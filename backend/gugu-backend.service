@@ -1,0 +1,30 @@
+[Unit]
+Description=Gugu Backend (FastAPI)
+Documentation=https://github.com/your-org/Gugu-web
+After=network.target
+
+[Service]
+Type=simple
+# 改成实际运行该服务的用户（不要用 root）
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/1panel/www/sites/test.gugugu.site/backend
+Environment="PATH=/opt/1panel/www/sites/test.gugugu.site/backend/.venv/bin"
+Environment="DB_STARTUP_TIMEOUT=10"
+ExecStart=/opt/1panel/www/sites/test.gugugu.site/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=on-failure
+RestartSec=3
+
+# 日志交给 journald（journalctl -u gugu-backend -f）
+StandardOutput=journal
+StandardError=journal
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# uploads 目录需要写权限
+ReadWritePaths=/opt/1panel/www/sites/test.gugugu.site/backend/uploads /opt/1panel/www/sites/test.gugugu.site/backend/config.override.json
+
+[Install]
+WantedBy=multi-user.target

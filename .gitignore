@@ -1,0 +1,55 @@
+# ===== Python / Backend =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+backend/venv/
+backend/.venv/
+backend/env/
+backend/.env
+*.sqlite
+*.db
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ===== Node / Frontend =====
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.vite/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+frontend/.pnpm-store/
+
+# ===== 通用 =====
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+*.swo
+*~
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+
+# ===== 项目特定 =====
+# 用户上传文件（运行时产生，不入版本控制）
+backend/uploads/
+# 备份文件
+backup/

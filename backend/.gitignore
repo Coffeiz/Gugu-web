@@ -1,0 +1,10 @@
+.env
+config.override.json
+uploads/
+__pycache__/
+*.pyc
+.venv/
+
+# 启动脚本运行时产物
+.gugu.pid
+logs/

@@ -1,0 +1,293 @@
+<template>
+  <div class="dp-wrap" ref="wrapRef">
+    <div
+      class="dp-input"
+      :class="{ 'has-value': modelValue, placeholder: !modelValue }"
+      @click="toggle"
+    >
+      <svg class="dp-icon" width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <rect x="1" y="2" width="12" height="11" rx="3"/>
+        <path d="M4 1v2M10 1v2M1 6h12"/>
+      </svg>
+      <span>{{ displayValue || placeholder }}</span>
+    </div>
+
+    <Teleport to="body">
+      <Transition name="dp-pop">
+        <div v-if="open" class="dp-popup" :style="popupStyle" ref="popupRef">
+          <!-- 月份导航 -->
+          <div class="dp-header">
+            <button class="dp-nav" @click.stop="prevMonth">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 2L4 6l4 4"/></svg>
+            </button>
+            <span class="dp-period">{{ cursor.getFullYear() }}年{{ cursor.getMonth() + 1 }}月</span>
+            <button class="dp-nav" @click.stop="nextMonth">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 2l4 4-4 4"/></svg>
+            </button>
+          </div>
+
+          <!-- 星期头 -->
+          <div class="dp-weekrow">
+            <span v-for="w in '一二三四五六日'" :key="w" class="dp-wh">{{ w }}</span>
+          </div>
+
+          <!-- 日期格 -->
+          <div class="dp-grid">
+            <button
+              v-for="d in calDays"
+              :key="d.key"
+              class="dp-day"
+              :class="{
+                'other': d.other,
+                'today': d.iso === todayIso,
+                'selected': d.iso === modelValue,
+                'weekend': d.dow >= 5,
+                'disabled': isDisabled(d.iso),
+              }"
+              @click.stop="select(d.iso)"
+            >{{ d.date }}</button>
+          </div>
+
+          <!-- 快捷 -->
+          <div class="dp-footer">
+            <button class="dp-clear" @click.stop="clear">清除</button>
+            <button class="dp-today" @click.stop="select(todayIso)">今天</button>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+
+const props = defineProps({
+  modelValue: { type: String, default: '' },
+  placeholder: { type: String, default: '选择日期' },
+  min: { type: String, default: '' },
+})
+const emit = defineEmits(['update:modelValue'])
+
+const open      = ref(false)
+const wrapRef   = ref(null)
+const popupRef  = ref(null)
+const popupStyle = ref({})
+
+const today    = new Date()
+const todayIso = toIso(today)
+
+const cursor = ref(
+  props.modelValue
+    ? new Date(props.modelValue + 'T00:00:00')
+    : new Date(today.getFullYear(), today.getMonth(), 1)
+)
+
+function toIso(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+}
+
+const displayValue = computed(() => {
+  if (!props.modelValue) return ''
+  const d = new Date(props.modelValue + 'T00:00:00')
+  return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`
+})
+
+const calDays = computed(() => {
+  const y = cursor.value.getFullYear()
+  const m = cursor.value.getMonth()
+  const first = new Date(y, m, 1)
+  const last  = new Date(y, m + 1, 0)
+  const startDow = (first.getDay() + 6) % 7
+  const days = []
+  for (let i = startDow - 1; i >= 0; i--) {
+    const d = new Date(y, m, -i)
+    days.push({ key: `p${i}`, date: d.getDate(), iso: toIso(d), other: true, dow: (d.getDay()+6)%7 })
+  }
+  for (let i = 1; i <= last.getDate(); i++) {
+    const d = new Date(y, m, i)
+    days.push({ key: toIso(d), date: i, iso: toIso(d), other: false, dow: (d.getDay()+6)%7 })
+  }
+  const rem = 7 - (days.length % 7)
+  if (rem < 7) for (let i = 1; i <= rem; i++) {
+    const d = new Date(y, m + 1, i)
+    days.push({ key: `n${i}`, date: i, iso: toIso(d), other: true, dow: (d.getDay()+6)%7 })
+  }
+  return days
+})
+
+function prevMonth() {
+  const d = new Date(cursor.value)
+  d.setMonth(d.getMonth() - 1)
+  cursor.value = d
+}
+function nextMonth() {
+  const d = new Date(cursor.value)
+  d.setMonth(d.getMonth() + 1)
+  cursor.value = d
+}
+
+function isDisabled(iso) {
+  return !!(props.min && iso < props.min)
+}
+
+function select(iso) {
+  if (isDisabled(iso)) return
+  emit('update:modelValue', iso)
+  open.value = false
+}
+
+function calcPopupStyle() {
+  const rect = wrapRef.value?.getBoundingClientRect()
+  if (!rect) return
+  const popW = 224
+  const centerX = rect.left + rect.width / 2
+  const left = Math.max(8, Math.min(centerX - popW / 2, window.innerWidth - popW - 8))
+  popupStyle.value = {
+    position: 'fixed',
+    top: rect.bottom + 6 + 'px',
+    left: left + 'px',
+    width: popW + 'px',
+    zIndex: 9999,
+  }
+}
+
+function openPicker() {
+  if (open.value) return
+  calcPopupStyle()
+  open.value = true
+}
+
+function closePicker() { open.value = false }
+
+defineExpose({ openPicker, closePicker })
+function clear() {
+  emit('update:modelValue', '')
+  open.value = false
+}
+
+function toggle() {
+  if (open.value) { open.value = false; return }
+  calcPopupStyle()
+  open.value = true
+}
+
+function onClickOutside(e) {
+  if (!open.value) return
+  if (wrapRef.value?.contains(e.target)) return
+  if (popupRef.value?.contains(e.target)) return
+  open.value = false
+}
+
+onMounted(() => document.addEventListener('click', onClickOutside, true))
+onUnmounted(() => document.removeEventListener('click', onClickOutside, true))
+
+// sync cursor when value changes externally
+watch(() => props.modelValue, v => {
+  if (v) cursor.value = new Date(v + 'T00:00:00')
+})
+</script>
+
+<style scoped>
+.dp-wrap { position: relative; width: 100%; }
+
+.dp-input {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 9px 12px;
+  background: rgba(255,255,255,0.6);
+  border: 1px solid rgba(255,255,255,0.8);
+  border-radius: var(--radius-sm, 10px);
+  font-size: 13px; color: var(--text-primary, #1e2028);
+  cursor: pointer; user-select: none;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.dp-input:hover {
+  border-color: rgba(123,127,178,0.35);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08);
+}
+.dp-input.placeholder span { color: var(--text-secondary, #8a8fa8); opacity: 0.6; font-size: 13px; }
+.dp-icon { color: var(--text-secondary, #8a8fa8); flex-shrink: 0; }
+</style>
+
+<style>
+.dp-popup {
+  background: rgba(238,240,246,0.96);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255,255,255,0.78);
+  border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 12px 36px rgba(30,40,80,0.14);
+  padding: 12px;
+  user-select: none;
+}
+
+.dp-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.dp-period { font-size: 13px; font-weight: 700; color: #1e2028; }
+.dp-nav {
+  width: 26px; height: 26px; border-radius: 7px;
+  border: none; background: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: #8a8fa8; transition: background 0.12s;
+}
+.dp-nav:hover { background: rgba(0,0,0,0.07); }
+
+.dp-weekrow {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 4px;
+}
+.dp-wh {
+  text-align: center; font-size: 10px; font-weight: 600;
+  color: #8a8fa8; padding: 2px 0;
+}
+
+.dp-grid {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.dp-day {
+  aspect-ratio: 1;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: none; cursor: pointer; padding: 0;
+  font-size: 11px; font-weight: 500; color: #1e2028; line-height: 1;
+  border-radius: 7px;
+  transition: background 0.1s, color 0.1s;
+  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+}
+.dp-day:hover:not(.selected) { background: rgba(123,127,178,0.12); }
+.dp-day.other { color: #8a8fa8; opacity: 0.4; }
+.dp-day.weekend:not(.selected):not(.today) { color: #b07080; }
+.dp-day.today:not(.selected) {
+  background: rgba(123,127,178,0.15);
+  color: #7b7fb2; font-weight: 700;
+}
+.dp-day.disabled { opacity: 0.25; cursor: not-allowed; pointer-events: none; }
+.dp-day.selected {
+  background: linear-gradient(135deg,#7b7fb2,#9590c4);
+  color: white; font-weight: 700;
+  box-shadow: 0 2px 8px rgba(123,127,178,0.32);
+}
+
+.dp-footer {
+  display: flex; justify-content: space-between;
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid rgba(0,0,0,0.06);
+}
+.dp-clear, .dp-today {
+  font-size: 11px; font-weight: 600;
+  padding: 4px 10px; border-radius: 7px; border: none;
+  cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+  transition: background 0.12s;
+}
+.dp-clear { background: none; color: #8a8fa8; }
+.dp-clear:hover { background: rgba(0,0,0,0.06); color: #1e2028; }
+.dp-today { background: rgba(123,127,178,0.12); color: #7b7fb2; }
+.dp-today:hover { background: rgba(123,127,178,0.22); }
+
+.dp-pop-enter-active { transition: opacity 0.15s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
+.dp-pop-leave-active { transition: opacity 0.1s, transform 0.1s ease-in; }
+.dp-pop-enter-from, .dp-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-4px); }
+</style>

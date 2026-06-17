@@ -1,0 +1,128 @@
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db
+from app.models import File, Folder, Project, User
+from app.schemas import FolderCreate, FolderRename, FolderResponse
+from app.core.security import get_current_user
+
+router = APIRouter(prefix="/folders", tags=["folders"])
+
+
+async def _file_count(folder_id: int, db: AsyncSession) -> int:
+    return (await db.execute(
+        select(func.count()).select_from(File).where(File.folder_id == folder_id)
+    )).scalar_one()
+
+
+# ── GET /folders?project_id=X  （省略 project_id = 个人文件夹）─────────────────
+
+@router.get("", response_model=list[FolderResponse])
+async def list_folders(
+    project_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if project_id is not None:
+        proj = await db.get(Project, project_id)
+        if not proj or proj.user_id != current_user.id:
+            raise HTTPException(404, "项目不存在")
+
+    stmt = (
+        select(Folder)
+        .where(Folder.user_id == current_user.id)
+        .order_by(Folder.created_at)
+    )
+    if project_id is not None:
+        stmt = stmt.where(Folder.project_id == project_id)
+    else:
+        stmt = stmt.where(Folder.project_id.is_(None))
+
+    folders = (await db.execute(stmt)).scalars().all()
+
+    counts_res = await db.execute(
+        select(File.folder_id, func.count().label("cnt"))
+        .where(File.folder_id.in_([f.id for f in folders]))
+        .group_by(File.folder_id)
+    )
+    count_map = {row.folder_id: row.cnt for row in counts_res}
+
+    return [
+        FolderResponse(id=f.id, project_id=f.project_id, name=f.name,
+                        file_count=count_map.get(f.id, 0))
+        for f in folders
+    ]
+
+
+# ── POST /folders ─────────────────────────────────────────────────────────────
+
+@router.post("", response_model=FolderResponse, status_code=201)
+async def create_folder(
+    body: FolderCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if body.project_id is not None:
+        proj = await db.get(Project, body.project_id)
+        if not proj or proj.user_id != current_user.id:
+            raise HTTPException(404, "项目不存在")
+
+    existing = (await db.execute(
+        select(Folder).where(
+            Folder.user_id == current_user.id,
+            Folder.project_id == body.project_id,
+            Folder.name == body.name,
+        )
+    )).scalar_one_or_none()
+    if existing:
+        raise HTTPException(409, "同名文件夹已存在")
+
+    folder = Folder(user_id=current_user.id, project_id=body.project_id, name=body.name)
+    db.add(folder)
+    await db.commit()
+    await db.refresh(folder)
+    return FolderResponse(id=folder.id, project_id=folder.project_id, name=folder.name, file_count=0)
+
+
+# ── PATCH /folders/{fid} ──────────────────────────────────────────────────────
+
+@router.patch("/{fid}", response_model=FolderResponse)
+async def rename_folder(
+    fid: int,
+    body: FolderRename,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    folder = await db.get(Folder, fid)
+    if not folder or folder.user_id != current_user.id:
+        raise HTTPException(404, "文件夹不存在")
+    folder.name = body.name
+    await db.commit()
+    await db.refresh(folder)
+    cnt = await _file_count(folder.id, db)
+    return FolderResponse(id=folder.id, project_id=folder.project_id, name=folder.name, file_count=cnt)
+
+
+# ── DELETE /folders/{fid} ─────────────────────────────────────────────────────
+
+@router.delete("/{fid}", status_code=204)
+async def delete_folder(
+    fid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    folder = await db.get(Folder, fid)
+    if not folder or folder.user_id != current_user.id:
+        raise HTTPException(404, "文件夹不存在")
+
+    files_res = await db.execute(
+        select(File).where(File.folder_id == fid, File.user_id == current_user.id)
+    )
+    for f in files_res.scalars().all():
+        f.folder_id = None
+
+    await db.delete(folder)
+    await db.commit()

@@ -1,0 +1,22 @@
+/* ── PM Studio 设计变量 ── */
+:root {
+  --bg-gradient: linear-gradient(160deg, #e8e9ee 0%, #d8dae4 35%, #bfc4d2 65%, #9aa2b8 100%);
+  --glass-bg: rgba(255, 255, 255, 0.56);
+  --glass-bg-hover: rgba(255, 255, 255, 0.70);
+  --glass-border: rgba(255, 255, 255, 0.76);
+  --glass-blur: blur(20px);
+  --glass-shadow: 0 4px 16px rgba(80,90,110,0.08), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55);
+  --glass-shadow-lg: 0 8px 28px rgba(80,90,110,0.11), inset 0 1px 0 rgba(255,255,255,0.98), inset 1px 0 0 rgba(255,255,255,0.65);
+  --color-primary: #7b7fb2;
+  --color-secondary: #c4afc8;
+  --color-tertiary: #7ab8c8;
+  --color-success: #5a9e88;
+  --color-warning: #b07858;
+  --text-primary: #1e2028;
+  --text-secondary: #8a8fa8;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --sidebar-width: 220px;
+  --font-sans: 'PingFang SC', 'Segoe UI', 'Helvetica Neue', sans-serif;
+}

@@ -1,0 +1,47 @@
+@import './variables.css';
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #app {
+  height: 100%;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background: var(--bg-gradient);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+/* 玻璃卡片工具类 */
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  corner-shape: squircle;
+  box-shadow: var(--glass-shadow);
+  transition: background 0.2s, box-shadow 0.2s;
+}
+.glass-card:hover {
+  background: var(--glass-bg-hover);
+  box-shadow: var(--glass-shadow-lg);
+}
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; margin-top: 8px; margin-bottom: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(123,127,178,0.22); border-radius: 99px; }
+
+/* 段落间距 */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.section-title { font-size: 15px; font-weight: 700; }
+.section-link { font-size: 13px; color: var(--color-primary); cursor: pointer; }
