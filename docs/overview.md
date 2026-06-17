@@ -1,7 +1,7 @@
 # 咕咕 · 项目文档
 
 > 最后更新：2026-06-17
-> 代号：PM-web · 域名：gugugu.site
+> 代号：咕咕 · 域名：gugugu.site
 
 ---
 
@@ -44,7 +44,7 @@
 ## 三、目录结构
 
 ```
-PM-web/
+Gugu-web/
 ├── docs/
 │   ├── overview.md       ← 本文件（主文档）
 │   ├── backend.md        ← 后端开发参考

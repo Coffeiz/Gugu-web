@@ -1,6 +1,6 @@
 # 咕咕
 
-> 代号：PM-web · 域名：gugugu.site
+> 代号：咕咕 · 域名：gugugu.site
 
 面向自由职业创作者的 AI 驱动项目管理工具。
 
