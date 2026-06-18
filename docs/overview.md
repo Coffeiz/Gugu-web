@@ -7,7 +7,7 @@
 
 ## 一、项目简介
 
-**咕咕** 是一个面向自由职业创作者（插画、动画等）的 AI 驱动项目管理工具。核心功能是用自然语言 Agent 管理项目进度、文件归档和排期提醒，未来扩展至团队/企业（ToB）。
+**咕咕** 是一个面向自由职业创作者（插画、动画等）的项目管理工具。核心功能是统一管理项目进度、文件归档和排期提醒，未来通过自然语言完成管理操作，并扩展至团队/企业（ToB）。
 
 **规划功能空间：**
 
@@ -20,7 +20,7 @@
 | 思维 | 创意画布（节点图），可挂文件 | 🔜 预留 |
 | 素材板 | 素材管理，自动打 tag | 🔜 预留 |
 | 客户 | 客户信息管理 | 🔜 规划中 |
-| AI Agent | 自然语言对话，记忆/提醒 | 🔜 规划中 |
+| 自然语言管理 | 对话完成项目 / 文件 / 提醒操作 | 🔜 规划中 |
 
 ---
 
@@ -31,11 +31,11 @@
 | 前端框架 | Vue 3 + Vite | Composition API，`<script setup>` |
 | 状态管理 | Pinia | 按业务拆分 store |
 | UI 组件库 | Arco Design Vue | 飞书出品 |
-| 后端框架 | FastAPI (Python) | 异步，AI 生态丰富 |
+| 后端框架 | FastAPI (Python) | 异步 |
 | 数据库 | PostgreSQL + SQLAlchemy 2.0 | 异步驱动 asyncpg |
 | 缓存 | Redis | 会话缓存、实时推送（预留） |
 | 文件存储 | 本地磁盘 / 阿里云 OSS | Admin 面板可热切换，无需重启 |
-| AI | 通义千问（OpenAI 兼容格式） | 可切换 5 个 provider |
+| 模型 | 通义千问（OpenAI 兼容格式） | 可切换 5 个 provider |
 | 认证 | JWT（jose + passlib） | 用户 Token + Admin Token 分离 |
 | 容器化 | Docker Compose | 本地一键启动全栈 |
 
@@ -123,7 +123,7 @@ Gugu-web/
 | 路径 | 页面 | 状态 |
 |------|------|------|
 | `/admin/login` | 管理员登录 | ✅ |
-| `/admin/config` | 系统配置（DB / Redis / Storage / AI） | ✅ |
+| `/admin/config` | 系统配置（DB / Redis / Storage） | ✅ |
 
 ---
 
@@ -167,8 +167,8 @@ Gugu-web/
 | `calendar_events` | 日历事件 | ✅ |
 | `clients` | 客户信息 | ✅ |
 | `mind_maps` | 思维画布（预留，暂不开发） | ✅ 表结构已建 |
-| `conversation_sessions` | AI 对话会话 | ✅ |
-| `conversation_messages` | AI 对话消息 | ✅ |
+| `conversation_sessions` | 自然语言管理对话会话 | ✅ |
+| `conversation_messages` | 自然语言管理对话消息 | ✅ |
 
 **已移除：** `file_versions`、`folders`
 
@@ -204,7 +204,7 @@ Gugu-web/
 | `db` | host / port / name / user / password |
 | `redis` | host / port / password |
 | `storage` | backend(`local`\|`oss`) / local_path / oss_* / oss_prefix |
-| `ai` | provider / api_key / base_url / model |
+| `model` | provider / api_key / base_url / model |
 
 默认 Admin 账号：`admin / admin123`（**上线前必须修改**）
 
@@ -260,14 +260,15 @@ cd frontend && npm run dev
 - **项目看板（Projects）**：三列看板、拖拽、DoneColumn 年月折叠、ProjectModal/NewProjectModal
 - **日历（Calendar）**：月视图、项目 bar、事件 chip、实时拖拽预览、跨夜日期自动更新
 - **文件库（Files）**：四空间架构重构、项目/阶段树导航、拖拽上传预填、XHR 进度条、local/OSS 存储抽象
-- 管理后台：登录、系统配置（DB/Redis/Storage/AI 热更新）
+- 管理后台：登录、系统配置（DB/Redis/Storage 热更新）
 - 后端全套 API + 存储抽象层
 
 ### 待开发 🚧
 
 | 优先级 | 功能 |
 |--------|------|
-| 高 | AI Agent 接口（SSE 流式，接通义千问） |
+| 高 | 自然语言管理接口（SSE 流式，接通义千问） |
+| 高 | 定时任务（按周期自动提醒 / 归档 / 同步） |
 | 高 | 前端文件库重构（适配新 API） |
 | 中 | 客户管理页面 |
 | 中 | Admin 面板存储配置 UI（OSS 切换） |
@@ -280,13 +281,13 @@ cd frontend && npm run dev
 ## 十二、下一步建议顺序
 
 ```
-前端文件库重构（适配新后端 API）
+自然语言管理接入（通义千问 SSE 流式）
        ↓
-Admin 存储配置 UI（OSS 测试连接 + backend 切换）
+定时任务（按周期自动提醒 / 归档 / 同步）
        ↓
-AI Agent 接入（通义千问 SSE 流式）
+思维画布（节点图）
        ↓
-客户管理页面
+团队 / 企业版（ToB）
        ↓
-思维 / 素材板
+客户管理
 ```

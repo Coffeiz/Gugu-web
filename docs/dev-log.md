@@ -7,7 +7,7 @@
 
 ## 核心愿景
 
-通用项目管理 Web，接入 AI Agent 管理进度、文件、排期，支持自然语言交互。适用于插画约稿、动画制作、工程项目等任何需要进度追踪的场景。
+通用项目管理 Web，通过自然语言管理进度、文件、排期，支持自然语言交互。适用于插画约稿、动画制作、工程项目等任何需要进度追踪的场景。
 
 ---
 
@@ -18,7 +18,7 @@
 | 前端 | Vue 3 + Vite + Pinia + Vue Router |
 | UI 库 | Arco Design Vue |
 | 后端 | FastAPI + PostgreSQL |
-| AI | Qwen + LangChain（待接入） |
+| 模型 | Qwen + LangChain（待接入） |
 
 ---
 
@@ -28,7 +28,7 @@
 - DefaultLayout：顶栏（glassmorphism，`position: absolute; z-index: 10`）+ 侧边栏 + 内容区
 - 顶栏内容：页面标题、日期、搜索框、"导入文件"、"新建项目"按钮
 - 侧边栏底部用户卡片（头像 + 姓名，无职业）+ 设置弹窗
-- AI 悬浮球（`z-index: 1000`）+ 聊天弹窗（`z-index: 999`），点击外部自动收起
+- 自然语言悬浮球（`z-index: 1000`）+ 聊天弹窗（`z-index: 999`），点击外部自动收起
 - 导航：总览 / 项目 / 日历 / 文件库 / 客户 / 通知
 - 滚动条始终占位（`overflow-y: scroll; scrollbar-gutter: stable`）防止切页抖动
 
@@ -59,7 +59,7 @@
 | 高 | 数据库模型 + Alembic 迁移 |
 | 高 | 后端 CRUD API（项目 / 文件） |
 | 中 | 替换 Mock 数据为真实 API |
-| 中 | AI Agent 集成（Qwen + LangChain） |
+| 中 | 自然语言管理集成（Qwen + LangChain） |
 | 低 | 客户管理页 |
 | 低 | 通知系统 |
 
@@ -71,4 +71,4 @@
 - **玻璃拟态**：`backdrop-filter: blur(20px)`，`rgba(255,255,255,0.26~0.48)` 背景，白色内描边
 - **圆角**：`--radius-sm: 10px`，`--radius-md: 14px`，`--radius-lg: 18px`
 - **动画**：hover 弹性 `cubic-bezier(0.34,1.2,0.64,1)`，遮罩/阴影 `cubic-bezier(0.4,0,0.2,1)`，Modal 入场 `cubic-bezier(0.34,1.3,0.64,1)`
-- **Z-index 层级**：内容(default) → 渐变遮罩(5) → 顶栏(10) → Modal(200~300) → AI 球(1000) / 聊天(999)
+- **Z-index 层级**：内容(default) → 渐变遮罩(5) → 顶栏(10) → Modal(200~300) → 对话球(1000) / 聊天(999)

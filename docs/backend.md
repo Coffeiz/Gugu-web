@@ -11,7 +11,7 @@
 | 鉴权 | JWT（python-jose + bcrypt） |
 | 配置 | pydantic-settings + .env + config.override.json |
 | 存储 | 本地文件系统 / 阿里云 OSS（可切换） |
-| AI | OpenAI 兼容接口（默认 qwen-max） |
+| 模型 | OpenAI 兼容接口（默认 qwen-max） |
 
 ---
 
@@ -38,7 +38,7 @@ backend/
 │           ├── events.py      # 日历事件 CRUD
 │           ├── clients.py     # 客户 CRUD
 │           ├── config.py      # Admin 配置热写（需 Token）
-│           ├── agent.py       # AI 对话接口
+│           ├── agent.py       # 自然语言对话接口
 │           └── tasks.py       # 后台任务（预留）
 ├── alembic/
 │   ├── env.py                 # Alembic async 配置
@@ -79,10 +79,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES=10080   # 7 天
 STORAGE__BACKEND=local
 STORAGE__LOCAL_PATH=./uploads
 
-# AI（可选）
-AI__PROVIDER=qwen
-AI__API_KEY=your-key
-AI__MODEL=qwen-max
+# 模型（可选）
+MODEL__PROVIDER=qwen
+MODEL__API_KEY=your-key
+MODEL__MODEL=qwen-max
 
 # 调试模式（开启 SQLAlchemy 日志）
 DEBUG=false

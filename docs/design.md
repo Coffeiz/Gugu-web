@@ -8,7 +8,7 @@
 
 - **类型**：ToC 优先，未来扩展 ToB
 - **核心用户**：自由职业创作者（插画、动画 PM 等），未来扩展到团队/企业
-- **一句话**：用 AI Agent 驱动的项目管理后台，管进度、排期、文件，支持自然语言交互
+- **一句话**：项目管理后台，统一管进度、排期、文件，支持自然语言交互
 
 ---
 
@@ -18,10 +18,10 @@
 |------|------|------|
 | 前端 | Vue 3 + Vite | 用户有 Vue 基础，上手快 |
 | UI 组件库 | Arco Design | 飞书出品，适合项目管理风格，ToB 扩展友好 |
-| 后端 | FastAPI (Python) | AI 生态丰富，LangChain/LlamaIndex 直接用 |
+| 后端 | FastAPI (Python) | 异步，LangChain/LlamaIndex 直接用 |
 | 数据库 | PostgreSQL + Redis | 结构化数据 + 缓存/实时 |
-| 文件存储 | 阿里云 OSS | 与 Qwen 同系，国内访问稳定 |
-| AI 平台 | 通义千问 (QwenPaw) | 国内合规，Agent 能力完善 |
+| 文件存储 | 阿里云 OSS | 国内访问稳定 |
+| 模型 | 通义千问 (Qwen) | 国内合规 |
 | 实时通信 | WebSocket | 项目状态实时推送 |
 
 **ToB 扩展策略**：前端和数据库基本不动，后期加多租户逻辑和权限体系即可。
@@ -44,7 +44,7 @@ frontend/
 │   │   ├── Projects/
 │   │   ├── Calendar/
 │   │   ├── Files/
-│   │   └── Chat/        # AI 对话入口（悬浮球展开）
+│   │   └── Chat/        # 自然语言对话入口（悬浮球展开）
 │   ├── stores/          # Pinia 状态管理
 │   ├── composables/     # useCalendar、useAgent 等可复用逻辑
 │   ├── services/        # API 请求封装
@@ -61,9 +61,9 @@ backend/
 │   │   ├── projects.py
 │   │   ├── tasks.py
 │   │   ├── files.py
-│   │   └── agent.py     # AI 对话/指令入口
+│   │   └── agent.py     # 自然语言对话/指令入口
 │   ├── services/
-│   │   ├── agent/       # Agent 逻辑、记忆管理（Markdown 文件作为记忆）
+│   │   ├── agent/       # 自然语言对话逻辑、记忆管理（Markdown 文件作为记忆）
 │   │   └── storage/     # OSS 文件操作
 │   ├── models/          # SQLAlchemy 数据库模型
 │   ├── schemas/         # Pydantic 请求/响应校验
@@ -239,7 +239,7 @@ backend/
 - **拖拽上传**：全页面拖拽遮罩（`dragCounter` 计数防误触），松开执行上传
 - **文件 input**：若选中了文件则上传为新版本，否则作为新文件添加
 
-### AI Agent（悬浮球）
+### 自然语言管理（悬浮球）
 
 - 右下角固定圆形按钮（`52px`，渐变背景），z-index: 1000
 - 点击弹出对话浮层（`320px` 宽），z-index: 999
@@ -257,8 +257,8 @@ backend/
 - [x] 数据库模型 + Alembic 迁移
 - [x] 后端 CRUD API（项目/文件/事件/客户）
 - [x] 前端接入真实 API
-- [ ] AI Agent 自然语言对话（进度查询、截稿提醒、排期建议）
-- [ ] Agent 记忆：用 Markdown 文件持久化项目状态
+- [ ] 自然语言管理（进度查询、截稿提醒、排期建议）
+- [ ] 对话记忆：用 Markdown 文件持久化项目状态
 - [ ] 客户信息管理
 - [ ] 通知系统后端（截稿前 48h 自动触发）
 
