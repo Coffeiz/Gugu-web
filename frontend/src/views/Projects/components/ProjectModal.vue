@@ -1272,8 +1272,25 @@ function downloadFolderZip(folder) {
   foldersApi.download(folder.id, folder.name)
 }
 
+function prunePmHistoryForFolder(folderId) {
+  const hasDeleted = snap => snap.some(f => f.id === folderId)
+  const curIdx = pmNavCursor.value
+  let newCursor = 0
+  const kept = []
+  pmNavStack.value.forEach((snap, i) => {
+    if (!hasDeleted(snap)) {
+      if (i <= curIdx) newCursor = kept.length
+      kept.push(snap)
+    }
+  })
+  if (!kept.length) kept.push([])
+  pmNavStack.value = kept
+  pmNavCursor.value = Math.min(newCursor, kept.length - 1)
+}
+
 async function deleteFolderCard(folder) {
   if (!confirm(`删除文件夹「${folder.name}」？其中的文件将移至项目根目录。`)) return
+  prunePmHistoryForFolder(folder.id)
   try {
     await foldersApi.delete(folder.id)
     await loadFolders(props.project.id)

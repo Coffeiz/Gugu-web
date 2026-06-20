@@ -42,6 +42,8 @@
             </div>
           </div>
 
+          <hr class="col-divider" />
+
           <div class="section">
             <label class="section-label">看板列</label>
             <div class="status-group">
@@ -56,6 +58,8 @@
               </button>
             </div>
           </div>
+
+          <hr class="col-divider" />
 
           <div class="section">
             <label class="section-label">项目颜色</label>
@@ -74,6 +78,8 @@
               </button>
             </div>
           </div>
+
+          <hr class="col-divider" />
 
           <div class="section">
             <label class="section-label">备注</label>
@@ -507,8 +513,12 @@ function handleCreate() {
 }
 .left-col {
   flex: 0 0 320px; padding: 18px 20px;
-  display: flex; flex-direction: column; gap: 20px;
+  display: flex; flex-direction: column; gap: 16px;
   overflow-y: auto;
+}
+.col-divider {
+  border: none; border-top: 1px solid rgba(0,0,0,0.07);
+  margin: 0;
 }
 .right-col {
   flex: 1; padding: 18px 20px;
