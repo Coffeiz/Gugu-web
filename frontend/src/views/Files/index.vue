@@ -100,12 +100,6 @@
           清空回收站
         </button>
 
-        <!-- 上传按钮 -->
-        <label v-if="canUpload" class="upload-btn">
-          <PhUploadSimple :size="12" weight="bold" />
-          上传文件
-          <input type="file" hidden multiple @change="handleFileInput" />
-        </label>
       </div>
     </div>
 
