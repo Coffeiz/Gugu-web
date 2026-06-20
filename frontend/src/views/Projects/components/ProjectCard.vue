@@ -77,25 +77,25 @@ const daysLeft      = computed(() => {
   return Math.ceil((dl - today) / 86400000)
 })
 const isUrgent      = computed(() => props.project.status !== 'done' && daysLeft.value <= 3)
+const thisYear = new Date().getFullYear()
+function fmtDate(iso) {
+  if (!iso) return ''
+  const d = new Date(iso + 'T00:00:00')
+  const mm = `${d.getMonth()+1}/${d.getDate()}`
+  return d.getFullYear() !== thisYear ? `${d.getFullYear()}/${mm}` : mm
+}
 const deadlineLabel = computed(() => {
   if (!props.project.deadline) return '—'
   const d = daysLeft.value
   if (d < 0) {
     if (props.project.status !== 'done') return `逾期 ${-d} 天`
-    const date = new Date(props.project.deadline + 'T00:00:00')
-    return `${date.getMonth()+1}/${date.getDate()}`
+    return fmtDate(props.project.deadline)
   }
   if (d === 0) return '今天截止'
   if (d === 1) return '明天'
   if (d <= 7)  return `${d}天后`
-  const date = new Date(props.project.deadline + 'T00:00:00')
-  return `${date.getMonth()+1}/${date.getDate()}`
+  return fmtDate(props.project.deadline)
 })
-function fmtDate(iso) {
-  if (!iso) return ''
-  const d = new Date(iso + 'T00:00:00')
-  return `${d.getMonth()+1}/${d.getDate()}`
-}
 </script>
 
 <style scoped>

@@ -1171,7 +1171,7 @@ async function deleteSelected() {
 
   // 乐观更新
   if (hasFiles)   cacheStore.removeFiles(fileIds)
-  if (hasFolders) folderIds.forEach(id => cacheStore.removeFolder(id))
+  if (hasFolders) { pruneHistoryForFolders(folderIds); folderIds.forEach(id => cacheStore.removeFolder(id)) }
   selectedIds.value        = new Set()
   selectedFolderKeys.value = new Set()
   loadContents()
@@ -1501,8 +1501,25 @@ async function onFolderDrop(f, e) {
   }
 }
 
+function pruneHistoryForFolders(folderIds) {
+  const idSet = new Set(folderIds)
+  const hasDeleted = snap => snap.some(seg => seg.type === 'folder' && idSet.has(seg.folderId))
+  const curIdx = navHistoryCursor.value
+  let newCursor = 0
+  const kept = []
+  navHistoryStack.value.forEach((snap, i) => {
+    if (!hasDeleted(snap)) {
+      if (i <= curIdx) newCursor = kept.length
+      kept.push(snap)
+    }
+  })
+  navHistoryStack.value = kept
+  navHistoryCursor.value = Math.min(newCursor, Math.max(0, kept.length - 1))
+}
+
 async function deleteFolder(f) {
   if (!confirm(`删除文件夹"${f.displayName}"？文件夹内所有内容将被删除。`)) return
+  pruneHistoryForFolders([f.folderId])
   cacheStore.removeFolder(f.folderId)
   loadContents()
   try {
@@ -1879,7 +1896,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 /* 新建文件夹 */
 .new-folder-btn {
   display: flex; align-items: center; gap: 5px;
-  padding: 6px 12px; border-radius: 8px;
+  height: 30px; padding: 0 12px; border-radius: 8px;
   border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.5);
   font-size: 12px; font-weight: 500; color: var(--text-secondary);
   cursor: pointer; font-family: var(--font-sans); transition: all 0.15s; white-space: nowrap;
@@ -1919,7 +1936,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 /* 上传按钮 */
 .upload-btn {
   display: flex; align-items: center; gap: 5px;
-  padding: 6px 13px; border-radius: 8px; border: none;
+  height: 30px; padding: 0 13px; border-radius: 8px; border: none;
   background: linear-gradient(135deg, #7b7fb2, #9590c4);
   color: white; font-size: 12px; font-weight: 600;
   cursor: pointer; font-family: var(--font-sans);

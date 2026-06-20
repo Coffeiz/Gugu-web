@@ -88,9 +88,11 @@ function isUrgent(p) {
   return Math.ceil((dl - today) / 86400000) <= 3
 }
 
+const thisYear = new Date().getFullYear()
 function formatDate(str) {
   const d = new Date(str + 'T00:00:00')
-  return `${d.getMonth() + 1}月${d.getDate()}日`
+  const base = `${d.getMonth() + 1}月${d.getDate()}日`
+  return d.getFullYear() !== thisYear ? `${d.getFullYear()}年${base}` : base
 }
 </script>
 

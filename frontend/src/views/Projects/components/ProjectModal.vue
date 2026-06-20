@@ -150,7 +150,7 @@
           <!-- 备注 -->
           <div class="desc-section">
             <div class="section-label">备注</div>
-            <textarea class="desc-input" placeholder="添加项目描述或备注…" rows="2"></textarea>
+            <textarea class="desc-input" v-model="localNotes" placeholder="添加项目描述或备注…" rows="3"></textarea>
           </div>
 
         </div>
@@ -689,6 +689,7 @@ const localStages    = ref([])
 const localStartDate = ref('')
 const localDeadline  = ref('')
 const localClient    = ref('')
+const localNotes     = ref('')
 const fileViewMode   = ref('grid')
 const projectFiles   = ref([])
 const projectFolders = ref([])
@@ -1290,6 +1291,7 @@ watch(() => props.project?.id, async (id) => {
   localStartDate.value = props.project?.startDate ?? ''
   localDeadline.value  = props.project?.deadline  ?? ''
   localClient.value    = props.project?.client    ?? ''
+  localNotes.value     = props.project?.notes     ?? ''
   editingStage.value   = null
   projectFiles.value   = []
   projectFolders.value = []
@@ -1349,6 +1351,17 @@ watch(localDeadline, v => {
   const p = projectStore.projects.find(p => p.id === id)
   if (p) p.deadline = v
   projectStore.updateProject(id, { deadline: v || null })
+})
+
+let _notesTimer = null
+watch(localNotes, v => {
+  if (initializing) return
+  const id = props.project?.id
+  if (!id) return
+  clearTimeout(_notesTimer)
+  _notesTimer = setTimeout(() => {
+    projectStore.updateProject(id, { notes: v })
+  }, 600)
 })
 
 const currentStageIndex = computed(() =>
@@ -1920,7 +1933,8 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .stage-node.done .node-line { background: var(--color-success); opacity: 0.4; }
 
 /* 备注 */
-.desc-section { padding: 10px 16px 14px; flex-shrink: 0; display: flex; flex-direction: column; gap: 3px; border-top: 1px solid rgba(0,0,0,0.07); }
+.desc-section { padding: 10px 16px 14px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid rgba(0,0,0,0.07); }
+.desc-section .section-label { margin-bottom: 0; }
 
 /* 悬浮删除按钮 */
 .del-float-btn {
@@ -2127,7 +2141,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 }
 .new-folder-btn {
   display: flex; align-items: center; gap: 5px;
-  padding: 5px 11px; border-radius: 8px;
+  height: 28px; padding: 0 11px; border-radius: 8px;
   border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.5);
   font-size: 12px; font-weight: 500; color: var(--text-secondary);
   cursor: pointer; font-family: var(--font-sans); transition: all 0.15s; white-space: nowrap;
