@@ -43,7 +43,14 @@ class LocalStorageBackend(StorageBackend):
         return (self.root / key).read_bytes()
 
     async def delete(self, key: str) -> None:
-        (self.root / key).unlink(missing_ok=True)
+        path = self.root / key
+        path.unlink(missing_ok=True)
+        try:
+            parent = path.parent
+            if parent != self.root and parent.exists():
+                parent.rmdir()  # 只有空目录才会成功，非空静默忽略
+        except OSError:
+            pass
 
     async def rename_file(self, old_key: str, new_key: str) -> None:
         old = self.root / old_key

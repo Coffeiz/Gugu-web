@@ -21,10 +21,16 @@
       <div
         v-for="d in calDays" :key="d.key"
         class="cal-day"
-        :class="{ 'other-month': d.other, 'today': d.isToday }"
+        :class="{
+          'other-month': d.other,
+          'today': d.isToday,
+          'is-holiday': !d.other && hdayType(d.iso) === 'holiday',
+          'is-workday':  !d.other && hdayType(d.iso) === 'workday',
+        }"
         @click="selectDay(d)"
       >
-        {{ d.date }}
+        <span class="day-num">{{ d.date }}</span>
+        <span v-if="!d.other && hdayType(d.iso)" class="hday-badge" :class="'hday-' + hdayType(d.iso)">{{ hdayType(d.iso) === 'holiday' ? '休' : '班' }}</span>
         <span v-if="!d.other && (d.hasEvent || d.isDeadline)" class="day-dots">
           <i v-if="d.hasEvent" class="dot-ev" :class="{ 'on-today': d.isToday }"></i>
           <i v-if="d.isDeadline" class="dot-dl" :class="{ 'on-today': d.isToday }"></i>
@@ -98,6 +104,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { eventsApi } from '@/services/api'
 import { useProjectStore } from '@/stores/projects'
 import DatePicker from '@/components/common/DatePicker.vue'
+import { useHolidays } from '@/composables/useHolidays'
 
 
 const projectStore = useProjectStore()
@@ -106,6 +113,27 @@ const today    = new Date()
 const year     = ref(today.getFullYear())
 const month    = ref(today.getMonth())
 const weekdays = ['一', '二', '三', '四', '五', '六', '日']
+
+const { fetchYear, getHolidayType } = useHolidays()
+const hdayCache = ref({})
+
+async function loadHolidays() {
+  const y = year.value
+  const years = [y]
+  if (month.value === 11) years.push(y + 1)
+  for (const yr of years) {
+    if (!hdayCache.value[yr]) {
+      const data = await fetchYear(yr)
+      hdayCache.value = { ...hdayCache.value, [yr]: data }
+    }
+  }
+}
+
+function hdayType(isoDate) {
+  if (!isoDate) return null
+  const yr = +isoDate.slice(0, 4)
+  return getHolidayType(hdayCache.value[yr], isoDate)
+}
 
 const pickerOpen      = ref(false)
 const pickerYear      = ref(today.getFullYear())
@@ -193,8 +221,8 @@ async function loadEvents() {
     events.value = await eventsApi.list(year.value, month.value)
   } catch { /* ignore */ }
 }
-onMounted(loadEvents)
-watch([year, month], loadEvents)
+onMounted(() => { loadEvents(); loadHolidays() })
+watch([year, month], () => { loadEvents(); loadHolidays() })
 
 // 近期节点日历事件直接读 store（DefaultLayout 挂载时已预加载）
 const upcomingCalEvents = computed(() => projectStore.upcomingCalEvents)
@@ -346,7 +374,7 @@ function hexAlpha(hex, a) {
   text-align: center; font-size: 11px; font-weight: 600;
   color: var(--text-secondary); padding: 3px 0 7px;
 }
-.weekday.weekend { color: #c4afc8; }
+.weekday.weekend { color: rgba(195,90,90,0.85); }
 
 .cal-day {
   display: flex; align-items: center; justify-content: center;
@@ -360,6 +388,16 @@ function hexAlpha(hex, a) {
   color: white; font-weight: 700;
   box-shadow: 0 2px 8px rgba(123,127,178,0.28);
 }
+.cal-day.is-holiday .day-num { color: rgba(210,75,75,0.82); }
+.cal-day.today .day-num { color: inherit; }
+.hday-badge {
+  position: absolute; top: 2px; right: 3px;
+  font-size: 8px; font-weight: 700; line-height: 1;
+  pointer-events: none;
+}
+.hday-holiday { color: rgba(210,75,75,0.82); }
+.hday-workday { color: rgba(170,100,5,0.85); }
+.cal-day.today .hday-badge { color: rgba(255,255,255,0.75); }
 .day-dots {
   position: absolute; bottom: 3px;
   display: flex; gap: 2px; align-items: center;
@@ -397,7 +435,7 @@ function hexAlpha(hex, a) {
 .cap-sdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
 .cap-s-pending { background: #9e9fc4; }
 .cap-s-active  { background: #7b7fb2; }
-.ev-cap-name { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.ev-cap-name { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; padding-bottom: 2px; margin-bottom: -2px; }
 .cap-days { font-size: 10px; font-weight: 700; color: var(--text-secondary); flex-shrink: 0; white-space: nowrap; margin-left: 4px; }
 .cap-days.urgent { color: var(--color-warning, #c8962a); }
 .event-meta { font-size: 11px; color: var(--text-secondary); margin-top: 2px; display: flex; align-items: center; gap: 5px; }

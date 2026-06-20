@@ -46,10 +46,15 @@
                 'is-today':    d.isToday,
                 'is-selected': d.iso === selectedDate,
                 'is-weekend':  d.dow >= 5,
+                'is-holiday':  !d.other && hdayType(d.iso) === 'holiday',
+                'is-workday':  !d.other && hdayType(d.iso) === 'workday',
               }"
               @click="!drag.active && (selectedDate = d.iso)"
             >
-              <div class="cell-num">{{ d.date }}</div>
+              <div class="cell-head">
+                <div class="cell-num">{{ d.date }}</div>
+                <span v-if="!d.other && hdayType(d.iso)" class="hday-badge" :class="'hday-' + hdayType(d.iso)">{{ hdayType(d.iso) === 'holiday' ? '休' : '班' }}</span>
+              </div>
               <!-- chips：paddingTop 将格子坐标系对齐到 bars-layer 坐标系 -->
               <template v-for="lay in [dayLayout(d.iso, week, wi)]" :key="'lay'">
                 <div
@@ -61,7 +66,8 @@
                     class="event-chip"
                     :class="{ 'chip-proj': ev.isProject, 'chip-ev-click': ev.isUserEvent }"
                     :style="{ background: ev.accent + '28', color: ev.accent, borderColor: ev.accent + '70', cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
-                    @click.stop="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event, true))"
+                    @click.left.stop="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event, true))"
+                    @contextmenu.prevent.stop="ev.isUserEvent && openEditForm(ev, $event, true)"
                     @mousedown.stop="ev.isProject ? startProjChipDrag(ev, $event) : (ev.isUserEvent && startEventDrag(ev, $event))"
                   >
                     <span v-if="ev.isProject" class="chip-proj-tag">项目</span>
@@ -122,7 +128,8 @@
         <div v-if="selectedEvents.length" class="sidebar-events">
           <div v-for="ev in selectedEvents" :key="ev.id" class="sidebar-ev"
                :style="{ cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
-               @click="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event))"
+               @click.left="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event))"
+               @contextmenu.prevent="ev.isUserEvent && openEditForm(ev, $event)"
           >
             <div class="sidebar-ev-bar" :style="{ background: ev.accent }"></div>
             <div class="sidebar-ev-body">
@@ -166,7 +173,8 @@
         <div v-for="ev in upcomingList" :key="ev.id" class="upcoming-item"
              :class="{ 'upcoming-proj': ev.isProject, 'upcoming-ev': ev.isUserEvent }"
              :style="{ cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
-             @click="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event))"
+             @click.left="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event))"
+             @contextmenu.prevent="ev.isUserEvent && openEditForm(ev, $event)"
         >
           <div class="upcoming-capsule"
                :style="{ background: hexAlpha(ev.accent, 0.1), borderColor: hexAlpha(ev.accent, 0.3) }">
@@ -272,6 +280,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from
 import { useProjectStore } from '@/stores/projects'
 import { eventsApi } from '@/services/api'
 import DatePicker from '@/components/common/DatePicker.vue'
+import { useHolidays } from '@/composables/useHolidays'
 
 const projectStore = useProjectStore()
 const todayIso = ref(toIso(new Date()))
@@ -288,6 +297,27 @@ function scheduleMidnightTick() {
 
 const cursor       = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 1))
 const selectedDate = ref(todayIso.value)
+
+const { fetchYear, getHolidayType } = useHolidays()
+const hdayCache = ref({})
+
+async function loadHolidays() {
+  const y = cursor.value.getFullYear()
+  const years = [y]
+  if (cursor.value.getMonth() === 11) years.push(y + 1)
+  for (const yr of years) {
+    if (!hdayCache.value[yr]) {
+      const data = await fetchYear(yr)
+      hdayCache.value = { ...hdayCache.value, [yr]: data }
+    }
+  }
+}
+
+function hdayType(isoDate) {
+  if (!isoDate) return null
+  const yr = +isoDate.slice(0, 4)
+  return getHolidayType(hdayCache.value[yr], isoDate)
+}
 const showAddForm  = ref(false)
 const newEvent     = ref({ name: '', date: todayIso.value, description: '' })
 const addBtnRef    = ref(null)
@@ -457,7 +487,7 @@ const morePopupRef = ref(null)
 const BAR_H    = 20  // 每条 bar / chip 的行高（slot 高，含间距）
 const HEADER_H = 32  // bars-layer 第一条 bar 的 top：cell-num 底部(31) + 1px 间距
 const CELL_TOP = 31  // cell-chips 起点：cell padding-top(7) + cell-num(24)
-const BOTTOM_PAD = 4 // 底部安全留白（px）
+const BOTTOM_PAD = 8 // 底部安全留白（px）：cell padding-bottom(4) + 4px 视觉安全区
 
 const weekHeights = ref({})   // { [weekIndex]: heightInPx }
 const weekRowElMap = {}       // 原生 el 引用，不需要响应式
@@ -915,6 +945,7 @@ onMounted(() => {
   fetchNextMonthEvents()
   nextTick(setupRO)
   scheduleMidnightTick()
+  loadHolidays()
 })
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside, true)
@@ -922,7 +953,7 @@ onUnmounted(() => {
   clearTimeout(_midnightTimer)
 })
 
-watch(cursor, fetchEvents)
+watch(cursor, () => { fetchEvents(); loadHolidays() })
 watch(monthWeeks, () => nextTick(setupRO))
 watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 
@@ -966,7 +997,7 @@ async function saveEvent() {
 
 <style scoped>
 .cal-page { display: flex; flex-direction: column; gap: 14px; height: 100%; }
-.cal-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; flex-shrink: 0; }
+.cal-toolbar { display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; }
 .toolbar-left { display: flex; align-items: center; gap: 4px; }
 .nav-btn { width: 30px; height: 30px; border-radius: 8px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); transition: background 0.15s; }
 .nav-btn:hover { background: rgba(0,0,0,0.06); }
@@ -987,7 +1018,7 @@ async function saveEvent() {
 .weekday-row { display: grid; grid-template-columns: repeat(7, 1fr); flex-shrink: 0; margin-bottom: 2px; }
 .weekday-hdr { text-align: center; font-size: 11px; font-weight: 600; color: var(--text-secondary); padding: 3px 0 8px; border-right: 1px solid rgba(123,127,178,0.15); }
 .weekday-hdr:last-child { border-right: none; }
-.weekday-hdr.weekend { color: #c4afc8; }
+.weekday-hdr.weekend { color: rgba(195,90,90,0.85); }
 
 .month-body { flex: 1; display: flex; flex-direction: column; border-top: 1px solid rgba(123,127,178,0.15); overflow: hidden; }
 
@@ -997,6 +1028,7 @@ async function saveEvent() {
   position: relative;
   border-bottom: 1px solid rgba(123,127,178,0.15);
   min-height: 80px;
+  overflow: hidden;
 }
 .week-row:last-child { border-bottom: none; }
 
@@ -1009,19 +1041,28 @@ async function saveEvent() {
 .month-cell:last-child { border-right: none; }
 .month-cell:hover { background: rgba(123,127,178,0.06); }
 .month-cell.other-month { opacity: 0.3; }
-.month-cell.is-weekend { background: rgba(0,0,0,0.012); }
-.month-cell.is-weekend:hover { background: rgba(0,0,0,0.045); }
-.month-cell.is-today .cell-num { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-weight: 700; box-shadow: 0 2px 6px rgba(123,127,178,0.32); }
+.month-cell.is-weekend { background: rgba(195,90,90,0.028); }
+.month-cell.is-weekend:hover { background: rgba(195,90,90,0.07); }
+.month-cell.is-today .cell-num { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: rgba(255,255,255,0.88) !important; font-weight: 700; border-radius: 6px; }
 .month-cell.is-selected { background: rgba(123,127,178,0.1); }
-.month-cell.is-selected:not(.is-today) .cell-num { background: rgba(123,127,178,0.15); color: var(--color-primary); font-weight: 700; }
+.month-cell.is-selected.is-weekend { background: rgba(195,90,90,0.1); }
+.month-cell.is-selected:not(.is-today) .cell-num { background: rgba(123,127,178,0.15); color: var(--color-primary); font-weight: 700; border-radius: 6px; }
+.month-cell.is-selected:not(.is-today).is-weekend .cell-num { background: rgba(195,90,90,0.15); color: rgba(195,90,90,0.9); }
+.month-cell.is-selected:not(.is-today).is-workday .cell-num { color: var(--color-primary); }
 
+.cell-head { display: flex; align-items: center; gap: 3px; height: 24px; }
 .cell-num { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; color: var(--text-primary); flex-shrink: 0; transition: all 0.15s; }
+.hday-badge { font-size: 9px; font-weight: 700; line-height: 1; padding: 2px 3px; border-radius: 3px; flex-shrink: 0; }
+.hday-holiday { background: rgba(210,75,75,0.1); color: rgba(210,75,75,0.82); }
+.hday-workday { background: rgba(210,130,20,0.14); color: rgba(170,100,5,0.9); }
+.month-cell.is-holiday .cell-num { color: rgba(210,75,75,0.82); }
+.month-cell.is-workday.is-weekend .cell-num { color: var(--text-primary); }
 
 /* chip 区域：paddingTop 由 JS 动态设置，推到 bar 下方 */
 .cell-chips { display: flex; flex-direction: column; gap: 2px; }
 
 .event-chip {
-  height: 16px; box-sizing: border-box;
+  height: 18px; box-sizing: border-box;
   font-size: 10px; font-weight: 600;
   padding: 0 7px; border-radius: 99px; border: 1px solid transparent;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -1123,11 +1164,12 @@ async function saveEvent() {
 }
 .ev-del-btn:hover { background: rgba(200,150,42,0.2); transform: scale(1.1); }
 .sidebar-ev-bar { width: 3px; border-radius: 99px; align-self: stretch; flex-shrink: 0; min-height: 26px; }
-.sidebar-ev-name { font-size: 12px; font-weight: 600; color: var(--text-primary); line-height: 1.4; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.sidebar-ev-name { font-size: 12px; font-weight: 600; color: var(--text-primary); line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
 .ev-type-badge {
+  display: inline-block; vertical-align: middle; margin-left: 4px;
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
-  padding: 1px 5px; border-radius: 4px;
-  flex-shrink: 0; line-height: 1.5;
+  padding: 1px 5px; border-radius: 4px; line-height: 1.5;
+  white-space: nowrap;
 }
 .ev-proj-badge {
   background: rgba(123,127,178,0.12); color: #7b7fb2;
@@ -1158,7 +1200,7 @@ async function saveEvent() {
 .cap-sdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
 .cap-s-pending { background: #9e9fc4; }
 .cap-s-active  { background: #7b7fb2; }
-.cap-name { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.cap-name { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; padding-bottom: 2px; margin-bottom: -2px; }
 .cap-days { font-size: 10px; font-weight: 700; color: var(--text-secondary); flex-shrink: 0; white-space: nowrap; margin-left: 4px; }
 .cap-days.urgent { color: var(--color-warning); }
 </style>

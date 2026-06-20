@@ -1,15 +1,15 @@
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, update as sa_update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import File, Project, Folder, User
+from app.models import File, MindMap, Project, Folder, User
 from app.schemas import FileResponse, BatchDeleteBody
 from app.core.security import get_current_user
 from app.services.storage import get_storage
-from app.api.v1.files import _to_resp, _color
+from app.api.v1.files import _to_resp, _color, _delete_thumb_cache, _build_key, _resolve_conflict
 
 router = APIRouter(prefix="/trash", tags=["trash"])
 
@@ -34,6 +34,51 @@ async def list_trash(
     return [_to_resp(f, pname, _color(pcolor), fname) for f, pname, pcolor, fname in result.all()]
 
 
+# ── 还原辅助：把物理文件从回收站移回原目录 ────────────────────────────────────
+
+async def _restore_file_storage(f: File, db: AsyncSession) -> None:
+    """重建原始 storage_key，将文件移回原目录；冲突时自动加 (n) 后缀。"""
+    from app.services.storage import get_storage
+    storage = get_storage()
+
+    # 获取所属项目/文件夹/思维导图信息，重建原始路径
+    project_name = project_year = project_month = folder_name = mind_map_title = ""
+    if f.project_id:
+        p = await db.get(Project, f.project_id)
+        if p:
+            project_name = p.name
+            date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
+            project_year, project_month = date_str[:4], date_str[5:7]
+    if f.folder_id:
+        fo = await db.get(Folder, f.folder_id)
+        if fo:
+            folder_name = fo.name
+    if f.mind_map_id:
+        mm = await db.get(MindMap, f.mind_map_id)
+        if mm:
+            mind_map_title = mm.title
+
+    base_key = _build_key(
+        uid=f.user_id, space=f.space,
+        display_name=f.display_name, ext=f.ext,
+        project_name=project_name, project_id=f.project_id or 0,
+        project_year=project_year, project_month=project_month,
+        folder_name=folder_name,
+        mind_map_title=mind_map_title, mind_map_id=f.mind_map_id or 0,
+    )
+    final_key, final_name = await _resolve_conflict(storage, base_key, f.display_name, f.ext)
+
+    old_key = f.storage_key
+    try:
+        await storage.rename_file(old_key, final_key)
+        f.storage_key = final_key
+        f.display_name = final_name
+    except Exception:
+        # 物理文件丢失时仍恢复 DB 记录，storage_key 重置为预期路径
+        f.storage_key = final_key
+        f.display_name = final_name
+
+
 # ── POST /trash/{fid}/restore ────────────────────────────────────────────────
 
 @router.post("/{fid}/restore", status_code=204)
@@ -45,6 +90,7 @@ async def restore_file(
     f = await db.get(File, fid)
     if not f or f.user_id != current_user.id or f.deleted_at is None:
         raise HTTPException(404, "文件不存在")
+    await _restore_file_storage(f, db)
     f.deleted_at = None
     await db.commit()
 
@@ -59,11 +105,15 @@ async def batch_restore(
 ):
     if not body.ids:
         return
-    await db.execute(
-        sa_update(File)
-        .where(File.id.in_(body.ids), File.user_id == current_user.id, File.deleted_at.isnot(None))
-        .values(deleted_at=None)
+    stmt = select(File).where(
+        File.id.in_(body.ids),
+        File.user_id == current_user.id,
+        File.deleted_at.isnot(None),
     )
+    files = (await db.execute(stmt)).scalars().all()
+    for f in files:
+        await _restore_file_storage(f, db)
+        f.deleted_at = None
     await db.commit()
 
 
@@ -78,12 +128,14 @@ async def hard_delete_file(
     f = await db.get(File, fid)
     if not f or f.user_id != current_user.id or f.deleted_at is None:
         raise HTTPException(404, "文件不存在")
+    fid = f.id
     try:
         await get_storage().delete(f.storage_key)
     except Exception:
         pass
     await db.delete(f)
     await db.commit()
+    _delete_thumb_cache(fid)
 
 
 # ── DELETE /trash （清空回收站）──────────────────────────────────────────────
@@ -96,6 +148,7 @@ async def empty_trash(
     stmt = select(File).where(File.user_id == current_user.id, File.deleted_at.isnot(None))
     files = (await db.execute(stmt)).scalars().all()
     storage = get_storage()
+    fids = [f.id for f in files]
     for f in files:
         try:
             await storage.delete(f.storage_key)
@@ -103,6 +156,8 @@ async def empty_trash(
             pass
         await db.delete(f)
     await db.commit()
+    for fid in fids:
+        _delete_thumb_cache(fid)
 
 
 # ── 自动清理过期文件（由 main.py 在启动时调用）────────────────────────────────
@@ -114,6 +169,7 @@ async def cleanup_expired(db: AsyncSession) -> int:
     if not files:
         return 0
     storage = get_storage()
+    fids = [f.id for f in files]
     for f in files:
         try:
             await storage.delete(f.storage_key)
@@ -121,4 +177,6 @@ async def cleanup_expired(db: AsyncSession) -> int:
             pass
         await db.delete(f)
     await db.commit()
-    return len(files)
+    for fid in fids:
+        _delete_thumb_cache(fid)
+    return len(fids)

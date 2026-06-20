@@ -2,10 +2,12 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from jose import jwt, JWTError
 from fastapi import HTTPException
 from pathlib import Path
@@ -20,6 +22,7 @@ from app.api.v1 import folders as folders_router
 from app.api.v1 import events as events_router
 from app.api.v1 import clients as clients_router
 from app.api.v1 import trash as trash_router
+from app.api.v1 import agent as agent_router
 from app.db.session import create_all_tables
 
 settings = get_settings()
@@ -121,6 +124,7 @@ app.include_router(folders_router.router,  prefix="/api/v1")
 app.include_router(events_router.router,   prefix="/api/v1")
 app.include_router(clients_router.router,  prefix="/api/v1")
 app.include_router(trash_router.router,    prefix="/api/v1")
+app.include_router(agent_router.router,    prefix="/api/v1")
 
 # ── Admin 配置路由（需要 Admin token）──
 app.include_router(
@@ -128,6 +132,22 @@ app.include_router(
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    msg = "；".join(
+        e.get("msg", "参数错误").replace("Value error, ", "")
+        for e in errors
+    )
+    return JSONResponse(status_code=422, content={"detail": msg})
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception):
+    print(f"[ERROR] {request.method} {request.url.path}: {type(exc).__name__}: {exc}")
+    return JSONResponse(status_code=500, content={"detail": "服务器内部错误，请稍后重试"})
 
 
 @app.get("/health")
