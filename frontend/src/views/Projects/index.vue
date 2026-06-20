@@ -19,12 +19,18 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
+import { useFilesCacheStore } from '@/stores/filesCache'
 import KanbanColumn from './components/KanbanColumn.vue'
 import DoneColumn   from './components/DoneColumn.vue'
 
 const projectStore = useProjectStore()
+const cacheStore   = useFilesCacheStore()
+
+onMounted(() => {
+  if (!cacheStore.loaded && !cacheStore.loading) cacheStore.load()
+})
 
 const nonDoneColumns = computed(() =>
   projectStore.kanbanColumns.filter(c => c.key !== 'done')

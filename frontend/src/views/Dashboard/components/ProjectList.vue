@@ -125,6 +125,7 @@ function formatDate(str) {
 .proj-name {
   font-size: 14px; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding-bottom: 2px; margin-bottom: -2px;
 }
 
 /* 第二行 */

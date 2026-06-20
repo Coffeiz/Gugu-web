@@ -30,6 +30,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 _MIGRATIONS = [
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL",
+    "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_width INTEGER NULL",
+    "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_height INTEGER NULL",
 ]
 
 

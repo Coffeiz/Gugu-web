@@ -1,15 +1,13 @@
 <template>
   <router-link :to="to" class="nav-item" active-class="active">
-    <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-      v-html="icon" />
+    <component :is="icon" class="nav-icon" :size="15" />
     <span class="nav-label-text"><slot /></span>
     <span v-if="$slots.badge" class="badge"><slot name="badge" /></span>
   </router-link>
 </template>
 
 <script setup>
-defineProps({ to: String, icon: String })
+defineProps({ to: String, icon: Object })
 </script>
 
 <style scoped>

@@ -127,6 +127,7 @@ function fmtDate(iso) {
   display: flex; align-items: center; gap: 4px;
   font-size: 11px; color: var(--text-secondary);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1;
+  padding-bottom: 2px; margin-bottom: -2px;
 }
 .proj-client svg { flex-shrink: 0; opacity: 0.85; }
 .proj-client.empty { opacity: 0.75; }

@@ -1,100 +1,49 @@
-# 文件存储结构规范（方案 A）
+# 文件存储结构规范
 
-> 更新：2026-06-17
-> 项目：PM Studio / gugugu.site
+> 更新：2026-06-20
+> 项目：咕咕 / gugugu.site
 
 ---
 
 ## 一、空间划分
 
-PM Studio 有四个独立的文件空间，每个空间有各自的目录和 DB 关联：
-
-| 空间 | `space` 值 | 目录前缀 | 开发状态 |
-|------|-----------|---------|---------|
-| 项目文件 | `project` | `{项目名} #{id}/` | ✅ 当前开发 |
-| 思维画布 | `mind` | `思维/{画布名} #{id}/` | 🔜 预留 |
-| 素材板 | `asset` | `素材板/` | 🔜 预留 |
-| 个人文件 | `personal` | `个人文件/` | ✅ 当前开发 |
+| 空间 | 说明 | 开发状态 |
+|------|------|---------|
+| 个人文件 | 用户自由上传，支持自建文件夹无限嵌套 | ✅ 已完成 |
+| 项目文件 | 关联项目，按年/月/项目/用户文件夹分层 | ✅ 已完成 |
+| 回收站 | 软删除文件，30 天自动清理 | ✅ 已完成 |
+| 思维画布 | 附件存储 | 🔜 预留 |
+| 素材板 | 素材管理 | 🔜 预留 |
 
 ---
 
 ## 二、磁盘目录结构
 
-### 2.1 完整结构
-
 ```
 uploads/
 └── {user_id}/
-    ├── {项目名} #{project_id}/      ← 项目空间
-    │   ├── {阶段名}/
-    │   │   └── 原始文件名.ext
-    │   └── 原始文件名.ext           ← 归属项目但未指定阶段
-    ├── 思维/                        ← 思维空间（预留）
-    │   └── {画布名} #{mind_map_id}/
-    │       └── 附件.ext
-    ├── 素材板/                      ← 素材板空间（预留）
-    │   └── 素材.ext
-    └── 个人文件/                    ← 个人文件空间
-        └── 原始文件名.ext
+    ├── 个人文件/
+    │   ├── 文件.pdf
+    │   └── {用户文件夹}/
+    │       └── 文件.pdf
+    └── 项目文件/
+        └── {year}/
+            └── {month}/
+                └── {项目名} #{project_id}/
+                    ├── 文件.pdf
+                    └── {用户文件夹}/
+                        └── 文件.pdf
 ```
 
-### 2.2 示例
+**年月来源：** 优先用项目 `start_date`，fallback 到 `created_at`（`_proj_date()` 工具函数，`backend/app/api/v1/projects.py`）。
 
-```
-uploads/
-└── 1/
-    ├── NB品牌设计 #3/
-    │   ├── 企划阶段/
-    │   │   ├── 需求文档.pdf
-    │   │   └── 封面图.png
-    │   └── 执行阶段/
-    │       └── 分镜稿.pdf
-    ├── 动画制作 #7/
-    │   └── 脚本初稿.docx
-    ├── 思维/
-    │   └── 产品规划 #1/
-    │       └── 流程图参考.png
-    ├── 素材板/
-    │   └── 风格参考.jpg
-    └── 个人文件/
-        └── 合同扫描.pdf
-```
-
-### 2.3 命名规则
-
-| 层级 | 格式 | 示例 |
-|------|------|------|
-| 用户目录 | `{user_id}/` | `1/` |
-| 项目目录 | `{项目名} #{project_id}/` | `NB品牌设计 #3/` |
-| 阶段目录 | `{阶段名}/`（原样，无 ID） | `企划阶段/` |
-| 思维目录 | `思维/{画布名} #{mind_map_id}/` | `思维/产品规划 #1/` |
-| 素材板目录 | `素材板/` | `素材板/` |
-| 个人文件目录 | `个人文件/` | `个人文件/` |
-| 文件名 | 上传时的原始文件名 | `需求文档.pdf` |
-
-**项目目录带 `#{id}` 的原因：**
-- 客户打开文件夹可直接识别项目名
-- 桌面客户端同步时通过 `#{id}` 定位 DB 对应项目，不依赖名称匹配
-- 项目改名时目录同步重命名，`#{id}` 不变，桌面客户端不丢失关联
-
-**阶段目录不带 ID：**
-- 阶段名在项目内唯一，无需 ID 区分
-- 更简洁，客户看到纯粹的阶段名
+**项目目录带 `#{id}` 的原因：** 项目改名时目录同步重命名，`#{id}` 不变，未来桌面客户端可通过 ID 定位关联，不依赖名称匹配。
 
 ---
 
-## 三、数据库表设计
+## 三、数据库表
 
-### 3.1 变更概览（对比旧版本）
-
-| 变更 | 说明 |
-|------|------|
-| 删除 `file_versions` 表 | 版本管理已从 UI 移除 |
-| 删除 `folders` 表 | 自定义文件夹废弃，改为空间/项目/阶段结构 |
-| 修改 `files` 表 | 见下方 |
-| 新增 `mind_maps` 表 | 思维画布元数据，暂不开发，预留结构 |
-
-### 3.2 新 `files` 表
+### 3.1 `files` 表
 
 ```sql
 CREATE TABLE files (
@@ -102,342 +51,136 @@ CREATE TABLE files (
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     display_name VARCHAR(300) NOT NULL,
     ext          VARCHAR(20)  NOT NULL,
-    space        VARCHAR(20)  NOT NULL DEFAULT 'personal',
     project_id   INTEGER REFERENCES projects(id) ON DELETE SET NULL,
-    stage_name   VARCHAR(100) NOT NULL DEFAULT '',
-    mind_map_id  INTEGER REFERENCES mind_maps(id) ON DELETE SET NULL,
+    folder_id    INTEGER REFERENCES folders(id) ON DELETE SET NULL,
+    stage_name   VARCHAR(100) NOT NULL DEFAULT '',  -- 标签字段，非导航层级
     storage_key  VARCHAR(500) NOT NULL,
     size         VARCHAR(50)  NOT NULL DEFAULT '',
     size_bytes   BIGINT       NOT NULL DEFAULT 0,
     mime_type    VARCHAR(200),
+    deleted_at   TIMESTAMP NULL,                    -- 软删除时间戳
     created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMP NOT NULL DEFAULT NOW()
 );
 ```
 
-#### 字段说明
+| 字段 | 说明 |
+|------|------|
+| `project_id` | NULL = 个人文件；有值 = 项目文件 |
+| `folder_id` | NULL = 当前空间根目录；有值 = 所在用户文件夹 |
+| `stage_name` | 文件标签，不作为导航层级，可选填 |
+| `storage_key` | 相对于 `UPLOAD_DIR` 的路径，OSS 迁移时直接用作 object key |
+| `deleted_at` | 非 NULL 表示已移入回收站 |
 
-| 字段 | 说明 | 示例 |
-|------|------|------|
-| `space` | 所属空间：`project` \| `mind` \| `asset` \| `personal` | `project` |
-| `project_id` | space=project 时必填；其余空间为 NULL | `3` |
-| `stage_name` | space=project 时可填；空字符串表示未指定阶段 | `企划阶段` |
-| `mind_map_id` | space=mind 时必填；其余空间为 NULL | `1` |
-| `storage_key` | 相对于 UPLOAD_DIR 的路径，OSS 迁移时直接用作 object key | `1/NB品牌设计 #3/企划阶段/需求文档.pdf` |
-| `size` | 格式化显示用 | `1.2 MB` |
-| `size_bytes` | 精确字节数 | `1258291` |
-
-#### storage_key 构造规则
-
-```
-project + 有阶段：  {uid}/{项目名} #{pid}/{stage_name}/{name}.{ext}
-project + 无阶段：  {uid}/{项目名} #{pid}/{name}.{ext}
-mind：              {uid}/思维/{画布名} #{mid}/{name}.{ext}
-asset：             {uid}/素材板/{name}.{ext}
-personal：          {uid}/个人文件/{name}.{ext}
-```
-
-#### 同名文件冲突处理
-
-同一目录下若已存在同名文件，追加 `(n)`：
-```
-需求文档.pdf → 需求文档(1).pdf → 需求文档(2).pdf
-```
-`display_name` 字段同步更新。
-
-### 3.3 `mind_maps` 表（预留，暂不开发）
+### 3.2 `folders` 表
 
 ```sql
-CREATE TABLE mind_maps (
-    id          SERIAL PRIMARY KEY,
-    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title       VARCHAR(300) NOT NULL,
-    project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
-    data_json   TEXT NOT NULL DEFAULT '{}',
-    created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+CREATE TABLE folders (
+    id         SERIAL PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = 个人文件夹
+    parent_id  INTEGER REFERENCES folders(id) ON DELETE CASCADE,   -- NULL = 根目录，自引用支持无限嵌套
+    name       VARCHAR(300) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 ```
 
-### 3.4 `assets` 表（预留，暂不开发）
+- `project_id = NULL`：个人文件夹
+- `parent_id = NULL`：该空间根目录下的文件夹
+- 删除文件夹时级联删除所有子文件夹，文件的 `folder_id` SET NULL
 
-```sql
-CREATE TABLE assets (
-    id          SERIAL PRIMARY KEY,
-    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-    tags_json   TEXT NOT NULL DEFAULT '[]',
-    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
-);
+### 3.3 自动迁移
+
+`session.py` 的 `create_all_tables()` 执行后自动跑 `_MIGRATIONS` 列表里的 `ALTER TABLE`，新增 nullable 列时加到此列表即可，无需手动执行 SQL。
+
+```python
+_MIGRATIONS = [
+    "ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL",
+    # 新增列在此追加
+]
 ```
 
 ---
 
-## 四、API 接口设计
+## 四、API 接口
 
-### 4.1 接口列表
+### 4.1 Files
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/files` | 列出文件（支持过滤） |
-| `GET` | `/files/tree` | 按项目/阶段返回树形结构 |
+| `GET` | `/files/all` | 当前用户所有文件元数据（前端全量缓存用） |
 | `POST` | `/files` | 上传文件 |
-| `DELETE` | `/files/{id}` | 删除文件（含磁盘） |
-| `PATCH` | `/files/{id}` | 重命名/移动文件 |
+| `PATCH` | `/files/{id}` | 重命名 / 移动文件 |
+| `DELETE` | `/files/{id}` | 软删除（移入回收站） |
+| `POST` | `/files/batch-delete` | 批量软删除 |
+| `POST` | `/files/{id}/copy` | 复制文件到指定目录 |
+| `GET` | `/files/{id}/download` | 下载（Bearer token 鉴权） |
+| `GET` | `/files/{id}/preview-pdf` | Office → PDF 转换预览（LibreOffice headless） |
+| `GET` | `/files/{id}/stream` | 视频流 URL |
+| `GET` | `/files/{id}/thumb` | 图片缩略图（`?size=tiny` 20×20 JPEG，`?size=card` 192×192 JPEG，`?size=full` 原图；后端磁盘缓存，`?token=JWT` 鉴权） |
 
-**废弃接口：**
-- `POST /files/{id}/versions` — 删除
-- `GET/POST/PATCH/DELETE /folders/*` — 删除
+**`GET /files` Query 参数：**
 
-### 4.2 `GET /files`
+| 参数 | 说明 |
+|------|------|
+| `project_id` | 过滤指定项目（省略则返回个人文件） |
+| `folder_id` | 过滤指定文件夹（省略则返回根目录文件） |
+| `include_deleted` | 回收站模式 |
 
-**Query 参数：**
+### 4.2 Folders
 
-| 参数 | 类型 | 说明 |
+| 方法 | 路径 | 说明 |
 |------|------|------|
-| `space` | str | `project` \| `mind` \| `asset` \| `personal` |
-| `project_id` | int | 过滤指定项目（space=project 时） |
-| `stage_name` | str | 过滤指定阶段 |
-| `mind_map_id` | int | 过滤指定画布（space=mind 时） |
-| `ext` | str | 过滤扩展名 |
-| `q` | str | 搜索文件名 |
+| `GET` | `/folders` | 列出文件夹 |
+| `GET` | `/folders/all` | 当前用户所有文件夹（前端全量缓存用） |
+| `POST` | `/folders` | 新建文件夹 |
+| `PATCH` | `/folders/{id}` | 重命名 |
+| `DELETE` | `/folders/{id}` | 删除（级联删除子文件夹，文件 SET NULL） |
+| `GET` | `/folders/{id}/download-zip` | 打包下载文件夹 |
 
-**Response：`FileResponse[]`**
+**`GET /folders` Query 参数：**
 
-```json
-[
-  {
-    "id": 5,
-    "displayName": "需求文档",
-    "ext": "PDF",
-    "space": "project",
-    "projectId": 3,
-    "projectName": "NB品牌设计",
-    "projectColor": "#7b7fb2",
-    "stageName": "企划阶段",
-    "size": "1.2 MB",
-    "createdAt": "2026-06-17"
-  }
-]
-```
+| 参数 | 说明 |
+|------|------|
+| `project_id` | 省略 = 个人文件夹；有值 = 项目文件夹 |
+| `parent_id` | 省略 = 只返回根目录文件夹（`parent_id IS NULL`） |
 
-> `projectName`、`projectColor` 通过 JOIN projects 实时查询，不在 files 表冗余存储。
+### 4.3 Trash
 
-### 4.3 `GET /files/tree`
-
-返回项目空间的树形结构，供文件库导航。
-
-**Response：**
-
-```json
-{
-  "projects": [
-    {
-      "id": 3,
-      "name": "NB品牌设计",
-      "color": "#7b7fb2",
-      "stages": [
-        { "name": "企划阶段", "count": 2 },
-        { "name": "执行阶段", "count": 1 }
-      ],
-      "unstagedCount": 0,
-      "totalCount": 3
-    }
-  ],
-  "personalCount": 1
-}
-```
-
-### 4.4 `POST /files`
-
-**Form data：**
-
-| 参数 | 类型 | 说明 |
+| 方法 | 路径 | 说明 |
 |------|------|------|
-| `file` | File | 文件二进制 |
-| `space` | str | 默认 `personal` |
-| `project_id` | int? | space=project 时填写 |
-| `stage_name` | str? | space=project 时可选 |
-| `mind_map_id` | int? | space=mind 时填写 |
+| `GET` | `/trash` | 列出回收站文件 |
+| `POST` | `/trash/{id}/restore` | 恢复单个文件 |
+| `POST` | `/trash/batch-restore` | 批量恢复 |
+| `DELETE` | `/trash/{id}` | 永久删除单个文件 |
+| `DELETE` | `/trash/empty` | 清空回收站 |
 
-**上传流程：**
-1. 解析文件名 → `display_name` + `ext`
-2. 按 `space` 和关联 ID 构造目标目录
-3. 检查同名冲突，必要时追加 `(n)`
-4. 构造 `storage_key`
-5. 通过 `get_storage().put(key, data)` 写入
-6. 写入 `files` 表
-7. 返回 `FileResponse`
-
-### 4.5 `DELETE /files/{id}`
-
-1. 校验所有权
-2. `await get_storage().delete(file.storage_key)`
-3. 删除 DB 记录
-4. 返回 204
-
-### 4.6 `PATCH /files/{id}`
-
-重命名或移动文件（改阶段/改项目），需同步移动磁盘文件。
-
-**Body：**
-```json
-{
-  "displayName": "新文件名",
-  "stageName": "执行阶段"
-}
-```
-
-**流程：**
-1. 构造新 `storage_key`
-2. `await get_storage().rename_file(old_key, new_key)`
-3. 更新 DB
+后端 lifespan 启动定时清理任务，每小时检查一次，自动永久删除 `deleted_at` 超过 30 天的文件。
 
 ---
 
-## 五、项目重命名联动
+## 五、存储后端抽象层
 
-`PATCH /projects/{id}` 修改 `name` 时：
-
-1. 读出旧项目名
-2. 通过 `get_storage().rename_dir(old_prefix, new_prefix)` 重命名目录
-3. 批量更新 `files.storage_key`（字符串前缀替换）
-4. 更新 `projects.name`
-
-```
-旧目录：1/NB品牌设计 #3/
-新目录：1/新名称 #3/
-```
-
----
-
-## 六、存储后端抽象层
-
-### 6.1 设计目标
+### 5.1 设计目标
 
 - 开发期用本地磁盘，上线后切换 OSS，**只改配置，不改业务代码**
-- 后台管理页面实时切换，无需重启服务
+- Admin 面板实时切换，无需重启服务
 - `storage_key` 对两种后端完全一致，DB 不变
 
-### 6.2 接口定义
+### 5.2 接口定义
 
 ```python
-# app/services/storage/__init__.py
-
-from abc import ABC, abstractmethod
-
 class StorageBackend(ABC):
-
-    @abstractmethod
-    async def put(self, key: str, data: bytes, mime_type: str | None = None) -> None:
-        """写入文件"""
-
-    @abstractmethod
-    async def get(self, key: str) -> bytes:
-        """读取文件内容"""
-
-    @abstractmethod
-    async def delete(self, key: str) -> None:
-        """删除文件，不存在时静默忽略"""
-
-    @abstractmethod
-    async def rename_file(self, old_key: str, new_key: str) -> None:
-        """移动/重命名单个文件"""
-
-    @abstractmethod
-    async def rename_dir(self, old_prefix: str, new_prefix: str) -> None:
-        """重命名目录前缀（项目改名时用）"""
-
-    @abstractmethod
-    def public_url(self, key: str) -> str:
-        """返回可访问的 URL"""
+    async def put(self, key: str, data: bytes, mime_type: str | None = None) -> None: ...
+    async def get(self, key: str) -> bytes: ...
+    async def delete(self, key: str) -> None: ...
+    async def rename_file(self, old_key: str, new_key: str) -> None: ...
+    async def rename_dir(self, old_prefix: str, new_prefix: str) -> None: ...
+    def public_url(self, key: str) -> str: ...
 ```
 
-### 6.3 本地实现
-
-```python
-class LocalStorageBackend(StorageBackend):
-    def __init__(self, root: Path):
-        self.root = root
-
-    async def put(self, key, data, mime_type=None):
-        path = self.root / key
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-
-    async def get(self, key):
-        return (self.root / key).read_bytes()
-
-    async def delete(self, key):
-        (self.root / key).unlink(missing_ok=True)
-
-    async def rename_file(self, old_key, new_key):
-        old = self.root / old_key
-        new = self.root / new_key
-        new.parent.mkdir(parents=True, exist_ok=True)
-        old.rename(new)
-
-    async def rename_dir(self, old_prefix, new_prefix):
-        old = self.root / old_prefix
-        new = self.root / new_prefix
-        if old.exists():
-            old.rename(new)
-
-    def public_url(self, key):
-        return f"/uploads/{key}"
-```
-
-### 6.4 OSS 实现
-
-```python
-class OSSStorageBackend(StorageBackend):
-    def __init__(self, cfg: StorageSettings):
-        import oss2
-        auth = oss2.Auth(cfg.oss_access_key_id, cfg.oss_access_key_secret)
-        self.bucket = oss2.Bucket(auth, cfg.oss_endpoint, cfg.oss_bucket)
-        self.pfx = cfg.oss_prefix  # 如 "pm-studio/"
-
-    async def put(self, key, data, mime_type=None):
-        import asyncio
-        headers = {"Content-Type": mime_type} if mime_type else {}
-        await asyncio.to_thread(
-            self.bucket.put_object, self.pfx + key, data, headers=headers
-        )
-
-    async def get(self, key):
-        import asyncio
-        result = await asyncio.to_thread(self.bucket.get_object, self.pfx + key)
-        return result.read()
-
-    async def delete(self, key):
-        import asyncio
-        await asyncio.to_thread(self.bucket.delete_object, self.pfx + key)
-
-    async def rename_file(self, old_key, new_key):
-        import asyncio
-        await asyncio.to_thread(
-            self.bucket.copy_object,
-            self.bucket.bucket_name, self.pfx + old_key, self.pfx + new_key
-        )
-        await self.delete(old_key)
-
-    async def rename_dir(self, old_prefix, new_prefix):
-        import asyncio, oss2
-        objs = await asyncio.to_thread(
-            list, oss2.ObjectIterator(self.bucket, prefix=self.pfx + old_prefix)
-        )
-        for obj in objs:
-            new_key = self.pfx + new_prefix + obj.key[len(self.pfx + old_prefix):]
-            await asyncio.to_thread(
-                self.bucket.copy_object, self.bucket.bucket_name, obj.key, new_key
-            )
-            await asyncio.to_thread(self.bucket.delete_object, obj.key)
-
-    def public_url(self, key):
-        return f"https://{self.bucket.bucket_name}.{self.bucket.endpoint}/{self.pfx}{key}"
-```
-
-### 6.5 工厂函数
+### 5.3 工厂函数
 
 ```python
 def get_storage() -> StorageBackend:
@@ -448,60 +191,139 @@ def get_storage() -> StorageBackend:
     return LocalStorageBackend(Path(cfg.storage.local_path))
 ```
 
-### 6.6 切换流程
+---
 
-```
-Admin 面板
-  → PATCH /admin/config {"storage": {"backend": "oss", ...}}
-  → save_override() 写入 config.override.json + get_settings.cache_clear()
-  → 下一请求 get_storage() 返回 OSSStorageBackend
-  → 新文件写 OSS，旧文件仍在本地（storage_key 不变）
-```
+## 六、项目重命名联动
 
-切换不自动迁移已有文件，需手动调用：
-```
-POST /admin/storage/migrate
-```
+`PATCH /projects/{id}` 修改 `name` 时：
+
+1. 读出旧项目名，构造旧目录前缀 `{uid}/项目文件/{year}/{month}/{旧名} #{id}/`
+2. `get_storage().rename_dir(old_prefix, new_prefix)` 重命名磁盘目录
+3. 批量替换 `files.storage_key` 前缀
+4. 更新 `projects.name`
 
 ---
 
-## 七、Config 配置
+## 七、同名文件冲突处理
 
-`StorageSettings` 新增 `oss_prefix` 字段：
+同一目录下已存在同名文件时，追加 `(n)`：
 
-```python
-class StorageSettings(BaseModel):
-    backend:               str = Field("local")
-    local_path:            str = Field("./uploads")
-    oss_access_key_id:     str = Field("")
-    oss_access_key_secret: str = Field("")
-    oss_bucket:            str = Field("pm-studio")
-    oss_endpoint:          str = Field("oss-cn-hangzhou.aliyuncs.com")
-    oss_prefix:            str = Field("", description="OSS 对象前缀，如 pm-studio/")
+```
+需求文档.pdf → 需求文档(1).pdf → 需求文档(2).pdf
 ```
 
-Admin 面板"存储"分组新增 OSS 连接测试：
-```
-POST /admin/config/test-connection  {"type": "oss"}
-```
-后端调 `bucket.get_bucket_info()` 验证凭证。
+`display_name` 字段同步更新。
 
 ---
 
-## 八、禁止使用的字符
+## 八、前端文件缓存策略 ✅
 
-项目名、阶段名、文件名均不允许：`\ / : * ? " < > |`
+### 8.1 目标
+
+消除文件库导航时的"白屏/加载"感，使文件夹切换、返回上级的体验接近本地应用。
+
+### 8.2 方案：全量元数据缓存 + 乐观更新
+
+进入文件库时一次性拉取当前用户所有文件和文件夹的**元数据**（不含文件内容/Blob），构建内存索引，所有导航为纯内存查找，写操作先更新本地缓存再后台同步服务端。
+
+**数据量评估：** 单条文件元数据约 300–600 字节，10,000 个文件约 5 MB，对浏览器无压力。
+
+### 8.3 后端接口
+
+```
+GET /files/all    → 当前用户所有未删除文件元数据（FileResponse[]）
+GET /folders/all  → 当前用户所有文件夹（FolderResponse[]）
+```
+
+### 8.4 前端内存索引（`src/stores/filesCache.js`）
+
+Computed Map 双索引，O(1) 查找：
+
+```js
+// files: 'personal' | 'proj:{id}' | folderId(int) → File[]
+const _fileIdx = computed(() => { ... })
+// folders: 'personal' | 'proj:{id}' | 'sub:{parentId}' → Folder[]
+const _folderIdx = computed(() => { ... })
+```
+
+### 8.5 乐观更新 + 服务端验证
+
+| 操作 | 本地先做 | 失败时 |
+|------|---------|--------|
+| 上传文件 | 加入缓存 | 无需回滚（服务端若失败则文件本就不存在） |
+| 删除文件 | 从缓存移除 | 放回 + 报错 |
+| 重命名 | 直接改名称 | 还原 + 报错 |
+| 新建文件夹 | 插入临时负数 ID 条目 | 移除临时条目 + 报错 |
+| 剪切粘贴 | 更新 folderId/projectId | 还原 + 报错 |
+
+### 8.6 缓存失效策略
+
+- **主动失效**：写操作后局部更新索引，无需重新全量拉取
+- **兜底刷新**：`uploadSignal` 触发后静默后台 `refresh()`
+- 多标签/多设备场景由兜底刷新覆盖，无需 WebSocket
+
+### 8.7 加载体验优化
+
+- **内容过渡动画**：导航切换时 `content-fade` 淡出（40ms）+ 淡入（120ms），`mode="out-in"` 避免双层叠放
+- 回收站仍走异步请求（需要 `deleted_at` 字段，不在主缓存中）
 
 ---
 
-## 九、前端变更概览
+## 九、图片缩略图
 
-| 模块 | 变更 |
+### 9.1 接口
+
+```
+GET /files/{id}/thumb?token={JWT}&size=full|tiny|card
+```
+
+| size | 说明 |
 |------|------|
-| `UploadModal.vue` | 加 `space` 选择；project 空间时显示阶段下拉 |
-| `Files/index.vue` | 导航改为空间/项目/阶段树，移除 `foldersApi` |
-| `services/api.js` | 删除 `foldersApi`，`filesApi` 更新参数 |
+| `full`（默认）| 返回原始图片文件 |
+| `tiny` | 20×20px JPEG（约 1 KB），用于 blur-up 模糊占位 |
+| `card` | 192×192px JPEG（约 10–40 KB），网格卡片显示用 |
+
+- 鉴权：解析 query param 中的主 JWT（与 `/stream` 端点模式一致）
+- 响应头：`Cache-Control: private, max-age=86400`（浏览器缓存 24 小时）
+- SVG 跳过 Pillow，`size=full` 直接返回原文件
+
+支持格式：JPEG / PNG / GIF / WEBP / AVIF / BMP / HEIC / HEIF / SVG。
+
+### 9.2 后端磁盘缓存
+
+生成的缩略图持久化到 `uploads/.thumbs/{fid}_{size}.jpg`。请求到来时优先命中缓存，跳过 Pillow，响应时间从数百毫秒降至毫秒级。
+
+**生成策略：**
+
+- **一次生成两个尺寸**：无论请求 `tiny` 还是 `card`，均读取一次原图，同时生成并缓存 tiny + card，避免重复 I/O
+- **上传时预生成**：图片上传完成后，后台任务（FastAPI `BackgroundTasks`）立即预生成缩略图，首次访问直接命中缓存
+- **删除时清理**：硬删除单个文件、清空回收站、定时清理过期文件时，均自动删除对应缩略图缓存（`_delete_thumb_cache(fid)`）
+
+**磁盘占用估算：** 单张图片缓存约 10–50 KB（tiny ~1 KB + card ~10–40 KB），1000 张图片约 10–50 MB。
+
+### 9.3 Blur-up 渐进式加载
+
+前端卡片双层叠放：
+
+1. `fc-thumb-tiny`（z-index 1）：`?size=tiny` 图片 + CSS `blur(10px) scale(1.15)`，进入视口即加载
+2. `fc-thumb-full`（z-index 2）：`?size=card` 图片，初始 `opacity: 0`，`load` 事件后 0.4s 淡入
+
+**切换目录不重播动画：** `loadedThumbs`（reactive Set）记录已加载的文件 id，返回已访问目录时 `fc-loaded` 类直接存在，无过渡动画。
+
+### 9.4 IntersectionObserver 懒加载
+
+`vLazySrc` 本地指令（`Files/index.vue`）：只有当卡片进入视口 250px 范围内才设置 `img.src`，避免进入大文件夹时同时发出数十个请求打满浏览器连接池（HTTP/1.1 每域名 6 个）。
+
+### 9.5 缓存层汇总
+
+| 位置 | 是否有持久缓存 | 说明 |
+|------|-------------|------|
+| 后端磁盘（`.thumbs/`） | ✅ 永久 | 生成后即写磁盘，文件删除时同步清理 |
+| 浏览器 HTTP 缓存 | ✅ 最多 24h | 由浏览器自动管理 |
+| 前端 Pinia store | ❌ 无 | 元数据缓存为纯内存，关页面即清 |
 
 ---
 
-*本文档为实现规范，重构时以此为准。*
+## 九、禁止使用的字符
+
+项目名、文件夹名、文件名均不允许：`\ / : * ? " < > |`

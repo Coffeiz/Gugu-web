@@ -5,7 +5,7 @@ Pydantic v2 schemas — alias_generator=to_camel 让 API 返回 camelCase
 from __future__ import annotations
 import re
 from typing import Optional, Any
-from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 from pydantic.alias_generators import to_camel
 
 _INVALID_NAME_RE = re.compile(r'[\\/:*?"<>|]')
@@ -23,7 +23,7 @@ class CamelModel(BaseModel):
 
 class UserRegister(CamelModel):
     username: str
-    email: EmailStr
+    email: str
     password: str
 
 
@@ -133,10 +133,20 @@ class FileResponse(CamelModel):
     mime_type: Optional[str]
     created_at: str
     deleted_at: Optional[str] = None
+    img_width: Optional[int] = None
+    img_height: Optional[int] = None
 
 
 class BatchDeleteBody(CamelModel):
     ids: list[int]
+
+class BatchDownloadBody(CamelModel):
+    ids: list[int] = []
+    folder_ids: list[int] = []
+
+class FileCopyBody(CamelModel):
+    folder_id:  Optional[int] = None
+    project_id: Optional[int] = None
 
 
 class FileUpdate(CamelModel):
@@ -156,6 +166,7 @@ class FileUpdate(CamelModel):
 
 class FolderCreate(CamelModel):
     project_id: Optional[int] = None
+    parent_id:  Optional[int] = None
     name: str
 
     @field_validator("name")
@@ -176,6 +187,7 @@ class FolderRename(CamelModel):
 class FolderResponse(CamelModel):
     id: int
     project_id: Optional[int]
+    parent_id:  Optional[int] = None
     name: str
     file_count: int = 0
 

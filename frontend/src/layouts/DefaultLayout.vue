@@ -50,11 +50,23 @@
       @close="uploadDialogOpen = false"
       @uploaded="onGlobalUploaded"
     />
+
+    <!-- 文件预览 Modal（PDF / 文本 / 音频） -->
+    <FilePreviewModal :show="!!previewStore.singleFile" :file="previewStore.singleFile" @close="previewStore.close" />
+
+    <!-- 浮动预览窗口（图片 / 视频，可多开） -->
+    <Teleport to="body">
+      <FloatPreviewWindow
+        v-for="win in previewStore.windows"
+        :key="win.id"
+        :win="win"
+      />
+    </Teleport>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useProjectStore } from '@/stores/projects'
@@ -66,6 +78,21 @@ import AiFloatBall from '@/components/common/AiFloatBall.vue'
 import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'
 import ProjectModal    from '@/views/Projects/components/ProjectModal.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
+import FilePreviewModal    from '@/components/common/FilePreviewModal.vue'
+import FloatPreviewWindow  from '@/components/common/FloatPreviewWindow.vue'
+import { usePreviewStore, isAudioExt } from '@/stores/preview'
+import { useAudioStore } from '@/stores/audio'
+
+const previewStore = usePreviewStore()
+const audioStore   = useAudioStore()
+
+// 音频文件不走预览框，直接交给迷你播放器
+watch(() => previewStore.file, (f) => {
+  if (f && isAudioExt(f.ext)) {
+    audioStore.play(f)
+    previewStore.close()
+  }
+})
 
 const route        = useRoute()
 const uiStore      = useUiStore()
@@ -87,6 +114,7 @@ function onGlobalUploaded() {
 
 onMounted(async () => {
   await authStore.fetchMe()
+  if (authStore.isLoggedIn) audioStore.restore()
   projectStore.fetchProjects()
   projectStore.fetchUpcomingCalEvents()
 })

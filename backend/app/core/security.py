@@ -20,6 +20,28 @@ def verify_password(plain: str, hashed: str) -> bool:
     return _bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
+def create_stream_token(file_id: int, user_id: int, expires_minutes: int = 10) -> str:
+    settings = get_settings()
+    expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
+    return jwt.encode(
+        {"sub": str(user_id), "fid": file_id, "role": "stream", "exp": expire},
+        settings.secret_key,
+        algorithm="HS256",
+    )
+
+
+def verify_stream_token(token: str) -> tuple[int, int]:
+    """Returns (file_id, user_id). Raises HTTPException on invalid/expired token."""
+    settings = get_settings()
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        if payload.get("role") != "stream":
+            raise ValueError
+        return int(payload["fid"]), int(payload["sub"])
+    except (JWTError, KeyError, ValueError):
+        raise HTTPException(status_code=401, detail="stream token 无效或已过期")
+
+
 def create_user_token(user_id: int) -> str:
     settings = get_settings()
     expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)

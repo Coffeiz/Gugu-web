@@ -144,7 +144,7 @@ const files = computed(() =>
   font-size: 11px; font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  line-height: 1.3;
+  line-height: 1.3; padding-bottom: 2px; margin-bottom: -2px;
 }
 
 .file-bottom {
@@ -153,6 +153,7 @@ const files = computed(() =>
 .file-project {
   font-size: 10px; color: var(--text-secondary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding-bottom: 2px; margin-bottom: -2px;
 }
 .file-meta {
   font-size: 9px; color: var(--text-secondary); opacity: 0.7;

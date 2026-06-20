@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { useAudioStore } from './audio'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const TOKEN_KEY = 'user_token'
@@ -19,14 +20,22 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = u
   }
 
+  function _extractDetail(body, fallback) {
+    const d = body?.detail
+    if (!d) return fallback
+    if (typeof d === 'string') return d
+    if (Array.isArray(d)) return d.map(e => e.msg ?? e).join('；')
+    return fallback
+  }
+
   async function register(username, email, password) {
     const res = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, email, password }),
     })
-    const body = await res.json()
-    if (!res.ok) throw new Error(body.detail ?? '注册失败')
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(_extractDetail(body, '注册失败'))
     _saveToken(body.accessToken)
     _setUser(body.user)
   }
@@ -37,8 +46,8 @@ export const useAuthStore = defineStore('auth', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     })
-    const body = await res.json()
-    if (!res.ok) throw new Error(body.detail ?? '登录失败')
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(_extractDetail(body, '登录失败'))
     _saveToken(body.accessToken)
     _setUser(body.user)
   }
@@ -57,6 +66,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function logout() {
+    useAudioStore().stop()
     token.value = ''
     user.value  = null
     localStorage.removeItem(TOKEN_KEY)
