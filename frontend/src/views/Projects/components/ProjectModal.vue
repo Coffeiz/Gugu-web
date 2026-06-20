@@ -98,15 +98,15 @@
                 v-for="(stage, i) in displayStages" :key="stage.key"
                 class="stage-node"
                 :class="{
-                  active: stage.key === localCurrentStage && stage.key !== draggedStageKey,
-                  done: doneStageKeys.has(stage.key) && stage.key !== draggedStageKey,
+                  active: i === activeStageIdx && stage.key !== draggedStageKey,
+                  done: i < activeStageIdx && stage.key !== draggedStageKey,
                   'stage-dragging': stageDrag.active && stage.key === draggedStageKey,
                 }"
-                @click="!stageDrag.active && setStage(stage.key)"
-                @mousedown="editingStage !== stage.key && startStageDrag(localStages.indexOf(stage), $event)"
+                @click="!stageDrag.active && setStage(stage.key, i)"
+                @mousedown="editingStage !== stage.key && startStageDrag(i, $event)"
               >
-                <div class="node-circle" :style="stage.key === localCurrentStage && stage.key !== draggedStageKey ? { background: localColor } : {}">
-                  <svg v-if="doneStageKeys.has(stage.key) && stage.key !== draggedStageKey" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round">
+                <div class="node-circle" :style="i === activeStageIdx && stage.key !== draggedStageKey ? { background: localColor } : {}">
+                  <svg v-if="i < activeStageIdx && stage.key !== draggedStageKey" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round">
                     <path d="M2 6l3 3 5-5"/>
                   </svg>
                   <span v-else class="node-num">{{ i + 1 }}</span>
@@ -1309,6 +1309,7 @@ watch(() => props.project?.id, async (id) => {
   localNotes.value        = props.project?.notes        ?? ''
   localColor.value        = props.project?.color        ?? ''
   localCurrentStage.value = props.project?.currentStage ?? ''
+  recalcStageState()
   editingStage.value   = null
   projectFiles.value   = []
   projectFolders.value = []
@@ -1377,11 +1378,8 @@ watch(localNotes, v => {
 const currentStageIndex = computed(() =>
   localStages.value.findIndex(s => s.key === localCurrentStage.value)
 )
-const doneStageKeys = computed(() => {
-  const idx = currentStageIndex.value
-  if (idx <= 0) return new Set()
-  return new Set(localStages.value.slice(0, idx).map(s => s.key))
-})
+// 当前阶段所在位置索引（位置固定，拖动重排不改变）
+const activeStageIdx = ref(-1)
 
 const displayStages = computed(() => {
   if (!stageDrag.active) return localStages.value
@@ -1397,13 +1395,17 @@ const draggedStageKey = computed(() =>
 const displayCurrentStageIndex = computed(() =>
   displayStages.value.findIndex(s => s.key === localCurrentStage.value)
 )
-const stageProgress = computed(() => {
+const stageProgress = ref(0)
+
+// 只在明确切换阶段时调用，拖动重排不触发
+function recalcStageState() {
   const stages = localStages.value
-  if (!stages.length) return 0
-  const idx = currentStageIndex.value
-  if (idx < 0) return 0
-  return Math.round((idx + 1) / stages.length * 100)
-})
+  const idx = stages.findIndex(s => s.key === localCurrentStage.value)
+  activeStageIdx.value = idx
+  stageProgress.value = stages.length > 0 && idx >= 0
+    ? Math.round((idx + 1) / stages.length * 100)
+    : 0
+}
 
 function extractAccent(colorStr) {
   const m = colorStr?.match(/#[0-9a-fA-F]{6}/)
@@ -1452,8 +1454,13 @@ function setColor(c) {
   projectStore.updateProject(props.project.id, { color: c })
 }
 
-function setStage(key) {
+function setStage(key, idx) {
   localCurrentStage.value = key
+  activeStageIdx.value = idx
+  const stages = localStages.value
+  stageProgress.value = stages.length > 0
+    ? Math.round((idx + 1) / stages.length * 100)
+    : 0
   projectStore.setStage(props.project.id, key)
 }
 
@@ -1515,8 +1522,8 @@ function startStageDrag(fromIdx, e) {
       stageDrag.overIdx      = fromIdx
       stageDrag.ghostLabel   = stage?.label ?? ''
       stageDrag.ghostNum     = fromIdx + 1
-      stageDrag.ghostIsActive = stage?.key === localCurrentStage.value
-      stageDrag.ghostIsDone  = fromIdx < currentStageIndex.value
+      stageDrag.ghostIsActive = fromIdx === activeStageIdx.value
+      stageDrag.ghostIsDone  = fromIdx < activeStageIdx.value
       stageDrag.ghostWidth   = rect.width
       stageDrag.grabOffsetX  = grabOffsetX
       stageDrag.grabOffsetY  = grabOffsetY
