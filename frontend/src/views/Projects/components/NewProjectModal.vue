@@ -327,17 +327,29 @@ const colorPresets = [
   { value: 'linear-gradient(135deg,#be8b8f,#c8aa72)' },
 ]
 
-const defaultForm = () => ({
-  name:      '',
-  client:    '',
-  startDate: todayIso(),
-  deadline:  weekLaterIso(),
-  status:    'pending',
-  color:     colorPresets[Math.floor(Math.random() * colorPresets.length)].value,
-  stages:    ['计划', '执行', '交付'],
-  notes:     '',
-})
-const defaultKeys = () => ['s0', 's1', 's2']
+function getLastStages() {
+  const projects = projectStore.projects
+  if (projects.length) {
+    const last = [...projects].sort((a, b) => (b.id > a.id ? 1 : -1))[0]
+    if (last.stages?.length) return last.stages.map(s => s.label ?? s)
+  }
+  return ['计划', '执行', '交付']
+}
+
+const defaultForm = () => {
+  const stages = getLastStages()
+  return {
+    name:      '',
+    client:    '',
+    startDate: todayIso(),
+    deadline:  weekLaterIso(),
+    status:    'pending',
+    color:     colorPresets[Math.floor(Math.random() * colorPresets.length)].value,
+    stages,
+    notes:     '',
+  }
+}
+const defaultKeys = () => getLastStages().map((_, i) => `s${i}`)
 
 const form      = reactive(defaultForm())
 const errors    = reactive({ name: '' })
@@ -461,6 +473,7 @@ function handleCreate() {
   const name = form.name.trim()
   if (!name) { errors.name = '请填写项目名称'; return }
   if (INVALID_NAME_RE.test(name)) { errors.name = '不能包含：\\ / : * ? " < > |'; return }
+  const stages = form.stages.filter(s => s.trim()).map(s => s.trim())
   projectStore.addProject({
     name:      name,
     client:    form.client.trim(),
@@ -468,7 +481,7 @@ function handleCreate() {
     deadline:  form.deadline,
     status:    form.status,
     color:     form.color,
-    stages:    form.stages.filter(s => s.trim()).map(s => s.trim()),
+    stages,
     notes:     form.notes.trim(),
   })
   emit('close')
@@ -524,7 +537,6 @@ function handleCreate() {
   flex: 1; padding: 18px 20px;
   display: flex; flex-direction: column; gap: 16px;
   border-left: 1px solid rgba(0,0,0,0.07);
-  background: rgba(0,0,0,0.015);
   overflow-y: auto;
 }
 
@@ -767,7 +779,7 @@ input::placeholder { color: var(--text-secondary); opacity: 0.6; }
   border: 1px solid rgba(123,127,178,0.28);
   border-radius: 10px;
   box-shadow: 0 8px 24px rgba(30,40,80,0.16);
-  opacity: 0.92; transform: rotate(-1deg) scale(1.02);
+  opacity: 0.95;
   box-sizing: border-box;
 }
 .np-stage-ghost .stage-num {

@@ -9,108 +9,103 @@
         <!-- 左栏 -->
         <div class="modal-left">
 
-          <!-- 紧凑标题区 -->
+          <!-- 标题 -->
           <div class="proj-header">
-            <div class="header-color-bar" :style="{ background: project.color }"></div>
-            <div class="header-info">
+            <div class="header-main">
               <input
                 v-if="editingName"
                 ref="nameInputRef"
                 v-model="localName"
-                class="header-name header-name-input"
+                class="header-name-input"
                 @blur="saveName"
                 @keydown.enter="saveName"
                 @keydown.esc="cancelName"
               />
-              <div v-else class="header-name header-name-view" @click="startEditName" title="点击修改名称">{{ project.name }}</div>
-              <div class="header-sub">
-                <span class="header-progress" :style="{ color: accentColor }">{{ stageProgress }}%</span>
+              <div v-else class="header-name" @click="startEditName" title="点击修改名称">{{ localName }}</div>
+            </div>
+            <div class="header-progress-bar">
+              <div class="header-progress-fill" :style="{ width: stageProgress + '%', background: localColor }"></div>
+              <span class="header-pct" :style="{ color: accentColor }">{{ stageProgress }}%</span>
+            </div>
+          </div>
+
+          <!-- 可滚动内容区 -->
+          <div class="left-content">
+
+            <div class="section">
+              <label class="section-label">客户 / 委托方</label>
+              <input class="field-input" v-model="localClient" placeholder="客户名称（选填）" />
+            </div>
+
+            <hr class="col-divider" />
+
+            <div class="section">
+              <label class="section-label">项目周期</label>
+              <DateSpanPicker
+                v-model:startDate="localStartDate"
+                v-model:endDate="localDeadline"
+                placeholder="选择开始 — 截止日期"
+              />
+            </div>
+
+            <hr class="col-divider" />
+
+            <div class="section">
+              <label class="section-label">看板列</label>
+              <div class="status-group">
+                <button
+                  v-for="col in projectStore.kanbanColumns"
+                  :key="col.key"
+                  class="status-btn"
+                  :class="['s-' + col.key, { active: project.status === col.key }]"
+                  @click="projectStore.moveProject(project.id, col.key)"
+                >
+                  <span class="opt-dot"></span>{{ col.label }}
+                </button>
               </div>
-              <div class="header-progress-bar">
-                <div class="header-progress-fill" :style="{ width: stageProgress + '%', background: project.color }"></div>
+            </div>
+
+            <hr class="col-divider" />
+
+            <div class="section">
+              <label class="section-label">项目颜色</label>
+              <div class="color-grid">
+                <button
+                  v-for="c in colorPresets"
+                  :key="c"
+                  class="color-chip"
+                  :class="{ active: localColor === c }"
+                  :style="{ background: c }"
+                  @click="setColor(c)"
+                >
+                  <svg v-if="localColor === c" width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.4" stroke-linecap="round">
+                    <path d="M2 6l3 3 5-5"/>
+                  </svg>
+                </button>
               </div>
             </div>
-          </div>
 
-          <!-- 客户 -->
-          <div class="client-row">
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="client-icon">
-              <circle cx="8" cy="6" r="2.5"/><path d="M2 14c0-3.3 2.7-5 6-5s6 1.7 6 5"/>
-            </svg>
-            <input
-              class="client-input"
-              v-model="localClient"
-              placeholder="输入客户名称"
-            />
-          </div>
+            <hr class="col-divider" />
 
-          <!-- 日期编辑 -->
-          <div class="meta-row">
-            <div class="meta-item">
-              <span class="meta-label">开始日期</span>
-              <DatePicker ref="startPickerRef" v-model="localStartDate" placeholder="设置开始日期" @update:modelValue="onStartDatePicked" />
-            </div>
-            <div class="meta-item">
-              <span class="meta-label">截止日期</span>
-              <DatePicker ref="deadlinePickerRef" v-model="localDeadline" :min="localStartDate || undefined" placeholder="设置截止日期" />
-              <span v-if="deadlineError" class="date-error">不能早于开始日期</span>
-            </div>
-          </div>
-
-          <!-- 看板状态 -->
-          <div class="status-row">
-            <span class="meta-label">看板状态</span>
-            <div class="status-btns">
-              <button
-                v-for="col in projectStore.kanbanColumns"
-                :key="col.key"
-                class="status-opt"
-                :class="['s-' + col.key, { active: project.status === col.key }]"
-                @click="projectStore.moveProject(project.id, col.key)"
-              >
-                <span class="opt-dot"></span>{{ col.label }}
-              </button>
-            </div>
-          </div>
-
-          <!-- 配色 -->
-          <div class="color-row">
-            <span class="meta-label">项目配色</span>
-            <div class="color-grid">
-              <button
-                v-for="c in colorPresets"
-                :key="c"
-                class="color-chip"
-                :class="{ active: project.color === c }"
-                :style="{ background: c }"
-                @click="setColor(c)"
-              >
-                <svg v-if="project.color === c" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round">
-                  <path d="M2 6l3 3 5-5"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <!-- 阶段编辑器 -->
-          <div class="stages-section">
-            <div class="section-label">
-              项目阶段
-              <button class="add-stage-btn" @click="addStage">＋ 添加</button>
-            </div>
+            <!-- 阶段 -->
+            <div class="section stages-section">
+              <div class="stages-header">
+                <label class="section-label">项目阶段 <span class="label-hint">拖拽排序</span></label>
+                <button class="add-stage-btn" @click="addStage">＋ 添加</button>
+              </div>
             <div class="stage-flow" ref="stageFlowRef">
               <div
                 v-for="(stage, i) in displayStages" :key="stage.key"
                 class="stage-node"
                 :class="{
-                  active: stage.key === project.currentStage && stage.key !== draggedStageKey,
+                  active: stage.key === localCurrentStage && stage.key !== draggedStageKey,
                   done: doneStageKeys.has(stage.key) && stage.key !== draggedStageKey,
                   'stage-dragging': stageDrag.active && stage.key === draggedStageKey,
                 }"
                 @click="!stageDrag.active && setStage(stage.key)"
                 @mousedown="editingStage !== stage.key && startStageDrag(localStages.indexOf(stage), $event)"
               >
-                <div class="node-circle" :style="stage.key === project.currentStage && stage.key !== draggedStageKey ? { background: project.color, borderColor: project.color } : {}">
+                <div class="node-circle" :style="stage.key === localCurrentStage && stage.key !== draggedStageKey ? { background: localColor } : {}">
                   <svg v-if="doneStageKeys.has(stage.key) && stage.key !== draggedStageKey" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round">
                     <path d="M2 6l3 3 5-5"/>
                   </svg>
@@ -137,22 +132,21 @@
             <Teleport to="body">
               <div v-if="stageDrag.active" class="stage-drag-ghost-full"
                 :style="{ left: stageDrag.ghostX + 'px', top: stageDrag.ghostY + 'px', width: stageDrag.ghostWidth + 'px' }">
-                <div class="node-circle"
-                  :style="stageDrag.ghostIsActive ? { background: project.color, borderColor: project.color } : {}">
-                  <svg v-if="stageDrag.ghostIsDone" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round"><path d="M2 6l3 3 5-5"/></svg>
-                  <span v-else class="node-num">{{ stageDrag.ghostNum }}</span>
-                </div>
-                <span class="node-label" :style="stageDrag.ghostIsActive ? { fontWeight: '700' } : {}">{{ stageDrag.ghostLabel }}</span>
+                <div class="node-circle"></div>
+                <span class="node-label">{{ stageDrag.ghostLabel }}</span>
               </div>
             </Teleport>
           </div>
 
-          <!-- 备注 -->
-          <div class="desc-section">
-            <div class="section-label">备注</div>
-            <textarea class="desc-input" v-model="localNotes" placeholder="添加项目描述或备注…" rows="3"></textarea>
-          </div>
+            <hr class="col-divider" />
 
+            <!-- 备注 -->
+            <div class="section">
+              <label class="section-label">备注</label>
+              <textarea class="notes-input" v-model="localNotes" placeholder="添加项目描述或备注…" rows="3"></textarea>
+            </div>
+
+          </div><!-- /left-content -->
         </div>
 
         <!-- 右栏：文件 -->
@@ -650,6 +644,7 @@ import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from
 import { useProjectStore } from '@/stores/projects'
 import { filesApi, foldersApi, uploadWithProgress, getToken } from '@/services/api'
 import DatePicker from '@/components/common/DatePicker.vue'
+import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import {
@@ -690,6 +685,8 @@ const localStartDate = ref('')
 const localDeadline  = ref('')
 const localClient    = ref('')
 const localNotes     = ref('')
+const localColor        = ref('')
+const localCurrentStage = ref('')
 const fileViewMode   = ref('grid')
 const projectFiles   = ref([])
 const projectFolders = ref([])
@@ -1304,11 +1301,14 @@ let initializing = false
 
 watch(() => props.project?.id, async (id) => {
   initializing = true
-  localStages.value    = props.project ? props.project.stages.map(s => ({ ...s })) : []
-  localStartDate.value = props.project?.startDate ?? ''
-  localDeadline.value  = props.project?.deadline  ?? ''
-  localClient.value    = props.project?.client    ?? ''
-  localNotes.value     = props.project?.notes     ?? ''
+  localStages.value       = props.project ? props.project.stages.map(s => ({ ...s })) : []
+  localName.value         = props.project?.name         ?? ''
+  localStartDate.value    = props.project?.startDate    ?? ''
+  localDeadline.value     = props.project?.deadline     ?? ''
+  localClient.value       = props.project?.client       ?? ''
+  localNotes.value        = props.project?.notes        ?? ''
+  localColor.value        = props.project?.color        ?? ''
+  localCurrentStage.value = props.project?.currentStage ?? ''
   editingStage.value   = null
   projectFiles.value   = []
   projectFolders.value = []
@@ -1354,17 +1354,10 @@ function onStartDatePicked(v) {
   startPickerRef.value?.closePicker()
   if (v) setTimeout(() => deadlinePickerRef.value?.openPicker(), 80)
 }
-const deadlineError = ref(false)
-
 watch(localDeadline, v => {
   if (initializing) return
   const id = props.project?.id
   if (!id) return
-  if (v && localStartDate.value && v < localStartDate.value) {
-    deadlineError.value = true
-    return
-  }
-  deadlineError.value = false
   const p = projectStore.projects.find(p => p.id === id)
   if (p) p.deadline = v
   projectStore.updateProject(id, { deadline: v || null })
@@ -1382,7 +1375,7 @@ watch(localNotes, v => {
 })
 
 const currentStageIndex = computed(() =>
-  localStages.value.findIndex(s => s.key === props.project?.currentStage)
+  localStages.value.findIndex(s => s.key === localCurrentStage.value)
 )
 const doneStageKeys = computed(() => {
   const idx = currentStageIndex.value
@@ -1402,7 +1395,7 @@ const draggedStageKey = computed(() =>
   stageDrag.active ? localStages.value[stageDrag.fromIdx]?.key : null
 )
 const displayCurrentStageIndex = computed(() =>
-  displayStages.value.findIndex(s => s.key === props.project?.currentStage)
+  displayStages.value.findIndex(s => s.key === localCurrentStage.value)
 )
 const stageProgress = computed(() => {
   const stages = localStages.value
@@ -1416,7 +1409,7 @@ function extractAccent(colorStr) {
   const m = colorStr?.match(/#[0-9a-fA-F]{6}/)
   return m ? m[0] : '#7b7fb2'
 }
-const accentColor   = computed(() => extractAccent(props.project?.color))
+const accentColor   = computed(() => extractAccent(localColor.value || props.project?.color))
 const accentColorBg = computed(() => {
   const c = accentColor.value
   return c ? c.replace(/^#/, '') .match(/.{2}/g)
@@ -1437,16 +1430,16 @@ const colorPresets = [
 ]
 
 function startEditName() {
-  localName.value = props.project.name
   editingName.value = true
   nextTick(() => nameInputRef.value?.select())
 }
 function saveName() {
   const n = localName.value.trim()
-  if (n && n !== props.project.name) {
+  if (!n) {
+    localName.value = props.project.name
+  } else if (n !== props.project.name) {
+    localName.value = n
     projectStore.updateProject(props.project.id, { name: n })
-    const p = projectStore.projects.find(p => p.id === props.project.id)
-    if (p) p.name = n
   }
   editingName.value = false
 }
@@ -1455,12 +1448,14 @@ function cancelName() {
 }
 
 function setColor(c) {
-  const p = projectStore.projects.find(p => p.id === props.project?.id)
-  if (p) p.color = c
+  localColor.value = c
   projectStore.updateProject(props.project.id, { color: c })
 }
 
-function setStage(key) { projectStore.setStage(props.project.id, key) }
+function setStage(key) {
+  localCurrentStage.value = key
+  projectStore.setStage(props.project.id, key)
+}
 
 async function handleDelete() {
   if (!props.project) return
@@ -1520,7 +1515,7 @@ function startStageDrag(fromIdx, e) {
       stageDrag.overIdx      = fromIdx
       stageDrag.ghostLabel   = stage?.label ?? ''
       stageDrag.ghostNum     = fromIdx + 1
-      stageDrag.ghostIsActive = stage?.key === props.project?.currentStage
+      stageDrag.ghostIsActive = stage?.key === localCurrentStage.value
       stageDrag.ghostIsDone  = fromIdx < currentStageIndex.value
       stageDrag.ghostWidth   = rect.width
       stageDrag.grabOffsetX  = grabOffsetX
@@ -1788,128 +1783,118 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   border-right: 1px solid rgba(0,0,0,0.07); overflow: hidden;
 }
 
-/* 紧凑标题区 */
+/* 标题 */
 .proj-header {
-  display: flex; align-items: stretch; gap: 0;
-  flex-shrink: 0; border-bottom: 1px solid rgba(0,0,0,0.07);
+  height: 52px; box-sizing: border-box;
+  display: flex; flex-direction: column; flex-shrink: 0;
 }
-.header-color-bar {
-  width: 5px; flex-shrink: 0;
-}
-.header-info {
-  flex: 1; padding: 14px 16px 10px; min-width: 0;
-  display: flex; flex-direction: column; gap: 5px;
+.header-main {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+  padding: 0 16px; min-width: 0;
 }
 .header-name {
-  font-size: 19px; font-weight: 700; color: var(--text-primary);
-  line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  padding-bottom: 2px; margin-bottom: -2px;
+  flex: 1; font-size: 17px; font-weight: 700; color: var(--text-primary);
+  cursor: text; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  line-height: 1.2;
 }
-.header-name-view { cursor: text; border-radius: 5px; }
-.header-name-view:hover { background: transparent; }
 .header-name-input {
-  width: 100%; border: none; outline: none;
-  background: transparent; border-radius: 5px;
-  padding: 1px 5px; margin: -1px -5px;
+  flex: 1; font-size: 17px; font-weight: 700; line-height: 1.2;
+  border: none; background: transparent; outline: none;
+  font-family: var(--font-sans); color: var(--text-primary); min-width: 0;
 }
-.header-sub {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 11px; color: var(--text-secondary);
-}
-.header-sub svg { flex-shrink: 0; opacity: 0.6; }
-.header-client { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.header-progress { font-size: 11px; font-weight: 700; flex-shrink: 0; }
 .header-progress-bar {
-  height: 3px; background: rgba(0,0,0,0.07); border-radius: 99px; overflow: hidden;
+  height: 3px; background: rgba(0,0,0,0.07); flex-shrink: 0; position: relative;
 }
 .header-progress-fill { height: 100%; border-radius: 99px; transition: width 0.4s; }
+.header-pct {
+  position: absolute; right: 8px; bottom: 5px;
+  font-size: 12px; font-weight: 700; line-height: 1;
+}
 
-/* 客户 */
-.client-row {
-  padding: 8px 14px; border-bottom: 1px solid rgba(0,0,0,0.07);
-  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+/* 可滚动内容区 */
+.left-content {
+  flex: 1; overflow-y: auto; padding: 12px 16px;
+  display: flex; flex-direction: column; gap: 0; min-height: 0;
 }
-.client-icon { color: var(--text-secondary); opacity: 0.75; flex-shrink: 0; }
-.client-input {
-  flex: 1; font-size: 12px; font-family: var(--font-sans);
-  color: var(--text-primary); background: transparent;
-  border: none; outline: none; padding: 0;
-}
-.client-input::placeholder { color: var(--text-secondary); opacity: 0.5; }
+.left-content::-webkit-scrollbar { width: 4px; }
+.left-content::-webkit-scrollbar-track { background: transparent; }
+.left-content::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 99px; }
 
-/* 日期 meta */
-.meta-row {
-  display: flex; border-bottom: 1px solid rgba(0,0,0,0.07); flex-shrink: 0;
+.section { display: flex; flex-direction: column; gap: 5px; padding: 8px 0; }
+.section-label {
+  font-size: 10px; font-weight: 600; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.07em;
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
 }
-.meta-item {
-  flex: 1; padding: 10px 12px;
-  display: flex; flex-direction: column; gap: 5px;
-  border-right: 1px solid rgba(0,0,0,0.07); min-width: 0;
+.label-hint {
+  font-size: 9.5px; font-weight: 500; opacity: 0.6;
+  text-transform: none; letter-spacing: 0;
 }
-.meta-item:last-child { border-right: none; }
-.date-error { font-size: 10px; color: var(--color-warning); }
-.meta-label { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.06em; }
+.col-divider { border: none; border-top: 1px solid rgba(0,0,0,0.07); margin: 0; }
+
+.field-input {
+  width: 100%; padding: 9px 12px; box-sizing: border-box;
+  border: 1px solid rgba(0,0,0,0.1); border-radius: 8px;
+  background: rgba(255,255,255,0.6); font-size: 13px;
+  font-family: var(--font-sans); color: var(--text-primary);
+  outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.field-input:hover { border-color: rgba(123,127,178,0.35); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08); }
+.field-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.1); }
+.field-input::placeholder { color: var(--text-secondary); opacity: 0.6; }
+
+/* 状态 */
+.status-group { display: flex; gap: 4px; flex-wrap: wrap; }
+.status-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 20px;
+  border: 1.5px solid transparent; font-size: 11px; font-weight: 600;
+  cursor: pointer; font-family: var(--font-sans);
+  background: rgba(0,0,0,0.04); color: var(--text-secondary);
+  transition: background 0.15s, color 0.15s, border-color 0.15s; outline: none;
+}
+.status-btn:hover { background: rgba(0,0,0,0.07); color: var(--text-primary); }
+.opt-dot { width: 6px; height: 6px; border-radius: 50%; }
+.status-btn.s-pending .opt-dot { background: #d46b6b; }
+.status-btn.s-active  .opt-dot { background: #c9943a; }
+.status-btn.s-done    .opt-dot { background: #5a9e88; }
+.status-btn.s-pending.active { background: rgba(212,107,107,0.12); border-color: rgba(212,107,107,0.5); color: #b84a4a; }
+.status-btn.s-active.active  { background: rgba(201,148,58,0.12);  border-color: rgba(201,148,58,0.5);  color: #a87520; }
+.status-btn.s-done.active    { background: rgba(90,158,136,0.12);  border-color: rgba(90,158,136,0.4);  color: #3a8870; }
 
 /* 配色 */
-.color-row {
-  padding: 10px 14px; border-bottom: 1px solid rgba(0,0,0,0.07);
-  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
-}
-.color-grid { display: flex; gap: 7px; flex-wrap: wrap; }
+.color-grid { display: flex; gap: 6px; flex-wrap: wrap; }
 .color-chip {
-  width: 22px; height: 22px; border-radius: 50%;
+  width: 20px; height: 20px; border-radius: 50%;
   border: 2px solid rgba(255,255,255,0.5);
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: border-color 0.15s;
-  padding: 0; outline: none;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: border-color 0.15s; padding: 0; outline: none;
 }
 .color-chip:hover { border-color: rgba(255,255,255,0.9); }
 .color-chip.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,0.18); }
 
-/* 状态 */
-.status-row {
-  padding: 10px 14px; border-bottom: 1px solid rgba(0,0,0,0.07);
-  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
-}
-.status-btns { display: flex; gap: 5px; }
-.status-opt {
-  display: flex; align-items: center; gap: 5px;
-  padding: 4px 10px; border-radius: 20px;
-  border: 1.5px solid transparent; font-size: 11px; font-weight: 600;
-  cursor: pointer; font-family: var(--font-sans);
-  background: rgba(0,0,0,0.04); color: var(--text-secondary);
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-  outline: none;
-}
-.status-opt:hover { background: rgba(0,0,0,0.07); color: var(--text-primary); }
-.opt-dot { width: 6px; height: 6px; border-radius: 50%; }
-.status-opt.s-pending .opt-dot { background: #d46b6b; }
-.status-opt.s-active  .opt-dot { background: #c9943a; }
-.status-opt.s-done    .opt-dot { background: #5a9e88; }
-.status-opt.s-pending.active { background: rgba(212,107,107,0.12); border-color: rgba(212,107,107,0.5); color: #b84a4a; }
-.status-opt.s-active.active  { background: rgba(201,148,58,0.12);  border-color: rgba(201,148,58,0.5);  color: #a87520; }
-.status-opt.s-done.active    { background: rgba(90,158,136,0.12);  border-color: rgba(90,158,136,0.4);  color: #3a8870; }
-
 /* 阶段 */
-.stages-section {
-  padding: 14px 14px 0 6px; flex: 1; min-height: 0;
-  display: flex; flex-direction: column;
+.stages-section { flex: 1; min-height: 80px; display: flex; flex-direction: column; gap: 0; padding-bottom: 0; }
+.stages-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;
 }
-.section-label {
-  font-size: 11px; font-weight: 600; color: var(--text-secondary);
-  text-transform: uppercase; letter-spacing: 0.07em;
-  display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;
-  flex-shrink: 0;
-}
-.stages-section .section-label { padding-left: 8px; }
 .add-stage-btn {
   background: none; border: none; font-size: 11px; font-weight: 600;
   color: var(--color-primary); cursor: pointer; font-family: var(--font-sans);
   padding: 0; text-transform: none; letter-spacing: 0;
 }
 .add-stage-btn:hover { opacity: 0.7; }
-.stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 3px 3px 10px 0; scrollbar-gutter: stable; }
+.stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 2px 4px 0; scrollbar-gutter: stable; }
+
+/* 备注 */
+.notes-input {
+  width: 100%; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; padding: 7px 10px;
+  font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
+  background: rgba(255,255,255,0.72); outline: none; resize: none; line-height: 1.5;
+  transition: border-color 0.15s, box-shadow 0.15s; box-sizing: border-box;
+}
+.notes-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
+.notes-input::placeholder { color: var(--text-secondary); opacity: 0.6; }
 .stage-node { display: flex; align-items: center; gap: 10px; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 14px 5px; }
 .stage-node.stage-dragging { opacity: 0.15; pointer-events: none; }
 .stage-node::before {
@@ -1919,12 +1904,12 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 }
 .node-circle {
   width: 22px; height: 22px; border-radius: 50%;
-  border: 2px solid rgba(0,0,0,0.15); background: rgba(255,255,255,0.7);
+  border: 1.5px solid rgba(0,0,0,0.12); background: rgba(0,0,0,0.08);
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-  transition: all 0.2s; z-index: 1;
+  z-index: 1;
 }
 .stage-node.done .node-circle { background: var(--color-success); border-color: var(--color-success); }
-.stage-node.active .node-circle { box-shadow: 0 0 0 3px rgba(123,127,178,0.2); }
+.stage-node.active .node-circle { border-color: transparent; }
 .node-num { font-size: 10px; font-weight: 700; color: var(--text-secondary); line-height: 1; }
 .stage-node.active .node-num { color: #fff; }
 .node-body { flex: 1; display: flex; align-items: center; justify-content: space-between; }
@@ -1949,9 +1934,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .node-line { position: absolute; left: 16px; top: 22px; width: 2px; height: 14px; background: rgba(0,0,0,0.08); }
 .stage-node.done .node-line { background: var(--color-success); opacity: 0.4; }
 
-/* 备注 */
-.desc-section { padding: 10px 16px 14px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid rgba(0,0,0,0.07); }
-.desc-section .section-label { margin-bottom: 0; }
+
 
 /* 悬浮删除按钮 */
 .del-float-btn {
@@ -1968,17 +1951,9 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   background: rgba(176,120,88,0.18);
   box-shadow: 0 4px 14px rgba(176,120,88,0.25);
 }
-.desc-input {
-  width: 100%; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; padding: 10px 12px;
-  font-size: 13px; font-family: var(--font-sans); color: var(--text-primary);
-  background: rgba(255,255,255,0.72); outline: none; resize: none; line-height: 1.6;
-  transition: border-color 0.15s, box-shadow 0.15s; box-sizing: border-box;
-}
-.desc-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
-.desc-input::placeholder { color: var(--text-secondary); opacity: 0.6; }
 
 /* ── 右栏：文件 ── */
-.modal-right { display: flex; flex-direction: column; min-height: 0; }
+.modal-right { display: flex; flex-direction: column; min-height: 0; background: transparent; }
 .right-header {
   height: 52px; box-sizing: border-box;
   padding: 0 12px 0 16px; border-bottom: 1px solid rgba(0,0,0,0.07);
@@ -2246,7 +2221,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 
 /* ── 批量操作浮动栏 ── */
 .pm-selection-bar {
-  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  position: absolute; bottom: 11px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 8px;
   padding: 8px 14px; border-radius: 12px;
   background: rgba(30,32,44,0.88);
@@ -2471,27 +2446,21 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 <style>
 .stage-drag-ghost-full {
   position: fixed; z-index: 9999; pointer-events: none;
-  display: flex; align-items: flex-start; gap: 10px;
-  padding: 6px 12px 6px 10px;
-  background: rgba(238,240,246,0.94);
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 12px 5px 10px;
+  background: rgba(238,240,246,0.96);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(123,127,178,0.3);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(30,40,80,0.18);
-  opacity: 0.92; transform: rotate(-1deg) scale(1.02);
-  box-sizing: border-box;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(30,40,80,0.14);
+  opacity: 0.95;
 }
 .stage-drag-ghost-full .node-circle {
-  width: 22px; height: 22px; border-radius: 50%;
-  border: 2px solid rgba(0,0,0,0.15); background: rgba(255,255,255,0.7);
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-}
-.stage-drag-ghost-full .node-num {
-  font-size: 10px; font-weight: 700; color: #6b7280;
+  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+  border: 1.5px solid rgba(0,0,0,0.12); background: rgba(0,0,0,0.08);
 }
 .stage-drag-ghost-full .node-label {
-  font-size: 13px; color: #1e2028; line-height: 22px;
-  font-weight: 500;
+  font-size: 13px; color: #1e2028; font-weight: 500; white-space: nowrap;
 }
 /* ── 右键菜单 ── */
 .ctx-item {
