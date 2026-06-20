@@ -1,8 +1,5 @@
 <template>
-  <Transition name="modal" :duration="{ enter: 340, leave: 220 }">
-    <div v-if="show" class="modal-wrap">
-      <div class="modal-overlay" @click="$emit('close')" />
-
+  <BaseModal :show="show" width="620px" @close="$emit('close')">
       <div class="modal">
         <!-- 头部 -->
         <div class="modal-header">
@@ -134,14 +131,14 @@
           <button class="btn-create" @click="handleCreate">创建项目</button>
         </div>
       </div>
-    </div>
-  </Transition>
+  </BaseModal>
 </template>
 
 <script setup>
 import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import DatePicker from '@/components/common/DatePicker.vue'
+import BaseModal from '@/components/common/BaseModal.vue'
 
 const props = defineProps({ show: Boolean })
 const emit  = defineEmits(['close'])
@@ -317,33 +314,8 @@ function handleCreate() {
 </script>
 
 <style scoped>
-.modal-wrap {
-  position: fixed; inset: 0; z-index: 300;
-  display: flex; align-items: center; justify-content: center;
-  padding: 24px;
-}
-
-.modal-overlay {
-  position: absolute; inset: 0;
-  background: rgba(20,22,30,0.3);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-}
-
-.modal {
-  position: relative;
-  width: 100%; max-width: 620px;
-  background: rgba(238,240,246,0.94);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
-  border: 1px solid rgba(255,255,255,0.72);
-  border-radius: 20px;
-  corner-shape: squircle;
-  box-shadow: 0 24px 64px rgba(20,25,50,0.2);
-  display: flex; flex-direction: column;
-  max-height: calc(100vh - 48px);
-  overflow: hidden;
-}
+/* .modal 保留作为 flex 子项的布局容器 */
+.modal { display: contents; }
 
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -508,12 +480,6 @@ input::placeholder { color: var(--text-secondary); opacity: 0.6; }
 }
 .btn-create:hover { opacity: 0.85; }
 
-.modal-enter-active .modal-overlay { transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
-.modal-leave-active .modal-overlay { transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1); }
-.modal-enter-from .modal-overlay, .modal-leave-to .modal-overlay { opacity: 0; }
-.modal-enter-active .modal { transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
-.modal-leave-active .modal { transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1); }
-.modal-enter-from .modal, .modal-leave-to .modal { opacity: 0; }
 </style>
 
 <style>

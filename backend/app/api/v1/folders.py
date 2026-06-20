@@ -1,6 +1,10 @@
+import io
+import zipfile
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +12,7 @@ from app.db.session import get_db
 from app.models import File, Folder, Project, User
 from app.schemas import FolderCreate, FolderRename, FolderResponse
 from app.core.security import get_current_user
+from app.services.storage import get_storage
 
 router = APIRouter(prefix="/folders", tags=["folders"])
 
@@ -18,11 +23,50 @@ async def _file_count(folder_id: int, db: AsyncSession) -> int:
     )).scalar_one()
 
 
+# ── GET /folders/all ─────────────────────────────────────────────────────────
+
+@router.get("/all", response_model=list[FolderResponse])
+async def list_all_folders(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    folders = (await db.execute(
+        select(Folder)
+        .where(Folder.user_id == current_user.id)
+        .order_by(Folder.created_at)
+    )).scalars().all()
+
+    if not folders:
+        return []
+
+    counts_res = await db.execute(
+        select(File.folder_id, func.count().label("cnt"))
+        .where(
+            File.folder_id.in_([f.id for f in folders]),
+            File.deleted_at.is_(None),
+        )
+        .group_by(File.folder_id)
+    )
+    count_map = {row.folder_id: row.cnt for row in counts_res}
+
+    return [
+        FolderResponse(
+            id=f.id,
+            project_id=f.project_id,
+            parent_id=f.parent_id,
+            name=f.name,
+            file_count=count_map.get(f.id, 0),
+        )
+        for f in folders
+    ]
+
+
 # ── GET /folders?project_id=X  （省略 project_id = 个人文件夹）─────────────────
 
 @router.get("", response_model=list[FolderResponse])
 async def list_folders(
     project_id: Optional[int] = None,
+    parent_id:  Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -41,6 +85,11 @@ async def list_folders(
     else:
         stmt = stmt.where(Folder.project_id.is_(None))
 
+    if parent_id is not None:
+        stmt = stmt.where(Folder.parent_id == parent_id)
+    else:
+        stmt = stmt.where(Folder.parent_id.is_(None))
+
     folders = (await db.execute(stmt)).scalars().all()
 
     counts_res = await db.execute(
@@ -51,8 +100,8 @@ async def list_folders(
     count_map = {row.folder_id: row.cnt for row in counts_res}
 
     return [
-        FolderResponse(id=f.id, project_id=f.project_id, name=f.name,
-                        file_count=count_map.get(f.id, 0))
+        FolderResponse(id=f.id, project_id=f.project_id, parent_id=f.parent_id,
+                       name=f.name, file_count=count_map.get(f.id, 0))
         for f in folders
     ]
 
@@ -74,17 +123,74 @@ async def create_folder(
         select(Folder).where(
             Folder.user_id == current_user.id,
             Folder.project_id == body.project_id,
+            Folder.parent_id == body.parent_id,
             Folder.name == body.name,
         )
     )).scalar_one_or_none()
     if existing:
         raise HTTPException(409, "同名文件夹已存在")
 
-    folder = Folder(user_id=current_user.id, project_id=body.project_id, name=body.name)
+    folder = Folder(
+        user_id=current_user.id,
+        project_id=body.project_id,
+        parent_id=body.parent_id,
+        name=body.name,
+    )
     db.add(folder)
     await db.commit()
     await db.refresh(folder)
-    return FolderResponse(id=folder.id, project_id=folder.project_id, name=folder.name, file_count=0)
+    return FolderResponse(id=folder.id, project_id=folder.project_id,
+                          parent_id=folder.parent_id, name=folder.name, file_count=0)
+
+
+# ── GET /folders/{fid}/download ──────────────────────────────────────────────
+
+@router.get("/{fid}/download")
+async def download_folder(
+    fid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    folder = await db.get(Folder, fid)
+    if not folder or folder.user_id != current_user.id:
+        raise HTTPException(404, "文件夹不存在")
+
+    storage = get_storage()
+    buf = io.BytesIO()
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        queue = [(fid, folder.name)]
+        while queue:
+            current_id, path_prefix = queue.pop(0)
+
+            files = (await db.execute(
+                select(File).where(
+                    File.folder_id == current_id,
+                    File.user_id == current_user.id,
+                    File.deleted_at.is_(None),
+                )
+            )).scalars().all()
+            for f in files:
+                data = await storage.get(f.storage_key)
+                arc_name = f"{path_prefix}/{f.display_name}.{f.ext.lower()}"
+                zf.writestr(arc_name, data)
+
+            subfolders = (await db.execute(
+                select(Folder).where(
+                    Folder.parent_id == current_id,
+                    Folder.user_id == current_user.id,
+                )
+            )).scalars().all()
+            for sub in subfolders:
+                queue.append((sub.id, f"{path_prefix}/{sub.name}"))
+
+    buf.seek(0)
+    filename = quote(f"{folder.name}.zip")
+    return Response(
+        content=buf.read(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
 
 
 # ── PATCH /folders/{fid} ──────────────────────────────────────────────────────

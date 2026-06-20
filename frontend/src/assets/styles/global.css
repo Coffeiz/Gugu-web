@@ -2,8 +2,11 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+svg { shape-rendering: geometricPrecision; }
+
 html, body, #app {
   height: 100%;
+  overflow: hidden;
   font-family: var(--font-sans);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;

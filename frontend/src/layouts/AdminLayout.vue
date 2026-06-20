@@ -4,15 +4,17 @@
       <!-- 品牌 -->
       <div class="sidebar-brand">
         <div class="brand-icon">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.6"
-            stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="8" cy="8" r="2.5"/>
-            <path d="M8 1v2M8 13v2M1 8h2M13 8h2"/>
-            <path d="M3.05 3.05l1.42 1.42M11.53 11.53l1.42 1.42M3.05 12.95l1.42-1.42M11.53 4.47l1.42-1.42"/>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 7h.01"/>
+            <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/>
+            <path d="M20 7l2 .5-2 .5"/>
+            <path d="M10 18v3"/>
+            <path d="M14 17.75V21"/>
+            <path d="M7 18a6 6 0 0 0 3.84-10.61"/>
           </svg>
         </div>
         <div class="brand-text">
-          <div class="brand-name">PM Studio</div>
+          <div class="brand-name">咕咕</div>
           <div class="brand-tag">管理后台</div>
         </div>
       </div>
@@ -214,6 +216,7 @@ function handleLogout() {
 .user-name {
   font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.75);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding-bottom: 2px; margin-bottom: -2px;
 }
 
 .logout-btn {

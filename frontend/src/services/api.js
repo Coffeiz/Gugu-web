@@ -1,11 +1,11 @@
 /**
- * PM Studio API 客户端
+ * 咕咕 API 客户端
  * 所有请求统一走这里，自动附加 user Bearer token
  */
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 
-function getToken() {
+export function getToken() {
   return localStorage.getItem('user_token') ?? ''
 }
 
@@ -33,7 +33,12 @@ async function request(method, path, body = null, isForm = false) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail ?? `HTTP ${res.status}`)
+    const d = err.detail
+    const msg = !d ? `HTTP ${res.status}`
+      : typeof d === 'string' ? d
+      : Array.isArray(d) ? d.map(e => e.msg ?? e).join('；')
+      : `HTTP ${res.status}`
+    throw new Error(msg)
   }
 
   if (res.status === 204) return null
@@ -59,8 +64,14 @@ export function uploadWithProgress(path, form, onProgress) {
       if (xhr.status >= 200 && xhr.status < 300) {
         try { resolve(JSON.parse(xhr.responseText)) } catch { resolve(null) }
       } else {
-        try { reject(new Error(JSON.parse(xhr.responseText).detail ?? `HTTP ${xhr.status}`)) }
-        catch { reject(new Error(`HTTP ${xhr.status}`)) }
+        try {
+          const d = JSON.parse(xhr.responseText).detail
+          const msg = !d ? `HTTP ${xhr.status}`
+            : typeof d === 'string' ? d
+            : Array.isArray(d) ? d.map(e => e.msg ?? e).join('；')
+            : `HTTP ${xhr.status}`
+          reject(new Error(msg))
+        } catch { reject(new Error(`HTTP ${xhr.status}`)) }
       }
     }
     xhr.onerror = () => reject(new Error('网络错误'))
@@ -91,9 +102,32 @@ export const filesApi = {
     return get(`/files${qs ? '?' + qs : ''}`)
   },
   tree:   ()         => get('/files/tree'),
+  all:    ()         => get('/files/all'),
   update: (id, data) => patch(`/files/${id}`, data),
   delete:      (id)   => del(`/files/${id}`),
   batchDelete: (ids)  => post('/files/batch-delete', { ids }),
+  copy: (id, body) => post(`/files/${id}/copy`, body),
+  batchDownload: async (ids, folderIds = [], filename = 'files.zip') => {
+    const token = getToken()
+    const res = await fetch(`${BASE_URL}/files/batch-download`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ ids, folderIds }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  },
+  // 返回 { url: "https://..." }，后端签名 URL，有效期短（5~10 分钟）
+  getStreamUrl: (id) => get(`/files/${id}/stream-url`),
   download: async (id, filename) => {
     const token = getToken()
     const res = await fetch(`${BASE_URL}/files/${id}/download`, {
@@ -120,10 +154,35 @@ export const eventsApi = {
 
 // ── Folders ───────────────────────────────────────────────────────────────────
 export const foldersApi = {
-  list:   (projectId)       => get(projectId != null ? `/folders?project_id=${projectId}` : '/folders'),
-  create: (projectId, name) => post('/folders', { ...(projectId != null ? { project_id: projectId } : {}), name }),
-  rename: (id, name)        => patch(`/folders/${id}`, { name }),
-  delete: (id)              => del(`/folders/${id}`),
+  all:  ()                              => get('/folders/all'),
+  list: ({ projectId, parentId } = {}) => {
+    const params = new URLSearchParams()
+    if (projectId != null) params.set('project_id', projectId)
+    if (parentId  != null) params.set('parent_id',  parentId)
+    const qs = params.toString()
+    return get(qs ? `/folders?${qs}` : '/folders')
+  },
+  create: (projectId, name, parentId = null) => post('/folders', {
+    ...(projectId != null ? { projectId } : {}),
+    ...(parentId  != null ? { parentId  } : {}),
+    name,
+  }),
+  rename: (id, name) => patch(`/folders/${id}`, { name }),
+  delete: (id)       => del(`/folders/${id}`),
+  download: async (id, name) => {
+    const token = getToken()
+    const res = await fetch(`${BASE_URL}/folders/${id}/download`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${name}.zip`
+    a.click()
+    URL.revokeObjectURL(url)
+  },
 }
 
 // ── Trash ─────────────────────────────────────────────────────────────────────

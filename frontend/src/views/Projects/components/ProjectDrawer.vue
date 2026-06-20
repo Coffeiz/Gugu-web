@@ -87,28 +87,106 @@
             </div>
           </section>
 
-          <!-- 文件（Mock） -->
+          <!-- 文件 -->
           <section class="section">
-            <div class="section-label">相关文件</div>
-            <div class="file-list">
-              <div v-for="file in mockFiles" :key="file.name" class="file-item">
-                <div class="file-icon" :style="{ background: file.color }">{{ file.ext }}</div>
+            <div class="section-label">
+              相关文件
+              <span class="file-count" v-if="totalFileCount > 0">{{ totalFileCount }}</span>
+              <div class="file-actions">
+                <button class="file-action-btn" title="新建文件夹" @click.stop="showNewFolder = !showNewFolder">
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M2 4a1 1 0 011-1h2.5l1 1.5H11a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1V4z"/><path d="M7 7v2.5M5.5 8.5h3"/>
+                  </svg>
+                </button>
+                <button class="file-action-btn upload" title="上传文件" @click.stop="uploadOpen = true">
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M7 9V3M4 6l3-3 3 3"/><path d="M1 11h12"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- 新建文件夹输入框 -->
+            <div v-if="showNewFolder" class="new-folder-row" @click.stop>
+              <input
+                class="new-folder-input"
+                v-model="newFolderName"
+                placeholder="文件夹名称"
+                @keyup.enter="createFolder"
+                @keyup.esc="showNewFolder = false; newFolderName = ''"
+                ref="folderInputRef"
+                autofocus
+              />
+              <button class="btn-confirm-sm" :disabled="folderLoading" @click="createFolder">确定</button>
+              <button class="btn-cancel-sm" @click="showNewFolder = false; newFolderName = ''">✕</button>
+            </div>
+
+            <!-- 文件夹列表 -->
+            <div v-if="folders.length" class="folder-rows">
+              <div v-for="folder in folders" :key="folder.id" class="folder-row" @click="toggleFolder(folder.id)">
+                <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                  <path d="M1 3.5a1 1 0 011-1h2.5l1 1.5H12a1 1 0 011 1v5a1 1 0 01-1 1H2a1 1 0 01-1-1V3.5z" :fill="openFolders.has(folder.id) ? 'rgba(123,127,178,0.15)' : 'none'"/>
+                </svg>
+                <span class="folder-name">{{ folder.name }}</span>
+                <span class="folder-cnt">{{ folder.fileCount }}</span>
+                <svg class="folder-chev" :class="{ open: openFolders.has(folder.id) }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                  <path d="M2 3.5l3 3 3-3"/>
+                </svg>
+              </div>
+              <!-- 展开的文件夹内文件 -->
+              <template v-for="folder in folders" :key="'files-' + folder.id">
+                <div v-if="openFolders.has(folder.id)" class="folder-files">
+                  <div v-if="!folderFiles[folder.id]?.length" class="empty-hint">暂无文件</div>
+                  <div v-for="f in folderFiles[folder.id]" :key="f.id" class="file-item indented">
+                    <div class="file-icon" :style="{ background: fileIconColor(f.ext) }">{{ f.ext }}</div>
+                    <div class="file-info">
+                      <div class="file-name">{{ f.displayName }}</div>
+                      <div class="file-meta">{{ f.size }} · {{ f.createdAt }}</div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <!-- 根目录文件 -->
+            <div v-if="rootFiles.length" class="file-list">
+              <div v-for="f in rootFiles" :key="f.id" class="file-item">
+                <div class="file-icon" :style="{ background: fileIconColor(f.ext) }">{{ f.ext }}</div>
                 <div class="file-info">
-                  <div class="file-name">{{ file.name }}</div>
-                  <div class="file-meta">{{ file.size }} · {{ file.date }}</div>
+                  <div class="file-name">{{ f.displayName }}</div>
+                  <div class="file-meta">{{ f.size }} · {{ f.createdAt }}</div>
                 </div>
               </div>
+            </div>
+
+            <div v-if="!folders.length && !rootFiles.length && !filesLoading" class="empty-hint">
+              暂无文件，点击右上角上传
             </div>
           </section>
         </div>
       </div>
     </div>
   </Transition>
+
+  <!-- 上传弹窗 -->
+  <UploadModal
+    :show="uploadOpen"
+    :projects="projectStore.projects"
+    :locked-project-id="project?.id ?? null"
+    :locked-project-name="project?.name ?? ''"
+    :locked-color="project ? extractColor(project.color) : ''"
+    :locked-folder-id="null"
+    @close="uploadOpen = false"
+    @uploaded="onUploaded"
+  />
+  </Transition>
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { useProjectStore } from '@/stores/projects'
+import { filesApi, foldersApi } from '@/services/api'
+import UploadModal from '@/views/Files/UploadModal.vue'
 
 const props = defineProps({
   project: { type: Object, default: null },
@@ -150,17 +228,113 @@ const mockTasks = ref([
   { id: 5, name: '最终交付文件整理', done: false },
 ])
 
-// 切换项目时重置任务
 watch(() => props.project?.id, () => {
   mockTasks.value.forEach(t => { t.done = t.id <= 2 })
 })
 
-// Mock 文件
-const mockFiles = [
-  { name: '参考图集.zip',  ext: 'ZIP', size: '12.4 MB', date: '06/10', color: 'linear-gradient(135deg,#9e9fc4,#7b7fb2)' },
-  { name: '草图_v2.psd',  ext: 'PSD', size: '84 MB',   date: '06/12', color: 'linear-gradient(135deg,#7ab8c8,#5a9e88)' },
-  { name: '合同扫描.pdf', ext: 'PDF', size: '2.1 MB',  date: '06/08', color: 'linear-gradient(135deg,#c4afc8,#b07858)' },
-]
+// ── 文件 / 文件夹 ──────────────────────────────────────────────────────────────
+
+const folders      = ref([])
+const rootFiles    = ref([])
+const folderFiles  = ref({})   // { [folderId]: File[] }
+const openFolders  = ref(new Set())
+const filesLoading = ref(false)
+
+const totalFileCount = computed(() =>
+  rootFiles.value.length + folders.value.reduce((s, f) => s + (f.fileCount ?? 0), 0)
+)
+
+const EXT_COLORS = {
+  PDF: 'linear-gradient(135deg,#e07070,#c45050)',
+  PSD: 'linear-gradient(135deg,#7ab8c8,#4a8ea0)',
+  AI:  'linear-gradient(135deg,#e09050,#c07030)',
+  PNG: 'linear-gradient(135deg,#7b9fe0,#5070c0)',
+  JPG: 'linear-gradient(135deg,#7b9fe0,#5070c0)',
+  ZIP: 'linear-gradient(135deg,#9e9fc4,#7b7fb2)',
+  MP4: 'linear-gradient(135deg,#b07090,#905070)',
+}
+function fileIconColor(ext) {
+  return EXT_COLORS[ext?.toUpperCase()] ?? 'linear-gradient(135deg,#8a8fa8,#6a6f88)'
+}
+
+function extractColor(color) {
+  if (!color) return '#7b7fb2'
+  const m = color.match(/#[0-9a-fA-F]{3,8}/)
+  return m ? m[0] : '#7b7fb2'
+}
+
+async function loadFiles() {
+  if (!props.project?.id) return
+  filesLoading.value = true
+  openFolders.value  = new Set()
+  folderFiles.value  = {}
+  try {
+    const [apifolders, apifiles] = await Promise.all([
+      foldersApi.list({ projectId: props.project.id }),
+      filesApi.list({ space: 'project', projectId: props.project.id }),
+    ])
+    folders.value   = apifolders
+    rootFiles.value = apifiles
+  } catch (e) {
+    console.error('[ProjectDrawer] 文件加载失败:', e.message)
+  } finally {
+    filesLoading.value = false
+  }
+}
+
+async function toggleFolder(folderId) {
+  const next = new Set(openFolders.value)
+  if (next.has(folderId)) {
+    next.delete(folderId)
+  } else {
+    next.add(folderId)
+    if (!folderFiles.value[folderId]) {
+      try {
+        folderFiles.value = { ...folderFiles.value, [folderId]: await filesApi.list({ folderId }) }
+      } catch { folderFiles.value = { ...folderFiles.value, [folderId]: [] } }
+    }
+  }
+  openFolders.value = next
+}
+
+watch(() => props.project?.id, (id) => {
+  if (id) loadFiles()
+  else { folders.value = []; rootFiles.value = [] }
+}, { immediate: true })
+
+// ── 新建文件夹 ────────────────────────────────────────────────────────────────
+
+const showNewFolder  = ref(false)
+const newFolderName  = ref('')
+const folderLoading  = ref(false)
+const folderInputRef = ref(null)
+
+watch(showNewFolder, v => { if (v) nextTick(() => folderInputRef.value?.focus()) })
+
+async function createFolder() {
+  const name = newFolderName.value.trim()
+  if (!name || !props.project?.id) return
+  folderLoading.value = true
+  try {
+    await foldersApi.create(props.project.id, name)
+    newFolderName.value = ''
+    showNewFolder.value = false
+    await loadFiles()
+  } catch (e) {
+    console.error('[ProjectDrawer] 新建文件夹失败:', e.message)
+  } finally {
+    folderLoading.value = false
+  }
+}
+
+// ── 上传 ─────────────────────────────────────────────────────────────────────
+
+const uploadOpen = ref(false)
+
+async function onUploaded() {
+  uploadOpen.value = false
+  await loadFiles()
+}
 </script>
 
 <style scoped>
@@ -400,33 +574,80 @@ const mockFiles = [
   color: var(--text-secondary);
 }
 
-/* 文件 */
-.file-list { display: flex; flex-direction: column; gap: 6px; }
+/* 文件区 section-label 扩展 */
+.file-count {
+  font-size: 10px; color: var(--text-secondary);
+  font-weight: 400; text-transform: none; letter-spacing: 0;
+}
+.file-actions { margin-left: auto; display: flex; gap: 4px; }
+.file-action-btn {
+  width: 22px; height: 22px; border-radius: 6px; border: none;
+  background: rgba(0,0,0,0.05); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-secondary); transition: background 0.15s, color 0.15s;
+}
+.file-action-btn:hover { background: rgba(0,0,0,0.1); color: var(--text-primary); }
+.file-action-btn.upload:hover { background: rgba(123,127,178,0.15); color: var(--color-primary); }
 
+/* 新建文件夹行 */
+.new-folder-row {
+  display: flex; gap: 6px; align-items: center;
+}
+.new-folder-input {
+  flex: 1; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px;
+  border: 1.5px solid rgba(123,127,178,0.4); background: rgba(255,255,255,0.8);
+  color: var(--text-primary); outline: none; font-family: var(--font-sans);
+}
+.new-folder-input:focus { border-color: var(--color-primary); }
+.btn-confirm-sm, .btn-cancel-sm {
+  height: 30px; padding: 0 10px; border-radius: 8px; border: none;
+  font-size: 12px; cursor: pointer; font-family: var(--font-sans);
+}
+.btn-confirm-sm { background: var(--color-primary); color: white; }
+.btn-confirm-sm:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-cancel-sm  { background: rgba(0,0,0,0.07); color: var(--text-secondary); }
+
+/* 文件夹行 */
+.folder-rows { display: flex; flex-direction: column; gap: 2px; }
+.folder-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 10px; border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.55); border: 1px solid rgba(255,255,255,0.65);
+  cursor: pointer; font-size: 13px; color: var(--text-primary);
+  transition: background 0.15s;
+}
+.folder-row:hover { background: rgba(255,255,255,0.8); }
+.folder-name { flex: 1; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-bottom: 2px; margin-bottom: -2px; }
+.folder-cnt  { font-size: 11px; color: var(--text-secondary); }
+.folder-chev { transition: transform 0.2s; flex-shrink: 0; }
+.folder-chev.open { transform: rotate(180deg); }
+.folder-files {
+  padding-left: 14px; display: flex; flex-direction: column; gap: 4px; margin-bottom: 2px;
+}
+
+/* 文件 */
+.file-list { display: flex; flex-direction: column; gap: 4px; }
 .file-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px;
   background: rgba(255,255,255,0.68);
   border: 1px solid rgba(255,255,255,0.65);
   border-radius: var(--radius-sm);
 }
+.file-item.indented { background: rgba(255,255,255,0.5); }
 
 .file-icon {
-  width: 32px; height: 32px;
-  border-radius: 8px;
+  width: 30px; height: 30px; border-radius: 7px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 9px;
-  font-weight: 700;
-  color: white;
-  letter-spacing: 0.04em;
-  flex-shrink: 0;
+  font-size: 8px; font-weight: 700; color: white;
+  letter-spacing: 0.04em; flex-shrink: 0;
 }
 
 .file-info { flex: 1; min-width: 0; }
-.file-name { font-size: 13px; font-weight: 500; color: var(--text-primary); }
-.file-meta { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.file-name { font-size: 12px; font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-bottom: 2px; margin-bottom: -2px; }
+.file-meta { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+
+.empty-hint { font-size: 12px; color: var(--text-secondary); padding: 4px 2px; }
 
 /* 抽屉动画 */
 .drawer-enter-active,

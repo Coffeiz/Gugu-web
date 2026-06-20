@@ -92,6 +92,8 @@ class File(Base):
     size:         Mapped[str]           = mapped_column(String(50),  default="")
     size_bytes:   Mapped[int]           = mapped_column(BigInteger,  default=0)
     mime_type:    Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    img_width:    Mapped[Optional[int]] = mapped_column(Integer,     nullable=True)
+    img_height:   Mapped[Optional[int]] = mapped_column(Integer,     nullable=True)
     created_at:   Mapped[datetime]      = mapped_column(DateTime,    default=datetime.utcnow)
     updated_at:   Mapped[datetime]      = mapped_column(DateTime,    default=datetime.utcnow, onupdate=datetime.utcnow)
     deleted_at:   Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None, index=True)
@@ -110,12 +112,15 @@ class Folder(Base):
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:    Mapped[int]      = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    parent_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="CASCADE"), nullable=True, index=True)
     name:       Mapped[str]           = mapped_column(String(200))
     created_at: Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow)
 
-    owner:   Mapped["User"]              = relationship(back_populates="folders")
-    project: Mapped[Optional["Project"]] = relationship(back_populates="folders")
-    files:   Mapped[list["File"]] = relationship(back_populates="folder")
+    owner:    Mapped["User"]              = relationship(back_populates="folders")
+    project:  Mapped[Optional["Project"]] = relationship(back_populates="folders")
+    files:    Mapped[list["File"]]        = relationship(back_populates="folder")
+    children: Mapped[list["Folder"]]      = relationship(back_populates="parent", cascade="all, delete-orphan")
+    parent:   Mapped[Optional["Folder"]]  = relationship(back_populates="children", remote_side="Folder.id")
 
 
 # ── MindMap（思维画布，暂不开发，预留结构）────────────────────────────────────

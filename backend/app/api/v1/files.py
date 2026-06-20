@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models import File, Folder, Project, User
-from app.schemas import FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry, BatchDeleteBody, BatchDownloadBody, FileCopyBody
+from app.schemas import FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry, BatchDeleteBody, FileCopyBody, BatchDownloadBody
 from jose import jwt, JWTError
 from app.core.security import get_current_user, create_stream_token, verify_stream_token
 from app.core.config import get_settings
@@ -198,6 +198,28 @@ async def list_all_files(
     )
     result = await db.execute(stmt)
     return [_to_resp(f, pname, _color(pcolor), fname) for f, pname, pcolor, fname in result.all()]
+
+
+# ── GET /files/version ────────────────────────────────────────────────────────
+
+@router.get("/version")
+async def files_version(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """返回文件表状态摘要，用于前端感知服务端变更（删除/修改均会改变结果）。"""
+    stmt = (
+        select(
+            func.count(File.id),
+            func.max(File.updated_at),
+            func.max(File.deleted_at),
+        )
+        .where(File.user_id == current_user.id)
+    )
+    result = await db.execute(stmt)
+    count, max_updated, max_deleted = result.one()
+    version = f"{count}:{max_updated}:{max_deleted}"
+    return {"version": version}
 
 
 # ── GET /files/tree ───────────────────────────────────────────────────────────

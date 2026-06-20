@@ -29,10 +29,37 @@ settings = get_settings()
 bearer = HTTPBearer()
 
 
+_THUMB_TTL_DAYS = 30
+_last_thumb_cleanup: float = 0.0
+
+
+def _evict_old_thumbs() -> int:
+    """删除超过 TTL 天未被访问的缩略图（同步，在线程中调用）。"""
+    import time
+    from app.api.v1.files import _thumb_dir
+    td = _thumb_dir()
+    if not td.exists():
+        return 0
+    cutoff = time.time() - _THUMB_TTL_DAYS * 86400
+    count = 0
+    for p in td.iterdir():
+        if p.suffix in (".webp", ".jpg"):
+            try:
+                if p.stat().st_mtime < cutoff:
+                    p.unlink(missing_ok=True)
+                    count += 1
+            except Exception:
+                pass
+    return count
+
+
 async def _auto_cleanup_loop():
-    """每小时检查并永久删除超过 30 天的回收站文件"""
+    """每小时检查并永久删除超过 30 天的回收站文件；每 24 小时驱逐冷缩略图。"""
+    import time
+    global _last_thumb_cleanup
     while True:
         await asyncio.sleep(3600)
+        # 回收站清理
         try:
             from app.db.session import _SessionLocal
             from app.api.v1.trash import cleanup_expired
@@ -44,6 +71,15 @@ async def _auto_cleanup_loop():
                     print(f"[回收站] 自动清理 {n} 个过期文件")
         except Exception as e:
             print(f"[回收站] 自动清理出错: {e}")
+        # 缩略图 TTL 驱逐（每 24 小时一次）
+        if time.time() - _last_thumb_cleanup > 86400:
+            try:
+                n = await asyncio.to_thread(_evict_old_thumbs)
+                if n:
+                    print(f"[缩略图] TTL 驱逐 {n} 个冷缓存")
+                _last_thumb_cleanup = time.time()
+            except Exception as e:
+                print(f"[缩略图] TTL 驱逐出错: {e}")
 
 
 async def _db_retry_loop():
@@ -79,6 +115,18 @@ async def lifespan(app: FastAPI):
         print(f"[警告] 数据库连接失败，跳过建表：{e}")
         print("[警告] Admin 认证仍可用，其余 API 需要数据库")
     Path(settings.storage.local_path).mkdir(parents=True, exist_ok=True)
+    # 清理旧 JPEG 缩略图缓存，首次请求时以 WebP 重新生成
+    try:
+        from app.api.v1.files import _thumb_dir
+        td = _thumb_dir()
+        if td.exists():
+            old = list(td.glob("*.jpg"))
+            for p in old:
+                p.unlink(missing_ok=True)
+            if old:
+                print(f"[缩略图] 已清理 {len(old)} 个旧 JPEG 缓存，将以 WebP 重新生成")
+    except Exception:
+        pass
     task = asyncio.create_task(_auto_cleanup_loop())
     retry_task = asyncio.create_task(_db_retry_loop())
     yield

@@ -218,7 +218,6 @@
 
 <script setup>
 import { reactive, computed, onMounted, defineComponent, h, ref } from 'vue'
-import { Message } from '@arco-design/web-vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
 import ConfigField from './components/ConfigField.vue'
@@ -284,10 +283,8 @@ async function initDb() {
     })
     const data = await res.json()
     testStatus.db = data
-    Message.success(data.message || '数据库表已创建/已就绪')
   } catch (e) {
     testStatus.db = { ok: false, message: e.message }
-    Message.error('初始化失败：' + e.message)
   } finally {
     initing.value = false
   }
@@ -370,7 +367,7 @@ const AI_PRESETS = {
   qwen:     { base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
   openai:   { base_url: 'https://api.openai.com/v1',                         model: 'gpt-4o' },
   deepseek: { base_url: 'https://api.deepseek.com',                          model: 'deepseek-chat' },
-  minimax:  { base_url: 'https://api.minimax.chat/v1',                       model: 'abab6.5s-chat' },
+  minimax:  { base_url: 'https://api.minimaxi.com/anthropic',                 model: 'MiniMax-M3' },
   anthropic:{ base_url: 'https://api.anthropic.com/v1',                      model: 'claude-opus-4-8' },
 }
 

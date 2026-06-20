@@ -2,52 +2,66 @@
   <aside class="sidebar">
     <!-- Logo -->
     <div class="logo">
-      <div class="logo-icon">✦</div>
-      <span class="logo-text">PM Studio</span>
+      <div class="logo-icon">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 7h.01"/>
+          <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/>
+          <path d="M20 7l2 .5-2 .5"/>
+          <path d="M10 18v3"/>
+          <path d="M14 17.75V21"/>
+          <path d="M7 18a6 6 0 0 0 3.84-10.61"/>
+        </svg>
+      </div>
+      <span class="logo-text">咕咕</span>
     </div>
 
     <!-- 导航 -->
     <nav class="nav">
+      <div class="nav-divider"></div>
+
       <div class="nav-section">
         <span class="nav-label">工作台</span>
-        <NavItem to="/dashboard" :icon="icons.grid">总览</NavItem>
-        <NavItem to="/projects" :icon="icons.list">
+        <NavItem to="/dashboard" :icon="PhSquaresFour">总览</NavItem>
+        <NavItem to="/projects" :icon="PhStack">
           项目
           <template #badge>{{ projectStore.activeCount }}</template>
         </NavItem>
-        <NavItem to="/calendar" :icon="icons.calendar">日历</NavItem>
+        <NavItem to="/calendar" :icon="PhCalendarBlank">日历</NavItem>
         <div class="nav-item soon-item">
-          <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" v-html="icons.mind" />
+          <PhGraph class="nav-icon" :size="15" />
           <span class="nav-label-text">思维</span>
           <span class="soon-badge">即将推出</span>
         </div>
       </div>
 
+      <div class="nav-divider"></div>
+
       <div class="nav-section">
         <span class="nav-label">资源</span>
-        <NavItem to="/files" :icon="icons.folder">文件库</NavItem>
+        <NavItem to="/files" :icon="PhFolder">文件库</NavItem>
         <div class="nav-item soon-item">
-          <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" v-html="icons.users" />
+          <PhAddressBook class="nav-icon" :size="15" />
           <span class="nav-label-text">客户</span>
           <span class="soon-badge">即将推出</span>
         </div>
         <div class="nav-item soon-item">
-          <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" v-html="icons.team" />
+          <PhUsersThree class="nav-icon" :size="15" />
           <span class="nav-label-text">团队</span>
           <span class="soon-badge">即将推出</span>
         </div>
       </div>
 
+      <div class="nav-divider"></div>
+
       <div class="nav-section">
         <span class="nav-label">通知</span>
-        <!-- 通知按钮：点击弹出小窗，不跳转路由 -->
         <div class="notif-anchor" ref="notifBtnRef">
           <button
             class="nav-item notif-btn"
             :class="{ 'notif-active': notifOpen }"
             @click.stop="toggleNotif"
           >
-            <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" v-html="icons.bell" />
+            <PhBell class="nav-icon" :size="15" />
             <span class="nav-label-text">通知</span>
             <span v-if="uiStore.notifCount" class="badge">{{ uiStore.notifCount }}</span>
           </button>
@@ -61,21 +75,21 @@
       <div class="user-info">
         <div class="user-name">{{ authStore.user?.username ?? '—' }}</div>
       </div>
-      <svg v-html="icons.settings" class="settings-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+      <PhGear class="settings-icon" :size="14" />
 
       <!-- 设置弹窗 -->
       <Transition name="popup">
         <div v-if="settingsOpen" class="settings-popup" @click.stop>
           <div class="settings-item">
-            <svg v-html="icons.profile" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            <PhUser :size="14" />
             个人资料
           </div>
           <div class="settings-item" @click="$router.push('/admin/login'); settingsOpen = false">
-            <svg v-html="icons.preferences" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            <PhShieldCheck :size="14" />
             管理后台
           </div>
           <div class="settings-item danger" @click="handleLogout">
-            <svg v-html="icons.logout" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            <PhSignOut :size="14" />
             退出登录
           </div>
         </div>
@@ -128,6 +142,20 @@ import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 import NavItem from './NavItem.vue'
+import {
+  PhSquaresFour,
+  PhStack,
+  PhCalendarBlank,
+  PhGraph,
+  PhFolder,
+  PhAddressBook,
+  PhUsersThree,
+  PhBell,
+  PhGear,
+  PhUser,
+  PhShieldCheck,
+  PhSignOut,
+} from '@phosphor-icons/vue'
 
 const router       = useRouter()
 const projectStore = useProjectStore()
@@ -181,21 +209,6 @@ function closeAll(e) {
 
 onMounted(() => document.addEventListener('click', closeAll))
 onUnmounted(() => document.removeEventListener('click', closeAll))
-
-const icons = {
-  grid: `<rect x="1.5" y="1.5" width="5" height="5" rx="1.2"/><rect x="9.5" y="1.5" width="5" height="5" rx="1.2"/><rect x="1.5" y="9.5" width="5" height="5" rx="1.2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1.2"/>`,
-  list: `<path d="M2 4h12M2 8h12M2 12h7"/>`,
-  calendar: `<rect x="1.5" y="2.5" width="13" height="12" rx="2"/><path d="M5 1v3M11 1v3M1.5 6.5h13"/>`,
-  folder: `<path d="M1.5 4.5C1.5 3.4 2.4 2.5 3.5 2.5h3l2 2h5.5c1.1 0 1.5.9 1.5 2v6c0 1.1-.9 2-2 2h-10c-1.1 0-2-.9-2-2v-8z"/>`,
-  users: `<circle cx="8" cy="5.5" r="2.5"/><path d="M2 14c0-3.3 2.7-5 6-5s6 1.7 6 5"/>`,
-  team:  `<circle cx="6" cy="5" r="2.5"/><path d="M1 13c0-2.8 2.2-4.5 5-4.5"/><circle cx="12" cy="5" r="2"/><path d="M10.5 9c1.5.3 3 1.4 3 3.5"/>`,
-  mind: `<path d="M5.5 3C4 3 2.5 4.2 2.5 6c0 1 .4 1.8 1 2.4V11h5V8.4c.6-.6 1-1.4 1-2.4 0-1.8-1.5-3-3-3z"/><path d="M5.5 3c.3-.8 1-1.5 2-1.5s1.7.7 2 1.5"/><path d="M9.5 6c.6-.4 1.5-.3 2 .5.5.7.3 1.8-.5 2.2"/><path d="M4.5 11h4"/>`,
-  bell: `<path d="M8 1.5a5 5 0 015 5v2.5l1 2H2l1-2V6.5a5 5 0 015-5z"/><path d="M6.5 13a1.5 1.5 0 003 0"/>`,
-  settings: `<circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4M3.2 12.8l1.4-1.4M11.4 4.6l1.4-1.4"/>`,
-  profile: `<circle cx="8" cy="6" r="2.5"/><path d="M2 14c0-3.3 2.7-5 6-5s6 1.7 6 5"/>`,
-  preferences: `<circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2"/>`,
-  logout: `<path d="M6 2H3a1 1 0 00-1 1v10a1 1 0 001 1h3M10 11l4-4-4-4M14 7H6"/>`,
-}
 </script>
 
 <style scoped>
@@ -212,7 +225,7 @@ const icons = {
 
 .logo {
   display: flex; align-items: center; justify-content: center;
-  gap: 10px; padding: 0 8px; margin-bottom: 32px;
+  gap: 10px; padding: 0 8px; margin-bottom: 20px;
 }
 .logo-icon {
   width: 34px; height: 34px; border-radius: 10px;
@@ -222,8 +235,14 @@ const icons = {
 }
 .logo-text { font-size: 16px; font-weight: 700; }
 
-.nav { flex: 1; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; }
+.nav { flex: 1; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
 .nav-section { display: flex; flex-direction: column; gap: 2px; }
+.nav-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
+  margin: 6px 4px;
+  flex-shrink: 0;
+}
 .nav-label {
   font-size: 10px; font-weight: 600; color: var(--text-secondary);
   text-transform: uppercase; letter-spacing: 0.08em; padding: 0 10px; margin-bottom: 4px;
@@ -245,7 +264,7 @@ const icons = {
   font-weight: 600; border-color: rgba(255,255,255,0.62);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
 }
-.nav-icon { width: 15px; height: 15px; flex-shrink: 0; }
+.nav-icon { flex-shrink: 0; }
 .nav-label-text { flex: 1; }
 .badge {
   background: rgba(123,127,178,0.42); color: white;
@@ -271,7 +290,7 @@ const icons = {
 }
 .user-info { flex: 1; overflow-x: hidden; }
 .user-name { font-size: 13px; font-weight: 600; line-height: 1.5; }
-.settings-icon { width: 14px; height: 14px; color: var(--text-secondary); flex-shrink: 0; }
+.settings-icon { color: var(--text-secondary); flex-shrink: 0; opacity: 0.6; }
 
 .settings-popup {
   position: absolute; bottom: calc(100% + 8px); left: 0; right: 0;
@@ -287,7 +306,7 @@ const icons = {
   padding: 10px 14px; font-size: 13px;
   color: var(--text-secondary); cursor: pointer; transition: background 0.15s;
 }
-.settings-item svg { width: 14px; height: 14px; opacity: 0.65; }
+.settings-item svg { opacity: 0.65; flex-shrink: 0; }
 .settings-item:hover { background: rgba(123,127,178,0.08); color: rgba(30,32,40,0.82); }
 .settings-item.danger:hover { background: rgba(176,120,88,0.08); color: var(--color-warning); }
 
