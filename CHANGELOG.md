@@ -9,7 +9,28 @@
 
 ## [0.7.0] - 2026-06-21
 
+### 新增（续）
+
+- **新建项目默认阶段**：打开新建面板时自动读取 store 中最近一个项目的阶段列表作为默认值，数据来自后端，换设备登录后同样生效
+
+### 修复（续）
+
+- **项目编辑卡颜色/阶段/名称不实时更新**：`localColor`、`localCurrentStage`、`localName` 改为独立 ref，点击后立即生效，不再依赖 props 响应式链；`startEditName` 不再重置 `localName`，避免二次点击回退旧值
+- **项目编辑卡阶段拖动带动进度与样式变化**：阶段球样式改为位置索引（`activeStageIdx`）驱动；`stageProgress` 改为 ref，仅在点击切换阶段时更新；拖动重排只移动标签名，done/active/plain 样式锁定在原位置不跟随
+- **阶段球 CSS 闪烁**：移除 `.stage-node.active .node-circle { background: var(--color-primary) }` CSS 规则与 `transition`，消除 inline style 与 class 之间的单帧冲突
+- **拖动 ghost 倾斜**：新建项目与编辑卡的阶段拖动 ghost 均去除 `rotate(-1deg) scale(1.02)` 变换
+- **`startStageDrag` indexOf 失效**：改为传 `i`（v-for 位置索引）替代 `localStages.indexOf(stage)`，避免 Vue proxy 引用比较失效
+
+### 调整
+
+- **项目编辑卡左右栏背景统一**：移除右栏 `background: rgba(0,0,0,0.015)`
+- **阶段球平面化**：去渐变与外描边，active 状态改用 inline style（项目颜色填充）；之后恢复 `1.5px` 描边
+- **多选工具栏垂直对齐**：`pm-selection-bar` bottom 调整至与右下角删除按钮中心对齐
+- **文件库删除顶栏上传按钮**
+
 ### 新增
+
+
 
 - **文件双向同步**：Tab 切回时自动调 `GET /files/version`（返回 `count:max_updated:max_deleted` 摘要），版本变化则静默重拉全量数据，感知删除/修改/新增；本地手动删除文件后 UI 自动同步（`/files/all` 扫描实体存在性，孤儿记录直接硬删，不进回收站）
 - **新建项目模板**：支持保存、删除、重命名阶段模板，持久化至 localStorage；内置「标准流程」「插画流程」「动画流程」三个默认模板
