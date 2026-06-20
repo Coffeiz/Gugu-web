@@ -20,20 +20,22 @@ export const useProjectStore = defineStore('projects', () => {
   const totalCount = computed(() => projects.value.length)
 
   const upcomingCount = computed(() => {
-    const now = new Date()
+    const today = new Date(); today.setHours(0, 0, 0, 0)
     return projects.value.filter(p => {
       if (!p.deadline) return false
-      const days = (new Date(p.deadline) - now) / 86400000
+      const days = (new Date(p.deadline + 'T00:00:00') - today) / 86400000
       return days >= 0 && days <= 7
     }).length
   })
 
-  const urgentProjects = computed(() =>
-    projects.value.filter(p => {
-      const days = (new Date(p.deadline) - new Date()) / 86400000
+  const urgentProjects = computed(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    return projects.value.filter(p => {
+      if (!p.deadline) return false
+      const days = (new Date(p.deadline + 'T00:00:00') - today) / 86400000
       return days <= 3
     })
-  )
+  })
 
   async function fetchProjects() {
     loading.value = true

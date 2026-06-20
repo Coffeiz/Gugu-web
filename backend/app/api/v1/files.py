@@ -197,7 +197,25 @@ async def list_all_files(
         .order_by(File.created_at.desc())
     )
     result = await db.execute(stmt)
-    return [_to_resp(f, pname, _color(pcolor), fname) for f, pname, pcolor, fname in result.all()]
+    rows = result.all()
+
+    # 本地存储时过滤掉实体文件已被手动删除的记录，并同步软删除数据库条目
+    storage = get_storage()
+    from app.services.storage import LocalStorageBackend
+    if isinstance(storage, LocalStorageBackend):
+        now = datetime.utcnow()
+        valid_rows = []
+        for row in rows:
+            f, pname, pcolor, fname = row
+            if (storage.root / f.storage_key).exists():
+                valid_rows.append(row)
+            else:
+                await db.delete(f)
+        if len(valid_rows) < len(rows):
+            await db.commit()
+        rows = valid_rows
+
+    return [_to_resp(f, pname, _color(pcolor), fname) for f, pname, pcolor, fname in rows]
 
 
 # ── GET /files/version ────────────────────────────────────────────────────────
@@ -403,8 +421,9 @@ async def update_file(
             project_year, project_month = date_str[:4], date_str[5:7]
     if new_fid:
         fo = await db.get(Folder, new_fid)
-        if fo:
-            folder_name = fo.name
+        if not fo or fo.user_id != current_user.id:
+            raise HTTPException(400, "目标文件夹不存在")
+        folder_name = fo.name
 
     new_key = _build_key(
         uid=current_user.id,
@@ -454,15 +473,18 @@ async def copy_file(
     project_name = ""; project_color = None; project_year = ""; project_month = ""
     if new_space == "project" and new_project_id:
         p = await db.get(Project, new_project_id)
-        if p:
-            project_name  = p.name; project_color = _color(p.color)
-            date_str      = p.start_date or p.created_at.strftime("%Y-%m-%d")
-            project_year, project_month = date_str[:4], date_str[5:7]
+        if not p or p.user_id != current_user.id:
+            raise HTTPException(400, "目标项目不存在")
+        project_name  = p.name; project_color = _color(p.color)
+        date_str      = p.start_date or p.created_at.strftime("%Y-%m-%d")
+        project_year, project_month = date_str[:4], date_str[5:7]
 
     folder_name = ""
     if new_folder_id:
         fo = await db.get(Folder, new_folder_id)
-        if fo: folder_name = fo.name
+        if not fo or fo.user_id != current_user.id:
+            raise HTTPException(400, "目标文件夹不存在")
+        folder_name = fo.name
 
     base_key = _build_key(
         uid=current_user.id, space=new_space, display_name=f.display_name,
@@ -489,16 +511,16 @@ async def copy_file(
 
 # ── DELETE /files/{fid} （软删除→回收站）────────────────────────────────────
 
-def _to_trash_key(fid: int, storage_key: str) -> str:
+def _to_trash_key(user_id: int, fid: int, storage_key: str) -> str:
     """生成回收站路径，保留原文件名方便识别。"""
-    return f"trash/{fid}/{storage_key.rsplit('/', 1)[-1]}"
+    return f"{user_id}/trash/{fid}/{storage_key.rsplit('/', 1)[-1]}"
 
 
 async def _move_to_trash(storage, f: File) -> None:
     """把物理文件移入回收站目录，更新 storage_key；失败时静默忽略。"""
     if f.storage_key.startswith("_trash_/"):
         return  # 已在回收站
-    trash_key = _to_trash_key(f.id, f.storage_key)
+    trash_key = _to_trash_key(f.user_id, f.id, f.storage_key)
     try:
         await storage.rename_file(f.storage_key, trash_key)
         f.storage_key = trash_key

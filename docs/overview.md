@@ -1,26 +1,25 @@
 # 咕咕 · 项目文档
 
-> 最后更新：2026-06-17
+> 最后更新：2026-06-21
 > 代号：咕咕 · 域名：gugugu.site
 
 ---
 
 ## 一、项目简介
 
-**咕咕** 是一个面向自由职业创作者（插画、动画等）的项目管理工具。核心功能是统一管理项目进度、文件归档和排期提醒，未来通过自然语言完成管理操作，并扩展至团队/企业（ToB）。
+**咕咕** 是面向创作者（插画、动画等）的 AI 驱动项目管理工具，**多用户产品**，所有数据按 `user_id` 隔离。核心功能是统一管理项目进度、文件归档和排期提醒，通过自然语言 Agent 完成管理操作，未来扩展至团队/企业（ToB）。
 
-**规划功能空间：**
+**功能空间：**
 
 | 空间 | 说明 | 状态 |
 |------|------|------|
-| 项目 | 看板管理、阶段跟踪、截止日期 | ✅ 完成 |
-| 日历 | 项目排期可视化、自定义事件 | ✅ 完成 |
-| 文件库 | 按项目/阶段归档，本地/OSS 双后端 | ✅ 完成（重构后） |
-| 总览 | 统计卡片、近期节点、最近文件 | ✅ 完成 |
-| 思维 | 创意画布（节点图），可挂文件 | 🔜 预留 |
-| 素材板 | 素材管理，自动打 tag | 🔜 预留 |
-| 客户 | 客户信息管理 | 🔜 规划中 |
-| 自然语言管理 | 对话完成项目 / 文件 / 提醒操作 | 🔜 规划中 |
+| 项目 | 看板管理、阶段跟踪、截止日期、文件附件 | ✅ 完成 |
+| 日历 | 项目排期可视化、自定义事件、中国节假日标注 | ✅ 完成 |
+| 文件库 | 按项目/文件夹归档，本地/OSS 双后端，文件预览 | ✅ 完成 |
+| 总览 | 统计卡片、近期节点、最近文件、月历面板 | ✅ 完成 |
+| 自然语言管理 | AI Agent 对话完成项目/日历操作（SSE 流式） | 🚧 开发中 |
+| 思维 | 创意画布（节点图） | 🔜 预留 |
+| 客户 | 客户信息管理（后端已完成，前端待开发） | 🔜 规划中 |
 
 ---
 
@@ -33,11 +32,9 @@
 | UI 组件库 | Arco Design Vue | 飞书出品 |
 | 后端框架 | FastAPI (Python) | 异步 |
 | 数据库 | PostgreSQL + SQLAlchemy 2.0 | 异步驱动 asyncpg |
-| 缓存 | Redis | 会话缓存、实时推送（预留） |
 | 文件存储 | 本地磁盘 / 阿里云 OSS | Admin 面板可热切换，无需重启 |
-| 模型 | 通义千问（OpenAI 兼容格式） | 可切换 5 个 provider |
-| 认证 | JWT（jose + passlib） | 用户 Token + Admin Token 分离 |
-| 容器化 | Docker Compose | 本地一键启动全栈 |
+| AI | Anthropic / OpenAI / 通义千问 / DeepSeek / MiniMax | 共用 OpenAI-compatible 接口，可切换 |
+| 认证 | JWT（jose + bcrypt） | User Token + Admin Token 分离 |
 
 ---
 
@@ -45,63 +42,54 @@
 
 ```
 Gugu-web/
-├── docs/
-│   ├── overview.md       ← 本文件（主文档）
-│   ├── backend.md        ← 后端开发参考
-│   ├── design.md         ← UI/UX 设计规范
-│   ├── storage.md        ← 文件存储结构规范（权威文档）
-│   ├── wishlist.md       ← 功能 Wishlist
-│   └── dev-log.md        ← 早期开发记录
-├── docker-compose.yml
-├── design/
-│   └── prototype.html    ← 可交互原型稿
+├── docs/                         ← 项目文档
 ├── frontend/
 │   └── src/
-│       ├── main.js
 │       ├── assets/styles/
 │       │   ├── variables.css     ← CSS 设计 Token
 │       │   └── global.css
 │       ├── router/index.js
-│       ├── stores/               ← projects / ui / config / admin
-│       ├── services/
-│       │   ├── api.js            ← projectsApi / filesApi / eventsApi / clientsApi
-│       │   └── cache.js          ← uploadSignal（跨组件刷新信号）
-│       ├── layouts/
-│       │   ├── DefaultLayout.vue
-│       │   └── AdminLayout.vue
+│       ├── stores/
+│       │   ├── projects.js
+│       │   ├── audio.js          ← 音频播放器全局状态
+│       │   ├── clipboard.js      ← 文件剪切/复制状态
+│       │   ├── filesCache.js     ← 全量文件元数据缓存 + 乐观更新
+│       │   └── preview.js        ← 文件预览状态
+│       ├── services/api.js       ← 所有 API 封装
 │       ├── components/common/
 │       │   ├── AppSidebar.vue
-│       │   ├── NavItem.vue
-│       │   ├── AiFloatBall.vue
-│       │   └── DatePicker.vue
+│       │   ├── AiFloatBall.vue   ← AI 悬浮球 + 迷你播放器
+│       │   ├── BaseModal.vue     ← 所有弹窗基类
+│       │   ├── ContextMenu.vue   ← 右键菜单
+│       │   ├── FilePreviewModal.vue
+│       │   ├── FloatPreviewWindow.vue
+│       │   └── viewers/          ← PdfViewer / ImageViewer / VideoViewer / TextViewer
 │       └── views/
 │           ├── Dashboard/
 │           ├── Projects/
 │           ├── Calendar/
 │           ├── Files/
-│           │   ├── index.vue
-│           │   └── UploadModal.vue
 │           └── Admin/
 └── backend/
     └── app/
         ├── main.py
         ├── core/
         │   ├── config.py         ← StorageSettings / AISettings / DBSettings
-        │   └── security.py
+        │   └── security.py       ← JWT + stream token
         ├── api/v1/
         │   ├── auth.py
-        │   ├── admin_auth.py
-        │   ├── config.py
+        │   ├── admin_auth.py / config.py
         │   ├── projects.py
-        │   ├── files.py
+        │   ├── files.py          ← 含 /all /version /copy /download /stream /thumb
+        │   ├── folders.py        ← 含 /all；支持 parent_id 无限嵌套
+        │   ├── trash.py          ← list/restore/hard-delete/empty；定时清理
         │   ├── events.py
         │   ├── clients.py
-        │   └── agent.py          ← 待实现
-        ├── models/__init__.py    ← User/Project/File/MindMap/CalendarEvent/Client
+        │   └── agent.py          ← SSE 流式，Anthropic/OpenAI 双路由，工具调用
+        ├── models/__init__.py
         ├── schemas/__init__.py
-        ├── services/
-        │   └── storage/          ← StorageBackend / LocalStorageBackend / OSSStorageBackend
-        └── db/
+        ├── services/storage/     ← StorageBackend / LocalStorageBackend / OSSStorageBackend
+        └── db/session.py         ← 自动迁移 _MIGRATIONS
 ```
 
 ---
@@ -115,7 +103,7 @@ Gugu-web/
 | `/dashboard` | 总览 | ✅ |
 | `/projects` | 项目看板 | ✅ |
 | `/calendar` | 日历 | ✅ |
-| `/files` | 文件库 | ✅（重构后） |
+| `/files` | 文件库 | ✅ |
 | `/mind` | 思维画布 | 🔜 即将推出 |
 
 ### 管理后台
@@ -123,7 +111,7 @@ Gugu-web/
 | 路径 | 页面 | 状态 |
 |------|------|------|
 | `/admin/login` | 管理员登录 | ✅ |
-| `/admin/config` | 系统配置（DB / Redis / Storage） | ✅ |
+| `/admin/config` | 系统配置（DB / Storage / AI） | ✅ |
 
 ---
 
@@ -134,13 +122,29 @@ Gugu-web/
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET/POST/PATCH/DELETE` | `/api/v1/projects` | 项目 CRUD；改名时联动重命名存储目录 |
-| `GET` | `/api/v1/files` | 列出文件（支持 space/project_id/stage_name/ext/q 过滤） |
-| `GET` | `/api/v1/files/tree` | 文件库导航树（项目→阶段汇总） |
-| `POST` | `/api/v1/files` | 上传文件（支持四空间） |
-| `PATCH` | `/api/v1/files/{id}` | 重命名/移动文件（同步磁盘） |
-| `DELETE` | `/api/v1/files/{id}` | 删除文件（同步磁盘） |
+| `GET` | `/api/v1/files` | 列出文件（支持 project_id/folder_id/ext/q 过滤） |
+| `GET` | `/api/v1/files/all` | 当前用户所有文件元数据（全量缓存用） |
+| `GET` | `/api/v1/files/version` | 文件表状态摘要（count:max_updated:max_deleted），前端用于感知变更 |
+| `GET` | `/api/v1/files/tree` | 文件库导航树 |
+| `POST` | `/api/v1/files` | 上传文件 |
+| `PATCH` | `/api/v1/files/{id}` | 重命名 / 移动文件 |
+| `DELETE` | `/api/v1/files/{id}` | 软删除（移入回收站） |
+| `POST` | `/api/v1/files/batch-delete` | 批量软删除 |
+| `POST` | `/api/v1/files/{id}/copy` | 复制文件 |
+| `GET` | `/api/v1/files/{id}/download` | 下载（Bearer token 鉴权） |
+| `GET` | `/api/v1/files/{id}/stream` | 视频流播放 |
+| `GET` | `/api/v1/files/{id}/thumb` | 图片缩略图（tiny/card/full） |
+| `GET` | `/api/v1/files/{id}/preview-pdf` | Office → PDF 转换预览 |
+| `GET` | `/api/v1/folders` | 列出文件夹 |
+| `GET` | `/api/v1/folders/all` | 当前用户所有文件夹（全量缓存用） |
+| `POST/PATCH/DELETE` | `/api/v1/folders` | 文件夹 CRUD |
+| `GET` | `/api/v1/folders/{id}/download-zip` | 打包下载文件夹 |
 | `GET/POST/PATCH/DELETE` | `/api/v1/events` | 日历事件 CRUD |
 | `GET/POST/DELETE` | `/api/v1/clients` | 客户 CRUD |
+| `GET/DELETE` | `/api/v1/trash` | 回收站列出 / 清空 |
+| `POST` | `/api/v1/trash/{id}/restore` | 恢复单个文件 |
+| `DELETE` | `/api/v1/trash/{id}` | 永久删除 |
+| `POST` | `/api/v1/agent/chat` | AI Agent 对话（SSE 流式） |
 
 ### Admin API（需 Admin Token）
 
@@ -148,12 +152,7 @@ Gugu-web/
 |------|------|------|
 | `POST` | `/api/v1/admin/auth/login` | 管理员登录 |
 | `GET/PATCH` | `/api/v1/admin/config` | 读取/更新系统配置（热更新） |
-| `POST` | `/api/v1/admin/config/test-connection` | 测试 DB / Redis / OSS 连通性 |
-
-### 已废弃
-
-- `POST /api/v1/files/{id}/versions` — 版本管理已移除
-- `GET/POST/PATCH/DELETE /api/v1/folders/*` — 自定义文件夹已移除
+| `POST` | `/api/v1/admin/config/test-connection` | 测试 DB / OSS 连通性 |
 
 ---
 
@@ -163,84 +162,37 @@ Gugu-web/
 |----|------|------|
 | `users` | 用户账号 | ✅ |
 | `projects` | 项目（含 stages_json、done_at） | ✅ |
-| `files` | 文件（四空间：project/mind/asset/personal） | ✅ 重构后 |
+| `files` | 文件（deleted_at 软删除，storage_key 物理路径） | ✅ |
+| `folders` | 文件夹（parent_id 自引用，无限嵌套） | ✅ |
 | `calendar_events` | 日历事件 | ✅ |
 | `clients` | 客户信息 | ✅ |
-| `mind_maps` | 思维画布（预留，暂不开发） | ✅ 表结构已建 |
-| `conversation_sessions` | 自然语言管理对话会话 | ✅ |
-| `conversation_messages` | 自然语言管理对话消息 | ✅ |
-
-**已移除：** `file_versions`、`folders`
+| `conversation_sessions` | AI 对话会话 | ✅ 表结构已建 |
+| `conversation_messages` | AI 对话消息 | ✅ 表结构已建 |
+| `mind_maps` | 思维画布（预留） | ✅ 表结构已建 |
 
 文件存储详细规范见 `docs/storage.md`。
 
 ---
 
-## 七、文件存储（摘要）
-
-四个独立空间，存储路径均以 `storage_key`（相对路径）标识：
-
-```
-{user_id}/
-├── {项目名} #{id}/          ← project 空间
-│   └── {阶段名}/
-├── 思维/{画布名} #{id}/     ← mind 空间（预留）
-├── 素材板/                  ← asset 空间（预留）
-└── 个人文件/                ← personal 空间
-```
-
-存储后端（local / oss）可通过 Admin 面板实时切换，`storage_key` 格式对两种后端完全一致。
-
-详见 `docs/storage.md`。
-
----
-
-## 八、配置系统
+## 七、配置系统
 
 优先级：`.env` → `config.override.json`（Admin UI 写入，热更新无需重启）
 
 | 分区 | 关键字段 |
 |------|---------|
 | `db` | host / port / name / user / password |
-| `redis` | host / port / password |
-| `storage` | backend(`local`\|`oss`) / local_path / oss_* / oss_prefix |
-| `model` | provider / api_key / base_url / model |
+| `storage` | backend(`local`\|`oss`) / local_path / oss_* |
+| `ai` | provider / api_key / base_url / model |
 
 默认 Admin 账号：`admin / admin123`（**上线前必须修改**）
 
 ---
 
-## 九、UI 设计规范（摘要）
+## 八、本地启动
 
-**风格：** Glassmorphism + 冷淡灰紫色系
-
-| 变量 | 值 |
-|------|----|
-| 背景渐变 | `#e8e9ee` → `#9aa2b8`（160deg，fixed） |
-| 卡片 | `rgba(255,255,255,0.56)` + `backdrop-filter: blur(20px)` |
-| 主色 | `#7b7fb2`（灰紫） |
-| 辅色 | `#c4afc8`（粉灰）/ `#7ab8c8`（青灰） |
-| 成功 | `#5a9e88` |
-| 警告 | `#b07858` |
-| 圆角 | 面板 `18px`，元素 `10–14px` |
-| 弹窗动画 | **纯 opacity，禁止任何 transform**（backdrop-filter 兼容性问题） |
-
-详见 `docs/design.md`。
-
----
-
-## 十、本地启动
-
-**Docker Compose（推荐）**
-```bash
-cp .env.example .env
-docker-compose up
-```
-
-**分别启动**
 ```bash
 # 后端（必须在 backend/ 目录）
-cd backend && uvicorn app.main:app --reload --port 8000
+cd backend && make start
 
 # 前端
 cd frontend && npm run dev
@@ -250,44 +202,26 @@ cd frontend && npm run dev
 
 ---
 
-## 十一、开发进度
+## 九、开发进度
 
 ### 已完成 ✅
 
 - 全局布局：侧边栏、顶栏玻璃效果、路由守卫
-- 通用组件：AppSidebar（通知弹窗）、NavItem、AiFloatBall、DatePicker
-- **总览（Dashboard）**：统计卡片、项目列表、日历面板、文件面板
-- **项目看板（Projects）**：三列看板、拖拽、DoneColumn 年月折叠、ProjectModal/NewProjectModal
-- **日历（Calendar）**：月视图、项目 bar、事件 chip、实时拖拽预览、跨夜日期自动更新
-- **文件库（Files）**：四空间架构重构、项目/阶段树导航、拖拽上传预填、XHR 进度条、local/OSS 存储抽象
-- 管理后台：登录、系统配置（DB/Redis/Storage 热更新）
-- 后端全套 API + 存储抽象层
+- **总览（Dashboard）**：统计卡片、项目列表、日历面板（含节假日）、文件面板
+- **项目看板（Projects）**：三列看板、拖拽、DoneColumn、ProjectModal（含文件区）、NewProjectModal
+- **日历（Calendar）**：月视图、事件/项目 bar、实时拖拽预览、中国节假日标注
+- **文件库（Files）**：7 层导航、框选、批量操作、右键菜单、剪贴板、文件预览（PDF/图/视频/文本/Office）、浮动预览窗、缩略图懒加载、全量元数据缓存
+- **音频迷你播放器**：集成在 AiFloatBall，固定/非固定模式
+- **AI Agent**：SSE 流式，Anthropic/OpenAI 双路由，最多 5 轮工具调用（查询/创建/更新项目，创建日历事件）
+- **文件双向同步**：Tab 切回时自动校验 `/files/version`，本地手动删除文件自动清理数据库
+- Admin 后台：登录、系统配置热更新
 
 ### 待开发 🚧
 
 | 优先级 | 功能 |
 |--------|------|
-| 高 | 自然语言管理接口（SSE 流式，接通义千问） |
-| 高 | 定时任务（按周期自动提醒 / 归档 / 同步） |
-| 高 | 前端文件库重构（适配新 API） |
-| 中 | 客户管理页面 |
-| 中 | Admin 面板存储配置 UI（OSS 切换） |
-| 低 | 通知系统后端 |
+| 高 | Agent 对话历史持久化，前端 UI 优化 |
+| 高 | Agent 工具扩展（修改阶段/配色，查询文件） |
+| 中 | 客户管理页面（后端 API 已完成） |
+| 中 | 通知系统 |
 | 低 | 思维画布页面 |
-| 低 | 素材板页面 |
-
----
-
-## 十二、下一步建议顺序
-
-```
-自然语言管理接入（通义千问 SSE 流式）
-       ↓
-定时任务（按周期自动提醒 / 归档 / 同步）
-       ↓
-思维画布（节点图）
-       ↓
-团队 / 企业版（ToB）
-       ↓
-客户管理
-```

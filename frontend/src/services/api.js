@@ -101,8 +101,9 @@ export const filesApi = {
     const qs = new URLSearchParams(p).toString()
     return get(`/files${qs ? '?' + qs : ''}`)
   },
-  tree:   ()         => get('/files/tree'),
-  all:    ()         => get('/files/all'),
+  tree:    ()         => get('/files/tree'),
+  all:     ()         => get('/files/all'),
+  version: ()         => get('/files/version'),
   update: (id, data) => patch(`/files/${id}`, data),
   delete:      (id)   => del(`/files/${id}`),
   batchDelete: (ids)  => post('/files/batch-delete', { ids }),

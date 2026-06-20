@@ -48,7 +48,7 @@ async def list_projects(
 ):
     stmt = (
         select(Project, func.count(File.id).label("fc"))
-        .outerjoin(File, File.project_id == Project.id)
+        .outerjoin(File, (File.project_id == Project.id) & File.deleted_at.is_(None))
         .where(Project.user_id == current_user.id)
         .group_by(Project.id)
         .order_by(Project.created_at.desc())
@@ -146,7 +146,7 @@ async def update_project(
     await db.refresh(p)
 
     fc_res = await db.execute(
-        select(func.count(File.id)).where(File.project_id == pid)
+        select(func.count(File.id)).where(File.project_id == pid, File.user_id == current_user.id, File.deleted_at.is_(None))
     )
     return _to_resp(p, fc_res.scalar_one())
 

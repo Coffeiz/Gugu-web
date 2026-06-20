@@ -7,6 +7,29 @@
 
 ---
 
+## [0.7.0] - 2026-06-21
+
+### 新增
+
+- **文件双向同步**：Tab 切回时自动调 `GET /files/version`（返回 `count:max_updated:max_deleted` 摘要），版本变化则静默重拉全量数据，感知删除/修改/新增；本地手动删除文件后 UI 自动同步（`/files/all` 扫描实体存在性，孤儿记录直接硬删，不进回收站）
+
+### 修复
+
+- **项目卡截止日期时区错误**：`new Date("YYYY-MM-DD")` 解析为 UTC 零点，凌晨访问时「今天截止」显示为「明天」；修复 `ProjectCard`、`ProjectList`、`ProjectDrawer`、`stores/projects.js` 共 4 处，改为本地日期零点比较
+- **项目卡文件数量不实时**：项目卡片的文件数量来自后端静态值，删除文件后不更新；改为从 `filesCache.allFiles` 实时计算
+- **项目列表 `file_count` 含回收站文件**：`GET /projects` 的 `file_count` 未过滤 `deleted_at`，导致回收站文件被计入；加 `deleted_at IS NULL` 过滤
+
+### 安全
+
+- **用户隔离漏洞修复**（6 处）：
+  - `copy_file`：目标 `project_id` / `folder_id` 未验证所有者，用户 A 可将文件复制进用户 B 的项目或文件夹
+  - `update_file`：目标 `folder_id` 未验证所有者，用户 A 可将文件移入用户 B 的文件夹
+  - `agent create_event`：`project_id` 未验证所有者，可将事件关联到其他用户的项目
+  - `update_project` 返回的 `file_count` 未过滤 `user_id`，可泄露其他用户文件数量
+- **回收站路径用户隔离**：回收站路径由 `trash/{fid}/` 改为 `{user_id}/trash/{fid}/`，确保多用户环境下回收站文件完全隔离
+
+---
+
 ## [0.6.0] - 2026-06-20 / 2026-06-21
 
 ### 新增

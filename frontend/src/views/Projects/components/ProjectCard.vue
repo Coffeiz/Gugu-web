@@ -70,7 +70,12 @@ const stageProgress = computed(() => {
   return Math.round((idx + 1) / stages.length * 100)
 })
 
-const daysLeft      = computed(() => Math.ceil((new Date(props.project.deadline) - new Date()) / 86400000))
+const daysLeft      = computed(() => {
+  if (!props.project.deadline) return null
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const dl    = new Date(props.project.deadline + 'T00:00:00')
+  return Math.ceil((dl - today) / 86400000)
+})
 const isUrgent      = computed(() => props.project.status !== 'done' && daysLeft.value <= 3)
 const deadlineLabel = computed(() => {
   if (!props.project.deadline) return '—'

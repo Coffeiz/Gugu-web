@@ -36,8 +36,18 @@ const nonDoneColumns = computed(() =>
   projectStore.kanbanColumns.filter(c => c.key !== 'done')
 )
 
+const liveFileCounts = computed(() => {
+  const m = new Map()
+  for (const f of cacheStore.allFiles) {
+    if (f.projectId != null) m.set(f.projectId, (m.get(f.projectId) ?? 0) + 1)
+  }
+  return m
+})
+
 function columnProjects(statusKey) {
-  return projectStore.projects.filter(p => p.status === statusKey)
+  return projectStore.projects
+    .filter(p => p.status === statusKey)
+    .map(p => ({ ...p, fileCount: liveFileCounts.value.get(p.id) ?? p.fileCount }))
 }
 
 function handleDrop({ projectId, targetStatus }) {

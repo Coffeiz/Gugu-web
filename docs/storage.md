@@ -1,6 +1,6 @@
 # 文件存储结构规范
 
-> 更新：2026-06-20
+> 更新：2026-06-21
 > 项目：咕咕 / gugugu.site
 
 ---
@@ -26,14 +26,19 @@ uploads/
     │   ├── 文件.pdf
     │   └── {用户文件夹}/
     │       └── 文件.pdf
-    └── 项目文件/
-        └── {year}/
-            └── {month}/
-                └── {项目名} #{project_id}/
-                    ├── 文件.pdf
-                    └── {用户文件夹}/
-                        └── 文件.pdf
+    ├── 项目文件/
+    │   └── {year}/
+    │       └── {month}/
+    │           └── {项目名} #{project_id}/
+    │               ├── 文件.pdf
+    │               └── {用户文件夹}/
+    │                   └── 文件.pdf
+    └── trash/
+        └── {file_id}/
+            └── 原文件名.ext   ← 软删除时移入，30 天后自动永久删除
 ```
+
+**用户隔离：** 回收站路径包含 `{user_id}/`，不同用户的回收站完全隔离。`/uploads/` 目录不对外静态暴露，所有访问必须经后端鉴权接口（`/files/{id}/download` 等）。
 
 **年月来源：** 优先用项目 `start_date`，fallback 到 `created_at`（`_proj_date()` 工具函数，`backend/app/api/v1/projects.py`）。
 
@@ -258,9 +263,10 @@ const _folderIdx = computed(() => { ... })
 
 ### 8.6 缓存失效策略
 
-- **主动失效**：写操作后局部更新索引，无需重新全量拉取
-- **兜底刷新**：`uploadSignal` 触发后静默后台 `refresh()`
-- 多标签/多设备场景由兜底刷新覆盖，无需 WebSocket
+- **主动失效**：写操作后局部更新索引（addFile/removeFile/updateFile 等乐观更新接口）
+- **版本校验**：Tab 切回（`visibilitychange` 事件）时调 `GET /files/version`，返回 `count:max_updated:max_deleted` 摘要；与上次版本不一致则静默重拉全量数据
+- **本地文件删除检测**：`GET /files/all` 在 LocalStorageBackend 下扫描每个文件实体是否存在；不存在的直接硬删数据库记录（不进回收站），确保 UI 与文件系统一致
+- 多标签/多设备场景由版本校验覆盖，无需 WebSocket
 
 ### 8.7 加载体验优化
 

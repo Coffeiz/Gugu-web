@@ -210,8 +210,9 @@ const stageLabel   = computed(() =>
 )
 
 const daysLeft = computed(() => {
-  if (!props.project) return 0
-  return Math.ceil((new Date(props.project.deadline) - new Date()) / 86400000)
+  if (!props.project?.deadline) return 0
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  return Math.ceil((new Date(props.project.deadline + 'T00:00:00') - today) / 86400000)
 })
 const isUrgent = computed(() => daysLeft.value <= 3)
 

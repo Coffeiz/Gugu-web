@@ -82,12 +82,14 @@ function accentColor(p) {
 }
 
 function isUrgent(p) {
-  if (p.status === 'done') return false
-  return Math.ceil((new Date(p.deadline) - new Date()) / 86400000) <= 3
+  if (p.status === 'done' || !p.deadline) return false
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const dl    = new Date(p.deadline + 'T00:00:00')
+  return Math.ceil((dl - today) / 86400000) <= 3
 }
 
 function formatDate(str) {
-  const d = new Date(str)
+  const d = new Date(str + 'T00:00:00')
   return `${d.getMonth() + 1}月${d.getDate()}日`
 }
 </script>
