@@ -1,56 +1,58 @@
-import { ref } from 'vue'
-
-const STORAGE_KEY = 'gugu_stage_templates'
+import { usePreferencesStore } from '@/stores/preferences'
 
 const DEFAULT_TEMPLATES = [
-  { id: 'default_1', name: '标准流程', stages: ['计划', '执行', '交付'] },
-  { id: 'default_2', name: '插画流程', stages: ['草稿', '线稿', '上色', '交付'] },
-  { id: 'default_3', name: '动画流程', stages: ['分镜', '原画', '动画', '后期', '交付'] },
+  { id: 'default_1', name: '标准流程',  stages: ['计划', '执行', '交付'] },
+  { id: 'default_2', name: '插画流程',  stages: ['草稿', '线稿', '上色', '交付'] },
+  { id: 'default_3', name: '动画流程',  stages: ['分镜', '原画', '动画', '后期', '交付'] },
 ]
 
-function load() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : [...DEFAULT_TEMPLATES]
-  } catch {
-    return [...DEFAULT_TEMPLATES]
-  }
-}
-
-function save(list) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
-}
-
-const templates = ref(load())
-
 export function useStageTemplates() {
-  function applyTemplate(id) {
-    return templates.value.find(t => t.id === id)?.stages ?? null
+  const prefs = usePreferencesStore()
+
+  const templates = prefs.stageTemplates.length
+    ? prefs.stageTemplates
+    : DEFAULT_TEMPLATES
+
+  // 返回响应式引用（直接用 store 的 ref）
+  const templatesRef = {
+    get value() {
+      return prefs.stageTemplates.length ? prefs.stageTemplates : DEFAULT_TEMPLATES
+    }
   }
 
-  function addTemplate(name, stages) {
+  function applyTemplate(id) {
+    const list = prefs.stageTemplates.length ? prefs.stageTemplates : DEFAULT_TEMPLATES
+    return list.find(t => t.id === id)?.stages ?? null
+  }
+
+  async function addTemplate(name, stages) {
     const trimmed = name.trim()
     if (!trimmed || !stages.length) return false
-    // 同名覆盖
-    const existing = templates.value.find(t => t.name === trimmed)
+    const current = prefs.stageTemplates.length ? [...prefs.stageTemplates] : [...DEFAULT_TEMPLATES]
+    const existing = current.find(t => t.name === trimmed)
     if (existing) {
       existing.stages = [...stages]
     } else {
-      templates.value.push({ id: `tpl_${Date.now()}`, name: trimmed, stages: [...stages] })
+      current.push({ id: `tpl_${Date.now()}`, name: trimmed, stages: [...stages] })
     }
-    save(templates.value)
+    await prefs.saveTemplates(current)
     return true
   }
 
-  function removeTemplate(id) {
-    const idx = templates.value.findIndex(t => t.id === id)
-    if (idx !== -1) { templates.value.splice(idx, 1); save(templates.value) }
+  async function removeTemplate(id) {
+    const current = prefs.stageTemplates.length ? [...prefs.stageTemplates] : [...DEFAULT_TEMPLATES]
+    const filtered = current.filter(t => t.id !== id)
+    await prefs.saveTemplates(filtered)
   }
 
-  function renameTemplate(id, name) {
-    const t = templates.value.find(t => t.id === id)
-    if (t) { t.name = name.trim(); save(templates.value) }
+  async function renameTemplate(id, name) {
+    const current = prefs.stageTemplates.length ? [...prefs.stageTemplates] : [...DEFAULT_TEMPLATES]
+    const t = current.find(t => t.id === id)
+    if (t) {
+      t.name = name.trim()
+      await prefs.saveTemplates(current)
+    }
   }
 
-  return { templates, applyTemplate, addTemplate, removeTemplate, renameTemplate }
+  return { templates: templatesRef, applyTemplate, addTemplate, removeTemplate, renameTemplate }
 }

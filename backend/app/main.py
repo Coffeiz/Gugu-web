@@ -23,6 +23,7 @@ from app.api.v1 import events as events_router
 from app.api.v1 import clients as clients_router
 from app.api.v1 import trash as trash_router
 from app.api.v1 import agent as agent_router
+from app.api.v1 import preferences as preferences_router
 from app.db.session import create_all_tables
 
 settings = get_settings()
@@ -171,8 +172,9 @@ app.include_router(files_router.router,    prefix="/api/v1")
 app.include_router(folders_router.router,  prefix="/api/v1")
 app.include_router(events_router.router,   prefix="/api/v1")
 app.include_router(clients_router.router,  prefix="/api/v1")
-app.include_router(trash_router.router,    prefix="/api/v1")
-app.include_router(agent_router.router,    prefix="/api/v1")
+app.include_router(trash_router.router,       prefix="/api/v1")
+app.include_router(agent_router.router,       prefix="/api/v1")
+app.include_router(preferences_router.router, prefix="/api/v1")
 
 # ── Admin 配置路由（需要 Admin token）──
 app.include_router(

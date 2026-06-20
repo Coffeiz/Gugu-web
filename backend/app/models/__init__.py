@@ -33,6 +33,31 @@ class User(Base):
     clients:       Mapped[list["Client"]]              = relationship(back_populates="owner", cascade="all, delete-orphan")
     mind_maps:     Mapped[list["MindMap"]]             = relationship(back_populates="owner", cascade="all, delete-orphan")
     conversations: Mapped[list["ConversationSession"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    preferences:   Mapped[Optional["UserPreferences"]] = relationship(back_populates="owner", cascade="all, delete-orphan", uselist=False)
+
+
+# ── UserPreferences ──────────────────────────────────────────────────────────
+
+class UserPreferences(Base):
+    __tablename__ = "user_preferences"
+
+    id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:    Mapped[int]      = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
+    data_json:  Mapped[str]      = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner: Mapped["User"] = relationship(back_populates="preferences")
+
+    @property
+    def data(self) -> dict:
+        try:
+            return json.loads(self.data_json)
+        except Exception:
+            return {}
+
+    @data.setter
+    def data(self, value: dict):
+        self.data_json = json.dumps(value, ensure_ascii=False)
 
 
 # ── Project ──────────────────────────────────────────────────────────────────

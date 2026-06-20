@@ -78,9 +78,7 @@
                   :style="{ background: c }"
                   @click="setColor(c)"
                 >
-                  <svg v-if="localColor === c" width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.4" stroke-linecap="round">
-                    <path d="M2 6l3 3 5-5"/>
-                  </svg>
+                  <PhCheck v-if="localColor === c" :size="11" weight="bold" style="color:white" />
                 </button>
               </div>
             </div>
@@ -106,9 +104,7 @@
                 @mousedown="editingStage !== stage.key && startStageDrag(i, $event)"
               >
                 <div class="node-circle" :style="i === activeStageIdx && stage.key !== draggedStageKey ? { background: localColor } : {}">
-                  <svg v-if="i < activeStageIdx && stage.key !== draggedStageKey" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round">
-                    <path d="M2 6l3 3 5-5"/>
-                  </svg>
+                  <PhCheck v-if="i < activeStageIdx && stage.key !== draggedStageKey" :size="10" weight="bold" style="color:white" />
                   <span v-else class="node-num">{{ i + 1 }}</span>
                 </div>
                 <div class="node-body">
@@ -121,7 +117,7 @@
                   />
                   <span v-else class="node-label" @click.stop="startEdit(stage.key)">{{ stage.label }}</span>
                   <button class="del-stage" @click.stop="removeStage(stage.key)">
-                    <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 2l6 6M8 2L2 8"/></svg>
+                    <PhX :size="9" weight="bold" />
                   </button>
                 </div>
                 <div v-if="i < displayStages.length - 1" class="node-line"></div>
@@ -132,7 +128,6 @@
             <Teleport to="body">
               <div v-if="stageDrag.active" class="stage-drag-ghost-full"
                 :style="{ left: stageDrag.ghostX + 'px', top: stageDrag.ghostY + 'px', width: stageDrag.ghostWidth + 'px' }">
-                <div class="node-circle"></div>
                 <span class="node-label">{{ stageDrag.ghostLabel }}</span>
               </div>
             </Teleport>
@@ -167,7 +162,7 @@
                 @drop="onPmBcDrop(null, $event)"
               >项目文件</button>
               <template v-for="(seg, idx) in folderStack" :key="seg.id">
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" class="bc-sep"><path d="M3 2l4 3-4 3"/></svg>
+                <PhCaretRight :size="10" weight="bold" class="bc-sep" />
                 <button v-if="idx < folderStack.length - 1" class="bc-seg"
                   :class="{ 'bc-drop-target': pmBcDragOverIdx === idx }"
                   @click="navigateTo(idx)"
@@ -263,7 +258,7 @@
                   @drop="onPmFolderDrop(folder, $event)">
                   <Transition name="sel-cb">
                     <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFolderIds.has(folder.id) }">
-                      <svg v-if="pmSelectedFolderIds.has(folder.id)" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg>
+                      <PhCheck v-if="pmSelectedFolderIds.has(folder.id)" :size="10" weight="bold" style="color:white" />
                     </div>
                   </Transition>
                   <div class="fd-icon-area">
@@ -306,7 +301,7 @@
                   @dragend="onPmFileDragEnd">
                   <Transition name="sel-cb">
                     <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFileIds.has(file.id) }">
-                      <svg v-if="pmSelectedFileIds.has(file.id)" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg>
+                      <PhCheck v-if="pmSelectedFileIds.has(file.id)" :size="10" weight="bold" style="color:white" />
                     </div>
                   </Transition>
                   <span class="fc-ext-badge" :style="{ color: fileIconColor(file.ext), background: fileIconColor(file.ext) + '18' }">{{ file.ext }}</span>
@@ -413,7 +408,7 @@
                 <!-- 上传卡片 -->
                 <label class="fc-upload" :class="{ dragging }"
                   @dragover.prevent="dragging = true" @dragleave="dragging = false" @drop.prevent="handleFileDrop">
-                  <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12V3M5 7l4-4 4 4"/><path d="M2 14h14"/></svg>
+                  <PhUploadSimple :size="16" weight="bold" />
                   <span>上传文件</span>
                   <input type="file" hidden multiple @change="handleFileInput" />
                 </label>
@@ -457,7 +452,7 @@
                   <span class="lr-actions">
                     <Transition name="sel-cb">
                       <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFolderIds.has(folder.id) }">
-                        <svg v-if="pmSelectedFolderIds.has(folder.id)" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg>
+                        <PhCheck v-if="pmSelectedFolderIds.has(folder.id)" :size="10" weight="bold" style="color:white" />
                       </div>
                     </Transition>
                     <template v-if="!pmInSelectionMode">
@@ -494,7 +489,7 @@
                   <span class="lr-actions">
                     <Transition name="sel-cb">
                       <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFileIds.has(file.id) }">
-                        <svg v-if="pmSelectedFileIds.has(file.id)" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg>
+                        <PhCheck v-if="pmSelectedFileIds.has(file.id)" :size="10" weight="bold" style="color:white" />
                       </div>
                     </Transition>
                     <template v-if="!pmInSelectionMode">
@@ -522,7 +517,7 @@
                 </div>
                 <!-- 上传行 -->
                 <label class="list-upload-row" @dragover.prevent="dragging = true" @dragleave="dragging = false" @drop.prevent="handleFileDrop">
-                  <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 9V3M4 6l3-3 3 3"/><path d="M1 11h12"/></svg>
+                  <PhUploadSimple :size="13" weight="bold" />
                   上传文件 <input type="file" hidden multiple @change="handleFileInput" />
                 </label>
               </div>
@@ -648,7 +643,7 @@ import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import {
-  PhFolder, PhArrowLeft, PhArrowRight, PhSortAscending, PhSquaresFour, PhList,
+  PhFolder, PhArrowLeft, PhArrowRight, PhCaretRight, PhSortAscending, PhSquaresFour, PhList,
   PhCheckSquare, PhFolderPlus, PhUploadSimple, PhPencilSimple,
   PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX, PhCheck,
   PhInfo, PhWarningCircle, PhDotsThree, PhTrash,
@@ -1539,9 +1534,11 @@ function startStageDrag(fromIdx, e) {
     document.removeEventListener('mousemove', mm)
     document.removeEventListener('mouseup', mu)
     if (activated) {
+      stageDrag.active = false
+      stageDrag.fromIdx = -1
+      stageDrag.overIdx = -1
       commitStageDrag()
       document.addEventListener('click', ce => ce.stopPropagation(), { capture: true, once: true })
-      setTimeout(() => { stageDrag.active = false; stageDrag.fromIdx = -1; stageDrag.overIdx = -1 }, 30)
     }
     document.body.style.cursor     = ''
     document.body.style.userSelect = ''
@@ -1853,9 +1850,9 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* 状态 */
 .status-group { display: flex; gap: 4px; flex-wrap: wrap; }
 .status-btn {
-  display: flex; align-items: center; gap: 5px;
-  padding: 3px 9px; border-radius: 20px;
-  border: 1.5px solid transparent; font-size: 11px; font-weight: 600;
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 20px;
+  border: 1.5px solid transparent; font-size: 12px; font-weight: 600;
   cursor: pointer; font-family: var(--font-sans);
   background: rgba(0,0,0,0.04); color: var(--text-secondary);
   transition: background 0.15s, color 0.15s, border-color 0.15s; outline: none;
@@ -1872,7 +1869,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* 配色 */
 .color-grid { display: flex; gap: 6px; flex-wrap: wrap; }
 .color-chip {
-  width: 20px; height: 20px; border-radius: 50%;
+  width: 22px; height: 22px; border-radius: 50%;
   border: 2px solid rgba(255,255,255,0.5);
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   transition: border-color 0.15s; padding: 0; outline: none;
@@ -2453,21 +2450,18 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 <style>
 .stage-drag-ghost-full {
   position: fixed; z-index: 9999; pointer-events: none;
-  display: flex; align-items: center; gap: 10px;
-  padding: 5px 12px 5px 10px;
+  display: flex; align-items: center;
+  padding: 5px 12px;
   background: rgba(238,240,246,0.96);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(123,127,178,0.3);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(30,40,80,0.14);
-  opacity: 0.95;
-}
-.stage-drag-ghost-full .node-circle {
-  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
-  border: 1.5px solid rgba(0,0,0,0.12); background: rgba(0,0,0,0.08);
+  opacity: 0.95; box-sizing: border-box;
 }
 .stage-drag-ghost-full .node-label {
-  font-size: 13px; color: #1e2028; font-weight: 500; white-space: nowrap;
+  font-size: 13px; color: #1e2028; font-weight: 500;
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* ── 右键菜单 ── */
 .ctx-item {

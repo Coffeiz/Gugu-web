@@ -253,3 +253,14 @@ class ClientResponse(CamelModel):
     email: Optional[str]
     phone: Optional[str]
     notes: str
+
+
+# ── UserPreferences ───────────────────────────────────────────────────────────
+
+class PreferencesResponse(CamelModel):
+    lastStages:     list[str] = []
+    stageTemplates: list[dict] = []
+
+class PreferencesUpdate(CamelModel):
+    lastStages:     Optional[list[str]]  = None
+    stageTemplates: Optional[list[dict]] = None

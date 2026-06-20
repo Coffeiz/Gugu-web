@@ -5,17 +5,14 @@
     <div class="cal-toolbar glass-card">
       <div class="toolbar-left">
         <button class="nav-btn" @click="prev">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 2L4 7l5 5"/></svg>
+          <PhCaretLeft :size="14" weight="bold" />
         </button>
         <button class="period-btn" ref="pickerAnchorRef" @click="togglePicker">
           <span>{{ periodLabel }}</span>
-          <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-            :style="{ transform: pickerOpen ? 'rotate(180deg)' : '', transition: 'transform 0.2s' }">
-            <path d="M2 3.5l3.5 3.5 3.5-3.5"/>
-          </svg>
+          <PhCaretDown :size="11" weight="bold" :style="{ transform: pickerOpen ? 'rotate(180deg)' : '', transition: 'transform 0.2s' }" />
         </button>
         <button class="nav-btn" @click="next">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 2l5 5-5 5"/></svg>
+          <PhCaretRight :size="14" weight="bold" />
         </button>
       </div>
       <button class="today-btn" @click="goToday">今天</button>
@@ -120,7 +117,7 @@
         <div class="sidebar-top">
           <div class="sidebar-date-label">{{ selectedDateLabel }}</div>
           <button class="add-event-btn" ref="addBtnRef" @click="openAddForm">
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 1v11M1 6.5h11"/></svg>
+            <PhPlus :size="13" weight="bold" />
             添加活动
           </button>
         </div>
@@ -140,9 +137,7 @@
               </div>
               <template v-if="ev.isUserEvent">
                 <div class="sidebar-ev-desc">
-                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" style="flex-shrink:0;opacity:0.38;margin-top:1px">
-                    <path d="M2 4h10M2 7h7M2 10h5"/>
-                  </svg>
+                  <PhAlignLeft :size="11" weight="bold" style="flex-shrink:0;opacity:0.38;margin-top:1px" />
                   <span v-if="ev.description">{{ ev.description }}</span>
                 </div>
               </template>
@@ -154,16 +149,12 @@
               </template>
             </div>
             <button v-if="ev.isUserEvent" class="ev-del-btn" @click.stop="deleteEvent(ev)" title="删除活动">
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-                <path d="M3 5h10M6 5V3h4v2M5 5l.5 8h5l.5-8"/>
-              </svg>
+              <PhTrash :size="12" weight="bold" />
             </button>
           </div>
         </div>
         <div v-else class="sidebar-empty">
-          <svg width="26" height="26" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.3">
-            <rect x="3" y="4" width="22" height="20" rx="4"/><path d="M9 2v4M19 2v4M3 10h22"/>
-          </svg>
+          <PhCalendarBlank :size="26" weight="bold" style="opacity:0.3" />
           <span>当天无日程</span>
         </div>
 
@@ -218,11 +209,11 @@
       <div v-if="pickerOpen" class="cal-month-picker" ref="pickerRef" :style="pickerStyle">
         <div class="picker-year-row">
           <button class="picker-nav" @click.stop="pickerYear--">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 2L4 6l4 4"/></svg>
+            <PhCaretLeft :size="12" weight="bold" />
           </button>
           <span class="picker-year">{{ pickerYear }}</span>
           <button class="picker-nav" @click.stop="pickerYear++">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 2l4 4-4 4"/></svg>
+            <PhCaretRight :size="12" weight="bold" />
           </button>
         </div>
         <div class="picker-months">
@@ -257,13 +248,18 @@
   <Teleport to="body">
     <Transition name="form-pop">
       <div v-if="showEditForm && editingEvent" class="add-event-popup" ref="editFormRef" :style="editFormStyle">
-        <div class="popup-title">编辑活动</div>
+        <div class="popup-header">
+          <span class="popup-title">编辑活动</span>
+          <button class="popup-close-btn" @click="showEditForm = false" title="关闭">
+            <PhX :size="12" weight="bold" />
+          </button>
+        </div>
         <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
         <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
         <textarea v-model="editingEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="popup-actions">
-          <button class="popup-cancel" @click="showEditForm = false">取消</button>
           <button class="popup-save" @click="saveEditEvent" :disabled="!editingEvent.name">保存</button>
+          <button class="popup-delete" @click="deleteEventFromEdit">删除</button>
         </div>
       </div>
     </Transition>
@@ -281,6 +277,7 @@ import { useProjectStore } from '@/stores/projects'
 import { eventsApi } from '@/services/api'
 import DatePicker from '@/components/common/DatePicker.vue'
 import { useHolidays } from '@/composables/useHolidays'
+import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX } from '@phosphor-icons/vue'
 
 const projectStore = useProjectStore()
 const todayIso = ref(toIso(new Date()))
@@ -966,6 +963,13 @@ async function deleteEvent(ev) {
   try { await eventsApi.delete(ev.id) } catch { }
 }
 
+async function deleteEventFromEdit() {
+  const ev = editingEvent.value
+  if (!ev) return
+  showEditForm.value = false
+  await deleteEvent(ev)
+}
+
 async function saveEvent() {
   if (!newEvent.value.name) return
   const date = newEvent.value.date || selectedDate.value
@@ -1154,15 +1158,15 @@ async function saveEvent() {
 .sidebar-ev { display: flex; gap: 9px; align-items: flex-start; background: rgba(255,255,255,0.66); border: 1px solid rgba(255,255,255,0.88); border-radius: 10px; padding: 8px 10px; }
 .sidebar-ev-body { flex: 1; min-width: 0; }
 .ev-del-btn {
-  background: rgba(200,150,42,0.1);
-  border: 1px solid rgba(200,150,42,0.22);
+  background: rgba(176,120,88,0.08);
+  border: 1px solid rgba(176,120,88,0.3);
   cursor: pointer; flex-shrink: 0;
-  color: #c8962a; padding: 4px;
+  color: #b07858; padding: 4px;
   display: flex; align-items: center; align-self: center;
   border-radius: 6px; margin-left: auto;
   transition: background 0.15s, transform 0.15s;
 }
-.ev-del-btn:hover { background: rgba(200,150,42,0.2); transform: scale(1.1); }
+.ev-del-btn:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); transform: scale(1.1); }
 .sidebar-ev-bar { width: 3px; border-radius: 99px; align-self: stretch; flex-shrink: 0; min-height: 26px; }
 .sidebar-ev-name { font-size: 12px; font-weight: 600; color: var(--text-primary); line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
 .ev-type-badge {
@@ -1255,16 +1259,19 @@ async function saveEvent() {
 .picker-enter-from,.picker-leave-to { opacity: 0; transform: scaleY(0.9) translateY(-6px); transform-origin: top; }
 
 .add-event-popup { background: rgba(255,255,255,0.66); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.88); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; }
-.popup-title { font-size: 13px; font-weight: 700; color: #1e2028; margin-bottom: 2px; }
+.popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.popup-title { font-size: 13px; font-weight: 700; color: #1e2028; }
+.popup-close-btn { width: 22px; height: 22px; border-radius: 6px; border: none; background: none; cursor: pointer; color: #8a8fa8; display: flex; align-items: center; justify-content: center; transition: background 0.12s, color 0.12s; padding: 0; flex-shrink: 0; }
+.popup-close-btn:hover { background: rgba(0,0,0,0.07); color: #1e2028; }
 .popup-input { width: 100%; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 12px; font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028; outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }
 .popup-input:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
 .popup-input::placeholder { color: #8a8fa8; opacity: 0.7; }
 .popup-textarea { width: 100%; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 12px; font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028; outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; resize: none; line-height: 1.5; }
 .popup-textarea:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
 .popup-textarea::placeholder { color: #8a8fa8; opacity: 0.7; }
-.popup-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
-.popup-cancel { padding: 5px 12px; border-radius: 8px; border: none; background: none; font-size: 12px; cursor: pointer; color: #8a8fa8; font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: background 0.12s; }
-.popup-cancel:hover { background: rgba(0,0,0,0.06); }
+.popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
+.popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: 'PingFang SC', 'Segoe UI', sans-serif; font-weight: 600; transition: background 0.12s, border-color 0.12s; }
+.popup-delete:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); }
 .popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
 .popup-save:disabled { opacity: 0.38; cursor: default; }
 .popup-save:not(:disabled):hover { opacity: 0.88; }

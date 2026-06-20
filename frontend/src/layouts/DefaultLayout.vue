@@ -82,6 +82,7 @@ import FilePreviewModal    from '@/components/common/FilePreviewModal.vue'
 import FloatPreviewWindow  from '@/components/common/FloatPreviewWindow.vue'
 import { usePreviewStore, isAudioExt } from '@/stores/preview'
 import { useAudioStore } from '@/stores/audio'
+import { usePreferencesStore } from '@/stores/preferences'
 
 const previewStore = usePreviewStore()
 const audioStore   = useAudioStore()
@@ -94,10 +95,11 @@ watch(() => previewStore.file, (f) => {
   }
 })
 
-const route        = useRoute()
-const uiStore      = useUiStore()
-const projectStore = useProjectStore()
-const authStore    = useAuthStore()
+const route          = useRoute()
+const uiStore        = useUiStore()
+const projectStore   = useProjectStore()
+const authStore      = useAuthStore()
+const prefsStore     = usePreferencesStore()
 
 const uploadDialogOpen = ref(false)
 const uploadProjects   = ref([])
@@ -114,7 +116,10 @@ function onGlobalUploaded() {
 
 onMounted(async () => {
   await authStore.fetchMe()
-  if (authStore.isLoggedIn) audioStore.restore()
+  if (authStore.isLoggedIn) {
+    audioStore.restore()
+    prefsStore.fetch()
+  }
   projectStore.fetchProjects()
   projectStore.fetchUpcomingCalEvents()
 })

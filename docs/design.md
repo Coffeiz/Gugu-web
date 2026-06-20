@@ -1,6 +1,6 @@
 # PM Studio · 设计需求文档
 
-> 整理自产品讨论，最后更新：2026-06-15
+> 整理自产品讨论，最后更新：2026-06-21
 
 ---
 
@@ -100,7 +100,9 @@ backend/
 
 ### 图标
 
-- 全部使用 SVG 线性图标，统一 `stroke-width: 1.5`，`stroke-linecap: round`
+- **优先使用 Phosphor Icons**（`@phosphor-icons/vue`，MIT）：UI 操作图标统一 `weight="bold"`
+- 保留手写内联 SVG 的场景：viewer 内控件、装饰性插图、带旋转动画的方向箭头
+- 内联 SVG 规范：`stroke-width: 1.5`，`stroke-linecap: round`，`fill="none"`，继承 `currentColor`
 - 不使用 Emoji 或彩色图标
 
 ### 排版
@@ -182,28 +184,59 @@ backend/
 
 ### ProjectModal（项目编辑弹窗）
 
-- **布局**：`grid-template-columns: 320px 1fr`，左栏信息编辑 / 右栏文件
-- **左栏 - 紧凑标题区**：5px 项目色竖条 + `header-info`（项目名、客户+进度百分比内联、3px 细进度条），总高约 70px
-- **左栏 - 日期编辑**：开始日期 / 截稿日期各一格，使用自定义 DatePicker，修改后自动保存
-- **左栏 - 看板状态**：待开始 / 进行中 / 已完成 三选一
-- **左栏 - 阶段编辑器**：可视化节点流，双击节点名改名，点击推进，可增删阶段
-- **左栏 - 备注**：多行文本框
-- **删除按钮**：`position: absolute; bottom: 14px; right: 14px`，琥珀色悬浮按钮
-- **右栏 - 文件**：
-  - 头部：`right-header` flex 行，依次为「文件」标题 / 文件数量 / 关闭按钮（flex 自然排列，不使用 `position:absolute`）
-  - 文件卡片：ext badge + 阶段彩点 / 文件名 / 阶段标签 + 大小日期
+`900×680px` 固定尺寸，`display: grid; grid-template-columns: 320px 1fr`。
+
+**左栏结构**（从上到下）：
+
+| 区块 | 说明 |
+|------|------|
+| `proj-header`（52px 固定） | 项目名（可内联点击编辑）+ 3px 进度条（底部）+ 右侧百分比绝对定位 |
+| `left-content`（flex:1 可滚动） | section + col-divider 模式，依次：客户 / 日期 / 看板状态 / 配色 / 阶段 / 备注 |
+| 删除按钮 | `position: absolute; bottom: 14px; right: 14px`，琥珀色 |
+
+**表单控件**：
+
+- `field-input`：`padding: 9px 12px; border-radius: 8px; background: rgba(255,255,255,0.6); border: 1px solid rgba(0,0,0,0.1)`，focus 时蓝紫色光晕
+- `section-label`：`10px / 600 / uppercase / letter-spacing: 0.07em`，小型大写标题
+- `col-divider`：`border-top: 1px solid rgba(0,0,0,0.07)`，区块间水平线
+- `color-chip`：`22px` 圆，渐变背景，选中 `border: 2px solid #fff + box-shadow: 0 0 0 2px rgba(0,0,0,0.18)`
+- `status-btn`：`padding: 5px 12px; font-size: 12px; border-radius: 20px; gap: 6px`，三态（待开始红·进行中橙·已完成绿），选中态对应颜色加 `background + border-color`
+
+**阶段编辑器**：
+
+- 节点球平面化：`22px` 圆，`border: 1.5px solid rgba(0,0,0,0.12); background: rgba(0,0,0,0.08)`
+- done（`i < activeStageIdx`）：绿色填充 `var(--color-success)`；active（`i === activeStageIdx`）：项目色通过 inline `:style` 注入，**不在 CSS class 里写 background**（否则与 inline style 单帧冲突产生闪烁）
+- 状态由**位置索引**（v-for 的 `i`）决定，不跟随 key——拖动重排只移动标签名，球的 done/active 位置不变
+- 拖动 ghost：仅标签文字 + 全宽背景条，无球，无旋转
+- 拖动解耦：`stageDrag.active = false` 必须在 `commitStageDrag()` 前执行，防止 `displayStages` 对已提交数据二次重排
+
+**响应式 ref**：`localName`、`localColor`、`localCurrentStage`、`activeStageIdx`、`stageProgress` 均为独立 ref，在 `watch(project.id)` 时初始化，点击立即更新不等 props 刷新。
+
+**右栏**：文件区，见文件库章节（ProjectModal 使用缩小参数版本）。
 
 ### NewProjectModal（新建项目弹窗）
 
-- 触发：顶栏"新建项目"按钮，全局挂载于 DefaultLayout
-- 字段：项目名 / 客户 / 开始日期（DatePicker，默认当天）/ 截稿日期（DatePicker，默认当天）/ 颜色选择（随机预设）/ 初始阶段配置
+`700px` 宽，两栏布局：左栏（客户 / 项目周期 / 看板状态 / 配色 / 备注）+ 右栏（阶段 + 模板）。
 
-### 弹窗动画规范
+- 默认截止日期：一周后（`weekLaterIso()`）
+- 默认阶段：读取 store 中最近一个项目的阶段列表；若无历史项目则用 `['计划', '执行', '交付']`
+- 阶段模板：`useStageTemplates` composable，内置三个默认模板，用户可保存/删除/重命名，持久化至 localStorage
+- 右栏无额外背景色（与左栏统一透明）
 
-- `<Transition name="modal" :duration="{ enter: 340, leave: 220 }">`
-- `.modal-overlay`：`opacity 0→1`，`0.28s ease`
-- `.modal`（卡片体）：`scale(0.95) translateY(10px) → normal`，spring 曲线 `cubic-bezier(0.34,1.3,0.64,1)`，`0.34s`
-- 关闭：overlay `0.22s`，卡片 `scale(0.97) translateY(4px) opacity→0`
+### 弹窗动画规范（BaseModal 统一管理）
+
+所有弹窗基于 `BaseModal.vue`，**禁止**在子弹窗重复定义遮罩、动画、Esc 逻辑。
+
+- Transition name `bm`，duration `{ enter: 340, leave: 220 }`
+- `.bm-overlay` 和 `.bm-card` 各自**纯 opacity** 过渡（进入 `cubic-bezier(0.4,0,0.2,1)` / 退出 `cubic-bezier(0.4,0,1,1)`）
+- **禁止 transform**：`scale` 或 `translateY` 会让含 `backdrop-filter` 的元素在动画帧间产生像素跳位（GPU compositing 问题）
+
+| 弹窗 | width | height | zIndex |
+|------|-------|--------|--------|
+| NewProjectModal | 700px | — | 300 |
+| UploadModal | 520px | — | 300 |
+| ProjectModal | 900px | 680px | 200 |
+| FilePreviewModal | 860px | min(90vh,880px) | 400 |
 
 ### 日历页（Calendar）
 
@@ -218,10 +251,15 @@ backend/
   - 当天日程：事件名 + 元信息（客户 + 类型标签）；无客户时省略分隔符 `·`；未知类型显示"事件"
   - 近期截稿：项目截稿日 + 独立事件合并排序
   - 项目条目显示"项目"标签以区分普通事件
-- **事件删除**：每条事件右侧显示琥珀色删除按钮（`color: #c8962a`）
+- **侧栏活动删除**：每条用户活动右侧显示删除按钮，颜色 `#b07858`（`var(--color-warning)` 系），`background: rgba(176,120,88,0.08); border: 1px solid rgba(176,120,88,0.3)`
+- **编辑活动弹窗**（`add-event-popup`，`<Teleport to="body">`）：
+  - 头部 `popup-header`：左侧标题 + 右侧 `popup-close-btn`（22px 圆角按钮，`PhX`，点击关闭）
+  - 底部 `popup-actions`：右对齐，左"保存"（紫渐变）→ 右"删除"（`#b07858` 边框色，与侧栏删除按钮统一）
+  - 删除逻辑复用 `deleteEvent()`，关闭弹窗后执行
 - **年月快速选择器**：`<Teleport to="body">`，弹窗宽 220px，居中对齐锚点
 - **添加事件弹窗**：`<Teleport to="body">`，包含事件名输入框 + DatePicker
 - **溢出弹窗**：点击 `+N 更多` 时，以点击位置为中心弹出悬浮列表（`position: fixed`）
+- **图标**：全部使用 Phosphor（`PhCaretLeft/Right`、`PhCaretDown`、`PhPlus`、`PhAlignLeft`、`PhTrash`、`PhCalendarBlank`、`PhX`），无内联 SVG
 
 ### 文件库页（Files）
 

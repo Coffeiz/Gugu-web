@@ -15,9 +15,7 @@
         />
         <span v-if="errors.name" class="name-error">{{ errors.name }}</span>
         <button class="close-btn" @click="$emit('close')">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-            <path d="M3 3l10 10M13 3L3 13"/>
-          </svg>
+          <PhX :size="14" weight="bold" />
         </button>
       </div>
 
@@ -72,9 +70,7 @@
                 :style="{ background: c.value }"
                 @click="form.color = c.value"
               >
-                <svg v-if="form.color === c.value" width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.4" stroke-linecap="round">
-                  <path d="M2 6l3 3 5-5"/>
-                </svg>
+                <PhCheck v-if="form.color === c.value" :size="11" weight="bold" style="color:white" />
               </button>
             </div>
           </div>
@@ -100,12 +96,7 @@
               <!-- 模板按钮 -->
               <div class="tpl-selector" ref="tplSelectorRef">
                 <button class="tpl-trigger" @click.stop="tplOpen = !tplOpen">
-                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                    <rect x="1" y="1" width="5" height="5" rx="1.5"/>
-                    <rect x="8" y="1" width="5" height="5" rx="1.5"/>
-                    <rect x="1" y="8" width="5" height="5" rx="1.5"/>
-                    <rect x="8" y="8" width="5" height="5" rx="1.5"/>
-                  </svg>
+                  <PhSquaresFour :size="11" weight="bold" />
                   模板
                 </button>
                 <Teleport to="body">
@@ -136,12 +127,12 @@
                             :title="renamingId === t.id ? '确认' : '重命名'"
                             @click.stop="renamingId === t.id ? commitRename(t.id) : startRename(t)"
                           >
-                            <svg v-if="renamingId !== t.id" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z"/></svg>
-                            <svg v-else width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M2 6l3 3 5-5"/></svg>
+                            <PhPencilSimple v-if="renamingId !== t.id" :size="10" weight="bold" />
+                            <PhCheck v-else :size="10" weight="bold" />
                           </button>
                           <!-- 删除按钮（始终显示） -->
                           <button class="tpl-del-btn" title="删除" @click.stop="removeTemplate(t.id)">
-                            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 2l6 6M8 2L2 8"/></svg>
+                            <PhX :size="10" weight="bold" />
                           </button>
                         </div>
                       </div>
@@ -151,7 +142,7 @@
                       <!-- 保存当前为模板 -->
                       <div v-if="!savingTpl" class="tpl-save-row">
                         <button class="tpl-save-btn" @click.stop="savingTpl = true">
-                          <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v10M1 6h10"/></svg>
+                          <PhPlus :size="10" weight="bold" />
                           保存当前为模板
                         </button>
                       </div>
@@ -165,10 +156,10 @@
                           ref="tplNameInputRef"
                         />
                         <button class="tpl-rename-btn" title="保存" @click.stop="commitSave">
-                          <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M2 6l3 3 5-5"/></svg>
+                          <PhCheck :size="10" weight="bold" />
                         </button>
                         <button class="tpl-del-btn" title="取消" @click.stop="savingTpl = false; newTplName = ''">
-                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 2l6 6M8 2L2 8"/></svg>
+                          <PhX :size="10" weight="bold" />
                         </button>
                       </div>
                     </div>
@@ -192,15 +183,11 @@
                   :ref="el => { if (el) stageInputRefs[stage.origIdx] = el }"
                 />
                 <button class="del-btn" @click.stop="removeStage(stage.origIdx)" :disabled="form.stages.length <= 1">
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                    <path d="M2 2l6 6M8 2L2 8"/>
-                  </svg>
+                  <PhX :size="10" weight="bold" />
                 </button>
               </div>
               <button class="add-stage-btn" @click="addStage">
-                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                  <path d="M6 1v10M1 6h10"/>
-                </svg>
+                <PhPlus :size="10" weight="bold" />
                 添加阶段
               </button>
             </div>
@@ -233,6 +220,8 @@ import { useProjectStore } from '@/stores/projects'
 import DateRangePicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { useStageTemplates } from '@/composables/useStageTemplates.js'
+import { usePreferencesStore } from '@/stores/preferences'
+import { PhX, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour } from '@phosphor-icons/vue'
 
 const props = defineProps({ show: Boolean })
 const emit  = defineEmits(['close'])
@@ -327,7 +316,10 @@ const colorPresets = [
   { value: 'linear-gradient(135deg,#be8b8f,#c8aa72)' },
 ]
 
+const prefsStore = usePreferencesStore()
+
 function getLastStages() {
+  if (prefsStore.lastStages.length) return prefsStore.lastStages
   const projects = projectStore.projects
   if (projects.length) {
     const last = [...projects].sort((a, b) => (b.id > a.id ? 1 : -1))[0]
@@ -474,6 +466,7 @@ function handleCreate() {
   if (!name) { errors.name = '请填写项目名称'; return }
   if (INVALID_NAME_RE.test(name)) { errors.name = '不能包含：\\ / : * ? " < > |'; return }
   const stages = form.stages.filter(s => s.trim()).map(s => s.trim())
+  prefsStore.saveLastStages(stages)
   projectStore.addProject({
     name:      name,
     client:    form.client.trim(),

@@ -200,3 +200,8 @@ export const clientsApi = {
   create: (data)     => post('/clients', data),
   delete: (id)       => del(`/clients/${id}`),
 }
+
+export const preferencesApi = {
+  get:    ()     => get('/preferences'),
+  update: (data) => request('PATCH', '/preferences', data),
+}
