@@ -6,17 +6,26 @@
 
       <!-- 面包屑导航 -->
       <div class="breadcrumb">
+        <button class="nav-hist-btn" :disabled="!canGoBack" @click="goBack" title="后退">
+          <PhArrowLeft :size="14" weight="bold" />
+        </button>
+        <button class="nav-hist-btn" :disabled="!canGoForward" @click="goForward" title="前进">
+          <PhArrowRight :size="14" weight="bold" />
+        </button>
         <button class="bc-item" :class="{ active: navPath.length === 0 }" @click="navigateTo(-1)">
-          <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-            <path d="M2 7h10M7 2l5 5-5 5"/>
-          </svg>
           全部文件
         </button>
         <template v-for="(seg, i) in navPath" :key="i">
           <svg class="bc-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
             <path d="M3 2l4 3-4 3"/>
           </svg>
-          <button class="bc-item" :class="{ active: i === navPath.length - 1 }" @click="navigateTo(i)">
+          <button class="bc-item"
+            :class="{ active: i === navPath.length - 1, 'bc-drop-target': bcDragOverIdx === i && isBcDroppable(seg) }"
+            @click="navigateTo(i)"
+            @dragover="onBcDragOver(seg, i, $event)"
+            @dragleave="onBcDragLeave(i)"
+            @drop="onBcDrop(seg, $event)"
+          >
             <span v-if="seg.color" class="bc-dot" :style="{ background: seg.color }"></span>
             {{ seg.name }}
           </button>
@@ -24,25 +33,49 @@
       </div>
 
       <div class="toolbar-right">
-        <!-- 视图切换（回收站不需要） -->
-        <div v-if="currentType !== 'trash'" class="view-toggle">
-          <button :class="{ on: viewMode === 'grid' }" @click="viewMode = 'grid'" title="网格视图">
-            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-              <rect x="1" y="1" width="5" height="5" rx="1.2"/>
-              <rect x="8" y="1" width="5" height="5" rx="1.2"/>
-              <rect x="1" y="8" width="5" height="5" rx="1.2"/>
-              <rect x="8" y="8" width="5" height="5" rx="1.2"/>
+        <!-- 排序选择器 -->
+        <div v-if="currentType !== 'root'" class="sort-selector" @click.stop>
+          <button class="sort-btn" @click.stop="sortMenuOpen = !sortMenuOpen">
+            <PhSortAscending :size="13" weight="bold" />
+            {{ SORT_OPTIONS.find(o => o.key === sortKey)?.label }}
+            <svg class="sort-dir-icon" :class="{ desc: sortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <path d="M5 2v6M2 5l3-3 3 3"/>
             </svg>
           </button>
+          <div v-if="sortMenuOpen" class="sort-menu">
+            <button v-for="opt in SORT_OPTIONS" :key="opt.key"
+              class="sort-menu-item" :class="{ active: sortKey === opt.key }"
+              @click.stop="onSortSelect(opt.key)">
+              {{ opt.label }}
+              <svg v-if="sortKey === opt.key" class="sort-check" :class="{ desc: sortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                <path d="M5 2v6M2 5l3-3 3 3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- 视图切换（回收站不需要） -->
+        <button
+          v-if="currentType !== 'trash' && currentType !== 'root'"
+          class="select-mode-btn"
+          :class="{ on: inSelectionMode }"
+          @click="toggleSelectMode"
+          title="选择"
+        >
+          <PhCheckSquare :size="14" weight="bold" />
+        </button>
+
+        <div v-if="currentType !== 'trash'" class="view-toggle">
+          <button :class="{ on: viewMode === 'grid' }" @click="viewMode = 'grid'" title="网格视图">
+            <PhSquaresFour :size="13" weight="bold" />
+          </button>
           <button :class="{ on: viewMode === 'list' }" @click="viewMode = 'list'" title="列表视图">
-            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-              <path d="M1 3h12M1 7h12M1 11h12"/>
-            </svg>
+            <PhList :size="13" weight="bold" />
           </button>
         </div>
 
-        <!-- 新建文件夹（个人层和项目层） -->
-        <template v-if="currentType === 'personal' || currentType === 'project'">
+        <!-- 新建文件夹（个人层、项目层、文件夹层） -->
+        <template v-if="currentType === 'personal' || currentType === 'project' || currentType === 'folder'">
           <div v-if="showNewFolderInput" class="new-folder-row" @click.stop>
             <input
               class="new-folder-input"
@@ -56,29 +89,23 @@
             <button class="btn-cancel" @click="showNewFolderInput = false; newFolderName = ''">✕</button>
           </div>
           <button v-else class="new-folder-btn" @click.stop="showNewFolderInput = true">
-            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-              <path d="M2 4a1 1 0 011-1h2.5l1 1.5H11a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1V4z"/>
-              <path d="M7 7v3M5.5 8.5h3"/>
-            </svg>
+            <PhFolderPlus :size="12" weight="bold" />
             新建文件夹
           </button>
         </template>
 
         <!-- 清空回收站 -->
         <button v-if="currentType === 'trash'" class="empty-trash-btn" @click.stop="confirmEmptyTrash">
-          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M2 4h10M5 4V3h4v1M6 7v3M8 7v3M3 4l.7 7.3A1 1 0 004.7 12h4.6a1 1 0 001-.7L11 4"/>
-          </svg>
+          <PhTrash :size="12" weight="bold" />
           清空回收站
         </button>
 
         <!-- 上传按钮 -->
-        <button v-if="currentType !== 'trash'" class="upload-btn" @click="openUploadDialog">
-          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M7 10V3M4 6l3-3 3 3"/><path d="M1 12h12"/>
-          </svg>
+        <label v-if="canUpload" class="upload-btn">
+          <PhUploadSimple :size="12" weight="bold" />
           上传文件
-        </button>
+          <input type="file" hidden multiple @change="handleFileInput" />
+        </label>
       </div>
     </div>
 
@@ -86,6 +113,7 @@
     <div class="files-body">
       <div class="files-main glass-card" ref="mainRef"
         :class="{ 'is-selecting': boxStart !== null }"
+        @contextmenu.prevent.self="openCtx('empty', null, $event)"
         @dragenter.prevent="onDragEnter"
         @dragover.prevent
         @dragleave="onDragLeave"
@@ -112,37 +140,41 @@
           height: selectionRect.height + 'px',
         }"></div>
 
+        <!-- ── 内容区（导航切换时淡入） ── -->
+        <Transition name="content-fade" mode="out-in">
+        <div :key="JSON.stringify(navPath)" class="content-body">
+
         <!-- ── 回收站视图 ── -->
         <template v-if="currentType === 'trash'">
-          <div v-if="contents.files.length > 0" class="trash-list">
-            <div class="trash-head">
-              <span>名称</span>
-              <span>删除时间</span>
-              <span>剩余天数</span>
-              <span>大小</span>
+          <div v-if="contents.files.length > 0" class="file-list trash-list">
+            <div class="list-head">
+              <span class="lh-sortable" :class="{ active: sortKey === 'name' }" @click="onSortSelect('name')">名称<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
+              <span>类型</span>
+              <span class="lh-sortable" :class="{ active: sortKey === 'createdAt' }" @click="onSortSelect('createdAt')">删除时间<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
+              <span>剩余</span>
+              <span class="lh-sortable" :class="{ active: sortKey === 'size' }" @click="onSortSelect('size')">大小<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
               <span></span>
             </div>
-            <div v-for="f in contents.files" :key="f.id" class="trash-row">
+            <div v-for="f in sortedContents.files" :key="f.id" class="list-row">
               <span class="lr-name-cell">
-                <span class="lr-ext">{{ f.ext }}</span>
-                <span class="lr-filename">{{ f.displayName }}</span>
+                <component :is="fileListIcon(f.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color: fileIconColor(f.ext) }" />
+                <span class="lr-filename" :title="f.displayName">{{ f.displayName }}</span>
+              </span>
+              <span class="lr-type-cell">
+                <span class="lr-ext" :style="{ color: fileIconColor(f.ext), background: fileIconColor(f.ext) + '18' }">{{ f.ext }}</span>
               </span>
               <span class="lr-text">{{ f.deletedAt ? formatDate(f.deletedAt) : '—' }}</span>
-              <span class="lr-text" :class="{ 'days-warn': daysLeft(f.deletedAt) <= 3 }">
-                {{ daysLeft(f.deletedAt) }} 天
-              </span>
+              <span class="lr-text" :class="{ 'days-warn': daysLeft(f.deletedAt) <= 3 }">{{ daysLeft(f.deletedAt) }} 天</span>
               <span class="lr-text">{{ f.size }}</span>
-              <span class="trash-actions">
-                <button class="trash-restore-btn" title="恢复文件" @click.stop="restoreFile(f)">
-                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <span class="lr-actions">
+                <button class="lr-action-btn trash-restore-btn" title="恢复" @click.stop="restoreFile(f)">
+                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/>
                   </svg>
                   恢复
                 </button>
-                <button class="trash-del-btn" title="永久删除" @click.stop="hardDeleteFile(f)">
-                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M2 4h10M5 4V3h4v1M6 7v3M8 7v3M3 4l.7 7.3A1 1 0 004.7 12h4.6a1 1 0 001-.7L11 4"/>
-                  </svg>
+                <button class="lr-action-btn lr-del-btn" title="永久删除" @click.stop="hardDeleteFile(f)">
+                  <PhTrash :size="11" weight="bold" />
                 </button>
               </span>
             </div>
@@ -157,91 +189,145 @@
 
         <!-- ── 网格视图 ── -->
         <template v-else-if="viewMode === 'grid'">
-          <div class="file-grid">
+          <div class="file-grid" @contextmenu.prevent.self="openCtx('empty', null, $event)">
 
             <!-- 文件夹卡片 -->
             <div
-              v-for="f in contents.folders"
+              v-for="f in sortedContents.folders"
               :key="f.id"
               class="folder-card"
-              :class="{ selected: selectedFolderKeys.has(f.id), 'pre-selected': previewFolderKeys.has(f.id) }"
+              :class="{ selected: selectedFolderKeys.has(f.id), 'pre-selected': previewFolderKeys.has(f.id), 'drag-over': dragOverFolderId === f.folderId }"
+              @contextmenu.prevent.stop="openCtx('folder', f, $event)"
               :data-folder-key="f.id"
-              @click.stop="enterFolder(f)"
+              :style="{ '--fd-color': folderAccentColor(f) }"
+              @click.stop="inSelectionMode ? toggleFolderSelect(f.id) : enterFolder(f)"
+              @dragover="onFolderDragOver(f, $event)"
+              @dragleave="onFolderDragLeave(f)"
+              @drop="onFolderDrop(f, $event)"
             >
-              <div class="fd-icon-wrap" :style="folderIconStyle(f)">
-                <svg v-if="f.type === 'personal'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="8" r="3.5"/><path d="M4 19c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/>
-                </svg>
-                <svg v-else-if="f.type === 'projects'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/>
-                  <path d="M12 12v4M10 14h4"/>
-                </svg>
-                <svg v-else-if="f.type === 'trash'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M3 6h18M8 6V4h8v2M19 6l-1.5 14a2 2 0 01-2 1.8H8.5a2 2 0 01-2-1.8L5 6"/>
-                  <path d="M10 11v6M14 11v6"/>
-                </svg>
-                <!-- 年份文件夹 -->
-                <svg v-else-if="f.type === 'year'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>
-                  <path d="M8 14h2M14 14h2M8 18h2M14 18h2"/>
-                </svg>
-                <!-- 月份文件夹 -->
-                <svg v-else-if="f.type === 'month'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>
-                  <circle cx="12" cy="15" r="2.5" fill="currentColor" stroke="none" opacity="0.6"/>
-                </svg>
-                <svg v-else width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
-                </svg>
+              <div class="fd-icon-area">
+                <component :is="folderListIcon(f)" class="fd-big-icon" :size="92" weight="bold" />
               </div>
-              <div class="fd-body">
-                <div class="fd-name">{{ f.displayName }}</div>
-                <div class="fd-count">{{ f.count != null ? f.count + ' 个文件' : '—' }}</div>
+              <div class="fd-label">
+                <div class="fd-name" :title="f.displayName">
+                  <span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop>
+                    <span class="rename-ghost">{{ renameText || ' ' }}</span>
+                    <input class="rename-input" v-model="renameText"
+                      @keydown="onRenameKey" @blur="commitRename" @focus="$event.target.select()" />
+                  </span>
+                  <template v-else>{{ f.displayName }}</template>
+                </div>
+                <div class="fd-count">{{ f.count != null ? f.count + ' 项' : '—' }}</div>
+              </div>
+              <Transition name="sel-cb">
+                <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedFolderKeys.has(f.id) }">
+                  <svg v-if="selectedFolderKeys.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M2 6l3 3 5-5"/>
+                  </svg>
+                </div>
+              </Transition>
+              <div v-if="f.type === 'folder' && !inSelectionMode" class="fd-hover-actions">
+                <button class="fc-action-btn fc-rename-btn" title="重命名" @click.stop="startRenameFolder(f)">
+                  <PhPencilSimple :size="11" weight="bold" />
+                </button>
+                <button class="fc-action-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)">
+                  <PhDownloadSimple :size="11" weight="bold" />
+                </button>
+                <button class="fc-action-btn fc-del-btn" title="删除" @click.stop="deleteFolder(f)">
+                  <PhTrash :size="11" weight="bold" />
+                </button>
               </div>
             </div>
 
             <!-- 文件卡片 -->
             <div
-              v-for="f in contents.files"
+              v-for="f in sortedContents.files"
               :key="f.id"
               class="fc-card"
-              :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id) }"
+              :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id), dragging: draggingFileIds.has(f.id), cut: cbStore.type === 'cut' && cbStore.fileIds.includes(f.id), 'fc-has-thumb': isImageExt(f.ext) }"
               :data-file-id="f.id"
-              @click.stop="toggleFileSelect(f.id, $event)"
+              :style="{ '--fc-color': fileIconColor(f.ext) }"
+              draggable="true"
+              @contextmenu.prevent.stop="openCtx('file', f, $event)"
+              @click.stop="inSelectionMode ? toggleFileSelectSimple(f.id) : (isPreviewable(f.ext) ? openPreview(f) : toggleFileSelect(f.id, $event))"
+              @dragstart="onFileDragStart(f, $event)"
+              @dragend="onFileDragEnd"
             >
-              <div class="fc-top">
-                <div class="fc-top-left">
-                  <span class="fc-ext">{{ f.ext }}</span>
-                </div>
-                <span v-if="f.projectColor" class="fc-dot" :style="{ background: f.projectColor }"></span>
+              <span class="fc-ext-badge">{{ f.ext }}</span>
+              <div v-if="isImageExt(f.ext)" class="fc-thumb-area">
+                <!-- 模糊占位层：20×20 tiny，懒加载至视口附近再触发 -->
+                <img class="fc-thumb fc-thumb-tiny" v-lazy-src="thumbUrl(f.id, 'tiny')"
+                  decoding="async" draggable="false" alt="" />
+                <!-- 全尺寸层：首次加载淡入，已加载过直接显示 -->
+                <img class="fc-thumb fc-thumb-full" v-lazy-src="thumbUrl(f.id, 'card')"
+                  :class="{ 'fc-loaded': loadedThumbs.has(f.id) }"
+                  decoding="async" draggable="false" alt=""
+                  @load="loadedThumbs.add(f.id)"
+                  @error="$event.target.style.display='none'" />
+                <div class="fc-thumb-fade"></div>
               </div>
-              <div class="fc-name">{{ f.displayName }}</div>
-              <span v-if="f.stageName" class="fc-stage-tag">{{ f.stageName }}</span>
-              <div class="fc-meta">{{ f.size }} · {{ f.createdAt }}</div>
-              <div class="fc-hover-actions">
-                <button class="fc-action-btn" title="下载" @click.stop="downloadFile(f)">
-                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M7 2v7M4 6l3 3 3-3"/><path d="M2 11h10"/>
+              <div v-else class="fc-icon-area">
+                <component :is="fileListIcon(f.ext)" class="fc-big-icon" :size="86" weight="bold" />
+              </div>
+              <div class="fc-label">
+                <div class="fc-name" :title="f.displayName">
+                  <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
+                    <span class="rename-ghost">{{ renameText || ' ' }}</span>
+                    <input class="rename-input" v-model="renameText"
+                      @keydown="onRenameKey" @blur="commitRename" @focus="$event.target.select()" />
+                  </span>
+                  <template v-else>{{ f.displayName }}</template>
+                </div>
+                <div class="fc-meta">{{ f.size }} · {{ f.createdAt }}</div>
+              </div>
+              <Transition name="sel-cb">
+                <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedIds.has(f.id) }">
+                  <svg v-if="selectedIds.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M2 6l3 3 5-5"/>
                   </svg>
+                </div>
+              </Transition>
+              <div v-if="!inSelectionMode" class="fc-hover-actions">
+                <button class="fc-action-btn fc-rename-btn" title="重命名" @click.stop="startRenameFile(f)">
+                  <PhPencilSimple :size="11" weight="bold" />
+                </button>
+                <button class="fc-action-btn" title="下载" @click.stop="downloadFile(f)">
+                  <PhDownloadSimple :size="11" weight="bold" />
                 </button>
                 <button class="fc-action-btn fc-del-btn" title="移到回收站" @click.stop="deleteSingleFile(f)">
-                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M2 4h10M5 4V3h4v1M6 7v3M8 7v3M3 4l.7 7.3A1 1 0 004.7 12h4.6a1 1 0 001-.7L11 4"/>
-                  </svg>
+                  <PhTrash :size="11" weight="bold" />
                 </button>
               </div>
             </div>
 
-            <!-- 上传快捷区 -->
-            <div class="fc-upload" @click.stop="openUploadDialog">
-              <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9 12V3M5 7l4-4 4 4"/><path d="M2 14h14"/>
-              </svg>
-              <span>上传文件</span>
+            <!-- 幽灵上传卡 -->
+            <div v-for="g in uploadingItems" :key="g.uid"
+              class="fc-ghost" :class="{ error: g.error }"
+              :style="{ '--fc-color': fileIconColor(g.ext) }">
+              <div class="fc-ghost-fill" :style="{ width: g.progress + '%' }"></div>
+              <span class="fc-ext-badge">{{ g.ext || '—' }}</span>
+              <div class="fc-icon-area">
+                <component :is="fileListIcon(g.ext)" class="fc-big-icon" :size="86" weight="bold" />
+              </div>
+              <div class="fc-label">
+                <div class="fc-name" :title="g.name">{{ g.name }}</div>
+                <div class="fc-meta fc-ghost-meta">
+                  <template v-if="g.error">上传失败</template>
+                  <template v-else>{{ g.progress }}%</template>
+                </div>
+              </div>
             </div>
+            <!-- 上传快捷区 -->
+            <label v-if="canUpload" class="fc-upload">
+              <svg width="20" height="20" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4">
+                <path d="M11 15V5M6 9l5-5 5 5"/><path d="M2 17h18"/>
+              </svg>
+              <span class="fc-upload-text">上传文件</span>
+              <input type="file" hidden multiple @change="handleFileInput" />
+            </label>
           </div>
 
-          <div v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading" class="grid-empty">
+          <div v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading && !canUpload" class="grid-empty">
             <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.3">
               <path d="M4 9a2 2 0 012-2h5l2 2h10a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V9z"/>
             </svg>
@@ -251,47 +337,90 @@
 
         <!-- ── 列表视图 ── -->
         <template v-else>
-          <div class="file-list">
+          <div class="file-list" @contextmenu.prevent.self="openCtx('empty', null, $event)">
             <div class="list-head">
-              <span>名称</span>
-              <span>项目 / 阶段</span>
-              <span>大小</span>
-              <span>日期</span>
+              <span class="lh-sortable" :class="{ active: sortKey === 'name' }" @click="onSortSelect('name')">名称<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
+              <span class="lh-sortable" :class="{ active: sortKey === 'type' }" @click="onSortSelect('type')">类型<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
+              <span class="lh-sortable" :class="{ active: sortKey === 'stage' }" @click="onSortSelect('stage')">项目 / 阶段<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
+              <span class="lh-sortable" :class="{ active: sortKey === 'size' }" @click="onSortSelect('size')">大小<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
+              <span class="lh-sortable" :class="{ active: sortKey === 'createdAt' }" @click="onSortSelect('createdAt')">日期<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
               <span></span>
             </div>
 
             <div
-              v-for="f in contents.folders"
+              v-for="f in sortedContents.folders"
               :key="f.id"
               class="list-row folder-row"
-              :class="{ selected: selectedFolderKeys.has(f.id), 'pre-selected': previewFolderKeys.has(f.id) }"
+              :class="{ selected: selectedFolderKeys.has(f.id), 'pre-selected': previewFolderKeys.has(f.id), 'drag-over': dragOverFolderId === f.folderId }"
               :data-folder-key="f.id"
-              @click.stop="enterFolder(f)"
+              @click.stop="inSelectionMode ? toggleFolderSelect(f.id) : enterFolder(f)"
+              @contextmenu.prevent.stop="openCtx('folder', f, $event)"
+              @dragover="onFolderDragOver(f, $event)"
+              @dragleave="onFolderDragLeave(f)"
+              @drop="onFolderDrop(f, $event)"
             >
               <span class="lr-name-cell">
-                <svg class="lr-folder-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" :style="{ color: folderAccentColor(f) }">
-                  <path v-if="f.type === 'projects'" d="M2 5a2 2 0 012-2h8a2 2 0 012 2v7a2 2 0 01-2 2H4a2 2 0 01-2-2V5zM8 8v3M7 9.5h2"/>
-                  <path v-else d="M2 5a2 2 0 012-2h2.5l1.5 2H12a2 2 0 012 2v5a2 2 0 01-2 2H4a2 2 0 01-2-2V5z"/>
-                </svg>
-                <span class="lr-filename">{{ f.displayName }}</span>
+                <component :is="folderListIcon(f)" class="lr-folder-icon" :size="16" weight="fill" :style="{ color: folderAccentColor(f) }" />
+                <span class="lr-filename" :title="f.displayName">
+                  <span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop>
+                    <span class="rename-ghost">{{ renameText || ' ' }}</span>
+                    <input class="rename-input rename-input-inline" v-model="renameText"
+                      @keydown="onRenameKey" @blur="commitRename" @focus="$event.target.select()" />
+                  </span>
+                  <template v-else>{{ f.displayName }}</template>
+                </span>
               </span>
+              <span class="lr-type-text">文件夹</span>
               <span class="lr-text">—</span>
               <span class="lr-text">{{ f.count != null ? f.count + ' 项' : '—' }}</span>
               <span class="lr-text">—</span>
-              <span></span>
+              <span class="lr-actions">
+                <Transition name="sel-cb">
+                  <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedFolderKeys.has(f.id) }">
+                    <svg v-if="selectedFolderKeys.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M2 6l3 3 5-5"/>
+                    </svg>
+                  </div>
+                </Transition>
+                <template v-if="f.type === 'folder' && !inSelectionMode">
+                  <button class="lr-action-btn lr-rename-btn" title="重命名" @click.stop="startRenameFolder(f)">
+                    <PhPencilSimple :size="11" weight="bold" />
+                  </button>
+                  <button class="lr-action-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)">
+                    <PhDownloadSimple :size="11" weight="bold" />
+                  </button>
+                  <button class="lr-action-btn lr-del-btn" title="删除" @click.stop="deleteFolder(f)">
+                    <PhTrash :size="11" weight="bold" />
+                  </button>
+                </template>
+              </span>
             </div>
 
             <div
-              v-for="f in contents.files"
+              v-for="f in sortedContents.files"
               :key="f.id"
               class="list-row"
-              :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id) }"
+              :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id), dragging: draggingFileIds.has(f.id), cut: cbStore.type === 'cut' && cbStore.fileIds.includes(f.id) }"
               :data-file-id="f.id"
-              @click.stop="toggleFileSelect(f.id, $event)"
+              draggable="true"
+              @contextmenu.prevent.stop="openCtx('file', f, $event)"
+              @click.stop="inSelectionMode ? toggleFileSelectSimple(f.id) : (isPreviewable(f.ext) ? openPreview(f) : toggleFileSelect(f.id, $event))"
+              @dragstart="onFileDragStart(f, $event)"
+              @dragend="onFileDragEnd"
             >
               <span class="lr-name-cell">
-                <span class="lr-ext">{{ f.ext }}</span>
-                <span class="lr-filename">{{ f.displayName }}</span>
+                <component :is="fileListIcon(f.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color: fileIconColor(f.ext) }" />
+                <span class="lr-filename" :title="f.displayName">
+                  <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
+                    <span class="rename-ghost">{{ renameText || ' ' }}</span>
+                    <input class="rename-input rename-input-inline" v-model="renameText"
+                      @keydown="onRenameKey" @blur="commitRename" @focus="$event.target.select()" />
+                  </span>
+                  <template v-else>{{ f.displayName }}</template>
+                </span>
+              </span>
+              <span class="lr-type-cell">
+                <span class="lr-ext" :style="{ color: fileIconColor(f.ext), background: fileIconColor(f.ext) + '18' }">{{ f.ext }}</span>
               </span>
               <span class="lr-proj-cell">
                 <span v-if="f.projectColor" class="lr-dot" :style="{ background: f.projectColor }"></span>
@@ -300,17 +429,43 @@
               <span class="lr-text">{{ f.size }}</span>
               <span class="lr-text">{{ f.createdAt }}</span>
               <span class="lr-actions">
-                <button class="lr-action-btn" title="下载" @click.stop="downloadFile(f)">
-                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M7 2v7M4 6l3 3 3-3"/><path d="M2 11h10"/>
-                  </svg>
-                </button>
-                <button class="lr-action-btn lr-del-btn" title="移到回收站" @click.stop="deleteSingleFile(f)">
-                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M2 4h10M5 4V3h4v1M6 7v3M8 7v3M3 4l.7 7.3A1 1 0 004.7 12h4.6a1 1 0 001-.7L11 4"/>
-                  </svg>
-                </button>
+                <Transition name="sel-cb">
+                  <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedIds.has(f.id) }">
+                    <svg v-if="selectedIds.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M2 6l3 3 5-5"/>
+                    </svg>
+                  </div>
+                </Transition>
+                <template v-if="!inSelectionMode">
+                  <button class="lr-action-btn lr-rename-btn" title="重命名" @click.stop="startRenameFile(f)">
+                    <PhPencilSimple :size="11" weight="bold" />
+                  </button>
+                  <button class="lr-action-btn" title="下载" @click.stop="downloadFile(f)">
+                    <PhDownloadSimple :size="11" weight="bold" />
+                  </button>
+                  <button class="lr-action-btn lr-del-btn" title="移到回收站" @click.stop="deleteSingleFile(f)">
+                    <PhTrash :size="11" weight="bold" />
+                  </button>
+                </template>
               </span>
+            </div>
+
+            <!-- 幽灵上传行 -->
+            <div v-for="g in uploadingItems" :key="g.uid"
+              class="list-row fc-ghost-row" :class="{ error: g.error }">
+              <div class="fc-ghost-fill" :style="{ width: g.progress + '%' }"></div>
+              <span class="lr-name-cell">
+                <component :is="fileListIcon(g.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color: fileIconColor(g.ext) }" />
+                <span class="lr-filename">{{ g.name }}</span>
+              </span>
+              <span class="lr-type-cell"><span class="lr-ext" :style="{ color: fileIconColor(g.ext), background: fileIconColor(g.ext) + '18' }">{{ g.ext || '—' }}</span></span>
+              <span class="lr-text">—</span>
+              <span class="lr-text">—</span>
+              <span class="lr-text">
+                <template v-if="g.error">失败</template>
+                <template v-else>{{ g.progress }}%</template>
+              </span>
+              <span class="lr-actions"></span>
             </div>
 
             <div v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading" class="list-empty">
@@ -321,6 +476,9 @@
             </div>
           </div>
         </template>
+
+        </div>
+        </Transition>
       </div>
     </div>
 
@@ -328,38 +486,145 @@
     <Transition name="action-bar">
       <div v-if="selectedIds.size > 0 || selectedFolderKeys.size > 0" class="selection-bar" @click.stop>
         <span class="sel-count">已选 {{ selectedIds.size + selectedFolderKeys.size }} 项</span>
-        <button v-if="selectedIds.size > 0" class="sel-delete-btn" @click="deleteSelected">
-          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M2 4h10M5 4V3h4v1M6 7v3M8 7v3M3 4l.7 7.3A1 1 0 004.7 12h4.6a1 1 0 001-.7L11 4"/>
+        <button class="sel-download-btn" @click="downloadSelected" :disabled="(selectedIds.size === 0 && selectedFolderKeys.size === 0) || downloadingZip">
+          <PhDownloadSimple v-if="!downloadingZip" :size="12" weight="bold" />
+          <svg v-else class="spin" width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <path d="M7 1a6 6 0 1 1-4.24 1.76"/>
           </svg>
+          {{ downloadingZip ? '下载中…' : '下载' }}
+        </button>
+        <div class="sel-divider"></div>
+        <button class="sel-action-btn" @click="selCut" title="剪切">
+          <PhScissors :size="12" weight="bold" />
+          剪切
+        </button>
+        <button class="sel-action-btn" @click="selCopy" title="复制">
+          <PhCopy :size="12" weight="bold" />
+          复制
+        </button>
+        <div class="sel-divider"></div>
+        <button class="sel-delete-btn" @click="deleteSelected">
+          <PhTrash :size="12" weight="bold" />
           移到回收站
         </button>
         <button class="sel-cancel-btn" @click="clearSelection">取消</button>
       </div>
     </Transition>
 
-    <UploadModal
-      :show="uploadDialogOpen"
-      :projects="allProjects"
-      :locked-project-id="uploadLockedProjectId"
-      :locked-project-name="uploadLockedProjectName"
-      :locked-color="uploadLockedColor"
-      :locked-folder-id="uploadLockedFolderId"
-      :initial-files="droppedFiles"
-      @close="closeUploadDialog"
-      @uploaded="onUploaded"
-    />
   </div>
+
+  <!-- 右键菜单 -->
+  <ContextMenu :show="ctx.visible" :x="ctx.x" :y="ctx.y" @close="ctx.visible = false">
+    <!-- 文件菜单 -->
+    <template v-if="ctx.type === 'file' || ctx.type === 'multi-file'">
+      <button v-if="ctx.type === 'file'" class="ctx-item" @click="ctxInfo">
+        <PhInfo :size="13" weight="bold" />
+        详细信息
+      </button>
+      <button class="ctx-item" @click="ctxDownload">
+        <PhDownloadSimple :size="13" weight="bold" />
+        下载
+      </button>
+      <button v-if="ctx.type === 'file'" class="ctx-item" @click="ctxRename">
+        <PhPencilSimple :size="13" weight="bold" />
+        重命名
+      </button>
+      <div class="ctx-sep"></div>
+      <button class="ctx-item" @click="ctxCut">
+        <PhScissors :size="13" weight="bold" />
+        剪切
+        <span class="ctx-shortcut">{{ modKey }}+X</span>
+      </button>
+      <button class="ctx-item" @click="ctxCopy">
+        <PhCopy :size="13" weight="bold" />
+        复制
+        <span class="ctx-shortcut">{{ modKey }}+C</span>
+      </button>
+      <div class="ctx-sep"></div>
+      <button class="ctx-item ctx-danger" @click="ctxDelete">
+        <PhTrash :size="13" weight="bold" />
+        移到回收站
+      </button>
+    </template>
+
+    <!-- 文件夹菜单 -->
+    <template v-else-if="ctx.type === 'folder'">
+      <button v-if="ctx.target?.type === 'folder'" class="ctx-item" @click="ctxDownloadFolder">
+        <PhDownloadSimple :size="13" weight="bold" />
+        下载为 ZIP
+      </button>
+      <button v-if="ctx.target?.type === 'folder'" class="ctx-item" @click="ctxRenameFolder">
+        <PhPencilSimple :size="13" weight="bold" />
+        重命名
+      </button>
+      <button v-if="ctx.target?.type === 'folder'" class="ctx-item" @click="ctxCutFolder">
+        <PhScissors :size="13" weight="bold" />
+        剪切
+        <span class="ctx-shortcut">{{ modKey }}+X</span>
+      </button>
+      <button v-if="ctx.target?.type === 'folder'" class="ctx-item ctx-danger" @click="ctxDeleteFolder">
+        <PhTrash :size="13" weight="bold" />
+        删除
+      </button>
+      <button v-if="ctx.target?.type !== 'folder'" class="ctx-item" disabled style="opacity:.4;cursor:default">
+        <PhDotsThree :size="13" weight="bold" />
+        此位置不可操作
+      </button>
+    </template>
+
+    <!-- 空白区菜单 -->
+    <template v-else-if="ctx.type === 'empty'">
+      <button class="ctx-item" @click="ctx.visible = false; showNewFolderInput = true">
+        <PhFolderPlus :size="13" weight="bold" />
+        新建文件夹
+      </button>
+      <div class="ctx-sep"></div>
+      <button v-if="cbStore.hasContent()" class="ctx-item" @click="ctxPaste">
+        <PhClipboardText :size="13" weight="bold" />
+        粘贴
+        <span class="ctx-shortcut">{{ modKey }}+V</span>
+      </button>
+      <button v-else class="ctx-item" disabled style="opacity:.4;cursor:default">
+        <PhClipboardText :size="13" weight="bold" />
+        剪贴板为空
+      </button>
+    </template>
+  </ContextMenu>
+
+  <!-- 文件详细信息弹窗 -->
+  <FileInfoPopup
+    :show="infoPopup.show"
+    :file="infoPopup.file"
+    :x="infoPopup.x"
+    :y="infoPopup.y"
+    @close="infoPopup.show = false"
+  />
+
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
-import { filesApi, foldersApi, trashApi } from '@/services/api'
+import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import { filesApi, foldersApi, trashApi, uploadWithProgress } from '@/services/api'
+import ContextMenu   from '@/components/ContextMenu.vue'
+import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
+import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
-import UploadModal from './UploadModal.vue'
+import { usePreviewStore, isPreviewable } from '@/stores/preview'
+import { useFilesCacheStore } from '@/stores/filesCache'
+import { getToken } from '@/services/api'
+import {
+  PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
+  PhBrowser, PhImage, PhFilmStrip, PhMusicNote, PhTable,
+  PhPresentationChart, PhArchive, PhCode, PhFileText,
+  PhArrowLeft, PhArrowRight, PhSortAscending, PhSquaresFour, PhList,
+  PhCheckSquare, PhFolderPlus, PhUploadSimple, PhPencilSimple,
+  PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX, PhCheck,
+  PhInfo, PhWarningCircle, PhDotsThree,
+} from '@phosphor-icons/vue'
 
 const projectStore = useProjectStore()
+const cacheStore   = useFilesCacheStore()
 
 // ── 视图状态 ──
 const viewMode    = ref('grid')
@@ -370,6 +635,38 @@ const mainRef     = ref(null)
 
 // ── 导航 ──
 const navPath = ref([])
+const navHistoryStack  = ref([])
+const navHistoryCursor = ref(-1)
+let _isHistoryNav = false
+
+const canGoBack    = computed(() => navHistoryCursor.value > 0)
+const canGoForward = computed(() => navHistoryCursor.value < navHistoryStack.value.length - 1)
+
+watch(navPath, (newVal) => {
+  if (_isHistoryNav) return
+  const snap = JSON.parse(JSON.stringify(newVal))
+  navHistoryStack.value = navHistoryStack.value.slice(0, navHistoryCursor.value + 1)
+  navHistoryStack.value.push(snap)
+  navHistoryCursor.value = navHistoryStack.value.length - 1
+}, { deep: true })
+
+function goBack() {
+  if (!canGoBack.value) return
+  _isHistoryNav = true
+  navHistoryCursor.value--
+  navPath.value = JSON.parse(JSON.stringify(navHistoryStack.value[navHistoryCursor.value]))
+  loadContents()
+  nextTick(() => { _isHistoryNav = false })
+}
+
+function goForward() {
+  if (!canGoForward.value) return
+  _isHistoryNav = true
+  navHistoryCursor.value++
+  navPath.value = JSON.parse(JSON.stringify(navHistoryStack.value[navHistoryCursor.value]))
+  loadContents()
+  nextTick(() => { _isHistoryNav = false })
+}
 
 const currentType = computed(() => {
   if (navPath.value.length === 0) return 'root'
@@ -378,6 +675,7 @@ const currentType = computed(() => {
 
 const currentSeg  = computed(() => navPath.value[navPath.value.length - 1] ?? null)
 const projectSeg  = computed(() => navPath.value.find(s => s.type === 'project') ?? null)
+const canUpload   = computed(() => ['personal', 'project', 'folder'].includes(currentType.value))
 
 const NAV_KEY = 'files_nav_path'
 
@@ -421,6 +719,13 @@ function enterFolder(folder) {
         { type: 'personal', name: '个人文件', color: null },
         { type: 'folder', folderId: folder.folderId, name: folder.displayName, color: null, space: 'personal' },
       ]
+    } else if (seg?.type === 'folder') {
+      // 已在某个文件夹内，直接追加子文件夹
+      navPath.value = [
+        ...navPath.value,
+        { type: 'folder', folderId: folder.folderId, name: folder.displayName,
+          projectId: folder.projectId ?? seg.projectId, color: folder.color ?? seg.color },
+      ]
     } else {
       // 保留到 project 层，追加 folder
       const projIdx = navPath.value.findIndex(s => s.type === 'project')
@@ -459,8 +764,67 @@ function restoreNav() {
   }
 }
 
+// ── 排序 ──
+const SORT_OPTIONS = [
+  { key: 'name',      label: '名称' },
+  { key: 'type',      label: '类型' },
+  { key: 'stage',     label: '阶段' },
+  { key: 'createdAt', label: '创建时间' },
+  { key: 'size',      label: '大小' },
+]
+const sortKey      = ref('name')
+const sortDir      = ref('asc')
+const sortMenuOpen = ref(false)
+
+function onSortSelect(key) {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    sortDir.value = 'asc'
+  }
+  sortMenuOpen.value = false
+}
+
+const sortedContents = computed(() => {
+  const { folders, files } = contents.value
+  if (currentType.value === 'root') return { folders, files }
+  const dir = sortDir.value === 'asc' ? 1 : -1
+
+  const sortedFolders = [...folders].sort((a, b) => {
+    if (sortKey.value === 'name' || sortKey.value === 'type') {
+      return dir * (a.displayName ?? '').localeCompare(b.displayName ?? '', 'zh')
+    }
+    return dir * ((a.id > b.id ? 1 : a.id < b.id ? -1 : 0))
+  })
+
+  const sortedFiles = [...files].sort((a, b) => {
+    if (sortKey.value === 'name') {
+      return dir * (a.displayName ?? '').localeCompare(b.displayName ?? '', 'zh')
+    }
+    if (sortKey.value === 'type') {
+      const ca = fileExtCategory(a.ext), cb = fileExtCategory(b.ext)
+      if (ca !== cb) return dir * ca.localeCompare(cb)
+      return dir * (a.ext ?? '').localeCompare(b.ext ?? '')
+    }
+    if (sortKey.value === 'stage') {
+      const sa = a.projectName || a.stageName || ''
+      const sb = b.projectName || b.stageName || ''
+      return dir * sa.localeCompare(sb, 'zh')
+    }
+    if (sortKey.value === 'createdAt') {
+      return dir * (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
+    }
+    if (sortKey.value === 'size') {
+      return dir * ((a.sizeBytes ?? 0) - (b.sizeBytes ?? 0))
+    }
+    return 0
+  })
+
+  return { folders: sortedFolders, files: sortedFiles }
+})
+
 // ── 内容 ──
-const tree     = ref(null)
 const contents = ref({ folders: [], files: [] })
 
 function extractColor(colorStr) {
@@ -473,142 +837,128 @@ function extractColor(colorStr) {
 function projYear(p)  { return (p.startDate || p.createdAt || '').slice(0, 4) || '未归类' }
 function projMonth(p) { return (p.startDate || p.createdAt || '').slice(5, 7) || '00' }
 
-async function loadContents() {
-  loading.value = true
+function loadContents() {
   const type = currentType.value
 
-  try {
-    if (type === 'root') {
-      contents.value = {
-        folders: [
-          { id: 'personal', type: 'personal', displayName: '个人文件', count: tree.value?.personalCount ?? null },
-          { id: 'projects', type: 'projects', displayName: '项目文件', count: projectStore.projects.length },
-          { id: 'trash',    type: 'trash',    displayName: '回收站',   count: null },
-        ],
-        files: [],
-      }
-      return
+  if (type === 'root') {
+    // root 仍需知道回收站数量，但可以暗后台拉取（非阻塞）
+    const personalCount = cacheStore.loaded
+      ? cacheStore.getPersonalRootFiles().length + cacheStore.getPersonalRootFolders().length
+      : null
+    contents.value = {
+      folders: [
+        { id: 'personal', type: 'personal', displayName: '个人文件', count: personalCount },
+        { id: 'projects', type: 'projects', displayName: '项目文件', count: projectStore.projects.length },
+        { id: 'trash',    type: 'trash',    displayName: '回收站',   count: null },
+      ],
+      files: [],
     }
-
-    if (type === 'trash') {
-      const files = await trashApi.list()
-      contents.value = { folders: [], files }
-      return
-    }
-
-    if (type === 'personal') {
-      const [apiFolders, rootFiles] = await Promise.all([
-        foldersApi.list(null),
-        filesApi.list({ space: 'personal' }),
-      ])
-      const folderItems = apiFolders.map(f => ({
-        id: `f:${f.id}`, type: 'folder', folderId: f.id,
-        displayName: f.name, color: null, space: 'personal',
-        count: f.fileCount,
-      }))
-      contents.value = { folders: folderItems, files: rootFiles }
-      return
-    }
-
-    if (type === 'projects') {
-      // 按年分组，使用 startDate 优先，fallback 到 createdAt
-      const yearMap = {}
-      for (const p of projectStore.projects) {
-        const year = projYear(p)
-        if (!yearMap[year]) yearMap[year] = 0
-        yearMap[year]++
-      }
-      const yearFolders = Object.keys(yearMap)
-        .sort((a, b) => b.localeCompare(a))
-        .map(y => ({
-          id: `y:${y}`, type: 'year',
-          displayName: y + ' 年',
-          year: y, count: yearMap[y],
-        }))
-      contents.value = { folders: yearFolders, files: [] }
-      return
-    }
-
-    if (type === 'year') {
-      const { year } = currentSeg.value
-      const monthMap = {}
-      for (const p of projectStore.projects) {
-        if (projYear(p) !== year) continue
-        const m = projMonth(p)
-        if (!monthMap[m]) monthMap[m] = 0
-        monthMap[m]++
-      }
-      const monthFolders = Object.keys(monthMap)
-        .sort()
-        .map(m => ({
-          id: `m:${year}-${m}`, type: 'month',
-          displayName: parseInt(m) + ' 月',
-          year, month: m, count: monthMap[m],
-        }))
-      contents.value = { folders: monthFolders, files: [] }
-      return
-    }
-
-    if (type === 'month') {
-      const { year, month } = currentSeg.value
-      const projs = projectStore.projects.filter(p => projYear(p) === year && projMonth(p) === month)
-      const projectFolders = projs.map(p => ({
-        id: `p:${p.id}`, type: 'project', displayName: p.name,
-        color: extractColor(p.color), projectId: p.id,
-        count: tree.value?.projects?.find(t => t.id === p.id)?.totalCount ?? null,
-      }))
-      contents.value = { folders: projectFolders, files: [] }
-      return
-    }
-
-    if (type === 'project') {
-      const seg = currentSeg.value
-      const [apiFolders, rootFiles] = await Promise.all([
-        foldersApi.list(seg.id),
-        filesApi.list({ space: 'project', projectId: seg.id }),
-      ])
-      const folderItems = apiFolders.map(f => ({
-        id: `f:${f.id}`, type: 'folder', folderId: f.id,
-        displayName: f.name, color: seg.color, projectId: seg.id,
-        count: f.fileCount,
-      }))
-      contents.value = { folders: folderItems, files: rootFiles }
-      return
-    }
-
-    if (type === 'folder') {
-      const seg = currentSeg.value
-      const files = await filesApi.list({ folderId: seg.folderId })
-      contents.value = { folders: [], files }
-      return
-    }
-  } catch (e) {
-    console.error('[Files]', e.message)
-  } finally {
-    loading.value = false
+    trashApi.list().then(files => {
+      const trashFolder = contents.value.folders.find(f => f.id === 'trash')
+      if (trashFolder) trashFolder.count = files.length
+    }).catch(() => {})
+    return
   }
-}
 
-async function loadTree() {
-  try {
-    tree.value = await filesApi.tree()
-  } catch (e) {
-    console.error('[Files] 加载树失败:', e.message)
+  if (type === 'trash') {
+    loading.value = true
+    trashApi.list()
+      .then(files => { contents.value = { folders: [], files } })
+      .catch(e => console.error('[Files]', e.message))
+      .finally(() => { loading.value = false })
+    return
+  }
+
+  if (type === 'personal') {
+    const folderItems = cacheStore.getPersonalRootFolders().map(f => ({
+      id: `f:${f.id}`, type: 'folder', folderId: f.id,
+      displayName: f.name, color: null, space: 'personal',
+      count: cacheStore.getFolderFiles(f.id).length,
+    }))
+    contents.value = { folders: folderItems, files: cacheStore.getPersonalRootFiles() }
+    return
+  }
+
+  if (type === 'projects') {
+    const yearMap = {}
+    for (const p of projectStore.projects) {
+      const year = projYear(p)
+      if (!yearMap[year]) yearMap[year] = 0
+      yearMap[year]++
+    }
+    const yearFolders = Object.keys(yearMap)
+      .sort((a, b) => b.localeCompare(a))
+      .map(y => ({ id: `y:${y}`, type: 'year', displayName: y + ' 年', year: y, count: yearMap[y] }))
+    contents.value = { folders: yearFolders, files: [] }
+    return
+  }
+
+  if (type === 'year') {
+    const { year } = currentSeg.value
+    const monthMap = {}
+    for (const p of projectStore.projects) {
+      if (projYear(p) !== year) continue
+      const m = projMonth(p)
+      if (!monthMap[m]) monthMap[m] = 0
+      monthMap[m]++
+    }
+    const monthFolders = Object.keys(monthMap)
+      .sort()
+      .map(m => ({ id: `m:${year}-${m}`, type: 'month', displayName: parseInt(m) + ' 月', year, month: m, count: monthMap[m] }))
+    contents.value = { folders: monthFolders, files: [] }
+    return
+  }
+
+  if (type === 'month') {
+    const { year, month } = currentSeg.value
+    const projs = projectStore.projects.filter(p => projYear(p) === year && projMonth(p) === month)
+    const totalByProject = (pid) => cacheStore.loaded
+      ? cacheStore.allFiles.filter(f => f.projectId === pid).length
+      : null
+    const projectFolders = projs.map(p => ({
+      id: `p:${p.id}`, type: 'project', displayName: p.name,
+      color: extractColor(p.color), projectId: p.id,
+      count: totalByProject(p.id),
+    }))
+    contents.value = { folders: projectFolders, files: [] }
+    return
+  }
+
+  if (type === 'project') {
+    const seg = currentSeg.value
+    const folderItems = cacheStore.getProjectRootFolders(seg.id).map(f => ({
+      id: `f:${f.id}`, type: 'folder', folderId: f.id,
+      displayName: f.name, color: seg.color, projectId: seg.id,
+      count: cacheStore.getFolderFiles(f.id).length,
+    }))
+    contents.value = { folders: folderItems, files: cacheStore.getProjectRootFiles(seg.id) }
+    return
+  }
+
+  if (type === 'folder') {
+    const seg = currentSeg.value
+    const folderItems = cacheStore.getSubFolders(seg.folderId).map(f => ({
+      id: `f:${f.id}`, type: 'folder', folderId: f.id,
+      displayName: f.name, color: seg.color, projectId: seg.projectId ?? null,
+      count: cacheStore.getFolderFiles(f.id).length,
+    }))
+    contents.value = { folders: folderItems, files: cacheStore.getFolderFiles(seg.folderId) }
+    return
   }
 }
 
 onMounted(async () => {
   await Promise.all([
     projectStore.projects.length === 0 ? projectStore.fetchProjects?.() : Promise.resolve(),
-    loadTree(),
+    cacheStore.loaded ? Promise.resolve() : cacheStore.load(),
   ])
   restoreNav()
   loadContents()
 })
 
-watch(uploadSignal, async () => {
-  await loadTree()
-  loadContents()
+watch(uploadSignal, () => {
+  // 上传信号由 uploadFiles 直接写入缓存；这里做一次静默后台刷新以纠偏
+  cacheStore.refresh().then(() => loadContents())
 })
 
 // ── 框选 ──
@@ -619,10 +969,14 @@ const previewFolderKeys  = ref(new Set())
 const boxStart           = ref(null)
 const boxEnd             = ref(null)
 let   _cRect             = null
+let   _latestPreview     = { fileIds: new Set(), folderKeys: new Set() }
+
+function _swallowBoxClick(e) { e.stopImmediatePropagation() }
 
 function clearSelection() {
   selectedIds.value        = new Set()
   selectedFolderKeys.value = new Set()
+  selectModeForced.value   = false
 }
 
 const selectionRect = computed(() => {
@@ -637,7 +991,7 @@ const selectionRect = computed(() => {
 
 function onMainMouseDown(e) {
   if (e.button !== 0) return
-  if (e.target.closest('button, .folder-card, .fc-upload, .trash-row')) return
+  if (e.target.closest('button, .fc-card, .folder-card, .fc-upload, .list-row')) return
   if (currentType.value === 'root' || currentType.value === 'projects') return
 
   _cRect = mainRef.value.getBoundingClientRect()
@@ -664,13 +1018,16 @@ function onDocMouseUp(e) {
   document.removeEventListener('mouseup',   onDocMouseUp)
 
   if (selectionRect.value) {
-    const { fileIds, folderKeys } = getItemsInBox()
-    selectedIds.value        = fileIds
-    selectedFolderKeys.value = folderKeys
+    // 直接用预览时缓存的结果，保证松手选中 == 预选中
+    selectedIds.value        = _latestPreview.fileIds
+    selectedFolderKeys.value = _latestPreview.folderKeys
+    // 用 capture 阶段一次性拦截紧接着的 click，阻止 toggleFileSelect / onPageClick 清掉选中结果
+    document.addEventListener('click', _swallowBoxClick, { capture: true, once: true })
   } else if (!e.ctrlKey && !e.metaKey) {
     clearSelection()
   }
 
+  _latestPreview  = { fileIds: new Set(), folderKeys: new Set() }
   previewFileIds.value    = new Set()
   previewFolderKeys.value = new Set()
   boxStart.value = null
@@ -702,13 +1059,42 @@ function getItemsInBox() {
 
 function updatePreview() {
   if (!selectionRect.value) {
+    _latestPreview  = { fileIds: new Set(), folderKeys: new Set() }
     previewFileIds.value    = new Set()
     previewFolderKeys.value = new Set()
     return
   }
   const { fileIds, folderKeys } = getItemsInBox()
+  _latestPreview  = { fileIds, folderKeys }
   previewFileIds.value    = fileIds
   previewFolderKeys.value = folderKeys
+}
+
+const selectModeForced = ref(false)
+const inSelectionMode  = computed(() => selectModeForced.value || selectedIds.value.size > 0 || selectedFolderKeys.value.size > 0)
+const downloadingZip   = ref(false)
+
+function toggleSelectMode() {
+  if (inSelectionMode.value) {
+    selectModeForced.value = false
+    clearSelection()
+  } else {
+    selectModeForced.value = true
+  }
+}
+
+function toggleFolderSelect(key) {
+  const keys = new Set(selectedFolderKeys.value)
+  if (keys.has(key)) keys.delete(key)
+  else keys.add(key)
+  selectedFolderKeys.value = keys
+}
+
+function toggleFileSelectSimple(fileId) {
+  const ids = new Set(selectedIds.value)
+  if (ids.has(fileId)) ids.delete(fileId)
+  else ids.add(fileId)
+  selectedIds.value = ids
 }
 
 function toggleFileSelect(fileId, e) {
@@ -725,28 +1111,80 @@ function toggleFileSelect(fileId, e) {
 
 function onPageClick() {
   clearSelection()
+  sortMenuOpen.value = false
 }
 
 // ── 删除 ──
 async function deleteSingleFile(f) {
+  const backup = cacheStore.getFile(f.id)
+  cacheStore.removeFile(f.id)
+  selectedIds.value = new Set([...selectedIds.value].filter(id => id !== f.id))
+  loadContents()
   try {
     await filesApi.delete(f.id)
-    selectedIds.value = new Set([...selectedIds.value].filter(id => id !== f.id))
-    await loadTree()
-    loadContents()
   } catch (e) {
+    if (backup) cacheStore.addFile(backup)
+    loadContents()
     console.error('[Files] 删除失败:', e.message)
   }
 }
 
-async function deleteSelected() {
-  if (selectedIds.value.size === 0) return
+async function downloadSelected() {
+  if (downloadingZip.value) return
+  const ids = [...selectedIds.value]
+  const folderObjs = contents.value.folders.filter(f => selectedFolderKeys.value.has(f.id))
+  const folderIds = folderObjs.map(f => f.folderId)
+  if (!ids.length && !folderIds.length) return
+
+  downloadingZip.value = true
   try {
-    await filesApi.batchDelete([...selectedIds.value])
-    selectedIds.value = new Set()
-    await loadTree()
-    loadContents()
+    // 单个文件 → 直接下载
+    if (ids.length === 1 && folderIds.length === 0) {
+      const f = sortedContents.value.files?.find(f => f.id === ids[0])
+      if (f) await filesApi.download(f.id, `${f.displayName}.${f.ext}`)
+      return
+    }
+    // 单个文件夹 → 以文件夹名打包
+    if (folderIds.length === 1 && ids.length === 0) {
+      await foldersApi.download(folderIds[0], folderObjs[0].displayName)
+      return
+    }
+    // 多选 → 以当前目录名打包
+    const dirName = currentSeg.value?.name ?? '文件'
+    await filesApi.batchDownload(ids, folderIds, `${dirName}.zip`)
   } catch (e) {
+    console.error('[Files] 批量下载失败:', e.message)
+  } finally {
+    downloadingZip.value = false
+  }
+}
+
+async function deleteSelected() {
+  const hasFiles   = selectedIds.value.size > 0
+  const hasFolders = selectedFolderKeys.value.size > 0
+  if (!hasFiles && !hasFolders) return
+
+  const fileIds     = [...selectedIds.value]
+  const folderMap   = new Map(contents.value.folders.map(f => [f.id, f.folderId]))
+  const folderIds   = [...selectedFolderKeys.value].map(k => folderMap.get(k)).filter(Boolean)
+  const fileBackups = fileIds.map(id => cacheStore.getFile(id)).filter(Boolean)
+
+  // 乐观更新
+  if (hasFiles)   cacheStore.removeFiles(fileIds)
+  if (hasFolders) folderIds.forEach(id => cacheStore.removeFolder(id))
+  selectedIds.value        = new Set()
+  selectedFolderKeys.value = new Set()
+  loadContents()
+
+  try {
+    const tasks = []
+    if (hasFiles)   tasks.push(filesApi.batchDelete(fileIds))
+    if (hasFolders) folderIds.forEach(id => tasks.push(foldersApi.delete(id)))
+    await Promise.all(tasks)
+  } catch (e) {
+    // 回滚
+    fileBackups.forEach(f => cacheStore.addFile(f))
+    loadContents()
     console.error('[Files] 批量删除失败:', e.message)
   }
 }
@@ -755,6 +1193,8 @@ async function deleteSelected() {
 async function restoreFile(f) {
   try {
     await trashApi.restore(f.id)
+    // 恢复后文件重新进入主缓存（deleted_at=null）
+    cacheStore.addFile({ ...f, deletedAt: null })
     loadContents()
   } catch (e) {
     console.error('[Files] 恢复失败:', e.message)
@@ -793,13 +1233,8 @@ function formatDate(iso) {
 }
 
 // ── 上传 ──
-const allProjects             = computed(() => projectStore.projects)
-const uploadDialogOpen        = ref(false)
-const uploadLockedProjectId   = ref(null)
-const uploadLockedProjectName = ref('')
-const uploadLockedColor       = ref('')
-const uploadLockedFolderId    = ref(null)
-const droppedFiles            = ref([])
+const uploadingItems = ref([])
+let _uploadUid = 0
 
 // ── 新建文件夹 ──
 const newFolderName      = ref('')
@@ -809,72 +1244,100 @@ const showNewFolderInput = ref(false)
 async function createFolder() {
   const name = newFolderName.value.trim()
   if (!name) return
-  const projectId = currentType.value === 'project' ? projectSeg.value?.id ?? null : null
+  const type      = currentType.value
+  const seg       = currentSeg.value
+  const projectId = (type === 'project' || type === 'folder')
+    ? (projectSeg.value?.id ?? seg?.projectId ?? null)
+    : null
+  const parentId  = type === 'folder' ? (seg?.folderId ?? null) : null
   newFolderLoading.value = true
+  const tempId = -(Date.now())
+  cacheStore.addFolder({ id: tempId, name, projectId, parentId, fileCount: 0 })
+  newFolderName.value = ''
+  showNewFolderInput.value = false
+  loadContents()
   try {
-    await foldersApi.create(projectId, name)
-    newFolderName.value = ''
-    showNewFolderInput.value = false
+    const real = await foldersApi.create(projectId, name, parentId)
+    cacheStore.removeFolder(tempId)
+    cacheStore.addFolder({ id: real.id, name: real.name, projectId: real.projectId ?? null, parentId: real.parentId ?? null, fileCount: 0 })
     loadContents()
   } catch (e) {
+    cacheStore.removeFolder(tempId)
+    loadContents()
     console.error('[Files] 新建文件夹失败:', e.message)
   } finally {
     newFolderLoading.value = false
   }
 }
 
-function openUploadDialog() {
+async function uploadFiles(files) {
+  if (!files.length) return
   const type = currentType.value
   const seg  = currentSeg.value
-
+  let space = 'personal', projectId = null, folderId = null
   if (type === 'project' && seg) {
-    uploadLockedProjectId.value   = seg.id
-    uploadLockedProjectName.value = seg.name
-    uploadLockedColor.value       = seg.color ?? ''
-    uploadLockedFolderId.value    = null
+    space = 'project'; projectId = seg.id
   } else if (type === 'folder' && seg) {
-    const ps = projectSeg.value
-    uploadLockedProjectId.value   = seg.projectId
-    uploadLockedProjectName.value = ps?.name ?? ''
-    uploadLockedColor.value       = seg.color ?? ''
-    uploadLockedFolderId.value    = seg.folderId
-  } else {
-    uploadLockedProjectId.value   = null
-    uploadLockedProjectName.value = ''
-    uploadLockedColor.value       = ''
-    uploadLockedFolderId.value    = null
+    folderId = seg.folderId
+    if (seg.projectId) { space = 'project'; projectId = seg.projectId }
   }
-  uploadDialogOpen.value = true
+
+  const tasks = files.map(f => {
+    const dotIdx = f.name.lastIndexOf('.')
+    const ext  = dotIdx > -1 ? f.name.slice(dotIdx + 1).toUpperCase() : ''
+    const name = dotIdx > -1 ? f.name.slice(0, dotIdx) : f.name
+    const ghost = { uid: ++_uploadUid, name, ext, progress: 0, error: false }
+    uploadingItems.value.push(ghost)
+    return { file: f, ghost }
+  })
+
+  await Promise.allSettled(tasks.map(async ({ file, ghost }) => {
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('space', space)
+      if (projectId) form.append('project_id', String(projectId))
+      if (folderId)  form.append('folder_id',  String(folderId))
+      const created = await uploadWithProgress('/files', form, p => {
+        const g = uploadingItems.value.find(g => g.uid === ghost.uid)
+        if (g) g.progress = Math.round(p * 100)
+      })
+      uploadingItems.value = uploadingItems.value.filter(g => g.uid !== ghost.uid)
+      cacheStore.addFile(created)
+      loadContents()
+    } catch (e) {
+      console.error('[Files] 上传失败:', e.message)
+      const g = uploadingItems.value.find(g => g.uid === ghost.uid)
+      if (g) g.error = true
+      setTimeout(() => {
+        uploadingItems.value = uploadingItems.value.filter(g => g.uid !== ghost.uid)
+      }, 2000)
+    }
+  }))
 }
 
-async function onUploaded() {
-  uploadDialogOpen.value = false
-  droppedFiles.value = []
-  await loadTree()
-  await nextTick()
-  loadContents()
-}
-
-function closeUploadDialog() {
-  uploadDialogOpen.value = false
-  droppedFiles.value = []
+async function handleFileInput(e) {
+  await uploadFiles([...e.target.files])
+  e.target.value = ''
 }
 
 // ── 拖拽上传 ──
 function onDragEnter(e) {
-  if (e.dataTransfer?.types?.includes('Files')) dragCounter.value++
+  if (canUpload.value && e.dataTransfer?.types?.includes('Files')) dragCounter.value++
 }
 function onDragLeave() {
   dragCounter.value = Math.max(0, dragCounter.value - 1)
 }
 function handleDrop(e) {
   dragCounter.value = 0
+  if (!canUpload.value) return
   const files = [...(e.dataTransfer?.files ?? [])]
-  if (files.length) {
-    droppedFiles.value = files
-    openUploadDialog()
-  }
+  if (files.length) uploadFiles(files)
 }
+
+// ── 预览 ──
+const previewStore = usePreviewStore()
+const openPreview = (f) => previewStore.open(f)
 
 // ── 下载 ──
 async function downloadFile(f) {
@@ -882,6 +1345,172 @@ async function downloadFile(f) {
     await filesApi.download(f.id, `${f.displayName}.${f.ext.toLowerCase()}`)
   } catch (e) {
     console.error('[Files] 下载失败:', e.message)
+  }
+}
+
+// ── 重命名 ──
+const renamingFileId    = ref(null)
+const renamingFolderKey = ref(null)
+const renameText        = ref('')
+
+function startRenameFile(f) {
+  renamingFolderKey.value = null
+  renamingFileId.value    = f.id
+  renameText.value        = f.displayName
+  nextTick(() => document.querySelector('.rename-input')?.select())
+}
+
+function startRenameFolder(f) {
+  renamingFileId.value    = null
+  renamingFolderKey.value = f.folderId
+  renameText.value        = f.displayName
+  nextTick(() => document.querySelector('.rename-input')?.select())
+}
+
+function cancelRename() {
+  renamingFileId.value    = null
+  renamingFolderKey.value = null
+  renameText.value        = ''
+}
+
+async function commitRename() {
+  const fileId    = renamingFileId.value
+  const folderId  = renamingFolderKey.value
+  if (fileId == null && folderId == null) return
+  const name = renameText.value.trim()
+  cancelRename()
+  if (!name) return
+  if (fileId != null) {
+    const oldName = cacheStore.getFile(fileId)?.displayName
+    cacheStore.updateFile(fileId, { displayName: name })
+    loadContents()
+    filesApi.update(fileId, { display_name: name }).catch(e => {
+      if (oldName != null) cacheStore.updateFile(fileId, { displayName: oldName })
+      loadContents()
+      console.error('[Files] 重命名失败:', e.message)
+    })
+  } else {
+    const oldName = cacheStore.getFolder(folderId)?.name
+    cacheStore.updateFolder(folderId, { name })
+    loadContents()
+    foldersApi.rename(folderId, name).catch(e => {
+      if (oldName != null) cacheStore.updateFolder(folderId, { name: oldName })
+      loadContents()
+      console.error('[Files] 重命名失败:', e.message)
+    })
+  }
+}
+
+function onRenameKey(e) {
+  if (e.key === 'Enter')  { e.preventDefault(); commitRename() }
+  if (e.key === 'Escape') { e.preventDefault(); cancelRename() }
+}
+
+async function downloadFolder(f) {
+  try {
+    await foldersApi.download(f.folderId, f.displayName)
+  } catch (e) {
+    console.error('[Files] 下载文件夹失败:', e.message)
+  }
+}
+
+// ── 拖动移动 ──
+const draggingFileIds  = ref(new Set())
+const dragOverFolderId = ref(null)
+const bcDragOverIdx    = ref(null)
+
+function onFileDragStart(f, e) {
+  const ids = selectedIds.value.has(f.id) && selectedIds.value.size > 0
+    ? [...selectedIds.value] : [f.id]
+  draggingFileIds.value = new Set(ids)
+  e.dataTransfer.setData('text/plain', JSON.stringify(ids))
+  e.dataTransfer.effectAllowed = 'move'
+  // 清除框选状态（mousedown 可能提前启动了框选，但 drag 开始后 mouseup 不会触发）
+  document.removeEventListener('mousemove', onDocMouseMove)
+  document.removeEventListener('mouseup', onDocMouseUp)
+  boxStart.value = null
+  boxEnd.value = null
+  previewFileIds.value = new Set()
+  previewFolderKeys.value = new Set()
+}
+function onFileDragEnd() {
+  draggingFileIds.value = new Set()
+  dragOverFolderId.value = null
+}
+function isBcDroppable(seg) {
+  return seg.type === 'folder' || seg.type === 'personal'
+}
+function onBcDragOver(seg, i, e) {
+  if (!isBcDroppable(seg) || !draggingFileIds.value.size) return
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'move'
+  bcDragOverIdx.value = i
+}
+function onBcDragLeave(i) {
+  if (bcDragOverIdx.value === i) bcDragOverIdx.value = null
+}
+async function onBcDrop(seg, e) {
+  e.preventDefault()
+  bcDragOverIdx.value = null
+  if (!isBcDroppable(seg)) return
+  let ids
+  try { ids = JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return }
+  if (!ids?.length) return
+  const targetFolderId = seg.type === 'folder' ? seg.folderId : null
+  const backups = ids.map(id => cacheStore.getFile(id)).filter(Boolean)
+  ids.forEach(id => cacheStore.updateFile(id, { folderId: targetFolderId }))
+  draggingFileIds.value = new Set()
+  selectedIds.value     = new Set()
+  loadContents()
+  try {
+    await Promise.all(ids.map(id => filesApi.update(id, { folder_id: targetFolderId })))
+  } catch (err) {
+    backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId }))
+    loadContents()
+    console.error('[Files] 移动失败:', err.message)
+  }
+}
+
+function onFolderDragOver(f, e) {
+  if (f.type !== 'folder') return
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'move'
+  dragOverFolderId.value = f.folderId
+}
+function onFolderDragLeave(f) {
+  if (dragOverFolderId.value === f.folderId) dragOverFolderId.value = null
+}
+async function onFolderDrop(f, e) {
+  e.preventDefault()
+  dragOverFolderId.value = null
+  if (f.type !== 'folder') return
+  let ids
+  try { ids = JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return }
+  if (!ids?.length) return
+  const backups = ids.map(id => cacheStore.getFile(id)).filter(Boolean)
+  ids.forEach(id => cacheStore.updateFile(id, { folderId: f.folderId }))
+  draggingFileIds.value = new Set()
+  selectedIds.value     = new Set()
+  loadContents()
+  try {
+    await Promise.all(ids.map(id => filesApi.update(id, { folder_id: f.folderId })))
+  } catch (err) {
+    backups.forEach(b => cacheStore.updateFile(b.id, { folderId: b.folderId }))
+    loadContents()
+    console.error('[Files] 移动失败:', err.message)
+  }
+}
+
+async function deleteFolder(f) {
+  if (!confirm(`删除文件夹"${f.displayName}"？文件夹内所有内容将被删除。`)) return
+  cacheStore.removeFolder(f.folderId)
+  loadContents()
+  try {
+    await foldersApi.delete(f.folderId)
+  } catch (e) {
+    // 无法回滚（不知道子结构），静默刷新
+    cacheStore.refresh().then(() => loadContents())
+    console.error('[Files] 删除文件夹失败:', e.message)
   }
 }
 
@@ -899,18 +1528,249 @@ function folderIconStyle(folder) {
   return { background: 'rgba(123,127,178,0.1)', color: 'var(--color-primary)' }
 }
 
+function fileExtCategory(ext) {
+  const e = (ext || '').toLowerCase()
+  if (['jpg','jpeg','png','gif','webp','svg','ico','bmp','avif','heic','tif','tiff'].includes(e)) return 'image'
+  if (['mp4','mov','avi','mkv','webm','wmv','flv','m4v'].includes(e))                            return 'video'
+  if (['mp3','wav','flac','aac','ogg','m4a','wma','opus'].includes(e))                           return 'audio'
+  if (['xls','xlsx','csv','ods','numbers'].includes(e))                                          return 'sheet'
+  if (['ppt','pptx','key','odp'].includes(e))                                                    return 'slide'
+  if (['zip','rar','7z','tar','gz','bz2','xz'].includes(e))                                      return 'archive'
+  if (['js','ts','jsx','tsx','vue','py','go','rs','java','cpp','c','cs','rb','swift','php','kt','dart','sh'].includes(e)) return 'code'
+  if (['html','css','scss','less','xml','json','yaml','yml','toml','md','mdx','graphql'].includes(e)) return 'code'
+  return 'doc'
+}
+
+const _IMAGE_EXTS  = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
+const isImageExt   = (ext) => _IMAGE_EXTS.has((ext || '').toLowerCase())
+const thumbUrl     = (id, size = '') =>
+  `/api/v1/files/${id}/thumb?token=${getToken()}${size ? `&size=${size}` : ''}`
+const loadedThumbs = reactive(new Set())
+
+// IntersectionObserver 懒加载指令：只在进入视口附近才设置 src，避免同时发出大量请求
+const vLazySrc = {
+  mounted(el, { value }) {
+    if (!value) return
+    const obs = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return
+      el.src = value
+      obs.disconnect()
+      el._lazySrcObs = null
+    }, { rootMargin: '250px' })
+    obs.observe(el)
+    el._lazySrcObs = obs
+  },
+  updated(el, { value, oldValue }) {
+    if (value === oldValue) return
+    el._lazySrcObs?.disconnect()
+    if (!value || el.src === value) return
+    const obs = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return
+      el.src = value
+      obs.disconnect()
+      el._lazySrcObs = null
+    }, { rootMargin: '250px' })
+    obs.observe(el)
+    el._lazySrcObs = obs
+  },
+  unmounted(el) {
+    el._lazySrcObs?.disconnect()
+    el._lazySrcObs = null
+  },
+}
+
+function fileIconColor(ext) {
+  const e = (ext || '').toLowerCase()
+  if (['jpg','jpeg','png','gif','webp','svg','ico','bmp','avif','heic'].includes(e)) return '#b07858'
+  if (['mp4','mov','avi','mkv','webm','wmv'].includes(e))                            return '#8868a0'
+  if (['mp3','wav','flac','aac','ogg','m4a'].includes(e))                            return '#a07088'
+  if (['pdf'].includes(e))                                                           return '#a85858'
+  if (['doc','docx','rtf','odt'].includes(e))                                        return '#5078a8'
+  if (['xls','xlsx','csv','ods'].includes(e))                                        return '#508870'
+  if (['ppt','pptx','key','odp'].includes(e))                                        return '#a07840'
+  if (['zip','rar','7z','tar','gz'].includes(e))                                     return '#808888'
+  if (['js','ts','jsx','tsx','vue','py','go','rs','java','cpp','c'].includes(e))     return '#688858'
+  if (['html','css','scss','json','yaml','xml','md'].includes(e))                    return '#508898'
+  return '#8888a8'
+}
+
+function folderListIcon(folder) {
+  if (folder.type === 'personal') return PhUser
+  if (folder.type === 'projects') return PhStack
+  if (folder.type === 'trash')    return PhTrash
+  if (folder.type === 'year')     return PhCalendarBlank
+  if (folder.type === 'month')    return PhCalendarDot
+  if (folder.type === 'project')  return PhBrowser
+  return PhFolder
+}
+
+function fileListIcon(ext) {
+  const cat = fileExtCategory(ext)
+  if (cat === 'image')   return PhImage
+  if (cat === 'video')   return PhFilmStrip
+  if (cat === 'audio')   return PhMusicNote
+  if (cat === 'sheet')   return PhTable
+  if (cat === 'slide')   return PhPresentationChart
+  if (cat === 'archive') return PhArchive
+  if (cat === 'code')    return PhCode
+  return PhFileText
+}
+
 function folderAccentColor(folder) {
-  if (folder.type === 'personal') return '#b49450'
-  if (folder.type === 'projects') return '#7b7fb2'
-  if (folder.type === 'trash')    return '#c85a5a'
-  if (folder.type === 'year')     return '#4a9a72'
-  if (folder.type === 'month')    return '#5080c8'
+  if (folder.type === 'personal') return '#967858'
+  if (folder.type === 'projects') return '#6878a8'
+  if (folder.type === 'trash')    return '#987070'
+  if (folder.type === 'year')     return '#508878'
+  if (folder.type === 'month')    return '#5878a8'
   if (folder.color) return folder.color
-  return 'var(--color-primary)'
+  return '#8888a8'
 }
 
 const folderInputRef = ref(null)
 watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.focus()) })
+
+// ── 剪贴板 & 右键菜单 ────────────────────────────────────────────────────────
+const isMac = navigator.platform.toUpperCase().includes('MAC') || navigator.userAgent.includes('Mac')
+const modKey = isMac ? '⌘' : 'Ctrl'
+const cbStore = useClipboardStore()
+
+const ctx = ref({ visible: false, x: 0, y: 0, type: null, target: null })
+const infoPopup = ref({ show: false, file: null, x: 0, y: 0 })
+
+function selCut() {
+  const fids = [...selectedIds.value]
+  const dids = [...selectedFolderKeys.value].map(k => contents.value.folders.find(f => f.id === k)?.folderId).filter(Boolean)
+  cbStore.cut(fids, dids)
+  clearSelection()
+}
+function selCopy() {
+  cbStore.copy([...selectedIds.value], [])
+  clearSelection()
+}
+
+function openCtx(type, target, e) {
+  // 如果右键点到已选中的文件，切换为多选菜单
+  if (type === 'file' && (selectedIds.value.has(target.id) || selectedFolderKeys.value.size > 0) &&
+      (selectedIds.value.size + selectedFolderKeys.value.size) > 1) {
+    type = 'multi-file'
+  }
+  ctx.value = { visible: true, x: e.clientX, y: e.clientY, type, target }
+}
+
+// 当前目录的 folder_id（null = 根目录）
+function currentFolderId() {
+  const seg = currentSeg.value
+  return seg?.type === 'folder' ? seg.folderId : null
+}
+
+// ── 文件操作 ──
+function ctxInfo() {
+  const f = ctx.value.target
+  ctx.value.visible = false
+  if (f) infoPopup.value = { show: true, file: f, x: ctx.value.x, y: ctx.value.y }
+}
+
+async function ctxDownload() {
+  ctx.value.visible = false
+  const ids = ctx.value.type === 'multi-file'
+    ? [...selectedIds.value]
+    : [ctx.value.target.id]
+  if (ids.length === 1) {
+    const f = sortedContents.value.files.find(f => f.id === ids[0])
+    if (f) await filesApi.download(f.id, `${f.displayName}.${f.ext}`)
+  } else {
+    const dirName = currentSeg.value?.name ?? '文件'
+    await filesApi.batchDownload(ids, [], `${dirName}.zip`)
+  }
+}
+function ctxRename() {
+  const f = ctx.value.target; ctx.value.visible = false
+  startRenameFile(f)
+}
+function ctxCut() {
+  const ids = ctx.value.type === 'multi-file'
+    ? [...selectedIds.value] : [ctx.value.target.id]
+  cbStore.cut(ids, []); ctx.value.visible = false
+}
+function ctxCopy() {
+  const ids = ctx.value.type === 'multi-file'
+    ? [...selectedIds.value] : [ctx.value.target.id]
+  cbStore.copy(ids, []); ctx.value.visible = false
+}
+async function ctxDelete() {
+  ctx.value.visible = false
+  const ids = ctx.value.type === 'multi-file'
+    ? [...selectedIds.value] : [ctx.value.target.id]
+  try {
+    await Promise.all(ids.map(id => filesApi.delete(id)))
+    selectedIds.value = new Set()
+    loadContents()
+  } catch (e) { console.error(e) }
+}
+
+// ── 文件夹操作 ──
+function ctxDownloadFolder() {
+  const f = ctx.value.target; ctx.value.visible = false
+  downloadFolder(f)
+}
+function ctxRenameFolder() {
+  const f = ctx.value.target; ctx.value.visible = false
+  startRenameFolder(f)
+}
+function ctxCutFolder() {
+  cbStore.cut([], [ctx.value.target.folderId]); ctx.value.visible = false
+}
+async function ctxDeleteFolder() {
+  const f = ctx.value.target; ctx.value.visible = false
+  await deleteFolder(f)
+}
+
+// ── 粘贴 ──
+async function ctxPaste() {
+  ctx.value.visible = false
+  const folderId = currentFolderId()
+  const seg = currentSeg.value
+  const projectId = seg?.type === 'project' ? seg.id : (seg?.projectId ?? null)
+  try {
+    if (cbStore.type === 'cut') {
+      const backups = cbStore.fileIds.map(id => cacheStore.getFile(id)).filter(Boolean)
+      cbStore.fileIds.forEach(id => cacheStore.updateFile(id, { folderId, projectId }))
+      cbStore.clear()
+      loadContents()
+      try {
+        await Promise.all(backups.map(f => filesApi.update(f.id, { folder_id: folderId })))
+      } catch (e) {
+        backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId, projectId: f.projectId }))
+        loadContents()
+        console.error('[Files] 粘贴失败:', e)
+      }
+    } else if (cbStore.type === 'copy') {
+      const created = await Promise.all(cbStore.fileIds.map(id =>
+        filesApi.copy(id, { folder_id: folderId, project_id: projectId })
+      ))
+      created.forEach(f => cacheStore.addFile(f))
+      loadContents()
+    }
+  } catch (e) { console.error('[Files] 粘贴失败:', e) }
+}
+
+// ── 键盘快捷键 ──
+function onKeyDown(e) {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+  const ctrl = e.ctrlKey || e.metaKey
+  if (ctrl && e.key === 'x') {
+    const fids = [...selectedIds.value]; const dids = [...selectedFolderKeys.value].map(k => contents.value.folders.find(f => f.id === k)?.folderId).filter(Boolean)
+    if (fids.length || dids.length) { cbStore.cut(fids, dids); e.preventDefault() }
+  } else if (ctrl && e.key === 'c') {
+    const fids = [...selectedIds.value]
+    if (fids.length) { cbStore.copy(fids, []); e.preventDefault() }
+  } else if (ctrl && e.key === 'v') {
+    if (cbStore.hasContent()) { ctxPaste(); e.preventDefault() }
+  }
+}
+
+onMounted(() => document.addEventListener('keydown', onKeyDown))
+onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 </script>
 
 <style scoped>
@@ -923,7 +1783,8 @@ watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.f
 /* ── 工具栏 ── */
 .files-toolbar {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 16px; flex-shrink: 0; gap: 12px;
+  height: 52px; box-sizing: border-box;
+  padding: 0 16px; flex-shrink: 0; gap: 12px;
   position: relative; z-index: 20;
 }
 .toolbar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -933,6 +1794,14 @@ watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.f
   display: flex; align-items: center; gap: 4px;
   flex: 1; min-width: 0; overflow: hidden;
 }
+.nav-hist-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 7px; border: none;
+  background: none; cursor: pointer; color: var(--text-secondary);
+  transition: all 0.13s; flex-shrink: 0;
+}
+.nav-hist-btn:hover:not(:disabled) { background: rgba(0,0,0,0.05); color: var(--text-primary); }
+.nav-hist-btn:disabled { opacity: 0.28; cursor: default; }
 .bc-item {
   display: flex; align-items: center; gap: 5px;
   padding: 4px 8px; border-radius: 7px; border: none;
@@ -944,10 +1813,54 @@ watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.f
 .bc-item:hover { background: rgba(0,0,0,0.05); color: var(--text-primary); }
 .bc-item.active { color: var(--text-primary); font-weight: 600; cursor: default; }
 .bc-item.active:hover { background: none; }
+.bc-item.bc-drop-target { background: rgba(123,127,178,0.15); color: var(--color-primary); }
 .bc-arrow { color: var(--text-secondary); opacity: 0.4; flex-shrink: 0; }
 .bc-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 
 /* 视图切换 */
+.sort-selector { position: relative; }
+.sort-btn {
+  display: flex; align-items: center; gap: 5px;
+  height: 30px; padding: 0 10px; border-radius: 8px; border: none;
+  background: rgba(255,255,255,0.55); cursor: pointer;
+  font-size: 11.5px; font-weight: 500; color: var(--text-secondary);
+  font-family: var(--font-sans); transition: background 0.15s, color 0.15s;
+}
+.sort-btn:hover { background: rgba(255,255,255,0.82); color: var(--text-primary); }
+.sort-dir-icon { transition: transform 0.2s; }
+.sort-dir-icon.desc { transform: rotate(180deg); }
+.sort-menu {
+  position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 200;
+  background: rgba(255,255,255,0.96); backdrop-filter: blur(12px);
+  border: 1px solid rgba(0,0,0,0.08); border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1); padding: 4px;
+  display: flex; flex-direction: column; gap: 1px; min-width: 110px;
+}
+.sort-menu-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 7px 10px; border-radius: 7px; border: none; background: none;
+  font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
+  cursor: pointer; transition: background 0.12s; text-align: left;
+}
+.sort-menu-item:hover { background: rgba(0,0,0,0.05); }
+.sort-menu-item.active { color: var(--color-primary); font-weight: 600; }
+.sort-check { flex-shrink: 0; color: var(--color-primary); }
+.sort-check.desc { transform: rotate(180deg); }
+
+.select-mode-btn {
+  width: 28px; height: 28px; border-radius: 6px; border: none;
+  background: rgba(0,0,0,0.05); cursor: pointer; color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.select-mode-btn svg { display: block; }
+.select-mode-btn.on {
+  background: rgba(255,255,255,0.85);
+  color: var(--color-primary);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.select-mode-btn:not(.on):hover { background: rgba(0,0,0,0.09); color: var(--text-primary); }
+
 .view-toggle {
   display: flex; background: rgba(0,0,0,0.05);
   border-radius: 8px; padding: 2px; gap: 2px;
@@ -1053,7 +1966,8 @@ watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.f
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 1.5px rgba(123,127,178,0.12);
 }
 .list-row.pre-selected {
-  background: rgba(123,127,178,0.05);
+  background: rgba(123,127,178,0.06);
+  outline: 1px solid rgba(123,127,178,0.25);
 }
 
 /* ── 文件夹选中态 ── */
@@ -1069,8 +1983,8 @@ watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.f
 /* ── 网格 ── */
 .file-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  gap: 9px;
+  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+  gap: 10px;
   align-content: start;
 }
 
@@ -1083,113 +1997,310 @@ watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.f
 /* ── 文件夹卡片 ── */
 .folder-card {
   position: relative;
-  background: rgba(255,255,255,0.62);
-  border: 1px solid rgba(255,255,255,0.85);
-  border-radius: var(--radius-md);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 4px rgba(80,90,110,0.05);
-  padding: 11px 10px 10px;
+  background: rgba(255,255,255,0.72);
+  background: color-mix(in srgb, var(--fd-color, #8888a0) 6%, rgba(255,255,255,0.82));
+  border: 1px solid rgba(255,255,255,0.9);
+  border-color: color-mix(in srgb, var(--fd-color, #8888a0) 14%, rgba(255,255,255,0.92));
+  border-radius: 14px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
   cursor: pointer;
-  display: flex; flex-direction: column; gap: 6px;
+  display: flex; flex-direction: column;
+  min-height: 122px; overflow: hidden;
   transition: transform 0.22s cubic-bezier(0.34,1.2,0.64,1),
               box-shadow 0.22s ease, background 0.18s;
   user-select: none;
 }
 .folder-card:hover {
   transform: translateY(-2px);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 16px rgba(80,90,110,0.1);
-  background: rgba(255,255,255,0.78);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
 }
 .folder-card:active { transform: translateY(0); }
 
-.fd-icon-wrap {
-  width: 40px; height: 38px; border-radius: 9px;
+.fd-icon-area {
+  height: 90px;
+  flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
+  overflow: visible;
 }
-
-.fd-body { min-width: 0; }
+.fd-big-icon {
+  width: 92px; height: 92px;
+  color: var(--fd-color, var(--color-primary));
+  opacity: 0.58;
+  transform: translateY(20px);
+  mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
+  flex-shrink: 0;
+}
+.fd-label { padding: 0 13px 13px; }
 .fd-name {
-  font-size: 11px; font-weight: 600; color: var(--text-primary);
+  font-size: 11.5px; font-weight: 600; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  line-height: 1.35;
+  line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
 .fd-count {
-  font-size: 9px; color: var(--text-secondary); opacity: 0.7; margin-top: 2px;
+  font-size: 9px; color: var(--text-secondary); opacity: 0.55; margin-top: 2px;
 }
+.fd-hover-actions {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s;
+}
+.folder-card:hover .fd-hover-actions { opacity: 1; }
 
 /* ── 文件卡片 ── */
 .fc-card {
   position: relative;
-  background: rgba(255,255,255,0.68);
-  border: 1.5px solid rgba(255,255,255,0.85);
-  border-radius: var(--radius-md);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 4px rgba(80,90,110,0.05);
-  padding: 10px 10px 9px;
-  display: flex; flex-direction: column; gap: 4px;
+  background: rgba(255,255,255,0.72);
+  border: 1px solid rgba(255,255,255,0.9);
+  border-radius: 14px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
+  display: flex; flex-direction: column;
+  min-height: 122px; overflow: hidden;
   cursor: pointer;
   transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
               box-shadow 0.25s ease, background 0.2s, border-color 0.2s;
 }
 .fc-card:hover {
   transform: translateY(-2px);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 16px rgba(80,90,110,0.11);
-  background: rgba(255,255,255,0.82);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
+  background: rgba(255,255,255,0.86);
 }
 .fc-card.selected {
-  border-color: rgba(123,127,178,0.65);
-  background: rgba(123,127,178,0.08);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 0 0 2px rgba(123,127,178,0.2);
+  border-color: rgba(123,127,178,0.55);
+  background: rgba(123,127,178,0.07);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 0 0 2px rgba(123,127,178,0.18);
+}
+.fc-card.selected .fc-thumb-area::after,
+.fc-card.pre-selected .fc-thumb-area::after {
+  content: ''; position: absolute; inset: 0; z-index: 2;
+  pointer-events: none;
+}
+.fc-card.selected .fc-thumb-area::after    { background: rgba(123,127,178,0.28); }
+.fc-card.pre-selected .fc-thumb-area::after { background: rgba(123,127,178,0.16); }
+
+/* ext 角标 */
+.sel-checkbox {
+  position: absolute; top: 8px; right: 8px; z-index: 3;
+  width: 18px; height: 18px; border-radius: 5px;
+  border: 2px solid rgba(123, 127, 178, 0.55);
+  background: rgba(255,255,255,0.75);
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, border-color 0.15s;
+  pointer-events: none;
+}
+.sel-checkbox.checked {
+  background: var(--color-primary, #7b7fb2);
+  border-color: var(--color-primary, #7b7fb2);
+}
+.lr-actions { position: relative; }
+.lr-actions .sel-checkbox {
+  position: absolute;
+  right: 0; top: 50%; transform: translateY(-50%);
+  background: rgba(255,255,255,0.55);
+  transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
+}
+.lr-actions .sel-checkbox.checked {
+  background: var(--color-primary, #7b7fb2);
+  border-color: var(--color-primary, #7b7fb2);
+}
+/* 勾选框出现/消失动画 */
+.sel-cb-enter-active,
+.sel-cb-leave-active { transition: background 0.15s, border-color 0.15s, opacity 0.18s ease; }
+.sel-cb-enter-from,
+.sel-cb-leave-to { opacity: 0; }
+
+.fc-ext-badge {
+  position: absolute; top: 10px; left: 10px; z-index: 2;
+  font-size: 8px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--fc-color, var(--color-primary));
+  background: rgba(0,0,0,0.04);
+  border-radius: 4px; padding: 2px 5px; line-height: 1.5;
 }
 
-.fc-top { display: flex; align-items: center; justify-content: space-between; }
-.fc-top-left { display: flex; align-items: center; gap: 4px; }
-.fc-ext {
-  font-size: 9px; font-weight: 800; letter-spacing: 0.04em;
-  color: var(--color-primary); background: rgba(123,127,178,0.12);
-  border-radius: 4px; padding: 2px 5px;
+/* 大图标区 */
+.fc-icon-area {
+  height: 90px;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  overflow: visible;
 }
-.fc-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; opacity: 0.8; }
+.fc-big-icon {
+  width: 86px; height: 86px;
+  color: var(--fc-color, var(--color-primary));
+  opacity: 0.55;
+  transform: translateY(20px);
+  mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
+  flex-shrink: 0;
+}
+
+/* 图片缩略图 */
+.fc-thumb-area {
+  position: relative;
+  height: 90px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 14px 14px 0 0;
+  background: rgba(0,0,0,0.05);
+  will-change: transform;
+  transform: translateZ(0);
+  mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
+}
+.fc-thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center top;
+  display: block;
+}
+/* tiny：模糊放大填满，作为永久底层 */
+.fc-thumb-tiny {
+  filter: blur(10px);
+  transform: scale(1.15);
+  z-index: 1;
+}
+/* full：初始透明，加载完淡入覆盖 tiny */
+.fc-thumb-full {
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.fc-thumb-full.fc-loaded { opacity: 1; }
+.fc-has-thumb .fc-label {
+  position: relative; z-index: 1;
+}
+.fc-has-thumb .fc-ext-badge {
+  background: rgba(0,0,0,0.32);
+  color: rgba(255,255,255,0.92);
+}
+
+/* 底部标签 */
+.fc-label { padding: 0 13px 13px; }
 .fc-name {
-  font-size: 11px; font-weight: 600; color: var(--text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3;
+  font-size: 11.5px; font-weight: 600; color: var(--text-primary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
-.fc-stage-tag {
-  align-self: flex-start; font-size: 9px; font-weight: 600;
-  color: var(--text-secondary); background: rgba(0,0,0,0.05);
-  border-radius: 4px; padding: 1px 5px;
-}
-.fc-meta { font-size: 9px; color: var(--text-secondary); opacity: 0.7; }
+.fc-meta { font-size: 9px; color: var(--text-secondary); opacity: 0.55; margin-top: 2px; }
 
 .fc-hover-actions {
-  position: absolute; bottom: 7px; right: 7px;
+  position: absolute; top: 8px; right: 8px; z-index: 2;
   display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s;
 }
 .fc-card:hover .fc-hover-actions { opacity: 1; }
 
 .fc-action-btn {
-  width: 22px; height: 22px; border-radius: 6px; border: none;
-  background: rgba(123,127,178,0.12); color: var(--color-primary);
+  position: relative;
+  width: 20px; height: 20px; border-radius: 5px; border: none;
+  background: rgba(255,255,255,0.78); color: var(--text-secondary);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.15s;
+  cursor: pointer; transition: background 0.15s, color 0.15s;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
 }
-.fc-action-btn:hover { background: rgba(123,127,178,0.22); }
-.fc-del-btn { background: rgba(200,90,90,0.1); color: #c85a5a; }
-.fc-del-btn:hover { background: rgba(200,90,90,0.2); }
+.fc-action-btn::after { content: ''; position: absolute; inset: -2px; }
+.fc-action-btn:hover { background: white; color: var(--text-primary); }
+.fc-del-btn:hover { color: #e05555; }
+
+/* ── 重命名内联输入 ── */
+.rename-sizer {
+  display: inline-block; position: relative;
+  max-width: 100%; vertical-align: top;
+}
+.rename-ghost {
+  display: block; visibility: hidden; white-space: pre;
+  font: inherit; padding: 0 5px; min-width: 2ch;
+}
+.rename-input, .rename-input-inline {
+  position: absolute; inset: 0; width: 100%;
+  border: none; outline: none;
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border-radius: 5px;
+  font: inherit; color: inherit;
+  padding: 0 5px;
+}
+
+/* ── 拖动状态 ── */
+.fc-card.dragging, .list-row.dragging { opacity: 0.35; cursor: grabbing; }
+.folder-card.drag-over {
+  background: color-mix(in srgb, var(--fd-color, var(--color-primary)) 12%, rgba(255,255,255,0.9));
+  border-color: color-mix(in srgb, var(--fd-color, var(--color-primary)) 55%, rgba(255,255,255,0.6));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 2px color-mix(in srgb, var(--fd-color, var(--color-primary)) 30%, transparent);
+}
+.list-row.folder-row.drag-over {
+  background: rgba(123,127,178,0.08);
+  outline: 1.5px solid var(--color-primary); outline-offset: -1px;
+}
+
+/* ── 幽灵上传卡片 ── */
+.fc-ghost {
+  position: relative; min-height: 122px; overflow: hidden;
+  border-radius: 14px; border: 1.5px dashed rgba(123,127,178,0.35);
+  background: rgba(123,127,178,0.04);
+  display: flex; flex-direction: column;
+  cursor: default; pointer-events: none;
+}
+.fc-ghost-fill {
+  position: absolute; inset: 0; right: auto; height: 100%;
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--fc-color, rgba(123,127,178,1)) 18%, transparent),
+    color-mix(in srgb, var(--fc-color, rgba(123,127,178,1)) 10%, transparent));
+  transition: width 0.25s ease-out;
+}
+.fc-ghost .fc-ext-badge { opacity: 0.6; }
+.fc-ghost .fc-icon-area { opacity: 0.35; }
+.fc-ghost .fc-label { opacity: 0.75; }
+.fc-ghost-meta { font-size: 9px; font-weight: 600; color: var(--fc-color, var(--color-primary)); }
+.fc-ghost.error { border-color: rgba(200,90,90,0.4); background: rgba(200,90,90,0.04); }
+.fc-ghost.error .fc-ghost-fill { background: rgba(200,90,90,0.12); width: 100% !important; }
+.fc-ghost.error .fc-ghost-meta { color: rgba(200,90,90,0.85); }
+
+/* 幽灵上传行 */
+.fc-ghost-row {
+  position: relative; overflow: hidden;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(123,127,178,0.2) !important;
+  background: rgba(123,127,178,0.03) !important;
+  pointer-events: none; cursor: default;
+}
+.fc-ghost-row .fc-ghost-fill {
+  position: absolute; inset: 0; right: auto; height: 100%;
+  background: rgba(123,127,178,0.08);
+  transition: width 0.25s ease-out;
+}
+.fc-ghost-row .lr-name-cell,
+.fc-ghost-row .lr-text,
+.fc-ghost-row .lr-type-cell { opacity: 0.6; }
+.fc-ghost-row.error { border-color: rgba(200,90,90,0.3) !important; }
+.fc-ghost-row.error .fc-ghost-fill { background: rgba(200,90,90,0.1); width: 100% !important; }
 
 .fc-upload {
-  border: 1.5px dashed rgba(0,0,0,0.1); border-radius: var(--radius-md);
+  border: 1.5px dashed rgba(0,0,0,0.09); border-radius: 14px;
   display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 5px;
-  min-height: 88px; color: var(--text-secondary); font-size: 10px;
+  align-items: center; justify-content: center; gap: 7px;
+  color: var(--text-secondary);
   cursor: pointer; background: rgba(255,255,255,0.2); transition: all 0.18s;
+  overflow: hidden; min-height: 130px;
 }
-.fc-upload:hover { border-color: rgba(123,127,178,0.5); color: var(--color-primary); background: rgba(123,127,178,0.05); }
+.fc-upload:hover { border-color: rgba(123,127,178,0.45); color: var(--color-primary); background: rgba(123,127,178,0.04); }
+.fc-upload-text { font-size: 10px; font-weight: 600; }
 
 /* ── 列表视图 ── */
-.file-list { display: flex; flex-direction: column; }
+.file-list { display: flex; flex-direction: column; gap: 2px; }
+
+.lh-sortable {
+  display: flex; align-items: center; gap: 3px;
+  cursor: pointer; user-select: none; transition: color 0.12s;
+}
+.lh-sortable:hover { color: var(--text-primary); }
+.lh-sortable.active { color: var(--color-primary); }
+.lh-arrow { opacity: 0; flex-shrink: 0; transition: opacity 0.15s, transform 0.2s; }
+.lh-sortable.active .lh-arrow { opacity: 1; }
+.lh-arrow.desc { transform: rotate(180deg); }
 
 .list-head {
   display: grid;
-  grid-template-columns: 2fr 1.2fr 80px 72px 56px;
+  grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
   padding: 0 10px 8px;
   font-size: 10px; font-weight: 600; color: var(--text-secondary);
   text-transform: uppercase; letter-spacing: 0.06em;
@@ -1197,8 +2308,9 @@ watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.f
 }
 .list-row {
   display: grid;
-  grid-template-columns: 2fr 1.2fr 80px 72px 56px;
+  grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
   align-items: center; padding: 9px 10px;
+  min-height: 42px;
   border-radius: 9px; transition: background 0.12s;
   cursor: pointer;
 }
@@ -1207,22 +2319,25 @@ watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.f
 .folder-row { cursor: pointer; }
 .folder-row:hover { background: rgba(180,148,80,0.06); }
 
-.lr-name-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.lr-folder-icon { flex-shrink: 0; }
+.lr-name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.lr-folder-icon, .lr-file-icon { flex-shrink: 0; opacity: 0.82; }
+.lr-type-cell { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .lr-ext {
-  font-size: 9px; font-weight: 800; letter-spacing: 0.04em;
-  color: var(--color-primary); background: rgba(123,127,178,0.12);
-  border-radius: 4px; padding: 2px 5px; flex-shrink: 0;
+  font-size: 8px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+  border-radius: 3px; padding: 1px 4px; flex-shrink: 0; line-height: 1.5;
 }
+.lr-type-text { font-size: 11px; color: var(--text-secondary); }
 .lr-filename {
   font-size: 12px; font-weight: 600; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 1; min-width: 0; padding-bottom: 2px; margin-bottom: -2px;
 }
 .lr-proj-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .lr-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; opacity: 0.8; }
 .lr-projname {
   font-size: 11px; color: var(--text-secondary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding-bottom: 2px; margin-bottom: -2px;
 }
 .lr-text { font-size: 11px; color: var(--text-secondary); }
 
@@ -1243,41 +2358,18 @@ watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.f
 }
 
 /* ── 回收站视图 ── */
-.trash-list { display: flex; flex-direction: column; }
-
-.trash-head {
-  display: grid;
-  grid-template-columns: 2fr 100px 70px 72px 120px;
-  padding: 0 10px 8px;
-  font-size: 10px; font-weight: 600; color: var(--text-secondary);
-  text-transform: uppercase; letter-spacing: 0.06em;
-  border-bottom: 1px solid rgba(0,0,0,0.06); margin-bottom: 2px;
-}
-.trash-row {
-  display: grid;
-  grid-template-columns: 2fr 100px 70px 72px 120px;
-  align-items: center; padding: 9px 10px;
-  border-radius: 9px; transition: background 0.12s;
-}
-.trash-row:hover { background: rgba(200,90,90,0.04); }
+.trash-list .list-head,
+.trash-list .list-row { grid-template-columns: 2fr 90px 1.2fr 56px 72px 96px; }
 
 .days-warn { color: #c85a5a; font-weight: 600; }
 
-.trash-actions { display: flex; align-items: center; gap: 6px; }
 .trash-restore-btn {
-  display: flex; align-items: center; gap: 4px;
-  padding: 4px 9px; border-radius: 6px; border: none;
-  background: rgba(123,127,178,0.1); color: var(--color-primary);
-  font-size: 11px; font-weight: 600; cursor: pointer; transition: background 0.15s;
+  width: auto; display: flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600;
+  color: var(--color-primary);
+  padding: 4px 8px;
 }
-.trash-restore-btn:hover { background: rgba(123,127,178,0.2); }
-.trash-del-btn {
-  width: 24px; height: 24px; border-radius: 6px; border: none;
-  background: rgba(200,90,90,0.08); color: #c85a5a;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.15s;
-}
-.trash-del-btn:hover { background: rgba(200,90,90,0.18); }
+.trash-restore-btn:hover { background: rgba(123,127,178,0.15); }
 
 /* ── 批量操作浮动栏 ── */
 .selection-bar {
@@ -1290,6 +2382,29 @@ watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.f
   z-index: 100;
 }
 .sel-count { font-size: 12px; color: rgba(255,255,255,0.75); white-space: nowrap; }
+.sel-download-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 12px; border-radius: 8px; border: none;
+  background: rgba(255,255,255,0.15); color: white;
+  font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.15s;
+}
+.sel-download-btn:hover { background: rgba(255,255,255,0.25); }
+.sel-download-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+/* ── 右键菜单 ── */
+.ctx-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 7px 10px; border: none; background: none;
+  border-radius: 7px; font-size: 13px; color: var(--text-primary);
+  cursor: pointer; text-align: left; white-space: nowrap;
+}
+.ctx-item:hover:not(:disabled) { background: rgba(0,0,0,0.05); }
+.ctx-item.ctx-danger { color: #c85a5a; }
+.ctx-item.ctx-danger:hover { background: rgba(200,90,90,0.1); }
+.ctx-sep { height: 1px; background: rgba(0,0,0,0.07); margin: 3px 6px; }
+.ctx-shortcut { margin-left: auto; font-size: 11px; color: var(--text-secondary); opacity: .7; }
+.fc-card.cut, .list-row.cut { opacity: 0.45; }
 .sel-delete-btn {
   display: flex; align-items: center; gap: 5px;
   padding: 6px 12px; border-radius: 8px; border: none;
@@ -1303,6 +2418,14 @@ watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.f
   font-size: 12px; cursor: pointer; transition: background 0.15s;
 }
 .sel-cancel-btn:hover { background: rgba(255,255,255,0.2); color: white; }
+.sel-action-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 11px; border-radius: 8px; border: none;
+  background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.9);
+  font-size: 12px; font-weight: 500; cursor: pointer; transition: background 0.15s;
+}
+.sel-action-btn:hover { background: rgba(255,255,255,0.22); }
+.sel-divider { width: 1px; height: 18px; background: rgba(255,255,255,0.18); margin: 0 2px; flex-shrink: 0; }
 
 /* ── 拖拽遮罩 ── */
 .drop-overlay {
@@ -1328,4 +2451,9 @@ watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.f
 
 .drop-fade-enter-active, .drop-fade-leave-active { transition: opacity 0.18s; }
 .drop-fade-enter-from, .drop-fade-leave-to { opacity: 0; }
+
+.content-body { width: 100%; height: 100%; display: contents; }
+.content-fade-enter-active { transition: opacity 0.12s ease; }
+.content-fade-leave-active { transition: opacity 0.04s ease; }
+.content-fade-enter-from, .content-fade-leave-to { opacity: 0; }
 </style>
