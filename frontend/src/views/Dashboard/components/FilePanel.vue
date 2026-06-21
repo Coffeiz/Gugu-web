@@ -131,7 +131,16 @@ function loadThumbs(list) {
     const m = { ...thumbMap.value }
     for (const { id, k, url } of results) if (url) m[id] = { ...m[id], [k]: url }
     thumbMap.value = m
+    preDecodeBlobs(m)
   })
+}
+
+function preDecodeBlobs(map) {
+  for (const entry of Object.values(map)) {
+    for (const url of [entry?.tiny, entry?.card]) {
+      if (url) { const i = new Image(); i.src = url; i.decode().catch(() => {}) }
+    }
+  }
 }
 
 const _IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
@@ -254,7 +263,11 @@ const files = computed(() =>
 </script>
 
 <style scoped>
-.file-panel { padding: 20px; flex-shrink: 0; }
+.file-panel {
+  padding: 20px; flex-shrink: 0;
+  content-visibility: auto;
+  contain-intrinsic-block-size: 280px;
+}
 
 .file-grid {
   display: grid;
@@ -272,11 +285,11 @@ const files = computed(() =>
   display: flex; flex-direction: column;
   min-height: 110px; overflow: hidden;
   cursor: pointer;
+  will-change: transform;
   transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
               box-shadow 0.25s ease, background 0.2s;
 }
 .fc-card:hover {
-  will-change: transform;
   transform: translateY(-2px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
   background: rgba(255,255,255,0.86);
