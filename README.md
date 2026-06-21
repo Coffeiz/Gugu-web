@@ -22,7 +22,7 @@
 | 🧠 思维画布 | 🔜 | 节点图创意空间，可挂文件 |
 | 🎨 素材板 | 🔜 | 素材管理 + 自动打 tag |
 | 👤 客户管理 | 🔜 | 客户信息归档 |
-| 💬 自然语言管理 | 🔜 | 对话即可管理项目、归档文件、设置提醒 |
+| 💬 自然语言管理 | ✅ | SSE 流式 AI 对话，支持 Anthropic / OpenAI / 通义 / DeepSeek |
 | ⚙️ 管理后台 | ✅ | DB / Redis / Storage 在线配置 + 热更新 |
 
 ---
@@ -34,6 +34,7 @@
 - **构建**：Vite 5
 - **状态**：Pinia
 - **UI 库**：Arco Design Vue
+- **图标库**：Phosphor Icons（`@phosphor-icons/vue`）
 - **路由**：Vue Router 4
 - **HTTP**：Axios
 
@@ -121,8 +122,9 @@ Gugu-web/
 │   └── src/
 │       ├── views/              # Dashboard / Projects / Calendar / Files / Admin
 │       ├── components/         # 通用 + 业务组件
-│       ├── stores/             # Pinia stores
-│       ├── services/           # API + 缓存信号
+│       ├── stores/             # Pinia stores（projects / filesCache / preview / audio / clipboard）
+│       ├── composables/        # useThumbCache（blob Map 缩略图缓存）
+│       ├── services/           # api.js（所有 API 封装）+ cache.js（filesCache sessionStorage）
 │       ├── layouts/            # DefaultLayout / AdminLayout
 │       └── router/
 ├── backend/                    # FastAPI 后端
@@ -136,8 +138,7 @@ Gugu-web/
 │           ├── storage/        # LocalStorage / OSSStorage
 │           └── agent/          # 智能助手（规划中）
 ├── docker-compose.yml
-├── .env.example
-└── PROJECT.md
+└── .env.example
 ```
 
 ---
@@ -165,11 +166,20 @@ Gugu-web/
 |------|------|------|
 | `GET/POST/PATCH/DELETE` | `/api/v1/projects` | 项目 CRUD；改名联动重命名存储目录 |
 | `GET` | `/api/v1/files` | 文件列表（多维度过滤） |
+| `GET` | `/api/v1/files/all` | 全量文件元数据（前端全量缓存用） |
+| `GET` | `/api/v1/files/version` | 文件变更摘要（前端增量感知） |
 | `GET` | `/api/v1/files/tree` | 文件库导航树 |
-| `POST` | `/api/v1/files` | 上传文件（四空间） |
-| `PATCH / DELETE` | `/api/v1/files/{id}` | 重命名 / 删除（同步磁盘） |
+| `POST` | `/api/v1/files` | 上传文件，后台预生成缩略图 |
+| `PATCH / DELETE` | `/api/v1/files/{id}` | 重命名 / 软删除（移入回收站） |
+| `GET` | `/api/v1/files/{id}/thumb` | 缩略图（tiny/card/full），Authorization Bearer |
+| `GET` | `/api/v1/files/{id}/download` | 文件下载 |
+| `GET/POST/PATCH/DELETE` | `/api/v1/folders` | 文件夹 CRUD，支持无限嵌套 |
+| `GET` | `/api/v1/folders/all` | 全量文件夹元数据 |
+| `GET/POST/DELETE` | `/api/v1/trash` | 回收站列出 / 恢复 / 永久删除 |
 | `GET/POST/PATCH/DELETE` | `/api/v1/events` | 日历事件 CRUD |
 | `GET/POST/DELETE` | `/api/v1/clients` | 客户 CRUD |
+| `GET/PATCH` | `/api/v1/preferences` | 用户偏好（阶段模板等） |
+| `POST` | `/api/v1/agent/chat` | AI Agent 对话（SSE 流式） |
 
 ### Admin API（需 Admin Token）
 
@@ -177,7 +187,7 @@ Gugu-web/
 |------|------|------|
 | `POST` | `/api/v1/admin/auth/login` | 管理员登录 |
 | `GET/PATCH` | `/api/v1/admin/config` | 系统配置读写（热更新） |
-| `POST` | `/api/v1/admin/config/test-connection` | 测试 DB / Redis / OSS |
+| `POST` | `/api/v1/admin/config/test-connection` | 测试 DB / OSS 连通性 |
 
 完整 OpenAPI 文档：启动后访问 `http://localhost:8000/docs`。
 
@@ -229,7 +239,7 @@ make backup      # 备份数据库
 - [x] 项目看板、日历、文件库、总览
 - [x] 管理后台（在线配置 + 热更新）
 - [x] 本地 / OSS 存储双后端
-- [ ] 自然语言管理（对话完成项目 / 文件 / 提醒操作）
+- [x] 自然语言管理（SSE 流式 AI Agent，支持多 provider）
 - [ ] 定时任务（按周期自动提醒 / 归档 / 同步）
 - [ ] 思维画布（节点图）
 - [ ] 团队 / 企业版（ToB）
@@ -264,7 +274,7 @@ make backup      # 备份数据库
 
 ## 📄 License
 
-[MIT](./LICENSE)
+MIT
 
 ---
 

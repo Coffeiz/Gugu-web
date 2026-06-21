@@ -29,11 +29,33 @@
         </div>
 
         <div class="fc-label">
-          <div class="fc-name" :title="f.name">{{ f.name }}</div>
+          <div v-if="renamingId === f.id" class="fc-rename-wrap" @click.stop>
+            <input
+              ref="renameInputRef"
+              class="fc-rename-input"
+              v-model="renameText"
+              @keydown.enter.prevent="commitRename(f)"
+              @keydown.esc="renamingId = null"
+              @blur="commitRename(f)"
+            />
+          </div>
+          <div v-else class="fc-name" :title="f.name">{{ f.name }}</div>
           <div class="fc-meta">
             <span class="fc-proj-dot" :style="{ background: f.projectColor }"></span>
             {{ f.project }} · {{ f.size }}
           </div>
+        </div>
+
+        <div class="fc-hover-actions">
+          <button class="fc-action-btn" title="重命名" @click.stop="startRename(f)">
+            <PhPencilSimple :size="11" weight="bold" />
+          </button>
+          <button class="fc-action-btn" title="下载" @click.stop="downloadFile(f)">
+            <PhDownloadSimple :size="11" weight="bold" />
+          </button>
+          <button class="fc-action-btn fc-del-btn" title="移到回收站" @click.stop="deleteFile(f)">
+            <PhTrash :size="11" weight="bold" />
+          </button>
         </div>
       </div>
 
@@ -65,25 +87,29 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, onMounted } from 'vue'
+import { ref, computed, reactive, onMounted, nextTick } from 'vue'
 import { filesApi } from '@/services/api'
 import { filesCache } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
-import { getThumb, getCachedThumb, preloadTinyThumbs } from '@/composables/useThumbCache'
+import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache } from '@/composables/useThumbCache'
 import UploadModal from '@/views/Files/UploadModal.vue'
 import {
   PhImage, PhFilmStrip, PhMusicNote, PhTable,
   PhPresentationChart, PhArchive, PhCode, PhFileText,
+  PhPencilSimple, PhDownloadSimple, PhTrash,
 } from '@phosphor-icons/vue'
 
-const dragging     = ref(false)
-const uploadOpen   = ref(false)
-const rawFiles     = ref(filesCache.data ?? [])
-const thumbMap     = reactive({}) // id → { tiny, card }
-const projectStore = useProjectStore()
-const previewStore = usePreviewStore()
-const projects     = computed(() => projectStore.projects)
+const dragging      = ref(false)
+const uploadOpen    = ref(false)
+const rawFiles      = ref(filesCache.data ?? [])
+const thumbMap      = reactive({}) // id → { tiny, card }
+const renamingId    = ref(null)
+const renameText    = ref('')
+const renameInputRef = ref(null)
+const projectStore  = useProjectStore()
+const previewStore  = usePreviewStore()
+const projects      = computed(() => projectStore.projects)
 
 function loadThumbs(list) {
   list.forEach(f => {
@@ -147,7 +173,41 @@ function fileListIcon(ext) {
 
 function openUpload() { uploadOpen.value = true }
 function openFile(f) {
+  if (renamingId.value === f.id) return
   if (isPreviewable(f.ext)) previewStore.open(f._raw)
+}
+
+async function startRename(f) {
+  renamingId.value = f.id
+  renameText.value = f.name
+  await nextTick()
+  renameInputRef.value?.focus()
+  renameInputRef.value?.select()
+}
+
+async function commitRename(f) {
+  const name = renameText.value.trim()
+  renamingId.value = null
+  if (!name || name === f.name) return
+  try {
+    await filesApi.update(f.id, { displayName: name })
+    const idx = rawFiles.value.findIndex(r => r.id === f.id)
+    if (idx !== -1) rawFiles.value[idx] = { ...rawFiles.value[idx], displayName: name }
+    filesCache.set([...rawFiles.value])
+  } catch { /* ignore */ }
+}
+
+async function downloadFile(f) {
+  await filesApi.download(f.id, `${f.name}.${f.ext}`)
+}
+
+async function deleteFile(f) {
+  try {
+    await filesApi.delete(f.id)
+    clearThumbCache(f.id)
+    rawFiles.value = rawFiles.value.filter(r => r.id !== f.id)
+    filesCache.set([...rawFiles.value])
+  } catch { /* ignore */ }
 }
 
 async function onUploaded() {
@@ -287,4 +347,30 @@ const files = computed(() =>
   background: rgba(123,127,178,0.04);
 }
 .fc-upload-text { font-size: 10px; font-weight: 600; }
+
+.fc-hover-actions {
+  position: absolute; top: 8px; right: 8px; z-index: 3;
+  display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s;
+}
+.fc-card:hover .fc-hover-actions { opacity: 1; }
+
+.fc-action-btn {
+  position: relative;
+  width: 20px; height: 20px; border-radius: 5px; border: none;
+  background: rgba(255,255,255,0.78); color: var(--text-secondary);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s, color 0.15s;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.fc-action-btn::after { content: ''; position: absolute; inset: -2px; }
+.fc-action-btn:hover { background: white; color: var(--text-primary); }
+.fc-del-btn:hover { color: #e05555; }
+
+.fc-rename-wrap { padding-bottom: 2px; }
+.fc-rename-input {
+  width: 100%; font-size: 11px; font-weight: 600; color: var(--text-primary);
+  background: rgba(255,255,255,0.9); border: 1px solid rgba(123,127,178,0.4);
+  border-radius: 4px; padding: 1px 4px; outline: none; line-height: 1.35;
+}
 </style>
