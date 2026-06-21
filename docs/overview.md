@@ -55,7 +55,11 @@ Gugu-web/
 │       │   ├── clipboard.js      ← 文件剪切/复制状态
 │       │   ├── filesCache.js     ← 全量文件元数据缓存 + 乐观更新
 │       │   └── preview.js        ← 文件预览状态
-│       ├── services/api.js       ← 所有 API 封装
+│       ├── services/
+│       │   ├── api.js            ← 所有 API 封装
+│       │   └── cache.js          ← filesCache（sessionStorage 持久化）+ uploadSignal
+│       ├── composables/
+│       │   └── useThumbCache.js  ← 模块级 blob Map + thumbLoadedIds + preloadTinyThumbs
 │       ├── components/common/
 │       │   ├── AppSidebar.vue
 │       │   ├── AiFloatBall.vue   ← AI 悬浮球 + 迷你播放器
@@ -133,7 +137,7 @@ Gugu-web/
 | `POST` | `/api/v1/files/{id}/copy` | 复制文件 |
 | `GET` | `/api/v1/files/{id}/download` | 下载（Bearer token 鉴权） |
 | `GET` | `/api/v1/files/{id}/stream` | 视频流播放 |
-| `GET` | `/api/v1/files/{id}/thumb` | 图片缩略图（tiny/card/full） |
+| `GET` | `/api/v1/files/{id}/thumb` | 图片缩略图（tiny/card/full），Authorization Bearer 鉴权 |
 | `GET` | `/api/v1/files/{id}/preview-pdf` | Office → PDF 转换预览 |
 | `GET` | `/api/v1/folders` | 列出文件夹 |
 | `GET` | `/api/v1/folders/all` | 当前用户所有文件夹（全量缓存用） |
@@ -144,6 +148,7 @@ Gugu-web/
 | `GET/DELETE` | `/api/v1/trash` | 回收站列出 / 清空 |
 | `POST` | `/api/v1/trash/{id}/restore` | 恢复单个文件 |
 | `DELETE` | `/api/v1/trash/{id}` | 永久删除 |
+| `GET/PATCH` | `/api/v1/preferences` | 用户偏好（阶段模板、上次使用阶段） |
 | `POST` | `/api/v1/agent/chat` | AI Agent 对话（SSE 流式） |
 
 ### Admin API（需 Admin Token）
@@ -168,6 +173,7 @@ Gugu-web/
 | `clients` | 客户信息 | ✅ |
 | `conversation_sessions` | AI 对话会话 | ✅ 表结构已建 |
 | `conversation_messages` | AI 对话消息 | ✅ 表结构已建 |
+| `user_preferences` | 用户偏好（阶段模板、last_stages，按 user_id 隔离） | ✅ |
 | `mind_maps` | 思维画布（预留） | ✅ 表结构已建 |
 
 文件存储详细规范见 `docs/storage.md`。

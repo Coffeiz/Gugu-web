@@ -123,7 +123,7 @@ _MIGRATIONS = [
 | `GET` | `/files/{id}/download` | 下载（Bearer token 鉴权） |
 | `GET` | `/files/{id}/preview-pdf` | Office → PDF 转换预览（LibreOffice headless） |
 | `GET` | `/files/{id}/stream` | 视频流 URL |
-| `GET` | `/files/{id}/thumb` | 图片缩略图（`?size=tiny` 20×20 JPEG，`?size=card` 192×192 JPEG，`?size=full` 原图；后端磁盘缓存，`?token=JWT` 鉴权） |
+| `GET` | `/files/{id}/thumb` | 图片缩略图（`?size=tiny` 20×20 JPEG，`?size=card` 192×192 JPEG，`?size=full` 原图；后端磁盘缓存，Authorization Bearer 鉴权） |
 
 **`GET /files` Query 参数：**
 
@@ -271,6 +271,9 @@ const _folderIdx = computed(() => { ... })
 ### 8.7 加载体验优化
 
 - **内容过渡动画**：导航切换时 `content-fade` 淡出（40ms）+ 淡入（120ms），`mode="out-in"` 避免双层叠放
+- **热缓存同步初始化**：`onMounted` 检测 `cacheStore.loaded && projectStore.projects.length > 0` 时同步调 `restoreNav() + loadContents()`，跳过 `await`，SPA 内导航回文件库无空帧闪烁
+- **tiny blob 全局预热**：任何页面获取文件列表后调 `preloadTinyThumbs(files)`，后台静默 fetch 所有图片的 tiny blob（已缓存则跳过），跨页面共享，实现渐进式加载
+- **项目编辑卡文件预填**：打开项目时先从 `filesCacheStore` 同步填充文件/文件夹列表，API 刷新后覆盖，消除等待期间文件区域为空的问题
 - 回收站仍走异步请求（需要 `deleted_at` 字段，不在主缓存中）
 
 ---
@@ -280,7 +283,8 @@ const _folderIdx = computed(() => { ... })
 ### 9.1 接口
 
 ```
-GET /files/{id}/thumb?token={JWT}&size=full|tiny|card
+GET /files/{id}/thumb?size=full|tiny|card
+Authorization: Bearer <user_token>
 ```
 
 | size | 说明 |
@@ -289,7 +293,7 @@ GET /files/{id}/thumb?token={JWT}&size=full|tiny|card
 | `tiny` | 20×20px JPEG（约 1 KB），用于 blur-up 模糊占位 |
 | `card` | 192×192px JPEG（约 10–40 KB），网格卡片显示用 |
 
-- 鉴权：解析 query param 中的主 JWT（与 `/stream` 端点模式一致）
+- 鉴权：`Authorization: Bearer` 请求头（URL 不含 token，HTTP 缓存 key 稳定）
 - 响应头：`Cache-Control: private, max-age=86400`（浏览器缓存 24 小时）
 - SVG 跳过 Pillow，`size=full` 直接返回原文件
 
@@ -314,7 +318,7 @@ GET /files/{id}/thumb?token={JWT}&size=full|tiny|card
 1. `fc-thumb-tiny`（z-index 1）：`?size=tiny` 图片 + CSS `blur(10px) scale(1.15)`，进入视口即加载
 2. `fc-thumb-full`（z-index 2）：`?size=card` 图片，初始 `opacity: 0`，`load` 事件后 0.4s 淡入
 
-**切换目录不重播动画：** `loadedThumbs`（reactive Set）记录已加载的文件 id，返回已访问目录时 `fc-loaded` 类直接存在，无过渡动画。
+**跨页导航不重播动画：** `thumbLoadedIds`（模块级 `reactive(new Set())`，`useThumbCache.js`）记录 card 尺寸已加载的文件 id，SPA 内跨页导航回文件库/总览/项目卡时 `fc-loaded` 类直接存在，无淡入动画。
 
 ### 9.4 IntersectionObserver 懒加载
 
@@ -322,11 +326,13 @@ GET /files/{id}/thumb?token={JWT}&size=full|tiny|card
 
 ### 9.5 缓存层汇总
 
-| 位置 | 是否有持久缓存 | 说明 |
-|------|-------------|------|
-| 后端磁盘（`.thumbs/`） | ✅ 永久 | 生成后即写磁盘，文件删除时同步清理 |
-| 浏览器 HTTP 缓存 | ✅ 最多 24h | 由浏览器自动管理 |
-| 前端 Pinia store | ❌ 无 | 元数据缓存为纯内存，关页面即清 |
+| 位置 | 持久范围 | 说明 |
+|------|---------|------|
+| 后端磁盘（`.thumbs/`） | 永久 | 生成后即写磁盘，文件删除时同步清理 |
+| 浏览器 HTTP 缓存 | 最多 24h | `Cache-Control: private, max-age=86400`，由浏览器管理 |
+| 前端 blob Map（`useThumbCache.js`） | SPA 生命周期 | 模块级 `Map`，切换路由不丢失；`URL.createObjectURL` blob URL，无重复网络请求；并发去重（pending Map） |
+| `thumbLoadedIds`（`useThumbCache.js`） | SPA 生命周期 | 模块级 `reactive(new Set())`，记录 card 已加载 id，导航回来直接应用 `fc-loaded`，无重播淡入 |
+| `filesCache` sessionStorage | 页面会话 | 文件列表持久化到 `sessionStorage`，刷新页面后总览文件卡第一帧即可渲染 |
 
 ---
 
