@@ -34,6 +34,8 @@ def _to_resp(p: Project, file_count: int = 0) -> ProjectResponse:
         current_stage=p.current_stage,
         notes=p.notes,
         archived=p.archived,
+        priority=p.priority,
+        version=p.version or 1,
         done_at=p.done_at.isoformat() if p.done_at else None,
         updated_at=p.updated_at.isoformat() if p.updated_at else None,
         created_at=p.created_at.strftime("%Y-%m-%d"),
@@ -48,7 +50,7 @@ async def list_projects(
 ):
     stmt = (
         select(Project, func.count(File.id).label("fc"))
-        .outerjoin(File, File.project_id == Project.id)
+        .outerjoin(File, (File.project_id == Project.id) & File.deleted_at.is_(None))
         .where(Project.user_id == current_user.id)
         .group_by(Project.id)
         .order_by(Project.created_at.desc())
@@ -114,6 +116,10 @@ async def update_project(
 
     data = body.model_dump(exclude_unset=True, by_alias=False)
 
+    client_version = data.pop("version", None)
+    if client_version is not None and p.version != client_version:
+        raise HTTPException(409, "数据已被其他用户修改，请刷新后重试")
+
     # 项目改名时同步重命名存储目录
     old_name = p.name
     new_name = data.get("name")
@@ -138,15 +144,18 @@ async def update_project(
             p.stages = v
         else:
             setattr(p, k, v)
-    # 首次进入 done 状态时记录时间，之后不清除（保证归档位置稳定）
+    # 仅在 done_at 为空时才记录完成时间，避免拖回已完成列重置时间
     if data.get("status") == "done" and p.done_at is None:
         p.done_at = datetime.utcnow()
+    elif "status" in data and data["status"] != "done":
+        p.done_at = None
 
+    p.version = (p.version or 1) + 1
     await db.commit()
     await db.refresh(p)
 
     fc_res = await db.execute(
-        select(func.count(File.id)).where(File.project_id == pid)
+        select(func.count(File.id)).where(File.project_id == pid, File.user_id == current_user.id, File.deleted_at.is_(None))
     )
     return _to_resp(p, fc_res.scalar_one())
 

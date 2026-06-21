@@ -12,7 +12,7 @@
           <PhPushPin v-if="miniPinned" :size="14" weight="fill" />
           <PhPushPinSlash v-else :size="14" weight="regular" />
         </button>
-        <button class="mp-btn mp-btn--close" @click="audioStop" title="关闭">
+        <button class="mp-btn mp-btn--close popup-close-btn" @click="audioStop" title="关闭">
           <PhX weight="bold" :size="13" />
         </button>
       </div>
@@ -76,7 +76,7 @@
         <span class="popup-status">
           <em class="status-dot" />在线
         </span>
-        <button class="popup-close" @click="open = false">
+        <button class="popup-close-btn" @click="open = false">
           <PhX weight="bold" :size="13" />
         </button>
       </div>
@@ -542,15 +542,8 @@ async function scrollBottom() {
   display: inline-block; width: 6px; height: 6px;
   border-radius: 50%; background: var(--color-success);
 }
-.popup-close {
-  width: 22px; height: 22px; border-radius: 6px; border: none; padding: 0;
-  background: rgba(0,0,0,0.04); color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; flex-shrink: 0;
-  transition: background 0.12s, color 0.12s;
-}
-.popup-close svg { display: block; }
-.popup-close:hover { background: rgba(200,80,80,0.1); color: rgba(200,80,80,0.8); }
+.popup-close-btn svg { display: block; }
+.popup-close-btn:hover { background: rgba(200,80,80,0.1) !important; color: rgba(200,80,80,0.8) !important; }
 
 .popup-messages {
   flex: 1; overflow-y: auto;
@@ -787,23 +780,15 @@ async function scrollBottom() {
   width: 22px; height: 22px; border-radius: 6px; border: none;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; flex-shrink: 0;
-  background: rgba(0,0,0,0.04); color: var(--text-secondary);
+  background: none; color: var(--text-secondary);
   transition: background 0.12s, color 0.12s;
 }
 .mp-btn--pin svg { display: block; }
 .mp-btn--pin:hover { background: rgba(100,110,200,0.12); color: rgba(100,110,200,0.9); }
-.mp-btn--pinned { color: rgba(100,110,200,0.8); background: rgba(100,110,200,0.1); }
-.mp-btn--pinned:hover { background: rgba(100,110,200,0.18); color: rgba(100,110,200,1); }
+.mp-btn--pinned { color: rgba(100,110,200,0.8); background: none; }
+.mp-btn--pinned:hover { background: rgba(100,110,200,0.12); color: rgba(100,110,200,1); }
 
-.mp-btn--close {
-  width: 22px; height: 22px; border-radius: 6px; border: none;
-  background: rgba(0,0,0,0.04); color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; flex-shrink: 0;
-  transition: background 0.12s, color 0.12s;
-}
-.mp-btn--close svg { display: block; }
-.mp-btn--close:hover { background: rgba(200,80,80,0.1); color: rgba(200,80,80,0.8); }
+.mp-btn--close:hover { background: rgba(200,80,80,0.1) !important; color: rgba(200,80,80,0.8) !important; }
 
 /* 控制行：三列 grid，左右等宽，播放居中 */
 .mp-controls {
@@ -836,7 +821,7 @@ async function scrollBottom() {
 .mp-vol-spacer { /* 左侧占位，宽度由 grid 1fr 决定 */ }
 .mp-vol-btn {
   width: 22px; height: 22px; border: none; border-radius: 6px;
-  background: rgba(0,0,0,0.04); color: var(--text-secondary);
+  background: none; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; flex-shrink: 0;
   transition: background 0.12s, color 0.12s;

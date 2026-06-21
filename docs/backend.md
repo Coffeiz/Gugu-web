@@ -1,17 +1,20 @@
-# PM Studio — 后端开发文档
+# 咕咕 · 后端开发文档
+
+> 最后更新：2026-06-21
+
+---
 
 ## 技术栈
 
 | 层次 | 技术 |
 |------|------|
-| Web 框架 | FastAPI 0.111+ |
-| ORM | SQLAlchemy 2.0 async |
-| 数据库 | PostgreSQL（asyncpg 驱动） |
-| 迁移 | Alembic（async 模式） |
-| 鉴权 | JWT（python-jose + bcrypt） |
-| 配置 | pydantic-settings + .env + config.override.json |
-| 存储 | 本地文件系统 / 阿里云 OSS（可切换） |
-| 模型 | OpenAI 兼容接口（默认 qwen-max） |
+| Web 框架 | FastAPI（async lifespan） |
+| ORM | SQLAlchemy 2.0 async + asyncpg |
+| 数据库 | PostgreSQL |
+| 鉴权 | JWT（python-jose + bcrypt），User Token / Admin Token 分离 |
+| 配置 | pydantic-settings + `.env` + `config.override.json`（热加载） |
+| 存储 | 本地磁盘 / 阿里云 OSS，Admin 面板热切换无需重启 |
+| AI | Anthropic / OpenAI / 通义千问 / DeepSeek / MiniMax，共用 OpenAI-compatible 接口 |
 
 ---
 
@@ -19,176 +22,165 @@
 
 ```
 backend/
-├── app/
-│   ├── main.py               # FastAPI 应用入口、CORS、路由注册
-│   ├── core/
-│   │   └── config.py         # 配置加载（BaseSettings + override 热加载）
-│   ├── db/
-│   │   ├── base.py           # DeclarativeBase
-│   │   └── session.py        # async engine、get_db 依赖、create_all_tables
-│   ├── models/
-│   │   └── __init__.py       # 所有 SQLAlchemy 模型
-│   ├── schemas/
-│   │   └── __init__.py       # 所有 Pydantic v2 schema（camelCase 输出）
-│   └── api/
-│       └── v1/
-│           ├── admin_auth.py  # POST /admin/auth/login, GET /admin/auth/me
-│           ├── projects.py    # CRUD /projects
-│           ├── files.py       # 文件上传 / 版本管理
-│           ├── events.py      # 日历事件 CRUD
-│           ├── clients.py     # 客户 CRUD
-│           ├── config.py      # Admin 配置热写（需 Token）
-│           ├── agent.py       # 自然语言对话接口
-│           └── tasks.py       # 后台任务（预留）
-├── alembic/
-│   ├── env.py                 # Alembic async 配置
-│   └── versions/              # 迁移脚本
-├── alembic.ini
+├── Makefile                      # make start / stop / restart
 ├── requirements.txt
-└── .env                       # 本地环境变量（不进 git）
+├── .env                          # 本地环境变量（不进 git）
+└── app/
+    ├── main.py                   # FastAPI 入口，路由注册，lifespan（建表 + 后台任务）
+    ├── core/
+    │   ├── config.py             # pydantic-settings，StorageSettings / AISettings / DBSettings
+    │   └── security.py           # JWT 签发 / 验证，get_current_user 依赖
+    ├── db/
+    │   ├── base.py               # DeclarativeBase
+    │   └── session.py            # async engine，get_db，create_all_tables，_MIGRATIONS
+    ├── models/__init__.py        # 所有 SQLAlchemy 2.0 模型（见下方）
+    ├── schemas/__init__.py       # 所有 Pydantic v2 schema（camelCase 输出）
+    ├── services/
+    │   ├── storage/__init__.py   # StorageBackend 抽象 + LocalStorageBackend + OSSStorageBackend
+    │   └── agent/__init__.py     # LangChain / Anthropic SSE 流式 Agent 逻辑
+    └── api/v1/
+        ├── auth.py               # POST /auth/register, /auth/login, GET /auth/me
+        ├── admin_auth.py         # POST /admin/auth/login, GET /admin/auth/me
+        ├── config.py             # GET/PATCH /admin/config（需 Admin Token）
+        ├── projects.py           # CRUD /projects
+        ├── files.py              # 文件上传/下载/缩略图/版本/全量/同步
+        ├── folders.py            # 文件夹 CRUD
+        ├── trash.py              # 回收站列出/恢复/删除/清空
+        ├── events.py             # 日历事件 CRUD
+        ├── clients.py            # 客户 CRUD
+        ├── preferences.py        # GET/PATCH /preferences（用户偏好）
+        ├── agent.py              # POST /agent/chat（SSE 流式 AI 对话）
+        └── tasks.py              # 后台任务（预留）
 ```
-
----
-
-## 本地启动
-
-### 1. 准备环境
-
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### 2. 配置 .env
-
-```env
-# 数据库
-DB__HOST=localhost
-DB__PORT=5432
-DB__NAME=pm_studio
-DB__USER=pm
-DB__PASSWORD=pm123
-
-# JWT 密钥（生产环境必须修改）
-SECRET_KEY=change-me-in-production
-ACCESS_TOKEN_EXPIRE_MINUTES=10080   # 7 天
-
-# 文件存储
-STORAGE__BACKEND=local
-STORAGE__LOCAL_PATH=./uploads
-
-# 模型（可选）
-MODEL__PROVIDER=qwen
-MODEL__API_KEY=your-key
-MODEL__MODEL=qwen-max
-
-# 调试模式（开启 SQLAlchemy 日志）
-DEBUG=false
-```
-
-### 3. 创建数据库
-
-```bash
-psql -U postgres -c "CREATE USER pm WITH PASSWORD 'pm123';"
-psql -U postgres -c "CREATE DATABASE pm_studio OWNER pm;"
-```
-
-### 4. 启动
-
-```bash
-uvicorn app.main:app --reload --port 8000
-```
-
-开发阶段启动时会自动调用 `create_all_tables()` 建表，无需手动运行迁移。
-
-访问 API 文档：http://localhost:8000/docs
-
----
-
-## 配置系统
-
-配置优先级（由低到高）：
-
-1. 代码默认值
-2. `.env` 文件
-3. 环境变量
-4. `config.override.json`（通过 Admin UI 写入，热加载，无需重启）
-
-嵌套配置使用双下划线分隔，例如 `DB__HOST=localhost`。
-
-`get_settings()` 使用 `@lru_cache`，应用生命周期内只加载一次。Admin 写入 override 后调用 `get_settings.cache_clear()` 触发重新加载。
 
 ---
 
 ## 数据库模型
 
-### Project（项目）
+所有表含 `user_id`（外键 → `users.id` CASCADE），全面用户隔离。
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | Integer PK | 自增主键 |
-| name | String(200) | 项目名称 |
-| client | String(200)? | 客户名称 |
-| status | String(20) | `pending` / `active` / `done` |
-| start_date | String(10)? | ISO 日期 `YYYY-MM-DD` |
-| deadline | String(10)? | ISO 日期 `YYYY-MM-DD` |
-| color | String(300) | CSS 渐变字符串 |
-| progress | Integer | 0–100 |
-| stages_json | Text | JSON 存储 `[{key, label}]` 阶段列表 |
-| current_stage | String(100)? | 当前阶段 key |
-| notes | Text | 备注 |
-| created_at / updated_at | DateTime | 时间戳 |
-
-`stages_json` 通过 `@property stages` 提供 Python 列表访问，`setter` 自动序列化。
-
-### File（文件）
+### User
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | Integer PK | |
-| display_name | String(300) | 文件名（不含扩展名） |
-| ext | String(20) | 扩展名大写，如 `PSD` |
-| project_id | FK → projects? | 关联项目（可为空） |
-| project_name | String(200)? | 冗余字段，避免 join |
-| project_color | String(300)? | 冗余字段，从项目 color 提取十六进制色 |
-| stage | String(100) | 所属阶段标签 |
+| username | String(100) unique | |
+| email | String(300) unique | |
+| hashed_password | String(200) | bcrypt |
+| is_active | Boolean | |
 | created_at | DateTime | |
 
-### FileVersion（文件版本）
+### UserPreferences
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | Integer PK | |
-| file_id | FK → files CASCADE | |
-| v | Integer | 版本号，从 1 开始递增 |
-| size | String(50) | 人类可读大小，如 `2.3 MB` |
-| note | String(500) | 版本备注 |
-| storage_path | String(500) | 本地路径（绝对路径）或 OSS key |
-| date_str | String(10) | 显示日期，如 `06/15` |
+| user_id | FK → users unique | 每用户仅一行 |
+| data_json | Text | JSON blob，存 `stageTemplates`、`lastStages` 等偏好 |
+| updated_at | DateTime | |
 
-### CalendarEvent（日历事件）
+`data` property 自动解析/序列化 JSON。
+
+### Project
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | Integer PK | |
+| user_id | FK → users | |
+| name | String(200) | 改名时联动重命名磁盘目录 |
+| client | String(200)? | |
+| status | String(20) | `pending` / `active` / `done` |
+| start_date / deadline | String(10)? | `YYYY-MM-DD` |
+| color | String(300) | CSS 渐变字符串 |
+| progress | Integer | 0–100 |
+| stages_json | Text | JSON `[{key, label}]`，`stages` property 代理 |
+| current_stage | String(100)? | |
+| notes | Text | |
+| archived | Boolean | |
+| done_at | DateTime? | 标记为完成时的时间戳 |
+| created_at / updated_at | DateTime | |
+
+### File
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | Integer PK | |
+| user_id | FK → users | |
+| display_name | String(300) | 文件名（不含扩展名） |
+| ext | String(20) | 扩展名小写，如 `pdf` |
+| space | String(20) | `personal` / `project` / `mind` / `asset` |
+| project_id | FK → projects? | NULL = 个人文件 |
+| folder_id | FK → folders? | NULL = 所属空间根目录 |
+| stage_name | String(100) | 文件标签（非导航层级） |
+| mind_map_id | FK → mind_maps? | 预留 |
+| storage_key | String(500) | 相对于 `UPLOAD_DIR` 的路径，OSS 迁移直接复用 |
+| size | String(50) | 人类可读，如 `2.3 MB` |
+| size_bytes | BigInteger | |
+| mime_type | String(200)? | |
+| img_width / img_height | Integer? | 图片尺寸（上传时提取） |
+| deleted_at | DateTime? | 非 NULL = 已进回收站 |
+| created_at / updated_at | DateTime | |
+
+### Folder
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | Integer PK | |
+| user_id | FK → users | |
+| project_id | FK → projects? | NULL = 个人文件夹 |
+| parent_id | FK → folders? | 自引用，NULL = 根目录，支持无限嵌套 |
+| name | String(200) | |
+| created_at | DateTime | |
+
+删除文件夹时级联删除子文件夹，文件 `folder_id` SET NULL。
+
+### CalendarEvent
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | Integer PK | |
+| user_id | FK → users | |
 | title | String(300) | |
 | date | String(10) | `YYYY-MM-DD` |
 | type | String(50) | `deadline` / `milestone` / `meeting` / `event` |
 | client | String(200)? | |
 | project_id | FK → projects? | |
+| description | Text? | |
+| created_at | DateTime | |
 
-### Client（客户）
+### Client
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | Integer PK | |
+| user_id | FK → users | |
 | name | String(200) | |
-| contact | String(200)? | 联系人 |
-| email | String(300)? | |
-| phone | String(50)? | |
+| contact / email / phone | String? | |
 | notes | Text | |
+| created_at | DateTime | |
+
+### ConversationSession / ConversationMessage
+
+AI 对话会话和消息，结构已建，前端持久化待开发。
+
+### MindMap
+
+思维画布，表结构已建，前端待开发。
+
+---
+
+## 自动迁移
+
+不使用 Alembic，开发阶段由 `session.py` 的 `create_all_tables()` 自动建表：
+
+```python
+_MIGRATIONS = [
+    "ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL",
+    # 新增 nullable 列在此追加，幂等安全
+]
+```
+
+启动时自动执行所有迁移 SQL，新增 nullable 列直接追加即可。
 
 ---
 
@@ -196,174 +188,210 @@ uvicorn app.main:app --reload --port 8000
 
 所有端点前缀 `/api/v1`，返回 camelCase JSON。
 
-### 健康检查
+### 用户认证
 
 ```
-GET /health
+POST /api/v1/auth/register      {username, email, password} → {access_token, user}
+POST /api/v1/auth/login         {username, password} → {access_token, user}
+GET  /api/v1/auth/me            → 当前用户信息
 ```
 
 ### 管理员认证
 
 ```
-POST /api/v1/admin/auth/login    body: {username, password}  → {access_token, token_type, user}
-GET  /api/v1/admin/auth/me       Header: Authorization: Bearer <token>
+POST /api/v1/admin/auth/login   {username, password} → {access_token}
+GET  /api/v1/admin/auth/me
 ```
 
-默认账号 `admin` / `admin123`（上线前修改 `admin_auth.py` 中的 hash）。
+默认账号 `admin / admin123`（上线前必须修改）。
 
 ### 项目
 
 ```
-GET    /api/v1/projects           列表（按创建时间倒序）
-POST   /api/v1/projects           创建
-GET    /api/v1/projects/{id}      单条
-PATCH  /api/v1/projects/{id}      部分更新
-DELETE /api/v1/projects/{id}      删除
+GET    /api/v1/projects
+POST   /api/v1/projects
+GET    /api/v1/projects/{id}
+PATCH  /api/v1/projects/{id}    改名时联动重命名磁盘目录 + 批量更新 storage_key
+DELETE /api/v1/projects/{id}
 ```
-
-**ProjectCreate / ProjectUpdate 字段（camelCase）：**
-`name`, `client`, `status`, `startDate`, `deadline`, `color`, `progress`, `stages`, `currentStage`, `notes`
 
 ### 文件
 
 ```
-GET    /api/v1/files              列表，支持查询参数 project_id、ext、q
-POST   /api/v1/files              上传文件（multipart/form-data）
-POST   /api/v1/files/{id}/versions  上传新版本（multipart/form-data）
-DELETE /api/v1/files/{id}         删除（同时删除磁盘文件）
+GET    /api/v1/files                    列出（project_id / folder_id / ext / q 过滤）
+GET    /api/v1/files/all                全量文件元数据（前端全量缓存用）
+GET    /api/v1/files/version            状态摘要 count:max_updated:max_deleted（前端变更感知）
+POST   /api/v1/files                    上传（multipart），后台预生成缩略图
+PATCH  /api/v1/files/{id}              重命名 / 移动（更新 storage_key）
+DELETE /api/v1/files/{id}              软删除（移入回收站）
+POST   /api/v1/files/batch-delete      批量软删除
+POST   /api/v1/files/{id}/copy         复制到指定目录
+GET    /api/v1/files/{id}/download     下载，Authorization Bearer 鉴权
+GET    /api/v1/files/{id}/stream       视频流
+GET    /api/v1/files/{id}/thumb        缩略图（?size=tiny|card|full），Authorization Bearer 鉴权
+GET    /api/v1/files/{id}/preview-pdf  Office → PDF 转换（LibreOffice headless）
 ```
 
-上传字段：`file`（二进制）、`project_id`（可选）、`stage`、`note`。
+**缩略图规格：**
 
-文件按用户隔离存储，详见 `docs/file-storage.md`。
+| size | 分辨率 | 格式 | 用途 |
+|------|--------|------|------|
+| `tiny` | 20px | WebP q75 | blur-up 模糊占位 |
+| `card` | 192px | WebP q82 | 网格卡片 |
+| `full` | 原图 | 原格式 | 全尺寸预览 |
+
+- 后端磁盘缓存：`uploads/.thumbs/{fid}_{size}.webp`
+- 请求 tiny 或 card 时，两个尺寸同时生成并缓存（避免重复 I/O）
+- 上传时 BackgroundTasks 立即预生成 tiny + card
+- 删除文件时同步清理缩略图缓存
+
+### 文件夹
+
+```
+GET    /api/v1/folders                  列出（project_id / parent_id 过滤）
+GET    /api/v1/folders/all              全量文件夹元数据
+POST   /api/v1/folders                  新建
+PATCH  /api/v1/folders/{id}            重命名
+DELETE /api/v1/folders/{id}            删除（级联子文件夹，文件 SET NULL）
+GET    /api/v1/folders/{id}/download-zip  打包下载
+```
+
+### 回收站
+
+```
+GET    /api/v1/trash                    列出回收站文件
+POST   /api/v1/trash/{id}/restore       恢复
+POST   /api/v1/trash/batch-restore      批量恢复
+DELETE /api/v1/trash/{id}               永久删除
+DELETE /api/v1/trash/empty              清空
+```
+
+每小时后台任务自动永久删除 `deleted_at` 超过 30 天的文件。
 
 ### 日历事件
 
 ```
-GET    /api/v1/events             列表，支持 year、month 过滤
-POST   /api/v1/events             创建
-PATCH  /api/v1/events/{id}        部分更新
-DELETE /api/v1/events/{id}        删除
+GET    /api/v1/events       （year / month 过滤）
+POST   /api/v1/events
+PATCH  /api/v1/events/{id}
+DELETE /api/v1/events/{id}
 ```
 
 ### 客户
 
 ```
-GET    /api/v1/clients            列表
-POST   /api/v1/clients            创建
-DELETE /api/v1/clients/{id}       删除
+GET    /api/v1/clients
+POST   /api/v1/clients
+DELETE /api/v1/clients/{id}
 ```
 
-### Admin 配置（需 Token）
+### 用户偏好
 
 ```
-GET  /api/v1/admin/config         读取当前配置
-POST /api/v1/admin/config         写入 override（部分字段，热加载）
+GET   /api/v1/preferences   → {stageTemplates, lastStages, ...}
+PATCH /api/v1/preferences   部分更新，merge 写入
+```
+
+### AI Agent
+
+```
+POST /api/v1/agent/chat     SSE 流式，支持 Anthropic / OpenAI-compatible 双路由
+```
+
+最多 5 轮工具调用，支持：查询/创建/更新项目，创建日历事件。
+
+### Admin 配置（需 Admin Token）
+
+```
+GET   /api/v1/admin/config
+PATCH /api/v1/admin/config              热更新，写入 config.override.json，无需重启
+POST  /api/v1/admin/config/test-connection  测试 DB / OSS 连通性
 ```
 
 ---
 
-## Schema 设计规范
+## 配置系统
+
+优先级（低 → 高）：代码默认值 → `.env` → 环境变量 → `config.override.json`
+
+| 分区 | 关键字段 |
+|------|---------|
+| `db` | host / port / name / user / password |
+| `storage` | backend(`local`\|`oss`) / local_path / oss_* |
+| `ai` | provider / api_key / base_url / model |
+
+`get_settings()` 使用 `@lru_cache`，Admin 写入 override 后调用 `get_settings.cache_clear()` 触发重新加载。
+
+---
+
+## 鉴权设计
+
+| Token 类型 | 签发 | 用途 |
+|-----------|------|------|
+| User JWT | `POST /auth/login` | 所有用户数据 API |
+| Admin JWT | `POST /admin/auth/login` | Admin 配置 API |
+
+两类 Token 均为 HS256 / 7 天有效期。User Token payload 含 `sub`（user_id）；Admin Token payload 含 `role`（`superadmin`/`admin`）。
+
+---
+
+## 启动流程（lifespan）
+
+1. `create_all_tables()` 建表（5s 超时，超时后跳过并后台重试）
+2. 清理旧 JPEG 缩略图缓存（迁移到 WebP 后遗留文件）
+3. 启动 `_auto_cleanup_loop()`：每小时清理过期回收站文件 + 每 24 小时驱逐冷缩略图（TTL 30 天）
+4. 启动 `_db_retry_loop()`：DB 不可达时每 30 秒重试建表
+
+---
+
+## Schema 规范
 
 所有 schema 继承 `CamelModel`：
 
 ```python
 class CamelModel(BaseModel):
     model_config = ConfigDict(
-        alias_generator=to_camel,   # snake_case → camelCase
-        populate_by_name=True,       # 同时接受 snake_case 输入
-        from_attributes=True,        # 支持 ORM 对象直接转换
+        alias_generator=to_camel,   # snake_case → camelCase（前端直接用 displayName 等）
+        populate_by_name=True,
+        from_attributes=True,       # 支持 ORM 对象直接 .model_validate()
     )
 ```
 
-这样前端无需任何转换，直接使用 `project.startDate`、`file.displayName` 等字段。
-
 ---
 
-## 鉴权
-
-目前仅 `/api/v1/admin/*` 路由需要 Admin JWT Token，其余用户路由需要 User JWT Token：
-
-```python
-# main.py
-app.include_router(
-    config_router.router,
-    prefix="/api/v1",
-    dependencies=[Depends(require_admin)],
-)
-```
-
-Token 由 `POST /api/v1/admin/auth/login` 签发，默认有效期 7 天，使用 HS256 算法。Payload 包含 `sub`（用户名）和 `role`（`superadmin` / `admin`）。
-
----
-
-## Alembic 迁移
-
-**仅生产环境使用**，开发阶段由 `create_all_tables()` 自动建表。
+## 本地启动
 
 ```bash
-# 生成迁移脚本
-alembic revision --autogenerate -m "add_xxx_table"
-
-# 执行迁移
-alembic upgrade head
-
-# 回滚一步
-alembic downgrade -1
-
-# 查看当前版本
-alembic current
+cd backend
+make start      # 等价于：source .venv/bin/activate && uvicorn app.main:app --reload --port 8000
+make stop       # kill 进程
+make restart
 ```
 
-`alembic/env.py` 使用 `async_engine_from_config` + `asyncio.run()`，完整支持 asyncpg。
+访问：`http://localhost:8000/docs`（Swagger UI）
 
 ---
 
-## 文件存储
+## 添加新端点
 
-当前使用本地存储，文件按用户隔离保存：
-
-```
-uploads/
-  {user_id}/
-    {file_id}_v{version}_{original_name}
-```
-
-详细说明（命名规则、DB 对应关系、上传/删除流程、用户隔离保证）见 `docs/file-storage.md`。
-
-切换阿里云 OSS：在 `.env` 中设置 `STORAGE__BACKEND=oss` 并填写 `STORAGE__OSS_*` 变量（`files.py` 中尚需实现 OSS 分支逻辑）。
-
----
-
-## 前端集成
-
-前端通过 `frontend/src/services/api.js` 统一调用，读取 `VITE_API_URL` 环境变量（默认 `http://localhost:8000/api/v1`）。
-
-采用 **mock + API 双轨策略**：各 store 和页面内置 mock 数据作为初始值，API 在线时覆盖，离线时保留 mock，确保开发体验不依赖后端。
-
----
-
-## 添加新端点（步骤）
-
-1. **模型**：在 `app/models/__init__.py` 添加新 SQLAlchemy 模型类
-2. **Schema**：在 `app/schemas/__init__.py` 添加 `XxxCreate`、`XxxUpdate`、`XxxResponse`（继承 `CamelModel`）
-3. **路由**：在 `app/api/v1/` 新建 `xxx.py`，定义 `APIRouter`
-4. **注册**：在 `app/main.py` `import` 并 `app.include_router(xxx.router, prefix="/api/v1")`
-5. **迁移**：`alembic revision --autogenerate -m "add_xxx"` → `alembic upgrade head`
-6. **前端**：在 `frontend/src/services/api.js` 添加对应 `xxxApi` 对象
+1. 在 `models/__init__.py` 添加 SQLAlchemy 模型，在 `_MIGRATIONS` 追加 `ALTER TABLE`
+2. 在 `schemas/__init__.py` 添加 `XxxCreate`、`XxxUpdate`、`XxxResponse`（继承 `CamelModel`）
+3. 在 `api/v1/` 新建 `xxx.py`，定义 `APIRouter`，注入 `get_current_user`
+4. 在 `main.py` `import` 并 `app.include_router(xxx.router, prefix="/api/v1")`
+5. 在 `frontend/src/services/api.js` 添加对应 `xxxApi` 对象
 
 ---
 
 ## 常见问题
 
 **Q: 启动报 `asyncpg.exceptions.InvalidPasswordError`**
-确认 PostgreSQL 用户名密码与 `.env` 一致，或检查 `pg_hba.conf` 是否允许本地连接。
+确认 PostgreSQL 用户名密码与 `.env` 一致，检查 `pg_hba.conf` 是否允许本地连接。
 
 **Q: 上传文件报 `500 OSError`**
-检查 `STORAGE__LOCAL_PATH` 目录是否存在且有写权限；或检查磁盘空间。
-
-**Q: JWT Token 过期**
-重新 `POST /api/v1/admin/auth/login` 获取新 Token。
+检查 `STORAGE__LOCAL_PATH` 目录是否存在且有写权限。
 
 **Q: 修改配置不生效**
-若修改了 `.env`，需重启 uvicorn；若通过 Admin API 写入 override，自动热加载，无需重启。
+修改 `.env` 需重启；通过 Admin UI 写入 override 自动热加载，无需重启。
+
+**Q: 缩略图不更新**
+删除 `uploads/.thumbs/` 目录下对应文件（或全部），下次请求时重新生成。

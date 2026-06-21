@@ -2,6 +2,7 @@
   <div class="glass-card calendar-panel">
     <!-- 月份头 -->
     <div class="cal-header">
+      <button class="cal-nav" @click="prevMonth">‹</button>
       <div class="cal-month-btn" @click="togglePicker" ref="pickerAnchorRef">
         <span>{{ year }}年 {{ month + 1 }}月</span>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
@@ -9,10 +10,7 @@
           <path d="M2 3.5l3 3 3-3"/>
         </svg>
       </div>
-      <div class="cal-nav-group">
-        <button class="cal-nav" @click="prevMonth">‹</button>
-        <button class="cal-nav" @click="nextMonth">›</button>
-      </div>
+      <button class="cal-nav" @click="nextMonth">›</button>
     </div>
 
     <!-- 星期行 -->
@@ -42,13 +40,13 @@
     <div class="upcoming">
       <div class="upcoming-title">近期节点</div>
       <div v-if="visibleEvents.length === 0" class="upcoming-empty">未来 15 天暂无节点</div>
-      <div class="event-row" :class="{ 'ev-proj-row': e.isProject, 'ev-act-row': !e.isProject }" v-for="e in visibleEvents" :key="e.id">
-        <div class="ev-capsule"
-             :style="{ background: hexAlpha(e.color, 0.1), borderColor: hexAlpha(e.color, 0.3), cursor: 'pointer' }"
+      <div class="event-row cap-row" :class="{ 'ev-proj-row': e.isProject, 'ev-act-row': !e.isProject }" v-for="e in visibleEvents" :key="e.id">
+        <div class="cap-capsule"
+             :style="{ '--cap-bg': capBg(e.color, e.progress), borderColor: hexAlpha(e.color, 0.3), cursor: 'pointer' }"
              @click="e.isProject ? openProject(e) : openEditForm(e, $event)">
-          <span class="cap-tag" :class="e.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="e.isProject ? { color: e.color } : {}">{{ e.isProject ? '项目' : '活动' }}</span>
+          <span class="cap-tag" :class="e.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="e.isProject ? { color: darkenHex(e.color) } : {}">{{ e.isProject ? '项目' : '活动' }}</span>
           <span v-if="e.isProject" class="cap-sdot" :class="'cap-s-' + e.status"></span>
-          <span class="ev-cap-name" :style="{ color: e.color }">{{ e.name }}</span>
+          <span class="cap-name" :style="{ color: darkenHex(e.color) }">{{ e.name }}</span>
           <span class="cap-days" :class="{ urgent: e.daysLeft <= 3 }">{{ e.daysLabel }}</span>
         </div>
       </div>
@@ -115,18 +113,23 @@ const month    = ref(today.getMonth())
 const weekdays = ['一', '二', '三', '四', '五', '六', '日']
 
 const { fetchYear, getHolidayType } = useHolidays()
-const hdayCache = ref({})
+
+// 模块级节假日缓存，跨导航不重置
+const _hdayStore = {}
+const hdayCache  = ref(_hdayStore)
 
 async function loadHolidays() {
   const y = year.value
   const years = [y]
   if (month.value === 11) years.push(y + 1)
+  let changed = false
   for (const yr of years) {
-    if (!hdayCache.value[yr]) {
-      const data = await fetchYear(yr)
-      hdayCache.value = { ...hdayCache.value, [yr]: data }
+    if (!_hdayStore[yr]) {
+      _hdayStore[yr] = await fetchYear(yr)
+      changed = true
     }
   }
+  if (changed) hdayCache.value = { ..._hdayStore }
 }
 
 function hdayType(isoDate) {
@@ -191,6 +194,11 @@ async function saveEditForm() {
   const ev = editingEvent.value
   if (!ev?.name) return
   showEditForm.value = false
+  // 乐观更新 events.value + 模块缓存
+  events.value = events.value.map(e =>
+    e.id === ev.id ? { ...e, title: ev.name, date: ev.date, description: ev.description } : e
+  )
+  _eventsCache.set(`${year.value}-${month.value}`, events.value)
   // 更新 store 中的 upcomingCalEvents
   const raw = projectStore.upcomingCalEvents.find(e => e.id === ev.id)
   if (raw) { raw.title = ev.name; raw.date = ev.date; raw.description = ev.description }
@@ -214,11 +222,21 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside, true
 
 const TYPE_COLOR = { deadline: '#b07858', milestone: '#7b7fb2', meeting: '#7ab8c8', event: '#9590c4' }
 
+// 模块级事件缓存，键为 `${year}-${month}`，跨导航不重置
+const _eventsCache = new Map()
+
 // 当前显示月份的事件（用于日历格子打点）
 const events = ref([])
 async function loadEvents() {
+  const key = `${year.value}-${month.value}`
+  if (_eventsCache.has(key)) {
+    events.value = _eventsCache.get(key)
+    return
+  }
   try {
-    events.value = await eventsApi.list(year.value, month.value)
+    const data = await eventsApi.list(year.value, month.value)
+    events.value = data
+    _eventsCache.set(key, data)
   } catch { /* ignore */ }
 }
 onMounted(() => { loadEvents(); loadHolidays() })
@@ -304,6 +322,12 @@ const visibleEvents = computed(() => {
         iso:       p.deadline,
         isProject: true,
         status:    p.status,
+        progress:  (() => {
+          const stages = p.stages ?? []
+          if (!stages.length) return 0
+          const idx = stages.findIndex(s => s.key === p.currentStage)
+          return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
+        })(),
         daysLeft:  dl,
         daysLabel: dl === 0 ? '今天' : dl === 1 ? '明天' : dl + '天后',
       })
@@ -330,11 +354,25 @@ function openProject(e) {
   if (proj) projectStore.openModal(proj)
 }
 
+function capBg(hex, progress) {
+  const base = hexAlpha(hex, 0.1)
+  if (!progress) return base
+  const fill = hexAlpha(hex, 0.32)
+  return `linear-gradient(to right, ${fill} 0%, ${fill} ${progress}%, ${base} ${progress}%, ${base} 100%)`
+}
+
 function hexAlpha(hex, a) {
   const r = parseInt(hex.slice(1,3),16)
   const g = parseInt(hex.slice(3,5),16)
   const b = parseInt(hex.slice(5,7),16)
   return `rgba(${r},${g},${b},${a})`
+}
+
+function darkenHex(hex, amount = 0.60) {
+  const r = Math.round(parseInt(hex.slice(1,3),16) * amount)
+  const g = Math.round(parseInt(hex.slice(3,5),16) * amount)
+  const b = Math.round(parseInt(hex.slice(5,7),16) * amount)
+  return `rgb(${r},${g},${b})`
 }
 </script>
 
@@ -342,26 +380,27 @@ function hexAlpha(hex, a) {
 .calendar-panel {
   padding: 20px;
   display: flex; flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
 }
 
-.cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.cal-header {
+  display: grid; grid-template-columns: 32px 1fr 32px;
+  align-items: center; margin-bottom: 14px;
+}
 
 .cal-month-btn {
-  display: flex; align-items: center; gap: 5px;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
   font-size: 14px; font-weight: 700;
   cursor: pointer; user-select: none;
-  padding: 3px 7px; border-radius: 8px; margin-left: -7px;
+  padding: 3px 8px; border-radius: 8px;
   transition: background 0.15s;
 }
 .cal-month-btn:hover { background: rgba(0,0,0,0.06); }
 
-.cal-nav-group { display: flex; gap: 2px; }
 .cal-nav {
   background: none; border: none; cursor: pointer;
   color: var(--text-secondary); font-size: 16px;
-  padding: 3px 7px; border-radius: 7px; transition: background 0.15s;
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  border-radius: 7px; transition: background 0.15s; padding: 0;
 }
 .cal-nav:hover { background: rgba(0,0,0,0.06); }
 
@@ -378,7 +417,7 @@ function hexAlpha(hex, a) {
 
 .cal-day {
   display: flex; align-items: center; justify-content: center;
-  font-size: 12px; border-radius: 9px; cursor: pointer;
+  font-size: 12px; font-weight: 500; border-radius: 9px; cursor: pointer;
   position: relative; transition: background 0.12s; color: var(--text-primary);
 }
 .cal-day:hover { background: rgba(123,127,178,0.1); }
@@ -411,8 +450,6 @@ function hexAlpha(hex, a) {
 
 .upcoming {
   border-top: 1px solid rgba(0,0,0,0.05); padding-top: 13px;
-  flex: 1; overflow-y: auto;
-  scrollbar-gutter: stable;
 }
 .upcoming-title {
   font-size: 10px; font-weight: 600; color: var(--text-secondary);
@@ -420,24 +457,6 @@ function hexAlpha(hex, a) {
 }
 .upcoming-empty { font-size: 11px; color: var(--text-secondary); opacity: 0.5; padding: 6px 0; }
 .event-row { display: flex; align-items: center; margin-bottom: 7px; }
-.ev-capsule {
-  flex: 1; min-width: 0;
-  display: flex; align-items: center; gap: 5px;
-  padding: 4px 8px 4px 5px;
-  border-radius: 20px; border: 1px solid;
-  transition: filter 0.12s;
-}
-.ev-proj-row:hover .ev-capsule,
-.ev-act-row:hover .ev-capsule { filter: brightness(1.08); }
-.cap-tag { flex-shrink: 0; font-size: 8px; font-weight: 700; letter-spacing: 0.04em; border-radius: 3px; padding: 0 4px; line-height: 13px; }
-.cap-tag-proj { background: rgba(255,255,255,0.55); }
-.cap-tag-ev   { background: rgba(210,175,40,0.28); color: #7a5c00; }
-.cap-sdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
-.cap-s-pending { background: #9e9fc4; }
-.cap-s-active  { background: #7b7fb2; }
-.ev-cap-name { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; padding-bottom: 2px; margin-bottom: -2px; }
-.cap-days { font-size: 10px; font-weight: 700; color: var(--text-secondary); flex-shrink: 0; white-space: nowrap; margin-left: 4px; }
-.cap-days.urgent { color: var(--color-warning, #c8962a); }
 .event-meta { font-size: 11px; color: var(--text-secondary); margin-top: 2px; display: flex; align-items: center; gap: 5px; }
 .event-tag {
   font-size: 9px; font-weight: 600;

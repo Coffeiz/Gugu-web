@@ -1,133 +1,153 @@
 <template>
   <BaseModal :show="!!project" width="900px" height="680px" :zIndex="200" @close="onModalClose">
       <div class="modal">
-        <!-- 悬浮删除按钮 -->
-        <button class="del-float-btn" @click="handleDelete" title="删除此项目">
-          <PhTrash :size="14" weight="bold" />
-        </button>
+        <!-- 悬浮操作按钮 -->
+        <div class="float-actions">
+          <button class="save-float-btn" @click="$emit('close')" title="保存并关闭">
+            <PhCheck :size="14" weight="bold" />
+          </button>
+          <button class="del-float-btn" @click="handleDelete" title="删除此项目">
+            <PhTrash :size="14" weight="bold" />
+          </button>
+        </div>
 
         <!-- 左栏 -->
         <div class="modal-left">
 
-          <!-- 紧凑标题区 -->
+          <!-- 标题 -->
           <div class="proj-header">
-            <div class="header-color-bar" :style="{ background: project.color }"></div>
-            <div class="header-info">
+            <div class="header-main">
               <input
                 v-if="editingName"
                 ref="nameInputRef"
                 v-model="localName"
-                class="header-name header-name-input"
+                class="header-name-input title-edit-input"
                 @blur="saveName"
                 @keydown.enter="saveName"
                 @keydown.esc="cancelName"
               />
-              <div v-else class="header-name header-name-view" @click="startEditName" title="点击修改名称">{{ project.name }}</div>
-              <div class="header-sub">
-                <span class="header-progress" :style="{ color: accentColor }">{{ stageProgress }}%</span>
+              <div v-else class="header-name" @click="startEditName" title="点击修改名称">{{ localName }}</div>
+            </div>
+            <div class="header-progress-bar">
+              <div class="header-progress-fill" :style="{ width: stageProgress + '%', background: localColor }"></div>
+            </div>
+          </div>
+
+          <!-- 可滚动内容区 -->
+          <div class="left-content">
+
+            <div class="section">
+              <label class="section-label">客户 / 委托方</label>
+              <input class="field-input" v-model="localClient" placeholder="客户名称（选填）" />
+            </div>
+
+            <hr class="col-divider" />
+
+            <div class="section">
+              <label class="section-label">项目周期</label>
+              <DateSpanPicker
+                v-model:startDate="localStartDate"
+                v-model:endDate="localDeadline"
+                placeholder="选择开始 — 截止日期"
+              />
+            </div>
+
+            <hr class="col-divider" />
+
+            <div class="section">
+              <label class="section-label">看板列</label>
+              <div class="status-group">
+                <button
+                  v-for="col in projectStore.kanbanColumns"
+                  :key="col.key"
+                  class="status-btn"
+                  :class="['s-' + col.key, { active: localStatus === col.key }]"
+                  @click="localStatus = col.key; projectStore.moveProject(project.id, col.key)"
+                >
+                  <span class="opt-dot"></span>{{ col.label }}
+                </button>
               </div>
-              <div class="header-progress-bar">
-                <div class="header-progress-fill" :style="{ width: stageProgress + '%', background: project.color }"></div>
+            </div>
+
+            <hr class="col-divider" />
+
+            <div class="section">
+              <label class="section-label">项目颜色</label>
+              <div class="color-grid">
+                <button
+                  v-for="c in colorPresets"
+                  :key="c"
+                  class="color-chip"
+                  :class="{ active: localColor === c }"
+                  :style="{ background: c }"
+                  @click="setColor(c)"
+                >
+                  <PhCheck v-if="localColor === c" :size="11" weight="bold" style="color:white" />
+                </button>
               </div>
             </div>
-          </div>
 
-          <!-- 客户 -->
-          <div class="client-row">
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="client-icon">
-              <circle cx="8" cy="6" r="2.5"/><path d="M2 14c0-3.3 2.7-5 6-5s6 1.7 6 5"/>
-            </svg>
-            <input
-              class="client-input"
-              v-model="localClient"
-              placeholder="输入客户名称"
-            />
-          </div>
+            <hr class="col-divider" />
 
-          <!-- 日期编辑 -->
-          <div class="meta-row">
-            <div class="meta-item">
-              <span class="meta-label">开始日期</span>
-              <DatePicker ref="startPickerRef" v-model="localStartDate" placeholder="设置开始日期" @update:modelValue="onStartDatePicked" />
-            </div>
-            <div class="meta-item">
-              <span class="meta-label">截止日期</span>
-              <DatePicker ref="deadlinePickerRef" v-model="localDeadline" :min="localStartDate || undefined" placeholder="设置截止日期" />
-              <span v-if="deadlineError" class="date-error">不能早于开始日期</span>
-            </div>
-          </div>
-
-          <!-- 看板状态 -->
-          <div class="status-row">
-            <span class="meta-label">看板状态</span>
-            <div class="status-btns">
-              <button
-                v-for="col in projectStore.kanbanColumns"
-                :key="col.key"
-                class="status-opt"
-                :class="['s-' + col.key, { active: project.status === col.key }]"
-                @click="projectStore.moveProject(project.id, col.key)"
-              >
-                <span class="opt-dot"></span>{{ col.label }}
-              </button>
-            </div>
-          </div>
-
-          <!-- 配色 -->
-          <div class="color-row">
-            <span class="meta-label">项目配色</span>
-            <div class="color-grid">
-              <button
-                v-for="c in colorPresets"
-                :key="c"
-                class="color-chip"
-                :class="{ active: project.color === c }"
-                :style="{ background: c }"
-                @click="setColor(c)"
-              >
-                <svg v-if="project.color === c" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round">
-                  <path d="M2 6l3 3 5-5"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <!-- 阶段编辑器 -->
-          <div class="stages-section">
-            <div class="section-label">
-              项目阶段
-              <button class="add-stage-btn" @click="addStage">＋ 添加</button>
-            </div>
+            <!-- 阶段 -->
+            <div class="section stages-section">
+              <div class="stages-header">
+                <label class="section-label">项目阶段 <span class="label-hint">拖拽排序</span></label>
+                <button class="add-stage-btn" @click="addStage">＋ 添加</button>
+              </div>
             <div class="stage-flow" ref="stageFlowRef">
               <div
                 v-for="(stage, i) in displayStages" :key="stage.key"
                 class="stage-node"
                 :class="{
-                  active: stage.key === project.currentStage && stage.key !== draggedStageKey,
-                  done: doneStageKeys.has(stage.key) && stage.key !== draggedStageKey,
+                  active: i === activeStageIdx && stage.key !== draggedStageKey,
+                  done: i < activeStageIdx && stage.key !== draggedStageKey,
                   'stage-dragging': stageDrag.active && stage.key === draggedStageKey,
+                  expanded: expandedStages.has(stage.key),
                 }"
-                @click="!stageDrag.active && setStage(stage.key)"
-                @mousedown="editingStage !== stage.key && startStageDrag(localStages.indexOf(stage), $event)"
               >
-                <div class="node-circle" :style="stage.key === project.currentStage && stage.key !== draggedStageKey ? { background: project.color, borderColor: project.color } : {}">
-                  <svg v-if="doneStageKeys.has(stage.key) && stage.key !== draggedStageKey" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round">
-                    <path d="M2 6l3 3 5-5"/>
-                  </svg>
-                  <span v-else class="node-num">{{ i + 1 }}</span>
-                </div>
-                <div class="node-body">
-                  <input
-                    v-if="editingStage === stage.key"
-                    v-model="stage.label"
-                    class="stage-input"
-                    @blur="saveStages" @keydown.enter="saveStages" @keydown.esc="editingStage = null" @click.stop
-                    ref="stageInputRef"
-                  />
-                  <span v-else class="node-label" @click.stop="startEdit(stage.key)">{{ stage.label }}</span>
+                <!-- 节点行 -->
+                <div class="node-row" @mousedown="editingStage !== stage.key && startStageDrag(i, $event)">
+                  <div class="node-circle"
+                    :style="i === activeStageIdx && stage.key !== draggedStageKey ? { background: localColor } : {}"
+                    @click.stop="!stageDrag.active && setStage(stage.key, i)"
+                  >
+                    <PhCheck v-if="i < activeStageIdx && stage.key !== draggedStageKey" :size="10" weight="bold" style="color:white" />
+                    <span v-else class="node-num">{{ i + 1 }}</span>
+                  </div>
+                  <div class="node-body">
+                    <input
+                      v-if="editingStage === stage.key"
+                      v-model="stage.label"
+                      class="stage-input"
+                      @blur="saveStages" @keydown.enter="saveStages" @keydown.esc="editingStage = null" @click.stop
+                      ref="stageInputRef"
+                    />
+                    <span v-else class="node-label" @click.stop="startEdit(stage.key)">{{ stage.label }}</span>
+                    <span class="todo-count" v-if="stage.todos?.length">{{ stage.todos.filter(t=>t.done).length }}/{{ stage.todos.length }}</span>
+                  </div>
                   <button class="del-stage" @click.stop="removeStage(stage.key)">
-                    <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 2l6 6M8 2L2 8"/></svg>
+                    <PhX :size="9" weight="bold" />
                   </button>
+                </div>
+                <!-- 待办列表 -->
+                <div class="todo-list">
+                  <div v-for="todo in (stage.todos ?? [])" :key="todo.id" class="todo-item">
+                    <button class="todo-check" :class="{ checked: todo.done }" @click.stop="toggleTodo(todo)">
+                      <PhCheck v-if="todo.done" :size="9" weight="bold" />
+                    </button>
+                    <input
+                      :class="['todo-input', `todo-input-${stage.key}`]"
+                      v-model="todo.text"
+                      :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
+                      placeholder="待办事项"
+                      @blur="saveStages"
+                      @keydown.enter.prevent="addTodo(stage)"
+                      @keydown.backspace="!todo.text && removeTodo(stage, todo.id)"
+                    />
+                    <button class="todo-del" @click.stop="removeTodo(stage, todo.id)"><PhX :size="8" weight="bold" /></button>
+                  </div>
+                  <button class="todo-add-btn" @click.stop="addTodo(stage)">＋ 添加待办</button>
                 </div>
                 <div v-if="i < displayStages.length - 1" class="node-line"></div>
               </div>
@@ -137,22 +157,20 @@
             <Teleport to="body">
               <div v-if="stageDrag.active" class="stage-drag-ghost-full"
                 :style="{ left: stageDrag.ghostX + 'px', top: stageDrag.ghostY + 'px', width: stageDrag.ghostWidth + 'px' }">
-                <div class="node-circle"
-                  :style="stageDrag.ghostIsActive ? { background: project.color, borderColor: project.color } : {}">
-                  <svg v-if="stageDrag.ghostIsDone" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round"><path d="M2 6l3 3 5-5"/></svg>
-                  <span v-else class="node-num">{{ stageDrag.ghostNum }}</span>
-                </div>
-                <span class="node-label" :style="stageDrag.ghostIsActive ? { fontWeight: '700' } : {}">{{ stageDrag.ghostLabel }}</span>
+                <span class="node-label">{{ stageDrag.ghostLabel }}</span>
               </div>
             </Teleport>
           </div>
 
-          <!-- 备注 -->
-          <div class="desc-section">
-            <div class="section-label">备注</div>
-            <textarea class="desc-input" placeholder="添加项目描述或备注…" rows="2"></textarea>
-          </div>
+            <hr class="col-divider" />
 
+            <!-- 备注 -->
+            <div class="section">
+              <label class="section-label">备注</label>
+              <textarea class="notes-input" v-model="localNotes" placeholder="添加项目描述或备注…" rows="3"></textarea>
+            </div>
+
+          </div><!-- /left-content -->
         </div>
 
         <!-- 右栏：文件 -->
@@ -173,7 +191,7 @@
                 @drop="onPmBcDrop(null, $event)"
               >项目文件</button>
               <template v-for="(seg, idx) in folderStack" :key="seg.id">
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" class="bc-sep"><path d="M3 2l4 3-4 3"/></svg>
+                <PhCaretRight :size="10" weight="bold" class="bc-sep" />
                 <button v-if="idx < folderStack.length - 1" class="bc-seg"
                   :class="{ 'bc-drop-target': pmBcDragOverIdx === idx }"
                   @click="navigateTo(idx)"
@@ -193,9 +211,9 @@
                   <path d="M5 2v6M2 5l3-3 3 3"/>
                 </svg>
               </button>
-              <div v-if="pmSortMenuOpen" class="sort-menu">
+              <div v-if="pmSortMenuOpen" class="sort-menu popup-menu">
                 <button v-for="opt in PM_SORT_OPTIONS" :key="opt.key"
-                  class="sort-menu-item" :class="{ active: pmSortKey === opt.key }"
+                  class="sort-menu-item popup-menu-item" :class="{ active: pmSortKey === opt.key }"
                   @click.stop="onPmSortSelect(opt.key)">
                   {{ opt.label }}
                   <svg v-if="pmSortKey === opt.key" class="sort-check" :class="{ desc: pmSortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -269,7 +287,7 @@
                   @drop="onPmFolderDrop(folder, $event)">
                   <Transition name="sel-cb">
                     <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFolderIds.has(folder.id) }">
-                      <svg v-if="pmSelectedFolderIds.has(folder.id)" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg>
+                      <PhCheck v-if="pmSelectedFolderIds.has(folder.id)" :size="10" weight="bold" style="color:white" />
                     </div>
                   </Transition>
                   <div class="fd-icon-area">
@@ -278,13 +296,15 @@
                     </svg>
                   </div>
                   <div class="fd-hover-actions" v-show="!pmInSelectionMode">
-                    <button class="fd-action-btn" title="重命名" @click.stop="startRenameFolder(folder)">
-                      <PhPencilSimple :size="10" weight="bold" />
+                    <button class="file-card-btn" :title="renamingFolderId === folder.id ? '确认' : '重命名'"
+                      @mousedown.prevent @click.stop="renamingFolderId === folder.id ? commitFolderRename() : startRenameFolder(folder)">
+                      <PhCheck v-if="renamingFolderId === folder.id" :size="10" weight="bold" />
+                      <PhPencilSimple v-else :size="10" weight="bold" />
                     </button>
-                    <button class="fd-action-btn" title="下载为 ZIP" @click.stop="downloadFolderZip(folder)">
+                    <button class="file-card-btn" title="下载为 ZIP" @click.stop="downloadFolderZip(folder)">
                       <PhDownloadSimple :size="10" weight="bold" />
                     </button>
-                    <button class="fd-action-btn fd-del-btn" title="删除" @click.stop="deleteFolderCard(folder)">
+                    <button class="file-card-btn del" title="删除" @click.stop="deleteFolderCard(folder)">
                       <PhTrash :size="10" weight="bold" />
                     </button>
                   </div>
@@ -312,21 +332,25 @@
                   @dragend="onPmFileDragEnd">
                   <Transition name="sel-cb">
                     <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFileIds.has(file.id) }">
-                      <svg v-if="pmSelectedFileIds.has(file.id)" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg>
+                      <PhCheck v-if="pmSelectedFileIds.has(file.id)" :size="10" weight="bold" style="color:white" />
                     </div>
                   </Transition>
                   <span class="fc-ext-badge" :style="{ color: fileIconColor(file.ext), background: fileIconColor(file.ext) + '18' }">{{ file.ext }}</span>
                   <div class="fc-hover-actions" v-show="!pmInSelectionMode">
-                    <button class="fc-act-btn" title="重命名" @click.stop="startRename(file)"><PhPencilSimple :size="10" weight="bold" /></button>
-                    <button class="fc-act-btn" title="下载" @click.stop="downloadFile(file)"><PhDownloadSimple :size="10" weight="bold" /></button>
-                    <button class="fc-act-btn del" title="删除" @click.stop="deleteFile(file)"><PhTrash :size="10" weight="bold" /></button>
+                    <button class="file-card-btn" :title="renamingFileId === file.id ? '确认' : '重命名'"
+                      @mousedown.prevent @click.stop="renamingFileId === file.id ? commitRename() : startRename(file)">
+                      <PhCheck v-if="renamingFileId === file.id" :size="10" weight="bold" />
+                      <PhPencilSimple v-else :size="10" weight="bold" />
+                    </button>
+                    <button class="file-card-btn" title="下载" @click.stop="downloadFile(file)"><PhDownloadSimple :size="10" weight="bold" /></button>
+                    <button class="file-card-btn del" title="删除" @click.stop="deleteFile(file)"><PhTrash :size="10" weight="bold" /></button>
                   </div>
                   <div v-if="isPmImageExt(file.ext)" class="fc-thumb-area">
-                    <img class="fc-thumb fc-thumb-tiny" v-lazy-src="pmThumbUrl(file.id, 'tiny')" decoding="async" draggable="false" alt="" />
-                    <img class="fc-thumb fc-thumb-full" v-lazy-src="pmThumbUrl(file.id, 'card')"
-                      :class="{ 'fc-loaded': pmLoadedThumbs.has(file.id) }"
+                    <img class="fc-thumb fc-thumb-tiny" v-lazy-src="{ id: file.id, size: 'tiny' }" decoding="async" draggable="false" alt="" />
+                    <img class="fc-thumb fc-thumb-full" v-lazy-src="{ id: file.id, size: 'card' }"
+                      :class="{ 'fc-loaded': thumbLoadedIds.has(file.id) }"
                       decoding="async" draggable="false" alt=""
-                      @load="pmLoadedThumbs.add(file.id)"
+                      @load="thumbLoadedIds.add(file.id)"
                       @error="$event.target.style.display='none'" />
                     <div class="fc-thumb-fade"></div>
                   </div>
@@ -419,7 +443,7 @@
                 <!-- 上传卡片 -->
                 <label class="fc-upload" :class="{ dragging }"
                   @dragover.prevent="dragging = true" @dragleave="dragging = false" @drop.prevent="handleFileDrop">
-                  <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12V3M5 7l4-4 4 4"/><path d="M2 14h14"/></svg>
+                  <PhUploadSimple :size="16" weight="bold" />
                   <span>上传文件</span>
                   <input type="file" hidden multiple @change="handleFileInput" />
                 </label>
@@ -463,13 +487,17 @@
                   <span class="lr-actions">
                     <Transition name="sel-cb">
                       <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFolderIds.has(folder.id) }">
-                        <svg v-if="pmSelectedFolderIds.has(folder.id)" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg>
+                        <PhCheck v-if="pmSelectedFolderIds.has(folder.id)" :size="10" weight="bold" style="color:white" />
                       </div>
                     </Transition>
                     <template v-if="!pmInSelectionMode">
-                      <button class="lr-action-btn" title="重命名" @click.stop="startRenameFolder(folder)"><PhPencilSimple :size="11" weight="bold" /></button>
-                      <button class="lr-action-btn" title="下载为 ZIP" @click.stop="downloadFolderZip(folder)"><PhDownloadSimple :size="11" weight="bold" /></button>
-                      <button class="lr-action-btn lr-del-btn" title="删除" @click.stop="deleteFolderCard(folder)"><PhTrash :size="11" weight="bold" /></button>
+                      <button class="file-list-btn" :title="renamingFolderId === folder.id ? '确认' : '重命名'"
+                        @mousedown.prevent @click.stop="renamingFolderId === folder.id ? commitFolderRename() : startRenameFolder(folder)">
+                        <PhCheck v-if="renamingFolderId === folder.id" :size="11" weight="bold" />
+                        <PhPencilSimple v-else :size="11" weight="bold" />
+                      </button>
+                      <button class="file-list-btn" title="下载为 ZIP" @click.stop="downloadFolderZip(folder)"><PhDownloadSimple :size="11" weight="bold" /></button>
+                      <button class="file-list-btn del" title="删除" @click.stop="deleteFolderCard(folder)"><PhTrash :size="11" weight="bold" /></button>
                     </template>
                   </span>
                 </div>
@@ -500,13 +528,17 @@
                   <span class="lr-actions">
                     <Transition name="sel-cb">
                       <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFileIds.has(file.id) }">
-                        <svg v-if="pmSelectedFileIds.has(file.id)" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg>
+                        <PhCheck v-if="pmSelectedFileIds.has(file.id)" :size="10" weight="bold" style="color:white" />
                       </div>
                     </Transition>
                     <template v-if="!pmInSelectionMode">
-                      <button class="lr-action-btn" title="重命名" @click.stop="startRename(file)"><PhPencilSimple :size="11" weight="bold" /></button>
-                      <button class="lr-action-btn" title="下载" @click.stop="downloadFile(file)"><PhDownloadSimple :size="11" weight="bold" /></button>
-                      <button class="lr-action-btn lr-del-btn" title="删除" @click.stop="deleteFile(file)"><PhTrash :size="11" weight="bold" /></button>
+                      <button class="file-list-btn" :title="renamingFileId === file.id ? '确认' : '重命名'"
+                        @mousedown.prevent @click.stop="renamingFileId === file.id ? commitRename() : startRename(file)">
+                        <PhCheck v-if="renamingFileId === file.id" :size="11" weight="bold" />
+                        <PhPencilSimple v-else :size="11" weight="bold" />
+                      </button>
+                      <button class="file-list-btn" title="下载" @click.stop="downloadFile(file)"><PhDownloadSimple :size="11" weight="bold" /></button>
+                      <button class="file-list-btn del" title="删除" @click.stop="deleteFile(file)"><PhTrash :size="11" weight="bold" /></button>
                     </template>
                   </span>
                 </div>
@@ -528,7 +560,7 @@
                 </div>
                 <!-- 上传行 -->
                 <label class="list-upload-row" @dragover.prevent="dragging = true" @dragleave="dragging = false" @drop.prevent="handleFileDrop">
-                  <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 9V3M4 6l3-3 3 3"/><path d="M1 11h12"/></svg>
+                  <PhUploadSimple :size="13" weight="bold" />
                   上传文件 <input type="file" hidden multiple @change="handleFileInput" />
                 </label>
               </div>
@@ -570,65 +602,65 @@
   <!-- 右键菜单 -->
   <ContextMenu :show="pmCtx.visible" :x="pmCtx.x" :y="pmCtx.y" @close="pmCtx.visible = false">
     <template v-if="pmCtx.type === 'file' || pmCtx.type === 'multi-file'">
-      <button v-if="pmCtx.type === 'file'" class="ctx-item" @click="pmCtxInfo">
+      <button v-if="pmCtx.type === 'file'" class="ctx-item popup-menu-item" @click="pmCtxInfo">
         <PhInfo :size="13" weight="bold" />
         详细信息
       </button>
-      <button class="ctx-item" @click="pmCtxDownload">
+      <button class="ctx-item popup-menu-item" @click="pmCtxDownload">
         <PhDownloadSimple :size="13" weight="bold" />
         下载
       </button>
-      <button v-if="pmCtx.type === 'file'" class="ctx-item" @click="pmCtxRename">
+      <button v-if="pmCtx.type === 'file'" class="ctx-item popup-menu-item" @click="pmCtxRename">
         <PhPencilSimple :size="13" weight="bold" />
         重命名
       </button>
-      <div class="ctx-sep"></div>
-      <button class="ctx-item" @click="pmCtxCut">
+      <div class="popup-menu-sep"></div>
+      <button class="ctx-item popup-menu-item" @click="pmCtxCut">
         <PhScissors :size="13" weight="bold" />
-        剪切 <span class="ctx-shortcut">{{ modKey }}+X</span>
+        剪切 <span class="popup-menu-shortcut">{{ modKey }}+X</span>
       </button>
-      <button class="ctx-item" @click="pmCtxCopy">
+      <button class="ctx-item popup-menu-item" @click="pmCtxCopy">
         <PhCopy :size="13" weight="bold" />
-        复制 <span class="ctx-shortcut">{{ modKey }}+C</span>
+        复制 <span class="popup-menu-shortcut">{{ modKey }}+C</span>
       </button>
-      <div class="ctx-sep"></div>
-      <button class="ctx-item ctx-danger" @click="pmCtxDelete">
+      <div class="popup-menu-sep"></div>
+      <button class="ctx-item popup-menu-item danger" @click="pmCtxDelete">
         <PhTrash :size="13" weight="bold" />
         移到回收站
       </button>
     </template>
 
     <template v-else-if="pmCtx.type === 'folder'">
-      <button class="ctx-item" @click="pmCtxDownloadFolder">
+      <button class="ctx-item popup-menu-item" @click="pmCtxDownloadFolder">
         <PhDownloadSimple :size="13" weight="bold" />
         下载为 ZIP
       </button>
-      <button class="ctx-item" @click="pmCtxRenameFolder">
+      <button class="ctx-item popup-menu-item" @click="pmCtxRenameFolder">
         <PhPencilSimple :size="13" weight="bold" />
         重命名
       </button>
-      <button class="ctx-item" @click="pmCtxCutFolder">
+      <button class="ctx-item popup-menu-item" @click="pmCtxCutFolder">
         <PhScissors :size="13" weight="bold" />
-        剪切 <span class="ctx-shortcut">{{ modKey }}+X</span>
+        剪切 <span class="popup-menu-shortcut">{{ modKey }}+X</span>
       </button>
-      <div class="ctx-sep"></div>
-      <button class="ctx-item ctx-danger" @click="pmCtxDeleteFolder">
+      <div class="popup-menu-sep"></div>
+      <button class="ctx-item popup-menu-item danger" @click="pmCtxDeleteFolder">
         <PhTrash :size="13" weight="bold" />
         删除
       </button>
     </template>
 
     <template v-else-if="pmCtx.type === 'empty'">
-      <button class="ctx-item" @click="pmCtx.visible = false; showNewFolder = true">
+      <button class="ctx-item popup-menu-item" @click="pmCtx.visible = false; showNewFolder = true">
         <PhFolderPlus :size="13" weight="bold" />
         新建文件夹
       </button>
-      <div class="ctx-sep"></div>
-      <button v-if="pmCbStore.hasContent()" class="ctx-item" @click="pmCtxPaste">
+      <div class="popup-menu-sep"></div>
+      <button v-if="pmCbStore.hasContent()" class="ctx-item popup-menu-item" @click="pmCtxPaste">
         <PhClipboardText :size="13" weight="bold" />
-        粘贴 <span class="ctx-shortcut">{{ modKey }}+V</span>
+        粘贴 <span class="popup-menu-shortcut">{{ modKey }}+V</span>
       </button>
-      <button v-else class="ctx-item" disabled style="opacity:.4;cursor:default">
+      <button v-else class="ctx-item popup-menu-item" disabled style="opacity:.4;cursor:default">
         <PhClipboardText :size="13" weight="bold" />
         剪贴板为空
       </button>
@@ -648,12 +680,15 @@
 <script setup>
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
-import { filesApi, foldersApi, uploadWithProgress, getToken } from '@/services/api'
+import { useFilesCacheStore } from '@/stores/filesCache'
+import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/services/api'
+import { getThumb, getCachedThumb, thumbLoadedIds, preloadTinyThumbs } from '@/composables/useThumbCache'
 import DatePicker from '@/components/common/DatePicker.vue'
+import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import {
-  PhFolder, PhArrowLeft, PhArrowRight, PhSortAscending, PhSquaresFour, PhList,
+  PhFolder, PhArrowLeft, PhArrowRight, PhCaretRight, PhCaretDown, PhSortAscending, PhSquaresFour, PhList,
   PhCheckSquare, PhFolderPlus, PhUploadSimple, PhPencilSimple,
   PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX, PhCheck,
   PhInfo, PhWarningCircle, PhDotsThree, PhTrash,
@@ -667,6 +702,7 @@ const emit = defineEmits(['close'])
 function onModalClose() { emit('close'); pmSortMenuOpen.value = false }
 
 const projectStore     = useProjectStore()
+const fileCacheStore   = useFilesCacheStore()
 const editingStage     = ref(null)
 const stageInputRef    = ref(null)
 const stageFlowRef     = ref(null)
@@ -685,10 +721,16 @@ const editingName      = ref(false)
 const localName        = ref('')
 const nameInputRef     = ref(null)
 
-const localStages    = ref([])
+const localStages      = ref([])
+const expandedStages   = ref(new Set())
+let _syncingFromStore  = false   // 防止 store→localStages 同步触发 saveTodos
 const localStartDate = ref('')
 const localDeadline  = ref('')
 const localClient    = ref('')
+const localNotes     = ref('')
+const localColor        = ref('')
+const localCurrentStage = ref('')
+const localStatus       = ref('')
 const fileViewMode   = ref('grid')
 const projectFiles   = ref([])
 const projectFolders = ref([])
@@ -739,6 +781,7 @@ const currentFiles = computed(() => {
   const folderId = folderStack.value[folderStack.value.length - 1].id
   return folderFilesMap.value[folderId] ?? []
 })
+watch(currentFiles, files => { if (files?.length) preloadTinyThumbs(files) })
 
 // 兼容旧模板引用（进入文件夹后的文件）
 const currentFolder = computed(() =>
@@ -1138,7 +1181,10 @@ const renameText     = ref('')
 function startRename(file) {
   renamingFileId.value = file.id
   renameText.value     = file.displayName
-  nextTick(() => document.querySelector('.rename-input-inline')?.focus())
+  nextTick(() => {
+    const el = document.querySelector('.rename-input-inline')
+    el?.focus(); el?.select()
+  })
 }
 function cancelRename() {
   renamingFileId.value = null
@@ -1214,26 +1260,38 @@ function fileIconColor(ext) {
   return map[cat] ?? '#8888a8'
 }
 
-const _PM_IMG_EXTS  = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','heic','heif'])
-const isPmImageExt  = (ext) => _PM_IMG_EXTS.has((ext || '').toLowerCase())
-const pmThumbUrl    = (id, size) => `/api/v1/files/${id}/thumb?token=${getToken()}&size=${size}`
-const pmLoadedThumbs = reactive(new Set())
+const _PM_IMG_EXTS   = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','heic','heif'])
+const isPmImageExt   = (ext) => _PM_IMG_EXTS.has((ext || '').toLowerCase())
 
 const vLazySrc = {
-  mounted(el, { value }) {
-    if (!value) return
+  mounted(el, { value: { id, size } }) {
+    if (!id) return
+    const cached = getCachedThumb(id, size)
+    if (cached) { el.src = cached; return }
+    if (size === 'tiny') {
+      getThumb(id, size).then(url => { if (url) el.src = url })
+      return
+    }
     const obs = new IntersectionObserver(([e]) => {
       if (!e.isIntersecting) return
-      el.src = value; obs.disconnect(); el._lazySrcObs = null
+      obs.disconnect(); el._lazySrcObs = null
+      getThumb(id, size).then(url => { if (url) el.src = url })
     }, { rootMargin: '200px' })
     obs.observe(el); el._lazySrcObs = obs
   },
-  updated(el, { value, oldValue }) {
-    if (value === oldValue || el.src === value) return
+  updated(el, { value: { id, size }, oldValue }) {
+    if (id === oldValue?.id && size === oldValue?.size) return
     el._lazySrcObs?.disconnect()
+    const cached = getCachedThumb(id, size)
+    if (cached) { el.src = cached; return }
+    if (size === 'tiny') {
+      getThumb(id, size).then(url => { if (url) el.src = url })
+      return
+    }
     const obs = new IntersectionObserver(([e]) => {
       if (!e.isIntersecting) return
-      el.src = value; obs.disconnect(); el._lazySrcObs = null
+      obs.disconnect(); el._lazySrcObs = null
+      getThumb(id, size).then(url => { if (url) el.src = url })
     }, { rootMargin: '200px' })
     obs.observe(el); el._lazySrcObs = obs
   },
@@ -1248,7 +1306,10 @@ const folderRenameText  = ref('')
 function startRenameFolder(folder) {
   renamingFolderId.value = folder.id
   folderRenameText.value = folder.name
-  nextTick(() => document.querySelector('.rename-input-inline')?.focus())
+  nextTick(() => {
+    const el = document.querySelector('.rename-input-inline')
+    el?.focus(); el?.select()
+  })
 }
 function cancelFolderRename() {
   renamingFolderId.value = null
@@ -1271,8 +1332,25 @@ function downloadFolderZip(folder) {
   foldersApi.download(folder.id, folder.name)
 }
 
+function prunePmHistoryForFolder(folderId) {
+  const hasDeleted = snap => snap.some(f => f.id === folderId)
+  const curIdx = pmNavCursor.value
+  let newCursor = 0
+  const kept = []
+  pmNavStack.value.forEach((snap, i) => {
+    if (!hasDeleted(snap)) {
+      if (i <= curIdx) newCursor = kept.length
+      kept.push(snap)
+    }
+  })
+  if (!kept.length) kept.push([])
+  pmNavStack.value = kept
+  pmNavCursor.value = Math.min(newCursor, kept.length - 1)
+}
+
 async function deleteFolderCard(folder) {
   if (!confirm(`删除文件夹「${folder.name}」？其中的文件将移至项目根目录。`)) return
+  prunePmHistoryForFolder(folder.id)
   try {
     await foldersApi.delete(folder.id)
     await loadFolders(props.project.id)
@@ -1286,10 +1364,16 @@ let initializing = false
 
 watch(() => props.project?.id, async (id) => {
   initializing = true
-  localStages.value    = props.project ? props.project.stages.map(s => ({ ...s })) : []
-  localStartDate.value = props.project?.startDate ?? ''
-  localDeadline.value  = props.project?.deadline  ?? ''
-  localClient.value    = props.project?.client    ?? ''
+  localStages.value       = props.project ? props.project.stages.map(s => ({ ...s })) : []
+  localName.value         = props.project?.name         ?? ''
+  localStartDate.value    = props.project?.startDate    ?? ''
+  localDeadline.value     = props.project?.deadline     ?? ''
+  localClient.value       = props.project?.client       ?? ''
+  localNotes.value        = props.project?.notes        ?? ''
+  localColor.value        = props.project?.color        ?? ''
+  localCurrentStage.value = props.project?.currentStage ?? ''
+  localStatus.value       = props.project?.status       ?? ''
+  recalcStageState()
   editingStage.value   = null
   projectFiles.value   = []
   projectFolders.value = []
@@ -1301,6 +1385,11 @@ watch(() => props.project?.id, async (id) => {
   await nextTick()
   initializing = false
   if (!id) return
+  // 热缓存：从 filesCacheStore 立即预填，避免等待 API 时文件区域为空
+  if (fileCacheStore.loaded) {
+    projectFiles.value   = fileCacheStore.getProjectRootFiles(id)
+    projectFolders.value = fileCacheStore.getProjectRootFolders(id)
+  }
   try {
     const [files, folders] = await Promise.all([
       filesApi.list({ projectId: id }),
@@ -1312,6 +1401,15 @@ watch(() => props.project?.id, async (id) => {
     // 后端未启动时保持空列表
   }
 }, { immediate: true })
+
+// 跟踪 store 里的 status 变化（如自动完成 / 拖回），实时同步胶囊亮起状态
+watch(() => props.project?.status, (status) => {
+  if (status !== undefined && status !== localStatus.value) {
+    localStatus.value = status
+  }
+})
+
+
 
 watch(localClient, v => {
   if (initializing) return
@@ -1335,30 +1433,31 @@ function onStartDatePicked(v) {
   startPickerRef.value?.closePicker()
   if (v) setTimeout(() => deadlinePickerRef.value?.openPicker(), 80)
 }
-const deadlineError = ref(false)
-
 watch(localDeadline, v => {
   if (initializing) return
   const id = props.project?.id
   if (!id) return
-  if (v && localStartDate.value && v < localStartDate.value) {
-    deadlineError.value = true
-    return
-  }
-  deadlineError.value = false
   const p = projectStore.projects.find(p => p.id === id)
   if (p) p.deadline = v
   projectStore.updateProject(id, { deadline: v || null })
 })
 
-const currentStageIndex = computed(() =>
-  localStages.value.findIndex(s => s.key === props.project?.currentStage)
-)
-const doneStageKeys = computed(() => {
-  const idx = currentStageIndex.value
-  if (idx <= 0) return new Set()
-  return new Set(localStages.value.slice(0, idx).map(s => s.key))
+let _notesTimer = null
+watch(localNotes, v => {
+  if (initializing) return
+  const id = props.project?.id
+  if (!id) return
+  clearTimeout(_notesTimer)
+  _notesTimer = setTimeout(() => {
+    projectStore.updateProject(id, { notes: v })
+  }, 600)
 })
+
+const currentStageIndex = computed(() =>
+  localStages.value.findIndex(s => s.key === localCurrentStage.value)
+)
+// 当前阶段所在位置索引（位置固定，拖动重排不改变）
+const activeStageIdx = ref(-1)
 
 const displayStages = computed(() => {
   if (!stageDrag.active) return localStages.value
@@ -1372,21 +1471,33 @@ const draggedStageKey = computed(() =>
   stageDrag.active ? localStages.value[stageDrag.fromIdx]?.key : null
 )
 const displayCurrentStageIndex = computed(() =>
-  displayStages.value.findIndex(s => s.key === props.project?.currentStage)
+  displayStages.value.findIndex(s => s.key === localCurrentStage.value)
 )
-const stageProgress = computed(() => {
-  const stages = localStages.value
+const stageProgress = ref(0)
+
+function calcProgress(stages, currentStageKey) {
   if (!stages.length) return 0
-  const idx = currentStageIndex.value
+  const idx = stages.findIndex(s => s.key === currentStageKey)
   if (idx < 0) return 0
-  return Math.round((idx + 1) / stages.length * 100)
-})
+  const w = 100 / stages.length
+  const todos = stages[idx].todos ?? []
+  const within = todos.length > 0 ? (todos.filter(t => t.done).length / todos.length) * w : w
+  return Math.round(idx * w + within)
+}
+
+// 只在明确切换阶段时调用，拖动重排不触发
+function recalcStageState() {
+  const stages = localStages.value
+  const idx = stages.findIndex(s => s.key === localCurrentStage.value)
+  activeStageIdx.value = idx
+  stageProgress.value = calcProgress(stages, localCurrentStage.value)
+}
 
 function extractAccent(colorStr) {
   const m = colorStr?.match(/#[0-9a-fA-F]{6}/)
   return m ? m[0] : '#7b7fb2'
 }
-const accentColor   = computed(() => extractAccent(props.project?.color))
+const accentColor   = computed(() => extractAccent(localColor.value || props.project?.color))
 const accentColorBg = computed(() => {
   const c = accentColor.value
   return c ? c.replace(/^#/, '') .match(/.{2}/g)
@@ -1407,16 +1518,16 @@ const colorPresets = [
 ]
 
 function startEditName() {
-  localName.value = props.project.name
   editingName.value = true
   nextTick(() => nameInputRef.value?.select())
 }
 function saveName() {
   const n = localName.value.trim()
-  if (n && n !== props.project.name) {
+  if (!n) {
+    localName.value = props.project.name
+  } else if (n !== props.project.name) {
+    localName.value = n
     projectStore.updateProject(props.project.id, { name: n })
-    const p = projectStore.projects.find(p => p.id === props.project.id)
-    if (p) p.name = n
   }
   editingName.value = false
 }
@@ -1425,12 +1536,42 @@ function cancelName() {
 }
 
 function setColor(c) {
-  const p = projectStore.projects.find(p => p.id === props.project?.id)
-  if (p) p.color = c
+  localColor.value = c
   projectStore.updateProject(props.project.id, { color: c })
 }
 
-function setStage(key) { projectStore.setStage(props.project.id, key) }
+function setStage(key, idx) {
+  const oldIdx = localStages.value.findIndex(s => s.key === localCurrentStage.value)
+  const newIdx = idx
+
+  localCurrentStage.value = key
+  activeStageIdx.value = idx
+
+  // 直接在本地同步计算，不依赖 store 异步回写
+  if (oldIdx !== newIdx && oldIdx >= 0 && newIdx >= 0) {
+    const stages = JSON.parse(JSON.stringify(localStages.value))
+    if (newIdx > oldIdx) {
+      for (let i = oldIdx; i < newIdx; i++) {
+        stages[i].todos = (stages[i].todos ?? []).map(t =>
+          t.done ? t : { ...t, _savedDone: false, done: true, autoCompleted: true }
+        )
+      }
+    } else {
+      for (let i = newIdx; i < stages.length; i++) {
+        stages[i].todos = (stages[i].todos ?? []).map(t =>
+          t.autoCompleted ? { ...t, done: t._savedDone ?? false, autoCompleted: false, _savedDone: undefined } : t
+        )
+      }
+    }
+    _syncingFromStore = true
+    localStages.value = stages
+    nextTick(() => { _syncingFromStore = false })
+  }
+
+  const newProgress = calcProgress(localStages.value, key)
+  stageProgress.value = newProgress
+  projectStore.setStage(props.project.id, key, newProgress)
+}
 
 async function handleDelete() {
   if (!props.project) return
@@ -1455,7 +1596,50 @@ function addStage() {
 function removeStage(key) {
   if (localStages.value.length <= 1) return
   localStages.value = localStages.value.filter(s => s.key !== key)
+  expandedStages.value.delete(key)
   saveStages()
+}
+
+function toggleExpand(key) {
+  const s = expandedStages.value
+  s.has(key) ? s.delete(key) : s.add(key)
+  expandedStages.value = new Set(s)
+}
+function saveTodos() {
+  if (!props.project) return
+  if (_syncingFromStore) return
+  const newProgress = calcProgress(localStages.value, localCurrentStage.value)
+  stageProgress.value = newProgress
+  const lastKey = localStages.value[localStages.value.length - 1]?.key
+  const isLastFull = localCurrentStage.value === lastKey && newProgress === 100
+  if (isLastFull && props.project.status !== 'done') {
+    // 最后阶段勾完所有待办 → 自动完成
+    projectStore.updateProject(props.project.id, { stages: JSON.parse(JSON.stringify(localStages.value)), progress: newProgress })
+    projectStore.moveProject(props.project.id, 'done')
+  } else if (!isLastFull && props.project.status === 'done') {
+    // 取消待办导致进度不满 → 从已完成回退到进行中（不触发 moveProject 的阶段还原逻辑）
+    projectStore.updateProject(props.project.id, { stages: JSON.parse(JSON.stringify(localStages.value)), progress: newProgress, status: 'active', doneAt: null })
+  } else {
+    projectStore.updateProject(props.project.id, { stages: JSON.parse(JSON.stringify(localStages.value)), progress: newProgress })
+  }
+}
+function addTodo(stage) {
+  if (!stage.todos) stage.todos = []
+  stage.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
+  saveTodos()
+  nextTick(() => {
+    const inputs = document.querySelectorAll(`.todo-input-${stage.key}`)
+    inputs[inputs.length - 1]?.focus()
+  })
+}
+function removeTodo(stage, id) {
+  stage.todos = (stage.todos ?? []).filter(t => t.id !== id)
+  saveTodos()
+}
+function toggleTodo(todo) {
+  todo.done = !todo.done
+  todo.autoCompleted = false  // 手动操作后清除自动标记，后退时不再还原
+  saveTodos()
 }
 
 function stageIdxFromY(y) {
@@ -1490,8 +1674,8 @@ function startStageDrag(fromIdx, e) {
       stageDrag.overIdx      = fromIdx
       stageDrag.ghostLabel   = stage?.label ?? ''
       stageDrag.ghostNum     = fromIdx + 1
-      stageDrag.ghostIsActive = stage?.key === props.project?.currentStage
-      stageDrag.ghostIsDone  = fromIdx < currentStageIndex.value
+      stageDrag.ghostIsActive = fromIdx === activeStageIdx.value
+      stageDrag.ghostIsDone  = fromIdx < activeStageIdx.value
       stageDrag.ghostWidth   = rect.width
       stageDrag.grabOffsetX  = grabOffsetX
       stageDrag.grabOffsetY  = grabOffsetY
@@ -1507,9 +1691,11 @@ function startStageDrag(fromIdx, e) {
     document.removeEventListener('mousemove', mm)
     document.removeEventListener('mouseup', mu)
     if (activated) {
-      commitStageDrag()
+      commitStageDrag()  // 先提交，再重置索引
+      stageDrag.active = false
+      stageDrag.fromIdx = -1
+      stageDrag.overIdx = -1
       document.addEventListener('click', ce => ce.stopPropagation(), { capture: true, once: true })
-      setTimeout(() => { stageDrag.active = false; stageDrag.fromIdx = -1; stageDrag.overIdx = -1 }, 30)
     }
     document.body.style.cursor     = ''
     document.body.style.userSelect = ''
@@ -1522,10 +1708,12 @@ function startStageDrag(fromIdx, e) {
 function commitStageDrag() {
   const { fromIdx, overIdx } = stageDrag
   if (fromIdx < 0 || fromIdx === overIdx) return
-  const stages = [...localStages.value]
-  const [moved] = stages.splice(fromIdx, 1)
-  const to = Math.max(0, Math.min(overIdx, stages.length))
-  stages.splice(to, 0, moved)
+  const stages = JSON.parse(JSON.stringify(localStages.value))
+  // 只移动标签，todos/key/当前阶段状态保持不变
+  const labels = stages.map(s => s.label)
+  const [movedLabel] = labels.splice(fromIdx, 1)
+  labels.splice(Math.max(0, Math.min(overIdx, labels.length)), 0, movedLabel)
+  stages.forEach((s, i) => { s.label = labels[i] })
   localStages.value = stages
   saveStages()
 }
@@ -1758,173 +1946,216 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   border-right: 1px solid rgba(0,0,0,0.07); overflow: hidden;
 }
 
-/* 紧凑标题区 */
+/* 标题 */
 .proj-header {
-  display: flex; align-items: stretch; gap: 0;
-  flex-shrink: 0; border-bottom: 1px solid rgba(0,0,0,0.07);
+  height: 52px; box-sizing: border-box;
+  display: flex; flex-direction: column; flex-shrink: 0;
 }
-.header-color-bar {
-  width: 5px; flex-shrink: 0;
-}
-.header-info {
-  flex: 1; padding: 14px 16px 10px; min-width: 0;
-  display: flex; flex-direction: column; gap: 5px;
+.header-main {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+  padding: 0 16px; min-width: 0;
 }
 .header-name {
-  font-size: 19px; font-weight: 700; color: var(--text-primary);
-  line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  padding-bottom: 2px; margin-bottom: -2px;
+  flex: 1; font-size: 17px; font-weight: 700; color: var(--text-primary);
+  cursor: text; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  line-height: 1.2;
 }
-.header-name-view { cursor: text; border-radius: 5px; }
-.header-name-view:hover { background: transparent; }
-.header-name-input {
-  width: 100%; border: none; outline: none;
-  background: transparent; border-radius: 5px;
-  padding: 1px 5px; margin: -1px -5px;
-}
-.header-sub {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 11px; color: var(--text-secondary);
-}
-.header-sub svg { flex-shrink: 0; opacity: 0.6; }
-.header-client { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.header-progress { font-size: 11px; font-weight: 700; flex-shrink: 0; }
+.header-name-input { flex: 1; font-size: 17px; min-width: 0; }
 .header-progress-bar {
-  height: 3px; background: rgba(0,0,0,0.07); border-radius: 99px; overflow: hidden;
+  height: 3px; background: rgba(0,0,0,0.07); flex-shrink: 0; position: relative;
 }
 .header-progress-fill { height: 100%; border-radius: 99px; transition: width 0.4s; }
+.header-pct {
+  position: absolute; right: 8px; bottom: 5px;
+  font-size: 12px; font-weight: 700; line-height: 1;
+}
 
-/* 客户 */
-.client-row {
-  padding: 8px 14px; border-bottom: 1px solid rgba(0,0,0,0.07);
-  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+/* 可滚动内容区 */
+.left-content {
+  flex: 1; overflow-y: auto; padding: 12px 16px;
+  display: flex; flex-direction: column; gap: 0; min-height: 0;
 }
-.client-icon { color: var(--text-secondary); opacity: 0.75; flex-shrink: 0; }
-.client-input {
-  flex: 1; font-size: 12px; font-family: var(--font-sans);
-  color: var(--text-primary); background: transparent;
-  border: none; outline: none; padding: 0;
-}
-.client-input::placeholder { color: var(--text-secondary); opacity: 0.5; }
+.left-content::-webkit-scrollbar { width: 4px; }
+.left-content::-webkit-scrollbar-track { background: transparent; }
+.left-content::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 99px; }
 
-/* 日期 meta */
-.meta-row {
-  display: flex; border-bottom: 1px solid rgba(0,0,0,0.07); flex-shrink: 0;
+.section { display: flex; flex-direction: column; gap: 5px; padding: 8px 0; }
+.section-label {
+  font-size: 10px; font-weight: 600; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.07em;
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
 }
-.meta-item {
-  flex: 1; padding: 10px 12px;
-  display: flex; flex-direction: column; gap: 5px;
-  border-right: 1px solid rgba(0,0,0,0.07); min-width: 0;
+.label-hint {
+  font-size: 9.5px; font-weight: 500; opacity: 0.6;
+  text-transform: none; letter-spacing: 0;
 }
-.meta-item:last-child { border-right: none; }
-.date-error { font-size: 10px; color: var(--color-warning); }
-.meta-label { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.06em; }
+.col-divider { border: none; border-top: 1px solid rgba(0,0,0,0.07); margin: 0; }
+
+.field-input {
+  width: 100%; padding: 9px 12px; box-sizing: border-box;
+  border: 1px solid rgba(0,0,0,0.1); border-radius: 8px;
+  background: rgba(255,255,255,0.6); font-size: 13px;
+  font-family: var(--font-sans); color: var(--text-primary);
+  outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.field-input:hover { border-color: rgba(123,127,178,0.35); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08); }
+.field-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.1); }
+.field-input::placeholder { color: var(--text-secondary); opacity: 0.6; }
+
+/* 状态 */
+.status-group { display: flex; gap: 4px; flex-wrap: wrap; }
+.status-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 20px;
+  border: 1.5px solid transparent; font-size: 12px; font-weight: 600;
+  cursor: pointer; font-family: var(--font-sans);
+  background: rgba(0,0,0,0.04); color: var(--text-secondary);
+  transition: background 0.15s, color 0.15s, border-color 0.15s; outline: none;
+}
+.status-btn:hover { background: rgba(0,0,0,0.07); color: var(--text-primary); }
+.opt-dot { width: 6px; height: 6px; border-radius: 50%; }
+.status-btn.s-pending .opt-dot { background: #d46b6b; }
+.status-btn.s-active  .opt-dot { background: #c9943a; }
+.status-btn.s-done    .opt-dot { background: #5a9e88; }
+.status-btn.s-pending.active { background: rgba(212,107,107,0.12); border-color: rgba(212,107,107,0.5); color: #b84a4a; }
+.status-btn.s-active.active  { background: rgba(201,148,58,0.12);  border-color: rgba(201,148,58,0.5);  color: #a87520; }
+.status-btn.s-done.active    { background: rgba(90,158,136,0.12);  border-color: rgba(90,158,136,0.4);  color: #3a8870; }
 
 /* 配色 */
-.color-row {
-  padding: 10px 14px; border-bottom: 1px solid rgba(0,0,0,0.07);
-  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
-}
-.color-grid { display: flex; gap: 7px; flex-wrap: wrap; }
+.color-grid { display: flex; gap: 6px; flex-wrap: wrap; }
 .color-chip {
   width: 22px; height: 22px; border-radius: 50%;
   border: 2px solid rgba(255,255,255,0.5);
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: border-color 0.15s;
-  padding: 0; outline: none;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: border-color 0.15s; padding: 0; outline: none;
 }
 .color-chip:hover { border-color: rgba(255,255,255,0.9); }
 .color-chip.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,0.18); }
 
-/* 状态 */
-.status-row {
-  padding: 10px 14px; border-bottom: 1px solid rgba(0,0,0,0.07);
-  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
-}
-.status-btns { display: flex; gap: 5px; }
-.status-opt {
-  display: flex; align-items: center; gap: 5px;
-  padding: 4px 10px; border-radius: 20px;
-  border: 1.5px solid transparent; font-size: 11px; font-weight: 600;
-  cursor: pointer; font-family: var(--font-sans);
-  background: rgba(0,0,0,0.04); color: var(--text-secondary);
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-  outline: none;
-}
-.status-opt:hover { background: rgba(0,0,0,0.07); color: var(--text-primary); }
-.opt-dot { width: 6px; height: 6px; border-radius: 50%; }
-.status-opt.s-pending .opt-dot { background: #d46b6b; }
-.status-opt.s-active  .opt-dot { background: #c9943a; }
-.status-opt.s-done    .opt-dot { background: #5a9e88; }
-.status-opt.s-pending.active { background: rgba(212,107,107,0.12); border-color: rgba(212,107,107,0.5); color: #b84a4a; }
-.status-opt.s-active.active  { background: rgba(201,148,58,0.12);  border-color: rgba(201,148,58,0.5);  color: #a87520; }
-.status-opt.s-done.active    { background: rgba(90,158,136,0.12);  border-color: rgba(90,158,136,0.4);  color: #3a8870; }
-
 /* 阶段 */
-.stages-section {
-  padding: 14px 14px 0 6px; flex: 1; min-height: 0;
-  display: flex; flex-direction: column;
+.stages-section { flex: 1; min-height: 80px; display: flex; flex-direction: column; gap: 0; padding-bottom: 0; }
+.stages-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;
 }
-.section-label {
-  font-size: 11px; font-weight: 600; color: var(--text-secondary);
-  text-transform: uppercase; letter-spacing: 0.07em;
-  display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;
-  flex-shrink: 0;
-}
-.stages-section .section-label { padding-left: 8px; }
 .add-stage-btn {
   background: none; border: none; font-size: 11px; font-weight: 600;
   color: var(--color-primary); cursor: pointer; font-family: var(--font-sans);
   padding: 0; text-transform: none; letter-spacing: 0;
 }
 .add-stage-btn:hover { opacity: 0.7; }
-.stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 3px 3px 10px 0; scrollbar-gutter: stable; }
-.stage-node { display: flex; align-items: center; gap: 10px; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 14px 5px; }
-.stage-node.stage-dragging { opacity: 0.15; pointer-events: none; }
-.stage-node::before {
-  content: ''; position: absolute; left: 0; top: 4px;
-  width: 2px; height: 14px; border-radius: 1px;
-  background: var(--color-primary); opacity: 0; transition: opacity 0.15s;
+.stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0 4px 0; margin-right: -10px; padding-right: 10px; }
+
+/* 备注 */
+.notes-input {
+  width: 100%; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; padding: 7px 10px;
+  font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
+  background: rgba(255,255,255,0.72); outline: none; resize: none; line-height: 1.5;
+  transition: border-color 0.15s, box-shadow 0.15s; box-sizing: border-box;
 }
+.notes-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
+.notes-input::placeholder { color: var(--text-secondary); opacity: 0.6; }
+.stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 0 5px; margin-bottom: 2px; }
+.stage-node.stage-dragging { opacity: 0.15; pointer-events: none; }
+
+.node-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
 .node-circle {
   width: 22px; height: 22px; border-radius: 50%;
-  border: 2px solid rgba(0,0,0,0.15); background: rgba(255,255,255,0.7);
+  border: 1.5px solid rgba(0,0,0,0.12); background: rgba(0,0,0,0.08);
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-  transition: all 0.2s; z-index: 1;
+  cursor: pointer; z-index: 1;
 }
 .stage-node.done .node-circle { background: var(--color-success); border-color: var(--color-success); }
-.stage-node.active .node-circle { box-shadow: 0 0 0 3px rgba(123,127,178,0.2); }
+.stage-node.active .node-circle { border-color: transparent; }
 .node-num { font-size: 10px; font-weight: 700; color: var(--text-secondary); line-height: 1; }
 .stage-node.active .node-num { color: #fff; }
-.node-body { flex: 1; display: flex; align-items: center; justify-content: space-between; }
+.node-body { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; }
 .node-label { font-size: 13px; color: var(--text-primary); }
 .stage-node.done .node-label { color: var(--text-secondary); text-decoration: line-through; }
 .stage-node.active .node-label { font-weight: 600; }
+.todo-count { font-size: 10px; color: var(--text-secondary); opacity: 0.7; white-space: nowrap; }
+.node-expand-btn {
+  background: none; border: none; cursor: pointer; color: var(--text-secondary);
+  opacity: 0; transition: opacity 0.15s, transform 0.2s; padding: 2px;
+  display: flex; align-items: center;
+}
+.node-expand-btn.open { transform: rotate(180deg); opacity: 0.5 !important; }
+.stage-node:hover .node-expand-btn { opacity: 0.4; }
 .stage-input {
   font-size: 13px; font-family: var(--font-sans);
   border: 1px solid rgba(123,127,178,0.4); border-radius: 6px; padding: 1px 6px;
-  background: rgba(255,255,255,0.8); outline: none; color: var(--text-primary); width: 110px;
+  background: rgba(255,255,255,0.72); outline: none; color: var(--text-primary); width: 110px;
   box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
 }
 .del-stage {
   background: none; border: none; cursor: pointer; color: var(--text-secondary);
   opacity: 0; transition: opacity 0.15s; padding: 2px;
-  display: flex; align-items: center;
+  display: flex; align-items: center; flex-shrink: 0;
 }
 .stage-node:hover .del-stage { opacity: 0.5; }
-.stage-node:hover::before { opacity: 0.4; }
-.stage-node.stage-dragging::before { opacity: 0.8; }
 .del-stage:hover { opacity: 1 !important; color: var(--color-warning); }
-.node-line { position: absolute; left: 16px; top: 22px; width: 2px; height: 14px; background: rgba(0,0,0,0.08); }
-.stage-node.done .node-line { background: var(--color-success); opacity: 0.4; }
+.node-line { display: none; }
+.todo-list { border-bottom: 1px solid rgba(0,0,0,0.06); }
+/* 待办列表 */
+.todo-list { padding: 2px 0 8px 30px; display: flex; flex-direction: column; gap: 3px; border-bottom: 1px solid rgba(0,0,0,0.06); }
+.stage-node:last-child .todo-list { border-bottom: none; }
+.todo-item { display: flex; align-items: center; gap: 6px; height: 24px; }
+.todo-item + .todo-item { border-top: 1px solid rgba(0,0,0,0.05); }
+.todo-check {
+  width: 15px; height: 15px; border-radius: 4px; flex-shrink: 0;
+  border: 1.5px solid rgba(0,0,0,0.18); background: rgba(255,255,255,0.7);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s, border-color 0.15s;
+}
+.todo-check.checked { background: var(--color-success); border-color: var(--color-success); color: white; }
+.todo-input {
+  flex: 1; font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
+  border: 1.5px solid transparent; border-radius: 5px;
+  background: transparent; outline: none; min-width: 0;
+  padding: 0 5px; box-sizing: border-box;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.todo-input:focus {
+  background: rgba(255,255,255,0.72);
+  border-color: rgba(123,127,178,0.4);
+  box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
+}
+.todo-del {
+  background: none; border: none; cursor: pointer; color: var(--text-secondary);
+  opacity: 0; transition: opacity 0.15s; padding: 2px; display: flex; align-items: center; flex-shrink: 0;
+}
+.todo-item:hover .todo-del { opacity: 0.4; }
+.todo-del:hover { opacity: 1 !important; color: var(--color-warning); }
+.todo-add-btn {
+  display: flex; align-items: center; gap: 4px;
+  height: 24px; padding: 0 10px; border-radius: 7px;
+  border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.5);
+  font-size: 11px; font-weight: 500; color: var(--text-secondary);
+  cursor: pointer; font-family: var(--font-sans); transition: all 0.15s;
+  margin-top: 2px;
+}
+.todo-add-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(123,127,178,0.06); }
 
-/* 备注 */
-.desc-section { padding: 10px 16px 14px; flex-shrink: 0; display: flex; flex-direction: column; gap: 3px; border-top: 1px solid rgba(0,0,0,0.07); }
 
-/* 悬浮删除按钮 */
-.del-float-btn {
+
+/* 悬浮操作按钮 */
+.float-actions {
   position: absolute; bottom: 14px; right: 14px; z-index: 10;
+  display: flex; gap: 8px; align-items: center;
+}
+.save-float-btn {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: rgba(90,158,136,0.1);
+  border: 1px solid rgba(90,158,136,0.28);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--color-success);
+  box-shadow: 0 2px 10px rgba(90,158,136,0.12);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.save-float-btn:hover {
+  background: rgba(90,158,136,0.18);
+  box-shadow: 0 4px 14px rgba(90,158,136,0.22);
+}
+.del-float-btn {
   width: 36px; height: 36px; border-radius: 10px;
   background: rgba(176,120,88,0.1);
   border: 1px solid rgba(176,120,88,0.25);
@@ -1937,17 +2168,9 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   background: rgba(176,120,88,0.18);
   box-shadow: 0 4px 14px rgba(176,120,88,0.25);
 }
-.desc-input {
-  width: 100%; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; padding: 10px 12px;
-  font-size: 13px; font-family: var(--font-sans); color: var(--text-primary);
-  background: rgba(255,255,255,0.72); outline: none; resize: none; line-height: 1.6;
-  transition: border-color 0.15s, box-shadow 0.15s; box-sizing: border-box;
-}
-.desc-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
-.desc-input::placeholder { color: var(--text-secondary); opacity: 0.6; }
 
 /* ── 右栏：文件 ── */
-.modal-right { display: flex; flex-direction: column; min-height: 0; }
+.modal-right { display: flex; flex-direction: column; min-height: 0; background: transparent; }
 .right-header {
   height: 52px; box-sizing: border-box;
   padding: 0 12px 0 16px; border-bottom: 1px solid rgba(0,0,0,0.07);
@@ -1992,15 +2215,12 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 
 /* 文件夹卡片 */
 .folder-card {
-  position: relative; min-height: 84px; overflow: hidden; border-radius: 10px;
+  min-height: 84px; border-radius: 10px;
   background: color-mix(in srgb, var(--fd-color) 6%, rgba(255,255,255,0.82));
   border: 1px solid color-mix(in srgb, var(--fd-color) 14%, rgba(255,255,255,0.92));
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 4px rgba(80,90,110,0.05);
-  cursor: pointer; display: flex; flex-direction: column;
-  transition: transform 0.22s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.22s;
 }
 .folder-card:hover {
-  transform: translateY(-2px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 5px 14px rgba(80,90,110,0.12);
 }
 .fd-icon-area { flex: 1; overflow: visible; display: flex; align-items: center; justify-content: center; }
@@ -2019,29 +2239,18 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s;
 }
 .folder-card:hover .fd-hover-actions { opacity: 1; }
-.fd-action-btn {
-  position: relative;
-  width: 17px; height: 17px; border-radius: 4px; border: none;
-  background: rgba(255,255,255,0.78); backdrop-filter: blur(4px);
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  color: var(--text-secondary); transition: background 0.15s, color 0.15s;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
-.fd-action-btn::after { content: ''; position: absolute; inset: -1px; }
-.fd-action-btn:hover { background: white; color: var(--text-primary); }
-.fd-del-btn:hover { color: #e05555; }
+/* ProjectModal 卡片较小，覆盖全局默认尺寸 */
+.file-card-btn { width: 17px; height: 17px; border-radius: 4px; }
+.file-card-btn::after { inset: -1px; }
 
 /* 文件卡片 */
 .fc-card {
-  position: relative; min-height: 84px; overflow: hidden; border-radius: 10px;
+  min-height: 84px; border-radius: 10px;
   background: rgba(255,255,255,0.68);
   border: 1px solid rgba(255,255,255,0.85);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 4px rgba(80,90,110,0.05);
-  cursor: pointer; display: flex; flex-direction: column;
-  transition: transform 0.22s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.22s;
 }
 .fc-card:hover {
-  transform: translateY(-2px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 5px 14px rgba(80,90,110,0.12);
 }
 .fc-ext-badge {
@@ -2096,19 +2305,8 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .sort-dir-icon.desc { transform: rotate(180deg); }
 .sort-menu {
   position: absolute; top: calc(100% + 5px); left: 50%; transform: translateX(-50%); z-index: 400;
-  background: rgba(255,255,255,0.96); backdrop-filter: blur(12px);
-  border: 1px solid rgba(0,0,0,0.08); border-radius: 10px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1); padding: 4px;
   display: flex; flex-direction: column; gap: 1px; min-width: 100px;
 }
-.sort-menu-item {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 6px 9px; border-radius: 6px; border: none; background: none;
-  font-size: 11.5px; font-family: var(--font-sans); color: var(--text-primary);
-  cursor: pointer; transition: background 0.12s; text-align: left;
-}
-.sort-menu-item:hover { background: rgba(0,0,0,0.05); }
-.sort-menu-item.active { color: var(--color-primary); font-weight: 600; }
 .sort-check { flex-shrink: 0; color: var(--color-primary); }
 .sort-check.desc { transform: rotate(180deg); }
 
@@ -2127,7 +2325,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 }
 .new-folder-btn {
   display: flex; align-items: center; gap: 5px;
-  padding: 5px 11px; border-radius: 8px;
+  height: 28px; padding: 0 11px; border-radius: 8px;
   border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.5);
   font-size: 12px; font-weight: 500; color: var(--text-secondary);
   cursor: pointer; font-family: var(--font-sans); transition: all 0.15s; white-space: nowrap;
@@ -2160,17 +2358,6 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* 卡片操作按钮（文件卡） */
 .fc-hover-actions { position: absolute; top: 5px; right: 5px; z-index: 3; display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s; }
 .fc-card:hover .fc-hover-actions { opacity: 1; }
-.fc-act-btn {
-  position: relative;
-  width: 17px; height: 17px; border-radius: 4px; border: none;
-  background: rgba(255,255,255,0.78); backdrop-filter: blur(4px);
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  color: var(--text-secondary); transition: background 0.15s, color 0.15s;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
-.fc-act-btn::after { content: ''; position: absolute; inset: -1px; }
-.fc-act-btn:hover { background: white; color: var(--text-primary); }
-.fc-act-btn.del:hover { color: #e05555; }
 
 /* ── 幽灵上传卡片 ── */
 .fc-ghost {
@@ -2215,7 +2402,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 
 /* ── 批量操作浮动栏 ── */
 .pm-selection-bar {
-  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  position: absolute; bottom: 11px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 8px;
   padding: 8px 14px; border-radius: 12px;
   background: rgba(30,32,44,0.88);
@@ -2342,15 +2529,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 }
 .lr-text { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
 .lr-actions { display: flex; gap: 2px; align-items: center; justify-content: flex-end; position: relative; }
-.lr-action-btn {
-  width: 24px; height: 24px; border-radius: 6px; border: none;
-  background: none; color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s;
-}
-.list-row:hover .lr-action-btn { opacity: 1; }
-.lr-action-btn:hover { background: rgba(123,127,178,0.1); color: var(--color-primary); }
-.lr-del-btn:hover { background: rgba(200,90,90,0.1); color: #c85a5a; }
+.list-row:hover .file-list-btn { opacity: 1; }
 
 /* 多选勾选框 */
 .sel-checkbox {
@@ -2415,9 +2594,9 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 }
 .rename-input-inline {
   position: absolute; inset: 0; width: 100%;
-  border: none; outline: none;
-  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-  border-radius: 4px; padding: 0 5px;
+  outline: none;
+  background: rgba(255,255,255,0.9); border: 1px solid rgba(123,127,178,0.4);
+  border-radius: 4px; padding: 0 4px;
   font: inherit; color: inherit;
 }
 
@@ -2440,40 +2619,20 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 <style>
 .stage-drag-ghost-full {
   position: fixed; z-index: 9999; pointer-events: none;
-  display: flex; align-items: flex-start; gap: 10px;
-  padding: 6px 12px 6px 10px;
-  background: rgba(238,240,246,0.94);
+  display: flex; align-items: center;
+  padding: 5px 12px;
+  background: rgba(238,240,246,0.96);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(123,127,178,0.3);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(30,40,80,0.18);
-  opacity: 0.92; transform: rotate(-1deg) scale(1.02);
-  box-sizing: border-box;
-}
-.stage-drag-ghost-full .node-circle {
-  width: 22px; height: 22px; border-radius: 50%;
-  border: 2px solid rgba(0,0,0,0.15); background: rgba(255,255,255,0.7);
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-}
-.stage-drag-ghost-full .node-num {
-  font-size: 10px; font-weight: 700; color: #6b7280;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(30,40,80,0.14);
+  opacity: 0.95; box-sizing: border-box;
 }
 .stage-drag-ghost-full .node-label {
-  font-size: 13px; color: #1e2028; line-height: 22px;
-  font-weight: 500;
+  font-size: 13px; color: #1e2028; font-weight: 500;
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* ── 右键菜单 ── */
-.ctx-item {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; padding: 7px 10px; border: none; background: none;
-  border-radius: 7px; font-size: 13px; color: var(--text-primary);
-  cursor: pointer; text-align: left; white-space: nowrap;
-}
-.ctx-item:hover:not(:disabled) { background: rgba(0,0,0,0.05); }
-.ctx-item.ctx-danger { color: #c85a5a; }
-.ctx-item.ctx-danger:hover { background: rgba(200,90,90,0.1); }
-.ctx-sep { height: 1px; background: rgba(0,0,0,0.07); margin: 3px 6px; }
-.ctx-shortcut { margin-left: auto; font-size: 11px; color: var(--text-secondary); opacity: .7; }
 .fc-card.cut, .list-row.cut { opacity: 0.45; }
 
 .drop-overlay {

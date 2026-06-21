@@ -20,20 +20,22 @@ export const useProjectStore = defineStore('projects', () => {
   const totalCount = computed(() => projects.value.length)
 
   const upcomingCount = computed(() => {
-    const now = new Date()
+    const today = new Date(); today.setHours(0, 0, 0, 0)
     return projects.value.filter(p => {
       if (!p.deadline) return false
-      const days = (new Date(p.deadline) - now) / 86400000
+      const days = (new Date(p.deadline + 'T00:00:00') - today) / 86400000
       return days >= 0 && days <= 7
     }).length
   })
 
-  const urgentProjects = computed(() =>
-    projects.value.filter(p => {
-      const days = (new Date(p.deadline) - new Date()) / 86400000
+  const urgentProjects = computed(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    return projects.value.filter(p => {
+      if (!p.deadline) return false
+      const days = (new Date(p.deadline + 'T00:00:00') - today) / 86400000
       return days <= 3
     })
-  )
+  })
 
   async function fetchProjects() {
     loading.value = true
@@ -52,7 +54,7 @@ export const useProjectStore = defineStore('projects', () => {
       name:         fields.name,
       client:       fields.client || null,
       status:       fields.status || 'pending',
-      stages:       fields.stages.map((label, i) => ({ key: `s${i}`, label })),
+      stages:       fields.stages.map((s, i) => ({ key: `s${i}`, label: typeof s === 'string' ? s : s.label, todos: s.todos ?? [] })),
       currentStage: fields.stages[0] ? 's0' : null,
       progress:     0,
       startDate:    fields.startDate || null,
@@ -70,51 +72,114 @@ export const useProjectStore = defineStore('projects', () => {
     projects.value = projects.value.filter(p => p.id !== id)
   }
 
+  async function _patchProject(id, payload) {
+    const p = projects.value.find(p => p.id === id)
+    try {
+      const updated = await projectsApi.update(id, { ...payload, version: p?.version })
+      if (p && updated) {
+        if (updated.version) p.version = updated.version
+        if ('doneAt' in updated) p.doneAt = updated.doneAt
+      }
+    } catch (e) {
+      if (e.status === 409) {
+        await fetchProjects()
+        throw new Error('数据已被其他用户修改，已自动刷新')
+      }
+      throw e
+    }
+  }
+
   async function moveProject(id, newStatus) {
     const p = projects.value.find(p => p.id === id)
     if (!p) return
     const oldStatus = p.status
     p.status = newStatus
 
-    if (newStatus === 'done' && !p.doneAt) {
+    if (newStatus === 'done' && oldStatus !== 'done') {
       p.doneAt = new Date().toISOString()
+    } else if (oldStatus === 'done' && newStatus !== 'done') {
+      p.doneAt = null
     }
 
     if (newStatus === 'done' && oldStatus !== 'done' && p.stages?.length) {
-      // 进入已完成：记住当前阶段，推进到最后阶段（100%）
-      p._stageBeforeDone = p.currentStage
+      if (!p._stageBeforeDone) p._stageBeforeDone = p.currentStage  // 若 setStage 已提前存好则不覆盖
       const lastKey = p.stages[p.stages.length - 1].key
       p.currentStage = lastKey
       p.progress = 100
-      await projectsApi.update(id, { status: newStatus, currentStage: lastKey, progress: 100 })
+      await _patchProject(id, { status: newStatus, currentStage: lastKey, progress: 100, doneAt: p.doneAt })
       return
     }
 
     if (oldStatus === 'done' && newStatus !== 'done' && p.stages?.length) {
-      // 离开已完成：还原之前记住的阶段
       const restored = p._stageBeforeDone ?? p.stages[0].key
       p._stageBeforeDone = undefined
       p.currentStage = restored
       const idx = p.stages.findIndex(s => s.key === restored)
       const progress = idx >= 0 ? Math.round((idx + 1) / p.stages.length * 100) : 0
       p.progress = progress
-      await projectsApi.update(id, { status: newStatus, currentStage: restored, progress })
+      // 还原所有 autoCompleted 的 todo 到快照状态
+      const stages = JSON.parse(JSON.stringify(p.stages))
+      for (const stage of stages) {
+        stage.todos = (stage.todos ?? []).map(t =>
+          t.autoCompleted ? { ...t, done: t._savedDone ?? false, autoCompleted: false, _savedDone: undefined } : t
+        )
+      }
+      p.stages = stages
+      await _patchProject(id, { status: newStatus, currentStage: restored, progress, stages })
       return
     }
 
-    await projectsApi.update(id, { status: newStatus })
+    await _patchProject(id, { status: newStatus })
   }
 
-  async function setStage(id, stageKey) {
+  async function setStage(id, stageKey, progress) {
     const p = projects.value.find(p => p.id === id)
     if (!p) return
+
+    const originalStageKey = p.currentStage  // 记录修改前的阶段，用于 _stageBeforeDone
+    const oldIdx = p.stages.findIndex(s => s.key === p.currentStage)
+    const newIdx = p.stages.findIndex(s => s.key === stageKey)
+
+    let stages = p.stages
+    if (oldIdx !== newIdx && oldIdx >= 0 && newIdx >= 0) {
+      stages = JSON.parse(JSON.stringify(p.stages))
+      if (newIdx > oldIdx) {
+        // 前进：对经过的阶段（不含新当前阶段）快照并自动打勾
+        for (let i = oldIdx; i < newIdx; i++) {
+          stages[i].todos = (stages[i].todos ?? []).map(t =>
+            t.done ? t : { ...t, _savedDone: false, done: true, autoCompleted: true }
+          )
+        }
+      } else {
+        // 后退：从目标阶段开始（含目标阶段自身）还原 autoCompleted 到快照状态
+        for (let i = newIdx; i < stages.length; i++) {
+          stages[i].todos = (stages[i].todos ?? []).map(t =>
+            t.autoCompleted ? { ...t, done: t._savedDone ?? false, autoCompleted: false, _savedDone: undefined } : t
+          )
+        }
+      }
+      p.stages = stages
+    }
+
     p.currentStage = stageKey
-    const idx = p.stages.findIndex(s => s.key === stageKey)
-    const progress = p.stages.length > 0
-      ? Math.round((idx + 1) / p.stages.length * 100)
-      : 0
-    p.progress = progress
-    await projectsApi.update(id, { currentStage: stageKey, progress })
+    p.progress = progress ?? 0
+
+    const isLastFull = newIdx === p.stages.length - 1 && p.progress === 100
+
+    if (isLastFull && p.status !== 'done') {
+      // 最后阶段 + 进度满 → 立即乐观更新 status/doneAt，一次 API 全部写入
+      p._stageBeforeDone = originalStageKey
+      p.status = 'done'
+      p.doneAt = new Date().toISOString()
+      await _patchProject(id, { currentStage: stageKey, progress: p.progress, stages, status: 'done' })
+    } else if (!isLastFull && p.status === 'done') {
+      // 退出最后阶段或进度不满 → 从已完成回退到进行中
+      p.status = 'active'
+      p.doneAt = null
+      await _patchProject(id, { currentStage: stageKey, progress: p.progress, stages, status: 'active', doneAt: null })
+    } else {
+      await _patchProject(id, { currentStage: stageKey, progress: p.progress, stages })
+    }
   }
 
   async function updateStages(id, newStages) {
@@ -124,18 +189,21 @@ export const useProjectStore = defineStore('projects', () => {
     if (!newStages.find(s => s.key === p.currentStage)) {
       p.currentStage = newStages[0]?.key ?? ''
     }
-    await projectsApi.update(id, { stages: newStages, currentStage: p.currentStage })
+    await _patchProject(id, { stages: newStages, currentStage: p.currentStage })
   }
 
   async function updateProject(id, fields) {
     const p = projects.value.find(p => p.id === id)
     if (p) Object.assign(p, fields)
-    await projectsApi.update(id, fields)
+    await _patchProject(id, fields)
   }
 
   const modalProject = ref(null)
 
-  function openModal(project) { modalProject.value = project }
+  function openModal(project) {
+    // 存 store 实际对象引用（而非调用方传来的 spread 快照），确保 modal 数据实时
+    modalProject.value = projects.value.find(p => p.id === project?.id) ?? project
+  }
   function closeModal()       { modalProject.value = null }
 
   // 近期节点日历事件缓存（在 store 里，SPA 导航不重置）

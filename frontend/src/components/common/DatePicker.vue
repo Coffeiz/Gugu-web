@@ -15,41 +15,73 @@
     <Teleport to="body">
       <Transition name="dp-pop">
         <div v-if="open" class="dp-popup" :style="popupStyle" ref="popupRef">
+
           <!-- 月份导航 -->
-          <div class="dp-header">
+          <div v-if="!yearMode" class="dp-header">
             <button class="dp-nav" @click.stop="prevMonth">
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 2L4 6l4 4"/></svg>
             </button>
-            <span class="dp-period">{{ cursor.getFullYear() }}年{{ cursor.getMonth() + 1 }}月</span>
+            <button class="dp-period" @click.stop="enterYearMode">
+              {{ cursor.getFullYear() }}年{{ cursor.getMonth() + 1 }}月
+              <svg class="dp-period-caret" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
+            </button>
             <button class="dp-nav" @click.stop="nextMonth">
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 2l4 4-4 4"/></svg>
             </button>
           </div>
 
-          <!-- 星期头 -->
-          <div class="dp-weekrow">
-            <span v-for="w in '一二三四五六日'" :key="w" class="dp-wh">{{ w }}</span>
+          <!-- 年份选择导航 -->
+          <div v-else class="dp-header">
+            <button class="dp-nav" @click.stop="yearStart -= 12">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 2L4 6l4 4"/></svg>
+            </button>
+            <button class="dp-period dp-period-range" @click.stop="yearMode = false">
+              {{ yearStart }} — {{ yearStart + 11 }}
+              <svg class="dp-period-caret up" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
+            </button>
+            <button class="dp-nav" @click.stop="yearStart += 12">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 2l4 4-4 4"/></svg>
+            </button>
           </div>
 
-          <!-- 日期格 -->
-          <div class="dp-grid">
+          <!-- 月份日历 -->
+          <template v-if="!yearMode">
+            <div class="dp-weekrow">
+              <span v-for="w in '一二三四五六日'" :key="w" class="dp-wh">{{ w }}</span>
+            </div>
+            <div class="dp-grid">
+              <button
+                v-for="d in calDays"
+                :key="d.key"
+                class="dp-day"
+                :class="{
+                  'other': d.other,
+                  'today': d.iso === todayIso,
+                  'selected': d.iso === modelValue,
+                  'weekend': d.dow >= 5,
+                  'disabled': isDisabled(d.iso),
+                }"
+                @click.stop="select(d.iso)"
+              >{{ d.date }}</button>
+            </div>
+          </template>
+
+          <!-- 年份网格 -->
+          <div v-else class="dp-year-grid">
             <button
-              v-for="d in calDays"
-              :key="d.key"
-              class="dp-day"
+              v-for="y in 12"
+              :key="y"
+              class="dp-year-btn"
               :class="{
-                'other': d.other,
-                'today': d.iso === todayIso,
-                'selected': d.iso === modelValue,
-                'weekend': d.dow >= 5,
-                'disabled': isDisabled(d.iso),
+                'this-year': yearStart + y - 1 === todayYear,
+                'selected': yearStart + y - 1 === cursor.getFullYear(),
               }"
-              @click.stop="select(d.iso)"
-            >{{ d.date }}</button>
+              @click.stop="selectYear(yearStart + y - 1)"
+            >{{ yearStart + y - 1 }}</button>
           </div>
 
           <!-- 快捷 -->
-          <div class="dp-footer">
+          <div v-if="!yearMode" class="dp-footer">
             <button class="dp-clear" @click.stop="clear">清除</button>
             <button class="dp-today" @click.stop="select(todayIso)">今天</button>
           </div>
@@ -69,19 +101,23 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue'])
 
-const open      = ref(false)
-const wrapRef   = ref(null)
-const popupRef  = ref(null)
+const open       = ref(false)
+const wrapRef    = ref(null)
+const popupRef   = ref(null)
 const popupStyle = ref({})
+const yearMode   = ref(false)
 
 const today    = new Date()
 const todayIso = toIso(today)
+const todayYear = today.getFullYear()
 
 const cursor = ref(
   props.modelValue
     ? new Date(props.modelValue + 'T00:00:00')
     : new Date(today.getFullYear(), today.getMonth(), 1)
 )
+
+const yearStart = ref(Math.floor(cursor.value.getFullYear() / 12) * 12)
 
 function toIso(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
@@ -127,6 +163,18 @@ function nextMonth() {
   cursor.value = d
 }
 
+function enterYearMode() {
+  yearStart.value = Math.floor(cursor.value.getFullYear() / 12) * 12
+  yearMode.value = true
+}
+
+function selectYear(y) {
+  const d = new Date(cursor.value)
+  d.setFullYear(y)
+  cursor.value = d
+  yearMode.value = false
+}
+
 function isDisabled(iso) {
   return !!(props.min && iso < props.min)
 }
@@ -161,13 +209,14 @@ function openPicker() {
 function closePicker() { open.value = false }
 
 defineExpose({ openPicker, closePicker })
+
 function clear() {
   emit('update:modelValue', '')
   open.value = false
 }
 
 function toggle() {
-  if (open.value) { open.value = false; return }
+  if (open.value) { open.value = false; yearMode.value = false; return }
   calcPopupStyle()
   open.value = true
 }
@@ -177,12 +226,12 @@ function onClickOutside(e) {
   if (wrapRef.value?.contains(e.target)) return
   if (popupRef.value?.contains(e.target)) return
   open.value = false
+  yearMode.value = false
 }
 
 onMounted(() => document.addEventListener('click', onClickOutside, true))
 onUnmounted(() => document.removeEventListener('click', onClickOutside, true))
 
-// sync cursor when value changes externally
 watch(() => props.modelValue, v => {
   if (v) cursor.value = new Date(v + 'T00:00:00')
 })
@@ -226,7 +275,18 @@ watch(() => props.modelValue, v => {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 8px;
 }
-.dp-period { font-size: 13px; font-weight: 700; color: #1e2028; }
+.dp-period {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 13px; font-weight: 700; color: #1e2028;
+  border: none; background: none; cursor: pointer;
+  padding: 3px 8px; border-radius: 7px;
+  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+  transition: background 0.12s, color 0.12s;
+}
+.dp-period:hover { background: rgba(123,127,178,0.1); color: #7b7fb2; }
+.dp-period-range { letter-spacing: 0.5px; }
+.dp-period-caret { opacity: 0.5; flex-shrink: 0; transition: transform 0.15s; }
+.dp-period-caret.up { transform: rotate(180deg); }
 .dp-nav {
   width: 26px; height: 26px; border-radius: 7px;
   border: none; background: none; cursor: pointer;
@@ -266,6 +326,28 @@ watch(() => props.modelValue, v => {
 }
 .dp-day.disabled { opacity: 0.25; cursor: not-allowed; pointer-events: none; }
 .dp-day.selected {
+  background: linear-gradient(135deg,#7b7fb2,#9590c4);
+  color: white; font-weight: 700;
+  box-shadow: 0 2px 8px rgba(123,127,178,0.32);
+}
+
+/* 年份网格 */
+.dp-year-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 4px; padding: 2px 0 4px;
+}
+.dp-year-btn {
+  height: 34px; border-radius: 8px; border: none; background: none;
+  font-size: 12px; font-weight: 500; color: #1e2028; cursor: pointer;
+  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+  transition: background 0.1s, color 0.1s;
+}
+.dp-year-btn:hover:not(.selected) { background: rgba(123,127,178,0.12); }
+.dp-year-btn.this-year:not(.selected) {
+  background: rgba(123,127,178,0.15);
+  color: #7b7fb2; font-weight: 700;
+}
+.dp-year-btn.selected {
   background: linear-gradient(135deg,#7b7fb2,#9590c4);
   color: white; font-weight: 700;
   box-shadow: 0 2px 8px rgba(123,127,178,0.32);

@@ -5,17 +5,14 @@
     <div class="cal-toolbar glass-card">
       <div class="toolbar-left">
         <button class="nav-btn" @click="prev">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 2L4 7l5 5"/></svg>
+          <PhCaretLeft :size="14" weight="bold" />
         </button>
         <button class="period-btn" ref="pickerAnchorRef" @click="togglePicker">
           <span>{{ periodLabel }}</span>
-          <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-            :style="{ transform: pickerOpen ? 'rotate(180deg)' : '', transition: 'transform 0.2s' }">
-            <path d="M2 3.5l3.5 3.5 3.5-3.5"/>
-          </svg>
+          <PhCaretDown :size="11" weight="bold" :style="{ transform: pickerOpen ? 'rotate(180deg)' : '', transition: 'transform 0.2s' }" />
         </button>
         <button class="nav-btn" @click="next">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 2l5 5-5 5"/></svg>
+          <PhCaretRight :size="14" weight="bold" />
         </button>
       </div>
       <button class="today-btn" @click="goToday">今天</button>
@@ -36,20 +33,27 @@
             class="week-row"
             :data-wi="wi"
             :ref="el => setWeekRef(el, wi)"
+            @mousemove="onWeekMouseMove($event, week)"
+            @mouseleave="hoveredDateIso = null"
+            @contextmenu.prevent="onWeekContextMenu($event, week)"
           >
             <div
               v-for="d in week" :key="d.key"
               class="month-cell"
               :data-iso="d.iso"
               :class="{
-                'other-month': d.other,
-                'is-today':    d.isToday,
-                'is-selected': d.iso === selectedDate,
-                'is-weekend':  d.dow >= 5,
-                'is-holiday':  !d.other && hdayType(d.iso) === 'holiday',
-                'is-workday':  !d.other && hdayType(d.iso) === 'workday',
+                'other-month':  d.other,
+                'is-today':     d.isToday,
+                'is-selected':  d.iso === selectedDate && !activeRange,
+                'is-weekend':   d.dow >= 5,
+                'is-holiday':   !d.other && hdayType(d.iso) === 'holiday',
+                'is-workday':   !d.other && hdayType(d.iso) === 'workday',
+                'cell-hovered': d.iso === hoveredDateIso,
+                'in-range':     isInActiveRange(d.iso),
+                'range-start':  activeRange && d.iso === activeRange.start,
+                'range-end':    activeRange && d.iso === activeRange.end,
               }"
-              @click="!drag.active && (selectedDate = d.iso)"
+              @mousedown="onCellMouseDown(d, $event)"
             >
               <div class="cell-head">
                 <div class="cell-num">{{ d.date }}</div>
@@ -63,9 +67,9 @@
                 >
                   <div
                     v-for="ev in lay.visibleChips" :key="ev.id"
-                    class="event-chip"
+                    class="event-chip cal-chip"
                     :class="{ 'chip-proj': ev.isProject, 'chip-ev-click': ev.isUserEvent }"
-                    :style="{ background: ev.accent + '28', color: ev.accent, borderColor: ev.accent + '70', cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
+                    :style="{ background: ev.accent + '28', color: darkenHex(ev.accent), borderColor: ev.accent + '70', cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
                     @click.left.stop="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event, true))"
                     @contextmenu.prevent.stop="ev.isUserEvent && openEditForm(ev, $event, true)"
                     @mousedown.stop="ev.isProject ? startProjChipDrag(ev, $event) : (ev.isUserEvent && startEventDrag(ev, $event))"
@@ -74,10 +78,11 @@
                     <span v-else class="chip-proj-tag chip-ev-tag">活动</span>
                     <span v-if="ev.isProject" class="bar-status-dot" :class="'bsd-' + ev.status"></span>
                     {{ ev.name }}
+                    <span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
                   </div>
                   <button
                     v-if="lay.moreCount > 0"
-                    class="chip-more-btn"
+                    class="chip-more-btn cal-chip"
                     @click.stop="showMore($event, d.iso, lay.moreItems)"
                   >+{{ lay.moreCount }} 更多</button>
                 </div>
@@ -88,24 +93,27 @@
             <div class="bars-layer">
               <template v-for="bar in weekBarsCapped(week, wi).bars" :key="bar.id">
                 <div
-                  class="project-bar"
-                  :class="{ 'bar-start': bar.startsHere, 'bar-end': bar.endsHere, 'bar-dragging': drag.active && drag.item?.id === bar.id }"
+                  class="project-bar cal-chip"
+                  :class="{ 'bar-start': bar.startsHere, 'bar-end': bar.endsHere, 'bar-dragging': drag.active && drag.item?.id === bar.id, 'bar-hovered': hoveredBarId === bar.id }"
+                  :data-bar-id="bar.id"
+                  @mouseenter="hoveredBarId = bar.id"
+                  @mouseleave="hoveredBarId = null"
                   @click.stop="openProject(bar)"
                   @mousedown.stop="startBarDrag(bar, $event)"
                   :style="{
                     left:  bar.startsHere ? `calc(${bar.colStart / 7 * 100}% + 6px)` : (bar.colStart / 7 * 100) + '%',
                     right: bar.endsHere   ? `calc(${(7 - bar.colEnd - 1) / 7 * 100}% + 6px)` : ((7 - bar.colEnd - 1) / 7 * 100) + '%',
                     top:   (HEADER_H + bar.row * BAR_H) + 'px',
-                    background:  bar.accent + '28',
+                    background: `linear-gradient(to right, ${bar.accent}50 0%, ${bar.accent}50 ${barSegFill(bar)}%, ${bar.accent}1a ${barSegFill(bar)}%, ${bar.accent}1a 100%)`,
                     borderColor: bar.accent + '70',
-                    color:       bar.accent,
+                    color:       darkenHex(bar.accent),
                   }"
                 >
                   <div v-if="bar.startsHere" class="bar-rh bar-rh-left" @mousedown.stop.prevent="startBarResize(bar, 'start', $event)"></div>
                   <template v-if="bar.startsHere || bar.colStart === 0">
                     <span class="bar-proj-tag">项目</span>
                     <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>
-                    <span class="bar-label">{{ bar.name }}</span>
+                    <span class="bar-label">{{ bar.name }}<span v-if="bar.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span></span>
                   </template>
                   <div v-if="bar.endsHere" class="bar-rh bar-rh-right" @mousedown.stop.prevent="startBarResize(bar, 'end', $event)"></div>
                 </div>
@@ -120,7 +128,7 @@
         <div class="sidebar-top">
           <div class="sidebar-date-label">{{ selectedDateLabel }}</div>
           <button class="add-event-btn" ref="addBtnRef" @click="openAddForm">
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 1v11M1 6.5h11"/></svg>
+            <PhPlus :size="13" weight="bold" />
             添加活动
           </button>
         </div>
@@ -133,16 +141,15 @@
           >
             <div class="sidebar-ev-bar" :style="{ background: ev.accent }"></div>
             <div class="sidebar-ev-body">
-              <div class="sidebar-ev-name">
-                {{ ev.name }}
-                <span v-if="!ev.isUserEvent" class="ev-type-badge ev-proj-badge">项目</span>
+              <div class="sidebar-ev-name" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">
+                <span v-if="!ev.isUserEvent" class="ev-type-badge ev-proj-badge" :style="{ color: darkenHex(ev.accent) }">项目</span>
                 <span v-else class="ev-type-badge ev-event-badge">{{ typeLabel(ev.type) }}</span>
+                {{ ev.name }}
+                <span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
               </div>
               <template v-if="ev.isUserEvent">
                 <div class="sidebar-ev-desc">
-                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" style="flex-shrink:0;opacity:0.38;margin-top:1px">
-                    <path d="M2 4h10M2 7h7M2 10h5"/>
-                  </svg>
+                  <PhAlignLeft :size="11" weight="bold" style="flex-shrink:0;opacity:0.38;margin-top:1px" />
                   <span v-if="ev.description">{{ ev.description }}</span>
                 </div>
               </template>
@@ -154,34 +161,30 @@
               </template>
             </div>
             <button v-if="ev.isUserEvent" class="ev-del-btn" @click.stop="deleteEvent(ev)" title="删除活动">
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-                <path d="M3 5h10M6 5V3h4v2M5 5l.5 8h5l.5-8"/>
-              </svg>
+              <PhTrash :size="12" weight="bold" />
             </button>
           </div>
         </div>
         <div v-else class="sidebar-empty">
-          <svg width="26" height="26" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.3">
-            <rect x="3" y="4" width="22" height="20" rx="4"/><path d="M9 2v4M19 2v4M3 10h22"/>
-          </svg>
+          <PhCalendarBlank :size="26" weight="bold" style="opacity:0.3" />
           <span>当天无日程</span>
         </div>
 
         <div class="sidebar-divider"></div>
 
         <div class="sidebar-section-title">近期节点</div>
-        <div v-for="ev in upcomingList" :key="ev.id" class="upcoming-item"
+        <div v-for="ev in upcomingList" :key="ev.id" class="upcoming-item cap-row"
              :class="{ 'upcoming-proj': ev.isProject, 'upcoming-ev': ev.isUserEvent }"
              :style="{ cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
              @click.left="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event))"
              @contextmenu.prevent="ev.isUserEvent && openEditForm(ev, $event)"
         >
-          <div class="upcoming-capsule"
-               :style="{ background: hexAlpha(ev.accent, 0.1), borderColor: hexAlpha(ev.accent, 0.3) }">
-            <span class="cap-tag" :class="ev.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="ev.isProject ? { color: ev.accent } : {}">{{ ev.isProject ? '项目' : '活动' }}</span>
+          <div class="cap-capsule"
+               :style="{ '--cap-bg': capBg(ev.accent, ev.progress), borderColor: hexAlpha(ev.accent, 0.3) }">
+            <span class="cap-tag" :class="ev.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">{{ ev.isProject ? '项目' : '活动' }}</span>
             <span v-if="ev.isProject" class="cap-sdot" :class="'cap-s-' + ev.status"></span>
-            <span class="cap-name" :style="{ color: ev.accent }">{{ ev.name }}</span>
-            <span class="cap-days" :class="{ urgent: ev.daysLeft <= 3 }">{{ ev.daysLabel }}</span>
+            <span class="cap-name" :style="{ color: darkenHex(ev.accent) }">{{ ev.name }}<span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span></span>
+            <span v-if="ev.status !== 'done'" class="cap-days" :class="{ urgent: ev.daysLeft <= 3 }">{{ ev.daysLabel }}</span>
           </div>
         </div>
       </div>
@@ -191,21 +194,21 @@
 
   <!-- 统一"更多"弹窗（项目 + 事件合并） -->
   <Teleport to="body">
-    <Transition name="picker">
+    <Transition name="more-pop">
       <div v-if="morePopup.open" class="overflow-popup" ref="morePopupRef" :style="morePopup.style">
         <div class="overflow-popup-title">{{ morePopup.dateLabel }}</div>
         <div class="overflow-list">
           <div
             v-for="item in morePopup.items" :key="item.id"
-            class="overflow-item"
+            class="overflow-item cal-chip"
             :class="{ 'overflow-clickable': item.isProject || item.isUserEvent }"
-            :style="{ background: item.accent + '28', borderColor: item.accent + '70', color: item.accent, cursor: (item.isProject || item.isUserEvent) ? 'grab' : 'default' }"
+            :style="{ background: item.isProject ? capBg(item.accent, item.progress) : item.accent + '28', borderColor: item.accent + '70', color: darkenHex(item.accent), cursor: (item.isProject || item.isUserEvent) ? 'grab' : 'default' }"
             @click.stop="item.isProject ? (morePopup.open = false, showEditForm = false, openProject(item)) : (item.isUserEvent && openEditForm(item, $event, true))"
             @mousedown.stop="(item.isProject || item.isUserEvent) && startMoreItemDrag(item, $event)"
           >
             <span class="overflow-tag" :class="{ 'overflow-tag-ev': !item.isProject }">{{ item.isProject ? '项目' : '活动' }}</span>
             <span v-if="item.isProject" class="bar-status-dot" :class="'bsd-' + item.status"></span>
-            <span class="overflow-name">{{ item.name }}</span>
+            <span class="overflow-name">{{ item.name }}<span v-if="item.isProject && item.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span></span>
           </div>
         </div>
       </div>
@@ -218,11 +221,11 @@
       <div v-if="pickerOpen" class="cal-month-picker" ref="pickerRef" :style="pickerStyle">
         <div class="picker-year-row">
           <button class="picker-nav" @click.stop="pickerYear--">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 2L4 6l4 4"/></svg>
+            <PhCaretLeft :size="12" weight="bold" />
           </button>
           <span class="picker-year">{{ pickerYear }}</span>
           <button class="picker-nav" @click.stop="pickerYear++">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 2l4 4-4 4"/></svg>
+            <PhCaretRight :size="12" weight="bold" />
           </button>
         </div>
         <div class="picker-months">
@@ -241,29 +244,57 @@
   <Teleport to="body">
     <Transition name="form-pop">
       <div v-if="showAddForm" class="add-event-popup" ref="addFormRef" :style="addFormStyle">
-        <div class="popup-title">添加活动</div>
-        <input v-model="newEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" autofocus />
+        <div class="popup-header">
+          <span class="popup-title">添加活动</span>
+          <button class="popup-close-btn" @click="showAddForm = false" title="关闭">
+            <PhX :size="12" weight="bold" />
+          </button>
+        </div>
+        <input v-model="newEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" @keydown.esc="showAddForm = false" autofocus />
         <DatePicker v-model="newEvent.date" placeholder="选择日期" />
         <textarea v-model="newEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="popup-actions">
-          <button class="popup-cancel" @click="showAddForm = false">取消</button>
           <button class="popup-save" @click="saveEvent" :disabled="!newEvent.name">保存</button>
         </div>
       </div>
     </Transition>
   </Teleport>
 
+  <!-- 日期格右键菜单 -->
+  <Teleport to="body">
+    <div
+      v-if="cellCtx.show"
+      ref="cellCtxRef"
+      class="popup-menu cal-ctx-menu"
+      :style="{ position:'fixed', left: cellCtx.x+'px', top: cellCtx.y+'px', zIndex: 3000, minWidth:'140px' }"
+    >
+      <button class="popup-menu-item" @click="ctxAddEvent">
+        <PhCalendarPlus :size="13" weight="bold" />
+        新建活动
+      </button>
+      <button class="popup-menu-item" @click="ctxAddProject">
+        <PhFolderPlus :size="13" weight="bold" />
+        新建项目
+      </button>
+    </div>
+  </Teleport>
+
   <!-- 编辑事件弹窗 -->
   <Teleport to="body">
     <Transition name="form-pop">
       <div v-if="showEditForm && editingEvent" class="add-event-popup" ref="editFormRef" :style="editFormStyle">
-        <div class="popup-title">编辑活动</div>
+        <div class="popup-header">
+          <span class="popup-title">编辑活动</span>
+          <button class="popup-close-btn" @click="showEditForm = false" title="关闭">
+            <PhX :size="12" weight="bold" />
+          </button>
+        </div>
         <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
         <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
         <textarea v-model="editingEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="popup-actions">
-          <button class="popup-cancel" @click="showEditForm = false">取消</button>
           <button class="popup-save" @click="saveEditEvent" :disabled="!editingEvent.name">保存</button>
+          <button class="popup-delete" @click="deleteEventFromEdit">删除</button>
         </div>
       </div>
     </Transition>
@@ -278,11 +309,14 @@ const upcomingEventsCache = { data: null }
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useProjectStore } from '@/stores/projects'
+import { useUiStore } from '@/stores/ui'
 import { eventsApi } from '@/services/api'
 import DatePicker from '@/components/common/DatePicker.vue'
 import { useHolidays } from '@/composables/useHolidays'
+import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck } from '@phosphor-icons/vue'
 
 const projectStore = useProjectStore()
+const uiStore = useUiStore()
 const todayIso = ref(toIso(new Date()))
 
 let _midnightTimer = null
@@ -337,6 +371,104 @@ const drag = reactive({
   item:       null,
   offsetDays: 0,      // proj-bar: days from startDate to where drag started
 })
+const hoveredBarId  = ref(null)
+const hoveredDateIso = ref(null)
+
+// ── 日期范围框选 ──────────────────────────────────────────────────────────────
+const rangeSelect  = reactive({ active: false, anchor: null })
+const hoverRangeEnd = ref(null)
+const selRange     = ref(null)   // { start, end } committed after mouseup
+
+const activeRange = computed(() => {
+  if (rangeSelect.active && rangeSelect.anchor && hoverRangeEnd.value) {
+    const [a, b] = [rangeSelect.anchor, hoverRangeEnd.value].sort()
+    return { start: a, end: b }
+  }
+  return selRange.value
+})
+
+function isInActiveRange(iso) {
+  const r = activeRange.value
+  return r ? iso >= r.start && iso <= r.end : false
+}
+
+function onCellMouseDown(d, e) {
+  if (e.button !== 0) return
+  if (drag.active) return
+  if (e.target.closest('.event-chip,.chip-more-btn,.project-bar,.bar-rh')) return
+  e.preventDefault()
+
+  const startIso = d.iso
+  rangeSelect.active = true
+  rangeSelect.anchor = startIso
+  hoverRangeEnd.value = startIso
+  selRange.value = null
+  cellCtx.show = false
+
+  const mm = (ev) => {
+    const iso = isoFromPoint(ev.clientX, ev.clientY)
+    if (iso) hoverRangeEnd.value = iso
+  }
+  const mu = (ev) => {
+    document.removeEventListener('mousemove', mm)
+    document.removeEventListener('mouseup', mu)
+    rangeSelect.active = false
+    const endIso = isoFromPoint(ev.clientX, ev.clientY) || startIso
+    hoverRangeEnd.value = null
+    if (endIso !== startIso) {
+      const [a, b] = [startIso, endIso].sort()
+      selRange.value = { start: a, end: b }
+      document.addEventListener('click', ce => ce.stopPropagation(), { capture: true, once: true })
+    } else {
+      selRange.value = null
+      selectedDate.value = startIso
+    }
+  }
+  document.addEventListener('mousemove', mm)
+  document.addEventListener('mouseup', mu)
+}
+
+// ── 右键菜单 ─────────────────────────────────────────────────────────────────
+const cellCtx = reactive({ show: false, x: 0, y: 0, iso: null, range: null })
+const cellCtxRef = ref(null)
+
+function onWeekContextMenu(e, week) {
+  if (e.target.closest('.event-chip,.chip-more-btn,.project-bar')) return
+  const iso = isoFromPoint(e.clientX, e.clientY)
+  if (!iso) return
+  cellCtx.iso   = iso
+  cellCtx.range = activeRange.value ?? null   // 右键时快照，避免后续被 handleClickOutside 清掉
+  cellCtx.x     = e.clientX
+  cellCtx.y     = e.clientY
+  cellCtx.show  = true
+}
+
+function ctxAddEvent() {
+  cellCtx.show = false
+  const iso = cellCtx.range?.start ?? cellCtx.iso
+  newEvent.value = { name: '', date: iso, description: '' }
+  addFormStyle.value = {
+    position: 'fixed',
+    top:  Math.min(cellCtx.y + 8, window.innerHeight - 300) + 'px',
+    left: Math.max(8, Math.min(cellCtx.x - 120, window.innerWidth - 258)) + 'px',
+    width: '240px', zIndex: 1000,
+  }
+  showAddForm.value = true
+}
+
+function ctxAddProject() {
+  cellCtx.show = false
+  uiStore.newProjectRange = cellCtx.range
+    ?? { start: cellCtx.iso, end: cellCtx.iso }
+  uiStore.openNewProject = true
+}
+
+function onWeekMouseMove(e, week) {
+  const rect = e.currentTarget.getBoundingClientRect()
+  const col  = Math.floor((e.clientX - rect.left) / rect.width * 7)
+  hoveredDateIso.value = week[Math.max(0, Math.min(6, col))]?.iso ?? null
+}
+
 const dragOverIso = ref(null)
 
 const dragOverRange = computed(() => {
@@ -365,6 +497,18 @@ function addDays(iso, n) {
   d.setDate(d.getDate() + n)
   return toIso(d)
 }
+function barSegFill(bar) {
+  if (!bar.progress) return 0
+  const total = daysBetween(bar.startDate, bar.endDate)
+  if (total <= 0) return bar.progress
+  const progressDays  = total * bar.progress / 100
+  const segStartOff   = daysBetween(bar.startDate, bar.segStartIso)
+  const segEndOff     = daysBetween(bar.startDate, bar.segEndIso) + 1
+  if (progressDays <= segStartOff) return 0
+  if (progressDays >= segEndOff)   return 100
+  return Math.round((progressDays - segStartOff) / (segEndOff - segStartOff) * 100)
+}
+
 function daysBetween(isoA, isoB) {
   return Math.round((new Date(isoB + 'T00:00:00') - new Date(isoA + 'T00:00:00')) / 86400000)
 }
@@ -461,7 +605,11 @@ async function commitDrag() {
     patch(nextMonthEvents.value)
     buildUpcomingList()
     eventsCache[`${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`] = [...extraEvents.value]
-    try { await eventsApi.update(ev.id, { title: ev.name, date: range.start, description: ev.description || undefined }) } catch {}
+    try {
+      const updated = await eventsApi.update(ev.id, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version })
+      const applyVer = (list) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
+      applyVer(extraEvents.value); applyVer(nextMonthEvents.value)
+    } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await loadEvents() } }
   }
 
   if (['proj-chip', 'proj-bar', 'proj-resize-start', 'proj-resize-end'].includes(drag.type)) {
@@ -566,6 +714,21 @@ function dayLayout(iso, week, wi) {
     .filter(p => p.startDate === p.endDate && p.startDate === iso)
     .map(p => ({ ...p, isProject: true }))
   const allChips = [...singleDayProjects, ...effectiveExtraEvents.value.filter(e => e.date === iso)]
+  const _chipPrio = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
+  allChips.sort((a, b) => {
+    const da = a.status === 'done' ? 1 : 0
+    const db = b.status === 'done' ? 1 : 0
+    if (da !== db) return da - db
+    const pd = _chipPrio(b) - _chipPrio(a)
+    if (pd !== 0) return pd
+    const as_ = a.startDate ?? a.date ?? ''
+    const bs  = b.startDate ?? b.date ?? ''
+    if (as_ !== bs) return as_.localeCompare(bs)
+    const ae = a.endDate ?? a.date ?? ''
+    const be = b.endDate ?? b.date ?? ''
+    if (ae !== be) return ae.localeCompare(be)
+    return (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
+  })
   const hasMore  = hiddenProjects.length > 0 || allChips.length > slots
 
   if (!hasMore) {
@@ -583,12 +746,19 @@ function showMore(e, iso, items) {
   const d     = new Date(iso + 'T00:00:00')
   const label = `${d.getMonth()+1}月${d.getDate()}日`
   const w     = 230
-  const left  = Math.max(8, Math.min(e.clientX - w / 2, window.innerWidth - w - 8))
-  const top   = Math.min(e.clientY + 8, window.innerHeight - 220)
-  morePopup.value = {
-    open: true, items, dateLabel: label,
-    style: { position: 'fixed', top: top + 'px', left: left + 'px', width: w + 'px', zIndex: 2000 },
-  }
+  const rect  = e.currentTarget.getBoundingClientRect()
+  const estH  = 48 + items.length * 30   // 估算弹窗高度
+  const gap   = 6
+  const left  = Math.max(8, Math.min(rect.left + rect.width / 2 - w / 2, window.innerWidth - w - 8))
+
+  const spaceBelow = window.innerHeight - rect.bottom
+  const openUp     = spaceBelow < estH + gap && rect.top > estH + gap
+
+  const style = openUp
+    ? { position: 'fixed', bottom: (window.innerHeight - rect.top + gap) + 'px', left: left + 'px', width: w + 'px', zIndex: 2000, transformOrigin: 'bottom' }
+    : { position: 'fixed', top: (rect.bottom + gap) + 'px',                      left: left + 'px', width: w + 'px', zIndex: 2000, transformOrigin: 'top' }
+
+  morePopup.value = { open: true, items, dateLabel: label, style }
 }
 
 function togglePicker() {
@@ -619,11 +789,24 @@ function extractAccent(colorStr) {
   const m = colorStr?.match(/#[0-9a-fA-F]{6}/)
   return m ? m[0] : '#7b7fb2'
 }
+function capBg(hex, progress) {
+  const base = hexAlpha(hex, 0.1)
+  if (!progress) return base
+  const fill = hexAlpha(hex, 0.32)
+  return `linear-gradient(to right, ${fill} 0%, ${fill} ${progress}%, ${base} ${progress}%, ${base} 100%)`
+}
+
 function hexAlpha(hex, a) {
   const r = parseInt(hex.slice(1,3),16)
   const g = parseInt(hex.slice(3,5),16)
   const b = parseInt(hex.slice(5,7),16)
   return `rgba(${r},${g},${b},${a})`
+}
+function darkenHex(hex, amount = 0.60) {
+  const r = Math.round(parseInt(hex.slice(1,3),16) * amount)
+  const g = Math.round(parseInt(hex.slice(3,5),16) * amount)
+  const b = Math.round(parseInt(hex.slice(5,7),16) * amount)
+  return `rgb(${r},${g},${b})`
 }
 function typeLabel(t) {
   return { deadline: '截止日', meeting: '会议', review: '审核', milestone: '节点', project: '进行中' }[t] ?? '活动'
@@ -647,6 +830,7 @@ function normalizeEvent(e) {
     accent:      TYPE_ACCENT[e.type] ?? '#8a8fa8',
     isUserEvent: true,
     description: e.description ?? '',
+    version:     e.version ?? 1,
   }
 }
 
@@ -703,6 +887,14 @@ const projectTimelines = computed(() =>
       isProject:    true,
       status:       p.status,
       currentStage: p.stages?.find(s => s.key === p.currentStage)?.label ?? null,
+      priority:     p.priority ?? null,
+      createdAt:    p.createdAt ?? '',
+      progress:     (() => {
+        const stages = p.stages ?? []
+        if (!stages.length) return 0
+        const idx = stages.findIndex(s => s.key === p.currentStage)
+        return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
+      })(),
     }))
 )
 
@@ -764,17 +956,31 @@ function weekBars(week) {
       const colStart = p.startDate <= ws ? 0 : week.findIndex(d => d.iso >= p.startDate)
       let colEnd = 6
       for (let i = 6; i >= 0; i--) { if (week[i].iso <= p.endDate) { colEnd = i; break } }
+      const cs = Math.max(0, colStart)
+      const ce = Math.min(6, colEnd)
       return {
         ...p,
-        colStart: Math.max(0, colStart),
-        colEnd:   Math.min(6, colEnd),
-        startsHere: p.startDate >= ws && p.startDate <= we,
-        endsHere:   p.endDate   >= ws && p.endDate   <= we,
+        colStart: cs,
+        colEnd:   ce,
+        startsHere:   p.startDate >= ws && p.startDate <= we,
+        endsHere:     p.endDate   >= ws && p.endDate   <= we,
+        segStartIso:  week[cs].iso,
+        segEndIso:    week[ce].iso,
       }
     })
 
-  // 贪心区间着色：按开始列排序，分配最小可用行（不重叠的 bar 共享同一行）
-  bars.sort((a, b) => a.colStart - b.colStart || (b.colEnd - b.colStart) - (a.colEnd - a.colStart))
+  // 贪心区间着色：已完成排末尾；其次截止日早的优先；再次开始日；最后创建时间兜底
+  const _prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
+  bars.sort((a, b) => {
+    const da = a.status === 'done' ? 1 : 0
+    const db = b.status === 'done' ? 1 : 0
+    if (da !== db) return da - db
+    const pd = _prioVal(b) - _prioVal(a)
+    if (pd !== 0) return pd
+    if (a.startDate !== b.startDate) return a.startDate.localeCompare(b.startDate)
+    if (a.endDate !== b.endDate) return a.endDate.localeCompare(b.endDate)
+    return (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
+  })
   const rowEnds = []  // rowEnds[r] = 该行最后一条 bar 的 colEnd
   bars.forEach(bar => {
     let r = 0
@@ -809,9 +1015,19 @@ const selectedDateLabel = computed(() => {
 const selectedEvents = computed(() => {
   const sel = selectedDate.value
   const chips = singleEvents(sel)
+  const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
   const activeProjects = projectTimelines.value
     .filter(p => p.startDate <= sel && p.endDate >= sel)
     .map(p => ({ ...p, type: p.endDate === sel ? 'deadline' : 'project' }))
+    .sort((a, b) => {
+      const aDone = a.status === 'done' ? 1 : 0
+      const bDone = b.status === 'done' ? 1 : 0
+      if (aDone !== bDone) return aDone - bDone
+      return prioVal(b) - prioVal(a)
+        || (a.startDate ?? '').localeCompare(b.startDate ?? '')
+        || (a.endDate ?? '').localeCompare(b.endDate ?? '')
+        || (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
+    })
   return [...activeProjects, ...chips]
 })
 
@@ -828,10 +1044,19 @@ function buildUpcomingList() {
     return { daysLeft: d, daysLabel: d === 0 ? '今天' : d === 1 ? '明天' : d + '天后' }
   }
 
-  // 项目截止（15天内，非已完成）
+  const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
+
+  // 项目截止（15天内），已完成项目排最后
   const projects = projectTimelines.value
     .filter(p => p.endDate >= todayStr && p.endDate <= cutoff)
-    .sort((a, b) => a.endDate.localeCompare(b.endDate))
+    .sort((a, b) => {
+      const doneDiff = (a.status === 'done' ? 1 : 0) - (b.status === 'done' ? 1 : 0)
+      if (doneDiff) return doneDiff
+      return prioVal(b) - prioVal(a)
+        || (a.startDate ?? '').localeCompare(b.startDate ?? '')
+        || (a.endDate ?? '').localeCompare(b.endDate ?? '')
+        || (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
+    })
     .slice(0, 4)
     .map(p => ({ ...p, date: p.endDate, ...label(p.endDate) }))
 
@@ -851,6 +1076,7 @@ function buildUpcomingList() {
 }
 
 watch([projectTimelines, extraEvents, nextMonthEvents], buildUpcomingList, { immediate: true })
+watch(activeRange, r => { uiStore.calendarActiveRange = r })
 
 function openAddForm() {
   newEvent.value = { name: '', date: selectedDate.value || todayIso.value, description: '' }
@@ -915,8 +1141,10 @@ async function saveEditEvent() {
   eventsCache[cacheKey] = [...extraEvents.value]
 
   try {
-    await eventsApi.update(ev.id, { title: ev.name, date: ev.date, description: ev.description || undefined })
-  } catch { }
+    const updated = await eventsApi.update(ev.id, { title: ev.name, date: ev.date, description: ev.description || undefined, version: ev.version })
+    const applyVer = (list) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
+    applyVer(extraEvents.value); applyVer(nextMonthEvents.value)
+  } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await loadEvents() } }
 }
 
 function handleClickOutside(e) {
@@ -936,6 +1164,9 @@ function handleClickOutside(e) {
   if (morePopup.value.open) {
     if (!morePopupRef.value?.contains(e.target) && !editFormRef.value?.contains(e.target))
       morePopup.value.open = false
+  }
+  if (cellCtx.show) {
+    if (!cellCtxRef.value?.contains(e.target)) cellCtx.show = false
   }
 }
 
@@ -964,6 +1195,13 @@ async function deleteEvent(ev) {
   const key = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   eventsCache[key] = extraEvents.value
   try { await eventsApi.delete(ev.id) } catch { }
+}
+
+async function deleteEventFromEdit() {
+  const ev = editingEvent.value
+  if (!ev) return
+  showEditForm.value = false
+  await deleteEvent(ev)
 }
 
 async function saveEvent() {
@@ -1039,16 +1277,31 @@ async function saveEvent() {
   overflow: hidden;
 }
 .month-cell:last-child { border-right: none; }
-.month-cell:hover { background: rgba(123,127,178,0.06); }
+.month-cell.cell-hovered { background: rgba(123,127,178,0.06); }
 .month-cell.other-month { opacity: 0.3; }
 .month-cell.is-weekend { background: rgba(195,90,90,0.028); }
-.month-cell.is-weekend:hover { background: rgba(195,90,90,0.07); }
+.month-cell.is-weekend.cell-hovered { background: rgba(195,90,90,0.07); }
+.month-cell.is-today { background: rgba(123,127,178,0.07); }
+.month-cell.is-today.is-weekend { background: rgba(195,90,90,0.07); }
 .month-cell.is-today .cell-num { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: rgba(255,255,255,0.88) !important; font-weight: 700; border-radius: 6px; }
+.month-cell.is-today.is-weekend .cell-num { background: linear-gradient(135deg,#b85c5c,#c97070); }
 .month-cell.is-selected { background: rgba(123,127,178,0.1); }
 .month-cell.is-selected.is-weekend { background: rgba(195,90,90,0.1); }
 .month-cell.is-selected:not(.is-today) .cell-num { background: rgba(123,127,178,0.15); color: var(--color-primary); font-weight: 700; border-radius: 6px; }
 .month-cell.is-selected:not(.is-today).is-weekend .cell-num { background: rgba(195,90,90,0.15); color: rgba(195,90,90,0.9); }
 .month-cell.is-selected:not(.is-today).is-workday .cell-num { color: var(--color-primary); }
+
+/* ── 日期范围框选 ── */
+.month-cell.in-range { background: rgba(123,127,178,0.08); }
+.month-cell.in-range.is-weekend { background: rgba(195,90,90,0.07); }
+.month-cell.range-start,
+.month-cell.range-end { background: rgba(123,127,178,0.16); }
+.month-cell.range-start.is-weekend,
+.month-cell.range-end.is-weekend { background: rgba(195,90,90,0.1); }
+.month-cell.range-start .cell-num,
+.month-cell.range-end .cell-num { background: rgba(123,127,178,0.22); color: var(--color-primary); font-weight: 700; border-radius: 6px; }
+.month-cell.range-start.is-weekend .cell-num,
+.month-cell.range-end.is-weekend .cell-num { background: rgba(195,90,90,0.15); color: rgba(195,90,90,0.9); }
 
 .cell-head { display: flex; align-items: center; gap: 3px; height: 24px; }
 .cell-num { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; color: var(--text-primary); flex-shrink: 0; transition: all 0.15s; }
@@ -1063,27 +1316,23 @@ async function saveEvent() {
 
 .event-chip {
   height: 18px; box-sizing: border-box;
-  font-size: 10px; font-weight: 600;
+  font-size: 10px; font-weight: 500;
   padding: 0 7px; border-radius: 99px; border: 1px solid transparent;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   display: flex; align-items: center;
-  transition: filter 0.12s;
 }
 .event-chip.chip-proj,
 .event-chip.chip-ev-click { cursor: grab; }
-.event-chip.chip-proj:hover,
-.event-chip.chip-ev-click:hover { filter: brightness(1.08); }
 .chip-more-btn {
   height: 16px; box-sizing: border-box;
-  font-size: 10px; font-weight: 600;
+  font-size: 10px; font-weight: 500;
   padding: 0 7px; border-radius: 99px;
   border: 1px solid rgba(123,127,178,0.35);
-  background: rgba(123,127,178,0.1); color: var(--color-primary);
+  background: rgba(123,127,178,0.1); color: rgb(101,104,146);
   cursor: pointer; font-family: var(--font-sans);
-  white-space: nowrap; transition: background 0.12s;
+  white-space: nowrap;
   display: flex; align-items: center;
 }
-.chip-more-btn:hover { background: rgba(123,127,178,0.2); }
 
 /* 项目条层 */
 .bars-layer { position: absolute; inset: 0; pointer-events: none; }
@@ -1093,11 +1342,10 @@ async function saveEvent() {
   position: absolute; height: 16px;
   border: 1px solid transparent;
   display: flex; align-items: center;
-  padding: 0 6px; font-size: 10px; font-weight: 600;
+  padding: 0 6px; font-size: 10px; font-weight: 500;
   white-space: nowrap; overflow: hidden; box-sizing: border-box;
   pointer-events: auto; cursor: grab;
 }
-.project-bar:hover { filter: brightness(1.08); }
 .project-bar.bar-dragging { opacity: 0.6; }
 .project-bar.bar-start  { border-radius: 99px 0 0 99px; padding-left: 8px; }
 .project-bar.bar-end    { border-radius: 0 99px 99px 0; }
@@ -1115,7 +1363,8 @@ async function saveEvent() {
 }
 .bar-rh-left  { left: 0; }
 .bar-rh-right { right: 0; }
-.project-bar:hover .bar-rh { opacity: 1; }
+.project-bar.bar-hovered .bar-rh { opacity: 1; }
+
 .bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 
 .bar-proj-tag {
@@ -1124,6 +1373,10 @@ async function saveEvent() {
   background: rgba(255,255,255,0.5);
   border-radius: 3px; padding: 0 3px; line-height: 11px;
   margin-right: 2px;
+}
+.cal-done-mark {
+  display: inline-flex; align-items: center;
+  color: #3a8870; vertical-align: -2px; margin-left: 2px;
 }
 .bar-status-dot {
   width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-right: 4px;
@@ -1151,20 +1404,21 @@ async function saveEvent() {
 .add-event-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.08); font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-primary); font-family: var(--font-sans); transition: all 0.15s; }
 .add-event-btn:hover { background: rgba(123,127,178,0.15); border-color: rgba(123,127,178,0.5); }
 .sidebar-events { display: flex; flex-direction: column; gap: 7px; margin-bottom: 4px; }
-.sidebar-ev { display: flex; gap: 9px; align-items: flex-start; background: rgba(255,255,255,0.66); border: 1px solid rgba(255,255,255,0.88); border-radius: 10px; padding: 8px 10px; }
+.sidebar-ev { display: flex; gap: 9px; align-items: flex-start; background: rgba(255,255,255,0.66); border: 1px solid rgba(255,255,255,0.88); border-radius: 10px; padding: 8px 10px; transition: box-shadow 0.25s ease; }
+.sidebar-ev:hover { box-shadow: inset 0 0 0 100px rgba(255,255,255,0.2), 0 3px 10px rgba(0,0,0,0.10); }
 .sidebar-ev-body { flex: 1; min-width: 0; }
 .ev-del-btn {
-  background: rgba(200,150,42,0.1);
-  border: 1px solid rgba(200,150,42,0.22);
+  background: rgba(176,120,88,0.08);
+  border: 1px solid rgba(176,120,88,0.3);
   cursor: pointer; flex-shrink: 0;
-  color: #c8962a; padding: 4px;
+  color: #b07858; padding: 4px;
   display: flex; align-items: center; align-self: center;
   border-radius: 6px; margin-left: auto;
   transition: background 0.15s, transform 0.15s;
 }
-.ev-del-btn:hover { background: rgba(200,150,42,0.2); transform: scale(1.1); }
+.ev-del-btn:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); transform: scale(1.1); }
 .sidebar-ev-bar { width: 3px; border-radius: 99px; align-self: stretch; flex-shrink: 0; min-height: 26px; }
-.sidebar-ev-name { font-size: 12px; font-weight: 600; color: var(--text-primary); line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
+.sidebar-ev-name { font-size: 12px; font-weight: 500; color: var(--text-primary); line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
 .ev-type-badge {
   display: inline-block; vertical-align: middle; margin-left: 4px;
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
@@ -1185,24 +1439,6 @@ async function saveEvent() {
 .sidebar-section-title { font-size: 10px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 10px; }
 .upcoming-item { display: flex; align-items: center; margin-bottom: 7px; }
 .upcoming-item:last-child { margin-bottom: 0; }
-.upcoming-capsule {
-  flex: 1; min-width: 0;
-  display: flex; align-items: center; gap: 5px;
-  padding: 4px 8px 4px 5px;
-  border-radius: 20px; border: 1px solid;
-  transition: filter 0.12s;
-}
-.upcoming-proj:hover .upcoming-capsule,
-.upcoming-ev:hover .upcoming-capsule { filter: brightness(1.08); }
-.cap-tag { flex-shrink: 0; font-size: 8px; font-weight: 700; letter-spacing: 0.04em; border-radius: 3px; padding: 0 4px; line-height: 13px; }
-.cap-tag-proj { background: rgba(255,255,255,0.55); }
-.cap-tag-ev   { background: rgba(210,175,40,0.28); color: #7a5c00; }
-.cap-sdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
-.cap-s-pending { background: #9e9fc4; }
-.cap-s-active  { background: #7b7fb2; }
-.cap-name { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; padding-bottom: 2px; margin-bottom: -2px; }
-.cap-days { font-size: 10px; font-weight: 700; color: var(--text-secondary); flex-shrink: 0; white-space: nowrap; margin-left: 4px; }
-.cap-days.urgent { color: var(--color-warning); }
 </style>
 
 <style>
@@ -1215,15 +1451,15 @@ async function saveEvent() {
   padding: 12px 14px;
   display: flex; flex-direction: column; gap: 8px;
 }
-.overflow-popup-title { font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.06em; }
+.overflow-popup-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); line-height: 1; padding-bottom: 2px; margin-bottom: -2px; }
 .overflow-list { display: flex; flex-direction: column; gap: 4px; }
 .overflow-item {
   display: flex; align-items: center; gap: 4px;
-  height: 20px; padding: 0 8px; border-radius: 99px;
-  border: 1px solid transparent; font-size: 10px; font-weight: 600;
-  white-space: nowrap; overflow: hidden; transition: filter 0.12s;
+  height: 22px; padding: 0 8px; border-radius: 99px;
+  border: 1px solid transparent; font-size: 10px; font-weight: 500;
+  white-space: nowrap; overflow: hidden;
 }
-.overflow-item.overflow-clickable:hover { filter: brightness(1.08); }
+.overflow-item:not(.overflow-clickable) { pointer-events: none; }
 .overflow-tag {
   font-size: 8px; font-weight: 700; letter-spacing: 0.04em;
   background: rgba(255,255,255,0.5);
@@ -1254,17 +1490,23 @@ async function saveEvent() {
 .picker-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .picker-enter-from,.picker-leave-to { opacity: 0; transform: scaleY(0.9) translateY(-6px); transform-origin: top; }
 
-.add-event-popup { background: rgba(255,255,255,0.66); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.88); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; }
-.popup-title { font-size: 13px; font-weight: 700; color: #1e2028; margin-bottom: 2px; }
+/* 更多弹窗：transform-origin 由内联 style 控制，动画只改 opacity + scale */
+.more-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
+.more-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
+.more-pop-enter-from,.more-pop-leave-to { opacity: 0; transform: scaleY(0.88); }
+
+.add-event-popup { background: rgba(255,255,255,0.6); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; }
+.popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.popup-title { font-size: 13px; font-weight: 700; color: #1e2028; }
 .popup-input { width: 100%; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 12px; font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028; outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }
 .popup-input:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
 .popup-input::placeholder { color: #8a8fa8; opacity: 0.7; }
 .popup-textarea { width: 100%; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 12px; font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028; outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; resize: none; line-height: 1.5; }
 .popup-textarea:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
 .popup-textarea::placeholder { color: #8a8fa8; opacity: 0.7; }
-.popup-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
-.popup-cancel { padding: 5px 12px; border-radius: 8px; border: none; background: none; font-size: 12px; cursor: pointer; color: #8a8fa8; font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: background 0.12s; }
-.popup-cancel:hover { background: rgba(0,0,0,0.06); }
+.popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
+.popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: 'PingFang SC', 'Segoe UI', sans-serif; font-weight: 600; transition: background 0.12s, border-color 0.12s; }
+.popup-delete:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); }
 .popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
 .popup-save:disabled { opacity: 0.38; cursor: default; }
 .popup-save:not(:disabled):hover { opacity: 0.88; }

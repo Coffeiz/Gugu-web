@@ -36,13 +36,8 @@
             <!-- 月目录 -->
             <div v-for="mg in yg.months" :key="mg.month" class="month-group">
               <button class="month-row" @click="toggleMonth(yg.year + mg.month)">
-                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
-                  :stroke="openMonths.has(yg.year + mg.month) ? '#5a9e88' : 'currentColor'"
-                >
-                  <path d="M1.5 6a1.5 1.5 0 011.5-1.5H5.5l1.5 2H13a1.5 1.5 0 011.5 1.5V13A1.5 1.5 0 0113 14.5H3A1.5 1.5 0 011.5 13V6z"
-                    :fill="openMonths.has(yg.year + mg.month) ? 'rgba(90,158,136,0.13)' : 'none'"
-                  />
-                </svg>
+                <PhFolderOpen v-if="openMonths.has(yg.year + mg.month)" :size="13" weight="fill" style="color:#5a9e88; opacity:0.85; flex-shrink:0" />
+                <PhFolder v-else :size="13" weight="regular" style="flex-shrink:0; opacity:0.6" />
                 <span class="month-name">{{ mg.month }}</span>
                 <span class="month-cnt">{{ mg.items.length }}</span>
                 <svg
@@ -102,6 +97,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import ProjectCard from './ProjectCard.vue'
+import { PhFolder, PhFolderOpen } from '@phosphor-icons/vue'
 
 const props = defineProps({
   projects: { type: Array, default: () => [] },

@@ -163,6 +163,7 @@ async def empty_trash(
 # ── 自动清理过期文件（由 main.py 在启动时调用）────────────────────────────────
 
 async def cleanup_expired(db: AsyncSession) -> int:
+    # 系统级任务，遍历所有用户的过期回收站文件，设计上是全局执行，无需 user_id 过滤
     cutoff = datetime.utcnow() - timedelta(days=TRASH_DAYS)
     stmt = select(File).where(File.deleted_at.isnot(None), File.deleted_at <= cutoff)
     files = (await db.execute(stmt)).scalars().all()

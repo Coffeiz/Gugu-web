@@ -38,7 +38,9 @@ async function request(method, path, body = null, isForm = false) {
       : typeof d === 'string' ? d
       : Array.isArray(d) ? d.map(e => e.msg ?? e).join('；')
       : `HTTP ${res.status}`
-    throw new Error(msg)
+    const apiErr = new Error(msg)
+    apiErr.status = res.status
+    throw apiErr
   }
 
   if (res.status === 204) return null
@@ -101,8 +103,9 @@ export const filesApi = {
     const qs = new URLSearchParams(p).toString()
     return get(`/files${qs ? '?' + qs : ''}`)
   },
-  tree:   ()         => get('/files/tree'),
-  all:    ()         => get('/files/all'),
+  tree:    ()         => get('/files/tree'),
+  all:     ()         => get('/files/all'),
+  version: ()         => get('/files/version'),
   update: (id, data) => patch(`/files/${id}`, data),
   delete:      (id)   => del(`/files/${id}`),
   batchDelete: (ids)  => post('/files/batch-delete', { ids }),
@@ -198,4 +201,9 @@ export const clientsApi = {
   list:   ()         => get('/clients'),
   create: (data)     => post('/clients', data),
   delete: (id)       => del(`/clients/${id}`),
+}
+
+export const preferencesApi = {
+  get:    ()     => get('/preferences'),
+  update: (data) => request('PATCH', '/preferences', data),
 }

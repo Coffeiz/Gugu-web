@@ -261,7 +261,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 .notif-btn:hover { background: rgba(123,127,178,0.08); color: rgba(30,32,40,0.82); }
 .notif-btn.notif-active {
   background: rgba(255,255,255,0.38); color: var(--color-primary);
-  font-weight: 600; border-color: rgba(255,255,255,0.62);
+  font-weight: 700; border-color: rgba(255,255,255,0.62);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
 }
 .nav-icon { flex-shrink: 0; }

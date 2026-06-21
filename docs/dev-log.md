@@ -1,7 +1,49 @@
 # PM Studio · 早期开发记录
 
-> 更新：2026-06-15
+> 更新：2026-06-21
 > 状态：早期阶段记录，当前进度见 `docs/overview.md`
+
+---
+
+## 2026-06-21 · 缩略图根因排查：Pillow 未安装导致全量加载原图
+
+### 背景
+
+用户反馈总览页和文件库滚动卡顿、图片加载慢、渐进式效果失效。为此陆续做了大量前端优化（`shallowRef` 批量更新、`preDecodeBlobs`、`will-change`、`backdrop-filter` 移除、IntersectionObserver 懒加载等），体验有所改善但根本问题未解决。
+
+### 根因
+
+**`Pillow` 未写入 `requirements.txt`，venv 中从未安装。**
+
+后端 `/files/{id}/thumb` 端点调用 `_generate_thumbs_sync()` 生成 WebP 缩略图，但所有调用都在 `except Exception: pass` 中静默失败。最终降级路径返回**原始大图**（几百KB～几MB JPEG/PNG）。
+
+前端把这张大图当成 `tiny`（预期 20px WebP）缓存到 blob Map，渲染时浏览器需要解码全尺寸图片：
+- `tiny` 不是 20px 小图，blur 占位失去意义
+- `card` 返回原图，文件库加载几十张 MB 级图片
+- 浏览器 HTTP Cache 缓存了这些大图响应（`max-age=86400`），强刷页面也不请求后端，旧 blob 持续命中
+
+### 排查过程
+
+1. 发现 blob cache 里存在 JPEG/PNG 类型，怀疑降级逻辑触发
+2. 在后端端点加日志，发现浏览器根本没有发 thumb 请求到服务器（HTTP Cache 直接命中）
+3. 清除 site data 后，强刷仍无 thumb 请求 → uvicorn 日志无任何 `/thumb` 条目
+4. 直接在 venv 中测试 `from PIL import Image` → `ModuleNotFoundError`
+5. 确认 Pillow 从未安装，`requirements.txt` 缺失该依赖
+
+### 修复内容
+
+| 位置 | 改动 |
+|------|------|
+| `requirements.txt` | 新增 `Pillow>=10.0.0` |
+| `_generate_thumbs_sync` | 修复 RGBA/透明通道处理（PNG 保留 RGBA，其余转 RGB） |
+| `get_thumb` 端点 | 降级改为输出缩小 JPEG，最后兜底才返回原图；移除静默 `except: pass`，改为打印 traceback |
+| `useThumbCache.js` | fetch 加 `cache: 'no-cache'`，强制跳过浏览器 HTTP Cache，确保拿到最新 WebP |
+
+### 反思
+
+之前所有前端优化（`shallowRef`、`preDecodeBlobs`、懒加载、`backdrop-filter`）都是在治标，真正的性能瓶颈是后端返回了全尺寸原图。正确的 WebP 生效后（tiny 几百字节，card 几 KB），滚动卡顿和加载慢的问题基本消失，前端优化才能真正发挥作用。
+
+**教训：依赖静默失败 + 降级兜底会掩盖真实问题，重要依赖必须写入 requirements.txt 并在 CI/部署时验证。**
 
 ---
 
@@ -62,6 +104,45 @@
 | 中 | 自然语言管理集成（Qwen + LangChain） |
 | 低 | 客户管理页 |
 | 低 | 通知系统 |
+
+---
+
+## 2026-06-22 · 阶段自动完成 + 状态联动 Bug 群
+
+### 背景
+
+实现「最后阶段进度满时自动标记已完成、拖回时还原阶段与待办」功能后，连续出现四个相互关联的 bug。
+
+### 根因逐一拆解
+
+**Bug 1 · `_stageBeforeDone` 记录了错误的阶段**
+
+`setStage` 在调用 `moveProject('done')` 之前已执行 `p.currentStage = stageKey`（最后阶段），导致 `moveProject` 里 `p._stageBeforeDone = p.currentStage` 拿到的是最后阶段 key，而非操作前的原始阶段。
+
+修法：在修改 `currentStage` 之前先记下 `originalStageKey`，直接写入 `p._stageBeforeDone`；`moveProject` 改为「已设则不覆盖」。
+
+**Bug 2 · 从已完成拖回时 todo 未还原**
+
+`moveProject`（看板拖拽触发）只还原了 `currentStage` 和 `progress`，完全缺少 todo 还原逻辑。`setStage` 的退回路径有正确的 `autoCompleted` 还原遍历，但 `moveProject` 未复用，导致拖回后所有阶段 todo 依然处于全勾状态。
+
+修法：在 `moveProject` 的 `done → active` 分支里加同样的还原遍历，并将还原后的 `stages` 一并 patch 到后端。
+
+**Bug 3 · 编辑卡状态胶囊不实时更新**
+
+Modal 内 `localStatus` 是本地 `ref`，只在 `watch(() => props.project?.id, ...)` 触发（即打开不同项目）时初始化一次。`moveProject` 修改了 store 的 `p.status`，但 `localStatus` 对此无感，胶囊卡在旧状态。
+
+修法：新增 `watch(() => props.project?.status, ...)` 单独跟踪 status 变化，实时同步 `localStatus`。
+
+**Bug 4 · 胶囊更新有明显延迟**
+
+`setStage` 的执行链：`await _patchProject`（网络）→ `await moveProject`（网络）→ 才设 `p.status = 'done'`。胶囊需等两次网络回包才变色。
+
+修法：把 `p.status = 'done'`、`p.doneAt`、`p._stageBeforeDone` 全部移到第一个 `await` 之前做乐观更新，并合并为一次 `_patchProject` 调用，Vue 在下一 tick 立即重渲。
+
+### 教训
+
+- **「提前修改共享状态再传给子函数」会破坏子函数的快照逻辑**：调用者改了 `p.currentStage`，被调用者再读它时拿到的是已被污染的值。今后凡是要在调用链中「传递修改前状态」，必须在第一次修改前就显式保存。
+- **乐观更新要在第一个 `await` 之前完成**：只要有一行同步赋值在 `await` 之后，用户就会感受到延迟。
 
 ---
 

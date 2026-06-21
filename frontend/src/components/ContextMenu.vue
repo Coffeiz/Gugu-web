@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div v-if="show" ref="el" class="ctx-menu" :style="style" @click.stop @contextmenu.prevent>
+    <div v-if="show" ref="el" class="ctx-menu popup-menu" :style="style" @click.stop @contextmenu.prevent>
       <slot />
     </div>
   </Teleport>
@@ -53,15 +53,5 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.ctx-menu {
-  background: rgba(255,255,255,0.96);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(0,0,0,0.08);
-  border-radius: 10px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-  padding: 4px;
-  min-width: 160px;
-  user-select: none;
-}
+.ctx-menu { min-width: 160px; }
 </style>

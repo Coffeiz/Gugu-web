@@ -16,7 +16,7 @@
         </div>
         <div class="topbar-actions">
           <a-button class="btn-ghost-custom" @click="openUpload">上传文件</a-button>
-          <a-button type="primary" class="btn-primary-custom" @click="uiStore.openNewProject = true">
+          <a-button type="primary" class="btn-primary-custom" @click="openNewProject">
             ＋ 新建项目
           </a-button>
         </div>
@@ -82,6 +82,7 @@ import FilePreviewModal    from '@/components/common/FilePreviewModal.vue'
 import FloatPreviewWindow  from '@/components/common/FloatPreviewWindow.vue'
 import { usePreviewStore, isAudioExt } from '@/stores/preview'
 import { useAudioStore } from '@/stores/audio'
+import { usePreferencesStore } from '@/stores/preferences'
 
 const previewStore = usePreviewStore()
 const audioStore   = useAudioStore()
@@ -94,13 +95,19 @@ watch(() => previewStore.file, (f) => {
   }
 })
 
-const route        = useRoute()
-const uiStore      = useUiStore()
-const projectStore = useProjectStore()
-const authStore    = useAuthStore()
+const route          = useRoute()
+const uiStore        = useUiStore()
+const projectStore   = useProjectStore()
+const authStore      = useAuthStore()
+const prefsStore     = usePreferencesStore()
 
 const uploadDialogOpen = ref(false)
 const uploadProjects   = ref([])
+
+function openNewProject() {
+  uiStore.newProjectRange = uiStore.calendarActiveRange ?? null
+  uiStore.openNewProject = true
+}
 
 function openUpload() {
   uploadDialogOpen.value = true
@@ -114,7 +121,10 @@ function onGlobalUploaded() {
 
 onMounted(async () => {
   await authStore.fetchMe()
-  if (authStore.isLoggedIn) audioStore.restore()
+  if (authStore.isLoggedIn) {
+    audioStore.restore()
+    prefsStore.fetch()
+  }
   projectStore.fetchProjects()
   projectStore.fetchUpcomingCalEvents()
 })
@@ -168,6 +178,8 @@ const todayStr = computed(() => {
   align-items: center;
   gap: 14px;
   padding: 14px 20px;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
 }
 
 .topbar-title h1 {

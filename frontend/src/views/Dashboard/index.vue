@@ -48,23 +48,25 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { filesApi } from '@/services/api'
-import { filesCache } from '@/services/cache'
+import { filesCache, filesCacheVersion } from '@/services/cache'
 import StatCard    from './components/StatCard.vue'
 import ProjectList from './components/ProjectList.vue'
 import CalendarPanel from './components/CalendarPanel.vue'
 import FilePanel   from './components/FilePanel.vue'
 
 const projectStore = useProjectStore()
-const _fileCount = ref(filesCache.data?.length ?? null)
-const fileCount = computed(() => _fileCount.value ?? '—')
+const fileCount = computed(() => filesCache.ref.value?.length ?? '—')
+
 onMounted(async () => {
   try {
+    const { version: ver } = await filesApi.version()
+    if (ver && ver === filesCacheVersion.get() && filesCache.data) return  // 数据未变，跳过全量拉取
     const fresh = await filesApi.list()
-    filesCache.data = fresh
-    _fileCount.value = fresh.length
+    filesCache.set(fresh)
+    if (ver) filesCacheVersion.set(ver)
   } catch { /* ignore */ }
 })
 </script>
@@ -87,10 +89,8 @@ onMounted(async () => {
 .mid-row {
   display: grid;
   grid-template-columns: 1fr 340px;
-  grid-template-rows: 1fr;
   gap: 18px;
   flex: 1;
-  min-height: 0;
 }
 
 @media (max-width: 960px) {

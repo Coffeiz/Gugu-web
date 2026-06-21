@@ -174,12 +174,17 @@ async def _exec_tool(user_id: int, name: str, args: dict) -> str:
             return json.dumps({"success": True, "project_id": p.id, "name": p.name})
 
         if name == "create_event":
+            pid = args.get("project_id")
+            if pid is not None:
+                proj = await db.get(Project, pid)
+                if not proj or proj.user_id != user_id:
+                    return json.dumps({"error": "项目不存在"})
             ev = CalendarEvent(
                 user_id=user_id,
                 title=args["title"],
                 date=args["date"],
                 type=args.get("type", "event"),
-                project_id=args.get("project_id"),
+                project_id=pid,
             )
             db.add(ev)
             await db.commit()

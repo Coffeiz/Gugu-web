@@ -42,9 +42,9 @@
               <path d="M5 2v6M2 5l3-3 3 3"/>
             </svg>
           </button>
-          <div v-if="sortMenuOpen" class="sort-menu">
+          <div v-if="sortMenuOpen" class="sort-menu popup-menu">
             <button v-for="opt in SORT_OPTIONS" :key="opt.key"
-              class="sort-menu-item" :class="{ active: sortKey === opt.key }"
+              class="sort-menu-item popup-menu-item" :class="{ active: sortKey === opt.key }"
               @click.stop="onSortSelect(opt.key)">
               {{ opt.label }}
               <svg v-if="sortKey === opt.key" class="sort-check" :class="{ desc: sortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -100,12 +100,6 @@
           清空回收站
         </button>
 
-        <!-- 上传按钮 -->
-        <label v-if="canUpload" class="upload-btn">
-          <PhUploadSimple :size="12" weight="bold" />
-          上传文件
-          <input type="file" hidden multiple @change="handleFileInput" />
-        </label>
       </div>
     </div>
 
@@ -167,13 +161,13 @@
               <span class="lr-text" :class="{ 'days-warn': daysLeft(f.deletedAt) <= 3 }">{{ daysLeft(f.deletedAt) }} 天</span>
               <span class="lr-text">{{ f.size }}</span>
               <span class="lr-actions">
-                <button class="lr-action-btn trash-restore-btn" title="恢复" @click.stop="restoreFile(f)">
+                <button class="file-list-btn trash-restore-btn" title="恢复" @click.stop="restoreFile(f)">
                   <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/>
                   </svg>
                   恢复
                 </button>
-                <button class="lr-action-btn lr-del-btn" title="永久删除" @click.stop="hardDeleteFile(f)">
+                <button class="file-list-btn del" title="永久删除" @click.stop="hardDeleteFile(f)">
                   <PhTrash :size="11" weight="bold" />
                 </button>
               </span>
@@ -200,7 +194,7 @@
               @contextmenu.prevent.stop="openCtx('folder', f, $event)"
               :data-folder-key="f.id"
               :style="{ '--fd-color': folderAccentColor(f) }"
-              @click.stop="inSelectionMode ? toggleFolderSelect(f.id) : enterFolder(f)"
+              @click.stop="handleFolderClick(f, $event)"
               @dragover="onFolderDragOver(f, $event)"
               @dragleave="onFolderDragLeave(f)"
               @drop="onFolderDrop(f, $event)"
@@ -227,13 +221,15 @@
                 </div>
               </Transition>
               <div v-if="f.type === 'folder' && !inSelectionMode" class="fd-hover-actions">
-                <button class="fc-action-btn fc-rename-btn" title="重命名" @click.stop="startRenameFolder(f)">
-                  <PhPencilSimple :size="11" weight="bold" />
+                <button class="file-card-btn" :title="renamingFolderKey === f.folderId ? '确认' : '重命名'"
+                  @mousedown.prevent @click.stop="renamingFolderKey === f.folderId ? commitRename() : startRenameFolder(f)">
+                  <PhCheck v-if="renamingFolderKey === f.folderId" :size="11" weight="bold" />
+                  <PhPencilSimple v-else :size="11" weight="bold" />
                 </button>
-                <button class="fc-action-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)">
+                <button class="file-card-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)">
                   <PhDownloadSimple :size="11" weight="bold" />
                 </button>
-                <button class="fc-action-btn fc-del-btn" title="删除" @click.stop="deleteFolder(f)">
+                <button class="file-card-btn del" title="删除" @click.stop="deleteFolder(f)">
                   <PhTrash :size="11" weight="bold" />
                 </button>
               </div>
@@ -249,20 +245,20 @@
               :style="{ '--fc-color': fileIconColor(f.ext) }"
               draggable="true"
               @contextmenu.prevent.stop="openCtx('file', f, $event)"
-              @click.stop="inSelectionMode ? toggleFileSelectSimple(f.id) : (isPreviewable(f.ext) ? openPreview(f) : toggleFileSelect(f.id, $event))"
+              @click.stop="handleFileClick(f, $event)"
               @dragstart="onFileDragStart(f, $event)"
               @dragend="onFileDragEnd"
             >
               <span class="fc-ext-badge">{{ f.ext }}</span>
               <div v-if="isImageExt(f.ext)" class="fc-thumb-area">
                 <!-- 模糊占位层：20×20 tiny，懒加载至视口附近再触发 -->
-                <img class="fc-thumb fc-thumb-tiny" v-lazy-src="thumbUrl(f.id, 'tiny')"
+                <img class="fc-thumb fc-thumb-tiny" v-lazy-src="{ id: f.id, size: 'tiny' }"
                   decoding="async" draggable="false" alt="" />
                 <!-- 全尺寸层：首次加载淡入，已加载过直接显示 -->
-                <img class="fc-thumb fc-thumb-full" v-lazy-src="thumbUrl(f.id, 'card')"
-                  :class="{ 'fc-loaded': loadedThumbs.has(f.id) }"
+                <img class="fc-thumb fc-thumb-full" v-lazy-src="{ id: f.id, size: 'card' }"
+                  :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }"
                   decoding="async" draggable="false" alt=""
-                  @load="loadedThumbs.add(f.id)"
+                  @load="cardBlobReadyIds.add(f.id)"
                   @error="$event.target.style.display='none'" />
                 <div class="fc-thumb-fade"></div>
               </div>
@@ -288,13 +284,15 @@
                 </div>
               </Transition>
               <div v-if="!inSelectionMode" class="fc-hover-actions">
-                <button class="fc-action-btn fc-rename-btn" title="重命名" @click.stop="startRenameFile(f)">
-                  <PhPencilSimple :size="11" weight="bold" />
+                <button class="file-card-btn" :title="renamingFileId === f.id ? '确认' : '重命名'"
+                  @mousedown.prevent @click.stop="renamingFileId === f.id ? commitRename() : startRenameFile(f)">
+                  <PhCheck v-if="renamingFileId === f.id" :size="11" weight="bold" />
+                  <PhPencilSimple v-else :size="11" weight="bold" />
                 </button>
-                <button class="fc-action-btn" title="下载" @click.stop="downloadFile(f)">
+                <button class="file-card-btn" title="下载" @click.stop="downloadFile(f)">
                   <PhDownloadSimple :size="11" weight="bold" />
                 </button>
-                <button class="fc-action-btn fc-del-btn" title="移到回收站" @click.stop="deleteSingleFile(f)">
+                <button class="file-card-btn del" title="移到回收站" @click.stop="deleteSingleFile(f)">
                   <PhTrash :size="11" weight="bold" />
                 </button>
               </div>
@@ -353,7 +351,7 @@
               class="list-row folder-row"
               :class="{ selected: selectedFolderKeys.has(f.id), 'pre-selected': previewFolderKeys.has(f.id), 'drag-over': dragOverFolderId === f.folderId }"
               :data-folder-key="f.id"
-              @click.stop="inSelectionMode ? toggleFolderSelect(f.id) : enterFolder(f)"
+              @click.stop="handleFolderClick(f, $event)"
               @contextmenu.prevent.stop="openCtx('folder', f, $event)"
               @dragover="onFolderDragOver(f, $event)"
               @dragleave="onFolderDragLeave(f)"
@@ -383,13 +381,15 @@
                   </div>
                 </Transition>
                 <template v-if="f.type === 'folder' && !inSelectionMode">
-                  <button class="lr-action-btn lr-rename-btn" title="重命名" @click.stop="startRenameFolder(f)">
-                    <PhPencilSimple :size="11" weight="bold" />
+                  <button class="file-list-btn" :title="renamingFolderKey === f.folderId ? '确认' : '重命名'"
+                    @mousedown.prevent @click.stop="renamingFolderKey === f.folderId ? commitRename() : startRenameFolder(f)">
+                    <PhCheck v-if="renamingFolderKey === f.folderId" :size="11" weight="bold" />
+                    <PhPencilSimple v-else :size="11" weight="bold" />
                   </button>
-                  <button class="lr-action-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)">
+                  <button class="file-list-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)">
                     <PhDownloadSimple :size="11" weight="bold" />
                   </button>
-                  <button class="lr-action-btn lr-del-btn" title="删除" @click.stop="deleteFolder(f)">
+                  <button class="file-list-btn del" title="删除" @click.stop="deleteFolder(f)">
                     <PhTrash :size="11" weight="bold" />
                   </button>
                 </template>
@@ -404,7 +404,7 @@
               :data-file-id="f.id"
               draggable="true"
               @contextmenu.prevent.stop="openCtx('file', f, $event)"
-              @click.stop="inSelectionMode ? toggleFileSelectSimple(f.id) : (isPreviewable(f.ext) ? openPreview(f) : toggleFileSelect(f.id, $event))"
+              @click.stop="handleFileClick(f, $event)"
               @dragstart="onFileDragStart(f, $event)"
               @dragend="onFileDragEnd"
             >
@@ -437,13 +437,15 @@
                   </div>
                 </Transition>
                 <template v-if="!inSelectionMode">
-                  <button class="lr-action-btn lr-rename-btn" title="重命名" @click.stop="startRenameFile(f)">
-                    <PhPencilSimple :size="11" weight="bold" />
+                  <button class="file-list-btn" :title="renamingFileId === f.id ? '确认' : '重命名'"
+                    @mousedown.prevent @click.stop="renamingFileId === f.id ? commitRename() : startRenameFile(f)">
+                    <PhCheck v-if="renamingFileId === f.id" :size="11" weight="bold" />
+                    <PhPencilSimple v-else :size="11" weight="bold" />
                   </button>
-                  <button class="lr-action-btn" title="下载" @click.stop="downloadFile(f)">
+                  <button class="file-list-btn" title="下载" @click.stop="downloadFile(f)">
                     <PhDownloadSimple :size="11" weight="bold" />
                   </button>
-                  <button class="lr-action-btn lr-del-btn" title="移到回收站" @click.stop="deleteSingleFile(f)">
+                  <button class="file-list-btn del" title="移到回收站" @click.stop="deleteSingleFile(f)">
                     <PhTrash :size="11" weight="bold" />
                   </button>
                 </template>
@@ -517,31 +519,31 @@
   <ContextMenu :show="ctx.visible" :x="ctx.x" :y="ctx.y" @close="ctx.visible = false">
     <!-- 文件菜单 -->
     <template v-if="ctx.type === 'file' || ctx.type === 'multi-file'">
-      <button v-if="ctx.type === 'file'" class="ctx-item" @click="ctxInfo">
+      <button v-if="ctx.type === 'file'" class="ctx-item popup-menu-item" @click="ctxInfo">
         <PhInfo :size="13" weight="bold" />
         详细信息
       </button>
-      <button class="ctx-item" @click="ctxDownload">
+      <button class="ctx-item popup-menu-item" @click="ctxDownload">
         <PhDownloadSimple :size="13" weight="bold" />
         下载
       </button>
-      <button v-if="ctx.type === 'file'" class="ctx-item" @click="ctxRename">
+      <button v-if="ctx.type === 'file'" class="ctx-item popup-menu-item" @click="ctxRename">
         <PhPencilSimple :size="13" weight="bold" />
         重命名
       </button>
-      <div class="ctx-sep"></div>
-      <button class="ctx-item" @click="ctxCut">
+      <div class="popup-menu-sep"></div>
+      <button class="ctx-item popup-menu-item" @click="ctxCut">
         <PhScissors :size="13" weight="bold" />
         剪切
-        <span class="ctx-shortcut">{{ modKey }}+X</span>
+        <span class="popup-menu-shortcut">{{ modKey }}+X</span>
       </button>
-      <button class="ctx-item" @click="ctxCopy">
+      <button class="ctx-item popup-menu-item" @click="ctxCopy">
         <PhCopy :size="13" weight="bold" />
         复制
-        <span class="ctx-shortcut">{{ modKey }}+C</span>
+        <span class="popup-menu-shortcut">{{ modKey }}+C</span>
       </button>
-      <div class="ctx-sep"></div>
-      <button class="ctx-item ctx-danger" @click="ctxDelete">
+      <div class="popup-menu-sep"></div>
+      <button class="ctx-item popup-menu-item danger" @click="ctxDelete">
         <PhTrash :size="13" weight="bold" />
         移到回收站
       </button>
@@ -549,24 +551,24 @@
 
     <!-- 文件夹菜单 -->
     <template v-else-if="ctx.type === 'folder'">
-      <button v-if="ctx.target?.type === 'folder'" class="ctx-item" @click="ctxDownloadFolder">
+      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item" @click="ctxDownloadFolder">
         <PhDownloadSimple :size="13" weight="bold" />
         下载为 ZIP
       </button>
-      <button v-if="ctx.target?.type === 'folder'" class="ctx-item" @click="ctxRenameFolder">
+      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item" @click="ctxRenameFolder">
         <PhPencilSimple :size="13" weight="bold" />
         重命名
       </button>
-      <button v-if="ctx.target?.type === 'folder'" class="ctx-item" @click="ctxCutFolder">
+      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item" @click="ctxCutFolder">
         <PhScissors :size="13" weight="bold" />
         剪切
-        <span class="ctx-shortcut">{{ modKey }}+X</span>
+        <span class="popup-menu-shortcut">{{ modKey }}+X</span>
       </button>
-      <button v-if="ctx.target?.type === 'folder'" class="ctx-item ctx-danger" @click="ctxDeleteFolder">
+      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item danger" @click="ctxDeleteFolder">
         <PhTrash :size="13" weight="bold" />
         删除
       </button>
-      <button v-if="ctx.target?.type !== 'folder'" class="ctx-item" disabled style="opacity:.4;cursor:default">
+      <button v-if="ctx.target?.type !== 'folder'" class="ctx-item popup-menu-item" disabled style="opacity:.4;cursor:default">
         <PhDotsThree :size="13" weight="bold" />
         此位置不可操作
       </button>
@@ -574,17 +576,17 @@
 
     <!-- 空白区菜单 -->
     <template v-else-if="ctx.type === 'empty'">
-      <button class="ctx-item" @click="ctx.visible = false; showNewFolderInput = true">
+      <button class="ctx-item popup-menu-item" @click="ctx.visible = false; showNewFolderInput = true">
         <PhFolderPlus :size="13" weight="bold" />
         新建文件夹
       </button>
-      <div class="ctx-sep"></div>
-      <button v-if="cbStore.hasContent()" class="ctx-item" @click="ctxPaste">
+      <div class="popup-menu-sep"></div>
+      <button v-if="cbStore.hasContent()" class="ctx-item popup-menu-item" @click="ctxPaste">
         <PhClipboardText :size="13" weight="bold" />
         粘贴
-        <span class="ctx-shortcut">{{ modKey }}+V</span>
+        <span class="popup-menu-shortcut">{{ modKey }}+V</span>
       </button>
-      <button v-else class="ctx-item" disabled style="opacity:.4;cursor:default">
+      <button v-else class="ctx-item popup-menu-item" disabled style="opacity:.4;cursor:default">
         <PhClipboardText :size="13" weight="bold" />
         剪贴板为空
       </button>
@@ -612,14 +614,14 @@ import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { getToken } from '@/services/api'
+import { getThumb, getCachedThumb, preloadTinyThumbs, cardBlobReadyIds } from '@/composables/useThumbCache'
 import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
   PhBrowser, PhImage, PhFilmStrip, PhMusicNote, PhTable,
   PhPresentationChart, PhArchive, PhCode, PhFileText,
   PhArrowLeft, PhArrowRight, PhSortAscending, PhSquaresFour, PhList,
-  PhCheckSquare, PhFolderPlus, PhUploadSimple, PhPencilSimple,
-  PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX, PhCheck,
+  PhCheckSquare, PhCheck, PhFolderPlus, PhUploadSimple, PhPencilSimple,
+  PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX,
   PhInfo, PhWarningCircle, PhDotsThree,
 } from '@phosphor-icons/vue'
 
@@ -627,6 +629,7 @@ const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
 
 // ── 视图状态 ──
+// 使用模块级 cardBlobReadyIds：首次 @load 后写入，session 内二次访问直接显示跳过动画
 const viewMode    = ref('grid')
 const loading     = ref(false)
 const dragCounter = ref(0)
@@ -826,6 +829,7 @@ const sortedContents = computed(() => {
 
 // ── 内容 ──
 const contents = ref({ folders: [], files: [] })
+watch(() => contents.value.files, files => { if (files?.length) preloadTinyThumbs(files) })
 
 function extractColor(colorStr) {
   if (!colorStr) return null
@@ -948,6 +952,12 @@ function loadContents() {
 }
 
 onMounted(async () => {
+  // 热缓存：同步初始化，避免 await 微任务暂停导致空帧
+  if (cacheStore.loaded && projectStore.projects.length > 0) {
+    restoreNav()
+    loadContents()
+    return
+  }
   await Promise.all([
     projectStore.projects.length === 0 ? projectStore.fetchProjects?.() : Promise.resolve(),
     cacheStore.loaded ? Promise.resolve() : cacheStore.load(),
@@ -977,6 +987,62 @@ function clearSelection() {
   selectedIds.value        = new Set()
   selectedFolderKeys.value = new Set()
   selectModeForced.value   = false
+  lastAnchorIndex.value    = -1
+}
+
+// ── Shift 多选 ──
+const lastAnchorIndex = ref(-1)
+
+const flatSelectableItems = computed(() => [
+  ...sortedContents.value.folders.map(f => ({ type: 'folder', id: f.id })),
+  ...sortedContents.value.files.map(f => ({ type: 'file', id: f.id })),
+])
+
+function _shiftSelect(type, id) {
+  const idx = flatSelectableItems.value.findIndex(i => i.type === type && i.id === id)
+  if (idx < 0) return false
+  const anchor = lastAnchorIndex.value
+  if (anchor < 0) return false
+  const [a, b] = anchor <= idx ? [anchor, idx] : [idx, anchor]
+  const ids  = new Set()
+  const keys = new Set()
+  flatSelectableItems.value.slice(a, b + 1).forEach(item => {
+    if (item.type === 'file') ids.add(item.id)
+    else keys.add(item.id)
+  })
+  selectedIds.value        = ids
+  selectedFolderKeys.value = keys
+  return true
+}
+
+function handleFolderClick(folder, event) {
+  if (event.shiftKey && _shiftSelect('folder', folder.id)) return
+  if (inSelectionMode.value) {
+    toggleFolderSelect(folder.id)
+    lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'folder' && i.id === folder.id)
+  } else {
+    enterFolder(folder)
+  }
+}
+
+function handleFileClick(file, event) {
+  if (event.shiftKey) {
+    if (!_shiftSelect('file', file.id)) {
+      // 没有锚点时 shift+click 当作普通选中，设置锚点
+      toggleFileSelectSimple(file.id)
+      lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
+    }
+    return
+  }
+  if (inSelectionMode.value) {
+    toggleFileSelectSimple(file.id)
+    lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
+  } else if (isPreviewable(file.ext)) {
+    openPreview(file)
+  } else {
+    toggleFileSelect(file.id, event)
+    lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
+  }
 }
 
 const selectionRect = computed(() => {
@@ -1018,12 +1084,29 @@ function onDocMouseUp(e) {
   document.removeEventListener('mouseup',   onDocMouseUp)
 
   if (selectionRect.value) {
-    // 直接用预览时缓存的结果，保证松手选中 == 预选中
-    selectedIds.value        = _latestPreview.fileIds
-    selectedFolderKeys.value = _latestPreview.folderKeys
-    // 用 capture 阶段一次性拦截紧接着的 click，阻止 toggleFileSelect / onPageClick 清掉选中结果
+    if (e.shiftKey) {
+      const ids  = new Set(selectedIds.value)
+      const keys = new Set(selectedFolderKeys.value)
+      _latestPreview.fileIds.forEach(id => ids.add(id))
+      _latestPreview.folderKeys.forEach(k => keys.add(k))
+      selectedIds.value        = ids
+      selectedFolderKeys.value = keys
+    } else {
+      selectedIds.value        = _latestPreview.fileIds
+      selectedFolderKeys.value = _latestPreview.folderKeys
+    }
+    // 把锚点设到框选结果里最末尾的那项，便于后续 shift+click 继续延伸
+    const flat = flatSelectableItems.value
+    for (let i = flat.length - 1; i >= 0; i--) {
+      const item = flat[i]
+      if ((item.type === 'file'   && _latestPreview.fileIds.has(item.id)) ||
+          (item.type === 'folder' && _latestPreview.folderKeys.has(item.id))) {
+        lastAnchorIndex.value = i
+        break
+      }
+    }
     document.addEventListener('click', _swallowBoxClick, { capture: true, once: true })
-  } else if (!e.ctrlKey && !e.metaKey) {
+  } else if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
     clearSelection()
   }
 
@@ -1171,7 +1254,7 @@ async function deleteSelected() {
 
   // 乐观更新
   if (hasFiles)   cacheStore.removeFiles(fileIds)
-  if (hasFolders) folderIds.forEach(id => cacheStore.removeFolder(id))
+  if (hasFolders) { pruneHistoryForFolders(folderIds); folderIds.forEach(id => cacheStore.removeFolder(id)) }
   selectedIds.value        = new Set()
   selectedFolderKeys.value = new Set()
   loadContents()
@@ -1501,8 +1584,25 @@ async function onFolderDrop(f, e) {
   }
 }
 
+function pruneHistoryForFolders(folderIds) {
+  const idSet = new Set(folderIds)
+  const hasDeleted = snap => snap.some(seg => seg.type === 'folder' && idSet.has(seg.folderId))
+  const curIdx = navHistoryCursor.value
+  let newCursor = 0
+  const kept = []
+  navHistoryStack.value.forEach((snap, i) => {
+    if (!hasDeleted(snap)) {
+      if (i <= curIdx) newCursor = kept.length
+      kept.push(snap)
+    }
+  })
+  navHistoryStack.value = kept
+  navHistoryCursor.value = Math.min(newCursor, Math.max(0, kept.length - 1))
+}
+
 async function deleteFolder(f) {
   if (!confirm(`删除文件夹"${f.displayName}"？文件夹内所有内容将被删除。`)) return
+  pruneHistoryForFolders([f.folderId])
   cacheStore.removeFolder(f.folderId)
   loadContents()
   try {
@@ -1543,32 +1643,45 @@ function fileExtCategory(ext) {
 
 const _IMAGE_EXTS  = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
 const isImageExt   = (ext) => _IMAGE_EXTS.has((ext || '').toLowerCase())
-const thumbUrl     = (id, size = '') =>
-  `/api/v1/files/${id}/thumb?token=${getToken()}${size ? `&size=${size}` : ''}`
-const loadedThumbs = reactive(new Set())
 
-// IntersectionObserver 懒加载指令：只在进入视口附近才设置 src，避免同时发出大量请求
+// IntersectionObserver 懒加载指令
+// tiny：不走 Observer，直接后台 fetch（20px WebP 成本极低），保证 blur 占位先于 card 出现
+// card：仍走 Observer，进视口附近才 fetch，节省带宽
 const vLazySrc = {
-  mounted(el, { value }) {
-    if (!value) return
+  mounted(el, { value: { id, size } }) {
+    if (!id) return
+    if (size === 'tiny') {
+      const cached = getCachedThumb(id, size)
+      if (cached) { el.src = cached; return }
+      getThumb(id, size).then(url => { if (url) el.src = url })
+      return
+    }
+    // card：无论是否有缓存都走 Observer，避免二次打开时几十张图同时解码
     const obs = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting) return
-      el.src = value
-      obs.disconnect()
-      el._lazySrcObs = null
+      obs.disconnect(); el._lazySrcObs = null
+      const cached = getCachedThumb(id, size)
+      if (cached) { el.src = cached; el.decode?.().catch(() => {}); return }
+      getThumb(id, size).then(url => { if (url) { el.src = url; el.decode?.().catch(() => {}) } })
     }, { rootMargin: '250px' })
     obs.observe(el)
     el._lazySrcObs = obs
   },
-  updated(el, { value, oldValue }) {
-    if (value === oldValue) return
+  updated(el, { value: { id, size }, oldValue }) {
+    if (id === oldValue?.id && size === oldValue?.size) return
     el._lazySrcObs?.disconnect()
-    if (!value || el.src === value) return
+    if (size === 'tiny') {
+      const cached = getCachedThumb(id, size)
+      if (cached) { el.src = cached; return }
+      getThumb(id, size).then(url => { if (url) el.src = url })
+      return
+    }
     const obs = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting) return
-      el.src = value
-      obs.disconnect()
-      el._lazySrcObs = null
+      obs.disconnect(); el._lazySrcObs = null
+      const cached = getCachedThumb(id, size)
+      if (cached) { el.src = cached; el.decode?.().catch(() => {}); return }
+      getThumb(id, size).then(url => { if (url) { el.src = url; el.decode?.().catch(() => {}) } })
     }, { rootMargin: '250px' })
     obs.observe(el)
     el._lazySrcObs = obs
@@ -1831,19 +1944,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .sort-dir-icon.desc { transform: rotate(180deg); }
 .sort-menu {
   position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 200;
-  background: rgba(255,255,255,0.96); backdrop-filter: blur(12px);
-  border: 1px solid rgba(0,0,0,0.08); border-radius: 10px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1); padding: 4px;
   display: flex; flex-direction: column; gap: 1px; min-width: 110px;
 }
-.sort-menu-item {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 7px 10px; border-radius: 7px; border: none; background: none;
-  font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
-  cursor: pointer; transition: background 0.12s; text-align: left;
-}
-.sort-menu-item:hover { background: rgba(0,0,0,0.05); }
-.sort-menu-item.active { color: var(--color-primary); font-weight: 600; }
 .sort-check { flex-shrink: 0; color: var(--color-primary); }
 .sort-check.desc { transform: rotate(180deg); }
 
@@ -1879,7 +1981,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 /* 新建文件夹 */
 .new-folder-btn {
   display: flex; align-items: center; gap: 5px;
-  padding: 6px 12px; border-radius: 8px;
+  height: 30px; padding: 0 12px; border-radius: 8px;
   border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.5);
   font-size: 12px; font-weight: 500; color: var(--text-secondary);
   cursor: pointer; font-family: var(--font-sans); transition: all 0.15s; white-space: nowrap;
@@ -1919,7 +2021,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 /* 上传按钮 */
 .upload-btn {
   display: flex; align-items: center; gap: 5px;
-  padding: 6px 13px; border-radius: 8px; border: none;
+  height: 30px; padding: 0 13px; border-radius: 8px; border: none;
   background: linear-gradient(135deg, #7b7fb2, #9590c4);
   color: white; font-size: 12px; font-weight: 600;
   cursor: pointer; font-family: var(--font-sans);
@@ -1996,25 +2098,15 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 
 /* ── 文件夹卡片 ── */
 .folder-card {
-  position: relative;
-  background: rgba(255,255,255,0.72);
   background: color-mix(in srgb, var(--fd-color, #8888a0) 6%, rgba(255,255,255,0.82));
-  border: 1px solid rgba(255,255,255,0.9);
-  border-color: color-mix(in srgb, var(--fd-color, #8888a0) 14%, rgba(255,255,255,0.92));
+  border: 1px solid color-mix(in srgb, var(--fd-color, #8888a0) 14%, rgba(255,255,255,0.92));
   border-radius: 14px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
-  cursor: pointer;
-  display: flex; flex-direction: column;
-  min-height: 122px; overflow: hidden;
-  transition: transform 0.22s cubic-bezier(0.34,1.2,0.64,1),
-              box-shadow 0.22s ease, background 0.18s;
-  user-select: none;
+  min-height: 122px;
 }
 .folder-card:hover {
-  transform: translateY(-2px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
 }
-.folder-card:active { transform: translateY(0); }
 
 .fd-icon-area {
   height: 90px;
@@ -2048,19 +2140,13 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 
 /* ── 文件卡片 ── */
 .fc-card {
-  position: relative;
   background: rgba(255,255,255,0.72);
   border: 1px solid rgba(255,255,255,0.9);
   border-radius: 14px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
-  display: flex; flex-direction: column;
-  min-height: 122px; overflow: hidden;
-  cursor: pointer;
-  transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
-              box-shadow 0.25s ease, background 0.2s, border-color 0.2s;
+  min-height: 122px;
 }
 .fc-card:hover {
-  transform: translateY(-2px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
   background: rgba(255,255,255,0.86);
 }
@@ -2189,18 +2275,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 .fc-card:hover .fc-hover-actions { opacity: 1; }
 
-.fc-action-btn {
-  position: relative;
-  width: 20px; height: 20px; border-radius: 5px; border: none;
-  background: rgba(255,255,255,0.78); color: var(--text-secondary);
-  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.15s, color 0.15s;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
-.fc-action-btn::after { content: ''; position: absolute; inset: -2px; }
-.fc-action-btn:hover { background: white; color: var(--text-primary); }
-.fc-del-btn:hover { color: #e05555; }
 
 /* ── 重命名内联输入 ── */
 .rename-sizer {
@@ -2213,11 +2287,11 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 .rename-input, .rename-input-inline {
   position: absolute; inset: 0; width: 100%;
-  border: none; outline: none;
-  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-  border-radius: 5px;
+  outline: none;
+  background: rgba(255,255,255,0.9); border: 1px solid rgba(123,127,178,0.4);
+  border-radius: 4px;
   font: inherit; color: inherit;
-  padding: 0 5px;
+  padding: 0 4px;
 }
 
 /* ── 拖动状态 ── */
@@ -2342,15 +2416,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .lr-text { font-size: 11px; color: var(--text-secondary); }
 
 .lr-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
-.lr-action-btn {
-  width: 24px; height: 24px; border-radius: 6px; border: none;
-  background: none; color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s;
-}
-.list-row:hover .lr-action-btn { opacity: 1; }
-.lr-action-btn:hover { background: rgba(123,127,178,0.1); color: var(--color-primary); }
-.lr-del-btn:hover { background: rgba(200,90,90,0.1); color: #c85a5a; }
+.list-row:hover .file-list-btn { opacity: 1; }
 
 .list-empty {
   display: flex; flex-direction: column; align-items: center;
@@ -2393,17 +2459,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* ── 右键菜单 ── */
-.ctx-item {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; padding: 7px 10px; border: none; background: none;
-  border-radius: 7px; font-size: 13px; color: var(--text-primary);
-  cursor: pointer; text-align: left; white-space: nowrap;
-}
-.ctx-item:hover:not(:disabled) { background: rgba(0,0,0,0.05); }
-.ctx-item.ctx-danger { color: #c85a5a; }
-.ctx-item.ctx-danger:hover { background: rgba(200,90,90,0.1); }
-.ctx-sep { height: 1px; background: rgba(0,0,0,0.07); margin: 3px 6px; }
-.ctx-shortcut { margin-left: auto; font-size: 11px; color: var(--text-secondary); opacity: .7; }
 .fc-card.cut, .list-row.cut { opacity: 0.45; }
 .sel-delete-btn {
   display: flex; align-items: center; gap: 5px;

@@ -33,6 +33,31 @@ class User(Base):
     clients:       Mapped[list["Client"]]              = relationship(back_populates="owner", cascade="all, delete-orphan")
     mind_maps:     Mapped[list["MindMap"]]             = relationship(back_populates="owner", cascade="all, delete-orphan")
     conversations: Mapped[list["ConversationSession"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    preferences:   Mapped[Optional["UserPreferences"]] = relationship(back_populates="owner", cascade="all, delete-orphan", uselist=False)
+
+
+# ── UserPreferences ──────────────────────────────────────────────────────────
+
+class UserPreferences(Base):
+    __tablename__ = "user_preferences"
+
+    id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:    Mapped[int]      = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
+    data_json:  Mapped[str]      = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner: Mapped["User"] = relationship(back_populates="preferences")
+
+    @property
+    def data(self) -> dict:
+        try:
+            return json.loads(self.data_json)
+        except Exception:
+            return {}
+
+    @data.setter
+    def data(self, value: dict):
+        self.data_json = json.dumps(value, ensure_ascii=False)
 
 
 # ── Project ──────────────────────────────────────────────────────────────────
@@ -52,6 +77,8 @@ class Project(Base):
     stages_json:   Mapped[str]           = mapped_column(Text,        default="[]")
     current_stage: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     notes:         Mapped[str]           = mapped_column(Text,        default="")
+    priority:      Mapped[Optional[str]] = mapped_column(String(20),  nullable=True)
+    version:       Mapped[int]           = mapped_column(Integer,     default=1)
     archived:      Mapped[bool]          = mapped_column(Boolean,     default=False)
     done_at:       Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at:    Mapped[datetime]      = mapped_column(DateTime,    default=datetime.utcnow)
@@ -153,6 +180,7 @@ class CalendarEvent(Base):
     client:      Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     project_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    version:     Mapped[int]           = mapped_column(Integer, default=1)
     created_at:  Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow)
 
     owner: Mapped["User"] = relationship(back_populates="events")

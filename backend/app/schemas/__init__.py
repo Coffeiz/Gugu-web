@@ -86,6 +86,8 @@ class ProjectUpdate(CamelModel):
     current_stage: Optional[str] = None
     notes: Optional[str] = None
     archived: Optional[bool] = None
+    priority: Optional[str] = None
+    version: Optional[int] = None
 
     @field_validator("name")
     @classmethod
@@ -108,6 +110,8 @@ class ProjectResponse(CamelModel):
     current_stage: Optional[str]
     notes: str
     archived: bool = False
+    priority: Optional[str] = None
+    version: int = 1
     done_at: Optional[str] = None
     updated_at: Optional[str] = None
     created_at: str = ""
@@ -224,6 +228,7 @@ class EventUpdate(CamelModel):
     client: Optional[str] = None
     project_id: Optional[int] = None
     description: Optional[str] = None
+    version: Optional[int] = None
 
 
 class EventResponse(CamelModel):
@@ -234,6 +239,7 @@ class EventResponse(CamelModel):
     client: Optional[str]
     project_id: Optional[int]
     description: Optional[str] = None
+    version: int = 1
 
 
 # ── Client ────────────────────────────────────────────────────────────────────
@@ -253,3 +259,14 @@ class ClientResponse(CamelModel):
     email: Optional[str]
     phone: Optional[str]
     notes: str
+
+
+# ── UserPreferences ───────────────────────────────────────────────────────────
+
+class PreferencesResponse(CamelModel):
+    lastStages:     list[str] = []
+    stageTemplates: list[dict] = []
+
+class PreferencesUpdate(CamelModel):
+    lastStages:     Optional[list[str]]  = None
+    stageTemplates: Optional[list[dict]] = None

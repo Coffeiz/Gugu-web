@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File as FastAPIFile, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File as FastAPIFile, Form
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,7 +39,10 @@ def _generate_thumbs_sync(raw: bytes, fid: int, sizes: tuple = ("tiny",)) -> Non
     from PIL import Image
     import io as _io
     td = _thumb_dir()
-    img = Image.open(_io.BytesIO(raw)).convert("RGB")
+    img = Image.open(_io.BytesIO(raw))
+    # 保留 RGBA（PNG 透明通道），其余统一转 RGB
+    if img.mode not in ("RGB", "RGBA"):
+        img = img.convert("RGBA") if "transparency" in img.info else img.convert("RGB")
     for size_name in sizes:
         max_px, quality = _THUMB_SIZE_MAP[size_name]
         out = img.copy()
@@ -47,6 +50,24 @@ def _generate_thumbs_sync(raw: bytes, fid: int, sizes: tuple = ("tiny",)) -> Non
         buf = _io.BytesIO()
         out.save(buf, format="WEBP", quality=quality)
         (td / f"{fid}_{size_name}.webp").write_bytes(buf.getvalue())
+
+def _generate_thumb_jpeg_fallback(raw: bytes, size: str) -> bytes | None:
+    """WebP 生成失败时的降级：强制 RGB，输出缩小的 JPEG，避免返回原始大图。"""
+    from PIL import Image
+    import io as _io
+    try:
+        img = Image.open(_io.BytesIO(raw))
+        # 取动图第一帧，强制转 RGB
+        if hasattr(img, "n_frames") and img.n_frames > 1:
+            img.seek(0)
+        img = img.convert("RGB")
+        max_px, _ = _THUMB_SIZE_MAP.get(size, (192, 82))
+        img.thumbnail((max_px, max_px), Image.LANCZOS)
+        buf = _io.BytesIO()
+        img.save(buf, format="JPEG", quality=80)
+        return buf.getvalue()
+    except Exception:
+        return None
 
 def _delete_thumb_cache(fid: int) -> None:
     for size in ("tiny", "card"):
@@ -197,7 +218,25 @@ async def list_all_files(
         .order_by(File.created_at.desc())
     )
     result = await db.execute(stmt)
-    return [_to_resp(f, pname, _color(pcolor), fname) for f, pname, pcolor, fname in result.all()]
+    rows = result.all()
+
+    # 本地存储时过滤掉实体文件已被手动删除的记录，并同步软删除数据库条目
+    storage = get_storage()
+    from app.services.storage import LocalStorageBackend
+    if isinstance(storage, LocalStorageBackend):
+        now = datetime.utcnow()
+        valid_rows = []
+        for row in rows:
+            f, pname, pcolor, fname = row
+            if (storage.root / f.storage_key).exists():
+                valid_rows.append(row)
+            else:
+                await db.delete(f)
+        if len(valid_rows) < len(rows):
+            await db.commit()
+        rows = valid_rows
+
+    return [_to_resp(f, pname, _color(pcolor), fname) for f, pname, pcolor, fname in rows]
 
 
 # ── GET /files/version ────────────────────────────────────────────────────────
@@ -403,8 +442,9 @@ async def update_file(
             project_year, project_month = date_str[:4], date_str[5:7]
     if new_fid:
         fo = await db.get(Folder, new_fid)
-        if fo:
-            folder_name = fo.name
+        if not fo or fo.user_id != current_user.id:
+            raise HTTPException(400, "目标文件夹不存在")
+        folder_name = fo.name
 
     new_key = _build_key(
         uid=current_user.id,
@@ -454,15 +494,18 @@ async def copy_file(
     project_name = ""; project_color = None; project_year = ""; project_month = ""
     if new_space == "project" and new_project_id:
         p = await db.get(Project, new_project_id)
-        if p:
-            project_name  = p.name; project_color = _color(p.color)
-            date_str      = p.start_date or p.created_at.strftime("%Y-%m-%d")
-            project_year, project_month = date_str[:4], date_str[5:7]
+        if not p or p.user_id != current_user.id:
+            raise HTTPException(400, "目标项目不存在")
+        project_name  = p.name; project_color = _color(p.color)
+        date_str      = p.start_date or p.created_at.strftime("%Y-%m-%d")
+        project_year, project_month = date_str[:4], date_str[5:7]
 
     folder_name = ""
     if new_folder_id:
         fo = await db.get(Folder, new_folder_id)
-        if fo: folder_name = fo.name
+        if not fo or fo.user_id != current_user.id:
+            raise HTTPException(400, "目标文件夹不存在")
+        folder_name = fo.name
 
     base_key = _build_key(
         uid=current_user.id, space=new_space, display_name=f.display_name,
@@ -489,16 +532,16 @@ async def copy_file(
 
 # ── DELETE /files/{fid} （软删除→回收站）────────────────────────────────────
 
-def _to_trash_key(fid: int, storage_key: str) -> str:
+def _to_trash_key(user_id: int, fid: int, storage_key: str) -> str:
     """生成回收站路径，保留原文件名方便识别。"""
-    return f"trash/{fid}/{storage_key.rsplit('/', 1)[-1]}"
+    return f"{user_id}/trash/{fid}/{storage_key.rsplit('/', 1)[-1]}"
 
 
 async def _move_to_trash(storage, f: File) -> None:
     """把物理文件移入回收站目录，更新 storage_key；失败时静默忽略。"""
     if f.storage_key.startswith("_trash_/"):
         return  # 已在回收站
-    trash_key = _to_trash_key(f.id, f.storage_key)
+    trash_key = _to_trash_key(f.user_id, f.id, f.storage_key)
     try:
         await storage.rename_file(f.storage_key, trash_key)
         f.storage_key = trash_key
@@ -636,14 +679,18 @@ _IMAGE_MIMES = frozenset({
 
 @router.get("/{fid}/thumb")
 async def get_thumb(
+    request: Request,
     fid: int,
-    token: str = Query(...),
     size: str = Query("full"),   # "tiny" | "card" | "full"
     db: AsyncSession = Depends(get_db),
 ):
     import asyncio
     from fastapi.responses import Response as FastAPIResponse
     settings = get_settings()
+    auth = request.headers.get("Authorization", "")
+    token = auth.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(401, "Token 无效")
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         if payload.get("role") != "user":
@@ -681,10 +728,20 @@ async def get_thumb(
         if cache_path.exists():
             return FastAPIResponse(content=cache_path.read_bytes(), media_type="image/webp",
                                    headers={"Cache-Control": "private, max-age=86400"})
+    except Exception as e:
+        import traceback
+        print(f"[缩略图] WebP 生成失败 fid={fid} size={size}: {e}\n{traceback.format_exc()}")
+
+    # 降级：WebP 失败时返回缩小的 JPEG，保证不返回原始大图
+    try:
+        jpeg_bytes = await asyncio.to_thread(_generate_thumb_jpeg_fallback, raw, size)
+        if jpeg_bytes:
+            return FastAPIResponse(content=jpeg_bytes, media_type="image/jpeg",
+                                   headers={"Cache-Control": "private, max-age=86400"})
     except Exception:
         pass
 
-    # 降级：实时返回原图
+    # 最后兜底：返回原图
     return FastAPIResponse(content=raw, media_type=mime,
                            headers={"Cache-Control": "private, max-age=86400"})
 
