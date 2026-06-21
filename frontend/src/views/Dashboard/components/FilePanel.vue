@@ -19,9 +19,9 @@
           <img class="fc-thumb fc-thumb-tiny" :src="thumbMap[f.id]?.tiny" decoding="async" draggable="false" alt="" />
           <img class="fc-thumb fc-thumb-full"
             :src="thumbMap[f.id]?.card"
-            :class="{ 'fc-loaded': cardLoadedIds.has(f.id) }"
+            :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }"
             decoding="async" draggable="false" alt=""
-            @load="cardLoadedIds.add(f.id)"
+            @load="cardBlobReadyIds.add(f.id)"
             @error="$event.target.style.display='none'" />
           <div class="fc-thumb-fade"></div>
         </div>
@@ -30,17 +30,21 @@
         </div>
 
         <div class="fc-label">
-          <div v-if="renamingId === f.id" class="fc-rename-wrap" @click.stop>
-            <input
-              ref="renameInputRef"
-              class="fc-rename-input"
-              v-model="renameText"
-              @keydown.enter.prevent="commitRename(f)"
-              @keydown.esc="renamingId = null"
-              @blur="commitRename(f)"
-            />
+          <div class="fc-name" :title="f.name">
+            <span v-if="renamingId === f.id" class="rename-sizer" @click.stop>
+              <span class="rename-ghost">{{ renameText || ' ' }}</span>
+              <input
+                ref="renameInputRef"
+                class="rename-input"
+                v-model="renameText"
+                @keydown.enter.prevent="commitRename(f)"
+                @keydown.esc="renamingId = null"
+                @blur="commitRename(f)"
+                @focus="$event.target.select()"
+              />
+            </span>
+            <template v-else>{{ f.name }}</template>
           </div>
-          <div v-else class="fc-name" :title="f.name">{{ f.name }}</div>
           <div class="fc-meta">
             <span class="fc-proj-dot" :style="{ background: f.projectColor }"></span>
             {{ f.project }} · {{ f.size }}
@@ -48,13 +52,15 @@
         </div>
 
         <div class="fc-hover-actions">
-          <button class="fc-action-btn" title="重命名" @click.stop="startRename(f)">
-            <PhPencilSimple :size="11" weight="bold" />
+          <button class="file-card-btn" :title="renamingId === f.id ? '确认' : '重命名'"
+            @mousedown.prevent @click.stop="renamingId === f.id ? commitRename(f) : startRename(f)">
+            <PhCheck v-if="renamingId === f.id" :size="11" weight="bold" />
+            <PhPencilSimple v-else :size="11" weight="bold" />
           </button>
-          <button class="fc-action-btn" title="下载" @click.stop="downloadFile(f)">
+          <button class="file-card-btn" title="下载" @click.stop="downloadFile(f)">
             <PhDownloadSimple :size="11" weight="bold" />
           </button>
-          <button class="fc-action-btn fc-del-btn" title="移到回收站" @click.stop="deleteFile(f)">
+          <button class="file-card-btn del" title="移到回收站" @click.stop="deleteFile(f)">
             <PhTrash :size="11" weight="bold" />
           </button>
         </div>
@@ -93,17 +99,19 @@ import { filesApi } from '@/services/api'
 import { filesCache } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
-import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache } from '@/composables/useThumbCache'
+import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache, cardBlobReadyIds } from '@/composables/useThumbCache'
 import UploadModal from '@/views/Files/UploadModal.vue'
 import {
   PhImage, PhFilmStrip, PhMusicNote, PhTable,
   PhPresentationChart, PhArchive, PhCode, PhFileText,
-  PhPencilSimple, PhDownloadSimple, PhTrash,
+  PhPencilSimple, PhCheck, PhDownloadSimple, PhTrash,
 } from '@phosphor-icons/vue'
 
 const panelRef      = ref(null)
+const colCount      = ref(4) // ResizeObserver 更新后覆盖
+const displayCount  = computed(() => Math.max(1, colCount.value - 1)) // 1 行，上传按钮占 1 格
 const cardVisible   = ref(false) // 面板是否已进入视口（触发过 card 加载）
-const cardLoadedIds = reactive(new Set()) // 组件级，每次挂载重置，保证渐进动画每次都播
+// 使用模块级 cardBlobReadyIds：首次 @load 后写入，session 内二次访问直接显示跳过动画
 const dragging      = ref(false)
 const uploadOpen    = ref(false)
 const rawFiles      = ref(filesCache.data ?? [])
@@ -217,8 +225,8 @@ async function startRename(f) {
   renamingId.value = f.id
   renameText.value = f.name
   await nextTick()
-  renameInputRef.value?.focus()
-  renameInputRef.value?.select()
+  const el = renameInputRef.value?.[0] ?? renameInputRef.value
+  el?.focus(); el?.select()
 }
 
 async function commitRename(f) {
@@ -255,20 +263,41 @@ async function onUploaded() {
 }
 
 // 响应 index.vue 拉取或上传后写入的新数据
+// minmax(130px, 1fr) + gap:8px + padding:20px*2 → cols = floor((w - 40 + 8) / 138)
+function calcCols(width) { return Math.max(1, Math.floor((width - 32) / 138)) }
+
 watch(filesCache.ref, (list) => {
   if (!list?.length) return
   rawFiles.value = list
   preloadTinyThumbs(list)
-  loadThumbs(list.slice(0, 7))
-  if (cardVisible.value) loadCards(list.slice(0, 7))
+  loadThumbs(list.slice(0, displayCount.value))
+  if (cardVisible.value) loadCards(list.slice(0, displayCount.value))
+})
+
+// 面板变宽时 displayCount 增大，补加载新出现文件的缩略图
+watch(displayCount, (newCount, oldCount) => {
+  if (newCount <= oldCount) return
+  const list = rawFiles.value
+  if (!list?.length) return
+  loadThumbs(list.slice(oldCount, newCount))
+  if (cardVisible.value) loadCards(list.slice(oldCount, newCount))
 })
 
 let _panelObs = null
+let _resizeObs = null
 onMounted(() => {
+  if (panelRef.value) {
+    colCount.value = calcCols(panelRef.value.offsetWidth)
+    _resizeObs = new ResizeObserver(([entry]) => {
+      colCount.value = calcCols(entry.contentRect.width)
+    })
+    _resizeObs.observe(panelRef.value)
+  }
+
   const list = filesCache.data
   if (list?.length) {
     preloadTinyThumbs(list)
-    loadThumbs(list.slice(0, 7))
+    loadThumbs(list.slice(0, displayCount.value))
   }
 
   // card 等面板接近视口时再加载，避免屏幕外批量解码
@@ -277,15 +306,18 @@ onMounted(() => {
     _panelObs.disconnect(); _panelObs = null
     cardVisible.value = true
     const cur = filesCache.data
-    if (cur?.length) loadCards(cur.slice(0, 7))
+    if (cur?.length) loadCards(cur.slice(0, displayCount.value))
   }, { rootMargin: '300px' })
   if (panelRef.value) _panelObs.observe(panelRef.value)
 })
 
-onUnmounted(() => { _panelObs?.disconnect(); _panelObs = null })
+onUnmounted(() => {
+  _panelObs?.disconnect(); _panelObs = null
+  _resizeObs?.disconnect(); _resizeObs = null
+})
 
 const files = computed(() =>
-  rawFiles.value.slice(0, 7).map(f => ({
+  rawFiles.value.slice(0, displayCount.value).map(f => ({
     id:           f.id,
     _raw:         f,
     name:         f.displayName,
@@ -308,24 +340,16 @@ const files = computed(() =>
 }
 
 .fc-card {
-  position: relative;
   background: rgba(255,255,255,0.72);
   border: 1px solid rgba(255,255,255,0.9);
   border-radius: 14px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
-  display: flex; flex-direction: column;
-  min-height: 110px; overflow: hidden;
-  cursor: pointer;
-  will-change: transform;
-  transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
-              box-shadow 0.25s ease, background 0.2s;
+  min-height: 110px;
 }
 .fc-card:hover {
-  transform: translateY(-2px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
   background: rgba(255,255,255,0.86);
 }
-.fc-card:active { transform: translateY(1px); opacity: 0.93; }
 
 .fc-ext-badge {
   position: absolute; top: 9px; left: 9px; z-index: 2;
@@ -403,23 +427,20 @@ const files = computed(() =>
 }
 .fc-card:hover .fc-hover-actions { opacity: 1; }
 
-.fc-action-btn {
-  position: relative;
-  width: 20px; height: 20px; border-radius: 5px; border: none;
-  background: rgba(255,255,255,0.78); color: var(--text-secondary);
-  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.15s, color 0.15s;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
-.fc-action-btn::after { content: ''; position: absolute; inset: -2px; }
-.fc-action-btn:hover { background: white; color: var(--text-primary); }
-.fc-del-btn:hover { color: #e05555; }
 
-.fc-rename-wrap { padding-bottom: 2px; }
-.fc-rename-input {
-  width: 100%; font-size: 11px; font-weight: 600; color: var(--text-primary);
+.rename-sizer {
+  display: inline-block; position: relative;
+  max-width: 100%; vertical-align: top;
+}
+.rename-ghost {
+  display: block; visibility: hidden; white-space: pre;
+  font: inherit; padding: 0 5px; min-width: 2ch;
+}
+.rename-input {
+  position: absolute; inset: 0; width: 100%;
+  outline: none;
   background: rgba(255,255,255,0.9); border: 1px solid rgba(123,127,178,0.4);
-  border-radius: 4px; padding: 1px 4px; outline: none; line-height: 1.35;
+  border-radius: 4px; padding: 0 4px;
+  font: inherit; color: inherit;
 }
 </style>

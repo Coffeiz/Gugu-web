@@ -18,16 +18,16 @@ body {
   min-height: 100vh;
 }
 
-/* 玻璃卡片工具类 */
-/* backdrop-filter 已移除：主体面板背后是平滑渐变背景，blur 视觉不可见，
-   但每次面板进入视口都触发 GPU backdrop 捕获，造成不必要的合成开销。
-   真正需要 blur 的浮层（侧边栏、弹窗、右键菜单等）各自单独声明。 */
+/* 玻璃面板工具类 */
 .glass-card {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   corner-shape: squircle;
   box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  transition: background 0.25s ease, box-shadow 0.25s ease;
 }
 .glass-card:hover {
   background: var(--glass-bg-hover);
@@ -48,3 +48,81 @@ body {
 }
 .section-title { font-size: 15px; font-weight: 700; }
 .section-link { font-size: 13px; color: var(--color-primary); cursor: pointer; }
+
+/* 近期节点胶囊（Dashboard CalendarPanel + 日历页侧栏共用） */
+.cap-capsule {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 8px 4px 5px;
+  border-radius: 20px; border: 1px solid;
+  transition: filter 0.12s;
+}
+.cap-tag { flex-shrink: 0; font-size: 8px; font-weight: 600; letter-spacing: 0.04em; border-radius: 3px; padding: 0 4px; line-height: 13px; }
+.cap-tag-proj { background: rgba(255,255,255,0.55); }
+.cap-tag-ev   { background: rgba(210,175,40,0.28); color: #7a5c00; }
+.cap-sdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.cap-s-pending { background: #9e9fc4; }
+.cap-s-active  { background: #7b7fb2; }
+.cap-name { font-size: 11px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; padding-bottom: 2px; margin-bottom: -2px; }
+.cap-days { font-size: 10px; font-weight: 700; color: var(--text-secondary); flex-shrink: 0; white-space: nowrap; margin-left: 4px; }
+.cap-days.urgent { color: var(--color-warning, #c8962a); }
+
+/* 胶囊行 hover 效果（Dashboard CalendarPanel + 日历页侧栏共用） */
+.cap-capsule { transition: box-shadow 0.25s ease; }
+.cap-row:hover .cap-capsule {
+  box-shadow: inset 0 0 0 100px rgba(255,255,255,0.45), 0 2px 6px rgba(80,90,110,0.1);
+}
+
+/* 日历可点击条/chip 通用 hover（event-chip、chip-more-btn、overflow-item、project-bar 共用） */
+.cal-chip {
+  transition: box-shadow 0.25s ease;
+}
+.cal-chip:hover,
+.cal-chip.bar-hovered {
+  box-shadow: inset 0 0 0 100px rgba(255,255,255,0.45), 0 2px 6px rgba(80,90,110,0.1);
+}
+
+/* 文件操作按钮（卡片悬浮，默认 20×20） */
+.file-card-btn {
+  position: relative;
+  width: 20px; height: 20px; border-radius: 5px; border: none;
+  background: rgba(255,255,255,0.78); color: var(--text-secondary);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s, color 0.15s;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.file-card-btn::after { content: ''; position: absolute; inset: -2px; }
+.file-card-btn:hover { background: white; color: var(--text-primary); }
+.file-card-btn.del:hover { color: #e05555; }
+
+/* 文件操作按钮（列表行，默认 24×24，父行 hover 才可见） */
+.file-list-btn {
+  width: 24px; height: 24px; border-radius: 6px; border: none;
+  background: none; color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s;
+}
+.file-list-btn:hover { background: rgba(123,127,178,0.1); color: var(--color-primary); }
+.file-list-btn.del:hover { background: rgba(200,90,90,0.1); color: #c85a5a; }
+
+/* 文件/文件夹卡片（grid 视图，Dashboard FilePanel、文件库、ProjectModal 共用） */
+.fc-card, .folder-card {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  display: flex; flex-direction: column;
+  will-change: transform;
+  user-select: none;
+}
+.fc-card {
+  transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
+              box-shadow 0.25s ease, background 0.2s, border-color 0.2s;
+}
+.folder-card {
+  transition: transform 0.22s cubic-bezier(0.34,1.2,0.64,1),
+              box-shadow 0.22s ease, background 0.18s;
+}
+.fc-card:hover, .folder-card:hover { transform: translateY(-2px); }
+.fc-card:active:not(:has(.fc-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }
+.folder-card:active:not(:has(.fd-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }

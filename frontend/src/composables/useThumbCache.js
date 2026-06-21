@@ -4,7 +4,10 @@ const BASE    = import.meta.env.VITE_API_URL ?? '/api/v1'
 const cache   = new Map() // `${id}_${size}` → blobUrl
 const pending = new Map() // `${id}_${size}` → Promise<string|null>
 
-export const thumbLoadedIds = reactive(new Set())
+export const thumbLoadedIds   = reactive(new Set())
+// card blob 已渲染过的 id（模块级，session 内持久）：首次 @load 后写入，
+// 二次访问同一文件时 fc-loaded 直接就绪，跳过渐进动画直接显示
+export const cardBlobReadyIds = reactive(new Set())
 
 export function getCachedThumb(id, size = 'card') {
   const url = cache.get(`${id}_${size}`)
@@ -56,4 +59,5 @@ export function clearThumbCache(id) {
     if (url) { URL.revokeObjectURL(url); cache.delete(key) }
   }
   thumbLoadedIds.delete(id)
+  cardBlobReadyIds.delete(id)
 }

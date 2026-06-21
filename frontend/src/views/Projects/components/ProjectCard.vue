@@ -2,13 +2,13 @@
   <div
     class="proj-card"
     draggable="true"
-    :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.91), rgba(255,255,255,0.98)), ${project.color}` }"
+    :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
     @dragstart.stop="$emit('dragstart', $event)"
     @click="$emit('click')"
   >
     <div class="card-body">
       <div class="card-top">
-        <div class="proj-name">{{ project.name }}</div>
+        <div class="proj-name" :style="{ color: nameColor }">{{ project.name }}</div>
       </div>
       <div class="proj-meta">
         <span class="proj-client" :class="{ empty: !project.client }">
@@ -54,6 +54,14 @@ import { computed } from 'vue'
 
 const props = defineProps({ project: { type: Object, required: true } })
 defineEmits(['click', 'dragstart'])
+
+const nameColor = computed(() => {
+  const hex = props.project.color?.match(/#[0-9a-fA-F]{6}/)?.[0] ?? '#7b7fb2'
+  const r = Math.round(parseInt(hex.slice(1,3),16) * 0.40)
+  const g = Math.round(parseInt(hex.slice(3,5),16) * 0.40)
+  const b = Math.round(parseInt(hex.slice(5,7),16) * 0.40)
+  return `rgb(${r},${g},${b})`
+})
 
 
 const currentStageIndex = computed(() =>
@@ -110,10 +118,20 @@ const deadlineLabel = computed(() => {
               box-shadow 0.3s ease, background 0.25s ease-out;
   user-select: none;
 }
+.proj-card::after {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(to top, rgba(255,255,255,0.25), rgba(255,255,255,0.05));
+  opacity: 0;
+  transition: opacity 0.3s cubic-bezier(0.34,1.2,0.64,1);
+  pointer-events: none;
+}
 .proj-card:hover {
   transform: translateY(-2px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 18px rgba(80,90,110,0.13);
 }
+.proj-card:hover::after { opacity: 1; }
 .proj-card:active { transform: translateY(1px); opacity: 0.93; }
 
 
@@ -121,7 +139,7 @@ const deadlineLabel = computed(() => {
 .card-top { display: flex; align-items: flex-start; gap: 6px; }
 
 .proj-name {
-  font-size: 13px; font-weight: 600; color: var(--text-primary);
+  font-size: 13px; font-weight: 500; color: var(--text-primary);
   line-height: 1.35; flex: 1; overflow: hidden;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }

@@ -13,7 +13,7 @@
       >
         <div class="proj-main">
           <!-- 第一行：项目名 -->
-          <div class="proj-name">{{ p.name }}</div>
+          <div class="proj-name" :style="{ color: nameColor(p) }">{{ p.name }}</div>
           <!-- 第二行：客户(左) + 右侧元信息组 -->
           <div class="proj-row2">
             <span class="meta-client" :class="{ empty: !p.client }">
@@ -76,10 +76,16 @@ function stageProgress(p) {
   return Math.round((idx + 1) / p.stages.length * 100)
 }
 
-function accentColor(p) {
-  const m = p.color?.match(/#[0-9a-fA-F]{6}/)
-  return m ? m[0] : '#7b7fb2'
+function darkenHex(hex, amount) {
+  const h = hex?.match(/#[0-9a-fA-F]{6}/)?.[0] ?? '#7b7fb2'
+  const r = Math.round(parseInt(h.slice(1,3),16) * amount)
+  const g = Math.round(parseInt(h.slice(3,5),16) * amount)
+  const b = Math.round(parseInt(h.slice(5,7),16) * amount)
+  return `rgb(${r},${g},${b})`
 }
+
+function accentColor(p) { return darkenHex(p.color, 0.60) }
+function nameColor(p)   { return darkenHex(p.color, 0.40) }
 
 function isUrgent(p) {
   if (p.status === 'done' || !p.deadline) return false
@@ -100,34 +106,35 @@ function formatDate(str) {
 .project-panel {
   padding: 20px;
   display: flex; flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
 }
 
 .project-list {
-  flex: 1; min-height: 0;
   display: flex; flex-direction: column;
-  overflow-y: auto;
+  gap: 5px;
   padding: 0 4px;
   margin: 0 -4px;
 }
-.project-list::-webkit-scrollbar { width: 4px; }
-.project-list::-webkit-scrollbar-track { background: transparent; margin-top: 8px; margin-bottom: 8px; }
-.project-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 99px; }
 
 .project-row {
+  position: relative;
   display: flex; align-items: center;
-  padding: 16px 8px; border-bottom: 1px solid rgba(0,0,0,0.05);
-  cursor: pointer; transition: background 0.12s;
+  padding: 16px 8px;
+  cursor: pointer; transition: background 0.25s ease, box-shadow 0.25s ease;
   border-radius: 10px;
 }
-.project-row:hover { background: rgba(0,0,0,0.03); }
-.project-row:last-child { border-bottom: none; }
+.project-row + .project-row::before {
+  content: '';
+  position: absolute;
+  top: -3px; left: 8px; right: 8px;
+  height: 1px;
+  background: rgba(0,0,0,0.1);
+}
+.project-row:hover { background: rgba(255,255,255,0.65); box-shadow: 0 0 0 1px rgba(255,255,255,0.8), 0 2px 8px rgba(80,90,110,0.05), inset 0 1px 0 rgba(255,255,255,0.6); }
 
 .proj-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 
 .proj-name {
-  font-size: 14px; font-weight: 600;
+  font-size: 14px; font-weight: 500;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   padding-bottom: 2px; margin-bottom: -2px;
 }

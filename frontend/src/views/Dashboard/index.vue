@@ -76,7 +76,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  height: 100%;
+  min-height: 100%;
 }
 
 .stats-row {
@@ -89,10 +89,8 @@ onMounted(async () => {
 .mid-row {
   display: grid;
   grid-template-columns: 1fr 340px;
-  grid-template-rows: 1fr;
   gap: 18px;
   flex: 1;
-  min-height: 0;
 }
 
 @media (max-width: 960px) {

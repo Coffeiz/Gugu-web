@@ -33,6 +33,8 @@
             class="week-row"
             :data-wi="wi"
             :ref="el => setWeekRef(el, wi)"
+            @mousemove="onWeekMouseMove($event, week)"
+            @mouseleave="hoveredDateIso = null"
           >
             <div
               v-for="d in week" :key="d.key"
@@ -45,6 +47,7 @@
                 'is-weekend':  d.dow >= 5,
                 'is-holiday':  !d.other && hdayType(d.iso) === 'holiday',
                 'is-workday':  !d.other && hdayType(d.iso) === 'workday',
+                'cell-hovered': d.iso === hoveredDateIso,
               }"
               @click="!drag.active && (selectedDate = d.iso)"
             >
@@ -60,9 +63,9 @@
                 >
                   <div
                     v-for="ev in lay.visibleChips" :key="ev.id"
-                    class="event-chip"
+                    class="event-chip cal-chip"
                     :class="{ 'chip-proj': ev.isProject, 'chip-ev-click': ev.isUserEvent }"
-                    :style="{ background: ev.accent + '28', color: ev.accent, borderColor: ev.accent + '70', cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
+                    :style="{ background: ev.accent + '28', color: darkenHex(ev.accent), borderColor: ev.accent + '70', cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
                     @click.left.stop="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event, true))"
                     @contextmenu.prevent.stop="ev.isUserEvent && openEditForm(ev, $event, true)"
                     @mousedown.stop="ev.isProject ? startProjChipDrag(ev, $event) : (ev.isUserEvent && startEventDrag(ev, $event))"
@@ -74,7 +77,7 @@
                   </div>
                   <button
                     v-if="lay.moreCount > 0"
-                    class="chip-more-btn"
+                    class="chip-more-btn cal-chip"
                     @click.stop="showMore($event, d.iso, lay.moreItems)"
                   >+{{ lay.moreCount }} 更多</button>
                 </div>
@@ -85,8 +88,11 @@
             <div class="bars-layer">
               <template v-for="bar in weekBarsCapped(week, wi).bars" :key="bar.id">
                 <div
-                  class="project-bar"
-                  :class="{ 'bar-start': bar.startsHere, 'bar-end': bar.endsHere, 'bar-dragging': drag.active && drag.item?.id === bar.id }"
+                  class="project-bar cal-chip"
+                  :class="{ 'bar-start': bar.startsHere, 'bar-end': bar.endsHere, 'bar-dragging': drag.active && drag.item?.id === bar.id, 'bar-hovered': hoveredBarId === bar.id }"
+                  :data-bar-id="bar.id"
+                  @mouseenter="hoveredBarId = bar.id"
+                  @mouseleave="hoveredBarId = null"
                   @click.stop="openProject(bar)"
                   @mousedown.stop="startBarDrag(bar, $event)"
                   :style="{
@@ -95,7 +101,7 @@
                     top:   (HEADER_H + bar.row * BAR_H) + 'px',
                     background:  bar.accent + '28',
                     borderColor: bar.accent + '70',
-                    color:       bar.accent,
+                    color:       darkenHex(bar.accent),
                   }"
                 >
                   <div v-if="bar.startsHere" class="bar-rh bar-rh-left" @mousedown.stop.prevent="startBarResize(bar, 'start', $event)"></div>
@@ -130,10 +136,10 @@
           >
             <div class="sidebar-ev-bar" :style="{ background: ev.accent }"></div>
             <div class="sidebar-ev-body">
-              <div class="sidebar-ev-name">
-                {{ ev.name }}
-                <span v-if="!ev.isUserEvent" class="ev-type-badge ev-proj-badge">项目</span>
+              <div class="sidebar-ev-name" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">
+                <span v-if="!ev.isUserEvent" class="ev-type-badge ev-proj-badge" :style="{ color: darkenHex(ev.accent) }">项目</span>
                 <span v-else class="ev-type-badge ev-event-badge">{{ typeLabel(ev.type) }}</span>
+                {{ ev.name }}
               </div>
               <template v-if="ev.isUserEvent">
                 <div class="sidebar-ev-desc">
@@ -161,17 +167,17 @@
         <div class="sidebar-divider"></div>
 
         <div class="sidebar-section-title">近期节点</div>
-        <div v-for="ev in upcomingList" :key="ev.id" class="upcoming-item"
+        <div v-for="ev in upcomingList" :key="ev.id" class="upcoming-item cap-row"
              :class="{ 'upcoming-proj': ev.isProject, 'upcoming-ev': ev.isUserEvent }"
              :style="{ cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
              @click.left="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event))"
              @contextmenu.prevent="ev.isUserEvent && openEditForm(ev, $event)"
         >
-          <div class="upcoming-capsule"
+          <div class="cap-capsule"
                :style="{ background: hexAlpha(ev.accent, 0.1), borderColor: hexAlpha(ev.accent, 0.3) }">
-            <span class="cap-tag" :class="ev.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="ev.isProject ? { color: ev.accent } : {}">{{ ev.isProject ? '项目' : '活动' }}</span>
+            <span class="cap-tag" :class="ev.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">{{ ev.isProject ? '项目' : '活动' }}</span>
             <span v-if="ev.isProject" class="cap-sdot" :class="'cap-s-' + ev.status"></span>
-            <span class="cap-name" :style="{ color: ev.accent }">{{ ev.name }}</span>
+            <span class="cap-name" :style="{ color: darkenHex(ev.accent) }">{{ ev.name }}</span>
             <span class="cap-days" :class="{ urgent: ev.daysLeft <= 3 }">{{ ev.daysLabel }}</span>
           </div>
         </div>
@@ -188,9 +194,9 @@
         <div class="overflow-list">
           <div
             v-for="item in morePopup.items" :key="item.id"
-            class="overflow-item"
+            class="overflow-item cal-chip"
             :class="{ 'overflow-clickable': item.isProject || item.isUserEvent }"
-            :style="{ background: item.accent + '28', borderColor: item.accent + '70', color: item.accent, cursor: (item.isProject || item.isUserEvent) ? 'grab' : 'default' }"
+            :style="{ background: item.accent + '28', borderColor: item.accent + '70', color: darkenHex(item.accent), cursor: (item.isProject || item.isUserEvent) ? 'grab' : 'default' }"
             @click.stop="item.isProject ? (morePopup.open = false, showEditForm = false, openProject(item)) : (item.isUserEvent && openEditForm(item, $event, true))"
             @mousedown.stop="(item.isProject || item.isUserEvent) && startMoreItemDrag(item, $event)"
           >
@@ -338,6 +344,15 @@ const drag = reactive({
   item:       null,
   offsetDays: 0,      // proj-bar: days from startDate to where drag started
 })
+const hoveredBarId  = ref(null)
+const hoveredDateIso = ref(null)
+
+function onWeekMouseMove(e, week) {
+  const rect = e.currentTarget.getBoundingClientRect()
+  const col  = Math.floor((e.clientX - rect.left) / rect.width * 7)
+  hoveredDateIso.value = week[Math.max(0, Math.min(6, col))]?.iso ?? null
+}
+
 const dragOverIso = ref(null)
 
 const dragOverRange = computed(() => {
@@ -625,6 +640,12 @@ function hexAlpha(hex, a) {
   const g = parseInt(hex.slice(3,5),16)
   const b = parseInt(hex.slice(5,7),16)
   return `rgba(${r},${g},${b},${a})`
+}
+function darkenHex(hex, amount = 0.60) {
+  const r = Math.round(parseInt(hex.slice(1,3),16) * amount)
+  const g = Math.round(parseInt(hex.slice(3,5),16) * amount)
+  const b = Math.round(parseInt(hex.slice(5,7),16) * amount)
+  return `rgb(${r},${g},${b})`
 }
 function typeLabel(t) {
   return { deadline: '截止日', meeting: '会议', review: '审核', milestone: '节点', project: '进行中' }[t] ?? '活动'
@@ -1047,10 +1068,10 @@ async function saveEvent() {
   overflow: hidden;
 }
 .month-cell:last-child { border-right: none; }
-.month-cell:hover { background: rgba(123,127,178,0.06); }
+.month-cell.cell-hovered { background: rgba(123,127,178,0.06); }
 .month-cell.other-month { opacity: 0.3; }
 .month-cell.is-weekend { background: rgba(195,90,90,0.028); }
-.month-cell.is-weekend:hover { background: rgba(195,90,90,0.07); }
+.month-cell.is-weekend.cell-hovered { background: rgba(195,90,90,0.07); }
 .month-cell.is-today .cell-num { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: rgba(255,255,255,0.88) !important; font-weight: 700; border-radius: 6px; }
 .month-cell.is-selected { background: rgba(123,127,178,0.1); }
 .month-cell.is-selected.is-weekend { background: rgba(195,90,90,0.1); }
@@ -1071,27 +1092,23 @@ async function saveEvent() {
 
 .event-chip {
   height: 18px; box-sizing: border-box;
-  font-size: 10px; font-weight: 600;
+  font-size: 10px; font-weight: 500;
   padding: 0 7px; border-radius: 99px; border: 1px solid transparent;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   display: flex; align-items: center;
-  transition: filter 0.12s;
 }
 .event-chip.chip-proj,
 .event-chip.chip-ev-click { cursor: grab; }
-.event-chip.chip-proj:hover,
-.event-chip.chip-ev-click:hover { filter: brightness(1.08); }
 .chip-more-btn {
   height: 16px; box-sizing: border-box;
-  font-size: 10px; font-weight: 600;
+  font-size: 10px; font-weight: 500;
   padding: 0 7px; border-radius: 99px;
   border: 1px solid rgba(123,127,178,0.35);
-  background: rgba(123,127,178,0.1); color: var(--color-primary);
+  background: rgba(123,127,178,0.1); color: rgb(101,104,146);
   cursor: pointer; font-family: var(--font-sans);
-  white-space: nowrap; transition: background 0.12s;
+  white-space: nowrap;
   display: flex; align-items: center;
 }
-.chip-more-btn:hover { background: rgba(123,127,178,0.2); }
 
 /* 项目条层 */
 .bars-layer { position: absolute; inset: 0; pointer-events: none; }
@@ -1101,11 +1118,10 @@ async function saveEvent() {
   position: absolute; height: 16px;
   border: 1px solid transparent;
   display: flex; align-items: center;
-  padding: 0 6px; font-size: 10px; font-weight: 600;
+  padding: 0 6px; font-size: 10px; font-weight: 500;
   white-space: nowrap; overflow: hidden; box-sizing: border-box;
   pointer-events: auto; cursor: grab;
 }
-.project-bar:hover { filter: brightness(1.08); }
 .project-bar.bar-dragging { opacity: 0.6; }
 .project-bar.bar-start  { border-radius: 99px 0 0 99px; padding-left: 8px; }
 .project-bar.bar-end    { border-radius: 0 99px 99px 0; }
@@ -1123,7 +1139,7 @@ async function saveEvent() {
 }
 .bar-rh-left  { left: 0; }
 .bar-rh-right { right: 0; }
-.project-bar:hover .bar-rh { opacity: 1; }
+.project-bar.bar-hovered .bar-rh { opacity: 1; }
 .bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 
 .bar-proj-tag {
@@ -1172,7 +1188,7 @@ async function saveEvent() {
 }
 .ev-del-btn:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); transform: scale(1.1); }
 .sidebar-ev-bar { width: 3px; border-radius: 99px; align-self: stretch; flex-shrink: 0; min-height: 26px; }
-.sidebar-ev-name { font-size: 12px; font-weight: 600; color: var(--text-primary); line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
+.sidebar-ev-name { font-size: 12px; font-weight: 500; color: var(--text-primary); line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
 .ev-type-badge {
   display: inline-block; vertical-align: middle; margin-left: 4px;
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
@@ -1193,24 +1209,6 @@ async function saveEvent() {
 .sidebar-section-title { font-size: 10px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 10px; }
 .upcoming-item { display: flex; align-items: center; margin-bottom: 7px; }
 .upcoming-item:last-child { margin-bottom: 0; }
-.upcoming-capsule {
-  flex: 1; min-width: 0;
-  display: flex; align-items: center; gap: 5px;
-  padding: 4px 8px 4px 5px;
-  border-radius: 20px; border: 1px solid;
-  transition: filter 0.12s;
-}
-.upcoming-proj:hover .upcoming-capsule,
-.upcoming-ev:hover .upcoming-capsule { filter: brightness(1.08); }
-.cap-tag { flex-shrink: 0; font-size: 8px; font-weight: 700; letter-spacing: 0.04em; border-radius: 3px; padding: 0 4px; line-height: 13px; }
-.cap-tag-proj { background: rgba(255,255,255,0.55); }
-.cap-tag-ev   { background: rgba(210,175,40,0.28); color: #7a5c00; }
-.cap-sdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
-.cap-s-pending { background: #9e9fc4; }
-.cap-s-active  { background: #7b7fb2; }
-.cap-name { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; padding-bottom: 2px; margin-bottom: -2px; }
-.cap-days { font-size: 10px; font-weight: 700; color: var(--text-secondary); flex-shrink: 0; white-space: nowrap; margin-left: 4px; }
-.cap-days.urgent { color: var(--color-warning); }
 </style>
 
 <style>
@@ -1223,15 +1221,15 @@ async function saveEvent() {
   padding: 12px 14px;
   display: flex; flex-direction: column; gap: 8px;
 }
-.overflow-popup-title { font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.06em; }
+.overflow-popup-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); line-height: 1; padding-bottom: 2px; margin-bottom: -2px; }
 .overflow-list { display: flex; flex-direction: column; gap: 4px; }
 .overflow-item {
   display: flex; align-items: center; gap: 4px;
-  height: 20px; padding: 0 8px; border-radius: 99px;
-  border: 1px solid transparent; font-size: 10px; font-weight: 600;
-  white-space: nowrap; overflow: hidden; transition: filter 0.12s;
+  height: 22px; padding: 0 8px; border-radius: 99px;
+  border: 1px solid transparent; font-size: 10px; font-weight: 500;
+  white-space: nowrap; overflow: hidden;
 }
-.overflow-item.overflow-clickable:hover { filter: brightness(1.08); }
+.overflow-item:not(.overflow-clickable) { pointer-events: none; }
 .overflow-tag {
   font-size: 8px; font-weight: 700; letter-spacing: 0.04em;
   background: rgba(255,255,255,0.5);

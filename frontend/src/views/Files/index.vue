@@ -161,13 +161,13 @@
               <span class="lr-text" :class="{ 'days-warn': daysLeft(f.deletedAt) <= 3 }">{{ daysLeft(f.deletedAt) }} 天</span>
               <span class="lr-text">{{ f.size }}</span>
               <span class="lr-actions">
-                <button class="lr-action-btn trash-restore-btn" title="恢复" @click.stop="restoreFile(f)">
+                <button class="file-list-btn trash-restore-btn" title="恢复" @click.stop="restoreFile(f)">
                   <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/>
                   </svg>
                   恢复
                 </button>
-                <button class="lr-action-btn lr-del-btn" title="永久删除" @click.stop="hardDeleteFile(f)">
+                <button class="file-list-btn del" title="永久删除" @click.stop="hardDeleteFile(f)">
                   <PhTrash :size="11" weight="bold" />
                 </button>
               </span>
@@ -221,13 +221,15 @@
                 </div>
               </Transition>
               <div v-if="f.type === 'folder' && !inSelectionMode" class="fd-hover-actions">
-                <button class="fc-action-btn fc-rename-btn" title="重命名" @click.stop="startRenameFolder(f)">
-                  <PhPencilSimple :size="11" weight="bold" />
+                <button class="file-card-btn" :title="renamingFolderKey === f.folderId ? '确认' : '重命名'"
+                  @mousedown.prevent @click.stop="renamingFolderKey === f.folderId ? commitRename() : startRenameFolder(f)">
+                  <PhCheck v-if="renamingFolderKey === f.folderId" :size="11" weight="bold" />
+                  <PhPencilSimple v-else :size="11" weight="bold" />
                 </button>
-                <button class="fc-action-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)">
+                <button class="file-card-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)">
                   <PhDownloadSimple :size="11" weight="bold" />
                 </button>
-                <button class="fc-action-btn fc-del-btn" title="删除" @click.stop="deleteFolder(f)">
+                <button class="file-card-btn del" title="删除" @click.stop="deleteFolder(f)">
                   <PhTrash :size="11" weight="bold" />
                 </button>
               </div>
@@ -254,9 +256,9 @@
                   decoding="async" draggable="false" alt="" />
                 <!-- 全尺寸层：首次加载淡入，已加载过直接显示 -->
                 <img class="fc-thumb fc-thumb-full" v-lazy-src="{ id: f.id, size: 'card' }"
-                  :class="{ 'fc-loaded': localCardLoaded.has(f.id) }"
+                  :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }"
                   decoding="async" draggable="false" alt=""
-                  @load="localCardLoaded.add(f.id)"
+                  @load="cardBlobReadyIds.add(f.id)"
                   @error="$event.target.style.display='none'" />
                 <div class="fc-thumb-fade"></div>
               </div>
@@ -282,13 +284,15 @@
                 </div>
               </Transition>
               <div v-if="!inSelectionMode" class="fc-hover-actions">
-                <button class="fc-action-btn fc-rename-btn" title="重命名" @click.stop="startRenameFile(f)">
-                  <PhPencilSimple :size="11" weight="bold" />
+                <button class="file-card-btn" :title="renamingFileId === f.id ? '确认' : '重命名'"
+                  @mousedown.prevent @click.stop="renamingFileId === f.id ? commitRename() : startRenameFile(f)">
+                  <PhCheck v-if="renamingFileId === f.id" :size="11" weight="bold" />
+                  <PhPencilSimple v-else :size="11" weight="bold" />
                 </button>
-                <button class="fc-action-btn" title="下载" @click.stop="downloadFile(f)">
+                <button class="file-card-btn" title="下载" @click.stop="downloadFile(f)">
                   <PhDownloadSimple :size="11" weight="bold" />
                 </button>
-                <button class="fc-action-btn fc-del-btn" title="移到回收站" @click.stop="deleteSingleFile(f)">
+                <button class="file-card-btn del" title="移到回收站" @click.stop="deleteSingleFile(f)">
                   <PhTrash :size="11" weight="bold" />
                 </button>
               </div>
@@ -377,13 +381,15 @@
                   </div>
                 </Transition>
                 <template v-if="f.type === 'folder' && !inSelectionMode">
-                  <button class="lr-action-btn lr-rename-btn" title="重命名" @click.stop="startRenameFolder(f)">
-                    <PhPencilSimple :size="11" weight="bold" />
+                  <button class="file-list-btn" :title="renamingFolderKey === f.folderId ? '确认' : '重命名'"
+                    @mousedown.prevent @click.stop="renamingFolderKey === f.folderId ? commitRename() : startRenameFolder(f)">
+                    <PhCheck v-if="renamingFolderKey === f.folderId" :size="11" weight="bold" />
+                    <PhPencilSimple v-else :size="11" weight="bold" />
                   </button>
-                  <button class="lr-action-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)">
+                  <button class="file-list-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)">
                     <PhDownloadSimple :size="11" weight="bold" />
                   </button>
-                  <button class="lr-action-btn lr-del-btn" title="删除" @click.stop="deleteFolder(f)">
+                  <button class="file-list-btn del" title="删除" @click.stop="deleteFolder(f)">
                     <PhTrash :size="11" weight="bold" />
                   </button>
                 </template>
@@ -431,13 +437,15 @@
                   </div>
                 </Transition>
                 <template v-if="!inSelectionMode">
-                  <button class="lr-action-btn lr-rename-btn" title="重命名" @click.stop="startRenameFile(f)">
-                    <PhPencilSimple :size="11" weight="bold" />
+                  <button class="file-list-btn" :title="renamingFileId === f.id ? '确认' : '重命名'"
+                    @mousedown.prevent @click.stop="renamingFileId === f.id ? commitRename() : startRenameFile(f)">
+                    <PhCheck v-if="renamingFileId === f.id" :size="11" weight="bold" />
+                    <PhPencilSimple v-else :size="11" weight="bold" />
                   </button>
-                  <button class="lr-action-btn" title="下载" @click.stop="downloadFile(f)">
+                  <button class="file-list-btn" title="下载" @click.stop="downloadFile(f)">
                     <PhDownloadSimple :size="11" weight="bold" />
                   </button>
-                  <button class="lr-action-btn lr-del-btn" title="移到回收站" @click.stop="deleteSingleFile(f)">
+                  <button class="file-list-btn del" title="移到回收站" @click.stop="deleteSingleFile(f)">
                     <PhTrash :size="11" weight="bold" />
                   </button>
                 </template>
@@ -606,14 +614,14 @@ import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { getThumb, getCachedThumb, preloadTinyThumbs } from '@/composables/useThumbCache'
+import { getThumb, getCachedThumb, preloadTinyThumbs, cardBlobReadyIds } from '@/composables/useThumbCache'
 import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
   PhBrowser, PhImage, PhFilmStrip, PhMusicNote, PhTable,
   PhPresentationChart, PhArchive, PhCode, PhFileText,
   PhArrowLeft, PhArrowRight, PhSortAscending, PhSquaresFour, PhList,
-  PhCheckSquare, PhFolderPlus, PhUploadSimple, PhPencilSimple,
-  PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX, PhCheck,
+  PhCheckSquare, PhCheck, PhFolderPlus, PhUploadSimple, PhPencilSimple,
+  PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX,
   PhInfo, PhWarningCircle, PhDotsThree,
 } from '@phosphor-icons/vue'
 
@@ -621,7 +629,7 @@ const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
 
 // ── 视图状态 ──
-const localCardLoaded = reactive(new Set()) // 组件级，每次进入页面重置，保证渐进动画每次都播
+// 使用模块级 cardBlobReadyIds：首次 @load 后写入，session 内二次访问直接显示跳过动画
 const viewMode    = ref('grid')
 const loading     = ref(false)
 const dragCounter = ref(0)
@@ -2028,25 +2036,15 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 
 /* ── 文件夹卡片 ── */
 .folder-card {
-  position: relative;
-  background: rgba(255,255,255,0.72);
   background: color-mix(in srgb, var(--fd-color, #8888a0) 6%, rgba(255,255,255,0.82));
-  border: 1px solid rgba(255,255,255,0.9);
-  border-color: color-mix(in srgb, var(--fd-color, #8888a0) 14%, rgba(255,255,255,0.92));
+  border: 1px solid color-mix(in srgb, var(--fd-color, #8888a0) 14%, rgba(255,255,255,0.92));
   border-radius: 14px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
-  cursor: pointer;
-  display: flex; flex-direction: column;
-  min-height: 122px; overflow: hidden;
-  transition: transform 0.22s cubic-bezier(0.34,1.2,0.64,1),
-              box-shadow 0.22s ease, background 0.18s;
-  user-select: none;
+  min-height: 122px;
 }
 .folder-card:hover {
-  transform: translateY(-2px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
 }
-.folder-card:active { transform: translateY(0); }
 
 .fd-icon-area {
   height: 90px;
@@ -2080,20 +2078,13 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 
 /* ── 文件卡片 ── */
 .fc-card {
-  position: relative;
   background: rgba(255,255,255,0.72);
   border: 1px solid rgba(255,255,255,0.9);
   border-radius: 14px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
-  display: flex; flex-direction: column;
-  min-height: 122px; overflow: hidden;
-  cursor: pointer;
-  will-change: transform;
-  transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
-              box-shadow 0.25s ease, background 0.2s, border-color 0.2s;
+  min-height: 122px;
 }
 .fc-card:hover {
-  transform: translateY(-2px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
   background: rgba(255,255,255,0.86);
 }
@@ -2222,18 +2213,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 .fc-card:hover .fc-hover-actions { opacity: 1; }
 
-.fc-action-btn {
-  position: relative;
-  width: 20px; height: 20px; border-radius: 5px; border: none;
-  background: rgba(255,255,255,0.78); color: var(--text-secondary);
-  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.15s, color 0.15s;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
-.fc-action-btn::after { content: ''; position: absolute; inset: -2px; }
-.fc-action-btn:hover { background: white; color: var(--text-primary); }
-.fc-del-btn:hover { color: #e05555; }
 
 /* ── 重命名内联输入 ── */
 .rename-sizer {
@@ -2246,11 +2225,11 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 .rename-input, .rename-input-inline {
   position: absolute; inset: 0; width: 100%;
-  border: none; outline: none;
-  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-  border-radius: 5px;
+  outline: none;
+  background: rgba(255,255,255,0.9); border: 1px solid rgba(123,127,178,0.4);
+  border-radius: 4px;
   font: inherit; color: inherit;
-  padding: 0 5px;
+  padding: 0 4px;
 }
 
 /* ── 拖动状态 ── */
@@ -2375,15 +2354,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .lr-text { font-size: 11px; color: var(--text-secondary); }
 
 .lr-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
-.lr-action-btn {
-  width: 24px; height: 24px; border-radius: 6px; border: none;
-  background: none; color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s;
-}
-.list-row:hover .lr-action-btn { opacity: 1; }
-.lr-action-btn:hover { background: rgba(123,127,178,0.1); color: var(--color-primary); }
-.lr-del-btn:hover { background: rgba(200,90,90,0.1); color: #c85a5a; }
+.list-row:hover .file-list-btn { opacity: 1; }
 
 .list-empty {
   display: flex; flex-direction: column; align-items: center;

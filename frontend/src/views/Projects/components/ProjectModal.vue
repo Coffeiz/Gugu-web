@@ -267,13 +267,15 @@
                     </svg>
                   </div>
                   <div class="fd-hover-actions" v-show="!pmInSelectionMode">
-                    <button class="fd-action-btn" title="重命名" @click.stop="startRenameFolder(folder)">
-                      <PhPencilSimple :size="10" weight="bold" />
+                    <button class="file-card-btn" :title="renamingFolderId === folder.id ? '确认' : '重命名'"
+                      @mousedown.prevent @click.stop="renamingFolderId === folder.id ? commitFolderRename() : startRenameFolder(folder)">
+                      <PhCheck v-if="renamingFolderId === folder.id" :size="10" weight="bold" />
+                      <PhPencilSimple v-else :size="10" weight="bold" />
                     </button>
-                    <button class="fd-action-btn" title="下载为 ZIP" @click.stop="downloadFolderZip(folder)">
+                    <button class="file-card-btn" title="下载为 ZIP" @click.stop="downloadFolderZip(folder)">
                       <PhDownloadSimple :size="10" weight="bold" />
                     </button>
-                    <button class="fd-action-btn fd-del-btn" title="删除" @click.stop="deleteFolderCard(folder)">
+                    <button class="file-card-btn del" title="删除" @click.stop="deleteFolderCard(folder)">
                       <PhTrash :size="10" weight="bold" />
                     </button>
                   </div>
@@ -306,9 +308,13 @@
                   </Transition>
                   <span class="fc-ext-badge" :style="{ color: fileIconColor(file.ext), background: fileIconColor(file.ext) + '18' }">{{ file.ext }}</span>
                   <div class="fc-hover-actions" v-show="!pmInSelectionMode">
-                    <button class="fc-act-btn" title="重命名" @click.stop="startRename(file)"><PhPencilSimple :size="10" weight="bold" /></button>
-                    <button class="fc-act-btn" title="下载" @click.stop="downloadFile(file)"><PhDownloadSimple :size="10" weight="bold" /></button>
-                    <button class="fc-act-btn del" title="删除" @click.stop="deleteFile(file)"><PhTrash :size="10" weight="bold" /></button>
+                    <button class="file-card-btn" :title="renamingFileId === file.id ? '确认' : '重命名'"
+                      @mousedown.prevent @click.stop="renamingFileId === file.id ? commitRename() : startRename(file)">
+                      <PhCheck v-if="renamingFileId === file.id" :size="10" weight="bold" />
+                      <PhPencilSimple v-else :size="10" weight="bold" />
+                    </button>
+                    <button class="file-card-btn" title="下载" @click.stop="downloadFile(file)"><PhDownloadSimple :size="10" weight="bold" /></button>
+                    <button class="file-card-btn del" title="删除" @click.stop="deleteFile(file)"><PhTrash :size="10" weight="bold" /></button>
                   </div>
                   <div v-if="isPmImageExt(file.ext)" class="fc-thumb-area">
                     <img class="fc-thumb fc-thumb-tiny" v-lazy-src="{ id: file.id, size: 'tiny' }" decoding="async" draggable="false" alt="" />
@@ -456,9 +462,13 @@
                       </div>
                     </Transition>
                     <template v-if="!pmInSelectionMode">
-                      <button class="lr-action-btn" title="重命名" @click.stop="startRenameFolder(folder)"><PhPencilSimple :size="11" weight="bold" /></button>
-                      <button class="lr-action-btn" title="下载为 ZIP" @click.stop="downloadFolderZip(folder)"><PhDownloadSimple :size="11" weight="bold" /></button>
-                      <button class="lr-action-btn lr-del-btn" title="删除" @click.stop="deleteFolderCard(folder)"><PhTrash :size="11" weight="bold" /></button>
+                      <button class="file-list-btn" :title="renamingFolderId === folder.id ? '确认' : '重命名'"
+                        @mousedown.prevent @click.stop="renamingFolderId === folder.id ? commitFolderRename() : startRenameFolder(folder)">
+                        <PhCheck v-if="renamingFolderId === folder.id" :size="11" weight="bold" />
+                        <PhPencilSimple v-else :size="11" weight="bold" />
+                      </button>
+                      <button class="file-list-btn" title="下载为 ZIP" @click.stop="downloadFolderZip(folder)"><PhDownloadSimple :size="11" weight="bold" /></button>
+                      <button class="file-list-btn del" title="删除" @click.stop="deleteFolderCard(folder)"><PhTrash :size="11" weight="bold" /></button>
                     </template>
                   </span>
                 </div>
@@ -493,9 +503,13 @@
                       </div>
                     </Transition>
                     <template v-if="!pmInSelectionMode">
-                      <button class="lr-action-btn" title="重命名" @click.stop="startRename(file)"><PhPencilSimple :size="11" weight="bold" /></button>
-                      <button class="lr-action-btn" title="下载" @click.stop="downloadFile(file)"><PhDownloadSimple :size="11" weight="bold" /></button>
-                      <button class="lr-action-btn lr-del-btn" title="删除" @click.stop="deleteFile(file)"><PhTrash :size="11" weight="bold" /></button>
+                      <button class="file-list-btn" :title="renamingFileId === file.id ? '确认' : '重命名'"
+                        @mousedown.prevent @click.stop="renamingFileId === file.id ? commitRename() : startRename(file)">
+                        <PhCheck v-if="renamingFileId === file.id" :size="11" weight="bold" />
+                        <PhPencilSimple v-else :size="11" weight="bold" />
+                      </button>
+                      <button class="file-list-btn" title="下载" @click.stop="downloadFile(file)"><PhDownloadSimple :size="11" weight="bold" /></button>
+                      <button class="file-list-btn del" title="删除" @click.stop="deleteFile(file)"><PhTrash :size="11" weight="bold" /></button>
                     </template>
                   </span>
                 </div>
@@ -1135,7 +1149,10 @@ const renameText     = ref('')
 function startRename(file) {
   renamingFileId.value = file.id
   renameText.value     = file.displayName
-  nextTick(() => document.querySelector('.rename-input-inline')?.focus())
+  nextTick(() => {
+    const el = document.querySelector('.rename-input-inline')
+    el?.focus(); el?.select()
+  })
 }
 function cancelRename() {
   renamingFileId.value = null
@@ -1257,7 +1274,10 @@ const folderRenameText  = ref('')
 function startRenameFolder(folder) {
   renamingFolderId.value = folder.id
   folderRenameText.value = folder.name
-  nextTick(() => document.querySelector('.rename-input-inline')?.focus())
+  nextTick(() => {
+    const el = document.querySelector('.rename-input-inline')
+    el?.focus(); el?.select()
+  })
 }
 function cancelFolderRename() {
   renamingFolderId.value = null
@@ -2023,15 +2043,12 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 
 /* 文件夹卡片 */
 .folder-card {
-  position: relative; min-height: 84px; overflow: hidden; border-radius: 10px;
+  min-height: 84px; border-radius: 10px;
   background: color-mix(in srgb, var(--fd-color) 6%, rgba(255,255,255,0.82));
   border: 1px solid color-mix(in srgb, var(--fd-color) 14%, rgba(255,255,255,0.92));
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 4px rgba(80,90,110,0.05);
-  cursor: pointer; display: flex; flex-direction: column;
-  transition: transform 0.22s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.22s;
 }
 .folder-card:hover {
-  transform: translateY(-2px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 5px 14px rgba(80,90,110,0.12);
 }
 .fd-icon-area { flex: 1; overflow: visible; display: flex; align-items: center; justify-content: center; }
@@ -2050,29 +2067,18 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s;
 }
 .folder-card:hover .fd-hover-actions { opacity: 1; }
-.fd-action-btn {
-  position: relative;
-  width: 17px; height: 17px; border-radius: 4px; border: none;
-  background: rgba(255,255,255,0.78); backdrop-filter: blur(4px);
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  color: var(--text-secondary); transition: background 0.15s, color 0.15s;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
-.fd-action-btn::after { content: ''; position: absolute; inset: -1px; }
-.fd-action-btn:hover { background: white; color: var(--text-primary); }
-.fd-del-btn:hover { color: #e05555; }
+/* ProjectModal 卡片较小，覆盖全局默认尺寸 */
+.file-card-btn { width: 17px; height: 17px; border-radius: 4px; }
+.file-card-btn::after { inset: -1px; }
 
 /* 文件卡片 */
 .fc-card {
-  position: relative; min-height: 84px; overflow: hidden; border-radius: 10px;
+  min-height: 84px; border-radius: 10px;
   background: rgba(255,255,255,0.68);
   border: 1px solid rgba(255,255,255,0.85);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 4px rgba(80,90,110,0.05);
-  cursor: pointer; display: flex; flex-direction: column;
-  transition: transform 0.22s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.22s;
 }
 .fc-card:hover {
-  transform: translateY(-2px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 5px 14px rgba(80,90,110,0.12);
 }
 .fc-ext-badge {
@@ -2191,17 +2197,6 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* 卡片操作按钮（文件卡） */
 .fc-hover-actions { position: absolute; top: 5px; right: 5px; z-index: 3; display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s; }
 .fc-card:hover .fc-hover-actions { opacity: 1; }
-.fc-act-btn {
-  position: relative;
-  width: 17px; height: 17px; border-radius: 4px; border: none;
-  background: rgba(255,255,255,0.78); backdrop-filter: blur(4px);
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  color: var(--text-secondary); transition: background 0.15s, color 0.15s;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
-.fc-act-btn::after { content: ''; position: absolute; inset: -1px; }
-.fc-act-btn:hover { background: white; color: var(--text-primary); }
-.fc-act-btn.del:hover { color: #e05555; }
 
 /* ── 幽灵上传卡片 ── */
 .fc-ghost {
@@ -2373,15 +2368,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 }
 .lr-text { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
 .lr-actions { display: flex; gap: 2px; align-items: center; justify-content: flex-end; position: relative; }
-.lr-action-btn {
-  width: 24px; height: 24px; border-radius: 6px; border: none;
-  background: none; color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s;
-}
-.list-row:hover .lr-action-btn { opacity: 1; }
-.lr-action-btn:hover { background: rgba(123,127,178,0.1); color: var(--color-primary); }
-.lr-del-btn:hover { background: rgba(200,90,90,0.1); color: #c85a5a; }
+.list-row:hover .file-list-btn { opacity: 1; }
 
 /* 多选勾选框 */
 .sel-checkbox {
@@ -2446,9 +2433,9 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 }
 .rename-input-inline {
   position: absolute; inset: 0; width: 100%;
-  border: none; outline: none;
-  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-  border-radius: 4px; padding: 0 5px;
+  outline: none;
+  background: rgba(255,255,255,0.9); border: 1px solid rgba(123,127,178,0.4);
+  border-radius: 4px; padding: 0 4px;
   font: inherit; color: inherit;
 }
 
