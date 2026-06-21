@@ -250,13 +250,13 @@
               <span class="fc-ext-badge">{{ f.ext }}</span>
               <div v-if="isImageExt(f.ext)" class="fc-thumb-area">
                 <!-- 模糊占位层：20×20 tiny，懒加载至视口附近再触发 -->
-                <img class="fc-thumb fc-thumb-tiny" v-lazy-src="thumbUrl(f.id, 'tiny')"
+                <img class="fc-thumb fc-thumb-tiny" v-lazy-src="{ id: f.id, size: 'tiny' }"
                   decoding="async" draggable="false" alt="" />
                 <!-- 全尺寸层：首次加载淡入，已加载过直接显示 -->
-                <img class="fc-thumb fc-thumb-full" v-lazy-src="thumbUrl(f.id, 'card')"
-                  :class="{ 'fc-loaded': loadedThumbs.has(f.id) }"
+                <img class="fc-thumb fc-thumb-full" v-lazy-src="{ id: f.id, size: 'card' }"
+                  :class="{ 'fc-loaded': thumbLoadedIds.has(f.id) }"
                   decoding="async" draggable="false" alt=""
-                  @load="loadedThumbs.add(f.id)"
+                  @load="thumbLoadedIds.add(f.id)"
                   @error="$event.target.style.display='none'" />
                 <div class="fc-thumb-fade"></div>
               </div>
@@ -606,7 +606,7 @@ import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { getToken } from '@/services/api'
+import { getThumb, getCachedThumb, thumbLoadedIds, preloadTinyThumbs } from '@/composables/useThumbCache'
 import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
   PhBrowser, PhImage, PhFilmStrip, PhMusicNote, PhTable,
@@ -820,6 +820,7 @@ const sortedContents = computed(() => {
 
 // ── 内容 ──
 const contents = ref({ folders: [], files: [] })
+watch(() => contents.value.files, files => { if (files?.length) preloadTinyThumbs(files) })
 
 function extractColor(colorStr) {
   if (!colorStr) return null
@@ -942,6 +943,12 @@ function loadContents() {
 }
 
 onMounted(async () => {
+  // 热缓存：同步初始化，避免 await 微任务暂停导致空帧
+  if (cacheStore.loaded && projectStore.projects.length > 0) {
+    restoreNav()
+    loadContents()
+    return
+  }
   await Promise.all([
     projectStore.projects.length === 0 ? projectStore.fetchProjects?.() : Promise.resolve(),
     cacheStore.loaded ? Promise.resolve() : cacheStore.load(),
@@ -1554,32 +1561,30 @@ function fileExtCategory(ext) {
 
 const _IMAGE_EXTS  = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
 const isImageExt   = (ext) => _IMAGE_EXTS.has((ext || '').toLowerCase())
-const thumbUrl     = (id, size = '') =>
-  `/api/v1/files/${id}/thumb?token=${getToken()}${size ? `&size=${size}` : ''}`
-const loadedThumbs = reactive(new Set())
 
-// IntersectionObserver 懒加载指令：只在进入视口附近才设置 src，避免同时发出大量请求
+// IntersectionObserver 懒加载指令：进入视口后用 getThumb 拿 blobUrl，命中缓存则直接设置
 const vLazySrc = {
-  mounted(el, { value }) {
-    if (!value) return
+  mounted(el, { value: { id, size } }) {
+    if (!id) return
+    const cached = getCachedThumb(id, size)
+    if (cached) { el.src = cached; return }
     const obs = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting) return
-      el.src = value
-      obs.disconnect()
-      el._lazySrcObs = null
+      obs.disconnect(); el._lazySrcObs = null
+      getThumb(id, size).then(url => { if (url) el.src = url })
     }, { rootMargin: '250px' })
     obs.observe(el)
     el._lazySrcObs = obs
   },
-  updated(el, { value, oldValue }) {
-    if (value === oldValue) return
+  updated(el, { value: { id, size }, oldValue }) {
+    if (id === oldValue?.id && size === oldValue?.size) return
     el._lazySrcObs?.disconnect()
-    if (!value || el.src === value) return
+    const cached = getCachedThumb(id, size)
+    if (cached) { el.src = cached; return }
     const obs = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting) return
-      el.src = value
-      obs.disconnect()
-      el._lazySrcObs = null
+      obs.disconnect(); el._lazySrcObs = null
+      getThumb(id, size).then(url => { if (url) el.src = url })
     }, { rootMargin: '250px' })
     obs.observe(el)
     el._lazySrcObs = obs
@@ -2067,6 +2072,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   display: flex; flex-direction: column;
   min-height: 122px; overflow: hidden;
   cursor: pointer;
+  will-change: transform;
   transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
               box-shadow 0.25s ease, background 0.2s, border-color 0.2s;
 }

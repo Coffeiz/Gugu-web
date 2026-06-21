@@ -30,7 +30,7 @@ defineProps({ to: String, icon: Object })
 .nav-item.active {
   background: rgba(255,255,255,0.38);
   color: var(--color-primary);
-  font-weight: 600;
+  font-weight: 700;
   border-color: rgba(255,255,255,0.62);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
 }

@@ -1,3 +1,4 @@
+import { computed } from 'vue'
 import { usePreferencesStore } from '@/stores/preferences'
 
 const DEFAULT_TEMPLATES = [
@@ -9,26 +10,22 @@ const DEFAULT_TEMPLATES = [
 export function useStageTemplates() {
   const prefs = usePreferencesStore()
 
-  const templates = prefs.stageTemplates.length
-    ? prefs.stageTemplates
-    : DEFAULT_TEMPLATES
+  const templates = computed(() =>
+    prefs.stageTemplates.length ? prefs.stageTemplates : DEFAULT_TEMPLATES
+  )
 
-  // 返回响应式引用（直接用 store 的 ref）
-  const templatesRef = {
-    get value() {
-      return prefs.stageTemplates.length ? prefs.stageTemplates : DEFAULT_TEMPLATES
-    }
+  function _current() {
+    return prefs.stageTemplates.length ? [...prefs.stageTemplates] : [...DEFAULT_TEMPLATES]
   }
 
   function applyTemplate(id) {
-    const list = prefs.stageTemplates.length ? prefs.stageTemplates : DEFAULT_TEMPLATES
-    return list.find(t => t.id === id)?.stages ?? null
+    return templates.value.find(t => t.id === id)?.stages ?? null
   }
 
   async function addTemplate(name, stages) {
     const trimmed = name.trim()
     if (!trimmed || !stages.length) return false
-    const current = prefs.stageTemplates.length ? [...prefs.stageTemplates] : [...DEFAULT_TEMPLATES]
+    const current = _current()
     const existing = current.find(t => t.name === trimmed)
     if (existing) {
       existing.stages = [...stages]
@@ -40,19 +37,14 @@ export function useStageTemplates() {
   }
 
   async function removeTemplate(id) {
-    const current = prefs.stageTemplates.length ? [...prefs.stageTemplates] : [...DEFAULT_TEMPLATES]
-    const filtered = current.filter(t => t.id !== id)
-    await prefs.saveTemplates(filtered)
+    await prefs.saveTemplates(_current().filter(t => t.id !== id))
   }
 
   async function renameTemplate(id, name) {
-    const current = prefs.stageTemplates.length ? [...prefs.stageTemplates] : [...DEFAULT_TEMPLATES]
+    const current = _current()
     const t = current.find(t => t.id === id)
-    if (t) {
-      t.name = name.trim()
-      await prefs.saveTemplates(current)
-    }
+    if (t) { t.name = name.trim(); await prefs.saveTemplates(current) }
   }
 
-  return { templates: templatesRef, applyTemplate, addTemplate, removeTemplate, renameTemplate }
+  return { templates, applyTemplate, addTemplate, removeTemplate, renameTemplate }
 }

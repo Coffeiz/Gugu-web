@@ -311,11 +311,11 @@
                     <button class="fc-act-btn del" title="删除" @click.stop="deleteFile(file)"><PhTrash :size="10" weight="bold" /></button>
                   </div>
                   <div v-if="isPmImageExt(file.ext)" class="fc-thumb-area">
-                    <img class="fc-thumb fc-thumb-tiny" v-lazy-src="pmThumbUrl(file.id, 'tiny')" decoding="async" draggable="false" alt="" />
-                    <img class="fc-thumb fc-thumb-full" v-lazy-src="pmThumbUrl(file.id, 'card')"
-                      :class="{ 'fc-loaded': pmLoadedThumbs.has(file.id) }"
+                    <img class="fc-thumb fc-thumb-tiny" v-lazy-src="{ id: file.id, size: 'tiny' }" decoding="async" draggable="false" alt="" />
+                    <img class="fc-thumb fc-thumb-full" v-lazy-src="{ id: file.id, size: 'card' }"
+                      :class="{ 'fc-loaded': thumbLoadedIds.has(file.id) }"
                       decoding="async" draggable="false" alt=""
-                      @load="pmLoadedThumbs.add(file.id)"
+                      @load="thumbLoadedIds.add(file.id)"
                       @error="$event.target.style.display='none'" />
                     <div class="fc-thumb-fade"></div>
                   </div>
@@ -637,7 +637,9 @@
 <script setup>
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
-import { filesApi, foldersApi, uploadWithProgress, getToken } from '@/services/api'
+import { useFilesCacheStore } from '@/stores/filesCache'
+import { filesApi, foldersApi, uploadWithProgress } from '@/services/api'
+import { getThumb, getCachedThumb, thumbLoadedIds, preloadTinyThumbs } from '@/composables/useThumbCache'
 import DatePicker from '@/components/common/DatePicker.vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
@@ -657,6 +659,7 @@ const emit = defineEmits(['close'])
 function onModalClose() { emit('close'); pmSortMenuOpen.value = false }
 
 const projectStore     = useProjectStore()
+const fileCacheStore   = useFilesCacheStore()
 const editingStage     = ref(null)
 const stageInputRef    = ref(null)
 const stageFlowRef     = ref(null)
@@ -732,6 +735,7 @@ const currentFiles = computed(() => {
   const folderId = folderStack.value[folderStack.value.length - 1].id
   return folderFilesMap.value[folderId] ?? []
 })
+watch(currentFiles, files => { if (files?.length) preloadTinyThumbs(files) })
 
 // 兼容旧模板引用（进入文件夹后的文件）
 const currentFolder = computed(() =>
@@ -1207,26 +1211,30 @@ function fileIconColor(ext) {
   return map[cat] ?? '#8888a8'
 }
 
-const _PM_IMG_EXTS  = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','heic','heif'])
-const isPmImageExt  = (ext) => _PM_IMG_EXTS.has((ext || '').toLowerCase())
-const pmThumbUrl    = (id, size) => `/api/v1/files/${id}/thumb?token=${getToken()}&size=${size}`
-const pmLoadedThumbs = reactive(new Set())
+const _PM_IMG_EXTS   = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','heic','heif'])
+const isPmImageExt   = (ext) => _PM_IMG_EXTS.has((ext || '').toLowerCase())
 
 const vLazySrc = {
-  mounted(el, { value }) {
-    if (!value) return
+  mounted(el, { value: { id, size } }) {
+    if (!id) return
+    const cached = getCachedThumb(id, size)
+    if (cached) { el.src = cached; return }
     const obs = new IntersectionObserver(([e]) => {
       if (!e.isIntersecting) return
-      el.src = value; obs.disconnect(); el._lazySrcObs = null
+      obs.disconnect(); el._lazySrcObs = null
+      getThumb(id, size).then(url => { if (url) el.src = url })
     }, { rootMargin: '200px' })
     obs.observe(el); el._lazySrcObs = obs
   },
-  updated(el, { value, oldValue }) {
-    if (value === oldValue || el.src === value) return
+  updated(el, { value: { id, size }, oldValue }) {
+    if (id === oldValue?.id && size === oldValue?.size) return
     el._lazySrcObs?.disconnect()
+    const cached = getCachedThumb(id, size)
+    if (cached) { el.src = cached; return }
     const obs = new IntersectionObserver(([e]) => {
       if (!e.isIntersecting) return
-      el.src = value; obs.disconnect(); el._lazySrcObs = null
+      obs.disconnect(); el._lazySrcObs = null
+      getThumb(id, size).then(url => { if (url) el.src = url })
     }, { rootMargin: '200px' })
     obs.observe(el); el._lazySrcObs = obs
   },
@@ -1316,6 +1324,11 @@ watch(() => props.project?.id, async (id) => {
   await nextTick()
   initializing = false
   if (!id) return
+  // 热缓存：从 filesCacheStore 立即预填，避免等待 API 时文件区域为空
+  if (fileCacheStore.loaded) {
+    projectFiles.value   = fileCacheStore.getProjectRootFiles(id)
+    projectFolders.value = fileCacheStore.getProjectRootFolders(id)
+  }
   try {
     const [files, folders] = await Promise.all([
       filesApi.list({ projectId: id }),

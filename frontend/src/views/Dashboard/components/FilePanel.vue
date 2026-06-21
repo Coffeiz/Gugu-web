@@ -4,39 +4,53 @@
       <span class="section-title">最近文件</span>
     </div>
 
-    <!-- 文件网格 -->
     <div class="file-grid">
       <div
         v-for="f in files"
         :key="f.id"
-        class="file-card"
+        class="fc-card"
+        :class="{ 'fc-has-thumb': isImageExt(f.ext) }"
+        :style="{ '--fc-color': fileIconColor(f.ext) }"
+        @click="openFile(f)"
       >
-        <div class="card-top">
-          <span class="file-ext">{{ f.type }}</span>
-          <span class="proj-dot" :style="{ background: f.color }" :title="f.project"></span>
+        <span class="fc-ext-badge">{{ f.ext }}</span>
+
+        <div v-if="isImageExt(f.ext)" class="fc-thumb-area">
+          <img class="fc-thumb fc-thumb-tiny" :src="thumbMap[f.id]?.tiny" decoding="async" draggable="false" alt="" />
+          <img class="fc-thumb fc-thumb-full"
+            :src="thumbMap[f.id]?.card"
+            :class="{ 'fc-loaded': thumbMap[f.id]?.card }"
+            decoding="async" draggable="false" alt=""
+            @error="$event.target.style.display='none'" />
+          <div class="fc-thumb-fade"></div>
         </div>
-        <div class="file-name">{{ f.name }}</div>
-        <div class="file-bottom">
-          <span class="file-project">{{ f.project }}</span>
-          <span class="file-meta">{{ f.size }} · {{ f.date }}</span>
+        <div v-else class="fc-icon-area">
+          <component :is="fileListIcon(f.ext)" class="fc-big-icon" :size="86" weight="bold" />
+        </div>
+
+        <div class="fc-label">
+          <div class="fc-name" :title="f.name">{{ f.name }}</div>
+          <div class="fc-meta">
+            <span class="fc-proj-dot" :style="{ background: f.projectColor }"></span>
+            {{ f.project }} · {{ f.size }}
+          </div>
         </div>
       </div>
 
       <!-- 上传区 -->
-      <div
-        class="file-upload"
+      <label
+        class="fc-upload"
         @dragover.prevent="dragging = true"
         @dragleave="dragging = false"
         @drop.prevent="dragging = false; openUpload()"
         :class="{ dragging }"
-        @click="openUpload"
+        @click.prevent="openUpload"
       >
-        <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 12V3M5 7l4-4 4 4"/><path d="M2 14h14"/>
+        <svg width="20" height="20" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4">
+          <path d="M11 15V5M6 9l5-5 5 5"/><path d="M2 17h18"/>
         </svg>
-        <span>上传文件</span>
-      </div>
-
+        <span class="fc-upload-text">上传文件</span>
+      </label>
     </div>
   </div>
 
@@ -51,46 +65,125 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, reactive, onMounted } from 'vue'
 import { filesApi } from '@/services/api'
 import { filesCache } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
+import { usePreviewStore, isPreviewable } from '@/stores/preview'
+import { getThumb, getCachedThumb, preloadTinyThumbs } from '@/composables/useThumbCache'
 import UploadModal from '@/views/Files/UploadModal.vue'
+import {
+  PhImage, PhFilmStrip, PhMusicNote, PhTable,
+  PhPresentationChart, PhArchive, PhCode, PhFileText,
+} from '@phosphor-icons/vue'
 
-const dragging    = ref(false)
-const uploadOpen  = ref(false)
-const rawFiles    = ref(filesCache.data ?? [])
+const dragging     = ref(false)
+const uploadOpen   = ref(false)
+const rawFiles     = ref(filesCache.data ?? [])
+const thumbMap     = reactive({}) // id → { tiny, card }
 const projectStore = useProjectStore()
+const previewStore = usePreviewStore()
 const projects     = computed(() => projectStore.projects)
 
+function loadThumbs(list) {
+  list.forEach(f => {
+    if (!isImageExt(f.ext)) return
+    const cached = getCachedThumb(f.id, 'tiny')
+    if (cached) {
+      thumbMap[f.id] = { tiny: cached, card: getCachedThumb(f.id, 'card') }
+    }
+    getThumb(f.id, 'tiny').then(url => {
+      if (!thumbMap[f.id]) thumbMap[f.id] = {}
+      thumbMap[f.id] = { ...thumbMap[f.id], tiny: url }
+    })
+    getThumb(f.id, 'card').then(url => {
+      if (!thumbMap[f.id]) thumbMap[f.id] = {}
+      thumbMap[f.id] = { ...thumbMap[f.id], card: url }
+    })
+  })
+}
+
+const _IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
+const isImageExt  = (ext) => _IMAGE_EXTS.has((ext || '').toLowerCase())
+
+function fileIconColor(ext) {
+  const e = (ext || '').toLowerCase()
+  if (['jpg','jpeg','png','gif','webp','svg','ico','bmp','avif','heic'].includes(e)) return '#b07858'
+  if (['mp4','mov','avi','mkv','webm','wmv'].includes(e))                            return '#8868a0'
+  if (['mp3','wav','flac','aac','ogg','m4a'].includes(e))                            return '#a07088'
+  if (['pdf'].includes(e))                                                           return '#a85858'
+  if (['doc','docx','rtf','odt'].includes(e))                                        return '#5078a8'
+  if (['xls','xlsx','csv','ods'].includes(e))                                        return '#508870'
+  if (['ppt','pptx','key','odp'].includes(e))                                        return '#a07840'
+  if (['zip','rar','7z','tar','gz'].includes(e))                                     return '#808888'
+  if (['js','ts','jsx','tsx','vue','py','go','rs','java','cpp','c'].includes(e))     return '#688858'
+  if (['html','css','scss','json','yaml','xml','md'].includes(e))                    return '#508898'
+  return '#8888a8'
+}
+
+function fileExtCategory(ext) {
+  const e = (ext || '').toLowerCase()
+  if (['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif','ico'].includes(e)) return 'image'
+  if (['mp4','mov','avi','mkv','webm','wmv'].includes(e))   return 'video'
+  if (['mp3','wav','flac','aac','ogg','m4a'].includes(e))   return 'audio'
+  if (['xls','xlsx','csv','ods'].includes(e))               return 'sheet'
+  if (['ppt','pptx','key','odp'].includes(e))               return 'slide'
+  if (['zip','rar','7z','tar','gz'].includes(e))            return 'archive'
+  if (['js','ts','jsx','tsx','vue','py','go','rs','java','cpp','c','cs','rb','swift','php','kt','dart','sh','html','css','scss','less','xml','json','yaml','yml','toml','md'].includes(e)) return 'code'
+  return 'doc'
+}
+
+function fileListIcon(ext) {
+  const cat = fileExtCategory(ext)
+  if (cat === 'image')   return PhImage
+  if (cat === 'video')   return PhFilmStrip
+  if (cat === 'audio')   return PhMusicNote
+  if (cat === 'sheet')   return PhTable
+  if (cat === 'slide')   return PhPresentationChart
+  if (cat === 'archive') return PhArchive
+  if (cat === 'code')    return PhCode
+  return PhFileText
+}
+
 function openUpload() { uploadOpen.value = true }
+function openFile(f) {
+  if (isPreviewable(f.ext)) previewStore.open(f._raw)
+}
 
 async function onUploaded() {
   uploadOpen.value = false
   try {
     const fresh = await filesApi.list()
-    filesCache.data = fresh
+    filesCache.set(fresh)
     rawFiles.value = fresh
+    preloadTinyThumbs(fresh)
+    loadThumbs(fresh.slice(0, 7))
   } catch { /* ignore */ }
 }
 
 onMounted(async () => {
+  if (filesCache.data?.length) {
+    preloadTinyThumbs(filesCache.data)
+    loadThumbs(filesCache.data.slice(0, 7))
+  }
   try {
     const fresh = await filesApi.list()
-    filesCache.data = fresh
+    filesCache.set(fresh)
     rawFiles.value = fresh
+    preloadTinyThumbs(fresh)
+    loadThumbs(fresh.slice(0, 7))
   } catch { /* ignore */ }
 })
 
 const files = computed(() =>
-  rawFiles.value.slice(0, 6).map(f => ({
-    id:      f.id,
-    name:    f.displayName,
-    type:    f.ext,
-    size:    f.versions?.[0]?.size ?? '—',
-    date:    f.versions?.[0]?.date ?? '—',
-    project: f.projectName ?? '未分类',
-    color:   f.projectColor ?? '#8a8fa8',
+  rawFiles.value.slice(0, 7).map(f => ({
+    id:           f.id,
+    _raw:         f,
+    name:         f.displayName,
+    ext:          f.ext,
+    size:         f.versions?.[0]?.size ?? '—',
+    project:      f.projectName ?? '未分类',
+    projectColor: f.projectColor ?? '#8a8fa8',
   }))
 )
 </script>
@@ -100,80 +193,98 @@ const files = computed(() =>
 
 .file-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
   gap: 8px;
   align-content: start;
 }
 
-.file-card {
-  background: rgba(255,255,255,0.68);
-  border: 1px solid rgba(255,255,255,0.85);
-  border-radius: var(--radius-md);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 4px rgba(80,90,110,0.05);
-  padding: 9px 10px 8px;
-  cursor: pointer;
-  display: flex; flex-direction: column; gap: 4px;
-  transition: transform 0.3s cubic-bezier(0.34, 1.2, 0.64, 1),
-              box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-              background 0.25s ease-out;
-}
-.file-card:hover {
-  transform: translateY(-2px);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 16px rgba(80,90,110,0.11);
-  background: rgba(255,255,255,0.82);
-}
-.file-card:active { transform: translateY(1px); opacity: 0.93; }
-
-.card-top {
-  display: flex; align-items: center; justify-content: space-between;
-}
-
-.file-ext {
-  font-size: 9px; font-weight: 800; letter-spacing: 0.04em;
-  color: var(--color-primary);
-  background: rgba(123,127,178,0.12);
-  border-radius: 4px; padding: 2px 5px;
-}
-
-.proj-dot {
-  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
-  opacity: 0.8;
-}
-
-.file-name {
-  font-size: 11px; font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  line-height: 1.3; padding-bottom: 2px; margin-bottom: -2px;
-}
-
-.file-bottom {
-  display: flex; flex-direction: column; gap: 1px;
-}
-.file-project {
-  font-size: 10px; color: var(--text-secondary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  padding-bottom: 2px; margin-bottom: -2px;
-}
-.file-meta {
-  font-size: 9px; color: var(--text-secondary); opacity: 0.7;
-}
-
-.file-upload {
-  border: 1.5px dashed rgba(0,0,0,0.1);
-  border-radius: var(--radius-md);
+.fc-card {
+  position: relative;
+  background: rgba(255,255,255,0.72);
+  border: 1px solid rgba(255,255,255,0.9);
+  border-radius: 14px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
   display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 5px;
-  min-height: 80px;
-  color: var(--text-secondary);
-  font-size: 10px;
+  min-height: 110px; overflow: hidden;
   cursor: pointer;
+  will-change: transform;
+  transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
+              box-shadow 0.25s ease, background 0.2s;
+}
+.fc-card:hover {
+  transform: translateY(-2px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
+  background: rgba(255,255,255,0.86);
+}
+.fc-card:active { transform: translateY(1px); opacity: 0.93; }
+
+.fc-ext-badge {
+  position: absolute; top: 9px; left: 9px; z-index: 2;
+  font-size: 8px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--fc-color, var(--color-primary));
+  background: rgba(0,0,0,0.04);
+  border-radius: 4px; padding: 2px 5px; line-height: 1.5;
+}
+
+.fc-icon-area {
+  height: 80px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  overflow: visible;
+}
+.fc-big-icon {
+  width: 80px; height: 80px;
+  color: var(--fc-color, var(--color-primary));
+  opacity: 0.55;
+  transform: translateY(18px);
+  mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
+  flex-shrink: 0;
+}
+
+.fc-thumb-area {
+  position: relative; height: 80px; flex-shrink: 0; overflow: hidden;
+  border-radius: 14px 14px 0 0; background: rgba(0,0,0,0.05);
+  mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
+}
+.fc-thumb {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center top; display: block;
+}
+.fc-thumb-tiny { filter: blur(10px); transform: scale(1.15); z-index: 1; }
+.fc-thumb-full { z-index: 2; opacity: 0; transition: opacity 0.4s ease; }
+.fc-thumb-full.fc-loaded { opacity: 1; }
+.fc-has-thumb .fc-ext-badge { background: rgba(0,0,0,0.32); color: rgba(255,255,255,0.92); }
+
+.fc-label { padding: 0 11px 11px; }
+.fc-name {
+  font-size: 11px; font-weight: 600; color: var(--text-primary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
+}
+.fc-meta {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 9px; color: var(--text-secondary); opacity: 0.55; margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.fc-proj-dot {
+  width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; opacity: 0.8;
+}
+
+.fc-upload {
+  min-height: 110px; border-radius: 14px;
+  border: 1.5px dashed rgba(0,0,0,0.1);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px;
+  color: var(--text-secondary); cursor: pointer;
   background: rgba(255,255,255,0.2);
   transition: all 0.18s;
 }
-.file-upload:hover, .file-upload.dragging {
-  border-color: rgba(123,127,178,0.5);
+.fc-upload:hover, .fc-upload.dragging {
+  border-color: rgba(123,127,178,0.45);
   color: var(--color-primary);
-  background: rgba(123,127,178,0.05);
+  background: rgba(123,127,178,0.04);
 }
+.fc-upload-text { font-size: 10px; font-weight: 600; }
 </style>

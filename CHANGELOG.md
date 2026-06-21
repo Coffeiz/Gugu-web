@@ -30,6 +30,18 @@
 - **多选工具栏垂直对齐**：`pm-selection-bar` bottom 调整至与右下角删除按钮中心对齐
 - **文件库删除顶栏上传按钮**
 - **UI 微调**：项目编辑卡看板状态胶囊加大（`padding: 5px 12px`，字号 12px）；配色球放大至 22px；SVG 全部迁移至 Phosphor Icons（ProjectModal、NewProjectModal、Calendar）
+- **导航栏**：选中项 `font-weight: 700`，未选中恢复默认字重
+- **总览日历头部**：年月文字居中，左右切换月份按钮分列两侧（三列 grid 布局）
+- **日历近期节点**：过滤已完成（`status === 'done'`）项目，不再显示在右侧栏
+- **日历添加活动弹窗**：改为与编辑弹窗一致的结构（popup-header + × 关闭，底部保存按钮）
+- **缩略图缓存优化**：`/files/{id}/thumb` 改为 Authorization header 认证（URL 不含 token，浏览器 HTTP 缓存 key 稳定）；新增 `useThumbCache` 模块级 blob Map，切换页面命中缓存零请求，并发自动去重
+- **总览文件面板**：使用文件库同款 `fc-card` 样式（大图标、ext 角标、渐变遮罩、图片缩略图）；`will-change: transform` 消除 backdrop-filter 叠加导致的 hover 卡顿
+- **删除废弃组件** `ProjectDrawer.vue`（无任何引用）
+- **缩略图跨页持久化**：`thumbLoadedIds` 提升为模块级 `reactive(new Set())`，导航回文件库/总览/项目卡时 `fc-loaded` 已就绪，卡片不再重新淡入；`getCachedThumb` 命中时同步标记，无需等 `@load` 事件
+- **tiny blob 全局预热**：新增 `preloadTinyThumbs(files)` 函数，任意页面获取文件列表后立即后台 fetch 所有图片的 tiny blob（已缓存则跳过）；文件库、总览、项目编辑卡均接入，跨页面共享 tiny 缓存实现渐进式加载
+- **文件列表 sessionStorage 持久化**：`filesCache` 改为读写 `sessionStorage`，页面刷新后总览文件卡第一帧即可渲染，无需等待 API
+- **文件库热缓存加载**：`onMounted` 检测 store 已加载时同步调 `loadContents()`，跳过 `await`，SPA 内导航回文件库无空帧闪烁
+- **项目编辑卡文件预填**：打开项目时先从 `filesCacheStore` 同步填充文件列表，API 刷新后覆盖，消除等待 API 期间文件区域为空的问题
 
 ### 新增
 

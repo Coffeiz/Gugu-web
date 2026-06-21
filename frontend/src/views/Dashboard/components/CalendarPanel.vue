@@ -2,6 +2,7 @@
   <div class="glass-card calendar-panel">
     <!-- 月份头 -->
     <div class="cal-header">
+      <button class="cal-nav" @click="prevMonth">‹</button>
       <div class="cal-month-btn" @click="togglePicker" ref="pickerAnchorRef">
         <span>{{ year }}年 {{ month + 1 }}月</span>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
@@ -9,10 +10,7 @@
           <path d="M2 3.5l3 3 3-3"/>
         </svg>
       </div>
-      <div class="cal-nav-group">
-        <button class="cal-nav" @click="prevMonth">‹</button>
-        <button class="cal-nav" @click="nextMonth">›</button>
-      </div>
+      <button class="cal-nav" @click="nextMonth">›</button>
     </div>
 
     <!-- 星期行 -->
@@ -346,22 +344,25 @@ function hexAlpha(hex, a) {
   overflow: hidden;
 }
 
-.cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.cal-header {
+  display: grid; grid-template-columns: 32px 1fr 32px;
+  align-items: center; margin-bottom: 14px;
+}
 
 .cal-month-btn {
-  display: flex; align-items: center; gap: 5px;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
   font-size: 14px; font-weight: 700;
   cursor: pointer; user-select: none;
-  padding: 3px 7px; border-radius: 8px; margin-left: -7px;
+  padding: 3px 8px; border-radius: 8px;
   transition: background 0.15s;
 }
 .cal-month-btn:hover { background: rgba(0,0,0,0.06); }
 
-.cal-nav-group { display: flex; gap: 2px; }
 .cal-nav {
   background: none; border: none; cursor: pointer;
   color: var(--text-secondary); font-size: 16px;
-  padding: 3px 7px; border-radius: 7px; transition: background 0.15s;
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  border-radius: 7px; transition: background 0.15s; padding: 0;
 }
 .cal-nav:hover { background: rgba(0,0,0,0.06); }
 

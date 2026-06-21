@@ -232,12 +232,16 @@
   <Teleport to="body">
     <Transition name="form-pop">
       <div v-if="showAddForm" class="add-event-popup" ref="addFormRef" :style="addFormStyle">
-        <div class="popup-title">添加活动</div>
-        <input v-model="newEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" autofocus />
+        <div class="popup-header">
+          <span class="popup-title">添加活动</span>
+          <button class="popup-close-btn" @click="showAddForm = false" title="关闭">
+            <PhX :size="12" weight="bold" />
+          </button>
+        </div>
+        <input v-model="newEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" @keydown.esc="showAddForm = false" autofocus />
         <DatePicker v-model="newEvent.date" placeholder="选择日期" />
         <textarea v-model="newEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="popup-actions">
-          <button class="popup-cancel" @click="showAddForm = false">取消</button>
           <button class="popup-save" @click="saveEvent" :disabled="!newEvent.name">保存</button>
         </div>
       </div>
@@ -827,7 +831,7 @@ function buildUpcomingList() {
 
   // 项目截止（15天内，非已完成）
   const projects = projectTimelines.value
-    .filter(p => p.endDate >= todayStr && p.endDate <= cutoff)
+    .filter(p => p.endDate >= todayStr && p.endDate <= cutoff && p.status !== 'done')
     .sort((a, b) => a.endDate.localeCompare(b.endDate))
     .slice(0, 4)
     .map(p => ({ ...p, date: p.endDate, ...label(p.endDate) }))

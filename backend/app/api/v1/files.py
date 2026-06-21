@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File as FastAPIFile, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File as FastAPIFile, Form
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -658,14 +658,18 @@ _IMAGE_MIMES = frozenset({
 
 @router.get("/{fid}/thumb")
 async def get_thumb(
+    request: Request,
     fid: int,
-    token: str = Query(...),
     size: str = Query("full"),   # "tiny" | "card" | "full"
     db: AsyncSession = Depends(get_db),
 ):
     import asyncio
     from fastapi.responses import Response as FastAPIResponse
     settings = get_settings()
+    auth = request.headers.get("Authorization", "")
+    token = auth.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(401, "Token 无效")
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         if payload.get("role") != "user":

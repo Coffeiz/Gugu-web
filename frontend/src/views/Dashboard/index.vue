@@ -63,7 +63,7 @@ const fileCount = computed(() => _fileCount.value ?? '—')
 onMounted(async () => {
   try {
     const fresh = await filesApi.list()
-    filesCache.data = fresh
+    filesCache.set(fresh)
     _fileCount.value = fresh.length
   } catch { /* ignore */ }
 })
