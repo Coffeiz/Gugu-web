@@ -138,9 +138,11 @@ async def update_project(
             p.stages = v
         else:
             setattr(p, k, v)
-    # 首次进入 done 状态时记录时间，之后不清除（保证归档位置稳定）
-    if data.get("status") == "done" and p.done_at is None:
+    # 进入 done 时（重新）记录时间；撤回时清除，确保下次完成时间准确
+    if data.get("status") == "done":
         p.done_at = datetime.utcnow()
+    elif "status" in data and data["status"] != "done":
+        p.done_at = None
 
     await db.commit()
     await db.refresh(p)

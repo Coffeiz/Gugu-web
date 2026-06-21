@@ -54,7 +54,7 @@ export const useProjectStore = defineStore('projects', () => {
       name:         fields.name,
       client:       fields.client || null,
       status:       fields.status || 'pending',
-      stages:       fields.stages.map((label, i) => ({ key: `s${i}`, label })),
+      stages:       fields.stages.map((s, i) => ({ key: `s${i}`, label: typeof s === 'string' ? s : s.label, todos: s.todos ?? [] })),
       currentStage: fields.stages[0] ? 's0' : null,
       progress:     0,
       startDate:    fields.startDate || null,
@@ -78,8 +78,10 @@ export const useProjectStore = defineStore('projects', () => {
     const oldStatus = p.status
     p.status = newStatus
 
-    if (newStatus === 'done' && !p.doneAt) {
+    if (newStatus === 'done') {
       p.doneAt = new Date().toISOString()
+    } else if (oldStatus === 'done') {
+      p.doneAt = null
     }
 
     if (newStatus === 'done' && oldStatus !== 'done' && p.stages?.length) {
@@ -107,16 +109,12 @@ export const useProjectStore = defineStore('projects', () => {
     await projectsApi.update(id, { status: newStatus })
   }
 
-  async function setStage(id, stageKey) {
+  async function setStage(id, stageKey, progress) {
     const p = projects.value.find(p => p.id === id)
     if (!p) return
     p.currentStage = stageKey
-    const idx = p.stages.findIndex(s => s.key === stageKey)
-    const progress = p.stages.length > 0
-      ? Math.round((idx + 1) / p.stages.length * 100)
-      : 0
-    p.progress = progress
-    await projectsApi.update(id, { currentStage: stageKey, progress })
+    p.progress = progress ?? 0
+    await projectsApi.update(id, { currentStage: stageKey, progress: p.progress })
   }
 
   async function updateStages(id, newStages) {

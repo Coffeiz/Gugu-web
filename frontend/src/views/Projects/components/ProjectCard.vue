@@ -26,9 +26,15 @@
             <rect x="1.5" y="2.5" width="13" height="12" rx="2"/>
             <path d="M5 1v3M11 1v3M1.5 6.5h13"/>
           </svg>
-          <span v-if="project.startDate" class="date-start">{{ fmtDate(project.startDate) }}</span>
-          <span v-if="project.startDate && project.deadline" class="date-sep">→</span>
-          <span class="deadline" :class="{ urgent: isUrgent }">{{ deadlineLabel }}</span>
+          <template v-if="project.status === 'done' && project.doneAt">
+            <span class="done-label">✓ 完成</span>
+            <span class="deadline">{{ fmtDate(project.doneAt.slice(0, 10)) }}</span>
+          </template>
+          <template v-else>
+            <span v-if="project.startDate" class="date-start">{{ fmtDate(project.startDate) }}</span>
+            <span v-if="project.startDate && project.deadline" class="date-sep">→</span>
+            <span class="deadline" :class="{ urgent: isUrgent }">{{ deadlineLabel }}</span>
+          </template>
         </div>
         <div class="footer-right">
           <span v-if="project.fileCount" class="file-badge">
@@ -75,7 +81,10 @@ const stageProgress = computed(() => {
   if (!stages.length) return 0
   const idx = currentStageIndex.value
   if (idx < 0) return 0
-  return Math.round((idx + 1) / stages.length * 100)
+  const w = 100 / stages.length
+  const todos = stages[idx].todos ?? []
+  const within = todos.length > 0 ? (todos.filter(t => t.done).length / todos.length) * w : w
+  return Math.round(idx * w + within)
 })
 
 const daysLeft      = computed(() => {
@@ -170,6 +179,7 @@ const deadlineLabel = computed(() => {
 .date-start { opacity: 0.65; white-space: nowrap; }
 .date-sep { opacity: 0.35; font-size: 9px; }
 .deadline { white-space: nowrap; }
+.done-label { white-space: nowrap; font-size: 10px; font-weight: 700; color: #3a8870; background: rgba(90,158,136,0.12); border: 1px solid rgba(90,158,136,0.35); border-radius: 20px; padding: 1px 6px; }
 .deadline.urgent { color: var(--color-warning); font-weight: 600; }
 
 .file-badge {

@@ -111,7 +111,7 @@
                           <!-- 名称区：普通 or 重命名输入 -->
                           <button v-if="renamingId !== t.id" class="tpl-apply" @click.stop="applyTpl(t)">
                             <span class="tpl-name">{{ t.name }}</span>
-                            <span class="tpl-stages-preview">{{ t.stages.join(' · ') }}</span>
+                            <span class="tpl-stages-preview">{{ t.stages.map(s => s.label ?? s).join(' · ') }}</span>
                           </button>
                           <input
                             v-else
@@ -170,21 +170,40 @@
             <div class="stages-editor" ref="stagesEditorRef">
               <div
                 v-for="(stage, i) in displayStages" :key="stage.key"
-                class="stage-row"
+                class="stage-block"
                 :class="{ 'stage-dragging': stageDrag.active && stage.origIdx === stageDrag.fromIdx }"
-                @mousedown="startStageDrag(stage.origIdx, $event)"
               >
-                <div class="stage-num">{{ i + 1 }}</div>
-                <input
-                  v-model="form.stages[stage.origIdx]"
-                  class="stage-input"
-                  :placeholder="`阶段 ${i + 1}`"
-                  @mousedown.stop
-                  :ref="el => { if (el) stageInputRefs[stage.origIdx] = el }"
-                />
-                <button class="del-btn" @click.stop="removeStage(stage.origIdx)" :disabled="form.stages.length <= 1">
-                  <PhX :size="10" weight="bold" />
-                </button>
+                <div class="stage-row" @mousedown="startStageDrag(stage.origIdx, $event)">
+                  <div class="stage-num">{{ i + 1 }}</div>
+                  <input
+                    v-model="form.stages[stage.origIdx].label"
+                    class="stage-input"
+                    :placeholder="`阶段 ${i + 1}`"
+                    @mousedown.stop
+                    :ref="el => { if (el) stageInputRefs[stage.origIdx] = el }"
+                  />
+                  <button class="del-btn" @click.stop="removeStage(stage.origIdx)" :disabled="form.stages.length <= 1">
+                    <PhX :size="10" weight="bold" />
+                  </button>
+                </div>
+                <!-- 待办列表 -->
+                <div class="np-todo-list">
+                  <div v-for="todo in (form.stages[stage.origIdx].todos ?? [])" :key="todo.id" class="np-todo-item">
+                    <button class="np-todo-check" :class="{ checked: todo.done }" @click.stop="todo.done = !todo.done">
+                      <PhCheck v-if="todo.done" :size="8" weight="bold" />
+                    </button>
+                    <input
+                      :class="['np-todo-input', `np-todo-input-${stage.origIdx}`]"
+                      v-model="todo.text"
+                      :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
+                      placeholder="待办事项"
+                      @keydown.enter.prevent="addNpTodo(stage.origIdx)"
+                      @keydown.backspace="!todo.text && removeNpTodo(stage.origIdx, todo.id)"
+                    />
+                    <button class="np-todo-del" @click.stop="removeNpTodo(stage.origIdx, todo.id)"><PhX :size="10" weight="bold" /></button>
+                  </div>
+                  <button class="np-todo-add-btn" @click.stop="addNpTodo(stage.origIdx)">＋ 添加待办</button>
+                </div>
               </div>
               <button class="add-stage-btn" @click="addStage">
                 <PhPlus :size="10" weight="bold" />
@@ -265,13 +284,27 @@ function applyTpl(t) {
 }
 
 async function commitSave() {
-  const stages = form.stages.filter(s => s.trim()).map(s => s.trim())
+  const stages = form.stages.filter(s => s.label.trim())
   if (!stages.length) return
   if (addTemplate(newTplName.value, stages)) {
     savingTpl.value = false
     newTplName.value = ''
   }
 }
+
+function addNpTodo(origIdx) {
+  const stage = form.stages[origIdx]
+  if (!stage.todos) stage.todos = []
+  stage.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
+  nextTick(() => {
+    const inputs = document.querySelectorAll(`.np-todo-input-${origIdx}`)
+    inputs[inputs.length - 1]?.focus()
+  })
+}
+function removeNpTodo(origIdx, id) {
+  form.stages[origIdx].todos = (form.stages[origIdx].todos ?? []).filter(t => t.id !== id)
+}
+
 
 async function startRename(t) {
   renamingId.value = t.id
@@ -319,13 +352,14 @@ const colorPresets = [
 const prefsStore = usePreferencesStore()
 
 function getLastStages() {
-  if (prefsStore.lastStages.length) return prefsStore.lastStages
+  const toObj = s => ({ label: typeof s === 'string' ? s : (s.label ?? ''), todos: [] })
+  if (prefsStore.lastStages.length) return prefsStore.lastStages.map(toObj)
   const projects = projectStore.projects
   if (projects.length) {
     const last = [...projects].sort((a, b) => (b.id > a.id ? 1 : -1))[0]
-    if (last.stages?.length) return last.stages.map(s => s.label ?? s)
+    if (last.stages?.length) return last.stages.map(toObj)
   }
-  return ['计划', '执行', '交付']
+  return [{ label: '计划', todos: [] }, { label: '执行', todos: [] }, { label: '交付', todos: [] }]
 }
 
 const defaultForm = () => {
@@ -355,7 +389,7 @@ const stageDrag = reactive({
 })
 
 const displayStages = computed(() => {
-  const items = form.stages.map((label, i) => ({ key: stageKeys.value[i] ?? `sk${i}`, label, origIdx: i }))
+  const items = form.stages.map((s, i) => ({ key: stageKeys.value[i] ?? `sk${i}`, label: s.label, origIdx: i }))
   if (!stageDrag.active) return items
   const arr = [...items]
   const [item] = arr.splice(stageDrag.fromIdx, 1)
@@ -375,7 +409,7 @@ watch(() => props.show, async (v) => {
 
 const stageInputRefs = {}
 async function addStage() {
-  form.stages.push('')
+  form.stages.push({ label: '', todos: [] })
   stageKeys.value.push(`sk${Date.now()}`)
   await nextTick()
   stageInputRefs[form.stages.length - 1]?.focus()
@@ -416,7 +450,7 @@ function startStageDrag(fromIdx, e) {
       stageDrag.active      = true
       stageDrag.fromIdx     = fromIdx
       stageDrag.overIdx     = fromIdx
-      stageDrag.ghostLabel  = form.stages[fromIdx] ?? ''
+      stageDrag.ghostLabel  = form.stages[fromIdx]?.label ?? ''
       stageDrag.ghostNum    = fromIdx + 1
       stageDrag.ghostWidth  = rect.width
       stageDrag.grabOffsetX = grabOffsetX
@@ -465,8 +499,8 @@ function handleCreate() {
   const name = form.name.trim()
   if (!name) { errors.name = '请填写项目名称'; return }
   if (INVALID_NAME_RE.test(name)) { errors.name = '不能包含：\\ / : * ? " < > |'; return }
-  const stages = form.stages.filter(s => s.trim()).map(s => s.trim())
-  prefsStore.saveLastStages(stages)
+  const stages = form.stages.filter(s => s.label.trim())
+  prefsStore.saveLastStages(stages.map(s => s.label.trim()))
   projectStore.addProject({
     name:      name,
     client:    form.client.trim(),
@@ -681,7 +715,9 @@ input::placeholder { color: var(--text-secondary); opacity: 0.6; }
 .tpl-pop-enter-from, .tpl-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-4px); }
 
 /* ── 阶段编辑器 ── */
-.stages-editor { display: flex; flex-direction: column; gap: 5px; }
+.stages-editor { display: flex; flex-direction: column; gap: 2px; }
+.stage-block { display: flex; flex-direction: column; }
+.stage-block.stage-dragging { opacity: 0.15; pointer-events: none; }
 .stage-row {
   display: flex; align-items: center; gap: 7px;
   position: relative; cursor: grab; transition: opacity 0.15s;
@@ -692,7 +728,6 @@ input::placeholder { color: var(--text-secondary); opacity: 0.6; }
   background: var(--color-primary); opacity: 0; transition: opacity 0.15s;
 }
 .stage-row:hover::before { opacity: 0.4; }
-.stage-row.stage-dragging { opacity: 0.15; pointer-events: none; }
 .stage-num {
   width: 20px; height: 20px; border-radius: 50%;
   background: rgba(123,127,178,0.15);
@@ -709,6 +744,46 @@ input::placeholder { color: var(--text-secondary); opacity: 0.6; }
 }
 .del-btn:hover:not(:disabled) { background: rgba(176,120,88,0.1); color: var(--color-warning); }
 .del-btn:disabled { opacity: 0.2; cursor: not-allowed; }
+
+/* 待办 */
+.np-todo-list { padding: 2px 0 6px 27px; display: flex; flex-direction: column; gap: 0; border-bottom: 1px solid rgba(0,0,0,0.06); margin-bottom: 3px; }
+.np-todo-item { display: flex; align-items: center; gap: 7px; height: 24px; }
+.np-todo-item + .np-todo-item { border-top: 1px solid rgba(0,0,0,0.05); }
+.np-todo-check {
+  width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0;
+  border: 1.5px solid rgba(0,0,0,0.18); background: rgba(255,255,255,0.7);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s, border-color 0.15s; padding: 0;
+}
+.np-todo-check.checked { background: var(--color-success); border-color: var(--color-success); color: white; }
+.np-todo-input {
+  flex: 1; font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
+  border: 1.5px solid transparent; border-radius: 10px;
+  background: transparent; outline: none; min-width: 0;
+  padding: 0 5px !important; height: 24px; box-sizing: border-box;
+  transition: background 0.15s, border-color 0.15s; width: 100% !important;
+}
+.np-todo-input:focus {
+  background: rgba(255,255,255,0.88); border-color: rgba(123,127,178,0.45);
+  box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
+}
+.np-todo-del {
+  width: 22px; height: 22px; border-radius: 6px;
+  background: none; border: none; cursor: pointer; color: var(--text-secondary);
+  opacity: 0; transition: opacity 0.15s; padding: 0;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.np-todo-item:hover .np-todo-del { opacity: 0.4; }
+.np-todo-del:hover { opacity: 1 !important; color: var(--color-warning); }
+.np-todo-add-btn {
+  display: flex; align-items: center; gap: 4px;
+  height: 24px; padding: 0 10px; border-radius: 7px;
+  border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.5);
+  font-size: 11px; font-weight: 500; color: var(--text-secondary);
+  cursor: pointer; font-family: var(--font-sans); transition: all 0.15s; margin-top: 2px;
+  margin-right: 29px;
+}
+.np-todo-add-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(123,127,178,0.06); }
 
 .add-stage-btn {
   display: flex; align-items: center; gap: 6px;

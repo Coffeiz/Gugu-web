@@ -1,10 +1,15 @@
 <template>
   <BaseModal :show="!!project" width="900px" height="680px" :zIndex="200" @close="onModalClose">
       <div class="modal">
-        <!-- 悬浮删除按钮 -->
-        <button class="del-float-btn" @click="handleDelete" title="删除此项目">
-          <PhTrash :size="14" weight="bold" />
-        </button>
+        <!-- 悬浮操作按钮 -->
+        <div class="float-actions">
+          <button class="save-float-btn" @click="$emit('close')" title="保存并关闭">
+            <PhCheck :size="14" weight="bold" />
+          </button>
+          <button class="del-float-btn" @click="handleDelete" title="删除此项目">
+            <PhTrash :size="14" weight="bold" />
+          </button>
+        </div>
 
         <!-- 左栏 -->
         <div class="modal-left">
@@ -25,7 +30,6 @@
             </div>
             <div class="header-progress-bar">
               <div class="header-progress-fill" :style="{ width: stageProgress + '%', background: localColor }"></div>
-              <span class="header-pct" :style="{ color: accentColor }">{{ stageProgress }}%</span>
             </div>
           </div>
 
@@ -57,8 +61,8 @@
                   v-for="col in projectStore.kanbanColumns"
                   :key="col.key"
                   class="status-btn"
-                  :class="['s-' + col.key, { active: project.status === col.key }]"
-                  @click="projectStore.moveProject(project.id, col.key)"
+                  :class="['s-' + col.key, { active: localStatus === col.key }]"
+                  @click="localStatus = col.key; projectStore.moveProject(project.id, col.key)"
                 >
                   <span class="opt-dot"></span>{{ col.label }}
                 </button>
@@ -99,26 +103,51 @@
                   active: i === activeStageIdx && stage.key !== draggedStageKey,
                   done: i < activeStageIdx && stage.key !== draggedStageKey,
                   'stage-dragging': stageDrag.active && stage.key === draggedStageKey,
+                  expanded: expandedStages.has(stage.key),
                 }"
-                @click="!stageDrag.active && setStage(stage.key, i)"
-                @mousedown="editingStage !== stage.key && startStageDrag(i, $event)"
               >
-                <div class="node-circle" :style="i === activeStageIdx && stage.key !== draggedStageKey ? { background: localColor } : {}">
-                  <PhCheck v-if="i < activeStageIdx && stage.key !== draggedStageKey" :size="10" weight="bold" style="color:white" />
-                  <span v-else class="node-num">{{ i + 1 }}</span>
-                </div>
-                <div class="node-body">
-                  <input
-                    v-if="editingStage === stage.key"
-                    v-model="stage.label"
-                    class="stage-input"
-                    @blur="saveStages" @keydown.enter="saveStages" @keydown.esc="editingStage = null" @click.stop
-                    ref="stageInputRef"
-                  />
-                  <span v-else class="node-label" @click.stop="startEdit(stage.key)">{{ stage.label }}</span>
+                <!-- 节点行 -->
+                <div class="node-row" @mousedown="editingStage !== stage.key && startStageDrag(i, $event)">
+                  <div class="node-circle"
+                    :style="i === activeStageIdx && stage.key !== draggedStageKey ? { background: localColor } : {}"
+                    @click.stop="!stageDrag.active && setStage(stage.key, i)"
+                  >
+                    <PhCheck v-if="i < activeStageIdx && stage.key !== draggedStageKey" :size="10" weight="bold" style="color:white" />
+                    <span v-else class="node-num">{{ i + 1 }}</span>
+                  </div>
+                  <div class="node-body">
+                    <input
+                      v-if="editingStage === stage.key"
+                      v-model="stage.label"
+                      class="stage-input"
+                      @blur="saveStages" @keydown.enter="saveStages" @keydown.esc="editingStage = null" @click.stop
+                      ref="stageInputRef"
+                    />
+                    <span v-else class="node-label" @click.stop="startEdit(stage.key)">{{ stage.label }}</span>
+                    <span class="todo-count" v-if="stage.todos?.length">{{ stage.todos.filter(t=>t.done).length }}/{{ stage.todos.length }}</span>
+                  </div>
                   <button class="del-stage" @click.stop="removeStage(stage.key)">
                     <PhX :size="9" weight="bold" />
                   </button>
+                </div>
+                <!-- 待办列表 -->
+                <div class="todo-list">
+                  <div v-for="todo in (stage.todos ?? [])" :key="todo.id" class="todo-item">
+                    <button class="todo-check" :class="{ checked: todo.done }" @click.stop="toggleTodo(todo)">
+                      <PhCheck v-if="todo.done" :size="9" weight="bold" />
+                    </button>
+                    <input
+                      :class="['todo-input', `todo-input-${stage.key}`]"
+                      v-model="todo.text"
+                      :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
+                      placeholder="待办事项"
+                      @blur="saveStages"
+                      @keydown.enter.prevent="addTodo(stage)"
+                      @keydown.backspace="!todo.text && removeTodo(stage, todo.id)"
+                    />
+                    <button class="todo-del" @click.stop="removeTodo(stage, todo.id)"><PhX :size="8" weight="bold" /></button>
+                  </div>
+                  <button class="todo-add-btn" @click.stop="addTodo(stage)">＋ 添加待办</button>
                 </div>
                 <div v-if="i < displayStages.length - 1" class="node-line"></div>
               </div>
@@ -659,7 +688,7 @@ import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import {
-  PhFolder, PhArrowLeft, PhArrowRight, PhCaretRight, PhSortAscending, PhSquaresFour, PhList,
+  PhFolder, PhArrowLeft, PhArrowRight, PhCaretRight, PhCaretDown, PhSortAscending, PhSquaresFour, PhList,
   PhCheckSquare, PhFolderPlus, PhUploadSimple, PhPencilSimple,
   PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX, PhCheck,
   PhInfo, PhWarningCircle, PhDotsThree, PhTrash,
@@ -692,13 +721,15 @@ const editingName      = ref(false)
 const localName        = ref('')
 const nameInputRef     = ref(null)
 
-const localStages    = ref([])
+const localStages      = ref([])
+const expandedStages   = ref(new Set())
 const localStartDate = ref('')
 const localDeadline  = ref('')
 const localClient    = ref('')
 const localNotes     = ref('')
 const localColor        = ref('')
 const localCurrentStage = ref('')
+const localStatus       = ref('')
 const fileViewMode   = ref('grid')
 const projectFiles   = ref([])
 const projectFolders = ref([])
@@ -1340,6 +1371,7 @@ watch(() => props.project?.id, async (id) => {
   localNotes.value        = props.project?.notes        ?? ''
   localColor.value        = props.project?.color        ?? ''
   localCurrentStage.value = props.project?.currentStage ?? ''
+  localStatus.value       = props.project?.status       ?? ''
   recalcStageState()
   editingStage.value   = null
   projectFiles.value   = []
@@ -1433,14 +1465,22 @@ const displayCurrentStageIndex = computed(() =>
 )
 const stageProgress = ref(0)
 
+function calcProgress(stages, currentStageKey) {
+  if (!stages.length) return 0
+  const idx = stages.findIndex(s => s.key === currentStageKey)
+  if (idx < 0) return 0
+  const w = 100 / stages.length
+  const todos = stages[idx].todos ?? []
+  const within = todos.length > 0 ? (todos.filter(t => t.done).length / todos.length) * w : w
+  return Math.round(idx * w + within)
+}
+
 // 只在明确切换阶段时调用，拖动重排不触发
 function recalcStageState() {
   const stages = localStages.value
   const idx = stages.findIndex(s => s.key === localCurrentStage.value)
   activeStageIdx.value = idx
-  stageProgress.value = stages.length > 0 && idx >= 0
-    ? Math.round((idx + 1) / stages.length * 100)
-    : 0
+  stageProgress.value = calcProgress(stages, localCurrentStage.value)
 }
 
 function extractAccent(colorStr) {
@@ -1493,11 +1533,9 @@ function setColor(c) {
 function setStage(key, idx) {
   localCurrentStage.value = key
   activeStageIdx.value = idx
-  const stages = localStages.value
-  stageProgress.value = stages.length > 0
-    ? Math.round((idx + 1) / stages.length * 100)
-    : 0
-  projectStore.setStage(props.project.id, key)
+  const newProgress = calcProgress(localStages.value, key)
+  stageProgress.value = newProgress
+  projectStore.setStage(props.project.id, key, newProgress)
 }
 
 async function handleDelete() {
@@ -1523,7 +1561,39 @@ function addStage() {
 function removeStage(key) {
   if (localStages.value.length <= 1) return
   localStages.value = localStages.value.filter(s => s.key !== key)
+  expandedStages.value.delete(key)
   saveStages()
+}
+
+function toggleExpand(key) {
+  const s = expandedStages.value
+  s.has(key) ? s.delete(key) : s.add(key)
+  expandedStages.value = new Set(s)
+}
+function saveTodos() {
+  if (!props.project) return
+  const newProgress = calcProgress(localStages.value, localCurrentStage.value)
+  stageProgress.value = newProgress
+  const p = projectStore.projects.find(p => p.id === props.project.id)
+  if (p) { p.stages = localStages.value; p.progress = newProgress }
+  projectsApi.update(props.project.id, { stages: localStages.value, progress: newProgress })
+}
+function addTodo(stage) {
+  if (!stage.todos) stage.todos = []
+  stage.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
+  saveTodos()
+  nextTick(() => {
+    const inputs = document.querySelectorAll(`.todo-input-${stage.key}`)
+    inputs[inputs.length - 1]?.focus()
+  })
+}
+function removeTodo(stage, id) {
+  stage.todos = (stage.todos ?? []).filter(t => t.id !== id)
+  saveTodos()
+}
+function toggleTodo(todo) {
+  todo.done = !todo.done
+  saveTodos()
 }
 
 function stageIdxFromY(y) {
@@ -1844,8 +1914,11 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 }
 .header-name-input {
   flex: 1; font-size: 17px; font-weight: 700; line-height: 1.2;
-  border: none; background: transparent; outline: none;
+  border: 1.5px solid rgba(123,127,178,0.45); border-radius: 7px;
+  background: rgba(255,255,255,0.88); outline: none;
+  padding: 2px 8px; margin: -3px -9px;
   font-family: var(--font-sans); color: var(--text-primary); min-width: 0;
+  box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
 }
 .header-progress-bar {
   height: 3px; background: rgba(0,0,0,0.07); flex-shrink: 0; position: relative;
@@ -1929,7 +2002,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   padding: 0; text-transform: none; letter-spacing: 0;
 }
 .add-stage-btn:hover { opacity: 0.7; }
-.stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 2px 4px 0; scrollbar-gutter: stable; }
+.stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0 4px 0; margin-right: -10px; padding-right: 10px; }
 
 /* 备注 */
 .notes-input {
@@ -1940,27 +2013,32 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 }
 .notes-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
 .notes-input::placeholder { color: var(--text-secondary); opacity: 0.6; }
-.stage-node { display: flex; align-items: center; gap: 10px; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 14px 5px; }
+.stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 0 5px; margin-bottom: 2px; }
 .stage-node.stage-dragging { opacity: 0.15; pointer-events: none; }
-.stage-node::before {
-  content: ''; position: absolute; left: 0; top: 4px;
-  width: 2px; height: 14px; border-radius: 1px;
-  background: var(--color-primary); opacity: 0; transition: opacity 0.15s;
-}
+
+.node-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
 .node-circle {
   width: 22px; height: 22px; border-radius: 50%;
   border: 1.5px solid rgba(0,0,0,0.12); background: rgba(0,0,0,0.08);
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-  z-index: 1;
+  cursor: pointer; z-index: 1;
 }
 .stage-node.done .node-circle { background: var(--color-success); border-color: var(--color-success); }
 .stage-node.active .node-circle { border-color: transparent; }
 .node-num { font-size: 10px; font-weight: 700; color: var(--text-secondary); line-height: 1; }
 .stage-node.active .node-num { color: #fff; }
-.node-body { flex: 1; display: flex; align-items: center; justify-content: space-between; }
+.node-body { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; }
 .node-label { font-size: 13px; color: var(--text-primary); }
 .stage-node.done .node-label { color: var(--text-secondary); text-decoration: line-through; }
 .stage-node.active .node-label { font-weight: 600; }
+.todo-count { font-size: 10px; color: var(--text-secondary); opacity: 0.7; white-space: nowrap; }
+.node-expand-btn {
+  background: none; border: none; cursor: pointer; color: var(--text-secondary);
+  opacity: 0; transition: opacity 0.15s, transform 0.2s; padding: 2px;
+  display: flex; align-items: center;
+}
+.node-expand-btn.open { transform: rotate(180deg); opacity: 0.5 !important; }
+.stage-node:hover .node-expand-btn { opacity: 0.4; }
 .stage-input {
   font-size: 13px; font-family: var(--font-sans);
   border: 1px solid rgba(123,127,178,0.4); border-radius: 6px; padding: 1px 6px;
@@ -1970,20 +2048,73 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .del-stage {
   background: none; border: none; cursor: pointer; color: var(--text-secondary);
   opacity: 0; transition: opacity 0.15s; padding: 2px;
-  display: flex; align-items: center;
+  display: flex; align-items: center; flex-shrink: 0;
 }
 .stage-node:hover .del-stage { opacity: 0.5; }
-.stage-node:hover::before { opacity: 0.4; }
-.stage-node.stage-dragging::before { opacity: 0.8; }
 .del-stage:hover { opacity: 1 !important; color: var(--color-warning); }
-.node-line { position: absolute; left: 16px; top: 22px; width: 2px; height: 14px; background: rgba(0,0,0,0.08); }
-.stage-node.done .node-line { background: var(--color-success); opacity: 0.4; }
+.node-line { display: none; }
+.todo-list { border-bottom: 1px solid rgba(0,0,0,0.06); }
+/* 待办列表 */
+.todo-list { padding: 2px 0 8px 30px; display: flex; flex-direction: column; gap: 3px; border-bottom: 1px solid rgba(0,0,0,0.06); }
+.stage-node:last-child .todo-list { border-bottom: none; }
+.todo-item { display: flex; align-items: center; gap: 6px; height: 24px; }
+.todo-item + .todo-item { border-top: 1px solid rgba(0,0,0,0.05); }
+.todo-check {
+  width: 15px; height: 15px; border-radius: 4px; flex-shrink: 0;
+  border: 1.5px solid rgba(0,0,0,0.18); background: rgba(255,255,255,0.7);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s, border-color 0.15s;
+}
+.todo-check.checked { background: var(--color-success); border-color: var(--color-success); color: white; }
+.todo-input {
+  flex: 1; font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
+  border: 1.5px solid transparent; border-radius: 5px;
+  background: transparent; outline: none; min-width: 0;
+  padding: 0 5px; box-sizing: border-box;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.todo-input:focus {
+  background: rgba(255,255,255,0.88);
+  border-color: rgba(123,127,178,0.45);
+  box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
+}
+.todo-del {
+  background: none; border: none; cursor: pointer; color: var(--text-secondary);
+  opacity: 0; transition: opacity 0.15s; padding: 2px; display: flex; align-items: center; flex-shrink: 0;
+}
+.todo-item:hover .todo-del { opacity: 0.4; }
+.todo-del:hover { opacity: 1 !important; color: var(--color-warning); }
+.todo-add-btn {
+  display: flex; align-items: center; gap: 4px;
+  height: 24px; padding: 0 10px; border-radius: 7px;
+  border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.5);
+  font-size: 11px; font-weight: 500; color: var(--text-secondary);
+  cursor: pointer; font-family: var(--font-sans); transition: all 0.15s;
+  margin-top: 2px;
+}
+.todo-add-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(123,127,178,0.06); }
 
 
 
-/* 悬浮删除按钮 */
-.del-float-btn {
+/* 悬浮操作按钮 */
+.float-actions {
   position: absolute; bottom: 14px; right: 14px; z-index: 10;
+  display: flex; gap: 8px; align-items: center;
+}
+.save-float-btn {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: rgba(90,158,136,0.1);
+  border: 1px solid rgba(90,158,136,0.28);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--color-success);
+  box-shadow: 0 2px 10px rgba(90,158,136,0.12);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.save-float-btn:hover {
+  background: rgba(90,158,136,0.18);
+  box-shadow: 0 4px 14px rgba(90,158,136,0.22);
+}
+.del-float-btn {
   width: 36px; height: 36px; border-radius: 10px;
   background: rgba(176,120,88,0.1);
   border: 1px solid rgba(176,120,88,0.25);

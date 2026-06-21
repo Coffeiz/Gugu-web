@@ -1,6 +1,6 @@
 # PM Studio · 设计需求文档
 
-> 整理自产品讨论，最后更新：2026-06-21
+> 整理自产品讨论，最后更新：2026-06-22
 
 ---
 
@@ -293,6 +293,24 @@ function darkenHex(hex, amount = 0.60) {
 - 拖动 ghost：仅标签文字 + 全宽背景条，无球，无旋转
 - 拖动解耦：`stageDrag.active = false` 必须在 `commitStageDrag()` 前执行，防止 `displayStages` 对已提交数据二次重排
 
+**阶段待办事项**：
+
+- 每个阶段下方常驻待办列表，数据结构 `{ key, label, todos: [{ id, text, done }] }` 存入 `stages_json`，无需新增数据表
+- 待办增删改走独立 `saveTodos()` 直接调 `projectsApi.update({ stages, progress })`，绕过 `updateStages()` 的 `currentStage` 重算逻辑，防止进度被意外重置
+- 阶段间分割线（`border-bottom` on `.todo-list`），最后一个阶段不加线；待办间分割线用 `.todo-item + .todo-item { border-top }` 相邻选择器，最后一条与「添加待办」按钮之间无线
+- 「添加待办」按钮：`1px dashed` 虚线外框，hover 变主色，样式与「新建文件夹」按钮一致
+- 待办重命名输入框：`border: 1.5px solid transparent` 占位（防文字偏移）；focus 时显示白底 + 紫色描边 `rgba(123,127,178,0.45)` + 外发光，与项目名重命名风格一致
+
+**进度细分规则**：
+
+| 场景 | 进度计算 |
+|------|---------|
+| 当前阶段**无**待办 | `(idx + 1) / totalStages × 100`（整阶段计入） |
+| 当前阶段**有**待办 | `idx / totalStages × 100 + completedTodos / totalTodos / totalStages × 100` |
+
+- `calcProgress(stages, currentStageKey)` 函数同时在 ProjectModal 和 ProjectCard 中使用，确保编辑弹窗头部进度条与看板卡片进度条数值一致
+- 切换阶段或勾选/取消待办后均实时更新 `stageProgress ref` 并持久化 `progress` 字段至后端
+
 **响应式 ref**：`localName`、`localColor`、`localCurrentStage`、`activeStageIdx`、`stageProgress` 均为独立 ref，在 `watch(project.id)` 时初始化，点击立即更新不等 props 刷新。
 
 **右栏**：文件区，见文件库章节（ProjectModal 使用缩小参数版本）。
@@ -303,7 +321,9 @@ function darkenHex(hex, amount = 0.60) {
 
 - 默认截止日期：一周后（`weekLaterIso()`）
 - 默认阶段：读取 store 中最近一个项目的阶段列表；若无历史项目则用 `['计划', '执行', '交付']`
-- 阶段模板：`useStageTemplates` composable，内置三个默认模板，用户可保存/删除/重命名，持久化至 localStorage
+- 阶段模板：`useStageTemplates` composable，内置三个默认模板，用户可保存/删除/重命名，持久化至后端用户偏好；模板存储完整 `{ label, todos }` 对象，保存时保留待办内容，模板预览仅展示阶段名称
+- `form.stages` 为 `{ label, todos: [] }[]` 对象数组；新建/应用模板/拖拽重排均操作同一结构，`handleCreate` 传递完整对象给 store，store 写入 `stages_json` 时生成 `key` 字段
+- 右栏阶段编辑器每个阶段下常驻待办区，样式与 ProjectModal 待办一致（分割线、虚线添加按钮、重命名白底描边）；「添加待办」按钮右侧对齐到输入框末尾（`margin-right: 29px`）
 - 右栏无额外背景色（与左栏统一透明）
 
 ### 弹窗动画规范（BaseModal 统一管理）
