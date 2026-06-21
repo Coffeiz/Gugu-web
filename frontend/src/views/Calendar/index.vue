@@ -266,7 +266,7 @@
       v-if="cellCtx.show"
       ref="cellCtxRef"
       class="popup-menu cal-ctx-menu"
-      :style="{ position:'fixed', left: cellCtx.x+'px', top: cellCtx.y+'px', zIndex: 3000, minWidth:'140px' }"
+      :style="{ position:'fixed', left: cellCtx.x+'px', top: cellCtx.y+'px', zIndex: 3000, minWidth:'110px' }"
     >
       <button class="popup-menu-item" @click="ctxAddEvent">
         <PhCalendarPlus :size="13" weight="bold" />
