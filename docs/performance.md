@@ -4,6 +4,20 @@
 
 ---
 
+## 目录
+
+- [一、缩略图 blob 缓存](#一缩略图-blob-缓存usethumpcachejs)
+- [二、tiny blob 全局预热](#二tiny-blob-全局预热preloadtinythumbs)
+- [三、filesCache sessionStorage 持久化](#三filescache-sessionstorage-持久化)
+- [四、总览页去重请求 + fileCount 响应式读缓存](#四总览页去重请求--filecount-响应式读缓存)
+- [五、文件库热缓存路径](#五文件库热缓存路径filesindexvue)
+- [六、总览 CalendarPanel 事件模块级缓存](#六总览-calendarpanel-事件模块级缓存)
+- [七、FilePanel thumbMap 改 shallowRef 批量更新](#七filepanel-thumbmap-改-shallowref-批量更新)
+- [八、滚动入视口卡顿优化](#八滚动入视口卡顿优化filepanel)
+- [缓存层总览](#缓存层总览)
+
+---
+
 ## 一、缩略图 blob 缓存（useThumbCache.js）
 
 ### 问题
