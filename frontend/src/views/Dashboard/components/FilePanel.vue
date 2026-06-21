@@ -273,11 +273,7 @@ const files = computed(() =>
 </script>
 
 <style scoped>
-.file-panel {
-  padding: 20px; flex-shrink: 0;
-  content-visibility: auto;
-  contain-intrinsic-block-size: 280px;
-}
+.file-panel { padding: 20px; flex-shrink: 0; }
 
 .file-grid {
   display: grid;

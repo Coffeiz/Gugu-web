@@ -328,19 +328,10 @@ function preDecodeBlobs(map) {
 
 `loadThumbs` 完成后立即调用，在 FilePanel 还在视口外时把解码和 GPU 上传做完。滚入时直接取已解码的结果，当帧无 CPU/GPU 峰值。
 
-**`content-visibility: auto`（提前渲染窗口）**
-
-```css
-.file-panel {
-  content-visibility: auto;
-  contain-intrinsic-block-size: 280px;
-}
-```
-
-浏览器在 FilePanel 进入视口前约一个屏幕高度时，利用空闲帧提前渲染（含 backdrop-filter 合成），把渲染成本从滚动帧分散到空闲期。`contain-intrinsic-block-size` 保留占位高度，防止滚动条跳变。
+> `content-visibility: auto` 曾用于延迟渲染 FilePanel，但实测滚动时仍有卡顿感，且整页加载完整体验更好，已移除。
 
 ### 效果
-- 滚动到 FilePanel 时不再卡顿
+- `preDecodeBlobs` 消除滚动进入时的图片解码峰值
 
 ---
 
