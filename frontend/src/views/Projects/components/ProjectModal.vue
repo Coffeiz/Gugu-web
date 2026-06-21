@@ -1219,6 +1219,10 @@ const vLazySrc = {
     if (!id) return
     const cached = getCachedThumb(id, size)
     if (cached) { el.src = cached; return }
+    if (size === 'tiny') {
+      getThumb(id, size).then(url => { if (url) el.src = url })
+      return
+    }
     const obs = new IntersectionObserver(([e]) => {
       if (!e.isIntersecting) return
       obs.disconnect(); el._lazySrcObs = null
@@ -1231,6 +1235,10 @@ const vLazySrc = {
     el._lazySrcObs?.disconnect()
     const cached = getCachedThumb(id, size)
     if (cached) { el.src = cached; return }
+    if (size === 'tiny') {
+      getThumb(id, size).then(url => { if (url) el.src = url })
+      return
+    }
     const obs = new IntersectionObserver(([e]) => {
       if (!e.isIntersecting) return
       obs.disconnect(); el._lazySrcObs = null

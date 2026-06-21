@@ -1562,12 +1562,18 @@ function fileExtCategory(ext) {
 const _IMAGE_EXTS  = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
 const isImageExt   = (ext) => _IMAGE_EXTS.has((ext || '').toLowerCase())
 
-// IntersectionObserver 懒加载指令：进入视口后用 getThumb 拿 blobUrl，命中缓存则直接设置
+// IntersectionObserver 懒加载指令
+// tiny：不走 Observer，直接后台 fetch（20px WebP 成本极低），保证 blur 占位先于 card 出现
+// card：仍走 Observer，进视口附近才 fetch，节省带宽
 const vLazySrc = {
   mounted(el, { value: { id, size } }) {
     if (!id) return
     const cached = getCachedThumb(id, size)
     if (cached) { el.src = cached; return }
+    if (size === 'tiny') {
+      getThumb(id, size).then(url => { if (url) el.src = url })
+      return
+    }
     const obs = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting) return
       obs.disconnect(); el._lazySrcObs = null
@@ -1581,6 +1587,10 @@ const vLazySrc = {
     el._lazySrcObs?.disconnect()
     const cached = getCachedThumb(id, size)
     if (cached) { el.src = cached; return }
+    if (size === 'tiny') {
+      getThumb(id, size).then(url => { if (url) el.src = url })
+      return
+    }
     const obs = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting) return
       obs.disconnect(); el._lazySrcObs = null

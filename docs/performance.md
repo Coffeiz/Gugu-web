@@ -72,8 +72,25 @@ export function preloadTinyThumbs(files) {
 
 tiny 尺寸仅 20px WebP，预热成本极低，完成后 `getCachedThumb(id, 'tiny')` 同步命中，用于 blur-up 渐进式加载。
 
+**`v-lazy-src` 指令 tiny 优先策略（Files / ProjectModal）**
+
+文件库和项目 Modal 使用 `v-lazy-src` IntersectionObserver 指令懒加载缩略图。原来 tiny 和 card 都走 Observer，两者几乎同时进视口、同时 fetch，无法保证 tiny 先出现。
+
+改为：`size === 'tiny'` 时跳过 Observer，直接后台 fetch；card 仍走 Observer 懒加载。
+
+```js
+if (size === 'tiny') {
+  getThumb(id, size).then(url => { if (url) el.src = url })
+  return   // 不设 Observer，tiny 始终先于 card 出现
+}
+// card：仍走 IntersectionObserver，进视口附近再 fetch
+```
+
+结合 `preloadTinyThumbs`，二次访问时 tiny 已在 blob Map 中，`getCachedThumb` 同步命中，模板挂载时立即设置 `el.src`，blur 占位从第一帧开始可见。
+
 ### 效果
-- 进入页面时立即显示模糊占位图，card 图加载完成后交叉淡入，无空白帧
+- 首次访问：tiny 后台 fetch（~50ms），blur 占位先于 card 出现，card 进视口后 fade in
+- 二次访问：tiny 缓存命中，blur 占位第一帧即可见；card 走 Observer 按需 fetch
 
 ---
 
