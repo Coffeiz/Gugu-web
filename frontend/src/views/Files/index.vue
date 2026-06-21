@@ -42,9 +42,9 @@
               <path d="M5 2v6M2 5l3-3 3 3"/>
             </svg>
           </button>
-          <div v-if="sortMenuOpen" class="sort-menu">
+          <div v-if="sortMenuOpen" class="sort-menu popup-menu">
             <button v-for="opt in SORT_OPTIONS" :key="opt.key"
-              class="sort-menu-item" :class="{ active: sortKey === opt.key }"
+              class="sort-menu-item popup-menu-item" :class="{ active: sortKey === opt.key }"
               @click.stop="onSortSelect(opt.key)">
               {{ opt.label }}
               <svg v-if="sortKey === opt.key" class="sort-check" :class="{ desc: sortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -194,7 +194,7 @@
               @contextmenu.prevent.stop="openCtx('folder', f, $event)"
               :data-folder-key="f.id"
               :style="{ '--fd-color': folderAccentColor(f) }"
-              @click.stop="inSelectionMode ? toggleFolderSelect(f.id) : enterFolder(f)"
+              @click.stop="handleFolderClick(f, $event)"
               @dragover="onFolderDragOver(f, $event)"
               @dragleave="onFolderDragLeave(f)"
               @drop="onFolderDrop(f, $event)"
@@ -245,7 +245,7 @@
               :style="{ '--fc-color': fileIconColor(f.ext) }"
               draggable="true"
               @contextmenu.prevent.stop="openCtx('file', f, $event)"
-              @click.stop="inSelectionMode ? toggleFileSelectSimple(f.id) : (isPreviewable(f.ext) ? openPreview(f) : toggleFileSelect(f.id, $event))"
+              @click.stop="handleFileClick(f, $event)"
               @dragstart="onFileDragStart(f, $event)"
               @dragend="onFileDragEnd"
             >
@@ -351,7 +351,7 @@
               class="list-row folder-row"
               :class="{ selected: selectedFolderKeys.has(f.id), 'pre-selected': previewFolderKeys.has(f.id), 'drag-over': dragOverFolderId === f.folderId }"
               :data-folder-key="f.id"
-              @click.stop="inSelectionMode ? toggleFolderSelect(f.id) : enterFolder(f)"
+              @click.stop="handleFolderClick(f, $event)"
               @contextmenu.prevent.stop="openCtx('folder', f, $event)"
               @dragover="onFolderDragOver(f, $event)"
               @dragleave="onFolderDragLeave(f)"
@@ -404,7 +404,7 @@
               :data-file-id="f.id"
               draggable="true"
               @contextmenu.prevent.stop="openCtx('file', f, $event)"
-              @click.stop="inSelectionMode ? toggleFileSelectSimple(f.id) : (isPreviewable(f.ext) ? openPreview(f) : toggleFileSelect(f.id, $event))"
+              @click.stop="handleFileClick(f, $event)"
               @dragstart="onFileDragStart(f, $event)"
               @dragend="onFileDragEnd"
             >
@@ -519,31 +519,31 @@
   <ContextMenu :show="ctx.visible" :x="ctx.x" :y="ctx.y" @close="ctx.visible = false">
     <!-- 文件菜单 -->
     <template v-if="ctx.type === 'file' || ctx.type === 'multi-file'">
-      <button v-if="ctx.type === 'file'" class="ctx-item" @click="ctxInfo">
+      <button v-if="ctx.type === 'file'" class="ctx-item popup-menu-item" @click="ctxInfo">
         <PhInfo :size="13" weight="bold" />
         详细信息
       </button>
-      <button class="ctx-item" @click="ctxDownload">
+      <button class="ctx-item popup-menu-item" @click="ctxDownload">
         <PhDownloadSimple :size="13" weight="bold" />
         下载
       </button>
-      <button v-if="ctx.type === 'file'" class="ctx-item" @click="ctxRename">
+      <button v-if="ctx.type === 'file'" class="ctx-item popup-menu-item" @click="ctxRename">
         <PhPencilSimple :size="13" weight="bold" />
         重命名
       </button>
-      <div class="ctx-sep"></div>
-      <button class="ctx-item" @click="ctxCut">
+      <div class="popup-menu-sep"></div>
+      <button class="ctx-item popup-menu-item" @click="ctxCut">
         <PhScissors :size="13" weight="bold" />
         剪切
-        <span class="ctx-shortcut">{{ modKey }}+X</span>
+        <span class="popup-menu-shortcut">{{ modKey }}+X</span>
       </button>
-      <button class="ctx-item" @click="ctxCopy">
+      <button class="ctx-item popup-menu-item" @click="ctxCopy">
         <PhCopy :size="13" weight="bold" />
         复制
-        <span class="ctx-shortcut">{{ modKey }}+C</span>
+        <span class="popup-menu-shortcut">{{ modKey }}+C</span>
       </button>
-      <div class="ctx-sep"></div>
-      <button class="ctx-item ctx-danger" @click="ctxDelete">
+      <div class="popup-menu-sep"></div>
+      <button class="ctx-item popup-menu-item danger" @click="ctxDelete">
         <PhTrash :size="13" weight="bold" />
         移到回收站
       </button>
@@ -551,24 +551,24 @@
 
     <!-- 文件夹菜单 -->
     <template v-else-if="ctx.type === 'folder'">
-      <button v-if="ctx.target?.type === 'folder'" class="ctx-item" @click="ctxDownloadFolder">
+      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item" @click="ctxDownloadFolder">
         <PhDownloadSimple :size="13" weight="bold" />
         下载为 ZIP
       </button>
-      <button v-if="ctx.target?.type === 'folder'" class="ctx-item" @click="ctxRenameFolder">
+      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item" @click="ctxRenameFolder">
         <PhPencilSimple :size="13" weight="bold" />
         重命名
       </button>
-      <button v-if="ctx.target?.type === 'folder'" class="ctx-item" @click="ctxCutFolder">
+      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item" @click="ctxCutFolder">
         <PhScissors :size="13" weight="bold" />
         剪切
-        <span class="ctx-shortcut">{{ modKey }}+X</span>
+        <span class="popup-menu-shortcut">{{ modKey }}+X</span>
       </button>
-      <button v-if="ctx.target?.type === 'folder'" class="ctx-item ctx-danger" @click="ctxDeleteFolder">
+      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item danger" @click="ctxDeleteFolder">
         <PhTrash :size="13" weight="bold" />
         删除
       </button>
-      <button v-if="ctx.target?.type !== 'folder'" class="ctx-item" disabled style="opacity:.4;cursor:default">
+      <button v-if="ctx.target?.type !== 'folder'" class="ctx-item popup-menu-item" disabled style="opacity:.4;cursor:default">
         <PhDotsThree :size="13" weight="bold" />
         此位置不可操作
       </button>
@@ -576,17 +576,17 @@
 
     <!-- 空白区菜单 -->
     <template v-else-if="ctx.type === 'empty'">
-      <button class="ctx-item" @click="ctx.visible = false; showNewFolderInput = true">
+      <button class="ctx-item popup-menu-item" @click="ctx.visible = false; showNewFolderInput = true">
         <PhFolderPlus :size="13" weight="bold" />
         新建文件夹
       </button>
-      <div class="ctx-sep"></div>
-      <button v-if="cbStore.hasContent()" class="ctx-item" @click="ctxPaste">
+      <div class="popup-menu-sep"></div>
+      <button v-if="cbStore.hasContent()" class="ctx-item popup-menu-item" @click="ctxPaste">
         <PhClipboardText :size="13" weight="bold" />
         粘贴
-        <span class="ctx-shortcut">{{ modKey }}+V</span>
+        <span class="popup-menu-shortcut">{{ modKey }}+V</span>
       </button>
-      <button v-else class="ctx-item" disabled style="opacity:.4;cursor:default">
+      <button v-else class="ctx-item popup-menu-item" disabled style="opacity:.4;cursor:default">
         <PhClipboardText :size="13" weight="bold" />
         剪贴板为空
       </button>
@@ -987,6 +987,62 @@ function clearSelection() {
   selectedIds.value        = new Set()
   selectedFolderKeys.value = new Set()
   selectModeForced.value   = false
+  lastAnchorIndex.value    = -1
+}
+
+// ── Shift 多选 ──
+const lastAnchorIndex = ref(-1)
+
+const flatSelectableItems = computed(() => [
+  ...sortedContents.value.folders.map(f => ({ type: 'folder', id: f.id })),
+  ...sortedContents.value.files.map(f => ({ type: 'file', id: f.id })),
+])
+
+function _shiftSelect(type, id) {
+  const idx = flatSelectableItems.value.findIndex(i => i.type === type && i.id === id)
+  if (idx < 0) return false
+  const anchor = lastAnchorIndex.value
+  if (anchor < 0) return false
+  const [a, b] = anchor <= idx ? [anchor, idx] : [idx, anchor]
+  const ids  = new Set()
+  const keys = new Set()
+  flatSelectableItems.value.slice(a, b + 1).forEach(item => {
+    if (item.type === 'file') ids.add(item.id)
+    else keys.add(item.id)
+  })
+  selectedIds.value        = ids
+  selectedFolderKeys.value = keys
+  return true
+}
+
+function handleFolderClick(folder, event) {
+  if (event.shiftKey && _shiftSelect('folder', folder.id)) return
+  if (inSelectionMode.value) {
+    toggleFolderSelect(folder.id)
+    lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'folder' && i.id === folder.id)
+  } else {
+    enterFolder(folder)
+  }
+}
+
+function handleFileClick(file, event) {
+  if (event.shiftKey) {
+    if (!_shiftSelect('file', file.id)) {
+      // 没有锚点时 shift+click 当作普通选中，设置锚点
+      toggleFileSelectSimple(file.id)
+      lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
+    }
+    return
+  }
+  if (inSelectionMode.value) {
+    toggleFileSelectSimple(file.id)
+    lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
+  } else if (isPreviewable(file.ext)) {
+    openPreview(file)
+  } else {
+    toggleFileSelect(file.id, event)
+    lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
+  }
 }
 
 const selectionRect = computed(() => {
@@ -1028,12 +1084,29 @@ function onDocMouseUp(e) {
   document.removeEventListener('mouseup',   onDocMouseUp)
 
   if (selectionRect.value) {
-    // 直接用预览时缓存的结果，保证松手选中 == 预选中
-    selectedIds.value        = _latestPreview.fileIds
-    selectedFolderKeys.value = _latestPreview.folderKeys
-    // 用 capture 阶段一次性拦截紧接着的 click，阻止 toggleFileSelect / onPageClick 清掉选中结果
+    if (e.shiftKey) {
+      const ids  = new Set(selectedIds.value)
+      const keys = new Set(selectedFolderKeys.value)
+      _latestPreview.fileIds.forEach(id => ids.add(id))
+      _latestPreview.folderKeys.forEach(k => keys.add(k))
+      selectedIds.value        = ids
+      selectedFolderKeys.value = keys
+    } else {
+      selectedIds.value        = _latestPreview.fileIds
+      selectedFolderKeys.value = _latestPreview.folderKeys
+    }
+    // 把锚点设到框选结果里最末尾的那项，便于后续 shift+click 继续延伸
+    const flat = flatSelectableItems.value
+    for (let i = flat.length - 1; i >= 0; i--) {
+      const item = flat[i]
+      if ((item.type === 'file'   && _latestPreview.fileIds.has(item.id)) ||
+          (item.type === 'folder' && _latestPreview.folderKeys.has(item.id))) {
+        lastAnchorIndex.value = i
+        break
+      }
+    }
     document.addEventListener('click', _swallowBoxClick, { capture: true, once: true })
-  } else if (!e.ctrlKey && !e.metaKey) {
+  } else if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
     clearSelection()
   }
 
@@ -1825,7 +1898,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   display: flex; align-items: center; justify-content: space-between;
   height: 52px; box-sizing: border-box;
   padding: 0 16px; flex-shrink: 0; gap: 12px;
-  position: relative;
+  position: relative; z-index: 20;
 }
 .toolbar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
@@ -1871,19 +1944,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .sort-dir-icon.desc { transform: rotate(180deg); }
 .sort-menu {
   position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 200;
-  background: rgba(255,255,255,0.96); backdrop-filter: blur(12px);
-  border: 1px solid rgba(0,0,0,0.08); border-radius: 10px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1); padding: 4px;
   display: flex; flex-direction: column; gap: 1px; min-width: 110px;
 }
-.sort-menu-item {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 7px 10px; border-radius: 7px; border: none; background: none;
-  font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
-  cursor: pointer; transition: background 0.12s; text-align: left;
-}
-.sort-menu-item:hover { background: rgba(0,0,0,0.05); }
-.sort-menu-item.active { color: var(--color-primary); font-weight: 600; }
 .sort-check { flex-shrink: 0; color: var(--color-primary); }
 .sort-check.desc { transform: rotate(180deg); }
 
@@ -2397,17 +2459,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* ── 右键菜单 ── */
-.ctx-item {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; padding: 7px 10px; border: none; background: none;
-  border-radius: 7px; font-size: 13px; color: var(--text-primary);
-  cursor: pointer; text-align: left; white-space: nowrap;
-}
-.ctx-item:hover:not(:disabled) { background: rgba(0,0,0,0.05); }
-.ctx-item.ctx-danger { color: #c85a5a; }
-.ctx-item.ctx-danger:hover { background: rgba(200,90,90,0.1); }
-.ctx-sep { height: 1px; background: rgba(0,0,0,0.07); margin: 3px 6px; }
-.ctx-shortcut { margin-left: auto; font-size: 11px; color: var(--text-secondary); opacity: .7; }
 .fc-card.cut, .list-row.cut { opacity: 0.45; }
 .sel-delete-btn {
   display: flex; align-items: center; gap: 5px;

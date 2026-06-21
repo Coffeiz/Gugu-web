@@ -1292,11 +1292,9 @@ async function saveEvent() {
 .picker-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .picker-enter-from,.picker-leave-to { opacity: 0; transform: scaleY(0.9) translateY(-6px); transform-origin: top; }
 
-.add-event-popup { background: rgba(255,255,255,0.66); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.88); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; }
+.add-event-popup { background: rgba(255,255,255,0.6); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; }
 .popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 .popup-title { font-size: 13px; font-weight: 700; color: #1e2028; }
-.popup-close-btn { width: 22px; height: 22px; border-radius: 6px; border: none; background: none; cursor: pointer; color: #8a8fa8; display: flex; align-items: center; justify-content: center; transition: background 0.12s, color 0.12s; padding: 0; flex-shrink: 0; }
-.popup-close-btn:hover { background: rgba(0,0,0,0.07); color: #1e2028; }
 .popup-input { width: 100%; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 12px; font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028; outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }
 .popup-input:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
 .popup-input::placeholder { color: #8a8fa8; opacity: 0.7; }

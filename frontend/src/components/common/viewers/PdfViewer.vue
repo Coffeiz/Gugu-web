@@ -387,6 +387,7 @@ onUnmounted(() => {
   flex: 1;
   overflow: auto;
   padding: 20px 24px;
+  position: relative;
 }
 
 .pv-pages {
@@ -446,6 +447,7 @@ onUnmounted(() => {
 
 /* ── 状态 ── */
 .pv-status {
+  position: absolute; inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -453,7 +455,6 @@ onUnmounted(() => {
   gap: 12px;
   color: var(--text-secondary);
   font-size: 13px;
-  min-height: calc(100vh - 200px);
 }
 .pv-error { color: rgba(180, 80, 80, 0.8); }
 .pv-spinner {

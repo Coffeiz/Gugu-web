@@ -211,9 +211,9 @@
                   <path d="M5 2v6M2 5l3-3 3 3"/>
                 </svg>
               </button>
-              <div v-if="pmSortMenuOpen" class="sort-menu">
+              <div v-if="pmSortMenuOpen" class="sort-menu popup-menu">
                 <button v-for="opt in PM_SORT_OPTIONS" :key="opt.key"
-                  class="sort-menu-item" :class="{ active: pmSortKey === opt.key }"
+                  class="sort-menu-item popup-menu-item" :class="{ active: pmSortKey === opt.key }"
                   @click.stop="onPmSortSelect(opt.key)">
                   {{ opt.label }}
                   <svg v-if="pmSortKey === opt.key" class="sort-check" :class="{ desc: pmSortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -602,65 +602,65 @@
   <!-- 右键菜单 -->
   <ContextMenu :show="pmCtx.visible" :x="pmCtx.x" :y="pmCtx.y" @close="pmCtx.visible = false">
     <template v-if="pmCtx.type === 'file' || pmCtx.type === 'multi-file'">
-      <button v-if="pmCtx.type === 'file'" class="ctx-item" @click="pmCtxInfo">
+      <button v-if="pmCtx.type === 'file'" class="ctx-item popup-menu-item" @click="pmCtxInfo">
         <PhInfo :size="13" weight="bold" />
         详细信息
       </button>
-      <button class="ctx-item" @click="pmCtxDownload">
+      <button class="ctx-item popup-menu-item" @click="pmCtxDownload">
         <PhDownloadSimple :size="13" weight="bold" />
         下载
       </button>
-      <button v-if="pmCtx.type === 'file'" class="ctx-item" @click="pmCtxRename">
+      <button v-if="pmCtx.type === 'file'" class="ctx-item popup-menu-item" @click="pmCtxRename">
         <PhPencilSimple :size="13" weight="bold" />
         重命名
       </button>
-      <div class="ctx-sep"></div>
-      <button class="ctx-item" @click="pmCtxCut">
+      <div class="popup-menu-sep"></div>
+      <button class="ctx-item popup-menu-item" @click="pmCtxCut">
         <PhScissors :size="13" weight="bold" />
-        剪切 <span class="ctx-shortcut">{{ modKey }}+X</span>
+        剪切 <span class="popup-menu-shortcut">{{ modKey }}+X</span>
       </button>
-      <button class="ctx-item" @click="pmCtxCopy">
+      <button class="ctx-item popup-menu-item" @click="pmCtxCopy">
         <PhCopy :size="13" weight="bold" />
-        复制 <span class="ctx-shortcut">{{ modKey }}+C</span>
+        复制 <span class="popup-menu-shortcut">{{ modKey }}+C</span>
       </button>
-      <div class="ctx-sep"></div>
-      <button class="ctx-item ctx-danger" @click="pmCtxDelete">
+      <div class="popup-menu-sep"></div>
+      <button class="ctx-item popup-menu-item danger" @click="pmCtxDelete">
         <PhTrash :size="13" weight="bold" />
         移到回收站
       </button>
     </template>
 
     <template v-else-if="pmCtx.type === 'folder'">
-      <button class="ctx-item" @click="pmCtxDownloadFolder">
+      <button class="ctx-item popup-menu-item" @click="pmCtxDownloadFolder">
         <PhDownloadSimple :size="13" weight="bold" />
         下载为 ZIP
       </button>
-      <button class="ctx-item" @click="pmCtxRenameFolder">
+      <button class="ctx-item popup-menu-item" @click="pmCtxRenameFolder">
         <PhPencilSimple :size="13" weight="bold" />
         重命名
       </button>
-      <button class="ctx-item" @click="pmCtxCutFolder">
+      <button class="ctx-item popup-menu-item" @click="pmCtxCutFolder">
         <PhScissors :size="13" weight="bold" />
-        剪切 <span class="ctx-shortcut">{{ modKey }}+X</span>
+        剪切 <span class="popup-menu-shortcut">{{ modKey }}+X</span>
       </button>
-      <div class="ctx-sep"></div>
-      <button class="ctx-item ctx-danger" @click="pmCtxDeleteFolder">
+      <div class="popup-menu-sep"></div>
+      <button class="ctx-item popup-menu-item danger" @click="pmCtxDeleteFolder">
         <PhTrash :size="13" weight="bold" />
         删除
       </button>
     </template>
 
     <template v-else-if="pmCtx.type === 'empty'">
-      <button class="ctx-item" @click="pmCtx.visible = false; showNewFolder = true">
+      <button class="ctx-item popup-menu-item" @click="pmCtx.visible = false; showNewFolder = true">
         <PhFolderPlus :size="13" weight="bold" />
         新建文件夹
       </button>
-      <div class="ctx-sep"></div>
-      <button v-if="pmCbStore.hasContent()" class="ctx-item" @click="pmCtxPaste">
+      <div class="popup-menu-sep"></div>
+      <button v-if="pmCbStore.hasContent()" class="ctx-item popup-menu-item" @click="pmCtxPaste">
         <PhClipboardText :size="13" weight="bold" />
-        粘贴 <span class="ctx-shortcut">{{ modKey }}+V</span>
+        粘贴 <span class="popup-menu-shortcut">{{ modKey }}+V</span>
       </button>
-      <button v-else class="ctx-item" disabled style="opacity:.4;cursor:default">
+      <button v-else class="ctx-item popup-menu-item" disabled style="opacity:.4;cursor:default">
         <PhClipboardText :size="13" weight="bold" />
         剪贴板为空
       </button>
@@ -2264,19 +2264,8 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .sort-dir-icon.desc { transform: rotate(180deg); }
 .sort-menu {
   position: absolute; top: calc(100% + 5px); left: 50%; transform: translateX(-50%); z-index: 400;
-  background: rgba(255,255,255,0.96); backdrop-filter: blur(12px);
-  border: 1px solid rgba(0,0,0,0.08); border-radius: 10px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1); padding: 4px;
   display: flex; flex-direction: column; gap: 1px; min-width: 100px;
 }
-.sort-menu-item {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 6px 9px; border-radius: 6px; border: none; background: none;
-  font-size: 11.5px; font-family: var(--font-sans); color: var(--text-primary);
-  cursor: pointer; transition: background 0.12s; text-align: left;
-}
-.sort-menu-item:hover { background: rgba(0,0,0,0.05); }
-.sort-menu-item.active { color: var(--color-primary); font-weight: 600; }
 .sort-check { flex-shrink: 0; color: var(--color-primary); }
 .sort-check.desc { transform: rotate(180deg); }
 
@@ -2603,17 +2592,6 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* ── 右键菜单 ── */
-.ctx-item {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; padding: 7px 10px; border: none; background: none;
-  border-radius: 7px; font-size: 13px; color: var(--text-primary);
-  cursor: pointer; text-align: left; white-space: nowrap;
-}
-.ctx-item:hover:not(:disabled) { background: rgba(0,0,0,0.05); }
-.ctx-item.ctx-danger { color: #c85a5a; }
-.ctx-item.ctx-danger:hover { background: rgba(200,90,90,0.1); }
-.ctx-sep { height: 1px; background: rgba(0,0,0,0.07); margin: 3px 6px; }
-.ctx-shortcut { margin-left: auto; font-size: 11px; color: var(--text-secondary); opacity: .7; }
 .fc-card.cut, .list-row.cut { opacity: 0.45; }
 
 .drop-overlay {

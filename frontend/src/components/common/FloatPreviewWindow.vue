@@ -461,20 +461,20 @@ onUnmounted(() => {
 
 .fpw-actions {
   display: flex;
-  gap: 3px;
+  gap: 0;
   flex-shrink: 0;
   margin-left: 4px;
 }
 .fpw-btn {
-  width: 24px; height: 24px;
+  width: 26px; height: 26px;
   border-radius: 6px; border: none;
-  background: rgba(255,255,255,0.5);
+  background: none;
   color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
-.fpw-btn:hover { background: rgba(255,255,255,0.9); color: var(--text-primary); }
+.fpw-btn:hover { background: rgba(0,0,0,0.1); color: var(--text-primary); }
 .fpw-close:hover { background: rgba(200,90,90,0.12); color: rgba(200,90,90,0.9); }
 
 /* ── 内容区 ── */

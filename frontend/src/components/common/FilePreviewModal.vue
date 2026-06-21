@@ -318,16 +318,15 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   padding-bottom: 2px;
   margin-bottom: -2px;
 }
-.fp-header-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.fp-header-actions { display: flex; align-items: center; gap: 0; flex-shrink: 0; }
 .fp-action-btn {
-  width: 28px; height: 28px; border-radius: 7px; border: none;
-  background: rgba(255, 255, 255, 0.6); color: var(--text-secondary);
+  width: 30px; height: 30px; border-radius: 7px; border: none;
+  background: none; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; transition: background 0.15s, color 0.15s;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 .fp-action-btn svg { display: block; }
-.fp-action-btn:hover { background: rgba(255, 255, 255, 0.9); color: var(--text-primary); }
+.fp-action-btn:hover { background: rgba(0,0,0,0.1); color: var(--text-primary); }
 .fp-close-btn:hover { background: rgba(200, 90, 90, 0.1); color: rgba(200, 90, 90, 0.9); }
 
 /* ── 内容区 ── */
