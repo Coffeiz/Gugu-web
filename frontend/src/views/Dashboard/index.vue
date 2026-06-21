@@ -48,7 +48,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { filesApi } from '@/services/api'
 import { filesCache } from '@/services/cache'
@@ -58,13 +58,12 @@ import CalendarPanel from './components/CalendarPanel.vue'
 import FilePanel   from './components/FilePanel.vue'
 
 const projectStore = useProjectStore()
-const _fileCount = ref(filesCache.data?.length ?? null)
-const fileCount = computed(() => _fileCount.value ?? '—')
+const fileCount = computed(() => filesCache.ref.value?.length ?? '—')
+
 onMounted(async () => {
   try {
     const fresh = await filesApi.list()
     filesCache.set(fresh)
-    _fileCount.value = fresh.length
   } catch { /* ignore */ }
 })
 </script>

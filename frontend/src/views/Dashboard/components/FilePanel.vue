@@ -87,7 +87,7 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, onMounted, nextTick } from 'vue'
+import { ref, computed, reactive, watch, onMounted, nextTick } from 'vue'
 import { filesApi } from '@/services/api'
 import { filesCache } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
@@ -214,25 +214,25 @@ async function onUploaded() {
   uploadOpen.value = false
   try {
     const fresh = await filesApi.list()
-    filesCache.set(fresh)
-    rawFiles.value = fresh
-    preloadTinyThumbs(fresh)
-    loadThumbs(fresh.slice(0, 7))
+    filesCache.set(fresh) // 触发 watch，rawFiles / thumbs 自动更新
   } catch { /* ignore */ }
 }
 
-onMounted(async () => {
-  if (filesCache.data?.length) {
-    preloadTinyThumbs(filesCache.data)
-    loadThumbs(filesCache.data.slice(0, 7))
+// 响应 index.vue 拉取或上传后写入的新数据
+watch(filesCache.ref, (list) => {
+  if (!list?.length) return
+  rawFiles.value = list
+  preloadTinyThumbs(list)
+  loadThumbs(list.slice(0, 7))
+})
+
+onMounted(() => {
+  const list = filesCache.data
+  if (list?.length) {
+    preloadTinyThumbs(list)
+    loadThumbs(list.slice(0, 7))
   }
-  try {
-    const fresh = await filesApi.list()
-    filesCache.set(fresh)
-    rawFiles.value = fresh
-    preloadTinyThumbs(fresh)
-    loadThumbs(fresh.slice(0, 7))
-  } catch { /* ignore */ }
+  // 不再自行调 filesApi.list()，由 index.vue 统一拉取
 })
 
 const files = computed(() =>

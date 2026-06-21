@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 
 const SS_KEY = 'gugu_files_cache'
 
@@ -9,10 +9,13 @@ function writeSS(data) {
   try { sessionStorage.setItem(SS_KEY, JSON.stringify(data)) } catch {}
 }
 
+const _fileList = shallowRef(readSS())
+
 export const filesCache = {
-  data: readSS(),
-  set(data) { this.data = data; writeSS(data) },
-  clear()   { this.data = null; try { sessionStorage.removeItem(SS_KEY) } catch {} },
+  get data() { return _fileList.value },
+  ref: _fileList,                          // 响应式 ref，供 watch / computed 使用
+  set(data) { _fileList.value = data; writeSS(data) },
+  clear()   { _fileList.value = null; try { sessionStorage.removeItem(SS_KEY) } catch {} },
 }
 
 export const uploadSignal = ref(0)

@@ -113,18 +113,23 @@ const month    = ref(today.getMonth())
 const weekdays = ['一', '二', '三', '四', '五', '六', '日']
 
 const { fetchYear, getHolidayType } = useHolidays()
-const hdayCache = ref({})
+
+// 模块级节假日缓存，跨导航不重置
+const _hdayStore = {}
+const hdayCache  = ref(_hdayStore)
 
 async function loadHolidays() {
   const y = year.value
   const years = [y]
   if (month.value === 11) years.push(y + 1)
+  let changed = false
   for (const yr of years) {
-    if (!hdayCache.value[yr]) {
-      const data = await fetchYear(yr)
-      hdayCache.value = { ...hdayCache.value, [yr]: data }
+    if (!_hdayStore[yr]) {
+      _hdayStore[yr] = await fetchYear(yr)
+      changed = true
     }
   }
+  if (changed) hdayCache.value = { ..._hdayStore }
 }
 
 function hdayType(isoDate) {
@@ -189,6 +194,11 @@ async function saveEditForm() {
   const ev = editingEvent.value
   if (!ev?.name) return
   showEditForm.value = false
+  // 乐观更新 events.value + 模块缓存
+  events.value = events.value.map(e =>
+    e.id === ev.id ? { ...e, title: ev.name, date: ev.date, description: ev.description } : e
+  )
+  _eventsCache.set(`${year.value}-${month.value}`, events.value)
   // 更新 store 中的 upcomingCalEvents
   const raw = projectStore.upcomingCalEvents.find(e => e.id === ev.id)
   if (raw) { raw.title = ev.name; raw.date = ev.date; raw.description = ev.description }
@@ -212,11 +222,21 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside, true
 
 const TYPE_COLOR = { deadline: '#b07858', milestone: '#7b7fb2', meeting: '#7ab8c8', event: '#9590c4' }
 
+// 模块级事件缓存，键为 `${year}-${month}`，跨导航不重置
+const _eventsCache = new Map()
+
 // 当前显示月份的事件（用于日历格子打点）
 const events = ref([])
 async function loadEvents() {
+  const key = `${year.value}-${month.value}`
+  if (_eventsCache.has(key)) {
+    events.value = _eventsCache.get(key)
+    return
+  }
   try {
-    events.value = await eventsApi.list(year.value, month.value)
+    const data = await eventsApi.list(year.value, month.value)
+    events.value = data
+    _eventsCache.set(key, data)
   } catch { /* ignore */ }
 }
 onMounted(() => { loadEvents(); loadHolidays() })
