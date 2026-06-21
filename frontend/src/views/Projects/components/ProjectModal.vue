@@ -21,7 +21,7 @@
                 v-if="editingName"
                 ref="nameInputRef"
                 v-model="localName"
-                class="header-name-input"
+                class="header-name-input title-edit-input"
                 @blur="saveName"
                 @keydown.enter="saveName"
                 @keydown.esc="cancelName"
@@ -681,7 +681,7 @@
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { filesApi, foldersApi, uploadWithProgress } from '@/services/api'
+import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/services/api'
 import { getThumb, getCachedThumb, thumbLoadedIds, preloadTinyThumbs } from '@/composables/useThumbCache'
 import DatePicker from '@/components/common/DatePicker.vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
@@ -723,6 +723,7 @@ const nameInputRef     = ref(null)
 
 const localStages      = ref([])
 const expandedStages   = ref(new Set())
+let _syncingFromStore  = false   // 防止 store→localStages 同步触发 saveTodos
 const localStartDate = ref('')
 const localDeadline  = ref('')
 const localClient    = ref('')
@@ -1401,6 +1402,7 @@ watch(() => props.project?.id, async (id) => {
   }
 }, { immediate: true })
 
+
 watch(localClient, v => {
   if (initializing) return
   const id = props.project?.id
@@ -1531,8 +1533,33 @@ function setColor(c) {
 }
 
 function setStage(key, idx) {
+  const oldIdx = localStages.value.findIndex(s => s.key === localCurrentStage.value)
+  const newIdx = idx
+
   localCurrentStage.value = key
   activeStageIdx.value = idx
+
+  // 直接在本地同步计算，不依赖 store 异步回写
+  if (oldIdx !== newIdx && oldIdx >= 0 && newIdx >= 0) {
+    const stages = JSON.parse(JSON.stringify(localStages.value))
+    if (newIdx > oldIdx) {
+      for (let i = oldIdx; i < newIdx; i++) {
+        stages[i].todos = (stages[i].todos ?? []).map(t =>
+          t.done ? t : { ...t, _savedDone: false, done: true, autoCompleted: true }
+        )
+      }
+    } else {
+      for (let i = newIdx; i < stages.length; i++) {
+        stages[i].todos = (stages[i].todos ?? []).map(t =>
+          t.autoCompleted ? { ...t, done: t._savedDone ?? false, autoCompleted: false, _savedDone: undefined } : t
+        )
+      }
+    }
+    _syncingFromStore = true
+    localStages.value = stages
+    nextTick(() => { _syncingFromStore = false })
+  }
+
   const newProgress = calcProgress(localStages.value, key)
   stageProgress.value = newProgress
   projectStore.setStage(props.project.id, key, newProgress)
@@ -1572,11 +1599,10 @@ function toggleExpand(key) {
 }
 function saveTodos() {
   if (!props.project) return
+  if (_syncingFromStore) return
   const newProgress = calcProgress(localStages.value, localCurrentStage.value)
   stageProgress.value = newProgress
-  const p = projectStore.projects.find(p => p.id === props.project.id)
-  if (p) { p.stages = localStages.value; p.progress = newProgress }
-  projectsApi.update(props.project.id, { stages: localStages.value, progress: newProgress })
+  projectStore.updateProject(props.project.id, { stages: JSON.parse(JSON.stringify(localStages.value)), progress: newProgress })
 }
 function addTodo(stage) {
   if (!stage.todos) stage.todos = []
@@ -1593,6 +1619,7 @@ function removeTodo(stage, id) {
 }
 function toggleTodo(todo) {
   todo.done = !todo.done
+  todo.autoCompleted = false  // 手动操作后清除自动标记，后退时不再还原
   saveTodos()
 }
 
@@ -1912,14 +1939,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   cursor: text; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   line-height: 1.2;
 }
-.header-name-input {
-  flex: 1; font-size: 17px; font-weight: 700; line-height: 1.2;
-  border: 1.5px solid rgba(123,127,178,0.45); border-radius: 7px;
-  background: rgba(255,255,255,0.88); outline: none;
-  padding: 2px 8px; margin: -3px -9px;
-  font-family: var(--font-sans); color: var(--text-primary); min-width: 0;
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
-}
+.header-name-input { flex: 1; font-size: 17px; min-width: 0; }
 .header-progress-bar {
   height: 3px; background: rgba(0,0,0,0.07); flex-shrink: 0; position: relative;
 }
@@ -2042,7 +2062,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .stage-input {
   font-size: 13px; font-family: var(--font-sans);
   border: 1px solid rgba(123,127,178,0.4); border-radius: 6px; padding: 1px 6px;
-  background: rgba(255,255,255,0.8); outline: none; color: var(--text-primary); width: 110px;
+  background: rgba(255,255,255,0.72); outline: none; color: var(--text-primary); width: 110px;
   box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
 }
 .del-stage {
@@ -2074,9 +2094,9 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 .todo-input:focus {
-  background: rgba(255,255,255,0.88);
-  border-color: rgba(123,127,178,0.45);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
+  background: rgba(255,255,255,0.72);
+  border-color: rgba(123,127,178,0.4);
+  box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
 }
 .todo-del {
   background: none; border: none; cursor: pointer; color: var(--text-secondary);

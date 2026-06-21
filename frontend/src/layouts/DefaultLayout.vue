@@ -16,7 +16,7 @@
         </div>
         <div class="topbar-actions">
           <a-button class="btn-ghost-custom" @click="openUpload">上传文件</a-button>
-          <a-button type="primary" class="btn-primary-custom" @click="uiStore.openNewProject = true">
+          <a-button type="primary" class="btn-primary-custom" @click="openNewProject">
             ＋ 新建项目
           </a-button>
         </div>
@@ -103,6 +103,11 @@ const prefsStore     = usePreferencesStore()
 
 const uploadDialogOpen = ref(false)
 const uploadProjects   = ref([])
+
+function openNewProject() {
+  uiStore.newProjectRange = uiStore.calendarActiveRange ?? null
+  uiStore.openNewProject = true
+}
 
 function openUpload() {
   uploadDialogOpen.value = true

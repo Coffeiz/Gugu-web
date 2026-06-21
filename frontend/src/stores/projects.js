@@ -92,9 +92,9 @@ export const useProjectStore = defineStore('projects', () => {
     const oldStatus = p.status
     p.status = newStatus
 
-    if (newStatus === 'done') {
+    if (newStatus === 'done' && oldStatus !== 'done') {
       p.doneAt = new Date().toISOString()
-    } else if (oldStatus === 'done') {
+    } else if (oldStatus === 'done' && newStatus !== 'done') {
       p.doneAt = null
     }
 
@@ -124,9 +124,34 @@ export const useProjectStore = defineStore('projects', () => {
   async function setStage(id, stageKey, progress) {
     const p = projects.value.find(p => p.id === id)
     if (!p) return
+
+    const oldIdx = p.stages.findIndex(s => s.key === p.currentStage)
+    const newIdx = p.stages.findIndex(s => s.key === stageKey)
+
+    let stages = p.stages
+    if (oldIdx !== newIdx && oldIdx >= 0 && newIdx >= 0) {
+      stages = JSON.parse(JSON.stringify(p.stages))
+      if (newIdx > oldIdx) {
+        // 前进：对经过的阶段（不含新当前阶段）快照并自动打勾
+        for (let i = oldIdx; i < newIdx; i++) {
+          stages[i].todos = (stages[i].todos ?? []).map(t =>
+            t.done ? t : { ...t, _savedDone: false, done: true, autoCompleted: true }
+          )
+        }
+      } else {
+        // 后退：从目标阶段开始（含目标阶段自身）还原 autoCompleted 到快照状态
+        for (let i = newIdx; i < stages.length; i++) {
+          stages[i].todos = (stages[i].todos ?? []).map(t =>
+            t.autoCompleted ? { ...t, done: t._savedDone ?? false, autoCompleted: false, _savedDone: undefined } : t
+          )
+        }
+      }
+      p.stages = stages
+    }
+
     p.currentStage = stageKey
     p.progress = progress ?? 0
-    await _patchProject(id, { currentStage: stageKey, progress: p.progress })
+    await _patchProject(id, { currentStage: stageKey, progress: p.progress, stages })
   }
 
   async function updateStages(id, newStages) {

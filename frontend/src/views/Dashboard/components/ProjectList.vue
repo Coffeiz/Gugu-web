@@ -55,7 +55,18 @@
               <span class="proj-pct" :style="{ color: accentColor(p) }">{{ stageProgress(p) }}%</span>
             </div>
           </div>
-          <div class="progress-track">
+          <div v-if="p.stages.length" class="seg-bar" @click.stop @mousedown.stop>
+            <div
+              v-for="(stage, i) in p.stages"
+              :key="stage.key"
+              class="seg"
+              :title="stage.label"
+              @click.stop="clickStage(p, i)"
+            >
+              <div class="seg-fill" :style="{ width: segFill(p, i) + '%', background: p.color }"></div>
+            </div>
+          </div>
+          <div v-else class="progress-track">
             <div class="progress-fill" :style="{ width: stageProgress(p) + '%', background: p.color }" />
           </div>
         </div>
@@ -123,6 +134,22 @@ const STATUS_NEXT = { pending: 'active', active: 'done' }
 async function advance(p) {
   const next = STATUS_NEXT[p.status]
   if (next) await projectStore.moveProject(p.id, next)
+}
+
+// ── 分段进度条 ────────────────────────────────────────────
+function segFill(p, i) {
+  const idx = p.stages.findIndex(s => s.key === p.currentStage)
+  if (i < idx) return 100
+  if (i > idx) return 0
+  const todos = p.stages[i].todos ?? []
+  if (!todos.length) return 100
+  return Math.round(todos.filter(t => t.done).length / todos.length * 100)
+}
+
+async function clickStage(p, i) {
+  const stage = p.stages[i]
+  const progress = Math.round((i + 1) / p.stages.length * 100)
+  await projectStore.setStage(p.id, stage.key, progress)
 }
 
 // ── 辅助 ─────────────────────────────────────────────────
@@ -243,6 +270,16 @@ function formatDate(str) {
   height: 3px; background: rgba(0,0,0,0.07); border-radius: 99px; overflow: hidden;
 }
 .progress-fill { height: 100%; border-radius: 99px; transition: width 0.4s; }
+
+.seg-bar { display: flex; gap: 2px; height: 5px; }
+.seg {
+  flex: 1; height: 100%; border-radius: 99px;
+  background: rgba(0,0,0,0.07); overflow: hidden; cursor: pointer;
+  transition: transform 0.18s ease, opacity 0.15s;
+  transform-origin: center;
+}
+.seg:hover { transform: scaleY(1.7); opacity: 0.8; }
+.seg-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
 
 /* ── 星级（右上角） ── */
 .row-stars {

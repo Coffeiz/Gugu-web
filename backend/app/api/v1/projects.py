@@ -144,8 +144,8 @@ async def update_project(
             p.stages = v
         else:
             setattr(p, k, v)
-    # 进入 done 时（重新）记录时间；撤回时清除，确保下次完成时间准确
-    if data.get("status") == "done":
+    # 仅在 done_at 为空时才记录完成时间，避免拖回已完成列重置时间
+    if data.get("status") == "done" and p.done_at is None:
         p.done_at = datetime.utcnow()
     elif "status" in data and data["status"] != "done":
         p.done_at = None

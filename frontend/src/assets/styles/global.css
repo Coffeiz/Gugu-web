@@ -168,3 +168,21 @@ body {
 .popup-menu-item.danger:hover:not(:disabled) { background: rgba(200,90,90,0.1); }
 .popup-menu-sep { height: 1px; background: rgba(0,0,0,0.07); margin: 3px 6px; }
 .popup-menu-shortcut { margin-left: auto; font-size: 11px; color: var(--text-secondary); opacity: .7; }
+
+/* 标题级内联编辑输入框（用于弹窗/卡片顶部名称编辑） */
+.title-edit-input {
+  background: rgba(255,255,255,0.72);
+  border: 1px solid rgba(0,0,0,0.1);
+  border-radius: 7px;
+  outline: none;
+  padding: 2px 8px; margin: -3px -9px;
+  font-weight: 700; line-height: 1.2;
+  font-family: var(--font-sans); color: var(--text-primary);
+  box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
+  caret-color: var(--color-primary);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.title-edit-input:focus {
+  border-color: rgba(123,127,178,0.4);
+  box-shadow: 0 0 0 3px rgba(123,127,178,0.14);
+}

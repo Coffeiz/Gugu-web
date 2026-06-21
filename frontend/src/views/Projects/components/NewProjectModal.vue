@@ -6,13 +6,20 @@
       <div class="modal-header">
         <div class="header-color-bar" :style="{ background: form.color }"></div>
         <input
+          v-if="nameEditing"
           ref="nameInputRef"
           v-model="form.name"
-          class="name-input"
+          class="header-name-input title-edit-input"
           :class="{ error: errors.name }"
           placeholder="项目名称"
           @input="errors.name = ''"
+          @blur="nameEditing = false"
+          @keydown.enter="nameEditing = false"
+          @keydown.esc="nameEditing = false"
         />
+        <div v-else class="header-name" :class="{ placeholder: !form.name, error: errors.name }" @click="startNameEdit">
+          {{ form.name || '项目名称' }}
+        </div>
         <span v-if="errors.name" class="name-error">{{ errors.name }}</span>
         <button class="close-btn" @click="$emit('close')">
           <PhX :size="14" weight="bold" />
@@ -250,6 +257,14 @@ const projectStore    = useProjectStore()
 const uiStore         = useUiStore()
 const stagesEditorRef = ref(null)
 const nameInputRef    = ref(null)
+const nameEditing     = ref(false)
+
+async function startNameEdit() {
+  nameEditing.value = true
+  await nextTick()
+  nameInputRef.value?.focus()
+  nameInputRef.value?.select()
+}
 
 // ── 模板 ──
 const { templates, applyTemplate, addTemplate, removeTemplate, renameTemplate } = useStageTemplates()
@@ -411,7 +426,7 @@ watch(() => props.show, async (v) => {
       uiStore.newProjectRange = null
     }
     await nextTick()
-    nameInputRef.value?.focus()
+    startNameEdit()
   }
 })
 
@@ -530,20 +545,21 @@ function handleCreate() {
 .modal-header {
   display: flex; align-items: center;
   gap: 14px; padding: 0 20px 0 0; flex-shrink: 0;
+  height: 52px; box-sizing: border-box;
   border-bottom: 1px solid rgba(0,0,0,0.07);
 }
 .header-color-bar {
   width: 5px; align-self: stretch; flex-shrink: 0;
   transition: background 0.2s; border-radius: 0;
 }
-.name-input {
-  flex: 1; background: none; outline: none; border: none;
-  font-size: 17px; font-weight: 700; color: var(--text-primary);
-  font-family: var(--font-sans); padding: 18px 0;
-  caret-color: var(--color-primary);
+.header-name {
+  flex: 1; font-size: 17px; font-weight: 700; color: var(--text-primary);
+  cursor: text; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  line-height: 1.2;
 }
-.name-input::placeholder { color: var(--text-secondary); opacity: 0.45; font-weight: 600; }
-.name-input.error { color: var(--color-warning); }
+.header-name.placeholder { color: var(--text-secondary); opacity: 0.45; }
+.header-name.error { color: var(--color-warning); opacity: 1; }
+.header-name-input { flex: 1; font-size: 17px; min-width: 0; }
 .name-error {
   font-size: 11px; color: var(--color-warning); flex-shrink: 0;
 }
@@ -588,7 +604,7 @@ label, .section-label {
 }
 .label-hint { font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; opacity: 0.65; }
 
-input[type="text"], input:not([type]):not(.name-input) {
+input[type="text"], input:not([type]):not(.name-input):not(.header-name-input) {
   width: 100%; padding: 8px 11px;
   background: rgba(255,255,255,0.72);
   border: 1px solid rgba(0,0,0,0.1);
@@ -598,7 +614,7 @@ input[type="text"], input:not([type]):not(.name-input) {
   transition: border-color 0.15s, box-shadow 0.15s;
   box-sizing: border-box;
 }
-input:not(.name-input):focus {
+input:not(.name-input):not(.header-name-input):focus {
   border-color: rgba(123,127,178,0.4);
   box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
 }

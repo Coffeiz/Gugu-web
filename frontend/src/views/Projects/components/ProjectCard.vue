@@ -69,7 +69,18 @@
         </div>
       </div>
 
-      <div class="progress-bar">
+      <div v-if="project.stages.length" class="seg-bar" @click.stop @mousedown.stop>
+        <div
+          v-for="(stage, i) in project.stages"
+          :key="stage.key"
+          class="seg"
+          :title="stage.label"
+          @click.stop="clickStage(i)"
+        >
+          <div class="seg-fill" :style="{ width: segFill(i) + '%', background: project.color }"></div>
+        </div>
+      </div>
+      <div v-else class="progress-bar">
         <div class="progress-fill" :style="{ width: stageProgress + '%', background: project.color }"></div>
       </div>
     </div>
@@ -173,6 +184,21 @@ const starColor = computed(() => {
   return '#8899cc'
 })
 
+function segFill(i) {
+  const idx = currentStageIndex.value
+  if (i < idx) return 100
+  if (i > idx) return 0
+  const todos = props.project.stages[i].todos ?? []
+  if (!todos.length) return 100
+  return Math.round(todos.filter(t => t.done).length / todos.length * 100)
+}
+
+async function clickStage(i) {
+  const stage = props.project.stages[i]
+  const progress = Math.round((i + 1) / props.project.stages.length * 100)
+  await projectStore.setStage(props.project.id, stage.key, progress)
+}
+
 async function setPriority(n) {
   // 再次点击同一级别则取消
   const next = prioValue.value === n ? null : PRIO_KEYS[n]
@@ -206,7 +232,7 @@ async function setPriority(n) {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 18px rgba(80,90,110,0.13);
 }
 .proj-card:hover::after { opacity: 1; }
-.proj-card:active { transform: translateY(1px); opacity: 0.93; }
+.proj-card:active:not(:has(.stars:active, .seg-bar:active)) { transform: translateY(1px); opacity: 0.93; }
 
 .card-body { flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card-top { display: flex; align-items: flex-start; gap: 6px; }
@@ -254,6 +280,16 @@ async function setPriority(n) {
 .progress-num { font-size: 10px; color: var(--text-secondary); }
 .progress-bar { height: 4px; background: rgba(0,0,0,0.07); border-radius: 99px; overflow: hidden; }
 .progress-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
+
+.seg-bar { display: flex; gap: 2px; height: 5px; }
+.seg {
+  flex: 1; height: 100%; border-radius: 99px;
+  background: rgba(0,0,0,0.07); overflow: hidden; cursor: pointer;
+  transition: transform 0.18s ease, opacity 0.15s;
+  transform-origin: center;
+}
+.seg:hover { transform: scaleY(1.7); opacity: 0.8; }
+.seg-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
 
 /* ── 星级 ── */
 .stars { display: flex; align-items: center; gap: 0; }

@@ -1054,6 +1054,7 @@ function buildUpcomingList() {
 }
 
 watch([projectTimelines, extraEvents, nextMonthEvents], buildUpcomingList, { immediate: true })
+watch(activeRange, r => { uiStore.calendarActiveRange = r })
 
 function openAddForm() {
   newEvent.value = { name: '', date: selectedDate.value || todayIso.value, description: '' }
