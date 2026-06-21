@@ -343,13 +343,11 @@ const files = computed(() =>
   background: rgba(255,255,255,0.72);
   border: 1px solid rgba(255,255,255,0.9);
   border-radius: 14px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(0,0,0,0.06);
   min-height: 110px;
+  transition: box-shadow 0.25s ease;
 }
-.fc-card:hover {
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
-  background: rgba(255,255,255,0.86);
-}
+.fc-card:hover { transform: none; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 4px 12px rgba(0,0,0,0.10); }
 
 .fc-ext-badge {
   position: absolute; top: 9px; left: 9px; z-index: 2;
@@ -390,7 +388,7 @@ const files = computed(() =>
 .fc-thumb-full.fc-loaded { opacity: 1; }
 .fc-has-thumb .fc-ext-badge { background: rgba(0,0,0,0.32); color: rgba(255,255,255,0.92); }
 
-.fc-label { padding: 0 11px 11px; }
+.fc-label { padding: 0 11px 11px; position: relative; z-index: 2; }
 .fc-name {
   font-size: 11px; font-weight: 600; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

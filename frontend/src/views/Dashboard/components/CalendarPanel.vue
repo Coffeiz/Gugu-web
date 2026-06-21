@@ -42,7 +42,7 @@
       <div v-if="visibleEvents.length === 0" class="upcoming-empty">未来 15 天暂无节点</div>
       <div class="event-row cap-row" :class="{ 'ev-proj-row': e.isProject, 'ev-act-row': !e.isProject }" v-for="e in visibleEvents" :key="e.id">
         <div class="cap-capsule"
-             :style="{ background: hexAlpha(e.color, 0.1), borderColor: hexAlpha(e.color, 0.3), cursor: 'pointer' }"
+             :style="{ '--cap-bg': capBg(e.color, e.progress), borderColor: hexAlpha(e.color, 0.3), cursor: 'pointer' }"
              @click="e.isProject ? openProject(e) : openEditForm(e, $event)">
           <span class="cap-tag" :class="e.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="e.isProject ? { color: darkenHex(e.color) } : {}">{{ e.isProject ? '项目' : '活动' }}</span>
           <span v-if="e.isProject" class="cap-sdot" :class="'cap-s-' + e.status"></span>
@@ -322,6 +322,12 @@ const visibleEvents = computed(() => {
         iso:       p.deadline,
         isProject: true,
         status:    p.status,
+        progress:  (() => {
+          const stages = p.stages ?? []
+          if (!stages.length) return 0
+          const idx = stages.findIndex(s => s.key === p.currentStage)
+          return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
+        })(),
         daysLeft:  dl,
         daysLabel: dl === 0 ? '今天' : dl === 1 ? '明天' : dl + '天后',
       })
@@ -346,6 +352,13 @@ function openProject(e) {
   const pid = Number(String(e.id).replace(/^pr-/, ''))
   const proj = projectStore.projects.find(p => p.id === pid)
   if (proj) projectStore.openModal(proj)
+}
+
+function capBg(hex, progress) {
+  const base = hexAlpha(hex, 0.1)
+  if (!progress) return base
+  const fill = hexAlpha(hex, 0.32)
+  return `linear-gradient(to right, ${fill} 0%, ${fill} ${progress}%, ${base} ${progress}%, ${base} 100%)`
 }
 
 function hexAlpha(hex, a) {

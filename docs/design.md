@@ -104,7 +104,8 @@ backend/
 
 | 用途 | 处理方式 |
 |------|---------|
-| 胶囊 / 条块 **背景** | `hexAlpha(accent, 0.1)` — 10% 透明度 |
+| 胶囊 / 条块 **背景**（无进度） | `hexAlpha(accent, 0.1)` — 10% 透明度 |
+| 胶囊 / 条块 **背景**（有进度） | `linear-gradient(to right, hexAlpha(accent,0.32) 0%, hexAlpha(accent,0.32) {fill}%, hexAlpha(accent,0.1) {fill}%, hexAlpha(accent,0.1) 100%)`，硬切割，填充量 = 当前阶段进度 |
 | 胶囊 / 条块 **边框** | `hexAlpha(accent, 0.3)` — 30% 透明度 |
 | 胶囊 / 条块内**标题文字** | `darkenHex(accent)` — RGB 各通道乘以 0.60 压暗 |
 | 侧栏条目标题（带彩色左边栏的样式） | `darkenHex(accent)` — 同上 |
@@ -121,6 +122,8 @@ function darkenHex(hex, amount = 0.60) {
 ```
 
 已应用场景：Dashboard 近期节点胶囊、总览项目列表百分比、日历项目条/chip/弹窗、日历侧栏卡片标题与近期节点胶囊。项目名称（Dashboard 项目列表 + 看板 ProjectCard）使用 `amount=0.40` 更深版本。
+
+**进度渐变统一实现方式**：`.cap-capsule` 背景统一由 CSS 变量 `--cap-bg` 驱动（`global.css: .cap-capsule { background: var(--cap-bg) }`），各模板通过 `:style="{ '--cap-bg': capBg(color, progress) }"` 传入；`capBg()` 在有进度时返回渐变，无进度时返回纯色，活动事件 `progress=0` 走纯色分支。日历项目条同理，通过 `barSegFill(bar)` 将进度换算为当前段在项目总时间轴中的填充比，使多行条进度连贯（跨周段不重置为 0%）。
 
 ### 项目/活动条目的字重规范
 
@@ -177,6 +180,8 @@ function darkenHex(hex, amount = 0.60) {
 - 底层面板 hover：`background`、`box-shadow` 以 `0.25s ease` 过渡，淡入淡出不突兀；统一定义在 `.glass-card` 的 `transition`，所有面板自动继承
 - 按钮/卡片 hover：轻微 `translateY(-2px)` + 阴影增强，`transition: 0.25s cubic-bezier(0.34,1.2,0.64,1)`
 - 文件/文件夹卡片 active：`translateY(1px) + opacity 0.93`，通过 `:active:not(:has(.fc-hover-actions:active))` 排除操作按钮点击时的下沉效果；卡片行为（布局、过渡、hover lift、active sink）统一提取至 `global.css` 的 `.fc-card` / `.folder-card`，各组件只保留 scoped 的颜色、尺寸、圆角差异
+- **文件/文件夹卡片 hover 白色高亮**：`::after` 伪元素叠加 `rgba(255,255,255,0.15)`，`opacity 0→1`，`0.25s ease`，`z-index: 1`，定义在 `global.css`；内容层（文件名 `.fc-label`、类型徽章 `.fc-ext-badge` z-index:2、操作按钮 z-index:3）均高于 `::after`，白色仅覆盖缩略图/图标
+- **不可拖动的卡片禁止 hover 浮起**：全局 `.fc-card:hover` 默认 `translateY(-2px)`；若卡片不支持拖动（如 Dashboard 最近文件），需在 scoped CSS 覆盖 `transform: none`，保留阴影加深和白色高亮，不产生位移
 - **彩色胶囊/条 hover**：统一使用 `box-shadow: inset 0 0 0 100px rgba(255,255,255,0.45), 0 2px 6px rgba(80,90,110,0.1)`，`0.25s ease` 过渡；inset 阴影天然在内容之下，无需 z-index 操控，可覆盖 inline background。适用场景：近期节点胶囊（`.cap-row:hover .cap-capsule`，global.css 统一定义）、日历事件 chip、项目条、更多按钮、更多弹窗条目
 
 ---
@@ -327,6 +332,7 @@ function darkenHex(hex, amount = 0.60) {
   - 项目条圆角：默认 0，仅在起始端 `border-radius: 99px 0 0 99px`，终止端 `0 99px 99px 0`，单日满圆 `99px`
   - **日期格 hover**：用 `mousemove` 在 `.week-row` 级别计算当前列（`Math.floor((x / width) * 7)`），设 `hoveredDateIso`，通过 `.cell-hovered` class 触发背景高亮，替代 CSS `:hover`；原因：`.bars-layer` 是 `.month-cell` 的兄弟元素，鼠标移到项目条上时 `:hover` 会丢失导致闪烁，`mousemove` 方案不受 DOM 层级影响
   - **交互元素 hover 统一**：项目条、事件 chip、更多按钮、更多弹窗条目全部使用 `inset 0 0 0 100px rgba(255,255,255,0.45)` + `0 2px 6px rgba(80,90,110,0.1)` box-shadow，`0.25s ease` 淡入淡出；多行项目条用 `hoveredBarId` ref 联动，鼠标进入任意段即高亮全部段
+  - **项目条进度可视化**：背景使用进度渐变（同胶囊规范），以项目实际日期计算每周段的填充比（`barSegFill`），跨行段进度连贯；已完成区域 `accent` 32% 不透明，未完成区域 10%
 - **侧栏**：
   - 当天日程：事件名 + 元信息（客户 + 类型标签）；无客户时省略分隔符 `·`；未知类型显示"事件"
   - 近期截稿：项目截稿日 + 独立事件合并排序

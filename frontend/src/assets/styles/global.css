@@ -55,6 +55,7 @@ body {
   display: flex; align-items: center; gap: 5px;
   padding: 4px 8px 4px 5px;
   border-radius: 20px; border: 1px solid;
+  background: var(--cap-bg);
   transition: filter 0.12s;
 }
 .cap-tag { flex-shrink: 0; font-size: 8px; font-weight: 600; letter-spacing: 0.04em; border-radius: 3px; padding: 0 4px; line-height: 13px; }
@@ -123,6 +124,14 @@ body {
   transition: transform 0.22s cubic-bezier(0.34,1.2,0.64,1),
               box-shadow 0.22s ease, background 0.18s;
 }
+.fc-card::after, .folder-card::after {
+  content: ''; position: absolute; inset: 0;
+  border-radius: inherit;
+  background: rgba(255,255,255,0.15);
+  opacity: 0; pointer-events: none; z-index: 1;
+  transition: opacity 0.25s ease;
+}
+.fc-card:hover::after, .folder-card:hover::after { opacity: 1; }
 .fc-card:hover, .folder-card:hover { transform: translateY(-2px); }
 .fc-card:active:not(:has(.fc-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }
 .folder-card:active:not(:has(.fd-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }

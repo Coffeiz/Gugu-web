@@ -99,7 +99,7 @@
                     left:  bar.startsHere ? `calc(${bar.colStart / 7 * 100}% + 6px)` : (bar.colStart / 7 * 100) + '%',
                     right: bar.endsHere   ? `calc(${(7 - bar.colEnd - 1) / 7 * 100}% + 6px)` : ((7 - bar.colEnd - 1) / 7 * 100) + '%',
                     top:   (HEADER_H + bar.row * BAR_H) + 'px',
-                    background:  bar.accent + '28',
+                    background: `linear-gradient(to right, ${bar.accent}50 0%, ${bar.accent}50 ${barSegFill(bar)}%, ${bar.accent}1a ${barSegFill(bar)}%, ${bar.accent}1a 100%)`,
                     borderColor: bar.accent + '70',
                     color:       darkenHex(bar.accent),
                   }"
@@ -174,7 +174,7 @@
              @contextmenu.prevent="ev.isUserEvent && openEditForm(ev, $event)"
         >
           <div class="cap-capsule"
-               :style="{ background: hexAlpha(ev.accent, 0.1), borderColor: hexAlpha(ev.accent, 0.3) }">
+               :style="{ '--cap-bg': capBg(ev.accent, ev.progress), borderColor: hexAlpha(ev.accent, 0.3) }">
             <span class="cap-tag" :class="ev.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">{{ ev.isProject ? '项目' : '活动' }}</span>
             <span v-if="ev.isProject" class="cap-sdot" :class="'cap-s-' + ev.status"></span>
             <span class="cap-name" :style="{ color: darkenHex(ev.accent) }">{{ ev.name }}</span>
@@ -381,6 +381,18 @@ function addDays(iso, n) {
   d.setDate(d.getDate() + n)
   return toIso(d)
 }
+function barSegFill(bar) {
+  if (!bar.progress) return 0
+  const total = daysBetween(bar.startDate, bar.endDate)
+  if (total <= 0) return bar.progress
+  const progressDays  = total * bar.progress / 100
+  const segStartOff   = daysBetween(bar.startDate, bar.segStartIso)
+  const segEndOff     = daysBetween(bar.startDate, bar.segEndIso) + 1
+  if (progressDays <= segStartOff) return 0
+  if (progressDays >= segEndOff)   return 100
+  return Math.round((progressDays - segStartOff) / (segEndOff - segStartOff) * 100)
+}
+
 function daysBetween(isoA, isoB) {
   return Math.round((new Date(isoB + 'T00:00:00') - new Date(isoA + 'T00:00:00')) / 86400000)
 }
@@ -635,6 +647,13 @@ function extractAccent(colorStr) {
   const m = colorStr?.match(/#[0-9a-fA-F]{6}/)
   return m ? m[0] : '#7b7fb2'
 }
+function capBg(hex, progress) {
+  const base = hexAlpha(hex, 0.1)
+  if (!progress) return base
+  const fill = hexAlpha(hex, 0.32)
+  return `linear-gradient(to right, ${fill} 0%, ${fill} ${progress}%, ${base} ${progress}%, ${base} 100%)`
+}
+
 function hexAlpha(hex, a) {
   const r = parseInt(hex.slice(1,3),16)
   const g = parseInt(hex.slice(3,5),16)
@@ -725,6 +744,12 @@ const projectTimelines = computed(() =>
       isProject:    true,
       status:       p.status,
       currentStage: p.stages?.find(s => s.key === p.currentStage)?.label ?? null,
+      progress:     (() => {
+        const stages = p.stages ?? []
+        if (!stages.length) return 0
+        const idx = stages.findIndex(s => s.key === p.currentStage)
+        return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
+      })(),
     }))
 )
 
@@ -786,12 +811,16 @@ function weekBars(week) {
       const colStart = p.startDate <= ws ? 0 : week.findIndex(d => d.iso >= p.startDate)
       let colEnd = 6
       for (let i = 6; i >= 0; i--) { if (week[i].iso <= p.endDate) { colEnd = i; break } }
+      const cs = Math.max(0, colStart)
+      const ce = Math.min(6, colEnd)
       return {
         ...p,
-        colStart: Math.max(0, colStart),
-        colEnd:   Math.min(6, colEnd),
-        startsHere: p.startDate >= ws && p.startDate <= we,
-        endsHere:   p.endDate   >= ws && p.endDate   <= we,
+        colStart: cs,
+        colEnd:   ce,
+        startsHere:   p.startDate >= ws && p.startDate <= we,
+        endsHere:     p.endDate   >= ws && p.endDate   <= we,
+        segStartIso:  week[cs].iso,
+        segEndIso:    week[ce].iso,
       }
     })
 
@@ -1140,6 +1169,7 @@ async function saveEvent() {
 .bar-rh-left  { left: 0; }
 .bar-rh-right { right: 0; }
 .project-bar.bar-hovered .bar-rh { opacity: 1; }
+
 .bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 
 .bar-proj-tag {
