@@ -1,7 +1,49 @@
 # PM Studio · 早期开发记录
 
-> 更新：2026-06-15
+> 更新：2026-06-21
 > 状态：早期阶段记录，当前进度见 `docs/overview.md`
+
+---
+
+## 2026-06-21 · 缩略图根因排查：Pillow 未安装导致全量加载原图
+
+### 背景
+
+用户反馈总览页和文件库滚动卡顿、图片加载慢、渐进式效果失效。为此陆续做了大量前端优化（`shallowRef` 批量更新、`preDecodeBlobs`、`will-change`、`backdrop-filter` 移除、IntersectionObserver 懒加载等），体验有所改善但根本问题未解决。
+
+### 根因
+
+**`Pillow` 未写入 `requirements.txt`，venv 中从未安装。**
+
+后端 `/files/{id}/thumb` 端点调用 `_generate_thumbs_sync()` 生成 WebP 缩略图，但所有调用都在 `except Exception: pass` 中静默失败。最终降级路径返回**原始大图**（几百KB～几MB JPEG/PNG）。
+
+前端把这张大图当成 `tiny`（预期 20px WebP）缓存到 blob Map，渲染时浏览器需要解码全尺寸图片：
+- `tiny` 不是 20px 小图，blur 占位失去意义
+- `card` 返回原图，文件库加载几十张 MB 级图片
+- 浏览器 HTTP Cache 缓存了这些大图响应（`max-age=86400`），强刷页面也不请求后端，旧 blob 持续命中
+
+### 排查过程
+
+1. 发现 blob cache 里存在 JPEG/PNG 类型，怀疑降级逻辑触发
+2. 在后端端点加日志，发现浏览器根本没有发 thumb 请求到服务器（HTTP Cache 直接命中）
+3. 清除 site data 后，强刷仍无 thumb 请求 → uvicorn 日志无任何 `/thumb` 条目
+4. 直接在 venv 中测试 `from PIL import Image` → `ModuleNotFoundError`
+5. 确认 Pillow 从未安装，`requirements.txt` 缺失该依赖
+
+### 修复内容
+
+| 位置 | 改动 |
+|------|------|
+| `requirements.txt` | 新增 `Pillow>=10.0.0` |
+| `_generate_thumbs_sync` | 修复 RGBA/透明通道处理（PNG 保留 RGBA，其余转 RGB） |
+| `get_thumb` 端点 | 降级改为输出缩小 JPEG，最后兜底才返回原图；移除静默 `except: pass`，改为打印 traceback |
+| `useThumbCache.js` | fetch 加 `cache: 'no-cache'`，强制跳过浏览器 HTTP Cache，确保拿到最新 WebP |
+
+### 反思
+
+之前所有前端优化（`shallowRef`、`preDecodeBlobs`、懒加载、`backdrop-filter`）都是在治标，真正的性能瓶颈是后端返回了全尺寸原图。正确的 WebP 生效后（tiny 几百字节，card 几 KB），滚动卡顿和加载慢的问题基本消失，前端优化才能真正发挥作用。
+
+**教训：依赖静默失败 + 降级兜底会掩盖真实问题，重要依赖必须写入 requirements.txt 并在 CI/部署时验证。**
 
 ---
 

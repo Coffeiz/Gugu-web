@@ -19,15 +19,15 @@ body {
 }
 
 /* 玻璃卡片工具类 */
+/* backdrop-filter 已移除：主体面板背后是平滑渐变背景，blur 视觉不可见，
+   但每次面板进入视口都触发 GPU backdrop 捕获，造成不必要的合成开销。
+   真正需要 blur 的浮层（侧边栏、弹窗、右键菜单等）各自单独声明。 */
 .glass-card {
   background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   corner-shape: squircle;
   box-shadow: var(--glass-shadow);
-  transition: background 0.2s, box-shadow 0.2s;
 }
 .glass-card:hover {
   background: var(--glass-bg-hover);

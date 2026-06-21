@@ -39,7 +39,10 @@ def _generate_thumbs_sync(raw: bytes, fid: int, sizes: tuple = ("tiny",)) -> Non
     from PIL import Image
     import io as _io
     td = _thumb_dir()
-    img = Image.open(_io.BytesIO(raw)).convert("RGB")
+    img = Image.open(_io.BytesIO(raw))
+    # 保留 RGBA（PNG 透明通道），其余统一转 RGB
+    if img.mode not in ("RGB", "RGBA"):
+        img = img.convert("RGBA") if "transparency" in img.info else img.convert("RGB")
     for size_name in sizes:
         max_px, quality = _THUMB_SIZE_MAP[size_name]
         out = img.copy()
@@ -47,6 +50,24 @@ def _generate_thumbs_sync(raw: bytes, fid: int, sizes: tuple = ("tiny",)) -> Non
         buf = _io.BytesIO()
         out.save(buf, format="WEBP", quality=quality)
         (td / f"{fid}_{size_name}.webp").write_bytes(buf.getvalue())
+
+def _generate_thumb_jpeg_fallback(raw: bytes, size: str) -> bytes | None:
+    """WebP 生成失败时的降级：强制 RGB，输出缩小的 JPEG，避免返回原始大图。"""
+    from PIL import Image
+    import io as _io
+    try:
+        img = Image.open(_io.BytesIO(raw))
+        # 取动图第一帧，强制转 RGB
+        if hasattr(img, "n_frames") and img.n_frames > 1:
+            img.seek(0)
+        img = img.convert("RGB")
+        max_px, _ = _THUMB_SIZE_MAP.get(size, (192, 82))
+        img.thumbnail((max_px, max_px), Image.LANCZOS)
+        buf = _io.BytesIO()
+        img.save(buf, format="JPEG", quality=80)
+        return buf.getvalue()
+    except Exception:
+        return None
 
 def _delete_thumb_cache(fid: int) -> None:
     for size in ("tiny", "card"):
@@ -707,10 +728,20 @@ async def get_thumb(
         if cache_path.exists():
             return FastAPIResponse(content=cache_path.read_bytes(), media_type="image/webp",
                                    headers={"Cache-Control": "private, max-age=86400"})
+    except Exception as e:
+        import traceback
+        print(f"[缩略图] WebP 生成失败 fid={fid} size={size}: {e}\n{traceback.format_exc()}")
+
+    # 降级：WebP 失败时返回缩小的 JPEG，保证不返回原始大图
+    try:
+        jpeg_bytes = await asyncio.to_thread(_generate_thumb_jpeg_fallback, raw, size)
+        if jpeg_bytes:
+            return FastAPIResponse(content=jpeg_bytes, media_type="image/jpeg",
+                                   headers={"Cache-Control": "private, max-age=86400"})
     except Exception:
         pass
 
-    # 降级：实时返回原图
+    # 最后兜底：返回原图
     return FastAPIResponse(content=raw, media_type=mime,
                            headers={"Cache-Control": "private, max-age=86400"})
 

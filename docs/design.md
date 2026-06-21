@@ -81,7 +81,7 @@ backend/
 参考：Glassmorphism + 冷淡灰色系
 
 - **背景**：顶部浅灰（`#e8e9ee`）→ 底部冷灰蓝（`#9aa2b8`），`160deg` 线性渐变，固定不随内容滚动
-- **卡片**：`rgba(255,255,255,0.56)` 半透明 + `backdrop-filter: blur(20px)`，亮度提升以增强可读性
+- **卡片**：`rgba(255,255,255,0.56)` 半透明，边框高光 + 轻阴影构成层次感（`.glass-card` 不含 `backdrop-filter`，背景为平滑渐变，blur 视觉不可见且有 GPU 开销）
 - **边缘高光**：`inset 0 1px 0 rgba(255,255,255,0.95)` 顶边亮线模拟玻璃切割倒角
 - **阴影**：轻阴影 `0 4px 16px rgba(80,90,110,0.08)`，扁平化，不堆叠
 - **圆角**：面板 `18px`，小元素 `10–12px`
@@ -159,7 +159,7 @@ backend/
 
 - `v-model`：ISO 日期字符串（`YYYY-MM-DD`）
 - 弹窗使用 `<Teleport to="body">`，通过 `getBoundingClientRect()` 定位
-- 样式：玻璃态面板（`rgba(255,255,255,0.66)` + `blur(24px)`），月份导航 + 7列日期网格 + 快捷操作（今天 / 清除）
+- 样式：半透明面板（`rgba(255,255,255,0.66)` + `blur(24px)`，浮层弹窗独立使用 backdrop-filter），月份导航 + 7列日期网格 + 快捷操作（今天 / 清除）
 - 选中日：`linear-gradient(135deg, #7b7fb2, #9590c4)` 渐变背景；今日：`rgba(123,127,178,0.15)` 浅紫高亮
 - 动画：`dp-pop`（scale + translateY，spring 曲线）
 - 点击外部关闭：`document.addEventListener('click', handler, true)` capture 阶段
@@ -229,7 +229,7 @@ backend/
 
 - Transition name `bm`，duration `{ enter: 340, leave: 220 }`
 - `.bm-overlay` 和 `.bm-card` 各自**纯 opacity** 过渡（进入 `cubic-bezier(0.4,0,0.2,1)` / 退出 `cubic-bezier(0.4,0,1,1)`）
-- **禁止 transform**：`scale` 或 `translateY` 会让含 `backdrop-filter` 的元素在动画帧间产生像素跳位（GPU compositing 问题）
+- **禁止 transform**：`scale` 或 `translateY` 会让含 `backdrop-filter` 的浮层元素在动画帧间产生像素跳位（GPU compositing 问题）；主体 `.glass-card` 已无 backdrop-filter，不受此限制
 
 | 弹窗 | width | height | zIndex |
 |------|-------|--------|--------|

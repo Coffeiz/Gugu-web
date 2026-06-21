@@ -6,6 +6,7 @@
 
 ## 目录
 
+- [⚠️ 根因：Pillow 未安装导致全量原图降级](#️-根因pillow-未安装导致全量原图降级)
 - [一、缩略图 blob 缓存](#一缩略图-blob-缓存usethumpcachejs)
 - [二、tiny blob 全局预热](#二tiny-blob-全局预热preloadtinythumbs)
 - [三、filesCache sessionStorage 持久化](#三filescache-sessionstorage-持久化)
@@ -16,7 +17,21 @@
 - [八、滚动入视口卡顿优化](#八滚动入视口卡顿优化filepanel)
 - [九、浮动预览窗口占位图竞速修复](#九浮动预览窗口占位图竞速修复floatpreviewwindow)
 - [十、Dashboard 版本前置检查](#十dashboard-版本前置检查跳过无效-list-请求)
+- [十一、移除 glass-card 的 backdrop-filter](#十一移除-glass-card-的-backdrop-filter)
+- [十二、WebP 缩略图根因修复](#十二webp-缩略图根因修复)
 - [缓存层总览](#缓存层总览)
+
+---
+
+## ⚠️ 根因：Pillow 未安装导致全量原图降级
+
+> 本节是最重要的一条。上方所有前端优化都是在治标，这里才是真正的性能瓶颈。
+
+`Pillow` 未写入 `requirements.txt`，venv 中从未安装。后端 `_generate_thumbs_sync()` 每次调用都在 `except Exception: pass` 中静默失败，最终降级返回**原始大图**（JPEG/PNG，几百KB ～ 几MB）。
+
+前端将大图 blob 缓存为 `tiny`/`card`，叠加浏览器 HTTP Cache（`max-age=86400`）后，强刷页面也无法触发新的 thumb 请求——uvicorn 日志中完全看不到 `/thumb` 条目。
+
+**修复**：安装 Pillow、修复 RGBA 处理、fetch 加 `cache: 'no-cache'`、降级改输出小 JPEG。详见[十二、WebP 缩略图根因修复](#十二webp-缩略图根因修复)。
 
 ---
 
@@ -425,6 +440,98 @@ onMounted(async () => {
 ### 效果
 - 文件未变时：1 次轻量 version 请求，FilePanel 零更新，进总览速度接近进文件库
 - 文件有变化时：正常 version + list 双请求，数据刷新
+
+---
+
+## 十一、移除 glass-card 的 backdrop-filter
+
+### 问题
+
+`.glass-card` 全局类带有 `backdrop-filter: blur(20px)`，用于主体面板（总览各卡片、文件库、日历）。
+
+但这些面板背后是页面固定背景渐变（`#e8e9ee → #9aa2b8`，160deg 线性渐变），对平滑渐变应用 blur 与不 blur 视觉上完全无差异。
+
+同时 `backdrop-filter` 有固定的 GPU 成本：每次带有该属性的元素**进入视口**，浏览器必须执行"捕获背景快照 → 应用 blur → 生成合成层"，这无法预计算或缓存。FilePanel 是总览页唯一可能在屏外的大型面板，滚入时必然触发一次 backdrop 合成峰值，是滚动卡顿的根因。
+
+### 方案
+
+从 `global.css` 的 `.glass-card` 中删除 `backdrop-filter`：
+
+```css
+/* 移除前 */
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  ...
+}
+
+/* 移除后 */
+.glass-card {
+  background: var(--glass-bg);
+  /* 无 backdrop-filter */
+  ...
+}
+```
+
+真正需要 blur 的浮层（侧边栏、BaseModal、ContextMenu、FloatPreviewWindow、DatePicker、日历事件弹窗等）均**单独声明** `backdrop-filter`，不受此次改动影响。
+
+### 视觉影响
+
+| 类型 | 影响 |
+|------|------|
+| 主体面板（总览/文件库/日历） | 无视觉变化（背后是平滑渐变，blur 本已不可见） |
+| 侧边栏 / 弹窗 / 右键菜单 / 浮层 | 不受影响（各自独立声明 backdrop-filter） |
+
+### 效果
+- FilePanel 滚入视口时无 backdrop 捕获峰值，滚动流畅
+- 所有主体页面进入时减少 5+ 个 backdrop-filter 合成层的创建开销
+
+---
+
+## 十二、WebP 缩略图根因修复
+
+### 问题
+
+`Pillow` 未写入 `requirements.txt`，venv 中从未安装。所有缩略图生成静默失败，降级返回原始大图。浏览器 HTTP Cache（`max-age=86400`）进一步缓存了这些大图响应，强刷也不发新请求。
+
+### 修复清单
+
+**后端 `requirements.txt`**
+```
+Pillow>=10.0.0
+```
+
+**`_generate_thumbs_sync`**：修复色彩模式处理
+```python
+img = Image.open(_io.BytesIO(raw))
+if img.mode not in ("RGB", "RGBA"):
+    img = img.convert("RGBA") if "transparency" in img.info else img.convert("RGB")
+```
+
+**`get_thumb` 端点**：降级链路改为小 JPEG，移除静默异常
+```python
+except Exception as e:
+    print(f"[缩略图] WebP 生成失败 fid={fid}: {e}\n{traceback.format_exc()}")
+
+# 降级：小 JPEG（非原图）
+jpeg_bytes = await asyncio.to_thread(_generate_thumb_jpeg_fallback, raw, size)
+# 最后兜底才返回原图
+```
+
+**`useThumbCache.js`**：绕过 HTTP Cache 确保拿到最新 WebP
+```js
+const p = fetch(`${BASE}/files/${id}/thumb?size=${size}`, {
+  headers: token ? { Authorization: `Bearer ${token}` } : {},
+  cache: 'no-cache',
+})
+```
+
+### 效果
+
+- tiny：几百字节 WebP → blur 占位图正常
+- card：几 KB WebP → 渐进式加载正常
+- 所有前端优化（preDecodeBlobs、懒加载、shallowRef）得以真正生效
 
 ---
 

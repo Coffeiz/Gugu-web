@@ -1,5 +1,5 @@
 <template>
-  <div class="glass-card file-panel">
+  <div class="glass-card file-panel" ref="panelRef">
     <div class="section-header">
       <span class="section-title">最近文件</span>
     </div>
@@ -19,8 +19,9 @@
           <img class="fc-thumb fc-thumb-tiny" :src="thumbMap[f.id]?.tiny" decoding="async" draggable="false" alt="" />
           <img class="fc-thumb fc-thumb-full"
             :src="thumbMap[f.id]?.card"
-            :class="{ 'fc-loaded': thumbMap[f.id]?.card }"
+            :class="{ 'fc-loaded': cardLoadedIds.has(f.id) }"
             decoding="async" draggable="false" alt=""
+            @load="cardLoadedIds.add(f.id)"
             @error="$event.target.style.display='none'" />
           <div class="fc-thumb-fade"></div>
         </div>
@@ -87,7 +88,7 @@
 </template>
 
 <script setup>
-import { ref, computed, shallowRef, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, shallowRef, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { filesApi } from '@/services/api'
 import { filesCache } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
@@ -100,6 +101,9 @@ import {
   PhPencilSimple, PhDownloadSimple, PhTrash,
 } from '@phosphor-icons/vue'
 
+const panelRef      = ref(null)
+const cardVisible   = ref(false) // 面板是否已进入视口（触发过 card 加载）
+const cardLoadedIds = reactive(new Set()) // 组件级，每次挂载重置，保证渐进动画每次都播
 const dragging      = ref(false)
 const uploadOpen    = ref(false)
 const rawFiles      = ref(filesCache.data ?? [])
@@ -111,37 +115,45 @@ const projectStore  = useProjectStore()
 const previewStore  = usePreviewStore()
 const projects      = computed(() => projectStore.projects)
 
+// 只加载 tiny，card 延迟到面板进入视口后再加载
 function loadThumbs(list) {
   const imgFiles = list.filter(f => isImageExt(f.ext))
-
-  // 同步：写入所有已缓存的 tiny 和 card（1 次 trigger）
   const snap = { ...thumbMap.value }
   imgFiles.forEach(f => {
-    snap[f.id] = { tiny: getCachedThumb(f.id, 'tiny'), card: getCachedThumb(f.id, 'card') }
+    snap[f.id] = { tiny: getCachedThumb(f.id, 'tiny'), card: thumbMap.value[f.id]?.card ?? null }
   })
   thumbMap.value = snap
-
-  // 异步 tiny（未缓存时各自独立到达，尽早显示 blur 占位）
   imgFiles.forEach(f => {
     if (snap[f.id]?.tiny) return
     getThumb(f.id, 'tiny').then(url => {
       if (url) thumbMap.value = { ...thumbMap.value, [f.id]: { ...thumbMap.value[f.id], tiny: url } }
     })
   })
+}
 
-  // 异步 card（批量等待，全部 resolve 后一次写入，保持 trigger 次数低）
-  const uncachedCards = imgFiles.filter(f => !snap[f.id]?.card)
-  if (uncachedCards.length) {
-    Promise.all(uncachedCards.map(f =>
-      getThumb(f.id, 'card').then(url => ({ id: f.id, url }))
-    )).then(results => {
-      const m = { ...thumbMap.value }
-      for (const { id, url } of results) if (url) m[id] = { ...m[id], card: url }
-      thumbMap.value = m
-      preDecodeBlobs(m)
-    })
-  } else {
-    preDecodeBlobs(snap)
+// 面板进入视口后调用，加载 card 缩略图
+function loadCards(list) {
+  const imgFiles = list.filter(f => isImageExt(f.ext))
+  const snap = { ...thumbMap.value }
+  let hasNew = false
+  imgFiles.forEach(f => {
+    const cached = getCachedThumb(f.id, 'card')
+    if (cached && snap[f.id]?.card !== cached) {
+      snap[f.id] = { ...snap[f.id], card: cached }
+      hasNew = true
+    }
+  })
+  if (hasNew) { thumbMap.value = snap; preDecodeBlobs(snap) }
+
+  const uncached = imgFiles.filter(f => !snap[f.id]?.card)
+  if (uncached.length) {
+    Promise.all(uncached.map(f => getThumb(f.id, 'card').then(url => ({ id: f.id, url }))))
+      .then(results => {
+        const m = { ...thumbMap.value }
+        for (const { id, url } of results) if (url) m[id] = { ...m[id], card: url }
+        thumbMap.value = m
+        preDecodeBlobs(m)
+      })
   }
 }
 
@@ -248,16 +260,29 @@ watch(filesCache.ref, (list) => {
   rawFiles.value = list
   preloadTinyThumbs(list)
   loadThumbs(list.slice(0, 7))
+  if (cardVisible.value) loadCards(list.slice(0, 7))
 })
 
+let _panelObs = null
 onMounted(() => {
   const list = filesCache.data
   if (list?.length) {
     preloadTinyThumbs(list)
     loadThumbs(list.slice(0, 7))
   }
-  // 不再自行调 filesApi.list()，由 index.vue 统一拉取
+
+  // card 等面板接近视口时再加载，避免屏幕外批量解码
+  _panelObs = new IntersectionObserver(([entry]) => {
+    if (!entry.isIntersecting) return
+    _panelObs.disconnect(); _panelObs = null
+    cardVisible.value = true
+    const cur = filesCache.data
+    if (cur?.length) loadCards(cur.slice(0, 7))
+  }, { rootMargin: '300px' })
+  if (panelRef.value) _panelObs.observe(panelRef.value)
 })
+
+onUnmounted(() => { _panelObs?.disconnect(); _panelObs = null })
 
 const files = computed(() =>
   rawFiles.value.slice(0, 7).map(f => ({
@@ -336,8 +361,8 @@ const files = computed(() =>
   width: 100%; height: 100%;
   object-fit: cover; object-position: center top; display: block;
 }
-.fc-thumb-tiny { filter: blur(10px); transform: scale(1.15); z-index: 1; }
-.fc-thumb-full { z-index: 2; opacity: 0; transition: opacity 0.4s ease; }
+.fc-thumb-tiny { filter: blur(10px); }
+.fc-thumb-full { opacity: 0; transition: opacity 0.4s ease; }
 .fc-thumb-full.fc-loaded { opacity: 1; }
 .fc-has-thumb .fc-ext-badge { background: rgba(0,0,0,0.32); color: rgba(255,255,255,0.92); }
 

@@ -173,6 +173,8 @@ const todayStr = computed(() => {
   align-items: center;
   gap: 14px;
   padding: 14px 20px;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
 }
 
 .topbar-title h1 {

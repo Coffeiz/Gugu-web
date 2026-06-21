@@ -23,6 +23,7 @@ export function getThumb(id, size = 'card') {
   const token = localStorage.getItem('user_token') ?? ''
   const p = fetch(`${BASE}/files/${id}/thumb?size=${size}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
+    cache: 'no-cache',
   })
     .then(r => (r.ok ? r.blob() : Promise.reject()))
     .then(blob => {

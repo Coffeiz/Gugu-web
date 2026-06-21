@@ -68,6 +68,16 @@
 - **模板重命名 UX**：重命名时删除按钮保持可见，铅笔图标变为对勾（确认）；保存模板行的图标按钮统一为与上方相同的 SVG 图标风格
 - **项目备注区域 `textarea` 未绑定**：备注输入框此前无 `v-model`，输入内容不会保存
 
+### 性能
+
+- **WebP 缩略图根因修复**：`Pillow` 未写入 `requirements.txt` 导致所有缩略图生成静默失败，后端一直返回原始大图（几百KB～几MB）；安装 Pillow 后 tiny 缩减至几百字节、card 缩减至几 KB，滚动卡顿与加载慢问题根本解决
+- **降级策略改进**：WebP 生成失败时改为输出缩小 JPEG（不再返回原始大图），兜底才返回原图；异常改为打印 traceback 便于排查
+- **HTTP Cache 绕过**：`useThumbCache.js` fetch 加 `cache: 'no-cache'`，防止浏览器缓存旧版大图响应（旧缓存 max-age=86400，强刷也不请求服务器）
+- **glass-card 移除 backdrop-filter**：主体面板背后是平滑渐变，blur 视觉不可见；移除后消除每次面板进入视口的 GPU backdrop 捕获峰值
+- **FilePanel 面板级懒加载**：card 缩略图改为面板接近视口时才加载，避免屏幕外批量解码；tiny 仍然立即预热
+- **文件库 card 缩略图始终走 IntersectionObserver**：有缓存时也不跳过 Observer，避免二次打开时几十张图同时解码导致比首次打开还慢
+- **渐进式动画修复**：`fc-loaded` 改由 `@load` 事件驱动（组件级 Set），不再由 URL 是否存在决定；二次打开时 blur→sharp 淡入效果与首次一致
+
 ### 安全
 
 - **用户隔离漏洞修复**（6 处）：

@@ -76,7 +76,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  min-height: 100%;
+  height: 100%;
 }
 
 .stats-row {

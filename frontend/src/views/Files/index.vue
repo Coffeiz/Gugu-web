@@ -254,9 +254,9 @@
                   decoding="async" draggable="false" alt="" />
                 <!-- 全尺寸层：首次加载淡入，已加载过直接显示 -->
                 <img class="fc-thumb fc-thumb-full" v-lazy-src="{ id: f.id, size: 'card' }"
-                  :class="{ 'fc-loaded': thumbLoadedIds.has(f.id) }"
+                  :class="{ 'fc-loaded': localCardLoaded.has(f.id) }"
                   decoding="async" draggable="false" alt=""
-                  @load="thumbLoadedIds.add(f.id)"
+                  @load="localCardLoaded.add(f.id)"
                   @error="$event.target.style.display='none'" />
                 <div class="fc-thumb-fade"></div>
               </div>
@@ -606,7 +606,7 @@ import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { getThumb, getCachedThumb, thumbLoadedIds, preloadTinyThumbs } from '@/composables/useThumbCache'
+import { getThumb, getCachedThumb, preloadTinyThumbs } from '@/composables/useThumbCache'
 import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
   PhBrowser, PhImage, PhFilmStrip, PhMusicNote, PhTable,
@@ -621,6 +621,7 @@ const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
 
 // ── 视图状态 ──
+const localCardLoaded = reactive(new Set()) // 组件级，每次进入页面重置，保证渐进动画每次都播
 const viewMode    = ref('grid')
 const loading     = ref(false)
 const dragCounter = ref(0)
@@ -1568,16 +1569,19 @@ const isImageExt   = (ext) => _IMAGE_EXTS.has((ext || '').toLowerCase())
 const vLazySrc = {
   mounted(el, { value: { id, size } }) {
     if (!id) return
-    const cached = getCachedThumb(id, size)
-    if (cached) { el.src = cached; return }
     if (size === 'tiny') {
+      const cached = getCachedThumb(id, size)
+      if (cached) { el.src = cached; return }
       getThumb(id, size).then(url => { if (url) el.src = url })
       return
     }
+    // card：无论是否有缓存都走 Observer，避免二次打开时几十张图同时解码
     const obs = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting) return
       obs.disconnect(); el._lazySrcObs = null
-      getThumb(id, size).then(url => { if (url) el.src = url })
+      const cached = getCachedThumb(id, size)
+      if (cached) { el.src = cached; el.decode?.().catch(() => {}); return }
+      getThumb(id, size).then(url => { if (url) { el.src = url; el.decode?.().catch(() => {}) } })
     }, { rootMargin: '250px' })
     obs.observe(el)
     el._lazySrcObs = obs
@@ -1585,16 +1589,18 @@ const vLazySrc = {
   updated(el, { value: { id, size }, oldValue }) {
     if (id === oldValue?.id && size === oldValue?.size) return
     el._lazySrcObs?.disconnect()
-    const cached = getCachedThumb(id, size)
-    if (cached) { el.src = cached; return }
     if (size === 'tiny') {
+      const cached = getCachedThumb(id, size)
+      if (cached) { el.src = cached; return }
       getThumb(id, size).then(url => { if (url) el.src = url })
       return
     }
     const obs = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting) return
       obs.disconnect(); el._lazySrcObs = null
-      getThumb(id, size).then(url => { if (url) el.src = url })
+      const cached = getCachedThumb(id, size)
+      if (cached) { el.src = cached; el.decode?.().catch(() => {}); return }
+      getThumb(id, size).then(url => { if (url) { el.src = url; el.decode?.().catch(() => {}) } })
     }, { rootMargin: '250px' })
     obs.observe(el)
     el._lazySrcObs = obs
@@ -1811,7 +1817,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   display: flex; align-items: center; justify-content: space-between;
   height: 52px; box-sizing: border-box;
   padding: 0 16px; flex-shrink: 0; gap: 12px;
-  position: relative; z-index: 20;
+  position: relative;
 }
 .toolbar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
