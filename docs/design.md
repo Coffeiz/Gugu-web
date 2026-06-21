@@ -325,7 +325,7 @@ function darkenHex(hex, amount = 0.60) {
 
 - **布局**：工具栏（年月导航 + 今天按钮）+ 主区（月视图）+ 侧栏（当天日程 + 近期截稿）
 - **月视图**：
-  - 日期格：`padding: 7px 6px 4px`，日期数字 24px 圆圈，今日渐变高亮，选中浅紫背景
+  - 日期格：`padding: 7px 6px 4px`，日期数字 24px 圆圈，今日渐变高亮（平日 `#7b7fb2→#9590c4` 紫灰，周末 `#b85c5c→#c97070` 低饱和红），选中浅紫背景
   - 项目横跨条（`bars-layer`）：`position: absolute; inset: 0` 覆盖整行，条的 top 偏移从格顶 **36px** 开始（清开 31px 的日期圆圈区域），每行间距 22px，最多显示 3 条，超出显示 `+N 更多`（可点击弹出列表）
   - 事件 chip：通过 `padding-top` 推至条下方显示（不再使用 `v-if` 隐藏），每日最多显示 `3 - 当日条数` 个 chip
   - 周行动态最小高度：`min-height: max(92px, calc(38px + var(--bar-rows, 0) * 22px + 14px))`

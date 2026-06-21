@@ -1102,6 +1102,7 @@ async function saveEvent() {
 .month-cell.is-weekend { background: rgba(195,90,90,0.028); }
 .month-cell.is-weekend.cell-hovered { background: rgba(195,90,90,0.07); }
 .month-cell.is-today .cell-num { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: rgba(255,255,255,0.88) !important; font-weight: 700; border-radius: 6px; }
+.month-cell.is-today.is-weekend .cell-num { background: linear-gradient(135deg,#b85c5c,#c97070); }
 .month-cell.is-selected { background: rgba(123,127,178,0.1); }
 .month-cell.is-selected.is-weekend { background: rgba(195,90,90,0.1); }
 .month-cell.is-selected:not(.is-today) .cell-num { background: rgba(123,127,178,0.15); color: var(--color-primary); font-weight: 700; border-radius: 6px; }
