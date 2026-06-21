@@ -7,6 +7,21 @@
 
 ---
 
+## [Unreleased]
+
+### 新增
+
+- **日历项目条进度渐变**：项目条背景改为左深右浅进度渐变（已完成区域 `accent` 32% 不透明，未完成区域 10%）；多行跨周段通过 `barSegFill()` 按项目实际日期计算各段填充比，进度连贯不重置
+- **近期节点胶囊进度渐变**：Dashboard CalendarPanel 和日历侧栏的项目胶囊背景同步显示阶段进度渐变，与项目条规范一致；活动事件不受影响（`progress=0` 走纯色分支）
+- **胶囊进度背景全局化**：`.cap-capsule` 背景统一由 CSS 变量 `--cap-bg` 驱动（`global.css`），各模板通过 `capBg(color, progress)` 生成渐变字符串设入变量，无需再内联 `background`
+
+### 调整
+
+- **文件卡片悬停白色高亮**：`::after` 伪元素叠加 `rgba(255,255,255,0.15)` 提取至 `global.css`，适用于所有 `.fc-card` / `.folder-card`；内容层（文件名 z-index:2、类型徽章 z-index:2、操作按钮 z-index:3）高于 `::after`（z-index:1），白色仅覆盖缩略图/图标
+- **Dashboard 最近文件卡片悬停不浮起**：scoped 覆盖 `transform: none`，阴影改为黑色基调 `rgba(0,0,0,0.10)`，`0.25s ease` 淡入淡出；设计规范明确：不可拖动的卡片不允许 hover 浮起
+
+---
+
 ## [0.7.0] - 2026-06-21
 
 ### 新增（续）
