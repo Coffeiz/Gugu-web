@@ -112,27 +112,37 @@ const previewStore  = usePreviewStore()
 const projects      = computed(() => projectStore.projects)
 
 function loadThumbs(list) {
-  // 同步：一次性写入所有已缓存的 blob URL（1次 trigger）
+  const imgFiles = list.filter(f => isImageExt(f.ext))
+
+  // 同步：写入所有已缓存的 tiny 和 card（1 次 trigger）
   const snap = { ...thumbMap.value }
-  list.forEach(f => {
-    if (!isImageExt(f.ext)) return
+  imgFiles.forEach(f => {
     snap[f.id] = { tiny: getCachedThumb(f.id, 'tiny'), card: getCachedThumb(f.id, 'card') }
   })
   thumbMap.value = snap
 
-  // 异步：全部 Promise resolve 后一次性合并（1次 trigger）
-  const pending = list
-    .filter(f => isImageExt(f.ext))
-    .flatMap(f => [
-      getThumb(f.id, 'tiny').then(url => ({ id: f.id, k: 'tiny', url })),
-      getThumb(f.id, 'card').then(url => ({ id: f.id, k: 'card', url })),
-    ])
-  Promise.all(pending).then(results => {
-    const m = { ...thumbMap.value }
-    for (const { id, k, url } of results) if (url) m[id] = { ...m[id], [k]: url }
-    thumbMap.value = m
-    preDecodeBlobs(m)
+  // 异步 tiny（未缓存时各自独立到达，尽早显示 blur 占位）
+  imgFiles.forEach(f => {
+    if (snap[f.id]?.tiny) return
+    getThumb(f.id, 'tiny').then(url => {
+      if (url) thumbMap.value = { ...thumbMap.value, [f.id]: { ...thumbMap.value[f.id], tiny: url } }
+    })
   })
+
+  // 异步 card（批量等待，全部 resolve 后一次写入，保持 trigger 次数低）
+  const uncachedCards = imgFiles.filter(f => !snap[f.id]?.card)
+  if (uncachedCards.length) {
+    Promise.all(uncachedCards.map(f =>
+      getThumb(f.id, 'card').then(url => ({ id: f.id, url }))
+    )).then(results => {
+      const m = { ...thumbMap.value }
+      for (const { id, url } of results) if (url) m[id] = { ...m[id], card: url }
+      thumbMap.value = m
+      preDecodeBlobs(m)
+    })
+  } else {
+    preDecodeBlobs(snap)
+  }
 }
 
 function preDecodeBlobs(map) {

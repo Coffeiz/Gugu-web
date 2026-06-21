@@ -12,7 +12,7 @@
 - [四、总览页去重请求 + fileCount 响应式读缓存](#四总览页去重请求--filecount-响应式读缓存)
 - [五、文件库热缓存路径](#五文件库热缓存路径filesindexvue)
 - [六、总览 CalendarPanel 事件模块级缓存](#六总览-calendarpanel-事件模块级缓存)
-- [七、FilePanel thumbMap 改 shallowRef 批量更新](#七filepanel-thumbmap-改-shallowref-批量更新)
+- [七、FilePanel thumbMap 改 shallowRef + 拆分 tiny/card 更新路径](#七filepanel-thumbmap-改-shallowref--拆分-tinycard-更新路径)
 - [八、滚动入视口卡顿优化](#八滚动入视口卡顿优化filepanel)
 - [缓存层总览](#缓存层总览)
 
@@ -217,37 +217,72 @@ async function saveEditForm() {
 
 ---
 
-## 七、FilePanel thumbMap 改 shallowRef 批量更新
+## 七、FilePanel thumbMap 改 shallowRef + 拆分 tiny/card 更新路径
 
 ### 问题
-`thumbMap = reactive({})` 每写一次 `thumbMap[id] = ...` 触发一次 Vue reactive update。7 张图片 × 每张写 3 次 = ≥21 次 trigger，每次都 diff + repaint 所有卡片。
+
+**问题 A**：`thumbMap = reactive({})` 每写一次 `thumbMap[id] = ...` 触发一次 Vue reactive update，7 张图片 × 每张写 3 次 = ≥21 次 trigger。
+
+**问题 B**：原来用 `Promise.all([tiny, card])` 捆绑更新，导致渐进式 blur-up 失效（见方案内表格）。
 
 ### 方案
 
 ```js
-const thumbMap = shallowRef({})   // 替代 reactive({})
+const thumbMap = shallowRef({})
 
 function loadThumbs(list) {
-  // 同步：一次性构建对象，1 次 trigger
+  const imgFiles = list.filter(f => isImageExt(f.ext))
+
+  // 同步：写入所有已缓存的 tiny 和 card（1 次 trigger）
   const snap = { ...thumbMap.value }
-  list.forEach(f => {
-    if (!isImageExt(f.ext)) return
+  imgFiles.forEach(f => {
     snap[f.id] = { tiny: getCachedThumb(f.id, 'tiny'), card: getCachedThumb(f.id, 'card') }
   })
   thumbMap.value = snap
 
-  // 异步：Promise.all 全量完成后再合并，1 次 trigger
-  Promise.all(pending).then(results => {
-    const m = { ...thumbMap.value }
-    for (const { id, k, url } of results) if (url) m[id] = { ...m[id], [k]: url }
-    thumbMap.value = m
-    preDecodeBlobs(m)
+  // 异步 tiny（未缓存时各自独立到达，尽早显示 blur 占位）
+  imgFiles.forEach(f => {
+    if (snap[f.id]?.tiny) return
+    getThumb(f.id, 'tiny').then(url => {
+      if (url) thumbMap.value = { ...thumbMap.value, [f.id]: { ...thumbMap.value[f.id], tiny: url } }
+    })
   })
+
+  // 异步 card（批量等待，全部 resolve 后一次写入）
+  const uncachedCards = imgFiles.filter(f => !snap[f.id]?.card)
+  if (uncachedCards.length) {
+    Promise.all(uncachedCards.map(f =>
+      getThumb(f.id, 'card').then(url => ({ id: f.id, url }))
+    )).then(results => {
+      const m = { ...thumbMap.value }
+      for (const { id, url } of results) if (url) m[id] = { ...m[id], card: url }
+      thumbMap.value = m
+      preDecodeBlobs(m)
+    })
+  } else {
+    preDecodeBlobs(snap)
+  }
 }
 ```
 
+**时间线（均未缓存时）：**
+```
+0ms    → snap 写入（tiny: null, card: null），1 次 trigger
+~50ms  → tiny 各自 resolve → blur 占位出现（最多 N 次 trigger）
+~200ms → Promise.all(cards) resolve → fade in（1 次 trigger）
+```
+
+**原 `Promise.all([tiny, card])` 的渐进式失效场景：**
+
+| 缓存状态 | 原行为 | 现行为 |
+|---------|--------|--------|
+| tiny + card 均已缓存 | 同时写入，直接显示 card，无 blur-up | 同时写入（数据已热，无需占位，合理） |
+| 均未缓存 | 等 card 完成才一起写，tiny 的 50ms 窗口浪费 | tiny 50ms 到达即显示 blur，card 200ms fade in |
+| tiny 缓存、card 未缓存 | 偶然正常 | 正常 |
+
 ### 效果
-- reactive trigger 从 ≥21 次降到 2 次，减少进入总览时的 JS/DOM 开销
+- reactive trigger 从 ≥21 次降到 2+N 次（N ≤ 7，tiny 极小几乎同帧 resolve）
+- 渐进式 blur-up 在所有缓存状态下均正确生效
 
 ---
 
