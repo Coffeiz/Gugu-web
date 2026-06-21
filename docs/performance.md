@@ -14,6 +14,8 @@
 - [六、总览 CalendarPanel 事件模块级缓存](#六总览-calendarpanel-事件模块级缓存)
 - [七、FilePanel thumbMap 改 shallowRef + 拆分 tiny/card 更新路径](#七filepanel-thumbmap-改-shallowref--拆分-tinycard-更新路径)
 - [八、滚动入视口卡顿优化](#八滚动入视口卡顿优化filepanel)
+- [九、浮动预览窗口占位图竞速修复](#九浮动预览窗口占位图竞速修复floatpreviewwindow)
+- [十、Dashboard 版本前置检查](#十dashboard-版本前置检查跳过无效-list-请求)
 - [缓存层总览](#缓存层总览)
 
 ---
@@ -339,6 +341,99 @@ function preDecodeBlobs(map) {
 
 ### 效果
 - 滚动到 FilePanel 时不再卡顿
+
+---
+
+## 九、浮动预览窗口占位图竞速修复（FloatPreviewWindow）
+
+### 问题
+
+`FloatPreviewWindow` 的渐进式加载策略：先显示 card 缩略图作占位，全图下载完成后淡出占位图。
+
+但占位图使用直接 HTTP URL（`?token=` 查询参数格式），与 `useThumbCache.js` 走 `Authorization: Bearer` + blob Map 的请求通道完全不同，浏览器 HTTP cache key 不一致，每次都发新网络请求。
+
+```js
+// 原来：HTTP URL，每次新请求
+const placeholderSrc = computed(() =>
+  `${BASE_URL}/files/${file.id}/thumb?token=${token}&size=card`
+)
+```
+
+`onPlaceholderLoad` 里的保护逻辑：
+```js
+if (blobUrl.value) return  // 全图已到，跳过占位图
+```
+
+当全图（download 接口）比 card 缩略图先下载完成时（文件小 / 网络快），`blobUrl` 已有值，渐进效果被跳过，直接显示全图无过渡。
+
+### 方案
+
+`placeholderSrc` 改为 `ref`，在 `load()` 里优先从 blob Map 同步命中，未缓存时后台 fetch：
+
+```js
+const placeholderSrc = ref(null)
+
+async function load(f) {
+  placeholderSrc.value = null
+  // ...
+  if (isImg.value && !_SVG_EXTS.has(f.ext?.toUpperCase())) {
+    const cached = getCachedThumb(f.id, 'card')
+    if (cached) {
+      placeholderSrc.value = cached          // 同步命中，第一帧即有占位图
+    } else {
+      getThumb(f.id, 'card').then(url => {
+        if (url && !imageReady.value) placeholderSrc.value = url
+      })
+    }
+  }
+}
+```
+
+### 效果
+- 文件列表/总览已预热 card blob → `getCachedThumb` 同步命中率接近 100%，占位图第一帧出现，全图无论多快都追不上
+- 未缓存时：`getThumb` 与全图下载并行，card 体积小通常先到
+- 渐进式过渡（模糊占位 → 清晰全图）在所有情况下稳定生效
+
+---
+
+## 十、Dashboard 版本前置检查（跳过无效 list 请求）
+
+### 问题
+
+Dashboard `onMounted` 无条件调用 `filesApi.list()`，即使文件数据未发生任何变化：
+
+```js
+// 每次进入总览都执行，即使数据没变
+const fresh = await filesApi.list()
+filesCache.set(fresh)  // 触发 watch → FilePanel loadThumbs → preDecodeBlobs
+```
+
+导致每次进总览都有一次完整的 list 请求 + FilePanel 级联重渲染。
+
+### 方案
+
+先请求轻量的 `/files/version`（返回 `count:max_updated:max_deleted` 摘要），与 sessionStorage 存储的上次版本比对，版本未变时直接返回：
+
+```js
+// services/cache.js
+export const filesCacheVersion = {
+  get()    { return sessionStorage.getItem('gugu_files_version') },
+  set(ver) { sessionStorage.setItem('gugu_files_version', ver) },
+}
+
+// Dashboard/index.vue
+onMounted(async () => {
+  const { version: ver } = await filesApi.version()
+  if (ver && ver === filesCacheVersion.get() && filesCache.data) return  // 跳过
+  const fresh = await filesApi.list()
+  filesCache.set(fresh)
+  if (ver) filesCacheVersion.set(ver)
+})
+```
+
+### 效果
+- 文件未变时：1 次轻量 version 请求，FilePanel 零更新，进总览速度接近进文件库
+- 文件有变化时：正常 version + list 双请求，数据刷新
 
 ---
 
