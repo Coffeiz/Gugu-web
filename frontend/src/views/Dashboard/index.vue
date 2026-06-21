@@ -51,7 +51,7 @@
 import { computed, onMounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { filesApi } from '@/services/api'
-import { filesCache } from '@/services/cache'
+import { filesCache, filesCacheVersion } from '@/services/cache'
 import StatCard    from './components/StatCard.vue'
 import ProjectList from './components/ProjectList.vue'
 import CalendarPanel from './components/CalendarPanel.vue'
@@ -62,8 +62,11 @@ const fileCount = computed(() => filesCache.ref.value?.length ?? '—')
 
 onMounted(async () => {
   try {
+    const { version: ver } = await filesApi.version()
+    if (ver && ver === filesCacheVersion.get() && filesCache.data) return  // 数据未变，跳过全量拉取
     const fresh = await filesApi.list()
     filesCache.set(fresh)
+    if (ver) filesCacheVersion.set(ver)
   } catch { /* ignore */ }
 })
 </script>
