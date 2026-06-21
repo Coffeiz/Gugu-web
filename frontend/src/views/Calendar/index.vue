@@ -78,6 +78,7 @@
                     <span v-else class="chip-proj-tag chip-ev-tag">活动</span>
                     <span v-if="ev.isProject" class="bar-status-dot" :class="'bsd-' + ev.status"></span>
                     {{ ev.name }}
+                    <span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
                   </div>
                   <button
                     v-if="lay.moreCount > 0"
@@ -112,7 +113,7 @@
                   <template v-if="bar.startsHere || bar.colStart === 0">
                     <span class="bar-proj-tag">项目</span>
                     <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>
-                    <span class="bar-label">{{ bar.name }}</span>
+                    <span class="bar-label">{{ bar.name }}<span v-if="bar.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span></span>
                   </template>
                   <div v-if="bar.endsHere" class="bar-rh bar-rh-right" @mousedown.stop.prevent="startBarResize(bar, 'end', $event)"></div>
                 </div>
@@ -144,6 +145,7 @@
                 <span v-if="!ev.isUserEvent" class="ev-type-badge ev-proj-badge" :style="{ color: darkenHex(ev.accent) }">项目</span>
                 <span v-else class="ev-type-badge ev-event-badge">{{ typeLabel(ev.type) }}</span>
                 {{ ev.name }}
+                <span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
               </div>
               <template v-if="ev.isUserEvent">
                 <div class="sidebar-ev-desc">
@@ -181,8 +183,8 @@
                :style="{ '--cap-bg': capBg(ev.accent, ev.progress), borderColor: hexAlpha(ev.accent, 0.3) }">
             <span class="cap-tag" :class="ev.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">{{ ev.isProject ? '项目' : '活动' }}</span>
             <span v-if="ev.isProject" class="cap-sdot" :class="'cap-s-' + ev.status"></span>
-            <span class="cap-name" :style="{ color: darkenHex(ev.accent) }">{{ ev.name }}</span>
-            <span class="cap-days" :class="{ urgent: ev.daysLeft <= 3 }">{{ ev.daysLabel }}</span>
+            <span class="cap-name" :style="{ color: darkenHex(ev.accent) }">{{ ev.name }}<span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span></span>
+            <span v-if="ev.status !== 'done'" class="cap-days" :class="{ urgent: ev.daysLeft <= 3 }">{{ ev.daysLabel }}</span>
           </div>
         </div>
       </div>
@@ -206,7 +208,7 @@
           >
             <span class="overflow-tag" :class="{ 'overflow-tag-ev': !item.isProject }">{{ item.isProject ? '项目' : '活动' }}</span>
             <span v-if="item.isProject" class="bar-status-dot" :class="'bsd-' + item.status"></span>
-            <span class="overflow-name">{{ item.name }}</span>
+            <span class="overflow-name">{{ item.name }}<span v-if="item.isProject && item.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span></span>
           </div>
         </div>
       </div>
@@ -311,7 +313,7 @@ import { useUiStore } from '@/stores/ui'
 import { eventsApi } from '@/services/api'
 import DatePicker from '@/components/common/DatePicker.vue'
 import { useHolidays } from '@/composables/useHolidays'
-import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus } from '@phosphor-icons/vue'
+import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck } from '@phosphor-icons/vue'
 
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
@@ -885,6 +887,7 @@ const projectTimelines = computed(() =>
       isProject:    true,
       status:       p.status,
       currentStage: p.stages?.find(s => s.key === p.currentStage)?.label ?? null,
+      priority:     p.priority ?? null,
       createdAt:    p.createdAt ?? '',
       progress:     (() => {
         const stages = p.stages ?? []
@@ -1012,9 +1015,19 @@ const selectedDateLabel = computed(() => {
 const selectedEvents = computed(() => {
   const sel = selectedDate.value
   const chips = singleEvents(sel)
+  const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
   const activeProjects = projectTimelines.value
     .filter(p => p.startDate <= sel && p.endDate >= sel)
     .map(p => ({ ...p, type: p.endDate === sel ? 'deadline' : 'project' }))
+    .sort((a, b) => {
+      const aDone = a.status === 'done' ? 1 : 0
+      const bDone = b.status === 'done' ? 1 : 0
+      if (aDone !== bDone) return aDone - bDone
+      return prioVal(b) - prioVal(a)
+        || (a.startDate ?? '').localeCompare(b.startDate ?? '')
+        || (a.endDate ?? '').localeCompare(b.endDate ?? '')
+        || (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
+    })
   return [...activeProjects, ...chips]
 })
 
@@ -1031,10 +1044,19 @@ function buildUpcomingList() {
     return { daysLeft: d, daysLabel: d === 0 ? '今天' : d === 1 ? '明天' : d + '天后' }
   }
 
-  // 项目截止（15天内，非已完成）
+  const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
+
+  // 项目截止（15天内），已完成项目排最后
   const projects = projectTimelines.value
-    .filter(p => p.endDate >= todayStr && p.endDate <= cutoff && p.status !== 'done')
-    .sort((a, b) => a.endDate.localeCompare(b.endDate))
+    .filter(p => p.endDate >= todayStr && p.endDate <= cutoff)
+    .sort((a, b) => {
+      const doneDiff = (a.status === 'done' ? 1 : 0) - (b.status === 'done' ? 1 : 0)
+      if (doneDiff) return doneDiff
+      return prioVal(b) - prioVal(a)
+        || (a.startDate ?? '').localeCompare(b.startDate ?? '')
+        || (a.endDate ?? '').localeCompare(b.endDate ?? '')
+        || (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
+    })
     .slice(0, 4)
     .map(p => ({ ...p, date: p.endDate, ...label(p.endDate) }))
 
@@ -1259,6 +1281,8 @@ async function saveEvent() {
 .month-cell.other-month { opacity: 0.3; }
 .month-cell.is-weekend { background: rgba(195,90,90,0.028); }
 .month-cell.is-weekend.cell-hovered { background: rgba(195,90,90,0.07); }
+.month-cell.is-today { background: rgba(123,127,178,0.07); }
+.month-cell.is-today.is-weekend { background: rgba(195,90,90,0.07); }
 .month-cell.is-today .cell-num { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: rgba(255,255,255,0.88) !important; font-weight: 700; border-radius: 6px; }
 .month-cell.is-today.is-weekend .cell-num { background: linear-gradient(135deg,#b85c5c,#c97070); }
 .month-cell.is-selected { background: rgba(123,127,178,0.1); }
@@ -1349,6 +1373,10 @@ async function saveEvent() {
   background: rgba(255,255,255,0.5);
   border-radius: 3px; padding: 0 3px; line-height: 11px;
   margin-right: 2px;
+}
+.cal-done-mark {
+  display: inline-flex; align-items: center;
+  color: #3a8870; vertical-align: -2px; margin-left: 2px;
 }
 .bar-status-dot {
   width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-right: 4px;
