@@ -17,6 +17,7 @@
 
 ### 调整（续）
 
+- **日历侧栏当天日程卡片悬停**：hover 叠加 `rgba(255,255,255,0.2)` inset 白色高亮 + `0 3px 10px rgba(0,0,0,0.10)` 外阴影，`0.25s ease` 淡入淡出
 - **文件卡片悬停白色高亮**：`::after` 伪元素叠加 `rgba(255,255,255,0.15)` 提取至 `global.css`，适用于所有 `.fc-card` / `.folder-card`；内容层（文件名 z-index:2、类型徽章 z-index:2、操作按钮 z-index:3）高于 `::after`（z-index:1），白色仅覆盖缩略图/图标
 - **Dashboard 最近文件卡片悬停不浮起**：scoped 覆盖 `transform: none`，阴影改为黑色基调 `rgba(0,0,0,0.10)`，`0.25s ease` 淡入淡出；设计规范明确：不可拖动的卡片不允许 hover 浮起
 
