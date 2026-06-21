@@ -87,7 +87,7 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, shallowRef, watch, onMounted, nextTick } from 'vue'
 import { filesApi } from '@/services/api'
 import { filesCache } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
@@ -103,7 +103,7 @@ import {
 const dragging      = ref(false)
 const uploadOpen    = ref(false)
 const rawFiles      = ref(filesCache.data ?? [])
-const thumbMap      = reactive({}) // id → { tiny, card }
+const thumbMap      = shallowRef({}) // id → { tiny, card }，shallowRef 批量更新减少 trigger 次数
 const renamingId    = ref(null)
 const renameText    = ref('')
 const renameInputRef = ref(null)
@@ -112,20 +112,25 @@ const previewStore  = usePreviewStore()
 const projects      = computed(() => projectStore.projects)
 
 function loadThumbs(list) {
+  // 同步：一次性写入所有已缓存的 blob URL（1次 trigger）
+  const snap = { ...thumbMap.value }
   list.forEach(f => {
     if (!isImageExt(f.ext)) return
-    const cached = getCachedThumb(f.id, 'tiny')
-    if (cached) {
-      thumbMap[f.id] = { tiny: cached, card: getCachedThumb(f.id, 'card') }
-    }
-    getThumb(f.id, 'tiny').then(url => {
-      if (!thumbMap[f.id]) thumbMap[f.id] = {}
-      thumbMap[f.id] = { ...thumbMap[f.id], tiny: url }
-    })
-    getThumb(f.id, 'card').then(url => {
-      if (!thumbMap[f.id]) thumbMap[f.id] = {}
-      thumbMap[f.id] = { ...thumbMap[f.id], card: url }
-    })
+    snap[f.id] = { tiny: getCachedThumb(f.id, 'tiny'), card: getCachedThumb(f.id, 'card') }
+  })
+  thumbMap.value = snap
+
+  // 异步：全部 Promise resolve 后一次性合并（1次 trigger）
+  const pending = list
+    .filter(f => isImageExt(f.ext))
+    .flatMap(f => [
+      getThumb(f.id, 'tiny').then(url => ({ id: f.id, k: 'tiny', url })),
+      getThumb(f.id, 'card').then(url => ({ id: f.id, k: 'card', url })),
+    ])
+  Promise.all(pending).then(results => {
+    const m = { ...thumbMap.value }
+    for (const { id, k, url } of results) if (url) m[id] = { ...m[id], [k]: url }
+    thumbMap.value = m
   })
 }
 
@@ -267,11 +272,11 @@ const files = computed(() =>
   display: flex; flex-direction: column;
   min-height: 110px; overflow: hidden;
   cursor: pointer;
-  will-change: transform;
   transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
               box-shadow 0.25s ease, background 0.2s;
 }
 .fc-card:hover {
+  will-change: transform;
   transform: translateY(-2px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
   background: rgba(255,255,255,0.86);
