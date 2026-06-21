@@ -34,6 +34,8 @@ def _to_resp(p: Project, file_count: int = 0) -> ProjectResponse:
         current_stage=p.current_stage,
         notes=p.notes,
         archived=p.archived,
+        priority=p.priority,
+        version=p.version or 1,
         done_at=p.done_at.isoformat() if p.done_at else None,
         updated_at=p.updated_at.isoformat() if p.updated_at else None,
         created_at=p.created_at.strftime("%Y-%m-%d"),
@@ -114,6 +116,10 @@ async def update_project(
 
     data = body.model_dump(exclude_unset=True, by_alias=False)
 
+    client_version = data.pop("version", None)
+    if client_version is not None and p.version != client_version:
+        raise HTTPException(409, "数据已被其他用户修改，请刷新后重试")
+
     # 项目改名时同步重命名存储目录
     old_name = p.name
     new_name = data.get("name")
@@ -144,6 +150,7 @@ async def update_project(
     elif "status" in data and data["status"] != "done":
         p.done_at = None
 
+    p.version = (p.version or 1) + 1
     await db.commit()
     await db.refresh(p)
 

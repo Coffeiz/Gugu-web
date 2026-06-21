@@ -48,9 +48,10 @@ function columnProjects(statusKey) {
   const list = projectStore.projects
     .filter(p => p.status === statusKey)
     .map(p => ({ ...p, fileCount: liveFileCounts.value.get(p.id) ?? p.fileCount }))
+  const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
   if (statusKey === 'done')   return list.sort((a, b) => (b.doneAt   ?? '').localeCompare(a.doneAt   ?? ''))
-  if (statusKey === 'active') return list.sort((a, b) => (a.deadline ?? '').localeCompare(b.deadline ?? '') || a.id - b.id)
-  return list.sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? '') || a.id - b.id)
+  if (statusKey === 'active') return list.sort((a, b) => prioVal(b) - prioVal(a) || (a.deadline ?? '').localeCompare(b.deadline ?? '') || a.id - b.id)
+  return list.sort((a, b) => prioVal(b) - prioVal(a) || (a.startDate ?? '').localeCompare(b.startDate ?? '') || a.id - b.id)
 }
 
 function handleDrop({ projectId, targetStatus }) {

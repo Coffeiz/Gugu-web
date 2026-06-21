@@ -236,6 +236,7 @@
 <script setup>
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
+import { useUiStore } from '@/stores/ui'
 import DateRangePicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { useStageTemplates } from '@/composables/useStageTemplates.js'
@@ -246,6 +247,7 @@ const props = defineProps({ show: Boolean })
 const emit  = defineEmits(['close'])
 
 const projectStore    = useProjectStore()
+const uiStore         = useUiStore()
 const stagesEditorRef = ref(null)
 const nameInputRef    = ref(null)
 
@@ -402,6 +404,12 @@ watch(() => props.show, async (v) => {
   if (v) {
     Object.assign(form, defaultForm())
     stageKeys.value = defaultKeys()
+    const range = uiStore.newProjectRange
+    if (range) {
+      form.startDate = range.start
+      form.deadline  = range.end
+      uiStore.newProjectRange = null
+    }
     await nextTick()
     nameInputRef.value?.focus()
   }

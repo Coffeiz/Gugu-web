@@ -20,6 +20,7 @@ def _to_resp(e: CalendarEvent) -> EventResponse:
         client=e.client,
         project_id=e.project_id,
         description=e.description,
+        version=e.version or 1,
     )
 
 
@@ -65,8 +66,13 @@ async def update_event(
     e = await db.get(CalendarEvent, eid)
     if not e or e.user_id != current_user.id:
         raise HTTPException(404, "事件不存在")
-    for k, v in body.model_dump(exclude_unset=True, by_alias=False).items():
+    data = body.model_dump(exclude_unset=True, by_alias=False)
+    client_version = data.pop("version", None)
+    if client_version is not None and e.version != client_version:
+        raise HTTPException(409, "数据已被其他用户修改，请刷新后重试")
+    for k, v in data.items():
         setattr(e, k, v)
+    e.version = (e.version or 1) + 1
     await db.commit()
     await db.refresh(e)
     return _to_resp(e)

@@ -11,10 +11,28 @@
         class="project-row"
         @click="openProject(p)"
       >
+        <!-- 星级优先级（右上角绝对定位） -->
+        <div class="row-stars" @click.stop @mousedown.stop>
+          <button
+            v-for="n in 3" :key="n"
+            class="star-btn"
+            :style="prioVal(p) >= n ? { color: starColor(p) } : {}"
+            :title="PRIO_LABELS[n]"
+            @click="setPriority(p, n)"
+          >
+            <svg width="11" height="11" viewBox="0 0 16 16">
+              <polygon
+                points="8,1.5 9.8,6 14.5,6.3 11,9.4 12.1,14 8,11.5 3.9,14 5,9.4 1.5,6.3 6.2,6"
+                :fill="prioVal(p) >= n ? starColor(p) : 'none'"
+              :stroke="prioVal(p) >= n ? starColor(p) : 'currentColor'"
+                stroke-width="1.2" stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+
         <div class="proj-main">
-          <!-- 第一行：项目名 -->
           <div class="proj-name" :style="{ color: nameColor(p) }">{{ p.name }}</div>
-          <!-- 第二行：客户(左) + 右侧元信息组 -->
           <div class="proj-row2">
             <span class="meta-client" :class="{ empty: !p.client }">
               <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -27,7 +45,11 @@
               <span class="meta-date" :class="{ urgent: isUrgent(p) }">
                 {{ p.deadline ? formatDate(p.deadline) : '' }}<span v-if="isUrgent(p)"> ⚠</span>
               </span>
-              <span class="proj-status" :class="'s-' + p.status">
+              <span
+                class="proj-status" :class="['s-' + p.status, { 'status-advanceable': p.status !== 'done' }]"
+                :title="p.status === 'pending' ? '点击移至进行中' : p.status === 'active' ? '点击标记完成' : ''"
+                @click.stop="advance(p)"
+              >
                 <i class="status-dot"></i>{{ statusLabel(p.status) }}
               </span>
               <span class="proj-pct" :style="{ color: accentColor(p) }">{{ stageProgress(p) }}%</span>
@@ -37,6 +59,8 @@
             <div class="progress-fill" :style="{ width: stageProgress(p) + '%', background: p.color }" />
           </div>
         </div>
+
+
       </div>
     </div>
   </div>
@@ -53,18 +77,55 @@ function openProject(p) { projectStore.openModal(p) }
 const statusLabels = { pending: '待开始', active: '进行中', done: '已完成' }
 function statusLabel(s) { return statusLabels[s] ?? s }
 
+// ── 排序：进行中 > 待开始 > 已完成，组内按优先级↓→开始日↑→截止日↑→创建日↑ ──
+const STATUS_ORDER = { active: 0, pending: 1, done: 2 }
+const PRIO_MAP     = { high: 3, medium: 2, low: 1 }
+const PRIO_LABELS  = { 1: '低优先级', 2: '中优先级', 3: '高优先级' }
+const PRIO_KEYS    = [null, 'low', 'medium', 'high']
+
+function prioVal(p) { return PRIO_MAP[p.priority] ?? 0 }
+
 const visibleProjects = computed(() => {
-  const active  = projectStore.projects.filter(p => p.status === 'active')
-  const pending = projectStore.projects
-    .filter(p => p.status === 'pending')
-    .slice(0, 3)
-  const done = projectStore.projects
-    .filter(p => p.status === 'done')
-    .sort((a, b) => (b.deadline ?? '').localeCompare(a.deadline ?? ''))
-    .slice(0, 2)
+  const active  = sort(projectStore.projects.filter(p => p.status === 'active'))
+  const pending = sort(projectStore.projects.filter(p => p.status === 'pending')).slice(0, 3)
+  const done    = sort(projectStore.projects.filter(p => p.status === 'done')).slice(0, 2)
   return [...active, ...pending, ...done]
 })
 
+function sort(list) {
+  return [...list].sort((a, b) => {
+    const pd = prioVal(b) - prioVal(a)
+    if (pd !== 0) return pd
+    const sd = (a.startDate ?? '').localeCompare(b.startDate ?? '')
+    if (sd !== 0) return sd
+    const dd = (a.deadline ?? '').localeCompare(b.deadline ?? '')
+    if (dd !== 0) return dd
+    return (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
+  })
+}
+
+// ── 优先级 ────────────────────────────────────────────────
+function starColor(p) {
+  const v = prioVal(p)
+  if (v === 3) return '#c45050'
+  if (v === 2) return '#c49020'
+  return '#8899cc'
+}
+
+async function setPriority(p, n) {
+  const next = prioVal(p) === n ? null : PRIO_KEYS[n]
+  await projectStore.updateProject(p.id, { priority: next })
+}
+
+// ── 前进状态（仅前进） ─────────────────────────────────────
+const STATUS_NEXT = { pending: 'active', active: 'done' }
+
+async function advance(p) {
+  const next = STATUS_NEXT[p.status]
+  if (next) await projectStore.moveProject(p.id, next)
+}
+
+// ── 辅助 ─────────────────────────────────────────────────
 function currentStageLabel(p) {
   return p.stages.find(s => s.key === p.currentStage)?.label ?? ''
 }
@@ -117,7 +178,7 @@ function formatDate(str) {
 
 .project-row {
   position: relative;
-  display: flex; align-items: center;
+  display: flex; align-items: center; gap: 4px;
   padding: 16px 8px;
   cursor: pointer; transition: background 0.25s ease, box-shadow 0.25s ease;
   border-radius: 10px;
@@ -139,7 +200,6 @@ function formatDate(str) {
   padding-bottom: 2px; margin-bottom: -2px;
 }
 
-/* 第二行 */
 .proj-row2 {
   display: flex; align-items: center;
   font-size: 11px; color: var(--text-secondary);
@@ -179,9 +239,28 @@ function formatDate(str) {
 .meta-date  { white-space: nowrap; }
 .meta-date.urgent { color: var(--color-warning); font-weight: 600; }
 
-/* 进度条 */
 .progress-track {
   height: 3px; background: rgba(0,0,0,0.07); border-radius: 99px; overflow: hidden;
 }
 .progress-fill { height: 100%; border-radius: 99px; transition: width 0.4s; }
+
+/* ── 星级（右上角） ── */
+.row-stars {
+  position: absolute; top: 10px; right: 8px;
+  display: flex; align-items: center; gap: 0;
+}
+.star-btn {
+  width: 20px; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: rgba(0,0,0,0.18);
+  transition: transform 0.1s, color 0.1s;
+}
+.star-btn:hover { transform: scale(1.2); }
+.star-btn.active { color: inherit; }
+
+/* 可前进的状态胶囊 */
+.status-advanceable { cursor: pointer; transition: background 0.15s, box-shadow 0.15s; }
+.status-advanceable:hover { filter: brightness(0.92); box-shadow: 0 2px 8px rgba(0,0,0,0.1), inset 0 0 0 99px rgba(255,255,255,0.2); }
+.status-advanceable:active { filter: brightness(0.85); }
 </style>

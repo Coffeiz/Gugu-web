@@ -77,6 +77,8 @@ class Project(Base):
     stages_json:   Mapped[str]           = mapped_column(Text,        default="[]")
     current_stage: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     notes:         Mapped[str]           = mapped_column(Text,        default="")
+    priority:      Mapped[Optional[str]] = mapped_column(String(20),  nullable=True)
+    version:       Mapped[int]           = mapped_column(Integer,     default=1)
     archived:      Mapped[bool]          = mapped_column(Boolean,     default=False)
     done_at:       Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at:    Mapped[datetime]      = mapped_column(DateTime,    default=datetime.utcnow)
@@ -178,6 +180,7 @@ class CalendarEvent(Base):
     client:      Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     project_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    version:     Mapped[int]           = mapped_column(Integer, default=1)
     created_at:  Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow)
 
     owner: Mapped["User"] = relationship(back_populates="events")

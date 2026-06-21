@@ -72,6 +72,20 @@ export const useProjectStore = defineStore('projects', () => {
     projects.value = projects.value.filter(p => p.id !== id)
   }
 
+  async function _patchProject(id, payload) {
+    const p = projects.value.find(p => p.id === id)
+    try {
+      const updated = await projectsApi.update(id, { ...payload, version: p?.version })
+      if (p && updated?.version) p.version = updated.version
+    } catch (e) {
+      if (e.status === 409) {
+        await fetchProjects()
+        throw new Error('数据已被其他用户修改，已自动刷新')
+      }
+      throw e
+    }
+  }
+
   async function moveProject(id, newStatus) {
     const p = projects.value.find(p => p.id === id)
     if (!p) return
@@ -85,28 +99,26 @@ export const useProjectStore = defineStore('projects', () => {
     }
 
     if (newStatus === 'done' && oldStatus !== 'done' && p.stages?.length) {
-      // 进入已完成：记住当前阶段，推进到最后阶段（100%）
       p._stageBeforeDone = p.currentStage
       const lastKey = p.stages[p.stages.length - 1].key
       p.currentStage = lastKey
       p.progress = 100
-      await projectsApi.update(id, { status: newStatus, currentStage: lastKey, progress: 100 })
+      await _patchProject(id, { status: newStatus, currentStage: lastKey, progress: 100 })
       return
     }
 
     if (oldStatus === 'done' && newStatus !== 'done' && p.stages?.length) {
-      // 离开已完成：还原之前记住的阶段
       const restored = p._stageBeforeDone ?? p.stages[0].key
       p._stageBeforeDone = undefined
       p.currentStage = restored
       const idx = p.stages.findIndex(s => s.key === restored)
       const progress = idx >= 0 ? Math.round((idx + 1) / p.stages.length * 100) : 0
       p.progress = progress
-      await projectsApi.update(id, { status: newStatus, currentStage: restored, progress })
+      await _patchProject(id, { status: newStatus, currentStage: restored, progress })
       return
     }
 
-    await projectsApi.update(id, { status: newStatus })
+    await _patchProject(id, { status: newStatus })
   }
 
   async function setStage(id, stageKey, progress) {
@@ -114,7 +126,7 @@ export const useProjectStore = defineStore('projects', () => {
     if (!p) return
     p.currentStage = stageKey
     p.progress = progress ?? 0
-    await projectsApi.update(id, { currentStage: stageKey, progress: p.progress })
+    await _patchProject(id, { currentStage: stageKey, progress: p.progress })
   }
 
   async function updateStages(id, newStages) {
@@ -124,13 +136,13 @@ export const useProjectStore = defineStore('projects', () => {
     if (!newStages.find(s => s.key === p.currentStage)) {
       p.currentStage = newStages[0]?.key ?? ''
     }
-    await projectsApi.update(id, { stages: newStages, currentStage: p.currentStage })
+    await _patchProject(id, { stages: newStages, currentStage: p.currentStage })
   }
 
   async function updateProject(id, fields) {
     const p = projects.value.find(p => p.id === id)
     if (p) Object.assign(p, fields)
-    await projectsApi.update(id, fields)
+    await _patchProject(id, fields)
   }
 
   const modalProject = ref(null)

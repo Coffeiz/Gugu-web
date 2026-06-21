@@ -9,6 +9,27 @@
     <div class="card-body">
       <div class="card-top">
         <div class="proj-name" :style="{ color: nameColor }">{{ project.name }}</div>
+        <!-- 星级优先级 -->
+        <div class="stars" @click.stop @mousedown.stop>
+          <button
+            v-for="n in 3"
+            :key="n"
+            class="star-btn"
+            :class="{ active: prioValue >= n }"
+            :title="PRIO_LABELS[n]"
+            @click="setPriority(n)"
+          >
+            <svg width="11" height="11" viewBox="0 0 16 16">
+              <polygon
+                points="8,1.5 9.8,6 14.5,6.3 11,9.4 12.1,14 8,11.5 3.9,14 5,9.4 1.5,6.3 6.2,6"
+                :fill="prioValue >= n ? starColor : 'none'"
+                :stroke="prioValue >= n ? starColor : 'currentColor'"
+                stroke-width="1.2"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="proj-meta">
         <span class="proj-client" :class="{ empty: !project.client }">
@@ -52,14 +73,29 @@
         <div class="progress-fill" :style="{ width: stageProgress + '%', background: project.color }"></div>
       </div>
     </div>
+
+    <!-- 推进到下一阶段按钮，已完成不显示 -->
+    <button
+      v-if="project.status !== 'done'"
+      class="card-advance"
+      :title="advanceLabel"
+      @click.stop="advance"
+    >
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="9 18 15 12 9 6"/>
+      </svg>
+    </button>
   </div>
 </template>
 
 <script setup>
 import { computed } from 'vue'
+import { useProjectStore } from '@/stores/projects'
 
 const props = defineProps({ project: { type: Object, required: true } })
 defineEmits(['click', 'dragstart'])
+
+const projectStore = useProjectStore()
 
 const nameColor = computed(() => {
   const hex = props.project.color?.match(/#[0-9a-fA-F]{6}/)?.[0] ?? '#7b7fb2'
@@ -68,7 +104,6 @@ const nameColor = computed(() => {
   const b = Math.round(parseInt(hex.slice(5,7),16) * 0.40)
   return `rgb(${r},${g},${b})`
 })
-
 
 const currentStageIndex = computed(() =>
   props.project.stages.findIndex(s => s.key === props.project.currentStage)
@@ -87,13 +122,13 @@ const stageProgress = computed(() => {
   return Math.round(idx * w + within)
 })
 
-const daysLeft      = computed(() => {
+const daysLeft  = computed(() => {
   if (!props.project.deadline) return null
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const dl    = new Date(props.project.deadline + 'T00:00:00')
   return Math.ceil((dl - today) / 86400000)
 })
-const isUrgent      = computed(() => props.project.status !== 'done' && daysLeft.value <= 3)
+const isUrgent = computed(() => props.project.status !== 'done' && daysLeft.value <= 3)
 const thisYear = new Date().getFullYear()
 function fmtDate(iso) {
   if (!iso) return ''
@@ -113,6 +148,36 @@ const deadlineLabel = computed(() => {
   if (d <= 7)  return `${d}天后`
   return fmtDate(props.project.deadline)
 })
+
+// ── 推进状态列 ────────────────────────────────────────────
+const STATUS_NEXT  = { pending: 'active', active: 'done' }
+const STATUS_LABEL = { pending: '移至进行中', active: '标记完成' }
+const advanceLabel = computed(() => STATUS_LABEL[props.project.status] ?? '')
+
+async function advance() {
+  const next = STATUS_NEXT[props.project.status]
+  if (next) await projectStore.moveProject(props.project.id, next)
+}
+
+// ── 星级优先级 ────────────────────────────────────────────
+// 1=低, 2=中, 3=高；null=无
+const PRIO_MAP    = { low: 1, medium: 2, high: 3 }
+const PRIO_LABELS = { 1: '低优先级', 2: '中优先级', 3: '高优先级' }
+const PRIO_KEYS   = [null, 'low', 'medium', 'high']
+
+const prioValue = computed(() => PRIO_MAP[props.project.priority] ?? 0)
+
+const starColor = computed(() => {
+  if (prioValue.value === 3) return '#c45050'
+  if (prioValue.value === 2) return '#c49020'
+  return '#8899cc'
+})
+
+async function setPriority(n) {
+  // 再次点击同一级别则取消
+  const next = prioValue.value === n ? null : PRIO_KEYS[n]
+  await projectStore.updateProject(props.project.id, { priority: next })
+}
 </script>
 
 <style scoped>
@@ -143,7 +208,6 @@ const deadlineLabel = computed(() => {
 .proj-card:hover::after { opacity: 1; }
 .proj-card:active { transform: translateY(1px); opacity: 0.93; }
 
-
 .card-body { flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card-top { display: flex; align-items: flex-start; gap: 6px; }
 
@@ -169,7 +233,7 @@ const deadlineLabel = computed(() => {
 }
 
 .card-footer { display: flex; align-items: center; justify-content: space-between; }
-.footer-right { display: flex; align-items: center; gap: 6px; }
+.footer-right { display: flex; align-items: center; gap: 5px; }
 
 .date-range {
   display: flex; align-items: center; gap: 4px;
@@ -190,4 +254,32 @@ const deadlineLabel = computed(() => {
 .progress-num { font-size: 10px; color: var(--text-secondary); }
 .progress-bar { height: 4px; background: rgba(0,0,0,0.07); border-radius: 99px; overflow: hidden; }
 .progress-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
+
+/* ── 星级 ── */
+.stars { display: flex; align-items: center; gap: 0; }
+.star-btn {
+  width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: rgba(0,0,0,0.2);
+  transition: transform 0.1s, color 0.1s;
+}
+.star-btn:hover { transform: scale(1.2); }
+.star-btn.active { color: v-bind(starColor); }
+
+/* ── 推进按钮（圆角靠父级 overflow:hidden 裁剪）── */
+.card-advance {
+  width: 42px; flex-shrink: 0; align-self: stretch;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none;
+  border-left: 1px solid rgba(0,0,0,0.07);
+  cursor: pointer;
+  color: rgba(0,0,0,0.25);
+  transition: background 0.15s, color 0.15s;
+}
+.card-advance:hover {
+  background: rgba(0,0,0,0.05);
+  color: var(--text-primary);
+}
+.card-advance:active { background: rgba(0,0,0,0.1); }
 </style>

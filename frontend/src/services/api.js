@@ -38,7 +38,9 @@ async function request(method, path, body = null, isForm = false) {
       : typeof d === 'string' ? d
       : Array.isArray(d) ? d.map(e => e.msg ?? e).join('；')
       : `HTTP ${res.status}`
-    throw new Error(msg)
+    const apiErr = new Error(msg)
+    apiErr.status = res.status
+    throw apiErr
   }
 
   if (res.status === 204) return null
