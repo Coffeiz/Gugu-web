@@ -1402,6 +1402,14 @@ watch(() => props.project?.id, async (id) => {
   }
 }, { immediate: true })
 
+// 跟踪 store 里的 status 变化（如自动完成 / 拖回），实时同步胶囊亮起状态
+watch(() => props.project?.status, (status) => {
+  if (status !== undefined && status !== localStatus.value) {
+    localStatus.value = status
+  }
+})
+
+
 
 watch(localClient, v => {
   if (initializing) return
@@ -1602,7 +1610,18 @@ function saveTodos() {
   if (_syncingFromStore) return
   const newProgress = calcProgress(localStages.value, localCurrentStage.value)
   stageProgress.value = newProgress
-  projectStore.updateProject(props.project.id, { stages: JSON.parse(JSON.stringify(localStages.value)), progress: newProgress })
+  const lastKey = localStages.value[localStages.value.length - 1]?.key
+  const isLastFull = localCurrentStage.value === lastKey && newProgress === 100
+  if (isLastFull && props.project.status !== 'done') {
+    // 最后阶段勾完所有待办 → 自动完成
+    projectStore.updateProject(props.project.id, { stages: JSON.parse(JSON.stringify(localStages.value)), progress: newProgress })
+    projectStore.moveProject(props.project.id, 'done')
+  } else if (!isLastFull && props.project.status === 'done') {
+    // 取消待办导致进度不满 → 从已完成回退到进行中（不触发 moveProject 的阶段还原逻辑）
+    projectStore.updateProject(props.project.id, { stages: JSON.parse(JSON.stringify(localStages.value)), progress: newProgress, status: 'active', doneAt: null })
+  } else {
+    projectStore.updateProject(props.project.id, { stages: JSON.parse(JSON.stringify(localStages.value)), progress: newProgress })
+  }
 }
 function addTodo(stage) {
   if (!stage.todos) stage.todos = []
@@ -1672,10 +1691,10 @@ function startStageDrag(fromIdx, e) {
     document.removeEventListener('mousemove', mm)
     document.removeEventListener('mouseup', mu)
     if (activated) {
+      commitStageDrag()  // 先提交，再重置索引
       stageDrag.active = false
       stageDrag.fromIdx = -1
       stageDrag.overIdx = -1
-      commitStageDrag()
       document.addEventListener('click', ce => ce.stopPropagation(), { capture: true, once: true })
     }
     document.body.style.cursor     = ''
@@ -1689,10 +1708,12 @@ function startStageDrag(fromIdx, e) {
 function commitStageDrag() {
   const { fromIdx, overIdx } = stageDrag
   if (fromIdx < 0 || fromIdx === overIdx) return
-  const stages = [...localStages.value]
-  const [moved] = stages.splice(fromIdx, 1)
-  const to = Math.max(0, Math.min(overIdx, stages.length))
-  stages.splice(to, 0, moved)
+  const stages = JSON.parse(JSON.stringify(localStages.value))
+  // 只移动标签，todos/key/当前阶段状态保持不变
+  const labels = stages.map(s => s.label)
+  const [movedLabel] = labels.splice(fromIdx, 1)
+  labels.splice(Math.max(0, Math.min(overIdx, labels.length)), 0, movedLabel)
+  stages.forEach((s, i) => { s.label = labels[i] })
   localStages.value = stages
   saveStages()
 }

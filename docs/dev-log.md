@@ -107,6 +107,45 @@
 
 ---
 
+## 2026-06-22 · 阶段自动完成 + 状态联动 Bug 群
+
+### 背景
+
+实现「最后阶段进度满时自动标记已完成、拖回时还原阶段与待办」功能后，连续出现四个相互关联的 bug。
+
+### 根因逐一拆解
+
+**Bug 1 · `_stageBeforeDone` 记录了错误的阶段**
+
+`setStage` 在调用 `moveProject('done')` 之前已执行 `p.currentStage = stageKey`（最后阶段），导致 `moveProject` 里 `p._stageBeforeDone = p.currentStage` 拿到的是最后阶段 key，而非操作前的原始阶段。
+
+修法：在修改 `currentStage` 之前先记下 `originalStageKey`，直接写入 `p._stageBeforeDone`；`moveProject` 改为「已设则不覆盖」。
+
+**Bug 2 · 从已完成拖回时 todo 未还原**
+
+`moveProject`（看板拖拽触发）只还原了 `currentStage` 和 `progress`，完全缺少 todo 还原逻辑。`setStage` 的退回路径有正确的 `autoCompleted` 还原遍历，但 `moveProject` 未复用，导致拖回后所有阶段 todo 依然处于全勾状态。
+
+修法：在 `moveProject` 的 `done → active` 分支里加同样的还原遍历，并将还原后的 `stages` 一并 patch 到后端。
+
+**Bug 3 · 编辑卡状态胶囊不实时更新**
+
+Modal 内 `localStatus` 是本地 `ref`，只在 `watch(() => props.project?.id, ...)` 触发（即打开不同项目）时初始化一次。`moveProject` 修改了 store 的 `p.status`，但 `localStatus` 对此无感，胶囊卡在旧状态。
+
+修法：新增 `watch(() => props.project?.status, ...)` 单独跟踪 status 变化，实时同步 `localStatus`。
+
+**Bug 4 · 胶囊更新有明显延迟**
+
+`setStage` 的执行链：`await _patchProject`（网络）→ `await moveProject`（网络）→ 才设 `p.status = 'done'`。胶囊需等两次网络回包才变色。
+
+修法：把 `p.status = 'done'`、`p.doneAt`、`p._stageBeforeDone` 全部移到第一个 `await` 之前做乐观更新，并合并为一次 `_patchProject` 调用，Vue 在下一 tick 立即重渲。
+
+### 教训
+
+- **「提前修改共享状态再传给子函数」会破坏子函数的快照逻辑**：调用者改了 `p.currentStage`，被调用者再读它时拿到的是已被污染的值。今后凡是要在调用链中「传递修改前状态」，必须在第一次修改前就显式保存。
+- **乐观更新要在第一个 `await` 之前完成**：只要有一行同步赋值在 `await` 之后，用户就会感受到延迟。
+
+---
+
 ## 设计规范（早期版本）
 
 - **色系**：紫蓝渐变主色 `#8b8fbe → #c4afc8`，成功绿 `#5a9e88`，警告橙 `#b07858`

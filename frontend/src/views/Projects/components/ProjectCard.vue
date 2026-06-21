@@ -47,9 +47,9 @@
             <rect x="1.5" y="2.5" width="13" height="12" rx="2"/>
             <path d="M5 1v3M11 1v3M1.5 6.5h13"/>
           </svg>
-          <template v-if="project.status === 'done' && project.doneAt">
-            <span class="done-label">✓ 完成</span>
-            <span class="deadline">{{ fmtDate(project.doneAt.slice(0, 10)) }}</span>
+          <template v-if="project.status === 'done'">
+            <span class="done-label"><PhCheck :size="9" weight="bold" /> 完成</span>
+            <span v-if="project.doneAt" class="deadline">{{ fmtDate(project.doneAt.slice(0, 10)) }}</span>
           </template>
           <template v-else>
             <span v-if="project.startDate" class="date-start">{{ fmtDate(project.startDate) }}</span>
@@ -77,7 +77,7 @@
           :title="stage.label"
           @click.stop="clickStage(i)"
         >
-          <div class="seg-fill" :style="{ width: segFill(i) + '%', background: project.color }"></div>
+          <div class="seg-fill" :style="segFillStyle(i)"></div>
         </div>
       </div>
       <div v-else class="progress-bar">
@@ -102,6 +102,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useProjectStore } from '@/stores/projects'
+import { PhCheck } from '@phosphor-icons/vue'
 
 const props = defineProps({ project: { type: Object, required: true } })
 defineEmits(['click', 'dragstart'])
@@ -184,6 +185,13 @@ const starColor = computed(() => {
   return '#8899cc'
 })
 
+function segFillStyle(i) {
+  const n = props.project.stages.length
+  const w = segFill(i)
+  const pos = n <= 1 ? '0%' : `${(i / (n - 1)) * 100}%`
+  return { width: w + '%', background: props.project.color, backgroundSize: `${n * 100}% 100%`, backgroundPosition: `${pos} 0%` }
+}
+
 function segFill(i) {
   const idx = currentStageIndex.value
   if (i < idx) return 100
@@ -194,8 +202,13 @@ function segFill(i) {
 }
 
 async function clickStage(i) {
-  const stage = props.project.stages[i]
-  const progress = Math.round((i + 1) / props.project.stages.length * 100)
+  const stages = props.project.stages
+  const stage = stages[i]
+  const n = stages.length
+  const w = 100 / n
+  const todos = stage.todos ?? []
+  const within = todos.length > 0 ? (todos.filter(t => t.done).length / todos.length) * w : w
+  const progress = Math.round(i * w + within)
   await projectStore.setStage(props.project.id, stage.key, progress)
 }
 
@@ -286,7 +299,10 @@ async function setPriority(n) {
   flex: 1; height: 100%; border-radius: 99px;
   background: rgba(0,0,0,0.07); overflow: hidden; cursor: pointer;
   transition: transform 0.18s ease, opacity 0.15s;
-  transform-origin: center;
+  transform-origin: center; position: relative;
+}
+.seg::before {
+  content: ''; position: absolute; inset: -6px 0;
 }
 .seg:hover { transform: scaleY(1.7); opacity: 0.8; }
 .seg-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }

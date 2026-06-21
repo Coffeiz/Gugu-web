@@ -63,7 +63,7 @@
               :title="stage.label"
               @click.stop="clickStage(p, i)"
             >
-              <div class="seg-fill" :style="{ width: segFill(p, i) + '%', background: p.color }"></div>
+              <div class="seg-fill" :style="segFillStyle(p, i)"></div>
             </div>
           </div>
           <div v-else class="progress-track">
@@ -137,6 +137,13 @@ async function advance(p) {
 }
 
 // ── 分段进度条 ────────────────────────────────────────────
+function segFillStyle(p, i) {
+  const n = p.stages.length
+  const w = segFill(p, i)
+  const pos = n <= 1 ? '0%' : `${(i / (n - 1)) * 100}%`
+  return { width: w + '%', background: p.color, backgroundSize: `${n * 100}% 100%`, backgroundPosition: `${pos} 0%` }
+}
+
 function segFill(p, i) {
   const idx = p.stages.findIndex(s => s.key === p.currentStage)
   if (i < idx) return 100
@@ -147,8 +154,13 @@ function segFill(p, i) {
 }
 
 async function clickStage(p, i) {
-  const stage = p.stages[i]
-  const progress = Math.round((i + 1) / p.stages.length * 100)
+  const stages = p.stages
+  const stage = stages[i]
+  const n = stages.length
+  const w = 100 / n
+  const todos = stage.todos ?? []
+  const within = todos.length > 0 ? (todos.filter(t => t.done).length / todos.length) * w : w
+  const progress = Math.round(i * w + within)
   await projectStore.setStage(p.id, stage.key, progress)
 }
 
@@ -276,8 +288,9 @@ function formatDate(str) {
   flex: 1; height: 100%; border-radius: 99px;
   background: rgba(0,0,0,0.07); overflow: hidden; cursor: pointer;
   transition: transform 0.18s ease, opacity 0.15s;
-  transform-origin: center;
+  transform-origin: center; position: relative;
 }
+.seg::before { content: ''; position: absolute; inset: -6px 0; }
 .seg:hover { transform: scaleY(1.7); opacity: 0.8; }
 .seg-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
 

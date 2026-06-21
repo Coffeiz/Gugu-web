@@ -7,6 +7,25 @@
 
 ---
 
+## [0.7.3] - 2026-06-22
+
+### 新增
+
+- **最后阶段自动完成**：当前阶段为最后阶段且进度达到 100% 时，项目自动标记为「已完成」状态；反之，在已完成状态下退回非末阶段或待办进度不满，自动回退至「进行中」
+- **拖回已完成恢复待办快照**：从看板「已完成」列拖回时，除还原 `currentStage` 外，同步还原所有 `autoCompleted` 待办至进入末阶段前的快照状态
+
+### 修复
+
+- **`_stageBeforeDone` 记录了末阶段而非原始阶段**：`setStage` 已先修改 `p.currentStage` 再调 `moveProject`，导致快照 key 错误；现在在修改前提前保存原始阶段 key
+- **拖回已完成后待办全部保持勾选**：`moveProject` 的 done→active 路径缺少 `autoCompleted` 还原逻辑，已补入与 `setStage` 相同的遍历还原
+- **编辑卡状态胶囊不实时更新**：`localStatus` 只在 modal 切换项目时初始化，`moveProject` 修改 store status 后胶囊不响应；新增 `watch(() => props.project?.status, ...)` 实时同步
+- **胶囊变色延迟明显**：status 更新在两次 API 回包后才生效；改为在第一个 `await` 前做乐观更新，合并为单次 patch，UI 立即响应
+- **上传文件弹窗文件过多时溢出**：`.drop-zone.has-files` 加 `max-height: 320px; overflow-y: auto`
+- **进度条鼠标判定区域**：两个界面项目卡进度段 `::before` 伪元素从 `inset: -4px` 扩展至 `-6px`
+- **阶段拖拽排序只重排名称**：拖动只移动 `label`，todo/key/当前阶段状态保持原位
+
+---
+
 ## [0.7.2] - 2026-06-22
 
 ### 新增

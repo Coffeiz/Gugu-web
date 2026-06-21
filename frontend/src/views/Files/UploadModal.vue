@@ -502,6 +502,8 @@ async function handleUpload() {
   align-items: stretch;
   justify-content: flex-start;
   gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
 }
 
 .dz-icon { color: var(--text-secondary); opacity: 0.5; }
