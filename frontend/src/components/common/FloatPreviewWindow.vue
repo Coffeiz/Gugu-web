@@ -125,6 +125,7 @@ import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import { filesApi } from '@/services/api'
 import { isImageExt, isVideoExt, usePreviewStore } from '@/stores/preview'
+import { getCachedThumb, getThumb } from '@/composables/useThumbCache'
 
 const props = defineProps({ win: { type: Object, required: true } })
 const previewStore = usePreviewStore()
@@ -154,13 +155,8 @@ const error           = ref(null)
 const placeholderReady = ref(false)
 const imageReady       = ref(false)
 
-const _SVG_EXTS = new Set(['SVG'])
-const placeholderSrc = computed(() => {
-  const ext = props.win.file.ext?.toUpperCase()
-  if (!isImg.value || _SVG_EXTS.has(ext)) return null
-  const token = localStorage.getItem('user_token') ?? ''
-  return `${BASE_URL}/files/${props.win.file.id}/thumb?token=${token}&size=card`
-})
+const _SVG_EXTS    = new Set(['SVG'])
+const placeholderSrc = ref(null)   // 从 blob Map 取，避免与全图下载竞速
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const TITLE_H  = 40
@@ -261,11 +257,24 @@ function onPlaceholderLoad(e) {
 
 async function load(f) {
   if (blobUrl.value) { URL.revokeObjectURL(blobUrl.value); blobUrl.value = null }
-  videoSrc.value = null
-  loading.value  = true
-  error.value    = null
+  videoSrc.value       = null
+  loading.value        = true
+  error.value          = null
   placeholderReady.value = false
   imageReady.value       = false
+  placeholderSrc.value   = null
+
+  // 占位图：优先从 blob Map 同步命中，未缓存则后台 fetch（与全图下载并行）
+  if (isImg.value && !_SVG_EXTS.has(f.ext?.toUpperCase())) {
+    const cached = getCachedThumb(f.id, 'card')
+    if (cached) {
+      placeholderSrc.value = cached
+    } else {
+      getThumb(f.id, 'card').then(url => {
+        if (url && !imageReady.value) placeholderSrc.value = url
+      })
+    }
+  }
   // 已知真实尺寸：直接定好窗口，无需等缩略图或下载完成
   if (isImg.value && f.imgWidth && f.imgHeight) {
     if (ready.value) animating.value = true
