@@ -48,7 +48,10 @@
                 <path d="M3 4.5l3 3 3-3"/>
               </svg>
             </div>
-            <div v-if="expanded === row.id && row.traceback" class="lt-traceback">
+            <div v-if="expanded === row.id && row.traceback" class="lt-traceback" @click.stop>
+              <button class="tb-copy" @click.stop="copyLog(row)">
+                {{ copiedId === row.id ? '已复制 ✓' : '复制日志' }}
+              </button>
               <pre>{{ row.traceback }}</pre>
             </div>
           </div>
@@ -125,6 +128,26 @@ const paginated = computed(() => {
 
 function toggle(id) {
   expanded.value = expanded.value === id ? null : id
+}
+
+const copiedId = ref(null)
+async function copyLog(row) {
+  const text = [
+    `[${fmtTime(row.created_at)}] ${row.level} ${row.module}`,
+    row.message,
+    row.traceback || '',
+  ].join('\n').trim()
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    // 降级：clipboard 不可用（非 https 等）时用 execCommand
+    const ta = document.createElement('textarea')
+    ta.value = text; document.body.appendChild(ta); ta.select()
+    try { document.execCommand('copy') } catch {}
+    document.body.removeChild(ta)
+  }
+  copiedId.value = row.id
+  setTimeout(() => { if (copiedId.value === row.id) copiedId.value = null }, 1500)
 }
 
 function fmtTime(iso) {
@@ -223,7 +246,16 @@ onMounted(load)
 
 .lt-traceback {
   padding: 0 16px 14px 16px;
+  position: relative;
 }
+.tb-copy {
+  position: absolute; top: 6px; right: 24px; z-index: 1;
+  padding: 3px 10px; border-radius: 6px;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+  color: rgba(255,255,255,0.7); font-size: 11px; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tb-copy:hover { background: rgba(255,255,255,0.16); color: rgba(255,255,255,0.95); }
 .lt-traceback pre {
   margin: 0; padding: 12px 14px; border-radius: 8px;
   background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.07);

@@ -658,10 +658,35 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 - [x] **step 5** 接通发回：`worker.handle` 跑完 `run_collect` → 按 platform 发回（飞书 `feishu.send_text` 用 `lark.Client` API）。**实测飞书私聊端到端：发"你是谁"→咕咕带人格回复送达飞书**
 - [ ] **step 6** 平台用户 ↔ 咕咕用户映射（多用户隔离，**当前临时全映射首个用户 root123**，待 OAuth 绑定替换）、事件去重、平台 token 存 Redis、用户状态机（并入 Phase 1.7）、背压
 
-> **首平台里程碑（2026-06-23）**：飞书私聊端到端打通——`飞书消息 → 网关(WSS) → Redis队列 → worker → run_collect(人格+记忆+41工具) → feishu.send_text 发回`。凭据走 `.env`（`FEISHU__APP_ID/SECRET`），网关 + worker 各为独立后台进程。坑：worker 阻塞读 XREADGROUP 需 `socket_timeout=None`，否则到点抛 TimeoutError。
+> **首平台里程碑（2026-06-23）**：飞书私聊端到端打通——`飞书消息 → 网关(WSS) → Redis队列 → worker → run_collect(人格+记忆+41工具) → feishu.send_text 发回`。坑：worker 阻塞读 XREADGROUP 需 `socket_timeout=None`，否则到点抛 TimeoutError。
+
+#### 频道面板与动态网关（Admin 管理 IM 频道）
+
+让管理员在后台**增删频道、填密钥、启停**，连接随之实时起停——不改代码、不重启。
+
+**① 存储 + CRUD**
+- 频道（内部叫 bot）存 `config.override.json` 的 `bots` 列表，每个 `{id, platform, name, app_id, app_secret, enabled}`。
+- Admin 接口 `/admin/agent/bots`（GET/POST/PUT/DELETE，`agent_admin.py`）：secret 打码返回；更新时空值/打码值（含 •）不覆盖真 secret。
+- 前端：Agent 配置「频道」tab —— 列表（平台·名称·App ID·Secret打码·启停）+ 增删改表单。
+
+**② 动态网关 · 进程级管理（`agent/adapters/supervisor.py`）**
+- **为什么进程级**：lark `ws.Client` 只有 `start()`、**无 `stop()`**，单连接在进程内断不掉 → **一个频道一个子进程**，kill 子进程 = 断开。
+- supervisor 轮询（默认 5s）启用频道（`config.active_im_bots()` 每次**现读 override 文件**，不走 lru_cache）→ reconcile：
+  - 新增/启用 → `spawn` 子进程 `python -m agent.adapters.feishu <channel_id>`
+  - 删除/停用 → `terminate`（超时 `kill`）对应子进程
+  - 子进程崩溃 → 下轮 `poll()` 检测到自动重启
+- **生效路径**：面板改 → 写 override → supervisor 约 5s 内 reconcile → 连接起/停，无需手动重启。
+
+**③ 按频道凭据（支持多频道并存）**
+- `feishu.serve(channel_id)` 用**该频道**凭据连接；`_creds_for(channel_id)` 从 `active_im_bots` 按 id 取，兜底首个/`.env`。
+- 收到的消息 payload 带 `channel_id`；worker 回发 `feishu.send_text(chat_id, text, channel_id)` 用**同一频道**凭据（`_client` 按 channel 缓存）。
+- 故可同时挂多个飞书企业的 bot，各连各的、各回各的。
+
+**④ 运行模型**：`supervisor`（管网关子进程）+ `worker`（消费队列跑大脑发回）两个常驻进程。凭据优先取面板（明文存 override，gitignore 不入库），`.env` 的 `FEISHU__*` 作兜底。
 
 **各平台 adapter（官方直连，无 OpenClaw；落在 `agent/adapters/`，step 4-5）**
-- [x] `adapters/feishu.py`：`lark-oapi`，WebSocket 长连收（`im.message.receive_v1`）+ `send_text` 发（`lark.Client` `im.v1.message.create`）。凭据走 env `FEISHU__APP_ID/SECRET`（**不做后台 UI 配置**）。**已端到端跑通**
+- [x] `adapters/feishu.py`：`lark-oapi`，WebSocket 长连收（`im.message.receive_v1`）+ `send_text` 发（`lark.Client` `im.v1.message.create`）；按 `channel_id` 取凭据，子进程入口。凭据走 **Admin 频道面板**（兜底 `.env`）。**已端到端跑通 + 动态频道管理**
+- [x] `adapters/supervisor.py`：频道管家，按面板启用列表起停网关子进程
 - [ ] `adapters/qqbot.py`：`botpy`，WebSocket（~~webhook~~），官方稳定
 - [ ] `adapters/weixin.py`：直连 iLink（长轮询 getupdates / sendmessage），纯文本先行，个人号有风险，最后做
 

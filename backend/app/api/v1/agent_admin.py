@@ -412,3 +412,86 @@ async def test_llm_preset(preset_id: str):
         return {"ok": ok, "status": resp.status_code, "detail": "" if ok else resp.text[:300]}
     except Exception as e:
         return {"ok": False, "status": 0, "detail": str(e)[:300]}
+
+
+# ── IM 机器人 CRUD（存 config.override.json 的 bots 列表）────────────────────────
+
+BOT_PLATFORMS = ["feishu", "qqbot", "weixin"]
+
+
+def _bots(override: dict) -> list:
+    return override.setdefault("bots", [])
+
+
+def _bot_out(b: dict) -> dict:
+    return {**b, "app_secret": _mask_key(b.get("app_secret", ""))}
+
+
+@router.get("/bots")
+async def list_bots():
+    override = _read_override()
+    return {
+        "items": [_bot_out(b) for b in override.get("bots", [])],
+        "platforms": BOT_PLATFORMS,
+    }
+
+
+class BotCreate(BaseModel):
+    platform: str
+    name: str = ""
+    app_id: str = ""
+    app_secret: str = ""
+    enabled: bool = True
+
+
+@router.post("/bots")
+async def create_bot(body: BotCreate):
+    if body.platform not in BOT_PLATFORMS:
+        raise HTTPException(400, f"未知平台: {body.platform}")
+    override = _read_override()
+    bots = _bots(override)
+    item = {
+        "id": f"bot_{_uuid.uuid4().hex[:8]}",
+        "platform": body.platform,
+        "name": body.name or body.platform,
+        "app_id": body.app_id,
+        "app_secret": body.app_secret,
+        "enabled": body.enabled,
+    }
+    bots.append(item)
+    _write_override(override)
+    return _bot_out(item)
+
+
+class BotUpdate(BaseModel):
+    name: str | None = None
+    app_id: str | None = None
+    app_secret: str | None = None
+    enabled: bool | None = None
+
+
+@router.put("/bots/{bot_id}")
+async def update_bot(bot_id: str, body: BotUpdate):
+    override = _read_override()
+    item = next((b for b in _bots(override) if b["id"] == bot_id), None)
+    if not item:
+        raise HTTPException(404, "机器人不存在")
+    if body.name is not None:
+        item["name"] = body.name
+    if body.app_id is not None:
+        item["app_id"] = body.app_id
+    # 空 / 打码值（含•）不覆盖已存 secret
+    if body.app_secret and "•" not in body.app_secret:
+        item["app_secret"] = body.app_secret
+    if body.enabled is not None:
+        item["enabled"] = body.enabled
+    _write_override(override)
+    return _bot_out(item)
+
+
+@router.delete("/bots/{bot_id}")
+async def delete_bot(bot_id: str):
+    override = _read_override()
+    override["bots"] = [b for b in _bots(override) if b["id"] != bot_id]
+    _write_override(override)
+    return {"deleted": bot_id}

@@ -170,6 +170,95 @@
         </div>
       </Teleport>
 
+      <!-- ── 频道 ── -->
+      <div v-if="activeTab === 'bots'" class="bots-panel">
+        <div v-if="botError && !botEditing" class="save-hint error" style="margin-bottom:10px;">{{ botError }}</div>
+        <div class="presets-header">
+          <div>
+            <h3 class="presets-title">频道</h3>
+            <p class="presets-desc">管理飞书 / QQ / 微信频道；填密钥、增删、启停（改后重启网关进程生效）</p>
+          </div>
+          <button class="btn-primary" @click="openNewBot">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 1v11M1 6.5h11"/></svg>
+            添加频道
+          </button>
+        </div>
+
+        <div v-if="botsLoading" class="presets-loading">加载中…</div>
+        <div v-else>
+          <div v-if="bots.length === 0" style="padding:28px;text-align:center;color:rgba(255,255,255,0.4);font-size:13px;">
+            还没有频道，点「添加频道」开始
+          </div>
+          <div v-else class="bots-grid">
+            <div v-for="b in bots" :key="b.id" class="bot-card" :class="{ 'bot-card--off': !b.enabled }">
+              <div class="bot-card-top">
+                <span class="bot-plat">{{ BOT_PLATFORM_LABELS[b.platform] || b.platform }}</span>
+                <span class="bot-status" :class="{ on: b.enabled }">{{ b.enabled ? '已启用' : '已停用' }}</span>
+              </div>
+              <div class="bot-name">{{ b.name }}</div>
+              <div class="bot-appid">{{ b.app_id || '—' }}</div>
+              <div class="bot-card-actions">
+                <button class="btn-ghost" @click="toggleBot(b)">{{ b.enabled ? '停用' : '启用' }}</button>
+                <button class="btn-ghost" @click="openEditBot(b)">编辑</button>
+                <button class="btn-ghost bot-del" @click="deleteBot(b)">删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 新建/编辑弹窗（中间，复用 LLM 配置弹窗样式）-->
+        <Teleport to="body">
+          <div v-if="botEditing" class="modal-mask"
+            @mousedown.self="botMaskDown = true"
+            @mouseup.self="botMaskDown && cancelBotEdit(); botMaskDown = false">
+            <div class="modal-box">
+              <h4 class="modal-title">{{ botEditing.id ? '编辑频道' : '添加频道' }}</h4>
+
+              <div class="modal-field">
+                <label>平台</label>
+                <div class="toggle-group" style="margin-bottom:0">
+                  <button v-for="(label, key) in BOT_PLATFORM_LABELS" :key="key"
+                    class="toggle-btn" :class="{ active: botEditing.platform === key }"
+                    :data-label="label" :disabled="!!botEditing.id"
+                    @click="!botEditing.id && (botEditing.platform = key)">{{ label }}</button>
+                </div>
+              </div>
+
+              <div class="modal-field">
+                <label>名称</label>
+                <input v-model="botEditing.name" placeholder="给这个频道起个名" class="modal-input" />
+              </div>
+
+              <div class="modal-field">
+                <label>App ID</label>
+                <input v-model="botEditing.app_id" placeholder="飞书形如 cli_xxxx" class="modal-input" autocomplete="off" />
+              </div>
+
+              <div class="modal-field">
+                <label>App Secret</label>
+                <input v-model="botEditing.app_secret" type="password" placeholder="留空表示不修改" class="modal-input" autocomplete="new-password" />
+              </div>
+
+              <div class="modal-field modal-field--row">
+                <span>启用</span>
+                <button class="toggle-switch" :class="{ on: botEditing.enabled }" @click="botEditing.enabled = !botEditing.enabled">
+                  <span class="toggle-knob" />
+                </button>
+              </div>
+
+              <div class="modal-actions">
+                <span class="save-hint" :class="{ error: !!botError }">{{ botError }}</span>
+                <button class="btn-ghost" @click="cancelBotEdit">取消</button>
+                <button class="btn-primary" :disabled="botSaving" @click="saveBot">
+                  <svg v-if="botSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+                  {{ botSaving ? '保存中…' : '保存' }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </Teleport>
+      </div>
+
       <!-- ── 系统提示词 ── -->
       <section v-if="activeTab === 'prompts'" class="config-card prompts-card">
         <div class="card-head">
@@ -588,6 +677,7 @@ const adminStore  = useAdminStore()
 
 const tabs = [
   { key: 'llm',      label: 'LLM 配置' },
+  { key: 'bots',     label: '频道' },
   { key: 'prompts',  label: '系统提示词' },
   { key: 'behavior', label: '行为配置' },
   { key: 'usage',    label: '用量统计' },
@@ -597,8 +687,77 @@ const activeTab = ref('llm')
 function switchTab(key) {
   activeTab.value = key
   if (key === 'llm'     && presets.value.length === 0) fetchPresets()
+  if (key === 'bots'    && bots.value.length === 0) fetchBots()
   if (key === 'prompts' && profiles.value.length === 0) fetchProfiles()
   if (key === 'usage'   && !usage.value) fetchUsage()
+}
+
+// ── IM 机器人 ──────────────────────────────────────────────────────────────
+const BOT_PLATFORM_LABELS = { feishu: '飞书', qqbot: 'QQ', weixin: '微信' }
+const bots = ref([])
+const botsLoading = ref(false)
+const botEditing = ref(null)   // null=不显示弹窗；{} 新建；{...bot} 编辑
+const botSaving = ref(false)
+const botError = ref('')
+const botMaskDown = ref(false)
+
+async function fetchBots() {
+  botsLoading.value = true
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/bots')
+    if (!res.ok) throw new Error(`加载失败 (${res.status})`)
+    const data = await res.json()
+    bots.value = data.items || []
+  } catch (e) { botError.value = e.message } finally { botsLoading.value = false }
+}
+
+function openNewBot() {
+  botEditing.value = { platform: 'feishu', name: '', app_id: '', app_secret: '', enabled: true }
+  botError.value = ''
+}
+function openEditBot(b) {
+  botEditing.value = { ...b, app_secret: '' }  // secret 留空=不修改
+  botError.value = ''
+}
+function cancelBotEdit() { botEditing.value = null; botError.value = '' }
+
+async function saveBot() {
+  const b = botEditing.value
+  if (!b.app_id) { botError.value = '请填 App ID'; return }
+  botSaving.value = true; botError.value = ''
+  try {
+    const url = b.id ? `/api/v1/admin/agent/bots/${b.id}` : '/api/v1/admin/agent/bots'
+    const method = b.id ? 'PUT' : 'POST'
+    const payload = b.id
+      ? { name: b.name, app_id: b.app_id, app_secret: b.app_secret, enabled: b.enabled }
+      : { platform: b.platform, name: b.name, app_id: b.app_id, app_secret: b.app_secret, enabled: b.enabled }
+    const res = await adminStore.authFetch(url, { method, body: JSON.stringify(payload) })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `保存失败 (${res.status})`)
+    }
+    botEditing.value = null   // 仅成功才关表单
+    await fetchBots()
+  } catch (e) { botError.value = e.message } finally { botSaving.value = false }
+}
+
+async function toggleBot(b) {
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/agent/bots/${b.id}`, {
+      method: 'PUT', body: JSON.stringify({ enabled: !b.enabled }),
+    })
+    if (!res.ok) throw new Error(`操作失败 (${res.status})`)
+    await fetchBots()
+  } catch (e) { botError.value = e.message }
+}
+
+async function deleteBot(b) {
+  if (!confirm(`删除频道「${b.name}」？`)) return
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/agent/bots/${b.id}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(`删除失败 (${res.status})`)
+    await fetchBots()
+  } catch (e) { botError.value = e.message }
 }
 
 // ── LLM 预设 ──────────────────────────────────────────────────────────────
@@ -1436,6 +1595,53 @@ onMounted(async () => {
   color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
 }
 .pca-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.75); }
+
+/* ── 频道：卡片网格 ── */
+.bots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.bot-card {
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px; padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 5px;
+  transition: opacity 0.2s;
+}
+.bot-card--off { opacity: 0.45; }
+.bot-card-top { display: flex; align-items: center; justify-content: space-between; }
+.bot-plat {
+  font-size: 11px; font-weight: 600; color: rgba(150,160,220,0.95);
+  background: rgba(123,127,178,0.16); padding: 2px 8px; border-radius: 6px;
+}
+.bot-status { font-size: 11px; color: rgba(255,255,255,0.4); }
+.bot-status.on { color: #74c69d; }
+.bot-name { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.9); }
+.bot-appid {
+  font-size: 11px; color: rgba(255,255,255,0.38);
+  font-family: 'SF Mono','Consolas',monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bot-card-actions { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; }
+.bot-card-actions .btn-ghost { font-size: 12px; padding: 4px 10px; }
+.bot-del { color: #d88; }
+
+/* ── 频道编辑表单 ── */
+.bot-edit-card { padding: 18px 20px; max-width: 480px; }
+.bot-edit-title { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.88); margin: 0 0 14px; }
+.bot-form { display: flex; flex-direction: column; gap: 12px; max-width: 400px; }
+.bot-field { display: flex; flex-direction: column; gap: 5px; }
+.bot-field > span { font-size: 12px; color: rgba(255,255,255,0.55); }
+.bot-field > span em { font-style: normal; color: rgba(255,255,255,0.32); margin-left: 6px; }
+.bot-field--row { flex-direction: row; align-items: center; justify-content: space-between; }
+.bot-input {
+  width: 100%; box-sizing: border-box;
+  background: rgba(0,0,0,0.22); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px; padding: 8px 11px; font-size: 13px;
+  color: rgba(255,255,255,0.85); outline: none;
+  transition: border-color 0.15s;
+}
+.bot-input:focus { border-color: rgba(123,127,178,0.5); }
 .pca-btn--activate {
   border-color: rgba(123,127,178,0.3); background: rgba(123,127,178,0.1);
   color: rgba(169,164,216,0.85);

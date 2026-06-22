@@ -228,6 +228,24 @@ def get_settings() -> AppSettings:
     return AppSettings().apply_override()
 
 
+def active_im_bots(platform: str) -> list[dict]:
+    """从 override 的 bots 列表读指定平台、已启用且有 secret 的 bot（凭据明文，给网关用）。
+
+    Admin「机器人」面板增删的 bot 存这里；网关据此连接。不走 lru_cache，
+    每次现读文件，Admin 改完下次启网关即生效。
+    """
+    if not OVERRIDE_FILE.exists():
+        return []
+    try:
+        override = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    return [
+        b for b in override.get("bots", [])
+        if b.get("platform") == platform and b.get("enabled") and b.get("app_id") and b.get("app_secret")
+    ]
+
+
 async def save_override(patch: dict) -> AppSettings:
     existing = {}
     if OVERRIDE_FILE.exists():

@@ -62,7 +62,7 @@ async def handle(msg_id: str, payload: dict):
     platform = payload.get("platform")
     if platform == "feishu" and payload.get("chat_id"):
         from agent.adapters import feishu
-        await asyncio.to_thread(feishu.send_text, payload["chat_id"], resp.text)
+        await asyncio.to_thread(feishu.send_text, payload["chat_id"], resp.text, payload.get("channel_id"))
         print(f"[worker] feishu 回复 → {resp.text!r}", flush=True)
     else:
         who = f"{platform}/{payload.get('platform_user_id')}"

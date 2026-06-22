@@ -16,6 +16,8 @@ langchain>=0.2.0
 langchain-community>=0.2.0
 # OSS
 oss2>=2.18.0
+# IM 平台接入（飞书 WebSocket 长连 + API）
+lark-oapi>=1.6.0
 # Utils
 python-dotenv>=1.0.0
 uuid6>=2024.1.12
