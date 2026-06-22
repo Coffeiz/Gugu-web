@@ -29,11 +29,11 @@ export const useAuthStore = defineStore('auth', () => {
     return fallback
   }
 
-  async function register(username, email, password) {
+  async function register(username, email, password, inviteCode) {
     const res = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, email, password }),
+      body: JSON.stringify({ username, email, password, inviteCode }),
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(_extractDetail(body, '注册失败'))

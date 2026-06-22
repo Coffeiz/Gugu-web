@@ -32,8 +32,8 @@ export const useConfigStore = defineStore('config', () => {
     db: {
       host: 'localhost',
       port: 5432,
-      name: 'pm_studio',
-      user: 'pm',
+      name: 'gugu_web',
+      user: 'gugu',
       password: '',
     },
     redis: {
@@ -46,7 +46,7 @@ export const useConfigStore = defineStore('config', () => {
       local_path: './uploads',
       oss_access_key_id: '',
       oss_access_key_secret: '',
-      oss_bucket: 'pm-studio',
+      oss_bucket: 'gugu-web',
       oss_endpoint: 'oss-cn-hangzhou.aliyuncs.com',
       oss_prefix: '',
     },
@@ -55,6 +55,17 @@ export const useConfigStore = defineStore('config', () => {
       api_key: '',
       base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       model: 'qwen-max',
+    },
+    agent: {
+      memory_enabled: true,
+      reflection_threshold: 10,
+      daily_retention_days: 14,
+      weekly_retention_weeks: 6,
+    },
+    quota: {
+      default_token_limit_6h: null,
+      default_token_limit_weekly: null,
+      default_storage_limit_bytes: null,
     },
   })
 
@@ -68,6 +79,8 @@ export const useConfigStore = defineStore('config', () => {
       if (data.redis)   Object.assign(cfg.redis,   sanitizeForEdit(data.redis))
       if (data.storage) Object.assign(cfg.storage, sanitizeForEdit(data.storage))
       if (data.ai)      Object.assign(cfg.ai,      sanitizeForEdit(data.ai))
+      if (data.agent)   Object.assign(cfg.agent,   data.agent)
+      if (data.quota)   Object.assign(cfg.quota,   data.quota)
     } catch {
       // 后端未启动时静默，使用默认值
     } finally {

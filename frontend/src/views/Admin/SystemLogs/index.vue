@@ -1,0 +1,249 @@
+<template>
+  <div class="syslog-page">
+    <div class="page-header">
+      <div class="page-title-block">
+        <h2 class="page-title">系统日志</h2>
+        <p class="page-desc">后端运行时的错误与警告记录</p>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <AdminSelect v-model="filterLevel" :options="levelOptions" style="width:140px" />
+      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" title="刷新">
+        <PhArrowClockwise :size="15" weight="bold" />
+      </button>
+      <span class="toolbar-count" v-if="filtered.length">{{ filtered.length }} 条</span>
+    </div>
+
+    <div class="log-table-wrap">
+      <div class="log-table">
+        <div class="lt-head">
+          <span class="col-time">时间</span>
+          <span class="col-level">级别</span>
+          <span class="col-module">模块</span>
+          <span class="col-msg">消息</span>
+        </div>
+
+        <div v-if="loading && !items.length" class="lt-empty">加载中…</div>
+        <div v-else-if="!filtered.length" class="lt-empty">暂无日志</div>
+
+        <template v-else>
+          <div
+            v-for="row in paginated"
+            :key="row.id"
+            class="lt-row"
+            :class="{ expanded: expanded === row.id, 'has-tb': row.traceback }"
+            @click="row.traceback ? toggle(row.id) : null"
+          >
+            <div class="lt-main">
+              <span class="col-time">{{ fmtTime(row.created_at) }}</span>
+              <span class="col-level">
+                <span class="level-tag" :class="row.level.toLowerCase()">{{ row.level }}</span>
+              </span>
+              <span class="col-module">{{ row.module }}</span>
+              <span class="col-msg">{{ firstLine(row.message) }}</span>
+              <svg v-if="row.traceback" class="expand-icon" :class="{ open: expanded === row.id }"
+                width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round">
+                <path d="M3 4.5l3 3 3-3"/>
+              </svg>
+            </div>
+            <div v-if="expanded === row.id && row.traceback" class="lt-traceback">
+              <pre>{{ row.traceback }}</pre>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- 分页 -->
+    <div class="pagination" v-if="filtered.length > pageSize">
+      <button class="pg-btn" :disabled="page <= 1" @click="page--">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor"
+          stroke-width="1.6" stroke-linecap="round"><path d="M9 11L5 7l4-4"/></svg>
+      </button>
+      <span class="pg-info">{{ page }} / {{ totalPages }}</span>
+      <button class="pg-btn" :disabled="page >= totalPages" @click="page++">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor"
+          stroke-width="1.6" stroke-linecap="round"><path d="M5 11l4-4-4-4"/></svg>
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, watch, onMounted } from 'vue'
+import { useAdminStore } from '@/stores/admin'
+import AdminSelect from '@/components/AdminSelect.vue'
+import { PhArrowClockwise } from '@phosphor-icons/vue'
+
+const adminStore = useAdminStore()
+
+const items       = ref([])
+const loading     = ref(false)
+const refreshing  = ref(false)  // 仅手动点击刷新时为 true
+const filterLevel = ref('')
+const expanded    = ref(null)
+const page        = ref(1)
+const pageSize    = 50
+
+const levelOptions = [
+  { label: '全部级别', value: '' },
+  { label: 'ERROR',   value: 'ERROR' },
+  { label: 'WARNING', value: 'WARNING' },
+  { label: 'INFO',    value: 'INFO' },
+]
+
+async function load(manual = false) {
+  if (manual) {
+    refreshing.value = true
+    setTimeout(() => { refreshing.value = false }, 550)
+  }
+  loading.value = true
+  try {
+    const qs  = filterLevel.value ? `?level=${filterLevel.value}` : ''
+    const res = await adminStore.authFetch(`/api/v1/admin/system-logs${qs}`)
+    const data = await res.json()
+    items.value = data.items ?? []
+    page.value  = 1
+    expanded.value = null
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(filterLevel, () => load(true))
+
+const filtered = computed(() => items.value)
+
+const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize)))
+
+const paginated = computed(() => {
+  const start = (page.value - 1) * pageSize
+  return filtered.value.slice(start, start + pageSize)
+})
+
+function toggle(id) {
+  expanded.value = expanded.value === id ? null : id
+}
+
+function fmtTime(iso) {
+  return iso ? iso.replace('T', ' ').slice(0, 19) : ''
+}
+
+function firstLine(msg) {
+  return msg ? msg.split('\n')[0] : ''
+}
+
+onMounted(load)
+</script>
+
+<style scoped>
+.syslog-page { min-height: 100%; display: flex; flex-direction: column; }
+
+.page-header { padding: 32px 36px 0; flex-shrink: 0; }
+.page-title { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
+.page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
+
+.toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 18px 36px 0; flex-shrink: 0;
+}
+.toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); margin-left: 4px; }
+
+.icon-btn {
+  width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
+}
+.icon-btn:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.8); }
+.icon-btn.spinning svg { animation: spin 0.5s ease-out; transform-box: fill-box; transform-origin: center; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.log-table-wrap {
+  flex: 1; padding: 14px 36px 0; overflow: hidden;
+}
+.log-table {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.lt-head {
+  display: grid;
+  grid-template-columns: 150px 80px 200px 1fr;
+  padding: 10px 16px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: rgba(255,255,255,0.25);
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+
+.lt-empty {
+  padding: 48px; text-align: center;
+  font-size: 13px; color: rgba(255,255,255,0.2);
+}
+
+.lt-row {
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  transition: background 0.12s;
+}
+.lt-row:last-child { border-bottom: none; }
+.lt-row.has-tb { cursor: pointer; }
+.lt-row.has-tb:hover { background: rgba(255,255,255,0.03); }
+.lt-row.expanded { background: rgba(255,255,255,0.04); }
+
+.lt-main {
+  display: grid;
+  grid-template-columns: 150px 80px 200px 1fr 18px;
+  padding: 10px 16px;
+  align-items: center;
+  gap: 0;
+  font-size: 12px;
+}
+
+.col-time   { color: rgba(255,255,255,0.3); font-variant-numeric: tabular-nums; }
+.col-module { color: rgba(255,255,255,0.45); font-family: 'SF Mono','Fira Code',monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col-msg    { color: rgba(255,255,255,0.7); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.level-tag {
+  display: inline-block; padding: 2px 7px; border-radius: 5px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+}
+.level-tag.error   { background: rgba(220,80,80,0.15);  color: rgba(240,120,120,0.95); }
+.level-tag.warning { background: rgba(210,160,60,0.15); color: rgba(230,180,80,0.95); }
+.level-tag.info    { background: rgba(80,180,140,0.12); color: rgba(100,200,160,0.9); }
+.level-tag.debug   { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.3); }
+
+.expand-icon {
+  color: rgba(255,255,255,0.25); transition: transform 0.18s; justify-self: end;
+}
+.expand-icon.open { transform: rotate(180deg); color: rgba(255,255,255,0.5); }
+
+.lt-traceback {
+  padding: 0 16px 14px 16px;
+}
+.lt-traceback pre {
+  margin: 0; padding: 12px 14px; border-radius: 8px;
+  background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.07);
+  font-family: 'SF Mono','Fira Code','Consolas',monospace;
+  font-size: 11px; line-height: 1.6;
+  color: rgba(240,120,120,0.85);
+  overflow-x: auto; white-space: pre;
+}
+
+/* 分页 */
+.pagination {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 16px 36px 24px;
+}
+.pg-btn {
+  width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(255,255,255,0.09); background: rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
+}
+.pg-btn:hover:not(:disabled) { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
+.pg-btn:disabled { opacity: 0.3; cursor: default; }
+.pg-info { font-size: 12px; color: rgba(255,255,255,0.35); min-width: 60px; text-align: center; }
+</style>
