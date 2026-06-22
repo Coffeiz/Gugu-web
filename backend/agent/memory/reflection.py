@@ -33,8 +33,28 @@ def _load_sys() -> str:
         return _SYS_FALLBACK
 
 
+# 纯应答 / 寒暄词：用户消息整条命中才跳过反思（精确匹配，长句不误伤）
+_TRIVIAL = frozenset({
+    "嗯", "嗯嗯", "嗯呢", "好", "好的", "好滴", "好哒", "行", "行吧", "成", "中",
+    "哦", "哦哦", "噢", "ok", "okay", "okk", "k", "谢谢", "谢了", "多谢", "thanks", "thx",
+    "收到", "了解", "明白", "懂了", "哈哈", "哈哈哈", "嘿嘿", "可以", "对", "对的",
+    "是", "是的", "没了", "没事", "不用了", "辛苦了", "👍", "👌", "🙏", "666", "赞", "嗯嗯嗯",
+})
+_STRIP = " \t\n　。，、！？～~.,!?;:…“”\"'（）()【】[]"
+
+
+def _worth_reflecting(user_msg: str) -> bool:
+    """整条消息是纯应答/寒暄词则不值得反思（省一次 LLM 调用）。保守：只挡明确废话。"""
+    cleaned = (user_msg or "").strip(_STRIP).strip().lower()
+    if not cleaned:
+        return False
+    return cleaned not in _TRIVIAL
+
+
 def schedule(user_id, user_name, user_msg, assistant_reply, settings) -> None:
-    """非阻塞触发一次反思。"""
+    """非阻塞触发一次反思。琐碎应答（嗯/好的/谢谢…）直接跳过，省调用。"""
+    if not _worth_reflecting(user_msg):
+        return
     task = asyncio.create_task(
         reflect(user_id, user_name, user_msg, assistant_reply, settings)
     )
