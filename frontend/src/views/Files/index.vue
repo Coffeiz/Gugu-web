@@ -54,9 +54,9 @@
           </div>
         </div>
 
-        <!-- 视图切换（回收站不需要） -->
+        <!-- 视图切换（根目录不需要选择模式） -->
         <button
-          v-if="currentType !== 'trash' && currentType !== 'root'"
+          v-if="currentType !== 'root'"
           class="select-mode-btn"
           :class="{ on: inSelectionMode }"
           @click="toggleSelectMode"
@@ -163,7 +163,10 @@
               <span class="lh-sortable" :class="{ active: sortKey === 'size' }" @click="onSortSelect('size')">大小<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
               <span></span>
             </div>
-            <div v-for="f in sortedContents.files" :key="f.id" class="list-row">
+            <div v-for="f in sortedContents.files" :key="f.id" class="list-row"
+              :data-file-id="f.id"
+              :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id) }"
+              @click.stop="handleTrashFileClick(f, $event)">
               <span class="lr-name-cell">
                 <component :is="fileListIcon(f.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color: fileIconColor(f.ext) }" />
                 <span class="lr-filename" :title="f.displayName">{{ f.displayName }}</span>
@@ -175,15 +178,24 @@
               <span class="lr-text" :class="{ 'days-warn': daysLeft(f.deletedAt) <= 3 }">{{ daysLeft(f.deletedAt) }} 天</span>
               <span class="lr-text">{{ f.size }}</span>
               <span class="lr-actions">
-                <button class="file-list-btn trash-restore-btn" title="恢复" @click.stop="restoreFile(f)">
-                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/>
-                  </svg>
-                  恢复
-                </button>
-                <button class="file-list-btn del" title="永久删除" @click.stop="hardDeleteFile(f)">
-                  <PhTrash :size="11" weight="bold" />
-                </button>
+                <Transition name="sel-cb">
+                  <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedIds.has(f.id) }">
+                    <svg v-if="selectedIds.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M2 6l3 3 5-5"/>
+                    </svg>
+                  </div>
+                </Transition>
+                <template v-if="!inSelectionMode">
+                  <button class="file-list-btn trash-restore-btn" title="恢复" @click.stop="restoreFile(f)">
+                    <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/>
+                    </svg>
+                    恢复
+                  </button>
+                  <button class="file-list-btn del" title="永久删除" @click.stop="hardDeleteFile(f)">
+                    <PhTrash :size="11" weight="bold" />
+                  </button>
+                </template>
               </span>
             </div>
           </div>
@@ -508,27 +520,41 @@
     <Transition name="action-bar">
       <div v-if="selectedIds.size > 0 || selectedFolderKeys.size > 0" class="selection-bar" @click.stop>
         <span class="sel-count">已选 {{ selectedIds.size + selectedFolderKeys.size }} 项</span>
-        <button class="sel-download-btn" @click="downloadSelected" :disabled="(selectedIds.size === 0 && selectedFolderKeys.size === 0) || downloadingZip">
-          <PhDownloadSimple v-if="!downloadingZip" :size="12" weight="bold" />
-          <svg v-else class="spin" width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-            <path d="M7 1a6 6 0 1 1-4.24 1.76"/>
-          </svg>
-          {{ downloadingZip ? '下载中…' : '下载' }}
-        </button>
-        <div class="sel-divider"></div>
-        <button class="sel-action-btn" @click="selCut" title="剪切">
-          <PhScissors :size="12" weight="bold" />
-          剪切
-        </button>
-        <button class="sel-action-btn" @click="selCopy" title="复制">
-          <PhCopy :size="12" weight="bold" />
-          复制
-        </button>
-        <div class="sel-divider"></div>
-        <button class="sel-delete-btn" @click="deleteSelected">
-          <PhTrash :size="12" weight="bold" />
-          移到回收站
-        </button>
+        <template v-if="currentType === 'trash'">
+          <button class="sel-download-btn" @click="restoreSelected">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/>
+            </svg>
+            恢复选中
+          </button>
+          <button class="sel-delete-btn" @click="hardDeleteSelected">
+            <PhTrash :size="12" weight="bold" />
+            永久删除
+          </button>
+        </template>
+        <template v-else>
+          <button class="sel-download-btn" @click="downloadSelected" :disabled="(selectedIds.size === 0 && selectedFolderKeys.size === 0) || downloadingZip">
+            <PhDownloadSimple v-if="!downloadingZip" :size="12" weight="bold" />
+            <svg v-else class="spin" width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <path d="M7 1a6 6 0 1 1-4.24 1.76"/>
+            </svg>
+            {{ downloadingZip ? '下载中…' : '下载' }}
+          </button>
+          <div class="sel-divider"></div>
+          <button class="sel-action-btn" @click="selCut" title="剪切">
+            <PhScissors :size="12" weight="bold" />
+            剪切
+          </button>
+          <button class="sel-action-btn" @click="selCopy" title="复制">
+            <PhCopy :size="12" weight="bold" />
+            复制
+          </button>
+          <div class="sel-divider"></div>
+          <button class="sel-delete-btn" @click="deleteSelected">
+            <PhTrash :size="12" weight="bold" />
+            移到回收站
+          </button>
+        </template>
         <button class="sel-cancel-btn" @click="clearSelection">取消</button>
       </div>
     </Transition>
@@ -1152,7 +1178,7 @@ function onDocMouseUp(e) {
       }
     }
     document.addEventListener('click', _swallowBoxClick, { capture: true, once: true })
-  } else if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+  } else if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !inSelectionMode.value) {
     clearSelection()
   }
 
@@ -1239,7 +1265,7 @@ function toggleFileSelect(fileId, e) {
 }
 
 function onPageClick() {
-  clearSelection()
+  if (!inSelectionMode.value) clearSelection()
   sortMenuOpen.value = false
 }
 
@@ -1337,6 +1363,39 @@ async function hardDeleteFile(f) {
     loadContents()
   } catch (e) {
     console.error('[Files] 永久删除失败:', e.message)
+  }
+}
+
+function handleTrashFileClick(f, event) {
+  if (event.target.closest('button')) return
+  const ids = new Set(selectedIds.value)
+  if (ids.has(f.id)) ids.delete(f.id)
+  else ids.add(f.id)
+  selectedIds.value = ids
+}
+
+async function restoreSelected() {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
+  try {
+    await Promise.all(ids.map(id => trashApi.restore(id)))
+    clearSelection()
+    loadContents()
+  } catch (e) {
+    console.error('[Files] 批量恢复失败:', e.message)
+  }
+}
+
+async function hardDeleteSelected() {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
+  if (!confirm(`永久删除选中的 ${ids.length} 个文件？此操作不可撤销。`)) return
+  try {
+    await Promise.all(ids.map(id => trashApi.hardDelete(id)))
+    clearSelection()
+    loadContents()
+  } catch (e) {
+    console.error('[Files] 批量永久删除失败:', e.message)
   }
 }
 
