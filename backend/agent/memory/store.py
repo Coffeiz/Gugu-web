@@ -35,6 +35,19 @@ async def read_memory(user_id) -> dict:
     return {"facts": facts, "daily": daily}
 
 
+def format_facts(facts: list[str]) -> str:
+    """把"全量事实列表"格式化为 markdown bullet（去重保序）。反思调和重写用。"""
+    lines: list[str] = []
+    seen: set[str] = set()
+    for f in facts:
+        f = str(f).strip().lstrip("-").strip()
+        k = f.lower()
+        if f and k not in seen:
+            seen.add(k)
+            lines.append(f"- {f}")
+    return "\n".join(lines)
+
+
 def merge_facts(existing: str, new_facts: list[str]) -> str:
     """把新事实追加到已有 facts（按内容去重，已含则跳过）。返回合并后文本。"""
     lines = [l for l in existing.splitlines() if l.strip()]

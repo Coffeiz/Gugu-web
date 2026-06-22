@@ -86,8 +86,9 @@ class AIPresets(BaseModel):
 class AgentBehaviorSettings(BaseModel):
     memory_enabled: bool = Field(True, description="是否启用记忆系统")
     reflection_threshold: int = Field(10, description="触发 Reflection 的消息数")
-    daily_retention_days: int = Field(14, description="daily 记忆保留天数")
-    weekly_retention_weeks: int = Field(6, description="weekly 记忆保留周数")
+    daily_retention_days: int = Field(14, description="daily 记忆保留天数（过期直接压进 memory.md）")
+    # 已废弃：weekly 层已砍，压缩定为 daily→memory 两段；字段暂留兼容旧 override，不再使用
+    weekly_retention_weeks: int = Field(6, description="（已废弃，weekly 层取消）")
 
 
 class QuotaSettings(BaseModel):

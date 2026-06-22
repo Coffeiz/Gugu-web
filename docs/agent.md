@@ -161,11 +161,10 @@ Importance 1~5 分级：
 - 5：核心信息，考虑升级进 memory.md
 
 #### `compressor.py`
-时间层压缩，职责单一：
-- `compress_daily()`：将过期 daily（>14天）压缩进对应 weekly，LLM 摘要，丢弃 importance≤2 的条目
-- `compress_weekly()`：将过期 weekly（>6周）提炼进 memory.md，LLM 摘要，importance≥4 的条目优先保留
+时间层压缩，职责单一（**已简化为两段 daily → memory，不设 weekly / monthly 层**）：
+- `compress_daily()`：将过期 daily（>14天）LLM 摘要后**直接提炼进 `memory.md`**（长期），丢弃 importance≤2 的条目
 
-两条压缩路径，终点均为 memory.md，不设 monthly 层。
+> **决策**：不要 weekly 中间层——咕咕只需"近期(daily) / 长期(memory)"两档，weekly 是多余复杂度。长期信息一律入 `memory.md`。
 
 #### `manager.py`
 记忆管理对外接口。负责：
@@ -312,7 +311,8 @@ Prompt 模板（`.md`），支持占位符，热更新无需重启。
 
 ## 用户个性化文件系统
 
-> ⚠️ **本节是 Phase 2b 的目标设计，非现状**。当前（2a）只落地 `facts.md` + `daily.md` 两个文件；`identity.json` / `save_identity` 已作废（昵称用 `User.display_name`）；`facts.json` 结构化、`summary.md`、`weekly/`、importance 分级均未实现。下文 identity/facts.json/summary/weekly 等描述待 2b 推进时再对照落地。
+> ⚠️ **本节是 Phase 2b 的目标设计，非现状**。当前（2a）只落地 `facts.md` + `daily.md` 两个文件；`identity.json` / `save_identity` 已作废（昵称用 `User.display_name`）；`facts.json` 结构化、`summary.md`、importance 分级均未实现。
+> **另：`weekly/` 层已砍** —— 压缩定为 **daily → memory.md 两段直压**，下文出现的 `weekly/`、注入顺序里的 `weekly`、保留期表的 weekly 行均作废，不再实现。
 
 每个文件回答一个独立问题，视角清晰不重叠：
 
@@ -517,6 +517,8 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 
 ## Roadmap
 
+> 🅼 = **小模型相关，全部最后做**。需自托管小模型推理（GPU/算力），目前无条件，统一推迟到所有其它功能之后；这些项不阻塞任何前序工作，主流程一律先用主模型 / 关键词 + 状态机替代。
+
 ### Phase 0 — 基础设施（已完成）
 
 - [x] Admin 后台：LLM 配置、系统提示词编辑、行为配置
@@ -599,10 +601,12 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 ### Phase 1.7 — 轻量 Runtime Router（待做，依据文档 29）
 
 > 注：实际开发顺序为 1.6 → **2a 记忆**（先做）→ 1.7。Router 不是记忆前置依赖，故先落了记忆闭环；1.7 仍未动。
+>
+> **价值与 IM 接入强绑定**：网页 UX 流式中输入被锁、且有停止按钮，状态查询/自然语言取消基本触发不了；但 IM bot 上消息异步、无流式指示，用户看不到咕咕是否在工作 → State Manager 是**刚需**。故 1.7 的"用户状态机"并入 Phase 4 IM 地基一起做（见 [`agent-im接入架构.md`](agent-im接入架构.md)），不单独提前。
 
 - [ ] 关键词 + 状态机版：自然语言取消（"算了 / 不弄了"）、状态查询（"还在吗 / 好了吗"）、简单闲聊与确认词（"嗯 / 好的 / 哈哈"）**不进主模型**，直接轻量回应
 - [ ] State Manager：`THINKING / SEARCHING / GENERATING / WAITING_CONFIRM / IDLE`，与删除二次确认的 WAITING_CONFIRM 衔接
-- [ ] 后续可升级为小模型意图分类（Qwen3-0.6B 等），输出 `{intent, confidence}` 再决定是否进主 Agent
+- [ ] 🅼 **（最后做 · 暂无条件）** 升级为小模型意图分类（Qwen3-0.6B 等），输出 `{intent, confidence}` 再决定是否进主 Agent —— 需自托管小模型推理（GPU/算力），目前不具备；**先用上面的关键词 + 状态机版即可满足 IM 接入需求**
 
 ### Phase 2 — 记忆系统
 
@@ -621,7 +625,7 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 
 **与原设计的实际偏差（已确认）**：
 - **facts.md 而非 facts.json**：MVP 直接维护 markdown 事实列表，不做结构化 JSON + confidence/source，去重靠内容包含判断。结构化版留待数据量上来再说。
-- **两层而非三层**：只有 `facts.md`（长期）+ `daily.md`（近期滚动 30 条），**无 weekly / compressor / manager / importance 分级**。压缩路径（daily→weekly→memory）整体延后。
+- **两层而非三层**：只有 `facts.md`（长期）+ `daily.md`（近期滚动 30 条），**无 weekly / compressor / manager / importance 分级**。压缩路径（已定为 **daily→memory，无 weekly**）整体延后。
 - **无 events 总线**：反思直接在 `web.py` fire-and-forget 调用，未引入 `events/bus.py`。
 - **无 identity / summary**：昵称沿用 `User.display_name`（注册已填），不单独问、不建 `identity.json`；身份/称呼由反思自然并入 facts。`summary.md` 快照延后。
 - **反思 token 暂不计入用户配额**（锦上添花，不占可见精力）。
@@ -629,7 +633,7 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 #### Phase 2b — 分层压缩与结构化（未做）
 
 - [ ] `facts.json` 结构化（confidence / source）+ 自然语言导出
-- [ ] `daily（14天）→ weekly（6周）→ memory.md` 压缩链 + importance 过滤（compressor / manager）
+- [ ] `daily（14天）→ memory.md` 压缩（**无 weekly 层**）+ importance 过滤（compressor / manager）
 - [ ] `summary.md` 当前状态快照（importance ≥ 4 触发更新）
 - [ ] `events/bus.py` + `events/types.py`：全局事件总线
 - [ ] **控制命令（文档 03）**：`/newchat`（清会话留记忆）/ `/remember` / `/forget` / `/memory` / `/clear`
@@ -639,12 +643,25 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 
 - [ ] `mcp/client.py` + `mcp/registry.py`：MCP 协议支持，动态加载外部工具
 - [ ] Profile 能力开关（memory_enabled / mcp_enabled）
-- [ ] `router.py` 升级：多 Profile 路由 + 小模型意图分类（在 Phase 1.7 轻量 Router 基础上）
+- [ ] `router.py` 升级：多 Profile 路由（在 Phase 1.7 轻量 Router 基础上）
+- [ ] 🅼 **（最后做 · 暂无条件）** 小模型意图分类，并入路由决策 —— 同 Phase 1.7 小模型项，需自托管推理算力，目前不做
 
-### Phase 4 — 平台接入与伙伴深化
+### Phase 4 — IM 平台接入与伙伴深化
 
-- [ ] `adapters/qqbot.py`：QQ Bot webhook
-- [ ] OpenClaw 即时通讯接入
+> **完整方案见 [`agent-im接入架构.md`](agent-im接入架构.md)**。决策：飞书 / QQ / 微信均走**官方直连、不用 OpenClaw**；从一开始就按「收消息 ↔ 跑大模型」解耦的**队列 + worker 架构**建，为高流量留缝。
+
+**IM 接入地基（队列架构，6 步逐缝验证，详见 IM 文档）**
+- [ ] `app/core/redis.py` 共享异步连接池 + Redis Streams 封装（produce/consume/ack/claim）—— Redis 现"配了没用"，需真正接入
+- [ ] **非流式 runner**：从 `core.LLMRunner` 抽"攒完整段"版 `(AgentRequest) → AgentResponse`（bot 共用，web SSE 不变）
+- [ ] **Worker 进程**：独立入口消费队列 → 映射用户 → 跑 agent → 发送（须脱离 web 进程，避免多 uvicorn worker 重复拉长连接）
+- [ ] **平台用户 ↔ 咕咕用户映射**（多用户隔离）、事件去重、平台 token 存 Redis、用户状态机（并入 Phase 1.7）、背压
+
+**各平台 adapter（官方直连，无 OpenClaw）**
+- [ ] `adapters/feishu.py`：`lark-oapi`，WebSocket 长连（`im.message.receive_v1` / `message.create`），文档最顺，建议先做
+- [ ] `adapters/qqbot.py`：`botpy`，WebSocket（~~webhook~~），官方稳定
+- [ ] `adapters/weixin.py`：直连 iLink（长轮询 getupdates / sendmessage），纯文本先行，个人号有风险，最后做
+
+**伙伴深化（更后）**
 - [ ] 主动触达：截止日临近提醒、异常沉默感知、情绪状态关注
 - [ ] 成就系统 / 正反馈系统（挂载 EventBus Listener）
 - [ ] 行为分析 Listener：从操作日志提炼工作节律，写入 facts

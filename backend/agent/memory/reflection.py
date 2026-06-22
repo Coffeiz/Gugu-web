@@ -46,13 +46,15 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> No
     try:
         existing = (await store.read_memory(user_id))["facts"]
         out = await _extract(user_name, user_msg, assistant_reply, existing, settings)
-        new_facts = out.get("facts") or []
+        facts = out.get("facts") or []
         daily_note = (out.get("daily") or "").strip()
 
-        if new_facts:
-            merged = store.merge_facts(existing, new_facts)
-            if merged.strip() != existing.strip():
-                await store.write_facts(user_id, merged)
+        # 调和重写：facts 是反思输出的"更新后完整事实集"，覆盖写回。
+        new_text = store.format_facts(facts)
+        # 防误删兜底：原本有事实、模型却返回空 → 视为异常，保留原文件不覆盖。
+        if new_text.strip() or not existing.strip():
+            if new_text.strip() != existing.strip():
+                await store.write_facts(user_id, new_text)
         if daily_note:
             await store.append_daily(user_id, datetime.now().strftime("%Y-%m-%d"), daily_note)
     except Exception:
@@ -61,8 +63,9 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> No
 
 async def _extract(user_name, user_msg, assistant_reply, existing_facts, settings) -> dict:
     user = (
-        f"已知事实：\n{existing_facts or '（暂无）'}\n\n"
-        f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n请提炼。"
+        f"已知的全部事实：\n{existing_facts or '（暂无）'}\n\n"
+        f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n"
+        f"请输出更新后的完整事实列表（保留仍成立的、修正矛盾、合并重复；没有新信息就原样返回，别清空）。"
     )
     sys = _load_sys()
     use_anthropic = (
