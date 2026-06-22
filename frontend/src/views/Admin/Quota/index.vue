@@ -62,6 +62,20 @@
               <button class="preset-chip" @click="globalDraft.storageGB = 100">100 GB</button>
             </div>
           </div>
+
+          <div class="quota-field">
+            <label class="qf-label">每日联网搜索次数上限</label>
+            <div class="qf-input-row">
+              <input v-model.number="globalDraft.searchDaily" class="qf-input" type="number" min="0" placeholder="不限制" />
+              <span class="qf-unit">次/天</span>
+            </div>
+            <div class="qf-presets">
+              <button class="preset-chip" @click="globalDraft.searchDaily = null">不限制</button>
+              <button class="preset-chip" @click="globalDraft.searchDaily = 10">10 次</button>
+              <button class="preset-chip" @click="globalDraft.searchDaily = 30">30 次</button>
+              <button class="preset-chip" @click="globalDraft.searchDaily = 100">100 次</button>
+            </div>
+          </div>
         </div>
 
         <div class="global-footer">
@@ -96,8 +110,8 @@
         <template v-else>
           <div class="ut-head">
             <span class="col-user">用户</span>
-            <span class="col-token">Token 限额 / 本周用量</span>
-            <span class="col-storage">存储上限 / 已用</span>
+            <span class="col-token">本周用量 / 限额</span>
+            <span class="col-storage">存储已用 / 上限</span>
             <span class="col-action"></span>
           </div>
           <div v-for="u in overrideUsers" :key="u.id" class="ut-row">
@@ -110,20 +124,22 @@
             </span>
             <span class="col-token">
               <span class="quota-cell">
+                <span class="quota-used">{{ fmtTokens(u.tokens_week) }}</span>
+                <span class="quota-sep">/</span>
                 <span class="quota-limit">{{ fmtTokens(u.token_limit_weekly) || '—' }}</span>
                 <span class="usage-bar-bg" v-if="u.token_limit_weekly">
                   <span class="usage-bar-fill token-fill" :style="tokenBarStyle(u)"></span>
                 </span>
-                <span class="quota-used">{{ fmtTokens(u.tokens_week) }} 已用</span>
               </span>
             </span>
             <span class="col-storage">
               <span class="quota-cell">
+                <span class="quota-used">{{ fmtBytes(u.storage_used) }}</span>
+                <span class="quota-sep">/</span>
                 <span class="quota-limit">{{ fmtBytes(u.storage_limit_bytes) }}</span>
                 <span class="usage-bar-bg" v-if="u.storage_limit_bytes">
                   <span class="usage-bar-fill storage-fill" :style="storageBarStyle(u)"></span>
                 </span>
-                <span class="quota-used">{{ fmtBytes(u.storage_used) }} 已用</span>
               </span>
             </span>
             <span class="col-action">
@@ -180,7 +196,7 @@
 
     <!-- 配额编辑弹窗 -->
     <Teleport to="body">
-      <div v-if="editTarget" class="modal-mask" @click.self="editTarget = null">
+      <div v-if="editTarget" class="modal-mask" @mousedown.self="maskMousedownSelf = true" @mouseup.self="maskMousedownSelf && (editTarget = null); maskMousedownSelf = false">
         <div class="modal-box">
           <p class="modal-title">编辑配额</p>
           <p class="modal-subtitle">{{ editTarget.display_name || editTarget.username }}</p>
@@ -254,7 +270,7 @@ const adminStore  = useAdminStore()
 const configStore = useConfigStore()
 
 // ── 全局配额 ──────────────────────────────────────────────────────────────────
-const globalDraft  = reactive({ token6h: null, tokenWeek: null, storageGB: null })
+const globalDraft  = reactive({ token6h: null, tokenWeek: null, storageGB: null, searchDaily: null })
 const globalSaving = ref(false)
 const globalSaved  = ref(false)
 
@@ -264,6 +280,7 @@ function _loadGlobalDraft() {
   globalDraft.tokenWeek = q.default_token_limit_weekly  ?? null
   globalDraft.storageGB = q.default_storage_limit_bytes != null
     ? +(q.default_storage_limit_bytes / 1073741824).toFixed(2) : null
+  globalDraft.searchDaily = q.default_search_limit_daily ?? null
 }
 
 async function saveGlobal() {
@@ -275,6 +292,7 @@ async function saveGlobal() {
         default_token_limit_6h:      globalDraft.token6h   != null ? Number(globalDraft.token6h)   : null,
         default_token_limit_weekly:  globalDraft.tokenWeek != null ? Number(globalDraft.tokenWeek) : null,
         default_storage_limit_bytes: globalDraft.storageGB != null ? Math.round(Number(globalDraft.storageGB) * 1073741824) : null,
+        default_search_limit_daily:  globalDraft.searchDaily != null ? Number(globalDraft.searchDaily) : null,
       },
     })
     globalSaved.value = true
@@ -327,6 +345,7 @@ function onSearch() {
 // ── 编辑弹窗 ─────────────────────────────────────────────────────────────────
 const editTarget = ref(null)
 const editSaving = ref(false)
+let maskMousedownSelf = false
 const editForm   = reactive({ token6h: null, tokenWeek: null, storageGB: null })
 
 function openEdit(u) {
@@ -545,9 +564,10 @@ onMounted(async () => {
 }
 .username-sub { font-size: 11px; color: rgba(255,255,255,0.3); }
 
-.quota-cell { display: flex; align-items: center; gap: 7px; }
-.quota-limit { font-size: 12px; color: rgba(255,255,255,0.6); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.quota-used  { font-size: 11px; color: rgba(255,255,255,0.25); white-space: nowrap; }
+.quota-cell { display: flex; align-items: center; gap: 5px; }
+.quota-used  { font-size: 12px; color: rgba(255,255,255,0.75); font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 500; }
+.quota-sep   { font-size: 12px; color: rgba(255,255,255,0.2); }
+.quota-limit { font-size: 12px; color: rgba(255,255,255,0.3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .usage-bar-bg {
   width: 50px; height: 3px; border-radius: 2px; flex-shrink: 0;
   background: rgba(255,255,255,0.08); overflow: hidden;

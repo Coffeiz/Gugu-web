@@ -11,6 +11,7 @@ import asyncio
 import json
 from pathlib import Path
 from functools import lru_cache
+from typing import Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,7 +21,7 @@ OVERRIDE_FILE = Path(__file__).parent.parent.parent / "config.override.json"
 class DatabaseSettings(BaseModel):
     host: str = Field("localhost", description="数据库主机")
     port: int = Field(5432, description="端口")
-    name: str = Field("pm_studio", description="数据库名")
+    name: str = Field("gugu_web", description="数据库名")
     user: str = Field("pm", description="用户名")
     password: str = Field("pm123", description="密码")
 
@@ -45,9 +46,9 @@ class StorageSettings(BaseModel):
     local_path: str = Field("./uploads", description="本地存储路径")
     oss_access_key_id: str = Field("", description="OSS AccessKey ID")
     oss_access_key_secret: str = Field("", description="OSS AccessKey Secret")
-    oss_bucket: str = Field("pm-studio", description="OSS Bucket 名")
+    oss_bucket: str = Field("gugu-web", description="OSS Bucket 名")
     oss_endpoint: str = Field("oss-cn-hangzhou.aliyuncs.com", description="OSS Endpoint")
-    oss_prefix:   str = Field("", description="OSS 对象前缀，如 pm-studio/")
+    oss_prefix:   str = Field("", description="OSS 对象前缀，如 gugu-web/")
 
 
 class AISettings(BaseModel):
@@ -58,6 +59,47 @@ class AISettings(BaseModel):
         description="API Base URL",
     )
     model: str = Field("qwen-max", description="使用模型")
+    max_tokens: int = Field(2000, description="最大输出 token 数")
+    temperature: float = Field(0.7, description="发散度 0~2")
+    context_tokens: int = Field(3000, description="历史上下文 token 预算")
+    thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
+
+
+class AIPresetItem(BaseModel):
+    id: str = ""
+    name: str = ""
+    provider: str = "openai"
+    api_key: str = ""
+    base_url: str = ""
+    model: str = ""
+    max_tokens: int = 2000
+    temperature: float = 0.7
+    context_tokens: int = 3000
+    thinking: str = "disabled"
+
+
+class AIPresets(BaseModel):
+    active_id: str = ""
+    items: list[AIPresetItem] = Field(default_factory=list)
+
+
+class AgentBehaviorSettings(BaseModel):
+    memory_enabled: bool = Field(True, description="是否启用记忆系统")
+    reflection_threshold: int = Field(10, description="触发 Reflection 的消息数")
+    daily_retention_days: int = Field(14, description="daily 记忆保留天数")
+    weekly_retention_weeks: int = Field(6, description="weekly 记忆保留周数")
+
+
+class QuotaSettings(BaseModel):
+    default_token_limit_6h:      Optional[int] = Field(None, description="全局 6 小时 Token 上限（None=不限制）")
+    default_token_limit_weekly:  Optional[int] = Field(None, description="全局每周 Token 上限（None=不限制）")
+    default_storage_limit_bytes: Optional[int] = Field(None, description="全局存储空间上限（None=不限制）")
+    default_search_limit_daily:  Optional[int] = Field(None, description="全局每日联网搜索次数上限（None=不限制）")
+
+
+class SearchSettings(BaseModel):
+    tavily_api_key: str = Field("", description="Tavily 联网搜索 API Key（空=禁用 web_search）")
+    max_results:    int = Field(5, description="默认返回结果数")
 
 
 class AppSettings(BaseSettings):
@@ -68,7 +110,7 @@ class AppSettings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "PM Studio"
+    app_name: str = "Gugu"
     debug: bool = False
     secret_key: str = Field("change-me-in-production", description="JWT 签名密钥")
     access_token_expire_minutes: int = Field(10080, description="Token 有效期（分钟）")
@@ -77,6 +119,10 @@ class AppSettings(BaseSettings):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     ai: AISettings = Field(default_factory=AISettings)
+    ai_presets: AIPresets = Field(default_factory=AIPresets)
+    agent: AgentBehaviorSettings = Field(default_factory=AgentBehaviorSettings)
+    quota: QuotaSettings = Field(default_factory=QuotaSettings)
+    search: SearchSettings = Field(default_factory=SearchSettings)
 
     def apply_override(self) -> "AppSettings":
         """从 config.override.json 合并覆盖字段，返回新实例。
@@ -118,8 +164,33 @@ class AppSettings(BaseSettings):
                 }}
                 updates["ai"] = AISettings.model_construct(**merged)
 
+            if "quota" in override:
+                merged = {**self.quota.model_dump(), **{
+                    k: v for k, v in override["quota"].items()
+                    if k in QuotaSettings.model_fields
+                }}
+                updates["quota"] = QuotaSettings.model_construct(**merged)
+
+            if "search" in override:
+                merged = {**self.search.model_dump(), **{
+                    k: v for k, v in override["search"].items()
+                    if k in SearchSettings.model_fields
+                }}
+                updates["search"] = SearchSettings.model_construct(**merged)
+
+            if "ai_presets" in override:
+                raw = override["ai_presets"]
+                items = [
+                    AIPresetItem(**{k: v for k, v in it.items() if k in AIPresetItem.model_fields})
+                    for it in raw.get("items", [])
+                ]
+                updates["ai_presets"] = AIPresets.model_construct(
+                    active_id=raw.get("active_id", ""),
+                    items=items,
+                )
+
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]

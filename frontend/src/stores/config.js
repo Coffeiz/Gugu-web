@@ -3,7 +3,7 @@ import { ref, reactive } from 'vue'
 import { useAdminStore } from './admin'
 
 // 后端对密码类字段返回 "****"，前端拿到后清空，存回时跳过空值（视为"未修改"）
-const PASSWORD_FIELDS = new Set(['password', 'api_key', 'oss_access_key_id', 'oss_access_key_secret'])
+const PASSWORD_FIELDS = new Set(['password', 'api_key', 'oss_access_key_id', 'oss_access_key_secret', 'tavily_api_key'])
 
 function sanitizeForEdit(obj) {
   const out = {}
@@ -66,6 +66,11 @@ export const useConfigStore = defineStore('config', () => {
       default_token_limit_6h: null,
       default_token_limit_weekly: null,
       default_storage_limit_bytes: null,
+      default_search_limit_daily: null,
+    },
+    search: {
+      tavily_api_key: '',
+      max_results: 5,
     },
   })
 
@@ -81,6 +86,7 @@ export const useConfigStore = defineStore('config', () => {
       if (data.ai)      Object.assign(cfg.ai,      sanitizeForEdit(data.ai))
       if (data.agent)   Object.assign(cfg.agent,   data.agent)
       if (data.quota)   Object.assign(cfg.quota,   data.quota)
+      if (data.search)  Object.assign(cfg.search,  sanitizeForEdit(data.search))
     } catch {
       // 后端未启动时静默，使用默认值
     } finally {

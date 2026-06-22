@@ -1,7 +1,43 @@
 # PM Studio · 早期开发记录
 
-> 更新：2026-06-21
+> 更新：2026-06-22
 > 状态：早期阶段记录，当前进度见 `docs/overview.md`
+
+---
+
+## 2026-06-22 · Agent：Skill 一等公民 + 记忆 Phase 2a + 联网搜索
+
+详细架构见 `docs/agent.md`。本次四块工作：
+
+### 1. Skill 一等公民重构
+
+原 `DefaultProfile.tool_names` 手抄全部工具名，与各 skill 的 `Tool` 声明双重维护（加工具改两处、漏一处静默失效）。改为：`SkillRegistry` 增 `_skills`（skill→有序工具名）+ `add_skill()`/`tools_of()`；`BaseProfile.skills`（skill 名列表）+ `tool_names` 派生属性。`DefaultProfile.skills` 一行替代扁平清单。工具集与重构前集合相等（验证通过），行为零变化。
+
+### 2. 记忆系统 Phase 2a（精简闭环）
+
+- `memory/store.py`：读写 `.agent/{facts,daily}.md`，经 `StorageBackend`（本地/OSS），单库无 DB 同步问题；`merge_facts` 内容去重、`append_daily` 滚动 30 条
+- `memory/reflection.py`：对话后单次非流式 LLM 提炼 `{facts,daily}`，`schedule()` fire-and-forget（持后台任务引用防 GC），失败不影响对话
+- `skills/memory.py`：`remember` 工具（主动记忆）
+- builder 记忆 section 仅非空时注入；loaders.load_memory 改 async；web.py memory_enabled 时注入 + 反思
+- **简化偏差**：facts.md 而非 facts.json、两层而非三层、无 compressor/events/identity（昵称用 `User.display_name`）
+- **实测**：真实对话已能写入 facts；首版提炼偏噪音（记了推测/世界常识/矛盾/评判），据此收紧反思提示词（见 4）
+
+### 3. 联网搜索（Tavily）+ 搜索配额
+
+- `skills/search.py`：`web_search` 工具（第 41 个），调 Tavily Search API
+- 配置：`config.py` 加 `SearchSettings.tavily_api_key`，走通用 `/admin/config`（GET 打码、PATCH 存 override）；前端 Agent 配置页「联网搜索」卡片输 key + config store 加 `search` 段 + `tavily_api_key` 进 `PASSWORD_FIELDS`
+- **搜索配额**：`QuotaSettings.default_search_limit_daily` + 新建 `search_usage` 表（create_all 自动建，无手写 migration）；`web_search` 执行前数当天次数、超则拒（仅拦搜索、不拦对话），成功才记一行。前端配额管理页加「每日搜索次数上限」。先只做全局、暂无 per-user 覆盖
+- 边界：`used >= limit` 拦截，30 上限 → 当天放行 0–29、第 30 次后拦
+
+### 4. 反思提示词文件化 + 收紧
+
+- 原 `_SYS` 内联常量 → `prompts/reflection.md`，`reflection.py` 每次现读（热生效）+ 兜底；接进 Admin（`agent_admin.py` 的 `SPECIAL_PROMPTS=["persona","reflection"]`），前端「系统提示词」tab 显示「记忆反思」+ 谨慎提示
+- 收紧规则（治首版噪音）：只记用户本人、不记推测、不记世界常识/一时状态、不评判、宁少勿多 1–3 条
+
+### 注记
+
+- web.py 持久化段：工具中间消息（tool_use/tool_result）以 `content_json`（JSONB）逐条落库；`core.py` 用 `model_dump()` 序列化 SDK 对象保证 JSON 安全
+- 后端 uvicorn 未开 `--reload`，改 Admin 端点/模型需 `make restart` 才生效
 
 ---
 

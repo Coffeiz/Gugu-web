@@ -312,6 +312,8 @@ Prompt 模板（`.md`），支持占位符，热更新无需重启。
 
 ## 用户个性化文件系统
 
+> ⚠️ **本节是 Phase 2b 的目标设计，非现状**。当前（2a）只落地 `facts.md` + `daily.md` 两个文件；`identity.json` / `save_identity` 已作废（昵称用 `User.display_name`）；`facts.json` 结构化、`summary.md`、`weekly/`、importance 分级均未实现。下文 identity/facts.json/summary/weekly 等描述待 2b 推进时再对照落地。
+
 每个文件回答一个独立问题，视角清晰不重叠：
 
 | 文件 | 回答的问题 | 由谁写 |
@@ -422,7 +424,7 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 
 ---
 
-## 工具清单（共 40，已实现）
+## 工具清单（共 41，已实现）
 
 > 🔒 = 不可逆操作，受删除二次确认保底（显式 confirm 参数）保护。所有工具带 `user_id` 所有权校验。
 
@@ -493,6 +495,11 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 | 工具 | 说明 |
 |------|------|
 | `remember` | 把一条关于用户的长期信息写进 `.agent/facts.md`（与反思共用 `store.merge_facts` 去重）|
+
+### 联网搜索 · `skills/search.py`（1）
+| 工具 | 说明 |
+|------|------|
+| `web_search` | Tavily 联网搜索实时/外部信息。Key 从 `settings.search.tavily_api_key`（Admin 配）读，未配置返回友好错误；受每日次数配额限制（见下）|
 
 > 启用集合由 `profiles/default.py` 的 `skills`（skill 名列表）经 registry 派生（见下「Skill 一等公民」）；新增工具 = 在对应 skill 加 `Tool` 声明 + handler（自动派生双格式并注册），不可逆操作加 `destructive=True`。
 
@@ -583,25 +590,15 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 - [x] **对话模式**：persona 写入执行/推进/记录/决策四态切换。实测：执行类答完会主动给 next step、决策探索（"纠结换电脑"）不强建项目、像朋友讨论
 - [x] ~~昵称收集~~ **改用 `User.display_name`**（注册/个人设置已填，`req.user_name` 即来源），不单独问昵称、不建 `identity.json`；身份称呼由反思自然并入 facts。下方「昵称收集机制」设计作废
 
-#### 昵称收集机制
+#### ~~昵称收集机制~~（已作废）
 
-Onboarding 页面已移除。用户昵称改为由咕咕在**第一次对话**中主动询问收集：
+原设计：移除 Onboarding，由咕咕首次对话主动问昵称、`save_identity` 工具写 `identity.json`。
 
-- **触发条件**：对话前检查 `uploads/{user_id}/.agent/identity.json` 是否存在，不存在则在 system prompt 中注入指令，让咕咕在本轮主动问出昵称
-- **询问逻辑**：写在 `persona.md` 中，不用代码控制——"如果不知道用户叫什么，先问昵称"
-- **写入方式**：给咕咕一个 `save_identity` 工具，模型拿到昵称后自行调用，后端写入 `identity.json`
+**作废原因**：`User.display_name` 在注册/个人设置时已填，`req.user_name` 直接取用即可——无需再问、无需 `identity.json` / `save_identity` / `skills/identity.py`。身份称呼等信息由 Phase 2a 反思自然并入 `facts.md`。
 
-```json
-// uploads/{user_id}/.agent/identity.json
-{ "nickname": "Jonas" }
-```
+### Phase 1.7 — 轻量 Runtime Router（待做，依据文档 29）
 
-实现清单（重构后模块）：
-- [ ] `save_identity` 工具（新建 `skills/identity.py`，自注册），后端执行时写 `identity.json`
-- [ ] `context/loaders.py` 读取 `identity.json`，`context/builder.py` 填充 `{name}` 占位符（替代旧 `_load_system_prompt`）
-- [ ] `persona.md` 写入昵称询问指令（persona 注入由本阶段启用）
-
-### Phase 1.7 — 轻量 Runtime Router（提前，依据文档 29）
+> 注：实际开发顺序为 1.6 → **2a 记忆**（先做）→ 1.7。Router 不是记忆前置依赖，故先落了记忆闭环；1.7 仍未动。
 
 - [ ] 关键词 + 状态机版：自然语言取消（"算了 / 不弄了"）、状态查询（"还在吗 / 好了吗"）、简单闲聊与确认词（"嗯 / 好的 / 哈哈"）**不进主模型**，直接轻量回应
 - [ ] State Manager：`THINKING / SEARCHING / GENERATING / WAITING_CONFIRM / IDLE`，与删除二次确认的 WAITING_CONFIRM 衔接
@@ -615,6 +612,8 @@ Onboarding 页面已移除。用户昵称改为由咕咕在**第一次对话**�
 
 - [x] `agent/memory/store.py`：读写 `.agent/{facts,daily}.md`，经 `StorageBackend`（本地/OSS 通吃），缺文件返回空。`merge_facts` 按内容去重，`append_daily` 滚动保留最近 30 条
 - [x] `agent/memory/reflection.py`：对话结束后**单次非流式** LLM 调用（复用 `settings.ai`）提炼 `{facts:[...], daily:"..."}`，增量合并写盘；`schedule()` fire-and-forget（持后台任务引用防 GC），失败不影响对话
+- [x] **反思提示词文件化**：提炼词从内联常量移到 `prompts/reflection.md`，`reflection.py` 每次现读（热生效）+ 兜底；接进 Admin（`agent_admin.py` `SPECIAL_PROMPTS=["persona","reflection"]`，前端「系统提示词」tab 显「记忆反思」）。首版实测偏噪音（记推测/世界常识/矛盾/评判），据此收紧规则：只记用户本人、不记推测/一时状态、不评判、宁少勿多
+- [x] **联网搜索 + 配额**：`skills/search.py` 的 `web_search`（Tavily，第 41 工具）；key 走通用 `/admin/config`（打码）+ 前端 Agent 页输入；每日次数配额 `quota.default_search_limit_daily` + `search_usage` 表（create_all 建），`web_search` 执行前查当天次数超则拒（仅拦搜索不拦对话）、成功才记。前端配额管理页加「每日搜索次数上限」。暂无 per-user 覆盖
 - [x] `skills/memory.py`：`remember` 工具 —— 用户说"记住X"时主动落盘（主动记忆路径）
 - [x] `context/loaders.py`：`load_memory` 改 async 真读；`context/builder.py`：清掉死占位符，记忆 section **仅非空时注入**（人格 → 我对你的了解/最近的记忆 → 实时状态），空记忆不烧 token
 - [x] `adapters/web.py`：`memory_enabled` 时 `await load_memory` 注入；持久化后 `reflection.schedule()` 触发反思

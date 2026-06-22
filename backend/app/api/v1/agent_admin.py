@@ -3,8 +3,17 @@ Agent 管理接口（需要 Admin token）
 GET  /api/v1/admin/agent/prompts              → 列出所有 profile
 GET  /api/v1/admin/agent/prompts/{profile}    → 读取 prompt 内容
 PUT  /api/v1/admin/agent/prompts/{profile}    → 写入 prompt 内容
+
+GET    /api/v1/admin/agent/llm-presets           → 列出所有预设（api_key 脱敏）
+POST   /api/v1/admin/agent/llm-presets           → 新建预设
+PUT    /api/v1/admin/agent/llm-presets/{id}      → 编辑预设（api_key 留空=保持原值）
+DELETE /api/v1/admin/agent/llm-presets/{id}      → 删除预设
+POST   /api/v1/admin/agent/llm-presets/{id}/activate → 设为当前（同步写入 ai 段）
+POST   /api/v1/admin/agent/llm-presets/{id}/test     → 连通性测试
 """
 
+import json
+import uuid as _uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -12,8 +21,52 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, text, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import OVERRIDE_FILE, get_settings
 from app.db.session import get_db
 from app.models import AgentUsage
+
+# ── 预设辅助函数 ──────────────────────────────────────────────────────────────
+
+def _read_override() -> dict:
+    if not OVERRIDE_FILE.exists():
+        return {}
+    try:
+        return json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_override(data: dict):
+    OVERRIDE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    get_settings.cache_clear()
+
+
+def _mask_key(key: str) -> str:
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return "•" * len(key)
+    return key[:3] + "•" * (len(key) - 7) + key[-4:]
+
+
+def _ensure_presets(override: dict) -> dict:
+    """返回 ai_presets dict（若不存在则从 ai 段迁移，但不写文件）。"""
+    if "ai_presets" in override:
+        return override["ai_presets"]
+    ai = override.get("ai", {})
+    provider = ai.get("provider", "openai")
+    item = {
+        "id": "default",
+        "name": f"{provider}",
+        "provider": provider,
+        "api_key": ai.get("api_key", ""),
+        "base_url": ai.get("base_url", ""),
+        "model": ai.get("model", ""),
+        "thinking": ai.get("thinking", "disabled"),
+    }
+    presets = {"active_id": "default", "items": [item]}
+    override["ai_presets"] = presets
+    return presets
 
 router = APIRouter(prefix="/admin/agent", tags=["admin"])
 
@@ -35,9 +88,13 @@ PLACEHOLDERS = [
 ]
 
 
+# 非对话 profile 的特殊可编辑 prompt：persona（人格）、reflection（记忆反思提炼词）
+SPECIAL_PROMPTS = ["persona", "reflection"]
+
+
 def _prompt_path(profile: str) -> Path:
-    if profile not in PROFILES:
-        raise HTTPException(400, f"未知 profile: {profile}，可选：{PROFILES}")
+    if profile not in SPECIAL_PROMPTS and profile not in PROFILES:
+        raise HTTPException(400, f"未知 profile: {profile}，可选：{SPECIAL_PROMPTS + PROFILES}")
     return PROMPTS_DIR / f"{profile}.md"
 
 
@@ -45,6 +102,22 @@ def _prompt_path(profile: str) -> Path:
 async def list_prompts():
     PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
     profiles = []
+    # persona 最先：咕咕人格，所有 profile 共享，标注谨慎修改
+    pp = PROMPTS_DIR / "persona.md"
+    profiles.append({
+        "profile": "persona",
+        "exists": pp.exists(),
+        "size": pp.stat().st_size if pp.exists() else 0,
+        "is_persona": True,
+    })
+    # reflection：记忆反思提炼词，非对话 profile，谨慎修改
+    rp = PROMPTS_DIR / "reflection.md"
+    profiles.append({
+        "profile": "reflection",
+        "exists": rp.exists(),
+        "size": rp.stat().st_size if rp.exists() else 0,
+        "is_persona": True,
+    })
     for name in PROFILES:
         p = PROMPTS_DIR / f"{name}.md"
         profiles.append({
@@ -183,3 +256,158 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
         "month":    target_month,
         "daily":    daily,
     }
+
+
+# ── LLM 预设 CRUD ─────────────────────────────────────────────────────────────
+
+@router.get("/llm-presets")
+async def list_llm_presets():
+    override = _read_override()
+    had_presets = "ai_presets" in override
+    presets = _ensure_presets(override)
+    if not had_presets:
+        _write_override(override)
+    items = [
+        {**item, "api_key": _mask_key(item.get("api_key", ""))}
+        for item in presets.get("items", [])
+    ]
+    return {"active_id": presets.get("active_id", ""), "items": items}
+
+
+class PresetCreate(BaseModel):
+    name: str
+    provider: str
+    api_key: str = ""
+    base_url: str = ""
+    model: str = ""
+    max_tokens: int = 2000
+    temperature: float = 0.7
+    context_tokens: int = 3000
+    thinking: str = "disabled"
+
+
+@router.post("/llm-presets")
+async def create_llm_preset(body: PresetCreate):
+    override = _read_override()
+    presets = _ensure_presets(override)
+    new_id = f"p_{_uuid.uuid4().hex[:8]}"
+    item = {
+        "id": new_id,
+        "name": body.name,
+        "provider": body.provider,
+        "api_key": body.api_key,
+        "base_url": body.base_url,
+        "model": body.model,
+        "max_tokens": body.max_tokens,
+        "temperature": body.temperature,
+        "context_tokens": body.context_tokens,
+        "thinking": body.thinking,
+    }
+    presets["items"].append(item)
+    if not presets.get("active_id"):
+        presets["active_id"] = new_id
+        override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled"}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking")}
+    _write_override(override)
+    return {**item, "api_key": _mask_key(item["api_key"])}
+
+
+class PresetUpdate(BaseModel):
+    name: str | None = None
+    provider: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    max_tokens: int | None = None
+    temperature: float | None = None
+    context_tokens: int | None = None
+    thinking: str | None = None
+
+
+@router.put("/llm-presets/{preset_id}")
+async def update_llm_preset(preset_id: str, body: PresetUpdate):
+    override = _read_override()
+    presets = _ensure_presets(override)
+    item = next((it for it in presets["items"] if it["id"] == preset_id), None)
+    if not item:
+        raise HTTPException(404, "预设不存在")
+    if body.name is not None:
+        item["name"] = body.name
+    if body.provider is not None:
+        item["provider"] = body.provider
+    if body.api_key:
+        item["api_key"] = body.api_key
+    if body.base_url is not None:
+        item["base_url"] = body.base_url
+    if body.model is not None:
+        item["model"] = body.model
+    if body.max_tokens is not None:
+        item["max_tokens"] = body.max_tokens
+    if body.temperature is not None:
+        item["temperature"] = body.temperature
+    if body.context_tokens is not None:
+        item["context_tokens"] = body.context_tokens
+    if body.thinking is not None:
+        item["thinking"] = body.thinking
+    if presets.get("active_id") == preset_id:
+        override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled"}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking")}
+    _write_override(override)
+    return {**item, "api_key": _mask_key(item["api_key"])}
+
+
+@router.delete("/llm-presets/{preset_id}")
+async def delete_llm_preset(preset_id: str):
+    override = _read_override()
+    presets = _ensure_presets(override)
+    if len(presets.get("items", [])) <= 1:
+        raise HTTPException(400, "至少保留一个预设")
+    if presets.get("active_id") == preset_id:
+        raise HTTPException(400, "无法删除当前激活的预设，请先切换到其他预设")
+    presets["items"] = [it for it in presets["items"] if it["id"] != preset_id]
+    _write_override(override)
+    return {"deleted": preset_id}
+
+
+@router.post("/llm-presets/{preset_id}/activate")
+async def activate_llm_preset(preset_id: str):
+    override = _read_override()
+    presets = _ensure_presets(override)
+    item = next((it for it in presets["items"] if it["id"] == preset_id), None)
+    if not item:
+        raise HTTPException(404, "预设不存在")
+    presets["active_id"] = preset_id
+    override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled"}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking")}
+    _write_override(override)
+    return {"active_id": preset_id}
+
+
+@router.post("/llm-presets/{preset_id}/test")
+async def test_llm_preset(preset_id: str):
+    import httpx
+    override = _read_override()
+    presets = _ensure_presets(override)
+    item = next((it for it in presets["items"] if it["id"] == preset_id), None)
+    if not item:
+        raise HTTPException(404, "预设不存在")
+    provider = item.get("provider", "openai")
+    api_key  = item.get("api_key", "")
+    base_url = item.get("base_url", "").rstrip("/")
+    model    = item.get("model", "")
+    try:
+        if provider == "anthropic":
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            }
+            url = f"{base_url}/messages"
+            payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
+        else:
+            headers = {"Authorization": f"Bearer {api_key}", "content-type": "application/json"}
+            url = f"{base_url}/chat/completions"
+            payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+        ok = resp.status_code < 500
+        return {"ok": ok, "status": resp.status_code, "detail": "" if ok else resp.text[:300]}
+    except Exception as e:
+        return {"ok": False, "status": 0, "detail": str(e)[:300]}

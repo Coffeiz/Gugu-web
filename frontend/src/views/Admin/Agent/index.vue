@@ -22,53 +22,153 @@
 
     <div class="panels-wrap">
 
-      <!-- ── LLM 配置 ── -->
-      <section v-if="activeTab === 'llm'" class="config-card">
-        <div class="card-head">
-          <div class="card-icon" style="--ic:rgba(196,175,200,0.14);--stroke:#9590c4">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
-              stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="10" cy="10" r="7"/>
-              <path d="M7 10h6M10 7v6"/>
-            </svg>
+      <!-- ── LLM 预设 ── -->
+      <div v-if="activeTab === 'llm'">
+        <!-- 标题行 -->
+        <div class="presets-header">
+          <div>
+            <h3 class="presets-title">LLM 预设</h3>
+            <p class="presets-desc">管理多套模型配置，随时切换当前生效预设</p>
           </div>
-          <div class="card-title-block">
-            <h3>LLM 配置</h3>
-            <p>Agent 使用的模型与 API 密钥</p>
-          </div>
-        </div>
-
-        <div class="toggle-group provider-grid">
-          <button class="toggle-btn" :class="{ active: llmDraft.provider === 'openai' }"
-            data-label="OpenAI 兼容" @click="setProvider('openai')">OpenAI 兼容</button>
-          <button class="toggle-btn" :class="{ active: llmDraft.provider === 'anthropic' }"
-            data-label="Anthropic" @click="setProvider('anthropic')">Anthropic</button>
-          <button class="toggle-btn" :class="{ active: llmDraft.provider === 'qwen' }"
-            data-label="通义千问" @click="setProvider('qwen')">通义千问</button>
-          <button class="toggle-btn" :class="{ active: llmDraft.provider === 'deepseek' }"
-            data-label="DeepSeek" @click="setProvider('deepseek')">DeepSeek</button>
-          <button class="toggle-btn" :class="{ active: llmDraft.provider === 'minimax' }"
-            data-label="MiniMax" @click="setProvider('minimax')">MiniMax</button>
-        </div>
-
-        <div class="field-grid">
-          <ConfigField label="API Key"  v-model="llmDraft.api_key"  type="password" placeholder="留空表示不修改" class="span2" />
-          <ConfigField label="Base URL" v-model="llmDraft.base_url" placeholder="https://…" class="span2" />
-          <ConfigField label="模型名称" v-model="llmDraft.model"    placeholder="qwen-max" />
-        </div>
-
-        <div class="card-actions">
-          <span class="save-hint" :class="{ error: !!llmError }">
-            <template v-if="llmSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
-            <template v-else-if="llmError">{{ llmError }}</template>
-          </span>
-          <button class="btn-ghost" @click="resetLlm">撤销修改</button>
-          <button class="btn-primary" :class="{ loading: llmSaving }" :disabled="llmSaving" @click="saveLlm">
-            <svg v-if="llmSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
-            {{ llmSaving ? '保存中…' : '保存' }}
+          <button class="btn-primary" @click="openNewPreset">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 1v11M1 6.5h11"/></svg>
+            新建预设
           </button>
         </div>
-      </section>
+
+        <div v-if="presetsLoading" class="presets-loading">加载中…</div>
+
+        <div v-else class="preset-list">
+          <div
+            v-for="p in presets"
+            :key="p.id"
+            class="preset-card"
+            :class="{ 'preset-card--active': p.id === activePresetId }"
+          >
+            <div class="preset-card-left">
+              <span class="provider-dot" :class="`dot-${p.provider}`"></span>
+            </div>
+            <div class="preset-card-body">
+              <div class="preset-card-top">
+                <span class="preset-name">{{ p.name }}</span>
+                <span v-if="p.id === activePresetId" class="active-badge">当前</span>
+                <span class="provider-label">{{ p.provider }}</span>
+              </div>
+              <div class="preset-card-meta">
+                <span class="preset-model">{{ p.model }}</span>
+                <span class="preset-meta-item">out {{ p.max_tokens ?? 2000 }}</span>
+                <span class="preset-meta-item">ctx {{ p.context_tokens ?? 3000 }}</span>
+                <span class="preset-meta-item">temp {{ p.temperature ?? 0.7 }}</span>
+                <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think">思考</span>
+                <span class="preset-key">{{ p.api_key || '未设置 Key' }}</span>
+              </div>
+            </div>
+            <div class="preset-card-actions">
+              <button class="pca-btn" @click="openEditPreset(p)">编辑</button>
+              <button class="pca-btn" :class="{ 'pca-btn--testing': testingId === p.id }" @click="testPreset(p.id)">
+                {{ testingId === p.id ? '测试中…' : '测试' }}
+              </button>
+              <button
+                v-if="p.id !== activePresetId"
+                class="pca-btn pca-btn--activate"
+                :class="{ 'pca-btn--activating': activatingId === p.id }"
+                @click="activatePreset(p.id)"
+              >{{ activatingId === p.id ? '切换中…' : '设为当前' }}</button>
+              <button
+                v-if="p.id !== activePresetId"
+                class="pca-btn pca-btn--del"
+                @click="deletePreset(p.id)"
+              >删除</button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="llmMsg" class="llm-msg" :class="{ 'llm-msg--error': llmMsgError }">{{ llmMsg }}</div>
+      </div>
+
+      <!-- 新建 / 编辑预设 Modal -->
+      <Teleport to="body">
+        <div
+          v-if="editTarget"
+          class="modal-mask"
+          @mousedown.self="editMaskDown = true"
+          @mouseup.self="editMaskDown && (editTarget = null); editMaskDown = false"
+        >
+          <div class="modal-box">
+            <h4 class="modal-title">{{ editIsNew ? '新建预设' : '编辑预设' }}</h4>
+
+            <div class="modal-field">
+              <label>预设名称</label>
+              <input v-model="editTarget.name" placeholder="MiniMax 主力" class="modal-input" />
+            </div>
+
+            <div class="modal-field">
+              <label>Provider</label>
+              <div class="toggle-group" style="margin-bottom:0">
+                <button v-for="pv in PROVIDERS" :key="pv.key"
+                  class="toggle-btn" :class="{ active: editTarget.provider === pv.key }"
+                  :data-label="pv.label"
+                  @click="setEditProvider(pv.key)">{{ pv.label }}</button>
+              </div>
+            </div>
+
+            <div class="modal-field">
+              <label>API Key</label>
+              <input v-model="editTarget.api_key" type="password" autocomplete="new-password"
+                placeholder="留空表示不修改" class="modal-input" />
+            </div>
+
+            <div class="modal-field">
+              <label>Base URL</label>
+              <input v-model="editTarget.base_url" placeholder="https://…" class="modal-input" />
+            </div>
+
+            <div class="modal-field">
+              <label>模型名称</label>
+              <input v-model="editTarget.model" placeholder="qwen-max" class="modal-input" />
+            </div>
+
+            <div class="modal-field-row">
+              <div class="modal-field">
+                <label>最大输出 Tokens</label>
+                <input v-model.number="editTarget.max_tokens" type="number" min="100" max="32000" step="100" class="modal-input" />
+              </div>
+              <div class="modal-field">
+                <label>发散度 Temperature</label>
+                <input v-model.number="editTarget.temperature" type="number" min="0" max="2" step="0.05" class="modal-input" />
+              </div>
+            </div>
+
+            <div class="modal-field">
+              <label>上下文历史 Tokens</label>
+              <input v-model.number="editTarget.context_tokens" type="number" min="500" max="200000" step="500" class="modal-input" />
+            </div>
+
+            <div class="modal-field modal-field--row">
+              <div class="thinking-label">
+                <span>深度思考</span>
+                <span class="thinking-hint">仅支持 MiniMax M3 / Anthropic（adaptive 模式）</span>
+              </div>
+              <button
+                class="toggle-switch"
+                :class="{ on: editTarget.thinking === 'adaptive' }"
+                @click="editTarget.thinking = editTarget.thinking === 'adaptive' ? 'disabled' : 'adaptive'"
+              >
+                <span class="toggle-knob" />
+              </button>
+            </div>
+
+            <div class="modal-actions">
+              <span class="save-hint" :class="{ error: !!editError }">{{ editError }}</span>
+              <button class="btn-ghost" @click="editTarget = null">取消</button>
+              <button class="btn-primary" :disabled="editSaving" @click="savePreset">
+                <svg v-if="editSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+                {{ editSaving ? '保存中…' : '保存' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
 
       <!-- ── 系统提示词 ── -->
       <section v-if="activeTab === 'prompts'" class="config-card prompts-card">
@@ -91,8 +191,20 @@
               :class="{ active: activeProfile === p.profile }"
               :data-label="p.profile"
               @click="switchProfile(p.profile)"
-            >{{ p.profile }}</button>
+            >{{ p.profile === 'persona' ? '人格' : p.profile === 'reflection' ? '记忆反思' : p.profile }}</button>
           </div>
+        </div>
+
+        <div v-if="activeProfile === 'persona'" class="persona-caution"
+          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;
+                 background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
+          ⚠️ 这是咕咕的<strong>人格设定</strong>，所有对话共享。谨慎修改 —— 会直接改变咕咕的性格、主动性、对话模式与说话方式。
+        </div>
+
+        <div v-if="activeProfile === 'reflection'" class="persona-caution"
+          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;
+                 background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
+          ⚠️ 这是<strong>记忆反思提炼词</strong>，决定咕咕每次对话后从中记住什么。改它会影响记忆质量；需保持输出 JSON 格式 <code>{"facts":[...],"daily":"..."}</code>。
         </div>
 
         <div class="prompt-editor-wrap">
@@ -210,6 +322,65 @@
           <button class="btn-primary" :class="{ loading: behaviorSaving }" :disabled="behaviorSaving" @click="saveBehavior">
             <svg v-if="behaviorSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
             {{ behaviorSaving ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </section>
+
+      <!-- ── 联网搜索（Tavily）── -->
+      <section v-if="activeTab === 'behavior'" class="config-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(122,184,200,0.15);--stroke:#7ab8c8">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="9" cy="9" r="6"/>
+              <path d="M17 17l-3.5-3.5"/>
+            </svg>
+          </div>
+          <div class="card-title-block">
+            <h3>联网搜索</h3>
+            <p>Tavily 搜索 API，让咕咕能查实时网络信息（每日次数上限在「配额管理」设置）</p>
+          </div>
+        </div>
+
+        <div class="behavior-grid">
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>Tavily API Key</span>
+              <span class="behavior-desc">留空表示不修改；清空并保存不会删除已存的 key</span>
+            </div>
+            <input
+              type="password"
+              class="behavior-input"
+              style="width: 280px;"
+              v-model="searchDraft.tavily_api_key"
+              placeholder="tvly-… （留空表示不修改）"
+              autocomplete="new-password"
+            />
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
+              <span>默认返回结果数</span>
+              <span class="behavior-desc">每次搜索返回多少条结果</span>
+            </div>
+            <input
+              type="number"
+              class="behavior-input"
+              v-model.number="searchDraft.max_results"
+              min="1" max="20"
+            />
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <span class="save-hint" :class="{ error: !!searchError }">
+            <template v-if="searchSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-else-if="searchError">{{ searchError }}</template>
+          </span>
+          <button class="btn-ghost" @click="resetSearch">撤销修改</button>
+          <button class="btn-primary" :class="{ loading: searchSaving }" :disabled="searchSaving" @click="saveSearch">
+            <svg v-if="searchSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            {{ searchSaving ? '保存中…' : '保存' }}
           </button>
         </div>
       </section>
@@ -419,50 +590,146 @@ const activeTab = ref('llm')
 
 function switchTab(key) {
   activeTab.value = key
+  if (key === 'llm'     && presets.value.length === 0) fetchPresets()
   if (key === 'prompts' && profiles.value.length === 0) fetchProfiles()
-  if (key === 'usage' && !usage.value) fetchUsage()
+  if (key === 'usage'   && !usage.value) fetchUsage()
 }
 
-// ── LLM 配置 ─────────────────────────────────────────────────────────────
-const llmDraft  = reactive({ ...configStore.cfg.ai })
-const llmSaving = ref(false)
-const llmSaved  = ref(false)
-const llmError  = ref('')
+// ── LLM 预设 ──────────────────────────────────────────────────────────────
+const PROVIDERS = [
+  { key: 'openai',    label: 'OpenAI 兼容', base_url: 'https://api.openai.com/v1',                          model: 'gpt-4o' },
+  { key: 'anthropic', label: 'Anthropic',   base_url: 'https://api.anthropic.com/v1',                       model: 'claude-opus-4-8' },
+  { key: 'qwen',      label: '通义千问',    base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
+  { key: 'deepseek',  label: 'DeepSeek',    base_url: 'https://api.deepseek.com',                           model: 'deepseek-chat' },
+  { key: 'minimax',   label: 'MiniMax',     base_url: 'https://api.minimaxi.com/anthropic',                 model: 'MiniMax-M3' },
+]
 
-const AI_PRESETS = {
-  qwen:      { base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
-  openai:    { base_url: 'https://api.openai.com/v1',                         model: 'gpt-4o' },
-  deepseek:  { base_url: 'https://api.deepseek.com',                          model: 'deepseek-chat' },
-  minimax:   { base_url: 'https://api.minimaxi.com/anthropic',                model: 'MiniMax-M3' },
-  anthropic: { base_url: 'https://api.anthropic.com/v1',                      model: 'claude-opus-4-8' },
+const presets        = ref([])
+const activePresetId = ref('')
+const presetsLoading = ref(false)
+const llmMsg         = ref('')
+const llmMsgError    = ref(false)
+const testingId      = ref(null)
+const activatingId   = ref(null)
+
+// edit modal
+const editTarget   = ref(null)
+const editIsNew    = ref(false)
+const editSaving   = ref(false)
+const editError    = ref('')
+const editMaskDown = ref(false)
+
+function showMsg(msg, isError = false) {
+  llmMsg.value      = msg
+  llmMsgError.value = isError
+  setTimeout(() => { llmMsg.value = '' }, isError ? 5000 : 3000)
 }
 
-function setProvider(p) {
-  llmDraft.provider = p
-  const preset = AI_PRESETS[p]
-  if (preset) {
-    llmDraft.base_url = preset.base_url
-    llmDraft.model    = preset.model
+async function fetchPresets() {
+  presetsLoading.value = true
+  try {
+    const res  = await adminStore.authFetch('/api/v1/admin/agent/llm-presets')
+    const data = await res.json()
+    presets.value        = data.items || []
+    activePresetId.value = data.active_id || ''
+  } catch (e) {
+    showMsg('加载失败：' + e.message, true)
+  } finally {
+    presetsLoading.value = false
   }
 }
 
-function resetLlm() {
-  Object.assign(llmDraft, configStore.cfg.ai)
+function openNewPreset() {
+  editIsNew.value  = true
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 2000, temperature: 0.7, context_tokens: 3000, thinking: 'disabled' }
+  editError.value  = ''
 }
 
-async function saveLlm() {
-  llmSaving.value = true
-  llmSaved.value  = false
-  llmError.value  = ''
+function openEditPreset(p) {
+  editIsNew.value  = false
+  editTarget.value = { ...p, api_key: '' }
+  editError.value  = ''
+}
+
+function setEditProvider(key) {
+  const pv = PROVIDERS.find(p => p.key === key)
+  if (!pv) return
+  editTarget.value.provider = key
+  editTarget.value.base_url = pv.base_url
+  editTarget.value.model    = pv.model
+}
+
+async function savePreset() {
+  editSaving.value = true
+  editError.value  = ''
   try {
-    await configStore.saveConfig({ ai: { ...llmDraft } })
-    llmSaved.value = true
-    setTimeout(() => { llmSaved.value = false }, 3000)
+    const body = { ...editTarget.value }
+    let res
+    if (editIsNew.value) {
+      res = await adminStore.authFetch('/api/v1/admin/agent/llm-presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    } else {
+      res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${body.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `保存失败（${res.status}）`)
+    }
+    editTarget.value = null
+    await fetchPresets()
+    showMsg('已保存')
   } catch (e) {
-    llmError.value = e.message
-    setTimeout(() => { llmError.value = '' }, 5000)
+    editError.value = e.message
   } finally {
-    llmSaving.value = false
+    editSaving.value = false
+  }
+}
+
+async function activatePreset(id) {
+  activatingId.value = id
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/activate`, { method: 'POST' })
+    if (!res.ok) throw new Error(`切换失败（${res.status}）`)
+    activePresetId.value = id
+    showMsg('已切换，即时生效')
+  } catch (e) {
+    showMsg(e.message, true)
+  } finally {
+    activatingId.value = null
+  }
+}
+
+async function deletePreset(id) {
+  if (!confirm('确定删除该预设？')) return
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `删除失败（${res.status}）`)
+    }
+    await fetchPresets()
+  } catch (e) {
+    showMsg(e.message, true)
+  }
+}
+
+async function testPreset(id) {
+  testingId.value = id
+  try {
+    const res  = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/test`, { method: 'POST' })
+    const data = await res.json()
+    showMsg(data.ok ? `连通正常（${data.status}）` : `连接失败（${data.status}）：${data.detail}`, !data.ok)
+  } catch (e) {
+    showMsg('测试失败：' + e.message, true)
+  } finally {
+    testingId.value = null
   }
 }
 
@@ -563,6 +830,34 @@ async function saveBehavior() {
     setTimeout(() => { behaviorError.value = '' }, 5000)
   } finally {
     behaviorSaving.value = false
+  }
+}
+
+// ── 联网搜索（Tavily）────────────────────────────────────────────────────────
+const searchDraft   = reactive({ ...configStore.cfg.search })
+const searchSaving  = ref(false)
+const searchSaved   = ref(false)
+const searchError   = ref('')
+
+function resetSearch() {
+  Object.assign(searchDraft, configStore.cfg.search)
+}
+
+async function saveSearch() {
+  searchSaving.value = true
+  searchSaved.value  = false
+  searchError.value  = ''
+  try {
+    await configStore.saveConfig({ search: { ...searchDraft } })
+    searchSaved.value = true
+    // key 保存后后端返回 ****，清空输入回到「不修改」态
+    Object.assign(searchDraft, configStore.cfg.search)
+    setTimeout(() => { searchSaved.value = false }, 3000)
+  } catch (e) {
+    searchError.value = e.message
+    setTimeout(() => { searchError.value = '' }, 5000)
+  } finally {
+    searchSaving.value = false
   }
 }
 
@@ -718,8 +1013,8 @@ const tooltipStyle = computed(() => {
 // ── 初始化 ────────────────────────────────────────────────────────────────
 onMounted(async () => {
   await configStore.fetchConfig()
-  Object.assign(llmDraft,   configStore.cfg.ai)
   Object.assign(agentDraft, configStore.cfg.agent)
+  fetchPresets()
 })
 </script>
 
@@ -811,7 +1106,7 @@ onMounted(async () => {
   border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
   font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.38);
   cursor: pointer; transition: all 0.15s;
-  display: inline-flex; flex-direction: column; align-items: center;
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
 }
 .toggle-btn::after {
   content: attr(data-label);
@@ -1076,4 +1371,124 @@ onMounted(async () => {
   cursor: pointer; transition: all 0.15s;
 }
 .clear-model-btn:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.7); }
+
+/* ── LLM 预设 ── */
+.presets-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 16px;
+}
+.presets-title { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.88); }
+.presets-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 4px; }
+.presets-loading { padding: 40px 0; text-align: center; font-size: 13px; color: rgba(255,255,255,0.25); }
+
+.preset-list { display: flex; flex-direction: column; gap: 8px; }
+
+.preset-card {
+  display: flex; align-items: center; gap: 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08); border-radius: 14px;
+  padding: 14px 16px;
+  transition: border-color 0.2s, background 0.2s;
+}
+.preset-card--active {
+  background: rgba(123,127,178,0.1);
+  border-color: rgba(123,127,178,0.3);
+}
+
+.preset-card-left { flex-shrink: 0; }
+.provider-dot {
+  display: block; width: 10px; height: 10px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.dot-openai    { background: #74c69d; }
+.dot-anthropic { background: #e08060; }
+.dot-qwen      { background: #60aedb; }
+.dot-deepseek  { background: #6090d8; }
+.dot-minimax   { background: #9590c4; }
+
+.preset-card-body { flex: 1; min-width: 0; }
+.preset-card-top  { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.preset-name { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.88); }
+.active-badge {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
+  padding: 1px 7px; border-radius: 20px;
+  background: rgba(123,127,178,0.25); color: rgba(169,164,216,0.9);
+  border: 1px solid rgba(123,127,178,0.35);
+}
+.provider-label {
+  font-size: 11px; color: rgba(255,255,255,0.28);
+  background: rgba(255,255,255,0.06); border-radius: 5px; padding: 1px 6px;
+}
+.preset-card-meta { display: flex; gap: 12px; }
+.preset-model { font-size: 12px; color: rgba(255,255,255,0.55); }
+.preset-key   { font-size: 12px; color: rgba(255,255,255,0.28); font-family: 'SF Mono', monospace; }
+
+.preset-card-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.pca-btn {
+  padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: 500;
+  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
+}
+.pca-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.75); }
+.pca-btn--activate {
+  border-color: rgba(123,127,178,0.3); background: rgba(123,127,178,0.1);
+  color: rgba(169,164,216,0.85);
+}
+.pca-btn--activate:hover { background: rgba(123,127,178,0.2); color: rgba(169,164,216,1); }
+.pca-btn--del { color: rgba(200,100,100,0.7); }
+.pca-btn--del:hover { background: rgba(200,80,80,0.12); color: rgba(220,100,100,0.9); }
+.pca-btn--testing, .pca-btn--activating { opacity: 0.6; cursor: default; }
+
+.llm-msg {
+  margin-top: 12px; padding: 10px 14px; border-radius: 10px;
+  font-size: 13px; color: #5ab899;
+  background: rgba(90,184,153,0.1); border: 1px solid rgba(90,184,153,0.2);
+}
+.llm-msg--error {
+  color: #e07878;
+  background: rgba(220,100,100,0.1); border-color: rgba(220,100,100,0.2);
+}
+
+/* ── 编辑 Modal ── */
+.modal-mask {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-box {
+  width: 480px; max-width: 92vw;
+  background: rgba(22,22,34,0.97);
+  backdrop-filter: blur(32px); -webkit-backdrop-filter: blur(32px);
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 18px;
+  padding: 28px 28px 22px;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+}
+.modal-title { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.88); margin-bottom: 20px; }
+.modal-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.modal-field label { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.07em; }
+.modal-input {
+  width: 100%; padding: 9px 12px; border-radius: 9px;
+  background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.1);
+  font-size: 13px; color: rgba(255,255,255,0.82); outline: none;
+  transition: border-color 0.15s; box-sizing: border-box;
+}
+.modal-input:focus { border-color: rgba(123,127,178,0.45); }
+.modal-input::placeholder { color: rgba(255,255,255,0.2); }
+.modal-actions {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 20px; padding-top: 16px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+}
+.modal-actions .save-hint { flex: 1; }
+.modal-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+.modal-field-row .modal-field { margin-bottom: 0; }
+.modal-field--row { flex-direction: row; align-items: center; justify-content: space-between; }
+.thinking-label { display: flex; flex-direction: column; gap: 3px; }
+.thinking-label > span:first-child { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.07em; }
+.thinking-hint { font-size: 11px; color: rgba(255,255,255,0.2); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.preset-meta-item { font-size: 12px; color: rgba(255,255,255,0.35); }
+.preset-meta-think { color: rgba(149,144,196,0.85); background: rgba(149,144,196,0.1); padding: 1px 6px; border-radius: 4px; }
+.modal-input[type="number"] { -moz-appearance: textfield; }
+.modal-input[type="number"]::-webkit-inner-spin-button,
+.modal-input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 </style>

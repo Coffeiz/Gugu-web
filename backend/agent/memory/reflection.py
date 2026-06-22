@@ -9,19 +9,28 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime
+from pathlib import Path
 
 from agent.memory import store
 
 # 保持后台任务引用，防止被 GC（fire-and-forget 必须）
 _bg_tasks: set = set()
 
-_SYS = (
-    "你在帮 AI 助理「咕咕」维护对用户的长期记忆。读这次对话，提炼出**值得长期记住**的、"
-    "关于用户本人的新信息：身份/职业、稳定偏好、习惯、在意的事、正在做的事的背景等。"
-    "规则：①只记关于用户的稳定信息，不记一次性琐事；②已知事实里有的不要重复；"
-    "③没有值得记的就返回空列表。严格只输出 JSON，格式："
-    '{"facts": ["...", "..."], "daily": "一句话总结本次对话(没有就空字符串)"}'
+_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+# 文件缺失时的兜底（正常走 prompts/reflection.md，可热编辑 / Admin 在线改）
+_SYS_FALLBACK = (
+    "你在帮咕咕维护对用户的长期记忆。只记关于用户本人的稳定信息（身份/偏好/习惯），"
+    "不记推测、世界常识、一时状态，不评判用户，宁少勿多、没有就返回空。"
+    '严格只输出 JSON：{"facts": ["..."], "daily": "一句话总结(没有就空字符串)"}'
 )
+
+
+def _load_sys() -> str:
+    """每次现读 reflection.md（热生效）；缺失则用兜底。"""
+    try:
+        return (_PROMPTS_DIR / "reflection.md").read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return _SYS_FALLBACK
 
 
 def schedule(user_id, user_name, user_msg, assistant_reply, settings) -> None:
@@ -55,19 +64,20 @@ async def _extract(user_name, user_msg, assistant_reply, existing_facts, setting
         f"已知事实：\n{existing_facts or '（暂无）'}\n\n"
         f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n请提炼。"
     )
+    sys = _load_sys()
     use_anthropic = (
         settings.ai.provider == "minimax"
         or "anthropic" in settings.ai.base_url.lower()
     )
     text = (
-        await _call_anthropic(user, settings)
+        await _call_anthropic(sys, user, settings)
         if use_anthropic
-        else await _call_openai(user, settings)
+        else await _call_openai(sys, user, settings)
     )
     return _parse_json(text)
 
 
-async def _call_anthropic(user: str, settings) -> str:
+async def _call_anthropic(sys: str, user: str, settings) -> str:
     import httpx
     from anthropic import AsyncAnthropic
 
@@ -78,7 +88,7 @@ async def _call_anthropic(user: str, settings) -> str:
     )
     resp = await client.messages.create(
         model=settings.ai.model,
-        system=_SYS,
+        system=sys,
         messages=[{"role": "user", "content": user}],
         max_tokens=500,
         temperature=0.3,
@@ -86,7 +96,7 @@ async def _call_anthropic(user: str, settings) -> str:
     return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
 
 
-async def _call_openai(user: str, settings) -> str:
+async def _call_openai(sys: str, user: str, settings) -> str:
     import httpx
     from openai import AsyncOpenAI
 
@@ -97,7 +107,7 @@ async def _call_openai(user: str, settings) -> str:
     )
     resp = await client.chat.completions.create(
         model=settings.ai.model,
-        messages=[{"role": "system", "content": _SYS}, {"role": "user", "content": user}],
+        messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
         max_tokens=500,
         temperature=0.3,
     )

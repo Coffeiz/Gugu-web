@@ -142,6 +142,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             etype = evt.get("type")
             if etype == "_new_round":
                 san = sanitize.StreamSanitizer()  # 新一轮重置，防止上轮 _cut 污染
+                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"  # 通知前端，显示等待指示
                 continue
             if etype == "_usage":
                 usage_tokens["input"]  = evt["input"]
