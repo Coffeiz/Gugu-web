@@ -191,7 +191,7 @@
               :class="{ active: activeProfile === p.profile }"
               :data-label="p.profile"
               @click="switchProfile(p.profile)"
-            >{{ p.profile === 'persona' ? '人格' : p.profile === 'reflection' ? '记忆反思' : p.profile }}</button>
+            >{{ ({persona:'人格', reflection:'记忆反思', compress:'记忆压缩'})[p.profile] || p.profile }}</button>
           </div>
         </div>
 
@@ -205,6 +205,12 @@
           style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;
                  background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
           ⚠️ 这是<strong>记忆反思提炼词</strong>，决定咕咕每次对话后从中记住什么。改它会影响记忆质量；需保持输出 JSON 格式 <code>{"facts":[...],"daily":"..."}</code>。
+        </div>
+
+        <div v-if="activeProfile === 'compress'" class="persona-caution"
+          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;
+                 background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
+          ⚠️ 这是<strong>记忆压缩提炼词</strong>，决定老的近期记忆怎么沉淀进长期记忆。改它会影响长期记忆质量；需保持输出 JSON 格式 <code>{"memory":"..."}</code>。
         </div>
 
         <div class="prompt-editor-wrap">

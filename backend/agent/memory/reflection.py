@@ -7,11 +7,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import datetime
 from pathlib import Path
 
 from agent.memory import store
+from agent.memory._llm import complete_json
 
 # 保持后台任务引用，防止被 GC（fire-and-forget 必须）
 _bg_tasks: set = set()
@@ -57,6 +57,9 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> No
                 await store.write_facts(user_id, new_text)
         if daily_note:
             await store.append_daily(user_id, datetime.now().strftime("%Y-%m-%d"), daily_note)
+            # 写完 daily 顺带检查压缩：攒够则把最老的沉淀进 memory.md
+            from agent.memory import compress
+            await compress.compact(user_id, settings)
     except Exception:
         pass  # 反思是锦上添花，任何失败都不能影响对话
 
@@ -67,69 +70,4 @@ async def _extract(user_name, user_msg, assistant_reply, existing_facts, setting
         f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n"
         f"请输出更新后的完整事实列表（保留仍成立的、修正矛盾、合并重复；没有新信息就原样返回，别清空）。"
     )
-    sys = _load_sys()
-    use_anthropic = (
-        settings.ai.provider == "minimax"
-        or "anthropic" in settings.ai.base_url.lower()
-    )
-    text = (
-        await _call_anthropic(sys, user, settings)
-        if use_anthropic
-        else await _call_openai(sys, user, settings)
-    )
-    return _parse_json(text)
-
-
-async def _call_anthropic(sys: str, user: str, settings) -> str:
-    import httpx
-    from anthropic import AsyncAnthropic
-
-    client = AsyncAnthropic(
-        api_key=settings.ai.api_key or "dummy",
-        base_url=settings.ai.base_url,
-        http_client=httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0)),
-    )
-    resp = await client.messages.create(
-        model=settings.ai.model,
-        system=sys,
-        messages=[{"role": "user", "content": user}],
-        max_tokens=500,
-        temperature=0.3,
-    )
-    return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-
-
-async def _call_openai(sys: str, user: str, settings) -> str:
-    import httpx
-    from openai import AsyncOpenAI
-
-    client = AsyncOpenAI(
-        api_key=settings.ai.api_key or "dummy",
-        base_url=settings.ai.base_url,
-        timeout=httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0),
-    )
-    resp = await client.chat.completions.create(
-        model=settings.ai.model,
-        messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
-        max_tokens=500,
-        temperature=0.3,
-    )
-    return resp.choices[0].message.content or ""
-
-
-def _parse_json(text: str) -> dict:
-    """从模型输出里抠出 JSON 对象，容忍 ```json 围栏与前后杂字。"""
-    if not text:
-        return {}
-    s = text.strip()
-    if "```" in s:
-        s = s.split("```")[1]
-        if s.startswith("json"):
-            s = s[4:]
-    lo, hi = s.find("{"), s.rfind("}")
-    if lo == -1 or hi == -1:
-        return {}
-    try:
-        return json.loads(s[lo:hi + 1])
-    except Exception:
-        return {}
+    return await complete_json(_load_sys(), user, settings)

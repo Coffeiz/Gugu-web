@@ -83,12 +83,15 @@ def build(profile: str, user_name: str, projects: list, events: list,
 
 
 def _memory_block(memory: dict) -> str:
-    """咕咕对用户的记忆，facts/daily 都空时返回空串（不注入）。"""
-    facts = (memory.get("facts") or "").strip()
-    daily = (memory.get("daily") or "").strip()
+    """咕咕对用户的记忆，全空时返回空串（不注入）。顺序：稳定事实 → 长期记忆 → 最近。"""
+    facts   = (memory.get("facts") or "").strip()
+    longterm = (memory.get("memory") or "").strip()
+    daily   = (memory.get("daily") or "").strip()
     parts = []
     if facts:
         parts.append("## 我对你的了解\n\n" + facts)
+    if longterm:
+        parts.append("## 长期记忆\n\n" + longterm)
     if daily:
         parts.append("## 最近的记忆\n\n" + daily)
     return "\n\n".join(parts)

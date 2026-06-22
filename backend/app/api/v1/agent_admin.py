@@ -88,8 +88,8 @@ PLACEHOLDERS = [
 ]
 
 
-# 非对话 profile 的特殊可编辑 prompt：persona（人格）、reflection（记忆反思提炼词）
-SPECIAL_PROMPTS = ["persona", "reflection"]
+# 非对话 profile 的特殊可编辑 prompt：persona（人格）、reflection（反思提炼）、compress（记忆压缩）
+SPECIAL_PROMPTS = ["persona", "reflection", "compress"]
 
 
 def _prompt_path(profile: str) -> Path:
@@ -110,14 +110,15 @@ async def list_prompts():
         "size": pp.stat().st_size if pp.exists() else 0,
         "is_persona": True,
     })
-    # reflection：记忆反思提炼词，非对话 profile，谨慎修改
-    rp = PROMPTS_DIR / "reflection.md"
-    profiles.append({
-        "profile": "reflection",
-        "exists": rp.exists(),
-        "size": rp.stat().st_size if rp.exists() else 0,
-        "is_persona": True,
-    })
+    # reflection / compress：记忆相关提炼词，非对话 profile，谨慎修改
+    for sp in ("reflection", "compress"):
+        spp = PROMPTS_DIR / f"{sp}.md"
+        profiles.append({
+            "profile": sp,
+            "exists": spp.exists(),
+            "size": spp.stat().st_size if spp.exists() else 0,
+            "is_persona": True,
+        })
     for name in PROFILES:
         p = PROMPTS_DIR / f"{name}.md"
         profiles.append({

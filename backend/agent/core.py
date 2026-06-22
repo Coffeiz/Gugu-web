@@ -43,17 +43,25 @@ class LLMRunner:
             http_client=httpx.AsyncClient(timeout=_timeout),
         )
 
-        total_in = total_out = 0
+        total_in = total_out = total_cache_read = 0
         max_tokens  = settings.ai.max_tokens
         temperature = settings.ai.temperature
         thinking_val = getattr(settings.ai, "thinking", "disabled")
         thinking_param = {"thinking": {"type": thinking_val}} if thinking_val == "adaptive" else {}
 
+        # prompt 缓存：把 system（含人格/记忆/上下文）作为稳定前缀缓存。
+        # Anthropic 顺序 tools→system→messages，断点打在 system 即缓存 tools+system，
+        # 多轮工具循环只重算新增 messages，命中后读取便宜 ~90%。
+        system_param = (
+            [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
+            if system_text else system_text
+        )
+
         for _ in range(MAX_ROUNDS):
             # 单次流式调用：既实时流式输出文本，又能拿到 tool_use（无双调用、无敷衍）
             async with client.messages.stream(
                 model=settings.ai.model,
-                system=system_text,
+                system=system_param,
                 messages=messages,
                 tools=tools,
                 max_tokens=max_tokens,
@@ -66,6 +74,7 @@ class LLMRunner:
 
             total_in  += final.usage.input_tokens
             total_out += final.usage.output_tokens
+            total_cache_read += getattr(final.usage, "cache_read_input_tokens", 0) or 0
 
             tool_blocks = [b for b in final.content if b.type == "tool_use"]
             if tool_blocks:
@@ -91,7 +100,7 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
 
-            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out})}\n\n"
+            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out, 'cache_read': total_cache_read})}\n\n"
             return
 
         yield f"data: {json.dumps({'type': 'error', 'detail': '工具调用轮次超限'})}\n\n"
