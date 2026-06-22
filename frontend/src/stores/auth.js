@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAudioStore } from './audio'
+import { authApi } from '@/services/api'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const TOKEN_KEY = 'user_token'
@@ -65,6 +66,18 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  async function updateProfile(fields) {
+    const updated = await authApi.updateProfile(fields)
+    user.value = updated
+    return updated
+  }
+
+  async function uploadAvatar(file) {
+    const updated = await authApi.uploadAvatar(file)
+    user.value = updated
+    return updated
+  }
+
   function logout() {
     useAudioStore().stop()
     token.value = ''
@@ -72,5 +85,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem(TOKEN_KEY)
   }
 
-  return { token, user, isLoggedIn, register, login, fetchMe, logout }
+  return { token, user, isLoggedIn, register, login, fetchMe, updateProfile, uploadAvatar, logout }
 })

@@ -18,6 +18,7 @@ langchain-community>=0.2.0
 oss2>=2.18.0
 # Utils
 python-dotenv>=1.0.0
+uuid6>=2024.1.12
 email-validator>=2.0.0
 pendulum>=3.0.0
 Pillow>=10.0.0

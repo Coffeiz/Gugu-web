@@ -71,27 +71,27 @@
 
     <!-- 用户卡片 -->
     <div class="user-card" :class="{ open: settingsOpen }" @click.stop="settingsOpen = !settingsOpen">
-      <div class="avatar">{{ userInitial }}</div>
+      <div class="avatar">
+        <img v-if="authStore.user?.avatarUrl" :src="authStore.user.avatarUrl" class="avatar-img" />
+        <template v-else>{{ userInitial }}</template>
+      </div>
       <div class="user-info">
-        <div class="user-name">{{ authStore.user?.username ?? '—' }}</div>
+        <div class="user-name">{{ userLabel }}</div>
       </div>
       <PhGear class="settings-icon" :size="14" />
 
       <!-- 设置弹窗 -->
       <Transition name="popup">
         <div v-if="settingsOpen" class="settings-popup" @click.stop>
-          <div class="settings-item">
-            <PhUser :size="14" />
-            个人资料
-          </div>
-          <div class="settings-item" @click="$router.push('/admin/login'); settingsOpen = false">
-            <PhShieldCheck :size="14" />
-            管理后台
-          </div>
-          <div class="settings-item danger" @click="handleLogout">
-            <PhSignOut :size="14" />
+          <button class="popup-menu-item" @click="uiStore.openProfile = true; settingsOpen = false">
+            <PhUser :size="13" weight="bold" />
+            个人设置
+          </button>
+          <div class="popup-menu-sep"></div>
+          <button class="popup-menu-item danger" @click="handleLogout">
+            <PhSignOut :size="13" weight="bold" />
             退出登录
-          </div>
+          </button>
         </div>
       </Transition>
     </div>
@@ -153,7 +153,6 @@ import {
   PhBell,
   PhGear,
   PhUser,
-  PhShieldCheck,
   PhSignOut,
 } from '@phosphor-icons/vue'
 
@@ -162,9 +161,8 @@ const projectStore = useProjectStore()
 const uiStore      = useUiStore()
 const authStore    = useAuthStore()
 
-const userInitial = computed(() =>
-  (authStore.user?.username?.[0] ?? '?').toUpperCase()
-)
+const userLabel = computed(() => authStore.user?.displayName || authStore.user?.username || '—')
+const userInitial = computed(() => (userLabel.value[0] ?? '?').toUpperCase())
 
 function handleLogout() {
   authStore.logout()
@@ -287,28 +285,13 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
   background: linear-gradient(135deg, #7b7fb2, #7ab8c8);
   display: flex; align-items: center; justify-content: center;
   font-size: 13px; font-weight: 700; color: white; flex-shrink: 0;
+  overflow: hidden;
 }
+.avatar-img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
 .user-info { flex: 1; overflow-x: hidden; }
 .user-name { font-size: 13px; font-weight: 600; line-height: 1.5; }
 .settings-icon { color: var(--text-secondary); flex-shrink: 0; opacity: 0.6; }
 
-.settings-popup {
-  position: absolute; bottom: calc(100% + 8px); left: 0; right: 0;
-  background: rgba(245,245,250,0.88);
-  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255,255,255,0.7);
-  border-radius: var(--radius-md);
-  box-shadow: var(--glass-shadow-lg);
-  overflow: hidden; z-index: 100;
-}
-.settings-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px; font-size: 13px;
-  color: var(--text-secondary); cursor: pointer; transition: background 0.15s;
-}
-.settings-item svg { opacity: 0.65; flex-shrink: 0; }
-.settings-item:hover { background: rgba(123,127,178,0.08); color: rgba(30,32,40,0.82); }
-.settings-item.danger:hover { background: rgba(176,120,88,0.08); color: var(--color-warning); }
 
 .popup-enter-active, .popup-leave-active { transition: opacity 0.15s, transform 0.15s; }
 .popup-enter-from, .popup-leave-to { opacity: 0; transform: translateY(6px); }
@@ -334,6 +317,17 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 
 <!-- 通知弹窗样式全局（Teleport 到 body） -->
 <style>
+.settings-popup {
+  position: absolute; bottom: calc(100% + 8px); left: 0; right: 0;
+  z-index: 100; padding: 4px;
+  background: rgba(255,255,255,0.44);
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255,255,255,0.72);
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.95), 0 4px 16px rgba(0,0,0,0.08);
+  user-select: none;
+}
+
 .notif-popup {
   background: rgba(238,240,246,0.96);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);

@@ -3,6 +3,8 @@ import { ref, watch } from 'vue'
 
 const AUDIO_FILE_KEY = 'gugu_audio_file'
 
+const bc = new BroadcastChannel('gugu_audio')
+
 export const useAudioStore = defineStore('audio', () => {
   const file    = ref(null)   // { id, displayName, ext }
   const blobUrl = ref(null)
@@ -19,8 +21,12 @@ export const useAudioStore = defineStore('audio', () => {
     if (blobUrl.value) { URL.revokeObjectURL(blobUrl.value); blobUrl.value = null }
   }
 
+  // 其他 tab 开始播放时，停掉本 tab
+  bc.onmessage = () => stop()
+
   async function play(f) {
     if (file.value?.id === f.id) return  // 同一首不重新加载
+    bc.postMessage('playing')
     revoke()
     file.value    = f
     loading.value = true

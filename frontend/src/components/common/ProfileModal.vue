@@ -1,0 +1,476 @@
+<template>
+  <BaseModal :show="show" width="900px" height="600px" @close="$emit('close')">
+    <div class="pm-layout">
+
+      <!-- 左侧导航栏 -->
+      <div class="pm-nav">
+        <div class="pm-user-block">
+          <div class="pm-avatar" @click="triggerAvatarUpload" title="点击更换头像">
+            <img v-if="authStore.user?.avatarUrl" :src="authStore.user.avatarUrl" class="pm-avatar-img" />
+            <template v-else>{{ initial }}</template>
+            <div class="pm-avatar-overlay"><PhCamera :size="13" weight="bold" /></div>
+          </div>
+          <input ref="avatarInput" type="file" accept="image/*" style="display:none" @change="onAvatarFile" />
+          <div class="pm-user-info">
+            <div class="pm-name">{{ displayLabel }}</div>
+            <div class="pm-email">{{ authStore.user?.email ?? '' }}</div>
+          </div>
+        </div>
+
+        <div class="pm-nav-divider"></div>
+
+        <template v-for="item in navItems" :key="item.key">
+          <div v-if="item.divider" class="pm-nav-divider"></div>
+          <button
+            v-else
+            class="pm-nav-item"
+            :class="{ active: activeNav === item.key }"
+            @click="activeNav = item.key"
+          >
+            <component :is="item.icon" :size="14" weight="bold" />
+            {{ item.label }}
+          </button>
+        </template>
+
+        <div class="pm-nav-spacer"></div>
+
+        <button class="pm-logout" @click="handleLogout">
+          <PhSignOut :size="13" weight="bold" />
+          退出登录
+        </button>
+      </div>
+
+      <!-- 右侧内容区 -->
+      <div class="pm-content">
+        <div class="pm-content-header">
+          <span class="pm-content-title">{{ currentNavLabel }}</span>
+          <button class="popup-close-btn" @click="$emit('close')">
+            <PhX :size="13" weight="bold" />
+          </button>
+        </div>
+
+        <div class="pm-content-body">
+
+          <!-- 个人信息 -->
+          <template v-if="activeNav === 'info'">
+            <div class="pm-section">
+              <div class="pm-section-label">个人资料</div>
+              <div class="pm-field">
+                <label>昵称</label>
+                <input v-model="displayName" class="form-input" :class="{ modified: displayName !== (authStore.user?.displayName ?? '') }" placeholder="填写昵称" />
+              </div>
+              <div class="pm-footer">
+                <span v-if="infoMsg" class="pm-msg" :class="infoMsgType">{{ infoMsg }}</span>
+                <button class="pm-save-btn" :disabled="displayName === (authStore.user?.displayName ?? '') || infoSaving" @click="saveInfo">
+                  {{ infoSaving ? '保存中…' : '保存' }}
+                </button>
+              </div>
+            </div>
+
+            <div class="pm-sep"></div>
+
+            <div class="pm-section">
+              <div class="pm-section-label">账号信息</div>
+              <div class="pm-field">
+                <label>用户名</label>
+                <div class="pm-static">{{ authStore.user?.username ?? '—' }}</div>
+              </div>
+              <div class="pm-field">
+                <label>邮箱</label>
+                <div class="pm-static">{{ authStore.user?.email ?? '—' }}</div>
+              </div>
+              <div class="pm-field">
+                <label>UID</label>
+                <div class="pm-static pm-uid">{{ authStore.user?.id ? authStore.user.id.replace(/-/g,'').slice(0,12).toUpperCase() : '—' }}</div>
+              </div>
+              <div class="pm-field">
+                <label>加入时间</label>
+                <div class="pm-static">{{ authStore.user?.createdAt ?? '—' }}</div>
+              </div>
+            </div>
+          </template>
+
+          <!-- 账号设置 -->
+          <template v-if="activeNav === 'account'">
+            <div class="pm-section">
+              <div class="pm-section-label">修改密码</div>
+              <div class="pm-field">
+                <label>当前密码</label>
+                <input v-model="currentPwd" type="password" class="form-input" placeholder="••••••••" />
+              </div>
+              <div class="pm-field">
+                <label>新密码</label>
+                <input v-model="newPwd" type="password" class="form-input" placeholder="至少 6 位" />
+              </div>
+              <div class="pm-field">
+                <label>确认密码</label>
+                <input v-model="confirmPwd" type="password" class="form-input" placeholder="再次输入" />
+              </div>
+              <div class="pm-footer">
+                <span v-if="pwdMsg" class="pm-msg" :class="pwdMsgType">{{ pwdMsg }}</span>
+                <button class="pm-save-btn" :disabled="!currentPwd || !newPwd || !confirmPwd || pwdSaving" @click="savePwd">
+                  {{ pwdSaving ? '保存中…' : '修改密码' }}
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- 咕咕设置 -->
+          <template v-if="activeNav === 'gugu'">
+            <div class="pm-section">
+              <div class="pm-section-label">回复风格</div>
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">语气</span>
+                  <span class="pm-field-hint">咕咕回复时的语气风格</span>
+                </div>
+                <div class="pm-coming">咕了</div>
+              </div>
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">回复长度</span>
+                  <span class="pm-field-hint">咕咕回复内容的详细程度</span>
+                </div>
+                <div class="pm-coming">咕了</div>
+              </div>
+            </div>
+
+            <div class="pm-sep"></div>
+
+            <div class="pm-section">
+              <div class="pm-section-label">接入咕咕</div>
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">即时通讯</span>
+                  <span class="pm-field-hint">接入即时通讯工具，随时随地和咕咕对话</span>
+                </div>
+                <div class="pm-coming">咕了</div>
+              </div>
+            </div>
+          </template>
+
+          <!-- 偏好设置 -->
+          <template v-if="activeNav === 'prefs'">
+            <div class="pm-section">
+              <div class="pm-section-label">外观</div>
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">主题</span>
+                  <span class="pm-field-hint">界面颜色风格</span>
+                </div>
+                <div class="pm-coming">咕了</div>
+              </div>
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">语言</span>
+                  <span class="pm-field-hint">界面显示语言</span>
+                </div>
+                <div class="pm-static">简体中文</div>
+              </div>
+            </div>
+
+            <div class="pm-sep"></div>
+
+            <div class="pm-section">
+              <div class="pm-section-label">工作台</div>
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">默认视图</span>
+                  <span class="pm-field-hint">打开应用时首先显示的页面</span>
+                </div>
+                <div class="pm-coming">咕了</div>
+              </div>
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">项目排序</span>
+                  <span class="pm-field-hint">项目列表的默认排序方式</span>
+                </div>
+                <div class="pm-coming">咕了</div>
+              </div>
+            </div>
+
+            <div class="pm-sep"></div>
+
+            <div class="pm-section">
+              <div class="pm-section-label">日历</div>
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">一周起始日</span>
+                  <span class="pm-field-hint">日历每周从哪天开始</span>
+                </div>
+                <div class="pm-coming">咕了</div>
+              </div>
+            </div>
+
+            <div class="pm-sep"></div>
+
+            <div class="pm-section">
+              <div class="pm-section-label">通知</div>
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">项目截止提醒</span>
+                  <span class="pm-field-hint">截止前 3 天发送通知</span>
+                </div>
+                <div class="pm-coming">咕了</div>
+              </div>
+            </div>
+          </template>
+
+        </div>
+      </div>
+    </div>
+  </BaseModal>
+</template>
+
+<script setup>
+import { ref, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import BaseModal from '@/components/common/BaseModal.vue'
+import { PhX, PhSignOut, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird } from '@phosphor-icons/vue'
+
+const props = defineProps({ show: Boolean })
+const emit  = defineEmits(['close'])
+
+const router    = useRouter()
+const authStore = useAuthStore()
+
+const displayLabel = computed(() => authStore.user?.displayName || authStore.user?.username || '—')
+const initial = computed(() => (displayLabel.value[0] ?? '?').toUpperCase())
+
+const navItems = [
+  { key: 'info',    label: '个人信息', icon: PhUser },
+  { key: 'account', label: '账号设置', icon: PhShieldCheck },
+  { key: 'prefs',   label: '偏好设置', icon: PhSliders },
+  { divider: true },
+  { key: 'gugu',    label: '咕咕设置', icon: PhBird },
+]
+const activeNav = ref('info')
+const currentNavLabel = computed(() => navItems.find(n => !n.divider && n.key === activeNav.value)?.label ?? '')
+
+// 打开时重置
+watch(() => props.show, v => {
+  if (v) {
+    activeNav.value    = 'info'
+    displayName.value  = authStore.user?.displayName ?? ''
+    infoMsg.value      = ''
+    pwdMsg.value       = ''
+    currentPwd.value   = newPwd.value = confirmPwd.value = ''
+  }
+})
+
+// 个人信息
+const displayName = ref(authStore.user?.displayName ?? '')
+const infoSaving  = ref(false)
+const infoMsg     = ref('')
+const infoMsgType = ref('ok')
+
+watch(() => authStore.user?.displayName, v => { displayName.value = v ?? '' })
+
+async function saveInfo() {
+  infoSaving.value  = true
+  infoMsg.value     = ''
+  try {
+    await authStore.updateProfile({ displayName: displayName.value })
+    infoMsg.value     = '保存成功'
+    infoMsgType.value = 'ok'
+  } catch (e) {
+    infoMsg.value     = e.message ?? '保存失败'
+    infoMsgType.value = 'err'
+  } finally {
+    infoSaving.value = false
+  }
+}
+
+// 账号设置
+const currentPwd  = ref('')
+const newPwd      = ref('')
+const confirmPwd  = ref('')
+const pwdSaving   = ref(false)
+const pwdMsg      = ref('')
+const pwdMsgType  = ref('ok')
+
+async function savePwd() {
+  pwdMsg.value = ''
+  if (newPwd.value.length < 6)           { pwdMsg.value = '新密码至少 6 位'; pwdMsgType.value = 'err'; return }
+  if (newPwd.value !== confirmPwd.value) { pwdMsg.value = '两次密码不一致';  pwdMsgType.value = 'err'; return }
+  pwdSaving.value = true
+  try {
+    await authStore.updateProfile({ currentPassword: currentPwd.value, newPassword: newPwd.value })
+    pwdMsg.value     = '密码已更新'
+    pwdMsgType.value = 'ok'
+    currentPwd.value = newPwd.value = confirmPwd.value = ''
+  } catch (e) {
+    pwdMsg.value     = e.message ?? '修改失败'
+    pwdMsgType.value = 'err'
+  } finally {
+    pwdSaving.value = false
+  }
+}
+
+// 头像上传
+const avatarInput = ref(null)
+function triggerAvatarUpload() { avatarInput.value?.click() }
+async function onAvatarFile(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  try { await authStore.uploadAvatar(file) }
+  catch (err) { console.error('头像上传失败', err) }
+  e.target.value = ''
+}
+
+function handleLogout() {
+  authStore.logout()
+  router.push('/login')
+  emit('close')
+}
+</script>
+
+<style scoped>
+/* 让 bm-card 背景透明，边缘倒角与 glass-card 一致 */
+:deep(.bm-card) {
+  background: transparent;
+  box-shadow: 0 24px 64px rgba(20,25,50,0.2),
+              inset 0 1px 0 rgba(255,255,255,0.95),
+              inset 1px 0 0 rgba(255,255,255,0.55);
+}
+
+.pm-layout {
+  display: grid;
+  grid-template-columns: 210px 1fr;
+  height: 100%;
+}
+
+/* 左侧导航 — 与 AppSidebar 同风格 */
+.pm-nav {
+  display: flex; flex-direction: column;
+  padding: 20px 14px;
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  border-right: 1px solid rgba(255,255,255,0.62);
+  box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
+  gap: 2px;
+}
+
+.pm-user-block {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 6px 12px;
+}
+.pm-avatar {
+  width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0;
+  background: linear-gradient(135deg, #7b7fb2, #7ab8c8);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; font-weight: 700; color: white;
+  position: relative; cursor: pointer; overflow: hidden;
+}
+.pm-avatar-img {
+  width: 100%; height: 100%; object-fit: cover; border-radius: 50%;
+}
+.pm-avatar-overlay {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: rgba(0,0,0,0.38);
+  display: flex; align-items: center; justify-content: center;
+  color: white; opacity: 0; transition: opacity 0.15s;
+}
+.pm-avatar:hover .pm-avatar-overlay { opacity: 1; }
+.pm-user-info { min-width: 0; }
+.pm-name  { font-size: 13px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-email { font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.pm-nav-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
+  margin: 6px 4px;
+}
+
+.pm-nav-item {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; padding: 10px 12px; border-radius: var(--radius-sm);
+  border: 1px solid transparent; background: none;
+  font-size: 14px; font-family: var(--font-sans);
+  color: rgba(30,32,40,0.62); cursor: pointer; text-align: left;
+  transition: all 0.15s;
+}
+.pm-nav-item:hover { background: rgba(123,127,178,0.08); color: rgba(30,32,40,0.82); }
+.pm-nav-item.active {
+  background: rgba(255,255,255,0.38); color: var(--color-primary);
+  font-weight: 700; border-color: rgba(255,255,255,0.62);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
+}
+
+.pm-nav-spacer { flex: 1; }
+
+.pm-logout {
+  display: flex; align-items: center; gap: 9px;
+  padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid transparent;
+  cursor: pointer; font-size: 14px; font-family: var(--font-sans);
+  color: rgba(30,32,40,0.62); background: none; width: 100%;
+  transition: all 0.15s;
+}
+.pm-logout:hover { background: rgba(176,120,88,0.08); color: #b07858; border-color: rgba(176,120,88,0.15); }
+
+/* 右侧内容 */
+.pm-content {
+  display: flex; flex-direction: column; min-height: 0;
+  background: rgba(238,240,246,0.96);
+  backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98);
+}
+
+.pm-content-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 26px 16px;
+  border-bottom: 1px solid rgba(0,0,0,0.06); flex-shrink: 0;
+}
+.pm-content-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+
+.pm-content-body { flex: 1; overflow-y: auto; padding: 6px 0; }
+
+.pm-section { padding: 20px 26px; display: flex; flex-direction: column; gap: 14px; }
+.pm-section-label {
+  font-size: 11px; font-weight: 700; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 2px;
+}
+.pm-sep { height: 1px; background: rgba(0,0,0,0.06); margin: 0 26px; }
+
+.pm-field {
+  display: grid; grid-template-columns: 80px 1fr; align-items: center; gap: 14px;
+}
+.pm-field label { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+
+.pm-field-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.pm-field-desc { display: flex; flex-direction: column; gap: 2px; }
+.pm-field-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.pm-field-hint { font-size: 12px; color: var(--text-secondary); }
+
+.form-input.modified { border-color: rgba(123,127,178,0.4); }
+.pm-uid { color: var(--text-secondary); }
+.pm-static {
+  font-size: 13px; color: var(--text-secondary); padding: 7px 2px;
+}
+.pm-coming {
+  font-size: 11px; font-weight: 600; color: rgba(30,32,40,0.3);
+  background: rgba(0,0,0,0.05); padding: 3px 10px; border-radius: 20px;
+}
+
+.pm-footer {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 8px; padding-top: 4px;
+}
+.pm-msg { font-size: 12px; margin-right: auto; }
+.pm-msg.ok  { color: #3a8870; }
+.pm-msg.err { color: #c85a5a; }
+
+.pm-save-btn {
+  padding: 7px 22px; border-radius: 8px; border: none;
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  color: white; font-size: 13px; font-weight: 600;
+  font-family: var(--font-sans); cursor: pointer;
+  box-shadow: 0 2px 8px rgba(123,127,178,0.28);
+  transition: opacity 0.15s, transform 0.15s;
+}
+.pm-save-btn:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+.pm-save-btn:disabled { opacity: 0.35; cursor: default; transform: none; }
+</style>

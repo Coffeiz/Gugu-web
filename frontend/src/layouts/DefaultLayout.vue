@@ -54,6 +54,9 @@
     <!-- 文件预览 Modal（PDF / 文本 / 音频） -->
     <FilePreviewModal :show="!!previewStore.singleFile" :file="previewStore.singleFile" @close="previewStore.close" />
 
+    <!-- 个人资料 Modal -->
+    <ProfileModal :show="uiStore.openProfile" @close="uiStore.openProfile = false" />
+
     <!-- 浮动预览窗口（图片 / 视频，可多开） -->
     <Teleport to="body">
       <FloatPreviewWindow
@@ -79,6 +82,7 @@ import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'
 import ProjectModal    from '@/views/Projects/components/ProjectModal.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
 import FilePreviewModal    from '@/components/common/FilePreviewModal.vue'
+import ProfileModal        from '@/components/common/ProfileModal.vue'
 import FloatPreviewWindow  from '@/components/common/FloatPreviewWindow.vue'
 import { usePreviewStore, isAudioExt } from '@/stores/preview'
 import { useAudioStore } from '@/stores/audio'

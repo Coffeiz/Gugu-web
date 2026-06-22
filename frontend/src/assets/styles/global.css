@@ -186,3 +186,19 @@ body {
   border-color: rgba(123,127,178,0.4);
   box-shadow: 0 0 0 3px rgba(123,127,178,0.14);
 }
+
+/* 通用表单输入框 */
+.form-input {
+  width: 100%; padding: 8px 12px; border-radius: 9px;
+  border: 1px solid rgba(255,255,255,0.75);
+  background: rgba(255,255,255,0.68);
+  font-size: 13px; font-family: var(--font-sans);
+  color: var(--text-primary); outline: none;
+  box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.form-input:focus {
+  border-color: rgba(123,127,178,0.55);
+  box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
+  background: rgba(255,255,255,0.85);
+}
+.form-input::placeholder { color: #8a8fa8; opacity: 0.7; }

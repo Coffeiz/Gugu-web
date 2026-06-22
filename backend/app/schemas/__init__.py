@@ -5,6 +5,7 @@ Pydantic v2 schemas — alias_generator=to_camel 让 API 返回 camelCase
 from __future__ import annotations
 import re
 from typing import Optional, Any
+from uuid import UUID
 from pydantic import BaseModel, ConfigDict, field_validator
 from pydantic.alias_generators import to_camel
 
@@ -33,10 +34,41 @@ class UserLogin(CamelModel):
 
 
 class UserResponse(CamelModel):
-    id: int
+    id: UUID
     username: str
+    display_name: Optional[str] = None
     email: str
     is_active: bool
+    avatar_url: Optional[str] = None
+    created_at: str = ""
+
+    @field_validator('created_at', mode='before')
+    @classmethod
+    def fmt_date(cls, v):
+        if v is None:
+            return ""
+        if hasattr(v, 'strftime'):
+            return v.strftime('%Y-%m-%d')
+        return str(v)
+
+    @classmethod
+    def from_user(cls, user) -> "UserResponse":
+        data = {
+            "id": user.id,
+            "username": user.username,
+            "display_name": user.display_name,
+            "email": user.email,
+            "is_active": user.is_active,
+            "created_at": user.created_at,
+            "avatar_url": f"/api/v1/auth/avatar/{user.id}" if user.avatar else None,
+        }
+        return cls.model_validate(data)
+
+
+class UpdateProfile(CamelModel):
+    display_name: Optional[str] = None
+    current_password: Optional[str] = None
+    new_password: Optional[str] = None
 
 
 class TokenResponse(CamelModel):

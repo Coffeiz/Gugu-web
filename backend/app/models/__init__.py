@@ -7,9 +7,11 @@ Files 四空间结构 + 项目内用户文件夹（Folder）。
 import json
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 
-from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Boolean, BigInteger
+from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from uuid6 import uuid7
 
 from app.db.base import Base
 
@@ -19,12 +21,14 @@ from app.db.base import Base
 class User(Base):
     __tablename__ = "users"
 
-    id:              Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id:              Mapped[UUID]     = mapped_column(Uuid, primary_key=True, default=uuid7)
     username:        Mapped[str]      = mapped_column(String(100), unique=True, index=True)
     email:           Mapped[str]      = mapped_column(String(300), unique=True, index=True)
-    hashed_password: Mapped[str]      = mapped_column(String(200))
-    is_active:       Mapped[bool]     = mapped_column(Boolean, default=True)
-    created_at:      Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    hashed_password: Mapped[str]           = mapped_column(String(200))
+    display_name:    Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default=None)
+    is_active:       Mapped[bool]          = mapped_column(Boolean, default=True)
+    avatar:          Mapped[Optional[str]] = mapped_column(String(500), nullable=True, default=None)
+    created_at:      Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow)
 
     projects:      Mapped[list["Project"]]             = relationship(back_populates="owner", cascade="all, delete-orphan")
     files:         Mapped[list["File"]]                = relationship(back_populates="owner", cascade="all, delete-orphan")
@@ -42,7 +46,7 @@ class UserPreferences(Base):
     __tablename__ = "user_preferences"
 
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:    Mapped[int]      = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
+    user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
     data_json:  Mapped[str]      = mapped_column(Text, default="{}")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -66,7 +70,7 @@ class Project(Base):
     __tablename__ = "projects"
 
     id:            Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:       Mapped[int]           = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id:       Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name:          Mapped[str]           = mapped_column(String(200))
     client:        Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     status:        Mapped[str]           = mapped_column(String(20),  default="pending")
@@ -106,7 +110,7 @@ class File(Base):
     __tablename__ = "files"
 
     id:           Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:      Mapped[int]           = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id:      Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     display_name: Mapped[str]           = mapped_column(String(300))
     ext:          Mapped[str]           = mapped_column(String(20))
     # 所属空间：project | mind | asset | personal
@@ -137,7 +141,7 @@ class Folder(Base):
     __tablename__ = "folders"
 
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:    Mapped[int]      = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     parent_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="CASCADE"), nullable=True, index=True)
     name:       Mapped[str]           = mapped_column(String(200))
@@ -156,7 +160,7 @@ class MindMap(Base):
     __tablename__ = "mind_maps"
 
     id:         Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:    Mapped[int]           = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id:    Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title:      Mapped[str]           = mapped_column(String(300))
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     data_json:  Mapped[str]           = mapped_column(Text, default="{}")
@@ -173,7 +177,7 @@ class CalendarEvent(Base):
     __tablename__ = "calendar_events"
 
     id:          Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:     Mapped[int]           = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id:     Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title:       Mapped[str]           = mapped_column(String(300))
     date:        Mapped[str]           = mapped_column(String(10))
     type:        Mapped[str]           = mapped_column(String(50),  default="event")
@@ -192,7 +196,7 @@ class Client(Base):
     __tablename__ = "clients"
 
     id:         Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:    Mapped[int]           = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id:    Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name:       Mapped[str]           = mapped_column(String(200))
     contact:    Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     email:      Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
@@ -209,7 +213,7 @@ class ConversationSession(Base):
     __tablename__ = "conversation_sessions"
 
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:    Mapped[int]      = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title:      Mapped[str]      = mapped_column(String(300), default="新对话")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -8,5 +8,7 @@ export const useUiStore = defineStore('ui', () => {
   const newProjectRange = ref(null)        // { start: iso, end: iso } | null
   const calendarActiveRange = ref(null)   // 日历当前多选范围，供顶栏按钮使用
 
-  return { notifCount, openNewProject, sidebarCollapsed, newProjectRange, calendarActiveRange }
+  const openProfile = ref(false)
+
+  return { notifCount, openNewProject, openProfile, sidebarCollapsed, newProjectRange, calendarActiveRange }
 })

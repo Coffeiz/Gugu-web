@@ -32,6 +32,12 @@ async function request(method, path, body = null, isForm = false) {
   const res = await fetch(`${BASE_URL}${path}`, opts)
 
   if (!res.ok) {
+    // token 失效时自动清除并跳转登录
+    if (res.status === 401) {
+      localStorage.removeItem('user_token')
+      window.location.href = '/login'
+      throw new Error('请重新登录')
+    }
     const err = await res.json().catch(() => ({}))
     const d = err.detail
     const msg = !d ? `HTTP ${res.status}`
@@ -206,4 +212,13 @@ export const clientsApi = {
 export const preferencesApi = {
   get:    ()     => get('/preferences'),
   update: (data) => request('PATCH', '/preferences', data),
+}
+
+export const authApi = {
+  updateProfile: (data) => request('PATCH', '/auth/profile', data),
+  uploadAvatar:  (file) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return request('POST', '/auth/avatar', fd, true)
+  },
 }

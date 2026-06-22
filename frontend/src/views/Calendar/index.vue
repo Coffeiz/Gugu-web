@@ -78,7 +78,6 @@
                     <span v-else class="chip-proj-tag chip-ev-tag">活动</span>
                     <span v-if="ev.isProject" class="bar-status-dot" :class="'bsd-' + ev.status"></span>
                     {{ ev.name }}
-                    <span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
                   </div>
                   <button
                     v-if="lay.moreCount > 0"
@@ -113,7 +112,7 @@
                   <template v-if="bar.startsHere || bar.colStart === 0">
                     <span class="bar-proj-tag">项目</span>
                     <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>
-                    <span class="bar-label">{{ bar.name }}<span v-if="bar.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span></span>
+                    <span class="bar-label">{{ bar.name }}</span>
                   </template>
                   <div v-if="bar.endsHere" class="bar-rh bar-rh-right" @mousedown.stop.prevent="startBarResize(bar, 'end', $event)"></div>
                 </div>
@@ -208,7 +207,7 @@
           >
             <span class="overflow-tag" :class="{ 'overflow-tag-ev': !item.isProject }">{{ item.isProject ? '项目' : '活动' }}</span>
             <span v-if="item.isProject" class="bar-status-dot" :class="'bsd-' + item.status"></span>
-            <span class="overflow-name">{{ item.name }}<span v-if="item.isProject && item.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span></span>
+            <span class="overflow-name">{{ item.name }}</span>
           </div>
         </div>
       </div>
