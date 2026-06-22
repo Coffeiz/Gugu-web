@@ -7,23 +7,58 @@
 
 ---
 
+## [0.8.0] - 2026-06-22
+
+### 新增
+
+- **Admin 独立入口**：Admin 面板从主应用拆分为独立 Vite 入口（`admin/index.html` + `src/admin.js`），Dev Server 端口 5174（`npm run dev:admin`），打包产物分离至 `dist/admin/`；Nginx 将 `admin.gugugu.site` 指向 `dist/admin/index.html` 即可实现独立域名
+- **用户管理面板**：全用户列表（头像、昵称、用户名、邮箱、注册时间、本周 Token、存储用量、配额状态），支持搜索过滤、封禁/解封、删除；操作写审计日志
+- **配额管理页**（独立路由 `/quota`）：三区块设计——全局默认配额（热保存至 `config.override.json`，无需重启）、用户覆盖列表（自定义配额用户）、所有用户表（可编辑任意用户配额）
+- **Token 用量限制**：6 小时滑动窗口 + 每周上限（周一 00:00 UTC 重置），对话前双重拦截；per-user 覆盖优先于全局默认，均为 `None` 时不限制
+- **存储空间限制**：上传前检查 `used + size > limit`，超限返回 400；同样支持全局默认与用户覆盖
+- **`QuotaSettings` 配置类**：`default_token_limit_6h` / `default_token_limit_weekly` / `default_storage_limit_bytes`，纳入 `AppSettings` 热更新流程；User 模型新增对应字段（migrations `20260622000006` / `20260622000007`）
+- **邀请码系统**：Admin 生成/管理邀请码（格式 `GUGU-XXXX-XXXX`），注册时校验，使用后标记失效；支持批量生成（1–20 个）、过滤（全部/有效/已用）、复制（非 HTTPS 降级 `execCommand`）
+- **Agent Admin 面板**：LLM 配置（provider 预设切换）、系统提示词（profile 热编辑）、行为配置（记忆参数）、用量统计四个 Tab
+- **用量统计**：每次对话记录 token（`AgentUsage` 表），统计面板含今日/总计汇总卡、SVG 折线图（对话/输入/输出三指标，可切换月份）、按模型分组表格
+- **审计日志 & 系统日志**：后端写入 + Admin 页面查看，关键操作（配置修改、用户管理、配额变更）全程可追溯
+
+### 调整
+
+- **去除 Onboarding 页面**：改为由 Agent 在首次对话中主动了解用户；移除路由守卫、`identity_done` localStorage 标记及 `/me/identity` 接口
+- **Admin 路由去前缀**：路由从 `/admin/*` 简化为 `/*`，`AdminLayout` 链接同步更新，对齐独立域名部署
+- **存储配额预设**：全局配额卡与用户编辑弹窗统一为 5 GB / 20 GB / 50 GB / 100 GB
+- **去除 Admin「返回主界面」链接**：两个应用完全独立，侧边栏与登录页均已移除
+
+### 修复
+
+- **配额页刷新后变无限制**：config store 缺少 `cfg.quota` 初始化，`fetchConfig` 未读取 `data.quota`；已补全
+- **用户覆盖列表始终为空**：`overrideUsers` 过滤条件错误引用已废弃字段 `token_limit_monthly`，修正为 `token_limit_6h || token_limit_weekly || storage_limit_bytes`
+- **Admin 登录跳转路径**：从 `/admin/config` 修正为 `/config`，对齐新 Router base
+
+### 架构
+
+- **Agent 设计方向确立**：咕咕定位为伙伴而非助理，记忆系统为核心；用户主动输入仅昵称一处，其余由咕咕自主观察积累；压缩路径 daily → weekly → memory.md，无 monthly 层；`summary.md` 由 Reflection（importance ≥ 4）触发更新
+- **用户档案目录确立**：`.agent/` 下 `identity.json` / `summary.md` / `facts.json` / `preferences.md` / `memory.md` / `daily/` / `weekly/`，每个文件回答一个独立问题
+
+---
+
 ## [0.7.2] - 2026-06-22
 
 ### 新增
 
-- **个人设置 Modal**：左导航分栏布局（780×520 → 900×600），导航与 AppSidebar 同风格毛玻璃；三大板块：个人信息、账号设置、偏好设置，另有「咕咕设置」入口（回复风格、即时通讯接入）
-- **头像上传**：个人设置页头像圆圈 hover 显示相机图标，点击选择图片上传（支持 JPEG/PNG/WebP/GIF，≤5MB）；AppSidebar 用户卡同步显示头像；后端存储至 `uploads/avatars/`，`GET /api/v1/auth/avatar/{user_id}` 提供图片服务
-- **昵称与登录名解耦**：新增 `display_name` 字段（migration `20260622000005`），登录名（`username`）不可更改、全局唯一，昵称（`displayName`）可随时修改；所有展示位优先显示昵称，无昵称时 fallback 至登录名
-- **用户 ID 迁移至 UUID v7**：`users.id` 及所有子表 `user_id` 外键从自增整数迁移至 UUID v7（有序、不暴露注册量，migration `20260622000004`）；UID 在设置页展示为前 12 位大写十六进制
-- **多标签页音频互斥**：通过 `BroadcastChannel` 实现跨标签页音频协调，新标签页播放时其他标签页自动停止
-- **全局表单输入框样式**：新增 `.form-input` 全局 CSS class，统一所有表单输入框样式
-- **用户弹窗重设计**：底部用户卡弹窗改用全局 `.popup-menu` 风格，宽度与用户卡一致；去除管理后台入口，新增「个人设置」按钮
-- **401 自动登出**：任何 API 返回 401 时，前端自动清除 token 并跳转登录页
+- **个人设置 Modal**：左导航分栏（900×600），与 AppSidebar 同风格毛玻璃；三大板块：个人信息、账号设置、偏好设置，另有「咕咕设置」入口
+- **头像上传**：头像圆圈 hover 显相机图标，支持 JPEG/PNG/WebP/GIF ≤5MB，存储至 `uploads/avatars/`，`GET /api/v1/auth/avatar/{user_id}` 提供服务；AppSidebar 同步显示
+- **昵称与登录名解耦**：新增 `display_name` 字段（migration `20260622000005`），登录名全局唯一不可改，昵称可随时修改；所有展示位优先显示昵称，fallback 至登录名
+- **用户 ID 迁移至 UUID v7**：`users.id` 及子表 `user_id` 外键从自增整数迁移至 UUID v7（有序、不暴露注册量，migration `20260622000004`）；UID 在设置页展示为前 12 位大写十六进制
+- **多标签页音频互斥**：`BroadcastChannel` 跨标签页协调，新标签页播放时其他自动停止
+- **401 自动登出**：任何 API 返回 401 时前端清除 token 并跳转登录页
+- **用户弹窗重设计**：底部用户卡弹窗改用 `.popup-menu` 风格；去除管理后台入口，新增「个人设置」按钮
+- **全局表单输入框样式**：新增 `.form-input` CSS class，统一所有表单输入框
 
 ### 调整
 
 - **日历右键菜单宽度**：从 140px 收窄至 110px
-- **日历完成勾号范围**：仅保留右侧当日列表与近期节点胶囊中的完成勾号，移除格内 chip、多日条、「更多」弹窗中的重复标记
+- **日历完成勾号范围**：仅保留右侧当日列表与近期节点胶囊，移除格内 chip、多日条、「更多」弹窗中的重复标记
 - **日历今日保底颜色**：选中其他日期时今日格子保留淡紫色（周末淡红色）底色
 
 ---
@@ -99,13 +134,7 @@
 - **日历多日框选**：在日历格空白处按住鼠标拖拽可选中连续日期范围，首尾高亮（周末用红色调），框选期间实时预览；选区保持直到用户重新拖选
 - **日历右键菜单**：在日期格空白处右键弹出 `.popup-menu` 风格菜单，可选「新建活动」（预填右键日期）或「新建项目」（预填框选范围为开始/截止日期）；菜单通过 `week-row` 层级捕获事件，避免 bars-layer 遮挡；关闭弹窗后选区不丢失
 
-### 调整（样式）
-
-- **全局弹出菜单样式**（`global.css`）：提取 `.popup-menu` / `.popup-menu-item` / `.popup-menu-sep` / `.popup-menu-shortcut` 为全局类（背景 `rgba(255,255,255,0.6)` + `blur(24px)`），右键菜单、排序下拉、日历活动弹窗统一复用；旧局部 scoped 样式删除
-- **全局关闭按钮**：`.popup-close-btn` 提取至 `global.css`，Calendar / AiFloatBall / mini 播放器关闭按钮统一使用；AiFloatBall 保留红色 hover scoped override
-- **mini 播放器图钉 / 音量按钮**：默认无底色，固定态仅保留紫色文字，hover 才显示浅底色
-- **浮动预览器 / 抽屉预览器按钮**：默认无底色，hover 显示 `rgba(0,0,0,0.1)` 暗色；按钮判定区域扩大 2px 且 gap 去除（相邻判定连续）
-- **PDF 加载状态位置**：`pv-status` 改为 `position: absolute; inset: 0` 绝对居中，与外层"正在转换文档"位置对齐
+### 调整
 
 ### 修复
 
@@ -124,8 +153,11 @@
 - **模板弹窗**：换亮白色背景；click-outside 排除内部点击；重命名时铅笔→对勾，删除按钮保持可见
 - **项目备注 `textarea` 未绑定**：补加 `v-model`
 
-### 调整
-
+- **全局弹出菜单样式**（`global.css`）：提取 `.popup-menu` / `.popup-menu-item` / `.popup-menu-sep` / `.popup-menu-shortcut` 为全局类（背景 `rgba(255,255,255,0.6)` + `blur(24px)`），右键菜单、排序下拉、日历活动弹窗统一复用
+- **全局关闭按钮**：`.popup-close-btn` 提取至 `global.css`，Calendar / mini 播放器统一使用
+- **mini 播放器图钉 / 音量按钮**：默认无底色，固定态仅保留紫色文字，hover 才显示浅底色
+- **浮动预览器 / 抽屉预览器按钮**：默认无底色，hover 显示 `rgba(0,0,0,0.1)` 暗色；判定区域扩大 2px，gap 去除使相邻判定连续
+- **PDF 加载状态位置**：`pv-status` 改为 `position: absolute; inset: 0` 绝对居中
 - **UI 交互全局优化**：
   - 所有底层玻璃面板加 `backdrop-filter: blur(20px)` 毛玻璃；hover 背景 / 阴影 `0.25s ease` 淡入淡出
   - 彩色胶囊 / 条 hover 统一用 `inset 0 0 0 100px rgba(255,255,255,0.45)` box-shadow，`0.25s ease`
