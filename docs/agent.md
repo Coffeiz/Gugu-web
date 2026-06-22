@@ -651,12 +651,14 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 > **完整方案见 [`agent-im接入架构.md`](agent-im接入架构.md)**。决策：飞书 / QQ / 微信均走**官方直连、不用 OpenClaw**；从一开始就按「收消息 ↔ 跑大模型」解耦的**队列 + worker 架构**建，为高流量留缝。
 
 **IM 接入地基（队列架构，6 步逐缝验证，详见 IM 文档）**
-- [ ] `app/core/redis.py` 共享异步连接池 + Redis Streams 封装（produce/consume/ack/claim）—— Redis 现"配了没用"，需真正接入
-- [ ] **非流式 runner**：从 `core.LLMRunner` 抽"攒完整段"版 `(AgentRequest) → AgentResponse`（bot 共用，web SSE 不变）
-- [ ] **Worker 进程**：独立入口消费队列 → 映射用户 → 跑 agent → 发送（须脱离 web 进程，避免多 uvicorn worker 重复拉长连接）
-- [ ] **平台用户 ↔ 咕咕用户映射**（多用户隔离）、事件去重、平台 token 存 Redis、用户状态机（并入 Phase 1.7）、背压
+- [x] **step 1 · `app/core/redis.py`**：共享异步 Redis 客户端（懒加载单例，同 db engine 模式）+ Redis Streams 封装（`ensure_group`/`produce`/`consume`/`ack`/`claim_stale`/`ping`/`reset`），消息体统一 `data=JSON`；`config.save_override` 改 redis 配置时 `reset` 重建。实测自产自消+ack 清零（远程 Redis 8.8.0）
+- [x] **step 2 · `agent/runner.py`**：`run_collect(req)→AgentResponse`，复用 loaders/builder/core/sanitize，把流式工具循环消费成"完整一段"回复（bot 不流式，web SSE 路不动）。实测真打 MiniMax 返回完整回复
+- [x] **step 3 · `worker.py`**（backend 顶层独立进程入口）：消费 `im:inbound` → `run_collect` →（暂打印）→ ack，带 `claim_stale` 回收崩溃遗留、信号优雅退出；独立于 web 避免多 uvicorn worker 重复消费。实测 队列→大脑→回复→ack 端到端通
+- [ ] **step 4** 平台网关：收消息 → 规范化 → `produce` 入队（待选平台+SDK+凭据）
+- [ ] **step 5** 接通：worker 处理后发回平台（platform send API）
+- [ ] **step 6** 平台用户 ↔ 咕咕用户映射（多用户隔离）、事件去重、平台 token 存 Redis、用户状态机（并入 Phase 1.7）、背压
 
-**各平台 adapter（官方直连，无 OpenClaw）**
+**各平台 adapter（官方直连，无 OpenClaw；落在 `agent/adapters/`，step 4-5）**
 - [ ] `adapters/feishu.py`：`lark-oapi`，WebSocket 长连（`im.message.receive_v1` / `message.create`），文档最顺，建议先做
 - [ ] `adapters/qqbot.py`：`botpy`，WebSocket（~~webhook~~），官方稳定
 - [ ] `adapters/weixin.py`：直连 iLink（长轮询 getupdates / sendmessage），纯文本先行，个人号有风险，最后做

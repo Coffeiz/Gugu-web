@@ -106,16 +106,16 @@ QQ WS网关  ├→ 规范化成 AgentRequest ──→ [Redis Streams 队列] �
 
 ---
 
-## 6. 现状盘点（2026-06-23）
+## 6. 现状盘点（2026-06-23，step 1-3 已落地）
 
 | 能力 | 现状 |
 |------|------|
 | 轻量后台 runtime | ✅ 有：FastAPI `lifespan` 拉起常驻 asyncio 循环（回收站清理 / DB 重连 / 日志刷盘）+ 反思 `create_task` |
-| 队列 / worker 框架 | ❌ 无：无 celery/rq/arq/redis-streams consumer，无独立 worker 进程 |
-| Redis | ⚠️ **配了但没用**：仅 Admin 一个连接测试 ping + 配置合并；无持久客户端、无功能在用 |
-| Runtime Router（状态机，文档 29） | ❌ 仅设计 |
-| 非流式 runner | ❌ 无（现仅 SSE 流式） |
-| 平台用户 ↔ 咕咕用户映射 | ❌ 无 |
+| 队列 / worker 框架 | ✅ **已建**：`app/core/redis.py`(Streams 封装) + `worker.py`(独立进程消费) |
+| Redis | ✅ **已接入**：共享异步客户端（懒加载单例）+ Streams；config 改 redis 配置 reset 重建 |
+| 非流式 runner | ✅ **已有**：`agent/runner.py` `run_collect()`，复用大脑收成完整回复 |
+| Runtime Router（状态机，文档 29） | ❌ 仅设计（用户状态机并入 step 6） |
+| 平台用户 ↔ 咕咕用户映射 | ❌ 无（step 6） |
 
 > **重要坑**：后端现为 `uvicorn --workers 1`。若为扩量把 web 开多 worker，每个进程会各自再拉一遍 bot 长连接 → 重复连接/处理。故 **bot 网关/worker 必须能脱离 web 当独立进程起**（`adapters/` 不依赖 FastAPI request 即为此）。
 
@@ -127,16 +127,16 @@ QQ WS网关  ├→ 规范化成 AgentRequest ──→ [Redis Streams 队列] �
 
 构建顺序（每步独立可测）：
 
-| 步 | 做什么 | 单独验证 |
-|----|--------|---------|
-| 1 | `app/core/redis.py` 共享异步连接池 + Streams 封装（produce/consume/ack/claim） | 脚本自产自消一条，通了再下一步 |
-| 2 | 非流式 runner：从 `core.LLMRunner` 抽"攒完整段"版 | 喂假 AgentRequest，看返回完整回复 |
-| 3 | Worker 进程：独立入口，消费→runner→打印（先不发平台） | 手动 XADD 一条，看 worker 跑通 agent |
-| 4 | 第一个平台网关（飞书或 QQ）：收→XADD | 网关只打印收到消息，确认鉴权/事件格式 |
-| 5 | 接通：网关→队列→worker→真发送 | 端到端"hello from 咕咕" |
-| 6 | 用户映射、事件去重、token 共享、背压 | 逐个加 |
+| 步 | 做什么 | 单独验证 | 状态 |
+|----|--------|---------|------|
+| 1 | `app/core/redis.py` 共享异步连接池 + Streams 封装（produce/consume/ack/claim） | 脚本自产自消一条 | ✅ 实测远程 Redis 8.8.0 通 |
+| 2 | `agent/runner.py` 非流式 runner：从 `core.LLMRunner` 抽"攒完整段"版 | 喂假 AgentRequest 看完整回复 | ✅ 实测真打 MiniMax 通 |
+| 3 | `worker.py` 独立进程：消费→runner→打印（先不发平台） | 手动 XADD 一条看 worker 跑通 | ✅ 实测 队列→大脑→ack 通 |
+| 4 | 第一个平台网关（飞书或 QQ）：收→XADD | 网关只打印收到消息，确认鉴权/事件格式 | ⏭️ 待选平台+SDK+凭据 |
+| 5 | 接通：网关→队列→worker→真发送 | 端到端"hello from 咕咕" | ⏭️ |
+| 6 | 用户映射、事件去重、token 共享、背压 | 逐个加 | ⏭️ |
 
-> Redis 现状是"配了没用"，所以第 1 步要真把客户端 + 队列封装建起来，不是"免费"的。
+> step 1-3 是平台无关的消息骨架，已全部对真实 Redis/LLM 验证；step 4 起才接真平台。消息流：`XADD im:inbound → worker 消费 → run_collect → 回复(暂打印) → ack`。
 
 ---
 
