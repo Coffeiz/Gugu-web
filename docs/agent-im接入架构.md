@@ -1,0 +1,177 @@
+# 咕咕 · IM 多平台接入架构
+
+> **状态**：💡 设计中（未开工）
+> **分类**：技术架构 / Agent 平台接入
+> **创建**：2026-06-23
+> **目标**：把咕咕接入飞书 / QQ / 微信三个 IM 平台，**不依赖 OpenClaw**，且架构**未来可平滑扩到高流量**。
+
+> ⚠️ 文中各平台 API 细节来自仓库/SDK 调研（WebFetch），**动手前需对着官方真 README 再核一遍**。
+
+---
+
+## 1. 目标与原则
+
+- 咕咕（独立 FastAPI 后端）作为"大脑"，接入飞书 / QQ / 微信，让用户在 IM 里直接和咕咕对话、管理项目/文件/日程。
+- **不用 OpenClaw**：三个平台都走各自官方直连。
+- **多用户**：每个平台用户必须映射到独立咕咕账号，数据隔离（见 [[project-multiuser]]）。
+- **为高流量留缝**：从一开始就按"收消息 / 跑大模型"解耦的架构建，将来加机器即可扩，不重写。
+
+---
+
+## 2. 为什么不用 OpenClaw
+
+`Tencent/openclaw-weixin`、`tencent-connect/openclaw-qqbot`、`larksuite/openclaw-lark` 都是 **OpenClaw 网关的频道插件**——插件本身就是连接器，跑在 OpenClaw 里，Agent 的"大脑"也配在 OpenClaw。
+
+要用它们得：① 跑一个 OpenClaw 网关 + 把咕咕桥接成 OpenClaw 的后端。这等于多运维一套框架、还受其版本兼容约束（如 openclaw-weixin 与 OpenClaw 2026.3.22+ 曾不兼容，issue #52885）。
+
+**结论**：三个平台都有官方直连路径，咕咿自己写 adapter 即可，OpenClaw 是多余中间层。
+
+---
+
+## 3. 三平台「不用 OpenClaw」直连方式
+
+| 平台 | 官方直连 | 收消息 | 公网 URL | 难度 / 风险 |
+|------|---------|--------|---------|------------|
+| **飞书** | `lark-oapi` SDK | WebSocket 长连 或 webhook | **不需要**（长连） | 🟢 最易，文档最好 |
+| **QQ** | `botpy` SDK | WebSocket | 不需要 | 🟢 易，官方稳定 |
+| **微信** | 直连 iLink（自写 HTTP 客户端） | 长轮询 getupdates | 不需要 | 🟡 中，文本可控；个人号有风险 |
+
+### 3.1 飞书 — `lark-oapi`（larksuite/oapi-sdk-python）
+
+- **鉴权**：App ID + App Secret，SDK 自动管 `tenant_access_token`
+- **收**：事件 `im.message.receive_v1`；可走 webhook，**也可走 WebSocket 长连接**（`FeishuChannel` / `channel.connect()`）→ 不需要公网 URL
+- **发**：`client.im.v1.message.create(...)`（`CreateMessageRequest` / `CreateMessageRequestBody`）
+- SDK 自动处理 token、签名、加解密、事件分发
+
+### 3.2 QQ — `botpy`（tencent-connect/botpy，官方）
+
+- **鉴权**：AppID + AppSecret（q.qq.com 开发者后台）
+- **收**：WebSocket，继承 `botpy.Client` 写异步事件：`on_at_message_create`（频道@）、群消息、`on_dms_reply`（私信）；用 `botpy.Intents(...)` 订阅
+- **发**：`self.api.post_message(...)`
+- **启动**：`client.run(appid=, secret=)`
+- 注意：群/C2C 消息能力需平台审批；有 sandbox / 生产环境之分
+
+### 3.3 微信 — 直连 iLink（参考 SiverKing/weixin-ClawBot-API）
+
+无 QQ 那种开放 bot 平台；官方新通道是 **iLink**（`ilinkai.weixin.qq.com`）。**纯文本不涉及加密**，就是个 HTTP 长轮询客户端：
+
+- **登录**：扫码 → 拿 iLink bot token（24h 过期需重扫，要做自动重连）
+- **请求头**：`Authorization: Bearer <token>` + `AuthorizationType: ilink_bot_token` + `X-WECHAT-UIN`（每次随机 uint32 base64）+ `iLink-App-Id: bot`
+- **收**：`POST getupdates` 长轮询（服务端挂 ~35s）
+- **发**：`POST sendmessage`，必填 `from_user_id` / `to_user_id` / `client_id` / `message_type:2` / `message_state:2` / `context_token` + `item_list`
+- **打字指示**：`getconfig`(取 typing_ticket) → `sendtyping{1}` → 生成 → `sendmessage` → `sendtyping{2}`
+- **媒体**（图片/语音）：AES-128-ECB + CDN，**首版不做，文本先行**
+- **风险**：须守《微信 ClawBot 功能使用条款》，腾讯保留内容过滤/限速；个人号自动化风险自负 → **建议三平台里最后接**
+
+---
+
+## 4. 高流量架构
+
+核心一句：**把"收消息"和"跑大模型"拆开，中间塞队列。** 大模型调用又慢又有速率上限，是唯一瓶颈，绝不能在长连接里同步等它。
+
+```
+飞书WS网关 ┐                          ┌→ Worker池 ×N（跑大模型，非流式）→ 调平台API发送
+QQ WS网关  ├→ 规范化成 AgentRequest ──→ [Redis Streams 队列] ─┤
+微信轮询网关┘   + 秒回"在干活" ack      └→ 加 worker = 加吞吐
+                     │                              │
+            [Redis: 用户状态/平台token/事件去重/用户映射缓存]
+                     │                              │
+            [Postgres: 用户/对话/用量]        [OSS: 记忆/文件]
+```
+
+三层各自独立扩展：
+
+| 层 | 职责 | 扩展方式 |
+|----|------|---------|
+| **网关**（每平台 1 个/可分片） | 持长连接；只做"收→规范化→入队→秒回 ack"，**不碰大模型** | 轻量；按平台/账号分片 |
+| **队列**（Redis Streams） | 削峰、解耦；消费组负载均衡 + ack + 失败重投 | 已有 Redis；Streams 轻松扛十万级/秒 |
+| **Worker 池** | 出队→映射用户→跑 `core.LLMRunner`(非流式)→发送 | **横向加进程**；真瓶颈在此 |
+
+**为什么能扛量**：网关不阻塞（只入队）→ 一条长连接吞海量消息；突发洪峰被队列吸住，不打爆大模型；加 worker 直到撞**大模型速率上限**——这才是真天花板，靠**多 key/预设轮询**（已有 `ai_presets`）突破。
+
+> **不要上 Kafka/RabbitMQ**：瓶颈永远是大模型不是队列，Redis Streams 足够，别过度设计。
+
+---
+
+## 5. 关键设计缝（现在留好，将来不重写）
+
+代码库已有 `agent/models.py` 的 `AgentRequest` / `AgentResponse` + `agent/adapters/base.py`——缝早留好了。守住两个边界：
+
+1. **非流式 runner = 纯函数** `(AgentRequest) → AgentResponse`：从现有 `core.LLMRunner` 抽出"攒完整段"版本。内联调、worker 里调，代码一字不改。
+2. **`dispatch(request)` 单一间接层**：今天 = 入队，明天 = 换 broker 也只改这一处。
+
+只要这两处干净，从单机长到集群是**加组件，不是重构**。
+
+> Web SSE 适配器（`adapters/web.py`）保持不变（流式、请求驱动）；bot 走新的非流式队列路径；两者共用 `core.LLMRunner`。
+
+---
+
+## 6. 现状盘点（2026-06-23）
+
+| 能力 | 现状 |
+|------|------|
+| 轻量后台 runtime | ✅ 有：FastAPI `lifespan` 拉起常驻 asyncio 循环（回收站清理 / DB 重连 / 日志刷盘）+ 反思 `create_task` |
+| 队列 / worker 框架 | ❌ 无：无 celery/rq/arq/redis-streams consumer，无独立 worker 进程 |
+| Redis | ⚠️ **配了但没用**：仅 Admin 一个连接测试 ping + 配置合并；无持久客户端、无功能在用 |
+| Runtime Router（状态机，文档 29） | ❌ 仅设计 |
+| 非流式 runner | ❌ 无（现仅 SSE 流式） |
+| 平台用户 ↔ 咕咕用户映射 | ❌ 无 |
+
+> **重要坑**：后端现为 `uvicorn --workers 1`。若为扩量把 web 开多 worker，每个进程会各自再拉一遍 bot 长连接 → 重复连接/处理。故 **bot 网关/worker 必须能脱离 web 当独立进程起**（`adapters/` 不依赖 FastAPI request 即为此）。
+
+---
+
+## 7. 落地路线 —— 直接从「队列架构」起步
+
+决策：**不先做内联 MVP 再重构，直接按队列+worker 架构建**（理由：dispatch 缝两种做法一样，Redis 已配置，省一次重构）。但**每条缝单独验证**，避免一上来同时调一堆未知。
+
+构建顺序（每步独立可测）：
+
+| 步 | 做什么 | 单独验证 |
+|----|--------|---------|
+| 1 | `app/core/redis.py` 共享异步连接池 + Streams 封装（produce/consume/ack/claim） | 脚本自产自消一条，通了再下一步 |
+| 2 | 非流式 runner：从 `core.LLMRunner` 抽"攒完整段"版 | 喂假 AgentRequest，看返回完整回复 |
+| 3 | Worker 进程：独立入口，消费→runner→打印（先不发平台） | 手动 XADD 一条，看 worker 跑通 agent |
+| 4 | 第一个平台网关（飞书或 QQ）：收→XADD | 网关只打印收到消息，确认鉴权/事件格式 |
+| 5 | 接通：网关→队列→worker→真发送 | 端到端"hello from 咕咕" |
+| 6 | 用户映射、事件去重、token 共享、背压 | 逐个加 |
+
+> Redis 现状是"配了没用"，所以第 1 步要真把客户端 + 队列封装建起来，不是"免费"的。
+
+---
+
+## 8. 高流量必踩点（第 6 步起逐个加）
+
+- **平台用户 ↔ 咕咿用户映射**：`(platform, platform_user_id) → user_id`，首次接触自动建号或绑定流程；热映射缓存进 Redis（咕咿是多用户，**必须隔离**）
+- **幂等去重**：平台会重发事件（飞书 webhook 重试），按 message_id 在 Redis 去重
+- **平台 token 存 Redis**：worker 发送时要用（微信扫码 token 尤其）
+- **用户状态机**（1.7）：每用户 IDLE/WORKING 存 Redis；同一人狂发时只跑一次、其余回"还在弄哦"——既是体验也是防刷
+- **秒回 ack**：无流式，收到先应一句"在看了哈～"，干完发真答案（微信有 sendtyping）
+- **背压**：队列堆积时降级/限速，别无限吃
+- **Postgres**：每消息读写对话历史，索引要好；量大上 PgBouncer + 读副本；热数据缓存 Redis
+- **进程管理**：worker 是独立进程，要进 `make`/`start.sh` 的起停（现仅起 uvicorn）
+
+---
+
+## 9. 待定决策
+
+1. **第一个平台**：飞书（文档最顺）还是 QQ（看受众）？微信最后。
+2. **用户映射策略**：IM 用户首次对话即自动建咕咿号，还是要求绑定已有账号？
+3. **反思等附加 LLM 调用是否计入用户配额**（现不计，高流量下成本需重算）。
+
+---
+
+## 附：相关文件 / 现有缝
+
+- `agent/models.py` — `AgentRequest` / `AgentResponse`（非流式响应预留）
+- `agent/adapters/base.py` — adapter 接口；`adapters/web.py` 为 SSE 实现，bot 各加一个
+- `agent/core.py` — `LLMRunner`（待抽非流式版）
+- `app/core/config.py` — `RedisSettings`（已配，待真正接入）
+- `app/main.py` — `lifespan` 背景任务模式（MVP 可借，扩量须拆独立进程）
+
+## 附：参考来源
+
+- [tencent-connect/botpy](https://github.com/tencent-connect/botpy)（QQ 官方 SDK）
+- [larksuite/oapi-sdk-python](https://github.com/larksuite/oapi-sdk-python)（飞书官方 SDK）
+- [SiverKing/weixin-ClawBot-API](https://github.com/SiverKing/weixin-ClawBot-API)（微信 iLink 直连示例）
+- 三个 OpenClaw 插件（不采用）：`Tencent/openclaw-weixin`、`tencent-connect/openclaw-qqbot`、`larksuite/openclaw-lark`
