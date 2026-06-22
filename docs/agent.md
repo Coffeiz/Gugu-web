@@ -422,6 +422,92 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 
 ---
 
+## 工具清单（共 40，已实现）
+
+> 🔒 = 不可逆操作，受删除二次确认保底（显式 confirm 参数）保护。所有工具带 `user_id` 所有权校验。
+
+### 项目 · `skills/projects.py`（14）
+| 工具 | 说明 |
+|------|------|
+| `list_projects` | 项目列表，可按状态筛选 |
+| `create_project` | 新建项目 |
+| `update_project` | 改状态/起止日期/客户/备注/名称 |
+| `get_project` | 单项目完整结构（阶段 key/label + 各阶段待办 id/text/done） |
+| `update_stage` | 切换当前阶段 / 勾选已有待办 |
+| `add_stage` | 新增阶段（追加或指定位置） |
+| `remove_stage` | 删除阶段 |
+| `rename_stage` | 重命名阶段 |
+| `add_todo` | 给阶段加待办（支持批量 texts） |
+| `remove_todo` | 删除待办 |
+| `set_priority` | 设优先级 high/medium/low |
+| `set_color` | 设项目颜色（十六进制） |
+| `archive_project` | 归档 / 取消归档 |
+| `delete_project` 🔒 | 永久删除项目 |
+
+### 日历 · `skills/calendar.py`（4）
+| 工具 | 说明 |
+|------|------|
+| `create_event` | 新建事件 / 截止提醒 |
+| `list_events` | 查询事件（日期范围 / 类型） |
+| `update_event` | 改标题/日期/类型/关联项目/描述 |
+| `delete_event` 🔒 | 删除事件（无回收站，不可逆） |
+
+### 文件 · `skills/files.py`（12）
+| 工具 | 说明 |
+|------|------|
+| `list_files` | 查询文件（空间/项目/扩展名/关键词） |
+| `read_file` | 读文本类文件内容（≤256KB） |
+| `edit_file` | 改文本（整体替换/追加/查找替换） |
+| `create_document` | 生成文件：md/txt/json/csv 直写；docx/pdf 由 HTML、xlsx 由 CSV 经 LibreOffice 转 |
+| `rename_file` | 重命名文件 |
+| `move_file` | 移动文件（空间/项目/文件夹/阶段） |
+| `copy_file` | 复制文件到目标位置 |
+| `delete_file` | 删除文件（进回收站，可还原） |
+| `create_folder` | 新建文件夹（支持嵌套） |
+| `list_folders` | 查询文件夹（按项目/父级） |
+| `rename_folder` | 重命名文件夹 |
+| `delete_folder` | 删除文件夹（夹内文件移至根，不删） |
+
+### 客户 · `skills/clients.py`（4）
+| 工具 | 说明 |
+|------|------|
+| `list_clients` | 客户列表 |
+| `create_client` | 新建客户 |
+| `update_client` | 改客户信息 |
+| `delete_client` 🔒 | 删除客户 |
+
+### 回收站 · `skills/trash.py`（3）
+| 工具 | 说明 |
+|------|------|
+| `list_trash` | 查看回收站 |
+| `restore_file` | 还原文件到原位置 |
+| `permanent_delete` 🔒 | 永久删除回收站文件 |
+
+### 聚合 · `skills/overview.py`（2）
+| 工具 | 说明 |
+|------|------|
+| `get_upcoming` | 近期截止项目 + 日历事件合并（默认 7 天） |
+| `get_dashboard_stats` | 项目按状态 / 事件 / 文件 / 客户计数 |
+
+### 记忆 · `skills/memory.py`（1）
+| 工具 | 说明 |
+|------|------|
+| `remember` | 把一条关于用户的长期信息写进 `.agent/facts.md`（与反思共用 `store.merge_facts` 去重）|
+
+> 启用集合由 `profiles/default.py` 的 `skills`（skill 名列表）经 registry 派生（见下「Skill 一等公民」）；新增工具 = 在对应 skill 加 `Tool` 声明 + handler（自动派生双格式并注册），不可逆操作加 `destructive=True`。
+
+### Skill 一等公民（Profile 组合 skill，不再手抄工具名）
+
+原 `DefaultProfile.tool_names` 手列 39 个工具名，与各 skill 的 `Tool` 声明双重维护（加工具要改两处，漏一处静默失效）。已重构为：
+
+- `SkillRegistry` 增 `_skills`（skill 名 → 有序工具名）+ `add_skill()` / `tools_of()`；`BaseSkill.register()` 注册时记录分组。
+- `BaseProfile.skills`（skill 名列表）+ `tool_names` **派生属性**（`registry.tools_of(skills)`，去重保序）。
+- `DefaultProfile.skills = ["projects","calendar","files","clients","trash","overview","memory"]` —— 一行替代 39 行扁平清单。
+
+工具集与重构前集合相等（验证通过），行为零变化。
+
+---
+
 ## Roadmap
 
 ### Phase 0 — 基础设施（已完成）
@@ -430,18 +516,74 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 - [x] `prompts/default.md`：prompt 文件化，admin 可热更新
 - [x] 用量统计：token 记录（`AgentUsage` 表）+ admin 统计面板
 
-### Phase 1 — 核心重构
+### Phase 1 — 核心重构（已完成）
 
-重构现有单文件实现，不改变对外接口，用户无感知。
+重构现有单文件实现，不改变对外接口，用户无感知。已落地并通过进程内冒烟（MiniMax/Anthropic 路实测，纯对话 / 列项目 / 建项目 / 建事件 4 场景）。
 
-- [ ] `models.py`：定义 AgentRequest / AgentResponse
-- [ ] `skills/`：将现有 tools 迁出，projects / calendar skill 自注册
-- [ ] `core.py`：统一 Anthropic / OpenAI 两路 LLM 循环
-- [ ] `context/loaders.py` + `context/builder.py`：读取用户文件，组装 prompt
-- [ ] `adapters/web.py`：现有 SSE 接口接入，对外行为不变
-- [ ] `profiles/default.py`：默认 Profile，技能集 + prompt 模板
+- [x] `models.py`：`AgentRequest`（message/user_id/user_name/session_id/source）/ `AgentResponse`
+- [x] `skills/`：现有 4 工具迁出，`skills/base.py` 提供 `Tool` + `BaseSkill` + 全局 `registry`（单一声明派生 Anthropic/OpenAI 双格式、`dispatch` 统一执行）；`projects.py` / `calendar.py` 自注册
+- [x] `core.py`：`LLMRunner` 统一 Anthropic / OpenAI 两路循环，工具走 registry，MAX_ROUNDS=5
+- [x] `context/loaders.py` + `context/builder.py`：DB 取 projects/events + 记忆 stub；prompt 组装
+- [x] `adapters/web.py`：SSE 编排（配额→上下文→会话→core→持久化），对外行为字节级不变
+- [x] `profiles/default.py`：`DefaultProfile`（`tool_names` 选定工具集 + `prompt_file` + `memory_enabled`）
+- [x] `app/api/v1/agent.py` 瘦身为薄层（637 → 106 行），仅 router + ChatRequest + 4 端点接线
 
-#### 昵称收集机制（在 Phase 1 重构前可直接加在现有 agent.py）
+**与原设计的实际偏差（已确认）**：
+- **编排归属**：会话持久化 / 配额 / 用量记录放在 `adapters/web.py`（务实），未单设 service 层。
+- **persona.md 推迟 Phase 2**：builder 当前只读 `default.md`，不加载/不 prepend persona；`{summary}{facts}{preferences}{memory}{weekly}{daily}` 占位符仍填空串（`loaders.load_memory` 返回空 dict）。
+- **`default.md` 加了操作性系统引导**（身份 + 工具使用须知 + 删除确认 + 文档生成约定）—— 裸 prompt 下模型不会主动/正确用工具，这是让 23 工具可用的最小必需；完整 persona/记忆仍属 Phase 2。prompt 每次调用现读文件，热生效无需重启。
+- **`router.py` 推迟**：当前单 Profile 直连，多 Profile 路由留 Phase 3。
+- **`max_tokens`/`temperature` 已可配**：Admin 增「离散度」等设置，core 改读 `settings.ai.max_tokens` / `settings.ai.temperature`（Phase 0 增强）。
+- **历史窗口改为按 token 预算**：原 `limit(10)` 按条数 → 改为 `context/tokens.py` 的 CJK 感知 token 估算（中文≈1.3 token/字，其余≈4 字符/token），从最新往回按预算裁剪、整条进出、至少保留最新一条；另设条数安全上限（40）。预算值接 `settings.ai.context_tokens`。
+- **LLM 单次流式调用（修复双调用敷衍 + 保留真流式）**：原"探测-再流式"两次调用、丢弃首次结果致敷衍。改为单次 `messages.stream`（带 tools）：实时流式输出文本，结束后从 `get_final_message` 取 tool_use 决定是否执行工具。真流式 + 无敷衍 + 工具正常；`temperature` 加到调用上保离散度。前端配合：流式中按纯文本显示、完成后渲染 markdown（避免半截表格/代码块闪烁）。
+- **MiniMax 标记清洗**：`agent/sanitize.py`，token 流出现 `]<]minimax` 即截断其后泄漏内容（处理跨块）。
+- **上下文注入文件概览**：`loaders.load_files_overview` 每轮提供文件夹列表 + 文件总数 + 最近 25 文件，builder 填 `{files}` 占位、`default.md` 设「你的文件」段。让咕咕开局即见最新文件状态，根治"读不到最新文件"（之前只注入项目+日历）。所有 id-based 工具均已支持按名定位（`project`/`file`/`event`/`client`/文件夹名）。
+
+### Phase 1.5 — 工具扩展与删除保底
+
+> 详见 [`agent-tools-design.md`](agent-tools-design.md)。全部落在 `backend/agent/`，不动后台。工具总数 4 → **37**，均通过冒烟。
+
+- [x] **项目**：`update_stage`（切阶段/勾待办）、`set_priority`、`archive_project`、`delete_project`（destructive）
+- [x] **日历**：`list_events` / `update_event` / `delete_event`（destructive）
+- [x] **文件**（`skills/files.py`）：`list_files` / `read_file` / `edit_file` / `create_document`（md/txt/json/csv 直写；docx/pdf 由 HTML、xlsx 由 CSV 经 LibreOffice 转换，已验证生成合法二进制）/ `rename_file` / `move_file` / `create_folder` / `delete_file`（软删可恢复）
+- [x] **客户**（`skills/clients.py`）：`list_clients` / `create_client`
+- [x] **删除二次确认 · 保底（显式 confirm 参数）**：删除工具加 `destructive` 标记 + `confirm` 入参；`agent/confirm.py` 的 `needs_confirmation(args, summary)` —— 未带 `confirm=true` 返回影响详情、不删，用户同意后带 `confirm=true` 再调一次才执行。早期曾用"跨轮强制(ContextVar+消息序号)"，但与模型"先用文字征询"的自然行为冲突、导致反复确认删不掉，已改为显式参数。实测：一次确认即删、id 正确。
+- [x] **聚合**（`skills/overview.py`）：`get_upcoming`（近期截止项目+日历事件合并排序）/ `get_dashboard_stats`（项目按状态/事件/文件/客户计数）
+- [x] **P0 缺口补齐**（实战暴露后补，详见 agent-tools-design.md）：
+  - 项目阶段/待办：`get_project`（看完整结构）/ `add_stage` / `remove_stage` / `rename_stage` / `add_todo`（批量）/ `remove_todo` —— 修复"建阶段被误建成项目"
+  - 文件夹：`list_folders` / `rename_folder` / `delete_folder`（move 待后端支持）
+  - 回收站（`skills/trash.py`）：`list_trash` / `restore_file` / `permanent_delete`🔒
+  - 客户：`update_client` / `delete_client`🔒
+
+> 实现注记：文本读/改限白名单 ext + ≤256KB；文件整理（rename/move）复用 `app.api.v1.files` 的 `_build_key`/`_resolve_conflict`/`_move_to_trash` 并复刻 `update_file` 的 key 重建；LibreOffice html→docx 需 `--infilter="HTML (StarWriter)"` 否则报 no export filter。
+> MiniMax tool-call 标记泄漏：已加 `agent/sanitize.py` 流式清洗器，token 流中一旦出现 `]<]minimax` 标记即截断其后泄漏内容（处理跨块拆分），`web.py` 转发处接入。
+> 已知待办（非本期 bug）：小文件 `_fmt_size` 显示「0 KB」（app 既有）。
+
+> 相关：多套 LLM 预设 + 激活切换的设计见 [`llm-presets-design.md`](llm-presets-design.md)（属后台配置层，保证 agent 包零改动）。
+
+---
+
+## 规划修正（依据 [`docs/agent设计/`](agent设计/) 八份产品设计文档）
+
+通读产品设计文档后对原路线的**顺序与范围修正**（不推翻工程骨架，只调优先级）：
+
+- **persona 从 Phase 2 拆出、提前做** —— 人格不依赖记忆系统，且文档 27《伙伴模式规则》已是现成素材；落成 `persona.md` 是最高杠杆、最低成本的体验提升。
+- **引入对话模式（文档 26）** —— 执行 / 推进 / 记录 / **决策探索** 四态；决策探索与闲聊**不强制任务化**。当前 `default.md` 的"直接调用工具去做"过于一刀切，会把"随便聊聊买车"也搞成项目管理，需按模式软化。
+- **Runtime Router 提前（文档 29）** —— 自然语言取消、状态查询、简单闲聊不进主模型；从原 Phase 3 提前到 Phase 1.7（轻量版）。
+- **配额改"能力降级"而非硬切（文档 30）** —— 精力不足时简单对话/查询仍可用，只暂缓重操作；现状是一刀切拦死全部对话（属后台配额领地，需协调）。
+- **安全瘦身（文档 07）** —— 咕咕不跑 shell，**不引入**命令白名单 / Docker 沙箱；保留「二次确认 + 审计日志 + 权限分级」即覆盖。
+- **暂不动（标记）** —— Record 统一数据模型（文档 30，与现分表架构根本分歧、改动巨大）；Chat→Action 转化率埋点（文档 25，不紧急）。
+
+---
+
+### Phase 1.6 — 伙伴人格 + 对话模式（依据文档 27 / 26）
+
+- [x] `prompts/persona.md`：采纳文档 27 伙伴人格（角色、四态、主动思考但不打扰、风格无工具感、内容边界、删除确认）；builder 最先加载、所有 profile 共享
+- [x] `context/builder.py`：prepend persona.md（persona → profile 模板的注入顺序）；`default.md` 收敛为数据上下文，去掉早期"催着用工具"的一刀切引导
+- [x] **对话模式**：persona 写入执行/推进/记录/决策四态切换。实测：执行类答完会主动给 next step、决策探索（"纠结换电脑"）不强建项目、像朋友讨论
+- [x] ~~昵称收集~~ **改用 `User.display_name`**（注册/个人设置已填，`req.user_name` 即来源），不单独问昵称、不建 `identity.json`；身份称呼由反思自然并入 facts。下方「昵称收集机制」设计作废
+
+#### 昵称收集机制
 
 Onboarding 页面已移除。用户昵称改为由咕咕在**第一次对话**中主动询问收集：
 
@@ -454,28 +596,51 @@ Onboarding 页面已移除。用户昵称改为由咕咕在**第一次对话**�
 { "nickname": "Jonas" }
 ```
 
-实现清单：
-- [ ] `save_identity` 工具加入工具列表，后端执行时写 `identity.json`
-- [ ] `_load_system_prompt` 读取 `identity.json` 填充 `{name}` 占位符
-- [ ] `persona.md` 写入昵称询问指令
+实现清单（重构后模块）：
+- [ ] `save_identity` 工具（新建 `skills/identity.py`，自注册），后端执行时写 `identity.json`
+- [ ] `context/loaders.py` 读取 `identity.json`，`context/builder.py` 填充 `{name}` 占位符（替代旧 `_load_system_prompt`）
+- [ ] `persona.md` 写入昵称询问指令（persona 注入由本阶段启用）
+
+### Phase 1.7 — 轻量 Runtime Router（提前，依据文档 29）
+
+- [ ] 关键词 + 状态机版：自然语言取消（"算了 / 不弄了"）、状态查询（"还在吗 / 好了吗"）、简单闲聊与确认词（"嗯 / 好的 / 哈哈"）**不进主模型**，直接轻量回应
+- [ ] State Manager：`THINKING / SEARCHING / GENERATING / WAITING_CONFIRM / IDLE`，与删除二次确认的 WAITING_CONFIRM 衔接
+- [ ] 后续可升级为小模型意图分类（Qwen3-0.6B 等），输出 `{intent, confidence}` 再决定是否进主 Agent
 
 ### Phase 2 — 记忆系统
 
-压缩路径：daily（14天）→ weekly（6周）→ memory.md，无 monthly 层。
+#### Phase 2a — 精简闭环（已落地）
 
-- [ ] 用户 `.agent/` 目录自动初始化（identity / summary / facts / preferences / memory）
+先做"能读、能记、能用"的最小闭环，**刻意简化**原设计（详见下方偏差），可直接验证咕咕"记得住"。
+
+- [x] `agent/memory/store.py`：读写 `.agent/{facts,daily}.md`，经 `StorageBackend`（本地/OSS 通吃），缺文件返回空。`merge_facts` 按内容去重，`append_daily` 滚动保留最近 30 条
+- [x] `agent/memory/reflection.py`：对话结束后**单次非流式** LLM 调用（复用 `settings.ai`）提炼 `{facts:[...], daily:"..."}`，增量合并写盘；`schedule()` fire-and-forget（持后台任务引用防 GC），失败不影响对话
+- [x] `skills/memory.py`：`remember` 工具 —— 用户说"记住X"时主动落盘（主动记忆路径）
+- [x] `context/loaders.py`：`load_memory` 改 async 真读；`context/builder.py`：清掉死占位符，记忆 section **仅非空时注入**（人格 → 我对你的了解/最近的记忆 → 实时状态），空记忆不烧 token
+- [x] `adapters/web.py`：`memory_enabled` 时 `await load_memory` 注入；持久化后 `reflection.schedule()` 触发反思
+- [x] `profiles/default.py`：`memory_enabled=True` + `skills` 加 `"memory"`
+
+**与原设计的实际偏差（已确认）**：
+- **facts.md 而非 facts.json**：MVP 直接维护 markdown 事实列表，不做结构化 JSON + confidence/source，去重靠内容包含判断。结构化版留待数据量上来再说。
+- **两层而非三层**：只有 `facts.md`（长期）+ `daily.md`（近期滚动 30 条），**无 weekly / compressor / manager / importance 分级**。压缩路径（daily→weekly→memory）整体延后。
+- **无 events 总线**：反思直接在 `web.py` fire-and-forget 调用，未引入 `events/bus.py`。
+- **无 identity / summary**：昵称沿用 `User.display_name`（注册已填），不单独问、不建 `identity.json`；身份/称呼由反思自然并入 facts。`summary.md` 快照延后。
+- **反思 token 暂不计入用户配额**（锦上添花，不占可见精力）。
+
+#### Phase 2b — 分层压缩与结构化（未做）
+
+- [ ] `facts.json` 结构化（confidence / source）+ 自然语言导出
+- [ ] `daily（14天）→ weekly（6周）→ memory.md` 压缩链 + importance 过滤（compressor / manager）
+- [ ] `summary.md` 当前状态快照（importance ≥ 4 触发更新）
 - [ ] `events/bus.py` + `events/types.py`：全局事件总线
-- [ ] `memory/storage.py`：facts.json + daily / weekly / memory.md 读写
-- [ ] `memory/reflection.py`：对话结束后 LLM 提炼结构化条目（fact / preference / state / memory）
-- [ ] `memory/compressor.py`：daily → weekly，weekly → memory.md，importance 过滤
-- [ ] `memory/manager.py`：统一接口，协调 Reflection + Compressor + Storage
-- [ ] summary.md 生成：Reflection 产生 importance ≥ 4 条目时触发更新
+- [ ] **控制命令（文档 03）**：`/newchat`（清会话留记忆）/ `/remember` / `/forget` / `/memory` / `/clear`
+- [ ] **历史压缩升级**：现为 token 截断，升级为分层摘要压缩（早期对话摘要 + 最近保留，文档 03/05）
 
 ### Phase 3 — 扩展能力
 
 - [ ] `mcp/client.py` + `mcp/registry.py`：MCP 协议支持，动态加载外部工具
 - [ ] Profile 能力开关（memory_enabled / mcp_enabled）
-- [ ] `router.py`：多 Profile 路由
+- [ ] `router.py` 升级：多 Profile 路由 + 小模型意图分类（在 Phase 1.7 轻量 Router 基础上）
 
 ### Phase 4 — 平台接入与伙伴深化
 
