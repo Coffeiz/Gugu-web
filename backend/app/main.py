@@ -232,7 +232,7 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 
 @app.exception_handler(Exception)
 async def unhandled_error_handler(request: Request, exc: Exception):
-    print(f"[ERROR] {request.method} {request.url.path}: {type(exc).__name__}: {exc}")
+    logger.exception("%s %s → %s", request.method, request.url.path, exc)
     return JSONResponse(status_code=500, content={"detail": "服务器内部错误，请稍后重试"})
 
 

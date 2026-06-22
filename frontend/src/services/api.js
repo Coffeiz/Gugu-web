@@ -224,6 +224,7 @@ export const agentApi = {
 
 export const authApi = {
   updateProfile: (data) => request('PATCH', '/auth/profile', data),
+  getQuota:      ()     => request('GET',   '/auth/quota'),
   uploadAvatar:  (file) => {
     const fd = new FormData()
     fd.append('file', file)

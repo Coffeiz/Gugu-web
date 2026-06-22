@@ -7,6 +7,9 @@ AgentUsage → yield done。对外 SSE 事件流与原实现字节级一致。
 """
 import calendar as _cal  # noqa: F401  (保留与原实现一致的导入位置)
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta
 from typing import AsyncGenerator
 
@@ -22,6 +25,46 @@ from agent.context import builder, loaders, tokens
 from agent.core import LLMRunner
 from agent.models import AgentRequest
 from agent.profiles import DefaultProfile
+
+
+async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic: bool) -> str:
+    """用 LLM 为新对话起标题（非流式，快速调用）。失败时回退到截断用户消息。"""
+    prompt = (
+        "根据下面这段对话，用一句话起一个简短的标题（10字以内，不含引号和标点符号）。"
+        "只输出标题本身，不要任何解释。\n"
+        f"用户：{user_msg[:150]}\n咕咕：{ai_reply[:300]}"
+    )
+    try:
+        if use_anthropic:
+            import httpx
+            from anthropic import AsyncAnthropic
+            client = AsyncAnthropic(
+                api_key=settings.ai.api_key or "dummy",
+                base_url=settings.ai.base_url,
+                http_client=httpx.AsyncClient(timeout=httpx.Timeout(10.0)),
+            )
+            resp = await client.messages.create(
+                model=settings.ai.model,
+                max_tokens=30,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return resp.content[0].text.strip()[:30]
+        else:
+            import httpx
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(
+                api_key=settings.ai.api_key or "dummy",
+                base_url=settings.ai.base_url,
+                timeout=httpx.Timeout(10.0),
+            )
+            resp = await client.chat.completions.create(
+                model=settings.ai.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=30,
+            )
+            return (resp.choices[0].message.content or "").strip()[:30]
+    except Exception:
+        return user_msg[:20]
 
 
 async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
@@ -79,6 +122,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             )
             session = res.scalars().first()
 
+        is_new_session = session is None
         if not session:
             session = ConversationSession(user_id=user_id, title=req.message[:50])
             db.add(session)
@@ -190,6 +234,16 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                 ))
             await db2.commit()
 
+        # ── 新会话：根据对话内容生成标题并推送给前端 ──
+        if is_new_session and full_reply:
+            title = await _generate_title(req.message, full_reply, settings, use_anthropic)
+            async with _sess._SessionLocal() as db3:
+                s = await db3.get(ConversationSession, session_id)
+                if s:
+                    s.title = title
+                    await db3.commit()
+            yield f"data: {json.dumps({'type': 'session_title', 'title': title}, ensure_ascii=False)}\n\n"
+
         # ── 对话后反思：提炼长期记忆（fire-and-forget，不阻塞、失败不影响）──
         if profile.memory_enabled and full_reply:
             from agent.memory import reflection
@@ -198,5 +252,5 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     except BaseException as e:
-        detail = str(e)[:200] or type(e).__name__
+        logger.exception("agent stream error for user %s: %s", req.user_id, e)
         yield f"data: {json.dumps({'type': 'error', 'message': f'咕咕出了点问题，请稍后再试'})}\n\n"

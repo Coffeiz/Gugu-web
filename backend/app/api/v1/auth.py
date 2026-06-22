@@ -1,14 +1,14 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File as FastAPIFile
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import User, InviteCode
+from app.models import User, InviteCode, AgentUsage
 from app.core.security import hash_password, verify_password, create_user_token, get_current_user
 from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile
 from app.core.config import get_settings
@@ -126,6 +126,46 @@ async def upload_avatar(
     await db.commit()
     await db.refresh(current_user)
     return UserResponse.from_user(current_user)
+
+
+@router.get("/quota")
+async def get_quota(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    settings = get_settings()
+    now = datetime.utcnow()
+
+    async def _used(since: datetime) -> int:
+        r = await db.execute(
+            select(func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out))
+            .where(and_(AgentUsage.user_id == current_user.id, AgentUsage.created_at >= since))
+        )
+        return r.scalar() or 0
+
+    window_start = now - timedelta(hours=6)
+    used_6h = await _used(window_start)
+
+    # 6h 窗口内最早一条记录的时间（用于前端计算"X小时后恢复"）
+    r_oldest = await db.execute(
+        select(func.min(AgentUsage.created_at))
+        .where(and_(AgentUsage.user_id == current_user.id, AgentUsage.created_at >= window_start))
+    )
+    oldest_6h_at = r_oldest.scalar()
+
+    week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    used_weekly = await _used(week_start)
+
+    limit_6h     = current_user.token_limit_6h     or settings.quota.default_token_limit_6h
+    limit_weekly = current_user.token_limit_weekly  or settings.quota.default_token_limit_weekly
+
+    return {
+        "used_6h":      used_6h,
+        "limit_6h":     limit_6h,
+        "oldest_6h_at": oldest_6h_at.isoformat() + "Z" if oldest_6h_at else None,
+        "used_weekly":  used_weekly,
+        "limit_weekly": limit_weekly,
+    }
 
 
 @router.get("/avatar/{user_id}")

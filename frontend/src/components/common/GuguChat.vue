@@ -90,9 +90,15 @@
           </div>
           <div class="popup-messages" ref="messagesEl">
             <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]">
-              <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-if="msg.streaming" style="white-space:pre-wrap;word-break:break-word">{{ msg.text }}</span><span v-else v-html="renderMd(msg.text)" /></div>
+              <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : renderMd(msg.text)" /></div>
               <div v-else class="msg-bubble">{{ msg.text }}</div>
-              <div class="msg-time">{{ msg.time }}</div>
+              <div class="msg-footer">
+                <span class="msg-time">{{ msg.time }}</span>
+                <button class="msg-copy-btn" @click="copyMsg(msg)" title="复制">
+                  <PhCheck v-if="copiedId === msg.id" :size="11" weight="bold" />
+                  <PhCopy  v-else :size="11" />
+                </button>
+              </div>
             </div>
             <div v-if="activeTool" class="msg ai">
               <div class="msg-bubble tool-bubble">
@@ -155,9 +161,15 @@
             </div>
             <div class="exp-messages" ref="expMessagesEl">
               <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]">
-                <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-if="msg.streaming" style="white-space:pre-wrap;word-break:break-word">{{ msg.text }}</span><span v-else v-html="renderMd(msg.text)" /></div>
+                <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : renderMd(msg.text)" /></div>
                 <div v-else class="msg-bubble">{{ msg.text }}</div>
-                <div class="msg-time">{{ msg.time }}</div>
+                <div class="msg-footer">
+                  <span class="msg-time">{{ msg.time }}</span>
+                  <button class="msg-copy-btn" @click="copyMsg(msg)" title="复制">
+                    <PhCheck v-if="copiedId === msg.id" :size="11" weight="bold" />
+                    <PhCopy  v-else :size="11" />
+                  </button>
+                </div>
               </div>
               <div v-if="activeTool" class="msg ai">
                 <div class="msg-bubble tool-bubble">
@@ -203,7 +215,7 @@ import {
   PhPushPin, PhPushPinSlash, PhX, PhPlay, PhPause,
   PhSpeakerHigh, PhSpeakerLow, PhSpeakerSlash,
   PhArrowRight, PhStop, PhArrowsOut, PhArrowsIn,
-  PhPencilSimple, PhTrash,
+  PhPencilSimple, PhTrash, PhCopy, PhCheck,
 } from '@phosphor-icons/vue'
 
 const SMALL_W   = 316
@@ -360,6 +372,14 @@ marked.use({
 })
 function renderMd(text) { return text ? marked.parse(text) : '' }
 
+// 流式渲染专用：补全未闭合的代码围栏，避免 marked 把半段代码块解析成残缺 HTML
+function renderMdStream(text) {
+  if (!text) return ''
+  const fences = (text.match(/^```/gm) || []).length
+  const patched = fences % 2 === 1 ? text + '\n```' : text
+  return marked.parse(patched)
+}
+
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 
 // ── 窗口状态 ────────────────────────────────────────────
@@ -380,6 +400,25 @@ const vw = ref(window.innerWidth)
 const vh = ref(window.innerHeight)
 function onResize() { vw.value = window.innerWidth; vh.value = window.innerHeight }
 
+// 小窗高度动态延伸：
+//   _baseScrollH  = 窗口打开/切换会话时消息区的 scrollHeight 基准（不计历史消息）
+//   msgsGrowth    = 基准之后新增的内容高度
+// 只有新增内容溢出当前窗口时才向上延伸，最高 75vh
+let _baseScrollH = 0
+const msgsGrowth = ref(0)
+
+function _resetSmallH() {
+  nextTick(() => {
+    _baseScrollH = messagesEl.value?.scrollHeight ?? 0
+    msgsGrowth.value = 0
+  })
+}
+
+const smallH = computed(() => {
+  const maxH = Math.min(vh.value * 0.75, vh.value - 88 - 16)
+  return Math.min(maxH, SMALL_H + msgsGrowth.value)
+})
+
 // 单一窗口的位置样式：小状态与大状态都用 top/left/right/bottom 像素值，保证过渡正常
 // transition 放在 CSS 而非 inline style，避免覆盖 Vue Transition 的 opacity/transform 动画
 const windowStyle = computed(() => {
@@ -389,7 +428,7 @@ const windowStyle = computed(() => {
     return { top: '12px', right: '12px', bottom: '12px', left: `${left}px` }
   }
   return {
-    top:    `${vh.value - 88 - SMALL_H}px`,
+    top:    `${vh.value - 88 - smallH.value}px`,
     left:   `${vw.value - 28 - SMALL_W}px`,
     right:  '28px',
     bottom: '88px',
@@ -398,8 +437,12 @@ const windowStyle = computed(() => {
 
 // 播放器联动：小窗打开时顶到窗口上方，其余情况悬在 fab 上方
 const miniPlayerStyle = computed(() => {
-  const bottom = (open.value && !expanded.value) ? 88 + SMALL_H + 8 : 88
-  return { bottom: `${bottom}px`, transformOrigin: `calc(100% - 25px) calc(100% + 35px)` }
+  const bottom = (open.value && !expanded.value) ? 88 + smallH.value + 8 : 88
+  // 小窗展开时播放器远离 FAB，从自身中心缩放；其他状态从 FAB 圆心缩放
+  const origin = (open.value && !expanded.value)
+    ? '50% 50%'
+    : `calc(100% - 25px) calc(100% + ${bottom - 53}px)`
+  return { bottom: `${bottom}px`, transformOrigin: origin }
 })
 
 async function toggleOpen() {
@@ -408,19 +451,11 @@ async function toggleOpen() {
     await nextTick()
     const el = expanded.value ? expMessagesEl.value : messagesEl.value
     if (el) scrollToBottom(el)
+    if (!expanded.value) _resetSmallH()
   }
 }
 
-function handleClickOutside(e) {
-  if (!open.value || expanded.value) return
-  if (fabRef.value?.contains(e.target)) return
-  if (windowRef.value?.contains(e.target)) return
-  if (playerRef.value?.contains(e.target)) return
-  open.value = false
-}
-
 onMounted(() => {
-  document.addEventListener('click', handleClickOutside, true)
   window.addEventListener('resize', onResize)
   window.addEventListener('beforeunload', saveProgress)
   // 刷新后恢复上次会话（sessionStorage 仍在则拉回那段对话；失败则当作新对话并清除存档）
@@ -432,7 +467,6 @@ onMounted(() => {
   }
 })
 onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside, true)
   window.removeEventListener('resize', onResize)
   window.removeEventListener('beforeunload', saveProgress)
 })
@@ -454,6 +488,30 @@ watch(sessionId, (v) => {
 
 function stopStreaming() {
   abortCtrl.value?.abort()
+}
+
+const copiedId = ref(null)
+function copyMsg(msg) {
+  // AI 消息取渲染后的纯文本，用户消息直接取原文
+  let text = msg.text
+  if (msg.role === 'ai' && msg.text) {
+    const tmp = document.createElement('div')
+    tmp.innerHTML = renderMd(msg.text)
+    text = tmp.innerText || tmp.textContent || msg.text
+  }
+  const fallback = () => {
+    const el = document.createElement('textarea')
+    el.value = text
+    el.style.cssText = 'position:fixed;top:-9999px;left:0;opacity:0'
+    document.body.appendChild(el)
+    el.focus(); el.select()
+    try { document.execCommand('copy') } catch {}
+    document.body.removeChild(el)
+  }
+  ;(navigator.clipboard ? navigator.clipboard.writeText(text).catch(fallback) : Promise.reject())
+    .catch(fallback)
+  copiedId.value = msg.id
+  setTimeout(() => { if (copiedId.value === msg.id) copiedId.value = null }, 1500)
 }
 
 const now = () => {
@@ -491,6 +549,8 @@ async function exitExpanded() {
   const el = messagesEl.value
   if (!el) return
   el.scrollTop = 999999
+  _baseScrollH = el.scrollHeight
+  msgsGrowth.value = 0
   const ro = new ResizeObserver(() => { el.scrollTop = 999999 })
   ro.observe(el)
   setTimeout(() => ro.disconnect(), 450)
@@ -508,6 +568,7 @@ async function loadSession(id) {
       time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
     }))
     await nextTick(); scrollExpBottom()
+    if (!expanded.value) _resetSmallH()
   } catch {}
 }
 
@@ -580,18 +641,20 @@ async function scrollExpBottom(force = false) {
 // MutationObserver：内容变化时跟随（仅 streaming 且用户未上翻）
 let msgMo = null, expMsgMo = null
 
-function makeScrollObserver(getEl) {
+function makeScrollObserver(getEl, trackGrowth = false) {
   return new MutationObserver(() => {
-    if (!streaming.value || userScrolledUp.value) return
     const el = getEl()
-    if (el) scrollToBottom(el)
+    if (!el) return
+    if (trackGrowth) msgsGrowth.value = Math.max(0, el.scrollHeight - _baseScrollH)
+    if (!streaming.value || userScrolledUp.value) return
+    scrollToBottom(el)
   })
 }
 
 watch(messagesEl, (el) => {
   msgMo?.disconnect()
   if (!el) return
-  msgMo = makeScrollObserver(() => messagesEl.value)
+  msgMo = makeScrollObserver(() => messagesEl.value, true)
   msgMo.observe(el, { childList: true, subtree: true, characterData: true })
 })
 watch(expMessagesEl, (el) => {
@@ -647,6 +710,9 @@ async function send() {
           const isNew = sessionId.value !== evt.session_id
           sessionId.value = evt.session_id
           if (isNew) await fetchSessions()
+        } else if (evt.type === 'session_title') {
+          const s = sessions.value.find(s => s.id === sessionId.value)
+          if (s) s.title = evt.title
         } else if (evt.type === '_new_round') {
           // 后端新一轮开始（sanitizer 已重置），前端无需变更视觉状态
         } else if (evt.type === 'tool_call') {
@@ -654,7 +720,7 @@ async function send() {
           if (evt.name) usedTools.add(evt.name)
           await scrollBottom(); await scrollExpBottom()
         } else if (evt.type === 'tool_done') {
-          activeTool.value = ''; thinking.value = false
+          activeTool.value = ''; thinking.value = true
           await scrollBottom(); await scrollExpBottom()
         } else if (evt.type === 'token') {
           thinking.value = false; activeTool.value = ''
@@ -951,10 +1017,24 @@ async function send() {
   background: linear-gradient(135deg, #7b7fb2, #9590c4); color: white;
   border-bottom-right-radius: 4px;
 }
-.msg-time { font-size: 10px; color: var(--text-secondary); margin-top: 3px; padding: 0 3px; }
+.msg-footer {
+  display: flex; align-items: center; gap: 4px;
+  margin-top: 3px; padding: 0 3px;
+}
+.msg-time { font-size: 10px; color: var(--text-secondary); }
+.msg-copy-btn {
+  width: 18px; height: 18px; border-radius: 4px; border: none;
+  background: none; color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; padding: 0; opacity: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.msg:hover .msg-copy-btn { opacity: 1; }
+.msg-copy-btn:hover { background: rgba(0,0,0,0.07); color: var(--color-primary); }
+.msg-copy-btn svg { display: block; }
 
 /* ── 思考/工具动画 ── */
-.thinking { display: flex; gap: 4px; align-items: center; padding: 12px 16px; }
+.thinking { display: flex; gap: 4px; align-items: center; padding: 16px 13px; }
 .thinking span {
   display: inline-block; width: 6px; height: 6px; border-radius: 50%;
   background: var(--color-primary); animation: bounce 1.2s infinite; opacity: 0.6;
@@ -963,14 +1043,14 @@ async function send() {
 .thinking span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
 
-.tool-bubble { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; color: var(--color-primary); opacity: 0.85; }
+.tool-bubble { display: flex; align-items: center; gap: 8px; padding: 10px 13px; font-size: 12px; color: var(--color-primary); }
 .tool-spinner {
   width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
   border: 2px solid rgba(123,127,178,0.25); border-top-color: var(--color-primary);
   animation: spin 0.7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.tool-label { font-size: 11px; font-weight: 600; }
+.tool-label { font-size: 12px; font-weight: 600; }
 
 /* ── Markdown ── */
 .md-body { padding: 10px 13px; }

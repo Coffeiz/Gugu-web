@@ -112,6 +112,37 @@
           <!-- 咕咕设置 -->
           <template v-if="activeNav === 'gugu'">
             <div class="pm-section">
+              <div class="pm-section-label">精力值</div>
+              <div v-if="quotaLoading" class="pm-quota-loading">加载中…</div>
+              <template v-else>
+                <div class="pm-quota-item">
+                  <div class="pm-quota-row">
+                    <span class="pm-quota-label">{{ recoverLabel }}</span>
+                    <span class="pm-quota-pct" :class="quotaPctClass(quota.used_6h, quota.limit_6h)">
+                      {{ quota.limit_6h ? Math.round(quota.used_6h / quota.limit_6h * 100) + '%' : '不限' }}
+                    </span>
+                  </div>
+                  <div class="pm-quota-bar">
+                    <div class="pm-quota-fill" :style="quotaBarStyle(quota.used_6h, quota.limit_6h)" />
+                  </div>
+                </div>
+                <div class="pm-quota-item">
+                  <div class="pm-quota-row">
+                    <span class="pm-quota-label">本周</span>
+                    <span class="pm-quota-pct" :class="quotaPctClass(quota.used_weekly, quota.limit_weekly)">
+                      {{ quota.limit_weekly ? Math.round(quota.used_weekly / quota.limit_weekly * 100) + '%' : '不限' }}
+                    </span>
+                  </div>
+                  <div class="pm-quota-bar">
+                    <div class="pm-quota-fill" :style="quotaBarStyle(quota.used_weekly, quota.limit_weekly)" />
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <div class="pm-sep"></div>
+
+            <div class="pm-section">
               <div class="pm-section-label">回复风格</div>
               <div class="pm-field-row">
                 <div class="pm-field-desc">
@@ -221,6 +252,7 @@ import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import BaseModal from '@/components/common/BaseModal.vue'
+import { authApi } from '@/services/api'
 import { PhX, PhSignOut, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird } from '@phosphor-icons/vue'
 
 const props = defineProps({ show: Boolean })
@@ -311,6 +343,44 @@ async function onAvatarFile(e) {
   try { await authStore.uploadAvatar(file) }
   catch (err) { console.error('头像上传失败', err) }
   e.target.value = ''
+}
+
+// 精力值配额
+const quota = ref({ used_6h: 0, limit_6h: null, oldest_6h_at: null, used_weekly: 0, limit_weekly: null })
+const quotaLoading = ref(false)
+
+async function loadQuota() {
+  quotaLoading.value = true
+  try { quota.value = await authApi.getQuota() } catch {}
+  finally { quotaLoading.value = false }
+}
+
+watch(activeNav, v => { if (v === 'gugu') loadQuota() })
+
+// "X小时后恢复精力" / "精力充沛"
+const recoverLabel = computed(() => {
+  if (!quota.value.oldest_6h_at) return '精力充沛'
+  const recoverAt = new Date(quota.value.oldest_6h_at).getTime() + 6 * 3600 * 1000
+  const diffMs = recoverAt - Date.now()
+  if (diffMs <= 0) return '精力充沛'
+  const diffH = diffMs / 3600000
+  if (diffH >= 1) return `${Math.ceil(diffH)} 小时后恢复精力`
+  return `${Math.ceil(diffMs / 60000)} 分钟后恢复精力`
+})
+
+function quotaBarStyle(used, limit) {
+  if (!limit) return { width: '8%', background: 'rgba(123,127,178,0.3)' }
+  const pct = Math.min(100, (used / limit) * 100)
+  const color = pct >= 90 ? 'rgba(200,80,80,0.7)'
+              : pct >= 70 ? 'rgba(210,160,60,0.75)'
+              : 'linear-gradient(90deg, rgba(123,127,178,0.6), rgba(149,144,196,0.75))'
+  return { width: pct + '%', background: color }
+}
+
+function quotaPctClass(used, limit) {
+  if (!limit) return ''
+  const pct = (used / limit) * 100
+  return pct >= 90 ? 'pct-danger' : pct >= 70 ? 'pct-warn' : ''
 }
 
 function handleLogout() {
@@ -467,4 +537,23 @@ function handleLogout() {
 }
 .pm-save-btn:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
 .pm-save-btn:disabled { opacity: 0.35; cursor: default; transform: none; }
+
+/* 精力值 */
+.pm-quota-loading { font-size: 12px; color: var(--text-secondary); padding: 4px 0; }
+.pm-quota-item { display: flex; flex-direction: column; gap: 6px; }
+.pm-quota-row { display: flex; align-items: center; justify-content: space-between; }
+.pm-quota-label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.pm-quota-pct { font-size: 12px; font-weight: 600; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.pm-quota-pct.pct-warn   { color: rgba(180,130,40,0.9); }
+.pm-quota-pct.pct-danger { color: rgba(200,70,70,0.9); }
+.pm-quota-bar {
+  height: 6px; border-radius: 99px;
+  background: rgba(0,0,0,0.07);
+  overflow: hidden;
+}
+.pm-quota-fill {
+  height: 100%; border-radius: 99px;
+  transition: width 0.5s cubic-bezier(0.22,1,0.36,1);
+  min-width: 2px;
+}
 </style>

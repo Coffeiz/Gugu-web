@@ -54,7 +54,15 @@ async def _update_project(db, user_id, args: dict):
     return {"success": True, "project_id": p.id, "name": p.name}
 
 
+_DEFAULT_STAGES = [
+    {"key": "s0", "label": "计划", "todos": []},
+    {"key": "s1", "label": "执行", "todos": []},
+    {"key": "s2", "label": "交付", "todos": []},
+]
+
+
 async def _create_project(db, user_id, args: dict):
+    default_stages = [dict(s) for s in _DEFAULT_STAGES]
     p = Project(
         user_id=user_id,
         name=args["name"],
@@ -63,6 +71,8 @@ async def _create_project(db, user_id, args: dict):
         deadline=args.get("deadline"),
         start_date=args.get("start_date"),
         notes=args.get("notes", ""),
+        stages_json=json.dumps(default_stages, ensure_ascii=False),
+        current_stage="s0",
     )
     db.add(p)
     await db.commit()
