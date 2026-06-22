@@ -4,6 +4,15 @@
 
 svg { shape-rendering: geometricPrecision; }
 
+/* date/time input 弹窗跟随系统深色 */
+input[type="date"],
+input[type="datetime-local"],
+input[type="time"],
+input[type="month"] {
+  color-scheme: dark;
+  font-family: var(--font-sans);
+}
+
 html, body, #app {
   height: 100%;
   overflow: hidden;
@@ -168,6 +177,30 @@ body {
 .popup-menu-item.danger:hover:not(:disabled) { background: rgba(200,90,90,0.1); }
 .popup-menu-sep { height: 1px; background: rgba(0,0,0,0.07); margin: 3px 6px; }
 .popup-menu-shortcut { margin-left: auto; font-size: 11px; color: var(--text-secondary); opacity: .7; }
+
+/* 暗色弹窗（Admin 用）— 对齐 .popup-menu 结构，暗色配色 */
+.popup-menu-dark {
+  background: rgba(20, 22, 38, 0.94);
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255,255,255,0.11);
+  border-radius: 10px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
+  padding: 4px;
+  user-select: none;
+}
+.popup-menu-dark .popup-menu-item {
+  color: rgba(255,255,255,0.72);
+  font-family: var(--font-sans);
+}
+.popup-menu-dark .popup-menu-item:hover:not(:disabled) { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.92); }
+.popup-menu-dark .popup-menu-item:disabled { opacity: 0.35; }
+.popup-menu-dark .popup-menu-item.active { color: rgba(160,150,235,0.95); font-weight: 600; }
+.popup-menu-dark .popup-menu-item.danger { color: rgba(220,100,100,0.9); }
+.popup-menu-dark .popup-menu-item.danger:hover:not(:disabled) { background: rgba(200,80,80,0.12); }
+.popup-menu-dark .popup-menu-sep { background: rgba(255,255,255,0.08); margin: 3px 6px; height: 1px; }
+.popup-menu-dark .popup-close-btn { color: rgba(255,255,255,0.35); }
+.popup-menu-dark .popup-close-btn:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.75); }
+.popup-menu-dark .popup-menu-shortcut { color: rgba(255,255,255,0.3); }
 
 /* 标题级内联编辑输入框（用于弹窗/卡片顶部名称编辑） */
 .title-edit-input {

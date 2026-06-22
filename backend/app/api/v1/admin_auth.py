@@ -5,12 +5,14 @@ GET  /api/v1/admin/auth/me      → 验证当前 Token
 """
 
 from datetime import datetime, timedelta
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 import bcrypt as _bcrypt
 from jose import jwt, JWTError
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
+from app.db.session import get_db
 
 router = APIRouter(prefix="/admin/auth", tags=["admin-auth"])
 bearer = HTTPBearer()
@@ -62,12 +64,21 @@ def _verify_token(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
 
 
 @router.post("/login")
-async def login(body: LoginRequest):
+async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    from app.api.v1.audit_log import write_log
     user = ADMIN_USERS.get(body.username)
     if not user or not _verify_pw(body.password, user["hashed_password"]):
+        try:
+            await write_log(db, body.username, "login", "登录失败：用户名或密码错误", request)
+        except Exception:
+            pass
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
     token = _create_token({"sub": user["username"], "role": user["role"]})
+    try:
+        await write_log(db, user["username"], "login", "登录成功", request)
+    except Exception:
+        pass
     return {
         "access_token": token,
         "token_type": "bearer",

@@ -12,7 +12,7 @@
           </div>
           <input ref="avatarInput" type="file" accept="image/*" style="display:none" @change="onAvatarFile" />
           <div class="pm-user-info">
-            <div class="pm-name">{{ displayLabel }}</div>
+            <div class="pm-name">{{ authStore.user?.displayName || '—' }}</div>
             <div class="pm-email">{{ authStore.user?.email ?? '' }}</div>
           </div>
         </div>
@@ -54,23 +54,11 @@
           <!-- 个人信息 -->
           <template v-if="activeNav === 'info'">
             <div class="pm-section">
-              <div class="pm-section-label">个人资料</div>
+              <div class="pm-section-label">账号信息</div>
               <div class="pm-field">
                 <label>昵称</label>
                 <input v-model="displayName" class="form-input" :class="{ modified: displayName !== (authStore.user?.displayName ?? '') }" placeholder="填写昵称" />
               </div>
-              <div class="pm-footer">
-                <span v-if="infoMsg" class="pm-msg" :class="infoMsgType">{{ infoMsg }}</span>
-                <button class="pm-save-btn" :disabled="displayName === (authStore.user?.displayName ?? '') || infoSaving" @click="saveInfo">
-                  {{ infoSaving ? '保存中…' : '保存' }}
-                </button>
-              </div>
-            </div>
-
-            <div class="pm-sep"></div>
-
-            <div class="pm-section">
-              <div class="pm-section-label">账号信息</div>
               <div class="pm-field">
                 <label>用户名</label>
                 <div class="pm-static">{{ authStore.user?.username ?? '—' }}</div>
@@ -86,6 +74,12 @@
               <div class="pm-field">
                 <label>加入时间</label>
                 <div class="pm-static">{{ authStore.user?.createdAt ?? '—' }}</div>
+              </div>
+              <div class="pm-footer">
+                <span v-if="infoMsg" class="pm-msg" :class="infoMsgType">{{ infoMsg }}</span>
+                <button class="pm-save-btn" :disabled="displayName === (authStore.user?.displayName ?? '') || infoSaving" @click="saveInfo">
+                  {{ infoSaving ? '保存中…' : '保存' }}
+                </button>
               </div>
             </div>
           </template>

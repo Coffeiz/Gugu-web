@@ -89,8 +89,8 @@
             </div>
           </div>
           <div class="popup-messages" ref="messagesEl">
-            <div v-for="(msg, i) in messages" :key="i" :class="['msg', msg.role]">
-              <div v-if="msg.role === 'ai'" class="msg-bubble md-body" v-html="renderMd(msg.text)" />
+            <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]">
+              <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-if="msg.streaming" style="white-space:pre-wrap;word-break:break-word">{{ msg.text }}</span><span v-else v-html="renderMd(msg.text)" /></div>
               <div v-else class="msg-bubble">{{ msg.text }}</div>
               <div class="msg-time">{{ msg.time }}</div>
             </div>
@@ -154,8 +154,8 @@
               </button>
             </div>
             <div class="exp-messages" ref="expMessagesEl">
-              <div v-for="(msg, i) in messages" :key="i" :class="['msg', msg.role]">
-                <div v-if="msg.role === 'ai'" class="msg-bubble md-body" v-html="renderMd(msg.text)" />
+              <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]">
+                <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-if="msg.streaming" style="white-space:pre-wrap;word-break:break-word">{{ msg.text }}</span><span v-else v-html="renderMd(msg.text)" /></div>
                 <div v-else class="msg-bubble">{{ msg.text }}</div>
                 <div class="msg-time">{{ msg.time }}</div>
               </div>
@@ -196,7 +196,9 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import { useAudioStore } from '@/stores/audio'
+import { useProjectStore } from '@/stores/projects'
 import { agentApi } from '@/services/api'
+import { uploadSignal, calendarSignal } from '@/services/cache'
 import {
   PhPushPin, PhPushPinSlash, PhX, PhPlay, PhPause,
   PhSpeakerHigh, PhSpeakerLow, PhSpeakerSlash,
@@ -209,6 +211,22 @@ const SMALL_H   = 360
 const SIDEBAR_W = 220
 
 const audioStore    = useAudioStore()
+const projectStore  = useProjectStore()
+
+// 工具名 → 受影响数据域，咕咕操作后据此刷新前端，免手动刷新页面
+const _PROJECT_TOOLS = new Set(['create_project','update_project','update_stage','add_stage','remove_stage','rename_stage','add_todo','remove_todo','set_priority','archive_project','delete_project'])
+const _CALENDAR_TOOLS = new Set(['create_event','update_event','delete_event'])
+const _FILE_TOOLS = new Set(['create_document','edit_file','rename_file','move_file','create_folder','delete_file','rename_folder','delete_folder','restore_file','permanent_delete'])
+
+async function refreshAfterTools(usedTools) {
+  if (!usedTools.size) return
+  const has = (set) => [...usedTools].some(t => set.has(t))
+  try {
+    if (has(_PROJECT_TOOLS)) await projectStore.fetchProjects()
+    if (has(_CALENDAR_TOOLS)) { calendarSignal.value++; projectStore.fetchUpcomingCalEvents?.() }
+    if (has(_FILE_TOOLS)) uploadSignal.value++
+  } catch (e) { /* 刷新失败不影响对话 */ }
+}
 const audioEl       = ref(null)
 const audioPlaying  = ref(false)
 const audioCurrent  = ref(0)
@@ -366,7 +384,9 @@ function onResize() { vw.value = window.innerWidth; vh.value = window.innerHeigh
 // transition 放在 CSS 而非 inline style，避免覆盖 Vue Transition 的 opacity/transform 动画
 const windowStyle = computed(() => {
   if (expanded.value) {
-    return { top: '12px', right: '12px', bottom: '12px', left: `${SIDEBAR_W + 12}px` }
+    // 右锚 720px，遇到窄屏时不超过导航栏右边界
+    const left = Math.max(SIDEBAR_W + 12, vw.value * 0.4 - 12)
+    return { top: '12px', right: '12px', bottom: '12px', left: `${left}px` }
   }
   return {
     top:    `${vh.value - 88 - SMALL_H}px`,
@@ -382,7 +402,14 @@ const miniPlayerStyle = computed(() => {
   return { bottom: `${bottom}px`, transformOrigin: `calc(100% - 25px) calc(100% + 35px)` }
 })
 
-function toggleOpen() { open.value = !open.value }
+async function toggleOpen() {
+  open.value = !open.value
+  if (open.value) {
+    await nextTick()
+    const el = expanded.value ? expMessagesEl.value : messagesEl.value
+    if (el) scrollToBottom(el)
+  }
+}
 
 function handleClickOutside(e) {
   if (!open.value || expanded.value) return
@@ -396,6 +423,13 @@ onMounted(() => {
   document.addEventListener('click', handleClickOutside, true)
   window.addEventListener('resize', onResize)
   window.addEventListener('beforeunload', saveProgress)
+  // 刷新后恢复上次会话（sessionStorage 仍在则拉回那段对话；失败则当作新对话并清除存档）
+  const saved = sessionStorage.getItem(SESSION_KEY)
+  if (saved) {
+    loadSession(Number(saved)).then(() => {
+      if (sessionId.value !== Number(saved)) sessionStorage.removeItem(SESSION_KEY)
+    })
+  }
 })
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside, true)
@@ -411,6 +445,13 @@ const activeTool     = ref('')
 const sessionId      = ref(null)
 const abortCtrl      = ref(null)
 
+// 会话 id 存入 sessionStorage：刷新页面保留当前对话，关闭浏览器/标签页才清空（=开新对话）
+const SESSION_KEY = 'gugu_session_id'
+watch(sessionId, (v) => {
+  if (v) sessionStorage.setItem(SESSION_KEY, String(v))
+  else sessionStorage.removeItem(SESSION_KEY)
+})
+
 function stopStreaming() {
   abortCtrl.value?.abort()
 }
@@ -419,8 +460,11 @@ const now = () => {
   const d = new Date()
   return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`
 }
+let _mid = 0
+const mkid = () => ++_mid
+
 const messages = ref([
-  { role: 'ai', text: '你好！我是咕咕，可以帮你查项目进度、搜索文件、查看截止日期和近期排期，随时问我吧 ✦', time: now() },
+  { id: mkid(), role: 'ai', text: '你好！我是咕咕，可以帮你查项目进度、搜索文件、查看截止日期和近期排期，随时问我吧 ✦', time: now() },
 ])
 
 // ── 展开/收起 ────────────────────────────────────────────
@@ -438,11 +482,18 @@ async function enterExpanded() {
   await fetchSessions()
   await nextTick()
   expInputEl.value?.focus()
-  scrollExpBottom()
+  if (expMessagesEl.value) expMessagesEl.value.scrollTop = 999999
 }
 
-function exitExpanded() {
+async function exitExpanded() {
   expanded.value = false
+  await nextTick()
+  const el = messagesEl.value
+  if (!el) return
+  el.scrollTop = 999999
+  const ro = new ResizeObserver(() => { el.scrollTop = 999999 })
+  ro.observe(el)
+  setTimeout(() => ro.disconnect(), 450)
 }
 
 async function loadSession(id) {
@@ -451,6 +502,7 @@ async function loadSession(id) {
     const data = await agentApi.getMessages(id)
     sessionId.value = id
     messages.value = data.messages.map(m => ({
+      id: mkid(),
       role: m.role === 'assistant' ? 'ai' : m.role,
       text: m.content,
       time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
@@ -558,7 +610,7 @@ onUnmounted(() => {
 async function send() {
   const text = inputText.value.trim()
   if (!text || streaming.value) return
-  messages.value.push({ role: 'user', text, time: now() })
+  messages.value.push({ id: mkid(), role: 'user', text, time: now() })
   inputText.value = ''
   if (expInputEl.value) expInputEl.value.style.height = 'auto'
   await scrollBottom(true); await scrollExpBottom(true)
@@ -568,6 +620,7 @@ async function send() {
   await scrollBottom(); await scrollExpBottom()
   const token = localStorage.getItem('user_token') ?? ''
   let aiIdx = -1
+  const usedTools = new Set()
 
   try {
     const res = await fetch(`${BASE_URL}/agent/chat`, {
@@ -594,38 +647,49 @@ async function send() {
           const isNew = sessionId.value !== evt.session_id
           sessionId.value = evt.session_id
           if (isNew) await fetchSessions()
+        } else if (evt.type === '_new_round') {
+          // 后端新一轮开始（sanitizer 已重置），前端无需变更视觉状态
         } else if (evt.type === 'tool_call') {
           thinking.value = false; activeTool.value = evt.label || evt.name
+          if (evt.name) usedTools.add(evt.name)
           await scrollBottom(); await scrollExpBottom()
         } else if (evt.type === 'tool_done') {
           activeTool.value = ''; thinking.value = false
           await scrollBottom(); await scrollExpBottom()
         } else if (evt.type === 'token') {
           thinking.value = false; activeTool.value = ''
-          if (aiIdx === -1) { messages.value.push({ role: 'ai', text: '', time: now() }); aiIdx = messages.value.length - 1 }
+          if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
           messages.value[aiIdx].text += evt.content
           await scrollBottom(); await scrollExpBottom()
         } else if (evt.type === 'done') {
           thinking.value = false; activeTool.value = ''
         } else if (evt.type === 'error') {
           thinking.value = false; activeTool.value = ''
-          messages.value.push({ role: 'ai', text: evt.detail, time: now() })
+          messages.value.push({ id: mkid(), role: 'ai', text: evt.message || evt.detail || '出错了，请稍后再试。', time: now() })
+          aiIdx = messages.value.length - 1
           await scrollBottom(); await scrollExpBottom()
         }
       }
     }
     if (aiIdx === -1) {
-      messages.value.push({ role: 'ai', text: '收到，但没有收到回复，请稍后再试。', time: now() })
+      messages.value.push({ id: mkid(), role: 'ai', text: '收到，但没有收到回复，请稍后再试。', time: now() })
       await scrollBottom(); await scrollExpBottom()
     }
   } catch (e) {
     thinking.value = false
     if (e.name !== 'AbortError') {
-      messages.value.push({ role: 'ai', text: `连接失败：${e.message}`, time: now() })
+      messages.value.push({ id: mkid(), role: 'ai', text: `连接失败：${e.message}`, time: now() })
       await scrollBottom(); await scrollExpBottom()
     }
   } finally {
+    // 流式结束：把该条 AI 消息标记为非流式，触发 markdown 渲染（流式中按纯文本显示，避免半截表格/代码块闪烁）
+    if (aiIdx !== -1 && messages.value[aiIdx]) messages.value[aiIdx].streaming = false
     thinking.value = false; activeTool.value = ''; streaming.value = false; abortCtrl.value = null
+    // markdown 重渲染后内容变高，MutationObserver 此时已因 streaming=false 停止跟随，
+    // 需在 nextTick 后再滚一次，否则底部时间戳会被截掉
+    await scrollBottom(); await scrollExpBottom()
+    // 咕咕若调用了改数据的工具，刷新对应前端视图（项目/日历/文件），免手动刷新页面
+    refreshAfterTools(usedTools)
   }
 }
 </script>
@@ -919,7 +983,8 @@ async function send() {
 .md-body :deep(ul),.md-body :deep(ol) { margin: 4px 0 8px 18px; padding: 0; }
 .md-body :deep(ul) { list-style: disc; }
 .md-body :deep(ol) { list-style: decimal; }
-.md-body :deep(li) { margin-bottom: 3px; line-height: 1.5; display: list-item; }
+.md-body :deep(li) { margin-bottom: 6px; line-height: 1.6; display: list-item; }
+.md-body :deep(li:last-child) { margin-bottom: 0; }
 .md-body :deep(li > ul), .md-body :deep(li > ol) { margin: 2px 0 2px 14px; }
 
 /* 表格 */

@@ -310,6 +310,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { eventsApi } from '@/services/api'
+import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck } from '@phosphor-icons/vue'
@@ -863,6 +864,12 @@ async function fetchEvents() {
     extraEvents.value = normalized
   } catch { }
 }
+
+// 咕咕在对话里增删改了活动 → 清月缓存并重取当前月
+watch(calendarSignal, () => {
+  for (const k in eventsCache) delete eventsCache[k]
+  fetchEvents()
+})
 
 function singleEvents(iso) { return extraEvents.value.filter(e => e.date === iso) }
 

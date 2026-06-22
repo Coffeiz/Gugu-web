@@ -42,9 +42,6 @@
         </button>
       </form>
 
-      <div class="login-footer">
-        <router-link to="/">← 返回主界面</router-link>
-      </div>
     </div>
   </div>
 </template>
@@ -65,7 +62,7 @@ async function handleLogin() {
   loading.value = true; error.value = ''
   try {
     await adminStore.login(form.username, form.password)
-    router.push('/admin/config')
+    router.push('/config')
   } catch (e) {
     error.value = e.message
   } finally {

@@ -112,6 +112,7 @@ export const filesApi = {
   tree:    ()         => get('/files/tree'),
   all:     ()         => get('/files/all'),
   version: ()         => get('/files/version'),
+  storage: ()         => get('/files/storage'),
   update: (id, data) => patch(`/files/${id}`, data),
   delete:      (id)   => del(`/files/${id}`),
   batchDelete: (ids)  => post('/files/batch-delete', { ids }),
@@ -176,8 +177,9 @@ export const foldersApi = {
     ...(parentId  != null ? { parentId  } : {}),
     name,
   }),
-  rename: (id, name) => patch(`/folders/${id}`, { name }),
-  delete: (id)       => del(`/folders/${id}`),
+  rename: (id, name)     => patch(`/folders/${id}`, { name }),
+  move:   (id, parentId) => patch(`/folders/${id}/parent`, { parentId }),
+  delete: (id)           => del(`/folders/${id}`),
   download: async (id, name) => {
     const token = getToken()
     const res = await fetch(`${BASE_URL}/folders/${id}/download`, {
@@ -212,6 +214,12 @@ export const clientsApi = {
 export const preferencesApi = {
   get:    ()     => get('/preferences'),
   update: (data) => request('PATCH', '/preferences', data),
+}
+
+export const agentApi = {
+  listSessions:    ()           => get('/agent/sessions'),
+  getMessages:     (sessionId) => get(`/agent/sessions/${sessionId}/messages`),
+  deleteSession:   (sessionId) => del(`/agent/sessions/${sessionId}`),
 }
 
 export const authApi = {

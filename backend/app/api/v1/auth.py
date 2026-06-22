@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -7,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import User
+from app.models import User, InviteCode
 from app.core.security import hash_password, verify_password, create_user_token, get_current_user
 from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile
 from app.core.config import get_settings
@@ -17,6 +18,16 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
 async def register(body: UserRegister, db: AsyncSession = Depends(get_db)):
+    # 验证邀请码
+    inv_result = await db.execute(
+        select(InviteCode).where(InviteCode.code == body.invite_code.strip().upper())
+    )
+    invite = inv_result.scalars().first()
+    if not invite:
+        raise HTTPException(400, "邀请码无效")
+    if invite.used_at is not None:
+        raise HTTPException(400, "邀请码已被使用")
+
     existing = await db.execute(
         select(User).where(
             (User.username == body.username) | (User.email == body.email)
@@ -29,8 +40,13 @@ async def register(body: UserRegister, db: AsyncSession = Depends(get_db)):
         username=body.username,
         email=body.email,
         hashed_password=hash_password(body.password),
+        display_name=body.username,
     )
     db.add(user)
+    await db.flush()
+
+    invite.used_at = datetime.utcnow()
+    invite.used_by = user.id
     await db.commit()
     await db.refresh(user)
 

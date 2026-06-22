@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models import File, Folder, Project, User
-from app.schemas import FolderCreate, FolderRename, FolderResponse
+from app.schemas import FolderCreate, FolderMove, FolderRename, FolderResponse
 from app.core.security import get_current_user
 from app.services.storage import get_storage
 
@@ -210,6 +210,47 @@ async def rename_folder(
     await db.refresh(folder)
     cnt = await _file_count(folder.id, db)
     return FolderResponse(id=folder.id, project_id=folder.project_id, name=folder.name, file_count=cnt)
+
+
+# ── PATCH /folders/{fid}/parent ──────────────────────────────────────────────
+
+@router.patch("/{fid}/parent", response_model=FolderResponse)
+async def move_folder(
+    fid: int,
+    body: FolderMove,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    folder = await db.get(Folder, fid)
+    if not folder or folder.user_id != current_user.id:
+        raise HTTPException(404, "文件夹不存在")
+
+    new_parent_id = body.parent_id
+
+    if new_parent_id is not None:
+        target = await db.get(Folder, new_parent_id)
+        if not target or target.user_id != current_user.id:
+            raise HTTPException(404, "目标文件夹不存在")
+        # Walk up from target to detect circular dependency
+        cur = new_parent_id
+        visited: set[int] = set()
+        while cur is not None:
+            if cur == fid:
+                raise HTTPException(400, "不能将文件夹移动到自身或其子文件夹中")
+            if cur in visited:
+                break
+            visited.add(cur)
+            f = await db.get(Folder, cur)
+            if f is None:
+                break
+            cur = f.parent_id
+
+    folder.parent_id = new_parent_id
+    await db.commit()
+    await db.refresh(folder)
+    cnt = await _file_count(folder.id, db)
+    return FolderResponse(id=folder.id, project_id=folder.project_id,
+                          parent_id=folder.parent_id, name=folder.name, file_count=cnt)
 
 
 # ── DELETE /folders/{fid} ─────────────────────────────────────────────────────

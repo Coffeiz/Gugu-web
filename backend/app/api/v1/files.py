@@ -261,6 +261,25 @@ async def files_version(
     return {"version": version}
 
 
+# ── GET /files/storage ───────────────────────────────────────────────────────
+
+@router.get("/storage")
+async def files_storage(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """返回当前用户的存储用量与上限。"""
+    used_res = await db.execute(
+        select(func.sum(File.size_bytes)).where(
+            File.user_id == current_user.id,
+            File.deleted_at.is_(None),
+        )
+    )
+    used = used_res.scalar() or 0
+    limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
+    return {"used_bytes": used, "limit_bytes": limit}
+
+
 # ── GET /files/tree ───────────────────────────────────────────────────────────
 
 @router.get("/tree", response_model=FileTreeResponse)
@@ -367,6 +386,17 @@ async def upload_file(
 
     data = await file.read()
     size_bytes = len(data)
+
+    # 检查存储配额（优先个人配额，fallback 全局默认）
+    _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
+    if _storage_limit is not None:
+        used_res = await db.execute(
+            select(func.sum(File.size_bytes)).where(File.user_id == current_user.id)
+        )
+        used = used_res.scalar() or 0
+        if used + size_bytes > _storage_limit:
+            raise HTTPException(status_code=400, detail="存储空间已满，无法上传")
+
     await storage.put(final_key, data, mime_type)
 
     img_width, img_height = None, None
@@ -532,7 +562,7 @@ async def copy_file(
 
 # ── DELETE /files/{fid} （软删除→回收站）────────────────────────────────────
 
-def _to_trash_key(user_id: int, fid: int, storage_key: str) -> str:
+def _to_trash_key(user_id, fid: int, storage_key: str) -> str:
     """生成回收站路径，保留原文件名方便识别。"""
     return f"{user_id}/trash/{fid}/{storage_key.rsplit('/', 1)[-1]}"
 
@@ -692,10 +722,11 @@ async def get_thumb(
     if not token:
         raise HTTPException(401, "Token 无效")
     try:
+        from uuid import UUID as _UUID
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         if payload.get("role") != "user":
             raise ValueError("not user")
-        user_id = int(payload["sub"])
+        user_id = _UUID(payload["sub"])
     except (JWTError, KeyError, ValueError):
         raise HTTPException(401, "Token 无效")
 

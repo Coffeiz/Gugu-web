@@ -29,7 +29,7 @@
     </main>
 
     <!-- AI 悬浮球 -->
-    <AiFloatBall />
+    <GuguChat />
 
     <!-- 新建项目 Modal -->
     <NewProjectModal
@@ -77,7 +77,7 @@ import { useAuthStore } from '@/stores/auth'
 import { projectsApi } from '@/services/api'
 import { uploadSignal } from '@/services/cache'
 import AppSidebar from '@/components/common/AppSidebar.vue'
-import AiFloatBall from '@/components/common/AiFloatBall.vue'
+import GuguChat from '@/components/common/GuguChat.vue'
 import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'
 import ProjectModal    from '@/views/Projects/components/ProjectModal.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'

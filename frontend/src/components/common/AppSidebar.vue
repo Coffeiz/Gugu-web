@@ -30,7 +30,7 @@
         <div class="nav-item soon-item">
           <PhGraph class="nav-icon" :size="15" />
           <span class="nav-label-text">思维</span>
-          <span class="soon-badge">即将推出</span>
+          <span class="soon-badge">咕了</span>
         </div>
       </div>
 
@@ -42,12 +42,12 @@
         <div class="nav-item soon-item">
           <PhAddressBook class="nav-icon" :size="15" />
           <span class="nav-label-text">客户</span>
-          <span class="soon-badge">即将推出</span>
+          <span class="soon-badge">咕了</span>
         </div>
         <div class="nav-item soon-item">
           <PhUsersThree class="nav-icon" :size="15" />
           <span class="nav-label-text">团队</span>
-          <span class="soon-badge">即将推出</span>
+          <span class="soon-badge">咕了</span>
         </div>
       </div>
 

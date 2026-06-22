@@ -27,3 +27,5 @@ export const filesCacheVersion = {
 }
 
 export const uploadSignal = ref(0)
+// 日历事件变更信号（咕咕对话里增删改活动后 bump，日历页监听并清缓存重取）
+export const calendarSignal = ref(0)

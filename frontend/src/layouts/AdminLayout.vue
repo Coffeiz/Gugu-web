@@ -24,7 +24,7 @@
       <!-- 导航 -->
       <nav class="sidebar-nav">
         <div class="nav-group-label">配置</div>
-        <router-link to="/admin/config" class="nav-item">
+        <router-link to="/config" class="nav-item">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <circle cx="8" cy="8" r="2"/>
@@ -32,9 +32,39 @@
           </svg>
           系统配置
         </router-link>
+        <router-link to="/agent" class="nav-item">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="8" cy="6" r="3"/>
+            <path d="M3 14c0-2.8 2.2-5 5-5s5 2.2 5 5"/>
+            <path d="M11 4l1 1-1 1"/>
+          </svg>
+          Agent 配置
+        </router-link>
 
-        <div class="nav-group-label" style="margin-top:18px">管理</div>
-        <div class="nav-item disabled">
+        <div class="sidebar-rule" style="margin:14px 4px" />
+        <div class="nav-group-label">数据</div>
+        <router-link to="/analytics" class="nav-item">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 12l3-4 3 2 3-5 3 3"/>
+            <path d="M2 14h12"/>
+          </svg>
+          数据分析
+        </router-link>
+
+        <div class="sidebar-rule" style="margin:14px 4px" />
+        <div class="nav-group-label">管理</div>
+        <router-link to="/invite-codes" class="nav-item">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="5" width="14" height="8" rx="1.5"/>
+            <path d="M5 5V3.5a2 2 0 014 0V5"/>
+            <circle cx="8" cy="9.5" r="1"/>
+          </svg>
+          邀请码
+        </router-link>
+        <router-link to="/users" class="nav-item">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <circle cx="6" cy="5" r="2.5"/>
@@ -42,29 +72,36 @@
             <path d="M12 7l1.5 1.5L16 6"/>
           </svg>
           用户管理
-          <span class="nav-badge">Soon</span>
-        </div>
-        <div class="nav-item disabled">
+        </router-link>
+        <router-link to="/quota" class="nav-item">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="1" width="14" height="14" rx="2"/>
+            <path d="M1 7h14M7 7v8"/>
+          </svg>
+          配额管理
+        </router-link>
+        <router-link to="/audit-log" class="nav-item">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="3" width="12" height="10" rx="2"/>
             <path d="M5 7h6M5 10h4"/>
           </svg>
           操作日志
-          <span class="nav-badge">Soon</span>
-        </div>
+        </router-link>
+        <router-link to="/system-logs" class="nav-item">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 4h12M2 8h8M2 12h5"/>
+            <circle cx="13" cy="11" r="2.5"/>
+            <path d="M13 9.5v1.5l1 1"/>
+          </svg>
+          系统日志
+        </router-link>
       </nav>
 
       <!-- 底部 -->
       <div class="sidebar-footer">
-        <router-link to="/" class="back-link">
-          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path d="M8.5 2.5L4 7l4.5 4.5"/>
-          </svg>
-          返回主界面
-        </router-link>
-        <div class="sidebar-rule" />
         <!-- 用户卡片 — 对齐前端 user-card 风格 -->
         <div class="user-card">
           <div class="user-avatar">{{ initial }}</div>
@@ -98,7 +135,7 @@ const initial = computed(() => (adminStore.adminUser?.username?.[0] ?? 'A').toUp
 
 function handleLogout() {
   adminStore.logout()
-  router.push('/admin/login')
+  router.push('/login')
 }
 </script>
 
@@ -187,14 +224,6 @@ function handleLogout() {
 
 /* ── 底部 ── */
 .sidebar-footer { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
-.back-link {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; color: rgba(255,255,255,0.25);
-  text-decoration: none; padding: 6px 10px; border-radius: 8px;
-  transition: all 0.15s;
-}
-.back-link:hover { color: rgba(255,255,255,0.55); background: rgba(255,255,255,0.05); }
-
 /* 用户卡片 — 对齐前端 user-card 风格，暗色版 */
 .user-card {
   display: flex; align-items: center; gap: 10px;

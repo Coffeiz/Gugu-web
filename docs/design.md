@@ -1,4 +1,4 @@
-# PM Studio · 设计需求文档
+# 咕咕 · 前台设计规范
 
 > 整理自产品讨论，最后更新：2026-06-22
 
@@ -16,13 +16,13 @@
 
 | 层级 | 选型 | 说明 |
 |------|------|------|
-| 前端 | Vue 3 + Vite | 用户有 Vue 基础，上手快 |
-| UI 组件库 | Arco Design | 飞书出品，适合项目管理风格，ToB 扩展友好 |
-| 后端 | FastAPI (Python) | 异步，LangChain/LlamaIndex 直接用 |
+| 前端 | Vue 3 + Vite | `<script setup>` + Pinia |
+| 图标库 | Phosphor Icons（`@phosphor-icons/vue`） | MIT，UI 操作图标统一 `weight="bold"` |
+| 后端 | FastAPI (Python) | 异步，SQLAlchemy 2.0 async |
 | 数据库 | PostgreSQL + Redis | 结构化数据 + 缓存/实时 |
-| 文件存储 | 阿里云 OSS | 国内访问稳定 |
-| 模型 | 通义千问 (Qwen) | 国内合规 |
-| 实时通信 | WebSocket | 项目状态实时推送 |
+| 文件存储 | 阿里云 OSS / 本地 | 可切换，Admin 配置 |
+| 模型 | 可配置（Qwen / Anthropic / OpenAI 兼容） | Admin 后台热更新 |
+| 实时通信 | SSE（Server-Sent Events） | Agent 对话流式输出 |
 
 **ToB 扩展策略**：前端和数据库基本不动，后期加多租户逻辑和权限体系即可。
 
@@ -160,10 +160,11 @@ function darkenHex(hex, amount = 0.60) {
 
 ### 图标
 
-- **优先使用 Phosphor Icons**（`@phosphor-icons/vue`，MIT）：UI 操作图标统一 `weight="bold"`
+- **统一使用 Phosphor Icons**（`@phosphor-icons/vue`，MIT）：UI 操作图标统一 `weight="bold"`
 - 保留手写内联 SVG 的场景：viewer 内控件、装饰性插图、带旋转动画的方向箭头
 - 内联 SVG 规范：`stroke-width: 1.5`，`stroke-linecap: round`，`fill="none"`，继承 `currentColor`
 - 不使用 Emoji 或彩色图标
+- 旋转动画的 SVG 需加 `transform-box: fill-box; transform-origin: center` 防止旋转时改变按钮宽度
 
 ### 排版
 

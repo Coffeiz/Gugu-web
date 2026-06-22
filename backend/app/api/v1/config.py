@@ -7,11 +7,12 @@ POST  /api/v1/admin/config/init-db           → 手动初始化数据库（建�
 """
 
 import asyncio
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from typing import Any, Literal
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings, save_override
-from app.db.session import create_all_tables, reset_engine
+from app.db.session import create_all_tables, reset_engine, get_db
 
 router = APIRouter(prefix="/admin/config", tags=["admin"])
 
@@ -41,10 +42,14 @@ class ConfigPatch(BaseModel):
 
 
 @router.patch("")
-async def update_config(body: ConfigPatch):
+async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = Depends(get_db)):
     import traceback as _tb
+    from app.api.v1.audit_log import write_log
     try:
         new_cfg = await save_override(body.patch)
+        sections = "、".join(body.patch.keys())
+        username = getattr(request.state, "admin_username", "admin")
+        await write_log(db, username, "config", f"修改配置：{sections}", request)
         return {"message": "配置已更新", "data": _mask(new_cfg.model_dump())}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}\n{_tb.format_exc()}")

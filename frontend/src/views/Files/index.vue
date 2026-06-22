@@ -100,6 +100,20 @@
           清空回收站
         </button>
 
+        <!-- 存储用量 -->
+        <div v-if="storageInfo.loaded" class="storage-pill" :class="{ 'no-limit': storageInfo.limit === null }"
+          :title="storageInfo.limit ? `已用 ${fmtBytes(storageInfo.used)} / ${fmtBytes(storageInfo.limit)}` : `已用 ${fmtBytes(storageInfo.used)}`">
+          <template v-if="storageInfo.limit !== null">
+            <div class="storage-bar-bg">
+              <div class="storage-bar-fill" :style="storageFillStyle"></div>
+            </div>
+          </template>
+          <span class="storage-text">
+            {{ fmtBytes(storageInfo.used) }}
+            <template v-if="storageInfo.limit !== null"> / {{ fmtBytes(storageInfo.limit) }}</template>
+          </span>
+        </div>
+
       </div>
     </div>
 
@@ -195,6 +209,9 @@
               :data-folder-key="f.id"
               :style="{ '--fd-color': folderAccentColor(f) }"
               @click.stop="handleFolderClick(f, $event)"
+              draggable="true"
+              @dragstart="onFolderCardDragStart(f, $event)"
+              @dragend="draggingFolderIds = new Set()"
               @dragover="onFolderDragOver(f, $event)"
               @dragleave="onFolderDragLeave(f)"
               @drop="onFolderDrop(f, $event)"
@@ -353,6 +370,9 @@
               :data-folder-key="f.id"
               @click.stop="handleFolderClick(f, $event)"
               @contextmenu.prevent.stop="openCtx('folder', f, $event)"
+              draggable="true"
+              @dragstart="onFolderCardDragStart(f, $event)"
+              @dragend="draggingFolderIds = new Set()"
               @dragover="onFolderDragOver(f, $event)"
               @dragleave="onFolderDragLeave(f)"
               @drop="onFolderDrop(f, $event)"
@@ -627,6 +647,30 @@ import {
 
 const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
+
+// ── 存储用量 ──
+const storageInfo = reactive({ used: 0, limit: null, loaded: false })
+async function fetchStorage() {
+  try {
+    const data = await filesApi.storage()
+    storageInfo.used   = data.used_bytes  ?? 0
+    storageInfo.limit  = data.limit_bytes ?? null
+    storageInfo.loaded = true
+  } catch {}
+}
+function fmtBytes(n) {
+  if (!n) return '0 B'
+  if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB'
+  if (n >= 1048576)    return (n / 1048576).toFixed(1) + ' MB'
+  if (n >= 1024)       return (n / 1024).toFixed(0) + ' KB'
+  return n + ' B'
+}
+const storageFillStyle = computed(() => {
+  if (!storageInfo.limit) return { width: '0%' }
+  const pct = Math.min(100, (storageInfo.used / storageInfo.limit) * 100)
+  const color = pct >= 90 ? '#c05050' : pct >= 70 ? '#b07858' : '#7b7fb2'
+  return { width: pct + '%', background: color }
+})
 
 // ── 视图状态 ──
 // 使用模块级 cardBlobReadyIds：首次 @load 后写入，session 内二次访问直接显示跳过动画
@@ -952,6 +996,7 @@ function loadContents() {
 }
 
 onMounted(async () => {
+  fetchStorage()
   // 热缓存：同步初始化，避免 await 微任务暂停导致空帧
   if (cacheStore.loaded && projectStore.projects.length > 0) {
     restoreNav()
@@ -969,6 +1014,7 @@ onMounted(async () => {
 watch(uploadSignal, () => {
   // 上传信号由 uploadFiles 直接写入缓存；这里做一次静默后台刷新以纠偏
   cacheStore.refresh().then(() => loadContents())
+  fetchStorage()
 })
 
 // ── 框选 ──
@@ -1388,6 +1434,7 @@ async function uploadFiles(files) {
       uploadingItems.value = uploadingItems.value.filter(g => g.uid !== ghost.uid)
       cacheStore.addFile(created)
       loadContents()
+      fetchStorage()
     } catch (e) {
       console.error('[Files] 上传失败:', e.message)
       const g = uploadingItems.value.find(g => g.uid === ghost.uid)
@@ -1498,9 +1545,16 @@ async function downloadFolder(f) {
 }
 
 // ── 拖动移动 ──
-const draggingFileIds  = ref(new Set())
-const dragOverFolderId = ref(null)
-const bcDragOverIdx    = ref(null)
+const draggingFileIds   = ref(new Set())
+const draggingFolderIds = ref(new Set())
+const dragOverFolderId  = ref(null)
+const bcDragOverIdx     = ref(null)
+
+function onFolderCardDragStart(f, e) {
+  draggingFolderIds.value = new Set([f.folderId])
+  e.dataTransfer.setData('application/x-folder-ids', JSON.stringify([f.folderId]))
+  e.dataTransfer.effectAllowed = 'move'
+}
 
 function onFileDragStart(f, e) {
   const ids = selectedIds.value.has(f.id) && selectedIds.value.size > 0
@@ -1524,7 +1578,8 @@ function isBcDroppable(seg) {
   return seg.type === 'folder' || seg.type === 'personal'
 }
 function onBcDragOver(seg, i, e) {
-  if (!isBcDroppable(seg) || !draggingFileIds.value.size) return
+  if (!isBcDroppable(seg)) return
+  if (!draggingFileIds.value.size && !draggingFolderIds.value.size) return
   e.preventDefault()
   e.dataTransfer.dropEffect = 'move'
   bcDragOverIdx.value = i
@@ -1536,10 +1591,31 @@ async function onBcDrop(seg, e) {
   e.preventDefault()
   bcDragOverIdx.value = null
   if (!isBcDroppable(seg)) return
+  const targetFolderId = seg.type === 'folder' ? seg.folderId : null
+
+  // 文件夹拖到面包屑
+  if (draggingFolderIds.value.size > 0) {
+    const folderIds = [...draggingFolderIds.value].filter(id => id !== targetFolderId)
+    draggingFolderIds.value = new Set()
+    if (!folderIds.length) return
+    const backups = folderIds.map(id => cacheStore.getFolder(id)).filter(Boolean)
+    folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: targetFolderId }))
+    selectedFolderKeys.value = new Set()
+    loadContents()
+    try {
+      await Promise.all(folderIds.map(id => foldersApi.move(id, targetFolderId)))
+    } catch (err) {
+      backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId }))
+      loadContents()
+      console.error('[Files] 移动文件夹失败:', err.message)
+    }
+    return
+  }
+
+  // 文件拖到面包屑（原逻辑）
   let ids
   try { ids = JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return }
   if (!ids?.length) return
-  const targetFolderId = seg.type === 'folder' ? seg.folderId : null
   const backups = ids.map(id => cacheStore.getFile(id)).filter(Boolean)
   ids.forEach(id => cacheStore.updateFile(id, { folderId: targetFolderId }))
   draggingFileIds.value = new Set()
@@ -1556,6 +1632,11 @@ async function onBcDrop(seg, e) {
 
 function onFolderDragOver(f, e) {
   if (f.type !== 'folder') return
+  const hasFiles   = draggingFileIds.value.size > 0
+  const hasFolders = draggingFolderIds.value.size > 0
+  if (!hasFiles && !hasFolders) return
+  // 不能拖到自身
+  if (hasFolders && draggingFolderIds.value.has(f.folderId)) return
   e.preventDefault()
   e.dataTransfer.dropEffect = 'move'
   dragOverFolderId.value = f.folderId
@@ -1567,6 +1648,27 @@ async function onFolderDrop(f, e) {
   e.preventDefault()
   dragOverFolderId.value = null
   if (f.type !== 'folder') return
+
+  // 文件夹拖入文件夹
+  if (draggingFolderIds.value.size > 0) {
+    const folderIds = [...draggingFolderIds.value].filter(id => id !== f.folderId)
+    draggingFolderIds.value = new Set()
+    if (!folderIds.length) return
+    const backups = folderIds.map(id => cacheStore.getFolder(id)).filter(Boolean)
+    folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: f.folderId }))
+    selectedFolderKeys.value = new Set()
+    loadContents()
+    try {
+      await Promise.all(folderIds.map(id => foldersApi.move(id, f.folderId)))
+    } catch (err) {
+      backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId }))
+      loadContents()
+      console.error('[Files] 移动文件夹失败:', err.message)
+    }
+    return
+  }
+
+  // 文件拖入文件夹（原逻辑）
   let ids
   try { ids = JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return }
   if (!ids?.length) return
@@ -2017,6 +2119,20 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   cursor: pointer; font-family: var(--font-sans); transition: all 0.15s;
 }
 .empty-trash-btn:hover { background: rgba(200,90,90,0.12); border-color: #c85a5a; }
+
+/* 存储用量 */
+.storage-pill {
+  display: flex; align-items: center; gap: 7px;
+  padding: 0 4px; height: 30px;
+  flex-shrink: 0;
+}
+.storage-pill.no-limit {}
+.storage-bar-bg {
+  width: 52px; height: 3px; border-radius: 2px; flex-shrink: 0;
+  background: rgba(0,0,0,0.07); overflow: hidden;
+}
+.storage-bar-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease, background 0.4s; }
+.storage-text { font-size: 11px; color: #8a8fa8; white-space: nowrap; }
 
 /* 上传按钮 */
 .upload-btn {

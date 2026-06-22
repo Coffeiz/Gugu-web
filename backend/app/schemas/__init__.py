@@ -26,6 +26,7 @@ class UserRegister(CamelModel):
     username: str
     email: str
     password: str
+    invite_code: str
 
 
 class UserLogin(CamelModel):
@@ -218,6 +219,10 @@ class FolderRename(CamelModel):
     @classmethod
     def name_valid(cls, v: str) -> str:
         return _validate_name(v)
+
+
+class FolderMove(CamelModel):
+    parent_id: Optional[int] = None
 
 
 class FolderResponse(CamelModel):

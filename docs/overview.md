@@ -17,7 +17,7 @@
 | 日历 | 项目排期可视化、自定义事件、中国节假日标注 | ✅ 完成 |
 | 文件库 | 按项目/文件夹归档，本地/OSS 双后端，文件预览 | ✅ 完成 |
 | 总览 | 统计卡片、近期节点、最近文件、月历面板 | ✅ 完成 |
-| 自然语言管理 | AI Agent 对话完成项目/日历操作（SSE 流式） | 🚧 开发中 |
+| 自然语言管理 | AI Agent 对话完成项目/日历/文件/客户操作（SSE 流式，23 工具，删除二次确认） | ✅ 完成（记忆系统 Phase 2 待做） |
 | 思维 | 创意画布（节点图） | 🔜 预留 |
 | 客户 | 客户信息管理（后端已完成，前端待开发） | 🔜 规划中 |
 
@@ -89,11 +89,20 @@ Gugu-web/
         │   ├── trash.py          ← list/restore/hard-delete/empty；定时清理
         │   ├── events.py
         │   ├── clients.py
-        │   └── agent.py          ← SSE 流式，Anthropic/OpenAI 双路由，工具调用
+        │   └── agent.py          ← 薄层：构造 AgentRequest → 调 agent 包 → SSE；会话 CRUD 端点
         ├── models/__init__.py
         ├── schemas/__init__.py
         ├── services/storage/     ← StorageBackend / LocalStorageBackend / OSSStorageBackend
         └── db/session.py         ← 自动迁移 _MIGRATIONS
+
+backend/agent/                    ← 独立 Agent 包（不依赖 FastAPI）
+├── core.py                       ← LLMRunner：统一 Anthropic/OpenAI 工具循环
+├── confirm.py                    ← 删除二次确认保底（跨轮强制）
+├── models.py                     ← AgentRequest / AgentResponse
+├── context/                      ← builder（组装 prompt）/ loaders / tokens（按 token 裁历史）
+├── skills/                       ← base + registry；projects/calendar/files/clients/overview（共 23 工具）
+├── profiles/                     ← DefaultProfile（技能集 + prompt 模板）
+└── adapters/web.py               ← SSE 编排（配额→上下文→会话→core→持久化）
 ```
 
 ---
@@ -218,16 +227,16 @@ cd frontend && npm run dev
 - **日历（Calendar）**：月视图、事件/项目 bar、实时拖拽预览、中国节假日标注
 - **文件库（Files）**：7 层导航、框选、批量操作、右键菜单、剪贴板、文件预览（PDF/图/视频/文本/Office）、浮动预览窗、缩略图懒加载、全量元数据缓存
 - **音频迷你播放器**：集成在 AiFloatBall，固定/非固定模式
-- **AI Agent**：SSE 流式，Anthropic/OpenAI 双路由，最多 5 轮工具调用（查询/创建/更新项目，创建日历事件）
+- **AI Agent**：独立 `backend/agent/` 包（core/context/skills/profiles/adapters），SSE 流式，Anthropic/OpenAI 双路由，对话历史持久化，token 用量记录 + 配额；**23 个工具**覆盖项目/日历/文件（读写整理 + 生成 Word/PDF/Excel）/客户/聚合；不可逆删除带**二次确认保底**（跨轮强制）；历史窗口按 token 预算裁剪
 - **文件双向同步**：Tab 切回时自动校验 `/files/version`，本地手动删除文件自动清理数据库
-- Admin 后台：登录、系统配置热更新
+- Admin 后台：登录、系统配置热更新、邀请码、审计/系统日志、Agent 用量统计
 
 ### 待开发 🚧
 
 | 优先级 | 功能 |
 |--------|------|
-| 高 | Agent 对话历史持久化，前端 UI 优化 |
-| 高 | Agent 工具扩展（修改阶段/配色，查询文件） |
-| 中 | 客户管理页面（后端 API 已完成） |
+| 高 | **Agent 记忆系统（Phase 2）**：reflection/compressor/persona/`.agent` 文件，让咕咕从助理变伙伴 |
+| 中 | 客户管理页面（后端 API + Agent 工具已就绪，缺前端页） |
 | 中 | 通知系统 |
 | 低 | 思维画布页面 |
+| 低 | 小修：`_fmt_size` 小文件显示 0 KB；过滤 MiniMax 漏出的 tool-call 标记 |

@@ -308,6 +308,7 @@ onMounted(load)
 .tag-config { background: rgba(120,140,220,0.15); color: rgba(150,170,240,0.9); }
 .tag-invite { background: rgba(200,160,80,0.15);  color: rgba(220,185,100,0.9); }
 .tag-agent  { background: rgba(160,100,220,0.15); color: rgba(190,140,240,0.9); }
+.tag-user   { background: rgba(80,170,200,0.15);  color: rgba(100,200,230,0.9); }
 
 /* 分页 */
 .pagination {

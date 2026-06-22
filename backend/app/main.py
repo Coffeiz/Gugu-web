@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from pathlib import Path
 
 from app.core.config import get_settings
+from app.core.logging import setup_logging, flush_log_queue
 from app.api.v1 import config as config_router
 from app.api.v1 import admin_auth
 from app.api.v1 import auth as user_auth
@@ -24,7 +25,17 @@ from app.api.v1 import clients as clients_router
 from app.api.v1 import trash as trash_router
 from app.api.v1 import agent as agent_router
 from app.api.v1 import preferences as preferences_router
+from app.api.v1 import agent_admin as agent_admin_router
+from app.api.v1 import invite_codes as invite_codes_router
+from app.api.v1 import audit_log as audit_log_router
+from app.api.v1 import system_logs as system_logs_router
+from app.api.v1 import users_admin as users_admin_router
 from app.db.session import create_all_tables
+
+import logging
+logger = logging.getLogger(__name__)
+
+setup_logging()
 
 settings = get_settings()
 bearer = HTTPBearer()
@@ -69,18 +80,18 @@ async def _auto_cleanup_loop():
             async with _SessionLocal() as db:
                 n = await cleanup_expired(db)
                 if n:
-                    print(f"[回收站] 自动清理 {n} 个过期文件")
+                    logger.info("回收站自动清理 %d 个过期文件", n)
         except Exception as e:
-            print(f"[回收站] 自动清理出错: {e}")
+            logger.error("回收站自动清理出错: %s", e, exc_info=True)
         # 缩略图 TTL 驱逐（每 24 小时一次）
         if time.time() - _last_thumb_cleanup > 86400:
             try:
                 n = await asyncio.to_thread(_evict_old_thumbs)
                 if n:
-                    print(f"[缩略图] TTL 驱逐 {n} 个冷缓存")
+                    logger.info("缩略图 TTL 驱逐 %d 个冷缓存", n)
                 _last_thumb_cleanup = time.time()
             except Exception as e:
-                print(f"[缩略图] TTL 驱逐出错: {e}")
+                logger.error("缩略图 TTL 驱逐出错: %s", e, exc_info=True)
 
 
 async def _db_retry_loop():
@@ -94,10 +105,10 @@ async def _db_retry_loop():
         await asyncio.sleep(30)
         try:
             await create_all_tables()
-            print("[OK] 数据库后台重连成功，表已建")
+            logger.info("数据库后台重连成功，表已建")
             return
         except Exception as e:
-            print(f"[DB重试] 尚未连通：{type(e).__name__}: {e}")
+            logger.debug("DB重试尚未连通：%s: %s", type(e).__name__, e)
 
 
 # 数据库启动超时（秒）：超时后跳过建表，后台继续重试
@@ -109,14 +120,12 @@ DB_STARTUP_TIMEOUT = int(os.getenv("DB_STARTUP_TIMEOUT", "5"))
 async def lifespan(app: FastAPI):
     try:
         await asyncio.wait_for(create_all_tables(), timeout=DB_STARTUP_TIMEOUT)
-        print("[OK] 数据库表已就绪")
+        logger.info("数据库表已就绪")
     except asyncio.TimeoutError:
-        print(f"[警告] 数据库 {DB_STARTUP_TIMEOUT}s 内未连通，已跳过建表（Admin 仍可用）")
+        logger.warning("数据库 %ds 内未连通，已跳过建表（Admin 仍可用）", DB_STARTUP_TIMEOUT)
     except Exception as e:
-        print(f"[警告] 数据库连接失败，跳过建表：{e}")
-        print("[警告] Admin 认证仍可用，其余 API 需要数据库")
+        logger.warning("数据库连接失败，跳过建表：%s", e)
     Path(settings.storage.local_path).mkdir(parents=True, exist_ok=True)
-    # 清理旧 JPEG 缩略图缓存，首次请求时以 WebP 重新生成
     try:
         from app.api.v1.files import _thumb_dir
         td = _thumb_dir()
@@ -125,14 +134,16 @@ async def lifespan(app: FastAPI):
             for p in old:
                 p.unlink(missing_ok=True)
             if old:
-                print(f"[缩略图] 已清理 {len(old)} 个旧 JPEG 缓存，将以 WebP 重新生成")
+                logger.info("已清理 %d 个旧 JPEG 缩略图缓存", len(old))
     except Exception:
         pass
-    task = asyncio.create_task(_auto_cleanup_loop())
+    task       = asyncio.create_task(_auto_cleanup_loop())
     retry_task = asyncio.create_task(_db_retry_loop())
+    log_task   = asyncio.create_task(flush_log_queue())
     yield
     task.cancel()
     retry_task.cancel()
+    log_task.cancel()
 
 
 app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
@@ -176,9 +187,34 @@ app.include_router(trash_router.router,       prefix="/api/v1")
 app.include_router(agent_router.router,       prefix="/api/v1")
 app.include_router(preferences_router.router, prefix="/api/v1")
 
-# ── Admin 配置路由（需要 Admin token）──
+# ── Admin 路由（需要 Admin token）──
 app.include_router(
     config_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    agent_admin_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    invite_codes_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    audit_log_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    system_logs_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    users_admin_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )

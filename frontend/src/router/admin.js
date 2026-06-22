@@ -21,6 +21,12 @@ const routes = [
         meta: { title: '系统配置' },
       },
       {
+        path: 'analytics',
+        name: 'AdminAnalytics',
+        component: () => import('@/views/Admin/Analytics/index.vue'),
+        meta: { title: '数据分析' },
+      },
+      {
         path: 'agent',
         name: 'AdminAgent',
         component: () => import('@/views/Admin/Agent/index.vue'),

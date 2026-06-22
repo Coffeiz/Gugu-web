@@ -36,7 +36,7 @@
         <div class="field-grid">
           <ConfigField label="主机" v-model="draft.db.host" placeholder="localhost" />
           <ConfigField label="端口" v-model.number="draft.db.port" placeholder="5432" type="number" />
-          <ConfigField label="数据库名" v-model="draft.db.name" placeholder="pm_studio" />
+          <ConfigField label="数据库名" v-model="draft.db.name" placeholder="gugu_web" />
           <ConfigField label="用户名" v-model="draft.db.user" placeholder="pm" />
           <ConfigField label="密码" v-model="draft.db.password" type="password" placeholder="留空表示不修改" class="span2" />
         </div>
@@ -126,7 +126,7 @@
           <ConfigField label="存储路径" v-model="draft.storage.local_path" placeholder="./uploads" class="span2" />
         </div>
         <div v-else class="field-grid">
-          <ConfigField label="Bucket 名" v-model="draft.storage.oss_bucket" placeholder="pm-studio" />
+          <ConfigField label="Bucket 名" v-model="draft.storage.oss_bucket" placeholder="gugu-web" />
           <ConfigField label="Endpoint"  v-model="draft.storage.oss_endpoint" placeholder="oss-cn-hangzhou.aliyuncs.com" />
           <ConfigField label="AccessKey ID"     v-model="draft.storage.oss_access_key_id"     type="password" placeholder="留空表示不修改" />
           <ConfigField label="AccessKey Secret" v-model="draft.storage.oss_access_key_secret" type="password" placeholder="留空表示不修改" />
@@ -151,41 +151,6 @@
             </svg>
             {{ testStatus.oss.message }}
           </div>
-        </div>
-      </section>
-
-      <!-- ── AI ── -->
-      <section id="sec-ai" class="config-card">
-        <div class="card-head">
-          <div class="card-icon" style="--ic:rgba(196,175,200,0.14);--stroke:#9590c4">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10 2l1.5 4h4l-3.3 2.4 1.3 4L10 10l-3.5 2.4 1.3-4L4.5 6h4z"/>
-            </svg>
-          </div>
-          <div class="card-title-block">
-            <h3>AI 配置</h3>
-            <p>Agent 使用的模型与 API 密钥</p>
-          </div>
-        </div>
-
-        <div class="toggle-group provider-grid">
-          <button class="toggle-btn" :class="{ active: draft.ai.provider === 'openai' }"
-            @click="setProvider('openai')">OpenAI 兼容</button>
-          <button class="toggle-btn" :class="{ active: draft.ai.provider === 'anthropic' }"
-            @click="setProvider('anthropic')">Anthropic 兼容</button>
-          <button class="toggle-btn" :class="{ active: draft.ai.provider === 'qwen' }"
-            @click="setProvider('qwen')">通义千问</button>
-          <button class="toggle-btn" :class="{ active: draft.ai.provider === 'deepseek' }"
-            @click="setProvider('deepseek')">DeepSeek</button>
-          <button class="toggle-btn" :class="{ active: draft.ai.provider === 'minimax' }"
-            @click="setProvider('minimax')">MiniMax</button>
-        </div>
-
-        <div class="field-grid">
-          <ConfigField label="API Key"  v-model="draft.ai.api_key"  type="password" placeholder="留空表示不修改" class="span2" />
-          <ConfigField label="Base URL" v-model="draft.ai.base_url" placeholder="https://…" class="span2" />
-          <ConfigField label="模型名称" v-model="draft.ai.model"    placeholder="qwen-max" />
         </div>
       </section>
 
@@ -224,14 +189,17 @@ import ConfigField from './components/ConfigField.vue'
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()
-const draft = reactive(JSON.parse(JSON.stringify(configStore.cfg)))
+const draft = reactive({
+  db:      JSON.parse(JSON.stringify(configStore.cfg.db)),
+  redis:   JSON.parse(JSON.stringify(configStore.cfg.redis)),
+  storage: JSON.parse(JSON.stringify(configStore.cfg.storage)),
+})
 
 onMounted(async () => {
   await configStore.fetchConfig()
   Object.assign(draft.db,      configStore.cfg.db)
   Object.assign(draft.redis,   configStore.cfg.redis)
   Object.assign(draft.storage, configStore.cfg.storage)
-  Object.assign(draft.ai,      configStore.cfg.ai)
 })
 
 // ── 连接字符串预览 ────────────────────────────────────────────────────────
@@ -363,29 +331,11 @@ const TestResult = defineComponent({
 })
 
 // ── 保存 / 重置 ───────────────────────────────────────────────────────────
-const AI_PRESETS = {
-  qwen:     { base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
-  openai:   { base_url: 'https://api.openai.com/v1',                         model: 'gpt-4o' },
-  deepseek: { base_url: 'https://api.deepseek.com',                          model: 'deepseek-chat' },
-  minimax:  { base_url: 'https://api.minimaxi.com/anthropic',                 model: 'MiniMax-M3' },
-  anthropic:{ base_url: 'https://api.anthropic.com/v1',                      model: 'claude-opus-4-8' },
-}
-
-function setProvider(p) {
-  draft.ai.provider = p
-  const preset = AI_PRESETS[p]
-  if (preset) {
-    draft.ai.base_url = preset.base_url
-    draft.ai.model    = preset.model
-  }
-}
-
 async function save() {
   await configStore.saveConfig({
     db:      { ...draft.db },
     redis:   { ...draft.redis },
     storage: { ...draft.storage },
-    ai:      { ...draft.ai },
   })
 }
 
@@ -393,7 +343,6 @@ function resetDraft() {
   Object.assign(draft.db,      configStore.cfg.db)
   Object.assign(draft.redis,   configStore.cfg.redis)
   Object.assign(draft.storage, configStore.cfg.storage)
-  Object.assign(draft.ai,      configStore.cfg.ai)
   testStatus.db    = null
   testStatus.redis = null
   testStatus.oss   = null
@@ -528,4 +477,5 @@ function resetDraft() {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin-icon { animation: spin 0.8s linear infinite; }
+
 </style>
