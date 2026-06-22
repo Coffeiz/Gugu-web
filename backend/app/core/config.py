@@ -103,6 +103,11 @@ class SearchSettings(BaseModel):
     max_results:    int = Field(5, description="默认返回结果数")
 
 
+class FeishuSettings(BaseModel):
+    app_id:     str = Field("", description="飞书自建应用 App ID（env FEISHU__APP_ID）")
+    app_secret: str = Field("", description="飞书 App Secret（env FEISHU__APP_SECRET，空=禁用飞书网关）")
+
+
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -124,6 +129,7 @@ class AppSettings(BaseSettings):
     agent: AgentBehaviorSettings = Field(default_factory=AgentBehaviorSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
+    feishu: FeishuSettings = Field(default_factory=FeishuSettings)
 
     def apply_override(self) -> "AppSettings":
         """从 config.override.json 合并覆盖字段，返回新实例。
@@ -179,6 +185,13 @@ class AppSettings(BaseSettings):
                 }}
                 updates["search"] = SearchSettings.model_construct(**merged)
 
+            if "feishu" in override:
+                merged = {**self.feishu.model_dump(), **{
+                    k: v for k, v in override["feishu"].items()
+                    if k in FeishuSettings.model_fields
+                }}
+                updates["feishu"] = FeishuSettings.model_construct(**merged)
+
             if "ai_presets" in override:
                 raw = override["ai_presets"]
                 items = [
@@ -191,7 +204,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "feishu"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]

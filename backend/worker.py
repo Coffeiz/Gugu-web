@@ -20,29 +20,53 @@ from app.core import redis as R
 from agent.models import AgentRequest
 from agent.runner import run_collect
 
-STREAM = "im:inbound"
+STREAM = R.IM_INBOUND_STREAM
 GROUP = "agent-workers"
 CONSUMER = f"{socket.gethostname()}-{os.getpid()}"
 
 _stop = asyncio.Event()
 
 
-def _build_req(payload: dict) -> AgentRequest:
-    return AgentRequest(
-        message=payload.get("text", ""),
-        user_id=payload.get("user_id"),
-        user_name=payload.get("user_name", ""),
-        session_id=payload.get("session_id"),
-        source=payload.get("platform", "worker"),
-    )
+async def _resolve_user(payload: dict):
+    """平台用户 → 咕咕 user_id。
+    TODO: 用绑定表 (platform, platform_user_id)→user_id 替换。
+    当前临时取数据库首个用户，仅供"试效果"，绑定流程做好后改掉。
+    """
+    if payload.get("user_id"):
+        return payload["user_id"], payload.get("user_name", "")
+    import app.db.session as _sess
+    if _sess._engine is None:
+        _sess._build_engine()
+    from sqlalchemy import select
+    from app.models import User
+    async with _sess._SessionLocal() as db:
+        u = (await db.execute(select(User).limit(1))).scalars().first()
+    return (str(u.id), u.username) if u else (None, "")
 
 
 async def handle(msg_id: str, payload: dict):
-    """处理一条：跑非流式 agent，暂打印回复（step 5 改为发回平台）。"""
-    req = _build_req(payload)
+    """处理一条：解析用户 → 跑非流式 agent → 发回平台。"""
+    user_id, user_name = await _resolve_user(payload)
+    if not user_id:
+        print("[worker] 无法解析用户，跳过", flush=True)
+        return None
+    req = AgentRequest(
+        message=payload.get("text", ""),
+        user_id=user_id, user_name=user_name,
+        session_id=payload.get("session_id"),
+        source=payload.get("platform", "worker"),
+    )
     resp = await run_collect(req)
-    who = f"{payload.get('platform')}/{payload.get('platform_user_id')}"
-    print(f"[worker] {who} {req.message!r} → {resp.text!r}", flush=True)
+
+    # 发回平台
+    platform = payload.get("platform")
+    if platform == "feishu" and payload.get("chat_id"):
+        from agent.adapters import feishu
+        await asyncio.to_thread(feishu.send_text, payload["chat_id"], resp.text)
+        print(f"[worker] feishu 回复 → {resp.text!r}", flush=True)
+    else:
+        who = f"{platform}/{payload.get('platform_user_id')}"
+        print(f"[worker] {who} {req.message!r} → {resp.text!r}", flush=True)
     return resp
 
 

@@ -654,14 +654,45 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 - [x] **step 1 · `app/core/redis.py`**：共享异步 Redis 客户端（懒加载单例，同 db engine 模式）+ Redis Streams 封装（`ensure_group`/`produce`/`consume`/`ack`/`claim_stale`/`ping`/`reset`），消息体统一 `data=JSON`；`config.save_override` 改 redis 配置时 `reset` 重建。实测自产自消+ack 清零（远程 Redis 8.8.0）
 - [x] **step 2 · `agent/runner.py`**：`run_collect(req)→AgentResponse`，复用 loaders/builder/core/sanitize，把流式工具循环消费成"完整一段"回复（bot 不流式，web SSE 路不动）。实测真打 MiniMax 返回完整回复
 - [x] **step 3 · `worker.py`**（backend 顶层独立进程入口）：消费 `im:inbound` → `run_collect` →（暂打印）→ ack，带 `claim_stale` 回收崩溃遗留、信号优雅退出；独立于 web 避免多 uvicorn worker 重复消费。实测 队列→大脑→回复→ack 端到端通
-- [ ] **step 4** 平台网关：收消息 → 规范化 → `produce` 入队（待选平台+SDK+凭据）
-- [ ] **step 5** 接通：worker 处理后发回平台（platform send API）
-- [ ] **step 6** 平台用户 ↔ 咕咕用户映射（多用户隔离）、事件去重、平台 token 存 Redis、用户状态机（并入 Phase 1.7）、背压
+- [x] **step 4 · `adapters/feishu.py`**：飞书 WebSocket 长连收 `im.message.receive_v1` → `produce_sync` 入队（lark `ws.Client.start()` 同步阻塞、handler 同步，故用同步 produce）。**实测连上飞书 WSS 并收到真实消息**
+- [x] **step 5** 接通发回：`worker.handle` 跑完 `run_collect` → 按 platform 发回（飞书 `feishu.send_text` 用 `lark.Client` API）。**实测飞书私聊端到端：发"你是谁"→咕咕带人格回复送达飞书**
+- [ ] **step 6** 平台用户 ↔ 咕咕用户映射（多用户隔离，**当前临时全映射首个用户 root123**，待 OAuth 绑定替换）、事件去重、平台 token 存 Redis、用户状态机（并入 Phase 1.7）、背压
+
+> **首平台里程碑（2026-06-23）**：飞书私聊端到端打通——`飞书消息 → 网关(WSS) → Redis队列 → worker → run_collect(人格+记忆+41工具) → feishu.send_text 发回`。凭据走 `.env`（`FEISHU__APP_ID/SECRET`），网关 + worker 各为独立后台进程。坑：worker 阻塞读 XREADGROUP 需 `socket_timeout=None`，否则到点抛 TimeoutError。
 
 **各平台 adapter（官方直连，无 OpenClaw；落在 `agent/adapters/`，step 4-5）**
-- [ ] `adapters/feishu.py`：`lark-oapi`，WebSocket 长连（`im.message.receive_v1` / `message.create`），文档最顺，建议先做
+- [x] `adapters/feishu.py`：`lark-oapi`，WebSocket 长连收（`im.message.receive_v1`）+ `send_text` 发（`lark.Client` `im.v1.message.create`）。凭据走 env `FEISHU__APP_ID/SECRET`（**不做后台 UI 配置**）。**已端到端跑通**
 - [ ] `adapters/qqbot.py`：`botpy`，WebSocket（~~webhook~~），官方稳定
 - [ ] `adapters/weixin.py`：直连 iLink（长轮询 getupdates / sendmessage），纯文本先行，个人号有风险，最后做
+
+#### 飞书接入设计（两层：bot 创建 + 用户 OAuth 扫码绑定）
+
+飞书分两件事，别混：
+
+**① bot 创建（owner 一次性，整个咕咕共用一个 bot）**
+- 飞书规定应用必须在开发者后台创建（无公开"自动创建"API）。
+- 省事方式：官方 CLI `npx -y @larksuite/openclaw-lark install` → 选新建 → **飞书扫码一键创建**（飞书未公开的"快捷创建"能力），产出标准自建应用的 App ID/Secret。**只借它创建，不跑 OpenClaw 运行时**；拿到的 App ID/Secret 填咕咕 `.env`、用咕咕自己的网关收发。手动开发者后台创建亦可。
+- 不自己复刻"扫码创建"（依赖飞书未公开内部 API，逆向不稳、不值当）。
+
+**② 用户绑定（每个用户在「咕咕设置」里扫码，OAuth 2.0 · 方案 A 轻绑定）**
+
+目标：用户在飞书里跟咕咕 bot 聊天时，咕咕知道"这是哪个咕咕账号"。
+
+```
+咕咕设置页 → 显示二维码（飞书 OAuth 授权链接渲染）→ 用户飞书扫 → 授权
+→ 回调拿到该用户 open_id → 写绑定表 (feishu, open_id) ↔ user_id
+→ 之后飞书消息进来，网关 open_id→查绑定表→解析成咕咕 user_id，按其数据回
+```
+
+- **方案 A 轻绑定**（采用）：只取 open_id 认人，不存 user_access_token。聊天场景够用。
+  （方案 B 代理身份——存 token 让咕咕"以用户身份"操作飞书——更重、需刷新，暂不做。）
+- **要建**：
+  1. 绑定表 `(platform, platform_user_id) ↔ user_id`（多用户隔离，新表 create_all 自动建）
+  2. 后端 2 接口：`GET /feishu/bind/url`（生成授权 URL + 二维码，state 绑当前用户）、`GET /feishu/bind/callback`（code 换 user_access_token → 取 open_id → 写绑定 → 回设置页）
+  3. 前端个人设置页「绑定飞书」区：二维码 + 已绑定/未绑定状态
+  4. 网关 `feishu.py`：收消息时 open_id → 查绑定表 → 填 `AgentRequest.user_id`（同时打通 step 5/6）
+- **前提**：飞书后台开 OAuth、登记 redirect_uri（如 `https://gugugu.site/api/v1/feishu/bind/callback`）。
+- lark-oapi 的 `authen.v1`（`CreateAccessTokenRequest` / `CreateOidcAccessTokenRequest`）可做 code→token 换取。
 
 **伙伴深化（更后）**
 - [ ] 主动触达：截止日临近提醒、异常沉默感知、情绪状态关注

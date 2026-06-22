@@ -1,7 +1,86 @@
 # PM Studio · 早期开发记录
 
-> 更新：2026-06-22
+> 更新：2026-06-23
 > 状态：早期阶段记录，当前进度见 `docs/overview.md`
+
+---
+
+## 2026-06-23 · 里程碑：咕咕首个 IM 平台（飞书）端到端打通 🎉
+
+**第一次让咕咕住进 IM**——飞书私聊里发消息，咕咕带完整人格/记忆/工具回复，全程经队列+独立 worker，平台无关骨架可复用到 QQ/微信。架构与决策见 `docs/agent-im接入架构.md`、`docs/agent.md` Phase 4。
+
+### 端到端链路
+
+```
+飞书私聊消息
+  → 网关 adapters/feishu.py（lark-oapi WebSocket 长连，收 im.message.receive_v1）
+  → produce_sync 入队 Redis Streams（im:inbound）
+  → worker.py 独立进程 consume
+  → run_collect(AgentRequest)：复用 loaders/builder/core/sanitize，攒完整回复（人格+记忆+41工具）
+  → feishu.send_text（lark.Client im.v1.message.create）发回飞书
+```
+
+实测：私聊发"你是谁"→ 咕咕回"我是咕咕，你的创作搭子…"（带人格），送达飞书。两条连发都正确处理。
+
+### 为什么这样搭（关键决策）
+
+- **不用 OpenClaw**：飞书/QQ/微信都走官方直连。飞书用官方 `lark-oapi`，WebSocket 长连**不需要公网 URL/webhook**，最省事。
+- **bot 创建 vs 用户绑定分开**：一个 bot（owner 一次性建，凭据走 `.env` 的 `FEISHU__APP_ID/SECRET`，**不做后台 UI**），所有用户私聊它各开小窗；用户身份靠后续 OAuth 扫码绑定区分（当前临时全映射 root123）。
+- **队列+独立 worker（不内联）**：收消息↔跑大模型解耦，为高流量留缝；worker 独立进程，避免多 uvicorn worker 重复消费长连接。
+- **同步 produce**：lark `ws.Client.start()` 是同步阻塞 loop、事件 handler 同步，故网关用 `redis.produce_sync`（独立同步客户端），worker 侧仍用异步 consume。
+
+### 踩的坑
+
+- **worker 阻塞读超时**：`XREADGROUP block=5000ms` 时 redis 客户端默认读超时更短 → 反复 `TimeoutError: Timeout reading from`。修：`get_redis` 设 `socket_timeout=None`（阻塞读不能有读超时）。
+- **过度撤回**：误把后端飞书网关/配置一起 git checkout 撤了（本意只删前端 Admin 飞书卡片）→ 从 context 重建后端。教训：撤回前分清"前端 UI"与"后端能力"，shared 文件别一把 checkout。
+
+### 现状与下一步
+
+- 跑起来 = 两个独立后台进程：`python -m agent.adapters.feishu`（网关）+ `python -m worker`（worker）。
+- 已落地骨架：`app/core/redis.py`（Streams + produce_sync）、`agent/runner.py`（非流式）、`worker.py`、`agent/adapters/feishu.py`（收+发）。
+- **下一步**：OAuth 2.0 用户扫码绑定（方案 A 轻绑定）——绑定表 `(platform,open_id)↔user_id` + 后端授权URL/回调 + 设置页二维码 + 网关 open_id 解析，替换临时的 root123 映射，实现"每人各聊各的"。
+
+---
+
+## 2026-06-23 · Agent：记忆深化 + prompt 缓存 + IM 接入架构
+
+接上一日，把记忆系统从"能记"做到"记得干净、注入便宜、写得克制"，并定下 IM 接入方案。详见 `docs/agent.md`、`docs/agent-im接入架构.md`。
+
+### 1. 记忆 facts 调和重写（治矛盾/膨胀）
+
+反思从"只输出新增、追加去重"改为"输出调和后的**完整事实**、覆盖写回"：保留仍成立、修正矛盾、合并重复、删过时，强约束"别无故删/别清空"，加防误删兜底（原有事实但模型返回空则不覆盖）。实测把"只去过杭州 vs 去过CP"这类矛盾、推测、评判噪音重写消除。`remember` 工具仍走追加。
+
+### 2. 记忆三层压缩（daily → memory，无 weekly）
+
+- 砍掉原设计的 weekly 中间层，压缩定为 **daily → memory.md** 两段（咕咕只需"近期/长期"两档）
+- `memory/_llm.py`：抽出反思/压缩共用的 LLM 调用（provider 路由 + JSON 解析）
+- `memory/compress.py` + `prompts/compress.md`：daily **按累积条数**压缩——保留最近 30、攒到 40 触发、最老 10 条 LLM 摘要沉淀进 memory.md、硬上限 60；约每 10 轮压一次
+- `store.py` 加 memory.md 读写、`read_memory` 返回 facts/memory/daily；`builder.py` 注入「长期记忆」段
+- **三层定稿**：facts（永久档案）/ memory（永久沉淀，越压越精）/ daily（最近 30–40，老的流进 memory）
+
+### 3. 反思写侧省钱：琐碎对话门槛
+
+`reflection.schedule()` 加 `_worth_reflecting()`：用户消息整条命中纯应答/寒暄词黑名单（嗯/好的/谢谢/哈哈/👍…）则跳过反思。精确匹配、保守，长句或短的有意义内容（"南京"/"我是插画师"）照常反思。省写侧约 20–40% 无效调用。
+
+### 4. prompt 缓存（读侧近乎免费）
+
+- `core.py` Anthropic/MiniMax 路：system（人格+记忆+上下文）打 `cache_control` 缓存断点，缓存 tools+system，多轮工具循环只重算新消息，命中读取便宜 ~90%；`_usage` 加 `cache_read` 观测
+- **实测 MiniMax M3**：第 2 次调用 `cache_read=1487 / input=1`，确认命中
+- OpenAI 兼容路为自动前缀缓存，结构已 system 在前，无需改
+
+### 5. 成本策略定论（1M 上下文 + 缓存背景下）
+
+- **读/注入侧**（记忆/工具/人格）：1M 上下文 + 缓存命中 → 几乎免费，**记忆注入不必 trim**；`context_tokens` 保持 25600（历史 token 每轮重算、缓存不了，不必追 1M）
+- **写/反思侧**：缓存帮不到，靠琐碎门槛省
+- facts/memory/daily 容量与压缩参数维持现状，不再细调
+
+### 6. 提示词文件化收口
+
+反思（reflection.md）、压缩（compress.md）均为 md 文件，热读 + 兜底 + Admin 在线编辑（`agent_admin.py` `SPECIAL_PROMPTS=["persona","reflection","compress"]`，前端「系统提示词」tab 显「人格/记忆反思/记忆压缩」）。标题生成 prompt 经评估保持内联（用户决定不抽）。
+
+### 7. IM 多平台接入架构（设计，未开工）
+
+新增 `docs/agent-im接入架构.md`：飞书 / QQ / 微信**官方直连、不用 OpenClaw**（lark-oapi / botpy / iLink）；从一开始按「收消息 ↔ 跑大模型」解耦的**队列 + worker 架构**建，为高流量留缝（AgentRequest/Response + dispatch 间接层）。现状：Redis 配了没用、无队列/worker、`--workers 1`；落地从 Redis+Streams 起步、6 步逐缝验证。agent.md Phase 4 已对齐、删 OpenClaw/webhook 旧话；小模型相关项统一标「最后做·暂无条件」。
 
 ---
 

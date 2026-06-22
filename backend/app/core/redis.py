@@ -15,6 +15,9 @@ import redis.asyncio as aioredis
 
 from app.core.config import get_settings
 
+# IM 消息入站队列（网关 produce、worker consume 共用）
+IM_INBOUND_STREAM = "im:inbound"
+
 _client: Optional[aioredis.Redis] = None
 
 
@@ -27,7 +30,7 @@ def get_redis() -> aioredis.Redis:
             decode_responses=True,
             socket_connect_timeout=6,
             socket_keepalive=True,
-            health_check_interval=30,
+            socket_timeout=None,  # 阻塞读（XREADGROUP block）不能有读超时，否则到点抛 TimeoutError
         )
     return _client
 
@@ -96,6 +99,26 @@ async def consume(stream: str, group: str, consumer: str,
 
 async def ack(stream: str, group: str, msg_id: str) -> None:
     await get_redis().xack(stream, group, msg_id)
+
+
+# ── 同步 produce（给平台网关用：lark/botpy 的 start() 是同步阻塞 loop，handler 同步）──
+_sync_client = None
+
+
+def get_redis_sync():
+    import redis as _redis_sync
+    global _sync_client
+    if _sync_client is None:
+        cfg = get_settings().redis
+        _sync_client = _redis_sync.from_url(cfg.url, decode_responses=True, socket_connect_timeout=6)
+    return _sync_client
+
+
+def produce_sync(stream: str, payload: dict, maxlen: int = 10000) -> str:
+    return get_redis_sync().xadd(
+        stream, {"data": json.dumps(payload, ensure_ascii=False)},
+        maxlen=maxlen, approximate=True,
+    )
 
 
 async def claim_stale(stream: str, group: str, consumer: str,
