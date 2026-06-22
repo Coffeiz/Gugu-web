@@ -23,6 +23,17 @@
 - **点击回收站文件行选中后立即被清除**：最外层 `files-page` 的 `@click` 会调 `clearSelection()`，文件行缺少 `.stop` 导致冒泡消掉选中状态；现为行点击加 `@click.stop`，并调整 `onPageClick` 在已有选中时跳过清除
 - **框选无法命中文件行**：误将 `.list-head` 加入 `onMainMouseDown` 排除列表，导致列标题区下方的整个拖拽起点都失效；恢复为仅排除 `button` 元素，列标题背景区可作为框选起点
 
+### 新增 · 飞书 Webhook 接入
+
+- **飞书事件订阅「请求地址」(Webhook) 模式**：作为长连接的替代，已有公网 HTTPS 时可少跑一个 supervisor 进程
+  - 新端点 `POST /api/v1/feishu/event/{channel_id}`：复用 lark `EventDispatcherHandler.do()` 解密 + 校验 Token + 验签 + 自动回 `challenge`，再派发到与长连接**同一个** `_make_on_message` 回调入队（payload 完全一致，worker/绑定/人格记忆链路零改动）
+  - Admin 频道弹窗（飞书）新增「事件订阅 Webhook」区：显示该频道**专属回调地址**（带 `channel_id`，可一键复制）+ Encrypt Key（打码）/ Verification Token 字段；env 兜底 `FEISHU__ENCRYPT_KEY` / `FEISHU__VERIFICATION_TOKEN`
+  - 修正 Starlette 头大小写问题：补齐 lark 验签所需的精确大小写 `X-Lark-*` 头
+
+### 变更
+
+- **精力恢复改为固定 6h 重置**：原 6h 配额是**滑动窗口**（按"过去 6 小时"累计），现改为按 UTC 整点 `00/06/12/18` 切固定桶、**到点整段清零**（与每周配额同口径）。`/quota` 返回 `reset_6h_at`（下次重置时刻，取代 `oldest_6h_at`）；拦截（`web.py`）、Admin 用户列表用量同步对齐；前端文案改「X 小时后重置精力」
+
 ---
 
 ## [0.11.0] - 2026-06-23 · 记忆系统、联网搜索、IM 接入（飞书）

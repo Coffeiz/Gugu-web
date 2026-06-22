@@ -424,7 +424,11 @@ def _bots(override: dict) -> list:
 
 
 def _bot_out(b: dict) -> dict:
-    return {**b, "app_secret": _mask_key(b.get("app_secret", ""))}
+    return {
+        **b,
+        "app_secret":  _mask_key(b.get("app_secret", "")),
+        "encrypt_key": _mask_key(b.get("encrypt_key", "")),
+    }
 
 
 @router.get("/bots")
@@ -441,6 +445,8 @@ class BotCreate(BaseModel):
     name: str = ""
     app_id: str = ""
     app_secret: str = ""
+    encrypt_key: str = ""           # 事件订阅「请求地址」模式才需要（长连接留空）
+    verification_token: str = ""
     enabled: bool = True
 
 
@@ -456,6 +462,8 @@ async def create_bot(body: BotCreate):
         "name": body.name or body.platform,
         "app_id": body.app_id,
         "app_secret": body.app_secret,
+        "encrypt_key": body.encrypt_key,
+        "verification_token": body.verification_token,
         "enabled": body.enabled,
     }
     bots.append(item)
@@ -467,6 +475,8 @@ class BotUpdate(BaseModel):
     name: str | None = None
     app_id: str | None = None
     app_secret: str | None = None
+    encrypt_key: str | None = None
+    verification_token: str | None = None
     enabled: bool | None = None
 
 
@@ -480,9 +490,13 @@ async def update_bot(bot_id: str, body: BotUpdate):
         item["name"] = body.name
     if body.app_id is not None:
         item["app_id"] = body.app_id
-    # 空 / 打码值（含•）不覆盖已存 secret
+    # 空 / 打码值（含•）不覆盖已存 secret（编辑时这俩字段留空=不修改）
     if body.app_secret and "•" not in body.app_secret:
         item["app_secret"] = body.app_secret
+    if body.encrypt_key and "•" not in body.encrypt_key:
+        item["encrypt_key"] = body.encrypt_key
+    if body.verification_token is not None:
+        item["verification_token"] = body.verification_token
     if body.enabled is not None:
         item["enabled"] = body.enabled
     _write_override(override)

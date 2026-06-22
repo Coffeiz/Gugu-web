@@ -106,6 +106,9 @@ class SearchSettings(BaseModel):
 class FeishuSettings(BaseModel):
     app_id:     str = Field("", description="飞书自建应用 App ID（env FEISHU__APP_ID）")
     app_secret: str = Field("", description="飞书 App Secret（env FEISHU__APP_SECRET，空=禁用飞书网关）")
+    redirect_uri: str = Field("", description="OAuth 扫码绑定回调地址，须与飞书后台登记一致，如 https://gugugu.site/api/v1/feishu/bind/callback")
+    encrypt_key:  str = Field("", description="事件订阅「请求地址」模式的 Encrypt Key（解密事件用，env FEISHU__ENCRYPT_KEY；走长连接可留空）")
+    verification_token: str = Field("", description="事件订阅 Verification Token（校验来源用，env FEISHU__VERIFICATION_TOKEN）")
 
 
 class AppSettings(BaseSettings):

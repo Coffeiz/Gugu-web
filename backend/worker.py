@@ -27,29 +27,53 @@ CONSUMER = f"{socket.gethostname()}-{os.getpid()}"
 _stop = asyncio.Event()
 
 
+_UNBOUND_HINT = (
+    "你好，我是咕咕 🐦\n你还没把飞书绑定到咕咕账号——在咕咕里打开「个人设置 → 绑定飞书」"
+    "扫个码，就能在这儿直接让我帮你管项目、查文件、记事情啦。"
+)
+
+
 async def _resolve_user(payload: dict):
-    """平台用户 → 咕咕 user_id。
-    TODO: 用绑定表 (platform, platform_user_id)→user_id 替换。
-    当前临时取数据库首个用户，仅供"试效果"，绑定流程做好后改掉。
-    """
-    if payload.get("user_id"):
-        return payload["user_id"], payload.get("user_name", "")
+    """平台用户 → 咕咕 user_id：查 PlatformBinding (platform, platform_user_id)。
+    返回 (user_id, display_name)；未绑定返回 (None, "")。"""
+    platform = payload.get("platform")
+    puid = payload.get("platform_user_id")
+    if not platform or not puid:
+        return None, ""
     import app.db.session as _sess
     if _sess._engine is None:
         _sess._build_engine()
     from sqlalchemy import select
-    from app.models import User
+    from app.models import PlatformBinding
     async with _sess._SessionLocal() as db:
-        u = (await db.execute(select(User).limit(1))).scalars().first()
-    return (str(u.id), u.username) if u else (None, "")
+        b = (await db.execute(
+            select(PlatformBinding).where(
+                PlatformBinding.platform == platform,
+                PlatformBinding.platform_user_id == puid,
+            )
+        )).scalars().first()
+    return (str(b.user_id), b.display_name) if b else (None, "")
+
+
+async def _send(payload: dict, text: str):
+    """按平台把文本发回。"""
+    platform = payload.get("platform")
+    if platform == "feishu" and payload.get("chat_id"):
+        from agent.adapters import feishu
+        await asyncio.to_thread(feishu.send_text, payload["chat_id"], text, payload.get("channel_id"))
+    else:
+        print(f"[worker] (无发送通道) {platform}: {text!r}", flush=True)
 
 
 async def handle(msg_id: str, payload: dict):
-    """处理一条：解析用户 → 跑非流式 agent → 发回平台。"""
+    """处理一条：解析用户 → 未绑定回提示 / 已绑定跑 agent → 发回平台。"""
     user_id, user_name = await _resolve_user(payload)
     if not user_id:
-        print("[worker] 无法解析用户，跳过", flush=True)
+        # 未绑定：回扫码绑定提示，不跑大脑
+        await _send(payload, _UNBOUND_HINT)
+        print(f"[worker] 未绑定用户 {payload.get('platform_user_id')}，已回提示", flush=True)
         return None
+
     req = AgentRequest(
         message=payload.get("text", ""),
         user_id=user_id, user_name=user_name,
@@ -57,16 +81,8 @@ async def handle(msg_id: str, payload: dict):
         source=payload.get("platform", "worker"),
     )
     resp = await run_collect(req)
-
-    # 发回平台
-    platform = payload.get("platform")
-    if platform == "feishu" and payload.get("chat_id"):
-        from agent.adapters import feishu
-        await asyncio.to_thread(feishu.send_text, payload["chat_id"], resp.text, payload.get("channel_id"))
-        print(f"[worker] feishu 回复 → {resp.text!r}", flush=True)
-    else:
-        who = f"{platform}/{payload.get('platform_user_id')}"
-        print(f"[worker] {who} {req.message!r} → {resp.text!r}", flush=True)
+    await _send(payload, resp.text)
+    print(f"[worker] {payload.get('platform')} 回复 → {resp.text!r}", flush=True)
     return resp
 
 

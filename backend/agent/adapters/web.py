@@ -89,10 +89,11 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                 )
                 return r.scalar() or 0
 
-            # 6h 滑动窗口
+            # 固定 6h 窗口：每天 00:00/06:00/12:00/18:00 UTC 整点重置（非滑动）
             _limit_6h = user.token_limit_6h or settings.quota.default_token_limit_6h
             if _limit_6h is not None:
-                _used_6h = await _token_used(_now - timedelta(hours=6))
+                _win_6h = _now.replace(hour=(_now.hour // 6) * 6, minute=0, second=0, microsecond=0)
+                _used_6h = await _token_used(_win_6h)
                 if _used_6h >= _limit_6h:
                     yield f"data: {json.dumps({'type': 'error', 'message': '咕咕精力不足，休息一下再来吧～'})}\n\n"
                     return

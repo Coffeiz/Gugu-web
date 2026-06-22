@@ -166,11 +166,21 @@
               <div class="pm-section-label">接入咕咕</div>
               <div class="pm-field-row">
                 <div class="pm-field-desc">
-                  <span class="pm-field-name">即时通讯</span>
-                  <span class="pm-field-hint">接入即时通讯工具，随时随地和咕咕对话</span>
+                  <span class="pm-field-name">飞书</span>
+                  <span class="pm-field-hint">{{ feishu.bound ? `已绑定 · ${feishu.display_name || '飞书账号'}` : '扫码绑定飞书，私聊咕咕直接管理项目/文件/日程' }}</span>
                 </div>
-                <div class="pm-coming">咕了</div>
+                <button v-if="feishu.bound" class="pm-bind-btn off" @click="unbindFeishu">解绑</button>
+                <button v-else class="pm-bind-btn" :disabled="feishuBinding" @click="startFeishuBind">
+                  {{ feishuBinding ? '生成中…' : '绑定' }}
+                </button>
               </div>
+
+              <div v-if="feishuQrShow" class="pm-qr-box">
+                <canvas ref="feishuQrCanvas" class="pm-qr-canvas"></canvas>
+                <div class="pm-qr-hint">{{ feishuQrHint }}</div>
+                <button class="pm-qr-cancel" @click="cancelFeishuBind">取消</button>
+              </div>
+              <div v-else-if="feishuError" class="pm-qr-err">{{ feishuError }}</div>
             </div>
           </template>
 
@@ -248,11 +258,12 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
+import QRCode from 'qrcode'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import BaseModal from '@/components/common/BaseModal.vue'
-import { authApi } from '@/services/api'
+import { authApi, feishuApi } from '@/services/api'
 import { PhX, PhSignOut, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird } from '@phosphor-icons/vue'
 
 const props = defineProps({ show: Boolean })
@@ -346,7 +357,7 @@ async function onAvatarFile(e) {
 }
 
 // 精力值配额
-const quota = ref({ used_6h: 0, limit_6h: null, oldest_6h_at: null, used_weekly: 0, limit_weekly: null })
+const quota = ref({ used_6h: 0, limit_6h: null, reset_6h_at: null, used_weekly: 0, limit_weekly: null })
 const quotaLoading = ref(false)
 
 async function loadQuota() {
@@ -355,17 +366,79 @@ async function loadQuota() {
   finally { quotaLoading.value = false }
 }
 
-watch(activeNav, v => { if (v === 'gugu') loadQuota() })
+watch(activeNav, v => { if (v === 'gugu') { loadQuota(); loadFeishu() } })
+
+// ── 飞书 OAuth 扫码绑定 ──
+const feishu = ref({ bound: false, display_name: '' })
+const feishuBinding = ref(false)
+const feishuQrShow = ref(false)
+const feishuQrHint = ref('')
+const feishuError = ref('')
+const feishuQrCanvas = ref(null)
+let feishuPoll = null
+
+async function loadFeishu() {
+  try { feishu.value = await feishuApi.status() } catch {}
+}
+
+async function startFeishuBind() {
+  feishuBinding.value = true
+  feishuError.value = ''
+  try {
+    const { url } = await feishuApi.bindUrl()
+    feishuQrShow.value = true
+    feishuQrHint.value = '用飞书 App 扫码授权，绑定后自动完成'
+    await nextTick()
+    await QRCode.toCanvas(feishuQrCanvas.value, url, { width: 180, margin: 1 })
+    _startPoll()
+  } catch (e) {
+    feishuError.value = e.message || '生成二维码失败'
+    feishuQrShow.value = false
+  } finally {
+    feishuBinding.value = false
+  }
+}
+
+function _startPoll() {
+  _stopPoll()
+  let tries = 0
+  feishuPoll = setInterval(async () => {
+    tries++
+    try {
+      const s = await feishuApi.status()
+      if (s.bound) {
+        feishu.value = s
+        cancelFeishuBind()
+        feishuQrHint.value = ''
+      }
+    } catch {}
+    if (tries > 100) cancelFeishuBind()   // ~5 分钟超时
+  }, 3000)
+}
+function _stopPoll() { if (feishuPoll) { clearInterval(feishuPoll); feishuPoll = null } }
+
+function cancelFeishuBind() {
+  _stopPoll()
+  feishuQrShow.value = false
+}
+
+async function unbindFeishu() {
+  if (!confirm('解绑飞书？解绑后在飞书里找咕咕会提示重新绑定。')) return
+  try { await feishuApi.unbind(); feishu.value = { bound: false, display_name: '' } }
+  catch (e) { feishuError.value = e.message }
+}
+
+onUnmounted(_stopPoll)
 
 // "X小时后恢复精力" / "精力充沛"
 const recoverLabel = computed(() => {
-  if (!quota.value.oldest_6h_at) return '精力充沛'
-  const recoverAt = new Date(quota.value.oldest_6h_at).getTime() + 6 * 3600 * 1000
-  const diffMs = recoverAt - Date.now()
+  // 固定 6h 重置：到下次重置时刻精力清零（非滑动）
+  if (!quota.value.used_6h || !quota.value.reset_6h_at) return '精力充沛'
+  const diffMs = new Date(quota.value.reset_6h_at).getTime() - Date.now()
   if (diffMs <= 0) return '精力充沛'
   const diffH = diffMs / 3600000
-  if (diffH >= 1) return `${Math.ceil(diffH)} 小时后恢复精力`
-  return `${Math.ceil(diffMs / 60000)} 分钟后恢复精力`
+  if (diffH >= 1) return `${Math.ceil(diffH)} 小时后重置精力`
+  return `${Math.ceil(diffMs / 60000)} 分钟后重置精力`
 })
 
 function quotaBarStyle(used, limit) {
@@ -518,6 +591,31 @@ function handleLogout() {
   font-size: 11px; font-weight: 600; color: rgba(30,32,40,0.3);
   background: rgba(0,0,0,0.05); padding: 3px 10px; border-radius: 20px;
 }
+
+/* 飞书绑定 */
+.pm-bind-btn {
+  padding: 6px 16px; border-radius: 8px; border: none;
+  background: linear-gradient(135deg, #7b7fb2, #9590c4); color: #fff;
+  font-size: 12px; font-weight: 600; font-family: var(--font-sans); cursor: pointer;
+  box-shadow: 0 2px 8px rgba(123,127,178,0.25); transition: opacity 0.15s, transform 0.15s;
+}
+.pm-bind-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
+.pm-bind-btn:disabled { opacity: 0.4; cursor: default; }
+.pm-bind-btn.off {
+  background: transparent; color: var(--text-secondary);
+  border: 1px solid rgba(0,0,0,0.12); box-shadow: none;
+}
+.pm-qr-box {
+  margin-top: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 16px; background: rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.06); border-radius: 12px;
+}
+.pm-qr-canvas { border-radius: 8px; background: #fff; }
+.pm-qr-hint { font-size: 12px; color: var(--text-secondary); }
+.pm-qr-cancel {
+  font-size: 12px; color: var(--text-secondary); background: none; border: none;
+  cursor: pointer; text-decoration: underline;
+}
+.pm-qr-err { margin-top: 10px; font-size: 12px; color: #c85a5a; }
 
 .pm-footer {
   display: flex; align-items: center; justify-content: flex-end;

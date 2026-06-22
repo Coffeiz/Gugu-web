@@ -184,6 +184,20 @@
           </button>
         </div>
 
+        <div class="bots-redirect">
+          <div class="bots-redirect-head">
+            <span class="bots-redirect-title">飞书 OAuth 回调地址</span>
+            <span class="bots-redirect-hint">用户扫码绑定飞书用；须与飞书后台「安全设置 → 重定向 URL」一致，且公网可达</span>
+          </div>
+          <div class="bots-redirect-row">
+            <input class="modal-input" style="flex:1" v-model="redirectUri"
+                   placeholder="https://你的域名/api/v1/feishu/bind/callback" />
+            <button class="btn-ghost" :disabled="redirectSaving" @click="saveRedirect">
+              {{ redirectSaving ? '保存中…' : (redirectSaved ? '已保存 ✓' : '保存') }}
+            </button>
+          </div>
+        </div>
+
         <div v-if="botsLoading" class="presets-loading">加载中…</div>
         <div v-else>
           <div v-if="bots.length === 0" style="padding:28px;text-align:center;color:rgba(255,255,255,0.4);font-size:13px;">
@@ -239,6 +253,30 @@
                 <input v-model="botEditing.app_secret" type="password" placeholder="留空表示不修改" class="modal-input" autocomplete="new-password" />
               </div>
 
+              <!-- 飞书事件订阅「请求地址」模式才需要；走长连接可留空 -->
+              <template v-if="botEditing.platform === 'feishu'">
+                <div class="bot-webhook-sep">事件订阅 Webhook（可选，用「请求地址」模式才填；长连接留空）</div>
+
+                <div class="modal-field">
+                  <label>回调地址</label>
+                  <div v-if="botEditing.id" class="bot-webhook-url">
+                    <code>{{ webhookUrl }}</code>
+                    <button class="tb-copy" type="button" @click="copyWebhook">{{ webhookCopied ? '已复制' : '复制' }}</button>
+                  </div>
+                  <div v-else class="bot-webhook-hint">先保存频道，再回来复制专属回调地址</div>
+                </div>
+
+                <div class="modal-field">
+                  <label>Encrypt Key</label>
+                  <input v-model="botEditing.encrypt_key" type="password" placeholder="留空表示不修改 / 不加密" class="modal-input" autocomplete="new-password" />
+                </div>
+
+                <div class="modal-field">
+                  <label>Verification Token</label>
+                  <input v-model="botEditing.verification_token" placeholder="飞书事件订阅页的 Verification Token" class="modal-input" autocomplete="off" />
+                </div>
+              </template>
+
               <div class="modal-field modal-field--row">
                 <span>启用</span>
                 <button class="toggle-switch" :class="{ on: botEditing.enabled }" @click="botEditing.enabled = !botEditing.enabled">
@@ -285,19 +323,19 @@
         </div>
 
         <div v-if="activeProfile === 'persona'" class="persona-caution"
-          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;
+          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
                  background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
           ⚠️ 这是咕咕的<strong>人格设定</strong>，所有对话共享。谨慎修改 —— 会直接改变咕咕的性格、主动性、对话模式与说话方式。
         </div>
 
         <div v-if="activeProfile === 'reflection'" class="persona-caution"
-          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;
+          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
                  background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
           ⚠️ 这是<strong>记忆反思提炼词</strong>，决定咕咕每次对话后从中记住什么。改它会影响记忆质量；需保持输出 JSON 格式 <code>{"facts":[...],"daily":"..."}</code>。
         </div>
 
         <div v-if="activeProfile === 'compress'" class="persona-caution"
-          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;
+          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
                  background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
           ⚠️ 这是<strong>记忆压缩提炼词</strong>，决定老的近期记忆怎么沉淀进长期记忆。改它会影响长期记忆质量；需保持输出 JSON 格式 <code>{"memory":"..."}</code>。
         </div>
@@ -687,9 +725,22 @@ const activeTab = ref('llm')
 function switchTab(key) {
   activeTab.value = key
   if (key === 'llm'     && presets.value.length === 0) fetchPresets()
-  if (key === 'bots'    && bots.value.length === 0) fetchBots()
+  if (key === 'bots') { if (bots.value.length === 0) fetchBots(); redirectUri.value = configStore.cfg.feishu?.redirect_uri || '' }
   if (key === 'prompts' && profiles.value.length === 0) fetchProfiles()
   if (key === 'usage'   && !usage.value) fetchUsage()
+}
+
+// ── 飞书 OAuth 回调地址（全局，存 config.override.json 的 feishu 段）──
+const redirectUri = ref('')
+const redirectSaving = ref(false)
+const redirectSaved = ref(false)
+async function saveRedirect() {
+  redirectSaving.value = true; redirectSaved.value = false
+  try {
+    await configStore.saveConfig({ feishu: { redirect_uri: redirectUri.value.trim() } })
+    redirectSaved.value = true
+    setTimeout(() => { redirectSaved.value = false }, 3000)
+  } catch (e) { botError.value = e.message } finally { redirectSaving.value = false }
 }
 
 // ── IM 机器人 ──────────────────────────────────────────────────────────────
@@ -712,14 +763,42 @@ async function fetchBots() {
 }
 
 function openNewBot() {
-  botEditing.value = { platform: 'feishu', name: '', app_id: '', app_secret: '', enabled: true }
+  botEditing.value = { platform: 'feishu', name: '', app_id: '', app_secret: '', encrypt_key: '', verification_token: '', enabled: true }
   botError.value = ''
 }
 function openEditBot(b) {
-  botEditing.value = { ...b, app_secret: '' }  // secret 留空=不修改
+  // secret/encrypt_key 留空=不修改（后台打码值不回填）；verification_token 非强敏感，回填便于核对
+  botEditing.value = { ...b, app_secret: '', encrypt_key: '' }
   botError.value = ''
 }
 function cancelBotEdit() { botEditing.value = null; botError.value = '' }
+
+const webhookCopied = ref(false)
+const webhookUrl = computed(() =>
+  botEditing.value?.id ? `${window.location.origin}/api/v1/feishu/event/${botEditing.value.id}` : '')
+async function copyWebhook() {
+  const text = webhookUrl.value
+  if (!text) return
+  let ok = false
+  // 安全上下文（HTTPS / localhost）才有 navigator.clipboard；局域网 IP+HTTP 下走 execCommand 兜底
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text); ok = true
+    }
+  } catch {}
+  if (!ok) {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'; ta.style.opacity = '0'
+      document.body.appendChild(ta); ta.focus(); ta.select()
+      ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+    } catch {}
+  }
+  if (ok) { webhookCopied.value = true; setTimeout(() => (webhookCopied.value = false), 1500) }
+  else { botError.value = '复制失败，请手动选中地址复制' }
+}
 
 async function saveBot() {
   const b = botEditing.value
@@ -728,9 +807,11 @@ async function saveBot() {
   try {
     const url = b.id ? `/api/v1/admin/agent/bots/${b.id}` : '/api/v1/admin/agent/bots'
     const method = b.id ? 'PUT' : 'POST'
-    const payload = b.id
-      ? { name: b.name, app_id: b.app_id, app_secret: b.app_secret, enabled: b.enabled }
-      : { platform: b.platform, name: b.name, app_id: b.app_id, app_secret: b.app_secret, enabled: b.enabled }
+    const common = {
+      name: b.name, app_id: b.app_id, app_secret: b.app_secret,
+      encrypt_key: b.encrypt_key, verification_token: b.verification_token, enabled: b.enabled,
+    }
+    const payload = b.id ? common : { platform: b.platform, ...common }
     const res = await adminStore.authFetch(url, { method, body: JSON.stringify(payload) })
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
@@ -1596,6 +1677,16 @@ onMounted(async () => {
 }
 .pca-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.75); }
 
+/* ── 频道：飞书回调地址 ── */
+.bots-redirect {
+  margin: 4px 0 16px; padding: 14px 16px;
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 12px;
+}
+.bots-redirect-head { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+.bots-redirect-title { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.85); }
+.bots-redirect-hint { font-size: 11px; color: rgba(255,255,255,0.4); }
+.bots-redirect-row { display: flex; gap: 8px; align-items: center; }
+
 /* ── 频道：卡片网格 ── */
 .bots-grid {
   display: grid;
@@ -1625,6 +1716,30 @@ onMounted(async () => {
 .bot-card-actions { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; }
 .bot-card-actions .btn-ghost { font-size: 12px; padding: 4px 10px; }
 .bot-del { color: #d88; }
+
+/* ── 频道弹窗：飞书事件订阅 Webhook 区 ── */
+.bot-webhook-sep {
+  margin: 16px 0 4px; font-size: 11px; color: rgba(255,255,255,0.4);
+  border-top: 1px solid rgba(255,255,255,0.08); padding-top: 12px;
+}
+.bot-webhook-url {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px; padding: 7px 10px;
+}
+.bot-webhook-url code {
+  flex: 1; font-size: 11.5px; color: rgba(150,200,220,0.95);
+  font-family: 'SF Mono','Consolas',monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  user-select: all;   /* 复制兜底失败时，点一下即可全选手动复制 */
+}
+.bot-webhook-url .tb-copy {
+  flex-shrink: 0; font-size: 11px; padding: 3px 10px; border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.6); cursor: pointer; transition: all 0.15s;
+}
+.bot-webhook-url .tb-copy:hover { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.85); }
+.bot-webhook-hint { font-size: 11.5px; color: rgba(255,255,255,0.35); padding: 2px 0; }
 
 /* ── 频道编辑表单 ── */
 .bot-edit-card { padding: 18px 20px; max-width: 480px; }
@@ -1695,6 +1810,7 @@ onMounted(async () => {
 .modal-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
 .modal-field-row .modal-field { margin-bottom: 0; }
 .modal-field--row { flex-direction: row; align-items: center; justify-content: space-between; }
+.modal-field--row > span { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.35); letter-spacing: 0.07em; }
 .thinking-label { display: flex; flex-direction: column; gap: 3px; }
 .thinking-label > span:first-child { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.07em; }
 .thinking-hint { font-size: 11px; color: rgba(255,255,255,0.2); text-transform: none; letter-spacing: 0; font-weight: 400; }

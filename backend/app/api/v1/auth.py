@@ -143,15 +143,10 @@ async def get_quota(
         )
         return r.scalar() or 0
 
-    window_start = now - timedelta(hours=6)
+    # 固定 6h 窗口：每天 00:00 / 06:00 / 12:00 / 18:00 UTC 整点重置（非滑动）
+    window_start = now.replace(hour=(now.hour // 6) * 6, minute=0, second=0, microsecond=0)
+    reset_6h_at = window_start + timedelta(hours=6)   # 下次重置（精力清零）时刻
     used_6h = await _used(window_start)
-
-    # 6h 窗口内最早一条记录的时间（用于前端计算"X小时后恢复"）
-    r_oldest = await db.execute(
-        select(func.min(AgentUsage.created_at))
-        .where(and_(AgentUsage.user_id == current_user.id, AgentUsage.created_at >= window_start))
-    )
-    oldest_6h_at = r_oldest.scalar()
 
     week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     used_weekly = await _used(week_start)
@@ -162,7 +157,7 @@ async def get_quota(
     return {
         "used_6h":      used_6h,
         "limit_6h":     limit_6h,
-        "oldest_6h_at": oldest_6h_at.isoformat() + "Z" if oldest_6h_at else None,
+        "reset_6h_at":  reset_6h_at.isoformat() + "Z",   # 下次精力重置时刻
         "used_weekly":  used_weekly,
         "limit_weekly": limit_weekly,
     }

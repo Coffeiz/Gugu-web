@@ -656,7 +656,8 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 - [x] **step 3 · `worker.py`**（backend 顶层独立进程入口）：消费 `im:inbound` → `run_collect` →（暂打印）→ ack，带 `claim_stale` 回收崩溃遗留、信号优雅退出；独立于 web 避免多 uvicorn worker 重复消费。实测 队列→大脑→回复→ack 端到端通
 - [x] **step 4 · `adapters/feishu.py`**：飞书 WebSocket 长连收 `im.message.receive_v1` → `produce_sync` 入队（lark `ws.Client.start()` 同步阻塞、handler 同步，故用同步 produce）。**实测连上飞书 WSS 并收到真实消息**
 - [x] **step 5** 接通发回：`worker.handle` 跑完 `run_collect` → 按 platform 发回（飞书 `feishu.send_text` 用 `lark.Client` API）。**实测飞书私聊端到端：发"你是谁"→咕咕带人格回复送达飞书**
-- [ ] **step 6** 平台用户 ↔ 咕咕用户映射（多用户隔离，**当前临时全映射首个用户 root123**，待 OAuth 绑定替换）、事件去重、平台 token 存 Redis、用户状态机（并入 Phase 1.7）、背压
+- [x] **step 6 · 用户映射（OAuth 扫码绑定）**：`PlatformBinding (platform, open_id)↔user_id` + `feishu_bind.py`（授权URL/回调/状态/解绑，state 用 JWT 签）+ 个人设置二维码绑定 UI；worker `_resolve_user` 查绑定表，未绑定回提示。**已替换临时 root123**
+- [ ] **step 6 余项**：事件去重、平台 token 存 Redis、用户状态机（并入 Phase 1.7）、背压
 
 > **首平台里程碑（2026-06-23）**：飞书私聊端到端打通——`飞书消息 → 网关(WSS) → Redis队列 → worker → run_collect(人格+记忆+41工具) → feishu.send_text 发回`。坑：worker 阻塞读 XREADGROUP 需 `socket_timeout=None`，否则到点抛 TimeoutError。
 
@@ -711,13 +712,13 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 
 - **方案 A 轻绑定**（采用）：只取 open_id 认人，不存 user_access_token。聊天场景够用。
   （方案 B 代理身份——存 token 让咕咕"以用户身份"操作飞书——更重、需刷新，暂不做。）
-- **要建**：
-  1. 绑定表 `(platform, platform_user_id) ↔ user_id`（多用户隔离，新表 create_all 自动建）
-  2. 后端 2 接口：`GET /feishu/bind/url`（生成授权 URL + 二维码，state 绑当前用户）、`GET /feishu/bind/callback`（code 换 user_access_token → 取 open_id → 写绑定 → 回设置页）
-  3. 前端个人设置页「绑定飞书」区：二维码 + 已绑定/未绑定状态
-  4. 网关 `feishu.py`：收消息时 open_id → 查绑定表 → 填 `AgentRequest.user_id`（同时打通 step 5/6）
-- **前提**：飞书后台开 OAuth、登记 redirect_uri（如 `https://gugugu.site/api/v1/feishu/bind/callback`）。
-- lark-oapi 的 `authen.v1`（`CreateAccessTokenRequest` / `CreateOidcAccessTokenRequest`）可做 code→token 换取。
+- **已建（✅）**：
+  1. ✅ 绑定表 `PlatformBinding (platform, platform_user_id) ↔ user_id`（唯一约束 open_id，create_all 自动建）
+  2. ✅ `app/api/v1/feishu_bind.py`：`/feishu/bind/url`（授权URL，state 用 JWT 签 user_id+channel）、`/callback`（lark `authen.v1.access_token.create` 用 code 换 open_id → 写绑定 → 返回提示页）、`/status`、`DELETE /bind`
+  3. ✅ 前端 `ProfileModal.vue`「咕咕设置 → 接入咕咕 → 飞书」：`qrcode` 渲染二维码 + 轮询 status 自动完成 + 解绑
+  4. ✅ `worker._resolve_user` 查绑定表得 user_id，未绑定回提示（不跑大脑）；网关 payload 带 `channel_id`，worker 按频道回发
+- **前提**：飞书后台开 OAuth、登记 `redirect_uri`（Admin 频道面板「飞书 OAuth 回调地址」或 env `FEISHU__REDIRECT_URI`，须公网可达 + 与飞书后台一致）。
+- **为什么收消息不用公网、绑定要**：收消息是长连接 outbound（我们连飞书）；OAuth 回调是 inbound（飞书重定向送授权码），OAuth 标准设计绕不开。详见 `feishu接入指南.md` §6。
 
 **伙伴深化（更后）**
 - [ ] 主动触达：截止日临近提醒、异常沉默感知、情绪状态关注

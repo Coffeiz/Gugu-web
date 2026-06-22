@@ -231,3 +231,10 @@ export const authApi = {
     return request('POST', '/auth/avatar', fd, true)
   },
 }
+
+// 飞书 OAuth 扫码绑定
+export const feishuApi = {
+  bindUrl: () => request('GET',    '/feishu/bind/url'),
+  status:  () => request('GET',    '/feishu/bind/status'),
+  unbind:  () => request('DELETE', '/feishu/bind'),
+}

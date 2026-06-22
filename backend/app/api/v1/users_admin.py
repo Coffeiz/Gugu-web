@@ -54,7 +54,8 @@ async def list_users(
     week_result = await db.execute(week_stmt)
     week_map = {str(row.user_id): row.tokens for row in week_result}
 
-    h6_start = now - timedelta(hours=6)
+    # 固定 6h 窗口（与用户端 /quota 一致）：00/06/12/18 UTC 整点重置
+    h6_start = now.replace(hour=(now.hour // 6) * 6, minute=0, second=0, microsecond=0)
     h6_stmt = (
         select(AgentUsage.user_id, func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out).label("tokens"))
         .where(AgentUsage.created_at >= h6_start)

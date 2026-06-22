@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="!!project" width="900px" height="680px" :zIndex="200" @close="onModalClose">
+  <BaseModal :show="!!project" width="1060px" height="780px" :zIndex="200" @close="onModalClose">
       <div class="modal">
         <!-- 悬浮操作按钮 -->
         <div class="float-actions">
@@ -2003,7 +2003,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .field-input::placeholder { color: var(--text-secondary); opacity: 0.6; }
 
 /* 状态 */
-.status-group { display: flex; gap: 4px; flex-wrap: wrap; }
+.status-group { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
 .status-btn {
   display: flex; align-items: center; gap: 6px;
   padding: 5px 12px; border-radius: 20px;
@@ -2022,7 +2022,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .status-btn.s-done.active    { background: rgba(90,158,136,0.12);  border-color: rgba(90,158,136,0.4);  color: #3a8870; }
 
 /* 配色 */
-.color-grid { display: flex; gap: 6px; flex-wrap: wrap; }
+.color-grid { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
 .color-chip {
   width: 22px; height: 22px; border-radius: 50%;
   border: 2px solid rgba(255,255,255,0.5);

@@ -401,18 +401,11 @@ const vh = ref(window.innerHeight)
 function onResize() { vw.value = window.innerWidth; vh.value = window.innerHeight }
 
 // 小窗高度动态延伸：
-//   _baseScrollH  = 窗口打开/切换会话时消息区的 scrollHeight 基准（不计历史消息）
-//   msgsGrowth    = 基准之后新增的内容高度
-// 只有新增内容溢出当前窗口时才向上延伸，最高 75vh
-let _baseScrollH = 0
+//   每次打开/切换小窗时重置 _scrollDelta = 0
+//   streaming 自动滚底时，累计 scrollTop 向下移动了多少，超出部分就是窗口需要增高的量
+//   用 scrollTop 位移而非 scrollHeight 差值，天然规避大小窗宽度不同导致的换行高度偏差
+let _scrollDelta = 0
 const msgsGrowth = ref(0)
-
-function _resetSmallH() {
-  nextTick(() => {
-    _baseScrollH = messagesEl.value?.scrollHeight ?? 0
-    msgsGrowth.value = 0
-  })
-}
 
 const smallH = computed(() => {
   const maxH = Math.min(vh.value * 0.75, vh.value - 88 - 16)
@@ -448,10 +441,10 @@ const miniPlayerStyle = computed(() => {
 async function toggleOpen() {
   open.value = !open.value
   if (open.value) {
+    if (!expanded.value) { _scrollDelta = 0; msgsGrowth.value = 0 }
     await nextTick()
     const el = expanded.value ? expMessagesEl.value : messagesEl.value
     if (el) scrollToBottom(el)
-    if (!expanded.value) _resetSmallH()
   }
 }
 
@@ -544,13 +537,14 @@ async function enterExpanded() {
 }
 
 async function exitExpanded() {
+  _scrollDelta = 0; msgsGrowth.value = 0  // 先重置，小窗 DOM 以 SMALL_H 直接创建，不产生二次缩小
   expanded.value = false
   await nextTick()
   const el = messagesEl.value
   if (!el) return
   el.scrollTop = 999999
-  _baseScrollH = el.scrollHeight
-  msgsGrowth.value = 0
+  // CSS transition 让窗口从大尺寸平滑缩小（0.38s），期间 clientHeight 持续变化
+  // ResizeObserver 跟着一直滚底，过渡结束后断开
   const ro = new ResizeObserver(() => { el.scrollTop = 999999 })
   ro.observe(el)
   setTimeout(() => ro.disconnect(), 450)
@@ -567,8 +561,8 @@ async function loadSession(id) {
       text: m.content,
       time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
     }))
+    _scrollDelta = 0; msgsGrowth.value = 0
     await nextTick(); scrollExpBottom()
-    if (!expanded.value) _resetSmallH()
   } catch {}
 }
 
@@ -645,9 +639,15 @@ function makeScrollObserver(getEl, trackGrowth = false) {
   return new MutationObserver(() => {
     const el = getEl()
     if (!el) return
-    if (trackGrowth) msgsGrowth.value = Math.max(0, el.scrollHeight - _baseScrollH)
     if (!streaming.value || userScrolledUp.value) return
-    scrollToBottom(el)
+    if (trackGrowth) {
+      const prevTop = el.scrollTop
+      scrollToBottom(el)
+      const step = el.scrollTop - prevTop
+      if (step > 0) { _scrollDelta += step; msgsGrowth.value = _scrollDelta }
+    } else {
+      scrollToBottom(el)
+    }
   })
 }
 
