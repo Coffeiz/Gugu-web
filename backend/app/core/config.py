@@ -223,6 +223,10 @@ async def save_override(patch: dict) -> AppSettings:
     OVERRIDE_FILE.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
     get_settings.cache_clear()
     new_settings = get_settings()
+    if "redis" in patch:
+        # 延迟导入避免循环依赖；Redis 配置变更后重建共享客户端
+        from app.core.redis import reset as reset_redis
+        await reset_redis()
     if "db" in patch:
         # 延迟导入避免循环依赖（db.session 也会 import config）
         from app.db.session import reset_engine, create_all_tables
