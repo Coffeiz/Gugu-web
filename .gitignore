@@ -49,7 +49,10 @@ Thumbs.db
 .settings/
 
 # ===== 项目特定 =====
-# 用户上传文件（运行时产生，不入版本控制）
+# 用户上传文件（运行时产生，不入版本控制）—— 含咕咕私有记忆 .agent/
+uploads/
 backend/uploads/
+# 进程 PID 文件（运行时产生）
+*.pid
 # 备份文件
 backup/
