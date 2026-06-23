@@ -59,6 +59,88 @@ async def _send(payload: dict, text: str):
         print(f"[worker] (无发送通道) {platform}: {text!r}", flush=True)
 
 
+# 飞书上传上限：图片 10MB、文件 30MB（超限飞书返回非 JSON 错误页，SDK 会 JSONDecodeError）
+_FEISHU_IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
+_FEISHU_IMAGE_MAX = 10 * 1024 * 1024
+_FEISHU_FILE_MAX = 30 * 1024 * 1024
+
+
+async def _send_files(payload: dict, files: list):
+    """咕咕 send_file 工具产出的文件，按平台发回。
+    飞书：图片/文件都能发（≤10/30MB）；QQ：⚠️ 官方只开放发图片，文档发不了 → 兜底提示。"""
+    if not files:
+        return
+    platform = payload.get("platform")
+    if platform not in ("feishu", "qqbot"):
+        print(f"[worker] {platform} 暂不支持发文件（{len(files)} 个）", flush=True)
+        return
+    import app.db.session as _S
+    from app.models import File
+    from app.services.storage import get_storage
+    if _S._engine is None:
+        _S._build_engine()
+    for f in files:
+        fid = f.get("file_id")
+        if not fid:
+            continue
+        try:
+            async with _S._SessionLocal() as db:
+                rec = await db.get(File, fid)
+            if not rec:
+                continue
+            fname = f"{rec.display_name}.{rec.ext}"
+            if platform == "feishu":
+                data = await get_storage().get(rec.storage_key)
+                await _send_file_feishu(payload, rec, data, fname)
+            else:
+                await _send_file_qq(payload, rec, fname)   # OSS 用 URL 模式时不必读字节
+        except Exception as e:
+            print(f"[worker] 发文件出错 {fid}: {type(e).__name__}: {e}", flush=True)
+
+
+async def _send_file_feishu(payload, rec, data: bytes, fname: str):
+    from agent.adapters import feishu
+    # 超限直接拦下，别让飞书返回错误页把 SDK 撞成 JSONDecodeError；改发一句说明
+    is_img = (rec.ext or "").lower() in _FEISHU_IMAGE_EXTS
+    limit = _FEISHU_IMAGE_MAX if is_img else _FEISHU_FILE_MAX
+    if len(data) > limit:
+        mb, lim_mb = len(data) / 1048576, limit // 1048576
+        print(f"[worker] feishu 发文件 {fname}: 跳过（{mb:.1f}MB > {lim_mb}MB 上限）", flush=True)
+        await _send(payload, f"《{fname}》有 {mb:.0f}MB，超过飞书 {lim_mb}MB 上限发不了 😅 你去网页对话或文件库里下载吧。")
+        return
+    ok = await feishu.send_file(payload.get("chat_id"), data, rec.display_name, rec.ext, payload.get("channel_id"))
+    print(f"[worker] feishu 发文件 {fname}: {'ok' if ok else '失败'}", flush=True)
+    if not ok:
+        await _send(payload, f"《{fname}》没发出去（飞书那边拒了），你去网页对话或文件库里下载吧。")
+
+
+# QQ C2C 富媒体走 base64 上传，请求体膨胀 33%；实测约 10MB 为界（9.5MB 过、10.8MB 挂
+# 「call inner proxy error」）。本地存储没公网 URL，没法换 URL 模式，只能卡这个上限。
+_QQ_FILE_MAX = 10 * 1024 * 1024
+
+
+async def _send_file_qq(payload, rec, fname: str):
+    from agent.adapters import qq
+    from app.services.storage import get_storage
+    openid = payload.get("platform_user_id")
+    storage = get_storage()
+    url = storage.fetch_url(rec.storage_key)   # OSS→签名 URL（无体积限制）；本地→None
+    if url:
+        ok = await qq.send_file(openid, None, rec.display_name, rec.ext,
+                                payload.get("channel_id"), payload.get("message_id"), url=url)
+    else:
+        # 本地存储没公网 URL，只能 base64 上传，受 ~10MB 限制
+        data = await storage.get(rec.storage_key)
+        if len(data) > _QQ_FILE_MAX:
+            await _send(payload, f"《{fname}》有 {len(data)/1048576:.0f}MB，超过 QQ 上限（本地存储约 10MB）发不了，去网页/文件库下载吧。")
+            return
+        ok = await qq.send_file(openid, data, rec.display_name, rec.ext,
+                                payload.get("channel_id"), payload.get("message_id"))
+    print(f"[worker] qq 发文件 {fname}: {'ok' if ok else '失败'}{'（URL模式）' if url else ''}", flush=True)
+    if not ok:
+        await _send(payload, f"《{fname}》没发出去（QQ 那边拒了），你去网页对话或文件库里下载吧。")
+
+
 # IM 会话映射：按 (platform, 平台用户) 记一个稳定 session_id，续聊不断。
 # 滑动 TTL：每条消息刷新，空闲超 IM_SESSION_TTL 自动起新会话。
 IM_SESSION_TTL = 12 * 3600  # 12 小时
@@ -101,10 +183,21 @@ async def handle(msg_id: str, payload: dict):
         user_id=user_id, user_name=user_name,
         session_id=sid,
         source=platform,
+        attachments=payload.get("attachments") or [],
     )
+    # 把 IM 上下文透传给工具层（react 工具据此给用户这条消息加表情）
+    from agent import imctx
+    imctx.set_im(platform, payload.get("message_id"), payload.get("channel_id"), payload.get("chat_id"))
     resp = await run_collect(req)
     await _im_session_set(platform, puid, resp.session_id)   # 续上同一会话
-    await _send(payload, resp.text)
+    # 表情回应已由网关「秒回」（_on_message 收到即发），这里不再补
+    # QQ 的「思考中」占位只认文本/markdown 被动回复，不认媒体消息（文件/图片）。
+    # 咕咕光发文件、没配文字时补一句短文本，让被动回复成立、思考态能正常消解。
+    reply_text = resp.text
+    if resp.files and not (reply_text or "").strip():
+        reply_text = "给你～"
+    await _send(payload, reply_text)
+    await _send_files(payload, resp.files)   # 咕咕 send_file 的文件发回平台
     print(f"[worker] {platform} 回复(session={resp.session_id}) → {resp.text!r}", flush=True)
     return resp
 

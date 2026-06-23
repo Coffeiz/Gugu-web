@@ -27,18 +27,136 @@ from app.core import redis as R
 STREAM = R.IM_INBOUND_STREAM
 
 
+# 能被咕咕「读内容」的文本类扩展名（与 chat_attach 同口径）
+_TEXT_EXTS = {"md", "txt", "json", "csv", "yaml", "yml", "log", "py", "js", "ts", "tsx",
+              "jsx", "vue", "html", "css", "scss", "java", "go", "rs", "c", "cpp", "h",
+              "hpp", "sh", "sql", "xml", "toml", "ini", "conf", "env"}
+
+
+def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
+    """下载用户发来的图片/文件 → 暂存 → 返回 (干净 caption, [attach_id])。
+
+    内容/卡片由 run_collect 的 resolve_for_message 据 attach_id 统一处理（和网页上传同一套），
+    所以这里 caption 留空、只回 attach_id。暂存失败才退回把内容塞进文本。
+    """
+    from lark_oapi.api.im.v1 import GetMessageResourceRequest
+    from app.core import chat_attach
+    mt = msg.message_type
+    try:
+        c = json.loads(msg.content) if msg.content else {}
+    except Exception:
+        c = {}
+    if mt == "image":
+        key, rtype, fname = c.get("image_key", ""), "image", "图片.jpg"
+    else:
+        key, rtype, fname = c.get("file_key", ""), "file", (c.get("file_name") or "文件")
+    if not key:
+        return (f"[用户发来一个{'图片' if mt == 'image' else '文件'}，但没取到资源]", [])
+    try:
+        req = GetMessageResourceRequest.builder().message_id(msg.message_id).file_key(key).type(rtype).build()
+        resp = client.im.v1.message_resource.get(req)
+        data = resp.file.read() if (resp.success() and resp.file) else b""
+    except Exception as e:
+        print(f"[feishu] 下载资源出错: {type(e).__name__}: {e}", flush=True)
+        data = b""
+    if not data:
+        return (f"[用户发来文件《{fname}》，但下载失败]", [])
+    name = fname.rsplit(".", 1)[0] if "." in fname else fname
+    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ("jpg" if mt == "image" else "")
+    try:
+        aid = chat_attach.stage_sync(owner, name, ext, None, data).get("attach_id", "")
+    except Exception as e:
+        print(f"[feishu] 暂存失败: {type(e).__name__}: {e}", flush=True)
+        aid = ""
+    if aid:
+        return ("", [aid])   # caption 空，文件卡 + 内容由 resolve_for_message 据 attach_id 注入
+    # 暂存失败兜底：文本类至少把内容塞进文本，让咕咕能读
+    if ext in _TEXT_EXTS:
+        return (f"[用户发来文件《{fname}》内容：]\n```\n{data.decode('utf-8', 'replace')[:30000]}\n```", [])
+    return (f"[用户发来文件《{fname}》，但暂存失败]", [])
+
+
 # ── 接收（网关子进程，凭据/归属从 env 注入）──
-def _make_on_message(channel_id: str, owner: str):
+def _do_react(client, message_id: str, emoji_type: str) -> bool:
+    """给某条消息加表情回应（同步，给 asyncio.to_thread 用）。失败返回 False。"""
+    try:
+        from lark_oapi.api.im.v1 import (
+            CreateMessageReactionRequest, CreateMessageReactionRequestBody, Emoji,
+        )
+        req = (CreateMessageReactionRequest.builder().message_id(message_id).request_body(
+            CreateMessageReactionRequestBody.builder()
+            .reaction_type(Emoji.builder().emoji_type(emoji_type).build()).build()).build())
+        resp = client.im.v1.message_reaction.create(req)
+        if not resp.success():
+            print(f"[feishu] reaction 失败: emoji={emoji_type} code={resp.code} msg={resp.msg}", flush=True)
+            return False
+        return True
+    except Exception as e:
+        print(f"[feishu] reaction 出错: {type(e).__name__}: {e}", flush=True)
+        return False
+
+
+async def react(channel_id: str, message_id: str, emoji_type: str) -> bool:
+    """给飞书某条消息加表情回应（咕咕 react 工具用，按 channel 取凭据）。"""
+    if not message_id or not emoji_type:
+        return False
+    app_id, app_secret = await _creds_by_id(channel_id)
+    if not app_id:
+        print(f"[feishu] react {channel_id} 无凭据，跳过", flush=True)
+        return False
+    if channel_id not in _clients:
+        _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
+    return await asyncio.to_thread(_do_react, _clients[channel_id], message_id, emoji_type)
+
+
+# 「秒回」：网关收到即用关键词快速判一下（纯本地、零网络），赶在 LLM 之前发出短文字 + 表情。
+# 每条规则 = (表情, 一组短回话术, 关键词)。按从上到下优先命中；都不中走 _DEFAULT。
+# 默认表情用 OnIt(👀「在看」) 而非 THUMBSUP——配合「在看~」更连贯，也避免满屏👍。
+import random as _random
+
+_QUICK_RULES = [
+    ("LAUGH",    ("哈哈", "草", "笑死了", "哈哈哈"),       ("哈哈", "23333", "笑死", "草", "lol", "hhh", "😂", "🤣")),
+    ("THANKS",   ("客气啦~", "嗨这没事", "应该的~"),        ("谢谢", "多谢", "感谢", "辛苦", "thx", "thanks", "🙏")),
+    ("DONE",     ("漂亮~", "棒", "搞定收工"),               ("搞定", "完成", "好了", "弄好", "done", "成了", "通过了")),
+    ("WOW",      ("哇厉害", "牛啊", "可以的~"),             ("厉害", "牛", "强", "哇", "wow", "卧槽", "666", "绝了")),
+    ("CRY",      ("唉别难过", "抱抱", "心疼一下"),           ("难过", "可惜", "唉", "崩溃", "麻了", "心疼", "emo", "😭", "😢")),
+    ("PARTY",    ("恭喜恭喜!", "庆祝一下~", "太棒了!"),      ("恭喜", "庆祝", "上线", "发布", "纪念", "🎉")),
+    ("OnIt",     ("嗨~", "在呢", "诶到~"),                  ("你好", "在吗", "在不在", "早", "晚上好", "中午好", "hi", "hello")),
+    ("THINKING", ("让我想想哈~", "我看看哈", "稍等想一下"),   ("为什么", "怎么", "如何", "?", "？", "吗", "呢", "请问", "能不能", "可不可以")),
+]
+_DEFAULT = ("OnIt", ("在看~", "收到,马上", "看看哈~", "嗯嗯我瞧瞧"))
+_MEDIA_ACK = ("收到,我看看~", "文件到了,瞅瞅", "收到啦~")
+
+
+def _quick_react(text: str, has_media: bool) -> tuple[str, str]:
+    """返回 (秒回短文字, 表情 emoji_type)。纯关键词，零网络，赶在 LLM 之前。"""
+    if has_media:
+        return _random.choice(_MEDIA_ACK), "OnIt"
+    t = (text or "").lower()
+    for emoji, acks, kws in _QUICK_RULES:
+        if any(k in t for k in kws):
+            return _random.choice(acks), emoji
+    return _random.choice(_DEFAULT[1]), _DEFAULT[0]
+
+
+def _make_on_message(channel_id: str, owner: str, api_client):
     def _on_message(data: P2ImMessageReceiveV1) -> None:
         ev = data.event
         msg = ev.message
-        if not msg or msg.message_type != "text":
-            return  # 暂只处理文本
-        try:
-            text = ((json.loads(msg.content) if msg.content else {}) or {}).get("text", "").strip()
-        except Exception:
-            text = ""
-        if not text:
+        if not msg:
+            return
+        mt = msg.message_type
+        attachments: list = []
+        if mt == "text":
+            try:
+                text = ((json.loads(msg.content) if msg.content else {}) or {}).get("text", "").strip()
+            except Exception:
+                text = ""
+        elif mt in ("image", "file"):
+            text, attachments = _ingest_media(api_client, msg, owner)
+        else:
+            return  # 语音/表情等暂不处理
+        if not text and not attachments:
             return
         open_id = ev.sender.sender_id.open_id if (ev.sender and ev.sender.sender_id) else None
         payload = {
@@ -50,8 +168,12 @@ def _make_on_message(channel_id: str, owner: str):
             "chat_type": msg.chat_type,
             "message_id": msg.message_id,
             "text": text,
+            "attachments": attachments,
         }
-        print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id}: {text!r}", flush=True)
+        print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text={text[:40]!r} att={len(attachments)}", flush=True)
+        # 秒回表情：赶在入队/生成之前，用关键词快速判一个即时点上（完整回复随后由 worker 发）
+        _, emoji = _quick_react(text, bool(attachments))
+        _do_react(api_client, msg.message_id, emoji)
         try:
             R.produce_sync(STREAM, payload)
         except Exception as e:
@@ -66,14 +188,19 @@ def serve() -> None:
     owner = os.environ.get("FEISHU_OWNER", "")
     if not app_id or not app_secret:
         raise SystemExit("缺少 FEISHU_APP_ID / FEISHU_APP_SECRET 环境变量（应由 supervisor 注入）。")
+    api_client = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()   # 下载收到的文件/图片用
+    # 表情事件空处理器：咕咕加表情后飞书会回推 reaction.created 事件，不注册的话 lark 每条都报
+    # 「processor not found」ERROR 刷屏（看着像断开，其实不是）。注册个 no-op 吞掉即可。
     handler = (
         lark.EventDispatcherHandler.builder("", "")
-        .register_p2_im_message_receive_v1(_make_on_message(channel_id, owner))
+        .register_p2_im_message_receive_v1(_make_on_message(channel_id, owner, api_client))
+        .register_p2_im_message_reaction_created_v1(lambda data: None)
+        .register_p2_im_message_reaction_deleted_v1(lambda data: None)
         .build()
     )
-    client = lark.ws.Client(app_id, app_secret, event_handler=handler, log_level=lark.LogLevel.INFO)
+    ws_client = lark.ws.Client(app_id, app_secret, event_handler=handler, log_level=lark.LogLevel.INFO)
     print(f"[feishu:{channel_id}] 网关启动（owner={owner}），WebSocket 长连接中…", flush=True)
-    client.start()  # 同步阻塞，SDK 自带断线重连
+    ws_client.start()  # 同步阻塞，SDK 自带断线重连
 
 
 # ── 发送（worker 用，按 bot id 现查 DB 取凭据，缓存 lark.Client）──
@@ -205,6 +332,67 @@ async def send_text(chat_id: str, text: str, channel_id: str | None = None) -> b
     if channel_id not in _clients:
         _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
     return await asyncio.to_thread(_do_send, _clients[channel_id], chat_id, text)
+
+
+# ── 发送文件/图片（咕咕 send_file 工具 → IM）──────────────────────────────────
+_IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
+
+
+def _feishu_file_type(ext: str) -> str:
+    if ext in ("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx"):
+        return {"docx": "doc", "xlsx": "xls", "pptx": "ppt"}.get(ext, ext)
+    if ext in ("ogg", "opus"):
+        return "opus"
+    if ext == "mp4":
+        return "mp4"
+    return "stream"
+
+
+def _do_send_file(client, chat_id: str, data: bytes, name: str, ext: str) -> bool:
+    import io
+    from lark_oapi.api.im.v1 import (
+        CreateImageRequest, CreateImageRequestBody,
+        CreateFileRequest, CreateFileRequestBody,
+        CreateMessageRequest, CreateMessageRequestBody,
+    )
+    ext_l = (ext or "").lower()
+    fname = f"{name}.{ext_l}" if ext_l else name
+    try:
+        if ext_l in _IMAGE_EXTS:
+            up = client.im.v1.image.create(CreateImageRequest.builder().request_body(
+                CreateImageRequestBody.builder().image_type("message").image(io.BytesIO(data)).build()).build())
+            if not up.success():
+                print(f"[feishu] 图片上传失败: code={up.code} msg={up.msg}", flush=True)
+                return False
+            msg_type, content = "image", json.dumps({"image_key": up.data.image_key})
+        else:
+            up = client.im.v1.file.create(CreateFileRequest.builder().request_body(
+                CreateFileRequestBody.builder().file_type(_feishu_file_type(ext_l)).file_name(fname)
+                .file(io.BytesIO(data)).build()).build())
+            if not up.success():
+                print(f"[feishu] 文件上传失败: code={up.code} msg={up.msg}", flush=True)
+                return False
+            msg_type, content = "file", json.dumps({"file_key": up.data.file_key})
+        req = (CreateMessageRequest.builder().receive_id_type("chat_id").request_body(
+            CreateMessageRequestBody.builder().receive_id(chat_id).msg_type(msg_type).content(content).build()).build())
+        resp = client.im.v1.message.create(req)
+        if not resp.success():
+            print(f"[feishu] 发文件消息失败: code={resp.code} msg={resp.msg}", flush=True)
+            return False
+        return True
+    except Exception as e:
+        print(f"[feishu] 发文件出错: {type(e).__name__}: {e}", flush=True)
+        return False
+
+
+async def send_file(chat_id: str, data: bytes, name: str, ext: str, channel_id: str | None = None) -> bool:
+    """把文件字节上传到飞书并发到会话（图片走 image、其余走 file）。"""
+    app_id, app_secret = await _creds_by_id(channel_id)
+    if not app_id:
+        return False
+    if channel_id not in _clients:
+        _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
+    return await asyncio.to_thread(_do_send_file, _clients[channel_id], chat_id, data, name, ext)
 
 
 if __name__ == "__main__":

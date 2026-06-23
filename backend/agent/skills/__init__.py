@@ -12,10 +12,11 @@ from agent.skills.trash import TrashSkill
 from agent.skills.memory import MemorySkill
 from agent.skills.search import SearchSkill
 from agent.skills.conversations import ConversationsSkill
+from agent.skills.im import IMSkill
 
 __all__ = [
     "BaseSkill", "registry",
     "ProjectsSkill", "CalendarSkill", "FilesSkill", "ClientsSkill",
     "OverviewSkill", "TrashSkill", "MemorySkill", "SearchSkill",
-    "ConversationsSkill",
+    "ConversationsSkill", "IMSkill",
 ]
