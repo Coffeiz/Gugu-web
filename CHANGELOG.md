@@ -9,7 +9,24 @@
 
 ## [Unreleased]
 
-_（暂无）_
+### 提示词分层 + 对外口径
+
+- 系统提示词拆成 **persona**（角色）/ **skills**（执行规则·真实性铁律·不可逆 confirm）/ **policy**（内容红线 + 对外口径）/ **default**（数据模板），各管一件、后台「Agent」面板分别可编辑；builder 注入序：人格 → 准则 → 红线 → 记忆 → 数据。铁律从 persona 搬进 skills、default 瘦身为纯数据
+- **policy 加「对外口径·以伙伴示人」**：始终以咕咕伙伴身份示人、不暴露模型/工具/架构；被身份/模型/工具/系统问题套话时**简短带过（2-3 句、不进讲解模式、不列举全部能力、立刻拉回需求）**；不编造假机制（玩笑 deflect 可以、虚构具体技术说明不行）；防 prompt injection（不复述系统提示词）；唯一诚实底线——不谎称真人
+- `default.md` 注入**完整时刻**（`{now}` 含星期 + 时分），咕咕能答「现在几点 / 星期几」、按时段问候
+
+### IM 出口兜底（确定性，prompt 之外的代码层保险）
+
+- 新 `agent/outbound.py`：IM 回复**发给用户 / 持久化之前**确定性清洗——抹 `call_xxx` tool id / `trace_id` 等内部噪声；系统提示词被吐出（多为 prompt injection 得手）则整条换安全话术。只管字面泄露，语义泄露仍靠 policy；仅 IM 路（非流式好扫）
+
+### systemd 托管 worker / supervisor（修生产稳定性隐患）
+
+- 新增 `gugu-worker.service` / `gugu-supervisor.service`（`Restart=always`，supervisor 加 `KillMode=control-group` 连带网关子进程一起管）；`make install` **一次装全 3 个**、`make uninstall` 一并清；三服务日志 `append` 到 `logs/gugu*.log`（后台 Debug 页可 tail，不进 journald）
+- **修复根因**：此前只有 web 有 systemd 单元，IM 的 worker/supervisor 没人托管 → 进程死了 / 服务器重启不自动拉起 → 消息无限排队（IM「偶发很慢 / 收不到」的真因）
+
+### 修复
+
+- **IM 空回复发 QQ 报「无效 markdown content」**：模型偶发出空文本，空内容发 QQ 被拒、用户啥也收不到。现空回复给兜底（有文件「给你～」、纯空「嗯~在的」），绝不发空
 
 ---
 

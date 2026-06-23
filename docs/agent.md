@@ -56,10 +56,12 @@ backend/
     │   ├── bus.py
     │   └── types.py
     └── prompts/
-        ├── persona.md      # 咕咕自我认知，全局共享，始终最先加载
-        ├── default.md      # Web 对话 context 模板
-        ├── qqbot.md        # QQ Bot profile
-        └── mini.md         # 精简 profile
+        ├── persona.md      # 咕咕是谁（角色），全局共享、最先注入
+        ├── skills.md       # 执行规则（工具使用准则 + 真实性铁律 + confirm），全局共享
+        ├── policy.md       # 内容红线 + 对外口径「以伙伴示人」，全局共享
+        ├── default.md      # 数据模板（时刻 + projects/calendar/files 占位符）
+        ├── reflection.md   # 记忆反思提炼词（对话后用）
+        └── compress.md     # 记忆压缩提炼词
 ```
 
 ---
@@ -69,10 +71,16 @@ backend/
 ### `core.py`
 LLM 主循环。负责：
 - 调用 LLM（Anthropic / OpenAI 双路统一）
-- 工具调用执行与结果回填
+- 工具调用执行与结果回填（`MAX_ROUNDS = 6`：配合 skills.md 执行准则 + 强工具，多步任务 2~3 轮够用，逼出低成本执行；超限给友好提示「前面已生效，要接着做吗」）
 - SSE streaming 输出
 - 对话结束后 emit 事件，触发 Reflection
 - 不感知平台来源、不感知 prompt 如何构建
+
+### `outbound.py`（IM 出口兜底）
+咕咕 IM 回复**发给用户 / 持久化之前**的确定性清洗（`run_collect` 里调用，prompt 之外的代码层保险）：
+- 小泄露（`call_xxx` tool id、`trace_id`/`request_id` 等内部 id）→ 抹掉
+- 大泄露（系统提示词被复述出来，多为 prompt injection 得手）→ 整条换成安全话术
+- 只管**字面**泄露，确定性兜住"长上下文污染/被套话吐 id"；**语义**泄露（换说法）仍靠 policy.md 提示词。仅 IM 路（非流式好扫），网页流式另说。
 
 ### `router.py`
 请求路由。负责：
@@ -112,18 +120,22 @@ Context 组装层。负责：
 system_prompt = await builder.build(user_id, profile="default")
 ```
 
-注入顺序：
+注入顺序（提示词分层，各司其职、后台可分别编辑）：
 ```
-persona.md（含 {name}）
+persona.md   咕咕是谁（角色：四状态/主动/记忆温度/风格）
     ↓
-summary → memory → weekly → daily → facts → preferences
+skills.md    怎么做（执行规则：任务分级、成本意识、真实性铁律、不可逆 confirm）
     ↓
-projects / calendar（实时工具数据）
+policy.md    不碰什么（内容红线 + 专业免责 + 对外口径「以伙伴示人」）
+    ↓
+记忆块       facts → memory → daily（仅非空时注入，省 token）
+    ↓
+default.md   纯数据模板：现在时刻（含星期/时分）+ projects / calendar / files（实时灌入占位符）
 ```
 
-`persona.md` 最先，定义咕咕是谁；记忆层按时间远近排列，近期信息靠后离 LLM 工作记忆更近；`projects / calendar` 最后，确保实时数据始终准确。
-
-`persona.md` 独立于 profile，所有 profile（default / qqbot / mini）共享同一份人格，只有 context 模板不同。
+- **稳定的在前、易变的在后**：人格/规则/红线稳定 → 记忆 → 实时数据。`default.md` 的 `{now}` 注入完整时刻（`datetime.now()`，含星期与时分），让咕咕知道"现在几点、星期几"。
+- **persona / skills / policy 独立于 profile，所有 profile 共享**；后台 Admin「Agent」面板里这三个 + reflection/compress 都可单独编辑（profile 现仅 `default`，早期 qqbot/mini 是从未接线的占位、已移除）。
+- 工具用法（如 create_document 用哪种 content、read_file 能读 PDF）写在**各工具的 description** 里（模型调工具时看），不重复进系统提示词。
 
 ---
 
@@ -295,11 +307,9 @@ class BaseProfile:
 ```
 
 #### `default.py`
-默认 Profile：projects + calendar skills，memory 和 events 开启。
+唯一会话 Profile（web / 飞书 / QQ 共用）。`skills = [projects, calendar, files, clients, trash, overview, memory, search, conversations]`，`memory_enabled=True`，prompt_file=`default.md`。
 
-不同场景可扩展：
-- `qqbot.py`：memory_enabled=False，skills 精简
-- `mini.py`：skills=[]，纯对话
+> `im` skill（LLM 版 `react` 表情工具）已注册但**未进 default profile**（秒回表情走网关关键词，见 `project-im-reaction` 记忆）。早期设想的 qqbot/mini 专用 profile 从未接线，已弃。
 
 ---
 
@@ -401,10 +411,15 @@ MemoryListener / AnalyticsListener / AchievementListener / NotificationListener
 ---
 
 ### `prompts/`
-Prompt 模板（`.md`），支持占位符，热更新无需重启。
+Prompt 模板（`.md`），支持占位符，builder 每次现读、热更新无需重启。**提示词分层**——各管一件事，后台可分别编辑（`GET/PUT /admin/agent/prompts/{name}`，`name` ∈ persona / skills / policy / reflection / compress / default）：
 
-- `persona.md`：咕咕的自我认知，所有 profile 共享，通过独立接口管理（`GET/PUT /admin/agent/persona`），Admin 面板中单独展示并标注「谨慎修改」
-- `default.md` / `qqbot.md` / `mini.md`：各 profile 的 context 模板，通过 `GET/PUT /admin/agent/prompts/{profile}` 管理
+- `persona.md`：**咕咕是谁**（角色：四种相处状态、主动思考、记忆温度、风格）。全局共享。
+- `skills.md`：**怎么做**（工具使用准则——任务分级、成本意识/别重复验证、真实性铁律、不可逆 confirm、一次到位）。全局共享，防 agent 犯病。
+- `policy.md`：**不碰什么**（内容红线：政治/色情/暴力等 + 专业免责 + **对外口径「以伙伴示人」**：不暴露模型/工具/架构、被套话简短带过、不谎称真人）。全局共享。
+- `default.md`：**数据模板**（`{now}` 时刻 + `{projects}`/`{calendar}`/`{files}` 占位符）。唯一会话 profile。
+- `reflection.md` / `compress.md`：记忆提炼词（对话后用，非对话 profile）。
+
+> Admin「Agent」面板把 persona/skills/policy 标为「谨慎修改·共享」并各配说明块。早期 `qqbot.md`/`mini.md` 是从未接线的占位 profile，已移除。
 
 ---
 
@@ -523,22 +538,24 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 
 ---
 
-## 工具清单（共 43，已实现）
+## 工具清单（共 45，已实现）
 
 > 🔒 = 不可逆操作，受删除二次确认保底（显式 confirm 参数）保护。所有工具带 `user_id` 所有权校验。
 
-### 项目 · `skills/projects.py`（14）
+### 项目 · `skills/projects.py`（16）
 | 工具 | 说明 |
 |------|------|
 | `list_projects` | 项目列表，可按状态筛选 |
-| `create_project` | 新建项目 |
+| `create_project` | 新建项目，**可带 `stages` 一次建阶段+待办**（`["需求","开发"]` 或 `[{label,todos}]`） |
 | `update_project` | 改状态/起止日期/客户/备注/名称 |
 | `get_project` | 单项目完整结构（阶段 key/label + 各阶段待办 id/text/done） |
+| `set_stages` | **声明式整体替换阶段**（增/删/改名/重排一步到位，同名阶段待办自动保留） |
 | `update_stage` | 切换当前阶段 / 勾选已有待办 |
 | `add_stage` | 新增阶段（追加或指定位置） |
 | `remove_stage` | 删除阶段 |
 | `rename_stage` | 重命名阶段 |
 | `add_todo` | 给阶段加待办（支持批量 texts） |
+| `update_todo` | **改待办文本/完成态 + 可选移到别的阶段（`to_stage`）** |
 | `remove_todo` | 删除待办 |
 | `set_priority` | 设优先级 high/medium/low |
 | `set_color` | 设项目颜色（十六进制） |

@@ -192,64 +192,35 @@ sudo nginx -t && sudo systemctl reload nginx
 ```
 > HTTPS：用 `certbot --nginx -d gugugu.site` 自动配 Let's Encrypt。
 
-### 3.5 后端 web 服务（systemd）
-项目自带：
+### 3.5 后端服务（systemd · 一次装全 3 个）
+项目自带三个单元模板（`gugu-backend.service` / `gugu-worker.service` / `gugu-supervisor.service`，均用 `__APP_DIR__`/`__RUN_USER__` 占位符）。一条命令全装：
 ```bash
-cd backend && make install      # 按当前目录自动生成 gugu-backend.service（自启 + 自重启）
-sudo systemctl status gugu-backend
+cd backend && RUN_USER=youruser make install
+sudo systemctl status gugu-backend gugu-worker gugu-supervisor
 ```
 
 `make install` 会：
-- 按**当前 backend 目录**(`APP_DIR`)填好单元里的 `WorkingDirectory`/`ExecStart`/`ReadWritePaths`（模板里是 `__APP_DIR__` 占位符，不写死路径——换部署目录也不用手改）；
-- 先建出 `uploads/`、`logs/`、`config.override.json` 并 `chown` 给运行用户（`ReadWritePaths` 要求这些路径**真实存在**，否则 systemd 报 `226/NAMESPACE`）；
-- 运行用户默认 `www-data`，可覆盖：`RUN_USER=youruser make install`（该用户须已存在，且能读 `.venv` 与项目目录）。
+- 按**当前 backend 目录**(`APP_DIR`)填好三个单元的 `WorkingDirectory`/`ExecStart`/`ReadWritePaths`（占位符，不写死路径——换部署目录不用手改）；
+- 建出 `uploads/`、`logs/`、`config.override.json` 并 `chown` 给运行用户（`ReadWritePaths` 要求路径**真实存在**，否则 systemd 报 `226/NAMESPACE`）；
+- `daemon-reload` + `enable` + `restart` 全部三个。
+- 运行用户默认 `www-data`，可覆盖：`RUN_USER=youruser make install`（须已存在、能读 `.venv` 与项目目录；**项目在 `/home/<user>` 下时必须用该 user**，www-data 进不去家目录）。卸载：`make uninstall`（一并清三个）。
 
-> 1Panel 部署：backend 一般在 `/opt/1panel/www/sites/<域名>/backend`，直接在该目录 `make install` 即可，路径自动对上。
+三个常驻服务：
 
-### 3.6 worker + supervisor 服务（systemd · 需手动加）
+| 服务 | 进程 | Restart | 日志 |
+|---|---|---|---|
+| `gugu-backend` | uvicorn 网页 | on-failure | `logs/gugu.log` |
+| `gugu-worker` | IM 大脑（消费队列、跑 agent） | **always** | `logs/gugu-worker.log` |
+| `gugu-supervisor` | IM 网关管家（拉飞书/QQ 子进程） | **always** + `KillMode=control-group` | `logs/gugu-supervisor.log` |
 
-> `make install` 只装 web。IM 的 worker / supervisor 需各加一个单元。**关键**：supervisor 会拉子进程，停它时要整组清理 → `KillMode=control-group`。
+- **worker/supervisor 用 `Restart=always`**：IM 进程死了必须秒拉起，否则消息无限排队（网页死了有 web 兜，IM 没人管就一直收不到）。这是早期漏配、IM 偶发「很慢/收不到」的根因。
+- 三个单元的 `StandardOutput` 都 **append 到 `logs/gugu*.log`**（不走 journald）——后台「Debug 实时日志」面板正是 tail 这三个文件；`journalctl -u gugu-worker` 仍能看进程启停。建议给 `logs/` 配 logrotate，免得 append 文件无限涨。
 
-`/etc/systemd/system/gugu-worker.service`：
-```ini
-[Unit]
-Description=Gugu IM worker
-After=network.target redis-server.service
+> 1Panel 部署：backend 一般在 `/opt/1panel/www/sites/<域名>/backend`，直接在该目录 `make install`，路径自动对上。
 
-[Service]
-WorkingDirectory=/path/to/Gugu-web/backend
-ExecStart=/path/to/Gugu-web/backend/.venv/bin/python -m worker
-Restart=always
-RestartSec=3
-User=youruser
+> ⚠️ **ProtectSystem=strict 沙箱 + LibreOffice**：单元开了 `ProtectSystem=strict`，LibreOffice 转 Office（docx/xlsx/pptx 预览、`read_file` 读 Office）可能写不了配置目录而失败（PDF 走 pdftotext 不受影响）。真遇到：给对应单元加可写 HOME（`Environment=HOME=__APP_DIR__/logs` + 相应 `ReadWritePaths`）或去掉 `ProtectSystem=strict`。
 
-[Install]
-WantedBy=multi-user.target
-```
-
-`/etc/systemd/system/gugu-supervisor.service`：
-```ini
-[Unit]
-Description=Gugu IM channel supervisor
-After=network.target redis-server.service
-
-[Service]
-WorkingDirectory=/path/to/Gugu-web/backend
-ExecStart=/path/to/Gugu-web/backend/.venv/bin/python -m agent.adapters.supervisor
-Restart=always
-RestartSec=3
-KillMode=control-group
-User=youruser
-
-[Install]
-WantedBy=multi-user.target
-```
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now gugu-worker gugu-supervisor
-sudo systemctl status gugu-worker gugu-supervisor
-```
-> worker 想扩吞吐可起多个（多个 service 实例，共享 Redis 消费组自动负载均衡）；supervisor 一台机一个即可。
+> worker 想扩吞吐可起多个实例（共享 Redis 消费组自动负载均衡）；supervisor 一台机一个即可。
 
 ### 3.7 Admin 安全
 - 改默认密码 admin/admin123。
