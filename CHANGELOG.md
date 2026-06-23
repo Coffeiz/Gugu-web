@@ -9,6 +9,13 @@
 
 ## [Unreleased] · 文件库回收站多选
 
+### 新增 · 咕咕能读历史对话
+
+- **咕咕能搜 / 读用户过去的对话**（其他 session，此前只能看当前对话 + 提炼记忆）：新 skill `conversations`
+  - `search_conversations(keyword?)`：按关键词搜消息正文+标题，按 session 聚合返回匹配片段；不传则列最近对话
+  - `read_conversation(session_id)`：读某条对话完整消息
+  - **严格多用户隔离**：只查当前用户的 session，读他人的返回"不属于你"（实测验证）。与记忆系统互补——记忆是提炼结论，这是原始原文。web/飞书/QQ 通用
+
 ### 改进 · 健壮性与错误文案
 
 - **工具异常不再冲垮对话**：`registry.dispatch` 给工具执行包 `try/except`——handler 抛错时把 `{"error":"工具 X 执行出错：…"}` 当结果返给 LLM（并打印堆栈到日志），咕咕按 persona 铁律如实告知没做成、不假装成功，对话继续。（之前一个工具崩 = 整轮报错）

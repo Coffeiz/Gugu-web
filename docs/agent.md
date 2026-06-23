@@ -194,6 +194,12 @@ Skill 基类，定义 tools 列表声明和统一执行入口，core 通过此�
 #### `projects.py` / `calendar.py` / `files.py`
 各功能领域工具实现，自注册到 skill registry，Profile 按需组合。
 
+#### `conversations.py`（读历史对话）
+让咕咕能搜 / 读用户**过去的对话**（其他 session）——当前 session 的历史已在上下文里，这里解决"翻看以前那次聊的"。
+- `search_conversations(keyword?)`：按关键词搜消息正文 + 标题，按 session 聚合返回匹配片段；不传关键词列最近对话。
+- `read_conversation(session_id)`：读某条对话的完整消息。
+- **严格多用户隔离**：只查 `ConversationSession.user_id == 当前用户`，读他人 session 返回"不属于你"。与记忆系统互补：记忆是提炼结论，这里是原始对话原文。
+
 #### 发送文件给用户（UI artifact 旁路）
 
 咕咕能在对话窗口给用户发可下载的文件卡片。工具 `send_file`（files skill，按 file 名/file_id 定位用户文件）。

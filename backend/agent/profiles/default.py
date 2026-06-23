@@ -9,7 +9,7 @@ from agent.profiles.base import BaseProfile
 
 class DefaultProfile(BaseProfile):
     name = "default"
-    skills = ["projects", "calendar", "files", "clients", "trash", "overview", "memory", "search"]
+    skills = ["projects", "calendar", "files", "clients", "trash", "overview", "memory", "search", "conversations"]
     prompt_file = "default.md"
     memory_enabled = True
     mcp_enabled = False
