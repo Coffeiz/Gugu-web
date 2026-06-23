@@ -61,8 +61,39 @@ _DEFAULT_STAGES = [
 ]
 
 
+def _build_stages(raw: list) -> list:
+    """把 ['计划','执行'] 或 [{'label':'开发','todos':['a','b']}] 规范成
+    [{key, label, todos:[{id,text,done}]}]，重排 key(s0..)/todo id(t1..)。"""
+    out, tnum = [], 0
+    for i, item in enumerate(raw or []):
+        if isinstance(item, str):
+            label, todo_src = item, []
+        elif isinstance(item, dict):
+            label = item.get("label") or item.get("name") or ""
+            todo_src = item.get("todos") or []
+        else:
+            continue
+        label = str(label).strip()
+        if not label:
+            continue
+        todos = []
+        for t in todo_src:
+            txt = (t.get("text") if isinstance(t, dict) else t)
+            if not str(txt or "").strip():
+                continue
+            tnum += 1
+            todos.append({"id": f"t{tnum}", "text": str(txt),
+                          "done": bool(t.get("done")) if isinstance(t, dict) else False})
+        out.append({"key": f"s{i}", "label": label, "todos": todos})
+    return out
+
+
 async def _create_project(db, user_id, args: dict):
-    default_stages = [dict(s) for s in _DEFAULT_STAGES]
+    # 自定义阶段：stages 可为 ["计划","执行"] 或 [{"label":..,"todos":[..]}]，不传用默认三段
+    raw = args.get("stages")
+    stages = _build_stages(raw) if raw else [dict(s) for s in _DEFAULT_STAGES]
+    if not stages:
+        stages = [dict(s) for s in _DEFAULT_STAGES]
     # 未指定开始日期默认今天，未指定截止默认一周后（与上下文「今天」同口径用 datetime.now）
     _now = datetime.now()
     start_date = args.get("start_date") or _now.strftime("%Y-%m-%d")
@@ -75,13 +106,14 @@ async def _create_project(db, user_id, args: dict):
         deadline=deadline,
         start_date=start_date,
         notes=args.get("notes", ""),
-        stages_json=json.dumps(default_stages, ensure_ascii=False),
-        current_stage="s0",
+        stages_json=json.dumps(stages, ensure_ascii=False),
+        current_stage=stages[0]["key"],
     )
     db.add(p)
     await db.commit()
     await db.refresh(p)
-    return {"success": True, "project_id": p.id, "name": p.name}
+    return {"success": True, "project_id": p.id, "name": p.name,
+            "stages": [s["label"] for s in stages]}
 
 
 async def _update_stage(db, user_id, args: dict):
@@ -368,6 +400,105 @@ async def _remove_todo(db, user_id, args: dict):
     return {"success": True, "project_id": p.id, "removed": target}
 
 
+async def _set_stages(db, user_id, args: dict):
+    """整体替换项目阶段（声明式：给出想要的完整阶段列表，增删改排序一次到位）。
+    同名阶段的待办默认保留（本次没给该阶段 todos 时）；给了 todos 则以本次为准。"""
+    p, _err = await _resolve_project(db, user_id, args)
+    if _err:
+        return _err
+    raw = args.get("stages")
+    if not isinstance(raw, list) or not raw:
+        return json.dumps({"error": '需提供 stages 列表，如 ["需求","开发"] 或 [{"label":"开发","todos":["接口"]}]'})
+
+    old = p.stages
+    old_by_label = {s.get("label"): s for s in old}
+    new_stages, tnum = [], 0
+    for i, item in enumerate(raw):
+        if isinstance(item, str):
+            label, todo_src, gave_todos = item, [], False
+        elif isinstance(item, dict):
+            label = item.get("label") or item.get("name") or ""
+            todo_src = item.get("todos") or []
+            gave_todos = "todos" in item
+        else:
+            continue
+        label = str(label).strip()
+        if not label:
+            continue
+        # todos：本次给了就用本次；没给但旧的同名阶段有，则保留旧的（改名/重排不丢待办）
+        if gave_todos:
+            src = [{"text": (t.get("text") if isinstance(t, dict) else t),
+                    "done": bool(t.get("done")) if isinstance(t, dict) else False} for t in todo_src]
+        elif label in old_by_label:
+            src = [{"text": t.get("text"), "done": t.get("done", False)}
+                   for t in old_by_label[label].get("todos", [])]
+        else:
+            src = []
+        todos = []
+        for t in src:
+            if not str(t.get("text") or "").strip():
+                continue
+            tnum += 1
+            todos.append({"id": f"t{tnum}", "text": str(t["text"]), "done": bool(t.get("done"))})
+        new_stages.append({"key": f"s{i}", "label": label, "todos": todos})
+
+    if not new_stages:
+        return json.dumps({"error": "stages 解析后为空"})
+    # current_stage：保留同名阶段，否则落到第一阶段
+    old_cur = next((s for s in old if s.get("key") == p.current_stage), None)
+    cur_label = old_cur.get("label") if old_cur else None
+    p.current_stage = next((s["key"] for s in new_stages if s["label"] == cur_label), new_stages[0]["key"])
+    p.stages = new_stages
+    p.updated_at = datetime.utcnow()
+    await db.commit()
+    return {"success": True, "project_id": p.id, "stages": [s["label"] for s in new_stages]}
+
+
+async def _update_todo(db, user_id, args: dict):
+    """改一条待办的文本/完成态，并可选移动到另一阶段。按文本或 id 定位（可用 stage 限定范围）。"""
+    p, _err = await _resolve_project(db, user_id, args)
+    if _err:
+        return _err
+    target = str(args.get("todo") or "").strip()
+    if not target:
+        return json.dumps({"error": "需提供 todo（待办文本或 id）"})
+    stages = p.stages
+    st_hint = args.get("stage")
+    found = found_stage = None
+    for s in stages:
+        if st_hint and s.get("key") != str(st_hint) and s.get("label") != str(st_hint):
+            continue
+        for t in s.get("todos", []):
+            if t.get("id") == target or target in t.get("text", ""):
+                found, found_stage = t, s
+                break
+        if found:
+            break
+    if not found:
+        return json.dumps({"error": f"未找到待办: {target}"})
+
+    if args.get("text"):
+        found["text"] = str(args["text"])
+    if "done" in args and args["done"] is not None:
+        found["done"] = bool(args["done"])
+    dest = found_stage
+    to = args.get("to_stage")
+    if to:
+        dest = _find_stage(stages, to)
+        if not dest:
+            return json.dumps({"error": f"目标阶段不存在: {to}",
+                               "available": [s.get("label") for s in stages]})
+        if dest is not found_stage:
+            found_stage["todos"] = [t for t in found_stage.get("todos", []) if t is not found]
+            dest.setdefault("todos", []).append(found)
+
+    p.stages = stages
+    p.updated_at = datetime.utcnow()
+    await db.commit()
+    return {"success": True, "project_id": p.id, "todo": found.get("text"),
+            "done": found.get("done"), "stage": dest.get("label")}
+
+
 class ProjectsSkill(BaseSkill):
     name = "projects"
     tools = [
@@ -410,7 +541,7 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="create_project",
             label="新建项目",
-            description="创建新项目。用户没明确说日期时不用追问：开始日期默认今天、截止日期默认一周后。",
+            description="创建新项目，可一次性带上自定义阶段和待办（无需再逐个 add_stage/add_todo）。用户没明确说日期时不用追问：开始日期默认今天、截止日期默认一周后；不传 stages 用默认「计划/执行/交付」三段。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -420,6 +551,17 @@ class ProjectsSkill(BaseSkill):
                     "deadline":   {"type": "string", "description": "YYYY-MM-DD；不填默认一周后"},
                     "start_date": {"type": "string", "description": "YYYY-MM-DD；不填默认今天"},
                     "notes":      {"type": "string"},
+                    "stages": {
+                        "type": "array",
+                        "description": '自定义阶段（按顺序）。两种写法：纯名称 ["需求","开发","测试"]，或带待办 [{"label":"开发","todos":["接口","联调"]}]。',
+                        "items": {
+                            "type": ["string", "object"],
+                            "properties": {
+                                "label": {"type": "string"},
+                                "todos": {"type": "array", "items": {"type": "string"}},
+                            },
+                        },
+                    },
                 },
                 "required": ["name"],
             },
@@ -596,6 +738,48 @@ class ProjectsSkill(BaseSkill):
                 "required": ["stage", "todo"],
             },
             handler=_remove_todo,
+        ),
+        Tool(
+            name="set_stages", label="整体设置阶段",
+            description="一次性把项目的阶段设成你想要的完整列表（增/删/改名/重排序一步到位，声明式）。同名阶段的待办会自动保留（除非你本次给了该阶段的 todos 则以本次为准）。适合重排或大改结构；只动一个阶段用 add_stage/rename_stage 即可。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "integer", "description": "项目 ID（可选）"},
+                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字）"},
+                    "stages": {
+                        "type": "array",
+                        "description": '想要的完整阶段列表（按顺序）。纯名称 ["需求","开发"] 或带待办 [{"label":"开发","todos":["接口"]}]。',
+                        "items": {
+                            "type": ["string", "object"],
+                            "properties": {
+                                "label": {"type": "string"},
+                                "todos": {"type": "array", "items": {"type": "string"}},
+                            },
+                        },
+                    },
+                },
+                "required": ["stages"],
+            },
+            handler=_set_stages,
+        ),
+        Tool(
+            name="update_todo", label="修改待办",
+            description="改一条待办的文本或完成状态，并可选移动到另一个阶段（to_stage）。按文本（部分匹配）或 id 定位，可用 stage 限定查找范围。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "integer", "description": "项目 ID（可选）"},
+                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字）"},
+                    "todo": {"type": "string", "description": "要改的待办：文本（部分匹配）或 id"},
+                    "stage": {"type": "string", "description": "待办所在阶段（可选，缩小查找范围）"},
+                    "text": {"type": "string", "description": "新文本（可选）"},
+                    "done": {"type": "boolean", "description": "完成态（可选）"},
+                    "to_stage": {"type": "string", "description": "移动到的目标阶段名称或 key（可选）"},
+                },
+                "required": ["todo"],
+            },
+            handler=_update_todo,
         ),
     ]
 
