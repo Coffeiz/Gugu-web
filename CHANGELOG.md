@@ -9,6 +9,41 @@
 
 ## [Unreleased] · 文件库回收站多选
 
+### 新增 · 飞书消息「秒回表情」
+
+- 飞书每来一条消息，网关 `_on_message` **赶在入队/LLM 之前**用关键词本地快速判一个表情即时点上（`im.v1.message_reaction.create`），完整回复随后由 worker 发——慢生成时先给个即时反馈，不干等
+  - `feishu.py` 的 `_quick_react`/`_QUICK_RULES`：笑→😂、谢→🙏、搞定→✅、问候/中性→👀(OnIt)、问问题→🤔；默认 OnIt 而非 👍（躲开「满屏大拇指」）
+  - 需飞书 app 开 `im:message_reaction`（消息表情·写）权限，否则日志 `reaction 失败` 且不影响主流程
+- 另有 **LLM 版 `react` 工具**（`skills/im.py` + `imctx.py` 经 contextvar 把 IM 上下文透传到工具层）能让咕咕按内容精挑表情——但**默认未进 profile**（要等 LLM 跑完才出、且会和秒回叠成两个表情）。未来接入快/小模型再启用，见记忆 `project-im-reaction`
+- 设计取舍：「每条都点」必然退化成单调表情（多数消息中性），真秒回又必须在 LLM 之前 → 取本地关键词（即时但糙）
+
+### 新增 · 聊天文件收发（网页 + 飞书）
+
+- **用户给咕咕发文件**（网页上传 / 飞书 / QQ 发文件）：咕咕能**看内容**（文本类 + **PDF/Word/Excel/PPT** 自动提取；图片给提示）+ 能**保存**到文件库
+  - `app/core/chat_attach.py`（新）：附件**暂存**（字节走 StorageBackend、元数据走 Redis，TTL 6h）+ `resolve_for_message`（解析成「给模型的内容 + 前端文件卡」，网页/IM 同一套）
+  - 网页：输入框加附件按钮 + 上传到 `POST /agent/upload`（暂存，10MB 上限）+ 待发 chip + 发送带 `attachments`；用户气泡显示文件卡
+  - 飞书接收：网关收 file/image → `im.v1.message_resource.get` 下载 → 暂存 → attachments（复刻 QwenPaw）
+  - **QQ 接收**：`on_c2c_message_create` 取 `message.attachments`（BaseMessage 自带 url/filename）→ 异步下载 → 暂存 → attachments；收到文件**瞬发**一句「文件收到啦，让我看看~」（赶在下载/入队前给即时反馈，也顺带解决 QQ 文件无「思考态」）
+  - 新工具 `save_uploaded_file(attach_id)`：把暂存附件存进文件库（personal），存完文件库实时刷新
+- **咕咕给用户发文件**（飞书 / QQ）：`send_file` 工具的文件事件被 `run_collect._collect` 捕获 → `worker._send_files` 按平台发
+  - 飞书：`im.v1.image/file.create` 上传拿 key → 发 image/file。⚠️ 图片 10MB / 文件 30MB，超限飞书返回非 JSON 错误页把 SDK 撞成 `JSONDecodeError` → 发前查大小、超限改发文字提示
+  - **QQ**：`/v2/users/{openid}/files` 富媒体上传（图片 file_type=1、文件=4，C2C 私聊支持发文件，群聊不支持）→ 拿 file_info → `post_c2c_message msg_type=7 media`。本地存储走 base64 `file_data`（请求体膨胀 33%，实测 ~10MB 为界，超限提示去网页下载）；**配了 OSS 则自动走 url 模式**（`storage.fetch_url()` 返回签名 URL → QQ 自己抓，无体积限制）
+  - QQ 修复：`msg_seq` 用 **Redis `INCR qqseq:{msg_id}`** 按 msg_id 跨进程发号（网关 ack 拿 1、worker 文本 2、文件 3…，两进程各自计数会撞被去重）；上传 inner-proxy 抖动重试 4 次；`send_file` 工具描述改平台中立 + prompt 加固「必须真调工具、绝不能只说正在发送」（之前模型在 QQ 上光说不调，假成功）
+- ⚠️ QQ **点赞/表情回应做不了**（reaction API 只对频道 guild，C2C 私聊没有）；图片**看内容**需 vision 模型；扫描件 PDF 无文字层提取为空（需 OCR）
+
+### 新增 · `read_file` 读 PDF / Office（文本提取）
+
+- `app/core/doctext.py`（新）：二进制文档 → 文本。PDF 用 `pdftotext`、Word/PPT/Excel 用 LibreOffice 转 txt/csv（pptx 经 pdf 中转）。**无新依赖**（pdftotext + libreoffice 系统命令）
+- `read_file`（文件库）和 `chat_attach`（聊天附件）共用 → 咕咕能读库里和聊天发来的 PDF/Office 内容
+- 配套修 prompt：模型原来凭旧印象/会话历史说「PDF 读不了」却不调工具 → 加「`read_file` 能读 PDF/Office，直接调，别说读不了」
+
+### 修复 · IM 实时同步的几个坑
+
+- **实时同步的咕咕回复显示空气泡**：markdown 改缓存渲染（`msg.html`）后，实时 `appended` 的助手消息只设了 `text` 没设 `html` → 非流式渲染读到 undefined → 空气泡。现 append 时 `renderMd` 设 html + 带 `files` 卡片 + AI 空文本不显示气泡
+- **`agent_usage.tools_used` 列缺失**：模型加了字段但没建迁移 → 所有生成持久化用量时 `UndefinedColumnError` 崩。已补列（生产需迁移）
+- **文件库不实时刷新**：Files 视图只 watch 老的 `uploadSignal`，没接实时 `rev.files` → 咕咕建/删/存文件不实时反映。现加 `watch(rev.files)`
+- **`create_document` 缺 name 死循环**：`args["name"]` 直接 KeyError、错误信息只有 `'name'` → 模型反复重试撞轮次上限。现校验参数返回看得懂的错；dispatch 错误带异常类型；加「参数解析失败（疑似 max_tokens 截断）」诊断日志
+
 ### 新增 · 网页生成解耦，刷新后续看（不再丢回复）
 
 - **网页生成脱离 HTTP 请求**：原来生成跑在请求的流式响应里，浏览器一刷新就断连 → 生成被取消、**回复也没持久化（丢了）**。现改为：

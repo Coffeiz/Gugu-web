@@ -5,6 +5,24 @@
 
 ---
 
+## 2026-06-23 · 聊天文件收发：三个藏得很深的坑
+
+做「用户给咕咕发文件 / 咕咕发文件回去」（网页 + 飞书），踩了三个根因都不在表面的坑：
+
+**1. 飞书发文件「没收到」→ 暂存撞 asyncio loop。**
+飞书收文件后要把字节暂存（`stage_sync`，给 IM 网关用的同步版）。咕咕一直说「暂存失败/没收到」。日志挖出来是 `RuntimeError: Cannot run the event loop while another loop is running`——lark SDK 的 handler **本身就跑在一个运行中的 asyncio loop** 里，我却在当前线程 `new_event_loop().run_until_complete()`，直接撞车。
+修法：把 async 的 `storage.put` 丢到**独立线程**用 `asyncio.run` 跑（新线程没有运行中的 loop），元数据用**同步 redis** 客户端（避开 async 客户端的跨 loop 复用问题）。教训：**别假设自己不在 loop 里**——第三方 SDK 的回调经常已经在 loop 中。
+
+**2. 实时同步时咕咕回复显示「空气泡」→ markdown 缓存渲染漏了 html。**
+之前为性能把 AI 气泡改成「持久化消息读 `msg.html`（预渲染），只有流式才实时 `renderMd`」。但 IM 实时 `appended` 进来的助手消息只塞了 `text` 没塞 `html` → 非流式分支读到 undefined → 空气泡。修：append 时就 `renderMd` 设 `html`、带上 `files` 卡片，AI 空文本不渲染气泡。教训：**加缓存字段后，所有写入口都得补上**，否则某条路径的数据就是「半成品」。
+
+**3. `agent_usage.tools_used` 缺列 → 所有生成全崩。**
+并行改动给模型加了 `tools_used` 字段但没建迁移，生产库没这列 → 每次存用量 `UndefinedColumnError` → `run_collect` 整个 except 掉 → 看起来像「咕咕全坏了」。手动 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 救活（迁移文件待补）。教训：**模型字段改动必须配迁移**，缺一列能让整条链路静默崩。
+
+资源下载/上传的平台 API 用法参考了 QwenPaw（飞书 `im.v1.message_resource.get` 下载、`im.v1.image/file.create` 上传）。QQ 的发文件还没做。
+
+---
+
 ## 2026-06-23 · 漏重启 worker：实时不生效 + QQ 会话没标 source（同一个根因）
 
 实时刷新和 IM 标题都做完、也单测过了，用户却反馈「IM 消息依旧不实时、新建 session 不刷新、QQ 会话没标记成 qq」。两个 bug，同一个根因。

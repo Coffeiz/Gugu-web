@@ -216,8 +216,45 @@ send_file 返回 {ok, message, _artifact:{file_id,name,ext,size_bytes}}
   → 重开对话时 /sessions/{id}/messages 带出 files → 卡片重新渲染
 ```
 - 任何工具想给前端推 UI 元素，都可走这条路（结果带 `_artifact`）。
-- ⚠️ **仅 web 对话**：IM（飞书/QQ）的 `_collect` 忽略 `file` 事件，工具文本仍回"已发送"但不真发文件（IM 发文件是各平台另一套 API，未做）。
+- **IM（飞书 / QQ）也真发文件**：`runner._collect` 收集 `file` 事件 → `AgentResponse.files` → `worker._send_files` 按平台分发。
+  - **飞书**：`feishu.send_file` 上传（`im.v1.image/file.create` 拿 key）→ 发 image/file。⚠️ 图片 10MB / 文件 30MB，超限飞书返回非 JSON 错误页会把 SDK 撞成 `JSONDecodeError` → 发前查大小、超限改发文字说明。
+  - **QQ**：`qq.send_file` → `/v2/users/{openid}/files` 富媒体上传（图片 file_type=1、文件=4；**C2C 私聊支持发文件、群聊不支持**）→ 拿 file_info → `post_c2c_message msg_type=7 media`。
+    - **本地存储**：base64 `file_data` 上传，请求体膨胀 33%，实测 **~10MB 为界**（超了报 `call inner proxy error`），`_send_file_qq` 超限改发文字提示。
+    - **OSS**：`storage.fetch_url(key)` 返回签名 URL（`bucket.sign_url`，1h），`qq.send_file(url=...)` 走 **url 模式**让 QQ 自己抓 → **无体积限制**，自动切换无需改代码。
+    - `msg_seq` 用 **Redis `INCR qqseq:{msg_id}`** 跨进程发号（QQ 按 `(msg_id, msg_seq)` 去重；网关 ack 和 worker 回复是两个进程，各自计数会撞）；上传抖动重试 4 次。
+    - QQ 文件没配文字时 worker 补一句短文本——QQ「思考中」占位只认文本/markdown 被动回复，媒体消息不消解它。
+  - **QQ 收文件瞬发 ack**：网关 `on_c2c_message_create` 见 `message.attachments` 就先发「文件收到啦，让我看看~」（下载/入队之前），即时反馈 + 顺带消解「思考态」。
 - ⚠️ 持久化依赖 `conversation_messages.files` 列（迁移 `20260623000001`）——**部署后必须 `make migrate`**，否则发文件存盘报错。
+
+#### 接收文件（用户发文件给咕咕 · 暂存旁路）
+
+用户能在 **web 上传 / 飞书 / QQ 发文件**给咕咕，咕咕能**看内容**（文本类 + PDF/Office）+ **存进文件库**。
+
+机制是「先暂存、要存才落库」（`app/core/chat_attach.py`）：
+```
+上传字节 → StorageBackend(.chat_staging/ key) + 元数据 → Redis(TTL 6h)，拿 attach_id
+  ├─ web：输入框附件按钮 → POST /agent/upload（暂存）→ 发送带 attachments=[aid]
+  ├─ 飞书：网关收 file/image → im.v1.message_resource.get 下载 → stage_sync 暂存（同步，handler 在运行 loop 里）
+  └─ QQ：on_c2c_message_create 取 message.attachments（url/filename）→ 异步下载 → chat_attach.stage（handler 本身 async）
+  → run_collect / web.py 调 chat_attach.resolve_for_message(user_id, attach_ids, message)
+       → ① 增广文本（文本/PDF/Office 用 doctext 提取正文注入 LLM；图片给提示）② 前端文件卡片
+  → 用户说"存一下" → 工具 save_uploaded_file(attach_id) 把暂存字节落成正式文件库记录
+```
+- **kind**：text（md/代码…）、**doctext.EXTRACTABLE（PDF/Word/Excel/PPT，自动提取文本，也按可读处理）**、image（需 vision）、binary（其余，可存读不了）。
+- ⚠️ `stage_sync`（飞书网关用）必须在独立线程跑 `asyncio.run`——lark handler 在运行中的 loop 里，当前线程 `run_until_complete` 会 `RuntimeError`；QQ handler 本身 async，直接用 `chat_attach.stage`。
+
+#### 飞书消息「秒回表情」
+
+飞书每来一条消息，网关 `_on_message` **赶在入队/LLM 之前**给用户那条加一个表情回应——慢生成时先给即时反馈：
+```
+收到消息 → _quick_react(text) 关键词本地判一个 emoji（零网络）
+        → _do_react(api_client, message_id, emoji)  # im.v1.message_reaction.create
+        → 再 produce 入队（完整回复随后 worker 发）
+```
+- `_QUICK_RULES`（feishu.py）：笑→😂 / 谢→🙏 / 搞定→✅ / 问候·中性→👀 OnIt / 问问题→🤔；默认 OnIt（不用 THUMBSUP，躲「满屏👍」）。飞书 emoji_type 大小写敏感（THUMBSUP/LAUGH/DONE 全大写，OnIt/Typing 驼峰）。
+- ⚠️ 需飞书 app 开 `im:message_reaction`（写）权限，否则日志 `reaction 失败`、不影响主流程。
+- **另有 LLM 版 `react` 工具**（`skills/im.py`，IM 上下文经 `agent/imctx.py` contextvar 透传）能让咕咕按内容精挑——但**默认未进 profile**（要等 LLM 跑完、且会和秒回叠两个表情）。等接入快/小模型再启用。
+- 设计取舍：「每条都点」必退化成单调表情（多数消息中性），真秒回又必须在 LLM 之前 → 取本地关键词（即时但糙）。
 
 #### 实时刷新（Redis pub/sub → SSE）
 
@@ -484,7 +521,7 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 
 ---
 
-## 工具清单（共 41，已实现）
+## 工具清单（共 43，已实现）
 
 > 🔒 = 不可逆操作，受删除二次确认保底（显式 confirm 参数）保护。所有工具带 `user_id` 所有权校验。
 
@@ -514,7 +551,7 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 | `update_event` | 改标题/日期/类型/关联项目/描述 |
 | `delete_event` 🔒 | 删除事件（无回收站，不可逆） |
 
-### 文件 · `skills/files.py`（12）
+### 文件 · `skills/files.py`（14）
 | 工具 | 说明 |
 |------|------|
 | `list_files` | 查询文件（空间/项目/扩展名/关键词） |
@@ -529,6 +566,8 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 | `list_folders` | 查询文件夹（按项目/父级） |
 | `rename_folder` | 重命名文件夹 |
 | `delete_folder` | 删除文件夹（夹内文件移至根，不删） |
+| `send_file` | 给用户发可下载文件（web 文件卡片 / 飞书文件，见「发送文件」） |
+| `save_uploaded_file` | 把用户暂存的上传附件存进文件库（见「接收文件」） |
 
 ### 客户 · `skills/clients.py`（4）
 | 工具 | 说明 |
