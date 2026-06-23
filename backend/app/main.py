@@ -36,6 +36,7 @@ from app.api.v1 import audit_log as audit_log_router
 from app.api.v1 import system_logs as system_logs_router
 from app.api.v1 import users_admin as users_admin_router
 from app.api.v1 import admin_debug as admin_debug_router
+from app.api.v1 import admin_analytics as admin_analytics_router
 from app.db.session import create_all_tables
 
 import logging
@@ -236,6 +237,11 @@ app.include_router(
 )
 app.include_router(
     admin_debug_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    admin_analytics_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )

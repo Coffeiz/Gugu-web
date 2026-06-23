@@ -245,7 +245,7 @@ function formatDate(str) {
 }
 .meta-right {
   display: grid;
-  grid-template-columns: 72px 64px 80px 32px;
+  grid-template-columns: 72px 80px 80px 32px;
   align-items: center;
   gap: 0 8px;
   flex-shrink: 0;

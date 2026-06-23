@@ -524,7 +524,6 @@ function darkenHex(hex, amount = 0.60) {
   outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s;
 }
 .dash-popup-input:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
-.dash-popup-input::placeholder { color: #8a8fa8; opacity: 0.7; }
 .dash-popup-textarea {
   width: 100%; padding: 7px 10px; border-radius: 9px;
   border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68);
@@ -533,7 +532,6 @@ function darkenHex(hex, amount = 0.60) {
   resize: none; line-height: 1.5;
 }
 .dash-popup-textarea:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
-.dash-popup-textarea::placeholder { color: #8a8fa8; opacity: 0.7; }
 .dash-popup-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
 .dash-popup-cancel { padding: 5px 12px; border-radius: 8px; border: none; background: none; font-size: 12px; cursor: pointer; color: #8a8fa8; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: background 0.12s; }
 .dash-popup-cancel:hover { background: rgba(0,0,0,0.06); }

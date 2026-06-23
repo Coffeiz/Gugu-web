@@ -73,7 +73,7 @@ function onDrop(e) {
 .col-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .col-count {
   font-size: 11px; font-weight: 600; color: var(--text-secondary);
-  background: rgba(0,0,0,0.06); border-radius: 20px;
+  background: rgba(255,255,255,0.85); border-radius: 20px;
   padding: 1px 7px; min-width: 22px; text-align: center;
 }
 .col-body {

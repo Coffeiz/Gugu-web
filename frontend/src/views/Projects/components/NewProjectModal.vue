@@ -620,7 +620,6 @@ input:not(.name-input):not(.header-name-input):focus {
   border-color: rgba(123,127,178,0.4);
   box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
 }
-input::placeholder { color: var(--text-secondary); opacity: 0.6; }
 
 /* ── 看板列 ── */
 .status-group { display: flex; gap: 6px; }
@@ -834,7 +833,6 @@ input::placeholder { color: var(--text-secondary); opacity: 0.6; }
   border-color: rgba(123,127,178,0.4);
   box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
 }
-.notes-input::placeholder { color: var(--text-secondary); opacity: 0.6; }
 
 /* ── 底部 ── */
 .modal-footer {

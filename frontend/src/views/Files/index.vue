@@ -33,28 +33,7 @@
       </div>
 
       <div class="toolbar-right">
-        <!-- 排序选择器 -->
-        <div v-if="currentType !== 'root'" class="sort-selector" @click.stop>
-          <button class="sort-btn" @click.stop="sortMenuOpen = !sortMenuOpen">
-            <PhSortAscending :size="13" weight="bold" />
-            {{ SORT_OPTIONS.find(o => o.key === sortKey)?.label }}
-            <svg class="sort-dir-icon" :class="{ desc: sortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-              <path d="M5 2v6M2 5l3-3 3 3"/>
-            </svg>
-          </button>
-          <div v-if="sortMenuOpen" class="sort-menu popup-menu">
-            <button v-for="opt in SORT_OPTIONS" :key="opt.key"
-              class="sort-menu-item popup-menu-item" :class="{ active: sortKey === opt.key }"
-              @click.stop="onSortSelect(opt.key)">
-              {{ opt.label }}
-              <svg v-if="sortKey === opt.key" class="sort-check" :class="{ desc: sortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                <path d="M5 2v6M2 5l3-3 3 3"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        <!-- 视图切换（根目录不需要选择模式） -->
+        <!-- 多选（根目录不需要） -->
         <button
           v-if="currentType !== 'root'"
           class="select-mode-btn"
@@ -65,6 +44,7 @@
           <PhCheckSquare :size="14" weight="bold" />
         </button>
 
+        <!-- 网格/列表切换 -->
         <div v-if="currentType !== 'trash'" class="view-toggle">
           <button :class="{ on: viewMode === 'grid' }" @click="viewMode = 'grid'" title="网格视图">
             <PhSquaresFour :size="13" weight="bold" />
@@ -93,6 +73,27 @@
             新建文件夹
           </button>
         </template>
+
+        <!-- 排序选择器 -->
+        <div v-if="currentType !== 'root'" class="sort-selector" @click.stop>
+          <button class="sort-btn" @click.stop="sortMenuOpen = !sortMenuOpen">
+            <PhSortAscending :size="13" weight="bold" />
+            {{ SORT_OPTIONS.find(o => o.key === sortKey)?.label }}
+            <svg class="sort-dir-icon" :class="{ desc: sortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <path d="M5 2v6M2 5l3-3 3 3"/>
+            </svg>
+          </button>
+          <div v-if="sortMenuOpen" class="sort-menu popup-menu">
+            <button v-for="opt in SORT_OPTIONS" :key="opt.key"
+              class="sort-menu-item popup-menu-item" :class="{ active: sortKey === opt.key }"
+              @click.stop="onSortSelect(opt.key)">
+              {{ opt.label }}
+              <svg v-if="sortKey === opt.key" class="sort-check" :class="{ desc: sortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                <path d="M5 2v6M2 5l3-3 3 3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
 
         <!-- 清空回收站 -->
         <button v-if="currentType === 'trash'" class="empty-trash-btn" @click.stop="confirmEmptyTrash">

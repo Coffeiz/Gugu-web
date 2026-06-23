@@ -202,26 +202,6 @@
                 <span v-else class="bc-seg bc-cur">{{ seg.name }}</span>
               </template>
             </nav>
-            <!-- 排序选择器 -->
-            <div class="sort-selector" @click.stop>
-              <button class="sort-btn" @click.stop="pmSortMenuOpen = !pmSortMenuOpen">
-                <PhSortAscending :size="13" weight="bold" />
-                {{ PM_SORT_OPTIONS.find(o => o.key === pmSortKey)?.label }}
-                <svg class="sort-dir-icon" :class="{ desc: pmSortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                  <path d="M5 2v6M2 5l3-3 3 3"/>
-                </svg>
-              </button>
-              <div v-if="pmSortMenuOpen" class="sort-menu popup-menu">
-                <button v-for="opt in PM_SORT_OPTIONS" :key="opt.key"
-                  class="sort-menu-item popup-menu-item" :class="{ active: pmSortKey === opt.key }"
-                  @click.stop="onPmSortSelect(opt.key)">
-                  {{ opt.label }}
-                  <svg v-if="pmSortKey === opt.key" class="sort-check" :class="{ desc: pmSortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                    <path d="M5 2v6M2 5l3-3 3 3"/>
-                  </svg>
-                </button>
-              </div>
-            </div>
             <!-- 多选模式 -->
             <button class="sel-mode-btn" :class="{ on: pmInSelectionMode }" @click.stop="togglePmSelectionMode" title="多选模式">
               <PhCheckSquare :size="13" weight="bold" />
@@ -246,6 +226,26 @@
                 ref="folderInputRef" autofocus />
               <button class="btn-confirm-sm" :disabled="folderLoading" @click="createFolder">确定</button>
               <button class="btn-cancel-sm" @click="showNewFolder = false; newFolderName = ''">✕</button>
+            </div>
+            <!-- 排序选择器（挪出 新建文件夹 的 v-if/v-else 对，否则 v-else 不相邻报错）-->
+            <div class="sort-selector" @click.stop>
+              <button class="sort-btn" @click.stop="pmSortMenuOpen = !pmSortMenuOpen">
+                <PhSortAscending :size="13" weight="bold" />
+                {{ PM_SORT_OPTIONS.find(o => o.key === pmSortKey)?.label }}
+                <svg class="sort-dir-icon" :class="{ desc: pmSortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                  <path d="M5 2v6M2 5l3-3 3 3"/>
+                </svg>
+              </button>
+              <div v-if="pmSortMenuOpen" class="sort-menu popup-menu">
+                <button v-for="opt in PM_SORT_OPTIONS" :key="opt.key"
+                  class="sort-menu-item popup-menu-item" :class="{ active: pmSortKey === opt.key }"
+                  @click.stop="onPmSortSelect(opt.key)">
+                  {{ opt.label }}
+                  <svg v-if="pmSortKey === opt.key" class="sort-check" :class="{ desc: pmSortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M5 2v6M2 5l3-3 3 3"/>
+                  </svg>
+                </button>
+              </div>
             </div>
             <button class="close-btn" @click="$emit('close')">
               <PhX :size="14" weight="bold" />
@@ -1931,6 +1931,12 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
               inset 0 1px 0 rgba(255,255,255,0.95),
               inset 1px 0 0 rgba(255,255,255,0.55);
 }
+:deep(.drp-input) {
+  background: rgba(255,255,255,0.5);
+}
+:deep(.drp-input:hover) {
+  background: rgba(255,255,255,0.75);
+}
 
 .modal {
   display: grid; grid-template-columns: 260px 1fr;
@@ -1956,6 +1962,13 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .proj-header {
   height: 52px; box-sizing: border-box;
   display: flex; flex-direction: column; flex-shrink: 0;
+  position: relative;
+}
+.proj-header::after {
+  content: '';
+  position: absolute; inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
 }
 .header-main {
   flex: 1; display: flex; align-items: center; gap: 8px;
@@ -1980,6 +1993,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .left-content {
   flex: 1; overflow-y: auto; padding: 12px 16px;
   display: flex; flex-direction: column; gap: 0; min-height: 0;
+  scrollbar-gutter: stable;
 }
 .left-content::-webkit-scrollbar { width: 4px; }
 .left-content::-webkit-scrollbar-track { background: transparent; }
@@ -2000,13 +2014,12 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .field-input {
   width: 100%; padding: 9px 12px; box-sizing: border-box;
   border: 1px solid rgba(0,0,0,0.1); border-radius: 8px;
-  background: rgba(255,255,255,0.35); font-size: 13px;
+  background: rgba(255,255,255,0.5); font-size: 13px;
   font-family: var(--font-sans); color: var(--text-primary);
   outline: none; transition: border-color 0.15s, box-shadow 0.15s;
 }
-.field-input:hover { border-color: rgba(123,127,178,0.35); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08); }
-.field-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.1); }
-.field-input::placeholder { color: var(--text-secondary); opacity: 0.6; }
+.field-input:hover { border-color: rgba(123,127,178,0.35); background: rgba(255,255,255,0.75); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08); }
+.field-input:focus { border-color: rgba(123,127,178,0.4); background: rgba(255,255,255,0.75); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.1); }
 
 /* 状态 */
 .status-group { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
@@ -2015,17 +2028,20 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   padding: 5px 9px; border-radius: 20px;
   border: 1.5px solid transparent; font-size: 12px; font-weight: 600;
   cursor: pointer; font-family: var(--font-sans);
-  background: rgba(0,0,0,0.04); color: var(--text-secondary);
+  background: rgba(0,0,0,0.10); color: #5a5f78;
   transition: background 0.15s, color 0.15s, border-color 0.15s; outline: none;
 }
-.status-btn:hover { background: rgba(0,0,0,0.07); color: var(--text-primary); }
+.status-btn:hover { background: rgba(0,0,0,0.15); color: var(--text-primary); }
 .opt-dot { width: 6px; height: 6px; border-radius: 50%; }
 .status-btn.s-pending .opt-dot { background: #d46b6b; }
 .status-btn.s-active  .opt-dot { background: #c9943a; }
 .status-btn.s-done    .opt-dot { background: #5a9e88; }
-.status-btn.s-pending.active { background: rgba(212,107,107,0.12); border-color: rgba(212,107,107,0.5); color: #b84a4a; }
-.status-btn.s-active.active  { background: rgba(201,148,58,0.12);  border-color: rgba(201,148,58,0.5);  color: #a87520; }
-.status-btn.s-done.active    { background: rgba(90,158,136,0.12);  border-color: rgba(90,158,136,0.4);  color: #3a8870; }
+.status-btn.s-pending.active .opt-dot { background: #d46b6b; }
+.status-btn.s-active.active  .opt-dot { background: #c9943a; }
+.status-btn.s-done.active    .opt-dot { background: #5a9e88; }
+.status-btn.s-pending.active { background: rgba(212,107,107,0.12); border-color: rgba(212,107,107,0.5); color: #9e3e3e; }
+.status-btn.s-active.active  { background: rgba(201,148,58,0.12);  border-color: rgba(201,148,58,0.5);  color: #8a5f18; }
+.status-btn.s-done.active    { background: rgba(90,158,136,0.12);  border-color: rgba(90,158,136,0.4);  color: #2e6e5a; }
 
 /* 配色 */
 .color-grid { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
@@ -2055,24 +2071,24 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .notes-input {
   width: 100%; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; padding: 7px 10px;
   font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
-  background: rgba(255,255,255,0.35); outline: none; resize: none; line-height: 1.5;
+  background: rgba(255,255,255,0.5); outline: none; resize: none; line-height: 1.5;
   transition: border-color 0.15s, box-shadow 0.15s; box-sizing: border-box;
 }
-.notes-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
-.notes-input::placeholder { color: var(--text-secondary); opacity: 0.6; }
+.notes-input:hover { background: rgba(255,255,255,0.75); }
+.notes-input:focus { border-color: rgba(123,127,178,0.4); background: rgba(255,255,255,0.75); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
 .stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 0 5px; margin-bottom: 2px; }
 .stage-node.stage-dragging { opacity: 0.15; pointer-events: none; }
 
 .node-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
 .node-circle {
   width: 22px; height: 22px; border-radius: 50%;
-  border: 1.5px solid rgba(0,0,0,0.12); background: rgba(0,0,0,0.08);
+  border: 1.5px solid rgba(90,95,120,0.35); background: rgba(0,0,0,0.08);
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   cursor: pointer; z-index: 1;
 }
 .stage-node.done .node-circle { background: var(--color-success); border-color: var(--color-success); }
 .stage-node.active .node-circle { border-color: transparent; }
-.node-num { font-size: 10px; font-weight: 700; color: var(--text-secondary); line-height: 1; }
+.node-num { font-size: 10px; font-weight: 700; color: #5a5f78; line-height: 1; }
 .stage-node.active .node-num { color: #fff; }
 .node-body { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; }
 .node-label { font-size: 13px; color: var(--text-primary); }
@@ -2089,9 +2105,11 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .stage-input {
   font-size: 13px; font-family: var(--font-sans);
   border: 1px solid rgba(123,127,178,0.4); border-radius: 6px; padding: 1px 6px;
-  background: rgba(255,255,255,0.35); outline: none; color: var(--text-primary); width: 110px;
+  background: rgba(255,255,255,0.5); outline: none; color: var(--text-primary); width: 110px;
   box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
+  transition: background 0.15s;
 }
+.stage-input:hover, .stage-input:focus { background: rgba(255,255,255,0.75); }
 .del-stage {
   background: none; border: none; cursor: pointer; color: var(--text-secondary);
   opacity: 0; transition: opacity 0.15s; padding: 2px;
@@ -2134,12 +2152,12 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .todo-add-btn {
   display: flex; align-items: center; gap: 4px;
   height: 24px; padding: 0 10px; border-radius: 7px;
-  border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.5);
+  border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.62);
   font-size: 11px; font-weight: 500; color: var(--text-secondary);
   cursor: pointer; font-family: var(--font-sans); transition: all 0.15s;
-  margin-top: 2px;
+  margin-top: 2px; margin-right: 18px;
 }
-.todo-add-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(123,127,178,0.06); }
+.todo-add-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(255,255,255,0.75); }
 
 
 
@@ -2644,7 +2662,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* ── 右键菜单 ── */
-.fc-card.cut, .list-row.cut { opacity: 0.45; }
+.fc-card.cut, .list-row.cut { opacity: 0.75; }
 
 .drop-overlay {
   position: absolute; inset: 0; z-index: 50;

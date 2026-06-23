@@ -225,7 +225,7 @@ async function setPriority(n) {
   border: 1px solid rgba(255,255,255,0.72);
   border-radius: var(--radius-md);
   corner-shape: squircle;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 2px 8px rgba(80,90,110,0.07);
+  box-shadow: 0 2px 8px rgba(80,90,110,0.07);
   overflow: hidden; cursor: pointer;
   transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1),
               box-shadow 0.3s ease, background 0.25s ease-out;
@@ -235,16 +235,18 @@ async function setPriority(n) {
   content: '';
   position: absolute; inset: 0;
   border-radius: inherit;
-  background: linear-gradient(to top, rgba(255,255,255,0.25), rgba(255,255,255,0.05));
-  opacity: 0;
-  transition: opacity 0.3s cubic-bezier(0.34,1.2,0.64,1);
+  background: linear-gradient(to top, rgba(255,255,255,0.08), transparent 50%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+  transition: background 0.3s cubic-bezier(0.34,1.2,0.64,1);
   pointer-events: none;
 }
 .proj-card:hover {
   transform: translateY(-2px);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 18px rgba(80,90,110,0.13);
+  box-shadow: 0 6px 18px rgba(80,90,110,0.13);
 }
-.proj-card:hover::after { opacity: 1; }
+.proj-card:hover::after {
+  background: linear-gradient(to top, rgba(255,255,255,0.25), rgba(255,255,255,0.05) 50%);
+}
 .proj-card:active:not(:has(.stars:active, .seg-bar:active)) { transform: translateY(1px); opacity: 0.93; }
 
 .card-body { flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }

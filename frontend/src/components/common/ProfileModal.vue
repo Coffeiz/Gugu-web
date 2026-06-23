@@ -69,7 +69,7 @@
               </div>
               <div class="pm-field">
                 <label>UID</label>
-                <div class="pm-static pm-uid">{{ authStore.user?.id ? authStore.user.id.replace(/-/g,'').slice(0,12).toUpperCase() : '—' }}</div>
+                <div class="pm-static pm-uid">{{ authStore.user?.id ?? '—' }}</div>
               </div>
               <div class="pm-field">
                 <label>加入时间</label>
@@ -112,11 +112,11 @@
           <!-- 咕咕设置 -->
           <template v-if="activeNav === 'gugu'">
             <div class="pm-section">
-              <div class="pm-section-label">精力值</div>
+              <div class="pm-section-label">精力</div>
               <div v-if="quotaLoading" class="pm-quota-skeleton">
                 <div class="pm-quota-item">
                   <div class="pm-quota-row">
-                    <span class="pm-quota-label">6 小时精力值</span>
+                    <span class="pm-quota-label">精力</span>
                     <div class="pm-qs-pct"></div>
                   </div>
                   <div class="pm-quota-bar"><div class="pm-qs-fill"></div></div>
@@ -477,15 +477,15 @@ async function removeBot(b) {
 
 onUnmounted(_stopConnectPoll)
 
-// "X小时后恢复精力" / "精力充沛"
 const recoverLabel = computed(() => {
-  // 固定 6h 重置：到下次重置时刻精力清零（非滑动）
   if (!quota.value.used_6h || !quota.value.reset_6h_at) return '精力充沛'
   const diffMs = new Date(quota.value.reset_6h_at).getTime() - Date.now()
   if (diffMs <= 0) return '精力充沛'
-  const diffH = diffMs / 3600000
-  if (diffH >= 1) return `${Math.ceil(diffH)} 小时后重置精力`
-  return `${Math.ceil(diffMs / 60000)} 分钟后重置精力`
+  const totalMin = Math.ceil(diffMs / 60000)
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  const timeStr = h > 0 ? `${h} 小时 ${m} 分钟` : `${m} 分钟`
+  return `${timeStr}后恢复精力`
 })
 
 function quotaBarStyle(used, limit) {
@@ -542,6 +542,7 @@ function handleLogout() {
   display: flex; align-items: center; justify-content: center;
   font-size: 16px; font-weight: 700; color: white;
   position: relative; cursor: pointer; overflow: hidden;
+  box-shadow: 0 2px 8px rgba(123,127,178,0.35);
 }
 .pm-avatar-img {
   width: 100%; height: 100%; object-fit: cover; border-radius: 50%;
