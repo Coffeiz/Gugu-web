@@ -164,12 +164,18 @@ async function load(file) {
       const res = await fetch(`${BASE_URL}/files/${file.id}/preview-pdf`, { headers })
       converting.value = false
       if (!res.ok) throw new Error(`转换失败 (${res.status})`)
-      const blob = await res.blob()
+      let blob = await res.blob()
+      // iframe 内嵌渲染要求 application/pdf，转换结果若非此类型则重包一层
+      if (blob.type !== 'application/pdf') blob = new Blob([blob], { type: 'application/pdf' })
       blobUrl.value = URL.createObjectURL(blob)
     } else {
       const res = await fetch(`${BASE_URL}/files/${file.id}/download`, { headers })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const blob = await res.blob()
+      let blob = await res.blob()
+      // PDF 走 iframe 原生渲染，blob 必须是 application/pdf，否则浏览器可能当下载/空白
+      if (file.ext?.toUpperCase() === 'PDF' && blob.type !== 'application/pdf') {
+        blob = new Blob([blob], { type: 'application/pdf' })
+      }
       blobUrl.value = URL.createObjectURL(blob)
     }
   } catch (e) {
