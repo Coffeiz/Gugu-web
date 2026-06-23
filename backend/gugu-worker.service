@@ -1,0 +1,27 @@
+[Unit]
+Description=Gugu IM Worker (消费 im:inbound 队列，跑 agent 回复)
+After=network.target
+
+[Service]
+Type=simple
+User=__RUN_USER__
+Group=__RUN_USER__
+WorkingDirectory=__APP_DIR__
+Environment="PATH=__APP_DIR__/.venv/bin"
+Environment="DB_STARTUP_TIMEOUT=10"
+ExecStart=__APP_DIR__/.venv/bin/python -m worker
+# IM 大脑，死了必须立刻拉起，否则消息无限排队
+Restart=always
+RestartSec=3
+
+# 写进 Debug 面板读的日志文件（而非 journal），让后台「Debug 实时日志」能 tail 到
+StandardOutput=append:__APP_DIR__/logs/gugu-worker.log
+StandardError=append:__APP_DIR__/logs/gugu-worker.log
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=__APP_DIR__/uploads __APP_DIR__/logs __APP_DIR__/config.override.json
+
+[Install]
+WantedBy=multi-user.target

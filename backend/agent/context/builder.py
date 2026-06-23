@@ -33,7 +33,11 @@ def _files_block(fo: dict | None) -> str:
 def build(profile: str, user_name: str, projects: list, events: list,
           memory: dict | None = None, files: dict | None = None) -> str:
     memory = memory or {}
-    today = datetime.now().strftime("%Y-%m-%d")
+    _now = datetime.now()
+    today = _now.strftime("%Y-%m-%d")
+    # 当前完整时刻（含星期、时分），让咕咕知道"现在几点、星期几"，能答时间、按时段问候、排期
+    _wd = "一二三四五六日"[_now.weekday()]
+    now_str = f"{today}（星期{_wd}）{_now.strftime('%H:%M')}"
 
     proj_lines = []
     for p in projects[:25]:
@@ -55,6 +59,7 @@ def build(profile: str, user_name: str, projects: list, events: list,
 
     replacements = {
         "{today}":    today,
+        "{now}":      now_str,
         "{name}":     user_name,
         "{projects}": proj_block,
         "{calendar}": ev_block,

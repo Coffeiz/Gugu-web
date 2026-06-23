@@ -15,9 +15,9 @@ ExecStart=__APP_DIR__/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 800
 Restart=on-failure
 RestartSec=3
 
-# 日志交给 journald（journalctl -u gugu-backend -f）
-StandardOutput=journal
-StandardError=journal
+# 写进 Debug 面板读的日志文件（而非 journal），让后台「Debug 实时日志」能 tail 到
+StandardOutput=append:__APP_DIR__/logs/gugu.log
+StandardError=append:__APP_DIR__/logs/gugu.log
 
 # 安全加固
 NoNewPrivileges=true

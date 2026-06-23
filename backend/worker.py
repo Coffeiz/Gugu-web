@@ -194,9 +194,12 @@ async def handle(msg_id: str, payload: dict):
     # QQ 的「思考中」占位只认文本/markdown 被动回复，不认媒体消息（文件/图片）。
     # 咕咕光发文件、没配文字时补一句短文本，让被动回复成立、思考态能正常消解。
     reply_text = resp.text
-    if resp.files and not (reply_text or "").strip():
-        reply_text = "给你～"
-    await _send(payload, reply_text)
+    if not (reply_text or "").strip():
+        # 模型没出文本：有文件配一句「给你～」，纯空则给个兜底——别发空
+        #（空内容发 QQ 会报「无效 markdown content」，用户啥也收不到）
+        reply_text = "给你～" if resp.files else "嗯~在的，你说～"
+    if reply_text.strip():
+        await _send(payload, reply_text)
     await _send_files(payload, resp.files)   # 咕咕 send_file 的文件发回平台
     print(f"[worker] {platform} 回复(session={resp.session_id}) → {resp.text!r}", flush=True)
     return resp

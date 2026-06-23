@@ -80,15 +80,17 @@ backup:      ## 备份数据库 + uploads + override 配置
 	./backup.sh
 
 # ── systemd ──────────────────────────────────────────────
-install:     ## 装成 systemd 服务（gugu-backend.service）
+install:     ## 装成 systemd 服务（web + IM worker + IM supervisor，均 Restart=always）
 	./start.sh install
 
-uninstall:   ## 卸载 systemd 服务
-	systemctl stop gugu-backend 2>/dev/null || true
-	systemctl disable gugu-backend 2>/dev/null || true
-	rm -f /etc/systemd/system/gugu-backend.service
+uninstall:   ## 卸载 systemd 服务（三个）
+	for s in gugu-backend gugu-worker gugu-supervisor; do \
+	  systemctl stop $$s 2>/dev/null || true; \
+	  systemctl disable $$s 2>/dev/null || true; \
+	  rm -f /etc/systemd/system/$$s.service; \
+	done
 	systemctl daemon-reload
-	@echo "已卸载 systemd 服务"
+	@echo "已卸载 systemd 服务（gugu-backend / gugu-worker / gugu-supervisor）"
 
 # ── 清理 ─────────────────────────────────────────────────
 clean:       ## 清缓存 + 日志 + pid（不删 venv / uploads / override）

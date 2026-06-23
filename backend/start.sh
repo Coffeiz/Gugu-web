@@ -150,15 +150,17 @@ cmd_foreground() {
 }
 
 cmd_install() {
-    local svc="/etc/systemd/system/gugu-backend.service"
-    local tmpl="${APP_DIR}/gugu-backend.service"
+    # 三个常驻服务：web(uvicorn)、IM worker、IM supervisor(网关管家)
+    local services="gugu-backend gugu-worker gugu-supervisor"
     # 运行该服务的用户，可用 RUN_USER 覆盖（默认 www-data，勿用 root）
     local run_user="${RUN_USER:-www-data}"
 
-    if [ ! -f "$tmpl" ]; then
-        err "未找到 $tmpl，请先把 systemd 单元放到 backend 目录"
-        exit 1
-    fi
+    for s in $services; do
+        if [ ! -f "${APP_DIR}/${s}.service" ]; then
+            err "未找到 ${APP_DIR}/${s}.service，请先把 systemd 单元放到 backend 目录"
+            exit 1
+        fi
+    done
     if ! id "$run_user" >/dev/null 2>&1; then
         err "运行用户 '$run_user' 不存在；用 RUN_USER=xxx make install 指定一个已存在的用户"
         exit 1
@@ -170,23 +172,27 @@ cmd_install() {
     [ -f "${APP_DIR}/config.override.json" ] || echo '{}' > "${APP_DIR}/config.override.json"
     chown -R "$run_user":"$run_user" "${APP_DIR}/uploads" "${APP_DIR}/logs" "${APP_DIR}/config.override.json"
 
-    # 按实际安装目录 / 用户填占位符，生成单元（不再死拷模板，换路径也不会再踩 test.* 之类）
-    log "按 APP_DIR=${APP_DIR} 生成 systemd 单元 → $svc"
-    sed -e "s#__APP_DIR__#${APP_DIR}#g" \
-        -e "s#__RUN_USER__#${run_user}#g" \
-        "$tmpl" > "$svc"
+    # 按实际安装目录 / 用户填占位符，生成三个单元
+    for s in $services; do
+        log "生成 systemd 单元 → /etc/systemd/system/${s}.service"
+        sed -e "s#__APP_DIR__#${APP_DIR}#g" \
+            -e "s#__RUN_USER__#${run_user}#g" \
+            "${APP_DIR}/${s}.service" > "/etc/systemd/system/${s}.service"
+    done
 
     systemctl daemon-reload
-    systemctl enable gugu-backend
+    for s in $services; do systemctl enable "$s"; done
     log "启动服务 ..."
-    systemctl restart gugu-backend
+    for s in $services; do systemctl restart "$s"; done
     sleep 2
-    systemctl status gugu-backend --no-pager
+    for s in $services; do systemctl status "$s" --no-pager --lines=3 || true; done
     log ""
-    log "常用命令："
-    log "  systemctl status gugu-backend    # 状态"
-    log "  journalctl -u gugu-backend -f    # 日志"
-    log "  systemctl restart gugu-backend  # 重启"
+    log "常用命令（web / IM 大脑 / IM 网关）："
+    log "  systemctl status gugu-backend gugu-worker gugu-supervisor"
+    log "  journalctl -u gugu-worker -f        # IM 大脑日志"
+    log "  journalctl -u gugu-supervisor -f    # IM 网关日志"
+    log "  systemctl restart gugu-worker       # 改了 agent 代码后重启大脑"
+    log "  systemctl restart gugu-supervisor   # 改了网关/凭据后重启网关"
 }
 
 # ── 入口 ───────────────────────────────────────────────
