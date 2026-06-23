@@ -25,7 +25,7 @@
       <nav class="sidebar-nav">
         <div class="nav-group-label">配置</div>
         <div class="nav-item" :class="{ active: isActive('/config') }" role="link" tabindex="0" @click="go('/config')">
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <circle cx="8" cy="8" r="2"/>
             <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.42 1.42M11.53 11.53l1.42 1.42M3.05 12.95l1.42-1.42M11.53 4.47l1.42-1.42"/>
@@ -33,7 +33,7 @@
           系统配置
         </div>
         <div class="nav-item" :class="{ active: isActive('/agent') }" role="link" tabindex="0" @click="go('/agent')">
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <circle cx="8" cy="6" r="3"/>
             <path d="M3 14c0-2.8 2.2-5 5-5s5 2.2 5 5"/>
@@ -45,7 +45,7 @@
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">数据</div>
         <div class="nav-item" :class="{ active: isActive('/analytics') }" role="link" tabindex="0" @click="go('/analytics')">
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M2 12l3-4 3 2 3-5 3 3"/>
             <path d="M2 14h12"/>
@@ -56,7 +56,7 @@
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">管理</div>
         <div class="nav-item" :class="{ active: isActive('/invite-codes') }" role="link" tabindex="0" @click="go('/invite-codes')">
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <rect x="1" y="5" width="14" height="8" rx="1.5"/>
             <path d="M5 5V3.5a2 2 0 014 0V5"/>
@@ -65,7 +65,7 @@
           邀请码
         </div>
         <div class="nav-item" :class="{ active: isActive('/users') }" role="link" tabindex="0" @click="go('/users')">
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <circle cx="6" cy="5" r="2.5"/>
             <path d="M1 14c0-3 2.2-5 5-5s5 2 5 5"/>
@@ -74,7 +74,7 @@
           用户管理
         </div>
         <div class="nav-item" :class="{ active: isActive('/quota') }" role="link" tabindex="0" @click="go('/quota')">
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <rect x="1" y="1" width="14" height="14" rx="2"/>
             <path d="M1 7h14M7 7v8"/>
@@ -82,7 +82,7 @@
           配额管理
         </div>
         <div class="nav-item" :class="{ active: isActive('/audit-log') }" role="link" tabindex="0" @click="go('/audit-log')">
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="3" width="12" height="10" rx="2"/>
             <path d="M5 7h6M5 10h4"/>
@@ -90,7 +90,7 @@
           操作日志
         </div>
         <div class="nav-item" :class="{ active: isActive('/system-logs') }" role="link" tabindex="0" @click="go('/system-logs')">
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M2 4h12M2 8h8M2 12h5"/>
             <circle cx="13" cy="11" r="2.5"/>
@@ -99,7 +99,7 @@
           系统日志
         </div>
         <div class="nav-item" :class="{ active: isActive('/services') }" role="link" tabindex="0" @click="go('/services')">
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="2.5" width="12" height="4" rx="1"/>
             <rect x="2" y="9.5" width="12" height="4" rx="1"/>
@@ -108,7 +108,7 @@
           服务状态
         </div>
         <div class="nav-item" :class="{ active: isActive('/debug') }" role="link" tabindex="0" @click="go('/debug')">
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 5h10M3 8h7M3 11h5"/>
             <circle cx="13" cy="11" r="2.2"/>
@@ -224,7 +224,7 @@ function handleLogout() {
 .nav-item {
   display: flex; align-items: center; gap: 9px;
   padding: 9px 10px; border-radius: 10px;
-  font-size: 13px; color: rgba(255,255,255,0.45);
+  font-size: 14px; color: rgba(255,255,255,0.45);
   text-decoration: none; cursor: pointer;
   border: 1px solid transparent;
   transition: all 0.15s;
