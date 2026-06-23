@@ -134,7 +134,7 @@
         <!-- 单一消息列表 -->
         <div class="chat-messages" ref="messagesEl">
           <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]">
-            <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : msg.html" /></div>
+            <div v-if="msg.role === 'ai' && (msg.text || msg.streaming)" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : msg.html" /></div>
             <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
             <div v-if="msg.files && msg.files.length" class="msg-files">
               <div v-for="f in msg.files" :key="f.file_id" class="msg-file" @click="downloadFile(f)" title="点击下载">
@@ -231,10 +231,13 @@ watch(() => liveStore.rev.sessions, () => fetchSessions())
 watch(() => liveStore.sessionEvent, async (e) => {
   if (!e || !e.appended?.length || e.session_id !== sessionId.value) return
   for (const m of e.appended) {
+    const isAi = m.role === 'assistant'
     messages.value.push({
       id: mkid(),
-      role: m.role === 'assistant' ? 'ai' : m.role,
+      role: isAi ? 'ai' : m.role,
       text: m.text || '',
+      html: isAi ? renderMd(m.text || '') : null,
+      files: (m.files && m.files.length) ? m.files : undefined,
       time: now(),
     })
   }
@@ -389,11 +392,16 @@ marked.use({
 function renderMd(text) { return text ? marked.parse(text) : '' }
 
 // 流式渲染专用：补全未闭合的代码围栏，避免 marked 把半段代码块解析成残缺 HTML
+// 单条缓存：同一帧内 text 未变则直接返回上次结果，避免重复解析
+let _mdStreamCache = null
 function renderMdStream(text) {
   if (!text) return ''
+  if (_mdStreamCache?.text === text) return _mdStreamCache.html
   const fences = (text.match(/^```/gm) || []).length
   const patched = fences % 2 === 1 ? text + '\n```' : text
-  return marked.parse(patched)
+  const html = marked.parse(patched)
+  _mdStreamCache = { text, html }
+  return html
 }
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
@@ -701,7 +709,7 @@ watch(messagesEl, (el) => {
       scrollToBottom(el)
     }
   })
-  msgMo.observe(el, { childList: true, subtree: true, characterData: true })
+  msgMo.observe(el, { childList: true, subtree: true })
 })
 
 onUnmounted(() => {
@@ -1034,12 +1042,16 @@ async function send(forcedText) {
   background: rgba(255,255,255,0.82);
   border: 1px solid rgba(255,255,255,0.95);
   box-shadow: 0 2px 8px rgba(123,127,178,0.12), inset 0 1px 0 rgba(255,255,255,1);
-  transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
+  transition: background 0.15s, box-shadow 0.15s;
 }
 .exp-new-session-btn:hover {
   background: rgba(255,255,255,0.95);
-  box-shadow: 0 4px 14px rgba(123,127,178,0.18), inset 0 1px 0 rgba(255,255,255,1);
-  transform: translateY(-1px);
+  box-shadow: 0 5px 16px rgba(123,127,178,0.22), inset 0 1px 0 rgba(255,255,255,1);
+}
+.exp-new-session-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 4px rgba(123,127,178,0.1), inset 0 1px 0 rgba(255,255,255,1);
+  transition: transform 0.05s, box-shadow 0.05s;
 }
 .exp-new-session-btn svg { display: block; }
 .exp-icon-btn {

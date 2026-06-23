@@ -661,6 +661,7 @@ import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useFilesCacheStore } from '@/stores/filesCache'
+import { useLiveStore } from '@/stores/live'
 import { getThumb, getCachedThumb, preloadTinyThumbs, cardBlobReadyIds } from '@/composables/useThumbCache'
 import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
@@ -674,6 +675,7 @@ import {
 
 const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
+const liveStore    = useLiveStore()
 
 // ── 存储用量 ──
 const storageInfo = reactive({ used: 0, limit: null, loaded: false })
@@ -1040,6 +1042,12 @@ onMounted(async () => {
 
 watch(uploadSignal, () => {
   // 上传信号由 uploadFiles 直接写入缓存；这里做一次静默后台刷新以纠偏
+  cacheStore.refresh().then(() => loadContents())
+  fetchStorage()
+})
+
+// 咕咕通过工具改了文件库（如保存上传附件 / 建文档 / 删除）→ 实时刷新当前视图
+watch(() => liveStore.rev.files, () => {
   cacheStore.refresh().then(() => loadContents())
   fetchStorage()
 })
