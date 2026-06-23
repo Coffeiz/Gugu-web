@@ -9,6 +9,25 @@
 
 ## [Unreleased] · 文件库回收站多选
 
+### 修复 · OpenAI 路真流式（DeepSeek 等）
+
+- **`_run_openai` 改为真·流式**（`core.py`）：原来非流式 `create()` 拿完整回复后假装按 40 字切片吐 → 换 DeepSeek（走 openai 路）后网页「等一下→一堆字」。现 `stream=True` **逐 token 实时输出**，工具调用按流式分片（`delta.tool_calls` 按 index 累积 id/name/arguments）正常工作，用量走 `stream_options.include_usage`。MiniMax（anthropic 路）本就真流式，不受影响
+- 实测：普通回复 50+ 个 1~3 字 token 事件、`list_projects` 工具正常
+
+### 改进 · 飞书消息支持 markdown 渲染
+
+- **飞书回复从纯文本改为交互卡片**（`feishu.py`）：飞书卡片 `markdown` 元素渲染粗体/列表/代码；卡片发失败自动回退纯文本
+- **GFM 表格 → 飞书原生 `table` 组件**：飞书 markdown 元素不支持表格（`| a | b |` 当原文显示），故把回复**拆段**——表格段解析成原生 `table` 组件（列名/对齐/分页），其余走 markdown 元素，混排成一张卡。`#` 标题转粗体（飞书对标题支持不稳）。复刻 QwenPaw 思路
+- ⚠️ IM 仍是**一次性发送、非流式**（`run_collect` 收完整段再发）；QQ 同理（C2C 无消息编辑，做不了流式），飞书流式卡片留作后续
+
+### 改进 · 文件卡片气泡化
+
+- 咕咕发的下载文件卡从紫调扁平卡改为**和 AI 气泡同款**：半透明白 + 左下角小尾巴 + 内高光 + 悬停阴影（不浮动）
+
+### 文档 · 并发与性能优化方案
+
+- 新增 [`并发与性能优化.md`](并发与性能优化.md)：诊断（LLM 接口延迟抖动是根因，非飞书/服务器/代码）+ 全系统并发现状（worker 单进程串行是最弱环）+ 分档优化方案（worker 有界并发、多 worker、换 provider、IM 流式）
+
 ### 新增 · 实时刷新（Redis pub/sub → SSE）
 
 - **咕咕改了数据/IM 来了消息，网页自动刷新**，无需手动刷新页面。此前 IM（飞书/QQ）触发的改动完全推不到网页，web 聊天也只有自己的 `refreshAfterTools` 自刷、且 Calendar 视图连刷新信号都没监听

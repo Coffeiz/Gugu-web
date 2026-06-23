@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
@@ -89,23 +90,110 @@ async def _creds_by_id(bot_id: str) -> tuple[str, str]:
         return (b.app_id, b.app_secret) if b else ("", "")
 
 
+# ── markdown → 飞书卡片元素 ──────────────────────────────────────────────────
+# 飞书卡片的 markdown 元素**不支持 GFM 表格**（| a | b | 会当原文显示），
+# 故把表格段解析成飞书**原生 table 组件**，其余文本走 markdown 元素，混排成一张卡。
+_TABLE_LINE = re.compile(r"^\s*\|")
+_SEP_LINE = re.compile(r"^\s*\|[\s\-:|]+\|\s*$")   # 表格分隔行 |---|:--:|
+_EMPH = re.compile(r"[*_]{1,2}(.+?)[*_]{1,2}")     # 去单元格里的 **粗体** 标记
+_HEADING = re.compile(r"^#{1,6}\s+(.+)$", re.MULTILINE)
+
+
+def _md_to_bold(text: str) -> str:
+    """飞书 markdown 元素对 # 标题支持不稳，转成粗体。"""
+    return _HEADING.sub(r"**\1**", text)
+
+
+def _split_row(line: str) -> list[str]:
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
+
+
+def _parse_md_table(block: list[str]) -> dict | None:
+    """GFM 表格行 → 飞书原生 table 组件；不是合法表格返回 None。"""
+    lines = [ln for ln in block if ln.strip()]
+    if len(lines) < 2:
+        return None
+    sep_idx = next((i for i, ln in enumerate(lines) if _SEP_LINE.match(ln)), None)
+    if not sep_idx:   # None 或 0（表头不能是分隔行）
+        return None
+    headers = _split_row(lines[0])
+    if not headers:
+        return None
+    keys = [f"col{i}" for i in range(len(headers))]
+    aligns = []
+    for cell in _split_row(lines[sep_idx]):
+        c = cell.strip()
+        aligns.append("center" if c.startswith(":") and c.endswith(":")
+                      else "right" if c.endswith(":") else "left")
+    columns = [{"name": keys[i], "display_name": headers[i], "width": "auto",
+                "horizontal_align": aligns[i] if i < len(aligns) else "left"}
+               for i in range(len(headers))]
+    rows = []
+    for ln in lines[sep_idx + 1:]:
+        cells = _split_row(ln)
+        rows.append({keys[i]: _EMPH.sub(r"\1", cells[i] if i < len(cells) else "")
+                     for i in range(len(keys))})
+    if not rows:
+        return None
+    return {"tag": "table", "page_size": min(max(len(rows), 10), 50),
+            "columns": columns, "rows": rows}
+
+
+def _build_card_elements(text: str) -> list[dict]:
+    """拆成卡片元素：连续 |…| 段试解析为 table 组件，其余转 markdown 元素。"""
+    lines = text.split("\n")
+    elements: list[dict] = []
+    i = 0
+    while i < len(lines):
+        if _TABLE_LINE.match(lines[i]):
+            block = []
+            while i < len(lines) and _TABLE_LINE.match(lines[i]):
+                block.append(lines[i])
+                i += 1
+            tbl = _parse_md_table(block)
+            elements.append(tbl if tbl else
+                            {"tag": "markdown", "content": _md_to_bold("\n".join(block))})
+        else:
+            block = []
+            while i < len(lines) and not _TABLE_LINE.match(lines[i]):
+                block.append(lines[i])
+                i += 1
+            content = "\n".join(block).strip()
+            if content:
+                elements.append({"tag": "markdown", "content": _md_to_bold(content)})
+    return elements or [{"tag": "markdown", "content": _md_to_bold(text)}]
+
+
 def _do_send(client, chat_id: str, text: str) -> bool:
     from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
-    req = (
-        CreateMessageRequest.builder()
-        .receive_id_type("chat_id")
-        .request_body(
-            CreateMessageRequestBody.builder()
-            .receive_id(chat_id).msg_type("text")
-            .content(json.dumps({"text": text}, ensure_ascii=False))
-            .build()
-        ).build()
-    )
-    resp = client.im.v1.message.create(req)
-    if not resp.success():
-        print(f"[feishu] 发送失败: code={resp.code} msg={resp.msg}", flush=True)
-        return False
-    return True
+
+    def _create(msg_type: str, content: str) -> bool:
+        req = (
+            CreateMessageRequest.builder()
+            .receive_id_type("chat_id")
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(chat_id).msg_type(msg_type)
+                .content(content)
+                .build()
+            ).build()
+        )
+        resp = client.im.v1.message.create(req)
+        if not resp.success():
+            print(f"[feishu] 发送失败({msg_type}): code={resp.code} msg={resp.msg}", flush=True)
+            return False
+        return True
+
+    # 优先发交互卡片（markdown 元素渲染粗体/列表/代码，表格走原生 table 组件）；失败回退纯文本
+    card = json.dumps({"elements": _build_card_elements(text)}, ensure_ascii=False)
+    if _create("interactive", card):
+        return True
+    return _create("text", json.dumps({"text": text}, ensure_ascii=False))
 
 
 async def send_text(chat_id: str, text: str, channel_id: str | None = None) -> bool:

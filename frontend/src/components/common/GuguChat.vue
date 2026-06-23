@@ -1120,11 +1120,17 @@ async function send(forcedText) {
 /* 咕咕发来的文件卡片 */
 .msg-files { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 280px; }
 .msg-file {
-  display: flex; align-items: center; gap: 10px; padding: 8px 10px; cursor: pointer;
-  background: rgba(123,127,178,0.08); border: 1px solid rgba(123,127,178,0.18);
-  border-radius: 10px; transition: background 0.15s, border-color 0.15s;
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer;
+  /* 和 AI 气泡同款：半透明白 + 左下角小尾巴 + 内高光，营造气泡感 */
+  background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.65);
+  border-radius: 14px; border-bottom-left-radius: 5px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px rgba(80,80,120,0.06);
+  transition: background 0.15s, box-shadow 0.15s;
 }
-.msg-file:hover { background: rgba(123,127,178,0.14); border-color: rgba(123,127,178,0.35); }
+.msg-file:hover {
+  background: rgba(255,255,255,0.7);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 3px 10px rgba(100,110,200,0.14);
+}
 .msg-file-ext {
   flex-shrink: 0; width: 34px; height: 34px; border-radius: 8px;
   display: flex; align-items: center; justify-content: center;

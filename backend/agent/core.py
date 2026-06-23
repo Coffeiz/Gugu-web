@@ -125,44 +125,67 @@ class LLMRunner:
         temperature = settings.ai.temperature
         total_in = total_out = 0
         for _ in range(MAX_ROUNDS):
-            resp = await client.chat.completions.create(
+            stream = await client.chat.completions.create(
                 model=settings.ai.model,
                 messages=messages,
                 tools=tools,
                 tool_choice="auto",
                 max_tokens=max_tokens,
                 temperature=temperature,
+                stream=True,
+                stream_options={"include_usage": True},
             )
-            if resp.usage:
-                total_in  += resp.usage.prompt_tokens
-                total_out += resp.usage.completion_tokens
-            msg = resp.choices[0].message
+            content = ""
+            tool_buf: dict[int, dict] = {}   # index → {id, name, args}，流式分片累积
+            async for chunk in stream:
+                if getattr(chunk, "usage", None):
+                    total_in  += chunk.usage.prompt_tokens or 0
+                    total_out += chunk.usage.completion_tokens or 0
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    content += delta.content
+                    yield f"data: {json.dumps({'type': 'token', 'content': delta.content})}\n\n"
+                for tc in (delta.tool_calls or []):
+                    b = tool_buf.setdefault(tc.index, {"id": "", "name": "", "args": ""})
+                    if tc.id:
+                        b["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        b["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
+                        b["args"] += tc.function.arguments
 
-            if msg.tool_calls:
-                messages.append(msg)
-                for tc in msg.tool_calls:
-                    label = self.labels.get(tc.function.name, tc.function.name)
+            if tool_buf:
+                ordered = [tool_buf[i] for i in sorted(tool_buf)]
+                messages.append({
+                    "role": "assistant",
+                    "content": content or None,
+                    "tool_calls": [
+                        {"id": b["id"], "type": "function",
+                         "function": {"name": b["name"], "arguments": b["args"]}}
+                        for b in ordered
+                    ],
+                })
+                for b in ordered:
+                    label = self.labels.get(b["name"], b["name"])
                     try:
-                        args = json.loads(tc.function.arguments)
+                        args = json.loads(b["args"])
                     except Exception:
                         args = {}
-                    yield f"data: {json.dumps({'type': 'tool_call', 'name': tc.function.name, 'label': label, 'input': args}, ensure_ascii=False)}\n\n"
-                    result, artifact = await registry.dispatch(user_id, tc.function.name, args)
-                    yield f"data: {json.dumps({'type': 'tool_done', 'name': tc.function.name, 'label': label}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'tool_call', 'name': b['name'], 'label': label, 'input': args}, ensure_ascii=False)}\n\n"
+                    result, artifact = await registry.dispatch(user_id, b["name"], args)
+                    yield f"data: {json.dumps({'type': 'tool_done', 'name': b['name'], 'label': label}, ensure_ascii=False)}\n\n"
                     if artifact:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
                     messages.append({
                         "role": "tool",
-                        "tool_call_id": tc.id,
+                        "tool_call_id": b["id"],
                         "content": result,
                     })
                 continue
 
-            # 无工具调用：首次调用已生成完整答复，直接输出，不再发第二次请求。
-            text = msg.content or ""
-            for i in range(0, len(text), 40):
-                yield f"data: {json.dumps({'type': 'token', 'content': text[i:i + 40]})}\n\n"
-
+            # 无工具调用：正文已逐 token 流式输出完毕
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out})}\n\n"
             return
 
