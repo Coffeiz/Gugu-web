@@ -47,10 +47,12 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                     ConversationSession.user_id == user_id,
                 )
             )).scalars().first()
+        is_new_session = False
         if not session:
             session = ConversationSession(user_id=user_id, title=(req.message[:50] or "新对话"), source=getattr(req, "source", "web"))
             db.add(session)
             await db.flush()
+            is_new_session = True
         session_id = session.id
 
         # 历史窗口：最新若干条 → 按 token 预算从新往回裁剪
@@ -114,14 +116,28 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                 ))
             await db2.commit()
 
+        # 新会话：和 web 同口径用 LLM 起个简短标题（IM 也有好看标题，而非首句截断）
+        new_title = None
+        if is_new_session and text:
+            try:
+                from agent.adapters.web import _generate_title
+                new_title = await _generate_title(req.message, text, settings, use_anthropic)
+                async with _sess._SessionLocal() as db3:
+                    s = await db3.get(ConversationSession, session_id)
+                    if s:
+                        s.title = new_title
+                        await db3.commit()
+            except Exception:
+                new_title = None
+
         # 推「会话有更新」事件：IM（飞书/QQ）来的消息实时反映到网页——
-        # 列表刷新 + 若该会话正打开则把这一来一回直接追加进气泡（消息级，不整列表 refetch）
+        # 列表刷新（带新标题）+ 若该会话正打开则把这一来一回直接追加进气泡（消息级，不整列表 refetch）
         try:
             from app.core import events
             appended = [{"role": "user", "text": req.message}]
             if text:
                 appended.append({"role": "assistant", "text": text})
-            await events.publish(user_id, "sessions", session_id=session_id, appended=appended)
+            await events.publish(user_id, "sessions", session_id=session_id, appended=appended, title=new_title)
         except Exception:
             pass
 

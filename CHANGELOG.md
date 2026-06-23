@@ -20,6 +20,10 @@
   - 流量可控：频道按用户隔离 `events:{user_id}`（无跨用户扇出）+ 发增量 + 空闲仅 ~20s keepalive
   - ⚠️ 新增改动型工具须登记到 `RESOURCE_BY_TOOL`，否则不会实时刷新；web 自身聊天暂未 publish → 同账号多标签不互相同步（站内 IM 时补上即可）
 
+### 改进 · 飞书/QQ 会话也用 AI 总结标题
+
+- **IM（飞书/QQ）新会话也起 LLM 简短标题**（此前只有 web 总结，IM 标题永远是首句截断、不更新）：`runner.run_collect` 检测新会话，首轮回复后复用 web 的 `_generate_title(首消息, 首回复)` 起 ≤10 字标题、更新 DB，并随实时事件带 `title` 推给网页 → 侧栏 `fetchSessions` 自动带出新标题。与 web 同口径（仅新会话总结一次，失败回退首句截断）
+
 ### 新增 · Debug 管理页
 
 - **Admin → Debug 实时日志**：新管理页，SSE 推流实时 tail 三个日志文件（`gugu.log` / `gugu-worker.log` / `gugu-supervisor.log`），样式复用 SystemLogs 暗色 glass 主题

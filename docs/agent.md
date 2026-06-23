@@ -224,7 +224,7 @@ send_file 返回 {ok, message, _artifact:{file_id,name,ext,size_bytes}}
 挂点是 `registry.dispatch`——所有工具执行的**唯一咽喉**，web 与 IM worker 共用：
 ```
 工具成功(改动型) → events.publish(user_id, 资源)           # dispatch 里，按 RESOURCE_BY_TOOL 映射
-IM 一轮持久化后 → events.publish(user_id,'sessions',session_id,appended)  # runner.run_collect
+IM 一轮持久化后 → events.publish(user_id,'sessions',session_id,appended,title)  # runner.run_collect
   → Redis PUBLISH events:{user_id}                         # 按用户隔离频道，无跨用户扇出
   → GET /api/v1/live/stream(SSE) 订阅该频道，逐条下发        # 鉴权走 fetch streaming 带 Authorization 头
   → 前端 live store：bump rev[资源] → 各 store/视图 watch 自己的 rev 重新拉取
@@ -232,6 +232,7 @@ IM 一轮持久化后 → events.publish(user_id,'sessions',session_id,appended)
 ```
 - **粗粒度**（数据资源）：`rev.projects/calendar/files` 递增 → `projects`/`filesCache` store、Calendar 视图重新拉取。
 - **细粒度**（会话消息）：IM 消息带 `session_id + appended`（这一来一回），正打开该会话就**追加气泡**，否则只刷会话列表。
+- **IM 会话标题**：`run_collect` 检测到新会话，首轮回复后复用 web 的 `_generate_title(首消息,首回复)` 起 ≤10 字标题、更新 DB，并随事件带 `title` 推出去（网页 `fetchSessions` 自动带出）。和 web 同口径：仅新会话总结一次，失败回退首句截断。此前 IM 标题只是首句截断、永不更新。
 - 流量：按收件人定向 + 发增量（不广播、不全量），空闲只有 ~20s 一次 keepalive。
 - 断线（后端重启/网络抖动）：前端指数退避自动重连。
 - ⚠️ **新增改动型工具记得登记到 `RESOURCE_BY_TOOL`**，否则该工具改完网页不会实时刷新。
