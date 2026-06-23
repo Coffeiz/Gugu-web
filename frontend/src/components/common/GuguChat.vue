@@ -135,7 +135,7 @@
         <div class="chat-messages" ref="messagesEl">
           <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]">
             <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : msg.html" /></div>
-            <div v-else class="msg-bubble">{{ msg.text }}</div>
+            <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
             <div v-if="msg.files && msg.files.length" class="msg-files">
               <div v-for="f in msg.files" :key="f.file_id" class="msg-file" @click="downloadFile(f)" title="点击下载">
                 <span class="msg-file-ext">{{ (f.ext || 'file').toUpperCase().slice(0, 4) }}</span>
@@ -167,7 +167,18 @@
         </div>
 
         <!-- 输入框 -->
+        <div v-if="pendingAtt.length || attUploading" class="chat-att-row">
+          <div v-for="a in pendingAtt" :key="a.attach_id" class="chat-att-chip">
+            <span class="chat-att-name">{{ a.name }}.{{ a.ext }}</span>
+            <button class="chat-att-x" @click="removeAtt(a)" title="移除">×</button>
+          </div>
+          <span v-if="attUploading" class="chat-att-chip att-up">上传中…</span>
+        </div>
         <div class="chat-input-row">
+          <button class="att-btn" @click="pickFile" title="添加附件">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7l-5.5 5.5a2.5 2.5 0 0 1-3.5-3.5L9 3.5a1.5 1.5 0 0 1 2 2L5.5 11"/></svg>
+          </button>
+          <input ref="fileInput" type="file" style="display:none" @change="onFilePicked" />
           <textarea v-if="expanded"
             v-model="inputText"
             ref="expInputEl"
@@ -455,6 +466,7 @@ async function toggleOpen() {
     if (!expanded.value) { _scrollDelta = 0; msgsGrowth.value = 0 }
     trackApi.track('chat_open').catch(() => {})
     await nextTick()
+    atBottom.value = true
     if (messagesEl.value) scrollToBottom(messagesEl.value)
   }
 }
@@ -483,6 +495,23 @@ const activeTool     = ref('')
 const sessionId      = ref(null)
 const abortCtrl      = ref(null)
 const pendingQueue   = ref([])   // 生成中发的消息，排队等流式结束后接着发
+const pendingAtt   = ref([])     // 待发送的聊天附件（已上传暂存）
+const attUploading = ref(false)
+const fileInput    = ref(null)
+function pickFile() { fileInput.value && fileInput.value.click() }
+async function onFilePicked(e) {
+  const file = e.target.files && e.target.files[0]
+  e.target.value = ''
+  if (!file) return
+  attUploading.value = true
+  try {
+    const meta = await agentApi.uploadAttachment(file)
+    pendingAtt.value.push(meta)
+  } catch (err) {
+    messages.value.push({ id: mkid(), role: 'ai', text: '附件上传失败 😵 ' + (err && err.message || ''), time: now() })
+  } finally { attUploading.value = false }
+}
+function removeAtt(a) { pendingAtt.value = pendingAtt.value.filter(x => x.attach_id !== a.attach_id) }
 let _sessionTurn = 0             // 当前 session 已发消息轮次（埋点用，切换 session 重置）
 
 // 会话 id 存入 sessionStorage：刷新页面保留当前对话，关闭浏览器/标签页才清空（=开新对话）
@@ -506,6 +535,7 @@ function fmtSize(b) {
 }
 
 async function downloadFile(f) {
+  if (f.upload) return   // 聊天上传的暂存附件，不走下载
   try { await filesApi.download(f.file_id, `${f.name}.${f.ext}`) }
   catch (e) { console.error('下载失败', e) }
 }
@@ -563,6 +593,7 @@ async function enterExpanded() {
   await fetchSessions()
   await nextTick()
   expInputEl.value?.focus()
+  atBottom.value = true
   if (messagesEl.value) messagesEl.value.scrollTop = 999999
 }
 
@@ -573,6 +604,7 @@ async function exitExpanded() {
   await nextTick()
   const el = messagesEl.value
   if (!el) return
+  atBottom.value = true
   el.scrollTop = 999999
   // CSS transition 让窗口从大尺寸平滑缩小（0.38s），期间 clientHeight 持续变化
   // ResizeObserver 跟着一直滚底，过渡结束后断开
@@ -595,7 +627,7 @@ async function loadSession(id) {
       time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
     }))
     _scrollDelta = 0; msgsGrowth.value = 0; _sessionTurn = 0
-    await nextTick(); scrollBottom()
+    await nextTick(); scrollBottom(true)
     if (data.active) resumeStream(id)   // 该会话后端正在生成 → 重连续看
   } catch {}
 }
@@ -762,11 +794,14 @@ async function send(forcedText) {
   // forcedText 来自"排队接力"（队首消息）：此时用户气泡已在入队时显示过，不重复推
   const fromInput = forcedText === undefined
   const text = (fromInput ? inputText.value : forcedText).trim()
-  if (!text) return
+  const atts = fromInput ? pendingAtt.value.slice() : []   // 本次随消息发的附件
+  if (!text && !atts.length) return
   if (fromInput) {
     _sessionTurn++
-    messages.value.push({ id: mkid(), role: 'user', text, time: now() })
+    messages.value.push({ id: mkid(), role: 'user', text, time: now(),
+      files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, upload: true })) : undefined })
     inputText.value = ''
+    pendingAtt.value = []
     if (expInputEl.value) expInputEl.value.style.height = 'auto'
     trackApi.track('chat_message', { turn: _sessionTurn }).catch(() => {})
     await scrollBottom(true)
@@ -785,7 +820,7 @@ async function send(forcedText) {
     const res = await fetch(`${BASE_URL}/agent/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ message: text, session_id: sessionId.value }),
+      body: JSON.stringify({ message: text, session_id: sessionId.value, attachments: atts.map(a => a.attach_id) }),
       signal: abortCtrl.value.signal,
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -850,6 +885,7 @@ async function send(forcedText) {
   border-radius: 20px;
   overflow: hidden;
   box-shadow: 0 24px 64px rgba(20,25,50,0.18);
+  will-change: top, left, right, bottom;
 }
 .chat-window::after {
   content: '';
@@ -865,6 +901,7 @@ async function send(forcedText) {
   background: var(--panel-bg);
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
+  transform: translateZ(0);
 }
 
 /* 位移过渡放在 CSS，不放 inline style（避免覆盖 Vue transition 的 opacity/transform） */
@@ -875,9 +912,6 @@ async function send(forcedText) {
               bottom 0.38s cubic-bezier(0.22,1,0.36,1);
 }
 
-/* 展开/缩小动画期间关掉毛玻璃（28px blur 每帧重算极烧），动画结束恢复 */
-.chat-main.is-resizing,
-.chat-main.is-resizing * { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 
 /* 窗口开/关动画（从右下角 fab 原点缩放），!important 覆盖上方位移 transition */
 .chat-open-enter-active {
@@ -933,6 +967,18 @@ async function send(forcedText) {
 .chat-main.is-expanded .chat-messages .msg-bubble { max-width: 72%; font-size: 14px; }
 .msg-sentinel { flex-shrink: 0; height: 1px; }
 
+.chat-att-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 6px; }
+.chat-att-chip { display: flex; align-items: center; gap: 5px; max-width: 180px;
+  padding: 3px 8px; border-radius: 8px; font-size: 11px; color: var(--color-primary);
+  background: rgba(123,127,178,0.1); border: 1px solid rgba(123,127,178,0.2); }
+.chat-att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-att-x { background: none; border: none; cursor: pointer; color: var(--color-primary);
+  font-size: 13px; line-height: 1; padding: 0; opacity: 0.6; }
+.chat-att-x:hover { opacity: 1; }
+.chat-att-chip.att-up { color: var(--text-secondary); background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.08); }
+.att-btn { flex-shrink: 0; background: none; border: none; cursor: pointer; color: var(--text-secondary);
+  display: flex; align-items: center; padding: 0; opacity: 0.7; transition: opacity 0.15s, color 0.15s; }
+.att-btn:hover { opacity: 1; color: var(--color-primary); }
 .chat-input-row {
   display: flex; align-items: center; gap: 8px;
   padding: 10px 13px;
@@ -1054,7 +1100,7 @@ async function send(forcedText) {
 .send-btn:disabled { opacity: 0.55; cursor: default; }
 
 /* ── 消息气泡 ── */
-.msg { display: flex; flex-direction: column; min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 48px; }
+.msg { display: flex; flex-direction: column; min-width: 0; }
 .msg.user { align-items: flex-end; }
 .msg.ai { align-items: flex-start; }
 .msg-bubble {
@@ -1071,9 +1117,10 @@ async function send(forcedText) {
   border-bottom-right-radius: 4px;
 }
 /* 咕咕发来的文件卡片 */
-.msg-files { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 320px; }
+.msg-files { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 88%; min-width: 0; }
 .msg-file {
   display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer;
+  max-width: 100%; box-sizing: border-box;
   /* 和 AI 气泡同款：半透明白 + 左下角小尾巴 + 内高光，营造气泡感 */
   background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.65);
   border-radius: 14px; border-bottom-left-radius: 5px;
@@ -1094,6 +1141,9 @@ async function send(forcedText) {
 .msg-file-name { font-size: 15px; font-weight: 500; color: #2a2c3a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg-file-meta { font-size: 12px; color: #9296ad; }
 .msg-file-dl { flex-shrink: 0; color: #7b7fb2; }
+/* 用户(右侧)发的附件卡：气泡尾巴翻到右下、左下回正常圆角、容器右对齐 */
+.msg.user .msg-files { align-items: flex-end; }
+.msg.user .msg-file { border-bottom-left-radius: 14px; border-bottom-right-radius: 5px; }
 .msg-footer {
   display: flex; align-items: center; gap: 4px;
   margin-top: 3px; padding: 0 3px;
@@ -1131,22 +1181,6 @@ async function send(forcedText) {
 
 /* ── Markdown ── */
 .md-body { padding: 10px 13px; }
-/* 巨型 markdown 消息（如整篇文档）：给块级子元素加 content-visibility，
-   窗口放大/缩小时浏览器跳过屏幕外块的换行重排，只排可见的几块。
-   contain-intrinsic-size 用 auto——首次渲染后记住真实高度，滚动/scrollHeight 基本不跳。 */
-.md-body :deep(p),
-.md-body :deep(ul),
-.md-body :deep(ol),
-.md-body :deep(pre),
-.md-body :deep(table),
-.md-body :deep(blockquote),
-.md-body :deep(h1),
-.md-body :deep(h2),
-.md-body :deep(h3),
-.md-body :deep(.md-code-block) {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 32px;
-}
 .md-body :deep(p) { margin: 0 0 8px; line-height: 1.6; }
 .md-body :deep(p:last-child) { margin-bottom: 0; }
 .md-body :deep(h1),.md-body :deep(h2),.md-body :deep(h3) { font-weight: 700; margin: 10px 0 6px; line-height: 1.3; }

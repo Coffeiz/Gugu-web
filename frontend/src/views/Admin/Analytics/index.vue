@@ -48,7 +48,7 @@
 
       <!-- ── 咕咕行为漏斗 ── -->
       <div class="section-label">咕咕行为漏斗</div>
-      <div class="funnel-strip" v-if="chatFunnel">
+      <div class="funnel-strip">
         <template v-for="(step, i) in chatFunnelSteps" :key="step.key">
           <div class="funnel-box">
             <div class="f-num">{{ step.value.toLocaleString() }}</div>
@@ -63,7 +63,7 @@
           </div>
         </template>
         <div class="funnel-extra">
-          大窗展开 <strong>{{ chatFunnel.chat_expanded }}</strong> 人
+          大窗展开 <strong>{{ chatFunnel?.chat_expanded ?? 0 }}</strong> 人
         </div>
       </div>
 
@@ -350,12 +350,11 @@ const funnelSteps = computed(() => {
 })
 
 const chatFunnelSteps = computed(() => {
-  if (!chatFunnel.value) return []
-  const f = chatFunnel.value
+  const f = chatFunnel.value ?? {}
   return [
-    { key: 'opened',  label: '打开咕咕', value: f.chat_opened },
-    { key: 'msg1',    label: '发消息',   value: f.chat_msg_1 },
-    { key: 'msg3',    label: '≥ 3 轮',   value: f.chat_msg_3 },
+    { key: 'opened', label: '打开咕咕', value: f.chat_opened ?? 0 },
+    { key: 'msg1',   label: '发消息',   value: f.chat_msg_1  ?? 0 },
+    { key: 'msg3',   label: '≥ 3 轮',   value: f.chat_msg_3  ?? 0 },
   ]
 })
 
@@ -528,7 +527,7 @@ async function load() {
     data.value      = await sumRes.json()
     usage.value     = await useRes.json()
     trends.value    = await trdRes.json()
-    chatFunnel.value = cfRes.ok ? await cfRes.json() : null
+    chatFunnel.value = cfRes.ok ? await cfRes.json() : { chat_opened: 0, chat_msg_1: 0, chat_msg_3: 0, chat_expanded: 0 }
     toolDist.value   = tdRes.ok ? await tdRes.json() : []
   } catch (e) {
     err.value = '加载失败：' + e.message
@@ -596,13 +595,14 @@ onMounted(load)
   flex: 1; min-width: 110px;
   background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
   border-radius: 12px; padding: 16px 12px 12px;
-  display: flex; flex-direction: column; align-items: center;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
 }
 .f-num  { font-size: 26px; font-weight: 700; color: rgba(255,255,255,0.88); line-height: 1; }
 .f-lbl  { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 5px; }
 .f-rate {
   font-size: 10px; font-weight: 600; margin-top: 6px;
   color: rgba(150,155,210,0.8);
+  min-height: 1.2em;
 }
 .funnel-arr { flex-shrink: 0; color: rgba(255,255,255,0.18); padding: 0 6px; }
 .funnel-extra {

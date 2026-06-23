@@ -220,6 +220,11 @@ export const agentApi = {
   listSessions:    ()           => get('/agent/sessions'),
   getMessages:     (sessionId) => get(`/agent/sessions/${sessionId}/messages`),
   deleteSession:   (sessionId) => del(`/agent/sessions/${sessionId}`),
+  uploadAttachment: (file) => {            // 聊天附件暂存，返回 { attach_id, name, ext, size, kind }
+    const form = new FormData()
+    form.append('file', file)
+    return upload('/agent/upload', form)
+  },
 }
 
 export const trackApi = {
