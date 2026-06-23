@@ -656,77 +656,65 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 - [x] **step 3 · `worker.py`**（backend 顶层独立进程入口）：消费 `im:inbound` → `run_collect` →（暂打印）→ ack，带 `claim_stale` 回收崩溃遗留、信号优雅退出；独立于 web 避免多 uvicorn worker 重复消费。实测 队列→大脑→回复→ack 端到端通
 - [x] **step 4 · `adapters/feishu.py`**：飞书 WebSocket 长连收 `im.message.receive_v1` → `produce_sync` 入队（lark `ws.Client.start()` 同步阻塞、handler 同步，故用同步 produce）。**实测连上飞书 WSS 并收到真实消息**
 - [x] **step 5** 接通发回：`worker.handle` 跑完 `run_collect` → 按 platform 发回（飞书 `feishu.send_text` 用 `lark.Client` API）。**实测飞书私聊端到端：发"你是谁"→咕咕带人格回复送达飞书**
-- [x] **step 6 · 用户映射（OAuth 扫码绑定）**：`PlatformBinding (platform, open_id)↔user_id` + `feishu_bind.py`（授权URL/回调/状态/解绑，state 用 JWT 签）+ 个人设置二维码绑定 UI；worker `_resolve_user` 查绑定表，未绑定回提示。**已替换临时 root123**
+- [x] ~~**step 6 · 用户映射（OAuth 扫码绑定）**：`PlatformBinding` + `feishu_bind.py`~~ —— **已被 BYO 取代**：后改为「每用户自带 bot，扫码 device-flow 自动创建」，bot 即归属 owner，删掉了绑定表 + OAuth 那套（见下「BYO 接入与动态网关」）
 - [ ] **step 6 余项**：事件去重、平台 token 存 Redis、用户状态机（并入 Phase 1.7）、背压
 
 > **首平台里程碑（2026-06-23）**：飞书私聊端到端打通——`飞书消息 → 网关(WSS) → Redis队列 → worker → run_collect(人格+记忆+41工具) → feishu.send_text 发回`。坑：worker 阻塞读 XREADGROUP 需 `socket_timeout=None`，否则到点抛 TimeoutError。
 
-#### 频道面板与动态网关（Admin 管理 IM 频道）
+#### BYO 接入与动态网关（用户自助，无 Admin 共享 bot）
 
-让管理员在后台**增删频道、填密钥、启停**，连接随之实时起停——不改代码、不重启。
+> **架构演进（2026-06-23）**：早期飞书是「Admin 共享 bot + 用户 OAuth 绑定」，后**统一改为 BYO**——飞书、QQ 每个用户接自己的 bot，扫码自动创建。已删除 Admin 频道面板、`PlatformBinding`、`feishu_bind/feishu_event`、`active_im_bots`。
 
-**① 存储 + CRUD**
-- 频道（内部叫 bot）存 `config.override.json` 的 `bots` 列表，每个 `{id, platform, name, app_id, app_secret, enabled}`。
-- Admin 接口 `/admin/agent/bots`（GET/POST/PUT/DELETE，`agent_admin.py`）：secret 打码返回；更新时空值/打码值（含 •）不覆盖真 secret。
-- 前端：Agent 配置「频道」tab —— 列表（平台·名称·App ID·Secret打码·启停）+ 增删改表单。
+**① 存储 · `user_bots` 表（每用户自带 bot）**
+- `app/api/v1/user_bots.py` 的 `/me/bots`：**用户级** CRUD（仅能管自己的，secret 打码），字段 `{user_id(owner), platform, app_id, app_secret, sandbox, enabled}`，create_all 自动建表。
+- 扫码自动连接直接写这张表（见各平台接入设计）。
 
 **② 动态网关 · 进程级管理（`agent/adapters/supervisor.py`）**
-- **为什么进程级**：lark `ws.Client` 只有 `start()`、**无 `stop()`**，单连接在进程内断不掉 → **一个频道一个子进程**，kill 子进程 = 断开。
-- supervisor 轮询（默认 5s）启用频道（`config.active_im_bots()` 每次**现读 override 文件**，不走 lru_cache）→ reconcile：
-  - 新增/启用 → `spawn` 子进程 `python -m agent.adapters.feishu <channel_id>`
-  - 删除/停用 → `terminate`（超时 `kill`）对应子进程
-  - 子进程崩溃 → 下轮 `poll()` 检测到自动重启
-- **生效路径**：面板改 → 写 override → supervisor 约 5s 内 reconcile → 连接起/停，无需手动重启。
+- **为什么进程级**：lark/botpy 的连接只有 `start()`、**无 `stop()`**，进程内断不掉 → **一个 bot 一个子进程**，kill 子进程 = 断开。
+- supervisor 常驻 loop 每 5s 查 `user_bots`（启用的）→ reconcile：新增/启用 `spawn`、停用/删除 `terminate`、崩溃下轮自动重启。
+- **凭据走环境变量注入**（不走 argv，避免 `ps` 泄漏 secret）：飞书 `FEISHU_BOT_ID/APP_ID/APP_SECRET/OWNER`、QQ `QQ_*`。
+- key 用 `platform:id` 命名空间；DB 抖动时保活已在跑的，不误杀。
 
-**③ 按频道凭据（支持多频道并存）**
-- `feishu.serve(channel_id)` 用**该频道**凭据连接；`_creds_for(channel_id)` 从 `active_im_bots` 按 id 取，兜底首个/`.env`。
-- 收到的消息 payload 带 `channel_id`；worker 回发 `feishu.send_text(chat_id, text, channel_id)` 用**同一频道**凭据（`_client` 按 channel 缓存）。
-- 故可同时挂多个飞书企业的 bot，各连各的、各回各的。
+**③ 认人 · owner 即归属（无需绑定表）**
+- bot 天然属于其 owner → 网关入队 payload 带 `owner_user_id`，`worker._resolve_user` 直接用它查 User（飞书、QQ 同一套，省掉了 PlatformBinding）。
+- 发送按 bot id 现查 `user_bots` 取凭据：feishu `send_text`、qq `send_c2c`。
 
-**④ 运行模型**：`supervisor`（管网关子进程）+ `worker`（消费队列跑大脑发回）两个常驻进程。凭据优先取面板（明文存 override，gitignore 不入库），`.env` 的 `FEISHU__*` 作兜底。
+**④ 运行模型**：`supervisor`（管网关子进程）+ `worker`（消费队列跑大脑发回）两个常驻进程。
 
-**各平台 adapter（官方直连，无 OpenClaw；落在 `agent/adapters/`，step 4-5）**
-- [x] `adapters/feishu.py`：`lark-oapi`，WebSocket 长连收（`im.message.receive_v1`）+ `send_text` 发（`lark.Client` `im.v1.message.create`）；按 `channel_id` 取凭据，子进程入口。凭据走 **Admin 频道面板**（兜底 `.env`）。**已端到端跑通 + 动态频道管理**
-- [x] `adapters/supervisor.py`：频道管家，按面板启用列表起停网关子进程
-- [x] `adapters/qq.py`：`botpy`，WebSocket 长连收 `on_c2c_message_create`（单聊 C2C）+ `post_c2c_message` 被动回复（带 msg_id）；**BYO 模型**（每用户自带 bot），凭据走 env 注入。**已端到端跑通 + 扫码自动连接**
-- [ ] `adapters/weixin.py`：直连 iLink（长轮询 getupdates / sendmessage），纯文本先行，个人号有风险，最后做
+**各平台 adapter（官方直连，无 OpenClaw；`agent/adapters/`）**
+- [x] `adapters/feishu.py`：`lark-oapi` WebSocket 长连收（`im.message.receive_v1`）+ `send_text` 发；**BYO**，收凭据走 env、发凭据查 `user_bots`，payload 带 `owner_user_id`。**已端到端跑通 + device-flow 扫码自动连接**
+- [x] `adapters/supervisor.py`：网关管家，飞书+QQ 都从 `user_bots` 读 + env 注入
+- [x] `adapters/qq.py`：`botpy` WebSocket 长连收 `on_c2c_message_create`（单聊 C2C）+ `post_c2c_message` 被动回复（带 msg_id）；**BYO**，env 注入。**已端到端跑通 + 扫码自动连接 + markdown(msg_type=2，无权限回退纯文本)**
+- [ ] `adapters/weixin.py`：iLink（个人微信号，扫码登录 + 长轮询 getupdates / sendmessage），纯文本、token 易失效、**封号风险高**，最后做（机制见 `agent-im接入架构.md` §3.3）
 
-#### 飞书接入设计（两层：bot 创建 + 用户 OAuth 扫码绑定）
+#### 飞书接入设计（BYO + device-flow 扫码自动创建）
 
-飞书分两件事，别混：
+与早期"共享 bot + OAuth 绑定"不同，现在每个用户扫码**自动创建并连接自己的飞书 app**（PersonalAgent），和 QQ 同模型。复刻 QwenPaw，实测无需合作方资质。
 
-**① bot 创建（owner 一次性，整个咕咕共用一个 bot）**
-- 飞书规定应用必须在开发者后台创建（无公开"自动创建"API）。
-- 省事方式：官方 CLI `npx -y @larksuite/openclaw-lark install` → 选新建 → **飞书扫码一键创建**（飞书未公开的"快捷创建"能力），产出标准自建应用的 App ID/Secret。**只借它创建，不跑 OpenClaw 运行时**；拿到的 App ID/Secret 填咕咕 `.env`、用咕咕自己的网关收发。手动开发者后台创建亦可。
-- 不自己复刻"扫码创建"（依赖飞书未公开内部 API，逆向不稳、不值当）。
-
-**② 用户绑定（每个用户在「咕咕设置」里扫码，OAuth 2.0 · 方案 A 轻绑定）**
-
-目标：用户在飞书里跟咕咕 bot 聊天时，咕咕知道"这是哪个咕咕账号"。
-
+**扫码自动连接（OAuth 2.0 设备授权流 RFC 8628）** `app/api/v1/feishu_connect.py`
 ```
-咕咕设置页 → 显示二维码（飞书 OAuth 授权链接渲染）→ 用户飞书扫 → 授权
-→ 回调拿到该用户 open_id → 写绑定表 (feishu, open_id) ↔ user_id
-→ 之后飞书消息进来，网关 open_id→查绑定表→解析成咕咕 user_id，按其数据回
+POST accounts.feishu.cn/oauth/v1/app/registration action=init  → supported_auth_methods（含 client_secret，无鉴权）
+POST … action=begin (archetype=PersonalAgent, auth_method=client_secret, request_user_info=open_id)
+     → device_code + verification_uri_complete（open.feishu.cn/page/launcher?user_code=..）
+  → 前端二维码 verification_uri_complete?source=Gugu
+  → 用户手机飞书扫码 → 授权创建 PersonalAgent 应用
+  → 轮询 POST … action=poll {device_code}
+       （等待时按 RFC 8628 返回 400 + {"error":"authorization_pending"}，**poll 不能 raise_for_status**）
+       成功 → client_id + client_secret（即 App ID/Secret）+ user_info.open_id
+  → 自动写 user_bots（platform=feishu）
 ```
-
-- **方案 A 轻绑定**（采用）：只取 open_id 认人，不存 user_access_token。聊天场景够用。
-  （方案 B 代理身份——存 token 让咕咕"以用户身份"操作飞书——更重、需刷新，暂不做。）
-- **已建（✅）**：
-  1. ✅ 绑定表 `PlatformBinding (platform, platform_user_id) ↔ user_id`（唯一约束 open_id，create_all 自动建）
-  2. ✅ `app/api/v1/feishu_bind.py`：`/feishu/bind/url`（授权URL，state 用 JWT 签 user_id+channel）、`/callback`（lark `authen.v1.access_token.create` 用 code 换 open_id → 写绑定 → 返回提示页）、`/status`、`DELETE /bind`
-  3. ✅ 前端 `ProfileModal.vue`「咕咕设置 → 接入咕咕 → 飞书」：`qrcode` 渲染二维码 + 轮询 status 自动完成 + 解绑
-  4. ✅ `worker._resolve_user` 查绑定表得 user_id，未绑定回提示（不跑大脑）；网关 payload 带 `channel_id`，worker 按频道回发
-- **前提**：飞书后台开 OAuth、登记 `redirect_uri`（Admin 频道面板「飞书 OAuth 回调地址」或 env `FEISHU__REDIRECT_URI`，须公网可达 + 与飞书后台一致）。
-- **为什么收消息不用公网、绑定要**：收消息是长连接 outbound（我们连飞书）；OAuth 回调是 inbound（飞书重定向送授权码），OAuth 标准设计绕不开。详见 `feishu接入指南.md` §6。
+- **device_code 只存服务端 Redis**（按 poll_id，TTL=expires_in），不下发前端。`source` 仅来源标签（非白名单）。
+- 国内 `accounts.feishu.cn`，国际版 Lark 为 `accounts.larksuite.com`（如需再加 domain 参数）。
+- 收发：`lark-oapi` WS 长连（`on_message` 带 owner 入队）+ `lark.Client` Open API 发；都不需要公网。
+- 拆解过程见 `docs/dev-log.md`、`docs/agent-im接入架构.md` §3.1。
 
 #### QQ 接入设计（BYO 每用户自带 bot + 扫码自动连接）
 
-与飞书"共享 bot + OAuth 绑定"不同，QQ 走 **BYO（Bring-Your-Own）**：每个用户接自己的 QQ bot。
+QQ 和飞书一样走 **BYO（Bring-Your-Own）**：每个用户接自己的 QQ bot，扫码自动创建。
 
 **① BYO 模型**
 - `user_bots` 表（create_all 自动建）存每用户的 `app_id/app_secret/sandbox/enabled`，platform=qqbot；`app/api/v1/user_bots.py` 的 `/me/bots` 是**用户级** CRUD（仅能管自己的，secret 打码）。
-- supervisor 泛化为多源：飞书读 override 文件（argv 传 channel_id），**QQ 读 `user_bots` 表**（凭据走**环境变量注入**，避免 ps 泄漏），常驻 loop 复用 asyncpg engine，DB 抖动保活不误杀。
+- supervisor 飞书+QQ **都从 `user_bots` 表读**（凭据走**环境变量注入**，避免 ps 泄漏），常驻 loop 复用 asyncpg engine，DB 抖动保活不误杀。
 - **不需要绑定表**：bot 即归属其 owner → 网关入队 payload 带 `owner_user_id`，`worker._resolve_user` 直接用（比飞书省一层）。
 
 **② 扫码自动连接（复刻 QwenPaw/OpenClaw，实测无需合作方资质）** `app/api/v1/qq_connect.py`

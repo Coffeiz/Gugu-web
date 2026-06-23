@@ -98,6 +98,15 @@
           </svg>
           系统日志
         </router-link>
+        <router-link to="/services" class="nav-item">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2.5" width="12" height="4" rx="1"/>
+            <rect x="2" y="9.5" width="12" height="4" rx="1"/>
+            <path d="M4.5 4.5h.01M4.5 11.5h.01"/>
+          </svg>
+          服务状态
+        </router-link>
       </nav>
 
       <!-- 底部 -->

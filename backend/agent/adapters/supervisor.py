@@ -111,12 +111,20 @@ def main() -> None:
     signal.signal(signal.SIGINT, _sig)
     signal.signal(signal.SIGTERM, _sig)
 
+    from app.core import health
     print(f"[supervisor] 频道管家启动（每 {POLL_SEC}s 同步一次配置）", flush=True)
     while not _stop:
         try:
             reconcile()
         except Exception as e:
             print(f"[supervisor] reconcile 出错: {type(e).__name__}: {e}", flush=True)
+        # 心跳：带上当前在跑的网关列表（给 Admin 服务面板）
+        gateways = [
+            {"key": k, "platform": _procs_spec.get(k, {}).get("platform", ""),
+             "owner": _procs_spec.get(k, {}).get("owner", "")}
+            for k in _procs
+        ]
+        health.beat_sync("supervisor", {"gateways": gateways, "count": len(gateways)})
         for _ in range(POLL_SEC):
             if _stop:
                 break

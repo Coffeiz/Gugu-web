@@ -36,12 +36,26 @@
 | **QQ** | `botpy` SDK | WebSocket | 不需要 | 🟢 易，官方稳定 |
 | **微信** | 直连 iLink（自写 HTTP 客户端） | 长轮询 getupdates | 不需要 | 🟡 中，文本可控；个人号有风险 |
 
-### 3.1 飞书 — `lark-oapi`（larksuite/oapi-sdk-python）
+### 3.1 飞书 — `lark-oapi`（larksuite/oapi-sdk-python）· 已落地（BYO + device-flow 扫码自动创建）
 
-- **鉴权**：App ID + App Secret，SDK 自动管 `tenant_access_token`
-- **收**：事件 `im.message.receive_v1`；可走 webhook，**也可走 WebSocket 长连接**（`FeishuChannel` / `channel.connect()`）→ 不需要公网 URL
-- **发**：`client.im.v1.message.create(...)`（`CreateMessageRequest` / `CreateMessageRequestBody`）
-- SDK 自动处理 token、签名、加解密、事件分发
+实现是 **BYO（每用户自带 app）**，代码 `agent/adapters/feishu.py` + `app/api/v1/feishu_connect.py`。
+
+- **鉴权**：App ID + App Secret（用户扫码自动创建的 PersonalAgent app），SDK 自动管 `tenant_access_token`
+- **收**：`im.message.receive_v1`，走 **WebSocket 长连接**（`lark.ws.Client`）→ 不需要公网；收凭据由 supervisor 走 env 注入，payload 带 `owner_user_id`
+- **发**：`lark.Client` `im.v1.message.create`，worker 端按 bot id 现查 `user_bots` 取凭据
+
+**扫码自动创建 app（OAuth 2.0 设备授权流 RFC 8628，复刻 QwenPaw，实测无需合作方资质）** `feishu_connect.py`：
+```
+POST accounts.feishu.cn/oauth/v1/app/registration action=init  → supported_auth_methods（无鉴权）
+POST … action=begin (archetype=PersonalAgent, auth_method=client_secret) → device_code + verification_uri_complete
+  → 前端二维码 verification_uri_complete?source=Gugu（open.feishu.cn/page/launcher?user_code=..）
+  → 用户手机飞书扫码 → 授权创建 PersonalAgent 应用
+  → 轮询 POST … action=poll {device_code}
+       （等待时按 RFC 8628 返回 400 + {"error":"authorization_pending"}，poll 不能 raise_for_status）
+       成功 → client_id + client_secret → 自动写 user_bots
+```
+- device_code 只存服务端 Redis（按 poll_id）。`source` 仅来源标签（非白名单）。国际版 Lark 域名 `accounts.larksuite.com`。
+- 与 QQ 同 BYO 模型（[[qq-scan-connect]] 同套）；早期的「共享 bot + OAuth 绑定」已废弃删除。
 
 ### 3.2 QQ — `botpy`（tencent-connect/botpy，官方）· 已落地（单聊 C2C，BYO）
 

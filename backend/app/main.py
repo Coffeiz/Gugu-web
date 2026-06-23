@@ -25,6 +25,7 @@ from app.api.v1 import clients as clients_router
 from app.api.v1 import trash as trash_router
 from app.api.v1 import agent as agent_router
 from app.api.v1 import user_bots as user_bots_router
+from app.api.v1 import services_admin as services_admin_router
 from app.api.v1 import qq_connect as qq_connect_router
 from app.api.v1 import feishu_connect as feishu_connect_router
 from app.api.v1 import preferences as preferences_router
@@ -222,6 +223,11 @@ app.include_router(
 )
 app.include_router(
     users_admin_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    services_admin_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )

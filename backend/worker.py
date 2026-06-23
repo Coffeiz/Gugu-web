@@ -126,15 +126,27 @@ async def run_once(block_ms: int = 5000) -> int:
     return handled
 
 
+async def _heartbeat():
+    from app.core import health
+    while not _stop.is_set():
+        await health.beat("worker", {"consumer": CONSUMER})
+        for _ in range(health.INTERVAL):
+            if _stop.is_set():
+                break
+            await asyncio.sleep(1)
+
+
 async def serve():
     await R.ensure_group(STREAM, GROUP)
     print(f"[worker] started · consumer={CONSUMER} · stream={STREAM}", flush=True)
+    hb = asyncio.create_task(_heartbeat())
     while not _stop.is_set():
         try:
             await run_once()
         except Exception as e:
             print(f"[worker] loop 出错，2s 后重试: {type(e).__name__}: {e}", flush=True)
             await asyncio.sleep(2)
+    hb.cancel()
     await R.reset()
     print("[worker] stopped", flush=True)
 
