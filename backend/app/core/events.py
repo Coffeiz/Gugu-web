@@ -28,6 +28,7 @@ RESOURCE_BY_TOOL: dict[str, str] = {
     "edit_file": "files", "create_document": "files", "rename_file": "files",
     "move_file": "files", "copy_file": "files", "create_folder": "files",
     "delete_file": "files", "rename_folder": "files", "delete_folder": "files",
+    "save_uploaded_file": "files",
     # 客户
     "create_client": "clients", "update_client": "clients", "delete_client": "clients",
     # 回收站（恢复/彻底删都影响文件库）

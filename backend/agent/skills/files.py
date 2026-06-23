@@ -138,16 +138,20 @@ async def _list_files(db, user_id, args: dict):
 
 
 async def _read_file(db, user_id, args: dict):
+    from app.core import doctext
     f, _err = await _resolve_file(db, user_id, args)
     if _err:
         return _err
-    if f.ext.lower() not in TEXT_EXTS:
-        return json.dumps({"error": f"不支持读取该类型（{f.ext}），仅支持文本类文件"})
-    if (f.size_bytes or 0) > READ_MAX_BYTES:
-        return json.dumps({"error": f"文件过大（{f.size}），超出可读上限 256KB"})
+    ext = f.ext.lower()
+    is_doc = ext in doctext.EXTRACTABLE      # PDF/docx/xlsx/pptx 等，需工具提取文本
+    if ext not in TEXT_EXTS and not is_doc:
+        return json.dumps({"error": f"不支持读取该类型（{f.ext}），仅支持文本类 + PDF/Office 文档"})
+    cap = doctext.EXTRACT_MAX_BYTES if is_doc else READ_MAX_BYTES
+    if (f.size_bytes or 0) > cap:
+        return json.dumps({"error": f"文件过大（{f.size}），超出可读上限"})
     try:
         data = await get_storage().get(f.storage_key)
-        text = data.decode("utf-8", errors="replace")
+        text = await doctext.extract_text(data, ext)   # 文本类直接 decode；文档走 pdftotext/LibreOffice
     except Exception as e:
         return json.dumps({"error": f"读取失败：{str(e)[:80]}"})
     return {"file_id": f.id, "name": f"{f.display_name}.{f.ext}", "content": text}
@@ -235,6 +239,41 @@ async def _create_document(db, user_id, args: dict):
     await db.refresh(db_file)
     return {"success": True, "file_id": db_file.id,
             "name": f"{final_name}.{fmt}", "size": db_file.size}
+
+
+async def _save_uploaded_file(db, user_id, args: dict):
+    """把用户聊天里上传的暂存附件保存进文件库（personal 空间）。"""
+    from app.core import chat_attach
+    aid = (args.get("attach_id") or "").strip()
+    if not aid:
+        return json.dumps({"error": "需提供 attach_id（来自用户上传的附件）"}, ensure_ascii=False)
+    meta = await chat_attach.get_meta(user_id, aid)
+    if not meta:
+        return json.dumps({"error": "附件不存在或已过期（聊天附件暂存 6 小时）"}, ensure_ascii=False)
+    try:
+        data = await chat_attach.read_bytes(meta)
+    except Exception as e:
+        return json.dumps({"error": f"读取附件失败：{str(e)[:80]}"}, ensure_ascii=False)
+    ext = meta.get("ext") or "bin"
+    display_name = meta.get("name") or "上传文件"
+    storage = get_storage()
+    try:
+        base_key = await _resolve_key(db, user_id, "personal", display_name, ext)
+    except ValueError as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
+    await storage.put(final_key, data, meta.get("mime") or "application/octet-stream")
+    db_file = File(
+        user_id=user_id, display_name=final_name, ext=ext, space="personal",
+        project_id=None, folder_id=None, stage_name="",
+        storage_key=final_key, size=_fmt_size(len(data)), size_bytes=len(data),
+        mime_type=meta.get("mime") or "",
+    )
+    db.add(db_file)
+    await db.commit()
+    await db.refresh(db_file)
+    return {"success": True, "file_id": db_file.id,
+            "name": f"{final_name}.{ext}", "space": "personal", "size": db_file.size}
 
 
 async def _rename_file(db, user_id, args: dict):
@@ -543,7 +582,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="read_file", label="读取文件",
-            description="读取文本类文件的内容（md/txt/json/代码等，≤256KB）。二进制文件（图片/视频等）不可读。",
+            description="读取文件内容：文本类（md/txt/json/代码等，≤256KB）直接读；PDF/Word/Excel/PPT 会自动提取文本。图片/视频/音频等仍不可读。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -717,7 +756,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="send_file", label="发送文件",
-            description="把用户文件库里的一个文件发到对话窗口，生成可下载卡片。当用户说「把X发给我/给我那个文件/发过来」时用。用 file 指定文件名（如「合同.pdf」）或 file_id。",
+            description="把用户文件库里的一个文件**真正发给用户**（网页显示下载卡片；飞书/QQ 直接把文件发到对方聊天里）。当用户说「把X发给我/给我那个文件/发过来」时**必须调用本工具**——绝不能只回「正在发送/已发给你」却不调用。用 file 指定文件名（如「合同.pdf」）或 file_id。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -726,6 +765,18 @@ class FilesSkill(BaseSkill):
                 },
             },
             handler=_send_file,
+        ),
+        Tool(
+            name="save_uploaded_file", label="保存上传文件",
+            description="把用户在对话里**上传的附件**保存进文件库（personal 空间）。当用户上传文件后说「存一下/保存到文件库/帮我存起来」时用。attach_id 来自上下文里「用户上传了文件…(attach_id=X)」的提示。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "attach_id": {"type": "string", "description": "上传附件的 attach_id（见上下文提示）"},
+                },
+                "required": ["attach_id"],
+            },
+            handler=_save_uploaded_file,
         ),
     ]
 

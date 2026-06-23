@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -15,6 +15,7 @@ class AgentRequest:
     user_name: str
     session_id: Optional[int] = None
     source: str = "web"           # "web" | "qqbot" | "openclaw"
+    attachments: list = field(default_factory=list)   # 聊天附件 attach_id（仅 web）
 
 
 @dataclass
@@ -24,3 +25,4 @@ class AgentResponse:
     session_id: Optional[int] = None
     tokens_in: int = 0
     tokens_out: int = 0
+    files: list = field(default_factory=list)   # 咕咕要发的文件卡片（file_id/name/ext…），平台 adapter 据此发文件

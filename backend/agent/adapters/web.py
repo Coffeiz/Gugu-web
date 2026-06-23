@@ -17,6 +17,7 @@ from typing import AsyncGenerator
 from sqlalchemy import select, func, and_
 
 from app.core.config import get_settings
+from app.core import chat_attach
 from app.models import (
     AgentUsage, CalendarEvent, ConversationMessage, ConversationSession,
     Project, User,
@@ -149,7 +150,10 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         )
         history = tokens.select_history(hist_res.scalars().all(), token_budget=settings.ai.context_tokens)
 
-        db.add(ConversationMessage(session_id=session.id, role="user", content=req.message))
+        # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化
+        aug_text, attach_cards = await chat_attach.resolve_for_message(user_id, req.attachments, req.message)
+        db.add(ConversationMessage(session_id=session.id, role="user", content=req.message,
+                                   files=attach_cards or None))
         await db.commit()
         session_id = session.id
 
@@ -159,7 +163,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     #    再转发该会话的生成频道。客户端断开只停转发，后台任务继续到完成。
     if not await genstream.is_active(session_id):
         task = asyncio.create_task(_generate(
-            req, session_id, projects, events, files_overview, history, is_new_session,
+            req, session_id, projects, events, files_overview, history, is_new_session, aug_text,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -191,13 +195,16 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
         yield line
 
 
-async def _generate(req, session_id, projects, events, files_overview, history, is_new_session) -> None:
+async def _generate(req, session_id, projects, events, files_overview, history, is_new_session,
+                    user_content=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
-    「续看端点」都只是订阅这条频道。
+    「续看端点」都只是订阅这条频道。user_content 是注入了附件内容的用户消息（给模型用，
+    持久化/反思仍用 req.message 原文）。
     """
     user_id = req.user_id
+    user_content = user_content if user_content is not None else req.message
     settings = get_settings()
     profile = DefaultProfile()
     import app.db.session as _sess
@@ -228,14 +235,14 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                     anthr_messages.append({"role": h.role, "content": h.content_json})
                 else:
                     anthr_messages.append({"role": h.role, "content": h.content or ""})
-            anthr_messages.append({"role": "user", "content": req.message})
+            anthr_messages.append({"role": "user", "content": user_content})
             anthr_initial_len = len(anthr_messages)
             gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True)
         else:
             oa_messages = [{"role": "system", "content": system_prompt}]
             for h in history:
                 oa_messages.append({"role": h.role, "content": h.content or ""})
-            oa_messages.append({"role": "user", "content": req.message})
+            oa_messages.append({"role": "user", "content": user_content})
             gen = runner.run(user_id, None, oa_messages, use_anthropic=False)
 
         san = sanitize.StreamSanitizer()

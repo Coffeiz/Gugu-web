@@ -6,12 +6,13 @@ adapters）。本文件只负责：接收请求 → 构造 AgentRequest → 调 
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import chat_attach
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models import ConversationMessage, ConversationSession, User
@@ -22,10 +23,29 @@ from agent.models import AgentRequest
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
+_MAX_ATTACH_BYTES = 10 * 1024 * 1024   # 单个聊天附件上限 10MB
+
 
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[int] = None
+    attachments: Optional[list[str]] = None   # 聊天附件的 attach_id 列表（来自 /agent/upload）
+
+
+@router.post("/upload")
+async def upload_attachment(
+    file: UploadFile = FastAPIFile(...),
+    current_user: User = Depends(get_current_user),
+):
+    """聊天附件上传：暂存（不进文件库），返回 attach_id。咕咕可看内容/可保存。"""
+    data = await file.read()
+    if len(data) > _MAX_ATTACH_BYTES:
+        raise HTTPException(400, "文件太大（聊天附件上限 10MB）")
+    parts = (file.filename or "file").rsplit(".", 1)
+    name = parts[0] or "file"
+    ext = parts[1] if len(parts) > 1 else ""
+    meta = await chat_attach.stage(current_user.id, name, ext, file.content_type, data)
+    return {k: meta[k] for k in ("attach_id", "name", "ext", "size", "kind")}
 
 
 @router.post("/chat")
@@ -39,6 +59,7 @@ async def chat(
         user_name=current_user.username,
         session_id=body.session_id,
         source="web",
+        attachments=body.attachments or [],
     )
     return StreamingResponse(
         web_adapter.stream(req),

@@ -28,6 +28,11 @@ class StorageBackend(ABC):
     def public_url(self, key: str) -> str:
         """返回可访问的 URL"""
 
+    def fetch_url(self, key: str) -> str | None:
+        """返回一个**外部第三方可直接 HTTP 抓取**的临时 URL（如给 QQ 富媒体 url 模式用）。
+        本地存储没有公网地址 → None（调用方退回 base64 上传）。"""
+        return None
+
 
 class LocalStorageBackend(StorageBackend):
 
@@ -115,6 +120,13 @@ class OSSStorageBackend(StorageBackend):
 
     def public_url(self, key: str) -> str:
         return f"https://{self.bucket.bucket_name}.{self.bucket.endpoint}/{self.pfx}{key}"
+
+    def fetch_url(self, key: str) -> str | None:
+        # 签名 URL：私有 bucket 也能抓、限时 1h（QQ 抓取是即时的，够用）
+        try:
+            return self.bucket.sign_url("GET", self.pfx + key, 3600)
+        except Exception:
+            return None
 
 
 def get_storage() -> StorageBackend:
