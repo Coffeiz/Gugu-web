@@ -115,6 +115,11 @@ cd backend
 ```
 频道在 **Admin → Agent 配置 → 频道** 里加（详见 [`feishu接入指南.md`](feishu接入指南.md)）。
 
+> ⚠️ **改了 `agent/` 大脑代码（runner / skills / core / 上下文 / 记忆等）后，worker 必须重启**——咕咕的大脑跑在 **worker** 进程里，不是 web（uvicorn）、也不是 supervisor。
+> - `supervisor` + 各平台网关（qq/feishu）只负责**收消息入队**；改它们（adapters）才需重启 supervisor。
+> - `make restart` 只重启 web（uvicorn），**不动 worker/supervisor**。
+> - 只重启 supervisor 而漏了 worker，会出现「网页/IM 行为没按新代码变」的诡异现象（如实时事件不发、新字段不写）——见 `devlog.md` 2026-06-23「漏重启 worker」。
+
 ### 2.8 Admin 初始化
 - Admin 后台：`http://localhost:5173/admin/login`
 - 默认账号 **admin / admin123**（⚠️ 上线前必改）

@@ -5,6 +5,35 @@
 
 ---
 
+## 2026-06-23 · 漏重启 worker：实时不生效 + QQ 会话没标 source（同一个根因）
+
+实时刷新和 IM 标题都做完、也单测过了，用户却反馈「IM 消息依旧不实时、新建 session 不刷新、QQ 会话没标记成 qq」。两个 bug，同一个根因。
+
+### 大脑跑在 worker，我一直只重启 supervisor
+
+排查时按 source 这条线查：QQ 会话 `source` 没设成 `qqbot` → 说明 `req.source` 没传到 `run_collect`。但翻 `worker.py` 的 `handle()`，`AgentRequest(..., source=platform)` 明明是对的，`qq.py` 入队也带了 `platform:"qqbot"`。代码没问题，那就是**跑的进程是旧的**。
+
+`ps` 一看：worker 进程 pid 还停在 **12:49** 启动的那个，而我这下午改的实时代码、source 传递全在之后。**关键认知盲点**：咕咕的大脑（`run_collect` + 工具 dispatch）跑在**独立的 `worker` 进程**里——
+
+```
+网关(qq/feishu) 收消息 → 入队 ──→ worker 消费 → run_collect(大脑) → 发回 + publish事件
+   ↑ supervisor 管这些                  ↑ 这个进程我从没重启过
+```
+
+我每次「重启 IM 栈」都只杀了 supervisor + 网关，**网关只负责收消息入队**，真正跑大脑、发实时事件、写 source 的 worker 一直是旧代码。栽在同一个地方好几次都没意识到 worker 是第三个独立进程。
+
+### 修 + 验证
+
+重启 worker 后：新建 QQ 会话 `source='qqbot'` ✓；用 curl 模拟浏览器订阅 `/live/stream`，独立进程 `events.publish` 的事件跨进程送达 ✓。两个 bug 一起好。
+
+### 教训
+
+- **改 `agent/` 大脑代码必须重启 worker**，光重启 supervisor 没用；`make restart` 只管 web。已写进 `deploy.md` 2.7。
+- 调试顺序对了：先盯一个**具体的可证伪现象**（source 没写对），顺着它确认「代码对 → 那就是进程旧」，比对着「实时为什么不工作」空想快得多。
+- 进程模型要在脑子里清晰：web(uvicorn) / supervisor(+网关子进程) / worker 是**三个**独立常驻进程，各管一段，别当成一坨。
+
+---
+
 ## 2026-06-23 · 实时刷新：Redis pub/sub → SSE（顺带想清楚了站内 IM 的地基）
 
 用户反馈「IM 发的消息、咕咕创建整理项目/活动/文件 都不会实时更新」。拆开是两个层面的洞。
