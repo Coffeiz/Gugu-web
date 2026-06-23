@@ -25,7 +25,7 @@
         <button class="pv-btn" @click="changeScale(-0.1)">
           <PhMinus weight="bold" :size="12" />
         </button>
-        <span class="pv-scale-label">{{ Math.round(scale * 100) }}%</span>
+        <button class="pv-scale-label pv-scale-reset" @click="resetScale" title="回到 100%">{{ Math.round(scale * 100) }}%</button>
         <button class="pv-btn" @click="changeScale(0.1)">
           <PhPlus weight="bold" :size="12" />
         </button>
@@ -86,17 +86,19 @@ const scrollRef     = ref(null)
 const renderedPages = ref(new Set())
 const isFitWidth    = ref(false)
 
-// p → { width, height } in CSS px at scale=1 (with PDF_TO_CSS_UNITS applied)
+// p → { width, height } CSS px at scale=1
 const pageSizes  = ref({})
 const canvasRefs = {}
 const textRefs   = {}
 
-const SUPERSAMPLE = 2   // 超采样倍率，canvas 渲染分辨率 = CSS 尺寸 × dpr × SUPERSAMPLE
+// 每页的渲染任务和状态
+const renderTasks = {}   // p → PDF.js renderTask
+const textRendered = {}  // p → cssScale（text layer 缓存标记）
+const tileStates   = {}  // p → { top, bottom }（已渲染 tile 范围，page 内 CSS px）
 
-let pdfDoc     = null
-let renderTask = null
-let pdfjsLib   = null
-let CSS_UNITS  = 96 / 72  // PDF pt → CSS px，ensurePdfjs 后从库取精确值
+let pdfDoc    = null
+let pdfjsLib  = null
+let CSS_UNITS = 96 / 72
 
 // ── 加载 PDF.js ────────────────────────────────────────
 async function ensurePdfjs() {
@@ -111,12 +113,14 @@ async function ensurePdfjs() {
 
 // ── 加载文档 ───────────────────────────────────────────
 async function loadPdf(url) {
-  loading.value    = true
-  error.value      = null
-  totalPages.value = 0
+  loading.value     = true
+  error.value       = null
+  totalPages.value  = 0
   currentPage.value = 1
   renderedPages.value = new Set()
-  pageSizes.value = {}
+  pageSizes.value   = {}
+  Object.keys(tileStates).forEach(k => delete tileStates[k])
+  Object.keys(textRendered).forEach(k => delete textRendered[k])
 
   try {
     await ensurePdfjs()
@@ -130,7 +134,6 @@ async function loadPdf(url) {
     }).promise
     totalPages.value = pdfDoc.numPages
 
-    // 预取页面 CSS 尺寸（含 DPI 校正，不含用户缩放）
     for (let i = 1; i <= pdfDoc.numPages; i++) {
       const page = await pdfDoc.getPage(i)
       const vp = page.getViewport({ scale: CSS_UNITS })
@@ -150,19 +153,19 @@ watch(() => props.blobUrl, url => {
   if (url) loadPdf(url)
 }, { immediate: true })
 
-// ── 渲染窗口（当前页 ±2 页）────────────────────────────
-async function renderWindow() {
-  if (!pdfDoc) return
-  const from = Math.max(1, currentPage.value - 2)
-  const to   = Math.min(totalPages.value, currentPage.value + 2)
-
-  for (let p = from; p <= to; p++) {
-    if (renderedPages.value.has(p)) continue
-    renderedPages.value = new Set([...renderedPages.value, p])
-    await nextTick()
-    await renderPage(p)
+// ── 页面 Y 坐标（scroll-area CSS px）─────────────────
+function getPageTop(p) {
+  let top = 0
+  for (let i = 1; i < p; i++) {
+    const sz = pageSizes.value[i]
+    if (sz) top += sz.height * scale.value + 16
   }
+  return top
 }
+
+// ── Tile 渲染（核心）──────────────────────────────────
+// canvas 只渲染可见区域 ± BUFFER，canvas 尺寸 ≈ 视口大小，与缩放无关
+const TILE_BUFFER = 400  // CSS px，上下各留 400px 缓冲防闪烁
 
 async function renderPage(p) {
   const canvas  = canvasRefs[p]
@@ -170,34 +173,67 @@ async function renderPage(p) {
   if (!canvas || !pdfDoc) return
 
   const page = await pdfDoc.getPage(p)
+  const dpr      = window.devicePixelRatio || 1
+  const cssScale = scale.value * CSS_UNITS
+  const physScale = cssScale * dpr  // 1x retina，canvas 尺寸 ≈ 屏幕像素
 
-  const dpr = window.devicePixelRatio || 1
+  const pageSz = pageSizes.value[p]
+  if (!pageSz) return
+  const pageCSSW = pageSz.width  * scale.value
+  const pageCSSH = pageSz.height * scale.value
 
-  // 物理像素 viewport（canvas 用，含超采样）
-  const vpPhysical = page.getViewport({ scale: scale.value * CSS_UNITS * dpr * SUPERSAMPLE })
-  // CSS 像素 viewport（text layer 用）
-  const vpCSS = page.getViewport({ scale: scale.value * CSS_UNITS })
+  // 计算可见 tile（page 内部坐标，CSS px）
+  const scrollEl  = scrollRef.value
+  const scrollTop = scrollEl ? scrollEl.scrollTop : 0
+  const viewportH = scrollEl ? scrollEl.clientHeight : pageCSSH
+  const pageTop   = getPageTop(p)
 
-  // ── canvas ──
-  canvas.width  = vpPhysical.width
-  canvas.height = vpPhysical.height
-  canvas.style.width  = vpCSS.width  + 'px'
-  canvas.style.height = vpCSS.height + 'px'
+  const tileTop    = Math.max(0,        scrollTop - TILE_BUFFER - pageTop)
+  const tileBottom = Math.min(pageCSSH, scrollTop + viewportH + TILE_BUFFER - pageTop)
 
-  if (renderTask) renderTask.cancel()
-  renderTask = page.render({
+  if (tileBottom <= tileTop) return  // 该页完全不可见
+
+  const tileH = tileBottom - tileTop
+  const tileW = pageCSSW
+
+  // PDF.js viewport：将渲染原点偏移到 tileTop，使 tile 顶部 = canvas 顶部
+  const fullVp = page.getViewport({ scale: physScale })
+  const mat    = fullVp.transform.slice()
+  mat[5] -= tileTop * dpr  // 向上平移 tileTop 个物理像素
+
+  const tileVp = page.getViewport({ scale: physScale, transform: mat })
+
+  // Canvas 大小 = tile 的物理像素，定位在 page-wrap 内 tileTop 处
+  canvas.width  = Math.ceil(tileW * dpr)
+  canvas.height = Math.ceil(tileH * dpr)
+  canvas.style.width    = tileW + 'px'
+  canvas.style.height   = tileH + 'px'
+  canvas.style.position = 'absolute'
+  canvas.style.top      = tileTop + 'px'
+  canvas.style.left     = '0'
+
+  // 取消同页上一次渲染
+  if (renderTasks[p]) { renderTasks[p].cancel(); delete renderTasks[p] }
+
+  const task = page.render({
     canvasContext: canvas.getContext('2d'),
-    viewport: vpPhysical,
+    viewport: tileVp,
     intent: 'display',
   })
-  try { await renderTask.promise } catch { /* cancelled */ }
+  renderTasks[p] = task
+  try {
+    await task.promise
+    tileStates[p] = { top: tileTop, bottom: tileBottom }
+  } catch { /* cancelled */ }
+  delete renderTasks[p]
 
-  // ── text layer ──
-  if (!textDiv) return
+  // Text layer：整页渲染一次，按 cssScale 缓存，不随滚动重渲
+  if (!textDiv || textRendered[p] === cssScale) return
+  textRendered[p] = cssScale
   textDiv.innerHTML = ''
+  const vpCSS = page.getViewport({ scale: cssScale })
   textDiv.style.width  = vpCSS.width  + 'px'
   textDiv.style.height = vpCSS.height + 'px'
-
   try {
     const textLayer = new pdfjsLib.TextLayer({
       textContentSource: page.streamTextContent(),
@@ -208,16 +244,55 @@ async function renderPage(p) {
   } catch { /* cancelled or unsupported */ }
 }
 
+// ── 初始化/缩放后渲染当前页 ±1 页 ──────────────────
+async function renderWindow() {
+  if (!pdfDoc) return
+  const from = Math.max(1, currentPage.value - 1)
+  const to   = Math.min(totalPages.value, currentPage.value + 1)
+
+  for (let p = from; p <= to; p++) {
+    if (!renderedPages.value.has(p)) {
+      renderedPages.value = new Set([...renderedPages.value, p])
+      await nextTick()
+    }
+    await renderPage(p)
+  }
+}
+
+// ── 滚动时按需重渲 tile（debounce 80ms）────────────
+let tileTimer = null
+function scheduleTileRender() {
+  clearTimeout(tileTimer)
+  tileTimer = setTimeout(async () => {
+    if (!scrollRef.value) return
+    const scrollTop = scrollRef.value.scrollTop
+    const viewportH = scrollRef.value.clientHeight
+    const from = Math.max(1, currentPage.value - 1)
+    const to   = Math.min(totalPages.value, currentPage.value + 1)
+
+    for (let p = from; p <= to; p++) {
+      if (!renderedPages.value.has(p)) continue
+      const state = tileStates[p]
+      if (state) {
+        const pageTop   = getPageTop(p)
+        const visTop    = scrollTop - pageTop
+        const visBottom = scrollTop + viewportH - pageTop
+        // 可见区域仍在已渲染 tile 内，跳过
+        if (visTop >= state.top && visBottom <= state.bottom) continue
+      }
+      await renderPage(p)
+    }
+  }, 80)
+}
+
 // ── 翻页 ───────────────────────────────────────────────
 let scrollLockTimer = null
 
 function goTo(p) {
   p = Math.max(1, Math.min(totalPages.value, p))
   currentPage.value = p
-
   clearTimeout(scrollLockTimer)
   scrollLockTimer = setTimeout(() => { scrollLockTimer = null }, 600)
-
   scrollToPage(p)
   renderWindow()
 }
@@ -238,7 +313,7 @@ function scrollToPage(p) {
   el.scrollTo({ top, behavior: 'smooth' })
 }
 
-// ── 滚动时更新当前页 ───────────────────────────────────
+// ── 滚动事件 ───────────────────────────────────────────
 function onScroll() {
   if (scrollLockTimer) return
   const el = scrollRef.value
@@ -250,7 +325,7 @@ function onScroll() {
     const h = sz.height * scale.value + 16
     if (top + h > el.scrollTop + 80) {
       currentPage.value = p
-      renderWindow()
+      scheduleTileRender()
       return
     }
     top += h
@@ -259,15 +334,33 @@ function onScroll() {
 
 // ── 缩放 ───────────────────────────────────────────────
 async function applyScale(s) {
+  const el = scrollRef.value
+  let fraction = 0
+  if (el && el.scrollHeight > el.clientHeight) {
+    fraction = Math.min(1, (el.scrollTop + el.clientHeight / 2) / el.scrollHeight)
+  }
+
   scale.value = s
   renderedPages.value = new Set()
+  Object.keys(tileStates).forEach(k => delete tileStates[k])
+  Object.keys(textRendered).forEach(k => delete textRendered[k])
   await nextTick()
+
+  if (el && fraction > 0) {
+    el.scrollTop = fraction * el.scrollHeight - el.clientHeight / 2
+  }
+
   await renderWindow()
 }
 
 async function changeScale(delta) {
   isFitWidth.value = false
   await applyScale(Math.min(4, Math.max(0.4, +(scale.value + delta).toFixed(1))))
+}
+
+async function resetScale() {
+  isFitWidth.value = false
+  await applyScale(1)
 }
 
 async function fitWidth() {
@@ -287,7 +380,7 @@ async function toggleFitWidth() {
   }
 }
 
-// ── 页面占位尺寸（CSS px，含 DPI 校正 + 用户缩放）────────
+// ── 占位尺寸 ──────────────────────────────────────────
 function pageWrapStyle(p) {
   const sz = pageSizes.value[p]
   if (!sz) return {}
@@ -311,6 +404,7 @@ function setTextRef(el, p) {
 onUnmounted(() => {
   if (pdfDoc) pdfDoc.destroy()
   clearTimeout(scrollLockTimer)
+  clearTimeout(tileTimer)
 })
 </script>
 
@@ -381,6 +475,12 @@ onUnmounted(() => {
   min-width: 20px;
   text-align: center;
 }
+.pv-scale-reset {
+  border: none; background: none; cursor: pointer;
+  padding: 2px 5px; border-radius: 4px;
+  transition: background 0.12s, color 0.12s;
+}
+.pv-scale-reset:hover { background: rgba(0,0,0,0.06); color: var(--text-primary); }
 
 /* ── 滚动区 ── */
 .pv-scroll {
@@ -415,8 +515,12 @@ onUnmounted(() => {
   background: rgba(240, 241, 246, 0.8);
 }
 
+/* canvas 绝对定位在 page-wrap 内，只覆盖可见 tile */
 .pv-canvas {
   display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
 }
 
 /* ── text layer ── */
@@ -425,12 +529,10 @@ onUnmounted(() => {
   top: 0;
   left: 0;
   overflow: hidden;
-  /* spans 是透明的，只用于文字选中 */
   line-height: 1;
-  pointer-events: none;  /* 不拦截点击，只允许选中 */
+  pointer-events: none;
 }
 
-/* PDF.js 动态插入的 span，不在 scoped 范围内，用 :deep */
 .pv-text-layer :deep(span) {
   color: transparent;
   position: absolute;
