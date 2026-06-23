@@ -11,9 +11,10 @@ from typing import AsyncGenerator
 
 from agent.skills import registry
 
-# 工具循环最大轮次。模型常一轮调一个工具，复杂多步任务（删项目+加阶段+加待办+建文档…）
-# 需要不少轮，5 太小会半途被「轮次超限」打断。16 给足头寸，又能兜住失控循环。
-MAX_ROUNDS = 16
+# 工具循环最大轮次。配合「工具使用准则」(skills.md，先规划后执行、别重复验证) + 强工具
+# (create_project 直接带 stages/todos、set_stages 整体替换)，多步任务现在 2~3 轮就能完成，
+# 6 足够覆盖且逼出「低成本执行」；真撞上限会友好提示「前面已生效，要不要接着做」。
+MAX_ROUNDS = 6
 
 
 class LLMRunner:

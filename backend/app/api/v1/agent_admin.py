@@ -72,7 +72,7 @@ router = APIRouter(prefix="/admin/agent", tags=["admin"])
 
 PROMPTS_DIR = Path(__file__).parent.parent.parent.parent / "agent" / "prompts"
 
-PROFILES = ["default", "qqbot", "mini"]
+PROFILES = ["default"]   # qqbot/mini 是早期占位、从未接线（运行时只用 default），已移除以免空 tab 误导
 
 PLACEHOLDERS = [
     {"key": "{today}",       "desc": "今天日期"},
@@ -88,8 +88,9 @@ PLACEHOLDERS = [
 ]
 
 
-# 非对话 profile 的特殊可编辑 prompt：persona（人格）、reflection（反思提炼）、compress（记忆压缩）
-SPECIAL_PROMPTS = ["persona", "reflection", "compress"]
+# 非对话 profile 的特殊可编辑 prompt：persona（人格）、skills（工具使用准则）、
+# reflection（反思提炼）、compress（记忆压缩）
+SPECIAL_PROMPTS = ["persona", "skills", "reflection", "compress"]
 
 
 def _prompt_path(profile: str) -> Path:
@@ -108,6 +109,14 @@ async def list_prompts():
         "profile": "persona",
         "exists": pp.exists(),
         "size": pp.stat().st_size if pp.exists() else 0,
+        "is_persona": True,
+    })
+    # skills：工具使用准则（Execution Policy），紧跟人格注入、所有 profile 共享
+    sk = PROMPTS_DIR / "skills.md"
+    profiles.append({
+        "profile": "skills",
+        "exists": sk.exists(),
+        "size": sk.stat().st_size if sk.exists() else 0,
         "is_persona": True,
     })
     # reflection / compress：记忆相关提炼词，非对话 profile，谨慎修改

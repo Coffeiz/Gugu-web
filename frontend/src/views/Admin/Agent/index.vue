@@ -192,7 +192,7 @@
               :class="{ active: activeProfile === p.profile }"
               :data-label="p.profile"
               @click="switchProfile(p.profile)"
-            >{{ ({persona:'人格', reflection:'记忆反思', compress:'记忆压缩'})[p.profile] || p.profile }}</button>
+            >{{ ({persona:'人格', skills:'工具准则', reflection:'记忆反思', compress:'记忆压缩'})[p.profile] || p.profile }}</button>
           </div>
         </div>
 
@@ -200,6 +200,12 @@
           style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
                  background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
           ⚠️ 这是咕咕的<strong>人格设定</strong>，所有对话共享。谨慎修改 —— 会直接改变咕咕的性格、主动性、对话模式与说话方式。
+        </div>
+
+        <div v-if="activeProfile === 'skills'" class="persona-caution"
+          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
+                 background:rgba(123,127,178,0.12);border:1px solid rgba(123,127,178,0.3);color:#5b5f96">
+          🛠️ 这是<strong>工具使用准则</strong>（Execution Policy），紧跟人格注入、所有对话共享。决定咕咕何时该动手、动几下、别重复验证/查询。越短越好用，改它直接影响咕咕调工具的行为模式。
         </div>
 
         <div v-if="activeProfile === 'reflection'" class="persona-caution"
