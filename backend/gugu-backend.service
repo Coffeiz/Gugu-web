@@ -1,17 +1,17 @@
 [Unit]
 Description=Gugu Backend (FastAPI)
-Documentation=https://github.com/your-org/Gugu-web
 After=network.target
 
 [Service]
 Type=simple
-# 改成实际运行该服务的用户（不要用 root）
-User=www-data
-Group=www-data
-WorkingDirectory=/opt/1panel/www/sites/test.gugugu.site/backend
-Environment="PATH=/opt/1panel/www/sites/test.gugugu.site/backend/.venv/bin"
+# 运行用户，由 start.sh install 按 RUN_USER 填入（默认 www-data，不要用 root）
+User=__RUN_USER__
+Group=__RUN_USER__
+# 以下路径由 start.sh install 按实际安装目录(APP_DIR)自动填入，勿手改占位符
+WorkingDirectory=__APP_DIR__
+Environment="PATH=__APP_DIR__/.venv/bin"
 Environment="DB_STARTUP_TIMEOUT=10"
-ExecStart=/opt/1panel/www/sites/test.gugugu.site/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+ExecStart=__APP_DIR__/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
 Restart=on-failure
 RestartSec=3
 
@@ -23,8 +23,8 @@ StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-# uploads 目录需要写权限
-ReadWritePaths=/opt/1panel/www/sites/test.gugugu.site/backend/uploads /opt/1panel/www/sites/test.gugugu.site/backend/config.override.json
+# 运行时需要写的目标（必须真实存在，否则 systemd namespace 报 226）
+ReadWritePaths=__APP_DIR__/uploads __APP_DIR__/logs __APP_DIR__/config.override.json
 
 [Install]
 WantedBy=multi-user.target

@@ -18,6 +18,8 @@ langchain-community>=0.2.0
 oss2>=2.18.0
 # IM 平台接入（飞书 WebSocket 长连 + API）
 lark-oapi>=1.6.0
+# QQ 官方机器人（botpy WebSocket 长连 + API，C2C 单聊）
+qq-botpy>=1.2.0
 # Utils
 python-dotenv>=1.0.0
 uuid6>=2024.1.12

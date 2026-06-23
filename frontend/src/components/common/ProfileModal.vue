@@ -181,6 +181,45 @@
                 <button class="pm-qr-cancel" @click="cancelFeishuBind">取消</button>
               </div>
               <div v-else-if="feishuError" class="pm-qr-err">{{ feishuError }}</div>
+
+              <!-- QQ：自带机器人（BYO）-->
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">QQ（自带机器人）</span>
+                  <span class="pm-field-hint">在 q.qq.com 创建你自己的 QQ 机器人，填进来，私聊它直接管项目/文件/日程</span>
+                </div>
+                <button class="pm-bind-btn" @click="qqShowCreate = !qqShowCreate">{{ qqShowCreate ? '收起' : '去创建' }}</button>
+              </div>
+
+              <div v-if="qqShowCreate" class="pm-qr-box">
+                <canvas ref="qqQrCanvas" class="pm-qr-canvas"></canvas>
+                <div class="pm-qr-hint">手机 QQ 扫码进<a :href="QQ_CREATE_URL" target="_blank" rel="noopener">移动版开放平台</a> → 创建机器人 → 把 AppID / AppSecret 填到下面</div>
+              </div>
+
+              <!-- 我的 QQ 机器人 -->
+              <div v-for="b in qqBots" :key="b.id" class="pm-bot-item">
+                <div class="pm-bot-info">
+                  <span class="pm-bot-name">{{ b.name }}<span v-if="b.sandbox" class="pm-bot-tag">沙箱</span></span>
+                  <span class="pm-bot-appid">{{ b.app_id }}</span>
+                </div>
+                <button class="pm-mini-toggle" :class="{ on: b.enabled }" @click="toggleQQBot(b)">{{ b.enabled ? '已启用' : '已停用' }}</button>
+                <button class="pm-bot-del" @click="removeQQBot(b)">删除</button>
+              </div>
+
+              <!-- 添加表单 -->
+              <div v-if="qqForm" class="pm-bot-form">
+                <input v-model="qqForm.name" placeholder="名称（可选）" class="pm-bot-input" />
+                <input v-model="qqForm.app_id" placeholder="AppID（纯数字）" class="pm-bot-input" autocomplete="off" />
+                <input v-model="qqForm.app_secret" type="password" placeholder="AppSecret" class="pm-bot-input" autocomplete="new-password" />
+                <label class="pm-bot-check"><input type="checkbox" v-model="qqForm.sandbox" /> 沙箱环境（开发期勾选）</label>
+                <div class="pm-bot-form-actions">
+                  <span class="pm-qr-err" style="flex:1">{{ qqError }}</span>
+                  <button class="pm-bind-btn off" @click="qqForm = null">取消</button>
+                  <button class="pm-bind-btn" :disabled="qqSaving" @click="saveQQBot">{{ qqSaving ? '保存中…' : '保存' }}</button>
+                </div>
+              </div>
+              <button v-else class="pm-add-bot" @click="openQQForm">+ 添加 QQ 机器人</button>
+              <div v-if="qqError && !qqForm" class="pm-qr-err">{{ qqError }}</div>
             </div>
           </template>
 
@@ -263,7 +302,7 @@ import QRCode from 'qrcode'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import BaseModal from '@/components/common/BaseModal.vue'
-import { authApi, feishuApi } from '@/services/api'
+import { authApi, feishuApi, userBotsApi } from '@/services/api'
 import { PhX, PhSignOut, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird } from '@phosphor-icons/vue'
 
 const props = defineProps({ show: Boolean })
@@ -366,7 +405,7 @@ async function loadQuota() {
   finally { quotaLoading.value = false }
 }
 
-watch(activeNav, v => { if (v === 'gugu') { loadQuota(); loadFeishu() } })
+watch(activeNav, v => { if (v === 'gugu') { loadQuota(); loadFeishu(); loadQQ() } })
 
 // ── 飞书 OAuth 扫码绑定 ──
 const feishu = ref({ bound: false, display_name: '' })
@@ -426,6 +465,48 @@ async function unbindFeishu() {
   if (!confirm('解绑飞书？解绑后在飞书里找咕咕会提示重新绑定。')) return
   try { await feishuApi.unbind(); feishu.value = { bound: false, display_name: '' } }
   catch (e) { feishuError.value = e.message }
+}
+
+// ── QQ 自带机器人（BYO）──
+// QQ 开放平台移动版创建/列表页（手机 QQ 扫码登录后可直接建 bot），桌面版 q.qq.com 手机体验差
+const QQ_CREATE_URL = 'https://q.qq.com/qqbot/openclaw/'
+const qqBots = ref([])
+const qqShowCreate = ref(false)
+const qqQrCanvas = ref(null)
+const qqForm = ref(null)
+const qqSaving = ref(false)
+const qqError = ref('')
+
+async function loadQQ() {
+  try { const r = await userBotsApi.list(); qqBots.value = r.items || [] } catch {}
+}
+
+// 展开创建引导时渲染 q.qq.com 二维码
+watch(qqShowCreate, async v => {
+  if (!v) return
+  await nextTick()
+  try { await QRCode.toCanvas(qqQrCanvas.value, QQ_CREATE_URL, { width: 150, margin: 1 }) } catch {}
+})
+
+function openQQForm() { qqForm.value = { name: '', app_id: '', app_secret: '', sandbox: false }; qqError.value = '' }
+
+async function saveQQBot() {
+  const f = qqForm.value
+  if (!f.app_id || !f.app_secret) { qqError.value = '请填 AppID 和 AppSecret'; return }
+  qqSaving.value = true; qqError.value = ''
+  try { await userBotsApi.create(f); qqForm.value = null; await loadQQ() }
+  catch (e) { qqError.value = e.message } finally { qqSaving.value = false }
+}
+
+async function toggleQQBot(b) {
+  try { await userBotsApi.update(b.id, { enabled: !b.enabled }); await loadQQ() }
+  catch (e) { qqError.value = e.message }
+}
+
+async function removeQQBot(b) {
+  if (!confirm(`删除「${b.name}」？删除后这个 QQ 机器人不再连咕咕。`)) return
+  try { await userBotsApi.remove(b.id); await loadQQ() }
+  catch (e) { qqError.value = e.message }
 }
 
 onUnmounted(_stopPoll)
@@ -610,7 +691,42 @@ function handleLogout() {
   padding: 16px; background: rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.06); border-radius: 12px;
 }
 .pm-qr-canvas { border-radius: 8px; background: #fff; }
-.pm-qr-hint { font-size: 12px; color: var(--text-secondary); }
+.pm-qr-hint { font-size: 12px; color: var(--text-secondary); text-align: center; }
+.pm-qr-hint a { color: #7b7fb2; font-weight: 600; }
+
+/* QQ BYO：机器人列表 + 表单 */
+.pm-bot-item {
+  margin-top: 8px; display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: 10px;
+  background: rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.06);
+}
+.pm-bot-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pm-bot-name { font-size: 13px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
+.pm-bot-tag { font-size: 10px; font-weight: 600; color: #b8860b; background: rgba(212,160,23,0.14); padding: 1px 6px; border-radius: 5px; }
+.pm-bot-appid { font-size: 11px; color: var(--text-secondary); font-family: 'SF Mono','Consolas',monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-mini-toggle {
+  flex-shrink: 0; font-size: 11px; padding: 3px 9px; border-radius: 6px; cursor: pointer;
+  border: 1px solid rgba(0,0,0,0.1); background: rgba(0,0,0,0.03); color: var(--text-secondary);
+}
+.pm-mini-toggle.on { color: #2a8c5a; border-color: rgba(42,140,90,0.3); background: rgba(42,140,90,0.08); }
+.pm-bot-del { flex-shrink: 0; font-size: 12px; color: #c05050; background: none; border: none; cursor: pointer; }
+.pm-add-bot {
+  margin-top: 8px; width: 100%; padding: 8px; border-radius: 9px; cursor: pointer;
+  font-size: 13px; color: var(--text-secondary);
+  border: 1px dashed rgba(0,0,0,0.15); background: none;
+}
+.pm-add-bot:hover { color: #7b7fb2; border-color: rgba(123,127,178,0.4); }
+.pm-bot-form {
+  margin-top: 8px; display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; border-radius: 10px; background: rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.06);
+}
+.pm-bot-input {
+  width: 100%; padding: 8px 11px; border-radius: 8px; font-size: 13px;
+  border: 1px solid rgba(0,0,0,0.1); background: #fff; color: var(--text-primary); outline: none;
+}
+.pm-bot-input:focus { border-color: rgba(123,127,178,0.5); }
+.pm-bot-check { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.pm-bot-form-actions { display: flex; align-items: center; gap: 8px; }
 .pm-qr-cancel {
   font-size: 12px; color: var(--text-secondary); background: none; border: none;
   cursor: pointer; text-decoration: underline;

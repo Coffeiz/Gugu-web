@@ -290,6 +290,27 @@ class PlatformBinding(Base):
     created_at:       Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+# ── UserBot（BYO：每用户自带的 IM 机器人）─────────────────────────────────────
+
+class UserBot(Base):
+    """用户自带机器人（Bring-Your-Own）：每用户存自己的 bot 凭据，咕咕为其起独立网关。
+
+    目前用于 QQ（platform=qqbot）。消息天然属于该 bot 的 owner（user_id），
+    所以不需要再做平台用户↔咕咕用户的绑定——bot 即归属。
+    """
+    __tablename__ = "user_bots"
+
+    id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    platform:   Mapped[str]      = mapped_column(String(20), default="qqbot")
+    name:       Mapped[str]      = mapped_column(String(100), default="")
+    app_id:     Mapped[str]      = mapped_column(String(128), default="")
+    app_secret: Mapped[str]      = mapped_column(String(256), default="")
+    sandbox:    Mapped[bool]     = mapped_column(Boolean, default=False)
+    enabled:    Mapped[bool]     = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 # ── InviteCode ────────────────────────────────────────────────────────────────
 
 class InviteCode(Base):

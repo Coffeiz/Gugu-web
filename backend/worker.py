@@ -27,23 +27,38 @@ CONSUMER = f"{socket.gethostname()}-{os.getpid()}"
 _stop = asyncio.Event()
 
 
-_UNBOUND_HINT = (
-    "你好，我是咕咕 🐦\n你还没把飞书绑定到咕咕账号——在咕咕里打开「个人设置 → 绑定飞书」"
-    "扫个码，就能在这儿直接让我帮你管项目、查文件、记事情啦。"
-)
+_UNBOUND_HINT = {
+    "feishu": (
+        "你好，我是咕咕 🐦\n你还没把飞书绑定到咕咕账号——在咕咕里打开「个人设置 → 接入咕咕 → 飞书」"
+        "扫个码，就能在这儿直接让我帮你管项目、查文件、记事情啦。"
+    ),
+}
+_DEFAULT_HINT = "你好，我是咕咕 🐦\n你还没把这个账号绑定到咕咕，先去咕咕「个人设置 → 接入咕咕」完成绑定吧。"
 
 
 async def _resolve_user(payload: dict):
-    """平台用户 → 咕咕 user_id：查 PlatformBinding (platform, platform_user_id)。
-    返回 (user_id, display_name)；未绑定返回 (None, "")。"""
+    """平台用户 → 咕咕 user_id。
+    - QQ（BYO）：bot 即归属，payload 自带 owner_user_id，直接用（查昵称即可）。
+    - 飞书（共享）：查 PlatformBinding (platform, platform_user_id)。
+    返回 (user_id, display_name)；认不出返回 (None, "")。"""
     platform = payload.get("platform")
     puid = payload.get("platform_user_id")
-    if not platform or not puid:
-        return None, ""
+
     import app.db.session as _sess
     if _sess._engine is None:
         _sess._build_engine()
     from sqlalchemy import select
+
+    # QQ：owner 即用户
+    owner = payload.get("owner_user_id")
+    if platform == "qqbot" and owner:
+        from app.models import User
+        async with _sess._SessionLocal() as db:
+            u = await db.get(User, owner)
+            return owner, ((u.display_name if u else "") or "")
+
+    if not platform or not puid:
+        return None, ""
     from app.models import PlatformBinding
     async with _sess._SessionLocal() as db:
         b = (await db.execute(
@@ -61,6 +76,10 @@ async def _send(payload: dict, text: str):
     if platform == "feishu" and payload.get("chat_id"):
         from agent.adapters import feishu
         await asyncio.to_thread(feishu.send_text, payload["chat_id"], text, payload.get("channel_id"))
+    elif platform == "qqbot" and payload.get("platform_user_id"):
+        from agent.adapters import qq
+        await qq.send_c2c(payload["platform_user_id"], text,
+                          payload.get("message_id"), payload.get("channel_id"))
     else:
         print(f"[worker] (无发送通道) {platform}: {text!r}", flush=True)
 
@@ -69,8 +88,9 @@ async def handle(msg_id: str, payload: dict):
     """处理一条：解析用户 → 未绑定回提示 / 已绑定跑 agent → 发回平台。"""
     user_id, user_name = await _resolve_user(payload)
     if not user_id:
-        # 未绑定：回扫码绑定提示，不跑大脑
-        await _send(payload, _UNBOUND_HINT)
+        # 认不出（飞书未绑定 / QQ bot 没 owner）：回提示，不跑大脑
+        hint = _UNBOUND_HINT.get(payload.get("platform"), _DEFAULT_HINT)
+        await _send(payload, hint)
         print(f"[worker] 未绑定用户 {payload.get('platform_user_id')}，已回提示", flush=True)
         return None
 

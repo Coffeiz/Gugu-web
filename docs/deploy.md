@@ -152,14 +152,21 @@ server {
     listen 80;
     server_name gugugu.site;
 
-    # 前端静态
+    # 前端静态（主站 + 后台是两个独立 SPA，共用 dist/ 根）
     root /path/to/Gugu-web/frontend/dist;
     index index.html;
+
+    # 后台 SPA：深链/刷新回退到 admin 自己的 index.html（必须在 location / 之前/之外单列）
+    location /admin {
+        try_files $uri $uri/ /admin/index.html;
+    }
+
+    # 主站 SPA
     location / {
         try_files $uri $uri/ /index.html;     # SPA 路由回退
     }
 
-    # 后端 API + Admin 反代
+    # 后端 API（主站 + 后台共用这一套反代）
     location /api/ {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
@@ -183,9 +190,16 @@ sudo nginx -t && sudo systemctl reload nginx
 ### 3.5 后端 web 服务（systemd）
 项目自带：
 ```bash
-cd backend && make install      # 装 gugu-backend.service（自启 + 自重启）
+cd backend && make install      # 按当前目录自动生成 gugu-backend.service（自启 + 自重启）
 sudo systemctl status gugu-backend
 ```
+
+`make install` 会：
+- 按**当前 backend 目录**(`APP_DIR`)填好单元里的 `WorkingDirectory`/`ExecStart`/`ReadWritePaths`（模板里是 `__APP_DIR__` 占位符，不写死路径——换部署目录也不用手改）；
+- 先建出 `uploads/`、`logs/`、`config.override.json` 并 `chown` 给运行用户（`ReadWritePaths` 要求这些路径**真实存在**，否则 systemd 报 `226/NAMESPACE`）；
+- 运行用户默认 `www-data`，可覆盖：`RUN_USER=youruser make install`（该用户须已存在，且能读 `.venv` 与项目目录）。
+
+> 1Panel 部署：backend 一般在 `/opt/1panel/www/sites/<域名>/backend`，直接在该目录 `make install` 即可，路径自动对上。
 
 ### 3.6 worker + supervisor 服务（systemd · 需手动加）
 

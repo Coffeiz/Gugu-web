@@ -416,7 +416,8 @@ async def test_llm_preset(preset_id: str):
 
 # ── IM 机器人 CRUD（存 config.override.json 的 bots 列表）────────────────────────
 
-BOT_PLATFORMS = ["feishu", "qqbot", "weixin"]
+# Admin 管的是共享 bot（飞书）；QQ 走用户自带(BYO)，在用户设置里管理，不在这里
+BOT_PLATFORMS = ["feishu"]
 
 
 def _bots(override: dict) -> list:
@@ -445,8 +446,9 @@ class BotCreate(BaseModel):
     name: str = ""
     app_id: str = ""
     app_secret: str = ""
-    encrypt_key: str = ""           # 事件订阅「请求地址」模式才需要（长连接留空）
+    encrypt_key: str = ""           # 飞书事件订阅「请求地址」模式才需要（长连接留空）
     verification_token: str = ""
+    sandbox: bool = False           # QQ 专用：是否连沙箱环境（开发期测试用）
     enabled: bool = True
 
 
@@ -464,6 +466,7 @@ async def create_bot(body: BotCreate):
         "app_secret": body.app_secret,
         "encrypt_key": body.encrypt_key,
         "verification_token": body.verification_token,
+        "sandbox": body.sandbox,
         "enabled": body.enabled,
     }
     bots.append(item)
@@ -477,6 +480,7 @@ class BotUpdate(BaseModel):
     app_secret: str | None = None
     encrypt_key: str | None = None
     verification_token: str | None = None
+    sandbox: bool | None = None
     enabled: bool | None = None
 
 
@@ -497,6 +501,8 @@ async def update_bot(bot_id: str, body: BotUpdate):
         item["encrypt_key"] = body.encrypt_key
     if body.verification_token is not None:
         item["verification_token"] = body.verification_token
+    if body.sandbox is not None:
+        item["sandbox"] = body.sandbox
     if body.enabled is not None:
         item["enabled"] = body.enabled
     _write_override(override)

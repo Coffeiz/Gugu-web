@@ -50,8 +50,12 @@ const routes = [
     ],
   },
 
-  // 404
-  { path: '/:pathMatch(.*)*', redirect: '/login' },
+  // 404（登录与否都直接展示，不跳登录）
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'NotFound',
+    component: () => import('@/views/NotFound.vue'),
+  },
 ]
 
 const router = createRouter({

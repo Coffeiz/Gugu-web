@@ -26,6 +26,7 @@ from app.api.v1 import trash as trash_router
 from app.api.v1 import agent as agent_router
 from app.api.v1 import feishu_bind as feishu_bind_router
 from app.api.v1 import feishu_event as feishu_event_router
+from app.api.v1 import user_bots as user_bots_router
 from app.api.v1 import preferences as preferences_router
 from app.api.v1 import agent_admin as agent_admin_router
 from app.api.v1 import invite_codes as invite_codes_router
@@ -191,6 +192,7 @@ app.include_router(preferences_router.router, prefix="/api/v1")
 # 飞书 OAuth 扫码绑定：bind/url + status + unbind 需用户登录；callback 是飞书重定向（靠 state 校验）
 app.include_router(feishu_bind_router.router,  prefix="/api/v1")
 app.include_router(feishu_event_router.router, prefix="/api/v1")
+app.include_router(user_bots_router.router,    prefix="/api/v1")
 
 # ── Admin 路由（需要 Admin token）──
 app.include_router(

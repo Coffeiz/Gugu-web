@@ -9,6 +9,25 @@
 
 ## [Unreleased] · 文件库回收站多选
 
+### 新增 · QQ 机器人接入（单聊 C2C，每用户自带 BYO）
+
+- **QQ 官方机器人**（botpy WebSocket 长连接，C2C 单聊）：用户私聊自己的 QQ 机器人，带完整人格/记忆/工具回复。和飞书长连接同模式——**不需要公网、备案前可用**
+  - `agent/adapters/qq.py`：收 C2C 消息入队（payload 与飞书同构，带 `message_id` 供被动回复 + `owner_user_id`）；**收**凭据从 env 注入、**发**消息按 bot id 现查 DB（`send_c2c` token 失效自动重建重试）
+  - `requirements.txt` 加 `qq-botpy>=1.2.0`
+- **BYO 模型（每用户自带 bot）**：每个用户在「个人设置 → 接入咕咕 → QQ」填自己在 q.qq.com 建的 bot 凭据，咕咕为其起独立网关；bot 收到的消息天然归属 owner，**无需再做用户绑定**
+  - 新增 `user_bots` 表 + `app/api/v1/user_bots.py`（`/me/bots` 用户级 CRUD，secret 打码，仅能管自己的）
+  - `supervisor.py`：飞书走 override 文件 + argv、QQ 走 `user_bots` 表 + 环境变量注入凭据（避免 ps 泄漏）；常驻 loop 复用 engine，DB 抖动保活不误杀
+  - `worker.py`：QQ 用 payload 的 `owner_user_id` 直接认人
+  - 前端「QQ（自带机器人）」：扫码进 QQ 移动版开放平台（`q.qq.com/qqbot/openclaw/`）创建 → 填 AppID/Secret/沙箱 → 我的 bot 列表（启停/删除）
+  - Admin 频道面板收敛为仅飞书（QQ 改由用户自助管理）
+
+### 新增 · 404 页 + 部署/运维
+
+- **404 页**：咕咕风格的 NotFound 页（路由 catch-all 改为渲染，不再 redirect 到登录）
+- **systemd 单元按安装目录自动生成**：`start.sh install` 用 `__APP_DIR__`/`__RUN_USER__` 占位符按当前 backend 目录填路径 + 建可写目录(uploads/logs/override)并授权——换部署目录不再手改、不再撞 `226/NAMESPACE`；运行用户可 `RUN_USER=xxx make install` 覆盖
+- **deploy.md nginx**：补 admin 子站 `location /admin` SPA 回退 + 带 hash 资源强缓存/HTML no-cache + gzip 建议
+- **vite**：`server.allowedHosts` 加 `myhome.coffeiz.space`（自定义域名/内网穿透访问 dev）
+
 ### 新增
 
 - **回收站多选 / 框选**：文件库回收站支持选择模式

@@ -245,7 +245,9 @@
 
               <div class="modal-field">
                 <label>App ID</label>
-                <input v-model="botEditing.app_id" placeholder="飞书形如 cli_xxxx" class="modal-input" autocomplete="off" />
+                <input v-model="botEditing.app_id"
+                  :placeholder="botEditing.platform === 'qqbot' ? 'QQ 机器人 AppID（纯数字）' : '飞书形如 cli_xxxx'"
+                  class="modal-input" autocomplete="off" />
               </div>
 
               <div class="modal-field">
@@ -274,6 +276,16 @@
                 <div class="modal-field">
                   <label>Verification Token</label>
                   <input v-model="botEditing.verification_token" placeholder="飞书事件订阅页的 Verification Token" class="modal-input" autocomplete="off" />
+                </div>
+              </template>
+
+              <!-- QQ：沙箱开关（开发期只有沙箱成员能聊；发布后关掉走正式环境）-->
+              <template v-if="botEditing.platform === 'qqbot'">
+                <div class="modal-field modal-field--row">
+                  <span>沙箱环境</span>
+                  <button class="toggle-switch" :class="{ on: botEditing.sandbox }" @click="botEditing.sandbox = !botEditing.sandbox">
+                    <span class="toggle-knob" />
+                  </button>
                 </div>
               </template>
 
@@ -763,7 +775,7 @@ async function fetchBots() {
 }
 
 function openNewBot() {
-  botEditing.value = { platform: 'feishu', name: '', app_id: '', app_secret: '', encrypt_key: '', verification_token: '', enabled: true }
+  botEditing.value = { platform: 'feishu', name: '', app_id: '', app_secret: '', encrypt_key: '', verification_token: '', sandbox: false, enabled: true }
   botError.value = ''
 }
 function openEditBot(b) {
@@ -809,7 +821,8 @@ async function saveBot() {
     const method = b.id ? 'PUT' : 'POST'
     const common = {
       name: b.name, app_id: b.app_id, app_secret: b.app_secret,
-      encrypt_key: b.encrypt_key, verification_token: b.verification_token, enabled: b.enabled,
+      encrypt_key: b.encrypt_key, verification_token: b.verification_token,
+      sandbox: !!b.sandbox, enabled: b.enabled,
     }
     const payload = b.id ? common : { platform: b.platform, ...common }
     const res = await adminStore.authFetch(url, { method, body: JSON.stringify(payload) })

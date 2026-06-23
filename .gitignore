@@ -56,3 +56,7 @@ backend/uploads/
 *.pid
 # 备份文件
 backup/
+
+# 构建产物 / 大字体资源
+gugu-backend-*.tar.gz
+docs/smiley-sans/

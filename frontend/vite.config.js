@@ -40,6 +40,8 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // 通过自定义域名/内网穿透访问 dev server 时，需把域名加入白名单，否则 Vite 拦截 Host 头
+    allowedHosts: ['myhome.coffeiz.space'],
     proxy: {
       '/api': {
         target: 'http://localhost:8000',

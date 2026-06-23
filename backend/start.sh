@@ -151,12 +151,31 @@ cmd_foreground() {
 
 cmd_install() {
     local svc="/etc/systemd/system/gugu-backend.service"
-    if [ ! -f "${APP_DIR}/gugu-backend.service" ]; then
-        err "未找到 ${APP_DIR}/gugu-backend.service，请先把 systemd 单元放到 backend 目录"
+    local tmpl="${APP_DIR}/gugu-backend.service"
+    # 运行该服务的用户，可用 RUN_USER 覆盖（默认 www-data，勿用 root）
+    local run_user="${RUN_USER:-www-data}"
+
+    if [ ! -f "$tmpl" ]; then
+        err "未找到 $tmpl，请先把 systemd 单元放到 backend 目录"
         exit 1
     fi
-    log "复制 systemd 单元到 $svc"
-    cp "${APP_DIR}/gugu-backend.service" "$svc"
+    if ! id "$run_user" >/dev/null 2>&1; then
+        err "运行用户 '$run_user' 不存在；用 RUN_USER=xxx make install 指定一个已存在的用户"
+        exit 1
+    fi
+
+    # ReadWritePaths 要求路径真实存在，否则 systemd 报 226/NAMESPACE
+    log "准备可写目录并授权给 $run_user"
+    mkdir -p "${APP_DIR}/uploads" "${APP_DIR}/logs"
+    [ -f "${APP_DIR}/config.override.json" ] || echo '{}' > "${APP_DIR}/config.override.json"
+    chown -R "$run_user":"$run_user" "${APP_DIR}/uploads" "${APP_DIR}/logs" "${APP_DIR}/config.override.json"
+
+    # 按实际安装目录 / 用户填占位符，生成单元（不再死拷模板，换路径也不会再踩 test.* 之类）
+    log "按 APP_DIR=${APP_DIR} 生成 systemd 单元 → $svc"
+    sed -e "s#__APP_DIR__#${APP_DIR}#g" \
+        -e "s#__RUN_USER__#${run_user}#g" \
+        "$tmpl" > "$svc"
+
     systemctl daemon-reload
     systemctl enable gugu-backend
     log "启动服务 ..."

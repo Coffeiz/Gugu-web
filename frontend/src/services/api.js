@@ -238,3 +238,11 @@ export const feishuApi = {
   status:  () => request('GET',    '/feishu/bind/status'),
   unbind:  () => request('DELETE', '/feishu/bind'),
 }
+
+// 用户自带机器人（BYO，目前 QQ）
+export const userBotsApi = {
+  list:   ()        => request('GET',    '/me/bots'),
+  create: (body)    => request('POST',   '/me/bots', body),
+  update: (id, body)=> request('PUT',    `/me/bots/${id}`, body),
+  remove: (id)      => request('DELETE', `/me/bots/${id}`),
+}
