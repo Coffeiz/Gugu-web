@@ -1,13 +1,34 @@
 <template>
-  <router-link :to="to" class="nav-item" active-class="active">
+  <!-- div + 编程式跳转：不渲染 <a href>，悬停时浏览器状态栏不暴露 URL -->
+  <div
+    class="nav-item"
+    :class="{ active: isActive }"
+    role="link"
+    tabindex="0"
+    @click="go"
+    @keydown.enter="go"
+  >
     <component :is="icon" class="nav-icon" :size="14" weight="bold" />
     <span class="nav-label-text"><slot /></span>
     <span v-if="$slots.badge" class="badge"><slot name="badge" /></span>
-  </router-link>
+  </div>
 </template>
 
 <script setup>
-defineProps({ to: String, icon: Object })
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+
+const props = defineProps({ to: String, icon: Object })
+const route = useRoute()
+const router = useRouter()
+
+// 复刻 router-link 默认的「包含式」匹配：当前路径等于 to 或在 to 之下即高亮
+const isActive = computed(
+  () => route.path === props.to || route.path.startsWith(props.to + '/'),
+)
+function go() {
+  if (route.path !== props.to) router.push(props.to)
+}
 </script>
 
 <style scoped>
@@ -20,6 +41,7 @@ defineProps({ to: String, icon: Object })
   font-size: 14px;
   color: rgba(30,32,40,0.62);
   text-decoration: none;
+  cursor: pointer;
   transition: all 0.15s;
   border: 1px solid transparent;
 }

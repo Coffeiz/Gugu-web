@@ -5,6 +5,71 @@
 
 ---
 
+## 2026-06-23 · 咕咕读历史对话 + 隐藏导航悬停 URL
+
+两件小事，但第二件踩了「需求别想当然」的教训。
+
+### 咕咕能翻以前的对话了
+
+此前咕咕只能看**当前 session 的上下文**和**提炼出的记忆**，翻不了以前那次具体聊了啥。加 `conversations` skill 两个工具：`search_conversations(keyword?)`（搜消息正文+标题、按 session 聚合带片段；不传则列最近）、`read_conversation(session_id)`（读完整原文）。**严格按 `user_id` 隔离**，读他人 session 返回"不属于你"（实测验证）。和记忆系统互补——**记忆是提炼结论，这是原始原文**，要细节时才翻。
+
+### 「隐藏导航栏 URL」——先理解错成隐藏地址栏
+
+用户说"隐藏导航栏的 url"，我**第一反应是隐藏地址栏路径**，于是把两个 router 都换成 `createMemoryHistory`（路由进内存、地址栏永远停在根）。用户回："我不是说这些"——还反问我**这网站到底该不该隐藏地址栏**。
+
+我给了真实意见：**不该**。URL 路径不是机密，数据靠 token/角色守，藏路径属于"安全靠隐蔽"几乎没用；却实打实丢了**刷新留在原页、深链、前进后退**。于是全回退。
+
+用户真正要的是**消除侧栏链接悬停时浏览器状态栏的 URL 预览**。根因：`<router-link>` 渲染成 `<a href>`，悬停就露目标地址。改法：侧栏项换成 `<div>` + 编程式 `router.push`，**没有 `href` 就没有悬停预览**；自己用 `route.path` 算 active 高亮、补 `tabindex`/`role=link`/回车跳转保住可访问性。主站 `NavItem.vue` + 后台 `AdminLayout.vue` 都改。
+
+**教训**：含糊需求（"隐藏 url"）至少有三种解（藏地址栏 / 藏悬停预览 / 改 hash），我挑了最重的那种还动了架构。该先一句话确认再动手，而不是猜一个就改一片。
+
+详见 `CHANGELOG.md`。
+
+---
+
+## 2026-06-23 · IM 统一 BYO + 服务面板 + 发文件 + 健壮性一波（接 QQ 之后）
+
+QQ 跑通后这一大批：把飞书也并到 BYO、加运维面板、让咕咕能发文件、补一堆健壮性。记几个有价值的点。
+
+### 飞书也是「扫码即创」——又一次推翻「合作墙」
+
+继 QQ 之后，飞书同样被我先误判为"需要官方接入资质"。扒 QwenPaw 源码 + 实测发现飞书有公开的 **OAuth 2.0 设备授权流（RFC 8628）**：`POST accounts.feishu.cn/oauth/v1/app/registration`（init→begin→poll），手机飞书扫码授权后**自动创建 PersonalAgent 应用**、poll 直接返回 `client_id/secret`。**无鉴权、无资质**。
+
+于是把飞书从「Admin 共享 bot + OAuth 用户绑定」**整个换成 BYO**（每用户扫码建自己的 app），和 QQ 统一：
+- supervisor 飞书+QQ 都从 `user_bots` 表读、env 注入凭据；worker 都用 `owner_user_id` 认人（bot 即归属，省掉 `PlatformBinding`）。
+- 删掉一整套旧代码：`feishu_bind.py`(OAuth)、`feishu_event.py`(webhook)、`PlatformBinding` 模型、Admin 频道面板、`FeishuSettings`/`active_im_bots`。
+- 坑：device flow **轮询等待时按 RFC 8628 返回 HTTP 400 + `{"error":"authorization_pending"}`** —— poll 不能 `raise_for_status`，否则一直当失败。
+- **教训重复**：又是"看起来很官方就以为够不着"。一个 `curl` 比三轮猜测有用。两次都栽在这。
+
+### 工具异常会冲垮整轮对话（健壮性大坑）
+
+用户报"咕咕生成一个字就出问题了"。查到 `registry.dispatch` 对工具 handler **没有 try/except**——任何工具抛异常都会穿透 core → web.py 的 `except` → 整轮报「咕咕出了点问题」。一个工具崩 = 整个对话崩。
+
+修：dispatch 包 try/except，把 `{"error":"工具 X 执行出错…"}` 当**结果**返给 LLM（并打日志）。LLM 按 persona 铁律如实说没做成、不假装成功，**对话继续**。顺带把错误文案友好化+分类（网络→「网络不太好」、其他→「开小差」）。
+
+### 发文件：工具 → 前端 UI 的旁路
+
+咕咕要能在窗口发可下载文件。普通工具结果只回给 LLM，没法推 UI。于是开一条旁路：工具结果带 `_artifact` → dispatch 返回 `(文本, artifact)` → core 在 tool_done 后多推 `{type:'file'}` → web 透传给前端渲下载卡片。**任何工具想推 UI 元素都能走这条**。持久化到 `conversation_messages.files`（新列+迁移），刷新后还在。
+
+### 服务面板：kill + systemd 自愈
+
+Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面板看状态 + 一键重启。重启用 **kill pid + 靠 systemd `Restart=always` 复活**（同用户无需 sudo；杀前核对 `/proc/cmdline` 防误杀）。dev 没 systemd 不自愈 → 加了"后端自己 Popen 拉起"兜底，`systemctl is-enabled` 判断走哪条。
+
+### 并行 agent 协作的坑
+
+这阶段有另一个 agent 同时在改前端。踩到：① 它插了个排序选择器到 `v-if/v-else` 中间 → 整个 build 挂（`v-else` 不相邻）；② 它给 `ConversationSession` 加了 `source` 列**但没迁移**，本地我 ALTER 过不报错、**服务器全新 DB 会缺列崩**。
+- **教训**：模型加列必须配迁移（`create_all` 只建表不加列）；提交时只 `git add` 自己动过的文件，别把别人半成品一起提了。
+
+### 收尾
+
+- 网页生成中发消息会**排队**，生成完接力发（和 IM 的 Redis 队列行为一致）。
+- `create_project` 未填日期默认 start=今天、deadline=一周后。
+- IM 对话**补上会话历史**（之前 `run_collect` 没读历史 → "聊着聊着变新会话"）。
+
+详见 `docs/agent.md`、`docs/agent-im接入架构.md`、`CHANGELOG.md`。
+
+---
+
 ## 2026-06-23 · QQ 接入：从「以为是合作墙」到扫码自动连接（根因拆解）🦐
 
 **结论先行**：QQ 实现了「手机扫码 → QQ App 内选 bot 授权 → 咕咕自动填好 AppSecret」，体验等同 QwenPaw/OpenClaw。**实测整套 q.qq.com 接口无鉴权、无需任何合作方资质**——一度误判为「腾讯官方合作墙」，被用户的实测和扒源码推翻。这条记录的价值在于**纠错过程**：别想当然把「看起来很官方的能力」判成够不着。

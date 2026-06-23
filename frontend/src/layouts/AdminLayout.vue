@@ -24,15 +24,15 @@
       <!-- 导航 -->
       <nav class="sidebar-nav">
         <div class="nav-group-label">配置</div>
-        <router-link to="/config" class="nav-item">
+        <div class="nav-item" :class="{ active: isActive('/config') }" role="link" tabindex="0" @click="go('/config')">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <circle cx="8" cy="8" r="2"/>
             <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.42 1.42M11.53 11.53l1.42 1.42M3.05 12.95l1.42-1.42M11.53 4.47l1.42-1.42"/>
           </svg>
           系统配置
-        </router-link>
-        <router-link to="/agent" class="nav-item">
+        </div>
+        <div class="nav-item" :class="{ active: isActive('/agent') }" role="link" tabindex="0" @click="go('/agent')">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <circle cx="8" cy="6" r="3"/>
@@ -40,22 +40,22 @@
             <path d="M11 4l1 1-1 1"/>
           </svg>
           Agent 配置
-        </router-link>
+        </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">数据</div>
-        <router-link to="/analytics" class="nav-item">
+        <div class="nav-item" :class="{ active: isActive('/analytics') }" role="link" tabindex="0" @click="go('/analytics')">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M2 12l3-4 3 2 3-5 3 3"/>
             <path d="M2 14h12"/>
           </svg>
           数据分析
-        </router-link>
+        </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">管理</div>
-        <router-link to="/invite-codes" class="nav-item">
+        <div class="nav-item" :class="{ active: isActive('/invite-codes') }" role="link" tabindex="0" @click="go('/invite-codes')">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <rect x="1" y="5" width="14" height="8" rx="1.5"/>
@@ -63,8 +63,8 @@
             <circle cx="8" cy="9.5" r="1"/>
           </svg>
           邀请码
-        </router-link>
-        <router-link to="/users" class="nav-item">
+        </div>
+        <div class="nav-item" :class="{ active: isActive('/users') }" role="link" tabindex="0" @click="go('/users')">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <circle cx="6" cy="5" r="2.5"/>
@@ -72,24 +72,24 @@
             <path d="M12 7l1.5 1.5L16 6"/>
           </svg>
           用户管理
-        </router-link>
-        <router-link to="/quota" class="nav-item">
+        </div>
+        <div class="nav-item" :class="{ active: isActive('/quota') }" role="link" tabindex="0" @click="go('/quota')">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <rect x="1" y="1" width="14" height="14" rx="2"/>
             <path d="M1 7h14M7 7v8"/>
           </svg>
           配额管理
-        </router-link>
-        <router-link to="/audit-log" class="nav-item">
+        </div>
+        <div class="nav-item" :class="{ active: isActive('/audit-log') }" role="link" tabindex="0" @click="go('/audit-log')">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="3" width="12" height="10" rx="2"/>
             <path d="M5 7h6M5 10h4"/>
           </svg>
           操作日志
-        </router-link>
-        <router-link to="/system-logs" class="nav-item">
+        </div>
+        <div class="nav-item" :class="{ active: isActive('/system-logs') }" role="link" tabindex="0" @click="go('/system-logs')">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M2 4h12M2 8h8M2 12h5"/>
@@ -97,8 +97,8 @@
             <path d="M13 9.5v1.5l1 1"/>
           </svg>
           系统日志
-        </router-link>
-        <router-link to="/services" class="nav-item">
+        </div>
+        <div class="nav-item" :class="{ active: isActive('/services') }" role="link" tabindex="0" @click="go('/services')">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="2.5" width="12" height="4" rx="1"/>
@@ -106,7 +106,16 @@
             <path d="M4.5 4.5h.01M4.5 11.5h.01"/>
           </svg>
           服务状态
-        </router-link>
+        </div>
+        <div class="nav-item" :class="{ active: isActive('/debug') }" role="link" tabindex="0" @click="go('/debug')">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 5h10M3 8h7M3 11h5"/>
+            <circle cx="13" cy="11" r="2.2"/>
+            <path d="M14.5 12.5l1.5 1.5"/>
+          </svg>
+          Debug 日志
+        </div>
       </nav>
 
       <!-- 底部 -->
@@ -135,12 +144,19 @@
 
 <script setup>
 import { computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
 
+const route = useRoute()
 const router = useRouter()
 const adminStore = useAdminStore()
 const initial = computed(() => (adminStore.adminUser?.username?.[0] ?? 'A').toUpperCase())
+
+// 导航：编程式跳转，不渲染 <a href>，悬停时状态栏不暴露 URL
+const isActive = (to) => route.path === to || route.path.startsWith(to + '/')
+function go(to) {
+  if (route.path !== to) router.push(to)
+}
 
 function handleLogout() {
   adminStore.logout()
@@ -217,7 +233,7 @@ function handleLogout() {
   color: rgba(255,255,255,0.75);
   background: rgba(255,255,255,0.06);
 }
-.nav-item.router-link-active {
+.nav-item.active {
   color: rgba(255,255,255,0.92);
   background: rgba(255,255,255,0.1);
   border-color: rgba(255,255,255,0.12);
