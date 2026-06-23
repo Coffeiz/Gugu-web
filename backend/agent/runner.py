@@ -102,6 +102,15 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                                    files=attach_cards or None))
         await db.commit()
 
+    # IM 来的用户消息：一存下就先推给网页（先看到「我发了什么」，咕咕回复生成完再推第二次），
+    # 而不是等一轮结束把一来一回一起推。events 是局部变量（日历列表），用别名导模块。
+    try:
+        from app.core import events as _evmod
+        await _evmod.publish(user_id, "sessions", session_id=session_id,
+                             appended=[{"role": "user", "text": req.message, "files": attach_cards or None}])
+    except Exception:
+        pass
+
     memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
     prompt_name = profile.prompt_file.removesuffix(".md")
     system_prompt = builder.build(
@@ -157,14 +166,15 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         if is_new_session and text:
             _schedule_title(user_id, session_id, req.message, text, settings, use_anthropic)
 
-        # 推「会话有更新」事件：IM（飞书/QQ）来的消息实时反映到网页——
-        # 列表刷新 + 若该会话正打开则把这一来一回直接追加进气泡（消息级，不整列表 refetch）
+        # 推第二次：咕咕的回复（用户消息已在生成前先推过，这里只补助手消息，
+        # 网页就「先看到我发的、再看到回答」，而不是一轮结束一次性蹦出来）
         try:
-            from app.core import events
-            appended = [{"role": "user", "text": req.message, "files": attach_cards or None}]
+            from app.core import events as _evmod
             if text or sent_files:
-                appended.append({"role": "assistant", "text": text, "files": sent_files or None})
-            await events.publish(user_id, "sessions", session_id=session_id, appended=appended)
+                await _evmod.publish(user_id, "sessions", session_id=session_id,
+                                     appended=[{"role": "assistant", "text": text, "files": sent_files or None}])
+            else:
+                await _evmod.publish(user_id, "sessions", session_id=session_id)  # 至少 bump 列表
         except Exception:
             pass
 
@@ -178,9 +188,14 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
 async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool, list]:
     """消费 LLMRunner 的 SSE 流：清洗后攒文本 + 取用量 + 收集咕咕要发的文件。
-    返回 (文本, in, out, errored, files)；errored=True 时文本是错误文案（不入历史/不反思）。"""
+    返回 (文本, in, out, errored, files)；errored=True 时文本是错误文案（不入历史/不反思）。
+
+    文本**按轮分段收集、结尾去重拼接**：MiniMax 多轮工具调用时常把上一轮的开场白
+    整段重述一遍，无脑拼接会让开场白叠 N 遍（QQ 还会把口语的 ~ 渲染成删除线）。
+    """
     san = sanitize.StreamSanitizer()
-    full = ""
+    rounds: list[str] = []   # 每轮文本分开存
+    cur = ""
     tin = tout = 0
     files: list = []
     async for evt_str in gen:
@@ -190,15 +205,30 @@ async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool,
             continue
         t = evt.get("type")
         if t == "_new_round":
+            cur += san.flush()
+            rounds.append(cur)
+            cur = ""
             san = sanitize.StreamSanitizer()  # 新一轮重置清洗器
         elif t == "_usage":
             tin = evt.get("input", 0)
             tout = evt.get("output", 0)
         elif t == "token":
-            full += san.feed(evt.get("content", ""))
+            cur += san.feed(evt.get("content", ""))
         elif t == "file" and evt.get("file"):
             files.append(evt["file"])   # 咕咕用 send_file 工具要发的文件
         elif t == "error":
             return (evt.get("message") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？", tin, tout, True, files)
-    full += san.flush()
-    return (full.strip(), tin, tout, False, files)
+    cur += san.flush()
+    rounds.append(cur)
+
+    # 去重拼接：若本轮以上一轮全文为前缀（模型重述了开场白），用本轮替换上一轮，不叠加
+    parts: list[str] = []
+    for r in rounds:
+        r = r.strip()
+        if not r:
+            continue
+        if parts and r.startswith(parts[-1]):
+            parts[-1] = r
+        else:
+            parts.append(r)
+    return ("".join(parts).strip(), tin, tout, False, files)
