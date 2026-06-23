@@ -82,7 +82,7 @@ POST q.qq.com/lite/create_bind_task {"key": base64(随机32字节)} → task_id 
 ```
 - **安全**：接口本身无鉴权，但 secret 用调用方本地 key 加密回传，只有创建者能解；aes_key 只存服务端 Redis（按 task_id），不下发前端。
 - `source` 仅为来源标签（非白名单，任意值都跳转）。
-- 拆解过程见 `docs/dev-log.md` 2026-06-23 QQ 条 + `qq-scan-connect` 记忆。
+- 拆解过程见 `docs/devlog.md` 2026-06-23 QQ 条 + `qq-scan-connect` 记忆。
 
 ### 3.3 微信 — 直连 iLink（参考 SiverKing/weixin-ClawBot-API）
 

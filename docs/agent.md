@@ -735,7 +735,7 @@ POST … action=begin (archetype=PersonalAgent, auth_method=client_secret, reque
 - **device_code 只存服务端 Redis**（按 poll_id，TTL=expires_in），不下发前端。`source` 仅来源标签（非白名单）。
 - 国内 `accounts.feishu.cn`，国际版 Lark 为 `accounts.larksuite.com`（如需再加 domain 参数）。
 - 收发：`lark-oapi` WS 长连（`on_message` 带 owner 入队）+ `lark.Client` Open API 发；都不需要公网。
-- 拆解过程见 `docs/dev-log.md`、`docs/agent-im接入架构.md` §3.1。
+- 拆解过程见 `docs/devlog.md`、`docs/agent-im接入架构.md` §3.1。
 
 #### QQ 接入设计（BYO 每用户自带 bot + 扫码自动连接）
 
@@ -756,7 +756,7 @@ POST q.qq.com/lite/create_bind_task {"key": base64(随机32字节)} → task_id 
   → 用第 1 步 key 解出 AppSecret → 自动写 user_bots（无需手动复制）
 ```
 - **安全**：接口无鉴权，但 secret 用调用方本地 key 加密回传、只有创建者能解；aes_key 只存服务端 Redis（按 task_id），不下发前端。`source` 只是来源标签（非白名单）。
-- 一度误判为"腾讯官方合作墙"，扒 QwenPaw 源码 + 实测推翻。详见 `docs/dev-log.md` 2026-06-23 QQ 条、`docs/agent-im接入架构.md` §3.2、`qq-scan-connect` 记忆。
+- 一度误判为"腾讯官方合作墙"，扒 QwenPaw 源码 + 实测推翻。详见 `docs/devlog.md` 2026-06-23 QQ 条、`docs/agent-im接入架构.md` §3.2、`qq-scan-connect` 记忆。
 
 **③ C2C 单聊收发**：`botpy.Intents(public_messages=True)` + `on_c2c_message_create`；回复用 `post_c2c_message(openid, msg_id, content)`（被动回复，worker 端独立 `BotHttp.login` 取 token、过期重建）。sandbox 字段区分开发/生产环境。
 

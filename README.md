@@ -115,7 +115,7 @@ Gugu-web/
 │   ├── design.md               # UI/UX 设计规范
 │   ├── storage.md              # 文件存储规范（权威）
 │   ├── wishlist.md             # 功能 Wishlist
-│   └── dev-log.md              # 早期开发日志
+│   └── devlog.md              # 早期开发日志
 ├── design/
 │   └── prototype.html          # 可交互原型稿
 ├── frontend/                   # Vue 3 前端
@@ -258,7 +258,7 @@ make backup      # 备份数据库
 | [docs/backend.md](docs/backend.md) | 后端开发参考 |
 | [docs/design.md](docs/design.md) | UI/UX 设计规范 |
 | [docs/wishlist.md](docs/wishlist.md) | 功能规划 |
-| [docs/dev-log.md](docs/dev-log.md) | 早期开发记录 |
+| [docs/devlog.md](docs/devlog.md) | 早期开发记录 |
 
 ---
 
