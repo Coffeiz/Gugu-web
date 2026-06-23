@@ -24,6 +24,10 @@
   - `app/api/v1/qq_connect.py`：`POST /me/qq/connect` 调 `q.qq.com/lite/create_bind_task` 建任务 → 前端二维码 → 手机 QQ 扫码选 bot 授权 → `GET /me/qq/connect/{task_id}` 轮询 `poll_bind_result`，完成则 **AES-256-GCM 解出 AppSecret 自动写入 UserBot**（无需手动复制）
   - 安全：aes_key 仅存服务端（Redis，按 task_id），secret 加密回传只有本端能解；端点本身无鉴权但不暴露明文
 
+### 修复
+
+- **IM 对话没有上下文（"聊着聊着变新会话"）**：`run_collect`（飞书/QQ 的非流式大脑入口）一直**没读会话历史**，每条消息都孤立处理 → 无连续对话。现与网页版同口径：`agent/runner.py` 找/建会话 → 读历史窗口（按 token 预算裁剪）→ 存用户+回复消息+用量 → 对话后反思（报错不入历史/不反思）；`worker.py` 按 `(平台, 平台用户)` 在 Redis 存稳定 `session_id`（滑动 TTL 12h，空闲超时才起新会话）。飞书、QQ 一并修复
+
 ### 新增 · 404 页 + 部署/运维
 
 - **404 页**：咕咕风格的 NotFound 页（路由 catch-all 改为渲染，不再 redirect 到登录）

@@ -84,8 +84,32 @@ async def _send(payload: dict, text: str):
         print(f"[worker] (无发送通道) {platform}: {text!r}", flush=True)
 
 
+# IM 会话映射：按 (platform, 平台用户) 记一个稳定 session_id，续聊不断。
+# 滑动 TTL：每条消息刷新，空闲超 IM_SESSION_TTL 自动起新会话。
+IM_SESSION_TTL = 12 * 3600  # 12 小时
+
+
+def _im_sess_key(platform: str, puid: str) -> str:
+    return f"imsession:{platform}:{puid}"
+
+
+async def _im_session_get(platform: str, puid: str):
+    if not platform or not puid:
+        return None
+    raw = await R.get_redis().get(_im_sess_key(platform, puid))
+    try:
+        return int(raw) if raw else None
+    except (TypeError, ValueError):
+        return None
+
+
+async def _im_session_set(platform: str, puid: str, session_id):
+    if platform and puid and session_id:
+        await R.get_redis().set(_im_sess_key(platform, puid), str(session_id), ex=IM_SESSION_TTL)
+
+
 async def handle(msg_id: str, payload: dict):
-    """处理一条：解析用户 → 未绑定回提示 / 已绑定跑 agent → 发回平台。"""
+    """处理一条：解析用户 → 未绑定回提示 / 已绑定跑 agent（带会话历史）→ 发回平台。"""
     user_id, user_name = await _resolve_user(payload)
     if not user_id:
         # 认不出（飞书未绑定 / QQ bot 没 owner）：回提示，不跑大脑
@@ -94,15 +118,20 @@ async def handle(msg_id: str, payload: dict):
         print(f"[worker] 未绑定用户 {payload.get('platform_user_id')}，已回提示", flush=True)
         return None
 
+    platform = payload.get("platform", "worker")
+    puid = payload.get("platform_user_id")
+    sid = payload.get("session_id") or await _im_session_get(platform, puid)
+
     req = AgentRequest(
         message=payload.get("text", ""),
         user_id=user_id, user_name=user_name,
-        session_id=payload.get("session_id"),
-        source=payload.get("platform", "worker"),
+        session_id=sid,
+        source=platform,
     )
     resp = await run_collect(req)
+    await _im_session_set(platform, puid, resp.session_id)   # 续上同一会话
     await _send(payload, resp.text)
-    print(f"[worker] {payload.get('platform')} 回复 → {resp.text!r}", flush=True)
+    print(f"[worker] {platform} 回复(session={resp.session_id}) → {resp.text!r}", flush=True)
     return resp
 
 
