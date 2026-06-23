@@ -116,6 +116,25 @@ def _strip_ext(name: str, ext: str) -> str:
     return name
 
 
+def _coerce_loc(space, project_id, folder_id):
+    """归一 move/copy 的目标位置，返回 (space, project_id, folder_id, error_json|None)。
+    ① id 字符串转 int —— LLM 常把 "91" 当字符串传，int4 列拿到字符串会让 asyncpg 直接抛错。
+    ② 落到「项目空间」却没指定具体项目 → 报错，挡住 space=project 但 project_id=None 的孤儿文件
+       （在任何项目里都看不到、却占着"项目空间"，正是之前让人困惑的状态）。"""
+    def _as_int(v):
+        try:
+            return int(str(v).strip().lstrip("#")) if v not in (None, "") else None
+        except (ValueError, TypeError):
+            return v
+    project_id = _as_int(project_id)
+    folder_id = _as_int(folder_id)
+    if space == "project" and not project_id:
+        return space, project_id, folder_id, json.dumps(
+            {"error": "移动/复制到项目空间必须指定 target.project_id（具体哪个项目）。"
+                      "可先用 list_projects 拿到项目 id 再操作。"})
+    return space, project_id, folder_id, None
+
+
 # ── handlers ──
 async def _list_files(db, user_id, args: dict):
     stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
@@ -242,38 +261,46 @@ async def _create_document(db, user_id, args: dict):
 
 
 async def _save_uploaded_file(db, user_id, args: dict):
-    """把用户聊天里上传的暂存附件保存进文件库（personal 空间）。"""
+    """把用户聊天里上传的暂存附件保存进文件库。默认 personal，可直接指定项目/文件夹。"""
     from app.core import chat_attach
-    aid = (args.get("attach_id") or "").strip()
-    if not aid:
-        return json.dumps({"error": "需提供 attach_id（来自用户上传的附件）"}, ensure_ascii=False)
-    meta = await chat_attach.get_meta(user_id, aid)
+    # 容错解析：LLM 常把 attach_id 抄错/截断，找不到就退到最近上传的，别误报"过期"
+    meta, note = await chat_attach.resolve_attach(user_id, args.get("attach_id") or "")
     if not meta:
-        return json.dumps({"error": "附件不存在或已过期（聊天附件暂存 6 小时）"}, ensure_ascii=False)
+        return json.dumps({"error": "没找到可保存的附件，可能确实过期了（聊天附件只暂存 6 小时）。"
+                                    "麻烦让用户重新发一下～"}, ensure_ascii=False)
     try:
         data = await chat_attach.read_bytes(meta)
     except Exception as e:
         return json.dumps({"error": f"读取附件失败：{str(e)[:80]}"}, ensure_ascii=False)
     ext = meta.get("ext") or "bin"
     display_name = meta.get("name") or "上传文件"
+
+    # 目标位置：默认 personal；给了 project_id 就直接进项目（一步到位，省得再 move）
+    space = args.get("space") or ("project" if args.get("project_id") else "personal")
+    space, project_id, folder_id, loc_err = _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
+    if loc_err:
+        return loc_err
+
     storage = get_storage()
     try:
-        base_key = await _resolve_key(db, user_id, "personal", display_name, ext)
+        base_key = await _resolve_key(db, user_id, space, display_name, ext,
+                                      project_id=project_id, folder_id=folder_id)
     except ValueError as e:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
     final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
     await storage.put(final_key, data, meta.get("mime") or "application/octet-stream")
     db_file = File(
-        user_id=user_id, display_name=final_name, ext=ext, space="personal",
-        project_id=None, folder_id=None, stage_name="",
+        user_id=user_id, display_name=final_name, ext=ext, space=space,
+        project_id=project_id if space == "project" else None, folder_id=folder_id, stage_name="",
         storage_key=final_key, size=_fmt_size(len(data)), size_bytes=len(data),
         mime_type=meta.get("mime") or "",
     )
     db.add(db_file)
     await db.commit()
     await db.refresh(db_file)
-    return {"success": True, "file_id": db_file.id,
-            "name": f"{final_name}.{ext}", "space": "personal", "size": db_file.size}
+    return {"success": True, "file_id": db_file.id, "name": f"{final_name}.{ext}",
+            "space": space, "project_id": db_file.project_id, "size": db_file.size,
+            **({"note": note} if note else {})}
 
 
 async def _rename_file(db, user_id, args: dict):
@@ -359,6 +386,9 @@ async def _move_file(db, user_id, args: dict):
     space = target.get("space", f.space)
     project_id = target.get("project_id", f.project_id)
     folder_id = target.get("folder_id", f.folder_id)
+    space, project_id, folder_id, loc_err = _coerce_loc(space, project_id, folder_id)
+    if loc_err:
+        return loc_err
 
     # 支持按文件夹「名称」移动（agent 通常不知道 folder_id）
     fname = target.get("folder")
@@ -510,6 +540,9 @@ async def _copy_file(db, user_id, args: dict):
     space = target.get("space", f.space)
     project_id = target.get("project_id", f.project_id)
     folder_id = target.get("folder_id", f.folder_id)
+    space, project_id, folder_id, loc_err = _coerce_loc(space, project_id, folder_id)
+    if loc_err:
+        return loc_err
     fname = target.get("folder")
     if fname is not None:
         fname = str(fname).strip()
@@ -768,13 +801,17 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="save_uploaded_file", label="保存上传文件",
-            description="把用户在对话里**上传的附件**保存进文件库（personal 空间）。当用户上传文件后说「存一下/保存到文件库/帮我存起来」时用。attach_id 来自上下文里「用户上传了文件…(attach_id=X)」的提示。",
+            description="把用户在对话里**上传的附件**保存进文件库。当用户上传文件后说「存一下/保存到文件库/存到某项目」时用。"
+                        "attach_id 来自上下文「用户上传了文件…(attach_id=X)」的提示——抄不准也没关系，系统会自动退到用户最近上传的那个。"
+                        "要存进某个项目就带上 project_id（不传则进 personal）。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "attach_id": {"type": "string", "description": "上传附件的 attach_id（见上下文提示）"},
+                    "attach_id": {"type": "string", "description": "上传附件的 attach_id（见上下文提示；可不填，自动取最近上传的）"},
+                    "project_id": {"type": "integer", "description": "存进哪个项目（不填=personal 个人空间）"},
+                    "folder_id": {"type": "integer", "description": "存进哪个文件夹（可选）"},
                 },
-                "required": ["attach_id"],
+                "required": [],
             },
             handler=_save_uploaded_file,
         ),

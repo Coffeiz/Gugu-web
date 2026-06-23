@@ -9,6 +9,34 @@ from __future__ import annotations
 import json
 from typing import Any
 
+# 这些 id 键对应的模型都是 int 主键，LLM 传成字符串会让 asyncpg 抛错。统一在 dispatch 入口转 int。
+# 注意：attach_id 是 hex 串（chat_attach 的 uuid4().hex）、user_id 是 UUID，都不在此列。
+_INT_ID_KEYS = ("project_id", "file_id", "folder_id", "parent_id",
+                "event_id", "client_id", "stage_id", "todo_id", "session_id")
+
+
+def _to_int_id(v):
+    """把形如 "91" / "#91" 的字符串 id 转 int；非纯数字或非字符串原样返回。"""
+    if isinstance(v, str):
+        s = v.strip().lstrip("#")
+        if s.isdigit():
+            return int(s)
+    return v
+
+
+def _coerce_int_ids(args) -> None:
+    """就地把 args（含嵌套 target）里的整型 id 键从字符串转成 int。"""
+    if not isinstance(args, dict):
+        return
+    for k in _INT_ID_KEYS:
+        if k in args:
+            args[k] = _to_int_id(args[k])
+    tgt = args.get("target")
+    if isinstance(tgt, dict):
+        for k in ("project_id", "folder_id"):
+            if k in tgt:
+                tgt[k] = _to_int_id(tgt[k])
+
 
 class Tool:
     """单个工具的声明 + 执行入口。"""
@@ -102,6 +130,23 @@ class SkillRegistry:
         tool = self._tools.get(name)
         if tool is None:
             return json.dumps({"error": f"未知工具: {name}"}), None
+
+        # user_id 归一成 UUID：IM 路（worker）传进来的是字符串，而 ORM 对象的 .user_id 是
+        # UUID 对象。SQL 查询（File.user_id == user_id）能自动转型，但工具里 python 层的
+        # 归属校验 `obj.user_id != user_id` 不会——字符串 vs UUID 永远不等，会把"自己的项目/
+        # 文件夹"误判成"不存在"。在唯一入口统一转一次，下游所有校验/查询都对（str(uuid) 仍是
+        # 同一规范字符串，存储 key 不变）。
+        if isinstance(user_id, str):
+            import uuid as _uuid
+            try:
+                user_id = _uuid.UUID(user_id)
+            except (ValueError, AttributeError):
+                pass   # 非标准 UUID 串：原样传，交给下游 SQL 比较
+
+        # 整型主键 id 归一：LLM 常把 id 当字符串传（"91"）。除 User 外所有模型都是 int 主键，
+        # int4 列拿到字符串会让 asyncpg 直接抛 DataError（db.get(Project,"91") 崩，而非返回 None）。
+        # 在入口把这些 id 键转成 int，下游 db.get/比较都稳。attach_id 是 hex 串、不能转，排除。
+        _coerce_int_ids(args)
 
         import app.db.session as _sess
         if _sess._engine is None:
