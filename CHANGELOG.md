@@ -7,211 +7,61 @@
 
 ---
 
-## [Unreleased] · 文件库回收站多选
+## [Unreleased]
 
-### 新增 · 飞书消息「秒回表情」
+_（暂无）_
 
-- 飞书每来一条消息，网关 `_on_message` **赶在入队/LLM 之前**用关键词本地快速判一个表情即时点上（`im.v1.message_reaction.create`），完整回复随后由 worker 发——慢生成时先给个即时反馈，不干等
-  - `feishu.py` 的 `_quick_react`/`_QUICK_RULES`：笑→😂、谢→🙏、搞定→✅、问候/中性→👀(OnIt)、问问题→🤔；默认 OnIt 而非 👍（躲开「满屏大拇指」）
-  - 需飞书 app 开 `im:message_reaction`（消息表情·写）权限，否则日志 `reaction 失败` 且不影响主流程
-- 另有 **LLM 版 `react` 工具**（`skills/im.py` + `imctx.py` 经 contextvar 把 IM 上下文透传到工具层）能让咕咕按内容精挑表情——但**默认未进 profile**（要等 LLM 跑完才出、且会和秒回叠成两个表情）。未来接入快/小模型再启用，见记忆 `project-im-reaction`
-- 设计取舍：「每条都点」必然退化成单调表情（多数消息中性），真秒回又必须在 LLM 之前 → 取本地关键词（即时但糙）
+---
 
-### 新增 · 聊天文件收发（网页 + 飞书）
+## [0.11.1] - 2026-06-24 · IM 全接入、文件收发、Agent 执行策略
 
-- **用户给咕咕发文件**（网页上传 / 飞书 / QQ 发文件）：咕咕能**看内容**（文本类 + **PDF/Word/Excel/PPT** 自动提取；图片给提示）+ 能**保存**到文件库
-  - `app/core/chat_attach.py`（新）：附件**暂存**（字节走 StorageBackend、元数据走 Redis，TTL 6h）+ `resolve_for_message`（解析成「给模型的内容 + 前端文件卡」，网页/IM 同一套）
-  - 网页：输入框加附件按钮 + 上传到 `POST /agent/upload`（暂存，10MB 上限）+ 待发 chip + 发送带 `attachments`；用户气泡显示文件卡
-  - 飞书接收：网关收 file/image → `im.v1.message_resource.get` 下载 → 暂存 → attachments（复刻 QwenPaw）
-  - **QQ 接收**：`on_c2c_message_create` 取 `message.attachments`（BaseMessage 自带 url/filename）→ 异步下载 → 暂存 → attachments；收到文件**瞬发**一句「文件收到啦，让我看看~」（赶在下载/入队前给即时反馈，也顺带解决 QQ 文件无「思考态」）
-  - 新工具 `save_uploaded_file(attach_id)`：把暂存附件存进文件库（personal），存完文件库实时刷新
-- **咕咕给用户发文件**（飞书 / QQ）：`send_file` 工具的文件事件被 `run_collect._collect` 捕获 → `worker._send_files` 按平台发
-  - 飞书：`im.v1.image/file.create` 上传拿 key → 发 image/file。⚠️ 图片 10MB / 文件 30MB，超限飞书返回非 JSON 错误页把 SDK 撞成 `JSONDecodeError` → 发前查大小、超限改发文字提示
-  - **QQ**：`/v2/users/{openid}/files` 富媒体上传（图片 file_type=1、文件=4，C2C 私聊支持发文件，群聊不支持）→ 拿 file_info → `post_c2c_message msg_type=7 media`。本地存储走 base64 `file_data`（请求体膨胀 33%，实测 ~10MB 为界，超限提示去网页下载）；**配了 OSS 则自动走 url 模式**（`storage.fetch_url()` 返回签名 URL → QQ 自己抓，无体积限制）
-  - QQ 修复：`msg_seq` 用 **Redis `INCR qqseq:{msg_id}`** 按 msg_id 跨进程发号（网关 ack 拿 1、worker 文本 2、文件 3…，两进程各自计数会撞被去重）；上传 inner-proxy 抖动重试 4 次；`send_file` 工具描述改平台中立 + prompt 加固「必须真调工具、绝不能只说正在发送」（之前模型在 QQ 上光说不调，假成功）
-- ⚠️ QQ **点赞/表情回应做不了**（reaction API 只对频道 guild，C2C 私聊没有）；图片**看内容**需 vision 模型；扫描件 PDF 无文字层提取为空（需 OCR）
+> 本版把 IM 接入做全（飞书 + QQ，BYO 扫码自连），打通文件双向收发与 PDF/Office 读取，
+> 并重构 Agent 提示词分层、引入执行策略。下面按主题归并（开发期约 25 个迭代小节）。
 
-### 新增 · `read_file` 读 PDF / Office（文本提取）
+### IM 接入（飞书 + QQ · BYO 扫码自连）
 
-- `app/core/doctext.py`（新）：二进制文档 → 文本。PDF 用 `pdftotext`、Word/PPT/Excel 用 LibreOffice 转 txt/csv（pptx 经 pdf 中转）。**无新依赖**（pdftotext + libreoffice 系统命令）
-- `read_file`（文件库）和 `chat_attach`（聊天附件）共用 → 咕咕能读库里和聊天发来的 PDF/Office 内容
-- 配套修 prompt：模型原来凭旧印象/会话历史说「PDF 读不了」却不调工具 → 加「`read_file` 能读 PDF/Office，直接调，别说读不了」
+- **飞书 + QQ 统一 BYO**：每用户自带 bot，「接入咕咕」扫码自动连接——飞书走 OAuth 设备授权（RFC 8628）、QQ 走 q.qq.com bind_task（均复刻 QwenPaw，实测无需合作方资质），凭据 AES 解密自动写入 `user_bots`。收凭据从 env 注入、发凭据按 bot id 查库，bot 即归属、无需用户绑定。`supervisor` 统一从 `user_bots` 拉起网关
+- **清理旧共享 bot**：删 `PlatformBinding` / `feishu_bind` / `feishu_event` / Admin「频道」面板，IM 接入全改用户自助（旧共享飞书 bot 需重新扫码）
+- **飞书 Webhook 模式**（长连接替代，有公网时少跑一个进程）：`POST /feishu/event/{channel_id}` 复用 lark handler 解密验签，派发到与长连接同一回调
+- **IM 上下文修复**：`run_collect` 原来不读历史 → 每条孤立处理（聊着变新会话）。现与网页同口径读历史窗口 + 按 `(平台,用户)` 在 Redis 存稳定 session_id（滑动 TTL 12h）
+- **飞书 markdown**：回复改交互卡片渲染粗体/列表/代码，GFM 表格 → 飞书原生 table 组件
+- **IM 新会话 AI 标题**（此前只 web 有，IM 永远首句截断）；标题生成移出关键路径改后台
+- **飞书秒回表情**：网关收到即用关键词本地判一个 emoji 即时点上（赶在 LLM 之前），默认 OnIt 而非 👍
 
-### 修复 · IM 对话体验（多轮去重 / 实时分两次推 / 标题异步）
+### 文件收发 + PDF/Office 读取
 
-- **多轮工具调用重复输出开场白**：MiniMax 多轮时常把上一轮开场白整段重述，`_collect` 无脑拼接 → 开场白叠 N 遍（QQ 还把口语 `~` 渲染成删除线，看着像"划掉的内容"）。现 `_collect` 改**按轮分段、去重拼接**（某轮若以上一轮全文为前缀就替换不叠加）+ prompt 加「调工具后别重述已说过的话、开场白只说一次」
-- **IM 对话在网页一轮结束才整体更新** → 改成**分两次推**：用户消息一存下就先 `events.publish`（网页先看到「IM 用户发了什么」），咕咕回复生成完再推第二次，呈现「先我发的、再回答」的正常聊天节奏。⚠️ `events` 在 `run_collect` 是局部变量（日历列表），推送要 `from app.core import events as _evmod` 别名导入，否则覆盖掉传给 `builder.build` 的列表
-- **新会话标题生成移出关键路径**：原来 IM 回复生成完还要串行等一次 LLM 起标题才返回（闲置后两次冷调用叠加 → 慢一倍）。现标题改后台 fire-and-forget（会话有首句截断做临时标题，好了再异步升级 + 推 title 事件）
+- **用户 → 咕咕发文件**（网页上传 / 飞书 / QQ）：暂存（`chat_attach`：字节走 storage、元数据走 Redis TTL 6h）→ 咕咕看内容 + `save_uploaded_file` 存库；QQ 收文件瞬发「文件收到啦」
+- **咕咕 → 用户发文件**（网页卡片 / 飞书 / QQ）：`send_file` 工具 → `worker._send_files` 按平台发。飞书图 10MB/文 30MB（超限兜底）；QQ 富媒体（本地 base64 ≤10MB、配 OSS 自动走签名 URL 无限制），msg_seq 用 Redis 按 msg_id 跨进程发号
+- **`read_file` 读 PDF/Word/Excel/PPT**（新 `app/core/doctext.py`：pdftotext + LibreOffice 提取，无新依赖），文件库与聊天附件共用
+- ⚠️ QQ 表情回应做不了（reaction 只对频道 guild）；图片看内容需 vision；扫描件 PDF 无文字层需 OCR
 
-### 修复 · IM 实时同步的几个坑
+### Agent 执行策略与工具
 
-- **实时同步的咕咕回复显示空气泡**：markdown 改缓存渲染（`msg.html`）后，实时 `appended` 的助手消息只设了 `text` 没设 `html` → 非流式渲染读到 undefined → 空气泡。现 append 时 `renderMd` 设 html + 带 `files` 卡片 + AI 空文本不显示气泡
-- **`agent_usage.tools_used` 列缺失**：模型加了字段但没建迁移 → 所有生成持久化用量时 `UndefinedColumnError` 崩。已补列（生产需迁移）
-- **文件库不实时刷新**：Files 视图只 watch 老的 `uploadSignal`，没接实时 `rev.files` → 咕咕建/删/存文件不实时反映。现加 `watch(rev.files)`
-- **`create_document` 缺 name 死循环**：`args["name"]` 直接 KeyError、错误信息只有 `'name'` → 模型反复重试撞轮次上限。现校验参数返回看得懂的错；dispatch 错误带异常类型；加「参数解析失败（疑似 max_tokens 截断）」诊断日志
+- **提示词分层**：拆成 persona（角色）/ skills（执行规则·铁律）/ policy（内容红线）/ default（数据模板），各司其职、后台可分别编辑（builder 注入序：人格 → 准则 → 红线 → 记忆 → 数据）
+- **执行策略 skills.md**：任务分级（聊天 0 / 查询 1-2 / 做完即停 / 先规划后执行）、成本意识（别重复验证与查询）、真实性铁律、不可逆 confirm 两步流程
+- **`MAX_ROUNDS` → 6**（早期 5→16，现配合强工具 + 准则，多步任务 2~3 轮够用，逼出低成本执行）
+- **项目工具增强**：`create_project` 带 `stages`（一次建阶段 + 待办）、`set_stages`（声明式整体替换、保留同名阶段待办）、`update_todo`（改文本/完成态 + 移到别的阶段）
+- **咕咕能读历史对话**（新 `conversations` skill：search / read，严格多用户隔离）
+- **健壮性**：工具异常不冲垮对话（`dispatch` try/except 把错当结果返给 LLM）；错误文案友好分类（网络/超时/精力）
 
-### 新增 · 网页生成解耦，刷新后续看（不再丢回复）
+### 实时与流式
 
-- **网页生成脱离 HTTP 请求**：原来生成跑在请求的流式响应里，浏览器一刷新就断连 → 生成被取消、**回复也没持久化（丢了）**。现改为：
-  - `agent/genstream.py`（新）：按会话的「生成流」通道（Redis pub/sub）+ 状态快照（已生成文字/当前工具）+ 活跃标志
-  - `web.py`：生成拆成**后台任务** `_generate`（脱离请求、自己持久化，刷新杀不掉）；`stream()` 改成「起任务 + 转发频道」；新增 `resume()`（先补已生成、再订阅后续）
-  - `agent.py`：新增 `GET /sessions/{id}/stream`（续看）+ messages 接口带 `active` 标志
-  - 前端：流式消费抽成 `consumeStream`（发送/续看共用）；`loadSession` 见 `active` 即 `resumeStream` 重连；整页刷新经 onMounted 恢复会话时自动续看
-- **效果**：① 刷新不再丢回复（后台跑完照样存）；② 刷新后能续上看到咕咕继续写 + 思考状态
-- 顺手修：新会话标题生成返回空串时不再硬覆盖原首句截断
+- **实时刷新（Redis pub/sub → SSE）**：咕咕改数据 / IM 来消息 → 网页自动刷新。挂点 `registry.dispatch`，粗粒度刷视图 + 消息级追加气泡；按用户隔离频道
+- **网页生成解耦**（新 `genstream`）：生成脱离 HTTP 请求、跑后台任务 → 刷新不丢回复、还能续看
+- **OpenAI 路真流式**（DeepSeek 等）：`stream=True` 逐 token，原来是非流式假切片
+- **IM 多轮修复**：MiniMax 重述开场白 → `_collect` 按轮去重；IM 对话在网页分两次推（先用户消息、再回答），不再一轮结束整体蹦出
+- 修复：实时回复空气泡、`agent_usage.tools_used` 缺列、文件库不实时刷新、`create_document` 缺 name 死循环
 
-### 修复 · 工具轮次 + 调用指示
+### 界面 / 性能
 
-- **`MAX_ROUNDS` 5 → 16**：多步任务（删项目+加阶段+加待办+建文档…）常一轮一个工具，5 太小会半途被「工具轮次超限」打断；16 给足头寸又兜得住失控。超限文案改友好（「前面几步已生效，要我接着做吗」）
-- **工具参数流式期间的空窗指示**（openai 路）：真流式下模型流式输出工具参数（如长文档内容）时无 token、`tool_call` 又要等参数收完才发 → 前端空窗像卡死。现工具调用一开始先亮「咕咕正在整理…」占位，参数收完再切具体工具名
+- **PDF 预览换回 iframe 原生引擎**（PDFium，大文件 / 多页流畅；之前 pdfjs 自渲染性能一般且白屏/漂移）
+- 文件卡片气泡化、隐藏导航悬停 URL、回收站多选 / 框选、一批界面细节（placeholder 统一、侧栏 IM/网页分组、看板与总览样式）
+- **精力恢复改固定 6h 重置**（UTC 整点 00/06/12/18 切桶、到点整段清零）
 
-### 修复 · OpenAI 路真流式（DeepSeek 等）
+### 文档 / 运维
 
-- **`_run_openai` 改为真·流式**（`core.py`）：原来非流式 `create()` 拿完整回复后假装按 40 字切片吐 → 换 DeepSeek（走 openai 路）后网页「等一下→一堆字」。现 `stream=True` **逐 token 实时输出**，工具调用按流式分片（`delta.tool_calls` 按 index 累积 id/name/arguments）正常工作，用量走 `stream_options.include_usage`。MiniMax（anthropic 路）本就真流式，不受影响
-- 实测：普通回复 50+ 个 1~3 字 token 事件、`list_projects` 工具正常
-
-### 改进 · 飞书消息支持 markdown 渲染
-
-- **飞书回复从纯文本改为交互卡片**（`feishu.py`）：飞书卡片 `markdown` 元素渲染粗体/列表/代码；卡片发失败自动回退纯文本
-- **GFM 表格 → 飞书原生 `table` 组件**：飞书 markdown 元素不支持表格（`| a | b |` 当原文显示），故把回复**拆段**——表格段解析成原生 `table` 组件（列名/对齐/分页），其余走 markdown 元素，混排成一张卡。`#` 标题转粗体（飞书对标题支持不稳）。复刻 QwenPaw 思路
-- ⚠️ IM 仍是**一次性发送、非流式**（`run_collect` 收完整段再发）；QQ 同理（C2C 无消息编辑，做不了流式），飞书流式卡片留作后续
-
-### 改进 · 文件卡片气泡化
-
-- 咕咕发的下载文件卡从紫调扁平卡改为**和 AI 气泡同款**：半透明白 + 左下角小尾巴 + 内高光 + 悬停阴影（不浮动）
-
-### 文档 · 并发与性能优化方案
-
-- 新增 [`并发与性能优化.md`](并发与性能优化.md)：诊断（LLM 接口延迟抖动是根因，非飞书/服务器/代码）+ 全系统并发现状（worker 单进程串行是最弱环）+ 分档优化方案（worker 有界并发、多 worker、换 provider、IM 流式）
-
-### 新增 · 实时刷新（Redis pub/sub → SSE）
-
-- **咕咕改了数据/IM 来了消息，网页自动刷新**，无需手动刷新页面。此前 IM（飞书/QQ）触发的改动完全推不到网页，web 聊天也只有自己的 `refreshAfterTools` 自刷、且 Calendar 视图连刷新信号都没监听
-  - 后端：`app/core/events.py`（`RESOURCE_BY_TOOL` 映射 + `publish` + SSE `stream`）+ `app/api/v1/live.py`（`GET /api/v1/live/stream`，鉴权 fetch streaming 带头，非 EventSource）
-  - 挂点 `registry.dispatch`（所有工具的唯一咽喉，web/IM 共用）：改动型工具成功后 `publish(user_id, 资源)`；`runner.run_collect`（IM 大脑入口）持久化后 `publish(user_id,'sessions',session_id,appended)`
-  - 前端：`stores/live.js` 开一条 SSE（断线指数退避重连），收事件递增 `rev[资源]`；`projects`/`filesCache` store、Calendar 视图 watch 各自 rev 重新拉取；`DefaultLayout` 登录后 `connect()`
-  - **粗粒度**：项目/日历/文件/客户变化 → 对应视图自动 refetch（顺手修了 Calendar 视图原本没监听刷新信号的 bug）
-  - **消息级**：IM 消息带 `session_id + appended`（这一来一回），若正打开该会话 → 直接把气泡**追加**进当前对话（只传增量，不整列表 refetch）；否则只刷会话列表
-  - 流量可控：频道按用户隔离 `events:{user_id}`（无跨用户扇出）+ 发增量 + 空闲仅 ~20s keepalive
-  - ⚠️ 新增改动型工具须登记到 `RESOURCE_BY_TOOL`，否则不会实时刷新；web 自身聊天暂未 publish → 同账号多标签不互相同步（站内 IM 时补上即可）
-
-### 改进 · 飞书/QQ 会话也用 AI 总结标题
-
-- **IM（飞书/QQ）新会话也起 LLM 简短标题**（此前只有 web 总结，IM 标题永远是首句截断、不更新）：`runner.run_collect` 检测新会话，首轮回复后复用 web 的 `_generate_title(首消息, 首回复)` 起 ≤10 字标题、更新 DB，并随实时事件带 `title` 推给网页 → 侧栏 `fetchSessions` 自动带出新标题。与 web 同口径（仅新会话总结一次，失败回退首句截断）
-
-### 新增 · Debug 管理页
-
-- **Admin → Debug 实时日志**：新管理页，SSE 推流实时 tail 三个日志文件（`gugu.log` / `gugu-worker.log` / `gugu-supervisor.log`），样式复用 SystemLogs 暗色 glass 主题
-  - 来源筛选（web / worker / supervisor）+ 级别筛选（ERROR / WARN / INFO / DEBUG）
-  - 自动滚动开关、清空按钮、连接状态实时指示（绿点）
-  - EventSource 无法带自定义 header → 改用 `?token=` 查询参数做 JWT 鉴权（后端手动验证）
-  - 后端 `/admin/debug/logs/tail`（快照）和 `/admin/debug/logs/stream`（SSE 流）两个端点
-
-### 改进 · 界面细节
-
-- **全局 `::placeholder` 样式**：统一占位符颜色（`var(--text-secondary)`，opacity 0.75），删除 ProjectModal / NewProjectModal / CalendarPanel / Calendar / GuguChat 中分散的同名 scoped 规则，以后新输入框无需单独处理
-- **咕咕聊天侧边栏分组**：展开侧栏新增 IM / 网页 session 分割线；IM session 排在网页 session 上方；标题「咕咕」水平居中
-- **ProfileModal 显示完整 UUID**：之前只截取前 12 位大写，现改为显示完整 UUID（为后续好友功能保留唯一性）
-- **头像阴影**：ProfileModal 设置页大头像 + AppSidebar 侧栏小头像均加 `box-shadow`（蓝紫调柔和阴影）
-- **看板列药丸更亮**：KanbanColumn `col-count` 胶囊背景改为 `rgba(255,255,255,0.85)`，在暗色卡片上更易读
-- **总览日期列加宽**：Dashboard 项目列表日期列从 64px 改为 80px，避免年份文字与状态药丸重叠
-- **ProjectModal 看板按钮样式调整**：
-  - 未选中：半透明暗底（`rgba(0,0,0,0.10)`）+ 灰蓝文字（`#5a5f78`），状态色圆点常显
-  - 悬停：略加深底色，文字提亮至主色
-  - 选中（active）：状态色描边（1.5px）+ 状态色浅底色 tint + 加深文字（与各状态色协调）
-  - 阶段节点（node-circle）：`rgba(0,0,0,0.08)` 底色 + `rgba(90,95,120,0.35)` 描边；数字与未选中按钮文字同色（`#5a5f78`），选中时白色
-- **待办添加按钮宽度对齐**：ProjectModal 中「+ 添加待办」按钮右边缘与标题输入框右边缘对齐
-- **待办内容不被滚动条截断**：`.left-content` 加 `scrollbar-gutter: stable`，滚动条出现时为内容区预留位置，防止右侧内容被遮挡
-
-### 新增 · 咕咕能读历史对话
-
-- **咕咕能搜 / 读用户过去的对话**（其他 session，此前只能看当前对话 + 提炼记忆）：新 skill `conversations`
-  - `search_conversations(keyword?)`：按关键词搜消息正文+标题，按 session 聚合返回匹配片段；不传则列最近对话
-  - `read_conversation(session_id)`：读某条对话完整消息
-  - **严格多用户隔离**：只查当前用户的 session，读他人的返回"不属于你"（实测验证）。与记忆系统互补——记忆是提炼结论，这是原始原文。web/飞书/QQ 通用
-
-### 改进 · 隐藏导航悬停 URL
-
-- 侧栏导航从 `<router-link>`（渲染 `<a href>`，悬停时浏览器状态栏暴露目标 URL）改为 `<div>` + 编程式 `router.push`，**悬停不再显示 URL**。保留点击跳转、active 高亮、键盘回车跳转（`tabindex`/`role=link`）。主站 `NavItem.vue` + 后台 `AdminLayout.vue` 都改。地址栏行为不变（仍正常显示路径，保留刷新留页/深链/前进后退）
-
-### 改进 · 健壮性与错误文案
-
-- **工具异常不再冲垮对话**：`registry.dispatch` 给工具执行包 `try/except`——handler 抛错时把 `{"error":"工具 X 执行出错：…"}` 当结果返给 LLM（并打印堆栈到日志），咕咕按 persona 铁律如实告知没做成、不假装成功，对话继续。（之前一个工具崩 = 整轮报错）
-- **错误文案友好化 + 分类**：网络/超时（后端 `_is_network_error` 或前端 fetch 失败）→「咕咕网络不太好 📡 可以再发一遍吗？」；其他后端错误 →「咕咕开小差了 😵‍💫 麻烦再说一遍好吗？」；精力/配额文案不变。飞书/QQ/网页三端一致
-- **网页生成中发消息会排队**：流式回复期间再发，立即显示气泡 + 入队，生成完接力发、逐条处理（和 IM 的 Redis 队列行为一致）；点停止键清空队列。修了 `@keydown.enter="send"` 把键盘事件当文本传的坑
-- 新增迁移 `20260623000002`：补 `conversation_sessions.source`（会话来源列，此前有模型字段无迁移，全新部署会缺列）
-
-### 新增 · 咕咕给用户发文件
-
-- **咕咕能在对话窗口发可下载的文件卡片**：新工具 `send_file`（files skill，按文件名/file_id 定位用户文件）。机制是一条「工具 → 前端 UI」旁路：工具结果带 `_artifact` → `registry.dispatch` 返回 `(给LLM文本, artifact)` → `core` 在 tool_done 后推 `{type:'file', file:{...}}` → `web.py` 透传给前端渲染下载卡片（`filesApi.download` 鉴权 blob 下载）
-  - **持久化**：发出的文件随助手消息存进 `conversation_messages.files`（JSON 列，迁移 `20260623000001`），`/sessions/{id}/messages` 带出 → 刷新/重开对话卡片仍在。**部署须 `make migrate`**
-  - 仅 web 对话；IM（飞书/QQ）暂不真发文件（`_collect` 忽略 file 事件）
-  - 顺手修 `_resolve_file` 的 file_id 分支：`f.user_id != user_id`（UUID 对象 vs 字符串永远不等）改字符串比较，修复所有按 file_id 定位文件的工具
-
-### 新增 · QQ 机器人接入（单聊 C2C，每用户自带 BYO）
-
-- **QQ 官方机器人**（botpy WebSocket 长连接，C2C 单聊）：用户私聊自己的 QQ 机器人，带完整人格/记忆/工具回复。和飞书长连接同模式——**不需要公网、备案前可用**
-  - `agent/adapters/qq.py`：收 C2C 消息入队（payload 与飞书同构，带 `message_id` 供被动回复 + `owner_user_id`）；**收**凭据从 env 注入、**发**消息按 bot id 现查 DB（`send_c2c` token 失效自动重建重试）
-  - `requirements.txt` 加 `qq-botpy>=1.2.0`
-- **BYO 模型（每用户自带 bot）**：每个用户在「个人设置 → 接入咕咕 → QQ」填自己在 q.qq.com 建的 bot 凭据，咕咕为其起独立网关；bot 收到的消息天然归属 owner，**无需再做用户绑定**
-  - 新增 `user_bots` 表 + `app/api/v1/user_bots.py`（`/me/bots` 用户级 CRUD，secret 打码，仅能管自己的）
-  - `supervisor.py`：飞书走 override 文件 + argv、QQ 走 `user_bots` 表 + 环境变量注入凭据（避免 ps 泄漏）；常驻 loop 复用 engine，DB 抖动保活不误杀
-  - `worker.py`：QQ 用 payload 的 `owner_user_id` 直接认人
-  - 前端「QQ（自带机器人）」：**扫码自动连接**为主、手动填 AppID/Secret 兜底 + 我的 bot 列表（启停/删除）
-- **QQ 扫码自动连接**（复刻 QwenPaw/OpenClaw 的 q.qq.com bind_task 流程，实测无需合作方资质）：
-  - `app/api/v1/qq_connect.py`：`POST /me/qq/connect` 调 `q.qq.com/lite/create_bind_task` 建任务 → 前端二维码 → 手机 QQ 扫码选 bot 授权 → `GET /me/qq/connect/{task_id}` 轮询 `poll_bind_result`，完成则 **AES-256-GCM 解出 AppSecret 自动写入 UserBot**（无需手动复制）
-  - 安全：aes_key 仅存服务端（Redis，按 task_id），secret 加密回传只有本端能解；端点本身无鉴权但不暴露明文
-
-### 变更 · 飞书统一到 BYO 扫码自动连接（重构 + 清理旧共享 bot）
-
-- **飞书也改为 BYO + 扫码自动创建**（与 QQ 统一），复刻 QwenPaw 的 **OAuth 2.0 设备授权流（RFC 8628）**，实测无需合作方资质：
-  - `app/api/v1/feishu_connect.py`：`POST /me/feishu/connect` 调 `accounts.feishu.cn/oauth/v1/app/registration`（init→begin 拿 device_code + 扫码 URL）→ 手机飞书扫码授权创建 PersonalAgent 应用 → `GET /me/feishu/connect/{poll_id}` 轮询（device flow 等待时返回 400+`authorization_pending`，已兼容）→ 成功拿 `client_id`/`client_secret` 自动写入 `user_bots`
-  - `agent/adapters/feishu.py` 重写为 BYO：收凭据从 env 注入、发凭据按 bot id 查 `user_bots`、payload 带 `owner_user_id`
-  - `supervisor.py` 统一：飞书 + QQ **都从 `user_bots` 表读 + 环境变量注入凭据**（不再读 override 文件）
-  - `worker.py`：飞书也用 `owner_user_id` 直接认人
-  - 前端「接入咕咕」统一：飞书 / QQ 都是「扫码连接」+ 按平台分列 bot 列表
-- **清理旧的共享 bot + OAuth 绑定那套**：
-  - 删 `feishu_bind.py`（OAuth 扫码绑定）、`feishu_event.py`（事件订阅 Webhook 模式）
-  - 删 `PlatformBinding` 模型（两平台均 BYO，bot 即归属，不再需要平台用户↔咕咕用户绑定）
-  - 删 Admin「频道」面板（tab + bots CRUD + 飞书回调地址）——IM 接入全部改为用户自助
-  - 删 `FeishuSettings` / `active_im_bots`（config）、前端 `feishuApi` / config.js 的 feishu 段
-  - ⚠️ 旧的共享飞书 bot（config.override.json 的 `bots`）不再自动连接，需重新扫码连一个
-
-### 修复
-
-- **IM 对话没有上下文（"聊着聊着变新会话"）**：`run_collect`（飞书/QQ 的非流式大脑入口）一直**没读会话历史**，每条消息都孤立处理 → 无连续对话。现与网页版同口径：`agent/runner.py` 找/建会话 → 读历史窗口（按 token 预算裁剪）→ 存用户+回复消息+用量 → 对话后反思（报错不入历史/不反思）；`worker.py` 按 `(平台, 平台用户)` 在 Redis 存稳定 `session_id`（滑动 TTL 12h，空闲超时才起新会话）。飞书、QQ 一并修复
-
-### 新增 · 404 页 + 部署/运维
-
-- **404 页**：咕咕风格的 NotFound 页（路由 catch-all 改为渲染，不再 redirect 到登录）
-- **systemd 单元按安装目录自动生成**：`start.sh install` 用 `__APP_DIR__`/`__RUN_USER__` 占位符按当前 backend 目录填路径 + 建可写目录(uploads/logs/override)并授权——换部署目录不再手改、不再撞 `226/NAMESPACE`；运行用户可 `RUN_USER=xxx make install` 覆盖
-- **deploy.md nginx**：补 admin 子站 `location /admin` SPA 回退 + 带 hash 资源强缓存/HTML no-cache + gzip 建议
-- **vite**：`server.allowedHosts` 加 `myhome.coffeiz.space`（自定义域名/内网穿透访问 dev）
-
-### 新增
-
-- **回收站多选 / 框选**：文件库回收站支持选择模式
-  - 工具栏新增「选择」按钮（原仅在普通视图显示，回收站亦可用）
-  - 直接点击文件行即可选中 / 取消（无需先开启选择模式，因回收站文件不可打开）
-  - 支持从列标题区向下框选批量圈定文件
-  - 选中后浮动操作栏显示**恢复选中**和**永久删除**两个批量操作
-  - 取消选中、关闭选择模式与普通文件视图行为一致
-
-### 修复
-
-- **点击回收站文件行选中后立即被清除**：最外层 `files-page` 的 `@click` 会调 `clearSelection()`，文件行缺少 `.stop` 导致冒泡消掉选中状态；现为行点击加 `@click.stop`，并调整 `onPageClick` 在已有选中时跳过清除
-- **框选无法命中文件行**：误将 `.list-head` 加入 `onMainMouseDown` 排除列表，导致列标题区下方的整个拖拽起点都失效；恢复为仅排除 `button` 元素，列标题背景区可作为框选起点
-
-### 新增 · 飞书 Webhook 接入
-
-- **飞书事件订阅「请求地址」(Webhook) 模式**：作为长连接的替代，已有公网 HTTPS 时可少跑一个 supervisor 进程
-  - 新端点 `POST /api/v1/feishu/event/{channel_id}`：复用 lark `EventDispatcherHandler.do()` 解密 + 校验 Token + 验签 + 自动回 `challenge`，再派发到与长连接**同一个** `_make_on_message` 回调入队（payload 完全一致，worker/绑定/人格记忆链路零改动）
-  - Admin 频道弹窗（飞书）新增「事件订阅 Webhook」区：显示该频道**专属回调地址**（带 `channel_id`，可一键复制）+ Encrypt Key（打码）/ Verification Token 字段；env 兜底 `FEISHU__ENCRYPT_KEY` / `FEISHU__VERIFICATION_TOKEN`
-  - 修正 Starlette 头大小写问题：补齐 lark 验签所需的精确大小写 `X-Lark-*` 头
-
-### 变更
-
-- **精力恢复改为固定 6h 重置**：原 6h 配额是**滑动窗口**（按"过去 6 小时"累计），现改为按 UTC 整点 `00/06/12/18` 切固定桶、**到点整段清零**（与每周配额同口径）。`/quota` 返回 `reset_6h_at`（下次重置时刻，取代 `oldest_6h_at`）；拦截（`web.py`）、Admin 用户列表用量同步对齐；前端文案改「X 小时后重置精力」
+- 新增 `并发与性能优化.md`（诊断 + 分档方案）、Admin Debug 实时日志页、咕咕风格 404 页、systemd 按安装目录自动生成、deploy.md nginx 补充
+- 迁移：`20260623000001`（messages.files）/ `20260623000002`（sessions.source）/ `20260623000003`（agent_usage.tools_used）——**部署须 `make migrate`**
 
 ---
 
