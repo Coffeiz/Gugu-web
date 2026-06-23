@@ -77,12 +77,20 @@ def build(profile: str, user_name: str, projects: list, events: list,
     except FileNotFoundError:
         skills_policy = ""
 
-    # 顺序：人格 → 工具准则 → 对用户的了解（仅非空时注入，避免空 section 烧 token）→ 当前状态
+    # 内容政策（红线）：独立维护、所有 profile 共享
+    try:
+        content_policy = (_PROMPTS_DIR / "policy.md").read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        content_policy = ""
+
+    # 顺序：人格 → 工具准则 → 内容政策 → 对用户的了解（仅非空时注入，避免空 section 烧 token）→ 当前状态
     sections = []
     if persona:
         sections.append(persona)
     if skills_policy:
         sections.append(skills_policy)
+    if content_policy:
+        sections.append(content_policy)
     mem_block = _memory_block(memory)
     if mem_block:
         sections.append(mem_block)

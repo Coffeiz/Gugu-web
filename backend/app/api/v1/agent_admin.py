@@ -89,8 +89,8 @@ PLACEHOLDERS = [
 
 
 # 非对话 profile 的特殊可编辑 prompt：persona（人格）、skills（工具使用准则）、
-# reflection（反思提炼）、compress（记忆压缩）
-SPECIAL_PROMPTS = ["persona", "skills", "reflection", "compress"]
+# policy（内容政策）、reflection（反思提炼）、compress（记忆压缩）
+SPECIAL_PROMPTS = ["persona", "skills", "policy", "reflection", "compress"]
 
 
 def _prompt_path(profile: str) -> Path:
@@ -117,6 +117,14 @@ async def list_prompts():
         "profile": "skills",
         "exists": sk.exists(),
         "size": sk.stat().st_size if sk.exists() else 0,
+        "is_persona": True,
+    })
+    # policy：内容政策（红线），独立维护、所有 profile 共享
+    pol = PROMPTS_DIR / "policy.md"
+    profiles.append({
+        "profile": "policy",
+        "exists": pol.exists(),
+        "size": pol.stat().st_size if pol.exists() else 0,
         "is_persona": True,
     })
     # reflection / compress：记忆相关提炼词，非对话 profile，谨慎修改

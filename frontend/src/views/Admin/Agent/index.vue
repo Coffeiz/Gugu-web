@@ -192,7 +192,7 @@
               :class="{ active: activeProfile === p.profile }"
               :data-label="p.profile"
               @click="switchProfile(p.profile)"
-            >{{ ({persona:'人格', skills:'工具准则', reflection:'记忆反思', compress:'记忆压缩'})[p.profile] || p.profile }}</button>
+            >{{ ({persona:'人格', skills:'工具准则', policy:'内容政策', reflection:'记忆反思', compress:'记忆压缩'})[p.profile] || p.profile }}</button>
           </div>
         </div>
 
@@ -206,6 +206,12 @@
           style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
                  background:rgba(123,127,178,0.12);border:1px solid rgba(123,127,178,0.3);color:#5b5f96">
           🛠️ 这是<strong>工具使用准则</strong>（Execution Policy），紧跟人格注入、所有对话共享。决定咕咕何时该动手、动几下、别重复验证/查询。越短越好用，改它直接影响咕咕调工具的行为模式。
+        </div>
+
+        <div v-if="activeProfile === 'policy'" class="persona-caution"
+          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
+                 background:rgba(214,90,90,0.12);border:1px solid rgba(214,90,90,0.3);color:#b04343">
+          🚫 这是<strong>内容政策（红线）</strong>，所有对话共享。定义咕咕不参与的话题（政治、色情等）和专业领域免责。以后加新红线就在这里加一行。
         </div>
 
         <div v-if="activeProfile === 'reflection'" class="persona-caution"
@@ -1195,6 +1201,13 @@ onMounted(async () => {
   border-color: rgba(123,127,178,0.4);
 }
 .prompt-textarea::placeholder { color: rgba(255,255,255,0.2); }
+/* 暗色滚动条 + 去掉右下角横竖交汇处的白块（scrollbar-corner 默认是白的） */
+.prompt-textarea::-webkit-scrollbar { width: 10px; height: 10px; }
+.prompt-textarea::-webkit-scrollbar-track { background: transparent; }
+.prompt-textarea::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 6px; }
+.prompt-textarea::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+.prompt-textarea::-webkit-scrollbar-corner { background: transparent; }
+.prompt-textarea { scrollbar-color: rgba(255,255,255,0.18) transparent; }  /* Firefox */
 
 .placeholder-panel {
   display: flex; flex-direction: column; gap: 6px;
