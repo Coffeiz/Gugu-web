@@ -60,3 +60,7 @@ backup/
 # 构建产物 / 大字体资源
 gugu-backend-*.tar.gz
 docs/smiley-sans/
+
+# 性能 trace / 抓的日志（大文件，勿提交）
+/logs/
+Trace-*.json
