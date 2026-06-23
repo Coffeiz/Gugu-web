@@ -317,19 +317,22 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 
 <!-- 通知弹窗样式全局（Teleport 到 body） -->
 <style>
+.settings-popup .popup-menu-item:hover:not(:disabled) { background: rgba(255,255,255,0.55); }
+.settings-popup .popup-menu-item.danger:hover:not(:disabled) { background: rgba(200,90,90,0.1); }
+
 .settings-popup {
   position: absolute; bottom: calc(100% + 8px); left: 0; right: 0;
-  z-index: 100; padding: 4px;
+  z-index: 100; overflow: hidden;
   background: rgba(255,255,255,0.44);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.72);
   border-radius: var(--radius-md);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.95), 0 4px 16px rgba(0,0,0,0.08);
   user-select: none;
 }
+.settings-popup .popup-menu-item { border-radius: 0; }
 
 .notif-popup {
-  background: rgba(238,240,246,0.96);
+  background: var(--panel-bg);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.82); border-radius: 16px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 10px 36px rgba(30,40,80,0.14);

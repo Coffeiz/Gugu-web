@@ -447,9 +447,13 @@ function ctxAddEvent() {
   cellCtx.show = false
   const iso = cellCtx.range?.start ?? cellCtx.iso
   newEvent.value = { name: '', date: iso, description: '' }
+  const ADD_H = 260
+  const ctxTop = (window.innerHeight - cellCtx.y - 8 >= ADD_H)
+    ? cellCtx.y + 8
+    : cellCtx.y - ADD_H - 8
   addFormStyle.value = {
     position: 'fixed',
-    top:  Math.min(cellCtx.y + 8, window.innerHeight - 300) + 'px',
+    top:  Math.max(8, ctxTop) + 'px',
     left: Math.max(8, Math.min(cellCtx.x - 120, window.innerWidth - 258)) + 'px',
     width: '240px', zIndex: 1000,
   }
@@ -1096,9 +1100,13 @@ function openAddForm() {
       ? sbRect.left + sbRect.width / 2
       : btnRect.right - popupWidth / 2
     const left = Math.max(8, Math.min(centerX - popupWidth / 2, window.innerWidth - popupWidth - 8))
+    const ADD_H = 260
+    const btnTop = (window.innerHeight - btnRect.bottom - 8 >= ADD_H)
+      ? btnRect.bottom + 8
+      : btnRect.top - ADD_H - 8
     addFormStyle.value = {
       position: 'fixed',
-      top:   btnRect.bottom + 8 + 'px',
+      top:   Math.max(8, btnTop) + 'px',
       left:  left + 'px',
       width: popupWidth + 'px',
       zIndex: 1000,
@@ -1111,10 +1119,13 @@ function openEditForm(ev, nativeEv, useMousePos = false) {
   showAddForm.value = false
   editingEvent.value = { id: ev.id, name: ev.name, date: ev.date, description: ev.description || '' }
   const w = 240
+  const EDIT_H = 220
   let left, top
   if (useMousePos) {
     left = Math.max(8, Math.min(nativeEv.clientX - w / 2, window.innerWidth - w - 8))
-    top  = Math.min(nativeEv.clientY + 8, window.innerHeight - 220)
+    top  = (window.innerHeight - nativeEv.clientY - 8 >= EDIT_H)
+      ? nativeEv.clientY + 8
+      : nativeEv.clientY - EDIT_H - 8
   } else {
     const el    = nativeEv.currentTarget ?? nativeEv.target
     const rect  = el.getBoundingClientRect()
@@ -1122,9 +1133,11 @@ function openEditForm(ev, nativeEv, useMousePos = false) {
     const sbRect = sbEl?.getBoundingClientRect()
     const centerX = sbRect ? sbRect.left + sbRect.width / 2 : rect.left + rect.width / 2
     left = Math.max(8, Math.min(centerX - w / 2, window.innerWidth - w - 8))
-    top  = rect.bottom + 6
+    top  = (window.innerHeight - rect.bottom - 6 >= EDIT_H)
+      ? rect.bottom + 6
+      : rect.top - EDIT_H - 6
   }
-  editFormStyle.value = { position: 'fixed', top: top + 'px', left: left + 'px', width: w + 'px', zIndex: 2100 }
+  editFormStyle.value = { position: 'fixed', top: Math.max(8, top) + 'px', left: left + 'px', width: w + 'px', zIndex: 2100 }
   showEditForm.value = true
 }
 
@@ -1449,7 +1462,7 @@ async function saveEvent() {
 
 <style>
 .overflow-popup {
-  background: rgba(238,240,246,0.96);
+  background: var(--panel-bg);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.82);
   border-radius: 14px;
@@ -1476,7 +1489,7 @@ async function saveEvent() {
 .overflow-name { overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 
 .cal-month-picker {
-  background: rgba(238,240,246,0.96);
+  background: var(--panel-bg);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.82);
   border-radius: 16px;

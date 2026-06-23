@@ -121,7 +121,7 @@
 
         <!-- 大窗布局 -->
         <div v-else key="large" class="layout-large">
-          <div class="exp-sidebar">
+          <div class="exp-sidebar panel-left">
             <div class="exp-sidebar-header">
               <span class="exp-sidebar-title">咕咕</span>
             </div>
@@ -803,7 +803,7 @@ async function send() {
 
 /* 小窗和大窗主区域负责背景 blur */
 .layout-small, .exp-main {
-  background: rgba(240, 240, 248, 0.88);
+  background: var(--panel-bg);
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
 }
@@ -888,11 +888,6 @@ async function send() {
 
 .exp-sidebar {
   width: 210px; flex-shrink: 0;
-  border-right: 1px solid rgba(255,255,255,0.62);
-  background: rgba(255,255,255,0.55);
-  backdrop-filter: blur(32px);
-  -webkit-backdrop-filter: blur(32px);
-  box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
   display: flex; flex-direction: column;
 }
 .exp-sidebar-header {
@@ -1110,7 +1105,7 @@ async function send() {
 .mini-player {
   position: fixed; right: 28px; width: 316px;
   transition: bottom 0.28s cubic-bezier(0.34, 1.2, 0.64, 1);
-  background: rgba(242, 242, 248, 0.9); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  background: var(--panel-bg); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
   border: 1px solid rgba(255,255,255,0.65); border-radius: 20px;
   box-shadow: var(--glass-shadow-lg); padding: 12px 14px 10px;
   z-index: 1002; display: flex; flex-direction: column; gap: 7px;

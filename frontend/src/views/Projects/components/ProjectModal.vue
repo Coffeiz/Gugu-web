@@ -12,7 +12,7 @@
         </div>
 
         <!-- 左栏 -->
-        <div class="modal-left">
+        <div class="modal-left panel-left">
 
           <!-- 标题 -->
           <div class="proj-header">
@@ -1924,9 +1924,16 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 </script>
 
 <style scoped>
-/* modal 保留 grid 双列布局，视觉样式由 BaseModal 的 bm-card 提供 */
+/* bm-card 透明，左栏自己带玻璃背景 */
+:deep(.bm-card) {
+  background: transparent;
+  box-shadow: 0 24px 64px rgba(20,25,50,0.2),
+              inset 0 1px 0 rgba(255,255,255,0.95),
+              inset 1px 0 0 rgba(255,255,255,0.55);
+}
+
 .modal {
-  display: grid; grid-template-columns: 320px 1fr;
+  display: grid; grid-template-columns: 260px 1fr;
   width: 100%; height: 100%;
   overflow: hidden;
 }
@@ -1942,8 +1949,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 
 /* ── 左栏 ── */
 .modal-left {
-  display: flex; flex-direction: column;
-  border-right: 1px solid rgba(0,0,0,0.07); overflow: hidden;
+  display: flex; flex-direction: column; overflow: hidden;
 }
 
 /* 标题 */
@@ -1994,7 +2000,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .field-input {
   width: 100%; padding: 9px 12px; box-sizing: border-box;
   border: 1px solid rgba(0,0,0,0.1); border-radius: 8px;
-  background: rgba(255,255,255,0.6); font-size: 13px;
+  background: rgba(255,255,255,0.35); font-size: 13px;
   font-family: var(--font-sans); color: var(--text-primary);
   outline: none; transition: border-color 0.15s, box-shadow 0.15s;
 }
@@ -2006,7 +2012,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .status-group { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
 .status-btn {
   display: flex; align-items: center; gap: 6px;
-  padding: 5px 12px; border-radius: 20px;
+  padding: 5px 9px; border-radius: 20px;
   border: 1.5px solid transparent; font-size: 12px; font-weight: 600;
   cursor: pointer; font-family: var(--font-sans);
   background: rgba(0,0,0,0.04); color: var(--text-secondary);
@@ -2049,7 +2055,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .notes-input {
   width: 100%; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; padding: 7px 10px;
   font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
-  background: rgba(255,255,255,0.72); outline: none; resize: none; line-height: 1.5;
+  background: rgba(255,255,255,0.35); outline: none; resize: none; line-height: 1.5;
   transition: border-color 0.15s, box-shadow 0.15s; box-sizing: border-box;
 }
 .notes-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
@@ -2083,7 +2089,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .stage-input {
   font-size: 13px; font-family: var(--font-sans);
   border: 1px solid rgba(123,127,178,0.4); border-radius: 6px; padding: 1px 6px;
-  background: rgba(255,255,255,0.72); outline: none; color: var(--text-primary); width: 110px;
+  background: rgba(255,255,255,0.35); outline: none; color: var(--text-primary); width: 110px;
   box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
 }
 .del-stage {
@@ -2170,7 +2176,12 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 }
 
 /* ── 右栏：文件 ── */
-.modal-right { display: flex; flex-direction: column; min-height: 0; background: transparent; }
+.modal-right {
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel-bg);
+  backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98);
+}
 .right-header {
   height: 52px; box-sizing: border-box;
   padding: 0 12px 0 16px; border-bottom: 1px solid rgba(0,0,0,0.07);
@@ -2621,7 +2632,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   position: fixed; z-index: 9999; pointer-events: none;
   display: flex; align-items: center;
   padding: 5px 12px;
-  background: rgba(238,240,246,0.96);
+  background: var(--panel-bg);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(123,127,178,0.3);
   border-radius: 8px;

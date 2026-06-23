@@ -261,7 +261,7 @@ watch(() => props.modelValue, v => {
 
 <style>
 .dp-popup {
-  background: rgba(238,240,246,0.96);
+  background: var(--panel-bg);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.78);

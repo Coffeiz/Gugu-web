@@ -539,6 +539,8 @@ function handleCreate() {
 </script>
 
 <style scoped>
+:deep(.bm-card) { background: var(--panel-bg); }
+
 .modal { display: contents; }
 
 /* ── 头部 ── */

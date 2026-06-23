@@ -3,7 +3,7 @@
     <div class="pm-layout">
 
       <!-- 左侧导航栏 -->
-      <div class="pm-nav">
+      <div class="pm-nav panel-left">
         <div class="pm-user-block">
           <div class="pm-avatar" @click="triggerAvatarUpload" title="点击更换头像">
             <img v-if="authStore.user?.avatarUrl" :src="authStore.user.avatarUrl" class="pm-avatar-img" />
@@ -529,10 +529,6 @@ function handleLogout() {
 .pm-nav {
   display: flex; flex-direction: column;
   padding: 20px 14px;
-  background: rgba(255,255,255,0.6);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border-right: 1px solid rgba(255,255,255,0.62);
-  box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
   gap: 2px;
 }
 
@@ -596,7 +592,7 @@ function handleLogout() {
 /* 右侧内容 */
 .pm-content {
   display: flex; flex-direction: column; min-height: 0;
-  background: rgba(238,240,246,0.96);
+  background: var(--panel-bg);
   backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98);
 }
