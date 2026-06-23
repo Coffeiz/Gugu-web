@@ -71,7 +71,6 @@
   <Transition name="chat-open">
     <div v-if="open" class="chat-window" :style="windowStyle" ref="windowRef">
       <Transition name="layout-switch">
-
         <!-- 小窗布局 -->
         <div v-if="!expanded" key="small" class="layout-small">
           <div class="popup-header">
@@ -90,7 +89,7 @@
           </div>
           <div class="popup-messages" ref="messagesEl">
             <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]">
-              <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : renderMd(msg.text)" /></div>
+              <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : msg.html" /></div>
               <div v-else class="msg-bubble">{{ msg.text }}</div>
               <div v-if="msg.files && msg.files.length" class="msg-files">
                 <div v-for="f in msg.files" :key="f.file_id" class="msg-file" @click="downloadFile(f)" title="点击下载">
@@ -186,7 +185,7 @@
             </div>
             <div class="exp-messages" ref="expMessagesEl">
               <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]">
-                <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : renderMd(msg.text)" /></div>
+                <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : msg.html" /></div>
                 <div v-else class="msg-bubble">{{ msg.text }}</div>
                 <div v-if="msg.files && msg.files.length" class="msg-files">
                   <div v-for="f in msg.files" :key="f.file_id" class="msg-file" @click="downloadFile(f)" title="点击下载">
@@ -584,7 +583,7 @@ let _mid = 0
 const mkid = () => ++_mid
 
 const messages = ref([
-  { id: mkid(), role: 'ai', text: '你好！我是咕咕，可以帮你查项目进度、搜索文件、查看截止日期和近期排期，随时问我吧 ✦', time: now() },
+  { id: mkid(), role: 'ai', text: '你好！我是咕咕，可以帮你查项目进度、搜索文件、查看截止日期和近期排期，随时问我吧 ✦', html: renderMd('你好！我是咕咕，可以帮你查项目进度、搜索文件、查看截止日期和近期排期，随时问我吧 ✦'), time: now() },
 ])
 
 // ── 展开/收起 ────────────────────────────────────────────
@@ -630,6 +629,7 @@ async function loadSession(id) {
       id: mkid(),
       role: m.role === 'assistant' ? 'ai' : m.role,
       text: m.content,
+      html: m.role === 'assistant' ? renderMd(m.content) : null,
       files: m.files && m.files.length ? m.files : undefined,
       time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
     }))
@@ -798,7 +798,11 @@ async function consumeStream(reader) {
       }
     }
   } finally {
-    if (aiIdx !== -1 && messages.value[aiIdx]) messages.value[aiIdx].streaming = false
+    if (aiIdx !== -1 && messages.value[aiIdx]) {
+      const m = messages.value[aiIdx]
+      m.streaming = false
+      m.html = renderMd(m.text)
+    }
   }
   return { aiIdx, usedTools }
 }
@@ -946,11 +950,11 @@ async function send(forcedText) {
 }
 .chat-open-enter-from, .chat-open-leave-to { opacity: 0; transform: scale(0.05); }
 
+/* ── 小窗布局 ── */
 /* 内部布局切换：无动画，随窗口位移即时切换 */
 .layout-switch-enter-active, .layout-switch-leave-active { transition: none; }
 .layout-switch-leave-to { display: none; }
 
-/* ── 小窗布局 ── */
 .layout-small { display: flex; flex-direction: column; height: 100%; }
 
 .popup-header {
@@ -1167,12 +1171,12 @@ async function send(forcedText) {
 .msg-file-ext {
   flex-shrink: 0; width: 34px; height: 34px; border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 10px; font-weight: 700; color: #fff; letter-spacing: 0.02em;
+  font-size: 11px; font-weight: 700; color: #fff; letter-spacing: 0.02em;
   background: linear-gradient(135deg, #7b7fb2, #9590c4);
 }
-.msg-file-info { flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.msg-file-name { font-size: 13px; font-weight: 600; color: #2a2c3a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msg-file-meta { font-size: 11px; color: #9296ad; }
+.msg-file-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.msg-file-name { font-size: 14px; font-weight: 600; color: #2a2c3a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-file-meta { font-size: 12px; color: #9296ad; }
 .msg-file-dl { flex-shrink: 0; color: #7b7fb2; }
 .msg-footer {
   display: flex; align-items: center; gap: 4px;

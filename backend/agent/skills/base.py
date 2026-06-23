@@ -115,7 +115,7 @@ class SkillRegistry:
             import traceback
             print(f"[skill] 工具 {name} 执行出错: {type(e).__name__}: {e}", flush=True)
             traceback.print_exc()
-            return json.dumps({"error": f"工具 {name} 执行出错：{e}"}, ensure_ascii=False), None
+            return json.dumps({"error": f"工具 {name} 执行出错：{type(e).__name__}: {e}"}, ensure_ascii=False), None
 
         if isinstance(result, str):
             return result, None

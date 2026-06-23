@@ -193,8 +193,10 @@ async def _edit_file(db, user_id, args: dict):
 async def _create_document(db, user_id, args: dict):
     fmt = (args.get("format") or "md").lower()
     if fmt not in _DOC_MIME:
-        return json.dumps({"error": f"不支持的格式: {fmt}", "supported": list(_DOC_MIME)})
-    name = args["name"]
+        return json.dumps({"error": f"不支持的格式: {fmt}", "supported": list(_DOC_MIME)}, ensure_ascii=False)
+    name = (args.get("name") or "").strip()
+    if not name:
+        return json.dumps({"error": "缺少必填参数 name（文件名）；请带上 name 再调用本工具"}, ensure_ascii=False)
     display_name = _strip_ext(name, fmt)
     space = args.get("space", "personal")
     content = args.get("content", "")

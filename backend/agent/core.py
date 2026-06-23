@@ -179,6 +179,9 @@ class LLMRunner:
                     try:
                         args = json.loads(b["args"])
                     except Exception:
+                        # 参数 JSON 解析失败（常见于长内容被 max_tokens 截断）→ 记下原文便于排查
+                        print(f"[core] 工具 {b['name']} 参数解析失败(疑似 max_tokens 截断), "
+                              f"len={len(b['args'])} 尾部={b['args'][-120:]!r}", flush=True)
                         args = {}
                     yield f"data: {json.dumps({'type': 'tool_call', 'name': b['name'], 'label': label, 'input': args}, ensure_ascii=False)}\n\n"
                     result, artifact = await registry.dispatch(user_id, b["name"], args)
