@@ -233,13 +233,7 @@ export const authApi = {
 }
 
 // 飞书 OAuth 扫码绑定
-export const feishuApi = {
-  bindUrl: () => request('GET',    '/feishu/bind/url'),
-  status:  () => request('GET',    '/feishu/bind/status'),
-  unbind:  () => request('DELETE', '/feishu/bind'),
-}
-
-// 用户自带机器人（BYO，目前 QQ）
+// 用户自带机器人（BYO：飞书 / QQ）
 export const userBotsApi = {
   list:   ()        => request('GET',    '/me/bots'),
   create: (body)    => request('POST',   '/me/bots', body),
@@ -251,4 +245,10 @@ export const userBotsApi = {
 export const qqConnectApi = {
   start: ()        => request('POST', '/me/qq/connect'),
   poll:  (taskId)  => request('GET',  `/me/qq/connect/${taskId}`),
+}
+
+// 飞书扫码自动连接（device flow → 轮询 → 自动填 key）
+export const feishuConnectApi = {
+  start: ()        => request('POST', '/me/feishu/connect'),
+  poll:  (pollId)  => request('GET',  `/me/feishu/connect/${pollId}`),
 }

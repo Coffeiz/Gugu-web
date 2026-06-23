@@ -19,10 +19,24 @@
   - `supervisor.py`：飞书走 override 文件 + argv、QQ 走 `user_bots` 表 + 环境变量注入凭据（避免 ps 泄漏）；常驻 loop 复用 engine，DB 抖动保活不误杀
   - `worker.py`：QQ 用 payload 的 `owner_user_id` 直接认人
   - 前端「QQ（自带机器人）」：**扫码自动连接**为主、手动填 AppID/Secret 兜底 + 我的 bot 列表（启停/删除）
-  - Admin 频道面板收敛为仅飞书（QQ 改由用户自助管理）
 - **QQ 扫码自动连接**（复刻 QwenPaw/OpenClaw 的 q.qq.com bind_task 流程，实测无需合作方资质）：
   - `app/api/v1/qq_connect.py`：`POST /me/qq/connect` 调 `q.qq.com/lite/create_bind_task` 建任务 → 前端二维码 → 手机 QQ 扫码选 bot 授权 → `GET /me/qq/connect/{task_id}` 轮询 `poll_bind_result`，完成则 **AES-256-GCM 解出 AppSecret 自动写入 UserBot**（无需手动复制）
   - 安全：aes_key 仅存服务端（Redis，按 task_id），secret 加密回传只有本端能解；端点本身无鉴权但不暴露明文
+
+### 变更 · 飞书统一到 BYO 扫码自动连接（重构 + 清理旧共享 bot）
+
+- **飞书也改为 BYO + 扫码自动创建**（与 QQ 统一），复刻 QwenPaw 的 **OAuth 2.0 设备授权流（RFC 8628）**，实测无需合作方资质：
+  - `app/api/v1/feishu_connect.py`：`POST /me/feishu/connect` 调 `accounts.feishu.cn/oauth/v1/app/registration`（init→begin 拿 device_code + 扫码 URL）→ 手机飞书扫码授权创建 PersonalAgent 应用 → `GET /me/feishu/connect/{poll_id}` 轮询（device flow 等待时返回 400+`authorization_pending`，已兼容）→ 成功拿 `client_id`/`client_secret` 自动写入 `user_bots`
+  - `agent/adapters/feishu.py` 重写为 BYO：收凭据从 env 注入、发凭据按 bot id 查 `user_bots`、payload 带 `owner_user_id`
+  - `supervisor.py` 统一：飞书 + QQ **都从 `user_bots` 表读 + 环境变量注入凭据**（不再读 override 文件）
+  - `worker.py`：飞书也用 `owner_user_id` 直接认人
+  - 前端「接入咕咕」统一：飞书 / QQ 都是「扫码连接」+ 按平台分列 bot 列表
+- **清理旧的共享 bot + OAuth 绑定那套**：
+  - 删 `feishu_bind.py`（OAuth 扫码绑定）、`feishu_event.py`（事件订阅 Webhook 模式）
+  - 删 `PlatformBinding` 模型（两平台均 BYO，bot 即归属，不再需要平台用户↔咕咕用户绑定）
+  - 删 Admin「频道」面板（tab + bots CRUD + 飞书回调地址）——IM 接入全部改为用户自助
+  - 删 `FeishuSettings` / `active_im_bots`（config）、前端 `feishuApi` / config.js 的 feishu 段
+  - ⚠️ 旧的共享飞书 bot（config.override.json 的 `bots`）不再自动连接，需重新扫码连一个
 
 ### 修复
 

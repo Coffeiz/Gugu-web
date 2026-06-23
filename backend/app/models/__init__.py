@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON, UniqueConstraint
+from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
@@ -268,26 +268,6 @@ class SearchUsage(Base):
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     query:      Mapped[str]      = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
-
-
-# ── PlatformBinding ───────────────────────────────────────────────────────────
-
-class PlatformBinding(Base):
-    """IM 平台用户 ↔ 咕咕用户绑定（OAuth 扫码绑定写入）。
-
-    platform_user_id 是平台侧用户标识（飞书为 open_id，按 app 隔离）。
-    网关收到消息时按 (platform, platform_user_id) 查 user_id，实现"每人各聊各的"。
-    """
-    __tablename__ = "platform_bindings"
-    __table_args__ = (UniqueConstraint("platform", "platform_user_id", name="uq_platform_user"),)
-
-    id:               Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:          Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    platform:         Mapped[str]      = mapped_column(String(20))          # feishu | qqbot | weixin
-    platform_user_id: Mapped[str]      = mapped_column(String(128), index=True)  # 飞书 open_id
-    channel_id:       Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # 绑定走的频道
-    display_name:     Mapped[str]      = mapped_column(String(100), default="")  # 平台侧昵称，便于展示
-    created_at:       Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 # ── UserBot（BYO：每用户自带的 IM 机器人）─────────────────────────────────────

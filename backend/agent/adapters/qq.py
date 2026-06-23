@@ -101,13 +101,32 @@ async def _api_for(channel_id: str):
     return _apis[channel_id]
 
 
+def _markdown_blocked(exc: Exception) -> bool:
+    """该 bot 没开通原生 markdown 权限的报错（回退纯文本）。"""
+    s = str(exc)
+    return ("50056" in s or "40034012" in s or "不允许发送原生 markdown" in s)
+
+
+async def _post(api, openid: str, text: str, msg_id: str | None):
+    """先发原生 markdown(msg_type=2) 让 QQ 渲染；该 bot 无 md 权限则回退纯文本(msg_type=0)。
+    回退用不同 msg_seq，避免被动回复重复 seq 被拒。"""
+    try:
+        await api.post_c2c_message(openid=openid, msg_type=2,
+                                   markdown={"content": text}, msg_id=msg_id, msg_seq=1)
+    except Exception as me:
+        if not _markdown_blocked(me):
+            raise
+        await api.post_c2c_message(openid=openid, msg_type=0,
+                                   content=text, msg_id=msg_id, msg_seq=2)
+
+
 async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                    channel_id: str | None = None) -> bool:
     """给指定用户发 C2C 被动回复（带原 msg_id）。token 过期等异常时重建一次再试。"""
     for attempt in (1, 2):
         try:
             api = await _api_for(channel_id)
-            await api.post_c2c_message(openid=openid, msg_type=0, content=text, msg_id=msg_id)
+            await _post(api, openid, text, msg_id)
             return True
         except Exception as e:
             print(f"[qq] 发送失败(第{attempt}次): {type(e).__name__}: {e}", flush=True)

@@ -113,7 +113,22 @@
           <template v-if="activeNav === 'gugu'">
             <div class="pm-section">
               <div class="pm-section-label">精力值</div>
-              <div v-if="quotaLoading" class="pm-quota-loading">加载中…</div>
+              <div v-if="quotaLoading" class="pm-quota-skeleton">
+                <div class="pm-quota-item">
+                  <div class="pm-quota-row">
+                    <span class="pm-quota-label">6 小时精力值</span>
+                    <div class="pm-qs-pct"></div>
+                  </div>
+                  <div class="pm-quota-bar"><div class="pm-qs-fill"></div></div>
+                </div>
+                <div class="pm-quota-item">
+                  <div class="pm-quota-row">
+                    <span class="pm-quota-label">本周</span>
+                    <div class="pm-qs-pct"></div>
+                  </div>
+                  <div class="pm-quota-bar"><div class="pm-qs-fill"></div></div>
+                </div>
+              </div>
               <template v-else>
                 <div class="pm-quota-item">
                   <div class="pm-quota-row">
@@ -164,64 +179,36 @@
 
             <div class="pm-section">
               <div class="pm-section-label">接入咕咕</div>
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">飞书</span>
-                  <span class="pm-field-hint">{{ feishu.bound ? `已绑定 · ${feishu.display_name || '飞书账号'}` : '扫码绑定飞书，私聊咕咕直接管理项目/文件/日程' }}</span>
+
+              <!-- 飞书 / QQ：都是自带机器人(BYO)，扫码自动创建+连接 -->
+              <template v-for="p in IM_PLATFORMS" :key="p.key">
+                <div class="pm-field-row">
+                  <div class="pm-field-desc">
+                    <span class="pm-field-name">{{ p.label }}</span>
+                    <span class="pm-field-hint">{{ p.hint }}</span>
+                  </div>
+                  <button class="pm-bind-btn" :disabled="connecting === p.key" @click="startConnect(p.key)">
+                    {{ connecting === p.key ? '生成中…' : '扫码连接' }}
+                  </button>
                 </div>
-                <button v-if="feishu.bound" class="pm-bind-btn off" @click="unbindFeishu">解绑</button>
-                <button v-else class="pm-bind-btn" :disabled="feishuBinding" @click="startFeishuBind">
-                  {{ feishuBinding ? '生成中…' : '绑定' }}
-                </button>
-              </div>
 
-              <div v-if="feishuQrShow" class="pm-qr-box">
-                <canvas ref="feishuQrCanvas" class="pm-qr-canvas"></canvas>
-                <div class="pm-qr-hint">{{ feishuQrHint }}</div>
-                <button class="pm-qr-cancel" @click="cancelFeishuBind">取消</button>
-              </div>
-              <div v-else-if="feishuError" class="pm-qr-err">{{ feishuError }}</div>
-
-              <!-- QQ：自带机器人（BYO）-->
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">QQ（自带机器人）</span>
-                  <span class="pm-field-hint">手机 QQ 扫码 → 选一个机器人授权，咕咕自动连接，私聊它直接管项目/文件/日程</span>
+                <div v-for="b in botsOf(p.key)" :key="b.id" class="pm-bot-item">
+                  <div class="pm-bot-info">
+                    <span class="pm-bot-name">{{ b.name }}<span v-if="b.sandbox" class="pm-bot-tag">沙箱</span></span>
+                    <span class="pm-bot-appid">{{ b.app_id }}</span>
+                  </div>
+                  <button class="pm-mini-toggle" :class="{ on: b.enabled }" @click="toggleBot(b)">{{ b.enabled ? '已启用' : '已停用' }}</button>
+                  <button class="pm-bot-del" @click="removeBot(b)">删除</button>
                 </div>
-                <button class="pm-bind-btn" :disabled="qqConnecting" @click="startQQConnect">{{ qqConnecting ? '生成中…' : '扫码连接' }}</button>
-              </div>
+              </template>
 
-              <!-- 扫码连接（自动）-->
-              <div v-if="qqConnectShow" class="pm-qr-box">
-                <canvas ref="qqQrCanvas" class="pm-qr-canvas"></canvas>
-                <div class="pm-qr-hint">{{ qqConnectHint }}</div>
-                <button class="pm-qr-cancel" @click="cancelQQConnect">取消</button>
+              <!-- 扫码连接二维码（飞书/QQ 共用，一次只连一个）-->
+              <div v-if="connect" class="pm-qr-box">
+                <canvas ref="connectCanvas" class="pm-qr-canvas"></canvas>
+                <div class="pm-qr-hint">{{ connectHint }}</div>
+                <button class="pm-qr-cancel" @click="cancelConnect">取消</button>
               </div>
-
-              <!-- 我的 QQ 机器人 -->
-              <div v-for="b in qqBots" :key="b.id" class="pm-bot-item">
-                <div class="pm-bot-info">
-                  <span class="pm-bot-name">{{ b.name }}<span v-if="b.sandbox" class="pm-bot-tag">沙箱</span></span>
-                  <span class="pm-bot-appid">{{ b.app_id }}</span>
-                </div>
-                <button class="pm-mini-toggle" :class="{ on: b.enabled }" @click="toggleQQBot(b)">{{ b.enabled ? '已启用' : '已停用' }}</button>
-                <button class="pm-bot-del" @click="removeQQBot(b)">删除</button>
-              </div>
-
-              <!-- 手动填（兜底）-->
-              <div v-if="qqForm" class="pm-bot-form">
-                <input v-model="qqForm.name" placeholder="名称（可选）" class="pm-bot-input" />
-                <input v-model="qqForm.app_id" placeholder="AppID（纯数字）" class="pm-bot-input" autocomplete="off" />
-                <input v-model="qqForm.app_secret" type="password" placeholder="AppSecret" class="pm-bot-input" autocomplete="new-password" />
-                <label class="pm-bot-check"><input type="checkbox" v-model="qqForm.sandbox" /> 沙箱环境（开发期勾选）</label>
-                <div class="pm-bot-form-actions">
-                  <span class="pm-qr-err" style="flex:1">{{ qqError }}</span>
-                  <button class="pm-bind-btn off" @click="qqForm = null">取消</button>
-                  <button class="pm-bind-btn" :disabled="qqSaving" @click="saveQQBot">{{ qqSaving ? '保存中…' : '保存' }}</button>
-                </div>
-              </div>
-              <button v-else-if="!qqConnectShow" class="pm-text-link" @click="openQQForm">扫不了？手动填 AppID / AppSecret</button>
-              <div v-if="qqError && !qqForm" class="pm-qr-err">{{ qqError }}</div>
+              <div v-if="connectErr" class="pm-qr-err">{{ connectErr }}</div>
             </div>
           </template>
 
@@ -304,7 +291,7 @@ import QRCode from 'qrcode'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import BaseModal from '@/components/common/BaseModal.vue'
-import { authApi, feishuApi, userBotsApi, qqConnectApi } from '@/services/api'
+import { authApi, userBotsApi, qqConnectApi, feishuConnectApi } from '@/services/api'
 import { PhX, PhSignOut, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird } from '@phosphor-icons/vue'
 
 const props = defineProps({ show: Boolean })
@@ -400,161 +387,92 @@ async function onAvatarFile(e) {
 // 精力值配额
 const quota = ref({ used_6h: 0, limit_6h: null, reset_6h_at: null, used_weekly: 0, limit_weekly: null })
 const quotaLoading = ref(false)
+const quotaHasData = ref(false)
 
 async function loadQuota() {
-  quotaLoading.value = true
-  try { quota.value = await authApi.getQuota() } catch {}
+  if (!quotaHasData.value) quotaLoading.value = true
+  try { quota.value = await authApi.getQuota(); quotaHasData.value = true } catch {}
   finally { quotaLoading.value = false }
 }
 
-watch(activeNav, v => { if (v === 'gugu') { loadQuota(); loadFeishu(); loadQQ() } })
+watch(activeNav, v => { if (v === 'gugu') { loadQuota(); loadBots() } })
 
-// ── 飞书 OAuth 扫码绑定 ──
-const feishu = ref({ bound: false, display_name: '' })
-const feishuBinding = ref(false)
-const feishuQrShow = ref(false)
-const feishuQrHint = ref('')
-const feishuError = ref('')
-const feishuQrCanvas = ref(null)
-let feishuPoll = null
+// ── 接入咕咕：飞书 / QQ 都是自带机器人(BYO) + 扫码自动连接 ──
+const IM_PLATFORMS = [
+  { key: 'feishu', label: '飞书（自带机器人）', api: feishuConnectApi,
+    hint: '手机飞书扫码 → 授权创建机器人，咕咕自动连接，私聊它直接管项目/文件/日程' },
+  { key: 'qqbot', label: 'QQ（自带机器人）', api: qqConnectApi,
+    hint: '手机 QQ 扫码 → 选一个机器人授权，咕咕自动连接，私聊它直接管项目/文件/日程' },
+]
 
-async function loadFeishu() {
-  try { feishu.value = await feishuApi.status() } catch {}
+const bots = ref([])
+const botsOf = (platform) => bots.value.filter(b => b.platform === platform)
+async function loadBots() {
+  try { const r = await userBotsApi.list(); bots.value = r.items || [] } catch {}
 }
 
-async function startFeishuBind() {
-  feishuBinding.value = true
-  feishuError.value = ''
+// 通用扫码连接（建任务 → 渲染二维码 → 轮询 → 自动写 user_bot）
+const connecting = ref('')          // 正在生成二维码的平台 key
+const connect = ref(null)           // { platform, id } 连接进行中
+const connectHint = ref('')
+const connectErr = ref('')
+const connectCanvas = ref(null)
+let connectPoll = null
+
+async function startConnect(platform) {
+  const p = IM_PLATFORMS.find(x => x.key === platform)
+  connecting.value = platform; connectErr.value = ''
   try {
-    const { url } = await feishuApi.bindUrl()
-    feishuQrShow.value = true
-    feishuQrHint.value = '用飞书 App 扫码授权，绑定后自动完成'
+    const r = await p.api.start()
+    const id = r.poll_id || r.task_id       // 飞书 poll_id / QQ task_id
+    connect.value = { platform, id }
+    connectHint.value = platform === 'feishu'
+      ? '手机飞书扫码 → 授权创建机器人，授权后自动连接'
+      : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
     await nextTick()
-    await QRCode.toCanvas(feishuQrCanvas.value, url, { width: 180, margin: 1 })
-    _startPoll()
+    await QRCode.toCanvas(connectCanvas.value, r.scan_url, { width: 180, margin: 1 })
+    _startConnectPoll(p)
   } catch (e) {
-    feishuError.value = e.message || '生成二维码失败'
-    feishuQrShow.value = false
+    connectErr.value = e.message || '生成二维码失败'
+    connect.value = null
   } finally {
-    feishuBinding.value = false
+    connecting.value = ''
   }
 }
 
-function _startPoll() {
-  _stopPoll()
+function _startConnectPoll(p) {
+  _stopConnectPoll()
   let tries = 0
-  feishuPoll = setInterval(async () => {
+  connectPoll = setInterval(async () => {
     tries++
     try {
-      const s = await feishuApi.status()
-      if (s.bound) {
-        feishu.value = s
-        cancelFeishuBind()
-        feishuQrHint.value = ''
-      }
+      const r = await p.api.poll(connect.value.id)
+      if (r.status === 'success') { cancelConnect(); await loadBots() }
+      else if (r.status === 'expired') { connectErr.value = '二维码已过期，请重新扫码连接'; cancelConnect() }
+      else if (r.status === 'fail') { connectErr.value = '连接失败：' + (r.reason || '未知'); cancelConnect() }
     } catch {}
-    if (tries > 100) cancelFeishuBind()   // ~5 分钟超时
+    if (tries > 100) cancelConnect()   // ~5 分钟超时
   }, 3000)
 }
-function _stopPoll() { if (feishuPoll) { clearInterval(feishuPoll); feishuPoll = null } }
+function _stopConnectPoll() { if (connectPoll) { clearInterval(connectPoll); connectPoll = null } }
 
-function cancelFeishuBind() {
-  _stopPoll()
-  feishuQrShow.value = false
+function cancelConnect() {
+  _stopConnectPoll()
+  connect.value = null
 }
 
-async function unbindFeishu() {
-  if (!confirm('解绑飞书？解绑后在飞书里找咕咕会提示重新绑定。')) return
-  try { await feishuApi.unbind(); feishu.value = { bound: false, display_name: '' } }
-  catch (e) { feishuError.value = e.message }
+async function toggleBot(b) {
+  try { await userBotsApi.update(b.id, { enabled: !b.enabled }); await loadBots() }
+  catch (e) { connectErr.value = e.message }
 }
 
-// ── QQ 自带机器人（BYO）──
-const qqBots = ref([])
-const qqQrCanvas = ref(null)
-const qqForm = ref(null)
-const qqSaving = ref(false)
-const qqError = ref('')
-
-async function loadQQ() {
-  try { const r = await userBotsApi.list(); qqBots.value = r.items || [] } catch {}
+async function removeBot(b) {
+  if (!confirm(`删除「${b.name}」？删除后这个机器人不再连咕咕。`)) return
+  try { await userBotsApi.remove(b.id); await loadBots() }
+  catch (e) { connectErr.value = e.message }
 }
 
-// ── QQ 扫码自动连接（建 task → 渲染二维码 → 轮询 → 自动填 key）──
-const qqConnecting = ref(false)
-const qqConnectShow = ref(false)
-const qqConnectHint = ref('')
-let qqConnectTaskId = null
-let qqConnectPoll = null
-
-async function startQQConnect() {
-  qqConnecting.value = true; qqError.value = ''; qqForm.value = null
-  try {
-    const { task_id, scan_url } = await qqConnectApi.start()
-    qqConnectTaskId = task_id
-    qqConnectShow.value = true
-    qqConnectHint.value = '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
-    await nextTick()
-    await QRCode.toCanvas(qqQrCanvas.value, scan_url, { width: 180, margin: 1 })
-    _qqStartConnectPoll()
-  } catch (e) {
-    qqError.value = e.message || '生成二维码失败'
-    qqConnectShow.value = false
-  } finally {
-    qqConnecting.value = false
-  }
-}
-
-function _qqStartConnectPoll() {
-  _qqStopConnectPoll()
-  let tries = 0
-  qqConnectPoll = setInterval(async () => {
-    tries++
-    try {
-      const r = await qqConnectApi.poll(qqConnectTaskId)
-      if (r.status === 'success') {
-        qqConnectHint.value = ''
-        cancelQQConnect()
-        await loadQQ()
-      } else if (r.status === 'expired') {
-        qqError.value = '二维码已过期，请重新扫码连接'; cancelQQConnect()
-      } else if (r.status === 'fail') {
-        qqError.value = '连接失败：' + (r.reason || '未知'); cancelQQConnect()
-      }
-    } catch {}
-    if (tries > 100) cancelQQConnect()   // ~5 分钟超时
-  }, 3000)
-}
-function _qqStopConnectPoll() { if (qqConnectPoll) { clearInterval(qqConnectPoll); qqConnectPoll = null } }
-
-function cancelQQConnect() {
-  _qqStopConnectPoll()
-  qqConnectShow.value = false
-  qqConnectTaskId = null
-}
-
-function openQQForm() { qqForm.value = { name: '', app_id: '', app_secret: '', sandbox: false }; qqError.value = '' }
-
-async function saveQQBot() {
-  const f = qqForm.value
-  if (!f.app_id || !f.app_secret) { qqError.value = '请填 AppID 和 AppSecret'; return }
-  qqSaving.value = true; qqError.value = ''
-  try { await userBotsApi.create(f); qqForm.value = null; await loadQQ() }
-  catch (e) { qqError.value = e.message } finally { qqSaving.value = false }
-}
-
-async function toggleQQBot(b) {
-  try { await userBotsApi.update(b.id, { enabled: !b.enabled }); await loadQQ() }
-  catch (e) { qqError.value = e.message }
-}
-
-async function removeQQBot(b) {
-  if (!confirm(`删除「${b.name}」？删除后这个 QQ 机器人不再连咕咕。`)) return
-  try { await userBotsApi.remove(b.id); await loadQQ() }
-  catch (e) { qqError.value = e.message }
-}
-
-onUnmounted(() => { _stopPoll(); _qqStopConnectPoll() })
+onUnmounted(_stopConnectPoll)
 
 // "X小时后恢复精力" / "精力充沛"
 const recoverLabel = computed(() => {
@@ -803,7 +721,23 @@ function handleLogout() {
 .pm-save-btn:disabled { opacity: 0.35; cursor: default; transform: none; }
 
 /* 精力值 */
-.pm-quota-loading { font-size: 12px; color: var(--text-secondary); padding: 4px 0; }
+.pm-quota-skeleton { display: flex; flex-direction: column; gap: 14px; }
+.pm-qs-pct {
+  width: 30px; height: 13px; border-radius: 6px;
+  background: linear-gradient(90deg, rgba(123,127,178,0.10) 25%, rgba(123,127,178,0.22) 50%, rgba(123,127,178,0.10) 75%);
+  background-size: 200% 100%;
+  animation: pm-shimmer 1.4s ease-in-out infinite;
+}
+.pm-qs-fill {
+  height: 100%; width: 40%; border-radius: 99px;
+  background: linear-gradient(90deg, rgba(123,127,178,0.18) 25%, rgba(123,127,178,0.35) 50%, rgba(123,127,178,0.18) 75%);
+  background-size: 200% 100%;
+  animation: pm-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes pm-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
 .pm-quota-item { display: flex; flex-direction: column; gap: 6px; }
 .pm-quota-row { display: flex; align-items: center; justify-content: space-between; }
 .pm-quota-label { font-size: 13px; font-weight: 600; color: var(--text-primary); }

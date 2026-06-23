@@ -72,9 +72,6 @@ export const useConfigStore = defineStore('config', () => {
       tavily_api_key: '',
       max_results: 5,
     },
-    feishu: {
-      redirect_uri: '',   // OAuth 扫码绑定回调（app_id/secret 走频道列表）
-    },
   })
 
   async function fetchConfig() {
@@ -90,7 +87,6 @@ export const useConfigStore = defineStore('config', () => {
       if (data.agent)   Object.assign(cfg.agent,   data.agent)
       if (data.quota)   Object.assign(cfg.quota,   data.quota)
       if (data.search)  Object.assign(cfg.search,  sanitizeForEdit(data.search))
-      if (data.feishu)  cfg.feishu.redirect_uri = data.feishu.redirect_uri || ''
     } catch {
       // 后端未启动时静默，使用默认值
     } finally {
