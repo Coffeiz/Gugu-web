@@ -48,7 +48,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                 )
             )).scalars().first()
         if not session:
-            session = ConversationSession(user_id=user_id, title=(req.message[:50] or "新对话"))
+            session = ConversationSession(user_id=user_id, title=(req.message[:50] or "新对话"), source=getattr(req, "source", "web"))
             db.add(session)
             await db.flush()
         session_id = session.id
@@ -142,6 +142,6 @@ async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool]
         elif t == "token":
             full += san.feed(evt.get("content", ""))
         elif t == "error":
-            return (evt.get("message") or "咕咕出了点问题，请稍后再试", tin, tout, True)
+            return (evt.get("message") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？", tin, tout, True)
     full += san.flush()
     return (full.strip(), tin, tout, False)

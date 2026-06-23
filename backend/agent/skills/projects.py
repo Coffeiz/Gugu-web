@@ -4,7 +4,7 @@
 done_at 处理）。
 """
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 
@@ -63,13 +63,17 @@ _DEFAULT_STAGES = [
 
 async def _create_project(db, user_id, args: dict):
     default_stages = [dict(s) for s in _DEFAULT_STAGES]
+    # 未指定开始日期默认今天，未指定截止默认一周后（与上下文「今天」同口径用 datetime.now）
+    _now = datetime.now()
+    start_date = args.get("start_date") or _now.strftime("%Y-%m-%d")
+    deadline = args.get("deadline") or (_now + timedelta(days=7)).strftime("%Y-%m-%d")
     p = Project(
         user_id=user_id,
         name=args["name"],
         client=args.get("client"),
         status=args.get("status", "pending"),
-        deadline=args.get("deadline"),
-        start_date=args.get("start_date"),
+        deadline=deadline,
+        start_date=start_date,
         notes=args.get("notes", ""),
         stages_json=json.dumps(default_stages, ensure_ascii=False),
         current_stage="s0",
@@ -406,15 +410,15 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="create_project",
             label="新建项目",
-            description="创建新项目。",
+            description="创建新项目。用户没明确说日期时不用追问：开始日期默认今天、截止日期默认一周后。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "name":       {"type": "string", "description": "项目名称"},
                     "client":     {"type": "string"},
                     "status":     {"type": "string", "enum": ["pending", "active", "done"]},
-                    "deadline":   {"type": "string", "description": "YYYY-MM-DD"},
-                    "start_date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "deadline":   {"type": "string", "description": "YYYY-MM-DD；不填默认一周后"},
+                    "start_date": {"type": "string", "description": "YYYY-MM-DD；不填默认今天"},
                     "notes":      {"type": "string"},
                 },
                 "required": ["name"],

@@ -93,24 +93,34 @@ class SkillRegistry:
     def openai_schemas(self, names: list[str]) -> list[dict]:
         return [self._tools[n].to_openai() for n in names if n in self._tools]
 
-    async def dispatch(self, user_id, name: str, args: dict) -> str:
-        """执行工具，统一返回 JSON 字符串（与原 _exec_tool 输出格式一致）。
+    async def dispatch(self, user_id, name: str, args: dict) -> tuple[str, dict | None]:
+        """执行工具，返回 (给 LLM 的 JSON 字符串, 给前端的 UI artifact|None)。
 
-        与原实现一致：每次工具调用自开一个数据库会话。
+        工具结果若是 dict 且含 `_artifact` 键，则把它抽出来作为 artifact（如发文件卡片），
+        其余字段序列化回给 LLM。每次工具调用自开一个数据库会话。
         """
         tool = self._tools.get(name)
         if tool is None:
-            return json.dumps({"error": f"未知工具: {name}"})
+            return json.dumps({"error": f"未知工具: {name}"}), None
 
         import app.db.session as _sess
         if _sess._engine is None:
             _sess._build_engine()
 
-        async with _sess._SessionLocal() as db:
-            result: Any = await tool.handler(db, user_id, args)
+        # 工具异常不能冲垮整个对话：捕获后当作错误结果回给 LLM（它可解释/换路），并打日志便于排查
+        try:
+            async with _sess._SessionLocal() as db:
+                result: Any = await tool.handler(db, user_id, args)
+        except Exception as e:
+            import traceback
+            print(f"[skill] 工具 {name} 执行出错: {type(e).__name__}: {e}", flush=True)
+            traceback.print_exc()
+            return json.dumps({"error": f"工具 {name} 执行出错：{e}"}, ensure_ascii=False), None
+
         if isinstance(result, str):
-            return result
-        return json.dumps(result, ensure_ascii=False)
+            return result, None
+        artifact = result.pop("_artifact", None) if isinstance(result, dict) else None
+        return json.dumps(result, ensure_ascii=False), artifact
 
 
 registry = SkillRegistry()

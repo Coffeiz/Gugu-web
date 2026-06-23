@@ -92,6 +92,16 @@
             <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]">
               <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : renderMd(msg.text)" /></div>
               <div v-else class="msg-bubble">{{ msg.text }}</div>
+              <div v-if="msg.files && msg.files.length" class="msg-files">
+                <div v-for="f in msg.files" :key="f.file_id" class="msg-file" @click="downloadFile(f)" title="点击下载">
+                  <span class="msg-file-ext">{{ (f.ext || 'file').toUpperCase().slice(0, 4) }}</span>
+                  <span class="msg-file-info">
+                    <span class="msg-file-name">{{ f.name }}.{{ f.ext }}</span>
+                    <span class="msg-file-meta">{{ fmtSize(f.size_bytes) }} · 下载</span>
+                  </span>
+                  <svg class="msg-file-dl" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>
+                </div>
+              </div>
               <div class="msg-footer">
                 <span class="msg-time">{{ msg.time }}</span>
                 <button class="msg-copy-btn" @click="copyMsg(msg)" title="复制">
@@ -111,7 +121,7 @@
             </div>
           </div>
           <div class="popup-input-row">
-            <input v-model="inputText" placeholder="问问项目进度、截止日期…" @keydown.enter="send" />
+            <input v-model="inputText" placeholder="问问项目进度、截止日期…" @keydown.enter="send()" />
             <button class="send-btn" @click="streaming ? stopStreaming() : send()">
               <PhArrowRight v-if="!streaming" weight="bold" :size="13" />
               <PhStop       v-else            weight="fill" :size="13" />
@@ -125,12 +135,7 @@
             <div class="exp-sidebar-header">
               <span class="exp-sidebar-title">咕咕</span>
             </div>
-            <div class="exp-new-session-wrap">
-              <button class="exp-new-session-btn" @click="newSession">
-                <PhPencilSimple weight="bold" :size="13" />
-                新对话
-              </button>
-            </div>
+            <div class="exp-sidebar-divider"></div>
             <div class="exp-session-list">
               <div
                 v-for="s in sessions" :key="s.id"
@@ -138,12 +143,19 @@
                 :class="{ active: s.id === sessionId }"
                 @click="loadSession(s.id)"
               >
+                <span v-if="s.source && s.source !== 'web'" class="exp-session-source" :class="`src-${s.source}`">{{ s.source === 'qqbot' ? 'QQ' : s.source === 'feishu' ? '飞书' : s.source }}</span>
                 <span class="exp-session-title">{{ s.title }}</span>
                 <button class="exp-session-del" @click.stop="deleteSession(s.id)" title="删除">
                   <PhTrash :size="12" weight="bold" />
                 </button>
               </div>
               <div v-if="sessions.length === 0" class="exp-session-empty">暂无对话</div>
+            </div>
+            <div class="exp-new-session-wrap">
+              <button class="exp-new-session-btn" @click="newSession">
+                <PhPencilSimple weight="bold" :size="13" />
+                新对话
+              </button>
             </div>
           </div>
           <div class="exp-main">
@@ -163,6 +175,16 @@
               <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]">
                 <div v-if="msg.role === 'ai'" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : renderMd(msg.text)" /></div>
                 <div v-else class="msg-bubble">{{ msg.text }}</div>
+                <div v-if="msg.files && msg.files.length" class="msg-files">
+                  <div v-for="f in msg.files" :key="f.file_id" class="msg-file" @click="downloadFile(f)" title="点击下载">
+                    <span class="msg-file-ext">{{ (f.ext || 'file').toUpperCase().slice(0, 4) }}</span>
+                    <span class="msg-file-info">
+                      <span class="msg-file-name">{{ f.name }}.{{ f.ext }}</span>
+                      <span class="msg-file-meta">{{ fmtSize(f.size_bytes) }} · 下载</span>
+                    </span>
+                    <svg class="msg-file-dl" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>
+                  </div>
+                </div>
                 <div class="msg-footer">
                   <span class="msg-time">{{ msg.time }}</span>
                   <button class="msg-copy-btn" @click="copyMsg(msg)" title="复制">
@@ -187,7 +209,7 @@
                 ref="expInputEl"
                 placeholder="问问项目进度、截止日期…"
                 rows="1"
-                @keydown.enter.exact.prevent="send"
+                @keydown.enter.exact.prevent="send()"
                 @input="autoResize"
               />
               <button class="send-btn exp-send-btn" @click="streaming ? stopStreaming() : send()">
@@ -209,7 +231,7 @@ import { marked } from 'marked'
 import hljs from 'highlight.js'
 import { useAudioStore } from '@/stores/audio'
 import { useProjectStore } from '@/stores/projects'
-import { agentApi } from '@/services/api'
+import { agentApi, filesApi } from '@/services/api'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import {
   PhPushPin, PhPushPinSlash, PhX, PhPlay, PhPause,
@@ -471,6 +493,7 @@ const streaming      = ref(false)
 const activeTool     = ref('')
 const sessionId      = ref(null)
 const abortCtrl      = ref(null)
+const pendingQueue   = ref([])   // 生成中发的消息，排队等流式结束后接着发
 
 // 会话 id 存入 sessionStorage：刷新页面保留当前对话，关闭浏览器/标签页才清空（=开新对话）
 const SESSION_KEY = 'gugu_session_id'
@@ -480,10 +503,23 @@ watch(sessionId, (v) => {
 })
 
 function stopStreaming() {
+  pendingQueue.value = []   // 停止=放弃排队中的消息
   abortCtrl.value?.abort()
 }
 
 const copiedId = ref(null)
+function fmtSize(b) {
+  if (!b) return ''
+  if (b < 1024) return b + ' B'
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'
+  return (b / 1048576).toFixed(1) + ' MB'
+}
+
+async function downloadFile(f) {
+  try { await filesApi.download(f.file_id, `${f.name}.${f.ext}`) }
+  catch (e) { console.error('下载失败', e) }
+}
+
 function copyMsg(msg) {
   // AI 消息取渲染后的纯文本，用户消息直接取原文
   let text = msg.text
@@ -559,6 +595,7 @@ async function loadSession(id) {
       id: mkid(),
       role: m.role === 'assistant' ? 'ai' : m.role,
       text: m.content,
+      files: m.files && m.files.length ? m.files : undefined,
       time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
     }))
     _scrollDelta = 0; msgsGrowth.value = 0
@@ -670,13 +707,19 @@ onUnmounted(() => {
   expMessagesEl.value?.removeEventListener('scroll', onExpMsgScroll)
 })
 
-async function send() {
-  const text = inputText.value.trim()
-  if (!text || streaming.value) return
-  messages.value.push({ id: mkid(), role: 'user', text, time: now() })
-  inputText.value = ''
-  if (expInputEl.value) expInputEl.value.style.height = 'auto'
-  await scrollBottom(true); await scrollExpBottom(true)
+async function send(forcedText) {
+  // forcedText 来自"排队接力"（队首消息）：此时用户气泡已在入队时显示过，不重复推
+  const fromInput = forcedText === undefined
+  const text = (fromInput ? inputText.value : forcedText).trim()
+  if (!text) return
+  if (fromInput) {
+    messages.value.push({ id: mkid(), role: 'user', text, time: now() })
+    inputText.value = ''
+    if (expInputEl.value) expInputEl.value.style.height = 'auto'
+    await scrollBottom(true); await scrollExpBottom(true)
+  }
+  // 生成中：把这条排队，等当前流式结束后在 finally 里接着发（气泡已显示）
+  if (streaming.value) { pendingQueue.value.push(text); return }
 
   thinking.value = true; streaming.value = true
   abortCtrl.value = new AbortController()
@@ -727,11 +770,18 @@ async function send() {
           if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
           messages.value[aiIdx].text += evt.content
           await scrollBottom(); await scrollExpBottom()
+        } else if (evt.type === 'file') {
+          thinking.value = false; activeTool.value = ''
+          if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
+          const m = messages.value[aiIdx]
+          if (!m.files) m.files = []
+          m.files.push(evt.file)
+          await scrollBottom(); await scrollExpBottom()
         } else if (evt.type === 'done') {
           thinking.value = false; activeTool.value = ''
         } else if (evt.type === 'error') {
           thinking.value = false; activeTool.value = ''
-          messages.value.push({ id: mkid(), role: 'ai', text: evt.message || evt.detail || '出错了，请稍后再试。', time: now() })
+          messages.value.push({ id: mkid(), role: 'ai', text: evt.message || evt.detail || '咕咕开小差了 😵‍💫 麻烦再说一遍好吗？', time: now() })
           aiIdx = messages.value.length - 1
           await scrollBottom(); await scrollExpBottom()
         }
@@ -744,7 +794,8 @@ async function send() {
   } catch (e) {
     thinking.value = false
     if (e.name !== 'AbortError') {
-      messages.value.push({ id: mkid(), role: 'ai', text: `连接失败：${e.message}`, time: now() })
+      // fetch 抛错=连不上咕咕后端，基本都是网络问题
+      messages.value.push({ id: mkid(), role: 'ai', text: '咕咕网络不太好 📡 可以再发一遍吗？', time: now() })
       await scrollBottom(); await scrollExpBottom()
     }
   } finally {
@@ -756,6 +807,8 @@ async function send() {
     await scrollBottom(); await scrollExpBottom()
     // 咕咕若调用了改数据的工具，刷新对应前端视图（项目/日历/文件），免手动刷新页面
     refreshAfterTools(usedTools)
+    // 生成期间排队的消息：取队首接着发（其自身 finally 会继续取下一条，逐条处理）
+    if (pendingQueue.value.length) send(pendingQueue.value.shift())
   }
 }
 </script>
@@ -893,24 +946,33 @@ async function send() {
 .exp-sidebar-header {
   display: flex; align-items: center;
   padding: 16px 14px 12px;
-  border-bottom: 1px solid rgba(255,255,255,0.5);
   flex-shrink: 0;
+}
+.exp-sidebar-divider {
+  height: 1px; flex-shrink: 0; margin: 0 4px;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
 }
 .exp-sidebar-title { flex: 1; font-size: 14px; font-weight: 700; color: var(--text-primary); }
 
-.exp-new-session-wrap { padding: 8px 10px 4px; }
+.exp-new-session-wrap {
+  padding: 10px 10px 12px;
+  border-top: 1px solid rgba(255,255,255,0.5);
+  flex-shrink: 0;
+}
 .exp-new-session-btn {
   width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 8px 14px; border-radius: 99px; border: none; cursor: pointer;
-  font-size: 12.5px; font-weight: 600; font-family: var(--font-sans);
+  padding: 9px 14px; border-radius: var(--radius-sm); cursor: pointer;
+  font-size: 12.5px; font-weight: 700; font-family: var(--font-sans);
   color: var(--color-primary);
-  background: rgba(123,127,178,0.1);
-  border: 1px solid rgba(123,127,178,0.18);
-  transition: background 0.15s, box-shadow 0.15s;
+  background: rgba(255,255,255,0.82);
+  border: 1px solid rgba(255,255,255,0.95);
+  box-shadow: 0 2px 8px rgba(123,127,178,0.12), inset 0 1px 0 rgba(255,255,255,1);
+  transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
 }
 .exp-new-session-btn:hover {
-  background: rgba(123,127,178,0.18);
-  box-shadow: 0 2px 8px rgba(123,127,178,0.15);
+  background: rgba(255,255,255,0.95);
+  box-shadow: 0 4px 14px rgba(123,127,178,0.18), inset 0 1px 0 rgba(255,255,255,1);
+  transform: translateY(-1px);
 }
 .exp-new-session-btn svg { display: block; }
 .exp-icon-btn {
@@ -948,6 +1010,13 @@ async function send() {
 .exp-session-del:hover { background: rgba(200,80,80,0.1); color: rgba(200,80,80,0.8); }
 .exp-session-del svg { display: block; }
 .exp-session-empty { font-size: 12px; color: var(--text-secondary); padding: 12px 10px; }
+.exp-session-source {
+  flex-shrink: 0; font-size: 11px; font-weight: 600; line-height: 1;
+  font-family: var(--font-sans); letter-spacing: 0.01em;
+  padding: 2px 5px; border-radius: 4px;
+}
+.exp-session-source.src-qqbot { background: rgba(18,183,245,0.15); color: #0c8fc0; }
+.exp-session-source.src-feishu { background: rgba(66,133,244,0.15); color: #3b6fc4; }
 
 .exp-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .exp-header {
@@ -1012,6 +1081,24 @@ async function send() {
   background: linear-gradient(135deg, #7b7fb2, #9590c4); color: white;
   border-bottom-right-radius: 4px;
 }
+/* 咕咕发来的文件卡片 */
+.msg-files { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 280px; }
+.msg-file {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; cursor: pointer;
+  background: rgba(123,127,178,0.08); border: 1px solid rgba(123,127,178,0.18);
+  border-radius: 10px; transition: background 0.15s, border-color 0.15s;
+}
+.msg-file:hover { background: rgba(123,127,178,0.14); border-color: rgba(123,127,178,0.35); }
+.msg-file-ext {
+  flex-shrink: 0; width: 34px; height: 34px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: #fff; letter-spacing: 0.02em;
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+}
+.msg-file-info { flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.msg-file-name { font-size: 13px; font-weight: 600; color: #2a2c3a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-file-meta { font-size: 11px; color: #9296ad; }
+.msg-file-dl { flex-shrink: 0; color: #7b7fb2; }
 .msg-footer {
   display: flex; align-items: center; gap: 4px;
   margin-top: 3px; padding: 0 3px;

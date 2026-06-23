@@ -187,8 +187,29 @@ Importance 1~5 分级：
 #### `base.py`
 Skill 基类，定义 tools 列表声明和统一执行入口，core 通过此接口调用。
 
+`registry.dispatch` 两条关键约定：
+- 返回 `(给LLM的文本, UI artifact|None)`——结果含 `_artifact` 键就抽出来（见下「发送文件」）。
+- **工具异常被兜住**：handler 抛错时不让它冲垮整轮对话，`try/except` 后把 `{"error":"工具 X 执行出错：…"}` 当结果返给 LLM（并打印堆栈到日志便于排查）。LLM 据此按 persona「铁律」如实告知没做成、不假装成功（persona.md：工具返回 error → 绝不能说"完成"）。
+
 #### `projects.py` / `calendar.py` / `files.py`
 各功能领域工具实现，自注册到 skill registry，Profile 按需组合。
+
+#### 发送文件给用户（UI artifact 旁路）
+
+咕咕能在对话窗口给用户发可下载的文件卡片。工具 `send_file`（files skill，按 file 名/file_id 定位用户文件）。
+
+机制是一条「工具 → 前端 UI」的旁路（普通工具结果只回给 LLM）：
+```
+send_file 返回 {ok, message, _artifact:{file_id,name,ext,size_bytes}}
+  → registry.dispatch 抽出 _artifact，返回 (给LLM的文本, artifact)
+  → core 在 tool_done 后多推一个事件 {type:'file', file:{...}}
+  → web.py 透传给前端（前端渲染下载卡片，走 filesApi.download 带鉴权 blob 下载）
+       同时累积进 sent_files，随助手消息持久化到 conversation_messages.files(JSON 列)
+  → 重开对话时 /sessions/{id}/messages 带出 files → 卡片重新渲染
+```
+- 任何工具想给前端推 UI 元素，都可走这条路（结果带 `_artifact`）。
+- ⚠️ **仅 web 对话**：IM（飞书/QQ）的 `_collect` 忽略 `file` 事件，工具文本仍回"已发送"但不真发文件（IM 发文件是各平台另一套 API，未做）。
+- ⚠️ 持久化依赖 `conversation_messages.files` 列（迁移 `20260623000001`）——**部署后必须 `make migrate`**，否则发文件存盘报错。
 
 ---
 
@@ -230,10 +251,18 @@ MCP 协议客户端，支持 stdio / SSE / HTTP 连接外部 MCP server。
 Adapter 接口：`receive()` 将平台消息转为 `AgentRequest`，`send()` 将响应转为平台格式。
 
 #### `web.py`
-Web SSE adapter，对应现有接口。
+Web SSE adapter：配额检查 → 上下文 → 会话 get/create → core 流式 → 持久化（含 `file` artifact 落 `conversation_messages.files`）。
 
-#### `qqbot.py`
-QQ Bot webhook adapter，接收事件，通过 QQ Bot API 回复。
+**错误文案分类**（都在 `web.py` 的 `except` + 前端兜底）：
+- 精力/配额：「咕咕精力不足，休息一下～」「咕咕本周精力耗尽啦，每周一恢复～」
+- 网络（`_is_network_error`：连接/超时类异常，或前端 fetch 失败）：「咕咕网络不太好 📡 可以再发一遍吗？」
+- 其他/未知（DB 错、代码 bug 等）：「咕咕开小差了 😵‍💫 麻烦再说一遍好吗？」
+- 工具异常**不在此处**——已在 `dispatch` 兜住返给 LLM（见 skills/base.py），不冲垮整轮。
+
+**网页生成中排队**（`GuguChat.send(forcedText)` + `pendingQueue`）：流式中再发消息不丢——立即显示用户气泡 + 入队，流式结束在 `finally` 取队首接力发，逐条处理；点停止键清空队列。IM（飞书/QQ）天生排队（Redis 队列 + 单 worker 顺序消费）。
+
+#### `qq.py` / `feishu.py`
+QQ / 飞书 BYO 网关（botpy / lark-oapi WebSocket 长连），见 Phase 4 与 `agent-im接入架构.md`。
 
 ---
 

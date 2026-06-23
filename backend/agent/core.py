@@ -82,8 +82,10 @@ class LLMRunner:
                 for block in tool_blocks:
                     label = self.labels.get(block.name, block.name)
                     yield f"data: {json.dumps({'type': 'tool_call', 'name': block.name, 'label': label, 'input': block.input}, ensure_ascii=False)}\n\n"
-                    result = await registry.dispatch(user_id, block.name, block.input)
+                    result, artifact = await registry.dispatch(user_id, block.name, block.input)
                     yield f"data: {json.dumps({'type': 'tool_done', 'name': block.name, 'label': label}, ensure_ascii=False)}\n\n"
+                    if artifact:
+                        yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -145,8 +147,10 @@ class LLMRunner:
                     except Exception:
                         args = {}
                     yield f"data: {json.dumps({'type': 'tool_call', 'name': tc.function.name, 'label': label, 'input': args}, ensure_ascii=False)}\n\n"
-                    result = await registry.dispatch(user_id, tc.function.name, args)
+                    result, artifact = await registry.dispatch(user_id, tc.function.name, args)
                     yield f"data: {json.dumps({'type': 'tool_done', 'name': tc.function.name, 'label': label}, ensure_ascii=False)}\n\n"
+                    if artifact:
+                        yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,

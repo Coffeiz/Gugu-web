@@ -263,7 +263,7 @@ async def _resolve_file(db, user_id, args):
     fid = args.get("file_id")
     if fid:
         f = await db.get(File, fid)
-        if not f or f.user_id != user_id or f.deleted_at is not None:
+        if not f or str(f.user_id) != str(user_id) or f.deleted_at is not None:
             return None, json.dumps({"error": "文件不存在"})
         return f, None
     name = args.get("file")
@@ -503,6 +503,25 @@ async def _copy_file(db, user_id, args: dict):
     return {"success": True, "file_id": new_file.id, "name": f"{new_display}.{f.ext}"}
 
 
+async def _send_file(db, user_id, args: dict):
+    """把用户文件库里的文件发到对话窗口（前端渲染可下载卡片）。
+    返回 _artifact，core 据此推一个 file 事件给前端；普通字段回给 LLM。"""
+    f, err = await _resolve_file(db, user_id, args)
+    if err:
+        return err
+    name = f"{f.display_name}.{f.ext}"
+    return {
+        "ok": True,
+        "message": f"已把《{name}》发到对话窗口，用户可直接下载。",
+        "_artifact": {
+            "file_id": f.id,
+            "name": f.display_name,
+            "ext": f.ext,
+            "size_bytes": f.size_bytes,
+        },
+    }
+
+
 class FilesSkill(BaseSkill):
     name = "files"
     tools = [
@@ -693,6 +712,18 @@ class FilesSkill(BaseSkill):
                 },
             },
             handler=_delete_folder,
+        ),
+        Tool(
+            name="send_file", label="发送文件",
+            description="把用户文件库里的一个文件发到对话窗口，生成可下载卡片。当用户说「把X发给我/给我那个文件/发过来」时用。用 file 指定文件名（如「合同.pdf」）或 file_id。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "file": {"type": "string", "description": "文件名（如 合同.pdf）"},
+                    "file_id": {"type": "integer", "description": "文件 id（已知时可用）"},
+                },
+            },
+            handler=_send_file,
         ),
     ]
 

@@ -219,6 +219,7 @@ class ConversationSession(Base):
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title:      Mapped[str]      = mapped_column(String(300), default="新对话")
+    source:     Mapped[str]      = mapped_column(String(20), default="web")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -238,6 +239,7 @@ class ConversationMessage(Base):
     role:         Mapped[str]             = mapped_column(String(20))
     content:      Mapped[str]             = mapped_column(Text, default="")
     content_json: Mapped[Optional[list]]  = mapped_column(JSON, nullable=True, default=None)
+    files:        Mapped[Optional[list]]  = mapped_column(JSON, nullable=True, default=None)  # 咕咕发的文件卡片 [{file_id,name,ext,size_bytes}]
     created_at:   Mapped[datetime]        = mapped_column(DateTime, default=datetime.utcnow)
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")

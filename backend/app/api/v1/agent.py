@@ -62,6 +62,7 @@ async def list_sessions(
         {
             "id": s.id,
             "title": s.title,
+            "source": s.source,
             "updatedAt": s.updated_at.isoformat(),
             "createdAt": s.created_at.isoformat(),
         }
@@ -90,7 +91,8 @@ async def get_session_messages(
     return {
         "session": {"id": session.id, "title": session.title},
         "messages": [
-            {"role": m.role, "content": m.content, "createdAt": m.created_at.isoformat()}
+            {"role": m.role, "content": m.content, "files": m.files or [],
+             "createdAt": m.created_at.isoformat()}
             for m in msgs
         ],
     }

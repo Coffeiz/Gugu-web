@@ -67,6 +67,16 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
         return user_msg[:20]
 
 
+def _is_network_error(e: BaseException) -> bool:
+    """LLM 服务商连接/超时类错误（与逻辑性 bug 区分，给"网络不好"文案）。
+    用类型+字符串双判，免得为各家 SDK 一一导入异常类。"""
+    if isinstance(e, (ConnectionError, TimeoutError)):
+        return True
+    blob = f"{type(e).__module__}.{type(e).__name__} {e}".lower()
+    return any(k in blob for k in ("timeout", "connect", "network", "ssl",
+                                   "econnreset", "read operation"))
+
+
 async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     user_id = req.user_id
     profile = DefaultProfile()
@@ -125,7 +135,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
 
         is_new_session = session is None
         if not session:
-            session = ConversationSession(user_id=user_id, title=req.message[:50])
+            session = ConversationSession(user_id=user_id, title=req.message[:50], source="web")
             db.add(session)
             await db.flush()
 
@@ -159,6 +169,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     usage_tokens = {"input": 0, "output": 0}
     anthr_messages: list = []
     anthr_initial_len: int = 0
+    sent_files: list = []   # 咕咕本轮发的文件卡片，随助手消息持久化
 
     try:
         if use_anthropic:
@@ -200,6 +211,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                     full_reply += clean
                     yield f"data: {json.dumps({'type': 'token', 'content': clean})}\n\n"
                 continue
+            if etype == "file" and evt.get("file"):
+                sent_files.append(evt["file"])   # 捕获以便持久化，仍向下转发给前端
             yield evt_str
 
         # 冲洗清洗器残留（未触发截断时的尾部）
@@ -218,11 +231,12 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                     content="",
                     content_json=tm["content"],
                 ))
-            if full_reply:
+            if full_reply or sent_files:
                 db2.add(ConversationMessage(
                     session_id=session_id,
                     role="assistant",
                     content=full_reply,
+                    files=sent_files or None,
                 ))
             if usage_tokens["input"] or usage_tokens["output"]:
                 db2.add(AgentUsage(
@@ -254,4 +268,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
 
     except BaseException as e:
         logger.exception("agent stream error for user %s: %s", req.user_id, e)
-        yield f"data: {json.dumps({'type': 'error', 'message': f'咕咕出了点问题，请稍后再试'})}\n\n"
+        print(f"[web] agent stream error for {req.user_id}: {type(e).__name__}: {e}", flush=True)
+        msg = ("咕咕网络不太好 📡 可以再发一遍吗？" if _is_network_error(e)
+               else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
+        yield f"data: {json.dumps({'type': 'error', 'message': msg})}\n\n"

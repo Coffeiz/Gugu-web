@@ -280,6 +280,8 @@ cd ../frontend && npm install && npm run build        # 前端重新构建
 # 或一键：make deploy（备份 + 依赖 + 迁移 + 前端 build + 重启）
 ```
 
+> ⚠️ **务必 `make migrate`，别只 restart**：启动时的 `create_all` **只建缺失的表、不会给已有表加新列**。所以凡是新增了模型列（如 `conversation_messages.files` 文件卡片、`conversation_sessions.source` 会话来源），只重启不跑迁移 → 相关写入会因「列不存在」报错。`make update` / `make deploy` 已含 migrate；手动更新记得补 `make migrate`。
+
 ## 7. 备份
 ```bash
 cd backend && make backup     # 备份数据库 + uploads + config.override.json

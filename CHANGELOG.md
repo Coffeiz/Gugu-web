@@ -9,6 +9,20 @@
 
 ## [Unreleased] · 文件库回收站多选
 
+### 改进 · 健壮性与错误文案
+
+- **工具异常不再冲垮对话**：`registry.dispatch` 给工具执行包 `try/except`——handler 抛错时把 `{"error":"工具 X 执行出错：…"}` 当结果返给 LLM（并打印堆栈到日志），咕咕按 persona 铁律如实告知没做成、不假装成功，对话继续。（之前一个工具崩 = 整轮报错）
+- **错误文案友好化 + 分类**：网络/超时（后端 `_is_network_error` 或前端 fetch 失败）→「咕咕网络不太好 📡 可以再发一遍吗？」；其他后端错误 →「咕咕开小差了 😵‍💫 麻烦再说一遍好吗？」；精力/配额文案不变。飞书/QQ/网页三端一致
+- **网页生成中发消息会排队**：流式回复期间再发，立即显示气泡 + 入队，生成完接力发、逐条处理（和 IM 的 Redis 队列行为一致）；点停止键清空队列。修了 `@keydown.enter="send"` 把键盘事件当文本传的坑
+- 新增迁移 `20260623000002`：补 `conversation_sessions.source`（会话来源列，此前有模型字段无迁移，全新部署会缺列）
+
+### 新增 · 咕咕给用户发文件
+
+- **咕咕能在对话窗口发可下载的文件卡片**：新工具 `send_file`（files skill，按文件名/file_id 定位用户文件）。机制是一条「工具 → 前端 UI」旁路：工具结果带 `_artifact` → `registry.dispatch` 返回 `(给LLM文本, artifact)` → `core` 在 tool_done 后推 `{type:'file', file:{...}}` → `web.py` 透传给前端渲染下载卡片（`filesApi.download` 鉴权 blob 下载）
+  - **持久化**：发出的文件随助手消息存进 `conversation_messages.files`（JSON 列，迁移 `20260623000001`），`/sessions/{id}/messages` 带出 → 刷新/重开对话卡片仍在。**部署须 `make migrate`**
+  - 仅 web 对话；IM（飞书/QQ）暂不真发文件（`_collect` 忽略 file 事件）
+  - 顺手修 `_resolve_file` 的 file_id 分支：`f.user_id != user_id`（UUID 对象 vs 字符串永远不等）改字符串比较，修复所有按 file_id 定位文件的工具
+
 ### 新增 · QQ 机器人接入（单聊 C2C，每用户自带 BYO）
 
 - **QQ 官方机器人**（botpy WebSocket 长连接，C2C 单聊）：用户私聊自己的 QQ 机器人，带完整人格/记忆/工具回复。和飞书长连接同模式——**不需要公网、备案前可用**
