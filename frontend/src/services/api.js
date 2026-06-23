@@ -246,3 +246,9 @@ export const userBotsApi = {
   update: (id, body)=> request('PUT',    `/me/bots/${id}`, body),
   remove: (id)      => request('DELETE', `/me/bots/${id}`),
 }
+
+// QQ 扫码自动连接（建 task → 轮询 → 自动填 key）
+export const qqConnectApi = {
+  start: ()        => request('POST', '/me/qq/connect'),
+  poll:  (taskId)  => request('GET',  `/me/qq/connect/${taskId}`),
+}

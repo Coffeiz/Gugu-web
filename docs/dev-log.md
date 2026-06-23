@@ -5,6 +5,58 @@
 
 ---
 
+## 2026-06-23 · QQ 接入：从「以为是合作墙」到扫码自动连接（根因拆解）🦐
+
+**结论先行**：QQ 实现了「手机扫码 → QQ App 内选 bot 授权 → 咕咕自动填好 AppSecret」，体验等同 QwenPaw/OpenClaw。**实测整套 q.qq.com 接口无鉴权、无需任何合作方资质**——一度误判为「腾讯官方合作墙」，被用户的实测和扒源码推翻。这条记录的价值在于**纠错过程**：别想当然把「看起来很官方的能力」判成够不着。
+
+### 背景诉求
+
+用户要的不是"填 AppID/Secret"，而是 QwenPaw 那种「扫码即连、自动填 key」。先做了两版都不对：
+1. **共享 bot + 用户验证码绑定** —— 用户要的是每人自带 bot（BYO），不是一个共享 bot。
+2. **BYO + 二维码指向 `q.qq.com` 网页** —— 用户指出 QwenPaw 扫码进的是 **QQ App 内授权页**，不是网页。
+
+### 几次误判（关键教训）
+
+| 当时判断 | 实际 | 错在哪 |
+|---|---|---|
+| 「扫码即创是飞书 openclaw CLI 的非公开接口，QQ 没有」 | QQ 有公开的 bind_task 流程 | 没去查 QQ 侧，拿飞书经验套 |
+| 「`source=QwenPaw` 是注册过的接入方白名单，独立项目用不了」 | source 只是标签，`source=Gugu` 照样跳转 | 没让用户实测就下结论 |
+| 「扫码进 QQ App 选 bot 是腾讯给合作方的原生深链，复刻不了」 | 就是个带 `task_id` 的普通网页(QQ webview 打开)，task 由公开接口创建 | 把"看起来原生/官方"等同于"够不着" |
+
+### 拆解真相的两步
+
+1. **用户给了真实 QR 链接**：`connect.html?task_id=<uuid>&_wv=2&source=QwenPaw` —— 暴露了 `task_id` 是核心，`_wv=2` 是 QQ webview 标志，`source` 是来源标签。
+2. **用户实测 `source=Gugu` 能正常跳转** → source 不是墙；剩下唯一问题是"怎么创建 task_id"。
+3. **扒 QwenPaw 源码**（开源 `qrcode_auth_handler.py`）找到全套：
+   - `POST q.qq.com/lite/create_bind_task {"key": <base64随机32字节>}` → `task_id`
+   - 轮询 `POST q.qq.com/lite/poll_bind_result {"task_id"}` → `status==2` 时返回 `bot_appid`(明文) + `bot_encrypt_secret`
+   - secret 是 **AES-256-GCM**（raw = iv(12) + 密文 + tag），用第 1 步的 key 解密
+   - **安全模型**：接口无鉴权，但 secret 用调用方本地生成的 key 加密回传，只有创建者能解 → 所以公开也安全
+4. **本地实测 `create_bind_task`**：我们自己的后端直接 POST 就拿到了合法 `task_id`，坐实"无鉴权可复刻"。
+
+### 实现（咕咕侧）
+
+- `app/api/v1/qq_connect.py`：`POST /me/qq/connect`(建 task，aes_key 只存 Redis 服务端) + `GET /me/qq/connect/{task_id}`(轮询→AES 解密→写 `user_bots`)
+- 前端 ProfileModal：QQ 主操作「扫码连接」(自动) + 「手动填」兜底
+- QQ 走 **BYO 模型**：`user_bots` 表存每用户凭据；supervisor 从 DB 读、按 bot 起独立网关（凭据走 env 注入）；worker 用 payload 的 `owner_user_id` 直接认人（bot 即归属，无需绑定）
+
+### 收尾的坑：发消息无回应
+
+连上后发消息咕咕不回 —— 不是代码问题，是 **supervisor 和 worker 没在跑**（只起了 web 后端）。这俩是独立进程必须单独常驻。起来后日志立刻通：
+```
+[qq:3] 收到 BBFF2AB9...: 'hello'
+[worker] qqbot 回复 → 'hey～今天有什么要推进的…'
+```
+> `ps | grep worker` 会被内核线程 `kworker` 误匹配，排查时差点看走眼。
+
+### 反思
+
+- **别替用户判"够不着"**：一个 `curl` 就能验证的事（create_bind_task 无鉴权），比三轮"我觉得是合作墙"有用得多。
+- **开源参照物先扒源码**：QwenPaw 开源，机制全在 `qrcode_auth_handler.py`，早看早做完。
+- 详细机制见 `qq-scan-connect` 记忆 + `docs/agent-im接入架构.md` §3.2。
+
+---
+
 ## 2026-06-23 · 里程碑：咕咕首个 IM 平台（飞书）端到端打通 🎉
 
 **第一次让咕咕住进 IM**——飞书私聊里发消息，咕咕带完整人格/记忆/工具回复，全程经队列+独立 worker，平台无关骨架可复用到 QQ/微信。架构与决策见 `docs/agent-im接入架构.md`、`docs/agent.md` Phase 4。

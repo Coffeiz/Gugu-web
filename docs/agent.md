@@ -688,7 +688,7 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 **各平台 adapter（官方直连，无 OpenClaw；落在 `agent/adapters/`，step 4-5）**
 - [x] `adapters/feishu.py`：`lark-oapi`，WebSocket 长连收（`im.message.receive_v1`）+ `send_text` 发（`lark.Client` `im.v1.message.create`）；按 `channel_id` 取凭据，子进程入口。凭据走 **Admin 频道面板**（兜底 `.env`）。**已端到端跑通 + 动态频道管理**
 - [x] `adapters/supervisor.py`：频道管家，按面板启用列表起停网关子进程
-- [ ] `adapters/qqbot.py`：`botpy`，WebSocket（~~webhook~~），官方稳定
+- [x] `adapters/qq.py`：`botpy`，WebSocket 长连收 `on_c2c_message_create`（单聊 C2C）+ `post_c2c_message` 被动回复（带 msg_id）；**BYO 模型**（每用户自带 bot），凭据走 env 注入。**已端到端跑通 + 扫码自动连接**
 - [ ] `adapters/weixin.py`：直连 iLink（长轮询 getupdates / sendmessage），纯文本先行，个人号有风险，最后做
 
 #### 飞书接入设计（两层：bot 创建 + 用户 OAuth 扫码绑定）
@@ -719,6 +719,29 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
   4. ✅ `worker._resolve_user` 查绑定表得 user_id，未绑定回提示（不跑大脑）；网关 payload 带 `channel_id`，worker 按频道回发
 - **前提**：飞书后台开 OAuth、登记 `redirect_uri`（Admin 频道面板「飞书 OAuth 回调地址」或 env `FEISHU__REDIRECT_URI`，须公网可达 + 与飞书后台一致）。
 - **为什么收消息不用公网、绑定要**：收消息是长连接 outbound（我们连飞书）；OAuth 回调是 inbound（飞书重定向送授权码），OAuth 标准设计绕不开。详见 `feishu接入指南.md` §6。
+
+#### QQ 接入设计（BYO 每用户自带 bot + 扫码自动连接）
+
+与飞书"共享 bot + OAuth 绑定"不同，QQ 走 **BYO（Bring-Your-Own）**：每个用户接自己的 QQ bot。
+
+**① BYO 模型**
+- `user_bots` 表（create_all 自动建）存每用户的 `app_id/app_secret/sandbox/enabled`，platform=qqbot；`app/api/v1/user_bots.py` 的 `/me/bots` 是**用户级** CRUD（仅能管自己的，secret 打码）。
+- supervisor 泛化为多源：飞书读 override 文件（argv 传 channel_id），**QQ 读 `user_bots` 表**（凭据走**环境变量注入**，避免 ps 泄漏），常驻 loop 复用 asyncpg engine，DB 抖动保活不误杀。
+- **不需要绑定表**：bot 即归属其 owner → 网关入队 payload 带 `owner_user_id`，`worker._resolve_user` 直接用（比飞书省一层）。
+
+**② 扫码自动连接（复刻 QwenPaw/OpenClaw，实测无需合作方资质）** `app/api/v1/qq_connect.py`
+```
+POST q.qq.com/lite/create_bind_task {"key": base64(随机32字节)} → task_id   （无鉴权！）
+  → 前端二维码 connect.html?task_id=..&_wv=2&source=Gugu
+  → 用户手机 QQ 扫码 → QQ App 内选 bot 授权
+  → 轮询 POST q.qq.com/lite/poll_bind_result {"task_id"}
+       status==2 → bot_appid(明文) + bot_encrypt_secret(AES-256-GCM)
+  → 用第 1 步 key 解出 AppSecret → 自动写 user_bots（无需手动复制）
+```
+- **安全**：接口无鉴权，但 secret 用调用方本地 key 加密回传、只有创建者能解；aes_key 只存服务端 Redis（按 task_id），不下发前端。`source` 只是来源标签（非白名单）。
+- 一度误判为"腾讯官方合作墙"，扒 QwenPaw 源码 + 实测推翻。详见 `docs/dev-log.md` 2026-06-23 QQ 条、`docs/agent-im接入架构.md` §3.2、`qq-scan-connect` 记忆。
+
+**③ C2C 单聊收发**：`botpy.Intents(public_messages=True)` + `on_c2c_message_create`；回复用 `post_c2c_message(openid, msg_id, content)`（被动回复，worker 端独立 `BotHttp.login` 取 token、过期重建）。sandbox 字段区分开发/生产环境。
 
 **伙伴深化（更后）**
 - [ ] 主动触达：截止日临近提醒、异常沉默感知、情绪状态关注

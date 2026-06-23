@@ -18,8 +18,11 @@
   - 新增 `user_bots` 表 + `app/api/v1/user_bots.py`（`/me/bots` 用户级 CRUD，secret 打码，仅能管自己的）
   - `supervisor.py`：飞书走 override 文件 + argv、QQ 走 `user_bots` 表 + 环境变量注入凭据（避免 ps 泄漏）；常驻 loop 复用 engine，DB 抖动保活不误杀
   - `worker.py`：QQ 用 payload 的 `owner_user_id` 直接认人
-  - 前端「QQ（自带机器人）」：扫码进 QQ 移动版开放平台（`q.qq.com/qqbot/openclaw/`）创建 → 填 AppID/Secret/沙箱 → 我的 bot 列表（启停/删除）
+  - 前端「QQ（自带机器人）」：**扫码自动连接**为主、手动填 AppID/Secret 兜底 + 我的 bot 列表（启停/删除）
   - Admin 频道面板收敛为仅飞书（QQ 改由用户自助管理）
+- **QQ 扫码自动连接**（复刻 QwenPaw/OpenClaw 的 q.qq.com bind_task 流程，实测无需合作方资质）：
+  - `app/api/v1/qq_connect.py`：`POST /me/qq/connect` 调 `q.qq.com/lite/create_bind_task` 建任务 → 前端二维码 → 手机 QQ 扫码选 bot 授权 → `GET /me/qq/connect/{task_id}` 轮询 `poll_bind_result`，完成则 **AES-256-GCM 解出 AppSecret 自动写入 UserBot**（无需手动复制）
+  - 安全：aes_key 仅存服务端（Redis，按 task_id），secret 加密回传只有本端能解；端点本身无鉴权但不暴露明文
 
 ### 新增 · 404 页 + 部署/运维
 

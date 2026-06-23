@@ -186,14 +186,16 @@
               <div class="pm-field-row">
                 <div class="pm-field-desc">
                   <span class="pm-field-name">QQ（自带机器人）</span>
-                  <span class="pm-field-hint">在 q.qq.com 创建你自己的 QQ 机器人，填进来，私聊它直接管项目/文件/日程</span>
+                  <span class="pm-field-hint">手机 QQ 扫码 → 选一个机器人授权，咕咕自动连接，私聊它直接管项目/文件/日程</span>
                 </div>
-                <button class="pm-bind-btn" @click="qqShowCreate = !qqShowCreate">{{ qqShowCreate ? '收起' : '去创建' }}</button>
+                <button class="pm-bind-btn" :disabled="qqConnecting" @click="startQQConnect">{{ qqConnecting ? '生成中…' : '扫码连接' }}</button>
               </div>
 
-              <div v-if="qqShowCreate" class="pm-qr-box">
+              <!-- 扫码连接（自动）-->
+              <div v-if="qqConnectShow" class="pm-qr-box">
                 <canvas ref="qqQrCanvas" class="pm-qr-canvas"></canvas>
-                <div class="pm-qr-hint">手机 QQ 扫码进<a :href="QQ_CREATE_URL" target="_blank" rel="noopener">移动版开放平台</a> → 创建机器人 → 把 AppID / AppSecret 填到下面</div>
+                <div class="pm-qr-hint">{{ qqConnectHint }}</div>
+                <button class="pm-qr-cancel" @click="cancelQQConnect">取消</button>
               </div>
 
               <!-- 我的 QQ 机器人 -->
@@ -206,7 +208,7 @@
                 <button class="pm-bot-del" @click="removeQQBot(b)">删除</button>
               </div>
 
-              <!-- 添加表单 -->
+              <!-- 手动填（兜底）-->
               <div v-if="qqForm" class="pm-bot-form">
                 <input v-model="qqForm.name" placeholder="名称（可选）" class="pm-bot-input" />
                 <input v-model="qqForm.app_id" placeholder="AppID（纯数字）" class="pm-bot-input" autocomplete="off" />
@@ -218,7 +220,7 @@
                   <button class="pm-bind-btn" :disabled="qqSaving" @click="saveQQBot">{{ qqSaving ? '保存中…' : '保存' }}</button>
                 </div>
               </div>
-              <button v-else class="pm-add-bot" @click="openQQForm">+ 添加 QQ 机器人</button>
+              <button v-else-if="!qqConnectShow" class="pm-text-link" @click="openQQForm">扫不了？手动填 AppID / AppSecret</button>
               <div v-if="qqError && !qqForm" class="pm-qr-err">{{ qqError }}</div>
             </div>
           </template>
@@ -302,7 +304,7 @@ import QRCode from 'qrcode'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import BaseModal from '@/components/common/BaseModal.vue'
-import { authApi, feishuApi, userBotsApi } from '@/services/api'
+import { authApi, feishuApi, userBotsApi, qqConnectApi } from '@/services/api'
 import { PhX, PhSignOut, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird } from '@phosphor-icons/vue'
 
 const props = defineProps({ show: Boolean })
@@ -468,10 +470,7 @@ async function unbindFeishu() {
 }
 
 // ── QQ 自带机器人（BYO）──
-// QQ 开放平台移动版创建/列表页（手机 QQ 扫码登录后可直接建 bot），桌面版 q.qq.com 手机体验差
-const QQ_CREATE_URL = 'https://q.qq.com/qqbot/openclaw/'
 const qqBots = ref([])
-const qqShowCreate = ref(false)
 const qqQrCanvas = ref(null)
 const qqForm = ref(null)
 const qqSaving = ref(false)
@@ -481,12 +480,58 @@ async function loadQQ() {
   try { const r = await userBotsApi.list(); qqBots.value = r.items || [] } catch {}
 }
 
-// 展开创建引导时渲染 q.qq.com 二维码
-watch(qqShowCreate, async v => {
-  if (!v) return
-  await nextTick()
-  try { await QRCode.toCanvas(qqQrCanvas.value, QQ_CREATE_URL, { width: 150, margin: 1 }) } catch {}
-})
+// ── QQ 扫码自动连接（建 task → 渲染二维码 → 轮询 → 自动填 key）──
+const qqConnecting = ref(false)
+const qqConnectShow = ref(false)
+const qqConnectHint = ref('')
+let qqConnectTaskId = null
+let qqConnectPoll = null
+
+async function startQQConnect() {
+  qqConnecting.value = true; qqError.value = ''; qqForm.value = null
+  try {
+    const { task_id, scan_url } = await qqConnectApi.start()
+    qqConnectTaskId = task_id
+    qqConnectShow.value = true
+    qqConnectHint.value = '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
+    await nextTick()
+    await QRCode.toCanvas(qqQrCanvas.value, scan_url, { width: 180, margin: 1 })
+    _qqStartConnectPoll()
+  } catch (e) {
+    qqError.value = e.message || '生成二维码失败'
+    qqConnectShow.value = false
+  } finally {
+    qqConnecting.value = false
+  }
+}
+
+function _qqStartConnectPoll() {
+  _qqStopConnectPoll()
+  let tries = 0
+  qqConnectPoll = setInterval(async () => {
+    tries++
+    try {
+      const r = await qqConnectApi.poll(qqConnectTaskId)
+      if (r.status === 'success') {
+        qqConnectHint.value = ''
+        cancelQQConnect()
+        await loadQQ()
+      } else if (r.status === 'expired') {
+        qqError.value = '二维码已过期，请重新扫码连接'; cancelQQConnect()
+      } else if (r.status === 'fail') {
+        qqError.value = '连接失败：' + (r.reason || '未知'); cancelQQConnect()
+      }
+    } catch {}
+    if (tries > 100) cancelQQConnect()   // ~5 分钟超时
+  }, 3000)
+}
+function _qqStopConnectPoll() { if (qqConnectPoll) { clearInterval(qqConnectPoll); qqConnectPoll = null } }
+
+function cancelQQConnect() {
+  _qqStopConnectPoll()
+  qqConnectShow.value = false
+  qqConnectTaskId = null
+}
 
 function openQQForm() { qqForm.value = { name: '', app_id: '', app_secret: '', sandbox: false }; qqError.value = '' }
 
@@ -509,7 +554,7 @@ async function removeQQBot(b) {
   catch (e) { qqError.value = e.message }
 }
 
-onUnmounted(_stopPoll)
+onUnmounted(() => { _stopPoll(); _qqStopConnectPoll() })
 
 // "X小时后恢复精力" / "精力充沛"
 const recoverLabel = computed(() => {
@@ -727,6 +772,11 @@ function handleLogout() {
 .pm-bot-input:focus { border-color: rgba(123,127,178,0.5); }
 .pm-bot-check { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .pm-bot-form-actions { display: flex; align-items: center; gap: 8px; }
+.pm-text-link {
+  margin-top: 8px; background: none; border: none; cursor: pointer;
+  font-size: 12px; color: var(--text-secondary); text-decoration: underline; padding: 0;
+}
+.pm-text-link:hover { color: #7b7fb2; }
 .pm-qr-cancel {
   font-size: 12px; color: var(--text-secondary); background: none; border: none;
   cursor: pointer; text-decoration: underline;

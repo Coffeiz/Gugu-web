@@ -43,13 +43,32 @@
 - **发**：`client.im.v1.message.create(...)`（`CreateMessageRequest` / `CreateMessageRequestBody`）
 - SDK 自动处理 token、签名、加解密、事件分发
 
-### 3.2 QQ — `botpy`（tencent-connect/botpy，官方）
+### 3.2 QQ — `botpy`（tencent-connect/botpy，官方）· 已落地（单聊 C2C，BYO）
+
+实现是**单聊 C2C** + **每用户自带 bot（BYO）**，代码 `agent/adapters/qq.py`。
 
 - **鉴权**：AppID + AppSecret（q.qq.com 开发者后台）
-- **收**：WebSocket，继承 `botpy.Client` 写异步事件：`on_at_message_create`（频道@）、群消息、`on_dms_reply`（私信）；用 `botpy.Intents(...)` 订阅
-- **发**：`self.api.post_message(...)`
-- **启动**：`client.run(appid=, secret=)`
+- **收**：WebSocket，继承 `botpy.Client`，`botpy.Intents(public_messages=True)` 订阅，事件 `on_c2c_message_create`；`message.author.user_openid` = 用户、`message.id` = 被动回复用的 msg_id
+- **发**：被动回复 `BotAPI.post_c2c_message(openid, msg_type=0, content, msg_id)`（worker 端独立 `BotHttp(...).login(Token)` 取 token，过期自动重建）
+- **启动**：`client.run(appid=, secret=)`（同步阻塞，botpy 自带重连）
 - 注意：群/C2C 消息能力需平台审批；有 sandbox / 生产环境之分
+
+**BYO 模型（与飞书"共享 bot"不同）**：QQ 每个用户填自己的 bot，存 `user_bots` 表（`app/api/v1/user_bots.py` 的 `/me/bots` 用户级 CRUD）。
+- supervisor 从 **DB** 读启用的 user_bots，每个起一条网关子进程，凭据走 **环境变量注入**（不走 argv，避免 ps 泄漏）。
+- bot 收到的消息**天然归属其 owner** → 入队 payload 带 `owner_user_id`，worker 直接认人，**无需平台用户↔咕咕用户的绑定**（这点比飞书简单）。
+
+**扫码自动连接（复刻 QwenPaw/OpenClaw，实测无需合作方资质）** `app/api/v1/qq_connect.py`：
+```
+POST q.qq.com/lite/create_bind_task {"key": base64(随机32字节)} → task_id   （无鉴权）
+  → 前端二维码 connect.html?task_id=..&_wv=2&source=Gugu
+  → 用户手机 QQ 扫码 → QQ App 内选 bot 授权
+  → 轮询 POST q.qq.com/lite/poll_bind_result {"task_id"}
+       status==2 → bot_appid(明文) + bot_encrypt_secret(AES-256-GCM, iv(12)+密文+tag)
+  → 用第 1 步的 key 解出 AppSecret → 自动写 user_bots
+```
+- **安全**：接口本身无鉴权，但 secret 用调用方本地 key 加密回传，只有创建者能解；aes_key 只存服务端 Redis（按 task_id），不下发前端。
+- `source` 仅为来源标签（非白名单，任意值都跳转）。
+- 拆解过程见 `docs/dev-log.md` 2026-06-23 QQ 条 + `qq-scan-connect` 记忆。
 
 ### 3.3 微信 — 直连 iLink（参考 SiverKing/weixin-ClawBot-API）
 
