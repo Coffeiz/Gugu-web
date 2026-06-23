@@ -63,6 +63,7 @@ class AISettings(BaseModel):
     temperature: float = Field(0.7, description="发散度 0~2")
     context_tokens: int = Field(3000, description="历史上下文 token 预算")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
+    vision: bool = Field(False, description="模型是否支持多模态（看图）。后台「检测」按钮探测后写入，亦可手动改")
 
 
 class AIPresetItem(BaseModel):
@@ -76,6 +77,7 @@ class AIPresetItem(BaseModel):
     temperature: float = 0.7
     context_tokens: int = 3000
     thinking: str = "disabled"
+    vision: bool = False
 
 
 class AIPresets(BaseModel):

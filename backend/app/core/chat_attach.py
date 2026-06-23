@@ -25,6 +25,14 @@ TEXT_EXTS = {
 }
 IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"}
 
+# 能作为「图片块」喂给 vision 模型的扩展名（主流 vision API 都收 png/jpeg/gif/webp；
+# bmp/svg 不通用，仍走文字提示）。每张原图上限、单条消息最多张数——挡住超大图把上下文撑爆。
+VISION_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
+_VISION_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                "gif": "image/gif", "webp": "image/webp"}
+VISION_IMG_MAX = 5 * 1024 * 1024   # 单张原图字节上限
+VISION_IMG_COUNT = 6               # 单条消息最多带几张图
+
 
 def _key(user_id, attach_id) -> str:
     return f"{_PREFIX}{user_id}:{attach_id}"
@@ -93,6 +101,45 @@ async def get_meta(user_id, attach_id: str) -> dict | None:
         return None
 
 
+async def list_staged(user_id) -> list[dict]:
+    """该用户当前所有未过期的暂存附件 meta，按剩余 TTL 降序（越新越靠前）。"""
+    r = get_redis()
+    prefix = f"{_PREFIX}{user_id}:"
+    out = []
+    async for k in r.scan_iter(match=f"{prefix}*", count=200):
+        ks = k if isinstance(k, str) else k.decode()
+        try:
+            raw = await r.get(ks)
+            if not raw:
+                continue
+            meta = json.loads(raw)
+            meta["_ttl"] = await r.ttl(ks)
+            out.append(meta)
+        except Exception:
+            continue
+    out.sort(key=lambda m: m.get("_ttl", 0), reverse=True)
+    return out
+
+
+async def resolve_attach(user_id, attach_id: str) -> tuple[dict | None, str]:
+    """容错解析附件，返回 (meta|None, note)。
+    LLM 抄 16 位 hex 的 attach_id 经常抄错/截断，别动不动报"过期"：
+    精确命中 → 前缀/子串唯一命中 → 退到最近上传的一个。全空才算真过期。"""
+    aid = (attach_id or "").strip()
+    if aid:
+        meta = await get_meta(user_id, aid)
+        if meta:
+            return meta, ""
+    staged = await list_staged(user_id)
+    if not staged:
+        return None, ""
+    if aid:
+        hit = [m for m in staged if aid in m["attach_id"] or m["attach_id"] in aid]
+        if len(hit) == 1:
+            return hit[0], "（按最接近的附件匹配）"
+    return staged[0], "（没对上 attach_id，用了你最近上传的那个附件）"
+
+
 async def read_bytes(meta: dict) -> bytes:
     return await get_storage().get(meta["storage_key"])
 
@@ -107,13 +154,25 @@ async def read_text(meta: dict) -> str:
         return ""
 
 
-async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> tuple[str, list]:
+def _vision_enabled() -> bool:
+    """当前激活模型是否支持多模态（后台探测/手动设的 ai.vision）。"""
+    try:
+        from app.core.config import get_settings
+        return bool(get_settings().ai.vision)
+    except Exception:
+        return False
+
+
+async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> tuple[str, list, list]:
     """把附件解析成：① 注入给模型的增广文本（文本读内容、图片/二进制给提示）
-    ② 给前端气泡的附件卡片列表。失效/过期的 attach_id 跳过。"""
+    ② 给前端气泡的附件卡片列表 ③ 图片块列表（仅 vision 模型，喂给模型「看」）。
+    失效/过期的 attach_id 跳过。"""
     if not attach_ids:
-        return base_message, []
+        return base_message, [], []
+    vision = _vision_enabled()
     parts = [base_message] if base_message else []
     cards = []
+    images: list = []   # [{media_type, b64}]，仅 vision 时填
     for aid in attach_ids:
         meta = await get_meta(user_id, aid)
         if not meta:
@@ -127,9 +186,42 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> t
         if meta["kind"] == "text":
             parts.append(f"\n\n📎 用户上传的文件{tag}，内容如下：\n```\n{await read_text(meta)}\n```")
         elif meta["kind"] == "image":
-            parts.append(f"\n\n📎 用户上传了图片{tag}。当前模型看不到图像内容；"
+            ext = (meta.get("ext") or "").lower()
+            # vision 模型 + 受支持格式 + 体积合规 + 没超张数 → 作为图片块让模型真看
+            if (vision and ext in VISION_EXTS and meta["size"] <= VISION_IMG_MAX
+                    and len(images) < VISION_IMG_COUNT):
+                try:
+                    import base64
+                    raw = await read_bytes(meta)
+                    images.append({"media_type": _VISION_MIME.get(ext, "image/png"),
+                                   "b64": base64.b64encode(raw).decode()})
+                    parts.append(f"\n\n📎 用户上传了图片{tag}（见随附图像）；"
+                                 f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
+                    continue
+                except Exception:
+                    pass   # 读图失败 → 退回文字提示
+            why = "当前模型看不到图像内容" if not vision else "这张图没法直接看（格式/体积不支持）"
+            parts.append(f"\n\n📎 用户上传了图片{tag}。{why}；"
                          f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
         else:
             parts.append(f"\n\n📎 用户上传了文件{tag}，二进制内容读不了；"
                          f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
-    return "".join(parts), cards
+    return "".join(parts), cards, images
+
+
+def build_user_content(text: str, images: list, use_anthropic: bool):
+    """把增广文本 + 图片块拼成发给模型的 user content。
+    无图 → 纯字符串（与旧行为一致）；有图 → 内容块列表（按 provider 格式）。"""
+    if not images:
+        return text
+    if use_anthropic:
+        parts = [{"type": "text", "text": text}] if text else []
+        for im in images:
+            parts.append({"type": "image", "source": {
+                "type": "base64", "media_type": im["media_type"], "data": im["b64"]}})
+        return parts
+    parts = [{"type": "text", "text": text}] if text else []
+    for im in images:
+        parts.append({"type": "image_url", "image_url": {
+            "url": f"data:{im['media_type']};base64,{im['b64']}"}})
+    return parts

@@ -60,6 +60,7 @@
                 <span class="preset-meta-item">ctx {{ p.context_tokens ?? 3000 }}</span>
                 <span class="preset-meta-item">temp {{ p.temperature ?? 0.7 }}</span>
                 <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think">思考</span>
+                <span v-if="p.vision" class="preset-meta-item preset-meta-vision">👁 多模态</span>
                 <span class="preset-key">{{ p.api_key || '未设置 Key' }}</span>
               </div>
             </div>
@@ -67,6 +68,9 @@
               <button class="pca-btn" @click="openEditPreset(p)">编辑</button>
               <button class="pca-btn" :class="{ 'pca-btn--testing': testingId === p.id }" @click="testPreset(p.id)">
                 {{ testingId === p.id ? '测试中…' : '测试' }}
+              </button>
+              <button class="pca-btn" :class="{ 'pca-btn--testing': probingId === p.id }" @click="probeVision(p.id)">
+                {{ probingId === p.id ? '检测中…' : '检测多模态' }}
               </button>
               <button
                 v-if="p.id !== activePresetId"
@@ -153,6 +157,20 @@
                 class="toggle-switch"
                 :class="{ on: editTarget.thinking === 'adaptive' }"
                 @click="editTarget.thinking = editTarget.thinking === 'adaptive' ? 'disabled' : 'adaptive'"
+              >
+                <span class="toggle-knob" />
+              </button>
+            </div>
+
+            <div class="modal-field modal-field--row">
+              <div class="thinking-label">
+                <span>多模态（看图）</span>
+                <span class="thinking-hint">开启后用户发的图片直接给模型「看」；不确定就用卡片上的「检测多模态」自动判定</span>
+              </div>
+              <button
+                class="toggle-switch"
+                :class="{ on: editTarget.vision }"
+                @click="editTarget.vision = !editTarget.vision"
               >
                 <span class="toggle-knob" />
               </button>
@@ -631,6 +649,7 @@ const llmMsg         = ref('')
 const llmMsgError    = ref(false)
 const testingId      = ref(null)
 const activatingId   = ref(null)
+const probingId      = ref(null)
 
 // edit modal
 const editTarget   = ref(null)
@@ -661,7 +680,7 @@ async function fetchPresets() {
 
 function openNewPreset() {
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 2000, temperature: 0.7, context_tokens: 3000, thinking: 'disabled' }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 2000, temperature: 0.7, context_tokens: 3000, thinking: 'disabled', vision: false }
   editError.value  = ''
 }
 
@@ -750,6 +769,23 @@ async function testPreset(id) {
     showMsg('测试失败：' + e.message, true)
   } finally {
     testingId.value = null
+  }
+}
+
+// 多模态探测：发一张极小图给该预设模型，按响应判定是否支持看图，结论自动写回 vision
+async function probeVision(id) {
+  probingId.value = id
+  try {
+    const res  = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/probe-vision`, { method: 'POST' })
+    const data = await res.json()
+    if (data.supported === true)       showMsg(`✅ 支持多模态（${data.status}），已开启`)
+    else if (data.supported === false) showMsg(`该模型不支持多模态，已设为关闭：${data.detail}`, true)
+    else                               showMsg(`测不准：${data.detail}`, true)
+    await fetchPresets()   // 刷新「👁 多模态」徽章
+  } catch (e) {
+    showMsg('检测失败：' + e.message, true)
+  } finally {
+    probingId.value = null
   }
 }
 
@@ -1597,6 +1633,7 @@ onMounted(async () => {
 .thinking-hint { font-size: 11px; color: rgba(255,255,255,0.2); text-transform: none; letter-spacing: 0; font-weight: 400; }
 .preset-meta-item { font-size: 12px; color: rgba(255,255,255,0.35); }
 .preset-meta-think { color: rgba(149,144,196,0.85); background: rgba(149,144,196,0.1); padding: 1px 6px; border-radius: 4px; }
+.preset-meta-vision { color: rgba(122,184,200,0.95); background: rgba(122,184,200,0.12); padding: 1px 6px; border-radius: 4px; }
 .modal-input[type="number"] { -moz-appearance: textfield; }
 .modal-input[type="number"]::-webkit-inner-spin-button,
 .modal-input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }

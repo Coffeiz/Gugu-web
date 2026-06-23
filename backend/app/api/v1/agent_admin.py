@@ -302,6 +302,7 @@ class PresetCreate(BaseModel):
     temperature: float = 0.7
     context_tokens: int = 3000
     thinking: str = "disabled"
+    vision: bool = False
 
 
 @router.post("/llm-presets")
@@ -320,11 +321,12 @@ async def create_llm_preset(body: PresetCreate):
         "temperature": body.temperature,
         "context_tokens": body.context_tokens,
         "thinking": body.thinking,
+        "vision": body.vision,
     }
     presets["items"].append(item)
     if not presets.get("active_id"):
         presets["active_id"] = new_id
-        override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled"}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking")}
+        override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled","vision":False}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking", "vision")}
     _write_override(override)
     return {**item, "api_key": _mask_key(item["api_key"])}
 
@@ -339,6 +341,7 @@ class PresetUpdate(BaseModel):
     temperature: float | None = None
     context_tokens: int | None = None
     thinking: str | None = None
+    vision: bool | None = None
 
 
 @router.put("/llm-presets/{preset_id}")
@@ -366,8 +369,10 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
         item["context_tokens"] = body.context_tokens
     if body.thinking is not None:
         item["thinking"] = body.thinking
+    if body.vision is not None:
+        item["vision"] = body.vision
     if presets.get("active_id") == preset_id:
-        override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled"}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking")}
+        override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled","vision":False}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking", "vision")}
     _write_override(override)
     return {**item, "api_key": _mask_key(item["api_key"])}
 
@@ -393,7 +398,7 @@ async def activate_llm_preset(preset_id: str):
     if not item:
         raise HTTPException(404, "预设不存在")
     presets["active_id"] = preset_id
-    override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled"}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking")}
+    override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled","vision":False}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking", "vision")}
     _write_override(override)
     return {"active_id": preset_id}
 
@@ -429,6 +434,83 @@ async def test_llm_preset(preset_id: str):
         return {"ok": ok, "status": resp.status_code, "detail": "" if ok else resp.text[:300]}
     except Exception as e:
         return {"ok": False, "status": 0, "detail": str(e)[:300]}
+
+
+def _probe_png_b64() -> str:
+    """纯 stdlib 造一张 8×8 实色 PNG 的 base64，用作多模态探测图（不依赖 Pillow）。"""
+    import base64
+    import struct
+    import zlib
+    w = h = 8
+    row = b"\x00" + b"\xe0\x40\x40" * w          # 每行：filter 0 + 8 像素(RGB 暗红)
+    idat = zlib.compress(row * h)
+    def _chunk(typ: bytes, data: bytes) -> bytes:
+        body = typ + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xffffffff)
+    png = (b"\x89PNG\r\n\x1a\n"
+           + _chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))   # 8bit, RGB
+           + _chunk(b"IDAT", idat)
+           + _chunk(b"IEND", b""))
+    return base64.b64encode(png).decode()
+
+
+async def _do_vision_probe(provider, api_key, base_url, model) -> tuple:
+    """发一张极小图给模型，看接不接受。用真正的 SDK 客户端（与 runner 同款），
+    路径/鉴权头由 SDK 拼，避免手写 URL 在 minimax 这种 base_url 上猜错。
+    返回 (supported, status, detail)：True=支持 / False=纯文本 / None=测不准。"""
+    import httpx
+    b64 = _probe_png_b64()
+    q = "这张图是什么颜色？用一个词回答。"
+    # 与 runner 一致：minimax / 含 anthropic 的 base_url 都走 anthropic 格式
+    is_anthropic = (provider in ("anthropic", "minimax")) or ("anthropic" in (base_url or "").lower())
+    timeout = httpx.Timeout(connect=10.0, read=25.0, write=10.0, pool=5.0)
+    try:
+        if is_anthropic:
+            from anthropic import AsyncAnthropic
+            client = AsyncAnthropic(api_key=api_key or "dummy", base_url=base_url,
+                                    http_client=httpx.AsyncClient(timeout=timeout))
+            await client.messages.create(model=model, max_tokens=16, messages=[{"role": "user", "content": [
+                {"type": "text", "text": q},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}},
+            ]}])
+        else:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=api_key or "dummy", base_url=base_url, timeout=timeout)
+            await client.chat.completions.create(model=model, max_tokens=16, messages=[{"role": "user", "content": [
+                {"type": "text", "text": q},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+            ]}])
+        return True, 200, "模型接受了图片输入 ✅ 支持多模态"
+    except Exception as e:
+        sc = getattr(e, "status_code", None) or 0
+        msg = str(e)[:200]
+        if sc in (400, 422):
+            # 鉴权过了、格式也对，却拒了图片块 → 多为纯文本模型不认 image
+            return False, sc, f"模型拒绝了图片输入，应为纯文本模型：{msg}"
+        if sc in (401, 403):
+            return None, sc, f"鉴权失败（{sc}），先确认 Key/连通性再测"
+        if sc == 404:
+            return None, sc, f"模型名或地址不对（{sc}）：{msg}"
+        return None, sc, f"未能判定：{msg}"
+
+
+@router.post("/llm-presets/{preset_id}/probe-vision")
+async def probe_vision_preset(preset_id: str):
+    """探测预设模型是否支持多模态，并把明确结论（True/False）写回 vision 字段。"""
+    override = _read_override()
+    presets = _ensure_presets(override)
+    item = next((it for it in presets["items"] if it["id"] == preset_id), None)
+    if not item:
+        raise HTTPException(404, "预设不存在")
+    supported, sc, detail = await _do_vision_probe(
+        item.get("provider", "openai"), item.get("api_key", ""),
+        item.get("base_url", "").rstrip("/"), item.get("model", ""))
+    if supported is not None:   # 结论明确才落库
+        item["vision"] = supported
+        if presets.get("active_id") == preset_id:
+            override.setdefault("ai", {})["vision"] = supported
+        _write_override(override)
+    return {"supported": supported, "status": sc, "detail": detail}
 
 
 # IM 机器人接入：飞书 / QQ 都走「用户自带(BYO)」，在用户设置里管理

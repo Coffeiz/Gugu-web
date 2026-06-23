@@ -1229,6 +1229,7 @@ async function send(forcedText) {
 .md-body :deep(em) { font-style: italic; opacity: 0.85; }
 .md-body :deep(code) { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11px; background: rgba(0,0,0,0.07); border-radius: 4px; padding: 1px 5px; }
 .md-body :deep(a) { color: var(--color-primary); text-decoration: underline; }
+.md-body :deep(img) { max-width: 100%; max-height: 240px; border-radius: 8px; object-fit: contain; display: block; }
 .md-body :deep(blockquote) { border-left: 3px solid var(--color-primary); margin: 6px 0; padding: 4px 10px; opacity: 0.75; font-style: italic; }
 .md-body :deep(hr) { border: none; border-top: 1px solid rgba(0,0,0,0.08); margin: 8px 0; }
 .md-body :deep(.md-code-block) { margin: 8px 0; border-radius: 8px; overflow: hidden; background: rgba(123,127,178,0.04); font-size: 11px; }

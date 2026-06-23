@@ -96,7 +96,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
-        aug_text, attach_cards = await chat_attach.resolve_for_message(
+        aug_text, attach_cards, aug_images = await chat_attach.resolve_for_message(
             user_id, getattr(req, "attachments", None) or [], req.message)
         db.add(ConversationMessage(session_id=session_id, role="user", content=req.message,
                                    files=attach_cards or None))
@@ -123,23 +123,28 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     )
     runner = LLMRunner(profile.tool_names, settings)
 
+    from app.core.chat_attach import build_user_content
     anthr_messages: list = []
     anthr_initial_len = 0
     if use_anthropic:
         for h in history:
             content = h.content_json if h.content_json is not None else (h.content or "")
             anthr_messages.append({"role": h.role, "content": content})
-        anthr_messages.append({"role": "user", "content": aug_text})
+        anthr_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, True)})
         anthr_initial_len = len(anthr_messages)
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True)
     else:
         oa_messages = [{"role": "system", "content": system_prompt}]
         for h in history:
             oa_messages.append({"role": h.role, "content": h.content or ""})
-        oa_messages.append({"role": "user", "content": aug_text})
+        oa_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, False)})
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False)
 
     text, tin, tout, errored, sent_files = await _collect(gen)
+    # IM 出口兜底：发给用户/持久化之前确定性清洗（抹 tool_id 噪声、拦系统提示词泄露）
+    if not errored:
+        from agent.outbound import sanitize_outbound
+        text = sanitize_outbound(text)
 
     # ── 持久化：工具调用轮次（anthropic）+ 回复 + 用量（报错不入历史）──
     if not errored:
