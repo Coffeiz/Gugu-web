@@ -120,6 +120,17 @@ class SkillRegistry:
         if isinstance(result, str):
             return result, None
         artifact = result.pop("_artifact", None) if isinstance(result, dict) else None
+
+        # 改动型工具成功后，推「资源变了」事件给该用户的网页端实时刷新（best-effort）
+        if not (isinstance(result, dict) and result.get("error")):
+            from app.core import events
+            res = events.RESOURCE_BY_TOOL.get(name)
+            if res:
+                try:
+                    await events.publish(user_id, res)
+                except Exception:
+                    pass
+
         return json.dumps(result, ensure_ascii=False), artifact
 
 

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { projectsApi, eventsApi } from '@/services/api'
+import { useLiveStore } from '@/stores/live'
 
 export const useProjectStore = defineStore('projects', () => {
 
@@ -217,6 +218,11 @@ export const useProjectStore = defineStore('projects', () => {
       upcomingCalEvents.value = [...thisMonth, ...nextMonth]
     } catch { /* ignore */ }
   }
+
+  // 实时：咕咕/IM 改了项目或日历事件 → 自动重新拉取（只刷已加载过的数据）
+  const live = useLiveStore()
+  watch(() => live.rev.projects, () => { if (projects.value.length || loading.value) fetchProjects() })
+  watch(() => live.rev.calendar, () => fetchUpcomingCalEvents())
 
   return {
     kanbanColumns, projects, loading, error,

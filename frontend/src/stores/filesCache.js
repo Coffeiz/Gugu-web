@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { filesApi, foldersApi } from '@/services/api'
+import { useLiveStore } from '@/stores/live'
 
 let _lastVersion = null
 let _visibilityBound = false
@@ -139,6 +140,9 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   function getFolder(id) {
     return allFolders.value.find(f => f.id === id) ?? null
   }
+
+  // 实时：咕咕/IM 改了文件库 → 已加载过才重新拉取
+  watch(() => useLiveStore().rev.files, () => { if (loaded.value) refresh() })
 
   return {
     allFiles, allFolders, loaded, loading,

@@ -9,6 +9,41 @@
 
 ## [Unreleased] · 文件库回收站多选
 
+### 新增 · 实时刷新（Redis pub/sub → SSE）
+
+- **咕咕改了数据/IM 来了消息，网页自动刷新**，无需手动刷新页面。此前 IM（飞书/QQ）触发的改动完全推不到网页，web 聊天也只有自己的 `refreshAfterTools` 自刷、且 Calendar 视图连刷新信号都没监听
+  - 后端：`app/core/events.py`（`RESOURCE_BY_TOOL` 映射 + `publish` + SSE `stream`）+ `app/api/v1/live.py`（`GET /api/v1/live/stream`，鉴权 fetch streaming 带头，非 EventSource）
+  - 挂点 `registry.dispatch`（所有工具的唯一咽喉，web/IM 共用）：改动型工具成功后 `publish(user_id, 资源)`；`runner.run_collect`（IM 大脑入口）持久化后 `publish(user_id,'sessions',session_id,appended)`
+  - 前端：`stores/live.js` 开一条 SSE（断线指数退避重连），收事件递增 `rev[资源]`；`projects`/`filesCache` store、Calendar 视图 watch 各自 rev 重新拉取；`DefaultLayout` 登录后 `connect()`
+  - **粗粒度**：项目/日历/文件/客户变化 → 对应视图自动 refetch（顺手修了 Calendar 视图原本没监听刷新信号的 bug）
+  - **消息级**：IM 消息带 `session_id + appended`（这一来一回），若正打开该会话 → 直接把气泡**追加**进当前对话（只传增量，不整列表 refetch）；否则只刷会话列表
+  - 流量可控：频道按用户隔离 `events:{user_id}`（无跨用户扇出）+ 发增量 + 空闲仅 ~20s keepalive
+  - ⚠️ 新增改动型工具须登记到 `RESOURCE_BY_TOOL`，否则不会实时刷新；web 自身聊天暂未 publish → 同账号多标签不互相同步（站内 IM 时补上即可）
+
+### 新增 · Debug 管理页
+
+- **Admin → Debug 实时日志**：新管理页，SSE 推流实时 tail 三个日志文件（`gugu.log` / `gugu-worker.log` / `gugu-supervisor.log`），样式复用 SystemLogs 暗色 glass 主题
+  - 来源筛选（web / worker / supervisor）+ 级别筛选（ERROR / WARN / INFO / DEBUG）
+  - 自动滚动开关、清空按钮、连接状态实时指示（绿点）
+  - EventSource 无法带自定义 header → 改用 `?token=` 查询参数做 JWT 鉴权（后端手动验证）
+  - 后端 `/admin/debug/logs/tail`（快照）和 `/admin/debug/logs/stream`（SSE 流）两个端点
+
+### 改进 · 界面细节
+
+- **全局 `::placeholder` 样式**：统一占位符颜色（`var(--text-secondary)`，opacity 0.75），删除 ProjectModal / NewProjectModal / CalendarPanel / Calendar / GuguChat 中分散的同名 scoped 规则，以后新输入框无需单独处理
+- **咕咕聊天侧边栏分组**：展开侧栏新增 IM / 网页 session 分割线；IM session 排在网页 session 上方；标题「咕咕」水平居中
+- **ProfileModal 显示完整 UUID**：之前只截取前 12 位大写，现改为显示完整 UUID（为后续好友功能保留唯一性）
+- **头像阴影**：ProfileModal 设置页大头像 + AppSidebar 侧栏小头像均加 `box-shadow`（蓝紫调柔和阴影）
+- **看板列药丸更亮**：KanbanColumn `col-count` 胶囊背景改为 `rgba(255,255,255,0.85)`，在暗色卡片上更易读
+- **总览日期列加宽**：Dashboard 项目列表日期列从 64px 改为 80px，避免年份文字与状态药丸重叠
+- **ProjectModal 看板按钮样式调整**：
+  - 未选中：半透明暗底（`rgba(0,0,0,0.10)`）+ 灰蓝文字（`#5a5f78`），状态色圆点常显
+  - 悬停：略加深底色，文字提亮至主色
+  - 选中（active）：状态色描边（1.5px）+ 状态色浅底色 tint + 加深文字（与各状态色协调）
+  - 阶段节点（node-circle）：`rgba(0,0,0,0.08)` 底色 + `rgba(90,95,120,0.35)` 描边；数字与未选中按钮文字同色（`#5a5f78`），选中时白色
+- **待办添加按钮宽度对齐**：ProjectModal 中「+ 添加待办」按钮右边缘与标题输入框右边缘对齐
+- **待办内容不被滚动条截断**：`.left-content` 加 `scrollbar-gutter: stable`，滚动条出现时为内容区预留位置，防止右侧内容被遮挡
+
 ### 新增 · 咕咕能读历史对话
 
 - **咕咕能搜 / 读用户过去的对话**（其他 session，此前只能看当前对话 + 提炼记忆）：新 skill `conversations`

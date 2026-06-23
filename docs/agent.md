@@ -217,6 +217,26 @@ send_file 返回 {ok, message, _artifact:{file_id,name,ext,size_bytes}}
 - ⚠️ **仅 web 对话**：IM（飞书/QQ）的 `_collect` 忽略 `file` 事件，工具文本仍回"已发送"但不真发文件（IM 发文件是各平台另一套 API，未做）。
 - ⚠️ 持久化依赖 `conversation_messages.files` 列（迁移 `20260623000001`）——**部署后必须 `make migrate`**，否则发文件存盘报错。
 
+#### 实时刷新（Redis pub/sub → SSE）
+
+咕咕在 **web 聊天或 IM（飞书/QQ）** 里改了数据（项目/日历/文件/客户）、或 IM 来了新消息，网页都**自动刷新**，无需手动刷新页面。实现见 `app/core/events.py` + `app/api/v1/live.py` + 前端 `stores/live.js`。
+
+挂点是 `registry.dispatch`——所有工具执行的**唯一咽喉**，web 与 IM worker 共用：
+```
+工具成功(改动型) → events.publish(user_id, 资源)           # dispatch 里，按 RESOURCE_BY_TOOL 映射
+IM 一轮持久化后 → events.publish(user_id,'sessions',session_id,appended)  # runner.run_collect
+  → Redis PUBLISH events:{user_id}                         # 按用户隔离频道，无跨用户扇出
+  → GET /api/v1/live/stream(SSE) 订阅该频道，逐条下发        # 鉴权走 fetch streaming 带 Authorization 头
+  → 前端 live store：bump rev[资源] → 各 store/视图 watch 自己的 rev 重新拉取
+       带 session_id 的事件 → GuguChat 判断是否当前会话，是则把 appended 直接追加进气泡（消息级，不整列表 refetch）
+```
+- **粗粒度**（数据资源）：`rev.projects/calendar/files` 递增 → `projects`/`filesCache` store、Calendar 视图重新拉取。
+- **细粒度**（会话消息）：IM 消息带 `session_id + appended`（这一来一回），正打开该会话就**追加气泡**，否则只刷会话列表。
+- 流量：按收件人定向 + 发增量（不广播、不全量），空闲只有 ~20s 一次 keepalive。
+- 断线（后端重启/网络抖动）：前端指数退避自动重连。
+- ⚠️ **新增改动型工具记得登记到 `RESOURCE_BY_TOOL`**，否则该工具改完网页不会实时刷新。
+- 当前 web 自身聊天走 `web.py` 流式（自带 `refreshAfterTools` 刷新），未 publish → **同账号多网页标签不互相同步**；将来做站内 IM 时让 web 也 publish 即可（链路现成）。
+
 ---
 
 ### `profiles/`

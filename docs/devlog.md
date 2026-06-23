@@ -5,6 +5,43 @@
 
 ---
 
+## 2026-06-23 · 实时刷新：Redis pub/sub → SSE（顺带想清楚了站内 IM 的地基）
+
+用户反馈「IM 发的消息、咕咕创建整理项目/活动/文件 都不会实时更新」。拆开是两个层面的洞。
+
+### 根因：IM 的改动根本没有通道到网页
+
+web 聊天本来有 `refreshAfterTools`——流结束后按用过的工具刷对应 store。但它**只对 web 生效**：IM（飞书/QQ）走的是另一条路（worker → `run_collect`），网页这边毫不知情。而且翻代码发现 Calendar 视图 `import` 了 `calendarSignal` 却**根本没 watch 它**，等于 web 改了日历视图也不刷——一个潜伏的 bug。
+
+光靠「web 流里的 `tool_done` 事件」补不了 IM——**IM 没有 web 流**。要让 IM 的改动到网页，必须有**推送通道**。
+
+### 方案：挂在 dispatch 这个唯一咽喉上
+
+关键发现：`registry.dispatch` 是 **web agent 和 IM worker 共用的唯一工具执行入口**。在这一个点上 publish「资源变了」，两条路就都覆盖了。Redis 已经在用（IM 队列 + 心跳），pub/sub 顺手：
+
+```
+工具成功 → events.publish(user_id, 资源)  →  Redis PUBLISH events:{user_id}
+                                          →  SSE /live/stream（前端 fetch streaming 订阅）
+                                          →  bump rev[资源] → store/视图 watch 重新拉
+```
+按 `events:{user_id}` 隔离频道，**没有跨用户扇出**——这是流量会不会炸的分水岭。
+
+### 从「刷列表」到「消息级追加」——想清楚了 native IM 的地基
+
+第一版只发 `{resources:['sessions']}`，前端刷会话列表。用户问「为什么消息不会追加」「以后做站内 IM 是不是还得做」「流量会不会太大」——三连问其实把方向问明白了：
+
+- **追加是任何 IM 的核心，不是附加项**。粗粒度「刷列表」是桥接场景的取巧；站内 IM 必须做到消息级推送。
+- **现在搭的 pub/sub → SSE 就是它的地基**，不浪费。于是直接做成 IM-ready：事件带 `session_id + appended`（这一来一回），前端判断是当前会话就把气泡追加进去。
+- **流量反而更省**：粗粒度是「改一条 → 整列表 refetch」，消息级是「只发那一条增量」。加上按收件人定向、空闲只 keepalive，流量下限就是「消息本身」，省不掉也不该省。
+
+### 留的尾巴（记清楚）
+
+web 自身聊天（`web.py` 流式）暂未 publish → 同账号多网页标签不互相同步。做站内 IM 时让 web 也 publish 即可，链路现成。已读/送达/在线状态/顺序去重是 IM 进阶项，地基已就位。
+
+详见 `docs/agent.md`「实时刷新」一节、`CHANGELOG.md`。
+
+---
+
 ## 2026-06-23 · 咕咕读历史对话 + 隐藏导航悬停 URL
 
 两件小事，但第二件踩了「需求别想当然」的教训。

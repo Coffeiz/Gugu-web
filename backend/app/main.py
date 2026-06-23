@@ -21,6 +21,7 @@ from app.api.v1 import projects as projects_router
 from app.api.v1 import files as files_router
 from app.api.v1 import folders as folders_router
 from app.api.v1 import events as events_router
+from app.api.v1 import live as live_router
 from app.api.v1 import clients as clients_router
 from app.api.v1 import trash as trash_router
 from app.api.v1 import agent as agent_router
@@ -34,6 +35,7 @@ from app.api.v1 import invite_codes as invite_codes_router
 from app.api.v1 import audit_log as audit_log_router
 from app.api.v1 import system_logs as system_logs_router
 from app.api.v1 import users_admin as users_admin_router
+from app.api.v1 import admin_debug as admin_debug_router
 from app.db.session import create_all_tables
 
 import logging
@@ -186,6 +188,7 @@ app.include_router(projects_router.router, prefix="/api/v1")
 app.include_router(files_router.router,    prefix="/api/v1")
 app.include_router(folders_router.router,  prefix="/api/v1")
 app.include_router(events_router.router,   prefix="/api/v1")
+app.include_router(live_router.router,      prefix="/api/v1")
 app.include_router(clients_router.router,  prefix="/api/v1")
 app.include_router(trash_router.router,       prefix="/api/v1")
 app.include_router(agent_router.router,       prefix="/api/v1")
@@ -228,6 +231,11 @@ app.include_router(
 )
 app.include_router(
     services_admin_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    admin_debug_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )

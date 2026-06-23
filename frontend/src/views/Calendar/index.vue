@@ -309,6 +309,7 @@ const upcomingEventsCache = { data: null }
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
+import { useLiveStore } from '@/stores/live'
 import { eventsApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
@@ -317,6 +318,7 @@ import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, P
 
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
+const liveStore = useLiveStore()
 const todayIso = ref(toIso(new Date()))
 
 let _midnightTimer = null
@@ -1203,6 +1205,8 @@ onUnmounted(() => {
   clearTimeout(_midnightTimer)
 })
 
+// 实时：咕咕/IM 改了日历 → 重新拉当前+下月活动
+watch(() => liveStore.rev.calendar, () => { fetchEvents(); fetchNextMonthEvents() })
 watch(cursor, () => { fetchEvents(); loadHolidays() })
 watch(monthWeeks, () => nextTick(setupRO))
 watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
@@ -1519,10 +1523,8 @@ async function saveEvent() {
 .popup-title { font-size: 13px; font-weight: 700; color: #1e2028; }
 .popup-input { width: 100%; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 12px; font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028; outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }
 .popup-input:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
-.popup-input::placeholder { color: #8a8fa8; opacity: 0.7; }
 .popup-textarea { width: 100%; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 12px; font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028; outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; resize: none; line-height: 1.5; }
 .popup-textarea:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
-.popup-textarea::placeholder { color: #8a8fa8; opacity: 0.7; }
 .popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
 .popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: 'PingFang SC', 'Segoe UI', sans-serif; font-weight: 600; transition: background 0.12s, border-color 0.12s; }
 .popup-delete:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); }

@@ -69,11 +69,12 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useProjectStore } from '@/stores/projects'
 import { useAuthStore } from '@/stores/auth'
+import { useLiveStore } from '@/stores/live'
 import { projectsApi } from '@/services/api'
 import { uploadSignal } from '@/services/cache'
 import AppSidebar from '@/components/common/AppSidebar.vue'
@@ -103,6 +104,7 @@ const route          = useRoute()
 const uiStore        = useUiStore()
 const projectStore   = useProjectStore()
 const authStore      = useAuthStore()
+const liveStore      = useLiveStore()
 const prefsStore     = usePreferencesStore()
 
 const uploadDialogOpen = ref(false)
@@ -128,10 +130,13 @@ onMounted(async () => {
   if (authStore.isLoggedIn) {
     audioStore.restore()
     prefsStore.fetch()
+    liveStore.connect()   // 开实时事件订阅：咕咕/IM 改了数据网页自动刷新
   }
   projectStore.fetchProjects()
   projectStore.fetchUpcomingCalEvents()
 })
+
+onBeforeUnmount(() => liveStore.disconnect())
 
 const currentTitle = computed(() => route.meta.title || '总览')
 

@@ -114,6 +114,17 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                 ))
             await db2.commit()
 
+        # 推「会话有更新」事件：IM（飞书/QQ）来的消息实时反映到网页——
+        # 列表刷新 + 若该会话正打开则把这一来一回直接追加进气泡（消息级，不整列表 refetch）
+        try:
+            from app.core import events
+            appended = [{"role": "user", "text": req.message}]
+            if text:
+                appended.append({"role": "assistant", "text": text})
+            await events.publish(user_id, "sessions", session_id=session_id, appended=appended)
+        except Exception:
+            pass
+
         # 对话后反思（fire-and-forget）
         if profile.memory_enabled and text:
             from agent.memory import reflection

@@ -138,12 +138,24 @@
             <div class="exp-sidebar-divider"></div>
             <div class="exp-session-list">
               <div
-                v-for="s in sessions" :key="s.id"
+                v-for="s in imSessions" :key="s.id"
                 class="exp-session-item"
                 :class="{ active: s.id === sessionId }"
                 @click="loadSession(s.id)"
               >
-                <span v-if="s.source && s.source !== 'web'" class="exp-session-source" :class="`src-${s.source}`">{{ s.source === 'qqbot' ? 'QQ' : s.source === 'feishu' ? '飞书' : s.source }}</span>
+                <span class="exp-session-source" :class="`src-${s.source}`">{{ s.source === 'qqbot' ? 'QQ' : s.source === 'feishu' ? '飞书' : s.source }}</span>
+                <span class="exp-session-title">{{ s.title }}</span>
+                <button class="exp-session-del" @click.stop="deleteSession(s.id)" title="删除">
+                  <PhTrash :size="12" weight="bold" />
+                </button>
+              </div>
+              <div v-if="webSessions.length && imSessions.length" class="exp-group-divider"></div>
+              <div
+                v-for="s in webSessions" :key="s.id"
+                class="exp-session-item"
+                :class="{ active: s.id === sessionId }"
+                @click="loadSession(s.id)"
+              >
                 <span class="exp-session-title">{{ s.title }}</span>
                 <button class="exp-session-del" @click.stop="deleteSession(s.id)" title="删除">
                   <PhTrash :size="12" weight="bold" />
@@ -151,6 +163,7 @@
               </div>
               <div v-if="sessions.length === 0" class="exp-session-empty">暂无对话</div>
             </div>
+            <div class="exp-sidebar-divider" style="margin: 0 12px"></div>
             <div class="exp-new-session-wrap">
               <button class="exp-new-session-btn" @click="newSession">
                 <PhPencilSimple weight="bold" :size="13" />
@@ -231,6 +244,7 @@ import { marked } from 'marked'
 import hljs from 'highlight.js'
 import { useAudioStore } from '@/stores/audio'
 import { useProjectStore } from '@/stores/projects'
+import { useLiveStore } from '@/stores/live'
 import { agentApi, filesApi } from '@/services/api'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import {
@@ -246,6 +260,25 @@ const SIDEBAR_W = 220
 
 const audioStore    = useAudioStore()
 const projectStore  = useProjectStore()
+const liveStore     = useLiveStore()
+
+// 实时：IM（飞书/QQ）来了新消息 → 刷新会话列表，新会话/新标题即时出现
+watch(() => liveStore.rev.sessions, () => fetchSessions())
+
+// 消息级实时：若这条 IM 消息属于当前打开的会话，直接把「这一来一回」追加进气泡，
+// 不必整列表/整会话 refetch（只传增量）。非当前会话则上面刷新列表即可。
+watch(() => liveStore.sessionEvent, async (e) => {
+  if (!e || !e.appended?.length || e.session_id !== sessionId.value) return
+  for (const m of e.appended) {
+    messages.value.push({
+      id: mkid(),
+      role: m.role === 'assistant' ? 'ai' : m.role,
+      text: m.text || '',
+      time: now(),
+    })
+  }
+  await nextTick(); await scrollBottom(); await scrollExpBottom()
+})
 
 // 工具名 → 受影响数据域，咕咕操作后据此刷新前端，免手动刷新页面
 const _PROJECT_TOOLS = new Set(['create_project','update_project','update_stage','add_stage','remove_stage','rename_stage','add_todo','remove_todo','set_priority','archive_project','delete_project'])
@@ -556,6 +589,8 @@ const messages = ref([
 
 // ── 展开/收起 ────────────────────────────────────────────
 const sessions = ref([])
+const webSessions = computed(() => sessions.value.filter(s => !s.source || s.source === 'web'))
+const imSessions  = computed(() => sessions.value.filter(s => s.source && s.source !== 'web'))
 const currentSessionTitle = computed(() =>
   !sessionId.value ? '新对话' : (sessions.value.find(s => s.id === sessionId.value)?.title ?? '对话')
 )
@@ -934,7 +969,6 @@ async function send(forcedText) {
   font-size: 13px; color: var(--text-primary);
   outline: none; font-family: var(--font-sans);
 }
-.popup-input-row input::placeholder { color: var(--text-secondary); }
 
 /* ── 大窗布局 ── */
 .layout-large { display: flex; height: 100%; }
@@ -952,11 +986,14 @@ async function send(forcedText) {
   height: 1px; flex-shrink: 0; margin: 0 4px;
   background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
 }
-.exp-sidebar-title { flex: 1; font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.exp-group-divider {
+  height: 1px; flex-shrink: 0; margin: 4px 2px;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
+}
+.exp-sidebar-title { flex: 1; font-size: 14px; font-weight: 700; color: var(--text-primary); text-align: center; }
 
 .exp-new-session-wrap {
   padding: 10px 10px 12px;
-  border-top: 1px solid rgba(255,255,255,0.5);
   flex-shrink: 0;
 }
 .exp-new-session-btn {
@@ -1051,7 +1088,6 @@ async function send(forcedText) {
   resize: none; line-height: 1.5; max-height: 120px; overflow-y: auto;
   display: block; padding: 0; vertical-align: middle;
 }
-.exp-input-row textarea::placeholder { color: var(--text-secondary); }
 .exp-send-btn { width: 32px; height: 32px; border-radius: 9px; }
 
 /* ── 通用发送按钮 ── */
