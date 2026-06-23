@@ -395,7 +395,10 @@ async function loadQuota() {
   finally { quotaLoading.value = false }
 }
 
-watch(activeNav, v => { if (v === 'gugu') { loadQuota(); loadBots() } })
+watch(activeNav, (v, old) => {
+  if (v === 'gugu') { loadQuota(); loadBots() }
+  if (old === 'gugu') cancelConnect()
+})
 
 // ── 接入咕咕：飞书 / QQ 都是自带机器人(BYO) + 扫码自动连接 ──
 const IM_PLATFORMS = [
@@ -605,7 +608,7 @@ function handleLogout() {
 }
 .pm-content-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
 
-.pm-content-body { flex: 1; overflow-y: auto; padding: 6px 0; }
+.pm-content-body { flex: 1; overflow-y: auto; padding: 6px 0; scrollbar-gutter: stable; }
 
 .pm-section { padding: 20px 26px; display: flex; flex-direction: column; gap: 14px; }
 .pm-section-label {
@@ -617,7 +620,7 @@ function handleLogout() {
 .pm-field {
   display: grid; grid-template-columns: 80px 1fr; align-items: center; gap: 14px;
 }
-.pm-field label { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.pm-field label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 
 .pm-field-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -729,7 +732,7 @@ function handleLogout() {
   animation: pm-shimmer 1.4s ease-in-out infinite;
 }
 .pm-qs-fill {
-  height: 100%; width: 40%; border-radius: 99px;
+  height: 100%; width: 0%; border-radius: 99px;
   background: linear-gradient(90deg, rgba(123,127,178,0.18) 25%, rgba(123,127,178,0.35) 50%, rgba(123,127,178,0.18) 75%);
   background-size: 200% 100%;
   animation: pm-shimmer 1.4s ease-in-out infinite;
