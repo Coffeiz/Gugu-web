@@ -4,7 +4,7 @@ from sqlalchemy import select, func, distinct, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import User, Project, ConversationSession, AgentUsage, UserBot
+from app.models import User, Project, ConversationSession, AgentUsage, UserBot, FrontendEvent
 
 router = APIRouter(prefix="/admin/analytics", tags=["admin"])
 
@@ -172,3 +172,46 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90), db: AsyncSessio
         "user_registrations":  [user_map.get(d, 0) for d in date_list],
         "project_completions": [proj_map.get(d, 0) for d in date_list],
     }
+
+
+@router.get("/chat-funnel")
+async def get_chat_funnel(db: AsyncSession = Depends(get_db)):
+    """咕咕对话框行为漏斗：打开 → 发消息 → 第 3 轮。"""
+    def _evt(event: str):
+        return select(func.count(distinct(FrontendEvent.user_id))).where(
+            FrontendEvent.event == event
+        )
+
+    opened   = (await db.execute(_evt("chat_open"))).scalar() or 0
+    msg1     = (await db.execute(_evt("chat_message"))).scalar() or 0
+    expanded = (await db.execute(_evt("chat_expanded"))).scalar() or 0
+
+    # turn >= 3：properties->>'turn' 转 int 比较（PostgreSQL jsonb）
+    msg3 = (await db.execute(text("""
+        SELECT COUNT(DISTINCT user_id)
+        FROM frontend_events
+        WHERE event = 'chat_message'
+          AND (properties->>'turn')::int >= 3
+    """))).scalar() or 0
+
+    return {
+        "chat_opened":   opened,
+        "chat_msg_1":    msg1,
+        "chat_msg_3":    int(msg3),
+        "chat_expanded": expanded,
+    }
+
+
+@router.get("/tool-distribution")
+async def get_tool_distribution(db: AsyncSession = Depends(get_db)):
+    """工具调用频次分布（按工具名聚合，降序 Top 20）。"""
+    rows = (await db.execute(text("""
+        SELECT elem AS tool_name, COUNT(*)::int AS calls
+        FROM agent_usage,
+             jsonb_array_elements_text(tools_used::jsonb) AS elem
+        WHERE tools_used IS NOT NULL
+        GROUP BY elem
+        ORDER BY calls DESC
+        LIMIT 20
+    """))).all()
+    return [{"tool": r.tool_name, "calls": r.calls} for r in rows]

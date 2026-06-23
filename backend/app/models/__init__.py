@@ -257,6 +257,7 @@ class AgentUsage(Base):
     tokens_out: Mapped[int]           = mapped_column(Integer, default=0)
     model:      Mapped[str]           = mapped_column(String(100))
     provider:   Mapped[str]           = mapped_column(String(50))
+    tools_used: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
     created_at: Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
@@ -330,3 +331,15 @@ class SystemLog(Base):
     message:    Mapped[str]           = mapped_column(Text)
     traceback:  Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+# ── FrontendEvent（前端行为埋点）─────────────────────────────────────────────
+
+class FrontendEvent(Base):
+    __tablename__ = "frontend_events"
+
+    id:         Mapped[int]                = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:    Mapped[UUID]               = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    event:      Mapped[str]                = mapped_column(String(64), index=True)   # chat_open / chat_expanded / chat_message
+    properties: Mapped[Optional[dict]]     = mapped_column(JSON, nullable=True, default=None)
+    created_at: Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow, index=True)

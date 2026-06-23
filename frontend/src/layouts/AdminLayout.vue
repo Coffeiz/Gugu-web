@@ -81,6 +81,18 @@
           </svg>
           配额管理
         </div>
+        <div class="nav-item" :class="{ active: isActive('/services') }" role="link" tabindex="0" @click="go('/services')">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2.5" width="12" height="4" rx="1"/>
+            <rect x="2" y="9.5" width="12" height="4" rx="1"/>
+            <path d="M4.5 4.5h.01M4.5 11.5h.01"/>
+          </svg>
+          服务状态
+        </div>
+
+        <div class="sidebar-rule" style="margin:14px 4px" />
+        <div class="nav-group-label">日志</div>
         <div class="nav-item" :class="{ active: isActive('/audit-log') }" role="link" tabindex="0" @click="go('/audit-log')">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
@@ -97,15 +109,6 @@
             <path d="M13 9.5v1.5l1 1"/>
           </svg>
           系统日志
-        </div>
-        <div class="nav-item" :class="{ active: isActive('/services') }" role="link" tabindex="0" @click="go('/services')">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
-            stroke-linecap="round" stroke-linejoin="round">
-            <rect x="2" y="2.5" width="12" height="4" rx="1"/>
-            <rect x="2" y="9.5" width="12" height="4" rx="1"/>
-            <path d="M4.5 4.5h.01M4.5 11.5h.01"/>
-          </svg>
-          服务状态
         </div>
         <div class="nav-item" :class="{ active: isActive('/debug') }" role="link" tabindex="0" @click="go('/debug')">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"

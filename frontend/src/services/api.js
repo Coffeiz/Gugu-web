@@ -222,6 +222,10 @@ export const agentApi = {
   deleteSession:   (sessionId) => del(`/agent/sessions/${sessionId}`),
 }
 
+export const trackApi = {
+  track: (event, properties) => request('POST', '/track', { event, properties }),
+}
+
 export const authApi = {
   updateProfile: (data) => request('PATCH', '/auth/profile', data),
   getQuota:      ()     => request('GET',   '/auth/quota'),

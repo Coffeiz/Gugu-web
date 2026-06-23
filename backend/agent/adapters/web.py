@@ -219,6 +219,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
     anthr_messages: list = []
     anthr_initial_len: int = 0
     sent_files: list = []   # 咕咕本轮发的文件卡片，随助手消息持久化
+    used_tools: list = []   # 本次对话调用的工具名（去重保留顺序）
 
     try:
         if use_anthropic:
@@ -259,6 +260,10 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                     full_reply += clean
                     await genstream.publish(session_id, {"type": "token", "content": clean})
                 continue
+            if etype == "tool_call":
+                name = evt.get("name", "")
+                if name and not name.startswith("_") and name not in used_tools:
+                    used_tools.append(name)
             if etype == "file" and evt.get("file"):
                 sent_files.append(evt["file"])   # 捕获以便持久化，仍转发给前端
             await genstream.publish(session_id, evt)
@@ -284,6 +289,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                     user_id=user_id, session_id=session_id,
                     tokens_in=usage_tokens["input"], tokens_out=usage_tokens["output"],
                     model=settings.ai.model, provider=settings.ai.provider,
+                    tools_used=used_tools or None,
                 ))
             await db2.commit()
 

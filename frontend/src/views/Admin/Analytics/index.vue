@@ -46,6 +46,39 @@
         </template>
       </div>
 
+      <!-- ── 咕咕行为漏斗 ── -->
+      <div class="section-label">咕咕行为漏斗</div>
+      <div class="funnel-strip" v-if="chatFunnel">
+        <template v-for="(step, i) in chatFunnelSteps" :key="step.key">
+          <div class="funnel-box">
+            <div class="f-num">{{ step.value.toLocaleString() }}</div>
+            <div class="f-lbl">{{ step.label }}</div>
+            <div class="f-rate">{{ i > 0 ? convRate(chatFunnelSteps[i-1].value, step.value) : '' }}</div>
+          </div>
+          <div class="funnel-arr" v-if="i < chatFunnelSteps.length - 1">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 8h10M9 4l4 4-4 4"/>
+            </svg>
+          </div>
+        </template>
+        <div class="funnel-extra">
+          大窗展开 <strong>{{ chatFunnel.chat_expanded }}</strong> 人
+        </div>
+      </div>
+
+      <!-- ── 工具调用分布 ── -->
+      <div class="section-label" v-if="toolDist.length">工具调用 Top {{ toolDist.length }}</div>
+      <div class="tool-dist" v-if="toolDist.length">
+        <div class="tool-bar-row" v-for="t in toolDist" :key="t.tool">
+          <span class="tool-name">{{ t.tool }}</span>
+          <div class="tool-bar-track">
+            <div class="tool-bar-fill" :style="{ width: (t.calls / toolDist[0].calls * 100) + '%' }" />
+          </div>
+          <span class="tool-calls">{{ t.calls.toLocaleString() }}</span>
+        </div>
+      </div>
+
       <!-- ── 概览卡片 ── -->
       <div class="section-label">用户 · 项目</div>
       <div class="cards-grid">
@@ -291,9 +324,11 @@ const admin   = useAdminStore()
 const data      = ref(null)
 const usage     = ref(null)
 const trends    = ref(null)   // 始终保存 60 天原始数据
-const loading   = ref(false)
-const err       = ref('')
-const rangeDays = ref(30)
+const loading    = ref(false)
+const err        = ref('')
+const rangeDays  = ref(30)
+const chatFunnel = ref(null)
+const toolDist   = ref([])
 
 const ranges = [
   { days: 7,  label: '7 天' },
@@ -311,6 +346,16 @@ const funnelSteps = computed(() => {
     { key: 'completed_project', label: '完成项目',   value: f.completed_project },
     { key: 'used_agent',        label: '使用 Agent', value: f.used_agent },
     { key: 'connected_im',      label: '接入 IM',    value: f.connected_im },
+  ]
+})
+
+const chatFunnelSteps = computed(() => {
+  if (!chatFunnel.value) return []
+  const f = chatFunnel.value
+  return [
+    { key: 'opened',  label: '打开咕咕', value: f.chat_opened },
+    { key: 'msg1',    label: '发消息',   value: f.chat_msg_1 },
+    { key: 'msg3',    label: '≥ 3 轮',   value: f.chat_msg_3 },
   ]
 })
 
@@ -470,17 +515,21 @@ async function load() {
   loading.value = true
   err.value = ''
   try {
-    const [sumRes, useRes, trdRes] = await Promise.all([
+    const [sumRes, useRes, trdRes, cfRes, tdRes] = await Promise.all([
       admin.authFetch('/api/v1/admin/analytics/summary'),
       admin.authFetch('/api/v1/admin/agent/usage'),
       admin.authFetch('/api/v1/admin/analytics/trends?days=60'),
+      admin.authFetch('/api/v1/admin/analytics/chat-funnel'),
+      admin.authFetch('/api/v1/admin/analytics/tool-distribution'),
     ])
     if (!sumRes.ok) throw new Error(`summary ${sumRes.status}`)
     if (!useRes.ok) throw new Error(`usage ${useRes.status}`)
     if (!trdRes.ok) throw new Error(`trends ${trdRes.status}`)
-    data.value   = await sumRes.json()
-    usage.value  = await useRes.json()
-    trends.value = await trdRes.json()
+    data.value      = await sumRes.json()
+    usage.value     = await useRes.json()
+    trends.value    = await trdRes.json()
+    chatFunnel.value = cfRes.ok ? await cfRes.json() : null
+    toolDist.value   = tdRes.ok ? await tdRes.json() : []
   } catch (e) {
     err.value = '加载失败：' + e.message
   } finally {
@@ -556,6 +605,32 @@ onMounted(load)
   color: rgba(150,155,210,0.8);
 }
 .funnel-arr { flex-shrink: 0; color: rgba(255,255,255,0.18); padding: 0 6px; }
+.funnel-extra {
+  flex-shrink: 0; margin-left: 20px; padding: 0 16px;
+  font-size: 12px; color: rgba(255,255,255,0.35); white-space: nowrap;
+}
+.funnel-extra strong { color: rgba(255,255,255,0.7); font-weight: 600; }
+
+/* ── tool distribution ── */
+.tool-dist { padding: 0 36px; display: flex; flex-direction: column; gap: 8px; }
+.tool-bar-row { display: flex; align-items: center; gap: 10px; }
+.tool-name {
+  width: 160px; flex-shrink: 0; font-size: 12px; color: rgba(255,255,255,0.55);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tool-bar-track {
+  flex: 1; height: 6px; border-radius: 3px;
+  background: rgba(255,255,255,0.06);
+}
+.tool-bar-fill {
+  height: 100%; border-radius: 3px;
+  background: rgba(123,127,178,0.7);
+  transition: width 0.3s;
+}
+.tool-calls {
+  width: 44px; flex-shrink: 0; text-align: right;
+  font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.5);
+}
 
 /* ── cards ── */
 .cards-grid {
