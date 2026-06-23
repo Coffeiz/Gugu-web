@@ -696,6 +696,7 @@ import {
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
 import { useClipboardStore } from '@/stores/clipboard'
+import { useLiveStore } from '@/stores/live'
 
 const props = defineProps({ project: { type: Object, default: null } })
 const emit = defineEmits(['close'])
@@ -703,6 +704,7 @@ function onModalClose() { emit('close'); pmSortMenuOpen.value = false }
 
 const projectStore     = useProjectStore()
 const fileCacheStore   = useFilesCacheStore()
+const liveStore        = useLiveStore()
 const editingStage     = ref(null)
 const stageInputRef    = ref(null)
 const stageFlowRef     = ref(null)
@@ -1401,6 +1403,48 @@ watch(() => props.project?.id, async (id) => {
     // 后端未启动时保持空列表
   }
 }, { immediate: true })
+
+// 实时刷新：咕咕（web 聊天 / IM）移动·保存·删除文件后，后端推 files 事件 → 重拉本项目文件，
+// 不必关闭重开弹窗。重拉根目录文件 + 文件夹；若正停在某子文件夹里，也刷新它的文件。
+async function reloadProjectFiles() {
+  const id = props.project?.id
+  if (!id) return
+  try {
+    const [files, folders] = await Promise.all([
+      filesApi.list({ projectId: id }),
+      foldersApi.list({ projectId: id }),
+    ])
+    projectFiles.value   = files.filter(f => !f.folderId)
+    projectFolders.value = folders
+    const stack = folderStack.value
+    if (stack.length) {
+      const fid = stack[stack.length - 1].id
+      folderFilesMap.value = { ...folderFilesMap.value, [fid]: await filesApi.list({ folderId: fid }) }
+    }
+  } catch { /* 后端不可用时保持现状 */ }
+}
+watch(() => liveStore.rev.files, () => { reloadProjectFiles() })
+
+// 实时同步阶段/待办：咕咕（web 聊天 / IM）用 set_stages/update_todo/add_todo 等改了阶段后，
+// projectStore 会在 rev.projects 上 fetchProjects 刷新；这里监听 store 里本项目 stages 的变化，
+// 同步进可编辑副本 localStages。两道保险：① 正在编辑（改阶段名 / 拖拽 / 敲待办输入框）时跳过，
+// 不冲掉手头改动；② 与本地一致则不动（避开"自己保存→store 更新"的回环）。
+const _storeProject = computed(() => projectStore.projects.find(p => p.id === props.project?.id))
+function _editingStageArea() {
+  if (editingStage.value || stageDrag.active) return true
+  const el = document.activeElement
+  return !!(el && el.classList &&
+            (el.classList.contains('todo-input') || el.classList.contains('stage-input')))
+}
+watch(() => _storeProject.value?.stages, (stages) => {
+  if (!stages || _editingStageArea()) return
+  if (JSON.stringify(stages) === JSON.stringify(localStages.value)) return
+  _syncingFromStore = true
+  localStages.value       = stages.map(s => ({ ...s, todos: (s.todos || []).map(t => ({ ...t })) }))
+  localCurrentStage.value = _storeProject.value?.currentStage ?? localCurrentStage.value
+  recalcStageState()
+  nextTick(() => { _syncingFromStore = false })
+}, { deep: true })
 
 // 跟踪 store 里的 status 变化（如自动完成 / 拖回），实时同步胶囊亮起状态
 watch(() => props.project?.status, (status) => {
@@ -2237,88 +2281,87 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .file-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  grid-auto-rows: 96px;
-  gap: 6px;
+  gap: 10px;
   align-content: start;
 }
 
 /* 文件夹卡片 */
 .folder-card {
-  min-height: 84px; border-radius: 10px;
+  min-height: 122px; border-radius: 14px;
   background: color-mix(in srgb, var(--fd-color) 6%, rgba(255,255,255,0.82));
   border: 1px solid color-mix(in srgb, var(--fd-color) 14%, rgba(255,255,255,0.92));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 4px rgba(80,90,110,0.05);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
 }
 .folder-card:hover {
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 5px 14px rgba(80,90,110,0.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
 }
-.fd-icon-area { flex: 1; overflow: visible; display: flex; align-items: center; justify-content: center; }
+.fd-icon-area { height: 90px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; overflow: visible; }
 .fd-big-icon {
-  width: 58px; height: 58px;
+  width: 92px; height: 92px;
   color: var(--fd-color); opacity: 0.58;
-  transform: translateY(12px);
+  transform: translateY(20px);
   mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
+  flex-shrink: 0;
 }
-.fd-label { padding: 0 8px 8px; }
-.fd-name { font-size: 10px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-bottom: 2px; margin-bottom: -2px; }
-.fd-count { font-size: 8px; color: var(--text-secondary); opacity: 0.55; margin-top: 1px; }
+.fd-label { padding: 0 13px 13px; }
+.fd-name { font-size: 11.5px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px; }
+.fd-count { font-size: 9px; color: var(--text-secondary); opacity: 0.55; margin-top: 2px; }
 .fd-hover-actions {
-  position: absolute; top: 5px; right: 5px; z-index: 3;
-  display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s;
+  position: absolute; top: 8px; right: 8px; z-index: 3;
+  display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s;
 }
 .folder-card:hover .fd-hover-actions { opacity: 1; }
-/* ProjectModal 卡片较小，覆盖全局默认尺寸 */
-.file-card-btn { width: 17px; height: 17px; border-radius: 4px; }
-.file-card-btn::after { inset: -1px; }
 
 /* 文件卡片 */
 .fc-card {
-  min-height: 84px; border-radius: 10px;
-  background: rgba(255,255,255,0.68);
-  border: 1px solid rgba(255,255,255,0.85);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 4px rgba(80,90,110,0.05);
+  min-height: 122px; border-radius: 14px;
+  background: rgba(255,255,255,0.72);
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
 }
 .fc-card:hover {
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 5px 14px rgba(80,90,110,0.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
+  background: rgba(255,255,255,0.86);
 }
 .fc-ext-badge {
-  position: absolute; top: 6px; left: 6px;
-  font-size: 7.5px; font-weight: 800; letter-spacing: 0.04em;
-  border-radius: 3px; padding: 1px 3px; z-index: 1;
+  position: absolute; top: 10px; left: 10px;
+  font-size: 8px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+  border-radius: 4px; padding: 2px 5px; line-height: 1.5; z-index: 1;
 }
-.fc-icon-area { flex: 1; overflow: visible; display: flex; align-items: center; justify-content: center; }
+.fc-icon-area { height: 90px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; overflow: visible; }
 
 .fc-thumb-area {
-  position: relative; height: 64px; flex-shrink: 0; overflow: hidden;
-  border-radius: 10px 10px 0 0; background: rgba(0,0,0,0.05);
+  position: relative; height: 90px; flex-shrink: 0; overflow: hidden;
+  border-radius: 14px 14px 0 0; background: rgba(0,0,0,0.05);
   will-change: transform; transform: translateZ(0);
-  mask-image: linear-gradient(to bottom, black 44%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 44%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
 }
 .fc-thumb {
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover; object-position: center top; display: block;
 }
-.fc-thumb-tiny { filter: blur(8px); transform: scale(1.12); z-index: 1; }
+.fc-thumb-tiny { filter: blur(10px); transform: scale(1.15); z-index: 1; }
 .fc-thumb-full { z-index: 2; opacity: 0; transition: opacity 0.4s ease; }
 .fc-thumb-full.fc-loaded { opacity: 1; }
-.fc-has-thumb .fc-label { margin-top: auto; position: relative; z-index: 1; }
+.fc-has-thumb .fc-label { position: relative; z-index: 1; }
 .fc-has-thumb .fc-ext-badge { background: rgba(0,0,0,0.32) !important; color: rgba(255,255,255,0.92) !important; }
 .fc-big-icon {
-  width: 58px; height: 58px;
+  width: 86px; height: 86px;
   color: var(--fc-color); opacity: 0.55;
-  transform: translateY(12px);
+  transform: translateY(20px);
   mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
+  flex-shrink: 0;
 }
-.fc-label { padding: 0 8px 8px; }
+.fc-label { padding: 0 13px 13px; }
 .fc-name {
-  font-size: 10px; font-weight: 600; color: var(--text-primary);
+  font-size: 11.5px; font-weight: 600; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  padding-bottom: 2px; margin-bottom: -2px;
+  line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
-.fc-meta { font-size: 8px; color: var(--text-secondary); opacity: 0.6; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-bottom: 2px; margin-bottom: -2px; }
+.fc-meta { font-size: 9px; color: var(--text-secondary); opacity: 0.55; margin-top: 2px; }
 
 /* 视图切换 & 新建文件夹（header 内） */
 .sort-selector { position: relative; }
@@ -2385,13 +2428,13 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .inner-empty { font-size: 11px; color: var(--text-secondary); grid-column: 1/-1; padding: 4px 2px; }
 
 /* 卡片操作按钮（文件卡） */
-.fc-hover-actions { position: absolute; top: 5px; right: 5px; z-index: 3; display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s; }
+.fc-hover-actions { position: absolute; top: 8px; right: 8px; z-index: 3; display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s; }
 .fc-card:hover .fc-hover-actions { opacity: 1; }
 
 /* ── 幽灵上传卡片 ── */
 .fc-ghost {
-  position: relative; min-height: 84px; overflow: hidden;
-  border-radius: 10px; border: 1.5px dashed rgba(123,127,178,0.35);
+  position: relative; min-height: 100px; overflow: hidden;
+  border-radius: 14px; border: 1.5px dashed rgba(123,127,178,0.35);
   background: rgba(123,127,178,0.04);
   display: flex; flex-direction: column;
   cursor: default; pointer-events: none;
@@ -2630,16 +2673,16 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 }
 
 .fc-upload {
-  border: 1.5px dashed rgba(0,0,0,0.1);
-  border-radius: 10px; min-height: 84px;
+  border: 1.5px dashed rgba(0,0,0,0.09);
+  border-radius: 14px; min-height: 130px;
   display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 5px;
-  color: var(--text-secondary); font-size: 10px;
+  align-items: center; justify-content: center; gap: 7px;
+  color: var(--text-secondary); font-size: 10px; font-weight: 600;
   cursor: pointer; background: rgba(255,255,255,0.2); transition: all 0.18s;
 }
 .fc-upload:hover, .fc-upload.dragging {
-  border-color: rgba(123,127,178,0.5);
-  color: var(--color-primary); background: rgba(123,127,178,0.05);
+  border-color: rgba(123,127,178,0.45);
+  color: var(--color-primary); background: rgba(123,127,178,0.04);
 }
 
 /* ── 动画 ── */
