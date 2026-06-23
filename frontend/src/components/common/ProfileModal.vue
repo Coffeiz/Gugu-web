@@ -5,10 +5,13 @@
       <!-- 左侧导航栏 -->
       <div class="pm-nav panel-left">
         <div class="pm-user-block">
-          <div class="pm-avatar" @click="triggerAvatarUpload" title="点击更换头像">
+          <div class="pm-avatar" :class="{ uploading: avatarUploading }" @click="triggerAvatarUpload" title="点击更换头像">
             <img v-if="authStore.user?.avatarUrl" :src="authStore.user.avatarUrl" class="pm-avatar-img" />
             <template v-else>{{ initial }}</template>
-            <div class="pm-avatar-overlay"><PhCamera :size="13" weight="bold" /></div>
+            <div class="pm-avatar-overlay">
+              <span v-if="avatarUploading" class="pm-avatar-spin"></span>
+              <PhCamera v-else :size="13" weight="bold" />
+            </div>
           </div>
           <input ref="avatarInput" type="file" accept="image/*" style="display:none" @change="onAvatarFile" />
           <div class="pm-user-info">
@@ -374,14 +377,28 @@ async function savePwd() {
 }
 
 // 头像上传
-const avatarInput = ref(null)
-function triggerAvatarUpload() { avatarInput.value?.click() }
+const avatarInput    = ref(null)
+const avatarUploading = ref(false)
+function triggerAvatarUpload() {
+  if (avatarUploading.value) return
+  avatarInput.value?.click()
+}
 async function onAvatarFile(e) {
   const file = e.target.files?.[0]
   if (!file) return
-  try { await authStore.uploadAvatar(file) }
-  catch (err) { console.error('头像上传失败', err) }
-  e.target.value = ''
+  avatarUploading.value = true
+  try {
+    await authStore.uploadAvatar(file)
+    infoMsg.value     = '头像已更新'
+    infoMsgType.value = 'ok'
+  } catch (err) {
+    infoMsg.value     = err.message || '头像上传失败'
+    infoMsgType.value = 'err'
+    activeNav.value   = 'info'
+  } finally {
+    avatarUploading.value = false
+    e.target.value = ''
+  }
 }
 
 // 精力值配额
@@ -553,7 +570,15 @@ function handleLogout() {
   display: flex; align-items: center; justify-content: center;
   color: white; opacity: 0; transition: opacity 0.15s;
 }
-.pm-avatar:hover .pm-avatar-overlay { opacity: 1; }
+.pm-avatar:hover .pm-avatar-overlay,
+.pm-avatar.uploading .pm-avatar-overlay { opacity: 1; }
+.pm-avatar-spin {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .pm-user-info { min-width: 0; }
 .pm-name  { font-size: 13px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pm-email { font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

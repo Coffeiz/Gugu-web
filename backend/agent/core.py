@@ -11,7 +11,9 @@ from typing import AsyncGenerator
 
 from agent.skills import registry
 
-MAX_ROUNDS = 5
+# 工具循环最大轮次。模型常一轮调一个工具，复杂多步任务（删项目+加阶段+加待办+建文档…）
+# 需要不少轮，5 太小会半途被「轮次超限」打断。16 给足头寸，又能兜住失控循环。
+MAX_ROUNDS = 16
 
 
 class LLMRunner:
@@ -105,7 +107,7 @@ class LLMRunner:
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out, 'cache_read': total_cache_read})}\n\n"
             return
 
-        yield f"data: {json.dumps({'type': 'error', 'detail': '工具调用轮次超限'})}\n\n"
+        yield f"data: {json.dumps({'type': 'error', 'detail': '这步操作有点多，咕咕没在一口气里全做完 😅 前面几步已经生效了，要我接着把剩下的做完吗？'}, ensure_ascii=False)}\n\n"
 
     # ── OpenAI ──────────────────────────────────────────────────────────────
     async def _run_openai(self, user_id, messages: list) -> AsyncGenerator[str, None]:
@@ -137,6 +139,7 @@ class LLMRunner:
             )
             content = ""
             tool_buf: dict[int, dict] = {}   # index → {id, name, args}，流式分片累积
+            announced = False                # 工具参数流式期间先亮个指示，免得前端空窗以为卡死
             async for chunk in stream:
                 if getattr(chunk, "usage", None):
                     total_in  += chunk.usage.prompt_tokens or 0
@@ -147,6 +150,10 @@ class LLMRunner:
                 if delta.content:
                     content += delta.content
                     yield f"data: {json.dumps({'type': 'token', 'content': delta.content})}\n\n"
+                if delta.tool_calls and not announced:
+                    # 工具调用开始（此后在流式输出工具参数，可能很长，无 token、tool_call 也要等参数收完才发）
+                    announced = True
+                    yield f"data: {json.dumps({'type': 'tool_call', 'name': '_preparing', 'label': '咕咕正在整理…'}, ensure_ascii=False)}\n\n"
                 for tc in (delta.tool_calls or []):
                     b = tool_buf.setdefault(tc.index, {"id": "", "name": "", "args": ""})
                     if tc.id:
@@ -189,4 +196,4 @@ class LLMRunner:
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out})}\n\n"
             return
 
-        yield f"data: {json.dumps({'type': 'error', 'detail': '工具调用轮次超限'})}\n\n"
+        yield f"data: {json.dumps({'type': 'error', 'detail': '这步操作有点多，咕咕没在一口气里全做完 😅 前面几步已经生效了，要我接着把剩下的做完吗？'}, ensure_ascii=False)}\n\n"

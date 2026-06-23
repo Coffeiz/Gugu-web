@@ -9,6 +9,21 @@
 
 ## [Unreleased] · 文件库回收站多选
 
+### 新增 · 网页生成解耦，刷新后续看（不再丢回复）
+
+- **网页生成脱离 HTTP 请求**：原来生成跑在请求的流式响应里，浏览器一刷新就断连 → 生成被取消、**回复也没持久化（丢了）**。现改为：
+  - `agent/genstream.py`（新）：按会话的「生成流」通道（Redis pub/sub）+ 状态快照（已生成文字/当前工具）+ 活跃标志
+  - `web.py`：生成拆成**后台任务** `_generate`（脱离请求、自己持久化，刷新杀不掉）；`stream()` 改成「起任务 + 转发频道」；新增 `resume()`（先补已生成、再订阅后续）
+  - `agent.py`：新增 `GET /sessions/{id}/stream`（续看）+ messages 接口带 `active` 标志
+  - 前端：流式消费抽成 `consumeStream`（发送/续看共用）；`loadSession` 见 `active` 即 `resumeStream` 重连；整页刷新经 onMounted 恢复会话时自动续看
+- **效果**：① 刷新不再丢回复（后台跑完照样存）；② 刷新后能续上看到咕咕继续写 + 思考状态
+- 顺手修：新会话标题生成返回空串时不再硬覆盖原首句截断
+
+### 修复 · 工具轮次 + 调用指示
+
+- **`MAX_ROUNDS` 5 → 16**：多步任务（删项目+加阶段+加待办+建文档…）常一轮一个工具，5 太小会半途被「工具轮次超限」打断；16 给足头寸又兜得住失控。超限文案改友好（「前面几步已生效，要我接着做吗」）
+- **工具参数流式期间的空窗指示**（openai 路）：真流式下模型流式输出工具参数（如长文档内容）时无 token、`tool_call` 又要等参数收完才发 → 前端空窗像卡死。现工具调用一开始先亮「咕咕正在整理…」占位，参数收完再切具体工具名
+
 ### 修复 · OpenAI 路真流式（DeepSeek 等）
 
 - **`_run_openai` 改为真·流式**（`core.py`）：原来非流式 `create()` 拿完整回复后假装按 40 字切片吐 → 换 DeepSeek（走 openai 路）后网页「等一下→一堆字」。现 `stream=True` **逐 token 实时输出**，工具调用按流式分片（`delta.tool_calls` 按 index 累积 id/name/arguments）正常工作，用量走 `stream_options.include_usage`。MiniMax（anthropic 路）本就真流式，不受影响

@@ -5,6 +5,7 @@ user message + yield session_id → 组装 system prompt → 按 provider 组 me
 → 调 core.LLMRunner → 收集 full_reply / usage → 持久化 assistant message +
 AgentUsage → yield done。对外 SSE 事件流与原实现字节级一致。
 """
+import asyncio
 import calendar as _cal  # noqa: F401  (保留与原实现一致的导入位置)
 import json
 import logging
@@ -20,7 +21,7 @@ from app.models import (
     AgentUsage, CalendarEvent, ConversationMessage, ConversationSession,
     Project, User,
 )
-from agent import sanitize
+from agent import sanitize, genstream
 from agent.context import builder, loaders, tokens
 from agent.core import LLMRunner
 from agent.models import AgentRequest
@@ -154,7 +155,55 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
 
     yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id})}\n\n"
 
-    # ── system prompt ──
+    # ── 启动后台生成（脱离本请求：浏览器刷新/断开杀不掉它，持久化也在任务里）──
+    #    再转发该会话的生成频道。客户端断开只停转发，后台任务继续到完成。
+    if not await genstream.is_active(session_id):
+        task = asyncio.create_task(_generate(
+            req, session_id, projects, events, files_overview, history, is_new_session,
+        ))
+        _gen_tasks.add(task)
+        task.add_done_callback(_gen_tasks.discard)
+
+    async for line in genstream.subscribe(session_id):
+        yield line
+
+
+_gen_tasks: set = set()   # 持后台生成任务引用，防 GC（任务需脱离请求存活）
+
+
+async def resume(session_id) -> AsyncGenerator[str, None]:
+    """续看：浏览器刷新后重连进行中的生成。先把已生成的内容补一次，再订阅后续。
+
+    没有进行中的生成（或已完成）→ 立即发 idle done，前端就走正常 DB 加载。
+    （快照→订阅之间有极小窗口可能漏几个 token，刷新瞬间可接受；回复最终以 DB 为准。）
+    """
+    snap = await genstream.snapshot(session_id)
+    if not snap or snap.get("done"):
+        yield f"data: {json.dumps({'type': 'done', 'idle': True})}\n\n"
+        return
+    if snap.get("text"):
+        yield f"data: {json.dumps({'type': 'token', 'content': snap['text']}, ensure_ascii=False)}\n\n"
+    for f in (snap.get("files") or []):
+        yield f"data: {json.dumps({'type': 'file', 'file': f}, ensure_ascii=False)}\n\n"
+    if snap.get("tool"):
+        yield f"data: {json.dumps({'type': 'tool_call', 'name': '_preparing', 'label': snap['tool']}, ensure_ascii=False)}\n\n"
+    async for line in genstream.subscribe(session_id):
+        yield line
+
+
+async def _generate(req, session_id, projects, events, files_overview, history, is_new_session) -> None:
+    """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
+
+    脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
+    「续看端点」都只是订阅这条频道。
+    """
+    user_id = req.user_id
+    settings = get_settings()
+    profile = DefaultProfile()
+    import app.db.session as _sess
+
+    await genstream.begin(session_id)
+
     prompt_name = profile.prompt_file.removesuffix(".md")
     memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
     system_prompt = builder.build(prompt_name, req.user_name, projects, events, memory, files_overview)
@@ -193,12 +242,11 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             try:
                 evt = json.loads(evt_str[6:])
             except Exception:
-                yield evt_str
                 continue
             etype = evt.get("type")
             if etype == "_new_round":
                 san = sanitize.StreamSanitizer()  # 新一轮重置，防止上轮 _cut 污染
-                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"  # 通知前端，显示等待指示
+                await genstream.publish(session_id, {"type": "_new_round"})
                 continue
             if etype == "_usage":
                 usage_tokens["input"]  = evt["input"]
@@ -209,66 +257,59 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                 clean = san.feed(evt["content"])
                 if clean:
                     full_reply += clean
-                    yield f"data: {json.dumps({'type': 'token', 'content': clean})}\n\n"
+                    await genstream.publish(session_id, {"type": "token", "content": clean})
                 continue
             if etype == "file" and evt.get("file"):
-                sent_files.append(evt["file"])   # 捕获以便持久化，仍向下转发给前端
-            yield evt_str
+                sent_files.append(evt["file"])   # 捕获以便持久化，仍转发给前端
+            await genstream.publish(session_id, evt)
 
         # 冲洗清洗器残留（未触发截断时的尾部）
         tail = san.flush()
         if tail:
             full_reply += tail
-            yield f"data: {json.dumps({'type': 'token', 'content': tail})}\n\n"
+            await genstream.publish(session_id, {"type": "token", "content": tail})
 
         # ── 持久化：工具调用中间消息 + AI 最终回复 + 用量 ──
         async with _sess._SessionLocal() as db2:
-            # 工具调用轮次（assistant tool_use + user tool_result）逐条落库
             for tm in anthr_messages[anthr_initial_len:]:
                 db2.add(ConversationMessage(
-                    session_id=session_id,
-                    role=tm["role"],
-                    content="",
-                    content_json=tm["content"],
+                    session_id=session_id, role=tm["role"], content="", content_json=tm["content"],
                 ))
             if full_reply or sent_files:
                 db2.add(ConversationMessage(
-                    session_id=session_id,
-                    role="assistant",
-                    content=full_reply,
-                    files=sent_files or None,
+                    session_id=session_id, role="assistant", content=full_reply, files=sent_files or None,
                 ))
             if usage_tokens["input"] or usage_tokens["output"]:
                 db2.add(AgentUsage(
-                    user_id=user_id,
-                    session_id=session_id,
-                    tokens_in=usage_tokens["input"],
-                    tokens_out=usage_tokens["output"],
-                    model=settings.ai.model,
-                    provider=settings.ai.provider,
+                    user_id=user_id, session_id=session_id,
+                    tokens_in=usage_tokens["input"], tokens_out=usage_tokens["output"],
+                    model=settings.ai.model, provider=settings.ai.provider,
                 ))
             await db2.commit()
 
-        # ── 新会话：根据对话内容生成标题并推送给前端 ──
+        # ── 新会话：根据对话内容生成标题并推送（空标题不覆盖原首句截断）──
         if is_new_session and full_reply:
-            title = await _generate_title(req.message, full_reply, settings, use_anthropic)
-            async with _sess._SessionLocal() as db3:
-                s = await db3.get(ConversationSession, session_id)
-                if s:
-                    s.title = title
-                    await db3.commit()
-            yield f"data: {json.dumps({'type': 'session_title', 'title': title}, ensure_ascii=False)}\n\n"
+            title = (await _generate_title(req.message, full_reply, settings, use_anthropic) or "").strip()
+            if title:
+                async with _sess._SessionLocal() as db3:
+                    s = await db3.get(ConversationSession, session_id)
+                    if s:
+                        s.title = title
+                        await db3.commit()
+                await genstream.publish(session_id, {"type": "session_title", "title": title})
 
-        # ── 对话后反思：提炼长期记忆（fire-and-forget，不阻塞、失败不影响）──
+        # ── 对话后反思：提炼长期记忆（fire-and-forget）──
         if profile.memory_enabled and full_reply:
             from agent.memory import reflection
             reflection.schedule(user_id, req.user_name, req.message, full_reply, settings)
 
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        await genstream.publish(session_id, {"type": "done"})
 
     except BaseException as e:
-        logger.exception("agent stream error for user %s: %s", req.user_id, e)
-        print(f"[web] agent stream error for {req.user_id}: {type(e).__name__}: {e}", flush=True)
+        logger.exception("agent generate error for user %s: %s", req.user_id, e)
+        print(f"[web] agent generate error for {req.user_id}: {type(e).__name__}: {e}", flush=True)
         msg = ("咕咕网络不太好 📡 可以再发一遍吗？" if _is_network_error(e)
                else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
-        yield f"data: {json.dumps({'type': 'error', 'message': msg})}\n\n"
+        await genstream.publish(session_id, {"type": "error", "message": msg})
+    finally:
+        await genstream.end(session_id)

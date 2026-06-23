@@ -5,15 +5,22 @@
         <h2 class="page-title">数据分析</h2>
         <p class="page-desc">用户旅程、活跃度、Agent 用量</p>
       </div>
-      <button class="refresh-btn" @click="load" :disabled="loading">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-          stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-          :class="{ spinning: loading }">
-          <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2"/>
-          <polyline points="10 1 14 5 10 5"/>
-        </svg>
-        刷新
-      </button>
+      <div class="header-right">
+        <div class="range-tabs">
+          <button v-for="r in ranges" :key="r.days"
+            :class="['range-tab', { active: rangeDays === r.days }]"
+            @click="setRange(r.days)">{{ r.label }}</button>
+        </div>
+        <button class="refresh-btn" @click="load" :disabled="loading">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            :class="{ spinning: loading }">
+            <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2"/>
+            <polyline points="10 1 14 5 10 5"/>
+          </svg>
+          刷新
+        </button>
+      </div>
     </div>
 
     <div v-if="loading && !data" class="state-msg">加载中…</div>
@@ -21,19 +28,17 @@
 
     <template v-else-if="data">
 
-      <!-- ── 用户旅程漏斗 ── -->
+      <!-- ── 漏斗 ── -->
       <div class="section-label">用户旅程漏斗</div>
       <div class="funnel-strip">
         <template v-for="(step, i) in funnelSteps" :key="step.key">
           <div class="funnel-box">
             <div class="f-num">{{ step.value.toLocaleString() }}</div>
             <div class="f-lbl">{{ step.label }}</div>
-            <div class="f-rate" v-if="i > 0">
-              {{ convRate(funnelSteps[i - 1].value, step.value) }}
-            </div>
+            <div class="f-rate">{{ i > 0 ? convRate(funnelSteps[i-1].value, step.value) : '' }}</div>
           </div>
           <div class="funnel-arr" v-if="i < funnelSteps.length - 1">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 8h10M9 4l4 4-4 4"/>
             </svg>
@@ -45,38 +50,45 @@
       <div class="section-label">用户 · 项目</div>
       <div class="cards-grid">
         <div class="card">
+          <div class="card-icon ic-blue"><PhUsers :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.users.total.toLocaleString() }}</div>
           <div class="card-lbl">注册用户</div>
         </div>
         <div class="card">
+          <div class="card-icon ic-blue"><PhUserPlus :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.users.new_30d }}<span class="card-unit"> 人</span></div>
           <div class="card-lbl">新增（30 天）</div>
           <div class="card-sub">7 天内 +{{ data.users.new_7d }} 人</div>
         </div>
         <div class="card">
-          <div class="card-val">{{ data.users.active_30d }}<span class="card-unit"> 人</span></div>
-          <div class="card-lbl">活跃用户（30 天）</div>
-          <div class="card-sub">有 Agent 调用</div>
+          <div class="card-icon ic-blue"><PhPulse :size="16" weight="bold"/></div>
+          <div class="card-val">{{ data.users.dau }}<span class="card-unit"> 人</span></div>
+          <div class="card-lbl">今日活跃（DAU）</div>
+          <div class="card-sub">30 天活跃 {{ data.users.active_30d }} 人</div>
         </div>
         <div class="card">
+          <div class="card-icon ic-blue"><PhChatsCircle :size="16" weight="bold"/></div>
           <div class="card-val">{{ pct(data.im_bots.adoption_rate) }}<span class="card-unit">%</span></div>
           <div class="card-lbl">IM 接入率</div>
           <div class="card-sub">{{ data.im_bots.users_with_bot }} 人已接入</div>
         </div>
-
         <div class="card">
+          <div class="card-icon ic-blue"><PhFolders :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.projects.total.toLocaleString() }}</div>
           <div class="card-lbl">项目总量</div>
         </div>
-        <div class="card card-pending">
+        <div class="card">
+          <div class="card-icon ic-muted"><PhClock :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.projects.pending }}</div>
           <div class="card-lbl">待开始</div>
         </div>
         <div class="card card-active">
+          <div class="card-icon ic-amber"><PhSpinnerGap :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.projects.active }}</div>
           <div class="card-lbl">进行中</div>
         </div>
         <div class="card card-done">
+          <div class="card-icon ic-teal"><PhCheckCircle :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.projects.done }}</div>
           <div class="card-lbl">已完成</div>
           <div class="card-sub" v-if="data.projects.total">
@@ -85,61 +97,172 @@
         </div>
       </div>
 
-      <!-- ── 对话 + Agent ── -->
-      <div class="two-col">
-        <div class="two-col-item">
-          <div class="section-label">对话</div>
-          <div class="cards-grid col3">
-            <div class="card">
-              <div class="card-val">{{ data.sessions.total.toLocaleString() }}</div>
-              <div class="card-lbl">总量</div>
+      <!-- ── 折线图 ── -->
+      <template v-if="vis">
+        <div class="section-label">趋势（近 {{ rangeDays }} 天）</div>
+        <div class="charts-grid">
+
+          <!-- Agent 调用 -->
+          <div class="chart-card">
+            <div class="chart-header">
+              <div class="chart-title">
+                <PhRobot :size="14" weight="bold" class="ct-icon ic-blue-raw"/>
+                Agent 调用
+              </div>
+              <div class="chart-stats">
+                <span class="cs-item">
+                  <span class="cs-lbl">总计</span>
+                  <span class="cs-val">{{ data.agent.total_calls.toLocaleString() }}</span>
+                </span>
+                <span class="cs-sep">·</span>
+                <span class="cs-item">
+                  <span class="cs-lbl">日均</span>
+                  <span class="cs-val">{{ dailyAvg(vis?.agent_calls) }}</span>
+                </span>
+                <span class="cs-sep">·</span>
+                <span class="cs-item">
+                  <span class="cs-lbl">今日</span>
+                  <span class="cs-val">{{ data.agent.today_calls }}</span>
+                </span>
+              </div>
             </div>
-            <div class="card">
-              <div class="card-val">{{ data.sessions.web.toLocaleString() }}</div>
-              <div class="card-lbl">网页</div>
-            </div>
-            <div class="card">
-              <div class="card-val">{{ data.sessions.im.toLocaleString() }}</div>
-              <div class="card-lbl">IM</div>
+            <div class="chart-wrap">
+              <Line :data="agentCallsChart" :options="lineOpts(false)" />
             </div>
           </div>
+
+          <!-- Token 消耗 -->
+          <div class="chart-card">
+            <div class="chart-header">
+              <div class="chart-title">
+                <PhLightning :size="14" weight="bold" class="ct-icon ic-amber-raw"/>
+                Token 消耗
+              </div>
+              <div class="chart-stats">
+                <span class="cs-item">
+                  <span class="cs-lbl">总计</span>
+                  <span class="cs-val">{{ fmtTok(data.agent.tokens_in + data.agent.tokens_out) }}</span>
+                </span>
+                <span class="cs-sep">·</span>
+                <span class="cs-item">
+                  <span class="cs-lbl">日均</span>
+                  <span class="cs-val">{{ fmtTok(Math.round(sumArr(vis?.agent_tokens) / rangeDays)) }}</span>
+                </span>
+                <span class="cs-sep">·</span>
+                <span class="cs-item">
+                  <span class="cs-lbl">今日</span>
+                  <span class="cs-val">{{ fmtTok(data.agent.today_tokens_in + data.agent.today_tokens_out) }}</span>
+                </span>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <Line :data="agentTokensChart" :options="lineOpts(true)" />
+            </div>
+          </div>
+
+          <!-- 用户注册 -->
+          <div class="chart-card">
+            <div class="chart-header">
+              <div class="chart-title">
+                <PhUserPlus :size="14" weight="bold" class="ct-icon ic-teal-raw"/>
+                用户注册
+              </div>
+              <div class="chart-stats">
+                <span class="cs-item">
+                  <span class="cs-lbl">总量</span>
+                  <span class="cs-val">{{ data.users.total.toLocaleString() }}</span>
+                </span>
+                <span class="cs-sep">·</span>
+                <span class="cs-item">
+                  <span class="cs-lbl">近{{ rangeDays }}天</span>
+                  <span class="cs-val">+{{ sumArr(vis?.user_registrations) }}</span>
+                </span>
+                <span class="cs-sep">·</span>
+                <span class="cs-item">
+                  <span class="cs-lbl">日均</span>
+                  <span class="cs-val">{{ dailyAvg(vis?.user_registrations) }}</span>
+                </span>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <Line :data="userRegsChart" :options="lineOpts(false)" />
+            </div>
+          </div>
+
+          <!-- 项目完成 -->
+          <div class="chart-card">
+            <div class="chart-header">
+              <div class="chart-title">
+                <PhCheckCircle :size="14" weight="bold" class="ct-icon ic-teal-raw"/>
+                项目完成
+              </div>
+              <div class="chart-stats">
+                <span class="cs-item">
+                  <span class="cs-lbl">累计完成</span>
+                  <span class="cs-val">{{ data.projects.done }}</span>
+                </span>
+                <span class="cs-sep">·</span>
+                <span class="cs-item">
+                  <span class="cs-lbl">近{{ rangeDays }}天</span>
+                  <span class="cs-val">{{ sumArr(vis?.project_completions) }}</span>
+                </span>
+                <span class="cs-sep">·</span>
+                <span class="cs-item">
+                  <span class="cs-lbl">完成率</span>
+                  <span class="cs-val">{{ data.projects.total ? pct(data.projects.done / data.projects.total) + '%' : '—' }}</span>
+                </span>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <Line :data="projDoneChart" :options="lineOpts(false)" />
+            </div>
+          </div>
+
         </div>
-        <div class="two-col-item">
-          <div class="section-label">Agent 调用</div>
-          <div class="cards-grid col2">
-            <div class="card">
-              <div class="card-val">{{ data.agent.total_calls.toLocaleString() }}</div>
-              <div class="card-lbl">总调用次数</div>
-              <div class="card-sub">今日 {{ data.agent.today_calls }}</div>
-            </div>
-            <div class="card">
-              <div class="card-val">{{ fmtTok(data.agent.tokens_in + data.agent.tokens_out) }}</div>
-              <div class="card-lbl">总 Token</div>
-              <div class="card-sub">今日 {{ fmtTok(data.agent.today_tokens_in + data.agent.today_tokens_out) }}</div>
-            </div>
-          </div>
+      </template>
+
+      <!-- ── 对话 ── -->
+      <div class="section-label">对话</div>
+      <div class="cards-grid col3">
+        <div class="card">
+          <div class="card-icon ic-blue"><PhChats :size="16" weight="bold"/></div>
+          <div class="card-val">{{ data.sessions.total.toLocaleString() }}</div>
+          <div class="card-lbl">总量</div>
+        </div>
+        <div class="card">
+          <div class="card-icon ic-blue"><PhMonitor :size="16" weight="bold"/></div>
+          <div class="card-val">{{ data.sessions.web.toLocaleString() }}</div>
+          <div class="card-lbl">网页对话</div>
+        </div>
+        <div class="card">
+          <div class="card-icon ic-blue"><PhDeviceMobile :size="16" weight="bold"/></div>
+          <div class="card-val">{{ data.sessions.im.toLocaleString() }}</div>
+          <div class="card-lbl">IM 对话</div>
         </div>
       </div>
 
       <!-- ── 模型分布 ── -->
       <template v-if="usage?.by_model?.length">
         <div class="section-label">模型分布</div>
-        <div class="model-table">
-          <div class="model-head">
-            <span>模型</span>
-            <span class="col-r">调用次数</span>
-            <span class="col-r">Token 消耗</span>
+        <div class="model-section">
+          <div class="model-donut-wrap">
+            <Doughnut :data="donutChart" :options="donutOpts" />
           </div>
-          <div v-for="m in usage.by_model" :key="m.model" class="model-row">
-            <span class="m-name">
-              {{ m.model }}
-              <span class="m-provider">{{ m.provider }}</span>
-            </span>
-            <span class="m-bar-wrap col-r">
-              <span class="m-bar" :style="{ width: modelBarPct(m) + '%' }"></span>
-              <span class="m-bar-val">{{ m.calls.toLocaleString() }}</span>
-            </span>
-            <span class="col-r">{{ fmtTok(m.tokens_in + m.tokens_out) }}</span>
+          <div class="model-table">
+            <div class="model-head">
+              <span>模型</span>
+              <span class="col-r">调用</span>
+              <span class="col-r">Token</span>
+            </div>
+            <div v-for="(m, i) in usage.by_model" :key="m.model" class="model-row">
+              <span class="m-name">
+                <span class="m-dot" :style="{ background: donutColors[i % donutColors.length] }"></span>
+                {{ m.model }}
+                <span class="m-provider">{{ m.provider }}</span>
+              </span>
+              <span class="col-r">{{ m.calls.toLocaleString() }}</span>
+              <span class="col-r">{{ fmtTok(m.tokens_in + m.tokens_out) }}</span>
+            </div>
           </div>
         </div>
       </template>
@@ -150,62 +273,214 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { Line, Doughnut } from 'vue-chartjs'
+import {
+  Chart as ChartJS, CategoryScale, LinearScale, PointElement,
+  LineElement, ArcElement, Tooltip, Filler
+} from 'chart.js'
+import {
+  PhUsers, PhUserPlus, PhPulse, PhChatsCircle, PhFolders,
+  PhClock, PhSpinnerGap, PhCheckCircle, PhRobot, PhLightning,
+  PhChats, PhMonitor, PhDeviceMobile
+} from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 
-const admin  = useAdminStore()
-const data   = ref(null)
-const usage  = ref(null)
-const loading = ref(false)
-const err    = ref('')
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Tooltip, Filler)
 
+const admin   = useAdminStore()
+const data      = ref(null)
+const usage     = ref(null)
+const trends    = ref(null)   // 始终保存 60 天原始数据
+const loading   = ref(false)
+const err       = ref('')
+const rangeDays = ref(30)
+
+const ranges = [
+  { days: 7,  label: '7 天' },
+  { days: 30, label: '30 天' },
+  { days: 60, label: '60 天' },
+]
+
+// ── 漏斗 ──────────────────────────────────────────────────────────────────
 const funnelSteps = computed(() => {
   if (!data.value) return []
   const f = data.value.funnel
   return [
-    { key: 'registered',       label: '注册',       value: f.registered },
-    { key: 'created_project',  label: '创建项目',   value: f.created_project },
-    { key: 'completed_project',label: '完成项目',   value: f.completed_project },
-    { key: 'used_agent',       label: '使用 Agent', value: f.used_agent },
-    { key: 'connected_im',     label: '接入 IM',    value: f.connected_im },
+    { key: 'registered',        label: '注册',       value: f.registered },
+    { key: 'created_project',   label: '创建项目',   value: f.created_project },
+    { key: 'completed_project', label: '完成项目',   value: f.completed_project },
+    { key: 'used_agent',        label: '使用 Agent', value: f.used_agent },
+    { key: 'connected_im',      label: '接入 IM',    value: f.connected_im },
   ]
 })
 
+// ── 工具函数 ──────────────────────────────────────────────────────────────
 function convRate(prev, curr) {
   if (!prev) return '—'
   return (curr / prev * 100).toFixed(1) + '%'
 }
-
 function pct(rate) {
   return (rate * 100).toFixed(1)
 }
-
 function fmtTok(n) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
   if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K'
   return String(n)
 }
-
-const maxModelCalls = computed(() => {
-  if (!usage.value?.by_model?.length) return 1
-  return Math.max(...usage.value.by_model.map(m => m.calls), 1)
-})
-
-function modelBarPct(m) {
-  return Math.round(m.calls / maxModelCalls.value * 100)
+function sumArr(arr) { return arr?.reduce((a, b) => a + b, 0) ?? 0 }
+function dailyAvg(arr) {
+  if (!arr?.length) return '0'
+  return (sumArr(arr) / arr.length).toFixed(1)
 }
 
+// ── Chart.js 配置 ─────────────────────────────────────────────────────────
+const BLUE   = 'rgba(123,127,178,1)'
+const AMBER  = 'rgba(201,148,58,1)'
+const TEAL   = 'rgba(90,158,136,1)'
+
+function mkDataset(data, color) {
+  return {
+    data,
+    borderColor: color,
+    backgroundColor: color.replace(',1)', ',0.12)'),
+    fill: true,
+    tension: 0.4,
+    pointRadius: 2,
+    pointHoverRadius: 5,
+    pointBackgroundColor: color,
+    borderWidth: 2,
+  }
+}
+
+function lineOpts(isTok) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 400 },
+    animations: {
+      x: { duration: 0 },   // x 位置不动画，防止切换区间时数据点横向滑动
+    },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: 'rgba(15,15,30,0.95)',
+        borderColor: 'rgba(255,255,255,0.1)',
+        borderWidth: 1,
+        titleColor: 'rgba(255,255,255,0.6)',
+        bodyColor: 'rgba(255,255,255,0.85)',
+        padding: 10,
+        callbacks: isTok ? { label: ctx => ' ' + fmtTok(ctx.raw) } : {},
+      },
+    },
+    scales: {
+      x: {
+        grid:   { color: 'rgba(255,255,255,0.05)' },
+        border: { color: 'transparent' },
+        ticks:  { color: 'rgba(255,255,255,0.3)', font: { size: 10 }, maxTicksLimit: 8 },
+      },
+      y: {
+        grid:   { color: 'rgba(255,255,255,0.05)' },
+        border: { color: 'transparent' },
+        ticks:  {
+          color: 'rgba(255,255,255,0.3)', font: { size: 10 },
+          callback: isTok ? v => fmtTok(v) : undefined,
+        },
+        beginAtZero: true,
+      },
+    },
+  }
+}
+
+// 根据 rangeDays 从末尾切片，Chart.js 就地更新 → 平滑过渡
+const vis = computed(() => {
+  const t = trends.value
+  if (!t) return null
+  const n = rangeDays.value
+  return {
+    labels:              t.labels.slice(-n),
+    agent_calls:         t.agent_calls.slice(-n),
+    agent_tokens:        t.agent_tokens.slice(-n),
+    user_registrations:  t.user_registrations.slice(-n),
+    project_completions: t.project_completions.slice(-n),
+  }
+})
+
+const agentCallsChart = computed(() => ({
+  labels: vis.value?.labels ?? [],
+  datasets: [mkDataset(vis.value?.agent_calls ?? [], BLUE)],
+}))
+
+const agentTokensChart = computed(() => ({
+  labels: vis.value?.labels ?? [],
+  datasets: [mkDataset(vis.value?.agent_tokens ?? [], AMBER)],
+}))
+
+const userRegsChart = computed(() => ({
+  labels: vis.value?.labels ?? [],
+  datasets: [mkDataset(vis.value?.user_registrations ?? [], TEAL)],
+}))
+
+const projDoneChart = computed(() => ({
+  labels: vis.value?.labels ?? [],
+  datasets: [mkDataset(vis.value?.project_completions ?? [], TEAL)],
+}))
+
+const donutColors = [
+  'rgba(123,127,178,0.85)',
+  'rgba(90,158,136,0.85)',
+  'rgba(201,148,58,0.85)',
+  'rgba(180,100,100,0.85)',
+  'rgba(100,160,210,0.85)',
+  'rgba(160,130,200,0.85)',
+]
+
+const donutChart = computed(() => {
+  const models = usage.value?.by_model ?? []
+  return {
+    labels: models.map(m => m.model),
+    datasets: [{
+      data: models.map(m => m.calls),
+      backgroundColor: donutColors,
+      borderColor: 'rgba(255,255,255,0.05)',
+      borderWidth: 2,
+      hoverOffset: 6,
+    }],
+  }
+})
+
+const donutOpts = {
+  responsive: true,
+  maintainAspectRatio: true,
+  cutout: '68%',
+  plugins: {
+    legend: { display: false },
+    tooltip: {
+      backgroundColor: 'rgba(15,15,30,0.95)',
+      borderColor: 'rgba(255,255,255,0.1)',
+      borderWidth: 1,
+      titleColor: 'rgba(255,255,255,0.6)',
+      bodyColor: 'rgba(255,255,255,0.85)',
+      padding: 10,
+    },
+  },
+}
+
+// ── 数据加载 ───────────────────────────────────────────────────────────────
 async function load() {
   loading.value = true
   err.value = ''
   try {
-    const [sumRes, useRes] = await Promise.all([
+    const [sumRes, useRes, trdRes] = await Promise.all([
       admin.authFetch('/api/v1/admin/analytics/summary'),
       admin.authFetch('/api/v1/admin/agent/usage'),
+      admin.authFetch('/api/v1/admin/analytics/trends?days=60'),
     ])
-    if (!sumRes.ok) throw new Error(`${sumRes.status}`)
-    if (!useRes.ok) throw new Error(`${useRes.status}`)
-    data.value  = await sumRes.json()
-    usage.value = await useRes.json()
+    if (!sumRes.ok) throw new Error(`summary ${sumRes.status}`)
+    if (!useRes.ok) throw new Error(`usage ${useRes.status}`)
+    if (!trdRes.ok) throw new Error(`trends ${trdRes.status}`)
+    data.value   = await sumRes.json()
+    usage.value  = await useRes.json()
+    trends.value = await trdRes.json()
   } catch (e) {
     err.value = '加载失败：' + e.message
   } finally {
@@ -213,11 +488,15 @@ async function load() {
   }
 }
 
+function setRange(days) {
+  rangeDays.value = days   // vis computed 自动切片，无需重新请求
+}
+
 onMounted(load)
 </script>
 
 <style scoped>
-.analytics-page { min-height: 100%; padding-bottom: 48px; }
+.analytics-page { min-height: 100%; padding-bottom: 56px; }
 
 /* ── header ── */
 .page-header {
@@ -228,12 +507,21 @@ onMounted(load)
 .page-title { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
 .page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
 
+.header-right { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+
+.range-tabs { display: flex; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 3px; }
+.range-tab {
+  font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer;
+  color: rgba(255,255,255,0.4); background: transparent; border: none; transition: all .15s;
+}
+.range-tab.active { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
+.range-tab:hover:not(.active) { color: rgba(255,255,255,0.6); }
+
 .refresh-btn {
   display: flex; align-items: center; gap: 6px;
   background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
   color: rgba(255,255,255,0.55); font-size: 12px; border-radius: 8px;
   padding: 7px 14px; cursor: pointer; transition: all .15s;
-  margin-top: 4px;
 }
 .refresh-btn:hover  { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); }
 .refresh-btn:disabled { opacity: .4; cursor: not-allowed; }
@@ -253,85 +541,109 @@ onMounted(load)
 
 /* ── funnel ── */
 .funnel-strip {
-  display: flex; align-items: center; gap: 0;
-  padding: 0 36px; overflow-x: auto;
+  display: flex; align-items: center; padding: 0 36px; overflow-x: auto; gap: 0;
 }
 .funnel-box {
-  flex: 1; min-width: 120px;
+  flex: 1; min-width: 110px;
   background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 12px; padding: 18px 16px 14px;
+  border-radius: 12px; padding: 16px 12px 12px;
   display: flex; flex-direction: column; align-items: center;
-  position: relative;
 }
-.f-num  { font-size: 28px; font-weight: 700; color: rgba(255,255,255,0.88); line-height: 1; }
-.f-lbl  { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 6px; }
+.f-num  { font-size: 26px; font-weight: 700; color: rgba(255,255,255,0.88); line-height: 1; }
+.f-lbl  { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 5px; }
 .f-rate {
-  position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
-  background: rgba(123,127,178,0.25); border: 1px solid rgba(123,127,178,0.3);
-  color: rgba(180,185,230,0.9); font-size: 10px; font-weight: 600;
-  padding: 1px 7px; border-radius: 20px; white-space: nowrap;
+  font-size: 10px; font-weight: 600; margin-top: 6px;
+  color: rgba(150,155,210,0.8);
 }
-.funnel-arr {
-  flex-shrink: 0; color: rgba(255,255,255,0.2); padding: 0 8px;
-}
+.funnel-arr { flex-shrink: 0; color: rgba(255,255,255,0.18); padding: 0 6px; }
 
 /* ── cards ── */
 .cards-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr);
-  gap: 12px; padding: 0 36px;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 0 36px;
 }
 .cards-grid.col3 { grid-template-columns: repeat(3, 1fr); }
-.cards-grid.col2 { grid-template-columns: repeat(2, 1fr); }
 
 .card {
   background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 12px; padding: 20px 20px 16px;
+  border-radius: 12px; padding: 18px 18px 14px; position: relative;
 }
-.card-val  { font-size: 30px; font-weight: 700; color: rgba(255,255,255,0.88); line-height: 1; }
-.card-unit { font-size: 14px; font-weight: 400; color: rgba(255,255,255,0.4); }
-.card-lbl  { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 8px; }
-.card-sub  { font-size: 11px; color: rgba(255,255,255,0.25); margin-top: 4px; }
+.card-icon {
+  width: 28px; height: 28px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 12px;
+}
+.ic-blue  { background: rgba(123,127,178,0.18); color: rgba(150,155,210,0.9); }
+.ic-muted { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.4); }
+.ic-amber { background: rgba(201,148,58,0.18);  color: rgba(215,165,75,0.9); }
+.ic-teal  { background: rgba(90,158,136,0.18);  color: rgba(100,175,150,0.9); }
 
-.card-pending { border-color: rgba(255,255,255,0.08); }
-.card-active  { border-color: rgba(201,148,58,0.3); }
+.card-val  { font-size: 28px; font-weight: 700; color: rgba(255,255,255,0.88); line-height: 1; }
+.card-unit { font-size: 13px; font-weight: 400; color: rgba(255,255,255,0.35); }
+.card-lbl  { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 7px; }
+.card-sub  { font-size: 11px; color: rgba(255,255,255,0.22); margin-top: 3px; }
+
+.card-active { border-color: rgba(201,148,58,0.25); }
 .card-active .card-val { color: #c9943a; }
-.card-done    { border-color: rgba(90,158,136,0.3); }
+.card-done   { border-color: rgba(90,158,136,0.25); }
 .card-done .card-val   { color: #5a9e88; }
 
-/* ── two-col row ── */
-.two-col {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 0; align-items: start;
+/* ── charts ── */
+.charts-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 36px;
 }
-.two-col-item .section-label { padding-top: 28px; }
+.chart-card {
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px; padding: 18px 18px 14px;
+}
+.chart-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.chart-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.7);
+}
+.ct-icon { flex-shrink: 0; }
+.ic-blue-raw  { color: rgba(150,155,210,0.9); }
+.ic-amber-raw { color: rgba(215,165,75,0.9); }
+.ic-teal-raw  { color: rgba(100,175,150,0.9); }
 
-/* ── model table ── */
+.chart-stats { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.cs-item { display: flex; flex-direction: column; align-items: flex-end; }
+.cs-lbl  { font-size: 10px; color: rgba(255,255,255,0.28); line-height: 1; }
+.cs-val  { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.78); line-height: 1.3; }
+.cs-sep  { color: rgba(255,255,255,0.15); font-size: 12px; }
+
+.chart-wrap { height: 160px; position: relative; }
+
+/* ── model section ── */
+.model-section {
+  display: flex; gap: 24px; align-items: flex-start; padding: 0 36px;
+}
+.model-donut-wrap {
+  width: 160px; flex-shrink: 0;
+}
 .model-table {
-  margin: 0 36px; background: rgba(255,255,255,0.03);
+  flex: 1; background: rgba(255,255,255,0.03);
   border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; overflow: hidden;
 }
 .model-head {
-  display: grid; grid-template-columns: 1fr 160px 120px;
-  padding: 10px 16px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
-  color: rgba(255,255,255,0.3); text-transform: uppercase;
+  display: grid; grid-template-columns: 1fr 80px 90px;
+  padding: 9px 14px; font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
+  color: rgba(255,255,255,0.28); text-transform: uppercase;
   border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 .model-row {
-  display: grid; grid-template-columns: 1fr 160px 120px;
-  padding: 12px 16px; font-size: 13px; color: rgba(255,255,255,0.7);
-  border-bottom: 1px solid rgba(255,255,255,0.04);
-  align-items: center;
+  display: grid; grid-template-columns: 1fr 80px 90px;
+  padding: 11px 14px; font-size: 13px; color: rgba(255,255,255,0.65);
+  border-bottom: 1px solid rgba(255,255,255,0.04); align-items: center;
 }
 .model-row:last-child { border-bottom: none; }
 .col-r { text-align: right; }
-.m-name { display: flex; flex-direction: column; gap: 2px; }
+.m-name {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; color: rgba(255,255,255,0.75);
+}
+.m-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .m-provider { font-size: 10px; color: rgba(255,255,255,0.25); }
-.m-bar-wrap {
-  display: flex; align-items: center; gap: 8px; justify-content: flex-end;
-}
-.m-bar {
-  height: 4px; border-radius: 2px;
-  background: linear-gradient(90deg, rgba(123,127,178,0.5), rgba(123,127,178,0.8));
-  min-width: 2px; max-width: 80px;
-}
-.m-bar-val { font-size: 13px; color: rgba(255,255,255,0.7); }
 </style>

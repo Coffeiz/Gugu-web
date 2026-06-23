@@ -635,6 +635,7 @@ async function loadSession(id) {
     }))
     _scrollDelta = 0; msgsGrowth.value = 0
     await nextTick(); scrollExpBottom()
+    if (data.active) resumeStream(id)   // 该会话后端正在生成 → 重连续看
   } catch {}
 }
 
@@ -742,6 +743,83 @@ onUnmounted(() => {
   expMessagesEl.value?.removeEventListener('scroll', onExpMsgScroll)
 })
 
+// 消费一条 SSE 流，把事件渲染进消息列表。send（POST /chat）和续看（GET .../stream）共用。
+// 返回 { aiIdx, usedTools }，供调用方做收尾（首条空回复兜底、刷新视图）。
+async function consumeStream(reader) {
+  const decoder = new TextDecoder()
+  let buf = '', aiIdx = -1
+  const usedTools = new Set()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n'); buf = lines.pop()
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const raw = line.slice(6).trim(); if (!raw) continue
+        let evt; try { evt = JSON.parse(raw) } catch { continue }
+        if (evt.type === 'session_id') {
+          const isNew = sessionId.value !== evt.session_id
+          sessionId.value = evt.session_id
+          if (isNew) await fetchSessions()
+        } else if (evt.type === 'session_title') {
+          const s = sessions.value.find(s => s.id === sessionId.value)
+          if (s) s.title = evt.title
+        } else if (evt.type === '_new_round') {
+          // 后端新一轮开始（sanitizer 已重置），前端无需变更视觉状态
+        } else if (evt.type === 'tool_call') {
+          thinking.value = false; activeTool.value = evt.label || evt.name
+          if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)  // 跳过 _preparing 占位
+          await scrollBottom(); await scrollExpBottom()
+        } else if (evt.type === 'tool_done') {
+          activeTool.value = ''; thinking.value = true
+          await scrollBottom(); await scrollExpBottom()
+        } else if (evt.type === 'token') {
+          thinking.value = false; activeTool.value = ''
+          if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
+          messages.value[aiIdx].text += evt.content
+          await scrollBottom(); await scrollExpBottom()
+        } else if (evt.type === 'file') {
+          thinking.value = false; activeTool.value = ''
+          if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
+          const m = messages.value[aiIdx]
+          if (!m.files) m.files = []
+          m.files.push(evt.file)
+          await scrollBottom(); await scrollExpBottom()
+        } else if (evt.type === 'done') {
+          thinking.value = false; activeTool.value = ''
+        } else if (evt.type === 'error') {
+          thinking.value = false; activeTool.value = ''
+          messages.value.push({ id: mkid(), role: 'ai', text: evt.message || evt.detail || '咕咕开小差了 😵‍💫 麻烦再说一遍好吗？', time: now() })
+          aiIdx = messages.value.length - 1
+          await scrollBottom(); await scrollExpBottom()
+        }
+      }
+    }
+  } finally {
+    if (aiIdx !== -1 && messages.value[aiIdx]) messages.value[aiIdx].streaming = false
+  }
+  return { aiIdx, usedTools }
+}
+
+// 续看：打开会话时若它正在生成（messages 接口返回 active），重连看后端跑完。
+async function resumeStream(id) {
+  if (streaming.value) return            // 本地正在发/看，不重复连
+  const token = localStorage.getItem('user_token') ?? ''
+  thinking.value = true; streaming.value = true
+  try {
+    const res = await fetch(`${BASE_URL}/agent/sessions/${id}/stream`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) return
+    if (sessionId.value !== id) return   // 期间又切走了，丢弃
+    const r = await consumeStream(res.body.getReader())
+    refreshAfterTools(r.usedTools)
+  } catch { /* 续看失败不打扰 */ }
+  finally { thinking.value = false; activeTool.value = ''; streaming.value = false }
+}
+
 async function send(forcedText) {
   // forcedText 来自"排队接力"（队首消息）：此时用户气泡已在入队时显示过，不重复推
   const fromInput = forcedText === undefined
@@ -772,56 +850,9 @@ async function send(forcedText) {
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      const lines = buf.split('\n'); buf = lines.pop()
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        const raw = line.slice(6).trim(); if (!raw) continue
-        let evt; try { evt = JSON.parse(raw) } catch { continue }
-        if (evt.type === 'session_id') {
-          const isNew = sessionId.value !== evt.session_id
-          sessionId.value = evt.session_id
-          if (isNew) await fetchSessions()
-        } else if (evt.type === 'session_title') {
-          const s = sessions.value.find(s => s.id === sessionId.value)
-          if (s) s.title = evt.title
-        } else if (evt.type === '_new_round') {
-          // 后端新一轮开始（sanitizer 已重置），前端无需变更视觉状态
-        } else if (evt.type === 'tool_call') {
-          thinking.value = false; activeTool.value = evt.label || evt.name
-          if (evt.name) usedTools.add(evt.name)
-          await scrollBottom(); await scrollExpBottom()
-        } else if (evt.type === 'tool_done') {
-          activeTool.value = ''; thinking.value = true
-          await scrollBottom(); await scrollExpBottom()
-        } else if (evt.type === 'token') {
-          thinking.value = false; activeTool.value = ''
-          if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
-          messages.value[aiIdx].text += evt.content
-          await scrollBottom(); await scrollExpBottom()
-        } else if (evt.type === 'file') {
-          thinking.value = false; activeTool.value = ''
-          if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
-          const m = messages.value[aiIdx]
-          if (!m.files) m.files = []
-          m.files.push(evt.file)
-          await scrollBottom(); await scrollExpBottom()
-        } else if (evt.type === 'done') {
-          thinking.value = false; activeTool.value = ''
-        } else if (evt.type === 'error') {
-          thinking.value = false; activeTool.value = ''
-          messages.value.push({ id: mkid(), role: 'ai', text: evt.message || evt.detail || '咕咕开小差了 😵‍💫 麻烦再说一遍好吗？', time: now() })
-          aiIdx = messages.value.length - 1
-          await scrollBottom(); await scrollExpBottom()
-        }
-      }
-    }
+    const r = await consumeStream(res.body.getReader())
+    aiIdx = r.aiIdx
+    r.usedTools.forEach(t => usedTools.add(t))
     if (aiIdx === -1) {
       messages.value.push({ id: mkid(), role: 'ai', text: '收到，但没有收到回复，请稍后再试。', time: now() })
       await scrollBottom(); await scrollExpBottom()
@@ -951,7 +982,7 @@ async function send(forcedText) {
 .popup-close-btn:hover { background: rgba(200,80,80,0.1) !important; color: rgba(200,80,80,0.8) !important; }
 
 .popup-messages {
-  flex: 1; overflow-y: auto;
+  flex: 1; overflow-y: auto; overflow-x: hidden;
   padding: 12px 13px;
   display: flex; flex-direction: column; gap: 8px;
 }
@@ -1033,6 +1064,7 @@ async function send(forcedText) {
 }
 .exp-session-item:hover { background: rgba(255,255,255,0.55); }
 .exp-session-item.active { background: rgba(123,127,178,0.12); }
+.exp-session-item.active .exp-session-title { font-weight: 700; }
 .exp-session-title {
   flex: 1; font-size: 12.5px; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -1065,7 +1097,7 @@ async function send(forcedText) {
 .exp-header-title { flex: 1; font-size: 14px; font-weight: 600; color: var(--text-primary); }
 
 .exp-messages {
-  flex: 1; overflow-y: auto;
+  flex: 1; overflow-y: auto; overflow-x: hidden;
   padding: 20px 24px;
   display: flex; flex-direction: column; gap: 12px;
 }
@@ -1102,12 +1134,13 @@ async function send(forcedText) {
 .send-btn:disabled { opacity: 0.55; cursor: default; }
 
 /* ── 消息气泡 ── */
-.msg { display: flex; flex-direction: column; }
+.msg { display: flex; flex-direction: column; min-width: 0; }
 .msg.user { align-items: flex-end; }
 .msg.ai { align-items: flex-start; }
 .msg-bubble {
   padding: 9px 13px; border-radius: 13px;
   font-size: 13px; line-height: 1.5; max-width: 88%;
+  word-break: break-word; overflow-wrap: break-word;
 }
 .msg.ai .msg-bubble {
   background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.65);
@@ -1167,14 +1200,14 @@ async function send(forcedText) {
 .thinking span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
 
-.tool-bubble { display: flex; align-items: center; gap: 8px; padding: 10px 13px; font-size: 12px; color: var(--color-primary); }
+.tool-bubble { display: flex; align-items: center; gap: 8px; color: var(--color-primary); }
 .tool-spinner {
   width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
   border: 2px solid rgba(123,127,178,0.25); border-top-color: var(--color-primary);
   animation: spin 0.7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.tool-label { font-size: 12px; font-weight: 600; }
+.tool-label { font-weight: 600; }
 
 /* ── Markdown ── */
 .md-body { padding: 10px 13px; }

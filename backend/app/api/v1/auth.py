@@ -74,7 +74,7 @@ async def login(body: UserLogin, db: AsyncSession = Depends(get_db)):
 
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: User = Depends(get_current_user)):
-    return UserResponse.model_validate(current_user)
+    return UserResponse.from_user(current_user)
 
 
 @router.patch("/profile", response_model=UserResponse)
@@ -176,4 +176,4 @@ async def get_avatar(user_id: UUID, db: AsyncSession = Depends(get_db)):
     mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
             "webp": "image/webp", "gif": "image/gif"}.get(ext, "image/jpeg")
     return Response(content=avatar_path.read_bytes(), media_type=mime,
-                    headers={"Cache-Control": "public, max-age=86400"})
+                    headers={"Cache-Control": "no-cache"})

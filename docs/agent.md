@@ -280,7 +280,9 @@ MCP 协议客户端，支持 stdio / SSE / HTTP 连接外部 MCP server。
 Adapter 接口：`receive()` 将平台消息转为 `AgentRequest`，`send()` 将响应转为平台格式。
 
 #### `web.py`
-Web SSE adapter：配额检查 → 上下文 → 会话 get/create → core 流式 → 持久化（含 `file` artifact 落 `conversation_messages.files`）。
+Web SSE adapter：`stream()` 同步做配额检查 → 上下文 → 会话 get/create → 存用户消息，再把生成丢到**后台任务** `_generate()`（脱离 HTTP 请求），自身只转发会话的生成频道。`_generate()` 跑 core 流式 → 发事件到 `genstream` → 自己持久化（含 `file` artifact 落 `conversation_messages.files`）。
+
+**生成解耦 + 刷新续看**（`agent/genstream.py`）：生成在后台任务里跑，**浏览器刷新/断连杀不掉它、回复不丢**。`genstream` 是按会话的生成流频道（Redis pub/sub）+ 状态快照（已生成文字/当前工具/done）。刷新后前端经 `GET /agent/sessions/{id}/stream`（`web.resume()`）先补已生成内容、再订阅后续；`/sessions/{id}/messages` 带 `active` 标志告诉前端要不要续看。前端 `consumeStream` 被 `send` 和续看共用。
 
 **错误文案分类**（都在 `web.py` 的 `except` + 前端兜底）：
 - 精力/配额：「咕咕精力不足，休息一下～」「咕咕本周精力耗尽啦，每周一恢复～」

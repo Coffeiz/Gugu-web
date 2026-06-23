@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends
-from sqlalchemy import select, func, distinct, or_
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select, func, distinct, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -29,6 +29,10 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
     active_30d = (await db.execute(
         select(func.count(distinct(AgentUsage.user_id)))
         .where(AgentUsage.created_at >= d30)
+    )).scalar() or 0
+    dau = (await db.execute(
+        select(func.count(distinct(AgentUsage.user_id)))
+        .where(AgentUsage.created_at >= today_start)
     )).scalar() or 0
 
     # ── 项目（排除归档）────────────────────────────────────────────────────────
@@ -89,10 +93,11 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
 
     return {
         "users": {
-            "total":     total_users,
+            "total":      total_users,
+            "dau":        dau,
             "active_30d": active_30d,
-            "new_7d":    new_7d,
-            "new_30d":   new_30d,
+            "new_7d":     new_7d,
+            "new_30d":    new_30d,
         },
         "projects": {
             "total":   total_proj,
@@ -124,4 +129,46 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
             "used_agent":       users_used_agent,
             "connected_im":     users_with_bot,
         },
+    }
+
+
+@router.get("/trends")
+async def get_trends(days: int = Query(default=30, ge=7, le=90), db: AsyncSession = Depends(get_db)):
+    now = datetime.utcnow()
+    start = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    date_list = [(start + timedelta(days=i)).date() for i in range(days)]
+    labels = [(start + timedelta(days=i)).strftime("%-m/%-d") for i in range(days)]
+
+    agent_rows = (await db.execute(text("""
+        SELECT DATE(created_at) AS d,
+               COUNT(*)::int AS calls,
+               COALESCE(SUM(tokens_in + tokens_out), 0)::bigint AS tokens
+        FROM agent_usage
+        WHERE created_at >= :start
+        GROUP BY DATE(created_at)
+    """), {"start": start})).all()
+    agent_map = {r.d: (r.calls, int(r.tokens)) for r in agent_rows}
+
+    user_rows = (await db.execute(text("""
+        SELECT DATE(created_at) AS d, COUNT(*)::int AS cnt
+        FROM users
+        WHERE created_at >= :start
+        GROUP BY DATE(created_at)
+    """), {"start": start})).all()
+    user_map = {r.d: r.cnt for r in user_rows}
+
+    proj_rows = (await db.execute(text("""
+        SELECT DATE(done_at) AS d, COUNT(*)::int AS cnt
+        FROM projects
+        WHERE done_at IS NOT NULL AND done_at >= :start
+        GROUP BY DATE(done_at)
+    """), {"start": start})).all()
+    proj_map = {r.d: r.cnt for r in proj_rows}
+
+    return {
+        "labels":              labels,
+        "agent_calls":         [agent_map.get(d, (0, 0))[0] for d in date_list],
+        "agent_tokens":        [agent_map.get(d, (0, 0))[1] for d in date_list],
+        "user_registrations":  [user_map.get(d, 0) for d in date_list],
+        "project_completions": [proj_map.get(d, 0) for d in date_list],
     }

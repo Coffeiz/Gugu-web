@@ -16,6 +16,7 @@ from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models import ConversationMessage, ConversationSession, User
 
+from agent import genstream
 from agent.adapters import web as web_adapter
 from agent.models import AgentRequest
 
@@ -41,6 +42,23 @@ async def chat(
     )
     return StreamingResponse(
         web_adapter.stream(req),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/sessions/{session_id}/stream")
+async def resume_stream(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """续看进行中的生成（刷新后重连）。无进行中的生成则立即返回 idle done。"""
+    session = await db.get(ConversationSession, session_id)
+    if not session or session.user_id != current_user.id:
+        raise HTTPException(404, "对话不存在")
+    return StreamingResponse(
+        web_adapter.resume(session_id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -90,6 +108,7 @@ async def get_session_messages(
     msgs = res.scalars().all()
     return {
         "session": {"id": session.id, "title": session.title},
+        "active": await genstream.is_active(session_id),   # 该会话是否正在生成（前端据此续看）
         "messages": [
             {"role": m.role, "content": m.content, "files": m.files or [],
              "createdAt": m.created_at.isoformat()}
