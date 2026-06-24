@@ -15,12 +15,12 @@
 |------|------|------|
 | 已交付 | ✅ 已部署 | 取消修复 / 对账 / 批量工具 / 多模态 / 搜索 + 定时任务多平台投递 |
 | P0 配置级 | ✅ 基本完成 | DB 池 ⑤ · Redis maxlen · 提交部署 |
-| **P1 worker 并发** | 🔜 **进行中** | ①⑦ + 并发热配 + 多 key 分流 + 地基 B ✅；剩 配额能力降级（地基 A 跟 ④ 后推） |
+| **P1 worker 并发** | ✅ **核心完成** | ①⑦ + 并发热配 + 多 key 分流 + 地基 B + 配额降级 全部上线；地基 A 跟 ④ 后推（按数据触发） |
 | P2 用户功能 | ⬜ | 客户页 · 主动触达 · 服务/Bot 管理页 |
 | P3 按需扩展 | ⏸️ | 多 key / 多 worker，由埋点数据触发 |
 | P4 远期 | ⬜ | 思维画布 · Planner · 多 Agent · 团队版 |
 
-**下一步**：①⑦ + 并发热配已上线并端到端验证（见[压测](并发压测结果.md)）。剩 **配额能力降级**；地基 A 跟 ④（web 多 worker）一起后推、由埋点数据触发。
+**下一步**：P1 核心全部上线（①⑦ + 并发热配 + 多 key 分流 + 地基 B + 配额降级，见[压测](并发压测结果.md)）。地基 A 跟 ④（web 多 worker）后推、由埋点数据触发。可转 **P2 用户功能**（客户页 / 主动触达 / 管理页）。
 
 ---
 
@@ -29,8 +29,8 @@
 ```mermaid
 flowchart TD
     P0["P0 · 配置级 ✅<br/>DB 池 · Redis maxlen · 部署"]
-    P1["P1 · worker 并发 🔜<br/>有界并发 ＋ user_gate ＋ 去重 ＋ ⑦ 兜底 · 埋点 · 配额降级"]
-    P2["P2 · 用户功能<br/>客户页 · 主动触达 · 服务/Bot 管理页"]
+    P1["P1 · worker 并发 ✅<br/>有界并发 ＋ user_gate ＋ ⑦ ＋ 多key分流 ＋ 地基B ＋ 配额降级"]
+    P2["P2 · 用户功能 🔜<br/>客户页 · 主动触达 · 服务/Bot 管理页"]
     P3["P3 · 按需扩展（数据触发）<br/>多 key · 多 worker ＋ 分片 · 记忆 2b"]
     P4["P4 · 远期<br/>思维画布 · Planner · 多 Agent · 团队版"]
 
@@ -40,7 +40,7 @@ flowchart TD
     classDef done fill:#EAF3DE,stroke:#3B6D11,color:#173404;
     classDef now fill:#E1F5EE,stroke:#0F6E56,color:#04342C;
     classDef later fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A;
-    class P0 done; class P1 now; class P2,P3,P4 later;
+    class P0,P1 done; class P2 now; class P3,P4 later;
 ```
 
 ---
@@ -75,7 +75,7 @@ flowchart TD
 **韧性 & 观测**
 
 - ✅ ⑦ 慢尾兜底：LLM 调用瞬时错误（429/超时/网络/5xx）出 token 前退避重试（实测 sem=20 带工具 0/12→12/12）
-- ⬜ 配额能力降级（忙时简单对话/查询仍可用，只暂缓重操作）
+- ✅ 配额能力降级：配额耗尽不再硬拦，降级到只读工具集（12/47）+ 提示婉拒重操作——查询/对话照常（web 路；`adapters/web.py` + `profile.light_tool_names`）
 - 🟡 埋点：任务耗时 / 队列深度（⑨ 监控已在服务页，为 P3 供数）
 
 > 配套：动了取消/状态核心，需并发冒烟测（多用户并发 + 同用户连发，验顺序/取消/状态不串）——逻辑层已单测通过。

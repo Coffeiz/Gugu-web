@@ -88,6 +88,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     if _sess._engine is None:
         _sess._build_engine()
 
+    degraded = False   # 配额耗尽 → 不硬拦，降级：只保留只读/轻量工具（查询/对话仍可用，屏蔽重操作）
     async with _sess._SessionLocal() as db:
         # ── token 配额检查 ──
         user = await db.get(User, user_id)
@@ -107,8 +108,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                 _win_6h = _now.replace(hour=(_now.hour // 6) * 6, minute=0, second=0, microsecond=0)
                 _used_6h = await _token_used(_win_6h)
                 if _used_6h >= _limit_6h:
-                    yield f"data: {json.dumps({'type': 'error', 'message': '咕咕精力不足，休息一下再来吧～'})}\n\n"
-                    return
+                    degraded = True   # 6h 配额耗尽 → 降级（不 return）
 
             # 本周（周一 00:00 UTC 起）
             _limit_week = user.token_limit_weekly or settings.quota.default_token_limit_weekly
@@ -116,8 +116,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                 _week_start = (_now - timedelta(days=_now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
                 _used_week = await _token_used(_week_start)
                 if _used_week >= _limit_week:
-                    yield f"data: {json.dumps({'type': 'error', 'message': '咕咕本周精力耗尽啦，每周一恢复～'})}\n\n"
-                    return
+                    degraded = True   # 周配额耗尽 → 降级（不 return）
 
         # ── 上下文：项目 + 事件 + 文件概览（每轮注入，保证咕咕看到最新状态）──
         projects = await loaders.load_projects(db, user_id)
@@ -164,6 +163,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     if not await genstream.is_active(session_id):
         task = asyncio.create_task(_generate(
             req, session_id, projects, events, files_overview, history, is_new_session, aug_text, aug_images,
+            degraded=degraded,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -196,7 +196,7 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
 
 
 async def _generate(req, session_id, projects, events, files_overview, history, is_new_session,
-                    user_content=None, user_images=None) -> None:
+                    user_content=None, user_images=None, degraded=False) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -216,12 +216,20 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
     memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
     system_prompt = builder.build(prompt_name, req.user_name, projects, events, memory, files_overview)
 
+    # 配额降级：只给只读/轻量工具 + 提示咕咕婉拒重操作（查询/对话照常）
+    tool_names = profile.tool_names
+    if degraded:
+        tool_names = profile.light_tool_names
+        system_prompt += ("\n\n[当前状态：精力配额已用尽，进入轻量模式] 只能做查询和对话。"
+                          "涉及创建/修改/删除/整理文件/生成文档/联网搜索等重操作时，"
+                          "礼貌告知用户「精力不足，等配额恢复后再帮你做」，不要假装已完成。")
+
     use_anthropic = (
         settings.ai.provider == "minimax"
         or "anthropic" in settings.ai.base_url.lower()
     )
 
-    runner = LLMRunner(profile.tool_names, settings)
+    runner = LLMRunner(tool_names, settings)
     full_reply = ""
     usage_tokens = {"input": 0, "output": 0}
     anthr_messages: list = []
