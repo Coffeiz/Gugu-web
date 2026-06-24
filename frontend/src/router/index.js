@@ -47,6 +47,12 @@ const routes = [
         component: () => import('@/views/Files/index.vue'),
         meta: { title: '文件库' },
       },
+      {
+        path: 'schedules',
+        name: 'Schedules',
+        component: () => import('@/views/Schedules/index.vue'),
+        meta: { title: '定时任务' },
+      },
     ],
   },
 

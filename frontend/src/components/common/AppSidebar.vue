@@ -27,6 +27,7 @@
           <template #badge>{{ projectStore.activeCount }}</template>
         </NavItem>
         <NavItem to="/calendar" :icon="PhCalendarBlank">日历</NavItem>
+        <NavItem to="/schedules" :icon="PhAlarm">定时任务</NavItem>
         <div class="nav-item soon-item">
           <PhGraph class="nav-icon" :size="15" />
           <span class="nav-label-text">思维</span>
@@ -152,6 +153,7 @@ import {
   PhSquaresFour,
   PhStack,
   PhCalendarBlank,
+  PhAlarm,
   PhGraph,
   PhFolder,
   PhAddressBook,

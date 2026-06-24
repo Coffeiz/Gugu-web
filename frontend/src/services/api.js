@@ -113,6 +113,16 @@ export const projectsApi = {
   delete: (id)       => del(`/projects/${id}`),
 }
 
+// ── ScheduledTasks（定时任务）─────────────────────────────────────────────────
+export const scheduledTasksApi = {
+  list:         ()         => get('/scheduled-tasks'),
+  create:       (data)     => post('/scheduled-tasks', data),
+  update:       (id, data) => patch(`/scheduled-tasks/${id}`, data),
+  delete:       (id)       => del(`/scheduled-tasks/${id}`),
+  run:          (id)       => post(`/scheduled-tasks/${id}/run`),
+  setReminders: (data)     => patch('/scheduled-tasks/reminders', data),
+}
+
 // ── Files ─────────────────────────────────────────────────────────────────────
 export const filesApi = {
   list: ({ space, projectId, folderId, mindMapId, ext, q } = {}) => {
