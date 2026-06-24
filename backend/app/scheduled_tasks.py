@@ -68,14 +68,17 @@ async def reconcile() -> None:
 
 
 # ── 执行 ─────────────────────────────────────────────────────────────────────
-async def execute_task(task_id: int, is_trial: bool = False) -> None:
+async def execute_task(task_id: int, is_trial: bool = False) -> dict:
+    """执行一次任务，返回各渠道投递结果 {渠道: 状态}（试运行据此给用户反馈）。"""
     import app.db.session as ss
     from app.models import ScheduledTask
+    result: dict = {}
     async with ss._SessionLocal() as db:
         t = await db.get(ScheduledTask, task_id)
         if not t or not t.enabled:
-            return
+            return {"错误": "任务不存在或已停用"}
         payload, uid, name = t.payload or "", t.user_id, t.name
+        chans = {c for c in (t.channels or "").split(",") if c}
         t.last_run_at = datetime.utcnow()
         if not is_trial and (t.cron or "").startswith("@once:"):
             t.enabled = False
@@ -88,16 +91,28 @@ async def execute_task(task_id: int, is_trial: bool = False) -> None:
             f"请以咕咕的身份完成这项任务，并将结果告知用户。"
         )
         text = await _run_agent(uid, prompt)
-        from app.core import events as _ev
-        await _ev.publish(uid, notification={"title": name, "content": text})
-        try:
-            await _deliver_im(uid, f"⏰ {name}\n\n{text}")
-        except Exception as e:
-            print(f"[sched] im 投递失败: {type(e).__name__}: {e}", flush=True)
+        # 按用户选的渠道投递。chat=web 历史别名；im=发到用过的所有 IM 平台（旧任务兼容）。
+        if {"web", "chat"} & chans:
+            from app.core import events as _ev
+            await _ev.publish(uid, notification={"title": name, "content": text})
+            result["web 通知"] = "已发送"
+        im_targets = {_CHAN_PLATFORM[c] for c in chans if c in _CHAN_PLATFORM}
+        if "im" in chans:
+            im_targets.update(_CHAN_PLATFORM.values())
+        for platform in im_targets:
+            lbl = _PLAT_LABEL.get(platform, platform)
+            try:
+                sent = await _deliver_im(uid, f"⏰ {name}\n\n{text}", platform)
+                result[lbl] = "已发送" if sent else "无可触达地址（先给该 bot 发条消息）"
+            except Exception as e:
+                result[lbl] = f"失败：{type(e).__name__}"
+                print(f"[sched] {platform} 投递失败: {type(e).__name__}: {e}", flush=True)
     except Exception as e:
         import traceback
+        result["错误"] = f"{type(e).__name__}: {e}"
         print(f"[sched] 执行任务 {task_id} 出错: {type(e).__name__}: {e}", flush=True)
         traceback.print_exc()
+    return result
 
 
 async def _run_agent(user_id, prompt: str) -> str:
@@ -111,12 +126,37 @@ async def _run_agent(user_id, prompt: str) -> str:
     return text or "（咕咕这次没有产出内容）"
 
 
+# 渠道 → IM 平台标识（worker 里 QQ 的 platform 是 "qqbot"）
+_CHAN_PLATFORM = {"feishu": "feishu", "qq": "qqbot"}
+_PLAT_LABEL = {"feishu": "飞书", "qqbot": "QQ"}
+
+
 # ── IM 投递 ──────────────────────────────────────────────────────────────────
-async def _deliver_im(user_id, text: str) -> None:
-    """按 Redis 里存的可触达地址主动 DM。飞书可主动；QQ 主动受限，best-effort。"""
-    reach = await get_imreach(user_id)
+async def _has_enabled_bot(user_id, platform: str) -> bool:
+    """该用户在该平台是否有 enabled 的 bot。保险二：解绑后即使地址残留也不投递。"""
+    import app.db.session as ss
+    from app.models import UserBot
+    from sqlalchemy import select
+    async with ss._SessionLocal() as db:
+        row = (await db.execute(
+            select(UserBot.id).where(
+                UserBot.user_id == _as_uuid(user_id),
+                UserBot.platform == platform,
+                UserBot.enabled.is_(True),
+            )
+        )).first()
+    return row is not None
+
+
+async def _deliver_im(user_id, text: str, platform: str | None = None) -> bool:
+    """主动 DM 到指定 IM 平台。platform=None 时发到最近一次可触达平台（兜底）。
+    飞书可主动；QQ 主动受限，best-effort。返回是否真的投出（无地址/无活绑定=False）。"""
+    # 保险二：必须有该平台的 enabled bot 才发——解绑后绝不发给旧账号
+    if platform and not await _has_enabled_bot(user_id, platform):
+        return False
+    reach = await get_imreach(user_id, platform)
     if not reach:
-        return   # 该用户没绑/没用过 IM，跳过（不算错）
+        return False   # 该平台没用过/无可触达地址，跳过
     import worker
     payload = {
         "platform": reach.get("platform"),
@@ -125,29 +165,51 @@ async def _deliver_im(user_id, text: str) -> None:
         "platform_user_id": reach.get("puid"),
     }
     await worker._send(payload, text)
+    return True
 
 
 # ── IM 可触达地址（worker 收到消息时记一份，主动推送时用）──────────────────────
-def _reach_key(user_id) -> str:
-    return f"imreach:{user_id}"
+def _reach_key(user_id, platform: str | None = None) -> str:
+    return f"imreach:{user_id}:{platform}" if platform else f"imreach:{user_id}"
 
 
 async def save_imreach(user_id, platform, channel_id, chat_id, puid) -> None:
     from app.core import redis as R
+    data = json.dumps({"platform": platform, "channel_id": channel_id, "chat_id": chat_id, "puid": puid})
     try:
-        await R.get_redis().set(
-            _reach_key(user_id),
-            json.dumps({"platform": platform, "channel_id": channel_id, "chat_id": chat_id, "puid": puid}),
-            ex=90 * 86400,   # 90 天，每次收到消息刷新
-        )
+        r = R.get_redis()
+        # 按平台键（精确投递）+ 最近键（兜底/旧逻辑），都 90 天滚动刷新
+        await r.set(_reach_key(user_id, platform), data, ex=90 * 86400)
+        await r.set(_reach_key(user_id), data, ex=90 * 86400)
     except Exception:
         pass
 
 
-async def get_imreach(user_id) -> dict | None:
+async def get_imreach(user_id, platform: str | None = None) -> dict | None:
     from app.core import redis as R
     try:
-        v = await R.get_redis().get(_reach_key(user_id))
+        r = R.get_redis()
+        if platform:
+            v = await r.get(_reach_key(user_id, platform))
+            if v:
+                return json.loads(v)
+            v = await r.get(_reach_key(user_id))   # 兜底：最近键正好是该平台
+            d = json.loads(v) if v else None
+            return d if d and d.get("platform") == platform else None
+        v = await r.get(_reach_key(user_id))
         return json.loads(v) if v else None
     except Exception:
         return None
+
+
+async def clear_imreach(user_id, platform: str) -> None:
+    """解绑某平台时清掉可触达地址：删按平台键 + 若最近键正好是该平台也删（保险一）。"""
+    from app.core import redis as R
+    try:
+        r = R.get_redis()
+        await r.delete(_reach_key(user_id, platform))
+        v = await r.get(_reach_key(user_id))
+        if v and json.loads(v).get("platform") == platform:
+            await r.delete(_reach_key(user_id))
+    except Exception:
+        pass

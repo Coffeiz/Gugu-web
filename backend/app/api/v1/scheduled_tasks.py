@@ -19,7 +19,7 @@ from app.models import ScheduledTask, User
 router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-tasks"])
 
 _ACTIONS = {"agent"}        # 用户能建的动作（系统级 deadline_scan 不开放）
-_CHANNELS = {"chat", "im"}
+_CHANNELS = {"web", "feishu", "qq", "im", "chat"}   # web=站内通知、feishu/qq=各 IM；chat=web、im=全部 IM（历史别名）
 
 
 def _validate_cron(cron: str) -> None:
@@ -39,7 +39,7 @@ def _validate_cron(cron: str) -> None:
 
 def _norm_channels(chs: list[str] | None) -> str:
     chs = [c for c in (chs or []) if c in _CHANNELS]
-    return ",".join(chs) if chs else "chat"
+    return ",".join(chs) if chs else "web"
 
 
 def _to_resp(t: ScheduledTask) -> dict:
@@ -126,19 +126,16 @@ async def delete_task(task_id: int, user: User = Depends(get_current_user), db: 
     await db.commit()
 
 
-_trial_tasks: set = set()   # 后台试运行任务引用，防 GC
-
-
 @router.post("/{task_id}/run")
 async def run_now(task_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """立即试运行一次：后台 fire-and-forget，立刻返回；结果走 SSE 通知 + IM 投递。
+    """立即试运行一次并等结果，返回各渠道投递状态（成功 / 无地址 / 失败）给用户看。
 
-    不在请求里 await 整个 agent 循环——那会让请求一直挂着、占住 DB 连接 30s+。
+    试运行是手动操作、用户在等反馈，所以同步 await（连接池已够，不会像 SSE 那样耗尽）。
     """
     await _owned(task_id, user, db)
-    import asyncio
     from app import scheduled_tasks as ST
-    t = asyncio.create_task(ST.execute_task(task_id, is_trial=True))
-    _trial_tasks.add(t)
-    t.add_done_callback(_trial_tasks.discard)
-    return {"ok": True, "msg": "已开始执行，完成后会在通知里告诉你"}
+    result = await ST.execute_task(task_id, is_trial=True)
+    if not result:
+        return {"ok": True, "msg": "已执行（该任务未选任何投递渠道）"}
+    msg = "试运行结果：\n" + "\n".join(f"· {k}：{v}" for k, v in result.items())
+    return {"ok": True, "result": result, "msg": msg}

@@ -25,7 +25,26 @@
 
 - **SSE 鉴权不查 DB**：`/live/stream` 原经 `get_current_user`（`Depends(get_db)`）拿用户，DB session 在 SSE 整个生命周期不释放——每条长连接占一个池连接。新增 `get_current_user_id`（仅解 JWT、不碰 DB），SSE 端点改用它，长连接不再占池。
 - **连接池调优**（`app/db/session.py`）：`pool_size=15`、`max_overflow=25`（峰值 40/进程，web+worker ≤80，留 ~20 给 pgAdmin）、`pool_timeout=10`（等不到快速失败而非挂 30s）、`pool_recycle=1800`。
-- **试运行 fire-and-forget**：`POST /scheduled-tasks/{id}/run` 原在请求里 `await` 整个 agent 循环（10–30s+），既挂住请求又长占 DB 连接；改为校验归属后 `asyncio.create_task` 后台执行、立即返回，结果走通知/IM。
+- **试运行返回各渠道结果**：`POST /scheduled-tasks/{id}/run` 同步执行并返回每个渠道的投递状态（`已发送` / `无可触达地址` / `失败`），前端弹窗直接显示——不再静默、不用猜哪个平台没收到。连接池已修复，同步 await 一条试运行只占一个连接、不会像 SSE 那样耗尽。
+
+### 定时任务 · 多平台精确投递（按平台存地址 + 连接时存址 + 解绑清址）
+
+> 让用户能**分别勾选** web 通知 / 飞书 / QQ，且各平台独立投递、互不覆盖；并杜绝解绑后误发旧账号。
+
+- **渠道拆分**：原单一「飞书/QQ」(`im`) 拆成 **`web` 通知 · `feishu` · `qq`** 三个独立勾选；后端 `execute_task` 按勾选的渠道分别投递（`web`→SSE 通知；`feishu`/`qq`→对应平台 DM）。旧 `chat`/`im` 作历史别名兼容。
+- **可触达地址按平台存**：`imreach:{uid}:{platform}`（原来是单条 `imreach:{uid}` 互相覆盖，导致「发了 QQ 飞书地址就没」）。`get_imreach(uid, platform)` 精确取该平台地址，合并键仅作兜底。
+- **飞书连接时存地址**：`feishu_connect.poll` 成功后把 owner `open_id` 存进 imreach → **选了飞书无需先聊天即可主动投递**（QQ 受平台限制仍需首条消息学习地址）。
+- **飞书按 open_id 发**：`feishu._do_send` 按收件人前缀自动判断 `ou_`(open_id) / `oc_`(chat_id)，`worker._send` 无 chat_id 时用 open_id。
+- **解绑双保险（防误发旧账号）**：① 解绑 bot 时 `clear_imreach` 删该平台地址；② 投递前 `_deliver_im` 校验该平台有 enabled bot，**无活绑定一律不发**——即使地址残留也发不出去；重绑生成新 app + 新地址。
+- **设置界面**：某平台已绑 bot 时**隐藏「扫码连接」按钮**（显示「已连接·删除后可重连」），UI 层定死「每用户每平台一个 bot」。
+
+### 通知面板 · 弹窗高度自适应不溢出
+
+- 弹窗高度按视口动态算（`maxHeight = 视口高 − 上下边距`），铃铛太靠下时整体上移让出空间，**底部绝不超出页面**；列表在弹窗内滚动。
+
+### 文档 · 并发优化 roadmap 收口
+
+- `开发链路-roadmap.md` 重命名为 **`并发优化ROADMAP.md`**（单一权威：诊断依据 + P0–P4 + ①–⑨ backlog）；合并并删除旧的 `并发与性能优化.md`（诊断数据已抢救进新文档）；`agent.md` 相应章节砍成指针。回填状态：⑤ DB 池、② 标题/反思 fire-and-forget 标记已完成。
 
 ### 项目看板 · 进度条瀑布动画
 
@@ -42,10 +61,10 @@
 - 各列 `.col-body` 加 `scrollbar-gutter: stable`，滚动条出现/消失时卡片宽度不再跳变。
 - 通过 `margin-right: -8px` + `padding-right: 14px` 将滚动条推入列右侧 padding 区域，远离卡片内容。
 
-### 通知面板 · Markdown 渲染 + 高度限制
+### 通知面板 · Markdown 渲染
 
 - 通知内容（`n.content`）从纯文本 `{{ }}` 改为 `v-html`，经 `marked.parse()` 渲染，支持加粗、列表、行内代码、标题等 Markdown 格式。
-- 通知列表加 `max-height: 60vh` + `overflow-y: auto`，内容过多时可滚动，不再撑破面板。
+- 高度限制：初版 `max-height: 60vh`，后改为按视口动态算、底部不溢出（见上「通知面板 · 弹窗高度自适应不溢出」）。
 
 ### 定时任务 · 试运行不关闭 @once 任务
 

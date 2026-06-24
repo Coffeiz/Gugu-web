@@ -1,4 +1,4 @@
-# 咕咕 · 功能开发链路 Roadmap
+# 咕咕 · 并发优化 Roadmap
 
 > **创建**：2026-06-24
 > **范围**：IM/Agent 扩量为主线的分期开发链路 + 依赖关系 + Admin 可管理项清单。
@@ -6,6 +6,25 @@
 > 相关：运行时决策环 [`agent-决策环.md`](agent-决策环.md)｜IM 接入与三进程部署 [`agent-im接入架构.md`](agent-im接入架构.md)。
 
 > **部署形态决策（2026-06-24）：默认单机。** web + worker + supervisor + 网关同机 → 一套 `.env`/`override` 管全部、Admin 配置 + 重启全生效。**跨主机控制面（Redis 共享配置 + 命令频道）移出范围**；扩量靠单机内手段（`uvicorn --workers N`、**单 worker 进程 + async 并发**、多 LLM key、DB 池）。瓶颈是大模型延迟、非机器，一台机远超 50 人才到头。连带简化：`user_gate` 用进程内锁即**终态**，P3 多 worker/分片基本划掉（见下）。
+
+---
+
+## 诊断依据（2026-06-23 实测）
+
+> 起因：飞书回复偶发很慢。排查定位为 **LLM 接口延迟抖动**（非飞书/服务器/代码 bug）——这是「⑥ 换 provider 杠杆最大」「并发治排队、provider 治延迟」整套排序的证据基础。
+
+实测（MiniMax-M3 经 `api.minimaxi.com/anthropic`）：
+
+| 测试 | 结果 |
+|------|------|
+| 一条 IM `run_collect`（14 字回复） | **17.9s**（含标题生成 1.3s，现已 fire-and-forget 移出关键路径） |
+| 裸调 LLM，无工具，回一字 ×6 | **11.9 / 2.3 / 4.0 / 1.9 / 2.4 / 1.7s**（同请求 1.7~17s 抖） |
+| 裸调 + 44 工具 | 2.5~15.6s（不稳定；「44 工具慢 5 倍」是采样偏差，工具数非主因） |
+| 工具加 `cache_control` 重复调 | `cache_read` 命中省 token，但延迟仍 8~12s（缓存救不了延迟） |
+
+**结论**：根因是 **MiniMax-M3 接口又慢又抖（同请求 1.7~17s）**，不是飞书/服务器/工具数/代码；`prompt 缓存省钱不省时`。→ 治本是 **⑥ 换稳快 provider（DeepSeek-V3 / Claude）**；但并发结构（① 串行 worker）在多用户下仍会暴露，需一并做。**正交：并发（①③④）治排队 · provider（⑥）治单条延迟。**
+
+> 复测脚本思路：`AsyncAnthropic` 指向 `settings.ai.base_url`，连发 6 次相同裸调看抖动；再加 `DefaultProfile().tool_names` 工具 schema 对比。
 
 ---
 
@@ -43,7 +62,7 @@ flowchart TD
 ### P0 · 现在（配置级，今天就能做）
 
 - 提交并部署本次修复（含取消修复，worker 主机需 `git pull` + 重启 `gugu-worker`）
-- 周边松绑（零代码）：DB `pool_size` 调大（⑤）· Redis `maxlen` · `uvicorn --workers N`（④，⚠️ 需先做 P1-地基A 防周期任务重复跑）
+- 周边松绑（零代码）：~~DB `pool_size` 调大（⑤）~~ ✅ **已做**（15+25）· Redis `maxlen` · `uvicorn --workers N`（④，⚠️ 需先做 P1-地基A 防周期任务重复跑）
 - **provider 杠杆（⑥）**：多备 key / 换 DeepSeek-V3·Claude（`ai_presets` 已支持）—— 真瓶颈在大模型延迟/速率，这步性价比最高，建议和 ④⑤ 一起现在做
 - **依赖**：无 ｜ **价值**：零/低代码拿到周边余量
 
@@ -112,13 +131,13 @@ flowchart TD
 | ② | 标题生成 + 反思移出关键路径 | —— | ✅ **已完成**（`runner._schedule_title` + `reflection.schedule` 均 fire-and-forget） |
 | ③ | 多开 worker 进程（消费组 + systemd） | P3 | ⚠️ **依赖 ①**：进程内锁只在单进程有效，多开需 `user_gate` 升级为 `hash(puid)` 分片或 Redis 锁 + 新增 `gugu-worker@.service` 模板 |
 | ④ | uvicorn --workers N | P0 | ⚠️ 需先做 P1-地基A（否则周期任务 N 倍重复） |
-| ⑤ | DB 连接池调大 | P0 | 配置级，今天能做 |
+| ⑤ | DB 连接池调大 | P0 | ✅ **已完成**（`pool_size=15` / `max_overflow=25` / `timeout=10` / `recycle=1800`，`db/session.py`） |
 | ⑥ | 换稳/快 provider（DeepSeek-V3 / Claude） | **P0（提前）** | 真瓶颈、杠杆最大；`ai_presets` 已支持多 key |
 | ⑦ | 慢尾兜底：超时 + 重试 | P1 | 并发化时一起做（韧性） |
 | ⑧ | IM 流式体验 | P2（独立轨） | 注：IM 现为非流式，飞书/QQ 靠卡片更新模拟 |
 | ⑨ | 队列水位监控 + 告警 | P2 | 🟡 监控✅（服务页 length/lag/pending）；告警待做 |
 
-**净结果**：② 已完成；⑨ 半完成；④⑤⑥ 现在就做；① 是 P1 核心；③⑦ 挂在 ① 上；⑧ 独立 UX 轨。
+**净结果**：②⑤ 已完成；⑨ 半完成；④⑥ 现在就做；① 是 P1 核心；③⑦ 挂在 ① 上；⑧ 独立 UX 轨。
 
 ---
 

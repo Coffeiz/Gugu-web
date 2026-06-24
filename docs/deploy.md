@@ -267,7 +267,7 @@ journalctl -u gugu-supervisor -f         # 或 tail logs/gugu-supervisor.log
 
 ### 4.3 把网关 / worker 拆到独立服务器（可选，非默认）
 
-> **默认单机部署**（web + worker + supervisor + 网关同机）——一套配置管全部、Admin 配置/重启全生效、扩量靠单机内手段就够（见 [`开发链路-roadmap.md`](开发链路-roadmap.md) 部署形态决策）。**以下拆机为可选路径**，仅当确有多机需求时用；跨主机的 Admin 配置/重启不生效（§4.4）。
+> **默认单机部署**（web + worker + supervisor + 网关同机）——一套配置管全部、Admin 配置/重启全生效、扩量靠单机内手段就够（见 [`并发优化ROADMAP.md`](并发优化ROADMAP.md) 部署形态决策）。**以下拆机为可选路径**，仅当确有多机需求时用；跨主机的 Admin 配置/重启不生效（§4.4）。
 
 > 网关/worker 和后台**不直接通信**，只在 **Redis + DB** 这条共享总线上碰头。所以拆机要配的就这两个 IP——**没有「web 的 IP」要填**。
 
@@ -286,7 +286,7 @@ sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
 
 **三条铁律：**
 1. **全网只能一个 supervisor** —— 两个会给每个 bot 各拉一条 WS → 同 bot 双连接、平台冲突。网关机只此一台跑 supervisor，其余机器只跑 worker。
-2. **worker 可多台**（消费组自动分摊），但同用户并发目前会乱序/串取消——多机前先做 `user_gate`/分片（见 [`开发链路-roadmap.md`](开发链路-roadmap.md) ①/③）。
+2. **worker 可多台**（消费组自动分摊），但同用户并发目前会乱序/串取消——多机前先做 `user_gate`/分片（见 [`并发优化ROADMAP.md`](并发优化ROADMAP.md) ①/③）。
 3. **周期清理任务只一处跑**（web 那台），别在网关机重复（见 roadmap 进程优化 A）。
 
 ### 4.4 跨主机的 Admin 限制

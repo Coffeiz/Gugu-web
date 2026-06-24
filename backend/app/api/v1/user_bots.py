@@ -129,6 +129,13 @@ async def delete_my_bot(
     bot = await db.get(UserBot, bot_id)
     if not bot or bot.user_id != current_user.id:
         raise HTTPException(404, "机器人不存在")
+    platform = bot.platform
     await db.delete(bot)
     await db.commit()
+    # 解绑即清可触达地址（保险一）→ 错勾该平台也不会发给旧账号
+    try:
+        from app import scheduled_tasks as ST
+        await ST.clear_imreach(current_user.id, platform)
+    except Exception:
+        pass
     await _touch_supervisor()

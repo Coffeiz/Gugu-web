@@ -48,9 +48,11 @@ async def _resolve_user(payload: dict):
 async def _send(payload: dict, text: str):
     """按平台把文本发回。"""
     platform = payload.get("platform")
-    if platform == "feishu" and payload.get("chat_id"):
+    if platform == "feishu" and (payload.get("chat_id") or payload.get("platform_user_id")):
         from agent.adapters import feishu
-        await feishu.send_text(payload["chat_id"], text, payload.get("channel_id"))
+        # chat_id（消息学到的会话）优先，否则用 open_id（连接时存的 owner 地址）
+        rid = payload.get("chat_id") or payload.get("platform_user_id")
+        await feishu.send_text(rid, text, payload.get("channel_id"))
     elif platform == "qqbot" and payload.get("platform_user_id"):
         from agent.adapters import qq
         await qq.send_c2c(payload["platform_user_id"], text,

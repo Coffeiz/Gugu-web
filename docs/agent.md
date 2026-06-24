@@ -816,7 +816,7 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 - [x] **step 4 · `adapters/feishu.py`**：飞书 WebSocket 长连收 `im.message.receive_v1` → `produce_sync` 入队（lark `ws.Client.start()` 同步阻塞、handler 同步，故用同步 produce）。**实测连上飞书 WSS 并收到真实消息**
 - [x] **step 5** 接通发回：`worker.handle` 跑完 `run_collect` → 按 platform 发回（飞书 `feishu.send_text` 用 `lark.Client` API）。**实测飞书私聊端到端：发"你是谁"→咕咕带人格回复送达飞书**
 - [x] ~~**step 6 · 用户映射（OAuth 扫码绑定）**：`PlatformBinding` + `feishu_bind.py`~~ —— **已被 BYO 取代**：后改为「每用户自带 bot，扫码 device-flow 自动创建」，bot 即归属 owner，删掉了绑定表 + OAuth 那套（见下「BYO 接入与动态网关」）
-- [ ] **step 6 余项**：事件去重、平台 token 存 Redis、用户状态机（并入 Phase 1.7）、背压
+- [ ] **step 6 余项**：事件去重、平台 token 存 Redis、用户状态机（并入 Phase 1.7）、背压（**去重 / 背压详见下「并发性能优化」**）
 
 > **首平台里程碑（2026-06-23）**：飞书私聊端到端打通——`飞书消息 → 网关(WSS) → Redis队列 → worker → run_collect(人格+记忆+41工具) → feishu.send_text 发回`。坑：worker 阻塞读 XREADGROUP 需 `socket_timeout=None`，否则到点抛 TimeoutError。
 
@@ -889,6 +889,10 @@ POST q.qq.com/lite/create_bind_task {"key": base64(随机32字节)} → task_id 
 - 一度误判为"腾讯官方合作墙"，扒 QwenPaw 源码 + 实测推翻。详见 `docs/devlog.md` 2026-06-23 QQ 条、`docs/agent-im接入架构.md` §3.2、`qq-scan-connect` 记忆。
 
 **③ C2C 单聊收发**：`botpy.Intents(public_messages=True)` + `on_c2c_message_create`；回复用 `post_c2c_message(openid, msg_id, content)`（被动回复，worker 端独立 `BotHttp.login` 取 token、过期重建）。sandbox 字段区分开发/生产环境。
+
+#### 并发性能优化
+
+> **完整诊断、方案与分期见 [`并发优化ROADMAP.md`](并发优化ROADMAP.md)**（诊断依据 + P0–P4 + ①–⑨ backlog）。一句话：worker 现为单进程串行（`run_once` 的 `for msg: await handle`，并发度=1，瓶颈在串行非资源）；核心优化是 **① worker 串行→有界并发 + `user_gate(puid)` 按用户串行**（P1），配合 ⑦ 慢尾兜底；横向扩（③多 worker / ④uvicorn --workers，需先抽离 scheduler 单实例）按埋点数据触发。`并发治排队 · provider(⑥)治延迟`，正交。
 
 **伙伴深化（更后）**
 - [ ] 主动触达：截止日临近提醒、异常沉默感知、情绪状态关注

@@ -120,6 +120,14 @@ async def poll(
             db.add(bot)
         await db.commit()
         await db.refresh(bot)
+        # 连接时存 owner 可触达地址（open_id）→ 选了飞书无需先聊天即可主动投递
+        oid = (data.get("user_info") or {}).get("open_id") or data.get("open_id")
+        if oid:
+            try:
+                from app import scheduled_tasks as ST
+                await ST.save_imreach(current_user.id, "feishu", str(bot.id), None, oid)
+            except Exception:
+                pass
         await R.get_redis().delete(_rk(poll_id))
         try:
             await R.get_redis().publish("im:supervisor:reload", "1")

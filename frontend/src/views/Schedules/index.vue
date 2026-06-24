@@ -60,22 +60,31 @@
           <span>发到哪</span>
           <div class="chans">
             <label class="chk-row">
-              <input type="checkbox" value="chat" v-model="form.channels" class="chk-input" />
+              <input type="checkbox" value="web" v-model="form.channels" class="chk-input" />
               <span class="chk-box">
-                <svg v-if="form.channels.includes('chat')" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <svg v-if="form.channels.includes('web')" width="10" height="10" viewBox="0 0 10 10" fill="none">
                   <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </span>
-              咕咕聊天
+              web 通知
             </label>
             <label class="chk-row">
-              <input type="checkbox" value="im" v-model="form.channels" class="chk-input" />
+              <input type="checkbox" value="feishu" v-model="form.channels" class="chk-input" />
               <span class="chk-box">
-                <svg v-if="form.channels.includes('im')" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <svg v-if="form.channels.includes('feishu')" width="10" height="10" viewBox="0 0 10 10" fill="none">
                   <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </span>
-              飞书 / QQ
+              飞书
+            </label>
+            <label class="chk-row">
+              <input type="checkbox" value="qq" v-model="form.channels" class="chk-input" />
+              <span class="chk-box">
+                <svg v-if="form.channels.includes('qq')" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              QQ
             </label>
           </div>
         </div>
@@ -109,7 +118,7 @@ const dayOpts = [
   { v: 4, label: '四' }, { v: 5, label: '五' }, { v: 6, label: '六' }, { v: 0, label: '日' },
 ]
 const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0]
-const form = reactive({ name: '', payload: '', days: [], time: '09:00', channels: ['chat'] })
+const form = reactive({ name: '', payload: '', days: [], time: '09:00', channels: ['web'] })
 
 function pad(n) { return String(n).padStart(2, '0') }
 function toggleDay(v) {
@@ -131,7 +140,7 @@ async function load() {
 }
 onMounted(load)
 
-function blankForm() { return { name: '', payload: '', days: [], time: '09:00', channels: ['chat'] } }
+function blankForm() { return { name: '', payload: '', days: [], time: '09:00', channels: ['web'] } }
 function openCreate() {
   editing.value = null
   Object.assign(form, blankForm())
@@ -142,7 +151,10 @@ function openCreate() {
 function openEdit(t) {
   editing.value = t
   const { days, time } = parseCron(t.cron)
-  Object.assign(form, { name: t.name, payload: t.payload, days, time, channels: [...t.channels] })
+  // 兼容老数据：chat→web，im→飞书+QQ
+  const chans = [...new Set([...t.channels].flatMap(c =>
+    c === 'chat' ? ['web'] : c === 'im' ? ['feishu', 'qq'] : [c]))]
+  Object.assign(form, { name: t.name, payload: t.payload, days, time, channels: chans })
   formErr.value = ''
   showModal.value = true
   nextTick(() => nameRef.value?.focus())
@@ -184,7 +196,7 @@ function cronLabel(cron) {
   return `每周${DOW_ORDER.filter(d => days.includes(d)).map(d => weekdays[d]).join('、')} ${time}`
 }
 function channelLabel(chs) {
-  const map = { chat: '聊天', im: '飞书/QQ' }
+  const map = { web: '通知', chat: '通知', feishu: '飞书', qq: 'QQ', im: '飞书/QQ' }
   return (chs || []).map(c => map[c] || c).join(' + ') || '—'
 }
 function fmtTime(iso) {
@@ -224,9 +236,9 @@ async function removeTask(t) {
 <style scoped>
 .sched-page { height: 100%; font-family: var(--font-sans); }
 
-/* 和顶栏「新建项目」按钮一致 */
+/* 和顶栏「新建项目」按钮一致（同 radius，且不用 squircle，与其圆角形状对齐） */
 .btn-primary {
-  padding: 8px 16px; border: none; border-radius: var(--radius-sm); corner-shape: squircle;
+  padding: 8px 16px; border: none; border-radius: var(--radius-sm);
   background: linear-gradient(135deg, #7b7fb2, #9590c4); color: #fff;
   font-size: 13px; font-weight: 600; cursor: pointer; font-family: var(--font-sans);
   box-shadow: 0 3px 12px rgba(123,127,178,0.3);
@@ -260,24 +272,24 @@ async function removeTask(t) {
 .task-card {
   position: relative;
   background: rgba(255,255,255,0.56); border: 1px solid rgba(255,255,255,0.72);
-  border-radius: var(--radius-md); corner-shape: squircle;
+  border-radius: var(--radius-md);   /* 14px，与文件卡 .fc-card 一致（普通圆角，不用 squircle） */
   box-shadow: 0 2px 8px rgba(80,90,110,0.07);
   padding: 13px 15px; display: flex; flex-direction: column; gap: 7px;
   overflow: hidden;
   transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.3s ease, background 0.25s ease-out;
 }
 .task-card::after {
-  content: ''; position: absolute; inset: 0; border-radius: inherit; corner-shape: squircle;
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
   background: linear-gradient(to top, rgba(255,255,255,0.08), transparent 50%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
   transition: background 0.3s cubic-bezier(0.34,1.2,0.64,1); pointer-events: none;
 }
 .task-card > * { position: relative; z-index: 1; }
-.task-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
-.task-card:hover::after { background: linear-gradient(to top, rgba(255,255,255,0.25), rgba(255,255,255,0.05) 50%); }
+.task-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
+.task-card:hover::after { background: rgba(255,255,255,0.2); }
 .task-card.off { opacity: 0.5; }
 .tc-top { display: flex; align-items: center; gap: 8px; }
-.tc-name { font-size: 14px; font-weight: 600; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-name { font-size: 13px; line-height: 1.2; font-weight: 600; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tc-when { font-size: 12px; color: var(--text-secondary); }
 .tc-payload { font-size: 12px; color: var(--text-secondary); background: rgba(0,0,0,0.035); border-radius: 8px; padding: 6px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tc-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
@@ -305,7 +317,7 @@ async function removeTask(t) {
 .title-input {
   width: 100%; box-sizing: border-box; outline: none;
   font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans);
-  padding: 9px 12px; margin-bottom: 14px;
+  padding: 6px 11px; margin-bottom: 10px;
   border: 1px solid transparent; border-radius: 10px; corner-shape: squircle;
   background: transparent;
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;

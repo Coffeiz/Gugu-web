@@ -195,12 +195,19 @@ function toggleNotif() {
   nextTick(() => {
     const rect = notifBtnRef.value?.getBoundingClientRect()
     if (!rect) return
-    const top = Math.min(rect.top, window.innerHeight - 320)
-    notifStyle.value = {
+    const gap = 16, MIN = 240
+    let top = rect.top
+    let maxHeight = window.innerHeight - top - gap
+    if (maxHeight < MIN) {                    // 铃铛太靠下 → 整体上移让出空间
+      top = Math.max(gap, window.innerHeight - gap - MIN)
+      maxHeight = window.innerHeight - top - gap
+    }
+    notifStyle.value = {                        // 底部 = top + maxHeight = 视口高 - gap，绝不超出页面
       position: 'fixed',
       top:  top + 'px',
       left: (rect.right + 10) + 'px',
       width: '300px',
+      maxHeight: maxHeight + 'px',
       zIndex: 1000,
     }
   })
@@ -327,20 +334,8 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 }
 </style>
 
-<!-- 通知弹窗样式全局（Teleport 到 body） -->
+<!-- 通知弹窗样式全局（Teleport 到 body）；菜单条目统一沿用 global.css 的 .popup-menu-item -->
 <style>
-.popup-menu-item {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; padding: 9px 12px;
-  background: none; border: none; cursor: pointer;
-  font-size: 13px; font-family: 'PingFang SC', 'Segoe UI', sans-serif;
-  color: #1e2028; text-align: left; transition: background 0.12s;
-}
-.popup-menu-item.danger { color: #c84a4a; }
-.popup-menu-sep { height: 1px; background: rgba(0,0,0,0.06); margin: 3px 0; }
-.settings-popup .popup-menu-item:hover:not(:disabled) { background: rgba(255,255,255,0.55); }
-.settings-popup .popup-menu-item.danger:hover:not(:disabled) { background: rgba(200,90,90,0.1); }
-
 .settings-popup {
   position: absolute; bottom: calc(100% + 8px); left: 0; right: 0;
   z-index: 100; overflow: hidden;
@@ -350,14 +345,24 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.95), 0 4px 16px rgba(0,0,0,0.08);
   user-select: none;
 }
-.settings-popup .popup-menu-item { border-radius: 0; }
+/* 用户弹窗条目沿用之前的外观（仅作用于 .settings-popup，不影响其它菜单） */
+.settings-popup .popup-menu-item {
+  padding: 9px 12px; border-radius: 0;
+  font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028;
+}
+.settings-popup .popup-menu-item.danger { color: #c84a4a; }
+.settings-popup .popup-menu-item:hover:not(:disabled) { background: rgba(255,255,255,0.55); }
+.settings-popup .popup-menu-item.danger:hover:not(:disabled) { background: rgba(200,90,90,0.1); }
+.settings-popup .popup-menu-sep { background: rgba(0,0,0,0.06); margin: 3px 0; }
 
 .notif-popup {
-  background: var(--panel-bg);
+  /* 与 .popup-menu（右键/排序弹窗）统一外观 */
+  background: rgba(255,255,255,0.6);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255,255,255,0.82); border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 10px 36px rgba(30,40,80,0.14);
+  border: 1px solid rgba(255,255,255,0.75); border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
   overflow: hidden;
+  display: flex; flex-direction: column;   /* header 固定 + 列表内部滚动，配合内联 max-height */
 }
 
 .notif-header {
@@ -378,7 +383,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 
 .notif-list {
   padding: 6px; display: flex; flex-direction: column; gap: 2px;
-  max-height: 60vh; overflow-y: auto;
+  flex: 1; min-height: 0; overflow-y: auto;   /* 在弹窗 max-height 内滚动，不撑出页面 */
 }
 .notif-list::-webkit-scrollbar { width: 3px; }
 .notif-list::-webkit-scrollbar-track { background: transparent; margin: 6px; }

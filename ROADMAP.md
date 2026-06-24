@@ -3,7 +3,7 @@
 > 当前版本：**0.11.1**　|　最后更新：2026-06-24
 
 本文件汇总产品各阶段目标与进度。详细功能列表见 [docs/wishlist.md](docs/wishlist.md)。
-IM/Agent 扩量分期链路（P0–P4 + 依赖关系 + Admin 可管理项）见 [docs/开发链路-roadmap.md](docs/开发链路-roadmap.md)。
+IM/Agent 扩量分期链路（P0–P4 + 依赖关系 + Admin 可管理项）见 [docs/并发优化ROADMAP.md](docs/并发优化ROADMAP.md)。
 
 ---
 

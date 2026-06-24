@@ -206,9 +206,10 @@
                     <span class="pm-field-name">{{ p.label }}</span>
                     <span class="pm-field-hint">{{ p.hint }}</span>
                   </div>
-                  <button class="pm-bind-btn" :disabled="connecting === p.key" @click="startConnect(p.key)">
+                  <button v-if="!botsOf(p.key).length" class="pm-bind-btn" :disabled="connecting === p.key" @click="startConnect(p.key)">
                     {{ connecting === p.key ? '生成中…' : '扫码连接' }}
                   </button>
+                  <span v-else class="pm-field-hint pm-bound-tag">已连接 · 删除后可重连</span>
                 </div>
 
                 <div v-for="b in botsOf(p.key)" :key="b.id" class="pm-bot-item">

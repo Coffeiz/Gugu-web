@@ -313,16 +313,19 @@ def _build_card_elements(text: str) -> list[dict]:
     return elements or [{"tag": "markdown", "content": _md_to_bold(text)}]
 
 
-def _do_send(client, chat_id: str, text: str) -> bool:
+def _do_send(client, receive_id: str, text: str) -> bool:
     from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
+
+    # 按前缀判断收件人类型：ou_=open_id（连接时存的 owner 地址）、oc_=chat_id（消息学到的会话）
+    rid_type = "open_id" if str(receive_id).startswith("ou_") else "chat_id"
 
     def _create(msg_type: str, content: str) -> bool:
         req = (
             CreateMessageRequest.builder()
-            .receive_id_type("chat_id")
+            .receive_id_type(rid_type)
             .request_body(
                 CreateMessageRequestBody.builder()
-                .receive_id(chat_id).msg_type(msg_type)
+                .receive_id(receive_id).msg_type(msg_type)
                 .content(content)
                 .build()
             ).build()
@@ -340,15 +343,15 @@ def _do_send(client, chat_id: str, text: str) -> bool:
     return _create("text", json.dumps({"text": text}, ensure_ascii=False))
 
 
-async def send_text(chat_id: str, text: str, channel_id: str | None = None) -> bool:
-    """给指定会话发文本（用该 bot 的凭据）。lark API 同步，丢线程跑。"""
+async def send_text(receive_id: str, text: str, channel_id: str | None = None) -> bool:
+    """给指定收件人发文本（chat_id 或 open_id 都行，用该 bot 的凭据）。lark API 同步，丢线程跑。"""
     app_id, app_secret = await _creds_by_id(channel_id)
     if not app_id:
         print(f"[feishu] user_bot {channel_id} 无凭据，发送跳过", flush=True)
         return False
     if channel_id not in _clients:
         _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
-    return await asyncio.to_thread(_do_send, _clients[channel_id], chat_id, text)
+    return await asyncio.to_thread(_do_send, _clients[channel_id], receive_id, text)
 
 
 # ── 发送文件/图片（咕咕 send_file 工具 → IM）──────────────────────────────────
