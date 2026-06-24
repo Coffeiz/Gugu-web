@@ -18,8 +18,9 @@
 - **两个投递渠道**：`chat` 作为 assistant 消息进用户「⏰ 咕咕提醒」会话 + 推 SSE（在线即时/离线下次见，不依赖 IM）；`im` 按 Redis 存的「可触达地址」(`imreach:{user_id}`，worker 收消息时记一份) 主动 DM（飞书可主动，QQ 主动受限 best-effort）。
 - 系统任务种子：首启自动建「截稿临近扫描」(每天 09:00)。`app/core/scheduler.py` 加 `get()` 供 reconcile 增删 job；`app/jobs.py` 收敛为 `scan_upcoming_deadlines` 纯查询辅助。
 - **Admin 服务状态页可见**：worker 心跳带上已挂定时任务（id/name/下次运行时间），服务页 worker 卡片下列出。
-- **用户「定时任务」页**（`/schedules`，侧边栏入口）：内置提醒开关（截稿提醒）+ 自定义任务 CRUD + 「试运行」立即执行一次 + 友好排程选择器（每天 / 工作日 / 每周 + 时间，前端构造 cron）。后端 API `GET/POST/PATCH/DELETE /scheduled-tasks`（cron 校验）+ `POST /{id}/run` + `PATCH /reminders`。
-- ⏳ 待做：Admin 端系统任务配置（截稿扫描的时间/全局开关）。
+- **用户「定时任务」页**（`/schedules`，侧边栏入口，glass 风格）：内置提醒开关（截稿提醒）+ 自定义任务 CRUD + 「试运行」立即执行一次 + 友好排程选择器（每天 / 工作日 / 每周 + 时间，前端构造 cron）。后端 API `GET/POST/PATCH/DELETE /scheduled-tasks`（cron 校验）+ `POST /{id}/run` + `PATCH /reminders`。
+- **Admin 系统任务配置**：服务状态页加「系统定时任务」卡——管理员改截稿扫描的时间、启停、试运行（`/admin/scheduled-tasks` GET/PATCH/`{id}/run`，require_admin）。
+- 三个面齐：用户面板 / 用户开关 / Admin 配置。
 
 ### IM 斜杠强制命令（/stop · /status · /help）
 

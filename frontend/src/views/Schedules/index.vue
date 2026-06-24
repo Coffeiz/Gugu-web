@@ -225,7 +225,13 @@ async function removeTask(t) {
 .btn-primary { padding: 8px 16px; border-radius: 10px; border: none; background: var(--color-primary); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; font-family: var(--font-sans); }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
 
-.card { background: rgba(255,255,255,0.56); border: 1px solid rgba(0,0,0,0.08); border-radius: 16px; padding: 18px 20px; margin-bottom: 16px; }
+.card {
+  background: var(--glass-bg); border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg); corner-shape: squircle;
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  padding: 18px 20px; margin-bottom: 16px;
+}
 .card-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 12px; }
 .muted { color: var(--text-secondary); font-weight: 400; }
 
@@ -235,7 +241,7 @@ async function removeTask(t) {
 
 .empty { font-size: 13px; color: var(--text-secondary); padding: 14px 2px; }
 .task-list { display: flex; flex-direction: column; gap: 10px; }
-.task-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.06); }
+.task-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: 12px; corner-shape: squircle; background: rgba(255,255,255,0.42); border: 1px solid var(--glass-border); }
 .task-row.off { opacity: 0.55; }
 .task-name { font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
 .tag { font-size: 11px; padding: 1px 7px; border-radius: 6px; font-weight: 500; }

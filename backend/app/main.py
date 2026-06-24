@@ -32,6 +32,7 @@ from app.api.v1 import qq_connect as qq_connect_router
 from app.api.v1 import feishu_connect as feishu_connect_router
 from app.api.v1 import preferences as preferences_router
 from app.api.v1 import scheduled_tasks as scheduled_tasks_router
+from app.api.v1 import scheduled_admin as scheduled_admin_router
 from app.api.v1 import agent_admin as agent_admin_router
 from app.api.v1 import invite_codes as invite_codes_router
 from app.api.v1 import audit_log as audit_log_router
@@ -210,6 +211,11 @@ app.include_router(feishu_connect_router.router, prefix="/api/v1")
 # ── Admin 路由（需要 Admin token）──
 app.include_router(
     config_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    scheduled_admin_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )
