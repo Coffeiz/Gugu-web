@@ -68,13 +68,29 @@
           </div>
         </label>
 
-        <label class="field">
+        <div class="field">
           <span>发到哪</span>
           <div class="chans">
-            <label><input type="checkbox" value="chat" v-model="form.channels" /> 咕咕聊天</label>
-            <label><input type="checkbox" value="im" v-model="form.channels" /> 飞书 / QQ</label>
+            <label class="chk-row">
+              <input type="checkbox" value="chat" v-model="form.channels" class="chk-input" />
+              <span class="chk-box">
+                <svg v-if="form.channels.includes('chat')" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              咕咕聊天
+            </label>
+            <label class="chk-row">
+              <input type="checkbox" value="im" v-model="form.channels" class="chk-input" />
+              <span class="chk-box">
+                <svg v-if="form.channels.includes('im')" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              飞书 / QQ
+            </label>
           </div>
-        </label>
+        </div>
 
         <div v-if="formErr" class="form-err">{{ formErr }}</div>
         <div class="modal-actions">
@@ -187,7 +203,7 @@ async function removeTask(t) {
 
 /* 和顶栏「新建项目」按钮一致 */
 .btn-primary {
-  padding: 8px 16px; border: none; border-radius: var(--radius-sm);
+  padding: 8px 16px; border: none; border-radius: var(--radius-sm); corner-shape: squircle;
   background: linear-gradient(135deg, #7b7fb2, #9590c4); color: #fff;
   font-size: 13px; font-weight: 600; cursor: pointer; font-family: var(--font-sans);
   box-shadow: 0 3px 12px rgba(123,127,178,0.3);
@@ -266,18 +282,40 @@ async function removeTask(t) {
 .modal-title { font-size: 16px; font-weight: 700; color: var(--text-primary); margin-bottom: 16px; }
 .field { display: block; margin-bottom: 14px; }
 .field > span { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+/* 输入框/选择框：学新建项目（0.72 白底 + rgba(0,0,0,0.1) 边 + 紫色 focus 光圈），曲率连续圆角 */
 .field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=time] {
-  width: 100%; box-sizing: border-box; padding: 8px 11px; border-radius: 9px; border: 1px solid rgba(0,0,0,0.14); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); background: #fff;
+  width: 100%; box-sizing: border-box; padding: 8px 11px;
+  border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; corner-shape: squircle;
+  background: rgba(255,255,255,0.72);
+  font-size: 13px; font-family: var(--font-sans); color: var(--text-primary);
+  outline: none; transition: border-color 0.15s, box-shadow 0.15s;
 }
-.field textarea { resize: vertical; }
+.field input:focus, .field textarea:focus, .field select:focus, .field input[type=time]:focus {
+  border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
+}
+.field textarea { resize: none; line-height: 1.6; }
 .seg { display: flex; gap: 8px; }
-.seg button { flex: 1; padding: 8px; border-radius: 9px; border: 1px solid rgba(0,0,0,0.14); background: #fff; font-size: 13px; cursor: pointer; color: var(--text-secondary); font-family: var(--font-sans); }
-.seg button.on { background: var(--color-primary); color: #fff; border-color: transparent; }
+.seg button {
+  flex: 1; padding: 8px; border-radius: 10px; corner-shape: squircle;
+  border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72);
+  font-size: 13px; cursor: pointer; color: var(--text-secondary); font-family: var(--font-sans);
+  transition: all 0.15s;
+}
+.seg button.on { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; border-color: transparent; }
 .when { display: flex; gap: 8px; }
 .when select { flex: 1; }
 .when input[type=time] { width: 120px; }
-.chans { display: flex; gap: 18px; font-size: 13px; color: var(--text-primary); }
-.chans label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+/* 勾选框：登录/注册页同款（隐藏原生 + 自定义方块 + SVG 对勾） */
+.chans { display: flex; gap: 18px; }
+.chk-row { display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; font-size: 13px; color: var(--text-primary); }
+.chk-input { display: none; }
+.chk-box {
+  flex-shrink: 0; width: 16px; height: 16px; border-radius: 5px; corner-shape: squircle;
+  border: 1.5px solid rgba(123,127,178,0.35); background: rgba(255,255,255,0.6);
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.chk-input:checked + .chk-box { background: linear-gradient(135deg,#7b7fb2,#9590c4); border-color: transparent; box-shadow: 0 2px 8px rgba(123,127,178,0.35); }
 .form-err { color: #d05a5a; font-size: 12px; margin-bottom: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 6px; }
 </style>
