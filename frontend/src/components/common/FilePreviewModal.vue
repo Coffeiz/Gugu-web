@@ -161,7 +161,10 @@ async function load(file) {
       videoSrc.value = url
     } else if (isOfficeExt(file.ext)) {
       converting.value = true
-      const res = await fetch(`${BASE_URL}/files/${file.id}/preview-pdf`, { headers })
+      const officeUrl = file.attach_id
+        ? `${BASE_URL}/agent/attachment/${file.attach_id}/preview-pdf`
+        : `${BASE_URL}/files/${file.id}/preview-pdf`
+      const res = await fetch(officeUrl, { headers })
       converting.value = false
       if (!res.ok) throw new Error(`转换失败 (${res.status})`)
       let blob = await res.blob()
@@ -169,7 +172,10 @@ async function load(file) {
       if (blob.type !== 'application/pdf') blob = new Blob([blob], { type: 'application/pdf' })
       blobUrl.value = URL.createObjectURL(blob)
     } else {
-      const res = await fetch(`${BASE_URL}/files/${file.id}/download`, { headers })
+      const dlUrl = file.attach_id
+        ? `${BASE_URL}/agent/attachment/${file.attach_id}/download`
+        : `${BASE_URL}/files/${file.id}/download`
+      const res = await fetch(dlUrl, { headers })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       let blob = await res.blob()
       // PDF 走 iframe 原生渲染，blob 必须是 application/pdf，否则浏览器可能当下载/空白
@@ -258,15 +264,18 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   inset: 0;
   z-index: 11000;   /* 高于 GuguChat 窗口（10001/10002） */
   overflow: hidden;
+  /* 整个预览模态提升为独立 GPU 合成层，防止 OOPIF（PDF iframe）的创建/销毁
+     触发外层 sidebar/topbar backdrop-filter 的重合成闪烁 */
+  will-change: transform;
 }
 
 /* ── 遮罩 ── */
 .fp-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(20, 22, 30, 0.25);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  background: rgba(20, 22, 30, 0.32);
+  /* 保持独立合成层：opacity 过渡结束后不丢层，避免层析构时的整页重绘 */
+  will-change: opacity;
 }
 
 /* ── 侧边面板 ── */
@@ -276,9 +285,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   top: 0;
   bottom: 0;
   width: 60vw;
-  background: rgba(242, 243, 248, 0.97);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  background: rgba(242, 243, 248, 0.98);
   border-left: 1px solid rgba(255, 255, 255, 0.7);
   border-radius: 20px 0 0 20px;
   box-shadow: -8px 0 48px rgba(20, 25, 60, 0.18),
@@ -286,6 +293,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  will-change: transform;
 }
 
 /* ── 顶栏 ── */

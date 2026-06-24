@@ -37,6 +37,16 @@
 - 原来 `DELETE /folders/{fid}` 把文件夹内文件的 `folder_id` 置 `null`，导致文件「跑到根目录」并仍计入文件数。
 - 现改为递归收集所有子文件夹，对其中全部文件设 `deleted_at = utcnow()`（软删除进回收站），再从最深层开始逐层删除文件夹，避免外键冲突。
 
+### 文件预览 · 修复 iframe PDF 滚动/开关时整页闪烁
+
+- **根因**：Chrome 的 PDF viewer 是独立渲染进程（OOPIF），其合成帧更新会与父层 `backdrop-filter` 发生合成器级联重绘，导致整个页面闪烁；窗口模式比全屏更明显（全屏走独立 GPU overlay 路径）。
+- **移除无效 `backdrop-filter`**：`.fp-panel`（0.97 不透明度，模糊不可见）和 `.fp-overlay`（0.25 透明度的遮罩，4px 模糊无视觉意义）的 `backdrop-filter` 均删除，彻底断开 OOPIF 合成帧触发 backdrop 纹理重算的通路。
+- **稳定 GPU 合成层**：
+  - `.fp-root` 加 `will-change: transform` → 整个预览模态从出现起即为独立 GPU 层，OOPIF 创建/销毁不扩散到外层 sidebar / topbar 的 `backdrop-filter` 合成树。
+  - `.fp-overlay` 加 `will-change: opacity` → opacity 过渡结束后不析构临时合成层，消除关闭时层重组导致的整页重绘。
+  - `.fp-panel` 加 `will-change: transform` → 面板本身稳定为独立层，与 OOPIF 合成隔离。
+  - `pv-iframe` 加 `will-change: transform` → OOPIF 拥有自己的 GPU 层。
+
 ### 定时任务 · 单次任务执行后自动删除
 
 - 单次任务（`@once:<ISO>`）触发执行完成后直接从数据库删除，不再保留禁用记录；APScheduler 下次 reconcile 时对应 job 随之移除。
@@ -153,7 +163,7 @@
 - **上下文注入消歧**：触发时把 payload 包成「[定时任务触发：{name}]\n现在是 {now}，用户设置了一条定时任务：{payload}\n请以咕咕的身份完成这项任务……」，让 agent 明确 payload 里的「我」指用户而非自己。
 - **编辑模态改版**：任务名置顶（白底描边输入框、聚焦才显边框）、重复改周一~周日圆形 day chips（多选、无选=不重复）、各区块分割线，与新建项目卡同款 squircle 风格。
 
-### 性能 · SSE 不再占连接池 + 连接池调优 + 试运行不阻塞
+### 性能 · SSE 不再占连接池 + 连接池调优 + 试运行同步返回结果
 
 > 修复「每次试运行 / 前后端重启后整站卡死」——根因是 SSE 长连接长期占着 DB 连接，把连接池（默认 15）耗尽。
 

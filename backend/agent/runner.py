@@ -11,7 +11,7 @@ import asyncio
 import json
 from typing import AsyncGenerator
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.config import get_settings
 from agent import sanitize
@@ -81,6 +81,19 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             )).scalars().first()
         is_new_session = False
         if not session:
+            session_count = (await db.execute(
+                select(func.count()).select_from(ConversationSession)
+                .where(ConversationSession.user_id == user_id)
+            )).scalar_one()
+            if session_count >= 50:
+                oldest = (await db.execute(
+                    select(ConversationSession)
+                    .where(ConversationSession.user_id == user_id)
+                    .order_by(ConversationSession.updated_at.asc())
+                    .limit(1)
+                )).scalars().first()
+                if oldest:
+                    await db.delete(oldest)
             session = ConversationSession(user_id=user_id, title=(req.message[:50] or "新对话"), source=getattr(req, "source", "web"))
             db.add(session)
             await db.flush()

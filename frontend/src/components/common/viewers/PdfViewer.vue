@@ -43,6 +43,7 @@ const pdfSrc = computed(() => (props.blobUrl ? props.blobUrl + '#view=FitH' : nu
   border: 0;
   display: block;
   background: #fff;
+  will-change: transform;
 }
 
 /* 加载态 */
