@@ -38,13 +38,10 @@ const nonDoneColumns = computed(() =>
 
 const liveFileCounts = computed(() => {
   const m = new Map()
-  // 文件夹 id → 所属项目 id（兜底 folder_id 有值但 project_id 为空的文件）
-  const folderProject = new Map()
-  for (const folder of cacheStore.allFolders) {
-    if (folder.projectId != null) folderProject.set(folder.id, folder.projectId)
-  }
   for (const f of cacheStore.allFiles) {
-    const pid = f.projectId ?? folderProject.get(f.folderId)
+    // 只计根目录文件（folderId 为空），和项目文件视图保持一致；文件夹内的文件通过文件夹 UI 展示
+    if (f.folderId != null) continue
+    const pid = f.projectId
     if (pid != null) m.set(pid, (m.get(pid) ?? 0) + 1)
   }
   return m
@@ -53,7 +50,8 @@ const liveFileCounts = computed(() => {
 function columnProjects(statusKey) {
   const list = projectStore.projects
     .filter(p => p.status === statusKey)
-    .map(p => ({ ...p, fileCount: liveFileCounts.value.get(p.id) ?? p.fileCount }))
+    // cache 已加载后以前端计数为准（只计根目录文件），避免回退到服务端含文件夹的数字
+    .map(p => ({ ...p, fileCount: cacheStore.loaded ? (liveFileCounts.value.get(p.id) ?? 0) : p.fileCount }))
   const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
   if (statusKey === 'done')   return list.sort((a, b) => prioVal(b) - prioVal(a) || (b.doneAt ?? '').localeCompare(a.doneAt ?? ''))
   if (statusKey === 'active') return list.sort((a, b) => prioVal(b) - prioVal(a) || (a.deadline ?? '').localeCompare(b.deadline ?? '') || a.id - b.id)

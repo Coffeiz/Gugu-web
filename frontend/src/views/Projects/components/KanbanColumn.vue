@@ -78,11 +78,14 @@ function onDrop(e) {
 }
 .col-body {
   display: flex; flex-direction: column; gap: 8px;
-  flex: 1; overflow-y: auto; padding: 2px 6px;
+  flex: 1; overflow-y: auto;
+  padding: 2px 6px 2px 6px;
+  margin-right: -8px; padding-right: 14px;
+  scrollbar-gutter: stable;
 }
 .col-body::-webkit-scrollbar { width: 3px; }
 .col-body::-webkit-scrollbar-track { background: transparent; margin-top: 8px; margin-bottom: 8px; }
-.col-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 99px; }
+.col-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 99px; }
 .col-empty {
   text-align: center; font-size: 12px; color: var(--text-secondary);
   opacity: 0.4; padding: 32px 0; border: 1.5px dashed rgba(0,0,0,0.1);

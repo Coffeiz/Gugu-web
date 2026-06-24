@@ -2,11 +2,11 @@ import json
 import re
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func, update, or_
+from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import File, Folder, Project, User
+from app.models import File, Project, User
 from app.schemas import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.core.security import get_current_user
 from app.services.storage import get_storage
@@ -48,17 +48,13 @@ async def list_projects(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # 关联子查询：直接属于项目的文件 + 通过项目文件夹关联的文件（OR 去重）
+    # 只计根目录文件（folder_id IS NULL），和项目文件视图保持一致；文件夹内文件通过文件夹 UI 展示
     file_count_subq = (
         select(func.count(File.id))
         .where(
             File.deleted_at.is_(None),
-            or_(
-                File.project_id == Project.id,
-                File.folder_id.in_(
-                    select(Folder.id).where(Folder.project_id == Project.id)
-                ),
-            ),
+            File.project_id == Project.id,
+            File.folder_id.is_(None),
         )
         .correlate(Project)
         .scalar_subquery()

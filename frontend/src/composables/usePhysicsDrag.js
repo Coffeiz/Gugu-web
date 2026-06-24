@@ -25,6 +25,33 @@ function _childCards(container, exclude) {
 }
 const _rects = els => els.map(e => e.getBoundingClientRect())
 
+// 最近的可纵向滚动祖先（兜底：看板/文件库的已知滚动容器，避免 overflow 检测在解锁瞬间抽风）
+function _scrollParent(node) {
+  let p = node && node.parentElement
+  while (p) {
+    const oy = getComputedStyle(p).overflowY
+    if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight + 1) return p
+    p = p.parentElement
+  }
+  const known = node && node.closest && node.closest('.col-body, .files-main')
+  return (known && known.scrollHeight > known.clientHeight + 1) ? known : null
+}
+
+// 自己用 rAF 做滚动补间——scrollBy({behavior:'smooth'}) 在某些情况下(reduce-motion / drop 上下文)会退化成瞬间；
+// 自实现保证一定有动画，且时长可控（默认 300ms 的快速 ease-out）
+function _animateScroll(el, dy, dur = 300) {
+  const from = el.scrollTop
+  const ease = t => 1 - Math.pow(1 - t, 3)
+  let start = null
+  const tick = (now) => {
+    if (start === null) start = now
+    const t = Math.min(1, (now - start) / dur)
+    el.scrollTop = from + dy * ease(t)
+    if (t < 1) requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
+}
+
 // 到位缓动：强 ease-out（快进慢收，非线性），不过冲、不回弹
 const _SETTLE = 'cubic-bezier(0.22, 1, 0.36, 1)'
 
@@ -83,6 +110,13 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
     ` perspective(760px) rotateX(${TILT}deg) scale(${LIFT})`
   document.body.appendChild(clone)
 
+  // 拖拽期间锁住看板列的滚动：挡掉浏览器原生拖拽的「边缘自动滚动」——否则列在拖动时就被原生滚到底，
+  // 落点时已无可滚（dy≈0），我们的受控平滑滚动跑不起来，看着就是「瞬间到底部」。列用的是 3px overlay
+  // 滚动条，overflow:hidden 不会引起布局位移。结束时在 end() 还原。
+  const _lockedScrollers = [...document.querySelectorAll('.col-body')]
+  const _savedScrollTop = new Map()
+  for (const s of _lockedScrollers) { _savedScrollTop.set(s, s.scrollTop); s.style.overflowY = 'hidden' }
+
   // 拾起：先即时透明隐藏源卡（同步 display:none 会让浏览器取消原生拖拽 → 立刻 dragend），
   // 下一帧再真正移出布局并 FLIP 合拢邻居
   sourceEl.style.opacity = '0'
@@ -127,6 +161,7 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
     if (!_active) return
     cancelAnimationFrame(_active.raf)
     _active = null
+    for (const s of _lockedScrollers) s.style.overflowY = ''   // 解锁列滚动，下面才能受控平滑滚到落点
     document.removeEventListener('dragover', onOver)
     document.removeEventListener('drop', end, true)
     sourceEl.removeEventListener('dragend', end)
@@ -180,6 +215,7 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
       clone2.style.transition = trans
       clone.style.transform = tf;  clone.style.opacity = '0'
       clone2.style.transform = tf; clone2.style.opacity = '0.97'
+
       const finish = () => {
         if (done) return
         done = true
@@ -212,6 +248,19 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
       return el.getBoundingClientRect()
     }
 
+    // 落点若在可滚动列里滚出视口 → 快速滚进可视区，并返回滚动后的最终落点（让克隆体飞到那里）
+    const revealInScroller = (sc, box) => {
+      if (!sc) return box
+      const r = sc.getBoundingClientRect(), pad = 6
+      let dy = box.bottom + pad > r.bottom ? box.bottom + pad - r.bottom
+             : box.top - pad < r.top ? box.top - pad - r.top : 0
+      const maxDown = sc.scrollHeight - sc.clientHeight - sc.scrollTop
+      dy = dy > 0 ? Math.min(dy, maxDown) : Math.max(dy, -sc.scrollTop)
+      if (Math.abs(dy) <= 1) return box
+      _animateScroll(sc, dy, 300)
+      return { left: box.left, top: box.top - dy, width: box.width, height: box.height }
+    }
+
     // 业务 drop + Vue 重渲染在微任务里已落定；本 rAF 在 paint 前做落点 FLIP，避免闪一下
     requestAnimationFrame(() => {
       // 1) 释放点压着文件夹/面包屑 → 吸入（不依赖异步重渲染）
@@ -224,7 +273,10 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
         const el = document.querySelector(sel)
         if (el && el.isConnected && el !== sourceEl) {
           if (el.offsetWidth > 0) {   // 落点可见 → 占位 FLIP 展开；双克隆同轨迹飞行 + 样式渐变
-            const box = animateOpen(el.parentElement, el)
+            animateOpen(el.parentElement, el)   // 它为量 FLIP 会瞬间 display:none 落点卡，故滚动放其后
+            // 落点在可滚动列里若滚出视口 → 快速滚进可视区，box 取滚动后的最终落点
+            const sc = _scrollParent(el)
+            const box = revealInScroller(sc, el.getBoundingClientRect())
             const clone2 = el.cloneNode(true)   // 新状态样式
             clone2.classList.add('phys-drag-clone')
             Object.assign(clone2.style, {
@@ -243,17 +295,24 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
         }
       }
 
-      // 3) 没变化 → 归位
+      // 3) 没变化 → 归位（原位若在列里滚出视口，也要快速滚回去）
       if (container && sourceEl.style.display === 'none') {
-        // 已收合 → 占位 FLIP 重新展开
-        const box = animateOpen(container, sourceEl)
-        flyTo(box, false, sourceEl)
+        // 已收合 → 先占位 FLIP 重新展开源卡（列恢复溢出），再算滚动容器，否则收合时列不溢出 → 取不到 sc
+        const box0 = animateOpen(container, sourceEl)
+        const sc = _scrollParent(sourceEl)
+        // 锁列期间源卡收合，浏览器可能把 scrollTop 夹小了；展开后还原到拖动前，revealInScroller 再据此滚到原位
+        if (sc && _savedScrollTop.has(sc)) {
+          sc.scrollTop = _savedScrollTop.get(sc)
+          flyTo(revealInScroller(sc, sourceEl.getBoundingClientRect()), false, sourceEl)
+        } else {
+          flyTo(revealInScroller(sc, box0), false, sourceEl)
+        }
       } else {
         // 收合还没来得及发生（极快的拖放）→ 直接归位即可
         sourceEl.style.display = ''
-        const box = sourceEl.getBoundingClientRect()
         sourceEl.style.opacity = '0'
-        flyTo(box, false, sourceEl)
+        const sc = _scrollParent(sourceEl)
+        flyTo(revealInScroller(sc, sourceEl.getBoundingClientRect()), false, sourceEl)
       }
     })
   }

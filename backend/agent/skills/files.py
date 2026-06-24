@@ -439,7 +439,13 @@ async def _folder_by_name(db, user_id, name, space=None, project_id=None):
         stmt = stmt.where(Folder.project_id.is_(None))
     rows = (await db.execute(stmt)).scalars().all()
     if not rows:
-        avail = (await db.execute(select(Folder.name).where(Folder.user_id == user_id))).scalars().all()
+        # 报错时只列出同项目/同空间的文件夹名，避免跨项目泄露
+        avail_stmt = select(Folder.name).where(Folder.user_id == user_id)
+        if space == "project" and project_id:
+            avail_stmt = avail_stmt.where(Folder.project_id == project_id)
+        elif space and space != "project":
+            avail_stmt = avail_stmt.where(Folder.project_id.is_(None))
+        avail = (await db.execute(avail_stmt)).scalars().all()
         return None, json.dumps({"error": f"未找到名为「{name}」的文件夹",
                                  "available_folders": sorted(set(avail))})
     if len(rows) > 1:
@@ -473,6 +479,10 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
             if err:
                 return err
             folder_id = fo.id
+            # 文件夹决定归属项目：以 folder 的 project_id 为准，避免跨项目移动后 project_id 与 folder 不一致
+            if fo.project_id is not None:
+                project_id = fo.project_id
+                space = "project"
 
     # 无变动 → 明确报错，而不是假成功（避免咕咕误报"已移动"）
     cur_pid = f.project_id
@@ -721,13 +731,24 @@ async def _find_folder(db, user_id, args: dict):
     """按 folder_id 或文件夹名定位；返回 Folder 或错误 JSON 字符串（含可选项）。"""
     fid = args.get("folder_id")
     if fid:
+        try:
+            fid = int(str(fid).strip())
+        except (ValueError, TypeError):
+            pass
         fo = await db.get(Folder, fid)
         if not fo or fo.user_id != user_id:
             return json.dumps({"error": "文件夹不存在"})
         return fo
     name = args.get("name") or args.get("folder")
     if name:
-        fo, err = await _folder_by_name(db, user_id, name)
+        # 把调用方传来的项目上下文透传进去，防止跨项目同名文件夹被误操作
+        pid = args.get("project_id")
+        try:
+            pid = int(str(pid).strip()) if pid not in (None, "") else None
+        except (ValueError, TypeError):
+            pid = None
+        space = "project" if pid else args.get("space")
+        fo, err = await _folder_by_name(db, user_id, name, space, pid)
         return err if err else fo
     return json.dumps({"error": "需提供 folder_id 或文件夹名 name"})
 
@@ -782,6 +803,10 @@ async def _copy_file(db, user_id, args: dict):
             if err:
                 return err
             folder_id = fo.id
+            # 复制目标以文件夹的项目为准，与 _move_one 保持一致
+            if fo.project_id is not None:
+                project_id = fo.project_id
+                space = "project"
     try:
         base_key = await _resolve_key(db, user_id, space, f.display_name, f.ext,
                                       project_id=project_id, folder_id=folder_id)
@@ -1026,12 +1051,13 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="rename_folder", label="重命名文件夹",
-            description="重命名文件夹。用 name 指定要改的文件夹名（或用 folder_id）。",
+            description="重命名文件夹。用 name 指定要改的文件夹名（或用 folder_id）。同名文件夹存在于多个项目时必须传 project_id 避免误操作。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "要重命名的文件夹当前名称"},
-                    "folder_id": {"type": "integer", "description": "文件夹 id（已知时可用）"},
+                    "folder_id": {"type": "integer", "description": "文件夹 id（已知时可用，优先于 name）"},
+                    "project_id": {"type": "integer", "description": "文件夹所在项目 id（按名字查找时用于精确定位，防止跨项目误操作）"},
                     "new_name": {"type": "string", "description": "新名称"},
                 },
                 "required": ["new_name"],
@@ -1040,12 +1066,13 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="delete_folder", label="删除文件夹",
-            description="删除文件夹。用 name 指定文件夹名（或 folder_id）。注意：夹内文件不会被删除，会移动到根目录（仍在文件库，不进回收站）——请如实告知用户，别说成文件被删/可还原。",
+            description="删除文件夹。用 name 指定文件夹名（或 folder_id）。注意：夹内文件不会被删除，会移动到根目录（仍在文件库，不进回收站）——请如实告知用户，别说成文件被删/可还原。同名文件夹存在于多个项目时必须传 project_id。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "要删除的文件夹名称"},
-                    "folder_id": {"type": "integer", "description": "文件夹 id（已知时可用）"},
+                    "folder_id": {"type": "integer", "description": "文件夹 id（已知时可用，优先于 name）"},
+                    "project_id": {"type": "integer", "description": "文件夹所在项目 id（按名字查找时用于精确定位，防止跨项目误操作）"},
                 },
             },
             handler=_delete_folder,

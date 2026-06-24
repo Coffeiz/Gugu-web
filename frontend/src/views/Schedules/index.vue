@@ -8,7 +8,6 @@
       <div v-else-if="tasks.length" class="task-grid">
         <div v-for="t in tasks" :key="t.id" class="task-card" :class="{ off: !t.enabled }">
           <div class="tc-top">
-            <span class="tag" :class="t.action_type">{{ t.action_type === 'agent' ? '咕咕' : '提醒' }}</span>
             <span class="tc-name">{{ t.name }}</span>
             <label class="switch sm">
               <input type="checkbox" :checked="t.enabled" @change="toggle(t)" />
@@ -30,23 +29,16 @@
     </div>
 
     <!-- 新建/编辑弹窗（共享 BaseModal，与项目弹窗同款风格+动画）-->
-    <BaseModal :show="showModal" width="440px" @close="showModal = false">
+    <BaseModal :show="showModal" width="360px" @close="showModal = false">
       <div class="sched-modal">
-        <input v-model="form.name" class="title-input" placeholder="任务名称" maxlength="100" />
+        <input v-model="form.name" ref="nameRef" class="title-input" placeholder="任务名称" maxlength="100" />
+        <div class="divider divider-full"></div>
 
         <label class="field">
-          <span>类型</span>
-          <div class="seg">
-            <button :class="{ on: form.action_type === 'reminder' }" @click="form.action_type = 'reminder'">提醒</button>
-            <button :class="{ on: form.action_type === 'agent' }" @click="form.action_type = 'agent'">让咕咕做事</button>
-          </div>
+          <span>提醒内容</span>
+          <textarea v-model="form.payload" rows="2" placeholder="如：该喝水啦～"></textarea>
         </label>
-
-        <label class="field">
-          <span>{{ form.action_type === 'agent' ? '给咕咕的指令' : '提醒内容' }}</span>
-          <textarea v-model="form.payload" rows="2"
-            :placeholder="form.action_type === 'agent' ? '如：把今天到期的待办列给我' : '如：该喝水啦～'"></textarea>
-        </label>
+        <div class="divider"></div>
 
         <div class="field">
           <span>重复</span>
@@ -56,11 +48,13 @@
           </div>
           <div class="repeat-hint">{{ repeatHint }}</div>
         </div>
+        <div class="divider"></div>
 
         <label class="field">
           <span>时间</span>
           <input type="time" v-model="form.time" />
         </label>
+        <div class="divider"></div>
 
         <div class="field">
           <span>发到哪</span>
@@ -97,7 +91,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, nextTick } from 'vue'
 import { scheduledTasksApi } from '@/services/api'
 import BaseModal from '@/components/common/BaseModal.vue'
 
@@ -108,13 +102,14 @@ const busy = ref(false)
 const showModal = ref(false)
 const editing = ref(null)
 const formErr = ref('')
+const nameRef = ref(null)
 // 重复：选中的星期（0=日,1=一,…,6=六）。空 = 不重复（一次性）
 const dayOpts = [
   { v: 1, label: '一' }, { v: 2, label: '二' }, { v: 3, label: '三' },
   { v: 4, label: '四' }, { v: 5, label: '五' }, { v: 6, label: '六' }, { v: 0, label: '日' },
 ]
 const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0]
-const form = reactive({ name: '', action_type: 'reminder', payload: '', days: [], time: '09:00', channels: ['chat'] })
+const form = reactive({ name: '', payload: '', days: [], time: '09:00', channels: ['chat'] })
 
 function pad(n) { return String(n).padStart(2, '0') }
 function toggleDay(v) {
@@ -122,7 +117,7 @@ function toggleDay(v) {
   if (i >= 0) form.days.splice(i, 1); else form.days.push(v)
 }
 const repeatHint = computed(() => {
-  if (!form.days.length) return '不重复（到点只运行一次）'
+  if (!form.days.length) return '无重复'
   if (form.days.length === 7) return '每天'
   return '每周' + DOW_ORDER.filter(d => form.days.includes(d)).map(d => weekdays[d]).join('、')
 })
@@ -136,19 +131,21 @@ async function load() {
 }
 onMounted(load)
 
-function blankForm() { return { name: '', action_type: 'reminder', payload: '', days: [], time: '09:00', channels: ['chat'] } }
+function blankForm() { return { name: '', payload: '', days: [], time: '09:00', channels: ['chat'] } }
 function openCreate() {
   editing.value = null
   Object.assign(form, blankForm())
   formErr.value = ''
   showModal.value = true
+  nextTick(() => nameRef.value?.focus())
 }
 function openEdit(t) {
   editing.value = t
   const { days, time } = parseCron(t.cron)
-  Object.assign(form, { name: t.name, action_type: t.action_type, payload: t.payload, days, time, channels: [...t.channels] })
+  Object.assign(form, { name: t.name, payload: t.payload, days, time, channels: [...t.channels] })
   formErr.value = ''
   showModal.value = true
+  nextTick(() => nameRef.value?.focus())
 }
 
 function buildCron() {
@@ -199,7 +196,7 @@ async function submit() {
   if (!form.name.trim()) { formErr.value = '名称不能为空'; return }
   if (!form.channels.length) { formErr.value = '至少选一个发送渠道'; return }
   busy.value = true; formErr.value = ''
-  const data = { name: form.name.trim(), action_type: form.action_type, payload: form.payload, cron: buildCron(), channels: [...form.channels], enabled: editing.value ? editing.value.enabled : true }
+  const data = { name: form.name.trim(), action_type: 'agent', payload: form.payload, cron: buildCron(), channels: [...form.channels], enabled: editing.value ? editing.value.enabled : true }
   try {
     if (editing.value) await scheduledTasksApi.update(editing.value.id, data)
     else await scheduledTasksApi.create(data)
@@ -281,9 +278,6 @@ async function removeTask(t) {
 .task-card.off { opacity: 0.5; }
 .tc-top { display: flex; align-items: center; gap: 8px; }
 .tc-name { font-size: 14px; font-weight: 600; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tag { font-size: 11px; padding: 1px 7px; border-radius: 6px; font-weight: 500; flex-shrink: 0; }
-.tag.reminder { background: rgba(123,127,178,0.16); color: #5b5fa6; }
-.tag.agent { background: rgba(29,158,117,0.16); color: #0f6e56; }
 .tc-when { font-size: 12px; color: var(--text-secondary); }
 .tc-payload { font-size: 12px; color: var(--text-secondary); background: rgba(0,0,0,0.035); border-radius: 8px; padding: 6px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tc-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
@@ -304,16 +298,23 @@ async function removeTask(t) {
 .switch input:checked + .slider::before { transform: translateX(16px); }
 .switch.sm input:checked + .slider::before { transform: translateX(13px); }
 
-.sched-modal { padding: 22px 24px; }
-/* 任务名放顶部、标题风格 */
+.sched-modal { padding: 16px 18px; }
+.divider { height: 1px; background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%); margin: 2px 0 10px; }
+.divider-full { margin-left: -18px; margin-right: -18px; background: rgba(0,0,0,0.07); }
+/* 任务名放顶部、标题风格（白底描边，学新建项目 field-input） */
 .title-input {
-  width: 100%; box-sizing: border-box; border: none; background: none; outline: none;
-  font-size: 18px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans);
-  padding: 0; margin-bottom: 18px;
+  width: 100%; box-sizing: border-box; outline: none;
+  font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans);
+  padding: 9px 12px; margin-bottom: 14px;
+  border: 1px solid transparent; border-radius: 10px; corner-shape: squircle;
+  background: transparent;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 .title-input::placeholder { color: rgba(0,0,0,0.28); font-weight: 700; }
-.field { display: block; margin-bottom: 14px; }
-.field > span { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+.title-input:hover { border-color: rgba(123,127,178,0.35); background: rgba(255,255,255,0.75); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08); }
+.title-input:focus { border-color: rgba(123,127,178,0.4); background: rgba(255,255,255,0.75); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.1); }
+.field { display: block; margin-bottom: 11px; }
+.field > span { display: block; font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; }
 /* 输入框/选择框：学新建项目（0.72 白底 + rgba(0,0,0,0.1) 边 + 紫色 focus 光圈），曲率连续圆角 */
 .field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=time] {
   width: 100%; box-sizing: border-box; padding: 8px 11px;
@@ -326,24 +327,17 @@ async function removeTask(t) {
   border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
 }
 .field textarea { resize: none; line-height: 1.6; }
-.seg { display: flex; gap: 8px; }
-.seg button {
-  flex: 1; padding: 8px; border-radius: 10px; corner-shape: squircle;
-  border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72);
-  font-size: 13px; cursor: pointer; color: var(--text-secondary); font-family: var(--font-sans);
-  transition: all 0.15s;
-}
-.seg button.on { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; border-color: transparent; }
 /* 重复：周一到周日 chips（不选=不重复） */
-.days { display: flex; gap: 6px; }
+.days { display: flex; gap: 6px; justify-content: center; }
 .day-chip {
-  flex: 1; padding: 7px 0; border-radius: 9px; corner-shape: squircle;
+  width: 34px; height: 34px; flex-shrink: 0; border-radius: 50%;
   border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72);
   font-size: 13px; cursor: pointer; color: var(--text-secondary); font-family: var(--font-sans);
+  display: flex; align-items: center; justify-content: center;
   transition: all 0.15s;
 }
 .day-chip:hover { border-color: rgba(123,127,178,0.4); }
-.day-chip.on { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; border-color: transparent; }
+.day-chip.on { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; border-color: transparent; box-shadow: 0 2px 8px rgba(123,127,178,0.35); }
 .repeat-hint { font-size: 12px; color: var(--text-secondary); margin-top: 7px; }
 .when input[type=time] { width: 120px; }
 /* 勾选框：登录/注册页同款（隐藏原生 + 自定义方块 + SVG 对勾） */

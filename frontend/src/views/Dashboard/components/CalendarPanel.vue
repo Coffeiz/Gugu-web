@@ -103,6 +103,7 @@ import { eventsApi } from '@/services/api'
 import { useProjectStore } from '@/stores/projects'
 import DatePicker from '@/components/common/DatePicker.vue'
 import { useHolidays } from '@/composables/useHolidays'
+import { projectProgress } from '@/utils/projectProgress'
 
 
 const projectStore = useProjectStore()
@@ -322,12 +323,7 @@ const visibleEvents = computed(() => {
         iso:       p.deadline,
         isProject: true,
         status:    p.status,
-        progress:  (() => {
-          const stages = p.stages ?? []
-          if (!stages.length) return 0
-          const idx = stages.findIndex(s => s.key === p.currentStage)
-          return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
-        })(),
+        progress:  projectProgress(p),
         daysLeft:  dl,
         daysLabel: dl === 0 ? '今天' : dl === 1 ? '明天' : dl + '天后',
       })

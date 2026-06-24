@@ -18,7 +18,7 @@ from app.models import ScheduledTask, User
 
 router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-tasks"])
 
-_ACTIONS = {"reminder", "agent"}        # 用户能建的动作（系统级 deadline_scan 不开放）
+_ACTIONS = {"agent"}        # 用户能建的动作（系统级 deadline_scan 不开放）
 _CHANNELS = {"chat", "im"}
 
 
@@ -126,10 +126,19 @@ async def delete_task(task_id: int, user: User = Depends(get_current_user), db: 
     await db.commit()
 
 
+_trial_tasks: set = set()   # 后台试运行任务引用，防 GC
+
+
 @router.post("/{task_id}/run")
 async def run_now(task_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """立即执行一次（试运行）。直接在本进程跑，不等 worker。"""
+    """立即试运行一次：后台 fire-and-forget，立刻返回；结果走 SSE 通知 + IM 投递。
+
+    不在请求里 await 整个 agent 循环——那会让请求一直挂着、占住 DB 连接 30s+。
+    """
     await _owned(task_id, user, db)
+    import asyncio
     from app import scheduled_tasks as ST
-    await ST.execute_task(task_id)
-    return {"ok": True, "msg": "已执行一次，去「⏰ 咕咕提醒」会话看结果"}
+    t = asyncio.create_task(ST.execute_task(task_id, is_trial=True))
+    _trial_tasks.add(t)
+    t.add_done_callback(_trial_tasks.discard)
+    return {"ok": True, "msg": "已开始执行，完成后会在通知里告诉你"}

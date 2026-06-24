@@ -78,7 +78,7 @@
           :title="stage.label"
           @click.stop="clickStage(i)"
         >
-          <div class="seg-fill" :style="segFillStyle(i)"></div>
+          <div class="seg-fill" :class="{ 'no-anim': !!animFills }" :style="segFillStyle(i)"></div>
         </div>
       </div>
       <div v-else class="progress-bar">
@@ -101,7 +101,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
 import { PhCheck } from '@phosphor-icons/vue'
@@ -198,31 +198,83 @@ const starColor = computed(() => {
 
 function segFillStyle(i) {
   const n = props.project.stages.length
-  const w = segFill(i)
+  const w = animFills.value ? animFills.value[i] : segFill(i)
   const pos = n <= 1 ? '0%' : `${(i / (n - 1)) * 100}%`
   return { width: w + '%', background: props.project.color, backgroundSize: `${n * 100}% 100%`, backgroundPosition: `${pos} 0%` }
 }
 
 function segFill(i) {
-  // 每个阶段按自己的待办完成度独立涨——阶段2的待办做完，阶段2就涨，不受阶段1是否完成影响
   const todos = props.project.stages[i].todos ?? []
-  if (todos.length) {
-    return Math.round(todos.filter(t => t.done).length / todos.length * 100)
-  }
-  // 无待办的阶段没法用待办衡量：按是否已推进到/过此阶段判断（当前及之前=满，之后=空）
+  if (todos.length) return Math.round(todos.filter(t => t.done).length / todos.length * 100)
   const idx = currentStageIndex.value
   return i <= idx ? 100 : 0
 }
 
+// ── 逐段顺序动画（全局 ease-out，仅对实际变化的段分配时间槽）
+const animFills = ref(null)  // null | number[]
+let _rafId = null
+
+function _animateStages(fromFills, toFills, isForward) {
+  const slots = fromFills
+    .map((f, j) => ({ j, from: f, to: toFills[j] }))
+    .filter(x => Math.abs(x.to - x.from) > 0.5)
+  if (!isForward) slots.reverse()
+  const nc = slots.length
+  if (nc === 0) { animFills.value = null; return }
+
+  if (_rafId) cancelAnimationFrame(_rafId)
+  const dur = Math.min(900, Math.max(200, nc * 220))
+  const start = performance.now()
+
+  function tick(now) {
+    const raw = Math.min(1, (now - start) / dur)
+    const t = 1 - (1 - raw) * (1 - raw)
+    const fills = [...fromFills]
+    slots.forEach(({ j, from, to }, k) => {
+      fills[j] = from + (to - from) * Math.max(0, Math.min(1, t * nc - k))
+    })
+    animFills.value = fills
+    if (raw < 1) { _rafId = requestAnimationFrame(tick) }
+    else         { animFills.value = null; _rafId = null }
+  }
+  _rafId = requestAnimationFrame(tick)
+}
+
 async function clickStage(i) {
   const stages = props.project.stages
-  const stage = stages[i]
-  const n = stages.length
-  const w = 100 / n
-  const todos = stage.todos ?? []
-  const within = todos.length > 0 ? (todos.filter(t => t.done).length / todos.length) * w : w
-  const progress = Math.round(i * w + within)
-  await projectStore.setStage(props.project.id, stage.key, progress)
+  const stage  = stages[i]
+  const n      = stages.length
+  const w      = 100 / n
+  const todos  = stage.todos ?? []
+  const withinProg = todos.length > 0 ? (todos.filter(t => t.done).length / todos.length) * w : w
+  const newProgress = Math.round(i * w + withinProg)
+  const withinSeg  = withinProg / w * 100
+
+  const fromFills = stages.map((_, j) => segFill(j))
+  const curIdx = currentStageIndex.value
+  const isForward = i > curIdx
+
+  const toFills = stages.map((s, j) => {
+    const sTodos = s.todos ?? []
+    if (sTodos.length > 0) {
+      if (isForward && j >= curIdx && j < i) return 100
+      if (!isForward && j >= i) {
+        const done = sTodos.filter(t => t.autoCompleted ? (t._savedDone ?? false) : t.done).length
+        return Math.round(done / sTodos.length * 100)
+      }
+      return fromFills[j]
+    }
+    if (j < i) return 100
+    if (j === i) return withinSeg
+    return 0
+  })
+
+  if (fromFills.some((f, j) => Math.abs(f - toFills[j]) > 0.5)) {
+    animFills.value = [...fromFills]
+    _animateStages(fromFills, toFills, isForward)
+  }
+
+  await projectStore.setStage(props.project.id, stage.key, newProgress)
 }
 
 async function setPriority(n) {
@@ -311,7 +363,7 @@ async function setPriority(n) {
 .progress-bar { height: 4px; background: rgba(0,0,0,0.07); border-radius: 99px; overflow: hidden; }
 .progress-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
 
-.seg-bar { display: flex; gap: 2px; height: 5px; }
+.seg-bar { display: flex; gap: 2px; height: 5px; position: relative; }
 .seg {
   flex: 1; height: 100%; border-radius: 99px;
   background: rgba(0,0,0,0.07); overflow: hidden; cursor: pointer;
@@ -323,6 +375,7 @@ async function setPriority(n) {
 }
 .seg:hover { transform: scaleY(1.7); opacity: 0.8; }
 .seg-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
+.seg-fill.no-anim { transition: none; }
 
 /* ── 星级 ── */
 .stars { display: flex; align-items: center; gap: 0; }

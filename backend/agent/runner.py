@@ -246,3 +246,39 @@ async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool,
         else:
             parts.append(r)
     return ("".join(parts).strip(), tin, tout, False, files, cancelled)
+
+
+async def run_ephemeral(user_id, user_name: str, prompt: str) -> str:
+    """定时任务专用：跑 agent 拿结果，不建 session、不存 DB、不推 SSE。"""
+    profile = DefaultProfile()
+    settings = get_settings()
+
+    import app.db.session as _sess
+    if _sess._engine is None:
+        _sess._build_engine()
+
+    async with _sess._SessionLocal() as db:
+        projects = await loaders.load_projects(db, user_id)
+        events = await loaders.load_events(db, user_id)
+        files_overview = await loaders.load_files_overview(db, user_id)
+
+    memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
+    prompt_name = profile.prompt_file.removesuffix(".md")
+    system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview)
+
+    use_anthropic = (
+        settings.ai.provider == "minimax"
+        or "anthropic" in settings.ai.base_url.lower()
+    )
+    runner = LLMRunner(profile.tool_names, settings)
+
+    from app.core.chat_attach import build_user_content
+    if use_anthropic:
+        messages = [{"role": "user", "content": build_user_content(prompt, [], True)}]
+        gen = runner.run(user_id, system_prompt, messages, use_anthropic=True)
+    else:
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+        gen = runner.run(user_id, None, messages, use_anthropic=False)
+
+    text, _, _, errored, _, _ = await _collect(gen)
+    return text if not errored else ""

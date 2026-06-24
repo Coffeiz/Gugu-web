@@ -9,14 +9,62 @@
 
 ## [Unreleased]
 
+### 定时任务 · 提醒工作流重构（结果走通知/IM，不进对话）
+
+> 定时任务的产出不再作为消息塞进对话框，改为独立工作流：到点跑 agent → 推送到侧边栏铃铛通知 + IM 主动投递。
+
+- **结果不入对话**：`execute_task` 改用 `run_ephemeral`（`agent/runner.py`）跑 agent——不建/不复用 `ConversationSession`、不写 `conversation_messages`、不推 `sessions` SSE 事件，因此定时任务的回复不会出现在「⏰ 咕咕提醒」会话或任何聊天窗口。
+- **投递改两路**：① `events.publish(uid, notification={title, content})` → SSE → 前端 `live.js` → `ui.js` 通知 store → 侧边栏铃铛角标实时弹出；② `_deliver_im` 主动 DM（飞书可主动，QQ best-effort）。
+- **移除 `reminder` 动作类型**：用户能建的动作只剩 `agent`（`_ACTIONS = {"agent"}`），删掉前端类型选择器与后端 `reminder` 分支；简单提醒和复杂任务统一交给 agent，可调用工具。
+- **上下文注入消歧**：触发时把 payload 包成「[定时任务触发：{name}]\n现在是 {now}，用户设置了一条定时任务：{payload}\n请以咕咕的身份完成这项任务……」，让 agent 明确 payload 里的「我」指用户而非自己。
+- **编辑模态改版**：任务名置顶（白底描边输入框、聚焦才显边框）、重复改周一~周日圆形 day chips（多选、无选=不重复）、各区块分割线，与新建项目卡同款 squircle 风格。
+
+### 性能 · SSE 不再占连接池 + 连接池调优 + 试运行不阻塞
+
+> 修复「每次试运行 / 前后端重启后整站卡死」——根因是 SSE 长连接长期占着 DB 连接，把连接池（默认 15）耗尽。
+
+- **SSE 鉴权不查 DB**：`/live/stream` 原经 `get_current_user`（`Depends(get_db)`）拿用户，DB session 在 SSE 整个生命周期不释放——每条长连接占一个池连接。新增 `get_current_user_id`（仅解 JWT、不碰 DB），SSE 端点改用它，长连接不再占池。
+- **连接池调优**（`app/db/session.py`）：`pool_size=15`、`max_overflow=25`（峰值 40/进程，web+worker ≤80，留 ~20 给 pgAdmin）、`pool_timeout=10`（等不到快速失败而非挂 30s）、`pool_recycle=1800`。
+- **试运行 fire-and-forget**：`POST /scheduled-tasks/{id}/run` 原在请求里 `await` 整个 agent 循环（10–30s+），既挂住请求又长占 DB 连接；改为校验归属后 `asyncio.create_task` 后台执行、立即返回，结果走通知/IM。
+
+### 项目看板 · 进度条瀑布动画
+
+> 点击阶段卡片时，进度条按顺序依次填充/退回，视觉上形成瀑布流效果。
+
+- **Per-stage 填充数组**（`animFills = ref(null)`）：抛弃原单一 `animFill` 数值，每个阶段独立存储当前宽度，彻底解决「完成阶段越多进度条越窄」的坐标系 bug。
+- **全局 ease-out + 时间槽错开**：对全局进度 `t = 1-(1-raw)²` 统一缓动，每个变化阶段分配错开的时间槽（`t·nc - k`），保证动画整体非线性减速且各段顺序填充，而非各段独立缓动。
+- **只对变化阶段分配槽位**：过滤掉填充量变化 ≤ 0.5% 的阶段，后退动画自动倒序，避免无意义补间。
+- **`toFills` 预测 setStage 副作用**：`setStage` 前进时对途经阶段 auto-complete todos（`autoCompleted: true`），后退时还原（`_savedDone`）。`toFills` 预先计算 setStage 执行后的真实填充值，避免动画结束后 `segFill` 与动画终态不一致造成视觉 snap。
+- **`ProjectCard.vue` 与 `ProjectList.vue` 同步**：两处 `clickStage` 使用相同动画逻辑和 `toFills` 计算，保持仪表盘列表与项目页行为一致。
+
+### 项目看板 · 滚动条优化
+
+- 各列 `.col-body` 加 `scrollbar-gutter: stable`，滚动条出现/消失时卡片宽度不再跳变。
+- 通过 `margin-right: -8px` + `padding-right: 14px` 将滚动条推入列右侧 padding 区域，远离卡片内容。
+
+### 通知面板 · Markdown 渲染 + 高度限制
+
+- 通知内容（`n.content`）从纯文本 `{{ }}` 改为 `v-html`，经 `marked.parse()` 渲染，支持加粗、列表、行内代码、标题等 Markdown 格式。
+- 通知列表加 `max-height: 60vh` + `overflow-y: auto`，内容过多时可滚动，不再撑破面板。
+
+### 定时任务 · 试运行不关闭 @once 任务
+
+- **根因**：`execute_task` 对 `cron` 以 `@once:` 开头的任务执行后自动 `enabled = False`，试运行也走了同一路径，导致点「试运行」后任务卡片立即变灰。
+- **修复**：`execute_task` 增加 `is_trial: bool = False` 参数；试运行端点 `POST /{id}/run` 传 `is_trial=True`，跳过 `enabled = False` 逻辑。
+
+### Bug 修复
+
+- **`ProjectCard.vue`**：`animFills` 为 `const ref`，误写 `animFills = [...]` 赋值常量导致 `TypeError`，改为 `animFills.value = [...]`。
+- **`ProjectModal.vue`**：`activeStageIdx` / `stageProgress` 声明在 `watch({ immediate })` 调用之后，`recalcStageState` 访问时命中暂时性死区（TDZ）报 `Cannot access before initialization`；将两个 `ref` 声明前移至 watch 之前。
+
 ### 用户定时任务（DB 驱动 · 执行 · 投递）
 
 > 用户自定义定时任务。引擎 APScheduler（`AsyncIOScheduler`），挂在 **worker 单实例进程**（web 多 worker 不重复跑，呼应「周期任务单实例化」）。
 
 - **DB 驱动**：`scheduled_tasks` 表（`action_type`、`payload`、`cron`、`channels`、`enabled`）。worker 每 ~30s 从 DB **reconcile** 到 APScheduler——增/删/改/开关即时生效、不重启（同 supervisor 读 `user_bots` 的套路）。
-- **两种动作**（`app/scheduled_tasks.py`）：`reminder` 到点发提醒文本｜`agent` 到点跑一条咕咕指令并把结果发回。
-- **两个投递渠道**：`chat` 作为 assistant 消息进用户「⏰ 咕咕提醒」会话 + 推 SSE（在线即时/离线下次见，不依赖 IM）；`im` 按 Redis 存的「可触达地址」(`imreach:{user_id}`，worker 收消息时记一份) 主动 DM（飞书可主动，QQ 主动受限 best-effort）。
-- **用户「定时任务」页**（`/schedules`，侧边栏入口，glass 大版面 + 任务小卡片）：自定义任务 CRUD + 「试运行」立即执行一次 + 友好排程选择器（每天 / 工作日 / 每周 + 时间，前端构造 cron）。后端 API `GET/POST/PATCH/DELETE /scheduled-tasks`（cron 校验）+ `POST /{id}/run`。
+- **动作**（`app/scheduled_tasks.py`）：到点跑一条咕咕指令（`agent`）。〔后续重构：移除 `reminder`、结果改走通知/IM，见本节顶部「提醒工作流重构」〕
+- **投递渠道**：侧边栏铃铛通知（SSE）+ `im` 按 Redis 存的「可触达地址」(`imreach:{user_id}`，worker 收消息时记一份) 主动 DM（飞书可主动，QQ 主动受限 best-effort）。〔原 `chat` 进会话渠道已废弃〕
+- **用户「定时任务」页**（`/schedules`，侧边栏入口，glass 大版面 + 任务小卡片）：自定义任务 CRUD + 「试运行」后台执行一次（结果走通知/IM）+ 排程选择器（周一~周日 day chips + 时间，前端构造 cron；一次性任务用 `@once:<ISO>`）。后端 API `GET/POST/PATCH/DELETE /scheduled-tasks`（cron 校验）+ `POST /{id}/run`。
 - **Admin 服务状态页可见**：worker 心跳带上已挂定时任务（id/name/下次运行时间），服务页 worker 卡片下列出。
 
 > 注：曾做过的「系统级任务 / 内置截稿提醒 / Admin 系统任务配置」按需求已移除，只保留用户自定义任务。
@@ -114,6 +162,18 @@
 - **松手按落点三态**：① 换状态/换列（看板进行中→已完成）→ **双克隆同轨迹飞行**，飞行途中 `scale` 把卡片伸缩到落点卡尺寸（已完成卡在月份分组里尺寸不同）+ 交叉淡变完成样式切换，落点邻居 FLIP **让位**；② 拖进文件夹/折叠分组 → 缩小**吸入**；③ 原地/拖出范围 → 实心飞回、占位 FLIP **展开归位**
 - 缓动统一为不回弹的强 ease-out；落点判定放在 `drop` 后下一帧、paint 前完成，避免闪一下
 - 修一串迭代中的坑：同步 `display:none` 源卡会取消原生拖拽（改即时透明 + 延后收合）、克隆体首帧停在 (0,0)、落进折叠分组时飞到左上角、**拖出有效区松手要等 ~250ms**（无效拖放的浏览器 snap-back 延迟 → 拖拽期间 `preventDefault` 让整页可放置，松手即时归位）
+- **换列/归位落点滚动到位（列已满时）**：落点卡若滚出列视口，松手后**快速滚动**（自实现 rAF 补间，避开 `scrollBy({smooth})` 在 drop / reduce-motion 下退化成瞬间）把它带进可视区，克隆体飞到滚动后的最终位置一起落定。根因是浏览器**原生拖拽边缘自动滚动**在拖动时就把列滚到底（`dy≈0` 没东西可滚）→ 拖拽期间锁住 `.col-body` 滚动（`overflow:hidden`，3px overlay 滚动条不引起位移），松手解锁再受控滚；归位（同列）也滚回原位（展开源卡后还原被锁列夹小的 `scrollTop`）
+- 去掉曾加的 `clip-path` 裁剪：有了滚动到位，克隆体本就落在视口内、不探出列，裁剪反而会在滚动途中把克隆体裁没
+
+### 项目进度口径统一为「总完成度」
+
+- **统一口径**：看板卡 / 总览页 / 项目编辑卡头部 / 日历项目条 / Dashboard 近期节点胶囊，进度数字一律 = **所有阶段待办「已完成 / 总数」**（不再是「(当前阶段+1)/阶段数」的阶段位置百分比）；无任何待办时退回按阶段位置。抽出共享 `utils/projectProgress.js` 作单一口径，日历/胶囊前端现算、不再读持久化 `progress`
+- **阶段条各阶段独立**：每段填充按**自己的待办完成度**涨（阶段2 待办做完阶段2 就涨，不受当前阶段限制），无待办的阶段按是否推进到/过此阶段
+- 持久化 `progress` 字段与「最后阶段满→自动完成」判定暂未改（仍阶段位置口径），仅显示层统一
+
+### 已完成列「最近完成」置顶
+
+- 已完成列顶部加「最近完成」区，按完成时间倒序直接显示最近 3 个项目（无需展开年/月文件夹），并从下面的归档分组里排除避免重复
 
 ### 文件工具「集合操作」化（批量 + 文件夹递归整搬）
 

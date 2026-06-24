@@ -10,6 +10,7 @@
 import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
 import { getToken } from '@/services/api'
+import { useUiStore } from '@/stores/ui'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const RESOURCES = ['projects', 'calendar', 'files', 'clients', 'sessions']
@@ -22,6 +23,9 @@ export const useLiveStore = defineStore('live', () => {
   // 细粒度会话事件：{ session_id, appended:[{role,text}], _t }，供 GuguChat 追加消息
   const sessionEvent = ref(null)
   let _seq = 0
+
+  // 同步拿 uiStore（Pinia 允许在 setup 里调其他 store）
+  const uiStore = useUiStore()
 
   let abort = null        // 当前连接的 AbortController
   let running = false     // 是否应保持连接（登录中）
@@ -58,9 +62,11 @@ export const useLiveStore = defineStore('live', () => {
             try {
               const evt = JSON.parse(raw)
               for (const r of evt.resources || []) bump(r)
-              // 细粒度：带 session_id 的事件交给 GuguChat 判断是否追加到当前会话
               if (evt.session_id != null) {
                 sessionEvent.value = { session_id: evt.session_id, appended: evt.appended || [], _t: ++_seq }
+              }
+              if (evt.notification) {
+                uiStore.pushNotification(evt.notification)
               }
             } catch { /* 忽略坏行 */ }
           }

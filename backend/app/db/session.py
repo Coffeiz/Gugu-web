@@ -10,7 +10,15 @@ _SessionLocal = None
 def _build_engine():
     global _engine, _SessionLocal
     settings = get_settings()
-    _engine = create_async_engine(settings.db.url, echo=settings.debug, pool_pre_ping=True)
+    _engine = create_async_engine(
+        settings.db.url,
+        echo=settings.debug,
+        pool_pre_ping=True,
+        pool_size=15,       # 稳定保持连接数
+        max_overflow=25,    # 峰值最多 40/进程；web+worker ≤ 80，留 20 给 pgAdmin
+        pool_timeout=10,
+        pool_recycle=1800,
+    )
     _SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -34,6 +42,12 @@ _MIGRATIONS = [
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_height INTEGER NULL",
     "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS content_json JSONB NULL",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS search_limit_daily INTEGER NULL",
+    # 修复历史数据：_move_one 曾未同步 project_id，导致 file.project_id 与 folder.project_id 不一致
+    """UPDATE files SET project_id = folders.project_id
+       FROM folders
+       WHERE files.folder_id = folders.id
+         AND folders.project_id IS NOT NULL
+         AND files.project_id IS DISTINCT FROM folders.project_id""",
 ]
 
 

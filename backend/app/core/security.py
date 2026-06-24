@@ -53,6 +53,20 @@ def create_user_token(user_id: UUID) -> str:
     )
 
 
+async def get_current_user_id(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> UUID:
+    """JWT-only auth，不查 DB——用于 SSE 等长连接，避免占住 pool。"""
+    settings = get_settings()
+    try:
+        payload = jwt.decode(credentials.credentials, settings.secret_key, algorithms=["HS256"])
+        if payload.get("role") != "user":
+            raise ValueError
+        return UUID(payload["sub"])
+    except (JWTError, KeyError, ValueError):
+        raise HTTPException(status_code=401, detail="Token 无效或已过期")
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer),
     db: AsyncSession = Depends(get_db),

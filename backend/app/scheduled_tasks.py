@@ -1,26 +1,18 @@
 """定时任务：DB 驱动的引擎（reconcile）+ 执行 + 投递。
 
-worker 进程每 ~30s 调 `reconcile()`：从 `scheduled_tasks` 表读启用任务，同步到 APScheduler
-（增/删/改/开关即时生效，不重启——同 supervisor 读 user_bots 的套路）。任务触发 → `execute_task`。
-
-动作：
-- reminder       到点发提醒文本
-- agent          到点跑一条咕咕指令、把结果发回
-- deadline_scan  系统级：扫所有用户近期截稿，按各自开关投递（用户偏好 remind_deadlines）
-
-投递渠道（任务的 channels 字段，逗号分隔）：
-- chat  作为一条 assistant 消息进用户的「⏰ 咕咕提醒」会话 + 推 SSE（在线即时/离线下次见）
-- im    主动 DM（按 Redis 里存的「可触达地址」imreach 发；飞书可主动，QQ 主动受限、best-effort）
+worker 进程每 ~30s 调 `reconcile()`：从 `scheduled_tasks` 表读启用任务，同步到 APScheduler。
+任务触发 → `execute_task` → 构造上下文 prompt → agent 生成回复 →
+  ① SSE notification 事件（前端侧边栏铃铛弹窗）
+  ② IM 主动 DM（飞书可主动；QQ best-effort）
 """
 from __future__ import annotations
 
 import json
 import uuid as _uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy import select
 
-CHANNELS_DEFAULT = "chat,im"
 _synced: dict[str, str] = {}   # job_id -> 上次同步用的 updated_at，变了才重挂
 
 
@@ -76,83 +68,50 @@ async def reconcile() -> None:
 
 
 # ── 执行 ─────────────────────────────────────────────────────────────────────
-async def execute_task(task_id: int) -> None:
+async def execute_task(task_id: int, is_trial: bool = False) -> None:
     import app.db.session as ss
     from app.models import ScheduledTask
     async with ss._SessionLocal() as db:
         t = await db.get(ScheduledTask, task_id)
         if not t or not t.enabled:
             return
-        action, payload, channels, uid, name = t.action_type, t.payload or "", t.channels or CHANNELS_DEFAULT, t.user_id, t.name
+        payload, uid, name = t.payload or "", t.user_id, t.name
         t.last_run_at = datetime.utcnow()
-        if (t.cron or "").startswith("@once:"):
-            t.enabled = False   # 一次性：跑完即停（reconcile 下轮摘除 job）
+        if not is_trial and (t.cron or "").startswith("@once:"):
+            t.enabled = False
         await db.commit()
     try:
-        if action == "reminder":
-            await deliver(uid, f"⏰ {payload}", channels)
-        elif action == "agent":
-            text = await _run_agent(uid, payload)
-            await deliver(uid, f"⏰ {name}\n\n{text}", channels)
-        else:
-            print(f"[sched] 任务 {task_id} 未知动作 {action!r}", flush=True)
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        prompt = (
+            f"[定时任务触发：{name}]\n"
+            f"现在是 {now_str}，用户设置了一条定时任务：{payload}\n"
+            f"请以咕咕的身份完成这项任务，并将结果告知用户。"
+        )
+        text = await _run_agent(uid, prompt)
+        from app.core import events as _ev
+        await _ev.publish(uid, notification={"title": name, "content": text})
+        try:
+            await _deliver_im(uid, f"⏰ {name}\n\n{text}")
+        except Exception as e:
+            print(f"[sched] im 投递失败: {type(e).__name__}: {e}", flush=True)
     except Exception as e:
         import traceback
-        print(f"[sched] 执行任务 {task_id}({action}) 出错: {type(e).__name__}: {e}", flush=True)
+        print(f"[sched] 执行任务 {task_id} 出错: {type(e).__name__}: {e}", flush=True)
         traceback.print_exc()
 
 
 async def _run_agent(user_id, prompt: str) -> str:
-    from agent.models import AgentRequest
-    from agent.runner import run_collect
+    from agent.runner import run_ephemeral
     import app.db.session as ss
     from app.models import User
     async with ss._SessionLocal() as db:
         u = await db.get(User, _as_uuid(user_id))
         uname = (u.display_name or u.username) if u else ""
-    resp = await run_collect(AgentRequest(message=prompt, user_id=user_id, user_name=uname, source="schedule"))
-    return (resp.text or "").strip() or "（咕咕这次没有产出内容）"
+    text = await run_ephemeral(user_id, uname, prompt)
+    return text or "（咕咕这次没有产出内容）"
 
 
-# ── 投递 ─────────────────────────────────────────────────────────────────────
-async def deliver(user_id, text: str, channels: str) -> None:
-    chans = {c.strip() for c in (channels or "").split(",") if c.strip()}
-    if "chat" in chans:
-        try:
-            await _deliver_chat(user_id, text)
-        except Exception as e:
-            print(f"[sched] chat 投递失败: {type(e).__name__}: {e}", flush=True)
-    if "im" in chans:
-        try:
-            await _deliver_im(user_id, text)
-        except Exception as e:
-            print(f"[sched] im 投递失败: {type(e).__name__}: {e}", flush=True)
-
-
-async def _deliver_chat(user_id, text: str) -> None:
-    """进用户的「⏰ 咕咕提醒」会话（source=schedule，找不到就建），推 SSE。"""
-    import app.db.session as ss
-    from app.models import ConversationSession, ConversationMessage
-    from app.core import events
-    uid = _as_uuid(user_id)
-    async with ss._SessionLocal() as db:
-        sess = (await db.execute(
-            select(ConversationSession).where(
-                ConversationSession.user_id == uid,
-                ConversationSession.source == "schedule",
-            ).order_by(ConversationSession.id.desc())
-        )).scalars().first()
-        if sess is None:
-            sess = ConversationSession(user_id=uid, title="⏰ 咕咕提醒", source="schedule")
-            db.add(sess)
-            await db.flush()
-        db.add(ConversationMessage(session_id=sess.id, role="assistant", content=text))
-        sess.updated_at = datetime.utcnow()
-        await db.commit()
-        sid = sess.id
-    await events.publish(uid, "sessions", "messages", session_id=sid)
-
-
+# ── IM 投递 ──────────────────────────────────────────────────────────────────
 async def _deliver_im(user_id, text: str) -> None:
     """按 Redis 里存的可触达地址主动 DM。飞书可主动；QQ 主动受限，best-effort。"""
     reach = await get_imreach(user_id)

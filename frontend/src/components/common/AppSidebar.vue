@@ -130,7 +130,7 @@
             <span class="notif-dot" :style="{ background: n.color }"></span>
             <div class="notif-body">
               <div class="notif-msg">{{ n.title }}</div>
-              <div class="notif-meta">{{ n.meta }}</div>
+              <div class="notif-meta md-content" v-html="renderMd(n.content || n.meta)"></div>
             </div>
             <span v-if="n.unread" class="notif-badge"></span>
           </div>
@@ -144,6 +144,7 @@
 
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { marked } from 'marked'
 import { useRouter } from 'vue-router'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
@@ -185,7 +186,8 @@ const notifBtnRef   = ref(null)
 const notifPopupRef = ref(null)
 const notifStyle    = ref({})
 
-const notifications = ref([])
+const notifications = computed(() => uiStore.notifications)
+function renderMd(text) { return text ? marked.parse(text, { breaks: true }) : '' }
 
 function toggleNotif() {
   if (notifOpen.value) { notifOpen.value = false; return }
@@ -205,7 +207,7 @@ function toggleNotif() {
 }
 
 function markAllRead() {
-  notifications.value.forEach(n => n.unread = false)
+  uiStore.markAllRead()
 }
 
 function closeAll(e) {
@@ -374,7 +376,13 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 }
 .notif-mark-all:hover { background: rgba(123,127,178,0.1); }
 
-.notif-list { padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.notif-list {
+  padding: 6px; display: flex; flex-direction: column; gap: 2px;
+  max-height: 60vh; overflow-y: auto;
+}
+.notif-list::-webkit-scrollbar { width: 3px; }
+.notif-list::-webkit-scrollbar-track { background: transparent; margin: 6px; }
+.notif-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 99px; }
 
 .notif-item {
   display: flex; align-items: flex-start; gap: 10px;
@@ -397,6 +405,12 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 .notif-meta {
   font-size: 11px; color: #8a8fa8; margin-top: 2px;
 }
+.notif-meta.md-content :deep(p) { margin: 0 0 2px; }
+.notif-meta.md-content :deep(ul), .notif-meta.md-content :deep(ol) { margin: 2px 0; padding-left: 14px; }
+.notif-meta.md-content :deep(li) { margin: 1px 0; }
+.notif-meta.md-content :deep(strong) { font-weight: 600; color: #6b6f8a; }
+.notif-meta.md-content :deep(code) { font-size: 10px; background: rgba(0,0,0,0.06); border-radius: 3px; padding: 0 3px; }
+.notif-meta.md-content :deep(h1), .notif-meta.md-content :deep(h2), .notif-meta.md-content :deep(h3) { font-size: 12px; margin: 2px 0; }
 
 .notif-badge {
   width: 7px; height: 7px; border-radius: 50%;

@@ -18,6 +18,23 @@
       <div v-if="projects.length === 0" class="col-empty">拖拽项目到此</div>
 
       <template v-else>
+        <!-- 最近完成（置顶 3 个，直接可见，无需展开文件夹）-->
+        <div v-if="recentDone.length" class="recent-done">
+          <div class="recent-done-label">
+            <PhCheckCircle :size="12" weight="fill" style="color:#5a9e88" />
+            最近完成
+          </div>
+          <div class="month-cards">
+            <ProjectCard
+              v-for="p in recentDone"
+              :key="'recent-' + p.id"
+              :project="p"
+              @click="$emit('card-click', p)"
+              @dragstart="(e) => e.dataTransfer.setData('projectId', p.id)"
+            />
+          </div>
+        </div>
+
         <!-- 年目录 -->
         <div v-for="yg in groupedByYear" :key="yg.year" class="year-group">
           <button class="year-row" @click="toggleYear(yg.year)">
@@ -97,7 +114,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import ProjectCard from './ProjectCard.vue'
-import { PhFolder, PhFolderOpen } from '@phosphor-icons/vue'
+import { PhFolder, PhFolderOpen, PhCheckCircle } from '@phosphor-icons/vue'
 
 const props = defineProps({
   projects: { type: Array, default: () => [] },
@@ -114,13 +131,26 @@ function dateOf(p) {
   return new Date(src.length === 10 ? src + 'T00:00:00' : src)
 }
 
+// 最近完成：按完成时间倒序取前 3，置顶直接可见（不进下面的年/月文件夹，避免重复）
+const recentDone = computed(() =>
+  [...props.projects]
+    .sort((a, b) => {
+      const ta = a.doneAt || a.deadline || a.startDate || ''
+      const tb = b.doneAt || b.deadline || b.startDate || ''
+      return tb.localeCompare(ta)
+    })
+    .slice(0, 3)
+)
+const recentIds = computed(() => new Set(recentDone.value.map(p => p.id)))
+
 const undatedProjects = computed(() =>
-  props.projects.filter(p => !dateOf(p))
+  props.projects.filter(p => !dateOf(p) && !recentIds.value.has(p.id))
 )
 
 const groupedByYear = computed(() => {
   const yearMap = new Map()
   for (const p of props.projects) {
+    if (recentIds.value.has(p.id)) continue   // 已在「最近完成」置顶区
     const d = dateOf(p)
     if (!d) continue
     const y = String(d.getFullYear())
@@ -168,6 +198,15 @@ function onDrop(e) {
 </script>
 
 <style scoped>
+/* 最近完成置顶区 */
+.recent-done { margin-bottom: 10px; }
+.recent-done-label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600; color: #5a9e88;
+  padding: 0 2px 6px;
+}
+.recent-done .month-cards { display: flex; flex-direction: column; gap: 6px; }
+
 .done-col {
   display: flex;
   flex-direction: column;

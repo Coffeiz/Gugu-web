@@ -63,7 +63,7 @@
               :title="stage.label"
               @click.stop="clickStage(p, i)"
             >
-              <div class="seg-fill" :style="segFillStyle(p, i)"></div>
+              <div class="seg-fill" :class="{ 'no-anim': !!animFillMap[p.id] }" :style="segFillStyle(p, i)"></div>
             </div>
           </div>
           <div v-else class="progress-track">
@@ -78,7 +78,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, reactive } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 
 const projectStore = useProjectStore()
@@ -139,29 +139,91 @@ async function advance(p) {
 // ── 分段进度条 ────────────────────────────────────────────
 function segFillStyle(p, i) {
   const n = p.stages.length
-  const w = segFill(p, i)
+  const w = segFillWithAnim(p, i)
   const pos = n <= 1 ? '0%' : `${(i / (n - 1)) * 100}%`
   return { width: w + '%', background: p.color, backgroundSize: `${n * 100}% 100%`, backgroundPosition: `${pos} 0%` }
 }
 
 function segFill(p, i) {
-  // 每个阶段按自己的待办完成度独立涨，不受当前阶段限制
   const todos = p.stages[i].todos ?? []
   if (todos.length) return Math.round(todos.filter(t => t.done).length / todos.length * 100)
-  // 无待办：按是否已推进到/过此阶段（当前及之前=满、之后=空）
   const idx = p.stages.findIndex(s => s.key === p.currentStage)
   return i <= idx ? 100 : 0
 }
 
+// ── 逐段独立插值动画（按 project.id 独立跟踪）─────────────
+const animFillMap = reactive({})  // { [pid]: number[] }
+const _rafMap = {}
+
+function segFillWithAnim(p, i) {
+  const fills = animFillMap[p.id]
+  if (!fills) return segFill(p, i)
+  return fills[i]
+}
+
+function _animateStages(p, fromFills, toFills, isForward) {
+  const slots = fromFills
+    .map((f, j) => ({ j, from: f, to: toFills[j] }))
+    .filter(x => Math.abs(x.to - x.from) > 0.5)
+  if (!isForward) slots.reverse()
+  const nc = slots.length
+  if (nc === 0) return
+
+  if (_rafMap[p.id]) cancelAnimationFrame(_rafMap[p.id])
+  const dur = Math.min(900, Math.max(200, nc * 220))
+  const start = performance.now()
+
+  function tick(now) {
+    const raw = Math.min(1, (now - start) / dur)
+    const t = 1 - (1 - raw) * (1 - raw)
+    const fills = [...fromFills]
+    slots.forEach(({ j, from, to }, k) => {
+      fills[j] = from + (to - from) * Math.max(0, Math.min(1, t * nc - k))
+    })
+    animFillMap[p.id] = fills
+    if (raw < 1) { _rafMap[p.id] = requestAnimationFrame(tick) }
+    else { delete animFillMap[p.id]; delete _rafMap[p.id] }
+  }
+  _rafMap[p.id] = requestAnimationFrame(tick)
+}
+
 async function clickStage(p, i) {
   const stages = p.stages
-  const stage = stages[i]
-  const n = stages.length
-  const w = 100 / n
-  const todos = stage.todos ?? []
-  const within = todos.length > 0 ? (todos.filter(t => t.done).length / todos.length) * w : w
-  const progress = Math.round(i * w + within)
-  await projectStore.setStage(p.id, stage.key, progress)
+  const stage  = stages[i]
+  const n      = stages.length
+  const w      = 100 / n
+  const todos  = stage.todos ?? []
+  const withinProg = todos.length > 0 ? (todos.filter(t => t.done).length / todos.length) * w : w
+  const newProgress = Math.round(i * w + withinProg)
+  const withinSeg  = withinProg / w * 100
+
+  const fromFills = stages.map((_, j) => segFill(p, j))
+  const curIdx = stages.findIndex(s => s.key === p.currentStage)
+  const isForward = i > curIdx
+
+  const toFills = stages.map((s, j) => {
+    const sTodos = s.todos ?? []
+    if (sTodos.length > 0) {
+      // 前进：途经阶段（curIdx ≤ j < i）会被 setStage 自动全勾
+      if (isForward && j >= curIdx && j < i) return 100
+      // 后退：目标阶段及之后（j ≥ i）的 autoCompleted 会被还原
+      if (!isForward && j >= i) {
+        const done = sTodos.filter(t => t.autoCompleted ? (t._savedDone ?? false) : t.done).length
+        return Math.round(done / sTodos.length * 100)
+      }
+      return fromFills[j]
+    }
+    if (j < i) return 100
+    if (j === i) return withinSeg
+    return 0
+  })
+
+  if (fromFills.some((f, j) => Math.abs(f - toFills[j]) > 0.5)) {
+    animFillMap[p.id] = [...fromFills]
+    _animateStages(p, fromFills, toFills, isForward)
+  }
+
+  await projectStore.setStage(p.id, stage.key, newProgress)
 }
 
 // ── 辅助 ─────────────────────────────────────────────────
@@ -291,7 +353,7 @@ function formatDate(str) {
 }
 .progress-fill { height: 100%; border-radius: 99px; transition: width 0.4s; }
 
-.seg-bar { display: flex; gap: 2px; height: 5px; }
+.seg-bar { display: flex; gap: 2px; height: 5px; position: relative; }
 .seg {
   flex: 1; height: 100%; border-radius: 99px;
   background: rgba(0,0,0,0.07); overflow: hidden; cursor: pointer;
@@ -301,6 +363,7 @@ function formatDate(str) {
 .seg::before { content: ''; position: absolute; inset: -6px 0; }
 .seg:hover { transform: scaleY(1.7); opacity: 0.8; }
 .seg-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
+.seg-fill.no-anim { transition: none; }
 
 /* ── 星级（右上角） ── */
 .row-stars {

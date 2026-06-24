@@ -894,3 +894,50 @@ POST q.qq.com/lite/create_bind_task {"key": base64(随机32字节)} → task_id 
 - [ ] 主动触达：截止日临近提醒、异常沉默感知、情绪状态关注
 - [ ] 成就系统 / 正反馈系统（挂载 EventBus Listener）
 - [ ] 行为分析 Listener：从操作日志提炼工作节律，写入 facts
+
+---
+
+## 提醒工作流（Reminder Workflow）
+
+> **架构决定（2026-06-24）**：定时任务结果**不进对话**，走独立链路投递到现有侧边栏通知弹窗 + IM。
+
+### 设计原则
+
+- **不进对话**：`_deliver_chat` 从定时任务路径完全移除，不污染聊天 session。
+- **不需新页面**：复用现有侧边栏铃铛通知弹窗，无需独立提醒中心。
+- **统一走 agent**：无 `reminder` 类型，payload 始终经 agent 处理后再投递，咕咕可以用自然语气包装提醒。
+
+### 关键设计：prompt 上下文注入
+
+用户填写的 payload 是面向自己的指令（如「让我喝水」），裸传给 agent 会导致 `我` 指向歧义。`execute_task` 触发时统一包裹上下文：
+
+```python
+prompt = (
+    f"[定时任务触发：{name}]\n"
+    f"用户在 {now} 设置了一条提醒，内容是：{payload}\n"
+    f"请以咕咕的身份，用自然的语气向用户发送这条提醒。"
+)
+```
+
+agent 收到后知道「我 = 用户」，生成友好提醒（如「⏰ 喝水时间到啦～记得补充水分哦！」）而不会混淆主语。
+
+### 执行链
+
+```
+APScheduler 触发
+  → execute_task
+  → 构造带上下文的 prompt（注入 task_name / payload / triggered_at）
+  → _run_agent(prompt)                     # 静默后台，不进对话
+  → events.publish(uid, 'notification',    # 复用现有 SSE 频道
+        title=task.name, content=result)
+      → live.js 收 notification 事件
+      → AppSidebar.notifications.push()    # 铃铛弹窗追加，角标 +1
+  → _deliver_im                            # 飞书/QQ 同步投递
+```
+
+### 待实现
+
+- [ ] `backend/app/scheduled_tasks.py`：`execute_task` 移除 `_deliver_chat`，构造上下文 prompt，结果走 `events.publish(notification)`
+- [ ] `backend/app/core/events.py`：`publish` 支持 `notification` 事件类型（带 `title` / `content` 字段）
+- [ ] `frontend/src/stores/live.js`：处理 `notification` 事件，写入全局通知列表（新增 `notifStore` 或挂 `uiStore`）
+- [ ] `frontend/src/components/common/AppSidebar.vue`：`notifications` 改为响应式 store 驱动，接收 SSE 推入条目，角标联动 `uiStore.notifCount`

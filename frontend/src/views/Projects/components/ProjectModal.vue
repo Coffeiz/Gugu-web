@@ -1368,6 +1368,8 @@ async function deleteFolderCard(folder) {
 }
 
 let initializing = false
+const activeStageIdx = ref(-1)
+const stageProgress  = ref(0)
 
 
 // 外部（Agent/IM）修改日期时同步本地状态（project?.id 不变，但日期值变了）
@@ -1511,7 +1513,6 @@ const currentStageIndex = computed(() =>
   localStages.value.findIndex(s => s.key === localCurrentStage.value)
 )
 // 当前阶段所在位置索引（位置固定，拖动重排不改变）
-const activeStageIdx = ref(-1)
 
 const displayStages = computed(() => {
   if (!stageDrag.active) return localStages.value
@@ -1527,8 +1528,6 @@ const draggedStageKey = computed(() =>
 const displayCurrentStageIndex = computed(() =>
   displayStages.value.findIndex(s => s.key === localCurrentStage.value)
 )
-const stageProgress = ref(0)
-
 function calcProgress(stages, currentStageKey) {
   if (!stages.length) return 0
   const idx = stages.findIndex(s => s.key === currentStageKey)

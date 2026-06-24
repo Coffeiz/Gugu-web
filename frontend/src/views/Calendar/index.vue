@@ -314,6 +314,7 @@ import { eventsApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
 import { useHolidays } from '@/composables/useHolidays'
+import { projectProgress } from '@/utils/projectProgress'
 import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck } from '@phosphor-icons/vue'
 
 const projectStore = useProjectStore()
@@ -901,12 +902,7 @@ const projectTimelines = computed(() =>
       currentStage: p.stages?.find(s => s.key === p.currentStage)?.label ?? null,
       priority:     p.priority ?? null,
       createdAt:    p.createdAt ?? '',
-      progress:     (() => {
-        const stages = p.stages ?? []
-        if (!stages.length) return 0
-        const idx = stages.findIndex(s => s.key === p.currentStage)
-        return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
-      })(),
+      progress:     projectProgress(p),
     }))
 )
 
