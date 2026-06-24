@@ -17,6 +17,7 @@ from app.core.config import get_settings
 from agent import sanitize
 from agent.context import builder, loaders, tokens
 from agent.core import LLMRunner
+from agent.llm_select import pick_model, release as _release_model
 from agent.models import AgentRequest, AgentResponse
 from agent.profiles import DefaultProfile
 
@@ -55,6 +56,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     user_id = req.user_id
     profile = DefaultProfile()
     settings = get_settings()
+    model_cfg = pick_model(settings, req)   # 解析层：active/pool/router 选一个模型配置
 
     import app.db.session as _sess
     if _sess._engine is None:
@@ -92,7 +94,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             .order_by(ConversationMessage.created_at.desc())
             .limit(tokens.HISTORY_MAX_MSGS)
         )
-        history = tokens.select_history(hist_res.scalars().all(), token_budget=settings.ai.context_tokens)
+        history = tokens.select_history(hist_res.scalars().all(), token_budget=model_cfg.context_tokens)
 
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
@@ -118,8 +120,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     )
 
     use_anthropic = (
-        settings.ai.provider == "minimax"
-        or "anthropic" in settings.ai.base_url.lower()
+        model_cfg.provider == "minimax"
+        or "anthropic" in (model_cfg.base_url or "").lower()
     )
     runner = LLMRunner(profile.tool_names, settings)
 
@@ -132,15 +134,18 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             anthr_messages.append({"role": h.role, "content": content})
         anthr_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, True)})
         anthr_initial_len = len(anthr_messages)
-        gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True)
+        gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True, model_cfg=model_cfg)
     else:
         oa_messages = [{"role": "system", "content": system_prompt}]
         for h in history:
             oa_messages.append({"role": h.role, "content": h.content or ""})
         oa_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, False)})
-        gen = runner.run(user_id, None, oa_messages, use_anthropic=False)
+        gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
 
-    text, tin, tout, errored, sent_files, cancelled = await _collect(gen)
+    try:
+        text, tin, tout, errored, sent_files, cancelled = await _collect(gen)
+    finally:
+        _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
 
     # 用户中途「算了」：网关已回「先不继续啦」，这里不再补发/不入历史/不反思（已执行的工具效果保留）
     if cancelled:
@@ -167,7 +172,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                 db2.add(AgentUsage(
                     user_id=user_id, session_id=session_id,
                     tokens_in=tin, tokens_out=tout,
-                    model=settings.ai.model, provider=settings.ai.provider,
+                    model=model_cfg.model, provider=model_cfg.provider,
                 ))
             await db2.commit()
 
@@ -252,6 +257,7 @@ async def run_ephemeral(user_id, user_name: str, prompt: str) -> str:
     """定时任务专用：跑 agent 拿结果，不建 session、不存 DB、不推 SSE。"""
     profile = DefaultProfile()
     settings = get_settings()
+    model_cfg = pick_model(settings, None)   # 解析层：active/pool/router 选一个模型配置
 
     import app.db.session as _sess
     if _sess._engine is None:
@@ -267,18 +273,21 @@ async def run_ephemeral(user_id, user_name: str, prompt: str) -> str:
     system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview)
 
     use_anthropic = (
-        settings.ai.provider == "minimax"
-        or "anthropic" in settings.ai.base_url.lower()
+        model_cfg.provider == "minimax"
+        or "anthropic" in (model_cfg.base_url or "").lower()
     )
     runner = LLMRunner(profile.tool_names, settings)
 
     from app.core.chat_attach import build_user_content
     if use_anthropic:
         messages = [{"role": "user", "content": build_user_content(prompt, [], True)}]
-        gen = runner.run(user_id, system_prompt, messages, use_anthropic=True)
+        gen = runner.run(user_id, system_prompt, messages, use_anthropic=True, model_cfg=model_cfg)
     else:
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
-        gen = runner.run(user_id, None, messages, use_anthropic=False)
+        gen = runner.run(user_id, None, messages, use_anthropic=False, model_cfg=model_cfg)
 
-    text, _, _, errored, _, _ = await _collect(gen)
+    try:
+        text, _, _, errored, _, _ = await _collect(gen)
+    finally:
+        _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
     return text if not errored else ""

@@ -348,6 +348,11 @@ async def _reconcile_loop():
             await asyncio.sleep(1)
         _refresh_concurrency()                   # 顺带热读并发上限（Admin 改了 ≤30s 生效）
         try:
+            from app.core.config import get_settings
+            get_settings.cache_clear()           # 清缓存 → worker 也热读 Admin 配置（模型策略/分流/行为等，≤30s 生效）
+        except Exception:
+            pass
+        try:
             await schedtasks.reconcile()
         except Exception as e:
             print(f"[worker] 定时任务 reconcile 出错: {type(e).__name__}: {e}", flush=True)

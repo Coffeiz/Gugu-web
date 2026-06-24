@@ -78,10 +78,13 @@ class AIPresetItem(BaseModel):
     context_tokens: int = 3000
     thinking: str = "disabled"
     vision: bool = False
+    in_pool: bool = False        # 是否加入「多 key 分流」池（strategy=pool 时随机挑这些）
 
 
 class AIPresets(BaseModel):
     active_id: str = ""
+    strategy: str = "active"     # 选模型策略：active 单一激活 | pool 多 key 分流 | router 智能路由（未来）
+    pool_mode: str = "random"    # pool 分流方式：random 随机 | round_robin 轮询 | least_loaded 最少在途
     items: list[AIPresetItem] = Field(default_factory=list)
 
 
@@ -201,6 +204,8 @@ class AppSettings(BaseSettings):
                 ]
                 updates["ai_presets"] = AIPresets.model_construct(
                     active_id=raw.get("active_id", ""),
+                    strategy=raw.get("strategy", "active"),
+                    pool_mode=raw.get("pool_mode", "random"),
                     items=items,
                 )
 

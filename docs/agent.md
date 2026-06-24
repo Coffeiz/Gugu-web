@@ -27,6 +27,7 @@ backend/
 │   └── api/v1/agent.py         # 薄层：接收请求 → 调 agent.router → 返回响应
 └── agent/                      # 独立 agent 包，不依赖 FastAPI
     ├── core.py
+    ├── llm_select.py           # 模型解析层 pick_model（active/pool/router）
     ├── router.py
     ├── models.py
     ├── context/
@@ -70,11 +71,19 @@ backend/
 
 ### `core.py`
 LLM 主循环。负责：
-- 调用 LLM（Anthropic / OpenAI 双路统一）
+- 调用 LLM（Anthropic / OpenAI 双路统一）；用哪个模型由 `llm_select.pick_model` 决定（见下），不直接读 `settings.ai`
 - 工具调用执行与结果回填（`MAX_ROUNDS = 6`：配合 skills.md 执行准则 + 强工具，多步任务 2~3 轮够用，逼出低成本执行；超限给友好提示「前面已生效，要接着做吗」）
-- SSE streaming 输出
+- SSE streaming 输出；`_stream_round` 包一层瞬时错误退避重试（⑦：429/超时/网络/5xx 在出 token 前重试，已吐 token 不重试防重复）
 - 对话结束后 emit 事件，触发 Reflection
 - 不感知平台来源、不感知 prompt 如何构建
+
+### `llm_select.py`（模型解析层）
+统一的「选哪个模型」决策点——`runner`/`core` 只对接 `pick_model(settings, ctx)`，未来 Router、多 key 分流都插这里，core 不动。按 `ai_presets.strategy` 分支：
+- **`active`**（默认）：用激活预设（= `settings.ai`，行为不变）。
+- **`pool`** 多 key 分流：勾了 `in_pool` 的预设里按 `pool_mode` 挑——`random` 随机 / `round_robin` 轮询 / `least_loaded` 最少在途（`release()` 跟踪每 key 在途，请求结束 `runner` 在 finally 里减；不等速 key 下最优）。每 key 一份限流额度，总并发 ≈ key 数 × 16。
+- **`router`** 智能路由：调 `set_router(fn)` 注册的 picker，没注册退回 active —— **未来 Router 的插槽**。
+- 无预设 → 退回 `settings.ai` 兜底。
+> 后台 Agent→LLM 预设 顶部「策略 / 分流 / 并发」可调；web 写即热，worker 每 30s 热读。详见 [`并发优化ROADMAP.md`](并发优化ROADMAP.md)「模型解析层」。
 
 ### `outbound.py`（IM 出口兜底）
 咕咕 IM 回复**发给用户 / 持久化之前**的确定性清洗（`run_collect` 里调用，prompt 之外的代码层保险）：

@@ -286,10 +286,33 @@ async def list_llm_presets():
     if not had_presets:
         _write_override(override)
     items = [
-        {**item, "api_key": _mask_key(item.get("api_key", ""))}
+        {**item, "api_key": _mask_key(item.get("api_key", "")), "in_pool": bool(item.get("in_pool", False))}
         for item in presets.get("items", [])
     ]
-    return {"active_id": presets.get("active_id", ""), "items": items}
+    return {"active_id": presets.get("active_id", ""),
+            "strategy": presets.get("strategy", "active"),
+            "pool_mode": presets.get("pool_mode", "random"), "items": items}
+
+
+class StrategyUpdate(BaseModel):
+    strategy: str | None = None    # active | pool | router
+    pool_mode: str | None = None   # random | round_robin | least_loaded
+
+
+@router.post("/llm-presets/strategy")
+async def set_llm_strategy(body: StrategyUpdate):
+    if body.strategy is not None and body.strategy not in ("active", "pool", "router"):
+        raise HTTPException(400, "strategy 只能是 active / pool / router")
+    if body.pool_mode is not None and body.pool_mode not in ("random", "round_robin", "least_loaded"):
+        raise HTTPException(400, "pool_mode 只能是 random / round_robin / least_loaded")
+    override = _read_override()
+    presets = _ensure_presets(override)
+    if body.strategy is not None:
+        presets["strategy"] = body.strategy
+    if body.pool_mode is not None:
+        presets["pool_mode"] = body.pool_mode
+    _write_override(override)
+    return {"strategy": presets.get("strategy", "active"), "pool_mode": presets.get("pool_mode", "random")}
 
 
 class PresetCreate(BaseModel):
@@ -342,6 +365,7 @@ class PresetUpdate(BaseModel):
     context_tokens: int | None = None
     thinking: str | None = None
     vision: bool | None = None
+    in_pool: bool | None = None
 
 
 @router.put("/llm-presets/{preset_id}")
@@ -371,6 +395,8 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
         item["thinking"] = body.thinking
     if body.vision is not None:
         item["vision"] = body.vision
+    if body.in_pool is not None:
+        item["in_pool"] = body.in_pool
     if presets.get("active_id") == preset_id:
         override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled","vision":False}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking", "vision")}
     _write_override(override)

@@ -81,30 +81,33 @@ class LLMRunner:
         self.labels = registry.labels()
 
     def run(self, user_id, system_text: str, messages: list,
-            use_anthropic: bool) -> AsyncGenerator[str, None]:
+            use_anthropic: bool, model_cfg=None) -> AsyncGenerator[str, None]:
+        # model_cfg：pick_model 解析出的模型配置（预设或 settings.ai）；None 时退回 settings.ai
+        ai = model_cfg if model_cfg is not None else self.settings.ai
         if use_anthropic:
-            return self._run_anthropic(user_id, system_text, messages)
-        return self._run_openai(user_id, messages)
+            return self._run_anthropic(user_id, system_text, messages, ai)
+        return self._run_openai(user_id, messages, ai)
 
     # ── Anthropic（MiniMax / Anthropic）─────────────────────────────────────
     async def _run_anthropic(self, user_id, system_text: str,
-                             messages: list) -> AsyncGenerator[str, None]:
+                             messages: list, ai=None) -> AsyncGenerator[str, None]:
         import httpx
         from anthropic import AsyncAnthropic
 
         settings = self.settings
+        ai = ai if ai is not None else settings.ai
         tools = registry.anthropic_schemas(self.tool_names)
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
         client = AsyncAnthropic(
-            api_key=settings.ai.api_key or "dummy",
-            base_url=settings.ai.base_url,
+            api_key=ai.api_key or "dummy",
+            base_url=ai.base_url,
             http_client=httpx.AsyncClient(timeout=_timeout),
         )
 
         total_in = total_out = total_cache_read = 0
-        max_tokens  = settings.ai.max_tokens
-        temperature = settings.ai.temperature
-        thinking_val = getattr(settings.ai, "thinking", "disabled")
+        max_tokens  = ai.max_tokens
+        temperature = ai.temperature
+        thinking_val = getattr(ai, "thinking", "disabled")
         thinking_param = {"thinking": {"type": thinking_val}} if thinking_val == "adaptive" else {}
 
         # prompt 缓存：把 system（含人格/记忆/上下文）作为稳定前缀缓存。
@@ -123,7 +126,7 @@ class LLMRunner:
             # 单次流式调用：既实时流式输出文本，又能拿到 tool_use（无双调用、无敷衍）
             # 经 _stream_round 包一层瞬时错误退避重试（⑦）；流式途中仍协作检查取消。
             _kwargs = dict(
-                model=settings.ai.model, system=system_param, messages=messages,
+                model=ai.model, system=system_param, messages=messages,
                 tools=tools, max_tokens=max_tokens, temperature=temperature, **thinking_param,
             )
             _tok = 0
@@ -185,28 +188,29 @@ class LLMRunner:
         yield f"data: {json.dumps({'type': 'error', 'detail': '这步操作有点多，咕咕没在一口气里全做完 😅 前面几步已经生效了，要我接着把剩下的做完吗？'}, ensure_ascii=False)}\n\n"
 
     # ── OpenAI ──────────────────────────────────────────────────────────────
-    async def _run_openai(self, user_id, messages: list) -> AsyncGenerator[str, None]:
+    async def _run_openai(self, user_id, messages: list, ai=None) -> AsyncGenerator[str, None]:
         import httpx
         from openai import AsyncOpenAI
 
         settings = self.settings
+        ai = ai if ai is not None else settings.ai
         tools = registry.openai_schemas(self.tool_names)
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
         client = AsyncOpenAI(
-            api_key=settings.ai.api_key or "dummy",
-            base_url=settings.ai.base_url,
+            api_key=ai.api_key or "dummy",
+            base_url=ai.base_url,
             timeout=_timeout,
         )
 
-        max_tokens  = settings.ai.max_tokens
-        temperature = settings.ai.temperature
+        max_tokens  = ai.max_tokens
+        temperature = ai.temperature
         total_in = total_out = 0
         for _ in range(MAX_ROUNDS):
             if await _im_cancelled():
                 yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                 return
             stream = await client.chat.completions.create(
-                model=settings.ai.model,
+                model=ai.model,
                 messages=messages,
                 tools=tools,
                 tool_choice="auto",

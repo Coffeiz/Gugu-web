@@ -28,12 +28,43 @@
         <div class="presets-header">
           <div>
             <h3 class="presets-title">LLM 预设</h3>
-            <p class="presets-desc">管理多套模型配置，随时切换当前生效预设</p>
+            <p class="presets-desc">管理多套模型配置；选模型策略 = 单一激活 / 多 key 分流 / 智能路由</p>
           </div>
-          <button class="btn-primary" @click="openNewPreset">
+          <div class="presets-header-right">
+            <label class="strategy-select" title="worker 同时跑几条 agent。单 key 安全上限≈16，多 key 分流可设 key数×16。改完 ≤30s 热生效">
+              <span>并发</span>
+              <input type="number" min="1" max="64" class="conc-input"
+                     v-model.number="agentDraft.worker_concurrency" @change="saveConcurrency" />
+            </label>
+            <label class="strategy-select">
+              <span>策略</span>
+              <AdminSelect
+                :model-value="strategy"
+                :options="[
+                  { value: 'active', label: '单一激活' },
+                  { value: 'pool',   label: '多 key 分流' },
+                  { value: 'router', label: '智能路由（待接入）' },
+                ]"
+                @update:model-value="setStrategy"
+              />
+            </label>
+            <label v-if="strategy === 'pool'" class="strategy-select" title="随机=简单均匀；轮询=严格交替；最少在途=自动多发给快的 key、避开慢的（key 速度差异大时最优）">
+              <span>分流</span>
+              <AdminSelect
+                :model-value="poolMode"
+                :options="[
+                  { value: 'random',       label: '随机' },
+                  { value: 'round_robin',  label: '轮询' },
+                  { value: 'least_loaded', label: '最少在途' },
+                ]"
+                @update:model-value="setPoolMode"
+              />
+            </label>
+            <button class="btn-primary" @click="openNewPreset">
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 1v11M1 6.5h11"/></svg>
             新建预设
-          </button>
+            </button>
+          </div>
         </div>
 
         <div v-if="presetsLoading" class="presets-loading">加载中…</div>
@@ -65,6 +96,9 @@
               </div>
             </div>
             <div class="preset-card-actions">
+              <button v-if="strategy === 'pool'" class="pca-btn" :class="{ 'pca-btn--pool-on': p.in_pool }" @click="togglePool(p)">
+                {{ p.in_pool ? '✓ 分流中' : '加入分流' }}
+              </button>
               <button class="pca-btn" @click="openEditPreset(p)">编辑</button>
               <button class="pca-btn" :class="{ 'pca-btn--testing': testingId === p.id }" @click="testPreset(p.id)">
                 {{ testingId === p.id ? '测试中…' : '测试' }}
@@ -320,19 +354,6 @@
               class="behavior-input"
               v-model.number="agentDraft.reflection_threshold"
               min="1" max="100"
-            />
-          </div>
-
-          <div class="behavior-item">
-            <div class="behavior-label">
-              <span>IM 并发量</span>
-              <span class="behavior-desc">worker 同时跑几条 agent（实测单 key 安全上限 16，改完 ≤30s 热生效、无需重启）</span>
-            </div>
-            <input
-              type="number"
-              class="behavior-input"
-              v-model.number="agentDraft.worker_concurrency"
-              min="1" max="64"
             />
           </div>
 
@@ -684,6 +705,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { PhBrain, PhEye } from '@phosphor-icons/vue'
+import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
 import ConfigField from '../Config/components/ConfigField.vue'
@@ -805,6 +827,8 @@ const PROVIDERS = [
 
 const presets        = ref([])
 const activePresetId = ref('')
+const strategy       = ref('active')   // active 单一激活 | pool 多 key 分流 | router 智能路由
+const poolMode       = ref('random')   // pool 分流方式：random | round_robin | least_loaded
 const presetsLoading = ref(false)
 const llmMsg         = ref('')
 const llmMsgError    = ref(false)
@@ -832,10 +856,69 @@ async function fetchPresets() {
     const data = await res.json()
     presets.value        = data.items || []
     activePresetId.value = data.active_id || ''
+    strategy.value       = data.strategy || 'active'
+    poolMode.value       = data.pool_mode || 'random'
   } catch (e) {
     showMsg('加载失败：' + e.message, true)
   } finally {
     presetsLoading.value = false
+  }
+}
+
+async function setStrategy(s) {
+  const prev = strategy.value
+  strategy.value = s
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/llm-presets/strategy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strategy: s }),
+    })
+    if (!res.ok) throw new Error((await res.json()).detail || '设置失败')
+    showMsg(s === 'pool' ? '已切到多 key 分流（勾选要参与分流的预设）' : s === 'router' ? '已切到智能路由（待 Router 接入，暂等同单一激活）' : '已切到单一激活')
+  } catch (e) {
+    strategy.value = prev
+    showMsg('切换策略失败：' + e.message, true)
+  }
+}
+
+async function setPoolMode(m) {
+  const prev = poolMode.value
+  poolMode.value = m
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/llm-presets/strategy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pool_mode: m }),
+    })
+    if (!res.ok) throw new Error('设置失败')
+    showMsg({ random: '分流方式：随机', round_robin: '分流方式：轮询', least_loaded: '分流方式：最少在途（自动避开慢 key）' }[m])
+  } catch (e) {
+    poolMode.value = prev
+    showMsg('设置分流方式失败：' + e.message, true)
+  }
+}
+
+async function saveConcurrency() {
+  const n = agentDraft.worker_concurrency
+  if (!Number.isFinite(n) || n < 1) { agentDraft.worker_concurrency = 16; return }
+  try {
+    await configStore.saveConfig({ agent: { ...agentDraft } })
+    showMsg(`并发量已设为 ${n}（worker ≤30s 热生效）`)
+  } catch (e) {
+    showMsg('保存并发量失败：' + e.message, true)
+  }
+}
+
+async function togglePool(p) {
+  const next = !p.in_pool
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${p.id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ in_pool: next }),
+    })
+    if (!res.ok) throw new Error('更新失败')
+    p.in_pool = next
+  } catch (e) {
+    showMsg('更新分流失败：' + e.message, true)
   }
 }
 
@@ -1603,6 +1686,13 @@ onMounted(async () => {
 }
 .presets-title { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.88); }
 .presets-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 4px; }
+.presets-header-right { display: flex; align-items: center; gap: 10px; }
+.strategy-select { display: flex; align-items: center; gap: 6px; font-size: 12px; color: rgba(255,255,255,0.5); }
+.pca-btn--pool-on { background: rgba(123,127,178,0.22); color: rgba(180,176,224,1); }
+.conc-input {
+  width: 52px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 8px; color: rgba(255,255,255,0.85); font-size: 12px; padding: 5px 8px; outline: none;
+}
 .presets-loading { padding: 40px 0; text-align: center; font-size: 13px; color: rgba(255,255,255,0.25); }
 
 .preset-list { display: flex; flex-direction: column; gap: 8px; }

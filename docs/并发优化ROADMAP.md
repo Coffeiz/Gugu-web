@@ -136,10 +136,36 @@ flowchart TD
 | ③ | 多开 worker（消费组 + systemd） | P3 | ⏸️ 依赖 ①；需 `user_gate` 升级分片/Redis 锁 |
 | ④ | uvicorn --workers N | P1 后推 | ⬜ 需先做地基A；dev 现用 --reload 单进程 |
 | ⑤ | DB 连接池调大 | P0 | ✅ 完成（15+25） |
-| ⑥ | 换稳/快 provider / flash 模型 | 按需 | ⏸️ 非必选，`ai_presets` 热生效，不阻塞 |
+| ⑥ | 换/加 provider · 多 key 分流 | 按需 | 🔜 预设+激活已有；正铺 `pick_model` 解析层（active/pool/router 可选，见上节）→ 多 key 分流 + Router 铺路 |
 | ⑦ | 慢尾兜底：瞬时错误退避重试 | P1 | ✅ 完成（anthropic 路；实测 sem=20 全 429→全成功） |
 | ⑧ | IM 流式体验 | P2 | ⬜ 独立 UX 轨 |
 | ⑨ | 队列水位监控 + 告警 | P2 | 🟡 监控已有，告警待做 |
+
+---
+
+## 模型解析层 `pick_model`（多 key 分流 + Router 铺路）
+
+> 给 ⑥（多 key 扩吞吐）和未来 Router 铺一层统一的「选哪个模型」抽象——调用层只对接这一个口子。
+
+**现状**：预设 CRUD + 激活已有（`agent_admin.py` / `Admin/Agent`），但调用层**直接读 `settings.ai`**（写死单一激活预设），无分流、无路由。
+
+**铺路**：调用层「读 `settings.ai`」→ 改成「调 `pick_model(settings, ctx)`」。这是**唯一的选模型决策点**，按策略分支：
+
+```
+strategy = active → 激活预设            （= 现状，行为不变，默认）
+strategy = pool   → 勾了 in_pool 的预设里随机挑（多 key：每 key 一份限流额度，总并发≈key数×16）
+strategy = router → 调注册的 router(ctx)，没注册退回 active（未来 Router 的插槽）
+无预设 → 退回 settings.ai 兜底
+```
+
+**配置**（`ai_presets`）：加 `strategy`（active/pool/router）+ 每个预设 `in_pool` 布尔。
+**后台 LLM 页**：策略下拉（单一激活 / 多 key 分流 / 智能路由<待接入>）+ 选「分流」时每预设显示「加入分流池」勾选。
+
+**收益**：
+- 后台点一下切策略，不改代码；多 key 分流今天可用（选 pool + 勾几个 key）。
+- **Router 以后只是「注册一个 picker」**——core 一行不动，下拉里「智能路由」自动激活。这就是「只对接一个」。
+
+**改动**：`config.py`（加字段）+ `agent/llm_select.py`（新，`pick_model`）+ `runner.py`/`core.py`（改用 `pick_model`）+ 前端 LLM 配置页。默认 `active` → 行为不变。关联 backlog ⑥。
 
 ---
 
