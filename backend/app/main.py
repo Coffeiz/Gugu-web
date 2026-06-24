@@ -31,6 +31,7 @@ from app.api.v1 import services_admin as services_admin_router
 from app.api.v1 import qq_connect as qq_connect_router
 from app.api.v1 import feishu_connect as feishu_connect_router
 from app.api.v1 import preferences as preferences_router
+from app.api.v1 import scheduled_tasks as scheduled_tasks_router
 from app.api.v1 import agent_admin as agent_admin_router
 from app.api.v1 import invite_codes as invite_codes_router
 from app.api.v1 import audit_log as audit_log_router
@@ -199,6 +200,7 @@ app.include_router(agent_router.router,       prefix="/api/v1")
 app.include_router(search_router.router,      prefix="/api/v1")
 app.include_router(track_router.router,       prefix="/api/v1")
 app.include_router(preferences_router.router, prefix="/api/v1")
+app.include_router(scheduled_tasks_router.router, prefix="/api/v1")
 app.include_router(feedback_router.router,    prefix="/api/v1")
 # 飞书 OAuth 扫码绑定：bind/url + status + unbind 需用户登录；callback 是飞书重定向（靠 state 校验）
 app.include_router(user_bots_router.router,      prefix="/api/v1")
