@@ -216,6 +216,12 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
     memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
     system_prompt = builder.build(prompt_name, req.user_name, projects, events, memory, files_overview)
 
+    # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
+    from agent.context import compress_conv
+    _summary, history = compress_conv.pop_summary(history)
+    if _summary:
+        system_prompt += compress_conv.system_block(_summary)
+
     # 配额降级：只给只读/轻量工具 + 提示咕咕婉拒重操作（查询/对话照常）
     tool_names = profile.tool_names
     if degraded:
@@ -354,6 +360,10 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
         if profile.memory_enabled and full_reply:
             from agent.memory import reflection
             reflection.schedule(user_id, req.user_name, req.message, full_reply, settings)
+
+        # ── 对话压缩：token 超阈值时后台静默压缩旧消息（fire-and-forget）──
+        from agent.context import compress_conv
+        compress_conv.schedule(session_id, user_id, settings, settings.ai.context_tokens)
 
         await genstream.publish(session_id, {"type": "done"})
 

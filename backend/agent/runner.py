@@ -132,6 +132,12 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         prompt_name, req.user_name, projects, events, memory, files_overview
     )
 
+    # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
+    from agent.context import compress_conv
+    _summary, history = compress_conv.pop_summary(history)
+    if _summary:
+        system_prompt += compress_conv.system_block(_summary)
+
     use_anthropic = (
         model_cfg.provider == "minimax"
         or "anthropic" in (model_cfg.base_url or "").lower()
@@ -210,6 +216,10 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         if profile.memory_enabled and text:
             from agent.memory import reflection
             reflection.schedule(user_id, req.user_name, req.message, text, settings)
+
+        # 对话压缩（fire-and-forget）
+        from agent.context import compress_conv
+        compress_conv.schedule(session_id, user_id, settings, model_cfg.context_tokens)
 
     return AgentResponse(text=text, session_id=session_id, tokens_in=tin, tokens_out=tout, files=sent_files)
 

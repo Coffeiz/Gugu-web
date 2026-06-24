@@ -10,11 +10,18 @@ from pathlib import Path
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 
-def _files_block(fo: dict | None) -> str:
+# 项目状态英文枚举 → 中文（注入上下文时翻好，免得咕咕照搬英文说给用户）
+_STATUS_ZH = {"pending": "待开始", "active": "进行中", "done": "已完成"}
+
+
+def _files_block(fo: dict | None, proj_names: dict | None = None) -> str:
     """文件/文件夹概览文本（紧凑）。"""
     if not fo or (not fo.get("total") and not fo.get("trash")):
         return "暂无文件"
     _SP = {"personal": "个人", "project": "项目", "asset": "素材", "mind": "思维"}
+    pn = proj_names or {}
+    def _proj(pid):   # 项目位置用名字，不用编号（编号只在 [id=] 里供调工具）
+        return f"项目「{pn[pid]}」" if pid in pn else f"项目#{pid}"
     by_space = fo.get("by_space") or {}
     space_str = "、".join(f"{_SP.get(k, k)} {v}" for k, v in by_space.items()) or "无"
     trash_n = fo.get("trash") or 0
@@ -23,14 +30,14 @@ def _files_block(fo: dict | None) -> str:
     folders = fo.get("folders") or []
     if folders:
         lines.append("文件夹：" + "、".join(
-            f"{x['name']}" + (f"(项目#{x['project_id']})" if x.get("project_id") else "")
+            f"{x['name']}" + (f"({_proj(x['project_id'])})" if x.get("project_id") else "")
             for x in folders
         ))
     files = fo.get("files") or []
     if files:
         lines.append(f"最近文件（最多 {len(files)} 个）：")
         for f in files:
-            loc = f.get("folder") or ("项目#%s" % f["project_id"] if f.get("project_id") else f.get("space", ""))
+            loc = f.get("folder") or (_proj(f["project_id"]) if f.get("project_id") else f.get("space", ""))
             lines.append(f"- [id={f['id']}] {f['name']}（{loc}）")
     return "\n".join(lines)
 
@@ -50,7 +57,7 @@ def build(profile: str, user_name: str, projects: list, events: list,
         done_cnt  = sum(1 for s in p.stages if s.get("done"))
         total_cnt = len(p.stages)
         prog = f"{done_cnt}/{total_cnt}阶段" if total_cnt else "无阶段"
-        proj_lines.append(f"- [id={p.id}] [{p.status}] {p.name}（{prog}，{deadline}，客户：{p.client or '无'}）")
+        proj_lines.append(f"- [id={p.id}] [{_STATUS_ZH.get(p.status, p.status)}] {p.name}（{prog}，{deadline}，客户：{p.client or '无'}）")
 
     ev_lines   = [f"- {ev.date} {ev.title}" for ev in events[:10]]
     proj_block = "\n".join(proj_lines) if proj_lines else "暂无项目"
@@ -68,7 +75,7 @@ def build(profile: str, user_name: str, projects: list, events: list,
         "{name}":     user_name,
         "{projects}": proj_block,
         "{calendar}": ev_block,
-        "{files}":    _files_block(files),
+        "{files}":    _files_block(files, {p.id: p.name for p in projects}),
     }
     result = template
     for key, val in replacements.items():

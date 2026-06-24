@@ -104,6 +104,30 @@ async def attachment_download(
     )
 
 
+@router.get("/attachment/{attach_id}/preview-pdf")
+async def attachment_preview_pdf(
+    attach_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """将聊天暂存附件（Office 格式）转换为 PDF 供前端预览。"""
+    from fastapi.responses import Response
+    from app.api.v1.files import _office_to_pdf
+
+    meta = await chat_attach.get_meta(current_user.id, attach_id)
+    if not meta:
+        raise HTTPException(404, "附件不存在或已过期")
+    ext = (meta.get("ext") or "").upper()
+    if ext not in {"DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX"}:
+        raise HTTPException(400, "不支持的格式")
+    try:
+        data = await chat_attach.read_bytes(meta)
+    except FileNotFoundError:
+        raise HTTPException(404, "附件已过期或物理文件丢失")
+    pdf = await _office_to_pdf(data, meta.get("ext", ""))
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Cache-Control": "private, max-age=300"})
+
+
 @router.post("/chat")
 async def chat(
     body: ChatRequest,
@@ -179,6 +203,7 @@ async def get_session_messages(
         .where(
             ConversationMessage.session_id == session_id,
             ConversationMessage.content_json.is_(None),  # 过滤工具中间消息（tool_use/tool_result）
+            ConversationMessage.role != "summary",       # 过滤对话压缩摘要（注入 system prompt，不进对话气泡）
         )
         .order_by(ConversationMessage.created_at)
     )

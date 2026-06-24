@@ -8,6 +8,22 @@ from __future__ import annotations
 import json
 
 
+async def complete_text(sys: str, user: str, settings, max_tokens: int = 800) -> str:
+    """单次非流式调用 → 返回纯文本。失败返回空串。"""
+    use_anthropic = (
+        settings.ai.provider == "minimax"
+        or "anthropic" in settings.ai.base_url.lower()
+    )
+    try:
+        return (
+            await _anthropic(sys, user, settings, max_tokens)
+            if use_anthropic
+            else await _openai(sys, user, settings, max_tokens)
+        )
+    except Exception:
+        return ""
+
+
 async def complete_json(sys: str, user: str, settings, max_tokens: int = 500) -> dict:
     """单次非流式调用 → 解析 JSON。失败/解析不出返回 {}。"""
     use_anthropic = (

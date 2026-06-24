@@ -346,6 +346,20 @@
 
           <div class="behavior-item">
             <div class="behavior-label">
+              <span>对话历史压缩</span>
+              <span class="behavior-desc">超长会话把旧消息总结成摘要省 token；关闭后只截断不摘要</span>
+            </div>
+            <button
+              class="toggle-switch"
+              :class="{ on: agentDraft.conv_compress_enabled }"
+              @click="agentDraft.conv_compress_enabled = !agentDraft.conv_compress_enabled"
+            >
+              <span class="toggle-knob" />
+            </button>
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
               <span>Reflection 触发阈值</span>
               <span class="behavior-desc">每隔多少条消息触发一次记忆整理</span>
             </div>
@@ -715,10 +729,10 @@ const adminStore  = useAdminStore()
 
 const tabs = [
   { key: 'llm',      label: 'LLM 配置' },
-  { key: 'prompts',  label: '系统提示词' },
   { key: 'behavior', label: '行为配置' },
   { key: 'usage',    label: '用量统计' },
   { key: 'trace',    label: '决策轨迹' },
+  { key: 'prompts',  label: '系统提示词' },
 ]
 const activeTab = ref('llm')
 

@@ -15,6 +15,11 @@ const routes = [
     component: () => import('@/views/Register.vue'),
     meta: { authPublic: true },
   },
+  {
+    path: '/privacy',
+    name: 'Privacy',
+    component: () => import('@/views/Privacy.vue'),
+  },
 
   // ── 主 App（需要用户登录）──
   {

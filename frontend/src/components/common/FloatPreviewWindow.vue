@@ -266,13 +266,23 @@ async function load(f) {
 
   // 占位图：优先从 blob Map 同步命中，未缓存则后台 fetch（与全图下载并行）
   if (isImg.value && !_SVG_EXTS.has(f.ext?.toUpperCase())) {
-    const cached = getCachedThumb(f.id, 'card')
-    if (cached) {
-      placeholderSrc.value = cached
+    if (f.attach_id) {
+      // 聊天附件：占位图走附件缩略图端点
+      const token = localStorage.getItem('user_token') ?? ''
+      const h = token ? { Authorization: `Bearer ${token}` } : {}
+      fetch(`${BASE_URL}/agent/attachment/${f.attach_id}/thumb?size=card`, { headers: h })
+        .then(r => r.ok ? r.blob() : null).then(b => {
+          if (b && !imageReady.value) placeholderSrc.value = URL.createObjectURL(b)
+        }).catch(() => {})
     } else {
-      getThumb(f.id, 'card').then(url => {
-        if (url && !imageReady.value) placeholderSrc.value = url
-      })
+      const cached = getCachedThumb(f.id, 'card')
+      if (cached) {
+        placeholderSrc.value = cached
+      } else {
+        getThumb(f.id, 'card').then(url => {
+          if (url && !imageReady.value) placeholderSrc.value = url
+        })
+      }
     }
   }
   // 已知真实尺寸：直接定好窗口，无需等缩略图或下载完成
@@ -286,8 +296,17 @@ async function load(f) {
 
   try {
     if (isVideoExt(f.ext)) {
-      const { url } = await filesApi.getStreamUrl(f.id)
-      videoSrc.value = url
+      let url
+      if (f.attach_id) {
+        const res = await fetch(`${BASE_URL}/agent/attachment/${f.attach_id}/download`, { headers })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        url = URL.createObjectURL(await res.blob())
+        videoSrc.value = url
+      } else {
+        const stream = await filesApi.getStreamUrl(f.id)
+        url = stream.url
+        videoSrc.value = url
+      }
       // 探视频尺寸
       await new Promise(resolve => {
         const vid = document.createElement('video')
@@ -303,7 +322,10 @@ async function load(f) {
         vid.src = url
       })
     } else {
-      const res = await fetch(`${BASE_URL}/files/${f.id}/download`, { headers })
+      const dlUrl = f.attach_id
+        ? `${BASE_URL}/agent/attachment/${f.attach_id}/download`
+        : `${BASE_URL}/files/${f.id}/download`
+      const res = await fetch(dlUrl, { headers })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()
       const url  = URL.createObjectURL(blob)

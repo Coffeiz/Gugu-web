@@ -686,16 +686,15 @@ async function downloadFile(f) {
   catch (e) { console.error('下载失败', e) }
 }
 
-// 可预览：必须是文件库文件（有 file_id，能走 /files/{id} 端点）且类型受支持；
-// 暂存附件/聊天上传件没有文件库端点，只能下载。
 const previewStore = usePreviewStore()
 function canPreview(f) {
-  return !!f.file_id && !f.upload && isPreviewable(f.ext)
+  return (!!f.file_id || !!f.attach_id) && isPreviewable(f.ext)
 }
 function openFileFromChat(f) {
   if (canPreview(f)) {
     previewStore.open({
-      id: f.file_id,
+      id: f.file_id ?? null,
+      attach_id: f.attach_id ?? null,
       ext: (f.ext || '').toUpperCase(),
       displayName: f.name,
       size: fmtSize(f.size_bytes),

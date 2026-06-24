@@ -64,6 +64,10 @@
         已有账号？
         <router-link to="/login">立即登录</router-link>
       </div>
+      <div class="card-policy">
+        注册即表示你已阅读并同意
+        <router-link to="/privacy">隐私政策</router-link>
+      </div>
     </div>
   </div>
 </template>
@@ -210,4 +214,10 @@ async function handleRegister() {
 }
 .card-footer a { color: #7b7fb2; font-weight: 600; text-decoration: none; }
 .card-footer a:hover { text-decoration: underline; }
+.card-policy {
+  margin-top: 10px; text-align: center;
+  font-size: 11px; color: #a0a4b8;
+}
+.card-policy a { color: #a0a4b8; text-decoration: underline; }
+.card-policy a:hover { color: #7b7fb2; }
 </style>
