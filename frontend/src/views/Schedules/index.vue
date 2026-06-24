@@ -9,8 +9,8 @@
     </div>
 
     <!-- 内置提醒 -->
-    <div class="card">
-      <div class="card-title">内置提醒</div>
+    <div class="panel">
+      <div class="section-header"><span class="section-title">内置提醒</span></div>
       <div class="builtin-row">
         <div>
           <div class="builtin-name">截稿提醒</div>
@@ -24,34 +24,31 @@
     </div>
 
     <!-- 我的任务 -->
-    <div class="card">
-      <div class="card-title">我的任务 <span class="muted">（{{ tasks.length }}）</span></div>
+    <div class="panel">
+      <div class="section-header">
+        <span class="section-title">我的任务 <span class="muted">（{{ tasks.length }}）</span></span>
+      </div>
       <div v-if="loading" class="empty">加载中…</div>
       <div v-else-if="!tasks.length" class="empty">还没有自定义任务，点右上角「新建任务」试试～</div>
-      <div v-else class="task-list">
-        <div v-for="t in tasks" :key="t.id" class="task-row" :class="{ off: !t.enabled }">
-          <div class="task-main">
-            <div class="task-name">
-              <span class="tag" :class="t.action_type">{{ t.action_type === 'agent' ? '咕咕' : '提醒' }}</span>
-              {{ t.name }}
-            </div>
-            <div class="task-meta">
-              <span>{{ cronLabel(t.cron) }}</span>
-              <span class="dot">·</span>
-              <span>{{ channelLabel(t.channels) }}</span>
-              <span v-if="t.last_run_at" class="dot">·</span>
-              <span v-if="t.last_run_at" class="muted">上次 {{ fmtTime(t.last_run_at) }}</span>
-            </div>
-            <div class="task-payload" v-if="t.payload">{{ t.payload }}</div>
-          </div>
-          <div class="task-actions">
-            <button class="link" @click="runNow(t)" :disabled="busy">试运行</button>
-            <button class="link" @click="openEdit(t)">编辑</button>
-            <button class="link danger" @click="removeTask(t)">删除</button>
+      <div v-else class="task-grid">
+        <div v-for="t in tasks" :key="t.id" class="task-card" :class="{ off: !t.enabled }">
+          <div class="tc-top">
+            <span class="tag" :class="t.action_type">{{ t.action_type === 'agent' ? '咕咕' : '提醒' }}</span>
+            <span class="tc-name">{{ t.name }}</span>
             <label class="switch sm">
               <input type="checkbox" :checked="t.enabled" @change="toggle(t)" />
               <span class="slider"></span>
             </label>
+          </div>
+          <div class="tc-when">{{ cronLabel(t.cron) }} · {{ channelLabel(t.channels) }}</div>
+          <div class="tc-payload" v-if="t.payload">{{ t.payload }}</div>
+          <div class="tc-foot">
+            <span class="tc-last">{{ t.last_run_at ? '上次 ' + fmtTime(t.last_run_at) : '未运行' }}</span>
+            <span class="tc-acts">
+              <button class="link" @click="runNow(t)" :disabled="busy">试运行</button>
+              <button class="link" @click="openEdit(t)">编辑</button>
+              <button class="link danger" @click="removeTask(t)">删除</button>
+            </span>
           </div>
         </div>
       </div>
@@ -225,33 +222,45 @@ async function removeTask(t) {
 .btn-primary { padding: 8px 16px; border-radius: 10px; border: none; background: var(--color-primary); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; font-family: var(--font-sans); }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
 
-.card {
-  background: var(--glass-bg); border: 1px solid var(--glass-border);
+/* 大版面（半透明面板，对齐原型 .glass-panel） */
+.panel {
+  background: rgba(255,255,255,0.34); border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg); corner-shape: squircle;
   box-shadow: var(--glass-shadow);
   backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
-  padding: 18px 20px; margin-bottom: 16px;
+  padding: 20px 22px; margin-bottom: 18px;
 }
-.card-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 12px; }
-.muted { color: var(--text-secondary); font-weight: 400; }
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.section-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+.muted { color: var(--text-secondary); font-weight: 400; font-size: 13px; }
 
 .builtin-row { display: flex; align-items: center; justify-content: space-between; }
 .builtin-name { font-size: 13px; font-weight: 500; color: var(--text-primary); }
 .builtin-desc { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
 
-.empty { font-size: 13px; color: var(--text-secondary); padding: 14px 2px; }
-.task-list { display: flex; flex-direction: column; gap: 10px; }
-.task-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: 12px; corner-shape: squircle; background: rgba(255,255,255,0.42); border: 1px solid var(--glass-border); }
-.task-row.off { opacity: 0.55; }
-.task-name { font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
-.tag { font-size: 11px; padding: 1px 7px; border-radius: 6px; font-weight: 500; }
+.empty { font-size: 13px; color: var(--text-secondary); padding: 8px 2px; }
+
+/* 版面里的小卡片（更实一点，浮在大版面上） */
+.task-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 12px; }
+.task-card {
+  background: rgba(255,255,255,0.62); border: 1px solid var(--glass-border);
+  border-radius: 14px; corner-shape: squircle; padding: 13px 15px;
+  display: flex; flex-direction: column; gap: 7px;
+  transition: box-shadow 0.2s ease, transform 0.2s cubic-bezier(0.34,1.2,0.64,1);
+}
+.task-card:hover { box-shadow: var(--glass-shadow); transform: translateY(-2px); }
+.task-card.off { opacity: 0.5; }
+.tc-top { display: flex; align-items: center; gap: 8px; }
+.tc-name { font-size: 14px; font-weight: 600; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag { font-size: 11px; padding: 1px 7px; border-radius: 6px; font-weight: 500; flex-shrink: 0; }
 .tag.reminder { background: rgba(123,127,178,0.16); color: #5b5fa6; }
 .tag.agent { background: rgba(29,158,117,0.16); color: #0f6e56; }
-.task-meta { font-size: 12px; color: var(--text-secondary); margin-top: 5px; display: flex; gap: 6px; flex-wrap: wrap; }
-.dot { opacity: 0.5; }
-.task-payload { font-size: 12px; color: var(--text-secondary); margin-top: 5px; max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.link { background: none; border: none; cursor: pointer; font-size: 12px; color: var(--text-secondary); padding: 2px 4px; font-family: var(--font-sans); }
+.tc-when { font-size: 12px; color: var(--text-secondary); }
+.tc-payload { font-size: 12px; color: var(--text-secondary); background: rgba(0,0,0,0.035); border-radius: 8px; padding: 6px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
+.tc-last { font-size: 11px; color: var(--text-secondary); opacity: 0.75; }
+.tc-acts { display: flex; gap: 8px; }
+.link { background: none; border: none; cursor: pointer; font-size: 12px; color: var(--text-secondary); padding: 2px 3px; font-family: var(--font-sans); }
 .link:hover { color: var(--text-primary); }
 .link.danger:hover { color: #d05a5a; }
 .link:disabled { opacity: 0.5; cursor: default; }
