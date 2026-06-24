@@ -5,6 +5,8 @@
 > **原则**：right-sized——周边节点先用配置松绑，worker 并发先用「单进程有界并发 + per-user 闸门」解，多进程/分片**由埋点数据触发、不提前**。
 > 相关：运行时决策环 [`agent-决策环.md`](agent-决策环.md)｜IM 接入与三进程部署 [`agent-im接入架构.md`](agent-im接入架构.md)。
 
+> **部署形态决策（2026-06-24）：默认单机。** web + worker + supervisor + 网关同机 → 一套 `.env`/`override` 管全部、Admin 配置 + 重启全生效。**跨主机控制面（Redis 共享配置 + 命令频道）移出范围**；扩量靠单机内手段（`uvicorn --workers N`、**单 worker 进程 + async 并发**、多 LLM key、DB 池）。瓶颈是大模型延迟、非机器，一台机远超 50 人才到头。连带简化：`user_gate` 用进程内锁即**终态**，P3 多 worker/分片基本划掉（见下）。
+
 ---
 
 ## 分期总览
@@ -49,7 +51,7 @@ flowchart TD
 
 **并发化（①）**
 - `run_once` 串行 `for await` → **有界并发**（`Semaphore(C)`）
-- **`user_gate(puid)` 抽象**（关键缝）：进程内 `asyncio.Lock`，同用户串行、不同用户并发；调用点按「将来可能是分布式锁/分片」来写
+- **`user_gate(puid)` 抽象**（关键缝）：进程内 `asyncio.Lock`，同用户串行、不同用户并发。**单机决策下，进程内锁即终态**——不再需要分布式锁/分片（除非以后真上多 worker 进程）
 - worker **优雅退出 drain（C）**：SIGTERM 先停取新消息、等在跑的跑完再退（并发后必须）
 - `message_id` 幂等去重（顺手修 `claim_stale` 60s 重投导致的重复回复隐患）
 
@@ -78,9 +80,9 @@ flowchart TD
 
 ### P3 · 按需扩展（数据驱动，别提前）
 
-- 多 worker + `hash(puid)` 分片（P1 埋点显示单进程吃紧才上；`user_gate` 实现从 asyncio 锁换 Redis 锁 / 分片路由，**上层不动**）
+- ~~多 worker + `hash(puid)` 分片~~ **暂不做（单机决策）**：单机优先「单 worker 进程 + async 并发」，进程内 `user_gate` 即够；真撞单进程 CPU 上限、被迫多进程时再上分片（届时 `user_gate` 实现从 asyncio 锁换 Redis 锁/分片路由，上层不动）
 - 记忆 2b：`summary.md` 快照 + 分层压缩（记忆真溢出才做）
-- **依赖**：P1 的 `user_gate` + 埋点数据
+- **依赖**：埋点数据；多 worker 那条已 park
 
 ### P4 · 远期 / 可能
 

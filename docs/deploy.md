@@ -254,7 +254,20 @@ journalctl -u gugu-supervisor -f         # 或 tail logs/gugu-supervisor.log
 
 也可在 **Admin → 服务状态** 页点「重启」（仅同主机有效，靠 kill + systemd 自愈）。
 
-### 4.3 把网关 / worker 拆到独立服务器
+> ⚠️ **`systemctl stop gugu-supervisor` 报 `Unit not loaded`**：说明这台机的 worker/supervisor 是**手动 `python -m ...` 起的、没装成 systemd**，systemctl 自然不认。两条路：
+> ```bash
+> # A. 手动停（按进程，supervisor 收 TERM 会连带杀网关子进程）
+> ps aux | grep -E "agent\.adapters\.supervisor|python -m worker" | grep -v grep   # 先看 pid
+> pkill -TERM -f "agent.adapters.supervisor"
+> pkill -TERM -f "python -m worker"
+> # B. 装成 systemd（推荐，之后 systemctl 可用 + 崩溃自拉 + 开机自启）
+> cd backend && RUN_USER=youruser make install
+> ```
+> 手动起的进程：`systemctl` 管不了、服务页「重启」也指望不上、重启机器/崩溃不自拉——所以生产建议一律 `make install` 走 systemd。
+
+### 4.3 把网关 / worker 拆到独立服务器（可选，非默认）
+
+> **默认单机部署**（web + worker + supervisor + 网关同机）——一套配置管全部、Admin 配置/重启全生效、扩量靠单机内手段就够（见 [`开发链路-roadmap.md`](开发链路-roadmap.md) 部署形态决策）。**以下拆机为可选路径**，仅当确有多机需求时用；跨主机的 Admin 配置/重启不生效（§4.4）。
 
 > 网关/worker 和后台**不直接通信**，只在 **Redis + DB** 这条共享总线上碰头。所以拆机要配的就这两个 IP——**没有「web 的 IP」要填**。
 
