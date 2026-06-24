@@ -1,14 +1,5 @@
 <template>
   <div class="sched-page">
-    <div class="sched-head">
-      <div>
-        <h1 class="sched-title">定时任务</h1>
-        <p class="sched-sub">让咕咕到点提醒你，或定时替你跑一件事</p>
-      </div>
-      <button class="btn-primary" @click="openCreate">＋ 新建任务</button>
-    </div>
-
-    <!-- 内置提醒 -->
     <div class="panel">
       <div class="section-header"><span class="section-title">内置提醒</span></div>
       <div class="builtin-row">
@@ -21,12 +12,12 @@
           <span class="slider"></span>
         </label>
       </div>
-    </div>
 
-    <!-- 我的任务 -->
-    <div class="panel">
+      <div class="divider"></div>
+
       <div class="section-header">
         <span class="section-title">我的任务 <span class="muted">（{{ tasks.length }}）</span></span>
+        <button class="btn-primary" @click="openCreate">＋ 新建任务</button>
       </div>
       <div v-if="loading" class="empty">加载中…</div>
       <div v-else-if="!tasks.length" class="empty">还没有自定义任务，点右上角「新建任务」试试～</div>
@@ -214,34 +205,34 @@ async function removeTask(t) {
 </script>
 
 <style scoped>
-.sched-page { max-width: 820px; margin: 0 auto; padding: 28px 24px 60px; font-family: var(--font-sans); }
-.sched-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 22px; }
-.sched-title { font-size: 22px; font-weight: 700; color: var(--text-primary); margin: 0; }
-.sched-sub { font-size: 13px; color: var(--text-secondary); margin: 5px 0 0; }
+.sched-page { height: 100%; font-family: var(--font-sans); }
 
 .btn-primary { padding: 8px 16px; border-radius: 10px; border: none; background: var(--color-primary); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; font-family: var(--font-sans); }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
 
-/* 大版面（半透明面板，对齐原型 .glass-panel） */
+/* 大版面：填满内容区（等宽 + 高到顶栏底），对齐原型 .glass-panel */
 .panel {
+  height: 100%; box-sizing: border-box;
+  display: flex; flex-direction: column;
   background: rgba(255,255,255,0.34); border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg); corner-shape: squircle;
   box-shadow: var(--glass-shadow);
   backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
-  padding: 20px 22px; margin-bottom: 18px;
+  padding: 22px 24px;
 }
-.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-shrink: 0; }
 .section-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
 .muted { color: var(--text-secondary); font-weight: 400; font-size: 13px; }
+.divider { height: 1px; background: rgba(0,0,0,0.06); margin: 18px 0; flex-shrink: 0; }
 
-.builtin-row { display: flex; align-items: center; justify-content: space-between; }
+.builtin-row { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
 .builtin-name { font-size: 13px; font-weight: 500; color: var(--text-primary); }
 .builtin-desc { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
 
 .empty { font-size: 13px; color: var(--text-secondary); padding: 8px 2px; }
 
-/* 版面里的小卡片（更实一点，浮在大版面上） */
-.task-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 12px; }
+/* 版面里的小卡片（更实一点，浮在大版面上）；区域内滚动，撑满剩余高度 */
+.task-grid { flex: 1; min-height: 0; overflow-y: auto; align-content: start; display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 12px; padding-right: 2px; }
 .task-card {
   background: rgba(255,255,255,0.62); border: 1px solid var(--glass-border);
   border-radius: 14px; corner-shape: squircle; padding: 13px 15px;
