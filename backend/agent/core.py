@@ -6,10 +6,41 @@ get_final_message 取 tool_use；有工具则执行（走 skills.registry）回�
 OpenAI 路：非流式探测工具 → 无工具时分块输出已生成文本。工具 schema 由 profile
 启用的工具名从 registry 派生，消除手写双格式。temperature 已加到调用上保证离散度生效。
 """
+import asyncio
 import json
 from typing import AsyncGenerator
 
 from agent.skills import registry
+
+# ⑦ 慢尾兜底：LLM 瞬时错误（限流 429 / 超时 / 网络 / 5xx）退避重试——贴着并发上限跑时
+# 把偶发 429 吸收成短延迟、不丢消息。只在「本轮还没吐 token 前」重试（已吐过再重试会重复输出）。
+_RETRY_BACKOFF = [1, 2, 4]   # 退避秒数；最多重试 3 次
+
+
+async def _stream_round(client, kwargs):
+    """跑一轮 Anthropic 流式，遇瞬时错误在出 token 前退避重试。
+    yield ('token', delta) 逐字；结束 yield ('final', message)。重试用尽 / 不可重试 → 抛出。"""
+    import anthropic
+    transient = (anthropic.RateLimitError, anthropic.APITimeoutError,
+                 anthropic.APIConnectionError, anthropic.InternalServerError)
+    last = None
+    for i in range(len(_RETRY_BACKOFF) + 1):
+        emitted = False
+        try:
+            async with client.messages.stream(**kwargs) as stream:
+                async for delta in stream.text_stream:
+                    emitted = True
+                    yield ("token", delta)
+                yield ("final", await stream.get_final_message())
+                return
+        except transient as e:
+            last = e
+            if emitted or i >= len(_RETRY_BACKOFF):
+                raise              # 已吐 token（重试会重复）或重试用尽 → 抛给上层降级
+            print(f"[core] LLM 瞬时错误 {type(e).__name__}，{_RETRY_BACKOFF[i]}s 后重试({i+1})", flush=True)
+            await asyncio.sleep(_RETRY_BACKOFF[i])
+    if last:
+        raise last
 
 # 工具循环最大轮次。配合「工具使用准则」(skills.md，先规划后执行、别重复验证) + 强工具
 # (create_project 带 stages/todos、set_stages 整体替换、move_items/批量 rename/edit 一次处理多个)，
@@ -90,25 +121,32 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                 return
             # 单次流式调用：既实时流式输出文本，又能拿到 tool_use（无双调用、无敷衍）
-            async with client.messages.stream(
-                model=settings.ai.model,
-                system=system_param,
-                messages=messages,
-                tools=tools,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                **thinking_param,
-            ) as stream:
-                _tok = 0
-                async for delta in stream.text_stream:
-                    yield f"data: {json.dumps({'type': 'token', 'content': delta})}\n\n"
+            # 经 _stream_round 包一层瞬时错误退避重试（⑦）；流式途中仍协作检查取消。
+            _kwargs = dict(
+                model=settings.ai.model, system=system_param, messages=messages,
+                tools=tools, max_tokens=max_tokens, temperature=temperature, **thinking_param,
+            )
+            _tok = 0
+            final = None
+            try:
+                async for _kind, _val in _stream_round(client, _kwargs):
+                    if _kind == "final":
+                        final = _val
+                        break
+                    yield f"data: {json.dumps({'type': 'token', 'content': _val})}\n\n"
                     # 流式途中也协作检查取消：单轮长回答没有「下一轮」，只能在这里掐断；
-                    # 退出 async with 会关闭 stream、断开上游请求，真正停掉生成（不是只丢弃后续 token）
+                    # 退出生成器会关闭 stream、断开上游请求，真正停掉生成（不是只丢弃后续 token）
                     _tok += 1
                     if _tok % _CANCEL_CHECK_EVERY == 0 and await _im_cancelled():
                         yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                         return
-                final = await stream.get_final_message()
+            except Exception as e:
+                import anthropic
+                busy = isinstance(e, getattr(anthropic, "RateLimitError", ()))
+                detail = "咕咕这会儿有点忙（接口繁忙），过几秒再发一次试试 🙏" if busy else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
+                print(f"[core] LLM 调用失败（已重试）: {type(e).__name__}: {str(e)[:120]}", flush=True)
+                yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
+                return
 
             total_in  += final.usage.input_tokens
             total_out += final.usage.output_tokens
