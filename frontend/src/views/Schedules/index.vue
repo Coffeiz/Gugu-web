@@ -185,8 +185,16 @@ async function removeTask(t) {
 <style scoped>
 .sched-page { height: 100%; font-family: var(--font-sans); }
 
-.btn-primary { padding: 8px 16px; border-radius: 10px; border: none; background: var(--color-primary); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; font-family: var(--font-sans); }
-.btn-primary:disabled { opacity: 0.5; cursor: default; }
+/* 和顶栏「新建项目」按钮一致 */
+.btn-primary {
+  padding: 8px 16px; border: none; border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, #7b7fb2, #9590c4); color: #fff;
+  font-size: 13px; font-weight: 600; cursor: pointer; font-family: var(--font-sans);
+  box-shadow: 0 3px 12px rgba(123,127,178,0.3);
+  transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.2s ease-out, opacity 0.2s ease-out;
+}
+.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(123,127,178,0.4); opacity: 0.92; }
+.btn-primary:disabled { opacity: 0.5; cursor: default; transform: none; }
 
 /* 大版面：填满内容区（等宽 + 高到顶栏底），对齐原型 .glass-panel */
 .panel {
@@ -198,19 +206,31 @@ async function removeTask(t) {
   backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   padding: 22px 24px;
 }
-.section-header { display: flex; align-items: center; justify-content: flex-end; margin-bottom: 14px; flex-shrink: 0; }
+.section-header { display: flex; align-items: center; justify-content: flex-start; margin-bottom: 16px; flex-shrink: 0; }
 
 .empty { font-size: 13px; color: var(--text-secondary); padding: 8px 2px; }
 
 /* 版面里的小卡片（更实一点，浮在大版面上）；区域内滚动，撑满剩余高度 */
 .task-grid { flex: 1; min-height: 0; overflow-y: auto; align-content: start; display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 12px; padding-right: 2px; }
+/* 与项目卡片同款：squircle + 顶部高光 ::after + hover 上浮 */
 .task-card {
-  background: rgba(255,255,255,0.62); border: 1px solid var(--glass-border);
-  border-radius: 14px; corner-shape: squircle; padding: 13px 15px;
-  display: flex; flex-direction: column; gap: 7px;
-  transition: box-shadow 0.2s ease, transform 0.2s cubic-bezier(0.34,1.2,0.64,1);
+  position: relative;
+  background: rgba(255,255,255,0.56); border: 1px solid rgba(255,255,255,0.72);
+  border-radius: var(--radius-md); corner-shape: squircle;
+  box-shadow: 0 2px 8px rgba(80,90,110,0.07);
+  padding: 13px 15px; display: flex; flex-direction: column; gap: 7px;
+  overflow: hidden;
+  transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.3s ease, background 0.25s ease-out;
 }
-.task-card:hover { box-shadow: var(--glass-shadow); transform: translateY(-2px); }
+.task-card::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; corner-shape: squircle;
+  background: linear-gradient(to top, rgba(255,255,255,0.08), transparent 50%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+  transition: background 0.3s cubic-bezier(0.34,1.2,0.64,1); pointer-events: none;
+}
+.task-card > * { position: relative; z-index: 1; }
+.task-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
+.task-card:hover::after { background: linear-gradient(to top, rgba(255,255,255,0.25), rgba(255,255,255,0.05) 50%); }
 .task-card.off { opacity: 0.5; }
 .tc-top { display: flex; align-items: center; gap: 8px; }
 .tc-name { font-size: 14px; font-weight: 600; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
