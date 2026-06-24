@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
 from app.db.session import get_db
-from app.models import ScheduledTask, User, UserPreferences
+from app.models import ScheduledTask, User
 
 router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-tasks"])
 
@@ -62,30 +62,12 @@ class TaskUpdate(BaseModel):
     enabled: bool | None = None
 
 
-class RemindersUpdate(BaseModel):
-    deadline: bool | None = None     # 截稿提醒开关（对应偏好 remind_deadlines）
-
-
-async def _prefs(user: User, db: AsyncSession) -> UserPreferences:
-    p = (await db.execute(select(UserPreferences).where(UserPreferences.user_id == user.id))).scalar_one_or_none()
-    if p is None:
-        p = UserPreferences(user_id=user.id, data_json="{}")
-        db.add(p)
-        await db.flush()
-    return p
-
-
 @router.get("")
 async def list_tasks(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     rows = (await db.execute(
         select(ScheduledTask).where(ScheduledTask.user_id == user.id).order_by(ScheduledTask.id.desc())
     )).scalars().all()
-    p = await _prefs(user, db)
-    await db.commit()
-    return {
-        "tasks": [_to_resp(t) for t in rows],
-        "reminders": {"deadline": bool(p.data.get("remind_deadlines", True))},
-    }
+    return {"tasks": [_to_resp(t) for t in rows]}
 
 
 @router.post("", status_code=201)
@@ -102,18 +84,6 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
     await db.commit()
     await db.refresh(t)
     return _to_resp(t)
-
-
-@router.patch("/reminders")
-async def update_reminders(body: RemindersUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """内置提醒开关（须在 /{task_id} 之前声明，否则 'reminders' 会被当 task_id 解析）。"""
-    p = await _prefs(user, db)
-    data = p.data
-    if body.deadline is not None:
-        data["remind_deadlines"] = body.deadline
-    p.data = data
-    await db.commit()
-    return {"deadline": bool(data.get("remind_deadlines", True))}
 
 
 async def _owned(task_id: int, user: User, db: AsyncSession) -> ScheduledTask:

@@ -120,7 +120,6 @@ export const scheduledTasksApi = {
   update:       (id, data) => patch(`/scheduled-tasks/${id}`, data),
   delete:       (id)       => del(`/scheduled-tasks/${id}`),
   run:          (id)       => post(`/scheduled-tasks/${id}/run`),
-  setReminders: (data)     => patch('/scheduled-tasks/reminders', data),
 }
 
 // ── Files ─────────────────────────────────────────────────────────────────────

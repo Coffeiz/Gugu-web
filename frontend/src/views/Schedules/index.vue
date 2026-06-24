@@ -1,20 +1,6 @@
 <template>
   <div class="sched-page">
     <div class="panel">
-      <div class="section-header"><span class="section-title">内置提醒</span></div>
-      <div class="builtin-row">
-        <div>
-          <div class="builtin-name">截稿提醒</div>
-          <div class="builtin-desc">每天 09:00 把 48 小时内到期的项目发给你</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" v-model="reminders.deadline" @change="saveReminders" />
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div class="divider"></div>
-
       <div class="section-header">
         <span class="section-title">我的任务 <span class="muted">（{{ tasks.length }}）</span></span>
         <button class="btn-primary" @click="openCreate">＋ 新建任务</button>
@@ -108,7 +94,6 @@ import { scheduledTasksApi } from '@/services/api'
 
 const weekdays = ['日', '一', '二', '三', '四', '五', '六']
 const tasks = ref([])
-const reminders = reactive({ deadline: true })
 const loading = ref(true)
 const busy = ref(false)
 const showModal = ref(false)
@@ -121,15 +106,9 @@ async function load() {
   try {
     const d = await scheduledTasksApi.list()
     tasks.value = d.tasks || []
-    reminders.deadline = d.reminders?.deadline ?? true
   } finally { loading.value = false }
 }
 onMounted(load)
-
-async function saveReminders() {
-  try { await scheduledTasksApi.setReminders({ deadline: reminders.deadline }) }
-  catch { reminders.deadline = !reminders.deadline }   // 失败回滚
-}
 
 function openCreate() {
   editing.value = null
@@ -223,11 +202,6 @@ async function removeTask(t) {
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-shrink: 0; }
 .section-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
 .muted { color: var(--text-secondary); font-weight: 400; font-size: 13px; }
-.divider { height: 1px; background: rgba(0,0,0,0.06); margin: 18px 0; flex-shrink: 0; }
-
-.builtin-row { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-.builtin-name { font-size: 13px; font-weight: 500; color: var(--text-primary); }
-.builtin-desc { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
 
 .empty { font-size: 13px; color: var(--text-secondary); padding: 8px 2px; }
 

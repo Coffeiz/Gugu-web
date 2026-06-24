@@ -263,7 +263,6 @@ async def serve():
     from app import scheduled_tasks as schedtasks
     sched.start()
     try:
-        await schedtasks.seed_system_tasks()    # 首次种入截稿扫描
         await schedtasks.reconcile()             # 立即从 DB 加载一遍
     except Exception as e:
         print(f"[worker] 定时任务初始化出错: {type(e).__name__}: {e}", flush=True)

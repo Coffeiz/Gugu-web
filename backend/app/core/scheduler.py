@@ -1,20 +1,12 @@
 """定时任务引擎（APScheduler · AsyncIOScheduler）。
 
 **单实例运行**：挂在 worker 进程里（worker 天生单例，避免 web 多 uvicorn worker 各自
-重复跑——也呼应「周期任务单实例化」的进程优化）。web 进程不 import jobs、不 start，故不会重复。
+重复跑——也呼应「周期任务单实例化」的进程优化）。web 进程不 start，故不会重复。
 
-用法：
-    # 在 app/jobs.py 里
-    from app.core import scheduler as sched
-
-    @sched.register(sched.cron(hour=9, minute=0), id="deadline_scan", name="截稿扫描")
-    async def deadline_scan(): ...
-
-    # 在 worker.serve() 里
-    import app.jobs            # 触发上面的 @register
-    sched.start()             # 把累积的 job 全挂上并启动
-    ...
-    sched.shutdown()          # 退出时
+任务来源是 **DB 驱动**（`scheduled_tasks` 表）：worker.serve() 里 `start()` 起 scheduler，
+再由 `app.scheduled_tasks.reconcile()` 每 ~30s 从 DB 把任务同步成 APScheduler job（用 `get()`
+拿底层 scheduler 增删）。下面的 `register/cron/every` 是给「代码内置周期任务」预留的轻量入口，
+当前没有内置任务（全 DB 驱动）。
 
 > 多 worker 时（未来）会重复触发——届时给 job 执行加 Redis leader 锁即可，上层不动。
 """

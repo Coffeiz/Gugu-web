@@ -9,18 +9,17 @@
 
 ## [Unreleased]
 
-### 定时任务系统（DB 驱动 · 执行 · 投递）
+### 用户定时任务（DB 驱动 · 执行 · 投递）
 
-> 主动触达 / 截稿提醒 / 用户自定义定时任务的地基。引擎 APScheduler（`AsyncIOScheduler`），挂在 **worker 单实例进程**（web 多 worker 不重复跑，呼应「周期任务单实例化」）。
+> 用户自定义定时任务。引擎 APScheduler（`AsyncIOScheduler`），挂在 **worker 单实例进程**（web 多 worker 不重复跑，呼应「周期任务单实例化」）。
 
-- **DB 驱动**：`scheduled_tasks` 表（`user_id` 空=系统级 / 有值=用户自定义、`action_type`、`payload`、`cron`、`channels`、`enabled`）。worker 每 ~30s 从 DB **reconcile** 到 APScheduler——增/删/改/开关即时生效、不重启（同 supervisor 读 `user_bots` 的套路）。
-- **三种动作**（`app/scheduled_tasks.py`）：`reminder` 到点发提醒文本｜`agent` 到点跑一条咕咕指令并把结果发回｜`deadline_scan` 系统级扫所有用户近期截稿、按各自开关投递。
+- **DB 驱动**：`scheduled_tasks` 表（`action_type`、`payload`、`cron`、`channels`、`enabled`）。worker 每 ~30s 从 DB **reconcile** 到 APScheduler——增/删/改/开关即时生效、不重启（同 supervisor 读 `user_bots` 的套路）。
+- **两种动作**（`app/scheduled_tasks.py`）：`reminder` 到点发提醒文本｜`agent` 到点跑一条咕咕指令并把结果发回。
 - **两个投递渠道**：`chat` 作为 assistant 消息进用户「⏰ 咕咕提醒」会话 + 推 SSE（在线即时/离线下次见，不依赖 IM）；`im` 按 Redis 存的「可触达地址」(`imreach:{user_id}`，worker 收消息时记一份) 主动 DM（飞书可主动，QQ 主动受限 best-effort）。
-- 系统任务种子：首启自动建「截稿临近扫描」(每天 09:00)。`app/core/scheduler.py` 加 `get()` 供 reconcile 增删 job；`app/jobs.py` 收敛为 `scan_upcoming_deadlines` 纯查询辅助。
+- **用户「定时任务」页**（`/schedules`，侧边栏入口，glass 大版面 + 任务小卡片）：自定义任务 CRUD + 「试运行」立即执行一次 + 友好排程选择器（每天 / 工作日 / 每周 + 时间，前端构造 cron）。后端 API `GET/POST/PATCH/DELETE /scheduled-tasks`（cron 校验）+ `POST /{id}/run`。
 - **Admin 服务状态页可见**：worker 心跳带上已挂定时任务（id/name/下次运行时间），服务页 worker 卡片下列出。
-- **用户「定时任务」页**（`/schedules`，侧边栏入口，glass 风格）：内置提醒开关（截稿提醒）+ 自定义任务 CRUD + 「试运行」立即执行一次 + 友好排程选择器（每天 / 工作日 / 每周 + 时间，前端构造 cron）。后端 API `GET/POST/PATCH/DELETE /scheduled-tasks`（cron 校验）+ `POST /{id}/run` + `PATCH /reminders`。
-- **Admin 系统任务配置**：服务状态页加「系统定时任务」卡——管理员改截稿扫描的时间、启停、试运行（`/admin/scheduled-tasks` GET/PATCH/`{id}/run`，require_admin）。
-- 三个面齐：用户面板 / 用户开关 / Admin 配置。
+
+> 注：曾做过的「系统级任务 / 内置截稿提醒 / Admin 系统任务配置」按需求已移除，只保留用户自定义任务。
 
 ### IM 斜杠强制命令（/stop · /status · /help）
 

@@ -79,9 +79,7 @@ async def execute_task(task_id: int) -> None:
         t.last_run_at = datetime.utcnow()
         await db.commit()
     try:
-        if action == "deadline_scan":
-            await _run_deadline_scan(channels)
-        elif action == "reminder":
+        if action == "reminder":
             await deliver(uid, f"⏰ {payload}", channels)
         elif action == "agent":
             text = await _run_agent(uid, payload)
@@ -104,34 +102,6 @@ async def _run_agent(user_id, prompt: str) -> str:
         uname = (u.display_name or u.username) if u else ""
     resp = await run_collect(AgentRequest(message=prompt, user_id=user_id, user_name=uname, source="schedule"))
     return (resp.text or "").strip() or "（咕咕这次没有产出内容）"
-
-
-async def _run_deadline_scan(channels: str) -> None:
-    from app.jobs import scan_upcoming_deadlines
-    cands = await scan_upcoming_deadlines(within_days=2)
-    by_user: dict[str, list] = {}
-    for c in cands:
-        by_user.setdefault(c["user_id"], []).append(c)
-    for uid, items in by_user.items():
-        if not await _user_opt_in(uid, "remind_deadlines", default=True):
-            continue
-        lines = "\n".join(f"· 「{c['name']}」距截稿 {c['days_left']} 天（{c['deadline']}）" for c in items)
-        await deliver(uid, f"⏰ 截稿提醒：你有 {len(items)} 个项目临近截止\n{lines}", channels)
-
-
-async def _user_opt_in(user_id, key: str, default: bool = True) -> bool:
-    import app.db.session as ss
-    from app.models import UserPreferences
-    async with ss._SessionLocal() as db:
-        p = (await db.execute(
-            select(UserPreferences).where(UserPreferences.user_id == _as_uuid(user_id))
-        )).scalars().first()
-    if not p:
-        return default
-    try:
-        return bool(json.loads(p.data_json or "{}").get(key, default))
-    except Exception:
-        return default
 
 
 # ── 投递 ─────────────────────────────────────────────────────────────────────
@@ -212,26 +182,3 @@ async def get_imreach(user_id) -> dict | None:
         return json.loads(v) if v else None
     except Exception:
         return None
-
-
-# ── 系统任务种子（首次启动建一行截稿扫描）────────────────────────────────────
-async def seed_system_tasks() -> None:
-    import app.db.session as ss
-    from app.models import ScheduledTask
-    if ss._engine is None:
-        ss._build_engine()
-    async with ss._SessionLocal() as db:
-        exists = (await db.execute(
-            select(ScheduledTask).where(
-                ScheduledTask.user_id.is_(None),
-                ScheduledTask.action_type == "deadline_scan",
-            )
-        )).scalars().first()
-        if exists:
-            return
-        db.add(ScheduledTask(
-            user_id=None, name="截稿临近扫描", action_type="deadline_scan",
-            payload="", cron="0 9 * * *", channels="chat,im", enabled=True,
-        ))
-        await db.commit()
-        print("[sched] 已种入系统任务：截稿临近扫描（每天 09:00）", flush=True)

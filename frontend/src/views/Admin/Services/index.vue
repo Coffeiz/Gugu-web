@@ -70,21 +70,6 @@
       </div>
     </div>
 
-    <div v-if="sysTasks.length" class="svc-systasks">
-      <div class="svc-sys-head">系统定时任务 <span class="svc-sys-sub">用户自定义任务 {{ userTaskCount }} 个</span></div>
-      <div v-for="t in sysTasks" :key="t.id" class="svc-sys-row">
-        <div class="svc-sys-info">
-          <div class="svc-sys-name">{{ t.name }}</div>
-          <div class="svc-sys-meta">{{ t.action_type }} · {{ t.last_run_at ? '上次 ' + fmtSys(t.last_run_at) : '未运行' }}</div>
-        </div>
-        <div class="svc-sys-ctl">
-          <input type="time" class="svc-sys-time" v-model="t._time" @change="saveSysTime(t)" />
-          <button class="svc-sys-btn" @click="runSys(t)">试运行</button>
-          <button class="svc-sys-btn" :class="{ on: t.enabled }" @click="toggleSys(t)">{{ t.enabled ? '已启用' : '已停用' }}</button>
-        </div>
-      </div>
-      <div v-if="sysMsg" class="svc-sys-msg">{{ sysMsg }}</div>
-    </div>
   </div>
 </template>
 
@@ -101,48 +86,7 @@ const err = ref('')
 const restarting = ref('')
 const msg = reactive({})
 const msgOk = reactive({})
-const sysTasks = ref([])
-const userTaskCount = ref(0)
-const sysMsg = ref('')
 let timer = null
-
-function cronToTime(cron) {
-  const p = (cron || '').split(' ')
-  if (p.length !== 5) return '09:00'
-  return `${String(p[1]).padStart(2, '0')}:${String(p[0]).padStart(2, '0')}`
-}
-function timeToCron(t) { const [h, m] = (t || '09:00').split(':').map(Number); return `${m} ${h} * * *` }
-function fmtSys(iso) {
-  try { const d = new Date(iso); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` }
-  catch { return '' }
-}
-async function loadSys() {
-  try {
-    const r = await adminStore.authFetch('/api/v1/admin/scheduled-tasks')
-    if (!r.ok) return
-    const d = await r.json()
-    sysTasks.value = (d.system || []).map(t => ({ ...t, _time: cronToTime(t.cron) }))
-    userTaskCount.value = d.user_task_count || 0
-  } catch {}
-}
-async function patchSys(id, body) {
-  try {
-    const r = await adminStore.authFetch(`/api/v1/admin/scheduled-tasks/${id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    })
-    if (!r.ok) sysMsg.value = `保存失败 (${r.status})`
-  } catch (e) { sysMsg.value = e.message }
-}
-async function saveSysTime(t) { await patchSys(t.id, { cron: timeToCron(t._time) }); sysMsg.value = `「${t.name}」改为每天 ${t._time}` }
-async function toggleSys(t) { await patchSys(t.id, { enabled: !t.enabled }); await loadSys() }
-async function runSys(t) {
-  try {
-    const r = await adminStore.authFetch(`/api/v1/admin/scheduled-tasks/${t.id}/run`, { method: 'POST' })
-    const d = await r.json().catch(() => ({}))
-    sysMsg.value = d.msg || '已执行'
-    await loadSys()
-  } catch (e) { sysMsg.value = e.message }
-}
 
 async function load(manual = false) {
   if (manual) loading.value = true
@@ -180,7 +124,7 @@ function fmtDur(s) {
   return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`
 }
 
-onMounted(() => { load(); loadSys(); timer = setInterval(() => load(), 5000) })
+onMounted(() => { load(); timer = setInterval(() => load(), 5000) })
 onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
 
@@ -259,17 +203,4 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .svc-self { font-size: 11px; color: rgba(255,255,255,0.3); }
 .svc-msg { margin-top: 8px; font-size: 11.5px; color: #74c69d; }
 .svc-msg.bad { color: #e08a8a; }
-
-.svc-systasks { margin-top: 20px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 16px 18px; }
-.svc-sys-head { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.85); margin-bottom: 12px; }
-.svc-sys-sub { font-size: 11px; font-weight: 400; color: rgba(255,255,255,0.35); margin-left: 8px; }
-.svc-sys-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid rgba(255,255,255,0.05); }
-.svc-sys-name { font-size: 13px; color: rgba(255,255,255,0.85); }
-.svc-sys-meta { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 2px; }
-.svc-sys-ctl { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.svc-sys-time { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 7px; color: rgba(255,255,255,0.85); font-size: 12px; padding: 4px 8px; }
-.svc-sys-btn { font-size: 11.5px; padding: 4px 11px; border-radius: 7px; cursor: pointer; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.6); }
-.svc-sys-btn:hover { background: rgba(255,255,255,0.1); }
-.svc-sys-btn.on { color: #4ade80; border-color: rgba(74,222,128,0.3); background: rgba(74,222,128,0.1); }
-.svc-sys-msg { margin-top: 10px; font-size: 11.5px; color: #74c69d; }
 </style>
