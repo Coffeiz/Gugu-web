@@ -4,9 +4,8 @@
       <div class="section-header">
         <button class="btn-primary" @click="openCreate">＋ 新建任务</button>
       </div>
-      <div v-if="loading" class="empty">加载中…</div>
-      <div v-else-if="!tasks.length" class="empty">还没有自定义任务，点右上角「新建任务」试试～</div>
-      <div v-else class="task-grid">
+      <div v-if="!loading && !tasks.length" class="empty">还没有自定义任务，点上方「新建任务」试试～</div>
+      <div v-else-if="tasks.length" class="task-grid">
         <div v-for="t in tasks" :key="t.id" class="task-card" :class="{ off: !t.enabled }">
           <div class="tc-top">
             <span class="tag" :class="t.action_type">{{ t.action_type === 'agent' ? '咕咕' : '提醒' }}</span>
