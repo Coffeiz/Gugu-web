@@ -1,6 +1,6 @@
 <template>
   <div class="asel-wrap" ref="wrapRef">
-    <div class="asel-trigger" :class="{ open: show }" @click="toggle">
+    <div class="asel-trigger" :class="{ open: show }" :style="{ minWidth: triggerMinW + 'px' }" @click="toggle">
       <span :class="{ placeholder: !modelValue }">{{ selectedLabel }}</span>
       <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round" stroke-linejoin="round" class="asel-chevron" :class="{ up: show }">
@@ -39,6 +39,18 @@ const selectedLabel = computed(() =>
   props.options.find(o => o.value === props.modelValue)?.label ?? props.placeholder
 )
 
+// Auto min-width to fit the longest option label
+// Chinese chars ≈ 15px, ASCII chars ≈ 8px; plus trigger padding (12px * 2) + chevron (11+8=19px)
+const triggerMinW = computed(() => {
+  if (!props.options.length) return 110
+  const max = Math.max(...props.options.map(o => {
+    let w = 0
+    for (const ch of o.label) w += ch.charCodeAt(0) > 0x7f ? 15 : 8
+    return w + 24 + 19  // padding + chevron
+  }))
+  return Math.max(110, max)
+})
+
 function toggle() {
   show.value = !show.value
   if (show.value) setTimeout(position, 0)
@@ -48,13 +60,20 @@ function position() {
   const rect = wrapRef.value?.getBoundingClientRect()
   if (!rect) return
   const below = rect.bottom + props.options.length * 36 + 16 < window.innerHeight
-  popupStyle.value = {
+  // Trigger already auto-sized to fit longest option; popup matches trigger width
+  const overflow = rect.right > window.innerWidth - 8
+  const style = {
     position: 'fixed',
-    left: `${rect.left}px`,
     minWidth: `${rect.width}px`,
     top: below ? `${rect.bottom + 5}px` : `${rect.top - props.options.length * 36 - 16}px`,
     zIndex: 9999,
   }
+  if (overflow) {
+    style.right = `${window.innerWidth - rect.right}px`
+  } else {
+    style.left = `${rect.left}px`
+  }
+  popupStyle.value = style
 }
 
 function select(value) {

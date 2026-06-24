@@ -36,7 +36,7 @@
               <input type="number" min="1" max="64" class="conc-input"
                      v-model.number="agentDraft.worker_concurrency" @change="saveConcurrency" />
             </label>
-            <label class="strategy-select">
+            <div class="strategy-select">
               <span>策略</span>
               <AdminSelect
                 :model-value="strategy"
@@ -47,8 +47,8 @@
                 ]"
                 @update:model-value="setStrategy"
               />
-            </label>
-            <label v-if="strategy === 'pool'" class="strategy-select" title="随机=简单均匀；轮询=严格交替；最少在途=自动多发给快的 key、避开慢的（key 速度差异大时最优）">
+            </div>
+            <div v-if="strategy === 'pool'" class="strategy-select" title="随机=简单均匀；轮询=严格交替；最少在途=自动多发给快的 key、避开慢的（key 速度差异大时最优）">
               <span>分流</span>
               <AdminSelect
                 :model-value="poolMode"
@@ -59,7 +59,7 @@
                 ]"
                 @update:model-value="setPoolMode"
               />
-            </label>
+            </div>
             <button class="btn-primary" @click="openNewPreset">
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 1v11M1 6.5h11"/></svg>
             新建预设

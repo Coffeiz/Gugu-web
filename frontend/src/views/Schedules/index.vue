@@ -2,7 +2,7 @@
   <div class="sched-page">
     <div class="panel">
       <div class="section-header">
-        <button class="btn-primary" @click="openCreate">＋ 新建任务</button>
+        <button class="btn-primary" @click="openCreate"><PhAlarm :size="14" weight="bold" style="vertical-align:-1px;margin-right:5px" />新建任务</button>
       </div>
       <div v-if="!loading && !tasks.length" class="empty">还没有自定义任务，点上方「新建任务」试试～</div>
       <div v-else-if="tasks.length" class="task-grid">
@@ -42,11 +42,18 @@
 
         <div class="field">
           <span>重复</span>
-          <div class="days">
-            <button v-for="d in dayOpts" :key="d.v" type="button" class="day-chip"
-              :class="{ on: form.days.includes(d.v) }" @click="toggleDay(d.v)">{{ d.label }}</button>
+          <div class="repeat-tabs">
+            <button v-for="opt in REPEAT_OPTS" :key="opt.v" type="button"
+              class="repeat-tab" :class="{ on: repeatMode === opt.v }"
+              @click="repeatMode = opt.v">{{ opt.label }}</button>
           </div>
-          <div class="repeat-hint">{{ repeatHint }}</div>
+          <div v-if="repeatMode === 'custom'" class="date-range">
+            <DateSpanPicker
+              v-model:startDate="customStartDate"
+              v-model:endDate="customEndDate"
+              placeholder="选择日期范围"
+            />
+          </div>
         </div>
         <div class="divider"></div>
 
@@ -68,7 +75,7 @@
               </span>
               web 通知
             </label>
-            <label class="chk-row">
+            <label v-if="imChannels.includes('feishu')" class="chk-row">
               <input type="checkbox" value="feishu" v-model="form.channels" class="chk-input" />
               <span class="chk-box">
                 <svg v-if="form.channels.includes('feishu')" width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -77,7 +84,7 @@
               </span>
               飞书
             </label>
-            <label class="chk-row">
+            <label v-if="imChannels.includes('qq')" class="chk-row">
               <input type="checkbox" value="qq" v-model="form.channels" class="chk-input" />
               <span class="chk-box">
                 <svg v-if="form.channels.includes('qq')" width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -103,6 +110,12 @@
 import { ref, reactive, onMounted, computed, nextTick } from 'vue'
 import { scheduledTasksApi } from '@/services/api'
 import BaseModal from '@/components/common/BaseModal.vue'
+import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
+import { useAuthStore } from '@/stores/auth'
+import { PhAlarm } from '@phosphor-icons/vue'
+
+const authStore = useAuthStore()
+const imChannels = computed(() => authStore.user?.imChannels ?? [])
 
 const weekdays = ['日', '一', '二', '三', '四', '五', '六']
 const tasks = ref([])
@@ -112,23 +125,29 @@ const showModal = ref(false)
 const editing = ref(null)
 const formErr = ref('')
 const nameRef = ref(null)
-// 重复：选中的星期（0=日,1=一,…,6=六）。空 = 不重复（一次性）
-const dayOpts = [
-  { v: 1, label: '一' }, { v: 2, label: '二' }, { v: 3, label: '三' },
-  { v: 4, label: '四' }, { v: 5, label: '五' }, { v: 6, label: '六' }, { v: 0, label: '日' },
+const REPEAT_OPTS = [
+  { v: 'daily',   label: '每日' },
+  { v: 'weekday', label: '工作日' },
+  { v: 'weekend', label: '周末' },
+  { v: 'custom',  label: '自定义' },
 ]
-const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0]
-const form = reactive({ name: '', payload: '', days: [], time: '09:00', channels: ['web'] })
+const repeatMode      = ref('daily')   // 'daily' | 'weekday' | 'weekend' | 'custom'
+const customStartDate = ref('')        // YYYY-MM-DD
+const customEndDate   = ref('')        // YYYY-MM-DD
+const form = reactive({ name: '', payload: '', time: '09:00', channels: ['web'] })
 
 function pad(n) { return String(n).padStart(2, '0') }
-function toggleDay(v) {
-  const i = form.days.indexOf(v)
-  if (i >= 0) form.days.splice(i, 1); else form.days.push(v)
+function todayIso() {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
-const repeatHint = computed(() => {
-  if (!form.days.length) return '无重复'
-  if (form.days.length === 7) return '每天'
-  return '每周' + DOW_ORDER.filter(d => form.days.includes(d)).map(d => weekdays[d]).join('、')
+
+watch(repeatMode, (mode) => {
+  if (mode === 'custom' && !customStartDate.value) {
+    const t = todayIso()
+    customStartDate.value = t
+    customEndDate.value   = t
+  }
 })
 
 async function load() {
@@ -140,21 +159,31 @@ async function load() {
 }
 onMounted(load)
 
-function blankForm() { return { name: '', payload: '', days: [], time: '09:00', channels: ['web'] } }
+function blankForm() { return { name: '', payload: '', time: '09:00', channels: ['web'] } }
 function openCreate() {
   editing.value = null
   Object.assign(form, blankForm())
+  repeatMode.value = 'daily'
+  customStartDate.value = ''
+  customEndDate.value = ''
   formErr.value = ''
   showModal.value = true
   nextTick(() => nameRef.value?.focus())
 }
+function filterChannels(chans) {
+  const allowed = ['web', ...imChannels.value]
+  const filtered = chans.filter(c => allowed.includes(c))
+  return filtered.length ? filtered : ['web']
+}
 function openEdit(t) {
   editing.value = t
-  const { days, time } = parseCron(t.cron)
-  // 兼容老数据：chat→web，im→飞书+QQ
+  const parsed = parseCron(t.cron)
+  repeatMode.value      = parsed.mode
+  customStartDate.value = parsed.startDate ?? ''
+  customEndDate.value   = parsed.endDate   ?? ''
   const chans = [...new Set([...t.channels].flatMap(c =>
     c === 'chat' ? ['web'] : c === 'im' ? ['feishu', 'qq'] : [c]))]
-  Object.assign(form, { name: t.name, payload: t.payload, days, time, channels: chans })
+  Object.assign(form, { name: t.name, payload: t.payload, time: parsed.time, channels: filterChannels(chans) })
   formErr.value = ''
   showModal.value = true
   nextTick(() => nameRef.value?.focus())
@@ -162,38 +191,49 @@ function openEdit(t) {
 
 function buildCron() {
   const [h, m] = form.time.split(':').map(Number)
-  if (!form.days.length) {
-    // 不重复：下一个该时间点（今天过了就明天）
-    const now = new Date()
-    const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0)
-    if (dt <= now) dt.setDate(dt.getDate() + 1)
-    return `@once:${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(h)}:${pad(m)}`
+  if (repeatMode.value === 'custom') {
+    const date = customStartDate.value || (() => {
+      const now = new Date()
+      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0)
+      if (dt <= now) dt.setDate(dt.getDate() + 1)
+      return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`
+    })()
+    const end = customEndDate.value ? `:end=${customEndDate.value}` : ''
+    return `@once:${date}T${pad(h)}:${pad(m)}${end}`
   }
-  const dows = DOW_ORDER.filter(d => form.days.includes(d)).join(',')
-  return `${m} ${h} * * ${dows}`
+  const DOW = { daily: '*', weekday: '1-5', weekend: '0,6' }
+  return `${m} ${h} * * ${DOW[repeatMode.value] ?? '*'}`
 }
 function parseCron(cron) {
   cron = cron || ''
   if (cron.startsWith('@once:')) {
-    const dt = new Date(cron.slice(6))
-    return { days: [], time: `${pad(dt.getHours())}:${pad(dt.getMinutes())}` }
+    // 格式：@once:YYYY-MM-DDTHH:mm 或 @once:YYYY-MM-DDTHH:mm:end=YYYY-MM-DD
+    const body = cron.slice(6)
+    const endMatch = body.match(/:end=(\d{4}-\d{2}-\d{2})$/)
+    const endDate  = endMatch ? endMatch[1] : ''
+    const iso      = endMatch ? body.slice(0, endMatch.index) : body
+    const [datePart, timePart] = iso.split('T')
+    const [hh, mm] = (timePart ?? '09:00').split(':')
+    return { mode: 'custom', time: `${pad(Number(hh))}:${pad(Number(mm))}`, startDate: datePart ?? '', endDate }
   }
   const p = cron.split(' ')
-  if (p.length !== 5) return { days: [], time: '09:00' }
+  if (p.length !== 5) return { mode: 'daily', time: '09:00', startDate: '', endDate: '' }
   const [m, h, , , dow] = p
   const time = `${pad(Number(h))}:${pad(Number(m))}`
-  const days = dow === '*' ? [0, 1, 2, 3, 4, 5, 6] : dow.split(',').map(Number).filter(x => !isNaN(x))
-  return { days, time }
+  const mode = dow === '1-5' || dow === '1,2,3,4,5' ? 'weekday'
+             : dow === '0,6' || dow === '6,0'        ? 'weekend'
+             : 'daily'
+  return { mode, time, startDate: '', endDate: '' }
 }
 function cronLabel(cron) {
-  if ((cron || '').startsWith('@once:')) {
-    const dt = new Date(cron.slice(6))
-    return `仅一次 · ${dt.getMonth() + 1}/${dt.getDate()} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`
+  const p = parseCron(cron)
+  if (p.mode === 'custom') {
+    const d = new Date(`${p.startDate}T${p.time}`)
+    const suffix = p.endDate ? ` → ${p.endDate}` : ''
+    return `${p.startDate} ${p.time}${suffix}`
   }
-  const { days, time } = parseCron(cron)
-  if (days.length === 7) return `每天 ${time}`
-  if (!days.length) return time
-  return `每周${DOW_ORDER.filter(d => days.includes(d)).map(d => weekdays[d]).join('、')} ${time}`
+  const labels = { daily: '每天', weekday: '工作日', weekend: '周末' }
+  return `${labels[p.mode] ?? '每天'} ${p.time}`
 }
 function channelLabel(chs) {
   const map = { web: '通知', chat: '通知', feishu: '飞书', qq: 'QQ', im: '飞书/QQ' }
@@ -239,8 +279,9 @@ async function removeTask(t) {
 /* 和顶栏「新建项目」按钮一致（同 radius，且不用 squircle，与其圆角形状对齐） */
 .btn-primary {
   padding: 8px 16px; border: none; border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, #7b7fb2, #9590c4); color: #fff;
-  font-size: 13px; font-weight: 600; cursor: pointer; font-family: var(--font-sans);
+  background: linear-gradient(135deg, #7b7fb2, #9590c4); color: rgba(255,255,255,0.95);
+  font-size: 13px; font-weight: 500; cursor: pointer; font-family: var(--font-sans);
+  display: inline-flex; align-items: center;
   box-shadow: 0 3px 12px rgba(123,127,178,0.3);
   transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.2s ease-out, opacity 0.2s ease-out;
 }
@@ -339,18 +380,17 @@ async function removeTask(t) {
   border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
 }
 .field textarea { resize: none; line-height: 1.6; }
-/* 重复：周一到周日 chips（不选=不重复） */
-.days { display: flex; gap: 6px; justify-content: center; }
-.day-chip {
-  width: 34px; height: 34px; flex-shrink: 0; border-radius: 50%;
+/* 重复：preset 选项卡 + 自定义日期范围 */
+.repeat-tabs { display: flex; gap: 6px; }
+.repeat-tab {
+  flex: 1; padding: 7px 0; border-radius: 10px; corner-shape: squircle;
   border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72);
-  font-size: 13px; cursor: pointer; color: var(--text-secondary); font-family: var(--font-sans);
-  display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s;
+  font-size: 13px; font-family: var(--font-sans); color: var(--text-secondary);
+  cursor: pointer; transition: all 0.15s; text-align: center;
 }
-.day-chip:hover { border-color: rgba(123,127,178,0.4); }
-.day-chip.on { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; border-color: transparent; box-shadow: 0 2px 8px rgba(123,127,178,0.35); }
-.repeat-hint { font-size: 12px; color: var(--text-secondary); margin-top: 7px; }
+.repeat-tab:hover { border-color: rgba(123,127,178,0.4); }
+.repeat-tab.on { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; border-color: transparent; box-shadow: 0 2px 8px rgba(123,127,178,0.3); }
+.date-range { margin-top: 8px; }
 .when input[type=time] { width: 120px; }
 /* 勾选框：登录/注册页同款（隐藏原生 + 自定义方块 + SVG 对勾） */
 .chans { display: flex; gap: 18px; }

@@ -1,5 +1,6 @@
 import io
 import zipfile
+from datetime import datetime
 from typing import Optional
 from urllib.parse import quote
 
@@ -270,11 +271,32 @@ async def delete_folder(
     if not folder or folder.user_id != current_user.id:
         raise HTTPException(404, "文件夹不存在")
 
-    files_res = await db.execute(
-        select(File).where(File.folder_id == fid, File.user_id == current_user.id)
-    )
-    for f in files_res.scalars().all():
-        f.folder_id = None
+    now = datetime.utcnow()
 
-    await db.delete(folder)
+    # 递归收集所有子文件夹 id
+    all_fids = [fid]
+    queue = [fid]
+    while queue:
+        parent = queue.pop()
+        sub_res = await db.execute(
+            select(Folder.id).where(Folder.parent_id == parent, Folder.user_id == current_user.id)
+        )
+        for sub_id in sub_res.scalars().all():
+            all_fids.append(sub_id)
+            queue.append(sub_id)
+
+    # 软删除所有层级的文件
+    for folder_id in all_fids:
+        files_res = await db.execute(
+            select(File).where(File.folder_id == folder_id, File.user_id == current_user.id, File.deleted_at.is_(None))
+        )
+        for f in files_res.scalars().all():
+            f.deleted_at = now
+
+    # 删除所有子文件夹（从最深层开始，避免外键约束）
+    for folder_id in reversed(all_fids):
+        f = await db.get(Folder, folder_id)
+        if f:
+            await db.delete(f)
+
     await db.commit()

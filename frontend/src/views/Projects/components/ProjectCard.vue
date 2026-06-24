@@ -4,7 +4,12 @@
     draggable="true"
     :data-project-id="project.id"
     :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
+    :class="{ 'file-drag-over': fileDragOver }"
     @dragstart.stop="onDragStart"
+    @dragenter.prevent="onFileDragEnter"
+    @dragover.prevent="onFileDragOver"
+    @dragleave="onFileDragLeave"
+    @drop.prevent="onFileDrop"
     @click="$emit('click')"
   >
     <div class="card-body">
@@ -86,6 +91,26 @@
       </div>
     </div>
 
+    <!-- 文件拖放 overlay -->
+    <Transition name="drop-overlay">
+      <div v-if="fileDragOver || fileUploading" class="drop-overlay"
+           :style="{ background: fileUploading ? null : overlayHintBg }">
+        <div v-if="fileUploading" class="upload-progress-bg"
+             :style="{ width: (fileUploadDone ? 100 : fileUploadPct) + '%', background: uploadFillBg }"></div>
+        <div class="drop-content" :style="{ color: nameColor }">
+          <template v-if="fileUploading">
+            <svg v-if="fileUploadDone" width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="nameColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="nameColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span>{{ fileUploadDone ? '已上传' : `${fileUploadPct}%` }}</span>
+          </template>
+          <template v-else>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="nameColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span>放入项目</span>
+          </template>
+        </div>
+      </div>
+    </Transition>
+
     <!-- 推进到下一阶段按钮，已完成不显示 -->
     <button
       v-if="project.status !== 'done'"
@@ -103,8 +128,10 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useProjectStore } from '@/stores/projects'
+import { useFilesCacheStore } from '@/stores/filesCache'
 import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
 import { PhCheck } from '@phosphor-icons/vue'
+import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 
 const props = defineProps({ project: { type: Object, required: true } })
 const emit = defineEmits(['click', 'dragstart'])
@@ -115,6 +142,7 @@ function onDragStart(e) {
 }
 
 const projectStore = useProjectStore()
+const cacheStore   = useFilesCacheStore()
 
 const nameColor = computed(() => {
   const hex = props.project.color?.match(/#[0-9a-fA-F]{6}/)?.[0] ?? '#7b7fb2'
@@ -123,6 +151,16 @@ const nameColor = computed(() => {
   const b = Math.round(parseInt(hex.slice(5,7),16) * 0.40)
   return `rgb(${r},${g},${b})`
 })
+
+const _colorRgb = computed(() => {
+  const hex = props.project.color?.match(/#[0-9a-fA-F]{6}/)?.[0] ?? '#7b7fb2'
+  const r = parseInt(hex.slice(1,3), 16)
+  const g = parseInt(hex.slice(3,5), 16)
+  const b = parseInt(hex.slice(5,7), 16)
+  return `${r},${g},${b}`
+})
+const overlayHintBg  = computed(() => `rgba(${_colorRgb.value},0.12)`)
+const uploadFillBg   = computed(() => `rgba(${_colorRgb.value},0.32)`)
 
 const currentStageIndex = computed(() =>
   props.project.stages.findIndex(s => s.key === props.project.currentStage)
@@ -277,6 +315,68 @@ async function clickStage(i) {
   await projectStore.setStage(props.project.id, stage.key, newProgress)
 }
 
+// ── 文件拖放上传 ──────────────────────────────────────────────
+const fileDragOver   = ref(false)
+const fileUploading  = ref(false)
+const fileUploadPct  = ref(0)
+const fileUploadDone = ref(false)
+let _dragEnterCount  = 0   // 处理子元素 dragleave 抖动
+
+function _isFileDrag(e) { return e.dataTransfer?.types?.includes('Files') }
+
+function onFileDragEnter(e) {
+  if (!_isFileDrag(e)) return
+  _dragEnterCount++
+  fileDragOver.value = true
+}
+function onFileDragOver(e) {
+  if (!_isFileDrag(e)) return
+  e.dataTransfer.dropEffect = 'copy'
+}
+function onFileDragLeave(e) {
+  if (!_isFileDrag(e)) return
+  _dragEnterCount--
+  if (_dragEnterCount <= 0) { _dragEnterCount = 0; fileDragOver.value = false }
+}
+async function onFileDrop(e) {
+  _dragEnterCount = 0; fileDragOver.value = false
+  const files = [...(e.dataTransfer?.files ?? [])]
+  if (!files.length) return
+  fileUploading.value = true; fileUploadPct.value = 0; fileUploadDone.value = false
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      const presign = await filesApi.presign({
+        filename: f.name, size_bytes: f.size,
+        mime_type: f.type || 'application/octet-stream',
+        space: 'project', project_id: props.project.id, folder_id: null, stage_name: '',
+      })
+      const onPct = (pct) => { fileUploadPct.value = Math.round(((i + pct) / files.length) * 100) }
+      let uploaded
+      if (presign.mode === 'oss') {
+        await uploadDirectWithProgress(presign.upload_url, f, onPct)
+        uploaded = await filesApi.confirm({
+          storage_key: presign.storage_key, display_name: presign.final_name,
+          ext: presign.ext, mime_type: f.type || 'application/octet-stream',
+          size_bytes: f.size, space: 'project', project_id: props.project.id,
+          folder_id: null, stage_name: '',
+        })
+      } else {
+        const form = new FormData()
+        form.append('file', f); form.append('space', 'project')
+        form.append('project_id', props.project.id)
+        uploaded = await uploadWithProgress('/files', form, onPct)
+      }
+      if (uploaded) cacheStore.addFile(uploaded)
+    }
+    fileUploadDone.value = true
+    setTimeout(() => { fileUploading.value = false; fileUploadDone.value = false }, 1200)
+  } catch (err) {
+    fileUploading.value = false
+    alert('上传失败：' + (err?.message ?? ''))
+  }
+}
+
 async function setPriority(n) {
   // 再次点击同一级别则取消
   const next = prioValue.value === n ? null : PRIO_KEYS[n]
@@ -296,6 +396,25 @@ async function setPriority(n) {
               box-shadow 0.3s ease, background 0.25s ease-out;
   user-select: none;
 }
+.proj-card.file-drag-over {
+  box-shadow: 0 0 0 2px rgba(123,127,178,0.6), 0 6px 18px rgba(80,90,110,0.13);
+  transform: translateY(-2px);
+}
+.drop-overlay {
+  position: absolute; inset: 0; border-radius: inherit; corner-shape: squircle;
+  overflow: hidden; pointer-events: none; z-index: 10;
+}
+.upload-progress-bg {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  transition: width 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+.drop-content {
+  position: relative; width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+  font-size: 12px; font-weight: 600;
+}
+.drop-overlay-enter-active, .drop-overlay-leave-active { transition: opacity 0.15s; }
+.drop-overlay-enter-from, .drop-overlay-leave-to { opacity: 0; }
 .proj-card::after {
   content: '';
   position: absolute; inset: 0;
@@ -366,14 +485,14 @@ async function setPriority(n) {
 .seg-bar { display: flex; gap: 2px; height: 5px; position: relative; }
 .seg {
   flex: 1; height: 100%; border-radius: 99px;
-  background: rgba(0,0,0,0.07); overflow: hidden; cursor: pointer;
+  background: rgba(0,0,0,0.07); cursor: pointer;
   transition: transform 0.18s ease, opacity 0.15s;
   transform-origin: center; position: relative;
 }
 .seg::before {
-  content: ''; position: absolute; inset: -6px 0;
+  content: ''; position: absolute; inset: -4px 0;
 }
-.seg:hover { transform: scaleY(1.7); opacity: 0.8; }
+.seg:hover { transform: scaleY(2.2); opacity: 0.8; }
 .seg-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
 .seg-fill.no-anim { transition: none; }
 

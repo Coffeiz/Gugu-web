@@ -256,7 +256,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
 .fp-root {
   position: fixed;
   inset: 0;
-  z-index: 1001;
+  z-index: 11000;   /* 高于 GuguChat 窗口（10001/10002） */
   overflow: hidden;
 }
 
@@ -398,7 +398,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   border: 1px solid rgba(255,255,255,0.7);
   box-shadow: 0 8px 32px rgba(20,25,60,0.18), 0 2px 8px rgba(0,0,0,0.07);
   user-select: none;
-  z-index: 1100;
+  z-index: 11100;   /* 配合 .fp-root 抬高，信息窗仍在面板之上 */
 }
 .fp-info-title {
   display: flex;

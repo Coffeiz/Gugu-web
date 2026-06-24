@@ -33,6 +33,17 @@
       </div>
 
       <div class="toolbar-right">
+        <!-- 粘贴（剪切/复制后出现，回收站除外）—— 放在所有按钮最左 -->
+        <button
+          v-if="cbStore.hasContent() && currentType !== 'trash' && currentType !== 'root'"
+          class="paste-btn"
+          @click="ctxPaste"
+          title="粘贴到当前位置"
+        >
+          <PhClipboardText :size="13" weight="bold" />
+          粘贴{{ (cbStore.fileIds.length + cbStore.folderIds.length) > 1 ? ` (${cbStore.fileIds.length + cbStore.folderIds.length})` : '' }}
+        </button>
+
         <!-- 多选（根目录不需要） -->
         <button
           v-if="currentType !== 'root'"
@@ -41,7 +52,18 @@
           @click="toggleSelectMode"
           title="选择"
         >
-          <PhCheckSquare :size="14" weight="bold" />
+          <PhCheckSquare :size="13" weight="bold" />
+        </button>
+
+        <!-- 全选（仅回收站，放在多选按钮右侧） -->
+        <button
+          v-if="currentType === 'trash' && contents.files.length"
+          class="select-all-btn"
+          :class="{ on: allTrashSelected }"
+          @click="toggleSelectAllTrash"
+          :title="allTrashSelected ? '取消全选' : '全选'"
+        >
+          {{ allTrashSelected ? '取消全选' : '全选' }}
         </button>
 
         <!-- 网格/列表切换 -->
@@ -69,30 +91,31 @@
             <button class="btn-cancel" @click="showNewFolderInput = false; newFolderName = ''">✕</button>
           </div>
           <button v-else class="new-folder-btn" @click.stop="showNewFolderInput = true">
-            <PhFolderPlus :size="12" weight="bold" />
+            <PhFolderPlus :size="13" weight="bold" />
             新建文件夹
           </button>
         </template>
 
         <!-- 排序选择器 -->
         <div v-if="currentType !== 'root'" class="sort-selector" @click.stop>
-          <button class="sort-btn" @click.stop="sortMenuOpen = !sortMenuOpen">
+          <button ref="sortBtnRef" class="sort-btn" @click.stop="openSortMenu">
             <PhSortAscending :size="13" weight="bold" />
             {{ SORT_OPTIONS.find(o => o.key === sortKey)?.label }}
             <svg class="sort-dir-icon" :class="{ desc: sortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
               <path d="M5 2v6M2 5l3-3 3 3"/>
             </svg>
           </button>
-          <div v-if="sortMenuOpen" class="sort-menu popup-menu">
+          <!-- 与右键菜单同源：Teleport 到 body，backdrop-filter 才能正确生效 -->
+          <ContextMenu :show="sortMenuOpen" :x="sortMenuPos.x" :y="sortMenuPos.y" @close="sortMenuOpen = false">
             <button v-for="opt in SORT_OPTIONS" :key="opt.key"
-              class="sort-menu-item popup-menu-item" :class="{ active: sortKey === opt.key }"
-              @click.stop="onSortSelect(opt.key)">
+              class="ctx-item popup-menu-item sort-menu-item" :class="{ active: sortKey === opt.key }"
+              @click="onSortSelect(opt.key)">
               {{ opt.label }}
               <svg v-if="sortKey === opt.key" class="sort-check" :class="{ desc: sortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
                 <path d="M5 2v6M2 5l3-3 3 3"/>
               </svg>
             </button>
-          </div>
+          </ContextMenu>
         </div>
 
         <!-- 清空回收站 -->
@@ -918,6 +941,15 @@ const SORT_OPTIONS = [
 const sortKey      = ref('name')
 const sortDir      = ref('asc')
 const sortMenuOpen = ref(false)
+const sortBtnRef   = ref(null)
+const sortMenuPos  = reactive({ x: 0, y: 0 })
+
+function openSortMenu() {
+  if (sortMenuOpen.value) { sortMenuOpen.value = false; return }
+  const r = sortBtnRef.value?.getBoundingClientRect()
+  if (r) { sortMenuPos.x = r.left; sortMenuPos.y = r.bottom + 6 }
+  sortMenuOpen.value = true
+}
 
 function onSortSelect(key) {
   if (sortKey.value === key) {
@@ -1319,6 +1351,20 @@ function toggleSelectMode() {
     clearSelection()
   } else {
     selectModeForced.value = true
+  }
+}
+
+// 回收站全选 / 取消全选
+const allTrashSelected = computed(() => {
+  const files = sortedContents.value.files
+  return files.length > 0 && files.every(f => selectedIds.value.has(f.id))
+})
+function toggleSelectAllTrash() {
+  if (allTrashSelected.value) {
+    clearSelection()
+  } else {
+    selectModeForced.value = true
+    selectedIds.value = new Set(sortedContents.value.files.map(f => f.id))
   }
 }
 
@@ -2198,17 +2244,14 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   display: flex; align-items: center; gap: 5px;
   height: 30px; padding: 0 10px; border-radius: 8px; border: none;
   background: rgba(255,255,255,0.55); cursor: pointer;
-  font-size: 11.5px; font-weight: 500; color: var(--text-secondary);
+  font-size: 12px; font-weight: 600; color: var(--color-primary);
   font-family: var(--font-sans); transition: background 0.15s, color 0.15s;
 }
-.sort-btn:hover { background: rgba(255,255,255,0.82); color: var(--text-primary); }
+.sort-btn:hover { background: rgba(255,255,255,0.82); }
 .sort-dir-icon { transition: transform 0.2s; }
 .sort-dir-icon.desc { transform: rotate(180deg); }
-.sort-menu {
-  position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 200;
-  display: flex; flex-direction: column; gap: 1px; min-width: 110px;
-}
-.sort-check { flex-shrink: 0; color: var(--color-primary); }
+/* 排序弹窗经 ContextMenu(Teleport 到 body)渲染，外观与右键菜单完全一致 */
+.sort-check { flex-shrink: 0; margin-left: auto; color: var(--color-primary); }
 .sort-check.desc { transform: rotate(180deg); }
 
 .select-mode-btn {
@@ -2224,6 +2267,29 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   box-shadow: 0 1px 4px rgba(0,0,0,0.08);
 }
 .select-mode-btn:not(.on):hover { background: rgba(0,0,0,0.09); color: var(--text-primary); }
+
+.select-all-btn {
+  height: 28px; padding: 0 12px; border-radius: 6px; border: none;
+  background: rgba(255,255,255,0.55); cursor: pointer; color: var(--color-primary);
+  font-size: 12px; font-weight: 600; font-family: var(--font-sans); white-space: nowrap;
+  display: flex; align-items: center;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.select-all-btn:not(.on):hover { background: rgba(255,255,255,0.82); }
+.select-all-btn.on {
+  background: rgba(255,255,255,0.92); color: var(--color-primary);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+
+.paste-btn {
+  display: flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 12px; border-radius: 8px; border: none;
+  background: rgba(255,255,255,0.55); cursor: pointer; color: var(--color-primary);
+  font-size: 12px; font-weight: 600; font-family: var(--font-sans); white-space: nowrap;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.paste-btn:hover { background: rgba(255,255,255,0.82); box-shadow: 0 1px 4px rgba(123,127,178,0.18); }
+.paste-btn svg { display: block; }
 
 .view-toggle {
   display: flex; background: rgba(0,0,0,0.05);
@@ -2245,10 +2311,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   display: flex; align-items: center; gap: 5px;
   height: 30px; padding: 0 12px; border-radius: 8px;
   border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.5);
-  font-size: 12px; font-weight: 500; color: var(--text-secondary);
+  font-size: 12px; font-weight: 600; color: var(--color-primary);
   cursor: pointer; font-family: var(--font-sans); transition: all 0.15s; white-space: nowrap;
 }
-.new-folder-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(123,127,178,0.06); }
+.new-folder-btn:hover { border-color: var(--color-primary); background: rgba(123,127,178,0.06); }
 
 .new-folder-row { display: flex; align-items: center; gap: 6px; }
 .new-folder-input {

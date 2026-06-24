@@ -10,10 +10,8 @@
         </div>
         <GlobalSearch />
         <div class="topbar-actions">
-          <a-button class="btn-ghost-custom" @click="openUpload">上传文件</a-button>
-          <a-button type="primary" class="btn-primary-custom" @click="openNewProject">
-            ＋ 新建项目
-          </a-button>
+          <a-button class="btn-ghost-custom" @click="openUpload"><PhUploadSimple :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />上传文件</a-button>
+          <a-button type="primary" class="btn-primary-custom" @click="openNewProject"><PhPlus :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />新建项目</a-button>
         </div>
       </header>
 
@@ -74,6 +72,7 @@ import { projectsApi } from '@/services/api'
 import { uploadSignal } from '@/services/cache'
 import AppSidebar from '@/components/common/AppSidebar.vue'
 import GuguChat from '@/components/common/GuguChat.vue'
+import { PhPlus, PhUploadSimple } from '@phosphor-icons/vue'
 import GlobalSearch from '@/components/common/GlobalSearch.vue'
 import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'
 import ProjectModal    from '@/views/Projects/components/ProjectModal.vue'
@@ -230,7 +229,7 @@ const todayStr = computed(() => {
   border-radius: var(--radius-sm) !important;
   color: var(--text-secondary) !important;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.95) !important;
-  font-size: 13px;
+  font-size: 13px; font-weight: 500;
   transition: transform 0.3s cubic-bezier(0.34, 1.2, 0.64, 1),
               background 0.2s ease-out, box-shadow 0.2s ease-out !important;
 }
@@ -245,7 +244,7 @@ const todayStr = computed(() => {
   border: none !important;
   border-radius: var(--radius-sm) !important;
   box-shadow: 0 3px 12px rgba(123,127,178,0.3) !important;
-  font-size: 13px;
+  font-size: 13px; font-weight: 500;
   transition: transform 0.3s cubic-bezier(0.34, 1.2, 0.64, 1),
               box-shadow 0.2s ease-out, opacity 0.2s ease-out !important;
 }

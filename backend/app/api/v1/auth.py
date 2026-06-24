@@ -73,7 +73,22 @@ async def login(body: UserLogin, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/me", response_model=UserResponse)
-async def me(current_user: User = Depends(get_current_user)):
+async def me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from app.models import UserBot
+    from app.scheduled_tasks import get_imreach
+    from sqlalchemy import select as _select
+    im_channels = []
+    feishu_reach = await get_imreach(current_user.id, "feishu")
+    if feishu_reach:
+        im_channels.append("feishu")
+    qq_bot = await db.scalar(_select(UserBot).where(
+        UserBot.user_id == current_user.id,
+        UserBot.platform == "qqbot",
+        UserBot.enabled == True,
+    ))
+    if qq_bot:
+        im_channels.append("qq")
+    current_user._im_channels = im_channels
     return UserResponse.from_user(current_user)
 
 

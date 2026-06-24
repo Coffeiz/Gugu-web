@@ -80,6 +80,30 @@ async def attachment_thumb(
                     headers={"Cache-Control": "private, max-age=3600"})
 
 
+@router.get("/attachment/{attach_id}/download")
+async def attachment_download(
+    attach_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """下载暂存聊天附件原文件（用户自己发的附件，6h 内有效）。"""
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    meta = await chat_attach.get_meta(current_user.id, attach_id)
+    if not meta:
+        raise HTTPException(404, "附件不存在或已过期")
+    try:
+        data = await chat_attach.read_bytes(meta)
+    except FileNotFoundError:
+        raise HTTPException(404, "附件已过期或物理文件丢失")
+    filename = f"{meta.get('name', 'file')}.{meta.get('ext', '')}"
+    encoded = quote(filename)
+    return Response(
+        content=data,
+        media_type=meta.get("mime") or "application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"},
+    )
+
+
 @router.post("/chat")
 async def chat(
     body: ChatRequest,

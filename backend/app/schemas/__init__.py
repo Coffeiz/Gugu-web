@@ -42,6 +42,7 @@ class UserResponse(CamelModel):
     is_active: bool
     avatar_url: Optional[str] = None
     created_at: str = ""
+    im_channels: list[str] = []
 
     @field_validator('created_at', mode='before')
     @classmethod
@@ -74,6 +75,7 @@ class UserResponse(CamelModel):
             "is_active": user.is_active,
             "created_at": user.created_at,
             "avatar_url": avatar_url,
+            "im_channels": getattr(user, "_im_channels", []),
         }
         return cls.model_validate(data)
 

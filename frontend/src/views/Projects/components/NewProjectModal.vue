@@ -6,20 +6,13 @@
       <div class="modal-header">
         <div class="header-color-bar" :style="{ background: form.color }"></div>
         <input
-          v-if="nameEditing"
           ref="nameInputRef"
           v-model="form.name"
-          class="header-name-input title-edit-input"
+          class="header-name-input"
           :class="{ error: errors.name }"
           placeholder="项目名称"
           @input="errors.name = ''"
-          @blur="nameEditing = false"
-          @keydown.enter="nameEditing = false"
-          @keydown.esc="nameEditing = false"
         />
-        <div v-else class="header-name" :class="{ placeholder: !form.name, error: errors.name }" @click="startNameEdit">
-          {{ form.name || '项目名称' }}
-        </div>
         <span v-if="errors.name" class="name-error">{{ errors.name }}</span>
         <button class="close-btn" @click="$emit('close')">
           <PhX :size="14" weight="bold" />
@@ -258,10 +251,7 @@ const projectStore    = useProjectStore()
 const uiStore         = useUiStore()
 const stagesEditorRef = ref(null)
 const nameInputRef    = ref(null)
-const nameEditing     = ref(false)
-
 async function startNameEdit() {
-  nameEditing.value = true
   await nextTick()
   nameInputRef.value?.focus()
   nameInputRef.value?.select()
@@ -555,14 +545,22 @@ function handleCreate() {
   width: 5px; align-self: stretch; flex-shrink: 0;
   transition: background 0.2s; border-radius: 0;
 }
-.header-name {
-  flex: 1; font-size: 17px; font-weight: 700; color: var(--text-primary);
-  cursor: text; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  line-height: 1.2;
+/* 名称：默认像纯文本，悬停/聚焦才浮出编辑框（与定时任务卡 .title-input 同款样式+动画） */
+.header-name-input {
+  flex: 1; min-width: 0; box-sizing: border-box;
+  font-size: 17px; font-weight: 700; color: var(--text-primary);
+  font-family: var(--font-sans); line-height: 1.2; outline: none;
+  padding: 7px 11px; margin: 0 -11px;
+  border: 1px solid transparent; border-radius: 10px; corner-shape: squircle;
+  background: transparent; caret-color: var(--color-primary);
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
-.header-name.placeholder { color: var(--text-secondary); opacity: 0.45; }
-.header-name.error { color: var(--color-warning); opacity: 1; }
-.header-name-input { flex: 1; font-size: 17px; min-width: 0; }
+.header-name-input::placeholder { color: var(--text-secondary); opacity: 0.45; font-weight: 700; }
+.header-name-input:hover {
+  border-color: rgba(123,127,178,0.35); background: rgba(255,255,255,0.75);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08);
+}
+.header-name-input.error { color: var(--color-warning); }
 .name-error {
   font-size: 11px; color: var(--color-warning); flex-shrink: 0;
 }
@@ -584,7 +582,8 @@ function handleCreate() {
   overflow-y: auto;
 }
 .col-divider {
-  border: none; border-top: 1px solid rgba(0,0,0,0.07);
+  border: none; height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
   margin: 0;
 }
 .right-col {
@@ -772,7 +771,9 @@ input:not(.name-input):not(.header-name-input):focus {
 .del-btn:disabled { opacity: 0.2; cursor: not-allowed; }
 
 /* 待办 */
-.np-todo-list { padding: 2px 0 6px 27px; display: flex; flex-direction: column; gap: 0; border-bottom: 1px solid rgba(0,0,0,0.06); margin-bottom: 3px; }
+.np-todo-list { padding: 2px 0 6px 27px; display: flex; flex-direction: column; gap: 0; margin-bottom: 3px;
+  background-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.06) 20%, rgba(0,0,0,0.06) 80%, transparent 100%);
+  background-size: 100% 1px; background-repeat: no-repeat; background-position: center bottom; }
 .np-todo-item { display: flex; align-items: center; gap: 7px; height: 24px; }
 .np-todo-item + .np-todo-item { border-top: 1px solid rgba(0,0,0,0.05); }
 .np-todo-check {

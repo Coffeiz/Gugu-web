@@ -39,8 +39,6 @@ const nonDoneColumns = computed(() =>
 const liveFileCounts = computed(() => {
   const m = new Map()
   for (const f of cacheStore.allFiles) {
-    // 只计根目录文件（folderId 为空），和项目文件视图保持一致；文件夹内的文件通过文件夹 UI 展示
-    if (f.folderId != null) continue
     const pid = f.projectId
     if (pid != null) m.set(pid, (m.get(pid) ?? 0) + 1)
   }

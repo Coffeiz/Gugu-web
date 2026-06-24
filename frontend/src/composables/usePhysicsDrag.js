@@ -85,7 +85,10 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
   if (!sourceEl || _active) return
   try { event.dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {}
 
-  const STIFF = opts.stiffness ?? 0.10   // 跟随刚度：越小越「拖沓」、延迟越高
+  // 二阶弹簧-阻尼跟随（有惯性/动量，起步被弹簧甩出去而非黏滞渗出）：
+  //   SPRING 越大越跟手、越小越拖；ZETA<1 略带动量回弹，=1 临界不过冲。
+  const SPRING = opts.spring   ?? 190    // 弹簧刚度（rad²/s²），≈2.2Hz 固有频率
+  const ZETA   = opts.damping  ?? 0.82   // 阻尼比：略欠阻尼，给一点「甩出去」的灵动
   const LIFT  = opts.lift      ?? 1.045  // 克隆抬起的放大
   const SWAY  = opts.sway      ?? 0.25   // 横向摆动幅度
   const TILT  = opts.tilt      ?? 5      // 后仰角(deg)：上小下大，像被拎起
@@ -133,7 +136,12 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
 
   const pos    = { x: rect.left + half.x, y: rect.top + half.y }
   const target = { x: pos.x, y: pos.y }
-  let vxs = 0, vys = 0
+  const vel    = { x: 0, y: 0 }   // 卡片速度 px/秒——二阶弹簧的动量来源
+  let vxs = 0, vys = 0            // 平滑后的速度，用于旋转
+
+  const DAMP = 2 * ZETA * Math.sqrt(SPRING)   // 阻尼系数（临界=2√k）
+  const KV   = -Math.log(1 - 0.12) * 60       // 旋转速度低通（每秒）
+  let lastT = null
 
   function onOver(e) {
     // 让整页都成为有效放置区：在任意处（包括拖出范围）松手都立刻触发 drop，
@@ -143,14 +151,28 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
     if (e.clientX || e.clientY) { target.x = e.clientX; target.y = e.clientY }
   }
 
-  function frame() {
-    const nx = pos.x + (target.x - pos.x) * STIFF
-    const ny = pos.y + (target.y - pos.y) * STIFF
-    const vx = nx - pos.x, vy = ny - pos.y
-    pos.x = nx; pos.y = ny
-    vxs += (vx - vxs) * 0.12; vys += (vy - vys) * 0.12   // 速度低通：旋转不再一卡一卡
-    const rotZ = Math.max(-5, Math.min(5, vxs * SWAY))
-    const rotX = TILT + Math.max(-4, Math.min(4, vys * 0.16))
+  function frame(now) {
+    // 真实帧间隔（秒）；首帧按 1/60，单帧卡顿/切后台回来则夹住，避免一帧跳一大步
+    let dt = lastT === null ? 1 / 60 : (now - lastT) / 1000
+    lastT = now
+    if (dt > 1 / 20) dt = 1 / 20
+
+    // 子步积分（≤1/120s/步）：显式欧拉在大 dt 下会发散，子步保证弹簧稳定，且与帧率解耦
+    let rem = dt
+    while (rem > 1e-4) {
+      const h = Math.min(rem, 1 / 120)
+      rem -= h
+      const ax = SPRING * (target.x - pos.x) - DAMP * vel.x
+      const ay = SPRING * (target.y - pos.y) - DAMP * vel.y
+      vel.x += ax * h; vel.y += ay * h
+      pos.x += vel.x * h; pos.y += vel.y * h
+    }
+
+    const av = 1 - Math.exp(-KV * dt)
+    vxs += (vel.x - vxs) * av; vys += (vel.y - vys) * av
+    // 旋转按 px/秒 → 1/60 归一，任何刷新率下后仰/摆动幅度与原先一致
+    const rotZ = Math.max(-5, Math.min(5, (vxs / 60) * SWAY))
+    const rotX = TILT + Math.max(-4, Math.min(4, (vys / 60) * 0.16))
     clone.style.transform =
       `translate3d(${(pos.x - half.x).toFixed(2)}px, ${(pos.y - GRABY).toFixed(2)}px, 0)` +
       ` perspective(760px) rotateX(${rotX.toFixed(2)}deg) rotateZ(${rotZ.toFixed(2)}deg) scale(${LIFT})`

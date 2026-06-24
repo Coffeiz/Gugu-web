@@ -356,12 +356,12 @@ function formatDate(str) {
 .seg-bar { display: flex; gap: 2px; height: 5px; position: relative; }
 .seg {
   flex: 1; height: 100%; border-radius: 99px;
-  background: rgba(0,0,0,0.07); overflow: hidden; cursor: pointer;
+  background: rgba(0,0,0,0.07); cursor: pointer;
   transition: transform 0.18s ease, opacity 0.15s;
   transform-origin: center; position: relative;
 }
-.seg::before { content: ''; position: absolute; inset: -6px 0; }
-.seg:hover { transform: scaleY(1.7); opacity: 0.8; }
+.seg::before { content: ''; position: absolute; inset: -4px 0; }
+.seg:hover { transform: scaleY(2.2); opacity: 0.8; }
 .seg-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
 .seg-fill.no-anim { transition: none; }
 

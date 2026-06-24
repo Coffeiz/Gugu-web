@@ -52,7 +52,7 @@
           </button>
         </div>
 
-        <div class="pm-content-body">
+        <div class="pm-content-body" ref="pmBodyRef">
 
           <!-- 个人信息 -->
           <template v-if="activeNav === 'info'">
@@ -475,6 +475,7 @@ const connect = ref(null)           // { platform, id } 连接进行中
 const connectHint = ref('')
 const connectErr = ref('')
 const connectCanvas = ref(null)
+const pmBodyRef = ref(null)
 let connectPoll = null
 
 async function startConnect(platform) {
@@ -489,6 +490,7 @@ async function startConnect(platform) {
       : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
     await nextTick()
     await QRCode.toCanvas(connectCanvas.value, r.scan_url, { width: 180, margin: 1 })
+    pmBodyRef.value?.scrollTo({ top: pmBodyRef.value.scrollHeight, behavior: 'smooth' })
     _startConnectPoll(p)
   } catch (e) {
     connectErr.value = e.message || '生成二维码失败'

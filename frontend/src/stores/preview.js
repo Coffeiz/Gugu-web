@@ -25,7 +25,7 @@ export const usePreviewStore = defineStore('preview', () => {
   const singleFile = ref(null)
 
   let _nextId = 1
-  let _topZ   = 2000
+  let _topZ   = 11000   // 高于 GuguChat 窗口（10001/10002），从聊天打开的预览要盖在上面
 
   function open(f) {
     if (isImageExt(f.ext) || isVideoExt(f.ext)) {

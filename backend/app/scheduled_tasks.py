@@ -81,7 +81,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
         chans = {c for c in (t.channels or "").split(",") if c}
         t.last_run_at = datetime.utcnow()
         if not is_trial and (t.cron or "").startswith("@once:"):
-            t.enabled = False
+            await db.delete(t)
         await db.commit()
     try:
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")

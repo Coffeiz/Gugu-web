@@ -18,15 +18,14 @@
           <div class="proj-header">
             <div class="header-main">
               <input
-                v-if="editingName"
                 ref="nameInputRef"
                 v-model="localName"
-                class="header-name-input title-edit-input"
+                class="header-name-input"
+                placeholder="项目名称"
                 @blur="saveName"
-                @keydown.enter="saveName"
+                @keydown.enter="$event.target.blur()"
                 @keydown.esc="cancelName"
               />
-              <div v-else class="header-name" @click="startEditName" title="点击修改名称">{{ localName }}</div>
             </div>
             <div class="header-progress-bar">
               <div class="header-progress-fill" :style="{ width: headerProgress + '%', background: localColor }"></div>
@@ -203,6 +202,11 @@
                 <span v-else class="bc-seg bc-cur">{{ seg.name }}</span>
               </template>
             </nav>
+            <!-- 粘贴（剪切/复制后出现）—— 放在所有按钮最左 -->
+            <button v-if="pmCbStore.hasContent()" class="paste-btn" @click.stop="pmCtxPaste" title="粘贴到当前位置">
+              <PhClipboardText :size="13" weight="bold" />
+              粘贴{{ (pmCbStore.fileIds.length + pmCbStore.folderIds.length) > 1 ? ` (${pmCbStore.fileIds.length + pmCbStore.folderIds.length})` : '' }}
+            </button>
             <!-- 多选模式 -->
             <button class="sel-mode-btn" :class="{ on: pmInSelectionMode }" @click.stop="togglePmSelectionMode" title="多选模式">
               <PhCheckSquare :size="13" weight="bold" />
@@ -218,7 +222,7 @@
             </div>
             <!-- 新建文件夹（每层都可用） -->
             <button v-if="!showNewFolder" class="new-folder-btn" @click.stop="showNewFolder = true">
-              <PhFolderPlus :size="12" weight="bold" />
+              <PhFolderPlus :size="13" weight="bold" />
               新建文件夹
             </button>
             <div v-else class="new-folder-inline" @click.stop>
@@ -230,23 +234,24 @@
             </div>
             <!-- 排序选择器（挪出 新建文件夹 的 v-if/v-else 对，否则 v-else 不相邻报错）-->
             <div class="sort-selector" @click.stop>
-              <button class="sort-btn" @click.stop="pmSortMenuOpen = !pmSortMenuOpen">
+              <button ref="pmSortBtnRef" class="sort-btn" @click.stop="openPmSortMenu">
                 <PhSortAscending :size="13" weight="bold" />
                 {{ PM_SORT_OPTIONS.find(o => o.key === pmSortKey)?.label }}
                 <svg class="sort-dir-icon" :class="{ desc: pmSortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
                   <path d="M5 2v6M2 5l3-3 3 3"/>
                 </svg>
               </button>
-              <div v-if="pmSortMenuOpen" class="sort-menu popup-menu">
+              <!-- 与右键菜单同源：Teleport 到 body，backdrop-filter 才能正确生效 -->
+              <ContextMenu :show="pmSortMenuOpen" :x="pmSortMenuPos.x" :y="pmSortMenuPos.y" @close="pmSortMenuOpen = false">
                 <button v-for="opt in PM_SORT_OPTIONS" :key="opt.key"
-                  class="sort-menu-item popup-menu-item" :class="{ active: pmSortKey === opt.key }"
-                  @click.stop="onPmSortSelect(opt.key)">
+                  class="ctx-item popup-menu-item sort-menu-item" :class="{ active: pmSortKey === opt.key }"
+                  @click="onPmSortSelect(opt.key)">
                   {{ opt.label }}
                   <svg v-if="pmSortKey === opt.key" class="sort-check" :class="{ desc: pmSortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
                     <path d="M5 2v6M2 5l3-3 3 3"/>
                   </svg>
                 </button>
-              </div>
+              </ContextMenu>
             </div>
             <button class="close-btn" @click="$emit('close')">
               <PhX :size="14" weight="bold" />
@@ -281,7 +286,7 @@
                   class="folder-card" :style="{ '--fd-color': accentColor }"
                   :class="{ 'drag-over': pmDragOverFolderId === folder.id, selected: pmSelectedFolderIds.has(folder.id), 'pre-selected': pmPreviewFolderIds.has(folder.id) }"
                   :data-pm-folder-id="folder.id"
-                  @click.stop="pmInSelectionMode ? toggleFolderSelectPm(folder) : enterFolder(folder)"
+                  @click.stop="onPmFolderClick(folder, $event)"
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
                   @dragover="onPmFolderDragOver(folder, $event)"
                   @dragleave="onPmFolderDragLeave(folder)"
@@ -328,7 +333,7 @@
                   :data-pm-file-id="file.id"
                   draggable="true"
                   @contextmenu.prevent.stop="openPmCtx('file', file, $event)"
-                  @click.stop="pmInSelectionMode ? toggleFileSelectPm(file) : (isPreviewable(file.ext) ? openPreview(file) : onPmFileClick(file, $event))"
+                  @click.stop="pmHandleFileClick(file, $event)"
                   @dragstart="onPmFileDragStart(file, $event)"
                   @dragend="onPmFileDragEnd">
                   <Transition name="sel-cb">
@@ -466,7 +471,7 @@
                   class="list-row folder-list-row"
                   :class="{ 'drag-over': pmDragOverFolderId === folder.id, selected: pmSelectedFolderIds.has(folder.id), 'pre-selected': pmPreviewFolderIds.has(folder.id) }"
                   :data-pm-folder-id="folder.id"
-                  @click.stop="pmInSelectionMode ? toggleFolderSelectPm(folder) : enterFolder(folder)"
+                  @click.stop="onPmFolderClick(folder, $event)"
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
                   @dragover="onPmFolderDragOver(folder, $event)"
                   @dragleave="onPmFolderDragLeave(folder)"
@@ -509,7 +514,7 @@
                   :data-pm-file-id="file.id"
                   draggable="true"
                   @contextmenu.prevent.stop="openPmCtx('file', file, $event)"
-                  @click.stop="pmInSelectionMode ? toggleFileSelectPm(file) : (isPreviewable(file.ext) ? openPreview(file) : onPmFileClick(file, $event))"
+                  @click.stop="pmHandleFileClick(file, $event)"
                   @dragstart="onPmFileDragStart(file, $event)"
                   @dragend="onPmFileDragEnd">
                   <span class="lr-name-cell">
@@ -820,15 +825,36 @@ const pmSelectionRect = computed(() => {
 
 const pmSelectionModeForced = ref(false)
 const pmDownloadingZip      = ref(false)
+const pmLastAnchorIndex     = ref(-1)
 const pmInSelectionMode = computed(() =>
   pmSelectionModeForced.value || pmSelectedFileIds.value.size > 0 || pmSelectedFolderIds.value.size > 0
 )
+
+// 当前层级的可选项扁平列表（文件夹在前，文件在后，与视觉顺序一致）
+const pmFlatSelectableItems = computed(() => [
+  ...sortedCurrentFolders.value.map(f => ({ type: 'folder', id: f.id })),
+  ...sortedCurrentFiles.value.map(f => ({ type: 'file',   id: f.id })),
+])
+
+function _pmShiftSelect(type, id) {
+  const flat = pmFlatSelectableItems.value
+  const idx = flat.findIndex(i => i.type === type && i.id === id)
+  if (idx < 0 || pmLastAnchorIndex.value < 0) return false
+  const [a, b] = pmLastAnchorIndex.value <= idx
+    ? [pmLastAnchorIndex.value, idx]
+    : [idx, pmLastAnchorIndex.value]
+  const range = flat.slice(a, b + 1)
+  pmSelectedFileIds.value   = new Set(range.filter(i => i.type === 'file').map(i => i.id))
+  pmSelectedFolderIds.value = new Set(range.filter(i => i.type === 'folder').map(i => i.id))
+  return true
+}
 
 function _pmSwallowClick(e) { e.stopImmediatePropagation() }
 function clearPmSelection() {
   pmSelectedFileIds.value = new Set()
   pmSelectedFolderIds.value = new Set()
   pmSelectionModeForced.value = false
+  pmLastAnchorIndex.value = -1
 }
 function togglePmSelectionMode() {
   if (pmInSelectionMode.value) clearPmSelection()
@@ -908,15 +934,56 @@ function _updatePmPreview() {
   _pmLatestPreview = { fileIds, folderIds }
   pmPreviewFileIds.value = fileIds; pmPreviewFolderIds.value = folderIds
 }
+function pmHandleFileClick(file, e) {
+  if (e.shiftKey || e.ctrlKey || e.metaKey || pmInSelectionMode.value) {
+    onPmFileClick(file, e)
+  } else if (isPreviewable(file.ext)) {
+    openPreview(file)
+  } else {
+    onPmFileClick(file, e)
+  }
+}
+
 function onPmFileClick(file, e) {
+  if (e.shiftKey) {
+    if (!_pmShiftSelect('file', file.id)) {
+      pmSelectedFileIds.value = new Set([file.id])
+      pmLastAnchorIndex.value = pmFlatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
+    }
+    return
+  }
   const ids = new Set(pmSelectedFileIds.value)
-  if (e.ctrlKey || e.metaKey) {
+  if (e.ctrlKey || e.metaKey || pmInSelectionMode.value) {
+    // 选中模式或 Ctrl/Cmd：toggle
     if (ids.has(file.id)) ids.delete(file.id); else ids.add(file.id)
   } else {
-    if (ids.size === 1 && ids.has(file.id)) ids.clear()
-    else { ids.clear(); ids.add(file.id) }
+    if (ids.size === 1 && ids.has(file.id) && pmSelectedFolderIds.value.size === 0) ids.clear()
+    else { ids.clear(); pmSelectedFolderIds.value = new Set(); ids.add(file.id) }
   }
   pmSelectedFileIds.value = ids
+  pmLastAnchorIndex.value = pmFlatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
+}
+
+function onPmFolderClick(folder, e) {
+  if (e.shiftKey) {
+    if (!_pmShiftSelect('folder', folder.id)) {
+      pmSelectedFolderIds.value = new Set([folder.id])
+      pmLastAnchorIndex.value = pmFlatSelectableItems.value.findIndex(i => i.type === 'folder' && i.id === folder.id)
+    }
+    return
+  }
+  if (e.ctrlKey || e.metaKey) {
+    const ids = new Set(pmSelectedFolderIds.value)
+    if (ids.has(folder.id)) ids.delete(folder.id); else ids.add(folder.id)
+    pmSelectedFolderIds.value = ids
+    pmLastAnchorIndex.value = pmFlatSelectableItems.value.findIndex(i => i.type === 'folder' && i.id === folder.id)
+    return
+  }
+  if (pmInSelectionMode.value) {
+    toggleFolderSelectPm(folder)
+    return
+  }
+  enterFolder(folder)
 }
 
 async function downloadSelectedPm() {
@@ -959,6 +1026,8 @@ async function deleteSelectedPm() {
       ...fids.map(id => filesApi.delete(id)),
       ...dids.map(id => foldersApi.delete(id)),
     ])
+    if (fids.length) fileCacheStore.removeFiles(fids)
+    if (dids.length) fileCacheStore.refresh()
     const pid = props.project?.id; if (!pid) return
     const [files, folders] = await Promise.all([
       filesApi.list({ projectId: pid }),
@@ -1064,6 +1133,15 @@ const PM_SORT_OPTIONS = [
 const pmSortKey      = ref('name')
 const pmSortDir      = ref('asc')
 const pmSortMenuOpen = ref(false)
+const pmSortBtnRef   = ref(null)
+const pmSortMenuPos  = reactive({ x: 0, y: 0 })
+
+function openPmSortMenu() {
+  if (pmSortMenuOpen.value) { pmSortMenuOpen.value = false; return }
+  const r = pmSortBtnRef.value?.getBoundingClientRect()
+  if (r) { pmSortMenuPos.x = r.left; pmSortMenuPos.y = r.bottom + 6 }
+  pmSortMenuOpen.value = true
+}
 
 function onPmSortSelect(key) {
   if (pmSortKey.value === key) {
@@ -1222,6 +1300,7 @@ async function commitRename() {
 async function deleteFile(file) {
   try {
     await filesApi.delete(file.id)
+    fileCacheStore.removeFile(file.id)
     projectFiles.value = projectFiles.value.filter(f => f.id !== file.id)
     for (const fid of Object.keys(folderFilesMap.value)) {
       folderFilesMap.value = {
@@ -1357,10 +1436,11 @@ function prunePmHistoryForFolder(folderId) {
 }
 
 async function deleteFolderCard(folder) {
-  if (!confirm(`删除文件夹「${folder.name}」？其中的文件将移至项目根目录。`)) return
+  if (!confirm(`删除文件夹「${folder.name}」？其中的文件将一并移入回收站。`)) return
   prunePmHistoryForFolder(folder.id)
   try {
     await foldersApi.delete(folder.id)
+    fileCacheStore.refresh()   // 后台静默刷新，让 allFiles 准确反映删除后的状态
     await loadFolders(props.project.id)
   } catch (e) {
     console.error('[ProjectModal] 删除文件夹失败:', e.message)
@@ -1600,7 +1680,8 @@ function saveName() {
   editingName.value = false
 }
 function cancelName() {
-  editingName.value = false
+  localName.value = props.project.name   // esc 还原，blur 时 saveName 视为无改动
+  nameInputRef.value?.blur()
 }
 
 function setColor(c) {
@@ -1708,6 +1789,15 @@ function toggleTodo(todo) {
   todo.done = !todo.done
   todo.autoCompleted = false  // 手动操作后清除自动标记，后退时不再还原
   saveTodos()
+  if (todo.done) {
+    const currIdx = localStages.value.findIndex(s => s.key === localCurrentStage.value)
+    if (currIdx >= 0 && currIdx < localStages.value.length - 1) {
+      const currTodos = localStages.value[currIdx].todos ?? []
+      if (currTodos.length > 0 && currTodos.every(t => t.done)) {
+        setStage(localStages.value[currIdx + 1].key, currIdx + 1)
+      }
+    }
+  }
 }
 
 function stageIdxFromY(y) {
@@ -1815,6 +1905,7 @@ async function uploadFiles(files) {
         if (g) g.progress = Math.round(p * 100)
       })
       uploadingItems.value = uploadingItems.value.filter(g => g.uid !== ghost.uid)
+      if (created) fileCacheStore.addFile(created)
       if (folder) {
         folderFilesMap.value = {
           ...folderFilesMap.value,
@@ -1923,6 +2014,7 @@ async function pmCtxDelete() {
   const ids = pmCtx.value.type === 'multi-file' ? [...pmSelectedFileIds.value] : [pmCtx.value.target.id]
   pmCtx.value.visible = false
   await Promise.all(ids.map(id => filesApi.delete(id)))
+  fileCacheStore.removeFiles(ids)
   clearPmSelection()
   await pmRefreshCurrentFolder()
 }
@@ -2042,12 +2134,21 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   flex: 1; display: flex; align-items: center; gap: 8px;
   padding: 0 16px; min-width: 0;
 }
-.header-name {
-  flex: 1; font-size: 17px; font-weight: 700; color: var(--text-primary);
-  cursor: text; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  line-height: 1.2;
+/* 名称：默认像纯文本，悬停/聚焦才浮出编辑框（与定时任务卡 .title-input 同款样式+动画） */
+.header-name-input {
+  flex: 1; min-width: 0; box-sizing: border-box;
+  font-size: 17px; font-weight: 700; color: var(--text-primary);
+  font-family: var(--font-sans); line-height: 1.2; outline: none;
+  padding: 7px 11px; margin: 0 -11px;
+  border: 1px solid transparent; border-radius: 10px; corner-shape: squircle;
+  background: transparent; caret-color: var(--color-primary);
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
-.header-name-input { flex: 1; font-size: 17px; min-width: 0; }
+.header-name-input::placeholder { color: var(--text-secondary); opacity: 0.45; font-weight: 700; }
+.header-name-input:hover {
+  border-color: rgba(123,127,178,0.35); background: rgba(255,255,255,0.75);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08);
+}
 .header-progress-bar {
   height: 3px; background: rgba(0,0,0,0.07); flex-shrink: 0; position: relative;
 }
@@ -2077,7 +2178,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   font-size: 9.5px; font-weight: 500; opacity: 0.6;
   text-transform: none; letter-spacing: 0;
 }
-.col-divider { border: none; border-top: 1px solid rgba(0,0,0,0.07); margin: 0; }
+.col-divider { border: none; height: 1px; background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%); margin: 0; }
 
 .field-input {
   width: 100%; padding: 9px 12px; box-sizing: border-box;
@@ -2186,10 +2287,11 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .stage-node:hover .del-stage { opacity: 0.5; }
 .del-stage:hover { opacity: 1 !important; color: var(--color-warning); }
 .node-line { display: none; }
-.todo-list { border-bottom: 1px solid rgba(0,0,0,0.06); }
 /* 待办列表 */
-.todo-list { padding: 2px 0 8px 30px; display: flex; flex-direction: column; gap: 3px; border-bottom: 1px solid rgba(0,0,0,0.06); }
-.stage-node:last-child .todo-list { border-bottom: none; }
+.todo-list { padding: 2px 0 8px 30px; display: flex; flex-direction: column; gap: 3px;
+  background-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.06) 20%, rgba(0,0,0,0.06) 80%, transparent 100%);
+  background-size: 100% 1px; background-repeat: no-repeat; background-position: center bottom; }
+.stage-node:last-child .todo-list { background-image: none; }
 .todo-item { display: flex; align-items: center; gap: 6px; height: 24px; }
 .todo-item + .todo-item { border-top: 1px solid rgba(0,0,0,0.05); }
 .todo-check {
@@ -2390,20 +2492,17 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* 视图切换 & 新建文件夹（header 内） */
 .sort-selector { position: relative; }
 .sort-btn {
-  display: flex; align-items: center; gap: 4px;
+  display: flex; align-items: center; gap: 5px;
   height: 28px; padding: 0 9px; border-radius: 7px; border: none;
   background: rgba(255,255,255,0.55); cursor: pointer;
-  font-size: 11px; font-weight: 500; color: var(--text-secondary);
+  font-size: 12px; font-weight: 600; color: var(--color-primary);
   font-family: var(--font-sans); transition: background 0.15s, color 0.15s;
 }
-.sort-btn:hover { background: rgba(255,255,255,0.82); color: var(--text-primary); }
+.sort-btn:hover { background: rgba(255,255,255,0.82); }
 .sort-dir-icon { transition: transform 0.2s; }
 .sort-dir-icon.desc { transform: rotate(180deg); }
-.sort-menu {
-  position: absolute; top: calc(100% + 5px); left: 50%; transform: translateX(-50%); z-index: 400;
-  display: flex; flex-direction: column; gap: 1px; min-width: 100px;
-}
-.sort-check { flex-shrink: 0; color: var(--color-primary); }
+/* 排序弹窗经 ContextMenu(Teleport 到 body)渲染，外观与右键菜单完全一致 */
+.sort-check { flex-shrink: 0; margin-left: auto; color: var(--color-primary); }
 .sort-check.desc { transform: rotate(180deg); }
 
 .view-toggle {
@@ -2423,10 +2522,10 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   display: flex; align-items: center; gap: 5px;
   height: 28px; padding: 0 11px; border-radius: 8px;
   border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.5);
-  font-size: 12px; font-weight: 500; color: var(--text-secondary);
+  font-size: 12px; font-weight: 600; color: var(--color-primary);
   cursor: pointer; font-family: var(--font-sans); transition: all 0.15s; white-space: nowrap;
 }
-.new-folder-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(123,127,178,0.06); }
+.new-folder-btn:hover { border-color: var(--color-primary); background: rgba(123,127,178,0.06); }
 .new-folder-inline { display: flex; gap: 5px; align-items: center; }
 .new-folder-input {
   width: 110px; height: 30px; padding: 0 8px; border-radius: 8px; font-size: 12px;
@@ -2671,6 +2770,16 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   box-shadow: 0 1px 4px rgba(0,0,0,0.08);
 }
 .sel-mode-btn:not(.on):hover { background: rgba(0,0,0,0.09); color: var(--text-primary); }
+
+.paste-btn {
+  display: flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 12px; border-radius: 8px; border: none;
+  background: rgba(255,255,255,0.55); cursor: pointer; color: var(--color-primary);
+  font-size: 12px; font-weight: 600; font-family: var(--font-sans); white-space: nowrap;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.paste-btn:hover { background: rgba(255,255,255,0.82); box-shadow: 0 1px 4px rgba(123,127,178,0.18); }
+.paste-btn svg { display: block; }
 .lr-chev { transition: transform 0.2s; opacity: 0.5; }
 .lr-chev.open { transform: rotate(180deg); }
 .list-row-empty { font-size: 11px; color: var(--text-secondary); padding: 4px 28px; }

@@ -4,11 +4,23 @@
 done_at 处理）。
 """
 import json
+import random
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 
 from app.models import File, Project
+
+_COLOR_PRESETS = [
+    "linear-gradient(135deg,#c8aa72,#b88060)",
+    "linear-gradient(135deg,#8fbe8b,#7ab8a8)",
+    "linear-gradient(135deg,#7ab8a8,#7ab8c8)",
+    "linear-gradient(135deg,#7ab8c8,#7b7fb2)",
+    "linear-gradient(135deg,#5e73b2,#7b7fb2)",
+    "linear-gradient(135deg,#7b7fb2,#c4afc8)",
+    "linear-gradient(135deg,#c4afc8,#b07090)",
+    "linear-gradient(135deg,#be8b8f,#c8aa72)",
+]
 from agent import confirm
 from agent.skills.base import BaseSkill, Tool
 
@@ -106,6 +118,7 @@ async def _create_project(db, user_id, args: dict):
         deadline=deadline,
         start_date=start_date,
         notes=args.get("notes", ""),
+        color=args.get("color") or random.choice(_COLOR_PRESETS),
         stages_json=json.dumps(stages, ensure_ascii=False),
         current_stage=stages[0]["key"],
     )
@@ -544,7 +557,7 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="create_project",
             label="新建项目",
-            description="创建新项目，可一次性带上自定义阶段和待办（无需再逐个 add_stage/add_todo）。用户没明确说日期时不用追问：开始日期默认今天、截止日期默认一周后；不传 stages 用默认「计划/执行/交付」三段。",
+            description="创建新项目，可一次性带上自定义阶段和待办（无需再逐个 add_stage/add_todo）。用户没明确说日期时不用追问：开始日期默认今天、截止日期默认一周后；不传 stages 用默认「计划/执行/交付」三段。\n\n颜色（color）：不传则随机从预设中选。如果能从上下文清楚判断项目类型（如设计、开发、运营、拍摄等），直接选一个合适色系创建，无需追问。如果类型模糊或无法推断，在调用工具前先问一句，给出 2~3 个色系选项让用户选（如「暖橙金 / 薰衣草紫 / 薄荷绿，你倾向哪种风格？」），拿到答案后再建。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -554,6 +567,7 @@ class ProjectsSkill(BaseSkill):
                     "deadline":   {"type": "string", "description": "YYYY-MM-DD；不填默认一周后"},
                     "start_date": {"type": "string", "description": "YYYY-MM-DD；不填默认今天"},
                     "notes":      {"type": "string"},
+                    "color":      {"type": "string", "description": "渐变色字符串，如 linear-gradient(135deg,#7b7fb2,#c4afc8)；不传则随机从预设中选"},
                     "stages": {
                         "type": "array",
                         "description": '自定义阶段（按顺序）。两种写法：纯名称 ["需求","开发","测试"]，或带待办 [{"label":"开发","todos":["接口","联调"]}]。',

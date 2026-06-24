@@ -90,19 +90,42 @@
         </div>
         <div class="exp-sidebar-divider"></div>
         <div class="exp-session-list">
-          <div
-            v-for="s in imSessions" :key="s.id"
-            class="exp-session-item"
-            :class="{ active: s.id === sessionId }"
-            @click="loadSession(s.id)"
-          >
-            <span class="exp-session-source" :class="`src-${s.source}`">{{ s.source === 'qqbot' ? 'QQ' : s.source === 'feishu' ? '飞书' : s.source }}</span>
-            <span class="exp-session-title">{{ s.title }}</span>
-            <button class="exp-session-del" @click.stop="deleteSession(s.id)" title="删除">
-              <PhTrash :size="12" weight="bold" />
+          <!-- IM 平台：飞书 / QQ，可展开抽屉。未接入 → 扫码连接；接入后 → 该平台会话 -->
+          <div v-for="p in IM_PLATFORMS" :key="p.key" class="im-plat">
+            <button class="im-plat-head" :class="{ open: imOpen[p.key] }" @click="toggleImPlatform(p.key)">
+              <svg class="im-plat-chev" :class="{ open: imOpen[p.key] }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
+              <span class="im-plat-name">{{ p.label }}</span>
+              <span class="im-plat-badge" :class="{ on: botsOf(p.key).length }">{{ botsOf(p.key).length ? '已接入' : '未接入' }}</span>
             </button>
+            <div v-show="imOpen[p.key]" class="im-plat-body">
+              <!-- 已接入 → 该平台会话抽屉 -->
+              <template v-if="botsOf(p.key).length">
+                <div v-for="s in imSessionsOf(p.key)" :key="s.id"
+                  class="exp-session-item" :class="{ active: s.id === sessionId }" @click="loadSession(s.id)">
+                  <span class="exp-session-title">{{ s.title }}</span>
+                  <button class="exp-session-del" @click.stop="deleteSession(s.id)" title="删除"><PhTrash :size="12" weight="bold" /></button>
+                </div>
+                <div v-if="!imSessionsOf(p.key).length" class="exp-session-empty">暂无对话</div>
+              </template>
+              <!-- 未接入 → 扫码连接 + 二维码抽屉 -->
+              <template v-else>
+                <div v-if="connect && connect.platform === p.key" class="im-qr-box">
+                  <canvas :ref="setConnectCanvas" class="im-qr-canvas"></canvas>
+                  <div class="im-qr-hint">{{ connectHint }}</div>
+                  <button class="im-qr-cancel" @click="cancelImConnect">取消</button>
+                </div>
+                <template v-else>
+                  <button class="im-connect-btn" :disabled="connecting === p.key" @click="startImConnect(p.key)">
+                    {{ connecting === p.key ? '生成中…' : '扫码连接' }}
+                  </button>
+                  <div v-if="connectErr && connecting !== p.key" class="im-qr-err">{{ connectErr }}</div>
+                </template>
+              </template>
+            </div>
           </div>
-          <div v-if="webSessions.length && imSessions.length" class="exp-group-divider"></div>
+
+          <!-- 网页对话 -->
+          <div v-if="webSessions.length" class="exp-group-divider"></div>
           <div
             v-for="s in webSessions" :key="s.id"
             class="exp-session-item"
@@ -114,7 +137,6 @@
               <PhTrash :size="12" weight="bold" />
             </button>
           </div>
-          <div v-if="sessions.length === 0" class="exp-session-empty">暂无对话</div>
         </div>
         <div class="exp-sidebar-divider" style="margin: 0 12px"></div>
         <div class="exp-new-session-wrap">
@@ -149,7 +171,7 @@
             <div v-if="msg.role === 'ai' && (msg.text || msg.streaming)" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : msg.html" /></div>
             <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
             <div v-if="msg.files && msg.files.length" class="msg-files">
-              <div v-for="f in msg.files" :key="f.file_id" class="msg-file" @click="downloadFile(f)" title="点击下载">
+              <div v-for="f in msg.files" :key="f.file_id" class="msg-file" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
                 <span class="msg-file-ext">
                   {{ (f.ext || 'file').toUpperCase().slice(0, 4) }}
                   <template v-if="isImageFile(f)">
@@ -161,7 +183,7 @@
                 </span>
                 <span class="msg-file-info">
                   <span class="msg-file-name">{{ f.name }}.{{ f.ext }}</span>
-                  <span class="msg-file-meta">{{ fmtSize(f.size_bytes) }} · 下载</span>
+                  <span class="msg-file-meta">{{ fmtSize(f.size_bytes) }} · {{ canPreview(f) ? '预览' : '下载' }}</span>
                 </span>
                 <svg class="msg-file-dl" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>
               </div>
@@ -226,14 +248,16 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import QRCode from 'qrcode'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import { useAudioStore } from '@/stores/audio'
 import { useProjectStore } from '@/stores/projects'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
-import { agentApi, filesApi, trackApi } from '@/services/api'
+import { usePreviewStore, isPreviewable } from '@/stores/preview'
+import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi } from '@/services/api'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/useThumbCache'
 
@@ -644,9 +668,41 @@ const vLazyThumb = {
 }
 
 async function downloadFile(f) {
-  if (f.upload) return   // 聊天上传的暂存附件，不走下载
+  if (f.attach_id) {
+    // 聊天上传的暂存附件：走 /agent/attachment/{id}/download
+    const token = localStorage.getItem('user_token') ?? ''
+    const res = await fetch(`${API_BASE}/agent/attachment/${f.attach_id}/download`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+    if (!res.ok) { console.error('附件下载失败', res.status); return }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `${f.name}.${f.ext}`
+    document.body.appendChild(a); a.click()
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove() }, 1000)
+    return
+  }
   try { await filesApi.download(f.file_id, `${f.name}.${f.ext}`) }
   catch (e) { console.error('下载失败', e) }
+}
+
+// 可预览：必须是文件库文件（有 file_id，能走 /files/{id} 端点）且类型受支持；
+// 暂存附件/聊天上传件没有文件库端点，只能下载。
+const previewStore = usePreviewStore()
+function canPreview(f) {
+  return !!f.file_id && !f.upload && isPreviewable(f.ext)
+}
+function openFileFromChat(f) {
+  if (canPreview(f)) {
+    previewStore.open({
+      id: f.file_id,
+      ext: (f.ext || '').toUpperCase(),
+      displayName: f.name,
+      size: fmtSize(f.size_bytes),
+    })
+    return
+  }
+  downloadFile(f)
 }
 
 function copyMsg(msg) {
@@ -695,8 +751,67 @@ async function fetchSessions() {
   try { sessions.value = await agentApi.listSessions() } catch {}
 }
 
+// ── 侧栏 IM 接入（飞书 / QQ）：未接入显示扫码连接抽屉，接入后变成该平台会话抽屉 ──
+const IM_PLATFORMS = [
+  { key: 'feishu', label: '飞书', api: feishuConnectApi },
+  { key: 'qqbot',  label: 'QQ',   api: qqConnectApi },
+]
+const bots   = ref([])
+const imOpen = reactive({ feishu: false, qqbot: false })
+const botsOf = (platform) => bots.value.filter(b => b.platform === platform)
+const imSessionsOf = (platform) => imSessions.value.filter(s => s.source === platform)
+
+async function loadBots() {
+  try { const r = await userBotsApi.list(); bots.value = r.items || [] } catch {}
+}
+function toggleImPlatform(key) { imOpen[key] = !imOpen[key] }
+
+// 通用扫码连接（建任务 → 渲染二维码 → 轮询 → 自动写 user_bot，与 ProfileModal 同一套 API）
+const connecting    = ref('')        // 正在生成二维码的平台 key
+const connect       = ref(null)      // { platform, id } 连接进行中
+const connectHint   = ref('')
+const connectErr    = ref('')
+const connectCanvas = ref(null)
+let   connectPoll   = null
+function setConnectCanvas(el) { if (el) connectCanvas.value = el }   // v-for 内函数 ref，避免数组 ref
+
+async function startImConnect(platform) {
+  const p = IM_PLATFORMS.find(x => x.key === platform)
+  connecting.value = platform; connectErr.value = ''
+  try {
+    const r = await p.api.start()
+    connect.value = { platform, id: r.poll_id || r.task_id }   // 飞书 poll_id / QQ task_id
+    connectHint.value = platform === 'feishu'
+      ? '手机飞书扫码 → 授权创建机器人，授权后自动连接'
+      : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
+    await nextTick()
+    await QRCode.toCanvas(connectCanvas.value, r.scan_url, { width: 160, margin: 1 })
+    _startImPoll(p)
+  } catch (e) {
+    connectErr.value = e.message || '生成二维码失败'
+    connect.value = null
+  } finally { connecting.value = '' }
+}
+function _startImPoll(p) {
+  _stopImPoll()
+  let tries = 0
+  connectPoll = setInterval(async () => {
+    tries++
+    try {
+      const r = await p.api.poll(connect.value.id)
+      if (r.status === 'success') { cancelImConnect(); await loadBots(); await fetchSessions() }
+      else if (r.status === 'expired') { connectErr.value = '二维码已过期，请重新扫码'; cancelImConnect() }
+      else if (r.status === 'fail') { connectErr.value = '连接失败：' + (r.reason || '未知'); cancelImConnect() }
+    } catch {}
+    if (tries > 100) cancelImConnect()   // ~5 分钟超时
+  }, 3000)
+}
+function _stopImPoll() { if (connectPoll) { clearInterval(connectPoll); connectPoll = null } }
+function cancelImConnect() { _stopImPoll(); connect.value = null }
+
 async function enterExpanded() {
   expanded.value = true
+  loadBots()
   _markResizing()
   trackApi.track('chat_expanded').catch(() => {})
   await fetchSessions()
@@ -847,6 +962,7 @@ onUnmounted(() => {
   msgMo?.disconnect()
   _sentinelObs?.disconnect()
   messagesEl.value?.removeEventListener('scroll', onMsgScroll)
+  _stopImPoll()
 })
 
 // 消费一条 SSE 流，把事件渲染进消息列表。send（POST /chat）和续看（GET .../stream）共用。
@@ -961,7 +1077,7 @@ async function send(forcedText) {
   if (fromInput) {
     _sessionTurn++
     messages.value.push({ id: mkid(), role: 'user', text, time: now(),
-      files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, upload: true, _thumbUrl: a._thumbUrl })) : undefined })
+      files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, upload: true, _thumbUrl: a._thumbUrl })) : undefined })
     inputText.value = ''
     pendingAtt.value = []
     if (expInputEl.value) expInputEl.value.style.height = 'auto'
@@ -1030,7 +1146,7 @@ async function send(forcedText) {
   position: fixed; bottom: 28px; right: 28px;
   isolation: isolate; width: 50px; height: 50px; border-radius: 50%;
   background: linear-gradient(135deg, #7b7fb2, #9590c4); border: none;
-  cursor: pointer; z-index: 1000;
+  cursor: pointer; z-index: 10000;   /* 高于卡片拖拽克隆体（9999） */
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 4px 18px rgba(123,127,178,0.32), inset 0 1px 0 rgba(255,255,255,0.45);
   transition: transform 0.2s, box-shadow 0.2s;
@@ -1050,7 +1166,7 @@ async function send(forcedText) {
 /* ── 单一聊天窗口 ── */
 .chat-window {
   position: fixed;
-  z-index: 1001;
+  z-index: 10001;   /* 高于卡片拖拽克隆体（9999） */
   border: 1px solid rgba(255,255,255,0.7);
   border-radius: 20px;
   overflow: hidden;
@@ -1076,23 +1192,24 @@ async function send(forcedText) {
 
 /* 位移过渡放在 CSS，不放 inline style（避免覆盖 Vue transition 的 opacity/transform） */
 .chat-window {
-  transition: top 0.38s cubic-bezier(0.22,1,0.36,1),
-              left 0.38s cubic-bezier(0.22,1,0.36,1),
-              right 0.38s cubic-bezier(0.22,1,0.36,1),
-              bottom 0.38s cubic-bezier(0.22,1,0.36,1);
+  transition: top 0.42s cubic-bezier(0.16, 1, 0.3, 1),
+              left 0.42s cubic-bezier(0.16, 1, 0.3, 1),
+              right 0.42s cubic-bezier(0.16, 1, 0.3, 1),
+              bottom 0.42s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 
 /* 窗口开/关动画（从右下角 fab 原点缩放），!important 覆盖上方位移 transition */
+/* 入场：极快启动、平滑减速（无过冲）；出场：平滑加速收缩 */
 .chat-open-enter-active {
-  transition: opacity 0.26s, transform 0.34s cubic-bezier(0.22, 1.12, 0.36, 1) !important;
+  transition: opacity 0.22s ease, transform 0.36s cubic-bezier(0.16, 1, 0.3, 1) !important;
   transform-origin: right bottom;
 }
 .chat-open-leave-active {
-  transition: opacity 0.18s ease-in, transform 0.22s cubic-bezier(0.55, 0, 1, 0.7) !important;
+  transition: opacity 0.18s ease-in, transform 0.22s cubic-bezier(0.7, 0, 0.84, 0) !important;
   transform-origin: right bottom;
 }
-.chat-open-enter-from, .chat-open-leave-to { opacity: 0; transform: scale(0.05); }
+.chat-open-enter-from, .chat-open-leave-to { opacity: 0; transform: scale(0.78); }
 
 /* ── 拖入附件遮罩 ── */
 .chat-drop-overlay {
@@ -1273,6 +1390,67 @@ async function send(forcedText) {
 .exp-session-source.src-qqbot { background: rgba(18,183,245,0.15); color: #0c8fc0; }
 .exp-session-source.src-feishu { background: rgba(66,133,244,0.15); color: #3b6fc4; }
 
+/* IM 平台抽屉（飞书 / QQ） */
+.im-plat { display: flex; flex-direction: column; }
+.im-plat-head {
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px 10px; border-radius: 9px; border: none; cursor: pointer;
+  background: none; font-family: var(--font-sans);
+  transition: background 0.12s;
+}
+.im-plat-head:hover { background: rgba(255,255,255,0.55); }
+.im-plat-head.open { background: rgba(123,127,178,0.08); }
+.im-plat-chev { color: var(--text-secondary); transition: transform 0.18s ease; flex-shrink: 0; }
+.im-plat-chev.open { transform: rotate(-180deg); }
+.im-plat-name { flex: 1; text-align: left; font-size: 12.5px; font-weight: 700; color: var(--text-primary); }
+.im-plat-badge {
+  flex-shrink: 0; font-size: 10.5px; font-weight: 600; line-height: 1;
+  padding: 2px 6px; border-radius: 4px;
+  background: rgba(123,127,178,0.12); color: var(--text-secondary);
+}
+.im-plat-badge.on { background: rgba(74,180,120,0.16); color: #2f9e63; }
+.im-plat-body {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 2px 0 6px;
+}
+.im-connect-btn {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;
+  margin: 4px 0 2px;
+  padding: 9px 14px; border-radius: var(--radius-sm); cursor: pointer;
+  font-size: 12.5px; font-weight: 700; font-family: var(--font-sans);
+  color: var(--color-primary);
+  background: rgba(255,255,255,0.82);
+  border: 1px solid rgba(255,255,255,0.95);
+  box-shadow: 0 2px 8px rgba(123,127,178,0.12), inset 0 1px 0 rgba(255,255,255,1);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.im-connect-btn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.95);
+  box-shadow: 0 5px 16px rgba(123,127,178,0.22), inset 0 1px 0 rgba(255,255,255,1);
+}
+.im-connect-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 0 1px 4px rgba(123,127,178,0.1), inset 0 1px 0 rgba(255,255,255,1);
+  transition: transform 0.05s, box-shadow 0.05s;
+}
+.im-connect-btn:disabled { opacity: 0.6; cursor: default; }
+.im-qr-box {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 12px 8px 10px;
+}
+.im-qr-canvas {
+  width: 160px; height: 160px; border-radius: 10px;
+  background: #fff; padding: 6px; box-sizing: border-box;
+  box-shadow: 0 2px 10px rgba(123,127,178,0.18);
+}
+.im-qr-hint { font-size: 11.5px; color: var(--text-secondary); text-align: center; line-height: 1.5; }
+.im-qr-err { font-size: 11.5px; color: rgba(200,80,80,0.9); padding: 4px 0; }
+.im-qr-cancel {
+  font-size: 11.5px; color: var(--text-secondary); background: none; border: none;
+  cursor: pointer; padding: 3px 10px; border-radius: 6px; transition: background 0.12s;
+}
+.im-qr-cancel:hover { background: rgba(123,127,178,0.12); color: var(--text-primary); }
+
 .exp-send-btn { width: 32px; height: 32px; border-radius: 9px; }
 
 /* ── 通用发送按钮 ── */
@@ -1437,7 +1615,7 @@ async function send(forcedText) {
   background: var(--panel-bg); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
   border: 1px solid rgba(255,255,255,0.65); border-radius: 20px;
   box-shadow: var(--glass-shadow-lg); padding: 12px 14px 10px;
-  z-index: 1002; display: flex; flex-direction: column; gap: 7px;
+  z-index: 10002; display: flex; flex-direction: column; gap: 7px;   /* 高于卡片拖拽克隆体（9999） */
 }
 .mp-info { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .mp-name { font-size: 12px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
