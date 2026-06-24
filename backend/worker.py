@@ -247,6 +247,10 @@ async def serve():
     await R.ensure_group(STREAM, GROUP)
     print(f"[worker] started · consumer={CONSUMER} · stream={STREAM}", flush=True)
     hb = asyncio.create_task(_heartbeat())
+    # 定时任务引擎：worker 是单实例进程，唯一 owner（web 多 worker 不会重复跑）
+    from app.core import scheduler as sched
+    import app.jobs  # noqa: F401 — import 即触发 @sched.register 注册
+    sched.start()
     while not _stop.is_set():
         try:
             await run_once()
@@ -254,6 +258,7 @@ async def serve():
             print(f"[worker] loop 出错，2s 后重试: {type(e).__name__}: {e}", flush=True)
             await asyncio.sleep(2)
     hb.cancel()
+    sched.shutdown()
     await R.reset()
     print("[worker] stopped", flush=True)
 

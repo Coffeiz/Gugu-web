@@ -9,6 +9,15 @@
 
 ## [Unreleased]
 
+### 定时任务引擎（APScheduler · worker 单实例）
+
+> 主动触达 / 截稿提醒的地基。
+
+- **`app/core/scheduler.py`**：`AsyncIOScheduler` 封装，`@register(cron()/every(), id)` 注册 + `start()/shutdown()`；挂在 **worker 进程**——worker 天生单实例，web 多 uvicorn worker 不会重复跑（呼应「周期任务单实例化」的进程优化）。
+- **`app/jobs.py`**：定时任务定义入口（新增任务＝加个 `@register` 的 async 函数）。首个任务 `deadline_scan`：每天 09:00 跨用户扫 48h 内到期的未完成项目（复用 `scan_upcoming_deadlines`，纯查询）。
+- **当前 dry-run（只打日志，不推送）**——真往用户 IM 主动 DM 还需：① IM 寻址（按 `user_id` 反查可触达地址）② 「何时打扰/频率/去重」策略，留作下一步（主动触达功能）。
+- worker `serve()` 里 `import app.jobs` + `scheduler.start()`，退出 `shutdown()`。
+
 ### IM 斜杠强制命令（/stop · /status · /help）
 
 > 比自然语言「算了/取消」更可靠的确定性中断手段。
