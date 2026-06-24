@@ -33,6 +33,7 @@ class User(Base):
     token_limit_6h:       Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     token_limit_weekly:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     storage_limit_bytes:  Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, default=None)
+    search_limit_daily:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
 
     projects:      Mapped[list["Project"]]             = relationship(back_populates="owner", cascade="all, delete-orphan")
     files:         Mapped[list["File"]]                = relationship(back_populates="owner", cascade="all, delete-orphan")
@@ -343,3 +344,16 @@ class FrontendEvent(Base):
     event:      Mapped[str]                = mapped_column(String(64), index=True)   # chat_open / chat_expanded / chat_message
     properties: Mapped[Optional[dict]]     = mapped_column(JSON, nullable=True, default=None)
     created_at: Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+# ── Feedback（用户反馈）─────────────────────────────────────────────────────
+
+class Feedback(Base):
+    __tablename__ = "feedbacks"
+
+    id:         Mapped[int]            = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:    Mapped[UUID]           = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    username:   Mapped[str]            = mapped_column(String(64))   # 冗余存，用户删除后仍可读
+    category:   Mapped[str]            = mapped_column(String(32), index=True)   # bug / suggestion / other
+    content:    Mapped[str]            = mapped_column(Text)
+    created_at: Mapped[datetime]       = mapped_column(DateTime, default=datetime.utcnow, index=True)

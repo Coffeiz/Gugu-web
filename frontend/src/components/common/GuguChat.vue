@@ -204,10 +204,16 @@
             ref="expInputEl"
             placeholder="问问项目进度、截止日期…"
             rows="1"
-            @keydown.enter.exact.prevent="send()"
+            @compositionstart="isComposing = true"
+            @compositionend="isComposing = false"
+            @keydown.enter.exact.prevent="!isComposing && send()"
             @input="autoResize"
           />
-          <input v-else v-model="inputText" placeholder="问问项目进度、截止日期…" @keydown.enter="send()" />
+          <input v-else v-model="inputText" placeholder="问问项目进度、截止日期…"
+            @compositionstart="isComposing = true"
+            @compositionend="isComposing = false"
+            @keydown.enter="!isComposing && send()"
+          />
           <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="streaming ? stopStreaming() : send()">
             <PhArrowRight v-if="!streaming" weight="bold" :size="expanded ? 14 : 13" />
             <PhStop       v-else            weight="fill"  :size="expanded ? 14 : 13" />
@@ -413,6 +419,9 @@ marked.use({
   breaks: true, gfm: true,
   renderer: (() => {
     const r = new marked.Renderer()
+    // 关掉删除线渲染：口语里 ~ 很常见（好的~、稍等~），~~ 叠出来会被 GFM 当删除线；
+    // 伙伴语气几乎不需要真删除线，把 ~~x~~ 直接渲染成纯文本 x（保留表格等其它 GFM 能力）。
+    r.del = (t) => (t && t.text) || ''
     r.code = ({ text, lang }) => {
       const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
       const highlighted = hljs.highlight(text, { language }).value
@@ -530,6 +539,7 @@ onUnmounted(() => {
 
 // ── 对话状态 ────────────────────────────────────────────
 const inputText      = ref('')
+const isComposing    = ref(false)
 const thinking       = ref(false)
 const streaming      = ref(false)
 const activeTool     = ref('')
@@ -714,9 +724,12 @@ async function exitExpanded() {
 
 async function loadSession(id) {
   if (id === sessionId.value) return
+  abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
+  streaming.value = false
   try {
     const data = await agentApi.getMessages(id)
     sessionId.value = id
+    thinking.value = false; activeTool.value = ''   // 切会话先清掉上个会话残留的「思考中/工具中」指示（active 会话下面 resumeStream 会重置）
     messages.value = data.messages.map(m => ({
       id: mkid(),
       role: m.role === 'assistant' ? 'ai' : m.role,
@@ -838,13 +851,24 @@ onUnmounted(() => {
 
 // 消费一条 SSE 流，把事件渲染进消息列表。send（POST /chat）和续看（GET .../stream）共用。
 // 返回 { aiIdx, usedTools }，供调用方做收尾（首条空回复兜底、刷新视图）。
-async function consumeStream(reader) {
+async function consumeStream(reader, ownerSid) {
   const decoder = new TextDecoder()
   let buf = '', aiIdx = -1
+  let sid = ownerSid           // 本流归属的会话（新对话在 session_id 事件前为 null）
+  let detached = false         // 一旦用户切到别的会话，本流永久脱离、不再污染当前视图
   const usedTools = new Set()
+  // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
+  const live = () => {
+    if (detached) return false
+    if (sessionId.value !== (sid ?? ownerSid)) { detached = true; return false }
+    return true
+  }
   try {
     while (true) {
-      const { done, value } = await reader.read()
+      let chunk
+      try { chunk = await reader.read() }
+      catch (e) { if (e.name === 'AbortError') break; throw e }   // 切会话会 abort：优雅收尾，别当网络错
+      const { done, value } = chunk
       if (done) break
       buf += decoder.decode(value, { stream: true })
       const lines = buf.split('\n'); buf = lines.pop()
@@ -854,67 +878,78 @@ async function consumeStream(reader) {
         let evt; try { evt = JSON.parse(raw) } catch { continue }
         if (evt.type === 'session_id') {
           const isNew = sessionId.value !== evt.session_id
-          sessionId.value = evt.session_id
+          // 仅当用户仍停在本流视图（旧会话或新对话）才把视图切到新 id，否则别抢走用户当前会话
+          if (sessionId.value === (sid ?? ownerSid)) sessionId.value = evt.session_id
+          sid = evt.session_id
           if (isNew) await fetchSessions()
         } else if (evt.type === 'session_title') {
-          const s = sessions.value.find(s => s.id === sessionId.value)
+          const s = sessions.value.find(s => s.id === sid)   // 按本流会话更新标题，与当前视图无关
           if (s) s.title = evt.title
         } else if (evt.type === '_new_round') {
           // 后端新一轮开始（sanitizer 已重置），前端无需变更视觉状态
         } else if (evt.type === 'tool_call') {
-          thinking.value = false; activeTool.value = evt.label || evt.name
           if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)  // 跳过 _preparing 占位
-          await scrollBottom()
+          if (live()) { thinking.value = false; activeTool.value = evt.label || evt.name; await scrollBottom() }
         } else if (evt.type === 'tool_done') {
-          activeTool.value = ''; thinking.value = true
-          await scrollBottom()
+          if (live()) { activeTool.value = ''; thinking.value = true; await scrollBottom() }
         } else if (evt.type === 'token') {
-          thinking.value = false; activeTool.value = ''
-          if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
-          messages.value[aiIdx].text += evt.content
-          await scrollBottom()
+          if (live()) {
+            thinking.value = false; activeTool.value = ''
+            if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
+            messages.value[aiIdx].text += evt.content
+            await scrollBottom()
+          }
         } else if (evt.type === 'file') {
-          thinking.value = false; activeTool.value = ''
-          if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
-          const m = messages.value[aiIdx]
-          if (!m.files) m.files = []
-          m.files.push(evt.file)
-          await scrollBottom()
+          if (live()) {
+            thinking.value = false; activeTool.value = ''
+            if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
+            const m = messages.value[aiIdx]
+            if (!m.files) m.files = []
+            m.files.push(evt.file)
+            await scrollBottom()
+          }
         } else if (evt.type === 'done') {
-          thinking.value = false; activeTool.value = ''
+          if (live()) { thinking.value = false; activeTool.value = '' }
         } else if (evt.type === 'error') {
-          thinking.value = false; activeTool.value = ''
-          messages.value.push({ id: mkid(), role: 'ai', text: evt.message || evt.detail || '咕咕开小差了 😵‍💫 麻烦再说一遍好吗？', time: now() })
-          aiIdx = messages.value.length - 1
-          await scrollBottom()
+          if (live()) {
+            thinking.value = false; activeTool.value = ''
+            messages.value.push({ id: mkid(), role: 'ai', text: evt.message || evt.detail || '咕咕开小差了 😵‍💫 麻烦再说一遍好吗？', time: now() })
+            aiIdx = messages.value.length - 1
+            await scrollBottom()
+          }
         }
       }
     }
   } finally {
-    if (aiIdx !== -1 && messages.value[aiIdx]) {
+    if (!detached && aiIdx !== -1 && messages.value[aiIdx]) {
       const m = messages.value[aiIdx]
       m.streaming = false
       m.html = renderMd(m.text)
     }
   }
-  return { aiIdx, usedTools }
+  return { aiIdx, usedTools, detached, sid }
 }
 
 // 续看：打开会话时若它正在生成（messages 接口返回 active），重连看后端跑完。
 async function resumeStream(id) {
   if (streaming.value) return            // 本地正在发/看，不重复连
   const token = localStorage.getItem('user_token') ?? ''
+  abortCtrl.value = new AbortController()   // 让下次切会话能 abort 掉这条续看
   thinking.value = true; streaming.value = true
   try {
     const res = await fetch(`${BASE_URL}/agent/sessions/${id}/stream`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal: abortCtrl.value.signal,
     })
     if (!res.ok) return
     if (sessionId.value !== id) return   // 期间又切走了，丢弃
-    const r = await consumeStream(res.body.getReader())
+    const r = await consumeStream(res.body.getReader(), id)
     refreshAfterTools(r.usedTools)
-  } catch { /* 续看失败不打扰 */ }
-  finally { thinking.value = false; activeTool.value = ''; streaming.value = false }
+  } catch { /* 续看失败/被切走中断都不打扰 */ }
+  finally {
+    // 仍停在本会话才收尾全局指示，避免切走后清掉新会话续看的状态
+    if (sessionId.value === id) { thinking.value = false; activeTool.value = ''; streaming.value = false; abortCtrl.value = null }
+  }
 }
 
 async function send(forcedText) {
@@ -940,6 +975,8 @@ async function send(forcedText) {
   abortCtrl.value = new AbortController()
   await scrollBottom()
   const token = localStorage.getItem('user_token') ?? ''
+  const ownerSid = sessionId.value   // 本次发送归属的会话（新对话为 null，流里拿到 id 后回填）
+  let resolvedSid = ownerSid         // 流里 session_id 事件后回填成真实 id
   let aiIdx = -1
   const usedTools = new Set()
 
@@ -947,36 +984,42 @@ async function send(forcedText) {
     const res = await fetch(`${BASE_URL}/agent/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ message: text, session_id: sessionId.value, attachments: atts.map(a => a.attach_id) }),
+      body: JSON.stringify({ message: text, session_id: ownerSid, attachments: atts.map(a => a.attach_id) }),
       signal: abortCtrl.value.signal,
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
-    const r = await consumeStream(res.body.getReader())
+    const r = await consumeStream(res.body.getReader(), ownerSid)
+    resolvedSid = r.sid
     aiIdx = r.aiIdx
     r.usedTools.forEach(t => usedTools.add(t))
-    if (aiIdx === -1) {
+    // 用户中途切走了 → 别把兜底气泡塞进当前别的会话视图（回复已在后端，切回会重载）
+    if (aiIdx === -1 && !r.detached) {
       messages.value.push({ id: mkid(), role: 'ai', text: '收到，但没有收到回复，请稍后再试。', time: now() })
       await scrollBottom()
     }
   } catch (e) {
-    thinking.value = false
-    if (e.name !== 'AbortError') {
-      // fetch 抛错=连不上咕咕后端，基本都是网络问题
+    if (e.name !== 'AbortError' && sessionId.value === resolvedSid) {
+      // fetch 抛错=连不上咕咕后端，基本都是网络问题（仅在仍停在本会话时报）
+      thinking.value = false
       messages.value.push({ id: mkid(), role: 'ai', text: '咕咕网络不太好 📡 可以再发一遍吗？', time: now() })
       await scrollBottom()
     }
   } finally {
-    // 流式结束：把该条 AI 消息标记为非流式，触发 markdown 渲染（流式中按纯文本显示，避免半截表格/代码块闪烁）
-    if (aiIdx !== -1 && messages.value[aiIdx]) messages.value[aiIdx].streaming = false
-    thinking.value = false; activeTool.value = ''; streaming.value = false; abortCtrl.value = null
-    // markdown 重渲染后内容变高，MutationObserver 此时已因 streaming=false 停止跟随，
-    // 需在 nextTick 后再滚一次，否则底部时间戳会被截掉
-    await scrollBottom()
+    // 仍停在本次发送的会话才收尾全局状态；切走后这些状态归新会话的续看流管，别清掉
+    const ownsView = sessionId.value === resolvedSid
+    if (ownsView) {
+      // 流式结束：把该条 AI 消息标记为非流式，触发 markdown 渲染（流式中按纯文本显示，避免半截表格/代码块闪烁）
+      if (aiIdx !== -1 && messages.value[aiIdx]) messages.value[aiIdx].streaming = false
+      thinking.value = false; activeTool.value = ''; streaming.value = false; abortCtrl.value = null
+      // markdown 重渲染后内容变高，MutationObserver 此时已因 streaming=false 停止跟随，
+      // 需在 nextTick 后再滚一次，否则底部时间戳会被截掉
+      await scrollBottom()
+    }
     // 咕咕若调用了改数据的工具，刷新对应前端视图（项目/日历/文件），免手动刷新页面
     refreshAfterTools(usedTools)
     // 生成期间排队的消息：取队首接着发（其自身 finally 会继续取下一条，逐条处理）
-    if (pendingQueue.value.length) send(pendingQueue.value.shift())
+    if (ownsView && pendingQueue.value.length) send(pendingQueue.value.shift())
   }
 }
 </script>

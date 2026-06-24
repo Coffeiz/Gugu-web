@@ -91,6 +91,7 @@ async def list_users(
             "token_limit_6h":      u.token_limit_6h,
             "token_limit_weekly":  u.token_limit_weekly,
             "storage_limit_bytes": u.storage_limit_bytes,
+            "search_limit_daily":  u.search_limit_daily,
         })
 
     return {"items": items, "total": len(items)}
@@ -133,7 +134,7 @@ async def update_quota(
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    for field in ("token_limit_6h", "token_limit_weekly", "storage_limit_bytes"):
+    for field in ("token_limit_6h", "token_limit_weekly", "storage_limit_bytes", "search_limit_daily"):
         if field in body:
             v = body[field]
             setattr(user, field, int(v) if v is not None else None)
@@ -146,4 +147,5 @@ async def update_quota(
         "token_limit_6h":      user.token_limit_6h,
         "token_limit_weekly":  user.token_limit_weekly,
         "storage_limit_bytes": user.storage_limit_bytes,
+        "search_limit_daily":  user.search_limit_daily,
     }

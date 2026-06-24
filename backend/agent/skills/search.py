@@ -27,8 +27,14 @@ async def _web_search(db, user_id, args: dict):
     if not query:
         return json.dumps({"error": "需要提供搜索关键词 query"})
 
-    # ── 每日次数配额（None=不限制）──
-    limit = settings.quota.default_search_limit_daily
+    # ── 每日次数配额（None=不限制；优先用户个人配置，否则回落全局）──
+    from app.models import User as _User
+    _user_obj = await db.get(_User, user_id)
+    limit = (
+        _user_obj.search_limit_daily
+        if _user_obj and _user_obj.search_limit_daily is not None
+        else settings.quota.default_search_limit_daily
+    )
     if limit is not None:
         day_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
         used = (await db.execute(

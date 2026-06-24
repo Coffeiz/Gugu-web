@@ -171,6 +171,23 @@ def _make_on_message(channel_id: str, owner: str, api_client):
             "attachments": attachments,
         }
         print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text={text[:40]!r} att={len(attachments)}", flush=True)
+
+        # Intent Router：纯文本消息先据当前状态判一手——任务进行中的「还在吗/算了/嗯」由网关
+        # 直接处理，不入队（IM 单 worker 顺序消费，忙时它根本看不到队列后面的消息）。带附件一律进主模型。
+        if not attachments:
+            from agent import router, runtime_state as rtstate
+            dec = router.decide(text, rtstate.get_state_sync("feishu", open_id))
+            if dec["action"] == "drop":
+                return
+            if dec["action"] in ("reply", "cancel"):
+                if dec["action"] == "cancel":
+                    rtstate.request_cancel_sync("feishu", open_id)
+                try:
+                    _do_send(api_client, msg.chat_id, dec["reply"])
+                except Exception as e:
+                    print(f"[feishu] 短路回复失败: {type(e).__name__}: {e}", flush=True)
+                return
+
         # 秒回表情：赶在入队/生成之前，用关键词快速判一个即时点上（完整回复随后由 worker 发）
         _, emoji = _quick_react(text, bool(attachments))
         _do_react(api_client, msg.message_id, emoji)

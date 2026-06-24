@@ -39,6 +39,17 @@ async def load_files_overview(db, user_id, recent: int = 25) -> dict:
     total = (await db.execute(
         select(func.count(File.id)).where(File.user_id == user_id, File.deleted_at.is_(None))
     )).scalar() or 0
+    # 各空间活跃文件数 + 回收站数（每轮注入真值，杜绝模型对"几个文件/删了几个"凭印象瞎报）
+    by_space = {
+        sp: c for sp, c in (await db.execute(
+            select(File.space, func.count(File.id))
+            .where(File.user_id == user_id, File.deleted_at.is_(None))
+            .group_by(File.space)
+        )).all()
+    }
+    trash = (await db.execute(
+        select(func.count(File.id)).where(File.user_id == user_id, File.deleted_at.isnot(None))
+    )).scalar() or 0
     files = (await db.execute(
         select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
         .order_by(File.updated_at.desc()).limit(recent)
@@ -47,6 +58,8 @@ async def load_files_overview(db, user_id, recent: int = 25) -> dict:
     fmap = {fo.id: fo.name for fo in folders}
     return {
         "total": total,
+        "by_space": by_space,
+        "trash": trash,
         "folders": [{"id": fo.id, "name": fo.name, "project_id": fo.project_id} for fo in folders],
         "files": [
             {"id": f.id, "name": f"{f.display_name}.{f.ext}", "space": f.space,

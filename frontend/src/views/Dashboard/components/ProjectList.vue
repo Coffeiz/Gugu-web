@@ -145,12 +145,12 @@ function segFillStyle(p, i) {
 }
 
 function segFill(p, i) {
-  const idx = p.stages.findIndex(s => s.key === p.currentStage)
-  if (i < idx) return 100
-  if (i > idx) return 0
+  // 每个阶段按自己的待办完成度独立涨，不受当前阶段限制
   const todos = p.stages[i].todos ?? []
-  if (!todos.length) return 100
-  return Math.round(todos.filter(t => t.done).length / todos.length * 100)
+  if (todos.length) return Math.round(todos.filter(t => t.done).length / todos.length * 100)
+  // 无待办：按是否已推进到/过此阶段（当前及之前=满、之后=空）
+  const idx = p.stages.findIndex(s => s.key === p.currentStage)
+  return i <= idx ? 100 : 0
 }
 
 async function clickStage(p, i) {
@@ -170,10 +170,18 @@ function currentStageLabel(p) {
 }
 
 function stageProgress(p) {
-  if (!p.stages.length) return 0
-  const idx = p.stages.findIndex(s => s.key === p.currentStage)
-  if (idx < 0) return 0
-  return Math.round((idx + 1) / p.stages.length * 100)
+  // 总完成度 = 所有阶段待办里已完成 / 总数（不按阶段位置）；无待办则退回按当前阶段位置
+  const stages = p.stages
+  if (!stages.length) return 0
+  let done = 0, total = 0
+  for (const s of stages) {
+    const todos = s.todos ?? []
+    done += todos.filter(t => t.done).length
+    total += todos.length
+  }
+  if (total > 0) return Math.round(done / total * 100)
+  const idx = stages.findIndex(s => s.key === p.currentStage)
+  return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
 }
 
 function darkenHex(hex, amount) {

@@ -16,6 +16,19 @@
 
     <div v-if="err" class="svc-err">{{ err }}</div>
 
+    <div v-if="queue.length != null" class="svc-queue">
+      <span class="q-label">IM 队列</span>
+      <span class="q-stat" title="队列里的消息总数（含已缓冲）">
+        <b>{{ queue.length }}</b><i>队列长度</i>
+      </span>
+      <span class="q-stat" :class="{ warn: (queue.lag || 0) > 20 }" title="已进队列、worker 还没取走 —— 真积压，持续 >0 说明 worker 吃不消">
+        <b>{{ queue.lag ?? '—' }}</b><i>积压待取</i>
+      </span>
+      <span class="q-stat" :class="{ warn: (queue.pending || 0) > 10 }" title="worker 取走了还没 ack —— 在处理中，长期偏高说明有卡住的任务">
+        <b>{{ queue.pending ?? '—' }}</b><i>处理中</i>
+      </span>
+    </div>
+
     <div class="svc-grid">
       <div v-for="s in services" :key="s.name" class="svc-card">
         <div class="svc-card-top">
@@ -58,6 +71,7 @@ import { useAdminStore } from '@/stores/admin'
 const adminStore = useAdminStore()
 const services = ref([])
 const deps = ref({ redis: false, db: false })
+const queue = ref({})
 const loading = ref(false)
 const err = ref('')
 const restarting = ref('')
@@ -73,6 +87,7 @@ async function load(manual = false) {
     const data = await res.json()
     services.value = data.services || []
     deps.value = data.deps || { redis: false, db: false }
+    queue.value = data.queue || {}
     err.value = ''
   } catch (e) { err.value = e.message } finally { loading.value = false }
 }
@@ -120,6 +135,18 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 }
 .svc-refresh:hover { background: rgba(255,255,255,0.1); }
 .svc-err { color: #e08a8a; font-size: 13px; margin-bottom: 12px; }
+
+.svc-queue {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px; padding: 12px 18px; margin-bottom: 16px;
+}
+.q-label { font-size: 12px; color: rgba(255,255,255,0.4); }
+.q-stat { display: flex; align-items: baseline; gap: 6px; cursor: help; }
+.q-stat b { font-size: 18px; font-weight: 600; color: rgba(255,255,255,0.92); }
+.q-stat i { font-size: 11px; font-style: normal; color: rgba(255,255,255,0.4); }
+.q-stat.warn b { color: #fbbf24; }
+.q-stat.warn i { color: rgba(251,191,36,0.7); }
 
 .svc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
 .svc-card {

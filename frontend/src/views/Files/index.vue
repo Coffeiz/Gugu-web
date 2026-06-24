@@ -664,6 +664,7 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { getThumb, getCachedThumb, preloadTinyThumbs, cardBlobReadyIds } from '@/composables/useThumbCache'
+import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
 import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
   PhBrowser, PhImage, PhFilmStrip, PhMusicNote, PhTable,
@@ -1696,6 +1697,9 @@ function onFolderCardDragStart(f, e) {
   draggingFolderIds.value = new Set([f.folderId])
   e.dataTransfer.setData('application/x-folder-ids', JSON.stringify([f.folderId]))
   e.dataTransfer.effectAllowed = 'move'
+  if (e.currentTarget?.classList?.contains('folder-card')) {
+    startPhysicsDrag(e, e.currentTarget)
+  }
 }
 
 function onFileDragStart(f, e) {
@@ -1704,6 +1708,10 @@ function onFileDragStart(f, e) {
   draggingFileIds.value = new Set(ids)
   e.dataTransfer.setData('text/plain', JSON.stringify(ids))
   e.dataTransfer.effectAllowed = 'move'
+  // 物理拖拽：仅网格卡片（列表行整条飞起来不好看），单选时启用
+  if (e.currentTarget?.classList?.contains('fc-card') && ids.length === 1) {
+    startPhysicsDrag(e, e.currentTarget)
+  }
   // 清除框选状态（mousedown 可能提前启动了框选，但 drag 开始后 mouseup 不会触发）
   document.removeEventListener('mousemove', onDocMouseMove)
   document.removeEventListener('mouseup', onDocMouseUp)
@@ -2756,6 +2764,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   background: rgba(232,233,238,0.82);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   border-radius: inherit;
+  corner-shape: inherit;   /* 跟随父级圆角形状（glass-card 是 squircle），否则与父级圆角不重合 → 双层圆角 */
   display: flex; align-items: center; justify-content: center;
   pointer-events: none;
 }

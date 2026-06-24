@@ -182,8 +182,8 @@
               <span class="usage-text">{{ fmtBytes(u.storage_used) }}</span>
             </span>
             <span class="col-status">
-              <span class="quota-badge" :class="(u.token_limit_6h || u.token_limit_weekly || u.storage_limit_bytes) ? 'custom' : 'default'">
-                {{ (u.token_limit_6h || u.token_limit_weekly || u.storage_limit_bytes) ? '自定义' : '全局默认' }}
+              <span class="quota-badge" :class="(u.token_limit_6h || u.token_limit_weekly || u.storage_limit_bytes || u.search_limit_daily != null) ? 'custom' : 'default'">
+                {{ (u.token_limit_6h || u.token_limit_weekly || u.storage_limit_bytes || u.search_limit_daily != null) ? '自定义' : '全局默认' }}
               </span>
             </span>
             <span class="col-action">
@@ -244,6 +244,21 @@
                 <button class="preset-chip" @click="editForm.storageGB = 20">20 GB</button>
                 <button class="preset-chip" @click="editForm.storageGB = 50">50 GB</button>
                 <button class="preset-chip" @click="editForm.storageGB = 100">100 GB</button>
+              </div>
+            </div>
+            <div class="quota-field">
+              <label class="qf-label">每日联网搜索上限
+                <span class="qf-hint">每天 0 点 UTC 重置</span>
+              </label>
+              <div class="qf-input-row">
+                <input v-model.number="editForm.searchDaily" class="qf-input" type="number" min="0" placeholder="不限制（跟随全局）" />
+                <span class="qf-unit">次</span>
+              </div>
+              <div class="qf-presets">
+                <button class="preset-chip" @click="editForm.searchDaily = null">不限制</button>
+                <button class="preset-chip" @click="editForm.searchDaily = 10">10 次</button>
+                <button class="preset-chip" @click="editForm.searchDaily = 30">30 次</button>
+                <button class="preset-chip" @click="editForm.searchDaily = 100">100 次</button>
               </div>
             </div>
           </div>
@@ -309,7 +324,7 @@ const refreshing = ref(false)
 const search     = ref('')
 
 const overrideUsers = computed(() =>
-  allItems.value.filter(u => u.token_limit_6h != null || u.token_limit_weekly != null || u.storage_limit_bytes != null)
+  allItems.value.filter(u => u.token_limit_6h != null || u.token_limit_weekly != null || u.storage_limit_bytes != null || u.search_limit_daily != null)
 )
 
 const allUsers = computed(() => {
@@ -346,14 +361,15 @@ function onSearch() {
 const editTarget = ref(null)
 const editSaving = ref(false)
 let maskMousedownSelf = false
-const editForm   = reactive({ token6h: null, tokenWeek: null, storageGB: null })
+const editForm   = reactive({ token6h: null, tokenWeek: null, storageGB: null, searchDaily: null })
 
 function openEdit(u) {
   editTarget.value = u
-  editForm.token6h   = u.token_limit_6h    ?? null
-  editForm.tokenWeek = u.token_limit_weekly ?? null
-  editForm.storageGB = u.storage_limit_bytes != null
+  editForm.token6h     = u.token_limit_6h    ?? null
+  editForm.tokenWeek   = u.token_limit_weekly ?? null
+  editForm.storageGB   = u.storage_limit_bytes != null
     ? +(u.storage_limit_bytes / 1073741824).toFixed(2) : null
+  editForm.searchDaily = u.search_limit_daily ?? null
 }
 
 async function saveEdit() {
@@ -361,9 +377,10 @@ async function saveEdit() {
   editSaving.value = true
   try {
     const body = {
-      token_limit_6h:      editForm.token6h   != null ? Number(editForm.token6h)   : null,
-      token_limit_weekly:  editForm.tokenWeek != null ? Number(editForm.tokenWeek) : null,
-      storage_limit_bytes: editForm.storageGB != null ? Math.round(Number(editForm.storageGB) * 1073741824) : null,
+      token_limit_6h:      editForm.token6h     != null ? Number(editForm.token6h)     : null,
+      token_limit_weekly:  editForm.tokenWeek   != null ? Number(editForm.tokenWeek)   : null,
+      storage_limit_bytes: editForm.storageGB   != null ? Math.round(Number(editForm.storageGB) * 1073741824) : null,
+      search_limit_daily:  editForm.searchDaily != null ? Number(editForm.searchDaily) : null,
     }
     const res  = await adminStore.authFetch(`/api/v1/admin/users/${editTarget.value.id}/quota`, {
       method: 'PATCH',
@@ -374,6 +391,7 @@ async function saveEdit() {
     editTarget.value.token_limit_6h      = data.token_limit_6h
     editTarget.value.token_limit_weekly  = data.token_limit_weekly
     editTarget.value.storage_limit_bytes = data.storage_limit_bytes
+    editTarget.value.search_limit_daily  = data.search_limit_daily
     editTarget.value = null
   } finally {
     editSaving.value = false
@@ -384,11 +402,12 @@ async function clearQuota(u) {
   await adminStore.authFetch(`/api/v1/admin/users/${u.id}/quota`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token_limit_6h: null, token_limit_weekly: null, storage_limit_bytes: null }),
+    body: JSON.stringify({ token_limit_6h: null, token_limit_weekly: null, storage_limit_bytes: null, search_limit_daily: null }),
   })
   u.token_limit_6h      = null
   u.token_limit_weekly  = null
   u.storage_limit_bytes = null
+  u.search_limit_daily  = null
 }
 
 // ── 格式化 ────────────────────────────────────────────────────────────────────

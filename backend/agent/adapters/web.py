@@ -246,6 +246,34 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
             oa_messages.append({"role": "user", "content": chat_attach.build_user_content(user_content, user_images, False)})
             gen = runner.run(user_id, None, oa_messages, use_anthropic=False)
 
+        # 跨轮去重（流式版的 _collect 去重）：MiniMax 多轮工具调用常把上一轮文本整段重述，
+        # 流式直接追加会重复显示（口语 ~ 叠成 ~~ 还会被 GFM 渲染成删除线）。这里按住本轮开头与
+        # 上一轮匹配的前缀，只吐真正新增的部分。
+        last_round = ""    # 上一轮模型产出的完整文本
+        round_buf  = ""    # 本轮累计（含被跳过的重复前缀），供下一轮比对
+        dedup      = False
+
+        async def emit_clean(text: str):
+            nonlocal full_reply, round_buf, dedup
+            if not text:
+                return
+            if dedup:
+                round_buf += text
+                if len(round_buf) < len(last_round):
+                    if last_round.startswith(round_buf):
+                        return                  # 仍是上一轮前缀，继续观望、先不发
+                    out = round_buf             # 提前偏离 → 不是重述，整段发
+                else:
+                    # 达到/超过上一轮长度：完整匹配=重述，跳过重复部分；否则整段发
+                    out = round_buf[len(last_round):] if round_buf.startswith(last_round) else round_buf
+                dedup = False
+            else:
+                round_buf += text
+                out = text
+            if out:
+                full_reply += out
+                await genstream.publish(session_id, {"type": "token", "content": out})
+
         san = sanitize.StreamSanitizer()
         async for evt_str in gen:
             try:
@@ -254,6 +282,9 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                 continue
             etype = evt.get("type")
             if etype == "_new_round":
+                last_round = round_buf            # 上一轮完整文本
+                round_buf  = ""
+                dedup      = bool(last_round)     # 有上一轮才需去重
                 san = sanitize.StreamSanitizer()  # 新一轮重置，防止上轮 _cut 污染
                 await genstream.publish(session_id, {"type": "_new_round"})
                 continue
@@ -265,8 +296,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                 # 清洗 MiniMax 漏出的 tool-call 标记；标记后内容丢弃
                 clean = san.feed(evt["content"])
                 if clean:
-                    full_reply += clean
-                    await genstream.publish(session_id, {"type": "token", "content": clean})
+                    await emit_clean(clean)
                 continue
             if etype == "tool_call":
                 name = evt.get("name", "")
@@ -279,8 +309,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
         # 冲洗清洗器残留（未触发截断时的尾部）
         tail = san.flush()
         if tail:
-            full_reply += tail
-            await genstream.publish(session_id, {"type": "token", "content": tail})
+            await emit_clean(tail)
 
         # ── 持久化：工具调用中间消息 + AI 最终回复 + 用量 ──
         async with _sess._SessionLocal() as db2:

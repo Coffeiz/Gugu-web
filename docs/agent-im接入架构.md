@@ -1,9 +1,11 @@
 # 咕咕 · IM 多平台接入架构
 
-> **状态**：💡 设计中（未开工）
+> **状态**：🟢 飞书 + QQ 已上线（BYO 扫码自连）｜微信待接｜队列+worker+supervisor 三进程已部署
 > **分类**：技术架构 / Agent 平台接入
-> **创建**：2026-06-23
+> **创建**：2026-06-23 ｜ **更新**：2026-06-24
 > **目标**：把咕咕接入飞书 / QQ / 微信三个 IM 平台，**不依赖 OpenClaw**，且架构**未来可平滑扩到高流量**。
+>
+> 运行时一轮对话内部决策环（含 IM 前置路由 / 状态机 / 自然语言取消）见 [`agent-决策环.md`](agent-决策环.md)。
 
 > ⚠️ 文中各平台 API 细节来自仓库/SDK 调研（WebFetch），**动手前需对着官方真 README 再核一遍**。
 
@@ -139,7 +141,7 @@ QQ WS网关  ├→ 规范化成 AgentRequest ──→ [Redis Streams 队列] �
 
 ---
 
-## 6. 现状盘点（2026-06-23，step 1-3 已落地）
+## 6. 现状盘点（2026-06-24，step 1-5 已落地）
 
 | 能力 | 现状 |
 |------|------|
@@ -147,10 +149,11 @@ QQ WS网关  ├→ 规范化成 AgentRequest ──→ [Redis Streams 队列] �
 | 队列 / worker 框架 | ✅ **已建**：`app/core/redis.py`(Streams 封装) + `worker.py`(独立进程消费) |
 | Redis | ✅ **已接入**：共享异步客户端（懒加载单例）+ Streams；config 改 redis 配置 reset 重建 |
 | 非流式 runner | ✅ **已有**：`agent/runner.py` `run_collect()`，复用大脑收成完整回复 |
-| Runtime Router（状态机，文档 29） | ❌ 仅设计（用户状态机并入 step 6） |
-| 平台用户 ↔ 咕咕用户映射 | ❌ 无（step 6） |
+| 网关进程管理 | ✅ **已建**：`agent/adapters/supervisor.py` 按 DB `user_bots` 动态 spawn/kill 飞书·QQ 网关子进程（详见 §10） |
+| Runtime Router + 状态机（文档 29 / Phase 1.7） | ✅ **已落地**：`agent/router.py`(关键词分类) + `agent/runtime_state.py`(Redis 状态机 IDLE/THINKING/SEARCHING/GENERATING + 取消标志)；网关层短路状态查询/取消，详见 [`agent-决策环.md`](agent-决策环.md) §⓪ |
+| 平台用户 ↔ 咕咕用户映射 | ✅ **BYO 免映射**：每用户自带 bot，消息天然归属 owner，入队 payload 带 `owner_user_id`，worker 直接认人——无需 `(platform, platform_user_id) → user_id` 绑定表 |
 
-> **重要坑**：后端现为 `uvicorn --workers 1`。若为扩量把 web 开多 worker，每个进程会各自再拉一遍 bot 长连接 → 重复连接/处理。故 **bot 网关/worker 必须能脱离 web 当独立进程起**（`adapters/` 不依赖 FastAPI request 即为此）。
+> **重要坑**：后端现为 `uvicorn --workers 1`（生产 backend 单元用 2）。若为扩量把 web 开多 worker，每个进程会各自再拉一遍 bot 长连接 → 重复连接/处理。故 **bot 网关/worker 脱离 web 当独立进程起**（`adapters/` 不依赖 FastAPI request 即为此）——见 §10 三进程拆分。
 
 ---
 
@@ -165,11 +168,11 @@ QQ WS网关  ├→ 规范化成 AgentRequest ──→ [Redis Streams 队列] �
 | 1 | `app/core/redis.py` 共享异步连接池 + Streams 封装（produce/consume/ack/claim） | 脚本自产自消一条 | ✅ 实测远程 Redis 8.8.0 通 |
 | 2 | `agent/runner.py` 非流式 runner：从 `core.LLMRunner` 抽"攒完整段"版 | 喂假 AgentRequest 看完整回复 | ✅ 实测真打 MiniMax 通 |
 | 3 | `worker.py` 独立进程：消费→runner→打印（先不发平台） | 手动 XADD 一条看 worker 跑通 | ✅ 实测 队列→大脑→ack 通 |
-| 4 | 第一个平台网关（飞书或 QQ）：收→XADD | 网关只打印收到消息，确认鉴权/事件格式 | ⏭️ 待选平台+SDK+凭据 |
-| 5 | 接通：网关→队列→worker→真发送 | 端到端"hello from 咕咕" | ⏭️ |
-| 6 | 用户映射、事件去重、token 共享、背压 | 逐个加 | ⏭️ |
+| 4 | 第一个平台网关（飞书 + QQ）：收→XADD | 网关打印收到消息，确认鉴权/事件格式 | ✅ 飞书 `lark.ws` + QQ `botpy` 均通 |
+| 5 | 接通：网关→队列→worker→真发送 | 端到端"hello from 咕咕" | ✅ 飞书/QQ 双向收发 + 文件 + 多模态 |
+| 6 | 事件去重、token 共享、背压、状态机/取消 | 逐个加 | 🚧 状态机+取消已做；去重/背压待加 |
 
-> step 1-3 是平台无关的消息骨架，已全部对真实 Redis/LLM 验证；step 4 起才接真平台。消息流：`XADD im:inbound → worker 消费 → run_collect → 回复(暂打印) → ack`。
+> step 1-5 全部对真实平台跑通：飞书/QQ 走 BYO 扫码自连，`supervisor` 按 DB 起网关 → 网关入队 → worker 消费 → `run_collect` → 调平台 API 发回。用户映射用 BYO owner 免了（见 §6）。
 
 ---
 
@@ -194,13 +197,63 @@ QQ WS网关  ├→ 规范化成 AgentRequest ──→ [Redis Streams 队列] �
 
 ---
 
+## 10. 进程部署与启停（现状）
+
+IM 这套在生产以 **三个 systemd 常驻服务**跑（单元文件在 `backend/*.service`，由 `./start.sh install` 按 `RUN_USER`/`APP_DIR` 填占位符后写到 `/etc/systemd/system/`）：
+
+| 服务 | ExecStart | 角色 | Restart | 日志 |
+|------|-----------|------|---------|------|
+| `gugu-backend` | `uvicorn app.main:app`（生产 `--workers 2`） | Web / Admin / API（用户在此注册 bot） | on-failure | `logs/gugu.log` |
+| `gugu-worker` | `python -m worker` | **IM 大脑**：消费 Redis 队列 → `run_collect` 跑 agent → 回发平台 | **always**（死了消息无限排队） | `logs/gugu-worker.log` |
+| `gugu-supervisor` | `python -m agent.adapters.supervisor` | **网关管家**：按 DB 拉起/看管飞书·QQ 网关子进程 | always | `logs/gugu-supervisor.log` |
+
+### 10.1 网关是 supervisor 动态 spawn 的子进程（无独立单元）
+
+`supervisor.py` 不是固定起几个网关，而是**对账循环**（每 ~1s）：
+
+1. 读 `user_bots` 表里 `enabled=True` 的 bot（BYO：每用户自带 bot，凭据在 DB，不在 `.env`）
+2. 每个启用的 bot → `subprocess.Popen([python, -m, agent.adapters.feishu|qq])`，凭据（`app_id`/`app_secret`/`owner`/QQ `sandbox`）作为**环境变量注入**子进程（不走 argv，避免 `ps` 泄漏）
+3. 持续 reconcile：新启用/挂掉的 → 拉起；停用/删除的 → kill
+4. 单元设 `KillMode=control-group`：重启 supervisor 会**连带杀掉它 spawn 的全部网关子进程**，再由新进程统一拉起
+
+> 含义：**在 Admin 里启用/停用某个 bot 不用碰 systemd**——supervisor 1 秒内自动 spawn/kill 对应网关。只有改了代码/凭据机制才需重启服务。
+
+### 10.2 启停命令
+
+**生产（有 systemd）：**
+```bash
+systemctl restart gugu-worker        # 改了 agent 代码（core.py / skills / runner）→ 重启大脑
+systemctl restart gugu-supervisor    # 改了网关或路由（router.py / feishu.py / qq.py / supervisor.py）→ 重启网关（连带子进程）
+systemctl status gugu-backend gugu-worker gugu-supervisor
+journalctl -u gugu-worker -f         # 或 tail -f logs/gugu-worker.log
+```
+
+**本机 / dev（macOS 无 systemd）：**
+- `./start.sh {start|stop|restart}` —— **只管 web 后端 uvicorn**，不含 worker/supervisor
+- dev 起 IM 需手动：`python -m worker`、`python -m agent.adapters.supervisor`（后者需 DB 里有启用的 bot）；或临时单起一个网关：`FEISHU_BOT_ID=… FEISHU_APP_ID=… python -m agent.adapters.feishu`
+
+### 10.3 改代码后该重启谁
+
+进程启动时把对应模块**载进内存**；改磁盘文件不影响已在跑的进程，必须重启对应服务，且**先把新代码同步到该进程所在主机**（worker / supervisor 可能与本机不在一台）。
+
+| 改了什么 | 重启 |
+|---------|------|
+| `agent/core.py`、`skills/*`、`runner.py`、prompts 之外的 agent 逻辑 | `gugu-worker` |
+| `router.py`、`runtime_state.py`、`adapters/feishu.py`/`qq.py`/`supervisor.py` | `gugu-supervisor`（取消标志的*读*在 worker，故路由判定改了也重启 worker 稳妥） |
+| `app/` 下的 Web/API | `gugu-backend` |
+| `prompts/*.md`（persona/skills/policy/reflection 等） | 不用重启，每轮现读热生效 |
+
+---
+
 ## 附：相关文件 / 现有缝
 
-- `agent/models.py` — `AgentRequest` / `AgentResponse`（非流式响应预留）
-- `agent/adapters/base.py` — adapter 接口；`adapters/web.py` 为 SSE 实现，bot 各加一个
-- `agent/core.py` — `LLMRunner`（待抽非流式版）
-- `app/core/config.py` — `RedisSettings`（已配，待真正接入）
-- `app/main.py` — `lifespan` 背景任务模式（MVP 可借，扩量须拆独立进程）
+- `agent/models.py` — `AgentRequest` / `AgentResponse`（`cancelled` 透传取消）
+- `agent/adapters/web.py`（SSE 流式）/ `feishu.py` / `qq.py`（IM 网关，BYO env 注入）/ `supervisor.py`（网关管家，按 DB spawn）
+- `agent/core.py` — `LLMRunner`（流式 + 轮顶/流式途中查取消）；`agent/runner.py` — `run_collect()` 非流式收集
+- `agent/router.py` + `agent/runtime_state.py` — 前置路由 + Redis 状态机/取消标志
+- `worker.py`（顶层）— IM 队列消费进程；`app/core/redis.py` — Streams 封装（produce/consume/ack/claim）
+- `app/api/v1/user_bots.py` / `feishu_connect.py` / `qq_connect.py` — bot CRUD + 扫码自连
+- `backend/{gugu-backend,gugu-worker,gugu-supervisor}.service` + `start.sh install` — 三进程部署（见 §10）
 
 ## 附：参考来源
 

@@ -440,6 +440,167 @@ async def upload_file(
     return resp
 
 
+# ── POST /files/presign ───────────────────────────────────────────────────────
+
+from pydantic import BaseModel as _BaseModel
+
+class PresignRequest(_BaseModel):
+    filename: str
+    size_bytes: int
+    mime_type: str = "application/octet-stream"
+    space: str = "personal"
+    project_id: Optional[int] = None
+    folder_id: Optional[int] = None
+    stage_name: str = ""
+
+
+@router.post("/presign")
+async def presign_upload(
+    body: PresignRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """检查存储后端：OSS 时签发 presigned PUT URL；本地时返回 {mode:'proxy'}。"""
+    from app.services.storage import get_storage, OSSStorageBackend
+
+    parts = body.filename.rsplit(".", 1)
+    display_name = parts[0]
+    ext = parts[1].upper()[:10] if len(parts) > 1 else "FILE"
+
+    project_name = ""
+    project_color = None
+    project_year = ""
+    project_month = ""
+    folder_name = ""
+
+    if body.space == "project" and body.project_id:
+        p = await db.get(Project, body.project_id)
+        if not p or p.user_id != current_user.id:
+            raise HTTPException(400, "项目不存在")
+        project_name = p.name
+        project_color = _color(p.color)
+        date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
+        project_year, project_month = date_str[:4], date_str[5:7]
+    elif body.space == "project":
+        raise HTTPException(400, "project 空间需要提供 project_id")
+
+    if body.folder_id is not None:
+        fo = await db.get(Folder, body.folder_id)
+        if not fo or fo.user_id != current_user.id:
+            raise HTTPException(400, "文件夹不存在")
+        folder_name = fo.name
+
+    base_key = _build_key(
+        uid=current_user.id,
+        space=body.space,
+        display_name=display_name,
+        ext=ext,
+        project_name=project_name,
+        project_id=body.project_id or 0,
+        project_year=project_year,
+        project_month=project_month,
+        folder_name=folder_name,
+    )
+
+    storage = get_storage()
+    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
+
+    # 配额检查
+    _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
+    if _storage_limit is not None:
+        used_res = await db.execute(
+            select(func.sum(File.size_bytes)).where(File.user_id == current_user.id)
+        )
+        used = used_res.scalar() or 0
+        if used + body.size_bytes > _storage_limit:
+            raise HTTPException(status_code=400, detail="存储空间已满，无法上传")
+
+    if isinstance(storage, OSSStorageBackend):
+        import asyncio as _asyncio
+        upload_url = await _asyncio.to_thread(
+            storage.presign_put, final_key, body.mime_type, 600
+        )
+        return {
+            "mode": "oss",
+            "upload_url": upload_url,
+            "storage_key": final_key,
+            "final_name": final_name,
+            "ext": ext,
+        }
+
+    return {"mode": "proxy"}
+
+
+# ── POST /files/confirm ───────────────────────────────────────────────────────
+
+class ConfirmRequest(_BaseModel):
+    storage_key: str
+    display_name: str
+    ext: str
+    mime_type: str = "application/octet-stream"
+    size_bytes: int
+    space: str = "personal"
+    project_id: Optional[int] = None
+    folder_id: Optional[int] = None
+    stage_name: str = ""
+
+
+@router.post("/confirm", response_model=FileResponse, status_code=201)
+async def confirm_upload(
+    body: ConfirmRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """OSS 直传完成后，注册 DB 记录。"""
+    from app.services.storage import get_storage, OSSStorageBackend
+
+    if not body.storage_key.startswith(f"{current_user.id}/"):
+        raise HTTPException(403, "无权限访问该存储路径")
+
+    storage = get_storage()
+    if not isinstance(storage, OSSStorageBackend):
+        raise HTTPException(400, "当前存储后端不是 OSS，请使用普通上传")
+
+    if not await storage.exists(body.storage_key):
+        raise HTTPException(400, "文件尚未上传到 OSS，请先完成直传")
+
+    project_name = ""
+    project_color = None
+    folder_name = ""
+
+    if body.space == "project" and body.project_id:
+        p = await db.get(Project, body.project_id)
+        if not p or p.user_id != current_user.id:
+            raise HTTPException(400, "项目不存在")
+        project_name = p.name
+        project_color = _color(p.color)
+
+    if body.folder_id is not None:
+        fo = await db.get(Folder, body.folder_id)
+        if not fo or fo.user_id != current_user.id:
+            raise HTTPException(400, "文件夹不存在")
+        folder_name = fo.name
+
+    db_file = File(
+        user_id=current_user.id,
+        display_name=body.display_name,
+        ext=body.ext,
+        space=body.space,
+        project_id=body.project_id if body.space == "project" else None,
+        folder_id=body.folder_id,
+        stage_name=body.stage_name,
+        storage_key=body.storage_key,
+        size=_fmt_size(body.size_bytes),
+        size_bytes=body.size_bytes,
+        mime_type=body.mime_type,
+    )
+    db.add(db_file)
+    await db.commit()
+    await db.refresh(db_file)
+
+    return _to_resp(db_file, project_name or None, project_color, folder_name or None)
+
+
 # ── PATCH /files/{fid} ───────────────────────────────────────────────────────
 
 @router.patch("/{fid}", response_model=FileResponse)

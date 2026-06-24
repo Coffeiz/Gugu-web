@@ -27,7 +27,7 @@ RESOURCE_BY_TOOL: dict[str, str] = {
     "create_event": "calendar", "update_event": "calendar", "delete_event": "calendar",
     # 文件库
     "edit_file": "files", "create_document": "files", "rename_file": "files",
-    "move_file": "files", "copy_file": "files", "create_folder": "files",
+    "move_items": "files", "copy_file": "files", "create_folder": "files",
     "delete_file": "files", "rename_folder": "files", "delete_folder": "files",
     "save_uploaded_file": "files",
     # 客户

@@ -29,7 +29,7 @@
               <div v-else class="header-name" @click="startEditName" title="点击修改名称">{{ localName }}</div>
             </div>
             <div class="header-progress-bar">
-              <div class="header-progress-fill" :style="{ width: stageProgress + '%', background: localColor }"></div>
+              <div class="header-progress-fill" :style="{ width: headerProgress + '%', background: localColor }"></div>
             </div>
           </div>
 
@@ -139,6 +139,7 @@
                     <input
                       :class="['todo-input', `todo-input-${stage.key}`]"
                       v-model="todo.text"
+                      :title="todo.text"
                       :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
                       placeholder="待办事项"
                       @blur="saveStages"
@@ -683,6 +684,7 @@ import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/services/api'
 import { getThumb, getCachedThumb, thumbLoadedIds, preloadTinyThumbs } from '@/composables/useThumbCache'
+import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
 import DatePicker from '@/components/common/DatePicker.vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
@@ -980,6 +982,10 @@ function onPmFileDragStart(file, e) {
   pmDraggingFileIds.value = new Set(ids)
   e.dataTransfer.setData('text/plain', JSON.stringify(ids))
   e.dataTransfer.effectAllowed = 'move'
+  // 物理拖拽：仅网格卡片、单选时启用（列表行整条飞起来不好看）
+  if (e.currentTarget?.classList?.contains('fc-card') && ids.length === 1) {
+    startPhysicsDrag(e, e.currentTarget)
+  }
   document.removeEventListener('mousemove', _onPmGridMouseMove)
   document.removeEventListener('mouseup',   _onPmGridMouseUp)
   pmBoxStart.value = null
@@ -1364,6 +1370,10 @@ async function deleteFolderCard(folder) {
 let initializing = false
 
 
+// 外部（Agent/IM）修改日期时同步本地状态（project?.id 不变，但日期值变了）
+watch(() => props.project?.startDate, (v) => { if (!initializing) localStartDate.value = v ?? '' })
+watch(() => props.project?.deadline,  (v) => { if (!initializing) localDeadline.value  = v ?? '' })
+
 watch(() => props.project?.id, async (id) => {
   initializing = true
   localStages.value       = props.project ? props.project.stages.map(s => ({ ...s })) : []
@@ -1528,6 +1538,21 @@ function calcProgress(stages, currentStageKey) {
   const within = todos.length > 0 ? (todos.filter(t => t.done).length / todos.length) * w : w
   return Math.round(idx * w + within)
 }
+
+// 顶部进度条：按「总完成度」= 所有阶段待办里已完成 / 总数（不按阶段位置）；
+// 没有任何待办时退回按当前阶段位置。仅用于头部条显示，持久化的 progress 不动。
+const headerProgress = computed(() => {
+  const stages = localStages.value
+  if (!stages.length) return 0
+  let done = 0, total = 0
+  for (const s of stages) {
+    const todos = s.todos ?? []
+    done += todos.filter(t => t.done).length
+    total += todos.length
+  }
+  if (total > 0) return Math.round(done / total * 100)
+  return calcProgress(stages, localCurrentStage.value)
+})
 
 // 只在明确切换阶段时调用，拖动重排不触发
 function recalcStageState() {
@@ -2712,6 +2737,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   background: rgba(232,233,238,0.82);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   border-radius: inherit;
+  corner-shape: inherit;   /* 跟随父级圆角形状，否则与父级 squircle 圆角不重合 → 双层圆角 */
   display: flex; align-items: center; justify-content: center;
   pointer-events: none;
 }

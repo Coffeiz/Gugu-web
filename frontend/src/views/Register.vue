@@ -43,9 +43,19 @@
             autocomplete="off" :disabled="loading" style="text-transform:uppercase;letter-spacing:0.05em" />
         </div>
 
+        <label class="ack-row">
+          <input type="checkbox" v-model="acknowledged" class="ack-input" />
+          <span class="ack-box">
+            <svg v-if="acknowledged" width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span class="ack-label">测试阶段数据随时可能清空，我已知晓并会自行备份</span>
+        </label>
+
         <div v-if="error" class="error-msg">{{ error }}</div>
 
-        <button type="submit" class="btn-primary" :disabled="loading">
+        <button type="submit" class="btn-primary" :disabled="loading || !acknowledged">
           {{ loading ? '注册中…' : '注册' }}
         </button>
       </form>
@@ -66,8 +76,9 @@ import { useAuthStore } from '@/stores/auth'
 const router  = useRouter()
 const auth    = useAuthStore()
 const form    = reactive({ username: '', email: '', password: '', inviteCode: '' })
-const loading = ref(false)
-const error   = ref('')
+const loading      = ref(false)
+const error        = ref('')
+const acknowledged = ref(false)
 
 async function handleRegister() {
   if (!form.username || !form.email || !form.password || !form.inviteCode) {
@@ -169,6 +180,29 @@ async function handleRegister() {
 }
 .btn-primary:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
 .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.ack-row {
+  display: flex; align-items: flex-start; gap: 9px;
+  margin-bottom: 12px; cursor: pointer;
+  user-select: none;
+}
+.ack-input { display: none; }
+.ack-box {
+  flex-shrink: 0; margin-top: 1px;
+  width: 16px; height: 16px; border-radius: 5px;
+  border: 1.5px solid rgba(123,127,178,0.35);
+  background: rgba(255,255,255,0.6);
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.ack-input:checked + .ack-box {
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(123,127,178,0.35);
+}
+.ack-label {
+  font-size: 12px; color: #8a8fa8; line-height: 1.55;
+}
 
 .card-footer {
   margin-top: 22px; text-align: center;

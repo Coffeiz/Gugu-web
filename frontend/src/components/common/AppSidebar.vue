@@ -78,11 +78,15 @@
       <div class="user-info">
         <div class="user-name">{{ userLabel }}</div>
       </div>
-      <PhGear class="settings-icon" :size="14" />
 
       <!-- 设置弹窗 -->
       <Transition name="popup">
         <div v-if="settingsOpen" class="settings-popup" @click.stop>
+          <button class="popup-menu-item" @click="feedbackOpen = true; settingsOpen = false">
+            <PhFlag :size="13" weight="bold" />
+            提交反馈
+          </button>
+          <div class="popup-menu-sep"></div>
           <button class="popup-menu-item" @click="uiStore.openProfile = true; settingsOpen = false">
             <PhUser :size="13" weight="bold" />
             个人设置
@@ -96,6 +100,8 @@
       </Transition>
     </div>
   </aside>
+
+  <FeedbackModal :show="feedbackOpen" @close="feedbackOpen = false" />
 
   <!-- 通知弹窗（Teleport，脱离 sidebar 层叠上下文） -->
   <Teleport to="body">
@@ -151,10 +157,11 @@ import {
   PhAddressBook,
   PhUsersThree,
   PhBell,
-  PhGear,
   PhUser,
   PhSignOut,
+  PhFlag,
 } from '@phosphor-icons/vue'
+import FeedbackModal from './FeedbackModal.vue'
 
 const router       = useRouter()
 const projectStore = useProjectStore()
@@ -163,6 +170,7 @@ const authStore    = useAuthStore()
 
 const userLabel = computed(() => authStore.user?.displayName || authStore.user?.username || '—')
 const userInitial = computed(() => (userLabel.value[0] ?? '?').toUpperCase())
+const feedbackOpen = ref(false)
 
 function handleLogout() {
   authStore.logout()
@@ -293,7 +301,6 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 .user-name { font-size: 13px; font-weight: 600; line-height: 1.5; }
 .settings-icon { color: var(--text-secondary); flex-shrink: 0; opacity: 0.6; }
 
-
 .popup-enter-active, .popup-leave-active { transition: opacity 0.15s, transform 0.15s; }
 .popup-enter-from, .popup-leave-to { opacity: 0; transform: translateY(6px); }
 
@@ -318,6 +325,15 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 
 <!-- 通知弹窗样式全局（Teleport 到 body） -->
 <style>
+.popup-menu-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 9px 12px;
+  background: none; border: none; cursor: pointer;
+  font-size: 13px; font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+  color: #1e2028; text-align: left; transition: background 0.12s;
+}
+.popup-menu-item.danger { color: #c84a4a; }
+.popup-menu-sep { height: 1px; background: rgba(0,0,0,0.06); margin: 3px 0; }
 .settings-popup .popup-menu-item:hover:not(:disabled) { background: rgba(255,255,255,0.55); }
 .settings-popup .popup-menu-item.danger:hover:not(:disabled) { background: rgba(200,90,90,0.1); }
 

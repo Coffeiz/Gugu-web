@@ -33,6 +33,14 @@ class StorageBackend(ABC):
         本地存储没有公网地址 → None（调用方退回 base64 上传）。"""
         return None
 
+    @abstractmethod
+    async def exists(self, key: str) -> bool:
+        """物理对象是否存在（对账用）"""
+
+    @abstractmethod
+    async def list_keys(self) -> list[str]:
+        """列出存储里所有对象 key（对账用；含 .agent/.chat_staging 等内部 key，由调用方过滤）"""
+
 
 class LocalStorageBackend(StorageBackend):
 
@@ -72,6 +80,19 @@ class LocalStorageBackend(StorageBackend):
 
     def public_url(self, key: str) -> str:
         return f"/uploads/{key}"
+
+    async def exists(self, key: str) -> bool:
+        return (self.root / key).is_file()
+
+    async def list_keys(self) -> list[str]:
+        import asyncio
+
+        def _walk():
+            if not self.root.exists():
+                return []
+            return [p.relative_to(self.root).as_posix()
+                    for p in self.root.rglob("*") if p.is_file()]
+        return await asyncio.to_thread(_walk)
 
 
 class OSSStorageBackend(StorageBackend):
@@ -127,6 +148,23 @@ class OSSStorageBackend(StorageBackend):
             return self.bucket.sign_url("GET", self.pfx + key, 3600)
         except Exception:
             return None
+
+    def presign_put(self, key: str, mime_type: str | None = None, expires: int = 600) -> str:
+        """返回有效期 expires 秒的 OSS presigned PUT URL，供浏览器直传。"""
+        headers = {"Content-Type": mime_type} if mime_type else {}
+        return self.bucket.sign_url("PUT", self.pfx + key, expires, headers=headers)
+
+    async def exists(self, key: str) -> bool:
+        import asyncio
+        return await asyncio.to_thread(self.bucket.object_exists, self.pfx + key)
+
+    async def list_keys(self) -> list[str]:
+        import asyncio, oss2
+        def _list():
+            n = len(self.pfx)
+            return [obj.key[n:] for obj in oss2.ObjectIterator(self.bucket, prefix=self.pfx)
+                    if not obj.key.endswith("/")]
+        return await asyncio.to_thread(_list)
 
 
 def get_storage() -> StorageBackend:

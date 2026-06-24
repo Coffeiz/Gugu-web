@@ -25,11 +25,19 @@ EXTRACT_MAX_BYTES = 30 * 1024 * 1024  # 可提取文档的原文件大小上限
 
 
 async def _run(cmd: list[str], stdin: bytes | None = None, timeout: int = 120):
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdin=asyncio.subprocess.PIPE if stdin is not None else None,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        # 命令不存在（如服务器没装 pdftotext/libreoffice）。必须区分于「用户文件丢失」，否则
+        # 「No such file or directory: 'pdftotext'」会被误读成文件不见了，害得 agent 劝用户删好文件。
+        raise RuntimeError(
+            f"服务器未安装「{cmd[0]}」命令，无法提取该文档文本——这是服务端环境问题，"
+            f"用户的文件本身完好、没有丢失，切勿建议删除或重传。"
+        )
     try:
         out, err = await asyncio.wait_for(proc.communicate(stdin), timeout=timeout)
     except asyncio.TimeoutError:

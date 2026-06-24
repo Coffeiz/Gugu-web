@@ -105,6 +105,16 @@ class SearchSettings(BaseModel):
     max_results:    int = Field(5, description="默认返回结果数")
 
 
+class SmtpSettings(BaseModel):
+    host:     str           = Field("", description="SMTP 服务器地址")
+    port:     int           = Field(465, description="SMTP 端口（465=SSL，587=STARTTLS）")
+    user:     str           = Field("", description="SMTP 登录账号")
+    password: str           = Field("", description="SMTP 登录密码")
+    from_addr: str          = Field("", description="发件人地址（默认同 user）")
+    to_addr:  str           = Field("", description="反馈通知收件人地址")
+    use_ssl:  bool          = Field(True, description="True=SSL(465)，False=STARTTLS(587)")
+
+
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -126,6 +136,7 @@ class AppSettings(BaseSettings):
     agent: AgentBehaviorSettings = Field(default_factory=AgentBehaviorSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
+    smtp: SmtpSettings = Field(default_factory=SmtpSettings)
 
     def apply_override(self) -> "AppSettings":
         """从 config.override.json 合并覆盖字段，返回新实例。

@@ -10,6 +10,10 @@
 ```
 用户消息
   │
+  ⓪ IM 前置路由（仅 IM）  agent/router.py + runtime_state.py
+  │    据 Redis 状态机短路「还在吗/算了/嗯」→ 不入队、不进主模型，网关直接回；其余才入队
+  │    （IM 单 worker 顺序消费：忙时看不到队列后续消息，故必须在网关层拦）
+  │
 ┌─┴──────────────────────────────────────────────────────────────┐
 │ ① 入口编排   adapters/web.py（网页流式） │ agent/runner.py（IM 非流式）│
 │    配额检查 → 取上下文 → 找/建会话 → 存用户消息                      │
@@ -22,7 +26,7 @@
   │    最近消息按 token 预算从新往回裁剪（CJK 感知）
   │
   ┌─┴── 决策核心 ────────────────────────────────────────────────┐
-  │ ④ LLM 工具循环  core.py（LLMRunner，MAX_ROUNDS=16）              │
+  │ ④ LLM 工具循环  core.py（LLMRunner，MAX_ROUNDS=6）               │
   │    模型读上下文 → 决定【调不调工具、调哪个、调几次、何时收尾】    │
   │      ├ 要调 → tool_call → ⑤ 派发 → 结果回灌 → 再想（下一轮）      │
   │      └ 不调/想好了 → 流式吐正文 token                            │
@@ -44,6 +48,74 @@
 ---
 
 ## 二、每一步负责什么 · 已做/未做
+
+### ⓪ IM 前置路由 + 状态机（仅 IM · Phase 1.7）
+
+| 文件 | 负责 |
+|------|------|
+| `agent/router.py` | 关键词 + 状态机轻量分类：`classify(text)` → progress/cancel/emotion/ack/agent；`decide(text, state)` 出动作（reply 短路 / cancel 置标志 / drop 忽略 / agent 入队）|
+| `agent/runtime_state.py` | Redis 状态机（`IDLE/THINKING/SEARCHING/GENERATING`，带 TTL 防卡死）+ 取消标志。**worker 写、网关读** |
+
+- ✅ **网关入队前拦一手**（`feishu._on_message` / `qq.on_c2c_message_create`）：任务进行中的「还在吗/算了/嗯」**不进队列、不进主模型**，网关据当前状态直接回话术（还在想哦~/正在查资料~/先不继续啦~）。
+- ✅ **关键架构洞察**：IM 是**单 worker 顺序消费队列**——任务进行中后续消息排在队列里、worker 在忙根本看不到，所以状态查询/取消**必须在网关层**据 Redis 状态短路，进不了 worker。这是整个设计的支点。
+- ✅ **状态打点**：worker `handle` 进入即 THINKING、结束清；core 工具循环据 `TOOL_STATE`（web_search→SEARCHING、create_document→GENERATING）打细粒度。
+- ✅ **自然语言取消**：网关置 `agentcancel` 标志 → core 工具循环检查命中即中断；`AgentResponse.cancelled` 透传 → worker 不补发。检查点有二：**每轮 LLM 开始前**（轮顶）+ **流式输出途中每 24 token**（`_CANCEL_CHECK_EVERY`，`core.py`）。后者是关键补丁——单轮长回答没有「下一轮」，只靠轮顶检查切不掉，必须在流式循环里查、命中即关闭 stream 断开上游请求。
+- ⚠️ **误判取舍**：整条匹配 + 短词才判取消/情绪，**宁漏判进主模型、不误判短路**（「算了」仅在忙时当取消，空闲时可能是「算了换个想法」→ 交主模型）。
+- ⚠️ **仍有的固有局限**：取消粒度约 24 token（亚秒级延迟，短于 24 token 的回答会说完）；**工具执行途中**（如慢的 web_search / 文档生成）不查取消，得等该工具跑完到下个检查点；WAITING_CONFIRM 状态预留但未接删除二次确认；网页路不走前置路由（有停止键/输入锁，价值低）；小模型意图分类（🅼 需 GPU）。
+
+#### 消息流架构图
+
+> 两个独立进程（网关 `gugu-supervisor` / 大脑 `gugu-worker`）靠 Redis 通信。状态查询/取消由**网关层**据 Redis 短路，进不了单 worker 顺序队列——这是支点。
+
+```mermaid
+flowchart TD
+    U([用户 · 飞书 / QQ])
+
+    subgraph GW["网关进程 · 常驻长连（lark WS / botpy）"]
+        direction TB
+        G1[网关收到消息<br/>_on_message] --> G2[Intent Router<br/>decide&#40;text, 状态&#41;]
+        G2 -.->|进度·情绪·确认| G3[短路回复]
+        G2 -.->|忙时算了| G4[取消 · 置标志]
+        G2 -->|其余| G5[入队 produce]
+    end
+
+    subgraph RD["Redis · 共享"]
+        direction TB
+        R1[(STREAM<br/>消息队列)]
+        R2[(agentstate<br/>状态机 · TTL)]
+        R3[(agentcancel<br/>取消标志)]
+        R4[(imsession<br/>会话续接)]
+    end
+
+    subgraph WK["Worker 进程 · 单实例顺序消费"]
+        direction TB
+        W1[消费一条 consume] --> W2[置 THINKING set_state] --> W3[Core LLM 循环<br/>MAX_ROUNDS=10]
+        W3 --> W4["流式输出 · 查取消<br/>轮顶 ＋ 每 24 token ★"]
+        W4 -->|有 tool_use| W5[dispatch 工具<br/>SEARCHING/GEN 态] --> W3
+        W4 -->|无| W6[finally 清状态<br/>clear state ＋ cancel] --> W7[回发用户<br/>_send ＋ 文件]
+    end
+
+    U --> G1
+    G3 -.->|直接回复·不入队| U
+    G4 -.->|回『先不继续啦』| U
+    G5 --> R1 --> W1
+    W2 -->|写| R2
+    R2 -.->|读| G2
+    G4 -->|写| R3
+    R3 -.->|查取消 ★| W4
+    W7 -.->|回复| U
+
+    classDef gw fill:#EEEDFE,stroke:#534AB7,color:#26215C;
+    classDef rd fill:#FAEEDA,stroke:#854F0B,color:#412402;
+    classDef wk fill:#E1F5EE,stroke:#0F6E56,color:#04342C;
+    classDef cancel fill:#FAECE7,stroke:#993C1D,color:#4A1B0C;
+    class G1,G2,G3,G5 gw;
+    class R1,R2,R4 rd;
+    class R3,G4 cancel;
+    class W1,W2,W3,W4,W5,W6,W7 wk;
+```
+
+> ★ = 本次新增（流式途中查取消，可中途真正打断生成）。之前只在轮顶查，单轮长回答打不断——见上方「自然语言取消」。
 
 ### ① 入口编排（两条路）
 
@@ -84,15 +156,15 @@
 
 | 文件 | 负责 |
 |------|------|
-| `core.py` `LLMRunner` | Anthropic / OpenAI 两路统一循环，`MAX_ROUNDS=16`。模型自主决定调不调工具、调哪个、调几次、何时收尾 |
+| `core.py` `LLMRunner` | Anthropic / OpenAI 两路统一循环，`MAX_ROUNDS=6`。模型自主决定调不调工具、调哪个、调几次、何时收尾 |
 
 - ✅ **单次流式调用**：边出正文 token 边判断 tool_use（修了早期"探测-再流式"双调用导致的敷衍）。
-- ✅ **多轮工具**：一轮里模型可连续调多个工具，结果回灌后继续想，最多 16 轮（超限报友好提示）。
+- ✅ **多轮工具**：一轮里模型可连续调多个工具，结果回灌后继续想，最多 6 轮（配合执行准则+强工具，超限报友好提示）。
 - ✅ **prompt 缓存**：system prompt 打 `cache_control: ephemeral`，省重复 token。
 - ✅ Anthropic 路：流式吐字 + `get_final_message` 取 tool_use；OpenAI 路：`tool_calls` 分发。
-- ⚠️ **未做 · 决策前置路由（Phase 1.7）**：现在**所有消息都进主模型**。理想是「算了/不弄了」(取消)、「还在吗/好了吗」(状态查询)、「嗯/好的/哈哈」(简单确认闲聊) **不进主模型**，关键词+状态机轻量回应。**这是当前最大的未做项**，和 IM 体验强绑定。
-- ⚠️ **未做 · State Manager**：`THINKING/SEARCHING/GENERATING/WAITING_CONFIRM/IDLE` 状态机（并入 IM 地基）。
-- 🅼 **最后做**：小模型意图分类（需自托管 GPU，暂无条件）。
+- ✅ **IM 协作取消**：每轮开头检查取消标志（`_im_cancelled`），命中即中断收尾（见 ⓪）；dispatch 前据工具打细粒度状态（`_im_set_tool_state`）。web 路无 imctx，这两处恒 no-op。
+- ✅ **决策前置路由已落地（Phase 1.7）**：「算了/还在吗/嗯」在 ⓪ 网关层短路、不进主模型——见上「⓪ IM 前置路由」。原"所有消息都进主模型"的最大洞已补（仅 IM 路）。
+- 🅼 **最后做**：小模型意图分类替换关键词版（需自托管 GPU，暂无条件）。
 
 ### ⑤ 工具派发
 
@@ -100,7 +172,7 @@
 |------|------|
 | `skills/base.py` `registry.dispatch` | **所有工具执行的唯一咽喉**（web/IM 共用）：按名找工具 → 每次开独立 DB 会话执行 → 异常包 try/except 当错误结果回灌（不冲垮对话）→ 抽 `_artifact` → 发实时事件 |
 
-- ✅ **44 个工具**，9 个 skill：项目(14)/日历(4)/文件(13)/客户(4)/回收站(3)/聚合(2)/记忆(1)/搜索(1)/对话查看(2)。详见 [`agent.md`](agent.md) 工具清单。
+- ✅ **47 个工具**，9 个 skill：项目(16)/日历(4)/文件(14)/客户(4)/回收站(3)/聚合(2)/记忆(1)/搜索(1)/对话查看(2)。详见 [`agent.md`](agent.md) 工具清单。
 - ✅ **工具异常隔离**：单个工具崩 → 返回 `{"error":...}` 给模型解释，对话继续（不再整轮报错）。
 - ✅ **Skill 一等公民**：profile 组合 skill 名，工具名由 registry 派生（加工具改一处）。
 - ✅ **多用户隔离**：所有工具按 `user_id` 查询（铁律）。
@@ -175,8 +247,9 @@
 - 入口编排（web 流式 + IM 非流式）、配额拦截
 - 上下文构建（项目/日历/文件/记忆/今天）、persona + 四态对话模式
 - 历史窗口（token 预算裁剪）
-- LLM 工具循环（单次流式、多轮工具、MAX_ROUNDS=16、prompt 缓存、双 provider）
-- 44 工具 + 统一派发 + 工具异常隔离 + 多用户隔离
+- LLM 工具循环（单次流式、多轮工具、MAX_ROUNDS=6、prompt 缓存、双 provider）
+- 47 工具 + 统一派发 + 工具异常隔离 + 多用户隔离
+- **IM 前置路由 + 状态机**（Phase 1.7 关键词版）：状态查询/取消/闲聊网关层短路、自然语言取消轮间中断
 - 危险操作二次确认
 - 实时事件（改动→网页刷新、IM 消息→追加气泡）
 - 流清洗、收尾持久化、会话 AI 标题
@@ -190,7 +263,7 @@
 
 | 档 | 项 | 影响 / 为什么是这个位置 |
 |----|----|------------------------|
-| **① 现在** | **轻量 Intent Router + State Manager**（关键词/状态机，绑 IM，非小模型）| 当前最大的洞。「算了/还在吗/嗯」都白跑主模型；网页有流式掩盖、**IM 才是刚需**（Phase 1.7） |
+| ~~**① 现在**~~ ✅ | ~~**轻量 Intent Router + State Manager**~~ **已落地**（关键词版，IM 路）：状态查询/取消/闲聊网关层短路，自然语言取消轮间中断（见 ⓪ / Phase 1.7）| 当前最大的洞，已补。小模型分类版留待有 GPU |
 | **② 紧接着** | **简单主动触达**（截止提醒）| 伙伴产品价值高于 Planner，复用现成 IM+实时设施；GPT 原案埋太后 |
 | | **配额能力降级**（非一刀切拦死）| 文档 30，精力不足时连查询都用不了 |
 | | **地基加固**（一键重启 worker/supervisor、健康、自愈）| 刚栽过坑（漏重启 worker，见 devlog）；堆功能前先把三进程运维做稳 |

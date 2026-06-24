@@ -68,9 +68,15 @@
       </div>
 
       <!-- ── 工具调用分布 ── -->
-      <div class="section-label" v-if="toolDist.length">工具调用 Top {{ toolDist.length }}</div>
+      <div class="section-label section-label-row" v-if="toolDist.length">
+        <span>工具调用 Top 10</span>
+        <button v-if="toolDist.length > 10" class="expand-btn" @click="toolExpanded = !toolExpanded">
+          {{ toolExpanded ? '收起' : `查看全部 ${toolDist.length} 个` }}
+          <PhCaretDown :size="11" weight="bold" :class="{ 'caret-up': toolExpanded }" />
+        </button>
+      </div>
       <div class="tool-dist" v-if="toolDist.length">
-        <div class="tool-bar-row" v-for="t in toolDist" :key="t.tool">
+        <div class="tool-bar-row" v-for="t in visibleTools" :key="t.tool">
           <span class="tool-name">{{ t.tool }}</span>
           <div class="tool-bar-track">
             <div class="tool-bar-fill" :style="{ width: (t.calls / toolDist[0].calls * 100) + '%' }" />
@@ -314,7 +320,7 @@ import {
 import {
   PhUsers, PhUserPlus, PhPulse, PhChatsCircle, PhFolders,
   PhClock, PhSpinnerGap, PhCheckCircle, PhRobot, PhLightning,
-  PhChats, PhMonitor, PhDeviceMobile
+  PhChats, PhMonitor, PhDeviceMobile, PhCaretDown
 } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 
@@ -328,7 +334,12 @@ const loading    = ref(false)
 const err        = ref('')
 const rangeDays  = ref(30)
 const chatFunnel = ref(null)
-const toolDist   = ref([])
+const toolDist    = ref([])
+const toolExpanded = ref(false)
+
+const visibleTools = computed(() =>
+  toolExpanded.value ? toolDist.value : toolDist.value.slice(0, 10)
+)
 
 const ranges = [
   { days: 7,  label: '7 天' },
@@ -610,6 +621,22 @@ onMounted(load)
   font-size: 12px; color: rgba(255,255,255,0.35); white-space: nowrap;
 }
 .funnel-extra strong { color: rgba(255,255,255,0.7); font-weight: 600; }
+
+/* ── section label row variant ── */
+.section-label-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-right: 36px;
+}
+.expand-btn {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; color: rgba(149,144,196,0.8);
+  background: none; border: none; cursor: pointer; padding: 2px 0;
+  font-family: var(--font-sans); transition: color 0.15s;
+  letter-spacing: 0;
+}
+.expand-btn:hover { color: rgba(149,144,196,1); }
+.expand-btn .caret-up { transform: rotate(180deg); }
+.expand-btn svg { transition: transform 0.2s; }
 
 /* ── tool distribution ── */
 .tool-dist { padding: 0 36px; display: flex; flex-direction: column; gap: 8px; }

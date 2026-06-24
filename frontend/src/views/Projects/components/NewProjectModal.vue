@@ -202,6 +202,7 @@
                     <input
                       :class="['np-todo-input', `np-todo-input-${stage.origIdx}`]"
                       v-model="todo.text"
+                      :title="todo.text"
                       :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
                       placeholder="待办事项"
                       @keydown.enter.prevent="addNpTodo(stage.origIdx)"

@@ -2,8 +2,9 @@
   <div
     class="proj-card"
     draggable="true"
+    :data-project-id="project.id"
     :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
-    @dragstart.stop="$emit('dragstart', $event)"
+    @dragstart.stop="onDragStart"
     @click="$emit('click')"
   >
     <div class="card-body">
@@ -102,10 +103,16 @@
 <script setup>
 import { computed } from 'vue'
 import { useProjectStore } from '@/stores/projects'
+import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
 import { PhCheck } from '@phosphor-icons/vue'
 
 const props = defineProps({ project: { type: Object, required: true } })
-defineEmits(['click', 'dragstart'])
+const emit = defineEmits(['click', 'dragstart'])
+
+function onDragStart(e) {
+  emit('dragstart', e)
+  startPhysicsDrag(e, e.currentTarget)
+}
 
 const projectStore = useProjectStore()
 
@@ -124,14 +131,18 @@ const currentStageLabel = computed(() =>
   props.project.stages[currentStageIndex.value]?.label ?? ''
 )
 const stageProgress = computed(() => {
+  // 总完成度 = 所有阶段待办里已完成 / 总数（与总览页、项目编辑卡头部口径一致）；无待办则退回阶段位置
   const stages = props.project.stages
   if (!stages.length) return 0
+  let done = 0, total = 0
+  for (const s of stages) {
+    const todos = s.todos ?? []
+    done += todos.filter(t => t.done).length
+    total += todos.length
+  }
+  if (total > 0) return Math.round(done / total * 100)
   const idx = currentStageIndex.value
-  if (idx < 0) return 0
-  const w = 100 / stages.length
-  const todos = stages[idx].todos ?? []
-  const within = todos.length > 0 ? (todos.filter(t => t.done).length / todos.length) * w : w
-  return Math.round(idx * w + within)
+  return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
 })
 
 const daysLeft  = computed(() => {
@@ -193,12 +204,14 @@ function segFillStyle(i) {
 }
 
 function segFill(i) {
-  const idx = currentStageIndex.value
-  if (i < idx) return 100
-  if (i > idx) return 0
+  // 每个阶段按自己的待办完成度独立涨——阶段2的待办做完，阶段2就涨，不受阶段1是否完成影响
   const todos = props.project.stages[i].todos ?? []
-  if (!todos.length) return 100
-  return Math.round(todos.filter(t => t.done).length / todos.length * 100)
+  if (todos.length) {
+    return Math.round(todos.filter(t => t.done).length / todos.length * 100)
+  }
+  // 无待办的阶段没法用待办衡量：按是否已推进到/过此阶段判断（当前及之前=满，之后=空）
+  const idx = currentStageIndex.value
+  return i <= idx ? 100 : 0
 }
 
 async function clickStage(i) {
@@ -235,6 +248,7 @@ async function setPriority(n) {
   content: '';
   position: absolute; inset: 0;
   border-radius: inherit;
+  corner-shape: squircle;   /* corner-shape 不随 border-radius:inherit 继承，需显式声明，否则圆角与卡片(squircle)不重合 → 双层圆角 */
   background: linear-gradient(to top, rgba(255,255,255,0.08), transparent 50%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
   transition: background 0.3s cubic-bezier(0.34,1.2,0.64,1);
@@ -284,7 +298,8 @@ async function setPriority(n) {
 .date-start { opacity: 0.65; white-space: nowrap; }
 .date-sep { opacity: 0.35; font-size: 9px; }
 .deadline { white-space: nowrap; }
-.done-label { white-space: nowrap; font-size: 10px; font-weight: 700; color: #3a8870; background: rgba(90,158,136,0.12); border: 1px solid rgba(90,158,136,0.35); border-radius: 20px; padding: 1px 6px; }
+/* 用 inset 阴影代替 border、去掉纵向 padding，使胶囊不比正文行高更高 → 不把进度条挤下移 */
+.done-label { white-space: nowrap; font-size: 10px; font-weight: 700; color: #3a8870; background: rgba(90,158,136,0.12); box-shadow: inset 0 0 0 1px rgba(90,158,136,0.35); border-radius: 20px; padding: 0 6px; display: inline-flex; align-items: center; gap: 2px; line-height: 1.4; }
 .deadline.urgent { color: var(--color-warning); font-weight: 600; }
 
 .file-badge {

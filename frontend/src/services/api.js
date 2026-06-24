@@ -87,6 +87,23 @@ export function uploadWithProgress(path, form, onProgress) {
   })
 }
 
+export function uploadDirectWithProgress(url, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', url)
+    if (file.type) xhr.setRequestHeader('Content-Type', file.type)
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total)
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve()
+      else reject(new Error(`OSS 直传失败: HTTP ${xhr.status}`))
+    }
+    xhr.onerror = () => reject(new Error('网络错误'))
+    xhr.send(file)
+  })
+}
+
 // ── Projects ─────────────────────────────────────────────────────────────────
 export const projectsApi = {
   list:   ()         => get('/projects'),
@@ -136,6 +153,8 @@ export const filesApi = {
     a.click()
     URL.revokeObjectURL(url)
   },
+  presign: (data) => post('/files/presign', data),
+  confirm: (data) => post('/files/confirm', data),
   // 返回 { url: "https://..." }，后端签名 URL，有效期短（5~10 分钟）
   getStreamUrl: (id) => get(`/files/${id}/stream-url`),
   download: async (id, filename) => {
@@ -220,6 +239,7 @@ export const agentApi = {
   listSessions:    ()           => get('/agent/sessions'),
   getMessages:     (sessionId) => get(`/agent/sessions/${sessionId}/messages`),
   deleteSession:   (sessionId) => del(`/agent/sessions/${sessionId}`),
+  clearMemory:     ()           => del('/agent/memory'),
   uploadAttachment: (file) => {            // 聊天附件暂存，返回 { attach_id, name, ext, size, kind }
     const form = new FormData()
     form.append('file', file)

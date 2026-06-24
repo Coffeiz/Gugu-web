@@ -75,6 +75,27 @@ async def _db_ok() -> bool:
     except Exception:
         return False
 
+async def _queue_info() -> dict:
+    """IM 入站队列积压（给服务面板看 worker 吃不吃得消）。
+    lag=已进队列还没被 worker 取走（真积压）；pending=取走了还没 ack（在处理中或卡住）。"""
+    try:
+        r = R.get_redis()
+        stream = R.IM_INBOUND_STREAM
+        length = await r.xlen(stream)
+        pending, lag, consumers = 0, None, 0
+        try:
+            for g in await r.xinfo_groups(stream):
+                if g.get("name") == "agent-workers":   # = worker.py 的 GROUP
+                    pending = g.get("pending", 0)
+                    lag = g.get("lag")
+                    consumers = g.get("consumers", 0)
+        except Exception:
+            pass   # 流/组还没建（没来过消息）
+        return {"length": length, "pending": pending, "lag": lag, "consumers": consumers}
+    except Exception:
+        return {"length": None, "pending": None, "lag": None, "consumers": None}
+
+
 _WEB_START = time.time()
 _HOST = socket.gethostname()
 
@@ -122,7 +143,7 @@ async def list_services():
         })
 
     deps = {"redis": await R.ping(), "db": await _db_ok()}
-    return {"services": services, "deps": deps}
+    return {"services": services, "deps": deps, "queue": await _queue_info()}
 
 
 @router.post("/{name}/restart")

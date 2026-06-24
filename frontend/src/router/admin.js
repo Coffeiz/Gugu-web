@@ -51,6 +51,12 @@ const routes = [
         meta: { title: '邀请码管理' },
       },
       {
+        path: 'feedback',
+        name: 'AdminFeedback',
+        component: () => import('@/views/Admin/Feedback/index.vue'),
+        meta: { title: '用户反馈' },
+      },
+      {
         path: 'audit-log',
         name: 'AdminAuditLog',
         component: () => import('@/views/Admin/AuditLog/index.vue'),

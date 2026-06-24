@@ -26,3 +26,4 @@ class AgentResponse:
     tokens_in: int = 0
     tokens_out: int = 0
     files: list = field(default_factory=list)   # 咕咕要发的文件卡片（file_id/name/ext…），平台 adapter 据此发文件
+    cancelled: bool = False                      # 用户中途「算了」→ 工具循环被取消，worker 据此不再补发回复

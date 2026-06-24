@@ -33,6 +33,7 @@ _MIGRATIONS = [
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_width INTEGER NULL",
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_height INTEGER NULL",
     "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS content_json JSONB NULL",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS search_limit_daily INTEGER NULL",
 ]
 
 

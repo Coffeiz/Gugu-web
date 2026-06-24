@@ -2,11 +2,11 @@ import json
 import re
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import File, Project, User
+from app.models import File, Folder, Project, User
 from app.schemas import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.core.security import get_current_user
 from app.services.storage import get_storage
@@ -48,11 +48,24 @@ async def list_projects(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # 关联子查询：直接属于项目的文件 + 通过项目文件夹关联的文件（OR 去重）
+    file_count_subq = (
+        select(func.count(File.id))
+        .where(
+            File.deleted_at.is_(None),
+            or_(
+                File.project_id == Project.id,
+                File.folder_id.in_(
+                    select(Folder.id).where(Folder.project_id == Project.id)
+                ),
+            ),
+        )
+        .correlate(Project)
+        .scalar_subquery()
+    )
     stmt = (
-        select(Project, func.count(File.id).label("fc"))
-        .outerjoin(File, (File.project_id == Project.id) & File.deleted_at.is_(None))
+        select(Project, file_count_subq.label("fc"))
         .where(Project.user_id == current_user.id)
-        .group_by(Project.id)
         .order_by(Project.created_at.desc())
     )
     result = await db.execute(stmt)
@@ -160,6 +173,24 @@ async def update_project(
     return _to_resp(p, fc_res.scalar_one())
 
 
+async def rehome_project_files_to_personal(db, user_id, pid: int) -> int:
+    """删项目前：把项目下的文件归到个人空间（space=personal、project_id/folder_id 置空）。
+
+    否则外键 `ON DELETE SET NULL` 会把文件的 project_id 抹成 null、但 space 仍是 'project'，
+    成为「孤儿文件」——前端按「projectId 为空就归个人」分组，会把它们漏进个人空间视图。
+    保留 storage_key 不动（物理文件仍在、仍可访问，路径残留无害）。返回归位文件数。"""
+    files = (await db.execute(
+        select(File).where(File.project_id == pid, File.user_id == user_id)
+    )).scalars().all()
+    for f in files:
+        f.space = "personal"
+        f.project_id = None
+        f.folder_id = None
+        f.stage_name = ""
+        f.updated_at = datetime.utcnow()
+    return len(files)
+
+
 @router.delete("/{pid}", status_code=204)
 async def delete_project(
     pid: int,
@@ -169,5 +200,6 @@ async def delete_project(
     p = await db.get(Project, pid)
     if not p or p.user_id != current_user.id:
         raise HTTPException(404, "项目不存在")
+    await rehome_project_files_to_personal(db, current_user.id, pid)  # 文件先归个人，别变孤儿
     await db.delete(p)
     await db.commit()

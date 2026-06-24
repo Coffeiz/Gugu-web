@@ -199,13 +199,16 @@ export const useProjectStore = defineStore('projects', () => {
     await _patchProject(id, fields)
   }
 
-  const modalProject = ref(null)
+  const modalProjectId = ref(null)
+  // computed 保证 fetchProjects 刷新后 modal 始终指向最新对象，不持有旧引用
+  const modalProject = computed(() =>
+    modalProjectId.value != null
+      ? (projects.value.find(p => p.id === modalProjectId.value) ?? null)
+      : null
+  )
 
-  function openModal(project) {
-    // 存 store 实际对象引用（而非调用方传来的 spread 快照），确保 modal 数据实时
-    modalProject.value = projects.value.find(p => p.id === project?.id) ?? project
-  }
-  function closeModal()       { modalProject.value = null }
+  function openModal(project) { modalProjectId.value = project?.id ?? null }
+  function closeModal()       { modalProjectId.value = null }
 
   // 近期节点日历事件缓存（在 store 里，SPA 导航不重置）
   const upcomingCalEvents = ref([])

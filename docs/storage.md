@@ -1,6 +1,6 @@
 # 文件存储结构规范
 
-> 更新：2026-06-21
+> 更新：2026-06-24
 > 项目：咕咕 / gugugu.site
 
 ---
@@ -183,6 +183,16 @@ class StorageBackend(ABC):
     async def rename_file(self, old_key: str, new_key: str) -> None: ...
     async def rename_dir(self, old_prefix: str, new_prefix: str) -> None: ...
     def public_url(self, key: str) -> str: ...
+    def fetch_url(self, key: str) -> str | None: ...     # 第三方可直接 HTTP 抓取的临时 URL（QQ 富媒体用），本地存储返回 None
+    async def exists(self, key: str) -> bool: ...         # 物理对象是否存在（对账用）
+    async def list_keys(self) -> list[str]: ...           # 枚举所有对象 key（对账用；Local 走 rglob，OSS 走 ObjectIterator）
+```
+
+`OSSStorageBackend` 额外提供（本地后端无此方法，presign 端点在返回 `mode:proxy` 前不调用）：
+
+```python
+def presign_put(self, key: str, mime_type: str | None = None, expires: int = 600) -> str:
+    """返回有效期 expires 秒的 presigned PUT URL，供浏览器绕过服务器直传 OSS。"""
 ```
 
 ### 5.3 工厂函数
@@ -195,6 +205,18 @@ def get_storage() -> StorageBackend:
         return OSSStorageBackend(cfg.storage)
     return LocalStorageBackend(Path(cfg.storage.local_path))
 ```
+
+### 5.4 OSS 切换与迁移注意
+
+**配置项**（Admin → 存储，落到 `settings.storage`）：`backend`（`local` | `oss`）、`oss_access_key_id` / `oss_access_key_secret` / `oss_bucket` / `oss_endpoint` / `oss_prefix`。OSS 凭据即使 `backend=local` 也会保存在 settings 里，方便切换前先验证。
+
+**切换即时生效**：`get_storage()` 每次请求重读 settings，把 `backend` 改成 `oss` 后**下一请求**就走 OSS，无需重启。
+
+**⚠️ 现有本地文件不自动迁移**：`files.storage_key` 是相对路径（如 `{uid}/项目文件/…/x.png`），本地与 OSS **共用同一套 key**。切到 OSS 后，老文件的 key 在 OSS 上并不存在 → 读取/缩略图会 404（`get_thumb` 等已改为缺文件返回 404、不再 500）。**平滑切换需先把 `uploads/` 全量同步到 OSS 同名 key**（`StorageBackend.list_keys()` 可枚举：Local 走 `rglob`、OSS 走 `ObjectIterator`，对账工具即基于此）。
+
+**Endpoint 协议**：`oss_endpoint` 不带协议时 oss2 默认 `http://`，签名 URL（`fetch_url`，QQ 抓媒体用）也是 http。需要 https 就把 endpoint 配成 `https://oss-cn-…aliyuncs.com`。
+
+**冒烟验证**：可直接实例化 `OSSStorageBackend(get_settings().storage)` 跑 `put → exists → get → fetch_url → rename_file → delete` 往返（用 `.smoketest/` 前缀的临时 key，跑完清理），确认凭据/连通正常，不必先切活跃 backend。
 
 ---
 
@@ -336,6 +358,109 @@ Authorization: Bearer <user_token>
 
 ---
 
-## 九、禁止使用的字符
+## 十、存储↔DB 对账与修复（Admin · 数据库）
+
+**以物理存储为准**核对 DB 记录与磁盘/OSS 对象，修复两者不一致。起因：DB 在两台服务器间迁移、两边 `uploads/` 都有文件，配置一改两边数据就串了。
+
+### 10.1 两类不一致
+
+| 类型 | 定义 | 修复 |
+|------|------|------|
+| 幽灵（ghost） | DB 有 `files` 行，但 `storage_key` 指向的物理对象不存在 | 暂只报告（删 DB 行风险高，留人工判断） |
+| 孤儿（orphan） | 物理对象存在，但没有任何 `files` 行引用 | `delete`（删物理文件）或 `import`（重建 DB 记录） |
+
+内部 key 不计入孤儿：`.agent/`、`.chat_staging`、`.thumbs/`、`_thumb`、`.thumbcache`、`avatars/`（`_is_internal_key`，`backend/app/api/v1/config.py`）。
+
+### 10.2 接口
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/admin/config/reconcile-storage` | **只读**对账，返回 `db_file_rows / storage_objects / matched / ghost_count / orphan_count` + 幽灵/孤儿明细 |
+| `POST` | `/admin/config/reconcile-storage/repair` | **写**修复，body `{action: "delete"\|"import", keys: [...]}`，返回 `{action, done, failed, done_keys}`（逐 key try/except，单条失败不中断） |
+
+- **`import` 反推规则**：从 `storage_key` 拆 `{uid}/空间/...` → 校验 user 存在 → `项目文件` 段按 `#{id}` 取 `project_id`、`个人文件` 段按文件夹名匹配 `folder_id` → 回填 `File` 行（`size_bytes` 取实际字节、`mime_type` 用 `mimetypes` 猜）
+- 依赖存储后端的 `list_keys()`（枚举）与 `exists()`（核对），见 §5.2
+- Admin → 系统配置 → 数据库 有「存储对账」按钮：出报告 + 每条孤儿「导入/删除」+ 批量
+
+---
+
+## 十一、项目删除与孤儿文件防护
+
+`File.project_id` 外键是 `ON DELETE SET NULL`：直接删项目会把文件 `project_id` 抹成 `NULL`、但 `space` 仍是 `'project'`，成为「孤儿文件」。前端 `filesCache` 按「`projectId` 为空即归个人」分组，会把这些孤儿**漏进个人空间视图**（曾导致已删项目的文件出现在用户个人文件里）。
+
+**防护**：删项目前先调 `rehome_project_files_to_personal(db, user_id, pid)`（`backend/app/api/v1/projects.py`）——把项目下文件 `space='personal'`、`project_id/folder_id/stage_name` 一并置空，干净归个人。`storage_key` 不动（物理文件仍在、仍可访问，路径里的旧项目名残留无害）。HTTP `DELETE /projects/{id}` 与 Agent `delete_project` 工具两条路都先 rehome 再删。
+
+> 历史遗留的孤儿可用 §十 的对账工具 `import` 重建记录、或 `delete` 清理。
+
+---
+
+## 十三、OSS 预签名直传
+
+### 13.1 设计背景
+
+普通上传路径：浏览器 → FastAPI → OSS（文件经过服务器两次），消耗服务器带宽。OSS 直传路径：浏览器先向服务器要一个预签名 URL，然后直接 PUT 到 OSS 边缘节点，服务器只参与签发 URL 和注册 DB 记录，带宽消耗降为零。
+
+### 13.2 适配逻辑
+
+| 后端 | 上传路径 | 触发条件 |
+|------|---------|---------|
+| `local` | 浏览器 → `POST /files`（服务器代理）| `storage.backend != 'oss'` |
+| `oss`   | 浏览器 → `/files/presign` → 直传 OSS → `/files/confirm` | `storage.backend == 'oss'` |
+
+Admin 切换后端后，下一次上传立即走对应路径，无需重启、无需前端改动。
+
+### 13.3 新增端点
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/api/v1/files/presign` | 计算 storage_key、检查配额；OSS 返回 `{ mode:'oss', upload_url, storage_key, final_name, ext }`，本地返回 `{ mode:'proxy' }` |
+| `POST` | `/api/v1/files/confirm` | 直传完成后注册 DB 记录；校验 key 归属（`storage_key` 必须以 `{user_id}/` 开头）+ 验证 OSS 对象存在 |
+
+**`/presign` 请求体：**
+
+```json
+{
+  "filename": "design.psd",
+  "size_bytes": 8500000,
+  "mime_type": "image/vnd.adobe.photoshop",
+  "space": "project",
+  "project_id": 12,
+  "folder_id": null,
+  "stage_name": "执行"
+}
+```
+
+**`/confirm` 请求体：**
+
+```json
+{
+  "storage_key": "uuid/项目文件/2026/06/设计稿 #12/design.PSD",
+  "display_name": "design",
+  "ext": "PSD",
+  "mime_type": "image/vnd.adobe.photoshop",
+  "size_bytes": 8500000,
+  "space": "project",
+  "project_id": 12,
+  "folder_id": null,
+  "stage_name": "执行"
+}
+```
+
+### 13.4 安全校验
+
+- `storage_key` 必须以当前登录用户的 UUID 开头，否则 403（防跨用户伪造）
+- OSS 对象必须实际存在（`storage.exists(key)`），否则 400（防 confirm 注入不存在的文件记录）
+- 配额检查在 `/presign` 阶段完成，超出配额直接 400，不签发 URL
+
+### 13.5 前端实现
+
+`frontend/src/services/api.js`：
+- `filesApi.presign(data)` — 调 `POST /files/presign`
+- `filesApi.confirm(data)` — 调 `POST /files/confirm`
+- `uploadDirectWithProgress(url, file, onProgress)` — 原生 XHR PUT 到预签名 URL，无 Authorization 头（预签名 URL 自带鉴权），支持进度回调
+
+`UploadModal.vue` 上传循环：先调 `/presign` 查后端类型，`mode === 'oss'` 走直传（进度 0→95%）+ confirm（95%→100%），否则走原有代理上传。
+
+## 十二、禁止使用的字符
 
 项目名、文件夹名、文件名均不允许：`\ / : * ? " < > |`

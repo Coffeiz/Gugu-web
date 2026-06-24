@@ -12,10 +12,12 @@ _im: ContextVar[dict | None] = ContextVar("im_ctx", default=None)
 
 
 def set_im(platform: str, message_id: str | None,
-           channel_id: str | None, chat_id: str | None) -> None:
+           channel_id: str | None, chat_id: str | None,
+           puid: str | None = None) -> None:
     _im.set({
         "platform": platform, "message_id": message_id,
         "channel_id": channel_id, "chat_id": chat_id,
+        "puid": puid,       # 平台用户 id，State Manager 据此打细粒度状态 / 检查取消标志
         "reacted": False,   # 本轮咕咕有没有用 react 工具点过表情（worker 收尾据此决定要不要兜底补一个）
     })
 

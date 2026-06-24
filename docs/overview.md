@@ -7,7 +7,7 @@
 
 ## 一、项目简介
 
-**咕咕** 是面向创作者（插画、动画等）的 AI 驱动项目管理工具，**多用户产品**，所有数据按 `user_id` 隔离。核心功能是统一管理项目进度、文件归档和排期提醒，通过自然语言 Agent 完成管理操作，未来扩展至团队/企业（ToB）。
+**咕咕** 是面向创作者（插画、动画等）及有项目管理需求的个人用户的 AI 驱动项目管理工具，**多用户产品**，所有数据按 `user_id` 隔离。核心功能是统一管理项目进度、文件归档和排期提醒，通过自然语言 Agent 完成管理操作，未来扩展至团队/企业（ToB）。
 
 **功能空间：**
 
@@ -141,7 +141,9 @@ backend/agent/                    ← 独立 Agent 包（不依赖 FastAPI）
 | `GET` | `/api/v1/files/all` | 当前用户所有文件元数据（全量缓存用） |
 | `GET` | `/api/v1/files/version` | 文件表状态摘要（count:max_updated:max_deleted），前端用于感知变更 |
 | `GET` | `/api/v1/files/tree` | 文件库导航树 |
-| `POST` | `/api/v1/files` | 上传文件 |
+| `POST` | `/api/v1/files` | 上传文件（本地代理路径） |
+| `POST` | `/api/v1/files/presign` | 签发 OSS presigned PUT URL（OSS 直传准备阶段） |
+| `POST` | `/api/v1/files/confirm` | OSS 直传完成后注册 DB 记录 |
 | `PATCH` | `/api/v1/files/{id}` | 重命名 / 移动文件 |
 | `DELETE` | `/api/v1/files/{id}` | 软删除（移入回收站） |
 | `POST` | `/api/v1/files/batch-delete` | 批量软删除 |

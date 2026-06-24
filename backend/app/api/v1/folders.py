@@ -19,7 +19,9 @@ router = APIRouter(prefix="/folders", tags=["folders"])
 
 async def _file_count(folder_id: int, db: AsyncSession) -> int:
     return (await db.execute(
-        select(func.count()).select_from(File).where(File.folder_id == folder_id)
+        select(func.count()).select_from(File).where(
+            File.folder_id == folder_id, File.deleted_at.is_(None)  # 排除回收站，否则删文件后计数不降
+        )
     )).scalar_one()
 
 
@@ -94,7 +96,10 @@ async def list_folders(
 
     counts_res = await db.execute(
         select(File.folder_id, func.count().label("cnt"))
-        .where(File.folder_id.in_([f.id for f in folders]))
+        .where(
+            File.folder_id.in_([f.id for f in folders]),
+            File.deleted_at.is_(None),  # 排除回收站，否则删文件后文件夹计数不降（与 /folders/all 一致）
+        )
         .group_by(File.folder_id)
     )
     count_map = {row.folder_id: row.cnt for row in counts_res}

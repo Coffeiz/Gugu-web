@@ -59,9 +59,9 @@
                 <span class="preset-meta-item">out {{ p.max_tokens ?? 2000 }}</span>
                 <span class="preset-meta-item">ctx {{ p.context_tokens ?? 3000 }}</span>
                 <span class="preset-meta-item">temp {{ p.temperature ?? 0.7 }}</span>
-                <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think">思考</span>
-                <span v-if="p.vision" class="preset-meta-item preset-meta-vision">👁 多模态</span>
-                <span class="preset-key">{{ p.api_key || '未设置 Key' }}</span>
+                <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think"><PhBrain :size="11" weight="bold" />思考</span>
+                <span v-if="p.vision" class="preset-meta-item preset-meta-vision"><PhEye :size="11" weight="bold" />多模态</span>
+                <span class="preset-key" :title="p.api_key || '未设置 Key'">{{ p.api_key || '未设置 Key' }}</span>
               </div>
             </div>
             <div class="preset-card-actions">
@@ -604,12 +604,73 @@
         </template>
       </div>
 
+      <!-- ── 决策轨迹（只读调试）── -->
+      <div v-if="activeTab === 'trace'" class="trace-wrap">
+        <!-- 会话列表 -->
+        <div class="trace-list">
+          <div class="trace-search">
+            <input v-model="traceSearch" placeholder="搜标题…" @keyup.enter="fetchTraceSessions" />
+            <input v-model="traceUser" placeholder="用户名…" @keyup.enter="fetchTraceSessions" />
+            <button @click="fetchTraceSessions">搜索</button>
+          </div>
+          <div v-if="traceLoading" class="trace-hint">加载中…</div>
+          <template v-else>
+            <div v-for="s in traceSessions" :key="s.id"
+              class="trace-sess" :class="{ active: traceSel === s.id }" @click="openTrace(s.id)">
+              <div class="ts-top"><span class="ts-src" :class="'src-'+s.source">{{ s.source }}</span><span class="ts-title">{{ s.title }}</span></div>
+              <div class="ts-meta">{{ s.user }} · {{ s.msgCount }} 条 · #{{ s.id }} · {{ fmtTraceTime(s.updatedAt) }}</div>
+            </div>
+            <div v-if="!traceSessions.length" class="trace-hint">无会话</div>
+          </template>
+        </div>
+        <!-- 轨迹时间线 -->
+        <div class="trace-detail">
+          <div v-if="traceDetailLoading" class="trace-empty">加载中…</div>
+          <div v-else-if="!traceData" class="trace-empty">← 左侧选一个会话，查看咕咕每轮的决策轨迹</div>
+          <template v-else>
+            <div class="trace-head">
+              <div class="th-title">{{ traceData.session.title }}</div>
+              <div class="th-meta">{{ traceData.session.user }} · {{ traceData.session.source }} · #{{ traceData.session.id }}
+                · LLM 调用 {{ traceData.usage.length }} 次 · token 入 {{ traceTokens.in }} / 出 {{ traceTokens.out }}</div>
+            </div>
+            <div class="trace-timeline">
+              <div v-for="(step, i) in traceSteps" :key="i" class="tstep" :class="'k-'+step.kind">
+                <template v-if="step.kind === 'user'">
+                  <div class="tstep-role user">用户</div>
+                  <div class="tstep-text">{{ step.text }}</div>
+                </template>
+                <template v-else-if="step.kind === 'ai'">
+                  <div class="tstep-role ai">咕咕</div>
+                  <div class="tstep-text">{{ step.text }}</div>
+                  <div v-if="step.files && step.files.length" class="tstep-files">📎 {{ step.files.map(f => f.name + '.' + f.ext).join('，') }}</div>
+                </template>
+                <template v-else-if="step.kind === 'tool_call'">
+                  <div class="tstep-tool">
+                    <span class="tool-badge call">🔧 {{ step.name }}</span>
+                    <button class="tool-toggle" @click="step._open = !step._open">{{ step._open ? '收起入参' : '入参' }}</button>
+                  </div>
+                  <pre v-if="step._open" class="tool-json">{{ step.input }}</pre>
+                </template>
+                <template v-else-if="step.kind === 'tool_result'">
+                  <div class="tstep-tool">
+                    <span class="tool-badge res" :class="{ err: step.isError }">↩ {{ step.isError ? '结果（错误）' : '结果' }}</span>
+                    <button class="tool-toggle" @click="step._open = !step._open">{{ step._open ? '收起' : '展开' }}</button>
+                  </div>
+                  <pre v-if="step._open" class="tool-json">{{ step.result }}</pre>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { PhBrain, PhEye } from '@phosphor-icons/vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
 import ConfigField from '../Config/components/ConfigField.vue'
@@ -622,6 +683,7 @@ const tabs = [
   { key: 'prompts',  label: '系统提示词' },
   { key: 'behavior', label: '行为配置' },
   { key: 'usage',    label: '用量统计' },
+  { key: 'trace',    label: '决策轨迹' },
 ]
 const activeTab = ref('llm')
 
@@ -630,6 +692,92 @@ function switchTab(key) {
   if (key === 'llm'     && presets.value.length === 0) fetchPresets()
   if (key === 'prompts' && profiles.value.length === 0) fetchProfiles()
   if (key === 'usage'   && !usage.value) fetchUsage()
+  if (key === 'trace'   && traceSessions.value.length === 0) fetchTraceSessions()
+}
+
+// ── 决策轨迹（只读调试）──────────────────────────────────────────────────────
+const traceSessions      = ref([])
+const traceLoading       = ref(false)
+const traceSel           = ref(null)
+const traceData          = ref(null)
+const traceSteps         = ref([])
+const traceDetailLoading = ref(false)
+const traceSearch        = ref('')
+const traceUser          = ref('')
+
+function fmtTraceTime(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+const traceTokens = computed(() => {
+  const u = traceData.value?.usage ?? []
+  return {
+    in:  u.reduce((a, x) => a + (x.tokensIn  || 0), 0),
+    out: u.reduce((a, x) => a + (x.tokensOut || 0), 0),
+  }
+})
+
+async function fetchTraceSessions() {
+  traceLoading.value = true
+  try {
+    const qs = new URLSearchParams()
+    if (traceSearch.value.trim()) qs.set('q', traceSearch.value.trim())
+    if (traceUser.value.trim())   qs.set('user', traceUser.value.trim())
+    const url = `/api/v1/admin/agent/sessions${qs.toString() ? '?' + qs : ''}`
+    const res = await adminStore.authFetch(url)
+    if (res.ok) traceSessions.value = await res.json()
+  } catch { /* ignore */ }
+  finally { traceLoading.value = false }
+}
+
+// content_json 块 → 可读结果文本（content 可能是字符串或块数组）
+function _extractResult(content) {
+  if (content == null) return ''
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) return content.map(c => typeof c === 'string' ? c : (c?.text ?? JSON.stringify(c))).join('\n')
+  return JSON.stringify(content, null, 2)
+}
+
+// 把消息序列拍平成时间线步骤（含被 getMessages 过滤的 tool_use/tool_result）
+function _buildSteps(messages) {
+  const steps = []
+  for (const m of messages) {
+    const cj = m.contentJson
+    if (!cj) {
+      const text = (m.content || '').trim()
+      if (text) steps.push({ kind: (m.role === 'assistant' || m.role === 'ai') ? 'ai' : 'user', text, files: m.files, _open: false })
+      continue
+    }
+    for (const b of cj) {
+      if (!b || typeof b !== 'object') continue
+      if (b.type === 'text' && (b.text || '').trim()) {
+        steps.push({ kind: 'ai', text: b.text, _open: false })
+      } else if (b.type === 'tool_use') {
+        steps.push({ kind: 'tool_call', name: b.name, input: JSON.stringify(b.input ?? {}, null, 2), _open: false })
+      } else if (b.type === 'tool_result') {
+        steps.push({ kind: 'tool_result', result: _extractResult(b.content), isError: !!b.is_error, _open: false })
+      }
+    }
+  }
+  return steps
+}
+
+async function openTrace(id) {
+  traceSel.value = id
+  traceDetailLoading.value = true
+  traceData.value = null
+  traceSteps.value = []
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/agent/sessions/${id}/trace`)
+    if (res.ok) {
+      const data = await res.json()
+      traceData.value = data
+      traceSteps.value = _buildSteps(data.messages)
+    }
+  } catch { /* ignore */ }
+  finally { traceDetailLoading.value = false }
 }
 
 
@@ -1482,9 +1630,11 @@ onMounted(async () => {
   font-size: 11px; color: rgba(255,255,255,0.28);
   background: rgba(255,255,255,0.06); border-radius: 5px; padding: 1px 6px;
 }
-.preset-card-meta { display: flex; gap: 12px; }
-.preset-model { font-size: 12px; color: rgba(255,255,255,0.55); }
-.preset-key   { font-size: 12px; color: rgba(255,255,255,0.28); font-family: 'SF Mono', monospace; }
+.preset-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; min-width: 0; }
+.preset-model { font-size: 12px; color: rgba(255,255,255,0.55); white-space: nowrap; }
+/* key 独占整行、过长截断带省略号（悬停看全文），不再撑破页面宽度 */
+.preset-key   { flex: 1 1 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; color: rgba(255,255,255,0.28); font-family: 'SF Mono', ui-monospace, monospace; }
 
 .preset-card-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
 .pca-btn {
@@ -1631,10 +1781,54 @@ onMounted(async () => {
 .thinking-label { display: flex; flex-direction: column; gap: 3px; }
 .thinking-label > span:first-child { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.07em; }
 .thinking-hint { font-size: 11px; color: rgba(255,255,255,0.2); text-transform: none; letter-spacing: 0; font-weight: 400; }
-.preset-meta-item { font-size: 12px; color: rgba(255,255,255,0.35); }
+.preset-meta-item { font-size: 12px; color: rgba(255,255,255,0.35); white-space: nowrap; flex-shrink: 0; }
+/* 思考 / 多模态：图标 + 文字横排，不被挤成竖排 */
+.preset-meta-think, .preset-meta-vision { display: inline-flex; align-items: center; gap: 3px; }
 .preset-meta-think { color: rgba(149,144,196,0.85); background: rgba(149,144,196,0.1); padding: 1px 6px; border-radius: 4px; }
 .preset-meta-vision { color: rgba(122,184,200,0.95); background: rgba(122,184,200,0.12); padding: 1px 6px; border-radius: 4px; }
 .modal-input[type="number"] { -moz-appearance: textfield; }
 .modal-input[type="number"]::-webkit-inner-spin-button,
 .modal-input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* ── 决策轨迹 ── */
+.trace-wrap { display: grid; grid-template-columns: 300px 1fr; gap: 14px; height: calc(100vh - 230px); min-height: 420px; }
+.trace-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; padding-right: 4px; }
+.trace-search { display: flex; gap: 6px; position: sticky; top: 0; padding-bottom: 6px; }
+.trace-search input { flex: 1; min-width: 0; padding: 7px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); color: #fff; font-size: 12px; }
+.trace-search button { padding: 0 12px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.4); background: rgba(123,127,178,0.18); color: #cdd0ee; font-size: 12px; cursor: pointer; }
+.trace-search button:hover { background: rgba(123,127,178,0.3); }
+.trace-hint { color: rgba(255,255,255,0.3); font-size: 12px; padding: 12px; text-align: center; }
+.trace-sess { padding: 9px 11px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.03); cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.trace-sess:hover { background: rgba(255,255,255,0.06); }
+.trace-sess.active { background: rgba(123,127,178,0.16); border-color: rgba(123,127,178,0.45); }
+.ts-top { display: flex; align-items: center; gap: 6px; }
+.ts-src { flex-shrink: 0; font-size: 10px; padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.5); }
+.ts-src.src-feishu { background: rgba(80,150,255,0.18); color: #9cc0ff; }
+.ts-src.src-qqbot { background: rgba(90,200,160,0.18); color: #8fe0c0; }
+.ts-title { font-size: 13px; color: #e8e9f2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-meta { font-size: 11px; color: rgba(255,255,255,0.32); margin-top: 3px; }
+.trace-detail { overflow-y: auto; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; background: rgba(255,255,255,0.02); padding: 16px; }
+.trace-empty { color: rgba(255,255,255,0.3); font-size: 13px; text-align: center; padding-top: 60px; }
+.trace-head { border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px; margin-bottom: 14px; }
+.th-title { font-size: 15px; font-weight: 600; color: #f0f1f8; }
+.th-meta { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 4px; }
+.trace-timeline { display: flex; flex-direction: column; gap: 10px; }
+.tstep { display: flex; flex-direction: column; gap: 5px; }
+.tstep-role { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; }
+.tstep-role.user { color: #c4afc8; }
+.tstep-role.ai   { color: #9aa0d8; }
+.tstep-text { font-size: 13px; line-height: 1.55; color: #d8d9e6; white-space: pre-wrap; word-break: break-word;
+  background: rgba(255,255,255,0.03); border-radius: 8px; padding: 8px 11px; }
+.k-user .tstep-text { background: rgba(196,175,200,0.08); }
+.tstep-files { font-size: 11px; color: #8fe0c0; }
+.k-tool_call, .k-tool_result { padding-left: 14px; border-left: 2px solid rgba(255,255,255,0.08); margin-left: 4px; }
+.tstep-tool { display: flex; align-items: center; gap: 8px; }
+.tool-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
+.tool-badge.call { background: rgba(123,127,178,0.2); color: #b6b9e6; }
+.tool-badge.res  { background: rgba(90,180,140,0.15); color: #8fd8b4; }
+.tool-badge.res.err { background: rgba(224,85,85,0.18); color: #f0a0a0; }
+.tool-toggle { font-size: 11px; color: rgba(255,255,255,0.4); background: none; border: none; cursor: pointer; padding: 2px 4px; }
+.tool-toggle:hover { color: rgba(255,255,255,0.7); }
+.tool-json { font-size: 11px; line-height: 1.5; color: #c2c4d6; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px; padding: 9px 11px; margin: 0; max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 </style>

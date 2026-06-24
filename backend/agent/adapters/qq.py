@@ -59,6 +59,22 @@ class _GuguQQClient(botpy.Client):
             "attachments": attachments,
         }
         print(f"[qq:{self._channel_id}] 收到 {openid}: text={text[:40]!r} att={len(attachments)}", flush=True)
+
+        # Intent Router：纯文本消息据当前状态短路——任务进行中的「还在吗/算了/嗯」网关直接处理、不入队
+        if not attachments:
+            from agent import router, runtime_state as rtstate
+            dec = router.decide(text, await rtstate.get_state("qqbot", openid))
+            if dec["action"] == "drop":
+                return
+            if dec["action"] in ("reply", "cancel"):
+                if dec["action"] == "cancel":
+                    await rtstate.request_cancel("qqbot", openid)
+                try:
+                    await _post(self.api, openid, dec["reply"], message.id)
+                except Exception as e:
+                    print(f"[qq] 短路回复失败: {type(e).__name__}: {e}", flush=True)
+                return
+
         try:
             await R.produce(STREAM, payload)
         except Exception as e:

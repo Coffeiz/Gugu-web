@@ -185,11 +185,22 @@ async def handle(msg_id: str, payload: dict):
         source=platform,
         attachments=payload.get("attachments") or [],
     )
-    # 把 IM 上下文透传给工具层（react 工具据此给用户这条消息加表情）
+    # 把 IM 上下文透传给工具层（react 工具据此给用户这条消息加表情；State Manager 据此打细粒度状态）
     from agent import imctx
-    imctx.set_im(platform, payload.get("message_id"), payload.get("channel_id"), payload.get("chat_id"))
-    resp = await run_collect(req)
+    imctx.set_im(platform, payload.get("message_id"), payload.get("channel_id"), payload.get("chat_id"), puid)
+    # State Manager：标记「忙」——网关据此短路「还在吗 / 算了」（IM 单 worker 顺序消费，忙时它看不到后续消息）
+    from agent import runtime_state as rtstate
+    await rtstate.set_state(platform, puid, rtstate.THINKING)
+    try:
+        resp = await run_collect(req)
+    finally:
+        await rtstate.clear_state(platform, puid)
+        await rtstate.clear_cancel(platform, puid)
     await _im_session_set(platform, puid, resp.session_id)   # 续上同一会话
+    if resp.cancelled:
+        # 用户中途「算了」：网关已回「先不继续啦」，这里不再补发任何内容
+        print(f"[worker] {platform} 任务被用户取消，跳过回复", flush=True)
+        return resp
     # 表情回应已由网关「秒回」（_on_message 收到即发），这里不再补
     # QQ 的「思考中」占位只认文本/markdown 被动回复，不认媒体消息（文件/图片）。
     # 咕咕光发文件、没配文字时补一句短文本，让被动回复成立、思考态能正常消解。

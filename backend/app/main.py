@@ -39,6 +39,7 @@ from app.api.v1 import users_admin as users_admin_router
 from app.api.v1 import admin_debug as admin_debug_router
 from app.api.v1 import admin_analytics as admin_analytics_router
 from app.api.v1 import track as track_router
+from app.api.v1 import feedback as feedback_router
 from app.db.session import create_all_tables
 
 import logging
@@ -198,6 +199,7 @@ app.include_router(agent_router.router,       prefix="/api/v1")
 app.include_router(search_router.router,      prefix="/api/v1")
 app.include_router(track_router.router,       prefix="/api/v1")
 app.include_router(preferences_router.router, prefix="/api/v1")
+app.include_router(feedback_router.router,    prefix="/api/v1")
 # 飞书 OAuth 扫码绑定：bind/url + status + unbind 需用户登录；callback 是飞书重定向（靠 state 校验）
 app.include_router(user_bots_router.router,      prefix="/api/v1")
 app.include_router(qq_connect_router.router,     prefix="/api/v1")
@@ -246,6 +248,11 @@ app.include_router(
 )
 app.include_router(
     admin_analytics_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    feedback_router.admin_router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )

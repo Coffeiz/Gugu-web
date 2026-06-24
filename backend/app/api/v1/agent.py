@@ -170,6 +170,21 @@ async def get_session_messages(
     }
 
 
+@router.delete("/memory", status_code=204)
+async def clear_memory(
+    current_user: User = Depends(get_current_user),
+):
+    """清除当前用户的全部 AI 记忆（facts / daily / memory）。"""
+    from agent.memory.store import _key, _DIR
+    from app.services.storage import get_storage
+    storage = get_storage()
+    for name in ("facts.md", "daily.md", "memory.md"):
+        try:
+            await storage.delete(_key(current_user.id, name))
+        except Exception:
+            pass
+
+
 @router.delete("/sessions/{session_id}", status_code=204)
 async def delete_session(
     session_id: int,

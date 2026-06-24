@@ -38,8 +38,14 @@ const nonDoneColumns = computed(() =>
 
 const liveFileCounts = computed(() => {
   const m = new Map()
+  // 文件夹 id → 所属项目 id（兜底 folder_id 有值但 project_id 为空的文件）
+  const folderProject = new Map()
+  for (const folder of cacheStore.allFolders) {
+    if (folder.projectId != null) folderProject.set(folder.id, folder.projectId)
+  }
   for (const f of cacheStore.allFiles) {
-    if (f.projectId != null) m.set(f.projectId, (m.get(f.projectId) ?? 0) + 1)
+    const pid = f.projectId ?? folderProject.get(f.folderId)
+    if (pid != null) m.set(pid, (m.get(pid) ?? 0) + 1)
   }
   return m
 })

@@ -12,9 +12,14 @@ _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 def _files_block(fo: dict | None) -> str:
     """文件/文件夹概览文本（紧凑）。"""
-    if not fo or not fo.get("total"):
+    if not fo or (not fo.get("total") and not fo.get("trash")):
         return "暂无文件"
-    lines = [f"共 {fo['total']} 个文件。"]
+    _SP = {"personal": "个人", "project": "项目", "asset": "素材", "mind": "思维"}
+    by_space = fo.get("by_space") or {}
+    space_str = "、".join(f"{_SP.get(k, k)} {v}" for k, v in by_space.items()) or "无"
+    trash_n = fo.get("trash") or 0
+    # 各空间真值 + 回收站数每轮注入：用户问「几个文件 / 删了几个 / 回收站还有吗」直接据此答，不许瞎报
+    lines = [f"共 {fo.get('total', 0)} 个活跃文件（各空间：{space_str}）；回收站 {trash_n} 个。"]
     folders = fo.get("folders") or []
     if folders:
         lines.append("文件夹：" + "、".join(

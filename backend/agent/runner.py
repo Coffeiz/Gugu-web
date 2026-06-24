@@ -140,7 +140,12 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         oa_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, False)})
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False)
 
-    text, tin, tout, errored, sent_files = await _collect(gen)
+    text, tin, tout, errored, sent_files, cancelled = await _collect(gen)
+
+    # 用户中途「算了」：网关已回「先不继续啦」，这里不再补发/不入历史/不反思（已执行的工具效果保留）
+    if cancelled:
+        return AgentResponse(text="", session_id=session_id, tokens_in=tin, tokens_out=tout, cancelled=True)
+
     # IM 出口兜底：发给用户/持久化之前确定性清洗（抹 tool_id 噪声、拦系统提示词泄露）
     if not errored:
         from agent.outbound import sanitize_outbound
@@ -203,6 +208,7 @@ async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool,
     cur = ""
     tin = tout = 0
     files: list = []
+    cancelled = False
     async for evt_str in gen:
         try:
             evt = json.loads(evt_str[6:])
@@ -221,8 +227,11 @@ async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool,
             cur += san.feed(evt.get("content", ""))
         elif t == "file" and evt.get("file"):
             files.append(evt["file"])   # 咕咕用 send_file 工具要发的文件
+        elif t == "_cancelled":
+            cancelled = True   # 用户中途「算了」：停止收集，网关已回「先不继续」，worker 不再补发
+            break
         elif t == "error":
-            return (evt.get("message") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？", tin, tout, True, files)
+            return (evt.get("message") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？", tin, tout, True, files, False)
     cur += san.flush()
     rounds.append(cur)
 
@@ -236,4 +245,4 @@ async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool,
             parts[-1] = r
         else:
             parts.append(r)
-    return ("".join(parts).strip(), tin, tout, False, files)
+    return ("".join(parts).strip(), tin, tout, False, files, cancelled)

@@ -181,6 +181,22 @@
             <div class="pm-sep"></div>
 
             <div class="pm-section">
+              <div class="pm-section-label">记忆</div>
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">删除所有记忆</span>
+                  <span class="pm-field-hint">清除咕咕记住的关于你的所有事实和对话记录，不可恢复</span>
+                </div>
+                <button class="pm-danger-btn" :disabled="memoryClearing" @click="clearMemory">
+                  {{ memoryClearing ? '清除中…' : '删除记忆' }}
+                </button>
+              </div>
+              <div v-if="memoryMsg" class="pm-msg" :class="memoryMsgType">{{ memoryMsg }}</div>
+            </div>
+
+            <div class="pm-sep"></div>
+
+            <div class="pm-section">
               <div class="pm-section-label">接入咕咕</div>
 
               <!-- 飞书 / QQ：都是自带机器人(BYO)，扫码自动创建+连接 -->
@@ -294,7 +310,7 @@ import QRCode from 'qrcode'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import BaseModal from '@/components/common/BaseModal.vue'
-import { authApi, userBotsApi, qqConnectApi, feishuConnectApi } from '@/services/api'
+import { authApi, agentApi, userBotsApi, qqConnectApi, feishuConnectApi } from '@/services/api'
 import { PhX, PhSignOut, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird } from '@phosphor-icons/vue'
 
 const props = defineProps({ show: Boolean })
@@ -412,8 +428,29 @@ async function loadQuota() {
   finally { quotaLoading.value = false }
 }
 
+// 记忆管理
+const memoryClearing = ref(false)
+const memoryMsg      = ref('')
+const memoryMsgType  = ref('ok')
+
+async function clearMemory() {
+  if (!confirm('确定要删除咕咕的所有记忆吗？此操作不可恢复。')) return
+  memoryClearing.value = true
+  memoryMsg.value = ''
+  try {
+    await agentApi.clearMemory()
+    memoryMsg.value    = '记忆已清除'
+    memoryMsgType.value = 'ok'
+  } catch (e) {
+    memoryMsg.value    = e.message ?? '删除失败'
+    memoryMsgType.value = 'err'
+  } finally {
+    memoryClearing.value = false
+  }
+}
+
 watch(activeNav, (v, old) => {
-  if (v === 'gugu') { loadQuota(); loadBots() }
+  if (v === 'gugu') { loadQuota(); loadBots(); memoryMsg.value = '' }
   if (old === 'gugu') cancelConnect()
 })
 
@@ -670,6 +707,14 @@ function handleLogout() {
 }
 .pm-bind-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
 .pm-bind-btn:disabled { opacity: 0.4; cursor: default; }
+.pm-danger-btn {
+  padding: 6px 16px; border-radius: 8px; border: none;
+  background: linear-gradient(135deg, #b25a5a, #c47070); color: #fff;
+  font-size: 12px; font-weight: 600; font-family: var(--font-sans); cursor: pointer;
+  box-shadow: 0 2px 8px rgba(178,90,90,0.25); transition: opacity 0.15s, transform 0.15s;
+}
+.pm-danger-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
+.pm-danger-btn:disabled { opacity: 0.4; cursor: default; }
 .pm-bind-btn.off {
   background: transparent; color: var(--text-secondary);
   border: 1px solid rgba(0,0,0,0.12); box-shadow: none;

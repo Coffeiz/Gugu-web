@@ -243,3 +243,13 @@ body {
   background: rgba(255,255,255,0.85);
 }
 ::placeholder { color: var(--text-secondary); opacity: 0.75; }
+
+/* ── 拖拽物理效果（usePhysicsDrag）── */
+/* 克隆体：跟着指针弹簧跟随的卡片，抬起阴影强化「拎起来」的感觉 */
+.phys-drag-clone {
+  box-shadow: 0 22px 50px rgba(30, 35, 60, 0.30);
+  cursor: grabbing;
+  opacity: 0.97;
+}
+/* 源卡 / 落点卡：隐藏但保留布局占位，让飞动的克隆体看起来就是卡片本体 */
+.phys-drag-source { opacity: 0 !important; }

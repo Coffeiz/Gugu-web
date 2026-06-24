@@ -82,11 +82,20 @@ LLM 主循环。负责：
 - 大泄露（系统提示词被复述出来，多为 prompt injection 得手）→ 整条换成安全话术
 - 只管**字面**泄露，确定性兜住"长上下文污染/被套话吐 id"；**语义**泄露（换说法）仍靠 policy.md 提示词。仅 IM 路（非流式好扫），网页流式另说。
 
-### `router.py`
-请求路由。负责：
-- 根据请求来源和用户设置选择对应 Profile
-- 将 `AgentRequest` 分发给正确的 Profile + Core 组合
-- 未来支持按用户权限路由到不同能力集
+### `router.py`（轻量 Intent Router · Phase 1.7）
+**网关入队前**的轻量路由层（关键词 + 状态机），决定一条消息要不要进主模型：
+- `classify(text)` → `progress / cancel / emotion / ack / agent` 五类（纯关键词，整条匹配；取消/情绪只在短消息上判，**宁漏判进主模型、不误判短路**）
+- `decide(text, state)` 结合当前 State Manager 状态出动作：`reply`（短路回话术，不入队）/ `cancel`（置取消标志 + 回话术）/ `drop`（忙时的「嗯/好」忽略不打断）/ `agent`（正常入队）
+- 据状态回不同话术：THINKING→「还在想哦~」SEARCHING→「正在查资料~」GENERATING→「马上就好~」
+- 将来可换小模型分类（输出 `{intent, confidence}`），`decide()` 接口不变
+> 早期设想的「按来源选 Profile」路由从未实现（现单 Profile 直连）；`router.py` 现指 Runtime Intent Router。
+
+### `runtime_state.py`（State Manager · Phase 1.7）
+IM 运行时状态机 + 取消标志，**跨进程共享走 Redis**（worker 写、网关读）。
+- 状态 `IDLE / THINKING / SEARCHING / GENERATING / WAITING_CONFIRM`，key `agentstate:{platform}:{puid}`，**带 TTL 300s**（worker 崩了自动过期回 IDLE 防卡死）
+- worker `handle` 进入即 THINKING、结束清除；core 工具循环据 `TOOL_STATE`（web_search→SEARCHING、create_document→GENERATING）打细粒度
+- 取消标志 `agentcancel:{platform}:{puid}`：网关检测到取消意图时置，core 每轮协作检查、命中即中断
+- **为什么状态要放 Redis 给网关读**：IM 是**单 worker 顺序消费队列**——任务进行中后续消息排在队列里、worker 在忙根本看不到，所以「还在吗 / 算了」必须由网关据此状态短路，进不了 worker
 
 ### `models.py`
 统一数据结构。定义 `AgentRequest` / `AgentResponse`，各 adapter 负责将平台格式转换为此结构。
@@ -249,11 +258,20 @@ send_file 返回 {ok, message, _artifact:{file_id,name,ext,size_bytes}}
   ├─ 飞书：网关收 file/image → im.v1.message_resource.get 下载 → stage_sync 暂存（同步，handler 在运行 loop 里）
   └─ QQ：on_c2c_message_create 取 message.attachments（url/filename）→ 异步下载 → chat_attach.stage（handler 本身 async）
   → run_collect / web.py 调 chat_attach.resolve_for_message(user_id, attach_ids, message)
-       → ① 增广文本（文本/PDF/Office 用 doctext 提取正文注入 LLM；图片给提示）② 前端文件卡片
+       → ① 增广文本（文本/PDF/Office 用 doctext 提取正文注入 LLM）② 前端文件卡片 ③ 图片块（vision 模型真看，见「多模态看图」）
   → 用户说"存一下" → 工具 save_uploaded_file(attach_id) 把暂存字节落成正式文件库记录
 ```
-- **kind**：text（md/代码…）、**doctext.EXTRACTABLE（PDF/Word/Excel/PPT，自动提取文本，也按可读处理）**、image（需 vision）、binary（其余，可存读不了）。
+- **kind**：text（md/代码…）、**doctext.EXTRACTABLE（PDF/Word/Excel/PPT，自动提取文本，也按可读处理）**、image（vision 模型直接看，见下）、binary（其余，可存读不了）。
 - ⚠️ `stage_sync`（飞书网关用）必须在独立线程跑 `asyncio.run`——lark handler 在运行中的 loop 里，当前线程 `run_until_complete` 会 `RuntimeError`；QQ handler 本身 async，直接用 `chat_attach.stage`。
+
+#### 多模态看图（vision · `chat_attach` + `read_file`）
+
+vision 模型（`ai.vision=True`，后台「检测」探测或手动开）下，咕咕能**真看图**——聊天发的图、以及文件库里的图都行：
+
+- **聊天图**：`resolve_for_message` 把图封成图片块随用户消息发给模型（Anthropic 路 `image` 块 / OpenAI 路 `image_url`）。
+- **大图自动压缩**（`_fit_image_for_vision`）：>5MB 或长边 >2048px 时，喂模型前等比降采样 + 逐级降质重压成 JPEG（**只压喂模型的副本，存库原图不动**）。修「发高清插画看不出图」——此前 >5MB 直接降级成文字提示。
+- **HEIC/HEIF**：接入 `pillow-heif`，iPhone 原图等非原生格式（heic/bmp/tiff）统一转码 JPEG 再喂；原生 png/jpg/gif/webp 达标则原样发。
+- **`read_file` 读文件库的图**（仅 vision **且 Anthropic 通道**）：图片走 `tool_result` 的图片内容块让模型看（`dispatch` 识别 `_vision_image` → 封块；OpenAI 路工具结果只能纯文本，故友好提示看不了）。持久化时 `strip_vision_for_history` 把图片块换成 `[图片已查看]` 占位——避免大 base64 撑爆历史 / 每轮重发。
 
 #### 飞书消息「秒回表情」
 
@@ -538,7 +556,7 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 
 ---
 
-## 工具清单（共 45，已实现）
+## 工具清单（共 47，已实现）
 
 > 🔒 = 不可逆操作，受删除二次确认保底（显式 confirm 参数）保护。所有工具带 `user_id` 所有权校验。
 
@@ -574,7 +592,7 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 | 工具 | 说明 |
 |------|------|
 | `list_files` | 查询文件（空间/项目/扩展名/关键词） |
-| `read_file` | 读文本类文件内容（≤256KB） |
+| `read_file` | 读文件内容：文本类（≤256KB）直读 / PDF·Word·Excel·PPT 提取文本 / **图片直接识别**（需 vision + Anthropic 通道，含 HEIC，大图自动压缩） |
 | `edit_file` | 改文本（整体替换/追加/查找替换） |
 | `create_document` | 生成文件：md/txt/json/csv 直写；docx/pdf 由 HTML、xlsx 由 CSV 经 LibreOffice 转 |
 | `rename_file` | 重命名文件 |
@@ -619,6 +637,14 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 |------|------|
 | `web_search` | Tavily 联网搜索实时/外部信息。Key 从 `settings.search.tavily_api_key`（Admin 配）读，未配置返回友好错误；受每日次数配额限制（见下）|
 
+### 对话 · `skills/conversations.py`（2）
+| 工具 | 说明 |
+|------|------|
+| `search_conversations` | 搜用户**过去的对话**（消息正文 + 标题，按 session 聚合返回片段；不传关键词列最近对话）。严格多用户隔离 |
+| `read_conversation` | 读某条历史对话的完整消息（只能读自己的 session）|
+
+> 另：`im` skill 的 `react`（LLM 版飞书表情）已注册但**未进 default profile**（秒回表情走网关关键词，见「飞书消息秒回表情」）；站内全局搜索是顶栏 UI 功能、走 `GET /api/v1/search`，**不是 agent 工具**。
+
 > 启用集合由 `profiles/default.py` 的 `skills`（skill 名列表）经 registry 派生（见下「Skill 一等公民」）；新增工具 = 在对应 skill 加 `Tool` 声明 + handler（自动派生双格式并注册），不可逆操作加 `destructive=True`。
 
 ### Skill 一等公民（Profile 组合 skill，不再手抄工具名）
@@ -627,7 +653,7 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 
 - `SkillRegistry` 增 `_skills`（skill 名 → 有序工具名）+ `add_skill()` / `tools_of()`；`BaseSkill.register()` 注册时记录分组。
 - `BaseProfile.skills`（skill 名列表）+ `tool_names` **派生属性**（`registry.tools_of(skills)`，去重保序）。
-- `DefaultProfile.skills = ["projects","calendar","files","clients","trash","overview","memory"]` —— 一行替代 39 行扁平清单。
+- `DefaultProfile.skills = ["projects","calendar","files","clients","trash","overview","memory","search","conversations"]` —— 一行替代几十行扁平清单（web / 飞书 / QQ 共用）。
 
 工具集与重构前集合相等（验证通过），行为零变化。
 
@@ -643,7 +669,7 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 
 | 档 | 做什么 | 为什么是这个位置 |
 |----|--------|------------------|
-| **① 现在** | **轻量 State Manager + Intent Router**（关键词 + 状态机，**非**小模型；绑 IM 做）| 当前最大的洞。网页有流式/停止键，掩盖了需求；**IM 异步无进度指示才是刚需**。先关键词版，别上 ML（见 Phase 1.7） |
+| ~~**① 现在**~~ ✅ | ~~**轻量 State Manager + Intent Router**~~ **已落地**（关键词版，IM 路）：状态查询/取消/闲聊不进主模型，网关层短路；自然语言取消轮间中断（见 Phase 1.7） | 当前最大的洞，已补。小模型分类版留待有 GPU |
 | **② 紧接着** | **简单主动触达**（截止临近提醒）+ **配额能力降级**（非一刀切拦死）+ **地基加固**（一键重启 worker/supervisor、健康、自愈）| 主动触达对伙伴产品价值高于 Planner，且复用现成 IM+实时设施；配额降级是真实痛点（文档 30，现在精力不足连查询都不行）；地基刚栽过坑（漏重启 worker，见 devlog）——**继续堆功能前先把三进程运维做稳** |
 | **③ 再 then** | **`summary.md` 状态快照** + **按需的记忆 2b**（只做用得上的）| 快照便宜且对上下文有用；**分层压缩是为了扛规模，现在早期、记忆没溢出，等真撑不住再上**（避免过早优化） |
 | **④ 谨慎 / 按需** | Insight / Goal / **Planner** | ⚠️ **不要预先造规划框架**——当前 LLM 工具循环本身就是轻量 planner；高复杂高风险、雄心路线常死在这。等出现具体、反复出现的「模型自己编排不了」的场景再针对性加 |
@@ -730,15 +756,16 @@ facts 不由 LLM 直接写文本，而是维护结构化 JSON，由 Reflection �
 
 **作废原因**：`User.display_name` 在注册/个人设置时已填，`req.user_name` 直接取用即可——无需再问、无需 `identity.json` / `save_identity` / `skills/identity.py`。身份称呼等信息由 Phase 2a 反思自然并入 `facts.md`。
 
-### Phase 1.7 — 轻量 Runtime Router（待做，依据文档 29）
+### Phase 1.7 — 轻量 Runtime Router（关键词版已落地，依据文档 29）
 
-> 注：实际开发顺序为 1.6 → **2a 记忆**（先做）→ 1.7。Router 不是记忆前置依赖，故先落了记忆闭环；1.7 仍未动。
+> **价值与 IM 接入强绑定**：网页 UX 流式中输入被锁、且有停止按钮，状态查询/自然语言取消基本触发不了；但 IM bot 上消息异步、无流式指示，用户看不到咕咕是否在工作 → State Manager 是**刚需**。故只对 IM 路做（web 复用现成停止键/genstream）。
 >
-> **价值与 IM 接入强绑定**：网页 UX 流式中输入被锁、且有停止按钮，状态查询/自然语言取消基本触发不了；但 IM bot 上消息异步、无流式指示，用户看不到咕咕是否在工作 → State Manager 是**刚需**。故 1.7 的"用户状态机"并入 Phase 4 IM 地基一起做（见 [`agent-im接入架构.md`](agent-im接入架构.md)），不单独提前。
+> **关键架构洞察**：IM 是**单 worker 顺序消费队列**——任务进行中后续消息排在队列里、worker 在忙看不到，所以「还在吗/算了」必须由**网关据 Redis 状态短路**，不能进 worker。详见 `runtime_state.py` / `router.py` 模块说明。
 
-- [ ] 关键词 + 状态机版：自然语言取消（"算了 / 不弄了"）、状态查询（"还在吗 / 好了吗"）、简单闲聊与确认词（"嗯 / 好的 / 哈哈"）**不进主模型**，直接轻量回应
-- [ ] State Manager：`THINKING / SEARCHING / GENERATING / WAITING_CONFIRM / IDLE`，与删除二次确认的 WAITING_CONFIRM 衔接
-- [ ] 🅼 **（最后做 · 暂无条件）** 升级为小模型意图分类（Qwen3-0.6B 等），输出 `{intent, confidence}` 再决定是否进主 Agent —— 需自托管小模型推理（GPU/算力），目前不具备；**先用上面的关键词 + 状态机版即可满足 IM 接入需求**
+- [x] **关键词 + 状态机版**（`agent/router.py`）：自然语言取消（"算了/停一下/不弄了"）、状态查询（"还在吗/好了吗/?"）、闲聊确认（"嗯/好的/哈哈"）**不进主模型**，网关直接轻量回应。整条匹配 + 短词才判取消/情绪，宁漏判进主模型、不误判短路（实测 classify 19/20，唯一漏判是安全方向）
+- [x] **State Manager**（`agent/runtime_state.py`）：`IDLE/THINKING/SEARCHING/GENERATING` 走 Redis（带 TTL 防卡死，worker 写、网关读）；worker `handle` + core 工具循环据 `TOOL_STATE` 打点。WAITING_CONFIRM 状态预留（尚未接删除二次确认）
+- [x] **自然语言取消落地**：网关置取消标志 → core 工具循环**每轮协作检查** → 命中即中断（粒度 = 轮与轮之间，单次 LLM 流式调用切不了）；`AgentResponse.cancelled` 透传，worker 据此不补发（网关已回「先不继续啦」）
+- [ ] 🅼 **（最后做 · 暂无条件）** 升级为小模型意图分类（Qwen3-0.6B 等），输出 `{intent, confidence}`——需自托管 GPU，目前关键词版已满足 IM 需求
 
 ### Phase 2 — 记忆系统
 

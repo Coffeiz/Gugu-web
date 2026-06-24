@@ -185,10 +185,10 @@ const todayStr = computed(() => {
   padding: 14px 20px;
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  /* 顶栏绝对定位且带 backdrop-filter，其 backdrop 取自下方会随鼠标 hover 不断重绘的
-     .page-content；同层重绘会导致顶栏的 backdrop-filter 栅格失效，在其下沿渲染出一条
-     白色伪影带（中间 .cal-toolbar 为静态定位、背后是静止 body 渐变，故无此问题）。
-     将顶栏提升为独立合成层，隔离这次重绘，消除该白带。 */
+  /* 顶栏绝对定位 + backdrop-filter，其 backdrop 取自下方的 .page-content。Chrome/macOS 下，
+     页面内容（日历日期格、总览项目卡等）hover 改背景触发重绘时，顶栏的 backdrop-filter 栅格
+     会失效，在其下沿渲染出一条白色伪影带（Safari 无此问题）。translateZ(0) 把顶栏提升为独立
+     GPU 合成层，稳定 backdrop-filter 的栅格，消除该白带。 */
   transform: translateZ(0);
 }
 

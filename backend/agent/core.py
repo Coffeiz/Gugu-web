@@ -12,9 +12,33 @@ from typing import AsyncGenerator
 from agent.skills import registry
 
 # 工具循环最大轮次。配合「工具使用准则」(skills.md，先规划后执行、别重复验证) + 强工具
-# (create_project 直接带 stages/todos、set_stages 整体替换)，多步任务现在 2~3 轮就能完成，
-# 6 足够覆盖且逼出「低成本执行」；真撞上限会友好提示「前面已生效，要不要接着做」。
-MAX_ROUNDS = 6
+# (create_project 带 stages/todos、set_stages 整体替换、move_items/批量 rename/edit 一次处理多个)，
+# 多步任务通常 2~3 轮就完成。设 10 给复杂任务留余量；真撞上限会友好提示「前面已生效，要不要接着做」。
+MAX_ROUNDS = 10
+_CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取消（单轮长回答只能在这里掐断）
+
+
+async def _im_cancelled() -> bool:
+    """IM 路：用户中途发「算了」→ 网关置了取消标志。web 路无 imctx，恒 False。"""
+    from agent import imctx
+    im = imctx.get_im()
+    if not im or not im.get("puid"):
+        return False
+    from agent import runtime_state as rt
+    return await rt.is_cancelled(im["platform"], im["puid"])
+
+
+async def _im_set_tool_state(tool_name: str) -> None:
+    """据工具名打细粒度状态（web_search→SEARCHING、create_document→GENERATING），
+    让网关「还在吗」答得更准。web 路无 imctx 时 no-op。"""
+    from agent import imctx
+    im = imctx.get_im()
+    if not im or not im.get("puid"):
+        return
+    from agent import runtime_state as rt
+    fine = rt.TOOL_STATE.get(tool_name)
+    if fine:
+        await rt.set_state(im["platform"], im["puid"], fine)
 
 
 class LLMRunner:
@@ -61,6 +85,10 @@ class LLMRunner:
         )
 
         for _ in range(MAX_ROUNDS):
+            # 用户中途「算了」→ 轮间协作中断（单次 LLM 流式调用本身切不了，故粒度是轮与轮之间）
+            if await _im_cancelled():
+                yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
+                return
             # 单次流式调用：既实时流式输出文本，又能拿到 tool_use（无双调用、无敷衍）
             async with client.messages.stream(
                 model=settings.ai.model,
@@ -71,8 +99,15 @@ class LLMRunner:
                 temperature=temperature,
                 **thinking_param,
             ) as stream:
+                _tok = 0
                 async for delta in stream.text_stream:
                     yield f"data: {json.dumps({'type': 'token', 'content': delta})}\n\n"
+                    # 流式途中也协作检查取消：单轮长回答没有「下一轮」，只能在这里掐断；
+                    # 退出 async with 会关闭 stream、断开上游请求，真正停掉生成（不是只丢弃后续 token）
+                    _tok += 1
+                    if _tok % _CANCEL_CHECK_EVERY == 0 and await _im_cancelled():
+                        yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
+                        return
                 final = await stream.get_final_message()
 
             total_in  += final.usage.input_tokens
@@ -84,6 +119,7 @@ class LLMRunner:
                 tool_results = []
                 for block in tool_blocks:
                     label = self.labels.get(block.name, block.name)
+                    await _im_set_tool_state(block.name)
                     yield f"data: {json.dumps({'type': 'tool_call', 'name': block.name, 'label': label, 'input': block.input}, ensure_ascii=False)}\n\n"
                     result, artifact = await registry.dispatch(user_id, block.name, block.input)
                     yield f"data: {json.dumps({'type': 'tool_done', 'name': block.name, 'label': label}, ensure_ascii=False)}\n\n"
@@ -128,6 +164,9 @@ class LLMRunner:
         temperature = settings.ai.temperature
         total_in = total_out = 0
         for _ in range(MAX_ROUNDS):
+            if await _im_cancelled():
+                yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
+                return
             stream = await client.chat.completions.create(
                 model=settings.ai.model,
                 messages=messages,
@@ -141,6 +180,7 @@ class LLMRunner:
             content = ""
             tool_buf: dict[int, dict] = {}   # index → {id, name, args}，流式分片累积
             announced = False                # 工具参数流式期间先亮个指示，免得前端空窗以为卡死
+            _tok = 0
             async for chunk in stream:
                 if getattr(chunk, "usage", None):
                     total_in  += chunk.usage.prompt_tokens or 0
@@ -151,6 +191,15 @@ class LLMRunner:
                 if delta.content:
                     content += delta.content
                     yield f"data: {json.dumps({'type': 'token', 'content': delta.content})}\n\n"
+                    # 流式途中协作检查取消（同 Anthropic 路：单轮长回答只能在这里掐断）
+                    _tok += 1
+                    if _tok % _CANCEL_CHECK_EVERY == 0 and await _im_cancelled():
+                        try:
+                            await stream.close()
+                        except Exception:
+                            pass
+                        yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
+                        return
                 if delta.tool_calls and not announced:
                     # 工具调用开始（此后在流式输出工具参数，可能很长，无 token、tool_call 也要等参数收完才发）
                     announced = True
@@ -184,6 +233,7 @@ class LLMRunner:
                         print(f"[core] 工具 {b['name']} 参数解析失败(疑似 max_tokens 截断), "
                               f"len={len(b['args'])} 尾部={b['args'][-120:]!r}", flush=True)
                         args = {}
+                    await _im_set_tool_state(b["name"])
                     yield f"data: {json.dumps({'type': 'tool_call', 'name': b['name'], 'label': label, 'input': args}, ensure_ascii=False)}\n\n"
                     result, artifact = await registry.dispatch(user_id, b["name"], args)
                     yield f"data: {json.dumps({'type': 'tool_done', 'name': b['name'], 'label': label}, ensure_ascii=False)}\n\n"

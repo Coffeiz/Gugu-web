@@ -196,41 +196,65 @@ async def _read_file(db, user_id, args: dict):
     return {"file_id": f.id, "name": f"{f.display_name}.{f.ext}", "content": text}
 
 
-async def _edit_file(db, user_id, args: dict):
-    f, _err = await _resolve_file(db, user_id, args)
-    if _err:
-        return _err
+async def _edit_one(db, user_id, f, spec: dict) -> dict:
+    """对已解析的 File f 应用一次编辑（mode + content/find/replace），各自 commit。返回结果 dict。
+    供单个与批量 edit 共用。"""
+    nm = f"{f.display_name}.{f.ext}"
     if f.ext.lower() not in TEXT_EXTS:
-        return json.dumps({"error": f"不支持修改该类型（{f.ext}），仅支持文本类文件"})
+        return {"error": f"不支持修改该类型（{f.ext}），仅支持文本类文件", "name": nm}
     if (f.size_bytes or 0) > READ_MAX_BYTES:
-        return json.dumps({"error": "文件过大，超出可改上限 256KB"})
-
+        return {"error": "文件过大，超出可改上限 256KB", "name": nm}
     storage = get_storage()
     try:
         old = (await storage.get(f.storage_key)).decode("utf-8", errors="replace")
     except Exception as e:
-        return json.dumps({"error": f"读取失败：{str(e)[:80]}"})
-
-    mode = args.get("mode", "replace_all")
+        return {"error": f"读取失败：{str(e)[:80]}", "name": nm}
+    mode = spec.get("mode", "replace_all")
     if mode == "replace_all":
-        new = args.get("content", "")
+        new = spec.get("content", "")
     elif mode == "append":
-        new = old + args.get("content", "")
+        new = old + spec.get("content", "")
     elif mode == "find_replace":
-        find = args.get("find", "")
+        find = spec.get("find", "")
         if not find or find not in old:
-            return json.dumps({"error": "未找到要替换的内容（find）"})
-        new = old.replace(find, args.get("replace", ""))
+            return {"error": "未找到要替换的内容（find）", "name": nm}
+        new = old.replace(find, spec.get("replace", ""))
     else:
-        return json.dumps({"error": f"未知 mode: {mode}"})
-
+        return {"error": f"未知 mode: {mode}", "name": nm}
     data = new.encode("utf-8")
     await storage.put(f.storage_key, data, f.mime_type)
     f.size_bytes = len(data)
     f.size = _fmt_size(len(data))
     f.updated_at = datetime.utcnow()
     await db.commit()
-    return {"success": True, "file_id": f.id, "new_size": f.size}
+    return {"success": True, "file_id": f.id, "name": nm, "new_size": f.size}
+
+
+async def _edit_file(db, user_id, args: dict):
+    """改文本文件。单个：file + mode + content/find/replace。
+    批量：edits=[{file 或 file_id, mode, content/find/replace}, ...]——一次改多个（多文件统一查找替换、
+    或各文件不同编辑都行），省去 N 次调用。逐项回报成功/失败。"""
+    items = args.get("edits")
+    if items:
+        edited, failed = [], []
+        for it in items:
+            if not isinstance(it, dict):
+                failed.append({"item": it, "error": "每项需是 {file, mode, ...}"})
+                continue
+            f, _err = await _resolve_file(db, user_id, it)
+            if _err:
+                failed.append({"item": it.get("file") or it.get("file_id"), "error": "没找到这个文件"})
+                continue
+            r = await _edit_one(db, user_id, f, it)
+            (edited if r.get("success") else failed).append(
+                r if r.get("success") else {"item": it.get("file") or it.get("file_id"), **r})
+        return {"success": True, "edited_count": len(edited), "failed_count": len(failed),
+                "edited": edited, "failed": failed}
+    # 单个
+    f, _err = await _resolve_file(db, user_id, args)
+    if _err:
+        return _err
+    return await _edit_one(db, user_id, f, args)
 
 
 async def _create_document(db, user_id, args: dict):
@@ -323,27 +347,57 @@ async def _save_uploaded_file(db, user_id, args: dict):
             **({"note": note} if note else {})}
 
 
-async def _rename_file(db, user_id, args: dict):
-    f, _err = await _resolve_file(db, user_id, args)
-    if _err:
-        return _err
-    new_display = _strip_ext(args["new_name"], f.ext)
+async def _rename_one(db, user_id, f, new_name: str) -> dict:
+    """重命名已解析的 File f，各自 commit。返回结果 dict。供单个与批量 rename 共用。"""
+    new_display = _strip_ext(new_name, f.ext)
     try:
         new_key = await _resolve_key(
             db, user_id, f.space, new_display, f.ext,
             project_id=f.project_id, folder_id=f.folder_id,
         )
     except ValueError as e:
-        return json.dumps({"error": str(e)})
+        return {"error": str(e), "name": f"{f.display_name}.{f.ext}"}
     storage = get_storage()
     if new_key != f.storage_key:
         new_key, new_display = await _resolve_conflict(storage, new_key, new_display, f.ext)
-        await storage.rename_file(f.storage_key, new_key)
+        try:
+            await storage.rename_file(f.storage_key, new_key)
+        except Exception as e:
+            return {"error": f"重命名失败（物理文件可能已丢失）：{str(e)[:80]}", "name": f"{f.display_name}.{f.ext}"}
         f.storage_key = new_key
+    old = f.display_name
     f.display_name = new_display
     f.updated_at = datetime.utcnow()
     await db.commit()
-    return {"success": True, "file_id": f.id, "name": f"{new_display}.{f.ext}"}
+    return {"success": True, "file_id": f.id, "old_name": f"{old}.{f.ext}", "name": f"{new_display}.{f.ext}"}
+
+
+async def _rename_file(db, user_id, args: dict):
+    """重命名文件。单个：file/file_id + new_name。
+    批量：renames=[{file 或 file_id, new_name}, ...]——适合「按顺序编号」，Agent 自己生成序号、一次调用全改。"""
+    items = args.get("renames")
+    if items:
+        renamed, failed = [], []
+        for it in items:
+            if not isinstance(it, dict) or not str(it.get("new_name") or "").strip():
+                failed.append({"item": it, "error": "每项需要 new_name"})
+                continue
+            f, _err = await _resolve_file(db, user_id, it)
+            if _err:
+                failed.append({"item": it.get("file") or it.get("file_id"), "error": "没找到这个文件"})
+                continue
+            r = await _rename_one(db, user_id, f, it["new_name"])
+            (renamed if r.get("success") else failed).append(
+                r if r.get("success") else {"item": it.get("file") or it.get("file_id"), **r})
+        return {"success": True, "renamed_count": len(renamed), "failed_count": len(failed),
+                "renamed": renamed, "failed": failed}
+    # 单个
+    if not str(args.get("new_name") or "").strip():
+        return json.dumps({"error": "需要 new_name；批量改名用 renames=[{file,new_name},...]"})
+    f, _err = await _resolve_file(db, user_id, args)
+    if _err:
+        return _err
+    return await _rename_one(db, user_id, f, args["new_name"])
 
 
 async def _resolve_file(db, user_id, args):
@@ -398,11 +452,9 @@ async def _folder_by_name(db, user_id, name, space=None, project_id=None):
     return rows[0], None
 
 
-async def _move_file(db, user_id, args: dict):
-    f, _err = await _resolve_file(db, user_id, args)
-    if _err:
-        return _err
-    target = args.get("target", {})
+async def _move_one(db, user_id, f, target: dict) -> dict:
+    """把已解析的 File f 移到 target，各自 commit。返回结果 dict（成功或 {"error":...}）。
+    供 move_items 移动文件时复用（单个文件也走它）。"""
     space = target.get("space", f.space)
     project_id = target.get("project_id", f.project_id)
     folder_id = target.get("folder_id", f.folder_id)
@@ -468,6 +520,156 @@ async def _move_file(db, user_id, args: dict):
     return {"success": True, "file_id": f.id, "name": f"{f.display_name}.{f.ext}",
             "space": f.space, "project_id": f.project_id, "project_name": project_name,
             "folder_id": f.folder_id, "moved_to": folder_name}
+
+
+def _as_dict(r):
+    """把 _move_one 的返回归一成 dict（错误分支历史上返回 json 字符串）。"""
+    if isinstance(r, str):
+        try:
+            return json.loads(r)
+        except Exception:
+            return {"error": r}
+    return r
+
+
+# ── move_items：统一「集合移动」（文件 + 文件夹混合，文件夹后端递归展开）──────────────
+
+async def _descendant_folder_ids(db, user_id, root_id: int) -> list[int]:
+    """root_id 及其所有子孙文件夹 id（沿 parent_id 逐层 BFS）。"""
+    ids = [root_id]
+    frontier = [root_id]
+    while frontier:
+        rows = (await db.execute(
+            select(Folder.id).where(Folder.user_id == user_id, Folder.parent_id.in_(frontier))
+        )).scalars().all()
+        fresh = [i for i in rows if i not in ids]
+        ids.extend(fresh)
+        frontier = fresh
+    return ids
+
+
+async def _resolve_target(db, user_id, target: dict):
+    """把 target 解析成统一落点 (space, project_id, folder_id)。返回 (space, pid, folder_id, err_dict|None)。
+    支持 folder_id（最准）/ folder 名 + space/project_id 限定 / 不给文件夹=空间根。"""
+    space = target.get("space")
+    project_id = target.get("project_id")
+    folder_id = target.get("folder_id")
+    fname = target.get("folder")
+    if folder_id:
+        fo = await db.get(Folder, folder_id)
+        if not fo or fo.user_id != user_id:
+            return None, None, None, {"error": "目标文件夹不存在"}
+        return ("project" if fo.project_id else "personal"), fo.project_id, fo.id, None
+    if fname is not None:
+        fname = str(fname).strip()
+        if fname in ("", "根", "根目录", "/"):
+            sp = space or ("project" if project_id else "personal")
+            return sp, (project_id if sp == "project" else None), None, None
+        sp = space or ("project" if project_id else "personal")
+        fo, err = await _folder_by_name(db, user_id, fname, sp, project_id)
+        if err:
+            return None, None, None, {"error": f"目标文件夹「{fname}」没找到，请用 list_folders 确认，或改用 folder_id"}
+        return ("project" if fo.project_id else "personal"), fo.project_id, fo.id, None
+    sp = space or "personal"
+    return sp, (project_id if sp == "project" else None), None, None
+
+
+async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id) -> dict:
+    """把 folder 整个搬到目标。同项目内只改 parent_id（便宜，不动文件）；跨项目/空间则
+    级联改所有子孙文件夹的 project_id、并把子孙文件物理重搬 + 改 space/project（贵）。"""
+    name = folder.name
+    sub_ids = await _descendant_folder_ids(db, user_id, folder.id)
+    # 防自移入自身或子孙
+    if t_parent_id in sub_ids:
+        return {"error": f"不能把文件夹「{name}」移动到它自己或它的子文件夹里"}
+    same_project = (t_pid == folder.project_id)   # personal 时两边都是 None
+    folder.parent_id = t_parent_id
+    folder.project_id = t_pid
+    moved_files = 0
+    failed = []
+    if not same_project:
+        # 子孙文件夹的 project_id 跟着改
+        for sid in sub_ids[1:]:
+            sf = await db.get(Folder, sid)
+            if sf:
+                sf.project_id = t_pid
+        # 子孙文件：物理 key 重搬 + 改 space/project（folder_id 不变，仍在各自文件夹里）
+        files = (await db.execute(
+            select(File).where(File.user_id == user_id,
+                               File.folder_id.in_(sub_ids), File.deleted_at.is_(None))
+        )).scalars().all()
+        storage = get_storage()
+        for f in files:
+            try:
+                new_key = await _resolve_key(db, user_id, t_space, f.display_name, f.ext,
+                                             project_id=t_pid, folder_id=f.folder_id)
+                if new_key != f.storage_key:
+                    new_key, new_disp = await _resolve_conflict(storage, new_key, f.display_name, f.ext)
+                    await storage.rename_file(f.storage_key, new_key)
+                    f.storage_key = new_key
+                    f.display_name = new_disp
+                f.space = t_space
+                f.project_id = t_pid
+                f.updated_at = datetime.utcnow()
+                moved_files += 1
+            except Exception as e:
+                failed.append({"file": f"{f.display_name}.{f.ext}", "error": str(e)[:80]})
+    await db.commit()
+    return {"success": True, "type": "folder", "folder": name,
+            "subfolders": len(sub_ids) - 1, "moved_files": moved_files,
+            **({"file_failures": failed} if failed else {})}
+
+
+async def _move_items(db, user_id, args: dict):
+    """统一移动：files + folders 一次搬到同一 target。文件夹连内容递归搬（后端展开，
+    Agent 不必知道里面有多少文件）。逐条如实回报成功/失败。"""
+    target = args.get("target", {})
+    t_space, t_pid, t_folder_id, terr = await _resolve_target(db, user_id, target)
+    if terr:
+        return terr
+    file_target = {"space": t_space, "project_id": t_pid, "folder_id": t_folder_id}
+
+    moved_files, moved_folders, failed = [], [], []
+    # 文件
+    for it in (args.get("files") or []):
+        sub = {}
+        if isinstance(it, int) or (isinstance(it, str) and str(it).strip().isdigit()):
+            sub["file_id"] = int(it)
+        else:
+            sub["file"] = str(it)
+        f, _err = await _resolve_file(db, user_id, sub)
+        if _err:
+            failed.append({"item": it, "kind": "file", "error": "没找到这个文件"})
+            continue
+        r = _as_dict(await _move_one(db, user_id, f, file_target))
+        (moved_files if r.get("success") else failed).append(
+            r if r.get("success") else {"item": it, "kind": "file", **r})
+    # 文件夹
+    for it in (args.get("folders") or []):
+        if isinstance(it, int) or (isinstance(it, str) and str(it).strip().isdigit()):
+            fo = await db.get(Folder, int(it))
+            if fo and fo.user_id != user_id:
+                fo = None
+        else:
+            # 按名找：在源处可能任意空间，这里全局按名匹配（重名则提示用 id）
+            rows = (await db.execute(
+                select(Folder).where(Folder.user_id == user_id, Folder.name == str(it))
+            )).scalars().all()
+            fo = rows[0] if len(rows) == 1 else None
+            if len(rows) > 1:
+                failed.append({"item": it, "kind": "folder", "error": "有多个同名文件夹，请改用 folder_id"})
+                continue
+        if not fo:
+            failed.append({"item": it, "kind": "folder", "error": "没找到这个文件夹"})
+            continue
+        r = await _move_folder(db, user_id, fo, t_space, t_pid, t_folder_id)
+        (moved_folders if r.get("success") else failed).append(
+            r if r.get("success") else {"item": it, "kind": "folder", **r})
+
+    return {"success": True,
+            "moved_files": len(moved_files), "moved_folders": len(moved_folders),
+            "failed_count": len(failed),
+            "files": moved_files, "folders": moved_folders, "failed": failed}
 
 
 async def _create_folder(db, user_id, args: dict):
@@ -655,18 +857,34 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="edit_file", label="修改文件",
-            description="修改文本类文件内容。mode=replace_all 整体替换(content)；append 追加(content)；find_replace 查找替换(find/replace)。",
+            description="修改文本类文件内容。mode=replace_all 整体替换(content)；append 追加(content)；find_replace 查找替换(find/replace)。"
+                        "**要改多个文件用 edits=[{file,mode,...},...] 一次调用全改**（如多文件统一把某词查找替换：每项填同样的 find/replace）。逐项回报成功/失败。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file_id": {"type": "integer", "description": "文件 id（可选）"},
-                    "file": {"type": "string", "description": "文件名（推荐：直接用名字）"},
+                    "edits": {
+                        "type": "array",
+                        "description": "批量：每项一个独立编辑 {file 或 file_id, mode, content/find/replace}。改多个文件用这个",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file": {"type": "string"},
+                                "file_id": {"type": "integer"},
+                                "mode": {"type": "string", "enum": ["replace_all", "append", "find_replace"]},
+                                "content": {"type": "string"},
+                                "find": {"type": "string"},
+                                "replace": {"type": "string"},
+                            },
+                            "required": ["mode"],
+                        },
+                    },
+                    "file_id": {"type": "integer", "description": "单个：文件 id"},
+                    "file": {"type": "string", "description": "单个：文件名"},
                     "mode": {"type": "string", "enum": ["replace_all", "append", "find_replace"]},
                     "content": {"type": "string", "description": "replace_all/append 用"},
                     "find": {"type": "string", "description": "find_replace 用"},
                     "replace": {"type": "string", "description": "find_replace 用"},
                 },
-                "required": ["mode"],
             },
             handler=_edit_file,
         ),
@@ -693,40 +911,58 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="rename_file", label="重命名文件",
-            description="重命名文件（不改变所在位置）。",
+            description="重命名文件（不改位置）。单个：file + new_name。"
+                        "**批量改名用 renames=[{file,new_name},...] 一次调用全改**——比如「按顺序编号」时，你自己排好序号（作品01、作品02…）一次传进来，别一个个改。逐项回报成功/失败。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file_id": {"type": "integer", "description": "文件 id（可选）"},
-                    "file": {"type": "string", "description": "文件名（推荐：直接用名字）"},
-                    "new_name": {"type": "string", "description": "新文件名（可不带扩展名）"},
+                    "renames": {
+                        "type": "array",
+                        "description": "批量改名：每项 {file 或 file_id, new_name}。按顺序编号等多文件场景用这个",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file": {"type": "string", "description": "文件名"},
+                                "file_id": {"type": "integer", "description": "文件 id"},
+                                "new_name": {"type": "string", "description": "新名（可不带扩展名）"},
+                            },
+                            "required": ["new_name"],
+                        },
+                    },
+                    "file_id": {"type": "integer", "description": "单个：文件 id"},
+                    "file": {"type": "string", "description": "单个：文件名"},
+                    "new_name": {"type": "string", "description": "单个：新文件名（可不带扩展名）"},
                 },
-                "required": ["new_name"],
             },
             handler=_rename_file,
         ),
         Tool(
-            name="move_file", label="移动文件",
-            description="把文件移动到目标位置。移动到文件夹用 target.folder 填文件夹名称即可（无需知道 id）；移回根目录填空字符串。返回会注明移到了哪。",
+            name="move_items", label="移动文件/文件夹",
+            description="把一批文件和/或文件夹移到同一个目标位置，**一次调用搞定**——不用一个个移。"
+                        "files 填文件名/id 数组，folders 填文件夹名/id 数组（两者可只给其一）。"
+                        "**移动文件夹会连同里面的所有文件、子文件夹一起递归搬过去，你不需要知道里面有几个文件**——只表达「把这个文件夹搬到那儿」即可，后端负责展开。"
+                        "目标用 target.folder 填目标文件夹名（移到空间根填空串）或 target.folder_id。返回逐项注明落点与成功/失败数。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file_id": {"type": "integer", "description": "文件 id（可选）"},
-                    "file": {"type": "string", "description": "文件名（推荐：直接用名字）"},
+                    "files":   {"type": "array", "items": {"type": "string"},
+                                "description": "要移动的文件（名称或 id）数组，可空"},
+                    "folders": {"type": "array", "items": {"type": "string"},
+                                "description": "要移动的文件夹（名称或 id）数组，可空——整夹连内容递归搬"},
                     "target": {
                         "type": "object",
+                        "description": "统一落点，所有文件和文件夹都移到这里",
                         "properties": {
-                            "folder": {"type": "string", "description": "目标文件夹名称（推荐用法；移回根目录传空串）"},
+                            "folder": {"type": "string", "description": "目标文件夹名称（移到空间根传空串）"},
+                            "folder_id": {"type": "integer", "description": "目标文件夹 id（最准；有就优先用）"},
                             "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
-                            "project_id": {"type": "integer"},
-                            "folder_id": {"type": "integer", "description": "目标文件夹 id（已知时可用，否则用 folder 名称）"},
-                            "stage_name": {"type": "string"},
+                            "project_id": {"type": "integer", "description": "目标在 project 空间时填"},
                         },
                     },
                 },
                 "required": ["target"],
             },
-            handler=_move_file,
+            handler=_move_items,
         ),
         Tool(
             name="copy_file", label="复制文件",

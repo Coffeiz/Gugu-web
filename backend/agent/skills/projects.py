@@ -219,9 +219,12 @@ async def _delete_project(db, user_id, args: dict):
         return blocked
 
     pid, pname = p.id, p.name
+    from app.api.v1.projects import rehome_project_files_to_personal
+    rehomed = await rehome_project_files_to_personal(db, user_id, pid)  # 文件先归个人，别变孤儿
     await db.delete(p)
     await db.commit()
-    return {"success": True, "deleted_project_id": pid, "name": pname}
+    return {"success": True, "deleted_project_id": pid, "name": pname,
+            "files_moved_to_personal": rehomed}
 
 
 # ── 阶段/待办辅助 ──

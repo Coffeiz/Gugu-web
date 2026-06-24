@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import OVERRIDE_FILE, get_settings
 from app.db.session import get_db
-from app.models import AgentUsage
+from app.models import AgentUsage, ConversationSession, ConversationMessage, User
 
 # ── 预设辅助函数 ──────────────────────────────────────────────────────────────
 
@@ -515,3 +515,95 @@ async def probe_vision_preset(preset_id: str):
 
 # IM 机器人接入：飞书 / QQ 都走「用户自带(BYO)」，在用户设置里管理
 # （/me/bots、/me/feishu/connect、/me/qq/connect），不再有 Admin 共享频道 CRUD。
+
+
+# ── 决策轨迹（只读调试）──────────────────────────────────────────────────────
+# 复用现有数据，无需额外埋点：工具调用/结果在 ConversationMessage.content_json（即
+# getMessages 用 content_json IS NULL 过滤掉的 tool_use / tool_result 行），每次 LLM
+# 调用的 token/模型在 AgentUsage。供 Admin「决策轨迹」tab 排查咕咕每轮怎么决策的。
+
+@router.get("/sessions")
+async def list_agent_sessions(
+    user: str | None = None,
+    q: str | None = None,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    """会话列表（最近更新优先），供决策轨迹查看器选择。"""
+    stmt = (
+        select(ConversationSession, User.username, User.display_name)
+        .outerjoin(User, User.id == ConversationSession.user_id)
+        .order_by(ConversationSession.updated_at.desc())
+        .limit(min(limit, 200))
+    )
+    if q:
+        stmt = stmt.where(ConversationSession.title.ilike(f"%{q}%"))
+    if user:
+        stmt = stmt.where(User.username.ilike(f"%{user}%"))
+    rows = (await db.execute(stmt)).all()
+    sids = [s.id for s, _, _ in rows]
+    counts: dict[int, int] = {}
+    if sids:
+        cres = await db.execute(
+            select(ConversationMessage.session_id, func.count())
+            .where(ConversationMessage.session_id.in_(sids))
+            .group_by(ConversationMessage.session_id)
+        )
+        counts = {sid: n for sid, n in cres.all()}
+    return [
+        {
+            "id": s.id, "title": s.title, "source": s.source,
+            "user": dn or un or "—",
+            "updatedAt": s.updated_at.isoformat(),
+            "createdAt": s.created_at.isoformat(),
+            "msgCount": counts.get(s.id, 0),
+        }
+        for s, un, dn in rows
+    ]
+
+
+@router.get("/sessions/{session_id}/trace")
+async def session_trace(session_id: int, db: AsyncSession = Depends(get_db)):
+    """单会话完整决策轨迹：含被 getMessages 过滤掉的 tool_use/tool_result 行 + 每次调用 token。
+    后端只透传原始数据（含 content_json 块），由前端解析渲染时间线。"""
+    session = await db.get(ConversationSession, session_id)
+    if not session:
+        raise HTTPException(404, "会话不存在")
+    owner = await db.get(User, session.user_id)
+    msgs = (await db.execute(
+        select(ConversationMessage)
+        .where(ConversationMessage.session_id == session_id)
+        .order_by(ConversationMessage.created_at, ConversationMessage.id)
+    )).scalars().all()
+    usage = (await db.execute(
+        select(AgentUsage)
+        .where(AgentUsage.session_id == session_id)
+        .order_by(AgentUsage.created_at, AgentUsage.id)
+    )).scalars().all()
+    return {
+        "session": {
+            "id": session.id, "title": session.title, "source": session.source,
+            "user": (owner.display_name or owner.username) if owner else "—",
+            "createdAt": session.created_at.isoformat(),
+            "updatedAt": session.updated_at.isoformat(),
+        },
+        "messages": [
+            {
+                "role": m.role,
+                "content": m.content,
+                "contentJson": m.content_json,   # 含 text / tool_use / tool_result 块
+                "files": m.files,
+                "createdAt": m.created_at.isoformat(),
+            }
+            for m in msgs
+        ],
+        "usage": [
+            {
+                "tokensIn": u.tokens_in, "tokensOut": u.tokens_out,
+                "model": u.model, "provider": u.provider,
+                "toolsUsed": u.tools_used,
+                "createdAt": u.created_at.isoformat(),
+            }
+            for u in usage
+        ],
+    }

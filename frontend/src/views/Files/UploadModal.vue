@@ -230,11 +230,11 @@
               >不标记</button>
               <button
                 v-for="s in currentProjectStages"
-                :key="s.name"
+                :key="s.key"
                 class="select-btn stage-tag-btn"
-                :class="{ active: selectedStage === s.name }"
-                @click="selectedStage = s.name"
-              >{{ s.name }}</button>
+                :class="{ active: selectedStage === s.label }"
+                @click="selectedStage = s.label"
+              >{{ s.label }}</button>
             </div>
           </div>
 
@@ -257,7 +257,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { uploadWithProgress, foldersApi } from '@/services/api'
+import { uploadWithProgress, uploadDirectWithProgress, filesApi, foldersApi } from '@/services/api'
 import BaseModal from '@/components/common/BaseModal.vue'
 
 const props = defineProps({
@@ -296,6 +296,15 @@ const currentProjectStages = computed(() => {
   return proj?.stages ?? []
 })
 
+// 项目「当前阶段」对应的标签：current_stage 存的是 s0/s1… 的 key，
+// 映射成 stage.label 作为文件标签的默认值（上传时自动打上）
+function stageDefault(pid = effectiveProjectId.value) {
+  if (!pid) return ''
+  const proj = props.projects.find(p => p.id === pid)
+  const cur = proj?.stages?.find(s => s.key === proj.currentStage)
+  return cur?.label ?? ''
+}
+
 async function loadFolders(pid) {
   if (!pid) { projectFolders.value = []; return }
   try {
@@ -305,19 +314,20 @@ async function loadFolders(pid) {
 
 watch(effectiveProjectId, (pid) => {
   selectedFolderId.value = null
-  selectedStage.value = ''
+  selectedStage.value = stageDefault(pid)   // 选中项目即默认打上其「当前阶段」标签（可改/可取消）
   loadFolders(pid)
 }, { immediate: false })
 
 watch(selectedId, () => {
   selectedFolderId.value = null
-  selectedStage.value = ''
+  // selectedStage 统一由 effectiveProjectId 监听设默认，避免两个监听顺序覆盖
 })
 
 watch(() => props.show, v => {
   if (v) {
     if (props.initialFiles.length) addFiles([...props.initialFiles])
     if (effectiveProjectId.value) loadFolders(effectiveProjectId.value)
+    selectedStage.value = stageDefault()   // 打开即默认当前阶段（锁定项目入口此时 effectiveProjectId 监听不触发）
   } else {
     pendingFiles.value     = []
     selectedId.value       = null
@@ -426,18 +436,50 @@ async function handleUpload() {
 
   try {
     for (let i = 0; i < pendingFiles.value.length; i++) {
-      const f    = pendingFiles.value[i]
-      const form = new FormData()
-      form.append('file', f)
-      form.append('space', space)
-      if (projectId != null) form.append('project_id', projectId)
-      if (folderId  != null) form.append('folder_id', folderId)
-      form.append('stage_name', selectedStage.value)
-      const created = await uploadWithProgress('/files', form, (pct) => {
-        const next = [...fileProgresses.value]
-        next[i] = pct
-        fileProgresses.value = next
+      const f = pendingFiles.value[i]
+
+      const presign = await filesApi.presign({
+        filename:   f.name,
+        size_bytes: f.size,
+        mime_type:  f.type || 'application/octet-stream',
+        space,
+        project_id: projectId ?? null,
+        folder_id:  folderId  ?? null,
+        stage_name: selectedStage.value,
       })
+
+      let created
+      if (presign.mode === 'oss') {
+        await uploadDirectWithProgress(presign.upload_url, f, (pct) => {
+          const next = [...fileProgresses.value]
+          next[i] = pct * 0.95
+          fileProgresses.value = next
+        })
+        created = await filesApi.confirm({
+          storage_key:  presign.storage_key,
+          display_name: presign.final_name,
+          ext:          presign.ext,
+          mime_type:    f.type || 'application/octet-stream',
+          size_bytes:   f.size,
+          space,
+          project_id: projectId ?? null,
+          folder_id:  folderId  ?? null,
+          stage_name: selectedStage.value,
+        })
+      } else {
+        const form = new FormData()
+        form.append('file', f)
+        form.append('space', space)
+        if (projectId != null) form.append('project_id', projectId)
+        if (folderId  != null) form.append('folder_id', folderId)
+        form.append('stage_name', selectedStage.value)
+        created = await uploadWithProgress('/files', form, (pct) => {
+          const next = [...fileProgresses.value]
+          next[i] = pct
+          fileProgresses.value = next
+        })
+      }
+
       fileProgresses.value[i] = 1
       uploaded.push(created)
       uploadedCount.value++

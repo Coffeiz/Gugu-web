@@ -233,6 +233,55 @@ sudo systemctl status gugu-backend gugu-worker gugu-supervisor
 
 飞书 bot 创建、权限、长连接事件订阅、凭据填写、频道面板原理，**完整步骤见 [`feishu接入指南.md`](feishu接入指南.md)**。生产上确保 `gugu-supervisor` + `gugu-worker` 两个服务在跑，频道在 Admin 面板增删启停即时生效。
 
+### 4.1 增删 / 启停单个网关（不用重启服务）
+
+网关 = `supervisor` 按 Admin「频道」面板里**启用的 bot** 动态 `spawn` 的子进程（每个 bot 一条 WS 长连，飞书 `lark.ws` / QQ `botpy`）。
+
+- **增 / 删 / 开 / 关某个 bot**：在 **Admin → Agent 配置 → 频道** 里操作（或扫码自连）→ 写 `user_bots` 表 → supervisor **每 ~1s 对账自动 spawn/kill** → **无需重启任何服务，秒级生效**。
+- 凭据由 supervisor 以**环境变量注入**子进程（不进 argv，`ps` 看不到）。
+
+### 4.2 启停 / 重启网关管家（supervisor）
+
+```bash
+# 生产（systemd）
+sudo systemctl restart gugu-supervisor   # 改了 adapters(feishu/qq)/router 后；KillMode=control-group 连带重起全部网关子进程
+sudo systemctl stop gugu-supervisor      # 停掉所有网关（连带子进程）
+journalctl -u gugu-supervisor -f         # 或 tail logs/gugu-supervisor.log
+
+# 开发（无 systemd）
+.venv/bin/python -m agent.adapters.supervisor   # 前台；Ctrl+C 停、连带杀子进程
+```
+
+也可在 **Admin → 服务状态** 页点「重启」（仅同主机有效，靠 kill + systemd 自愈）。
+
+### 4.3 把网关 / worker 拆到独立服务器
+
+> 网关/worker 和后台**不直接通信**，只在 **Redis + DB** 这条共享总线上碰头。所以拆机要配的就这两个 IP——**没有「web 的 IP」要填**。
+
+那台新机的 `backend/.env`：
+```bash
+REDIS__HOST=<共享 Redis IP>      REDIS__PASSWORD=...
+DB__HOST=<共享 DB IP>            DB__PASSWORD=...
+```
+起 worker + supervisor（这台不必跑 web）：
+```bash
+./start.sh install                         # 装 systemd 三单元
+sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
+# 或手动：.venv/bin/python -m worker  &  .venv/bin/python -m agent.adapters.supervisor
+```
+起来即**自动接入**：worker 加入共享 Redis 消费组 `agent-workers` 分摊队列；supervisor 读共享 DB 的 `user_bots` 拉网关。后台（在另一台）零改动，**「服务状态」页直接显示这台机**（host = 它的 hostname）。
+
+**三条铁律：**
+1. **全网只能一个 supervisor** —— 两个会给每个 bot 各拉一条 WS → 同 bot 双连接、平台冲突。网关机只此一台跑 supervisor，其余机器只跑 worker。
+2. **worker 可多台**（消费组自动分摊），但同用户并发目前会乱序/串取消——多机前先做 `user_gate`/分片（见 [`开发链路-roadmap.md`](开发链路-roadmap.md) ①/③）。
+3. **周期清理任务只一处跑**（web 那台），别在网关机重复（见 roadmap 进程优化 A）。
+
+### 4.4 跨主机的 Admin 限制
+
+- **能看**：服务状态 / 队列水位 / 网关列表（心跳走共享 Redis，全局可见）。
+- **不能配 / 重启**：Admin 改配置写的是**本机** `config.override.json`、重启只杀**本机** pid → 推不到另一台。远端机要改配置/重启，需 **ssh 上那台改 `.env` + 重启**。
+- 想「Admin 填个 IP 就配好/重启远端」需建 Redis 控制面（共享配置 + pub/sub 失效 + 命令频道），暂未做。
+
 ---
 
 ## 5. 日常运维

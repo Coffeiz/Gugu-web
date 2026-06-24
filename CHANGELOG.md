@@ -9,6 +9,136 @@
 
 ## [Unreleased]
 
+### IM 自然语言取消 · 流式途中可打断（修复）
+
+> 现象：IM（QQ/飞书）生成时发「取消/算了」打不断，答案照样说完。
+
+- **根因**：core 工具循环只在**每轮 LLM 开始前**查取消标志（轮顶）。最常见的「生成」是单轮、无后续工具——网关把取消标志写进了 Redis，但 core 永远等不到「下一轮」去读它，于是整段答案照常流完。
+- **修复**（`agent/core.py`，Anthropic + OpenAI 两路）：流式输出循环里**每 24 个 token**（`_CANCEL_CHECK_EVERY`）协作查一次取消标志，命中即退出 `async with` / `stream.close()` —— **关闭流、断开上游请求、真正掐断生成**（不是只丢弃后续 token）。
+- 进程内伪流测验证：取消标志在第 30 个 token 生效后，生成在第 48 个 token（首个检查点）停下，而非流完 1000 个。
+- 固有局限（已记 [`agent-决策环.md`](docs/agent-决策环.md)）：取消粒度约 24 token（亚秒级延迟，短于 24 token 的回答会说完）；**工具执行途中**（慢 `web_search`/文档生成）不查取消，等工具跑完到下个检查点。
+
+### Admin 服务状态页 · 队列水位监控
+
+- **后端** `services_admin.py` 的 `GET /admin/services` 增 `queue` 段：读 `im:inbound` 流 `length` + `agent-workers` 消费组 `lag`（已进队列没被取走＝真积压）/ `pending`（取走没 ack＝处理中）。
+- **前端** 服务状态页加队列水位条（队列长度 / 积压待取 / 处理中），`lag>20` 或 `pending>10` 标黄预警 —— 一眼判断 worker 吃不吃得消。
+- `consumers` 字段（消费组历史 pid 累积、非活 worker 数）刻意不显示，免误导。
+
+### 咕咕聊天 · 多会话流式隔离 + 切换实时续看
+
+- **修「回复串到别的会话」**：流式回复原来一直往全局共享的 `messages` 写，发完消息切到另一个会话，正在生成的 token 就渲染进了**当前所看会话**的视图（从没真正存进去 → 切换/重载即消失，纯视觉串台）。现在每个流**绑定归属会话**，切走后 `detached` 不再碰别的视图；`session_id` / `session_title` 事件按本流会话处理、不抢当前焦点；空回复兜底气泡也加 `!detached` 守卫
+- **切换后仍实时（思考/生成动画不丢）**：改为「UI 始终只有一个流式消费者，绑当前所看会话」——切走时 `abort` 当前 SSE（后端 `genstream` 生成已解耦、继续跑、不受影响），切到的会话若 `active` 就 `resumeStream` 重连：续看端点先补已生成快照（完整 partial 文本 + 文件 + 当前工具态）再订阅后续，所以切过去/切回都立刻看到当前进度并继续实时刷新；切回已生成完的会话则从 DB 载入完整回复
+- `send` / `resumeStream` 收尾加 **ownership 守卫**（`sessionId === 本流会话` 才重置 `streaming/thinking/activeTool/abortCtrl`），避免切走后旧流的 finally 清掉新会话续看流的状态；`consumeStream` 对 abort 优雅收尾（不当网络错）
+
+### OSS 预签名直传（自适应上传）
+
+> 背景：文件上传此前走服务器中转（浏览器 → FastAPI → OSS），文件过两遍服务器、带宽双倍消耗。
+- **自动适配后端**：`storage.backend == 'oss'` 时自动切 OSS 直传；`local` 时继续走服务器代理；Admin 切换后端后下一次上传立即生效，无需重启
+- **新端点 `POST /files/presign`**：计算 `storage_key`、检查配额，OSS 后端返回 `{ mode:'oss', upload_url, storage_key, final_name, ext }`（presigned PUT URL 有效期 10 分钟），本地后端返回 `{ mode:'proxy' }`
+- **新端点 `POST /files/confirm`**：OSS 直传完成后由浏览器调用，验证 `storage_key` 归属（必须以 `{user_id}/` 开头）+ 验证 OSS 对象实际存在，写入 DB 记录，返回 `FileResponse`
+- **存储后端新增 `OSSStorageBackend.presign_put(key, mime_type, expires=600)`**：封装 `oss2.Bucket.sign_url("PUT", ...)`，返回带签名的 PUT URL
+- **前端**：`api.js` 新增 `filesApi.presign` / `filesApi.confirm` + `uploadDirectWithProgress(url, file, onProgress)`（原生 PUT XHR，无 Authorization 头，OSS 预签名 URL 自带鉴权）；`UploadModal.vue` 上传循环先调 `/presign`，按 `mode` 分支走直传或原有代理流程，进度条 OSS 路保留 5% 给 confirm 阶段
+
+### 存储↔DB 对账与修复工具（Admin · 数据库）
+
+> 起因：DB 曾在两台服务器间迁移、两边 `uploads/` 都有物理文件，改配置后「DB 记录」与「磁盘对象」串了——出现 DB 有记录但文件没了（幽灵）、文件在磁盘但 DB 无记录（孤儿）。需要一个以**物理存储为准**的核对 + 修复手段。
+- **对账（只读）`GET /admin/config/reconcile-storage`**：逐一比对 `files.storage_key` 与存储后端实际对象，返回 `db_file_rows / storage_objects / matched / ghost_count / orphan_count` 及幽灵/孤儿明细。内部 key（`.agent/`、`.chat_staging`、`.thumbs/`、`avatars/` 等）由 `_is_internal_key` 过滤，不计入孤儿
+- **修复（写）`POST /admin/config/reconcile-storage/repair`**，`action` 两选项都给：
+  - `delete`：删除孤儿物理文件（清磁盘垃圾，如永久删除残留的 `trash/` 文件）
+  - `import`：把孤儿重建成 DB 记录（解析 `storage_key` 反推 user/空间/项目/文件夹，回填 `File` 行）
+  - 逐 key try/except，返回 `done / failed / done_keys`，单条失败不影响其余
+- **存储后端补 `exists(key)` / `list_keys()`**（`StorageBackend` 基类 + Local 用 `rglob`、OSS 用 `ObjectIterator`），供对账枚举/核对
+- **Admin → 系统配置 → 数据库**新增「存储对账」按钮：跑对账出报告（亮色文字适配深色面板），每条孤儿配「导入 / 删除」按钮 + 批量「全部导入 / 全部删除」
+- **修复 import 500**：`reconcile_repair` 漏 import `get_storage` → `NameError` → 点「导入」报「服务器内部错误」。补上函数内 import，import/delete 两动作端到端实测通过
+
+### 项目删除遗留孤儿文件（结构性修复）
+
+> 现象：用户个人文件视图里冒出本应属于已删项目的文件（A 开头、01–08 等）。Safari/Chrome 都有、清缓存无效——不是缓存问题。
+- **根因**：`File.project_id` 外键是 `ON DELETE SET NULL`，删项目时文件 `project_id` 被抹成 `NULL` 但 `space` 仍是 `'project'` → 成「孤儿文件」；而前端 `filesCache` 按「`projectId` 为空就归个人」分组，把这些孤儿漏进了个人空间视图
+- **修复**：删项目前先 `rehome_project_files_to_personal`（`space='personal'`、`project_id/folder_id/stage_name` 置空），文件干净归个人而非变孤儿；物理文件 `storage_key` 不动（仍可访问，路径残留无害）。HTTP `DELETE /projects/{id}` 与 Agent `delete_project` 工具两条路都接入
+- **教训留档**：排查时一度误判「文件已删/是浏览器缓存/连错库」，实为孤儿泄漏——`skills.md` 已强化「被质疑数量/可见性时跨全空间重查、勿先甩锅给缓存」
+
+### 用户反馈功能
+
+- **反馈入口**：侧边栏底部独立按钮 → 移入用户卡片弹出菜单首项（PhFlag 图标），点击头像弹窗即可触达，不占导航空间
+- **FeedbackModal 分类图标**：emoji 换成 Phosphor 图标（Bug → `PhWarningOctagon`、建议 → `PhLightbulb`、其他 → `PhChatCircle`），选中时仅色/背景变、字重固定避免宽度抖动
+- **后端**：新 `Feedback` 表、`POST /api/v1/feedback` 用户提交端点、`GET /api/v1/admin/feedback` 分页列表；`BackgroundTasks` 异步触发 SMTP 邮件通知
+
+### Admin · 邮件系统（SMTP）配置
+
+- **系统配置页新增「邮件系统」卡片**：SSL（465）/ STARTTLS（587）快速切换、服务器 / 端口 / 账号 / 密码 / 发件人 / 收件人六字段，卡片图标用 `PhEnvelopeSimple`
+- **测试发送**：新后端端点 `POST /api/v1/admin/config/test-smtp`，用当前面板输入参数（密码留空回退已保存值）异步发一封测试邮件，即时回报成功/失败
+- **Config Store**：新增 `smtp` 节，`fetchConfig` / `saveConfig` / `resetDraft` 均一并处理，与 DB/Redis/Storage 同等公民
+- 邮件服务 `app/services/email.py`：`send_email` / `notify_feedback`，无 SMTP 配置时静默跳过
+
+### Admin · 用户反馈页重写
+
+- 全面改用深色 glass-morphism 风格（`rgba(255,255,255,0.05)` 卡片 + `backdrop-filter: blur`），与其他管理面板视觉一致
+- 分类过滤按钮、刷新按钮图标换 Phosphor（`PhList` / `PhWarningOctagon` / `PhLightbulb` / `PhChatCircle` / `PhArrowClockwise`）
+- 修复刷新按钮 SVG 旋转偏移：给 `.spin-icon` 补 `transform-box: fill-box; transform-origin: center`，Phosphor SVG 现在绕中心旋转
+
+### Admin · 导航图标全换 Phosphor
+
+- `AdminLayout.vue` 十二个导航项的手绘 SVG 全替换为 Phosphor 组件（PhGear / PhRobot / PhChartLine / PhFlag / PhTicket / PhUsers / PhStack / PhPulse / PhClipboard / PhTerminal / PhBug / PhSignOut），品牌 Logo SVG 保持不变
+
+### 细节修复
+
+- **toggle-btn 宽度抖动**：`font-weight` 从 500/600 切换改为始终 600，选中态仅变背景色与边框，按钮宽度不再跳动（影响存储后端切换、SMTP SSL 切换）
+
+### 卡片拖拽物理效果（项目卡 / 文件卡）
+
+> 原生 HTML5 拖放的 ghost 由浏览器接管，无法做弹簧跟随、占位收合、落点让位。新 `composables/usePhysicsDrag.js` 在**保留原有拖放逻辑不变**的前提下叠一层纯视觉物理层（隐藏原生 ghost、克隆体跟手飞、FLIP 占位动画）。接入看板项目卡、文件库网格卡、项目编辑卡（ProjectModal）文件卡。
+- **跟手 + 拎起感**：克隆体弹簧跟随（低通平滑去抖）、挂在指针下方、按速度轻微后仰（上小下大）；拾起时源卡隐藏、占位用 **FLIP 动画收合**邻居（不再突然空出）
+- **松手按落点三态**：① 换状态/换列（看板进行中→已完成）→ **双克隆同轨迹飞行**，飞行途中 `scale` 把卡片伸缩到落点卡尺寸（已完成卡在月份分组里尺寸不同）+ 交叉淡变完成样式切换，落点邻居 FLIP **让位**；② 拖进文件夹/折叠分组 → 缩小**吸入**；③ 原地/拖出范围 → 实心飞回、占位 FLIP **展开归位**
+- 缓动统一为不回弹的强 ease-out；落点判定放在 `drop` 后下一帧、paint 前完成，避免闪一下
+- 修一串迭代中的坑：同步 `display:none` 源卡会取消原生拖拽（改即时透明 + 延后收合）、克隆体首帧停在 (0,0)、落进折叠分组时飞到左上角、**拖出有效区松手要等 ~250ms**（无效拖放的浏览器 snap-back 延迟 → 拖拽期间 `preventDefault` 让整页可放置，松手即时归位）
+
+### 文件工具「集合操作」化（批量 + 文件夹递归整搬）
+
+> 起因：Agent 一次只能移/改一个文件、且没法移文件夹，多文件操作要调 N 次——既慢又容易丢步、乱报数量。改为「让 Agent 表达意图、后端负责展开」的集合操作。
+- **`move_items`**（取代单文件 `move_file`）：`files` + `folders` 混合一次移到同一 `target`。**移文件夹连里面的文件、子文件夹一起递归搬**（后端展开，Agent 不必知道里面有几个）——同项目内只改 `parent_id`（便宜）、跨项目/空间则级联改子孙 `project_id/space` + 物理重搬；防自移入自身/子孙；逐项回报成功/失败
+- **`rename_file` 批量**：`renames=[{file,new_name},...]` 一次改多个，适合「按顺序编号」（Agent 自己排序号一次传）
+- **`edit_file` 批量**：`edits=[{file,mode,...},...]` 一次改多个（多文件统一查找替换、或各自不同编辑）
+- 三者都**逐项如实回报** `moved/renamed/edited_count + failed`，呼应防幻觉（不许笼统宣布"全部完成"）
+- `skills.md` 同步：引导优先用批量入口、移文件夹递归不必枚举；**改掉旧准则**「批量操作每一个都各自调用工具」（它会让模型一个个调、白瞎批量），改为「用批量工具一次处理 + 按后端逐项回报如实汇报」
+
+### 执行准则：工具循环 6 → 10 + 改文件前读最新
+
+- **`MAX_ROUNDS` 6 → 10**：复杂多步任务留余量；批量工具已压低实际轮次，10 不会经常摸到
+- **改文件内容前先 `read_file` 拿最新**（`skills.md`）：用户可能在网页/IM 自己改过/传过/删过文件，几轮前的 `read_file` 内容可能已过期——尤其 `replace_all` 整体覆盖前必须先读，别覆盖掉用户的外部改动；文件存在/位置/数量则以每轮注入的实时「文件概览」为准
+
+### 修复（续）
+
+- **`read_file` 读 PDF/Office 报「找不到文件」误导 Agent 劝用户删好文件**：服务器没装 `pdftotext`/`libreoffice` 时，`doctext` 抛的 `[Errno 2] No such file or directory: 'pdftotext'`（指**命令**不存在）被模型误读成「用户文件丢了」，进而建议删除/重传——而文件完好。`doctext._run` 捕获 `FileNotFoundError`，改报「服务器未装「X」命令、用户文件完好、切勿建议删除/重传」
+
+### 轻量 Intent Router + State Manager（Phase 1.7 · 关键词版 · 仅 IM）
+
+- **网关入队前置路由**（`agent/router.py` + `agent/runtime_state.py`）：任务进行中的「还在吗 / 算了 / 嗯」**不进队列、不进主模型**，网关据 Redis 状态机直接回话术。关键洞察：IM 是单 worker 顺序消费队列，忙时看不到队列后续消息，故状态查询/取消必须在**网关层**短路
+- **State Manager**：`IDLE/THINKING/SEARCHING/GENERATING` 走 Redis（worker 写、网关读，带 TTL 防卡死）；worker `handle` + core 工具循环据 `TOOL_STATE`（web_search→SEARCHING、create_document→GENERATING）打点
+- **自然语言取消**：网关置取消标志 → core 工具循环**每轮协作检查** → 命中即中断（粒度 = 轮与轮之间，单次 LLM 流式调用切不了）；`AgentResponse.cancelled` 透传，worker 不补发（网关已回「先不继续啦」）
+- 误判取舍：整条匹配 + 短词才判取消/情绪，宁漏判进主模型、不误判短路（「算了」仅在忙时当取消）。web 路无 imctx，core 的取消/打点恒 no-op，不受影响
+
+### Agent 防幻觉增强（数量诚实 + 被质疑重查）
+
+> 起因：一次批量删文件，MiniMax 谎报"删了 23 个"，被质疑时又编"13 个被系统吞了、不是我的锅"——实际只删了 9 个个人文件、其余在项目空间安然无恙（无数据丢失）。
+
+- **结构 · 概览注入真值**：`load_files_overview` 每轮多注入「各空间文件数 + 回收站数」，模型每轮都看到真值（如「项目 9、个人 1；回收站 9」），数量类问题不靠记忆瞎报
+- **提示词 · 数量诚实**（`skills.md`）：报"删了/移了 N 个"，N 只能数本轮实际 success 回执，失败逐条说
+- **提示词 · 被质疑铁律**：用户质疑数量/结果（"怎么只有 X 个 / 少了 / 没删掉吧"）时**必须重调 `list_files`/`list_trash` 核实**，用最新数据答；**明令禁止**编"系统吞了/并发/不是我的锅"甩锅，真有出入就如实承认"我刚才报错了"
+- **提示词 · 时间别臆测**（`default.md` `{now}` 旁）：`{now}` 本就每轮新鲜组装（`datetime.now()`，每条消息重算），但模型曾在闲聊里凭感觉编时间（明明 14:05 却说"凌晨 4 点多还在啃手册"）。在 `{now}` 旁补一句：涉及「现在几点 / 星期几 / 时段问候」一律以 `{now}` 为准、不得臆测，拿不准就别提时段
+
+### 注册页内测提示 + 自定义勾选框
+
+- 注册表单增加内测免责提示勾选：文案「测试阶段数据随时可能清空，我已知晓并会自行备份」，勾选后方可点击注册按钮（`Register.vue`）
+- 自定义勾选框样式：隐藏原生 `<input>`，未勾时半透明白底 + 淡紫边框与输入框同风格，已勾时紫色渐变填充 + 白色对勾 SVG + 淡紫阴影，与注册按钮视觉呼应
+
+### 修复
+
+- **文件夹文件数不随删除下降**：`/folders` 列表端点（及 `_file_count` 辅助）算 `file_count` 时漏了排除回收站文件（`deleted_at`），而 `/folders/all` 是对的。导致 ProjectModal 里删文件后文件夹计数不降、项目总数（根文件 + Σ文件夹数）也跟着不降——看着像"实时刷新失效"，实则重新拉到的数据本身就错。两处补 `File.deleted_at.is_(None)`，与 `/folders/all` 对齐
+- **项目卡左上角双层圆角**：`.proj-card` 用 `corner-shape: squircle`，但 `corner-shape` 不随 `border-radius: inherit` 继承 → `::after` 叠加层拿到 squircle 半径 + 默认 round 形状，内高光描的圆角与卡片不重合。`::after` 显式补 `corner-shape: squircle`；顺手扫全项目，文件库 / ProjectModal 的 `.drop-overlay`（宿主是 squircle 的 `.glass-card`）同隐患，补 `corner-shape: inherit`
+- **已完成项目卡进度条被挤下移、卡片变高**：「✓ 完成」胶囊 `.done-label` 的 `border` + 纵向 `padding` 比正文多撑约 4px，把 footer 行撑高。改用 `inset` 阴影代替 border、去纵向 padding，胶囊高度 ≤ 正文行高 → 进度条不再下移，与进行中卡同高
+- **待办事项悬停显示完整文字**：待办输入框加 `:title="todo.text"`，文字被省略号截断时悬停可见全文（ProjectModal + NewProjectModal）
+
 ### 站内全局搜索（顶栏）
 
 - 新 `GET /api/v1/search?q=`：一个关键词跨 **项目 / 文件 / 文件夹 / 日程 / 客户 / 对话** 检索（按 `user_id` 隔离，ILIKE 子串匹配对中文有效、无需全文索引）；文件排除回收站，对话同时搜会话标题与消息正文并给命中片段；各类型分组、各取前 6 条
@@ -49,6 +179,10 @@
 - **缩略图端点物理文件缺失返回 500 → 404**：`files.py` `get_thumb` 与新 `agent` `attachment_thumb` 读不到物理文件时抛未捕获 `FileNotFoundError`、刷屏 ASGI 异常（如旧 `storage_key` 已失效的卡片仍请求缩略图）；改为缺文件即 404，前端正常回退角标
 - **`move_file` 工具回报落点**：原来移动成功只返回文件夹名（如「（根目录）」），**不含项目信息**，模型无从确认落到哪个项目、易自行脑补位置；现返回 `space / project_id / project_name / folder_id`
 - **反幻觉铁律补强（`skills.md`）**：具体文件名 / 所在项目 / 文件夹 / id **必须来自本轮最近一次工具返回**，移动/保存按工具回执原样转告；拿不准位置就重新查、**不许先报一个位置被质疑后再编另一个圆场**（修一次咕咕把图谎报在错项目、还虚构文件名的真因）
+- **换头像不实时更新（需刷新）**：头像 URL 路径固定（`/api/v1/auth/avatar/{id}`），换图后字符串不变 → Vue `:src` 不刷新、浏览器命中旧缓存（导航栏 + 个人设置都卡）。现 `UserResponse.from_user` 给 URL 挂上以头像文件 `mtime` 为版本号的 `?v=`，换图即变 URL、迫使重渲染 + 重取，无需刷新；版本绑内容、所有查看处一致
+- **Admin 工具调用分布接口 500（`cannot extract elements from a scalar`）**：`admin_analytics.py` `/tool-distribution` 用 `jsonb_array_elements_text(tools_used)` 展开工具数组，但 `agent_usage.tools_used` 部分行存的是 **JSON 标量值**（多为 JSON `null`，`tools_used IS NOT NULL` 拦不住它，因为那是 SQL NOT NULL 而非 JSON null）→ 展开标量抛 `asyncpg.InvalidParameterValueError`。WHERE 追加 `AND jsonb_typeof(tools_used::jsonb) = 'array'`，只展开真正的数组行
+- **顶栏下方白色伪影带（Chrome/macOS）**：顶栏绝对定位 + `backdrop-filter`，其 backdrop 取自下方 `.page-content`；页面内容（日历日期格、总览项目卡等）hover 改背景触发重绘时，Chrome/macOS 下顶栏的 backdrop-filter 栅格失效、在其下沿渲染出一条白带（Safari 无此问题，与具体页面无关）。给 `.topbar` 加 `transform: translateZ(0)` 提升为独立 GPU 合成层、稳定 backdrop-filter 栅格
+- **项目卡文件计数漏算文件夹内的文件**：项目列表后端查询仅按 `files.project_id` 聚合，但文件夹内文件在某些上传路径下只有 `folder_id` 而无 `project_id`，导致计数偏低。后端改用关联子查询同时统计直属项目的文件与通过项目文件夹关联的文件（`OR folder_id IN (SELECT id FROM folders WHERE project_id = project.id)`，`OR` 避免重复计数）；前端 `liveFileCounts` 同步用 `allFolders` 建立 `folderId → projectId` 映射兜底，保证 live count 与后端计数口径一致
 
 ---
 
