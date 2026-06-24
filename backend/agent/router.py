@@ -41,6 +41,29 @@ _CANCEL_KW  = ["算了", "不用了", "不弄了", "别弄了", "别分析了", 
                "停下", "先停", "不做了", "取消", "别搞了", "先不弄", "不想弄了"]
 _EMOTION_KW = ["急", "快点", "快快", "怎么还没", "怎么这么慢", "太慢", "等不及"]
 
+# ── 斜杠强制命令（确定性，绕过关键词分类——最可靠的中断/控制手段）──
+# body（去掉前导 /）小写后查表 → 命令名；非命令（如粘贴的路径 /Users/..）返回 None 走正常对话
+_CMD = {
+    "stop": "stop", "s": "stop", "cancel": "stop", "x": "stop",
+    "停": "stop", "停止": "stop", "取消": "stop", "停下": "stop",
+    "status": "status", "状态": "status", "进度": "status",
+    "help": "help", "h": "help", "帮助": "help", "菜单": "help", "命令": "help",
+}
+_HELP_TEXT = (
+    "🤖 可用命令（确定性、立即生效）：\n"
+    "/stop　停止当前任务\n"
+    "/status　看当前进度\n"
+    "/help　这份帮助"
+)
+
+
+def parse_command(text: str) -> str | None:
+    """识别 `/stop` 这类斜杠命令；半角/全角斜杠都认。非命令返回 None。"""
+    t = (text or "").strip()
+    if t[:1] not in ("/", "／"):
+        return None
+    return _CMD.get(t[1:].strip().lower())
+
 
 def classify(text: str) -> str:
     raw = (text or "").strip()
@@ -84,8 +107,19 @@ def decide(text: str, state: str) -> dict:
       'drop'   忽略（不回不入队）
       'agent'  正常入队给主 Agent
     """
-    intent = classify(text)
     busy = state and state != st.IDLE
+
+    # 斜杠强制命令优先：确定性、绕过关键词分类。/stop 无条件置取消标志（不靠"是否判定为忙"）
+    cmd = parse_command(text)
+    if cmd == "stop":
+        return ({"action": "cancel", "reply": "🛑 已停止当前任务"} if busy
+                else {"action": "reply", "reply": "现在没有在跑的任务哦～"})
+    if cmd == "status":
+        return {"action": "reply", "reply": _PROGRESS_REPLY.get(state, _PROGRESS_REPLY[st.IDLE])}
+    if cmd == "help":
+        return {"action": "reply", "reply": _HELP_TEXT}
+
+    intent = classify(text)
 
     if intent == PROGRESS:
         return {"action": "reply", "reply": _PROGRESS_REPLY.get(state, _PROGRESS_REPLY[st.IDLE])}
