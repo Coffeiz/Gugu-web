@@ -9,6 +9,44 @@
 
 ## [Unreleased]
 
+### UI · 顶栏 & 定时任务按钮优化
+
+- **顶栏按钮字重**：「新建项目」和「上传文件」`font-weight` 统一改为 `500`。
+- **顶栏按钮图标**：引入 `@phosphor-icons/vue`，「新建项目」换用 `PhPlus`，「上传文件」新增 `PhUploadSimple`，替代原来的全角 `＋` 字符。
+- **定时任务「新建任务」**：字重改为 `500`、颜色改为 `rgba(255,255,255,0.95)` 与顶栏主按钮对齐，图标换用 `PhAlarmPlus`（与侧边栏 `PhAlarm` 同系列，语义更准确）。
+- **定时任务标题输入框**：padding 缩小（`9px→6px`），与新建项目弹窗标题区域高度对齐。
+
+### 定时任务 · 频道选项按 IM 绑定动态显示
+
+- 飞书 / QQ 频道选项仅在用户已绑定对应平台时显示；未绑定任何 IM 时只显示「web 通知」。
+- **后端**：`GET /auth/me` 新增 `im_channels` 字段，异步查 Redis（飞书 `imreach`）+ DB（`user_bots` 表 QQ bot），返回当前用户已绑定的平台列表。
+- **前端**：`UserResponse` 加 `imChannels` 字段；Schedules 页读取并动态 `v-if` 控制选项；编辑已有任务时自动过滤掉已保存但现在未绑定的频道，至少保留 `web`。
+
+### 咕咕设置 · 扫码连接平滑滚动
+
+- 点击「扫码连接」生成二维码后，设置面板自动平滑滚动到底部（`scrollTo({ behavior: 'smooth' })`），不再需要手动下拉。
+
+### IM worker · 串行 → 有界并发（P1-①，~6× 吞吐）
+
+> worker 原本严格串行（`run_once` 里 `for msg: await handle`），N 个用户同时发就排队、尾延迟 = N×单条。worker 基本在等 LLM（IO 密集），改为并发执行。
+
+- **有界并发**：`run_once` 串行 for → `asyncio.create_task` 并发派发 + 全局 `Semaphore`；按在跑数留空闲槽消费，防任务无界堆积（背压）。
+- **`user_gate(puid)`**：每用户一把进程内 `asyncio.Lock`——同用户串行保序（不抢同一 `session_id`、不乱序），不同用户并发。单机决策下进程内锁即终态。
+- **`msg_id` 幂等去重**：派发前 `SETNX imseen:{msg_id}`，修掉 `claim_stale` 60s 重投导致的重复回复。
+- **优雅 drain**：SIGTERM 先停收新消息、`gather` 等在跑的处理完再退，不截断回复。
+- **并发上限可热配**：`agent.worker_concurrency`（默认 16，实测单 MiniMax key 安全上限——带工具 sem=20 全 429）。worker 每 30s 从 override 热读、改完 ≤30s 生效无需重启；要更大吞吐靠多备 key，非调大此数。
+- **并发安全**：`imctx` 用 ContextVar（按 asyncio 任务隔离）、`rtstate` 按 puid 存 Redis、加 per-user 锁，已验证不串。
+- 压测：串行 ~21 条/分 → 并发 ~190（带工具）~340（无工具）条/分，0 报错；详见 [`docs/并发压测结果.md`](docs/并发压测结果.md)。
+
+### IM · 工具循环上限 10 → 6
+
+- `MAX_ROUNDS` 降到 6，收紧单条 handle 最坏耗时（封顶慢尾）；多步任务通常 2~3 轮就完成，6 仍留余量。
+
+### 文档 · 并发优化 roadmap 重写 + 压测存档
+
+- `并发优化ROADMAP.md` 重写易读性：顶部「当前状态一览」表、统一状态徽章（✅🔜⬜⏸️）、诊断数据外移、mermaid/明细精简。
+- 新增 `并发压测结果.md`：单条延迟（17.9s→4.3s）、串行 vs 并发、升压拐点、1000 用户容量模型。
+
 ### 定时任务 · 提醒工作流重构（结果走通知/IM，不进对话）
 
 > 定时任务的产出不再作为消息塞进对话框，改为独立工作流：到点跑 agent → 推送到侧边栏铃铛通知 + IM 主动投递。

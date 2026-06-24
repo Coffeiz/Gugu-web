@@ -1,8 +1,9 @@
 """IM 上下文透传：把「当前正在处理的 IM 消息」的平台/message_id/channel_id 带给工具层。
 
-worker 是串行单任务（serve → run_once → handle），handle 里 set 之后，
-run_collect → 工具循环 → 工具 handler 在同一异步任务内都能 get（contextvar 同任务传播）。
-web 路径不 set，react 之类的 IM 工具据此判定「当前不在 IM 对话里」直接返回不可用。
+worker 并发处理（run_once 把每条消息派发成独立 asyncio 任务，见 _dispatch）。
+ContextVar 在 create_task 时按任务复制、set 在任务内调用，故每条消息有自己隔离的
+上下文 dict——并发下不同用户互不串；handle 里 set 之后，run_collect → 工具循环 →
+工具 handler 在同一任务内都能 get。web 路径不 set，react 之类 IM 工具据此判定「当前不在 IM 对话里」返回不可用。
 """
 from __future__ import annotations
 

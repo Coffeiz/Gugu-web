@@ -325,6 +325,19 @@
 
           <div class="behavior-item">
             <div class="behavior-label">
+              <span>IM 并发量</span>
+              <span class="behavior-desc">worker 同时跑几条 agent（实测单 key 安全上限 16，改完 ≤30s 热生效、无需重启）</span>
+            </div>
+            <input
+              type="number"
+              class="behavior-input"
+              v-model.number="agentDraft.worker_concurrency"
+              min="1" max="64"
+            />
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
               <span>Daily 记忆保留天数</span>
               <span class="behavior-desc">超出后压缩进 Weekly</span>
             </div>

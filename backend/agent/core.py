@@ -13,8 +13,8 @@ from agent.skills import registry
 
 # 工具循环最大轮次。配合「工具使用准则」(skills.md，先规划后执行、别重复验证) + 强工具
 # (create_project 带 stages/todos、set_stages 整体替换、move_items/批量 rename/edit 一次处理多个)，
-# 多步任务通常 2~3 轮就完成。设 10 给复杂任务留余量；真撞上限会友好提示「前面已生效，要不要接着做」。
-MAX_ROUNDS = 10
+# 多步任务通常 2~3 轮就完成。设 6 给复杂任务留余量、同时收紧慢尾（封顶单条耗时）；真撞上限会友好提示「前面已生效，要不要接着做」。
+MAX_ROUNDS = 6
 _CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取消（单轮长回答只能在这里掐断）
 
 

@@ -26,6 +26,33 @@ CONSUMER = f"{socket.gethostname()}-{os.getpid()}"
 
 _stop = asyncio.Event()
 
+# ── P1-① 有界并发（worker 基本在等 LLM，IO 密集，串行白白浪费事件循环）──────────
+# 并发上限由 Admin 配置 agent.worker_concurrency 控制，worker 每 30s（reconcile 时）热读、无需重启。
+# 实测单 MiniMax key 安全上限≈16（带工具 sem=20 全 429）；要更大吞吐 = 多备 key，不是调大此数。
+_max_concurrency = 16                          # 当前生效值（_refresh_concurrency 热更新；run_once 据此留空闲槽）
+_user_locks: dict[str, asyncio.Lock] = {}      # user_gate：同用户串行保序、不同用户并发
+_inflight: set = set()                         # 在跑任务集：背压计数 + 优雅 drain
+
+
+def _refresh_concurrency():
+    """从 config.override.json 直接热读并发上限（隔离读，不动全局 settings 缓存）。"""
+    global _max_concurrency
+    val = 16
+    try:
+        import json as _json
+        from app.core.config import OVERRIDE_FILE
+        if OVERRIDE_FILE.exists():
+            ov = _json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
+            v = (ov.get("agent") or {}).get("worker_concurrency")
+            if v is not None:
+                val = int(v)
+    except Exception:
+        pass
+    new = max(1, min(64, val))
+    if new != _max_concurrency:
+        print(f"[worker] 并发上限 {_max_concurrency} → {new}", flush=True)
+    _max_concurrency = new
+
 
 _DEFAULT_HINT = "你好，我是咕咕 🐦\n这个机器人还没和咕咕账号关联好，去咕咕「个人设置 → 接入咕咕」重新扫码连接一下吧。"
 
@@ -224,20 +251,44 @@ async def handle(msg_id: str, payload: dict):
     return resp
 
 
-async def run_once(block_ms: int = 5000) -> int:
-    """消费一批并处理。返回处理条数。先回收崩溃 worker 的遗留，再收新消息。"""
-    handled = 0
-    # 回收待处理超 60s 的（崩溃 worker 遗留），与新消息一并处理
-    stale = await R.claim_stale(STREAM, GROUP, CONSUMER, min_idle_ms=60000, count=10)
-    msgs = stale + await R.consume(STREAM, GROUP, CONSUMER, count=10, block_ms=block_ms)
-    for msg_id, payload in msgs:
+async def _dispatch(msg_id: str, payload: dict):
+    """并发处理一条：幂等去重 → 按用户串行 → 限流执行 → ack。"""
+    # 幂等：同一 stream 条目被 claim_stale（60s）重投时跳过，防重复回复（在拿锁/槽前就丢）
+    try:
+        fresh = await R.get_redis().set(f"imseen:{msg_id}", "1", ex=3600, nx=True)
+    except Exception:
+        fresh = True
+    if not fresh:
+        await R.ack(STREAM, GROUP, msg_id)
+        return
+    puid = payload.get("platform_user_id") or msg_id
+    lock = _user_locks.setdefault(puid, asyncio.Lock())
+    async with lock:                # user_gate：同用户串行，不抢同一 session_id、不乱序
+        # 全局并发上限由 run_once 按 _max_concurrency 留空闲槽控制（_inflight ≤ 上限）
         try:
             await handle(msg_id, payload)
         except Exception as e:
             print(f"[worker] handle 出错（已 ack 丢弃，避免毒消息循环）: {type(e).__name__}: {e}", flush=True)
         finally:
             await R.ack(STREAM, GROUP, msg_id)
-            handled += 1
+
+
+async def run_once(block_ms: int = 5000) -> int:
+    """消费一批并发派发（不阻塞等处理）。按在跑数留空闲槽，防任务无界堆积。返回派发条数。"""
+    free = _max_concurrency - len(_inflight)
+    if free <= 0:
+        await asyncio.sleep(0.1)
+        return 0
+    # 先回收崩溃 worker 的遗留（>60s 未 ack），再收新消息，合计不超过空闲槽
+    msgs = list(await R.claim_stale(STREAM, GROUP, CONSUMER, min_idle_ms=60000, count=free))
+    need = free - len(msgs)
+    if need > 0:
+        msgs += await R.consume(STREAM, GROUP, CONSUMER, count=need, block_ms=block_ms)
+    for msg_id, payload in msgs:
+        t = asyncio.create_task(_dispatch(msg_id, payload))
+        _inflight.add(t)
+        t.add_done_callback(_inflight.discard)
+    handled = len(msgs)
     return handled
 
 
@@ -258,7 +309,8 @@ async def _heartbeat():
 
 async def serve():
     await R.ensure_group(STREAM, GROUP)
-    print(f"[worker] started · consumer={CONSUMER} · stream={STREAM}", flush=True)
+    _refresh_concurrency()
+    print(f"[worker] started · consumer={CONSUMER} · stream={STREAM} · 并发={_max_concurrency}", flush=True)
     hb = asyncio.create_task(_heartbeat())
     # 定时任务引擎：worker 是单实例进程，唯一 owner（web 多 worker 不会重复跑）
     from app.core import scheduler as sched
@@ -275,6 +327,10 @@ async def serve():
         except Exception as e:
             print(f"[worker] loop 出错，2s 后重试: {type(e).__name__}: {e}", flush=True)
             await asyncio.sleep(2)
+    # 优雅 drain：收到 SIGTERM 停收新消息后，等在跑的处理完再退（并发后必须，别截断回复）
+    if _inflight:
+        print(f"[worker] drain：等 {len(_inflight)} 条在跑的完成…", flush=True)
+        await asyncio.gather(*list(_inflight), return_exceptions=True)
     hb.cancel()
     sched_task.cancel()
     sched.shutdown()
@@ -290,6 +346,7 @@ async def _reconcile_loop():
             if _stop.is_set():
                 return
             await asyncio.sleep(1)
+        _refresh_concurrency()                   # 顺带热读并发上限（Admin 改了 ≤30s 生效）
         try:
             await schedtasks.reconcile()
         except Exception as e:
