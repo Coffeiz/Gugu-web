@@ -9,441 +9,90 @@
 
 ## [Unreleased]
 
-### 隐私政策页面
+---
 
-- 新增 `/privacy` 独立页面，无需登录即可访问，渲染完整隐私政策文档（基于 `docs/privacy.md`）。
-- 毛玻璃卡片质感与登录页一致（`backdrop-filter: blur(24px)`，三层 inset 高光）；背景渐变固定，卡片内容可滚动。
-- 注册页底部新增「注册即表示你已阅读并同意 隐私政策」链接。
+## [0.12.0] - 2026-06-25 · 并发扩量、定时任务、IM 强化与体验打磨
 
-### 聊天会话 · 超出上限自动清理
+> 本版核心：worker 从串行并发化、配多 key 分流扩到 50+ 人；落地用户定时任务 + 提醒工作流；
+> IM 交互（斜杠命令 / 取消打断 / 多模态）与网页聊天体验大幅强化；外加一大批文件系统、看板、
+> Admin、防幻觉与运维打磨。下面按主题归并（开发期约 50 个迭代小节）。
 
-- 每个用户最多保留 50 个聊天会话；新建会话时若已达上限，自动删除 `updated_at` 最旧的一条（含其全部消息，级联删除），无感知，不报错。
+### 并发扩量与性能（worker 串行 → 50+ 人）
 
-### 项目编辑卡 · 阶段 Todo 全完成自动进入下一阶段
+- **worker 串行 → 有界并发**：`run_once` 的 `for await` 改 `asyncio.create_task` 并发派发 + 全局 `Semaphore`；`user_gate(puid)` 进程内锁同用户串行保序、不同用户并发（单机即终态）；优雅 drain（SIGTERM 等在跑的跑完再退）；`msg_id` SETNX 幂等去重（修 `claim_stale` 重投）。实测 ~6×（串行 ~21 → 并发 ~190 条/分，带工具）
+- **多 key 分流（pick_model 模型解析层）**：`agent/llm_select.py` 统一「选哪个模型」决策点；`pool` 策略把请求散到多个 key（`random`/`round_robin`/`least_loaded` 最少在途），**总并发 ≈ key 数 × 16**；实测 2 key 把 sem=24 从 0/24 救成 24/24，不等速 key 下「最少在途」吞吐 +37%
+- **⑦ 慢尾兜底**：`core._stream_round` 对 429/超时/网络/5xx 在出 token 前退避重试（1/2/4s），sem=20 带工具从 0/12 → 12/12
+- **配额耗尽能力降级**：不再一刀切拦死，降到只读工具集（12/47）+ 婉拒重操作，查询/对话照常（`profile.light_tool_names`）
+- **连接池 + SSE**：SSE 鉴权改 `get_current_user_id`（不查 DB），长连接不再占连接池；池调优 `pool_size=15`/`max_overflow=25`/`timeout=10`/`recycle=1800`——修「试运行/重启后整站卡死」
+- **地基加固**：稳定 consumer 名 `{host}`（重启复用、不再积累）+ 启动清死 consumer；`MAX_ROUNDS → 6`；`worker_concurrency` 后台可热配（30s 热读）
+- 压测详见 [`docs/并发压测结果.md`](docs/并发压测结果.md)（单条 17.9s→4.3s、串行 vs 并发、升压拐点、1000 用户容量模型）
 
-- 在项目编辑卡勾选 todo 后，若当前阶段所有 todo 均已完成（且存在下一阶段），自动调用 `setStage` 进入下一阶段；复用现有进度条动画与已过阶段 auto-complete 逻辑。
-- 反勾 todo 不触发；无 todo 的阶段不触发；最后阶段全完成仍走原有「自动标记项目完成」流程。
+### 定时任务 + 提醒工作流
 
-### 定时任务 · 重复模式改为场景选择器
+- **用户自定义定时任务**：`scheduled_tasks` 表（DB 驱动），worker 单实例每 ~30s reconcile 到 APScheduler（增删改开关即时生效）；`/schedules` 页 CRUD + 试运行 + 排程选择器
+- **提醒工作流重构**：结果**不进对话**——`execute_task` 用 `run_ephemeral` 跑 agent（不建 session/不写消息/不推 sessions 事件），改投递到侧边栏铃铛通知(SSE) + IM 主动 DM；移除 `reminder` 动作类型，统一走 agent；上下文注入消歧（payload 里「我」= 用户）
+- **多平台精确投递**：web 通知 / 飞书 / QQ **分别勾选**、各自独立；`imreach:{uid}:{platform}` 按平台存址互不覆盖；飞书连接时存 `open_id` → 免先聊天即可投递；解绑清址 + 投递前校验活绑定，防误发旧账号
+- **对话历史压缩（新）**：超长会话把旧消息**滚动**总结成摘要，注入 system prompt 省 token（不当消息发给 LLM）；后台「对话历史压缩」开关（`conv_compress_enabled`，默认开，可关）
+- 重复模式改场景选择器（每日/工作日/周末/自定义）；单次任务执行后自动删除；试运行同步返回各渠道结果（已发送/无地址/失败）；频道选项按 IM 绑定动态显示
 
-- **「重复」字段重设计**：原来 7 个星期几 chips 改为 4 个场景 pill 按钮——**每日 / 工作日 / 周末 / 自定义**；点「自定义」展开 `DateSpanPicker`（与新建项目弹窗同款组件）选开始/结束日，后端存为 `@once:YYYY-MM-DDTHH:mm:end=YYYY-MM-DD`。
-- **自定义默认今日-今日**：切换到「自定义」且未曾选过日期时，开始/结束均自动填入当天，无需手动操作。
-- cron 映射：每日 → `m h * * *`，工作日 → `m h * * 1-5`，周末 → `m h * * 0,6`。
+### IM 交互强化
 
-### 项目编辑卡 · 文件系统快捷键
+- **斜杠强制命令** `/stop`·`/status`·`/help`：网关层确定性触发，绕过关键词分类，比自然语言取消稳；非命令（路径/未知）不吞、照常走对话
+- **自然语言取消·流式途中可打断**：core 工具循环原只在轮顶查取消，单轮长回答打不断——改为流式输出每 24 token 协作查、命中即 `close stream` 断上游，真正掐断生成
+- **轻量 Intent Router + State Manager（Phase 1.7）**：任务进行中的「还在吗/算了/嗯」网关据 Redis 状态短路、不进主模型；状态机走 Redis（worker 写、网关读，带 TTL 防卡死）
+- **多模态看图增强**：大图自动压缩、HEIC/HEIF（`pillow-heif`）、`read_file` 看文件库内图（vision + Anthropic）
+- **IM 出口兜底**（`agent/outbound.py`）：发用户前确定性清洗 tool_id / 拦系统提示词泄露；空回复兜底（绝不发空）
 
-- **Shift+Click 区间多选**：记录上次 anchor 索引，再次 Shift+Click 按当前排序顺序选取之间所有文件和文件夹；切换排序后范围随之更新。
-- **Ctrl/⌘+Click 文件夹加选**：文件夹支持 Ctrl/⌘ 点击加入多选（原来只有文件支持），与文件混选、批量操作。
-- 两个快捷键均基于 `pmFlatSelectableItems`（按 `sortedCurrentFolders + sortedCurrentFiles` 实时排序），与文件库侧的实现保持一致。
+### 咕咕聊天（网页）体验
 
-### 项目编辑卡 · 文件数徽章实时更新
+- **多会话流式隔离 + 切换实时续看**：流绑定归属会话（修「回复串到别的会话」），切走 abort、切回 `resumeStream` 补快照再续；`genstream` 后台解耦，刷新/切换不丢回复
+- **消息图片缩略图 / 拖入上传 / 滚动跟随**：气泡缩略图（复用 `useThumbCache`，刷新后按 `attach_id` 取暂存图）；大小窗整窗拖入多文件；大窗流式跟随脱手修复、发消息即时跳底
+- **侧栏 IM 接入抽屉**：飞书/QQ 两个可展开抽屉，未接入显示「扫码连接」，接入后变会话抽屉
 
-- **ProjectModal 上传**：每上传一个文件后调 `fileCacheStore.addFile()`，卡片右下角文件数立即 +1，无需刷新页面。
-- **单文件/批量/右键删除**：删除后调 `fileCacheStore.removeFile()` / `removeFiles()`，文件数立即 −N。
-- **删除文件夹**：文件夹软删后调 `fileCacheStore.refresh()` 重新拉取，徽章同步更新（文件夹内文件已一并软删，不会遗留在计数里）。
+### 文件系统与项目
 
-### 文件夹删除 · 软删除内部文件（不再移到根目录）
+- **文件工具集合操作**：`move_items`（文件 + 文件夹**递归整搬**，后端展开）取代单文件 move；`rename_file`/`edit_file` 批量；逐项如实回报，呼应防幻觉
+- **存储↔DB 对账与修复工具**（Admin·数据库）：以物理存储为准核对，幽灵（DB 有文件没）/ 孤儿（文件在 DB 无记录）明细 + 导入/删除修复
+- **项目删除遗留孤儿修复**：删项目前 `rehome_project_files_to_personal`，文件干净归个人而非变孤儿泄漏进个人视图
+- **OSS 预签名直传**：`storage.backend=='oss'` 自动走浏览器直传（presign/confirm 两端点），`local` 仍走代理，省服务器中转带宽
+- **项目进度口径统一**为「所有阶段待办已完成/总数」（看板/总览/编辑卡/日历/胶囊一致），阶段条各阶段独立涨
+- 文件夹删除改软删进回收站；项目卡拖放上传 + 文件数实时徽章；编辑卡 Shift/Ctrl 多选快捷键；已完成列「最近完成」置顶
 
-- 原来 `DELETE /folders/{fid}` 把文件夹内文件的 `folder_id` 置 `null`，导致文件「跑到根目录」并仍计入文件数。
-- 现改为递归收集所有子文件夹，对其中全部文件设 `deleted_at = utcnow()`（软删除进回收站），再从最深层开始逐层删除文件夹，避免外键冲突。
+### 界面打磨
 
-### 文件预览 · 修复 iframe PDF 滚动/开关时整页闪烁
+- **卡片拖拽物理效果**（`usePhysicsDrag`）：弹簧跟手、FLIP 占位收合、落点让位/换列双克隆飞行/吸入文件夹，落点滚动到位；接入看板/文件库/编辑卡
+- **看板进度条瀑布动画**（per-stage 填充 + 全局 ease-out 错峰）+ 滚动条 `scrollbar-gutter: stable`
+- **通知面板** Markdown 渲染 + 高度自适应不溢出（按视口动态算、铃铛靠下时上移）
+- 弹窗样式统一（排序改走 `ContextMenu` 修毛玻璃失效、清全局样式泄漏）；项目卡名称悬停浮出编辑框
+- 顶栏/定时任务按钮 Phosphor 图标；`AdminSelect` 自定义下拉（自适应宽度）；站内全局搜索（顶栏跨项目/文件/文件夹/日程/客户/对话 6 类）
+- 隐私政策独立页 `/privacy`（无需登录）+ 注册页内测提示勾选
+- PDF 预览修 iframe 滚动/开关时整页闪烁（移 OOPIF 无效 `backdrop-filter` + `will-change` 稳定 GPU 层）
 
-- **根因**：Chrome 的 PDF viewer 是独立渲染进程（OOPIF），其合成帧更新会与父层 `backdrop-filter` 发生合成器级联重绘，导致整个页面闪烁；窗口模式比全屏更明显（全屏走独立 GPU overlay 路径）。
-- **移除无效 `backdrop-filter`**：`.fp-panel`（0.97 不透明度，模糊不可见）和 `.fp-overlay`（0.25 透明度的遮罩，4px 模糊无视觉意义）的 `backdrop-filter` 均删除，彻底断开 OOPIF 合成帧触发 backdrop 纹理重算的通路。
-- **稳定 GPU 合成层**：
-  - `.fp-root` 加 `will-change: transform` → 整个预览模态从出现起即为独立 GPU 层，OOPIF 创建/销毁不扩散到外层 sidebar / topbar 的 `backdrop-filter` 合成树。
-  - `.fp-overlay` 加 `will-change: opacity` → opacity 过渡结束后不析构临时合成层，消除关闭时层重组导致的整页重绘。
-  - `.fp-panel` 加 `will-change: transform` → 面板本身稳定为独立层，与 OOPIF 合成隔离。
-  - `pv-iframe` 加 `will-change: transform` → OOPIF 拥有自己的 GPU 层。
+### Agent 提示词与防幻觉
 
-### 定时任务 · 单次任务执行后自动删除
+- **提示词分层**：persona（角色）/ skills（执行规则·真实性铁律·confirm）/ policy（内容红线 + 对外口径「以伙伴示人」）/ default（数据模板），后台分别可编辑
+- **防幻觉增强**：概览每轮注入各空间文件真值；数量只数本轮 success；被质疑数量/结果**必重查**、禁止甩锅编造；时间一律以 `{now}` 为准
+- **咕咕中文化**：注入上下文时项目状态英文枚举 → 中文（待开始/进行中/已完成）、文件位置用项目名不用编号；policy 加规则——内部 id/编号绝不对用户说、字段状态一律中文、不夹生英文
+- 改文件内容前先 `read_file` 拿最新（防覆盖用户外部改动）
 
-- 单次任务（`@once:<ISO>`）触发执行完成后直接从数据库删除，不再保留禁用记录；APScheduler 下次 reconcile 时对应 job 随之移除。
-- 试运行（`is_trial=True`）不受影响，仍只执行不修改记录。
-- 重复 cron 任务行为不变。
+### Admin / 后台
 
-### 后台 · LLM 预设「策略/分流」下拉改为自定义组件
+- 服务状态页**队列水位监控**（`im:inbound` length / 消费组 lag / pending，超阈值标黄）
+- **用户反馈功能**（提交入口 + Admin 分页列表 + SMTP 邮件通知）+ 反馈页深色 glass 重写
+- **SMTP 邮件系统**配置卡片（SSL/STARTTLS 切换 + 测试发送）
+- Admin 导航图标全换 Phosphor
 
-- **原生 `<select>` → `AdminSelect`**：策略与分流两个下拉改用全站统一的 `AdminSelect` 自定义下拉（Teleport 到 body，`popup-menu-dark` 暗色毛玻璃样式），与其他 Admin 页面（日志过滤、审计日志）保持一致。
-- **触发器自适应宽度**：`AdminSelect` 新增按选项内容自动计算最小宽度（中文字符 ≈ 15px、ASCII ≈ 8px），触发器宽度自动撑到能容纳最长选项，弹窗与选框完全等宽水平对齐。
-- **弹窗位置修正**：`position()` 改为根据剩余视口宽度自动选左/右对齐，防止弹窗超出右边界。
-- **移除 `<label>` 包裹**：策略/分流从 `<label>` 改为 `<div>`，避免浏览器将点击事件重新分发到子元素导致 toggle 双触发。
+### 运维 / 文档
 
-### LLM · 模型解析层 pick_model（多 key 分流 + Router 铺路）
-
-> 给「多 key 扩吞吐」和未来 Router 铺一层统一的「选哪个模型」抽象——调用层只对接这一个口子。
-
-- **`agent/llm_select.py` 新增 `pick_model(settings, ctx)`**：调用层（`runner`/`core`）唯一的选模型决策点，按 `ai_presets.strategy` 分支。`core`/`runner` 从「直接读 `settings.ai`」改为调它（默认 active → 行为字节级不变）。
-- **三种策略**（后台 Agent→LLM 预设 顶部「策略」下拉）：
-  - `active` 单一激活（默认）｜`pool` 多 key 分流｜`router` 智能路由（注册 `set_router` 即生效的插槽，未来 Router 落这里，core 不动）。
-- **多 key 分流 `pool`**：勾选预设「加入分流」，请求散到这些 key——每 key 一份限流额度，**总并发 ≈ key 数 × 16**。实测 2 key 把 sem=24 从单 key 的 0/24 救成 24/24。
-- **3 种分流方式**（pool 子下拉）：`random` 随机｜`round_robin` 轮询｜`least_loaded` 最少在途（动态路由到最闲的 key，`release` 跟踪在途）。实测不等速 2 key 下「最少在途」吞吐 +37%、延迟近半。
-- **配置 + 热生效**：`ai_presets.strategy` / `pool_mode` + 预设 `in_pool`；web 写即热，worker 每 30s 热读（`get_settings.cache_clear()`）。
-- 详见 [`docs/并发压测结果.md`](docs/并发压测结果.md) 三点五、[`docs/并发优化ROADMAP.md`](docs/并发优化ROADMAP.md)「模型解析层」。
-
-### 文件库/项目编辑卡 · 粘贴按钮 + 工具栏按钮统一
-
-- **粘贴按钮**：文件剪切/复制后（`cbStore.hasContent()`），文件库与项目编辑卡工具栏**最左侧**出现「粘贴」按钮，点击粘贴到当前文件夹/项目（剪切→移动、复制→拷贝，等同右键菜单）；多于一项显示数量「粘贴 (N)」。回收站/根目录不显示。图标用 icon 库 `PhClipboardText`。
-- **回收站全选**：回收站工具栏多选按钮右侧新增「全选 / 取消全选」，进入多选并勾选全部回收站文件。
-- **工具栏按钮统一**：粘贴 / 排序 / 新建文件夹 / 全选 等带文字按钮统一为 **12px·字重 600·主色文字·icon 13px**，亮色玻璃底（`rgba(255,255,255,.55)`，hover 加深、不再变灰）。
-
-### 弹窗样式统一 · 修毛玻璃失效
-
-> 排序弹窗原来内联在带 `backdrop-filter` 的容器里，自身 blur 失效、发灰、透明度异常（祖先有 backdrop-filter 会让子级 backdrop-filter 失效）。
-
-- **排序弹窗改走 `ContextMenu`**：文件库与项目编辑卡的排序下拉改用与右键菜单同源的 `ContextMenu`（Teleport 到 body），blur/透明度与右键菜单完全一致；按按钮位置弹出，自带点击外部/Esc 关闭、贴边修正；选中项箭头右对齐。
-- **导航栏通知弹窗**：统一为 `.popup-menu` 外观（背景 `rgba(255,255,255,.6)`、blur 24px、圆角 10px、`0 4px 20px` 阴影）。
-- **清理全局样式泄漏**：移除 `AppSidebar.vue` 里非 scoped 的 `.popup-menu-item` 覆盖块（会全局改右键/排序菜单条目间距），统一回 `global.css` 标准定义；用户弹窗条目样式收进 `.settings-popup` 作用域，不再外泄。
-
-### 项目卡 · 名称悬停浮出编辑框
-
-- 新建项目卡与项目编辑卡的项目名改为常驻输入框：默认像纯文本，**悬停才浮出编辑框**（与定时任务卡 `.title-input` 同款样式+动画），点击直接编辑、无暗色反馈；无悬停时无描边（移除了全局 `.title-edit-input` 残留的描边/阴影）。
-
-### 看板 · 列项目数徽章配色对齐导航栏
-
-- 看板列右上角项目数（待开始/进行中）徽章改用导航栏徽章配色（`rgba(123,127,178,.42)` 底 + 白字），尺寸与「已完成」列一致。
-
-### GuguChat · 侧栏 IM 接入抽屉（飞书 / QQ）
-
-- 聊天窗侧栏 IM 区拆成**飞书 / QQ 两个可展开抽屉**：未接入显示与「新对话」同款的「扫码连接」按钮 → 扫码连接（二维码 + 轮询）；**接入后二维码按钮自动消失，变成该平台的会话抽屉**；按钮宽度与侧栏对齐。
-
-### UI · 顶栏 & 定时任务按钮优化
-
-- **顶栏按钮字重**：「新建项目」和「上传文件」`font-weight` 统一改为 `500`。
-- **顶栏按钮图标**：引入 `@phosphor-icons/vue`，「新建项目」换用 `PhPlus`，「上传文件」新增 `PhUploadSimple`，替代原来的全角 `＋` 字符。
-- **定时任务「新建任务」**：字重改为 `500`、颜色改为 `rgba(255,255,255,0.95)` 与顶栏主按钮对齐，图标换用 `PhAlarmPlus`（与侧边栏 `PhAlarm` 同系列，语义更准确）。
-- **定时任务标题输入框**：padding 缩小（`9px→6px`），与新建项目弹窗标题区域高度对齐。
-
-### 定时任务 · 频道选项按 IM 绑定动态显示
-
-- 飞书 / QQ 频道选项仅在用户已绑定对应平台时显示；未绑定任何 IM 时只显示「web 通知」。
-- **后端**：`GET /auth/me` 新增 `im_channels` 字段，异步查 Redis（飞书 `imreach`）+ DB（`user_bots` 表 QQ bot），返回当前用户已绑定的平台列表。
-- **前端**：`UserResponse` 加 `imChannels` 字段；Schedules 页读取并动态 `v-if` 控制选项；编辑已有任务时自动过滤掉已保存但现在未绑定的频道，至少保留 `web`。
-
-### 咕咕设置 · 扫码连接平滑滚动
-
-- 点击「扫码连接」生成二维码后，设置面板自动平滑滚动到底部（`scrollTo({ behavior: 'smooth' })`），不再需要手动下拉。
-
-### IM worker · 串行 → 有界并发（P1-①，~6× 吞吐）
-
-> worker 原本严格串行（`run_once` 里 `for msg: await handle`），N 个用户同时发就排队、尾延迟 = N×单条。worker 基本在等 LLM（IO 密集），改为并发执行。
-
-- **有界并发**：`run_once` 串行 for → `asyncio.create_task` 并发派发 + 全局 `Semaphore`；按在跑数留空闲槽消费，防任务无界堆积（背压）。
-- **`user_gate(puid)`**：每用户一把进程内 `asyncio.Lock`——同用户串行保序（不抢同一 `session_id`、不乱序），不同用户并发。单机决策下进程内锁即终态。
-- **`msg_id` 幂等去重**：派发前 `SETNX imseen:{msg_id}`，修掉 `claim_stale` 60s 重投导致的重复回复。
-- **优雅 drain**：SIGTERM 先停收新消息、`gather` 等在跑的处理完再退，不截断回复。
-- **并发上限可热配**：`agent.worker_concurrency`（默认 16，实测单 MiniMax key 安全上限——带工具 sem=20 全 429）。worker 每 30s 从 override 热读、改完 ≤30s 生效无需重启；要更大吞吐靠多备 key，非调大此数。
-- **并发安全**：`imctx` 用 ContextVar（按 asyncio 任务隔离）、`rtstate` 按 puid 存 Redis、加 per-user 锁，已验证不串。
-- 压测：串行 ~21 条/分 → 并发 ~190（带工具）~340（无工具）条/分，0 报错；详见 [`docs/并发压测结果.md`](docs/并发压测结果.md)。
-- **地基 B · 清死 consumer**：consumer 名从 `{host}-{pid}` 改稳定 `{host}`（重启复用不再积累；多 worker 用 `GUGU_WORKER_SLOT` 区分）+ 启动 `cleanup_dead_consumers`（空闲>30min 且无 pending 即删，保留自己）。曾堆 79 个，已清 78。
-
-### IM · LLM 慢尾兜底（⑦：瞬时错误退避重试）
-
-> 贴着并发上限跑会偶发限流；把硬失败变成「慢几秒但不丢」。
-
-- `core._stream_round` 包一层重试：LLM 流式调用遇 **429 / 超时 / 网络 / 5xx** 在「出 token 前」退避重试（1/2/4s，最多 3 次）；已吐 token 不重试（防重复）。重试用尽/不可重试 → 友好降级文案，不让整条 handle 崩。
-- 实测：sem=20 带工具原本 0/12 全 429，加重试后 **12/12 全成功**（延迟升到 ~9s 含退避）。
-- 注：当前 anthropic 路（MiniMax）；OpenAI 路（DeepSeek 等）可同样套用，待接入时补。
-
-### 配额 · 耗尽降级（不再硬拦，查询/对话仍可用）
-
-> 原来 token 配额（精力）一耗尽就整条拦死，连查询都不行。改为**能力降级**。
-
-- web 路配额耗尽（6h/周）不再 `return` 报错，改 `degraded=True` 继续跑——只给**只读/轻量工具集**（12/47：list/get/read/搜会话），屏蔽创建/修改/删除/生成文档/联网等重操作。
-- 注入提示让咕咕**礼貌婉拒重操作**（「精力不足，等恢复再做」），不假装已完成；查询/对话照常。
-- `profiles/base.py` 加 `READ_ONLY_TOOLS` + `light_tool_names`；`adapters/web.py` 配额块改降级。
-
-### IM · 工具循环上限 10 → 6
-
-- `MAX_ROUNDS` 降到 6，收紧单条 handle 最坏耗时（封顶慢尾）；多步任务通常 2~3 轮就完成，6 仍留余量。
-
-### 文档 · 并发优化 roadmap 重写 + 压测存档
-
-- `并发优化ROADMAP.md` 重写易读性：顶部「当前状态一览」表、统一状态徽章（✅🔜⬜⏸️）、诊断数据外移、mermaid/明细精简。
-- 新增 `并发压测结果.md`：单条延迟（17.9s→4.3s）、串行 vs 并发、升压拐点、1000 用户容量模型。
-
-### 定时任务 · 提醒工作流重构（结果走通知/IM，不进对话）
-
-> 定时任务的产出不再作为消息塞进对话框，改为独立工作流：到点跑 agent → 推送到侧边栏铃铛通知 + IM 主动投递。
-
-- **结果不入对话**：`execute_task` 改用 `run_ephemeral`（`agent/runner.py`）跑 agent——不建/不复用 `ConversationSession`、不写 `conversation_messages`、不推 `sessions` SSE 事件，因此定时任务的回复不会出现在「⏰ 咕咕提醒」会话或任何聊天窗口。
-- **投递改两路**：① `events.publish(uid, notification={title, content})` → SSE → 前端 `live.js` → `ui.js` 通知 store → 侧边栏铃铛角标实时弹出；② `_deliver_im` 主动 DM（飞书可主动，QQ best-effort）。
-- **移除 `reminder` 动作类型**：用户能建的动作只剩 `agent`（`_ACTIONS = {"agent"}`），删掉前端类型选择器与后端 `reminder` 分支；简单提醒和复杂任务统一交给 agent，可调用工具。
-- **上下文注入消歧**：触发时把 payload 包成「[定时任务触发：{name}]\n现在是 {now}，用户设置了一条定时任务：{payload}\n请以咕咕的身份完成这项任务……」，让 agent 明确 payload 里的「我」指用户而非自己。
-- **编辑模态改版**：任务名置顶（白底描边输入框、聚焦才显边框）、重复改周一~周日圆形 day chips（多选、无选=不重复）、各区块分割线，与新建项目卡同款 squircle 风格。
-
-### 性能 · SSE 不再占连接池 + 连接池调优 + 试运行同步返回结果
-
-> 修复「每次试运行 / 前后端重启后整站卡死」——根因是 SSE 长连接长期占着 DB 连接，把连接池（默认 15）耗尽。
-
-- **SSE 鉴权不查 DB**：`/live/stream` 原经 `get_current_user`（`Depends(get_db)`）拿用户，DB session 在 SSE 整个生命周期不释放——每条长连接占一个池连接。新增 `get_current_user_id`（仅解 JWT、不碰 DB），SSE 端点改用它，长连接不再占池。
-- **连接池调优**（`app/db/session.py`）：`pool_size=15`、`max_overflow=25`（峰值 40/进程，web+worker ≤80，留 ~20 给 pgAdmin）、`pool_timeout=10`（等不到快速失败而非挂 30s）、`pool_recycle=1800`。
-- **试运行返回各渠道结果**：`POST /scheduled-tasks/{id}/run` 同步执行并返回每个渠道的投递状态（`已发送` / `无可触达地址` / `失败`），前端弹窗直接显示——不再静默、不用猜哪个平台没收到。连接池已修复，同步 await 一条试运行只占一个连接、不会像 SSE 那样耗尽。
-
-### 定时任务 · 多平台精确投递（按平台存地址 + 连接时存址 + 解绑清址）
-
-> 让用户能**分别勾选** web 通知 / 飞书 / QQ，且各平台独立投递、互不覆盖；并杜绝解绑后误发旧账号。
-
-- **渠道拆分**：原单一「飞书/QQ」(`im`) 拆成 **`web` 通知 · `feishu` · `qq`** 三个独立勾选；后端 `execute_task` 按勾选的渠道分别投递（`web`→SSE 通知；`feishu`/`qq`→对应平台 DM）。旧 `chat`/`im` 作历史别名兼容。
-- **可触达地址按平台存**：`imreach:{uid}:{platform}`（原来是单条 `imreach:{uid}` 互相覆盖，导致「发了 QQ 飞书地址就没」）。`get_imreach(uid, platform)` 精确取该平台地址，合并键仅作兜底。
-- **飞书连接时存地址**：`feishu_connect.poll` 成功后把 owner `open_id` 存进 imreach → **选了飞书无需先聊天即可主动投递**（QQ 受平台限制仍需首条消息学习地址）。
-- **飞书按 open_id 发**：`feishu._do_send` 按收件人前缀自动判断 `ou_`(open_id) / `oc_`(chat_id)，`worker._send` 无 chat_id 时用 open_id。
-- **解绑双保险（防误发旧账号）**：① 解绑 bot 时 `clear_imreach` 删该平台地址；② 投递前 `_deliver_im` 校验该平台有 enabled bot，**无活绑定一律不发**——即使地址残留也发不出去；重绑生成新 app + 新地址。
-- **设置界面**：某平台已绑 bot 时**隐藏「扫码连接」按钮**（显示「已连接·删除后可重连」），UI 层定死「每用户每平台一个 bot」。
-
-### 通知面板 · 弹窗高度自适应不溢出
-
-- 弹窗高度按视口动态算（`maxHeight = 视口高 − 上下边距`），铃铛太靠下时整体上移让出空间，**底部绝不超出页面**；列表在弹窗内滚动。
-
-### 文档 · 并发优化 roadmap 收口
-
-- `开发链路-roadmap.md` 重命名为 **`并发优化ROADMAP.md`**（单一权威：诊断依据 + P0–P4 + ①–⑨ backlog）；合并并删除旧的 `并发与性能优化.md`（诊断数据已抢救进新文档）；`agent.md` 相应章节砍成指针。回填状态：⑤ DB 池、② 标题/反思 fire-and-forget 标记已完成。
-
-### 项目卡 · 拖放上传文件到项目文件夹
-
-- **拖放支持**：将文件拖到项目卡片上（`dragenter`/`dragover`/`dragleave`/`drop`），直接上传到该项目的根目录。使用 `_dragEnterCount` 计数器解决子元素 `dragleave` 误触发问题，通过 `dataTransfer.types.includes('Files')` 区分文件拖拽与卡片拖拽。
-- **上传进度 overlay**：拖入时卡片显示半透明颜色提示；上传中进度条从左向右填充整张卡片——颜色取自 `project.color` 第一个 hex 色值转 `rgba(r,g,b,0.32)`（天生带 alpha，不依赖 `opacity`），支持 `transition: width 0.5s` 平滑缓动，解决之前一跳一跳的问题；图标与文字颜色跟随项目色。
-- **文件数实时更新**：上传完成后调用 `cacheStore.addFile(uploaded)`，`liveFileCounts`（由 `allFiles` 实时计算）立即更新卡片右下角文件数，无需刷新页面。
-
-### 项目看板 · 进度条瀑布动画
-
-> 点击阶段卡片时，进度条按顺序依次填充/退回，视觉上形成瀑布流效果。
-
-- **Per-stage 填充数组**（`animFills = ref(null)`）：抛弃原单一 `animFill` 数值，每个阶段独立存储当前宽度，彻底解决「完成阶段越多进度条越窄」的坐标系 bug。
-- **全局 ease-out + 时间槽错开**：对全局进度 `t = 1-(1-raw)²` 统一缓动，每个变化阶段分配错开的时间槽（`t·nc - k`），保证动画整体非线性减速且各段顺序填充，而非各段独立缓动。
-- **只对变化阶段分配槽位**：过滤掉填充量变化 ≤ 0.5% 的阶段，后退动画自动倒序，避免无意义补间。
-- **`toFills` 预测 setStage 副作用**：`setStage` 前进时对途经阶段 auto-complete todos（`autoCompleted: true`），后退时还原（`_savedDone`）。`toFills` 预先计算 setStage 执行后的真实填充值，避免动画结束后 `segFill` 与动画终态不一致造成视觉 snap。
-- **`ProjectCard.vue` 与 `ProjectList.vue` 同步**：两处 `clickStage` 使用相同动画逻辑和 `toFills` 计算，保持仪表盘列表与项目页行为一致。
-
-### 项目看板 · 滚动条优化
-
-- 各列 `.col-body` 加 `scrollbar-gutter: stable`，滚动条出现/消失时卡片宽度不再跳变。
-- 通过 `margin-right: -8px` + `padding-right: 14px` 将滚动条推入列右侧 padding 区域，远离卡片内容。
-
-### 通知面板 · Markdown 渲染
-
-- 通知内容（`n.content`）从纯文本 `{{ }}` 改为 `v-html`，经 `marked.parse()` 渲染，支持加粗、列表、行内代码、标题等 Markdown 格式。
-- 高度限制：初版 `max-height: 60vh`，后改为按视口动态算、底部不溢出（见上「通知面板 · 弹窗高度自适应不溢出」）。
-
-### 定时任务 · 试运行不关闭 @once 任务
-
-- **根因**：`execute_task` 对 `cron` 以 `@once:` 开头的任务执行后自动 `enabled = False`，试运行也走了同一路径，导致点「试运行」后任务卡片立即变灰。
-- **修复**：`execute_task` 增加 `is_trial: bool = False` 参数；试运行端点 `POST /{id}/run` 传 `is_trial=True`，跳过 `enabled = False` 逻辑。
-
-### Bug 修复
-
-- **`ProjectCard.vue`**：`animFills` 为 `const ref`，误写 `animFills = [...]` 赋值常量导致 `TypeError`，改为 `animFills.value = [...]`。
-- **`ProjectModal.vue`**：`activeStageIdx` / `stageProgress` 声明在 `watch({ immediate })` 调用之后，`recalcStageState` 访问时命中暂时性死区（TDZ）报 `Cannot access before initialization`；将两个 `ref` 声明前移至 watch 之前。
-
-### 用户定时任务（DB 驱动 · 执行 · 投递）
-
-> 用户自定义定时任务。引擎 APScheduler（`AsyncIOScheduler`），挂在 **worker 单实例进程**（web 多 worker 不重复跑，呼应「周期任务单实例化」）。
-
-- **DB 驱动**：`scheduled_tasks` 表（`action_type`、`payload`、`cron`、`channels`、`enabled`）。worker 每 ~30s 从 DB **reconcile** 到 APScheduler——增/删/改/开关即时生效、不重启（同 supervisor 读 `user_bots` 的套路）。
-- **动作**（`app/scheduled_tasks.py`）：到点跑一条咕咕指令（`agent`）。〔后续重构：移除 `reminder`、结果改走通知/IM，见本节顶部「提醒工作流重构」〕
-- **投递渠道**：侧边栏铃铛通知（SSE）+ `im` 按 Redis 存的「可触达地址」(`imreach:{user_id}`，worker 收消息时记一份) 主动 DM（飞书可主动，QQ 主动受限 best-effort）。〔原 `chat` 进会话渠道已废弃〕
-- **用户「定时任务」页**（`/schedules`，侧边栏入口，glass 大版面 + 任务小卡片）：自定义任务 CRUD + 「试运行」后台执行一次（结果走通知/IM）+ 排程选择器（周一~周日 day chips + 时间，前端构造 cron；一次性任务用 `@once:<ISO>`）。后端 API `GET/POST/PATCH/DELETE /scheduled-tasks`（cron 校验）+ `POST /{id}/run`。
-- **Admin 服务状态页可见**：worker 心跳带上已挂定时任务（id/name/下次运行时间），服务页 worker 卡片下列出。
-
-> 注：曾做过的「系统级任务 / 内置截稿提醒 / Admin 系统任务配置」按需求已移除，只保留用户自定义任务。
-
-### IM 斜杠强制命令（/stop · /status · /help）
-
-> 比自然语言「算了/取消」更可靠的确定性中断手段。
-
-- **网关层斜杠命令**（`agent/router.py` 的 `parse_command` + `decide`，网关零改动）：绕过关键词分类，确定性触发。
-  - `/stop`（及 `/取消` `/x`，半/全角斜杠都认）→ **无条件置取消标志**中断当前任务——不受「是否判定为忙」约束、无关键词漏判，比自然语言取消稳；空闲时回「现在没有在跑的任务」。
-  - `/status` 看当前进度（按状态机回话术）、`/help` 列命令。
-- 非命令（如粘贴路径 `/Users/...`、未知命令）**不被吃掉**，照常走对话；自然语言取消「算了/还在吗」仍并存。
-- 中断的实际粒度沿用 core 的取消检查（轮顶 + 流式途中每 24 token），故需配合 worker 上的取消修复一起部署。
-
-### IM 自然语言取消 · 流式途中可打断（修复）
-
-> 现象：IM（QQ/飞书）生成时发「取消/算了」打不断，答案照样说完。
-
-- **根因**：core 工具循环只在**每轮 LLM 开始前**查取消标志（轮顶）。最常见的「生成」是单轮、无后续工具——网关把取消标志写进了 Redis，但 core 永远等不到「下一轮」去读它，于是整段答案照常流完。
-- **修复**（`agent/core.py`，Anthropic + OpenAI 两路）：流式输出循环里**每 24 个 token**（`_CANCEL_CHECK_EVERY`）协作查一次取消标志，命中即退出 `async with` / `stream.close()` —— **关闭流、断开上游请求、真正掐断生成**（不是只丢弃后续 token）。
-- 进程内伪流测验证：取消标志在第 30 个 token 生效后，生成在第 48 个 token（首个检查点）停下，而非流完 1000 个。
-- 固有局限（已记 [`agent-决策环.md`](docs/agent-决策环.md)）：取消粒度约 24 token（亚秒级延迟，短于 24 token 的回答会说完）；**工具执行途中**（慢 `web_search`/文档生成）不查取消，等工具跑完到下个检查点。
-
-### Admin 服务状态页 · 队列水位监控
-
-- **后端** `services_admin.py` 的 `GET /admin/services` 增 `queue` 段：读 `im:inbound` 流 `length` + `agent-workers` 消费组 `lag`（已进队列没被取走＝真积压）/ `pending`（取走没 ack＝处理中）。
-- **前端** 服务状态页加队列水位条（队列长度 / 积压待取 / 处理中），`lag>20` 或 `pending>10` 标黄预警 —— 一眼判断 worker 吃不吃得消。
-- `consumers` 字段（消费组历史 pid 累积、非活 worker 数）刻意不显示，免误导。
-
-### 咕咕聊天 · 多会话流式隔离 + 切换实时续看
-
-- **修「回复串到别的会话」**：流式回复原来一直往全局共享的 `messages` 写，发完消息切到另一个会话，正在生成的 token 就渲染进了**当前所看会话**的视图（从没真正存进去 → 切换/重载即消失，纯视觉串台）。现在每个流**绑定归属会话**，切走后 `detached` 不再碰别的视图；`session_id` / `session_title` 事件按本流会话处理、不抢当前焦点；空回复兜底气泡也加 `!detached` 守卫
-- **切换后仍实时（思考/生成动画不丢）**：改为「UI 始终只有一个流式消费者，绑当前所看会话」——切走时 `abort` 当前 SSE（后端 `genstream` 生成已解耦、继续跑、不受影响），切到的会话若 `active` 就 `resumeStream` 重连：续看端点先补已生成快照（完整 partial 文本 + 文件 + 当前工具态）再订阅后续，所以切过去/切回都立刻看到当前进度并继续实时刷新；切回已生成完的会话则从 DB 载入完整回复
-- `send` / `resumeStream` 收尾加 **ownership 守卫**（`sessionId === 本流会话` 才重置 `streaming/thinking/activeTool/abortCtrl`），避免切走后旧流的 finally 清掉新会话续看流的状态；`consumeStream` 对 abort 优雅收尾（不当网络错）
-
-### OSS 预签名直传（自适应上传）
-
-> 背景：文件上传此前走服务器中转（浏览器 → FastAPI → OSS），文件过两遍服务器、带宽双倍消耗。
-- **自动适配后端**：`storage.backend == 'oss'` 时自动切 OSS 直传；`local` 时继续走服务器代理；Admin 切换后端后下一次上传立即生效，无需重启
-- **新端点 `POST /files/presign`**：计算 `storage_key`、检查配额，OSS 后端返回 `{ mode:'oss', upload_url, storage_key, final_name, ext }`（presigned PUT URL 有效期 10 分钟），本地后端返回 `{ mode:'proxy' }`
-- **新端点 `POST /files/confirm`**：OSS 直传完成后由浏览器调用，验证 `storage_key` 归属（必须以 `{user_id}/` 开头）+ 验证 OSS 对象实际存在，写入 DB 记录，返回 `FileResponse`
-- **存储后端新增 `OSSStorageBackend.presign_put(key, mime_type, expires=600)`**：封装 `oss2.Bucket.sign_url("PUT", ...)`，返回带签名的 PUT URL
-- **前端**：`api.js` 新增 `filesApi.presign` / `filesApi.confirm` + `uploadDirectWithProgress(url, file, onProgress)`（原生 PUT XHR，无 Authorization 头，OSS 预签名 URL 自带鉴权）；`UploadModal.vue` 上传循环先调 `/presign`，按 `mode` 分支走直传或原有代理流程，进度条 OSS 路保留 5% 给 confirm 阶段
-
-### 存储↔DB 对账与修复工具（Admin · 数据库）
-
-> 起因：DB 曾在两台服务器间迁移、两边 `uploads/` 都有物理文件，改配置后「DB 记录」与「磁盘对象」串了——出现 DB 有记录但文件没了（幽灵）、文件在磁盘但 DB 无记录（孤儿）。需要一个以**物理存储为准**的核对 + 修复手段。
-- **对账（只读）`GET /admin/config/reconcile-storage`**：逐一比对 `files.storage_key` 与存储后端实际对象，返回 `db_file_rows / storage_objects / matched / ghost_count / orphan_count` 及幽灵/孤儿明细。内部 key（`.agent/`、`.chat_staging`、`.thumbs/`、`avatars/` 等）由 `_is_internal_key` 过滤，不计入孤儿
-- **修复（写）`POST /admin/config/reconcile-storage/repair`**，`action` 两选项都给：
-  - `delete`：删除孤儿物理文件（清磁盘垃圾，如永久删除残留的 `trash/` 文件）
-  - `import`：把孤儿重建成 DB 记录（解析 `storage_key` 反推 user/空间/项目/文件夹，回填 `File` 行）
-  - 逐 key try/except，返回 `done / failed / done_keys`，单条失败不影响其余
-- **存储后端补 `exists(key)` / `list_keys()`**（`StorageBackend` 基类 + Local 用 `rglob`、OSS 用 `ObjectIterator`），供对账枚举/核对
-- **Admin → 系统配置 → 数据库**新增「存储对账」按钮：跑对账出报告（亮色文字适配深色面板），每条孤儿配「导入 / 删除」按钮 + 批量「全部导入 / 全部删除」
-- **修复 import 500**：`reconcile_repair` 漏 import `get_storage` → `NameError` → 点「导入」报「服务器内部错误」。补上函数内 import，import/delete 两动作端到端实测通过
-
-### 项目删除遗留孤儿文件（结构性修复）
-
-> 现象：用户个人文件视图里冒出本应属于已删项目的文件（A 开头、01–08 等）。Safari/Chrome 都有、清缓存无效——不是缓存问题。
-- **根因**：`File.project_id` 外键是 `ON DELETE SET NULL`，删项目时文件 `project_id` 被抹成 `NULL` 但 `space` 仍是 `'project'` → 成「孤儿文件」；而前端 `filesCache` 按「`projectId` 为空就归个人」分组，把这些孤儿漏进了个人空间视图
-- **修复**：删项目前先 `rehome_project_files_to_personal`（`space='personal'`、`project_id/folder_id/stage_name` 置空），文件干净归个人而非变孤儿；物理文件 `storage_key` 不动（仍可访问，路径残留无害）。HTTP `DELETE /projects/{id}` 与 Agent `delete_project` 工具两条路都接入
-- **教训留档**：排查时一度误判「文件已删/是浏览器缓存/连错库」，实为孤儿泄漏——`skills.md` 已强化「被质疑数量/可见性时跨全空间重查、勿先甩锅给缓存」
-
-### 用户反馈功能
-
-- **反馈入口**：侧边栏底部独立按钮 → 移入用户卡片弹出菜单首项（PhFlag 图标），点击头像弹窗即可触达，不占导航空间
-- **FeedbackModal 分类图标**：emoji 换成 Phosphor 图标（Bug → `PhWarningOctagon`、建议 → `PhLightbulb`、其他 → `PhChatCircle`），选中时仅色/背景变、字重固定避免宽度抖动
-- **后端**：新 `Feedback` 表、`POST /api/v1/feedback` 用户提交端点、`GET /api/v1/admin/feedback` 分页列表；`BackgroundTasks` 异步触发 SMTP 邮件通知
-
-### Admin · 邮件系统（SMTP）配置
-
-- **系统配置页新增「邮件系统」卡片**：SSL（465）/ STARTTLS（587）快速切换、服务器 / 端口 / 账号 / 密码 / 发件人 / 收件人六字段，卡片图标用 `PhEnvelopeSimple`
-- **测试发送**：新后端端点 `POST /api/v1/admin/config/test-smtp`，用当前面板输入参数（密码留空回退已保存值）异步发一封测试邮件，即时回报成功/失败
-- **Config Store**：新增 `smtp` 节，`fetchConfig` / `saveConfig` / `resetDraft` 均一并处理，与 DB/Redis/Storage 同等公民
-- 邮件服务 `app/services/email.py`：`send_email` / `notify_feedback`，无 SMTP 配置时静默跳过
-
-### Admin · 用户反馈页重写
-
-- 全面改用深色 glass-morphism 风格（`rgba(255,255,255,0.05)` 卡片 + `backdrop-filter: blur`），与其他管理面板视觉一致
-- 分类过滤按钮、刷新按钮图标换 Phosphor（`PhList` / `PhWarningOctagon` / `PhLightbulb` / `PhChatCircle` / `PhArrowClockwise`）
-- 修复刷新按钮 SVG 旋转偏移：给 `.spin-icon` 补 `transform-box: fill-box; transform-origin: center`，Phosphor SVG 现在绕中心旋转
-
-### Admin · 导航图标全换 Phosphor
-
-- `AdminLayout.vue` 十二个导航项的手绘 SVG 全替换为 Phosphor 组件（PhGear / PhRobot / PhChartLine / PhFlag / PhTicket / PhUsers / PhStack / PhPulse / PhClipboard / PhTerminal / PhBug / PhSignOut），品牌 Logo SVG 保持不变
-
-### 细节修复
-
-- **toggle-btn 宽度抖动**：`font-weight` 从 500/600 切换改为始终 600，选中态仅变背景色与边框，按钮宽度不再跳动（影响存储后端切换、SMTP SSL 切换）
-
-### 卡片拖拽物理效果（项目卡 / 文件卡）
-
-> 原生 HTML5 拖放的 ghost 由浏览器接管，无法做弹簧跟随、占位收合、落点让位。新 `composables/usePhysicsDrag.js` 在**保留原有拖放逻辑不变**的前提下叠一层纯视觉物理层（隐藏原生 ghost、克隆体跟手飞、FLIP 占位动画）。接入看板项目卡、文件库网格卡、项目编辑卡（ProjectModal）文件卡。
-- **跟手 + 拎起感**：克隆体弹簧跟随（低通平滑去抖）、挂在指针下方、按速度轻微后仰（上小下大）；拾起时源卡隐藏、占位用 **FLIP 动画收合**邻居（不再突然空出）
-- **松手按落点三态**：① 换状态/换列（看板进行中→已完成）→ **双克隆同轨迹飞行**，飞行途中 `scale` 把卡片伸缩到落点卡尺寸（已完成卡在月份分组里尺寸不同）+ 交叉淡变完成样式切换，落点邻居 FLIP **让位**；② 拖进文件夹/折叠分组 → 缩小**吸入**；③ 原地/拖出范围 → 实心飞回、占位 FLIP **展开归位**
-- 缓动统一为不回弹的强 ease-out；落点判定放在 `drop` 后下一帧、paint 前完成，避免闪一下
-- 修一串迭代中的坑：同步 `display:none` 源卡会取消原生拖拽（改即时透明 + 延后收合）、克隆体首帧停在 (0,0)、落进折叠分组时飞到左上角、**拖出有效区松手要等 ~250ms**（无效拖放的浏览器 snap-back 延迟 → 拖拽期间 `preventDefault` 让整页可放置，松手即时归位）
-- **换列/归位落点滚动到位（列已满时）**：落点卡若滚出列视口，松手后**快速滚动**（自实现 rAF 补间，避开 `scrollBy({smooth})` 在 drop / reduce-motion 下退化成瞬间）把它带进可视区，克隆体飞到滚动后的最终位置一起落定。根因是浏览器**原生拖拽边缘自动滚动**在拖动时就把列滚到底（`dy≈0` 没东西可滚）→ 拖拽期间锁住 `.col-body` 滚动（`overflow:hidden`，3px overlay 滚动条不引起位移），松手解锁再受控滚；归位（同列）也滚回原位（展开源卡后还原被锁列夹小的 `scrollTop`）
-- 去掉曾加的 `clip-path` 裁剪：有了滚动到位，克隆体本就落在视口内、不探出列，裁剪反而会在滚动途中把克隆体裁没
-
-### 项目进度口径统一为「总完成度」
-
-- **统一口径**：看板卡 / 总览页 / 项目编辑卡头部 / 日历项目条 / Dashboard 近期节点胶囊，进度数字一律 = **所有阶段待办「已完成 / 总数」**（不再是「(当前阶段+1)/阶段数」的阶段位置百分比）；无任何待办时退回按阶段位置。抽出共享 `utils/projectProgress.js` 作单一口径，日历/胶囊前端现算、不再读持久化 `progress`
-- **阶段条各阶段独立**：每段填充按**自己的待办完成度**涨（阶段2 待办做完阶段2 就涨，不受当前阶段限制），无待办的阶段按是否推进到/过此阶段
-- 持久化 `progress` 字段与「最后阶段满→自动完成」判定暂未改（仍阶段位置口径），仅显示层统一
-
-### 已完成列「最近完成」置顶
-
-- 已完成列顶部加「最近完成」区，按完成时间倒序直接显示最近 3 个项目（无需展开年/月文件夹），并从下面的归档分组里排除避免重复
-
-### 文件工具「集合操作」化（批量 + 文件夹递归整搬）
-
-> 起因：Agent 一次只能移/改一个文件、且没法移文件夹，多文件操作要调 N 次——既慢又容易丢步、乱报数量。改为「让 Agent 表达意图、后端负责展开」的集合操作。
-- **`move_items`**（取代单文件 `move_file`）：`files` + `folders` 混合一次移到同一 `target`。**移文件夹连里面的文件、子文件夹一起递归搬**（后端展开，Agent 不必知道里面有几个）——同项目内只改 `parent_id`（便宜）、跨项目/空间则级联改子孙 `project_id/space` + 物理重搬；防自移入自身/子孙；逐项回报成功/失败
-- **`rename_file` 批量**：`renames=[{file,new_name},...]` 一次改多个，适合「按顺序编号」（Agent 自己排序号一次传）
-- **`edit_file` 批量**：`edits=[{file,mode,...},...]` 一次改多个（多文件统一查找替换、或各自不同编辑）
-- 三者都**逐项如实回报** `moved/renamed/edited_count + failed`，呼应防幻觉（不许笼统宣布"全部完成"）
-- `skills.md` 同步：引导优先用批量入口、移文件夹递归不必枚举；**改掉旧准则**「批量操作每一个都各自调用工具」（它会让模型一个个调、白瞎批量），改为「用批量工具一次处理 + 按后端逐项回报如实汇报」
-
-### 执行准则：工具循环 6 → 10 + 改文件前读最新
-
-- **`MAX_ROUNDS` 6 → 10**：复杂多步任务留余量；批量工具已压低实际轮次，10 不会经常摸到
-- **改文件内容前先 `read_file` 拿最新**（`skills.md`）：用户可能在网页/IM 自己改过/传过/删过文件，几轮前的 `read_file` 内容可能已过期——尤其 `replace_all` 整体覆盖前必须先读，别覆盖掉用户的外部改动；文件存在/位置/数量则以每轮注入的实时「文件概览」为准
-
-### 修复（续）
-
-- **`read_file` 读 PDF/Office 报「找不到文件」误导 Agent 劝用户删好文件**：服务器没装 `pdftotext`/`libreoffice` 时，`doctext` 抛的 `[Errno 2] No such file or directory: 'pdftotext'`（指**命令**不存在）被模型误读成「用户文件丢了」，进而建议删除/重传——而文件完好。`doctext._run` 捕获 `FileNotFoundError`，改报「服务器未装「X」命令、用户文件完好、切勿建议删除/重传」
-
-### 轻量 Intent Router + State Manager（Phase 1.7 · 关键词版 · 仅 IM）
-
-- **网关入队前置路由**（`agent/router.py` + `agent/runtime_state.py`）：任务进行中的「还在吗 / 算了 / 嗯」**不进队列、不进主模型**，网关据 Redis 状态机直接回话术。关键洞察：IM 是单 worker 顺序消费队列，忙时看不到队列后续消息，故状态查询/取消必须在**网关层**短路
-- **State Manager**：`IDLE/THINKING/SEARCHING/GENERATING` 走 Redis（worker 写、网关读，带 TTL 防卡死）；worker `handle` + core 工具循环据 `TOOL_STATE`（web_search→SEARCHING、create_document→GENERATING）打点
-- **自然语言取消**：网关置取消标志 → core 工具循环**每轮协作检查** → 命中即中断（粒度 = 轮与轮之间，单次 LLM 流式调用切不了）；`AgentResponse.cancelled` 透传，worker 不补发（网关已回「先不继续啦」）
-- 误判取舍：整条匹配 + 短词才判取消/情绪，宁漏判进主模型、不误判短路（「算了」仅在忙时当取消）。web 路无 imctx，core 的取消/打点恒 no-op，不受影响
-
-### Agent 防幻觉增强（数量诚实 + 被质疑重查）
-
-> 起因：一次批量删文件，MiniMax 谎报"删了 23 个"，被质疑时又编"13 个被系统吞了、不是我的锅"——实际只删了 9 个个人文件、其余在项目空间安然无恙（无数据丢失）。
-
-- **结构 · 概览注入真值**：`load_files_overview` 每轮多注入「各空间文件数 + 回收站数」，模型每轮都看到真值（如「项目 9、个人 1；回收站 9」），数量类问题不靠记忆瞎报
-- **提示词 · 数量诚实**（`skills.md`）：报"删了/移了 N 个"，N 只能数本轮实际 success 回执，失败逐条说
-- **提示词 · 被质疑铁律**：用户质疑数量/结果（"怎么只有 X 个 / 少了 / 没删掉吧"）时**必须重调 `list_files`/`list_trash` 核实**，用最新数据答；**明令禁止**编"系统吞了/并发/不是我的锅"甩锅，真有出入就如实承认"我刚才报错了"
-- **提示词 · 时间别臆测**（`default.md` `{now}` 旁）：`{now}` 本就每轮新鲜组装（`datetime.now()`，每条消息重算），但模型曾在闲聊里凭感觉编时间（明明 14:05 却说"凌晨 4 点多还在啃手册"）。在 `{now}` 旁补一句：涉及「现在几点 / 星期几 / 时段问候」一律以 `{now}` 为准、不得臆测，拿不准就别提时段
-
-### 注册页内测提示 + 自定义勾选框
-
-- 注册表单增加内测免责提示勾选：文案「测试阶段数据随时可能清空，我已知晓并会自行备份」，勾选后方可点击注册按钮（`Register.vue`）
-- 自定义勾选框样式：隐藏原生 `<input>`，未勾时半透明白底 + 淡紫边框与输入框同风格，已勾时紫色渐变填充 + 白色对勾 SVG + 淡紫阴影，与注册按钮视觉呼应
+- **systemd 托管 worker / supervisor**（`Restart=always`，supervisor `KillMode=control-group`）；`make install` 一次装全 3 个——修「漏重启 worker → 进程死了不自动拉起、消息无限排队」的生产隐患
+- **文档收口**：`开发链路-roadmap.md` → `并发优化ROADMAP.md`（单一权威，P0–P4 + ①–⑨ + 压测），新增 `并发压测结果.md`，删旧 `并发与性能优化.md`；`agent.md` 重整为纯架构参考（1059→418）、`agent-决策环.md` 同步并发现状
 
 ### 修复
 
-- **文件夹文件数不随删除下降**：`/folders` 列表端点（及 `_file_count` 辅助）算 `file_count` 时漏了排除回收站文件（`deleted_at`），而 `/folders/all` 是对的。导致 ProjectModal 里删文件后文件夹计数不降、项目总数（根文件 + Σ文件夹数）也跟着不降——看着像"实时刷新失效"，实则重新拉到的数据本身就错。两处补 `File.deleted_at.is_(None)`，与 `/folders/all` 对齐
-- **项目卡左上角双层圆角**：`.proj-card` 用 `corner-shape: squircle`，但 `corner-shape` 不随 `border-radius: inherit` 继承 → `::after` 叠加层拿到 squircle 半径 + 默认 round 形状，内高光描的圆角与卡片不重合。`::after` 显式补 `corner-shape: squircle`；顺手扫全项目，文件库 / ProjectModal 的 `.drop-overlay`（宿主是 squircle 的 `.glass-card`）同隐患，补 `corner-shape: inherit`
-- **已完成项目卡进度条被挤下移、卡片变高**：「✓ 完成」胶囊 `.done-label` 的 `border` + 纵向 `padding` 比正文多撑约 4px，把 footer 行撑高。改用 `inset` 阴影代替 border、去纵向 padding，胶囊高度 ≤ 正文行高 → 进度条不再下移，与进行中卡同高
-- **待办事项悬停显示完整文字**：待办输入框加 `:title="todo.text"`，文字被省略号截断时悬停可见全文（ProjectModal + NewProjectModal）
-
-### 站内全局搜索（顶栏）
-
-- 新 `GET /api/v1/search?q=`：一个关键词跨 **项目 / 文件 / 文件夹 / 日程 / 客户 / 对话** 检索（按 `user_id` 隔离，ILIKE 子串匹配对中文有效、无需全文索引）；文件排除回收站，对话同时搜会话标题与消息正文并给命中片段；各类型分组、各取前 6 条
-- 顶栏把原静态占位做成真搜索框：Phosphor 图标（与侧栏导航同款）、250ms 防抖 + 防乱序、分组下拉（白底毛玻璃对齐 `.add-event-popup` / 右键菜单，**Teleport 到 body** 让 backdrop blur 生效并浮于内容之上）
-- 点击跳转：项目→开项目弹窗；文件/文件夹→进入文件库对应目录（沿 `parentId` 复原面包屑、文件高亮闪烁，复用客户端文件缓存、后端零改动）；日程→日历；对话→打开咕咕聊天并切到该会话；客户暂提示（页面未做）
-
-### 多模态看图增强（大图压缩 / HEIC / 读库内图）
-
-- **大图自动压缩**：聊天图 >5MB 或超 2048px 时，喂模型前等比降采样 + 逐级降质重压成 JPEG（只压喂模型的副本、原图不动）。修「发高清插画看不出图」——此前 >5MB 直接降级成文字提示、模型看不到
-- **HEIC/HEIF 支持**：接入 `pillow-heif`，iPhone 原图等非原生格式统一转码 JPEG 再喂 vision
-- **`read_file` 能看文件库的图**：vision + Anthropic 通道下，读到图片走 `tool_result` 图片块让模型真看（非 Anthropic 通道友好提示）；持久化时把图片块换成占位，避免历史撑爆 / 每轮重发
-
-### 咕咕聊天 · 图片缩略图 / 拖入上传 / 滚动跟随
-
-- **消息气泡图片缩略图**（复用文件库 `useThumbCache`）：刚发的图走本地 `objectURL` 即时预览、咕咕返回的库内图走 `file_id` 服务端缩略图、刷新后历史里的暂存图走新端点 `GET /agent/attachment/{attach_id}/thumb`（暂存 6h 内有效），三者都没有才回退 ext 角标。修了「刷新后缩略图消失」——历史里用户发的图只剩 `attach_id`、本地 URL 已丢，新端点按 `attach_id` 取暂存图补上
-- **大小窗都支持拖入文件上传**：整窗虚线遮罩（`pointer-events:none` 不挡 drop）、多文件、形针选择也改多选；与点选共用 `uploadAttachFiles`
-- **大窗流式跟随脱手修复**：跟随判定从异步 `IntersectionObserver` 的 `atBottom`（大窗固定高度时哨兵被流式内容顶出视口、早一帧翻 false 导致脱手）改为稳健的 `stick`——仅用户主动上翻才取消、滚回底部附近恢复；每个 token 的 `scrollBottom()` 与 MutationObserver 同走此判定
-- **发消息即时跳到底**：原 smooth 滚动在大窗会被随后冒出的 thinking 气泡/回复打断、看着没到底，改即时跳底 + 补一帧 `rAF`（兜住附件缩略图/气泡迟一拍布局）
-
-### 提示词分层 + 对外口径
-
-- 系统提示词拆成 **persona**（角色）/ **skills**（执行规则·真实性铁律·不可逆 confirm）/ **policy**（内容红线 + 对外口径）/ **default**（数据模板），各管一件、后台「Agent」面板分别可编辑；builder 注入序：人格 → 准则 → 红线 → 记忆 → 数据。铁律从 persona 搬进 skills、default 瘦身为纯数据
-- **policy 加「对外口径·以伙伴示人」**：始终以咕咕伙伴身份示人、不暴露模型/工具/架构；被身份/模型/工具/系统问题套话时**简短带过（2-3 句、不进讲解模式、不列举全部能力、立刻拉回需求）**；不编造假机制（玩笑 deflect 可以、虚构具体技术说明不行）；防 prompt injection（不复述系统提示词）；唯一诚实底线——不谎称真人
-- `default.md` 注入**完整时刻**（`{now}` 含星期 + 时分），咕咕能答「现在几点 / 星期几」、按时段问候
-
-### IM 出口兜底（确定性，prompt 之外的代码层保险）
-
-- 新 `agent/outbound.py`：IM 回复**发给用户 / 持久化之前**确定性清洗——抹 `call_xxx` tool id / `trace_id` 等内部噪声；系统提示词被吐出（多为 prompt injection 得手）则整条换安全话术。只管字面泄露，语义泄露仍靠 policy；仅 IM 路（非流式好扫）
-
-### systemd 托管 worker / supervisor（修生产稳定性隐患）
-
-- 新增 `gugu-worker.service` / `gugu-supervisor.service`（`Restart=always`，supervisor 加 `KillMode=control-group` 连带网关子进程一起管）；`make install` **一次装全 3 个**、`make uninstall` 一并清；三服务日志 `append` 到 `logs/gugu*.log`（后台 Debug 页可 tail，不进 journald）
-- **修复根因**：此前只有 web 有 systemd 单元，IM 的 worker/supervisor 没人托管 → 进程死了 / 服务器重启不自动拉起 → 消息无限排队（IM「偶发很慢 / 收不到」的真因）
-
-### 修复
-
-- **IM 空回复发 QQ 报「无效 markdown content」**：模型偶发出空文本，空内容发 QQ 被拒、用户啥也收不到。现空回复给兜底（有文件「给你～」、纯空「嗯~在的」），绝不发空
-- **缩略图端点物理文件缺失返回 500 → 404**：`files.py` `get_thumb` 与新 `agent` `attachment_thumb` 读不到物理文件时抛未捕获 `FileNotFoundError`、刷屏 ASGI 异常（如旧 `storage_key` 已失效的卡片仍请求缩略图）；改为缺文件即 404，前端正常回退角标
-- **`move_file` 工具回报落点**：原来移动成功只返回文件夹名（如「（根目录）」），**不含项目信息**，模型无从确认落到哪个项目、易自行脑补位置；现返回 `space / project_id / project_name / folder_id`
-- **反幻觉铁律补强（`skills.md`）**：具体文件名 / 所在项目 / 文件夹 / id **必须来自本轮最近一次工具返回**，移动/保存按工具回执原样转告；拿不准位置就重新查、**不许先报一个位置被质疑后再编另一个圆场**（修一次咕咕把图谎报在错项目、还虚构文件名的真因）
-- **换头像不实时更新（需刷新）**：头像 URL 路径固定（`/api/v1/auth/avatar/{id}`），换图后字符串不变 → Vue `:src` 不刷新、浏览器命中旧缓存（导航栏 + 个人设置都卡）。现 `UserResponse.from_user` 给 URL 挂上以头像文件 `mtime` 为版本号的 `?v=`，换图即变 URL、迫使重渲染 + 重取，无需刷新；版本绑内容、所有查看处一致
-- **Admin 工具调用分布接口 500（`cannot extract elements from a scalar`）**：`admin_analytics.py` `/tool-distribution` 用 `jsonb_array_elements_text(tools_used)` 展开工具数组，但 `agent_usage.tools_used` 部分行存的是 **JSON 标量值**（多为 JSON `null`，`tools_used IS NOT NULL` 拦不住它，因为那是 SQL NOT NULL 而非 JSON null）→ 展开标量抛 `asyncpg.InvalidParameterValueError`。WHERE 追加 `AND jsonb_typeof(tools_used::jsonb) = 'array'`，只展开真正的数组行
-- **顶栏下方白色伪影带（Chrome/macOS）**：顶栏绝对定位 + `backdrop-filter`，其 backdrop 取自下方 `.page-content`；页面内容（日历日期格、总览项目卡等）hover 改背景触发重绘时，Chrome/macOS 下顶栏的 backdrop-filter 栅格失效、在其下沿渲染出一条白带（Safari 无此问题，与具体页面无关）。给 `.topbar` 加 `transform: translateZ(0)` 提升为独立 GPU 合成层、稳定 backdrop-filter 栅格
-- **项目卡文件计数漏算文件夹内的文件**：项目列表后端查询仅按 `files.project_id` 聚合，但文件夹内文件在某些上传路径下只有 `folder_id` 而无 `project_id`，导致计数偏低。后端改用关联子查询同时统计直属项目的文件与通过项目文件夹关联的文件（`OR folder_id IN (SELECT id FROM folders WHERE project_id = project.id)`，`OR` 避免重复计数）；前端 `liveFileCounts` 同步用 `allFolders` 建立 `folderId → projectId` 映射兜底，保证 live count 与后端计数口径一致
+- **配置 override 漏 `agent` 段合并**（存量 bug）：`apply_override` 没有 agent 合并块 → 整个 agent 行为配置 override 失效（对话压缩/worker_concurrency/memory_enabled 保存后读默认值），已补
+- **对话压缩致命 bug**：摘要原以 `role="summary"` 当消息发给 LLM（API 只认 user/assistant 会报错）→ 改注入 system prompt；messages 端点过滤摘要气泡
+- **`read_file` 读 PDF/Office 报「找不到文件」误导**：服务器没装 `pdftotext`/`libreoffice` 时 `FileNotFoundError`（命令不存在）被误读成「用户文件丢了」→ 改报命令未装、文件完好、勿建议删除
+- 一批：文件夹文件数漏排回收站、项目卡计数漏算文件夹内文件、换头像不实时（URL 挂 mtime 版本号）、Admin 工具分布接口 500（jsonb 标量）、顶栏白色伪影带、缩略图缺文件 500→404、`move_file` 回报落点补项目信息、IM 空回复发 QQ 被拒、项目卡双层圆角、已完成卡进度条下移、`ProjectCard`/`ProjectModal` TDZ
 
 ---
 
