@@ -9,15 +9,16 @@
 
 ## [Unreleased]
 
-### 定时任务引擎（APScheduler · worker 单实例）
+### 定时任务系统（DB 驱动 · 执行 · 投递）
 
-> 主动触达 / 截稿提醒的地基。
+> 主动触达 / 截稿提醒 / 用户自定义定时任务的地基。引擎 APScheduler（`AsyncIOScheduler`），挂在 **worker 单实例进程**（web 多 worker 不重复跑，呼应「周期任务单实例化」）。
 
-- **`app/core/scheduler.py`**：`AsyncIOScheduler` 封装，`@register(cron()/every(), id)` 注册 + `start()/shutdown()`；挂在 **worker 进程**——worker 天生单实例，web 多 uvicorn worker 不会重复跑（呼应「周期任务单实例化」的进程优化）。
-- **`app/jobs.py`**：定时任务定义入口（新增任务＝加个 `@register` 的 async 函数）。首个任务 `deadline_scan`：每天 09:00 跨用户扫 48h 内到期的未完成项目（复用 `scan_upcoming_deadlines`，纯查询）。
-- **当前 dry-run（只打日志，不推送）**——真往用户 IM 主动 DM 还需：① IM 寻址（按 `user_id` 反查可触达地址）② 「何时打扰/频率/去重」策略，留作下一步（主动触达功能）。
-- worker `serve()` 里 `import app.jobs` + `scheduler.start()`，退出 `shutdown()`。
-- **Admin 服务状态页可见**：worker 心跳带上已注册定时任务（id/name/下次运行时间），服务页 worker 卡片下列出（无独立页，挂在现有面板）。
+- **DB 驱动**：`scheduled_tasks` 表（`user_id` 空=系统级 / 有值=用户自定义、`action_type`、`payload`、`cron`、`channels`、`enabled`）。worker 每 ~30s 从 DB **reconcile** 到 APScheduler——增/删/改/开关即时生效、不重启（同 supervisor 读 `user_bots` 的套路）。
+- **三种动作**（`app/scheduled_tasks.py`）：`reminder` 到点发提醒文本｜`agent` 到点跑一条咕咕指令并把结果发回｜`deadline_scan` 系统级扫所有用户近期截稿、按各自开关投递。
+- **两个投递渠道**：`chat` 作为 assistant 消息进用户「⏰ 咕咕提醒」会话 + 推 SSE（在线即时/离线下次见，不依赖 IM）；`im` 按 Redis 存的「可触达地址」(`imreach:{user_id}`，worker 收消息时记一份) 主动 DM（飞书可主动，QQ 主动受限 best-effort）。
+- 系统任务种子：首启自动建「截稿临近扫描」(每天 09:00)。`app/core/scheduler.py` 加 `get()` 供 reconcile 增删 job；`app/jobs.py` 收敛为 `scan_upcoming_deadlines` 纯查询辅助。
+- **Admin 服务状态页可见**：worker 心跳带上已挂定时任务（id/name/下次运行时间），服务页 worker 卡片下列出。
+- ⏳ 待做：三个管理面（用户自定义面板 / 咕咕设置开关 / Admin 配置）+ API。
 
 ### IM 斜杠强制命令（/stop · /status · /help）
 

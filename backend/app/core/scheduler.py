@@ -60,6 +60,11 @@ def start() -> AsyncIOScheduler:
     return _sched
 
 
+def get():
+    """返回底层 AsyncIOScheduler（None 表示未启动）；DB 驱动 reconcile 用它增删 job。"""
+    return _sched
+
+
 def jobs() -> list:
     """当前已挂的 job（给服务面板/调试看）。"""
     return _sched.get_jobs() if _sched else []

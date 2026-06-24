@@ -188,6 +188,12 @@ async def handle(msg_id: str, payload: dict):
     # 把 IM 上下文透传给工具层（react 工具据此给用户这条消息加表情；State Manager 据此打细粒度状态）
     from agent import imctx
     imctx.set_im(platform, payload.get("message_id"), payload.get("channel_id"), payload.get("chat_id"), puid)
+    # 记一份「可触达地址」：定时任务/主动推送时按 user_id 反查这里发 IM
+    try:
+        from app import scheduled_tasks as schedtasks
+        await schedtasks.save_imreach(user_id, platform, payload.get("channel_id"), payload.get("chat_id"), puid)
+    except Exception:
+        pass
     # State Manager：标记「忙」——网关据此短路「还在吗 / 算了」（IM 单 worker 顺序消费，忙时它看不到后续消息）
     from agent import runtime_state as rtstate
     await rtstate.set_state(platform, puid, rtstate.THINKING)
@@ -254,8 +260,14 @@ async def serve():
     hb = asyncio.create_task(_heartbeat())
     # 定时任务引擎：worker 是单实例进程，唯一 owner（web 多 worker 不会重复跑）
     from app.core import scheduler as sched
-    import app.jobs  # noqa: F401 — import 即触发 @sched.register 注册
+    from app import scheduled_tasks as schedtasks
     sched.start()
+    try:
+        await schedtasks.seed_system_tasks()    # 首次种入截稿扫描
+        await schedtasks.reconcile()             # 立即从 DB 加载一遍
+    except Exception as e:
+        print(f"[worker] 定时任务初始化出错: {type(e).__name__}: {e}", flush=True)
+    sched_task = asyncio.create_task(_reconcile_loop())
     while not _stop.is_set():
         try:
             await run_once()
@@ -263,9 +275,24 @@ async def serve():
             print(f"[worker] loop 出错，2s 后重试: {type(e).__name__}: {e}", flush=True)
             await asyncio.sleep(2)
     hb.cancel()
+    sched_task.cancel()
     sched.shutdown()
     await R.reset()
     print("[worker] stopped", flush=True)
+
+
+async def _reconcile_loop():
+    """每 30s 从 DB 对账定时任务（增/删/改/开关即时生效，无需重启）。"""
+    from app import scheduled_tasks as schedtasks
+    while not _stop.is_set():
+        for _ in range(30):
+            if _stop.is_set():
+                return
+            await asyncio.sleep(1)
+        try:
+            await schedtasks.reconcile()
+        except Exception as e:
+            print(f"[worker] 定时任务 reconcile 出错: {type(e).__name__}: {e}", flush=True)
 
 
 def _install_signals(loop):
