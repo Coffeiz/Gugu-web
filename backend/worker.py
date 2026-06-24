@@ -22,7 +22,10 @@ from agent.runner import run_collect
 
 STREAM = R.IM_INBOUND_STREAM
 GROUP = "agent-workers"
-CONSUMER = f"{socket.gethostname()}-{os.getpid()}"
+# 稳定 consumer 名：重启不换名（原来带 pid，每次重启留个死 consumer 累积，见地基 B）。
+# 多 worker 时给每实例设 GUGU_WORKER_SLOT=0/1/2 区分。
+_slot = os.getenv("GUGU_WORKER_SLOT", "").strip()
+CONSUMER = socket.gethostname() + (f"-{_slot}" if _slot else "")
 
 _stop = asyncio.Event()
 
@@ -310,6 +313,12 @@ async def _heartbeat():
 async def serve():
     await R.ensure_group(STREAM, GROUP)
     _refresh_concurrency()
+    try:
+        n = await R.cleanup_dead_consumers(STREAM, GROUP, CONSUMER)
+        if n:
+            print(f"[worker] 清理死 consumer {n} 个", flush=True)
+    except Exception:
+        pass
     print(f"[worker] started · consumer={CONSUMER} · stream={STREAM} · 并发={_max_concurrency}", flush=True)
     hb = asyncio.create_task(_heartbeat())
     # 定时任务引擎：worker 是单实例进程，唯一 owner（web 多 worker 不会重复跑）

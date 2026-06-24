@@ -75,6 +75,7 @@
 - **并发上限可热配**：`agent.worker_concurrency`（默认 16，实测单 MiniMax key 安全上限——带工具 sem=20 全 429）。worker 每 30s 从 override 热读、改完 ≤30s 生效无需重启；要更大吞吐靠多备 key，非调大此数。
 - **并发安全**：`imctx` 用 ContextVar（按 asyncio 任务隔离）、`rtstate` 按 puid 存 Redis、加 per-user 锁，已验证不串。
 - 压测：串行 ~21 条/分 → 并发 ~190（带工具）~340（无工具）条/分，0 报错；详见 [`docs/并发压测结果.md`](docs/并发压测结果.md)。
+- **地基 B · 清死 consumer**：consumer 名从 `{host}-{pid}` 改稳定 `{host}`（重启复用不再积累；多 worker 用 `GUGU_WORKER_SLOT` 区分）+ 启动 `cleanup_dead_consumers`（空闲>30min 且无 pending 即删，保留自己）。曾堆 79 个，已清 78。
 
 ### IM · LLM 慢尾兜底（⑦：瞬时错误退避重试）
 
@@ -129,6 +130,12 @@
 ### 文档 · 并发优化 roadmap 收口
 
 - `开发链路-roadmap.md` 重命名为 **`并发优化ROADMAP.md`**（单一权威：诊断依据 + P0–P4 + ①–⑨ backlog）；合并并删除旧的 `并发与性能优化.md`（诊断数据已抢救进新文档）；`agent.md` 相应章节砍成指针。回填状态：⑤ DB 池、② 标题/反思 fire-and-forget 标记已完成。
+
+### 项目卡 · 拖放上传文件到项目文件夹
+
+- **拖放支持**：将文件拖到项目卡片上（`dragenter`/`dragover`/`dragleave`/`drop`），直接上传到该项目的根目录。使用 `_dragEnterCount` 计数器解决子元素 `dragleave` 误触发问题，通过 `dataTransfer.types.includes('Files')` 区分文件拖拽与卡片拖拽。
+- **上传进度 overlay**：拖入时卡片显示半透明颜色提示；上传中进度条从左向右填充整张卡片——颜色取自 `project.color` 第一个 hex 色值转 `rgba(r,g,b,0.32)`（天生带 alpha，不依赖 `opacity`），支持 `transition: width 0.5s` 平滑缓动，解决之前一跳一跳的问题；图标与文字颜色跟随项目色。
+- **文件数实时更新**：上传完成后调用 `cacheStore.addFile(uploaded)`，`liveFileCounts`（由 `allFiles` 实时计算）立即更新卡片右下角文件数，无需刷新页面。
 
 ### 项目看板 · 进度条瀑布动画
 

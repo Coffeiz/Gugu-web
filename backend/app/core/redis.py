@@ -134,3 +134,26 @@ async def claim_stale(stream: str, group: str, consumer: str,
     # redis-py 返回 (next_cursor, entries[, deleted_ids])
     entries = resp[1] if len(resp) > 1 else []
     return _parse(entries)
+
+
+async def cleanup_dead_consumers(stream: str, group: str, keep: str,
+                                 min_idle_ms: int = 1800000) -> int:
+    """清理消费组里的死 consumer：删掉 != keep、空闲超 min_idle(默认 30min)、且无 pending 的。
+    （worker 重启换名会留旧 consumer 累积；无 pending=没活会丢，空闲久=已死。）返回删除数。"""
+    r = get_redis()
+    try:
+        consumers = await r.xinfo_consumers(stream, group)
+    except aioredis.ResponseError:
+        return 0
+    n = 0
+    for c in consumers:
+        name = c.get("name")
+        if name == keep:
+            continue
+        if int(c.get("pending", 0)) == 0 and int(c.get("idle", 0)) >= min_idle_ms:
+            try:
+                await r.xgroup_delconsumer(stream, group, name)
+                n += 1
+            except aioredis.ResponseError:
+                pass
+    return n
