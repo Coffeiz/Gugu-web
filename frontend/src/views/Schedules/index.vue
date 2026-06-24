@@ -211,7 +211,12 @@ async function removeTask(t) {
 .empty { font-size: 13px; color: var(--text-secondary); padding: 8px 2px; }
 
 /* 版面里的小卡片（更实一点，浮在大版面上）；区域内滚动，撑满剩余高度 */
-.task-grid { flex: 1; min-height: 0; overflow-y: auto; align-content: start; display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 12px; padding-right: 2px; }
+/* 滚动容器；用内边距给 hover 上浮+阴影留空间（否则顶部被 overflow 裁掉），负 margin 抵消让卡片仍贴边对齐 */
+.task-grid {
+  flex: 1; min-height: 0; overflow-y: auto; align-content: start;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 12px;
+  margin: 0 -8px; padding: 10px 8px 16px;
+}
 /* 与项目卡片同款：squircle + 顶部高光 ::after + hover 上浮 */
 .task-card {
   position: relative;
