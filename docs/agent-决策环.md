@@ -12,7 +12,7 @@
   │
   ⓪ IM 前置路由（仅 IM）  agent/router.py + runtime_state.py
   │    据 Redis 状态机短路「还在吗/算了/嗯」→ 不入队、不进主模型，网关直接回；其余才入队
-  │    （IM 单 worker 顺序消费：忙时看不到队列后续消息，故必须在网关层拦）
+  │    （IM 按用户串行 user_gate：同用户任务进行中其后续消息排在锁后、worker 看不到，故必须在网关层拦）
   │
 ┌─┴──────────────────────────────────────────────────────────────┐
 │ ① 入口编排   adapters/web.py（网页流式） │ agent/runner.py（IM 非流式）│
@@ -57,7 +57,7 @@
 | `agent/runtime_state.py` | Redis 状态机（`IDLE/THINKING/SEARCHING/GENERATING`，带 TTL 防卡死）+ 取消标志。**worker 写、网关读** |
 
 - ✅ **网关入队前拦一手**（`feishu._on_message` / `qq.on_c2c_message_create`）：任务进行中的「还在吗/算了/嗯」**不进队列、不进主模型**，网关据当前状态直接回话术（还在想哦~/正在查资料~/先不继续啦~）。
-- ✅ **关键架构洞察**：IM 是**单 worker 顺序消费队列**——任务进行中后续消息排在队列里、worker 在忙根本看不到，所以状态查询/取消**必须在网关层**据 Redis 状态短路，进不了 worker。这是整个设计的支点。
+- ✅ **关键架构洞察**：worker 虽有界并发，但**按用户串行（user_gate 进程内锁）**——同一用户任务进行中，其后续消息排在该用户的锁后、worker 当时看不到，所以状态查询/取消**必须在网关层**据 Redis 状态短路，进不了 worker。这是整个设计的支点（并发化不改变这一点：同用户仍保序）。
 - ✅ **状态打点**：worker `handle` 进入即 THINKING、结束清；core 工具循环据 `TOOL_STATE`（web_search→SEARCHING、create_document→GENERATING）打细粒度。
 - ✅ **自然语言取消**：网关置 `agentcancel` 标志 → core 工具循环检查命中即中断；`AgentResponse.cancelled` 透传 → worker 不补发。检查点有二：**每轮 LLM 开始前**（轮顶）+ **流式输出途中每 24 token**（`_CANCEL_CHECK_EVERY`，`core.py`）。后者是关键补丁——单轮长回答没有「下一轮」，只靠轮顶检查切不掉，必须在流式循环里查、命中即关闭 stream 断开上游请求。
 - ⚠️ **误判取舍**：整条匹配 + 短词才判取消/情绪，**宁漏判进主模型、不误判短路**（「算了」仅在忙时当取消，空闲时可能是「算了换个想法」→ 交主模型）。
@@ -65,7 +65,7 @@
 
 #### 消息流架构图
 
-> 两个独立进程（网关 `gugu-supervisor` / 大脑 `gugu-worker`）靠 Redis 通信。状态查询/取消由**网关层**据 Redis 短路，进不了单 worker 顺序队列——这是支点。
+> 两个独立进程（网关 `gugu-supervisor` / 大脑 `gugu-worker`）靠 Redis 通信。状态查询/取消由**网关层**据 Redis 短路——worker 有界并发但**按用户串行（user_gate）**，同用户后续消息排在锁后进不去，这是支点。
 
 ```mermaid
 flowchart TD
@@ -87,9 +87,9 @@ flowchart TD
         R4[(imsession<br/>会话续接)]
     end
 
-    subgraph WK["Worker 进程 · 单实例顺序消费"]
+    subgraph WK["Worker 进程 · 有界并发 + 按用户串行(user_gate)"]
         direction TB
-        W1[消费一条 consume] --> W2[置 THINKING set_state] --> W3[Core LLM 循环<br/>MAX_ROUNDS=10]
+        W1[消费 · 并发派发<br/>Semaphore + per-user 锁] --> W2[置 THINKING set_state] --> W3[Core LLM 循环<br/>MAX_ROUNDS=6]
         W3 --> W4["流式输出 · 查取消<br/>轮顶 ＋ 每 24 token ★"]
         W4 -->|有 tool_use| W5[dispatch 工具<br/>SEARCHING/GEN 态] --> W3
         W4 -->|无| W6[finally 清状态<br/>clear state ＋ cancel] --> W7[回发用户<br/>_send ＋ 文件]
@@ -127,7 +127,7 @@ flowchart TD
 - ✅ 两条路共用 ②③④⑤ 的同一套大脑，只是输出形态不同（流 vs 整段）。
 - ✅ **网页生成解耦 + 刷新续看**：`agent/genstream.py` 是按会话的生成流频道（Redis pub/sub）+ 状态快照；浏览器刷新后经 `GET /sessions/{id}/stream`（`web.resume()`）补已生成内容再续订阅。根治"刷新丢回复"。
 - ✅ 配额拦截在网页路（`web.py`）：精力/配额不足直接友好拒，不进模型。
-- ⚠️ **未做**：配额「能力降级」（文档 30）——现在是一刀切拦死全部对话；理想是精力不足时简单查询/闲聊仍可用、只暂缓重操作。
+- ✅ **配额「能力降级」已落地**（P1，文档 30）：精力耗尽不再一刀切拦死，降级到只读工具集（12/47）+ 婉拒重操作，查询/对话照常（`profile.light_tool_names`）。
 - ⚠️ **编排归属**：会话持久化/配额/用量记在 adapter 里（务实），没单设 service 层。
 
 ### ② 上下文构建（记忆在这步自动注入）
@@ -259,14 +259,13 @@ flowchart TD
 
 ### ⚠️ 未做（按修订后的实际推进顺序）
 
-> 原则：按「**让咕咕明天更有用 + 现在最痛**」排，不按「agent 该有哪些模块」堆。权威版见 [`agent.md`](agent.md) Roadmap 顶部「下一步优先级」。
+> 原则：按「**让咕咕明天更有用 + 现在最痛**」排，不按「agent 该有哪些模块」堆。**分期/扩量权威见 [`并发优化ROADMAP.md`](并发优化ROADMAP.md)**（P0–P4 + ①–⑨ + 压测）；下表为决策环视角的摘要。
 
 | 档 | 项 | 影响 / 为什么是这个位置 |
 |----|----|------------------------|
 | ~~**① 现在**~~ ✅ | ~~**轻量 Intent Router + State Manager**~~ **已落地**（关键词版，IM 路）：状态查询/取消/闲聊网关层短路，自然语言取消轮间中断（见 ⓪ / Phase 1.7）| 当前最大的洞，已补。小模型分类版留待有 GPU |
-| **② 紧接着** | **简单主动触达**（截止提醒）| 伙伴产品价值高于 Planner，复用现成 IM+实时设施；GPT 原案埋太后 |
-| | **配额能力降级**（非一刀切拦死）| 文档 30，精力不足时连查询都用不了 |
-| | **地基加固**（一键重启 worker/supervisor、健康、自愈）| 刚栽过坑（漏重启 worker，见 devlog）；堆功能前先把三进程运维做稳 |
+| ~~**②**~~ ✅ | ~~**配额能力降级**~~ ✅（降到只读集）+ ~~**地基加固**~~ ✅（服务状态页 + 死 consumer 清理）+ **worker 有界并发**（P1，~6×）| P1/P2 已完成 |
+| **②′ 余项** | **主动触达**（异常沉默/情绪关注）| 截稿提醒已改用户自定义（定时任务面板）；情绪/沉默感知仍未做 |
 | **③ 再 then** | **`summary.md` 状态快照** | 便宜、对上下文有用 |
 | | **按需的记忆 2b**（结构化/事件总线/控制命令）| 只做用得上的；**分层压缩等记忆真撑不住再上**（现在早期、没溢出，避免过早优化） |
 | **④ 谨慎/按需** | Insight / Goal / **Planner**（Phase 4）| ⚠️ 别预先造规划框架——工具循环已是轻量 planner；等具体反复痛点再加 |
@@ -278,4 +277,4 @@ flowchart TD
 
 ---
 
-> 相关文档：[`agent.md`](agent.md)（架构总览 + 完整工具清单 + Roadmap）、[`agent-im接入架构.md`](agent-im接入架构.md)（IM 队列架构）、[`devlog.md`](devlog.md)（踩坑记录）。
+> 相关文档：[`agent.md`](agent.md)（架构总览 + 完整工具清单 + 现状）、[`并发优化ROADMAP.md`](并发优化ROADMAP.md)（分期/扩量 + 压测）、[`agent-im接入架构.md`](agent-im接入架构.md)（IM 队列架构）、[`devlog.md`](devlog.md)（踩坑记录）。
