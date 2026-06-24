@@ -26,3 +26,4 @@ uuid6>=2024.1.12
 email-validator>=2.0.0
 pendulum>=3.0.0
 Pillow>=10.0.0
+pillow-heif>=0.16.0   # 解码 iPhone HEIC/HEIF 图片，喂给 vision 模型前转 JPEG

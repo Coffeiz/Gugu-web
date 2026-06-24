@@ -54,6 +54,18 @@ class UserResponse(CamelModel):
 
     @classmethod
     def from_user(cls, user) -> "UserResponse":
+        # 头像 URL 路径固定（按 user.id），换头像后字符串不变 → 前端 :src 不刷新、浏览器命中缓存。
+        # 用头像文件 mtime 作版本号挂 ?v=，换图即变 URL，迫使前端重渲染 + 浏览器重取
+        avatar_url = None
+        if user.avatar:
+            avatar_url = f"/api/v1/auth/avatar/{user.id}"
+            try:
+                from pathlib import Path as _Path
+                from app.core.config import get_settings
+                p = _Path(get_settings().storage.local_path) / user.avatar
+                avatar_url += f"?v={p.stat().st_mtime_ns}"
+            except Exception:
+                pass
         data = {
             "id": user.id,
             "username": user.username,
@@ -61,7 +73,7 @@ class UserResponse(CamelModel):
             "email": user.email,
             "is_active": user.is_active,
             "created_at": user.created_at,
-            "avatar_url": f"/api/v1/auth/avatar/{user.id}" if user.avatar else None,
+            "avatar_url": avatar_url,
         }
         return cls.model_validate(data)
 

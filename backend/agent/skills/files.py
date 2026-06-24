@@ -162,9 +162,29 @@ async def _read_file(db, user_id, args: dict):
     if _err:
         return _err
     ext = f.ext.lower()
+
+    # 图片：vision 模型 + Anthropic 通道 → 把图喂给模型「看」（结果走 tool_result 图片块）
+    from app.core import chat_attach
+    if ext in chat_attach.IMAGE_EXTS:
+        if not chat_attach.vision_ready():
+            return json.dumps({"error": f"这是图片（{f.ext}），当前模型/通道无法识别图像内容"})
+        if ext not in chat_attach.VISION_EXTS:
+            return json.dumps({"error": f"图片格式 {f.ext} 暂不支持识别（如 svg 矢量图）"})
+        if (f.size_bytes or 0) > chat_attach.VISION_READ_MAX:
+            return json.dumps({"error": f"图片过大（{f.size}），超出可看上限"})
+        try:
+            data = await get_storage().get(f.storage_key)
+            block = chat_attach.vision_block(data, ext)
+        except Exception as e:
+            return json.dumps({"error": f"读取失败：{str(e)[:80]}"})
+        if not block:
+            return json.dumps({"error": "图片无法解析"})
+        return {"_vision_image": block,
+                "note": f"已打开图片《{f.display_name}.{f.ext}》，见随附图像。"}
+
     is_doc = ext in doctext.EXTRACTABLE      # PDF/docx/xlsx/pptx 等，需工具提取文本
     if ext not in TEXT_EXTS and not is_doc:
-        return json.dumps({"error": f"不支持读取该类型（{f.ext}），仅支持文本类 + PDF/Office 文档"})
+        return json.dumps({"error": f"不支持读取该类型（{f.ext}），仅支持文本类 + PDF/Office 文档 + 图片"})
     cap = doctext.EXTRACT_MAX_BYTES if is_doc else READ_MAX_BYTES
     if (f.size_bytes or 0) > cap:
         return json.dumps({"error": f"文件过大（{f.size}），超出可读上限"})
@@ -439,8 +459,15 @@ async def _move_file(db, user_id, args: dict):
     if folder_id:
         fo = await db.get(Folder, folder_id)
         folder_name = fo.name if fo else "（根目录）"
+    # 明确回报落点的「空间/项目/文件夹」，别只给文件夹名——否则模型无从确认到底进了哪个项目，
+    # 容易自行脑补位置（曾出现移到项目根目录后谎报项目/文件名的情况）
+    project_name = None
+    if f.space == "project" and f.project_id:
+        p = await db.get(Project, f.project_id)
+        project_name = p.name if p else None
     return {"success": True, "file_id": f.id, "name": f"{f.display_name}.{f.ext}",
-            "moved_to": folder_name, "folder_id": f.folder_id}
+            "space": f.space, "project_id": f.project_id, "project_name": project_name,
+            "folder_id": f.folder_id, "moved_to": folder_name}
 
 
 async def _create_folder(db, user_id, args: dict):
@@ -615,7 +642,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="read_file", label="读取文件",
-            description="读取文件内容：文本类（md/txt/json/代码等，≤256KB）直接读；PDF/Word/Excel/PPT 会自动提取文本。图片/视频/音频等仍不可读。",
+            description="读取文件内容：文本类（md/txt/json/代码等，≤256KB）直接读；PDF/Word/Excel/PPT 自动提取文本；图片（png/jpg/heic 等）可直接识别图像内容（需多模态模型）。视频/音频不可读。",
             input_schema={
                 "type": "object",
                 "properties": {

@@ -6,13 +6,12 @@
 
 ## 进行中 🚧
 
-- **Agent 对话历史持久化** — 当前对话刷新后丢失，需接入 `conversation_sessions` / `conversation_messages` 表
-- **Agent 工具扩展** — 增加修改项目阶段/配色、查询文件、创建文件夹等工具
+- _（里程碑之间，下一项待锁定）_
 
 ## 规划中 🔜
 
 - **客户管理页面** — 后端 `clients` API 已完成，前端无页面
-- **通知系统** — 截止日期提醒，侧边栏通知入口已预留
+- **定时任务 + 截稿主动通知** — 截止日期提醒 / 周期归档 / 同步；复用 IM 出口 + APScheduler，把「48h 内到期」主动推给用户（侧边栏通知入口已预留）
 - **思维画布** — 创意节点图，可挂文件附件，侧边栏入口已预留
 - **团队协作** — 多用户共享项目、权限管理（ToB 方向）
 
@@ -22,6 +21,11 @@
 - 文件按项目/阶段归档
 - 文件预览（PDF / 图片 / 视频 / 文本 / Office）
 - 回收站（软删除、30 天自动清理、还原）
-- 自然语言管理接口（AI Agent SSE 流式，Anthropic/OpenAI 双路由）
+- 自然语言管理接口（AI Agent SSE 流式，多 provider）
 - 中国节假日日历标注
 - 文件本地/UI 双向同步（visibilitychange + /files/version）
+- **Agent 对话历史持久化**（`conversation_sessions` / `conversation_messages`）
+- **Agent 工具扩展** — 改阶段/配色、查文件、建文件夹等，现共 23 工具
+- **Agent 记忆系统（Phase 2）** — `.agent/` 三层档案 + 反思 + 压缩 + persona 伙伴化
+- **IM 接入（飞书 + QQ · BYO 扫码）** — 文件双向收发、PDF/Office 读取、实时同步
+- **提示词分层** — persona/skills/policy/default 四层，后台可分别编辑

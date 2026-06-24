@@ -8,12 +8,7 @@
           <h1>{{ currentTitle }}</h1>
           <p>{{ todayStr }}</p>
         </div>
-        <div class="search-box">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-            <circle cx="6" cy="6" r="4"/><path d="M10 10l2.5 2.5"/>
-          </svg>
-          搜索项目、文件或客户…
-        </div>
+        <GlobalSearch />
         <div class="topbar-actions">
           <a-button class="btn-ghost-custom" @click="openUpload">上传文件</a-button>
           <a-button type="primary" class="btn-primary-custom" @click="openNewProject">
@@ -79,6 +74,7 @@ import { projectsApi } from '@/services/api'
 import { uploadSignal } from '@/services/cache'
 import AppSidebar from '@/components/common/AppSidebar.vue'
 import GuguChat from '@/components/common/GuguChat.vue'
+import GlobalSearch from '@/components/common/GlobalSearch.vue'
 import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'
 import ProjectModal    from '@/views/Projects/components/ProjectModal.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
@@ -189,6 +185,11 @@ const todayStr = computed(() => {
   padding: 14px 20px;
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
+  /* 顶栏绝对定位且带 backdrop-filter，其 backdrop 取自下方会随鼠标 hover 不断重绘的
+     .page-content；同层重绘会导致顶栏的 backdrop-filter 栅格失效，在其下沿渲染出一条
+     白色伪影带（中间 .cal-toolbar 为静态定位、背后是静止 body 渐变，故无此问题）。
+     将顶栏提升为独立合成层，隔离这次重绘，消除该白带。 */
+  transform: translateZ(0);
 }
 
 .topbar-title h1 {

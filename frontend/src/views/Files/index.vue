@@ -662,6 +662,7 @@ import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useLiveStore } from '@/stores/live'
+import { useUiStore } from '@/stores/ui'
 import { getThumb, getCachedThumb, preloadTinyThumbs, cardBlobReadyIds } from '@/composables/useThumbCache'
 import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
@@ -676,6 +677,7 @@ import {
 const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
 const liveStore    = useLiveStore()
+const uiStore      = useUiStore()
 
 // ── 存储用量 ──
 const storageInfo = reactive({ used: 0, limit: null, loaded: false })
@@ -838,6 +840,70 @@ function restoreNav() {
   } catch {
     navPath.value = []
   }
+}
+
+// ── 顶栏全局搜索：定位到某个文件/文件夹所在目录 ──
+function _folderChain(folderId) {
+  // 从根到目标，沿 parentId 上溯，返回文件夹对象数组
+  const chain = []
+  const seen = new Set()
+  let cur = cacheStore.getFolder(folderId)
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id)
+    chain.unshift(cur)
+    cur = cur.parentId != null ? cacheStore.getFolder(cur.parentId) : null
+  }
+  return chain
+}
+
+function _basePath(projectId) {
+  if (projectId != null) {
+    const p = projectStore.projects.find(p => p.id === projectId)
+    return [
+      { type: 'projects', name: '项目文件', color: null },
+      { type: 'project', id: projectId, name: p?.name ?? '项目', color: p?.color ?? null },
+    ]
+  }
+  return [{ type: 'personal', name: '个人文件', color: null }]
+}
+
+function _folderSeg(f) {
+  return { type: 'folder', folderId: f.id, name: f.name ?? f.displayName,
+           projectId: f.projectId ?? null, color: f.color ?? null }
+}
+
+async function jumpToTarget(target) {
+  if (!target) return
+  if (!cacheStore.loaded) await cacheStore.load()
+  clearSelection()
+  if (target.kind === 'folder') {
+    const fo = cacheStore.getFolder(target.id)
+    if (!fo) return
+    navPath.value = [..._basePath(fo.projectId), ..._folderChain(fo.id).map(_folderSeg)]
+  } else {
+    const f = cacheStore.getFile(target.id)
+    if (!f) return
+    navPath.value = f.folderId != null
+      ? [..._basePath(f.projectId), ..._folderChain(f.folderId).map(_folderSeg)]
+      : _basePath(f.projectId)
+  }
+  saveNav()
+  loadContents()
+  if (target.kind === 'file') {
+    await nextTick()
+    _flashFile(target.id)
+  }
+}
+
+function _flashFile(id) {
+  // 等内容渲染 + 缩略图布局稳定后，滚到目标并高亮一下
+  setTimeout(() => {
+    const el = mainRef.value?.querySelector(`[data-file-id="${id}"]`)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add('search-flash')
+    setTimeout(() => el.classList.remove('search-flash'), 1800)
+  }, 150)
 }
 
 // ── 排序 ──
@@ -1026,18 +1092,26 @@ function loadContents() {
 
 onMounted(async () => {
   fetchStorage()
+  // 顶栏搜索点了文件/文件夹：优先定位到目标目录，不走 restoreNav
+  const target = uiStore.pendingFileTarget
+  uiStore.pendingFileTarget = null
   // 热缓存：同步初始化，避免 await 微任务暂停导致空帧
   if (cacheStore.loaded && projectStore.projects.length > 0) {
-    restoreNav()
-    loadContents()
+    if (target) { jumpToTarget(target) } else { restoreNav(); loadContents() }
     return
   }
   await Promise.all([
     projectStore.projects.length === 0 ? projectStore.fetchProjects?.() : Promise.resolve(),
     cacheStore.loaded ? Promise.resolve() : cacheStore.load(),
   ])
-  restoreNav()
-  loadContents()
+  if (target) { jumpToTarget(target) } else { restoreNav(); loadContents() }
+})
+
+// 已在文件库页时再点搜索结果 → 监听信号直接定位
+watch(() => uiStore.pendingFileTarget, (target) => {
+  if (!target) return
+  uiStore.pendingFileTarget = null
+  jumpToTarget(target)
 })
 
 watch(uploadSignal, () => {
@@ -2061,6 +2135,16 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   display: flex; flex-direction: column; gap: 14px;
   height: 100%; position: relative;
   user-select: none;
+}
+
+/* 顶栏搜索定位到的文件：短暂高亮 */
+.search-flash {
+  animation: search-flash 1.8s ease;
+  border-radius: var(--radius-sm);
+}
+@keyframes search-flash {
+  0%, 60%  { box-shadow: 0 0 0 2px var(--color-primary), 0 0 14px rgba(123,127,178,0.55); }
+  100%     { box-shadow: 0 0 0 0 rgba(123,127,178,0); }
 }
 
 /* ── 工具栏 ── */

@@ -153,7 +153,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                 for tm in anthr_messages[anthr_initial_len:]:
                     db2.add(ConversationMessage(
                         session_id=session_id, role=tm["role"],
-                        content="", content_json=tm["content"],
+                        content="", content_json=chat_attach.strip_vision_for_history(tm["content"]),
                     ))
             if text or sent_files:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant",

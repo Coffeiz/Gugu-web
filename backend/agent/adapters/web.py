@@ -286,7 +286,8 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
         async with _sess._SessionLocal() as db2:
             for tm in anthr_messages[anthr_initial_len:]:
                 db2.add(ConversationMessage(
-                    session_id=session_id, role=tm["role"], content="", content_json=tm["content"],
+                    session_id=session_id, role=tm["role"], content="",
+                    content_json=chat_attach.strip_vision_for_history(tm["content"]),
                 ))
             if full_reply or sent_files:
                 db2.add(ConversationMessage(

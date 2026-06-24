@@ -164,6 +164,15 @@ class SkillRegistry:
 
         if isinstance(result, str):
             return result, None
+
+        # 工具想让模型「看图」：返回 Anthropic 图片内容块（文字说明 + 图），核心循环原样塞进 tool_result.content。
+        # 仅在 vision + anthropic 通道下由工具产生（如 read_file 读图片）；OpenAI 路工具不会走到这里。
+        if isinstance(result, dict) and "_vision_image" in result:
+            block = result.pop("_vision_image")
+            note = result.get("note", "")
+            content = ([{"type": "text", "text": note}] if note else []) + [block]
+            return content, None
+
         artifact = result.pop("_artifact", None) if isinstance(result, dict) else None
 
         # 改动型工具成功后，推「资源变了」事件给该用户的网页端实时刷新（best-effort）

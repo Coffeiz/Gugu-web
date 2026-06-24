@@ -740,7 +740,10 @@ async def get_thumb(
 
     # SVG 和全尺寸直接返回原图
     if size == "full" or mime == "image/svg+xml":
-        data = await get_storage().get(f.storage_key)
+        try:
+            data = await get_storage().get(f.storage_key)
+        except FileNotFoundError:
+            raise HTTPException(404, "物理文件丢失")
         return FastAPIResponse(content=data, media_type=mime,
                                headers={"Cache-Control": "private, max-age=86400"})
 
@@ -752,7 +755,10 @@ async def get_thumb(
                                headers={"Cache-Control": "private, max-age=86400"})
 
     # 缓存 miss：读原图，按需生成请求的尺寸（card 不在上传时预生成）
-    raw = await get_storage().get(f.storage_key)
+    try:
+        raw = await get_storage().get(f.storage_key)
+    except FileNotFoundError:
+        raise HTTPException(404, "物理文件丢失")
     try:
         await asyncio.to_thread(_generate_thumbs_sync, raw, fid, (size,))
         cache_path = _thumb_path(fid, size)

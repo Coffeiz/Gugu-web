@@ -210,6 +210,7 @@ async def get_tool_distribution(db: AsyncSession = Depends(get_db)):
         FROM agent_usage,
              jsonb_array_elements_text(tools_used::jsonb) AS elem
         WHERE tools_used IS NOT NULL
+          AND jsonb_typeof(tools_used::jsonb) = 'array'
         GROUP BY elem
         ORDER BY calls DESC
         LIMIT 20

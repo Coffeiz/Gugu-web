@@ -231,6 +231,11 @@ export const trackApi = {
   track: (event, properties) => request('POST', '/track', { event, properties }),
 }
 
+// 站内全局搜索（顶栏搜索框）
+export const searchApi = {
+  query: (q) => request('GET', `/search?q=${encodeURIComponent(q)}`),
+}
+
 export const authApi = {
   updateProfile: (data) => request('PATCH', '/auth/profile', data),
   getQuota:      ()     => request('GET',   '/auth/quota'),

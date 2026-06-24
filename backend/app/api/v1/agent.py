@@ -48,6 +48,38 @@ async def upload_attachment(
     return {k: meta[k] for k in ("attach_id", "name", "ext", "size", "kind")}
 
 
+@router.get("/attachment/{attach_id}/thumb")
+async def attachment_thumb(
+    attach_id: str,
+    size: str = "card",
+    current_user: User = Depends(get_current_user),
+):
+    """暂存聊天附件的图片缩略图（按 attach_id）。
+    刷新后历史气泡里用户发的图本来只有 attach_id（无 file_id、本地 objectURL 已丢），
+    借此仍能显示缩略图。仅暂存 6h 内有效，过期/非图片 → 404，前端回退到 ext 角标。"""
+    import asyncio
+    from fastapi.responses import Response
+
+    meta = await chat_attach.get_meta(current_user.id, attach_id)
+    if not meta or meta.get("kind") != "image":
+        raise HTTPException(404, "附件不存在或不是图片")
+    try:
+        raw = await chat_attach.read_bytes(meta)
+    except FileNotFoundError:
+        raise HTTPException(404, "附件已过期或物理文件丢失")
+    if (meta.get("ext") or "").lower() == "svg":
+        return Response(content=raw, media_type="image/svg+xml",
+                        headers={"Cache-Control": "private, max-age=3600"})
+    # 复用文件库的缩略图生成（JPEG 兜底版，按 size 取最大边）
+    from app.api.v1.files import _generate_thumb_jpeg_fallback
+    jpeg = await asyncio.to_thread(_generate_thumb_jpeg_fallback, raw, size)
+    if jpeg:
+        return Response(content=jpeg, media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=3600"})
+    return Response(content=raw, media_type=meta.get("mime") or "application/octet-stream",
+                    headers={"Cache-Control": "private, max-age=3600"})
+
+
 @router.post("/chat")
 async def chat(
     body: ChatRequest,

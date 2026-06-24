@@ -69,7 +69,19 @@
 
   <!-- 聊天窗口（单一元素，小/大状态通过位置过渡） -->
   <Transition name="chat-open">
-    <div v-if="open" class="chat-window" :style="windowStyle" ref="windowRef">
+    <div v-if="open" class="chat-window" :style="windowStyle" ref="windowRef"
+      @dragenter="onChatDragEnter" @dragover="onChatDragOver" @dragleave="onChatDragLeave" @drop="onChatDrop">
+
+      <!-- 拖入遮罩（覆盖整个窗口，大小窗通用）-->
+      <Transition name="chat-drop-fade">
+        <div v-if="isChatDragging" class="chat-drop-overlay">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 16V6M8 10l4-4 4 4"/><path d="M5 19h14"/>
+          </svg>
+          <span>松开以添加附件</span>
+        </div>
+      </Transition>
+
 
       <!-- 侧边栏（仅大窗） -->
       <div v-if="expanded" class="exp-sidebar panel-left">
@@ -138,7 +150,15 @@
             <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
             <div v-if="msg.files && msg.files.length" class="msg-files">
               <div v-for="f in msg.files" :key="f.file_id" class="msg-file" @click="downloadFile(f)" title="点击下载">
-                <span class="msg-file-ext">{{ (f.ext || 'file').toUpperCase().slice(0, 4) }}</span>
+                <span class="msg-file-ext">
+                  {{ (f.ext || 'file').toUpperCase().slice(0, 4) }}
+                  <template v-if="isImageFile(f)">
+                    <img v-if="f._thumbUrl" class="msg-file-thumb" :src="f._thumbUrl"
+                      draggable="false" alt="" @error="$event.target.remove()" />
+                    <img v-else class="msg-file-thumb" v-lazy-thumb="f.file_id || f.attach_id"
+                      decoding="async" draggable="false" alt="" @error="$event.target.remove()" />
+                  </template>
+                </span>
                 <span class="msg-file-info">
                   <span class="msg-file-name">{{ f.name }}.{{ f.ext }}</span>
                   <span class="msg-file-meta">{{ fmtSize(f.size_bytes) }} · 下载</span>
@@ -178,7 +198,7 @@
           <button class="att-btn" @click="pickFile" title="添加附件">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7l-5.5 5.5a2.5 2.5 0 0 1-3.5-3.5L9 3.5a1.5 1.5 0 0 1 2 2L5.5 11"/></svg>
           </button>
-          <input ref="fileInput" type="file" style="display:none" @change="onFilePicked" />
+          <input ref="fileInput" type="file" multiple style="display:none" @change="onFilePicked" />
           <textarea v-if="expanded"
             v-model="inputText"
             ref="expInputEl"
@@ -206,8 +226,12 @@ import hljs from 'highlight.js'
 import { useAudioStore } from '@/stores/audio'
 import { useProjectStore } from '@/stores/projects'
 import { useLiveStore } from '@/stores/live'
+import { useUiStore } from '@/stores/ui'
 import { agentApi, filesApi, trackApi } from '@/services/api'
 import { uploadSignal, calendarSignal } from '@/services/cache'
+import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/useThumbCache'
+
+const API_BASE = import.meta.env.VITE_API_URL ?? '/api/v1'
 import {
   PhPushPin, PhPushPinSlash, PhX, PhPlay, PhPause,
   PhSpeakerHigh, PhSpeakerLow, PhSpeakerSlash,
@@ -222,6 +246,15 @@ const SIDEBAR_W = 220
 const audioStore    = useAudioStore()
 const projectStore  = useProjectStore()
 const liveStore     = useLiveStore()
+const uiStore       = useUiStore()
+
+// 顶栏全局搜索点「对话」结果：打开聊天面板并切到该会话
+watch(() => uiStore.pendingChatSession, async (id) => {
+  if (!id) return
+  open.value = true
+  await loadSession(id)
+  uiStore.pendingChatSession = null
+})
 
 // 实时：IM（飞书/QQ）来了新消息 → 刷新会话列表，新会话/新标题即时出现
 watch(() => liveStore.rev.sessions, () => fetchSessions())
@@ -474,7 +507,7 @@ async function toggleOpen() {
     if (!expanded.value) { _scrollDelta = 0; msgsGrowth.value = 0 }
     trackApi.track('chat_open').catch(() => {})
     await nextTick()
-    atBottom.value = true
+    atBottom.value = true; stick.value = true
     if (messagesEl.value) scrollToBottom(messagesEl.value)
   }
 }
@@ -507,19 +540,45 @@ const pendingAtt   = ref([])     // 待发送的聊天附件（已上传暂存�
 const attUploading = ref(false)
 const fileInput    = ref(null)
 function pickFile() { fileInput.value && fileInput.value.click() }
-async function onFilePicked(e) {
-  const file = e.target.files && e.target.files[0]
-  e.target.value = ''
-  if (!file) return
+async function uploadAttachFiles(files) {
+  if (!files.length) return
   attUploading.value = true
   try {
-    const meta = await agentApi.uploadAttachment(file)
-    pendingAtt.value.push(meta)
-  } catch (err) {
-    messages.value.push({ id: mkid(), role: 'ai', text: '附件上传失败 😵 ' + (err && err.message || ''), time: now() })
+    for (const file of files) {
+      try {
+        const meta = await agentApi.uploadAttachment(file)
+        // 图片附件：本地 objectURL 立即出预览（暂存附件无 file_id，取不到服务端缩略图）
+        if (_IMG_EXTS.has((meta.ext || '').toLowerCase())) meta._thumbUrl = URL.createObjectURL(file)
+        pendingAtt.value.push(meta)
+      } catch (err) {
+        messages.value.push({ id: mkid(), role: 'ai', text: '附件上传失败 😵 ' + (err && err.message || ''), time: now() })
+      }
+    }
   } finally { attUploading.value = false }
 }
-function removeAtt(a) { pendingAtt.value = pendingAtt.value.filter(x => x.attach_id !== a.attach_id) }
+async function onFilePicked(e) {
+  const files = [...(e.target.files || [])]
+  e.target.value = ''
+  await uploadAttachFiles(files)
+}
+
+// ── 拖入文件添加附件（大小窗都支持）──
+const chatDrag = ref(0)
+const isChatDragging = computed(() => chatDrag.value > 0)
+function _dragHasFiles(e) { return [...(e.dataTransfer?.types || [])].includes('Files') }
+function onChatDragEnter(e) { if (_dragHasFiles(e)) { e.preventDefault(); chatDrag.value++ } }
+function onChatDragOver(e)  { if (_dragHasFiles(e)) e.preventDefault() }
+function onChatDragLeave()  { if (chatDrag.value > 0) chatDrag.value-- }
+function onChatDrop(e) {
+  if (!_dragHasFiles(e)) return
+  e.preventDefault()
+  chatDrag.value = 0
+  uploadAttachFiles([...(e.dataTransfer?.files || [])])
+}
+function removeAtt(a) {
+  if (a._thumbUrl) URL.revokeObjectURL(a._thumbUrl)   // 未发送即移除，回收 objectURL
+  pendingAtt.value = pendingAtt.value.filter(x => x.attach_id !== a.attach_id)
+}
 let _sessionTurn = 0             // 当前 session 已发消息轮次（埋点用，切换 session 重置）
 
 // 会话 id 存入 sessionStorage：刷新页面保留当前对话，关闭浏览器/标签页才清空（=开新对话）
@@ -540,6 +599,38 @@ function fmtSize(b) {
   if (b < 1024) return b + ' B'
   if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'
   return (b / 1048576).toFixed(1) + ' MB'
+}
+
+// ── 图片附件缩略图（与文件库共用 useThumbCache）──
+const _IMG_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
+// 缩略图来源优先级：本地 _thumbUrl（刚发的，即时）> file_id（已落库，服务端图）
+// > attach_id（刷新后历史里的暂存图，走 /agent/attachment 端点，6h 内有效）；都没有则 ext 角标
+function isImageFile(f) {
+  if (f._thumbUrl) return true
+  const isImg = _IMG_EXTS.has((f.ext || '').toLowerCase())
+  return isImg && (!!f.file_id || !!f.attach_id)
+}
+// IntersectionObserver 懒加载指令：进视口附近才取 card 尺寸缩略图。
+// 值为数字 file_id → 文件库缩略图；为字符串 attach_id → 暂存附件缩略图端点。
+const vLazyThumb = {
+  mounted(el, { value: id }) {
+    if (!id) return
+    const isAttach = typeof id === 'string'
+    const key  = isAttach ? `att:${id}_card` : `${id}_card`
+    const cached = isAttach ? getCachedThumbUrl(key) : getCachedThumb(id, 'card')
+    if (cached) { el.src = cached; return }
+    const fetchThumb = () => isAttach
+      ? getThumbUrl(key, `${API_BASE}/agent/attachment/${id}/thumb?size=card`)
+      : getThumb(id, 'card')
+    const obs = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return
+      obs.disconnect(); el._thumbObs = null
+      fetchThumb().then(url => { if (url) el.src = url })
+    }, { rootMargin: '200px' })
+    obs.observe(el)
+    el._thumbObs = obs
+  },
+  unmounted(el) { el._thumbObs?.disconnect(); el._thumbObs = null },
 }
 
 async function downloadFile(f) {
@@ -601,8 +692,8 @@ async function enterExpanded() {
   await fetchSessions()
   await nextTick()
   expInputEl.value?.focus()
-  atBottom.value = true
-  if (messagesEl.value) messagesEl.value.scrollTop = 999999
+  atBottom.value = true; stick.value = true
+  if (messagesEl.value) { messagesEl.value.scrollTop = 999999; _lastTop = messagesEl.value.scrollTop }
 }
 
 async function exitExpanded() {
@@ -612,11 +703,11 @@ async function exitExpanded() {
   await nextTick()
   const el = messagesEl.value
   if (!el) return
-  atBottom.value = true
-  el.scrollTop = 999999
+  atBottom.value = true; stick.value = true
+  el.scrollTop = 999999; _lastTop = el.scrollTop
   // CSS transition 让窗口从大尺寸平滑缩小（0.38s），期间 clientHeight 持续变化
   // ResizeObserver 跟着一直滚底，过渡结束后断开
-  const ro = new ResizeObserver(() => { el.scrollTop = 999999 })
+  const ro = new ResizeObserver(() => { el.scrollTop = 999999; _lastTop = el.scrollTop })
   ro.observe(el)
   setTimeout(() => ro.disconnect(), 450)
 }
@@ -664,27 +755,54 @@ function autoResize(e) {
 const atBottom = ref(true)
 let _sentinelObs = null
 
+// streaming 跟随意图：只有用户主动上翻才取消，回到底部附近恢复。
+// 不依赖异步的 atBottom（大窗固定高度时，每个流式块把哨兵顶出视口，IO 会比
+// MutationObserver 早一帧把 atBottom 置 false，导致跟随脱手）。
+const stick   = ref(true)
+let _lastTop  = 0     // 上次（多为程序化）滚动后的 scrollTop，用于判别用户上翻
+
 // streaming 用即时滚动跟随，避免 smooth 叠加追不上
 function scrollToBottom(el, smooth = false) {
   if (smooth) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
   else el.scrollTop = el.scrollHeight
+  _lastTop = el.scrollTop   // 记录落点：程序化滚动产生的 scroll 事件不会误判为上翻
 }
 
-// 用户发送时强制 smooth 滚到底；streaming 跟随时即时
+// 用户上翻 → 停住；滚回接近底部 → 恢复跟随
+function onMsgScroll() {
+  const el = messagesEl.value; if (!el) return
+  const top = el.scrollTop
+  if (top < _lastTop - 4) {
+    stick.value = false
+  } else if (el.scrollHeight - top - el.clientHeight < 60) {
+    stick.value = true
+  }
+  _lastTop = top
+}
+
+// 用户发送时强制即时跳到底（大窗用 smooth 会被随后出现的 thinking 气泡/内容打断，看着没到底）；
+// 再补一帧 rAF，兜住附件缩略图/气泡迟一拍布局导致的高度变化
 async function scrollBottom(force = false) {
   await nextTick()
   const el = messagesEl.value; if (!el) return
-  if (force) { atBottom.value = true; scrollToBottom(el, true) }
-  else if (atBottom.value) scrollToBottom(el)
+  if (force) {
+    atBottom.value = true; stick.value = true
+    scrollToBottom(el)
+    requestAnimationFrame(() => { if (stick.value && messagesEl.value) scrollToBottom(messagesEl.value) })
+  }
+  else if (stick.value) scrollToBottom(el)   // 跟随用稳健的 stick，不用异步竞态的 atBottom
 }
 
 // MutationObserver：内容变化时跟随（仅 streaming 且用户未上翻）
 let msgMo = null
 
-watch(messagesEl, (el) => {
+watch(messagesEl, (el, oldEl) => {
   msgMo?.disconnect()
   _sentinelObs?.disconnect()
+  oldEl?.removeEventListener('scroll', onMsgScroll)
   if (!el) return
+
+  el.addEventListener('scroll', onMsgScroll, { passive: true })
 
   // IntersectionObserver：观察哨兵 div 是否可见，替代 scrollHeight 读取
   const sentinel = el.querySelector('.msg-sentinel')
@@ -699,7 +817,7 @@ watch(messagesEl, (el) => {
   // MutationObserver：streaming 时内容变化自动滚底，小窗模式额外累计高度增量
   msgMo = new MutationObserver(() => {
     const el = messagesEl.value
-    if (!el || !streaming.value || !atBottom.value || resizing.value) return
+    if (!el || !streaming.value || !stick.value || resizing.value) return
     if (!expanded.value) {
       const prevTop = el.scrollTop
       scrollToBottom(el)
@@ -715,6 +833,7 @@ watch(messagesEl, (el) => {
 onUnmounted(() => {
   msgMo?.disconnect()
   _sentinelObs?.disconnect()
+  messagesEl.value?.removeEventListener('scroll', onMsgScroll)
 })
 
 // 消费一条 SSE 流，把事件渲染进消息列表。send（POST /chat）和续看（GET .../stream）共用。
@@ -807,7 +926,7 @@ async function send(forcedText) {
   if (fromInput) {
     _sessionTurn++
     messages.value.push({ id: mkid(), role: 'user', text, time: now(),
-      files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, upload: true })) : undefined })
+      files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, upload: true, _thumbUrl: a._thumbUrl })) : undefined })
     inputText.value = ''
     pendingAtt.value = []
     if (expInputEl.value) expInputEl.value.style.height = 'auto'
@@ -931,6 +1050,19 @@ async function send(forcedText) {
   transform-origin: right bottom;
 }
 .chat-open-enter-from, .chat-open-leave-to { opacity: 0; transform: scale(0.05); }
+
+/* ── 拖入附件遮罩 ── */
+.chat-drop-overlay {
+  position: absolute; inset: 0; z-index: 120;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  pointer-events: none;   /* 让拖拽事件穿透到 .chat-window，drop/dragleave 才能正常触发 */
+  background: rgba(123,127,178,0.16);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  border: 2px dashed rgba(123,127,178,0.6); border-radius: 20px;
+  color: var(--color-primary); font-size: 14px; font-weight: 600;
+}
+.chat-drop-fade-enter-active, .chat-drop-fade-leave-active { transition: opacity 0.15s ease; }
+.chat-drop-fade-enter-from, .chat-drop-fade-leave-to { opacity: 0; }
 
 /* ── 单一布局 ── */
 .chat-window { display: flex; }
@@ -1144,10 +1276,16 @@ async function send(forcedText) {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 3px 10px rgba(100,110,200,0.14);
 }
 .msg-file-ext {
+  position: relative; overflow: hidden;
   flex-shrink: 0; width: 34px; height: 34px; border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
   font-size: 11px; font-weight: 700; color: #fff; letter-spacing: 0.02em;
   background: linear-gradient(135deg, #7b7fb2, #9590c4);
+}
+/* 图片附件：缩略图覆盖 ext 角标；加载失败时 @error 移除自身，露出底下角标 */
+.msg-file-thumb {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block;
 }
 .msg-file-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .msg-file-name { font-size: 15px; font-weight: 500; color: #2a2c3a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

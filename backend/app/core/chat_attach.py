@@ -13,6 +13,13 @@ import uuid
 from app.core.redis import get_redis, get_redis_sync
 from app.services.storage import get_storage
 
+# 让 Pillow 能解码 iPhone 的 HEIC/HEIF（缺包则静默跳过，heic 退回不可读）
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except Exception:
+    pass
+
 TTL = 6 * 3600          # 暂存 6 小时
 _PREFIX = "chatfile:"
 MAX_TEXT_INJECT = 32000  # 注入给模型的文本上限（字符）
@@ -23,15 +30,18 @@ TEXT_EXTS = {
     "vue", "html", "css", "scss", "java", "go", "rs", "c", "cpp", "h", "hpp", "sh",
     "sql", "xml", "toml", "ini", "conf", "env", "tex",
 }
-IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"}
+IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic", "heif", "tiff", "tif"}
 
-# 能作为「图片块」喂给 vision 模型的扩展名（主流 vision API 都收 png/jpeg/gif/webp；
-# bmp/svg 不通用，仍走文字提示）。每张原图上限、单条消息最多张数——挡住超大图把上下文撑爆。
-VISION_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
+# 能喂给 vision 模型的扩展名。png/jpeg/gif/webp 是 API 原生格式（达标即原样发）；
+# heic/bmp/tiff 等先经 Pillow 转码成 JPEG 再发（见 _fit_image_for_vision）。svg 是矢量、Pillow 不解，仍走文字提示。
+VISION_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "bmp", "tiff", "tif"}
+_VISION_PASSTHROUGH = {"png", "jpg", "jpeg", "gif", "webp"}   # API 原生收，达标免重编码
 _VISION_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
                 "gif": "image/gif", "webp": "image/webp"}
-VISION_IMG_MAX = 5 * 1024 * 1024   # 单张原图字节上限
+VISION_IMG_MAX = 5 * 1024 * 1024   # 单张图喂模型的字节上限（超了自动降采样压缩，不再直接丢）
 VISION_IMG_COUNT = 6               # 单条消息最多带几张图
+VISION_MAX_DIM = 2048              # 喂模型前长边降采样到此像素（插画/照片足够清晰，省 token）
+VISION_TARGET_BYTES = int(4.5 * 1024 * 1024)  # 压缩目标字节（留 API 余量）
 
 
 def _key(user_id, attach_id) -> str:
@@ -163,6 +173,96 @@ def _vision_enabled() -> bool:
         return False
 
 
+def _fit_image_for_vision(raw: bytes, ext: str):
+    """把图调整到适合喂 vision 模型的体积/尺寸，返回 (bytes, media_type)；失败返回 None。
+
+    只作用于「喂给模型的副本」——存进文件库 / storage 的原图不受影响。
+    - 体积 ≤ 上限且长边 ≤ VISION_MAX_DIM → 原样用（不重编码，保真省 CPU）
+    - 超体积或超大尺寸 → 等比降采样到长边 VISION_MAX_DIM，再逐级降质重压成 JPEG 压到目标内
+    （插画常见 >5MB，此前会被直接丢成「看不到」——本函数把它救回来）
+    """
+    media = _VISION_MIME.get(ext, "image/jpeg")
+    passthrough = ext in _VISION_PASSTHROUGH   # 非原生格式（heic/bmp/tiff…）一律重编码成 JPEG
+    try:
+        import io
+        from PIL import Image
+    except Exception:
+        # Pillow 不可用：原生格式且体积合规就原样发，否则放弃
+        return (raw, media) if (passthrough and len(raw) <= VISION_IMG_MAX) else None
+
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            if passthrough and len(raw) <= VISION_IMG_MAX and max(im.size) <= VISION_MAX_DIM:
+                return raw, media   # 原生格式 + 已达标，原样用
+
+            # 透明通道铺白底再转 RGB（JPEG 不支持 alpha）
+            if im.mode in ("RGBA", "LA", "P"):
+                im = im.convert("RGBA")
+                bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+                im = Image.alpha_composite(bg, im).convert("RGB")
+            elif im.mode != "RGB":
+                im = im.convert("RGB")
+
+            w, h = im.size
+            scale = VISION_MAX_DIM / max(w, h)
+            if scale < 1:
+                im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+
+            buf = io.BytesIO()
+            for q in (85, 75, 65, 55, 45):
+                buf.seek(0); buf.truncate(0)
+                im.save(buf, format="JPEG", quality=q, optimize=True)
+                if buf.tell() <= VISION_TARGET_BYTES:
+                    break
+            return buf.getvalue(), "image/jpeg"
+    except Exception:
+        return None
+
+
+def vision_ready() -> bool:
+    """vision 开 **且** 当前 provider 走 Anthropic 块格式——只有这样才能在 tool_result 里塞图片块
+    （OpenAI 路工具结果只能是纯文本）。read_file 看图据此决定能否把库里的图喂给模型。"""
+    try:
+        from app.core.config import get_settings
+        s = get_settings()
+        anthropic = (s.ai.provider == "minimax") or ("anthropic" in (s.ai.base_url or "").lower())
+        return bool(s.ai.vision) and anthropic
+    except Exception:
+        return False
+
+
+VISION_READ_MAX = 30 * 1024 * 1024   # read_file 看图时从存储拉取的硬上限（压缩前），挡住超大文件
+
+
+def vision_block(raw: bytes, ext: str):
+    """把图压好封成 Anthropic image 内容块 {"type":"image",...}；不支持/失败返回 None。"""
+    if (ext or "").lower() not in VISION_EXTS:
+        return None
+    fitted = _fit_image_for_vision(raw, (ext or "").lower())
+    if not fitted:
+        return None
+    import base64
+    data, media = fitted
+    return {"type": "image", "source": {
+        "type": "base64", "media_type": media, "data": base64.b64encode(data).decode()}}
+
+
+def strip_vision_for_history(content):
+    """持久化前把 tool_result 里的图片块换成占位文字。
+
+    图片 base64 很大，若原样存进对话历史，会撑大 DB 且每轮都重新喂给模型（token 爆炸）。
+    历史里留个占位即可——模型要再看会重新调 read_file。"""
+    if not isinstance(content, list):
+        return content
+    out = []
+    for blk in content:
+        if isinstance(blk, dict) and blk.get("type") == "image":
+            out.append({"type": "text", "text": "[图片已查看]"})
+        else:
+            out.append(blk)
+    return out
+
+
 async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> tuple[str, list, list]:
     """把附件解析成：① 注入给模型的增广文本（文本读内容、图片/二进制给提示）
     ② 给前端气泡的附件卡片列表 ③ 图片块列表（仅 vision 模型，喂给模型「看」）。
@@ -187,20 +287,22 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> t
             parts.append(f"\n\n📎 用户上传的文件{tag}，内容如下：\n```\n{await read_text(meta)}\n```")
         elif meta["kind"] == "image":
             ext = (meta.get("ext") or "").lower()
-            # vision 模型 + 受支持格式 + 体积合规 + 没超张数 → 作为图片块让模型真看
-            if (vision and ext in VISION_EXTS and meta["size"] <= VISION_IMG_MAX
-                    and len(images) < VISION_IMG_COUNT):
+            # vision 模型 + 受支持格式 + 没超张数 → 喂给模型真看（超体积/超大尺寸自动压缩）
+            if vision and ext in VISION_EXTS and len(images) < VISION_IMG_COUNT:
                 try:
                     import base64
                     raw = await read_bytes(meta)
-                    images.append({"media_type": _VISION_MIME.get(ext, "image/png"),
-                                   "b64": base64.b64encode(raw).decode()})
-                    parts.append(f"\n\n📎 用户上传了图片{tag}（见随附图像）；"
-                                 f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
-                    continue
+                    fitted = _fit_image_for_vision(raw, ext)
+                    if fitted:
+                        data, media = fitted
+                        images.append({"media_type": media,
+                                       "b64": base64.b64encode(data).decode()})
+                        parts.append(f"\n\n📎 用户上传了图片{tag}（见随附图像）；"
+                                     f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
+                        continue
                 except Exception:
-                    pass   # 读图失败 → 退回文字提示
-            why = "当前模型看不到图像内容" if not vision else "这张图没法直接看（格式/体积不支持）"
+                    pass   # 读图/压缩失败 → 退回文字提示
+            why = "当前模型看不到图像内容" if not vision else "这张图没法直接看（格式不支持）"
             parts.append(f"\n\n📎 用户上传了图片{tag}。{why}；"
                          f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
         else:

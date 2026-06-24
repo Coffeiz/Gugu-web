@@ -42,6 +42,33 @@ export function getThumb(id, size = 'card') {
   return p
 }
 
+// 通用：按任意 URL 取缩略图并以自定义 key 缓存（聊天暂存附件缩略图等，走 file id 之外的端点）
+export function getCachedThumbUrl(key) {
+  return cache.get(key) ?? null
+}
+
+export function getThumbUrl(key, url) {
+  if (cache.has(key)) return Promise.resolve(cache.get(key))
+  if (pending.has(key)) return pending.get(key)
+
+  const token = localStorage.getItem('user_token') ?? ''
+  const p = fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    cache: 'no-cache',
+  })
+    .then(r => (r.ok ? r.blob() : Promise.reject()))
+    .then(blob => {
+      const blobUrl = URL.createObjectURL(blob)
+      cache.set(key, blobUrl)
+      pending.delete(key)
+      return blobUrl
+    })
+    .catch(() => { pending.delete(key); return null })
+
+  pending.set(key, p)
+  return p
+}
+
 const _IMG_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','heic','heif','svg'])
 
 export function preloadTinyThumbs(files) {
