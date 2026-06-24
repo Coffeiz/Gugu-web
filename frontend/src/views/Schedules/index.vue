@@ -30,9 +30,9 @@
       </div>
     </div>
 
-    <!-- 新建/编辑弹窗 -->
-    <div v-if="showModal" class="modal-overlay" @click.self="showModal = false">
-      <div class="modal">
+    <!-- 新建/编辑弹窗（共享 BaseModal，与项目弹窗同款风格+动画）-->
+    <BaseModal :show="showModal" width="440px" @close="showModal = false">
+      <div class="sched-modal">
         <div class="modal-title">{{ editing ? '编辑任务' : '新建任务' }}</div>
 
         <label class="field">
@@ -83,13 +83,14 @@
           <button class="btn-primary" @click="submit" :disabled="busy">{{ editing ? '保存' : '创建' }}</button>
         </div>
       </div>
-    </div>
+    </BaseModal>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { scheduledTasksApi } from '@/services/api'
+import BaseModal from '@/components/common/BaseModal.vue'
 
 const weekdays = ['日', '一', '二', '三', '四', '五', '六']
 const tasks = ref([])
@@ -262,8 +263,7 @@ async function removeTask(t) {
 .switch input:checked + .slider::before { transform: translateX(16px); }
 .switch.sm input:checked + .slider::before { transform: translateX(13px); }
 
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.32); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(2px); }
-.modal { width: 440px; max-width: 92vw; background: #fff; border-radius: 18px; padding: 22px 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.22); }
+.sched-modal { padding: 22px 24px; }
 .modal-title { font-size: 16px; font-weight: 700; color: var(--text-primary); margin-bottom: 16px; }
 .field { display: block; margin-bottom: 14px; }
 .field > span { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
