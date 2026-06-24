@@ -17,6 +17,7 @@
 - **`app/jobs.py`**：定时任务定义入口（新增任务＝加个 `@register` 的 async 函数）。首个任务 `deadline_scan`：每天 09:00 跨用户扫 48h 内到期的未完成项目（复用 `scan_upcoming_deadlines`，纯查询）。
 - **当前 dry-run（只打日志，不推送）**——真往用户 IM 主动 DM 还需：① IM 寻址（按 `user_id` 反查可触达地址）② 「何时打扰/频率/去重」策略，留作下一步（主动触达功能）。
 - worker `serve()` 里 `import app.jobs` + `scheduler.start()`，退出 `shutdown()`。
+- **Admin 服务状态页可见**：worker 心跳带上已注册定时任务（id/name/下次运行时间），服务页 worker 卡片下列出（无独立页，挂在现有面板）。
 
 ### IM 斜杠强制命令（/stop · /status · /help）
 

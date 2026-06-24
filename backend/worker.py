@@ -235,8 +235,13 @@ async def run_once(block_ms: int = 5000) -> int:
 
 async def _heartbeat():
     from app.core import health
+    from app.core import scheduler as sched
     while not _stop.is_set():
-        await health.beat("worker", {"consumer": CONSUMER})
+        jobs = [{
+            "id": j.id, "name": j.name,
+            "next": j.next_run_time.strftime("%Y-%m-%d %H:%M") if j.next_run_time else None,
+        } for j in sched.jobs()]
+        await health.beat("worker", {"consumer": CONSUMER, "jobs": jobs})
         for _ in range(health.INTERVAL):
             if _stop.is_set():
                 break
