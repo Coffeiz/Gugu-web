@@ -2,7 +2,6 @@
   <div class="sched-page">
     <div class="panel">
       <div class="section-header">
-        <span class="section-title">我的任务 <span class="muted">（{{ tasks.length }}）</span></span>
         <button class="btn-primary" @click="openCreate">＋ 新建任务</button>
       </div>
       <div v-if="loading" class="empty">加载中…</div>
@@ -199,9 +198,7 @@ async function removeTask(t) {
   backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   padding: 22px 24px;
 }
-.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-shrink: 0; }
-.section-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
-.muted { color: var(--text-secondary); font-weight: 400; font-size: 13px; }
+.section-header { display: flex; align-items: center; justify-content: flex-end; margin-bottom: 14px; flex-shrink: 0; }
 
 .empty { font-size: 13px; color: var(--text-secondary); padding: 8px 2px; }
 
