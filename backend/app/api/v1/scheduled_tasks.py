@@ -23,6 +23,13 @@ _CHANNELS = {"chat", "im"}
 
 
 def _validate_cron(cron: str) -> None:
+    if (cron or "").startswith("@once:"):
+        from datetime import datetime
+        try:
+            datetime.fromisoformat(cron[6:])
+        except ValueError:
+            raise HTTPException(400, "一次性时间格式错误")
+        return
     from apscheduler.triggers.cron import CronTrigger
     try:
         CronTrigger.from_crontab(cron)

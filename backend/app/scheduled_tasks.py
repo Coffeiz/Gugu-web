@@ -28,10 +28,18 @@ def _as_uuid(v):
     return v if not isinstance(v, str) else _uuid.UUID(v)
 
 
+def build_trigger(cron: str):
+    """cron 字符串 → APScheduler 触发器。`@once:<ISO>` = 一次性（DateTrigger），否则 crontab。"""
+    if (cron or "").startswith("@once:"):
+        from apscheduler.triggers.date import DateTrigger
+        return DateTrigger(run_date=datetime.fromisoformat(cron[6:]), timezone="Asia/Shanghai")
+    from apscheduler.triggers.cron import CronTrigger
+    return CronTrigger.from_crontab(cron, timezone="Asia/Shanghai")
+
+
 # ── reconcile：DB → APScheduler ──────────────────────────────────────────────
 async def reconcile() -> None:
     from app.core import scheduler as sched
-    from apscheduler.triggers.cron import CronTrigger
     s = sched.get()
     if s is None:
         return
@@ -52,9 +60,9 @@ async def reconcile() -> None:
         if s.get_job(jid) is not None and _synced.get(jid) == stamp:
             continue   # 没变，跳过
         try:
-            trig = CronTrigger.from_crontab(t.cron, timezone="Asia/Shanghai")
+            trig = build_trigger(t.cron)
         except Exception as e:
-            print(f"[sched] 任务 {t.id} cron 非法({t.cron!r})：{e}", flush=True)
+            print(f"[sched] 任务 {t.id} 触发器非法({t.cron!r})：{e}", flush=True)
             continue
         s.add_job(execute_task, trig, args=[t.id], id=jid, name=t.name,
                   replace_existing=True, max_instances=1, coalesce=True)
@@ -77,6 +85,8 @@ async def execute_task(task_id: int) -> None:
             return
         action, payload, channels, uid, name = t.action_type, t.payload or "", t.channels or CHANNELS_DEFAULT, t.user_id, t.name
         t.last_run_at = datetime.utcnow()
+        if (t.cron or "").startswith("@once:"):
+            t.enabled = False   # 一次性：跑完即停（reconcile 下轮摘除 job）
         await db.commit()
     try:
         if action == "reminder":

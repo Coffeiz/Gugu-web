@@ -32,12 +32,7 @@
     <!-- 新建/编辑弹窗（共享 BaseModal，与项目弹窗同款风格+动画）-->
     <BaseModal :show="showModal" width="440px" @close="showModal = false">
       <div class="sched-modal">
-        <div class="modal-title">{{ editing ? '编辑任务' : '新建任务' }}</div>
-
-        <label class="field">
-          <span>名称</span>
-          <input v-model="form.name" placeholder="如：每早待办、喝水提醒" maxlength="100" />
-        </label>
+        <input v-model="form.name" class="title-input" placeholder="任务名称" maxlength="100" />
 
         <label class="field">
           <span>类型</span>
@@ -53,19 +48,18 @@
             :placeholder="form.action_type === 'agent' ? '如：把今天到期的待办列给我' : '如：该喝水啦～'"></textarea>
         </label>
 
-        <label class="field">
-          <span>什么时候</span>
-          <div class="when">
-            <select v-model="form.freq">
-              <option value="daily">每天</option>
-              <option value="weekday">工作日（周一至周五）</option>
-              <option value="weekly">每周</option>
-            </select>
-            <select v-if="form.freq === 'weekly'" v-model.number="form.weekday">
-              <option v-for="(w, i) in weekdays" :key="i" :value="i === 0 ? 0 : i">周{{ w }}</option>
-            </select>
-            <input type="time" v-model="form.time" />
+        <div class="field">
+          <span>重复</span>
+          <div class="days">
+            <button v-for="d in dayOpts" :key="d.v" type="button" class="day-chip"
+              :class="{ on: form.days.includes(d.v) }" @click="toggleDay(d.v)">{{ d.label }}</button>
           </div>
+          <div class="repeat-hint">{{ repeatHint }}</div>
+        </div>
+
+        <label class="field">
+          <span>时间</span>
+          <input type="time" v-model="form.time" />
         </label>
 
         <div class="field">
@@ -103,7 +97,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { scheduledTasksApi } from '@/services/api'
 import BaseModal from '@/components/common/BaseModal.vue'
 
@@ -114,7 +108,24 @@ const busy = ref(false)
 const showModal = ref(false)
 const editing = ref(null)
 const formErr = ref('')
-const form = reactive({ name: '', action_type: 'reminder', payload: '', freq: 'daily', weekday: 1, time: '09:00', channels: ['chat'] })
+// 重复：选中的星期（0=日,1=一,…,6=六）。空 = 不重复（一次性）
+const dayOpts = [
+  { v: 1, label: '一' }, { v: 2, label: '二' }, { v: 3, label: '三' },
+  { v: 4, label: '四' }, { v: 5, label: '五' }, { v: 6, label: '六' }, { v: 0, label: '日' },
+]
+const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0]
+const form = reactive({ name: '', action_type: 'reminder', payload: '', days: [], time: '09:00', channels: ['chat'] })
+
+function pad(n) { return String(n).padStart(2, '0') }
+function toggleDay(v) {
+  const i = form.days.indexOf(v)
+  if (i >= 0) form.days.splice(i, 1); else form.days.push(v)
+}
+const repeatHint = computed(() => {
+  if (!form.days.length) return '不重复（到点只运行一次）'
+  if (form.days.length === 7) return '每天'
+  return '每周' + DOW_ORDER.filter(d => form.days.includes(d)).map(d => weekdays[d]).join('、')
+})
 
 async function load() {
   loading.value = true
@@ -125,40 +136,55 @@ async function load() {
 }
 onMounted(load)
 
+function blankForm() { return { name: '', action_type: 'reminder', payload: '', days: [], time: '09:00', channels: ['chat'] } }
 function openCreate() {
   editing.value = null
-  Object.assign(form, { name: '', action_type: 'reminder', payload: '', freq: 'daily', weekday: 1, time: '09:00', channels: ['chat'] })
+  Object.assign(form, blankForm())
   formErr.value = ''
   showModal.value = true
 }
 function openEdit(t) {
   editing.value = t
-  const { freq, weekday, time } = parseCron(t.cron)
-  Object.assign(form, { name: t.name, action_type: t.action_type, payload: t.payload, freq, weekday, time, channels: [...t.channels] })
+  const { days, time } = parseCron(t.cron)
+  Object.assign(form, { name: t.name, action_type: t.action_type, payload: t.payload, days, time, channels: [...t.channels] })
   formErr.value = ''
   showModal.value = true
 }
 
 function buildCron() {
   const [h, m] = form.time.split(':').map(Number)
-  if (form.freq === 'daily')   return `${m} ${h} * * *`
-  if (form.freq === 'weekday') return `${m} ${h} * * 1-5`
-  return `${m} ${h} * * ${form.weekday}`
+  if (!form.days.length) {
+    // 不重复：下一个该时间点（今天过了就明天）
+    const now = new Date()
+    const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0)
+    if (dt <= now) dt.setDate(dt.getDate() + 1)
+    return `@once:${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(h)}:${pad(m)}`
+  }
+  const dows = DOW_ORDER.filter(d => form.days.includes(d)).join(',')
+  return `${m} ${h} * * ${dows}`
 }
 function parseCron(cron) {
-  const p = (cron || '').split(' ')
-  if (p.length !== 5) return { freq: 'daily', weekday: 1, time: '09:00' }
+  cron = cron || ''
+  if (cron.startsWith('@once:')) {
+    const dt = new Date(cron.slice(6))
+    return { days: [], time: `${pad(dt.getHours())}:${pad(dt.getMinutes())}` }
+  }
+  const p = cron.split(' ')
+  if (p.length !== 5) return { days: [], time: '09:00' }
   const [m, h, , , dow] = p
-  const time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
-  if (dow === '*') return { freq: 'daily', weekday: 1, time }
-  if (dow === '1-5') return { freq: 'weekday', weekday: 1, time }
-  return { freq: 'weekly', weekday: Number(dow) || 0, time }
+  const time = `${pad(Number(h))}:${pad(Number(m))}`
+  const days = dow === '*' ? [0, 1, 2, 3, 4, 5, 6] : dow.split(',').map(Number).filter(x => !isNaN(x))
+  return { days, time }
 }
 function cronLabel(cron) {
-  const { freq, weekday, time } = parseCron(cron)
-  if (freq === 'daily')   return `每天 ${time}`
-  if (freq === 'weekday') return `工作日 ${time}`
-  return `每周${weekdays[weekday] ?? ''} ${time}`
+  if ((cron || '').startsWith('@once:')) {
+    const dt = new Date(cron.slice(6))
+    return `仅一次 · ${dt.getMonth() + 1}/${dt.getDate()} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`
+  }
+  const { days, time } = parseCron(cron)
+  if (days.length === 7) return `每天 ${time}`
+  if (!days.length) return time
+  return `每周${DOW_ORDER.filter(d => days.includes(d)).map(d => weekdays[d]).join('、')} ${time}`
 }
 function channelLabel(chs) {
   const map = { chat: '聊天', im: '飞书/QQ' }
@@ -279,7 +305,13 @@ async function removeTask(t) {
 .switch.sm input:checked + .slider::before { transform: translateX(13px); }
 
 .sched-modal { padding: 22px 24px; }
-.modal-title { font-size: 16px; font-weight: 700; color: var(--text-primary); margin-bottom: 16px; }
+/* 任务名放顶部、标题风格 */
+.title-input {
+  width: 100%; box-sizing: border-box; border: none; background: none; outline: none;
+  font-size: 18px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans);
+  padding: 0; margin-bottom: 18px;
+}
+.title-input::placeholder { color: rgba(0,0,0,0.28); font-weight: 700; }
 .field { display: block; margin-bottom: 14px; }
 .field > span { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
 /* 输入框/选择框：学新建项目（0.72 白底 + rgba(0,0,0,0.1) 边 + 紫色 focus 光圈），曲率连续圆角 */
@@ -302,8 +334,17 @@ async function removeTask(t) {
   transition: all 0.15s;
 }
 .seg button.on { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; border-color: transparent; }
-.when { display: flex; gap: 8px; }
-.when select { flex: 1; }
+/* 重复：周一到周日 chips（不选=不重复） */
+.days { display: flex; gap: 6px; }
+.day-chip {
+  flex: 1; padding: 7px 0; border-radius: 9px; corner-shape: squircle;
+  border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72);
+  font-size: 13px; cursor: pointer; color: var(--text-secondary); font-family: var(--font-sans);
+  transition: all 0.15s;
+}
+.day-chip:hover { border-color: rgba(123,127,178,0.4); }
+.day-chip.on { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; border-color: transparent; }
+.repeat-hint { font-size: 12px; color: var(--text-secondary); margin-top: 7px; }
 .when input[type=time] { width: 120px; }
 /* 勾选框：登录/注册页同款（隐藏原生 + 自定义方块 + SVG 对勾） */
 .chans { display: flex; gap: 18px; }
