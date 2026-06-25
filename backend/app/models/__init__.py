@@ -85,7 +85,6 @@ class Project(Base):
     progress:      Mapped[int]           = mapped_column(Integer,     default=0)
     stages_json:   Mapped[str]           = mapped_column(Text,        default="[]")
     current_stage: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    notes:         Mapped[str]           = mapped_column(Text,        default="")
     priority:      Mapped[Optional[str]] = mapped_column(String(20),  nullable=True)
     version:       Mapped[int]           = mapped_column(Integer,     default=1)
     archived:      Mapped[bool]          = mapped_column(Boolean,     default=False)

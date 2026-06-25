@@ -32,7 +32,6 @@ def _to_resp(p: Project, file_count: int = 0) -> ProjectResponse:
         progress=p.progress,
         stages=p.stages,
         current_stage=p.current_stage,
-        notes=p.notes,
         archived=p.archived,
         priority=p.priority,
         version=p.version or 1,
@@ -84,7 +83,6 @@ async def create_project(
         color=body.color,
         progress=body.progress,
         current_stage=body.current_stage,
-        notes=body.notes,
     )
     p.stages = body.stages
     db.add(p)

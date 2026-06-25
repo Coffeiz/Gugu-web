@@ -5,6 +5,41 @@
 
 ---
 
+## 2026-06-25 · 已完成列折叠的月份改 v-if：别让攒了几百个的项目卡全量挂载
+
+`DoneColumn.vue`（项目看板「已完成」列）按年→月折叠，但折叠用的是 `v-show`——**只切 `display:none`，里面的 `ProjectCard` 照样全部挂载**。已完成项目随时间累积到几百个时，初次渲染要 mount 几百个 526 行、十几个 computed 的大卡片（虽不发网络请求，但实例化 + DOM + 响应式开销都在），明显拖慢。
+
+改法：折叠容器的三处 `v-show` → `v-if`（年 body、月 cards、未设置日期 body）。默认 `onMounted` 只开当前年+当前月，于是**初次只渲染「最近完成」置顶 3 个 + 当前月那几张**，展开某月才按需挂载、折叠回去即卸载。`npx vite build` 通过。
+
+> `v-show` 适合频繁切换、想保留状态的场景；这里卡片纯由 props 驱动、且大多数长期折叠，`v-if` 的按需挂载/卸载更划算。
+
+---
+
+## 2026-06-25 · 批量上传/缩略图并发限流：共享 pLimit，别把连接和带宽打满
+
+低配生产（2C/2G + 有限带宽）批量拖几十个文件时，尾部请求 503/超时。根因是浏览器单域名 HTTP/1.1 约 6 连接，而前端**一次性把所有上传请求全发出去**（`ProjectModal.uploadFiles` 的 `Promise.allSettled(tasks.map(...))` 无上限），上传完成又同时触发同样多的 `/thumb` 请求，两者叠加瞬间打满。
+
+**做法**：抽一个共享并发限流器 `@/utils/concurrency.js` `pLimit(n)`（任务排队、按阈值放行、完成即补位），上传与缩略图加载**共用同一实现**，阈值集中两个常量：`UPLOAD_CONCURRENCY=3` / `THUMB_CONCURRENCY=6`，带宽紧只调一处。
+
+三处限流现状：① 上传 = `ProjectModal` 套 `pLimit(3)`（新增；`UploadModal`/`ProjectCard` 本就 `for` 串行）；② 缩略图加载 = `useThumbCache` 改用共享 `pLimit(6)`（替换原 `_acquire/_release`）；③ 缩略图生成（后端）= `_THUMB_SEM=Semaphore(cpu-1)`（早有，2C=1）。
+
+注意：仅**单客户端内**限流，多用户并发仍可能叠加——真要全局限得后端中间件信号量，当前量级不必要。`npx vite build` 通过。详见 `performance.md` 十三节。
+
+---
+
+## 2026-06-25 · 下线项目「备注」功能：贯穿全栈的字段删除
+
+项目备注（`Project.notes`）整体下线，从数据层到 UI 一条龙删干净：
+
+- **后端**：模型 `Project.notes` 列、schema（ProjectCreate/Update/Response）、API（`projects.py` 的 `_to_resp`/`create_project`）、全局搜索（`search.py` 不再按 notes 匹配）。
+- **agent 工具（数据集）**：`skills/projects.py` 里 `create_project`/`update_project` 的 `notes` 入参、`get_project`/`list`/序列化的 `notes` 字段、以及工具描述里的"备注"字样全部移除——模型从此既不会写也不会读项目备注。
+- **前端**：`stores/projects.js` 默认对象、`NewProjectModal`/`ProjectModal` 的备注 textarea + 自动保存 watcher + CSS、`Privacy.vue` 文案。
+- **迁移**：`20260625000001_drop_project_notes.py`，`DROP COLUMN IF EXISTS`（幂等）。
+
+两个注意点：① 只删**项目**的 notes，**客户**（`Client.notes`）和**邀请码**（`InviteCode.note`）的备注保留。② 模型改完应用即可正常工作（DB 那列还在、ORM 不映射、新建走 DB 默认值），**跑迁移才真正删列且不可逆**——本地/devserver/prod 各自决定何时 `alembic upgrade head`。改了 `skills/projects.py`（大脑），IM worker 需重启才生效。
+
+---
+
 ## 2026-06-25 · 给 agent 加"自我核实"闭环：防"嘴上说建好了、实际没建全"
 
 模型偶尔会建项目/任务时漏建几个阶段或待办，却回一句"都建好啦 ✅"。靠 prompt 提醒("做完检查一下")不稳——它经常跳过。于是改成**代码强制**的核实闭环（`core.py`）。
@@ -25,9 +60,15 @@
 
 每个含增删改的任务**至少多 1 轮 LLM 调用**（自检轮），2C/2G + MiniMax 上成本和响应时间都会涨。换"不漏建"的确定性，值；嫌重可把 `_mutset` 收窄到只盖 create_*，或调小 `MAX_VERIFY`。
 
+### 静默自检（补丁）：别"二次检查重复说一遍差不多的话"
+
+上线后发现 UX 回归：前端所有 token 都拼进**同一个气泡**（`aiIdx` 跨轮不重置），自检轮的确认（"已核实，项目X的3阶段都在 ✅"）直接拼到首条"建好了…"后面，几乎重复。web.py 原有的去重只做**精确前缀匹配**，自检是**改写/换词**，前缀对不上 → 漏过。
+
+改在 **core.py 源头**（web/IM 统一受益）：引入 `verify_mode`（进入核实阶段就持续到收尾，含其 `get_*` 查证轮）+ `verify_fixed`。核实阶段模型文字**先缓冲不实时发**——干净通过整段丢弃；只有补做时在补做那轮发一次"发现漏了X"说明。坑：自检几乎总要先调 `get_project` 查证，确认落在**下一轮**，所以 `verify_mode` 必须**跨轮持续**（最初按单轮标志写错了，冒烟测试抓出来）。
+
 ### 冒烟测试（无 API 成本）
 
-在接缝处打桩（`_stream_round`/OpenAI client/`registry.dispatch`），用脚本化假回复驱动 **core.py 真实循环**，4 场景 15 断言全绿：A 建项目→自检发现不全→补做→二次核实通过（注入 2 次）；B 纯查询不触发；C 反复改→封顶 3 轮不报错；D OpenAI 路同构。证实了"通过即停 / 补做再触发 / 只读不触发 / 有上限"四条核心行为。
+在接缝处打桩（`_stream_round`/OpenAI client/`registry.dispatch`），用脚本化假回复驱动 **core.py 真实循环**，`backend/scripts/smoke_self_verify.py`，5 场景 23 断言全绿：① 干净通过→确认被抑制（核心诉求，断言"已核实"不在流出文本里）；② 发现漏→只发一次"发现漏了X"、中间/末尾确认静默；③ 纯查询不触发；④ 反复补做封顶 3 轮不报错；⑤ OpenAI 路同构。
 
 ---
 

@@ -42,7 +42,6 @@ async def _list_projects(db, user_id, args: dict):
             "deadline": p.deadline,
             "start_date": p.start_date,
             "client": p.client,
-            "notes": p.notes,
             "stages_done": sum(1 for s in p.stages if s.get("done")),
             "stages_total": len(p.stages),
         }
@@ -58,7 +57,7 @@ async def _update_project(db, user_id, args: dict):
         if args["status"] == "done" and p.done_at is None:
             p.done_at = datetime.utcnow()
         p.status = args["status"]
-    for field in ("deadline", "start_date", "client", "notes", "name"):
+    for field in ("deadline", "start_date", "client", "name"):
         if field in args:
             setattr(p, field, args[field])
     p.updated_at = datetime.utcnow()
@@ -117,7 +116,6 @@ async def _create_project(db, user_id, args: dict):
         status=args.get("status", "pending"),
         deadline=deadline,
         start_date=start_date,
-        notes=args.get("notes", ""),
         color=args.get("color") or random.choice(_COLOR_PRESETS),
         stages_json=json.dumps(stages, ensure_ascii=False),
         current_stage=stages[0]["key"],
@@ -312,7 +310,7 @@ async def _get_project(db, user_id, args: dict):
     return {
         "id": p.id, "name": p.name, "status": p.status, "priority": p.priority,
         "client": p.client, "start_date": p.start_date, "deadline": p.deadline,
-        "notes": p.notes, "current_stage": p.current_stage, "archived": p.archived,
+        "current_stage": p.current_stage, "archived": p.archived,
         "stages": [
             {"key": s.get("key"), "label": s.get("label"), "done": s.get("done", False),
              "todos": [{"id": t.get("id"), "text": t.get("text"), "done": t.get("done", False)}
@@ -537,7 +535,7 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="update_project",
             label="更新项目",
-            description="修改项目的状态、截止日期、开始日期、备注、客户名称。",
+            description="修改项目的状态、截止日期、开始日期、客户名称。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -547,7 +545,6 @@ class ProjectsSkill(BaseSkill):
                     "deadline":   {"type": "string", "description": "截止日期 YYYY-MM-DD"},
                     "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
                     "client":     {"type": "string", "description": "客户名称"},
-                    "notes":      {"type": "string", "description": "备注"},
                     "name":       {"type": "string", "description": "项目名称"},
                 },
                 "required": [],
@@ -566,7 +563,6 @@ class ProjectsSkill(BaseSkill):
                     "status":     {"type": "string", "enum": ["pending", "active", "done"]},
                     "deadline":   {"type": "string", "description": "YYYY-MM-DD；不填默认一周后"},
                     "start_date": {"type": "string", "description": "YYYY-MM-DD；不填默认今天"},
-                    "notes":      {"type": "string"},
                     "color":      {"type": "string", "description": "渐变色字符串，如 linear-gradient(135deg,#7b7fb2,#c4afc8)；不传则随机从预设中选"},
                     "stages": {
                         "type": "array",
@@ -671,7 +667,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="get_project", label="项目详情",
-            description="获取单个项目的完整结构：状态、日期、客户、备注、当前阶段，以及每个阶段（含 key/label）下的待办列表（含 id/text/done）。管理阶段或待办前先用它看清结构。",
+            description="获取单个项目的完整结构：状态、日期、客户、当前阶段，以及每个阶段（含 key/label）下的待办列表（含 id/text/done）。管理阶段或待办前先用它看清结构。",
             input_schema={
                 "type": "object",
                 "properties": {

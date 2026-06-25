@@ -112,7 +112,6 @@ class ProjectCreate(CamelModel):
     color: str = "linear-gradient(135deg,#7b7fb2,#c4afc8)"
     stages: list[dict] = []
     current_stage: Optional[str] = None
-    notes: str = ""
     progress: int = 0
 
     @field_validator("name")
@@ -131,7 +130,6 @@ class ProjectUpdate(CamelModel):
     progress: Optional[int] = None
     stages: Optional[list[dict]] = None
     current_stage: Optional[str] = None
-    notes: Optional[str] = None
     archived: Optional[bool] = None
     priority: Optional[str] = None
     version: Optional[int] = None
@@ -155,7 +153,6 @@ class ProjectResponse(CamelModel):
     progress: int
     stages: list[dict]
     current_stage: Optional[str]
-    notes: str
     archived: bool = False
     priority: Optional[str] = None
     version: int = 1

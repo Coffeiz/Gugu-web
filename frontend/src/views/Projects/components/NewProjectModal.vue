@@ -75,13 +75,6 @@
             </div>
           </div>
 
-          <hr class="col-divider" />
-
-          <div class="section">
-            <label class="section-label">备注</label>
-            <textarea class="notes-input" v-model="form.notes" placeholder="添加项目描述或备注…" rows="3"></textarea>
-          </div>
-
         </div>
 
         <!-- 右栏：阶段 -->
@@ -380,7 +373,6 @@ const defaultForm = () => {
     status:    'pending',
     color:     colorPresets[Math.floor(Math.random() * colorPresets.length)].value,
     stages,
-    notes:     '',
   }
 }
 const defaultKeys = () => getLastStages().map((_, i) => `s${i}`)
@@ -523,7 +515,6 @@ function handleCreate() {
     status:    form.status,
     color:     form.color,
     stages,
-    notes:     form.notes.trim(),
   })
   emit('close')
 }
@@ -822,19 +813,6 @@ input:not(.name-input):not(.header-name-input):focus {
   box-sizing: border-box;
 }
 .add-stage-btn:hover { background: rgba(255,255,255,0.72); color: var(--text-primary); border-color: rgba(123,127,178,0.3); }
-
-/* ── 备注 ── */
-.notes-input {
-  width: 100%; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px;
-  padding: 8px 11px; font-size: 13px; font-family: var(--font-sans);
-  color: var(--text-primary); background: rgba(255,255,255,0.72);
-  outline: none; resize: none; line-height: 1.6;
-  transition: border-color 0.15s, box-shadow 0.15s; box-sizing: border-box;
-}
-.notes-input:focus {
-  border-color: rgba(123,127,178,0.4);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
-}
 
 /* ── 底部 ── */
 .modal-footer {

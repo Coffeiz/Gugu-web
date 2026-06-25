@@ -61,7 +61,6 @@ export const useProjectStore = defineStore('projects', () => {
       startDate:    fields.startDate || null,
       deadline:     fields.deadline  || null,
       color:        fields.color || 'linear-gradient(135deg,#7b7fb2,#c4afc8)',
-      notes:        '',
     }
     const created = await projectsApi.create(payload)
     projects.value.unshift(created)

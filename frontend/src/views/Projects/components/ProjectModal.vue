@@ -101,6 +101,7 @@
                 :class="{
                   active: i === activeStageIdx && stage.key !== draggedStageKey,
                   done: i < activeStageIdx && stage.key !== draggedStageKey,
+                  locked: lockedStageIndices.has(localStages.findIndex(s => s.key === stage.key)),
                   'stage-dragging': stageDrag.active && stage.key === draggedStageKey,
                   expanded: expandedStages.has(stage.key),
                 }"
@@ -161,14 +162,6 @@
               </div>
             </Teleport>
           </div>
-
-            <hr class="col-divider" />
-
-            <!-- 备注 -->
-            <div class="section">
-              <label class="section-label">备注</label>
-              <textarea class="notes-input" v-model="localNotes" placeholder="添加项目描述或备注…" rows="3"></textarea>
-            </div>
 
           </div><!-- /left-content -->
         </div>
@@ -688,7 +681,13 @@ import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/services/api'
-import { getThumb, getCachedThumb, thumbLoadedIds, preloadTinyThumbs } from '@/composables/useThumbCache'
+import { thumbLoadedIds } from '@/composables/useThumbCache'
+import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
+import { isImageExt as isPmImageExt, fileExtCategory, fileIconColor } from '@/utils/fileTypes'
+import { pLimit, UPLOAD_CONCURRENCY } from '@/utils/concurrency'
+import { useSorting } from '@/composables/useSorting'
+import { useUploadQueue } from '@/composables/useUploadQueue'
+import { useBoxSelection } from '@/composables/useBoxSelection'
 import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
 import DatePicker from '@/components/common/DatePicker.vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
@@ -736,7 +735,6 @@ let _syncingFromStore  = false   // 防止 store→localStages 同步触发 save
 const localStartDate = ref('')
 const localDeadline  = ref('')
 const localClient    = ref('')
-const localNotes     = ref('')
 const localColor        = ref('')
 const localCurrentStage = ref('')
 const localStatus       = ref('')
@@ -790,7 +788,7 @@ const currentFiles = computed(() => {
   const folderId = folderStack.value[folderStack.value.length - 1].id
   return folderFilesMap.value[folderId] ?? []
 })
-watch(currentFiles, files => { if (files?.length) preloadTinyThumbs(files) })
+// tiny 已由 v-lazy-src 视口门控，不再全量预热
 
 // 兼容旧模板引用（进入文件夹后的文件）
 const currentFolder = computed(() =>
@@ -803,34 +801,39 @@ const totalFileCount = computed(() =>
 )
 
 // ── 框选 ──────────────────────────────────────────────────────────────────────
-const pmGridRef           = ref(null)
-const pmSelectedFileIds   = ref(new Set())
-const pmSelectedFolderIds = ref(new Set())
-const pmPreviewFileIds    = ref(new Set())
-const pmPreviewFolderIds  = ref(new Set())
-const pmBoxStart          = ref(null)
-const pmBoxEnd            = ref(null)
-let _pmCRect              = null
-let _pmLatestPreview      = { fileIds: new Set(), folderIds: new Set() }
+const pmGridRef = ref(null)
+const pmLastAnchorIndex = ref(-1)
 
-const pmSelectionRect = computed(() => {
-  if (!pmBoxStart.value || !pmBoxEnd.value) return null
-  const x1 = Math.min(pmBoxStart.value.x, pmBoxEnd.value.x)
-  const x2 = Math.max(pmBoxStart.value.x, pmBoxEnd.value.x)
-  const y1 = Math.min(pmBoxStart.value.y, pmBoxEnd.value.y)
-  const y2 = Math.max(pmBoxStart.value.y, pmBoxEnd.value.y)
-  if (x2 - x1 < 3 && y2 - y1 < 3) return null
-  return { left: x1, top: y1, width: x2 - x1, height: y2 - y1 }
+const {
+  selectedFileIds: pmSelectedFileIds,
+  selectedFolderIds: pmSelectedFolderIds,
+  previewFileIds: pmPreviewFileIds,
+  previewFolderIds: pmPreviewFolderIds,
+  boxStart: pmBoxStart,
+  selectionRect: pmSelectionRect,
+  onContainerMouseDown: onPmGridMouseDown,
+  cancelDrag: _cancelPmBoxDrag,
+  clearSelection: _clearPmSelBase,
+  toggleFileSelect: toggleFileSelectPm,
+  toggleFolderSelect: _toggleFolderSelPm,
+} = useBoxSelection(pmGridRef, {
+  fileAttr: 'data-pm-file-id',
+  folderAttr: 'data-pm-folder-id',
+  excludeSelector: 'button, input, .folder-card, .fc-card, .fc-upload, label',
+  parseFolderId: Number,
+  onBoxSelect: ({ fileIds, folderIds }) => {
+    pmSelectedFileIds.value   = fileIds
+    pmSelectedFolderIds.value = folderIds
+    if (fileIds.size + folderIds.size > 0) pmSelectionModeForced.value = true
+  },
 })
 
 const pmSelectionModeForced = ref(false)
 const pmDownloadingZip      = ref(false)
-const pmLastAnchorIndex     = ref(-1)
 const pmInSelectionMode = computed(() =>
   pmSelectionModeForced.value || pmSelectedFileIds.value.size > 0 || pmSelectedFolderIds.value.size > 0
 )
 
-// 当前层级的可选项扁平列表（文件夹在前，文件在后，与视觉顺序一致）
 const pmFlatSelectableItems = computed(() => [
   ...sortedCurrentFolders.value.map(f => ({ type: 'folder', id: f.id })),
   ...sortedCurrentFiles.value.map(f => ({ type: 'file',   id: f.id })),
@@ -849,90 +852,17 @@ function _pmShiftSelect(type, id) {
   return true
 }
 
-function _pmSwallowClick(e) { e.stopImmediatePropagation() }
 function clearPmSelection() {
-  pmSelectedFileIds.value = new Set()
-  pmSelectedFolderIds.value = new Set()
+  _clearPmSelBase()
   pmSelectionModeForced.value = false
-  pmLastAnchorIndex.value = -1
+  pmLastAnchorIndex.value     = -1
 }
+
+function toggleFolderSelectPm(folder) { _toggleFolderSelPm(folder.id) }
+
 function togglePmSelectionMode() {
   if (pmInSelectionMode.value) clearPmSelection()
   else pmSelectionModeForced.value = true
-}
-function toggleFolderSelectPm(folder) {
-  const ids = new Set(pmSelectedFolderIds.value)
-  if (ids.has(folder.id)) ids.delete(folder.id); else ids.add(folder.id)
-  pmSelectedFolderIds.value = ids
-}
-function toggleFileSelectPm(file) {
-  const ids = new Set(pmSelectedFileIds.value)
-  if (ids.has(file.id)) ids.delete(file.id); else ids.add(file.id)
-  pmSelectedFileIds.value = ids
-}
-
-function onPmGridMouseDown(e) {
-  if (e.button !== 0) return
-  if (e.target.closest('button, input, .folder-card, .fc-card, .fc-upload, label')) return
-  if (!pmGridRef.value) return
-  _pmCRect = pmGridRef.value.getBoundingClientRect()
-  const st = pmGridRef.value.scrollTop
-  pmBoxStart.value = { x: e.clientX - _pmCRect.left, y: e.clientY - _pmCRect.top + st }
-  pmBoxEnd.value   = { ...pmBoxStart.value }
-  document.addEventListener('mousemove', _onPmGridMouseMove)
-  document.addEventListener('mouseup',   _onPmGridMouseUp)
-}
-function _onPmGridMouseMove(e) {
-  if (!_pmCRect || !pmGridRef.value) return
-  const st = pmGridRef.value.scrollTop
-  pmBoxEnd.value = { x: e.clientX - _pmCRect.left, y: e.clientY - _pmCRect.top + st }
-  _updatePmPreview()
-}
-function _onPmGridMouseUp(e) {
-  document.removeEventListener('mousemove', _onPmGridMouseMove)
-  document.removeEventListener('mouseup',   _onPmGridMouseUp)
-  if (pmSelectionRect.value) {
-    pmSelectedFileIds.value   = _pmLatestPreview.fileIds
-    pmSelectedFolderIds.value = _pmLatestPreview.folderIds
-    if (_pmLatestPreview.fileIds.size + _pmLatestPreview.folderIds.size > 0)
-      pmSelectionModeForced.value = true
-    document.addEventListener('click', _pmSwallowClick, { capture: true, once: true })
-  } else if (!e.ctrlKey && !e.metaKey) {
-    clearPmSelection()
-  }
-  _pmLatestPreview      = { fileIds: new Set(), folderIds: new Set() }
-  pmPreviewFileIds.value   = new Set()
-  pmPreviewFolderIds.value = new Set()
-  pmBoxStart.value    = null
-  pmBoxEnd.value      = null
-  _pmCRect            = null
-}
-function _getPmItemsInBox() {
-  const rect = pmSelectionRect.value
-  if (!rect || !pmGridRef.value) return { fileIds: new Set(), folderIds: new Set() }
-  const cRect     = pmGridRef.value.getBoundingClientRect()
-  const st        = pmGridRef.value.scrollTop
-  const fileIds   = new Set()
-  const folderIds = new Set()
-  pmGridRef.value.querySelectorAll('[data-pm-file-id], [data-pm-folder-id]').forEach(el => {
-    const er = el.getBoundingClientRect()
-    const l = er.left - cRect.left, t = er.top - cRect.top + st
-    if (l < rect.left + rect.width && l + er.width > rect.left &&
-        t < rect.top  + rect.height && t + er.height > rect.top) {
-      if (el.dataset.pmFileId)   fileIds.add(Number(el.dataset.pmFileId))
-      if (el.dataset.pmFolderId) folderIds.add(Number(el.dataset.pmFolderId))
-    }
-  })
-  return { fileIds, folderIds }
-}
-function _updatePmPreview() {
-  if (!pmSelectionRect.value) {
-    _pmLatestPreview = { fileIds: new Set(), folderIds: new Set() }
-    pmPreviewFileIds.value = new Set(); pmPreviewFolderIds.value = new Set(); return
-  }
-  const { fileIds, folderIds } = _getPmItemsInBox()
-  _pmLatestPreview = { fileIds, folderIds }
-  pmPreviewFileIds.value = fileIds; pmPreviewFolderIds.value = folderIds
 }
 function pmHandleFileClick(file, e) {
   if (e.shiftKey || e.ctrlKey || e.metaKey || pmInSelectionMode.value) {
@@ -1055,12 +985,7 @@ function onPmFileDragStart(file, e) {
   if (e.currentTarget?.classList?.contains('fc-card') && ids.length === 1) {
     startPhysicsDrag(e, e.currentTarget)
   }
-  document.removeEventListener('mousemove', _onPmGridMouseMove)
-  document.removeEventListener('mouseup',   _onPmGridMouseUp)
-  pmBoxStart.value = null
-  pmBoxEnd.value = null
-  pmPreviewFileIds.value = new Set()
-  pmPreviewFolderIds.value = new Set()
+  _cancelPmBoxDrag()
 }
 function onPmFileDragEnd() {
   pmDraggingFileIds.value = new Set()
@@ -1122,36 +1047,7 @@ async function onPmFolderDrop(folder, e) {
 }
 
 // ── 排序 ──────────────────────────────────────────────────────────────────────
-
-const PM_SORT_OPTIONS = [
-  { key: 'name',      label: '名称' },
-  { key: 'type',      label: '类型' },
-  { key: 'stage',     label: '阶段' },
-  { key: 'createdAt', label: '创建时间' },
-  { key: 'size',      label: '大小' },
-]
-const pmSortKey      = ref('name')
-const pmSortDir      = ref('asc')
-const pmSortMenuOpen = ref(false)
-const pmSortBtnRef   = ref(null)
-const pmSortMenuPos  = reactive({ x: 0, y: 0 })
-
-function openPmSortMenu() {
-  if (pmSortMenuOpen.value) { pmSortMenuOpen.value = false; return }
-  const r = pmSortBtnRef.value?.getBoundingClientRect()
-  if (r) { pmSortMenuPos.x = r.left; pmSortMenuPos.y = r.bottom + 6 }
-  pmSortMenuOpen.value = true
-}
-
-function onPmSortSelect(key) {
-  if (pmSortKey.value === key) {
-    pmSortDir.value = pmSortDir.value === 'asc' ? 'desc' : 'asc'
-  } else {
-    pmSortKey.value = key
-    pmSortDir.value = 'asc'
-  }
-  pmSortMenuOpen.value = false
-}
+const { SORT_OPTIONS: PM_SORT_OPTIONS, sortKey: pmSortKey, sortDir: pmSortDir, sortMenuOpen: pmSortMenuOpen, sortBtnRef: pmSortBtnRef, sortMenuPos: pmSortMenuPos, openSortMenu: openPmSortMenu, onSortSelect: onPmSortSelect } = useSorting()
 
 const sortedCurrentFolders = computed(() => {
   const dir = pmSortDir.value === 'asc' ? 1 : -1
@@ -1327,63 +1223,9 @@ const openPreview = (f) => previewStore.open(f)
 
 // ── 文件类型辅助 ──────────────────────────────────────────────────────────────
 
-function fileExtCategory(ext) {
-  const e = (ext || '').toLowerCase()
-  if (['jpg','jpeg','png','gif','webp','svg','ico','bmp','avif','heic','tif','tiff'].includes(e)) return 'image'
-  if (['mp4','mov','avi','mkv','webm','wmv','flv','m4v'].includes(e)) return 'video'
-  if (['mp3','wav','flac','aac','ogg','m4a','wma','opus'].includes(e)) return 'audio'
-  if (['xls','xlsx','csv','ods','numbers'].includes(e)) return 'sheet'
-  if (['ppt','pptx','key','odp'].includes(e)) return 'slide'
-  if (['zip','rar','7z','tar','gz','bz2','xz'].includes(e)) return 'archive'
-  if (['js','ts','jsx','tsx','vue','py','go','rs','java','cpp','c','cs','rb','swift','php','kt','dart','sh',
-       'html','css','scss','less','xml','json','yaml','yml','toml','md','mdx','graphql'].includes(e)) return 'code'
-  return 'doc'
-}
-
-function fileIconColor(ext) {
-  const cat = fileExtCategory(ext)
-  const map = { image: '#b07858', video: '#8868a0', audio: '#a07088', sheet: '#508870',
-                slide: '#a07840', archive: '#808888', code: '#688858' }
-  return map[cat] ?? '#8888a8'
-}
-
-const _PM_IMG_EXTS   = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','heic','heif'])
-const isPmImageExt   = (ext) => _PM_IMG_EXTS.has((ext || '').toLowerCase())
-
-const vLazySrc = {
-  mounted(el, { value: { id, size } }) {
-    if (!id) return
-    const cached = getCachedThumb(id, size)
-    if (cached) { el.src = cached; return }
-    if (size === 'tiny') {
-      getThumb(id, size).then(url => { if (url) el.src = url })
-      return
-    }
-    const obs = new IntersectionObserver(([e]) => {
-      if (!e.isIntersecting) return
-      obs.disconnect(); el._lazySrcObs = null
-      getThumb(id, size).then(url => { if (url) el.src = url })
-    }, { rootMargin: '200px' })
-    obs.observe(el); el._lazySrcObs = obs
-  },
-  updated(el, { value: { id, size }, oldValue }) {
-    if (id === oldValue?.id && size === oldValue?.size) return
-    el._lazySrcObs?.disconnect()
-    const cached = getCachedThumb(id, size)
-    if (cached) { el.src = cached; return }
-    if (size === 'tiny') {
-      getThumb(id, size).then(url => { if (url) el.src = url })
-      return
-    }
-    const obs = new IntersectionObserver(([e]) => {
-      if (!e.isIntersecting) return
-      obs.disconnect(); el._lazySrcObs = null
-      getThumb(id, size).then(url => { if (url) el.src = url })
-    }, { rootMargin: '200px' })
-    obs.observe(el); el._lazySrcObs = obs
-  },
-  unmounted(el) { el._lazySrcObs?.disconnect(); el._lazySrcObs = null },
-}
+// 文件类型助手（isImageExt→isPmImageExt / fileExtCategory / fileIconColor）与缩略图懒加载指令
+// vLazySrc 已统一到 @/utils/fileTypes 和 @/composables/useLazyThumb，见顶部 import。
+// 注：fileIconColor 改用共享版（pdf/doc 等单列颜色，不再统一灰）；isImageExt 含 svg（svg 现也显缩略图）。
 
 // ── 文件夹操作 ────────────────────────────────────────────────────────────────
 
@@ -1463,7 +1305,6 @@ watch(() => props.project?.id, async (id) => {
   localStartDate.value    = props.project?.startDate    ?? ''
   localDeadline.value     = props.project?.deadline     ?? ''
   localClient.value       = props.project?.client       ?? ''
-  localNotes.value        = props.project?.notes        ?? ''
   localColor.value        = props.project?.color        ?? ''
   localCurrentStage.value = props.project?.currentStage ?? ''
   localStatus.value       = props.project?.status       ?? ''
@@ -1578,21 +1419,26 @@ watch(localDeadline, v => {
   projectStore.updateProject(id, { deadline: v || null })
 })
 
-let _notesTimer = null
-watch(localNotes, v => {
-  if (initializing) return
-  const id = props.project?.id
-  if (!id) return
-  clearTimeout(_notesTimer)
-  _notesTimer = setTimeout(() => {
-    projectStore.updateProject(id, { notes: v })
-  }, 600)
-})
-
 const currentStageIndex = computed(() =>
   localStages.value.findIndex(s => s.key === localCurrentStage.value)
 )
 // 当前阶段所在位置索引（位置固定，拖动重排不改变）
+
+// 被锁定的阶段下标集合：前面阶段 todo 全部手动完成时，该阶段及之前不可退回
+const lockedStageIndices = computed(() => {
+  const locked = new Set()
+  const stages = localStages.value
+  const cur = activeStageIdx.value
+  for (let target = 0; target < cur; target++) {
+    for (let i = target; i < cur; i++) {
+      const todos = stages[i].todos ?? []
+      if (todos.length > 0 && todos.every(t => t.done && !t.autoCompleted)) {
+        locked.add(target); break
+      }
+    }
+  }
+  return locked
+})
 
 const displayStages = computed(() => {
   if (!stageDrag.active) return localStages.value
@@ -1692,6 +1538,15 @@ function setColor(c) {
 function setStage(key, idx) {
   const oldIdx = localStages.value.findIndex(s => s.key === localCurrentStage.value)
   const newIdx = idx
+
+  // 往回跳时：若路径上有阶段的 todo 全部手动完成（非 autoCompleted），禁止退回
+  if (newIdx < oldIdx) {
+    const stages = localStages.value
+    for (let i = newIdx; i < oldIdx; i++) {
+      const todos = stages[i].todos ?? []
+      if (todos.length > 0 && todos.every(t => t.done && !t.autoCompleted)) return
+    }
+  }
 
   localCurrentStage.value = key
   activeStageIdx.value = idx
@@ -1876,8 +1731,7 @@ function commitStageDrag() {
   saveStages()
 }
 
-const uploadingItems = ref([])
-let _uploadUid = 0
+const { uploadingItems, createGhost, updateGhostProgress, removeGhost, failGhost } = useUploadQueue()
 
 async function uploadFiles(files) {
   if (!files.length || !props.project) return
@@ -1888,23 +1742,19 @@ async function uploadFiles(files) {
     const dotIdx = f.name.lastIndexOf('.')
     const ext  = dotIdx > -1 ? f.name.slice(dotIdx + 1).toUpperCase() : ''
     const name = dotIdx > -1 ? f.name.slice(0, dotIdx) : f.name
-    const ghost = { uid: ++_uploadUid, name, ext, progress: 0, error: false }
-    uploadingItems.value.push(ghost)
-    return { file: f, ghost }
+    return { file: f, ghost: createGhost(name, ext) }
   })
 
-  await Promise.allSettled(tasks.map(async ({ file, ghost }) => {
+  const limit = pLimit(UPLOAD_CONCURRENCY)
+  await Promise.allSettled(tasks.map(({ file, ghost }) => limit(async () => {
     try {
       const form = new FormData()
       form.append('file', file)
       form.append('space', 'project')
       form.append('project_id', props.project.id)
       if (folder) form.append('folder_id', folder.id)
-      const created = await uploadWithProgress('/files', form, p => {
-        const g = uploadingItems.value.find(g => g.uid === ghost.uid)
-        if (g) g.progress = Math.round(p * 100)
-      })
-      uploadingItems.value = uploadingItems.value.filter(g => g.uid !== ghost.uid)
+      const created = await uploadWithProgress('/files', form, p => updateGhostProgress(ghost, p))
+      removeGhost(ghost)
       if (created) fileCacheStore.addFile(created)
       if (folder) {
         folderFilesMap.value = {
@@ -1918,12 +1768,9 @@ async function uploadFiles(files) {
       }
     } catch (e) {
       console.error('[ProjectModal] 上传失败:', e.message)
-      ghost.error = true
-      setTimeout(() => {
-        uploadingItems.value = uploadingItems.value.filter(g => g.uid !== ghost.uid)
-      }, 2000)
+      failGhost(ghost)
     }
-  }))
+  })))
 }
 
 async function handleFileInput(e) {
@@ -2236,15 +2083,6 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .add-stage-btn:hover { opacity: 0.7; }
 .stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0 4px 0; margin-right: -10px; padding-right: 10px; }
 
-/* 备注 */
-.notes-input {
-  width: 100%; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; padding: 7px 10px;
-  font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
-  background: rgba(255,255,255,0.5); outline: none; resize: none; line-height: 1.5;
-  transition: border-color 0.15s, box-shadow 0.15s; box-sizing: border-box;
-}
-.notes-input:hover { background: rgba(255,255,255,0.75); }
-.notes-input:focus { border-color: rgba(123,127,178,0.4); background: rgba(255,255,255,0.75); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
 .stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 0 5px; margin-bottom: 2px; }
 .stage-node.stage-dragging { opacity: 0.15; pointer-events: none; }
 
@@ -2257,6 +2095,8 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 }
 .stage-node.done .node-circle { background: var(--color-success); border-color: var(--color-success); }
 .stage-node.active .node-circle { border-color: transparent; }
+.stage-node.locked .node-circle { cursor: not-allowed; opacity: 0.7; }
+.stage-node.locked .node-label  { opacity: 0.6; }
 .node-num { font-size: 10px; font-weight: 700; color: #5a5f78; line-height: 1; }
 .stage-node.active .node-num { color: #fff; }
 .node-body { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; }

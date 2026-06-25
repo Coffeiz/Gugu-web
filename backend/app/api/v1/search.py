@@ -48,12 +48,12 @@ async def search(
     like = f"%{q}%"
     groups: list = []
 
-    # ── 项目：名/客户/备注/当前阶段 ──
+    # ── 项目：名/客户/当前阶段 ──
     rows = (await db.execute(
         select(Project).where(
             Project.user_id == uid,
             or_(Project.name.ilike(like), Project.client.ilike(like),
-                Project.notes.ilike(like), Project.current_stage.ilike(like)),
+                Project.current_stage.ilike(like)),
         ).order_by(Project.updated_at.desc()).limit(PER_TYPE)
     )).scalars().all()
     if rows:
