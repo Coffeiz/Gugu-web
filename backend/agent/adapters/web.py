@@ -251,6 +251,9 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                 else:
                     anthr_messages.append({"role": h.role, "content": h.content or ""})
             anthr_messages.append({"role": "user", "content": chat_attach.build_user_content(user_content, user_images, True)})
+            # 清洗历史：窗口截断/压缩可能留下孤儿 tool_result、空消息、连续同角色 → MiniMax 报
+            # invalid params / SDK IndexError。发送前修正，保证合法可发（用户消息已在 stream() 独立持久化）。
+            anthr_messages = sanitize.sanitize_messages(anthr_messages)
             anthr_initial_len = len(anthr_messages)
             gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True)
         else:
