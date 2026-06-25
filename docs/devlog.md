@@ -27,6 +27,53 @@
 
 ---
 
+## 2026-06-25 · 回收站一键清空 + 堵住咕咕泄露内部术语
+
+两个从真实使用里暴露的问题：
+
+**1. 回收站只能 50 个 50 个删，没法一键清空。** 根因：`list_trash` 写死最近 50 条且不翻页（116 个只看得到 50，删完再冒下 50），`permanent_delete` 又只收单个 `file_id` → 删 N 个要调 N 次，撞 `MAX_ROUNDS` 上限就卡住。后端其实早有一键清空（`DELETE /trash`，网页"清空"按钮用的），只是 **agent 没有对应工具**。修复：`permanent_delete` 加 **`all=true`**（复用清空逻辑、一次全删、走同样两步 confirm、按数量提示）；`list_trash` 列满 50 时附"还有更多、清空用 all=true"提示；skills.md 加硬规则"清空回收站一次 all=true，绝不逐个删"。
+
+**2. 咕咕把内部机制词泄露给用户。** 实际聊天里冒出了 `confirm=true` / `list_trash` / `system 注入的 116` / 空数组 `[]` / "调用 N 个"。policy.md 本有"不外露工具名/JSON"，但太笼统没对号入座。修复：把这次漏的**每个原词**作为反面清单钉进 policy.md，并给正反改写（❌「发了 50 个调用全失败、list_trash 返回 []、system 注入的 116 对不上」→ ✅「回收站清空啦，现在是空的 ✅」）。`builder.build()` 每次请求重读 .md，下条消息即生效、不用重启。
+
+> 注：那次"文件不在回收站"是用户自己在网页删了，不是咕咕乱删 ID——排除了行为问题。
+
+---
+
+## 2026-06-25 · "咕咕开小差了"真凶：历史窗口截断留下孤儿 tool_result
+
+用户反复"开小差"，排查绕了一大圈（先怀疑本地 DB 连接池、Redis、LLM key——全是好的），
+最后从共享 DB 的 SystemLog + devserver 的 `gugu-web-dev.log` 揪出真凶。
+
+### 排查链（记一笔，少走弯路）
+
+1. 前端文案区分来源：`咕咕开小差了 😵‍💫` = 后端发的 **error 事件**（core.py LLM 失败的 detail）；
+   `网络不太好 📡` 才是前端纯网络兜底。看到"开小差"就说明后端在报错，不是连不上。
+2. 本地 gugu.log 不增长 → 用户其实打的是 **devserver**（和本地共用 192.168.110.50 的 DB/Redis，
+   日志混在一起；traceback 路径 `/home/coffeiz/...python3.12` = Linux 才认出来）。
+3. devserver 还有个坑：手动 `--reload` uvicorn 占着 8000，systemd `gugu-backend` 绑不上 →
+   崩溃重启 **6031 次**（`Address already in use`）。这是噪声，不是"开小差"的因。
+4. 真错在 `gugu-web-dev.log`：`BadRequestError 400 invalid params, tool result's...` 与
+   `IndexError`（print 截断在 120 字符看不全）。
+
+### 根因
+
+`tokens.select_history` 按 token 预算"整条进出"裁历史，但**不守 tool_use/tool_result 配对**：
+窗口可能从一个带 `tool_result` 的 user 消息开头，而它对应的 `assistant tool_use` 正好被裁在窗外
+→ **孤儿 tool_result** → MiniMax（anthropic 兼容端点，比官方严）报
+`invalid params, tool result's tool id(xxx) not found (2013)`。有时它返回畸形流让 SDK 抛 `IndexError`，
+是同一病根的另一种表现。会话越长越容易踩（一个 136 条的会话是重灾区）。web.py 又把历史**原样**塞给 LLM，没有任何合法性清洗。
+
+### 修复
+
+`sanitize.sanitize_messages()`（`agent/sanitize.py`），在 web.py 发送前清洗：删孤儿
+tool_use/tool_result、删空消息/空 text 块、保证首条 user、合并连续同角色。**验证**：直接打 MiniMax，
+构造孤儿场景原样发 → 400（还原了那条确切报错），清洗后 → 200。
+
+> 经验：MiniMax 其实**容忍**连续同角色（实测 200），真正致命的是孤儿 tool_result。
+> 但合并同角色无害、留作健壮性。print 调试信息别截断太狠（`str(e)[:120]` 把关键的 tool id 切没了）。
+
+---
+
 ## 2026-06-25 · 下线项目「备注」功能：贯穿全栈的字段删除
 
 项目备注（`Project.notes`）整体下线，从数据层到 UI 一条龙删干净：

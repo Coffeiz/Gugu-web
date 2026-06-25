@@ -363,7 +363,7 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 
 ### 回收站 · `skills/trash.py`（3）
 
-`list_trash` / `restore_file` / `permanent_delete` 🔒
+`list_trash`（只列最近 50、不翻页，列满附"还有更多"提示）/ `restore_file` / `permanent_delete` 🔒（`file_id` 删单个，或 **`all=true` 一次清空整个回收站**——避免逐个删撞轮次上限）
 
 ### 聚合 · `skills/overview.py`（2）
 
