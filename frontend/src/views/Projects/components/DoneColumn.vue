@@ -240,8 +240,8 @@ function onDrop(e) {
   background: #5a9e88; flex-shrink: 0;
 }
 .col-count {
-  font-size: 11px; font-weight: 600; color: var(--text-secondary);
-  background: rgba(0,0,0,0.06); border-radius: 20px;
+  font-size: 11px; font-weight: 700; color: #fff;
+  background: rgba(123,127,178,0.42); border-radius: 20px;
   padding: 1px 7px; min-width: 22px; text-align: center;
 }
 

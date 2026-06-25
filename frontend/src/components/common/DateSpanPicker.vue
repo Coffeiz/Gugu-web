@@ -137,7 +137,8 @@ function toIso(d) {
 function fmt(iso) {
   if (!iso) return ''
   const d = new Date(iso + 'T00:00:00')
-  return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`
+  const base = `${d.getMonth()+1}/${d.getDate()}`
+  return d.getFullYear() !== todayYear ? `${d.getFullYear()}/${base}` : base
 }
 
 const calDays = computed(() => {

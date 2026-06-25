@@ -1,7 +1,31 @@
 # PM Studio · 早期开发记录
 
-> 更新：2026-06-25
+> 更新：2026-06-26
 > 状态：早期阶段记录，当前进度见 `docs/overview.md`
+
+---
+
+## 2026-06-26 · 一批体验打磨：FAB/气泡/颜色/日历联动/预览实时刷新
+
+本次迭代无新功能模块，全是从真实使用中暴露的交互细节：
+
+**咕咕 FAB 只跳图标**：原来 `ai-fab--typing` 加在 `<button>` 上，整个圆圈都在跳，视觉廉价。改到内层 `<svg>` 后圆形底座静止，只有图标轻微弹跳（translateY 0→-2px→0，0.2s），更克制。
+
+**空气泡问题**：agent 有时只输出空白 token，气泡就出来了但没内容。两层修复：① 渲染条件加 `.trim()` 判断；② stream 结束后 `finally` 里检查 `text?.trim()`，空的就从 `messages` 里 `splice` 掉。
+
+**agent 建项目不撞颜色**：之前随机选颜色会选到已有卡的颜色，视觉上撞色。新增 `_pick_unused_color`——先查当前用户所有项目已用色集合，从预设里过滤出未用的再随机；全用完了才退化为全随机。
+
+**新建项目弹窗两行变紧凑**：客户+日期并一行，看板状态+颜色并一行，用 `grid 1fr 1fr`，状态按钮字号和间距缩小，颜色 chip 缩到 20px 并 `flex-wrap: nowrap`，单行不溢出。
+
+**DateSpanPicker 省年**：`fmt()` 判断是否当年，是则只输出「月/日」，不是才输出「年/月/日」。影响所有用到 `DateSpanPicker` 的地方，包括项目卡、新建弹窗。
+
+**全局注册 DatePicker/DateSpanPicker**：这两个组件被 Calendar、ProjectModal、CalendarPanel 等多处 import，提到 `main.js` `app.component()` 全局注册，各处无需单独 import。
+
+**定时任务自定义日期单选**：原来用 `DateSpanPicker` 选区间（对应 `@once:...:end=...`），改为 `DatePicker` 单日，cron 格式简化为 `@once:YYYY-MM-DDTHH:mm`，parseCron 同步移除 endDate 解析。
+
+**文档预览实时刷新**：发现 agent 编辑文件后，`FilePreviewModal` 和 `FloatPreviewWindow` 的 blob URL 不会更新（它们只在 `file` prop 变化时重加载）。解法：watch `liveStore.rev.files`，文件改动 SSE 到来时对 `isText` 类型文件重新 fetch。图片/视频/PDF 跳过，因为 agent 不会就地修改这些格式。
+
+**日历多选→添加项目**：拖选多日后侧栏"添加活动"按钮变为"添加项目"（渐变紫，与顶栏同款），点击走已有的 `uiStore.newProjectRange + openNewProject` 通路，弹窗自动填入所选日期范围。`ctxAddProject` 加 fallback：无 `cellCtx.range` 时用 `activeRange.value`（侧栏点击场景）。
 
 ---
 
@@ -24,6 +48,24 @@
 三处限流现状：① 上传 = `ProjectModal` 套 `pLimit(3)`（新增；`UploadModal`/`ProjectCard` 本就 `for` 串行）；② 缩略图加载 = `useThumbCache` 改用共享 `pLimit(6)`（替换原 `_acquire/_release`）；③ 缩略图生成（后端）= `_THUMB_SEM=Semaphore(cpu-1)`（早有，2C=1）。
 
 注意：仅**单客户端内**限流，多用户并发仍可能叠加——真要全局限得后端中间件信号量，当前量级不必要。`npx vite build` 通过。详见 `performance.md` 十三节。
+
+---
+
+## 2026-06-26 · 给咕咕加「定时任务」技能：功能完整 + 尽量少调用
+
+先清理 reminder 遗留（`action_type` 整列删，含 DB 迁移），再加 `skills/scheduled_tasks.py`
+（list/create/update/delete 四件套，进 DefaultProfile）。两条硬约束贯穿设计：
+
+**功能完整**：CRUD 齐；create 一次带齐 name+instruction+cron+channels；update 含改名/改时间/改渠道/启停；
+delete 走两步 confirm；cron 支持 crontab 与 `@once:<ISO>`，复用 API 层 `_validate_cron`/`_norm_channels`。
+
+**尽量少调用**：① create 一口气建好，cron 由模型从自然语言直接生成、不绕中间「解析时间」工具；
+② update/delete **按任务名定位**（`task="每天进度"`），不必先 list 再操作（仿项目 `_resolve_project`）；
+③ list 一次返回全部。④ **故意不进 `RESOURCE_BY_TOOL`**——定时任务是单行写入、风险低，进去会每次触发
+自我核实那一轮，反而多调用，与「少调用」冲突，所以不放（代价：建完 /schedules 页不自动刷新，可接受）。
+
+附带：`_humanize_cron` 把 `0 9 * * *`→「每天 09:00」，skills.md 要求**对用户只说人话时间、绝不甩 cron 串**；
+设 feishu/qq 渠道前确认绑定。冒烟：建/按名改/按名删(两步)/非法cron拦截/cron人话化 全过，工具数 47→51。
 
 ---
 

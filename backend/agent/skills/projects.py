@@ -99,6 +99,16 @@ def _build_stages(raw: list) -> list:
     return out
 
 
+async def _pick_unused_color(db, user_id) -> str:
+    rows = (await db.execute(
+        select(Project.color).where(Project.user_id == user_id)
+    )).scalars().all()
+    used = set(rows)
+    unused = [c for c in _COLOR_PRESETS if c not in used]
+    pool = unused if unused else _COLOR_PRESETS
+    return random.choice(pool)
+
+
 async def _create_project(db, user_id, args: dict):
     # 自定义阶段：stages 可为 ["计划","执行"] 或 [{"label":..,"todos":[..]}]，不传用默认三段
     raw = args.get("stages")
@@ -116,7 +126,7 @@ async def _create_project(db, user_id, args: dict):
         status=args.get("status", "pending"),
         deadline=deadline,
         start_date=start_date,
-        color=args.get("color") or random.choice(_COLOR_PRESETS),
+        color=args.get("color") or await _pick_unused_color(db, user_id),
         stages_json=json.dumps(stages, ensure_ascii=False),
         current_stage=stages[0]["key"],
     )

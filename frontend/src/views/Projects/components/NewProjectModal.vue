@@ -4,7 +4,7 @@
 
       <!-- 头部 -->
       <div class="modal-header">
-        <div class="header-color-bar" :style="{ background: form.color }"></div>
+        <button class="status-ball" :class="'sb-' + form.status" @click.stop="cycleStatus" :title="projectStore.kanbanColumns.find(c => c.key === form.status)?.label ?? form.status"></button>
         <input
           ref="nameInputRef"
           v-model="form.name"
@@ -21,9 +21,10 @@
 
       <!-- 主体：单列 -->
       <div class="modal-body">
-        <div class="section">
+        <!-- 客户 & 项目周期 同行 -->
+        <div class="section-row">
           <div class="field">
-            <label>客户 / 委托方</label>
+            <label>客户</label>
             <input v-model="form.client" placeholder="客户名称（选填）" />
           </div>
           <div class="field">
@@ -31,30 +32,14 @@
             <DateRangePicker
               v-model:startDate="form.startDate"
               v-model:endDate="form.deadline"
-              placeholder="选择开始 — 截止日期"
+              placeholder="选择开始 — 截止"
             />
           </div>
         </div>
 
         <hr class="col-divider" />
 
-        <div class="section">
-          <label class="section-label">看板列</label>
-          <div class="status-group">
-            <button
-              v-for="col in projectStore.kanbanColumns"
-              :key="col.key"
-              class="status-btn"
-              :class="['s-' + col.key, { active: form.status === col.key }]"
-              @click="form.status = col.key"
-            >
-              <span class="opt-dot"></span>{{ col.label }}
-            </button>
-          </div>
-        </div>
-
-        <hr class="col-divider" />
-
+        <!-- 项目颜色 -->
         <div class="section">
           <label class="section-label">项目颜色</label>
           <div class="color-grid">
@@ -160,7 +145,11 @@
                 :class="{ 'stage-dragging': stageDrag.active && stage.origIdx === stageDrag.fromIdx }"
               >
                 <div class="stage-row" @mousedown="startStageDrag(stage.origIdx, $event)">
-                  <div class="stage-num">{{ i + 1 }}</div>
+                  <div class="stage-num"
+                    :class="{ 'stage-num--active': form.currentStageIdx === stage.origIdx }"
+                    @click.stop="form.currentStageIdx = stage.origIdx"
+                    title="设为当前阶段"
+                  >{{ i + 1 }}</div>
                   <input
                     v-model="form.stages[stage.origIdx].label"
                     class="stage-input"
@@ -228,7 +217,7 @@ import { useStageTemplates } from '@/composables/useStageTemplates.js'
 import { usePreferencesStore } from '@/stores/preferences'
 import { PhX, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour } from '@phosphor-icons/vue'
 
-const props = defineProps({ show: Boolean })
+const props = defineProps({ show: Boolean, initStatus: { type: String, default: null } })
 const emit  = defineEmits(['close'])
 
 const projectStore    = useProjectStore()
@@ -357,13 +346,14 @@ function getLastStages() {
 const defaultForm = () => {
   const stages = getLastStages()
   return {
-    name:      '',
-    client:    '',
-    startDate: todayIso(),
-    deadline:  weekLaterIso(),
-    status:    'pending',
-    color:     colorPresets[Math.floor(Math.random() * colorPresets.length)].value,
+    name:             '',
+    client:           '',
+    startDate:        todayIso(),
+    deadline:         weekLaterIso(),
+    status:           'pending',
+    color:            colorPresets[Math.floor(Math.random() * colorPresets.length)].value,
     stages,
+    currentStageIdx:  0,
   }
 }
 const defaultKeys = () => getLastStages().map((_, i) => `s${i}`)
@@ -393,6 +383,7 @@ watch(() => props.show, async (v) => {
   if (v) {
     Object.assign(form, defaultForm())
     stageKeys.value = defaultKeys()
+    if (props.initStatus) form.status = props.initStatus
     const range = uiStore.newProjectRange
     if (range) {
       form.startDate = range.start
@@ -415,6 +406,9 @@ function removeStage(origIdx) {
   if (form.stages.length > 1) {
     form.stages.splice(origIdx, 1)
     stageKeys.value.splice(origIdx, 1)
+    if (form.currentStageIdx >= form.stages.length) {
+      form.currentStageIdx = form.stages.length - 1
+    }
   }
 }
 
@@ -492,6 +486,12 @@ function commitStageDrag() {
 
 const INVALID_NAME_RE = /[\\/:*?"<>|]/
 
+function cycleStatus() {
+  const cols = projectStore.kanbanColumns
+  const idx  = cols.findIndex(c => c.key === form.status)
+  form.status = cols[(idx + 1) % cols.length].key
+}
+
 function handleCreate() {
   const name = form.name.trim()
   if (!name) { errors.name = '请填写项目名称'; return }
@@ -499,13 +499,14 @@ function handleCreate() {
   const stages = form.stages.filter(s => s.label.trim())
   prefsStore.saveLastStages(stages.map(s => s.label.trim()))
   projectStore.addProject({
-    name:      name,
-    client:    form.client.trim(),
-    startDate: form.startDate,
-    deadline:  form.deadline,
-    status:    form.status,
-    color:     form.color,
+    name:            name,
+    client:          form.client.trim(),
+    startDate:       form.startDate,
+    deadline:        form.deadline,
+    status:          form.status,
+    color:           form.color,
     stages,
+    currentStageIdx: form.currentStageIdx,
   })
   emit('close')
 }
@@ -519,26 +520,32 @@ function handleCreate() {
 /* ── 头部 ── */
 .modal-header {
   display: flex; align-items: center;
-  gap: 14px; padding: 0 20px 0 0; flex-shrink: 0;
+  gap: 12px; padding: 0 20px 0 16px; flex-shrink: 0;
   height: 52px; box-sizing: border-box;
   border-bottom: 1px solid rgba(0,0,0,0.07);
 }
-.header-color-bar {
-  width: 5px; align-self: stretch; flex-shrink: 0;
-  transition: background 0.2s; border-radius: 0;
+.status-ball {
+  width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+  border: none; padding: 0; cursor: pointer; outline: none;
+  transition: transform 0.15s, box-shadow 0.15s;
 }
+.status-ball:hover { transform: scale(1.2); }
+.sb-pending { background: #d46b6b; box-shadow: 0 0 0 3px rgba(212,107,107,0.2); }
+.sb-active  { background: #c9943a; box-shadow: 0 0 0 3px rgba(201,148,58,0.2); }
+.sb-done    { background: #5a9e88; box-shadow: 0 0 0 3px rgba(90,158,136,0.2); }
 /* 名称：默认像纯文本，悬停/聚焦才浮出编辑框（与定时任务卡 .title-input 同款样式+动画） */
 .header-name-input {
   flex: 1; min-width: 0; box-sizing: border-box;
   font-size: 17px; font-weight: 700; color: var(--text-primary);
   font-family: var(--font-sans); line-height: 1.2; outline: none;
-  padding: 7px 11px; margin: 0 -11px;
+  padding: 7px 8px; margin: 0;
   border: 1px solid transparent; border-radius: 10px; corner-shape: squircle;
   background: transparent; caret-color: var(--color-primary);
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 .header-name-input::placeholder { color: var(--text-secondary); opacity: 0.45; font-weight: 700; }
-.header-name-input:hover {
+.header-name-input:hover,
+.header-name-input:focus {
   border-color: rgba(123,127,178,0.35); background: rgba(255,255,255,0.75);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08);
 }
@@ -556,9 +563,10 @@ function handleCreate() {
 
 /* ── 主体单列 ── */
 .modal-body {
-  display: flex; flex-direction: column; gap: 16px;
-  flex: 1; min-height: 0; overflow-y: auto;
-  padding: 18px 20px;
+  display: flex; flex-direction: column; gap: 12px;
+  overflow-y: auto;
+  padding: 14px 20px;
+  max-height: calc(84vh - 120px);
 }
 .col-divider {
   border: none; height: 1px;
@@ -568,7 +576,18 @@ function handleCreate() {
 
 /* ── 通用 section & field ── */
 .section { display: flex; flex-direction: column; gap: 8px; }
-.stages-section { flex: 1; min-height: 0; }
+.section-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  position: relative;
+}
+.section-row::after {
+  content: '';
+  position: absolute; left: 50%; top: -6px; bottom: -6px;
+  width: 1px; transform: translateX(-50%);
+  background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.07) 15%, rgba(0,0,0,0.07) 85%, transparent 100%);
+  pointer-events: none;
+}
+.stages-section { display: flex; flex-direction: column; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 
 label, .section-label {
@@ -605,6 +624,9 @@ input:not(.name-input):not(.header-name-input):focus {
   cursor: pointer; font-family: var(--font-sans);
   transition: all 0.15s; white-space: nowrap; flex: 1; justify-content: center;
 }
+/* section-row 内紧凑版：缩小字号和内边距让三个按钮单行显示 */
+.section-row .status-group { gap: 4px; }
+.section-row .status-btn { font-size: 11px; padding: 4px 5px; gap: 4px; }
 .status-btn:hover { background: rgba(0,0,0,0.07); color: var(--text-primary); }
 .opt-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .s-pending .opt-dot { background: #d46b6b; }
@@ -615,15 +637,16 @@ input:not(.name-input):not(.header-name-input):focus {
 .s-done.active    { background: rgba(90,158,136,0.12);  border-color: rgba(90,158,136,0.4);  color: #3a8870; }
 
 /* ── 颜色选择 ── */
-.color-grid { display: flex; gap: 8px; flex-wrap: wrap; }
+.color-grid { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .color-chip {
-  width: 28px; height: 28px; border-radius: 50%;
+  width: 28px; height: 28px; border-radius: 6px;
   border: 2px solid rgba(255,255,255,0.5);
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: border-color 0.15s, box-shadow 0.15s;
-  padding: 0; outline: none;
+  padding: 0; outline: none; flex-shrink: 0;
 }
+/* section-row 内：缩小 chip 让 8 个单行排列 */
 .color-chip:hover { border-color: rgba(255,255,255,0.9); }
 .color-chip.active {
   border-color: #fff;
@@ -713,7 +736,10 @@ input:not(.name-input):not(.header-name-input):focus {
 .tpl-pop-enter-from, .tpl-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-4px); }
 
 /* ── 阶段编辑器 ── */
-.stages-editor { display: flex; flex-direction: column; gap: 2px; }
+.stages-editor {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 0 8px 0 6px;
+}
 .stage-block { display: flex; flex-direction: column; }
 .stage-block.stage-dragging { opacity: 0.15; pointer-events: none; }
 .stage-row {
@@ -731,6 +757,11 @@ input:not(.name-input):not(.header-name-input):focus {
   background: rgba(123,127,178,0.15);
   font-size: 10px; font-weight: 700; color: var(--color-primary);
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.stage-num--active {
+  background: var(--color-primary);
+  color: #fff;
 }
 .stage-input { flex: 1; padding: 6px 9px !important; font-size: 12.5px !important; }
 .del-btn {

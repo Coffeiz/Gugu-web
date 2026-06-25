@@ -7,6 +7,8 @@ import '@/assets/styles/global.css'
 
 import App from './App.vue'
 import router from './router'
+import DatePicker from '@/components/common/DatePicker.vue'
+import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 
 const app = createApp(App)
 
@@ -14,5 +16,8 @@ app.use(createPinia())
 app.use(router)
 app.use(ArcoVue)
 app.use(ArcoVueIcon)
+
+app.component('DatePicker', DatePicker)
+app.component('DateSpanPicker', DateSpanPicker)
 
 app.mount('#app')

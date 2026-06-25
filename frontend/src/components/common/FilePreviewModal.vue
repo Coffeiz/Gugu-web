@@ -101,6 +101,7 @@ import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import { PhInfo, PhDownloadSimple, PhX, PhWarningCircle } from '@phosphor-icons/vue'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
+import { useLiveStore } from '@/stores/live'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
 
@@ -196,6 +197,11 @@ watch(() => [props.show, props.file], ([show, file]) => {
   if (show && file) load(file)
   else revoke()
 }, { immediate: true })
+
+const liveStore = useLiveStore()
+watch(() => liveStore.rev.files, () => {
+  if (props.show && props.file && isText.value) load(props.file)
+})
 
 function onKey(e) { if (e.key === 'Escape') emit('close') }
 watch(() => props.show, v => {

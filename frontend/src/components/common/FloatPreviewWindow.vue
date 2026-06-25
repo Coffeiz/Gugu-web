@@ -133,6 +133,7 @@ import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import { filesApi } from '@/services/api'
 import { isImageExt, isVideoExt, isTextExt, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/useThumbCache'
+import { useLiveStore } from '@/stores/live'
 
 const props = defineProps({ win: { type: Object, required: true } })
 const previewStore = usePreviewStore()
@@ -379,6 +380,11 @@ async function load(f) {
 
 watch(() => props.win.file, f => load(f), { immediate: true })
 
+const liveStore = useLiveStore()
+watch(() => liveStore.rev.files, () => {
+  if (isText.value && !props.win.file.attach_id) load(props.win.file)
+})
+
 async function handleDownload() {
   try {
     await filesApi.download(props.win.file.id, `${props.win.file.displayName}.${props.win.file.ext.toLowerCase()}`)
@@ -459,6 +465,7 @@ onUnmounted(() => {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.1s ease;
+  will-change: transform;
 }
 .fpw-root.fpw-ready {
   opacity: 1;

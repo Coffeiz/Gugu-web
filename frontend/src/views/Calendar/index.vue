@@ -126,7 +126,11 @@
       <div class="cal-sidebar glass-card" ref="calSidebarRef">
         <div class="sidebar-top">
           <div class="sidebar-date-label">{{ selectedDateLabel }}</div>
-          <button class="add-event-btn" ref="addBtnRef" @click="openAddForm">
+          <button v-if="activeRange" class="add-event-btn add-proj-btn" @click="ctxAddProject">
+            <PhPlus :size="13" weight="bold" />
+            添加项目
+          </button>
+          <button v-else class="add-event-btn" ref="addBtnRef" @click="openAddForm">
             <PhPlus :size="13" weight="bold" />
             添加活动
           </button>
@@ -315,7 +319,7 @@ import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { projectProgress } from '@/utils/projectProgress'
-import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck } from '@phosphor-icons/vue'
+import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack } from '@phosphor-icons/vue'
 
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
@@ -466,7 +470,8 @@ function ctxAddEvent() {
 function ctxAddProject() {
   cellCtx.show = false
   uiStore.newProjectRange = cellCtx.range
-    ?? { start: cellCtx.iso, end: cellCtx.iso }
+    ?? activeRange.value
+    ?? { start: cellCtx.iso || selectedDate.value, end: cellCtx.iso || selectedDate.value }
   uiStore.openNewProject = true
 }
 
@@ -1424,6 +1429,8 @@ async function saveEvent() {
 .sidebar-date-label { font-size: 13px; font-weight: 700; color: var(--text-primary); }
 .add-event-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.08); font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-primary); font-family: var(--font-sans); transition: all 0.15s; }
 .add-event-btn:hover { background: rgba(123,127,178,0.15); border-color: rgba(123,127,178,0.5); }
+.add-proj-btn { background: linear-gradient(135deg,#7b7fb2,#9590c4); border-color: transparent; color: #fff; box-shadow: 0 3px 12px rgba(123,127,178,0.3); }
+.add-proj-btn:hover { background: linear-gradient(135deg,#7b7fb2,#9590c4); border-color: transparent; opacity: 0.92; box-shadow: 0 6px 18px rgba(123,127,178,0.4); }
 .sidebar-events { display: flex; flex-direction: column; gap: 7px; margin-bottom: 4px; }
 .sidebar-ev { display: flex; gap: 9px; align-items: flex-start; background: rgba(255,255,255,0.66); border: 1px solid rgba(255,255,255,0.88); border-radius: 10px; padding: 8px 10px; transition: box-shadow 0.25s ease; }
 .sidebar-ev:hover { box-shadow: inset 0 0 0 100px rgba(255,255,255,0.2), 0 3px 10px rgba(0,0,0,0.10); }

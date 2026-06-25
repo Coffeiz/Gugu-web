@@ -1,7 +1,7 @@
 <template>
   <!-- 迷你播放器 -->
   <Transition name="mini-player">
-    <div v-if="audioStore.file && (miniPinned || open)" class="mini-player" :style="miniPlayerStyle" ref="playerRef">
+    <div v-if="audioStore.file && (miniPinned || open) && !expanded" class="mini-player" :style="miniPlayerStyle" ref="playerRef">
       <div class="mp-info">
         <span class="mp-bars" :class="{ 'mp-bars--playing': barsPlaying }" ref="barsRef"><i v-for="n in 4" :key="n" /></span>
         <span class="mp-name">{{ audioStore.file.displayName }}.{{ audioStore.file.ext?.toLowerCase() }}</span>
@@ -269,7 +269,7 @@ import {
   PhPencilSimple, PhTrash, PhCopy, PhCheck,
 } from '@phosphor-icons/vue'
 
-const SMALL_W   = 316
+const SMALL_W   = 360
 const SMALL_H   = 360
 const SIDEBAR_W = 220
 
@@ -533,6 +533,21 @@ const miniPlayerStyle = computed(() => {
     : `calc(100% - 25px) calc(100% + ${bottom - 53}px)`
   return { bottom: `${bottom}px`, transformOrigin: origin }
 })
+
+// 通知气泡锚点：让通知始终浮在「小窗 / 音乐播放器」上方，不与之重叠。
+// 关闭态：浮在 fab（或其上的播放器）上方；小窗态：浮在小窗（及其上播放器）上方；
+// 放大态：窗口几乎占满，播放器已缩回 fab，通知仍回到 fab 上方默认位。
+const MP_EST_H = 112   // 播放器外高估值（含 padding，用于堆叠避让）
+const notifyAnchor = computed(() => {
+  const hasPlayer = !!audioStore.file && (miniPinned.value || open.value)
+  if (open.value && !expanded.value) {
+    const winTop = 88 + smallH.value                          // 小窗顶沿（距视口底）
+    return (hasPlayer ? winTop + 8 + MP_EST_H : winTop) + 12
+  }
+  // 关闭态 / 放大态（放大时播放器已缩回 fab）
+  return (hasPlayer && !expanded.value) ? 88 + MP_EST_H + 12 : 90
+})
+watch(notifyAnchor, v => { uiStore.chatNotifyAnchor = v }, { immediate: true })
 
 async function toggleOpen() {
   open.value = !open.value
@@ -1171,7 +1186,7 @@ async function send(forcedText) {
 @keyframes fab-ripple { 0% { transform: scale(0.4); opacity: 0.8; } 100% { transform: scale(1.55); opacity: 0; } }
 @keyframes fab-typing {
   0%   { transform: translateY(0); }
-  50%  { transform: translateY(-4px); }
+  50%  { transform: translateY(-2px); }
   100% { transform: translateY(0); }
 }
 .ai-fab--typing { animation: fab-typing 0.2s linear 1; }
@@ -1307,6 +1322,7 @@ async function send(forcedText) {
   flex: 1; border: none; background: none;
   font-size: 13px; color: var(--text-primary);
   outline: none; font-family: var(--font-sans);
+  line-height: 1.5; padding: 2px 0;
 }
 .chat-input-row textarea {
   flex: 1; border: none; background: none;
@@ -1623,7 +1639,7 @@ async function send(forcedText) {
 
 /* ── 迷你播放器 ── */
 .mini-player {
-  position: fixed; right: 28px; width: 316px;
+  position: fixed; right: 28px; width: 332px;   /* 外宽 332+14*2=360，与小窗对齐 */
   transition: bottom 0.28s cubic-bezier(0.34, 1.2, 0.64, 1);
   background: var(--panel-bg); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
   border: 1px solid rgba(255,255,255,0.65); border-radius: 20px;

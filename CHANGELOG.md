@@ -9,6 +9,19 @@
 
 ## [Unreleased]
 
+### 体验打磨与交互增强
+
+- **咕咕 FAB 只跳图标，不跳整个圆圈**：`ai-fab--typing` 动画 class 从 `<button>` 移到内层 `<svg>`，跳动幅度从 4 px 收窄到 2 px，圆形底座完全静止。
+- **修复空气泡**：AI 流式输出结束后若文本全为空白符，消息气泡不渲染（`msg.text?.trim()`），并在 `finally` 里清除该消息记录。
+- **agent 创建项目自动选未用颜色**：`projects.py` 增加 `_pick_unused_color`，先从数据库查已使用颜色集合，优先随机选未使用的，全满时再随机选。
+- **新建项目弹窗布局紧凑化**：客户 + 项目周期合并为同一行，看板列 + 颜色格合并为同一行，用 `grid 1fr 1fr` 双列排布；标签精简（"客户 / 委托方"→"客户"），日期选择器 placeholder 缩短。
+- **DateSpanPicker 日期显示省略当年年份**：`fmt()` 函数当年日期只显示「月/日」，跨年才补「年/月/日」，减少视觉噪声。
+- **定时任务「新建任务」按钮去掉悬浮位移动画**：移除 `.btn-primary:hover` 的 `transform: translateY(-2px)`，保留阴影加深和透明度变化。
+- **定时任务自定义日期改为单日选择**：原来的 `DateSpanPicker`（范围）替换为 `DatePicker`（单日），cron 格式 `@once:YYYY-MM-DDTHH:mm`，去掉 `:end=` 后缀逻辑；`DatePicker` 与 `DateSpanPicker` 统一在 `main.js` 全局注册，无需各处单独 import。
+- **文档预览实时刷新**：`FilePreviewModal` 和 `FloatPreviewWindow` 监听 `liveStore.rev.files`，agent 编辑文本/Markdown/代码文件后预览窗自动重新 fetch 渲染最新内容（图片/视频/PDF 不自动刷，避免无效重加载）。
+- **已完成列数量角标统一风格**：`DoneColumn` 的 `.col-count` 改为与 `KanbanColumn` 相同样式（白色加粗数字 + 半透明紫色背景），视觉上三列一致。
+- **日历多选日期后侧栏按钮变为「添加项目」**：框选多日时，侧栏「添加活动」替换为渐变紫色「添加项目」按钮（与顶栏新建项目同款风格），点击打开新建项目弹窗并自动填入所选日期范围。
+
 ### 文本文件改用浮动窗口预览
 
 - **MD / TXT 等文本类型走浮动窗口**：`preview.js` 的 `open()` 把 `isTextExt` 也路由到浮动窗口路径；`FloatPreviewWindow` 新增文本分支（下载 blob → 交给 `TextViewer` 渲染），默认窗口 720×520，支持拖拽、最大化、多开，MD 有 markdown 渲染、代码文件有高亮。

@@ -48,11 +48,7 @@
               @click="repeatMode = opt.v">{{ opt.label }}</button>
           </div>
           <div v-if="repeatMode === 'custom'" class="date-range">
-            <DateSpanPicker
-              v-model:startDate="customStartDate"
-              v-model:endDate="customEndDate"
-              placeholder="选择日期范围"
-            />
+            <DatePicker v-model="customStartDate" placeholder="选择日期" />
           </div>
         </div>
         <div class="divider"></div>
@@ -103,6 +99,10 @@
         </div>
       </div>
     </BaseModal>
+
+    <Transition name="toast">
+      <div v-if="toastMsg" class="toast">{{ toastMsg }}</div>
+    </Transition>
   </div>
 </template>
 
@@ -110,7 +110,6 @@
 import { ref, reactive, onMounted, computed, nextTick } from 'vue'
 import { scheduledTasksApi } from '@/services/api'
 import BaseModal from '@/components/common/BaseModal.vue'
-import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import { useAuthStore } from '@/stores/auth'
 import { PhAlarm } from '@phosphor-icons/vue'
 
@@ -125,6 +124,13 @@ const showModal = ref(false)
 const editing = ref(null)
 const formErr = ref('')
 const nameRef = ref(null)
+const toastMsg = ref('')
+let toastTimer = null
+function showToast(msg) {
+  toastMsg.value = msg
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toastMsg.value = '' }, 2800)
+}
 const REPEAT_OPTS = [
   { v: 'daily',   label: '每日' },
   { v: 'weekday', label: '工作日' },
@@ -133,7 +139,6 @@ const REPEAT_OPTS = [
 ]
 const repeatMode      = ref('daily')   // 'daily' | 'weekday' | 'weekend' | 'custom'
 const customStartDate = ref('')        // YYYY-MM-DD
-const customEndDate   = ref('')        // YYYY-MM-DD
 const form = reactive({ name: '', payload: '', time: '09:00', channels: ['web'] })
 
 function pad(n) { return String(n).padStart(2, '0') }
@@ -144,9 +149,7 @@ function todayIso() {
 
 watch(repeatMode, (mode) => {
   if (mode === 'custom' && !customStartDate.value) {
-    const t = todayIso()
-    customStartDate.value = t
-    customEndDate.value   = t
+    customStartDate.value = todayIso()
   }
 })
 
@@ -165,7 +168,6 @@ function openCreate() {
   Object.assign(form, blankForm())
   repeatMode.value = 'daily'
   customStartDate.value = ''
-  customEndDate.value = ''
   formErr.value = ''
   showModal.value = true
   nextTick(() => nameRef.value?.focus())
@@ -180,7 +182,6 @@ function openEdit(t) {
   const parsed = parseCron(t.cron)
   repeatMode.value      = parsed.mode
   customStartDate.value = parsed.startDate ?? ''
-  customEndDate.value   = parsed.endDate   ?? ''
   const chans = [...new Set([...t.channels].flatMap(c =>
     c === 'chat' ? ['web'] : c === 'im' ? ['feishu', 'qq'] : [c]))]
   Object.assign(form, { name: t.name, payload: t.payload, time: parsed.time, channels: filterChannels(chans) })
@@ -198,8 +199,7 @@ function buildCron() {
       if (dt <= now) dt.setDate(dt.getDate() + 1)
       return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`
     })()
-    const end = customEndDate.value ? `:end=${customEndDate.value}` : ''
-    return `@once:${date}T${pad(h)}:${pad(m)}${end}`
+    return `@once:${date}T${pad(h)}:${pad(m)}`
   }
   const DOW = { daily: '*', weekday: '1-5', weekend: '0,6' }
   return `${m} ${h} * * ${DOW[repeatMode.value] ?? '*'}`
@@ -207,30 +207,24 @@ function buildCron() {
 function parseCron(cron) {
   cron = cron || ''
   if (cron.startsWith('@once:')) {
-    // 格式：@once:YYYY-MM-DDTHH:mm 或 @once:YYYY-MM-DDTHH:mm:end=YYYY-MM-DD
-    const body = cron.slice(6)
-    const endMatch = body.match(/:end=(\d{4}-\d{2}-\d{2})$/)
-    const endDate  = endMatch ? endMatch[1] : ''
-    const iso      = endMatch ? body.slice(0, endMatch.index) : body
+    const iso = cron.slice(6)
     const [datePart, timePart] = iso.split('T')
     const [hh, mm] = (timePart ?? '09:00').split(':')
-    return { mode: 'custom', time: `${pad(Number(hh))}:${pad(Number(mm))}`, startDate: datePart ?? '', endDate }
+    return { mode: 'custom', time: `${pad(Number(hh))}:${pad(Number(mm))}`, startDate: datePart ?? '' }
   }
   const p = cron.split(' ')
-  if (p.length !== 5) return { mode: 'daily', time: '09:00', startDate: '', endDate: '' }
+  if (p.length !== 5) return { mode: 'daily', time: '09:00', startDate: '' }
   const [m, h, , , dow] = p
   const time = `${pad(Number(h))}:${pad(Number(m))}`
   const mode = dow === '1-5' || dow === '1,2,3,4,5' ? 'weekday'
              : dow === '0,6' || dow === '6,0'        ? 'weekend'
              : 'daily'
-  return { mode, time, startDate: '', endDate: '' }
+  return { mode, time, startDate: '' }
 }
 function cronLabel(cron) {
   const p = parseCron(cron)
   if (p.mode === 'custom') {
-    const d = new Date(`${p.startDate}T${p.time}`)
-    const suffix = p.endDate ? ` → ${p.endDate}` : ''
-    return `${p.startDate} ${p.time}${suffix}`
+    return `${p.startDate} ${p.time}`
   }
   const labels = { daily: '每天', weekday: '工作日', weekend: '周末' }
   return `${labels[p.mode] ?? '每天'} ${p.time}`
@@ -248,7 +242,7 @@ async function submit() {
   if (!form.name.trim()) { formErr.value = '名称不能为空'; return }
   if (!form.channels.length) { formErr.value = '至少选一个发送渠道'; return }
   busy.value = true; formErr.value = ''
-  const data = { name: form.name.trim(), action_type: 'agent', payload: form.payload, cron: buildCron(), channels: [...form.channels], enabled: editing.value ? editing.value.enabled : true }
+  const data = { name: form.name.trim(), payload: form.payload, cron: buildCron(), channels: [...form.channels], enabled: editing.value ? editing.value.enabled : true }
   try {
     if (editing.value) await scheduledTasksApi.update(editing.value.id, data)
     else await scheduledTasksApi.create(data)
@@ -263,8 +257,8 @@ async function toggle(t) {
 }
 async function runNow(t) {
   busy.value = true
-  try { const r = await scheduledTasksApi.run(t.id); alert(r.msg || '已执行一次'); await load() }
-  catch (e) { alert('执行失败：' + (e?.message || '')) }
+  try { const r = await scheduledTasksApi.run(t.id); showToast(r.msg || '已执行一次'); await load() }
+  catch (e) { showToast('执行失败：' + (e?.message || '')) }
   finally { busy.value = false }
 }
 async function removeTask(t) {
@@ -285,7 +279,7 @@ async function removeTask(t) {
   box-shadow: 0 3px 12px rgba(123,127,178,0.3);
   transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.2s ease-out, opacity 0.2s ease-out;
 }
-.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(123,127,178,0.4); opacity: 0.92; }
+.btn-primary:hover { box-shadow: 0 6px 18px rgba(123,127,178,0.4); opacity: 0.92; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; transform: none; }
 
 /* 大版面：填满内容区（等宽 + 高到顶栏底），对齐原型 .glass-panel */
@@ -405,4 +399,16 @@ async function removeTask(t) {
 .chk-input:checked + .chk-box { background: linear-gradient(135deg,#7b7fb2,#9590c4); border-color: transparent; box-shadow: 0 2px 8px rgba(123,127,178,0.35); }
 .form-err { color: #d05a5a; font-size: 12px; margin-bottom: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 6px; }
+
+.toast {
+  position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
+  background: rgba(30,32,40,0.92); backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
+  padding: 10px 20px; font-size: 13px; color: rgba(255,255,255,0.82);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  pointer-events: none; white-space: nowrap; z-index: 9999;
+}
+.toast-enter-active, .toast-leave-active { transition: opacity 0.2s, transform 0.2s; }
+.toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+.toast-leave-to   { opacity: 0; transform: translateX(-50%) translateY(8px); }
 </style>
