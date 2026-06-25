@@ -54,8 +54,8 @@ MAX_VERIFY = 3
 _VERIFY_PROMPT = (
     "【系统自检 · 请认真执行，勿跳过】你刚才执行了增删改操作。现在**用查询工具核实它们真的生效且完整**："
     "建项目/任务用 `get_project` 看阶段和待办是否齐全；增删改文件用 `list_files`/`list_folders` 看是否真到位；"
-    "日历/客户同理。**发现没做成或不完整 → 立刻补做**。核实无误就简短确认一句（如「已核实，都建好了」），"
-    "不要重复啰嗦、不要把流程念一遍；若发现并修正了问题，简要说明改了什么。"
+    "日历/客户同理。**发现没做成或不完整 → 立刻补做，并简要说明补了什么**。"
+    "若核实一切正常，简单确认即可、别重复刚才说过的话（系统会自动略过这条，用户不会看到重复确认）。"
 )
 
 
@@ -136,6 +136,9 @@ class LLMRunner:
 
         _mutset = _mutating_tools()
         did_mutate = False; verify_count = 0; round_i = 0
+        # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
+        # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
+        verify_mode = False; verify_fixed = False
         while round_i < MAX_ROUNDS + MAX_VERIFY * 2:   # 核实轮额外预算，不挤占任务的 MAX_ROUNDS
             round_i += 1
             # 用户中途「算了」→ 轮间协作中断（单次 LLM 流式调用本身切不了，故粒度是轮与轮之间）
@@ -150,12 +153,16 @@ class LLMRunner:
             )
             _tok = 0
             final = None
+            _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
             try:
                 async for _kind, _val in _stream_round(client, _kwargs):
                     if _kind == "final":
                         final = _val
                         break
-                    yield f"data: {json.dumps({'type': 'token', 'content': _val})}\n\n"
+                    if verify_mode:
+                        _verify_buf.append(_val)   # 核实阶段文字不实时发，先缓冲
+                    else:
+                        yield f"data: {json.dumps({'type': 'token', 'content': _val})}\n\n"
                     # 流式途中也协作检查取消：单轮长回答没有「下一轮」，只能在这里掐断；
                     # 退出生成器会关闭 stream、断开上游请求，真正停掉生成（不是只丢弃后续 token）
                     _tok += 1
@@ -176,6 +183,9 @@ class LLMRunner:
 
             tool_blocks = [b for b in final.content if b.type == "tool_use"]
             if tool_blocks:
+                # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
+                if verify_mode and not verify_fixed and _verify_buf and any(b.name in _mutset for b in tool_blocks):
+                    yield f"data: {json.dumps({'type': 'token', 'content': ''.join(_verify_buf)})}\n\n"
                 tool_results = []
                 for block in tool_blocks:
                     label = self.labels.get(block.name, block.name)
@@ -184,6 +194,8 @@ class LLMRunner:
                     result, artifact = await registry.dispatch(user_id, block.name, block.input)
                     if block.name in _mutset:
                         did_mutate = True   # 本次做过增删改 → 收尾时强制自我核实
+                        if verify_mode:
+                            verify_fixed = True   # 核实阶段里补了东西 → 确有遗漏
                     yield f"data: {json.dumps({'type': 'tool_done', 'name': block.name, 'label': label}, ensure_ascii=False)}\n\n"
                     if artifact:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
@@ -208,6 +220,7 @@ class LLMRunner:
             if did_mutate and verify_count < MAX_VERIFY:
                 verify_count += 1
                 did_mutate = False
+                verify_mode = True   # 进入/保持核实阶段 → 之后文字先缓冲
                 content_dicts = [
                     b.model_dump() if hasattr(b, "model_dump") else dict(b)
                     for b in final.content
@@ -216,6 +229,8 @@ class LLMRunner:
                 messages.append({"role": "user", "content": _VERIFY_PROMPT})
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
+            # 收尾：干净核实阶段的确认文字（_verify_buf）直接丢弃，用户看不到重复确认
+            # （若补做过，说明已在补做那轮发过；这里不再补发）
 
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out, 'cache_read': total_cache_read})}\n\n"
             return
@@ -242,6 +257,8 @@ class LLMRunner:
         total_in = total_out = 0
         _mutset = _mutating_tools()
         did_mutate = False; verify_count = 0; round_i = 0
+        # 自我核实阶段：进入后持续到收尾，期间文字先缓冲——干净通过整段丢弃、补做了才发一次说明（同 Anthropic 路）
+        verify_mode = False; verify_fixed = False
         while round_i < MAX_ROUNDS + MAX_VERIFY * 2:   # 核实轮额外预算
             round_i += 1
             if await _im_cancelled():
@@ -270,7 +287,8 @@ class LLMRunner:
                 delta = chunk.choices[0].delta
                 if delta.content:
                     content += delta.content
-                    yield f"data: {json.dumps({'type': 'token', 'content': delta.content})}\n\n"
+                    if not verify_mode:   # 核实阶段不实时发，攒到 content 里待回合末定夺
+                        yield f"data: {json.dumps({'type': 'token', 'content': delta.content})}\n\n"
                     # 流式途中协作检查取消（同 Anthropic 路：单轮长回答只能在这里掐断）
                     _tok += 1
                     if _tok % _CANCEL_CHECK_EVERY == 0 and await _im_cancelled():
@@ -295,6 +313,9 @@ class LLMRunner:
 
             if tool_buf:
                 ordered = [tool_buf[i] for i in sorted(tool_buf)]
+                # 核实阶段首次补做（本轮有增删改）→ 发一次"发现漏了X，补一下"说明；之后核对文字仍静默
+                if verify_mode and not verify_fixed and content and any(b["name"] in _mutset for b in ordered):
+                    yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
                 messages.append({
                     "role": "assistant",
                     "content": content or None,
@@ -318,6 +339,8 @@ class LLMRunner:
                     result, artifact = await registry.dispatch(user_id, b["name"], args)
                     if b["name"] in _mutset:
                         did_mutate = True   # 做过增删改 → 收尾时强制自我核实
+                        if verify_mode:
+                            verify_fixed = True   # 核实阶段里补了东西 → 确有遗漏
                     yield f"data: {json.dumps({'type': 'tool_done', 'name': b['name'], 'label': label}, ensure_ascii=False)}\n\n"
                     if artifact:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
@@ -333,10 +356,12 @@ class LLMRunner:
             if did_mutate and verify_count < MAX_VERIFY:
                 verify_count += 1
                 did_mutate = False
+                verify_mode = True   # 进入/保持核实阶段 → 之后文字先缓冲
                 messages.append({"role": "assistant", "content": content or ""})
                 messages.append({"role": "user", "content": _VERIFY_PROMPT})
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
+            # 收尾：干净核实阶段的确认文字（content，未实时发）直接丢弃，用户看不到重复确认
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out})}\n\n"
             return
 
