@@ -26,15 +26,16 @@ def _verify_pw(plain: str, hashed: str) -> bool:
     return _bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
-# ── 临时内置管理员（正式上线前改为从数据库读取）──
-ADMIN_USERS = {
-    "admin": {
-        "username": "admin",
-        # 默认密码 admin123，上线前必须修改
-        "hashed_password": _hash_pw("admin123"),
-        "role": "superadmin",
+def _get_admin_users():
+    cfg = get_settings()
+    name = cfg.admin_username or "admin"
+    return {
+        name: {
+            "username": name,
+            "hashed_password": _hash_pw(cfg.admin_password),
+            "role": "superadmin",
+        }
     }
-}
 
 
 class LoginRequest(BaseModel):
@@ -66,7 +67,7 @@ def _verify_token(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
 @router.post("/login")
 async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     from app.api.v1.audit_log import write_log
-    user = ADMIN_USERS.get(body.username)
+    user = _get_admin_users().get(body.username)
     if not user or not _verify_pw(body.password, user["hashed_password"]):
         try:
             await write_log(db, body.username, "login", "登录失败：用户名或密码错误", request)

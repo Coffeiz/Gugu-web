@@ -1,7 +1,39 @@
 # PM Studio · 早期开发记录
 
-> 更新：2026-06-23
+> 更新：2026-06-25
 > 状态：早期阶段记录，当前进度见 `docs/overview.md`
+
+---
+
+## 2026-06-25 · 并发化扩量踩的三个连接/配置坑
+
+把 worker 从串行改并发、上多 key 分流那几天，真正卡住我的不是并发逻辑本身，而是三个「看着不相关、根因藏得深」的连接/配置坑。
+
+### 坑一：SSE 长连接把 DB 连接池吃光 → 整站卡死
+
+现象：前后端一重启、或多开几个标签页，**所有 API 一起挂**（30s 超时），不只是聊天。
+
+根因：`/live/stream`（实时刷新 SSE）走 `Depends(get_current_user)`，而它 `Depends(get_db)`——于是 **DB session 在 SSE 整条长连接的生命周期里一直不释放**。每条 SSE = 占一个池连接。默认池 `pool_size=5 + overflow=10 = 15`，浏览器重连几次就打满，之后所有请求 `QueuePool limit ... timeout`。
+
+修：SSE 不需要查 DB，只要鉴权。新增 `get_current_user_id`（只解 JWT、不碰 DB），SSE 端点改用它；连接池也调大到 15+25。
+
+> **教训**：长连接 / 流式端点**绝不要挂 `Depends(get_db)`**——普通请求几十毫秒就还连接，SSE 能挂几小时。要鉴权就只解 token，别顺手拿 db。
+
+### 坑二：uvicorn --reload 被 SSE 卡死，改一次代码要强杀
+
+改完后端 `--reload` 卡在 `Waiting for connections to close`——SSE 长连接不主动断，reload 永远等不到「连接关完」，后端一直不可用，只能 `pkill -9` 重起。快速迭代时尤其要命。
+
+解：`uvicorn ... --reload --timeout-graceful-shutdown 1`——1 秒强制断连，reload 秒级完成。（和坑一同源：SSE 长连接既占池、又卡 reload。）
+
+### 坑三：config override 漏了一个段，整组开关静默失效
+
+后台把「对话历史压缩」开关关掉、保存、刷新——**又自己打开了**。
+
+根因：`apply_override` 给 `db/redis/storage/ai/quota/search/ai_presets` 都写了合并块，**唯独漏了 `agent`**，`top_fields` 还把 `agent` 排除在外。结果 `agent` 段（对话压缩、`worker_concurrency`、`memory_enabled`…）的 override **写进了 `config.override.json`，但 `apply_override` 根本不读** → `settings.agent.*` 永远是 schema 默认值。最坑的是**不报错**：保存成功、文件里也确实有 `false`，就是读回来是 `true`。
+
+修：补上 `if "agent" in override: ...` 合并块。一并修好了之前也悄悄失效的 `worker_concurrency` / `memory_enabled`。
+
+> **教训**：加一个新配置段，**必须同步在 `apply_override` 加合并块**，否则静默失效——没有任何报错指向你，只能靠「保存的值读不回来」反推。排查时记住：**「写盘成功」和「读回正确」是两回事**，要分别验。
 
 ---
 

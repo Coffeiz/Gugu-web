@@ -132,6 +132,8 @@ class AppSettings(BaseSettings):
     debug: bool = False
     secret_key: str = Field("change-me-in-production", description="JWT 签名密钥")
     access_token_expire_minutes: int = Field(10080, description="Token 有效期（分钟）")
+    admin_username: str = Field("admin", description="后台管理员用户名（env ADMIN_USERNAME）")
+    admin_password: str = Field("admin123", description="后台管理员密码（env ADMIN_PASSWORD）")
 
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
