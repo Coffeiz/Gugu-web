@@ -197,7 +197,7 @@ server {
     root /path/to/Gugu-web/frontend/dist;
     index index.html;
 
-    # 后台 SPA：深链/刷新回退到 admin 自己的 index.html（必须在 location / 之前/之外单列）
+    # 后台 SPA：路由 base 为 /admin，深链/刷新均回退到 admin/index.html（必须在 location / 之前）
     location /admin {
         try_files $uri $uri/ /admin/index.html;
     }
@@ -243,11 +243,12 @@ sudo nginx -t && sudo systemctl reload nginx
   proxy_buffering   off;
   proxy_read_timeout 3600s;
   ```
-- **伪静态**（网站 → 配置 → 伪静态）：SPA 路由回退（主站 + 后台两个独立入口）
+- **伪静态**（网站 → 配置 → 伪静态）：SPA 路由回退（主站 + 后台两个独立入口，顺序不能颠倒）
   ```nginx
   location /admin { try_files $uri $uri/ /admin/index.html; }
   location /      { try_files $uri $uri/ /index.html; }
   ```
+  > 后台路由 base 为 `/admin`，所有 admin 页面 URL 形如 `/admin/config`、`/admin/login`，刷新时命中第一条规则。本地 admin dev server（`npm run dev:admin`）也需从 `localhost:5174/admin/` 访问。
 
 **踩过的坑（按出现频率）：**
 

@@ -33,8 +33,9 @@ import { PhWarningCircle } from '@phosphor-icons/vue'
 const MAX_BYTES = 500 * 1024
 
 const props = defineProps({
-  blobUrl: { type: String, default: null },
-  ext:     { type: String, default: null },
+  blobUrl:  { type: String, default: null },
+  ext:      { type: String, default: null },
+  fontSize: { type: Number, default: 13 },
 })
 
 // 扩展名 → highlight.js 语言名
@@ -211,16 +212,18 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
 .tv-wrap {
   position: absolute;
   inset: 0;
-  background: #f8f9fc;
+  background: #fff;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transform: translateZ(0);
+  --tv-font-size: v-bind('props.fontSize + "px"');
 }
 
 .tv-scroll {
   flex: 1;
   overflow: auto;
-  padding: 16px 0;
+  padding: 0 0 16px;
 }
 
 .tv-notice {
@@ -236,7 +239,7 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
   width: 100%;
   border-collapse: collapse;
   font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
-  font-size: 13px;
+  font-size: var(--tv-font-size, 13px);
   line-height: 1.7;
 }
 
@@ -308,7 +311,7 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   max-width: 860px;
   margin: 0 auto;
   color: #24292f;
-  font-size: 15px;
+  font-size: var(--tv-font-size, 15px);
   line-height: 1.75;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }

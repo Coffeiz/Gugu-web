@@ -128,9 +128,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     }
     collect(id)
     allFolders.value = allFolders.value.filter(f => !toRemove.has(f.id))
-    allFiles.value   = allFiles.value.map(f =>
-      toRemove.has(f.folderId) ? { ...f, folderId: null } : f
-    )
+    allFiles.value   = allFiles.value.filter(f => !toRemove.has(f.folderId))
   }
 
   function updateFolder(id, patch) {

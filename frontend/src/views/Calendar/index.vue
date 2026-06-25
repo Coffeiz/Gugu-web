@@ -506,7 +506,9 @@ function addDays(iso, n) {
 }
 function barSegFill(bar) {
   if (!bar.progress) return 0
-  const total = daysBetween(bar.startDate, bar.endDate)
+  // total 含端点（+1）：与下面 segEndOff 的「含端点 +1」口径一致。
+  // 否则 progressDays 最大只到 end-start，永远 < 末段 segEndOff(=total+1)，100% 的项目长条只填到 ~90%。
+  const total = daysBetween(bar.startDate, bar.endDate) + 1
   if (total <= 0) return bar.progress
   const progressDays  = total * bar.progress / 100
   const segStartOff   = daysBetween(bar.startDate, bar.segStartIso)

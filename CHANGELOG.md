@@ -9,6 +9,22 @@
 
 ## [Unreleased]
 
+### 文本文件改用浮动窗口预览
+
+- **MD / TXT 等文本类型走浮动窗口**：`preview.js` 的 `open()` 把 `isTextExt` 也路由到浮动窗口路径；`FloatPreviewWindow` 新增文本分支（下载 blob → 交给 `TextViewer` 渲染），默认窗口 720×520，支持拖拽、最大化、多开，MD 有 markdown 渲染、代码文件有高亮。
+- **修复滚动闪烁**：`TextViewer` 的 `.tv-wrap` 加 `transform: translateZ(0)` 提升到独立合成层；行号列 `position: sticky` 在 `will-change: transform` 滚动容器里有 Chromium 已知 bug（向上滚时 sticky 元素重绘闪烁），将 `will-change` 移到外层 `tv-wrap` 后消除。
+
+### AI 回复质量 · 修复文件编号外漏
+
+- **系统提示词去掉 `[id=xxx]` 前缀**：文件列表从 `[id=899] 文件名.ext（位置）` 改为 `文件名.ext（位置）`；工具调用本就支持按文件名定位（`_resolve_file` 优先名字查找），编号仅在同名歧义时才需要，日常完全用不到。
+- **Admin Agent 行为 toggle 改为即时保存**：「记忆系统」和「对话历史压缩」开关点击后自动调 `saveBehavior()`，不再需要额外点「保存」按钮，避免用户误以为切换即生效而实际未持久化。
+
+### 前端代码复用重构（共用 composable）
+
+- **提取 `useSorting`**：排序状态（`sortKey/Dir`）、菜单（`sortMenuOpen/Pos`）与 `SORT_OPTIONS` 常量从 `Files/index.vue` 和 `ProjectModal.vue` 合并为单一 composable；两处通过解构别名调用，模板无改动。
+- **提取 `useUploadQueue`**：幽灵上传卡的创建（`createGhost`）、进度（`updateGhostProgress`）、移除（`removeGhost`）、失败（`failGhost`）统一管理，父组件只需传各自的业务参数调 `uploadWithProgress`，不再各自维护 `uploadingItems` 和 `_uploadUid`。
+- **提取 `useBoxSelection`**：框选拖拽全逻辑（矩形计算、DOM 碰撞检测、预览高亮、`cancelDrag`）提取为通用 composable；通过 `fileAttr`/`folderAttr`/`parseFolderId`/`onBoxSelect` 选项适配两处差异（Files 折叠键值 vs ProjectModal 数字 ID、Shift 追加 vs 替换），两侧约 180 行重复代码删除。
+
 ### 缩略图生成 · 低配机器减负（draft 降采样 + 并发闸）
 
 > 2 核小机上传图片后网页「卡一下」——缩略图生成（解码/缩放/编码）虽已丢线程池，但多个并发跑仍占满双核、拖累其它请求。

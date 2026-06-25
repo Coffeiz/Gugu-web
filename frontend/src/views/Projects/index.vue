@@ -8,6 +8,7 @@
         :projects="columnProjects(col.key)"
         @card-click="projectStore.openModal"
         @drop-project="handleDrop"
+        @add-project="projectStore.openModal(null)"
       />
       <DoneColumn
         :projects="columnProjects('done')"

@@ -367,8 +367,7 @@ class ScheduledTask(Base):
     # null = 系统级任务（如截稿扫描，跨用户）；有值 = 用户自定义任务
     user_id:     Mapped[Optional[UUID]]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     name:        Mapped[str]                = mapped_column(String(100))
-    action_type: Mapped[str]                = mapped_column(String(20))    # reminder | agent | deadline_scan
-    payload:     Mapped[str]                = mapped_column(Text, default="")   # reminder=提醒文本；agent=指令
+    payload:     Mapped[str]                = mapped_column(Text, default="")   # 到点要执行的指令（交给 agent 跑）
     cron:        Mapped[str]                = mapped_column(String(60))    # crontab "m h dom mon dow"
     channels:    Mapped[str]                = mapped_column(String(40), default="chat,im")   # chat / im 逗号分隔
     enabled:     Mapped[bool]               = mapped_column(Boolean, default=True)

@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="show" width="700px" @close="$emit('close')">
+  <BaseModal :show="show" width="480px" @close="$emit('close')">
     <div class="modal">
 
       <!-- 头部 -->
@@ -19,68 +19,61 @@
         </button>
       </div>
 
-      <!-- 主体：左右两栏 -->
+      <!-- 主体：单列 -->
       <div class="modal-body">
-
-        <!-- 左栏：基本信息 -->
-        <div class="left-col">
-
-          <div class="section">
-            <div class="field">
-              <label>客户 / 委托方</label>
-              <input v-model="form.client" placeholder="客户名称（选填）" />
-            </div>
-            <div class="field">
-              <label>项目周期</label>
-              <DateRangePicker
-                v-model:startDate="form.startDate"
-                v-model:endDate="form.deadline"
-                placeholder="选择开始 — 截止日期"
-              />
-            </div>
+        <div class="section">
+          <div class="field">
+            <label>客户 / 委托方</label>
+            <input v-model="form.client" placeholder="客户名称（选填）" />
           </div>
-
-          <hr class="col-divider" />
-
-          <div class="section">
-            <label class="section-label">看板列</label>
-            <div class="status-group">
-              <button
-                v-for="col in projectStore.kanbanColumns"
-                :key="col.key"
-                class="status-btn"
-                :class="['s-' + col.key, { active: form.status === col.key }]"
-                @click="form.status = col.key"
-              >
-                <span class="opt-dot"></span>{{ col.label }}
-              </button>
-            </div>
+          <div class="field">
+            <label>项目周期</label>
+            <DateRangePicker
+              v-model:startDate="form.startDate"
+              v-model:endDate="form.deadline"
+              placeholder="选择开始 — 截止日期"
+            />
           </div>
-
-          <hr class="col-divider" />
-
-          <div class="section">
-            <label class="section-label">项目颜色</label>
-            <div class="color-grid">
-              <button
-                v-for="c in colorPresets"
-                :key="c.value"
-                class="color-chip"
-                :class="{ active: form.color === c.value }"
-                :style="{ background: c.value }"
-                @click="form.color = c.value"
-              >
-                <PhCheck v-if="form.color === c.value" :size="11" weight="bold" style="color:white" />
-              </button>
-            </div>
-          </div>
-
         </div>
 
-        <!-- 右栏：阶段 -->
-        <div class="right-col">
+        <hr class="col-divider" />
 
-          <div class="section stages-section">
+        <div class="section">
+          <label class="section-label">看板列</label>
+          <div class="status-group">
+            <button
+              v-for="col in projectStore.kanbanColumns"
+              :key="col.key"
+              class="status-btn"
+              :class="['s-' + col.key, { active: form.status === col.key }]"
+              @click="form.status = col.key"
+            >
+              <span class="opt-dot"></span>{{ col.label }}
+            </button>
+          </div>
+        </div>
+
+        <hr class="col-divider" />
+
+        <div class="section">
+          <label class="section-label">项目颜色</label>
+          <div class="color-grid">
+            <button
+              v-for="c in colorPresets"
+              :key="c.value"
+              class="color-chip"
+              :class="{ active: form.color === c.value }"
+              :style="{ background: c.value }"
+              @click="form.color = c.value"
+            >
+              <PhCheck v-if="form.color === c.value" :size="11" weight="bold" style="color:white" />
+            </button>
+          </div>
+        </div>
+
+        <hr class="col-divider" />
+
+        <div class="section stages-section">
             <div class="stages-header">
               <label class="section-label">
                 项目阶段
@@ -204,8 +197,6 @@
                 添加阶段
               </button>
             </div>
-          </div>
-
         </div>
       </div>
 
@@ -563,25 +554,16 @@ function handleCreate() {
 }
 .close-btn:hover { background: rgba(0,0,0,0.1); }
 
-/* ── 主体两栏 ── */
+/* ── 主体单列 ── */
 .modal-body {
-  display: flex; gap: 0; flex: 1; min-height: 0; overflow: hidden;
-}
-.left-col {
-  flex: 0 0 320px; padding: 18px 20px;
   display: flex; flex-direction: column; gap: 16px;
-  overflow-y: auto;
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 18px 20px;
 }
 .col-divider {
   border: none; height: 1px;
   background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
   margin: 0;
-}
-.right-col {
-  flex: 1; padding: 18px 20px;
-  display: flex; flex-direction: column; gap: 16px;
-  border-left: 1px solid rgba(0,0,0,0.07);
-  overflow-y: auto;
 }
 
 /* ── 通用 section & field ── */

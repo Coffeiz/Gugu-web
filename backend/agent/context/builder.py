@@ -38,7 +38,7 @@ def _files_block(fo: dict | None, proj_names: dict | None = None) -> str:
         lines.append(f"最近文件（最多 {len(files)} 个）：")
         for f in files:
             loc = f.get("folder") or (_proj(f["project_id"]) if f.get("project_id") else f.get("space", ""))
-            lines.append(f"- [id={f['id']}] {f['name']}（{loc}）")
+            lines.append(f"- {f['name']}（{loc}）")
     return "\n".join(lines)
 
 

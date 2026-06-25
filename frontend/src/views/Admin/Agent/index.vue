@@ -338,7 +338,7 @@
             <button
               class="toggle-switch"
               :class="{ on: agentDraft.memory_enabled }"
-              @click="agentDraft.memory_enabled = !agentDraft.memory_enabled"
+              @click="agentDraft.memory_enabled = !agentDraft.memory_enabled; saveBehavior()"
             >
               <span class="toggle-knob" />
             </button>
@@ -352,7 +352,7 @@
             <button
               class="toggle-switch"
               :class="{ on: agentDraft.conv_compress_enabled }"
-              @click="agentDraft.conv_compress_enabled = !agentDraft.conv_compress_enabled"
+              @click="agentDraft.conv_compress_enabled = !agentDraft.conv_compress_enabled; saveBehavior()"
             >
               <span class="toggle-knob" />
             </button>

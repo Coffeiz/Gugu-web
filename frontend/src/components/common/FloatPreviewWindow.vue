@@ -12,6 +12,11 @@
       <span class="fpw-ext" :style="{ color: extColor, background: extColor + '22' }">{{ win.file.ext }}</span>
       <span class="fpw-name" :title="win.file.displayName">{{ win.file.displayName }}</span>
       <div class="fpw-actions">
+        <template v-if="isText">
+          <button class="fpw-btn" title="缩小字号" @click.stop="textFontSize = Math.max(10, textFontSize - 1)"><PhMinus weight="bold" :size="12" /></button>
+          <span class="fpw-font-size">{{ textFontSize }}</span>
+          <button class="fpw-btn" title="放大字号" @click.stop="textFontSize = Math.min(24, textFontSize + 1)"><PhPlus weight="bold" :size="12" /></button>
+        </template>
         <button ref="infoBtnRef" class="fpw-btn" :class="{ active: showInfo }" title="文件信息" @click.stop="openInfo">
           <PhInfo weight="bold" :size="13" />
         </button>
@@ -33,6 +38,7 @@
       <!-- 真实内容（在下层） -->
       <ImageViewer v-if="isImg" :blobUrl="blobUrl" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc" />
+      <TextViewer  v-else-if="isText && blobUrl" :blobUrl="blobUrl" :ext="win.file.ext" :fontSize="textFontSize" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
         <div class="fpw-spinner"></div>
         <span>加载中…</span>
@@ -120,11 +126,12 @@
 
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
-import { PhInfo, PhDownloadSimple, PhCornersOut, PhCornersIn, PhX, PhWarningCircle } from '@phosphor-icons/vue'
+import { PhInfo, PhDownloadSimple, PhCornersOut, PhCornersIn, PhX, PhWarningCircle, PhMinus, PhPlus } from '@phosphor-icons/vue'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
+import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import { filesApi } from '@/services/api'
-import { isImageExt, isVideoExt, usePreviewStore } from '@/stores/preview'
+import { isImageExt, isVideoExt, isTextExt, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/useThumbCache'
 
 const props = defineProps({ win: { type: Object, required: true } })
@@ -137,13 +144,19 @@ const w = ref(props.win.w)
 const h = ref(props.win.h)
 
 // ── 文件类型 ──────────────────────────────────────────────────────────────────
-const isImg = computed(() => isImageExt(props.win.file.ext))
-const isVid = computed(() => isVideoExt(props.win.file.ext))
+const isImg  = computed(() => isImageExt(props.win.file.ext))
+const isVid  = computed(() => isVideoExt(props.win.file.ext))
+const isText = computed(() => isTextExt(props.win.file.ext))
+
+const textFontSize = ref(13)
 
 const EXT_COLORS = {
   JPG: '#4caf7d', JPEG: '#4caf7d', PNG: '#4caf7d', WEBP: '#4caf7d',
   GIF: '#9c6fdb', SVG: '#f0a500', BMP: '#8888a8',
   MP4: '#5a8cd8', WEBM: '#5a8cd8', MOV: '#5a8cd8', M4V: '#5a8cd8',
+  MD: '#6b9e78', TXT: '#8a8a9a', JSON: '#d4820a', CSV: '#3a8fbf',
+  JS: '#f0c000', TS: '#3178c6', PY: '#4b8bbe', CSS: '#a855f7',
+  HTML: '#e34c26', YAML: '#cb171e', XML: '#f16529', SH: '#3d9970',
 }
 const extColor = computed(() => EXT_COLORS[props.win.file.ext?.toUpperCase()] ?? '#7b7fb2')
 
@@ -321,6 +334,14 @@ async function load(f) {
         vid.onerror = () => { fitWindow(720, 404); resolve() }
         vid.src = url
       })
+    } else if (isTextExt(f.ext)) {
+      const dlUrl = f.attach_id
+        ? `${BASE_URL}/agent/attachment/${f.attach_id}/download`
+        : `${BASE_URL}/files/${f.id}/download`
+      const res = await fetch(dlUrl, { headers })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      blobUrl.value = URL.createObjectURL(await res.blob())
+      fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
     } else {
       const dlUrl = f.attach_id
         ? `${BASE_URL}/agent/attachment/${f.attach_id}/download`
@@ -498,6 +519,10 @@ onUnmounted(() => {
 }
 .fpw-btn:hover { background: rgba(0,0,0,0.1); color: var(--text-primary); }
 .fpw-close:hover { background: rgba(200,90,90,0.12); color: rgba(200,90,90,0.9); }
+.fpw-font-size {
+  font-size: 10px; font-weight: 600; color: var(--text-secondary);
+  min-width: 18px; text-align: center; line-height: 26px; user-select: none;
+}
 
 /* ── 内容区 ── */
 .fpw-body {
@@ -505,6 +530,9 @@ onUnmounted(() => {
   position: relative;
   overflow: hidden;
   background: rgba(220, 222, 232, 0.5);
+}
+.fpw-body:has(.tv-wrap) {
+  background: #fff;
 }
 
 /* ── 状态 ── */

@@ -28,7 +28,7 @@ export const usePreviewStore = defineStore('preview', () => {
   let _topZ   = 11000   // 高于 GuguChat 窗口（10001/10002），从聊天打开的预览要盖在上面
 
   function open(f) {
-    if (isImageExt(f.ext) || isVideoExt(f.ext)) {
+    if (isImageExt(f.ext) || isVideoExt(f.ext) || isTextExt(f.ext)) {
       const existing = windows.value.find(w => w.file.id === f.id)
       if (existing) { bringToFront(existing.id); return }
       const idx = windows.value.length

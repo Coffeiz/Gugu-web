@@ -56,7 +56,7 @@
   <!-- 悬浮球 -->
   <button class="ai-fab" :class="{ 'ai-fab--playing': rippleActive }" ref="fabRef" @click="toggleOpen" title="咕咕">
     <svg ref="fabSvgRef"
-         :class="{ 'ai-fab-spin': audioStore.file && !spinningBack }"
+         :class="{ 'ai-fab-spin': audioStore.file && !spinningBack, 'ai-fab--typing': fabJumping }"
          :style="audioStore.file && !spinningBack ? { animationPlayState: audioPlaying ? 'running' : 'paused' } : {}"
          width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
       <path d="M16 7h.01"/>
@@ -168,7 +168,7 @@
         <!-- 单一消息列表 -->
         <div class="chat-messages" ref="messagesEl">
           <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]">
-            <div v-if="msg.role === 'ai' && (msg.text || msg.streaming)" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : msg.html" /></div>
+            <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : msg.html" /></div>
             <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
             <div v-if="msg.files && msg.files.length" class="msg-files">
               <div v-for="f in msg.files" :key="f.file_id" class="msg-file" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
@@ -567,6 +567,11 @@ const isComposing    = ref(false)
 const thinking       = ref(false)
 const streaming      = ref(false)
 const activeTool     = ref('')
+const isTypingText   = computed(() => streaming.value && !thinking.value && !activeTool.value)
+const fabJumping     = ref(false)
+watch(isTypingText, v => {
+  if (v) { fabJumping.value = true; setTimeout(() => { fabJumping.value = false }, 350) }
+})
 const sessionId      = ref(null)
 const abortCtrl      = ref(null)
 const pendingQueue   = ref([])   // 生成中发的消息，排队等流式结束后接着发
@@ -1040,6 +1045,9 @@ async function consumeStream(reader, ownerSid) {
       const m = messages.value[aiIdx]
       m.streaming = false
       m.html = renderMd(m.text)
+      if (!m.text?.trim() && !m.files?.length) {
+        messages.value.splice(aiIdx, 1)
+      }
     }
   }
   return { aiIdx, usedTools, detached, sid }
@@ -1161,6 +1169,12 @@ async function send(forcedText) {
 }
 .ai-fab--playing::after { animation-delay: 1.8s; }
 @keyframes fab-ripple { 0% { transform: scale(0.4); opacity: 0.8; } 100% { transform: scale(1.55); opacity: 0; } }
+@keyframes fab-typing {
+  0%   { transform: translateY(0); }
+  50%  { transform: translateY(-4px); }
+  100% { transform: translateY(0); }
+}
+.ai-fab--typing { animation: fab-typing 0.2s linear 1; }
 
 /* ── 单一聊天窗口 ── */
 .chat-window {

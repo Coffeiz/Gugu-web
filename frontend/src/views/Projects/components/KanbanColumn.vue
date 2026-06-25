@@ -23,6 +23,12 @@
         @dragstart="(e) => { e.dataTransfer.setData('projectId', project.id) }"
       />
       <div v-if="projects.length === 0" class="col-empty">拖拽项目到此</div>
+      <button class="add-card" @click="$emit('add-project')">
+        <svg width="14" height="14" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="opacity:0.5;flex-shrink:0">
+          <line x1="11" y1="4" x2="11" y2="18"/><line x1="4" y1="11" x2="18" y2="11"/>
+        </svg>
+        <span class="add-card-text">新建项目</span>
+      </button>
     </div>
   </div>
 </template>
@@ -35,7 +41,7 @@ const props = defineProps({
   column:   { type: Object, required: true },
   projects: { type: Array, default: () => [] },
 })
-const emit = defineEmits(['card-click', 'drop-project'])
+const emit = defineEmits(['card-click', 'drop-project', 'add-project'])
 
 const isDragOver = ref(false)
 
@@ -91,4 +97,21 @@ function onDrop(e) {
   opacity: 0.4; padding: 32px 0; border: 1.5px dashed rgba(0,0,0,0.1);
   border-radius: var(--radius-md); margin-top: 4px;
 }
+.add-card {
+  display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; flex-shrink: 0; height: 34px;
+  background: rgba(255,255,255,0.2);
+  border: 1.5px dashed rgba(0,0,0,0.09);
+  border-radius: var(--radius-md);
+  corner-shape: squircle;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.18s;
+}
+.add-card:hover {
+  border-color: rgba(123,127,178,0.45);
+  color: var(--color-primary);
+  background: rgba(123,127,178,0.04);
+}
+.add-card-text { font-size: 10px; font-weight: 600; }
 </style>
