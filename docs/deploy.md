@@ -77,8 +77,8 @@ DB__NAME=gugu_web
 DB__USER=pm
 DB__PASSWORD=pm123
 
-# JWT 密钥（生产务必改）
-SECRET_KEY=换成随机长字符串
+# JWT 密钥（生产务必改）— 生成随机值：python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+SECRET_KEY=换成上面命令生成的随机长串
 
 # 后台管理员账号（不填默认 admin/admin123，生产务必改；改后重启后端生效）
 ADMIN_USERNAME=admin
@@ -164,7 +164,11 @@ cd backend
 
 ### 3.2 配置（生产）
 
-- `backend/.env`：填 DB / Redis / `SECRET_KEY`（**务必换随机值**）。
+- `backend/.env`：填 DB / Redis / `SECRET_KEY` / 管理员账号（见 §2.3）。`SECRET_KEY` **务必换随机值**：
+  ```bash
+  python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+  ```
+  > JWT（登录 Token）就是用 `SECRET_KEY` 签名的，**线上用默认值 = 任何人能伪造管理员/用户 Token**，必须换。改 `SECRET_KEY` 后所有已签发的 Token 失效（需重新登录），重启后端生效。
 - 其余（AI key、OSS、飞书凭据）登录 Admin 面板配，落到 `config.override.json`。
 - **存储**：默认本地 `uploads/`；多机/对象存储用 Admin 切到阿里云 OSS。
 
@@ -310,6 +314,37 @@ sudo systemctl status gugu-backend gugu-worker gugu-supervisor
 - `SECRET_KEY` 用强随机值（`python3 -c "import secrets; print(secrets.token_urlsafe(48))"`）。
 - CORS：`main.py` 默认只开 localhost:5173，生产改成实际域名。
 
+### 3.8 低配服务器调优（2C/2G 这类）
+
+咕咕 = Python web + worker + supervisor + 网关 + PostgreSQL + Redis，2C/2G 上跑得起来但**很紧**，容易 OOM / CPU 打满。按这套调：
+
+**① 加 swap（2G 内存必配，防 OOM 杀进程）**
+```bash
+fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab     # 开机自动挂
+free -h                                              # 确认 Swap 行有值
+```
+> swap 不替代内存，但内存峰值有它兜底，不至于直接被 OOM killer 杀掉（咕咕 backend 被 `code=killed status=9` 多半就是 OOM）。
+
+**② 别在这台机跑非必要的重应用**：pgAdmin、其它面板应用等很吃 CPU/内存（pgAdmin 曾崩溃重启循环把 CPU 烧到 100% 整机卡死）。看库用 1Panel 自带的数据库管理或本地客户端远程连，**别在生产机常驻 pgAdmin**。
+
+**③ 降咕咕自身占用**：
+- web 单进程：uvicorn **别加 `--workers N`**；
+- worker 并发度调小：后台 → Agent → `worker_concurrency` 设 **4**（默认 16，小核机器吃不消）；
+- 不用 IM 就在后台**停用 bot**，supervisor 不拉网关子进程，每个省 ~60–80M。
+
+**④（可选）systemd 给服务设资源上限**，防单个吃爆整机（`systemctl edit gugu-worker`，drop-in 里写——**不能写行内注释**）：
+```ini
+[Service]
+CPUQuota=50%
+MemoryMax=512M
+```
+保存后 `systemctl daemon-reload && systemctl restart gugu-worker`，`systemctl show gugu-worker -p CPUQuota -p MemoryMax` 验证。
+
+> **排查整机卡死**：先 `ps aux --sort=-%cpu | head` 看**谁**在烧 CPU（常常不是咕咕，而是别的应用）、`free -h` 看内存、`journalctl -u gugu-backend -n 40` 看有没有 OOM 杀。别一上来就以为是自己代码。
+
+> **真要稳 + 扩用户：升 4G**。Python + Postgres + Redis + IM 多进程，4G 才舒服，2G 一波并发就贴 OOM 线。
+
 ---
 
 ## 4. IM 频道（飞书）
@@ -432,6 +467,36 @@ cd ../frontend && npm install && npm run build        # 前端重新构建
 ```
 
 > ⚠️ **务必 `make migrate`，别只 restart**：启动时的 `create_all` **只建缺失的表、不会给已有表加新列**。所以凡是新增了模型列（如 `conversation_messages.files` 文件卡片、`conversation_sessions.source` 会话来源），只重启不跑迁移 → 相关写入会因「列不存在」报错。`make update` / `make deploy` 已含 migrate；手动更新记得补 `make migrate`。
+
+### 6.1 zip 打包上传更新（无 git 时）
+
+没在生产配 git 的话，可以本地打 zip → 传服务器解压。**关键：打包必须排除服务器独有的状态文件，否则解压会覆盖掉它们。**
+
+| 文件/目录 | 被覆盖的后果 |
+|---|---|
+| `backend/.env` | **丢生产 DB 密码 + `ADMIN_USERNAME`/`ADMIN_PASSWORD`**（最致命） |
+| `backend/config.override.json` | 丢 Admin 配的 AI key / 飞书凭据 / 存储设置 |
+| `backend/.venv` | venv 是按本机平台编译的，Mac→Linux 覆盖后**跑不起来** |
+| `uploads/` | **抹掉所有用户文件 + 咕咕 `.agent/` 记忆** |
+
+本地打包（排除上述 + 缓存）：
+```bash
+cd <项目根>
+zip -r backend.zip backend \
+  -x 'backend/.venv/*' -x 'backend/.env' -x 'backend/config.override.json' \
+  -x 'backend/logs/*' -x 'backend/uploads/*' -x '*/__pycache__/*' -x '*.pyc'
+```
+服务器解压 + 收尾：
+```bash
+cd <项目目录> && unzip -o backend.zip       # -o 覆盖代码；.env/.venv 没打进 zip 故不受影响
+cd backend
+.venv/bin/pip install -r requirements.txt   # requirements 变了才需要
+make migrate                                 # 有新模型列时（见上 ⚠️）
+systemctl restart gugu-backend               # 改了 web/后端
+systemctl restart gugu-worker                # 改了 agent/ 大脑代码
+```
+
+> **更稳的做法**：生产配一次 git deploy key（见 §3.4.1），以后更新就 `git pull` + 重启——git 只动跟踪文件，`.env`/`.venv`/`uploads` 都 gitignore、永不被碰，天然无「覆盖状态」风险，省去每次手动排除。
 
 ## 7. 备份
 

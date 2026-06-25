@@ -5,6 +5,41 @@
 
 ---
 
+## 2026-06-25 · 生产整机卡死：以为是自己传的代码，真凶是 pgAdmin + 2G OOM
+
+第一次把咕咕部署到自己的生产服务器（阿里云 2C/2G + 1Panel），传了几个文件后**整机卡死、网页打不开**。第一反应是「我刚传的代码把后端搞崩了」——结果完全不是。
+
+### 排查：先看「谁在烧 CPU」，而不是猜
+
+```bash
+ps aux --sort=-%cpu | head        # CPU 谁占满
+free -h                            # 内存
+journalctl -u gugu-backend -n 40   # 有没有崩/被杀
+```
+
+`ps` 一看，烧 100% CPU 的是 **pgAdmin**（`gunicorn ... run_pgadmin:app`），咕咕的 worker/web 才占 1%、好好的。pgAdmin 是 1Panel 应用商店装的、跑在 Docker 里，**崩溃重启循环**——PID 一直变（`kill` 掉立刻换个新的），连它的启动探活代码 `import config; print(...)` 都在 100% CPU 上转。它还绑在公网 80 端口，很可能在被扫描爆破。
+
+`journalctl` 又发现咕咕 **backend 被 `code=killed status=9/KILL` 杀过几次**——`status=9` = SIGKILL，是**系统 OOM killer** 干的：pgAdmin + Postgres + Redis + 咕咕挤在 2G（实际可用 1.6G）里把内存吃爆，内核挑了 backend 杀。
+
+### 根因链
+
+pgAdmin 崩溃重启循环 → 烧满 CPU + 吃内存 → 整机卡 + 内存到顶时 OOM 杀掉咕咕 backend。**和我传文件没半点关系。**
+
+### 处理
+
+1. **停掉 pgAdmin**（Docker 容器，`docker stop` / 1Panel 停用；这台机根本不需要它，看库用本地客户端远程连）→ CPU 立刻回正常。
+2. **加 4G swap** → 防内存峰值再触发 OOM。
+3. worker 并发度调小、不用的 IM bot 停用 → 降咕咕自身占用。
+
+### 教训
+
+- **整机卡死先 `ps aux --sort=-%cpu | head` 看是谁，别先怀疑自己刚改的东西**——这次真凶是个完全无关的第三方应用。
+- **`status=9/KILL` 八成是 OOM**，不是代码 bug。2G 小机必配 swap。
+- **生产机别堆非必要的重应用**（pgAdmin、各种面板插件）——它们和你的服务抢同一份 CPU/内存，一个崩溃循环就能拖垮全机。
+- 调优细节见 `deploy.md` §3.8「低配服务器调优」。
+
+---
+
 ## 2026-06-25 · 并发化扩量踩的三个连接/配置坑
 
 把 worker 从串行改并发、上多 key 分流那几天，真正卡住我的不是并发逻辑本身，而是三个「看着不相关、根因藏得深」的连接/配置坑。

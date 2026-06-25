@@ -1,3 +1,5 @@
+import asyncio
+import os
 import re
 from datetime import datetime
 from typing import Optional
@@ -34,12 +36,22 @@ def _thumb_path(fid: int, size: str) -> _Path:
 
 _THUMB_SIZE_MAP = {"tiny": (20, 75), "card": (192, 82)}
 
+# 缩略图生成是 CPU 密集（解码/缩放/编码）；小核机器上多个并发跑会占满 CPU、卡住其他请求。
+# 闸门：最多 (核数-1) 个并发，至少留一个核给事件循环（2 核 → 1）。
+_THUMB_SEM = asyncio.Semaphore(max(1, (os.cpu_count() or 2) - 1))
+
 def _generate_thumbs_sync(raw: bytes, fid: int, sizes: tuple = ("tiny",)) -> None:
     """生成指定尺寸的 WebP 缩略图并写入磁盘缓存。在线程中运行。"""
     from PIL import Image
     import io as _io
     td = _thumb_dir()
     img = Image.open(_io.BytesIO(raw))
+    # 大图快速降采样解码：JPEG 按目标尺寸 draft 出 1/2~1/8 分辨率，省掉解全分辨率的大头开销（非 JPEG 无效，安全）
+    try:
+        _biggest = max(_THUMB_SIZE_MAP[s][0] for s in sizes)
+        img.draft(None, (_biggest, _biggest))
+    except Exception:
+        pass
     # 保留 RGBA（PNG 透明通道），其余统一转 RGB
     if img.mode not in ("RGB", "RGBA"):
         img = img.convert("RGBA") if "transparency" in img.info else img.convert("RGB")
@@ -57,11 +69,15 @@ def _generate_thumb_jpeg_fallback(raw: bytes, size: str) -> bytes | None:
     import io as _io
     try:
         img = Image.open(_io.BytesIO(raw))
+        max_px, _ = _THUMB_SIZE_MAP.get(size, (192, 82))
+        try:
+            img.draft(None, (max_px, max_px))   # JPEG 大图快速降采样解码
+        except Exception:
+            pass
         # 取动图第一帧，强制转 RGB
         if hasattr(img, "n_frames") and img.n_frames > 1:
             img.seek(0)
         img = img.convert("RGB")
-        max_px, _ = _THUMB_SIZE_MAP.get(size, (192, 82))
         img.thumbnail((max_px, max_px), Image.LANCZOS)
         buf = _io.BytesIO()
         img.save(buf, format="JPEG", quality=80)
@@ -324,7 +340,8 @@ async def _pregen_thumb(storage_key: str, fid: int) -> None:
     import asyncio
     try:
         raw = await get_storage().get(storage_key)
-        await asyncio.to_thread(_generate_thumbs_sync, raw, fid)
+        async with _THUMB_SEM:
+            await asyncio.to_thread(_generate_thumbs_sync, raw, fid)
     except Exception:
         pass
 
@@ -921,7 +938,8 @@ async def get_thumb(
     except FileNotFoundError:
         raise HTTPException(404, "物理文件丢失")
     try:
-        await asyncio.to_thread(_generate_thumbs_sync, raw, fid, (size,))
+        async with _THUMB_SEM:
+            await asyncio.to_thread(_generate_thumbs_sync, raw, fid, (size,))
         cache_path = _thumb_path(fid, size)
         if cache_path.exists():
             return FastAPIResponse(content=cache_path.read_bytes(), media_type="image/webp",
@@ -932,7 +950,8 @@ async def get_thumb(
 
     # 降级：WebP 失败时返回缩小的 JPEG，保证不返回原始大图
     try:
-        jpeg_bytes = await asyncio.to_thread(_generate_thumb_jpeg_fallback, raw, size)
+        async with _THUMB_SEM:
+            jpeg_bytes = await asyncio.to_thread(_generate_thumb_jpeg_fallback, raw, size)
         if jpeg_bytes:
             return FastAPIResponse(content=jpeg_bytes, media_type="image/jpeg",
                                    headers={"Cache-Control": "private, max-age=86400"})
