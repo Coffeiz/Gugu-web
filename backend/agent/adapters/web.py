@@ -369,7 +369,6 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
 
     except BaseException as e:
         logger.exception("agent generate error for user %s: %s", req.user_id, e)
-        print(f"[web] agent generate error for {req.user_id}: {type(e).__name__}: {e}", flush=True)
         msg = ("咕咕网络不太好 📡 可以再发一遍吗？" if _is_network_error(e)
                else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
         await genstream.publish(session_id, {"type": "error", "message": msg})

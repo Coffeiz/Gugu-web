@@ -329,7 +329,11 @@ free -h                                              # 确认 Swap 行有值
 **② 别在这台机跑非必要的重应用**：pgAdmin、其它面板应用等很吃 CPU/内存（pgAdmin 曾崩溃重启循环把 CPU 烧到 100% 整机卡死）。看库用 1Panel 自带的数据库管理或本地客户端远程连，**别在生产机常驻 pgAdmin**。
 
 **③ 降咕咕自身占用**：
-- web 单进程：uvicorn **别加 `--workers N`**；
+- **web 改单进程**（⚠️ **2G 机最容易踩的 OOM 坑**）：`make install` 装的 `gugu-backend.service` 模板默认 **`--workers 2`** —— 两个完整 app 进程各 ~250M，2G 机上加 Postgres/Redis 直接顶爆，反复被 OOM 杀（日志 `oom-kill` / `code=killed status=9`）。改成 1 个 worker，内存减半（uvicorn 异步 IO 密集，单 worker 够用）：
+  ```bash
+  sed -i 's/--workers 2/--workers 1/' /etc/systemd/system/gugu-backend.service
+  systemctl daemon-reload && systemctl restart gugu-backend
+  ```
 - worker 并发度调小：后台 → Agent → `worker_concurrency` 设 **4**（默认 16，小核机器吃不消）；
 - 不用 IM 就在后台**停用 bot**，supervisor 不拉网关子进程，每个省 ~60–80M。
 
@@ -523,6 +527,8 @@ cd backend && make backup     # 备份数据库 + uploads + config.override.json
 | 登录/接口报 `ERR_SSL_UNRECOGNIZED_NAME_ALERT`（页面能开、API 失败） | **SSL 证书没覆盖该域名**（如证书只签了 `gugugu.site`，没含 `www.gugugu.site`）。1Panel 网站→证书 重签 Let's Encrypt，**域名列表同时勾 `gugugu.site` + `www.gugugu.site`**（或通配 `*.gugugu.site`）；前提是该域名 DNS 已解析到本机。验证：`echo \| openssl s_client -servername www.gugugu.site -connect www.gugugu.site:443 2>/dev/null \| openssl x509 -noout -ext subjectAltName` 看 SAN 里有没有该域名 |
 | `make install` 后 gugu-backend 一直重启   | 旧的手动 `uvicorn :8000` 没停、占着端口 → systemd 版绑不上崩 → `Restart` 循环。`systemctl stop gugu-backend` + `pkill -9 -f "uvicorn app.main"` + `fuser -k 8000/tcp` 清掉再 `systemctl start`（详见 §3.5 / §5.1） |
 | nginx `duplicate location "/"` 启动失败 | 反向代理路径填成了 `/`（整站代理给后端）和伪静态 `location /` 撞 → 反代路径必须是 `/api`（详见 §3.4.1） |
+| `gugu-backend` 反复被 OOM 杀（`oom-kill` / `code=killed status=9`） | 小内存机（2G）上 systemd 模板默认 `--workers 2` 太吃内存 → 改单 worker：`sed -i 's/--workers 2/--workers 1/' /etc/systemd/system/gugu-backend.service && systemctl daemon-reload && systemctl restart gugu-backend`；并加 swap（详见 §3.8） |
+| 整机 CPU 100% / 卡死 | 先 `ps aux --sort=-%cpu \| head` 看**谁**在烧（常是 pgAdmin 等第三方应用，不是咕咕）；`free -h` 看内存、`journalctl -u gugu-backend` 看 OOM（详见 §3.8 + devlog 2026-06-25） |
 
 
 ---

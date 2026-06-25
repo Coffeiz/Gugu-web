@@ -64,3 +64,6 @@ docs/smiley-sans/
 # 性能 trace / 抓的日志（大文件，勿提交）
 /logs/
 Trace-*.json
+
+# 部署打包产物
+backend.zip
