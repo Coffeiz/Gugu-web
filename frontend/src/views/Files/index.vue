@@ -686,12 +686,16 @@ import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
-import { getThumb, getCachedThumb, preloadTinyThumbs, cardBlobReadyIds } from '@/composables/useThumbCache'
+import { cardBlobReadyIds } from '@/composables/useThumbCache'
+import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
+import { isImageExt, fileExtCategory, fileIconColor, fileListIcon } from '@/utils/fileTypes'
 import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
+import { useSorting } from '@/composables/useSorting'
+import { useUploadQueue } from '@/composables/useUploadQueue'
+import { useBoxSelection } from '@/composables/useBoxSelection'
 import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
-  PhBrowser, PhImage, PhFilmStrip, PhMusicNote, PhTable,
-  PhPresentationChart, PhArchive, PhCode, PhFileText,
+  PhBrowser,
   PhArrowLeft, PhArrowRight, PhSortAscending, PhSquaresFour, PhList,
   PhCheckSquare, PhCheck, PhFolderPlus, PhUploadSimple, PhPencilSimple,
   PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX,
@@ -931,35 +935,7 @@ function _flashFile(id) {
 }
 
 // ── 排序 ──
-const SORT_OPTIONS = [
-  { key: 'name',      label: '名称' },
-  { key: 'type',      label: '类型' },
-  { key: 'stage',     label: '阶段' },
-  { key: 'createdAt', label: '创建时间' },
-  { key: 'size',      label: '大小' },
-]
-const sortKey      = ref('name')
-const sortDir      = ref('asc')
-const sortMenuOpen = ref(false)
-const sortBtnRef   = ref(null)
-const sortMenuPos  = reactive({ x: 0, y: 0 })
-
-function openSortMenu() {
-  if (sortMenuOpen.value) { sortMenuOpen.value = false; return }
-  const r = sortBtnRef.value?.getBoundingClientRect()
-  if (r) { sortMenuPos.x = r.left; sortMenuPos.y = r.bottom + 6 }
-  sortMenuOpen.value = true
-}
-
-function onSortSelect(key) {
-  if (sortKey.value === key) {
-    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
-  } else {
-    sortKey.value = key
-    sortDir.value = 'asc'
-  }
-  sortMenuOpen.value = false
-}
+const { SORT_OPTIONS, sortKey, sortDir, sortMenuOpen, sortBtnRef, sortMenuPos, openSortMenu, onSortSelect } = useSorting()
 
 const sortedContents = computed(() => {
   const { folders, files } = contents.value
@@ -1001,7 +977,7 @@ const sortedContents = computed(() => {
 
 // ── 内容 ──
 const contents = ref({ folders: [], files: [] })
-watch(() => contents.value.files, files => { if (files?.length) preloadTinyThumbs(files) })
+// tiny 已由 v-lazy-src 视口门控（更大 rootMargin 先于 card），不再全量预热——避免屏幕外缩略图挤占并发队列
 
 function extractColor(colorStr) {
   if (!colorStr) return null
@@ -1160,27 +1136,57 @@ watch(() => liveStore.rev.files, () => {
 })
 
 // ── 框选 ──
-const selectedIds        = ref(new Set())
-const selectedFolderKeys = ref(new Set())
-const previewFileIds     = ref(new Set())
-const previewFolderKeys  = ref(new Set())
-const boxStart           = ref(null)
-const boxEnd             = ref(null)
-let   _cRect             = null
-let   _latestPreview     = { fileIds: new Set(), folderKeys: new Set() }
+const lastAnchorIndex = ref(-1)
 
-function _swallowBoxClick(e) { e.stopImmediatePropagation() }
+const {
+  selectedFileIds: selectedIds,
+  selectedFolderIds: selectedFolderKeys,
+  previewFileIds,
+  previewFolderIds: previewFolderKeys,
+  boxStart, selectionRect,
+  onContainerMouseDown: _boxMouseDown,
+  cancelDrag: _cancelBoxDrag,
+  clearSelection: _clearSelBase,
+  toggleFileSelect: toggleFileSelectSimple,
+  toggleFolderSelect,
+} = useBoxSelection(mainRef, {
+  fileAttr: 'data-file-id',
+  folderAttr: 'data-folder-key',
+  excludeSelector: 'button, .fc-card, .folder-card, .fc-upload, .list-row',
+  onBoxSelect: ({ fileIds, folderIds }, e) => {
+    if (e.shiftKey) {
+      const ids  = new Set(selectedIds.value)
+      const keys = new Set(selectedFolderKeys.value)
+      fileIds.forEach(id => ids.add(id)); selectedIds.value = ids
+      folderIds.forEach(k => keys.add(k)); selectedFolderKeys.value = keys
+    } else {
+      selectedIds.value        = fileIds
+      selectedFolderKeys.value = folderIds
+    }
+    // 把锚点设到框选结果里最末尾的那项，便于后续 shift+click 继续延伸
+    const flat = flatSelectableItems.value
+    for (let i = flat.length - 1; i >= 0; i--) {
+      const item = flat[i]
+      if ((item.type === 'file' && fileIds.has(item.id)) ||
+          (item.type === 'folder' && folderIds.has(item.id))) {
+        lastAnchorIndex.value = i; break
+      }
+    }
+  },
+})
 
 function clearSelection() {
-  selectedIds.value        = new Set()
-  selectedFolderKeys.value = new Set()
-  selectModeForced.value   = false
-  lastAnchorIndex.value    = -1
+  _clearSelBase()
+  selectModeForced.value = false
+  lastAnchorIndex.value  = -1
+}
+
+function onMainMouseDown(e) {
+  if (currentType.value === 'root' || currentType.value === 'projects') return
+  _boxMouseDown(e)
 }
 
 // ── Shift 多选 ──
-const lastAnchorIndex = ref(-1)
-
 const flatSelectableItems = computed(() => [
   ...sortedContents.value.folders.map(f => ({ type: 'folder', id: f.id })),
   ...sortedContents.value.files.map(f => ({ type: 'file', id: f.id })),
@@ -1233,114 +1239,6 @@ function handleFileClick(file, event) {
   }
 }
 
-const selectionRect = computed(() => {
-  if (!boxStart.value || !boxEnd.value) return null
-  const x1 = Math.min(boxStart.value.x, boxEnd.value.x)
-  const x2 = Math.max(boxStart.value.x, boxEnd.value.x)
-  const y1 = Math.min(boxStart.value.y, boxEnd.value.y)
-  const y2 = Math.max(boxStart.value.y, boxEnd.value.y)
-  if (x2 - x1 < 3 && y2 - y1 < 3) return null
-  return { left: x1, top: y1, width: x2 - x1, height: y2 - y1 }
-})
-
-function onMainMouseDown(e) {
-  if (e.button !== 0) return
-  if (e.target.closest('button, .fc-card, .folder-card, .fc-upload, .list-row')) return
-  if (currentType.value === 'root' || currentType.value === 'projects') return
-
-  _cRect = mainRef.value.getBoundingClientRect()
-  const scrollTop = mainRef.value.scrollTop
-  boxStart.value = { x: e.clientX - _cRect.left, y: e.clientY - _cRect.top + scrollTop }
-  boxEnd.value   = { ...boxStart.value }
-
-  document.addEventListener('mousemove', onDocMouseMove)
-  document.addEventListener('mouseup',   onDocMouseUp)
-}
-
-function onDocMouseMove(e) {
-  if (!_cRect) return
-  const scrollTop = mainRef.value.scrollTop
-  boxEnd.value = {
-    x: e.clientX - _cRect.left,
-    y: e.clientY - _cRect.top + scrollTop,
-  }
-  updatePreview()
-}
-
-function onDocMouseUp(e) {
-  document.removeEventListener('mousemove', onDocMouseMove)
-  document.removeEventListener('mouseup',   onDocMouseUp)
-
-  if (selectionRect.value) {
-    if (e.shiftKey) {
-      const ids  = new Set(selectedIds.value)
-      const keys = new Set(selectedFolderKeys.value)
-      _latestPreview.fileIds.forEach(id => ids.add(id))
-      _latestPreview.folderKeys.forEach(k => keys.add(k))
-      selectedIds.value        = ids
-      selectedFolderKeys.value = keys
-    } else {
-      selectedIds.value        = _latestPreview.fileIds
-      selectedFolderKeys.value = _latestPreview.folderKeys
-    }
-    // 把锚点设到框选结果里最末尾的那项，便于后续 shift+click 继续延伸
-    const flat = flatSelectableItems.value
-    for (let i = flat.length - 1; i >= 0; i--) {
-      const item = flat[i]
-      if ((item.type === 'file'   && _latestPreview.fileIds.has(item.id)) ||
-          (item.type === 'folder' && _latestPreview.folderKeys.has(item.id))) {
-        lastAnchorIndex.value = i
-        break
-      }
-    }
-    document.addEventListener('click', _swallowBoxClick, { capture: true, once: true })
-  } else if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !inSelectionMode.value) {
-    clearSelection()
-  }
-
-  _latestPreview  = { fileIds: new Set(), folderKeys: new Set() }
-  previewFileIds.value    = new Set()
-  previewFolderKeys.value = new Set()
-  boxStart.value = null
-  boxEnd.value   = null
-  _cRect         = null
-}
-
-function getItemsInBox() {
-  const rect = selectionRect.value
-  if (!rect || !mainRef.value) return { fileIds: new Set(), folderKeys: new Set() }
-  const cRect      = mainRef.value.getBoundingClientRect()
-  const scrollTop  = mainRef.value.scrollTop
-  const fileIds    = new Set()
-  const folderKeys = new Set()
-  mainRef.value.querySelectorAll('[data-file-id], [data-folder-key]').forEach(el => {
-    const er  = el.getBoundingClientRect()
-    const elL = er.left - cRect.left
-    const elT = er.top  - cRect.top + scrollTop
-    const elR = elL + er.width
-    const elB = elT + er.height
-    if (elL < rect.left + rect.width && elR > rect.left &&
-        elT < rect.top  + rect.height && elB > rect.top) {
-      if (el.dataset.fileId)    fileIds.add(Number(el.dataset.fileId))
-      if (el.dataset.folderKey) folderKeys.add(el.dataset.folderKey)
-    }
-  })
-  return { fileIds, folderKeys }
-}
-
-function updatePreview() {
-  if (!selectionRect.value) {
-    _latestPreview  = { fileIds: new Set(), folderKeys: new Set() }
-    previewFileIds.value    = new Set()
-    previewFolderKeys.value = new Set()
-    return
-  }
-  const { fileIds, folderKeys } = getItemsInBox()
-  _latestPreview  = { fileIds, folderKeys }
-  previewFileIds.value    = fileIds
-  previewFolderKeys.value = folderKeys
-}
-
 const selectModeForced = ref(false)
 const inSelectionMode  = computed(() => selectModeForced.value || selectedIds.value.size > 0 || selectedFolderKeys.value.size > 0)
 const downloadingZip   = ref(false)
@@ -1366,20 +1264,6 @@ function toggleSelectAllTrash() {
     selectModeForced.value = true
     selectedIds.value = new Set(sortedContents.value.files.map(f => f.id))
   }
-}
-
-function toggleFolderSelect(key) {
-  const keys = new Set(selectedFolderKeys.value)
-  if (keys.has(key)) keys.delete(key)
-  else keys.add(key)
-  selectedFolderKeys.value = keys
-}
-
-function toggleFileSelectSimple(fileId) {
-  const ids = new Set(selectedIds.value)
-  if (ids.has(fileId)) ids.delete(fileId)
-  else ids.add(fileId)
-  selectedIds.value = ids
 }
 
 function toggleFileSelect(fileId, e) {
@@ -1551,8 +1435,7 @@ function formatDate(iso) {
 }
 
 // ── 上传 ──
-const uploadingItems = ref([])
-let _uploadUid = 0
+const { uploadingItems, createGhost, updateGhostProgress, removeGhost, failGhost } = useUploadQueue()
 
 // ── 新建文件夹 ──
 const newFolderName      = ref('')
@@ -1604,9 +1487,7 @@ async function uploadFiles(files) {
     const dotIdx = f.name.lastIndexOf('.')
     const ext  = dotIdx > -1 ? f.name.slice(dotIdx + 1).toUpperCase() : ''
     const name = dotIdx > -1 ? f.name.slice(0, dotIdx) : f.name
-    const ghost = { uid: ++_uploadUid, name, ext, progress: 0, error: false }
-    uploadingItems.value.push(ghost)
-    return { file: f, ghost }
+    return { file: f, ghost: createGhost(name, ext) }
   })
 
   await Promise.allSettled(tasks.map(async ({ file, ghost }) => {
@@ -1616,21 +1497,14 @@ async function uploadFiles(files) {
       form.append('space', space)
       if (projectId) form.append('project_id', String(projectId))
       if (folderId)  form.append('folder_id',  String(folderId))
-      const created = await uploadWithProgress('/files', form, p => {
-        const g = uploadingItems.value.find(g => g.uid === ghost.uid)
-        if (g) g.progress = Math.round(p * 100)
-      })
-      uploadingItems.value = uploadingItems.value.filter(g => g.uid !== ghost.uid)
+      const created = await uploadWithProgress('/files', form, p => updateGhostProgress(ghost, p))
+      removeGhost(ghost)
       cacheStore.addFile(created)
       loadContents()
       fetchStorage()
     } catch (e) {
       console.error('[Files] 上传失败:', e.message)
-      const g = uploadingItems.value.find(g => g.uid === ghost.uid)
-      if (g) g.error = true
-      setTimeout(() => {
-        uploadingItems.value = uploadingItems.value.filter(g => g.uid !== ghost.uid)
-      }, 2000)
+      failGhost(ghost)
     }
   }))
 }
@@ -1759,12 +1633,7 @@ function onFileDragStart(f, e) {
     startPhysicsDrag(e, e.currentTarget)
   }
   // 清除框选状态（mousedown 可能提前启动了框选，但 drag 开始后 mouseup 不会触发）
-  document.removeEventListener('mousemove', onDocMouseMove)
-  document.removeEventListener('mouseup', onDocMouseUp)
-  boxStart.value = null
-  boxEnd.value = null
-  previewFileIds.value = new Set()
-  previewFolderKeys.value = new Set()
+  _cancelBoxDrag()
 }
 function onFileDragEnd() {
   draggingFileIds.value = new Set()
@@ -1926,84 +1795,8 @@ function folderIconStyle(folder) {
   return { background: 'rgba(123,127,178,0.1)', color: 'var(--color-primary)' }
 }
 
-function fileExtCategory(ext) {
-  const e = (ext || '').toLowerCase()
-  if (['jpg','jpeg','png','gif','webp','svg','ico','bmp','avif','heic','tif','tiff'].includes(e)) return 'image'
-  if (['mp4','mov','avi','mkv','webm','wmv','flv','m4v'].includes(e))                            return 'video'
-  if (['mp3','wav','flac','aac','ogg','m4a','wma','opus'].includes(e))                           return 'audio'
-  if (['xls','xlsx','csv','ods','numbers'].includes(e))                                          return 'sheet'
-  if (['ppt','pptx','key','odp'].includes(e))                                                    return 'slide'
-  if (['zip','rar','7z','tar','gz','bz2','xz'].includes(e))                                      return 'archive'
-  if (['js','ts','jsx','tsx','vue','py','go','rs','java','cpp','c','cs','rb','swift','php','kt','dart','sh'].includes(e)) return 'code'
-  if (['html','css','scss','less','xml','json','yaml','yml','toml','md','mdx','graphql'].includes(e)) return 'code'
-  return 'doc'
-}
-
-const _IMAGE_EXTS  = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
-const isImageExt   = (ext) => _IMAGE_EXTS.has((ext || '').toLowerCase())
-
-// IntersectionObserver 懒加载指令
-// tiny：不走 Observer，直接后台 fetch（20px WebP 成本极低），保证 blur 占位先于 card 出现
-// card：仍走 Observer，进视口附近才 fetch，节省带宽
-const vLazySrc = {
-  mounted(el, { value: { id, size } }) {
-    if (!id) return
-    if (size === 'tiny') {
-      const cached = getCachedThumb(id, size)
-      if (cached) { el.src = cached; return }
-      getThumb(id, size).then(url => { if (url) el.src = url })
-      return
-    }
-    // card：无论是否有缓存都走 Observer，避免二次打开时几十张图同时解码
-    const obs = new IntersectionObserver(([entry]) => {
-      if (!entry.isIntersecting) return
-      obs.disconnect(); el._lazySrcObs = null
-      const cached = getCachedThumb(id, size)
-      if (cached) { el.src = cached; el.decode?.().catch(() => {}); return }
-      getThumb(id, size).then(url => { if (url) { el.src = url; el.decode?.().catch(() => {}) } })
-    }, { rootMargin: '250px' })
-    obs.observe(el)
-    el._lazySrcObs = obs
-  },
-  updated(el, { value: { id, size }, oldValue }) {
-    if (id === oldValue?.id && size === oldValue?.size) return
-    el._lazySrcObs?.disconnect()
-    if (size === 'tiny') {
-      const cached = getCachedThumb(id, size)
-      if (cached) { el.src = cached; return }
-      getThumb(id, size).then(url => { if (url) el.src = url })
-      return
-    }
-    const obs = new IntersectionObserver(([entry]) => {
-      if (!entry.isIntersecting) return
-      obs.disconnect(); el._lazySrcObs = null
-      const cached = getCachedThumb(id, size)
-      if (cached) { el.src = cached; el.decode?.().catch(() => {}); return }
-      getThumb(id, size).then(url => { if (url) { el.src = url; el.decode?.().catch(() => {}) } })
-    }, { rootMargin: '250px' })
-    obs.observe(el)
-    el._lazySrcObs = obs
-  },
-  unmounted(el) {
-    el._lazySrcObs?.disconnect()
-    el._lazySrcObs = null
-  },
-}
-
-function fileIconColor(ext) {
-  const e = (ext || '').toLowerCase()
-  if (['jpg','jpeg','png','gif','webp','svg','ico','bmp','avif','heic'].includes(e)) return '#b07858'
-  if (['mp4','mov','avi','mkv','webm','wmv'].includes(e))                            return '#8868a0'
-  if (['mp3','wav','flac','aac','ogg','m4a'].includes(e))                            return '#a07088'
-  if (['pdf'].includes(e))                                                           return '#a85858'
-  if (['doc','docx','rtf','odt'].includes(e))                                        return '#5078a8'
-  if (['xls','xlsx','csv','ods'].includes(e))                                        return '#508870'
-  if (['ppt','pptx','key','odp'].includes(e))                                        return '#a07840'
-  if (['zip','rar','7z','tar','gz'].includes(e))                                     return '#808888'
-  if (['js','ts','jsx','tsx','vue','py','go','rs','java','cpp','c'].includes(e))     return '#688858'
-  if (['html','css','scss','json','yaml','xml','md'].includes(e))                    return '#508898'
-  return '#8888a8'
-}
+// 文件类型助手（isImageExt / fileExtCategory / fileIconColor / fileListIcon）与缩略图懒加载指令
+// vLazySrc 已统一收口到 @/utils/fileTypes 和 @/composables/useLazyThumb，见顶部 import。
 
 function folderListIcon(folder) {
   if (folder.type === 'personal') return PhUser
@@ -2013,18 +1806,6 @@ function folderListIcon(folder) {
   if (folder.type === 'month')    return PhCalendarDot
   if (folder.type === 'project')  return PhBrowser
   return PhFolder
-}
-
-function fileListIcon(ext) {
-  const cat = fileExtCategory(ext)
-  if (cat === 'image')   return PhImage
-  if (cat === 'video')   return PhFilmStrip
-  if (cat === 'audio')   return PhMusicNote
-  if (cat === 'sheet')   return PhTable
-  if (cat === 'slide')   return PhPresentationChart
-  if (cat === 'archive') return PhArchive
-  if (cat === 'code')    return PhCode
-  return PhFileText
 }
 
 function folderAccentColor(folder) {

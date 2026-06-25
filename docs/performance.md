@@ -1,6 +1,6 @@
 # 咕咕 · 前端性能优化文档
 
-> 最后更新：2026-06-21
+> 最后更新：2026-06-25
 
 ---
 
@@ -19,6 +19,7 @@
 - [十、Dashboard 版本前置检查](#十dashboard-版本前置检查跳过无效-list-请求)
 - [十一、移除 glass-card 的 backdrop-filter](#十一移除-glass-card-的-backdrop-filter)
 - [十二、WebP 缩略图根因修复](#十二webp-缩略图根因修复)
+- [十三、并发限流：批量上传 + 缩略图加载](#十三并发限流批量上传--缩略图加载)
 - [缓存层总览](#缓存层总览)
 
 ---
@@ -532,6 +533,37 @@ const p = fetch(`${BASE}/files/${id}/thumb?size=${size}`, {
 - tiny：几百字节 WebP → blur 占位图正常
 - card：几 KB WebP → 渐进式加载正常
 - 所有前端优化（preDecodeBlobs、懒加载、shallowRef）得以真正生效
+
+---
+
+## 十三、并发限流：批量上传 + 缩略图加载
+
+### 问题
+
+浏览器对单域名 HTTP/1.1 连接约 6 条上限。批量拖入几十个文件时：
+
+- **上传**：`ProjectModal.uploadFiles` 原本 `Promise.allSettled(tasks.map(...))` **一次性把所有上传请求全发出去**，无上限；
+- **缩略图**：上传完成 + 列表渲染又同时触发同样多的 `/thumb` 请求。
+
+两者叠加瞬间打满浏览器连接和服务器带宽，尾部请求排队超时 → 503 / 网络错误。低配生产（2C/2G + 有限带宽）尤其明显。
+
+### 方案：共享并发限流器
+
+抽出 `@/utils/concurrency.js` 的 `pLimit(n)`——任务排队、按阈值放行、完成即补位。**上传与缩略图加载共用同一实现**，阈值集中在该文件末尾两个常量，带宽吃紧时只调一处：
+
+```js
+export const UPLOAD_CONCURRENCY = 3   // 同时上传的文件数
+export const THUMB_CONCURRENCY  = 6   // 同时加载的缩略图数（贴浏览器单域名连接上限）
+```
+
+| 限制点 | 位置 | 阈值 |
+|--------|------|------|
+| 同时上传文件数 | `ProjectModal.vue` 批量上传（`limit(async () => …)` 包住每个任务） | `UPLOAD_CONCURRENCY = 3` |
+| 同时加载缩略图数 | `useThumbCache.js` `getThumb` / `getThumbUrl`（替换原 `_acquire/_release`） | `THUMB_CONCURRENCY = 6` |
+| 同时生成缩略图数（后端） | `app/api/v1/files.py` `_THUMB_SEM = Semaphore(cpu-1)` | 2C 机 = 1 |
+
+> `UploadModal.vue` / `ProjectCard.vue` 的上传本就是 `for` 串行（同时 1 个），未改。
+> ⚠️ 仅**单客户端内**限流；多用户并发仍可能叠加，真要全局限需后端中间件信号量（当前量级不必要）。
 
 ---
 

@@ -100,10 +100,9 @@ import { filesCache } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache, cardBlobReadyIds } from '@/composables/useThumbCache'
+import { isImageExt, fileIconColor, fileListIcon } from '@/utils/fileTypes'
 import UploadModal from '@/views/Files/UploadModal.vue'
 import {
-  PhImage, PhFilmStrip, PhMusicNote, PhTable,
-  PhPresentationChart, PhArchive, PhCode, PhFileText,
   PhPencilSimple, PhCheck, PhDownloadSimple, PhTrash,
 } from '@phosphor-icons/vue'
 
@@ -173,47 +172,7 @@ function preDecodeBlobs(map) {
   }
 }
 
-const _IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
-const isImageExt  = (ext) => _IMAGE_EXTS.has((ext || '').toLowerCase())
-
-function fileIconColor(ext) {
-  const e = (ext || '').toLowerCase()
-  if (['jpg','jpeg','png','gif','webp','svg','ico','bmp','avif','heic'].includes(e)) return '#b07858'
-  if (['mp4','mov','avi','mkv','webm','wmv'].includes(e))                            return '#8868a0'
-  if (['mp3','wav','flac','aac','ogg','m4a'].includes(e))                            return '#a07088'
-  if (['pdf'].includes(e))                                                           return '#a85858'
-  if (['doc','docx','rtf','odt'].includes(e))                                        return '#5078a8'
-  if (['xls','xlsx','csv','ods'].includes(e))                                        return '#508870'
-  if (['ppt','pptx','key','odp'].includes(e))                                        return '#a07840'
-  if (['zip','rar','7z','tar','gz'].includes(e))                                     return '#808888'
-  if (['js','ts','jsx','tsx','vue','py','go','rs','java','cpp','c'].includes(e))     return '#688858'
-  if (['html','css','scss','json','yaml','xml','md'].includes(e))                    return '#508898'
-  return '#8888a8'
-}
-
-function fileExtCategory(ext) {
-  const e = (ext || '').toLowerCase()
-  if (['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif','ico'].includes(e)) return 'image'
-  if (['mp4','mov','avi','mkv','webm','wmv'].includes(e))   return 'video'
-  if (['mp3','wav','flac','aac','ogg','m4a'].includes(e))   return 'audio'
-  if (['xls','xlsx','csv','ods'].includes(e))               return 'sheet'
-  if (['ppt','pptx','key','odp'].includes(e))               return 'slide'
-  if (['zip','rar','7z','tar','gz'].includes(e))            return 'archive'
-  if (['js','ts','jsx','tsx','vue','py','go','rs','java','cpp','c','cs','rb','swift','php','kt','dart','sh','html','css','scss','less','xml','json','yaml','yml','toml','md'].includes(e)) return 'code'
-  return 'doc'
-}
-
-function fileListIcon(ext) {
-  const cat = fileExtCategory(ext)
-  if (cat === 'image')   return PhImage
-  if (cat === 'video')   return PhFilmStrip
-  if (cat === 'audio')   return PhMusicNote
-  if (cat === 'sheet')   return PhTable
-  if (cat === 'slide')   return PhPresentationChart
-  if (cat === 'archive') return PhArchive
-  if (cat === 'code')    return PhCode
-  return PhFileText
-}
+// 文件类型助手统一收口到 @/utils/fileTypes（isImageExt / fileIconColor / fileListIcon），见顶部 import。
 
 function openUpload() { uploadOpen.value = true }
 function openFile(f) {

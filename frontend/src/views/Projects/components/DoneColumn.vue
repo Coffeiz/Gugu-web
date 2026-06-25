@@ -49,7 +49,8 @@
             <span class="year-cnt">{{ yg.total }}</span>
           </button>
 
-          <div v-show="openYears.has(yg.year)" class="year-body">
+          <!-- v-if（非 v-show）：折叠的年份完全不渲染其下卡片，避免已完成项目累积后全量挂载拖慢初次渲染 -->
+          <div v-if="openYears.has(yg.year)" class="year-body">
             <!-- 月目录 -->
             <div v-for="mg in yg.months" :key="mg.month" class="month-group">
               <button class="month-row" @click="toggleMonth(yg.year + mg.month)">
@@ -66,7 +67,7 @@
                 </svg>
               </button>
 
-              <div v-show="openMonths.has(yg.year + mg.month)" class="month-cards">
+              <div v-if="openMonths.has(yg.year + mg.month)" class="month-cards">
                 <ProjectCard
                   v-for="p in mg.items"
                   :key="p.id"
@@ -93,7 +94,7 @@
             <span class="year-label undated">未设置日期</span>
             <span class="year-cnt">{{ undatedProjects.length }}</span>
           </button>
-          <div v-show="openYears.has('__undated')" class="year-body">
+          <div v-if="openYears.has('__undated')" class="year-body">
             <div class="month-cards" style="padding-left: 8px">
               <ProjectCard
                 v-for="p in undatedProjects"
@@ -246,7 +247,10 @@ function onDrop(e) {
 
 .col-body {
   display: flex; flex-direction: column; gap: 2px;
-  flex: 1; overflow-y: auto; padding: 2px 2px;
+  flex: 1; overflow-y: auto;
+  padding: 2px 6px 2px 6px;
+  margin-right: -8px; padding-right: 14px;
+  scrollbar-gutter: stable;
 }
 .col-body::-webkit-scrollbar { width: 3px; }
 .col-body::-webkit-scrollbar-track { background: transparent; margin-top: 8px; margin-bottom: 8px; }

@@ -330,6 +330,7 @@ Authorization: Bearer <user_token>
 - **一次生成两个尺寸**：无论请求 `tiny` 还是 `card`，均读取一次原图，同时生成并缓存 tiny + card，避免重复 I/O
 - **上传时预生成**：图片上传完成后，后台任务（FastAPI `BackgroundTasks`）立即预生成缩略图，首次访问直接命中缓存
 - **删除时清理**：硬删除单个文件、清空回收站、定时清理过期文件时，均自动删除对应缩略图缓存（`_delete_thumb_cache(fid)`）
+- **生成并发限流**：`_THUMB_SEM = Semaphore(cpu-1)`（`files.py`）——同时只允许 `cpu-1` 个缩略图在生成（2C 机 = 1），批量上传时不会让 Pillow 把 CPU 打满拖垮整机
 
 **磁盘占用估算：** 单张图片缓存约 10–50 KB（tiny ~1 KB + card ~10–40 KB），1000 张图片约 10–50 MB。
 
@@ -346,7 +347,11 @@ Authorization: Bearer <user_token>
 
 `vLazySrc` 本地指令（`Files/index.vue`）：只有当卡片进入视口 250px 范围内才设置 `img.src`，避免进入大文件夹时同时发出数十个请求打满浏览器连接池（HTTP/1.1 每域名 6 个）。
 
-### 9.5 缓存层汇总
+### 9.5 缩略图加载并发限流
+
+懒加载只控制「进视口才请求」，但一屏内仍可能同时进入几十张卡片。`useThumbCache.js` 的 `getThumb`/`getThumbUrl` 经 `@/utils/concurrency` 的 `pLimit(THUMB_CONCURRENCY=6)` 限流——与批量上传共用同一限流器实现，把同时在途的 `/thumb` 请求压在 6 个内，尾部不再超时。详见 `performance.md` 十三节。
+
+### 9.6 缓存层汇总
 
 | 位置 | 持久范围 | 说明 |
 |------|---------|------|

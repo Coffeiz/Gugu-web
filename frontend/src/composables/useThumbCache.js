@@ -1,21 +1,13 @@
 import { reactive } from 'vue'
+import { pLimit, THUMB_CONCURRENCY } from '@/utils/concurrency'
 
 const BASE    = import.meta.env.VITE_API_URL ?? '/api/v1'
 const cache   = new Map() // `${id}_${size}` → blobUrl
 const pending = new Map() // `${id}_${size}` → Promise<string|null>
 
-// 并发限流：浏览器 HTTP/1.1 单域名 6 连接，批量上传时同时发几十个缩略图请求会导致尾部超时
-const MAX_CONCURRENT = 6
-let _active = 0
-const _queue = []
-function _acquire() {
-  if (_active < MAX_CONCURRENT) { _active++; return Promise.resolve() }
-  return new Promise(resolve => _queue.push(resolve))
-}
-function _release() {
-  const next = _queue.shift()
-  if (next) { next() } else { _active-- }
-}
+// 并发限流：浏览器 HTTP/1.1 单域名约 6 连接，批量加载几十张缩略图会导致尾部超时；
+// 与上传共用 @/utils/concurrency 的限流器实现，阈值集中在那里调
+const thumbLimit = pLimit(THUMB_CONCURRENCY)
 
 export const thumbLoadedIds   = reactive(new Set())
 // card blob 已渲染过的 id（模块级，session 内持久）：首次 @load 后写入，
@@ -37,7 +29,7 @@ export function getThumb(id, size = 'card') {
   if (pending.has(key)) return pending.get(key)
 
   const token = localStorage.getItem('user_token') ?? ''
-  const p = _acquire().then(() =>
+  const p = thumbLimit(() =>
     fetch(`${BASE}/files/${id}/thumb?size=${size}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       cache: 'no-cache',
@@ -47,12 +39,11 @@ export function getThumb(id, size = 'card') {
         const url = URL.createObjectURL(blob)
         cache.set(key, url)
         if (size === 'card') thumbLoadedIds.add(id)
-        pending.delete(key)
-        _release()
         return url
       })
-      .catch(() => { pending.delete(key); _release(); return null })
   )
+    .then(url => { pending.delete(key); return url })
+    .catch(() => { pending.delete(key); return null })
 
   pending.set(key, p)
   return p
@@ -68,7 +59,7 @@ export function getThumbUrl(key, url) {
   if (pending.has(key)) return pending.get(key)
 
   const token = localStorage.getItem('user_token') ?? ''
-  const p = _acquire().then(() =>
+  const p = thumbLimit(() =>
     fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       cache: 'no-cache',
@@ -77,12 +68,11 @@ export function getThumbUrl(key, url) {
       .then(blob => {
         const blobUrl = URL.createObjectURL(blob)
         cache.set(key, blobUrl)
-        pending.delete(key)
-        _release()
         return blobUrl
       })
-      .catch(() => { pending.delete(key); _release(); return null })
   )
+    .then(blobUrl => { pending.delete(key); return blobUrl })
+    .catch(() => { pending.delete(key); return null })
 
   pending.set(key, p)
   return p
