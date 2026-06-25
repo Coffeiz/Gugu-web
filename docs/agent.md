@@ -74,6 +74,7 @@ LLM 主循环。负责：
 
 - 调用 LLM（Anthropic / OpenAI 双路统一）；用哪个模型由 `llm_select.pick_model` 决定（见下），不直接读 `settings.ai`
 - 工具调用执行与结果回填（`MAX_ROUNDS = 6`：配合 skills.md 执行准则 + 强工具，多步任务 2~3 轮够用；超限给友好提示「前面已生效，要接着做吗」）
+- **自我核实闭环（`MAX_VERIFY = 3`）**：本轮调过增删改工具（即 `RESOURCE_BY_TOOL` 全集）后，模型说"完成"时强制注入一轮「系统自检」——让它用查询工具（`get_project`/`list_files` …）查证真生效且完整，**不全就当场补做**。**触发条件是"这一轮做过增删改"（`did_mutate`）**：自检轮若只查证没改动 → 结束；若补做了（又调增删改）→ `did_mutate` 重新置位、再来一轮，直到"只查不改"或封顶 3 轮。**不是固定跑 3 轮**：通过即停，只读任务零额外开销。两路（Anthropic/OpenAI）同构，轮预算 `MAX_ROUNDS + MAX_VERIFY*2` 不挤占任务轮
 - SSE streaming 输出；`_stream_round` 包一层瞬时错误退避重试（⑦：429/超时/网络/5xx 在出 token 前重试，已吐 token 不重试防重复）
 - 对话结束后 emit 事件，触发 Reflection
 - 不感知平台来源、不感知 prompt 如何构建

@@ -160,6 +160,7 @@ flowchart TD
 
 - ✅ **单次流式调用**：边出正文 token 边判断 tool_use（修了早期"探测-再流式"双调用导致的敷衍）。
 - ✅ **多轮工具**：一轮里模型可连续调多个工具，结果回灌后继续想，最多 6 轮（配合执行准则+强工具，超限报友好提示）。
+- ✅ **自我核实闭环（`MAX_VERIFY=3`）**：本轮调过增删改（`RESOURCE_BY_TOOL`）后、模型说"完成"时，强制注入一轮「系统自检」让它用查询工具查证真生效/完整，不全就补做。**通过即停（自检轮只查没改 → 结束），不是固定 3 轮**；补做了就再自检一轮，封顶 3；只读任务不触发。防"嘴上说建好了、实际没建全"。两路同构，详见 `agent.md`。
 - ✅ **prompt 缓存**：system prompt 打 `cache_control: ephemeral`，省重复 token。
 - ✅ Anthropic 路：流式吐字 + `get_final_message` 取 tool_use；OpenAI 路：`tool_calls` 分发。
 - ✅ **IM 协作取消**：每轮开头检查取消标志（`_im_cancelled`），命中即中断收尾（见 ⓪）；dispatch 前据工具打细粒度状态（`_im_set_tool_state`）。web 路无 imctx，这两处恒 no-op。

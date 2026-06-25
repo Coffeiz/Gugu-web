@@ -48,6 +48,22 @@ async def _stream_round(client, kwargs):
 MAX_ROUNDS = 6
 _CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取消（单轮长回答只能在这里掐断）
 
+# ── 自我核实：做了增删改后，模型说"完成"时强制再跑一轮核实（用查询工具查证真生效/完整），
+# 没做成/不完整就补做；最多 MAX_VERIFY 轮。防"嘴上说建好了、实际没建全"。
+MAX_VERIFY = 3
+_VERIFY_PROMPT = (
+    "【系统自检 · 请认真执行，勿跳过】你刚才执行了增删改操作。现在**用查询工具核实它们真的生效且完整**："
+    "建项目/任务用 `get_project` 看阶段和待办是否齐全；增删改文件用 `list_files`/`list_folders` 看是否真到位；"
+    "日历/客户同理。**发现没做成或不完整 → 立刻补做**。核实无误就简短确认一句（如「已核实，都建好了」），"
+    "不要重复啰嗦、不要把流程念一遍；若发现并修正了问题，简要说明改了什么。"
+)
+
+
+def _mutating_tools() -> set:
+    """增删改工具名集合（复用实时刷新的资源映射，即所有改动型工具）。"""
+    from app.core.events import RESOURCE_BY_TOOL
+    return set(RESOURCE_BY_TOOL)
+
 
 async def _im_cancelled() -> bool:
     """IM 路：用户中途发「算了」→ 网关置了取消标志。web 路无 imctx，恒 False。"""
@@ -118,7 +134,10 @@ class LLMRunner:
             if system_text else system_text
         )
 
-        for _ in range(MAX_ROUNDS):
+        _mutset = _mutating_tools()
+        did_mutate = False; verify_count = 0; round_i = 0
+        while round_i < MAX_ROUNDS + MAX_VERIFY * 2:   # 核实轮额外预算，不挤占任务的 MAX_ROUNDS
+            round_i += 1
             # 用户中途「算了」→ 轮间协作中断（单次 LLM 流式调用本身切不了，故粒度是轮与轮之间）
             if await _im_cancelled():
                 yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
@@ -163,6 +182,8 @@ class LLMRunner:
                     await _im_set_tool_state(block.name)
                     yield f"data: {json.dumps({'type': 'tool_call', 'name': block.name, 'label': label, 'input': block.input}, ensure_ascii=False)}\n\n"
                     result, artifact = await registry.dispatch(user_id, block.name, block.input)
+                    if block.name in _mutset:
+                        did_mutate = True   # 本次做过增删改 → 收尾时强制自我核实
                     yield f"data: {json.dumps({'type': 'tool_done', 'name': block.name, 'label': label}, ensure_ascii=False)}\n\n"
                     if artifact:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
@@ -179,6 +200,20 @@ class LLMRunner:
                 ]
                 messages.append({"role": "assistant", "content": content_dicts})
                 messages.append({"role": "user", "content": tool_results})
+                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                continue
+
+            # 自我核实：本次做过增删改、且核实未满 MAX_VERIFY 轮 → 强制再跑一轮，
+            # 模型用查询工具查证真生效/完整，没做成就补做（补做会再置 did_mutate→触发下一轮核实，最多 MAX_VERIFY）。
+            if did_mutate and verify_count < MAX_VERIFY:
+                verify_count += 1
+                did_mutate = False
+                content_dicts = [
+                    b.model_dump() if hasattr(b, "model_dump") else dict(b)
+                    for b in final.content
+                ]
+                messages.append({"role": "assistant", "content": content_dicts})
+                messages.append({"role": "user", "content": _VERIFY_PROMPT})
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
 
@@ -205,7 +240,10 @@ class LLMRunner:
         max_tokens  = ai.max_tokens
         temperature = ai.temperature
         total_in = total_out = 0
-        for _ in range(MAX_ROUNDS):
+        _mutset = _mutating_tools()
+        did_mutate = False; verify_count = 0; round_i = 0
+        while round_i < MAX_ROUNDS + MAX_VERIFY * 2:   # 核实轮额外预算
+            round_i += 1
             if await _im_cancelled():
                 yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                 return
@@ -278,6 +316,8 @@ class LLMRunner:
                     await _im_set_tool_state(b["name"])
                     yield f"data: {json.dumps({'type': 'tool_call', 'name': b['name'], 'label': label, 'input': args}, ensure_ascii=False)}\n\n"
                     result, artifact = await registry.dispatch(user_id, b["name"], args)
+                    if b["name"] in _mutset:
+                        did_mutate = True   # 做过增删改 → 收尾时强制自我核实
                     yield f"data: {json.dumps({'type': 'tool_done', 'name': b['name'], 'label': label}, ensure_ascii=False)}\n\n"
                     if artifact:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
@@ -289,6 +329,14 @@ class LLMRunner:
                 continue
 
             # 无工具调用：正文已逐 token 流式输出完毕
+            # 自我核实：做过增删改、未满 MAX_VERIFY 轮 → 强制再跑一轮查证/补做
+            if did_mutate and verify_count < MAX_VERIFY:
+                verify_count += 1
+                did_mutate = False
+                messages.append({"role": "assistant", "content": content or ""})
+                messages.append({"role": "user", "content": _VERIFY_PROMPT})
+                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                continue
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out})}\n\n"
             return
 
