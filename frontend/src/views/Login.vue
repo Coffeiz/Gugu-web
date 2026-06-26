@@ -64,7 +64,7 @@ async function handleLogin() {
   loading.value = true; error.value = ''
   try {
     await auth.login(form.username, form.password)
-    router.push(router.currentRoute.value.query.redirect ?? '/dashboard')
+    router.push(router.currentRoute.value.query.redirect ?? '/projects')
   } catch (e) {
     error.value = e.message
   } finally {

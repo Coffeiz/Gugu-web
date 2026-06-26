@@ -1,6 +1,6 @@
 <template>
   <BaseModal :show="!!project" width="1060px" height="780px" :zIndex="200" @close="onModalClose">
-      <div class="modal">
+      <div class="modal" :class="{ 'stages-expanded': stagesExpanded, 'info-expanded': infoExpanded, 'pm-switching': pmSwitching }">
         <!-- 悬浮操作按钮 -->
         <div class="float-actions">
           <button class="save-float-btn" @click="$emit('close')" title="保存并关闭">
@@ -17,6 +17,8 @@
           <!-- 标题 -->
           <div class="proj-header">
             <div class="header-main">
+              <button class="status-ball" :class="'sb-' + localStatus" @click.stop="cycleStatus"
+                :title="projectStore.kanbanColumns.find(c => c.key === localStatus)?.label ?? localStatus"></button>
               <input
                 ref="nameInputRef"
                 v-model="localName"
@@ -35,6 +37,7 @@
           <!-- 可滚动内容区 -->
           <div class="left-content">
 
+            <div class="info-block">
             <div class="section">
               <label class="section-label">客户 / 委托方</label>
               <input class="field-input" v-model="localClient" placeholder="客户名称（选填）" />
@@ -54,23 +57,6 @@
             <hr class="col-divider" />
 
             <div class="section">
-              <label class="section-label">看板列</label>
-              <div class="status-group">
-                <button
-                  v-for="col in projectStore.kanbanColumns"
-                  :key="col.key"
-                  class="status-btn"
-                  :class="['s-' + col.key, { active: localStatus === col.key }]"
-                  @click="localStatus = col.key; projectStore.moveProject(project.id, col.key)"
-                >
-                  <span class="opt-dot"></span>{{ col.label }}
-                </button>
-              </div>
-            </div>
-
-            <hr class="col-divider" />
-
-            <div class="section">
               <label class="section-label">项目颜色</label>
               <div class="color-grid">
                 <button
@@ -85,6 +71,7 @@
                 </button>
               </div>
             </div>
+            </div><!-- /info-block -->
 
             <hr class="col-divider" />
 
@@ -166,8 +153,15 @@
           </div><!-- /left-content -->
         </div>
 
-        <!-- 右栏：文件 -->
+        <!-- 右栏：文件（两种模式都保持项目文件，仅宽度变化）-->
         <div class="modal-right">
+          <!-- 两栏边缘切换：展开阶段区(50/50) / 恢复文件区 -->
+          <button class="col-toggle-btn" @click="togglePmStages"
+            :title="stagesExpanded ? '恢复文件区' : '展开阶段区'">
+            <PhCaretLeft v-if="stagesExpanded" :size="13" weight="bold" />
+            <PhCaretRight v-else :size="13" weight="bold" />
+          </button>
+
           <div class="right-header">
             <!-- 面包屑路径 -->
             <nav class="file-breadcrumb">
@@ -694,7 +688,7 @@ import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import {
-  PhFolder, PhArrowLeft, PhArrowRight, PhCaretRight, PhCaretDown, PhSortAscending, PhSquaresFour, PhList,
+  PhFolder, PhArrowLeft, PhArrowRight, PhCaretLeft, PhCaretRight, PhCaretDown, PhSortAscending, PhSquaresFour, PhList,
   PhCheckSquare, PhFolderPlus, PhUploadSimple, PhPencilSimple,
   PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX, PhCheck,
   PhInfo, PhWarningCircle, PhDotsThree, PhTrash,
@@ -795,6 +789,21 @@ const currentFolder = computed(() =>
   folderStack.value.length ? folderStack.value[folderStack.value.length - 1] : null
 )
 const currentFolderFiles = computed(() => currentFiles.value)
+
+// ── 侧栏两模式：false=文件区宽（现状）；true=左右各 50%、信息区 2 列 ──
+// 交叉渐变切换：内容淡出 → 不可见时瞬切两套排版 → 淡入（不实时缩放/回流）
+const stagesExpanded = ref(false)   // 列宽/版面预设
+const infoExpanded = ref(false)     // 信息区 1列/2列版面预设
+const pmSwitching = ref(false)      // 内容淡隐中（true 时 opacity:0）
+function togglePmStages() {
+  if (pmSwitching.value) return
+  pmSwitching.value = true                          // ① 内容淡出隐藏（之后的列宽动画不会被看到回流）
+  setTimeout(() => {
+    stagesExpanded.value = !stagesExpanded.value    // ② 列宽顺滑动画 + 换信息区版面（内容仍隐藏，看不到自适应）
+    infoExpanded.value = stagesExpanded.value
+  }, 190)
+  setTimeout(() => { pmSwitching.value = false }, 190 + 400)  // ③ 列宽动画结束后才淡入新版面
+}
 
 const totalFileCount = computed(() =>
   projectFiles.value.length + projectFolders.value.reduce((s, f) => s + (f.fileCount ?? 0), 0)
@@ -1535,6 +1544,15 @@ function setColor(c) {
   projectStore.updateProject(props.project.id, { color: c })
 }
 
+// 状态球：点一下循环 待开始 → 进行中 → 已完成（替代原看板列）
+function cycleStatus() {
+  const cols = projectStore.kanbanColumns
+  const idx = cols.findIndex(c => c.key === localStatus.value)
+  const next = cols[(idx + 1) % cols.length].key
+  localStatus.value = next
+  if (props.project?.id) projectStore.moveProject(props.project.id, next)
+}
+
 function setStage(key, idx) {
   const oldIdx = localStages.value.findIndex(s => s.key === localCurrentStage.value)
   const newIdx = idx
@@ -1946,7 +1964,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 }
 
 .modal {
-  display: grid; grid-template-columns: 260px 1fr;
+  display: flex;
   width: 100%; height: 100%;
   overflow: hidden;
 }
@@ -1963,6 +1981,38 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* ── 左栏 ── */
 .modal-left {
   display: flex; flex-direction: column; overflow: hidden;
+  width: 300px; flex-shrink: 0; will-change: width;
+  transition: width 0.4s cubic-bezier(0.45, 0, 0.18, 1);   /* 面板比例顺滑动画（内容此时已淡隐，看不到回流）*/
+}
+/* 列宽由 stages-expanded 驱动 */
+.modal.stages-expanded .modal-left { width: 50%; }
+
+/* 内容淡出 → 换版面 → 淡入（淡出也平滑，不再瞬隐）*/
+.left-content, .file-content, .right-header { transition: opacity 0.18s ease; }
+.modal.pm-switching .left-content,
+.modal.pm-switching .file-content,
+.modal.pm-switching .right-header { opacity: 0; }
+
+/* 信息区版面由 info-expanded 驱动（与列宽解耦，在淡隐时才换，不被看见）。
+   版面1：竖排，每行之间横向分割线（沿用 .col-divider）。
+   版面2：2×2 网格，十字分割线——客户|周期、看板|颜色 竖线，上下两行之间横线（用 section 的 border 画）*/
+.info-block { display: flex; flex-direction: column; }
+.modal.info-expanded .info-block {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0; align-items: stretch;
+}
+.modal.info-expanded .info-block > .col-divider { display: none; }
+.modal.info-expanded .info-block > .section { padding: 11px 16px; position: relative; min-height: 56px; }
+/* 3 区块：客户 | 周期 同一行，颜色独占整行 */
+.modal.info-expanded .info-block > .section:nth-of-type(3) { grid-column: 1 / -1; }
+/* 横线：客户/周期 与 颜色 之间，整条独立 */
+.modal.info-expanded .info-block > .section:nth-of-type(1),
+.modal.info-expanded .info-block > .section:nth-of-type(2) {
+  border-bottom: 1px solid rgba(0,0,0,0.07);
+}
+/* 竖线：仅 客户|周期 一条独立短线——固定 28px、居中，与横线不相交 */
+.modal.info-expanded .info-block > .section:nth-of-type(1)::after {
+  content: ''; position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  width: 1px; height: 28px; background: rgba(0,0,0,0.07);
 }
 
 /* 标题 */
@@ -1981,12 +2031,22 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   flex: 1; display: flex; align-items: center; gap: 8px;
   padding: 0 16px; min-width: 0;
 }
+/* 状态球：项目名前的状态指示（点击循环状态，替代看板列）*/
+.status-ball {
+  width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+  border: none; padding: 0; cursor: pointer; outline: none;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.status-ball:hover { transform: scale(1.2); }
+.sb-pending { background: #d46b6b; box-shadow: 0 0 0 3px rgba(212,107,107,0.2); }
+.sb-active  { background: #c9943a; box-shadow: 0 0 0 3px rgba(201,148,58,0.2); }
+.sb-done    { background: #5a9e88; box-shadow: 0 0 0 3px rgba(90,158,136,0.2); }
 /* 名称：默认像纯文本，悬停/聚焦才浮出编辑框（与定时任务卡 .title-input 同款样式+动画） */
 .header-name-input {
   flex: 1; min-width: 0; box-sizing: border-box;
   font-size: 17px; font-weight: 700; color: var(--text-primary);
   font-family: var(--font-sans); line-height: 1.2; outline: none;
-  padding: 7px 11px; margin: 0 -11px;
+  padding: 7px 11px; margin: 0 -11px 0 0;
   border: 1px solid transparent; border-radius: 10px; corner-shape: squircle;
   background: transparent; caret-color: var(--color-primary);
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
@@ -2011,9 +2071,9 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   display: flex; flex-direction: column; gap: 0; min-height: 0;
   scrollbar-gutter: stable;
 }
-.left-content::-webkit-scrollbar { width: 4px; }
+.left-content::-webkit-scrollbar { width: 3px; }
 .left-content::-webkit-scrollbar-track { background: transparent; }
-.left-content::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 99px; }
+.left-content::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
 
 .section { display: flex; flex-direction: column; gap: 5px; padding: 8px 0; }
 .section-label {
@@ -2062,7 +2122,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* 配色 */
 .color-grid { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
 .color-chip {
-  width: 22px; height: 22px; border-radius: 50%;
+  width: 22px; height: 22px; border-radius: 6px;   /* 方形（圆角）色块 */
   border: 2px solid rgba(255,255,255,0.5);
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   transition: border-color 0.15s; padding: 0; outline: none;
@@ -2081,7 +2141,10 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   padding: 0; text-transform: none; letter-spacing: 0;
 }
 .add-stage-btn:hover { opacity: 0.7; }
-.stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0 4px 0; margin-right: -10px; padding-right: 10px; }
+.stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 11px 4px 8px; margin-right: -3px; }
+.stage-flow::-webkit-scrollbar { width: 3px; }
+.stage-flow::-webkit-scrollbar-track { background: transparent; }
+.stage-flow::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
 
 .stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 0 5px; margin-bottom: 2px; }
 .stage-node.stage-dragging { opacity: 0.15; pointer-events: none; }
@@ -2206,10 +2269,35 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* ── 右栏：文件 ── */
 .modal-right {
   display: flex; flex-direction: column; min-height: 0;
+  flex: 1 1 0; min-width: 0; position: relative;
   background: var(--panel-bg);
   backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98);
 }
+/* 切换期间临时关掉嵌套 backdrop-filter：它套在 .bm-card 的毛玻璃里、宽度又随动画变，
+   会让外层整层毛玻璃在动画起止帧重栅格化 → 整个面板闪屏。切完恢复，静态时毛玻璃照常。 */
+.modal.pm-switching .modal-right { backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* 两栏边缘切换按钮：贴在右栏左缘，随宽度动画一起移动 */
+.col-toggle-btn {
+  position: absolute; left: -7px; top: 50%; transform: translateY(-50%);
+  z-index: 12; width: 12px; height: 48px; border-radius: 7px;
+  border: 1px solid rgba(0,0,0,0.08);
+  background: var(--panel-bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--text-secondary);
+  box-shadow: 0 2px 10px rgba(30,40,80,0.12);
+  transition: color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+/* 视觉窄、但向两侧各扩 2px 透明鼠标判定区，好点中又不和滚动条重叠 */
+.col-toggle-btn::before {
+  content: ''; position: absolute; left: -2px; right: -2px; top: -2px; bottom: -2px;
+}
+.col-toggle-btn:hover {
+  color: var(--color-primary); background: rgba(255,255,255,0.92);
+  box-shadow: 0 3px 14px rgba(123,127,178,0.25);
+}
+
 .right-header {
   height: 52px; box-sizing: border-box;
   padding: 0 12px 0 16px; border-bottom: 1px solid rgba(0,0,0,0.07);
@@ -2242,14 +2330,39 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .fc-empty { grid-column: 1/-1; padding: 32px 0; text-align: center; font-size: 12px; color: var(--text-secondary); opacity: 0.6; }
 
 
-.file-content { flex: 1; overflow-y: auto; padding: 14px; user-select: none; position: relative; }
+.file-content { flex: 1; overflow-y: auto; padding: 14px; user-select: none; position: relative; isolation: isolate; }
 
 .file-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  /* Mode1：固定卡片宽度（不随比例缩放），只改变列数 */
+  grid-template-columns: repeat(auto-fill, 138px);
   gap: 10px;
   align-content: start;
 }
+/* Mode2（文件区压窄）：卡片缩小，单行正好 4 个，宽高比与 mode1 完全一致（138:122） */
+.modal.stages-expanded .file-grid {
+  grid-template-columns: repeat(4, 1fr);
+}
+/* 整卡（fc-card + folder-card）用 aspect-ratio 保持 138:122，flex-column 让缩略图区弹性填充 */
+.modal.stages-expanded .fc-card,
+.modal.stages-expanded .folder-card {
+  min-height: 0;
+  aspect-ratio: 138 / 122;
+  display: flex;
+  flex-direction: column;
+}
+/* 缩略图/图标区弹性占满卡片扣除 label 后的剩余高度 */
+.modal.stages-expanded .fc-thumb-area,
+.modal.stages-expanded .fc-icon-area,
+.modal.stages-expanded .fd-icon-area {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+.modal.stages-expanded .fc-big-icon { width: 52px; height: 52px; }
+/* 上传按钮与幽灵卡取消固定 min-height，跟随卡片同比例 */
+.modal.stages-expanded .fc-upload,
+.modal.stages-expanded .fc-ghost { min-height: 0; aspect-ratio: 138 / 122; }
 
 /* 文件夹卡片 */
 .folder-card {
@@ -2300,7 +2413,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .fc-thumb-area {
   position: relative; height: 90px; flex-shrink: 0; overflow: hidden;
   border-radius: 14px 14px 0 0; background: rgba(0,0,0,0.05);
-  will-change: transform; transform: translateZ(0);
+  transform: translateZ(0);   /* 去掉常驻 will-change：大量卡片常驻 will-change 会让合成器层预算耗尽、滚动时偶发闪屏 */
   mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
 }

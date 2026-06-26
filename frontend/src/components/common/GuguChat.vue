@@ -1,7 +1,7 @@
 <template>
   <!-- 迷你播放器 -->
   <Transition name="mini-player">
-    <div v-if="audioStore.file && (miniPinned || open) && !expanded" class="mini-player" :style="miniPlayerStyle" ref="playerRef">
+    <div v-if="audioStore.file && (miniPinned || open)" class="mini-player" :style="miniPlayerStyle" ref="playerRef">
       <div class="mp-info">
         <span class="mp-bars" :class="{ 'mp-bars--playing': barsPlaying }" ref="barsRef"><i v-for="n in 4" :key="n" /></span>
         <span class="mp-name">{{ audioStore.file.displayName }}.{{ audioStore.file.ext?.toLowerCase() }}</span>
@@ -167,8 +167,8 @@
 
         <!-- 单一消息列表 -->
         <div class="chat-messages" ref="messagesEl">
-          <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]">
-            <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body"><span v-html="msg.streaming ? renderMdStream(msg.text) : msg.html" /></div>
+          <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]" :data-db-id="msg.dbId || ''">
+            <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : msg.html" /></div>
             <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
             <div v-if="msg.files && msg.files.length" class="msg-files">
               <div v-for="f in msg.files" :key="f.file_id" class="msg-file" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
@@ -260,6 +260,7 @@ import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi } from '@/services/api'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/useThumbCache'
+import MarkdownView from '@/components/common/MarkdownView.vue'
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '/api/v1'
 import {
@@ -283,8 +284,21 @@ watch(() => uiStore.pendingChatSession, async (id) => {
   if (!id) return
   open.value = true
   await loadSession(id)
+  const msgId = uiStore.pendingChatMessageId
   uiStore.pendingChatSession = null
+  uiStore.pendingChatMessageId = null
+  if (msgId) _flashChatMessage(msgId)
 })
+
+function _flashChatMessage(dbId) {
+  setTimeout(() => {
+    const el = messagesEl.value?.querySelector(`[data-db-id="${dbId}"]`)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add('msg-search-flash')
+    setTimeout(() => el.classList.remove('msg-search-flash'), 1800)
+  }, 200)
+}
 
 // 实时：IM（飞书/QQ）来了新消息 → 刷新会话列表，新会话/新标题即时出现
 watch(() => liveStore.rev.sessions, () => fetchSessions())
@@ -531,7 +545,9 @@ const miniPlayerStyle = computed(() => {
   const origin = (open.value && !expanded.value)
     ? '50% 50%'
     : `calc(100% - 25px) calc(100% + ${bottom - 53}px)`
-  return { bottom: `${bottom}px`, transformOrigin: origin }
+  // 展开态层级低于咕咕窗口（10001），使播放器显示在窗口后方
+  const zIndex = expanded.value ? 10000 : 10002
+  return { bottom: `${bottom}px`, transformOrigin: origin, zIndex }
 })
 
 // 通知气泡锚点：让通知始终浮在「小窗 / 音乐播放器」上方，不与之重叠。
@@ -544,10 +560,20 @@ const notifyAnchor = computed(() => {
     const winTop = 88 + smallH.value                          // 小窗顶沿（距视口底）
     return (hasPlayer ? winTop + 8 + MP_EST_H : winTop) + 12
   }
-  // 关闭态 / 放大态（放大时播放器已缩回 fab）
-  return (hasPlayer && !expanded.value) ? 88 + MP_EST_H + 12 : 90
+  return hasPlayer ? 88 + MP_EST_H + 12 : 90
 })
 watch(notifyAnchor, v => { uiStore.chatNotifyAnchor = v }, { immediate: true })
+
+// 通知气泡开合的缩放原点（与音乐播放器同逻辑）：
+// 直接浮在咕咕球上方（聊天关闭且无播放器）→ 从球圆心缩放；被小窗/播放器顶高 → 从自身中心缩放。
+const notifyOrigin = computed(() => {
+  const hasPlayer = !!audioStore.file && (miniPinned.value || open.value)
+  if (!open.value && !hasPlayer) {
+    return `calc(100% - 25px) calc(100% + ${notifyAnchor.value - 53}px)`
+  }
+  return '50% 50%'
+})
+watch(notifyOrigin, v => { uiStore.chatNotifyOrigin = v }, { immediate: true })
 
 async function toggleOpen() {
   open.value = !open.value
@@ -866,6 +892,7 @@ async function loadSession(id) {
     thinking.value = false; activeTool.value = ''   // 切会话先清掉上个会话残留的「思考中/工具中」指示（active 会话下面 resumeStream 会重置）
     messages.value = data.messages.map(m => ({
       id: mkid(),
+      dbId: m.id,
       role: m.role === 'assistant' ? 'ai' : m.role,
       text: m.content,
       html: m.role === 'assistant' ? renderMd(m.content) : null,
@@ -1496,6 +1523,13 @@ async function send(forcedText) {
 /* ── 消息气泡 ── */
 .msg { display: flex; flex-direction: column; min-width: 0; }
 .msg.user { align-items: flex-end; }
+.msg-search-flash { animation: msg-search-flash 1.8s ease forwards; border-radius: 12px; }
+@keyframes msg-search-flash {
+  0%   { background: rgba(123,127,178,0.18); }
+  35%  { background: rgba(123,127,178,0.18); }
+  100% { background: transparent; }
+}
+
 .msg.ai { align-items: flex-start; }
 .msg-bubble {
   padding: 9px 13px; border-radius: 13px;
@@ -1580,66 +1614,12 @@ async function send(forcedText) {
 .tool-label { font-weight: 600; }
 
 /* ── Markdown ── */
+/* md 排版由通用组件 MarkdownView 提供；这里只保留聊天气泡的内边距 */
 .md-body { padding: 10px 13px; }
-.md-body :deep(p) { margin: 0 0 8px; line-height: 1.6; }
-.md-body :deep(p:last-child) { margin-bottom: 0; }
-.md-body :deep(h1),.md-body :deep(h2),.md-body :deep(h3) { font-weight: 700; margin: 10px 0 6px; line-height: 1.3; }
-.md-body :deep(h1) { font-size: 14px; }
-.md-body :deep(h2) { font-size: 13px; }
-.md-body :deep(h3) { font-size: 12px; }
-.md-body :deep(ul),.md-body :deep(ol) { margin: 4px 0 8px 18px; padding: 0; }
-.md-body :deep(ul) { list-style: disc; }
-.md-body :deep(ol) { list-style: decimal; }
-.md-body :deep(li) { margin-bottom: 6px; line-height: 1.6; display: list-item; }
-.md-body :deep(li:last-child) { margin-bottom: 0; }
-.md-body :deep(li > ul), .md-body :deep(li > ol) { margin: 2px 0 2px 14px; }
-
-/* 表格 */
-.md-body :deep(table) {
-  width: 100%; border-collapse: collapse; margin: 8px 0;
-  font-size: 12.5px; border-radius: 8px; overflow: hidden;
-}
-.md-body :deep(th) {
-  background: rgba(123,127,178,0.1); font-weight: 600;
-  padding: 7px 12px; text-align: left;
-  border-bottom: 1px solid rgba(123,127,178,0.2);
-  border-right: 1px solid rgba(123,127,178,0.18);
-}
-.md-body :deep(td) {
-  padding: 6px 12px;
-  border-bottom: 1px solid rgba(0,0,0,0.05);
-  border-right: 1px solid rgba(0,0,0,0.06);
-}
-.md-body :deep(tr:last-child td) { border-bottom: none; }
-.md-body :deep(th:last-child), .md-body :deep(td:last-child) { border-right: none; }
-.md-body :deep(tr:nth-child(even) td) { background: rgba(0,0,0,0.02); }
-.md-body :deep(strong) { font-weight: 700; }
-.md-body :deep(em) { font-style: italic; opacity: 0.85; }
-.md-body :deep(code) { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11px; background: rgba(0,0,0,0.07); border-radius: 4px; padding: 1px 5px; }
-.md-body :deep(a) { color: var(--color-primary); text-decoration: underline; }
-.md-body :deep(img) { max-width: 100%; max-height: 240px; border-radius: 8px; object-fit: contain; display: block; }
-.md-body :deep(blockquote) { border-left: 3px solid var(--color-primary); margin: 6px 0; padding: 4px 10px; opacity: 0.75; font-style: italic; }
-.md-body :deep(hr) { border: none; border-top: 1px solid rgba(0,0,0,0.08); margin: 8px 0; }
-.md-body :deep(.md-code-block) { margin: 8px 0; border-radius: 8px; overflow: hidden; background: rgba(123,127,178,0.04); font-size: 11px; }
-.md-body :deep(.md-code-header) { display: flex; align-items: center; justify-content: space-between; padding: 5px 12px; background: rgba(123,127,178,0.12); border-bottom: 1px solid rgba(123,127,178,0.2); }
-.md-body :deep(.md-code-lang) { font-size: 10px; font-weight: 600; color: var(--color-primary); opacity: 0.85; text-transform: lowercase; letter-spacing: 0.04em; }
-.md-body :deep(.md-copy-btn) { font-size: 10px; font-weight: 600; color: var(--color-primary); background: none; border: none; cursor: pointer; padding: 0; opacity: 0.7; transition: opacity 0.15s; }
-.md-body :deep(.md-copy-btn:hover) { opacity: 1; }
-.md-body :deep(pre) { margin: 0; padding: 9px 12px; overflow-x: auto; background: none; }
-.md-body :deep(pre code) { background: none; padding: 0; border-radius: 0; font-size: 11px; line-height: 1.6; }
-.md-body :deep(.hljs-keyword) { color: #7b5cf0; }
-.md-body :deep(.hljs-string) { color: #2d7a4f; }
-.md-body :deep(.hljs-comment) { color: #9a9a9a; font-style: italic; }
-.md-body :deep(.hljs-number) { color: #b07858; }
-.md-body :deep(.hljs-function) { color: #4a7fb5; }
-.md-body :deep(.hljs-title) { color: #4a7fb5; font-weight: 600; }
-.md-body :deep(.hljs-attr) { color: #b07858; }
-.md-body :deep(.hljs-built_in) { color: #5a9e88; }
-.md-body :deep(.hljs-variable) { color: #1e2028; }
 
 /* ── 迷你播放器 ── */
 .mini-player {
-  position: fixed; right: 28px; width: 332px;   /* 外宽 332+14*2=360，与小窗对齐 */
+  position: fixed; right: 28px; box-sizing: border-box; width: 360px;   /* border-box 外宽 360，与小窗/气泡严格对齐 */
   transition: bottom 0.28s cubic-bezier(0.34, 1.2, 0.64, 1);
   background: var(--panel-bg); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
   border: 1px solid rgba(255,255,255,0.65); border-radius: 20px;

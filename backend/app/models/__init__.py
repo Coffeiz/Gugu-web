@@ -264,7 +264,8 @@ class AgentUsage(Base):
 # ── SearchUsage ───────────────────────────────────────────────────────────────
 
 class SearchUsage(Base):
-    """联网搜索用量：每次 web_search 记一行，用于每日次数配额统计。"""
+    """深度研究用量：每次 deep_research（Tavily）记一行，用于每日次数配额统计。
+    （web_search 走自建 SearXNG、免费，不计配额。）"""
     __tablename__ = "search_usage"
 
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -374,3 +375,16 @@ class ScheduledTask(Base):
     last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
     created_at:  Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow)
     updated_at:  Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ── SiteNotification（站点通知广播）──────────────────────────────────────────
+class SiteNotification(Base):
+    __tablename__ = "site_notifications"
+
+    id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title:      Mapped[str]      = mapped_column(String(200))
+    content:    Mapped[str]      = mapped_column(Text, default="")
+    color:      Mapped[str]      = mapped_column(String(50), default="#7b7fb2")
+    target:     Mapped[str]      = mapped_column(String(50), default="all")   # "all" 或 user_id
+    created_by: Mapped[str]      = mapped_column(String(100), default="admin")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

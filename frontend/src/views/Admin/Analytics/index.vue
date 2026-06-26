@@ -67,21 +67,23 @@
         </div>
       </div>
 
-      <!-- ── 工具调用分布 ── -->
-      <div class="section-label section-label-row" v-if="toolDist.length">
-        <span>工具调用 Top 10</span>
-        <button v-if="toolDist.length > 10" class="expand-btn" @click="toolExpanded = !toolExpanded">
-          {{ toolExpanded ? '收起' : `查看全部 ${toolDist.length} 个` }}
-          <PhCaretDown :size="11" weight="bold" :class="{ 'caret-up': toolExpanded }" />
-        </button>
-      </div>
-      <div class="tool-dist" v-if="toolDist.length">
-        <div class="tool-bar-row" v-for="t in visibleTools" :key="t.tool">
-          <span class="tool-name">{{ t.tool }}</span>
-          <div class="tool-bar-track">
-            <div class="tool-bar-fill" :style="{ width: (t.calls / toolDist[0].calls * 100) + '%' }" />
-          </div>
-          <span class="tool-calls">{{ t.calls.toLocaleString() }}</span>
+      <!-- ── 对话 ── -->
+      <div class="section-label">对话</div>
+      <div class="cards-grid col3">
+        <div class="card">
+          <div class="card-icon ic-blue"><PhChats :size="16" weight="bold"/></div>
+          <div class="card-val">{{ data.sessions.total.toLocaleString() }}</div>
+          <div class="card-lbl">总量</div>
+        </div>
+        <div class="card">
+          <div class="card-icon ic-blue"><PhMonitor :size="16" weight="bold"/></div>
+          <div class="card-val">{{ data.sessions.web.toLocaleString() }}</div>
+          <div class="card-lbl">网页对话</div>
+        </div>
+        <div class="card">
+          <div class="card-icon ic-blue"><PhDeviceMobile :size="16" weight="bold"/></div>
+          <div class="card-val">{{ data.sessions.im.toLocaleString() }}</div>
+          <div class="card-lbl">IM 对话</div>
         </div>
       </div>
 
@@ -166,7 +168,7 @@
               </div>
             </div>
             <div class="chart-wrap">
-              <Line :data="agentCallsChart" :options="lineOpts(false)" />
+              <Line :data="agentCallsChart" :options="lineOpts(false)" :plugins="chartPlugins" />
             </div>
           </div>
 
@@ -195,7 +197,7 @@
               </div>
             </div>
             <div class="chart-wrap">
-              <Line :data="agentTokensChart" :options="lineOpts(true)" />
+              <Line :data="agentTokensChart" :options="lineOpts(true)" :plugins="chartPlugins" />
             </div>
           </div>
 
@@ -224,7 +226,7 @@
               </div>
             </div>
             <div class="chart-wrap">
-              <Line :data="userRegsChart" :options="lineOpts(false)" />
+              <Line :data="userRegsChart" :options="lineOpts(false)" :plugins="chartPlugins" />
             </div>
           </div>
 
@@ -253,30 +255,28 @@
               </div>
             </div>
             <div class="chart-wrap">
-              <Line :data="projDoneChart" :options="lineOpts(false)" />
+              <Line :data="projDoneChart" :options="lineOpts(false)" :plugins="chartPlugins" />
             </div>
           </div>
 
         </div>
       </template>
 
-      <!-- ── 对话 ── -->
-      <div class="section-label">对话</div>
-      <div class="cards-grid col3">
-        <div class="card">
-          <div class="card-icon ic-blue"><PhChats :size="16" weight="bold"/></div>
-          <div class="card-val">{{ data.sessions.total.toLocaleString() }}</div>
-          <div class="card-lbl">总量</div>
-        </div>
-        <div class="card">
-          <div class="card-icon ic-blue"><PhMonitor :size="16" weight="bold"/></div>
-          <div class="card-val">{{ data.sessions.web.toLocaleString() }}</div>
-          <div class="card-lbl">网页对话</div>
-        </div>
-        <div class="card">
-          <div class="card-icon ic-blue"><PhDeviceMobile :size="16" weight="bold"/></div>
-          <div class="card-val">{{ data.sessions.im.toLocaleString() }}</div>
-          <div class="card-lbl">IM 对话</div>
+      <!-- ── 工具调用分布 ── -->
+      <div class="section-label section-label-row" v-if="toolDist.length">
+        <span>工具调用 Top 10</span>
+        <button v-if="toolDist.length > 10" class="expand-btn" @click="toolExpanded = !toolExpanded">
+          {{ toolExpanded ? '收起' : `查看全部 ${toolDist.length} 个` }}
+          <PhCaretDown :size="11" weight="bold" :class="{ 'caret-up': toolExpanded }" />
+        </button>
+      </div>
+      <div class="tool-dist" v-if="toolDist.length">
+        <div class="tool-bar-row" v-for="t in visibleTools" :key="t.tool">
+          <span class="tool-name">{{ t.tool }}</span>
+          <div class="tool-bar-track">
+            <div class="tool-bar-fill" :style="{ width: (t.calls / toolDist[0].calls * 100) + '%' }" />
+          </div>
+          <span class="tool-calls">{{ t.calls.toLocaleString() }}</span>
         </div>
       </div>
 
@@ -326,13 +326,33 @@ import { useAdminStore } from '@/stores/admin'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Tooltip, Filler)
 
+const crosshairPlugin = {
+  id: 'crosshair',
+  afterDraw(chart) {
+    if (!chart.tooltip?._active?.length) return
+    const { ctx, scales: { y } } = chart
+    const x = chart.tooltip._active[0].element.x
+    ctx.save()
+    ctx.beginPath()
+    ctx.moveTo(x, y.top)
+    ctx.lineTo(x, y.bottom)
+    ctx.lineWidth = 1
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'
+    ctx.setLineDash([])
+    ctx.stroke()
+    ctx.restore()
+  }
+}
+
+const chartPlugins = [crosshairPlugin]
+
 const admin   = useAdminStore()
 const data      = ref(null)
 const usage     = ref(null)
 const trends    = ref(null)   // 始终保存 60 天原始数据
 const loading    = ref(false)
 const err        = ref('')
-const rangeDays  = ref(30)
+const rangeDays    = ref(30)
 const chatFunnel = ref(null)
 const toolDist    = ref([])
 const toolExpanded = ref(false)
@@ -397,13 +417,24 @@ function mkDataset(data, color) {
   return {
     data,
     borderColor: color,
-    backgroundColor: color.replace(',1)', ',0.12)'),
+    backgroundColor(ctx) {
+      const chart = ctx.chart
+      const { chartArea, ctx: c } = chart
+      if (!chartArea) return color.replace(',1)', ',0.15)')
+      const grad = c.createLinearGradient(0, chartArea.top, 0, chartArea.bottom)
+      grad.addColorStop(0, color.replace(',1)', ',0.28)'))
+      grad.addColorStop(0.6, color.replace(',1)', ',0.08)'))
+      grad.addColorStop(1, color.replace(',1)', ',0.0)'))
+      return grad
+    },
     fill: true,
-    tension: 0.4,
-    pointRadius: 2,
-    pointHoverRadius: 5,
+    tension: 0.45,
+    pointRadius: 0,
+    pointHoverRadius: 4,
     pointBackgroundColor: color,
-    borderWidth: 2,
+    pointBorderColor: 'rgba(14,14,28,0.85)',
+    pointBorderWidth: 1.5,
+    borderWidth: 1.5,
   }
 }
 
@@ -411,33 +442,34 @@ function lineOpts(isTok) {
   return {
     responsive: true,
     maintainAspectRatio: false,
-    animation: { duration: 400 },
-    animations: {
-      x: { duration: 0 },   // x 位置不动画，防止切换区间时数据点横向滑动
-    },
+    animation: false,
+    interaction: { mode: 'index', intersect: false },
     plugins: {
       legend: { display: false },
       tooltip: {
-        backgroundColor: 'rgba(15,15,30,0.95)',
-        borderColor: 'rgba(255,255,255,0.1)',
+        mode: 'index',
+        intersect: false,
+        displayColors: false,
+        backgroundColor: 'rgba(10,10,22,0.92)',
+        borderColor: 'rgba(255,255,255,0.08)',
         borderWidth: 1,
-        titleColor: 'rgba(255,255,255,0.6)',
+        titleColor: 'rgba(255,255,255,0.45)',
         bodyColor: 'rgba(255,255,255,0.85)',
         padding: 10,
-        callbacks: isTok ? { label: ctx => ' ' + fmtTok(ctx.raw) } : {},
+        callbacks: isTok ? { label: ctx => fmtTok(ctx.raw) } : { label: ctx => String(ctx.raw) },
       },
     },
     scales: {
       x: {
-        grid:   { color: 'rgba(255,255,255,0.05)' },
+        grid:   { color: 'rgba(255,255,255,0.04)' },
         border: { color: 'transparent' },
-        ticks:  { color: 'rgba(255,255,255,0.3)', font: { size: 10 }, maxTicksLimit: 8 },
+        ticks:  { color: 'rgba(255,255,255,0.25)', font: { size: 10 }, maxTicksLimit: 8 },
       },
       y: {
-        grid:   { color: 'rgba(255,255,255,0.05)' },
+        grid:   { color: 'rgba(255,255,255,0.04)' },
         border: { color: 'transparent' },
         ticks:  {
-          color: 'rgba(255,255,255,0.3)', font: { size: 10 },
+          color: 'rgba(255,255,255,0.25)', font: { size: 10 },
           callback: isTok ? v => fmtTok(v) : undefined,
         },
         beginAtZero: true,
@@ -548,7 +580,7 @@ async function load() {
 }
 
 function setRange(days) {
-  rangeDays.value = days   // vis computed 自动切片，无需重新请求
+  rangeDays.value = days
 }
 
 onMounted(load)
@@ -691,7 +723,7 @@ onMounted(load)
 
 /* ── charts ── */
 .charts-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 36px;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 0 36px;
 }
 .chart-card {
   background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
@@ -716,7 +748,7 @@ onMounted(load)
 .cs-val  { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.78); line-height: 1.3; }
 .cs-sep  { color: rgba(255,255,255,0.15); font-size: 12px; }
 
-.chart-wrap { height: 160px; position: relative; }
+.chart-wrap { height: 180px; position: relative; overflow: hidden; }
 
 /* ── model section ── */
 .model-section {

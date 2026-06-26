@@ -23,7 +23,7 @@
         @dragstart="(e) => { e.dataTransfer.setData('projectId', project.id) }"
       />
       <div v-if="projects.length === 0" class="col-empty">拖拽项目到此</div>
-      <button class="add-card" @click="$emit('add-project')">
+      <button class="add-card" @click="$emit('add-project', column.key)">
         <svg width="14" height="14" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="opacity:0.5;flex-shrink:0">
           <line x1="11" y1="4" x2="11" y2="18"/><line x1="4" y1="11" x2="18" y2="11"/>
         </svg>
@@ -98,20 +98,22 @@ function onDrop(e) {
   border-radius: var(--radius-md); margin-top: 4px;
 }
 .add-card {
-  display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 6px;
-  width: 100%; flex-shrink: 0; height: 34px;
-  background: rgba(255,255,255,0.2);
-  border: 1.5px dashed rgba(0,0,0,0.09);
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; flex-shrink: 0; min-height: 82px;
+  background: rgba(255,255,255,0.15);
+  border: 1.5px dashed rgba(0,0,0,0.1);
   border-radius: var(--radius-md);
   corner-shape: squircle;
+  box-shadow: 0 2px 8px rgba(80,90,110,0.04);
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.18s;
 }
 .add-card:hover {
-  border-color: rgba(123,127,178,0.45);
+  border-color: rgba(123,127,178,0.4);
   color: var(--color-primary);
-  background: rgba(123,127,178,0.04);
+  background: rgba(123,127,178,0.05);
+  box-shadow: 0 2px 10px rgba(80,90,110,0.08);
 }
-.add-card-text { font-size: 10px; font-weight: 600; }
+.add-card-text { font-size: 11px; font-weight: 600; }
 </style>

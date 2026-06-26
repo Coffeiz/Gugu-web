@@ -216,7 +216,6 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transform: translateZ(0);
   --tv-font-size: v-bind('props.fontSize + "px"');
 }
 
@@ -224,6 +223,7 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
   flex: 1;
   overflow: auto;
   padding: 0 0 16px;
+  will-change: scroll-position;
 }
 
 .tv-notice {

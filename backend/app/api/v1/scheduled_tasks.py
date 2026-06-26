@@ -1,7 +1,8 @@
-"""用户定时任务 API：列表 / 增删改 / 立即试运行 + 内置提醒开关。
+"""用户定时任务 API：列表 / 增删改 / 立即试运行。
 
 任务由 worker 每 ~30s 从 DB reconcile 到 APScheduler（新建/改动最多 30s 后生效）；
 「立即运行」直接在本进程执行一次，便于测试。系统级任务（user_id 空）不在此暴露。
+到点统一交给 agent 执行 payload（指令），无 reminder/agent 之分。
 """
 from __future__ import annotations
 
@@ -18,7 +19,6 @@ from app.models import ScheduledTask, User
 
 router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-tasks"])
 
-_ACTIONS = {"agent"}        # 用户能建的动作（系统级 deadline_scan 不开放）
 _CHANNELS = {"web", "feishu", "qq", "im", "chat"}   # web=站内通知、feishu/qq=各 IM；chat=web、im=全部 IM（历史别名）
 
 
@@ -44,7 +44,7 @@ def _norm_channels(chs: list[str] | None) -> str:
 
 def _to_resp(t: ScheduledTask) -> dict:
     return {
-        "id": t.id, "name": t.name, "action_type": t.action_type,
+        "id": t.id, "name": t.name,
         "payload": t.payload, "cron": t.cron,
         "channels": [c for c in (t.channels or "").split(",") if c],
         "enabled": t.enabled,
@@ -54,10 +54,9 @@ def _to_resp(t: ScheduledTask) -> dict:
 
 class TaskCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    action_type: str          # reminder | agent
-    payload: str = ""
-    cron: str                 # crontab "分 时 日 月 周"
-    channels: list[str] = ["chat"]
+    payload: str = ""         # 到点要执行的指令
+    cron: str                 # crontab "分 时 日 月 周"，或 @once:<ISO>
+    channels: list[str] = ["web"]
     enabled: bool = True
 
 
@@ -79,11 +78,9 @@ async def list_tasks(user: User = Depends(get_current_user), db: AsyncSession = 
 
 @router.post("", status_code=201)
 async def create_task(body: TaskCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    if body.action_type not in _ACTIONS:
-        raise HTTPException(400, f"action_type 只能是 {_ACTIONS}")
     _validate_cron(body.cron)
     t = ScheduledTask(
-        user_id=user.id, name=body.name, action_type=body.action_type,
+        user_id=user.id, name=body.name,
         payload=body.payload or "", cron=body.cron,
         channels=_norm_channels(body.channels), enabled=body.enabled,
     )

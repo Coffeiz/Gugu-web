@@ -42,8 +42,28 @@ def _files_block(fo: dict | None, proj_names: dict | None = None) -> str:
     return "\n".join(lines)
 
 
+def _skills_index_block(skill_names: list[str] | None) -> str:
+    """注入「可用技能」索引：每个 prompt skill 一行 name + 何时用。模型据此用 use_skill 按需拉正文。"""
+    if not skill_names:
+        return ""
+    from agent import skills as _sk
+    idx = _sk.skills_index(skill_names)
+    if not idx:
+        return ""
+    lines = ["## 可用技能",
+             "下列「技能」是带触发条件的做法剧本。命中下方场景时，**先调 `use_skill` 拉取该技能详细步骤再照做**，别凭空猜。",
+             "技能正文里若出现 `curl <URL>`，就用 `http_get` 工具抓那个 URL（你没有 shell，但有 `http_get`）。"]
+    for s in idx:
+        emoji = f"{s['emoji']} " if s.get("emoji") else ""
+        when = f" — {s['when']}" if s.get("when") else ""
+        lines.append(f"- {emoji}**{s['name']}**（`use_skill` 名：`{s['slug']}`）{when}")
+    return "\n".join(lines)
+
+
 def build(profile: str, user_name: str, projects: list, events: list,
-          memory: dict | None = None, files: dict | None = None) -> str:
+          memory: dict | None = None, files: dict | None = None,
+          skills: list[str] | None = None,
+          style_prefs: dict | None = None) -> str:
     memory = memory or {}
     _now = datetime.now()
     today = _now.strftime("%Y-%m-%d")
@@ -100,7 +120,7 @@ def build(profile: str, user_name: str, projects: list, events: list,
     except FileNotFoundError:
         content_policy = ""
 
-    # 顺序：人格 → 工具准则 → 内容政策 → 对用户的了解（仅非空时注入，避免空 section 烧 token）→ 当前状态
+    # 顺序：人格 → 工具准则 → 内容政策 → 风格偏好 → 技能索引 → 记忆 → 当前状态
     sections = []
     if persona:
         sections.append(persona)
@@ -108,11 +128,39 @@ def build(profile: str, user_name: str, projects: list, events: list,
         sections.append(skills_policy)
     if content_policy:
         sections.append(content_policy)
+    style_block = _style_block(style_prefs or {})
+    if style_block:
+        sections.append(style_block)
+    skills_block = _skills_index_block(skills)
+    if skills_block:
+        sections.append(skills_block)
     mem_block = _memory_block(memory)
     if mem_block:
         sections.append(mem_block)
     sections.append(result)
     return "\n\n---\n\n".join(sections)
+
+
+def _style_block(prefs: dict) -> str:
+    """用户风格偏好，全为默认值时返回空串（不注入，省 token）。"""
+    TONE = {
+        "formal": "偏正式（措辞严谨，少用语气词和口语化表达，但仍然和善，不端着、不冷淡）",
+        "lively": "偏活泼（可以用语气词，轻松自然，偶尔开个小玩笑）",
+    }
+    LENGTH = {
+        "short":    "简短（直接利落、不啰嗦、少铺垫，但该有的体谅别省，别变生硬或打发）",
+        "detailed": "详细（多一点背景和解释，让回答更完整，用户追问前就说清楚）",
+    }
+    # emoji 不开放给用户选：表情风格由 persona 统一管（极简、只标内容类别），稳定优于可调。
+    lines = []
+    if t := TONE.get(prefs.get("reply_tone", "")):
+        lines.append(f"- 语气：{t}")
+    if l := LENGTH.get(prefs.get("reply_length", "")):
+        lines.append(f"- 回复长度：{l}")
+    if not lines:
+        return ""
+    return ("## 风格偏好（用户设置，优先于默认风格中的语气松紧 / 长度；"
+            "但真诚与和善是底线，不在可调范围，任何设置下都不能变冷或打发）\n\n" + "\n".join(lines))
 
 
 def _memory_block(memory: dict) -> str:

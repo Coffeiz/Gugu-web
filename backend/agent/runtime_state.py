@@ -21,6 +21,8 @@ STATE_TTL = 300   # 5min 兜底：worker 崩了 / 漏清，状态自动过期回
 # 工具名 → 进入的细粒度状态（其余工具维持 THINKING）
 TOOL_STATE = {
     "web_search":      SEARCHING,
+    "deep_research":   SEARCHING,
+    "http_get":        SEARCHING,
     "create_document": GENERATING,
     "send_file":       GENERATING,
 }

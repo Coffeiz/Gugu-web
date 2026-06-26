@@ -12,7 +12,7 @@ from app.services.storage import get_storage
 from app.api.v1.trash import _restore_file_storage
 from app.api.v1.files import _delete_thumb_cache
 from agent import confirm
-from agent.skills.base import BaseSkill, Tool
+from agent.tools.base import BaseSkill, Tool
 
 
 async def _list_trash(db, user_id, args: dict):

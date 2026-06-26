@@ -70,6 +70,8 @@ export const useConfigStore = defineStore('config', () => {
     },
     search: {
       tavily_api_key: '',
+      searxng_url: '',
+      searxng_engines: 'sogou,quark,360search',
       max_results: 5,
     },
     smtp: {

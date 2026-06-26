@@ -69,6 +69,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         projects = await loaders.load_projects(db, user_id)
         events = await loaders.load_events(db, user_id)
         files_overview = await loaders.load_files_overview(db, user_id)
+        style_prefs = await loaders.load_style_prefs(db, user_id)
 
         # ── 会话 get / create（IM 续聊靠 worker 传稳定 session_id）──
         session = None
@@ -129,7 +130,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
     prompt_name = profile.prompt_file.removesuffix(".md")
     system_prompt = builder.build(
-        prompt_name, req.user_name, projects, events, memory, files_overview
+        prompt_name, req.user_name, projects, events, memory, files_overview,
+        skills=profile.skills, style_prefs=style_prefs,
     )
 
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
@@ -293,7 +295,7 @@ async def run_ephemeral(user_id, user_name: str, prompt: str) -> str:
 
     memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
     prompt_name = profile.prompt_file.removesuffix(".md")
-    system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview)
+    system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview, skills=profile.skills)
 
     use_anthropic = (
         model_cfg.provider == "minimax"

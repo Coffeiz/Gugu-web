@@ -80,6 +80,12 @@ const routes = [
         component: () => import('@/views/Admin/Debug/index.vue'),
         meta: { title: 'Debug 日志' },
       },
+      {
+        path: 'notifications',
+        name: 'AdminNotifications',
+        component: () => import('@/views/Admin/Notifications/index.vue'),
+        meta: { title: '通知发布' },
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/login' },

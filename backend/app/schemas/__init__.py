@@ -314,7 +314,11 @@ class ClientResponse(CamelModel):
 class PreferencesResponse(CamelModel):
     lastStages:     list[str] = []
     stageTemplates: list[dict] = []
+    replyTone:      Optional[str] = None   # natural / formal / lively
+    replyLength:    Optional[str] = None   # medium / short / detailed
 
 class PreferencesUpdate(CamelModel):
     lastStages:     Optional[list[str]]  = None
     stageTemplates: Optional[list[dict]] = None
+    replyTone:      Optional[str] = None
+    replyLength:    Optional[str] = None

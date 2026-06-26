@@ -56,7 +56,7 @@ export const useProjectStore = defineStore('projects', () => {
       client:       fields.client || null,
       status:       fields.status || 'pending',
       stages:       fields.stages.map((s, i) => ({ key: `s${i}`, label: typeof s === 'string' ? s : s.label, todos: s.todos ?? [] })),
-      currentStage: fields.stages[0] ? 's0' : null,
+      currentStage: fields.stages[0] ? `s${fields.currentStageIdx ?? 0}` : null,
       progress:     0,
       startDate:    fields.startDate || null,
       deadline:     fields.deadline  || null,

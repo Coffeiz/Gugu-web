@@ -106,7 +106,9 @@ class QuotaSettings(BaseModel):
 
 
 class SearchSettings(BaseModel):
-    tavily_api_key: str = Field("", description="Tavily 联网搜索 API Key（空=禁用 web_search）")
+    tavily_api_key: str = Field("", description="Tavily API Key（空=禁用 deep_research 深度研究）")
+    searxng_url:    str = Field("", description="自建 SearXNG 实例地址（空=禁用 web_search 通用搜索），如 http://127.0.0.1:8888")
+    searxng_engines: str = Field("sogou,quark,360search", description="SearXNG 启用的引擎（逗号分隔；国内服务器只有这几个可达）")
     max_results:    int = Field(5, description="默认返回结果数")
 
 

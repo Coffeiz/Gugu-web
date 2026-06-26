@@ -80,64 +80,95 @@ def _to_blocks(content) -> list:
     return []
 
 
-def _block_keep(b, use_ids: set, result_ids: set) -> bool:
-    """该 block 是否保留：孤儿 tool_result / 孤儿 tool_use / 空 text 都丢。"""
+def _nonempty_block(b) -> bool:
+    """空 text block 丢；其余（tool_use/tool_result/thinking/image…）先留，配对合法性后续再判。"""
     if not isinstance(b, dict):
         return bool(b)
-    t = b.get("type")
-    if t == "tool_result":
-        return b.get("tool_use_id") in use_ids
-    if t == "tool_use":
-        return b.get("id") in result_ids
-    if t == "text":
+    if b.get("type") == "text":
         return bool((b.get("text") or "").strip())
-    return True  # image / thinking 等保留
+    return True
+
+
+def _to_norm(m) -> dict:
+    """把一条消息规整成 {role, content: [blocks]}（字符串 → text block；丢空 text block）。"""
+    c = m.get("content")
+    if isinstance(c, str):
+        blocks = [{"type": "text", "text": c}] if c.strip() else []
+    elif isinstance(c, list):
+        blocks = [b for b in c if _nonempty_block(b)]
+    elif c:
+        blocks = [c]
+    else:
+        blocks = []
+    return {"role": m.get("role"), "content": blocks}
+
+
+def _uses(blocks) -> set:
+    return {b["id"] for b in blocks if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("id")}
+
+
+def _results(blocks) -> set:
+    return {b["tool_use_id"] for b in blocks if isinstance(b, dict) and b.get("type") == "tool_result"}
 
 
 def sanitize_messages(messages: list) -> list:
     """清洗发给 Anthropic/MiniMax 的消息序列，确保合法可发送。
 
-    1) 丢孤儿 tool_result（无对应 tool_use）与孤儿 tool_use（无对应 tool_result）——窗口截断所致；
-    2) 丢空 text block / 整条空内容的消息；
-    3) 开头必须是 user（去掉前导 assistant / 残留）；
-    4) 合并相邻同角色消息（Anthropic 要求 user/assistant 严格交替）。
+    核心是 **tool_use/tool_result 必须严格相邻配对**（MiniMax 要求 tool_result 紧跟在
+    含对应 tool_use 的 assistant 之后），而 token 窗口截断 / 删空消息 / 合并同角色都会破坏它。
+    做法（基于相邻性，而非全局 id 是否存在）：
+    1) 规整成 block 列表、丢空 text block；
+    2) 只认「assistant(tool_use X) 紧接 user(tool_result X)」的合法对，其余 tool 块全剥掉；
+    3) 丢空消息；
+    4) 开头必须是 user——丢前导 assistant 时，同步剥掉它在新表头遗留的孤儿 tool_result；
+    5) 合并相邻同角色。
     """
-    # 1) 窗口内出现的 tool_use id 与被 tool_result 引用的 id
-    use_ids, result_ids = set(), set()
-    for m in messages:
-        c = m.get("content")
-        if isinstance(c, list):
-            for b in c:
-                if isinstance(b, dict):
-                    if b.get("type") == "tool_use":
-                        use_ids.add(b.get("id"))
-                    elif b.get("type") == "tool_result":
-                        result_ids.add(b.get("tool_use_id"))
+    norm = [_to_norm(m) for m in messages]
 
-    # 2) 逐条清块；块清空的整条丢弃
-    cleaned = []
-    for m in messages:
-        c = m.get("content")
-        if isinstance(c, list):
-            nc = [b for b in c if _block_keep(b, use_ids, result_ids)]
-            if nc:
-                cleaned.append({**m, "content": nc})
-        elif isinstance(c, str):
-            if c.strip():
-                cleaned.append(m)
-        elif c:
-            cleaned.append(m)
+    # 2) 合法对**按位置标记**（不能用全局 id：同一 id 跨位置复用时，会放过领头的孤儿 result）：
+    #    仅当 assistant[i] 的 tool_use 与紧邻 user[i+1] 的 tool_result id 相交，才把这两处的对应块标合法。
+    valid_use: dict = {}   # 消息下标 → 该 assistant 处合法的 tool_use id
+    valid_res: dict = {}   # 消息下标 → 该 user 处合法的 tool_result id
+    for i in range(len(norm) - 1):
+        if norm[i]["role"] == "assistant" and norm[i + 1]["role"] == "user":
+            common = _uses(norm[i]["content"]) & _results(norm[i + 1]["content"])
+            if common:
+                valid_use.setdefault(i, set()).update(common)
+                valid_res.setdefault(i + 1, set()).update(common)
 
-    # 3) 开头必须是 user
-    while cleaned and cleaned[0].get("role") != "user":
-        cleaned.pop(0)
+    for idx, m in enumerate(norm):
+        kept = []
+        for b in m["content"]:
+            if isinstance(b, dict) and b.get("type") == "tool_use":
+                if b.get("id") in valid_use.get(idx, ()):
+                    kept.append(b)
+            elif isinstance(b, dict) and b.get("type") == "tool_result":
+                if b.get("tool_use_id") in valid_res.get(idx, ()):
+                    kept.append(b)
+            else:
+                kept.append(b)
+        m["content"] = kept
 
-    # 4) 合并相邻同角色
+    # 3) 丢空消息
+    norm = [m for m in norm if m["content"]]
+
+    # 4) 开头必须是 user；丢前导 assistant 时剥掉新表头的孤儿 tool_result
+    while norm and norm[0]["role"] != "user":
+        dropped_uses = _uses(norm.pop(0)["content"])
+        if dropped_uses and norm and norm[0]["role"] == "user":
+            norm[0]["content"] = [
+                b for b in norm[0]["content"]
+                if not (isinstance(b, dict) and b.get("type") == "tool_result"
+                        and b.get("tool_use_id") in dropped_uses)
+            ]
+            if not norm[0]["content"]:
+                norm.pop(0)
+
+    # 5) 合并相邻同角色
     merged: list = []
-    for m in cleaned:
-        if merged and merged[-1].get("role") == m.get("role"):
-            merged[-1] = {"role": m["role"],
-                          "content": _to_blocks(merged[-1]["content"]) + _to_blocks(m.get("content"))}
+    for m in norm:
+        if merged and merged[-1]["role"] == m["role"]:
+            merged[-1]["content"] = merged[-1]["content"] + m["content"]
         else:
-            merged.append({"role": m.get("role"), "content": m.get("content")})
+            merged.append({"role": m["role"], "content": m["content"]})
     return merged

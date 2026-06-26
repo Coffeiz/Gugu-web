@@ -22,6 +22,15 @@ async def _get_or_create(user: User, db: AsyncSession) -> UserPreferences:
     return prefs
 
 
+def _to_response(data: dict) -> PreferencesResponse:
+    return PreferencesResponse(
+        lastStages=data.get("last_stages", []),
+        stageTemplates=data.get("stage_templates", []),
+        replyTone=data.get("reply_tone"),
+        replyLength=data.get("reply_length"),
+    )
+
+
 @router.get("", response_model=PreferencesResponse)
 async def get_preferences(
     user: User = Depends(get_current_user),
@@ -29,11 +38,7 @@ async def get_preferences(
 ):
     prefs = await _get_or_create(user, db)
     await db.commit()
-    data = prefs.data
-    return PreferencesResponse(
-        lastStages=data.get("last_stages", []),
-        stageTemplates=data.get("stage_templates", []),
-    )
+    return _to_response(prefs.data)
 
 
 @router.patch("", response_model=PreferencesResponse)
@@ -48,9 +53,10 @@ async def update_preferences(
         data["last_stages"] = body.lastStages
     if body.stageTemplates is not None:
         data["stage_templates"] = body.stageTemplates
+    if body.replyTone is not None:
+        data["reply_tone"] = body.replyTone
+    if body.replyLength is not None:
+        data["reply_length"] = body.replyLength
     prefs.data = data
     await db.commit()
-    return PreferencesResponse(
-        lastStages=data.get("last_stages", []),
-        stageTemplates=data.get("stage_templates", []),
-    )
+    return _to_response(data)

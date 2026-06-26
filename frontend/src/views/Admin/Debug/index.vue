@@ -28,6 +28,7 @@
       <div class="log-table">
         <div class="lt-head">
           <span class="col-src">来源</span>
+          <span class="col-time">时间</span>
           <span class="col-msg">日志</span>
         </div>
 
@@ -44,6 +45,7 @@
               <span class="col-src">
                 <span class="src-tag" :class="`src-${row.source}`">{{ row.source }}</span>
               </span>
+              <span class="col-time">{{ row.time }}</span>
               <span class="col-msg">{{ row.line }}</span>
             </div>
           </div>
@@ -101,8 +103,15 @@ const liveCount = computed(() => filtered.value.length)
 
 function clearLines() { lines.value = [] }
 
+function parseTime(line) {
+  // app logger 格式：06-26 08:03:21 INFO ...  → 取 HH:MM:SS
+  const m = line.match(/^\d{2}-\d{2} (\d{2}:\d{2}:\d{2})/)
+  if (m) return m[1]
+  return new Date().toTimeString().slice(0, 8)
+}
+
 function addLine(source, line) {
-  lines.value.push({ id: uid++, source, line })
+  lines.value.push({ id: uid++, source, line, time: parseTime(line) })
   if (lines.value.length > 2000) lines.value.splice(0, 200)
   if (autoScroll.value) {
     nextTick(() => {
@@ -187,7 +196,7 @@ onUnmounted(() => { sse?.close() })
 }
 
 .lt-head {
-  display: grid; grid-template-columns: 96px 1fr;
+  display: grid; grid-template-columns: 96px 72px 1fr;
   padding: 10px 16px;
   font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
   color: rgba(255,255,255,0.25);
@@ -203,7 +212,7 @@ onUnmounted(() => { sse?.close() })
 .lt-row:last-child { border-bottom: none; }
 
 .lt-main {
-  display: grid; grid-template-columns: 96px 1fr;
+  display: grid; grid-template-columns: 96px 72px 1fr;
   padding: 6px 16px; align-items: baseline; gap: 0;
   font-size: 12px; font-family: 'SF Mono','Fira Code','Consolas',monospace;
 }
@@ -211,6 +220,7 @@ onUnmounted(() => { sse?.close() })
 .lt-row.lvl-error   .col-msg { color: rgba(240,120,120,0.9); }
 .lt-row.lvl-warning .col-msg { color: rgba(230,180,80,0.9); }
 .lt-row.lvl-info    .col-msg { color: rgba(255,255,255,0.7); }
+.col-time { font-size: 11px; color: rgba(255,255,255,0.25); white-space: nowrap; padding-top: 1px; }
 .col-msg { color: rgba(255,255,255,0.45); word-break: break-all; white-space: pre-wrap; line-height: 1.55; }
 
 .src-tag {

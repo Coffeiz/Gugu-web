@@ -18,7 +18,7 @@ from app.services.storage import get_storage
 from app.api.v1.files import (
     _build_key, _resolve_conflict, _fmt_size, _move_to_trash, _color,
 )
-from agent.skills.base import BaseSkill, Tool
+from agent.tools.base import BaseSkill, Tool
 
 # 可读/可改的文本类扩展名
 TEXT_EXTS = frozenset({

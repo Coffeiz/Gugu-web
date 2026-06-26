@@ -3,7 +3,7 @@
 仅在 IM 对话（目前飞书）里可用：上下文（平台/message_id/channel_id）由 worker 经
 agent.imctx 透传。web 对话没有「可回应的消息」，调用时直接返回不可用。
 """
-from agent.skills.base import BaseSkill, Tool
+from agent.tools.base import BaseSkill, Tool
 
 # 情绪 → 飞书 emoji_type（飞书表情 key）。挑了较稳的几个；个别若飞书不认会在日志报
 # `reaction 失败 emoji=...`，照着飞书表情列表改这里即可。

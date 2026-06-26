@@ -22,6 +22,8 @@ lark-oapi>=1.6.0
 qq-botpy>=1.2.0
 # Utils
 python-dotenv>=1.0.0
+pypinyin>=0.50.0
+pykakasi>=2.2.0
 uuid6>=2024.1.12
 email-validator>=2.0.0
 pendulum>=3.0.0

@@ -44,7 +44,18 @@
           </svg>
           {{ project.client }}
         </span>
-        <span class="proj-stage">{{ currentStageLabel }}</span>
+        <span
+          class="proj-stage"
+          :class="{ open: stagePopOpen }"
+          ref="stageRef"
+          :title="currentStageLabel"
+          @click.stop="openStagePop"
+          @mousedown.stop
+        >
+          <span class="ps-label">{{ currentStageLabel || '阶段' }}</span>
+          <span v-if="curTodoTotal" class="ps-count">{{ curDoneCount }}/{{ curTodoTotal }}</span>
+          <svg class="ps-caret" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
+        </span>
       </div>
 
       <div class="card-footer">
@@ -112,14 +123,44 @@
       </svg>
     </button>
   </div>
+
+  <!-- 当前阶段待办弹层（点击阶段名弹出） -->
+  <Teleport to="body">
+    <div v-if="stagePopOpen" class="todo-pop" :style="stagePopStyle" ref="stagePopRef" @click.stop @mousedown.stop>
+      <div class="tp-header">
+        <span class="tp-title">{{ currentStageLabel || '当前阶段' }}</span>
+        <span v-if="curTodoTotal" class="tp-count">{{ curDoneCount }}/{{ curTodoTotal }}</span>
+        <button class="popup-close-btn" @click="closeStagePop" title="关闭"><PhX :size="11" weight="bold" /></button>
+      </div>
+      <div v-if="curTodoTotal" class="tp-list">
+        <div v-for="t in currentTodos" :key="t.id" class="tp-item">
+          <button class="tp-check" :class="{ checked: t.done }" @click="toggleTodo(t)">
+            <PhCheck v-if="t.done" :size="9" weight="bold" />
+          </button>
+          <input
+            class="tp-input"
+            v-model="t.text"
+            :style="t.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
+            placeholder="待办事项"
+            @blur="persistTodos"
+            @keydown.enter="persistTodos"
+            @keydown.backspace="!t.text && removeTodo(t.id)"
+          />
+          <button class="tp-del" @click="removeTodo(t.id)" title="删除"><PhX :size="8" weight="bold" /></button>
+        </div>
+      </div>
+      <div v-else class="tp-empty">还没有待办</div>
+      <button class="tp-add" @click="addTodo">＋ 添加待办</button>
+    </div>
+  </Teleport>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, nextTick, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
-import { PhCheck } from '@phosphor-icons/vue'
+import { PhCheck, PhX } from '@phosphor-icons/vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
 
@@ -158,6 +199,69 @@ const currentStageIndex = computed(() =>
 const currentStageLabel = computed(() =>
   props.project.stages[currentStageIndex.value]?.label ?? ''
 )
+
+// ── 当前阶段待办弹层（点击右侧阶段名弹出）────────────────────────
+const currentStage = computed(() => props.project.stages[currentStageIndex.value] ?? null)
+const currentTodos = computed(() => currentStage.value?.todos ?? [])
+const curTodoTotal = computed(() => currentTodos.value.length)
+const curDoneCount = computed(() => currentTodos.value.filter(t => t.done).length)
+
+const stagePopOpen  = ref(false)
+const stagePopStyle = ref({})
+const stagePopRef   = ref(null)
+const stageRef      = ref(null)
+
+function openStagePop() {
+  if (stagePopOpen.value) { closeStagePop(); return }
+  const rect = stageRef.value?.getBoundingClientRect()
+  if (!rect) return
+  stagePopOpen.value = true
+  nextTick(() => {
+    const popW = 224
+    const popH = stagePopRef.value?.offsetHeight ?? 180
+    let left = rect.right - popW                          // 右对齐到阶段名右端
+    left = Math.max(8, Math.min(left, window.innerWidth - popW - 8))
+    let top = rect.bottom + 6                             // 默认在阶段名下方
+    if (top + popH > window.innerHeight - 8) top = rect.top - popH - 6   // 放不下转上方
+    if (top < 8) top = 8
+    stagePopStyle.value = { position: 'fixed', left: left + 'px', top: top + 'px', width: popW + 'px', zIndex: 11000 }
+    document.addEventListener('mousedown', onDocDown)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', closeStagePop, true)
+  })
+}
+function closeStagePop() {
+  if (!stagePopOpen.value) return
+  stagePopOpen.value = false
+  document.removeEventListener('mousedown', onDocDown)
+  document.removeEventListener('keydown', onKey)
+  window.removeEventListener('scroll', closeStagePop, true)
+}
+function onDocDown(e) {
+  if (stagePopRef.value && !stagePopRef.value.contains(e.target) &&
+      stageRef.value && !stageRef.value.contains(e.target)) closeStagePop()
+}
+function onKey(e) { if (e.key === 'Escape') closeStagePop() }
+
+function persistTodos() { projectStore.updateStages(props.project.id, props.project.stages) }
+function toggleTodo(t) { t.done = !t.done; t.autoCompleted = false; persistTodos() }
+function addTodo() {
+  const s = currentStage.value; if (!s) return
+  if (!s.todos) s.todos = []
+  s.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
+  persistTodos()
+  nextTick(() => {
+    const inputs = stagePopRef.value?.querySelectorAll('.tp-input')
+    inputs?.[inputs.length - 1]?.focus()
+  })
+}
+function removeTodo(id) {
+  const s = currentStage.value; if (!s) return
+  s.todos = (s.todos ?? []).filter(t => t.id !== id)
+  persistTodos()
+}
+
+onUnmounted(closeStagePop)
 const stageProgress = computed(() => {
   // 总完成度 = 所有阶段待办里已完成 / 总数（与总览页、项目编辑卡头部口径一致）；无待办则退回阶段位置
   const stages = props.project.stages
@@ -341,7 +445,7 @@ async function setPriority(n) {
 .proj-card:hover::after {
   background: linear-gradient(to top, rgba(255,255,255,0.25), rgba(255,255,255,0.05) 50%);
 }
-.proj-card:active:not(:has(.stars:active, .seg-bar-wrap:active)) { transform: translateY(1px); opacity: 0.93; }
+.proj-card:active:not(:has(.stars:active, .seg-bar-wrap:active, .proj-stage:active)) { transform: translateY(1px); opacity: 0.93; }
 
 .card-body { flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card-top { display: flex; align-items: flex-start; gap: 6px; }
@@ -363,9 +467,60 @@ async function setPriority(n) {
 .proj-client svg { flex-shrink: 0; opacity: 0.85; }
 .proj-client.empty { opacity: 0.75; }
 .proj-stage {
+  display: inline-flex; align-items: center; gap: 4px;
   font-size: 10px; color: var(--text-secondary);
-  opacity: 0.6; white-space: nowrap; flex-shrink: 0;
+  white-space: nowrap; flex-shrink: 0; opacity: 0.75;
+  padding: 2px 5px; margin: -2px -4px; border-radius: 6px;
+  cursor: pointer; transition: background 0.12s, opacity 0.12s;
 }
+.proj-stage:hover, .proj-stage.open { background: rgba(0,0,0,0.06); opacity: 1; }
+.ps-label { overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
+.ps-count { font-size: 9px; opacity: 0.8; font-variant-numeric: tabular-nums; }
+.ps-caret { opacity: 0.5; flex-shrink: 0; transition: transform 0.16s; }
+.proj-stage.open .ps-caret { transform: rotate(180deg); }
+
+/* 当前阶段待办弹层（Teleport 到 body，通用弹窗风格） */
+.todo-pop {
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255,255,255,0.75); border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12);
+  padding: 14px 14px 12px; font-family: var(--font-sans); box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.tp-header { display: flex; align-items: center; gap: 6px; }
+.tp-title { font-size: 13px; font-weight: 700; color: #1e2028; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-count { font-size: 11px; color: var(--text-secondary); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.tp-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
+.tp-list::-webkit-scrollbar { width: 3px; }
+.tp-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.14); border-radius: 99px; }
+.tp-item { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 8px; }
+.tp-item:hover { background: rgba(0,0,0,0.04); }
+.tp-check {
+  width: 15px; height: 15px; border-radius: 5px; flex-shrink: 0;
+  border: 1.5px solid rgba(0,0,0,0.22); background: none; color: #fff;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+  transition: background 0.12s, border-color 0.12s;
+}
+.tp-check.checked { background: var(--color-primary); border-color: var(--color-primary); }
+.tp-input {
+  flex: 1; min-width: 0; border: none; background: none; outline: none;
+  font-size: 12px; color: var(--text-primary); font-family: var(--font-sans); padding: 2px 0;
+}
+.tp-del {
+  flex-shrink: 0; width: 16px; height: 16px; border: none; background: none;
+  color: var(--text-secondary); opacity: 0; cursor: pointer; padding: 0; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center; transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.tp-item:hover .tp-del { opacity: 0.55; }
+.tp-del:hover { opacity: 1 !important; background: rgba(200,80,80,0.12); color: #c85050; }
+.tp-empty { font-size: 12px; color: var(--text-secondary); opacity: 0.55; text-align: center; padding: 6px 0 4px; }
+.tp-add {
+  width: 100%; padding: 6px; border: 1px dashed rgba(0,0,0,0.15);
+  background: none; border-radius: 9px; font-size: 12px; color: var(--text-secondary);
+  cursor: pointer; font-family: var(--font-sans); transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.tp-add:hover { background: rgba(123,127,178,0.08); color: var(--color-primary); border-color: rgba(123,127,178,0.4); }
 
 .card-footer { display: flex; align-items: center; justify-content: space-between; }
 .footer-right { display: flex; align-items: center; gap: 5px; }

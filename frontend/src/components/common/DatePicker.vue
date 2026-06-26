@@ -2,7 +2,7 @@
   <div class="dp-wrap" ref="wrapRef">
     <div
       class="dp-input"
-      :class="{ 'has-value': modelValue, placeholder: !modelValue }"
+      :class="{ 'has-value': modelValue, placeholder: !modelValue, open }"
       @click="toggle"
     >
       <svg class="dp-icon" width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
@@ -242,18 +242,21 @@ watch(() => props.modelValue, v => {
 
 .dp-input {
   display: flex; align-items: center; justify-content: center; gap: 7px;
-  padding: 9px 12px;
-  background: rgba(255,255,255,0.6);
-  border: 1px solid rgba(255,255,255,0.8);
+  padding: 8px 11px;
+  background: rgba(255,255,255,0.72);
+  border: 1px solid rgba(0,0,0,0.1);
   border-radius: var(--radius-sm, 10px);
   font-size: 13px; color: var(--text-primary, #1e2028);
   cursor: pointer; user-select: none;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .dp-input:hover {
   border-color: rgba(123,127,178,0.35);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08);
+  box-shadow: 0 0 0 3px rgba(123,127,178,0.08);
+}
+.dp-input.open {
+  border-color: rgba(123,127,178,0.4);
+  box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
 }
 .dp-input.placeholder span { color: var(--text-secondary, #8a8fa8); opacity: 0.6; font-size: 13px; }
 .dp-icon { color: var(--text-secondary, #8a8fa8); flex-shrink: 0; }

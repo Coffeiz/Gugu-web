@@ -138,6 +138,7 @@
 
         <div v-if="selectedEvents.length" class="sidebar-events">
           <div v-for="ev in selectedEvents" :key="ev.id" class="sidebar-ev"
+               :data-event-id="ev.id"
                :style="{ cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
                @click.left="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event))"
                @contextmenu.prevent="ev.isUserEvent && openEditForm(ev, $event)"
@@ -1093,6 +1094,27 @@ function buildUpcomingList() {
 watch([projectTimelines, extraEvents, nextMonthEvents], buildUpcomingList, { immediate: true })
 watch(activeRange, r => { uiStore.calendarActiveRange = r })
 
+// 搜索跳转：导航到日程所在月份并高亮
+watch(() => uiStore.pendingCalendarEvent, async (target) => {
+  if (!target) return
+  uiStore.pendingCalendarEvent = null
+  const d = new Date(target.date + 'T00:00:00')
+  cursor.value = new Date(d.getFullYear(), d.getMonth(), 1)
+  selectedDate.value = target.date
+  await nextTick()
+  _flashCalendarEvent(target.id)
+})
+
+function _flashCalendarEvent(id) {
+  setTimeout(() => {
+    const el = document.querySelector(`[data-event-id="${id}"]`)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add('search-flash')
+    setTimeout(() => el.classList.remove('search-flash'), 1800)
+  }, 150)
+}
+
 function openAddForm() {
   newEvent.value = { name: '', date: selectedDate.value || todayIso.value, description: '' }
   const btnEl = addBtnRef.value
@@ -1539,4 +1561,12 @@ async function saveEvent() {
 .form-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
 .form-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .form-pop-enter-from, .form-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-6px); }
+
+/* 搜索跳转高亮 */
+.search-flash { animation: search-flash 1.8s ease forwards; border-radius: 10px; }
+@keyframes search-flash {
+  0%   { background: rgba(123,127,178,0.22); }
+  35%  { background: rgba(123,127,178,0.22); }
+  100% { background: transparent; }
+}
 </style>

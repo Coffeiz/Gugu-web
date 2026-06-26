@@ -73,3 +73,17 @@ async def load_memory(user_id) -> dict:
     """读取用户 .agent/ 记忆，返回 {facts, daily}（缺失为空串）。"""
     from agent.memory import store
     return await store.read_memory(user_id)
+
+
+async def load_style_prefs(db, user_id) -> dict:
+    """读取用户回复风格偏好（reply_tone / reply_length），缺失键直接省略。
+    （emoji 风格不开放给用户选，由 persona 统一管，见 builder._style_block。）"""
+    from app.models import UserPreferences
+    result = await db.execute(
+        select(UserPreferences).where(UserPreferences.user_id == user_id)
+    )
+    prefs = result.scalar_one_or_none()
+    if prefs is None:
+        return {}
+    data = prefs.data
+    return {k: data[k] for k in ("reply_tone", "reply_length") if data.get(k)}

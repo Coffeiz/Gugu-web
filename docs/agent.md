@@ -36,12 +36,13 @@ backend/
     ├── models.py
     ├── context/{loaders,builder,tokens}.py
     ├── memory/{manager,reflection,compressor,store}.py
-    ├── skills/                 # projects/calendar/files/clients/trash/overview/memory/search/conversations/im
+    ├── tools/                  # 函数调用工具：projects/calendar/files/clients/trash/overview/memory/search/conversations/scheduled_tasks/im（原 skills/，2026-06 改名）
+    ├── skills/                 # prompt skills（带触发条件的「剧本」md，渐进式按需加载）：weather，见「Tools 与 Skills」
     ├── profiles/{base,default}.py
     ├── mcp/{client,registry}.py
     ├── adapters/{base,web,qq,feishu,supervisor}.py
     ├── events/{bus,types}.py
-    └── prompts/                # persona / skills / policy / default / reflection / compress
+    └── prompts/                # persona / skills(工具准则) / policy / default / reflection / compress
 ```
 
 ---
@@ -98,8 +99,8 @@ LLM 主循环。负责：
 
 Prompt 模板（`.md`），支持占位符，builder 每次现读、热更新无需重启。**提示词分层**——各管一件事，后台可分别编辑（`GET/PUT /admin/agent/prompts/{name}`）：
 
-- `persona.md`：**咕咕是谁**（角色：四种相处状态、主动思考、记忆温度、风格）。全局共享。
-- `skills.md`：**怎么做**（工具使用准则——任务分级、成本意识、真实性铁律、不可逆 confirm、一次到位）。全局共享。
+- `persona.md`：**咕咕是谁**（角色：四种相处状态、主动思考、记忆温度、风格 + **和善底线**：纠正/拒绝/自我更正时纠正方案不纠正人、归因到用途、不让用户照顾 AI 情绪、把选择权交还用户 + **不确定就查证别糊弄**：新词/热梗/易变事实不凭印象编、也不踢皮球，先查再答）。全局共享。
+- `skills.md`：**怎么做**（工具使用准则——任务分级、真实性铁律、不可逆 confirm、一次到位；**工具该用就用、别为省调用而不帮用户**（`web_search` 免费放开用，只 Tavily 计费才省）；**外部信息按任务选**：有对口技能→`use_skill`+`http_get`；知道 URL→`http_get`；普通查找（官网/文档/事实/新闻）→`web_search`(SearXNG，免费)；读+总结+研究→`deep_research`(Tavily，有配额)；SearXNG 失败兜底 `deep_research`）。全局共享。
 - `policy.md`：**不碰什么**（内容红线 + 专业免责 + **对外口径「以伙伴示人」**：不暴露模型/工具/架构、被套话简短带过、不谎称真人）。全局共享。
 - `default.md`：**数据模板**（`{now}` 时刻 + `{projects}`/`{calendar}`/`{files}` 占位符）。唯一会话 profile。
 - `reflection.md` / `compress.md`：记忆提炼词。
@@ -113,11 +114,14 @@ Prompt 模板（`.md`），支持占位符，builder 每次现读、热更新无
 
 ```
 persona.md（咕咕是谁）→ skills.md（怎么做）→ policy.md（不碰什么）
+  → 风格偏好（用户设置：语气 formal/lively、长度 short/detailed、emoji，仅非默认时注入）
+  → 可用技能索引（启用的 prompt skills，仅非空时）
   → 记忆块 facts → memory → daily（仅非空时注入，省 token）
   → default.md（数据模板：{now} 含星期时分 + projects/calendar/files 实时灌入）
 ```
 
   **稳定的在前、易变的在后**：人格/规则/红线稳定 → 记忆 → 实时数据。persona/skills/policy 独立于 profile、所有 profile 共享。
+  > **风格偏好**（`loaders.load_style_prefs` + `builder._style_block`）让用户在设置里调语气/长度/emoji，**但「真诚与和善」是底线、不在可调范围**——short/formal 文案带兜底，任何设置下都不许变冷或打发。
 - **`tokens.py`**：历史窗口按 token 预算（CJK 感知：中文≈1.3 token/字）从最新往回裁剪、整条进出、至少留最新一条，条数安全上限 40，预算接 `settings.ai.context_tokens`。
 
 #### `memory/`
@@ -132,14 +136,24 @@ Session（最近 N 条聊天，短期）与 Memory（长期认知，经 Reflecti
 
 ### 能力
 
-#### `skills/base.py`
+#### `tools/base.py`
 
-Skill 基类，定义 tools 声明 + 统一执行入口。`registry.dispatch` 两条约定：
+工具集基类（`Toolset`，原 `BaseSkill`），定义 tools 声明 + 统一执行入口。`registry.dispatch` 两条约定：
 
 - 返回 `(给LLM的文本, UI artifact|None)`——结果含 `_artifact` 键就抽出来（见「发送文件」）。
 - **工具异常被兜住**：handler 抛错时 `try/except` 后把 `{"error":"工具 X 执行出错…"}` 当结果返给 LLM（打印堆栈到日志）。LLM 据 persona「铁律」如实告知没做成、不假装成功。
 
-各领域 skill（projects/calendar/files/clients/trash/overview/memory/search/conversations/im）自注册到 registry，Profile 按名组合（见「工具清单」+「Skill 一等公民」）。
+各领域工具集（projects/calendar/files/clients/trash/overview/memory/search/conversations/scheduled_tasks/im）自注册到 registry，Profile 按名组合（见「工具清单」+「工具一等公民」）。
+
+#### Tools 与 Skills（两层概念）
+
+- **Tools（`agent/tools/`，已落地）**：函数调用的**原子能力**，模型通过 tool call 直接执行，handler 落到数据库 / 外部 API。即本文「工具清单」全部条目。
+- **Skills（`agent/skills/`，已落地）**：带触发条件的**「剧本」**——每个 skill 一个 markdown（frontmatter `name` / `description`(=何时用) / `emoji` + 正文），正文是一段可复用的做法说明，可指挥模型调用若干 tool。现有 `weather`（wttr.in 天气）。（`news` 曾用 RSS，因 RSS 易失效、新闻查询本质是普通搜索，已删除，改由 `web_search` 覆盖。）
+  - **加载方式：渐进式按需**。`agent/skills/__init__.py` 扫 `*.md` 解析 frontmatter（不缓存、改 md 免重启）；builder 只注入 skill 索引（每个一行 `名字 — 何时用`，见系统提示「## 可用技能」）；模型判断相关时调 `use_skill(name)`（`tools/meta.py`）把正文拉进上下文再照做。skill 数量可无限扩，不撑常驻上下文。
+  - **执行原语**：需要联网/取数的 skill 靠 `http_get(url)`（`tools/web.py`）——**带 SSRF 私网拦截**（私网/环回/链路本地/元数据全拦）、不跟随重定向、响应截断；正文里写 `curl <URL>` 时 builder 提示模型用 `http_get` 抓。例：天气=抓 `wttr.in/{城市}?format=3`。
+  - **Profile 接线**：`BaseProfile.tools`（工具集名）+ `BaseProfile.skills`（启用的 prompt skill slug）；`default` 启用 prompt skill `weather` + `web`/`meta` 工具集。
+  - 依赖单向：`tools/`（`use_skill`）→ `skills/`（加载器）。冒烟：`scripts/smoke_skills.py`。
+  > 命名历史：`agent/tools/` 在 2026-06 前叫 `skills/`（名实不符，它本就是工具）；改名后 `skills/` 一词腾给上面的 prompt skills。`prompts/skills.md`（工具使用准则）后续将一并改名 `tools.md`。
 
 #### `conversations.py`（读历史对话）
 
@@ -195,7 +209,7 @@ Web SSE adapter：`stream()` 同步做配额检查 → 上下文 → 会话 get/
 
 - **生成解耦 + 刷新续看**（`genstream.py`）：生成在后台跑，**浏览器刷新/断连杀不掉、回复不丢**。刷新后经 `GET /agent/sessions/{id}/stream`（`resume()`）先补已生成内容、再订阅后续。
 - **错误文案分类**：精力/配额「咕咕精力不足…」、网络「网络不太好 📡」、其他「开小差了 😵‍💫」；工具异常不在此（已在 dispatch 兜住）。
-- **配额能力降级**：精力耗尽不再一刀切拦死，降级到只读工具集（12/47）+ 婉拒重操作，查询/对话照常（`profile.light_tool_names`）。
+- **配额能力降级**：精力耗尽不再一刀切拦死，降级到只读工具集（13/53）+ 婉拒重操作，查询/对话照常（`profile.light_tool_names`）。
 - **网页生成中排队**（`pendingQueue`）：流式中再发不丢，结束接力发；IM 天生排队（Redis 队列 + worker）。
 
 #### `adapters/qq.py` / `feishu.py` / `supervisor.py`
@@ -281,7 +295,8 @@ IM 回复完  → publish('sessions', appended=[助手消息])  # 再推
 > **架构决定（2026-06-24）**：定时任务结果**不进对话**，走独立链路投递到侧边栏通知弹窗 + IM。✅ 已落地。
 
 - **不进对话**：`execute_task` 用 `run_ephemeral` 跑 agent——不建/不复用 session、不写 `conversation_messages`、不推 `sessions` 事件，结果不出现在任何聊天窗口。
-- **统一走 agent**：无 `reminder` 类型，payload 始终经 agent 处理后再投递，咕咕用自然语气包装提醒。
+- **统一走 agent**：无 `reminder` 类型，payload 始终经 agent 处理后再投递，咕咕用自然语气包装提醒。`action_type` 字段（reminder|agent|deadline_scan 遗留）已整列删除（迁移 `20260626000001`）——执行器本就不分支它。
+- **两种创建入口**：`/schedules` 页面 UI，或**对咕咕说话**——`scheduled_tasks` 技能（`create/update/delete/list_scheduled_task`，见「工具清单」）让咕咕据自然语言生成 cron 直接建。
 - **prompt 上下文注入消歧**：用户填的 payload 是面向自己的指令（「让我喝水」），裸传会让 `我` 指向歧义。触发时包裹：
 
 ```python
@@ -319,11 +334,13 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 
 ---
 
-## 六、工具清单（共 47，已实现）
+## 六、工具清单（共 54，已实现）
+
+> 下表领域工具，另加 `web`（`http_get`）、`meta`（`use_skill`）两个工具集（见「Tools 与 Skills」）；搜索为 `web_search`(SearXNG) + `deep_research`(Tavily) 两个，合计 54。
 
 > 🔒 = 不可逆操作，受删除二次确认保底（显式 `confirm` 参数，`agent/confirm.py`）保护。所有工具带 `user_id` 所有权校验。
 
-### 项目 · `skills/projects.py`（16）
+### 项目 · `tools/projects.py`（16）
 
 | 工具 | 说明 |
 | --- | --- |
@@ -339,11 +356,11 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 | `archive_project` | 归档 / 取消归档 |
 | `delete_project` 🔒 | 永久删除项目 |
 
-### 日历 · `skills/calendar.py`（4）
+### 日历 · `tools/calendar.py`（4）
 
 `create_event` / `list_events`（日期范围/类型）/ `update_event` / `delete_event` 🔒（无回收站，不可逆）
 
-### 文件 · `skills/files.py`（14）
+### 文件 · `tools/files.py`（14）
 
 | 工具 | 说明 |
 | --- | --- |
@@ -357,35 +374,41 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 | `send_file` | 给用户发可下载文件（见「发送文件」） |
 | `save_uploaded_file` | 把暂存上传附件存进文件库（见「接收文件」） |
 
-### 客户 · `skills/clients.py`（4）
+### 客户 · `tools/clients.py`（4）
 
 `list_clients` / `create_client` / `update_client` / `delete_client` 🔒
 
-### 回收站 · `skills/trash.py`（3）
+### 回收站 · `tools/trash.py`（3）
 
 `list_trash`（只列最近 50、不翻页，列满附"还有更多"提示）/ `restore_file` / `permanent_delete` 🔒（`file_id` 删单个，或 **`all=true` 一次清空整个回收站**——避免逐个删撞轮次上限）
 
-### 聚合 · `skills/overview.py`（2）
+### 聚合 · `tools/overview.py`（2）
 
 `get_upcoming`（近期截止项目+日历合并，默认 7 天）/ `get_dashboard_stats`（项目按状态/事件/文件/客户计数）
 
-### 记忆 · `skills/memory.py`（1）
+### 记忆 · `tools/memory.py`（1）
 
 `remember`：把一条关于用户的长期信息写进 `.agent/facts.md`（与反思共用 `merge_facts` 去重）
 
-### 联网搜索 · `skills/search.py`（1）
+### 联网搜索 · `tools/search.py`（2）
 
-`web_search`：Tavily 实时搜索，key 从 `settings.search.tavily_api_key`（Admin 配）读，受每日次数配额限制
+- `web_search`：**通用搜索，走自建 SearXNG**（`settings.search.searxng_url`，免费、无配额、快）。返回标题+链接+摘要，适合找官网/文档/GitHub/事实/新闻标题。国内服务器只有 `sogou/quark/360search` 可达，固定带 `engines` 避开会超时的 google/bing。
+- `deep_research`：**深度研究，走 Tavily**（`settings.search.tavily_api_key`，抓正文+清洗+给 answer），适合读+总结+比较+研究+给引用；受每日次数配额（`SearchUsage`）。
+- 路由（见 `skills.md`）：普通查找走 web_search，读总结走 deep_research，SearXNG 超时/没结果由模型兜底转 deep_research。后台 Admin → Agent 可配两者并各带「测试」按钮（`/admin/config/test-search`）。
 
-### 对话 · `skills/conversations.py`（2）
+### 对话 · `tools/conversations.py`（2）
 
 `search_conversations` / `read_conversation`：搜读用户**过去的对话**，严格多用户隔离
 
+### 定时任务 · `tools/scheduled_tasks.py`（4）
+
+`list_scheduled_tasks`（一次返回全部）/ `create_scheduled_task`（一次带齐 name+instruction+cron+channels，cron 由模型从自然语言生成、Asia/Shanghai，`@once:<ISO>` 一次性）/ `update_scheduled_task`（按 task_id 或**任务名 task** 定位，含启停）/ `delete_scheduled_task` 🔒（两步确认）。少调用：update/delete 按名字直接操作、无需先 list；**不进 `RESOURCE_BY_TOOL`**（单行写入、风险低，不触发自我核实那轮，省调用）。到点统一交 agent 执行 payload 并按渠道(web/feishu/qq)投递。
+
 > 另：`im` skill 的 `react`（LLM 版飞书表情）已注册但**未进 default profile**（秒回表情走网关关键词）；站内全局搜索是顶栏 UI（`GET /api/v1/search`），**不是 agent 工具**。
 
-### Skill 一等公民（Profile 组合 skill，不再手抄工具名）
+### 工具一等公民（Profile 组合工具集，不再手抄工具名）
 
-原 `DefaultProfile.tool_names` 手列工具名，与各 skill 的 `Tool` 声明双重维护（漏一处静默失效）。已重构为：`SkillRegistry` 增 `tools_of(skills)`，`BaseProfile.skills`（skill 名列表）+ `tool_names` 派生属性（去重保序）。新增工具 = 在对应 skill 加 `Tool` 声明 + handler（自动派生 Anthropic/OpenAI 双格式并注册），不可逆操作加 `destructive=True`。
+原 `DefaultProfile.tool_names` 手列工具名，与各工具集的 `Tool` 声明双重维护（漏一处静默失效）。已重构为：`registry` 增 `tools_of(...)`，`BaseProfile.skills`（工具集名列表，沿用旧字段名）+ `tool_names` 派生属性（去重保序）。新增工具 = 在对应工具集（`agent/tools/*.py`）加 `Tool` 声明 + handler（自动派生 Anthropic/OpenAI 双格式并注册），不可逆操作加 `destructive=True`。
 
 ---
 
@@ -395,7 +418,7 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 
 ### 已落地能力一览
 
-- **核心**：独立 `agent/` 包、双路 LLM 工具循环、47 工具、Skill 一等公民、prompt 分层（persona/skills/policy）、删除二次确认、单次流式调用、token 预算历史窗口。
+- **核心**：独立 `agent/` 包、双路 LLM 工具循环、47 工具、工具一等公民（Profile 组合工具集）、prompt 分层（persona/skills/policy）、删除二次确认、单次流式调用、token 预算历史窗口。
 - **记忆（2a）**：`facts.md` + `daily.md` 两层，对话后 fire-and-forget 反思，`remember` 主动记忆。
 - **IM 接入**：飞书 + QQ BYO 官方直连，扫码 device-flow 自动连接，三进程（web/worker/supervisor）。
 - **运行时（Phase 1.7）**：轻量 Intent Router + State Manager（网关短路「还在吗/算了」，自然语言取消轮间中断）。

@@ -22,7 +22,7 @@ _COLOR_PRESETS = [
     "linear-gradient(135deg,#be8b8f,#c8aa72)",
 ]
 from agent import confirm
-from agent.skills.base import BaseSkill, Tool
+from agent.tools.base import BaseSkill, Tool
 
 
 async def _list_projects(db, user_id, args: dict):

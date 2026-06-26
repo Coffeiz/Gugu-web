@@ -24,10 +24,14 @@
     <!-- AI 悬浮球 -->
     <GuguChat />
 
+    <!-- 通知气泡 -->
+    <NotificationBubble />
+
     <!-- 新建项目 Modal -->
     <NewProjectModal
       :show="uiStore.openNewProject"
-      @close="uiStore.openNewProject = false"
+      :initStatus="uiStore.newProjectInitStatus"
+      @close="uiStore.openNewProject = false; uiStore.newProjectInitStatus = null"
     />
 
     <!-- 全局项目编辑 Modal -->
@@ -79,7 +83,8 @@ import ProjectModal    from '@/views/Projects/components/ProjectModal.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
 import FilePreviewModal    from '@/components/common/FilePreviewModal.vue'
 import ProfileModal        from '@/components/common/ProfileModal.vue'
-import FloatPreviewWindow  from '@/components/common/FloatPreviewWindow.vue'
+import FloatPreviewWindow    from '@/components/common/FloatPreviewWindow.vue'
+import NotificationBubble   from '@/components/common/NotificationBubble.vue'
 import { usePreviewStore, isAudioExt } from '@/stores/preview'
 import { useAudioStore } from '@/stores/audio'
 import { usePreferencesStore } from '@/stores/preferences'

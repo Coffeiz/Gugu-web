@@ -212,7 +212,7 @@ async def get_session_messages(
         "session": {"id": session.id, "title": session.title},
         "active": await genstream.is_active(session_id),   # 该会话是否正在生成（前端据此续看）
         "messages": [
-            {"role": m.role, "content": m.content, "files": m.files or [],
+            {"id": m.id, "role": m.role, "content": m.content, "files": m.files or [],
              "createdAt": m.created_at.isoformat()}
             for m in msgs
         ],

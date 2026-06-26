@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.models import Client
 from agent import confirm
-from agent.skills.base import BaseSkill, Tool
+from agent.tools.base import BaseSkill, Tool
 
 
 async def _list_clients(db, user_id, args: dict):

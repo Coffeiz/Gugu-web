@@ -423,24 +423,70 @@
           </div>
           <div class="card-title-block">
             <h3>联网搜索</h3>
-            <p>Tavily 搜索 API，让咕咕能查实时网络信息（每日次数上限在「配额管理」设置）</p>
+            <p>通用搜索走自建 SearXNG（免费、不计配额），深度研究 / 总结走 Tavily（有每日次数上限，在「配额管理」设置）</p>
           </div>
         </div>
 
         <div class="behavior-grid">
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label">
-              <span>Tavily API Key</span>
-              <span class="behavior-desc">留空表示不修改；清空并保存不会删除已存的 key</span>
+              <span>SearXNG 地址（通用搜索 web_search）</span>
+              <span class="behavior-desc">自建 SearXNG 实例地址，留空=禁用通用搜索、全部走 Tavily。同机填 http://127.0.0.1:端口，内网/1Panel 部署填对应内网 IP:端口</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:0;">
+              <span v-if="searchTest.searxng.msg" :title="searchTest.searxng.msg"
+                    :style="{ color: searchTest.searxng.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
+                {{ searchTest.searxng.msg }}
+              </span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.searxng.loading" @click="testSearch('searxng')">
+                {{ searchTest.searxng.loading ? '测试中…' : '测试' }}
+              </button>
+              <input
+                type="text"
+                class="behavior-input"
+                style="width: 280px; flex-shrink:0;"
+                v-model="searchDraft.searxng_url"
+                placeholder="http://127.0.0.1:8888（留空=禁用）"
+              />
+            </div>
+          </div>
+
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>SearXNG 引擎</span>
+              <span class="behavior-desc">逗号分隔。国内服务器一般只有这几个可达；google/bing 会超时</span>
             </div>
             <input
-              type="password"
+              type="text"
               class="behavior-input"
               style="width: 280px;"
-              v-model="searchDraft.tavily_api_key"
-              placeholder="tvly-… （留空表示不修改）"
-              autocomplete="new-password"
+              v-model="searchDraft.searxng_engines"
+              placeholder="sogou,quark,360search"
             />
+          </div>
+
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>Tavily API Key（深度研究 deep_research）</span>
+              <span class="behavior-desc">留空表示不修改；清空并保存不会删除已存的 key</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:0;">
+              <span v-if="searchTest.tavily.msg" :title="searchTest.tavily.msg"
+                    :style="{ color: searchTest.tavily.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
+                {{ searchTest.tavily.msg }}
+              </span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.tavily.loading" @click="testSearch('tavily')">
+                {{ searchTest.tavily.loading ? '测试中…' : '测试' }}
+              </button>
+              <input
+                type="password"
+                class="behavior-input"
+                style="width: 280px; flex-shrink:0;"
+                v-model="searchDraft.tavily_api_key"
+                placeholder="tvly-… （留空表示不修改）"
+                autocomplete="new-password"
+              />
+            </div>
           </div>
 
           <div class="behavior-item">
@@ -1155,6 +1201,33 @@ const searchError   = ref('')
 
 function resetSearch() {
   Object.assign(searchDraft, configStore.cfg.search)
+}
+
+// ── 搜索连通测试（SearXNG / Tavily）──
+const searchTest = reactive({
+  searxng: { loading: false, ok: false, msg: '' },
+  tavily:  { loading: false, ok: false, msg: '' },
+})
+async function testSearch(target) {
+  const t = searchTest[target]
+  t.loading = true; t.msg = ''
+  try {
+    const payload = target === 'searxng'
+      ? { target, searxng_url: searchDraft.searxng_url || '', searxng_engines: searchDraft.searxng_engines || '' }
+      : { target, tavily_api_key: searchDraft.tavily_api_key || '' }   // 留空=用已存 key
+    const res = await adminStore.authFetch('/api/v1/admin/config/test-search', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    const data = await res.json()
+    t.ok = !!data.ok
+    t.msg = data.message || (data.ok ? 'OK' : '失败')
+  } catch (e) {
+    t.ok = false
+    t.msg = '请求失败：' + e.message
+  } finally {
+    t.loading = false
+  }
 }
 
 async function saveSearch() {

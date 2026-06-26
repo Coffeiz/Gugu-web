@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.models import CalendarEvent, Project
 from agent import confirm
-from agent.skills.base import BaseSkill, Tool
+from agent.tools.base import BaseSkill, Tool
 
 
 async def _create_event(db, user_id, args: dict):

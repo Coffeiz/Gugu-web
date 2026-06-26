@@ -62,15 +62,28 @@ async def publish(user_id, *resources: str, **extra) -> None:
         pass
 
 
+BROADCAST_CHANNEL = "events:__broadcast__"
+
+
+async def broadcast(title: str, content: str = "", color: str = "#7b7fb2") -> None:
+    """向所有在线用户推送通知气泡（best-effort）。"""
+    notification = {"title": title, "content": content, "color": color}
+    payload = {"notification": notification}
+    try:
+        await get_redis().publish(BROADCAST_CHANNEL, __import__("json").dumps(payload, ensure_ascii=False))
+    except Exception:
+        pass
+
+
 async def stream(user_id):
-    """SSE 生成器：订阅该用户频道，把每条事件以 `data: {...}` 推给浏览器。
+    """SSE 生成器：订阅该用户频道 + 全局广播频道，把每条事件以 `data: {...}` 推给浏览器。
 
     无消息时每 ~20s 发一个注释行做 keepalive（防代理掐断空闲连接）。
     连接断开时 finally 里清理订阅。
     """
     pubsub = get_redis().pubsub()
     ch = _channel(user_id)
-    await pubsub.subscribe(ch)
+    await pubsub.subscribe(ch, BROADCAST_CHANNEL)
     try:
         yield ": connected\n\n"
         while True:

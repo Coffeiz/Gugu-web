@@ -6,7 +6,7 @@ handler 不需要 db（记忆走文件），但保持 (db, user_id, args) 统一
 import json
 
 from agent.memory import store
-from agent.skills.base import BaseSkill, Tool
+from agent.tools.base import BaseSkill, Tool
 
 
 async def _remember(db, user_id, args: dict):

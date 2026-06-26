@@ -9,6 +9,92 @@
 
 ## [Unreleased]
 
+### Agent 搜索分层：自建 SearXNG（通用、免费）+ Tavily（深度）
+
+- **`web_search` → 自建 SearXNG**（`tools/search.py`）：通用网页搜索，免费、无配额、快，返回标题+链接+摘要，适合找官网/文档/GitHub/事实/新闻标题。`settings.search.searxng_url` + `searxng_engines` 配置；国内服务器只有 `sogou/quark/360search` 可达，固定带 engines 避开会超时的 google/bing。
+- **Tavily → `deep_research`**：原 `web_search`(Tavily) 改名 `deep_research`，定位「读网页正文 + 总结 / 比较 / 研究 / 给引用」，保留每日次数配额（`SearchUsage`，SearXNG 不计）。`runtime_state` 给 `deep_research`/`http_get` 补「搜索中」状态。
+- **路由按任务分**（`prompts/skills.md`）：专有技能 → 已知 URL `http_get` → 普通查找 `web_search`(SearXNG) → 读+总结 `deep_research`(Tavily，直接上别绕) → SearXNG 失败由模型兜底转 `deep_research`。**目标：~80% 普通联网走免费 SearXNG，不再烧 Tavily 配额。**
+- **删除 `news` skill**：RSS 易失效，新闻查询归入 `web_search`（通用引擎 sogou/quark/360 本就覆盖新闻）。
+- **`web_search` 去掉 `category` 参数**：实测国内服务器上 news/it/science 等类别引擎（google/bing news、reuters 等）全被墙，传 `category` 只会挂一堆死引擎、拖慢甚至超时；通用引擎已覆盖新闻，去掉后更快更干净。
+- **后台可配 + 测试按钮**（Admin → Agent → 联网搜索）：SearXNG 地址 / 引擎 / Tavily Key 都在面板配（`config.override.json` 热生效），各带「测试」按钮（`POST /admin/config/test-search`）——SearXNG 测试免费且会列出可达/超时引擎，Tavily 测试验证 key 有效。403 等错误给「未开启 JSON 输出」等清晰提示。
+- 部署见 `docs/deploy.md`「可选：SearXNG 自建搜索」（Docker，开 `formats: json` + `limiter: false`，内存紧的机器用 `--memory` 上限隔离）。冒烟 `scripts/smoke_skills.py` 覆盖两工具。
+
+### Agent 对外口径：堵住新工具名泄露（`policy.md`）
+
+- **背景**：新加搜索/技能工具后，咕咕被问「这是怎么搜到的」会抖出 `use_skill → http_get → wttr.in` 三步流程、被问「http_get 是什么」会复述工具名——`policy.md` 原有「不暴露工具」规矩没压住，因禁用名单还是老工具（`list_trash` 等）、且没专门管「问机制」的场景。
+- **修复**（提示词层，热生效）：① 禁用工具名补全 `web_search`/`deep_research`/`http_get`/`use_skill` + 「技能/剧本/调用/接口」说法；② 新增「被问『怎么做到的 / 这是什么工具 / 怎么搜到的』」专门口径，只用能力说法答、不报名、不讲分几步、不主动报数据源（带 ❌/✅ 对照例）；③ 再补「用户直接把工具名甩脸上问时也别复述、别承认」。
+- **实测**（`run_ephemeral` 真实 LLM）：4 类套话（含两种直接报工具名）全部 0 泄露。
+
+### Agent：不确定就主动查证，别糊弄（去工具成本焦虑）
+
+- **背景**：被问没听过的新词/热梗（如"月薪喵"），咕咕要么"没听过、你从哪看的"踢皮球、要么凭字面编个听着像对的答案——两种失败同一个根：没有"答之前先确认自己是不是真知道"的自觉。`skills.md` 的"省着用工具、成本意识"还压着它不敢主动搜。
+- **修复**（提示词层，热生效）：① `skills.md` 去掉"省工具"框架——"工具该用就用，别为省调用而不帮用户"，`web_search` 走自建搜索免费、放开用，只有 Tavily 计费才省着点；保留真效率（别重复查、别反复确认结果）。② `persona.md` 加「不确定就去查证，别糊弄」——立足"给对的答案才是真帮用户"，同堵"编答案"与"踢皮球"，限定在新词/热梗/近期事件/易变事实，稳定常识仍直接答（不逢问必搜）。**没写机械 if-then 规则进 skills**，由性格驱动。
+- **实测**：「月薪喵是什么」→ 主动搜、给出真实含义（博主养的布偶猫表情包），不再脑补；「Python 是什么」→ 直接答、不多搜。
+
+### Agent：Tools/Skills 分层 + prompt skills 系统（weather / news）
+
+- **`agent/skills/` → `agent/tools/` 改名**：原 `skills/` 全是函数调用工具，名实不符；整目录改名 `tools/`，修全部 `agent.skills`→`agent.tools` import（15 py + core/profiles/smoke）。`prompts/skills.md`（工具准则）暂留，后续改名 `tools.md`。
+- **prompt skills 系统**（新 `agent/skills/`）：带触发条件的「剧本」md（frontmatter `name`/`description`/`emoji` + 正文），**渐进式按需加载**——builder 只注入「## 可用技能」索引（每个一行 name + 何时用），模型相关时调 `use_skill(name)`（`tools/meta.py`）拉正文再照做，skill 数量可无限扩不撑上下文。加载器 `skills/__init__.py` 不缓存、改 md 免重启。
+- **`http_get(url)` 工具**（`tools/web.py`）：prompt skills 的联网执行原语——**SSRF 私网拦截**（私网/环回/链路本地/元数据全拦）、不跟随重定向、响应截断 4000；builder 提示「正文里 `curl <URL>` 即用 http_get 抓」。
+- **weather skill**：`http_get` 抓 `wttr.in/{城市}?format=3|?0`，转人话。
+- **news skill**：原版要 `browser_use`（我们没有，且 http_get 抓 HTML 首页无效）→ 改 **RSS 路线**，`http_get` 抓人民网 `people.com.cn/rss/{politics|finance|society|world|scitech|sports|ent}.xml`（七类实测 200、干净 CDATA 标题），**无需浏览器**。
+- **Profile 字段**：`BaseProfile.skills`→`tools`（工具集），新增 `skills`（启用的 prompt skill slug）；`default` 启用 `weather`/`news` + `web`/`meta`。工具数 51→**53**。
+- **工具使用准则（`skills.md`）成本梯队**：要外部信息按「有对口技能 → `use_skill`+`http_get`；知道 URL → 直接 `http_get`；开放式找不到来源 → 才用 `web_search`/Tavily」由便宜到贵选，**显著减少 Tavily 调用**。
+- 冒烟：`scripts/smoke_skills.py`（28 项，含 SSRF、实抓 wttr.in/RSS）。
+
+### Agent：修复多工具对话后追问报「咕咕开小差了」（孤儿 tool_result）
+
+- **根因**（真实会话复现）：天气/改项目等多工具轮被持久化进 `content_json`，追问时历史按 token 窗口截断，`sanitize_messages` 用**全局 id 匹配**判断 tool 配对——「开头必须是 user」会丢掉打头的 `assistant(tool_use)` 把紧跟的 `tool_result` 变孤儿，删空消息/合并同角色又打乱相邻性 → MiniMax `400 invalid params, tool result's tool id not found` → 重试 5 次失败 → 「咕咕开小差了」。
+- **修复**（`agent/sanitize.py`）：`sanitize_messages` 改为**按位置标记合法对**——只认「`assistant(tool_use X)` 紧接 `user(tool_result X)`」的相邻配对，其余 tool 块全剥；丢前导 assistant 时同步剥掉新表头遗留的孤儿 tool_result。不再被「id 跨位置复用」蒙混。
+- 冒烟：`scripts/smoke_sanitize.py`（8 项，含顺序错位领头 result 等边界）。
+
+### Agent 语气：和善底线 + 与「语气/长度」设置衔接
+
+- **persona.md 新增「和善底线」**（摩擦时刻——纠正/不认同/拒绝/自我更正——最易显冷）：**纠正方案不纠正人、调整方向不调整关系**；归因到用途/事实而非人（保护积极面子）、别让用户反过来照顾 AI 情绪（不堆叠「我错了/我收回/没过脑子」）、自然转弯不急刹车（少用「收回/取消」）、把选择权和结束权交还用户（不替他「完事」）。
+- **与用户「语气/长度」设置（`style_prefs`）衔接**：`builder._style_block` 给 `short`/`formal` 文案加兜底（简短≠生硬、正式≠冷淡），标题改为「用户设置优先于语气松紧/长度/emoji，**但真诚与和善是底线、不在可调范围**」——两功能各管各、不打架。
+
+### 全局搜索增强：准确跳转 + 拼音/罗马音匹配
+
+- **搜索跳到准确位置**：对话搜索命中消息正文时，跳转后自动滚到并高亮该条消息（`data-db-id` + `_flashChatMessage`）；日程搜索命中后切换到对应月份并高亮目标日程条目（`data-event-id` + `_flashCalendarEvent`）；两处均有 1.8 秒渐隐紫色背景闪光动画
+- **后端补充消息 ID 字段**：`GET /api/v1/agent/sessions/{id}/messages` 每条消息加 `id` 字段；搜索接口消息正文命中时附带 `message_id`，前端凭此定位具体消息
+- **拼音 / 日语罗马音搜索**（`backend/app/utils/romaji.py`）：新增 `pypinyin` + `pykakasi` 双引擎罗马音转换工具，`to_romaji()` 先用 pypinyin 把汉字转拼音、再用 pykakasi 把假名转 Hepburn 罗马音，`romaji_match()` 做去空格子串匹配；搜索 `riqi` 可命中「日期」，搜索 `yorushika` 可命中「ヨルシカ」
+- **搜索后端 ASCII 查询自动走罗马音分支**（`search.py`）：检测到纯 ASCII 字母 query 时，在 SQL ILIKE 结果不足 PER_TYPE 的情况下再扫描最近 200 条记录、用 `romaji_match` 过滤补充，所有类型（项目 / 文件 / 文件夹 / 日程 / 客户 / 对话）均覆盖；合并去重后取前 6 条
+
+### 开发服务器稳定性修复
+
+- **uvicorn `--reload` 限定监听目录**：改为 `--reload-dir app --reload-dir agent`，不再 watch 整个 `backend/`（含 `.venv/`），安装 pip 包不再触发大量连锁重启导致请求 500
+
+### 项目卡：点击阶段名快速操作当前阶段待办
+
+- **阶段名变可点击触发器**（`ProjectCard.vue`）：项目卡右侧的当前阶段名变为可点击（hover 浅底 + 小箭头，有待办时附 `已完成/总数` 计数），点击在其下方（放不下转上方）弹出**当前阶段待办弹层**，Teleport 到 body、玻璃面板风
+- **弹层内直接操作待办**：勾选 / 取消、编辑文字、删除、＋ 添加，持久化走 `projectStore.updateStages`；无待办时显示「还没有待办」+ 添加入口；点击外部 / `Esc` / 页面滚动关闭
+- 触发器 `@click.stop`、弹层 Teleport 到 body，不会误触打开项目编辑卡
+
+### 站内通知系统（管理员广播 + 用户端气泡）
+
+- **通知气泡组件**（`NotificationBubble.vue`）：与小窗/播放器同款玻璃风（`backdrop-filter: blur(28px)` + 20px 圆角 + `var(--glass-shadow-lg)` + 内高光 `::after`），**固定 360px 与小窗/播放器严格同宽**（三者均按 border-box 360 对齐）；**纵向布局**——关闭 ✕ 绝对定位右上角、标题行（圆点 + 标题）、内容占满整宽且左右 padding 对称；**关闭按钮与音乐播放器 / GuguChat 一致**（26px 圆角方块、透明底、`PhX`、hover 变红）；**新通知把旧的顶上去**——新条插到底部（贴近球），旧条 `nb-move` 上移、停留 **0.5 秒**后自动消失；最新这条**不自动超时**（无进度条），由用户点关闭按钮关掉或被下一条顶替；开/合以**咕咕球圆心为缩放原点**（`scale(0.05)` + 弹性曲线，与音乐播放器一致，原点 `uiStore.chatNotifyOrigin`：贴球时取球心、被小窗/播放器顶高时取自身中心）；去掉配色选项，圆点统一咕咕主题渐变；内容支持**完整 Markdown**
+- **通知支持「无标题、仅内容」**：后端 `BroadcastRequest.title` 改为可选 + 校验「标题/内容不可同时为空」；气泡 / 侧边栏 / admin 预览均按无标题渲染（不显示标题行、内容作正文）；气泡无标题时内容首行用浮动占位绕开右上角 ✕
+- **气泡与侧边栏通知中心彻底解耦**：① 气泡存的是 uiStore 通知的**独立快照**（`{id,title,content}`）而非同一对象引用，关闭气泡只动本组件 `visible`，不影响侧边栏数据；② 修复点击气泡关闭 ✕ 会**连带关掉侧边栏通知下拉弹窗**的 bug——`AppSidebar` 的 `document` 外部点击监听 `closeAll` 加守卫 `e.target.closest('.nb-stack')`，落在气泡内的点击视为气泡自身交互，不触发侧边栏弹层关闭
+- **独立 Markdown 渲染器 + 通用展示组件**：`utils/markdown.js` 是通知/轻量场景专用的隔离 `marked` 实例（GFM + 软换行 + 链接新标签打开 `rel=noopener`），与 GuguChat 那套带 hljs 高亮 / 复制按钮的全局 `marked` 配置互不影响；`components/common/MarkdownView.vue` 为全站通用的 md 展示组件（`:text` 走轻量渲染、`:html` 接预渲染产物，字号用 `em` 相对父容器），**GuguChat 聊天 / 通知气泡 / 侧边栏通知中心统一同款 md 输出样式**，各处删除原本重复的 `:deep()` 样式块
+- **气泡动态锚点**（`uiStore.chatNotifyAnchor`）：GuguChat 小窗/播放器展开时实时写入距视口底部距离，气泡始终浮在其正上方，`transition: bottom 0.42s` 平滑避让
+- **后台通知发布页**（`Admin/Notifications/index.vue`）：填写标题（**可选**）+ 内容（**支持 Markdown**，已移除配色选项），预览 **1:1 复刻真实气泡**（纵向布局、✕ 右上角、无进度条、无标题时仅内容），一键发送给所有在线用户；记录历史列表，可单条删除
+- **广播后端**（`notifications_admin.py`）：`POST /api/v1/admin/notifications/broadcast` 写入 `site_notifications` 表 + 发布到 Redis `events:__broadcast__` 频道；`GET/DELETE .../history` 管理记录；`events.stream()` 同时订阅用户个人频道与广播频道，全量覆盖在线用户
+- **侧边栏通知中心 Markdown**（`AppSidebar.vue`）：改用通用 `MarkdownView` 组件渲染 `n.content`，与气泡 / 聊天同款 md 输出（`em`/`del`/`a`/`blockquote`/`pre`/代码块/`hr`/标题层级等全覆盖），移除组件内原本重复的一大段 `:deep()` 样式
+
+### UI 细节与交互打磨
+
+- **GuguChat 小窗 / 音乐播放器加宽 + 三者严格同宽**：小窗 `SMALL_W` 316→360px；播放器改 `box-sizing: border-box; width: 360px`（修掉原先 content-box 332 实际外宽 362 比小窗宽 2px 的问题）；通知气泡同为 border-box 360，三者右对齐成一列
+- **音乐播放器随聊天放大缩回咕咕球**：聊天展开（放大）时播放器 `v-if` 加 `&& !expanded`，走 `mini-player` 离场动画缩回 FAB 圆心（`transform-origin` 已指向球心），退出放大再从球弹回；播放状态仍由 FAB 旋转 / 律动指示
+- **项目卡文件预览滚动闪烁修复**（`ProjectModal.vue`）：移除文件卡 `.fc-thumb-area` 常驻的 `will-change: transform`（大量卡片常驻 will-change 撑爆合成器层预算，叠加 `.modal-right` 的 `backdrop-filter: blur(28px)` 滚动时偶发闪屏），保留 `translateZ(0)` 维持遮罩层；滚动容器 `.file-content` 加 `isolation: isolate` 隔离重绘
+- **新建项目状态球**：顶部状态「胶囊」改为 14px 圆形状态球，点击循环切换三态（待开始/进行中/已完成），悬浮缩放 1.2×；修复名称输入框 `margin: -11px` 导致与状态球重叠的问题
+- **颜色格方形化**：新建项目颜色选择格从圆形改为 6px 圆角方块，视觉更整齐
+- **分割线宽度统一**：纵向 `.section-row::after` 改用渐变色，与横向分割线视觉线宽一致
+- **数据分析趋势图增强**（`Admin/Analytics/index.vue`）：折线改为 canvas 渐变填充（顶端到透明）；鼠标悬浮显示跨所有数据系列的 `index` 模式 tooltip；新增自定义 `crosshairPlugin`，白色竖线（35% 不透明）指示当前日期位置
+- **GuguChat 输入框底部裁切修复**：输入框加 `line-height: 1.5; padding: 2px 0`，g/p/y 等下沉字符不再被截断
+- **文档预览滚动闪烁修复**（`TextViewer.vue`）：移除 `.tv-wrap` 上的 `transform: translateZ(0)`（与 `position: sticky` 行号列产生合成层竞争导致闪烁），改为在滚动容器加 `will-change: scroll-position`
+- **DatePicker 样式统一**（`DatePicker.vue`）：边框色/背景/内边距与其他表单输入框对齐；打开状态加紫色描边 focus 环；日期数字保持居中显示
+- **定时任务试运行 Toast**（`Schedules/index.vue`）：「试运行」结果从浏览器 `alert()` 改为页面内 Toast 提示，风格与其他页面一致
+
 ### 体验打磨与交互增强
 
 - **咕咕 FAB 只跳图标，不跳整个圆圈**：`ai-fab--typing` 动画 class 从 `<button>` 移到内层 `<svg>`，跳动幅度从 4 px 收窄到 2 px，圆形底座完全静止。

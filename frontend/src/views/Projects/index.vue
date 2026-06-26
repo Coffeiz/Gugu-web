@@ -8,7 +8,7 @@
         :projects="columnProjects(col.key)"
         @card-click="projectStore.openModal"
         @drop-project="handleDrop"
-        @add-project="projectStore.openModal(null)"
+        @add-project="openNewWithStatus"
       />
       <DoneColumn
         :projects="columnProjects('done')"
@@ -23,11 +23,13 @@
 import { computed, onMounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
+import { useUiStore } from '@/stores/ui'
 import KanbanColumn from './components/KanbanColumn.vue'
 import DoneColumn   from './components/DoneColumn.vue'
 
 const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
+const uiStore      = useUiStore()
 
 onMounted(() => {
   if (!cacheStore.loaded && !cacheStore.loading) cacheStore.load()
@@ -59,6 +61,11 @@ function columnProjects(statusKey) {
 
 function handleDrop({ projectId, targetStatus }) {
   projectStore.moveProject(projectId, targetStatus)
+}
+
+function openNewWithStatus(status) {
+  uiStore.newProjectInitStatus = status ?? null
+  uiStore.openNewProject = true
 }
 </script>
 

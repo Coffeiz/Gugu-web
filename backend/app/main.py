@@ -39,6 +39,7 @@ from app.api.v1 import system_logs as system_logs_router
 from app.api.v1 import users_admin as users_admin_router
 from app.api.v1 import admin_debug as admin_debug_router
 from app.api.v1 import admin_analytics as admin_analytics_router
+from app.api.v1 import notifications_admin as notifications_admin_router
 from app.api.v1 import track as track_router
 from app.api.v1 import feedback as feedback_router
 from app.db.session import create_all_tables
@@ -255,6 +256,11 @@ app.include_router(
 )
 app.include_router(
     feedback_router.admin_router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    notifications_admin_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )

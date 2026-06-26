@@ -10,7 +10,7 @@ import asyncio
 import json
 from typing import AsyncGenerator
 
-from agent.skills import registry
+from agent.tools import registry
 
 # ⑦ 慢尾兜底：LLM 瞬时错误（限流 429 / 超时 / 网络 / 5xx）退避重试——贴着并发上限跑时
 # 把偶发 429 吸收成短延迟、不丢消息。只在「本轮还没吐 token 前」重试（已吐过再重试会重复输出）。

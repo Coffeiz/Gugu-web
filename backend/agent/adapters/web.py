@@ -122,6 +122,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         projects = await loaders.load_projects(db, user_id)
         events = await loaders.load_events(db, user_id)
         files_overview = await loaders.load_files_overview(db, user_id)
+        style_prefs = await loaders.load_style_prefs(db, user_id)
 
         # ── 会话 get / create ──
         session = None
@@ -163,7 +164,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     if not await genstream.is_active(session_id):
         task = asyncio.create_task(_generate(
             req, session_id, projects, events, files_overview, history, is_new_session, aug_text, aug_images,
-            degraded=degraded,
+            degraded=degraded, style_prefs=style_prefs,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -196,7 +197,7 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
 
 
 async def _generate(req, session_id, projects, events, files_overview, history, is_new_session,
-                    user_content=None, user_images=None, degraded=False) -> None:
+                    user_content=None, user_images=None, degraded=False, style_prefs=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -214,7 +215,10 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
 
     prompt_name = profile.prompt_file.removesuffix(".md")
     memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
-    system_prompt = builder.build(prompt_name, req.user_name, projects, events, memory, files_overview)
+    system_prompt = builder.build(
+        prompt_name, req.user_name, projects, events, memory, files_overview,
+        skills=profile.skills, style_prefs=style_prefs,
+    )
 
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
     from agent.context import compress_conv
@@ -329,24 +333,34 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
             await emit_clean(tail)
 
         # ── 持久化：工具调用中间消息 + AI 最终回复 + 用量 ──
-        async with _sess._SessionLocal() as db2:
-            for tm in anthr_messages[anthr_initial_len:]:
-                db2.add(ConversationMessage(
-                    session_id=session_id, role=tm["role"], content="",
-                    content_json=chat_attach.strip_vision_for_history(tm["content"]),
-                ))
-            if full_reply or sent_files:
-                db2.add(ConversationMessage(
-                    session_id=session_id, role="assistant", content=full_reply, files=sent_files or None,
-                ))
-            if usage_tokens["input"] or usage_tokens["output"]:
-                db2.add(AgentUsage(
-                    user_id=user_id, session_id=session_id,
-                    tokens_in=usage_tokens["input"], tokens_out=usage_tokens["output"],
-                    model=settings.ai.model, provider=settings.ai.provider,
-                    tools_used=used_tools or None,
-                ))
-            await db2.commit()
+        # 会话可能在后台生成期间被用户删掉（DELETE /sessions/{id}，合法操作）。此时：
+        # 不写无依附的 message；usage 降级为 session_id=None 保住计费（与删除时 SET NULL 一致）；
+        # 极端竞态（预检查后、commit 前被删）走 IntegrityError 静默跳过——回复已生成成功，
+        # 绝不能因记账失败把整个任务推进 except 给用户误报「开小差」。
+        from sqlalchemy.exc import IntegrityError
+        try:
+            async with _sess._SessionLocal() as db2:
+                sess_alive = await db2.get(ConversationSession, session_id) is not None
+                if sess_alive:
+                    for tm in anthr_messages[anthr_initial_len:]:
+                        db2.add(ConversationMessage(
+                            session_id=session_id, role=tm["role"], content="",
+                            content_json=chat_attach.strip_vision_for_history(tm["content"]),
+                        ))
+                    if full_reply or sent_files:
+                        db2.add(ConversationMessage(
+                            session_id=session_id, role="assistant", content=full_reply, files=sent_files or None,
+                        ))
+                if usage_tokens["input"] or usage_tokens["output"]:
+                    db2.add(AgentUsage(
+                        user_id=user_id, session_id=session_id if sess_alive else None,
+                        tokens_in=usage_tokens["input"], tokens_out=usage_tokens["output"],
+                        model=settings.ai.model, provider=settings.ai.provider,
+                        tools_used=used_tools or None,
+                    ))
+                await db2.commit()
+        except IntegrityError:
+            logger.warning("会话 %s 在生成期间被删除，跳过本次持久化", session_id)
 
         # ── 新会话：根据对话内容生成标题并推送（空标题不覆盖原首句截断）──
         if is_new_session and full_reply:

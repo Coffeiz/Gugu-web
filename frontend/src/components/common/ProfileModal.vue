@@ -167,14 +167,28 @@
                   <span class="pm-field-name">语气</span>
                   <span class="pm-field-hint">咕咕回复时的语气风格</span>
                 </div>
-                <div class="pm-coming">咕了</div>
+                <div class="pm-style-group">
+                  <button v-for="opt in TONE_OPTS" :key="opt.value"
+                          class="pm-style-chip"
+                          :class="{ active: (prefsStore.replyTone ?? 'natural') === opt.value }"
+                          @click="prefsStore.saveStyle({ tone: opt.value === 'natural' ? null : opt.value })">
+                    {{ opt.label }}
+                  </button>
+                </div>
               </div>
               <div class="pm-field-row">
                 <div class="pm-field-desc">
                   <span class="pm-field-name">回复长度</span>
                   <span class="pm-field-hint">咕咕回复内容的详细程度</span>
                 </div>
-                <div class="pm-coming">咕了</div>
+                <div class="pm-style-group">
+                  <button v-for="opt in LENGTH_OPTS" :key="opt.value"
+                          class="pm-style-chip"
+                          :class="{ active: (prefsStore.replyLength ?? 'medium') === opt.value }"
+                          @click="prefsStore.saveStyle({ length: opt.value === 'medium' ? null : opt.value })">
+                    {{ opt.label }}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -310,15 +324,28 @@ import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 import QRCode from 'qrcode'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { usePreferencesStore } from '@/stores/preferences'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { authApi, agentApi, userBotsApi, qqConnectApi, feishuConnectApi } from '@/services/api'
 import { PhX, PhSignOut, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird } from '@phosphor-icons/vue'
 
+const TONE_OPTS   = [
+  { value: 'natural', label: '自然' },
+  { value: 'formal',  label: '正式' },
+  { value: 'lively',  label: '活泼' },
+]
+const LENGTH_OPTS = [
+  { value: 'medium',   label: '适中' },
+  { value: 'short',    label: '简短' },
+  { value: 'detailed', label: '详细' },
+]
+
 const props = defineProps({ show: Boolean })
 const emit  = defineEmits(['close'])
 
-const router    = useRouter()
-const authStore = useAuthStore()
+const router     = useRouter()
+const authStore  = useAuthStore()
+const prefsStore = usePreferencesStore()
 
 const displayLabel = computed(() => authStore.user?.displayName || authStore.user?.username || '—')
 const initial = computed(() => (displayLabel.value[0] ?? '?').toUpperCase())
@@ -699,6 +726,21 @@ function handleLogout() {
 .pm-coming {
   font-size: 11px; font-weight: 600; color: rgba(30,32,40,0.3);
   background: rgba(0,0,0,0.05); padding: 3px 10px; border-radius: 20px;
+}
+
+.pm-style-group {
+  display: flex; gap: 4px; flex-shrink: 0;
+}
+.pm-style-chip {
+  padding: 4px 11px; border-radius: 20px; border: 1px solid rgba(0,0,0,0.1);
+  background: transparent; font-size: 12px; font-weight: 500;
+  color: var(--text-secondary); cursor: pointer; font-family: var(--font-sans);
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.pm-style-chip:hover { background: rgba(123,127,178,0.08); color: var(--text-primary); }
+.pm-style-chip.active {
+  background: rgba(123,127,178,0.14); border-color: rgba(123,127,178,0.4);
+  color: var(--color-primary); font-weight: 600;
 }
 
 /* 飞书绑定 */

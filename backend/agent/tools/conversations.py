@@ -10,7 +10,7 @@ import json
 from sqlalchemy import select, desc, or_
 
 from app.models import ConversationMessage, ConversationSession
-from agent.skills.base import BaseSkill, Tool
+from agent.tools.base import BaseSkill, Tool
 
 
 def _fmt(dt) -> str:

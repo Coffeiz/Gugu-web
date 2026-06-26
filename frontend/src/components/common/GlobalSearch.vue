@@ -129,9 +129,11 @@ function go(type, it) {
     uiStore.pendingFileTarget = { kind: type, id: it.id }   // 文件库监听后定位到对应目录
     router.push('/files')
   } else if (type === 'event') {
+    uiStore.pendingCalendarEvent = { id: it.id, date: it.date }
     router.push('/calendar')
   } else if (type === 'conversation') {
-    uiStore.pendingChatSession = it.id   // GuguChat 监听后打开并切到该会话
+    uiStore.pendingChatMessageId = it.message_id || null
+    uiStore.pendingChatSession = it.id   // GuguChat 监听后打开、切到会话、滚到匹配消息
   } else if (type === 'client') {
     Message.info('客户页面还在开发中，先在项目里看吧～')
   }

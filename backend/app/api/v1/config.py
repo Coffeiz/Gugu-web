@@ -7,6 +7,7 @@ POST  /api/v1/admin/config/init-db           → 手动初始化数据库（建�
 """
 
 import asyncio
+import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from typing import Any, Literal
@@ -304,6 +305,64 @@ async def test_connection(body: TestConnectionRequest):
             return {"ok": False, "message": str(e)}
 
     return {"ok": False, "message": "未知连接类型"}
+
+
+# ── 搜索测试（SearXNG / Tavily）──────────────────────────────────────────────
+
+class SearchTestRequest(BaseModel):
+    target:          Literal["searxng", "tavily"]
+    searxng_url:     str = ""   # 留空=用已存配置
+    searxng_engines: str = ""
+    tavily_api_key:  str = ""   # 留空=用已存配置
+
+
+@router.post("/test-search")
+async def test_search(body: SearchTestRequest):
+    cfg = get_settings()
+
+    if body.target == "searxng":
+        url = (body.searxng_url or cfg.search.searxng_url or "").rstrip("/")
+        if not url:
+            return {"ok": False, "message": "未填 SearXNG 地址"}
+        engines = body.searxng_engines or cfg.search.searxng_engines
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(12.0)) as client:
+                resp = await client.get(f"{url}/search",
+                                        params={"q": "test", "format": "json", "engines": engines})
+        except Exception as e:
+            return {"ok": False, "message": f"连不上：{type(e).__name__}: {str(e)[:80]}"}
+        if resp.status_code == 403:
+            return {"ok": False, "message": "403 — SearXNG 未开启 JSON 输出。请在其 settings.yml 的 search.formats 加上 json（并设 server.limiter: false），重启容器后再试"}
+        if resp.status_code != 200:
+            return {"ok": False, "message": f"HTTP {resp.status_code}（非 200）"}
+        try:
+            data = resp.json()
+        except Exception:
+            return {"ok": False, "message": "返回的不是 JSON（多半未开启 json 格式）"}
+        n = len(data.get("results") or [])
+        dead = [e[0] for e in (data.get("unresponsive_engines") or [])]
+        if n == 0:
+            return {"ok": False, "message": f"能连上但返回 0 条结果（引擎可能被限/不可达；超时引擎：{dead or '无'}）"}
+        msg = f"OK — 返回 {n} 条结果"
+        if dead:
+            msg += f"（超时引擎：{'、'.join(dead)}）"
+        return {"ok": True, "message": msg}
+
+    elif body.target == "tavily":
+        key = body.tavily_api_key or cfg.search.tavily_api_key
+        if not key:
+            return {"ok": False, "message": "未配 Tavily API Key"}
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+                resp = await client.post("https://api.tavily.com/search",
+                                         json={"api_key": key, "query": "test", "max_results": 1})
+                resp.raise_for_status()
+                resp.json()
+        except Exception as e:
+            return {"ok": False, "message": f"Key 无效或请求失败：{str(e)[:90]}"}
+        return {"ok": True, "message": "OK — Tavily Key 有效（本次测试消耗 1 次调用）"}
+
+    return {"ok": False, "message": "未知测试目标"}
 
 
 # ── SMTP 测试发送 ──────────────────────────────────────────────────────────

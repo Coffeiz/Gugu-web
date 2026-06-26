@@ -97,7 +97,7 @@ async function handleRegister() {
   loading.value = true; error.value = ''
   try {
     await auth.register(form.username, form.email, form.password, form.inviteCode)
-    router.push('/dashboard')
+    router.push('/projects')
   } catch (e) {
     error.value = e.message
   } finally {

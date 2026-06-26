@@ -21,7 +21,9 @@
 
       <div class="nav-section">
         <span class="nav-label">工作台</span>
+        <!-- 总览暂时隐藏（默认进项目）；保留给未来团队功能，恢复时取消注释 + 恢复路由
         <NavItem to="/dashboard" :icon="PhSquaresFour">总览</NavItem>
+        -->
         <NavItem to="/projects" :icon="PhStack">
           项目
           <template #badge>{{ projectStore.activeCount }}</template>
@@ -129,8 +131,8 @@
           >
             <span class="notif-dot" :style="{ background: n.color }"></span>
             <div class="notif-body">
-              <div class="notif-msg">{{ n.title }}</div>
-              <div class="notif-meta md-content" v-html="renderMd(n.content || n.meta)"></div>
+              <div v-if="n.title" class="notif-msg">{{ n.title }}</div>
+              <div class="notif-meta" :class="{ 'as-title': !n.title }"><MarkdownView :text="n.content || n.meta || ''" /></div>
             </div>
             <span v-if="n.unread" class="notif-badge"></span>
           </div>
@@ -144,7 +146,7 @@
 
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
-import { marked } from 'marked'
+import MarkdownView from './MarkdownView.vue'
 import { useRouter } from 'vue-router'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
@@ -187,7 +189,6 @@ const notifPopupRef = ref(null)
 const notifStyle    = ref({})
 
 const notifications = computed(() => uiStore.notifications)
-function renderMd(text) { return text ? marked.parse(text, { breaks: true }) : '' }
 
 function toggleNotif() {
   if (notifOpen.value) { notifOpen.value = false; return }
@@ -218,6 +219,9 @@ function markAllRead() {
 }
 
 function closeAll(e) {
+  // 通知气泡（Teleport 到 body）是独立组件，点它内部（含关闭 ✕）属于气泡自身交互，
+  // 不能当成「点击外部」而连带把侧边栏的通知/设置弹窗一起关掉。
+  if (e?.target?.closest?.('.nb-stack')) return
   settingsOpen.value = false
   if (notifPopupRef.value && !notifPopupRef.value.contains(e?.target) && !notifBtnRef.value?.contains(e?.target)) {
     notifOpen.value = false
@@ -408,14 +412,12 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 }
 .notif-item.unread .notif-msg { font-weight: 600; }
 .notif-meta {
-  font-size: 11px; color: #8a8fa8; margin-top: 2px;
+  font-size: 11px; color: #8a8fa8; margin-top: 3px;
+  line-height: 1.55; word-break: break-word; overflow-wrap: break-word;
 }
-.notif-meta.md-content :deep(p) { margin: 0 0 2px; }
-.notif-meta.md-content :deep(ul), .notif-meta.md-content :deep(ol) { margin: 2px 0; padding-left: 14px; }
-.notif-meta.md-content :deep(li) { margin: 1px 0; }
-.notif-meta.md-content :deep(strong) { font-weight: 600; color: #6b6f8a; }
-.notif-meta.md-content :deep(code) { font-size: 10px; background: rgba(0,0,0,0.06); border-radius: 3px; padding: 0 3px; }
-.notif-meta.md-content :deep(h1), .notif-meta.md-content :deep(h2), .notif-meta.md-content :deep(h3) { font-size: 12px; margin: 2px 0; }
+/* 无标题时内容即正文：用主文字色、去掉顶部间距，不显得像副标题 */
+.notif-meta.as-title { color: #1e2028; font-size: 12px; margin-top: 0; }
+/* markdown 排版由通用组件 MarkdownView 统一提供（字号继承自 .notif-meta 的 11px） */
 
 .notif-badge {
   width: 7px; height: 7px; border-radius: 50%;

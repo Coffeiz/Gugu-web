@@ -26,11 +26,23 @@ def _verify_admin_token(token: str) -> None:
         raise HTTPException(401, "Token 无效")
 
 _BACKEND = Path(__file__).resolve().parents[3]
+_LOGS = _BACKEND / "logs"
 LOG_FILES = {
-    "web":        _BACKEND / "logs" / "gugu.log",
-    "worker":     _BACKEND / "logs" / "gugu-worker.log",
-    "supervisor": _BACKEND / "logs" / "gugu-supervisor.log",
+    "web":        _LOGS / "gugu.log",
+    "worker":     _LOGS / "gugu-worker.log",
+    "supervisor": _LOGS / "gugu-supervisor.log",
 }
+# web 在 dev / prod 下写不同文件（dev=手动 uvicorn→gugu-web-dev.log；prod=systemd→gugu.log）。
+# 取最近更新的那个，自动适配环境——否则 dev 时会一直 tail 停掉的 prod 日志（满屏历史 crash）。
+_WEB_CANDIDATES = [_LOGS / "gugu-web-dev.log", _LOGS / "gugu.log"]
+
+
+def _resolve(name: str) -> Path:
+    if name == "web":
+        existing = [p for p in _WEB_CANDIDATES if p.exists()]
+        if existing:
+            return max(existing, key=lambda p: p.stat().st_mtime)
+    return LOG_FILES[name]
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mK]")
 
@@ -60,7 +72,7 @@ async def tail_logs(lines: int = 200, source: str | None = None):
     sources = [source] if source and source in LOG_FILES else list(LOG_FILES)
     result = []
     for src in sources:
-        for line in _tail(LOG_FILES[src], lines):
+        for line in _tail(_resolve(src), lines):
             result.append({"source": src, "line": line})
     return {"lines": result}
 
@@ -73,7 +85,7 @@ async def stream_logs(
 ):
     if token:
         _verify_admin_token(token)
-    sources = {k: v for k, v in LOG_FILES.items() if not source or k == source}
+    sources = {k: _resolve(k) for k in LOG_FILES if not source or k == source}
 
     async def generator():
         positions: dict[str, int] = {}

@@ -64,6 +64,13 @@
         </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
+        <div class="nav-group-label">运营</div>
+        <div class="nav-item" :class="{ active: isActive('/notifications') }" role="link" tabindex="0" @click="go('/notifications')">
+          <PhBellRinging :size="14" />
+          通知发布
+        </div>
+
+        <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">日志</div>
         <div class="nav-item" :class="{ active: isActive('/audit-log') }" role="link" tabindex="0" @click="go('/audit-log')">
           <PhClipboard :size="14" />
@@ -106,7 +113,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
 import {
   PhGear, PhRobot, PhChartLine, PhFlag, PhTicket, PhUsers,
-  PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut,
+  PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging,
 } from '@phosphor-icons/vue'
 
 const route = useRoute()

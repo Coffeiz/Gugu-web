@@ -17,7 +17,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # backend/ 入 path
 
 import agent.core as core
-from agent.skills import registry
+from agent.tools import registry
 from agent.core import LLMRunner, _VERIFY_PROMPT, MAX_VERIFY
 
 PASS, FAIL = [], []

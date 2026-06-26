@@ -27,13 +27,15 @@ const routes = [
     component: DefaultLayout,
     meta: { requiresAuth: true },
     children: [
-      { path: '', redirect: '/dashboard' },
-      {
-        path: 'dashboard',
-        name: 'Dashboard',
-        component: () => import('@/views/Dashboard/index.vue'),
-        meta: { title: '总览' },
-      },
+      { path: '', redirect: '/projects' },
+      // 总览面板暂时隐藏（个人用户用处不大，默认进项目）；代码保留，未来作团队功能再开启。
+      // 取消注释即可恢复（同时恢复 AppSidebar 的「总览」导航项、Login/Register 的跳转目标）。
+      // {
+      //   path: 'dashboard',
+      //   name: 'Dashboard',
+      //   component: () => import('@/views/Dashboard/index.vue'),
+      //   meta: { title: '总览' },
+      // },
       {
         path: 'projects',
         name: 'Projects',
@@ -82,7 +84,7 @@ router.beforeEach((to) => {
   }
 
   if (to.meta.authPublic && userToken) {
-    return { path: '/dashboard' }
+    return { path: '/projects' }
   }
 })
 

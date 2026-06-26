@@ -16,6 +16,7 @@
 | **supervisor** | 频道管家：按 Admin 频道面板起停各平台网关子进程        | `.venv/bin/python -m agent.adapters.supervisor` | 接 IM 时 |
 | PostgreSQL     | 主数据库                               | 系统服务 / Docker                                   | 必须     |
 | Redis          | IM 消息队列（Streams）                   | 系统服务 / Docker                                   | 接 IM 时 |
+| SearXNG        | 自建通用搜索（`web_search`，省 Tavily 配额）   | Docker / 1Panel                                 | 可选     |
 
 
 > 前端：开发用 `npm run dev`（:5173）；生产 `npm run build` 出 `dist/`，由 nginx 托管。
@@ -151,6 +152,52 @@ cd backend
 - Admin 后台：`http://localhost:5173/admin/login`
 - 默认账号 **admin / admin123**——改用户名/密码在 `.env` 设 `ADMIN_USERNAME` / `ADMIN_PASSWORD`（⚠️ 上线前必改，改后重启后端）
 - 登录后在「系统配置 / Agent 配置」里设 DB / Redis / AI provider / 存储 / 频道。
+
+### 2.9 可选：SearXNG 自建搜索（降低 Tavily 成本）
+
+咕咕的 `web_search`（通用搜索）走自建 **SearXNG**，免费、不计配额；`deep_research`（深度总结）才走 Tavily。不部署 SearXNG 也能跑（普通搜索会自动退到 Tavily）。
+
+**推荐用 compose**（配置文件挂出来可改、重建不丢；1Panel → 容器 → 编排 直接贴）。⚠️ 两个最常踩的坑：① 必须开 `formats: json`，否则后端拿到 **403 Forbidden**；② SearXNG 与后端**不在同一台机**时，端口要发布到 `0.0.0.0`、地址填 `http://内网IP:端口`（不能填 127.0.0.1）。
+
+```yaml
+# docker-compose.yml
+services:
+  searxng:
+    image: searxng/searxng:latest        # 国内拉不动换 docker.m.daocloud.io/searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    ports:
+      - "8888:8080"                       # 跨机访问发布到 0.0.0.0；仅同机用可写 127.0.0.1:8888:8080
+    volumes:
+      - ./searxng:/etc/searxng:rw         # 配置挂出来，可编辑、重建不丢
+    environment:
+      - SEARXNG_BASE_URL=http://内网IP:8888/
+      - UWSGI_WORKERS=1
+      - UWSGI_THREADS=2
+    mem_limit: 350m                       # 内存紧 / 与 DB 同机时限死，OOM 也只杀它、不拖垮别人
+```
+
+**配 settings.yml**（两选一）：
+- **A 先启动再改**：`docker compose up -d` 后，编排目录的 `searxng/` 下会生成默认 `settings.yml` → 改两处：`server.limiter: false`、`search.formats` 加 `json` → 重启容器。
+- **B 先放好再启动**：在编排目录建 `searxng/settings.yml`：
+  ```yaml
+  use_default_settings: true
+  server:
+    secret_key: "改成随机串：openssl rand -hex 32"
+    limiter: false
+  search:                      # ← 独立顶层段，和 server 平级
+    formats:
+      - html
+      - json
+  ```
+  ⚠️ **`formats` 属于 `search:` 段，别误塞进 `server:`**——`search:` 是和 `server:` 平级的独立顶层段；放错位置 JSON 不生效、测试仍 403（常见错误）。
+
+**配置 + 验证**：Admin → Agent → 联网搜索，填「SearXNG 地址」（同机 `http://127.0.0.1:8888`，跨机填 `http://内网IP:8888`）→ 点「测试」。
+
+- 测试返回 **403** = 没开 `formats: json`；**0 结果** = 引擎被限/不可达；**连不上** = 端口没发布到 0.0.0.0 或地址填错。
+- **引擎**：国内服务器 google/bing/ddg 多会超时，一般只有 `sogou,quark,360search` 可达——按「测试」结果里列出的「超时引擎」调整「SearXNG 引擎」那栏。
+- **安全**：`0.0.0.0` + `limiter: false` = 内网无认证可用；要更严可用防火墙只放行后端那台访问 8888。
+- 关掉 SearXNG（清空地址）后，`web_search` 自动全部退到 Tavily。
 
 ---
 
