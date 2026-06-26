@@ -1,6 +1,7 @@
 <template>
   <div
     class="column"
+    :data-col-status="column.key"
     :class="{ 'drag-over': isDragOver }"
     @dragover.prevent="isDragOver = true"
     @dragleave="isDragOver = false"
@@ -20,7 +21,6 @@
         :key="project.id"
         :project="project"
         @click="$emit('card-click', project)"
-        @dragstart="(e) => { e.dataTransfer.setData('projectId', project.id) }"
       />
       <div v-if="projects.length === 0" class="col-empty">拖拽项目到此</div>
       <button class="add-card" @click="$emit('add-project', column.key)">

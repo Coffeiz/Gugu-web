@@ -127,7 +127,7 @@
             :key="n.id"
             class="notif-item"
             :class="{ unread: n.unread }"
-            @click="n.unread = false"
+            @click="uiStore.markRead(n.id)"
           >
             <span class="notif-dot" :style="{ background: n.color }"></span>
             <div class="notif-body">

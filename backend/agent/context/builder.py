@@ -145,7 +145,7 @@ def _style_block(prefs: dict) -> str:
     """用户风格偏好，全为默认值时返回空串（不注入，省 token）。"""
     TONE = {
         "formal": "偏正式（措辞严谨，少用语气词和口语化表达，但仍然和善，不端着、不冷淡）",
-        "lively": "偏活泼（可以用语气词，轻松自然，偶尔开个小玩笑）",
+        "lively": "偏活泼（可以用语气词、轻松自然、偶尔开个小玩笑；但活泼靠词句和语气，不靠堆 emoji，表情仍守 persona 的极简规则）",
     }
     LENGTH = {
         "short":    "简短（直接利落、不啰嗦、少铺垫，但该有的体谅别省，别变生硬或打发）",
@@ -160,11 +160,13 @@ def _style_block(prefs: dict) -> str:
     if not lines:
         return ""
     return ("## 风格偏好（用户设置，优先于默认风格中的语气松紧 / 长度；"
-            "但真诚与和善是底线，不在可调范围，任何设置下都不能变冷或打发）\n\n" + "\n".join(lines))
+            "但真诚、和善、以及表情极简规则都是底线，不在可调范围——任何设置下都不变冷、"
+            "不打发，也不靠堆 emoji 卖萌）\n\n" + "\n".join(lines))
 
 
 def _memory_block(memory: dict) -> str:
-    """咕咕对用户的记忆，全空时返回空串（不注入）。顺序：稳定事实 → 长期记忆 → 最近。"""
+    """咕咕对用户的记忆。全空时也注入一句明确声明——给"我不知道"一个锚点，防模型
+    在空白处脑补共同经历（伪个性化）；不再返回空串。顺序：稳定事实 → 长期记忆 → 最近。"""
     facts   = (memory.get("facts") or "").strip()
     longterm = (memory.get("memory") or "").strip()
     daily   = (memory.get("daily") or "").strip()
@@ -175,4 +177,8 @@ def _memory_block(memory: dict) -> str:
         parts.append("## 长期记忆\n\n" + longterm)
     if daily:
         parts.append("## 最近的记忆\n\n" + daily)
+    if not parts:
+        return ("## 关于这位用户的记忆\n\n"
+                "（暂无任何长期记忆——你对 TA 还不了解。别假装记得任何共同经历或偏好，"
+                "需要了解就直接问。）")
     return "\n\n".join(parts)

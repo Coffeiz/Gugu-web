@@ -1,16 +1,14 @@
 <template>
   <div
     class="proj-card"
-    draggable="true"
     :data-project-id="project.id"
     :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
     :class="{ 'file-drag-over': fileDragOver }"
-    @dragstart.stop="onDragStart"
+    @pointerdown="onPointerDown"
     @dragenter.prevent="onFileDragEnter"
     @dragover.prevent="onFileDragOver"
     @dragleave="onFileDragLeave"
     @drop.prevent="onFileDrop"
-    @click="$emit('click')"
   >
     <div class="card-body">
       <div class="card-top">
@@ -165,14 +163,44 @@ import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/servic
 import SegBar from '@/components/common/SegBar.vue'
 
 const props = defineProps({ project: { type: Object, required: true } })
-const emit = defineEmits(['click', 'dragstart'])
-
-function onDragStart(e) {
-  emit('dragstart', e)
-  startPhysicsDrag(e, e.currentTarget)
-}
+const emit = defineEmits(['click'])
 
 const projectStore = useProjectStore()
+
+// 拖到哪一列就移到哪个状态：松手时据落点找列的 data-col-status（源卡此刻 display:none、克隆体 pointer-events:none，
+// elementFromPoint 命中的就是底下真实的列）。同列不动 → 不触发 moveProject 的 API。
+function dispatchDrop({ x, y }) {
+  const el = document.elementFromPoint(x, y)
+  const col = el && el.closest && el.closest('[data-col-status]')
+  if (!col) return
+  const status = col.getAttribute('data-col-status')
+  if (status && status !== props.project.status) projectStore.moveProject(props.project.id, status)
+}
+
+// pointer 驱动拖拽（替代原生 HTML5 drag）：先攒位移，越过阈值才真正开拖——否则当成点击开项目。
+// 内部控件（星级 / 阶段 / 进度条）自己处理点击，不在这里起拖。
+function onPointerDown(e) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  if (e.target.closest('.stars, .proj-stage, .seg-bar-wrap')) return
+  const card = e.currentTarget
+  const sx = e.clientX, sy = e.clientY
+  let started = false
+  const onMove = (ev) => {
+    if (started || Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return
+    started = true
+    teardown()
+    startPhysicsDrag(ev, card, { pointer: true, skipAbsorb: true, onDrop: dispatchDrop })
+  }
+  const onUp = () => { teardown(); if (!started) emit('click') }   // 没拖动 = 点击 → 开项目
+  const teardown = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onUp)
+  }
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onUp)
+}
 const cacheStore   = useFilesCacheStore()
 
 const nameColor = computed(() => {

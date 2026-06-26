@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON
+from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
@@ -386,5 +386,19 @@ class SiteNotification(Base):
     content:    Mapped[str]      = mapped_column(Text, default="")
     color:      Mapped[str]      = mapped_column(String(50), default="#7b7fb2")
     target:     Mapped[str]      = mapped_column(String(50), default="all")   # "all" 或 user_id
+    bubble:     Mapped[bool]     = mapped_column(Boolean, default=True)        # 是否弹气泡（实时 + 上线补弹）
+    persist:    Mapped[bool]     = mapped_column(Boolean, default=True)        # 是否进通知中心（持久列表）
+    bubble_expire_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # 气泡时限，null=永久
     created_by: Mapped[str]      = mapped_column(String(100), default="admin")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class NotificationRead(Base):
+    """按用户记录已读的站内通知（site_notifications.id）。一条记录 = 该用户读过该通知；无记录 = 未读。"""
+    __tablename__ = "notification_reads"
+    __table_args__ = (UniqueConstraint("user_id", "notification_id", name="uq_notif_read"),)
+
+    id:              Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:         Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    notification_id: Mapped[int]      = mapped_column(ForeignKey("site_notifications.id", ondelete="CASCADE"), index=True)
+    read_at:         Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

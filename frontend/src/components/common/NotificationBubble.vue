@@ -31,26 +31,19 @@ import MarkdownView from '@/components/common/MarkdownView.vue'
 
 const uiStore = useUiStore()
 const visible = ref([])
-let lastSeenId = 0
+let _vk = 0                 // 气泡本地 key（与后端 id 解耦）
 const timers = new Map()   // id -> setTimeout 句柄
 
-// 新通知到来：把现有的旧通知顶上去（column-reverse 下新条插到底部，旧条上移），
-// 旧条停留 0.5 秒后自动消失。当前最新这条不自动超时，由用户点关闭或被下一条顶替。
-//
-// 气泡只是一个「转瞬即逝的弹层」，与侧边栏通知中心是两个独立组件：
-// 这里存的是 uiStore 通知的「独立快照」（而非同一对象引用），关闭气泡只动本组件自己的
-// visible 列表，绝不影响 uiStore.notifications，侧边栏通知不会被一起关掉。
-watch(() => uiStore.notifications, (notifs) => {
-  if (!notifs.length) return
-  const latest = notifs[0]
-  if (latest.id <= lastSeenId) return
-  lastSeenId = latest.id
-
-  // 现有可见的旧通知：被顶上去后 0.5 秒消失
+// 气泡 = 纯「实时到达」的瞬态弹层，**只监听 uiStore.liveNotification**（SSE 实时置位）——
+// 关浏览器重开拉回来的历史通知**不弹气泡**（那是导航栏通知中心的事）。气泡与导航栏彻底分开：
+// 气泡关闭只动本组件 visible，不影响 uiStore.notifications，也不改已读态（气泡不算已读）。
+watch(() => uiStore.liveNotification, (n) => {
+  if (!n) return
+  // 现有可见的旧气泡：被顶上去后 0.5 秒消失
   visible.value.forEach(item => scheduleDismiss(item.id, 500))
-  // 新通知插到队首（视觉上在底部、贴近球），把旧的顶上去；存快照不共享引用
-  visible.value = [{ id: latest.id, title: latest.title, content: latest.content }, ...visible.value]
-}, { deep: true })
+  // 新气泡插到队首（视觉上在底部、贴近球），把旧的顶上去
+  visible.value = [{ id: ++_vk, title: n.title, content: n.content }, ...visible.value]
+})
 
 function scheduleDismiss(id, delay) {
   if (timers.has(id)) return   // 已排程，避免重复计时

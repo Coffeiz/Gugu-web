@@ -22,6 +22,30 @@
           <textarea v-model="form.content" rows="4" placeholder="支持 Markdown：**加粗**、[链接](https://…)、- 列表、`代码`…" class="text-input textarea" />
         </div>
 
+        <div class="field">
+          <label>发布渠道</label>
+          <div class="channel-row">
+            <button v-for="c in CHANNELS" :key="c.value"
+                    class="channel-chip" :class="{ active: form.channel === c.value }"
+                    @click="form.channel = c.value" :title="c.hint">
+              {{ c.label }}
+            </button>
+          </div>
+          <span class="channel-hint">{{ CHANNELS.find(c => c.value === form.channel)?.hint }}</span>
+        </div>
+
+        <div class="field" v-if="form.channel !== 'center'">
+          <label>气泡时限</label>
+          <div class="channel-row">
+            <button v-for="t in BUBBLE_TTLS" :key="String(t.value)"
+                    class="channel-chip" :class="{ active: form.bubbleTtl === t.value }"
+                    @click="form.bubbleTtl = t.value">
+              {{ t.label }}
+            </button>
+          </div>
+          <span class="channel-hint">超过时限后，再登录的用户不会再被补弹这条气泡（实时在线的不受影响）</span>
+        </div>
+
         <!-- 预览（与用户端咕咕玻璃气泡 1:1 一致） -->
         <div class="preview-label">预览</div>
         <div class="preview-bubble" :class="{ 'pv-bare': !form.title }">
@@ -90,7 +114,19 @@ import { renderMarkdown } from '@/utils/markdown'
 
 const admin = useAdminStore()
 
-const form = reactive({ title: '', content: '' })
+const CHANNELS = [
+  { value: 'both',   label: '气泡 + 通知中心', hint: '弹气泡，同时进通知中心（持久、可标已读、重开还在）' },
+  { value: 'bubble', label: '仅气泡',         hint: '只弹气泡：实时在线立即弹；离线者上线时补弹最近一条（在时限内、只一次）。不进通知中心' },
+  { value: 'center', label: '仅通知中心',     hint: '不弹气泡，只进通知中心（持久、未读追踪、离线也不漏）' },
+]
+// 气泡时限：过了这个时间，再登录的用户不再补弹（永久=只要没被更新的气泡顶掉就一直能补弹）
+const BUBBLE_TTLS = [
+  { value: null, label: '永久' },
+  { value: 24,   label: '1 天' },
+  { value: 72,   label: '3 天' },
+  { value: 168,  label: '7 天' },
+]
+const form = reactive({ title: '', content: '', channel: 'both', bubbleTtl: 24 })
 const sending = ref(false)
 const err = ref('')
 const history = ref([])
@@ -112,7 +148,12 @@ async function send() {
     const res = await admin.authFetch('/api/v1/admin/notifications/broadcast', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: form.title, content: form.content, target: 'all' }),
+      body: JSON.stringify({
+        title: form.title, content: form.content, target: 'all',
+        bubble:  form.channel !== 'center',   // both / bubble → 弹气泡
+        persist: form.channel !== 'bubble',   // both / center → 进通知中心
+        bubble_ttl_hours: form.channel !== 'center' ? form.bubbleTtl : null,  // 时限只对气泡有意义
+      }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     showToast('通知已发送')
@@ -194,6 +235,19 @@ onMounted(loadHistory)
 .text-input:focus { border-color: rgba(123,127,178,0.5); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
 .text-input::placeholder { color: rgba(255,255,255,0.2); }
 .textarea { resize: none; line-height: 1.6; }
+
+/* 发布渠道选择 */
+.channel-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.channel-chip {
+  padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; font-family: inherit;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.6); transition: all 0.12s; outline: none;
+}
+.channel-chip:hover { border-color: rgba(123,127,178,0.5); color: rgba(255,255,255,0.85); }
+.channel-chip.active {
+  background: rgba(123,127,178,0.25); border-color: rgba(123,127,178,0.7); color: #fff; font-weight: 600;
+}
+.channel-hint { display: block; margin-top: 7px; font-size: 11px; color: rgba(255,255,255,0.35); }
 
 .preview-label {
   font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.25);

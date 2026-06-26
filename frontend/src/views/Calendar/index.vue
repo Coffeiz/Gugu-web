@@ -390,6 +390,7 @@ const selRange     = ref(null)   // { start, end } committed after mouseup
 const activeRange = computed(() => {
   if (rangeSelect.active && rangeSelect.anchor && hoverRangeEnd.value) {
     const [a, b] = [rangeSelect.anchor, hoverRangeEnd.value].sort()
+    if (a === b) return null   // 未跨天时不视为 range
     return { start: a, end: b }
   }
   return selRange.value

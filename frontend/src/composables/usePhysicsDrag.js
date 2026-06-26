@@ -27,14 +27,17 @@ const _rects = els => els.map(e => e.getBoundingClientRect())
 
 // 最近的可纵向滚动祖先（兜底：看板/文件库的已知滚动容器，避免 overflow 检测在解锁瞬间抽风）
 function _scrollParent(node) {
+  // 先试已知滚动容器：一次 closest 命中即返回，省掉逐级 getComputedStyle 遍历。
+  // drop 时布局已被 moveProject 改脏，每次 getComputedStyle 都会触发一次强制样式/布局重算（trace: get scrollTop 105ms）。
+  const known = node && node.closest && node.closest('.col-body, .files-main')
+  if (known && known.scrollHeight > known.clientHeight + 1) return known
   let p = node && node.parentElement
   while (p) {
     const oy = getComputedStyle(p).overflowY
     if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight + 1) return p
     p = p.parentElement
   }
-  const known = node && node.closest && node.closest('.col-body, .files-main')
-  return (known && known.scrollHeight > known.clientHeight + 1) ? known : null
+  return null
 }
 
 // 自己用 rAF 做滚动补间——scrollBy({behavior:'smooth'}) 在某些情况下(reduce-motion / drop 上下文)会退化成瞬间；
@@ -77,13 +80,17 @@ function _invertPlay(kids, fromRects, toRects, dur = 340) {
 }
 
 /**
- * @param {DragEvent} event  原生 dragstart 事件
+ * @param {DragEvent|PointerEvent} event  原生 dragstart 事件，或 pointer 模式下越过阈值的 pointermove
  * @param {HTMLElement} sourceEl  被拖的卡片（一般传 event.currentTarget）
- * @param {object} [opts]  { stiffness, sway, tilt, grabY, lift }
+ * @param {object} [opts]  { spring, sway, tilt, grabY, lift, pointer, onDrop }
+ *   pointer:true 改用 pointer 事件驱动（setPointerCapture 跳过每帧命中测试，省掉原生 dragover 的 HitTest）；
+ *   onDrop({x,y}): pointer 模式下松手时回调，由调用方据落点执行业务移动（原生模式靠各列 @drop 落定）。
  */
 export function startPhysicsDrag(event, sourceEl, opts = {}) {
   if (!sourceEl || _active) return
-  try { event.dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {}
+  const pointer = opts.pointer === true
+  const pointerId = pointer ? event.pointerId : null
+  if (!pointer) { try { event.dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {} }
 
   // 二阶弹簧-阻尼跟随（有惯性/动量，起步被弹簧甩出去而非黏滞渗出）：
   //   SPRING 越大越跟手、越小越拖；ZETA<1 略带动量回弹，=1 临界不过冲。
@@ -113,6 +120,16 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
     ` perspective(760px) rotateX(${TILT}deg) scale(${LIFT})`
   document.body.appendChild(clone)
 
+  // 拖拽期间给浏览器减负（性能：trace 显示 CPU 几乎全在浏览器渲染，非物理 JS）：
+  //   - 关掉顶栏/侧栏 backdrop-filter：内容一动玻璃就重模糊整条 → 整屏 Paint，拖拽这一两秒不模糊几乎无感；
+  //   - 卡片 pointer-events:none：原生拖拽每帧对深层玻璃 DOM 做命中测试很贵，列仍保留以接收原生 drop。
+  //   end() 里在 elementFromPoint(文件夹吸附判定) 之前同步摘掉，故不影响落点检测。
+  document.body.classList.add('phys-dragging')
+
+  // pointer 模式：把后续 pointermove 全部捕获到 body（源卡随后会 display:none，捕在它身上会丢捕获）。
+  // 捕获后浏览器不再为每次移动做命中测试 —— 这正是原生 dragover 省不掉、吃掉 1.3s 的那笔 HitTest。
+  if (pointer) { try { document.body.setPointerCapture(pointerId) } catch {} }
+
   // 拖拽期间锁住看板列的滚动：挡掉浏览器原生拖拽的「边缘自动滚动」——否则列在拖动时就被原生滚到底，
   // 落点时已无可滚（dy≈0），我们的受控平滑滚动跑不起来，看着就是「瞬间到底部」。列用的是 3px overlay
   // 滚动条，overflow:hidden 不会引起布局位移。结束时在 end() 还原。
@@ -136,6 +153,8 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
 
   const pos    = { x: rect.left + half.x, y: rect.top + half.y }
   const target = { x: pos.x, y: pos.y }
+  // pointer 模式起点就是当前指针位置（原生模式靠首个 dragover 校正）
+  if (pointer && (event.clientX || event.clientY)) { target.x = event.clientX; target.y = event.clientY }
   const vel    = { x: 0, y: 0 }   // 卡片速度 px/秒——二阶弹簧的动量来源
   let vxs = 0, vys = 0            // 平滑后的速度，用于旋转
 
@@ -183,10 +202,22 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
     if (!_active) return
     cancelAnimationFrame(_active.raf)
     _active = null
+    document.body.classList.remove('phys-dragging')            // 恢复 backdrop-filter（落点 elementFromPoint 之前）
     for (const s of _lockedScrollers) s.style.overflowY = ''   // 解锁列滚动，下面才能受控平滑滚到落点
-    document.removeEventListener('dragover', onOver)
-    document.removeEventListener('drop', end, true)
-    sourceEl.removeEventListener('dragend', end)
+    if (pointer) {
+      document.removeEventListener('pointermove', onOver)
+      document.removeEventListener('pointerup', end)
+      document.removeEventListener('pointercancel', end)
+      try { document.body.releasePointerCapture(pointerId) } catch {}
+    } else {
+      document.removeEventListener('dragover', onOver)
+      document.removeEventListener('drop', end, true)
+      sourceEl.removeEventListener('dragend', end)
+    }
+
+    // pointer 模式：落点的业务移动由调用方在此执行（原生模式靠各列 @drop 已落定）。
+    // 必须先于下面的落点 FLIP——它要等业务移动触发的 Vue 重渲染把卡片排到新槽位后，再据新 DOM 飞过去。
+    if (opts.onDrop) { try { opts.onDrop({ x: target.x, y: target.y }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
 
     const dropX = target.x, dropY = target.y
     const idAttr = sourceEl.getAttribute('data-file-id')    ? ['data-file-id',    sourceEl.getAttribute('data-file-id')]
@@ -286,9 +317,13 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
     // 业务 drop + Vue 重渲染在微任务里已落定；本 rAF 在 paint 前做落点 FLIP，避免闪一下
     requestAnimationFrame(() => {
       // 1) 释放点压着文件夹/面包屑 → 吸入（不依赖异步重渲染）
-      const under = document.elementFromPoint(dropX, dropY)
-      const absorb = under && under.closest && under.closest('.folder-card, .bc-item')
-      if (absorb) { flyTo(absorb.getBoundingClientRect(), true, null); return }
+      //    skipAbsorb（看板）跳过：看板永不吸入文件夹，而此处 elementFromPoint 在 moveProject 把布局改脏后
+      //    会强制一次整页重排（trace 里 elementFromPoint 161ms 的大头）——白白吃掉松手那帧。
+      if (!opts.skipAbsorb) {
+        const under = document.elementFromPoint(dropX, dropY)
+        const absorb = under && under.closest && under.closest('.folder-card, .bc-item')
+        if (absorb) { flyTo(absorb.getBoundingClientRect(), true, null); return }
+      }
 
       // 2) 卡片落到新位置（换列/重排）
       if (sel) {
@@ -340,8 +375,14 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
   }
 
   _active = { raf: 0, end }
-  document.addEventListener('dragover', onOver)
-  document.addEventListener('drop', end, true)   // 捕获阶段，先于业务 drop 收尾视觉
-  sourceEl.addEventListener('dragend', end)
+  if (pointer) {
+    document.addEventListener('pointermove', onOver)
+    document.addEventListener('pointerup', end)
+    document.addEventListener('pointercancel', end)
+  } else {
+    document.addEventListener('dragover', onOver)
+    document.addEventListener('drop', end, true)   // 捕获阶段，先于业务 drop 收尾视觉
+    sourceEl.addEventListener('dragend', end)
+  }
   _active.raf = requestAnimationFrame(frame)
 }

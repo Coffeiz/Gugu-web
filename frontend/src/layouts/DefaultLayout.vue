@@ -130,6 +130,8 @@ onMounted(async () => {
   if (authStore.isLoggedIn) {
     audioStore.restore()
     prefsStore.fetch()
+    uiStore.fetchNotifications()   // 拉持久通知（含离线漏掉的）：关浏览器重开还在
+    uiStore.checkLoginBubble()     // 上线补弹最近一条有效气泡（只一次、过期不弹）
     liveStore.connect()   // 开实时事件订阅：咕咕/IM 改了数据网页自动刷新
   }
   projectStore.fetchProjects()

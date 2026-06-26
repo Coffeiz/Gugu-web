@@ -244,6 +244,12 @@ export const preferencesApi = {
   update: (data) => request('PATCH', '/preferences', data),
 }
 
+export const notificationsApi = {
+  list:        ()    => get('/notifications'),                       // 通知中心：近期持久通知 + 未读态
+  latestBubble: ()   => get('/notifications/bubble'),               // 上线补弹：最近一条有效气泡（{bubble:null|{...}}）
+  markRead:    (ids) => request('POST', '/notifications/read', { ids: ids ?? null }),  // 无 ids = 全部已读
+}
+
 export const agentApi = {
   listSessions:    ()           => get('/agent/sessions'),
   getMessages:     (sessionId) => get(`/agent/sessions/${sessionId}/messages`),

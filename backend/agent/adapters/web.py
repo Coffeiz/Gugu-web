@@ -291,6 +291,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
             else:
                 round_buf += text
                 out = text
+            out = sanitize.strip_disallowed_emoji(out)   # 出口兜底删白名单外 emoji（prompt 压不住）
             if out:
                 full_reply += out
                 await genstream.publish(session_id, {"type": "token", "content": out})

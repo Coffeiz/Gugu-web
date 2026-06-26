@@ -253,3 +253,14 @@ body {
 }
 /* 源卡 / 落点卡：隐藏但保留布局占位，让飞动的克隆体看起来就是卡片本体 */
 .phys-drag-source { opacity: 0 !important; }
+
+/* 拖拽期间给浏览器减负（perf trace 显示 CPU 几乎全在浏览器渲染，非物理 JS）：
+   顶栏/侧栏的 backdrop-filter 在内容变动时会重新模糊整条 → 整屏 Paint（trace 里单次 ~29ms 的整屏重绘）。
+   拖拽这一两秒关掉模糊几乎无感，却能消掉这笔最大的 Paint 开销。body.phys-dragging 由 usePhysicsDrag 开/关。 */
+body.phys-dragging .topbar,
+body.phys-dragging .sidebar {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* pointer 驱动拖拽没有原生 drag 光标，整页给个抓取态补回手感 */
+body.phys-dragging, body.phys-dragging * { cursor: grabbing !important; }

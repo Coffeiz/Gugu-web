@@ -1,6 +1,7 @@
 <template>
   <div
     class="done-col"
+    data-col-status="done"
     :class="{ 'drag-over': isDragOver }"
     @dragover.prevent="isDragOver = true"
     @dragleave="isDragOver = false"
@@ -30,7 +31,6 @@
               :key="'recent-' + p.id"
               :project="p"
               @click="$emit('card-click', p)"
-              @dragstart="(e) => e.dataTransfer.setData('projectId', p.id)"
             />
           </div>
         </div>
@@ -72,9 +72,7 @@
                   v-for="p in mg.items"
                   :key="p.id"
                   :project="p"
-                  
                   @click="$emit('card-click', p)"
-                  @dragstart="(e) => e.dataTransfer.setData('projectId', p.id)"
                 />
               </div>
             </div>
@@ -100,9 +98,7 @@
                 v-for="p in undatedProjects"
                 :key="p.id"
                 :project="p"
-                
                 @click="$emit('card-click', p)"
-                @dragstart="(e) => e.dataTransfer.setData('projectId', p.id)"
               />
             </div>
           </div>

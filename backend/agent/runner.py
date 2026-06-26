@@ -176,6 +176,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     if not errored:
         from agent.outbound import sanitize_outbound
         text = sanitize_outbound(text)
+        text = sanitize.strip_disallowed_emoji(text)   # 出口兜底删白名单外 emoji（prompt 压不住）
 
     # ── 持久化：工具调用轮次（anthropic）+ 回复 + 用量（报错不入历史）──
     if not errored:
@@ -315,4 +316,4 @@ async def run_ephemeral(user_id, user_name: str, prompt: str) -> str:
         text, _, _, errored, _, _ = await _collect(gen)
     finally:
         _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
-    return text if not errored else ""
+    return sanitize.strip_disallowed_emoji(text) if not errored else ""

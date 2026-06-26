@@ -9,6 +9,8 @@ MiniMax-M3 经 Anthropic 兼容端点流式输出时，偶发把内部 tool-call
 """
 from __future__ import annotations
 
+import re
+
 TRUNCATE_MARKERS = ["]<]minimax"]
 
 
@@ -63,6 +65,26 @@ class StreamSanitizer:
         out = self._buf
         self._buf = ""
         return out
+
+
+# ── 输出 emoji 白名单过滤 ────────────────────────────────────────────────────
+# persona 要求表情极简、只标内容类别、坚决不用阴阳/情绪/暧昧表情，但 prompt 压不住模型在
+# 「活泼」语气下的 emoji 习惯（实测三层声明无效——emoji 是 token 级低层习惯，非高层语义行为）。
+# 这里在输出出口确定性兜底：白名单（功能/内容类别）外的 emoji 一律删——宁可误删一个无害图标，
+# 也不放过一个会被读成阴阳/敷衍/暧昧的脸或手势。base char 判定，连带的 VS16/ZWJ 一起处理。
+_KEEP_EMOJI = set("✅✔☑💡📌📎📝📄📅📆🗓⏰⏳⌛🔍🔎🎉🎊📂📁🗂📊📈📉🔔💬🗨")
+# 前导可选空格一起匹配：删违规 emoji 时连它前面的空格一起吃掉，不留难看的双空格 / 行尾空格
+_EMOJI_RE = re.compile(
+    "[ 　]?([\U0001F300-\U0001FAFF\U00002600-\U000027BF\U00002B00-\U00002BFF"
+    "\U00002300-\U000023FF\U0001F1E6-\U0001F1FF])[\U0000FE00-\U0000FE0F\U0000200D]*"
+)
+
+
+def strip_disallowed_emoji(text: str) -> str:
+    """删掉「内容类别白名单」外的所有 emoji（脸 / 手势 / 情绪 / 暧昧等高阴阳风险表情）。"""
+    if not text:
+        return text
+    return _EMOJI_RE.sub(lambda m: m.group(0) if m.group(1) in _KEEP_EMOJI else "", text)
 
 
 # ── 历史消息清洗（Anthropic / MiniMax）──────────────────────────────────────

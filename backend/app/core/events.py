@@ -65,9 +65,12 @@ async def publish(user_id, *resources: str, **extra) -> None:
 BROADCAST_CHANNEL = "events:__broadcast__"
 
 
-async def broadcast(title: str, content: str = "", color: str = "#7b7fb2") -> None:
-    """向所有在线用户推送通知气泡（best-effort）。"""
-    notification = {"title": title, "content": content, "color": color}
+async def broadcast(title: str, content: str = "", color: str = "#7b7fb2", nid=None,
+                    bubble: bool = True, persist: bool = True) -> None:
+    """向所有在线用户推送通知（best-effort）。nid=site_notifications.id（供前端去重/标已读）；
+    bubble=是否弹气泡，persist=是否进通知中心——前端按这俩决定怎么处理。"""
+    notification = {"id": nid, "title": title, "content": content, "color": color,
+                    "bubble": bubble, "persist": persist}
     payload = {"notification": notification}
     try:
         await get_redis().publish(BROADCAST_CHANNEL, __import__("json").dumps(payload, ensure_ascii=False))

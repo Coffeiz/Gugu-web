@@ -2149,7 +2149,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 0 5px; margin-bottom: 2px; }
 .stage-node.stage-dragging { opacity: 0.15; pointer-events: none; }
 
-.node-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+.node-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 0; }
 .node-circle {
   width: 22px; height: 22px; border-radius: 50%;
   border: 1.5px solid rgba(90,95,120,0.35); background: rgba(0,0,0,0.08);
