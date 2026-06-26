@@ -160,6 +160,8 @@ async def _update_stage(db, user_id, args: dict):
 
     # 勾选/取消某条待办（按所在阶段 + 文本匹配）
     td = args.get("todo")
+    if isinstance(td, str):                 # 容错：模型偶尔把 todo 传成字符串而非 {text,...}
+        td = {"text": td} if td.strip() else None
     if td and td.get("text"):
         st_key = td.get("stage")
         done_val = bool(td.get("done", True))
@@ -500,6 +502,10 @@ async def _update_todo(db, user_id, args: dict):
             break
     if not found:
         return json.dumps({"error": f"未找到待办: {target}"})
+
+    if not (args.get("text") or ("done" in args and args["done"] is not None) or args.get("to_stage")):
+        return json.dumps({"error": "没提供要改的内容（text/done/to_stage），未改动。",
+                           "todo": found.get("text")})
 
     if args.get("text"):
         found["text"] = str(args["text"])

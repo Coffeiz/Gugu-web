@@ -8,7 +8,7 @@
       <PhWarningCircle :size="28" style="opacity:.5" />
       <span>{{ error }}</span>
     </div>
-    <div v-else class="tv-scroll">
+    <div v-else ref="tvScroll" class="tv-scroll" @scroll="onScroll">
       <div v-if="truncated" class="tv-notice">仅显示前 500 KB</div>
       <!-- Markdown 渲染 -->
       <div v-if="mdHtml" class="tv-md" v-html="mdHtml" @click="onMdClick" />
@@ -27,7 +27,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 import { PhWarningCircle } from '@phosphor-icons/vue'
 
 const MAX_BYTES = 500 * 1024
@@ -36,7 +36,25 @@ const props = defineProps({
   blobUrl:  { type: String, default: null },
   ext:      { type: String, default: null },
   fontSize: { type: Number, default: 13 },
+  // 文件标识：滚动位置按它存进 localStorage，刷新（重载/组件重建）后据此还原
+  fileKey:  { type: [String, Number], default: null },
 })
+
+const tvScroll = ref(null)   // .tv-scroll 滚动容器
+
+// 滚动位置持久化到 localStorage：实时刷新会把 blobUrl 置空、整组件销毁重建，内存变量留不住，
+// 只有 localStorage 跨重建（甚至跨整页刷新）还在。按 fileKey 存，渲染完读回。
+const _posKey = () => (props.fileKey != null ? 'tvpos:' + props.fileKey : null)
+let _saveQueued = false
+function onScroll() {
+  if (_saveQueued) return
+  _saveQueued = true
+  requestAnimationFrame(() => {
+    _saveQueued = false
+    const k = _posKey()
+    if (k && tvScroll.value) { try { localStorage.setItem(k, String(Math.round(tvScroll.value.scrollTop))) } catch {} }
+  })
+}
 
 // 扩展名 → highlight.js 语言名
 const LANG_MAP = {
@@ -204,6 +222,13 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
     error.value = '读取失败：' + e.message
   } finally {
     loading.value = false
+  }
+  // 渲染完从 localStorage 还原该文件的滚动位置（新内容更短时浏览器自动夹到底部）
+  const k = _posKey()
+  const saved = k ? parseInt(localStorage.getItem(k) || '0', 10) : 0
+  if (saved > 0) {
+    await nextTick()
+    requestAnimationFrame(() => { if (tvScroll.value) tvScroll.value.scrollTop = saved })
   }
 }, { immediate: true })
 </script>

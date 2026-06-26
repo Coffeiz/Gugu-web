@@ -999,7 +999,9 @@ function onPmFileDragStart(file, e) {
   e.dataTransfer.effectAllowed = 'move'
   // 物理拖拽：仅网格卡片、单选时启用（列表行整条飞起来不好看）
   if (e.currentTarget?.classList?.contains('fc-card') && ids.length === 1) {
-    startPhysicsDrag(e, e.currentTarget)
+    // mode2（stages-expanded）下卡片用 aspect-ratio 压扁；克隆体在 body 层丢了该上下文，
+    // 给它打标记类把 mode2 版式补回去，否则拖影回落 mode1 的更大尺寸、与面板卡对不上。
+    startPhysicsDrag(e, e.currentTarget, stagesExpanded.value ? { cloneClass: 'pm-clone-expanded' } : {})
   }
   _cancelPmBoxDrag()
 }
@@ -2370,6 +2372,14 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* 上传按钮与幽灵卡取消固定 min-height，跟随卡片同比例 */
 .modal.stages-expanded .fc-upload,
 .modal.stages-expanded .fc-ghost { min-height: 0; aspect-ratio: 138 / 122; }
+/* 物理拖影克隆体被挂到 body、脱离 .modal.stages-expanded 上下文 → 用克隆标记类补回 mode2 版式，
+   否则拖影回落 mode1 的 min-height:122 尺寸，和面板里压扁的卡片对不上（克隆体外框高度由内联 rect 控制）。 */
+.fc-card.pm-clone-expanded,
+.folder-card.pm-clone-expanded { min-height: 0; display: flex; flex-direction: column; }
+.pm-clone-expanded .fc-thumb-area,
+.pm-clone-expanded .fc-icon-area,
+.pm-clone-expanded .fd-icon-area { flex: 1; height: auto; min-height: 0; }
+.pm-clone-expanded .fc-big-icon { width: 52px; height: 52px; }
 
 /* 文件夹卡片 */
 .folder-card {

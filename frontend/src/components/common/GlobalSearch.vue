@@ -124,7 +124,8 @@ async function runSearch(text) {
 function go(type, it) {
   close()
   if (type === 'project') {
-    router.push('/projects').then(() => projectStore.openModal({ id: it.id }))
+    uiStore.pendingProjectHighlight = it.id   // 跳转后高亮项目卡，不打开编辑弹窗
+    router.push('/projects')
   } else if (type === 'file' || type === 'folder') {
     uiStore.pendingFileTarget = { kind: type, id: it.id }   // 文件库监听后定位到对应目录
     router.push('/files')

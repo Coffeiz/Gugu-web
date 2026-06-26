@@ -12,6 +12,7 @@ export const useUiStore = defineStore('ui', () => {
   const pendingFileTarget    = ref(null)
   const pendingChatMessageId = ref(null)   // 对话搜索命中消息时，跳转后滚到该消息
   const pendingCalendarEvent = ref(null)   // { id, date } 日程搜索跳转
+  const pendingProjectHighlight = ref(null)   // 项目搜索跳转后高亮项目卡（不打开编辑弹窗）
 
   // 通知气泡锚点：距视口底部的 px。GuguChat 按小窗/播放器是否展开实时更新，
   // 让通知气泡始终浮在「聊天窗/音乐播放器」上方而不重叠。
@@ -98,6 +99,6 @@ export const useUiStore = defineStore('ui', () => {
     pushNotification, markAllRead, markRead,
     openNewProject, newProjectInitStatus, openProfile, sidebarCollapsed, newProjectRange,
     calendarActiveRange, pendingChatSession, pendingFileTarget, chatNotifyAnchor, chatNotifyOrigin,
-    pendingChatMessageId, pendingCalendarEvent,
+    pendingChatMessageId, pendingCalendarEvent, pendingProjectHighlight,
   }
 })

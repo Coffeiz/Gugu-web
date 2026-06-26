@@ -529,7 +529,12 @@
       <section v-if="activeTab === 'labels'" class="config-card labels-card">
         <div class="card-head">
           <h3>状态命名</h3>
-          <p>自定义对话里「状态指示」的显示名。留空＝用默认值。<b>一个状态可填多个名称，用「|」分隔，显示时随机取一个</b>（例：<code>咕咕在想…|让我捋捋|动动脑子</code>）。改完保存即时生效（工具名立即生效，「思考中」需刷新对话页）。</p>
+          <p>自定义对话里「状态指示」的显示名。留空＝用默认值。改完保存即时生效（工具名立即生效，「思考中」需刷新对话页）。</p>
+        </div>
+
+        <div class="labels-tip">
+          <span class="labels-tip-icon">💡</span>
+          <span>一个状态可填<b>多个名称</b>，用竖线 <code>|</code> 分隔，每次显示<b>随机取一个</b>。例：<code>咕咕在想…|让我捋捋一下|动动小脑瓜</code></span>
         </div>
 
         <div v-if="labelsLoading" class="placeholder-panel">加载中…</div>
@@ -2161,6 +2166,13 @@ onMounted(async () => {
   border-radius: 8px; padding: 9px 11px; margin: 0; max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 
 /* ── 状态命名 ── */
+.labels-tip { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 16px; padding: 10px 13px;
+  background: rgba(120,170,255,0.09); border: 1px solid rgba(120,170,255,0.22); border-radius: 10px;
+  font-size: 12.5px; line-height: 1.6; color: rgba(255,255,255,0.78); }
+.labels-tip-icon { flex: 0 0 auto; font-size: 14px; line-height: 1.4; }
+.labels-tip b { color: #fff; font-weight: 600; }
+.labels-tip code, .card-head code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+  background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 5px; padding: 1px 6px; color: #ffd9a8; }
 .labels-group-title { display: flex; align-items: center; gap: 10px; margin: 18px 2px 8px; font-size: 12px; font-weight: 600;
   color: rgba(255,255,255,0.42); text-transform: uppercase; letter-spacing: 0.06em; }
 .labels-filter { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; width: 180px;

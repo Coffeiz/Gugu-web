@@ -108,6 +108,7 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
   // 克隆体（保留 data-v scoped 属性 → 外观一致），它就是飞动的「本体」
   const clone = sourceEl.cloneNode(true)
   clone.classList.add('phys-drag-clone')
+  if (opts.cloneClass) clone.classList.add(opts.cloneClass)   // 调用方补回脱离上下文后丢失的版式（如 mode2）
   Object.assign(clone.style, {
     position: 'fixed', left: '0', top: '0',
     width: rect.width + 'px', height: rect.height + 'px',
@@ -336,6 +337,7 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
             const box = revealInScroller(sc, el.getBoundingClientRect())
             const clone2 = el.cloneNode(true)   // 新状态样式
             clone2.classList.add('phys-drag-clone')
+            if (opts.cloneClass) clone2.classList.add(opts.cloneClass)
             Object.assign(clone2.style, {
               position: 'fixed', left: '0', top: '0',
               width: clone.style.width, height: clone.style.height,

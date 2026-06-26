@@ -36,7 +36,7 @@
             <template v-else-if="blobUrl || videoSrc">
               <PdfViewer   v-if="isPdf || isOffice" :blobUrl="blobUrl" />
               <ImageViewer v-else-if="isImage"      :blobUrl="blobUrl" />
-              <TextViewer  v-else-if="isText"       :blobUrl="blobUrl" :ext="file?.ext" />
+              <TextViewer  v-else-if="isText"       :blobUrl="blobUrl" :ext="file?.ext" :fileKey="file?.id ?? file?.attach_id" />
               <VideoViewer v-else-if="isVideo"      :src="videoSrc" />
 
             </template>
@@ -145,7 +145,7 @@ function revoke() {
   videoSrc.value = null
 }
 
-async function load(file) {
+async function load(file, refresh = false) {
   revoke()
   loading.value    = true
   converting.value = false
@@ -173,9 +173,10 @@ async function load(file) {
       if (blob.type !== 'application/pdf') blob = new Blob([blob], { type: 'application/pdf' })
       blobUrl.value = URL.createObjectURL(blob)
     } else {
-      const dlUrl = file.attach_id
+      const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
+      const dlUrl = (file.attach_id
         ? `${BASE_URL}/agent/attachment/${file.attach_id}/download`
-        : `${BASE_URL}/files/${file.id}/download`
+        : `${BASE_URL}/files/${file.id}/download`) + bust
       const res = await fetch(dlUrl, { headers })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       let blob = await res.blob()
@@ -200,7 +201,7 @@ watch(() => [props.show, props.file], ([show, file]) => {
 
 const liveStore = useLiveStore()
 watch(() => liveStore.rev.files, () => {
-  if (props.show && props.file && isText.value) load(props.file)
+  if (props.show && props.file && isText.value) load(props.file, true)
 })
 
 function onKey(e) { if (e.key === 'Escape') emit('close') }

@@ -38,7 +38,7 @@
       <!-- 真实内容（在下层） -->
       <ImageViewer v-if="isImg" :blobUrl="blobUrl" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc" />
-      <TextViewer  v-else-if="isText && blobUrl" :blobUrl="blobUrl" :ext="win.file.ext" :fontSize="textFontSize" />
+      <TextViewer  v-else-if="isText && blobUrl" :blobUrl="blobUrl" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
         <div class="fpw-spinner"></div>
         <span>加载中…</span>
@@ -336,9 +336,10 @@ async function load(f, refresh = false) {
         vid.src = url
       })
     } else if (isTextExt(f.ext)) {
-      const dlUrl = f.attach_id
+      const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
+      const dlUrl = (f.attach_id
         ? `${BASE_URL}/agent/attachment/${f.attach_id}/download`
-        : `${BASE_URL}/files/${f.id}/download`
+        : `${BASE_URL}/files/${f.id}/download`) + bust
       const res = await fetch(dlUrl, { headers })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       blobUrl.value = URL.createObjectURL(await res.blob())

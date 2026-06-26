@@ -79,11 +79,14 @@ async def _update_event(db, user_id, args: dict):
     e, _err = await _resolve_event(db, user_id, args)
     if _err:
         return _err
+    fields = ("title", "date", "type", "project_id", "description")
+    if not any(fld in args for fld in fields):   # 没给任何要改的字段 → 别假成功（防咕咕误报"已更新"）
+        return json.dumps({"error": "没提供要修改的字段（title/date/type/project_id/description），未改动。"})
     if args.get("project_id") is not None:
         proj = await db.get(Project, args["project_id"])
         if not proj or proj.user_id != user_id:
             return json.dumps({"error": "关联项目不存在"})
-    for field in ("title", "date", "type", "project_id", "description"):
+    for field in fields:
         if field in args:
             setattr(e, field, args[field])
     await db.commit()

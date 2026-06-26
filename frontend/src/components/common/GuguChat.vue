@@ -196,19 +196,16 @@
               </button>
             </div>
           </div>
-          <div v-if="activeTool" class="msg ai">
-            <div class="msg-bubble tool-bubble">
-              <span class="tool-spinner" />
-              <span class="tool-label">{{ activeTool }}</span>
+          <!-- 状态指示：动画队列驱动，:key 让每条重建以重放入场动画；文字走打字机、点点为默认思考态 -->
+          <div v-if="statusKind" class="msg ai">
+            <div :key="statusSeq" class="msg-bubble status-pop"
+                 :class="statusKind === 'dots' ? 'thinking' : 'tool-bubble'">
+              <template v-if="statusKind === 'dots'"><span /><span /><span /></template>
+              <template v-else>
+                <span class="tool-spinner" />
+                <span class="tool-label">{{ statusTyped }}</span>
+              </template>
             </div>
-          </div>
-          <div v-else-if="thinking" class="msg ai">
-            <!-- 「思考中」有文案 → 带 spinner 的文字气泡（多候选已随机取一）；清空了才回退三个点 -->
-            <div v-if="thinkingText" class="msg-bubble tool-bubble">
-              <span class="tool-spinner" />
-              <span class="tool-label">{{ thinkingText }}</span>
-            </div>
-            <div v-else class="msg-bubble thinking"><span /><span /><span /></div>
           </div>
           <div class="msg-sentinel" />
         </div>
@@ -322,9 +319,10 @@ watch(() => liveStore.sessionEvent, async (e) => {
 })
 
 // 工具名 → 受影响数据域，咕咕操作后据此刷新前端，免手动刷新页面
-const _PROJECT_TOOLS = new Set(['create_project','update_project','update_stage','add_stage','remove_stage','rename_stage','add_todo','remove_todo','set_priority','archive_project','delete_project'])
+// 与后端 RESOURCE_BY_TOOL（app/core/events.py）保持一致——漏了哪个工具，对应视图就不会实时刷新。
+const _PROJECT_TOOLS = new Set(['create_project','update_project','delete_project','archive_project','update_stage','set_priority','set_color','add_stage','remove_stage','rename_stage','add_todo','remove_todo','set_stages','update_todo'])
 const _CALENDAR_TOOLS = new Set(['create_event','update_event','delete_event'])
-const _FILE_TOOLS = new Set(['create_document','edit_file','rename_file','move_file','create_folder','delete_file','rename_folder','delete_folder','restore_file','permanent_delete'])
+const _FILE_TOOLS = new Set(['edit_file','create_document','rename_file','move_items','copy_file','create_folder','delete_file','rename_folder','delete_folder','save_uploaded_file','restore_file','permanent_delete'])
 
 async function refreshAfterTools(usedTools) {
   if (!usedTools.size) return
@@ -332,7 +330,9 @@ async function refreshAfterTools(usedTools) {
   try {
     if (has(_PROJECT_TOOLS)) await projectStore.fetchProjects()
     if (has(_CALENDAR_TOOLS)) { calendarSignal.value++; projectStore.fetchUpcomingCalEvents?.() }
-    if (has(_FILE_TOOLS)) uploadSignal.value++
+    // 文件：刷文件管理器（uploadSignal）+ 确定性 bump rev.files 让打开的预览窗重载。
+    // 实时 SSE（live.js）是 best-effort（dev 重启 / pub-sub 竞态会丢事件），靠这条回合末兜底保证稳定刷新。
+    if (has(_FILE_TOOLS)) { uploadSignal.value++; liveStore.bump('files') }
   } catch (e) { /* 刷新失败不影响对话 */ }
 }
 const audioEl       = ref(null)
@@ -617,24 +617,70 @@ onUnmounted(() => {
 // ── 对话状态 ────────────────────────────────────────────
 const inputText      = ref('')
 const isComposing    = ref(false)
-const thinking       = ref(false)
-const thinkingLabels = ref([])   // 「思考中」候选文案（后台「状态命名」_thinking，可多个 | 分隔）
-const thinkingText   = ref('')   // 本次显示的随机一条（每次进入思考态重新抽）
+const thinkingLabels = ref([])   // 「思考中」候选文案（后台「状态命名」_thinking，可多个 | 分隔；空=三个点）
 const streaming      = ref(false)
-const activeTool     = ref('')
-const isTypingText   = computed(() => streaming.value && !thinking.value && !activeTool.value)
+// 状态指示走「动画队列」：SSE 事件入队、逐个播放（文字打字机入场），切换太快也排队、不抢拍、不闪。
+const statusKind     = ref('')   // '' | 'text'（工具/自定义思考，打字机）| 'dots'（默认思考三点）
+const statusTyped    = ref('')   // 当前显示的文字（打字机进度；dots 时为空）
+const statusSeq      = ref(0)    // 每播一条 +1，用作 :key 让气泡重建、重放入场动画
+const isTypingText   = computed(() => streaming.value && !statusKind.value)
 const fabJumping     = ref(false)
 watch(isTypingText, v => {
   if (v) { fabJumping.value = true; setTimeout(() => { fabJumping.value = false }, 350) }
 })
-// 每次进入「思考中」就从候选里随机抽一条显示（候选为空则回退三个点）
-watch(thinking, v => {
-  if (v && thinkingLabels.value.length) {
-    thinkingText.value = thinkingLabels.value[Math.floor(Math.random() * thinkingLabels.value.length)]
-  } else if (!v) {
-    thinkingText.value = ''
-  }
-})
+
+// ── 状态动画队列 ───────────────────────────────────────────
+const STATUS_TYPE_MS = 26    // 打字机每字间隔
+const STATUS_HOLD_MS = 160   // 打完后的最短驻留，避免一闪而过
+const STATUS_DOTS_MS = 420   // 三点状态的最短驻留
+let _statusQ = []
+let _statusBusy = false
+let _typeTimer = null
+
+function _thinkingItem() {
+  // 「思考中」：设了自定义文案就随机取一条走打字机；否则三个点
+  const c = thinkingLabels.value
+  return c.length ? { kind: 'text', label: c[Math.floor(Math.random() * c.length)] } : { kind: 'dots' }
+}
+
+function clearStatus() {       // 立即清空并打断队列（回复开始/结束/切会话）
+  _statusQ = []
+  _statusBusy = false
+  if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }
+  statusKind.value = ''; statusTyped.value = ''
+}
+
+function enqueueStatus(item) { // item: {kind:'text'|'dots'|'hide', label?}
+  _statusQ.push(item)
+  _pumpStatus()
+}
+
+function _pumpStatus() {
+  if (_statusBusy) return
+  const next = _statusQ.shift()
+  if (!next) return
+  _statusBusy = true
+  _playStatus(next).then(() => { _statusBusy = false; _pumpStatus() })
+}
+
+function _playStatus(item) {
+  return new Promise(resolve => {
+    if (item.kind === 'hide') { statusKind.value = ''; statusTyped.value = ''; resolve(); return }
+    statusSeq.value++          // 触发入场动画重放（:key 变化 → 气泡重建）
+    statusKind.value = item.kind
+    statusTyped.value = ''
+    scrollBottom()
+    if (item.kind === 'dots') { setTimeout(resolve, STATUS_DOTS_MS); return }
+    const full = item.label || ''
+    if (!full) { resolve(); return }
+    let i = 0
+    if (_typeTimer) clearInterval(_typeTimer)
+    _typeTimer = setInterval(() => {
+      statusTyped.value = full.slice(0, ++i)
+      if (i >= full.length) { clearInterval(_typeTimer); _typeTimer = null; setTimeout(resolve, STATUS_HOLD_MS) }
+    }, STATUS_TYPE_MS)
+  })
+}
 const sessionId      = ref(null)
 const abortCtrl      = ref(null)
 const pendingQueue   = ref([])   // 生成中发的消息，排队等流式结束后接着发
@@ -923,7 +969,7 @@ async function loadSession(id) {
   try {
     const data = await agentApi.getMessages(id)
     sessionId.value = id
-    thinking.value = false; activeTool.value = ''   // 切会话先清掉上个会话残留的「思考中/工具中」指示（active 会话下面 resumeStream 会重置）
+    clearStatus()   // 切会话先清掉上个会话残留的状态指示（active 会话下面 resumeStream 会重置）
     messages.value = data.messages.map(m => ({
       id: mkid(),
       dbId: m.id,
@@ -1082,21 +1128,28 @@ async function consumeStream(reader, ownerSid) {
           // 后端新一轮开始（sanitizer 已重置），前端无需变更视觉状态
         } else if (evt.type === 'tool_call') {
           if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)  // 跳过 _preparing 占位
-          // label 已由后端解析（含「状态命名」覆盖 + 复查前缀），前端直接显示
-          if (live()) { thinking.value = false; activeTool.value = evt.label || evt.name; await scrollBottom() }
+          // label 已由后端解析（含「状态命名」覆盖 + 复查前缀）；入队走打字机入场，切换太快也不抢拍
+          if (live()) enqueueStatus({ kind: 'text', label: evt.label || evt.name })
         } else if (evt.type === 'tool_done') {
-          // 复查轮结束不回落到「生成中」点点（回复早已显示完，点点会被误读为卡住）；主回复轮照旧回 thinking
-          if (live()) { activeTool.value = ''; thinking.value = !evt.verify; await scrollBottom() }
+          // 改动类工具一完成就即时 bump 对应资源（走已连好的对话流，不等回合末、不靠 best-effort
+          // 的 events SSE）→ 文件预览 / 项目卡 / 日历当场刷新。视图是全局的，切走也该刷，故不受 live() 限制。
+          if (evt.name) {
+            if (_FILE_TOOLS.has(evt.name)) liveStore.bump('files')
+            else if (_PROJECT_TOOLS.has(evt.name)) liveStore.bump('projects')
+            else if (_CALENDAR_TOOLS.has(evt.name)) liveStore.bump('calendar')
+          }
+          // 复查轮结束直接隐藏（回复早已显示完，别回落点点被误读为卡住）；主回复轮回到「思考中」
+          if (live()) enqueueStatus(evt.verify ? { kind: 'hide' } : _thinkingItem())
         } else if (evt.type === 'token') {
           if (live()) {
-            thinking.value = false; activeTool.value = ''
+            clearStatus()   // 真回复开始 → 打断状态队列、收起指示，让位给流式正文
             if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
             messages.value[aiIdx].text += evt.content
             await scrollBottom()
           }
         } else if (evt.type === 'file') {
           if (live()) {
-            thinking.value = false; activeTool.value = ''
+            clearStatus()
             if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
             const m = messages.value[aiIdx]
             if (!m.files) m.files = []
@@ -1104,10 +1157,10 @@ async function consumeStream(reader, ownerSid) {
             await scrollBottom()
           }
         } else if (evt.type === 'done') {
-          if (live()) { thinking.value = false; activeTool.value = '' }
+          if (live()) clearStatus()
         } else if (evt.type === 'error') {
           if (live()) {
-            thinking.value = false; activeTool.value = ''
+            clearStatus()
             messages.value.push({ id: mkid(), role: 'ai', text: evt.message || evt.detail || '咕咕开小差了 😵‍💫 麻烦再说一遍好吗？', time: now() })
             aiIdx = messages.value.length - 1
             await scrollBottom()
@@ -1133,7 +1186,7 @@ async function resumeStream(id) {
   if (streaming.value) return            // 本地正在发/看，不重复连
   const token = localStorage.getItem('user_token') ?? ''
   abortCtrl.value = new AbortController()   // 让下次切会话能 abort 掉这条续看
-  thinking.value = true; streaming.value = true
+  streaming.value = true; clearStatus(); enqueueStatus(_thinkingItem())
   try {
     const res = await fetch(`${BASE_URL}/agent/sessions/${id}/stream`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -1146,7 +1199,7 @@ async function resumeStream(id) {
   } catch { /* 续看失败/被切走中断都不打扰 */ }
   finally {
     // 仍停在本会话才收尾全局指示，避免切走后清掉新会话续看的状态
-    if (sessionId.value === id) { thinking.value = false; activeTool.value = ''; streaming.value = false; abortCtrl.value = null }
+    if (sessionId.value === id) { clearStatus(); streaming.value = false; abortCtrl.value = null }
   }
 }
 
@@ -1169,7 +1222,7 @@ async function send(forcedText) {
   // 生成中：把这条排队，等当前流式结束后在 finally 里接着发（气泡已显示）
   if (streaming.value) { pendingQueue.value.push(text); return }
 
-  thinking.value = true; streaming.value = true
+  streaming.value = true; clearStatus(); enqueueStatus(_thinkingItem())
   abortCtrl.value = new AbortController()
   await scrollBottom()
   const token = localStorage.getItem('user_token') ?? ''
@@ -1199,7 +1252,7 @@ async function send(forcedText) {
   } catch (e) {
     if (e.name !== 'AbortError' && sessionId.value === resolvedSid) {
       // fetch 抛错=连不上咕咕后端，基本都是网络问题（仅在仍停在本会话时报）
-      thinking.value = false
+      clearStatus()
       messages.value.push({ id: mkid(), role: 'ai', text: '咕咕网络不太好 📡 可以再发一遍吗？', time: now() })
       await scrollBottom()
     }
@@ -1209,7 +1262,7 @@ async function send(forcedText) {
     if (ownsView) {
       // 流式结束：把该条 AI 消息标记为非流式，触发 markdown 渲染（流式中按纯文本显示，避免半截表格/代码块闪烁）
       if (aiIdx !== -1 && messages.value[aiIdx]) messages.value[aiIdx].streaming = false
-      thinking.value = false; activeTool.value = ''; streaming.value = false; abortCtrl.value = null
+      clearStatus(); streaming.value = false; abortCtrl.value = null
       // markdown 重渲染后内容变高，MutationObserver 此时已因 streaming=false 停止跟随，
       // 需在 nextTick 后再滚一次，否则底部时间戳会被截掉
       await scrollBottom()
@@ -1645,6 +1698,10 @@ async function send(forcedText) {
 .thinking span:nth-child(2) { animation-delay: 0.2s; }
 .thinking span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
+
+/* 状态气泡入场动画（:key 变化触发重建 → 每个状态都「冒」一下；文字本身再走打字机） */
+.status-pop { animation: statusPop 0.3s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+@keyframes statusPop { from { opacity: 0; transform: translateY(7px) scale(0.96); } to { opacity: 1; transform: none; } }
 
 .tool-bubble { display: flex; align-items: center; gap: 8px; color: var(--color-primary); }
 .tool-spinner {

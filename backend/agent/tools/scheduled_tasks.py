@@ -119,6 +119,8 @@ async def _update_scheduled_task(db, user_id, args: dict):
     t, err = await _resolve_task(db, user_id, args)
     if err:
         return err
+    if not any(args.get(fld) is not None for fld in ("cron", "name", "instruction", "channels", "enabled")):
+        return json.dumps({"error": "没提供要修改的字段（cron/name/instruction/channels/enabled），未改动。"})
     if args.get("cron") is not None:
         c = _check_cron(str(args["cron"]).strip())
         if c:

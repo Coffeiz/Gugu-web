@@ -67,7 +67,10 @@ async def _update_client(db, user_id, args: dict):
     c, _err = await _resolve_client(db, user_id, args)
     if _err:
         return _err
-    for field in ("name", "contact", "email", "phone", "notes"):
+    fields = ("name", "contact", "email", "phone", "notes")
+    if not any(fld in args for fld in fields):   # 没给任何要改的字段 → 别假成功（防咕咕误报"已更新"）
+        return json.dumps({"error": "没提供要修改的字段（name/contact/email/phone/notes），未改动。"})
+    for field in fields:
         if field in args:
             setattr(c, field, args[field])
     await db.commit()

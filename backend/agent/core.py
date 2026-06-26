@@ -51,8 +51,8 @@ MAX_ROUNDS = 6
 _CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取消（单轮长回答只能在这里掐断）
 
 # ── 自我核实：做了增删改后，模型说"完成"时强制再跑一轮核实（用查询工具查证真生效/完整），
-# 没做成/不完整就补做；最多 MAX_VERIFY 轮。防"嘴上说建好了、实际没建全"。
-MAX_VERIFY = 3
+# 没做成/不完整就补做；最多 MAX_VERIFY 轮（每次对话回合计，非整 session）。防"嘴上说建好了、实际没建全"。
+MAX_VERIFY = 5
 _VERIFY_PROMPT = (
     "【系统自检 · 请认真执行，勿跳过】你刚才执行了增删改操作。现在**用对应的查询工具把刚改的东西查出来、核对真生效且完整**："
     "查询工具一般是 `list_*` / `get_*` / `read_*`（建项目用 `get_project` 看阶段待办、定时任务用 `list_scheduled_tasks` 看 cron/内容……照此类推，不管什么资源都先查后认，别凭印象说完成）。"
@@ -74,12 +74,12 @@ _READ_PREFIXES = ("read_", "list_", "get_", "find_", "search_")
 # 特殊状态显示名默认值（非工具，无法从 registry 派生）。后台「状态命名」面板可覆盖：
 #   _preparing      openai 流式收参数阶段的占位
 #   _verify_prefix  复查轮工具标签前缀，后端拼到 label 前再下发
-#   _thinking       「思考中」状态的文字（前端取此值显示成气泡；清空则回退三个点）
+#   _thinking       「思考中」状态的文字（默认空＝显示三个点；填了才显示成文字气泡）
 # 任一命名都可填多个（用 | 分隔），显示时随机取一个 —— 见 _pick_label。
 SPECIAL_STATE_LABELS = {
     "_preparing":     "咕咕正在整理…",
     "_verify_prefix": "复查 · ",
-    "_thinking":      "咕咕在想…",
+    "_thinking":      "",
 }
 
 

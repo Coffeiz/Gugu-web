@@ -135,6 +135,47 @@ def _coerce_loc(space, project_id, folder_id):
     return space, project_id, folder_id, None
 
 
+def _norm_target(target):
+    """target 容错：模型偶尔把它序列化成字符串（JSON 或 Python 字面量），统一回 dict。"""
+    if isinstance(target, dict):
+        return target
+    if isinstance(target, str) and target.strip():
+        import ast
+        for _p in (json.loads, ast.literal_eval):
+            try:
+                v = _p(target)
+                if isinstance(v, dict):
+                    return v
+            except Exception:
+                pass
+    return {}
+
+
+def _target_loc(f, target: dict):
+    """据 target 算出 (space, project_id, folder_id)。关键：跨项目/空间又没显式指定 folder 时，
+    folder_id 落到目标根目录（None），**不继承源文件夹**——否则「复制到别的项目」会落回原文件夹
+    （源文件夹属于原项目），表现为「原地复制了一份」。给了 project_id 没给 space 则视为进项目空间。"""
+    def _i(v):
+        try:
+            return int(str(v).strip().lstrip("#")) if v not in (None, "") else None
+        except (ValueError, TypeError):
+            return v
+    if "space" in target:
+        space = target["space"]
+    elif target.get("project_id") not in (None, ""):
+        space = "project"
+    else:
+        space = f.space
+    project_id = _i(target.get("project_id", f.project_id))
+    if "folder_id" in target:
+        folder_id = _i(target.get("folder_id"))
+    elif space == f.space and project_id == f.project_id:
+        folder_id = f.folder_id          # 同项目同空间内复制/移动 → 默认留在原文件夹
+    else:
+        folder_id = None                 # 跨项目/空间 → 落目标根目录，不继承源文件夹
+    return space, project_id, folder_id
+
+
 # ── handlers ──
 async def _list_files(db, user_id, args: dict):
     stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
@@ -470,9 +511,8 @@ async def _folder_by_name(db, user_id, name, space=None, project_id=None):
 async def _move_one(db, user_id, f, target: dict) -> dict:
     """把已解析的 File f 移到 target，各自 commit。返回结果 dict（成功或 {"error":...}）。
     供 move_items 移动文件时复用（单个文件也走它）。"""
-    space = target.get("space", f.space)
-    project_id = target.get("project_id", f.project_id)
-    folder_id = target.get("folder_id", f.folder_id)
+    target = _norm_target(target)
+    space, project_id, folder_id = _target_loc(f, target)
     space, project_id, folder_id, loc_err = _coerce_loc(space, project_id, folder_id)
     if loc_err:
         return loc_err
@@ -795,10 +835,8 @@ async def _copy_file(db, user_id, args: dict):
     f, _err = await _resolve_file(db, user_id, args)
     if _err:
         return _err
-    target = args.get("target", {})
-    space = target.get("space", f.space)
-    project_id = target.get("project_id", f.project_id)
-    folder_id = target.get("folder_id", f.folder_id)
+    target = _norm_target(args.get("target", {}))
+    space, project_id, folder_id = _target_loc(f, target)
     space, project_id, folder_id, loc_err = _coerce_loc(space, project_id, folder_id)
     if loc_err:
         return loc_err

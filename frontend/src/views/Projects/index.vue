@@ -20,7 +20,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
@@ -34,6 +34,28 @@ const uiStore      = useUiStore()
 onMounted(() => {
   if (!cacheStore.loaded && !cacheStore.loading) cacheStore.load()
 })
+
+// 全局搜索点击项目 → 跳转本页后高亮对应项目卡（不打开编辑弹窗）
+watch(() => uiStore.pendingProjectHighlight, (id) => {
+  if (id == null) return
+  uiStore.pendingProjectHighlight = null
+  _flashProject(id)
+}, { immediate: true })
+
+function _flashProject(id) {
+  let tries = 0
+  const tick = () => {
+    const el = document.querySelector(`[data-project-id="${id}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.classList.add('search-flash')
+      setTimeout(() => el.classList.remove('search-flash'), 1800)
+    } else if (tries++ < 20) {
+      setTimeout(tick, 100)   // 项目卡还没渲染（刚跳转/数据加载中），等一会重试，最多 ~2s
+    }
+  }
+  setTimeout(tick, 100)
+}
 
 const nonDoneColumns = computed(() =>
   projectStore.kanbanColumns.filter(c => c.key !== 'done')

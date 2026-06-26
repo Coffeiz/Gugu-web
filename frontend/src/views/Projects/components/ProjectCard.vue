@@ -272,7 +272,18 @@ function onDocDown(e) {
 function onKey(e) { if (e.key === 'Escape') closeStagePop() }
 
 function persistTodos() { projectStore.updateStages(props.project.id, props.project.stages) }
-function toggleTodo(t) { t.done = !t.done; t.autoCompleted = false; persistTodos() }
+function toggleTodo(t) {
+  t.done = !t.done; t.autoCompleted = false
+  // 勾完当前阶段最后一个待办 → 自动进入下一阶段（与项目编辑卡一致；空阶段 / 最后阶段不动）
+  const stages = props.project.stages
+  const idx = stages.findIndex(s => s.key === props.project.currentStage)
+  const todos = idx >= 0 ? (stages[idx].todos ?? []) : []
+  if (t.done && idx >= 0 && idx < stages.length - 1 && todos.length > 0 && todos.every(x => x.done)) {
+    projectStore.setStage(props.project.id, stages[idx + 1].key, stageProgress.value)   // setStage 一并保存 stages + 推进
+  } else {
+    persistTodos()
+  }
+}
 function addTodo() {
   const s = currentStage.value; if (!s) return
   if (!s.todos) s.todos = []
@@ -601,4 +612,11 @@ async function setPriority(n) {
   color: var(--text-primary);
 }
 .card-advance:active { background: rgba(0,0,0,0.1); }
+
+/* 全局搜索命中 → 跳转本页后高亮闪一下定位（class 由 Projects 面板 JS 动态加） */
+.proj-card.search-flash { animation: proj-search-flash 1.8s ease forwards; }
+@keyframes proj-search-flash {
+  0%, 30% { box-shadow: 0 0 0 3px rgba(123,127,178,0.7), 0 8px 22px rgba(80,90,110,0.22); }
+  100%    { box-shadow: 0 2px 8px rgba(80,90,110,0.07); }
+}
 </style>
