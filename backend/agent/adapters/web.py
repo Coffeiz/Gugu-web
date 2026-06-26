@@ -40,10 +40,12 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
         if use_anthropic:
             import httpx
             from anthropic import AsyncAnthropic
+            from agent.llm_select import anthropic_default_headers
             client = AsyncAnthropic(
                 api_key=settings.ai.api_key or "dummy",
                 base_url=settings.ai.base_url,
                 http_client=httpx.AsyncClient(timeout=httpx.Timeout(10.0)),
+                default_headers=anthropic_default_headers(settings.ai),
             )
             resp = await client.messages.create(
                 model=settings.ai.model,
@@ -54,10 +56,12 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
         else:
             import httpx
             from openai import AsyncOpenAI
+            from agent.llm_select import openai_default_headers
             client = AsyncOpenAI(
                 api_key=settings.ai.api_key or "dummy",
                 base_url=settings.ai.base_url,
                 timeout=httpx.Timeout(10.0),
+                default_headers=openai_default_headers(settings.ai),
             )
             resp = await client.chat.completions.create(
                 model=settings.ai.model,
@@ -159,8 +163,11 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
 
     yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id})}\n\n"
 
-    # ── 启动后台生成（脱离本请求：浏览器刷新/断开杀不掉它，持久化也在任务里）──
-    #    再转发该会话的生成频道。客户端断开只停转发，后台任务继续到完成。
+    # ── 先订阅频道、再启动后台生成 ──
+    #    顺序很关键：pub/sub 发完即弃，若先起生成、后订阅，生成的头几个 token（短回复时是全部）
+    #    会在订阅建好之前被 publish 掉 → 首条消息空气泡。先 attach 订阅，消息就进连接缓冲不丢。
+    #    （生成脱离本请求：浏览器刷新/断开只停转发，后台任务继续到完成、自己持久化。）
+    pubsub = await genstream.open_subscription(session_id)
     if not await genstream.is_active(session_id):
         task = asyncio.create_task(_generate(
             req, session_id, projects, events, files_overview, history, is_new_session, aug_text, aug_images,
@@ -169,7 +176,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
 
-    async for line in genstream.subscribe(session_id):
+    async for line in genstream.subscribe(session_id, pubsub=pubsub):
         yield line
 
 
@@ -234,10 +241,8 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                           "涉及创建/修改/删除/整理文件/生成文档/联网搜索等重操作时，"
                           "礼貌告知用户「精力不足，等配额恢复后再帮你做」，不要假装已完成。")
 
-    use_anthropic = (
-        settings.ai.provider == "minimax"
-        or "anthropic" in settings.ai.base_url.lower()
-    )
+    from agent.llm_select import use_anthropic_for
+    use_anthropic = use_anthropic_for(settings.ai)
 
     runner = LLMRunner(tool_names, settings)
     full_reply = ""

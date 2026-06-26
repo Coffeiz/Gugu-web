@@ -93,11 +93,22 @@ async def is_active(session_id) -> bool:
     return bool(snap) and not snap.get("done")
 
 
-async def subscribe(session_id):
-    """订阅某会话的生成频道，逐条 yield SSE 行。无消息时定期 keepalive。"""
+async def open_subscription(session_id):
+    """先建立订阅（attach 到频道）并返回 pubsub，让调用方能在『启动生成之前』就订上。
+    pub/sub 发完即弃，只送达当时已订阅者；先订阅后，频道消息会进连接缓冲、不丢——
+    这是首条消息『空气泡』（生成头几个 token 抢在订阅前 publish 掉了）的根治点。"""
     pubsub = get_redis().pubsub()
+    await pubsub.subscribe(_ch(session_id))
+    return pubsub
+
+
+async def subscribe(session_id, pubsub=None):
+    """订阅某会话的生成频道，逐条 yield SSE 行。无消息时定期 keepalive。
+    可传入 open_subscription() 预先订好的 pubsub（避免订阅前丢消息）。"""
     ch = _ch(session_id)
-    await pubsub.subscribe(ch)
+    if pubsub is None:
+        pubsub = get_redis().pubsub()
+        await pubsub.subscribe(ch)
     try:
         while True:
             try:

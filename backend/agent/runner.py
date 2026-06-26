@@ -140,10 +140,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     if _summary:
         system_prompt += compress_conv.system_block(_summary)
 
-    use_anthropic = (
-        model_cfg.provider == "minimax"
-        or "anthropic" in (model_cfg.base_url or "").lower()
-    )
+    from agent.llm_select import use_anthropic_for
+    use_anthropic = use_anthropic_for(model_cfg)
     runner = LLMRunner(profile.tool_names, settings)
 
     from app.core.chat_attach import build_user_content
@@ -298,10 +296,8 @@ async def run_ephemeral(user_id, user_name: str, prompt: str) -> str:
     prompt_name = profile.prompt_file.removesuffix(".md")
     system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview, skills=profile.skills)
 
-    use_anthropic = (
-        model_cfg.provider == "minimax"
-        or "anthropic" in (model_cfg.base_url or "").lower()
-    )
+    from agent.llm_select import use_anthropic_for
+    use_anthropic = use_anthropic_for(model_cfg)
     runner = LLMRunner(profile.tool_names, settings)
 
     from app.core.chat_attach import build_user_content

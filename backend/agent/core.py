@@ -52,17 +52,28 @@ _CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取�
 # 没做成/不完整就补做；最多 MAX_VERIFY 轮。防"嘴上说建好了、实际没建全"。
 MAX_VERIFY = 3
 _VERIFY_PROMPT = (
-    "【系统自检 · 请认真执行，勿跳过】你刚才执行了增删改操作。现在**用查询工具核实它们真的生效且完整**："
-    "建项目/任务用 `get_project` 看阶段和待办是否齐全；增删改文件用 `list_files`/`list_folders` 看是否真到位；"
-    "日历/客户同理。**发现没做成或不完整 → 立刻补做，并简要说明补了什么**。"
+    "【系统自检 · 请认真执行，勿跳过】你刚才执行了增删改操作。现在**用对应的查询工具把刚改的东西查出来、核对真生效且完整**："
+    "查询工具一般是 `list_*` / `get_*` / `read_*`（建项目用 `get_project` 看阶段待办、定时任务用 `list_scheduled_tasks` 看 cron/内容……照此类推，不管什么资源都先查后认，别凭印象说完成）。"
+    "**尤其改了文件正文（`edit_file`/`create_document`）：必须用 `read_file` 把内容读回来逐字比对——`list_files` 只能看文件在不在、读不到正文，光看那个不算核实。**"
+    "**发现没做成或不完整 → 立刻补做，并简要说明补了什么**。"
     "若核实一切正常，简单确认即可、别重复刚才说过的话（系统会自动略过这条，用户不会看到重复确认）。"
 )
 
 
-def _mutating_tools() -> set:
-    """增删改工具名集合（复用实时刷新的资源映射，即所有改动型工具）。"""
+# 增删改工具的命名约定：写动词前缀。新功能的工具照此命名（create_/update_/delete_/...），
+# 就自动纳入自我核实——这是「新功能直接适配复查」的关键，不用再来这里登记。
+_WRITE_PREFIXES = (
+    "create_", "update_", "delete_", "add_", "remove_", "edit_", "rename_",
+    "move_", "copy_", "set_", "archive_", "restore_", "permanent_delete", "save_",
+)
+
+
+def _mutating_tools(tool_names) -> set:
+    """本次可用工具里的「增删改」集合：① 命名约定（写动词前缀，自动覆盖新工具）
+    ② 并上 RESOURCE_BY_TOOL 里人工登记的（双保险，防约定外的特例漏判）。"""
     from app.core.events import RESOURCE_BY_TOOL
-    return set(RESOURCE_BY_TOOL)
+    by_name = {n for n in tool_names if n.startswith(_WRITE_PREFIXES)}
+    return by_name | set(RESOURCE_BY_TOOL)
 
 
 async def _im_cancelled() -> bool:
@@ -114,27 +125,38 @@ class LLMRunner:
         ai = ai if ai is not None else settings.ai
         tools = registry.anthropic_schemas(self.tool_names)
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
+        from agent.llm_select import anthropic_default_headers, _is_mimo
+        is_mimo = _is_mimo(ai)
         client = AsyncAnthropic(
             api_key=ai.api_key or "dummy",
             base_url=ai.base_url,
             http_client=httpx.AsyncClient(timeout=_timeout),
+            default_headers=anthropic_default_headers(ai),
         )
 
         total_in = total_out = total_cache_read = 0
         max_tokens  = ai.max_tokens
         temperature = ai.temperature
         thinking_val = getattr(ai, "thinking", "disabled")
-        thinking_param = {"thinking": {"type": thinking_val}} if thinking_val == "adaptive" else {}
+        if is_mimo:
+            # mimo 的 thinking 取值用文档确认的 disabled；想开就不传、用其默认（避免猜它的 enable 取值）
+            thinking_param = {"thinking": {"type": "disabled"}} if thinking_val != "adaptive" else {}
+        else:
+            thinking_param = {"thinking": {"type": thinking_val}} if thinking_val == "adaptive" else {}
 
         # prompt 缓存：把 system（含人格/记忆/上下文）作为稳定前缀缓存。
         # Anthropic 顺序 tools→system→messages，断点打在 system 即缓存 tools+system，
         # 多轮工具循环只重算新增 messages，命中后读取便宜 ~90%。
-        system_param = (
-            [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
-            if system_text else system_text
-        )
+        # 例外：mimo 的 anthropic 端点不支持 prompt caching，不能发 cache_control（可能报错）。
+        if system_text:
+            _sys_blk = {"type": "text", "text": system_text}
+            if not is_mimo:
+                _sys_blk["cache_control"] = {"type": "ephemeral"}
+            system_param = [_sys_blk]
+        else:
+            system_param = system_text
 
-        _mutset = _mutating_tools()
+        _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; round_i = 0
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
@@ -244,19 +266,27 @@ class LLMRunner:
 
         settings = self.settings
         ai = ai if ai is not None else settings.ai
+        # mimo（小米）是推理模型：会把思考放 reasoning_content、正文放 content，偶尔整轮正文为空 →
+        # 空回复/空气泡。据此单独适配（下方空 content 兜底）。
+        is_mimo = (ai.provider or "").lower() == "mimo" or "xiaomimimo" in (ai.base_url or "").lower()
         tools = registry.openai_schemas(self.tool_names)
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
+        from agent.llm_select import openai_default_headers
         client = AsyncOpenAI(
             api_key=ai.api_key or "dummy",
             base_url=ai.base_url,
             timeout=_timeout,
+            default_headers=openai_default_headers(ai),
         )
 
         max_tokens  = ai.max_tokens
         temperature = ai.temperature
+        # mimo：思考关时显式传 thinking:disabled（官方两套 API 都支持此参数）——从源头避免「输出全进
+        # reasoning_content、正文空」的空气泡。思考开（adaptive）则不传，用 mimo 默认（开），靠下方空回复兜底。
+        _mimo_extra = {"thinking": {"type": "disabled"}} if (is_mimo and getattr(ai, "thinking", "disabled") != "adaptive") else {}
         total_in = total_out = 0
-        _mutset = _mutating_tools()
-        did_mutate = False; verify_count = 0; round_i = 0
+        _mutset = _mutating_tools(self.tool_names)
+        did_mutate = False; verify_count = 0; round_i = 0; empty_retry = 0
         # 自我核实阶段：进入后持续到收尾，期间文字先缓冲——干净通过整段丢弃、补做了才发一次说明（同 Anthropic 路）
         verify_mode = False; verify_fixed = False
         while round_i < MAX_ROUNDS + MAX_VERIFY * 2:   # 核实轮额外预算
@@ -273,6 +303,7 @@ class LLMRunner:
                 temperature=temperature,
                 stream=True,
                 stream_options={"include_usage": True},
+                extra_body=_mimo_extra,
             )
             content = ""
             tool_buf: dict[int, dict] = {}   # index → {id, name, args}，流式分片累积
@@ -352,6 +383,17 @@ class LLMRunner:
                 continue
 
             # 无工具调用：正文已逐 token 流式输出完毕
+            # mimo 空回复兜底：推理模型偶尔把整轮输出全放进 reasoning_content、正文 content 为空 →
+            # 用户看到空气泡。本轮没动工具、也不在核实阶段时：先追一轮要它直接给正文；仍空则给句得体兜底。
+            if is_mimo and not content.strip() and not did_mutate and not verify_mode:
+                if empty_retry < 1:
+                    empty_retry += 1
+                    messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})
+                    yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                    continue
+                fb = "嗯…我这下没太接住，你再说一遍、或者换个说法，我马上跟上～"
+                yield f"data: {json.dumps({'type': 'token', 'content': fb}, ensure_ascii=False)}\n\n"
+                content = fb
             # 自我核实：做过增删改、未满 MAX_VERIFY 轮 → 强制再跑一轮查证/补做
             if did_mutate and verify_count < MAX_VERIFY:
                 verify_count += 1

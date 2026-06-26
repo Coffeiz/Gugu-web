@@ -9,6 +9,29 @@
 
 ## [Unreleased]
 
+### MiMo（小米）模型接入 + 双 API 适配 + 空回复治理
+
+- **后台新增 MiMo provider**（`Admin/Agent/index.vue`）：供应商下拉加「MiMo (小米)」（默认 `mimo-v2.5`、base_url `token-plan-cn.xiaomimimo.com/v1`、橙色圆点）。`mimo-v2.5` 才同时支持「看图 + 深度思考 + 1M 上下文」；`mimo-v2.5-pro` 纯文本不看图，选型注意。
+- **API 格式可选**（`api_format` 字段，`AISettings`/`AIPresetItem` + admin 选择器）：MiMo 同时提供 OpenAI / Anthropic 两套兼容 API，预设里可显式选格式（留空=按 provider/base_url 自动判）；选 Anthropic 时前端自动把 base_url 后缀 `/v1` ↔ `/anthropic` 互切。后端抽出**唯一判定口 `llm_select.use_anthropic_for(ai)`**（优先显式 `api_format`），聊天 / 记忆 / IM **5 处**重复逻辑统一改用它，杜绝「聊天走 anthropic、记忆还走 openai」的不一致。
+- **鉴权**：MiMo 两套 API 都收 `api-key` 头与 `Authorization: Bearer`。`llm_select.openai_default_headers` / `anthropic_default_headers` 给 mimo 补 `api-key` 头（多发一个无害），三处 SDK 客户端 + admin 连通性测试/多模态检测同款。
+- **空气泡根治**：mimo 是推理模型（返回 `reasoning_content` + `content` 双字段），思考开时偶尔整轮输出全进 `reasoning_content`、`content` 为空 → 空气泡。两层修复：① **OpenAI 路给 mimo 传 `thinking:{type:disabled}`**（`extra_body`，官方两套 API 都支持此参；思考关时正文不再空，从源头消除）；② 仍空（思考开）时**追一轮要正文、再空给一句得体兜底**，绝不留空气泡。
+- **Anthropic 路对 mimo 特化**（`core._run_anthropic`）：去掉 `cache_control`（mimo 无 prompt caching）；thinking 取值用文档确认的 `disabled`（想开则不传、用其默认，不瞎猜 enable 值）。实测 mimo anthropic 端点（`/anthropic/v1/messages`）：鉴权 / `thinking:disabled` / **图片块（看图）** 全通，`cache_control` 也不报错。**走 Anthropic 格式可原生处理思考块（免疫空气泡）+ `read_file` 看库内图**，功能最全。
+
+### 流式首条空气泡：pub/sub 订阅竞态修复
+
+- **现象**：切换主模型（尤其首 token 更快的模型）后，每个会话**第一条**回复偶发空气泡——回复其实已生成并落库（快照/DB 有全文），只是当场没显示。
+- **根因**（`adapters/web.stream()`）：先 `create_task` 起后台生成、后 `subscribe` 频道；Redis pub/sub 发完即弃，生成的头几个 token（短回复时是全部）在订阅建好前被 publish 掉、丢失。
+- **修复**（`genstream.py` + `adapters/web.py`）：新增 `open_subscription()`，**先 attach 订阅、再启动生成**——订阅就绪后频道消息进连接缓冲不丢。`subscribe(session_id, pubsub=)` 兼容传入已订阅的 pubsub；`resume()`（刷新续看，本就先回放快照再订阅）逻辑不变。
+
+### 前端体验打磨
+
+- **日历多选：单日悬停不提前切侧边栏**（`Calendar/index.vue`）：`activeRange` computed 在 anchor 与 hoverRangeEnd 同天时返回 `null`，侧边栏仅在真正跨天拖选后才切换为「添加项目」模式，防止点击单天意外触发。
+- **定时任务时间输入改为文本框**（`Schedules/index.vue`）：`<input type="time">` 改为 `<input type="text">`，不弹系统选择器；宽度与 `DatePicker` 等宽（移除 `width: 120px` 限制），文字居中对齐；`title-input`、表单 input/textarea/select、`repeat-tab` 圆角统一为 `var(--radius-sm)`，同步去除 `corner-shape: squircle`（避免与 DatePicker 视觉不一致）。
+- **项目卡悬停亮色高光**（`ProjectCard.vue`）：卡片 `::after` 伪元素加顶部白色渐变 + inset 描边，hover 时高光明显增亮（`rgba(255,255,255,0.55)` 渐变区），静止时保持低调（`0.12`），transition 过渡顺滑。
+- **看板「新建项目」卡悬停亮色**（`KanbanColumn.vue`）：hover 背景从 `rgba(255,255,255,0.05)`（比默认更暗）修正为 `rgba(255,255,255,0.3)`（明显更亮），无 inset 顶部光，与项目卡风格对齐。
+- **ProjectModal 删除阶段按钮位置修复**（`ProjectModal.vue`）：`.node-row` 加 `padding-right: 8px`，防止「×」按钮落在阶段分割线上。
+- **浮动预览窗口：内容刷新不重置位置**（`FloatPreviewWindow.vue`）：`liveStore.rev.files` 触发的内容重载改传 `refresh=true`，`load()` 在 `refresh && ready` 时跳过 `fitWindow()`，窗口位置/尺寸原地保留，仅 `blobUrl` 更新为最新内容。
+
 ### Agent 记忆边界：根治"伪个性化幻觉"（编造与用户的共同历史）
 
 - **背景**：空记忆 / 新用户下，咕咕会硬编「你之前聊过 X / 我记得你喜欢 Y」（用户根本没提过）。这类幻觉 `web_search` 救不了——「你我之间发生过什么」网上查不到，唯一真相源是注入的记忆区；且「活泼」语气会放大（亲昵语域爱 call-back 共同记忆）。

@@ -269,7 +269,7 @@ function onPlaceholderLoad(e) {
   placeholderReady.value = true
 }
 
-async function load(f) {
+async function load(f, refresh = false) {
   if (blobUrl.value) { URL.revokeObjectURL(blobUrl.value); blobUrl.value = null }
   videoSrc.value       = null
   loading.value        = true
@@ -342,7 +342,9 @@ async function load(f) {
       const res = await fetch(dlUrl, { headers })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       blobUrl.value = URL.createObjectURL(await res.blob())
-      fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
+      if (!refresh || !ready.value) {
+        fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
+      }
     } else {
       const dlUrl = f.attach_id
         ? `${BASE_URL}/agent/attachment/${f.attach_id}/download`
@@ -372,7 +374,7 @@ async function load(f) {
     }
   } catch (e) {
     error.value = '加载失败：' + e.message
-    fitWindow(480, 300)
+    if (!refresh || !ready.value) fitWindow(480, 300)
   } finally {
     loading.value = false
   }
@@ -382,7 +384,7 @@ watch(() => props.win.file, f => load(f), { immediate: true })
 
 const liveStore = useLiveStore()
 watch(() => liveStore.rev.files, () => {
-  if (isText.value && !props.win.file.attach_id) load(props.win.file)
+  if (isText.value && !props.win.file.attach_id) load(props.win.file, true)
 })
 
 async function handleDownload() {

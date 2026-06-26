@@ -461,9 +461,9 @@ async function setPriority(n) {
   position: absolute; inset: 0;
   border-radius: inherit;
   corner-shape: squircle;   /* corner-shape 不随 border-radius:inherit 继承，需显式声明，否则圆角与卡片(squircle)不重合 → 双层圆角 */
-  background: linear-gradient(to top, rgba(255,255,255,0.08), transparent 50%);
+  background: linear-gradient(to bottom, rgba(255,255,255,0.12) 0%, transparent 50%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
-  transition: background 0.3s cubic-bezier(0.34,1.2,0.64,1);
+  transition: background 0.25s ease, box-shadow 0.25s ease;
   pointer-events: none;
 }
 .proj-card:hover {
@@ -471,7 +471,8 @@ async function setPriority(n) {
   box-shadow: 0 6px 18px rgba(80,90,110,0.13);
 }
 .proj-card:hover::after {
-  background: linear-gradient(to top, rgba(255,255,255,0.25), rgba(255,255,255,0.05) 50%);
+  background: linear-gradient(to bottom, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.08) 45%, transparent 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,1);
 }
 .proj-card:active:not(:has(.stars:active, .seg-bar-wrap:active, .proj-stage:active)) { transform: translateY(1px); opacity: 0.93; }
 

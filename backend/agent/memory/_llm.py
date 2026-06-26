@@ -10,10 +10,8 @@ import json
 
 async def complete_text(sys: str, user: str, settings, max_tokens: int = 800) -> str:
     """单次非流式调用 → 返回纯文本。失败返回空串。"""
-    use_anthropic = (
-        settings.ai.provider == "minimax"
-        or "anthropic" in settings.ai.base_url.lower()
-    )
+    from agent.llm_select import use_anthropic_for
+    use_anthropic = use_anthropic_for(settings.ai)
     try:
         return (
             await _anthropic(sys, user, settings, max_tokens)
@@ -26,10 +24,8 @@ async def complete_text(sys: str, user: str, settings, max_tokens: int = 800) ->
 
 async def complete_json(sys: str, user: str, settings, max_tokens: int = 500) -> dict:
     """单次非流式调用 → 解析 JSON。失败/解析不出返回 {}。"""
-    use_anthropic = (
-        settings.ai.provider == "minimax"
-        or "anthropic" in settings.ai.base_url.lower()
-    )
+    from agent.llm_select import use_anthropic_for
+    use_anthropic = use_anthropic_for(settings.ai)
     text = (
         await _anthropic(sys, user, settings, max_tokens)
         if use_anthropic
@@ -42,10 +38,12 @@ async def _anthropic(sys: str, user: str, settings, max_tokens: int) -> str:
     import httpx
     from anthropic import AsyncAnthropic
 
+    from agent.llm_select import anthropic_default_headers
     client = AsyncAnthropic(
         api_key=settings.ai.api_key or "dummy",
         base_url=settings.ai.base_url,
         http_client=httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0)),
+        default_headers=anthropic_default_headers(settings.ai),
     )
     resp = await client.messages.create(
         model=settings.ai.model,
@@ -60,11 +58,13 @@ async def _anthropic(sys: str, user: str, settings, max_tokens: int) -> str:
 async def _openai(sys: str, user: str, settings, max_tokens: int) -> str:
     import httpx
     from openai import AsyncOpenAI
+    from agent.llm_select import openai_default_headers
 
     client = AsyncOpenAI(
         api_key=settings.ai.api_key or "dummy",
         base_url=settings.ai.base_url,
         timeout=httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0),
+        default_headers=openai_default_headers(settings.ai),
     )
     resp = await client.chat.completions.create(
         model=settings.ai.model,

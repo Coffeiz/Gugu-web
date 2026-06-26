@@ -69,7 +69,7 @@
 
   <!-- 聊天窗口（单一元素，小/大状态通过位置过渡） -->
   <Transition name="chat-open">
-    <div v-if="open" class="chat-window" :style="windowStyle" ref="windowRef"
+    <div v-if="open" class="chat-window" :class="{ 'win-grow': streaming && !expanded }" :style="windowStyle" ref="windowRef"
       @dragenter="onChatDragEnter" @dragover="onChatDragOver" @dragleave="onChatDragLeave" @drop="onChatDrop">
 
       <!-- 拖入遮罩（覆盖整个窗口，大小窗通用）-->
@@ -221,7 +221,7 @@
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7l-5.5 5.5a2.5 2.5 0 0 1-3.5-3.5L9 3.5a1.5 1.5 0 0 1 2 2L5.5 11"/></svg>
           </button>
           <input ref="fileInput" type="file" multiple style="display:none" @change="onFilePicked" />
-          <textarea v-if="expanded"
+          <textarea
             v-model="inputText"
             ref="expInputEl"
             placeholder="问问项目进度、截止日期…"
@@ -230,11 +230,6 @@
             @compositionend="isComposing = false"
             @keydown.enter.exact.prevent="!isComposing && send()"
             @input="autoResize"
-          />
-          <input v-else v-model="inputText" placeholder="问问项目进度、截止日期…"
-            @compositionstart="isComposing = true"
-            @compositionend="isComposing = false"
-            @keydown.enter="!isComposing && send()"
           />
           <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="streaming ? stopStreaming() : send()">
             <PhArrowRight v-if="!streaming" weight="bold" :size="expanded ? 14 : 13" />
@@ -510,17 +505,24 @@ const vw = ref(window.innerWidth)
 const vh = ref(window.innerHeight)
 function onResize() { vw.value = window.innerWidth; vh.value = window.innerHeight }
 
-// 小窗高度动态延伸：
-//   每次打开/切换小窗时重置 _scrollDelta = 0
-//   streaming 自动滚底时，累计 scrollTop 向下移动了多少，超出部分就是窗口需要增高的量
-//   用 scrollTop 位移而非 scrollHeight 差值，天然规避大小窗宽度不同导致的换行高度偏差
-let _scrollDelta = 0
-const msgsGrowth = ref(0)
+// 小窗高度跟随内容：直接用 messages 内容真实高度（scrollHeight，天然含所有气泡 + gap + padding）
+//   算窗口该多高，到 maxH 封顶后内部滚动。比旧的「按滚动位移反推」稳——旧法窗口一增高、内容
+//   不再溢出，位移 delta 就归零、停止增长（表现为生成到一半窗口不再长高）。
+const contentH = ref(SMALL_H)   // 窗口高度（= SMALL_H + 相对基线的新增内容高度），驱动 smallH
+let _baseScrollH = 0            // 打开/切会话时的内容高度基线：窗口只随「相对基线新增的内容」长高，
+                               // 不一次跳到全部历史高度（否则历史多时一发消息就瞬间全高）
 
 const smallH = computed(() => {
   const maxH = Math.min(vh.value * 0.75, vh.value - 88 - 16)
-  return Math.min(maxH, SMALL_H + msgsGrowth.value)
+  return Math.min(maxH, Math.max(SMALL_H, contentH.value))
 })
+
+// 内容相对基线增高多少，窗口就增高多少（含用户气泡 + AI 气泡）；到 maxH 封顶后内部滚动
+function syncSmallH() {
+  const el = messagesEl.value
+  if (!el || expanded.value || resizing.value) return
+  contentH.value = SMALL_H + Math.max(0, el.scrollHeight - _baseScrollH)
+}
 
 // 单一窗口的位置样式：小状态与大状态都用 top/left/right/bottom 像素值，保证过渡正常
 // transition 放在 CSS 而非 inline style，避免覆盖 Vue Transition 的 opacity/transform 动画
@@ -578,10 +580,11 @@ watch(notifyOrigin, v => { uiStore.chatNotifyOrigin = v }, { immediate: true })
 async function toggleOpen() {
   open.value = !open.value
   if (open.value) {
-    if (!expanded.value) { _scrollDelta = 0; msgsGrowth.value = 0 }
+    if (!expanded.value) contentH.value = SMALL_H
     trackApi.track('chat_open').catch(() => {})
     await nextTick()
     atBottom.value = true; stick.value = true
+    _baseScrollH = messagesEl.value?.scrollHeight || 0   // 基线 = 打开时的历史内容高度
     if (messagesEl.value) scrollToBottom(messagesEl.value)
   }
 }
@@ -867,7 +870,9 @@ async function enterExpanded() {
 }
 
 async function exitExpanded() {
-  _scrollDelta = 0; msgsGrowth.value = 0  // 先重置，小窗 DOM 以 SMALL_H 直接创建，不产生二次缩小
+  contentH.value = SMALL_H  // 先重置，小窗 DOM 以 SMALL_H 直接创建，不产生二次缩小
+  _baseScrollH = Infinity   // 缩小动画期间冻结增长（grown 恒 0、窗口稳在 SMALL_H）：大窗换行少、
+                            // scrollHeight 偏小，拿它当基线会让小窗重新换行后的高度全被算成新增 → 顶满
   expanded.value = false
   _markResizing()
   await nextTick()
@@ -876,10 +881,14 @@ async function exitExpanded() {
   atBottom.value = true; stick.value = true
   el.scrollTop = 999999; _lastTop = el.scrollTop
   // CSS transition 让窗口从大尺寸平滑缩小（0.38s），期间 clientHeight 持续变化
-  // ResizeObserver 跟着一直滚底，过渡结束后断开
+  // ResizeObserver 跟着一直滚底，过渡结束后断开；动画结束、小窗布局稳定后再测真实基线
   const ro = new ResizeObserver(() => { el.scrollTop = 999999; _lastTop = el.scrollTop })
   ro.observe(el)
-  setTimeout(() => ro.disconnect(), 450)
+  setTimeout(() => {
+    ro.disconnect()
+    _baseScrollH = messagesEl.value?.scrollHeight || 0
+    syncSmallH()
+  }, 450)
 }
 
 async function loadSession(id) {
@@ -899,8 +908,10 @@ async function loadSession(id) {
       files: m.files && m.files.length ? m.files : undefined,
       time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
     }))
-    _scrollDelta = 0; msgsGrowth.value = 0; _sessionTurn = 0
-    await nextTick(); scrollBottom(true)
+    contentH.value = SMALL_H; _sessionTurn = 0
+    await nextTick()
+    _baseScrollH = messagesEl.value?.scrollHeight || 0   // 基线 = 切入会话的历史高度
+    scrollBottom(true)
     if (data.active) resumeStream(id)   // 该会话后端正在生成 → 重连续看
   } catch {}
 }
@@ -945,13 +956,10 @@ function scrollToBottom(el, smooth = false) {
 // 用户上翻 → 停住；滚回接近底部 → 恢复跟随
 function onMsgScroll() {
   const el = messagesEl.value; if (!el) return
-  const top = el.scrollTop
-  if (top < _lastTop - 4) {
-    stick.value = false
-  } else if (el.scrollHeight - top - el.clientHeight < 60) {
-    stick.value = true
-  }
-  _lastTop = top
+  // 用「距底距离」判定，对窗口增高导致的 scrollTop clamp 鲁棒（不会误判成用户上翻 → 停止跟随）
+  const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+  stick.value = dist < 40
+  _lastTop = el.scrollTop
 }
 
 // 用户发送时强制即时跳到底（大窗用 smooth 会被随后出现的 thinking 气泡/内容打断，看着没到底）；
@@ -959,6 +967,7 @@ function onMsgScroll() {
 async function scrollBottom(force = false) {
   await nextTick()
   const el = messagesEl.value; if (!el) return
+  syncSmallH()   // 发送/加载后按内容真实高度更新窗口高（含刚加的用户气泡）
   if (force) {
     atBottom.value = true; stick.value = true
     scrollToBottom(el)
@@ -991,14 +1000,11 @@ watch(messagesEl, (el, oldEl) => {
   // MutationObserver：streaming 时内容变化自动滚底，小窗模式额外累计高度增量
   msgMo = new MutationObserver(() => {
     const el = messagesEl.value
-    if (!el || !streaming.value || !stick.value || resizing.value) return
-    if (!expanded.value) {
-      const prevTop = el.scrollTop
-      scrollToBottom(el)
-      const step = el.scrollTop - prevTop
-      if (step > 0) { _scrollDelta += step; msgsGrowth.value = _scrollDelta }
-    } else {
-      scrollToBottom(el)
+    if (!el || resizing.value) return
+    syncSmallH()                          // 按内容真实高度更新小窗高度（含用户气泡 + AI 气泡）
+    if (stick.value) {
+      scrollToBottom(el)                                                                          // 立即滚底
+      requestAnimationFrame(() => { if (stick.value && messagesEl.value) scrollToBottom(messagesEl.value) })  // 等窗口增高后的布局再滚一次
     }
   })
   msgMo.observe(el, { childList: true, subtree: true })
@@ -1252,6 +1258,13 @@ async function send(forcedText) {
               right 0.42s cubic-bezier(0.16, 1, 0.3, 1),
               bottom 0.42s cubic-bezier(0.16, 1, 0.3, 1);
 }
+/* 小窗流式增高：top 即时跟随内容（去掉 0.42s 缓动，否则窗口高度滞后于出字、一跳一跳）。
+   left/right/bottom 保留缓动用于开关/位移动画；流式中它们不变，无副作用。 */
+.chat-window.win-grow {
+  transition: left 0.42s cubic-bezier(0.16, 1, 0.3, 1),
+              right 0.42s cubic-bezier(0.16, 1, 0.3, 1),
+              bottom 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+}
 
 
 /* 窗口开/关动画（从右下角 fab 原点缩放），!important 覆盖上方位移 transition */
@@ -1335,7 +1348,7 @@ async function send(forcedText) {
   display: flex; align-items: center; padding: 0; opacity: 0.7; transition: opacity 0.15s, color 0.15s; }
 .att-btn:hover { opacity: 1; color: var(--color-primary); }
 .chat-input-row {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: flex-end; gap: 8px;   /* 输入框多行增高时，附件/发送按钮贴底对齐 */
   padding: 10px 13px;
   border-top: 1px solid rgba(255,255,255,0.65);
   background: rgba(255,255,255,0.55);
@@ -1356,8 +1369,10 @@ async function send(forcedText) {
   font-size: 14px; color: var(--text-primary);
   outline: none; font-family: var(--font-sans);
   resize: none; line-height: 1.5; max-height: 120px; overflow-y: auto;
-  display: block; padding: 0; vertical-align: middle;
+  display: block; padding: 4px 0; vertical-align: middle;
 }
+/* 小窗输入字号略小，与小窗整体一致 */
+.chat-main:not(.is-expanded) .chat-input-row textarea { font-size: 13px; }
 
 .exp-sidebar {
   width: 210px; flex-shrink: 0;

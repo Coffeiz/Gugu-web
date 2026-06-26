@@ -53,9 +53,9 @@
         </div>
         <div class="divider"></div>
 
-        <label class="field">
+        <label class="field time-field">
           <span>时间</span>
-          <input type="time" v-model="form.time" />
+          <input type="text" v-model="form.time" placeholder="HH:MM" autocomplete="off" />
         </label>
         <div class="divider"></div>
 
@@ -353,7 +353,7 @@ async function removeTask(t) {
   width: 100%; box-sizing: border-box; outline: none;
   font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans);
   padding: 6px 11px; margin-bottom: 10px;
-  border: 1px solid transparent; border-radius: 10px; corner-shape: squircle;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
   background: transparent;
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
@@ -365,7 +365,7 @@ async function removeTask(t) {
 /* 输入框/选择框：学新建项目（0.72 白底 + rgba(0,0,0,0.1) 边 + 紫色 focus 光圈），曲率连续圆角 */
 .field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=time] {
   width: 100%; box-sizing: border-box; padding: 8px 11px;
-  border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; corner-shape: squircle;
+  border: 1px solid rgba(0,0,0,0.1); border-radius: var(--radius-sm);
   background: rgba(255,255,255,0.72);
   font-size: 13px; font-family: var(--font-sans); color: var(--text-primary);
   outline: none; transition: border-color 0.15s, box-shadow 0.15s;
@@ -377,7 +377,7 @@ async function removeTask(t) {
 /* 重复：preset 选项卡 + 自定义日期范围 */
 .repeat-tabs { display: flex; gap: 6px; }
 .repeat-tab {
-  flex: 1; padding: 7px 0; border-radius: 10px; corner-shape: squircle;
+  flex: 1; padding: 7px 0; border-radius: var(--radius-sm);
   border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72);
   font-size: 13px; font-family: var(--font-sans); color: var(--text-secondary);
   cursor: pointer; transition: all 0.15s; text-align: center;
@@ -385,7 +385,7 @@ async function removeTask(t) {
 .repeat-tab:hover { border-color: rgba(123,127,178,0.4); }
 .repeat-tab.on { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; border-color: transparent; box-shadow: 0 2px 8px rgba(123,127,178,0.3); }
 .date-range { margin-top: 8px; }
-.when input[type=time] { width: 120px; }
+.time-field input { text-align: center; }
 /* 勾选框：登录/注册页同款（隐藏原生 + 自定义方块 + SVG 对勾） */
 .chans { display: flex; gap: 18px; }
 .chk-row { display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; font-size: 13px; color: var(--text-primary); }

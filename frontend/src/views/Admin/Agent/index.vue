@@ -166,6 +166,15 @@
               <input v-model="editTarget.model" placeholder="qwen-max" class="modal-input" />
             </div>
 
+            <div class="modal-field" v-if="editTarget.provider === 'mimo'">
+              <label>API 格式 <span class="thinking-hint" style="font-weight:400">Anthropic 格式可用思考块 / 缓存 / 看库内图</span></label>
+              <div class="api-format-grid">
+                <button v-for="f in API_FORMATS" :key="f.key" type="button"
+                  class="toggle-btn" :class="{ active: (editTarget.api_format || 'openai') === f.key }"
+                  @click="pickApiFormat(f.key)">{{ f.label }}</button>
+              </div>
+            </div>
+
             <div class="modal-field-row">
               <div class="modal-field">
                 <label>最大输出 Tokens</label>
@@ -883,6 +892,13 @@ const PROVIDERS = [
   { key: 'qwen',      label: '通义千问',    base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
   { key: 'deepseek',  label: 'DeepSeek',    base_url: 'https://api.deepseek.com',                           model: 'deepseek-chat' },
   { key: 'minimax',   label: 'MiniMax',     base_url: 'https://api.minimaxi.com/anthropic',                 model: 'MiniMax-M3' },
+  { key: 'mimo',      label: 'MiMo (小米)',  base_url: 'https://token-plan-cn.xiaomimimo.com/v1',            model: 'mimo-v2.5' },
+]
+
+// MiMo 同时提供 OpenAI / Anthropic 两套兼容 API，按预设选格式（影响后端走哪条通道）
+const API_FORMATS = [
+  { key: 'openai',    label: 'OpenAI 格式' },
+  { key: 'anthropic', label: 'Anthropic 格式' },
 ]
 
 const presets        = ref([])
@@ -984,7 +1000,7 @@ async function togglePool(p) {
 
 function openNewPreset() {
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 2000, temperature: 0.7, context_tokens: 3000, thinking: 'disabled', vision: false }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 2000, temperature: 0.7, context_tokens: 3000, thinking: 'disabled', vision: false, api_format: '' }
   editError.value  = ''
 }
 
@@ -1000,6 +1016,17 @@ function setEditProvider(key) {
   editTarget.value.provider = key
   editTarget.value.base_url = pv.base_url
   editTarget.value.model    = pv.model
+  // mimo 同时提供两套 API：默认 openai 格式；切到别的 provider 清掉（走自动判定）
+  editTarget.value.api_format = key === 'mimo' ? 'openai' : ''
+}
+
+// 选 API 格式时，同步切换 mimo 端点后缀（host 保留，只改 /v1 ↔ /anthropic）
+function pickApiFormat(fmt) {
+  editTarget.value.api_format = fmt
+  const bu = (editTarget.value.base_url || '').replace(/\/(v1|anthropic)\/?$/, '')
+  if (bu.includes('xiaomimimo')) {
+    editTarget.value.base_url = bu + (fmt === 'anthropic' ? '/anthropic' : '/v1')
+  }
 }
 
 async function savePreset() {
@@ -1806,6 +1833,9 @@ onMounted(async () => {
 .dot-qwen      { background: #60aedb; }
 .dot-deepseek  { background: #6090d8; }
 .dot-minimax   { background: #9590c4; }
+.dot-mimo      { background: #ff6a00; }
+.api-format-grid { display: flex; gap: 8px; flex-wrap: wrap; }
+.api-format-grid .toggle-btn { flex: 1; min-width: 0; white-space: nowrap; }
 
 .preset-card-body { flex: 1; min-width: 0; }
 .preset-card-top  { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }

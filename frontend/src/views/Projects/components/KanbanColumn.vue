@@ -110,10 +110,10 @@ function onDrop(e) {
   transition: all 0.18s;
 }
 .add-card:hover {
-  border-color: rgba(123,127,178,0.4);
+  border-color: rgba(123,127,178,0.35);
   color: var(--color-primary);
-  background: rgba(123,127,178,0.05);
-  box-shadow: 0 2px 10px rgba(80,90,110,0.08);
+  background: rgba(255,255,255,0.3);
+  box-shadow: 0 4px 14px rgba(80,90,110,0.1);
 }
 .add-card-text { font-size: 11px; font-weight: 600; }
 </style>

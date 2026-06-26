@@ -697,6 +697,7 @@ import ContextMenu   from '@/components/ContextMenu.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
+import { usePreferencesStore } from '@/stores/preferences'
 
 const props = defineProps({ project: { type: Object, default: null } })
 const emit = defineEmits(['close'])
@@ -705,6 +706,7 @@ function onModalClose() { emit('close'); pmSortMenuOpen.value = false }
 const projectStore     = useProjectStore()
 const fileCacheStore   = useFilesCacheStore()
 const liveStore        = useLiveStore()
+const prefsStore       = usePreferencesStore()
 const editingStage     = ref(null)
 const stageInputRef    = ref(null)
 const stageFlowRef     = ref(null)
@@ -792,15 +794,20 @@ const currentFolderFiles = computed(() => currentFiles.value)
 
 // ── 侧栏两模式：false=文件区宽（现状）；true=左右各 50%、信息区 2 列 ──
 // 交叉渐变切换：内容淡出 → 不可见时瞬切两套排版 → 淡入（不实时缩放/回流）
-const stagesExpanded = ref(false)   // 列宽/版面预设
-const infoExpanded = ref(false)     // 信息区 1列/2列版面预设
+// 初值取自后端记忆（preferences）；若 preferences 晚于本组件加载完成，loaded 变 true 时再同步一次
+const stagesExpanded = ref(prefsStore.pmStagesExpanded)   // 列宽/版面预设
+const infoExpanded = ref(prefsStore.pmStagesExpanded)     // 信息区 1列/2列版面预设
 const pmSwitching = ref(false)      // 内容淡隐中（true 时 opacity:0）
+watch(() => prefsStore.loaded, (v) => {
+  if (v) { stagesExpanded.value = prefsStore.pmStagesExpanded; infoExpanded.value = prefsStore.pmStagesExpanded }
+})
 function togglePmStages() {
   if (pmSwitching.value) return
   pmSwitching.value = true                          // ① 内容淡出隐藏（之后的列宽动画不会被看到回流）
   setTimeout(() => {
     stagesExpanded.value = !stagesExpanded.value    // ② 列宽顺滑动画 + 换信息区版面（内容仍隐藏，看不到自适应）
     infoExpanded.value = stagesExpanded.value
+    prefsStore.savePmStagesExpanded(stagesExpanded.value)   // 记住版面选择（存后端，跨设备）
   }, 190)
   setTimeout(() => { pmSwitching.value = false }, 190 + 400)  // ③ 列宽动画结束后才淡入新版面
 }

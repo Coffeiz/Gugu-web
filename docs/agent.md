@@ -73,7 +73,11 @@ IM 路：飞书/QQ → 网关(WS 长连，BYO 子进程) → router.decide 短�
 
 LLM 主循环。负责：
 
-- 调用 LLM（Anthropic / OpenAI 双路统一）；用哪个模型由 `llm_select.pick_model` 决定（见下），不直接读 `settings.ai`
+- 调用 LLM（Anthropic / OpenAI 双路统一）；用哪个模型由 `llm_select.pick_model` 决定（见下），不直接读 `settings.ai`。**走哪条通道（块格式）由 `llm_select.use_anthropic_for(ai)` 统一判定**（见下），不在 core 里现算
+- **MiMo（小米）适配**（推理模型，`reasoning_content` + `content` 双字段，同时提供 OpenAI / Anthropic 两套 API）：
+  - **OpenAI 路**：思考关时传 `extra_body={"thinking":{"type":"disabled"}}`（官方两套 API 都支持此参）——避免「输出全进 `reasoning_content`、正文空」的**空气泡**；仍空（思考开）则**追一轮要正文、再空给得体兜底**（`empty_retry`），绝不留空气泡
+  - **Anthropic 路**：去掉 `cache_control`（mimo 无 prompt caching）；thinking 取值用 `disabled`（想开则不传、用其默认）。该路原生处理思考块 → 免疫空气泡，且 `read_file` 能看库内图（见「多模态看图」）
+  - 鉴权：mimo 两套 API 都收 `api-key` 头与 `Bearer`；客户端经 `openai_default_headers` / `anthropic_default_headers` 补 `api-key` 头（多发无害）
 - 工具调用执行与结果回填（`MAX_ROUNDS = 6`：配合 skills.md 执行准则 + 强工具，多步任务 2~3 轮够用；超限给友好提示「前面已生效，要接着做吗」）
 - **自我核实闭环（`MAX_VERIFY = 3`）**：本轮调过增删改工具（即 `RESOURCE_BY_TOOL` 全集）后，模型说"完成"时强制注入一轮「系统自检」——让它用查询工具（`get_project`/`list_files` …）查证真生效且完整，**不全就当场补做**。**触发条件是"这一轮做过增删改"（`did_mutate`）**：自检轮若只查证没改动 → 结束；若补做了（又调增删改）→ `did_mutate` 重新置位、再来一轮，直到"只查不改"或封顶 3 轮。**不是固定跑 3 轮**：通过即停，只读任务零额外开销。两路（Anthropic/OpenAI）同构，轮预算 `MAX_ROUNDS + MAX_VERIFY*2` 不挤占任务轮
   - **静默自检（`verify_mode`/`verify_fixed`）**：核实阶段（含其 `get_*` 查证轮）模型的文字**先缓冲不实时流**——干净通过则整段丢弃，**不把"已核实…"这种与首条几乎重复的确认刷给用户**；只有发现并补做时，才在补做那轮发一次"发现漏了X"说明。解决"二次检查重复说一遍差不多的话"。在 core 源头处理，web/IM 两路统一受益
@@ -84,6 +88,9 @@ LLM 主循环。负责：
 #### `llm_select.py`（模型解析层）
 
 统一的「选哪个模型」决策点——`runner`/`core` 只对接 `pick_model(settings, ctx)`，未来 Router、多 key 分流都插这里，core 不动。按 `ai_presets.strategy` 分支：
+
+> **通道判定也统一在此**：`use_anthropic_for(ai)` 是全后端唯一的「走 anthropic 块格式还是 openai 格式」判定口（聊天 / 记忆 / IM 共用，杜绝各处不一致）——优先看预设显式 `api_format`（`openai`/`anthropic`，给 mimo 等同时提供两套 API 的厂商选），否则按 `provider==minimax` / base_url 含 `anthropic` 自动判。`openai_default_headers` / `anthropic_default_headers` 在此给非标准鉴权（mimo 的 `api-key` 头）补头。
+
 
 - **active**（默认）：用激活预设（= `settings.ai`，行为不变）。
 - **pool** 多 key 分流：勾了 `in_pool` 的预设里按 `pool_mode` 挑——`random` / `round_robin` / `least_loaded` 最少在途（`release()` 跟踪每 key 在途，请求结束 `runner` 在 finally 里减；不等速 key 下最优）。每 key 一份限流额度，总并发 ≈ key 数 × 16。
@@ -195,7 +202,7 @@ vision 模型（`ai.vision=True`）下咕咕真看图——聊天发的图 + 文
 - **聊天图**：`resolve_for_message` 封图片块随消息发（Anthropic `image` / OpenAI `image_url`）。
 - **大图自动压缩**（`_fit_image_for_vision`）：>5MB 或长边 >2048px 时喂模型前等比降采样重压 JPEG（只压副本、存库原图不动）。
 - **HEIC/HEIF**：`pillow-heif` 把 iPhone 原图等转 JPEG 再喂。
-- `read_file` 读文件库图（仅 vision + Anthropic 通道）：图走 `tool_result` 图片块；持久化时 `strip_vision_for_history` 换 `[图片已查看]` 占位，避免大 base64 撑爆历史。
+- `read_file` 读文件库图（仅 vision + Anthropic 通道）：图走 `tool_result` 图片块；持久化时 `strip_vision_for_history` 换 `[图片已查看]` 占位，避免大 base64 撑爆历史。**OpenAI 路工具结果只能纯文本、塞不了图片块，故 `read_file` 看图只在 anthropic 通道生效**——mimo 想让咕咕看库内图，需选 Anthropic 格式（聊天直接发的图两路都能看）。
 
 #### `mcp/`
 

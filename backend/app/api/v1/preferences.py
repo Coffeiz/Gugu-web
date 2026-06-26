@@ -28,6 +28,7 @@ def _to_response(data: dict) -> PreferencesResponse:
         stageTemplates=data.get("stage_templates", []),
         replyTone=data.get("reply_tone"),
         replyLength=data.get("reply_length"),
+        pmStagesExpanded=data.get("pm_stages_expanded", False),
     )
 
 
@@ -57,6 +58,8 @@ async def update_preferences(
         data["reply_tone"] = body.replyTone
     if body.replyLength is not None:
         data["reply_length"] = body.replyLength
+    if body.pmStagesExpanded is not None:
+        data["pm_stages_expanded"] = body.pmStagesExpanded
     prefs.data = data
     await db.commit()
     return _to_response(data)

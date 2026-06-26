@@ -326,6 +326,7 @@ class PresetCreate(BaseModel):
     context_tokens: int = 3000
     thinking: str = "disabled"
     vision: bool = False
+    api_format: str = ""
 
 
 @router.post("/llm-presets")
@@ -345,11 +346,12 @@ async def create_llm_preset(body: PresetCreate):
         "context_tokens": body.context_tokens,
         "thinking": body.thinking,
         "vision": body.vision,
+        "api_format": body.api_format,
     }
     presets["items"].append(item)
     if not presets.get("active_id"):
         presets["active_id"] = new_id
-        override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled","vision":False}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking", "vision")}
+        override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled","vision":False,"api_format":""}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking", "vision", "api_format")}
     _write_override(override)
     return {**item, "api_key": _mask_key(item["api_key"])}
 
@@ -365,6 +367,7 @@ class PresetUpdate(BaseModel):
     context_tokens: int | None = None
     thinking: str | None = None
     vision: bool | None = None
+    api_format: str | None = None
     in_pool: bool | None = None
 
 
@@ -395,10 +398,12 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
         item["thinking"] = body.thinking
     if body.vision is not None:
         item["vision"] = body.vision
+    if body.api_format is not None:
+        item["api_format"] = body.api_format
     if body.in_pool is not None:
         item["in_pool"] = body.in_pool
     if presets.get("active_id") == preset_id:
-        override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled","vision":False}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking", "vision")}
+        override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled","vision":False,"api_format":""}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking", "vision", "api_format")}
     _write_override(override)
     return {**item, "api_key": _mask_key(item["api_key"])}
 
@@ -424,7 +429,7 @@ async def activate_llm_preset(preset_id: str):
     if not item:
         raise HTTPException(404, "预设不存在")
     presets["active_id"] = preset_id
-    override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled","vision":False}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking", "vision")}
+    override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled","vision":False,"api_format":""}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking", "vision", "api_format")}
     _write_override(override)
     return {"active_id": preset_id}
 
@@ -441,17 +446,25 @@ async def test_llm_preset(preset_id: str):
     api_key  = item.get("api_key", "")
     base_url = item.get("base_url", "").rstrip("/")
     model    = item.get("model", "")
+    from types import SimpleNamespace
+    from agent.llm_select import use_anthropic_for
+    is_anthropic = use_anthropic_for(SimpleNamespace(provider=provider, base_url=base_url, api_format=item.get("api_format", "")))
+    _mimo = provider == "mimo" or "xiaomimimo" in base_url.lower()   # MiMo 用 api-key 头，非标准 Bearer
     try:
-        if provider == "anthropic":
+        if is_anthropic:
             headers = {
                 "x-api-key": api_key,
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json",
             }
+            if _mimo:
+                headers["api-key"] = api_key
             url = f"{base_url}/messages"
             payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
         else:
             headers = {"Authorization": f"Bearer {api_key}", "content-type": "application/json"}
+            if _mimo:
+                headers["api-key"] = api_key
             url = f"{base_url}/chat/completions"
             payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -480,28 +493,33 @@ def _probe_png_b64() -> str:
     return base64.b64encode(png).decode()
 
 
-async def _do_vision_probe(provider, api_key, base_url, model) -> tuple:
+async def _do_vision_probe(provider, api_key, base_url, model, api_format="") -> tuple:
     """发一张极小图给模型，看接不接受。用真正的 SDK 客户端（与 runner 同款），
     路径/鉴权头由 SDK 拼，避免手写 URL 在 minimax 这种 base_url 上猜错。
     返回 (supported, status, detail)：True=支持 / False=纯文本 / None=测不准。"""
     import httpx
+    from types import SimpleNamespace
+    from agent.llm_select import use_anthropic_for, anthropic_default_headers, openai_default_headers
     b64 = _probe_png_b64()
     q = "这张图是什么颜色？用一个词回答。"
-    # 与 runner 一致：minimax / 含 anthropic 的 base_url 都走 anthropic 格式
-    is_anthropic = (provider in ("anthropic", "minimax")) or ("anthropic" in (base_url or "").lower())
+    _ns = SimpleNamespace(provider=provider, base_url=base_url, api_key=api_key, api_format=api_format)
+    # 与 runner 同一判定口（含显式 api_format）
+    is_anthropic = use_anthropic_for(_ns)
     timeout = httpx.Timeout(connect=10.0, read=25.0, write=10.0, pool=5.0)
     try:
         if is_anthropic:
             from anthropic import AsyncAnthropic
             client = AsyncAnthropic(api_key=api_key or "dummy", base_url=base_url,
-                                    http_client=httpx.AsyncClient(timeout=timeout))
+                                    http_client=httpx.AsyncClient(timeout=timeout),
+                                    default_headers=anthropic_default_headers(_ns))
             await client.messages.create(model=model, max_tokens=16, messages=[{"role": "user", "content": [
                 {"type": "text", "text": q},
                 {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}},
             ]}])
         else:
             from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=api_key or "dummy", base_url=base_url, timeout=timeout)
+            client = AsyncOpenAI(api_key=api_key or "dummy", base_url=base_url, timeout=timeout,
+                                 default_headers=openai_default_headers(_ns))
             await client.chat.completions.create(model=model, max_tokens=16, messages=[{"role": "user", "content": [
                 {"type": "text", "text": q},
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
@@ -530,7 +548,8 @@ async def probe_vision_preset(preset_id: str):
         raise HTTPException(404, "预设不存在")
     supported, sc, detail = await _do_vision_probe(
         item.get("provider", "openai"), item.get("api_key", ""),
-        item.get("base_url", "").rstrip("/"), item.get("model", ""))
+        item.get("base_url", "").rstrip("/"), item.get("model", ""),
+        item.get("api_format", ""))
     if supported is not None:   # 结论明确才落库
         item["vision"] = supported
         if presets.get("active_id") == preset_id:

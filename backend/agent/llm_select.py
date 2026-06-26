@@ -20,6 +20,37 @@ _rr_counter = 0                  # round_robin 轮询游标
 _inflight: dict[str, int] = {}   # least_loaded 每 key 在途计数（pick 时 +1，release 时 -1）
 
 
+def _is_mimo(ai) -> bool:
+    return (getattr(ai, "provider", "") or "").lower() == "mimo" or "xiaomimimo" in (getattr(ai, "base_url", "") or "").lower()
+
+
+def use_anthropic_for(ai) -> bool:
+    """该模型走 anthropic 块格式还是 openai 格式 —— 全后端唯一判定口（聊天/记忆/IM 共用，避免各处不一致）。
+    优先显式 `api_format`（mimo 等同时提供两套 API 的厂商可选）；否则按 provider/base_url 自动判。"""
+    fmt = (getattr(ai, "api_format", "") or "").lower()
+    if fmt == "anthropic":
+        return True
+    if fmt == "openai":
+        return False
+    return (getattr(ai, "provider", "") == "minimax") or ("anthropic" in (getattr(ai, "base_url", "") or "").lower())
+
+
+def openai_default_headers(ai) -> dict:
+    """OpenAI 兼容通道里，部分厂商鉴权头非标准。给它们补对应头，其余空（用 SDK 默认 Authorization: Bearer）。
+    - 小米 MiMo：用 `api-key: <KEY>` 头，不是 Bearer。按 provider==mimo / base_url 含 xiaomimimo 识别。"""
+    if _is_mimo(ai):
+        return {"api-key": getattr(ai, "api_key", "") or ""}
+    return {}
+
+
+def anthropic_default_headers(ai) -> dict:
+    """Anthropic 兼容通道的非标准鉴权头。Anthropic SDK 默认发 `x-api-key`；mimo 的 anthropic 端点
+    可能要它自己的 `api-key` 头，一并补上（多发一个无害），让 mimo 走 anthropic 格式也能鉴权。"""
+    if _is_mimo(ai):
+        return {"api-key": getattr(ai, "api_key", "") or ""}
+    return {}
+
+
 def _pick_pool(pool, mode):
     """从分流池按方式挑一个：random 随机 | round_robin 轮询 | least_loaded 最少在途。"""
     if mode == "round_robin":

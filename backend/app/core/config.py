@@ -64,6 +64,7 @@ class AISettings(BaseModel):
     context_tokens: int = Field(3000, description="历史上下文 token 预算")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
     vision: bool = Field(False, description="模型是否支持多模态（看图）。后台「检测」按钮探测后写入，亦可手动改")
+    api_format: str = Field("", description="API 格式: openai | anthropic | 空=按 provider/base_url 自动判（mimo 等同时提供两套 API 的厂商可显式选）")
 
 
 class AIPresetItem(BaseModel):
@@ -78,6 +79,7 @@ class AIPresetItem(BaseModel):
     context_tokens: int = 3000
     thinking: str = "disabled"
     vision: bool = False
+    api_format: str = ""         # API 格式: openai | anthropic | 空=自动（mimo 等双 API 厂商可显式选）
     in_pool: bool = False        # 是否加入「多 key 分流」池（strategy=pool 时随机挑这些）
 
 
