@@ -81,6 +81,7 @@ LLM 主循环。负责：
 - 工具调用执行与结果回填（`MAX_ROUNDS = 6`：配合 skills.md 执行准则 + 强工具，多步任务 2~3 轮够用；超限给友好提示「前面已生效，要接着做吗」）
 - **自我核实闭环（`MAX_VERIFY = 3`）**：本轮调过增删改工具（即 `RESOURCE_BY_TOOL` 全集）后，模型说"完成"时强制注入一轮「系统自检」——让它用查询工具（`get_project`/`list_files` …）查证真生效且完整，**不全就当场补做**。**触发条件是"这一轮做过增删改"（`did_mutate`）**：自检轮若只查证没改动 → 结束；若补做了（又调增删改）→ `did_mutate` 重新置位、再来一轮，直到"只查不改"或封顶 3 轮。**不是固定跑 3 轮**：通过即停，只读任务零额外开销。两路（Anthropic/OpenAI）同构，轮预算 `MAX_ROUNDS + MAX_VERIFY*2` 不挤占任务轮
   - **静默自检（`verify_mode`/`verify_fixed`）**：核实阶段（含其 `get_*` 查证轮）模型的文字**先缓冲不实时流**——干净通过则整段丢弃，**不把"已核实…"这种与首条几乎重复的确认刷给用户**；只有发现并补做时，才在补做那轮发一次"发现漏了X"说明。解决"二次检查重复说一遍差不多的话"。在 core 源头处理，web/IM 两路统一受益
+- **真实性守卫（确定性兜底「说了没做」幻觉，两路同构）**：无工具收尾时检测两类幻觉、各追一轮逼纠偏（封顶 1 次）——① **narration 兜底**（`_looks_like_narration`：「让我读…读到了…改好了/已创建/已保存」等过程叙述或完成断言 **+ 本轮零工具** → 注入 `_NARRATION_NUDGE` 逼真调）；② **决策守卫**（`_is_decision_dodge`：用户明确命令改动 **+** 回复「不用改/已合理」驳回 **+** 零工具 → 注入 `_DECISION_NUDGE` 逼执行或问清）。配合自我核实闭环，覆盖**真实性三大坑**「动嘴不动手 / 改了不核对 / 自作主张不做」。**提示词软、守卫硬**——弱模型（mimo）尤其靠此层兜（已 live 验证守卫在真实循环里自动接管）。完整设计见 [`agent-reliability.md`](agent-reliability.md)
 - SSE streaming 输出；`_stream_round` 包一层瞬时错误退避重试（⑦：429/超时/网络/5xx 在出 token 前重试，已吐 token 不重试防重复）
 - 对话结束后 emit 事件，触发 Reflection
 - 不感知平台来源、不感知 prompt 如何构建
@@ -145,10 +146,12 @@ Session（最近 N 条聊天，短期）与 Memory（长期认知，经 Reflecti
 
 #### `tools/base.py`
 
-工具集基类（`Toolset`，原 `BaseSkill`），定义 tools 声明 + 统一执行入口。`registry.dispatch` 两条约定：
+工具集基类（`Toolset`，原 `BaseSkill`），定义 tools 声明 + 统一执行入口。`registry.dispatch` 是所有工具执行的**唯一咽喉**，几条约定：
 
 - 返回 `(给LLM的文本, UI artifact|None)`——结果含 `_artifact` 键就抽出来（见「发送文件」）。
 - **工具异常被兜住**：handler 抛错时 `try/except` 后把 `{"error":"工具 X 执行出错…"}` 当结果返给 LLM（打印堆栈到日志）。LLM 据 persona「铁律」如实告知没做成、不假装成功。
+- **工具调用轨迹（可观测）**：每次 dispatch 落一行 JSON（`{tool, args摘要(截断), ok, ms, user}`，三出口全覆盖）到 `agent.traj` logger → gugu.log / Debug 面板。`grep '"t": "tool"'` 即得整条轨迹，「调没调工具/调了啥/成没成」翻一眼即知（reliability Roadmap P1）。
+- **注册期契约 fail-fast**（`SkillRegistry.add`）：重名 / 空名 / `input_schema` 非 `type=object` / `handler` 不可调用 → 启动期抛 `ToolContractError`，不留到运行时静默失效（重名覆盖、调用崩）。对齐 OpenClaw `assertUniqueNames`（reliability Roadmap P4①）。
 
 各领域工具集（projects/calendar/files/clients/trash/overview/memory/search/conversations/scheduled_tasks/im）自注册到 registry，Profile 按名组合（见「工具清单」+「工具一等公民」）。
 
@@ -215,6 +218,7 @@ vision 模型（`ai.vision=True`）下咕咕真看图——聊天发的图 + 文
 Web SSE adapter：`stream()` 同步做配额检查 → 上下文 → 会话 get/create → 存用户消息，再把生成丢到**后台任务** `_generate()`（脱离 HTTP），自身只转发会话生成频道。
 
 - **生成解耦 + 刷新续看**（`genstream.py`）：生成在后台跑，**浏览器刷新/断连杀不掉、回复不丢**。刷新后经 `GET /agent/sessions/{id}/stream`（`resume()`）先补已生成内容、再订阅后续。
+  - **首条空气泡修复**：`stream()` 改为 `open_subscription()` **先 attach 订阅、再启动生成**——pub/sub 发完即弃，旧逻辑「先起生成后订阅」会把头几个 token（短回复时是全部）在订阅建好前发空 → 首条消息空气泡（快模型更易触发）。先订阅后，频道消息进连接缓冲不丢。
 - **错误文案分类**：精力/配额「咕咕精力不足…」、网络「网络不太好 📡」、其他「开小差了 😵‍💫」；工具异常不在此（已在 dispatch 兜住）。
 - **配额能力降级**：精力耗尽不再一刀切拦死，降级到只读工具集（13/53）+ 婉拒重操作，查询/对话照常（`profile.light_tool_names`）。
 - **网页生成中排队**（`pendingQueue`）：流式中再发不丢，结束接力发；IM 天生排队（Redis 队列 + worker）。

@@ -36,6 +36,8 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
         "只输出标题本身，不要任何解释。\n"
         f"用户：{user_msg[:150]}\n咕咕：{ai_reply[:300]}"
     )
+    from agent.llm_select import _is_mimo
+    is_mimo = _is_mimo(settings.ai)
     try:
         if use_anthropic:
             import httpx
@@ -47,12 +49,17 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
                 http_client=httpx.AsyncClient(timeout=httpx.Timeout(10.0)),
                 default_headers=anthropic_default_headers(settings.ai),
             )
+            # mimo 默认开思考，30 token 会被思考块吃光、content[0] 是 thinking 块取不到 .text → 标题空。
+            # 显式关思考（与正文同口径），并从 content 里挑真正的 text 块，别按下标取。
+            extra = {"thinking": {"type": "disabled"}} if is_mimo else {}
             resp = await client.messages.create(
                 model=settings.ai.model,
-                max_tokens=30,
+                max_tokens=40,
                 messages=[{"role": "user", "content": prompt}],
+                **extra,
             )
-            return resp.content[0].text.strip()[:30]
+            text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
+            return (text.strip()[:30]) or user_msg[:20]
         else:
             import httpx
             from openai import AsyncOpenAI
@@ -63,12 +70,14 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
                 timeout=httpx.Timeout(10.0),
                 default_headers=openai_default_headers(settings.ai),
             )
+            extra = {"extra_body": {"thinking": {"type": "disabled"}}} if is_mimo else {}
             resp = await client.chat.completions.create(
                 model=settings.ai.model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=30,
+                max_tokens=40,
+                **extra,
             )
-            return (resp.choices[0].message.content or "").strip()[:30]
+            return (resp.choices[0].message.content or "").strip()[:30] or user_msg[:20]
     except Exception:
         return user_msg[:20]
 

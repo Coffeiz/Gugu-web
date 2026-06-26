@@ -29,10 +29,13 @@
   │ ④ LLM 工具循环  core.py（LLMRunner，MAX_ROUNDS=6）               │
   │    模型读上下文 → 决定【调不调工具、调哪个、调几次、何时收尾】    │
   │      ├ 要调 → tool_call → ⑤ 派发 → 结果回灌 → 再想（下一轮）      │
-  │      └ 不调/想好了 → 流式吐正文 token                            │
-  │ ⑤ 工具派发  skills/base.py registry.dispatch                    │
-  │    执行工具（每次独立 DB 会话）；危险操作走 ⑥ 确认；             │
-  │    成功后 ⑦ 发实时事件；可带 _artifact 推 UI                     │
+  │      └ 不调/想收尾 → ④′ 真实性守卫 → 过则流式吐正文 token        │
+  │ ④′ 真实性守卫（无工具收尾时确定性兜底「说了没做」）              │
+  │    ① 假装(narration) ② 驳回(decision) → 检测到 → 注入 nudge 逼真调│
+  │    ③ 改过数据(自我核实 MAX_VERIFY) → 逼查证/补做。命中即重入一轮  │
+  │ ⑤ 工具派发  tools/base.py registry.dispatch（所有执行唯一咽喉）  │
+  │    执行（每次独立 DB 会话）+ 轨迹 agent.traj + 注册期契约 fail-fast│
+  │    危险操作走 ⑥ 确认；成功后 ⑦ 发实时事件；可带 _artifact 推 UI  │
   └─┬────────────────────────────────────────────────────────────┘
   │
   ⑧ 流清洗   agent/sanitize.py（过滤 MiniMax 漏标记）
@@ -43,7 +46,7 @@
 回复送达（网页 SSE 流 / IM 平台 API）
 ```
 
-**一句话抓重点**：环里**唯一真正"决策"的是第④步**——模型自主编排工具。其它步要么是确定性的喂料（②③），要么是把模型的决定落地（⑤⑦⑨⑩）。记忆在②就摊上桌（被动），工具在④按需抽（主动）。
+**一句话抓重点**：环里**唯一真正"决策"的是第④步**——模型自主编排工具。其它步要么是确定性的喂料（②③），要么是把模型的决定落地（⑤⑦⑨⑩）。记忆在②就摊上桌（被动），工具在④按需抽（主动）。**④′ 真实性守卫**在④的"决定"上加一道**确定性兜底**——模型「说了没做 / 该做不做」时检测并逼它真做，**提示词软、守卫硬**（弱模型 mimo 尤其靠这层），详见 [`agent-reliability.md`](agent-reliability.md)。
 
 ---
 
@@ -161,6 +164,7 @@ flowchart TD
 - ✅ **单次流式调用**：边出正文 token 边判断 tool_use（修了早期"探测-再流式"双调用导致的敷衍）。
 - ✅ **多轮工具**：一轮里模型可连续调多个工具，结果回灌后继续想，最多 6 轮（配合执行准则+强工具，超限报友好提示）。
 - ✅ **自我核实闭环（`MAX_VERIFY=3`）**：本轮调过增删改（`RESOURCE_BY_TOOL`）后、模型说"完成"时，强制注入一轮「系统自检」让它用查询工具查证真生效/完整，不全就补做。**通过即停（自检轮只查没改 → 结束），不是固定 3 轮**；补做了就再自检一轮，封顶 3；只读任务不触发。防"嘴上说建好了、实际没建全"。两路同构，详见 `agent.md`。
+- ✅ **④′ 真实性守卫（无工具收尾时确定性兜底「说了没做」，两路同构）**：除自我核实外再加两道——**narration 兜底**（`_looks_like_narration` 抓「让我读…读到了…改好了/已创建/已是X格式」等叙述或完成断言 **+ 本轮零工具** → `_NARRATION_NUDGE` 逼真调）；**决策守卫**（`_is_decision_dodge` 抓「用户明确命令改 **+** 回复『不用改/已合理』驳回 **+** 零工具」→ `_DECISION_NUDGE` 逼执行或问清）；mimo 空回复 `empty_retry` 兜底。各封顶 1 次重入。覆盖真实性三大坑「动嘴不动手 / 改了不核对 / 自作主张不做」。**提示词软、守卫硬**——M3 提示词就够，弱模型 mimo 全靠此层（live 真实循环已验证守卫自动接管）。详见 [`agent-reliability.md`](agent-reliability.md)。
 - ✅ **prompt 缓存**：system prompt 打 `cache_control: ephemeral`，省重复 token。
 - ✅ Anthropic 路：流式吐字 + `get_final_message` 取 tool_use；OpenAI 路：`tool_calls` 分发。
 - ✅ **IM 协作取消**：每轮开头检查取消标志（`_im_cancelled`），命中即中断收尾（见 ⓪）；dispatch 前据工具打细粒度状态（`_im_set_tool_state`）。web 路无 imctx，这两处恒 no-op。
@@ -171,12 +175,14 @@ flowchart TD
 
 | 文件 | 负责 |
 |------|------|
-| `skills/base.py` `registry.dispatch` | **所有工具执行的唯一咽喉**（web/IM 共用）：按名找工具 → 每次开独立 DB 会话执行 → 异常包 try/except 当错误结果回灌（不冲垮对话）→ 抽 `_artifact` → 发实时事件 |
+| `tools/base.py` `registry.dispatch` | **所有工具执行的唯一咽喉**（web/IM 共用）：按名找工具 → 每次开独立 DB 会话执行 → 异常包 try/except 当错误结果回灌（不冲垮对话）→ 抽 `_artifact` → 发实时事件 → 落一行调用轨迹 |
 
 - ✅ **47 个工具**，9 个 skill：项目(16)/日历(4)/文件(14)/客户(4)/回收站(3)/聚合(2)/记忆(1)/搜索(1)/对话查看(2)。详见 [`agent.md`](agent.md) 工具清单。
 - ✅ **工具异常隔离**：单个工具崩 → 返回 `{"error":...}` 给模型解释，对话继续（不再整轮报错）。
 - ✅ **Skill 一等公民**：profile 组合 skill 名，工具名由 registry 派生（加工具改一处）。
 - ✅ **多用户隔离**：所有工具按 `user_id` 查询（铁律）。
+- ✅ **工具调用轨迹（可观测）**：每次 dispatch 落一行 JSON（`{tool, args摘要, ok, ms, user}`，三出口全覆盖）到 `agent.traj` logger → gugu.log / Debug 面板，`grep '"t": "tool"'` 即得整条轨迹（reliability P1）。
+- ✅ **注册期契约 fail-fast**：`SkillRegistry.add` 校验重名/空名/`type=object` schema/handler 可调用，违约启动期抛 `ToolContractError`，不留到运行时静默失效（reliability P4①）。
 
 ### ⑥ 危险操作二次确认
 
@@ -249,6 +255,8 @@ flowchart TD
 - 上下文构建（项目/日历/文件/记忆/今天）、persona + 四态对话模式
 - 历史窗口（token 预算裁剪）
 - LLM 工具循环（单次流式、多轮工具、MAX_ROUNDS=6、prompt 缓存、双 provider）
+- **④′ 真实性守卫**（无工具收尾兜底「说了没做」：narration + 决策守卫 + 自我核实 + mimo 空回复，提示词软守卫硬，live 已验）
+- **可观测**：工具调用轨迹 `agent.traj`（P1）+ 工具注册契约 fail-fast（P4①）
 - 47 工具 + 统一派发 + 工具异常隔离 + 多用户隔离
 - **IM 前置路由 + 状态机**（Phase 1.7 关键词版）：状态查询/取消/闲聊网关层短路、自然语言取消轮间中断
 - 危险操作二次确认
@@ -278,4 +286,4 @@ flowchart TD
 
 ---
 
-> 相关文档：[`agent.md`](agent.md)（架构总览 + 完整工具清单 + 现状）、[`并发优化ROADMAP.md`](并发优化ROADMAP.md)（分期/扩量 + 压测）、[`agent-im接入架构.md`](agent-im接入架构.md)（IM 队列架构）、[`devlog.md`](devlog.md)（踩坑记录）。
+> 相关文档：[`agent.md`](agent.md)（架构总览 + 完整工具清单 + 现状）、[`agent-architecture.md`](agent-architecture.md)（架构全景图：可靠性执行 + 系统模块 + 新旧对比）、[`agent-reliability.md`](agent-reliability.md)（可靠性工程 + 守卫层 + P0–P4 Roadmap）、[`并发优化ROADMAP.md`](并发优化ROADMAP.md)（分期/扩量 + 压测）、[`agent-im接入架构.md`](agent-im接入架构.md)（IM 队列架构）、[`devlog.md`](devlog.md)（踩坑记录）。

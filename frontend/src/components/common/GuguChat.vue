@@ -203,7 +203,12 @@
             </div>
           </div>
           <div v-else-if="thinking" class="msg ai">
-            <div class="msg-bubble thinking"><span /><span /><span /></div>
+            <!-- 「思考中」有文案 → 带 spinner 的文字气泡（多候选已随机取一）；清空了才回退三个点 -->
+            <div v-if="thinkingText" class="msg-bubble tool-bubble">
+              <span class="tool-spinner" />
+              <span class="tool-label">{{ thinkingText }}</span>
+            </div>
+            <div v-else class="msg-bubble thinking"><span /><span /><span /></div>
           </div>
           <div class="msg-sentinel" />
         </div>
@@ -592,6 +597,10 @@ async function toggleOpen() {
 onMounted(() => {
   window.addEventListener('resize', onResize)
   window.addEventListener('beforeunload', saveProgress)
+  // 拉一次状态显示名（目前只用到「思考中」候选文案；失败就保持默认三个点）
+  agentApi.getUiLabels?.().then(r => {
+    thinkingLabels.value = Array.isArray(r?.thinking) ? r.thinking : (r?.thinking ? [r.thinking] : [])
+  }).catch(() => {})
   // 刷新后恢复上次会话（sessionStorage 仍在则拉回那段对话；失败则当作新对话并清除存档）
   const saved = sessionStorage.getItem(SESSION_KEY)
   if (saved) {
@@ -609,12 +618,22 @@ onUnmounted(() => {
 const inputText      = ref('')
 const isComposing    = ref(false)
 const thinking       = ref(false)
+const thinkingLabels = ref([])   // 「思考中」候选文案（后台「状态命名」_thinking，可多个 | 分隔）
+const thinkingText   = ref('')   // 本次显示的随机一条（每次进入思考态重新抽）
 const streaming      = ref(false)
 const activeTool     = ref('')
 const isTypingText   = computed(() => streaming.value && !thinking.value && !activeTool.value)
 const fabJumping     = ref(false)
 watch(isTypingText, v => {
   if (v) { fabJumping.value = true; setTimeout(() => { fabJumping.value = false }, 350) }
+})
+// 每次进入「思考中」就从候选里随机抽一条显示（候选为空则回退三个点）
+watch(thinking, v => {
+  if (v && thinkingLabels.value.length) {
+    thinkingText.value = thinkingLabels.value[Math.floor(Math.random() * thinkingLabels.value.length)]
+  } else if (!v) {
+    thinkingText.value = ''
+  }
 })
 const sessionId      = ref(null)
 const abortCtrl      = ref(null)
@@ -866,7 +885,13 @@ async function enterExpanded() {
   await nextTick()
   expInputEl.value?.focus()
   atBottom.value = true; stick.value = true
-  if (messagesEl.value) { messagesEl.value.scrollTop = 999999; _lastTop = messagesEl.value.scrollTop }
+  const el = messagesEl.value
+  if (!el) return
+  el.scrollTop = 999999; _lastTop = el.scrollTop
+  // 展开动画期间容器高度持续变化，用 ResizeObserver 跟底，420ms 动画结束后断开
+  const ro = new ResizeObserver(() => { el.scrollTop = 999999; _lastTop = el.scrollTop })
+  ro.observe(el)
+  setTimeout(() => { ro.disconnect() }, 450)
 }
 
 async function exitExpanded() {
@@ -1057,9 +1082,11 @@ async function consumeStream(reader, ownerSid) {
           // 后端新一轮开始（sanitizer 已重置），前端无需变更视觉状态
         } else if (evt.type === 'tool_call') {
           if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)  // 跳过 _preparing 占位
+          // label 已由后端解析（含「状态命名」覆盖 + 复查前缀），前端直接显示
           if (live()) { thinking.value = false; activeTool.value = evt.label || evt.name; await scrollBottom() }
         } else if (evt.type === 'tool_done') {
-          if (live()) { activeTool.value = ''; thinking.value = true; await scrollBottom() }
+          // 复查轮结束不回落到「生成中」点点（回复早已显示完，点点会被误读为卡住）；主回复轮照旧回 thinking
+          if (live()) { activeTool.value = ''; thinking.value = !evt.verify; await scrollBottom() }
         } else if (evt.type === 'token') {
           if (live()) {
             thinking.value = false; activeTool.value = ''

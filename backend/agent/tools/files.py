@@ -227,7 +227,16 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
     f.size = _fmt_size(len(data))
     f.updated_at = datetime.utcnow()
     await db.commit()
-    return {"success": True, "file_id": f.id, "name": nm, "new_size": f.size}
+    result = {"success": True, "file_id": f.id, "name": nm, "new_size": f.size}
+    # P2c · 内容骤降告警：replace_all 最容易把整段覆盖丢。改后显著变短时确定性提示模型核对，
+    # 不全靠它自己「读回来发现」（配合 skills.md「改正文必须 read_file 读回比对」铁律）。
+    if len(old) >= 200 and len(new) < len(old) * 0.5:
+        result["warning"] = (
+            f"⚠️ 改后内容明显变短（原约 {len(old)} 字 → 新约 {len(new)} 字）。"
+            f"若你本只想改局部却用了整体覆盖，可能把其它内容覆盖丢了——"
+            f"请立刻 read_file 读回核对内容是否完整，缺了就补回。"
+        )
+    return result
 
 
 async def _edit_file(db, user_id, args: dict):

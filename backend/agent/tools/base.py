@@ -7,7 +7,29 @@ Anthropic 与 OpenAI 两种 schema，消除手写两份的重复。core 通过 r
 from __future__ import annotations
 
 import json
+import logging
+import time
 from typing import Any
+
+# 工具调用轨迹（可观测，reliability Roadmap P1）：每次 dispatch 落一行 JSON 到 `agent.traj` logger
+# → 经 INFO 进 gugu.log（Debug 面板 tail 得到）。「调没调工具/调了啥/成没成」翻一眼即得，不用复现+猜。
+_traj_log = logging.getLogger("agent.traj")
+
+
+def _log_traj(name: str, user_id, args: dict, ok: bool, note: str, t0: float) -> None:
+    """记一行工具调用轨迹（best-effort，绝不因记日志影响工具）。args 只记摘要、截断，**不记大内容**（如文件正文）。"""
+    try:
+        summary = {}
+        for k, v in (args or {}).items():
+            sv = str(v) if not isinstance(v, (int, float, bool)) else v
+            summary[k] = (sv[:57] + "…") if isinstance(sv, str) and len(sv) > 60 else sv
+        rec = {"t": "tool", "tool": name, "user": str(user_id)[:8],
+               "ok": ok, "ms": int((time.monotonic() - t0) * 1000), "args": summary}
+        if not ok and note:
+            rec["err"] = note[:120]
+        _traj_log.info(json.dumps(rec, ensure_ascii=False))
+    except Exception:
+        pass
 
 # 这些 id 键对应的模型都是 int 主键，LLM 传成字符串会让 asyncpg 抛错。统一在 dispatch 入口转 int。
 # 注意：attach_id 是 hex 串（chat_attach 的 uuid4().hex）、user_id 是 UUID，都不在此列。
@@ -84,6 +106,12 @@ class BaseSkill:
         return self
 
 
+class ToolContractError(Exception):
+    """工具注册期契约校验失败（重名 / 空名 / schema 非法 / handler 不可调用）。
+    启动期 fail-fast，对齐 OpenClaw 的 assertUniqueNames / ToolPlanContractError——
+    工具定义写错宁可启动就炸、立刻发现，也不要运行时静默失效（重名覆盖、调用崩）。"""
+
+
 class SkillRegistry:
     """全局工具注册表，按工具名索引。"""
 
@@ -92,6 +120,15 @@ class SkillRegistry:
         self._skills: dict[str, list[str]] = {}  # skill 名 → 有序工具名
 
     def add(self, tool: Tool) -> None:
+        # P4 · 注册期契约校验（fail-fast）：定义错在这里就炸，不留到运行时静默失效
+        if not tool.name or not isinstance(tool.name, str):
+            raise ToolContractError(f"工具名非法（空或非字符串）：{tool.name!r}")
+        if tool.name in self._tools:
+            raise ToolContractError(f"工具重名：{tool.name}（已注册，工具名必须全局唯一）")
+        if not isinstance(tool.input_schema, dict) or tool.input_schema.get("type") != "object":
+            raise ToolContractError(f"工具 {tool.name} 的 input_schema 非法：必须是 dict 且顶层 type='object'")
+        if not callable(tool.handler):
+            raise ToolContractError(f"工具 {tool.name} 的 handler 不可调用")
         self._tools[tool.name] = tool
 
     def add_skill(self, name: str, tool_names: list[str]) -> None:
@@ -127,8 +164,10 @@ class SkillRegistry:
         工具结果若是 dict 且含 `_artifact` 键，则把它抽出来作为 artifact（如发文件卡片），
         其余字段序列化回给 LLM。每次工具调用自开一个数据库会话。
         """
+        t0 = time.monotonic()
         tool = self._tools.get(name)
         if tool is None:
+            _log_traj(name, user_id, args, False, "未知工具", t0)
             return json.dumps({"error": f"未知工具: {name}"}), None
 
         # user_id 归一成 UUID：IM 路（worker）传进来的是字符串，而 ORM 对象的 .user_id 是
@@ -160,7 +199,18 @@ class SkillRegistry:
             import traceback
             print(f"[skill] 工具 {name} 执行出错: {type(e).__name__}: {e}", flush=True)
             traceback.print_exc()
+            _log_traj(name, user_id, args, False, f"{type(e).__name__}: {e}", t0)
             return json.dumps({"error": f"工具 {name} 执行出错：{type(e).__name__}: {e}"}, ensure_ascii=False), None
+
+        # 工具调用轨迹（成功路径，一次覆盖 str / 图片块 / dict 三种返回）
+        if isinstance(result, dict):
+            _ok, _note = (not result.get("error")), str(result.get("error") or "")
+        elif isinstance(result, str):
+            _ok = not result.lstrip().startswith('{"error"')
+            _note = "" if _ok else result[:120]
+        else:
+            _ok, _note = True, ""
+        _log_traj(name, user_id, args, _ok, _note, t0)
 
         if isinstance(result, str):
             return result, None

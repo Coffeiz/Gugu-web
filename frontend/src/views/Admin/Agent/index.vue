@@ -525,6 +525,57 @@
         </div>
       </section>
 
+      <!-- ── 状态命名 ── -->
+      <section v-if="activeTab === 'labels'" class="config-card labels-card">
+        <div class="card-head">
+          <h3>状态命名</h3>
+          <p>自定义对话里「状态指示」的显示名。留空＝用默认值。<b>一个状态可填多个名称，用「|」分隔，显示时随机取一个</b>（例：<code>咕咕在想…|让我捋捋|动动脑子</code>）。改完保存即时生效（工具名立即生效，「思考中」需刷新对话页）。</p>
+        </div>
+
+        <div v-if="labelsLoading" class="placeholder-panel">加载中…</div>
+        <template v-else>
+          <!-- 特殊状态 -->
+          <div class="labels-group-title">特殊状态</div>
+          <div class="labels-list">
+            <div v-for="row in stateLabels.special" :key="row.key" class="label-row">
+              <div class="label-meta">
+                <span class="label-key">{{ row.key }}</span>
+                <span class="label-default">默认：{{ row.default || '（空·回退三个点）' }}</span>
+              </div>
+              <div class="label-input-wrap">
+                <input v-model="row.custom" :placeholder="row.default || '留空＝三个点；多个用 | 分隔'" class="label-input" />
+                <button v-if="row.custom" class="label-reset" title="恢复默认" @click="resetStateLabel(row)">×</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 工具 -->
+          <div class="labels-group-title">
+            工具（{{ filteredTools.length }}/{{ stateLabels.tools.length }}）
+            <input v-model="labelsFilter" placeholder="筛选工具名 / 文案…" class="labels-filter" />
+          </div>
+          <div class="labels-list">
+            <div v-for="row in filteredTools" :key="row.key" class="label-row">
+              <div class="label-meta">
+                <span class="label-key">{{ row.key }}</span>
+                <span class="label-default">默认：{{ row.default }}</span>
+              </div>
+              <div class="label-input-wrap">
+                <input v-model="row.custom" :placeholder="row.default" class="label-input" />
+                <button v-if="row.custom" class="label-reset" title="恢复默认" @click="resetStateLabel(row)">×</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="labels-save-bar">
+            <span v-if="labelsSaved" class="labels-saved-tip">已保存 ✓</span>
+            <button class="btn-primary" :disabled="labelsSaving" @click="saveStateLabels">
+              {{ labelsSaving ? '保存中…' : '保存' }}
+            </button>
+          </div>
+        </template>
+      </section>
+
       <!-- ── 用量统计 ── -->
       <div v-if="activeTab === 'usage'">
         <div v-if="usageLoading && !usage" class="usage-loading">加载中…</div>
@@ -785,6 +836,7 @@ const adminStore  = useAdminStore()
 const tabs = [
   { key: 'llm',      label: 'LLM 配置' },
   { key: 'behavior', label: '行为配置' },
+  { key: 'labels',   label: '状态命名' },
   { key: 'usage',    label: '用量统计' },
   { key: 'trace',    label: '决策轨迹' },
   { key: 'prompts',  label: '系统提示词' },
@@ -797,7 +849,63 @@ function switchTab(key) {
   if (key === 'prompts' && profiles.value.length === 0) fetchProfiles()
   if (key === 'usage'   && !usage.value) fetchUsage()
   if (key === 'trace'   && traceSessions.value.length === 0) fetchTraceSessions()
+  if (key === 'labels'  && !stateLabels.special.length && !stateLabels.tools.length) fetchStateLabels()
 }
+
+// ── 状态命名（对话里状态指示的显示名）──────────────────────────────────────────
+const stateLabels  = reactive({ special: [], tools: [] })
+const labelsLoading = ref(false)
+const labelsSaving  = ref(false)
+const labelsFilter  = ref('')
+const labelsSaved   = ref(false)
+
+const filteredTools = computed(() => {
+  const q = labelsFilter.value.trim().toLowerCase()
+  if (!q) return stateLabels.tools
+  return stateLabels.tools.filter(r =>
+    r.key.toLowerCase().includes(q) || (r.default || '').includes(q) || (r.custom || '').includes(q))
+})
+
+async function fetchStateLabels() {
+  labelsLoading.value = true
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/state-labels')
+    const data = await res.json()
+    stateLabels.special = (data.special || []).map(r => ({ ...r }))
+    stateLabels.tools   = (data.tools   || []).map(r => ({ ...r }))
+  } catch (e) {
+    console.error('加载状态命名失败', e)
+  } finally {
+    labelsLoading.value = false
+  }
+}
+
+async function saveStateLabels() {
+  labelsSaving.value = true
+  labelsSaved.value = false
+  try {
+    const overrides = {}
+    for (const r of [...stateLabels.special, ...stateLabels.tools]) {
+      const v = (r.custom || '').trim()
+      if (v && v !== r.default) overrides[r.key] = v   // 只提交「改过且非空」的，空/同默认走回退
+    }
+    const res = await adminStore.authFetch('/api/v1/admin/agent/state-labels', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overrides }),
+    })
+    if (!res.ok) throw new Error('保存失败')
+    labelsSaved.value = true
+    setTimeout(() => { labelsSaved.value = false }, 2000)
+  } catch (e) {
+    console.error('保存状态命名失败', e)
+    alert('保存失败，请重试')
+  } finally {
+    labelsSaving.value = false
+  }
+}
+
+function resetStateLabel(row) { row.custom = '' }
 
 // ── 决策轨迹（只读调试）──────────────────────────────────────────────────────
 const traceSessions      = ref([])
@@ -2051,4 +2159,29 @@ onMounted(async () => {
 .tool-toggle:hover { color: rgba(255,255,255,0.7); }
 .tool-json { font-size: 11px; line-height: 1.5; color: #c2c4d6; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06);
   border-radius: 8px; padding: 9px 11px; margin: 0; max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+
+/* ── 状态命名 ── */
+.labels-group-title { display: flex; align-items: center; gap: 10px; margin: 18px 2px 8px; font-size: 12px; font-weight: 600;
+  color: rgba(255,255,255,0.42); text-transform: uppercase; letter-spacing: 0.06em; }
+.labels-filter { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; width: 180px;
+  background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.1); border-radius: 7px; padding: 5px 9px; color: #e6e7f0; font-size: 12px; }
+.labels-filter:focus { outline: none; border-color: rgba(255,255,255,0.28); }
+.labels-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+.label-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: rgba(255,255,255,0.025);
+  border: 1px solid rgba(255,255,255,0.06); border-radius: 9px; }
+.label-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 0 0 40%; }
+.label-key { font-size: 12px; color: #cdd0e4; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.label-default { font-size: 10.5px; color: rgba(255,255,255,0.3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.label-input-wrap { position: relative; flex: 1; min-width: 0; }
+.label-input { width: 100%; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.1); border-radius: 7px;
+  padding: 6px 26px 6px 9px; color: #e6e7f0; font-size: 12.5px; }
+.label-input:focus { outline: none; border-color: rgba(255,255,255,0.3); }
+.label-reset { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; line-height: 1;
+  border: none; background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.55); border-radius: 50%; cursor: pointer; font-size: 13px; }
+.label-reset:hover { background: rgba(255,255,255,0.16); color: #fff; }
+.labels-save-bar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 18px;
+  padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.07); }
+.labels-saved-tip { font-size: 12.5px; color: #7fd6a0; }
+@media (max-width: 720px) { .labels-list { grid-template-columns: 1fr; } }
 </style>

@@ -652,3 +652,44 @@ async def session_trace(session_id: int, db: AsyncSession = Depends(get_db)):
             for u in usage
         ],
     }
+
+
+# ── 状态命名：对话里「状态指示」的显示名（工具名 + 特殊状态），后台可改、热生效 ──────────────
+
+class StateLabelsUpdate(BaseModel):
+    overrides: dict[str, str] = {}
+
+
+@router.get("/state-labels")
+async def get_state_labels():
+    """列出所有可命名状态：special（思考中三点/整理中/复查前缀）+ tools（每个工具）。
+    default=代码默认，custom=后台覆盖值，label=实际显示（custom or default）。"""
+    from agent.tools import registry
+    from agent.core import SPECIAL_STATE_LABELS
+    ov = (_read_override().get("state_labels") or {}).get("overrides") or {}
+
+    def _row(key, default):
+        custom = ov.get(key, "")
+        return {"key": key, "default": default, "custom": custom, "label": custom or default}
+
+    special = [_row(k, v) for k, v in SPECIAL_STATE_LABELS.items()]
+    tools = [_row(k, v) for k, v in sorted(registry.labels().items())]
+    return {"special": special, "tools": tools}
+
+
+@router.put("/state-labels")
+async def update_state_labels(body: StateLabelsUpdate):
+    """保存覆盖：空值 / 等于默认值的不落库（保持 override 干净，未设的自动回退默认）。"""
+    from agent.tools import registry
+    from agent.core import SPECIAL_STATE_LABELS
+    defaults = {**SPECIAL_STATE_LABELS, **registry.labels()}
+    clean: dict[str, str] = {}
+    for k, v in (body.overrides or {}).items():
+        v = (v or "").strip()
+        if not v or (k in defaults and v == defaults[k]):
+            continue
+        clean[k] = v
+    override = _read_override()
+    override["state_labels"] = {"overrides": clean}
+    _write_override(override)
+    return {"ok": True, "count": len(clean)}

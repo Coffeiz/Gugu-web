@@ -114,6 +114,13 @@ class SearchSettings(BaseModel):
     max_results:    int = Field(5, description="默认返回结果数")
 
 
+class StateLabelSettings(BaseModel):
+    """对话里「状态指示」的自定义命名。key=工具名（web_search…）或特殊状态键（_thinking/_preparing/
+    _verify_prefix），value=自定义显示名；未设的 key 自动回退到代码默认（工具的 label / 内置默认）。
+    后台「状态命名」面板写入，core/前端热读。"""
+    overrides: dict[str, str] = Field(default_factory=dict, description="状态显示名覆盖表（key→自定义名）")
+
+
 class SmtpSettings(BaseModel):
     host:     str           = Field("", description="SMTP 服务器地址")
     port:     int           = Field(465, description="SMTP 端口（465=SSL，587=STARTTLS）")
@@ -148,6 +155,7 @@ class AppSettings(BaseSettings):
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
     smtp: SmtpSettings = Field(default_factory=SmtpSettings)
+    state_labels: StateLabelSettings = Field(default_factory=StateLabelSettings)
 
     def apply_override(self) -> "AppSettings":
         """从 config.override.json 合并覆盖字段，返回新实例。
@@ -223,8 +231,15 @@ class AppSettings(BaseSettings):
                     items=items,
                 )
 
+            if "state_labels" in override:
+                raw = override["state_labels"] or {}
+                ov = raw.get("overrides", raw) if isinstance(raw, dict) else {}
+                updates["state_labels"] = StateLabelSettings.model_construct(
+                    overrides={str(k): str(v) for k, v in ov.items() if isinstance(ov, dict)}
+                )
+
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]

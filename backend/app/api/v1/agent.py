@@ -189,6 +189,23 @@ async def list_sessions(
     ]
 
 
+@router.get("/ui-labels")
+async def get_ui_labels(current_user: User = Depends(get_current_user)):
+    """聊天前端用的「状态显示名」——目前只有「思考中」三个点的文字是前端态（无 SSE 事件），
+    工具名/复查前缀都由后端在 tool_call 事件里直接下发。返回解析后的特殊状态名（已套用后台覆盖）。"""
+    import re
+    from app.core.config import get_settings
+    from agent.core import SPECIAL_STATE_LABELS
+    ov = getattr(getattr(get_settings(), "state_labels", None), "overrides", None) or {}
+    merged = {**SPECIAL_STATE_LABELS, **{k: v for k, v in ov.items() if k.startswith("_") and v}}
+
+    def _split(raw: str) -> list[str]:
+        # 命名可含多个候选（| 或换行分隔）→ 返回数组，前端每次随机取一个
+        return [p.strip() for p in re.split(r"[|\n]", raw or "") if p.strip()]
+
+    return {"thinking": _split(merged.get("_thinking", ""))}
+
+
 @router.get("/sessions/{session_id}/messages")
 async def get_session_messages(
     session_id: int,
