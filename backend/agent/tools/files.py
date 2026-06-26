@@ -869,7 +869,8 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="read_file", label="读取文件",
-            description="读取文件内容：文本类（md/txt/json/代码等，≤256KB）直接读；PDF/Word/Excel/PPT 自动提取文本；图片（png/jpg/heic 等）可直接识别图像内容（需多模态模型）。视频/音频不可读。",
+            description="读取文件内容：文本类（md/txt/json/代码等，≤256KB）直接读；PDF/Word/Excel/PPT 自动提取文本；图片（png/jpg/heic 等）可直接识别图像内容（需多模态模型）。视频/音频不可读。"
+                        "读到后按需提炼、别整段复述给用户：大文件挑相关部分讲；JSON/YAML 点出顶层键和关键字段；CSV/TSV 给表头+前几行再总结各列；只回答用户问的那块。",
             input_schema={
                 "type": "object",
                 "properties": {

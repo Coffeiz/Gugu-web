@@ -224,6 +224,8 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
   overflow: auto;
   padding: 0 0 16px;
   will-change: scroll-position;
+  user-select: text;            /* 覆盖预览弹窗容器的 user-select:none，让正文可选/复制 */
+  -webkit-user-select: text;    /* 行号 .tv-ln 单独 none，不会被选进去 */
 }
 
 .tv-notice {

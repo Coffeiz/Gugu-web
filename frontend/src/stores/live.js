@@ -30,6 +30,7 @@ export const useLiveStore = defineStore('live', () => {
   let abort = null        // 当前连接的 AbortController
   let running = false     // 是否应保持连接（登录中）
   let retry = 0           // 重连退避计数
+  let everConnected = false   // 是否曾连上过：重连成功时据此 catch-up（首次连接不用）
 
   function bump(resource) {
     if (resource in rev) rev[resource]++
@@ -48,6 +49,10 @@ export const useLiveStore = defineStore('live', () => {
         if (!res.ok || !res.body) throw new Error(`live stream ${res.status}`)
         connected.value = true
         retry = 0
+        // 重连成功 → bump 所有 rev，让各视图重新拉一次、补上断线期间漏掉的变更（SSE 不补发历史
+        // 事件；后端 reload / 网络抖动断开期间咕咕改的文件等，就靠这步刷出来，不用手动重载页面）。
+        if (everConnected) for (const r of RESOURCES) bump(r)
+        everConnected = true
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
         let buf = ''

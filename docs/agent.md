@@ -1,7 +1,7 @@
 # Agent 架构方案
 
 > 想看**一轮对话内部走哪些步、每步谁负责**，见 [`agent-决策环.md`](agent-决策环.md)（运行时决策环专题）。
-> 本文是**架构总览 + 完整工具清单 + 现状**；并发/扩量分期见 [`并发优化ROADMAP.md`](并发优化ROADMAP.md)，变更记录见 [`CHANGELOG.md`](../CHANGELOG.md)，决策过程见 [`devlog.md`](devlog.md)。
+> 本文是**架构总览 + 完整工具清单 + 现状**；**架构全景图**（可靠性执行 + 系统模块两张图）见 [`agent-architecture.md`](agent-architecture.md)，可靠性工程见 [`agent-reliability.md`](agent-reliability.md)；并发/扩量分期见 [`并发优化ROADMAP.md`](并发优化ROADMAP.md)，变更记录见 [`CHANGELOG.md`](../CHANGELOG.md)，决策过程见 [`devlog.md`](devlog.md)。
 
 ## 一、定位
 

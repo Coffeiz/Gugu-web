@@ -59,6 +59,38 @@ _VERIFY_PROMPT = (
     "若核实一切正常，简单确认即可、别重复刚才说过的话（系统会自动略过这条，用户不会看到重复确认）。"
 )
 
+# 核实轮只嘴上说"确认/没问题"、却没真调查询工具时，强制再追一轮真查（防"凭印象说做完了"）
+_VERIFY_FORCE_PROMPT = (
+    "【系统自检 · 你还没真正核实】你上一条只是嘴上说\"确认/没问题\"，**没有调用任何查询工具去查证**——"
+    "光凭印象不算核实。现在**立刻调 `read_file`（改了文件正文）/ `get_project` / `list_*` 等查询工具，把刚改的东西真查出来**，"
+    "对照确认：真生效、内容完整、**没把别的内容覆盖丢**（尤其 `edit_file` replace_all 容易冲掉其它段落）。查完再回报。"
+)
+
+# 查询工具命名前缀：核实轮必须真调这类工具，不许凭印象说"确认了"
+_READ_PREFIXES = ("read_", "list_", "get_", "find_", "search_")
+
+# narration 兜底：模型有时不真调工具，改用文字"假装"在读/改文件（「让我读一下…读到了…改好了」并
+# 编造内容），这段叙述进历史后还会自我强化。检测这类话术——若本轮整段生成一个工具都没真调，多半在演。
+_NARRATION_RE = __import__("re").compile(
+    r"让我(先|再|现在)?(读|看|查|改|滚动|翻)"
+    r"|我(来|先)?(读|看|查|改)一?下"
+    r"|读到了|看到了|改好了|改成了"
+    r"|文件里(是|有|写)"
+)
+
+
+def _looks_like_narration(text: str) -> bool:
+    """文本宣称在读/改/查文件，却（由调用方判断）本轮没真调工具 → 多半用嘴假装。"""
+    return bool(text) and bool(_NARRATION_RE.search(text))
+
+
+_NARRATION_NUDGE = (
+    "【系统提醒 · 你在用嘴假装操作】你刚才用文字描述了读取/修改文件，但本轮**没有真的调用任何工具**。"
+    "这是绝不允许的——不能凭空说出文件内容、不能说\"读到了/改好了\"。"
+    "现在**立刻发出真正的工具调用**（read_file / edit_file 等）去真正执行；"
+    "若确实不需要动手，就如实说清楚，别再叙述虚构的读取/修改过程。"
+)
+
 
 # 增删改工具的命名约定：写动词前缀。新功能的工具照此命名（create_/update_/delete_/...），
 # 就自动纳入自我核实——这是「新功能直接适配复查」的关键，不用再来这里登记。
@@ -158,9 +190,10 @@ class LLMRunner:
 
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; round_i = 0
+        any_tool_called = False; narration_retry = 0   # narration 兜底：整段生成有没有真调过工具
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
-        verify_mode = False; verify_fixed = False
+        verify_mode = False; verify_fixed = False; verify_queried = False
         while round_i < MAX_ROUNDS + MAX_VERIFY * 2:   # 核实轮额外预算，不挤占任务的 MAX_ROUNDS
             round_i += 1
             # 用户中途「算了」→ 轮间协作中断（单次 LLM 流式调用本身切不了，故粒度是轮与轮之间）
@@ -205,6 +238,7 @@ class LLMRunner:
 
             tool_blocks = [b for b in final.content if b.type == "tool_use"]
             if tool_blocks:
+                any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
                 if verify_mode and not verify_fixed and _verify_buf and any(b.name in _mutset for b in tool_blocks):
                     yield f"data: {json.dumps({'type': 'token', 'content': ''.join(_verify_buf)})}\n\n"
@@ -218,6 +252,8 @@ class LLMRunner:
                         did_mutate = True   # 本次做过增删改 → 收尾时强制自我核实
                         if verify_mode:
                             verify_fixed = True   # 核实阶段里补了东西 → 确有遗漏
+                    elif verify_mode and block.name.startswith(_READ_PREFIXES):
+                        verify_queried = True   # 核实阶段真的用查询工具查证了（不是嘴上确认）
                     yield f"data: {json.dumps({'type': 'tool_done', 'name': block.name, 'label': label}, ensure_ascii=False)}\n\n"
                     if artifact:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
@@ -237,9 +273,12 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
 
-            # 自我核实：本次做过增删改、且核实未满 MAX_VERIFY 轮 → 强制再跑一轮，
-            # 模型用查询工具查证真生效/完整，没做成就补做（补做会再置 did_mutate→触发下一轮核实，最多 MAX_VERIFY）。
-            if did_mutate and verify_count < MAX_VERIFY:
+            # 自我核实：① 做过增删改 → 注入核实 prompt 让用查询工具查证、没做全就补做；
+            # ② 已进核实阶段却只嘴上确认、没真调过查询工具（verify_queried=False）→ 强制再追一轮真查。
+            # 都受 MAX_VERIFY 封顶防死循环。补做会再置 did_mutate → 触发下一轮核实。
+            _need_verify = did_mutate and verify_count < MAX_VERIFY
+            _need_force  = verify_mode and not verify_queried and not did_mutate and verify_count < MAX_VERIFY
+            if _need_verify or _need_force:
                 verify_count += 1
                 did_mutate = False
                 verify_mode = True   # 进入/保持核实阶段 → 之后文字先缓冲
@@ -248,7 +287,18 @@ class LLMRunner:
                     for b in final.content
                 ]
                 messages.append({"role": "assistant", "content": content_dicts})
-                messages.append({"role": "user", "content": _VERIFY_PROMPT})
+                messages.append({"role": "user", "content": _VERIFY_FORCE_PROMPT if _need_force else _VERIFY_PROMPT})
+                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                continue
+            # narration 兜底：整段生成一个工具都没真调，但文字在"假装"读/改文件 → 追一轮逼它真调。
+            # 只追一次；核实阶段不算（那是另一套）。content 在 verify_mode 下被缓冲，故取 _verify_buf 兜底。
+            _final_text = "".join(b.text for b in final.content if b.type == "text")
+            if (not any_tool_called and not verify_mode and narration_retry < 1
+                    and _looks_like_narration(_final_text)):
+                narration_retry += 1
+                content_dicts = [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in final.content]
+                messages.append({"role": "assistant", "content": content_dicts})
+                messages.append({"role": "user", "content": _NARRATION_NUDGE})
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
             # 收尾：干净核实阶段的确认文字（_verify_buf）直接丢弃，用户看不到重复确认
@@ -287,8 +337,9 @@ class LLMRunner:
         total_in = total_out = 0
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; round_i = 0; empty_retry = 0
+        any_tool_called = False; narration_retry = 0   # narration 兜底：整段生成有没有真调过工具
         # 自我核实阶段：进入后持续到收尾，期间文字先缓冲——干净通过整段丢弃、补做了才发一次说明（同 Anthropic 路）
-        verify_mode = False; verify_fixed = False
+        verify_mode = False; verify_fixed = False; verify_queried = False
         while round_i < MAX_ROUNDS + MAX_VERIFY * 2:   # 核实轮额外预算
             round_i += 1
             if await _im_cancelled():
@@ -343,6 +394,7 @@ class LLMRunner:
                         b["args"] += tc.function.arguments
 
             if tool_buf:
+                any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
                 ordered = [tool_buf[i] for i in sorted(tool_buf)]
                 # 核实阶段首次补做（本轮有增删改）→ 发一次"发现漏了X，补一下"说明；之后核对文字仍静默
                 if verify_mode and not verify_fixed and content and any(b["name"] in _mutset for b in ordered):
@@ -372,6 +424,8 @@ class LLMRunner:
                         did_mutate = True   # 做过增删改 → 收尾时强制自我核实
                         if verify_mode:
                             verify_fixed = True   # 核实阶段里补了东西 → 确有遗漏
+                    elif verify_mode and b["name"].startswith(_READ_PREFIXES):
+                        verify_queried = True   # 核实阶段真的用查询工具查证了（不是嘴上确认）
                     yield f"data: {json.dumps({'type': 'tool_done', 'name': b['name'], 'label': label}, ensure_ascii=False)}\n\n"
                     if artifact:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
@@ -394,13 +448,23 @@ class LLMRunner:
                 fb = "嗯…我这下没太接住，你再说一遍、或者换个说法，我马上跟上～"
                 yield f"data: {json.dumps({'type': 'token', 'content': fb}, ensure_ascii=False)}\n\n"
                 content = fb
-            # 自我核实：做过增删改、未满 MAX_VERIFY 轮 → 强制再跑一轮查证/补做
-            if did_mutate and verify_count < MAX_VERIFY:
+            # narration 兜底：整段生成一个工具都没真调，但文字在"假装"读/改文件 → 追一轮逼它真调（只一次）。
+            if (not any_tool_called and not verify_mode and narration_retry < 1
+                    and _looks_like_narration(content)):
+                narration_retry += 1
+                messages.append({"role": "assistant", "content": content or "（…）"})
+                messages.append({"role": "user", "content": _NARRATION_NUDGE})
+                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                continue
+            # 自我核实：① 做过增删改 → 核实查证/补做；② 已进核实阶段却只嘴上确认、没真调查询工具 → 强制再追一轮真查
+            _need_verify = did_mutate and verify_count < MAX_VERIFY
+            _need_force  = verify_mode and not verify_queried and not did_mutate and verify_count < MAX_VERIFY
+            if _need_verify or _need_force:
                 verify_count += 1
                 did_mutate = False
                 verify_mode = True   # 进入/保持核实阶段 → 之后文字先缓冲
                 messages.append({"role": "assistant", "content": content or ""})
-                messages.append({"role": "user", "content": _VERIFY_PROMPT})
+                messages.append({"role": "user", "content": _VERIFY_FORCE_PROMPT if _need_force else _VERIFY_PROMPT})
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
             # 收尾：干净核实阶段的确认文字（content，未实时发）直接丢弃，用户看不到重复确认

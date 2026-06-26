@@ -9,6 +9,22 @@
 
 ## [Unreleased]
 
+### Agent 可靠性强化：核实强制真查 + 防「用嘴假装操作」 + 明确请求必执行
+
+针对实战暴露的三类「说了没做」幻觉（动嘴不动手 / 自作主张不做 / 改了不核对），从运行时硬化：
+
+- **核实轮强制真查**（`core.py`）：自我核实闭环加 `verify_queried` 跟踪——核实轮只嘴上说「确认/没问题」却没真调任何查询工具时，注入 `_VERIFY_FORCE_PROMPT` 强制再追一轮真调 `read_file`/`get_project`/`list_*` 查证（防「凭印象说做完了」）。两路同构、`MAX_VERIFY` 封顶。
+- **narration 检测**（`core.py`）：抓模型用文字「假装」读/改文件（「让我读一下…读到了…改好了」）却本轮没真调工具的情况，`_NARRATION_NUDGE` 强制纠偏。
+- **明确请求必执行**（`skills.md`）：「做事」扩到含改/调整/排序/换位置；加硬原则「用户明确要改就执行，别用『现状已合理』驳回」——治「明确要排序、模型判断不用改、一个工具都不调」。
+- **对外口径前提澄清**（`policy.md`）：明确「不报工具名」是**措辞口径、不是少调工具**，别把「别暴露调用」误读成「别调用」或用文字假装做了。
+- **`read_file` 按需提炼**（`files.py`）：读到后挑相关部分讲、别整段复述（JSON 点关键字段、CSV 给表头+前几行）。
+- **可靠性架构文档**：新增 `docs/agent-reliability.md`（基于实读 OpenClaw 仓库的可靠性工程重构，核心是 **Execution Verifier** 执行验证层：信 Tool 不信 Assistant、把真实性守卫从「喂 prompt」硬化到「拦回复重生成」）+ `docs/agent-architecture.md`（两张架构全景图：可靠性执行链路 + 系统模块）。
+
+### 前端修复：SSE 重连补偿 + 文本预览可选中
+
+- **SSE 实时刷新断线重连补偿**（`live.js`）：重连成功后 bump 所有 rev，补上断线期间漏掉的资源变更——后端 reload / 网络抖动期间咕咕改的文件等，自动刷出来，不用再手动重载页面。
+- **文本预览可选中复制**（`TextViewer.vue`）：覆盖预览弹窗的 `user-select:none`，正文可选/复制，行号 `tv-ln` 仍不可选、不被选进去。
+
 ### MiMo（小米）模型接入 + 双 API 适配 + 空回复治理
 
 - **后台新增 MiMo provider**（`Admin/Agent/index.vue`）：供应商下拉加「MiMo (小米)」（默认 `mimo-v2.5`、base_url `token-plan-cn.xiaomimimo.com/v1`、橙色圆点）。`mimo-v2.5` 才同时支持「看图 + 深度思考 + 1M 上下文」；`mimo-v2.5-pro` 纯文本不看图，选型注意。
