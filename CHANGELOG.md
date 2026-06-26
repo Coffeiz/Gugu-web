@@ -9,271 +9,123 @@
 
 ## [Unreleased]
 
-### 通知气泡：类 SSE 逐字流式呈现
+---
+
+## [0.13.0] - 2026-06-27 · MiMo接入、可靠性守卫体系、通知系统升级与全面体验打磨
+
+> 本版核心：接入小米 MiMo 双格式模型；Agent 可靠性从「提示词软约束」升级为「代码多层硬守卫」；通知系统落库持久化 + 气泡流式打字机；SearXNG 替代 Tavily 承接通用搜索；对话状态指示动画化并全后台可配；外加文本预览稳定化、一批前端交互与 UI 细节打磨。
+
+### MiMo（小米）模型接入 + 双 API 格式适配
+
+- **后台新增 MiMo provider**（`Admin/Agent/index.vue`）：供应商下拉加「MiMo (小米)」（默认 `mimo-v2.5`，橙色圆点）；`mimo-v2.5` 同时支持看图 + 深度思考 + 1M 上下文，`mimo-v2.5-pro` 纯文本不看图。
+- **API 格式显式可选**（`api_format` 字段）：MiMo 提供 OpenAI / Anthropic 两套兼容 API，预设里可选格式（留空=按 provider 自动判）；选 Anthropic 时前端自动切 base_url 后缀。后端抽出唯一判定口 `llm_select.use_anthropic_for(ai)`，聊天/记忆/IM 五处重复逻辑统一，杜绝「聊天走 anthropic、记忆还走 openai」的不一致。
+- **空气泡根治**：mimo 推理模型偶尔整轮输出落进 `reasoning_content`、`content` 为空 → 空气泡。双层修复：① 传 `thinking:{type:disabled}` 从源头消除；② 仍空时追一轮要正文，再空给一句兜底，绝不留空气泡。走 Anthropic 格式可原生处理思考块 + `read_file` 看库内图，功能最全；去掉 `cache_control`（mimo 无 prompt caching）。
+- **修复：MiMo 标题不更新**：标题调用未禁 mimo 的思考，`max_tokens=30` 被思考块吃光 → 标题空 → 回退首句截断。改传 `thinking:disabled`，从 `content` 挑真正的 text 块，`max_tokens` 提到 40。
+- **修复：流式首条空气泡**（`genstream.py`）：`adapters/web` 先 `create_task` 后 `subscribe`，生成的头几个 token 在订阅建好前被 publish 掉丢失。新增 `open_subscription()` **先 attach 再启动生成**，订阅就绪后频道消息进缓冲不丢。
+
+### Agent 可靠性：多层硬守卫体系
+
+实战逮到「说了没做」「复制落错位置」「update 谎报成功」等多类执行幻觉，从代码层面硬化：
+
+- **跨项目复制/移动落错位置**（`tools/files.py`）：未指定 folder 时默认继承源文件夹（属于原项目），实际落回原地。抽 `_target_loc` 统一定位：跨项目/空间又没指定 folder → 落目标根目录，不继承源文件夹。
+- **update 类工具杜绝空转报成功**：`update_client`/`update_event`/`update_scheduled_task`/`update_todo` 没提供任何改动字段时改返回错误并提示该传哪些，不再空转谎报 success。
+- **核实轮强制真查**（`core.py`）：自我核实加 `verify_queried` 跟踪——核实轮只嘴上说「没问题」却没真调查询工具时，注入 `_VERIFY_FORCE_PROMPT` 强制再追一轮真调 `read_file`/`list_*` 查证，防「凭印象说做完了」。`MAX_VERIFY` 3→5 封顶。
+- **narration / 完成断言检测**（`core.py`）：检测模型用文字假装读/改文件却没真调工具，`_NARRATION_NUDGE` 强制纠偏。精度踩坑——口语高发词误触发 → 最终收窄到只收强 CRUD 动词（建/创建/保存/删/发/移/归档/重命名），实测 0/13 误触发、0/10 漏抓。
+- **决策守卫**（`core.py` `_is_decision_dodge`）：用户消息含改动命令 + 回复含「不用改/已合理」+ 本轮零工具，三信号齐备时注入 `_DECISION_NUDGE` 逼执行或问清。实测 4 抓 6 放零误伤（求澄清/已动手/问句均不误判）。
+- **`edit_file` 差异校验**（`files.py`）：原文 ≥200 字且改后 <50% 时结果加 `warning`，逼模型 `read_file` 读回核对（非阻塞）。
+- **工具调用轨迹日志**（`tools/base.py`）：`registry.dispatch` 每次落一行 JSON（tool、args 摘要、ok、ms、user）到 `agent.traj`，三出口全覆盖，`grep '"t": "tool"'` 翻一眼即知。
+- **工具注册契约 fail-fast**（`SkillRegistry.add`）：重名/空名/`input_schema` 非 object/handler 不可调用 → 启动期抛 `ToolContractError`，实测 55 工具全过、4 类违规全拦。
+- **可靠性架构文档**：新增 `docs/agent-reliability.md`（Execution Verifier 执行验证层：信 Tool 不信 Assistant）+ `docs/agent-architecture.md`（可靠性执行链路 + 系统模块全景图）。
+
+### Agent 人格与知识边界
+
+- **记忆边界：根治「伪个性化幻觉」**：空记忆/新用户下咕咕会硬编「你之前聊过 X」。修复：`persona.md` + `policy.md` 加「不虚构共同历史」红线；`_memory_block` 空记忆时注入「暂无长期记忆——别假装记得任何共同经历」锚点。实测三风格全 0 脑补，活泼语气也没放大。
+- **emoji 红线：输出层确定性兜底**：`persona` 明令不用阴阳/情绪表情，但活泼语气下照冒（token 级习惯，prompt 治不了）。`sanitize.strip_disallowed_emoji` 白名单制（27 个内容表情）之外的 emoji 连前导空格一起删；挂三出口（web 流式/IM/定时），实测违规全 0。
+- **不确定就主动查证**：去掉 `skills.md` 的「省工具」框架——`web_search` 走自建搜索免费，该用就用；`persona.md` 加「不确定就去查证，别糊弄」，限定在新词/热梗/近期事件/易变事实，稳定常识仍直接答。实测「月薪喵是什么」→ 主动搜给真实含义，「Python 是什么」→ 直接答不多搜。
+- **看图信自己的眼睛**：被问「这是谁」时咕咕会反射性 `web_search`「核实」，但网页搜文字帮不了认图（还白白多走一轮、token 涨 2 万+）。`persona.md` 加「看图类问题凭看到的直接答，只有要图本身给不了的外部信息才联网」。
+- **对外口径：堵住工具名泄露**：新增工具后咕咕会抖出 `web_search`/`http_get` 等工具名和调用步骤。`policy.md` 补禁用名单 + 专门口径（只用能力说法答，不报名），实测 4 类套话全 0 泄露。
+- **语气和善底线**：`persona.md` 新增「和善底线」——纠正方案不纠正人、归因到事实而非人、别让用户反过来照顾 AI 情绪、自然转弯不急刹车、把选择权交还用户。与「语气/长度」偏好设置衔接：简短≠生硬、正式≠冷淡，真诚与和善是底线、不在可调范围。
+
+### 联网搜索分层：SearXNG（通用）+ Tavily（深度）
+
+- **`web_search` → 自建 SearXNG**（`tools/search.py`）：通用搜索免费无配额，返回标题+链接+摘要；国内固定带 `sogou/quark/360search` 避开被墙引擎；后台可配地址/引擎 + 测试按钮（`Admin → Agent → 联网搜索`），SearXNG 测试会列出可达/超时引擎。
+- **Tavily → `deep_research`**：原 `web_search`(Tavily) 改名，定位「读网页正文 + 总结/比较/研究」，保留每日次数配额（`SearchUsage`，SearXNG 不计）。路由准则：普通查找走 SearXNG，需读正文或给引用走 Tavily。目标：~80% 普通联网走免费 SearXNG。
+- **prompt skills 系统**（新 `agent/skills/`）：带触发条件的「剧本」md，**按需加载**——builder 只注入索引（每个一行 name+描述），模型相关时调 `use_skill(name)` 拉正文，skill 数量可无限扩不撑上下文。
+- **`http_get(url)` 工具**（`tools/web.py`）：prompt skills 的联网执行原语；含 SSRF 私网拦截（私网/环回/链路本地/元数据全拦）、不跟随重定向、响应截断 4000。**weather skill**：抓 `wttr.in/{城市}` 转人话。工具数 51→53。
+- **`agent/skills/` → `agent/tools/` 改名**：原 skills 目录全是函数调用工具，改名对齐语义；新 `agent/skills/` 专放 prompt skill 剧本。
+
+### 通知系统：持久化 + 流式气泡 + 已读追踪
+
+- **通知落库 + 按用户已读**：新表 `notification_reads`；`site_notifications` 加 `bubble`/`persist`/`bubble_expire_at` 三列（Alembic `20260626000002`），通知一律落库，气泡落库才能离线补弹。
+- **两渠道独立发布**：`bubble`（弹气泡）/ `persist`（进通知中心）可分别开关。后台发布页加**气泡时限**（永久/1天/3天/7天，默认 1 天）。
+- **导航栏通知中心（持久态）**：`GET /notifications`（仅 persist=true）+ 标已读落库；前端 onMounted 拉全量 + 实时 SSE 追加，关浏览器重开仍在，未读数从后端来。
+- **气泡上线补弹**：实时在线立即弹；离线者上线时补弹最近一条有效气泡（只一次，localStorage 记已弹 id，带 TTL 过期后不补）。
+- **气泡流式打字机**（`NotificationBubble.vue`）：新通知**标题逐字冒出（30ms/字）→ 正文逐字流式（15ms/字）**，走 `MarkdownView` 渲染已打出子串；全局单计时器只让最新一条打字；标题圆点接收时脉冲，打完恢复。
+- **通知支持无标题**：`title` 改可选（标题/内容不可同时为空），气泡/侧边栏/预览均按无标题渲染，气泡无标题时内容首行绕开 ✕ 占位。
+- **气泡组件**（`NotificationBubble.vue`）：玻璃风（blur + 20px 圆角 + glass-shadow），固定 360px 与小窗/播放器严格同宽（border-box 三件对齐）；新通知把旧的顶上去（旧条 `nb-move` 上移 0.5s 后消失）；最新这条不自动超时，由用户关闭或被下一条顶替；开/合以咕咕球圆心为缩放原点。
+- **气泡与侧边栏解耦**：气泡存独立快照，关闭气泡不影响侧边栏通知列表；修复点气泡 ✕ 连带关掉侧边栏弹窗的 bug（`closeAll` 加 `.nb-stack` 守卫）。
+- **独立 `MarkdownView` 组件**（`utils/markdown.js`）：轻量独立 `marked` 实例（GFM + 软换行 + 链接新标签），与 GuguChat 的全局配置互不影响；通知气泡/侧边栏/聊天统一同款 md 样式。
+- **气泡动态锚点**（`uiStore.chatNotifyAnchor`）：小窗/播放器展开时实时写入距视口底部距离，气泡始终浮在其正上方，`transition: bottom 0.42s` 平滑避让。
+- **后台通知发布页**（`Admin/Notifications`）：填标题（可选）+ 内容（支持 Markdown），预览 1:1 复刻真实气泡，一键发送给所有在线用户 + 历史列表/删除。
+- **广播后端**（`notifications_admin.py`）：写库 + 发布到 Redis `events:__broadcast__`；`events.stream()` 同时订阅用户个人频道与广播频道。
+
+### 对话状态指示：全可配 + 动画化
+
+- **状态命名后台可配**（`Admin/Agent/index.vue` 新标签页）：可改全部状态显示名——特殊状态（思考中/整理中/复查前缀）+ 每个工具（~55 个，带筛选框）；留空回退默认，保存即热生效（后台 `StateLabelSettings` + `config.override.json`）。
+- **一态多名随机显示**：任一命名值用 `|` 分隔填多个，每次随机取一条；工具名由后端 `_pick_label` 每次发事件时抽，思考态由前端每次进入思考时抽。
+- **单一数据源**：工具名/复查前缀/整理中由**后端**在 `tool_call` 事件里解析好下发，前端直接显示，撤掉前端拼「复查 ·」前缀；思考态经 `GET /agent/ui-labels` 取。
+- **打字机入场 + 排队切换**（`GuguChat.vue`）：状态文字逐字冒出，配轻微「冒泡」入场动画；SSE 状态事件**入队逐个播放**，每条打完字 + 最短驻留才切下一条，不再一闪而过。真回复 token 一到即打断队列让位正文。
+- **思考默认回三个点**：`core.py` `_thinking` 默认空 → 显示三个点动画；后台填了文字才显示带 spinner 的文字气泡。
+- **自检轮气泡治理**：复查轮 `tool_done` 原来把 `thinking` 重置为真（=3 个点），但复查正文被缓冲丢弃，导致点点残留到 `done`。改为：复查工具打 `verify` 标记，`tool_done` 时 `thinking = !evt.verify`；复查状态显示「复查 · X」与主回复区分，既消除残留点点又可观测。
+
+### 文本预览稳定化 + 浮动窗口增强
+
+- **文本文件走浮动窗口预览**：`preview.js` 把 `isTextExt`（MD/TXT/代码等）路由到浮动窗口；`FloatPreviewWindow` 新增文本分支（下载 blob → `TextViewer` 渲染），默认 720×520，支持拖拽/最大化/多开；MD 有 markdown 渲染，代码文件有高亮。
+- **稳定即时刷新**（`GuguChat.vue`）：文件工具 `tool_done` 即 `liveStore.bump('files')`，确定性触发预览重载，不靠会丢的 events SSE 兜底；推广到 projects/calendar。
+- **TextViewer 滚动位置存 localStorage**：按 `fileKey` 存，跨组件重建/整页刷新都保留；新内容更短时浏览器自动夹到底。
+- **下载 URL cache-bust**：刷新时带 `?_t=`，避免浏览器返回缓存旧内容。
+- **文本预览可选中复制**（`TextViewer.vue`）：覆盖预览弹窗的 `user-select:none`，正文可选/复制，行号仍不可选。
+- **浮动窗口：内容刷新不重置位置**（`FloatPreviewWindow.vue`）：`liveStore.rev.files` 触发的重载传 `refresh=true`，`load()` 在 `refresh && ready` 时跳过 `fitWindow()`，窗口位置/尺寸原地保留，仅 `blobUrl` 更新。
+- **SSE 断线重连补偿**（`live.js`）：重连成功后 bump 所有 rev，补上断线期间漏掉的资源变更，不用手动刷页面。
+- **工具集漂移修复**：`_PROJECT_TOOLS`/`_FILE_TOOLS` 与后端 `RESOURCE_BY_TOOL` 不同步导致连回合末兜底都漏刷，已对齐并加注释防再漂移。
+
+### 前端交互与 UI 打磨
+
+- **GuguChat 展开大窗跳底**：`enterExpanded()` 加 ResizeObserver 在 0.42s 过渡期间持续跟底，对齐 `exitExpanded()` 行为；修复原来只在 nextTick 后设一次 scrollTop 随即失效的问题。
+- **日历多选：单日悬停不切侧边栏**（`Calendar/index.vue`）：`activeRange` 在 anchor=hoverRangeEnd 时返回 `null`，只有真正跨天拖选后才切「添加项目」模式。
+- **定时任务时间输入改文本框**（`Schedules/index.vue`）：不弹系统选择器；宽度与 DatePicker 等宽，文字居中；`title-input`/input/textarea/select/`repeat-tab` 圆角统一 `var(--radius-sm)`，去除 `corner-shape: squircle`。
+- **项目卡悬停亮色高光**（`ProjectCard.vue`）：`::after` 伪元素顶部白色渐变 + inset 描边，hover 时明显增亮（`rgba(255,255,255,0.55)`），transition 过渡顺滑。
+- **看板「新建项目」卡悬停亮色**（`KanbanColumn.vue`）：hover 背景从暗（`0.05`）修正为 `rgba(255,255,255,0.3)`，与项目卡风格对齐。
+- **ProjectModal 删除阶段按钮位置修复**：`.node-row` 加 `padding-right: 8px`，防止「×」按钮落在阶段分割线上。
+- **项目编辑卡阶段区版面记忆**（`pmStagesExpanded`）：展开（50/50 版面）状态持久化到用户偏好，重开保留上次版面。
+- **GuguChat 小窗/播放器/气泡严格同宽**（360px border-box）；音乐播放器随聊天展开缩回咕咕球；FAB 只跳图标、圆圈完全静止。
+- **新建项目状态球**：顶部胶囊改为 14px 圆形状态球，点击循环切换三态，悬浮缩放 1.2×；修复与名称输入框重叠。
+- **DatePicker 样式统一**：边框色/背景/内边距与其他表单对齐，打开状态加紫色 focus 环。
+- **定时任务试运行 Toast**：「试运行」结果从浏览器 `alert()` 改为页面内 Toast 提示。
+- **颜色格方形化**：新建项目颜色格从圆形改为 6px 圆角方块；分割线宽度统一（纵向改用渐变色）。
+- **数据分析趋势图增强**（`Admin/Analytics`）：折线改为 canvas 渐变填充；hover 显示跨系列 tooltip；自定义 crosshairPlugin 白色竖线指示当前日期。
+
+### 项目与工作流增强
+
+- **全局搜索准确跳转**：对话搜索滚到并高亮命中消息（`data-db-id` + `_flashChatMessage`）；日程搜索切换到对应月份并高亮目标条目；两处均有 1.8s 渐隐紫色高亮动画。后端消息列表每条加 `id` 字段，搜索命中时附带 `message_id`。
+- **全局搜索拼音/罗马音匹配**（`utils/romaji.py`）：纯 ASCII query 自动走罗马音分支（pypinyin + pykakasi），搜 `riqi` 命中「日期」，搜 `yorushika` 命中「ヨルシカ」。
+- **全局搜索点项目 → 高亮项目卡**：照 file/event 跳转的 `pendingXxx` 模式，点项目跳到项目面板、对应卡片滚到中央 + 紫色高亮环闪一下，不再弹编辑窗。
+- **待办全完成自动进下一阶段**（`ProjectCard.vue`）：勾完当前阶段最后一个待办 → 自动推进下一阶段，与 `ProjectModal` 已有逻辑对齐；空阶段/最后阶段不动，取消勾选不推进。
+- **项目卡：点击阶段名快速操作待办**：阶段名变可点击触发器（hover 浅底 + 小箭头，有待办时附完成计数），弹出当前阶段待办弹层（Teleport 到 body，玻璃面板风），支持勾选/编辑/删除/添加，点外部或 Esc 关闭。
+- **mode2 文件卡拖影尺寸修复**（`usePhysicsDrag.js`）：stages-expanded 下文件卡 `aspect-ratio` 压扁，拖影克隆体挂 body 后丢上下文 → 尺寸回落更大。给物理拖拽加 `cloneClass` 选项，mode2 时给克隆体打标记类补回版式，拖影与面板卡严丝合缝。
+- **修复：多工具对话后追问报「咕咕开小差了」**（孤儿 tool_result）：历史截断时丢掉打头的 `assistant(tool_use)` 把紧跟的 `tool_result` 变孤儿 → MiniMax 400 → 「咕咕开小差了」。`sanitize_messages` 改为按位置标记合法相邻对，丢前导 assistant 时同步剥掉遗留孤儿 tool_result。
+
+### 其他
+
+- **前端代码复用重构**：提取 `useSorting`/`useUploadQueue`/`useBoxSelection` 三个 composable，消除 Files 和 ProjectModal 间约 180 行重复代码；`DatePicker`/`DateSpanPicker` 统一在 `main.js` 全局注册。
+- **AI 回复文件编号外漏修复**：文件列表去掉 `[id=xxx]` 前缀，工具按文件名定位足够，编号只在同名歧义时才需要；Admin Agent 行为开关改为点击即时保存，不再需要额外点「保存」。
+- **缩略图减负**：`Image.draft()` 大图快速降采样解码 + `Semaphore(核数-1)` 并发闸，2 核机上传后不再占满双核卡请求。
+- **开发服务器稳定性**：uvicorn `--reload` 限定监听 `app/` + `agent/` 两目录，不再 watch 整个 backend（含 .venv），pip install 不触发大量连锁重启。
+- **后台管理员用户名走 env**（`ADMIN_USERNAME`，默认 `admin`），与 `ADMIN_PASSWORD` 同款。改 `.env` 后重启即生效。
 
-把状态气泡那套「逐字打字机」搬到咕咕球上方的通知气泡（`NotificationBubble.vue`）：新通知不再一次性出全文，而是**标题逐字冒出（30ms/字）→ 正文逐字流式（15ms/字，长文每拍多推几字不拖沓）**，正文渲染「已打出的子串」走 `MarkdownView`，与咕咕回复的流式 markdown 同源。每条 item 用 `reactive` 包裹让打字机改属性即驱动视图；全局单计时器只让最新一条打字、新通知到达即接管、手动关掉正在打字的那条会停表。标题圆点在接收时脉冲（`nb-pulse`），打完恢复，直观表达「正在接收」。
-
-### 项目交互：搜索定位高亮项目卡 + 待办全完成自动进下一阶段
-
-- **全局搜索点项目 → 高亮项目卡，不再打开编辑**（`GlobalSearch.vue` / `ui.js` / `Projects/index.vue`）：照 file/event 跳转的 `uiStore.pendingXxx` + 目标页 watch + flash 模式——点项目跳到项目面板、对应卡片滚到中央 + 紫色高亮环闪一下，不再弹编辑窗。卡片未渲染好（跨页跳转 / 数据加载中）会重试 ~2s 等它出现。
-- **待办全完成自动进下一阶段**（`ProjectCard.vue`）：项目卡的待办弹窗里勾完当前阶段最后一个待办 → 自动推进下一阶段（与项目编辑卡 `ProjectModal` 已有逻辑对齐；空阶段 / 最后阶段不动，取消勾选不推进）。
-- **mode2 文件卡拖影尺寸修复**（`ProjectModal.vue` / `usePhysicsDrag.js`）：项目编辑卡 stages-expanded（mode2）下文件卡用 `aspect-ratio` 压扁，但物理拖影克隆体挂到 body 后丢了 `.modal.stages-expanded` 上下文 → 回落 mode1 的 `min-height:122` 尺寸、比面板卡更大。给物理拖拽加 `cloneClass` 选项，mode2 时给克隆体打标记类把版式补回，拖影与面板卡严丝合缝。
-
-### 可靠性：复制/移动跨项目落错位置修复 + update 类工具杜绝「谎报成功」 + 复查上限 3→5
-
-实战逮到一个「复制失败却谎报成功」的案例（让咕咕把文档复制进 X 项目，结果在原地复制了一份、还说"已复制到项目"）。轨迹日志（`agent.traj`）还原后定位并扩查同类：
-
-- **跨项目复制/移动落错位置**（`tools/files.py`）：`_copy_file`/`_move_one` 把文件放到目标项目时，未指定文件夹的 `folder_id` **默认继承了源文件的文件夹**——而源文件夹属于原项目，于是复制件落回原地。抽 `_target_loc` 统一目标定位：**跨项目/空间又没指定 folder → 落目标根目录、不继承源文件夹**；同项目内才保留原文件夹；给了 `project_id` 没给 `space` 自动视为进项目空间。`_move_folder` 经确认已正确级联子项 project_id，不在此列。
-- **target 参数容错**（`_norm_target`）：模型偶尔把 `target` 序列化成字符串（JSON / Python 字面量），统一解析回 dict，避免被忽略或 `.get` 崩溃。
-- **update 类工具杜绝空转报成功**（类「谎报」根因）：`update_client`/`update_event`/`update_scheduled_task`/`update_todo` 以前「定位到对象→没给任何要改的字段→照样 commit 报 success」，咕咕据此误报"已更新"。现在**没提供任何改动字段就返回错误**（提示该传哪些），逼它带字段重试或如实说，不再空转谎报。`update_stage` 已有 no-op 守卫，仅补 `todo` 传成字符串的容错。
-- **自我核实上限 3→5**（`core.py` `MAX_VERIFY`）：每次对话回合最多复查 5 次（循环预算 `MAX_ROUNDS+MAX_VERIFY*2` 随之放宽），收尾核对更彻底。
-
-### 文本预览刷新稳定化：稳定 + 及时 + 位置不变
-
-咕咕改完 md 后预览不刷新（只依赖 best-effort 的实时 SSE，dev 重启 / pub-sub 竞态会丢事件），且刷新后滚动跳顶：
-
-- **稳定刷新**（`GuguChat.vue`）：`refreshAfterTools` 文件分支补 `liveStore.bump('files')`，每个用了文件工具的回合结束**确定性**触发预览重载，不靠会丢的 events SSE 兜底。
-- **及时反馈**：文件工具一 `tool_done`（改完那刻）即 `bump('files')`，走已连好的对话流、不等回合末，用户当场看到；预览是全局组件，切走也刷。
-- **位置不变**（`TextViewer.vue`）：滚动位置按 `fileKey` 存 `localStorage`（实时刷新会销毁重建组件，内存变量留不住，只有 localStorage 跨重建/整页刷新都在），渲染完读回；新内容更短时浏览器自动夹到底。
-- **拿到新内容**（`FloatPreviewWindow.vue` / `FilePreviewModal.vue`）：刷新时下载 URL 带 `?_t=` cache-bust，避免浏览器返回缓存旧内容（否则表现成"没刷新"）。
-- **泛化到项目卡 / 日历 + 修复工具集漂移**（`GuguChat.vue`）：同样的「`tool_done` 即时 bump」推广到 `projects`/`calendar`——咕咕重构项目（阶段/进度/待办）当场刷新。根因还包括前端工具集和后端 `RESOURCE_BY_TOOL` **不同步**：`_PROJECT_TOOLS` 漏了 `set_stages`/`update_todo`/`set_color`（重构正用这些），`_FILE_TOOLS` 把 `move_items` 错写成 `move_file` 且缺 `copy_file`/`save_uploaded_file` → 连回合末兜底都漏刷。已对齐后端权威映射并加注释防再漂移。
-
-### 状态指示动画化：SSE 流式入场 + 切换排队，思考默认回三点
-
-- **打字机入场 + 入场动画**（`GuguChat.vue`）：状态文字（工具名 / 复查 / 自定义思考）像回复一样逐字冒出，配一个轻微"冒泡"入场动画。
-- **动画队列**：SSE 状态事件不再立即切换，而是**入队逐个播放**，每条打完字 + 最短驻留才切下一条——切换太快也不再一闪而过 / 抢拍。真回复 token 一到就打断队列、让位正文。
-- **思考默认回三个点**（`core.py` `_thinking` 默认空）：「思考中」默认仍是三个点动画（也带入场动画）；后台「状态命名」填了文字才显示成文字气泡。
-- **多命名格式提示**（`Admin/Agent/index.vue`）：「状态命名」面板加醒目提示条，说明「多个名称用 `|` 分隔、随机显示其一」+ 示例。
-
-### 状态命名：对话「状态指示」全可自定义 + 一态多名随机显示
-
-把对话里所有「状态气泡」的文案做成后台可配、并支持一个状态挂多个名字随机显示：
-
-- **后台「状态命名」面板**（`Admin/Agent/index.vue` 新标签页）：可改**全部**状态显示名——特殊状态（思考中 / 整理中 / 复查前缀）+ **每个工具**（~55 个，带筛选框）。留空＝回退默认，所以「保留默认」天然成立；改完保存即时生效（工具名下一条消息就变，「思考中」需刷新对话页）。
-- **配置与注入**（`config.py` `StateLabelSettings` + `core.py`）：新增 `state_labels.overrides` 覆盖表（`config.override.json`，`apply_override` 合并、`get_settings` 热读）；`LLMRunner` 构造时 `labels = 特殊默认 ← 各工具 label ← 用户覆盖`，未覆盖 key 自动回退。
-- **单一数据源**：工具名 / 复查前缀 / 整理中由**后端**在 `tool_call` 事件里解析好再下发，前端直接显示（撤掉前端拼「复查 ·」前缀）；只有「思考中」是无 SSE 事件的前端态，经新端点 `GET /agent/ui-labels` 取。管理读写走 `GET/PUT /admin/agent/state-labels`（admin 鉴权）。
-- **思考态可命名为文字气泡**：「思考中」默认是三个点动画；后台「状态命名」给 `_thinking` 填了字，才显示成带 spinner 的文字气泡（见「状态指示动画化」一节，默认最终定为三个点）。
-- **一态多名 · 随机显示**：任一命名值可用 `|` 分隔填多个，显示时随机取一条。随机点分两处：工具名 / 复查前缀 / 整理中由**后端** `_pick_label` 每次发事件时抽（同一工具多次调用会换名）；「思考中」由**前端** `watch(thinking)` 每次进入思考态抽（刷新后每轮转圈也会换）。
-
-### 自检轮气泡治理：复查不再残留「生成中」点点，且可见可辨
-
-- **现象**：让咕咕做事（增删改）后，回复已显示完，却还挂着 3 个点转几秒——像卡住/还在生成。
-- **根因**（`core.py`）：自我核实轮（复查）跑查询工具时，`tool_done` 把前端 `thinking` 重新置真（=3 个点），但复查文字本就被缓冲丢弃、没有 token 把点点清掉，于是点点一直挂到 `done`。
-- **修复（区分而非隐藏）**：复查轮的 `tool_call`/`tool_done` 打 `verify` 标记下发；前端复查工具标注「复查 · X」与主回复区分，且复查 `tool_done` **不再回落到「生成中」点点**（`thinking = !evt.verify`）。既消除残留点点，又让复查在查什么一目了然。（先试过「全静默」——把复查工具状态全藏了，反而丢了可观测性，故改为区分。）
-
-### MiMo 标题修复：思考吃光 token 致会话名不自动更新
-
-- **现象**：web 用 mimo（anthropic 格式）时，新会话标题不自动生成，停在首句截断。
-- **根因**（`adapters/web._generate_title`）：标题调用没禁 mimo 的思考，`max_tokens=30` 被思考块吃光、取不到 `text` 块 → 标题空 → 回退首句截断（看着像没更新）。
-- **修复**：mimo 显式传 `thinking:disabled`（两路同口径），从 `content` 里挑真正的 text 块（不按下标取），`max_tokens` 提到 40，空则回退首句。
-
-### Agent 可靠性强化：核实强制真查 + 防「用嘴假装操作」 + 明确请求必执行
-
-针对实战暴露的三类「说了没做」幻觉（动嘴不动手 / 自作主张不做 / 改了不核对），从运行时硬化：
-
-- **核实轮强制真查**（`core.py`）：自我核实闭环加 `verify_queried` 跟踪——核实轮只嘴上说「确认/没问题」却没真调任何查询工具时，注入 `_VERIFY_FORCE_PROMPT` 强制再追一轮真调 `read_file`/`get_project`/`list_*` 查证（防「凭印象说做完了」）。两路同构、`MAX_VERIFY` 封顶。
-- **narration 检测**（`core.py`）：抓模型用文字「假装」读/改文件（「让我读一下…读到了…改好了」）却本轮没真调工具的情况，`_NARRATION_NUDGE` 强制纠偏。
-- **明确请求必执行**（`skills.md`）：「做事」扩到含改/调整/排序/换位置；加硬原则「用户明确要改就执行，别用『现状已合理』驳回」——治「明确要排序、模型判断不用改、一个工具都不调」。
-- **对外口径前提澄清**（`policy.md`）：明确「不报工具名」是**措辞口径、不是少调工具**，别把「别暴露调用」误读成「别调用」或用文字假装做了。
-- **`read_file` 按需提炼**（`files.py`）：读到后挑相关部分讲、别整段复述（JSON 点关键字段、CSV 给表头+前几行）。
-- **决策守卫 · 代码版**（`core.py` `_is_decision_dodge`）：prompt 之外再加硬守卫——①用户消息含改动命令 ②回复含「不用改/已合理/保持原样」驳回语 ③本轮零工具，三信号齐备 → 注入 `_DECISION_NUDGE` 逼执行或问清。高精度三信号、实测 4 抓 6 放零误伤（求澄清/已动手/问句/「做不到」均不误判）。M3+mimo 端到端验（驳回→nudge→真调 `set_color`）。
-- **narration 泛化到完成断言**（P2a）：检测从「读/改叙述」扩到完成断言。精度踩了两次坑——① 全链路实测抓到逃逸「已经是每行一个的格式了」→ 补「已经是X格式了」；② 但泛化把「记/整理/安排/确认」等**口语高发词**也当完成断言了，咕咕正常回句「已经记下了/已经安排好了/确认过这方向可行」就误触发、逼重来一轮（前端表现为「气泡再出现又收回」）。**最终收窄到只收强 CRUD 动词**（建/创建/保存/删/发/移/归档/重命名），口语词剔除；实测 0/13 误触发、0/10 漏抓。教训：单元测试「零误伤」≠ 生产安全，口语动词必须实跑才暴露。
-- **edit_file 差异校验**（P2c，`files.py`）：`replace_all` 最易把整段覆盖丢——原文≥200 字且改后<50% 时结果加 `warning` 逼模型 `read_file` 读回核对（非阻塞）。
-- **工具调用轨迹**（P1，`tools/base.py`）：`registry.dispatch` 每次落一行 JSON（`{tool, args摘要, ok, ms, user}`，三出口全覆盖）到 `agent.traj` logger → gugu.log / Debug 面板。「调没调工具/调了啥/成没成」翻一眼即知，`grep '"t": "tool"'`。
-- **工具注册契约 fail-fast**（P4，`SkillRegistry.add`）：重名/空名/`input_schema` 非 `type=object`/`handler` 不可调用 → 启动期抛 `ToolContractError`，不留到运行时静默失效（实测 55 工具全过、4 类违规全拦）。
-- **诚实边界（实测结论）**：上述守卫验证「提示词软、守卫硬」——M3 提示词就够认错改正；**弱模型 mimo 提示词救不动、全靠代码守卫兜**（live 真实循环 run3 逮到守卫自动接管，全链路 ~93% 最终真调工具，残余逃逸是 mimo 本身的不确定性，正则补一个堵一个、到顶需小模型语义判定）。
-- **可靠性架构文档**：新增 `docs/agent-reliability.md`（基于实读 OpenClaw 仓库的可靠性工程重构，核心是 **Execution Verifier** 执行验证层：信 Tool 不信 Assistant、把真实性守卫从「喂 prompt」硬化到「拦回复重生成」）+ `docs/agent-architecture.md`（两张架构全景图：可靠性执行链路 + 系统模块）。
-
-### 前端修复：SSE 重连补偿 + 文本预览可选中
-
-- **SSE 实时刷新断线重连补偿**（`live.js`）：重连成功后 bump 所有 rev，补上断线期间漏掉的资源变更——后端 reload / 网络抖动期间咕咕改的文件等，自动刷出来，不用再手动重载页面。
-- **文本预览可选中复制**（`TextViewer.vue`）：覆盖预览弹窗的 `user-select:none`，正文可选/复制，行号 `tv-ln` 仍不可选、不被选进去。
-
-### MiMo（小米）模型接入 + 双 API 适配 + 空回复治理
-
-- **后台新增 MiMo provider**（`Admin/Agent/index.vue`）：供应商下拉加「MiMo (小米)」（默认 `mimo-v2.5`、base_url `token-plan-cn.xiaomimimo.com/v1`、橙色圆点）。`mimo-v2.5` 才同时支持「看图 + 深度思考 + 1M 上下文」；`mimo-v2.5-pro` 纯文本不看图，选型注意。
-- **API 格式可选**（`api_format` 字段，`AISettings`/`AIPresetItem` + admin 选择器）：MiMo 同时提供 OpenAI / Anthropic 两套兼容 API，预设里可显式选格式（留空=按 provider/base_url 自动判）；选 Anthropic 时前端自动把 base_url 后缀 `/v1` ↔ `/anthropic` 互切。后端抽出**唯一判定口 `llm_select.use_anthropic_for(ai)`**（优先显式 `api_format`），聊天 / 记忆 / IM **5 处**重复逻辑统一改用它，杜绝「聊天走 anthropic、记忆还走 openai」的不一致。
-- **鉴权**：MiMo 两套 API 都收 `api-key` 头与 `Authorization: Bearer`。`llm_select.openai_default_headers` / `anthropic_default_headers` 给 mimo 补 `api-key` 头（多发一个无害），三处 SDK 客户端 + admin 连通性测试/多模态检测同款。
-- **空气泡根治**：mimo 是推理模型（返回 `reasoning_content` + `content` 双字段），思考开时偶尔整轮输出全进 `reasoning_content`、`content` 为空 → 空气泡。两层修复：① **OpenAI 路给 mimo 传 `thinking:{type:disabled}`**（`extra_body`，官方两套 API 都支持此参；思考关时正文不再空，从源头消除）；② 仍空（思考开）时**追一轮要正文、再空给一句得体兜底**，绝不留空气泡。
-- **Anthropic 路对 mimo 特化**（`core._run_anthropic`）：去掉 `cache_control`（mimo 无 prompt caching）；thinking 取值用文档确认的 `disabled`（想开则不传、用其默认，不瞎猜 enable 值）。实测 mimo anthropic 端点（`/anthropic/v1/messages`）：鉴权 / `thinking:disabled` / **图片块（看图）** 全通，`cache_control` 也不报错。**走 Anthropic 格式可原生处理思考块（免疫空气泡）+ `read_file` 看库内图**，功能最全。
-
-### Agent 看图：信自己的眼睛，别反射性联网搜
-
-- **背景**：模型接了 vision 后，问「这是谁 / 这画的啥角色」时咕咕会按「不确定就查证」的人格反射性 `web_search` 去「核实」——但 web 搜是文字的，反向认图根本帮不上，只让用户干等（实测一次图请求白白多走一轮 `web_search`、输入涨到 2 万+ token）。
-- **修复**（`persona.md`）：「不确定就查证」段后加「看图时信你自己的眼睛」——看图类问题**凭看到的直接答**（认得就说、拿不准就照实说像谁），只有要图本身给不了的**外部信息**（出处设定 / 哪买 / 最新消息）且确实不知道时才联网。区别于「外部事实可查证」：图里画了啥，眼睛已经看到了，不必再搜。
-
-### 流式首条空气泡：pub/sub 订阅竞态修复
-
-- **现象**：切换主模型（尤其首 token 更快的模型）后，每个会话**第一条**回复偶发空气泡——回复其实已生成并落库（快照/DB 有全文），只是当场没显示。
-- **根因**（`adapters/web.stream()`）：先 `create_task` 起后台生成、后 `subscribe` 频道；Redis pub/sub 发完即弃，生成的头几个 token（短回复时是全部）在订阅建好前被 publish 掉、丢失。
-- **修复**（`genstream.py` + `adapters/web.py`）：新增 `open_subscription()`，**先 attach 订阅、再启动生成**——订阅就绪后频道消息进连接缓冲不丢。`subscribe(session_id, pubsub=)` 兼容传入已订阅的 pubsub；`resume()`（刷新续看，本就先回放快照再订阅）逻辑不变。
-
-### 前端体验打磨
-
-- **日历多选：单日悬停不提前切侧边栏**（`Calendar/index.vue`）：`activeRange` computed 在 anchor 与 hoverRangeEnd 同天时返回 `null`，侧边栏仅在真正跨天拖选后才切换为「添加项目」模式，防止点击单天意外触发。
-- **定时任务时间输入改为文本框**（`Schedules/index.vue`）：`<input type="time">` 改为 `<input type="text">`，不弹系统选择器；宽度与 `DatePicker` 等宽（移除 `width: 120px` 限制），文字居中对齐；`title-input`、表单 input/textarea/select、`repeat-tab` 圆角统一为 `var(--radius-sm)`，同步去除 `corner-shape: squircle`（避免与 DatePicker 视觉不一致）。
-- **项目卡悬停亮色高光**（`ProjectCard.vue`）：卡片 `::after` 伪元素加顶部白色渐变 + inset 描边，hover 时高光明显增亮（`rgba(255,255,255,0.55)` 渐变区），静止时保持低调（`0.12`），transition 过渡顺滑。
-- **看板「新建项目」卡悬停亮色**（`KanbanColumn.vue`）：hover 背景从 `rgba(255,255,255,0.05)`（比默认更暗）修正为 `rgba(255,255,255,0.3)`（明显更亮），无 inset 顶部光，与项目卡风格对齐。
-- **ProjectModal 删除阶段按钮位置修复**（`ProjectModal.vue`）：`.node-row` 加 `padding-right: 8px`，防止「×」按钮落在阶段分割线上。
-- **浮动预览窗口：内容刷新不重置位置**（`FloatPreviewWindow.vue`）：`liveStore.rev.files` 触发的内容重载改传 `refresh=true`，`load()` 在 `refresh && ready` 时跳过 `fitWindow()`，窗口位置/尺寸原地保留，仅 `blobUrl` 更新为最新内容。
-- **项目编辑卡阶段区展开版面记忆**（`pmStagesExpanded` 偏好）：阶段区展开（50/50 版面）状态持久化到用户偏好——`UserPreferences` 加 `pmStagesExpanded` 字段（`schemas` + `preferences` API），前端 `preferences` store 加 `savePmStagesExpanded`，重开保留上次版面。
-
-### Agent 记忆边界：根治"伪个性化幻觉"（编造与用户的共同历史）
-
-- **背景**：空记忆 / 新用户下，咕咕会硬编「你之前聊过 X / 我记得你喜欢 Y」（用户根本没提过）。这类幻觉 `web_search` 救不了——「你我之间发生过什么」网上查不到，唯一真相源是注入的记忆区；且「活泼」语气会放大（亲昵语域爱 call-back 共同记忆）。
-- **A · prompt 双层红线**：`persona.md`「关于记忆」加「记忆区是你对用户了解的唯一真相源，没写的就是不知道，绝不说『你之前聊过 / 喜欢 X』」+ 区分两类不确定（外部事实可查证 / 你俩之间的事查不到→没记忆就别断言）；`policy.md` 加红线「不虚构与用户的共同历史」。
-- **C · 空记忆显式声明**：`builder._memory_block` 记忆全空时不再返回空串，改注入「暂无任何长期记忆——别假装记得任何共同经历或偏好」，给「我不知道」一个锚点，掐掉无锚点脑补。
-- **实测**（`scripts/smoke_memory_boundary.py`，全零 UUID 空记忆 + 诱发 prompt，三风格 × 真实 LLM）：**natural/formal/lively 全 0 脑补**，活泼也没放大；咕咕改为老实承认「头一回聊、一无所知」并引导用户自我介绍，甚至主动声明「不瞎猜一个听着像对的答案糊弄你」。
-
-### Agent emoji 红线：prompt 压不住 → 输出层确定性兜底
-
-- **背景**：persona 明令「坚决不用 😅😶✨ 等阴阳 / 情绪表情」，但「活泼」语气下照冒（emoji 是该语域的高概率 token）。先试 prompt 三层声明（lively 文案 + 风格块底线声明 + persona「语气不豁免」）——**实测全无效**，lively 依旧条条带 😅。**结论**：emoji 是 token 级低层习惯、非高层语义行为，prompt 治不了，必须输出层兜底。
-- **修复**：`sanitize.strip_disallowed_emoji`——白名单（27 个内容类别表情 ✅💡📝📂📅💬…）之外的 emoji 连前导空格一起删（白名单制比黑名单稳，新表情漏不掉）。挂**三出口**：web `emit_clean`（流式当场拦）、`run_collect`（IM，接 `sanitize_outbound` 后）、`run_ephemeral`（定时）；`_collect` 保持纯净（对照测试要拿原始输出）。
-- **实测**：strip 后三风格 emoji 违规全 0；白名单实战抓到 🤷🌱😂✨ 等未预料表情。
-
-### 通知系统：持久化 + 已读追踪 + 气泡上线补弹/时限（气泡与通知中心分渠道）
-
-- **通知落库 + 按用户已读**：新表 `notification_reads`（user × notification × read_at，无记录=未读）；`site_notifications` 加 `bubble`/`persist`/`bubble_expire_at` 三列（Alembic `20260626000002`）。通知本体一律落库（气泡也要落库才能上线补弹）。
-- **两渠道独立发布**：`bubble`（弹气泡）/ `persist`（进通知中心）可分别开关——气泡+中心 / 仅气泡 / 仅中心。
-- **导航栏通知中心 = 持久态**：`GET /notifications`（仅 `persist=true`）+ `POST /notifications/read`（标已读落库）；前端 `onMounted` 拉全量（含离线漏掉的）+ 实时 SSE 追加，关浏览器重开还在、未读数从后端来。
-- **气泡 = 实时弹 + 上线补弹**：实时在线立即弹；离线者上线时 `GET /notifications/bubble` 补弹**最近一条**有效气泡，**只一次**（前端 `localStorage` 记已弹 id），**带发布时限**（`bubble_ttl_hours`，过期后再登录不补弹）。气泡与通知中心数据源彻底分开（气泡听 `liveNotification`，中心读持久列表）。
-- **后台发布页**（`Admin/Notifications`）：发布渠道选择 + **气泡时限**（永久/1天/3天/7天，默认 1 天）；广播带 `nid` 供前端去重/标已读。
-- 后端已上线（迁移已在共享库执行）；前端已 build、随版本末部署。
-
-
-### Agent 搜索分层：自建 SearXNG（通用、免费）+ Tavily（深度）
-
-- **`web_search` → 自建 SearXNG**（`tools/search.py`）：通用网页搜索，免费、无配额、快，返回标题+链接+摘要，适合找官网/文档/GitHub/事实/新闻标题。`settings.search.searxng_url` + `searxng_engines` 配置；国内服务器只有 `sogou/quark/360search` 可达，固定带 engines 避开会超时的 google/bing。
-- **Tavily → `deep_research`**：原 `web_search`(Tavily) 改名 `deep_research`，定位「读网页正文 + 总结 / 比较 / 研究 / 给引用」，保留每日次数配额（`SearchUsage`，SearXNG 不计）。`runtime_state` 给 `deep_research`/`http_get` 补「搜索中」状态。
-- **路由按任务分**（`prompts/skills.md`）：专有技能 → 已知 URL `http_get` → 普通查找 `web_search`(SearXNG) → 读+总结 `deep_research`(Tavily，直接上别绕) → SearXNG 失败由模型兜底转 `deep_research`。**目标：~80% 普通联网走免费 SearXNG，不再烧 Tavily 配额。**
-- **删除 `news` skill**：RSS 易失效，新闻查询归入 `web_search`（通用引擎 sogou/quark/360 本就覆盖新闻）。
-- **`web_search` 去掉 `category` 参数**：实测国内服务器上 news/it/science 等类别引擎（google/bing news、reuters 等）全被墙，传 `category` 只会挂一堆死引擎、拖慢甚至超时；通用引擎已覆盖新闻，去掉后更快更干净。
-- **后台可配 + 测试按钮**（Admin → Agent → 联网搜索）：SearXNG 地址 / 引擎 / Tavily Key 都在面板配（`config.override.json` 热生效），各带「测试」按钮（`POST /admin/config/test-search`）——SearXNG 测试免费且会列出可达/超时引擎，Tavily 测试验证 key 有效。403 等错误给「未开启 JSON 输出」等清晰提示。
-- 部署见 `docs/deploy.md`「可选：SearXNG 自建搜索」（Docker，开 `formats: json` + `limiter: false`，内存紧的机器用 `--memory` 上限隔离）。冒烟 `scripts/smoke_skills.py` 覆盖两工具。
-
-### Agent 对外口径：堵住新工具名泄露（`policy.md`）
-
-- **背景**：新加搜索/技能工具后，咕咕被问「这是怎么搜到的」会抖出 `use_skill → http_get → wttr.in` 三步流程、被问「http_get 是什么」会复述工具名——`policy.md` 原有「不暴露工具」规矩没压住，因禁用名单还是老工具（`list_trash` 等）、且没专门管「问机制」的场景。
-- **修复**（提示词层，热生效）：① 禁用工具名补全 `web_search`/`deep_research`/`http_get`/`use_skill` + 「技能/剧本/调用/接口」说法；② 新增「被问『怎么做到的 / 这是什么工具 / 怎么搜到的』」专门口径，只用能力说法答、不报名、不讲分几步、不主动报数据源（带 ❌/✅ 对照例）；③ 再补「用户直接把工具名甩脸上问时也别复述、别承认」。
-- **实测**（`run_ephemeral` 真实 LLM）：4 类套话（含两种直接报工具名）全部 0 泄露。
-
-### Agent：不确定就主动查证，别糊弄（去工具成本焦虑）
-
-- **背景**：被问没听过的新词/热梗（如"月薪喵"），咕咕要么"没听过、你从哪看的"踢皮球、要么凭字面编个听着像对的答案——两种失败同一个根：没有"答之前先确认自己是不是真知道"的自觉。`skills.md` 的"省着用工具、成本意识"还压着它不敢主动搜。
-- **修复**（提示词层，热生效）：① `skills.md` 去掉"省工具"框架——"工具该用就用，别为省调用而不帮用户"，`web_search` 走自建搜索免费、放开用，只有 Tavily 计费才省着点；保留真效率（别重复查、别反复确认结果）。② `persona.md` 加「不确定就去查证，别糊弄」——立足"给对的答案才是真帮用户"，同堵"编答案"与"踢皮球"，限定在新词/热梗/近期事件/易变事实，稳定常识仍直接答（不逢问必搜）。**没写机械 if-then 规则进 skills**，由性格驱动。
-- **实测**：「月薪喵是什么」→ 主动搜、给出真实含义（博主养的布偶猫表情包），不再脑补；「Python 是什么」→ 直接答、不多搜。
-
-### Agent：不虚构与用户的共同历史（伪个性化）
-
-- 与「不确定就查证」是**两类**不确定：外部世界的事拿不准能上网查，但**你俩之间发生过什么查不到、网上也没有，没记忆就是没有，别编**。
-- `persona.md` / `policy.md` 加规矩：记忆区没写的，绝不说「你之前提过 / 我记得你说过 / 你喜欢 X」；想显得懂他却没素材时宁可问、别脑补一段没发生的经历；被反问「我什么时候说过」时老实认。
-- `builder._memory_block` 改为**空记忆时也注入一句明确声明**（"暂无长期记忆，别假装记得共同经历，需要就直接问"）——给"我不知道"一个锚点，防模型在空白处脑补。
-
-### Agent：Tools/Skills 分层 + prompt skills 系统（weather / news）
-
-- **`agent/skills/` → `agent/tools/` 改名**：原 `skills/` 全是函数调用工具，名实不符；整目录改名 `tools/`，修全部 `agent.skills`→`agent.tools` import（15 py + core/profiles/smoke）。`prompts/skills.md`（工具准则）暂留，后续改名 `tools.md`。
-- **prompt skills 系统**（新 `agent/skills/`）：带触发条件的「剧本」md（frontmatter `name`/`description`/`emoji` + 正文），**渐进式按需加载**——builder 只注入「## 可用技能」索引（每个一行 name + 何时用），模型相关时调 `use_skill(name)`（`tools/meta.py`）拉正文再照做，skill 数量可无限扩不撑上下文。加载器 `skills/__init__.py` 不缓存、改 md 免重启。
-- **`http_get(url)` 工具**（`tools/web.py`）：prompt skills 的联网执行原语——**SSRF 私网拦截**（私网/环回/链路本地/元数据全拦）、不跟随重定向、响应截断 4000；builder 提示「正文里 `curl <URL>` 即用 http_get 抓」。
-- **weather skill**：`http_get` 抓 `wttr.in/{城市}?format=3|?0`，转人话。
-- **news skill**：原版要 `browser_use`（我们没有，且 http_get 抓 HTML 首页无效）→ 改 **RSS 路线**，`http_get` 抓人民网 `people.com.cn/rss/{politics|finance|society|world|scitech|sports|ent}.xml`（七类实测 200、干净 CDATA 标题），**无需浏览器**。
-- **Profile 字段**：`BaseProfile.skills`→`tools`（工具集），新增 `skills`（启用的 prompt skill slug）；`default` 启用 `weather`/`news` + `web`/`meta`。工具数 51→**53**。
-- **工具使用准则（`skills.md`）成本梯队**：要外部信息按「有对口技能 → `use_skill`+`http_get`；知道 URL → 直接 `http_get`；开放式找不到来源 → 才用 `web_search`/Tavily」由便宜到贵选，**显著减少 Tavily 调用**。
-- 冒烟：`scripts/smoke_skills.py`（28 项，含 SSRF、实抓 wttr.in/RSS）。
-
-### Agent：修复多工具对话后追问报「咕咕开小差了」（孤儿 tool_result）
-
-- **根因**（真实会话复现）：天气/改项目等多工具轮被持久化进 `content_json`，追问时历史按 token 窗口截断，`sanitize_messages` 用**全局 id 匹配**判断 tool 配对——「开头必须是 user」会丢掉打头的 `assistant(tool_use)` 把紧跟的 `tool_result` 变孤儿，删空消息/合并同角色又打乱相邻性 → MiniMax `400 invalid params, tool result's tool id not found` → 重试 5 次失败 → 「咕咕开小差了」。
-- **修复**（`agent/sanitize.py`）：`sanitize_messages` 改为**按位置标记合法对**——只认「`assistant(tool_use X)` 紧接 `user(tool_result X)`」的相邻配对，其余 tool 块全剥；丢前导 assistant 时同步剥掉新表头遗留的孤儿 tool_result。不再被「id 跨位置复用」蒙混。
-- 冒烟：`scripts/smoke_sanitize.py`（8 项，含顺序错位领头 result 等边界）。
-
-### Agent 语气：和善底线 + 与「语气/长度」设置衔接
-
-- **persona.md 新增「和善底线」**（摩擦时刻——纠正/不认同/拒绝/自我更正——最易显冷）：**纠正方案不纠正人、调整方向不调整关系**；归因到用途/事实而非人（保护积极面子）、别让用户反过来照顾 AI 情绪（不堆叠「我错了/我收回/没过脑子」）、自然转弯不急刹车（少用「收回/取消」）、把选择权和结束权交还用户（不替他「完事」）。
-- **与用户「语气/长度」设置（`style_prefs`）衔接**：`builder._style_block` 给 `short`/`formal` 文案加兜底（简短≠生硬、正式≠冷淡），标题改为「用户设置优先于语气松紧/长度/emoji，**但真诚与和善是底线、不在可调范围**」——两功能各管各、不打架。
-
-### 全局搜索增强：准确跳转 + 拼音/罗马音匹配
-
-- **搜索跳到准确位置**：对话搜索命中消息正文时，跳转后自动滚到并高亮该条消息（`data-db-id` + `_flashChatMessage`）；日程搜索命中后切换到对应月份并高亮目标日程条目（`data-event-id` + `_flashCalendarEvent`）；两处均有 1.8 秒渐隐紫色背景闪光动画
-- **后端补充消息 ID 字段**：`GET /api/v1/agent/sessions/{id}/messages` 每条消息加 `id` 字段；搜索接口消息正文命中时附带 `message_id`，前端凭此定位具体消息
-- **拼音 / 日语罗马音搜索**（`backend/app/utils/romaji.py`）：新增 `pypinyin` + `pykakasi` 双引擎罗马音转换工具，`to_romaji()` 先用 pypinyin 把汉字转拼音、再用 pykakasi 把假名转 Hepburn 罗马音，`romaji_match()` 做去空格子串匹配；搜索 `riqi` 可命中「日期」，搜索 `yorushika` 可命中「ヨルシカ」
-- **搜索后端 ASCII 查询自动走罗马音分支**（`search.py`）：检测到纯 ASCII 字母 query 时，在 SQL ILIKE 结果不足 PER_TYPE 的情况下再扫描最近 200 条记录、用 `romaji_match` 过滤补充，所有类型（项目 / 文件 / 文件夹 / 日程 / 客户 / 对话）均覆盖；合并去重后取前 6 条
-
-### 开发服务器稳定性修复
-
-- **uvicorn `--reload` 限定监听目录**：改为 `--reload-dir app --reload-dir agent`，不再 watch 整个 `backend/`（含 `.venv/`），安装 pip 包不再触发大量连锁重启导致请求 500
-
-### 项目卡：点击阶段名快速操作当前阶段待办
-
-- **阶段名变可点击触发器**（`ProjectCard.vue`）：项目卡右侧的当前阶段名变为可点击（hover 浅底 + 小箭头，有待办时附 `已完成/总数` 计数），点击在其下方（放不下转上方）弹出**当前阶段待办弹层**，Teleport 到 body、玻璃面板风
-- **弹层内直接操作待办**：勾选 / 取消、编辑文字、删除、＋ 添加，持久化走 `projectStore.updateStages`；无待办时显示「还没有待办」+ 添加入口；点击外部 / `Esc` / 页面滚动关闭
-- 触发器 `@click.stop`、弹层 Teleport 到 body，不会误触打开项目编辑卡
-
-### 站内通知系统（管理员广播 + 用户端气泡）
-
-- **通知气泡组件**（`NotificationBubble.vue`）：与小窗/播放器同款玻璃风（`backdrop-filter: blur(28px)` + 20px 圆角 + `var(--glass-shadow-lg)` + 内高光 `::after`），**固定 360px 与小窗/播放器严格同宽**（三者均按 border-box 360 对齐）；**纵向布局**——关闭 ✕ 绝对定位右上角、标题行（圆点 + 标题）、内容占满整宽且左右 padding 对称；**关闭按钮与音乐播放器 / GuguChat 一致**（26px 圆角方块、透明底、`PhX`、hover 变红）；**新通知把旧的顶上去**——新条插到底部（贴近球），旧条 `nb-move` 上移、停留 **0.5 秒**后自动消失；最新这条**不自动超时**（无进度条），由用户点关闭按钮关掉或被下一条顶替；开/合以**咕咕球圆心为缩放原点**（`scale(0.05)` + 弹性曲线，与音乐播放器一致，原点 `uiStore.chatNotifyOrigin`：贴球时取球心、被小窗/播放器顶高时取自身中心）；去掉配色选项，圆点统一咕咕主题渐变；内容支持**完整 Markdown**
-- **通知支持「无标题、仅内容」**：后端 `BroadcastRequest.title` 改为可选 + 校验「标题/内容不可同时为空」；气泡 / 侧边栏 / admin 预览均按无标题渲染（不显示标题行、内容作正文）；气泡无标题时内容首行用浮动占位绕开右上角 ✕
-- **气泡与侧边栏通知中心彻底解耦**：① 气泡存的是 uiStore 通知的**独立快照**（`{id,title,content}`）而非同一对象引用，关闭气泡只动本组件 `visible`，不影响侧边栏数据；② 修复点击气泡关闭 ✕ 会**连带关掉侧边栏通知下拉弹窗**的 bug——`AppSidebar` 的 `document` 外部点击监听 `closeAll` 加守卫 `e.target.closest('.nb-stack')`，落在气泡内的点击视为气泡自身交互，不触发侧边栏弹层关闭
-- **独立 Markdown 渲染器 + 通用展示组件**：`utils/markdown.js` 是通知/轻量场景专用的隔离 `marked` 实例（GFM + 软换行 + 链接新标签打开 `rel=noopener`），与 GuguChat 那套带 hljs 高亮 / 复制按钮的全局 `marked` 配置互不影响；`components/common/MarkdownView.vue` 为全站通用的 md 展示组件（`:text` 走轻量渲染、`:html` 接预渲染产物，字号用 `em` 相对父容器），**GuguChat 聊天 / 通知气泡 / 侧边栏通知中心统一同款 md 输出样式**，各处删除原本重复的 `:deep()` 样式块
-- **气泡动态锚点**（`uiStore.chatNotifyAnchor`）：GuguChat 小窗/播放器展开时实时写入距视口底部距离，气泡始终浮在其正上方，`transition: bottom 0.42s` 平滑避让
-- **后台通知发布页**（`Admin/Notifications/index.vue`）：填写标题（**可选**）+ 内容（**支持 Markdown**，已移除配色选项），预览 **1:1 复刻真实气泡**（纵向布局、✕ 右上角、无进度条、无标题时仅内容），一键发送给所有在线用户；记录历史列表，可单条删除
-- **广播后端**（`notifications_admin.py`）：`POST /api/v1/admin/notifications/broadcast` 写入 `site_notifications` 表 + 发布到 Redis `events:__broadcast__` 频道；`GET/DELETE .../history` 管理记录；`events.stream()` 同时订阅用户个人频道与广播频道，全量覆盖在线用户
-- **侧边栏通知中心 Markdown**（`AppSidebar.vue`）：改用通用 `MarkdownView` 组件渲染 `n.content`，与气泡 / 聊天同款 md 输出（`em`/`del`/`a`/`blockquote`/`pre`/代码块/`hr`/标题层级等全覆盖），移除组件内原本重复的一大段 `:deep()` 样式
-
-### UI 细节与交互打磨
-
-- **GuguChat 小窗 / 音乐播放器加宽 + 三者严格同宽**：小窗 `SMALL_W` 316→360px；播放器改 `box-sizing: border-box; width: 360px`（修掉原先 content-box 332 实际外宽 362 比小窗宽 2px 的问题）；通知气泡同为 border-box 360，三者右对齐成一列
-- **音乐播放器随聊天放大缩回咕咕球**：聊天展开（放大）时播放器 `v-if` 加 `&& !expanded`，走 `mini-player` 离场动画缩回 FAB 圆心（`transform-origin` 已指向球心），退出放大再从球弹回；播放状态仍由 FAB 旋转 / 律动指示
-- **项目卡文件预览滚动闪烁修复**（`ProjectModal.vue`）：移除文件卡 `.fc-thumb-area` 常驻的 `will-change: transform`（大量卡片常驻 will-change 撑爆合成器层预算，叠加 `.modal-right` 的 `backdrop-filter: blur(28px)` 滚动时偶发闪屏），保留 `translateZ(0)` 维持遮罩层；滚动容器 `.file-content` 加 `isolation: isolate` 隔离重绘
-- **新建项目状态球**：顶部状态「胶囊」改为 14px 圆形状态球，点击循环切换三态（待开始/进行中/已完成），悬浮缩放 1.2×；修复名称输入框 `margin: -11px` 导致与状态球重叠的问题
-- **颜色格方形化**：新建项目颜色选择格从圆形改为 6px 圆角方块，视觉更整齐
-- **分割线宽度统一**：纵向 `.section-row::after` 改用渐变色，与横向分割线视觉线宽一致
-- **数据分析趋势图增强**（`Admin/Analytics/index.vue`）：折线改为 canvas 渐变填充（顶端到透明）；鼠标悬浮显示跨所有数据系列的 `index` 模式 tooltip；新增自定义 `crosshairPlugin`，白色竖线（35% 不透明）指示当前日期位置
-- **GuguChat 输入框底部裁切修复**：输入框加 `line-height: 1.5; padding: 2px 0`，g/p/y 等下沉字符不再被截断
-- **文档预览滚动闪烁修复**（`TextViewer.vue`）：移除 `.tv-wrap` 上的 `transform: translateZ(0)`（与 `position: sticky` 行号列产生合成层竞争导致闪烁），改为在滚动容器加 `will-change: scroll-position`
-- **DatePicker 样式统一**（`DatePicker.vue`）：边框色/背景/内边距与其他表单输入框对齐；打开状态加紫色描边 focus 环；日期数字保持居中显示
-- **定时任务试运行 Toast**（`Schedules/index.vue`）：「试运行」结果从浏览器 `alert()` 改为页面内 Toast 提示，风格与其他页面一致
-
-### 体验打磨与交互增强
-
-- **咕咕 FAB 只跳图标，不跳整个圆圈**：`ai-fab--typing` 动画 class 从 `<button>` 移到内层 `<svg>`，跳动幅度从 4 px 收窄到 2 px，圆形底座完全静止。
-- **修复空气泡**：AI 流式输出结束后若文本全为空白符，消息气泡不渲染（`msg.text?.trim()`），并在 `finally` 里清除该消息记录。
-- **agent 创建项目自动选未用颜色**：`projects.py` 增加 `_pick_unused_color`，先从数据库查已使用颜色集合，优先随机选未使用的，全满时再随机选。
-- **新建项目弹窗布局紧凑化**：客户 + 项目周期合并为同一行，看板列 + 颜色格合并为同一行，用 `grid 1fr 1fr` 双列排布；标签精简（"客户 / 委托方"→"客户"），日期选择器 placeholder 缩短。
-- **DateSpanPicker 日期显示省略当年年份**：`fmt()` 函数当年日期只显示「月/日」，跨年才补「年/月/日」，减少视觉噪声。
-- **定时任务「新建任务」按钮去掉悬浮位移动画**：移除 `.btn-primary:hover` 的 `transform: translateY(-2px)`，保留阴影加深和透明度变化。
-- **定时任务自定义日期改为单日选择**：原来的 `DateSpanPicker`（范围）替换为 `DatePicker`（单日），cron 格式 `@once:YYYY-MM-DDTHH:mm`，去掉 `:end=` 后缀逻辑；`DatePicker` 与 `DateSpanPicker` 统一在 `main.js` 全局注册，无需各处单独 import。
-- **文档预览实时刷新**：`FilePreviewModal` 和 `FloatPreviewWindow` 监听 `liveStore.rev.files`，agent 编辑文本/Markdown/代码文件后预览窗自动重新 fetch 渲染最新内容（图片/视频/PDF 不自动刷，避免无效重加载）。
-- **已完成列数量角标统一风格**：`DoneColumn` 的 `.col-count` 改为与 `KanbanColumn` 相同样式（白色加粗数字 + 半透明紫色背景），视觉上三列一致。
-- **日历多选日期后侧栏按钮变为「添加项目」**：框选多日时，侧栏「添加活动」替换为渐变紫色「添加项目」按钮（与顶栏新建项目同款风格），点击打开新建项目弹窗并自动填入所选日期范围。
-
-### 文本文件改用浮动窗口预览
-
-- **MD / TXT 等文本类型走浮动窗口**：`preview.js` 的 `open()` 把 `isTextExt` 也路由到浮动窗口路径；`FloatPreviewWindow` 新增文本分支（下载 blob → 交给 `TextViewer` 渲染），默认窗口 720×520，支持拖拽、最大化、多开，MD 有 markdown 渲染、代码文件有高亮。
-- **修复滚动闪烁**：`TextViewer` 的 `.tv-wrap` 加 `transform: translateZ(0)` 提升到独立合成层；行号列 `position: sticky` 在 `will-change: transform` 滚动容器里有 Chromium 已知 bug（向上滚时 sticky 元素重绘闪烁），将 `will-change` 移到外层 `tv-wrap` 后消除。
-
-### AI 回复质量 · 修复文件编号外漏
-
-- **系统提示词去掉 `[id=xxx]` 前缀**：文件列表从 `[id=899] 文件名.ext（位置）` 改为 `文件名.ext（位置）`；工具调用本就支持按文件名定位（`_resolve_file` 优先名字查找），编号仅在同名歧义时才需要，日常完全用不到。
-- **Admin Agent 行为 toggle 改为即时保存**：「记忆系统」和「对话历史压缩」开关点击后自动调 `saveBehavior()`，不再需要额外点「保存」按钮，避免用户误以为切换即生效而实际未持久化。
-
-### 前端代码复用重构（共用 composable）
-
-- **提取 `useSorting`**：排序状态（`sortKey/Dir`）、菜单（`sortMenuOpen/Pos`）与 `SORT_OPTIONS` 常量从 `Files/index.vue` 和 `ProjectModal.vue` 合并为单一 composable；两处通过解构别名调用，模板无改动。
-- **提取 `useUploadQueue`**：幽灵上传卡的创建（`createGhost`）、进度（`updateGhostProgress`）、移除（`removeGhost`）、失败（`failGhost`）统一管理，父组件只需传各自的业务参数调 `uploadWithProgress`，不再各自维护 `uploadingItems` 和 `_uploadUid`。
-- **提取 `useBoxSelection`**：框选拖拽全逻辑（矩形计算、DOM 碰撞检测、预览高亮、`cancelDrag`）提取为通用 composable；通过 `fileAttr`/`folderAttr`/`parseFolderId`/`onBoxSelect` 选项适配两处差异（Files 折叠键值 vs ProjectModal 数字 ID、Shift 追加 vs 替换），两侧约 180 行重复代码删除。
-
-### 缩略图生成 · 低配机器减负（draft 降采样 + 并发闸）
-
-> 2 核小机上传图片后网页「卡一下」——缩略图生成（解码/缩放/编码）虽已丢线程池，但多个并发跑仍占满双核、拖累其它请求。
-
-- **`Image.draft()` 大图快速降采样解码**：JPEG 解码时直接按目标尺寸解出 1/2~1/8 分辨率，省掉解全分辨率的大头开销（非 JPEG 无效、安全）。手机大照片生成缩略图的 CPU 大幅下降。
-- **并发闸 `_THUMB_SEM = Semaphore(核数-1)`**：缩略图生成最多 `(核数-1)` 个并行（2 核→1），始终留一个核给事件循环和其它请求——上传后「后台预生成 + 前端按需生成」两边不再争满双核。
-
-### 后台管理员 · 用户名也走 env
-
-- 管理员用户名从写死 `"admin"` 改为读 `settings.admin_username`（env `ADMIN_USERNAME`，默认 `admin`），与 `ADMIN_PASSWORD` 同款。改 `.env` 后重启后端，用新账号登录。
 
 ---
+
 
 ## [0.12.0] - 2026-06-25 · 并发扩量、定时任务、IM 强化与体验打磨
 
