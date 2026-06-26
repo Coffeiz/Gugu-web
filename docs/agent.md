@@ -79,7 +79,7 @@ LLM 主循环。负责：
   - **Anthropic 路**：去掉 `cache_control`（mimo 无 prompt caching）；thinking 取值用 `disabled`（想开则不传、用其默认）。该路原生处理思考块 → 免疫空气泡，且 `read_file` 能看库内图（见「多模态看图」）
   - 鉴权：mimo 两套 API 都收 `api-key` 头与 `Bearer`；客户端经 `openai_default_headers` / `anthropic_default_headers` 补 `api-key` 头（多发无害）
 - 工具调用执行与结果回填（`MAX_ROUNDS = 6`：配合 skills.md 执行准则 + 强工具，多步任务 2~3 轮够用；超限给友好提示「前面已生效，要接着做吗」）
-- **自我核实闭环（`MAX_VERIFY = 3`）**：本轮调过增删改工具（即 `RESOURCE_BY_TOOL` 全集）后，模型说"完成"时强制注入一轮「系统自检」——让它用查询工具（`get_project`/`list_files` …）查证真生效且完整，**不全就当场补做**。**触发条件是"这一轮做过增删改"（`did_mutate`）**：自检轮若只查证没改动 → 结束；若补做了（又调增删改）→ `did_mutate` 重新置位、再来一轮，直到"只查不改"或封顶 3 轮。**不是固定跑 3 轮**：通过即停，只读任务零额外开销。两路（Anthropic/OpenAI）同构，轮预算 `MAX_ROUNDS + MAX_VERIFY*2` 不挤占任务轮
+- **自我核实闭环（`MAX_VERIFY = 5`）**：本轮调过增删改工具（即 `RESOURCE_BY_TOOL` 全集）后，模型说"完成"时强制注入一轮「系统自检」——让它用查询工具（`get_project`/`list_files` …）查证真生效且完整，**不全就当场补做**。**触发条件是"这一轮做过增删改"（`did_mutate`）**：自检轮若只查证没改动 → 结束；若补做了（又调增删改）→ `did_mutate` 重新置位、再来一轮，直到"只查不改"或封顶 5 轮。**不是固定跑 5 轮**：通过即停，只读任务零额外开销。两路（Anthropic/OpenAI）同构，轮预算 `MAX_ROUNDS + MAX_VERIFY*2` 不挤占任务轮
   - **静默自检（`verify_mode`/`verify_fixed`）**：核实阶段（含其 `get_*` 查证轮）模型的文字**先缓冲不实时流**——干净通过则整段丢弃，**不把"已核实…"这种与首条几乎重复的确认刷给用户**；只有发现并补做时，才在补做那轮发一次"发现漏了X"说明。解决"二次检查重复说一遍差不多的话"。在 core 源头处理，web/IM 两路统一受益
 - **真实性守卫（确定性兜底「说了没做」幻觉，两路同构）**：无工具收尾时检测两类幻觉、各追一轮逼纠偏（封顶 1 次）——① **narration 兜底**（`_looks_like_narration`：「让我读…读到了…改好了/已创建/已保存」等过程叙述或完成断言 **+ 本轮零工具** → 注入 `_NARRATION_NUDGE` 逼真调）；② **决策守卫**（`_is_decision_dodge`：用户明确命令改动 **+** 回复「不用改/已合理」驳回 **+** 零工具 → 注入 `_DECISION_NUDGE` 逼执行或问清）。配合自我核实闭环，覆盖**真实性三大坑**「动嘴不动手 / 改了不核对 / 自作主张不做」。**提示词软、守卫硬**——弱模型（mimo）尤其靠此层兜（已 live 验证守卫在真实循环里自动接管）。完整设计见 [`agent-reliability.md`](agent-reliability.md)
 - SSE streaming 输出；`_stream_round` 包一层瞬时错误退避重试（⑦：429/超时/网络/5xx 在出 token 前重试，已吐 token 不重试防重复）

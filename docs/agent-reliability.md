@@ -44,8 +44,9 @@ agent 不是「调一次大模型」的黑盒，是**流水线**——哪一步�
 | 失败模式 | 现状守卫 | 软/硬 | 演进方向 |
 | --- | --- | --- | --- |
 | **动嘴不动手**（叙述读改却没调工具） | `core._looks_like_narration` 正则检测 + `_NARRATION_NUDGE` 强制纠偏；skills.md「真实性铁律」 | **半硬**（检测是代码、纠偏靠再喂 prompt） | 检测命中后，可直接**拦截这条回复不发给用户**，强制进工具调用轮，而非只喂提醒 |
-| **改了不核对** | `core` 自我核实闭环（`MAX_VERIFY=3`，`did_mutate` 触发）+ `_VERIFY_FORCE_PROMPT`（只嘴上确认没真查 → 强制再调查询工具）+ 「改文件正文必须 `read_file` 读回比对」 | **半硬**（触发是代码 `did_mutate`/`verify_queried`，查证内容靠 prompt） | 对 `edit_file` 可加**确定性差异校验**：改前后字节数骤降 / 关键段落消失 → 代码层告警，不全靠模型自己「读回来发现」 |
-| **自作主张不做**（明确请求判断「不用改」） | skills.md「用户明确要改就执行，别用『现状已合理』驳回」 | **纯软**（只有 prompt，今天 M3 也没听） | 这是当前最大的「软」缺口。OpenClaw 思路：把「明确的修改请求」做**意图分类 → 确定性要求进入执行**，而不是让模型先判断「要不要做」 |
+| **改了不核对** | `core` 自我核实闭环（`MAX_VERIFY=5`，`did_mutate` 触发）+ `_VERIFY_FORCE_PROMPT`（只嘴上确认没真查 → 强制再调查询工具）+ 「改文件正文必须 `read_file` 读回比对」+ `edit_file` 确定性差异校验（改后骤短加 `warning`） | **半硬**（触发是代码 `did_mutate`/`verify_queried`，查证内容靠 prompt） | 差异校验已落地（P2c）；可再扩到「关键段落消失」检测 |
+| **自作主张不做**（明确请求判断「不用改」） | skills.md「用户明确要改就执行，别用『现状已合理』驳回」+ `core._is_decision_dodge` 决策守卫（三信号齐备注入 `_DECISION_NUDGE`） | **半硬**（检测是代码三信号，纠偏靠 prompt） | 已加代码层守卫；终极靠小模型意图分类，到顶再做 |
+| **操作落错位置 / 空转谎报成功**（实战逮到「复制进项目→原地复制还说已复制」） | `tools/files._target_loc`：跨项目/空间复制移动不继承源文件夹、落目标根目录；`_norm_target` 字符串容错；`update_client/event/scheduled_task/todo` 没给改动字段直接报错、不空转报 success | **硬**（位置定位 + 空转检测都在代码） | 同类排查已覆盖各 update 工具；新增工具按「没产生实际效果就报错、别报 success」自律 |
 | **内部机制/工具名泄露** | `outbound.sanitize_outbound`（IM 出口确定性清洗 tool_id/trace_id，系统提示词被复述整条换话术）+ policy.md 对外口径 | **硬**（出口代码扫） | 已较完善；web 流式路可同样接一道出口清洗 |
 | **emoji 红线**（活泼语气冒阴阳表情） | `sanitize.strip_disallowed_emoji`（白名单外 emoji 出口删，三出口挂载） | **硬** | 已落地，是「prompt 压不住 → 输出层确定性兜底」的范本 |
 | **不可逆误删** | `confirm.py` 两步确认（不带 confirm 拿影响 → 用户同意 → `confirm=true` 执行） | **硬** | 已完善 |
@@ -171,6 +172,11 @@ OpenClaw 的开发准则 `AGENTS.md` 白纸黑字：cloud 模型（Anthropic/Ope
 | **横切 · 模型策略** | 可靠性场景（多步改数据 / 文档编辑）默认走**强工具模型**（M3 / Anthropic），mimo 留纯对话；`llm_select.pick_model` 是现成插槽 | mimo/M3 双路、后台手选 | 从源头减少弱模型「说了没做」 | 小 · 低（看体验数据） |
 
 **关键序**：P0 先（别让验过的修复烂在本地）→ P1 紧跟（**没有轨迹，后面每个守卫的效果都只能靠猜**）→ P2 是真实性主战场（a/c 风险低先上，b 要权衡）→ P3 最难最后碰 → P4 随手做 → 模型策略贯穿。
+
+**实战驱动的补充（P1 轨迹的直接收益）**：靠 `agent.traj` 轨迹逮到并修的同类「谎报成功」——
+- **操作落错位置**：`copy_file`/`move_items` 跨项目时 `folder_id` 继承源文件夹 → 原地复制。抽 `_target_loc` 统一目标定位（跨项目/空间不继承源文件夹、落目标根），`_norm_target` 容错字符串 target。
+- **空转报成功**：`update_client/event/scheduled_task/todo` 没给改动字段也 commit + 报 success → 模型据此谎报「已更新」。改为**没有实际改动就报错**。`update_stage` 已有 no-op 守卫，仅补 `todo` 字符串容错。
+- 自律原则沉淀：**新增工具凡「没产生实际效果」（no-op / 参数解析失败退化 / 目标解析不出）一律报错，绝不 return success**——否则就是给上层喂谎报素材。MAX_VERIFY 同步提到 5，收尾核对更彻底。
 
 ---
 

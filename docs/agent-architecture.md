@@ -43,7 +43,7 @@ flowchart TD
         direction TB
         G{"本轮收尾判定"}
         NARR["🛡 narration 兜底<br/>声称读/改却没调工具<br/>→ _NARRATION_NUDGE 强制重入"]
-        VFY["🛡 自我核实闭环 MAX_VERIFY=3<br/>did_mutate → 查询工具查证 / 不全补做<br/>verify_queried：只嘴上确认 → 强制真查"]
+        VFY["🛡 自我核实闭环 MAX_VERIFY=5<br/>did_mutate → 查询工具查证 / 不全补做<br/>verify_queried：只嘴上确认 → 强制真查"]
         EMPTY["🛡 空回复兜底 empty_retry<br/>（mimo 整轮进 reasoning、正文空）"]
         G -->|"假装操作"| NARR
         G -->|"改过数据"| VFY

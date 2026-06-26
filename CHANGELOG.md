@@ -13,6 +13,7 @@
 
 - **全局搜索点项目 → 高亮项目卡，不再打开编辑**（`GlobalSearch.vue` / `ui.js` / `Projects/index.vue`）：照 file/event 跳转的 `uiStore.pendingXxx` + 目标页 watch + flash 模式——点项目跳到项目面板、对应卡片滚到中央 + 紫色高亮环闪一下，不再弹编辑窗。卡片未渲染好（跨页跳转 / 数据加载中）会重试 ~2s 等它出现。
 - **待办全完成自动进下一阶段**（`ProjectCard.vue`）：项目卡的待办弹窗里勾完当前阶段最后一个待办 → 自动推进下一阶段（与项目编辑卡 `ProjectModal` 已有逻辑对齐；空阶段 / 最后阶段不动，取消勾选不推进）。
+- **mode2 文件卡拖影尺寸修复**（`ProjectModal.vue` / `usePhysicsDrag.js`）：项目编辑卡 stages-expanded（mode2）下文件卡用 `aspect-ratio` 压扁，但物理拖影克隆体挂到 body 后丢了 `.modal.stages-expanded` 上下文 → 回落 mode1 的 `min-height:122` 尺寸、比面板卡更大。给物理拖拽加 `cloneClass` 选项，mode2 时给克隆体打标记类把版式补回，拖影与面板卡严丝合缝。
 
 ### 可靠性：复制/移动跨项目落错位置修复 + update 类工具杜绝「谎报成功」 + 复查上限 3→5
 
@@ -31,6 +32,7 @@
 - **及时反馈**：文件工具一 `tool_done`（改完那刻）即 `bump('files')`，走已连好的对话流、不等回合末，用户当场看到；预览是全局组件，切走也刷。
 - **位置不变**（`TextViewer.vue`）：滚动位置按 `fileKey` 存 `localStorage`（实时刷新会销毁重建组件，内存变量留不住，只有 localStorage 跨重建/整页刷新都在），渲染完读回；新内容更短时浏览器自动夹到底。
 - **拿到新内容**（`FloatPreviewWindow.vue` / `FilePreviewModal.vue`）：刷新时下载 URL 带 `?_t=` cache-bust，避免浏览器返回缓存旧内容（否则表现成"没刷新"）。
+- **泛化到项目卡 / 日历 + 修复工具集漂移**（`GuguChat.vue`）：同样的「`tool_done` 即时 bump」推广到 `projects`/`calendar`——咕咕重构项目（阶段/进度/待办）当场刷新。根因还包括前端工具集和后端 `RESOURCE_BY_TOOL` **不同步**：`_PROJECT_TOOLS` 漏了 `set_stages`/`update_todo`/`set_color`（重构正用这些），`_FILE_TOOLS` 把 `move_items` 错写成 `move_file` 且缺 `copy_file`/`save_uploaded_file` → 连回合末兜底都漏刷。已对齐后端权威映射并加注释防再漂移。
 
 ### 状态指示动画化：SSE 流式入场 + 切换排队，思考默认回三点
 
@@ -46,7 +48,7 @@
 - **后台「状态命名」面板**（`Admin/Agent/index.vue` 新标签页）：可改**全部**状态显示名——特殊状态（思考中 / 整理中 / 复查前缀）+ **每个工具**（~55 个，带筛选框）。留空＝回退默认，所以「保留默认」天然成立；改完保存即时生效（工具名下一条消息就变，「思考中」需刷新对话页）。
 - **配置与注入**（`config.py` `StateLabelSettings` + `core.py`）：新增 `state_labels.overrides` 覆盖表（`config.override.json`，`apply_override` 合并、`get_settings` 热读）；`LLMRunner` 构造时 `labels = 特殊默认 ← 各工具 label ← 用户覆盖`，未覆盖 key 自动回退。
 - **单一数据源**：工具名 / 复查前缀 / 整理中由**后端**在 `tool_call` 事件里解析好再下发，前端直接显示（撤掉前端拼「复查 ·」前缀）；只有「思考中」是无 SSE 事件的前端态，经新端点 `GET /agent/ui-labels` 取。管理读写走 `GET/PUT /admin/agent/state-labels`（admin 鉴权）。
-- **所有状态都显示气泡**：「思考中」默认名从空改为 `咕咕在想…`，于是它和工具一样是带 spinner 的文字气泡（清空才回退三个点）。
+- **思考态可命名为文字气泡**：「思考中」默认是三个点动画；后台「状态命名」给 `_thinking` 填了字，才显示成带 spinner 的文字气泡（见「状态指示动画化」一节，默认最终定为三个点）。
 - **一态多名 · 随机显示**：任一命名值可用 `|` 分隔填多个，显示时随机取一条。随机点分两处：工具名 / 复查前缀 / 整理中由**后端** `_pick_label` 每次发事件时抽（同一工具多次调用会换名）；「思考中」由**前端** `watch(thinking)` 每次进入思考态抽（刷新后每轮转圈也会换）。
 
 ### 自检轮气泡治理：复查不再残留「生成中」点点，且可见可辨
