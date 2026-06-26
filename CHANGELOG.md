@@ -17,6 +17,11 @@
 - **空气泡根治**：mimo 是推理模型（返回 `reasoning_content` + `content` 双字段），思考开时偶尔整轮输出全进 `reasoning_content`、`content` 为空 → 空气泡。两层修复：① **OpenAI 路给 mimo 传 `thinking:{type:disabled}`**（`extra_body`，官方两套 API 都支持此参；思考关时正文不再空，从源头消除）；② 仍空（思考开）时**追一轮要正文、再空给一句得体兜底**，绝不留空气泡。
 - **Anthropic 路对 mimo 特化**（`core._run_anthropic`）：去掉 `cache_control`（mimo 无 prompt caching）；thinking 取值用文档确认的 `disabled`（想开则不传、用其默认，不瞎猜 enable 值）。实测 mimo anthropic 端点（`/anthropic/v1/messages`）：鉴权 / `thinking:disabled` / **图片块（看图）** 全通，`cache_control` 也不报错。**走 Anthropic 格式可原生处理思考块（免疫空气泡）+ `read_file` 看库内图**，功能最全。
 
+### Agent 看图：信自己的眼睛，别反射性联网搜
+
+- **背景**：模型接了 vision 后，问「这是谁 / 这画的啥角色」时咕咕会按「不确定就查证」的人格反射性 `web_search` 去「核实」——但 web 搜是文字的，反向认图根本帮不上，只让用户干等（实测一次图请求白白多走一轮 `web_search`、输入涨到 2 万+ token）。
+- **修复**（`persona.md`）：「不确定就查证」段后加「看图时信你自己的眼睛」——看图类问题**凭看到的直接答**（认得就说、拿不准就照实说像谁），只有要图本身给不了的**外部信息**（出处设定 / 哪买 / 最新消息）且确实不知道时才联网。区别于「外部事实可查证」：图里画了啥，眼睛已经看到了，不必再搜。
+
 ### 流式首条空气泡：pub/sub 订阅竞态修复
 
 - **现象**：切换主模型（尤其首 token 更快的模型）后，每个会话**第一条**回复偶发空气泡——回复其实已生成并落库（快照/DB 有全文），只是当场没显示。
@@ -31,6 +36,7 @@
 - **看板「新建项目」卡悬停亮色**（`KanbanColumn.vue`）：hover 背景从 `rgba(255,255,255,0.05)`（比默认更暗）修正为 `rgba(255,255,255,0.3)`（明显更亮），无 inset 顶部光，与项目卡风格对齐。
 - **ProjectModal 删除阶段按钮位置修复**（`ProjectModal.vue`）：`.node-row` 加 `padding-right: 8px`，防止「×」按钮落在阶段分割线上。
 - **浮动预览窗口：内容刷新不重置位置**（`FloatPreviewWindow.vue`）：`liveStore.rev.files` 触发的内容重载改传 `refresh=true`，`load()` 在 `refresh && ready` 时跳过 `fitWindow()`，窗口位置/尺寸原地保留，仅 `blobUrl` 更新为最新内容。
+- **项目编辑卡阶段区展开版面记忆**（`pmStagesExpanded` 偏好）：阶段区展开（50/50 版面）状态持久化到用户偏好——`UserPreferences` 加 `pmStagesExpanded` 字段（`schemas` + `preferences` API），前端 `preferences` store 加 `savePmStagesExpanded`，重开保留上次版面。
 
 ### Agent 记忆边界：根治"伪个性化幻觉"（编造与用户的共同历史）
 
