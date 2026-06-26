@@ -467,24 +467,33 @@ async function setPriority(n) {
 }
 .drop-overlay-enter-active, .drop-overlay-leave-active { transition: opacity 0.15s; }
 .drop-overlay-enter-from, .drop-overlay-leave-to { opacity: 0; }
+/* 常驻玻璃微光 + 顶部高光描边（静态底层） */
+.proj-card::before {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  corner-shape: squircle;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.12) 0%, transparent 50%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+  pointer-events: none;
+}
+/* 悬停增强高光：linear-gradient 不能做 transition 插值，改用 opacity 淡入淡出 */
 .proj-card::after {
   content: '';
   position: absolute; inset: 0;
   border-radius: inherit;
   corner-shape: squircle;   /* corner-shape 不随 border-radius:inherit 继承，需显式声明，否则圆角与卡片(squircle)不重合 → 双层圆角 */
-  background: linear-gradient(to bottom, rgba(255,255,255,0.12) 0%, transparent 50%);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
-  transition: background 0.25s ease, box-shadow 0.25s ease;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.08) 45%, transparent 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,1);
+  opacity: 0;
+  transition: opacity 0.25s ease;
   pointer-events: none;
 }
 .proj-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 18px rgba(80,90,110,0.13);
 }
-.proj-card:hover::after {
-  background: linear-gradient(to bottom, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.08) 45%, transparent 100%);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,1);
-}
+.proj-card:hover::after { opacity: 1; }
 .proj-card:active:not(:has(.stars:active, .seg-bar-wrap:active, .proj-stage:active)) { transform: translateY(1px); opacity: 0.93; }
 
 .card-body { flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }

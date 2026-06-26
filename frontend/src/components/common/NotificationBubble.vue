@@ -40,14 +40,15 @@ let _typeTimer = null      // 全局单计时器：同一时刻只让最新那�
 let _typingId  = null      // 正在打字的 item id（手动关掉它时要停表）
 const TITLE_MS = 30        // 标题每字间隔
 const BODY_MS  = 15        // 正文每字间隔（比标题快，长文不拖沓）
+const AUTO_MS  = 5000      // 自动消失时限：打字打完后停留 5s 再收（被新气泡顶替则 0.5s 更快）
 
 // 气泡 = 纯「实时到达」的瞬态弹层，**只监听 uiStore.liveNotification**（SSE 实时置位）——
 // 关浏览器重开拉回来的历史通知**不弹气泡**（那是导航栏通知中心的事）。气泡与导航栏彻底分开：
 // 气泡关闭只动本组件 visible，不影响 uiStore.notifications，也不改已读态（气泡不算已读）。
 watch(() => uiStore.liveNotification, (n) => {
   if (!n) return
-  // 现有可见的旧气泡：被顶上去后 0.5 秒消失
-  visible.value.forEach(item => scheduleDismiss(item.id, 500))
+  // 现有可见的旧气泡：被顶上去后 0.5 秒消失（覆盖其原有的 5s 自动时限，顶替更快）
+  visible.value.forEach(item => { item.superseded = true; rescheduleDismiss(item.id, 500) })
   // 新气泡插到队首（视觉上在底部、贴近球），把旧的顶上去；reactive 让打字机改属性能驱动视图
   const item = reactive({
     id: ++_vk, title: n.title || '', content: n.content || '',
@@ -61,13 +62,13 @@ watch(() => uiStore.liveNotification, (n) => {
 function startTyping(item) {
   if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }
   const fullTitle = item.title, fullBody = item.content
-  if (!fullTitle && !fullBody) { item.typing = false; return }
+  if (!fullTitle && !fullBody) { item.typing = false; if (!item.superseded) scheduleDismiss(item.id, AUTO_MS); return }
   _typingId = item.id
   item.phase = fullTitle ? 'title' : 'body'
   const bodyStep = fullBody.length > 150 ? 3 : 1
   let ti = 0, bi = 0
   const run = (ms, tick) => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = setInterval(tick, ms) }
-  const stop = () => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = null; item.typing = false; if (_typingId === item.id) _typingId = null }
+  const stop = () => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = null; item.typing = false; if (_typingId === item.id) _typingId = null; if (!item.superseded) scheduleDismiss(item.id, AUTO_MS) }
   const typeBody = () => run(BODY_MS, () => {
     bi = Math.min(fullBody.length, bi + bodyStep)
     item.tContent = fullBody.slice(0, bi)
@@ -83,6 +84,12 @@ function startTyping(item) {
 
 function scheduleDismiss(id, delay) {
   if (timers.has(id)) return   // 已排程，避免重复计时
+  timers.set(id, setTimeout(() => dismiss(id), delay))
+}
+
+function rescheduleDismiss(id, delay) {   // 覆盖已有计时（顶替时用更短的 0.5s 抢过来）
+  const t = timers.get(id)
+  if (t) clearTimeout(t)
   timers.set(id, setTimeout(() => dismiss(id), delay))
 }
 

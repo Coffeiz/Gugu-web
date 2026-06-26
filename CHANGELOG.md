@@ -9,6 +9,11 @@
 
 ## [Unreleased]
 
+### UI 细节：项目卡悬停高光淡入淡出 + 通知气泡打完自动消失
+
+- **项目卡悬停高光淡入淡出**（`ProjectCard.vue`）：悬停高光此前是瞬间出现——根因是高光用 `linear-gradient` 实现，而 `transition: background` 对 gradient 不生效（background-image 非可动画属性）。改为常驻微光放 `::before` 静态底层、悬停强高光放 `::after` 用 `opacity: 0→1` 淡入淡出（0.25s），移入移出都平滑。
+- **通知气泡打完自动消失**（`NotificationBubble.vue`）：逐字流式打完后停留 5s 自动收起；被新气泡顶替时改用 0.5s 更快让位。
+
 ---
 
 ## [0.13.0] - 2026-06-27 · MiMo接入、可靠性守卫体系、通知系统升级与全面体验打磨
