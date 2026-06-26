@@ -628,4 +628,11 @@ async function setPriority(n) {
   0%, 30% { box-shadow: 0 0 0 3px rgba(123,127,178,0.7), 0 8px 22px rgba(80,90,110,0.22); }
   100%    { box-shadow: 0 2px 8px rgba(80,90,110,0.07); }
 }
+/* 新手引导高亮：一次「呼吸」——光晕由弱渐强再渐弱（时长由 JS 动态设为 5s） */
+.proj-card.onboard-flash { animation: proj-onboard-breath 5s ease-in-out forwards; }
+@keyframes proj-onboard-breath {
+  0%   { box-shadow: 0 0 0 0 rgba(123,127,178,0), 0 2px 8px rgba(80,90,110,0.07); }
+  50%  { box-shadow: 0 0 0 5px rgba(123,127,178,0.45), 0 8px 26px rgba(123,127,178,0.28); }
+  100% { box-shadow: 0 0 0 0 rgba(123,127,178,0), 0 2px 8px rgba(80,90,110,0.07); }
+}
 </style>

@@ -5,7 +5,7 @@
         v-for="item in visible"
         :key="item.id"
         class="nb-item"
-        :class="{ 'nb-bare': !item.title }"
+        :class="{ 'nb-bare': !item.title, 'nb-gugu': item.gugu }"
         :style="{ transformOrigin: uiStore.chatNotifyOrigin }"
       >
         <button class="nb-close" @click="dismiss(item.id)" title="关闭">
@@ -41,6 +41,9 @@ let _typingId  = null      // 正在打字的 item id（手动关掉它时要停
 const TITLE_MS = 30        // 标题每字间隔
 const BODY_MS  = 15        // 正文每字间隔（比标题快，长文不拖沓）
 const AUTO_MS  = 5000      // 自动消失时限：打字打完后停留 5s 再收（被新气泡顶替则 0.5s 更快）
+const PAUSE_TOKEN = '[[p]]'  // 文案里的停顿标记（不显示）
+const PAUSE_MS = 1000        // 打到停顿标记时暂停时长
+const SLOW_MS  = 400         // [[slow]]…[[/slow]] 段内逐字慢速冒出的每字间隔
 
 // 气泡 = 纯「实时到达」的瞬态弹层，**只监听 uiStore.liveNotification**（SSE 实时置位）——
 // 关浏览器重开拉回来的历史通知**不弹气泡**（那是导航栏通知中心的事）。气泡与导航栏彻底分开：
@@ -51,7 +54,7 @@ watch(() => uiStore.liveNotification, (n) => {
   visible.value.forEach(item => { item.superseded = true; rescheduleDismiss(item.id, 500) })
   // 新气泡插到队首（视觉上在底部、贴近球），把旧的顶上去；reactive 让打字机改属性能驱动视图
   const item = reactive({
-    id: ++_vk, title: n.title || '', content: n.content || '',
+    id: ++_vk, title: n.title || '', content: n.content || '', gugu: !!n.gugu,
     tTitle: '', tContent: '', phase: 'title', typing: true,
   })
   visible.value = [item, ...visible.value]
@@ -59,25 +62,61 @@ watch(() => uiStore.liveNotification, (n) => {
 })
 
 // 标题逐字 → 正文逐字。正文较长时一拍多推几字，避免长通知打太久。
+// 文案标记（不显示）：[[p]]=停顿 PAUSE_MS；[[slow]]…[[/slow]]=段内每字 SLOW_MS 慢速冒出。
 function startTyping(item) {
   if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }
-  const fullTitle = item.title, fullBody = item.content
+  const raw = item.content || ''
+  const hasMarkers = raw.includes('[[')
+  const STRIP_RE = /\[\[\/?(?:p(?::\d+)?|slow)\]\]/g   // 去 [[p]] / [[p:1500]] / [[slow]] / [[/slow]]
+  const fullTitle = (item.title || '').replace(STRIP_RE, '')
+  const fullBody = raw.replace(STRIP_RE, '')   // 去所有标记，用于空判断
   if (!fullTitle && !fullBody) { item.typing = false; if (!item.superseded) scheduleDismiss(item.id, AUTO_MS); return }
   _typingId = item.id
   item.phase = fullTitle ? 'title' : 'body'
-  const bodyStep = fullBody.length > 150 ? 3 : 1
-  let ti = 0, bi = 0
+  let ti = 0
   const run = (ms, tick) => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = setInterval(tick, ms) }
-  const stop = () => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = null; item.typing = false; if (_typingId === item.id) _typingId = null; if (!item.superseded) scheduleDismiss(item.id, AUTO_MS) }
-  const typeBody = () => run(BODY_MS, () => {
-    bi = Math.min(fullBody.length, bi + bodyStep)
-    item.tContent = fullBody.slice(0, bi)
-    if (bi >= fullBody.length) stop()
-  })
+  const stop = () => { if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }; item.typing = false; if (_typingId === item.id) _typingId = null; if (!item.superseded) scheduleDismiss(item.id, AUTO_MS) }
+
+  let typeBody
+  if (!hasMarkers) {
+    // 快路径：无标记，按 slice 推进（长文一拍多推几字）
+    const bodyStep = fullBody.length > 150 ? 3 : 1
+    let bi = 0
+    typeBody = () => run(BODY_MS, () => {
+      bi = Math.min(fullBody.length, bi + bodyStep)
+      item.tContent = fullBody.slice(0, bi)
+      if (bi >= fullBody.length) stop()
+    })
+  } else {
+    // 标记路径：解析成 ops（普通字 / 慢字 / 纯停顿），逐 op 用 setTimeout 推进，速度可变
+    const ops = []
+    let i = 0, slow = false
+    while (i < raw.length) {
+      // [[p]] 或 [[p:1500]]：纯停顿，时长可指定（缺省 PAUSE_MS）
+      if (raw.startsWith('[[p', i)) {
+        const m = raw.slice(i).match(/^\[\[p(?::(\d+))?\]\]/)
+        if (m) { ops.push({ ch: '', ms: m[1] ? +m[1] : PAUSE_MS }); i += m[0].length; continue }
+      }
+      if (raw.startsWith('[[slow]]', i))   { slow = true;  i += 8; continue }
+      if (raw.startsWith('[[/slow]]', i))  { slow = false; i += 9; continue }
+      ops.push({ ch: raw[i], ms: slow ? SLOW_MS : BODY_MS }); i++
+    }
+    let acc = '', oi = 0
+    typeBody = () => {
+      if (oi >= ops.length) { stop(); return }
+      const op = ops[oi++]
+      if (op.ch) { acc += op.ch; item.tContent = acc }
+      _typeTimer = setTimeout(() => { if (_typingId === item.id) typeBody() }, op.ms)
+    }
+  }
   if (item.phase === 'title') {
     run(TITLE_MS, () => {
       item.tTitle = fullTitle.slice(0, ++ti)
-      if (ti >= fullTitle.length) { item.phase = 'body'; fullBody ? typeBody() : stop() }
+      if (ti >= fullTitle.length) {
+        item.phase = 'body'
+        if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }  // 清掉标题 interval 再进正文（两路都安全）
+        fullBody ? typeBody() : stop()
+      }
     })
   } else { typeBody() }
 }
@@ -171,6 +210,8 @@ function dismiss(id) {
   word-break: break-word; overflow-wrap: break-word;
   /* 占满整个内容宽度，左右与气泡 padding 对称 */
 }
+/* 咕咕语气气泡（新手引导）：文字对齐 GuguChat 聊天正文——13px、主色、行高 1.5 */
+.nb-gugu .nb-content { font-size: 13px; color: var(--text-primary); line-height: 1.5; }
 /* 无标题（仅内容）时，内容是顶部元素：在右上角浮一个占位块给关闭 ✕ 让位，
    首行文字绕开它，避免被 ✕ 压住，其余行仍占满整宽 */
 .nb-bare .nb-content::before {

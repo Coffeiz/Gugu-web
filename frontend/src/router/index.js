@@ -60,6 +60,12 @@ const routes = [
         component: () => import('@/views/Schedules/index.vue'),
         meta: { title: '定时任务' },
       },
+      {
+        path: 'dev/onboarding',
+        name: 'DevOnboarding',
+        component: () => import('@/views/DevOnboarding.vue'),
+        meta: { title: '新手引导 Demo' },
+      },
     ],
   },
 

@@ -67,7 +67,8 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { runOnboarding } from '@/composables/useOnboarding'
 import { useUiStore } from '@/stores/ui'
 import { useProjectStore } from '@/stores/projects'
 import { useAuthStore } from '@/stores/auth'
@@ -101,6 +102,7 @@ watch(() => previewStore.file, (f) => {
 })
 
 const route          = useRoute()
+const router         = useRouter()
 const uiStore        = useUiStore()
 const projectStore   = useProjectStore()
 const authStore      = useAuthStore()
@@ -133,6 +135,7 @@ onMounted(async () => {
     uiStore.fetchNotifications()   // 拉持久通知（含离线漏掉的）：关浏览器重开还在
     uiStore.checkLoginBubble()     // 上线补弹最近一条有效气泡（只一次、过期不弹）
     liveStore.connect()   // 开实时事件订阅：咕咕/IM 改了数据网页自动刷新
+    runOnboarding(router)          // 新手引导：延迟弹欢迎/引导气泡 + 高亮引导项目（fire-and-forget）
   }
   projectStore.fetchProjects()
   projectStore.fetchUpcomingCalEvents()

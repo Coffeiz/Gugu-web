@@ -43,6 +43,7 @@ from app.api.v1 import notifications_admin as notifications_admin_router
 from app.api.v1 import notifications as notifications_router
 from app.api.v1 import track as track_router
 from app.api.v1 import feedback as feedback_router
+from onboarding.routes import router as onboarding_router   # 独立子系统（backend/onboarding/）
 from app.db.session import create_all_tables
 
 import logging
@@ -208,6 +209,7 @@ app.include_router(feedback_router.router,    prefix="/api/v1")
 app.include_router(user_bots_router.router,      prefix="/api/v1")
 app.include_router(qq_connect_router.router,     prefix="/api/v1")
 app.include_router(feishu_connect_router.router, prefix="/api/v1")
+app.include_router(onboarding_router,            prefix="/api/v1")   # 新手引导（用户鉴权，作用于自己）
 
 # ── Admin 路由（需要 Admin token）──
 app.include_router(

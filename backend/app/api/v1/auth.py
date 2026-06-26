@@ -50,6 +50,10 @@ async def register(body: UserRegister, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(user)
 
+    # 新手引导播种（独立子系统，best-effort：内部已吞异常，不影响注册）
+    from onboarding.seed import seed_for_user
+    await seed_for_user(db, user)
+
     return TokenResponse(
         access_token=create_user_token(user.id),
         user=UserResponse.from_user(user),

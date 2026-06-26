@@ -263,6 +263,16 @@ export const agentApi = {
   },
 }
 
+export const onboardingApi = {
+  getState:  ()    => get('/onboarding/state'),
+  claim:     (key) => post(`/onboarding/claim/${key}`),
+  // demo（作用于当前用户自己）
+  devPools:  ()    => get('/onboarding/dev/pools'),
+  devFire:   (key) => post(`/onboarding/dev/fire/${key}`),
+  devReset:  ()    => post('/onboarding/dev/reset'),
+  devReseed: ()    => post('/onboarding/dev/reseed'),
+}
+
 export const trackApi = {
   track: (event, properties) => request('POST', '/track', { event, properties }),
 }

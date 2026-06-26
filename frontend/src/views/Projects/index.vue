@@ -38,18 +38,23 @@ onMounted(() => {
 // 全局搜索点击项目 → 跳转本页后高亮对应项目卡（不打开编辑弹窗）
 watch(() => uiStore.pendingProjectHighlight, (id) => {
   if (id == null) return
+  const ms  = uiStore.pendingProjectHighlightMs || 1800        // 缺省 1.8s；新手引导设 5000
+  const cls = uiStore.pendingProjectHighlightBreath ? 'onboard-flash' : 'search-flash'  // 引导用「呼吸」动画
   uiStore.pendingProjectHighlight = null
-  _flashProject(id)
+  uiStore.pendingProjectHighlightMs = null
+  uiStore.pendingProjectHighlightBreath = false
+  _flashProject(id, ms, cls)
 }, { immediate: true })
 
-function _flashProject(id) {
+function _flashProject(id, ms = 1800, cls = 'search-flash') {
   let tries = 0
   const tick = () => {
     const el = document.querySelector(`[data-project-id="${id}"]`)
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      el.classList.add('search-flash')
-      setTimeout(() => el.classList.remove('search-flash'), 1800)
+      el.style.animationDuration = ms + 'ms'   // 覆盖 CSS 默认时长，让高亮整体持续 ms
+      el.classList.add(cls)
+      setTimeout(() => { el.classList.remove(cls); el.style.animationDuration = '' }, ms)
     } else if (tries++ < 20) {
       setTimeout(tick, 100)   // 项目卡还没渲染（刚跳转/数据加载中），等一会重试，最多 ~2s
     }

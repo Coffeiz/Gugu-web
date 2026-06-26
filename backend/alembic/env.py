@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app.db.base import Base
 import app.models  # noqa
+import onboarding.models  # noqa  # 独立子系统的表也纳入 metadata
 from app.core.config import get_settings
 
 settings = get_settings()

@@ -9,6 +9,17 @@
 
 ## [Unreleased]
 
+### 新手引导 Phase 1：注册播种 + 欢迎/引导气泡 + 高亮（独立子系统 `backend/onboarding/`）
+
+新用户首次进来不再是空房间——咕咕提前布置好一个「活的示例项目」并主动打招呼。独立子系统、**不依赖 agent**，文案全静态随机、不过 LLM。详见 `docs/新手引导-实现方案.md`。
+
+- **注册播种**（`onboarding/seed.py`，注册 hook 调，幂等、一账号一次）：建引导项目（名 3 选 1 无 emoji / 三阶段带 🌱🌿💬 / 各阶段待办 / `start_date`=登陆日、`deadline`=+3 天）+ 2 个 markdown 文件（欢迎信 + 「可以删掉我」，标题/引用块/落款排版）+ 个人空间根目录 1 个 mp3「小惊喜」（`onboarding/assets/`，缺则跳过）+ 日历活动「和咕咕的第一天」。
+- **自有数据 + claim-once**（`onboarding/models.py` `OnboardingState` 表、`state.py`）：一用户一行 JSON 状态；welcome/guide/各情境/回头看 首次 claim 返回随机文案 + 标记，之后空——天然「只触发一次」、跨设备/重登有效。
+- **欢迎/引导气泡 + 高亮**（`useOnboarding.js`，接进 `DefaultLayout`）：进应用 1s 弹欢迎、再 ~4.5s 弹引导并**跳项目面板高亮引导项目卡（5s 一次「呼吸」光晕）**。气泡走通知 toast，文字对齐 GuguChat 聊天正文（13px/主色），打完停留 5s 自动消失。
+- **打字机标记**（`NotificationBubble.vue`）：文案支持 `[[p]]/[[p:1500]]`（停顿）、`[[slow]]…[[/slow]]`（逐字慢速冒出，如文件库「不过…」三个点）。
+- **Demo 控制面板** `/dev/onboarding`：重置 / 重新播种 / 立刻预览各气泡，便于不重注册反复测。
+- 注意：`backend/onboarding/` 不在 dev `uvicorn --reload` 监视目录，改后需 `--reload-dir onboarding` 或强制触发 reload。Phase 2（情境气泡 07 各界面钩子）、Phase 3（回头看 08）待做。
+
 ### UI 细节：项目卡悬停高光淡入淡出 + 通知气泡打完自动消失
 
 - **项目卡悬停高光淡入淡出**（`ProjectCard.vue`）：悬停高光此前是瞬间出现——根因是高光用 `linear-gradient` 实现，而 `transition: background` 对 gradient 不生效（background-image 非可动画属性）。改为常驻微光放 `::before` 静态底层、悬停强高光放 `::after` 用 `opacity: 0→1` 淡入淡出（0.25s），移入移出都平滑。

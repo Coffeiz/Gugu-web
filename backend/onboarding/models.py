@@ -1,0 +1,40 @@
+"""新手引导子系统自有数据表。
+
+`OnboardingState`：一用户一行，状态存 JSON（字段随文案迭代增减、免逐字段迁移）。
+**不改 User 模型** —— 子系统独立。用 app 的 Base，仅复用基础设施、不耦合业务。
+"""
+from datetime import datetime
+from uuid import UUID
+
+from sqlalchemy import DateTime, ForeignKey, JSON, Uuid
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base
+
+
+def default_state() -> dict:
+    """新用户的初始 onboarding 状态。键见 docs/新手引导-实现方案.md §2。"""
+    return {
+        "seeded": False,
+        "seeded_project_id": None,
+        "seeded_project_name": None,   # 回头看(08) 回填用
+        "welcome_shown": False,
+        "guide_shown": False,
+        "lookback_shown": False,
+        "hints": {
+            "file_lib": False, "music": False, "calendar": False,
+            "stage_switch": False, "todo_roam": False, "todo_newproj": False,
+            "im_bind": False,
+        },
+    }
+
+
+class OnboardingState(Base):
+    __tablename__ = "onboarding_state"
+
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    state: Mapped[dict] = mapped_column(JSON, default=default_state)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -13,6 +13,8 @@ export const useUiStore = defineStore('ui', () => {
   const pendingChatMessageId = ref(null)   // 对话搜索命中消息时，跳转后滚到该消息
   const pendingCalendarEvent = ref(null)   // { id, date } 日程搜索跳转
   const pendingProjectHighlight = ref(null)   // 项目搜索跳转后高亮项目卡（不打开编辑弹窗）
+  const pendingProjectHighlightMs = ref(null) // 高亮时长(ms)：缺省 1800；新手引导用 5000（设 id 前先设它）
+  const pendingProjectHighlightBreath = ref(false) // true=用「呼吸」动画（新手引导），缺省搜索 flash
 
   // 通知气泡锚点：距视口底部的 px。GuguChat 按小窗/播放器是否展开实时更新，
   // 让通知气泡始终浮在「聊天窗/音乐播放器」上方而不重叠。
@@ -58,7 +60,8 @@ export const useUiStore = defineStore('ui', () => {
       }
     }
     if (bubble) {
-      liveNotification.value = { seq: ++_liveSeq, title: n.title, content: n.content }
+      // gugu=true：用咕咕聊天文字的大小/颜色（新手引导气泡），见 NotificationBubble .nb-gugu
+      liveNotification.value = { seq: ++_liveSeq, title: n.title, content: n.content, gugu: n.gugu }
       _markBubbleSeen(n.id)   // 实时弹过的，下次上线别再补弹
     }
   }
@@ -99,6 +102,7 @@ export const useUiStore = defineStore('ui', () => {
     pushNotification, markAllRead, markRead,
     openNewProject, newProjectInitStatus, openProfile, sidebarCollapsed, newProjectRange,
     calendarActiveRange, pendingChatSession, pendingFileTarget, chatNotifyAnchor, chatNotifyOrigin,
-    pendingChatMessageId, pendingCalendarEvent, pendingProjectHighlight,
+    pendingChatMessageId, pendingCalendarEvent, pendingProjectHighlight, pendingProjectHighlightMs,
+    pendingProjectHighlightBreath,
   }
 })
