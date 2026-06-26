@@ -12,11 +12,11 @@
           <PhX weight="bold" :size="13" />
         </button>
         <div v-if="item.title" class="nb-head">
-          <span class="nb-dot" />
-          <div class="nb-title">{{ item.title }}</div>
+          <span class="nb-dot" :class="{ typing: item.typing }" />
+          <div class="nb-title">{{ item.tTitle }}</div>
         </div>
         <div v-if="item.content" class="nb-content">
-          <MarkdownView :text="item.content" />
+          <MarkdownView :text="item.tContent" />
         </div>
       </div>
     </TransitionGroup>
@@ -24,7 +24,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, reactive, watch } from 'vue'
 import { PhX } from '@phosphor-icons/vue'
 import { useUiStore } from '@/stores/ui'
 import MarkdownView from '@/components/common/MarkdownView.vue'
@@ -34,6 +34,13 @@ const visible = ref([])
 let _vk = 0                 // 气泡本地 key（与后端 id 解耦）
 const timers = new Map()   // id -> setTimeout 句柄
 
+// 状态气泡那套「类 SSE 逐字流式」搬到通知上：新通知不直接出全文，而是标题先逐字冒出、
+// 再正文逐字流式（正文渲染「已打出的子串」，与咕咕回复的流式 markdown 同源）。
+let _typeTimer = null      // 全局单计时器：同一时刻只让最新那条打字
+let _typingId  = null      // 正在打字的 item id（手动关掉它时要停表）
+const TITLE_MS = 30        // 标题每字间隔
+const BODY_MS  = 15        // 正文每字间隔（比标题快，长文不拖沓）
+
 // 气泡 = 纯「实时到达」的瞬态弹层，**只监听 uiStore.liveNotification**（SSE 实时置位）——
 // 关浏览器重开拉回来的历史通知**不弹气泡**（那是导航栏通知中心的事）。气泡与导航栏彻底分开：
 // 气泡关闭只动本组件 visible，不影响 uiStore.notifications，也不改已读态（气泡不算已读）。
@@ -41,9 +48,38 @@ watch(() => uiStore.liveNotification, (n) => {
   if (!n) return
   // 现有可见的旧气泡：被顶上去后 0.5 秒消失
   visible.value.forEach(item => scheduleDismiss(item.id, 500))
-  // 新气泡插到队首（视觉上在底部、贴近球），把旧的顶上去
-  visible.value = [{ id: ++_vk, title: n.title, content: n.content }, ...visible.value]
+  // 新气泡插到队首（视觉上在底部、贴近球），把旧的顶上去；reactive 让打字机改属性能驱动视图
+  const item = reactive({
+    id: ++_vk, title: n.title || '', content: n.content || '',
+    tTitle: '', tContent: '', phase: 'title', typing: true,
+  })
+  visible.value = [item, ...visible.value]
+  startTyping(item)
 })
+
+// 标题逐字 → 正文逐字。正文较长时一拍多推几字，避免长通知打太久。
+function startTyping(item) {
+  if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }
+  const fullTitle = item.title, fullBody = item.content
+  if (!fullTitle && !fullBody) { item.typing = false; return }
+  _typingId = item.id
+  item.phase = fullTitle ? 'title' : 'body'
+  const bodyStep = fullBody.length > 150 ? 3 : 1
+  let ti = 0, bi = 0
+  const run = (ms, tick) => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = setInterval(tick, ms) }
+  const stop = () => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = null; item.typing = false; if (_typingId === item.id) _typingId = null }
+  const typeBody = () => run(BODY_MS, () => {
+    bi = Math.min(fullBody.length, bi + bodyStep)
+    item.tContent = fullBody.slice(0, bi)
+    if (bi >= fullBody.length) stop()
+  })
+  if (item.phase === 'title') {
+    run(TITLE_MS, () => {
+      item.tTitle = fullTitle.slice(0, ++ti)
+      if (ti >= fullTitle.length) { item.phase = 'body'; fullBody ? typeBody() : stop() }
+    })
+  } else { typeBody() }
+}
 
 function scheduleDismiss(id, delay) {
   if (timers.has(id)) return   // 已排程，避免重复计时
@@ -53,6 +89,8 @@ function scheduleDismiss(id, delay) {
 function dismiss(id) {
   const t = timers.get(id)
   if (t) { clearTimeout(t); timers.delete(id) }
+  // 关掉的正是当前在打字的那条 → 停表，别让计时器空转
+  if (_typingId === id && _typeTimer) { clearInterval(_typeTimer); _typeTimer = null; _typingId = null }
   visible.value = visible.value.filter(n => n.id !== id)
 }
 </script>
@@ -107,6 +145,12 @@ function dismiss(id) {
   width: 8px; height: 8px; border-radius: 50%;
   flex-shrink: 0;
   background: linear-gradient(135deg, #7b7fb2, #9590c4);   /* 固定咕咕主题色，不再随通知配色 */
+}
+/* 逐字流式进行中：圆点脉冲，像「正在接收」 */
+.nb-dot.typing { animation: nb-pulse 0.9s ease-in-out infinite; }
+@keyframes nb-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(0.66); }
 }
 .nb-title {
   flex: 1; min-width: 0;
