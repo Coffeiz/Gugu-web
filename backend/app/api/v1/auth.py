@@ -78,6 +78,10 @@ async def login(body: UserLogin, db: AsyncSession = Depends(get_db)):
 
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    now = datetime.utcnow()
+    if current_user.last_active_at is None or (now - current_user.last_active_at) >= timedelta(hours=1):
+        current_user.last_active_at = now
+        await db.commit()
     from app.models import UserBot
     from app.scheduled_tasks import get_imreach
     from sqlalchemy import select as _select

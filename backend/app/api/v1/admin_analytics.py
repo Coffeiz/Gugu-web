@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, distinct, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,13 +8,22 @@ from app.models import User, Project, ConversationSession, AgentUsage, UserBot, 
 
 router = APIRouter(prefix="/admin/analytics", tags=["admin"])
 
+_CST = timezone(timedelta(hours=8))
+
+
+def _today_start_utc() -> datetime:
+    """北京时间今日 0 点，转回 UTC naive，供 DB 比较。"""
+    now_cst = datetime.now(_CST)
+    win_cst = now_cst.replace(hour=0, minute=0, second=0, microsecond=0)
+    return win_cst.astimezone(timezone.utc).replace(tzinfo=None)
+
 
 @router.get("/summary")
 async def get_summary(db: AsyncSession = Depends(get_db)):
     now = datetime.utcnow()
     d7  = now - timedelta(days=7)
     d30 = now - timedelta(days=30)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = _today_start_utc()
 
     # ── 用户 ──────────────────────────────────────────────────────────────────
     total_users = (await db.execute(
@@ -31,8 +40,8 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
         .where(AgentUsage.created_at >= d30)
     )).scalar() or 0
     dau = (await db.execute(
-        select(func.count(distinct(AgentUsage.user_id)))
-        .where(AgentUsage.created_at >= today_start)
+        select(func.count()).select_from(User)
+        .where(User.last_active_at >= today_start)
     )).scalar() or 0
 
     # ── 项目（排除归档）────────────────────────────────────────────────────────
