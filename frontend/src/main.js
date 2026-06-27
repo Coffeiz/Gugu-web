@@ -1,3 +1,6 @@
+import { runClientVersionGate } from '@/utils/clientVersionGate'
+runClientVersionGate()   // 新版本上线 → 先清掉跨版本过期的客户端状态（保留登录），再启动
+
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ArcoVue from '@arco-design/web-vue'

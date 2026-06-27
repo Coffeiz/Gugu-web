@@ -1,11 +1,18 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
+import { execSync } from 'node:child_process'
 import Components from 'unplugin-vue-components/vite'
 import AutoImport from 'unplugin-auto-import/vite'
 import { ArcoResolver } from 'unplugin-vue-components/resolvers'
 
+// 发版门版本号：优先 git 短哈希（只在真发版/换提交时变），无 git（如 zip 部署）回退构建时间戳（每次构建必变）
+const APP_VER = (() => {
+  try { return execSync('git rev-parse --short HEAD').toString().trim() } catch { return String(Date.now()) }
+})()
+
 export default defineConfig({
+  define: { __APP_VERSION__: JSON.stringify(APP_VER) },
   plugins: [
     vue(),
     Components({
