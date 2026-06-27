@@ -82,6 +82,19 @@
         </div>
       </Transition>
 
+      <!-- 扫码绑定 IM 弹窗：咕咕回复里点 [扫码绑定…](gugu://bind-im/<platform>) 按钮触发，复用现有连接 API -->
+      <Transition name="chat-drop-fade">
+        <div v-if="chatBind.open" class="cb-overlay" @click.self="closeChatBind">
+          <div class="cb-modal popup-menu">
+            <div class="cb-title">扫码绑定{{ chatBind.label }}</div>
+            <canvas ref="chatBindCanvas" class="cb-qr"></canvas>
+            <div v-if="chatBind.err" class="cb-err">{{ chatBind.err }}</div>
+            <div v-else class="cb-hint">{{ chatBind.hint || '生成二维码中…' }}</div>
+            <button class="cb-cancel" @click="closeChatBind">取消</button>
+          </div>
+        </div>
+      </Transition>
+
 
       <!-- 侧边栏（仅大窗） -->
       <div v-if="expanded" class="exp-sidebar panel-left">
@@ -168,7 +181,7 @@
         <!-- 单一消息列表 -->
         <div class="chat-messages" ref="messagesEl">
           <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]" :data-db-id="msg.dbId || ''">
-            <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : msg.html" /></div>
+            <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onChatActionClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : msg.html" /></div>
             <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
             <div v-if="msg.files && msg.files.length" class="msg-files">
               <div v-for="f in msg.files" :key="f.file_id" class="msg-file" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
@@ -948,6 +961,57 @@ function _startImPoll(p) {
 function _stopImPoll() { if (connectPoll) { clearInterval(connectPoll); connectPoll = null } }
 function cancelImConnect() { _stopImPoll(); connect.value = null }
 
+// ── 聊天内「扫码绑定 IM」：咕咕回复里输出 [文案](gugu://bind-im/<platform>) 当按钮，
+//    点击 → 这里弹小窗扫码（复用 IM_PLATFORMS 的 start/poll，与侧栏同一套后端，互不干扰）──
+const chatBind = reactive({ open: false, platform: '', label: '', hint: '', err: '', id: null })
+const chatBindCanvas = ref(null)
+let chatBindPoll = null
+
+function onChatActionClick(e) {
+  const a = e.target.closest?.('a[href^="gugu://"]')
+  if (!a) return
+  e.preventDefault()
+  const m = (a.getAttribute('href') || '').match(/^gugu:\/\/bind-im\/([a-z]+)/i)
+  if (m) openChatImBind(m[1])
+}
+
+async function openChatImBind(platform) {
+  const p = IM_PLATFORMS.find(x => x.key === platform)
+  if (!p) return
+  _stopChatBindPoll()
+  chatBind.platform = platform; chatBind.label = p.label
+  chatBind.err = ''; chatBind.hint = ''; chatBind.id = null; chatBind.open = true
+  await nextTick()
+  try {
+    const r = await p.api.start()
+    chatBind.id = r.poll_id || r.task_id
+    chatBind.hint = platform === 'feishu'
+      ? '手机飞书扫码 → 授权创建机器人，授权后自动连接'
+      : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
+    await nextTick()
+    await QRCode.toCanvas(chatBindCanvas.value, r.scan_url, { width: 168, margin: 1 })
+    _startChatBindPoll(p)
+  } catch (e) {
+    chatBind.err = e.message || '生成二维码失败'
+  }
+}
+function _startChatBindPoll(p) {
+  _stopChatBindPoll()
+  let tries = 0
+  chatBindPoll = setInterval(async () => {
+    tries++
+    try {
+      const r = await p.api.poll(chatBind.id)
+      if (r.status === 'success') { closeChatBind(); await loadBots(); await fetchSessions() }
+      else if (r.status === 'expired') { chatBind.err = '二维码已过期，关掉再点一次按钮'; _stopChatBindPoll() }
+      else if (r.status === 'fail') { chatBind.err = '连接失败：' + (r.reason || '未知'); _stopChatBindPoll() }
+    } catch {}
+    if (tries > 100) closeChatBind()
+  }, 3000)
+}
+function _stopChatBindPoll() { if (chatBindPoll) { clearInterval(chatBindPoll); chatBindPoll = null } }
+function closeChatBind() { _stopChatBindPoll(); chatBind.open = false }
+
 async function enterExpanded() {
   expanded.value = true
   loadBots()
@@ -1631,6 +1695,54 @@ async function send(forcedText) {
 }
 .im-qr-hint { font-size: 11.5px; color: var(--text-secondary); text-align: center; line-height: 1.5; }
 .im-qr-err { font-size: 11.5px; color: rgba(200,80,80,0.9); padding: 4px 0; }
+
+/* 咕咕回复里的「扫码绑定」动作按钮：md 里的 gugu:// 链接渲染成按钮（onChatActionClick 拦截点击）*/
+.msg-bubble.md-body :deep(a[href^="gugu://"]) {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin: 3px 4px 3px 0; padding: 5px 12px;
+  font-size: 12.5px; font-weight: 600; text-decoration: none;
+  color: #fff; background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  border-radius: 999px; box-shadow: 0 2px 8px rgba(123,127,178,0.28);
+  cursor: pointer; transition: transform 0.12s, box-shadow 0.12s; user-select: none;
+}
+.msg-bubble.md-body :deep(a[href^="gugu://"]:hover) {
+  transform: translateY(-1px); box-shadow: 0 4px 12px rgba(123,127,178,0.36); opacity: 1;
+}
+.msg-bubble.md-body :deep(a[href^="gugu://"]:active) { transform: translateY(0); }
+
+/* 扫码绑定弹窗（聊天上弹小窗）*/
+.cb-overlay {
+  position: absolute; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  /* 极轻遮罩、不压暗（仅用于点外面关闭 + 一点聚焦）——避免把弹窗玻璃衬得发灰发透，
+     让它和右键菜单一样浮在亮内容上、显得更实 */
+  background: rgba(0,0,0,0.04);
+}
+.cb-modal {
+  /* 玻璃外观复用全局 .popup-menu（与右键菜单完全一致）；这里只管布局 + 固定宽度（防止加载前后变宽）*/
+  display: flex; flex-direction: column; align-items: center; gap: 9px;
+  width: 230px; box-sizing: border-box;
+  padding: 18px 20px 14px;
+}
+.cb-title { font-size: 13.5px; font-weight: 700; color: var(--text-primary); }
+.cb-qr {
+  width: 168px; height: 168px; border-radius: 10px;
+  background: #fff; padding: 6px; box-sizing: border-box;
+  box-shadow: 0 2px 10px rgba(123,127,178,0.18);
+}
+.cb-hint, .cb-err {
+  font-size: 11.5px; text-align: center; line-height: 1.5; max-width: 190px;
+  min-height: 33px;          /* 预留 ~2 行：二维码/提示加载前后弹窗高度不跳 */
+  display: flex; align-items: center; justify-content: center;
+}
+.cb-hint { color: var(--text-secondary); }
+.cb-err  { color: rgba(200,80,80,0.9); }
+.cb-cancel {
+  margin-top: 2px; padding: 5px 16px; font-size: 12px;
+  color: var(--text-secondary); background: rgba(123,127,178,0.1);
+  border: none; border-radius: 999px; cursor: pointer;
+}
+.cb-cancel:hover { background: rgba(123,127,178,0.18); }
 .im-qr-cancel {
   font-size: 11.5px; color: var(--text-secondary); background: none; border: none;
   cursor: pointer; padding: 3px 10px; border-radius: 6px; transition: background 0.12s;

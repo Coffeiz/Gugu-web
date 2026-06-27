@@ -10,7 +10,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -20,8 +20,13 @@ from app.models import User, SiteNotification, NotificationRead
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 
-def _visible(uid) -> "ColumnElement":
-    return or_(SiteNotification.target == "all", SiteNotification.target == str(uid))
+def _visible(user) -> "ColumnElement":
+    # 目标匹配（全员广播 / 本人专属）+ **只看注册之后产生的通知**：
+    # 刚注册的新用户不补看历史广播——否则首登会弹一条旧广播气泡、和新手引导教程气泡撞车。
+    return and_(
+        or_(SiteNotification.target == "all", SiteNotification.target == str(user.id)),
+        SiteNotification.created_at >= user.created_at,
+    )
 
 
 @router.get("")
@@ -34,7 +39,7 @@ async def list_notifications(
     uid = current_user.id
     rows = (await db.execute(
         select(SiteNotification)
-        .where(_visible(uid), SiteNotification.persist == True)
+        .where(_visible(current_user), SiteNotification.persist == True)
         .order_by(SiteNotification.created_at.desc())
         .limit(max(1, min(limit, 100)))
     )).scalars().all()
@@ -62,7 +67,7 @@ async def latest_bubble(
     row = (await db.execute(
         select(SiteNotification)
         .where(
-            _visible(uid),
+            _visible(current_user),
             SiteNotification.bubble == True,
             or_(SiteNotification.bubble_expire_at.is_(None), SiteNotification.bubble_expire_at > now),
         )
@@ -90,7 +95,7 @@ async def mark_read(
         target_ids = list(body.ids)
     else:
         target_ids = (await db.execute(
-            select(SiteNotification.id).where(_visible(uid))
+            select(SiteNotification.id).where(_visible(current_user))
         )).scalars().all()
     existing = set((await db.execute(
         select(NotificationRead.notification_id).where(NotificationRead.user_id == uid)

@@ -17,12 +17,15 @@ _traj_log = logging.getLogger("agent.traj")
 
 
 def _log_traj(name: str, user_id, args: dict, ok: bool, note: str, t0: float) -> None:
-    """记一行工具调用轨迹（best-effort，绝不因记日志影响工具）。args 只记摘要、截断，**不记大内容**（如文件正文）。"""
+    """记一行工具调用轨迹（best-effort，绝不因记日志影响工具）。
+
+    隐私：args 只记**结构**——数字/布尔/null（project_id 等便于排查落位）原样保留，字符串值
+    一律打码（可能含文件名/客户名/正文），不把用户内容写进日志（与决策轨迹脱敏同口径）。
+    """
     try:
         summary = {}
         for k, v in (args or {}).items():
-            sv = str(v) if not isinstance(v, (int, float, bool)) else v
-            summary[k] = (sv[:57] + "…") if isinstance(sv, str) and len(sv) > 60 else sv
+            summary[k] = v if isinstance(v, (int, float, bool)) or v is None else "***"
         rec = {"t": "tool", "tool": name, "user": str(user_id)[:8],
                "ok": ok, "ms": int((time.monotonic() - t0) * 1000), "args": summary}
         if not ok and note:

@@ -566,6 +566,47 @@ async def probe_vision_preset(preset_id: str):
 # 复用现有数据，无需额外埋点：工具调用/结果在 ConversationMessage.content_json（即
 # getMessages 用 content_json IS NULL 过滤掉的 tool_use / tool_result 行），每次 LLM
 # 调用的 token/模型在 AgentUsage。供 Admin「决策轨迹」tab 排查咕咕每轮怎么决策的。
+#
+# 隐私（脱敏保留）：决策轨迹只暴露「决策结构」，不暴露用户内容——对话正文 / 工具结果 /
+# 文件名 / 会话标题一律脱敏，工具入参只保留 id/数字/布尔等结构字段、字符串值打码。管理员能
+# 排查咕咕「调了什么、落到哪、成没成」，但看不到用户聊了什么。脱敏在后端做（数据不出后端）。
+
+_REDACT_STR = "***"
+
+
+def _redact_text(s: str | None) -> str:
+    """正文脱敏：不返回原文，只给字数提示（保留『这里有内容』的可观测性，不泄露内容）。"""
+    return f"〔已隐藏 · {len(s)} 字〕" if s else ""
+
+
+def _redact_args(v):
+    """工具入参脱敏：dict/list 结构与 数字/布尔/null 原样保留（project_id 等便于排查落位），字符串一律打码。"""
+    if isinstance(v, dict):
+        return {k: _redact_args(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_redact_args(x) for x in v]
+    if isinstance(v, str):
+        return _REDACT_STR
+    return v
+
+
+def _redact_cj(blocks):
+    """content_json 块脱敏：保留 text/tool_use/tool_result 的结构与工具名，正文与结果内容打码。"""
+    if not blocks:
+        return blocks
+    out = []
+    for b in blocks:
+        if not isinstance(b, dict):
+            continue
+        t = b.get("type")
+        if t == "text":
+            out.append({"type": "text", "text": _redact_text(b.get("text", ""))})
+        elif t == "tool_use":
+            out.append({"type": "tool_use", "name": b.get("name"), "input": _redact_args(b.get("input") or {})})
+        elif t == "tool_result":
+            out.append({"type": "tool_result", "is_error": bool(b.get("is_error")), "content": "〔结果已隐藏〕"})
+    return out
+
 
 @router.get("/sessions")
 async def list_agent_sessions(
@@ -581,8 +622,7 @@ async def list_agent_sessions(
         .order_by(ConversationSession.updated_at.desc())
         .limit(min(limit, 200))
     )
-    if q:
-        stmt = stmt.where(ConversationSession.title.ilike(f"%{q}%"))
+    # 标题来自用户首句、属隐私，不再按标题内容检索（否则可凭关键词试探用户聊了什么）；只按用户名筛选
     if user:
         stmt = stmt.where(User.username.ilike(f"%{user}%"))
     rows = (await db.execute(stmt)).all()
@@ -597,7 +637,7 @@ async def list_agent_sessions(
         counts = {sid: n for sid, n in cres.all()}
     return [
         {
-            "id": s.id, "title": s.title, "source": s.source,
+            "id": s.id, "title": f"会话 #{s.id}", "source": s.source,   # 标题脱敏：不暴露用户首句
             "user": dn or un or "—",
             "updatedAt": s.updated_at.isoformat(),
             "createdAt": s.created_at.isoformat(),
@@ -627,7 +667,7 @@ async def session_trace(session_id: int, db: AsyncSession = Depends(get_db)):
     )).scalars().all()
     return {
         "session": {
-            "id": session.id, "title": session.title, "source": session.source,
+            "id": session.id, "title": f"会话 #{session.id}", "source": session.source,   # 标题脱敏
             "user": (owner.display_name or owner.username) if owner else "—",
             "createdAt": session.created_at.isoformat(),
             "updatedAt": session.updated_at.isoformat(),
@@ -635,9 +675,9 @@ async def session_trace(session_id: int, db: AsyncSession = Depends(get_db)):
         "messages": [
             {
                 "role": m.role,
-                "content": m.content,
-                "contentJson": m.content_json,   # 含 text / tool_use / tool_result 块
-                "files": m.files,
+                "content": _redact_text(m.content),          # 正文脱敏（只给字数）
+                "contentJson": _redact_cj(m.content_json),   # 块脱敏：留工具名/结构，正文与结果打码
+                "files": [{"name": _REDACT_STR, "ext": (f or {}).get("ext", "")} for f in (m.files or [])] or None,
                 "createdAt": m.created_at.isoformat(),
             }
             for m in msgs

@@ -768,8 +768,7 @@
         <!-- 会话列表 -->
         <div class="trace-list">
           <div class="trace-search">
-            <input v-model="traceSearch" placeholder="搜标题…" @keyup.enter="fetchTraceSessions" />
-            <input v-model="traceUser" placeholder="用户名…" @keyup.enter="fetchTraceSessions" />
+            <input v-model="traceUser" placeholder="按用户名筛选…" @keyup.enter="fetchTraceSessions" />
             <button @click="fetchTraceSessions">搜索</button>
           </div>
           <div v-if="traceLoading" class="trace-hint">加载中…</div>

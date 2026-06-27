@@ -45,6 +45,12 @@
         <router-link to="/register">立即注册</router-link>
       </div>
     </div>
+
+    <div class="page-footer">
+      <span>Created by Claude with love</span>
+      <span class="footer-sep">·</span>
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">苏ICP备2026042185号</a>
+    </div>
   </div>
 </template>
 
@@ -158,4 +164,16 @@ async function handleLogin() {
 }
 .card-footer a { color: #7b7fb2; font-weight: 600; text-decoration: none; }
 .card-footer a:hover { text-decoration: underline; }
+
+.page-footer {
+  position: absolute; bottom: 24px; left: 0; right: 0;
+  text-align: center; font-size: 11px; color: rgba(100,108,130,0.55);
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  pointer-events: none;
+}
+.page-footer a {
+  color: rgba(100,108,130,0.55); text-decoration: none; pointer-events: auto;
+}
+.page-footer a:hover { color: rgba(100,108,130,0.85); }
+.footer-sep { opacity: 0.5; }
 </style>
