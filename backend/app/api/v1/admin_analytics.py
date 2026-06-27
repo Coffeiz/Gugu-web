@@ -39,10 +39,15 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
         select(func.count(distinct(AgentUsage.user_id)))
         .where(AgentUsage.created_at >= d30)
     )).scalar() or 0
-    dau = (await db.execute(
-        select(func.count()).select_from(User)
-        .where(User.last_active_at >= today_start)
-    )).scalar() or 0
+    # WAU：过去 7 天活跃用户 = 对话过（AgentUsage，覆盖网页 + IM）∪ 登录过网页（last_active_at），按 user_id 去重。
+    # IM 走 worker 不更新 last_active_at，靠 AgentUsage 纳入；网页 + IM 都用的同一用户只算一次。
+    _chat_ids = set((await db.execute(
+        select(distinct(AgentUsage.user_id)).where(AgentUsage.created_at >= d7)
+    )).scalars().all())
+    _web_ids = set((await db.execute(
+        select(User.id).where(User.last_active_at >= d7)
+    )).scalars().all())
+    wau = len(_chat_ids | _web_ids)
 
     # ── 项目（排除归档）────────────────────────────────────────────────────────
     total_proj = (await db.execute(
@@ -96,14 +101,11 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
     users_completed = (await db.execute(
         select(func.count(distinct(Project.user_id))).where(Project.status == "done")
     )).scalar() or 0
-    users_used_agent = (await db.execute(
-        select(func.count(distinct(AgentUsage.user_id)))
-    )).scalar() or 0
 
     return {
         "users": {
             "total":      total_users,
-            "dau":        dau,
+            "wau":        wau,
             "active_30d": active_30d,
             "new_7d":     new_7d,
             "new_30d":    new_30d,
@@ -135,8 +137,6 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
             "registered":       total_users,
             "created_project":  users_with_proj,
             "completed_project": users_completed,
-            "used_agent":       users_used_agent,
-            "connected_im":     users_with_bot,
         },
     }
 

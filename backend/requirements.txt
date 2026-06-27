@@ -29,3 +29,4 @@ email-validator>=2.0.0
 pendulum>=3.0.0
 Pillow>=10.0.0
 pillow-heif>=0.16.0   # 解码 iPhone HEIC/HEIF 图片，喂给 vision 模型前转 JPEG
+pilk>=0.2.4           # 解码 QQ/微信 SILK 语音 → pcm，配合系统 ffmpeg 转 mp3 喂 mimo（IM 语音理解）

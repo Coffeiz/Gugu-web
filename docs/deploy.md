@@ -34,6 +34,7 @@
 | PostgreSQL      | 15+   | 数据库                                                                 |
 | Redis           | 7+    | IM 队列（接 IM 才需）                                                      |
 | **LibreOffice** | 任意    | 咕咕生成 Word/PDF/Excel（`create_document`）靠 `libreoffice --headless` 转换 |
+| **ffmpeg**      | 任意    | IM 语音理解：把 QQ/飞书语音（SILK/opus）转成 mp3 喂 mimo（配合 pip 的 `pilk` 解 SILK）。只装在跑 IM 网关的机器；没装则语音退文字提示 |
 
 
 系统包（Debian/Ubuntu 示例）：
@@ -41,7 +42,7 @@
 ```bash
 sudo apt update
 sudo apt install -y python3-venv python3-dev build-essential \
-                    postgresql redis-server libreoffice nginx
+                    postgresql redis-server libreoffice ffmpeg nginx
 # Node 用 nvm 或 nodesource 装 18+
 ```
 

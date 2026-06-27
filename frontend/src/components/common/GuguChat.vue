@@ -181,10 +181,21 @@
         <!-- 单一消息列表 -->
         <div class="chat-messages" ref="messagesEl">
           <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]" :data-db-id="msg.dbId || ''">
-            <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onChatActionClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : msg.html" /></div>
+            <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onChatActionClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : msg.html" :text="msg.text" /></div>
             <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
             <div v-if="msg.files && msg.files.length" class="msg-files">
-              <div v-for="f in msg.files" :key="f.file_id" class="msg-file" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
+              <template v-for="f in msg.files" :key="f.file_id || f.attach_id">
+              <!-- 语音条：点一下播放（带鉴权拉 blob），不是文件卡 -->
+              <div v-if="f.kind === 'voice'" class="msg-voice" :class="{ playing: voicePlayingId === f.attach_id }"
+                   @click="toggleVoice(f)" title="点击播放语音">
+                <span class="mv-btn">
+                  <PhPause v-if="voicePlayingId === f.attach_id" weight="fill" :size="13" />
+                  <PhPlay  v-else weight="fill" :size="13" />
+                </span>
+                <span class="mv-wave"><i v-for="n in 13" :key="n" :style="{ height: voiceBar(n) }" /></span>
+                <span class="mv-dur">{{ fmtDur(f.duration) }}</span>
+              </div>
+              <div v-else class="msg-file" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
                 <span class="msg-file-ext">
                   {{ (f.ext || 'file').toUpperCase().slice(0, 4) }}
                   <template v-if="isImageFile(f)">
@@ -200,6 +211,7 @@
                 </span>
                 <svg class="msg-file-dl" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>
               </div>
+              </template>
             </div>
             <div class="msg-footer">
               <span class="msg-time">{{ msg.time }}</span>
@@ -232,11 +244,15 @@
           <span v-if="attUploading" class="chat-att-chip att-up">上传中…</span>
         </div>
         <div class="chat-input-row">
-          <button class="att-btn" @click="pickFile" title="添加附件">
+          <button v-if="!recording" class="att-btn" @click="pickFile" title="添加附件">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7l-5.5 5.5a2.5 2.5 0 0 1-3.5-3.5L9 3.5a1.5 1.5 0 0 1 2 2L5.5 11"/></svg>
+          </button>
+          <button v-if="!recording" class="att-btn" @click="startRecord" title="语音输入">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7a4.5 4.5 0 0 0 9 0M8 11.5V14M5.5 14h5"/></svg>
           </button>
           <input ref="fileInput" type="file" multiple style="display:none" @change="onFilePicked" />
           <textarea
+            v-if="!recording"
             v-model="inputText"
             ref="expInputEl"
             placeholder="问问项目进度、截止日期…"
@@ -246,8 +262,15 @@
             @keydown.enter.exact.prevent="!isComposing && send()"
             @input="autoResize"
           />
-          <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="streaming ? stopStreaming() : send()">
-            <PhArrowRight v-if="!streaming" weight="bold" :size="expanded ? 14 : 13" />
+          <div v-else class="rec-bar">
+            <span class="rec-dot"></span>
+            <span class="rec-time">{{ recordSecs }}″</span>
+            <span class="rec-hint">录音中… 点 ✓ 发送</span>
+            <button class="rec-cancel" @click="cancelRecord">取消</button>
+          </div>
+          <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="recording ? stopRecord() : (streaming ? stopStreaming() : send())">
+            <PhCheck      v-if="recording"  weight="bold" :size="expanded ? 14 : 13" />
+            <PhArrowRight v-else-if="!streaming" weight="bold" :size="expanded ? 14 : 13" />
             <PhStop       v-else            weight="fill"  :size="expanded ? 14 : 13" />
           </button>
         </div>
@@ -705,13 +728,13 @@ const pendingAtt   = ref([])     // 待发送的聊天附件（已上传暂存�
 const attUploading = ref(false)
 const fileInput    = ref(null)
 function pickFile() { fileInput.value && fileInput.value.click() }
-async function uploadAttachFiles(files) {
+async function uploadAttachFiles(files, opts = {}) {
   if (!files.length) return
   attUploading.value = true
   try {
     for (const file of files) {
       try {
-        const meta = await agentApi.uploadAttachment(file)
+        const meta = await agentApi.uploadAttachment(file, opts.voice)
         // 图片附件：本地 objectURL 立即出预览（暂存附件无 file_id，取不到服务端缩略图）
         if (_IMG_EXTS.has((meta.ext || '').toLowerCase())) meta._thumbUrl = URL.createObjectURL(file)
         pendingAtt.value.push(meta)
@@ -744,6 +767,96 @@ function removeAtt(a) {
   if (a._thumbUrl) URL.revokeObjectURL(a._thumbUrl)   // 未发送即移除，回收 objectURL
   pendingAtt.value = pendingAtt.value.filter(x => x.attach_id !== a.attach_id)
 }
+
+// ── 语音输入：录音 → 上传成附件 → 录完即发（咕咕用 mimo 听懂内容）──
+// 浏览器多录成 webm/opus（mimo 不收）→ 后端 /agent/upload 转 mp3；Safari m4a/Firefox ogg 原生免转。
+const recording  = ref(false)
+const recordSecs = ref(0)
+let _recorder = null, _recChunks = [], _recStream = null, _recTimer = null, _recMime = '', _recCancelled = false
+function _pickRecMime() {
+  const cands = ['audio/mp4', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/webm']  // 优先 mimo 原生(m4a/ogg)
+  if (window.MediaRecorder)
+    for (const m of cands) { try { if (MediaRecorder.isTypeSupported(m)) return m } catch {} }
+  return ''
+}
+function _recExt(m) {
+  if (m.includes('mp4')) return 'm4a'
+  if (m.includes('ogg')) return 'ogg'
+  if (m.includes('wav')) return 'wav'
+  return 'webm'
+}
+function _chatTip(text) { messages.value.push({ id: mkid(), role: 'ai', text, time: now() }) }
+async function startRecord() {
+  if (recording.value) return
+  // getUserMedia 只在安全环境（HTTPS / localhost）可用——http 访问时 navigator.mediaDevices 直接是 undefined、连权限都不弹
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    _chatTip('录音需要 HTTPS 或 localhost 安全环境 🎤 当前是 http 访问（如局域网 IP），浏览器不给开麦克风。线上 https 域名可以用～'); return
+  }
+  if (!window.MediaRecorder) { _chatTip('这个浏览器不支持录音 🎤'); return }
+  try {
+    _recStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const mime = _pickRecMime()
+    _recorder = mime ? new MediaRecorder(_recStream, { mimeType: mime }) : new MediaRecorder(_recStream)
+    _recMime = _recorder.mimeType || mime || 'audio/webm'
+    _recChunks = []; _recCancelled = false
+    _recorder.ondataavailable = (e) => { if (e.data && e.data.size) _recChunks.push(e.data) }
+    _recorder.onstop = _onRecStop
+    _recorder.start()
+    recording.value = true; recordSecs.value = 0
+    _recTimer = setInterval(() => { recordSecs.value++; if (recordSecs.value >= 60) stopRecord() }, 1000)
+  } catch (e) {
+    _recStream?.getTracks().forEach(t => t.stop()); _recStream = null
+    messages.value.push({ id: mkid(), role: 'ai',
+      text: '没法录音 🎤 ' + (e?.name === 'NotAllowedError' ? '麦克风权限被拒了，去浏览器设置允许一下' : (e?.message || '')), time: now() })
+  }
+}
+function stopRecord()   { if (recording.value && _recorder) { _recCancelled = false; _recorder.stop() } }   // 结束并发送
+function cancelRecord() { if (recording.value && _recorder) { _recCancelled = true;  _recorder.stop() } }   // 丢弃
+async function _onRecStop() {
+  recording.value = false
+  if (_recTimer) { clearInterval(_recTimer); _recTimer = null }
+  _recStream?.getTracks().forEach(t => t.stop()); _recStream = null
+  const chunks = _recChunks, mime = _recMime, cancelled = _recCancelled
+  _recChunks = []; _recorder = null
+  if (cancelled || !chunks.length) return
+  const blob = new Blob(chunks, { type: mime })
+  if (!blob.size) return
+  const file = new File([blob], `语音_${Date.now()}.${_recExt(mime)}`, { type: mime })
+  await uploadAttachFiles([file], { voice: true })   // 标记为语音 → 语音条 + 30 天存储 + 「让我听听」
+  if (pendingAtt.value.length) send()   // 录完即发（含可能已输入的文字）
+}
+// ── 语音条播放：点击拉鉴权 blob（download 端点带 Bearer），单实例播放，再点暂停 ──
+const voicePlayingId = ref(null)
+let _voiceAudio = null
+const _voiceUrls = {}            // attach_id → objectURL 缓存（同条重播不重拉）
+const _WAVE = [50, 80, 38, 95, 60, 72, 44, 88, 56, 68, 42, 84, 52]   // 装饰性波形高度
+function voiceBar(n) { return _WAVE[(n - 1) % _WAVE.length] + '%' }
+function fmtDur(sec) {
+  const s = Math.round(sec || 0)
+  if (!s) return '语音'
+  return s < 60 ? s + '″' : Math.floor(s / 60) + "'" + String(s % 60).padStart(2, '0')
+}
+async function toggleVoice(f) {
+  const id = f.attach_id
+  if (!id) return
+  if (voicePlayingId.value === id && _voiceAudio) { _voiceAudio.pause(); return }  // 再点＝暂停
+  if (_voiceAudio) { _voiceAudio.pause(); _voiceAudio = null }                     // 切换：停掉上一条
+  try {
+    let url = _voiceUrls[id]
+    if (!url) {
+      const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
+      const token = localStorage.getItem('user_token') ?? ''
+      const res = await fetch(`${BASE_URL}/agent/attachment/${id}/download`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      if (!res.ok) { _chatTip(res.status === 404 ? '这条语音过期啦（语音保留 30 天）🎤' : '语音加载失败了 😵'); return }
+      url = URL.createObjectURL(await res.blob()); _voiceUrls[id] = url
+    }
+    const a = new Audio(url); _voiceAudio = a; voicePlayingId.value = id
+    a.onended = a.onpause = () => { if (voicePlayingId.value === id) voicePlayingId.value = null }
+    await a.play()
+  } catch (e) { voicePlayingId.value = null; _chatTip('语音播放失败 🎤') }
+}
+
 let _sessionTurn = 0             // 当前 session 已发消息轮次（埋点用，切换 session 重置）
 
 // 会话 id 存入 sessionStorage：刷新页面保留当前对话，关闭浏览器/标签页才清空（=开新对话）
@@ -1537,6 +1650,14 @@ async function send(forcedText) {
   flex-shrink: 0;
 }
 .chat-main.is-expanded .chat-input-row { padding: 14px 20px; gap: 10px; }
+/* 录音条：录音时替换输入框 */
+.rec-bar { flex: 1; display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-primary); padding: 2px 0; min-width: 0; }
+.rec-dot { width: 8px; height: 8px; border-radius: 50%; background: #e15c5c; flex-shrink: 0; animation: rec-pulse 1s ease-in-out infinite; }
+@keyframes rec-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+.rec-time { font-variant-numeric: tabular-nums; font-weight: 600; color: #e15c5c; }
+.rec-hint { color: var(--text-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rec-cancel { margin-left: auto; flex-shrink: 0; border: none; background: rgba(123,127,178,0.12); color: var(--text-secondary); font-size: 12px; padding: 3px 10px; border-radius: 999px; cursor: pointer; }
+.rec-cancel:hover { background: rgba(123,127,178,0.2); }
 .chat-input-row input {
   flex: 1; border: none; background: none;
   font-size: 13px; color: var(--text-primary);
@@ -1817,9 +1938,32 @@ async function send(forcedText) {
 .msg-file-name { font-size: 15px; font-weight: 500; color: #2a2c3a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg-file-meta { font-size: 12px; color: #9296ad; }
 .msg-file-dl { flex-shrink: 0; color: #7b7fb2; }
+/* 语音条：迷你播放条（播放钮 + 波形 + 时长），和文件卡同款气泡质感 */
+.msg-voice {
+  display: inline-flex; align-items: center; gap: 9px; padding: 8px 13px; cursor: pointer;
+  max-width: 100%; box-sizing: border-box; user-select: none;
+  background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.65);
+  border-radius: 14px; border-bottom-left-radius: 5px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px rgba(80,80,120,0.06);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.msg-voice:hover { background: rgba(255,255,255,0.72); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 3px 10px rgba(100,110,200,0.14); }
+.msg-voice .mv-btn {
+  flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; color: #fff;
+  background: linear-gradient(135deg, #7b7fb2, #9590c4); box-shadow: 0 1px 3px rgba(110,110,170,0.3);
+}
+.msg-voice .mv-wave { display: flex; align-items: center; gap: 2px; height: 18px; }
+.msg-voice .mv-wave i { width: 2.5px; border-radius: 2px; background: #b0b2cc; transition: background 0.2s; }
+.msg-voice.playing .mv-wave i { background: #8186bd; animation: mv-pulse 0.9s ease-in-out infinite; }
+.msg-voice .mv-wave i:nth-child(even) { animation-delay: 0.15s; }
+.msg-voice .mv-wave i:nth-child(3n) { animation-delay: 0.3s; }
+@keyframes mv-pulse { 0%,100% { transform: scaleY(0.6); } 50% { transform: scaleY(1); } }
+.msg-voice .mv-dur { font-size: 12.5px; color: #7e82a6; font-variant-numeric: tabular-nums; flex-shrink: 0; }
 /* 用户(右侧)发的附件卡：气泡尾巴翻到右下、左下回正常圆角、容器右对齐 */
 .msg.user .msg-files { align-items: flex-end; }
 .msg.user .msg-file { border-bottom-left-radius: 14px; border-bottom-right-radius: 5px; }
+.msg.user .msg-voice { border-bottom-left-radius: 14px; border-bottom-right-radius: 5px; }
 .msg-footer {
   display: flex; align-items: center; gap: 4px;
   margin-top: 3px; padding: 0 3px;

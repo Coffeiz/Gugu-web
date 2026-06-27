@@ -696,6 +696,7 @@ import { useUploadQueue } from '@/composables/useUploadQueue'
 import { useBoxSelection } from '@/composables/useBoxSelection'
 import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
+  PhClock, PhPlayCircle, PhCheckCircle,
   PhBrowser,
   PhArrowLeft, PhArrowRight, PhSortAscending, PhSquaresFour, PhList,
   PhCheckSquare, PhCheck, PhFolderPlus, PhUploadSimple, PhPencilSimple,
@@ -798,23 +799,32 @@ function enterFolder(folder) {
     navPath.value = [{ type: 'projects', name: '项目文件', color: null }]
   } else if (folder.type === 'trash') {
     navPath.value = [{ type: 'trash', name: '回收站', color: null }]
+  } else if (folder.type === 'status') {
+    navPath.value = [
+      { type: 'projects', name: '项目文件', color: null },
+      { type: 'status', status: folder.status, name: folder.displayName, color: null },
+    ]
   } else if (folder.type === 'year') {
     navPath.value = [
       { type: 'projects', name: '项目文件', color: null },
+      { type: 'status', status: 'done', name: '已完成', color: null },
       { type: 'year', name: folder.year + ' 年', year: folder.year, color: null },
     ]
   } else if (folder.type === 'month') {
     const yearSeg = navPath.value.find(s => s.type === 'year')
     navPath.value = [
       { type: 'projects', name: '项目文件', color: null },
+      { type: 'status', status: 'done', name: '已完成', color: null },
       { type: 'year',  name: yearSeg.year + ' 年', year: yearSeg.year, color: null },
       { type: 'month', name: parseInt(folder.month) + ' 月', year: folder.year, month: folder.month, color: null },
     ]
   } else if (folder.type === 'project') {
-    // 保留年月上下文
+    // 保留 状态 + 年月 上下文
     const path = [{ type: 'projects', name: '项目文件', color: null }]
+    const statusSeg = navPath.value.find(s => s.type === 'status')
     const yearSeg  = navPath.value.find(s => s.type === 'year')
     const monthSeg = navPath.value.find(s => s.type === 'month')
+    if (statusSeg) path.push({ ...statusSeg })
     if (yearSeg)  path.push({ ...yearSeg })
     if (monthSeg) path.push({ ...monthSeg })
     path.push({ type: 'project', id: folder.projectId, name: folder.displayName, color: folder.color })
@@ -888,10 +898,18 @@ function _folderChain(folderId) {
 function _basePath(projectId) {
   if (projectId != null) {
     const p = projectStore.projects.find(p => p.id === projectId)
-    return [
-      { type: 'projects', name: '项目文件', color: null },
-      { type: 'project', id: projectId, name: p?.name ?? '项目', color: p?.color ?? null },
-    ]
+    const base = [{ type: 'projects', name: '项目文件', color: null }]
+    if (p) {
+      const col = projectStore.kanbanColumns.find(c => c.key === p.status)
+      base.push({ type: 'status', status: p.status, name: col?.label ?? '项目', color: null })
+      if (p.status === 'done') {   // 已完成：补上 完成日期 的年 / 月 段，面包屑与正常进入一致
+        const y = doneYear(p), m = doneMonth(p)
+        base.push({ type: 'year', name: y + ' 年', year: y, color: null })
+        base.push({ type: 'month', name: parseInt(m) + ' 月', year: y, month: m, color: null })
+      }
+    }
+    base.push({ type: 'project', id: projectId, name: p?.name ?? '项目', color: p?.color ?? null })
+    return base
   }
   return [{ type: 'personal', name: '个人文件', color: null }]
 }
@@ -940,7 +958,8 @@ const { SORT_OPTIONS, sortKey, sortDir, sortMenuOpen, sortBtnRef, sortMenuPos, o
 
 const sortedContents = computed(() => {
   const { folders, files } = contents.value
-  if (currentType.value === 'root') return { folders, files }
+  // projects 层是「状态文件夹」，保持看板顺序（待开始→进行中→已完成），不参与排序
+  if (currentType.value === 'root' || currentType.value === 'projects') return { folders, files }
   const dir = sortDir.value === 'asc' ? 1 : -1
 
   const sortedFolders = [...folders].sort((a, b) => {
@@ -986,9 +1005,22 @@ function extractColor(colorStr) {
   return m ? m[0] : colorStr
 }
 
-// 项目的年月来自 startDate，fallback 到 createdAt
-function projYear(p)  { return (p.startDate || p.createdAt || '').slice(0, 4) || '未归类' }
-function projMonth(p) { return (p.startDate || p.createdAt || '').slice(5, 7) || '00' }
+// 已完成项目按「完成日期」doneAt 归档（与项目面板一致），fallback startDate/createdAt
+function doneYear(p)  { return (p.doneAt || p.startDate || p.createdAt || '').slice(0, 4) || '未归类' }
+function doneMonth(p) { return (p.doneAt || p.startDate || p.createdAt || '').slice(5, 7) || '00' }
+
+// 状态文件夹的色 / 图标（待开始灰 / 进行中蓝 / 已完成绿）
+const STATUS_COLOR = { pending: '#8a8fa8', active: '#5080c8', done: '#4a9a72' }
+const STATUS_ICON  = { pending: PhClock,   active: PhPlayCircle, done: PhCheckCircle }
+
+// 项目 → 文件夹卡
+function projFolder(p) {
+  return {
+    id: `p:${p.id}`, type: 'project', displayName: p.name,
+    color: extractColor(p.color), projectId: p.id,
+    count: cacheStore.loaded ? cacheStore.allFiles.filter(f => f.projectId === p.id).length : null,
+  }
+}
 
 function loadContents() {
   const type = currentType.value
@@ -1033,16 +1065,35 @@ function loadContents() {
   }
 
   if (type === 'projects') {
-    const yearMap = {}
-    for (const p of projectStore.projects) {
-      const year = projYear(p)
-      if (!yearMap[year]) yearMap[year] = 0
-      yearMap[year]++
+    // 按项目状态分三组（待开始/进行中/已完成），看板顺序；空组不显示
+    const cnt = {}
+    for (const p of projectStore.projects) cnt[p.status] = (cnt[p.status] || 0) + 1
+    const statusFolders = projectStore.kanbanColumns
+      .filter(c => (cnt[c.key] || 0) > 0)
+      .map(c => ({ id: `st:${c.key}`, type: 'status', status: c.key, displayName: c.label, count: cnt[c.key] }))
+    contents.value = { folders: statusFolders, files: [] }
+    return
+  }
+
+  if (type === 'status') {
+    const { status } = currentSeg.value
+    if (status === 'done') {
+      // 已完成 → 按完成日期年份归档
+      const yearMap = {}
+      for (const p of projectStore.projects) {
+        if (p.status !== 'done') continue
+        const y = doneYear(p)
+        yearMap[y] = (yearMap[y] || 0) + 1
+      }
+      const yearFolders = Object.keys(yearMap)
+        .sort((a, b) => b.localeCompare(a))
+        .map(y => ({ id: `y:${y}`, type: 'year', displayName: y + ' 年', year: y, count: yearMap[y] }))
+      contents.value = { folders: yearFolders, files: [] }
+    } else {
+      // 待开始/进行中 → 直接列项目（不归档）
+      const projs = projectStore.projects.filter(p => p.status === status)
+      contents.value = { folders: projs.map(projFolder), files: [] }
     }
-    const yearFolders = Object.keys(yearMap)
-      .sort((a, b) => b.localeCompare(a))
-      .map(y => ({ id: `y:${y}`, type: 'year', displayName: y + ' 年', year: y, count: yearMap[y] }))
-    contents.value = { folders: yearFolders, files: [] }
     return
   }
 
@@ -1050,10 +1101,9 @@ function loadContents() {
     const { year } = currentSeg.value
     const monthMap = {}
     for (const p of projectStore.projects) {
-      if (projYear(p) !== year) continue
-      const m = projMonth(p)
-      if (!monthMap[m]) monthMap[m] = 0
-      monthMap[m]++
+      if (p.status !== 'done' || doneYear(p) !== year) continue
+      const m = doneMonth(p)
+      monthMap[m] = (monthMap[m] || 0) + 1
     }
     const monthFolders = Object.keys(monthMap)
       .sort()
@@ -1064,16 +1114,8 @@ function loadContents() {
 
   if (type === 'month') {
     const { year, month } = currentSeg.value
-    const projs = projectStore.projects.filter(p => projYear(p) === year && projMonth(p) === month)
-    const totalByProject = (pid) => cacheStore.loaded
-      ? cacheStore.allFiles.filter(f => f.projectId === pid).length
-      : null
-    const projectFolders = projs.map(p => ({
-      id: `p:${p.id}`, type: 'project', displayName: p.name,
-      color: extractColor(p.color), projectId: p.id,
-      count: totalByProject(p.id),
-    }))
-    contents.value = { folders: projectFolders, files: [] }
+    const projs = projectStore.projects.filter(p => p.status === 'done' && doneYear(p) === year && doneMonth(p) === month)
+    contents.value = { folders: projs.map(projFolder), files: [] }
     return
   }
 
@@ -1791,6 +1833,7 @@ function folderIconStyle(folder) {
   if (folder.type === 'personal') return { background: 'rgba(180,148,80,0.14)',  color: '#b49450' }
   if (folder.type === 'projects') return { background: 'rgba(123,127,178,0.13)', color: '#7b7fb2' }
   if (folder.type === 'trash')    return { background: 'rgba(220,80,80,0.1)',    color: '#c85a5a' }
+  if (folder.type === 'status')   { const c = STATUS_COLOR[folder.status] || '#7b7fb2'; return { background: c + '1f', color: c } }
   if (folder.type === 'year')     return { background: 'rgba(80,160,120,0.12)',  color: '#4a9a72' }
   if (folder.type === 'month')    return { background: 'rgba(80,130,200,0.11)',  color: '#5080c8' }
   if (folder.color) {
@@ -1807,6 +1850,7 @@ function folderListIcon(folder) {
   if (folder.type === 'personal') return PhUser
   if (folder.type === 'projects') return PhStack
   if (folder.type === 'trash')    return PhTrash
+  if (folder.type === 'status')   return STATUS_ICON[folder.status] || PhStack
   if (folder.type === 'year')     return PhCalendarBlank
   if (folder.type === 'month')    return PhCalendarDot
   if (folder.type === 'project')  return PhBrowser
@@ -1817,6 +1861,7 @@ function folderAccentColor(folder) {
   if (folder.type === 'personal') return '#967858'
   if (folder.type === 'projects') return '#6878a8'
   if (folder.type === 'trash')    return '#987070'
+  if (folder.type === 'status')   return STATUS_COLOR[folder.status] || '#8888a8'
   if (folder.type === 'year')     return '#508878'
   if (folder.type === 'month')    return '#5878a8'
   if (folder.color) return folder.color

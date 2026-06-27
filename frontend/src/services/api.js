@@ -257,9 +257,10 @@ export const agentApi = {
   getMessages:     (sessionId) => get(`/agent/sessions/${sessionId}/messages`),
   deleteSession:   (sessionId) => del(`/agent/sessions/${sessionId}`),
   clearMemory:     ()           => del('/agent/memory'),
-  uploadAttachment: (file) => {            // 聊天附件暂存，返回 { attach_id, name, ext, size, kind }
+  uploadAttachment: (file, voice = false) => {   // 聊天附件暂存，返回 { attach_id, name, ext, size, kind, duration }
     const form = new FormData()
     form.append('file', file)
+    if (voice) form.append('voice', 'true')      // 录音 → 语音条 + 30 天独立存储
     return upload('/agent/upload', form)
   },
 }

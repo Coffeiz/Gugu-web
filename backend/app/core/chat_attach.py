@@ -20,7 +20,8 @@ try:
 except Exception:
     pass
 
-TTL = 6 * 3600          # 暂存 6 小时
+TTL = 6 * 3600          # 普通附件暂存 6 小时
+TTL_VOICE = 30 * 24 * 3600   # 语音条独立留存 30 天（语音是对话内容，比临时附件留得久）
 _PREFIX = "chatfile:"
 MAX_TEXT_INJECT = 32000  # 注入给模型的文本上限（字符）
 
@@ -31,6 +32,16 @@ TEXT_EXTS = {
     "sql", "xml", "toml", "ini", "conf", "env", "tex",
 }
 IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic", "heif", "tiff", "tif"}
+# 音 / 视频理解（仅 mimo + openai 格式路支持，见 _media_understanding_enabled）。格式 / 上限照 mimo 文档。
+AUDIO_EXTS = {"mp3", "wav", "flac", "m4a", "ogg"}              # mimo 原生收，免转
+VIDEO_EXTS = {"mp4", "mov", "avi", "wmv"}
+# 非 mimo 原生的音频（IM 语音 / 浏览器录音常见）：算「音频」但要先转 mp3 才能喂 mimo（需服务器装 ffmpeg）
+TRANSCODE_AUDIO_EXTS = {"amr", "silk", "sil", "slk", "opus", "aac", "wma", "webm", "3gp", "3gpp"}
+MEDIA_RAW_MAX = 36 * 1024 * 1024   # 原始字节上限：base64 后约 <50MB（mimo base64 限制）
+_MEDIA_MIME = {
+    "mp3": "audio/mpeg", "wav": "audio/wav", "flac": "audio/flac", "m4a": "audio/mp4", "ogg": "audio/ogg",
+    "mp4": "video/mp4", "mov": "video/quicktime", "avi": "video/x-msvideo", "wmv": "video/x-ms-wmv",
+}
 
 # 能喂给 vision 模型的扩展名。png/jpeg/gif/webp 是 API 原生格式（达标即原样发）；
 # heic/bmp/tiff 等先经 Pillow 转码成 JPEG 再发（见 _fit_image_for_vision）。svg 是矢量、Pillow 不解，仍走文字提示。
@@ -52,6 +63,10 @@ def _kind(ext: str) -> str:
     e = (ext or "").lower()
     if e in IMAGE_EXTS:
         return "image"
+    if e in AUDIO_EXTS or e in TRANSCODE_AUDIO_EXTS:
+        return "audio"
+    if e in VIDEO_EXTS:
+        return "video"
     if e in TEXT_EXTS:
         return "text"
     from app.core import doctext
@@ -60,21 +75,41 @@ def _kind(ext: str) -> str:
     return "binary"
 
 
-async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes) -> dict:
-    """暂存一个上传文件，返回元数据（含 attach_id）。"""
+async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
+                *, kind: str | None = None, ttl: int = TTL,
+                subdir: str = ".chat_staging", extra: dict | None = None) -> dict:
+    """暂存一个上传文件，返回元数据（含 attach_id）。
+    语音条走 kind='voice' / ttl=TTL_VOICE / subdir='.voice'（见 stage_voice）。"""
     attach_id = uuid.uuid4().hex[:16]
     ext_l = (ext or "").lower()[:10]
-    storage_key = f"{user_id}/.chat_staging/{attach_id}.{ext_l or 'bin'}"
+    storage_key = f"{user_id}/{subdir}/{attach_id}.{ext_l or 'bin'}"
     await get_storage().put(storage_key, data, mime or "application/octet-stream")
     meta = {
         "attach_id": attach_id, "name": name, "ext": ext_l, "mime": mime or "",
-        "size": len(data), "storage_key": storage_key, "kind": _kind(ext_l),
+        "size": len(data), "storage_key": storage_key, "kind": kind or _kind(ext_l),
     }
-    await get_redis().set(_key(user_id, attach_id), json.dumps(meta, ensure_ascii=False), ex=TTL)
+    if extra:
+        meta.update(extra)
+    await get_redis().set(_key(user_id, attach_id), json.dumps(meta, ensure_ascii=False), ex=ttl)
     return meta
 
 
-def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes) -> dict:
+async def stage_voice(user_id, name: str, ext: str, mime: str | None, data: bytes,
+                      duration: float | None = None) -> dict:
+    """语音消息（IM 语音 / 网页录音）：独立 .voice/ 存储 + 30 天留存 + kind='voice' + 时长。"""
+    return await stage(user_id, name, ext, mime, data, kind="voice", ttl=TTL_VOICE,
+                       subdir=".voice", extra={"duration": duration} if duration is not None else None)
+
+
+def stage_voice_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
+                     duration: float | None = None) -> dict:
+    return stage_sync(user_id, name, ext, mime, data, kind="voice", ttl=TTL_VOICE,
+                      subdir=".voice", extra={"duration": duration} if duration is not None else None)
+
+
+def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
+               *, kind: str | None = None, ttl: int = TTL,
+               subdir: str = ".chat_staging", extra: dict | None = None) -> dict:
     """同步暂存（给 IM 网关用）。
 
     网关 handler 跑在一个**已运行的 asyncio loop** 里（lark SDK），所以不能在当前线程
@@ -87,7 +122,7 @@ def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes) -> d
     import uuid as _uuid
     attach_id = _uuid.uuid4().hex[:16]
     ext_l = (ext or "").lower()[:10]
-    storage_key = f"{user_id}/.chat_staging/{attach_id}.{ext_l or 'bin'}"
+    storage_key = f"{user_id}/{subdir}/{attach_id}.{ext_l or 'bin'}"
 
     def _put():
         asyncio.run(get_storage().put(storage_key, data, mime or "application/octet-stream"))
@@ -97,9 +132,11 @@ def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes) -> d
 
     meta = {
         "attach_id": attach_id, "name": name, "ext": ext_l, "mime": mime or "",
-        "size": len(data), "storage_key": storage_key, "kind": _kind(ext_l),
+        "size": len(data), "storage_key": storage_key, "kind": kind or _kind(ext_l),
     }
-    get_redis_sync().set(_key(user_id, attach_id), json.dumps(meta, ensure_ascii=False), ex=TTL)
+    if extra:
+        meta.update(extra)
+    get_redis_sync().set(_key(user_id, attach_id), json.dumps(meta, ensure_ascii=False), ex=ttl)
     return meta
 
 
@@ -169,6 +206,18 @@ def _vision_enabled() -> bool:
     try:
         from app.core.config import get_settings
         return bool(get_settings().ai.vision)
+    except Exception:
+        return False
+
+
+def _media_understanding_enabled() -> bool:
+    """音 / 视频理解是否可用：仅 **mimo + openai 格式路**。
+    `input_audio` / `video_url` 是 mimo 对 OpenAI 格式的扩展；mimo 走 anthropic 格式、或其它厂商都不支持。"""
+    try:
+        from app.core.config import get_settings
+        from agent.llm_select import _is_mimo, use_anthropic_for
+        ai = get_settings().ai
+        return _is_mimo(ai) and not use_anthropic_for(ai)
     except Exception:
         return False
 
@@ -263,16 +312,18 @@ def strip_vision_for_history(content):
     return out
 
 
-async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> tuple[str, list, list]:
+async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> tuple[str, list, list, list]:
     """把附件解析成：① 注入给模型的增广文本（文本读内容、图片/二进制给提示）
     ② 给前端气泡的附件卡片列表 ③ 图片块列表（仅 vision 模型，喂给模型「看」）。
     失效/过期的 attach_id 跳过。"""
     if not attach_ids:
-        return base_message, [], []
+        return base_message, [], [], []
     vision = _vision_enabled()
+    media_ok = _media_understanding_enabled()
     parts = [base_message] if base_message else []
     cards = []
     images: list = []   # [{media_type, b64}]，仅 vision 时填
+    media: list = []    # [{type:'audio'|'video', mime, b64}]，仅 mimo+openai 路时填
     for aid in attach_ids:
         meta = await get_meta(user_id, aid)
         if not meta:
@@ -280,6 +331,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> t
         cards.append({
             "attach_id": meta["attach_id"], "name": meta["name"], "ext": meta["ext"],
             "size_bytes": meta["size"], "kind": meta["kind"], "upload": True,
+            "duration": meta.get("duration"),   # 语音条用：前端显示时长 + 渲染成播放条
         })
         fname = f"{meta['name']}.{meta['ext']}" if meta["ext"] else meta["name"]
         tag = f"《{fname}》(attach_id={meta['attach_id']})"
@@ -305,25 +357,67 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> t
             why = "当前模型看不到图像内容" if not vision else "这张图没法直接看（格式不支持）"
             parts.append(f"\n\n📎 用户上传了图片{tag}。{why}；"
                          f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
+        elif meta["kind"] in ("audio", "video", "voice"):
+            is_voice = meta["kind"] == "voice"
+            is_video = meta["kind"] == "video"
+            noun = "语音" if is_voice else ("视频" if is_video else "音频")
+            ext = (meta.get("ext") or "").lower()
+            native = ext in (VIDEO_EXTS if is_video else AUDIO_EXTS)   # 语音转码后是 mp3，按音频判原生
+            # mimo+openai 路 + 是 mimo 原生格式 + 没超体积 → 真喂给模型听/看（base64）；否则退文字提示。
+            # 非原生（amr/silk/webm 等）应在入口已转成 mp3；走到这还非原生 = 转码没成（多半缺 ffmpeg）。
+            if media_ok and native and meta["size"] <= MEDIA_RAW_MAX:
+                try:
+                    import base64
+                    raw = await read_bytes(meta)
+                    mime = _MEDIA_MIME.get(ext, meta.get("mime") or "application/octet-stream")
+                    media.append({"type": "video" if is_video else "audio", "mime": mime,
+                                  "b64": base64.b64encode(raw).decode()})
+                    if is_voice:
+                        # 语音是「对话里说的话」，不是要存的文件——明确叫咕咕直接听内容回应，别问存不存。
+                        parts.append(f"\n\n🎤 用户给你发来一条语音{tag}（已随附）。请**直接听里面说了什么并自然回应**——"
+                                     f"这是对话内容，不是文件，别问「要不要保存」这类话。")
+                    else:
+                        parts.append(f"\n\n📎 用户上传了{noun}{tag}（已随附{noun}，你可直接听/看内容）；"
+                                     f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
+                    continue
+                except Exception:
+                    pass   # 读取/编码失败 → 退文字提示
+            if not media_ok:
+                why = f"当前模型不支持{noun}理解（需 mimo + openai 格式）"
+            elif not native:
+                why = f"这条{noun}是 {ext or '未知'} 格式、得先转成 mp3 才能听——服务器没装 ffmpeg 转不了（装上 ffmpeg 即可听内容）"
+            else:
+                why = f"这条{noun}太大（超过上限），没法直接听/看"
+            tail = "" if is_voice else "；若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。"
+            parts.append(f"\n\n📎 用户发来{noun}{tag}。{why}。{tail}")
         else:
             parts.append(f"\n\n📎 用户上传了文件{tag}，二进制内容读不了；"
                          f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
-    return "".join(parts), cards, images
+    return "".join(parts), cards, images, media
 
 
-def build_user_content(text: str, images: list, use_anthropic: bool):
-    """把增广文本 + 图片块拼成发给模型的 user content。
-    无图 → 纯字符串（与旧行为一致）；有图 → 内容块列表（按 provider 格式）。"""
-    if not images:
+def build_user_content(text: str, images: list, use_anthropic: bool, media: list | None = None):
+    """把增广文本 + 图片块（+ mimo 音视频块）拼成发给模型的 user content。
+    无图无媒体 → 纯字符串（与旧行为一致）；否则 → 内容块列表（按 provider 格式）。
+    `media`（音/视频）只走 openai 路（mimo 扩展块），anthropic 路忽略。"""
+    media = media or []
+    if not images and not media:
         return text
     if use_anthropic:
         parts = [{"type": "text", "text": text}] if text else []
         for im in images:
             parts.append({"type": "image", "source": {
                 "type": "base64", "media_type": im["media_type"], "data": im["b64"]}})
-        return parts
+        return parts   # anthropic 不支持 input_audio/video_url，忽略 media（resolve 也只在 openai 路填它）
     parts = [{"type": "text", "text": text}] if text else []
     for im in images:
         parts.append({"type": "image_url", "image_url": {
             "url": f"data:{im['media_type']};base64,{im['b64']}"}})
+    for m in media:
+        data_url = f"data:{m['mime']};base64,{m['b64']}"
+        if m["type"] == "audio":
+            parts.append({"type": "input_audio", "input_audio": {"data": data_url}})
+        else:  # video
+            parts.append({"type": "video_url", "video_url": {"url": data_url},
+                          "fps": 2, "media_resolution": "default"})
     return parts

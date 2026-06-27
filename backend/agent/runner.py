@@ -112,11 +112,23 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
-        aug_text, attach_cards, aug_images = await chat_attach.resolve_for_message(
+        aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
             user_id, getattr(req, "attachments", None) or [], req.message)
         db.add(ConversationMessage(session_id=session_id, role="user", content=req.message,
                                    files=attach_cards or None))
         await db.commit()
+
+    # 音/视频理解只有 mimo+openai 路支持（input_audio/video_url 是 mimo 的 OpenAI 扩展块）。
+    # 若 pool/router 这轮选的模型走 anthropic 路（如 MiniMax-M3）或非 mimo，它消费不了媒体块——
+    # build_user_content 会把音视频丢掉，咕咕只看到「用户上传了文件」的文字 → 当成文件处理。
+    # 带媒体的这轮强制切到 active 模型（mimo+openai），让咕咕真能听/看；active 也不行就维持原状（退文字提示）。
+    if aug_media:
+        from agent.llm_select import use_anthropic_for as _ua, _is_mimo as _im
+        if _ua(model_cfg) or not _im(model_cfg):
+            active = settings.ai
+            if _im(active) and not _ua(active):
+                _release_model(model_cfg)   # 释放 pool 选的原模型在途计数，避免泄漏
+                model_cfg = active
 
     # IM 来的用户消息：一存下就先推给网页（先看到「我发了什么」，咕咕回复生成完再推第二次），
     # 而不是等一轮结束把一来一回一起推。events 是局部变量（日历列表），用别名导模块。
@@ -158,7 +170,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         oa_messages = [{"role": "system", "content": system_prompt}]
         for h in history:
             oa_messages.append({"role": h.role, "content": h.content or ""})
-        oa_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, False)})
+        oa_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, False, media=aug_media)})
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
 
     try:

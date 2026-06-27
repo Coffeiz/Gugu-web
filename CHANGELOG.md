@@ -9,6 +9,48 @@
 
 ## [Unreleased]
 
+### mimo 音 / 视频理解适配（含模型池路由修复）
+
+让咕咕能真正「听 / 看」用户发的音视频（mimo 的 OpenAI 扩展块 `input_audio` / `video_url`）：
+
+- **多模态附件链路**（`chat_attach.py` / `agent/core.py` / `runner.py` / `web.py`）：音视频附件 base64 随消息喂给 mimo；`build_user_content` openai 路加 `input_audio` / `video_url` 块（anthropic 路不支持、忽略）。mimo 默认思考模式会返回空正文，两套 API 均显式传 `thinking: disabled`。
+- **IM 语音转码**（`media_transcode.py`）：QQ 语音是 SILK（`pilk` 解码）、其它 IM 多是 opus/amr → `ffmpeg` 转 mp3 再喂 mimo；缺 `ffmpeg`/`pilk` 优雅降级退文字提示。**部署需装 `ffmpeg`**（`deploy.md` 已补）+ `pilk`（`requirements.txt`）。
+- **修：音视频被模型池静默打掉**（`runner.py`）：IM 经 `pick_model` 可能路由到非 mimo 模型（如 MiniMax-M3，走 anthropic 路），媒体块被 `build_user_content` 丢掉，咕咕只当成文件回「收到 mp3」。改为**带音视频的这轮强制切到 active mimo+openai 模型**，保证发得出去。
+- **修：空附件早返回 tuple 元数太少**（`chat_attach.resolve_for_message`）：早返回原是 3-tuple、调用方已改 4-tuple 解包 → 无附件消息会崩。统一 4-tuple。
+
+### 语音消息做成「语音条」+ 30 天独立存储 + 「让我听听」语气
+
+QQ 语音 / 网页录音不再当文件卡，做成可播放的语音条：
+
+- **语音条 UI**（`GuguChat.vue`）：`msg.files` 里 `kind==='voice'` 渲染成播放钮 + 装饰波形 + 时长；点击带 Bearer 拉 `download` 端点 blob 播放（`<audio src>` 不带 token）。
+- **独立 30 天存储**（`chat_attach.py`）：语音走 `stage_voice()` → 独立 `.voice/` 目录、留存 30 天（普通附件仍 6h `.chat_staging/`）、带时长（`ffprobe` 探测）。过期点播放 → 提示「语音过期啦」。
+- **「直接听内容回应」语气**（`resolve_for_message`）：语音分支提示词改成「这是对话不是文件，直接听内容并回应，别问要不要存」，去掉 `save_uploaded_file` 话术。
+- **入口标记**：QQ 语音（silk/amr 转码成功＝语音）→ `stage_voice`；网页录音上传带 `voice=true`；拖入的音频文件仍当文件。
+
+### 项目待办：拖拽排序
+
+项目卡待办弹窗 + 项目编辑卡阶段待办，每条左侧加拖拽手柄（六点 grip，平时半隐、悬停浮现），原生 HTML5 drag 重排 → 落库（`persistTodos` / `saveStages`）。手柄独立于输入框：点字照常编辑、拖手柄才排序；编辑卡内限**同阶段**重排。`ProjectCard.vue` / `ProjectModal.vue`。
+
+### 日历：已完成项目统一淡化
+
+日历各处（月视图 chip / 跨天项目条 / 当天日程 / 近期节点 / 「+N 更多」弹层）的已完成项目统一加 `cal-done` 淡化（opacity 0.45、hover 回 0.7），退到背景、不抢眼；只淡化项目，用户活动事件不受影响。`Calendar/index.vue`。
+
+### 后台分析：DAU 改 WAU，纳入 IM 活跃
+
+活跃指标从「今日活跃（DAU）」改为「周活跃（WAU）」：过去 7 天「对话过（`AgentUsage`，网页 + IM 都记）∪ 登录过网页（`last_active_at`）」按 user_id 去重。修原 DAU 只看 `last_active_at`（仅带 token 的网页请求更新）、漏掉**纯用 IM 不登网页**用户的问题。`admin_analytics.py` / `Admin/Analytics/index.vue`。
+
+### 文件库：项目文件按状态分组（已完成按完成日期归档）
+
+文件库「项目文件」从「按 startDate 年/月归档所有项目」改为**先按项目状态分组**（待开始 / 进行中 / 已完成，看板顺序、空组隐藏）；纯前端（`Files/index.vue`）：
+- 待开始 / 进行中 → 直接平铺该状态项目；
+- 已完成 → 按**完成日期 `doneAt`** 归档为 年 / 月 / 项目（与项目面板一致）；
+- 三态文件夹配状态色 + 图标（待开始灰·时钟 / 进行中蓝·播放 / 已完成绿·对勾）；
+- 面包屑、全局搜索跳文件均按状态重建路径。
+
+### 日历提醒：要提醒就建一次性定时任务（治「空口承诺提醒」）
+
+日历事件本身不会主动提醒，咕咕却常按常识空口承诺「会提前 X 分钟通知」而不真设。`skills.md` 加规则：要提醒必须 `create_event` 后再 `create_scheduled_task` 建 `@once` 一次性提醒（事件时间减提前量、`channels` 默认 web），并加**铁规则「没真建成定时任务就别说会提醒」**。
+
 ### 隐私：决策轨迹脱敏（数据最小化）
 
 后台「决策轨迹」原本能看任意用户会话的完整对话原文 + 工具内容 + 文件——改为**脱敏保留**：只暴露决策结构、不暴露用户内容，脱敏全在后端做（数据不出后端）。

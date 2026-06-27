@@ -106,7 +106,21 @@ async def _ingest_qq_media(message: C2CMessage, owner: str) -> list:
                         print(f"[qq] 下载附件失败 status={resp.status}", flush=True)
                         continue
                     data = await resp.read()
-                meta = await chat_attach.stage(owner, name, ext, mime, data)
+                # 语音/音频：QQ 语音是 SILK 等 mimo 不支持的编码 → 转成 mp3 再暂存，
+                # 这样 resolve_for_message 才会按音频喂给模型听（缺 ffmpeg/pilk 则原样、退文字提示）。
+                # QQ 语音原编码就是 silk/amr，转码成功＝这是一条「语音消息」→ 渲染成语音条 + 30 天独立存储。
+                is_voice = False
+                from app.core import media_transcode
+                if ext not in ("mp3", "wav", "flac", "m4a", "ogg"):
+                    conv = media_transcode.to_mimo_mp3(data, ext, mime)
+                    if conv is not None:
+                        data, ext, mime, name = conv, "mp3", "audio/mpeg", (name or "语音")
+                        is_voice = True
+                if is_voice:
+                    dur = media_transcode.probe_duration(data, ext)
+                    meta = await chat_attach.stage_voice(owner, name, ext, mime, data, duration=dur)
+                else:
+                    meta = await chat_attach.stage(owner, name, ext, mime, data)
                 out.append(meta["attach_id"])
             except Exception as e:
                 print(f"[qq] 暂存附件出错: {type(e).__name__}: {e}", flush=True)

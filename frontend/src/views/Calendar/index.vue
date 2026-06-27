@@ -68,7 +68,7 @@
                   <div
                     v-for="ev in lay.visibleChips" :key="ev.id"
                     class="event-chip cal-chip"
-                    :class="{ 'chip-proj': ev.isProject, 'chip-ev-click': ev.isUserEvent }"
+                    :class="{ 'chip-proj': ev.isProject, 'chip-ev-click': ev.isUserEvent, 'cal-done': ev.isProject && ev.status === 'done' }"
                     :style="{ background: ev.accent + '28', color: darkenHex(ev.accent), borderColor: ev.accent + '70', cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
                     @click.left.stop="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event, true))"
                     @contextmenu.prevent.stop="ev.isUserEvent && openEditForm(ev, $event, true)"
@@ -93,7 +93,7 @@
               <template v-for="bar in weekBarsCapped(week, wi).bars" :key="bar.id">
                 <div
                   class="project-bar cal-chip"
-                  :class="{ 'bar-start': bar.startsHere, 'bar-end': bar.endsHere, 'bar-dragging': drag.active && drag.item?.id === bar.id, 'bar-hovered': hoveredBarId === bar.id }"
+                  :class="{ 'bar-start': bar.startsHere, 'bar-end': bar.endsHere, 'bar-dragging': drag.active && drag.item?.id === bar.id, 'bar-hovered': hoveredBarId === bar.id, 'cal-done': bar.status === 'done' }"
                   :data-bar-id="bar.id"
                   @mouseenter="hoveredBarId = bar.id"
                   @mouseleave="hoveredBarId = null"
@@ -138,6 +138,7 @@
 
         <div v-if="selectedEvents.length" class="sidebar-events">
           <div v-for="ev in selectedEvents" :key="ev.id" class="sidebar-ev"
+               :class="{ 'cal-done': ev.isProject && ev.status === 'done' }"
                :data-event-id="ev.id"
                :style="{ cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
                @click.left="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event))"
@@ -178,7 +179,7 @@
 
         <div class="sidebar-section-title">近期节点</div>
         <div v-for="ev in upcomingList" :key="ev.id" class="upcoming-item cap-row"
-             :class="{ 'upcoming-proj': ev.isProject, 'upcoming-ev': ev.isUserEvent }"
+             :class="{ 'upcoming-proj': ev.isProject, 'upcoming-ev': ev.isUserEvent, 'cal-done': ev.isProject && ev.status === 'done' }"
              :style="{ cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
              @click.left="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event))"
              @contextmenu.prevent="ev.isUserEvent && openEditForm(ev, $event)"
@@ -205,7 +206,7 @@
           <div
             v-for="item in morePopup.items" :key="item.id"
             class="overflow-item cal-chip"
-            :class="{ 'overflow-clickable': item.isProject || item.isUserEvent }"
+            :class="{ 'overflow-clickable': item.isProject || item.isUserEvent, 'cal-done': item.isProject && item.status === 'done' }"
             :style="{ background: item.isProject ? capBg(item.accent, item.progress) : item.accent + '28', borderColor: item.accent + '70', color: darkenHex(item.accent), cursor: (item.isProject || item.isUserEvent) ? 'grab' : 'default' }"
             @click.stop="item.isProject ? (morePopup.open = false, showEditForm = false, openProject(item)) : (item.isUserEvent && openEditForm(item, $event, true))"
             @mousedown.stop="(item.isProject || item.isUserEvent) && startMoreItemDrag(item, $event)"
@@ -839,6 +840,7 @@ const TYPE_ACCENT = {
 
 function normalizeEvent(e) {
   return {
+    _uid:        e._uid ?? ('e' + e.id),   // 稳定客户端标识：本地增删改按它匹配，不受临时→真 id 替换影响
     id:          e.id,
     date:        e.date,
     name:        e.title,
@@ -1146,7 +1148,7 @@ function openAddForm() {
 
 function openEditForm(ev, nativeEv, useMousePos = false) {
   showAddForm.value = false
-  editingEvent.value = { id: ev.id, name: ev.name, date: ev.date, description: ev.description || '' }
+  editingEvent.value = { _uid: ev._uid, id: ev.id, name: ev.name, date: ev.date, description: ev.description || '' }
   const w = 240
   const EDIT_H = 220
   let left, top
@@ -1240,12 +1242,21 @@ watch(monthWeeks, () => nextTick(setupRO))
 watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 
 async function deleteEvent(ev) {
-  extraEvents.value     = extraEvents.value.filter(e => e.id !== ev.id)
-  nextMonthEvents.value = nextMonthEvents.value.filter(e => e.id !== ev.id)
+  // ① 按稳定 _uid 匹配（旧数据/无 _uid 时退回宽松 id 比较）——临时→真 id 替换后也能删对那份，
+  //    杜绝「服务器删成功了、视图里那份却因 id 形态对不上而没删掉」。
+  const match = (e) => (ev._uid != null ? e._uid === ev._uid : String(e.id) === String(ev.id))
+  extraEvents.value     = extraEvents.value.filter(e => !match(e))
+  nextMonthEvents.value = nextMonthEvents.value.filter(e => !match(e))
   buildUpcomingList()
   const key = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   eventsCache[key] = extraEvents.value
-  try { await eventsApi.delete(ev.id) } catch { }
+  try {
+    await eventsApi.delete(ev.id)
+  } catch { /* 已删/网络等 → 下面对账兜底，不再静默留下脏状态 */ }
+  finally {
+    // ③ 与服务器对账：不管成功/404 都按最新刷一次，杜绝「删了还在 / 删了又回来 / 再删报错」
+    fetchEvents(); fetchNextMonthEvents()
+  }
 }
 
 async function deleteEventFromEdit() {
@@ -1258,8 +1269,10 @@ async function deleteEventFromEdit() {
 async function saveEvent() {
   if (!newEvent.value.name) return
   const date = newEvent.value.date || selectedDate.value
+  const uid = 'u' + Date.now()
   const localItem = {
-    id:          'u' + Date.now(),
+    _uid:        uid,
+    id:          uid,                    // 临时 id；create 回来换成真数字 id，但 _uid 不变
     date,
     name:        newEvent.value.name,
     client:      '',
@@ -1276,8 +1289,8 @@ async function saveEvent() {
   const cacheKey = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   try {
     const created = await eventsApi.create({ title: localItem.name, date, type: 'event', description: localItem.description || undefined })
-    const norm = normalizeEvent(created)
-    const idx = extraEvents.value.findIndex(e => e.id === localItem.id)
+    const norm = { ...normalizeEvent(created), _uid: uid }   // 保留同一 _uid，删/改才能稳定匹配
+    const idx = extraEvents.value.findIndex(e => e._uid === uid)
     if (idx !== -1) extraEvents.value[idx] = norm
   } catch { }
   eventsCache[cacheKey] = [...extraEvents.value]
@@ -1285,6 +1298,10 @@ async function saveEvent() {
 </script>
 
 <style scoped>
+/* 已完成项目：日历各处（chip / 项目条 / 侧边栏 / 近期节点 / 更多弹层）统一淡化 */
+.cal-done { opacity: 0.45; }
+.cal-done:hover { opacity: 0.7; }   /* 悬停略恢复，方便看清要操作的那条 */
+
 .cal-page { display: flex; flex-direction: column; gap: 14px; height: 100%; }
 .cal-toolbar { display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; }
 .toolbar-left { display: flex; align-items: center; gap: 4px; }

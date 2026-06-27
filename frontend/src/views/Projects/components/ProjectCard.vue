@@ -131,7 +131,9 @@
         <button class="popup-close-btn" @click="closeStagePop" title="关闭"><PhX :size="11" weight="bold" /></button>
       </div>
       <div v-if="curTodoTotal" class="tp-list">
-        <div v-for="t in currentTodos" :key="t.id" class="tp-item">
+        <div v-for="(t, i) in currentTodos" :key="t.id" class="tp-item"
+             @dragover.prevent @drop="tpDrop(i)">
+          <span class="tp-drag" draggable="true" @dragstart="tpDragIdx = i" @dragend="tpDragIdx = null" title="拖拽排序"><PhDotsSixVertical :size="11" weight="bold" /></span>
           <button class="tp-check" :class="{ checked: t.done }" @click="toggleTodo(t)">
             <PhCheck v-if="t.done" :size="9" weight="bold" />
           </button>
@@ -159,7 +161,7 @@ import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
 import { fireHint } from '@/composables/useOnboarding'
-import { PhCheck, PhX } from '@phosphor-icons/vue'
+import { PhCheck, PhX, PhDotsSixVertical } from '@phosphor-icons/vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
 
@@ -273,6 +275,19 @@ function onDocDown(e) {
 function onKey(e) { if (e.key === 'Escape') closeStagePop() }
 
 function persistTodos() { projectStore.updateStages(props.project.id, props.project.stages) }
+
+// 待办拖拽排序（当前阶段内）
+const tpDragIdx = ref(null)
+function tpDrop(to) {
+  const from = tpDragIdx.value
+  tpDragIdx.value = null
+  if (from == null || from === to) return
+  const arr = currentStage.value?.todos
+  if (!arr) return
+  const [moved] = arr.splice(from, 1)
+  arr.splice(to, 0, moved)
+  persistTodos()
+}
 function toggleTodo(t) {
   t.done = !t.done; t.autoCompleted = false
   // 勾完当前阶段最后一个待办 → 自动进入下一阶段（与项目编辑卡一致；空阶段 / 最后阶段不动）
@@ -547,6 +562,9 @@ async function setPriority(n) {
 .tp-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.14); border-radius: 99px; }
 .tp-item { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 8px; }
 .tp-item:hover { background: rgba(0,0,0,0.04); }
+.tp-drag { display: flex; align-items: center; flex-shrink: 0; cursor: grab; color: var(--text-secondary); opacity: 0.28; transition: opacity 0.12s; }
+.tp-item:hover .tp-drag { opacity: 0.5; }
+.tp-drag:active { cursor: grabbing; }
 .tp-check {
   width: 15px; height: 15px; border-radius: 5px; flex-shrink: 0;
   border: 1.5px solid rgba(0,0,0,0.22); background: none; color: #fff;

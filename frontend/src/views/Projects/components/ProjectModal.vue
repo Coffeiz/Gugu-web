@@ -119,7 +119,9 @@
                 </div>
                 <!-- 待办列表 -->
                 <div class="todo-list">
-                  <div v-for="todo in (stage.todos ?? [])" :key="todo.id" class="todo-item">
+                  <div v-for="(todo, ti) in (stage.todos ?? [])" :key="todo.id" class="todo-item"
+                       @dragover.prevent @drop="todoDrop(stage, ti)">
+                    <span class="todo-drag" draggable="true" @dragstart="todoDrag = { stageKey: stage.key, index: ti }" @dragend="todoDrag = null" title="拖拽排序"><PhDotsSixVertical :size="11" weight="bold" /></span>
                     <button class="todo-check" :class="{ checked: todo.done }" @click.stop="toggleTodo(todo)">
                       <PhCheck v-if="todo.done" :size="9" weight="bold" />
                     </button>
@@ -692,7 +694,7 @@ import {
   PhFolder, PhArrowLeft, PhArrowRight, PhCaretLeft, PhCaretRight, PhCaretDown, PhSortAscending, PhSquaresFour, PhList,
   PhCheckSquare, PhFolderPlus, PhUploadSimple, PhPencilSimple,
   PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX, PhCheck,
-  PhInfo, PhWarningCircle, PhDotsThree, PhTrash,
+  PhInfo, PhWarningCircle, PhDotsThree, PhTrash, PhDotsSixVertical,
 } from '@phosphor-icons/vue'
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
@@ -1631,6 +1633,19 @@ function saveStages() {
   editingStage.value = null
   projectStore.updateStages(props.project.id, localStages.value)
 }
+
+// 待办拖拽排序（仅同一阶段内）
+const todoDrag = ref(null)
+function todoDrop(stage, to) {
+  const d = todoDrag.value
+  todoDrag.value = null
+  if (!d || d.stageKey !== stage.key || d.index === to) return
+  const arr = stage.todos
+  if (!arr) return
+  const [moved] = arr.splice(d.index, 1)
+  arr.splice(to, 0, moved)
+  saveStages()
+}
 function addStage() {
   const key = `stage_${Date.now()}`
   localStages.value.push({ key, label: '新阶段' })
@@ -2222,6 +2237,9 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .stage-node:last-child .todo-list { background-image: none; }
 .todo-item { display: flex; align-items: center; gap: 6px; height: 24px; }
 .todo-item + .todo-item { border-top: 1px solid rgba(0,0,0,0.05); }
+.todo-drag { display: flex; align-items: center; flex-shrink: 0; cursor: grab; color: var(--text-secondary); opacity: 0.28; transition: opacity 0.12s; }
+.todo-item:hover .todo-drag { opacity: 0.5; }
+.todo-drag:active { cursor: grabbing; }
 .todo-check {
   width: 15px; height: 15px; border-radius: 4px; flex-shrink: 0;
   border: 1.5px solid rgba(0,0,0,0.18); background: rgba(255,255,255,0.7);

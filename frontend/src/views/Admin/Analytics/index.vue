@@ -103,8 +103,8 @@
         </div>
         <div class="card">
           <div class="card-icon ic-blue"><PhPulse :size="16" weight="bold"/></div>
-          <div class="card-val">{{ data.users.dau }}<span class="card-unit"> 人</span></div>
-          <div class="card-lbl">今日活跃（DAU）</div>
+          <div class="card-val">{{ data.users.wau }}<span class="card-unit"> 人</span></div>
+          <div class="card-lbl">周活跃（WAU）</div>
           <div class="card-sub">30 天活跃 {{ data.users.active_30d }} 人</div>
         </div>
         <div class="card">
@@ -375,8 +375,6 @@ const funnelSteps = computed(() => {
     { key: 'registered',        label: '注册',       value: f.registered },
     { key: 'created_project',   label: '创建项目',   value: f.created_project },
     { key: 'completed_project', label: '完成项目',   value: f.completed_project },
-    { key: 'used_agent',        label: '使用 Agent', value: f.used_agent },
-    { key: 'connected_im',      label: '接入 IM',    value: f.connected_im },
   ]
 })
 

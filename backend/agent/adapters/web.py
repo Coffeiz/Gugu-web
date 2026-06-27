@@ -172,7 +172,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         history = tokens.select_history(hist_res.scalars().all(), token_budget=settings.ai.context_tokens)
 
         # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化
-        aug_text, attach_cards, aug_images = await chat_attach.resolve_for_message(user_id, req.attachments, req.message)
+        aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(user_id, req.attachments, req.message)
         db.add(ConversationMessage(session_id=session.id, role="user", content=req.message,
                                    files=attach_cards or None))
         await db.commit()
@@ -200,7 +200,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     if not await genstream.is_active(session_id):
         task = asyncio.create_task(_generate(
             req, session_id, projects, events, files_overview, history, is_new_session, aug_text, aug_images,
-            style_prefs=style_prefs,
+            style_prefs=style_prefs, user_media=aug_media,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -233,7 +233,7 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
 
 
 async def _generate(req, session_id, projects, events, files_overview, history, is_new_session,
-                    user_content=None, user_images=None, style_prefs=None) -> None:
+                    user_content=None, user_images=None, style_prefs=None, user_media=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -243,6 +243,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
     user_id = req.user_id
     user_content = user_content if user_content is not None else req.message
     user_images = user_images or []
+    user_media = user_media or []
     settings = get_settings()
     profile = DefaultProfile()
     import app.db.session as _sess
@@ -304,7 +305,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
             oa_messages = [{"role": "system", "content": system_prompt}]
             for h in history:
                 oa_messages.append({"role": h.role, "content": h.content or ""})
-            oa_messages.append({"role": "user", "content": chat_attach.build_user_content(user_content, user_images, False)})
+            oa_messages.append({"role": "user", "content": chat_attach.build_user_content(user_content, user_images, False, media=user_media)})
             gen = runner.run(user_id, None, oa_messages, use_anthropic=False)
 
         # 跨轮去重（流式版的 _collect 去重）：MiniMax 多轮工具调用常把上一轮文本整段重述，
