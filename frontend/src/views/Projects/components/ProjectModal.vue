@@ -1655,16 +1655,20 @@ function saveTodos() {
   const newProgress = calcProgress(localStages.value, localCurrentStage.value)
   stageProgress.value = newProgress
   const lastKey = localStages.value[localStages.value.length - 1]?.key
-  const isLastFull = localCurrentStage.value === lastKey && newProgress === 100
-  if (isLastFull && props.project.status !== 'done') {
-    // 最后阶段勾完所有待办 → 自动完成
-    projectStore.updateProject(props.project.id, { stages: JSON.parse(JSON.stringify(localStages.value)), progress: newProgress })
+  // 真正「完成」= 在最后阶段 + **所有阶段的全部待办都已勾选**（真正 100%）。
+  // 只看当前阶段进度（calcProgress）会漏掉「取消了前面阶段某条待办」→ 当前阶段仍满、项目却赖在已完成。
+  const allTodosDone = localStages.value.every(s => (s.todos ?? []).every(t => t.done))
+  const fullyComplete = localCurrentStage.value === lastKey && newProgress === 100 && allTodosDone
+  const snapshot = () => JSON.parse(JSON.stringify(localStages.value))
+  if (fullyComplete && props.project.status !== 'done') {
+    // 到最后阶段且全部待办勾完 → 自动完成
+    projectStore.updateProject(props.project.id, { stages: snapshot(), progress: newProgress })
     projectStore.moveProject(props.project.id, 'done')
-  } else if (!isLastFull && props.project.status === 'done') {
-    // 取消待办导致进度不满 → 从已完成回退到进行中（不触发 moveProject 的阶段还原逻辑）
-    projectStore.updateProject(props.project.id, { stages: JSON.parse(JSON.stringify(localStages.value)), progress: newProgress, status: 'active', doneAt: null })
+  } else if (!fullyComplete && props.project.status === 'done') {
+    // 取消了任意阶段的待办、不再 100% → 退出已完成、退回进行中（禁止非满项目留在已完成）
+    projectStore.updateProject(props.project.id, { stages: snapshot(), progress: newProgress, status: 'active', doneAt: null })
   } else {
-    projectStore.updateProject(props.project.id, { stages: JSON.parse(JSON.stringify(localStages.value)), progress: newProgress })
+    projectStore.updateProject(props.project.id, { stages: snapshot(), progress: newProgress })
   }
 }
 function addTodo(stage) {
@@ -1762,11 +1766,10 @@ function commitStageDrag() {
   const { fromIdx, overIdx } = stageDrag
   if (fromIdx < 0 || fromIdx === overIdx) return
   const stages = JSON.parse(JSON.stringify(localStages.value))
-  // 只移动标签，todos/key/当前阶段状态保持不变
-  const labels = stages.map(s => s.label)
-  const [movedLabel] = labels.splice(fromIdx, 1)
-  labels.splice(Math.max(0, Math.min(overIdx, labels.length)), 0, movedLabel)
-  stages.forEach((s, i) => { s.label = labels[i] })
+  // 整个阶段对象（label + todos + key）一起搬，和预览 displayStages 一致。
+  // key 是稳定身份不随位置变；当前阶段按 key 跟随移动后的阶段（updateStages 不重排 key）。
+  const [moved] = stages.splice(fromIdx, 1)
+  stages.splice(Math.max(0, Math.min(overIdx, stages.length)), 0, moved)
   localStages.value = stages
   saveStages()
 }
