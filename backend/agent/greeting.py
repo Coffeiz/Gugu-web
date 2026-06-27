@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import CalendarEvent, Project
+from app.models import CalendarEvent, ConversationMessage, ConversationSession, Project
 from agent.memory import store as mem_store
 
 logger = logging.getLogger("agent.greeting")
@@ -22,14 +22,44 @@ _PROMPT = (
     "- **别罗列功能清单**（项目 / 文件 / 日历这种名词菜单）。\n"
     "- 暖、像朋友、可以一点点俏皮但真诚；**表情极简**，能不用就不用。\n"
     "- 2~3 句，结尾把话交回他（想做点啥、想理清啥、随便聊聊都行）。\n"
+    "- **据下面「上次和你说话」定口吻**：若就在最近（几小时内 / 今天 / 昨天），**绝不要说「好久不见 / 好久没见 / 这阵子忙啥 / 最近怎么样」这类久别重逢的话**——就自然接上、像刚才还在聊；只有确实隔了好些天，才适合久别重逢的语气。没有聊天记录就给个轻松招呼，也别说好久不见。\n"
     "- 若下面有近期上下文，自然带一句（最近在忙的项目、快到的提醒等），**别硬塞、别像念清单**；没有就给一句通用暖招呼。\n"
     "{ctx}"
     "直接输出招呼本身，不要任何解释或引号。"
 )
 
 
+async def _last_seen_part(db: AsyncSession, user_id) -> str:
+    """「上次和你说话是多久前」——用最近一条对话消息的时间算。喂给模型定问候口吻
+    （刚聊过别说『好久不见』）。"""
+    try:
+        last = (await db.execute(
+            select(ConversationMessage.created_at)
+            .join(ConversationSession, ConversationSession.id == ConversationMessage.session_id)
+            .where(ConversationSession.user_id == user_id)
+            .order_by(ConversationMessage.created_at.desc()).limit(1))).scalar()
+    except Exception:
+        return ""
+    if last is None:
+        return "【上次和你说话】没有聊天记录（第一次或很久没来）——别说「好久不见」，给个轻松招呼即可。"
+    mins = max(0.0, (datetime.utcnow() - last).total_seconds() / 60)
+    if mins < 60:
+        when = f"就在不久前（约 {int(mins)} 分钟前）——刚聊过，千万别说「好久不见」，自然接上"
+    elif mins < 60 * 12:
+        when = f"今天早些时候（约 {int(mins // 60)} 小时前）——别说「好久不见」"
+    elif mins < 60 * 24 * 2:
+        when = f"约 {int(mins // 60)} 小时前（昨天左右）——别用久别重逢的语气"
+    else:
+        when = f"{int(mins // (60 * 24))} 天前——隔了好些天，可以用久别重逢的语气"
+    return "【上次和你说话】" + when
+
+
 async def _recent_context(db: AsyncSession, user_id) -> str:
     parts: list[str] = []
+    # 上次互动时间（定问候口吻：刚聊过别说「好久不见」）——放最前，最显眼
+    seen = await _last_seen_part(db, user_id)
+    if seen:
+        parts.append(seen)
     # 长期 fact + 近 7 天 daily
     try:
         mem = await mem_store.read_memory(user_id)
