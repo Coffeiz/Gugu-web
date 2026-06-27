@@ -505,6 +505,7 @@ ss -ltnp | grep :8000 || echo "8000 已空闲"
 
 > ⚠️ 进程已被 systemd 托管时**别用 `pkill`**——杀了会被 `Restart` 立刻拉起、看着像「关不掉」，用 `systemctl stop/restart`。
 > ⚠️ 改了 `agent/` 大脑代码要重启的是 **worker**，不是 backend（见 §2.7 注）。
+> ⚠️ **生产别用 `make start/stop/restart` 控制 backend**：生产的 web 是 systemd `gugu-backend.service` 在跑，而 `make start/stop` 管的是 Makefile 另起的「手动 uvicorn」——两者不是同一个进程。曾出现 `make stop` 报「未运行」但 `systemctl status` 显示服务正跑的迷惑现象，还可能两份一起起来抢 8000 端口。**生产一律 `systemctl`，`make` 留给开发机。**
 
 ## 6. 更新部署
 
@@ -549,6 +550,45 @@ systemctl restart gugu-worker                # 改了 agent/ 大脑代码
 ```
 
 > **更稳的做法**：生产配一次 git deploy key（见 §3.4.1），以后更新就 `git pull` + 重启——git 只动跟踪文件，`.env`/`.venv`/`uploads` 都 gitignore、永不被碰，天然无「覆盖状态」风险，省去每次手动排除。
+>
+> ⚠️ 但 `git reset --hard` / `git clean -fdx` / 重新解压 zip **会**冲掉这些 gitignore 的状态文件（`.venv` 被删 → 服务 `203/EXEC`；`.env`/`config.override.json` 被删 → DB 密码丢、`password authentication failed for user "pm"`）。**任何代码刷新后，启动/迁移前先确认三样都在**：`.venv` 能跑（`.venv/bin/python -V`）、`.env` + `config.override.json` 里 DB 密码正确。缺了先补（重建 venv 见 §2.2，恢复 DB 密码见 §2.3/§2.4），再 migrate / 启动。
+>
+> ⚠️ **重建 `.env` 时务必沿用原来的 `SECRET_KEY`,别重新生成。** `SECRET_KEY` 一变,**所有已签发的登录 token 立刻失效** → 部署后用户访问任何需登录的接口都 `401`，前端表现为「数据页全部加载失败 / summary 401」。这不是数据/权限 bug，**重新登录即恢复**（旧 token 用旧 key 签的，新 key 验不过）。根治:`SECRET_KEY` 当成长期不变的密钥存在 `.env` 里，跨部署保持同一个值；每次部署重新随机生成 = 每次把全员登出。有旧值备份就填回旧值，连用户重登都省了。
+
+### 6.2 迁移报「列已存在」/ alembic 与 create_all 不同步的恢复（生产实战）
+
+**症状**：生产 `make migrate`（`alembic upgrade head`）**从 base 从头重放**、第一条迁移就炸：
+`asyncpg.exceptions.DuplicateColumnError: column "description" of relation "calendar_events" already exists`。
+
+**成因**：生产库的表结构是后端启动时 **`create_all` 按当前模型直接建的**，而 `alembic_version` 表是空的 / 从没 stamp 过 → alembic 以为一条都没迁，从头重放每一条，撞上 `create_all` 早就建好的列。凡是用**非幂等** `op.add_column` 写的老迁移（如 `add_description`），一撞即死。**这跟 DB 里有没有数据无关，数据是好的，纯粹是版本表没记账。**
+
+**恢复（不丢数据，绝不从头重放）**：
+
+1. **先盖章、让 alembic 停止重放**——`stamp` 只写版本号、不动任何表：
+   ```bash
+   .venv/bin/alembic stamp head        # 认定「库已是最新」，跳过全部重放
+   # 想更精细：stamp 到「上次部署那版代码」的 alembic head，再 upgrade head 只补其后的新迁移
+   #   git ls-tree -r --name-only <上次部署的commit> -- backend/alembic/versions | sort | tail
+   #   取最新那个文件里的 revision = <OLD_HEAD>，再 alembic stamp <OLD_HEAD> && alembic upgrade head
+   ```
+2. **`stamp head` 会连本次真正该跑的新迁移一起跳过** → 它们加的「新列 / 新表」可能没建，得手动补。本项目新迁移都写成**幂等**（`IF NOT EXISTS`），**直接在生产库跑零风险**（已存在跳过）：
+   - **新表**（如 `onboarding_state`）：后端启动 `create_all` 会自动建；或手动 `CREATE TABLE IF NOT EXISTS ...`（从迁移文件抄）。
+   - **给已有表加的新列**（⚠️ `create_all` 不补列！只能手动）：`ALTER TABLE 表 ADD COLUMN IF NOT EXISTS 列 ...`，DDL 从对应迁移文件抄。例：本次 `site_notifications` 的 `bubble`/`persist`/`bubble_expire_at`。
+   - **删废弃列的迁移**（⚠️ 订正：**不是「非必需」，很多时候必须删**）：新代码从模型里删掉某字段后，INSERT 就不再带它；如果旧库里那列是 **`NOT NULL` 且没有 DB 默认值**（典型:列的默认是 ORM 在 Python 侧给的，删字段后没人给了），新代码每次 INSERT 都会 `NotNullViolationError`、整个建项目/建任务直接崩。**这种废弃列必须删**（就是 `DROP COLUMN IF EXISTS`，新代码本就不用它、数据已弃用）。本次实战:`projects.notes`、`scheduled_tasks.action_type` 没删 → `create_project` 一直 `null value in column "notes" violates not-null constraint`。删了才好。
+3. **全量核对（强烈推荐）**：手动补/删难免漏。用 `alembic revision --autogenerate` 把**当前模型 vs 实际库**的所有差异一次性扫出来——**只读库、不改库，只生成一个文件当对照清单**：
+   ```bash
+   .venv/bin/alembic revision --autogenerate -m schema_audit
+   sed -n '/def upgrade/,/^def downgrade/p' alembic/versions/*_schema_audit.py   # 看 upgrade() 里的 op.*
+   rm alembic/versions/*_schema_audit.py    # ⚠️ 看完务必删：它是 head 之上的游离迁移，留着会被后续 upgrade 整份应用
+   ```
+   - `upgrade()` 只有 `pass` → 库已和模型完全一致，收工。
+   - 有 `op.add_column`/`op.create_table` → 真要补；`op.drop_column`（NOT NULL 无默认那种）→ 真要删；`op.alter_column`（类型/server_default/索引命名）→ **多为假阳性噪音，逐条看、别整份 apply**。
+   - 挑出真要动的，写成幂等 DDL 在库上跑。**这是排查全量 schema 差异的标准手段，比逐个撞错快且全。**
+4. 补完启动 + 验证：`systemctl restart gugu-backend gugu-worker gugu-supervisor` → `curl 127.0.0.1:8000/health`。
+
+**预防（迁移作者）**：删模型字段时，配套的 `DROP COLUMN` 迁移要写成幂等并**确实部署执行**；列的「非空 + 默认」尽量用 DB 级 `server_default`（而非纯 Python 侧 `default=`），这样即使迁移漏跑，旧列也有默认值兜底、不会卡 INSERT。
+
+**预防**：① 迁移一律写**幂等**（`ADD/DROP COLUMN IF [NOT] EXISTS`、`CREATE TABLE IF NOT EXISTS`）——本项目新迁移已遵守，老的 `add_description` 没遵守才会撞；② 生产从第一天就 `alembic stamp`、保持版本表有值，别让 `create_all` 和 alembic 各建各的、`alembic_version` 长期为空。
 
 ## 7. 备份
 
@@ -577,6 +617,12 @@ cd backend && make backup     # 备份数据库 + uploads + config.override.json
 | nginx `duplicate location "/"` 启动失败 | 反向代理路径填成了 `/`（整站代理给后端）和伪静态 `location /` 撞 → 反代路径必须是 `/api`（详见 §3.4.1） |
 | `gugu-backend` 反复被 OOM 杀（`oom-kill` / `code=killed status=9`） | 小内存机（2G）上 systemd 模板默认 `--workers 2` 太吃内存 → 改单 worker：`sed -i 's/--workers 2/--workers 1/' /etc/systemd/system/gugu-backend.service && systemctl daemon-reload && systemctl restart gugu-backend`；并加 swap（详见 §3.8） |
 | 整机 CPU 100% / 卡死 | 先 `ps aux --sort=-%cpu \| head` 看**谁**在烧（常是 pgAdmin 等第三方应用，不是咕咕）；`free -h` 看内存、`journalctl -u gugu-backend` 看 OOM（详见 §3.8 + devlog 2026-06-25） |
+| 服务 `status=203/EXEC` 起不来 | systemd 执行不了 ExecStart 里的 `.venv/bin/...` → **venv 缺失/损坏**（多半被 `reset --hard`/`clean`/重新解压冲掉）。重建 venv + 装依赖（§2.2），并确认 `.env`/`config.override.json` 也在再启动 |
+| `password authentication failed for user "pm"` | DB 配置被部署冲掉、密码退回占位值。把 `.env`/`config.override.json` 里的 DB 密码恢复成生产真实值（1Panel→数据库 可看/重置），与 Postgres 里 `pm` 用户密码一致（详见 §6 ⚠️ / §2.4） |
+| `alembic upgrade head` 报 `DuplicateColumnError`（从 base 重放撞已有列） | 生产库由 `create_all` 建、`alembic_version` 空 → 重放撞车。`alembic stamp head` 认账停止重放，再手动补本次新迁移的幂等 DDL（新表靠 `create_all`，新列手动 `ADD COLUMN IF NOT EXISTS`）。详见 §6.2 |
+| 建项目/任务报 `null value in column "xxx" violates not-null constraint`（如 `notes`） | 新代码删了该字段、INSERT 不再带它，但旧库那列还是 `NOT NULL` 无默认 → 必须把废弃列删掉：`ALTER TABLE 表 DROP COLUMN IF EXISTS 列`。用 `alembic revision --autogenerate` 全量核对漏补/漏删（详见 §6.2） |
+| `make stop` 说「未运行」但 `systemctl` 显示服务在跑 | 生产 backend 由 systemd `gugu-backend.service` 托管，`make start/stop` 管的是另起的手动 uvicorn → 两者不是一个进程。生产一律用 `systemctl`（详见 §5.1） |
+| 部署后数据页全部「加载失败 / summary 401」 | 重建 `.env` 时 `SECRET_KEY` 变了 → 旧登录 token 全失效。**重新登录即恢复**；根治:`SECRET_KEY` 跨部署保持同一值，别每次重新生成（详见 §6 ⚠️ / §3.2） |
 
 
 ---

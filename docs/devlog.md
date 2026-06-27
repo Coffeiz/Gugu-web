@@ -5,6 +5,26 @@
 
 ---
 
+## 2026-06-27 · 生产部署连环坑：被冲的状态文件、create_all/alembic 不同步、废弃 NOT NULL 列
+
+本地改完一批（默认问候、精力硬拦等）push 到 main、devserver `git reset --hard` 对齐后，往**生产**（`www.gugugu.site`，阿里云 1Panel + systemd，和 192.168.110.51 那台 dev 是两台机）推这版，结果踩了一长串坑——几乎每一步都暴露一个「dev 想当然、prod 不成立」的假设，逐个记下来（都已沉进 `deploy.md`）。
+
+**① `make stop` 说「未运行」但服务在跑。** 生产 backend 是 systemd `gugu-backend.service` 托管的，而 `make start/stop` 管的是 Makefile 另起的手动 uvicorn——两套进程。在生产用 `make` 控制后端只会迷惑 +抢端口，**一律 `systemctl`**。
+
+**② 服务 `status=203/EXEC` 起不来。** 203 = systemd 执行不了 ExecStart 里的 `.venv/bin/...` → **venv 被这次部署冲没了**（`reset --hard`/`clean`/重新解压都可能干掉 gitignore 的 `.venv`）。重建 venv + 装依赖才起得来。
+
+**③ `password authentication failed for user "pm"`。** 部署把 `.env`/`config.override.json` 也冲了，DB 密码退回占位值（用户原话「忘了重建 env 了」）。教训:**任何代码刷新后，启动/迁移前先确认 `.venv` + `.env` + `config.override.json` 三样都在、DB 密码对**。
+
+**④ `alembic upgrade head` 从 base 重放、第一条就炸 `DuplicateColumnError: column "description" already exists`。** 这是核心认知坑:**生产库的表结构一直是后端启动 `create_all` 按模型直接建的，`alembic_version` 表从来是空的**——alembic 以为啥都没迁，从头重放，撞上 `create_all` 早建好的列（非幂等的老 `add_description` 一撞即死）。dev 一直假设「迁移是 schema 的唯一真相」，prod 上根本不是。恢复:`alembic stamp head` 让它停止重放（只写版本号、不动表），再把本次新迁移真正该加的「新列/新表」手动补上（新迁移多写成 `IF NOT EXISTS`，直接在库上跑零风险）。
+
+**⑤ 自食其果:「旧库和新工具系统不兼容」。** stamp head 之后，建项目报 `null value in column "notes" violates not-null constraint`。根因正是**我前一步嘴上说「删废弃列的迁移非必需、先别跑」——错的**。新代码把 `notes` 字段从模型删了、INSERT 不再带它，但旧库那列还是 `NOT NULL` 且**没有 DB 默认值**（默认本是 ORM 在 Python 侧给的，删字段后没人给）→ 每次 INSERT 都插 NULL → 违约、建项目全崩。**废弃的 NOT-NULL 无默认列必须删**，不删就挡死所有写入。删掉 `projects.notes` + `scheduled_tasks.action_type` 后恢复。
+
+**⑥ 怎么一次性查清所有差别（而不是逐个撞）。** 用 `alembic revision --autogenerate` 当**只读差异扫描器**:它把当前模型 vs 实际库的所有出入生成成一个文件（不改库），`upgrade()` 里 `op.add_column`/`drop_column`/`alter_column` 一目了然。读完即删（它是 head 之上的游离迁移，留着会被后续 upgrade 整份应用）。这次跑出来 `upgrade()` 是空的 `pass` → **确认生产库已和新模型 100% 一致**，连环坑收尾。注意它有假阳性（server_default、索引命名等），当对照清单用、别整份 apply。
+
+**附带两记:** 部署后所有数据页 `summary 401` —— 重建 env 时 `SECRET_KEY` 变了、旧登录 token 全失效，**重新登录即恢复**（根治:SECRET_KEY 跨部署保持同一值）。还有 1.6G 小机上 `make install` 把 unit 重置回 `--workers 2`（≈660M）贴着 OOM 线，得重新 `sed` 降单 worker。
+
+**一句话总结:** 这串坑的共同根:**生产环境的真实状态和 dev 的脑内模型不一致**——prod 的 schema 是 `create_all` 攒的不是 alembic 迁的、状态文件会被部署冲掉、删字段的迁移不跑就留下挡路的 NOT NULL 列。排查的通用解法也统一:**别逐个撞，用工具拿全量真相**（`alembic autogenerate` 看 schema 差异、`pg_stat_activity`/配置确认连的哪个库、`journalctl`+`logs/gugu.log` 分清 systemd 视角和 Python 真错）。全部订正/补进了 `deploy.md` §5.1 / §6 / §6.2 + 常见问题表。
+
 ## 2026-06-27 · 对话默认问候改成生成 + 一个「前导 assistant 被剥」的隐蔽坑
 
 把 GuguChat 打开时那条写死的默认问候改成**咕咕自己生成**（带点记忆、像熟人开口），方案沉在 `docs/对话默认问候-生成方案.md`。几轮迭代把节奏定型：**进入全新对话时**后台轻量直连生成一句（不走 agent 循环、不计精力），内存 ref 不跨刷新缓存；打开对话框时走**打字机动画**逐字冒（生成版 / 兜底都走）；生成没好就从静态兜底池随机取一条。中途纠了个浪费：本来「每次刷新都生成」，但刷新常停在老会话（`SESSION_KEY` 还在、问候根本不显示）→ 改成由 `GuguChat` 据 `SESSION_KEY` 判断，只在真·全新对话才生成。
