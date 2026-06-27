@@ -40,6 +40,11 @@ _PROGRESS = {
 _CANCEL_KW  = ["算了", "不用了", "不弄了", "别弄了", "别分析了", "先别弄", "先别", "停一下",
                "停下", "先停", "不做了", "取消", "别搞了", "先不弄", "不想弄了"]
 _EMOTION_KW = ["急", "快点", "快快", "怎么还没", "怎么这么慢", "太慢", "等不及"]
+# 催词只在「整句基本就是这句催」时才判——句首，或仅「你/咕咕」指向咕咕的前缀。
+# 否则子串匹配会把带话题主语的「法拉利怎么这么慢」「这电脑太慢」也当成催咕咕而误短路。
+_EMOTION_LEAD = ("", "你", "咕咕", "你这", "咕咕你", "你怎么", "咕咕怎么")
+def _is_emotion(t: str) -> bool:
+    return any(t.startswith(lead + k) for lead in _EMOTION_LEAD for k in _EMOTION_KW)
 
 # ── 斜杠强制命令（确定性，绕过关键词分类——最可靠的中断/控制手段）──
 # body（去掉前导 /）小写后查表 → 命令名；非命令（如粘贴的路径 /Users/..）返回 None 走正常对话
@@ -81,7 +86,7 @@ def classify(text: str) -> str:
     if len(t) <= 12:
         if any(k in t for k in _CANCEL_KW):
             return CANCEL
-        if any(k in t for k in _EMOTION_KW):
+        if _is_emotion(t):
             return EMOTION
     return AGENT
 
@@ -124,7 +129,10 @@ def decide(text: str, state: str) -> dict:
     if intent == PROGRESS:
         return {"action": "reply", "reply": _PROGRESS_REPLY.get(state, _PROGRESS_REPLY[st.IDLE])}
     if intent == EMOTION:
-        return {"action": "reply", "reply": _EMOTION_BUSY if busy else _PROGRESS_REPLY[st.IDLE]}
+        # 催促只在咕咕**真的在忙**（思考/搜索/生成/等确认）时才拦截，回一句状态化的「还在想/正在弄」安抚；
+        # 空闲时根本没在干活，回「在的你说」是答非所问 → 不拦，交主 Agent 正常回应。
+        return ({"action": "reply", "reply": _PROGRESS_REPLY.get(state, _EMOTION_BUSY)} if busy
+                else {"action": "agent"})
     if intent == ACK:
         # 任务进行中的「嗯/好」多半是搭话——别打断也别喂主模型；空闲时轻量回一句
         return {"action": "drop"} if busy else {"action": "reply", "reply": _ACK_REPLY}

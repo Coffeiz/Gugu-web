@@ -150,7 +150,7 @@ QQ WS网关  ├→ 规范化成 AgentRequest ──→ [Redis Streams 队列] �
 | Redis | ✅ **已接入**：共享异步客户端（懒加载单例）+ Streams；config 改 redis 配置 reset 重建 |
 | 非流式 runner | ✅ **已有**：`agent/runner.py` `run_collect()`，复用大脑收成完整回复 |
 | 网关进程管理 | ✅ **已建**：`agent/adapters/supervisor.py` 按 DB `user_bots` 动态 spawn/kill 飞书·QQ 网关子进程（详见 §10） |
-| Runtime Router + 状态机（文档 29 / Phase 1.7） | ✅ **已落地**：`agent/router.py`(关键词分类) + `agent/runtime_state.py`(Redis 状态机 IDLE/THINKING/SEARCHING/GENERATING + 取消标志)；网关层短路状态查询/取消，详见 [`agent-决策环.md`](agent-决策环.md) §⓪ |
+| Runtime Router + 状态机（文档 29 / Phase 1.7） | ✅ **已落地**：`agent/router.py`(关键词分类) + `agent/runtime_state.py`(Redis 状态机 IDLE/THINKING/SEARCHING/GENERATING + 取消标志)；网关层短路状态查询/取消，详见 [`agent-决策环.md`](agent-决策环.md) §⓪。**注**：情绪/催词用「句首锚定」防话题误判（「法拉利怎么这么慢」不算催咕咕）；催促只在咕咕真在忙时才拦、回「还在想/正在弄」，空闲交主模型 |
 | 平台用户 ↔ 咕咕用户映射 | ✅ **BYO 免映射**：每用户自带 bot，消息天然归属 owner，入队 payload 带 `owner_user_id`，worker 直接认人——无需 `(platform, platform_user_id) → user_id` 绑定表 |
 
 > **重要坑**：后端现为 `uvicorn --workers 1`（生产 backend 单元用 2）。若为扩量把 web 开多 worker，每个进程会各自再拉一遍 bot 长连接 → 重复连接/处理。故 **bot 网关/worker 脱离 web 当独立进程起**（`adapters/` 不依赖 FastAPI request 即为此）——见 §10 三进程拆分。

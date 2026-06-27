@@ -232,8 +232,10 @@ QQ / 飞书 BYO 网关（botpy / lark-oapi WebSocket 长连）+ supervisor 网�
 **网关入队前**的关键词+状态机路由，决定一条消息要不要进主模型：
 
 - `classify(text)` → `progress / cancel / emotion / ack / agent`（纯关键词，整条匹配；取消/情绪只在短消息上判，**宁漏判进主模型、不误判短路**）
+  - ⚠️ **情绪/催词用「句首锚定」、不是子串匹配**：只在句首、或仅「你/咕咕」指向咕咕的前缀时才判（如「怎么这么慢」「你怎么这么慢」）。否则子串会把带话题主语的「**法拉利**怎么这么慢」「这电脑太慢」误当成催咕咕而短路。
 - `decide(text, state)` 结合 State Manager 状态出动作：`reply`（短路回话术，不入队）/ `cancel`（置取消标志）/ `drop`（忙时「嗯/好」忽略）/ `agent`（入队）
 - 据状态回话术：THINKING→「还在想哦~~」SEARCHING→「正在查资料~~」GENERATING→「马上就好~」
+- ⚠️ **催促（emotion）只在咕咕真在忙时才拦截**：busy（思考/搜索/生成/等确认）→ 回状态化的「还在想/正在弄」安抚；**空闲 → 不拦、交主 Agent**（空闲时回「在的你说」是答非所问）。「在吗」这类纯在场查询（progress）则空闲也答「在的你说」，是对的。
 - 将来可换小模型分类，`decide()` 接口不变。
 
 #### `runtime_state.py`（State Manager）
