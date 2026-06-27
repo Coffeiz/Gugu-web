@@ -392,11 +392,14 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                         db2.add(ConversationMessage(
                             session_id=session_id, role="assistant", content=full_reply, files=sent_files or None,
                         ))
-                # 6h 精力满后冻结记账：达上限则本轮 token 不计入（6h 与周都不再累加），直到窗口重置
-                if (usage_tokens["input"] or usage_tokens["output"]) and not await quota.six_h_exhausted(db2, user_id, settings):
+                # 按 6h 剩余额度封顶本轮用量：精力条最多 100%，单轮顶过线则只记填满部分、
+                # 超出（对话后半段）不计入（6h 与周都不计）；已满则 (0,0) 不写。
+                _cap_in, _cap_out = await quota.cap_usage(db2, user_id, settings,
+                                                          usage_tokens["input"], usage_tokens["output"])
+                if _cap_in or _cap_out:
                     db2.add(AgentUsage(
                         user_id=user_id, session_id=session_id if sess_alive else None,
-                        tokens_in=usage_tokens["input"], tokens_out=usage_tokens["output"],
+                        tokens_in=_cap_in, tokens_out=_cap_out,
                         model=settings.ai.model, provider=settings.ai.provider,
                         tools_used=used_tools or None,
                     ))

@@ -14,7 +14,7 @@
 精力（Token 配额）从「软降级」改为「硬拦」，新增满额冻结与全局逐字流式。详见 `docs/精力系统架构.md`。
 
 - **耗尽硬拦**（`web.py` / `profiles/base.py`）：6h / 周配额用尽后不再「软降级只挡重操作」，改为直接回一句「咕咕累了，休息会儿再来～」并 return，聊天 / 查询一律不放行；移除 `degraded` / `light_tool_names` / `READ_ONLY_TOOLS`。
-- **满额冻结记账**（新增 `agent/quota.py` `six_h_exhausted`）：6h 达上限后本轮及之后 token 不再写 `AgentUsage`（6h 与周都不再累加），直到窗口整点重置；web `_generate` 与 runner（IM / 定时任务）两处记账都接守卫，非 web 路径满额也不污染周精力。
+- **封顶 + 满额冻结记账**（新增 `agent/quota.py` `cap_usage`）：记账前按 6h 剩余额度封顶本轮用量——单轮对话顶过线只记「填满到上限」的部分、超出（对话后半段）丢弃，**精力条最多 100% 不越线**；6h 已满则本轮不写 `AgentUsage`（冻结），直到窗口整点重置。被封顶 / 冻结的 token 既不计 6h 也不计周；web `_generate` 与 runner（IM / 定时任务）两处记账都接，非 web 路径满额也不污染周精力。
 - **空回复兜底覆盖全模型**（`core.py`）：原空气泡兜底只 gate 在 `is_mimo`，非 mimo 模型空正文会裸露成空气泡；去掉该门，任何模型空正文都兜。
 - **逐字流式统一**（新增 `genstream.typed_stream` 通用件）：系统侧成段文案（硬拦提示、空回复兜底、核实补做说明）原本一次性整段蹦出，统一改走 `typed_stream` 逐字推送，与正常回复同款动画（续看快照保持一次性、不重演）。
 

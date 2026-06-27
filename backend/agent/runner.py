@@ -188,11 +188,12 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             if text or sent_files:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant",
                                             content=text, files=sent_files or None))
-            # 6h 精力满后冻结记账：达上限则本轮 token 不计入（6h 与周都不再累加），直到窗口重置
-            if (tin or tout) and not await quota.six_h_exhausted(db2, user_id, settings):
+            # 按 6h 剩余额度封顶本轮用量（精力条最多 100%，顶过线只记填满部分，超出不计 6h 与周）；已满则 (0,0) 不写
+            _cap_in, _cap_out = await quota.cap_usage(db2, user_id, settings, tin, tout)
+            if _cap_in or _cap_out:
                 db2.add(AgentUsage(
                     user_id=user_id, session_id=session_id,
-                    tokens_in=tin, tokens_out=tout,
+                    tokens_in=_cap_in, tokens_out=_cap_out,
                     model=model_cfg.model, provider=model_cfg.provider,
                 ))
             await db2.commit()
