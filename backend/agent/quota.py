@@ -7,14 +7,18 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select, func, and_
 
+_CST = timezone(timedelta(hours=8))
+
 
 def six_h_window_start(now: datetime) -> datetime:
-    """当前 6h 固定窗口起点（每天 00 / 06 / 12 / 18 UTC 整点，非滑动）。"""
-    return now.replace(hour=(now.hour // 6) * 6, minute=0, second=0, microsecond=0)
+    """当前 6h 固定窗口起点（每天 00 / 06 / 12 / 18 CST 整点，非滑动）。返回 UTC naive datetime。"""
+    now_cst = now.replace(tzinfo=timezone.utc).astimezone(_CST)
+    win_cst = now_cst.replace(hour=(now_cst.hour // 6) * 6, minute=0, second=0, microsecond=0)
+    return win_cst.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 async def cap_usage(db, user_id, settings, tin: int, tout: int) -> tuple[int, int]:
