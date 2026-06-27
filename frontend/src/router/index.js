@@ -60,12 +60,14 @@ const routes = [
         component: () => import('@/views/Schedules/index.vue'),
         meta: { title: '定时任务' },
       },
-      {
+      // 新手引导 demo 面板：仅 dev 注册；prod build 时 import.meta.env.DEV=false，
+      // 整个三元分支（含 import() 动态导入）被 tree-shake 掉，DevOnboarding.vue 不进生产包。
+      ...(import.meta.env.DEV ? [{
         path: 'dev/onboarding',
         name: 'DevOnboarding',
         component: () => import('@/views/DevOnboarding.vue'),
         meta: { title: '新手引导 Demo' },
-      },
+      }] : []),
     ],
   },
 

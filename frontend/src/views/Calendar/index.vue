@@ -319,6 +319,7 @@ import { eventsApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
 import { useHolidays } from '@/composables/useHolidays'
+import { fireHint } from '@/composables/useOnboarding'
 import { projectProgress } from '@/utils/projectProgress'
 import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack } from '@phosphor-icons/vue'
 
@@ -1218,6 +1219,7 @@ function handleClickOutside(e) {
 }
 
 onMounted(() => {
+  fireHint('calendar')   // 新手引导：第一次打开日历
   document.addEventListener('click', handleClickOutside, true)
   fetchEvents()
   fetchNextMonthEvents()

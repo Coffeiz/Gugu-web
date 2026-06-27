@@ -215,6 +215,7 @@ import DateRangePicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { useStageTemplates } from '@/composables/useStageTemplates.js'
 import { usePreferencesStore } from '@/stores/preferences'
+import { onboardingProjectId } from '@/composables/useOnboarding'
 import { PhX, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour } from '@phosphor-icons/vue'
 
 const props = defineProps({ show: Boolean, initStatus: { type: String, default: null } })
@@ -335,7 +336,8 @@ const prefsStore = usePreferencesStore()
 function getLastStages() {
   const toObj = s => ({ label: typeof s === 'string' ? s : (s.label ?? ''), todos: [] })
   if (prefsStore.lastStages.length) return prefsStore.lastStages.map(toObj)
-  const projects = projectStore.projects
+  // 兜底复制「最近一个项目」的阶段——但**排除播种的教程项目**（它的阶段是教程，不该当新项目模板）
+  const projects = projectStore.projects.filter(p => p.id !== onboardingProjectId.value)
   if (projects.length) {
     const last = [...projects].sort((a, b) => (b.id > a.id ? 1 : -1))[0]
     if (last.stages?.length) return last.stages.map(toObj)

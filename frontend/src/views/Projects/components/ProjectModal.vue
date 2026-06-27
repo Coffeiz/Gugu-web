@@ -683,6 +683,7 @@ import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
 import { useBoxSelection } from '@/composables/useBoxSelection'
 import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
+import { fireHint } from '@/composables/useOnboarding'
 import DatePicker from '@/components/common/DatePicker.vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
@@ -1577,6 +1578,7 @@ function setStage(key, idx) {
 
   localCurrentStage.value = key
   activeStageIdx.value = idx
+  if (oldIdx !== newIdx) fireHint('stage_switch')   // 新手引导：第一次切换阶段
 
   // 直接在本地同步计算，不依赖 store 异步回写
   if (oldIdx !== newIdx && oldIdx >= 0 && newIdx >= 0) {
@@ -1606,7 +1608,18 @@ function setStage(key, idx) {
 
 async function handleDelete() {
   if (!props.project) return
-  await projectStore.deleteProject(props.project.id)
+  const id = props.project.id
+  // 项目里有文件/文件夹时：它们会随项目一并删除，先弹浏览器确认；没有则直接删
+  const fileCnt   = fileCacheStore.loaded ? fileCacheStore.allFiles.filter(f => f.projectId === id).length   : (props.project.fileCount || 0)
+  const folderCnt = fileCacheStore.loaded ? fileCacheStore.allFolders.filter(f => f.projectId === id).length : 0
+  if (fileCnt + folderCnt > 0) {
+    const parts = []
+    if (fileCnt)   parts.push(`${fileCnt} 个文件`)
+    if (folderCnt) parts.push(`${folderCnt} 个文件夹`)
+    if (!window.confirm(`项目「${props.project.name}」中的 ${parts.join('、')} 将随项目一并删除。确定删除该项目吗？`)) return
+  }
+  await projectStore.deleteProject(id)
+  if (fileCnt + folderCnt > 0) fileCacheStore.refresh()   // 该项目的文件/文件夹已随项目删除，重拉同步本地缓存
   emit('close')
 }
 

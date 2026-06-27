@@ -24,7 +24,7 @@ def default_state() -> dict:
         "hints": {
             "file_lib": False, "music": False, "calendar": False,
             "stage_switch": False, "todo_roam": False, "todo_newproj": False,
-            "im_bind": False,
+            "im_bind": False, "schedules": False,
         },
     }
 

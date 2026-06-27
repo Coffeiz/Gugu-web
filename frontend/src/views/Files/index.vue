@@ -682,7 +682,8 @@ import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
-import { usePreviewStore, isPreviewable } from '@/stores/preview'
+import { usePreviewStore, isPreviewable, isAudioExt } from '@/stores/preview'
+import { fireHint } from '@/composables/useOnboarding'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
@@ -1100,6 +1101,7 @@ function loadContents() {
 }
 
 onMounted(async () => {
+  fireHint('file_lib')   // 新手引导：第一次进文件库
   fetchStorage()
   // 顶栏搜索点了文件/文件夹：优先定位到目标目录，不走 restoreNav
   const target = uiStore.pendingFileTarget
@@ -1362,9 +1364,8 @@ async function deleteSelected() {
 async function restoreFile(f) {
   try {
     await trashApi.restore(f.id)
-    // 恢复后文件重新进入主缓存（deleted_at=null）
-    cacheStore.addFile({ ...f, deletedAt: null })
     loadContents()
+    liveStore.bump('files')
   } catch (e) {
     console.error('[Files] 恢复失败:', e.message)
   }
@@ -1395,6 +1396,7 @@ async function restoreSelected() {
     await Promise.all(ids.map(id => trashApi.restore(id)))
     clearSelection()
     loadContents()
+    liveStore.bump('files')
   } catch (e) {
     console.error('[Files] 批量恢复失败:', e.message)
   }
@@ -1530,7 +1532,10 @@ function handleDrop(e) {
 
 // ── 预览 ──
 const previewStore = usePreviewStore()
-const openPreview = (f) => previewStore.open(f)
+const openPreview = (f) => {
+  if (isAudioExt(f.ext)) fireHint('music')   // 新手引导：第一次打开音乐文件（🎵😌 彩蛋）
+  previewStore.open(f)
+}
 
 // ── 下载 ──
 async function downloadFile(f) {

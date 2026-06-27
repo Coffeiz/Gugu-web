@@ -327,6 +327,7 @@ import { useAuthStore } from '@/stores/auth'
 import { usePreferencesStore } from '@/stores/preferences'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { authApi, agentApi, userBotsApi, qqConnectApi, feishuConnectApi } from '@/services/api'
+import { fireHint } from '@/composables/useOnboarding'
 import { PhX, PhSignOut, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird } from '@phosphor-icons/vue'
 
 const TONE_OPTS   = [
@@ -534,7 +535,7 @@ function _startConnectPoll(p) {
     tries++
     try {
       const r = await p.api.poll(connect.value.id)
-      if (r.status === 'success') { cancelConnect(); await loadBots() }
+      if (r.status === 'success') { cancelConnect(); await loadBots(); fireHint('im_bind') }   // 新手引导：第一次绑定 IM
       else if (r.status === 'expired') { connectErr.value = '二维码已过期，请重新扫码连接'; cancelConnect() }
       else if (r.status === 'fail') { connectErr.value = '连接失败：' + (r.reason || '未知'); cancelConnect() }
     } catch {}

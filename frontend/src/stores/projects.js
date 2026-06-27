@@ -64,6 +64,8 @@ export const useProjectStore = defineStore('projects', () => {
     }
     const created = await projectsApi.create(payload)
     projects.value.unshift(created)
+    // 新手引导：手动新建第一个项目后弹一句（claim-once 保证只第一次）
+    import('@/composables/useOnboarding').then(m => m.fireHint('todo_newproj')).catch(() => {})
     return created
   }
 
@@ -97,6 +99,10 @@ export const useProjectStore = defineStore('projects', () => {
 
     if (newStatus === 'done' && oldStatus !== 'done') {
       p.doneAt = new Date().toISOString()
+      // 新手引导回头看(08)：完成第 5 个项目时弹一句（claim-once 只一次）
+      if (projects.value.filter(x => x.status === 'done').length >= 5) {
+        import('@/composables/useOnboarding').then(m => m.fireLookback()).catch(() => {})
+      }
     } else if (oldStatus === 'done' && newStatus !== 'done') {
       p.doneAt = null
     }

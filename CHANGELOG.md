@@ -9,6 +9,18 @@
 
 ## [Unreleased]
 
+### 新手引导 Phase 3：回头看（完成第 5 个项目）
+
+完成第 5 个项目时，咕咕回头看一眼：「还记得『〈引导项目名〉』吗？(停 1.5s) 那时候这里只有两个文件，现在已经越来越热闹啦。」`projectStore.moveProject` 里项目转「已完成」、已完成数 ≥5 → `fireLookback()`（claim-once 只一次；文案 `{project_name}` 后端用 `seeded_project_name` 回填）。至此新手引导 Phase 1/2/3 全部落地。
+
+### 新手引导 Phase 2：情境气泡（7 个「第一次」钩子）
+
+各界面第一次操作时，咕咕缓一拍（统一 1s）冒一句轻提示——claim-once 在后端，只弹一次、跨设备/重登有效。
+
+- **7 个钩子**（`fireHint(key)` → `claim hint:<key>`）：进文件库 / 文件库打开音频(🎵😌) / 进日历 / 进定时任务页 / 切换·推进阶段（😊 熟悉一点了吗？）/ 手动新建第一个项目后（好啦～以后想到什么都可以建一个项目）/ 绑定 QQ·飞书成功。接入点：`Files`/`Calendar`/`Schedules`/`ProjectCard`+`ProjectModal`/`stores/projects.js`/`ProfileModal`。
+- **气泡文案标记**：`schedules` 用 `[[p]]` 在「还没有定时任务」后停 1s；`file_lib` 用 `[[slow]]` 让「不过…」三个点逐个慢慢冒。
+- **顺带修复**：新建项目的阶段默认值会兜底复制「最近一个项目」的阶段——**排除播种的教程项目**（`NewProjectModal` + `onboarding/useOnboarding` 暴露 `onboardingProjectId`），否则教程的 🌱🌿💬 会污染第一个真实项目的阶段模板。
+
 ### 新手引导 Phase 1：注册播种 + 欢迎/引导气泡 + 高亮（独立子系统 `backend/onboarding/`）
 
 新用户首次进来不再是空房间——咕咕提前布置好一个「活的示例项目」并主动打招呼。独立子系统、**不依赖 agent**，文案全静态随机、不过 LLM。详见 `docs/新手引导-实现方案.md`。

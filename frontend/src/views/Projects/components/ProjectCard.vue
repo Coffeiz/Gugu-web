@@ -158,6 +158,7 @@ import { computed, ref, nextTick, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
+import { fireHint } from '@/composables/useOnboarding'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
@@ -280,6 +281,7 @@ function toggleTodo(t) {
   const todos = idx >= 0 ? (stages[idx].todos ?? []) : []
   if (t.done && idx >= 0 && idx < stages.length - 1 && todos.length > 0 && todos.every(x => x.done)) {
     projectStore.setStage(props.project.id, stages[idx + 1].key, stageProgress.value)   // setStage 一并保存 stages + 推进
+    fireHint('stage_switch')   // 新手引导：第一次推进阶段
   } else {
     persistTodos()
   }

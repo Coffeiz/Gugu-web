@@ -67,6 +67,9 @@ async def claim(db: AsyncSession, user_id, key: str) -> str | None:
     row = await get_or_create(db, user_id, for_update=True)
     state = {**default_state(), **(row.state or {})}
     state["hints"] = {**default_state()["hints"], **(row.state or {}).get("hints", {})}
+    # 只有走过新引导（注册时被播种）的用户才弹气泡——老用户没 seeded，一律不打扰
+    if not state.get("seeded"):
+        return None
     if _is_claimed(state, key):
         return None
     text = _text_for(key, state)

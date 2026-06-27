@@ -109,6 +109,7 @@
 <script setup>
 import { ref, reactive, onMounted, computed, nextTick } from 'vue'
 import { scheduledTasksApi } from '@/services/api'
+import { fireHint } from '@/composables/useOnboarding'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { useAuthStore } from '@/stores/auth'
 import { PhAlarm } from '@phosphor-icons/vue'
@@ -160,7 +161,7 @@ async function load() {
     tasks.value = d.tasks || []
   } finally { loading.value = false }
 }
-onMounted(load)
+onMounted(() => { fireHint('schedules'); load() })   // 新手引导：第一次进定时任务页
 
 function blankForm() { return { name: '', payload: '', time: '09:00', channels: ['web'] } }
 function openCreate() {
