@@ -30,6 +30,7 @@ class ChatRequest(BaseModel):
     message: str
     session_id: Optional[int] = None
     attachments: Optional[list[str]] = None   # 聊天附件的 attach_id 列表（来自 /agent/upload）
+    greeting: Optional[str] = None            # 新会话首条消息携带的「已显示默认问候」→ 落为本会话首条 assistant 消息
 
 
 @router.post("/upload")
@@ -140,6 +141,7 @@ async def chat(
         session_id=body.session_id,
         source="web",
         attachments=body.attachments or [],
+        greeting=body.greeting,
     )
     return StreamingResponse(
         web_adapter.stream(req),
@@ -204,6 +206,17 @@ async def get_ui_labels(current_user: User = Depends(get_current_user)):
         return [p.strip() for p in re.split(r"[|\n]", raw or "") if p.strip()]
 
     return {"thinking": _split(merged.get("_thinking", ""))}
+
+
+@router.get("/greeting")
+async def get_greeting(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """对话框默认问候：咕咕据近期记忆/项目/提醒生成一句。失败/空 → text=''，前端兜底池接手。"""
+    from app.core.config import get_settings
+    from agent import greeting
+    return {"text": await greeting.generate(db, current_user.id, get_settings())}
 
 
 @router.get("/sessions/{session_id}/messages")

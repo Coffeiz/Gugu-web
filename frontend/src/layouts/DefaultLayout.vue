@@ -136,6 +136,8 @@ onMounted(async () => {
     uiStore.checkLoginBubble()     // 上线补弹最近一条有效气泡（只一次、过期不弹）
     liveStore.connect()   // 开实时事件订阅：咕咕/IM 改了数据网页自动刷新
     runOnboarding(router)          // 新手引导：延迟弹欢迎/引导气泡 + 高亮引导项目（fire-and-forget）
+    // 对话框默认问候的生成不在这儿无条件触发——只有「全新对话（无可恢复会话）」才需要，
+    // 由 GuguChat onMounted 据 SESSION_KEY 决定（刷新停在老会话时不空跑生成）。
   }
   projectStore.fetchProjects()
   projectStore.fetchUpcomingCalEvents()

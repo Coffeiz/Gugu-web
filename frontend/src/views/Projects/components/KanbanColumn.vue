@@ -22,7 +22,6 @@
         :project="project"
         @click="$emit('card-click', project)"
       />
-      <div v-if="projects.length === 0" class="col-empty">拖拽项目到此</div>
       <button class="add-card" @click="$emit('add-project', column.key)">
         <svg width="14" height="14" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="opacity:0.5;flex-shrink:0">
           <line x1="11" y1="4" x2="11" y2="18"/><line x1="4" y1="11" x2="18" y2="11"/>
@@ -92,14 +91,9 @@ function onDrop(e) {
 .col-body::-webkit-scrollbar { width: 3px; }
 .col-body::-webkit-scrollbar-track { background: transparent; margin-top: 8px; margin-bottom: 8px; }
 .col-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 99px; }
-.col-empty {
-  text-align: center; font-size: 12px; color: var(--text-secondary);
-  opacity: 0.4; padding: 32px 0; border: 1.5px dashed rgba(0,0,0,0.1);
-  border-radius: var(--radius-md); margin-top: 4px;
-}
 .add-card {
   display: flex; align-items: center; justify-content: center; gap: 6px;
-  width: 100%; flex-shrink: 0; min-height: 82px;
+  width: 100%; flex-shrink: 0; min-height: 96px;
   background: rgba(255,255,255,0.15);
   border: 1.5px dashed rgba(0,0,0,0.1);
   border-radius: var(--radius-md);

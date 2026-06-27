@@ -15,6 +15,9 @@
   --color-warning: #b07858;
   --text-primary: #1e2028;
   --text-secondary: #8a8fa8;
+  /* 咕咕正文文字（GuguChat 小窗消息 / 通知气泡等共用，颜色用 --text-primary）*/
+  --gugu-body-size: 13px;
+  --gugu-body-line: 1.5;
   --radius-sm: 10px;
   --radius-md: 14px;
   --radius-lg: 18px;

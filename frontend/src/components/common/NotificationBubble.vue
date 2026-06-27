@@ -40,7 +40,7 @@ let _typeTimer = null      // 全局单计时器：同一时刻只让最新那�
 let _typingId  = null      // 正在打字的 item id（手动关掉它时要停表）
 const TITLE_MS = 30        // 标题每字间隔
 const BODY_MS  = 15        // 正文每字间隔（比标题快，长文不拖沓）
-const AUTO_MS  = 5000      // 自动消失时限：打字打完后停留 5s 再收（被新气泡顶替则 0.5s 更快）
+const AUTO_MS  = 5000      // 自动消失时限：**仅教程气泡(gugu)** 打完后停留 5s 再收（被新气泡顶替则 0.5s）
 const PAUSE_TOKEN = '[[p]]'  // 文案里的停顿标记（不显示）
 const PAUSE_MS = 1000        // 打到停顿标记时暂停时长
 const SLOW_MS  = 400         // [[slow]]…[[/slow]] 段内逐字慢速冒出的每字间隔
@@ -54,7 +54,7 @@ watch(() => uiStore.liveNotification, (n) => {
   visible.value.forEach(item => { item.superseded = true; rescheduleDismiss(item.id, 500) })
   // 新气泡插到队首（视觉上在底部、贴近球），把旧的顶上去；reactive 让打字机改属性能驱动视图
   const item = reactive({
-    id: ++_vk, title: n.title || '', content: n.content || '', gugu: !!n.gugu,
+    id: ++_vk, notifId: n.id ?? null, title: n.title || '', content: n.content || '', gugu: !!n.gugu,
     tTitle: '', tContent: '', phase: 'title', typing: true,
   })
   visible.value = [item, ...visible.value]
@@ -70,12 +70,13 @@ function startTyping(item) {
   const STRIP_RE = /\[\[\/?(?:p(?::\d+)?|slow)\]\]/g   // 去 [[p]] / [[p:1500]] / [[slow]] / [[/slow]]
   const fullTitle = (item.title || '').replace(STRIP_RE, '')
   const fullBody = raw.replace(STRIP_RE, '')   // 去所有标记，用于空判断
-  if (!fullTitle && !fullBody) { item.typing = false; if (!item.superseded) scheduleDismiss(item.id, AUTO_MS); return }
+  if (!fullTitle && !fullBody) { item.typing = false; if (!item.superseded && item.gugu) scheduleDismiss(item.id, AUTO_MS); return }
   _typingId = item.id
   item.phase = fullTitle ? 'title' : 'body'
   let ti = 0
   const run = (ms, tick) => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = setInterval(tick, ms) }
-  const stop = () => { if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }; item.typing = false; if (_typingId === item.id) _typingId = null; if (!item.superseded) scheduleDismiss(item.id, AUTO_MS) }
+  // 只有教程气泡（gugu）打完后 5s 自动消失；其它通知（IM/广播）留到手动关或被新气泡顶掉
+  const stop = () => { if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }; item.typing = false; if (_typingId === item.id) _typingId = null; if (!item.superseded && item.gugu) scheduleDismiss(item.id, AUTO_MS) }
 
   let typeBody
   if (!hasMarkers) {
@@ -137,6 +138,8 @@ function dismiss(id) {
   if (t) { clearTimeout(t); timers.delete(id) }
   // 关掉的正是当前在打字的那条 → 停表，别让计时器空转
   if (_typingId === id && _typeTimer) { clearInterval(_typeTimer); _typeTimer = null; _typingId = null }
+  const item = visible.value.find(n => n.id === id)
+  if (item?.notifId != null) uiStore.markRead(item.notifId)
   visible.value = visible.value.filter(n => n.id !== id)
 }
 </script>
@@ -204,14 +207,13 @@ function dismiss(id) {
   line-height: 1.3;
 }
 .nb-content {
-  font-size: 12px; color: var(--text-secondary);
-  line-height: 1.5;
+  /* 文字与 GuguChat 小窗正文一致（全局变量，所有通知气泡共用）*/
+  font-size: var(--gugu-body-size); color: var(--text-primary);
+  line-height: var(--gugu-body-line);
   max-height: 200px; overflow-y: auto;   /* 完整 md 可能较长：限高，超出可滚动 */
   word-break: break-word; overflow-wrap: break-word;
   /* 占满整个内容宽度，左右与气泡 padding 对称 */
 }
-/* 咕咕语气气泡（新手引导）：文字对齐 GuguChat 聊天正文——13px、主色、行高 1.5 */
-.nb-gugu .nb-content { font-size: 13px; color: var(--text-primary); line-height: 1.5; }
 /* 无标题（仅内容）时，内容是顶部元素：在右上角浮一个占位块给关闭 ✕ 让位，
    首行文字绕开它，避免被 ✕ 压住，其余行仍占满整宽 */
 .nb-bare .nb-content::before {

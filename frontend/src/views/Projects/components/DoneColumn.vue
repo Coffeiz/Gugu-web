@@ -253,10 +253,11 @@ function onDrop(e) {
 .col-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 99px; }
 
 .col-empty {
+  display: flex; align-items: center; justify-content: center;
   text-align: center; font-size: 12px; color: var(--text-secondary);
-  opacity: 0.4; padding: 32px 0;
+  opacity: 0.4; min-height: 96px; flex-shrink: 0;
   border: 1.5px dashed rgba(0,0,0,0.1);
-  border-radius: var(--radius-md); margin-top: 4px;
+  border-radius: var(--radius-md);
 }
 
 /* ── 年目录 ── */

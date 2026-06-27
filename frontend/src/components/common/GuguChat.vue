@@ -255,6 +255,7 @@ import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi } from '@/services/api'
+import { getGreeting, greeting, prefetchGreeting } from '@/composables/useGreeting'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/useThumbCache'
 import MarkdownView from '@/components/common/MarkdownView.vue'
@@ -607,6 +608,9 @@ onMounted(() => {
     loadSession(Number(saved)).then(() => {
       if (sessionId.value !== Number(saved)) sessionStorage.removeItem(SESSION_KEY)
     })
+  } else {
+    // 全新对话（无可恢复会话）才需要默认问候 → 此刻后台生成；刷新停在老会话时不空跑。
+    prefetchGreeting()
   }
 })
 onUnmounted(() => {
@@ -848,9 +852,31 @@ const now = () => {
 let _mid = 0
 const mkid = () => ++_mid
 
+// 默认问候：占位空消息（打开对话框时再以打字机动画显示，文案在那一刻取最新生成版/兜底）
 const messages = ref([
-  { id: mkid(), role: 'ai', text: '你好！我是咕咕，可以帮你查项目进度、搜索文件、查看截止日期和近期排期，随时问我吧 ✦', html: renderMd('你好！我是咕咕，可以帮你查项目进度、搜索文件、查看截止日期和近期排期，随时问我吧 ✦'), time: now() },
+  { id: mkid(), role: 'ai', text: '', html: '', time: now(), _greeting: true },
 ])
+
+// 打开对话框时让默认问候像回复一样「打字机」冒出来（生成版 / 兜底都走这套）。每条问候只播一次。
+let _greetTimer = null
+function animateGreeting() {
+  const m = messages.value
+  if (!(m.length === 1 && m[0]._greeting)) return   // 已有真实对话 → 不动
+  const msg = m[0]
+  if (msg._greetAnimated) return
+  msg._greetAnimated = true
+  const full = getGreeting()                        // 此刻取最新（生成好就用生成版，否则兜底）
+  msg._greetFull = full                             // 记下定稿文案：用户回复时随首条消息把它入库（见 send）
+  msg.text = ''; msg.html = ''; msg.streaming = true
+  let i = 0
+  if (_greetTimer) clearInterval(_greetTimer)
+  _greetTimer = setInterval(() => {
+    msg.text = full.slice(0, ++i)
+    if (i >= full.length) { clearInterval(_greetTimer); _greetTimer = null; msg.streaming = false; msg.html = renderMd(full) }
+  }, 22)
+}
+// 任何打开路径（FAB / 通知点开 / 展开）都触发一次
+watch(open, (v) => { if (v) animateGreeting() })
 
 // ── 展开/收起 ────────────────────────────────────────────
 const sessions = ref([])
@@ -989,9 +1015,10 @@ async function loadSession(id) {
 
 async function newSession() {
   sessionId.value = null
-  messages.value = []
+  messages.value = []        // 大窗「新对话」是干净起手——不放默认问候（问候只在打开小窗时出现）
   _sessionTurn = 0
-  await nextTick(); expInputEl.value?.focus()
+  await nextTick()
+  expInputEl.value?.focus()
 }
 
 async function deleteSession(id) {
@@ -1231,11 +1258,17 @@ async function send(forcedText) {
   let aiIdx = -1
   const usedTools = new Set()
 
+  // 新会话且当前显示着默认问候 → 把问候随首条消息带给后端，落为本会话首条 assistant 消息，
+  // 这样咕咕回复时能看到「自己已经打过招呼」，不会把用户对问候的回复当成对话刚开始。
+  const _g0 = messages.value[0]
+  const greetingForSession = (ownerSid == null && _g0?._greeting) ? (_g0._greetFull || _g0.text || '') : ''
+
   try {
     const res = await fetch(`${BASE_URL}/agent/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ message: text, session_id: ownerSid, attachments: atts.map(a => a.attach_id) }),
+      body: JSON.stringify({ message: text, session_id: ownerSid, attachments: atts.map(a => a.attach_id),
+                             ...(greetingForSession ? { greeting: greetingForSession } : {}) }),
       signal: abortCtrl.value.signal,
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -1425,7 +1458,9 @@ async function send(forcedText) {
 .chat-att-x:hover { opacity: 1; }
 .chat-att-chip.att-up { color: var(--text-secondary); background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.08); }
 .att-btn { flex-shrink: 0; background: none; border: none; cursor: pointer; color: var(--text-secondary);
-  display: flex; align-items: center; padding: 0; opacity: 0.7; transition: opacity 0.15s, color 0.15s; }
+  display: flex; align-items: center; justify-content: center; height: 28px; padding: 0;
+  opacity: 0.7; transition: opacity 0.15s, color 0.15s; }   /* 与发送按钮(28)等高，底对齐时中心也对齐 */
+.chat-main.is-expanded .att-btn { height: 32px; }   /* 放大态对齐放大发送按钮(32) */
 .att-btn:hover { opacity: 1; color: var(--color-primary); }
 .chat-input-row {
   display: flex; align-items: flex-end; gap: 8px;   /* 输入框多行增高时，附件/发送按钮贴底对齐 */
@@ -1628,7 +1663,7 @@ async function send(forcedText) {
 .msg.ai { align-items: flex-start; }
 .msg-bubble {
   padding: 9px 13px; border-radius: 13px;
-  font-size: 13px; line-height: 1.5; max-width: 88%;
+  font-size: var(--gugu-body-size); line-height: var(--gugu-body-line); max-width: 88%;
   word-break: break-word; overflow-wrap: break-word;
 }
 .msg.ai .msg-bubble {

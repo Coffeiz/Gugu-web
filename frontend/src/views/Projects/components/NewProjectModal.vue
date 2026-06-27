@@ -541,15 +541,13 @@ function handleCreate() {
   font-size: 17px; font-weight: 700; color: var(--text-primary);
   font-family: var(--font-sans); line-height: 1.2; outline: none;
   padding: 7px 8px; margin: 0;
-  border: 1px solid transparent; border-radius: 10px; corner-shape: squircle;
-  background: transparent; caret-color: var(--color-primary);
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; corner-shape: squircle;
+  background: rgba(255,255,255,0.72); caret-color: var(--color-primary);   /* 与下方字段框统一：0.72 白底 + 0.1 边框 */
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .header-name-input::placeholder { color: var(--text-secondary); opacity: 0.45; font-weight: 700; }
-.header-name-input:hover,
 .header-name-input:focus {
-  border-color: rgba(123,127,178,0.35); background: rgba(255,255,255,0.75);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08);
+  border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
 }
 .header-name-input.error { color: var(--color-warning); }
 .name-error {

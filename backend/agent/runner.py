@@ -14,7 +14,7 @@ from typing import AsyncGenerator
 from sqlalchemy import func, select
 
 from app.core.config import get_settings
-from agent import sanitize
+from agent import sanitize, quota
 from agent.context import builder, loaders, tokens
 from agent.core import LLMRunner
 from agent.llm_select import pick_model, release as _release_model
@@ -188,7 +188,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             if text or sent_files:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant",
                                             content=text, files=sent_files or None))
-            if tin or tout:
+            # 6h 精力满后冻结记账：达上限则本轮 token 不计入（6h 与周都不再累加），直到窗口重置
+            if (tin or tout) and not await quota.six_h_exhausted(db2, user_id, settings):
                 db2.add(AgentUsage(
                     user_id=user_id, session_id=session_id,
                     tokens_in=tin, tokens_out=tout,

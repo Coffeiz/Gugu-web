@@ -16,6 +16,7 @@ class AgentRequest:
     session_id: Optional[int] = None
     source: str = "web"           # "web" | "qqbot" | "openclaw"
     attachments: list = field(default_factory=list)   # 聊天附件 attach_id（仅 web）
+    greeting: Optional[str] = None   # 新会话首条用户消息携带的「已显示默认问候」，落为本会话首条 assistant 消息（仅 web）
 
 
 @dataclass

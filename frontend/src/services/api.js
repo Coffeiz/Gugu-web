@@ -253,6 +253,7 @@ export const notificationsApi = {
 export const agentApi = {
   listSessions:    ()           => get('/agent/sessions'),
   getUiLabels:     ()           => get('/agent/ui-labels'),   // 状态显示名（目前用「思考中」文字）
+  greeting:        ()           => get('/agent/greeting'),    // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId) => get(`/agent/sessions/${sessionId}/messages`),
   deleteSession:   (sessionId) => del(`/agent/sessions/${sessionId}`),
   clearMemory:     ()           => del('/agent/memory'),

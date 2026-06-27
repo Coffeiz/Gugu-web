@@ -61,7 +61,7 @@ export const useUiStore = defineStore('ui', () => {
     }
     if (bubble) {
       // gugu=true：用咕咕聊天文字的大小/颜色（新手引导气泡），见 NotificationBubble .nb-gugu
-      liveNotification.value = { seq: ++_liveSeq, title: n.title, content: n.content, gugu: n.gugu }
+      liveNotification.value = { seq: ++_liveSeq, id: n.id ?? null, title: n.title, content: n.content, gugu: n.gugu }
       _markBubbleSeen(n.id)   // 实时弹过的，下次上线别再补弹
     }
   }

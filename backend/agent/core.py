@@ -12,6 +12,7 @@ import random
 import re as _re_mod
 from typing import AsyncGenerator
 
+from agent import genstream
 from agent.tools import registry
 
 # ⑦ 慢尾兜底：LLM 瞬时错误（限流 429 / 超时 / 网络 / 5xx）退避重试——贴着并发上限跑时
@@ -317,7 +318,8 @@ class LLMRunner:
                 any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
                 if verify_mode and not verify_fixed and _verify_buf and any(b.name in _mutset for b in tool_blocks):
-                    yield f"data: {json.dumps({'type': 'token', 'content': ''.join(_verify_buf)})}\n\n"
+                    async for _line in genstream.typed_stream(''.join(_verify_buf)):   # 逐字流式，与正常回复一致
+                        yield _line
                 tool_results = []
                 for block in tool_blocks:
                     label = self._label(block.name)
@@ -489,7 +491,8 @@ class LLMRunner:
                 ordered = [tool_buf[i] for i in sorted(tool_buf)]
                 # 核实阶段首次补做（本轮有增删改）→ 发一次"发现漏了X，补一下"说明；之后核对文字仍静默
                 if verify_mode and not verify_fixed and content and any(b["name"] in _mutset for b in ordered):
-                    yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
+                    async for _line in genstream.typed_stream(content):   # 逐字流式，与正常回复一致
+                        yield _line
                 messages.append({
                     "role": "assistant",
                     "content": content or None,
@@ -531,16 +534,19 @@ class LLMRunner:
                 continue
 
             # 无工具调用：正文已逐 token 流式输出完毕
-            # mimo 空回复兜底：推理模型偶尔把整轮输出全放进 reasoning_content、正文 content 为空 →
-            # 用户看到空气泡。本轮没动工具、也不在核实阶段时：先追一轮要它直接给正文；仍空则给句得体兜底。
-            if is_mimo and not content.strip() and not did_mutate and not verify_mode:
+            # 空回复兜底：模型整轮没产出正文 → 用户看到空气泡。常见于 ① 推理模型把话全放进
+            # reasoning_content；② 精力降级进轻量模式后「没重活可干」干脆不说话。不限 mimo——
+            # 任何模型空正文都要兜（此前只 gate 在 is_mimo，导致非 mimo 模型精力用尽时裸露成空气泡）。
+            # 本轮没动工具、也不在核实阶段时：先追一轮要它直接给正文；仍空则给句得体兜底。
+            if not content.strip() and not did_mutate and not verify_mode:
                 if empty_retry < 1:
                     empty_retry += 1
                     messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})
                     yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                     continue
                 fb = "嗯…我这下没太接住，你再说一遍、或者换个说法，我马上跟上～"
-                yield f"data: {json.dumps({'type': 'token', 'content': fb}, ensure_ascii=False)}\n\n"
+                async for _line in genstream.typed_stream(fb):   # 空回复兜底也走逐字流式
+                    yield _line
                 content = fb
             # narration 兜底：整段生成一个工具都没真调，但文字在"假装"读/改文件 → 追一轮逼它真调（只一次）。
             if (not any_tool_called and not verify_mode and narration_retry < 1

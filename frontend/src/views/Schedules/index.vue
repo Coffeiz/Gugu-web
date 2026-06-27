@@ -354,13 +354,12 @@ async function removeTask(t) {
   width: 100%; box-sizing: border-box; outline: none;
   font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans);
   padding: 6px 11px; margin-bottom: 10px;
-  border: 1px solid transparent; border-radius: var(--radius-sm);
-  background: transparent;
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  border: 1px solid rgba(0,0,0,0.1); border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.72);   /* 与下方字段框统一：0.72 白底 + 0.1 边框 */
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .title-input::placeholder { color: rgba(0,0,0,0.28); font-weight: 700; }
-.title-input:hover { border-color: rgba(123,127,178,0.35); background: rgba(255,255,255,0.75); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08); }
-.title-input:focus { border-color: rgba(123,127,178,0.4); background: rgba(255,255,255,0.75); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.1); }
+.title-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
 .field { display: block; margin-bottom: 11px; }
 .field > span { display: block; font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; }
 /* 输入框/选择框：学新建项目（0.72 白底 + rgba(0,0,0,0.1) 边 + 紫色 focus 光圈），曲率连续圆角 */

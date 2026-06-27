@@ -167,24 +167,6 @@ async def update_project(
     return _to_resp(p, fc_res.scalar_one())
 
 
-async def rehome_project_files_to_personal(db, user_id, pid: int) -> int:
-    """删项目前：把项目下的文件归到个人空间（space=personal、project_id/folder_id 置空）。
-
-    否则外键 `ON DELETE SET NULL` 会把文件的 project_id 抹成 null、但 space 仍是 'project'，
-    成为「孤儿文件」——前端按「projectId 为空就归个人」分组，会把它们漏进个人空间视图。
-    保留 storage_key 不动（物理文件仍在、仍可访问，路径残留无害）。返回归位文件数。"""
-    files = (await db.execute(
-        select(File).where(File.project_id == pid, File.user_id == user_id)
-    )).scalars().all()
-    for f in files:
-        f.space = "personal"
-        f.project_id = None
-        f.folder_id = None
-        f.stage_name = ""
-        f.updated_at = datetime.utcnow()
-    return len(files)
-
-
 @router.delete("/{pid}", status_code=204)
 async def delete_project(
     pid: int,
@@ -194,6 +176,14 @@ async def delete_project(
     p = await db.get(Project, pid)
     if not p or p.user_id != current_user.id:
         raise HTTPException(404, "项目不存在")
-    await rehome_project_files_to_personal(db, current_user.id, pid)  # 文件先归个人，别变孤儿
+    # 连项目内的文件/文件夹一并删除（不再把文件归个人空间）：
+    #   · 文件：软删（置 deleted_at），保留物理与「可恢复」语义，与单文件删除一致；
+    #   · 文件夹：由 folders.project_id 的 ON DELETE CASCADE 随项目自动删除。
+    # 前端在项目有文件/文件夹时已弹确认，这里直接执行级联删除。
+    await db.execute(
+        update(File)
+        .where(File.project_id == pid, File.user_id == current_user.id, File.deleted_at.is_(None))
+        .values(deleted_at=datetime.utcnow())
+    )
     await db.delete(p)
     await db.commit()

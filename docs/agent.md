@@ -301,6 +301,16 @@ IM 回复完  → publish('sessions', appended=[助手消息])  # 再推
 - **facts 更新策略（2b 目标）**：维护结构化 JSON（value/confidence/source：observed 用户说过的、inferred 行为推断的）；已有事实变化更新 value 不追加，避免脏数据。**现状（2a）直接 markdown 列表，去重靠内容包含判断**。
 - **压缩定为 daily → memory 两段直压，无 weekly 中间层**（咕咕只需近期/长期两档）。
 
+### 消息序列约束 · 前导 assistant 会被剥（sanitize）
+
+发给 Anthropic/MiniMax 的消息序列**首条必须是 user**。`agent/sanitize.py` 的 `sanitize_messages`（`web.py` 组完 `anthr_messages` 后调）第 4 步据此 `while norm[0].role != "user": pop(0)`——把所有**前面没有 user 的前导 assistant 消息每轮丢掉**（连同孤儿 tool_result、空消息、相邻同角色合并一起清）。这是合法性约束，不是 bug。
+
+**推论**：想让模型「看到」一条**不是用户发出**的 assistant 上下文（对话框默认问候、系统旁白、注入的伪助手发言），**别指望把它当历史里的前导 assistant 消息**——它会被剥掉，模型永远收不到。正确做法是**注入 system prompt**（或拼进某条 user 消息），保持序列 user 开头。
+
+> **踩坑实例（默认问候）**：对话框默认问候用户回复后，曾把它入库为新会话首条 `assistant`（`created_at` 早于用户消息），指望模型看到「自己已打招呼」。结果 sanitize 每轮剥掉它，模型把用户的回复当成对话开头又重新寒暄。改法：`web.py` 在 `is_new_session and req.greeting` 时把问候拼进 system prompt（"你已经说过：「…」，别重复"）；DB 那条 assistant 仍留着只供会话回看显示。详见 `对话默认问候-生成方案.md` §4.2。
+
+**排查提示**：遇到「模型无视某条历史消息」，先确认它在 `sanitize_messages` 之后是否还在（前导 assistant / 孤儿 tool 块 / 空消息都会被清掉）。
+
 ### 提醒工作流（Reminder Workflow）
 
 > **架构决定（2026-06-24）**：定时任务结果**不进对话**，走独立链路投递到侧边栏通知弹窗 + IM。✅ 已落地。

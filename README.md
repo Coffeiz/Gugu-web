@@ -2,7 +2,7 @@
 
 > 代号：**咕咕**　|　域名：[gugugu.site](https://gugugu.site)
 
-一个面向**自由职业创作者**（插画、动画、设计等）的项目管理工具。统一管理项目进度、文件归档与排期提醒，未来可通过自然语言完成项目管理操作，并扩展至团队 / 企业协作（ToB）。
+一个陪伴**个人成长**的 AI 伙伴 + 项目管理工具——面向任何有目标要推进的人（工作、创作、学习、生活皆可，创作者是重点群体之一）。统一管理项目进度、文件归档、排期提醒与日常记录，通过自然语言完成操作，并扩展至团队 / 企业协作（ToB）。
 
 ![status](https://img.shields.io/badge/status-active-success)
 ![frontend](https://img.shields.io/badge/frontend-Vue%203-42b883)

@@ -22,7 +22,7 @@ from app.models import (
     AgentUsage, CalendarEvent, ConversationMessage, ConversationSession,
     Project, User,
 )
-from agent import sanitize, genstream
+from agent import sanitize, genstream, quota
 from agent.context import builder, loaders, tokens
 from agent.core import LLMRunner
 from agent.models import AgentRequest
@@ -101,13 +101,13 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     if _sess._engine is None:
         _sess._build_engine()
 
-    degraded = False   # 配额耗尽 → 不硬拦，降级：只保留只读/轻量工具（查询/对话仍可用，屏蔽重操作）
+    quota_exceeded = False   # 配额耗尽 → 硬拦：直接回一句「精力耗尽」，不启动生成
+    quota_reset_at = None     # 配额恢复时刻（取先耗尽的那档：6h 整点 / 下周一）
+    _now = datetime.utcnow()
     async with _sess._SessionLocal() as db:
         # ── token 配额检查 ──
         user = await db.get(User, user_id)
         if user:
-            _now = datetime.utcnow()
-
             async def _token_used(since: datetime) -> int:
                 r = await db.execute(
                     select(func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out))
@@ -119,17 +119,17 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             _limit_6h = user.token_limit_6h or settings.quota.default_token_limit_6h
             if _limit_6h is not None:
                 _win_6h = _now.replace(hour=(_now.hour // 6) * 6, minute=0, second=0, microsecond=0)
-                _used_6h = await _token_used(_win_6h)
-                if _used_6h >= _limit_6h:
-                    degraded = True   # 6h 配额耗尽 → 降级（不 return）
+                if await _token_used(_win_6h) >= _limit_6h:
+                    quota_exceeded = True
+                    quota_reset_at = _win_6h + timedelta(hours=6)
 
             # 本周（周一 00:00 UTC 起）
             _limit_week = user.token_limit_weekly or settings.quota.default_token_limit_weekly
-            if _limit_week is not None:
+            if not quota_exceeded and _limit_week is not None:
                 _week_start = (_now - timedelta(days=_now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-                _used_week = await _token_used(_week_start)
-                if _used_week >= _limit_week:
-                    degraded = True   # 周配额耗尽 → 降级（不 return）
+                if await _token_used(_week_start) >= _limit_week:
+                    quota_exceeded = True
+                    quota_reset_at = _week_start + timedelta(days=7)
 
         # ── 上下文：项目 + 事件 + 文件概览（每轮注入，保证咕咕看到最新状态）──
         projects = await loaders.load_projects(db, user_id)
@@ -153,6 +153,14 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             session = ConversationSession(user_id=user_id, title=req.message[:50], source="web")
             db.add(session)
             await db.flush()
+            # 前端展示过的默认问候 → 先落为本会话首条 assistant 消息（在用户消息之前），
+            # 这样用户对问候的回复不会被当成「对话刚开始」。问候由 /agent/greeting 轻量直连生成、
+            # 不计精力；此处仅把已显示文本入库（不写 AgentUsage，照样不计精力）。
+            # 先 flush 让它的 created_at 早于稍后写入的用户消息，下面历史查询即可纳入它。
+            if req.greeting and req.greeting.strip():
+                db.add(ConversationMessage(session_id=session.id, role="assistant",
+                                           content=req.greeting.strip()))
+                await db.flush()
 
         # 历史窗口：取最新若干条（条数安全上限），再按 token 预算从新往回裁剪
         hist_res = await db.execute(
@@ -172,6 +180,18 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
 
     yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id})}\n\n"
 
+    # 精力耗尽 → 硬拦：持久化一句提示并回给前端，不启动生成（查询/对话一律不放行）
+    if quota_exceeded:
+        block_msg = "咕咕累了，休息会儿再来～"
+        async with _sess._SessionLocal() as db2:
+            if await db2.get(ConversationSession, session_id) is not None:
+                db2.add(ConversationMessage(session_id=session_id, role="assistant", content=block_msg))
+                await db2.commit()
+        async for line in genstream.typed_stream(block_msg):   # 逐字流式：复用 SSE token 动画，咕咕「打字」感
+            yield line
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return
+
     # ── 先订阅频道、再启动后台生成 ──
     #    顺序很关键：pub/sub 发完即弃，若先起生成、后订阅，生成的头几个 token（短回复时是全部）
     #    会在订阅建好之前被 publish 掉 → 首条消息空气泡。先 attach 订阅，消息就进连接缓冲不丢。
@@ -180,7 +200,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     if not await genstream.is_active(session_id):
         task = asyncio.create_task(_generate(
             req, session_id, projects, events, files_overview, history, is_new_session, aug_text, aug_images,
-            degraded=degraded, style_prefs=style_prefs,
+            style_prefs=style_prefs,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -213,7 +233,7 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
 
 
 async def _generate(req, session_id, projects, events, files_overview, history, is_new_session,
-                    user_content=None, user_images=None, degraded=False, style_prefs=None) -> None:
+                    user_content=None, user_images=None, style_prefs=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -242,13 +262,19 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
     if _summary:
         system_prompt += compress_conv.system_block(_summary)
 
-    # 配额降级：只给只读/轻量工具 + 提示咕咕婉拒重操作（查询/对话照常）
+    # 默认问候：新会话首轮把它作为「对话开场」注入 system，而不是只靠那条前导 assistant 历史——
+    # 后者会被 sanitize 的「开头必须是 user」规则剥掉（Anthropic/MiniMax 不许前导 assistant），
+    # 导致模型看不到自己已打招呼、把用户对问候的回复当成对话刚开始又重新问好。问候那条仍照常
+    # 入库（供会话回看显示），这里额外让模型「知道」它，避免重复寒暄。
+    if is_new_session and req.greeting and req.greeting.strip():
+        system_prompt += (
+            "\n\n# 本次对话的开场\n"
+            "用户刚打开对话框时，你已经主动对他说了下面这句开场白。**不要再重新打招呼**，"
+            "顺着它、结合用户的回复自然往下接：\n"
+            f"「{req.greeting.strip()}」"
+        )
+
     tool_names = profile.tool_names
-    if degraded:
-        tool_names = profile.light_tool_names
-        system_prompt += ("\n\n[当前状态：精力配额已用尽，进入轻量模式] 只能做查询和对话。"
-                          "涉及创建/修改/删除/整理文件/生成文档/联网搜索等重操作时，"
-                          "礼貌告知用户「精力不足，等配额恢复后再帮你做」，不要假装已完成。")
 
     from agent.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(settings.ai)
@@ -366,7 +392,8 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                         db2.add(ConversationMessage(
                             session_id=session_id, role="assistant", content=full_reply, files=sent_files or None,
                         ))
-                if usage_tokens["input"] or usage_tokens["output"]:
+                # 6h 精力满后冻结记账：达上限则本轮 token 不计入（6h 与周都不再累加），直到窗口重置
+                if (usage_tokens["input"] or usage_tokens["output"]) and not await quota.six_h_exhausted(db2, user_id, settings):
                     db2.add(AgentUsage(
                         user_id=user_id, session_id=session_id if sess_alive else None,
                         tokens_in=usage_tokens["input"], tokens_out=usage_tokens["output"],

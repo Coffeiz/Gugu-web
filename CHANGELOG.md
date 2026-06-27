@@ -9,6 +9,42 @@
 
 ## [Unreleased]
 
+### 精力系统：耗尽硬拦 + 满额冻结 + 逐字流式提示
+
+精力（Token 配额）从「软降级」改为「硬拦」，新增满额冻结与全局逐字流式。详见 `docs/精力系统架构.md`。
+
+- **耗尽硬拦**（`web.py` / `profiles/base.py`）：6h / 周配额用尽后不再「软降级只挡重操作」，改为直接回一句「咕咕累了，休息会儿再来～」并 return，聊天 / 查询一律不放行；移除 `degraded` / `light_tool_names` / `READ_ONLY_TOOLS`。
+- **满额冻结记账**（新增 `agent/quota.py` `six_h_exhausted`）：6h 达上限后本轮及之后 token 不再写 `AgentUsage`（6h 与周都不再累加），直到窗口整点重置；web `_generate` 与 runner（IM / 定时任务）两处记账都接守卫，非 web 路径满额也不污染周精力。
+- **空回复兜底覆盖全模型**（`core.py`）：原空气泡兜底只 gate 在 `is_mimo`，非 mimo 模型空正文会裸露成空气泡；去掉该门，任何模型空正文都兜。
+- **逐字流式统一**（新增 `genstream.typed_stream` 通用件）：系统侧成段文案（硬拦提示、空回复兜底、核实补做说明）原本一次性整段蹦出，统一改走 `typed_stream` 逐字推送，与正常回复同款动画（续看快照保持一次性、不重演）。
+
+### 项目 / 弹窗细节
+
+- **删项目改为连文件一并删除 + 有内容弹确认**（`projects.py` / `ProjectModal.vue`）：原先删项目把文件「归位个人空间」（跑进个人文件），改为文件软删、文件夹随 FK 级联删；前端在项目有文件 / 文件夹时弹浏览器确认，没有则直接删。
+- **新建项目卡 / 定时任务卡标题输入框统一**（`NewProjectModal.vue` / `Schedules/index.vue`）：标题框从「透明、悬停才浮白」改为与其余字段框一致的 `0.72` 白底 + `0.1` 边框 + 同款 focus（保留大字号粗体）。
+- **GuguChat 附件按钮与发送按钮垂直对齐**（`GuguChat.vue`）：附件按钮补固定高度（28 / 放大 32）与发送按钮等高，底对齐时中心也对齐。
+
+### 对话框默认问候改为咕咕生成（轻量直连 + 打字机动画，不计精力）
+
+打开对话框时那句默认问候，从写死的固定文案改成**咕咕每次刷新页面重新生成一句**——带点记忆、像熟人开口。详见 `docs/对话默认问候-生成方案.md`。
+
+- **后端轻量生成**（`agent/greeting.py` + `GET /agent/greeting`）：组装记忆上下文（长期 fact + 近 7 天有动静的项目 + 近 7 天 daily + 近期日历提醒）→ 轻量 LLM 直连（参照 `_generate_title`：非流式、anthropic/openai 双路、mimo 关思考、`max_tokens=180`），**不走 agent 循环**。提示词硬约束：不自我介绍、不报功能菜单、暖、2~3 句、表情极简、结尾把话交回用户。失败/空 → 返回 `''`。
+- **不计入精力 / 配额**：该调用不经 `web.stream`/`runner` 那条记 `AgentUsage` 的路，token 不写 `AgentUsage`、不扣配额。
+- **只在进入「全新对话」时生成**（`useGreeting.js` + `GuguChat.vue`）：`greeting` 只活在本次页面生命周期、不跨刷新缓存（去掉 sessionStorage）。生成不再在 `DefaultLayout` 无条件触发——刷新常会停在老会话（`SESSION_KEY` 仍在、`loadSession` 拉回历史），那时默认问候根本不显示、生成纯属空跑。改为 `GuguChat` 挂载时据 `SESSION_KEY` 判断：有可恢复会话 → 不生成；无（首次访问 / 关过标签页 / 清过会话）→ 才后台预取（fire-and-forget）。
+- **打开对话框时打字机动画显示**（`GuguChat.vue`）：默认问候改为占位空消息，`watch(open)` 在任何打开路径触发 `animateGreeting()`——那一刻取最新问候逐字冒出（走 `streaming`/`renderMdStream`，与咕咕回复同源），每条只播一次。
+- **问候纳入对话**（`GuguChat.vue` + `web.py` + `AgentRequest`/`ChatRequest` 加 `greeting` 字段）：用户回复问候时，把已显示的问候随首条消息发给后端。否则模型把用户对问候的回复当成「对话刚开始」又重新打招呼。落地分两步：① 问候入库为本会话首条 assistant 消息（供会话回看显示；只写一行 `ConversationMessage`、不碰 `AgentUsage` → 仍不计精力）；② **新会话首轮把问候作为「对话开场」注入 system prompt**——不能只靠那条前导 assistant 历史，因为 `sanitize_messages` 的「开头必须是 user」规则（Anthropic/MiniMax 不许前导 assistant）会把它剥掉，模型就看不到自己已打招呼。注入后模型「知道」开场白、顺着接，不再重复寒暄。
+- **大窗「新对话」不放问候**（`GuguChat.vue` `newSession`）：问候只在打开小窗时出现；大窗点「新对话」是干净起手、空白开始。
+- **兜底池**（`useGreeting.js`）：生成没好/失败 → 从 5 条静态兜底随机取一条，**兜底同样走打字机动画**；文案不自我介绍、不报菜单、风格贴近咕咕。
+
+## [0.13.1] - 2026-06-27 · 新手引导系统（独立子系统）+ 通知气泡 / 调性打磨
+
+### 通知气泡文字统一 + 调性放宽到「个人成长」
+
+- **通知气泡文字对齐 GuguChat 小窗正文**（全局变量）：所有通知气泡正文从 12px / 次要色改为与聊天一致的 13px / 主色 / 行高 1.5。抽出全局 CSS 变量 `--gugu-body-size` / `--gugu-body-line`（`variables.css`），`GuguChat` 与 `NotificationBubble` 共用——一处定义、改一处全局生效。
+- **5s 自动消失收窄为仅教程气泡**（`NotificationBubble.vue`）：打完停留 5s 自动收**只作用于新手引导气泡**（`gugu` 标记）；IM / 后台广播等其它通知恢复「留到手动关或被新气泡顶掉」。
+- **调性放宽**（`persona.md` + README / overview / mvp / design）：从「面向创作者（插画 / 动画 / 设计自由职业者）」放宽到「陪伴**个人成长**」——面向任何有目标要推进的人（工作 / 创作 / 学习 / 生活，创作者是重点群体之一）。
+- **自我介绍不报功能菜单**（`persona.md`）：被问「介绍自己 / 你能做什么」时，别像念说明书那样罗列功能清单（读着像把提示词背一遍），用一两句像朋友那样说清是谁、把话交回用户；能力让人用着发现。
+
 ### 新手引导 Phase 3：回头看（完成第 5 个项目）
 
 完成第 5 个项目时，咕咕回头看一眼：「还记得『〈引导项目名〉』吗？(停 1.5s) 那时候这里只有两个文件，现在已经越来越热闹啦。」`projectStore.moveProject` 里项目转「已完成」、已完成数 ≥5 → `fireLookback()`（claim-once 只一次；文案 `{project_name}` 后端用 `seeded_project_name` 回填）。至此新手引导 Phase 1/2/3 全部落地。
@@ -30,12 +66,12 @@
 - **欢迎/引导气泡 + 高亮**（`useOnboarding.js`，接进 `DefaultLayout`）：进应用 1s 弹欢迎、再 ~4.5s 弹引导并**跳项目面板高亮引导项目卡（5s 一次「呼吸」光晕）**。气泡走通知 toast，文字对齐 GuguChat 聊天正文（13px/主色），打完停留 5s 自动消失。
 - **打字机标记**（`NotificationBubble.vue`）：文案支持 `[[p]]/[[p:1500]]`（停顿）、`[[slow]]…[[/slow]]`（逐字慢速冒出，如文件库「不过…」三个点）。
 - **Demo 控制面板** `/dev/onboarding`：重置 / 重新播种 / 立刻预览各气泡，便于不重注册反复测。
-- 注意：`backend/onboarding/` 不在 dev `uvicorn --reload` 监视目录，改后需 `--reload-dir onboarding` 或强制触发 reload。Phase 2（情境气泡 07 各界面钩子）、Phase 3（回头看 08）待做。
+- **老用户隔离 + demo 仅 dev**：`state.claim()` 加 seeded 闸——没走过新引导（注册时被播种）的老用户 claim 一律 None，欢迎/引导/情境/回头看气泡都不打扰；`/dev/onboarding` 用 `import.meta.env.DEV` 条件注册，prod build 经 tree-shake 完全剔除（代码保留供 dev 调试）。`scripts/smoke_onboarding.py` 端到端冒烟 20 项全过。
+- 注意：`backend/onboarding/` 不在 dev `uvicorn --reload` 监视目录，改后需启动加 `--reload-dir onboarding` 或强制触发 reload。
 
-### UI 细节：项目卡悬停高光淡入淡出 + 通知气泡打完自动消失
+### UI 细节：项目卡悬停高光淡入淡出
 
 - **项目卡悬停高光淡入淡出**（`ProjectCard.vue`）：悬停高光此前是瞬间出现——根因是高光用 `linear-gradient` 实现，而 `transition: background` 对 gradient 不生效（background-image 非可动画属性）。改为常驻微光放 `::before` 静态底层、悬停强高光放 `::after` 用 `opacity: 0→1` 淡入淡出（0.25s），移入移出都平滑。
-- **通知气泡打完自动消失**（`NotificationBubble.vue`）：逐字流式打完后停留 5s 自动收起；被新气泡顶替时改用 0.5s 更快让位。
 
 ---
 

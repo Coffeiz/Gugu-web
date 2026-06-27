@@ -102,6 +102,16 @@ async def open_subscription(session_id):
     return pubsub
 
 
+async def typed_stream(text: str, delay: float = 0.045):
+    """把一段文字按 SSE `token` 事件**逐字**吐出 → 复用前端对 token 流的现成渲染，
+    做出「咕咕逐字打字」的 SSE 动画效果。用于系统侧主动让咕咕说一句话（如配额硬拦提示），
+    全局可复用：`async for line in genstream.typed_stream(msg): yield line`。"""
+    import asyncio
+    for ch in text:
+        yield f"data: {json.dumps({'type': 'token', 'content': ch}, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(delay)
+
+
 async def subscribe(session_id, pubsub=None):
     """订阅某会话的生成频道，逐条 yield SSE 行。无消息时定期 keepalive。
     可传入 open_subscription() 预先订好的 pubsub（避免订阅前丢消息）。"""
