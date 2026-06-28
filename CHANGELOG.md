@@ -9,6 +9,32 @@
 
 ## [Unreleased]
 
+### 接入微信（个人微信 · 官方 iLink Bot）
+
+咕咕可接入**个人微信**：走微信官方 iLink Bot API（`ilinkai.weixin.qq.com`）——扫码授权拿 `bot_token` → `getupdates` long-poll 收 + HTTP send 发，**非逆向、无封号风险**，模式同飞书/QQ 的 BYO 扫码自动连接。
+
+- **网关 + 客户端**（新增 `adapters/wechat.py` / `adapters/wechat_client.py`）：long-poll 子进程拉消息入 `im:inbound`，`ILinkClient` 封装出码/轮询/收发；iLink 回复**必须带入站消息的 `context_token`**，入队 payload 透传、worker 回复时带回。
+- **扫码连接**（新增 `api/v1/wechat_connect.py`）：`POST/GET /me/wechat/connect` 出码 + 轮询确认 → 自动 upsert `user_bots`（`bot_token` 存 `app_secret`、`base_url` 存 `app_id`）→ 通知 supervisor reload。`supervisor.py` 加 wechat 子进程拉起、`worker.py` 加微信发送分支，前端 `ProfileModal` 加「微信（个人微信）」扫码入口。
+- **收到消息先即时反馈**：网关拉到消息先回一句「收到啦，让我看看哈~」再入队，免得 agent 慢处理时用户在微信干等没动静。
+- MVP 限文本（图片/语音后补，需 iLink 媒体 AES + CDN）。⚠️ 待确认 iLink Bot（`bot_type=3`）开放门槛。
+
+### 修：精力 100% 仍拦不住对话（封顶截断到 0 + IM 漏判）
+
+精力满了却还能继续聊，三处根因一并修：
+
+- **封顶按比例缩被 `int()` 截断到 0**（`quota.py cap_usage`）：`remaining` 很小、单轮 token 很大时（如 limit=1），`int(tin * remaining/total)` 截成 0 → `AgentUsage` 永远记 0、用量永远填不满上限、硬拦的 `used >= limit` 永不触发。改为**精确填满**剩余额度（tin 优先、余量给 tout），不再按比例缩。
+- **IM / 定时任务路径根本没硬拦**：耗尽硬拦原本只在网页 `web.stream`，IM/定时走的 `runner.run_collect` 漏了。抽出 `quota.is_exhausted`（CST 6h/周同口径），`runner` 存完用户消息即判定耗尽、直接回「咕咕累了，休息会儿再来～」不再生成。
+- **web 与 IM 口径统一**（`web.py`）：网页原为 UTC 窗口内联判定，改走同一个 `quota.is_exhausted`，两路硬拦口径一致。
+
+### 红线：不虚构联网信息（交叉验证）+ 未来任务主动确认设定时
+
+- **不虚构联网 / 实时信息**（`policy.md`）：联网查到什么说什么，**绝不在搜索结果之外脑补/外推/补全**（尤其赛程/比分/日期/价格）；关键或易错事实**交叉验证**，单一来源不轻信、来源冲突如实讲分歧。治咕咕给 F1 赛果时凭单一来源瞎编。
+- **未来要到点执行的活 = 定时任务**（`skills.md`）：用户提「明天 / X 点 / 每天 帮我做 / 收集 / 发 某事」时，**先主动确认**「要设成定时任务、到点自动做吗」→ 认可才 `create_scheduled_task`；铁规则「没真建成那条定时任务，就别口头答应会自动做」。治「明早 8 点收集战报」被当口头应承、没真落定时任务。
+
+### 待办/阶段拖拽升级为实时让位（去动画 + 克隆无底框）
+
+待办与阶段拖拽从 HTML5 drag 升级为**指针驱动**：拖动时其他元素**实时同步让位**（不再等落下才重排）；待办拖动名字即可排序、并可**跨阶段**拖到别的阶段；去掉让位过渡动画（直接到位，杜绝中线判断引发的抖动）；阶段克隆预览**只显克隆体、不带底色框**，与待办一致。定时任务编辑卡的提醒内容占位也从「该喝水啦～」改为「收集昨天的科技新闻」。`ProjectCard.vue` / `ProjectModal.vue` / `Schedules/index.vue`。
+
 ### 修：delete_project 工具 ImportError 导致 agent 删项目必失败
 
 agent 工具层 `_delete_project` 还在 `from app.api.v1.projects import rehome_project_files_to_personal`，但该函数在「删项目改为连文件软删」时已被移除，导致任何 agent 删项目请求都以 ImportError 崩溃。改为与 API 端一致：先 `UPDATE files SET deleted_at=now()`（软删），再 `DELETE project`（文件夹由 FK CASCADE 级联删）。

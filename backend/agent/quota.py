@@ -21,6 +21,38 @@ def six_h_window_start(now: datetime) -> datetime:
     return win_cst.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _week_start(now: datetime) -> datetime:
+    """本周一 00:00 CST 起点，返回 UTC naive datetime。"""
+    nc = now.replace(tzinfo=timezone.utc).astimezone(_CST)
+    wc = (nc - timedelta(days=nc.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    return wc.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+async def is_exhausted(db, user_id, settings) -> bool:
+    """6h 或周配额是否已耗尽（used >= limit）。供「耗尽硬拦」判定——与 cap_usage 同窗口口径
+    （CST 6h / 周）。web 流式与 runner 非流式（IM、定时任务）共用，保证两路硬拦口径一致。"""
+    from app.models import User, AgentUsage
+    u = await db.get(User, user_id)
+    if u is None:
+        return False
+    now = datetime.utcnow()
+
+    async def _used(since: datetime) -> int:
+        r = await db.execute(
+            select(func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out))
+            .where(and_(AgentUsage.user_id == user_id, AgentUsage.created_at >= since))
+        )
+        return r.scalar() or 0
+
+    limit_6h = u.token_limit_6h or settings.quota.default_token_limit_6h
+    if limit_6h is not None and await _used(six_h_window_start(now)) >= limit_6h:
+        return True
+    limit_w = u.token_limit_weekly or settings.quota.default_token_limit_weekly
+    if limit_w is not None and await _used(_week_start(now)) >= limit_w:
+        return True
+    return False
+
+
 async def cap_usage(db, user_id, settings, tin: int, tout: int) -> tuple[int, int]:
     """按 6h 剩余额度给本轮 token **封顶**，返回实际应记账的 `(tin, tout)`。
 
@@ -48,5 +80,9 @@ async def cap_usage(db, user_id, settings, tin: int, tout: int) -> tuple[int, in
     total = tin + tout
     if total <= remaining:
         return tin, tout                 # 没顶过线：原样计
-    ratio = remaining / total            # 顶过线：按比例缩到刚好填满，超出丢弃
-    return int(tin * ratio), int(tout * ratio)
+    # 顶过线：精确填满剩余额度（tin 优先、余量给 tout）。**不按比例缩**——比例缩的 int()
+    # 会在 remaining 很小、token 很大时截断到 0（如 limit=1），导致 used 永远是 0、cap 永远
+    # 填不满，硬拦的 used>=limit 永不触发 → 精力 100% 却能一直聊的 bug 根因。
+    cap_in = min(tin, remaining)
+    cap_out = remaining - cap_in
+    return cap_in, cap_out

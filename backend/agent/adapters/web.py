@@ -101,35 +101,9 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     if _sess._engine is None:
         _sess._build_engine()
 
-    quota_exceeded = False   # 配额耗尽 → 硬拦：直接回一句「精力耗尽」，不启动生成
-    quota_reset_at = None     # 配额恢复时刻（取先耗尽的那档：6h 整点 / 下周一）
-    _now = datetime.utcnow()
     async with _sess._SessionLocal() as db:
-        # ── token 配额检查 ──
-        user = await db.get(User, user_id)
-        if user:
-            async def _token_used(since: datetime) -> int:
-                r = await db.execute(
-                    select(func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out))
-                    .where(and_(AgentUsage.user_id == user_id, AgentUsage.created_at >= since))
-                )
-                return r.scalar() or 0
-
-            # 固定 6h 窗口：每天 00:00/06:00/12:00/18:00 UTC 整点重置（非滑动）
-            _limit_6h = user.token_limit_6h or settings.quota.default_token_limit_6h
-            if _limit_6h is not None:
-                _win_6h = _now.replace(hour=(_now.hour // 6) * 6, minute=0, second=0, microsecond=0)
-                if await _token_used(_win_6h) >= _limit_6h:
-                    quota_exceeded = True
-                    quota_reset_at = _win_6h + timedelta(hours=6)
-
-            # 本周（周一 00:00 UTC 起）
-            _limit_week = user.token_limit_weekly or settings.quota.default_token_limit_weekly
-            if not quota_exceeded and _limit_week is not None:
-                _week_start = (_now - timedelta(days=_now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-                if await _token_used(_week_start) >= _limit_week:
-                    quota_exceeded = True
-                    quota_reset_at = _week_start + timedelta(days=7)
+        # ── 精力耗尽硬拦判定（与 IM/定时任务 runner 同口径，走 quota.is_exhausted 的 CST 6h/周窗口）──
+        quota_exceeded = await quota.is_exhausted(db, user_id, settings)
 
         # ── 上下文：项目 + 事件 + 文件概览（每轮注入，保证咕咕看到最新状态）──
         projects = await loaders.load_projects(db, user_id)

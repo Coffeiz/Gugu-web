@@ -87,6 +87,11 @@ async def _send(payload: dict, text: str):
         from agent.adapters import qq
         await qq.send_c2c(payload["platform_user_id"], text,
                           payload.get("message_id"), payload.get("channel_id"))
+    elif platform == "wechat" and payload.get("platform_user_id"):
+        from agent.adapters import wechat
+        # iLink 回复必须带入站消息的 context_token（worker 透传）
+        await wechat.send_text(payload["platform_user_id"], text,
+                               payload.get("channel_id"), payload.get("context_token", ""))
     else:
         print(f"[worker] (无发送通道) {platform}: {text!r}", flush=True)
 

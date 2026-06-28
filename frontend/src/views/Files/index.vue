@@ -1675,6 +1675,11 @@ function onFileDragStart(f, e) {
   draggingFileIds.value = new Set(ids)
   e.dataTransfer.setData('text/plain', JSON.stringify(ids))
   e.dataTransfer.effectAllowed = 'move'
+  // 用卡片/行自身作拖拽图，覆盖浏览器对 text/plain 的「带网站 favicon 的文本预览」
+  try {
+    const _r = e.currentTarget.getBoundingClientRect()
+    e.dataTransfer.setDragImage(e.currentTarget, e.clientX - _r.left, e.clientY - _r.top)
+  } catch {}
   // 物理拖拽：仅网格卡片（列表行整条飞起来不好看），单选时启用
   if (e.currentTarget?.classList?.contains('fc-card') && ids.length === 1) {
     startPhysicsDrag(e, e.currentTarget)

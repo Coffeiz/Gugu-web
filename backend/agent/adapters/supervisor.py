@@ -24,6 +24,7 @@ POLL_SEC = 5
 PLATFORM_MODULE = {
     "feishu": "agent.adapters.feishu",
     "qqbot":  "agent.adapters.qq",
+    "wechat": "agent.adapters.wechat",
 }
 _procs: dict[str, subprocess.Popen] = {}
 _procs_spec: dict[str, dict] = {}
@@ -71,6 +72,12 @@ def _spawn(key: str, spec: dict) -> subprocess.Popen:
         env.update({
             "FEISHU_BOT_ID": spec["id"], "FEISHU_APP_ID": spec["app_id"],
             "FEISHU_APP_SECRET": spec["app_secret"], "FEISHU_OWNER": spec["owner"],
+        })
+    elif spec["platform"] == "wechat":
+        # 微信 iLink：bot_token 存在 app_secret、base_url 存在 app_id（复用现有字段）
+        env.update({
+            "WECHAT_BOT_ID": spec["id"], "WECHAT_BOT_TOKEN": spec["app_secret"],
+            "WECHAT_BASE_URL": spec["app_id"], "WECHAT_OWNER": spec["owner"],
         })
     else:  # qqbot
         env.update({

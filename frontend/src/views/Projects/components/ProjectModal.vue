@@ -82,6 +82,7 @@
                 <button class="add-stage-btn" @click="addStage">＋ 添加</button>
               </div>
             <div class="stage-flow" ref="stageFlowRef">
+              <TransitionGroup name="stage-flip">
               <div
                 v-for="(stage, i) in displayStages" :key="stage.key"
                 class="stage-node"
@@ -118,29 +119,43 @@
                   </button>
                 </div>
                 <!-- 待办列表 -->
-                <div class="todo-list">
+                <TransitionGroup tag="div" name="todo-flip" class="todo-list"
+                     @dragover.prevent="todoListDragOver(stage)"
+                     @drop="todoDragEnd">
                   <div v-for="(todo, ti) in (stage.todos ?? [])" :key="todo.id" class="todo-item"
-                       @dragover.prevent @drop="todoDrop(stage, ti)">
-                    <span class="todo-drag" draggable="true" @dragstart="todoDrag = { stageKey: stage.key, index: ti }" @dragend="todoDrag = null" title="拖拽排序"><PhDotsSixVertical :size="11" weight="bold" /></span>
+                       :class="{ 'todo-ghost': todoDrag && todoDrag.stageKey === stage.key && todoDrag.index === ti }"
+                       :draggable="editingTodo !== todo.id"
+                       @dragstart="todoDragStart(stage, ti)"
+                       @dragend="todoDragEnd"
+                       @dragover.prevent.stop="todoDragOver(stage, ti, $event)">
                     <button class="todo-check" :class="{ checked: todo.done }" @click.stop="toggleTodo(todo)">
                       <PhCheck v-if="todo.done" :size="9" weight="bold" />
                     </button>
                     <input
+                      v-if="editingTodo === todo.id"
                       :class="['todo-input', `todo-input-${stage.key}`]"
+                      :data-tid="todo.id"
                       v-model="todo.text"
                       :title="todo.text"
                       :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
                       placeholder="待办事项"
-                      @blur="saveStages"
-                      @keydown.enter.prevent="addTodo(stage)"
+                      @blur="editingTodo = null; saveStages()"
+                      @keydown.enter.prevent="editingTodo = null; saveStages()"
+                      @keydown.esc="editingTodo = null"
                       @keydown.backspace="!todo.text && removeTodo(stage, todo.id)"
                     />
+                    <span
+                      v-else class="todo-name"
+                      :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
+                      @click.stop="startEditTodo(todo.id)"
+                    >{{ todo.text || '待办事项' }}</span>
                     <button class="todo-del" @click.stop="removeTodo(stage, todo.id)"><PhX :size="8" weight="bold" /></button>
                   </div>
-                  <button class="todo-add-btn" @click.stop="addTodo(stage)">＋ 添加待办</button>
-                </div>
+                  <button key="todo-add" class="todo-add-btn" @click.stop="addTodo(stage)">＋ 添加待办</button>
+                </TransitionGroup>
                 <div v-if="i < displayStages.length - 1" class="node-line"></div>
               </div>
+              </TransitionGroup>
             </div>
 
             <!-- 拖拽虚影（圆圈 + 文字） -->
@@ -148,6 +163,9 @@
               <div v-if="stageDrag.active" class="stage-drag-ghost-full"
                 :style="{ left: stageDrag.ghostX + 'px', top: stageDrag.ghostY + 'px', width: stageDrag.ghostWidth + 'px' }">
                 <span class="node-label">{{ stageDrag.ghostLabel }}</span>
+                <div v-if="stageDrag.ghostTodos.length" class="ghost-todos">
+                  <div v-for="t in stageDrag.ghostTodos" :key="t.id" class="ghost-todo" :class="{ done: t.done }">{{ t.text || '待办事项' }}</div>
+                </div>
               </div>
             </Teleport>
           </div>
@@ -694,7 +712,7 @@ import {
   PhFolder, PhArrowLeft, PhArrowRight, PhCaretLeft, PhCaretRight, PhCaretDown, PhSortAscending, PhSquaresFour, PhList,
   PhCheckSquare, PhFolderPlus, PhUploadSimple, PhPencilSimple,
   PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX, PhCheck,
-  PhInfo, PhWarningCircle, PhDotsThree, PhTrash, PhDotsSixVertical,
+  PhInfo, PhWarningCircle, PhDotsThree, PhTrash,
 } from '@phosphor-icons/vue'
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
@@ -717,7 +735,7 @@ const stageDrag = reactive({
   active: false, fromIdx: -1, overIdx: -1,
   ghostX: 0, ghostY: 0, ghostLabel: '',
   ghostNum: 1, ghostIsActive: false, ghostIsDone: false,
-  ghostWidth: 200, grabOffsetX: 0, grabOffsetY: 0,
+  ghostWidth: 200, grabOffsetX: 0, grabOffsetY: 0, ghostTodos: [],
 })
 const dragging         = ref(false)
 const pmDragCounter    = ref(0)
@@ -1000,6 +1018,11 @@ function onPmFileDragStart(file, e) {
   pmDraggingFileIds.value = new Set(ids)
   e.dataTransfer.setData('text/plain', JSON.stringify(ids))
   e.dataTransfer.effectAllowed = 'move'
+  // 用卡片/行自身作拖拽图，覆盖浏览器对 text/plain 的「带网站 favicon 的文本预览」
+  try {
+    const _r = e.currentTarget.getBoundingClientRect()
+    e.dataTransfer.setDragImage(e.currentTarget, e.clientX - _r.left, e.clientY - _r.top)
+  } catch {}
   // 物理拖拽：仅网格卡片、单选时启用（列表行整条飞起来不好看）
   if (e.currentTarget?.classList?.contains('fc-card') && ids.length === 1) {
     // mode2（stages-expanded）下卡片用 aspect-ratio 压扁；克隆体在 body 层丢了该上下文，
@@ -1634,17 +1657,47 @@ function saveStages() {
   projectStore.updateStages(props.project.id, localStages.value)
 }
 
-// 待办拖拽排序（仅同一阶段内）
-const todoDrag = ref(null)
-function todoDrop(stage, to) {
+// 待办拖拽：拖名字行重排，可跨阶段移动；编辑态(span→input)不可拖。
+// 实时同步——dragenter 即把拖中项 splice 到目标位（其他待办由 TransitionGroup 动画让位），
+// 拖完(dragend / drop)才 saveStages 落库。
+const todoDrag = ref(null)       // { stageKey, index } 拖动中实时更新（指向被拖项当前所在位）
+const editingTodo = ref(null)    // 正在编辑文字的待办 id
+function startEditTodo(id) {
+  editingTodo.value = id
+  nextTick(() => document.querySelector(`[data-tid="${id}"]`)?.focus())
+}
+function todoDragStart(stage, ti) {
+  todoDrag.value = { stageKey: stage.key, index: ti }
+}
+function _moveTodo(d, targetStage, to) {
+  const src = localStages.value.find(s => s.key === d.stageKey)
+  if (!src?.todos) return
+  let idx = to
+  if (src === targetStage) {
+    if (d.index < to) idx--            // 同列表：移除后目标位前移一格
+    if (idx === d.index) return         // 没越过中线，不动
+  }
+  const [moved] = src.todos.splice(d.index, 1)
+  if (!moved) return
+  if (!targetStage.todos) targetStage.todos = []
+  idx = Math.max(0, Math.min(idx, targetStage.todos.length))
+  targetStage.todos.splice(idx, 0, moved)
+  todoDrag.value = { stageKey: targetStage.key, index: idx }
+}
+// dragover + 中线判断：指针越过目标待办中线才换位，避免来回横跳
+function todoDragOver(stage, ti, e) {
   const d = todoDrag.value
-  todoDrag.value = null
-  if (!d || d.stageKey !== stage.key || d.index === to) return
-  const arr = stage.todos
-  if (!arr) return
-  const [moved] = arr.splice(d.index, 1)
-  arr.splice(to, 0, moved)
-  saveStages()
+  if (!d) return
+  const r = e.currentTarget.getBoundingClientRect()
+  const after = (e.clientY - r.top) > r.height / 2
+  _moveTodo(d, stage, after ? ti + 1 : ti)
+}
+function todoListDragOver(stage) {   // 空阶段：拖到空白区移入末尾
+  const d = todoDrag.value
+  if (d && (stage.todos?.length ?? 0) === 0) _moveTodo(d, stage, 0)
+}
+function todoDragEnd() {
+  if (todoDrag.value) { todoDrag.value = null; saveStages() }
 }
 function addStage() {
   const key = `stage_${Date.now()}`
@@ -1715,16 +1768,21 @@ function toggleTodo(todo) {
 }
 
 function stageIdxFromY(y) {
-  if (!stageFlowRef.value) return -1
+  if (!stageFlowRef.value) return stageDrag.overIdx
   const nodes = stageFlowRef.value.querySelectorAll('.stage-node')
-  let best = -1, bestDist = Infinity
-  nodes.forEach((el, i) => {
-    const rect = el.getBoundingClientRect()
-    const center = (rect.top + rect.bottom) / 2
-    const d = Math.abs(y - center)
-    if (d < bestDist) { bestDist = d; best = i }
-  })
-  return best
+  let cur = stageDrag.overIdx
+  if (cur < 0) cur = 0
+  // 增量 + 滞后：overIdx 每次最多移一格，且需指针「明确越过相邻阶段中线」才移——
+  // 避免重排后『指针下的阶段变了』导致 overIdx 反复横跳（闭环抖动）。只读相邻两个 rect，也省 reflow。
+  if (cur > 0) {
+    const prev = nodes[cur - 1]?.getBoundingClientRect()
+    if (prev && y < prev.top + prev.height / 2) return cur - 1
+  }
+  if (cur < nodes.length - 1) {
+    const next = nodes[cur + 1]?.getBoundingClientRect()
+    if (next && y > next.top + next.height / 2) return cur + 1
+  }
+  return cur
 }
 
 function startStageDrag(fromIdx, e) {
@@ -1745,6 +1803,7 @@ function startStageDrag(fromIdx, e) {
       stageDrag.fromIdx      = fromIdx
       stageDrag.overIdx      = fromIdx
       stageDrag.ghostLabel   = stage?.label ?? ''
+      stageDrag.ghostTodos   = stage?.todos ?? []   // ghost 带着待办一起悬浮，保持「整个阶段被抓起」的一体感
       stageDrag.ghostNum     = fromIdx + 1
       stageDrag.ghostIsActive = fromIdx === activeStageIdx.value
       stageDrag.ghostIsDone  = fromIdx < activeStageIdx.value
@@ -2187,7 +2246,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .stage-flow::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
 
 .stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 0 5px; margin-bottom: 2px; }
-.stage-node.stage-dragging { opacity: 0.15; pointer-events: none; }
+.stage-node.stage-dragging { opacity: 0.15; pointer-events: none; transition: none; }   /* 被拖阶段占位瞬间跟随、不参与让位动画；完整保留待办，与跟手 ghost 一致 */
 
 .node-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 0; }
 .node-circle {
@@ -2237,9 +2296,9 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .stage-node:last-child .todo-list { background-image: none; }
 .todo-item { display: flex; align-items: center; gap: 6px; height: 24px; }
 .todo-item + .todo-item { border-top: 1px solid rgba(0,0,0,0.05); }
-.todo-drag { display: flex; align-items: center; flex-shrink: 0; cursor: grab; color: var(--text-secondary); opacity: 0.28; transition: opacity 0.12s; }
-.todo-item:hover .todo-drag { opacity: 0.5; }
-.todo-drag:active { cursor: grabbing; }
+.todo-name { flex: 1; min-width: 0; font-size: 12px; color: var(--text-primary); padding: 2px 0; cursor: grab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.todo-item:active .todo-name { cursor: grabbing; }
+.todo-ghost { opacity: 0.35; }   /* 被拖的那条淡化，让位预览更清楚 */
 .todo-check {
   width: 15px; height: 15px; border-radius: 4px; flex-shrink: 0;
   border: 1.5px solid rgba(0,0,0,0.18); background: rgba(255,255,255,0.7);
@@ -2828,19 +2887,20 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 <style>
 .stage-drag-ghost-full {
   position: fixed; z-index: 9999; pointer-events: none;
-  display: flex; align-items: center;
-  padding: 5px 12px;
-  background: var(--panel-bg);
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(123,127,178,0.3);
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(30,40,80,0.14);
-  opacity: 0.95; box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: stretch;
+  padding: 6px 12px 8px;
+  opacity: 0.85; box-sizing: border-box;   /* 只显示克隆内容，不要底色框/边框/阴影 */
 }
 .stage-drag-ghost-full .node-label {
   font-size: 13px; color: #1e2028; font-weight: 500;
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.stage-drag-ghost-full .ghost-todos { margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
+.stage-drag-ghost-full .ghost-todo {
+  font-size: 12px; color: var(--text-secondary); line-height: 1.4;
+  padding-left: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stage-drag-ghost-full .ghost-todo.done { text-decoration: line-through; opacity: 0.5; }
 /* ── 右键菜单 ── */
 .fc-card.cut, .list-row.cut { opacity: 0.75; }
 

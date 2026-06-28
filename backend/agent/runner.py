@@ -118,6 +118,11 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                                    files=attach_cards or None))
         await db.commit()
 
+        # 精力耗尽 → 硬拦（IM / 定时任务，与网页 web.stream 同口径）：用户消息已记，不再生成，直接回一句
+        if await quota.is_exhausted(db, user_id, settings):
+            return AgentResponse(text="咕咕累了，休息会儿再来～", session_id=session_id,
+                                 tokens_in=0, tokens_out=0)
+
     # 音/视频理解只有 mimo+openai 路支持（input_audio/video_url 是 mimo 的 OpenAI 扩展块）。
     # 若 pool/router 这轮选的模型走 anthropic 路（如 MiniMax-M3）或非 mimo，它消费不了媒体块——
     # build_user_content 会把音视频丢掉，咕咕只看到「用户上传了文件」的文字 → 当成文件处理。

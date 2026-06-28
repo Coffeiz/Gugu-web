@@ -36,7 +36,7 @@
 
         <label class="field">
           <span>提醒内容</span>
-          <textarea v-model="form.payload" rows="2" placeholder="如：该喝水啦～"></textarea>
+          <textarea v-model="form.payload" rows="2" placeholder="如：收集昨天的科技新闻"></textarea>
         </label>
         <div class="divider"></div>
 

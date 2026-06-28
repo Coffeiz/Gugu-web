@@ -30,6 +30,7 @@ from app.api.v1 import user_bots as user_bots_router
 from app.api.v1 import services_admin as services_admin_router
 from app.api.v1 import qq_connect as qq_connect_router
 from app.api.v1 import feishu_connect as feishu_connect_router
+from app.api.v1 import wechat_connect as wechat_connect_router
 from app.api.v1 import preferences as preferences_router
 from app.api.v1 import scheduled_tasks as scheduled_tasks_router
 from app.api.v1 import agent_admin as agent_admin_router
@@ -209,6 +210,7 @@ app.include_router(feedback_router.router,    prefix="/api/v1")
 app.include_router(user_bots_router.router,      prefix="/api/v1")
 app.include_router(qq_connect_router.router,     prefix="/api/v1")
 app.include_router(feishu_connect_router.router, prefix="/api/v1")
+app.include_router(wechat_connect_router.router, prefix="/api/v1")
 app.include_router(onboarding_router,            prefix="/api/v1")   # 新手引导（用户鉴权，作用于自己）
 
 # ── Admin 路由（需要 Admin token）──

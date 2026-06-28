@@ -130,25 +130,33 @@
         <span v-if="curTodoTotal" class="tp-count">{{ curDoneCount }}/{{ curTodoTotal }}</span>
         <button class="popup-close-btn" @click="closeStagePop" title="关闭"><PhX :size="11" weight="bold" /></button>
       </div>
-      <div v-if="curTodoTotal" class="tp-list">
+      <TransitionGroup v-if="curTodoTotal" tag="div" name="tp-flip" class="tp-list">
         <div v-for="(t, i) in currentTodos" :key="t.id" class="tp-item"
-             @dragover.prevent @drop="tpDrop(i)">
-          <span class="tp-drag" draggable="true" @dragstart="tpDragIdx = i" @dragend="tpDragIdx = null" title="拖拽排序"><PhDotsSixVertical :size="11" weight="bold" /></span>
+             :class="{ 'tp-ghost': tpDrag === i }"
+             :draggable="editingTp !== t.id"
+             @dragstart="tpDragStart(i)"
+             @dragend="tpDragEnd"
+             @dragover.prevent="tpDragOver(i, $event)">
           <button class="tp-check" :class="{ checked: t.done }" @click="toggleTodo(t)">
             <PhCheck v-if="t.done" :size="9" weight="bold" />
           </button>
           <input
+            v-if="editingTp === t.id"
             class="tp-input"
+            :data-tpid="t.id"
             v-model="t.text"
             :style="t.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
             placeholder="待办事项"
-            @blur="persistTodos"
-            @keydown.enter="persistTodos"
+            @blur="editingTp = null; persistTodos()"
+            @keydown.enter="editingTp = null; persistTodos()"
+            @keydown.esc="editingTp = null"
             @keydown.backspace="!t.text && removeTodo(t.id)"
           />
+          <span v-else class="tp-name" :style="t.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
+                @click="startEditTp(t.id)">{{ t.text || '待办事项' }}</span>
           <button class="tp-del" @click="removeTodo(t.id)" title="删除"><PhX :size="8" weight="bold" /></button>
         </div>
-      </div>
+      </TransitionGroup>
       <div v-else class="tp-empty">还没有待办</div>
       <button class="tp-add" @click="addTodo">＋ 添加待办</button>
     </div>
@@ -161,7 +169,7 @@ import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
 import { fireHint } from '@/composables/useOnboarding'
-import { PhCheck, PhX, PhDotsSixVertical } from '@phosphor-icons/vue'
+import { PhCheck, PhX } from '@phosphor-icons/vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
 
@@ -276,17 +284,32 @@ function onKey(e) { if (e.key === 'Escape') closeStagePop() }
 
 function persistTodos() { projectStore.updateStages(props.project.id, props.project.stages) }
 
-// 待办拖拽排序（当前阶段内）
-const tpDragIdx = ref(null)
-function tpDrop(to) {
-  const from = tpDragIdx.value
-  tpDragIdx.value = null
-  if (from == null || from === to) return
+// 待办拖拽：拖名字行重排（当前阶段内）；编辑态不可拖。dragenter 实时 splice + TransitionGroup 让位，dragend 落库
+const tpDrag = ref(null)         // 拖动中实时 index
+const editingTp = ref(null)
+function startEditTp(id) {
+  editingTp.value = id
+  nextTick(() => document.querySelector(`[data-tpid="${id}"]`)?.focus())
+}
+function tpDragStart(i) { tpDrag.value = i }
+// dragover + 中线判断：指针越过目标待办中线才换位，避免来回横跳
+function tpDragOver(i, e) {
+  const from = tpDrag.value
+  if (from == null) return
   const arr = currentStage.value?.todos
   if (!arr) return
+  const r = e.currentTarget.getBoundingClientRect()
+  const after = (e.clientY - r.top) > r.height / 2
+  let idx = after ? i + 1 : i
+  if (from < idx) idx--
+  idx = Math.max(0, Math.min(idx, arr.length))
+  if (idx === from) return
   const [moved] = arr.splice(from, 1)
-  arr.splice(to, 0, moved)
-  persistTodos()
+  arr.splice(idx, 0, moved)
+  tpDrag.value = idx
+}
+function tpDragEnd() {
+  if (tpDrag.value != null) { tpDrag.value = null; persistTodos() }
 }
 function toggleTodo(t) {
   t.done = !t.done; t.autoCompleted = false
@@ -562,9 +585,9 @@ async function setPriority(n) {
 .tp-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.14); border-radius: 99px; }
 .tp-item { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 8px; }
 .tp-item:hover { background: rgba(0,0,0,0.04); }
-.tp-drag { display: flex; align-items: center; flex-shrink: 0; cursor: grab; color: var(--text-secondary); opacity: 0.28; transition: opacity 0.12s; }
-.tp-item:hover .tp-drag { opacity: 0.5; }
-.tp-drag:active { cursor: grabbing; }
+.tp-name { flex: 1; min-width: 0; font-size: 12px; color: var(--text-primary); padding: 2px 0; cursor: grab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-item:active .tp-name { cursor: grabbing; }
+.tp-ghost { opacity: 0.35; }
 .tp-check {
   width: 15px; height: 15px; border-radius: 5px; flex-shrink: 0;
   border: 1.5px solid rgba(0,0,0,0.22); background: none; color: #fff;

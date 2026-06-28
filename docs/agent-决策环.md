@@ -282,7 +282,7 @@ flowchart TD
 | **④ 谨慎/按需** | Insight / Goal / **Planner**（Phase 4）| ⚠️ 别预先造规划框架——工具循环已是轻量 planner；等具体反复痛点再加 |
 | | **多 Profile 路由** `router.py`、**MCP 外部工具**（Phase 3）| 现单 Profile 直连；按需 |
 | **⑤ 可能不做/无条件** | **多 Agent** | 单用户 PM 伙伴多半不需要，复杂度爆炸，别投机性建 |
-| | **微信接入** | 封号风险高，最后做 |
+| | **微信接入** | ~~封号风险高~~ **可走官方 iLink Bot API**（`ilinkai.weixin.qq.com`）：扫码授权 → bearer token → `getupdates` long-poll 收 + HTTP send，**非逆向、无封号风险**。模式同飞书/QQ 官方 bot，可仿 `adapters/feishu.py`/`qq.py` 加 `wechat.py`。参考 [QwenPaw](https://github.com/agentscope-ai/QwenPaw) `app/channels/wechat`。⚠️ 待确认 iLink Bot（`bot_type=3`）的开放/申请门槛 |
 | | 🅼 小模型意图分类 | 需自托管 GPU，暂无条件 |
 | | web 多标签同步 / 已读送达在线状态 | 站内 IM 时再说 |
 

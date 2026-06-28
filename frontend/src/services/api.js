@@ -314,3 +314,9 @@ export const feishuConnectApi = {
   start: ()        => request('POST', '/me/feishu/connect'),
   poll:  (pollId)  => request('GET',  `/me/feishu/connect/${pollId}`),
 }
+
+// 微信 iLink 扫码自动连接（个人微信；出码 = base64 PNG → 轮询 → 自动写 bot_token）
+export const wechatConnectApi = {
+  start: ()        => request('POST', '/me/wechat/connect'),
+  poll:  (taskId)  => request('GET',  `/me/wechat/connect/${taskId}`),
+}

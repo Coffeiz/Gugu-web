@@ -326,7 +326,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { usePreferencesStore } from '@/stores/preferences'
 import BaseModal from '@/components/common/BaseModal.vue'
-import { authApi, agentApi, userBotsApi, qqConnectApi, feishuConnectApi } from '@/services/api'
+import { authApi, agentApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi } from '@/services/api'
 import { fireHint } from '@/composables/useOnboarding'
 import { PhX, PhSignOut, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird } from '@phosphor-icons/vue'
 
@@ -489,6 +489,8 @@ const IM_PLATFORMS = [
     hint: '手机飞书扫码 → 授权创建机器人，咕咕自动连接，私聊它直接管项目/文件/日程' },
   { key: 'qqbot', label: 'QQ（自带机器人）', api: qqConnectApi,
     hint: '手机 QQ 扫码 → 选一个机器人授权，咕咕自动连接，私聊它直接管项目/文件/日程' },
+  { key: 'wechat', label: '微信（个人微信）', api: wechatConnectApi,
+    hint: '手机微信扫码 → 授权个人微信机器人（官方 iLink、无需企业资质），私聊它直接管项目/文件/日程' },
 ]
 
 const bots = ref([])
@@ -511,10 +513,12 @@ async function startConnect(platform) {
   connecting.value = platform; connectErr.value = ''
   try {
     const r = await p.api.start()
-    const id = r.poll_id || r.task_id       // 飞书 poll_id / QQ task_id
+    const id = r.poll_id || r.task_id       // 飞书 poll_id / QQ·微信 task_id
     connect.value = { platform, id }
     connectHint.value = platform === 'feishu'
       ? '手机飞书扫码 → 授权创建机器人，授权后自动连接'
+      : platform === 'wechat'
+      ? '手机微信扫码 → 授权个人微信机器人，授权后自动连接'
       : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
     await nextTick()
     await QRCode.toCanvas(connectCanvas.value, r.scan_url, { width: 180, margin: 1 })
