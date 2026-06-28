@@ -375,13 +375,13 @@ free -h                                              # 确认 Swap 行有值
 ```
 > swap 不替代内存，但内存峰值有它兜底，不至于直接被 OOM killer 杀掉（咕咕 backend 被 `code=killed status=9` 多半就是 OOM）。
 
-swap 配了但使用率一直 0？多半是 `vm.swappiness` 太低（云服务器默认常为 0，内存耗尽前不动 swap）。调到 10，让内核提前把冷页换出、给活跃进程留 RAM：
+swap 配了但使用率一直 0？多半是 `vm.swappiness` 太低（云服务器默认常为 0，内存耗尽前不动 swap）。2G 这类内存紧的机器推荐调到 **40**，让内核提前把冷页换出、给活跃进程留 RAM（10 太保守，60 是桌面默认太激进）：
 ```bash
-sudo sysctl vm.swappiness=10                          # 立即生效
-echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p                                        # 重载确认（最后一行应显示 vm.swappiness = 10）
-# 若 /etc/sysctl.conf 里原本有 vm.swappiness=0，清掉旧行避免歧义：
-sudo sed -i '/^vm.swappiness = 0$/d' /etc/sysctl.conf
+sudo sysctl vm.swappiness=40                          # 立即生效
+echo 'vm.swappiness=40' | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p                                        # 重载确认（最后一行应显示 vm.swappiness = 40）
+# 若 /etc/sysctl.conf 里原本有旧的 vm.swappiness 行，清掉避免歧义：
+sudo sed -i '/^vm\.swappiness/d' /etc/sysctl.conf && echo 'vm.swappiness=40' | sudo tee -a /etc/sysctl.conf
 ```
 
 **② 别在这台机跑非必要的重应用**：pgAdmin、其它面板应用等很吃 CPU/内存（pgAdmin 曾崩溃重启循环把 CPU 烧到 100% 整机卡死）。看库用 1Panel 自带的数据库管理或本地客户端远程连，**别在生产机常驻 pgAdmin**。
