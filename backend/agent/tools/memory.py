@@ -1,6 +1,7 @@
 """记忆技能：让咕咕能主动"记住"用户的长期信息。
 
-remember 把一条事实写进 .agent/facts.md（与反思共用 store.merge_facts 去重）。
+remember 把一条事实写进结构化 .agent/facts.json（与反思共用 store.apply_facts_ops 去重/印证）。
+用户明确让记 → kind=observed（亲述、确凿、不衰减）、importance 给高（4）。
 handler 不需要 db（记忆走文件），但保持 (db, user_id, args) 统一签名。
 """
 import json
@@ -13,9 +14,11 @@ async def _remember(db, user_id, args: dict):
     fact = (args.get("fact") or "").strip()
     if not fact:
         return json.dumps({"error": "需要提供要记住的内容 fact"})
-    mem = await store.read_memory(user_id)
-    merged = store.merge_facts(mem["facts"], [fact])
-    await store.write_facts(user_id, merged)
+    facts = await store.read_facts_list(user_id)
+    facts = store.apply_facts_ops(facts, [{"text": fact, "kind": "observed", "importance": 4}], [])
+    await store.write_facts_list(user_id, facts)
+    from agent import events
+    events.publish(events.types.MemoryUpdated(user_id=user_id, added=1, removed=0, source="remember"))
     return {"success": True, "remembered": fact}
 
 

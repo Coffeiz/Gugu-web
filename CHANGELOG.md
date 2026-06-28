@@ -20,9 +20,13 @@
 - **P1 · 行为模块库**（`agent/behaviors.py` + `prompts/behaviors/`）：从 persona 抽出情境策略模块（DO+DON'T 同文件），由本句线索 + World Model **软点亮**、置于人格后最高优先、零前置 LLM。现有三个：`emotion-first`（接情绪·压住给方案/任务化，补 Being-with 缺口、压「闲聊也推进」nudge）、`stuck-first`（卡住给最小一步、别甩完整大纲）、`decision-explore`（纠结里摆权衡、问关键、别替 TA 拍板）。**最小裁决**：情绪在场优先接情绪、不与任务型模块叠加（stuck/decision 可共存）。
 - **P2 · per-user 解读先验 lens**（`agent/memory/lens.py` + `.agent/lens.json`）：第 5 类记忆「怎么读懂这个用户」的偏置规则（如 `「还行」→ 多半不太行`）。事件驱动（吃反思 `lens_hint`、零热路径 LLM）；防过拟合双闸（模型自律 + 候选须复现 2 次、以触发语为键合并同义改写才提拔）；confidence 新规则 0.6 / 印证↑ / 半衰期 30 天衰减 / 低于 0.25 退休；`builder` 注入「解读镜片」偏置不独裁、按 effective 选话术档。
 
-### 记忆系统：增量化 + 时间衰减
+### 记忆系统：结构化 facts（2b）+ 增量化 + 时间衰减 + 事件总线 + 控制命令
 
-- **反思增量化（2b · delta）**（`memory/reflection.py` + `store.apply_facts_delta`）：反思只吐 `facts_add`/`facts_remove`、**不再回显整份 facts**。根治了「facts 一多 → 回显超 `max_tokens` → 截断 → JSON 解析失败 → 静默返回 `{}`、老用户反思全废」的隐蔽坑；`max_tokens` 回落固定 900。旧 prompt 兼容回退。
+- **facts 结构化（2b）**（`memory/store.py` `facts.json`）：facts 从 markdown 行升级为结构化条目，每条带 `kind`(observed=用户亲述/inferred=咕咕推断) / `conf`(置信) / `imp`(importance 1-5) / `ts`。反思吐 `facts_add`(对象 `{text,kind,importance}`)/`facts_remove`，`apply_facts_ops` 应用：命中相似条**印证**（升 conf、刷新 ts、亲述升级 observed），否则新增。**注入按 effective×importance 过滤排序**（importance 过滤）；**observed 不衰减、inferred 按半衰期（45 天）淡出**（复用 `decay.py`）——旧的推断类事实自然过期、不再当永真。旧 `facts.md` 首次读取自动迁移成 `facts.json`，零手动迁移。
+- **反思增量化（2b · delta）**（`memory/reflection.py`）：反思只吐增删、**不再回显整份 facts**。根治了「facts 一多 → 回显超 `max_tokens` → 截断 → JSON 解析失败 → 静默返回 `{}`、老用户反思全废」的隐蔽坑；`max_tokens` 回落固定 900。
+- **事件总线（2b）**（`agent/events/bus.py` + `types.py`）：轻量异步发布/订阅，事件用类（`MemoryUpdated`）不用字符串。反思 / `remember` / `/forget` 在 facts 变更后 `publish`，内置 listener 落 `agent.events` 审计日志；成就/分析等下游以后挂 listener 即可、不动发布方。
+- **记忆控制命令（2b）**（`agent/commands.py`）：聊天里直接打 `/memory`（看咕咕记得你哪些事，按重要度排、标「推测」）、`/forget <内容>`（忘掉对得上的那条 fact）——确定性短路、零 LLM、不计精力、不触发反思。`/newchat` 未做（网页 UI 已有「新对话」）。
+- **summary 时间衰减**（`agent/decay.py` + `store`）：summary 写时盖 `summary.ts`，注入时按半衰期（5 天）权重换话术档（新鲜直接给 / 半旧标「约 N 天前、可能已变」/ 过时标「多半过时、别据此提具体事」），过期状态不被当成近况。`decay.py` 为通用件，facts/lens confidence 衰减复用。
 - **summary 时间衰减**（`agent/decay.py` + `store`）：summary 写时盖 `summary.ts`，注入时按半衰期（5 天）权重换话术档（新鲜直接给 / 半旧标「约 N 天前、可能已变」/ 过时标「多半过时、别据此提具体事」），过期状态不被当成近况。`decay.py` 为通用件，lens confidence 衰减复用。
 
 ### 多模态：mimo 音视频理解 + 语音条

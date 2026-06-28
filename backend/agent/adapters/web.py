@@ -195,6 +195,19 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
 
     yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id})}\n\n"
 
+    # 记忆控制命令（/memory /forget）：确定性短路，零 LLM、不计精力、不反思；先于配额（命令免费）
+    from agent import commands as _commands
+    cmd_reply = await _commands.handle(user_id, req.message)
+    if cmd_reply is not None:
+        async with _sess._SessionLocal() as db2:
+            if await db2.get(ConversationSession, session_id) is not None:
+                db2.add(ConversationMessage(session_id=session_id, role="assistant", content=cmd_reply))
+                await db2.commit()
+        async for line in genstream.typed_stream(cmd_reply):
+            yield line
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return
+
     # 精力耗尽 → 硬拦：持久化一句提示并回给前端，不启动生成（查询/对话一律不放行）
     if quota_exceeded:
         block_msg = "咕咕累了，休息会儿再来～"

@@ -28,14 +28,15 @@ _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 _SYS_FALLBACK = (
     "你在帮咕咕维护对用户的长期记忆。只记关于用户本人的稳定信息（身份/偏好/习惯），"
     "不记推测、世界常识、一时状态，不评判用户，宁少勿多。**只报本轮的增删**：新值得长期记的"
-    "进 facts_add；被推翻/过时/被替换的旧条进 facts_remove（尽量照抄原文）；没变动就都给空数组、"
-    "别重列旧事实。summary 是一句「用户当下在忙什么/近期重心」的快照，基于原快照演进、没变就原样返回。"
+    "进 facts_add（每条对象 {text, kind: observed=亲述/inferred=推断, importance: 1-5}）；"
+    "被推翻/过时/被替换的旧条进 facts_remove（字符串、尽量照抄原文）；没变动就都给空数组、别重列旧事实。"
+    "summary 是一句「用户当下在忙什么/近期重心」的快照，基于原快照演进、没变就原样返回。"
     "perception 是本轮观察（intent/ambiguity/emotion/emo_strength），照实判、只打点。"
     "lens_hint：仅当本轮**确实暴露了一条「怎么读懂这个用户」的可复用规则**才写、绝大多数轮留空字符串"
     "（一次性误会、具体事实都不算）。固定格式『「触发语」→ 真实含义/应对』，触发语放「」里写关键几字"
     "（如『「随便」→ 其实有偏好要追问』），便于复现识别。"
-    '严格只输出 JSON：{"facts_add": ["..."], "facts_remove": ["..."], "daily": "一句话总结(没有就空字符串)", '
-    '"summary": "当前状态快照(没有就空字符串)", "lens_hint": "", '
+    '严格只输出 JSON：{"facts_add": [{"text": "...", "kind": "observed", "importance": 4}], "facts_remove": ["..."], '
+    '"daily": "一句话总结(没有就空字符串)", "summary": "当前状态快照(没有就空字符串)", "lens_hint": "", '
     '"perception": {"intent": "情绪/查询/执行/...", "ambiguity": 0, "emotion": "无", "emo_strength": 0}}'
 )
 
@@ -142,18 +143,19 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> No
         daily_note = (out.get("daily") or "").strip()
         summary = (out.get("summary") or "").strip()
 
-        # facts 更新：优先走 2b 增量（facts_add/facts_remove，反思只吐变化、输出不随 facts 增长）；
-        # 旧 prompt 仍回显整份 facts 时回退到「调和覆盖」（兼容灰度，防 prompt 滚动滞后）。
+        # facts 更新（2b 结构化）：反思只吐增删 facts_add(带 kind/importance)/facts_remove，
+        # apply_facts_ops 应用到 facts.json（命中相似条→印证升 conf，否则新增）。输出不随 facts 增长。
         f_add, f_rem = out.get("facts_add"), out.get("facts_remove")
-        if f_add is not None or f_rem is not None:
-            new_text = store.apply_facts_delta(existing, f_add or [], f_rem or [])
-            if new_text.strip() != existing.strip():
-                await store.write_facts(user_id, new_text)
-        else:
-            new_text = store.format_facts(out.get("facts") or [])
-            # 防误删兜底：原本有事实、模型却返回空 → 视为异常，保留原文件不覆盖。
-            if (new_text.strip() or not existing.strip()) and new_text.strip() != existing.strip():
-                await store.write_facts(user_id, new_text)
+        legacy = out.get("facts")   # 旧 prompt 回显整份 facts（灰度兼容）→ 当 inferred 增量并入
+        if f_add is not None or f_rem is not None or legacy:
+            cur = await store.read_facts_list(user_id)
+            adds = f_add if f_add is not None else (legacy or [])
+            new = store.apply_facts_ops(cur, adds, f_rem or [])
+            if new != cur:
+                await store.write_facts_list(user_id, new)
+                from agent import events
+                events.publish(events.types.MemoryUpdated(
+                    user_id=user_id, added=len(adds or []), removed=len(f_rem or []), source="reflection"))
         # summary 同理：非空才覆盖、变了才写（防把已有快照清空/瞎改）
         if summary and summary != existing_summary.strip():
             await store.write_summary(user_id, summary)

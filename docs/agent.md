@@ -148,7 +148,7 @@ Session（最近 N 条聊天，短期）与 Memory（长期认知，经 Reflecti
 - **`store.py`**：读写 `.agent/{facts,daily,memory,summary}.md` + `summary.ts` + `lens.json`（lens 经 `lens.py`），经 `StorageBackend`（本地/OSS 通吃）。`read_memory` 一次返回五层（含渲染好的 lens 注入块、summary_ts）；`apply_facts_delta` 应用增删、`merge_facts` 按内容去重，`append_daily` 滚动保留最近 30 条。
 - **`compress.py`**：daily→memory 压缩**已落地**——daily 攒到 `DAILY_COMPACT_AT`(40) 条时，reflection 写完 daily 顺带触发 `compact()`：把最老的条目 LLM 沉淀进 `memory.md`、daily 留回最近 `DAILY_KEEP_RECENT`(30) 条（约每 10 轮压一次，失败不影响主流程；模型返空则不覆盖、不裁 daily 防丢数据）。**无 weekly 中间层、无 importance 分级**（咕咕只需近期/长期两档）。`_llm.py` 是记忆模块共用的非流式 LLM 小工具。`decay.py` 是时间衰减共用件（summary 新鲜度 / lens confidence 都用）。
 
-> ⚠️ **记忆系统现状**：已落地 **`facts.md` + `daily.md` + `memory.md` + `summary.md`（带时间衰减）+ `lens.json`（解读先验）五层**（daily→memory 压缩在跑；summary 由反思顺带产出；反思已增量化 delta；lens 事件驱动自学）；**仍未实现**：`facts.json` 结构化（confidence/source）、importance 分级、weekly 层、events 总线、lens 反驳↓通道。详见「用户个性化文件系统」+「现状与演进」。
+> ⚠️ **记忆系统现状**：已落地 **`facts.json`（结构化：kind/conf/imp/ts，反思增量增删改 + importance 过滤 + inferred 时间衰减）+ `daily.md` + `memory.md` + `summary.md`（带时间衰减）+ `lens.json`（解读先验）五层**（daily→memory 压缩在跑；summary 由反思顺带产出；lens 事件驱动自学；记忆变更走 `events/bus.py`；`/memory` `/forget` 控制命令）；**仍未实现**：facts 完整来源链（现只标 kind=observed/inferred，不记是哪轮对话）、weekly 层、lens 反驳↓通道、`/newchat`（UI 已有）。详见「用户个性化文件系统」+「现状与演进」。
 
 ### 能力
 
@@ -303,9 +303,9 @@ IM 回复完  → publish('sessions', appended=[助手消息])  # 再推
 - ⚠️ 推送 `events` 模块要 `as _evmod` 别名导入，否则覆盖 `run_collect` 里同名日历局部变量。
 - 当前 web 自身聊天走 `web.py` 流式（自带刷新），未 publish → 同账号多标签不互相同步（将来让 web 也 publish 即可，链路现成）。
 
-#### `events/`（事件总线 · 未做）
+#### `agent/events/`（事件总线 · 已落地）
 
-`bus.py` 异步事件总线 + `types.py` 事件类型（类而非字符串）。成就/行为分析/正反馈未来挂 Listener，Core 不耦合业务。**Phase 2b 未实现**（反思现直接在 web.py fire-and-forget，未走总线）。
+`bus.py` 异步事件总线（`subscribe(类型, 协程)` + `publish(event)` fire-and-forget，listener 失败只记日志不影响主流程）+ `types.py` 事件类型（类而非字符串：`Event` / `MemoryUpdated`）。当前发布方：反思 / `remember` / `/forget` 在 facts 变更后 `publish(MemoryUpdated)`；内置 listener 把变更落 `agent.events` 审计日志。成就/行为分析/正反馈等以后挂 Listener 即可、不动发布方。
 
 ### 配置
 
@@ -321,7 +321,7 @@ IM 回复完  → publish('sessions', appended=[助手消息])  # 再推
 
 ### 用户个性化文件系统
 
-> ⚠️ **现状已落地 五层**：`facts.md`（**增量 delta 写**）+ `daily.md` + `memory.md` + `summary.md`（**带时间衰减**）+ `lens.json`（**解读先验，per-user 自学**）；`identity.json`/`save_identity` 已作废（昵称用 `User.display_name`）；**仍未实现**：`facts.json` 结构化（confidence/source）、importance 分级、`weekly/` 层、lens 反驳↓通道。
+> ⚠️ **现状已落地 五层**：`facts.json`（**结构化 + 增量增删改**：每条 kind/conf/imp/ts，importance 过滤、inferred 时间衰减）+ `daily.md` + `memory.md` + `summary.md`（**带时间衰减**）+ `lens.json`（**解读先验，per-user 自学**）；`identity.json`/`save_identity` 已作废（昵称用 `User.display_name`）；**仍未实现**：facts 完整来源链（只标 kind，不记哪轮）、`weekly/` 层、lens 反驳↓通道。
 
 每个文件回答一个独立问题：
 
@@ -336,7 +336,7 @@ IM 回复完  → publish('sessions', appended=[助手消息])  # 再推
 | `preferences.md`（2b） | 用户喜欢什么、习惯什么？ | 咕咕观察（**未做**，倾向并入 facts/lens） |
 
 - **信息来源严格区分**：用户主动提供的只有注册填的昵称（`User.display_name`）；其余习惯/偏好/状态全由咕咕对话观察积累，**不向用户提问、不让填表**——这是伙伴和助理的核心区别。
-- **facts 更新策略**：现状（2b）反思只吐**增删 delta**（`facts_add`/`facts_remove`），`apply_facts_delta` 应用到 markdown 列表、去重靠内容包含判断；**结构化 JSON（value/confidence/source）仍未做**——等 lens 需要逐条溯源/置信时再上，现无迁移负担。
+- **facts 更新策略（2b 结构化）**：反思吐增删 —— `facts_add`（对象 `{text,kind,importance}`）/ `facts_remove`（字符串），`store.apply_facts_ops` 应用到 `facts.json`：命中相似条**印证**（升 conf、刷新 ts、user 亲述升级 observed）、否则新增；`kind=observed` 不衰减、`inferred` 按半衰期淡出；注入时按 effective×importance 排序过滤。旧 `facts.md` 首次读取自动迁移。**仍未做**：完整来源链（哪轮对话/原文）。
 - **压缩 daily → memory 两段直压、无 weekly 中间层**（咕咕只需近期/长期两档）——**已落地**（`compress.compact`，见「memory/」）。
 
 ### 消息序列约束 · 前导 assistant 会被剥（sanitize）
@@ -494,11 +494,11 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 - **配额「能力降级」而非硬切**：精力耗尽降到只读工具集，查询/对话照常。
 - **不预造 Planner / 多 Agent**：当前 LLM 工具循环本身即轻量 planner；雄心路线常死在过早抽象，等出现具体「模型编排不了」的场景再加。
 - **安全瘦身**：咕咕不跑 shell，不引入命令白名单/Docker 沙箱；「二次确认 + 审计 + 权限分级」即覆盖。
-- **记忆刻意简化**：facts 用 markdown 而非结构化 JSON、反思直接 fire-and-forget 不走 events 总线——四层（facts/daily/memory/summary）+ daily→memory 压缩 + summary 快照已落地，结构化 `facts.json` / events 总线等数据量上来再做。
+- **记忆五层 + 自学 + 事件化**：`facts.json`（结构化 kind/conf/imp、增量增删改、importance 过滤、inferred 衰减）/ daily / memory / summary（衰减）/ lens（解读先验自学）；记忆变更走 `events/bus.py`；`/memory` `/forget` 控制命令。仍刻意不做：facts 完整来源链、weekly 层。
 
 ### 未做 / 按需（数据驱动，别提前）
 
-- **记忆 2b**：`facts.json` 结构化、events 总线、控制命令（/newchat /forget …）。（daily→memory 分层压缩、summary 当前状态快照已落地，移出待办。）
+- **记忆 2b 已落地**：`facts.json` 结构化（kind/conf/imp、增量增删改、importance 过滤、inferred 衰减）、`events/bus.py` 事件总线、`/memory` `/forget` 控制命令、summary 时间衰减、lens 解读先验。**仍未做**：facts 完整来源链、weekly 层、`/newchat`（UI 已有）、lens 反驳↓。
 - **扩展能力（Phase 3）**：MCP 外部工具、多 Profile 路由、🅼 小模型意图分类（需自托管 GPU）。
 - **伙伴深化**：主动触达（异常沉默/情绪关注）、成就/正反馈系统、行为分析 Listener。
 - **多 worker + 分片**：撞单进程 CPU 上限才上（届时 `user_gate` 换 Redis 锁，上层不动）。
