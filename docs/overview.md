@@ -18,7 +18,7 @@
 | 文件库 | 按项目/文件夹归档，本地/OSS 双后端，文件预览 | ✅ 完成 |
 | 总览 | 统计卡片、近期节点、最近文件、月历面板 | ✅ 完成 |
 | 自然语言管理 | AI Agent 对话完成项目/日历/文件/客户操作（SSE 流式，23 工具，删除二次确认） | ✅ 完成 |
-| Agent 记忆系统 | 私有 `.agent/` 三层档案（facts/daily/memory），对话后反思提炼 + 自动压缩沉淀，persona 伙伴化 | ✅ 完成 |
+| Agent 记忆系统 | 私有 `.agent/` 五层档案（facts.json 结构化 / daily / memory / summary 时间衰减 / lens 解读先验），对话后反思增量提炼（facts 增删 + summary + lens_hint + correction + perception）+ 自动压缩沉淀，persona 伙伴化 | ✅ 完成 |
 | IM 接入 | 飞书 + QQ（BYO 扫码自连），文件双向收发、PDF/Office 读取、实时同步到网页 | ✅ 完成 |
 | 思维 | 创意画布（节点图） | 🔜 预留 |
 | 客户 | 客户信息管理（后端已完成，前端待开发） | 🔜 规划中 |
