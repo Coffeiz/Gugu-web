@@ -51,6 +51,95 @@ async def _gen_title_bg(user_id, session_id, user_msg: str, reply_text: str, set
         pass
 
 
+async def _gen_summary_bg(user_id, session_id, force: bool, settings, use_anthropic: bool) -> None:
+    """后台给会话生成/刷新「一句话总结」（供跨 session 查找 + 续接桥指针）。
+    新会话强制出一版；之后每 ~6 条消息刷新一次、跟着话题走。不计精力（同标题）。"""
+    try:
+        import app.db.session as _sess
+        from app.models import ConversationSession, ConversationMessage
+        from sqlalchemy import select as _select, func as _func, desc as _desc
+        async with _sess._SessionLocal() as db:
+            cnt = (await db.execute(
+                _select(_func.count()).select_from(ConversationMessage)
+                .where(ConversationMessage.session_id == session_id,
+                       ConversationMessage.content_json.is_(None)))).scalar_one()
+            if not force and (cnt < 4 or cnt % 6 != 0):
+                return                              # 没到刷新点就跳过，省 LLM 调用
+            rows = (await db.execute(
+                _select(ConversationMessage)
+                .where(ConversationMessage.session_id == session_id,
+                       ConversationMessage.content_json.is_(None))
+                .order_by(_desc(ConversationMessage.created_at)).limit(12))).scalars().all()
+            rows = [m for m in reversed(rows) if m.content]
+        if not rows:
+            return
+        convo = "\n".join(
+            f"{'用户' if m.role == 'user' else '咕咕'}：{(m.content or '')[:200]}" for m in rows)
+        from agent.adapters.web import _generate_summary
+        summary = await _generate_summary(convo, settings, use_anthropic)
+        if not summary:
+            return                                  # 失败回空 → 不覆盖原总结
+        async with _sess._SessionLocal() as db:
+            s = await db.get(ConversationSession, session_id)
+            if s:
+                s.summary = summary
+                await db.commit()
+    except Exception:
+        pass
+
+
+def _schedule_summary(user_id, session_id, force: bool, settings, use_anthropic: bool) -> None:
+    task = asyncio.create_task(_gen_summary_bg(user_id, session_id, force, settings, use_anthropic))
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
+_IM_SOURCES = ("feishu", "qqbot", "wechat")
+_CONTINUE_CUES = ("继续", "刚刚", "刚才", "刚说", "刚聊", "上次", "上回", "之前",
+                  "接着", "那个事", "那件事", "没续上")
+
+
+async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str) -> str:
+    """IM 新会话开场的「续接桥」：IM 会话是 12h 滑动 TTL，过期会起一条新空会话，咕咕会丢掉
+    上一条的上下文（「没续上之前的聊天」根因）。这里趁 db 还开着补两档：
+      A 档（总给）：一行「上一条对话」指针，带 session id —— 让模型（尤其 mimo）知道去
+                   `read_conversation(id)` 翻，而不是空着答或拿别的话题顶上。
+      B 档（这句像要接着聊时）：直接把上一条尾部几轮塞进上下文，不靠模型自觉调工具。
+    上一条太久远（>48h）则不当「刚刚」、整体不注入（防把陈年对话当最近的翻出来）。"""
+    from datetime import datetime
+    from sqlalchemy import desc as _desc
+    from app.models import ConversationSession, ConversationMessage
+    prev = (await db.execute(
+        select(ConversationSession)
+        .where(ConversationSession.user_id == user_id,
+               ConversationSession.id != current_session_id)
+        .order_by(_desc(ConversationSession.updated_at)).limit(1))).scalars().first()
+    if not prev or not prev.updated_at:
+        return ""
+    age_h = (datetime.utcnow() - prev.updated_at).total_seconds() / 3600
+    if age_h > 48:
+        return ""
+    when = f"约 {int(age_h)} 小时前" if age_h >= 1 else f"约 {max(1, int(age_h * 60))} 分钟前"
+    title = (prev.title or "").strip() or "（无标题）"
+    gist = (prev.summary or "").strip()
+    gist_str = f"——{gist}" if gist else ""
+    block = (f"\n\n---\n\n## 最近一条对话（用户可能想接着聊）\n"
+             f"上一条对话 #{prev.id}《{title}》{gist_str}，{when}结束。**用户若说「继续 / 刚刚 / 上次 / 之前那次」，"
+             f"多半指的是它**——用 `read_conversation({prev.id})` 把它翻出来再接，别空着答、也别拿别的话题顶上。")
+    if any(c in (user_msg or "") for c in _CONTINUE_CUES):
+        rows = (await db.execute(
+            select(ConversationMessage)
+            .where(ConversationMessage.session_id == prev.id,
+                   ConversationMessage.content_json.is_(None))
+            .order_by(_desc(ConversationMessage.created_at)).limit(8))).scalars().all()
+        rows = [m for m in reversed(rows) if m.content]
+        if rows:
+            tail = "\n".join(
+                f"- {'用户' if m.role == 'user' else '咕咕'}：{(m.content or '')[:200]}" for m in rows)
+            block += "\n\n这句像是要接着上一条聊，下面是那条对话的最近几轮，**直接据此接上**：\n" + tail
+    return block
+
+
 async def run_collect(req: AgentRequest) -> AgentResponse:
     """找/建会话 + 读历史 → 跑工具循环 → 攒完整回复 + 存盘 + 反思。"""
     user_id = req.user_id
@@ -123,6 +212,15 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             return AgentResponse(text="咕咕累了，休息会儿再来～", session_id=session_id,
                                  tokens_in=0, tokens_out=0)
 
+        # IM 新会话「续接桥」：趁 db 还开着查上一条对话，给指针/尾部，免得 12h TTL 起新会话后
+        # 用户说「继续刚刚」咕咕空着答（web 有自己的会话续接 + 可手动选历史，无需此桥）。
+        im_bridge = ""
+        if is_new_session and getattr(req, "source", None) in _IM_SOURCES:
+            try:
+                im_bridge = await _im_continuity_bridge(db, user_id, session_id, req.message)
+            except Exception:
+                im_bridge = ""
+
     # 音/视频理解只有 mimo+openai 路支持（input_audio/video_url 是 mimo 的 OpenAI 扩展块）。
     # 若 pool/router 这轮选的模型走 anthropic 路（如 MiniMax-M3）或非 mimo，它消费不了媒体块——
     # build_user_content 会把音视频丢掉，咕咕只看到「用户上传了文件」的文字 → 当成文件处理。
@@ -152,6 +250,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         skills=profile.skills, style_prefs=style_prefs,
         source=getattr(req, "source", None), im_channels=im_channels,
     )
+    if im_bridge:               # IM 新会话续接桥（见 _im_continuity_bridge）
+        system_prompt += im_bridge
 
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
     from agent.context import compress_conv
@@ -221,6 +321,9 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         # 闲置后「重新聊天」=新会话，原来要在回复后再串行等一次 LLM 起标题才返回 → 慢一倍，这里去掉。
         if is_new_session and text:
             _schedule_title(user_id, session_id, req.message, text, settings, use_anthropic)
+        # 会话「一句话总结」：新会话先出一版，之后每 ~6 条刷新（跟着话题走）；供 search_conversations + 续接桥
+        if text:
+            _schedule_summary(user_id, session_id, is_new_session, settings, use_anthropic)
 
         # 推第二次：咕咕的回复（用户消息已在生成前先推过，这里只补助手消息，
         # 网页就「先看到我发的、再看到回答」，而不是一轮结束一次性蹦出来）

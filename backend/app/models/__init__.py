@@ -220,6 +220,7 @@ class ConversationSession(Base):
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title:      Mapped[str]      = mapped_column(String(300), default="新对话")
+    summary:    Mapped[str]      = mapped_column(Text, default="")   # 一句话「这段对话聊了啥」，供跨 session 查找/续接（随会话刷新；绑 session、删则同删）
     source:     Mapped[str]      = mapped_column(String(20), default="web")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

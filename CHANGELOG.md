@@ -11,6 +11,22 @@
 
 > 时区统一、IM 时间修复、后台脱敏、体验修缮。
 
+### 跨 session 续接修复（IM「没续上之前的聊天」）
+
+IM 会话是 12h 滑动 TTL，过期会起新空会话 → 咕咕丢掉上一条上下文、续不上。三处一并修：
+
+- **`read_conversation` 取最近而非最旧**（`tools/conversations.py`）：原 `order_by(created_at)` 升序 + limit 返回的是**最旧** N 条，「继续刚刚的话题」要的恰恰是最近聊的——改 DESC 取完再正序。
+- **IM 新会话「续接桥」**（`runner._im_continuity_bridge`）：新会话开场注入「上一条对话 #id《标题》— 一句话总结」**指针**（A 档，引导咕咕用 `read_conversation` 翻）；用户这句带「继续 / 刚刚 / 上次 / 之前」等**续接词**时，直接把上一条尾部几轮塞进上下文（B 档，mimo 也能接，不靠模型自觉调工具）。超 48h 不注入（防翻陈年账）。按 user_id 查、跨平台续接、严格用户隔离；微信走同一套（`source` 统一）。
+- **默认问候优先最近项目**（`greeting.py`）：上下文里「最近在推进的项目」提到最前、长期 facts 降级标成「背景，别当『最近在忙』」；提示词同步——治「记忆里聊过的旧项目被当成『最近在忙』」（如把 facts 里的旧插画项目当成在做的项目）。
+
+### 新增：会话一句话总结（`conversation_sessions.summary`）
+
+每个会话存一句「这段聊了啥」，供跨 session 查找 + 续接桥指针。后台 fire-and-forget 生成（`web._generate_summary`：新会话出一版、之后每 ~6 条刷新跟着话题走）、**不计精力**、失败不覆盖；`search_conversations` 列表/搜索带上、关键词也搜它。**绑 session 列、随会话删除自动清理**（50 上限淘汰 / 手动删 / 账号 CASCADE，无额外清理逻辑）。新增 `summary` 列 + 幂等迁移 `20260628000001`。
+
+### GuguChat 在线 / 离线状态
+
+未接入任何 IM（微信 / QQ / 飞书）→ 状态显示「**离线**」（原硬编码恒「在线」）。离线做成**克制的可点暗示**（灰点、文字弱化、hover 才微亮 + tooltip，不抢眼）；点击 → 展开大窗 + 摊开 IM 抽屉露出「扫码连接」+ 高亮 IM 区，引导接入。`open` 时即加载 bot 列表，小窗状态也准。
+
 ### 修复
 
 - **IM 聊天气泡时间偏 8 小时**：`agent.py` 的 `createdAt` / `updatedAt` 补 `"Z"` 后缀，前端 `new Date()` 正确按 UTC 解析后 `toLocaleTimeString` 转本地时间。

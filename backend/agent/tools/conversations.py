@@ -30,7 +30,8 @@ async def _search_conversations(db, user_id, args: dict):
             .limit(limit)
         )).scalars().all()
         return {"recent": [
-            {"session_id": s.id, "title": s.title, "source": s.source, "updated_at": _fmt(s.updated_at)}
+            {"session_id": s.id, "title": s.title, "summary": s.summary or "",
+             "source": s.source, "updated_at": _fmt(s.updated_at)}
             for s in rows
         ]}
 
@@ -42,7 +43,9 @@ async def _search_conversations(db, user_id, args: dict):
         .where(
             ConversationSession.user_id == user_id,
             ConversationMessage.content_json.is_(None),   # 跳过工具中间消息
-            or_(ConversationMessage.content.ilike(like), ConversationSession.title.ilike(like)),
+            or_(ConversationMessage.content.ilike(like),
+                ConversationSession.title.ilike(like),
+                ConversationSession.summary.ilike(like)),
         )
         .order_by(desc(ConversationMessage.created_at))
         .limit(limit * 4)
@@ -54,8 +57,8 @@ async def _search_conversations(db, user_id, args: dict):
             continue
         snippet = (msg.content or "")[:140]
         seen[sess.id] = {
-            "session_id": sess.id, "title": sess.title, "source": sess.source,
-            "updated_at": _fmt(sess.updated_at),
+            "session_id": sess.id, "title": sess.title, "summary": sess.summary or "",
+            "source": sess.source, "updated_at": _fmt(sess.updated_at),
             "match": {"role": ("你" if msg.role == "user" else "咕咕"), "snippet": snippet},
         }
         if len(seen) >= limit:
@@ -76,15 +79,18 @@ async def _read_conversation(db, user_id, args: dict):
         return json.dumps({"error": "对话不存在或不属于你"}, ensure_ascii=False)
 
     limit = max(1, min(int(args.get("limit", 40) or 40), 100))
+    # 取该 session 的「最近」N 条（DESC + limit），再翻回正序展示——
+    # 别用 ASC+limit（那会返回最旧 N 条，「继续刚刚的话题」恰恰要的是最近聊的）。
     msgs = (await db.execute(
         select(ConversationMessage)
         .where(
             ConversationMessage.session_id == sess.id,
             ConversationMessage.content_json.is_(None),
         )
-        .order_by(ConversationMessage.created_at)
+        .order_by(desc(ConversationMessage.created_at))
         .limit(limit)
     )).scalars().all()
+    msgs = list(reversed(msgs))   # 翻回时间正序，便于按顺序阅读
     return {
         "session_id": sess.id, "title": sess.title, "source": sess.source,
         "messages": [

@@ -82,6 +82,47 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
         return user_msg[:20]
 
 
+async def _generate_summary(convo: str, settings, use_anthropic: bool) -> str:
+    """用 LLM 给一段会话起「一句话总结」（这段聊了啥），供跨 session 查找/续接。
+    非流式、快速、失败回空（调用方据空不覆盖原总结）。结构同 _generate_title。"""
+    prompt = (
+        "用一句话（20字以内）概括下面这段对话主要在聊什么 / 在做什么，"
+        "供日后检索和接着聊时一眼认出。只输出那句话，不要引号、不要解释。\n\n"
+        f"{convo[:1500]}"
+    )
+    from agent.llm_select import _is_mimo
+    is_mimo = _is_mimo(settings.ai)
+    try:
+        if use_anthropic:
+            import httpx
+            from anthropic import AsyncAnthropic
+            from agent.llm_select import anthropic_default_headers
+            client = AsyncAnthropic(
+                api_key=settings.ai.api_key or "dummy", base_url=settings.ai.base_url,
+                http_client=httpx.AsyncClient(timeout=httpx.Timeout(10.0)),
+                default_headers=anthropic_default_headers(settings.ai))
+            extra = {"thinking": {"type": "disabled"}} if is_mimo else {}
+            resp = await client.messages.create(
+                model=settings.ai.model, max_tokens=80,
+                messages=[{"role": "user", "content": prompt}], **extra)
+            text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
+            return text.strip().strip('"「」')[:120]
+        else:
+            import httpx
+            from openai import AsyncOpenAI
+            from agent.llm_select import openai_default_headers
+            client = AsyncOpenAI(
+                api_key=settings.ai.api_key or "dummy", base_url=settings.ai.base_url,
+                timeout=httpx.Timeout(10.0), default_headers=openai_default_headers(settings.ai))
+            extra = {"extra_body": {"thinking": {"type": "disabled"}}} if is_mimo else {}
+            resp = await client.chat.completions.create(
+                model=settings.ai.model, max_tokens=80,
+                messages=[{"role": "user", "content": prompt}], **extra)
+            return (resp.choices[0].message.content or "").strip().strip('"「」')[:120]
+    except Exception:
+        return ""
+
+
 def _is_network_error(e: BaseException) -> bool:
     """LLM 服务商连接/超时类错误（与逻辑性 bug 区分，给"网络不好"文案）。
     用类型+字符串双判，免得为各家 SDK 一一导入异常类。"""
@@ -394,6 +435,11 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                         s.title = title
                         await db3.commit()
                 await genstream.publish(session_id, {"type": "session_title", "title": title})
+
+        # ── 会话「一句话总结」：新会话出一版、之后每 ~6 条刷新（供 search/续接桥；与 IM 路同一套）──
+        if full_reply:
+            from agent.runner import _schedule_summary
+            _schedule_summary(req.user_id, session_id, is_new_session, settings, use_anthropic)
 
         # ── 对话后反思：提炼长期记忆（fire-and-forget）──
         if profile.memory_enabled and full_reply:

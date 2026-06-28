@@ -103,7 +103,8 @@
         </div>
         <div class="exp-sidebar-divider"></div>
         <div class="exp-session-list">
-          <!-- IM 平台：飞书 / QQ，可展开抽屉。未接入 → 扫码连接；接入后 → 该平台会话 -->
+          <!-- IM 平台：飞书 / QQ / 微信，可展开抽屉。未接入 → 扫码连接；接入后 → 该平台会话 -->
+          <div class="im-plat-group" ref="imGroupEl" :class="{ 'im-flash': imHighlight }">
           <div v-for="p in IM_PLATFORMS" :key="p.key" class="im-plat">
             <button class="im-plat-head" :class="{ open: imOpen[p.key] }" @click="toggleImPlatform(p.key)">
               <svg class="im-plat-chev" :class="{ open: imOpen[p.key] }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
@@ -136,6 +137,7 @@
               </template>
             </div>
           </div>
+          </div><!-- /im-plat-group -->
 
           <!-- 网页对话 -->
           <div v-if="webSessions.length" class="exp-group-divider"></div>
@@ -164,7 +166,11 @@
       <div class="chat-main" :class="{ 'is-expanded': expanded, 'is-resizing': resizing }">
         <div class="chat-header">
           <span class="chat-title">{{ expanded ? currentSessionTitle : '咕咕' }}</span>
-          <span class="popup-status"><em class="status-dot" />在线</span>
+          <span class="popup-status" :class="{ 'is-offline': !imOnline }"
+                @click="!imOnline && promptConnectIM()"
+                :title="imOnline ? '咕咕在线' : '咕咕还没接到你的微信 / QQ / 飞书——点一下接上，随时随地找它'">
+            <em class="status-dot" />{{ imOnline ? '在线' : '离线' }}
+          </span>
           <div class="btn-group">
             <button v-if="!expanded" class="popup-icon-btn" @click="enterExpanded" title="展开">
               <PhArrowsOut weight="bold" :size="13" />
@@ -290,7 +296,7 @@ import { useProjectStore } from '@/stores/projects'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
-import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi } from '@/services/api'
+import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi } from '@/services/api'
 import { getGreeting, greeting, prefetchGreeting } from '@/composables/useGreeting'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/useThumbCache'
@@ -1002,7 +1008,7 @@ function animateGreeting() {
   }, 22)
 }
 // 任何打开路径（FAB / 通知点开 / 展开）都触发一次
-watch(open, (v) => { if (v) animateGreeting() })
+watch(open, (v) => { if (v) { animateGreeting(); loadBots() } })
 
 // ── 展开/收起 ────────────────────────────────────────────
 const sessions = ref([])
@@ -1016,13 +1022,17 @@ async function fetchSessions() {
   try { sessions.value = await agentApi.listSessions() } catch {}
 }
 
-// ── 侧栏 IM 接入（飞书 / QQ）：未接入显示扫码连接抽屉，接入后变成该平台会话抽屉 ──
+// ── 侧栏 IM 接入（飞书 / QQ / 微信）：未接入显示扫码连接抽屉，接入后变成该平台会话抽屉 ──
 const IM_PLATFORMS = [
-  { key: 'feishu', label: '飞书', api: feishuConnectApi },
-  { key: 'qqbot',  label: 'QQ',   api: qqConnectApi },
+  { key: 'feishu',  label: '飞书', api: feishuConnectApi },
+  { key: 'qqbot',   label: 'QQ',   api: qqConnectApi },
+  { key: 'wechat',  label: '微信', api: wechatConnectApi },
 ]
 const bots   = ref([])
-const imOpen = reactive({ feishu: false, qqbot: false })
+const imOpen = reactive({ feishu: false, qqbot: false, wechat: false })
+const imOnline    = computed(() => bots.value.length > 0)   // 接了任意 IM bot = 在线，否则离线
+const imHighlight = ref(false)
+const imGroupEl   = ref(null)
 const botsOf = (platform) => bots.value.filter(b => b.platform === platform)
 const imSessionsOf = (platform) => imSessions.value.filter(s => s.source === platform)
 
@@ -1030,6 +1040,19 @@ async function loadBots() {
   try { const r = await userBotsApi.list(); bots.value = r.items || [] } catch {}
 }
 function toggleImPlatform(key) { imOpen[key] = !imOpen[key] }
+
+// 离线状态被点击：展开大窗 → 摊开各 IM 抽屉露出「扫码连接」→ 高亮 IM 区一下（暗示式引导，不强推）
+async function promptConnectIM() {
+  if (!expanded.value) await enterExpanded()
+  else loadBots()
+  IM_PLATFORMS.forEach(p => { imOpen[p.key] = true })
+  await nextTick()
+  imGroupEl.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  imHighlight.value = false   // 重置以便点第二次也能重放动画
+  await nextTick()
+  imHighlight.value = true
+  setTimeout(() => { imHighlight.value = false }, 2600)
+}
 
 // 通用扫码连接（建任务 → 渲染二维码 → 轮询 → 自动写 user_bot，与 ProfileModal 同一套 API）
 const connecting    = ref('')        // 正在生成二维码的平台 key
@@ -1045,10 +1068,12 @@ async function startImConnect(platform) {
   connecting.value = platform; connectErr.value = ''
   try {
     const r = await p.api.start()
-    connect.value = { platform, id: r.poll_id || r.task_id }   // 飞书 poll_id / QQ task_id
+    connect.value = { platform, id: r.poll_id || r.task_id }   // 飞书 poll_id / QQ & 微信 task_id
     connectHint.value = platform === 'feishu'
       ? '手机飞书扫码 → 授权创建机器人，授权后自动连接'
-      : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
+      : platform === 'wechat'
+        ? '手机微信扫码 → 授权后自动连接'
+        : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
     await nextTick()
     await QRCode.toCanvas(connectCanvas.value, r.scan_url, { width: 160, margin: 1 })
     _startImPoll(p)
@@ -1100,7 +1125,9 @@ async function openChatImBind(platform) {
     chatBind.id = r.poll_id || r.task_id
     chatBind.hint = platform === 'feishu'
       ? '手机飞书扫码 → 授权创建机器人，授权后自动连接'
-      : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
+      : platform === 'wechat'
+        ? '手机微信扫码 → 授权后自动连接'
+        : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
     await nextTick()
     await QRCode.toCanvas(chatBindCanvas.value, r.scan_url, { width: 168, margin: 1 })
     _startChatBindPoll(p)
@@ -1596,7 +1623,20 @@ async function send(forcedText) {
 .chat-title { font-size: 13px; font-weight: 700; flex: 1; }
 .chat-main.is-expanded .chat-title { font-size: 14px; font-weight: 600; }
 .popup-status { font-size: 11px; color: var(--color-success); display: flex; align-items: center; gap: 4px; }
-.status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); }
+.status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); transition: background .15s, box-shadow .15s; }
+/* 离线：克制的暗示——灰点、弱化文字、可点；只在 hover 才微微亮起（点用暖色 + 细光环），平时不抢眼 */
+.popup-status.is-offline { color: var(--text-secondary); cursor: pointer; opacity: .85; transition: color .15s, opacity .15s; }
+.popup-status.is-offline .status-dot { background: var(--text-secondary); }
+.popup-status.is-offline:hover { opacity: 1; color: var(--text-primary); }
+.popup-status.is-offline:hover .status-dot { background: var(--color-warning); box-shadow: 0 0 0 3px rgba(176, 120, 88, 0.22); }
+/* 点击离线后，IM 区短暂高亮一下引导视线（不留痕） */
+.im-plat-group { border-radius: 10px; }
+.im-plat-group.im-flash { animation: imFlash 2.4s ease-out 1; }
+@keyframes imFlash {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(123, 127, 178, 0); }
+  14%      { box-shadow: 0 0 0 2px rgba(123, 127, 178, 0.55); }
+  60%      { box-shadow: 0 0 0 2px rgba(123, 127, 178, 0.28); }
+}
 .btn-group { display: flex; align-items: center; gap: 2px; }
 
 .popup-icon-btn {
