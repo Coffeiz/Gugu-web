@@ -9,20 +9,27 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **密码找回（邮件重置链接）**（`api/v1/auth.py` + `ForgotPassword`/`ResetPassword` 页）：`POST /auth/forgot-password` 按邮箱查用户 → `secrets.token_urlsafe(32)` 存 Redis（`pwdreset:tok`，30 分钟 TTL）→ 线程池发重置邮件；邮箱不存在 / 冷却中**都返回同一句**（防枚举），同邮箱 60s 冷却防刷。`POST /auth/reset-password` 校验 token + 新密码 ≥8 位 → 改密 → 删 token（一次性）。重置链接基址取请求 `Origin`（用户当前站点）不写死域名；登录页加「忘记密码？」入口，`reset-password` 不加 `authPublic`（已登录点邮件链接也可用）。
+- **独立语音识别模型（与主模型解耦）**（`settings.voice` + `agent/voice.py`）：语音 / 音视频转写改用**独立配置的 ASR 模型**把音频转成文字、再交主模型处理，主模型不再被强切 mimo（根治「主模型非 mimo 时媒体块被静默丢弃、语音被当文件」）。`model` 留空 = 未配置 → 收到语音咕咕直接回「不支持」。固定走 OpenAI 兼容 `input_audio`（chat + base64，纯 ASR 不传 thinking）；Admin「Agent 配置」加语音模型卡（model / base_url / api_key / provider，含 MiMo·Qwen 模板按钮）。
+
 ### 改进
 
 - **skills.md 瘦身：situational 剧本抽成按需 skill**（`agent/skills/`）：把 `prompts/skills.md`（每轮常驻的工具准则）里三块**针对性 how-to**——项目规划、定时任务、接入 IM——抽成按需 `use_skill` 拉取的 skill（`project-planning` / `scheduled-tasks` / `im-bind`），skills.md 只留**主动触发 + 安全红线**的短指针（如「没真建成定时任务就别口头承诺」常驻）。常驻 prompt 省 ~600-1000 tokens、更聚焦；冗长剧本用到才拉。**安全红线（真实性铁律、删除两步确认）与高频元策略仍常驻、不拆**（按需件只在模型决定动手后才拉，主动触发与安全规则拆了会失效）。线上验证：问「怎么接飞书」→ 模型自动 `use_skill im-bind` → 给出扫码按钮。
-- **项目规划更克制**（`agent/skills/project-planning.md`）：① 推进项目时**主动让状态跟上进展**——规划完 / 勾首个待办 / 开始动手 → 主动从「待开始」转「进行中」并告知（低风险可逆）；全部做完 → 先问确认再标「已完成」（归档较重）；状态与进展脱节就主动提。② **默认精简、别甩一面墙**——阶段宜少（3~5）、每段只列关键待办（≤4）、不拆微步骤、颗粒度随项目大小缩放；**详细按需展开**（主动给「要哪段拆细」）而非默认，拿不准往少了给。③ **待办本就可选**——长期/单线创作（草图→线稿→上色→交付）阶段即进度、不必每段列待办，只想归拢文件建个项目壳即可，没「具体可勾、用户真会追的动作」就别硬凑。
+- **项目规划更克制**（`agent/skills/project-planning.md`）：① 推进项目时**主动让状态跟上进展**——规划完 / 勾首个待办 / 开始动手 → 主动从「待开始」转「进行中」并告知（低风险可逆）；全部做完 → 先问确认再标「已完成」（归档较重）；状态与进展脱节就主动提。② **默认精简、别甩一面墙**——阶段宜少（3~5）、每段只列关键待办（≤4）、不拆微步骤、颗粒度随项目大小缩放；**详细按需展开**（主动给「要哪段拆细」）而非默认，拿不准往少了给。③ **待办本就可选**——长期/单线创作（草图→线稿→上色→交付）阶段即进度、不必每段列待办，只想归拢文件建个项目壳即可，没「具体可勾、用户真会追的动作」就别硬凑。④ **同类型项目尽量同色系**——建项目前看现有同类项目的颜色（`list_projects` 输出补 `color`），新项目沿用同色系让看板按类型成组；判不出类型 / 无同类才随机或问，别为配色专门追问。
 
 ### 修复
 
 - **一次性定时任务过期不自动清理**（`app/scheduled_tasks.py`）：正常触发的 `@once` 任务由 `execute_task` 即时删除，但**停用 / misfire 没触发 / 残留**的过期一次性任务无人回收，会一直僵在面板里（`execute_task` 对停用任务直接 early-return，走不到删除）。`reconcile`（每 ~30s）新增 GC：**时间已过点的一次性任务一律清掉**（留 120s 宽限避开正在触发的那一下），周期 cron 与未到点的不受影响。
 - **接入 IM 按钮漏微信**：咕咕给扫码绑定按钮时只发飞书 / QQ、漏了微信，现补齐微信。
-- **拖到「已完成」没勾完待办**：项目卡拖到已完成列时，自动勾选所有阶段的全部待办（进度与状态一致）。
-- **网页语音体验**：录音发出即显示语音条（不再等回包）、录音条与发送按钮等高对齐。
-- **非 wav/mp3 语音识别失败**：送 ASR 前先用 ffmpeg 把其它格式音频转码，避免识别不了。
-- **语音 API Key「没保存」错觉**：后台语音配置加「已配置」指示，消除以为没存上的误会。
-- **后台页滚动闪动**：去掉 `background-attachment: fixed`，修滚动时背景抖动。
+- **拖到「已完成」没勾完待办**（`stores/projects.js`）：项目卡拖到已完成列时自动勾选所有阶段的全部待办——`moveProject` 进 done 分支原只推进 `currentStage` + `progress=100`、没勾 todo 也没把 stages 传后端。补：深拷贝 stages、未完成 todo 设 `done`+`autoCompleted`（快照原状态随 patch 存），与 `setStage` 同一约定，拖回进行中自动复原。
+- **语音转写一直 400（识别不了）**（`agent/voice.py`）：mimo-v2.5-asr 只收 `audio/wav|mpeg|mp3`，但浏览器录音是 `audio/mp4`(Safari) / `audio/webm`(Chrome)、QQ/微信常是 amr → `Param Incorrect`。转写前凡 mime 不在白名单的，用 **ffmpeg** 转 16k 单声道 wav 再送（输入走临时文件，mp4 的 moov 在尾部需可寻址）。
+- **邮件系统：配置「不保存」+ 发件人填名字崩**（`core/config.py` + `services/email.py`）：① `apply_override` 的「顶层字段」兜底循环排除集漏了 `smtp`、`voice` → 这两段先被各自处理块构造成对象、又被原始 dict 覆盖回 → `settings.smtp/voice` 变 dict、后台读出当空配置（看着像没保存）、发信用空配置发不出。补进排除集即根治。② 后台「发件人」常被填成显示名（如「咕咕」）而非邮箱，旧逻辑直接当地址塞进 From → 信封发件人 `<咕咕>` → smtplib `MAIL FROM` 按 ASCII 编码崩。`_resolve_from`：含 `@` 才当地址，否则当显示名、地址退回登录账号；中文主题 / 发件名走 `EmailMessage` 自动 RFC2047 编码。
+- **网页语音发出后先显示成文件卡、刷新才变语音条**（`GuguChat.vue`）：`send()` 拼乐观用户气泡时 `files.map` 漏了附件的 `kind` / `duration`，而语音条靠 `f.kind==='voice'` 判定 → 补上即解。
+- **语音 API Key 看着「没保存」**（`stores/config.js` + Admin/Agent）：key 实际存住了，但后端脱敏成 `****`、前端又清空显示 → 字段永远空、看着像没存。`config` store 记录后端是否已有 key（`secretSet.voiceApiKey`），面板据此显示「· 已配置 ✓」+ 动态占位。
+- **后台页滚动闪动**（`layouts/AdminLayout.vue`）：`.admin-main` 既是 100vh 滚动容器又用了 `background-attachment: fixed`，渐变被钉在视口、滚动时每帧重绘整块导致闪动。去掉该属性（元素本身就是视口高的滚动容器，默认 `scroll` 已让背景相对自身固定，视觉一致且无重绘），所有后台页共用此布局。
+- **录音条与按钮没对齐**（`GuguChat.vue`）：`.rec-bar` 没设高度、靠 padding 撑出约 22px，比 28px 按钮矮，底对齐时内容偏低。设成与按钮等高（28 / 放大态 32）、内容居中。
 
 ## [0.14.0] - 2026-06-29 · 感知系统（遥测/行为模块/解读先验）+ 记忆 2b（结构化 facts/事件总线/控制命令）
 
