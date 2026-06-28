@@ -54,10 +54,16 @@ async def update_preferences(
         data["last_stages"] = body.lastStages
     if body.stageTemplates is not None:
         data["stage_templates"] = body.stageTemplates
-    if body.replyTone is not None:
-        data["reply_tone"] = body.replyTone
-    if body.replyLength is not None:
-        data["reply_length"] = body.replyLength
+    if "replyTone" in body.model_fields_set:
+        if body.replyTone is None:
+            data.pop("reply_tone", None)   # null = 重置为默认（自然）
+        else:
+            data["reply_tone"] = body.replyTone
+    if "replyLength" in body.model_fields_set:
+        if body.replyLength is None:
+            data.pop("reply_length", None) # null = 重置为默认（适中）
+        else:
+            data["reply_length"] = body.replyLength
     if body.pmStagesExpanded is not None:
         data["pm_stages_expanded"] = body.pmStagesExpanded
     prefs.data = data
