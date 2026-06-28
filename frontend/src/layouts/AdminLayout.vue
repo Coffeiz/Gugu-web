@@ -39,6 +39,10 @@
           <PhChartLine :size="14" />
           数据分析
         </div>
+        <div class="nav-item" :class="{ active: isActive('/perception') }" role="link" tabindex="0" @click="go('/perception')">
+          <PhBrain :size="14" />
+          感知诊断
+        </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">管理</div>
@@ -113,7 +117,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
 import {
   PhGear, PhRobot, PhChartLine, PhFlag, PhTicket, PhUsers,
-  PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging,
+  PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging, PhBrain,
 } from '@phosphor-icons/vue'
 
 const route = useRoute()

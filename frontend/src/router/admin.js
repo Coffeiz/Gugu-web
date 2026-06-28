@@ -27,6 +27,12 @@ const routes = [
         meta: { title: '数据分析' },
       },
       {
+        path: 'perception',
+        name: 'AdminPerception',
+        component: () => import('@/views/Admin/Perception/index.vue'),
+        meta: { title: '感知诊断' },
+      },
+      {
         path: 'agent',
         name: 'AdminAgent',
         component: () => import('@/views/Admin/Agent/index.vue'),
