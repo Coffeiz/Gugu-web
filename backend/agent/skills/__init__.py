@@ -8,6 +8,11 @@
 依赖单向：tools（use_skill）→ skills（本模块）。
 
 不缓存：每次现读目录里的几个 .md（开销极小），改 skill 内容**无需重启**即生效。
+
+⚠️ 约定：**每新增一个 skill，记得在 `prompts/skills.md` 补一条「主动指针」**
+（「用户什么场景 → `use_skill X`」）——别只靠 builder 自动注入的索引；指针写在常驻准则里
+能强化触发（尤其需要主动留意的场景）。现有 4 个：weather / project-planning /
+scheduled-tasks / im-bind，skills.md 都有对应指针。
 """
 from __future__ import annotations
 
