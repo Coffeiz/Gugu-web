@@ -166,10 +166,10 @@
       <div class="chat-main" :class="{ 'is-expanded': expanded, 'is-resizing': resizing }">
         <div class="chat-header">
           <span class="chat-title">{{ expanded ? currentSessionTitle : '咕咕' }}</span>
-          <span class="popup-status" :class="{ 'is-offline': !imOnline }"
-                @click="!imOnline && promptConnectIM()"
-                :title="imOnline ? '咕咕在线' : '咕咕还没接到你的微信 / QQ / 飞书——点一下接上，随时随地找它'">
-            <em class="status-dot" />{{ imOnline ? '在线' : '离线' }}
+          <span class="popup-status" :class="'is-' + presenceKind"
+                @click="presenceKind === 'offline' && promptConnectIM()"
+                :title="presenceTitle">
+            <em class="status-dot" />{{ presenceText }}
           </span>
           <div class="btn-group">
             <button v-if="!expanded" class="popup-icon-btn" @click="enterExpanded" title="展开">
@@ -296,7 +296,7 @@ import { useProjectStore } from '@/stores/projects'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
-import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi } from '@/services/api'
+import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi, authApi } from '@/services/api'
 import { getGreeting, greeting, prefetchGreeting } from '@/composables/useGreeting'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/useThumbCache'
@@ -1008,7 +1008,7 @@ function animateGreeting() {
   }, 22)
 }
 // 任何打开路径（FAB / 通知点开 / 展开）都触发一次
-watch(open, (v) => { if (v) { animateGreeting(); loadBots() } })
+watch(open, (v) => { if (v) { animateGreeting(); loadBots(); loadQuota(); pickOfflineLabel() } })
 
 // ── 展开/收起 ────────────────────────────────────────────
 const sessions = ref([])
@@ -1031,6 +1031,26 @@ const IM_PLATFORMS = [
 const bots   = ref([])
 const imOpen = reactive({ feishu: false, qqbot: false, wechat: false })
 const imOnline    = computed(() => bots.value.some(b => b.enabled))   // 有「启用中」的 IM bot 才算在线（停用/残留不算）
+
+// ── 顶部状态：休息中（精力耗尽）> 在线（任意 IM 启用）> 随机离线 ──
+const quota = ref(null)
+async function loadQuota() { try { quota.value = await authApi.getQuota() } catch {} }
+const energyExhausted = computed(() => {
+  const q = quota.value
+  if (!q) return false
+  return (q.limit_6h != null && q.used_6h >= q.limit_6h) ||
+         (q.limit_weekly != null && q.used_weekly >= q.limit_weekly)
+})
+// 离线时随机显示「QQ/微信/飞书 离线」之一（每次打开换一个，暗示这些渠道还没接上）
+const _OFFLINE_LABELS = ['QQ 离线', '微信离线', '飞书离线']
+const offlineLabel = ref('离线')
+function pickOfflineLabel() { offlineLabel.value = _OFFLINE_LABELS[Math.floor(Math.random() * _OFFLINE_LABELS.length)] }
+const presenceKind  = computed(() => energyExhausted.value ? 'resting' : (imOnline.value ? 'online' : 'offline'))
+const presenceText  = computed(() => presenceKind.value === 'resting' ? '休息中'
+                                   : presenceKind.value === 'online'  ? '在线' : offlineLabel.value)
+const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕精力用完了，歇会儿就回来～'
+                                   : presenceKind.value === 'online'  ? '咕咕在线'
+                                   : '咕咕还没接到你的微信 / QQ / 飞书——点一下接上，随时随地找它')
 const imHighlight = ref(false)
 const imGroupEl   = ref(null)
 const botsOf = (platform) => bots.value.filter(b => b.platform === platform)
@@ -1500,6 +1520,7 @@ async function send(forcedText) {
       // 流式结束：把该条 AI 消息标记为非流式，触发 markdown 渲染（流式中按纯文本显示，避免半截表格/代码块闪烁）
       if (aiIdx !== -1 && messages.value[aiIdx]) messages.value[aiIdx].streaming = false
       clearStatus(); streaming.value = false; abortCtrl.value = null
+      loadQuota()   // 回复消耗精力，刷新一次——耗尽时顶部状态即时变「休息中」
       // markdown 重渲染后内容变高，MutationObserver 此时已因 streaming=false 停止跟随，
       // 需在 nextTick 后再滚一次，否则底部时间戳会被截掉
       await scrollBottom()
@@ -1629,6 +1650,10 @@ async function send(forcedText) {
 .popup-status.is-offline .status-dot { background: var(--text-secondary); }
 .popup-status.is-offline:hover { opacity: 1; color: var(--text-primary); }
 .popup-status.is-offline:hover .status-dot { background: var(--color-warning); box-shadow: 0 0 0 3px rgba(176, 120, 88, 0.22); }
+/* 休息中（精力耗尽）：暖色、点轻微呼吸，不可点 */
+.popup-status.is-resting { color: var(--color-warning); cursor: default; }
+.popup-status.is-resting .status-dot { background: var(--color-warning); animation: restPulse 1.8s ease-in-out infinite; }
+@keyframes restPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 /* 点击离线后，IM 区短暂高亮一下引导视线（不留痕） */
 .im-plat-group { border-radius: 10px; }
 .im-plat-group.im-flash { animation: imFlash 2.4s ease-out 1; }
