@@ -10,10 +10,45 @@
 """
 from __future__ import annotations
 
+import asyncio
+import base64
 import logging
+import os
+import tempfile
 from types import SimpleNamespace
 
 logger = logging.getLogger("agent.voice")
+
+# mimo-v2.5-asr 等 ASR 模型只收这几种容器；浏览器录音多是 audio/mp4(Safari)/audio/webm(Chrome)，
+# QQ/微信语音也常是 amr/silk → 一律用 ffmpeg 转 wav 再送。
+_ASR_OK_MIME = {"audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3"}
+
+
+async def _to_wav(raw: bytes) -> bytes | None:
+    """用 ffmpeg 把任意音频转成 16k 单声道 WAV。失败返回 None。
+
+    输入走临时文件而非管道：mp4 的 moov 原子可能在尾部、需要可寻址输入，pipe 不可寻址会失败。"""
+    fd, inp = tempfile.mkstemp(suffix=".bin")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw)
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-nostdin", "-i", inp, "-ar", "16000", "-ac", "1", "-f", "wav", "pipe:1",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0 or not out:
+            logger.warning("ffmpeg 转码失败 rc=%s: %s", proc.returncode,
+                           (err or b"")[-300:].decode("utf-8", "ignore"))
+            return None
+        return out
+    except Exception as e:
+        logger.warning("ffmpeg 转码异常 %s: %s", type(e).__name__, str(e)[:200])
+        return None
+    finally:
+        try:
+            os.unlink(inp)
+        except OSError:
+            pass
 
 
 def _vm(settings):
@@ -38,7 +73,17 @@ async def transcribe(media: list, settings) -> str | None:
     parts = []
     for m in (media or []):
         if m.get("type") == "audio" and m.get("b64"):
-            data_url = f"data:{m.get('mime') or 'audio/mpeg'};base64,{m['b64']}"
+            mime = (m.get("mime") or "audio/mpeg").lower()
+            b64 = m["b64"]
+            # mimo ASR 只收 wav/mp3/mpeg；其余（mp4/webm/amr…）先用 ffmpeg 转 wav
+            if mime not in _ASR_OK_MIME:
+                wav = await _to_wav(base64.b64decode(b64))
+                if wav is None:
+                    logger.warning("转写跳过：音频 %s 转 wav 失败", mime)
+                    continue
+                b64 = base64.b64encode(wav).decode()
+                mime = "audio/wav"
+            data_url = f"data:{mime};base64,{b64}"
             parts.append({"type": "input_audio", "input_audio": {"data": data_url}})
     if not parts:
         logger.info("转写跳过：media 里没有 audio 块（types=%s）", [m.get("type") for m in (media or [])])
