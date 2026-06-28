@@ -17,70 +17,92 @@
         </div>
         <div>
           <div class="brand-name">咕咕</div>
-          <div class="brand-sub">登录你的账号</div>
+          <div class="brand-sub">设置新密码</div>
         </div>
       </div>
 
-      <form @submit.prevent="handleLogin">
-        <div class="field">
-          <label>用户名</label>
-          <input v-model="form.username" type="text" placeholder="输入用户名"
-            autocomplete="username" :disabled="loading" />
+      <template v-if="done">
+        <div class="done-box">
+          <div class="done-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#7b7fb2" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+          </div>
+          <p class="done-text">密码已重置，请用新密码登录。</p>
         </div>
-        <div class="field">
-          <label>密码</label>
-          <input v-model="form.password" type="password" placeholder="••••••••"
-            autocomplete="current-password" :disabled="loading" />
+        <button class="btn-primary" @click="goLogin">前往登录</button>
+      </template>
+
+      <template v-else-if="!token">
+        <div class="error-msg">链接无效或缺少参数，请重新申请重置邮件。</div>
+        <div class="card-footer" style="margin-top:14px">
+          <router-link to="/forgot-password">重新申请</router-link>
         </div>
+      </template>
 
-        <div class="forgot-row">
-          <router-link to="/forgot-password">忘记密码？</router-link>
+      <template v-else>
+        <form @submit.prevent="handleSubmit" novalidate>
+          <div class="field">
+            <label>新密码</label>
+            <input v-model="pw" type="password" placeholder="至少 8 位"
+              autocomplete="new-password" :disabled="loading" />
+          </div>
+          <div class="field">
+            <label>确认新密码</label>
+            <input v-model="pw2" type="password" placeholder="再输入一次"
+              autocomplete="new-password" :disabled="loading" />
+          </div>
+
+          <div v-if="error" class="error-msg">{{ error }}</div>
+
+          <button type="submit" class="btn-primary" :disabled="loading">
+            {{ loading ? '提交中…' : '重置密码' }}
+          </button>
+        </form>
+
+        <div class="card-footer">
+          <router-link to="/login">返回登录</router-link>
         </div>
-
-        <div v-if="error" class="error-msg">{{ error }}</div>
-
-        <button type="submit" class="btn-primary" :disabled="loading">
-          {{ loading ? '登录中…' : '登录' }}
-        </button>
-      </form>
-
-      <div class="card-footer">
-        没有账号？
-        <router-link to="/register">立即注册</router-link>
-      </div>
-    </div>
-
-    <div class="page-footer">
-      <span>Created by Claude with love</span>
-      <span class="footer-sep">·</span>
-      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">苏ICP备2026042185号</a>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
+import { ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
-const router   = useRouter()
-const auth     = useAuthStore()
-const form     = reactive({ username: '', password: '' })
-const loading  = ref(false)
-const error    = ref('')
+const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
+const route   = useRoute()
+const router  = useRouter()
+const token   = ref(route.query.token || '')
+const pw      = ref('')
+const pw2     = ref('')
+const loading = ref(false)
+const error   = ref('')
+const done    = ref(false)
 
-async function handleLogin() {
-  if (!form.username || !form.password) { error.value = '请填写用户名和密码'; return }
+async function handleSubmit() {
+  if (pw.value.length < 8) { error.value = '密码至少 8 位'; return }
+  if (pw.value !== pw2.value) { error.value = '两次输入的密码不一致'; return }
   loading.value = true; error.value = ''
   try {
-    await auth.login(form.username, form.password)
-    router.push(router.currentRoute.value.query.redirect ?? '/projects')
+    const res = await fetch(`${BASE_URL}/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: token.value, newPassword: pw.value }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(body?.detail || '重置失败，请重试')
+    done.value = true
   } catch (e) {
     error.value = e.message
   } finally {
     loading.value = false
   }
 }
+
+function goLogin() { router.push('/login') }
 </script>
 
 <style scoped>
@@ -115,7 +137,7 @@ async function handleLogin() {
     inset 1px 0 0 rgba(255,255,255,0.55);
 }
 
-.card-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+.card-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
 .brand-icon {
   width: 44px; height: 44px; border-radius: 13px; flex-shrink: 0;
   background: linear-gradient(135deg, #7b7fb2, #9590c4);
@@ -145,14 +167,6 @@ async function handleLogin() {
 .field input::placeholder { color: #b0b4c4; }
 .field input:disabled { opacity: 0.5; }
 
-.forgot-row {
-  text-align: right; margin: -4px 0 14px;
-}
-.forgot-row a {
-  font-size: 12px; color: #8a8fa8; text-decoration: none;
-}
-.forgot-row a:hover { color: #7b7fb2; }
-
 .error-msg {
   font-size: 12px; color: #c05050; margin-bottom: 12px;
   padding: 8px 12px; border-radius: 9px;
@@ -170,22 +184,18 @@ async function handleLogin() {
 .btn-primary:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
 .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
+.done-box { text-align: center; padding: 8px 0 18px; }
+.done-icon {
+  width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 15px;
+  background: rgba(123,127,178,0.1);
+  display: flex; align-items: center; justify-content: center;
+}
+.done-text { font-size: 14px; color: #1e2028; line-height: 1.6; margin: 0; }
+
 .card-footer {
   margin-top: 22px; text-align: center;
   font-size: 13px; color: #8a8fa8;
 }
 .card-footer a { color: #7b7fb2; font-weight: 600; text-decoration: none; }
 .card-footer a:hover { text-decoration: underline; }
-
-.page-footer {
-  position: absolute; bottom: 24px; left: 0; right: 0;
-  text-align: center; font-size: 11px; color: rgba(100,108,130,0.55);
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-  pointer-events: none;
-}
-.page-footer a {
-  color: rgba(100,108,130,0.55); text-decoration: none; pointer-events: auto;
-}
-.page-footer a:hover { color: rgba(100,108,130,0.85); }
-.footer-sep { opacity: 0.5; }
 </style>

@@ -17,64 +17,73 @@
         </div>
         <div>
           <div class="brand-name">咕咕</div>
-          <div class="brand-sub">登录你的账号</div>
+          <div class="brand-sub">找回密码</div>
         </div>
       </div>
 
-      <form @submit.prevent="handleLogin">
-        <div class="field">
-          <label>用户名</label>
-          <input v-model="form.username" type="text" placeholder="输入用户名"
-            autocomplete="username" :disabled="loading" />
-        </div>
-        <div class="field">
-          <label>密码</label>
-          <input v-model="form.password" type="password" placeholder="••••••••"
-            autocomplete="current-password" :disabled="loading" />
-        </div>
+      <template v-if="!sent">
+        <p class="hint">输入你注册时填写的邮箱，我们会给你发一封重置密码的邮件。</p>
+        <form @submit.prevent="handleSubmit" novalidate>
+          <div class="field">
+            <label>邮箱</label>
+            <input v-model="email" type="email" placeholder="your@email.com"
+              autocomplete="email" :disabled="loading" />
+          </div>
 
-        <div class="forgot-row">
-          <router-link to="/forgot-password">忘记密码？</router-link>
+          <div v-if="error" class="error-msg">{{ error }}</div>
+
+          <button type="submit" class="btn-primary" :disabled="loading">
+            {{ loading ? '发送中…' : '发送重置邮件' }}
+          </button>
+        </form>
+      </template>
+
+      <template v-else>
+        <div class="done-box">
+          <div class="done-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7b7fb2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+              <polyline points="22,6 12,13 2,6"/>
+            </svg>
+          </div>
+          <p class="done-text">{{ message }}</p>
+          <p class="done-sub">链接 30 分钟内有效。没收到的话检查垃圾箱，或稍后重试。</p>
         </div>
-
-        <div v-if="error" class="error-msg">{{ error }}</div>
-
-        <button type="submit" class="btn-primary" :disabled="loading">
-          {{ loading ? '登录中…' : '登录' }}
-        </button>
-      </form>
+      </template>
 
       <div class="card-footer">
-        没有账号？
-        <router-link to="/register">立即注册</router-link>
+        想起来了？
+        <router-link to="/login">返回登录</router-link>
       </div>
-    </div>
-
-    <div class="page-footer">
-      <span>Created by Claude with love</span>
-      <span class="footer-sep">·</span>
-      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">苏ICP备2026042185号</a>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
+import { ref } from 'vue'
 
-const router   = useRouter()
-const auth     = useAuthStore()
-const form     = reactive({ username: '', password: '' })
-const loading  = ref(false)
-const error    = ref('')
+const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
+const email   = ref('')
+const loading = ref(false)
+const error   = ref('')
+const sent    = ref(false)
+const message = ref('')
 
-async function handleLogin() {
-  if (!form.username || !form.password) { error.value = '请填写用户名和密码'; return }
+async function handleSubmit() {
+  if (!email.value || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value)) {
+    error.value = '请输入有效的邮箱地址'; return
+  }
   loading.value = true; error.value = ''
   try {
-    await auth.login(form.username, form.password)
-    router.push(router.currentRoute.value.query.redirect ?? '/projects')
+    const res = await fetch(`${BASE_URL}/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.value.trim() }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(body?.detail || '发送失败，请稍后重试')
+    message.value = body.message || '若该邮箱已注册，重置链接已发送，请查收邮箱。'
+    sent.value = true
   } catch (e) {
     error.value = e.message
   } finally {
@@ -115,7 +124,7 @@ async function handleLogin() {
     inset 1px 0 0 rgba(255,255,255,0.55);
 }
 
-.card-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+.card-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
 .brand-icon {
   width: 44px; height: 44px; border-radius: 13px; flex-shrink: 0;
   background: linear-gradient(135deg, #7b7fb2, #9590c4);
@@ -124,6 +133,8 @@ async function handleLogin() {
 }
 .brand-name { font-size: 18px; font-weight: 700; color: #1e2028; }
 .brand-sub  { font-size: 12px; color: #8a8fa8; margin-top: 2px; }
+
+.hint { font-size: 13px; color: #8a8fa8; line-height: 1.6; margin: 0 0 18px; }
 
 .field { margin-bottom: 14px; }
 .field label {
@@ -145,14 +156,6 @@ async function handleLogin() {
 .field input::placeholder { color: #b0b4c4; }
 .field input:disabled { opacity: 0.5; }
 
-.forgot-row {
-  text-align: right; margin: -4px 0 14px;
-}
-.forgot-row a {
-  font-size: 12px; color: #8a8fa8; text-decoration: none;
-}
-.forgot-row a:hover { color: #7b7fb2; }
-
 .error-msg {
   font-size: 12px; color: #c05050; margin-bottom: 12px;
   padding: 8px 12px; border-radius: 9px;
@@ -170,22 +173,19 @@ async function handleLogin() {
 .btn-primary:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
 .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
+.done-box { text-align: center; padding: 8px 0 4px; }
+.done-icon {
+  width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 15px;
+  background: rgba(123,127,178,0.1);
+  display: flex; align-items: center; justify-content: center;
+}
+.done-text { font-size: 14px; color: #1e2028; line-height: 1.6; margin: 0 0 8px; }
+.done-sub  { font-size: 12px; color: #a0a4b8; line-height: 1.6; margin: 0; }
+
 .card-footer {
   margin-top: 22px; text-align: center;
   font-size: 13px; color: #8a8fa8;
 }
 .card-footer a { color: #7b7fb2; font-weight: 600; text-decoration: none; }
 .card-footer a:hover { text-decoration: underline; }
-
-.page-footer {
-  position: absolute; bottom: 24px; left: 0; right: 0;
-  text-align: center; font-size: 11px; color: rgba(100,108,130,0.55);
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-  pointer-events: none;
-}
-.page-footer a {
-  color: rgba(100,108,130,0.55); text-decoration: none; pointer-events: auto;
-}
-.page-footer a:hover { color: rgba(100,108,130,0.85); }
-.footer-sep { opacity: 0.5; }
 </style>

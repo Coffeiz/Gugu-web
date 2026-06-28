@@ -16,6 +16,18 @@ const routes = [
     meta: { authPublic: true },
   },
   {
+    path: '/forgot-password',
+    name: 'ForgotPassword',
+    component: () => import('@/views/ForgotPassword.vue'),
+    meta: { authPublic: true },
+  },
+  {
+    // 重置链接从邮件点进来，登录与否都要可用 → 不加 authPublic（避免已登录被重定向走）
+    path: '/reset-password',
+    name: 'ResetPassword',
+    component: () => import('@/views/ResetPassword.vue'),
+  },
+  {
     path: '/privacy',
     name: 'Privacy',
     component: () => import('@/views/Privacy.vue'),

@@ -1,17 +1,21 @@
+import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File as FastAPIFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import Response
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.db.session import get_db
 from app.models import User, InviteCode, AgentUsage
 from app.core.security import hash_password, verify_password, create_user_token, get_current_user
-from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile
+from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword
 from app.core.config import get_settings
+from app.core.redis import get_redis
+from app.services import email as email_svc
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -74,6 +78,70 @@ async def login(body: UserLogin, db: AsyncSession = Depends(get_db)):
         access_token=create_user_token(user.id),
         user=UserResponse.from_user(user),
     )
+
+
+# ── 密码找回 ────────────────────────────────────────────────────────────────
+_RESET_TOKEN_TTL = 30 * 60   # 重置链接有效期 30 分钟
+_RESET_COOLDOWN  = 60        # 同一邮箱 60s 内只发一封，防刷
+_RESET_GENERIC   = {"ok": True, "message": "若该邮箱已注册，重置链接已发送，请查收邮箱（含垃圾箱）。"}
+
+
+@router.post("/forgot-password")
+async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSession = Depends(get_db)):
+    """申请重置：生成一次性 token 存 Redis，发邮件给注册邮箱。
+
+    **无论邮箱是否注册都返回同一句**——避免通过接口枚举哪些邮箱已注册。"""
+    email_in = (body.email or "").strip().lower()
+    if not email_in or "@" not in email_in:
+        return _RESET_GENERIC
+    r = get_redis()
+    cd_key = f"pwdreset:cd:{email_in}"
+    if await r.get(cd_key):        # 冷却中，静默返回（不重复发信）
+        return _RESET_GENERIC
+    user = (await db.execute(
+        select(User).where(func.lower(User.email) == email_in)
+    )).scalars().first()
+    if not user:
+        return _RESET_GENERIC
+
+    token = secrets.token_urlsafe(32)
+    await r.set(f"pwdreset:tok:{token}", str(user.id), ex=_RESET_TOKEN_TTL)
+    await r.set(cd_key, "1", ex=_RESET_COOLDOWN)
+
+    # 重置链接基址：优先用请求 Origin（用户当前所在站点），退到 base_url——不写死域名
+    origin = request.headers.get("origin") or str(request.base_url).rstrip("/")
+    link = f"{origin}/reset-password?token={token}"
+    # 发信 best-effort：smtplib 是同步的，丢线程池避免阻塞事件循环；失败不暴露给前端
+    try:
+        await run_in_threadpool(
+            email_svc.send_reset_email,
+            to_addr=user.email, username=user.display_name or user.username, link=link,
+        )
+    except Exception:
+        pass
+    return _RESET_GENERIC
+
+
+@router.post("/reset-password")
+async def reset_password(body: ResetPassword, db: AsyncSession = Depends(get_db)):
+    """凭一次性 token 设新密码：校验 token + 密码长度 → 改密 → 删 token（一次性）。"""
+    token = (body.token or "").strip()
+    pw = body.new_password or ""
+    if len(pw) < 8:
+        raise HTTPException(400, "密码至少 8 位")
+    if not token:
+        raise HTTPException(400, "链接无效")
+    r = get_redis()
+    uid = await r.get(f"pwdreset:tok:{token}")
+    if not uid:
+        raise HTTPException(400, "链接已失效或已被使用，请重新申请")
+    user = await db.get(User, UUID(uid))
+    if not user:
+        raise HTTPException(400, "账号不存在")
+    user.hashed_password = hash_password(pw)
+    await db.commit()
+    await r.delete(f"pwdreset:tok:{token}")   # 一次性：用完即焚
+    return {"ok": True}
 
 
 @router.get("/me", response_model=UserResponse)

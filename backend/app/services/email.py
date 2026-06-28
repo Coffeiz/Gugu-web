@@ -89,6 +89,27 @@ def send_test_email(*, host: str, port: int, user: str, password: str,
     _deliver(host=host, port=port, user=user, password=password, use_ssl=use_ssl, msg=msg)
 
 
+def send_reset_email(*, to_addr: str, username: str, link: str) -> bool:
+    """发送密码重置邮件（含纯文本 + HTML 按钮）。走 send_email，沿用已保存的 SMTP 配置。"""
+    subject = "咕咕 · 重置密码"
+    body = (
+        f"你正在重置咕咕账号「{username}」的密码。\n\n"
+        f"点击下面的链接设置新密码（30 分钟内有效）：\n{link}\n\n"
+        "如果这不是你本人操作，忽略此邮件即可，密码不会变动。"
+    )
+    html = f"""\
+<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:480px;margin:0 auto;color:#1e2028">
+  <p style="font-size:15px">你正在重置咕咕账号「<b>{username}</b>」的密码。</p>
+  <p style="font-size:14px;color:#5a5f72">点击下面的按钮设置新密码，链接 <b>30 分钟内有效</b>：</p>
+  <p style="margin:24px 0">
+    <a href="{link}" style="display:inline-block;padding:11px 26px;background:linear-gradient(135deg,#7b7fb2,#9590c4);color:#fff;text-decoration:none;border-radius:11px;font-size:14px;font-weight:600">重置密码</a>
+  </p>
+  <p style="font-size:12px;color:#8a8fa8">按钮打不开就复制下面的链接到浏览器：<br><span style="color:#7b7fb2;word-break:break-all">{link}</span></p>
+  <p style="font-size:12px;color:#a0a4b8;margin-top:20px;border-top:1px solid #eee;padding-top:14px">如果这不是你本人操作，忽略此邮件即可，密码不会变动。</p>
+</div>"""
+    return send_email(subject, body, to_addr=to_addr, html=html)
+
+
 def notify_feedback(username: str, category: str, content: str) -> None:
     category_labels = {"bug": "Bug 反馈", "suggestion": "功能建议", "other": "其他"}
     label = category_labels.get(category, category)

@@ -34,6 +34,15 @@ class UserLogin(CamelModel):
     password: str
 
 
+class ForgotPassword(CamelModel):
+    email: str
+
+
+class ResetPassword(CamelModel):
+    token: str
+    new_password: str
+
+
 class UserResponse(CamelModel):
     id: UUID
     username: str
