@@ -164,4 +164,7 @@ async def _extract(user_name, user_msg, assistant_reply, existing_facts, existin
         f"请输出更新后的完整事实列表 + 当前状态快照 + 本轮 perception（保留仍成立的、修正矛盾、合并重复；"
         f"快照基于原快照演进、没变就原样返回；都别清空。perception 照本轮用户消息判，始终给）。"
     )
-    return await complete_json(_load_sys(), user, settings)
+    # 输出要回显**整份 facts** + daily/summary/perception；max_tokens 跟 facts 量走，
+    # 否则 facts 一多输出被截断 → JSON 解析失败 → 整个反思静默返回 {}（老用户反思全废，踩过大坑）。
+    mt = min(4000, max(1500, int(len(existing_facts or "") * 1.6) + 700))
+    return await complete_json(_load_sys(), user, settings, max_tokens=mt)

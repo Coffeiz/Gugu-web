@@ -22,8 +22,10 @@ async def complete_text(sys: str, user: str, settings, max_tokens: int = 800) ->
         return ""
 
 
-async def complete_json(sys: str, user: str, settings, max_tokens: int = 500) -> dict:
-    """单次非流式调用 → 解析 JSON。失败/解析不出返回 {}。"""
+async def complete_json(sys: str, user: str, settings, max_tokens: int = 1500) -> dict:
+    """单次非流式调用 → 解析 JSON。失败/解析不出返回 {}。
+    ⚠️ max_tokens 太小会把 JSON 截断 → 解析失败静默返回 {}；要回显大内容（如反思回显整份
+    facts）的调用方必须按内容量调大 max_tokens（默认曾 500，导致老用户反思全静默，踩过大坑）。"""
     from agent.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(settings.ai)
     text = (
