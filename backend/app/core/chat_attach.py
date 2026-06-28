@@ -378,8 +378,10 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> t
             # 能喂 base64 给模型的条件：① 主模型 mimo+openai（直接听/看）；② 配了独立语音识别模型
             #（仅音频/语音，交 transcribe 转文字）。视频仍只走 ①（ASR 听不了画面）。
             can_feed = media_ok or (voice_ok and not is_video)
-            # 非原生（amr/silk/webm 等）应在入口已转成 mp3；走到这还非原生 = 转码没成（多半缺 ffmpeg）。
-            if can_feed and native and meta["size"] <= MEDIA_RAW_MAX:
+            # 格式：配了语音识别模型时音频/语音**不必原生**——voice.transcribe 会用 ffmpeg 把任意格式
+            # （webm/amr/mp4…）转 wav 再送。网页 Chrome 录的就是 webm，过去卡在这。视频无转写仍需原生交 mimo。
+            fmt_ok = native or (voice_ok and not is_video)
+            if can_feed and fmt_ok and meta["size"] <= MEDIA_RAW_MAX:
                 try:
                     import base64
                     raw = await read_bytes(meta)
@@ -398,7 +400,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> t
                     pass   # 读取/编码失败 → 退文字提示
             if not can_feed:
                 why = f"没法处理{noun}（需主模型 mimo+openai，或在后台配「语音识别模型」）"
-            elif not native:
+            elif not fmt_ok:
                 why = f"这条{noun}是 {ext or '未知'} 格式、得先转成 mp3 才能听——服务器没装 ffmpeg 转不了（装上 ffmpeg 即可听内容）"
             else:
                 why = f"这条{noun}太大（超过上限），没法直接听/看"
