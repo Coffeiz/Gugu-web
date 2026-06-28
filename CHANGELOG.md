@@ -17,7 +17,7 @@
 
 - **P0 · A+B 感知遥测 + 误判捕获**（`memory/reflection.py`）：反思多吐 `perception`（intent/ambiguity/emotion/emo_strength）打 `agent.perc` 日志 + 推 Redis capped list；正则捕获用户纠正（`misperc`）当客观误判信号。Admin「感知诊断」面板（`/admin/perception` + 前端深色页）按**活跃用户宏平均**聚合误判率/意图分布/by-model。
   - **面板阈值可调**：顶部阈值条（活跃门槛 / 标红误判率 / 歧义偏高线 / 最小样本，改完即时重切，带「复位默认」）；后端把 `rate_hi`/`min_n`/`ambig_hi` 提成 query 参数（默认即原常量），标红/标黄/高亮全随面板阈值联动。**只改「怎么看」这屏数据，不动系统行为阈值**（lens/decay 等仍留代码常量、按红线人调走部署）。
-- **P1 · 行为模块库**（`agent/behaviors.py` + `prompts/behaviors/`）：从 persona 抽出第一个情境策略模块 `emotion-first`（DO 接住情绪 / DON'T 别给方案别任务化），由本句线索 + World Model 软点亮、置于人格后最高优先；补 Being-with 缺口、压「闲聊也推进」nudge。
+- **P1 · 行为模块库**（`agent/behaviors.py` + `prompts/behaviors/`）：从 persona 抽出情境策略模块（DO+DON'T 同文件），由本句线索 + World Model **软点亮**、置于人格后最高优先、零前置 LLM。现有三个：`emotion-first`（接情绪·压住给方案/任务化，补 Being-with 缺口、压「闲聊也推进」nudge）、`stuck-first`（卡住给最小一步、别甩完整大纲）、`decision-explore`（纠结里摆权衡、问关键、别替 TA 拍板）。**最小裁决**：情绪在场优先接情绪、不与任务型模块叠加（stuck/decision 可共存）。
 - **P2 · per-user 解读先验 lens**（`agent/memory/lens.py` + `.agent/lens.json`）：第 5 类记忆「怎么读懂这个用户」的偏置规则（如 `「还行」→ 多半不太行`）。事件驱动（吃反思 `lens_hint`、零热路径 LLM）；防过拟合双闸（模型自律 + 候选须复现 2 次、以触发语为键合并同义改写才提拔）；confidence 新规则 0.6 / 印证↑ / 半衰期 30 天衰减 / 低于 0.25 退休；`builder` 注入「解读镜片」偏置不独裁、按 effective 选话术档。
 
 ### 记忆系统：增量化 + 时间衰减

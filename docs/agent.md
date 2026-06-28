@@ -36,7 +36,7 @@ backend/
     ├── models.py
     ├── context/{loaders,builder,tokens}.py
     ├── memory/{store,reflection,compress,lens,_llm}.py + decay.py   # 五层记忆：facts(增量delta)/daily/memory/summary(时间衰减)/lens(解读先验)；reflection 提炼 + compress 压缩 + decay 衰减
-    ├── behaviors.py + prompts/behaviors/   # 行为模块库（情境策略软点亮，现有 emotion-first）
+    ├── behaviors.py + prompts/behaviors/   # 行为模块库（情境策略软点亮：emotion-first/stuck-first/decision-explore）
     ├── tools/                  # 函数调用工具：projects/calendar/files/clients/trash/overview/memory/search/conversations/scheduled_tasks/im（原 skills/，2026-06 改名）
     ├── skills/                 # prompt skills（带触发条件的「剧本」md，渐进式按需加载）：weather，见「Tools 与 Skills」
     ├── profiles/{base,default}.py
@@ -479,7 +479,7 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 
 - **核心**：独立 `agent/` 包、双路 LLM 工具循环、47 工具、工具一等公民（Profile 组合工具集）、prompt 分层（persona/skills/policy）、删除二次确认、单次流式调用、token 预算历史窗口。
 - **记忆**：`facts.md`（增量 delta）+ `daily.md` + `memory.md` + `summary.md`（时间衰减）+ `lens.json`（解读先验）**五层**（daily→memory 压缩、summary 快照、反思增量化、per-user lens 自学均已落地），对话后 fire-and-forget 反思，`remember` 主动记忆。
-- **感知系统（P0–P2）**：A+B 感知遥测 + 误判捕获 → Admin「感知诊断」面板（活跃用户宏平均）；行为模块库（`emotion-first` 软点亮）；per-user 解读先验 lens（事件驱动自学、偏置不独裁）。详见 [`感知系统-架构升级.md`](感知系统-架构升级.md)。
+- **感知系统（P0–P2）**：A+B 感知遥测 + 误判捕获 → Admin「感知诊断」面板（活跃用户宏平均）；行为模块库（`emotion-first`/`stuck-first`/`decision-explore` 软点亮、情绪优先裁决）；per-user 解读先验 lens（事件驱动自学、偏置不独裁）。详见 [`感知系统-架构升级.md`](感知系统-架构升级.md)。
 - **IM 接入**：飞书 + QQ BYO 官方直连，扫码 device-flow 自动连接，三进程（web/worker/supervisor）。
 - **多模态**：vision 看图（聊天图 + 库内图）；**mimo 音视频理解**（听语音/音频、看视频，IM 语音 SILK→mp3 转码），**语音条 + 30 天独立存储**（QQ 语音 / 网页录音）。
 - **运行时（Phase 1.7）**：轻量 Intent Router + State Manager（网关短路「还在吗/算了」，自然语言取消轮间中断）。
