@@ -66,7 +66,8 @@ def build(profile: str, user_name: str, projects: list, events: list,
           memory: dict | None = None, files: dict | None = None,
           skills: list[str] | None = None,
           style_prefs: dict | None = None,
-          source: str | None = None, im_channels: dict | None = None) -> str:
+          source: str | None = None, im_channels: dict | None = None,
+          user_msg: str = "") -> str:
     memory = memory or {}
     _now = local_now()
     today = _now.strftime("%Y-%m-%d")
@@ -126,10 +127,20 @@ def build(profile: str, user_name: str, projects: list, events: list,
     except FileNotFoundError:
         content_policy = ""
 
-    # 顺序：人格 → 工具准则 → 内容政策 → 风格偏好 → 技能索引 → 记忆 → 当前状态
+    # 行为模块（Behavior Skills）：按本轮感知信号（本句线索 + World Model summary）软点亮，
+    # 置于人格之后、最高优先——本轮"特别这么相处"，盖过默认的任务倾向。详见感知系统升级 §3.2。
+    try:
+        from agent import behaviors as _bh
+        beh_block = _bh.render(_bh.select(user_msg, (memory.get("summary") or "")))
+    except Exception:
+        beh_block = ""
+
+    # 顺序：人格 → 本轮行为模块 → 工具准则 → 内容政策 → 风格偏好 → 技能索引 → 记忆 → 当前状态
     sections = []
     if persona:
         sections.append(persona)
+    if beh_block:
+        sections.append(beh_block)
     if skills_policy:
         sections.append(skills_policy)
     if content_policy:

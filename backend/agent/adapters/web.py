@@ -272,6 +272,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
         prompt_name, req.user_name, projects, events, memory, files_overview,
         skills=profile.skills, style_prefs=style_prefs,
         source="web", im_channels=im_channels,
+        user_msg=req.message,   # 行为模块软点亮（emotion-first 等）
     )
 
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）

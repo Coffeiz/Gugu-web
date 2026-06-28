@@ -249,6 +249,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         prompt_name, req.user_name, projects, events, memory, files_overview,
         skills=profile.skills, style_prefs=style_prefs,
         source=getattr(req, "source", None), im_channels=im_channels,
+        user_msg=req.message,   # 行为模块软点亮（emotion-first 等）
     )
     if im_bridge:               # IM 新会话续接桥（见 _im_continuity_bridge）
         system_prompt += im_bridge
