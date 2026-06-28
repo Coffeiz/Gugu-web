@@ -61,9 +61,11 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
     seen = await _last_seen_part(db, user_id)
     # 记忆：当前状态快照 + 长期 fact + 近 7 天 daily（先取出，下面按优先级排）
     summary = facts = daily = ""
+    summary_ts = None
     try:
         mem = await mem_store.read_memory(user_id)
         summary = (mem.get("summary") or "").strip()[:400]
+        summary_ts = mem.get("summary_ts")
         facts = (mem.get("facts") or "").strip()[:800]
         cutoff = (local_now().date() - timedelta(days=7)).isoformat()
         daily_lines = [ln for ln in (mem.get("daily") or "").splitlines()
@@ -104,7 +106,15 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
     if proj_part:
         parts.append("【最近在推进的项目】（greeting 优先从这里挑一个自然带）\n" + proj_part)
     if summary:
-        parts.append("【TA 最近在忙什么】\n" + summary)
+        from agent import decay
+        w = decay.weight(summary_ts)
+        ad = decay.age_days(summary_ts)
+        if w >= 0.6:
+            parts.append("【TA 最近在忙什么】\n" + summary)
+        elif w >= 0.25:
+            parts.append(f"【TA 之前在忙什么（约 {int(ad)} 天前记的，可能已变，别当成现在的事张口就提）】\n" + summary)
+        else:
+            parts.append(f"【TA 较早前的状态（约 {int(ad)} 天前，多半过时，别拿来当近况）】\n" + summary)
     if ev_part:
         parts.append("【近期日程 / 提醒】\n" + ev_part)
     if daily:
