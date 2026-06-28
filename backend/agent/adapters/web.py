@@ -226,9 +226,11 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
 
     prompt_name = profile.prompt_file.removesuffix(".md")
     memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
+    im_channels = await loaders.load_im_channels(user_id)
     system_prompt = builder.build(
         prompt_name, req.user_name, projects, events, memory, files_overview,
         skills=profile.skills, style_prefs=style_prefs,
+        source="web", im_channels=im_channels,
     )
 
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）

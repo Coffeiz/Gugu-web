@@ -70,9 +70,22 @@ async def load_files_overview(db, user_id, recent: int = 25) -> dict:
 
 
 async def load_memory(user_id) -> dict:
-    """读取用户 .agent/ 记忆，返回 {facts, daily}（缺失为空串）。"""
+    """读取用户 .agent/ 记忆，返回 {facts, daily, memory, summary}（缺失为空串）。"""
     from agent.memory import store
     return await store.read_memory(user_id)
+
+
+async def load_im_channels(user_id) -> dict:
+    """已连接的 IM 通知渠道（imreach 有记录＝该平台可主动触达）。返回 {qq: bool, feishu: bool}。
+    供 builder 注入「通知渠道连接情况」，让咕咕据实判断能否走某 IM 渠道、别瞎让用户绑。"""
+    from app.scheduled_tasks import get_imreach
+    out = {}
+    for ch, plat in (("qq", "qqbot"), ("feishu", "feishu")):
+        try:
+            out[ch] = bool(await get_imreach(user_id, plat))
+        except Exception:
+            out[ch] = False
+    return out
 
 
 async def load_style_prefs(db, user_id) -> dict:

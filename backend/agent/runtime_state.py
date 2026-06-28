@@ -86,3 +86,34 @@ async def is_cancelled(platform, puid) -> bool:
 async def clear_cancel(platform, puid) -> None:
     if platform and puid:
         await get_redis().delete(_ckey(platform, puid))
+
+
+# ── 等回话标志：咕咕回复以提问/确认收尾时 worker 置；网关读到 → 让「嗯/好/算了」放行进 agent ──
+#    （否则确认被当闲聊 drop/秒回吞掉，主模型永远收不到。20min 窗口，超时自动失效）
+AWAIT_TTL = 1200
+
+
+def _akey(platform, puid) -> str:
+    return f"agentawait:{platform}:{puid}"
+
+
+async def set_awaiting(platform, puid, val: bool) -> None:
+    """咕咕回复定稿后 worker 调：以提问收尾→置标志，否则清掉。"""
+    if not (platform and puid):
+        return
+    if val:
+        await get_redis().set(_akey(platform, puid), "1", ex=AWAIT_TTL)
+    else:
+        await get_redis().delete(_akey(platform, puid))
+
+
+async def is_awaiting(platform, puid) -> bool:
+    if not (platform and puid):
+        return False
+    return bool(await get_redis().get(_akey(platform, puid)))
+
+
+def is_awaiting_sync(platform, puid) -> bool:
+    if not (platform and puid):
+        return False
+    return bool(get_redis_sync().get(_akey(platform, puid)))

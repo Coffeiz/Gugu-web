@@ -1,7 +1,8 @@
 """对话后反思：提炼值得长期记住的信息，增量写入 facts/daily。
 
 复用 settings.ai 的 provider 做一次廉价非流式调用，产出 JSON：
-  {"facts": ["新长期事实", ...], "daily": "一句话总结(可空)"}
+  {"facts": ["新长期事实", ...], "daily": "一句话总结(可空)", "summary": "当前状态快照(可空)"}
+facts=稳定事实、daily=本次流水、summary=「用户当下在忙什么」快照（增量演进）。
 由 web adapter 在对话结束后 fire-and-forget 调用，不阻塞 SSE、失败不影响主流程。
 """
 from __future__ import annotations
@@ -20,8 +21,9 @@ _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 # 文件缺失时的兜底（正常走 prompts/reflection.md，可热编辑 / Admin 在线改）
 _SYS_FALLBACK = (
     "你在帮咕咕维护对用户的长期记忆。只记关于用户本人的稳定信息（身份/偏好/习惯），"
-    "不记推测、世界常识、一时状态，不评判用户，宁少勿多、没有就返回空。"
-    '严格只输出 JSON：{"facts": ["..."], "daily": "一句话总结(没有就空字符串)"}'
+    "不记推测、世界常识、一时状态，不评判用户，宁少勿多、没有就返回空。summary 是一句"
+    "「用户当下在忙什么/近期重心」的快照，基于原快照演进、没变就原样返回。"
+    '严格只输出 JSON：{"facts": ["..."], "daily": "一句话总结(没有就空字符串)", "summary": "当前状态快照(没有就空字符串)"}'
 )
 
 
@@ -64,10 +66,13 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings) -> None:
 
 async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> None:
     try:
-        existing = (await store.read_memory(user_id))["facts"]
-        out = await _extract(user_name, user_msg, assistant_reply, existing, settings)
+        mem = await store.read_memory(user_id)
+        existing = mem["facts"]
+        existing_summary = mem.get("summary", "")
+        out = await _extract(user_name, user_msg, assistant_reply, existing, existing_summary, settings)
         facts = out.get("facts") or []
         daily_note = (out.get("daily") or "").strip()
+        summary = (out.get("summary") or "").strip()
 
         # 调和重写：facts 是反思输出的"更新后完整事实集"，覆盖写回。
         new_text = store.format_facts(facts)
@@ -75,6 +80,9 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> No
         if new_text.strip() or not existing.strip():
             if new_text.strip() != existing.strip():
                 await store.write_facts(user_id, new_text)
+        # summary 同理：非空才覆盖、变了才写（防把已有快照清空/瞎改）
+        if summary and summary != existing_summary.strip():
+            await store.write_summary(user_id, summary)
         if daily_note:
             await store.append_daily(user_id, datetime.now().strftime("%Y-%m-%d"), daily_note)
             # 写完 daily 顺带检查压缩：攒够则把最老的沉淀进 memory.md
@@ -84,10 +92,12 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> No
         pass  # 反思是锦上添花，任何失败都不能影响对话
 
 
-async def _extract(user_name, user_msg, assistant_reply, existing_facts, settings) -> dict:
+async def _extract(user_name, user_msg, assistant_reply, existing_facts, existing_summary, settings) -> dict:
     user = (
         f"已知的全部事实：\n{existing_facts or '（暂无）'}\n\n"
+        f"当前状态快照：\n{existing_summary or '（暂无）'}\n\n"
         f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n"
-        f"请输出更新后的完整事实列表（保留仍成立的、修正矛盾、合并重复；没有新信息就原样返回，别清空）。"
+        f"请输出更新后的完整事实列表 + 当前状态快照（保留仍成立的、修正矛盾、合并重复；"
+        f"快照基于原快照演进、没变就原样返回；都别清空）。"
     )
     return await complete_json(_load_sys(), user, settings)

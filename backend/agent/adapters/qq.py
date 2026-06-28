@@ -63,7 +63,8 @@ class _GuguQQClient(botpy.Client):
         # Intent Router：纯文本消息据当前状态短路——任务进行中的「还在吗/算了/嗯」网关直接处理、不入队
         if not attachments:
             from agent import router, runtime_state as rtstate
-            dec = router.decide(text, await rtstate.get_state("qqbot", openid))
+            dec = router.decide(text, await rtstate.get_state("qqbot", openid),
+                                await rtstate.is_awaiting("qqbot", openid))
             if dec["action"] == "drop":
                 return
             if dec["action"] in ("reply", "cancel"):

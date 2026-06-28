@@ -48,10 +48,14 @@ def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
         c = {}
     if mt == "image":
         key, rtype, fname = c.get("image_key", ""), "image", "图片.jpg"
+    elif mt == "audio":
+        # 飞书语音是 opus（资源按 file 下）；当「语音消息」处理 → 转 mp3 喂 mimo + 语音条 + 30 天存储
+        key, rtype, fname = c.get("file_key", ""), "file", "语音.opus"
     else:
         key, rtype, fname = c.get("file_key", ""), "file", (c.get("file_name") or "文件")
     if not key:
-        return (f"[用户发来一个{'图片' if mt == 'image' else '文件'}，但没取到资源]", [])
+        noun = "语音" if mt == "audio" else ("图片" if mt == "image" else "文件")
+        return (f"[用户发来一个{noun}，但没取到资源]", [])
     try:
         req = GetMessageResourceRequest.builder().message_id(msg.message_id).file_key(key).type(rtype).build()
         resp = client.im.v1.message_resource.get(req)
@@ -63,13 +67,28 @@ def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
         return (f"[用户发来文件《{fname}》，但下载失败]", [])
     name = fname.rsplit(".", 1)[0] if "." in fname else fname
     ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ("jpg" if mt == "image" else "")
+    is_voice = (mt == "audio")
+    duration = None
+    if is_voice:
+        # opus（mimo 不收）→ ffmpeg 转 mp3；缺 ffmpeg 则原样、退文字提示（resolve 兜底）
+        from app.core import media_transcode
+        conv = media_transcode.to_mimo_mp3(data, ext or "opus", "audio/ogg")
+        if conv is not None:
+            data, ext, name = conv, "mp3", "语音"
+        duration = media_transcode.probe_duration(data, ext)
     try:
-        aid = chat_attach.stage_sync(owner, name, ext, None, data).get("attach_id", "")
+        if is_voice:
+            aid = chat_attach.stage_voice_sync(
+                owner, name, ext, "audio/mpeg" if ext == "mp3" else None, data, duration=duration).get("attach_id", "")
+        else:
+            aid = chat_attach.stage_sync(owner, name, ext, None, data).get("attach_id", "")
     except Exception as e:
         print(f"[feishu] 暂存失败: {type(e).__name__}: {e}", flush=True)
         aid = ""
     if aid:
-        return ("", [aid])   # caption 空，文件卡 + 内容由 resolve_for_message 据 attach_id 注入
+        return ("", [aid])   # caption 空，文件卡/语音条 + 内容由 resolve_for_message 据 attach_id 注入
+    if is_voice:
+        return ("[用户发来一条语音，但处理失败]", [])
     # 暂存失败兜底：文本类至少把内容塞进文本，让咕咕能读
     if ext in _TEXT_EXTS:
         return (f"[用户发来文件《{fname}》内容：]\n```\n{data.decode('utf-8', 'replace')[:30000]}\n```", [])
@@ -152,10 +171,10 @@ def _make_on_message(channel_id: str, owner: str, api_client):
                 text = ((json.loads(msg.content) if msg.content else {}) or {}).get("text", "").strip()
             except Exception:
                 text = ""
-        elif mt in ("image", "file"):
+        elif mt in ("image", "file", "audio"):
             text, attachments = _ingest_media(api_client, msg, owner)
         else:
-            return  # 语音/表情等暂不处理
+            return  # 表情/位置/合并转发等暂不处理
         if not text and not attachments:
             return
         open_id = ev.sender.sender_id.open_id if (ev.sender and ev.sender.sender_id) else None
@@ -176,7 +195,8 @@ def _make_on_message(channel_id: str, owner: str, api_client):
         # 直接处理，不入队（IM 单 worker 顺序消费，忙时它根本看不到队列后面的消息）。带附件一律进主模型。
         if not attachments:
             from agent import router, runtime_state as rtstate
-            dec = router.decide(text, rtstate.get_state_sync("feishu", open_id))
+            dec = router.decide(text, rtstate.get_state_sync("feishu", open_id),
+                                rtstate.is_awaiting_sync("feishu", open_id))
             if dec["action"] == "drop":
                 return
             if dec["action"] in ("reply", "cancel"):

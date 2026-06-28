@@ -36,11 +36,12 @@ async def _write(key: str, text: str) -> None:
 
 
 async def read_memory(user_id) -> dict:
-    """返回 {facts, memory, daily}，缺失为空串。"""
-    facts  = (await _read(_key(user_id, "facts.md"))).strip()
-    memory = (await _read(_key(user_id, "memory.md"))).strip()
-    daily  = (await _read(_key(user_id, "daily.md"))).strip()
-    return {"facts": facts, "memory": memory, "daily": daily}
+    """返回 {facts, memory, daily, summary}，缺失为空串。"""
+    facts   = (await _read(_key(user_id, "facts.md"))).strip()
+    memory  = (await _read(_key(user_id, "memory.md"))).strip()
+    daily   = (await _read(_key(user_id, "daily.md"))).strip()
+    summary = (await _read(_key(user_id, "summary.md"))).strip()
+    return {"facts": facts, "memory": memory, "daily": daily, "summary": summary}
 
 
 def format_facts(facts: list[str]) -> str:
@@ -70,6 +71,15 @@ def merge_facts(existing: str, new_facts: list[str]) -> str:
 
 async def write_facts(user_id, facts_md: str) -> None:
     await _write(_key(user_id, "facts.md"), facts_md.strip() + "\n")
+
+
+# ── summary.md（当前状态快照「用户现在在做什么」，反思写）──
+async def read_summary(user_id) -> str:
+    return (await _read(_key(user_id, "summary.md"))).strip()
+
+
+async def write_summary(user_id, text: str) -> None:
+    await _write(_key(user_id, "summary.md"), text.strip() + "\n")
 
 
 # ── memory.md（长期记忆，compress 写）──

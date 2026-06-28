@@ -242,6 +242,7 @@ async def handle(msg_id: str, payload: dict):
     await _im_session_set(platform, puid, resp.session_id)   # 续上同一会话
     if resp.cancelled:
         # 用户中途「算了」：网关已回「先不继续啦」，这里不再补发任何内容
+        await rtstate.set_awaiting(platform, puid, False)   # 没有悬而未决的提问了
         print(f"[worker] {platform} 任务被用户取消，跳过回复", flush=True)
         return resp
     # 表情回应已由网关「秒回」（_on_message 收到即发），这里不再补
@@ -255,6 +256,9 @@ async def handle(msg_id: str, payload: dict):
     if reply_text.strip():
         await _send(payload, reply_text)
     await _send_files(payload, resp.files)   # 咕咕 send_file 的文件发回平台
+    # 这条以提问/确认收尾 → 置「等回话」标志，网关下条「嗯/好/算了」就放行进 agent（别当闲聊吞了）
+    from agent import router as _router
+    await rtstate.set_awaiting(platform, puid, _router.reply_awaits_answer(reply_text))
     print(f"[worker] {platform} 回复(session={resp.session_id}) → {resp.text!r}", flush=True)
     return resp
 

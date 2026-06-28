@@ -270,7 +270,7 @@ async def clear_memory(
     from agent.memory.store import _key, _DIR
     from app.services.storage import get_storage
     storage = get_storage()
-    for name in ("facts.md", "daily.md", "memory.md"):
+    for name in ("facts.md", "daily.md", "memory.md", "summary.md"):
         try:
             await storage.delete(_key(current_user.id, name))
         except Exception:

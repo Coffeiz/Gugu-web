@@ -140,13 +140,14 @@ flowchart TD
 | 文件 | 负责 |
 |------|------|
 | `context/loaders.py` | 从 DB/存储取料：项目、日历事件、文件概览（文件夹+最近 25 文件）、记忆（facts/daily）|
-| `context/builder.py` | 组装 system prompt：persona → 数据上下文（今天/项目[:25]/日历[:10]/文件）→ 记忆段 |
+| `context/builder.py` | 组装 system prompt：persona → 风格 → 技能索引 → 记忆段（状态快照/事实/长期/近期）→ 来源·渠道 → 数据上下文（今天/项目[:25]/日历[:10]/文件）|
 
 - ✅ **"今天"** 用 `datetime.now()`（服务器本地时间）注入，咕咕知道当前日期。
 - ✅ **persona 最先加载**（`prompts/persona.md`，所有 profile 共享）：伙伴人格 + 执行/推进/记录/决策**四态**。
-- ✅ **记忆仅非空时注入**（人格 → 我对你的了解 → 最近记忆），空记忆不烧 token。
+- ✅ **记忆仅非空时注入**（TA 当前状态 → 我对你的了解 → 长期记忆 → 最近记忆），空记忆不烧 token。
 - ✅ 文件概览每轮注入，根治"读不到最新文件"。
-- ⚠️ **未做**：`summary.md` 当前状态快照（Phase 2b）。
+- ✅ **`summary.md` 当前状态快照已落地**：反思顺带产出「用户当下在忙什么」，注入记忆段最前（`## TA 最近的状态`），见 ③ 反思。
+- ✅ **当前对话来源 / 通知渠道已注入**（`_source_block`）：本次来自 QQ/飞书/网页 + 各 IM 渠道是否已连——治「用户正用 QQ 聊、咕咕却说没绑让扫码」。
 
 ### ③ 历史窗口
 
@@ -155,7 +156,7 @@ flowchart TD
 | `context/tokens.py` | `select_history`：最近消息从新往回按 token 预算裁剪（中文≈1.3 token/字），整条进出、至少留最新一条；条数硬上限 40 |
 
 - ✅ 已从"按条数 limit(10)"升级为"按 token 预算"。预算接 `settings.ai.context_tokens`。
-- ⚠️ **未做**：分层摘要压缩（早期对话摘要 + 最近保留）——现在是**直接截断**，超窗就丢老的（Phase 2b）。
+- ✅ **分层摘要压缩已落地**（`context/compress_conv.py`）：token 超阈值后台把最老一批消息**滚动总结**成 summary（合并上一版、不从头重压），存 `role="summary"` 消息、注入 system prompt 顶部；`select_history` 置顶取、`pop_summary` 弹给入口编排。不再直接丢老消息。
 
 ### ④ LLM 工具循环 ★决策核心★
 
@@ -224,12 +225,14 @@ flowchart TD
 
 | 文件 | 负责 |
 |------|------|
-| `agent/memory/reflection.py` | 对话结束后**单次非流式** LLM 调用，提炼 `{facts:[...], daily:"..."}` 增量写盘；`schedule()` fire-and-forget（不阻塞、失败不影响）|
+| `agent/memory/reflection.py` | 对话结束后**单次非流式** LLM 调用，提炼 `{facts:[...], daily:"...", summary:"..."}` 增量写盘；`schedule()` fire-and-forget（不阻塞、失败不影响）|
 
-- ✅ 两层记忆：`facts.md`（长期，反思调和重写去重）+ `daily.md`（近期滚动 30 条）。
+- ✅ **四层记忆**：`facts.md`（长期事实，反思调和重写去重）+ `daily.md`（近期滚动 30 条）+ `memory.md`（daily 老条目压缩沉淀，`compress.compact`）+ `summary.md`（当前状态快照，反思顺带产出、增量演进）。
+- ✅ **`daily→memory.md` 分层压缩已落地**（`memory/compress.py`）：daily 攒到 40 条触发，最老的 LLM 沉淀进 memory、daily 留最近 30。
+- ✅ **`summary.md` 当前状态快照已落地**：和反思同一次 LLM 调用顺带产出，注入记忆段最前（见 ②）。
 - ✅ 反思提示词文件化（`prompts/reflection.md`，Admin 可改），规则收紧：只记用户本人、不记推测/评判、宁少勿多。
 - ✅ 主动记忆路径：`remember` 工具（用户说"记住X"）。
-- ⚠️ **未做（Phase 2b）**：`facts.json` 结构化（confidence/source）、`daily→memory.md` 分层压缩 + importance 过滤、`summary.md` 快照、`events/bus.py` 事件总线、控制命令（`/newchat` `/forget` `/memory` 等）。
+- ⚠️ **未做（Phase 2b）**：`facts.json` 结构化（confidence/source）、importance 过滤、`events/bus.py` 事件总线、控制命令（`/newchat` `/forget` `/memory` 等）。
 - ⚠️ 反思 token 暂不计入用户配额。
 
 ---
@@ -254,7 +257,7 @@ flowchart TD
 ### ✅ 已做（决策环已闭环可用）
 
 - 入口编排（web 流式 + IM 非流式）、配额拦截
-- 上下文构建（项目/日历/文件/记忆/今天）、persona + 四态对话模式
+- 上下文构建（项目/日历/文件/记忆/今天/**当前来源·通知渠道**）、persona + 四态对话模式
 - 历史窗口（token 预算裁剪）
 - LLM 工具循环（单次流式、多轮工具、MAX_ROUNDS=6、prompt 缓存、双 provider）
 - **④′ 真实性守卫**（无工具收尾兜底「说了没做」：narration + 决策守卫 + 自我核实 + mimo 空回复，提示词软守卫硬，live 已验）
@@ -264,7 +267,8 @@ flowchart TD
 - 危险操作二次确认
 - 实时事件（改动→网页刷新、IM 消息→追加气泡）
 - 流清洗、收尾持久化、会话 AI 标题
-- 对话后反思（两层记忆）+ 主动记忆 + 联网搜索（配额）
+- 对话后反思（**四层记忆**：facts/daily/memory/summary，含 daily→memory 压缩 + 当前状态快照）+ 主动记忆 + 联网搜索（配额）
+- 对话历史分层摘要压缩（`compress_conv`，超 token 滚动总结注入 system prompt）
 - 查看历史对话（跨 session 搜/读）
 - IM 接入：飞书/QQ BYO 扫码自动连接、队列+worker+supervisor 架构
 
@@ -277,8 +281,8 @@ flowchart TD
 | ~~**① 现在**~~ ✅ | ~~**轻量 Intent Router + State Manager**~~ **已落地**（关键词版，IM 路）：状态查询/取消/闲聊网关层短路，自然语言取消轮间中断（见 ⓪ / Phase 1.7）| 当前最大的洞，已补。小模型分类版留待有 GPU |
 | ~~**②**~~ ✅ | ~~**配额能力降级**~~ ✅（降到只读集）+ ~~**地基加固**~~ ✅（服务状态页 + 死 consumer 清理）+ **worker 有界并发**（P1，~6×）| P1/P2 已完成 |
 | **②′ 余项** | **主动触达**（异常沉默/情绪关注）| 截稿提醒已改用户自定义（定时任务面板）；情绪/沉默感知仍未做 |
-| **③ 再 then** | **`summary.md` 状态快照** | 便宜、对上下文有用 |
-| | **按需的记忆 2b**（结构化/事件总线/控制命令）| 只做用得上的；**分层压缩等记忆真撑不住再上**（现在早期、没溢出，避免过早优化） |
+| ~~**③**~~ ✅ | ~~**`summary.md` 状态快照**~~ **已落地** + ~~daily→memory 分层压缩~~ ✅ + ~~对话历史摘要压缩~~ ✅ | 便宜、对上下文有用，已做 |
+| | **按需的记忆 2b**（`facts.json` 结构化 / importance / 事件总线 / 控制命令）| 只做用得上的；现在早期、没溢出，避免过早优化（分层压缩已做、不在此列） |
 | **④ 谨慎/按需** | Insight / Goal / **Planner**（Phase 4）| ⚠️ 别预先造规划框架——工具循环已是轻量 planner；等具体反复痛点再加 |
 | | **多 Profile 路由** `router.py`、**MCP 外部工具**（Phase 3）| 现单 Profile 直连；按需 |
 | **⑤ 可能不做/无条件** | **多 Agent** | 单用户 PM 伙伴多半不需要，复杂度爆炸，别投机性建 |

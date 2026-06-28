@@ -20,14 +20,14 @@ backend/
 ├── app/
 │   ├── api/v1/agent.py         # 薄层：接收请求 → 调 agent → 返回响应
 │   ├── scheduled_tasks.py      # 定时任务执行 + 多平台投递（见「提醒工作流」）
-│   └── core/{redis,events,chat_attach}.py   # Redis Streams / pub-sub SSE / 附件暂存
+│   └── core/{redis,events,chat_attach,media_transcode}.py  # Redis Streams / pub-sub SSE / 附件暂存 / 音视频转码（SILK·opus→mp3）
 ├── worker.py                   # IM 消息 worker（独立进程，消费 im:inbound）
 └── agent/
     ├── core.py                 # LLM 主循环
     ├── llm_select.py           # 模型解析层 pick_model（active/pool/router）
     ├── runner.py               # 非流式 run_collect / run_ephemeral（IM·定时任务用）
     ├── router.py               # 轻量 Intent Router（网关入队前短路）
-    ├── runtime_state.py        # State Manager（IM 状态机 + 取消标志，走 Redis）
+    ├── runtime_state.py        # State Manager（IM 状态机 + 取消标志 + 等回话标志，走 Redis）
     ├── outbound.py             # IM 出口兜底清洗
     ├── sanitize.py             # MiniMax 标记流式清洗
     ├── confirm.py              # 删除二次确认（显式 confirm 参数）
@@ -35,7 +35,7 @@ backend/
     ├── imctx.py                # IM 上下文 contextvar 透传
     ├── models.py
     ├── context/{loaders,builder,tokens}.py
-    ├── memory/{manager,reflection,compressor,store}.py
+    ├── memory/{store,reflection,compress,_llm}.py   # 四层记忆：facts/daily/memory/summary；reflection 提炼 + compress 压缩
     ├── tools/                  # 函数调用工具：projects/calendar/files/clients/trash/overview/memory/search/conversations/scheduled_tasks/im（原 skills/，2026-06 改名）
     ├── skills/                 # prompt skills（带触发条件的「剧本」md，渐进式按需加载）：weather，见「Tools 与 Skills」
     ├── profiles/{base,default}.py
@@ -124,23 +124,26 @@ Prompt 模板（`.md`），支持占位符，builder 每次现读、热更新无
 persona.md（咕咕是谁）→ skills.md（怎么做）→ policy.md（不碰什么）
   → 风格偏好（用户设置：语气 formal/lively、长度 short/detailed、emoji，仅非默认时注入）
   → 可用技能索引（启用的 prompt skills，仅非空时）
-  → 记忆块 facts → memory → daily（**空记忆也注入一句"暂无、别假装记得"锚点**，防伪个性化脑补）
+  → 记忆块 summary（TA 当前状态）→ facts → memory → daily（**空记忆也注入一句"暂无、别假装记得"锚点**，防伪个性化脑补）
+  → 当前对话来源 / 通知渠道（`_source_block`：本次来自 QQ/飞书/网页 + 各 IM 渠道是否已连）
   → default.md（数据模板：{now} 含星期时分 + projects/calendar/files 实时灌入）
 ```
 
   **稳定的在前、易变的在后**：人格/规则/红线稳定 → 记忆 → 实时数据。persona/skills/policy 独立于 profile、所有 profile 共享。
+  > **当前来源 / 通知渠道**（`loaders.load_im_channels` + `builder._source_block`，由 `runner`/`web` 透传 `source`）：注入「本次对话来自哪个平台 + QQ/飞书是否已连（据 `imreach`）」。**当前来源平台强制标记已连**（用户正用它说话＝必然可达）——根治「用户正用 QQ 聊天、咕咕却说 QQ 没绑让扫码」。咕咕设 qq/feishu 提醒渠道时据此判断、不再瞎让绑。
   > **风格偏好**（`loaders.load_style_prefs` + `builder._style_block`）让用户在设置里调语气/长度/emoji，**但「真诚与和善」是底线、不在可调范围**——short/formal 文案带兜底，任何设置下都不许变冷或打发。
 - **`tokens.py`**：历史窗口按 token 预算（CJK 感知：中文≈1.3 token/字）从最新往回裁剪、整条进出、至少留最新一条，条数安全上限 40，预算接 `settings.ai.context_tokens`。
 
 #### `memory/`
 
-Session（最近 N 条聊天，短期）与 Memory（长期认知，经 Reflection 提炼）严格分离：`Conversation → Reflection → MemoryManager → Storage`。
+Session（最近 N 条聊天，短期）与 Memory（长期认知，经 Reflection 提炼）严格分离：`Conversation → Reflection（facts/daily/summary）→ compress（daily→memory）→ Storage`。
 
-- **`reflection.py`**：对话结束后**单次非流式** LLM 提炼 `{facts:[...], daily:"..."}`，增量合并写盘；`schedule()` fire-and-forget（持后台任务引用防 GC），失败不影响对话。提炼词文件化（`prompts/reflection.md`，热生效），规则收紧：只记用户本人、不记推测/一时状态、不评判、宁少勿多。
-- **`store.py`**：读写 `.agent/{facts,daily}.md`，经 `StorageBackend`（本地/OSS 通吃）。`merge_facts` 按内容去重，`append_daily` 滚动保留最近 30 条。
-- **`compressor.py` / `manager.py`**：时间层压缩（daily >14天 LLM 摘要直接进 `memory.md`，丢 importance≤2）+ 统一 save/load 接口。**当前为 2a 精简版（facts+daily 两层，无 weekly），compressor/manager 属 2b 未做**，见「现状与演进」。
+- **`reflection.py`**：对话结束后**单次非流式** LLM 提炼 `{facts:[...], daily:"...", summary:"..."}`，增量合并写盘；`schedule()` fire-and-forget（持后台任务引用防 GC），失败不影响对话。提炼词文件化（`prompts/reflection.md`，热生效），规则收紧：只记用户本人、不记推测/一时状态、不评判、宁少勿多。
+  - **`summary` 当前状态快照（`summary.md`）**：一段「用户此刻在忙什么 / 近期重心」的话，和反思**同一次 LLM 调用顺带产出**（零额外开销），基于原快照**增量演进**——重心没变就原样返回、变了才改（写回有"非空 + 变了"双重守卫，防清空/瞎改）。`builder._memory_block` 把它注入到记忆块**最前**（`## TA 最近的状态`），让咕咕开口前就知道用户当下处境；`greeting.py` 默认问候也优先参考它。区别于 facts（稳定身份）与 daily（流水）。
+- **`store.py`**：读写 `.agent/{facts,daily,memory,summary}.md`，经 `StorageBackend`（本地/OSS 通吃）。`read_memory` 一次返回四层；`merge_facts` 按内容去重，`append_daily` 滚动保留最近 30 条。
+- **`compress.py`**：daily→memory 压缩**已落地**——daily 攒到 `DAILY_COMPACT_AT`(40) 条时，reflection 写完 daily 顺带触发 `compact()`：把最老的条目 LLM 沉淀进 `memory.md`、daily 留回最近 `DAILY_KEEP_RECENT`(30) 条（约每 10 轮压一次，失败不影响主流程；模型返空则不覆盖、不裁 daily 防丢数据）。**无 weekly 中间层、无 importance 分级**（咕咕只需近期/长期两档）。`_llm.py` 是记忆模块共用的非流式 LLM 小工具。
 
-> ⚠️ **记忆系统现状（2a）**：只落地 `facts.md` + `daily.md`；`facts.json` 结构化、`summary.md`、importance 分级、weekly 层、events 总线均**未实现**（2b）。详见「用户个性化文件系统」+「现状与演进」。
+> ⚠️ **记忆系统现状**：已落地 **`facts.md` + `daily.md` + `memory.md` + `summary.md` 四层**（daily→memory 压缩在跑；summary 由反思顺带产出，见下「当前状态快照」）；**仍未实现**：`facts.json` 结构化、importance 分级、weekly 层、events 总线。详见「用户个性化文件系统」+「现状与演进」。
 
 ### 能力
 
@@ -191,12 +194,14 @@ web 上传 / 飞书 / QQ 发文件 → 咕咕能**看内容**（文本+PDF/Offic
 
 ```
 上传字节 → StorageBackend(.chat_staging/) + 元数据 → Redis(TTL 6h)，拿 attach_id
-  → resolve_for_message：① 增广文本（doctext 提取正文注入 LLM）② 前端文件卡片 ③ 图片块（vision 真看）
+  → resolve_for_message → 4-tuple：① 增广文本（doctext 提取正文注入 LLM）② 前端文件卡片
+                                    ③ 图片块（vision 真看）④ 音视频块（mimo 真听/看，见「音视频理解」）
   → 用户说"存一下" → save_uploaded_file(attach_id) 落成正式文件
 ```
 
-- kind：text / doctext.EXTRACTABLE（PDF·Word·Excel·PPT 提文本）/ image（vision 看）/ binary。
+- kind：text / doctext.EXTRACTABLE（PDF·Word·Excel·PPT 提文本）/ image（vision 看）/ **audio·video（mimo 听/看）/ voice（语音条）** / binary。
 - ⚠️ `stage_sync`（飞书网关用）须独立线程跑 `asyncio.run`——lark handler 在运行 loop 里直接 `run_until_complete` 会 `RuntimeError`；QQ handler 本身 async 直接 `stage`。
+- ⚠️ `resolve_for_message` 是 **4-tuple**（text/cards/images/media）；空附件早返回也须 4 元，否则无附件消息解包就崩。
 
 #### 多模态看图（vision · `chat_attach` + `read_file`）
 
@@ -206,6 +211,29 @@ vision 模型（`ai.vision=True`）下咕咕真看图——聊天发的图 + 文
 - **大图自动压缩**（`_fit_image_for_vision`）：>5MB 或长边 >2048px 时喂模型前等比降采样重压 JPEG（只压副本、存库原图不动）。
 - **HEIC/HEIF**：`pillow-heif` 把 iPhone 原图等转 JPEG 再喂。
 - `read_file` 读文件库图（仅 vision + Anthropic 通道）：图走 `tool_result` 图片块；持久化时 `strip_vision_for_history` 换 `[图片已查看]` 占位，避免大 base64 撑爆历史。**OpenAI 路工具结果只能纯文本、塞不了图片块，故 `read_file` 看图只在 anthropic 通道生效**——mimo 想让咕咕看库内图，需选 Anthropic 格式（聊天直接发的图两路都能看）。
+
+#### 多模态听音 · 看视频（mimo 音视频理解 · `chat_attach` + `media_transcode`）
+
+咕咕能真**听懂**用户发的语音 / 音频、真**看懂**视频——但**仅 mimo（小米）+ OpenAI 格式路**：
+
+- **能力门**（`_media_understanding_enabled`）= `_is_mimo(ai) and not use_anthropic_for(ai)`。`input_audio` / `video_url` 是 mimo 对 OpenAI 格式的扩展块，mimo 走 anthropic 格式或其它厂商都不支持。
+- **附件链路**：`resolve_for_message` 把音视频 base64 成 `media` 块（④），`build_user_content` 在 openai 路拼 `input_audio`（音频）/ `video_url`+`fps`（视频）块发给 mimo；anthropic 路忽略 `media`。格式 / 上限照 mimo 文档（音频 mp3/wav/flac/m4a/ogg，base64 <50MB）。
+- **IM 语音转码**（`media_transcode.to_mimo_mp3`）：IM 语音多是 mimo 不收的编码——**QQ 语音是 SILK**（`pilk` 解成 24kHz 单声道 pcm 再 `ffmpeg` 封 mp3）、**飞书语音是 opus**、其它 amr 等直接 `ffmpeg` 转（opus 不用 pilk）。缺 `ffmpeg`/`pilk` 优雅降级退文字提示，绝不报错阻塞网关。
+  - ⚠️ **IM 网关 PATH 被收窄**（常只 `.venv/bin`）→ `shutil.which("ffmpeg")` 找不到系统二进制，`_ffmpeg_bin()` 加绝对路径兜底。
+  - ⚠️ `pilk.decode` 返回的是**时长/状态、不是采样率**——采样率固定 24000，曾误当采样率传 `-ar` 生成「7 小时」25MB mp3。
+- ⚠️ **音视频被模型池静默打掉**（`runner.py`）：IM 经 `pick_model` 可能路由到非 mimo 模型（MiniMax-M3 走 anthropic 路），`build_user_content` 把 `media` 丢掉 → 咕咕只当文件回「收到 mp3」。**带 `media` 的这轮强制切到 active mimo+openai 模型**，保证发得出去。排查媒体「时好时坏」先查 `pick_model` 实际返回哪个模型，别只看全局 active。
+- **mimo 默认思考 → 空正文**：两套 API 调用都显式传 `thinking: disabled`，否则音频转写返回空。
+
+> **MiniMax 只做生成（T2A 语音合成 / Hailuo 视频生成），不做音视频理解、无 ASR**——「听」只能 mimo。「咕咕回语音（T2A）」在 [`wishlist.md`](wishlist.md)。
+
+#### 语音消息（语音条 · 30 天独立存储）
+
+IM 语音 / 网页录音不当文件卡，做成可播放的**语音条**：
+
+- **入口标记谁是「语音」**：QQ 语音（SILK/amr）/ 飞书语音（opus，`feishu._ingest_media` 处理 `audio` 类型）转码成功＝一条语音消息 → `stage_voice`/`stage_voice_sync`；网页录音上传带 `voice=true` form 字段 → `stage_voice`；拖入的音频文件 voice=false＝当文件。
+- **独立存储**（`chat_attach.stage_voice`）：走独立 `.voice/` 目录、`kind="voice"`、**留存 30 天**（普通附件仍 6h `.chat_staging/`）、带时长（`media_transcode.probe_duration` 用 `ffprobe` 探测）。`stage()`/`stage_sync()` 已参数化（`kind`/`ttl`/`subdir`/`extra`）。
+- **「直接听内容回应」语气**：`resolve_for_message` 的 `voice` 分支提示词改成「这是对话不是文件，直接听内容并回应，别问要不要存」，**去掉** `save_uploaded_file` 话术（音频/视频/文件才带）。
+- **前端语音条**（`GuguChat.vue`）：`msg.files` 里 `kind==='voice'` 渲染成播放钮 + 装饰波形 + 时长；点击 `toggleVoice` 带 Bearer 拉 `/agent/attachment/{id}/download` 的 blob 播放（`<audio src>` 不带 token，必须 fetch blob）；过期 404 → 提示「语音过期啦」。
 
 #### `mcp/`
 
@@ -233,7 +261,8 @@ QQ / 飞书 BYO 网关（botpy / lark-oapi WebSocket 长连）+ supervisor 网�
 
 - `classify(text)` → `progress / cancel / emotion / ack / agent`（纯关键词，整条匹配；取消/情绪只在短消息上判，**宁漏判进主模型、不误判短路**）
   - ⚠️ **情绪/催词用「句首锚定」、不是子串匹配**：只在句首、或仅「你/咕咕」指向咕咕的前缀时才判（如「怎么这么慢」「你怎么这么慢」）。否则子串会把带话题主语的「**法拉利**怎么这么慢」「这电脑太慢」误当成催咕咕而短路。
-- `decide(text, state)` 结合 State Manager 状态出动作：`reply`（短路回话术，不入队）/ `cancel`（置取消标志）/ `drop`（忙时「嗯/好」忽略）/ `agent`（入队）
+- `decide(text, state, awaiting)` 结合 State Manager 状态出动作：`reply`（短路回话术，不入队）/ `cancel`（置取消标志）/ `drop`（忙时「嗯/好」忽略）/ `agent`（入队）
+- ⚠️ **「等回话」标志破确认被吞**（`awaiting`）：咕咕上轮回复以**问句/确认收尾**（`reply_awaits_answer`：结尾带 `？` 或「要不要/好吗/确认一下」等）时，worker 置 `agentawait:{platform}:{puid}`（Redis，20min）。网关读到后，这轮的「嗯/好/算了」**放行进 agent**（是对提问的回答），不再被当闲聊 `drop`/秒回吞掉——主模型收得到确认。咕咕下条陈述回复自动清标志，恢复闲聊短路。
 - 据状态回话术：THINKING→「还在想哦~~」SEARCHING→「正在查资料~~」GENERATING→「马上就好~」
 - ⚠️ **催促（emotion）只在咕咕真在忙时才拦截**：busy（思考/搜索/生成/等确认）→ 回状态化的「还在想/正在弄」安抚；**空闲 → 不拦、交主 Agent**（空闲时回「在的你说」是答非所问）。「在吗」这类纯在场查询（progress）则空闲也答「在的你说」，是对的。
 - 将来可换小模型分类，`decide()` 接口不变。
@@ -244,6 +273,7 @@ IM 运行时状态机 + 取消标志，**跨进程共享走 Redis**（worker 写
 
 - 状态 `IDLE/THINKING/SEARCHING/GENERATING/WAITING_CONFIRM`，key `agentstate:{platform}:{puid}`，**TTL 300s**（worker 崩了自动回 IDLE 防卡死）；worker `handle` 进入即 THINKING，core 据 `TOOL_STATE` 打细粒度。
 - 取消标志 `agentcancel:{platform}:{puid}`：网关置、core 每轮协作检查命中即中断。
+- 等回话标志 `agentawait:{platform}:{puid}`：worker 在回复定稿后置（咕咕以提问/确认收尾才置、否则清，20min TTL）、网关读，让确认用的「嗯/好/算了」放行进 agent（见 Router「等回话标志」）。
 - **为什么状态放 Redis 给网关读**：IM 任务进行中后续消息排在队列里、worker 看不到，所以「还在吗/算了」必须由网关据此状态短路，进不了 worker。
 
 #### `outbound.py`（IM 出口兜底）
@@ -286,7 +316,7 @@ IM 回复完  → publish('sessions', appended=[助手消息])  # 再推
 
 ### 用户个性化文件系统
 
-> ⚠️ **本节是 Phase 2b 目标设计，非现状**。当前（2a）只落地 `facts.md` + `daily.md`；`identity.json`/`save_identity` 已作废（昵称用 `User.display_name`）；`facts.json` 结构化、`summary.md`、importance 分级、`weekly/` 层均未实现。
+> ⚠️ **本节含部分 Phase 2b 目标设计**。现状已落地 **`facts.md` + `daily.md` + `memory.md` + `summary.md` 四层**；`identity.json`/`save_identity` 已作废（昵称用 `User.display_name`）；**仍未实现**：`facts.json` 结构化、importance 分级、`weekly/` 层。
 
 每个文件回答一个独立问题：
 
@@ -296,12 +326,12 @@ IM 回复完  → publish('sessions', appended=[助手消息])  # 再推
 | `facts.md`（现状） | 咕咕知道用户哪些客观事实？ | 咕咕观察 + 反思写入 |
 | `daily.md`（现状） | 近期发生了什么？ | 反思滚动写入（最近 30 条） |
 | `preferences.md`（2b） | 用户喜欢什么、习惯什么？ | 咕咕观察 |
-| `memory.md`（2b） | 咕咕长期理解到了什么？ | Compressor 提炼 |
-| `summary.md`（2b） | 用户现在在做什么？ | importance≥4 触发更新 |
+| `memory.md`（现状） | 咕咕长期理解到了什么？ | `compress` 提炼（daily 老条目沉淀） |
+| `summary.md`（现状） | 用户现在在做什么？ | 反思每轮顺带产出（增量演进，重心变了才改） |
 
 - **信息来源严格区分**：用户主动提供的只有注册填的昵称（`User.display_name`）；其余习惯/偏好/状态全由咕咕对话观察积累，**不向用户提问、不让填表**——这是伙伴和助理的核心区别。
 - **facts 更新策略（2b 目标）**：维护结构化 JSON（value/confidence/source：observed 用户说过的、inferred 行为推断的）；已有事实变化更新 value 不追加，避免脏数据。**现状（2a）直接 markdown 列表，去重靠内容包含判断**。
-- **压缩定为 daily → memory 两段直压，无 weekly 中间层**（咕咕只需近期/长期两档）。
+- **压缩 daily → memory 两段直压、无 weekly 中间层**（咕咕只需近期/长期两档）——**已落地**（`compress.compact`，见「memory/」）。
 
 ### 消息序列约束 · 前导 assistant 会被剥（sanitize）
 
@@ -347,7 +377,7 @@ APScheduler 触发 → execute_task → 构造上下文 prompt → run_ephemeral
 - **动态网关 · 进程级**（`adapters/supervisor.py`）：lark/botpy 连接只有 `start()`、**无 `stop()`** → 一个 bot 一个子进程，kill 子进程=断开。supervisor 每 5s 查 `user_bots` reconcile（增/删/崩溃自愈）；**凭据走环境变量注入**（不走 argv，避免 `ps` 泄漏 secret）。
 - **认人 · owner 即归属**：bot 天然属于 owner → 网关入队 payload 带 `owner_user_id`，`worker._resolve_user` 直接用（省掉绑定表）。
 - **运行模型 · 三进程**：`web`（API/SSE）+ `worker`（消费队列跑大脑）+ `supervisor`（管网关子进程）。
-- **各平台**：飞书 ✅（lark-oapi WS）、QQ ✅（botpy WS，C2C 私聊，markdown msg_type=2 无权限回退纯文本）、微信 ⬜（iLink 个人号，封号风险高，最后做）。
+- **各平台**：飞书 ✅（lark-oapi WS，图片/文件/**语音 opus** 收）、QQ ✅（botpy WS，C2C 私聊，**语音 SILK** 收，markdown msg_type=2 无权限回退纯文本）、微信 ⬜（iLink 个人号，封号风险高，最后做）。
 
 ### 并发模型
 
@@ -442,8 +472,9 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 ### 已落地能力一览
 
 - **核心**：独立 `agent/` 包、双路 LLM 工具循环、47 工具、工具一等公民（Profile 组合工具集）、prompt 分层（persona/skills/policy）、删除二次确认、单次流式调用、token 预算历史窗口。
-- **记忆（2a）**：`facts.md` + `daily.md` 两层，对话后 fire-and-forget 反思，`remember` 主动记忆。
+- **记忆**：`facts.md` + `daily.md` + `memory.md` + `summary.md` **四层**（daily→memory 压缩 + summary 当前状态快照已落地），对话后 fire-and-forget 反思，`remember` 主动记忆。
 - **IM 接入**：飞书 + QQ BYO 官方直连，扫码 device-flow 自动连接，三进程（web/worker/supervisor）。
+- **多模态**：vision 看图（聊天图 + 库内图）；**mimo 音视频理解**（听语音/音频、看视频，IM 语音 SILK→mp3 转码），**语音条 + 30 天独立存储**（QQ 语音 / 网页录音）。
 - **运行时（Phase 1.7）**：轻量 Intent Router + State Manager（网关短路「还在吗/算了」，自然语言取消轮间中断）。
 - **并发（P1）**：worker 有界并发 + `user_gate` + drain + 去重（~6×），⑦ 慢尾兜底，模型解析层多 key 分流（least_loaded）。
 - **韧性/运维（P1/P2）**：配额能力降级（只读集），稳定 consumer 名 + 死 consumer 清理，服务状态页（三进程状态/PID/心跳/一键重启 + IM 队列水位）。
@@ -456,11 +487,11 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 - **配额「能力降级」而非硬切**：精力耗尽降到只读工具集，查询/对话照常。
 - **不预造 Planner / 多 Agent**：当前 LLM 工具循环本身即轻量 planner；雄心路线常死在过早抽象，等出现具体「模型编排不了」的场景再加。
 - **安全瘦身**：咕咕不跑 shell，不引入命令白名单/Docker 沙箱；「二次确认 + 审计 + 权限分级」即覆盖。
-- **记忆刻意简化（2a）**：facts.md 而非结构化 JSON、两层而非三层、反思直接 fire-and-forget 不走 events 总线——结构化/分层压缩/summary/events 总线（2b）等数据量上来再做。
+- **记忆刻意简化**：facts 用 markdown 而非结构化 JSON、反思直接 fire-and-forget 不走 events 总线——四层（facts/daily/memory/summary）+ daily→memory 压缩 + summary 快照已落地，结构化 `facts.json` / events 总线等数据量上来再做。
 
 ### 未做 / 按需（数据驱动，别提前）
 
-- **记忆 2b**：`facts.json` 结构化、`summary.md` 快照、daily→memory 分层压缩、events 总线、控制命令（/newchat /forget …）。
+- **记忆 2b**：`facts.json` 结构化、events 总线、控制命令（/newchat /forget …）。（daily→memory 分层压缩、summary 当前状态快照已落地，移出待办。）
 - **扩展能力（Phase 3）**：MCP 外部工具、多 Profile 路由、🅼 小模型意图分类（需自托管 GPU）。
 - **伙伴深化**：主动触达（异常沉默/情绪关注）、成就/正反馈系统、行为分析 Listener。
 - **多 worker + 分片**：撞单进程 CPU 上限才上（届时 `user_gate` 换 Redis 锁，上层不动）。

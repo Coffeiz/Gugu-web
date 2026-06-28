@@ -104,13 +104,30 @@ _ACK_REPLY    = "嗯嗯～"
 _CANCEL_REPLY = "好的，那这个先不继续啦～"
 
 
-def decide(text: str, state: str) -> dict:
+# 咕咕上一条回复以「问句 / 征询确认」收尾 → worker 置 awaiting 标志，网关读到后让这轮的
+# 「嗯 / 好 / 算了」放行进 agent（否则确认被当闲聊 drop/秒回吞掉，主模型永远收不到）。
+_AWAIT_MARKERS = ("要不要", "需要我", "要我", "好不好", "好吗", "行吗", "可以吗", "对吗",
+                  "是不是", "确认一下", "要吗", "成不成", "好不")
+
+
+def reply_awaits_answer(text: str) -> bool:
+    """咕咕这条回复是否在『等用户回答』——以问句/确认收尾。worker 据此置 awaiting 标志。"""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if "？" in t[-16:] or "?" in t[-16:]:   # 结尾带问号（容忍后面跟 emoji/引号）
+        return True
+    return any(m in t[-24:] for m in _AWAIT_MARKERS)
+
+
+def decide(text: str, state: str, awaiting: bool = False) -> dict:
     """返回 {action, reply?}。
     action：
       'reply'  网关直接回 reply（短路，不入队）
       'cancel' 置取消标志 + 回 reply（不入队）
       'drop'   忽略（不回不入队）
       'agent'  正常入队给主 Agent
+    `awaiting`：咕咕上轮以提问/确认收尾、正等用户回话——此时「嗯/好/算了」是回答，须放行进 agent。
     """
     busy = state and state != st.IDLE
 
@@ -134,9 +151,15 @@ def decide(text: str, state: str) -> dict:
         return ({"action": "reply", "reply": _PROGRESS_REPLY.get(state, _EMOTION_BUSY)} if busy
                 else {"action": "agent"})
     if intent == ACK:
-        # 任务进行中的「嗯/好」多半是搭话——别打断也别喂主模型；空闲时轻量回一句
+        # 咕咕刚问了问题、正等回话 → 这声「嗯/好」是确认/回答，必须放行进 agent（别当闲聊吞了）
+        if awaiting:
+            return {"action": "agent"}
+        # 否则：任务进行中的「嗯/好」多半是搭话——别打断也别喂主模型；空闲时轻量回一句
         return {"action": "drop"} if busy else {"action": "reply", "reply": _ACK_REPLY}
     if intent == CANCEL:
+        # 咕咕在等确认时「算了/不用」是回答（否）→ 交 agent 让它收场，别当成「取消任务」
+        if awaiting and not busy:
+            return {"action": "agent"}
         # 只有真在忙才当取消；空闲时「算了」可能是「算了换个想法」→ 交主模型
         return {"action": "cancel", "reply": _CANCEL_REPLY} if busy else {"action": "agent"}
     return {"action": "agent"}

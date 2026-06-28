@@ -9,6 +9,12 @@
 
 ## [Unreleased]
 
+_（下个版本的改动先记到这里）_
+
+## [0.13.2] - 2026-06-28 · 微信接入 + 记忆四层 + 音视频·语音 + 精力修复 + 体验打磨
+
+> 本版核心：新增**微信接入**（个人微信官方 iLink Bot，扫码自连，模式同飞书/QQ）；记忆补到**四层**（facts / daily / memory / **summary 当前状态快照**）；咕咕能**听 / 看音视频**（mimo 多模态 + IM 语音转码）、语音做成可播放**语音条 + 30 天存储**；修了一批 **Agent 可靠性**问题（联网不虚构 / 交叉验证、未来任务主动确认设定时、IM「确认用的嗯」被吞、用 QQ 聊却说没绑定）；**精力配额**修了「100% 仍拦不住」（封顶截断 + IM 漏判）与时区（UTC→CST）；外加拖拽实时让位、文件按状态分组、决策轨迹脱敏、DAU→WAU 等体验与后台打磨。
+
 ### 接入微信（个人微信 · 官方 iLink Bot）
 
 咕咕可接入**个人微信**：走微信官方 iLink Bot API（`ilinkai.weixin.qq.com`）——扫码授权拿 `bot_token` → `getupdates` long-poll 收 + HTTP send 发，**非逆向、无封号风险**，模式同飞书/QQ 的 BYO 扫码自动连接。
@@ -17,60 +23,6 @@
 - **扫码连接**（新增 `api/v1/wechat_connect.py`）：`POST/GET /me/wechat/connect` 出码 + 轮询确认 → 自动 upsert `user_bots`（`bot_token` 存 `app_secret`、`base_url` 存 `app_id`）→ 通知 supervisor reload。`supervisor.py` 加 wechat 子进程拉起、`worker.py` 加微信发送分支，前端 `ProfileModal` 加「微信（个人微信）」扫码入口。
 - **收到消息先即时反馈**：网关拉到消息先回一句「收到啦，让我看看哈~」再入队，免得 agent 慢处理时用户在微信干等没动静。
 - MVP 限文本（图片/语音后补，需 iLink 媒体 AES + CDN）。⚠️ 待确认 iLink Bot（`bot_type=3`）开放门槛。
-
-### 修：精力 100% 仍拦不住对话（封顶截断到 0 + IM 漏判）
-
-精力满了却还能继续聊，三处根因一并修：
-
-- **封顶按比例缩被 `int()` 截断到 0**（`quota.py cap_usage`）：`remaining` 很小、单轮 token 很大时（如 limit=1），`int(tin * remaining/total)` 截成 0 → `AgentUsage` 永远记 0、用量永远填不满上限、硬拦的 `used >= limit` 永不触发。改为**精确填满**剩余额度（tin 优先、余量给 tout），不再按比例缩。
-- **IM / 定时任务路径根本没硬拦**：耗尽硬拦原本只在网页 `web.stream`，IM/定时走的 `runner.run_collect` 漏了。抽出 `quota.is_exhausted`（CST 6h/周同口径），`runner` 存完用户消息即判定耗尽、直接回「咕咕累了，休息会儿再来～」不再生成。
-- **web 与 IM 口径统一**（`web.py`）：网页原为 UTC 窗口内联判定，改走同一个 `quota.is_exhausted`，两路硬拦口径一致。
-
-### 红线：不虚构联网信息（交叉验证）+ 未来任务主动确认设定时
-
-- **不虚构联网 / 实时信息**（`policy.md`）：联网查到什么说什么，**绝不在搜索结果之外脑补/外推/补全**（尤其赛程/比分/日期/价格）；关键或易错事实**交叉验证**，单一来源不轻信、来源冲突如实讲分歧。治咕咕给 F1 赛果时凭单一来源瞎编。
-- **未来要到点执行的活 = 定时任务**（`skills.md`）：用户提「明天 / X 点 / 每天 帮我做 / 收集 / 发 某事」时，**先主动确认**「要设成定时任务、到点自动做吗」→ 认可才 `create_scheduled_task`；铁规则「没真建成那条定时任务，就别口头答应会自动做」。治「明早 8 点收集战报」被当口头应承、没真落定时任务。
-
-### 待办/阶段拖拽升级为实时让位（去动画 + 克隆无底框）
-
-待办与阶段拖拽从 HTML5 drag 升级为**指针驱动**：拖动时其他元素**实时同步让位**（不再等落下才重排）；待办拖动名字即可排序、并可**跨阶段**拖到别的阶段；去掉让位过渡动画（直接到位，杜绝中线判断引发的抖动）；阶段克隆预览**只显克隆体、不带底色框**，与待办一致。定时任务编辑卡的提醒内容占位也从「该喝水啦～」改为「收集昨天的科技新闻」。`ProjectCard.vue` / `ProjectModal.vue` / `Schedules/index.vue`。
-
-### 修：delete_project 工具 ImportError 导致 agent 删项目必失败
-
-agent 工具层 `_delete_project` 还在 `from app.api.v1.projects import rehome_project_files_to_personal`，但该函数在「删项目改为连文件软删」时已被移除，导致任何 agent 删项目请求都以 ImportError 崩溃。改为与 API 端一致：先 `UPDATE files SET deleted_at=now()`（软删），再 `DELETE project`（文件夹由 FK CASCADE 级联删）。
-
-### 修：精力配额与 DAU 统计时区错误（UTC → CST）
-
-- **精力 6h 窗口**（`agent/quota.py`）：`six_h_window_start` 原按 UTC 整点切割（北京 08/14/20/02 点重置），改为 CST 整点（00/06/12/18）；UTC → CST 算槽位，再转回 UTC naive 供 DB 比较，与 `AgentUsage.created_at` 口径一致。
-- **DAU 改为「登录即算」+ CST 今日 0 点**（`admin_analytics.py` / `auth.py` / `models`）：原 DAU 按 `AgentUsage` 统计（须发消息才算），且 `today_start` 用 UTC 午夜。改为 `User.last_active_at`：前端每次加载调 `/auth/me`，每小时最多写一次，CST 今日 0 点起有记录即算活跃。新增 `last_active_at` 字段 + migration `20260627000002`。
-
-### 深夜对话时间语境（0–4 点以日出为一天的分界）
-
-凌晨 0–4 点时，`builder.py` 在注入的当前时刻后附加提示：「以日出为一天的分界：用户口中的『今天』指尚未结束的这个主观白天（日历昨天），『明天』指日出后的那天（日历今天）」，让咕咕正确理解深夜说「明天」的语义。
-
-### 关闭气泡通知自动标记导航栏已读
-
-通知同时推送导航栏和气泡时，关闭气泡（点 ✕ 或被新气泡顶替）即调 `uiStore.markRead(notifId)` 标记已读。`liveNotification` 补带 `id` 字段，气泡 item 存 `notifId`，`dismiss()` 取出后调 markRead。纯 bubble-only 通知（无后端 id）不受影响。
-
-### 登录页底部加备案号与署名
-
-登录页底部绝对定位一行小字：「Created by Claude with love · 苏ICP备2026042185号」，备案号链接工信部查询页。
-
-### 修：用户正用 QQ 聊天，咕咕却说「QQ 没绑定、扫码连」
-
-用户在 QQ 上跟咕咕说「QQ 通知我」，咕咕却回「QQ 还没绑定，扫一下连上」——它根本不知道**当前这段对话就来自 QQ**（QQ 显然已连）。根因：系统提示从不注入「当前来源平台 / 已连 IM 渠道」，而 `create_scheduled_task` 工具又叫咕咕「设 qq/feishu 渠道前先确认绑定」，咕咕无从确认只能瞎猜。
-
-- **注入来源 + 渠道连接情况**（`builder._source_block` / `loaders.load_im_channels`）：系统提示加「## 当前对话来源 / 通知渠道」——本次对话来自 QQ/飞书/网页、各 IM 渠道是否已连（据 `imreach`）。**当前来源平台强制标记已连**（用户正用它说话＝必然可达），并明示「无需再绑、绝不让 TA 扫码」。
-- **`runner.py` / `web.py`** 透传 `source`（`req.source`/`"web"`）+ `im_channels` 给 `builder.build`。
-- **工具描述订正**（`scheduled_tasks.py`）：`create_scheduled_task` 的渠道说明从「先确认绑定」改为「看系统提示的渠道连接情况，已连直接用、未连才提示绑」。
-
-### 修：IM 路由把「确认用的嗯」当闲聊吞掉
-
-咕咕问「要删吗 / 要建项目吗」后，用户回「嗯」确认，却被 Intent Router 当成闲聊——忙时 `drop`、空闲回个「嗯嗯～」**都不进主模型**，确认永远丢失。根因是路由不知道「咕咕刚问了用户问题」。
-
-- **「等回话」标志**（`runtime_state.py` / `worker.py` / `router.py`）：咕咕回复以**问句/确认收尾**（`reply_awaits_answer`：结尾带 `？` 或「要不要/好吗/确认一下」等）时，worker 在回复定稿后置 `agentawait:{platform}:{puid}`（Redis，20min TTL；陈述句回复则清）。
-- **路由放行**：网关把 awaiting 传进 `decide(text, state, awaiting)`；awaiting 为真时，这轮的「嗯/好/算了」走 `agent`（是对提问的回答），不再 `drop`/秒回吞掉。咕咕下条陈述回复自动清标志，恢复正常闲聊短路。
-- 顺带发现 `WAITING_CONFIRM` 状态定义了但从未被 set（删除确认走的是工具层 `confirm` 参数，不靠状态机），文档已订正。
 
 ### 记忆新增 summary.md（当前状态快照「用户现在在做什么」）
 
@@ -100,17 +52,58 @@ QQ 语音 / 网页录音不再当文件卡，做成可播放的语音条：
 - **入口标记**：QQ 语音（silk/amr）/ 飞书语音（opus）转码成功＝语音 → `stage_voice`；网页录音上传带 `voice=true`；拖入的音频文件仍当文件。
 - **飞书语音接入**（`feishu.py`）：原本 `audio` 类型语音被 `_ingest_media` 外直接 `return` 丢弃，现按「语音消息」处理——opus 经 `ffmpeg` 转 mp3、`stage_voice_sync` 暂存，与 QQ 汇合到同一条 mimo 听音链路（不用 pilk，opus 直转）。
 
+### 红线：不虚构联网信息（交叉验证）+ 未来任务主动确认设定时
+
+- **不虚构联网 / 实时信息**（`policy.md`）：联网查到什么说什么，**绝不在搜索结果之外脑补/外推/补全**（尤其赛程/比分/日期/价格）；关键或易错事实**交叉验证**，单一来源不轻信、来源冲突如实讲分歧。治咕咕给 F1 赛果时凭单一来源瞎编。
+- **未来要到点执行的活 = 定时任务**（`skills.md`）：用户提「明天 / X 点 / 每天 帮我做 / 收集 / 发 某事」时，**先主动确认**「要设成定时任务、到点自动做吗」→ 认可才 `create_scheduled_task`；铁规则「没真建成那条定时任务，就别口头答应会自动做」。治「明早 8 点收集战报」被当口头应承、没真落定时任务。
+
+### 咕咕行为：问候口吻 + 建项目当规划伙伴
+
+- **默认问候据「上次互动」定口吻**（`agent/greeting.py`）：生成问候前查最近一条对话消息的时间，告诉模型「距上次说话多久」并加硬规则——几小时内 / 今天 / 昨天**绝不说「好久不见 / 最近怎么样」**、自然接上；确实隔了多天才用久别重逢语气；无记录给轻松招呼。修「刚聊过还说好久不见」的出戏。
+- **建项目当规划伙伴，别套模板**（`prompts/skills.md`）：建项目时按项目真实流程拟贴合的阶段 + 每段关键待办（「公司建立」就是 注册资质 → 组团队 → 启动 这种），别一律默认「计划 / 执行 / 交付」；用户只给名字时主动提方案、请其确认/微调再落。
+- **多天 / 多任务的事倾向做成项目**（`prompts/skills.md`）：旅游 / 办展 / 装修 / 搬家这类倾向做成项目（能装阶段 + 待办 + 文件）而非只记日历事件，做成后主动给规划（如旅游列打包 / 订票待办）；闲聊 / 决策探索 / 情绪场景仍克制，不硬塞。
+- **保存 / 创建文档 ≠ 把文件发给用户**（`prompts/skills.md` + `send_file` 工具描述）：创建文档后用一句话告诉用户存到哪个目录（同一文件本轮连续编辑只在「刚创建」那次报一次位置）；**绝不主动 `send_file`**——它在飞书 / QQ 是真把文件推到对方聊天，只有用户明确要（「发给我 / 给我那个文件」）才发。
+
+### 日历提醒：要提醒就建一次性定时任务（治「空口承诺提醒」）
+
+日历事件本身不会主动提醒，咕咕却常按常识空口承诺「会提前 X 分钟通知」而不真设。`skills.md` 加规则：要提醒必须 `create_event` 后再 `create_scheduled_task` 建 `@once` 一次性提醒（事件时间减提前量、`channels` 默认 web），并加**铁规则「没真建成定时任务就别说会提醒」**。
+
+### 修：用户正用 QQ 聊天，咕咕却说「QQ 没绑定、扫码连」
+
+用户在 QQ 上跟咕咕说「QQ 通知我」，咕咕却回「QQ 还没绑定，扫一下连上」——它根本不知道**当前这段对话就来自 QQ**（QQ 显然已连）。根因：系统提示从不注入「当前来源平台 / 已连 IM 渠道」，而 `create_scheduled_task` 工具又叫咕咕「设 qq/feishu 渠道前先确认绑定」，咕咕无从确认只能瞎猜。
+
+- **注入来源 + 渠道连接情况**（`builder._source_block` / `loaders.load_im_channels`）：系统提示加「## 当前对话来源 / 通知渠道」——本次对话来自 QQ/飞书/网页、各 IM 渠道是否已连（据 `imreach`）。**当前来源平台强制标记已连**（用户正用它说话＝必然可达），并明示「无需再绑、绝不让 TA 扫码」。
+- **`runner.py` / `web.py`** 透传 `source`（`req.source`/`"web"`）+ `im_channels` 给 `builder.build`。
+- **工具描述订正**（`scheduled_tasks.py`）：`create_scheduled_task` 的渠道说明从「先确认绑定」改为「看系统提示的渠道连接情况，已连直接用、未连才提示绑」。
+
+### 修：IM 路由把「确认用的嗯」当闲聊吞掉
+
+咕咕问「要删吗 / 要建项目吗」后，用户回「嗯」确认，却被 Intent Router 当成闲聊——忙时 `drop`、空闲回个「嗯嗯～」**都不进主模型**，确认永远丢失。根因是路由不知道「咕咕刚问了用户问题」。
+
+- **「等回话」标志**（`runtime_state.py` / `worker.py` / `router.py`）：咕咕回复以**问句/确认收尾**（`reply_awaits_answer`：结尾带 `？` 或「要不要/好吗/确认一下」等）时，worker 在回复定稿后置 `agentawait:{platform}:{puid}`（Redis，20min TTL；陈述句回复则清）。
+- **路由放行**：网关把 awaiting 传进 `decide(text, state, awaiting)`；awaiting 为真时，这轮的「嗯/好/算了」走 `agent`（是对提问的回答），不再 `drop`/秒回吞掉。咕咕下条陈述回复自动清标志，恢复正常闲聊短路。
+- 顺带发现 `WAITING_CONFIRM` 状态定义了但从未被 set（删除确认走的是工具层 `confirm` 参数，不靠状态机），文档已订正。
+
+### 修：精力 100% 仍拦不住对话（封顶截断到 0 + IM 漏判）
+
+精力满了却还能继续聊，三处根因一并修：
+
+- **封顶按比例缩被 `int()` 截断到 0**（`quota.py cap_usage`）：`remaining` 很小、单轮 token 很大时（如 limit=1），`int(tin * remaining/total)` 截成 0 → `AgentUsage` 永远记 0、用量永远填不满上限、硬拦的 `used >= limit` 永不触发。改为**精确填满**剩余额度（tin 优先、余量给 tout），不再按比例缩。
+- **IM / 定时任务路径根本没硬拦**：耗尽硬拦原本只在网页 `web.stream`，IM/定时走的 `runner.run_collect` 漏了。抽出 `quota.is_exhausted`（CST 6h/周同口径），`runner` 存完用户消息即判定耗尽、直接回「咕咕累了，休息会儿再来～」不再生成。
+- **web 与 IM 口径统一**（`web.py`）：网页原为 UTC 窗口内联判定，改走同一个 `quota.is_exhausted`，两路硬拦口径一致。
+
+### 修：精力配额与 DAU 统计时区错误（UTC → CST）
+
+- **精力 6h 窗口**（`agent/quota.py`）：`six_h_window_start` 原按 UTC 整点切割（北京 08/14/20/02 点重置），改为 CST 整点（00/06/12/18）；UTC → CST 算槽位，再转回 UTC naive 供 DB 比较，与 `AgentUsage.created_at` 口径一致。
+- **DAU 改为「登录即算」+ CST 今日 0 点**（`admin_analytics.py` / `auth.py` / `models`）：原 DAU 按 `AgentUsage` 统计（须发消息才算），且 `today_start` 用 UTC 午夜。改为 `User.last_active_at`：前端每次加载调 `/auth/me`，每小时最多写一次，CST 今日 0 点起有记录即算活跃。新增 `last_active_at` 字段 + migration `20260627000002`。
+
+### 待办/阶段拖拽升级为实时让位（去动画 + 克隆无底框）
+
+待办与阶段拖拽从 HTML5 drag 升级为**指针驱动**：拖动时其他元素**实时同步让位**（不再等落下才重排）；待办拖动名字即可排序、并可**跨阶段**拖到别的阶段；去掉让位过渡动画（直接到位，杜绝中线判断引发的抖动）；阶段克隆预览**只显克隆体、不带底色框**，与待办一致。定时任务编辑卡的提醒内容占位也从「该喝水啦～」改为「收集昨天的科技新闻」。`ProjectCard.vue` / `ProjectModal.vue` / `Schedules/index.vue`。
+
 ### 项目待办：拖拽排序
 
 项目卡待办弹窗 + 项目编辑卡阶段待办，每条左侧加拖拽手柄（六点 grip，平时半隐、悬停浮现），原生 HTML5 drag 重排 → 落库（`persistTodos` / `saveStages`）。手柄独立于输入框：点字照常编辑、拖手柄才排序；编辑卡内限**同阶段**重排。`ProjectCard.vue` / `ProjectModal.vue`。
-
-### 日历：已完成项目统一淡化
-
-日历各处（月视图 chip / 跨天项目条 / 当天日程 / 近期节点 / 「+N 更多」弹层）的已完成项目统一加 `cal-done` 淡化（opacity 0.45、hover 回 0.7），退到背景、不抢眼；只淡化项目，用户活动事件不受影响。`Calendar/index.vue`。
-
-### 后台分析：DAU 改 WAU，纳入 IM 活跃
-
-活跃指标从「今日活跃（DAU）」改为「周活跃（WAU）」：过去 7 天「对话过（`AgentUsage`，网页 + IM 都记）∪ 登录过网页（`last_active_at`）」按 user_id 去重。修原 DAU 只看 `last_active_at`（仅带 token 的网页请求更新）、漏掉**纯用 IM 不登网页**用户的问题。`admin_analytics.py` / `Admin/Analytics/index.vue`。
 
 ### 文件库：项目文件按状态分组（已完成按完成日期归档）
 
@@ -120,9 +113,30 @@ QQ 语音 / 网页录音不再当文件卡，做成可播放的语音条：
 - 三态文件夹配状态色 + 图标（待开始灰·时钟 / 进行中蓝·播放 / 已完成绿·对勾）；
 - 面包屑、全局搜索跳文件均按状态重建路径。
 
-### 日历提醒：要提醒就建一次性定时任务（治「空口承诺提醒」）
+### 日历：已完成项目统一淡化
 
-日历事件本身不会主动提醒，咕咕却常按常识空口承诺「会提前 X 分钟通知」而不真设。`skills.md` 加规则：要提醒必须 `create_event` 后再 `create_scheduled_task` 建 `@once` 一次性提醒（事件时间减提前量、`channels` 默认 web），并加**铁规则「没真建成定时任务就别说会提醒」**。
+日历各处（月视图 chip / 跨天项目条 / 当天日程 / 近期节点 / 「+N 更多」弹层）的已完成项目统一加 `cal-done` 淡化（opacity 0.45、hover 回 0.7），退到背景、不抢眼；只淡化项目，用户活动事件不受影响。`Calendar/index.vue`。
+
+### 深夜对话时间语境（0–4 点以日出为一天的分界）
+
+凌晨 0–4 点时，`builder.py` 在注入的当前时刻后附加提示：「以日出为一天的分界：用户口中的『今天』指尚未结束的这个主观白天（日历昨天），『明天』指日出后的那天（日历今天）」，让咕咕正确理解深夜说「明天」的语义。
+
+### 关闭气泡通知自动标记导航栏已读
+
+通知同时推送导航栏和气泡时，关闭气泡（点 ✕ 或被新气泡顶替）即调 `uiStore.markRead(notifId)` 标记已读。`liveNotification` 补带 `id` 字段，气泡 item 存 `notifId`，`dismiss()` 取出后调 markRead。纯 bubble-only 通知（无后端 id）不受影响。
+
+### 聊天内扫码绑定 IM：咕咕直接给按钮
+
+- **问「怎么加 IM」→ 咕咕给可点的扫码按钮**（`prompts/skills.md` + `GuguChat.vue`）：用户问「怎么绑定飞书 / QQ / 把你接到 IM」时，咕咕在回复里输出动作链接当按钮（`[扫码绑定飞书](gugu://bind-im/feishu)` / `qqbot`），不再讲后台手动步骤。前端把 `gugu://` 链接渲染成胶囊按钮、拦截点击，**聊天上弹小窗显示二维码**，扫码成功自动绑定 + 刷新会话。复用现有 `feishu/qq connect` 的 start/poll，后端零改动；弹窗用全局 `.popup-menu`（右键菜单同款玻璃）。
+
+### 前端发版门：新版本自动清过期客户端状态
+
+- **客户端状态版本门**（`utils/clientVersionGate.js` + `main.js` / `admin.js` + `vite(.admin).config.js`）：构建版本号（`__APP_VERSION__` = git 短哈希，无 git 回退构建时间戳）变化 → 应用启动时（`createApp` 前）清掉 `KEEP` 之外的所有 localStorage + 整个 sessionStorage，再写新版本号。修「发版后旧 localStorage 残留、新代码走旧逻辑」。保留登录态（`user_token` / `admin_token`）与无害偏好（球钉住 / 音量）；主站 `/` 与后台 `/admin` 同源共享 localStorage，`KEEP` 同含两边 token、同版本号只第一个触发清理，不互相清登录。版本号跟 git 提交走（改了代码提交才 bump，同提交重复构建不白清）。
+- 配套（运维侧，需在 1Panel/nginx 配）：`index.html` 发 `no-cache`、`/assets`（带哈希）长缓存，确保新 JS 真加载、版本门跑到最新那套。
+
+### 登录页底部加备案号与署名
+
+登录页底部绝对定位一行小字：「Created by Claude with love · 苏ICP备2026042185号」，备案号链接工信部查询页。
 
 ### 隐私：决策轨迹脱敏（数据最小化）
 
@@ -134,27 +148,19 @@ QQ 语音 / 网页录音不再当文件卡，做成可播放的语音条：
 - 前端去掉「搜标题」框、改按用户名筛选（`Admin/Agent/index.vue`）。
 - 保留排查能力：仍能看每轮调了哪些工具、落到哪个 id、成 / 败、token、轮次。
 
-### 咕咕行为：问候口吻 + 建项目当规划伙伴
+### 后台分析：DAU 改 WAU，纳入 IM 活跃
 
-- **默认问候据「上次互动」定口吻**（`agent/greeting.py`）：生成问候前查最近一条对话消息的时间，告诉模型「距上次说话多久」并加硬规则——几小时内 / 今天 / 昨天**绝不说「好久不见 / 最近怎么样」**、自然接上；确实隔了多天才用久别重逢语气；无记录给轻松招呼。修「刚聊过还说好久不见」的出戏。
-- **建项目当规划伙伴，别套模板**（`prompts/skills.md`）：建项目时按项目真实流程拟贴合的阶段 + 每段关键待办（「公司建立」就是 注册资质 → 组团队 → 启动 这种），别一律默认「计划 / 执行 / 交付」；用户只给名字时主动提方案、请其确认/微调再落。
-- **多天 / 多任务的事倾向做成项目**（`prompts/skills.md`）：旅游 / 办展 / 装修 / 搬家这类倾向做成项目（能装阶段 + 待办 + 文件）而非只记日历事件，做成后主动给规划（如旅游列打包 / 订票待办）；闲聊 / 决策探索 / 情绪场景仍克制，不硬塞。
-- **保存 / 创建文档 ≠ 把文件发给用户**（`prompts/skills.md` + `send_file` 工具描述）：创建文档后用一句话告诉用户存到哪个目录（同一文件本轮连续编辑只在「刚创建」那次报一次位置）；**绝不主动 `send_file`**——它在飞书 / QQ 是真把文件推到对方聊天，只有用户明确要（「发给我 / 给我那个文件」）才发。
-
-### 前端发版门：新版本自动清过期客户端状态
-
-- **客户端状态版本门**（`utils/clientVersionGate.js` + `main.js` / `admin.js` + `vite(.admin).config.js`）：构建版本号（`__APP_VERSION__` = git 短哈希，无 git 回退构建时间戳）变化 → 应用启动时（`createApp` 前）清掉 `KEEP` 之外的所有 localStorage + 整个 sessionStorage，再写新版本号。修「发版后旧 localStorage 残留、新代码走旧逻辑」。保留登录态（`user_token` / `admin_token`）与无害偏好（球钉住 / 音量）；主站 `/` 与后台 `/admin` 同源共享 localStorage，`KEEP` 同含两边 token、同版本号只第一个触发清理，不互相清登录。版本号跟 git 提交走（改了代码提交才 bump，同提交重复构建不白清）。
-- 配套（运维侧，需在 1Panel/nginx 配）：`index.html` 发 `no-cache`、`/assets`（带哈希）长缓存，确保新 JS 真加载、版本门跑到最新那套。
-
-### 聊天内扫码绑定 IM：咕咕直接给按钮
-
-- **问「怎么加 IM」→ 咕咕给可点的扫码按钮**（`prompts/skills.md` + `GuguChat.vue`）：用户问「怎么绑定飞书 / QQ / 把你接到 IM」时，咕咕在回复里输出动作链接当按钮（`[扫码绑定飞书](gugu://bind-im/feishu)` / `qqbot`），不再讲后台手动步骤。前端把 `gugu://` 链接渲染成胶囊按钮、拦截点击，**聊天上弹小窗显示二维码**，扫码成功自动绑定 + 刷新会话。复用现有 `feishu/qq connect` 的 start/poll，后端零改动；弹窗用全局 `.popup-menu`（右键菜单同款玻璃）。
+活跃指标从「今日活跃（DAU）」改为「周活跃（WAU）」：过去 7 天「对话过（`AgentUsage`，网页 + IM 都记）∪ 登录过网页（`last_active_at`）」按 user_id 去重。修原 DAU 只看 `last_active_at`（仅带 token 的网页请求更新）、漏掉**纯用 IM 不登网页**用户的问题。`admin_analytics.py` / `Admin/Analytics/index.vue`。
 
 ### 后台 / 数据
 
 - **记录用户 `last_active_at` + 后台活跃统计**（`models` / `auth` / `admin_analytics` + 迁移 `20260627000002`）：User 加 `last_active_at` 列（可空、索引），用户活动时按 1 小时节流更新；后台基于它统计活跃用户。
 
-### 修复
+### 修：delete_project 工具 ImportError 导致 agent 删项目必失败
+
+agent 工具层 `_delete_project` 还在 `from app.api.v1.projects import rehome_project_files_to_personal`，但该函数在「删项目改为连文件软删」时已被移除，导致任何 agent 删项目请求都以 ImportError 崩溃。改为与 API 端一致：先 `UPDATE files SET deleted_at=now()`（软删），再 `DELETE project`（文件夹由 FK CASCADE 级联删）。
+
+### 其它修复
 
 - **阶段拖拽重排没把待办带走**（`ProjectModal.vue` `commitStageDrag`）：拖拽落下时原本只重排了 `label` 数组、再赋回原位置的阶段，导致 `todos`/`key` 留在原地——表现为「只改了阶段名，待办没跟走」，且当前阶段也会错位。改成和拖拽预览 `displayStages` 一致：**整个阶段对象（label + todos + key）一起搬**；`key` 为稳定身份、`updateStages` 不重排 key，故当前阶段按 key 正确跟随、进度据新位置重算。
 - **已完成项目取消前面阶段的待办没退出已完成**（`ProjectModal.vue` `saveTodos`）：完成判据 `isLastFull` 只看当前（=最后）阶段进度，取消**前面阶段**的待办时当前阶段仍满 → 项目赖在「已完成」。改成 `fullyComplete = 最后阶段 + **所有阶段全部待办都勾选**`：取消任意阶段的待办、不再真 100% → 退出已完成、退回进行中；同一判据也用于「进入已完成」，**禁止非满项目进入已完成**。
