@@ -551,8 +551,9 @@
             <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.base_url" placeholder="https://…/compatible-mode/v1" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>API Key</span><span class="behavior-desc">留空 = 不修改（保存后回显 ****）</span></div>
-            <input type="password" class="behavior-input" style="width:280px" v-model="voiceDraft.api_key" placeholder="留空=不修改" />
+            <div class="behavior-label"><span>API Key<span v-if="configStore.secretSet.voiceApiKey" style="margin-left:6px;color:var(--color-primary);font-size:11px;font-weight:600">· 已配置 ✓</span></span><span class="behavior-desc">已存的 Key 出于安全不回显；留空＝保留不变，要换填新值覆盖</span></div>
+            <input type="password" class="behavior-input" style="width:280px" v-model="voiceDraft.api_key"
+                   :placeholder="configStore.secretSet.voiceApiKey ? '已配置，留空＝不修改' : '填入语音模型 API Key'" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label"><span>provider</span><span class="behavior-desc">选服务商——端点/模型为空时顺带填模板（不覆盖你已填的，比如套餐端点），自行补 Key</span></div>

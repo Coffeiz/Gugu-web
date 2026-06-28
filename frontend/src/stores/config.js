@@ -27,6 +27,9 @@ export const useConfigStore = defineStore('config', () => {
   const saving    = ref(false)
   const saved     = ref(false)
   const saveError = ref('')
+  // 后端把已存的密钥脱敏成 ****、前端又清空显示，导致「已存」无任何痕迹 → 看着像没保存。
+  // 这里记录各保密字段后端当前是否已有值，供 UI 显示「已配置」指示。
+  const secretSet = reactive({ voiceApiKey: false })
 
   const cfg = reactive({
     db: {
@@ -102,7 +105,7 @@ export const useConfigStore = defineStore('config', () => {
       if (data.redis)   Object.assign(cfg.redis,   sanitizeForEdit(data.redis))
       if (data.storage) Object.assign(cfg.storage, sanitizeForEdit(data.storage))
       if (data.ai)      Object.assign(cfg.ai,      sanitizeForEdit(data.ai))
-      if (data.voice)   Object.assign(cfg.voice,   sanitizeForEdit(data.voice))
+      if (data.voice) { secretSet.voiceApiKey = data.voice.api_key === '****'; Object.assign(cfg.voice, sanitizeForEdit(data.voice)) }
       if (data.agent)   Object.assign(cfg.agent,   data.agent)
       if (data.quota)   Object.assign(cfg.quota,   data.quota)
       if (data.search)  Object.assign(cfg.search,  sanitizeForEdit(data.search))
@@ -135,6 +138,7 @@ export const useConfigStore = defineStore('config', () => {
       for (const [section, vals] of Object.entries(cleanPatch)) {
         if (cfg[section]) Object.assign(cfg[section], vals)
       }
+      if (cleanPatch.voice?.api_key) secretSet.voiceApiKey = true   // 这次确实写了新 key
       saved.value = true
       setTimeout(() => { saved.value = false }, 3000)
     } catch (e) {
@@ -145,5 +149,5 @@ export const useConfigStore = defineStore('config', () => {
     }
   }
 
-  return { cfg, loading, saving, saved, saveError, fetchConfig, saveConfig }
+  return { cfg, loading, saving, saved, saveError, secretSet, fetchConfig, saveConfig }
 })
