@@ -1,76 +1,89 @@
 <template>
   <div class="perc-page">
-    <div class="perc-head">
-      <div>
-        <h2 class="perc-title">感知诊断</h2>
-        <p class="perc-sub">咕咕「读懂用户需求」的整体健康度——需求类型分布 / 误判率 / 异常。数据来自对话后反思（零延迟遥测）</p>
+    <div class="page-header">
+      <div class="page-title-block">
+        <h2 class="page-title">感知诊断</h2>
+        <p class="page-desc">咕咕「读懂用户需求」健康度 · 仅活跃用户、按用户宏平均（重度用户不主导）</p>
       </div>
-      <div class="perc-head-right">
-        <select v-model.number="hours" @change="load(true)" class="perc-sel">
-          <option :value="24">近 24h</option>
-          <option :value="168">近 7 天</option>
-          <option :value="720">近 30 天</option>
-          <option :value="0">全部</option>
-        </select>
-        <button class="perc-refresh" @click="load(true)" :disabled="loading">{{ loading ? '加载中…' : '刷新' }}</button>
+      <div class="header-right">
+        <div class="range-tabs">
+          <button v-for="r in ranges" :key="r.h"
+            :class="['range-tab', { active: hours === r.h }]"
+            @click="setRange(r.h)">{{ r.label }}</button>
+        </div>
+        <button class="refresh-btn" @click="load" :disabled="loading">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ spinning: loading }">
+            <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2"/>
+            <polyline points="10 1 14 5 10 5"/>
+          </svg>
+          刷新
+        </button>
       </div>
     </div>
 
-    <div v-if="err" class="perc-err">{{ err }}</div>
+    <div v-if="loading && !loaded" class="state-msg">加载中…</div>
+    <div v-else-if="err" class="state-msg err">{{ err }}</div>
+    <div v-else-if="!data.active_users" class="state-msg">{{ data.note || '暂无活跃用户数据' }}</div>
 
-    <!-- 异常标红 -->
-    <div v-if="data.flags && data.flags.length" class="perc-flags">
-      <div class="perc-flag" v-for="(f, i) in data.flags" :key="i">⚠️ {{ f }}</div>
-    </div>
-    <div v-else-if="data.perc_total" class="perc-ok">✅ 暂无异常（{{ data.perc_total }} 条观察）</div>
-
-    <!-- 总览指标卡 -->
-    <div class="perc-cards">
-      <div class="perc-card"><b>{{ data.perc_total ?? '—' }}</b><i>观察数 (perc)</i></div>
-      <div class="perc-card"><b>{{ data.misperc_total ?? '—' }}</b><i>纠正数 (misperc)</i></div>
-      <div class="perc-card" :class="rateClass(data.overall_misperc_rate)"><b>{{ pct(data.overall_misperc_rate) }}</b><i>总误判率</i></div>
-      <div class="perc-card" :class="{ warn: data.avg_ambiguity > 60 }"><b>{{ data.avg_ambiguity ?? '—' }}</b><i>平均歧义度</i></div>
-      <div class="perc-card"><b>{{ data.avg_emo_strength ?? '—' }}</b><i>平均情绪强度</i></div>
-    </div>
-
-    <div class="perc-sec-title">需求类型分布 & 误判率<span class="perc-hint">误判率 = 被用户下一句纠正的比例（按相邻配对）</span></div>
-    <div v-if="!intents.length" class="perc-empty">暂无数据——发生几轮对话后再来看</div>
-    <table v-else class="perc-table">
-      <thead><tr><th>需求类型</th><th class="w">占比</th><th>条数</th><th>纠正</th><th>误判率</th></tr></thead>
-      <tbody>
-        <tr v-for="r in intents" :key="r.intent">
-          <td class="perc-intent">{{ r.intent }}</td>
-          <td class="perc-bar-cell">
-            <div class="perc-bar-wrap"><div class="perc-bar" :style="{ width: r.pct + '%' }"></div></div>
-            <span class="perc-pct">{{ r.pct }}%</span>
-          </td>
-          <td>{{ r.count }}</td>
-          <td>{{ r.misperc }}</td>
-          <td :class="rateClass(r.misperc_rate)">{{ pct(r.misperc_rate) }}</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <template v-if="data.by_model && data.by_model.length">
-      <div class="perc-sec-title">按模型</div>
-      <table class="perc-table">
-        <thead><tr><th>模型</th><th>条数</th><th>纠正</th><th>误判率</th></tr></thead>
-        <tbody>
-          <tr v-for="r in data.by_model" :key="r.model">
-            <td class="perc-intent">{{ r.model }}</td>
-            <td>{{ r.count }}</td>
-            <td>{{ r.misperc }}</td>
-            <td :class="rateClass(r.misperc_rate)">{{ pct(r.misperc_rate) }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </template>
-
-    <template v-if="data.emotion_distribution && data.emotion_distribution.length">
-      <div class="perc-sec-title">情绪分布</div>
-      <div class="perc-emos">
-        <span v-for="e in data.emotion_distribution" :key="e.emotion" class="perc-emo">{{ e.emotion }} · {{ e.count }}</span>
+    <template v-else>
+      <!-- 异常标红 -->
+      <div v-if="data.flags && data.flags.length" class="flag-strip">
+        <div v-for="(f, i) in data.flags" :key="i" class="flag-item"><span class="flag-dot">!</span>{{ f }}</div>
       </div>
+
+      <div class="section-label">总览</div>
+      <div class="cards-grid">
+        <div class="card">
+          <div class="card-icon ic-blue"><PhUsers :size="16" weight="bold"/></div>
+          <div class="card-val">{{ data.active_users }}</div>
+          <div class="card-lbl">活跃用户（≥{{ data.min_events }} 轮）</div>
+        </div>
+        <div class="card">
+          <div class="card-icon ic-blue"><PhChats :size="16" weight="bold"/></div>
+          <div class="card-val">{{ data.perc_total }}</div>
+          <div class="card-lbl">观察数 · 纠正 {{ data.misperc_total }}</div>
+        </div>
+        <div class="card" :class="rateCard(data.overall_misperc_rate)">
+          <div class="card-icon ic-amber"><PhPulse :size="16" weight="bold"/></div>
+          <div class="card-val">{{ pct(data.overall_misperc_rate) }}</div>
+          <div class="card-lbl">误判率（宏平均）</div>
+        </div>
+        <div class="card" :class="{ 'card-active': data.avg_ambiguity > 60 }">
+          <div class="card-icon ic-amber"><PhBrain :size="16" weight="bold"/></div>
+          <div class="card-val">{{ data.avg_ambiguity ?? '—' }}</div>
+          <div class="card-lbl">平均歧义度 · 情绪 {{ data.avg_emo_strength ?? '—' }}</div>
+        </div>
+      </div>
+
+      <div class="section-label">需求类型分布 & 误判率<span class="sl-hint">占比=按用户宏平均 · 误判率=被下一句纠正的比例</span></div>
+      <div v-if="!intents.length" class="state-msg sm-sm">暂无数据</div>
+      <div v-else class="dist">
+        <div v-for="r in intents" :key="r.intent" class="dist-row">
+          <span class="dist-name">{{ r.intent }}</span>
+          <div class="dist-track"><div class="dist-fill" :style="{ width: r.pct + '%' }"></div></div>
+          <span class="dist-pct">{{ r.pct }}%</span>
+          <span class="dist-rate" :class="rateClass(r.misperc_rate)">误判 {{ pct(r.misperc_rate) }}<i>n={{ r.count }}</i></span>
+        </div>
+      </div>
+
+      <template v-if="data.by_model && data.by_model.length">
+        <div class="section-label">按模型</div>
+        <div class="dist">
+          <div v-for="r in data.by_model" :key="r.model" class="dist-row">
+            <span class="dist-name wide">{{ r.model }}</span>
+            <span class="dist-meta">{{ r.count }} 条</span>
+            <span class="dist-rate" :class="rateClass(r.misperc_rate)">误判 {{ pct(r.misperc_rate) }}</span>
+          </div>
+        </div>
+      </template>
+
+      <template v-if="data.emotion_distribution && data.emotion_distribution.length">
+        <div class="section-label">情绪分布</div>
+        <div class="emo-strip">
+          <span v-for="e in data.emotion_distribution" :key="e.emotion" class="emo-chip">{{ e.emotion }} · {{ e.count }}</span>
+        </div>
+      </template>
     </template>
   </div>
 </template>
@@ -78,72 +91,98 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
+import { PhUsers, PhChats, PhPulse, PhBrain } from '@phosphor-icons/vue'
 
 const adminStore = useAdminStore()
 const data = ref({})
 const hours = ref(168)
 const loading = ref(false)
+const loaded = ref(false)
 const err = ref('')
+const ranges = [{ h: 24, label: '24h' }, { h: 168, label: '7天' }, { h: 720, label: '30天' }, { h: 0, label: '全部' }]
 
 const intents = computed(() => data.value.intent_distribution || [])
 
-async function load(manual = false) {
-  if (manual) loading.value = true
+async function load() {
+  loading.value = true
   try {
     const res = await adminStore.authFetch(`/api/v1/admin/perception?hours=${hours.value}`)
     if (!res.ok) throw new Error(`加载失败 (${res.status})`)
     data.value = await res.json()
+    loaded.value = true
     err.value = ''
   } catch (e) { err.value = e.message } finally { loading.value = false }
 }
+function setRange(h) { hours.value = h; load() }
 
 function pct(v) { return v == null ? '—' : (v * 100).toFixed(0) + '%' }
 // >25% 标红、>15% 标黄（与后端异常阈值对齐）
 function rateClass(v) { return v != null && v > 0.25 ? 'bad' : (v != null && v > 0.15 ? 'warn' : '') }
+function rateCard(v) { return v != null && v > 0.25 ? 'card-bad' : (v != null && v > 0.15 ? 'card-active' : '') }
 
-onMounted(() => load())
+onMounted(load)
 </script>
 
 <style scoped>
-.perc-page { padding: 4px 2px; }
-.perc-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
-.perc-title { font-size: 19px; font-weight: 600; color: #2a2c3a; margin: 0; }
-.perc-sub { font-size: 12.5px; color: #9296ad; margin: 4px 0 0; max-width: 560px; }
-.perc-head-right { display: flex; gap: 8px; flex-shrink: 0; }
-.perc-sel, .perc-refresh { font-size: 13px; padding: 6px 12px; border-radius: 8px; border: 1px solid #e2e2ef; background: #fff; color: #4a4d63; cursor: pointer; }
-.perc-refresh:disabled { opacity: .5; cursor: default; }
-.perc-err { background: #fdecea; color: #b23b1d; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; }
+.perc-page { min-height: 100%; padding-bottom: 56px; }
 
-.perc-flags { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
-.perc-flag { background: #fdecea; color: #b23b1d; border: 1px solid #f5ccc2; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
-.perc-ok { background: #eaf7f0; color: #18794e; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; }
+/* ── header（对齐其它后台面板）── */
+.page-header { padding: 32px 36px 0; display: flex; align-items: flex-start; justify-content: space-between; }
+.page-title-block { display: flex; flex-direction: column; }
+.page-title { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
+.page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
+.header-right { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+.range-tabs { display: flex; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 3px; }
+.range-tab { font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer; color: rgba(255,255,255,0.4); background: transparent; border: none; transition: all .15s; }
+.range-tab.active { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
+.range-tab:hover:not(.active) { color: rgba(255,255,255,0.6); }
+.refresh-btn { display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.55); font-size: 12px; border-radius: 8px; padding: 7px 14px; cursor: pointer; transition: all .15s; }
+.refresh-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); }
+.refresh-btn:disabled { opacity: .4; cursor: not-allowed; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinning { animation: spin .8s linear infinite; }
 
-.perc-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 22px; }
-.perc-card { background: #fff; border: 1px solid #ececf5; border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
-.perc-card b { font-size: 24px; font-weight: 700; color: #2a2c3a; line-height: 1; }
-.perc-card i { font-size: 12px; color: #9296ad; font-style: normal; }
-.perc-card.warn b { color: #9a6a00; }
-.perc-card.warn { background: #fdf6e7; border-color: #f0e0b8; }
-.perc-card.bad b { color: #b23b1d; }
-.perc-card.bad { background: #fdecea; border-color: #f5ccc2; }
+.state-msg { padding: 60px 36px; text-align: center; color: rgba(255,255,255,0.3); font-size: 14px; }
+.state-msg.err { color: #e07070; }
+.state-msg.sm-sm { padding: 24px 36px; }
 
-.perc-sec-title { font-size: 14px; font-weight: 600; color: #3a3c4e; margin: 18px 0 8px; display: flex; align-items: baseline; gap: 10px; }
-.perc-hint { font-size: 11.5px; font-weight: 400; color: #a8abc0; }
-.perc-empty { color: #9296ad; font-size: 13px; padding: 10px 0; }
+/* ── section label ── */
+.section-label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; color: rgba(255,255,255,0.3); text-transform: uppercase; padding: 28px 36px 10px; display: flex; align-items: baseline; gap: 10px; }
+.sl-hint { font-size: 10px; font-weight: 500; letter-spacing: 0; text-transform: none; color: rgba(255,255,255,0.22); }
 
-.perc-table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; border: 1px solid #ececf5; border-radius: 12px; overflow: hidden; }
-.perc-table th { text-align: left; color: #9296ad; font-weight: 500; font-size: 12px; padding: 9px 14px; background: #fafafe; border-bottom: 1px solid #ececf5; }
-.perc-table th.w { width: 38%; }
-.perc-table td { padding: 9px 14px; border-bottom: 1px solid #f3f3fa; color: #4a4d63; }
-.perc-table tr:last-child td { border-bottom: none; }
-.perc-intent { font-weight: 600; color: #2a2c3a; }
-.perc-bar-cell { display: flex; align-items: center; gap: 8px; }
-.perc-bar-wrap { flex: 1; height: 7px; background: #f0f0f8; border-radius: 4px; overflow: hidden; max-width: 200px; }
-.perc-bar { height: 100%; background: linear-gradient(90deg, #8186bd, #9590c4); border-radius: 4px; }
-.perc-pct { font-size: 12px; color: #9296ad; min-width: 34px; }
-.perc-table td.warn { color: #9a6a00; font-weight: 600; }
-.perc-table td.bad { color: #b23b1d; font-weight: 700; }
+/* ── flags ── */
+.flag-strip { padding: 18px 36px 0; display: flex; flex-direction: column; gap: 8px; }
+.flag-item { display: flex; align-items: center; gap: 9px; background: rgba(224,112,112,0.1); border: 1px solid rgba(224,112,112,0.28); color: rgba(235,150,150,0.95); border-radius: 10px; padding: 10px 14px; font-size: 12.5px; }
+.flag-dot { flex-shrink: 0; width: 17px; height: 17px; border-radius: 50%; background: rgba(224,112,112,0.85); color: #2a1414; font-weight: 800; font-size: 12px; display: flex; align-items: center; justify-content: center; }
 
-.perc-emos { display: flex; flex-wrap: wrap; gap: 8px; }
-.perc-emo { background: #f3f3fa; color: #5a5d75; border-radius: 8px; padding: 5px 11px; font-size: 12.5px; }
+/* ── cards ── */
+.cards-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 0 36px; }
+.card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 18px 18px 14px; }
+.card-icon { width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; }
+.ic-blue  { background: rgba(123,127,178,0.18); color: rgba(150,155,210,0.9); }
+.ic-amber { background: rgba(201,148,58,0.18); color: rgba(215,165,75,0.9); }
+.card-val { font-size: 28px; font-weight: 700; color: rgba(255,255,255,0.88); line-height: 1; }
+.card-lbl { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 7px; }
+.card-active { border-color: rgba(201,148,58,0.25); }
+.card-active .card-val { color: #c9943a; }
+.card-bad { border-color: rgba(224,112,112,0.3); }
+.card-bad .card-val { color: #e07070; }
+
+/* ── distribution bars（沿用后台 tool-dist 风格）── */
+.dist { padding: 0 36px; display: flex; flex-direction: column; gap: 9px; }
+.dist-row { display: flex; align-items: center; gap: 12px; }
+.dist-name { width: 64px; flex-shrink: 0; font-size: 12.5px; font-weight: 600; color: rgba(255,255,255,0.7); }
+.dist-name.wide { width: 130px; }
+.dist-track { flex: 1; height: 7px; border-radius: 4px; background: rgba(255,255,255,0.06); max-width: 320px; }
+.dist-fill { height: 100%; border-radius: 4px; background: rgba(123,127,178,0.75); transition: width .3s; }
+.dist-pct { width: 44px; flex-shrink: 0; text-align: right; font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.5); }
+.dist-meta { font-size: 12px; color: rgba(255,255,255,0.4); }
+.dist-rate { margin-left: auto; font-size: 12px; color: rgba(255,255,255,0.4); display: flex; align-items: baseline; gap: 5px; }
+.dist-rate i { font-style: normal; font-size: 10.5px; color: rgba(255,255,255,0.25); }
+.dist-rate.warn { color: rgba(215,165,75,0.95); }
+.dist-rate.bad { color: rgba(235,150,150,0.95); font-weight: 700; }
+
+/* ── emotion ── */
+.emo-strip { padding: 0 36px; display: flex; flex-wrap: wrap; gap: 8px; }
+.emo-chip { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.55); border-radius: 8px; padding: 5px 11px; font-size: 12px; }
 </style>
