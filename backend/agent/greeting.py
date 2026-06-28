@@ -7,6 +7,8 @@
 import logging
 from datetime import date, datetime, timedelta
 
+from app.core.tz import local_now
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,13 +62,16 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
     seen = await _last_seen_part(db, user_id)
     if seen:
         parts.append(seen)
-    # 长期 fact + 近 7 天 daily
+    # 当前状态快照 + 长期 fact + 近 7 天 daily
     try:
         mem = await mem_store.read_memory(user_id)
+        summary = (mem.get("summary") or "").strip()
+        if summary:
+            parts.append("【TA 最近在忙什么】\n" + summary[:400])   # 问候最该参考的当下重心
         facts = (mem.get("facts") or "").strip()
         if facts:
             parts.append("【长期了解】\n" + facts[:800])
-        cutoff = (date.today() - timedelta(days=7)).isoformat()
+        cutoff = (local_now().date() - timedelta(days=7)).isoformat()
         daily_lines = [ln for ln in (mem.get("daily") or "").splitlines()
                        if ln.strip().startswith("- ") and ln[2:12] >= cutoff]
         if daily_lines:

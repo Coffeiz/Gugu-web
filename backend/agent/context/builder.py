@@ -4,8 +4,10 @@
 （default.md，含实时数据与记忆占位符）。persona 定义"咕咕是谁、怎么相处、何时
 主动"，模板提供"此刻的项目/日程/记忆"。
 """
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
+
+from app.core.tz import local_now
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
@@ -66,7 +68,7 @@ def build(profile: str, user_name: str, projects: list, events: list,
           style_prefs: dict | None = None,
           source: str | None = None, im_channels: dict | None = None) -> str:
     memory = memory or {}
-    _now = datetime.now()
+    _now = local_now()
     today = _now.strftime("%Y-%m-%d")
     # 当前完整时刻（含星期、时分），让咕咕知道"现在几点、星期几"，能答时间、按时段问候、排期
     _wd = "一二三四五六日"[_now.weekday()]

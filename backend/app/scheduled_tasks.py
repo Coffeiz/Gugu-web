@@ -11,6 +11,8 @@ import json
 import uuid as _uuid
 from datetime import datetime
 
+from app.core.tz import local_now
+
 from sqlalchemy import select
 
 _synced: dict[str, str] = {}   # job_id -> 上次同步用的 updated_at，变了才重挂
@@ -84,7 +86,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             await db.delete(t)
         await db.commit()
     try:
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        now_str = local_now().strftime("%Y-%m-%d %H:%M")
         prompt = (
             f"[定时任务触发：{name}]\n"
             f"现在是 {now_str}，用户设置了一条定时任务：{payload}\n"

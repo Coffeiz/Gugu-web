@@ -5,17 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models import User, Project, ConversationSession, AgentUsage, UserBot, FrontendEvent
+from app.core.tz import LOCAL_TZ, local_day_start_utc, utc_to_local_date_expr
 
 router = APIRouter(prefix="/admin/analytics", tags=["admin"])
-
-_CST = timezone(timedelta(hours=8))
-
-
-def _today_start_utc() -> datetime:
-    """北京时间今日 0 点，转回 UTC naive，供 DB 比较。"""
-    now_cst = datetime.now(_CST)
-    win_cst = now_cst.replace(hour=0, minute=0, second=0, microsecond=0)
-    return win_cst.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 @router.get("/summary")
@@ -23,7 +15,7 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
     now = datetime.utcnow()
     d7  = now - timedelta(days=7)
     d30 = now - timedelta(days=30)
-    today_start = _today_start_utc()
+    today_start = local_day_start_utc()
 
     # ── 用户 ──────────────────────────────────────────────────────────────────
     total_users = (await db.execute(
@@ -143,43 +135,45 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
 
 @router.get("/trends")
 async def get_trends(days: int = Query(default=30, ge=7, le=90), db: AsyncSession = Depends(get_db)):
-    now = datetime.utcnow()
-    start = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    date_list = [(start + timedelta(days=i)).date() for i in range(days)]
-    labels = [(start + timedelta(days=i)).strftime("%-m/%-d") for i in range(days)]
+    now_local = datetime.now(LOCAL_TZ)
+    start_local = (now_local - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
+    local_date_list = [(start_local + timedelta(days=i)).date() for i in range(days)]
+    labels = [(start_local + timedelta(days=i)).strftime("%-m/%-d") for i in range(days)]
 
-    agent_rows = (await db.execute(text("""
-        SELECT DATE(created_at) AS d,
+    tz_expr = utc_to_local_date_expr()   # e.g. INTERVAL '+8 hours'
+    agent_rows = (await db.execute(text(f"""
+        SELECT DATE(created_at + {tz_expr}) AS d,
                COUNT(*)::int AS calls,
                COALESCE(SUM(tokens_in + tokens_out), 0)::bigint AS tokens
         FROM agent_usage
         WHERE created_at >= :start
-        GROUP BY DATE(created_at)
-    """), {"start": start})).all()
+        GROUP BY DATE(created_at + {tz_expr})
+    """), {"start": start_utc})).all()
     agent_map = {r.d: (r.calls, int(r.tokens)) for r in agent_rows}
 
-    user_rows = (await db.execute(text("""
-        SELECT DATE(created_at) AS d, COUNT(*)::int AS cnt
+    user_rows = (await db.execute(text(f"""
+        SELECT DATE(created_at + {tz_expr}) AS d, COUNT(*)::int AS cnt
         FROM users
         WHERE created_at >= :start
-        GROUP BY DATE(created_at)
-    """), {"start": start})).all()
+        GROUP BY DATE(created_at + {tz_expr})
+    """), {"start": start_utc})).all()
     user_map = {r.d: r.cnt for r in user_rows}
 
-    proj_rows = (await db.execute(text("""
-        SELECT DATE(done_at) AS d, COUNT(*)::int AS cnt
+    proj_rows = (await db.execute(text(f"""
+        SELECT DATE(done_at + {tz_expr}) AS d, COUNT(*)::int AS cnt
         FROM projects
         WHERE done_at IS NOT NULL AND done_at >= :start
-        GROUP BY DATE(done_at)
-    """), {"start": start})).all()
+        GROUP BY DATE(done_at + {tz_expr})
+    """), {"start": start_utc})).all()
     proj_map = {r.d: r.cnt for r in proj_rows}
 
     return {
         "labels":              labels,
-        "agent_calls":         [agent_map.get(d, (0, 0))[0] for d in date_list],
-        "agent_tokens":        [agent_map.get(d, (0, 0))[1] for d in date_list],
-        "user_registrations":  [user_map.get(d, 0) for d in date_list],
-        "project_completions": [proj_map.get(d, 0) for d in date_list],
+        "agent_calls":         [agent_map.get(d, (0, 0))[0] for d in local_date_list],
+        "agent_tokens":        [agent_map.get(d, (0, 0))[1] for d in local_date_list],
+        "user_registrations":  [user_map.get(d, 0) for d in local_date_list],
+        "project_completions": [proj_map.get(d, 0) for d in local_date_list],
     }
 
 

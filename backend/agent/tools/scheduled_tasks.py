@@ -169,7 +169,7 @@ class ScheduledTasksSkill(BaseSkill):
             name="create_scheduled_task", label="新建定时任务",
             description=("创建一个定时任务：到点自动按 instruction 执行并把结果投递给用户。一次带齐参数即可，无需多轮。\n"
                          + _CRON_HINT
-                         + "\n渠道 channels：web(站内通知,默认) / feishu / qq；设 feishu/qq 前先确认用户已绑定对应 IM，否则会投递失败。"),
+                         + "\n渠道 channels：web(站内通知,默认) / feishu / qq；某渠道是否已连**看系统提示「当前对话来源 / 通知渠道」**——已连(✅)的直接设，只有未连(❌)才提示用户去绑（用户正用某 IM 跟你聊＝那个渠道必然已连，别让 TA 扫码）。"),
             input_schema={
                 "type": "object",
                 "properties": {

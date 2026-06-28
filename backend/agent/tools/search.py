@@ -12,6 +12,8 @@ sogou/quark/360search 可达，固定带 engines 避开会超时的 google/bing 
 import json
 from datetime import datetime
 
+from app.core.tz import local_day_start_utc
+
 import httpx
 from sqlalchemy import func, select
 
@@ -81,7 +83,7 @@ async def _deep_research(db, user_id, args: dict):
         else settings.quota.default_search_limit_daily
     )
     if limit is not None:
-        day_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = local_day_start_utc()
         used = (await db.execute(
             select(func.count(SearchUsage.id)).where(
                 SearchUsage.user_id == user_id, SearchUsage.created_at >= day_start

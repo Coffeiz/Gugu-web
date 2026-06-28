@@ -11,21 +11,21 @@ from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select, func, and_
 
-_CST = timezone(timedelta(hours=8))
+from app.core.tz import LOCAL_TZ
 
 
 def six_h_window_start(now: datetime) -> datetime:
-    """当前 6h 固定窗口起点（每天 00 / 06 / 12 / 18 CST 整点，非滑动）。返回 UTC naive datetime。"""
-    now_cst = now.replace(tzinfo=timezone.utc).astimezone(_CST)
-    win_cst = now_cst.replace(hour=(now_cst.hour // 6) * 6, minute=0, second=0, microsecond=0)
-    return win_cst.astimezone(timezone.utc).replace(tzinfo=None)
+    """当前 6h 固定窗口起点（每天 00 / 06 / 12 / 18 本地整点，非滑动）。返回 UTC naive datetime。"""
+    now_local = now.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ)
+    win_local = now_local.replace(hour=(now_local.hour // 6) * 6, minute=0, second=0, microsecond=0)
+    return win_local.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _week_start(now: datetime) -> datetime:
-    """本周一 00:00 CST 起点，返回 UTC naive datetime。"""
-    nc = now.replace(tzinfo=timezone.utc).astimezone(_CST)
-    wc = (nc - timedelta(days=nc.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-    return wc.astimezone(timezone.utc).replace(tzinfo=None)
+    """本周一 00:00 本地起点，返回 UTC naive datetime。"""
+    nl = now.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ)
+    wl = (nl - timedelta(days=nl.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    return wl.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 async def is_exhausted(db, user_id, settings) -> bool:

@@ -38,8 +38,6 @@
         </div>
 
         <div class="svc-meta">
-          <div v-if="s.pid"><span>PID</span>{{ s.pid }}</div>
-          <div v-if="s.host"><span>主机</span>{{ s.host }}</div>
           <div v-if="s.name === 'web'"><span>运行</span>{{ fmtDur(s.uptime_secs) }}</div>
           <div v-else-if="s.last_seen_secs != null"><span>心跳</span>{{ s.last_seen_secs }}s 前</div>
           <div v-if="s.name === 'supervisor'"><span>网关</span>{{ s.extra?.count ?? 0 }} 个</div>
@@ -48,7 +46,6 @@
         <div v-if="s.name === 'supervisor' && s.extra?.gateways?.length" class="svc-gateways">
           <div v-for="g in s.extra.gateways" :key="g.key" class="svc-gw">
             <span class="svc-gw-plat">{{ g.platform }}</span>
-            <span class="svc-gw-owner">{{ (g.owner || '').slice(0, 8) }}</span>
           </div>
         </div>
 
@@ -182,7 +179,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   font-size: 10.5px; padding: 2px 7px; border-radius: 5px;
   background: rgba(123,127,178,0.16); color: rgba(180,185,225,0.95);
 }
-.svc-gw-owner { color: rgba(255,255,255,0.4); margin-left: 5px; font-family: monospace; }
+
 
 .svc-jobs { margin-top: 10px; }
 .svc-jobs-title { font-size: 11px; color: rgba(255,255,255,0.35); margin-bottom: 5px; }
