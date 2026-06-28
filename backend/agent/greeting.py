@@ -25,7 +25,7 @@ _PROMPT = (
     "- 暖、像朋友、可以一点点俏皮但真诚；**表情极简**，能不用就不用。\n"
     "- 2~3 句，结尾把话交回他（想做点啥、想理清啥、随便聊聊都行）。\n"
     "- **据下面「上次和你说话」定口吻**：若就在最近（几小时内 / 今天 / 昨天），**绝不要说「好久不见 / 好久没见 / 这阵子忙啥 / 最近怎么样」这类久别重逢的话**——就自然接上、像刚才还在聊；只有确实隔了好些天，才适合久别重逢的语气。没有聊天记录就给个轻松招呼，也别说好久不见。\n"
-    "- 若下面有近期上下文，自然带一句（最近在忙的项目、快到的提醒等），**别硬塞、别像念清单**；没有就给一句通用暖招呼。\n"
+    "- 若下面有近期上下文，自然带一句——**优先挑「最近在推进的项目 / 当下重心 / 近期日程」**来提；**「长期背景」里的陈年事实（早就聊过的旧项目、老偏好）别拿来当『最近在忙』说**，那是旧的、未必还在做。**别硬塞、别像念清单**；近期啥都没有就给一句通用暖招呼，别翻旧账。\n"
     "{ctx}"
     "直接输出招呼本身，不要任何解释或引号。"
 )
@@ -57,28 +57,22 @@ async def _last_seen_part(db: AsyncSession, user_id) -> str:
 
 
 async def _recent_context(db: AsyncSession, user_id) -> str:
-    parts: list[str] = []
-    # 上次互动时间（定问候口吻：刚聊过别说「好久不见」）——放最前，最显眼
+    # 上次互动时间（定问候口吻：刚聊过别说「好久不见」）
     seen = await _last_seen_part(db, user_id)
-    if seen:
-        parts.append(seen)
-    # 当前状态快照 + 长期 fact + 近 7 天 daily
+    # 记忆：当前状态快照 + 长期 fact + 近 7 天 daily（先取出，下面按优先级排）
+    summary = facts = daily = ""
     try:
         mem = await mem_store.read_memory(user_id)
-        summary = (mem.get("summary") or "").strip()
-        if summary:
-            parts.append("【TA 最近在忙什么】\n" + summary[:400])   # 问候最该参考的当下重心
-        facts = (mem.get("facts") or "").strip()
-        if facts:
-            parts.append("【长期了解】\n" + facts[:800])
+        summary = (mem.get("summary") or "").strip()[:400]
+        facts = (mem.get("facts") or "").strip()[:800]
         cutoff = (local_now().date() - timedelta(days=7)).isoformat()
         daily_lines = [ln for ln in (mem.get("daily") or "").splitlines()
                        if ln.strip().startswith("- ") and ln[2:12] >= cutoff]
-        if daily_lines:
-            parts.append("【近 7 天记忆】\n" + "\n".join(daily_lines[:10]))
+        daily = "\n".join(daily_lines[:10])
     except Exception:
         pass
-    # 近 7 天有动静的项目
+    # 近 7 天有动静的项目（greeting 最该优先参考的「最近在做什么」）
+    proj_part = ""
     try:
         since = datetime.utcnow() - timedelta(days=7)
         rows = (await db.execute(
@@ -86,11 +80,11 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
             .where(Project.user_id == user_id, Project.updated_at >= since, Project.archived.is_(False))
             .order_by(Project.updated_at.desc()).limit(6))).scalars().all()
         if rows:
-            parts.append("【近 7 天有动静的项目】\n" + "\n".join(
-                f"- {p.name}（{p.progress}%）" for p in rows))
+            proj_part = "\n".join(f"- {p.name}（{p.progress}%）" for p in rows)
     except Exception:
         pass
     # 提醒：近 7 天 ~ 未来 14 天的日历事件
+    ev_part = ""
     try:
         lo = (date.today() - timedelta(days=7)).isoformat()
         hi = (date.today() + timedelta(days=14)).isoformat()
@@ -99,9 +93,24 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
             .where(CalendarEvent.user_id == user_id, CalendarEvent.date >= lo, CalendarEvent.date <= hi)
             .order_by(CalendarEvent.date).limit(6))).scalars().all()
         if evs:
-            parts.append("【近期日程 / 提醒】\n" + "\n".join(f"- {e.date} {e.title}" for e in evs))
+            ev_part = "\n".join(f"- {e.date} {e.title}" for e in evs)
     except Exception:
         pass
+    # 优先级：最近在推进的（项目 > 当下重心 > 日程）排前、最显眼；长期 facts 垫底并明确
+    # 标成「背景」——别让陈年事实（如早就聊过的旧项目名）被当成「最近在忙」拿出来。
+    parts: list[str] = []
+    if seen:
+        parts.append(seen)
+    if proj_part:
+        parts.append("【最近在推进的项目】（greeting 优先从这里挑一个自然带）\n" + proj_part)
+    if summary:
+        parts.append("【TA 最近在忙什么】\n" + summary)
+    if ev_part:
+        parts.append("【近期日程 / 提醒】\n" + ev_part)
+    if daily:
+        parts.append("【近 7 天记忆】\n" + daily)
+    if facts:
+        parts.append("【长期背景（陈年事实，**别当成「最近在忙」随口提**，仅帮你把握 TA 是谁）】\n" + facts)
     return ("\n近期上下文（仅供你自然带一句，别照念）：\n" + "\n\n".join(parts) + "\n\n") if parts else "\n"
 
 

@@ -9,7 +9,28 @@
 
 ## [Unreleased]
 
-_（下个版本的改动先记到这里）_
+> 时区统一、IM 时间修复、后台脱敏、体验修缮。
+
+### 修复
+
+- **IM 聊天气泡时间偏 8 小时**：`agent.py` 的 `createdAt` / `updatedAt` 补 `"Z"` 后缀，前端 `new Date()` 正确按 UTC 解析后 `toLocaleTimeString` 转本地时间。
+- **后台管理面板时间偏 8 小时**：系统日志 / 邀请码 / 反馈 / 定时任务的 `strftime` 改为 `fmt_local()`，直接下发本地时区字符串。
+- **所有时区散落 `timedelta(hours=8)` 集中**：新增 `app/core/tz.py`（`LOCAL_TZ` / `local_now` / `local_day_start_utc` / `fmt_local`），quota / search / overview / greeting / scheduled_tasks / builder / admin_analytics 统一引用，消除各模块各自硬编码。
+- **删除项目工具崩溃**：`agent/tools/projects.py` `_delete_project` 修复 `rehome_project_files_to_personal` ImportError（该函数已删除），改为直接软删文件 + 删项目。
+- **IM 「确认用的嗯」被吞**：新增 `runtime_state.set/is_awaiting`（20 min Redis TTL），咕咕以提问/确认收尾 → worker 置标志 → `router.decide()` awaiting=True 时 ACK/CANCEL 放行进 agent。
+
+### 新增
+
+- **飞书语音消息**：`adapters/feishu.py` 接 `audio` 类型，opus → mp3（ffmpeg）→ 语音条 + 30 天存储；缺 ffmpeg 则原样兜底。
+- **深夜语境提示（0–4 点）**：`builder.py` 注入「日出为一天分界」hint，避免咕咕把深夜用户口中的「明天」误当作日历后天。
+
+### 改进
+
+- **DAU 改为登录即算**：后台统计从「当天有 AI 对话」改为 `last_active_at >= 今日零点`（`GET /me` 节流更新），`User` 加 `last_active_at` 字段 + 迁移。
+- **问候优先级重排**（`greeting.py`）：上下文注入顺序改为「最近推进项目 → 当前状态快照 → 近期日程 → 近 7 天 daily → 长期 facts（标注为背景、禁止当「最近在忙」提）」，防止陈年旧事被当近况说出来。
+- **服务状态脱敏**：隐藏 PID / 主机名 / 网关所属用户名，定时任务列表改为只显示数量。
+- **登录页备案号**：底部加「Created by Claude with love · 苏ICP备2026042185号」。
+- **通知气泡关闭即已读**：关闭气泡同时调 `uiStore.markRead`，与侧边栏通知中心状态同步。
 
 ## [0.13.2] - 2026-06-28 · 微信接入 + 记忆四层 + 音视频·语音 + 精力修复 + 体验打磨
 
