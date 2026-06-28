@@ -36,14 +36,18 @@ async def _write(key: str, text: str) -> None:
 
 
 async def read_memory(user_id) -> dict:
-    """返回 {facts, memory, daily, summary, summary_ts}，缺失为空串/None。
-    summary_ts = summary 上次更新的 epoch（给时间衰减用，见 agent/decay.py）。"""
+    """返回 {facts, memory, daily, summary, summary_ts, lens}，缺失为空串/None。
+    summary_ts = summary 上次更新的 epoch（给时间衰减用，见 agent/decay.py）。
+    lens = 渲染好的「解读镜片」注入块（per-user 解读先验，见 agent/memory/lens.py），无则空串。"""
     facts   = (await _read(_key(user_id, "facts.md"))).strip()
     memory  = (await _read(_key(user_id, "memory.md"))).strip()
     daily   = (await _read(_key(user_id, "daily.md"))).strip()
     summary = (await _read(_key(user_id, "summary.md"))).strip()
     summary_ts = await read_summary_ts(user_id)
-    return {"facts": facts, "memory": memory, "daily": daily, "summary": summary, "summary_ts": summary_ts}
+    from agent.memory import lens as _lens   # 局部导入避免包内循环
+    lens_block = await _lens.read_block(user_id)
+    return {"facts": facts, "memory": memory, "daily": daily,
+            "summary": summary, "summary_ts": summary_ts, "lens": lens_block}
 
 
 async def read_summary_ts(user_id) -> float | None:

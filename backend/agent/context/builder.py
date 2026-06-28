@@ -141,6 +141,11 @@ def build(profile: str, user_name: str, projects: list, events: list,
         sections.append(persona)
     if beh_block:
         sections.append(beh_block)
+    # 解读镜片（per-user lens）：紧跟行为模块、置于工具准则之前——它偏置「怎么读懂 TA」，
+    # 是最上游的感知偏好。read_memory 已渲染好（按 confidence 选话术、退休低分规则）。
+    lens_block = (memory.get("lens") or "").strip()
+    if lens_block:
+        sections.append(lens_block)
     if skills_policy:
         sections.append(skills_policy)
     if content_policy:

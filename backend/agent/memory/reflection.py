@@ -31,8 +31,11 @@ _SYS_FALLBACK = (
     "进 facts_add；被推翻/过时/被替换的旧条进 facts_remove（尽量照抄原文）；没变动就都给空数组、"
     "别重列旧事实。summary 是一句「用户当下在忙什么/近期重心」的快照，基于原快照演进、没变就原样返回。"
     "perception 是本轮观察（intent/ambiguity/emotion/emo_strength），照实判、只打点。"
+    "lens_hint：仅当本轮**确实暴露了一条「怎么读懂这个用户」的可复用规则**才写、绝大多数轮留空字符串"
+    "（一次性误会、具体事实都不算）。固定格式『「触发语」→ 真实含义/应对』，触发语放「」里写关键几字"
+    "（如『「随便」→ 其实有偏好要追问』），便于复现识别。"
     '严格只输出 JSON：{"facts_add": ["..."], "facts_remove": ["..."], "daily": "一句话总结(没有就空字符串)", '
-    '"summary": "当前状态快照(没有就空字符串)", '
+    '"summary": "当前状态快照(没有就空字符串)", "lens_hint": "", '
     '"perception": {"intent": "情绪/查询/执行/...", "ambiguity": 0, "emotion": "无", "emo_strength": 0}}'
 )
 
@@ -159,6 +162,9 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> No
             # 写完 daily 顺带检查压缩：攒够则把最老的沉淀进 memory.md
             from agent.memory import compress
             await compress.compact(user_id, settings)
+        # lens（解读先验）gated 学习：hint 多数轮为空；候选须复现才提拔成规则。顺带做退休维护。
+        from agent.memory import lens
+        await lens.observe(user_id, out.get("lens_hint"))
     except Exception:
         pass  # 反思是锦上添花，任何失败都不能影响对话
 
