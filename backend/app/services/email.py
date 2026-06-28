@@ -17,12 +17,23 @@ logger = logging.getLogger(__name__)
 _SENDER_NAME = "咕咕"   # 发件人显示名（自动 RFC2047 编码，不会再 ascii 报错）
 
 
-def _build_msg(subject: str, body: str, from_addr: str, to_addr: str, html: str | None = None) -> EmailMessage:
+def _resolve_from(from_field: str, user: str) -> tuple[str, str]:
+    """解析出 (显示名, 发件地址)。
+
+    后台「发件人」字段常被填成显示名（如「咕咕」）而非邮箱——若直接当地址塞进
+    From，信封发件人会是 `<咕咕>`，smtplib 发 `MAIL FROM` 时按 ASCII 编码即崩。
+    规则：含 `@` 的字段才当地址，否则当显示名、地址退回登录账号 `user`（真实邮箱）。"""
+    name = from_field if (from_field and "@" not in from_field) else _SENDER_NAME
+    addr = from_field if (from_field and "@" in from_field) else user
+    return name, addr
+
+
+def _build_msg(subject: str, body: str, from_name: str, from_addr: str, to_addr: str, html: str | None = None) -> EmailMessage:
     """构建一封邮件。EmailMessage 默认策略会自动把非 ASCII 头编成 =?utf-8?…?=。"""
     msg = EmailMessage()
     msg["Subject"] = subject
-    # 友好发件名「咕咕 <addr>」；charset=utf-8 让中文名按 RFC2047 编码（无 from_addr 时退空）
-    msg["From"] = formataddr((_SENDER_NAME, from_addr), "utf-8") if from_addr else from_addr
+    # 友好发件名「name <addr>」；charset=utf-8 让中文显示名按 RFC2047 编码（地址须是 ASCII 邮箱）
+    msg["From"] = formataddr((from_name, from_addr), "utf-8") if from_addr else from_addr
     msg["To"] = to_addr
     msg.set_content(body)
     if html:
@@ -56,8 +67,8 @@ def send_email(subject: str, body: str, *, to_addr: str | None = None, html: str
     to = to_addr or cfg.to_addr
     if not cfg.host or not to:
         return False
-    from_addr = cfg.from_addr or cfg.user
-    msg = _build_msg(subject, body, from_addr, to, html)
+    from_name, from_addr = _resolve_from(cfg.from_addr, cfg.user)
+    msg = _build_msg(subject, body, from_name, from_addr, to, html)
     try:
         _deliver(host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password,
                  use_ssl=cfg.use_ssl, msg=msg)
@@ -70,10 +81,11 @@ def send_email(subject: str, body: str, *, to_addr: str | None = None, html: str
 def send_test_email(*, host: str, port: int, user: str, password: str,
                     from_addr: str, to_addr: str, use_ssl: bool) -> None:
     """SMTP 连通测试：用传入的（可能未保存的）参数发一封测试邮件。失败抛异常（调用方捕获给提示）。"""
+    from_name, real_from = _resolve_from(from_addr, user)
     msg = _build_msg(
         "咕咕 · SMTP 测试邮件",
         "这是来自咕咕后台的 SMTP 连通性测试邮件，收到即表示配置正确。",
-        from_addr or user, to_addr)
+        from_name, real_from, to_addr)
     _deliver(host=host, port=port, user=user, password=password, use_ssl=use_ssl, msg=msg)
 
 
