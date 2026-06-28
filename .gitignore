@@ -19,6 +19,7 @@ htmlcov/
 # ===== Node / Frontend =====
 frontend/node_modules/
 frontend/dist/
+frontend/dist.zip
 frontend/build/
 frontend/.vite/
 frontend/.env
