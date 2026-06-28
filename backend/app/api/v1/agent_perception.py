@@ -17,7 +17,7 @@ router = APIRouter(prefix="/admin/perception", tags=["admin"])
 
 _PERC_KEY = "perc:events"
 
-# 异常阈值
+# 异常阈值（默认值；可由面板按 query 参数覆盖，仅影响本次「怎么看」，不改系统行为）
 _RATE_HI = 0.25        # 某 intent 误判率超此 → 标红
 _MIN_N = 10            # 该 intent 样本太少不下结论
 _AMBIG_HI = 60         # 平均歧义度偏高
@@ -29,8 +29,11 @@ def _mean(xs, nd=1):
 
 
 @router.get("")
-async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int = 1):
-    """感知总览。hours=时间窗（默认 7 天，0=不限）;min_events=活跃用户门槛（窗口内 ≥N 轮反思）。"""
+async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int = 1,
+                           rate_hi: float = _RATE_HI, min_n: int = _MIN_N, ambig_hi: float = _AMBIG_HI):
+    """感知总览。hours=时间窗（默认 7 天，0=不限）;min_events=活跃用户门槛（窗口内 ≥N 轮反思）;
+    rate_hi/min_n/ambig_hi=标红阈值（误判率/最小样本/歧义度），默认即原常量，仅改「怎么看」不改系统行为。"""
+    thresholds = {"rate_hi": rate_hi, "min_n": min_n, "ambig_hi": ambig_hi}
     r = get_redis()
     raw = await r.lrange(_PERC_KEY, 0, limit - 1)
     events = []
@@ -59,7 +62,8 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
     misp = [e for e in events if e.get("t") == "misperc" and e.get("u") in active]
 
     if not active:
-        return {"window_hours": hours, "min_events": min_events, "active_users": 0,
+        return {"window_hours": hours, "min_events": min_events, "thresholds": thresholds,
+                "active_users": 0,
                 "perc_total": 0, "misperc_total": 0, "overall_misperc_rate": None,
                 "avg_ambiguity": None, "avg_emo_strength": None,
                 "intent_distribution": [], "by_model": [], "emotion_distribution": [],
@@ -125,20 +129,21 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
     # 异常标记
     flags = []
     for row in by_intent:
-        if row["count"] >= _MIN_N and row["misperc_rate"] and row["misperc_rate"] > _RATE_HI:
+        if row["count"] >= min_n and row["misperc_rate"] and row["misperc_rate"] > rate_hi:
             flags.append(f"intent「{row['intent']}」误判率偏高 {row['misperc_rate']:.0%}（n={row['count']}）")
-    if avg_ambiguity is not None and avg_ambiguity > _AMBIG_HI:
+    if avg_ambiguity is not None and avg_ambiguity > ambig_hi:
         flags.append(f"平均歧义度偏高 {avg_ambiguity}（模型普遍读不准 / 该多澄清）")
     if len(perc) >= 50 and not any(x["intent"] in ("情绪", "陪伴") and x["count"] for x in by_intent):
         flags.append("情绪/陪伴型占比为 0 —— 情绪需求可能被系统性误归类")
     if overall_misperc_rate is not None:
         for row in by_model:
-            if row["count"] >= _MIN_N and row["misperc_rate"] and row["misperc_rate"] > overall_misperc_rate + 0.1:
+            if row["count"] >= min_n and row["misperc_rate"] and row["misperc_rate"] > overall_misperc_rate + 0.1:
                 flags.append(f"模型「{row['model']}」误判率 {row['misperc_rate']:.0%} 明显高于整体 {overall_misperc_rate:.0%}")
 
     return {
         "window_hours": hours,
         "min_events": min_events,
+        "thresholds": thresholds,
         "active_users": len(active),
         "perc_total": len(perc),
         "misperc_total": len(misp),

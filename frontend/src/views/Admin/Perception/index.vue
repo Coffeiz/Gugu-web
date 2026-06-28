@@ -22,6 +22,30 @@
       </div>
     </div>
 
+    <!-- 阈值条：只改「怎么看」这屏数据（口径 + 标红线），不动系统行为 -->
+    <div class="ctrl-bar">
+      <span class="ctrl-grp">
+        <label>活跃门槛</label>
+        <input type="number" min="1" step="1" v-model.number="minEvents" @change="load">
+        <span class="ctrl-u">轮</span>
+      </span>
+      <span class="ctrl-grp">
+        <label>标红误判率</label>
+        <input type="number" min="0" max="100" step="5" v-model.number="rateHiPct" @change="load">
+        <span class="ctrl-u">%</span>
+      </span>
+      <span class="ctrl-grp">
+        <label>歧义偏高线</label>
+        <input type="number" min="0" max="100" step="5" v-model.number="ambigHi" @change="load">
+      </span>
+      <span class="ctrl-grp">
+        <label>最小样本</label>
+        <input type="number" min="1" step="1" v-model.number="minN" @change="load">
+      </span>
+      <button v-if="!isDefault" class="ctrl-reset" @click="resetThresholds">复位默认</button>
+      <span class="ctrl-note">阈值只改这屏的看法（口径/标红），不影响线上行为</span>
+    </div>
+
     <div v-if="loading && !loaded" class="state-msg">加载中…</div>
     <div v-else-if="err" class="state-msg err">{{ err }}</div>
     <div v-else-if="!data.active_users" class="state-msg">{{ data.note || '暂无活跃用户数据' }}</div>
@@ -49,7 +73,7 @@
           <div class="card-val">{{ pct(data.overall_misperc_rate) }}</div>
           <div class="card-lbl">误判率（宏平均）</div>
         </div>
-        <div class="card" :class="{ 'card-active': data.avg_ambiguity > 60 }">
+        <div class="card" :class="{ 'card-active': data.avg_ambiguity > ambigHi }">
           <div class="card-icon ic-amber"><PhBrain :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.avg_ambiguity ?? '—' }}</div>
           <div class="card-lbl">平均歧义度 · 情绪 {{ data.avg_emo_strength ?? '—' }}</div>
@@ -101,12 +125,31 @@ const loaded = ref(false)
 const err = ref('')
 const ranges = [{ h: 24, label: '24h' }, { h: 168, label: '7天' }, { h: 720, label: '30天' }, { h: 0, label: '全部' }]
 
+// 可调阈值（默认即后端原常量）：活跃门槛 / 标红误判率(%) / 歧义偏高线 / 最小样本
+const DEFAULTS = { minEvents: 1, rateHiPct: 25, ambigHi: 60, minN: 10 }
+const minEvents = ref(DEFAULTS.minEvents)
+const rateHiPct = ref(DEFAULTS.rateHiPct)
+const ambigHi = ref(DEFAULTS.ambigHi)
+const minN = ref(DEFAULTS.minN)
+const isDefault = computed(() =>
+  minEvents.value === DEFAULTS.minEvents && rateHiPct.value === DEFAULTS.rateHiPct &&
+  ambigHi.value === DEFAULTS.ambigHi && minN.value === DEFAULTS.minN)
+function resetThresholds() {
+  minEvents.value = DEFAULTS.minEvents; rateHiPct.value = DEFAULTS.rateHiPct
+  ambigHi.value = DEFAULTS.ambigHi; minN.value = DEFAULTS.minN; load()
+}
+
 const intents = computed(() => data.value.intent_distribution || [])
 
 async function load() {
   loading.value = true
   try {
-    const res = await adminStore.authFetch(`/api/v1/admin/perception?hours=${hours.value}`)
+    const me = Math.max(1, minEvents.value || 1)
+    const rate = Math.min(1, Math.max(0, (rateHiPct.value || 0) / 100))
+    const amb = Math.max(0, ambigHi.value || 0)
+    const mn = Math.max(1, minN.value || 1)
+    const q = `hours=${hours.value}&min_events=${me}&rate_hi=${rate}&ambig_hi=${amb}&min_n=${mn}`
+    const res = await adminStore.authFetch(`/api/v1/admin/perception?${q}`)
     if (!res.ok) throw new Error(`加载失败 (${res.status})`)
     data.value = await res.json()
     loaded.value = true
@@ -116,9 +159,9 @@ async function load() {
 function setRange(h) { hours.value = h; load() }
 
 function pct(v) { return v == null ? '—' : (v * 100).toFixed(0) + '%' }
-// >25% 标红、>15% 标黄（与后端异常阈值对齐）
-function rateClass(v) { return v != null && v > 0.25 ? 'bad' : (v != null && v > 0.15 ? 'warn' : '') }
-function rateCard(v) { return v != null && v > 0.25 ? 'card-bad' : (v != null && v > 0.15 ? 'card-active' : '') }
+// 标红线 = 当前 rateHiPct；标黄 = 其 0.6 倍（随面板阈值联动）
+function rateClass(v) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return v != null && v > hi ? 'bad' : (v != null && v > mid ? 'warn' : '') }
+function rateCard(v) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return v != null && v > hi ? 'card-bad' : (v != null && v > mid ? 'card-active' : '') }
 
 onMounted(load)
 </script>
@@ -141,6 +184,17 @@ onMounted(load)
 .refresh-btn:disabled { opacity: .4; cursor: not-allowed; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .spinning { animation: spin .8s linear infinite; }
+
+/* ── 阈值条 ── */
+.ctrl-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding: 16px 36px 0; }
+.ctrl-grp { display: flex; align-items: center; gap: 6px; }
+.ctrl-grp label { font-size: 11.5px; color: rgba(255,255,255,0.42); }
+.ctrl-grp input { width: 54px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: rgba(255,255,255,0.85); font-size: 12px; padding: 4px 7px; text-align: right; outline: none; transition: border-color .15s; }
+.ctrl-grp input:focus { border-color: rgba(150,155,210,0.55); }
+.ctrl-u { font-size: 11px; color: rgba(255,255,255,0.3); }
+.ctrl-reset { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.55); font-size: 11.5px; border-radius: 6px; padding: 4px 10px; cursor: pointer; transition: all .15s; }
+.ctrl-reset:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); }
+.ctrl-note { margin-left: auto; font-size: 10.5px; color: rgba(255,255,255,0.25); }
 
 .state-msg { padding: 60px 36px; text-align: center; color: rgba(255,255,255,0.3); font-size: 14px; }
 .state-msg.err { color: #e07070; }
