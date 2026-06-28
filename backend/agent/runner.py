@@ -347,10 +347,12 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         except Exception:
             pass
 
-        # 对话后反思（fire-and-forget）
+        # 对话后反思（fire-and-forget）。IM 用「工具轮次让 anthr_messages 变长」当「咕咕动作了」代理，
+        # 这样「嗯」确认后真建改东西的轮也会反思（openai 路径无此代理、回落到 user_msg 判，可接受）。
         if profile.memory_enabled and text:
             from agent.memory import reflection
-            reflection.schedule(user_id, req.user_name, req.message, text, settings)
+            im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
+            reflection.schedule(user_id, req.user_name, req.message, text, settings, used_tools=im_used_tools)
 
         # 对话压缩（fire-and-forget）
         from agent.context import compress_conv

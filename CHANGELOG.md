@@ -23,6 +23,8 @@
 
 ### 记忆系统：结构化 facts（2b）+ 增量化 + 时间衰减 + 事件总线 + 控制命令
 
+- **反思跳过的修正：确认轮带动作也反思**（`memory/reflection.py` `schedule`）：原本「嗯/好的」这类纯应答词整轮跳过反思——但它们常用来**确认咕咕的方案**，若这轮咕咕**真用了工具**（如「要建项目吗？」→「嗯」→真建了），现在即便用户只说「嗯」也反思，记下这轮做了啥（daily/summary）。判据是「本轮有没有动作（工具）」而非消息长短：web 传 `used_tools` 列表、IM 用「工具轮次让消息变长」当代理；纯寒暄无动作仍跳过、不浪费调用。
+
 - **facts 结构化（2b）**（`memory/store.py` `facts.json`）：facts 从 markdown 行升级为结构化条目，每条带 `kind`(observed=用户亲述/inferred=咕咕推断) / `conf`(置信) / `imp`(importance 1-5) / `ts`。反思吐 `facts_add`(对象 `{text,kind,importance}`)/`facts_remove`，`apply_facts_ops` 应用：命中相似条**印证**（升 conf、刷新 ts、亲述升级 observed），否则新增。**注入按 effective×importance 过滤排序**（importance 过滤）；**observed 不衰减、inferred 按半衰期（45 天）淡出**（复用 `decay.py`）——旧的推断类事实自然过期、不再当永真。旧 `facts.md` 首次读取自动迁移成 `facts.json`，零手动迁移。
 - **反思增量化（2b · delta）**（`memory/reflection.py`）：反思只吐增删、**不再回显整份 facts**。根治了「facts 一多 → 回显超 `max_tokens` → 截断 → JSON 解析失败 → 静默返回 `{}`、老用户反思全废」的隐蔽坑；`max_tokens` 回落固定 900。
 - **事件总线（2b）**（`agent/events/bus.py` + `types.py`）：轻量异步发布/订阅，事件用类（`MemoryUpdated`）不用字符串。反思 / `remember` / `/forget` 在 facts 变更后 `publish`，内置 listener 落 `agent.events` 审计日志；成就/分析等下游以后挂 listener 即可、不动发布方。

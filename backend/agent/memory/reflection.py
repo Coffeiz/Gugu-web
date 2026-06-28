@@ -136,9 +136,11 @@ def _worth_reflecting(user_msg: str) -> bool:
     return cleaned not in _TRIVIAL
 
 
-def schedule(user_id, user_name, user_msg, assistant_reply, settings) -> None:
-    """非阻塞触发一次反思。琐碎应答（嗯/好的/谢谢…）直接跳过，省调用。"""
-    if not _worth_reflecting(user_msg):
+def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools=None) -> None:
+    """非阻塞触发一次反思。琐碎应答（嗯/好的/谢谢…）默认跳过省调用——
+    但若这轮咕咕**用了工具**（如「要建项目吗？」→「嗯」→真建了），即便用户只说「嗯」也反思，
+    以记下这轮做了啥（daily/summary）。used_tools 传列表(web)或 bool(IM 代理)皆可，truthy 即视为有动作。"""
+    if not _worth_reflecting(user_msg) and not used_tools:
         return
     task = asyncio.create_task(
         reflect(user_id, user_name, user_msg, assistant_reply, settings)
