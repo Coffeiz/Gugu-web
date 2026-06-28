@@ -537,34 +537,30 @@
           </div>
           <div class="card-title-block">
             <h3>语音识别模型</h3>
-            <p>独立于主模型，专门把语音 / 音视频转成文字后交主模型处理（主模型不再被强切到 mimo）。<b>留空 = 不支持语音</b>——咕咕收到语音会回「不支持」。需用支持 <code>input_audio</code> 的模型（mimo 系，OpenAI 格式）。</p>
+            <p>独立于主模型，把语音 / 音视频转成文字后交主模型处理（主模型不再被强切）。<b>留空 = 不支持语音</b>（咕咕收到语音回「不支持」）。<b>固定走 OpenAI 兼容方式</b>（chat + input_audio）——推荐阿里百炼 <code>qwen3-asr-flash</code>。</p>
           </div>
         </div>
 
         <div class="behavior-grid">
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label">
-              <span>模型名 model</span>
-              <span class="behavior-desc">留空 = 不支持语音（收到语音回「不支持」）。填你的语音/识别模型名</span>
-            </div>
+            <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc"><b>留空 = 不支持语音</b>。MiMo 填 <code>mimo-v2.5-asr</code>；Qwen 填 <code>qwen3-asr-flash</code>（选下方 provider 会自动带上）</span></div>
             <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.model" placeholder="留空=不支持语音" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>Base URL</span></div>
-            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.base_url" placeholder="https://…/v1" />
+            <div class="behavior-label"><span>Base URL</span><span class="behavior-desc">OpenAI 兼容端点。百炼如 https://&#123;WorkspaceId&#125;.cn-beijing.maas.aliyuncs.com/compatible-mode/v1</span></div>
+            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.base_url" placeholder="https://…/compatible-mode/v1" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label"><span>API Key</span><span class="behavior-desc">留空 = 不修改（保存后回显 ****）</span></div>
             <input type="password" class="behavior-input" style="width:280px" v-model="voiceDraft.api_key" placeholder="留空=不修改" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label">
-              <span>provider / api_format</span>
-              <span class="behavior-desc">provider 如 <code>mimo</code>；api_format 填 <code>openai</code>（input_audio 走 OpenAI 格式）</span>
-            </div>
-            <div style="display:flex;gap:8px;justify-content:flex-end;flex-shrink:0;">
-              <input type="text" class="behavior-input" style="width:120px" v-model="voiceDraft.provider" placeholder="mimo" />
-              <input type="text" class="behavior-input" style="width:120px" v-model="voiceDraft.api_format" placeholder="openai" />
+            <div class="behavior-label"><span>provider</span><span class="behavior-desc">选服务商——端点/模型为空时顺带填模板（不覆盖你已填的，比如套餐端点），自行补 Key</span></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;align-items:center;">
+              <button v-for="vp in VOICE_PROVIDERS" :key="vp.provider" type="button" class="btn-ghost"
+                      :style="voiceDraft.provider === vp.provider ? 'border-color:var(--color-primary);color:var(--color-primary)' : ''"
+                      @click="pickVoiceProvider(vp)">{{ vp.label }}</button>
+              <input type="text" class="behavior-input" style="width:120px" v-model="voiceDraft.provider" placeholder="自定义" />
             </div>
           </div>
         </div>
@@ -1405,6 +1401,15 @@ const voiceSaving = ref(false)
 const voiceSaved  = ref(false)
 const voiceError  = ref('')
 function resetVoice() { Object.assign(voiceDraft, configStore.cfg.voice) }
+const VOICE_PROVIDERS = [
+  { label: 'MiMo',  provider: 'mimo', model: 'mimo-v2.5-asr',   base_url: 'https://api.xiaomimimo.com/v1' },
+  { label: 'Qwen',  provider: 'qwen', model: 'qwen3-asr-flash', base_url: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1' },
+]
+function pickVoiceProvider(vp) {
+  voiceDraft.provider = vp.provider
+  if (!(voiceDraft.model || '').trim())    voiceDraft.model    = vp.model      // 只在空时填模板，
+  if (!(voiceDraft.base_url || '').trim()) voiceDraft.base_url = vp.base_url    // 不覆盖你已填的（如套餐端点）
+}
 async function saveVoice() {
   voiceSaving.value = true; voiceSaved.value = false; voiceError.value = ''
   try {

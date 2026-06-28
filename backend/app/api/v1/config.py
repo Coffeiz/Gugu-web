@@ -395,31 +395,11 @@ async def test_smtp(body: SmtpTestParams):
         if not to_addr:
             return {"ok": False, "message": "收件人地址未配置"}
 
-        subject = "咕咕 - SMTP 测试邮件"
-        body_text = "这是来自咕咕后台的 SMTP 连通性测试邮件，收到即表示配置正确。"
-        msg = (
-            f"From: {from_addr}\r\n"
-            f"To: {to_addr}\r\n"
-            f"Subject: {subject}\r\n"
-            f"Content-Type: text/plain; charset=utf-8\r\n\r\n"
-            f"{body_text}"
-        )
-
-        def _send():
-            if use_ssl:
-                ctx = _ssl.create_default_context()
-                with smtplib.SMTP_SSL(host, port, context=ctx, timeout=10) as s:
-                    if user:
-                        s.login(user, password)
-                    s.sendmail(from_addr, [to_addr], msg.encode("utf-8"))
-            else:
-                with smtplib.SMTP(host, port, timeout=10) as s:
-                    s.starttls(context=_ssl.create_default_context())
-                    if user:
-                        s.login(user, password)
-                    s.sendmail(from_addr, [to_addr], msg.encode("utf-8"))
-
-        await asyncio.to_thread(_send)
+        from app.services import email as email_svc
+        await asyncio.to_thread(
+            email_svc.send_test_email,
+            host=host, port=port, user=user, password=password,
+            from_addr=from_addr, to_addr=to_addr, use_ssl=use_ssl)
         return {"ok": True, "message": f"测试邮件已发送至 {to_addr}"}
     except Exception as e:
         return {"ok": False, "message": str(e)}

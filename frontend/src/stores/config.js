@@ -61,7 +61,7 @@ export const useConfigStore = defineStore('config', () => {
       api_key: '',
       base_url: '',
       model: '',
-      api_format: '',
+      api_format: 'openai',
     },
     agent: {
       memory_enabled: true,

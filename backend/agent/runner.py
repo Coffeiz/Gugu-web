@@ -203,6 +203,13 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         from app.core import chat_attach
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
             user_id, getattr(req, "attachments", None) or [], req.message)
+        if getattr(req, "attachments", None):   # 诊断：带附件时记 kind/ext/media 数，排查语音为何没转写
+            import logging as _lg
+            _lg.getLogger("agent.runner").info(
+                "[语音诊断] attach=%d aug_media=%d kinds=%s exts=%s",
+                len(req.attachments or []), len(aug_media or []),
+                [c.get("kind") for c in (attach_cards or [])],
+                [c.get("ext") for c in (attach_cards or [])])
         db.add(ConversationMessage(session_id=session_id, role="user", content=req.message,
                                    files=attach_cards or None))
         await db.commit()

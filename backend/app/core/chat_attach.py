@@ -222,6 +222,17 @@ def _media_understanding_enabled() -> bool:
         return False
 
 
+def _voice_recognition_enabled() -> bool:
+    """是否配了独立「语音识别模型」（settings.voice）。配了就该为音频/语音构建 media base64
+    交给 agent.voice.transcribe 转写——**不管主模型支不支持音视频**（解耦的关键）。"""
+    try:
+        from app.core.config import get_settings
+        from agent import voice as _voice
+        return _voice.is_configured(get_settings())
+    except Exception:
+        return False
+
+
 def _fit_image_for_vision(raw: bytes, ext: str):
     """把图调整到适合喂 vision 模型的体积/尺寸，返回 (bytes, media_type)；失败返回 None。
 
@@ -320,6 +331,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> t
         return base_message, [], [], []
     vision = _vision_enabled()
     media_ok = _media_understanding_enabled()
+    voice_ok = _voice_recognition_enabled()   # 配了独立语音识别模型 → 音频/语音也构建 media 交 transcribe
     parts = [base_message] if base_message else []
     cards = []
     images: list = []   # [{media_type, b64}]，仅 vision 时填
@@ -363,9 +375,11 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> t
             noun = "语音" if is_voice else ("视频" if is_video else "音频")
             ext = (meta.get("ext") or "").lower()
             native = ext in (VIDEO_EXTS if is_video else AUDIO_EXTS)   # 语音转码后是 mp3，按音频判原生
-            # mimo+openai 路 + 是 mimo 原生格式 + 没超体积 → 真喂给模型听/看（base64）；否则退文字提示。
+            # 能喂 base64 给模型的条件：① 主模型 mimo+openai（直接听/看）；② 配了独立语音识别模型
+            #（仅音频/语音，交 transcribe 转文字）。视频仍只走 ①（ASR 听不了画面）。
+            can_feed = media_ok or (voice_ok and not is_video)
             # 非原生（amr/silk/webm 等）应在入口已转成 mp3；走到这还非原生 = 转码没成（多半缺 ffmpeg）。
-            if media_ok and native and meta["size"] <= MEDIA_RAW_MAX:
+            if can_feed and native and meta["size"] <= MEDIA_RAW_MAX:
                 try:
                     import base64
                     raw = await read_bytes(meta)
@@ -382,8 +396,8 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> t
                     continue
                 except Exception:
                     pass   # 读取/编码失败 → 退文字提示
-            if not media_ok:
-                why = f"当前模型不支持{noun}理解（需 mimo + openai 格式）"
+            if not can_feed:
+                why = f"没法处理{noun}（需主模型 mimo+openai，或在后台配「语音识别模型」）"
             elif not native:
                 why = f"这条{noun}是 {ext or '未知'} 格式、得先转成 mp3 才能听——服务器没装 ffmpeg 转不了（装上 ffmpeg 即可听内容）"
             else:

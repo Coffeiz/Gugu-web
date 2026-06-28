@@ -71,9 +71,10 @@ class VoiceSettings(AISettings):
     """语音 / 音视频识别（转写）模型——独立于主模型。把语音转成文字后交主模型处理，主模型不再被强切。
     **model 为空 = 未配置**：收到语音/音视频时咕咕直接回「不支持」，不再强切 mimo。
     需用支持 `input_audio` 的模型（mimo 系，openai 格式）。"""
-    provider: str = Field("", description="语音模型提供方（空=未配置）")
+    provider: str = Field("", description="语音模型提供方（仅记录用；语音固定走 OpenAI 兼容方式）")
     base_url: str = Field("", description="语音模型 Base URL")
     model: str = Field("", description="语音/识别模型名（空=未配置→收到语音回不支持）")
+    api_format: str = Field("openai", description="语音识别固定走 OpenAI 兼容方式（chat + input_audio）")
 
 
 class AIPresetItem(BaseModel):

@@ -169,12 +169,14 @@ async def get_quota(
         )
         return r.scalar() or 0
 
-    # 固定 6h 窗口：每天 00:00 / 06:00 / 12:00 / 18:00 UTC 整点重置（非滑动）
-    window_start = now.replace(hour=(now.hour // 6) * 6, minute=0, second=0, microsecond=0)
+    # 6h 固定窗口 + 周窗口：**与 quota.is_exhausted（硬拦）共用同一套 CST 口径**——
+    # 否则 UI 按 UTC 窗口显示「精力已恢复」、后端按 CST 窗口仍判耗尽 → 出现「明明恢复了还被拦」的矛盾。
+    from agent import quota as _quota
+    window_start = _quota.six_h_window_start(now)
     reset_6h_at = window_start + timedelta(hours=6)   # 下次重置（精力清零）时刻
     used_6h = await _used(window_start)
 
-    week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = _quota._week_start(now)
     used_weekly = await _used(week_start)
 
     limit_6h     = current_user.token_limit_6h     or settings.quota.default_token_limit_6h
