@@ -207,6 +207,24 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
+    # 语音 / 音视频：用独立「语音识别模型」转文字 → 交主模型（不强切）；没配 → 切断回「不支持」。
+    if aug_media:
+        from agent import voice as _voice
+        transcript = await _voice.transcribe(aug_media, settings)
+        if transcript is None:        # 未配置语音模型
+            block_msg = "抱歉，我现在还不能处理语音 / 音视频消息哦，打字告诉我就行～"
+            async with _sess._SessionLocal() as db2:
+                if await db2.get(ConversationSession, session_id) is not None:
+                    db2.add(ConversationMessage(session_id=session_id, role="assistant", content=block_msg))
+                    await db2.commit()
+            async for line in genstream.typed_stream(block_msg):
+                yield line
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
+        spoken = transcript.strip() or "（用户发来一段语音，但这次没听清内容）"
+        aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
+        aug_media = []                # 已转文字 → 丢媒体，主模型按文本处理
+
     # ── 先订阅频道、再启动后台生成 ──
     #    顺序很关键：pub/sub 发完即弃，若先起生成、后订阅，生成的头几个 token（短回复时是全部）
     #    会在订阅建好之前被 publish 掉 → 首条消息空气泡。先 attach 订阅，消息就进连接缓冲不丢。

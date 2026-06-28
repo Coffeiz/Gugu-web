@@ -221,17 +221,19 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             except Exception:
                 im_bridge = ""
 
-    # 音/视频理解只有 mimo+openai 路支持（input_audio/video_url 是 mimo 的 OpenAI 扩展块）。
-    # 若 pool/router 这轮选的模型走 anthropic 路（如 MiniMax-M3）或非 mimo，它消费不了媒体块——
-    # build_user_content 会把音视频丢掉，咕咕只看到「用户上传了文件」的文字 → 当成文件处理。
-    # 带媒体的这轮强制切到 active 模型（mimo+openai），让咕咕真能听/看；active 也不行就维持原状（退文字提示）。
+    # 语音 / 音视频：用独立配置的「语音识别模型」转成文字 → 交主模型，**主模型不再被强切**（见 agent/voice.py）。
+    # 没配语音模型 → 切断，回「不支持」（用户消息已存，不再生成）。
     if aug_media:
-        from agent.llm_select import use_anthropic_for as _ua, _is_mimo as _im
-        if _ua(model_cfg) or not _im(model_cfg):
-            active = settings.ai
-            if _im(active) and not _ua(active):
-                _release_model(model_cfg)   # 释放 pool 选的原模型在途计数，避免泄漏
-                model_cfg = active
+        from agent import voice as _voice
+        transcript = await _voice.transcribe(aug_media, settings)
+        if transcript is None:        # 未配置语音模型
+            _release_model(model_cfg)
+            return AgentResponse(
+                text="抱歉，我现在还不能处理语音 / 音视频消息哦，打字告诉我就行～",
+                session_id=session_id, tokens_in=0, tokens_out=0)
+        spoken = transcript.strip() or "（用户发来一段语音，但这次没听清内容）"
+        aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
+        aug_media = []                # 已转文字 → 丢媒体，主模型按文本处理
 
     # IM 来的用户消息：一存下就先推给网页（先看到「我发了什么」，咕咕回复生成完再推第二次），
     # 而不是等一轮结束把一来一回一起推。events 是局部变量（日历列表），用别名导模块。

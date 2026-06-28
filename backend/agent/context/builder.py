@@ -215,7 +215,16 @@ def _memory_block(memory: dict) -> str:
     daily   = (memory.get("daily") or "").strip()
     parts = []
     if summary:
-        parts.append("## TA 最近的状态\n\n" + summary)
+        # 时间衰减:summary 越久没更新越不可信，按权重换不同话术（数字内部用、不喂模型）
+        from agent import decay
+        w = decay.weight(memory.get("summary_ts"))
+        ad = decay.age_days(memory.get("summary_ts"))
+        if w >= 0.6:
+            parts.append("## TA 最近的状态\n\n" + summary)
+        elif w >= 0.25:
+            parts.append(f"## TA 的状态（约 {int(ad)} 天前记的，仅供参考、可能已变）\n\n" + summary)
+        else:
+            parts.append(f"## TA 较早前的状态（约 {int(ad)} 天前，多半过时——别当成现在、别据此主动提具体事）\n\n" + summary)
     if facts:
         parts.append("## 我对你的了解\n\n" + facts)
     if longterm:

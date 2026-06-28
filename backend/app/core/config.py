@@ -67,6 +67,15 @@ class AISettings(BaseModel):
     api_format: str = Field("", description="API 格式: openai | anthropic | 空=按 provider/base_url 自动判（mimo 等同时提供两套 API 的厂商可显式选）")
 
 
+class VoiceSettings(AISettings):
+    """语音 / 音视频识别（转写）模型——独立于主模型。把语音转成文字后交主模型处理，主模型不再被强切。
+    **model 为空 = 未配置**：收到语音/音视频时咕咕直接回「不支持」，不再强切 mimo。
+    需用支持 `input_audio` 的模型（mimo 系，openai 格式）。"""
+    provider: str = Field("", description="语音模型提供方（空=未配置）")
+    base_url: str = Field("", description="语音模型 Base URL")
+    model: str = Field("", description="语音/识别模型名（空=未配置→收到语音回不支持）")
+
+
 class AIPresetItem(BaseModel):
     id: str = ""
     name: str = ""
@@ -150,6 +159,7 @@ class AppSettings(BaseSettings):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     ai: AISettings = Field(default_factory=AISettings)
+    voice: VoiceSettings = Field(default_factory=VoiceSettings)   # 独立语音识别模型（空=不支持语音）
     ai_presets: AIPresets = Field(default_factory=AIPresets)
     agent: AgentBehaviorSettings = Field(default_factory=AgentBehaviorSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
@@ -196,6 +206,13 @@ class AppSettings(BaseSettings):
                     if k in AISettings.model_fields
                 }}
                 updates["ai"] = AISettings.model_construct(**merged)
+
+            if "voice" in override:
+                merged = {**self.voice.model_dump(), **{
+                    k: v for k, v in override["voice"].items()
+                    if k in VoiceSettings.model_fields
+                }}
+                updates["voice"] = VoiceSettings.model_construct(**merged)
 
             if "quota" in override:
                 merged = {**self.quota.model_dump(), **{

@@ -541,7 +541,9 @@ cd ../frontend && npm install && npm run build        # 前端重新构建
 # 或一键：make deploy（备份 + 依赖 + 迁移 + 前端 build + 重启）
 ```
 
-> ⚠️ **务必 `make migrate`，别只 restart**：启动时的 `create_all` **只建缺失的表、不会给已有表加新列**。所以凡是新增了模型列（如 `conversation_messages.files` 文件卡片、`conversation_sessions.source` 会话来源），只重启不跑迁移 → 相关写入会因「列不存在」报错。`make update` / `make deploy` 已含 migrate；手动更新记得补 `make migrate`。
+> ⚠️ **务必 `make migrate`，别只 restart**：启动时的 `create_all` **只建缺失的表、不会给已有表加新列**。所以凡是新增了模型列（如 `conversation_messages.files` 文件卡片、`conversation_sessions.source` 会话来源、`conversation_sessions.summary` 会话总结），只重启不跑迁移 → 相关写入会因「列不存在」报错。`make update` / `make deploy` 已含 migrate；手动更新记得补 `make migrate`。
+>
+> 🔥 **scp / rsync 单传文件最易踩**（devserver 实战）：单传了带新列的模型代码、却忘了 `make migrate` → **每次对话一查 `conversation_sessions` 就崩，连带反思 / 感知遥测全不跑**。排查时表面像「某功能没数据」，根因其实在这。**传了模型改动 = 立刻补 `make migrate` + 重启。**
 
 ### 7.1 数据库 Schema / 版本更新流程（改了模型后必看）
 

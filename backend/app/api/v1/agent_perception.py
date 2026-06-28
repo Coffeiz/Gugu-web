@@ -29,7 +29,7 @@ def _mean(xs, nd=1):
 
 
 @router.get("")
-async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int = 3):
+async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int = 1):
     """感知总览。hours=时间窗（默认 7 天，0=不限）;min_events=活跃用户门槛（窗口内 ≥N 轮反思）。"""
     r = get_redis()
     raw = await r.lrange(_PERC_KEY, 0, limit - 1)

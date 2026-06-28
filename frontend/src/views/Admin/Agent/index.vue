@@ -525,6 +525,63 @@
         </div>
       </section>
 
+      <!-- ── 语音识别模型 ── -->
+      <section v-if="activeTab === 'behavior'" class="config-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <rect x="7.5" y="2" width="5" height="10" rx="2.5"/>
+              <path d="M5 9a5 5 0 0 0 10 0M10 14.5V18M7 18h6"/>
+            </svg>
+          </div>
+          <div class="card-title-block">
+            <h3>语音识别模型</h3>
+            <p>独立于主模型，专门把语音 / 音视频转成文字后交主模型处理（主模型不再被强切到 mimo）。<b>留空 = 不支持语音</b>——咕咕收到语音会回「不支持」。需用支持 <code>input_audio</code> 的模型（mimo 系，OpenAI 格式）。</p>
+          </div>
+        </div>
+
+        <div class="behavior-grid">
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>模型名 model</span>
+              <span class="behavior-desc">留空 = 不支持语音（收到语音回「不支持」）。填你的语音/识别模型名</span>
+            </div>
+            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.model" placeholder="留空=不支持语音" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>Base URL</span></div>
+            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.base_url" placeholder="https://…/v1" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>API Key</span><span class="behavior-desc">留空 = 不修改（保存后回显 ****）</span></div>
+            <input type="password" class="behavior-input" style="width:280px" v-model="voiceDraft.api_key" placeholder="留空=不修改" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>provider / api_format</span>
+              <span class="behavior-desc">provider 如 <code>mimo</code>；api_format 填 <code>openai</code>（input_audio 走 OpenAI 格式）</span>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;flex-shrink:0;">
+              <input type="text" class="behavior-input" style="width:120px" v-model="voiceDraft.provider" placeholder="mimo" />
+              <input type="text" class="behavior-input" style="width:120px" v-model="voiceDraft.api_format" placeholder="openai" />
+            </div>
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <span class="save-hint" :class="{ error: !!voiceError }">
+            <template v-if="voiceSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-else-if="voiceError">{{ voiceError }}</template>
+          </span>
+          <button class="btn-ghost" @click="resetVoice">撤销修改</button>
+          <button class="btn-primary" :class="{ loading: voiceSaving }" :disabled="voiceSaving" @click="saveVoice">
+            <svg v-if="voiceSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            {{ voiceSaving ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </section>
+
       <!-- ── 状态命名 ── -->
       <section v-if="activeTab === 'labels'" class="config-card labels-card">
         <div class="card-head">
@@ -1342,6 +1399,26 @@ function resetSearch() {
   Object.assign(searchDraft, configStore.cfg.search)
 }
 
+// ── 语音识别模型 ──
+const voiceDraft  = reactive({ ...configStore.cfg.voice })
+const voiceSaving = ref(false)
+const voiceSaved  = ref(false)
+const voiceError  = ref('')
+function resetVoice() { Object.assign(voiceDraft, configStore.cfg.voice) }
+async function saveVoice() {
+  voiceSaving.value = true; voiceSaved.value = false; voiceError.value = ''
+  try {
+    await configStore.saveConfig({ voice: { ...voiceDraft } })
+    voiceSaved.value = true
+    Object.assign(voiceDraft, configStore.cfg.voice)   // key 存后回 ****，同步回「不修改」态
+    setTimeout(() => { voiceSaved.value = false }, 3000)
+  } catch (e) {
+    voiceError.value = e.message || '保存失败'
+  } finally {
+    voiceSaving.value = false
+  }
+}
+
 // ── 搜索连通测试（SearXNG / Tavily）──
 const searchTest = reactive({
   searxng: { loading: false, ok: false, msg: '' },
@@ -1540,6 +1617,7 @@ const tooltipStyle = computed(() => {
 onMounted(async () => {
   await configStore.fetchConfig()
   Object.assign(agentDraft, configStore.cfg.agent)
+  Object.assign(voiceDraft, configStore.cfg.voice)
   fetchPresets()
 })
 </script>

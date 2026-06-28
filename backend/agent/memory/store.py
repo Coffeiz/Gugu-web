@@ -36,12 +36,23 @@ async def _write(key: str, text: str) -> None:
 
 
 async def read_memory(user_id) -> dict:
-    """返回 {facts, memory, daily, summary}，缺失为空串。"""
+    """返回 {facts, memory, daily, summary, summary_ts}，缺失为空串/None。
+    summary_ts = summary 上次更新的 epoch（给时间衰减用，见 agent/decay.py）。"""
     facts   = (await _read(_key(user_id, "facts.md"))).strip()
     memory  = (await _read(_key(user_id, "memory.md"))).strip()
     daily   = (await _read(_key(user_id, "daily.md"))).strip()
     summary = (await _read(_key(user_id, "summary.md"))).strip()
-    return {"facts": facts, "memory": memory, "daily": daily, "summary": summary}
+    summary_ts = await read_summary_ts(user_id)
+    return {"facts": facts, "memory": memory, "daily": daily, "summary": summary, "summary_ts": summary_ts}
+
+
+async def read_summary_ts(user_id) -> float | None:
+    """summary 上次更新时间（epoch）；无/解析失败返回 None（衰减件按"新鲜"处理）。"""
+    raw = (await _read(_key(user_id, "summary.ts"))).strip()
+    try:
+        return float(raw) if raw else None
+    except Exception:
+        return None
 
 
 def format_facts(facts: list[str]) -> str:
@@ -80,6 +91,8 @@ async def read_summary(user_id) -> str:
 
 async def write_summary(user_id, text: str) -> None:
     await _write(_key(user_id, "summary.md"), text.strip() + "\n")
+    import time
+    await _write(_key(user_id, "summary.ts"), str(time.time()))   # 盖更新时间戳（时间衰减用）
 
 
 # ── memory.md（长期记忆，compress 写）──

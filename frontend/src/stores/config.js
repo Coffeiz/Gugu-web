@@ -56,6 +56,13 @@ export const useConfigStore = defineStore('config', () => {
       base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       model: 'qwen-max',
     },
+    voice: {
+      provider: '',
+      api_key: '',
+      base_url: '',
+      model: '',
+      api_format: '',
+    },
     agent: {
       memory_enabled: true,
       reflection_threshold: 10,
@@ -95,6 +102,7 @@ export const useConfigStore = defineStore('config', () => {
       if (data.redis)   Object.assign(cfg.redis,   sanitizeForEdit(data.redis))
       if (data.storage) Object.assign(cfg.storage, sanitizeForEdit(data.storage))
       if (data.ai)      Object.assign(cfg.ai,      sanitizeForEdit(data.ai))
+      if (data.voice)   Object.assign(cfg.voice,   sanitizeForEdit(data.voice))
       if (data.agent)   Object.assign(cfg.agent,   data.agent)
       if (data.quota)   Object.assign(cfg.quota,   data.quota)
       if (data.search)  Object.assign(cfg.search,  sanitizeForEdit(data.search))
