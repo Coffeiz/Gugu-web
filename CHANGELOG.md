@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### 改进
+
+- **skills.md 瘦身：situational 剧本抽成按需 skill**（`agent/skills/`）：把 `prompts/skills.md`（每轮常驻的工具准则）里三块**针对性 how-to**——项目规划、定时任务、接入 IM——抽成按需 `use_skill` 拉取的 skill（`project-planning` / `scheduled-tasks` / `im-bind`），skills.md 只留**主动触发 + 安全红线**的短指针（如「没真建成定时任务就别口头承诺」常驻）。常驻 prompt 省 ~600-1000 tokens、更聚焦；冗长剧本用到才拉。**安全红线（真实性铁律、删除两步确认）与高频元策略仍常驻、不拆**（按需件只在模型决定动手后才拉，主动触发与安全规则拆了会失效）。线上验证：问「怎么接飞书」→ 模型自动 `use_skill im-bind` → 给出扫码按钮。
+
 ### 修复
 
 - **一次性定时任务过期不自动清理**（`app/scheduled_tasks.py`）：正常触发的 `@once` 任务由 `execute_task` 即时删除，但**停用 / misfire 没触发 / 残留**的过期一次性任务无人回收，会一直僵在面板里（`execute_task` 对停用任务直接 early-return，走不到删除）。`reconcile`（每 ~30s）新增 GC：**时间已过点的一次性任务一律清掉**（留 120s 宽限避开正在触发的那一下），周期 cron 与未到点的不受影响。
