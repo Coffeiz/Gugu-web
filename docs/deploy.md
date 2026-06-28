@@ -1,10 +1,33 @@
-# 咕咕 部署文档（开发 + 生产完整教程）
+# 咕咕 部署文档（部署教程 + 运维手册）
 
-从零把咕咕跑起来：开发环境一步步起服务，生产环境上 nginx + systemd。含 venv、数据库、AI、IM 频道（飞书）的完整配置。
+从零把咕咕跑起来，再到日常运维排错。**全文分两部分**：
+
+- **第一部分 · 部署教程（§1–§5）**：顺着读，从开发环境到生产上线（nginx + systemd + HTTPS + IM）。
+- **第二部分 · 运维手册（§6–§10）**：按操作查——重启哪个进程、怎么更新、备份、调优、出问题怎么排。
+
+## 快速导航
+
+| 我想…                                            | 去看                                        |
+| ---------------------------------------------- | ----------------------------------------- |
+| 搞清楚要跑哪些进程                                      | §1 架构总览                                   |
+| 第一次在本地把咕咕跑起来                                   | §2 环境要求 → §3 开发环境部署                       |
+| 上线到生产服务器                                       | §4 生产环境部署（nginx + systemd + HTTPS）        |
+| 接入飞书 / QQ / 微信                                 | §5 接入 IM 频道                               |
+| **改了代码，该重启哪个进程？**（最常踩）                         | **§6.1 重启决策表**                            |
+| 启停 / 重启 backend·worker·supervisor              | §6.2 / §6.3                               |
+| 增删启停某个 IM bot                                   | §6.4                                      |
+| 更新线上代码（scp / zip / git）                        | §7 更新线上代码                                 |
+| **改了数据库模型 / 加字段（schema 更新流程）**                  | **§7.1 Schema / 版本更新流程**                  |
+| 备份数据                                           | §8 备份                                     |
+| 服务器卡死 / OOM / 内存紧（2C/2G 机）                     | §9 低配服务器调优                               |
+| 多台机器拆分网关 / worker                              | §5.2 多机部署                                 |
+| 出问题了（500 / SSE 断 / IM 收不到 / 迁移报错 / 401 …）      | §10 故障排查                                  |
 
 ---
 
-## 0. 架构总览：要跑哪些进程
+# 第一部分 · 部署教程
+
+## 1. 架构总览：要跑哪些进程
 
 咕咕分前端 + 后端，后端又有 **3 个常驻进程** + **2 个依赖服务**：
 
@@ -21,10 +44,12 @@
 
 > 前端：开发用 `npm run dev`（:5173）；生产 `npm run build` 出 `dist/`，由 nginx 托管。
 > 不接 IM（飞书/QQ/微信）时，worker / supervisor / Redis 可以不跑。
+>
+> 💡 **「咕咕的大脑跑在 worker，不在 web」**——记住这条，能省掉一半运维困惑（改大脑代码要重启 worker 而非 backend，详见 §6.1）。
 
 ---
 
-## 1. 环境要求
+## 2. 环境要求
 
 
 | 依赖              | 版本    | 用途                                                                  |
@@ -48,13 +73,13 @@ sudo apt install -y python3-venv python3-dev build-essential \
 
 ---
 
-## 2. 开发环境部署
+## 3. 开发环境部署
 
-### 2.1 拿代码
+### 3.1 拿代码
 
 本项目部署**不依赖 git**，`scp`/`rsync` 传整个目录即可。开发就是本地目录。
 
-### 2.2 后端：venv + 依赖
+### 3.2 后端：venv + 依赖
 
 ```bash
 cd backend
@@ -65,7 +90,7 @@ python3 -m venv .venv                 # 建虚拟环境（脚本/Makefile 默认
 
 > 全程用 `.venv/bin/xxx` 绝对路径，**不用 `activate`**，避开 PEP 668 / 系统包污染。`make deps` 等价于上面最后一步。
 
-### 2.3 配置
+### 3.3 配置
 
 两层：`.env`（基础值）+ Admin 面板写的 `config.override.json`（优先级最高，运行时热合并）。
 
@@ -95,7 +120,7 @@ REDIS__PORT=6379
 
 > `.env` 和 `config.override.json` 都已 gitignore，不入库。AI key、飞书凭据等敏感配置**优先用 Admin 面板**填。
 
-### 2.4 数据库
+### 3.4 数据库
 
 建库 + 用户（与上面 `.env` 对应）：
 
@@ -106,7 +131,7 @@ sudo -u postgres psql -c "CREATE DATABASE gugu_web OWNER pm;"
 
 表结构：后端启动时自动 `create_all` 建表 + 跑内置 schema 迁移；也可手动 `make migrate`（`alembic upgrade head`）。
 
-### 2.5 启动后端
+### 3.5 启动后端
 
 ```bash
 # 开发用前台 + 热重载（改代码自动重启）
@@ -120,7 +145,7 @@ make logs          # 实时日志
 
 健康检查：`curl http://127.0.0.1:8000/health` → `{"status":"ok"}`。
 
-### 2.6 前端
+### 3.6 前端
 
 ```bash
 cd frontend
@@ -130,7 +155,7 @@ npm run dev        # Vite :5173，已设 host:true 可局域网访问
 
 浏览器开 `http://localhost:5173`。
 
-### 2.7 IM 频道进程（接飞书才需要）
+### 3.7 IM 频道进程（接飞书才需要）
 
 确保 Redis 在跑，然后两个进程（各开一个终端，或后台）：
 
@@ -142,19 +167,15 @@ cd backend
 
 频道在 **Admin → Agent 配置 → 频道** 里加（详见 `[feishu接入指南.md](feishu接入指南.md)`）。
 
-> ⚠️ **改了 `agent/` 大脑代码（runner / skills / core / 上下文 / 记忆等）后，worker 必须重启**——咕咕的大脑跑在 **worker** 进程里，不是 web（uvicorn）、也不是 supervisor。
->
-> - `supervisor` + 各平台网关（qq/feishu）只负责**收消息入队**；改它们（adapters）才需重启 supervisor。
-> - `make restart` 只重启 web（uvicorn），**不动 worker/supervisor**。
-> - 只重启 supervisor 而漏了 worker，会出现「网页/IM 行为没按新代码变」的诡异现象（如实时事件不发、新字段不写）——见 `devlog.md` 2026-06-23「漏重启 worker」。
+> ⚠️ 改了 `agent/` 大脑代码后要重启 **worker**（不是 web、也不是 supervisor）——「改了什么、重启哪个」的完整决策表见 **§6.1**。
 
-### 2.8 Admin 初始化
+### 3.8 Admin 初始化
 
 - Admin 后台：`http://localhost:5173/admin/login`
 - 默认账号 **admin / admin123**——改用户名/密码在 `.env` 设 `ADMIN_USERNAME` / `ADMIN_PASSWORD`（⚠️ 上线前必改，改后重启后端）
 - 登录后在「系统配置 / Agent 配置」里设 DB / Redis / AI provider / 存储 / 频道。
 
-### 2.9 可选：SearXNG 自建搜索（降低 Tavily 成本）
+### 3.9 可选：SearXNG 自建搜索（降低 Tavily 成本）
 
 咕咕的 `web_search`（通用搜索）走自建 **SearXNG**，免费、不计配额；`deep_research`（深度总结）才走 Tavily。不部署 SearXNG 也能跑（普通搜索会自动退到 Tavily）。
 
@@ -202,17 +223,17 @@ services:
 
 ---
 
-## 3. 生产环境部署
+## 4. 生产环境部署
 
 生产 = 前端静态托管 + 后端常驻服务 + nginx 反代 + HTTPS。
 
-### 3.1 系统依赖 + venv + 依赖
+### 4.1 系统依赖 + venv + 依赖
 
-同 §1、§2.2（装系统包、建 `.venv`、`make deps`）。
+同 §2、§3.2（装系统包、建 `.venv`、`make deps`）。
 
-### 3.2 配置（生产）
+### 4.2 配置（生产）
 
-- `backend/.env`：填 DB / Redis / `SECRET_KEY` / 管理员账号（见 §2.3）。`SECRET_KEY` **务必换随机值**：
+- `backend/.env`：填 DB / Redis / `SECRET_KEY` / 管理员账号（见 §3.3）。`SECRET_KEY` **务必换随机值**：
   ```bash
   python3 -c "import secrets; print(secrets.token_urlsafe(48))"
   ```
@@ -220,13 +241,13 @@ services:
 - 其余（AI key、OSS、飞书凭据）登录 Admin 面板配，落到 `config.override.json`。
 - **存储**：默认本地 `uploads/`；多机/对象存储用 Admin 切到阿里云 OSS。
 
-### 3.3 数据库迁移
+### 4.3 数据库迁移
 
 ```bash
 cd backend && make migrate     # alembic upgrade head
 ```
 
-### 3.4 前端构建 → nginx 托管
+### 4.4 前端构建 → nginx 托管
 
 ```bash
 cd frontend
@@ -278,7 +299,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 > HTTPS：用 `certbot --nginx -d gugugu.site` 自动配 Let's Encrypt。
 
-#### 3.4.1 1Panel 面板部署（对应上面 nginx，拆成面板几处填）
+#### 4.4.1 1Panel 面板部署（对应上面 nginx，拆成面板几处填）
 
 1Panel 不手写 nginx server 块，把上面那套拆进面板：
 
@@ -304,7 +325,7 @@ sudo nginx -t && sudo systemctl reload nginx
 - `**[Errno 98] address already in use`（8000 被占）**：多半上一次前台 uvicorn 没停。`ss -ltnp | grep :8000` 看谁占，`pkill -f "uvicorn app.main"` 杀掉；或换端口（记得同步改反代目标）。注意：能看到 `Application startup complete` 再报 bind 失败，说明**后端/DB 没问题，纯粹端口冲突**。
 - 私有仓库 clone：服务器生成 SSH key → GitHub 仓库 Settings → Deploy keys 加只读公钥 → `git clone git@github.com:...`（国内服务器连不上 GitHub 时走代理 / 镜像）。
 
-### 3.5 后端服务（systemd · 一次装全 3 个）
+### 4.5 后端服务（systemd · 一次装全 3 个）
 
 项目自带三个单元模板（`gugu-backend.service` / `gugu-worker.service` / `gugu-supervisor.service`，均用 `__APP_DIR__`/`__RUN_USER__` 占位符）。一条命令全装：
 
@@ -350,9 +371,9 @@ sudo systemctl status gugu-backend gugu-worker gugu-supervisor
 
 > ⚠️ **ProtectSystem=strict 沙箱 + LibreOffice**：单元开了 `ProtectSystem=strict`，LibreOffice 转 Office（docx/xlsx/pptx 预览、`read_file` 读 Office）可能写不了配置目录而失败（PDF 走 pdftotext 不受影响）。真遇到：给对应单元加可写 HOME（`Environment=HOME=__APP_DIR__/logs` + 相应 `ReadWritePaths`）或去掉 `ProtectSystem=strict`。
 
-> worker 想扩吞吐可起多个实例（共享 Redis 消费组自动负载均衡）；supervisor 一台机一个即可。
+> worker 想扩吞吐可起多个实例（共享 Redis 消费组自动负载均衡）；supervisor 一台机一个即可。多机拆分见 §5.2。
 
-### 3.7 Admin 安全
+### 4.6 Admin 安全
 
 - **改默认管理员账号**（默认 `admin / admin123`）——在 `backend/.env` 设：
   ```
@@ -363,7 +384,244 @@ sudo systemctl status gugu-backend gugu-worker gugu-supervisor
 - `SECRET_KEY` 用强随机值（`python3 -c "import secrets; print(secrets.token_urlsafe(48))"`）。
 - CORS：`main.py` 默认只开 localhost:5173，生产改成实际域名。
 
-### 3.8 低配服务器调优（2C/2G 这类）
+---
+
+## 5. 接入 IM 频道（飞书 / QQ / 微信）
+
+### 5.1 接入步骤
+
+飞书 bot 创建、权限、长连接事件订阅、凭据填写、频道面板原理，**完整步骤见 `[feishu接入指南.md](feishu接入指南.md)`**。QQ / 微信（个人微信 iLink）走 Admin 面板扫码自连。
+
+生产前提：确保 `gugu-supervisor` + `gugu-worker` 两个服务在跑（§4.5），频道在 Admin 面板增删启停**即时生效**（日常增删启停、重启管家见 §6.4 / §6.3）。
+
+网关 = `supervisor` 按 Admin「频道」面板里**启用的 bot** 动态 `spawn` 的子进程（每个 bot 一条 WS 长连，飞书 `lark.ws` / QQ `botpy`），凭据由 supervisor 以**环境变量注入**子进程（不进 argv，`ps` 看不到）。
+
+### 5.2 多机部署：把网关 / worker 拆到独立服务器（可选，非默认）
+
+> **默认单机部署**（web + worker + supervisor + 网关同机）——一套配置管全部、Admin 配置/重启全生效、扩量靠单机内手段就够（见 `[并发优化ROADMAP.md](并发优化ROADMAP.md)` 部署形态决策）。**以下拆机为可选路径**，仅当确有多机需求时用。
+
+> 网关/worker 和后台**不直接通信**，只在 **Redis + DB** 这条共享总线上碰头。所以拆机要配的就这两个 IP——**没有「web 的 IP」要填**。
+
+那台新机的 `backend/.env`：
+
+```bash
+REDIS__HOST=<共享 Redis IP>      REDIS__PASSWORD=...
+DB__HOST=<共享 DB IP>            DB__PASSWORD=...
+```
+
+起 worker + supervisor（这台不必跑 web）：
+
+```bash
+./start.sh install                         # 装 systemd 三单元
+sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
+# 或手动：.venv/bin/python -m worker  &  .venv/bin/python -m agent.adapters.supervisor
+```
+
+起来即**自动接入**：worker 加入共享 Redis 消费组 `agent-workers` 分摊队列；supervisor 读共享 DB 的 `user_bots` 拉网关。后台（在另一台）零改动，**「服务状态」页直接显示这台机**（host = 它的 hostname）。
+
+**三条铁律：**
+
+1. **全网只能一个 supervisor** —— 两个会给每个 bot 各拉一条 WS → 同 bot 双连接、平台冲突。网关机只此一台跑 supervisor，其余机器只跑 worker。
+2. **worker 可多台**（消费组自动分摊），但同用户并发目前会乱序/串取消——多机前先做 `user_gate`/分片（见 `[并发优化ROADMAP.md](并发优化ROADMAP.md)` ①/③）。
+3. **周期清理任务只一处跑**（web 那台），别在网关机重复（见 roadmap 进程优化 A）。
+
+#### 跨主机的 Admin 限制
+
+- **能看**：服务状态 / 队列水位 / 网关列表（心跳走共享 Redis，全局可见）。
+- **不能配 / 重启**：Admin 改配置写的是**本机** `config.override.json`、重启只杀**本机** pid → 推不到另一台。远端机要改配置/重启，需 **ssh 上那台改 `.env` + 重启**。
+- 想「Admin 填个 IP 就配好/重启远端」需建 Redis 控制面（共享配置 + pub/sub 失效 + 命令频道），暂未做。
+
+---
+
+# 第二部分 · 运维手册
+
+## 6. 进程管理与重启
+
+### 6.1 改了什么 → 重启哪个进程（最常踩，先看这张表）
+
+**咕咕的「大脑」跑在 worker，不在 web。** 改了什么、重启谁，对照下表（命令为生产 systemd；开发环境的启停见 §6.2 / §6.3）：
+
+
+| 你改了…                                                              | 要重启                                    | 命令（生产）                            |
+| ----------------------------------------------------------------- | -------------------------------------- | --------------------------------- |
+| API / Admin 接口、`app/`、`main.py`、路由、新接口                            | **backend (web)**                      | `systemctl restart gugu-backend`  |
+| 咕咕大脑：`agent/` 下 runner / core / skills / tools / 上下文 / 记忆 / prompts | **worker**                             | `systemctl restart gugu-worker`   |
+| IM 网关代码：`agent/adapters/`（feishu / qq / wechat）、`router.py`        | **supervisor**（连带重起所有网关子进程）            | `systemctl restart gugu-supervisor` |
+| 前端 `frontend/`                                                    | 重新构建（不必重启服务）                           | `cd frontend && npm run build`    |
+| 配置 `.env`（含 `SECRET_KEY` / 管理员账号）                                 | **backend**                            | `systemctl restart gugu-backend`  |
+| **新增了模型字段 / 数据库列**                                                | **不是重启，是迁移！**                          | `make migrate`（见 §7）              |
+| 启用 / 停用 / 增删某个 IM bot                                             | 都不用重启                                  | Admin 面板即时生效（见 §6.4）             |
+
+
+⚠️ **三个最常见的错**：
+
+- **只重启了 web、漏了 worker**：改了大脑代码却只 `make restart` / `systemctl restart gugu-backend`，结果「网页/IM 行为没按新代码变」（实时事件不发、新字段不写）——因为大脑在 worker。见 `devlog.md` 2026-06-23「漏重启 worker」。
+- **以为 `make restart` 管全部**：它**只重启 web（uvicorn）**，不动 worker/supervisor。IM 相关改动要单独重启对应进程。
+- **改了 DB 模型只重启没迁移**：`create_all` 只建新表、**不给旧表加列** → 写入报「列不存在」。要 `make migrate`（见 §7 的 ⚠️）。
+
+### 6.2 启停 / 重启 backend（web）
+
+**已装 systemd（生产正途）** —— 直接 `systemctl`，别 `pkill`（`Restart=` 会把你杀的进程自动拉起）：
+```bash
+systemctl restart gugu-backend      # 重启 web；root 无需 sudo
+systemctl stop    gugu-backend      # 停
+systemctl status  gugu-backend
+```
+
+**手动前台跑（测试阶段）/ 端口被占卡住** —— 强杀进程再起：
+```bash
+pkill -9 -f "uvicorn app.main"      # 杀掉所有 uvicorn 实例
+fuser -k 8000/tcp 2>/dev/null       # 兜底：谁占 8000 就杀谁（换成实际端口）
+sleep 1
+ss -ltnp | grep :8000 || echo "8000 已空闲"
+# 再重新启动（前台测试用；常驻请走 systemd，见 §4.5）
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+> ⚠️ 进程已被 systemd 托管时**别用 `pkill`**——杀了会被 `Restart` 立刻拉起、看着像「关不掉」，用 `systemctl stop/restart`。
+> ⚠️ 改了 `agent/` 大脑代码要重启的是 **worker**，不是 backend（见 §6.1）。
+> ⚠️ **生产别用 `make start/stop/restart` 控制 backend**：生产的 web 是 systemd `gugu-backend.service` 在跑，而 `make start/stop` 管的是 Makefile 另起的「手动 uvicorn」——两者不是同一个进程。曾出现 `make stop` 报「未运行」但 `systemctl status` 显示服务正跑的迷惑现象，还可能两份一起起来抢 8000 端口。**生产一律 `systemctl`，`make` 留给开发机。**
+
+### 6.3 启停 / 重启 worker / supervisor
+
+```bash
+# 生产（systemd）
+sudo systemctl restart gugu-worker       # 改了 agent/ 大脑代码后
+sudo systemctl restart gugu-supervisor   # 改了 adapters(feishu/qq/wechat)/router 后；KillMode=control-group 连带重起全部网关子进程
+sudo systemctl stop gugu-supervisor      # 停掉所有网关（连带子进程）
+journalctl -u gugu-supervisor -f         # 或 tail logs/gugu-supervisor.log
+
+# 开发（无 systemd）
+.venv/bin/python -m worker                       # 前台 worker
+.venv/bin/python -m agent.adapters.supervisor   # 前台 supervisor；Ctrl+C 停、连带杀子进程
+```
+
+也可在 **Admin → 服务状态** 页点「重启」（仅同主机有效，靠 kill + systemd 自愈）。
+
+> ⚠️ `**systemctl stop gugu-supervisor` 报 `Unit not loaded`**：说明这台机的 worker/supervisor 是**手动 `python -m ...` 起的、没装成 systemd**，systemctl 自然不认。两条路：
+>
+> ```bash
+> # A. 手动停（按进程，supervisor 收 TERM 会连带杀网关子进程）
+> ps aux | grep -E "agent\.adapters\.supervisor|python -m worker" | grep -v grep   # 先看 pid
+> pkill -TERM -f "agent.adapters.supervisor"
+> pkill -TERM -f "python -m worker"
+> # B. 装成 systemd（推荐，之后 systemctl 可用 + 崩溃自拉 + 开机自启）
+> cd backend && RUN_USER=youruser make install
+> ```
+>
+> 手动起的进程：`systemctl` 管不了、服务页「重启」也指望不上、重启机器/崩溃不自拉——所以生产建议一律 `make install` 走 systemd。
+
+### 6.4 增删 / 启停单个 IM 网关（不用重启服务）
+
+- **增 / 删 / 开 / 关某个 bot**：在 **Admin → Agent 配置 → 频道** 里操作（或扫码自连）→ 写 `user_bots` 表 → supervisor **每 ~1s 对账自动 spawn/kill** → **无需重启任何服务，秒级生效**。
+- 凭据由 supervisor 以**环境变量注入**子进程（不进 argv，`ps` 看不到）。
+- 要重启整个网关管家（改了 adapters 代码时）见 §6.3。
+
+### 6.5 看状态 / 日志
+
+```bash
+cd backend
+make status              # web 状态 + 健康检查
+make logs                # web 实时日志
+sudo systemctl status gugu-worker gugu-supervisor    # IM 进程
+sudo journalctl -u gugu-supervisor -f                # 看频道起停日志
+```
+
+---
+
+## 7. 更新线上代码
+
+```bash
+# scp/rsync 传新代码后：
+cd backend
+make update              # = deps + migrate（装依赖 + 跑迁移）
+make restart             # 重启 web
+sudo systemctl restart gugu-worker gugu-supervisor   # 重启 IM（若改了 agent 代码，见 §6.1）
+cd ../frontend && npm install && npm run build        # 前端重新构建
+# 或一键：make deploy（备份 + 依赖 + 迁移 + 前端 build + 重启）
+```
+
+> ⚠️ **务必 `make migrate`，别只 restart**：启动时的 `create_all` **只建缺失的表、不会给已有表加新列**。所以凡是新增了模型列（如 `conversation_messages.files` 文件卡片、`conversation_sessions.source` 会话来源），只重启不跑迁移 → 相关写入会因「列不存在」报错。`make update` / `make deploy` 已含 migrate；手动更新记得补 `make migrate`。
+
+### 7.1 数据库 Schema / 版本更新流程（改了模型后必看）
+
+咕咕没有版本号概念，「版本更新」= **代码 + 数据库 schema 一起往前推**。只改代码（不动表结构）按上面 §7 走即可；**一旦改了数据库模型（`app/models.py` 加/删字段），分两侧，作者侧那步最容易漏**：
+
+**① 作者侧（本地，改完模型立刻做）：新建一条迁移**
+
+1. 改 `app/models.py`（加/删字段）。
+2. 在 `backend/alembic/versions/` 建迁移文件 `YYYYMMDDNNNNNN_描述.py`：
+   - `revision` = 时间戳 ID；`down_revision` = **上一条迁移的 revision**（链式串起来，别断链——`alembic heads` 应始终只有一个 head）。
+   - 写 `upgrade()` / `downgrade()`，**一律用幂等 DDL**（本项目铁律）：
+     ```python
+     def upgrade():
+         op.execute("ALTER TABLE 表 ADD COLUMN IF NOT EXISTS 列 类型 ...")     # 加列
+         op.execute("CREATE INDEX IF NOT EXISTS ix_xx ON 表 (列)")            # 加索引
+         # 删废弃列：op.execute("ALTER TABLE 表 DROP COLUMN IF EXISTS 列")
+         # 建新表：  op.execute("CREATE TABLE IF NOT EXISTS ...")
+     ```
+     > 为什么必须幂等：生产库的表常是后端启动时 `create_all` 直接建的，列**早已存在**；迁移用裸 `op.add_column`（无 `IF NOT EXISTS`）在 `upgrade head` 从 base 重放时会撞 `DuplicateColumnError`（§10.2 的根因）。`IF [NOT] EXISTS` 让「已存在就跳过」，全新 DB / 老库重放都安全。
+   - 嫌手写麻烦：`.venv/bin/alembic revision --autogenerate -m 描述` 让它扫「模型 vs 库」差异自动生成 —— 但 **autogenerate 有假阳性**（`alter_column` 类型/server_default/索引命名多是噪音），生成后**逐条核对、改成幂等 DDL**，别整份照用。
+3. 本地 `make migrate` 验证能升上去（`alembic current` 应显示到你这条）。
+
+**② 部署侧（服务器，上线）：** 就是 §7 那套 —— `make deploy`（含迁移）或 `make update` 后重启。迁移 = `alembic upgrade head`，只补 `down_revision` 链上还没应用的那几条。
+
+**谁负责建 schema（记这张表就够）：**
+
+| 改动                | 谁来建                          | 漏跑迁移的后果                                    |
+| ----------------- | ---------------------------- | ----------------------------------------- |
+| **新表**            | 启动时 `create_all` 自动建（迁移可省，仍建议写） | 一般没事                                       |
+| **给旧表加 / 删列**     | **只能靠迁移**（`create_all` 不碰已有表）  | INSERT 报「列不存在」/「not-null 违约」→ 建项目/任务直接崩 |
+
+> 铁律一句话：**改了已有表的列，必须有配套（幂等）迁移，且上线时真的跑了。** 出 `DuplicateColumnError` / `null value violates not-null` 这类，按 §10.2 恢复。
+
+### 7.2 zip 打包上传更新（无 git 时）
+
+没在生产配 git 的话，可以本地打 zip → 传服务器解压。**关键：打包必须排除服务器独有的状态文件，否则解压会覆盖掉它们。**
+
+| 文件/目录 | 被覆盖的后果 |
+|---|---|
+| `backend/.env` | **丢生产 DB 密码 + `ADMIN_USERNAME`/`ADMIN_PASSWORD`**（最致命） |
+| `backend/config.override.json` | 丢 Admin 配的 AI key / 飞书凭据 / 存储设置 |
+| `backend/.venv` | venv 是按本机平台编译的，Mac→Linux 覆盖后**跑不起来** |
+| `uploads/` | **抹掉所有用户文件 + 咕咕 `.agent/` 记忆** |
+
+本地打包（排除上述 + 缓存）：
+```bash
+cd <项目根>
+zip -r backend.zip backend \
+  -x 'backend/.venv/*' -x 'backend/.env' -x 'backend/config.override.json' \
+  -x 'backend/logs/*' -x 'backend/uploads/*' -x '*/__pycache__/*' -x '*.pyc'
+```
+服务器解压 + 收尾：
+```bash
+cd <项目目录> && unzip -o backend.zip       # -o 覆盖代码；.env/.venv 没打进 zip 故不受影响
+cd backend
+.venv/bin/pip install -r requirements.txt   # requirements 变了才需要
+make migrate                                 # 有新模型列时（见上 ⚠️）
+systemctl restart gugu-backend               # 改了 web/后端
+systemctl restart gugu-worker                # 改了 agent/ 大脑代码
+```
+
+> **更稳的做法**：生产配一次 git deploy key（见 §4.4.1），以后更新就 `git pull` + 重启——git 只动跟踪文件，`.env`/`.venv`/`uploads` 都 gitignore、永不被碰，天然无「覆盖状态」风险，省去每次手动排除。
+>
+> ⚠️ 但 `git reset --hard` / `git clean -fdx` / 重新解压 zip **会**冲掉这些 gitignore 的状态文件（`.venv` 被删 → 服务 `203/EXEC`；`.env`/`config.override.json` 被删 → DB 密码丢、`password authentication failed for user "pm"`）。**任何代码刷新后，启动/迁移前先确认三样都在**：`.venv` 能跑（`.venv/bin/python -V`）、`.env` + `config.override.json` 里 DB 密码正确。缺了先补（重建 venv 见 §3.2，恢复 DB 密码见 §3.3/§3.4），再 migrate / 启动。
+>
+> ⚠️ **重建 `.env` 时务必沿用原来的 `SECRET_KEY`,别重新生成。** `SECRET_KEY` 一变,**所有已签发的登录 token 立刻失效** → 部署后用户访问任何需登录的接口都 `401`，前端表现为「数据页全部加载失败 / summary 401」。这不是数据/权限 bug，**重新登录即恢复**（旧 token 用旧 key 签的，新 key 验不过）。根治:`SECRET_KEY` 当成长期不变的密钥存在 `.env` 里，跨部署保持同一个值；每次部署重新随机生成 = 每次把全员登出。有旧值备份就填回旧值，连用户重登都省了。
+
+---
+
+## 8. 备份
+
+```bash
+cd backend && make backup     # 备份数据库 + uploads + config.override.json
+```
+
+> `uploads/` 含用户文件 + 咕咕 `.agent/` 记忆；`config.override.json` 含所有 Admin 配置（含明文凭据）。两者都要备。
+
+---
+
+## 9. 低配服务器调优（2C/2G 这类）
 
 咕咕 = Python web + worker + supervisor + 网关 + PostgreSQL + Redis，2C/2G 上跑得起来但**很紧**，容易 OOM / CPU 打满。按这套调：
 
@@ -409,163 +667,35 @@ MemoryMax=512M
 
 ---
 
-## 4. IM 频道（飞书）
+## 10. 故障排查
 
-飞书 bot 创建、权限、长连接事件订阅、凭据填写、频道面板原理，**完整步骤见 `[feishu接入指南.md](feishu接入指南.md)`**。生产上确保 `gugu-supervisor` + `gugu-worker` 两个服务在跑，频道在 Admin 面板增删启停即时生效。
+### 10.1 常见问题速查表
 
-### 4.1 增删 / 启停单个网关（不用重启服务）
 
-网关 = `supervisor` 按 Admin「频道」面板里**启用的 bot** 动态 `spawn` 的子进程（每个 bot 一条 WS 长连，飞书 `lark.ws` / QQ `botpy`）。
+| 现象                                     | 解法                                                      |
+| -------------------------------------- | ------------------------------------------------------- |
+| 后端 500 / 启动失败                          | 必须从 `backend/` 目录起（否则 `.env` 不加载）；查 `logs/gugu.log`     |
+| 生成 Word/PDF/Excel 失败                   | 没装 **LibreOffice**（`apt install libreoffice`）           |
+| 聊天流式（SSE）被截断                           | nginx 要 `proxy_buffering off` + 拉长 `proxy_read_timeout` |
+| IM 收不到/回不出                             | Redis 没起；或 supervisor/worker 没跑；详见 feishu接入指南排错表        |
+| 「改了代码但行为没变」                            | 多半漏重启 worker（大脑在 worker，不在 web）——见 §6.1 重启决策表          |
+| worker `Timeout reading from ...:6379` | 已修：`app/core/redis.py` `socket_timeout=None`（旧版本需更新代码）  |
+| Admin 频道保存「消失」                         | 后端加了 `/admin/agent/bots` 接口后要 `make restart`            |
+| `pip install` 报 externally-managed     | 用 `.venv/bin/pip`（绝对路径），别用系统 pip                        |
+| 登录/接口报 `ERR_SSL_UNRECOGNIZED_NAME_ALERT`（页面能开、API 失败） | **SSL 证书没覆盖该域名**（如证书只签了 `gugugu.site`，没含 `www.gugugu.site`）。1Panel 网站→证书 重签 Let's Encrypt，**域名列表同时勾 `gugugu.site` + `www.gugugu.site`**（或通配 `*.gugugu.site`）；前提是该域名 DNS 已解析到本机。验证：`echo \| openssl s_client -servername www.gugugu.site -connect www.gugugu.site:443 2>/dev/null \| openssl x509 -noout -ext subjectAltName` 看 SAN 里有没有该域名 |
+| `make install` 后 gugu-backend 一直重启   | 旧的手动 `uvicorn :8000` 没停、占着端口 → systemd 版绑不上崩 → `Restart` 循环。`systemctl stop gugu-backend` + `pkill -9 -f "uvicorn app.main"` + `fuser -k 8000/tcp` 清掉再 `systemctl start`（详见 §4.5 / §6.2） |
+| nginx `duplicate location "/"` 启动失败 | 反向代理路径填成了 `/`（整站代理给后端）和伪静态 `location /` 撞 → 反代路径必须是 `/api`（详见 §4.4.1） |
+| `gugu-backend` 反复被 OOM 杀（`oom-kill` / `code=killed status=9`） | 小内存机（2G）上 systemd 模板默认 `--workers 2` 太吃内存 → 改单 worker：`sed -i 's/--workers 2/--workers 1/' /etc/systemd/system/gugu-backend.service && systemctl daemon-reload && systemctl restart gugu-backend`；并加 swap（详见 §9） |
+| 整机 CPU 100% / 卡死 | 先 `ps aux --sort=-%cpu \| head` 看**谁**在烧（常是 pgAdmin 等第三方应用，不是咕咕）；`free -h` 看内存、`journalctl -u gugu-backend` 看 OOM（详见 §9 + devlog 2026-06-25） |
+| 服务 `status=203/EXEC` 起不来 | systemd 执行不了 ExecStart 里的 `.venv/bin/...` → **venv 缺失/损坏**（多半被 `reset --hard`/`clean`/重新解压冲掉）。重建 venv + 装依赖（§3.2），并确认 `.env`/`config.override.json` 也在再启动 |
+| `password authentication failed for user "pm"` | DB 配置被部署冲掉、密码退回占位值。把 `.env`/`config.override.json` 里的 DB 密码恢复成生产真实值（1Panel→数据库 可看/重置），与 Postgres 里 `pm` 用户密码一致（详见 §7 ⚠️ / §3.4） |
+| `alembic upgrade head` 报 `DuplicateColumnError`（从 base 重放撞已有列） | 生产库由 `create_all` 建、`alembic_version` 空 → 重放撞车。`alembic stamp head` 认账停止重放，再手动补本次新迁移的幂等 DDL（新表靠 `create_all`，新列手动 `ADD COLUMN IF NOT EXISTS`）。详见 §10.2 |
+| 建项目/任务报 `null value in column "xxx" violates not-null constraint`（如 `notes`） | 新代码删了该字段、INSERT 不再带它，但旧库那列还是 `NOT NULL` 无默认 → 必须把废弃列删掉：`ALTER TABLE 表 DROP COLUMN IF EXISTS 列`。用 `alembic revision --autogenerate` 全量核对漏补/漏删（详见 §10.2） |
+| `make stop` 说「未运行」但 `systemctl` 显示服务在跑 | 生产 backend 由 systemd `gugu-backend.service` 托管，`make start/stop` 管的是另起的手动 uvicorn → 两者不是一个进程。生产一律用 `systemctl`（详见 §6.2） |
+| 部署后数据页全部「加载失败 / summary 401」 | 重建 `.env` 时 `SECRET_KEY` 变了 → 旧登录 token 全失效。**重新登录即恢复**；根治:`SECRET_KEY` 跨部署保持同一值，别每次重新生成（详见 §7 ⚠️ / §4.2） |
 
-- **增 / 删 / 开 / 关某个 bot**：在 **Admin → Agent 配置 → 频道** 里操作（或扫码自连）→ 写 `user_bots` 表 → supervisor **每 ~1s 对账自动 spawn/kill** → **无需重启任何服务，秒级生效**。
-- 凭据由 supervisor 以**环境变量注入**子进程（不进 argv，`ps` 看不到）。
 
-### 4.2 启停 / 重启网关管家（supervisor）
-
-```bash
-# 生产（systemd）
-sudo systemctl restart gugu-supervisor   # 改了 adapters(feishu/qq)/router 后；KillMode=control-group 连带重起全部网关子进程
-sudo systemctl stop gugu-supervisor      # 停掉所有网关（连带子进程）
-journalctl -u gugu-supervisor -f         # 或 tail logs/gugu-supervisor.log
-
-# 开发（无 systemd）
-.venv/bin/python -m agent.adapters.supervisor   # 前台；Ctrl+C 停、连带杀子进程
-```
-
-也可在 **Admin → 服务状态** 页点「重启」（仅同主机有效，靠 kill + systemd 自愈）。
-
-> ⚠️ `**systemctl stop gugu-supervisor` 报 `Unit not loaded`**：说明这台机的 worker/supervisor 是**手动 `python -m ...` 起的、没装成 systemd**，systemctl 自然不认。两条路：
->
-> ```bash
-> # A. 手动停（按进程，supervisor 收 TERM 会连带杀网关子进程）
-> ps aux | grep -E "agent\.adapters\.supervisor|python -m worker" | grep -v grep   # 先看 pid
-> pkill -TERM -f "agent.adapters.supervisor"
-> pkill -TERM -f "python -m worker"
-> # B. 装成 systemd（推荐，之后 systemctl 可用 + 崩溃自拉 + 开机自启）
-> cd backend && RUN_USER=youruser make install
-> ```
->
-> 手动起的进程：`systemctl` 管不了、服务页「重启」也指望不上、重启机器/崩溃不自拉——所以生产建议一律 `make install` 走 systemd。
-
-### 4.3 把网关 / worker 拆到独立服务器（可选，非默认）
-
-> **默认单机部署**（web + worker + supervisor + 网关同机）——一套配置管全部、Admin 配置/重启全生效、扩量靠单机内手段就够（见 `[并发优化ROADMAP.md](并发优化ROADMAP.md)` 部署形态决策）。**以下拆机为可选路径**，仅当确有多机需求时用；跨主机的 Admin 配置/重启不生效（§4.4）。
-
-> 网关/worker 和后台**不直接通信**，只在 **Redis + DB** 这条共享总线上碰头。所以拆机要配的就这两个 IP——**没有「web 的 IP」要填**。
-
-那台新机的 `backend/.env`：
-
-```bash
-REDIS__HOST=<共享 Redis IP>      REDIS__PASSWORD=...
-DB__HOST=<共享 DB IP>            DB__PASSWORD=...
-```
-
-起 worker + supervisor（这台不必跑 web）：
-
-```bash
-./start.sh install                         # 装 systemd 三单元
-sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
-# 或手动：.venv/bin/python -m worker  &  .venv/bin/python -m agent.adapters.supervisor
-```
-
-起来即**自动接入**：worker 加入共享 Redis 消费组 `agent-workers` 分摊队列；supervisor 读共享 DB 的 `user_bots` 拉网关。后台（在另一台）零改动，**「服务状态」页直接显示这台机**（host = 它的 hostname）。
-
-**三条铁律：**
-
-1. **全网只能一个 supervisor** —— 两个会给每个 bot 各拉一条 WS → 同 bot 双连接、平台冲突。网关机只此一台跑 supervisor，其余机器只跑 worker。
-2. **worker 可多台**（消费组自动分摊），但同用户并发目前会乱序/串取消——多机前先做 `user_gate`/分片（见 `[并发优化ROADMAP.md](并发优化ROADMAP.md)` ①/③）。
-3. **周期清理任务只一处跑**（web 那台），别在网关机重复（见 roadmap 进程优化 A）。
-
-### 4.4 跨主机的 Admin 限制
-
-- **能看**：服务状态 / 队列水位 / 网关列表（心跳走共享 Redis，全局可见）。
-- **不能配 / 重启**：Admin 改配置写的是**本机** `config.override.json`、重启只杀**本机** pid → 推不到另一台。远端机要改配置/重启，需 **ssh 上那台改 `.env` + 重启**。
-- 想「Admin 填个 IP 就配好/重启远端」需建 Redis 控制面（共享配置 + pub/sub 失效 + 命令频道），暂未做。
-
----
-
-## 5. 日常运维
-
-```bash
-cd backend
-make status              # web 状态 + 健康检查
-make logs                # web 实时日志
-sudo systemctl status gugu-worker gugu-supervisor    # IM 进程
-sudo journalctl -u gugu-supervisor -f                # 看频道起停日志
-```
-
-### 5.1 强制关闭 / 重启后端
-
-**已装 systemd（生产正途）** —— 直接 `systemctl`，别 `pkill`（`Restart=` 会把你杀的进程自动拉起）：
-```bash
-systemctl restart gugu-backend      # 重启 web；root 无需 sudo
-systemctl stop    gugu-backend      # 停
-systemctl status  gugu-backend
-```
-
-**手动前台跑（测试阶段）/ 端口被占卡住** —— 强杀进程再起：
-```bash
-pkill -9 -f "uvicorn app.main"      # 杀掉所有 uvicorn 实例
-fuser -k 8000/tcp 2>/dev/null       # 兜底：谁占 8000 就杀谁（换成实际端口）
-sleep 1
-ss -ltnp | grep :8000 || echo "8000 已空闲"
-# 再重新启动（前台测试用；常驻请走 systemd，见 §3.5）
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-> ⚠️ 进程已被 systemd 托管时**别用 `pkill`**——杀了会被 `Restart` 立刻拉起、看着像「关不掉」，用 `systemctl stop/restart`。
-> ⚠️ 改了 `agent/` 大脑代码要重启的是 **worker**，不是 backend（见 §2.7 注）。
-> ⚠️ **生产别用 `make start/stop/restart` 控制 backend**：生产的 web 是 systemd `gugu-backend.service` 在跑，而 `make start/stop` 管的是 Makefile 另起的「手动 uvicorn」——两者不是同一个进程。曾出现 `make stop` 报「未运行」但 `systemctl status` 显示服务正跑的迷惑现象，还可能两份一起起来抢 8000 端口。**生产一律 `systemctl`，`make` 留给开发机。**
-
-## 6. 更新部署
-
-```bash
-# scp/rsync 传新代码后：
-cd backend
-make update              # = deps + migrate（装依赖 + 跑迁移）
-make restart             # 重启 web
-sudo systemctl restart gugu-worker gugu-supervisor   # 重启 IM（若改了 agent 代码）
-cd ../frontend && npm install && npm run build        # 前端重新构建
-# 或一键：make deploy（备份 + 依赖 + 迁移 + 前端 build + 重启）
-```
-
-> ⚠️ **务必 `make migrate`，别只 restart**：启动时的 `create_all` **只建缺失的表、不会给已有表加新列**。所以凡是新增了模型列（如 `conversation_messages.files` 文件卡片、`conversation_sessions.source` 会话来源），只重启不跑迁移 → 相关写入会因「列不存在」报错。`make update` / `make deploy` 已含 migrate；手动更新记得补 `make migrate`。
-
-### 6.1 zip 打包上传更新（无 git 时）
-
-没在生产配 git 的话，可以本地打 zip → 传服务器解压。**关键：打包必须排除服务器独有的状态文件，否则解压会覆盖掉它们。**
-
-| 文件/目录 | 被覆盖的后果 |
-|---|---|
-| `backend/.env` | **丢生产 DB 密码 + `ADMIN_USERNAME`/`ADMIN_PASSWORD`**（最致命） |
-| `backend/config.override.json` | 丢 Admin 配的 AI key / 飞书凭据 / 存储设置 |
-| `backend/.venv` | venv 是按本机平台编译的，Mac→Linux 覆盖后**跑不起来** |
-| `uploads/` | **抹掉所有用户文件 + 咕咕 `.agent/` 记忆** |
-
-本地打包（排除上述 + 缓存）：
-```bash
-cd <项目根>
-zip -r backend.zip backend \
-  -x 'backend/.venv/*' -x 'backend/.env' -x 'backend/config.override.json' \
-  -x 'backend/logs/*' -x 'backend/uploads/*' -x '*/__pycache__/*' -x '*.pyc'
-```
-服务器解压 + 收尾：
-```bash
-cd <项目目录> && unzip -o backend.zip       # -o 覆盖代码；.env/.venv 没打进 zip 故不受影响
-cd backend
-.venv/bin/pip install -r requirements.txt   # requirements 变了才需要
-make migrate                                 # 有新模型列时（见上 ⚠️）
-systemctl restart gugu-backend               # 改了 web/后端
-systemctl restart gugu-worker                # 改了 agent/ 大脑代码
-```
-
-> **更稳的做法**：生产配一次 git deploy key（见 §3.4.1），以后更新就 `git pull` + 重启——git 只动跟踪文件，`.env`/`.venv`/`uploads` 都 gitignore、永不被碰，天然无「覆盖状态」风险，省去每次手动排除。
->
-> ⚠️ 但 `git reset --hard` / `git clean -fdx` / 重新解压 zip **会**冲掉这些 gitignore 的状态文件（`.venv` 被删 → 服务 `203/EXEC`；`.env`/`config.override.json` 被删 → DB 密码丢、`password authentication failed for user "pm"`）。**任何代码刷新后，启动/迁移前先确认三样都在**：`.venv` 能跑（`.venv/bin/python -V`）、`.env` + `config.override.json` 里 DB 密码正确。缺了先补（重建 venv 见 §2.2，恢复 DB 密码见 §2.3/§2.4），再 migrate / 启动。
->
-> ⚠️ **重建 `.env` 时务必沿用原来的 `SECRET_KEY`,别重新生成。** `SECRET_KEY` 一变,**所有已签发的登录 token 立刻失效** → 部署后用户访问任何需登录的接口都 `401`，前端表现为「数据页全部加载失败 / summary 401」。这不是数据/权限 bug，**重新登录即恢复**（旧 token 用旧 key 签的，新 key 验不过）。根治:`SECRET_KEY` 当成长期不变的密钥存在 `.env` 里，跨部署保持同一个值；每次部署重新随机生成 = 每次把全员登出。有旧值备份就填回旧值，连用户重登都省了。
-
-### 6.2 迁移报「列已存在」/ alembic 与 create_all 不同步的恢复（生产实战）
+### 10.2 数据库迁移恢复：alembic 与 create_all 不同步（生产实战）
 
 **症状**：生产 `make migrate`（`alembic upgrade head`）**从 base 从头重放**、第一条迁移就炸：
 `asyncpg.exceptions.DuplicateColumnError: column "description" of relation "calendar_events" already exists`。
@@ -600,41 +730,6 @@ systemctl restart gugu-worker                # 改了 agent/ 大脑代码
 
 **预防**：① 迁移一律写**幂等**（`ADD/DROP COLUMN IF [NOT] EXISTS`、`CREATE TABLE IF NOT EXISTS`）——本项目新迁移已遵守，老的 `add_description` 没遵守才会撞；② 生产从第一天就 `alembic stamp`、保持版本表有值，别让 `create_all` 和 alembic 各建各的、`alembic_version` 长期为空。
 
-## 7. 备份
-
-```bash
-cd backend && make backup     # 备份数据库 + uploads + config.override.json
-```
-
-> `uploads/` 含用户文件 + 咕咕 `.agent/` 记忆；`config.override.json` 含所有 Admin 配置（含明文凭据）。两者都要备。
-
----
-
-## 8. 常见问题
-
-
-| 现象                                     | 解法                                                      |
-| -------------------------------------- | ------------------------------------------------------- |
-| 后端 500 / 启动失败                          | 必须从 `backend/` 目录起（否则 `.env` 不加载）；查 `logs/gugu.log`     |
-| 生成 Word/PDF/Excel 失败                   | 没装 **LibreOffice**（`apt install libreoffice`）           |
-| 聊天流式（SSE）被截断                           | nginx 要 `proxy_buffering off` + 拉长 `proxy_read_timeout` |
-| IM 收不到/回不出                             | Redis 没起；或 supervisor/worker 没跑；详见 feishu接入指南排错表        |
-| worker `Timeout reading from ...:6379` | 已修：`app/core/redis.py` `socket_timeout=None`（旧版本需更新代码）  |
-| Admin 频道保存「消失」                         | 后端加了 `/admin/agent/bots` 接口后要 `make restart`            |
-| `pip install` 报 externally-managed     | 用 `.venv/bin/pip`（绝对路径），别用系统 pip                        |
-| 登录/接口报 `ERR_SSL_UNRECOGNIZED_NAME_ALERT`（页面能开、API 失败） | **SSL 证书没覆盖该域名**（如证书只签了 `gugugu.site`，没含 `www.gugugu.site`）。1Panel 网站→证书 重签 Let's Encrypt，**域名列表同时勾 `gugugu.site` + `www.gugugu.site`**（或通配 `*.gugugu.site`）；前提是该域名 DNS 已解析到本机。验证：`echo \| openssl s_client -servername www.gugugu.site -connect www.gugugu.site:443 2>/dev/null \| openssl x509 -noout -ext subjectAltName` 看 SAN 里有没有该域名 |
-| `make install` 后 gugu-backend 一直重启   | 旧的手动 `uvicorn :8000` 没停、占着端口 → systemd 版绑不上崩 → `Restart` 循环。`systemctl stop gugu-backend` + `pkill -9 -f "uvicorn app.main"` + `fuser -k 8000/tcp` 清掉再 `systemctl start`（详见 §3.5 / §5.1） |
-| nginx `duplicate location "/"` 启动失败 | 反向代理路径填成了 `/`（整站代理给后端）和伪静态 `location /` 撞 → 反代路径必须是 `/api`（详见 §3.4.1） |
-| `gugu-backend` 反复被 OOM 杀（`oom-kill` / `code=killed status=9`） | 小内存机（2G）上 systemd 模板默认 `--workers 2` 太吃内存 → 改单 worker：`sed -i 's/--workers 2/--workers 1/' /etc/systemd/system/gugu-backend.service && systemctl daemon-reload && systemctl restart gugu-backend`；并加 swap（详见 §3.8） |
-| 整机 CPU 100% / 卡死 | 先 `ps aux --sort=-%cpu \| head` 看**谁**在烧（常是 pgAdmin 等第三方应用，不是咕咕）；`free -h` 看内存、`journalctl -u gugu-backend` 看 OOM（详见 §3.8 + devlog 2026-06-25） |
-| 服务 `status=203/EXEC` 起不来 | systemd 执行不了 ExecStart 里的 `.venv/bin/...` → **venv 缺失/损坏**（多半被 `reset --hard`/`clean`/重新解压冲掉）。重建 venv + 装依赖（§2.2），并确认 `.env`/`config.override.json` 也在再启动 |
-| `password authentication failed for user "pm"` | DB 配置被部署冲掉、密码退回占位值。把 `.env`/`config.override.json` 里的 DB 密码恢复成生产真实值（1Panel→数据库 可看/重置），与 Postgres 里 `pm` 用户密码一致（详见 §6 ⚠️ / §2.4） |
-| `alembic upgrade head` 报 `DuplicateColumnError`（从 base 重放撞已有列） | 生产库由 `create_all` 建、`alembic_version` 空 → 重放撞车。`alembic stamp head` 认账停止重放，再手动补本次新迁移的幂等 DDL（新表靠 `create_all`，新列手动 `ADD COLUMN IF NOT EXISTS`）。详见 §6.2 |
-| 建项目/任务报 `null value in column "xxx" violates not-null constraint`（如 `notes`） | 新代码删了该字段、INSERT 不再带它，但旧库那列还是 `NOT NULL` 无默认 → 必须把废弃列删掉：`ALTER TABLE 表 DROP COLUMN IF EXISTS 列`。用 `alembic revision --autogenerate` 全量核对漏补/漏删（详见 §6.2） |
-| `make stop` 说「未运行」但 `systemctl` 显示服务在跑 | 生产 backend 由 systemd `gugu-backend.service` 托管，`make start/stop` 管的是另起的手动 uvicorn → 两者不是一个进程。生产一律用 `systemctl`（详见 §5.1） |
-| 部署后数据页全部「加载失败 / summary 401」 | 重建 `.env` 时 `SECRET_KEY` 变了 → 旧登录 token 全失效。**重新登录即恢复**；根治:`SECRET_KEY` 跨部署保持同一值，别每次重新生成（详见 §6 ⚠️ / §3.2） |
-
-
 ---
 
 ## 附：关键路径
@@ -648,5 +743,3 @@ cd backend && make backup     # 备份数据库 + uploads + config.override.json
 | `backend/logs/gugu.log`        | web 日志                            |
 | `uploads/`                     | 用户文件 + 咕咕 `.agent/` 记忆（gitignore） |
 | `frontend/dist/`               | 前端构建产物（nginx 托管）                  |
-
-
