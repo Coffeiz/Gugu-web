@@ -9,7 +9,25 @@
 
 ## [Unreleased]
 
-> 时区统一、IM 时间修复、后台脱敏、体验修缮。
+> 感知系统升级（遥测/行为模块/解读先验）、记忆增量化与时间衰减、时区统一、IM 时间修复、后台脱敏、体验修缮。
+
+### 感知系统 P0–P2（`docs/感知系统-架构升级.md`）
+
+把决策环最上游的「感知」从隐式变显式、可观测、可 per-user 成长，**全程不给聊天热路径加 LLM 跳**（观测/学习都在异步反思里）。
+
+- **P0 · A+B 感知遥测 + 误判捕获**（`memory/reflection.py`）：反思多吐 `perception`（intent/ambiguity/emotion/emo_strength）打 `agent.perc` 日志 + 推 Redis capped list；正则捕获用户纠正（`misperc`）当客观误判信号。Admin「感知诊断」面板（`/admin/perception` + 前端深色页）按**活跃用户宏平均**聚合误判率/意图分布/by-model。
+- **P1 · 行为模块库**（`agent/behaviors.py` + `prompts/behaviors/`）：从 persona 抽出第一个情境策略模块 `emotion-first`（DO 接住情绪 / DON'T 别给方案别任务化），由本句线索 + World Model 软点亮、置于人格后最高优先；补 Being-with 缺口、压「闲聊也推进」nudge。
+- **P2 · per-user 解读先验 lens**（`agent/memory/lens.py` + `.agent/lens.json`）：第 5 类记忆「怎么读懂这个用户」的偏置规则（如 `「还行」→ 多半不太行`）。事件驱动（吃反思 `lens_hint`、零热路径 LLM）；防过拟合双闸（模型自律 + 候选须复现 2 次、以触发语为键合并同义改写才提拔）；confidence 新规则 0.6 / 印证↑ / 半衰期 30 天衰减 / 低于 0.25 退休；`builder` 注入「解读镜片」偏置不独裁、按 effective 选话术档。
+
+### 记忆系统：增量化 + 时间衰减
+
+- **反思增量化（2b · delta）**（`memory/reflection.py` + `store.apply_facts_delta`）：反思只吐 `facts_add`/`facts_remove`、**不再回显整份 facts**。根治了「facts 一多 → 回显超 `max_tokens` → 截断 → JSON 解析失败 → 静默返回 `{}`、老用户反思全废」的隐蔽坑；`max_tokens` 回落固定 900。旧 prompt 兼容回退。
+- **summary 时间衰减**（`agent/decay.py` + `store`）：summary 写时盖 `summary.ts`，注入时按半衰期（5 天）权重换话术档（新鲜直接给 / 半旧标「约 N 天前、可能已变」/ 过时标「多半过时、别据此提具体事」），过期状态不被当成近况。`decay.py` 为通用件，lens confidence 衰减复用。
+
+### 多模态：mimo 音视频理解 + 语音条
+
+- **mimo 音视频理解**：听语音/音频、看视频；带媒体时强制路由到 mimo（`runner` 防 `pick_model` 把 IM 静默路由到无音频能力的模型而丢媒体）。IM 语音 SILK→mp3 转码（`pilk` + ffmpeg，`-ar 24000` 防 25MB 巨文件）。
+- **语音条**：QQ 语音 / 网页录音存独立 `.voice/`、30 天清理（非文件卡），咕咕「让我听听」直接听内容回应。
 
 ### 跨 session 续接修复（IM「没续上之前的聊天」）
 

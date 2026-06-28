@@ -35,7 +35,8 @@ backend/
     ├── imctx.py                # IM 上下文 contextvar 透传
     ├── models.py
     ├── context/{loaders,builder,tokens}.py
-    ├── memory/{store,reflection,compress,_llm}.py   # 四层记忆：facts/daily/memory/summary；reflection 提炼 + compress 压缩
+    ├── memory/{store,reflection,compress,lens,_llm}.py + decay.py   # 五层记忆：facts(增量delta)/daily/memory/summary(时间衰减)/lens(解读先验)；reflection 提炼 + compress 压缩 + decay 衰减
+    ├── behaviors.py + prompts/behaviors/   # 行为模块库（情境策略软点亮，现有 emotion-first）
     ├── tools/                  # 函数调用工具：projects/calendar/files/clients/trash/overview/memory/search/conversations/scheduled_tasks/im（原 skills/，2026-06 改名）
     ├── skills/                 # prompt skills（带触发条件的「剧本」md，渐进式按需加载）：weather，见「Tools 与 Skills」
     ├── profiles/{base,default}.py
@@ -136,14 +137,18 @@ persona.md（咕咕是谁）→ skills.md（怎么做）→ policy.md（不碰�
 
 #### `memory/`
 
-Session（最近 N 条聊天，短期）与 Memory（长期认知，经 Reflection 提炼）严格分离：`Conversation → Reflection（facts/daily/summary）→ compress（daily→memory）→ Storage`。
+Session（最近 N 条聊天，短期）与 Memory（长期认知，经 Reflection 提炼）严格分离：`Conversation → Reflection（facts 增删 / daily / summary / lens_hint / perception）→ compress（daily→memory）→ Storage`。
 
-- **`reflection.py`**：对话结束后**单次非流式** LLM 提炼 `{facts:[...], daily:"...", summary:"..."}`，增量合并写盘；`schedule()` fire-and-forget（持后台任务引用防 GC），失败不影响对话。提炼词文件化（`prompts/reflection.md`，热生效），规则收紧：只记用户本人、不记推测/一时状态、不评判、宁少勿多。
-  - **`summary` 当前状态快照（`summary.md`）**：一段「用户此刻在忙什么 / 近期重心」的话，和反思**同一次 LLM 调用顺带产出**（零额外开销），基于原快照**增量演进**——重心没变就原样返回、变了才改（写回有"非空 + 变了"双重守卫，防清空/瞎改）。`builder._memory_block` 把它注入到记忆块**最前**（`## TA 最近的状态`），让咕咕开口前就知道用户当下处境；`greeting.py` 默认问候也优先参考它。区别于 facts（稳定身份）与 daily（流水）。
-- **`store.py`**：读写 `.agent/{facts,daily,memory,summary}.md`，经 `StorageBackend`（本地/OSS 通吃）。`read_memory` 一次返回四层；`merge_facts` 按内容去重，`append_daily` 滚动保留最近 30 条。
-- **`compress.py`**：daily→memory 压缩**已落地**——daily 攒到 `DAILY_COMPACT_AT`(40) 条时，reflection 写完 daily 顺带触发 `compact()`：把最老的条目 LLM 沉淀进 `memory.md`、daily 留回最近 `DAILY_KEEP_RECENT`(30) 条（约每 10 轮压一次，失败不影响主流程；模型返空则不覆盖、不裁 daily 防丢数据）。**无 weekly 中间层、无 importance 分级**（咕咕只需近期/长期两档）。`_llm.py` 是记忆模块共用的非流式 LLM 小工具。
+- **`reflection.py`**：对话结束后**单次非流式** LLM 提炼 `{facts_add, facts_remove, daily, summary, lens_hint, perception}`，增量写盘；`schedule()` fire-and-forget（持后台任务引用防 GC），失败不影响对话。提炼词文件化（`prompts/reflection.md`，热生效），规则收紧：只记用户本人、不记推测/一时状态、不评判、宁少勿多。
+  - **facts 增量化（2b · delta）**：反思只吐 `facts_add`/`facts_remove`（这轮的增删），由 `store.apply_facts_delta` 应用到 `facts.md`，**不再回显整份 facts**。根治了「facts 一多 → 回显超 `max_tokens` → 截断 → JSON 解析失败 → 静默返回 `{}`、老用户反思全废」的老坑（曾踩）；`max_tokens` 因此回落到固定 900。旧 prompt（回显整份 `facts`）仍兼容回退。
+  - **`summary` 当前状态快照（`summary.md`）**：一段「用户此刻在忙什么 / 近期重心」的话，和反思**同一次 LLM 调用顺带产出**（零额外开销），基于原快照**增量演进**——重心没变就原样返回、变了才改（写回有"非空 + 变了"双重守卫，防清空/瞎改）。写时盖 `summary.ts` 时间戳，**时间衰减**（`agent/decay.py`，半衰期 5 天）：`builder._memory_block` 与 `greeting.py` 注入时按权重换话术档（新鲜直接给 / 半旧标「约 N 天前、可能已变」/ 过时标「多半过时、别据此提具体事」），过期状态不当近况。
+  - **`lens_hint` 解读先验燃料**：见下「lens.py」；绝大多数轮为空，事件驱动地喂 lens。
+  - **`perception` 感知遥测**：本轮观察（intent/ambiguity/emotion/emo_strength）+ 误判捕获，只打 `agent.perc` 日志 + 推 Redis capped list，喂 Admin「感知诊断」面板，不写记忆、不影响回复。
+- **`lens.py`（per-user 解读先验，第 5 类记忆）**：「怎么读懂这个用户」的偏置规则（如 `「还行」→ 多半不太行`），存 `.agent/lens.json`。**事件驱动**（吃反思 `lens_hint`、零热路径 LLM）；**防过拟合双闸**（模型自律 + 候选须复现 `PROMOTE_AT=2` 次、**以触发语为键**合并同义改写才提拔）；confidence 新规则 0.6 / 印证↑ / 半衰期 30 天衰减（复用 `decay.py`）/ 低于 `RETIRE_EFF=0.25` 退休；`builder` 注入「解读镜片」**偏置不独裁**、按 effective 选话术档（笃定/多半/也许）。⚠️ v1 未做：被反驳时 confidence↓（靠衰减自然淘汰）。详见 `docs/感知系统-架构升级.md` §3.5。
+- **`store.py`**：读写 `.agent/{facts,daily,memory,summary}.md` + `summary.ts` + `lens.json`（lens 经 `lens.py`），经 `StorageBackend`（本地/OSS 通吃）。`read_memory` 一次返回五层（含渲染好的 lens 注入块、summary_ts）；`apply_facts_delta` 应用增删、`merge_facts` 按内容去重，`append_daily` 滚动保留最近 30 条。
+- **`compress.py`**：daily→memory 压缩**已落地**——daily 攒到 `DAILY_COMPACT_AT`(40) 条时，reflection 写完 daily 顺带触发 `compact()`：把最老的条目 LLM 沉淀进 `memory.md`、daily 留回最近 `DAILY_KEEP_RECENT`(30) 条（约每 10 轮压一次，失败不影响主流程；模型返空则不覆盖、不裁 daily 防丢数据）。**无 weekly 中间层、无 importance 分级**（咕咕只需近期/长期两档）。`_llm.py` 是记忆模块共用的非流式 LLM 小工具。`decay.py` 是时间衰减共用件（summary 新鲜度 / lens confidence 都用）。
 
-> ⚠️ **记忆系统现状**：已落地 **`facts.md` + `daily.md` + `memory.md` + `summary.md` 四层**（daily→memory 压缩在跑；summary 由反思顺带产出，见下「当前状态快照」）；**仍未实现**：`facts.json` 结构化、importance 分级、weekly 层、events 总线。详见「用户个性化文件系统」+「现状与演进」。
+> ⚠️ **记忆系统现状**：已落地 **`facts.md` + `daily.md` + `memory.md` + `summary.md`（带时间衰减）+ `lens.json`（解读先验）五层**（daily→memory 压缩在跑；summary 由反思顺带产出；反思已增量化 delta；lens 事件驱动自学）；**仍未实现**：`facts.json` 结构化（confidence/source）、importance 分级、weekly 层、events 总线、lens 反驳↓通道。详见「用户个性化文件系统」+「现状与演进」。
 
 ### 能力
 
@@ -316,21 +321,22 @@ IM 回复完  → publish('sessions', appended=[助手消息])  # 再推
 
 ### 用户个性化文件系统
 
-> ⚠️ **本节含部分 Phase 2b 目标设计**。现状已落地 **`facts.md` + `daily.md` + `memory.md` + `summary.md` 四层**；`identity.json`/`save_identity` 已作废（昵称用 `User.display_name`）；**仍未实现**：`facts.json` 结构化、importance 分级、`weekly/` 层。
+> ⚠️ **现状已落地 五层**：`facts.md`（**增量 delta 写**）+ `daily.md` + `memory.md` + `summary.md`（**带时间衰减**）+ `lens.json`（**解读先验，per-user 自学**）；`identity.json`/`save_identity` 已作废（昵称用 `User.display_name`）；**仍未实现**：`facts.json` 结构化（confidence/source）、importance 分级、`weekly/` 层、lens 反驳↓通道。
 
 每个文件回答一个独立问题：
 
 | 文件 | 回答的问题 | 由谁写 |
 | --- | --- | --- |
 | `prompts/persona.md` | 咕咕是谁？ | 开发者定义 |
-| `facts.md`（现状） | 咕咕知道用户哪些客观事实？ | 咕咕观察 + 反思写入 |
+| `facts.md`（现状） | 咕咕知道用户哪些客观事实？ | 咕咕观察 + 反思**增量**写入（add/remove） |
 | `daily.md`（现状） | 近期发生了什么？ | 反思滚动写入（最近 30 条） |
-| `preferences.md`（2b） | 用户喜欢什么、习惯什么？ | 咕咕观察 |
 | `memory.md`（现状） | 咕咕长期理解到了什么？ | `compress` 提炼（daily 老条目沉淀） |
-| `summary.md`（现状） | 用户现在在做什么？ | 反思每轮顺带产出（增量演进，重心变了才改） |
+| `summary.md`（现状） | 用户现在在做什么？ | 反思每轮顺带产出（增量演进 + 时间衰减，重心变了才改） |
+| `lens.json`（现状） | 怎么读懂这个用户？（解读先验） | 反思 `lens_hint` 事件驱动喂、候选复现才提拔（见 §感知系统 §3.5） |
+| `preferences.md`（2b） | 用户喜欢什么、习惯什么？ | 咕咕观察（**未做**，倾向并入 facts/lens） |
 
 - **信息来源严格区分**：用户主动提供的只有注册填的昵称（`User.display_name`）；其余习惯/偏好/状态全由咕咕对话观察积累，**不向用户提问、不让填表**——这是伙伴和助理的核心区别。
-- **facts 更新策略（2b 目标）**：维护结构化 JSON（value/confidence/source：observed 用户说过的、inferred 行为推断的）；已有事实变化更新 value 不追加，避免脏数据。**现状（2a）直接 markdown 列表，去重靠内容包含判断**。
+- **facts 更新策略**：现状（2b）反思只吐**增删 delta**（`facts_add`/`facts_remove`），`apply_facts_delta` 应用到 markdown 列表、去重靠内容包含判断；**结构化 JSON（value/confidence/source）仍未做**——等 lens 需要逐条溯源/置信时再上，现无迁移负担。
 - **压缩 daily → memory 两段直压、无 weekly 中间层**（咕咕只需近期/长期两档）——**已落地**（`compress.compact`，见「memory/」）。
 
 ### 消息序列约束 · 前导 assistant 会被剥（sanitize）
@@ -472,7 +478,8 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 ### 已落地能力一览
 
 - **核心**：独立 `agent/` 包、双路 LLM 工具循环、47 工具、工具一等公民（Profile 组合工具集）、prompt 分层（persona/skills/policy）、删除二次确认、单次流式调用、token 预算历史窗口。
-- **记忆**：`facts.md` + `daily.md` + `memory.md` + `summary.md` **四层**（daily→memory 压缩 + summary 当前状态快照已落地），对话后 fire-and-forget 反思，`remember` 主动记忆。
+- **记忆**：`facts.md`（增量 delta）+ `daily.md` + `memory.md` + `summary.md`（时间衰减）+ `lens.json`（解读先验）**五层**（daily→memory 压缩、summary 快照、反思增量化、per-user lens 自学均已落地），对话后 fire-and-forget 反思，`remember` 主动记忆。
+- **感知系统（P0–P2）**：A+B 感知遥测 + 误判捕获 → Admin「感知诊断」面板（活跃用户宏平均）；行为模块库（`emotion-first` 软点亮）；per-user 解读先验 lens（事件驱动自学、偏置不独裁）。详见 [`感知系统-架构升级.md`](感知系统-架构升级.md)。
 - **IM 接入**：飞书 + QQ BYO 官方直连，扫码 device-flow 自动连接，三进程（web/worker/supervisor）。
 - **多模态**：vision 看图（聊天图 + 库内图）；**mimo 音视频理解**（听语音/音频、看视频，IM 语音 SILK→mp3 转码），**语音条 + 30 天独立存储**（QQ 语音 / 网页录音）。
 - **运行时（Phase 1.7）**：轻量 Intent Router + State Manager（网关短路「还在吗/算了」，自然语言取消轮间中断）。
