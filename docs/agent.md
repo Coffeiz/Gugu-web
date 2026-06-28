@@ -139,7 +139,8 @@ persona.md（咕咕是谁）→ skills.md（怎么做）→ policy.md（不碰�
 
 Session（最近 N 条聊天，短期）与 Memory（长期认知，经 Reflection 提炼）严格分离：`Conversation → Reflection（facts 增删 / daily / summary / lens_hint / perception）→ compress（daily→memory）→ Storage`。
 
-- **`reflection.py`**：对话结束后**单次非流式** LLM 提炼 `{facts_add, facts_remove, daily, summary, lens_hint, perception}`，增量写盘；`schedule()` fire-and-forget（持后台任务引用防 GC），失败不影响对话。提炼词文件化（`prompts/reflection.md`，热生效），规则收紧：只记用户本人、不记推测/一时状态、不评判、宁少勿多。
+- **`reflection.py`**：对话结束后**单次非流式** LLM 提炼 `{facts_add, facts_remove, daily, summary, lens_hint, correction, perception}`，增量写盘；`schedule()` fire-and-forget（持后台任务引用防 GC），失败不影响对话。提炼词文件化（`prompts/reflection.md`，热生效），规则收紧：只记用户本人、不记推测/一时状态、不评判、宁少勿多。
+  - **跳过门控**（`_worth_reflecting` + `schedule`）：整条是纯应答/寒暄词（嗯/好的/谢谢…）默认跳过、省一次调用；**但若这轮咕咕用了工具**（「嗯」常用来确认方案、确认后真建改了东西），则即便用户只说「嗯」也反思，记下这轮干了啥（判据是「有没有动作」而非消息长短：web 传 `used_tools`、IM 用工具轮次让消息变长当代理）。
   - **facts 增量 + 结构化（2b）**：反思只吐 `facts_add`（对象 `{text,kind,importance}`）/`facts_remove`（字符串），由 `store.apply_facts_ops` 应用到结构化 `facts.json`，**不再回显整份 facts**。根治了「facts 一多 → 回显超 `max_tokens` → 截断 → JSON 解析失败 → 静默返回 `{}`、老用户反思全废」的老坑（曾踩）；`max_tokens` 因此回落到固定 900。**算法细节见下「记忆算法详解 §A」**。
   - **`summary` 当前状态快照（`summary.md`）**：一段「用户此刻在忙什么 / 近期重心」的话，和反思**同一次 LLM 调用顺带产出**（零额外开销），基于原快照**增量演进**——重心没变就原样返回、变了才改（写回有"非空 + 变了"双重守卫，防清空/瞎改）。写时盖 `summary.ts` 时间戳，**时间衰减**（`agent/decay.py`，半衰期 5 天）：`builder._memory_block` 与 `greeting.py` 注入时按权重换话术档（新鲜直接给 / 半旧标「约 N 天前、可能已变」/ 过时标「多半过时、别据此提具体事」），过期状态不当近况。
   - **`lens_hint` 解读先验燃料**：见下「lens.py」；绝大多数轮为空，事件驱动地喂 lens。
