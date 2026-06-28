@@ -272,7 +272,8 @@ function handleLogout() {
 .admin-main {
   flex: 1;
   background: linear-gradient(150deg, #0f1117 0%, #121626 40%, #161b30 70%, #1a1e38 100%);
-  background-attachment: fixed;
+  /* 不用 background-attachment: fixed——它把渐变钉在视口，滚动时每帧重绘整块导致闪动；
+     本元素本身就是视口高的滚动容器，默认 scroll 已让背景相对自身固定，视觉一致且无重绘。 */
   overflow-y: auto;
   height: 100vh;
 }
