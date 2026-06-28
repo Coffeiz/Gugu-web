@@ -34,6 +34,7 @@ from app.api.v1 import wechat_connect as wechat_connect_router
 from app.api.v1 import preferences as preferences_router
 from app.api.v1 import scheduled_tasks as scheduled_tasks_router
 from app.api.v1 import agent_admin as agent_admin_router
+from app.api.v1 import agent_perception as agent_perception_router
 from app.api.v1 import invite_codes as invite_codes_router
 from app.api.v1 import audit_log as audit_log_router
 from app.api.v1 import system_logs as system_logs_router
@@ -221,6 +222,11 @@ app.include_router(
 )
 app.include_router(
     agent_admin_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    agent_perception_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )

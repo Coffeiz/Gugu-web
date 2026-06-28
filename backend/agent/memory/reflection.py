@@ -40,30 +40,49 @@ _CORRECTION_MARKERS = ("不是我", "我是说", "我的意思是", "你理解�
 _PERC_INTENTS = {"执行", "推进", "记录", "查询", "决策", "反思", "情绪", "陪伴", "闲聊"}
 
 
-def _log_misperception(user_id, user_msg: str) -> None:
-    """这句像纠正上一条 → 打 misperc（离线按 user 相邻配前一条 perc = 被误判那轮）。"""
+_PERC_KEY = "perc:events"    # Redis capped list:给 Admin 聚合面板（/admin/perception）读
+_PERC_CAP = 20000
+
+
+def _now_ts() -> float:
+    import time
+    return time.time()   # 真 epoch 浮点（保留亚秒序，误判配对才不乱；别用 utcnow().timestamp() 跨时区会偏）
+
+
+def _misperc_rec(user_id, user_msg: str) -> dict | None:
+    """这句像纠正上一条 → 一条 misperc 记录（离线按 user 相邻配前一条 perc = 被误判那轮）。"""
     head = (user_msg or "").strip()[:16]
     hit = next((m for m in _CORRECTION_MARKERS if m in head), None)
-    if hit:
-        try:
-            _perc_log.info(json.dumps({"t": "misperc", "u": str(user_id)[:8], "marker": hit}, ensure_ascii=False))
-        except Exception:
-            pass
+    if not hit:
+        return None
+    return {"t": "misperc", "u": str(user_id)[:8], "marker": hit, "ts": _now_ts()}
 
 
-def _log_perception(user_id, perc, model: str) -> None:
-    """打 perc 遥测日志（只结构化字段，不写用户原文）。"""
+def _perc_rec(user_id, perc, model: str) -> dict | None:
+    """本轮观察 → 一条 perc 记录（只结构化字段，不写用户原文）。"""
     if not isinstance(perc, dict):
-        return
+        return None
     intent = perc.get("intent")
-    try:
-        _perc_log.info(json.dumps({
-            "t": "perc", "u": str(user_id)[:8], "model": model or "",
+    return {"t": "perc", "u": str(user_id)[:8], "model": model or "",
             "intent": intent if intent in _PERC_INTENTS else "其他",
-            "ambiguity": perc.get("ambiguity"),
-            "emotion": perc.get("emotion"),
-            "emo": perc.get("emo_strength"),
-        }, ensure_ascii=False))
+            "ambiguity": perc.get("ambiguity"), "emotion": perc.get("emotion"),
+            "emo": perc.get("emo_strength"), "ts": _now_ts()}
+
+
+async def _emit_perc(rec: dict | None) -> None:
+    """打 agent.perc 日志(trace/grep) + 推 Redis capped list(给聚合面板)。永不抛、不影响反思。"""
+    if not rec:
+        return
+    line = json.dumps(rec, ensure_ascii=False)
+    try:
+        _perc_log.info(line)
+    except Exception:
+        pass
+    try:
+        from app.core.redis import get_redis
+        r = get_redis()
+        await r.lpush(_PERC_KEY, line)
+        await r.ltrim(_PERC_KEY, 0, _PERC_CAP - 1)
     except Exception:
         pass
 
@@ -107,14 +126,14 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings) -> None:
 
 async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> None:
     # 误判捕获:纯正则、零依赖，先于 LLM 调用打点（即使下面 extract 失败也已记下）
-    _log_misperception(user_id, user_msg)
+    await _emit_perc(_misperc_rec(user_id, user_msg))
     try:
         mem = await store.read_memory(user_id)
         existing = mem["facts"]
         existing_summary = mem.get("summary", "")
         out = await _extract(user_name, user_msg, assistant_reply, existing, existing_summary, settings)
-        # 感知遥测:把本轮 perception 打进 agent.perc 日志（不写记忆）
-        _log_perception(user_id, out.get("perception"), getattr(getattr(settings, "ai", None), "model", ""))
+        # 感知遥测:把本轮 perception 打日志 + 推 Redis（不写记忆）
+        await _emit_perc(_perc_rec(user_id, out.get("perception"), getattr(getattr(settings, "ai", None), "model", "")))
         facts = out.get("facts") or []
         daily_note = (out.get("daily") or "").strip()
         summary = (out.get("summary") or "").strip()
