@@ -112,7 +112,16 @@ export const useProjectStore = defineStore('projects', () => {
       const lastKey = p.stages[p.stages.length - 1].key
       p.currentStage = lastKey
       p.progress = 100
-      await _patchProject(id, { status: newStatus, currentStage: lastKey, progress: 100, doneAt: p.doneAt })
+      // 拖到「已完成」= 全项目收尾：自动勾选所有阶段里未完成的待办（快照原状态 +
+      // autoCompleted 标记，拖回进行中时按此还原）。与 setStage 前进时同一套约定。
+      const stages = JSON.parse(JSON.stringify(p.stages))
+      for (const stage of stages) {
+        stage.todos = (stage.todos ?? []).map(t =>
+          t.done ? t : { ...t, _savedDone: false, done: true, autoCompleted: true }
+        )
+      }
+      p.stages = stages
+      await _patchProject(id, { status: newStatus, currentStage: lastKey, progress: 100, doneAt: p.doneAt, stages })
       return
     }
 
