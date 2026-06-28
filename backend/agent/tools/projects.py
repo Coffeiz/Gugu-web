@@ -39,6 +39,7 @@ async def _list_projects(db, user_id, args: dict):
             "id": p.id,
             "name": p.name,
             "status": p.status,
+            "color": p.color,        # 给「同类项目同色系」用：建新项目前看现有同类的颜色好沿用
             "deadline": p.deadline,
             "start_date": p.start_date,
             "client": p.client,
