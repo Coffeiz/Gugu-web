@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.tz import fmt_local
 from app.db.session import get_db
 from app.models import Feedback, User
 from app.core.security import get_current_user
@@ -73,7 +74,7 @@ async def list_feedback(
                 "username": r.username,
                 "category": r.category,
                 "content": r.content,
-                "createdAt": r.created_at.strftime("%Y-%m-%d %H:%M"),
+                "createdAt": fmt_local(r.created_at),
             }
             for r in rows
         ],

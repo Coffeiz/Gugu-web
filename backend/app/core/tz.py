@@ -38,6 +38,13 @@ def local_day_start_utc() -> datetime:
     return day0.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def fmt_local(dt, fmt: str = "%Y-%m-%d %H:%M") -> str:
+    """UTC-naive datetime → 本地时间格式化字符串（供 API 直接下发给前端的时间字段）。"""
+    if dt is None:
+        return ""
+    return dt.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ).strftime(fmt)
+
+
 def utc_to_local_date_expr() -> str:
     """PostgreSQL 表达式：把 UTC 时间戳转成本地日期，用于 GROUP BY DATE(...)。
     例：DATE(created_at + INTERVAL '8 hours')"""
