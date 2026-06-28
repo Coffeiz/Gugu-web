@@ -229,6 +229,13 @@ class AppSettings(BaseSettings):
                 }}
                 updates["search"] = SearchSettings.model_construct(**merged)
 
+            if "smtp" in override:
+                merged = {**self.smtp.model_dump(), **{
+                    k: v for k, v in override["smtp"].items()
+                    if k in SmtpSettings.model_fields
+                }}
+                updates["smtp"] = SmtpSettings.model_construct(**merged)
+
             if "agent" in override:
                 merged = {**self.agent.model_dump(), **{
                     k: v for k, v in override["agent"].items()
@@ -257,7 +264,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "voice"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]

@@ -50,6 +50,9 @@ def send_email(subject: str, body: str, *, to_addr: str | None = None, html: str
     """用后台保存的 SMTP 配置发信。成功 True，失败 False（吞异常、记日志，不影响主流程）。
     `to_addr` 不传则发给配置里的默认收件人；`html` 可附 HTML 版本。"""
     cfg = get_settings().smtp
+    if isinstance(cfg, dict):   # apply_override 后嵌套配置段可能是 dict，统一成可属性访问（同 voice）
+        from types import SimpleNamespace
+        cfg = SimpleNamespace(**cfg)
     to = to_addr or cfg.to_addr
     if not cfg.host or not to:
         return False
