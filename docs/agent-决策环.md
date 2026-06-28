@@ -234,7 +234,7 @@ flowchart TD
 - ✅ 主动记忆路径：`remember` 工具（用户说"记住X"）。
 - ✅ **反思增量化（Phase 2b · delta）**：反思只吐 `facts_add` / `facts_remove`（这轮的增删），由 `store.apply_facts_delta` 应用到 facts.md，**不再回显整份 facts**。根治了「facts 一多 → 输出超 max_tokens → 截断 → JSON 解析失败 → 静默返回 `{}`、老用户反思全废」的老坑；max_tokens 因此回落到固定值。旧 prompt（回显整份 `facts`）仍兼容回退。
 - ✅ **per-user 解读先验 lens（Phase P2 · v1）**（`agent/memory/lens.py` + `.agent/lens.json`）：第 5 类记忆——「怎么读懂这个用户」的偏置规则（如『「还行」→ 多半不太行』）。**事件驱动**（反思多吐一个 `lens_hint` 字段、零热路径 LLM）；**防过拟合双闸**（模型自律 + 候选须复现 `PROMOTE_AT` 次、以「触发语」为键合并同义改写才提拔）；confidence 新规则 0.6、印证↑、按 `LENS_HALF_LIFE=30d` 衰减、低于 `RETIRE_EFF` 退休；`builder` 注入成「解读镜片」**偏置不独裁**、按 effective 选话术档。⚠️ v1 未做：被反驳时 confidence↓（靠衰减自然淘汰）。
-- ✅ **Phase 2b 已落地**：`facts.json` **结构化**（每条 kind=observed/inferred、conf、importance、ts；反思增量增删改 `apply_facts_ops`，命中相似条印证升 conf、否则新增；`observed` 不衰减、`inferred` 按半衰期淡出；注入按 effective×importance 过滤排序；旧 facts.md 自动迁移）+ `events/bus.py` **事件总线**（`MemoryUpdated` 发布 + 审计 listener，Core 不耦合下游）+ **控制命令** `/memory`（看记得啥）/`/forget`（忘掉一条）。
+- ✅ **Phase 2b 已落地**：`facts.json` **结构化**（每条 kind=observed/inferred、conf、importance、ts；反思增量增删改 `apply_facts_ops`，命中相似条印证升 conf、否则新增；`observed` 不衰减、`inferred` 按半衰期淡出；注入按 effective×importance 过滤排序；旧 facts.md 自动迁移）+ `events/bus.py` **事件总线**（`MemoryUpdated` 发布 + 审计 listener，Core 不耦合下游）+ **控制命令** `/memory`（看记得啥）/`/forget`（忘掉一条）。**算法详解（数据结构/置信公式/相似度阈值理由/衰减半衰期表）见 [`agent.md`](agent.md)「记忆算法详解 §A–§D」。**
 - ⚠️ **2b 仍未做**：facts 完整来源链（现只标 kind、不记哪轮对话/原文）、`/newchat`（网页 UI 已有）、lens 反驳↓通道。
 - ⚠️ 反思 token 暂不计入用户配额。
 

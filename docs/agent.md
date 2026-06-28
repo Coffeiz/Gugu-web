@@ -140,15 +140,114 @@ persona.md（咕咕是谁）→ skills.md（怎么做）→ policy.md（不碰�
 Session（最近 N 条聊天，短期）与 Memory（长期认知，经 Reflection 提炼）严格分离：`Conversation → Reflection（facts 增删 / daily / summary / lens_hint / perception）→ compress（daily→memory）→ Storage`。
 
 - **`reflection.py`**：对话结束后**单次非流式** LLM 提炼 `{facts_add, facts_remove, daily, summary, lens_hint, perception}`，增量写盘；`schedule()` fire-and-forget（持后台任务引用防 GC），失败不影响对话。提炼词文件化（`prompts/reflection.md`，热生效），规则收紧：只记用户本人、不记推测/一时状态、不评判、宁少勿多。
-  - **facts 增量化（2b · delta）**：反思只吐 `facts_add`/`facts_remove`（这轮的增删），由 `store.apply_facts_delta` 应用到 `facts.md`，**不再回显整份 facts**。根治了「facts 一多 → 回显超 `max_tokens` → 截断 → JSON 解析失败 → 静默返回 `{}`、老用户反思全废」的老坑（曾踩）；`max_tokens` 因此回落到固定 900。旧 prompt（回显整份 `facts`）仍兼容回退。
+  - **facts 增量 + 结构化（2b）**：反思只吐 `facts_add`（对象 `{text,kind,importance}`）/`facts_remove`（字符串），由 `store.apply_facts_ops` 应用到结构化 `facts.json`，**不再回显整份 facts**。根治了「facts 一多 → 回显超 `max_tokens` → 截断 → JSON 解析失败 → 静默返回 `{}`、老用户反思全废」的老坑（曾踩）；`max_tokens` 因此回落到固定 900。**算法细节见下「记忆算法详解 §A」**。
   - **`summary` 当前状态快照（`summary.md`）**：一段「用户此刻在忙什么 / 近期重心」的话，和反思**同一次 LLM 调用顺带产出**（零额外开销），基于原快照**增量演进**——重心没变就原样返回、变了才改（写回有"非空 + 变了"双重守卫，防清空/瞎改）。写时盖 `summary.ts` 时间戳，**时间衰减**（`agent/decay.py`，半衰期 5 天）：`builder._memory_block` 与 `greeting.py` 注入时按权重换话术档（新鲜直接给 / 半旧标「约 N 天前、可能已变」/ 过时标「多半过时、别据此提具体事」），过期状态不当近况。
   - **`lens_hint` 解读先验燃料**：见下「lens.py」；绝大多数轮为空，事件驱动地喂 lens。
   - **`perception` 感知遥测**：本轮观察（intent/ambiguity/emotion/emo_strength）+ 误判捕获，只打 `agent.perc` 日志 + 推 Redis capped list，喂 Admin「感知诊断」面板，不写记忆、不影响回复。
 - **`lens.py`（per-user 解读先验，第 5 类记忆）**：「怎么读懂这个用户」的偏置规则（如 `「还行」→ 多半不太行`），存 `.agent/lens.json`。**事件驱动**（吃反思 `lens_hint`、零热路径 LLM）；**防过拟合双闸**（模型自律 + 候选须复现 `PROMOTE_AT=2` 次、**以触发语为键**合并同义改写才提拔）；confidence 新规则 0.6 / 印证↑ / 半衰期 30 天衰减（复用 `decay.py`）/ 低于 `RETIRE_EFF=0.25` 退休；`builder` 注入「解读镜片」**偏置不独裁**、按 effective 选话术档（笃定/多半/也许）。⚠️ v1 未做：被反驳时 confidence↓（靠衰减自然淘汰）。详见 `docs/感知系统-架构升级.md` §3.5。
-- **`store.py`**：读写 `.agent/{facts,daily,memory,summary}.md` + `summary.ts` + `lens.json`（lens 经 `lens.py`），经 `StorageBackend`（本地/OSS 通吃）。`read_memory` 一次返回五层（含渲染好的 lens 注入块、summary_ts）；`apply_facts_delta` 应用增删、`merge_facts` 按内容去重，`append_daily` 滚动保留最近 30 条。
+- **`store.py`**：读写 `.agent/` 下 `facts.json`（结构化）+ `daily.md` + `memory.md` + `summary.md` + `summary.ts` + `lens.json`，经 `StorageBackend`（本地/OSS 通吃）。`read_memory` 一次返回五层（facts 已 `render_facts` 成注入用 markdown、含渲染好的 lens 块与 summary_ts）；facts 结构化读写/应用走 `read_facts_list` / `write_facts_list` / `apply_facts_ops` / `render_facts`，`append_daily` 滚动保留最近 30 条。**算法细节见下「记忆算法详解」**。
+- **`commands.py`**：聊天里的斜杠记忆命令 `/memory`（看记得啥）、`/forget X`（忘掉一条），在 web `stream()` 短路即时回（零 LLM、不计精力、不反思）。见「记忆算法详解 §C」。
+- **`agent/events/`**：记忆变更事件总线（`bus.py` 发布/订阅 + `types.py` 类事件）。见「记忆算法详解 §D」。
 - **`compress.py`**：daily→memory 压缩**已落地**——daily 攒到 `DAILY_COMPACT_AT`(40) 条时，reflection 写完 daily 顺带触发 `compact()`：把最老的条目 LLM 沉淀进 `memory.md`、daily 留回最近 `DAILY_KEEP_RECENT`(30) 条（约每 10 轮压一次，失败不影响主流程；模型返空则不覆盖、不裁 daily 防丢数据）。**无 weekly 中间层、无 importance 分级**（咕咕只需近期/长期两档）。`_llm.py` 是记忆模块共用的非流式 LLM 小工具。`decay.py` 是时间衰减共用件（summary 新鲜度 / lens confidence 都用）。
 
 > ⚠️ **记忆系统现状**：已落地 **`facts.json`（结构化：kind/conf/imp/ts，反思增量增删改 + importance 过滤 + inferred 时间衰减）+ `daily.md` + `memory.md` + `summary.md`（带时间衰减）+ `lens.json`（解读先验）五层**（daily→memory 压缩在跑；summary 由反思顺带产出；lens 事件驱动自学；记忆变更走 `events/bus.py`；`/memory` `/forget` 控制命令）；**仍未实现**：facts 完整来源链（现只标 kind=observed/inferred，不记是哪轮对话）、weekly 层、lens 反驳↓通道、`/newchat`（UI 已有）。详见「用户个性化文件系统」+「现状与演进」。
+
+#### 记忆算法详解（2b）
+
+> 这节把 `store.py` / `commands.py` / `events/` / `decay.py` 里的算法讲透：数据结构、置信/衰减公式、相似度匹配、各阈值的取值理由。改这块前先读这里。
+
+##### §A 结构化 facts（`facts.json` + `store.apply_facts_ops`）
+
+**为什么结构化**：纯 markdown 行的 facts 有三个治不了的毛病——① 分不清「用户亲口说的」和「咕咕猜的」，猜错的会和真事实一样被当永真；② 没有重要度，facts 一多无法取舍；③ 没有时间维度，过时的推断永远赖着。结构化把每条 fact 升级成带元数据的对象，这三点才有抓手。
+
+**数据结构**（`.agent/facts.json`，一个 JSON 数组）：
+```json
+{"id": "a3f201", "text": "用户是自由插画师", "kind": "observed", "conf": 0.9, "imp": 4, "ts": 1782650000.0}
+```
+- `kind`：`observed`（用户**亲口说过**，确凿）/ `inferred`（咕咕从对话**推断**，不那么确凿）。决定衰不衰减。
+- `conf` ∈ (0,1]：置信。`observed` 默认 0.9、`inferred` 默认 0.6；每次被「印证」+0.1（上限 0.97）。
+- `imp` ∈ 1~5：importance，对长期了解 TA 的重要度。反思/模型给，默认 3。
+- `ts`：创建或上次印证的 epoch。`inferred` 的衰减以它为基准。
+
+**effective 置信**（`_fact_eff`）——注入和退休都看这个，不是看裸 `conf`：
+```
+effective = conf × (1                              if kind == observed
+                    decay.weight(ts, 45d)          if kind == inferred)
+```
+即 **observed 不随时间打折**（用户说过的事不会因为时间久就变假）；**inferred 按 45 天半衰期淡出**（45 天前推断的、没再被印证的，置信减半）。`decay.weight` 见 §B。
+
+**`apply_facts_ops(facts, add, remove)` 的决策流**（反思 / `remember` / `/forget` 都走它）：
+```
+# 删：remove 里每个字符串，删掉所有与之“相似”的条（见下相似度）
+facts = [f for f in facts if not any(similar(f.text, r) for r in remove)]
+# 增/印证：add 里每条（str → 当 inferred；dict → 用其 kind/importance）
+for a in add:
+    hit = 第一个 similar(f.text, a.text) 的已有条
+    if hit:                       # 命中 = 同一条再次出现 → 印证，不新增
+        hit.conf = min(0.97, hit.conf + 0.1)   # 置信涨
+        hit.ts   = now                          # 刷新（inferred 衰减重新计时）
+        if a.kind == observed: hit.kind = observed   # 用户亲述 > 旧的推断，升级
+        if len(a.text) > len(hit.text): hit.text = a.text   # 采更具体的措辞
+        if a.importance: hit.imp = a.importance
+    else:                          # 没命中 → 新增一条
+        facts.append({id, text, kind, conf=默认[kind], imp, ts=now})
+```
+关键：**印证机制**让反复出现的事实置信越来越高、且 inferred 每被提到一次就重新计时（不会淡出）；只有真正没再被提起的推断才会随时间退休。
+
+**相似度 `_fact_similar(a, b)`**（判定「是不是同一条」）：归一化（去标点/空格、转小写、中文保留）后——① 完全相等 → 是；② 较短的（≥6 字符）是较长的子串 → 是；③ 否则看**字符 bigram 的 Jaccard ≥ 0.7** → 是。
+- **为什么阈值高到 0.7**：短中文事实里「用户喜欢猫」和「用户喜欢狗」的 bigram Jaccard ≈ 0.6——阈值若低于此，会把**两条不同事实误并成一条**，丢掉信息（猫被并进狗）。0.7 挡住这类「同骨架、差一个关键名词」的假阳性。代价是「用户是插画师」/「用户是自由插画师」这种插字改写（≈0.5）不会自动合并，留成两条近似——**这是刻意取舍：宁可留近似重复（render 顶多多一行、反思以后可 remove），绝不误并丢信息**。
+
+**注入渲染 `render_facts`**（`read_memory['facts']` 用它，结果是喂给 LLM 的 markdown）：
+```
+1. 算每条 effective；effective < 0.2（FACT_RETIRE_EFF）的丢弃（退休、不进 prompt）
+2. 按 effective × imp 降序排  ← importance 过滤：重要且可信的排前面
+3. 取前 40 条（FACTS_INJECT_MAX）  ← facts 再多也不撑爆 prompt
+4. 渲染成「- {text}」；inferred 且 effective<0.45 的标「（不太确定）」提示模型别当铁律
+```
+
+**迁移**（`_migrate_md`）：老用户的 `facts.md` 在第一次 `read_facts_list` 时被解析成结构化（每行一条、`kind=observed`、`conf=0.75`、`imp=3`）并写回 `facts.json`，**自动、一次性、无需手动**。`facts.md` 文件保留不删（不再写），方便回滚对照。
+
+##### §B 时间衰减（`agent/decay.py`，全系统共用）
+
+一个纯函数，summary 新鲜度、lens confidence、facts(inferred) 置信都复用：
+```
+weight(updated_ts, half_life_days) = 0.5 ** (age_days / half_life_days)      # ∈ (0,1]
+  age_days = (now - updated_ts) / 86400 ；updated_ts 为空 → 返回 1.0（当新鲜，兼容旧数据）
+```
+即「距上次更新过了一个半衰期，权重减半」。各处半衰期不同，体现「这类信息多久该打折」：
+
+| 用处 | 半衰期 | 退休/分档线 | 含义 |
+|---|---|---|---|
+| summary（当前状态） | **5 天** | <0.6 加「可能已变」、<0.25 加「多半过时」 | 状态变得快，几天就该存疑 |
+| facts（仅 inferred） | **45 天** | effective<0.2 退休 | 推断比状态稳，但久了无印证也该淡出 |
+| lens（解读先验 confidence） | **30 天** | effective<0.25 退休 | 慢变先验 |
+
+权重是**内部数**：调用方据它选离散话术（「可能已变」之类）或决定取舍，**从不把数字本身喂给 LLM**。
+
+##### §C 控制命令（`agent/commands.py`）
+
+用户在聊天框直接打斜杠命令，在 web `stream()` 里**短路**——不进 LLM、不计精力、不触发反思，像配额硬拦那样用 `genstream.typed_stream` 把回复逐字流式回去：
+- `/memory`（`/记忆` `/记得`）：列出当前 facts（按 `effective × imp` 排序，`inferred` 标「（推测）」）+ 最近状态 summary。
+- `/forget <内容>`（`/忘记` `/忘掉`）：删掉与 `<内容>` 对得上的 fact。删除匹配比注入匹配**宽**一点（用户主动点名删）：归一化后 `<内容>`（≥2 字）是某条 fact 的子串，或两者整体 `_fact_similar`，即删。删 0 条会如实回「没找到」。
+- `/newchat` **未做**：网页已有「新对话」按钮，斜杠新建会话与会话编排耦合，UI 操作即可。
+
+解析 `_parse` 半角/全角斜杠与空格都认；非记忆命令返回 `None`，照常走对话（不吞别的 `/` 输入）。
+
+##### §D 事件总线（`agent/events/bus.py` + `types.py`）
+
+记忆变更的解耦广播。**发布方不关心有没有/有几个消费者**，listener 失败只记日志、绝不反噬主流程：
+```
+subscribe(EventType, async_listener)     # 注册：按事件“类”订阅（不是字符串）
+publish(event)                            # 对该类型每个 listener 各起一个后台任务（fire-and-forget）
+```
+- 事件用**类**不用字符串（`types.py`：`Event` 基类 → `MemoryUpdated(user_id, added, removed, source)`），可类型检查、带结构化字段、IDE 可跳转。
+- 当前发布点：反思写完 facts、`remember` 工具、`/forget` 命令 → `publish(MemoryUpdated(..., source="reflection"|"remember"|"forget"))`。
+- 当前唯一 listener：把变更落 `agent.events` 审计日志（进 Debug 面板，可看「谁的记忆何时 +N/-M」）。
+- 设计意图：成就 / 行为分析 / 正反馈这类下游**以后挂 listener 即可**，不动发布方、Core 不耦合业务（决策环文档列的 2b 目标）。
+
+##### §E lens（解读先验，第 5 类记忆）
+
+「怎么读懂这个用户」的偏置规则，自成体系、事件驱动自学，属感知系统范畴——完整算法（候选→提拔双闸、触发语为键的复现匹配、confidence 动态）见 [`感知系统-架构升级.md`](感知系统-架构升级.md) §3.5，本文不重复。
 
 ### 能力
 
