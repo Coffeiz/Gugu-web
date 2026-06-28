@@ -1471,7 +1471,7 @@ async function send(forcedText) {
   if (fromInput) {
     _sessionTurn++
     messages.value.push({ id: mkid(), role: 'user', text, time: now(),
-      files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, upload: true, _thumbUrl: a._thumbUrl })) : undefined })
+      files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl })) : undefined })
     inputText.value = ''
     pendingAtt.value = []
     if (expInputEl.value) expInputEl.value.style.height = 'auto'
@@ -1724,7 +1724,8 @@ async function send(forcedText) {
 }
 .chat-main.is-expanded .chat-input-row { padding: 14px 20px; gap: 10px; }
 /* 录音条：录音时替换输入框 */
-.rec-bar { flex: 1; display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-primary); padding: 2px 0; min-width: 0; }
+.rec-bar { flex: 1; display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-primary); height: 28px; min-width: 0; }   /* 与按钮(28)等高 → flex-end 底对齐时内容也居中对齐，不再偏低 */
+.chat-main.is-expanded .rec-bar { height: 32px; }   /* 放大态对齐 32 */
 .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: #e15c5c; flex-shrink: 0; animation: rec-pulse 1s ease-in-out infinite; }
 @keyframes rec-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 .rec-time { font-variant-numeric: tabular-nums; font-weight: 600; color: #e15c5c; }
