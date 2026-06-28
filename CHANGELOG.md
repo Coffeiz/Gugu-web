@@ -9,6 +9,52 @@
 
 ## [Unreleased]
 
+### 修：delete_project 工具 ImportError 导致 agent 删项目必失败
+
+agent 工具层 `_delete_project` 还在 `from app.api.v1.projects import rehome_project_files_to_personal`，但该函数在「删项目改为连文件软删」时已被移除，导致任何 agent 删项目请求都以 ImportError 崩溃。改为与 API 端一致：先 `UPDATE files SET deleted_at=now()`（软删），再 `DELETE project`（文件夹由 FK CASCADE 级联删）。
+
+### 修：精力配额与 DAU 统计时区错误（UTC → CST）
+
+- **精力 6h 窗口**（`agent/quota.py`）：`six_h_window_start` 原按 UTC 整点切割（北京 08/14/20/02 点重置），改为 CST 整点（00/06/12/18）；UTC → CST 算槽位，再转回 UTC naive 供 DB 比较，与 `AgentUsage.created_at` 口径一致。
+- **DAU 改为「登录即算」+ CST 今日 0 点**（`admin_analytics.py` / `auth.py` / `models`）：原 DAU 按 `AgentUsage` 统计（须发消息才算），且 `today_start` 用 UTC 午夜。改为 `User.last_active_at`：前端每次加载调 `/auth/me`，每小时最多写一次，CST 今日 0 点起有记录即算活跃。新增 `last_active_at` 字段 + migration `20260627000002`。
+
+### 深夜对话时间语境（0–4 点以日出为一天的分界）
+
+凌晨 0–4 点时，`builder.py` 在注入的当前时刻后附加提示：「以日出为一天的分界：用户口中的『今天』指尚未结束的这个主观白天（日历昨天），『明天』指日出后的那天（日历今天）」，让咕咕正确理解深夜说「明天」的语义。
+
+### 关闭气泡通知自动标记导航栏已读
+
+通知同时推送导航栏和气泡时，关闭气泡（点 ✕ 或被新气泡顶替）即调 `uiStore.markRead(notifId)` 标记已读。`liveNotification` 补带 `id` 字段，气泡 item 存 `notifId`，`dismiss()` 取出后调 markRead。纯 bubble-only 通知（无后端 id）不受影响。
+
+### 登录页底部加备案号与署名
+
+登录页底部绝对定位一行小字：「Created by Claude with love · 苏ICP备2026042185号」，备案号链接工信部查询页。
+
+### 修：用户正用 QQ 聊天，咕咕却说「QQ 没绑定、扫码连」
+
+用户在 QQ 上跟咕咕说「QQ 通知我」，咕咕却回「QQ 还没绑定，扫一下连上」——它根本不知道**当前这段对话就来自 QQ**（QQ 显然已连）。根因：系统提示从不注入「当前来源平台 / 已连 IM 渠道」，而 `create_scheduled_task` 工具又叫咕咕「设 qq/feishu 渠道前先确认绑定」，咕咕无从确认只能瞎猜。
+
+- **注入来源 + 渠道连接情况**（`builder._source_block` / `loaders.load_im_channels`）：系统提示加「## 当前对话来源 / 通知渠道」——本次对话来自 QQ/飞书/网页、各 IM 渠道是否已连（据 `imreach`）。**当前来源平台强制标记已连**（用户正用它说话＝必然可达），并明示「无需再绑、绝不让 TA 扫码」。
+- **`runner.py` / `web.py`** 透传 `source`（`req.source`/`"web"`）+ `im_channels` 给 `builder.build`。
+- **工具描述订正**（`scheduled_tasks.py`）：`create_scheduled_task` 的渠道说明从「先确认绑定」改为「看系统提示的渠道连接情况，已连直接用、未连才提示绑」。
+
+### 修：IM 路由把「确认用的嗯」当闲聊吞掉
+
+咕咕问「要删吗 / 要建项目吗」后，用户回「嗯」确认，却被 Intent Router 当成闲聊——忙时 `drop`、空闲回个「嗯嗯～」**都不进主模型**，确认永远丢失。根因是路由不知道「咕咕刚问了用户问题」。
+
+- **「等回话」标志**（`runtime_state.py` / `worker.py` / `router.py`）：咕咕回复以**问句/确认收尾**（`reply_awaits_answer`：结尾带 `？` 或「要不要/好吗/确认一下」等）时，worker 在回复定稿后置 `agentawait:{platform}:{puid}`（Redis，20min TTL；陈述句回复则清）。
+- **路由放行**：网关把 awaiting 传进 `decide(text, state, awaiting)`；awaiting 为真时，这轮的「嗯/好/算了」走 `agent`（是对提问的回答），不再 `drop`/秒回吞掉。咕咕下条陈述回复自动清标志，恢复正常闲聊短路。
+- 顺带发现 `WAITING_CONFIRM` 状态定义了但从未被 set（删除确认走的是工具层 `confirm` 参数，不靠状态机），文档已订正。
+
+### 记忆新增 summary.md（当前状态快照「用户现在在做什么」）
+
+记忆从三层补到**四层**：facts（稳定身份）/ daily（流水）/ memory（长期）之外，加 **`summary.md`** —— 一段「用户此刻在忙什么 / 近期重心 / 状态」的快照。
+
+- **零额外开销产出**（`reflection.py` / `prompts/reflection.md`）：反思那次 LLM 调用的输出从 `{facts,daily}` 扩成 `{facts,daily,summary}`，summary 顺带产出。基于原快照**增量演进**——重心没变原样返回、变了才改；写回有「非空 + 内容变了」双重守卫，防把已有快照清空或瞎改。
+- **注入最前**（`builder._memory_block`）：作为 `## TA 最近的状态` 注入系统提示**记忆块顶部**，咕咕开口前就知道用户当下处境；`greeting.py` 默认问候也优先参考它。
+- **存储/清理**（`store.py` / `agent.py`）：`read_memory` 返回四层，`read_summary`/`write_summary` 读写 `.agent/summary.md`；清空记忆接口一并删除 summary.md。
+- 实测：「在筹备公司年会、下周五交方案」→ summary 记「最近在筹备公司年会策划方案，下周五截止，忙得脚不沾地」，facts 只留稳定事实，三类正确分离。
+
 ### mimo 音 / 视频理解适配（含模型池路由修复）
 
 让咕咕能真正「听 / 看」用户发的音视频（mimo 的 OpenAI 扩展块 `input_audio` / `video_url`）：
@@ -25,7 +71,8 @@ QQ 语音 / 网页录音不再当文件卡，做成可播放的语音条：
 - **语音条 UI**（`GuguChat.vue`）：`msg.files` 里 `kind==='voice'` 渲染成播放钮 + 装饰波形 + 时长；点击带 Bearer 拉 `download` 端点 blob 播放（`<audio src>` 不带 token）。
 - **独立 30 天存储**（`chat_attach.py`）：语音走 `stage_voice()` → 独立 `.voice/` 目录、留存 30 天（普通附件仍 6h `.chat_staging/`）、带时长（`ffprobe` 探测）。过期点播放 → 提示「语音过期啦」。
 - **「直接听内容回应」语气**（`resolve_for_message`）：语音分支提示词改成「这是对话不是文件，直接听内容并回应，别问要不要存」，去掉 `save_uploaded_file` 话术。
-- **入口标记**：QQ 语音（silk/amr 转码成功＝语音）→ `stage_voice`；网页录音上传带 `voice=true`；拖入的音频文件仍当文件。
+- **入口标记**：QQ 语音（silk/amr）/ 飞书语音（opus）转码成功＝语音 → `stage_voice`；网页录音上传带 `voice=true`；拖入的音频文件仍当文件。
+- **飞书语音接入**（`feishu.py`）：原本 `audio` 类型语音被 `_ingest_media` 外直接 `return` 丢弃，现按「语音消息」处理——opus 经 `ffmpeg` 转 mp3、`stage_voice_sync` 暂存，与 QQ 汇合到同一条 mimo 听音链路（不用 pilk，opus 直转）。
 
 ### 项目待办：拖拽排序
 

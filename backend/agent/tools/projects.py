@@ -7,7 +7,7 @@ import json
 import random
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.models import File, Project
 
@@ -242,12 +242,15 @@ async def _delete_project(db, user_id, args: dict):
         return blocked
 
     pid, pname = p.id, p.name
-    from app.api.v1.projects import rehome_project_files_to_personal
-    rehomed = await rehome_project_files_to_personal(db, user_id, pid)  # 文件先归个人，别变孤儿
+    # 文件软删（置 deleted_at），文件夹随项目 FK CASCADE 自动删
+    await db.execute(
+        update(File)
+        .where(File.project_id == pid, File.user_id == user_id, File.deleted_at.is_(None))
+        .values(deleted_at=datetime.utcnow())
+    )
     await db.delete(p)
     await db.commit()
-    return {"success": True, "deleted_project_id": pid, "name": pname,
-            "files_moved_to_personal": rehomed}
+    return {"success": True, "deleted_project_id": pid, "name": pname}
 
 
 # ── 阶段/待办辅助 ──

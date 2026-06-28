@@ -4,7 +4,7 @@
 （default.md，含实时数据与记忆占位符）。persona 定义"咕咕是谁、怎么相处、何时
 主动"，模板提供"此刻的项目/日程/记忆"。
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -63,13 +63,17 @@ def _skills_index_block(skill_names: list[str] | None) -> str:
 def build(profile: str, user_name: str, projects: list, events: list,
           memory: dict | None = None, files: dict | None = None,
           skills: list[str] | None = None,
-          style_prefs: dict | None = None) -> str:
+          style_prefs: dict | None = None,
+          source: str | None = None, im_channels: dict | None = None) -> str:
     memory = memory or {}
     _now = datetime.now()
     today = _now.strftime("%Y-%m-%d")
     # 当前完整时刻（含星期、时分），让咕咕知道"现在几点、星期几"，能答时间、按时段问候、排期
     _wd = "一二三四五六日"[_now.weekday()]
     now_str = f"{today}（星期{_wd}）{_now.strftime('%H:%M')}"
+    # 深夜（0-4 点）：用户主观上还没睡着、仍认为是"昨天"，「明天」=日历今天，「今天」=日历昨天
+    if _now.hour < 4:
+        now_str += "，深夜未眠——以日出为一天的分界：用户口中的「今天」指尚未结束的这个主观白天（日历昨天），「明天」指日出后的那天（日历今天），涉及日期时请按此理解"
 
     proj_lines = []
     for p in projects[:25]:
@@ -137,8 +141,33 @@ def build(profile: str, user_name: str, projects: list, events: list,
     mem_block = _memory_block(memory)
     if mem_block:
         sections.append(mem_block)
+    src_block = _source_block(source, im_channels)
+    if src_block:
+        sections.append(src_block)
     sections.append(result)
     return "\n\n---\n\n".join(sections)
+
+
+_SOURCE_NAME = {"qqbot": "QQ", "feishu": "飞书", "web": "网页"}
+
+
+def _source_block(source: str | None, im_channels: dict | None) -> str:
+    """注入「当前对话来源 + 已连通知渠道」——根治『用户正用 QQ 聊天，咕咕却说 QQ 没绑、让扫码』。
+    当前来源平台必然可达（用户正用它说话），强制标记已连，别再让 TA 绑。"""
+    name = _SOURCE_NAME.get(source or "")
+    ch = im_channels or {}
+    qq_on = bool(ch.get("qq")) or source == "qqbot"
+    fs_on = bool(ch.get("feishu")) or source == "feishu"
+    lines = []
+    if name:
+        lines.append(f"本次对话来自：**{name}**。")
+    lines.append(f"主动通知渠道：站内通知（始终可用）；QQ {'已连 ✅' if qq_on else '未连 ❌'}；"
+                 f"飞书 {'已连 ✅' if fs_on else '未连 ❌'}。")
+    if source in ("qqbot", "feishu"):
+        lines.append(f"- 用户**正用 {name} 跟你说话** → {name} 必然已连接：设提醒/通知走 {name} 渠道时"
+                     f"**无需再绑定、绝不让 TA 扫码**（说『没绑』就错了）。")
+    lines.append("- 设 qq/feishu 通知渠道前看这里：已连(✅)的直接用；只有未连(❌)才提示用户去「设置 → 连接 IM」绑定。")
+    return "## 当前对话来源 / 通知渠道\n\n" + "\n".join(lines)
 
 
 def _style_block(prefs: dict) -> str:
@@ -167,10 +196,13 @@ def _style_block(prefs: dict) -> str:
 def _memory_block(memory: dict) -> str:
     """咕咕对用户的记忆。全空时也注入一句明确声明——给"我不知道"一个锚点，防模型
     在空白处脑补共同经历（伪个性化）；不再返回空串。顺序：稳定事实 → 长期记忆 → 最近。"""
+    summary = (memory.get("summary") or "").strip()
     facts   = (memory.get("facts") or "").strip()
     longterm = (memory.get("memory") or "").strip()
     daily   = (memory.get("daily") or "").strip()
     parts = []
+    if summary:
+        parts.append("## TA 最近的状态\n\n" + summary)
     if facts:
         parts.append("## 我对你的了解\n\n" + facts)
     if longterm:
