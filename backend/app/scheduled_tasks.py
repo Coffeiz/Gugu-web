@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid as _uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.core.tz import local_now
 
@@ -31,6 +31,22 @@ def build_trigger(cron: str):
     return CronTrigger.from_crontab(cron, timezone="Asia/Shanghai")
 
 
+_ONCE_GC_GRACE = timedelta(seconds=120)   # 一次性任务过点后多久可被 GC（留窗口给正在触发的 execute_task 先删）
+
+
+def _once_expired(cron: str, now_naive: datetime) -> bool:
+    """是不是「已过点的一次性任务」。@once 时间是 Asia/Shanghai 本地(naive)，与 local_now 同口径比。
+    解析不了的不动（宁留勿误删）。仅过去超过宽限期才算过期，避开正在触发的那一下。"""
+    c = cron or ""
+    if not c.startswith("@once:"):
+        return False
+    try:
+        when = datetime.fromisoformat(c[6:])
+    except Exception:
+        return False
+    return when < now_naive - _ONCE_GC_GRACE
+
+
 # ── reconcile：DB → APScheduler ──────────────────────────────────────────────
 async def reconcile() -> None:
     from app.core import scheduler as sched
@@ -42,9 +58,18 @@ async def reconcile() -> None:
     if ss._engine is None:
         ss._build_engine()
     async with ss._SessionLocal() as db:
-        tasks = (await db.execute(
-            select(ScheduledTask).where(ScheduledTask.enabled.is_(True))
-        )).scalars().all()
+        all_tasks = (await db.execute(select(ScheduledTask))).scalars().all()
+        # GC 过期的一次性任务：一次性任务过点就「用完了」——正常触发的已被 execute_task 即时删，
+        # 这里兜底清理漏网的（misfire 没触发、被停用、或残留），否则它们永远僵在面板里。
+        now_naive = local_now().replace(tzinfo=None)
+        gc_ids = [t.id for t in all_tasks if _once_expired(t.cron, now_naive)]
+        if gc_ids:
+            for t in all_tasks:
+                if t.id in gc_ids:
+                    await db.delete(t)
+            await db.commit()
+            print(f"[sched] GC {len(gc_ids)} 个过期一次性任务: {gc_ids}", flush=True)
+        tasks = [t for t in all_tasks if t.enabled and t.id not in set(gc_ids)]
 
     desired: dict[str, str] = {}
     for t in tasks:
