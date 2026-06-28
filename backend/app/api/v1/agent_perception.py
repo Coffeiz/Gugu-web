@@ -65,14 +65,18 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
         return {"window_hours": hours, "min_events": min_events, "thresholds": thresholds,
                 "active_users": 0,
                 "perc_total": 0, "misperc_total": 0, "overall_misperc_rate": None,
+                "perception_misperc_rate": None, "misperc_by_kind": [],
                 "avg_ambiguity": None, "avg_emo_strength": None,
                 "intent_distribution": [], "by_model": [], "emotion_distribution": [],
                 "flags": [], "note": f"暂无活跃用户（窗口内对话 ≥{min_events} 轮的用户）—— 多聊几轮再看"}
 
-    # 误判按 user+ts 相邻配对到「被误判那轮」的 intent/model（仅活跃用户内）
-    per_user_misperc = Counter()
-    misperc_by_intent = Counter()
+    # 误判按 user+ts 相邻配对到「被误判那轮」的 intent/model（仅活跃用户内）。
+    # 新：按 kind 分「感知误读」与「数据/执行错」——感知误判率才是本面板真正要优化的。
+    per_user_misperc = Counter()        # 全部纠正（含数据错）
+    per_user_perc_err = Counter()       # 仅「感知误读」
+    misperc_by_intent = Counter()       # intent/model 维度沿用全部纠正口径
     misperc_by_model = Counter()
+    misperc_by_kind = Counter()
     for u in active:
         evs = sorted(by_user_all[u], key=lambda x: x.get("ts") or 0)
         last_perc = None
@@ -81,6 +85,10 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
                 last_perc = e
             elif e.get("t") == "misperc" and last_perc is not None:
                 per_user_misperc[u] += 1
+                kind = e.get("kind") or "未判"
+                misperc_by_kind[kind] += 1
+                if kind == "感知误读":
+                    per_user_perc_err[u] += 1
                 misperc_by_intent[last_perc.get("intent")] += 1
                 misperc_by_model[last_perc.get("model")] += 1
 
@@ -88,7 +96,7 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
     all_intents = set()
     for u in active:
         all_intents |= {e.get("intent") for e in by_user_perc[u]}
-    user_avg_amb, user_avg_emo, user_rate = [], [], []
+    user_avg_amb, user_avg_emo, user_rate, user_perc_rate = [], [], [], []
     intent_user_share = {i: [] for i in all_intents}   # intent → 各用户的占比（缺席补 0）
     for u in active:
         evs = by_user_perc[u]
@@ -96,6 +104,7 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
         user_avg_amb.append(_mean([e.get("ambiguity") for e in evs]))
         user_avg_emo.append(_mean([e.get("emo") for e in evs]))
         user_rate.append(per_user_misperc.get(u, 0) / tot)
+        user_perc_rate.append(per_user_perc_err.get(u, 0) / tot)
         ic = Counter(e.get("intent") for e in evs)
         for i in all_intents:
             intent_user_share[i].append(ic.get(i, 0) / tot)
@@ -103,6 +112,8 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
     avg_ambiguity = _mean(user_avg_amb)
     avg_emo = _mean(user_avg_emo)
     overall_misperc_rate = round(sum(user_rate) / len(user_rate), 3) if user_rate else None
+    # 感知误判率（仅「感知误读」kind，宏平均）—— 这才是本面板真正要优化的；数据/执行错另算
+    perception_misperc_rate = round(sum(user_perc_rate) / len(user_perc_rate), 3) if user_perc_rate else None
 
     # intent 分布：占比=宏平均 share（按用户均权）；条数=活跃池计数；误判率=活跃池 micro
     pooled_intent = Counter(e.get("intent") for e in perc)
@@ -148,6 +159,8 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
         "perc_total": len(perc),
         "misperc_total": len(misp),
         "overall_misperc_rate": overall_misperc_rate,
+        "perception_misperc_rate": perception_misperc_rate,
+        "misperc_by_kind": [{"kind": k, "count": v} for k, v in misperc_by_kind.most_common()],
         "avg_ambiguity": avg_ambiguity,
         "avg_emo_strength": avg_emo,
         "intent_distribution": by_intent,

@@ -68,10 +68,10 @@
           <div class="card-val">{{ data.perc_total }}</div>
           <div class="card-lbl">观察数 · 纠正 {{ data.misperc_total }}</div>
         </div>
-        <div class="card" :class="rateCard(data.overall_misperc_rate)">
+        <div class="card" :class="rateCard(data.perception_misperc_rate)">
           <div class="card-icon ic-amber"><PhPulse :size="16" weight="bold"/></div>
-          <div class="card-val">{{ pct(data.overall_misperc_rate) }}</div>
-          <div class="card-lbl">误判率（宏平均）</div>
+          <div class="card-val">{{ pct(data.perception_misperc_rate) }}</div>
+          <div class="card-lbl">感知误判率（仅误读·宏平均）</div>
         </div>
         <div class="card" :class="{ 'card-active': data.avg_ambiguity > ambigHi }">
           <div class="card-icon ic-amber"><PhBrain :size="16" weight="bold"/></div>
@@ -79,6 +79,15 @@
           <div class="card-lbl">平均歧义度 · 情绪 {{ data.avg_emo_strength ?? '—' }}</div>
         </div>
       </div>
+
+      <template v-if="data.misperc_by_kind && data.misperc_by_kind.length">
+        <div class="section-label">纠错构成<span class="sl-hint">反思 LLM 判定 · 区分「读错需求」与「数据/执行错」</span></div>
+        <div class="emo-strip">
+          <span v-for="k in data.misperc_by_kind" :key="k.kind"
+            :class="['kind-chip', kindCls(k.kind)]">{{ k.kind }} · {{ k.count }}</span>
+          <span class="kind-chip">总纠错率 {{ pct(data.overall_misperc_rate) }}</span>
+        </div>
+      </template>
 
       <div class="section-label">需求类型分布 & 误判率<span class="sl-hint">占比=按用户宏平均 · 误判率=被下一句纠正的比例</span></div>
       <div v-if="!intents.length" class="state-msg sm-sm">暂无数据</div>
@@ -162,6 +171,8 @@ function pct(v) { return v == null ? '—' : (v * 100).toFixed(0) + '%' }
 // 标红线 = 当前 rateHiPct；标黄 = 其 0.6 倍（随面板阈值联动）
 function rateClass(v) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return v != null && v > hi ? 'bad' : (v != null && v > mid ? 'warn' : '') }
 function rateCard(v) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return v != null && v > hi ? 'card-bad' : (v != null && v > mid ? 'card-active' : '') }
+// 纠错构成配色：感知误读=红（该优化）、数据/执行错=琥珀（归数据/工具）、未判=灰
+function kindCls(k) { return k === '感知误读' ? 'kc-bad' : (k === '数据或执行错' ? 'kc-warn' : 'kc-dim') }
 
 onMounted(load)
 </script>
@@ -239,4 +250,8 @@ onMounted(load)
 /* ── emotion ── */
 .emo-strip { padding: 0 36px; display: flex; flex-wrap: wrap; gap: 8px; }
 .emo-chip { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.55); border-radius: 8px; padding: 5px 11px; font-size: 12px; }
+.kind-chip { border-radius: 8px; padding: 5px 11px; font-size: 12px; background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.55); border: 1px solid transparent; }
+.kind-chip.kc-bad  { background: rgba(224,112,112,0.12); color: rgba(235,150,150,0.95); border-color: rgba(224,112,112,0.28); }
+.kind-chip.kc-warn { background: rgba(201,148,58,0.12); color: rgba(215,165,75,0.95); border-color: rgba(201,148,58,0.25); }
+.kind-chip.kc-dim  { color: rgba(255,255,255,0.4); }
 </style>

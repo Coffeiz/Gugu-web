@@ -32,17 +32,22 @@ _SYS_FALLBACK = (
     "被推翻/过时/被替换的旧条进 facts_remove（字符串、尽量照抄原文）；没变动就都给空数组、别重列旧事实。"
     "summary 是一句「用户当下在忙什么/近期重心」的快照，基于原快照演进、没变就原样返回。"
     "perception 是本轮观察（intent/ambiguity/emotion/emo_strength），照实判、只打点。"
+    "correction 判用户这条是否在纠正你上一条：is_correction(true/false)，kind 仅 true 时给——"
+    "`感知误读`(没读懂用户要什么) / `数据或执行错`(读懂了但数据/操作做错)，拿不准偏后者。"
     "lens_hint：仅当本轮**确实暴露了一条「怎么读懂这个用户」的可复用规则**才写、绝大多数轮留空字符串"
     "（一次性误会、具体事实都不算）。固定格式『「触发语」→ 真实含义/应对』，触发语放「」里写关键几字"
     "（如『「随便」→ 其实有偏好要追问』），便于复现识别。"
     '严格只输出 JSON：{"facts_add": [{"text": "...", "kind": "observed", "importance": 4}], "facts_remove": ["..."], '
     '"daily": "一句话总结(没有就空字符串)", "summary": "当前状态快照(没有就空字符串)", "lens_hint": "", '
+    '"correction": {"is_correction": false, "kind": ""}, '
     '"perception": {"intent": "情绪/查询/执行/...", "ambiguity": 0, "emotion": "无", "emo_strength": 0}}'
 )
 
-# 误判捕获:用户这句像在纠正上一条回复没领会对 = 唯一干净的客观真值（高精度词，宁缺勿滥）
+# 误判捕获:主信号是反思 LLM 判的 correction（见 _misperc_llm，能分感知误读/数据执行错）；
+# 正则只在 extract 失败时兜底（高精度、注定漏召回——短随意的纠正如「错了，…」抓不到）。
 _CORRECTION_MARKERS = ("不是我", "我是说", "我的意思是", "你理解错", "理解错了", "我要的是",
                        "搞错了", "你弄错", "不是这个", "我说的是", "不对，", "不对,", "不是，", "不是,")
+_CORRECTION_KINDS = {"感知误读", "数据或执行错"}   # LLM 判的纠正类型；面板据此拆「感知误判」与「数据/执行纠错」
 _PERC_INTENTS = {"执行", "推进", "记录", "查询", "决策", "反思", "情绪", "陪伴", "闲聊"}
 
 
@@ -55,13 +60,25 @@ def _now_ts() -> float:
     return time.time()   # 真 epoch 浮点（保留亚秒序，误判配对才不乱；别用 utcnow().timestamp() 跨时区会偏）
 
 
-def _misperc_rec(user_id, user_msg: str) -> dict | None:
-    """这句像纠正上一条 → 一条 misperc 记录（离线按 user 相邻配前一条 perc = 被误判那轮）。"""
+def _misperc_llm(user_id, corr) -> dict | None:
+    """反思 LLM 判定的纠正 → misperc（带 kind=感知误读/数据或执行错，via=llm）。主信号。
+    corr 来自 _extract 的 out['correction']；非纠正或格式不对 → None（不记）。"""
+    if not isinstance(corr, dict) or not corr.get("is_correction"):
+        return None
+    kind = corr.get("kind")
+    return {"t": "misperc", "u": str(user_id)[:8],
+            "kind": kind if kind in _CORRECTION_KINDS else "未判",
+            "via": "llm", "ts": _now_ts()}
+
+
+def _misperc_regex(user_id, user_msg: str) -> dict | None:
+    """正则兜底（仅 extract 失败时用）：这句开头像纠正 → misperc（kind 未判、via=regex）。
+    高精度、注定漏召回（短随意纠正抓不到），所以只当 LLM 不可用时的保底。"""
     head = (user_msg or "").strip()[:16]
     hit = next((m for m in _CORRECTION_MARKERS if m in head), None)
     if not hit:
         return None
-    return {"t": "misperc", "u": str(user_id)[:8], "marker": hit, "ts": _now_ts()}
+    return {"t": "misperc", "u": str(user_id)[:8], "kind": "未判", "via": "regex", "marker": hit, "ts": _now_ts()}
 
 
 def _perc_rec(user_id, perc, model: str) -> dict | None:
@@ -131,13 +148,23 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings) -> None:
 
 
 async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> None:
-    # 误判捕获:纯正则、零依赖，先于 LLM 调用打点（即使下面 extract 失败也已记下）
-    await _emit_perc(_misperc_rec(user_id, user_msg))
+    out = None
     try:
         mem = await store.read_memory(user_id)
-        existing = mem["facts"]
         existing_summary = mem.get("summary", "")
-        out = await _extract(user_name, user_msg, assistant_reply, existing, existing_summary, settings)
+        out = await _extract(user_name, user_msg, assistant_reply, mem["facts"], existing_summary, settings)
+    except Exception:
+        out = None
+
+    # 误判捕获:优先信反思 LLM 判的 correction（能分「感知误读 vs 数据/执行错」，正则做不到）；
+    # extract 没成（{} / 异常）才退回正则兜底（高精度、漏召回）。二选一，不重复计。
+    if isinstance(out, dict) and out:
+        await _emit_perc(_misperc_llm(user_id, out.get("correction")))
+    else:
+        await _emit_perc(_misperc_regex(user_id, user_msg))
+        return  # extract 没结果，facts/summary 无从写
+
+    try:
         # 感知遥测:把本轮 perception 打日志 + 推 Redis（不写记忆）
         await _emit_perc(_perc_rec(user_id, out.get("perception"), getattr(getattr(settings, "ai", None), "model", "")))
         daily_note = (out.get("daily") or "").strip()
