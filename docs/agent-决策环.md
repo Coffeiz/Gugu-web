@@ -225,14 +225,15 @@ flowchart TD
 
 | 文件 | 负责 |
 |------|------|
-| `agent/memory/reflection.py` | 对话结束后**单次非流式** LLM 调用，提炼 `{facts:[...], daily:"...", summary:"..."}` 增量写盘；`schedule()` fire-and-forget（不阻塞、失败不影响）|
+| `agent/memory/reflection.py` | 对话结束后**单次非流式** LLM 调用，提炼 `{facts_add/facts_remove, daily, summary, perception}` 增量写盘；`schedule()` fire-and-forget（不阻塞、失败不影响）|
 
 - ✅ **四层记忆**：`facts.md`（长期事实，反思调和重写去重）+ `daily.md`（近期滚动 30 条）+ `memory.md`（daily 老条目压缩沉淀，`compress.compact`）+ `summary.md`（当前状态快照，反思顺带产出、增量演进）。
 - ✅ **`daily→memory.md` 分层压缩已落地**（`memory/compress.py`）：daily 攒到 40 条触发，最老的 LLM 沉淀进 memory、daily 留最近 30。
 - ✅ **`summary.md` 当前状态快照已落地**：和反思同一次 LLM 调用顺带产出，注入记忆段最前（见 ②）。
 - ✅ 反思提示词文件化（`prompts/reflection.md`，Admin 可改），规则收紧：只记用户本人、不记推测/评判、宁少勿多。
 - ✅ 主动记忆路径：`remember` 工具（用户说"记住X"）。
-- ⚠️ **未做（Phase 2b）**：`facts.json` 结构化（confidence/source）、importance 过滤、`events/bus.py` 事件总线、控制命令（`/newchat` `/forget` `/memory` 等）。
+- ✅ **反思增量化（Phase 2b · delta）**：反思只吐 `facts_add` / `facts_remove`（这轮的增删），由 `store.apply_facts_delta` 应用到 facts.md，**不再回显整份 facts**。根治了「facts 一多 → 输出超 max_tokens → 截断 → JSON 解析失败 → 静默返回 `{}`、老用户反思全废」的老坑；max_tokens 因此回落到固定值。旧 prompt（回显整份 `facts`）仍兼容回退。
+- ⚠️ **未做（Phase 2b 余项）**：`facts.json` 结构化（confidence/source）、importance 过滤、`events/bus.py` 事件总线、控制命令（`/newchat` `/forget` `/memory` 等）。其中结构化（per-fact 置信度/来源）等 **lens 落地需要逐条衰减/溯源时**再做，现注入仍按 markdown 行、无迁移负担。
 - ⚠️ 反思 token 暂不计入用户配额。
 
 ---

@@ -68,6 +68,32 @@ def format_facts(facts: list[str]) -> str:
     return "\n".join(lines)
 
 
+def apply_facts_delta(existing_md: str, add, remove) -> str:
+    """对已有 facts 应用一次增量(2b)：先删 remove 命中的旧条、再去重追加 add。
+
+    反思只吐「这轮的增删」、不回显整份 facts —— 输出体量不再随 facts 增长，根治
+    max_tokens 截断 → JSON 解析失败 → 反思静默返回 {} 的老坑（见 reflection._extract）。
+    remove 按内容匹配（容模型轻微改写）：完全相等优先；或双向子串且长度≥4（中文每字信息量大、
+    照抄原文是主路径，子串只兜底标点/「了」之类的轻微出入，阈值 4 挡住「用户」「项目」这类泛词）。
+    """
+    def _norm(s: str) -> str:
+        return str(s).strip().lstrip("-").strip().lower()
+
+    lines = [l for l in existing_md.splitlines() if l.strip()]
+    rem = [_norm(r) for r in (remove or []) if str(r).strip()]
+    if rem:
+        lines = [l for l in lines
+                 if not any(r == _norm(l) or (len(r) >= 4 and (r in _norm(l) or _norm(l) in r))
+                            for r in rem)]
+    haystack = "\n".join(lines).lower()
+    for f in (add or []):
+        f = str(f).strip().lstrip("-").strip()
+        if f and f.lower() not in haystack:
+            lines.append(f"- {f}")
+            haystack += "\n" + f.lower()
+    return "\n".join(lines)
+
+
 def merge_facts(existing: str, new_facts: list[str]) -> str:
     """把新事实追加到已有 facts（按内容去重，已含则跳过）。返回合并后文本。"""
     lines = [l for l in existing.splitlines() if l.strip()]

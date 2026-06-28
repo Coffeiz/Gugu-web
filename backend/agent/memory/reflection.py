@@ -27,10 +27,12 @@ _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 # 文件缺失时的兜底（正常走 prompts/reflection.md，可热编辑 / Admin 在线改）
 _SYS_FALLBACK = (
     "你在帮咕咕维护对用户的长期记忆。只记关于用户本人的稳定信息（身份/偏好/习惯），"
-    "不记推测、世界常识、一时状态，不评判用户，宁少勿多、没有就返回空。summary 是一句"
-    "「用户当下在忙什么/近期重心」的快照，基于原快照演进、没变就原样返回。perception 是本轮观察"
-    "（intent/ambiguity/emotion/emo_strength），照实判、只打点。"
-    '严格只输出 JSON：{"facts": ["..."], "daily": "一句话总结(没有就空字符串)", "summary": "当前状态快照(没有就空字符串)", '
+    "不记推测、世界常识、一时状态，不评判用户，宁少勿多。**只报本轮的增删**：新值得长期记的"
+    "进 facts_add；被推翻/过时/被替换的旧条进 facts_remove（尽量照抄原文）；没变动就都给空数组、"
+    "别重列旧事实。summary 是一句「用户当下在忙什么/近期重心」的快照，基于原快照演进、没变就原样返回。"
+    "perception 是本轮观察（intent/ambiguity/emotion/emo_strength），照实判、只打点。"
+    '严格只输出 JSON：{"facts_add": ["..."], "facts_remove": ["..."], "daily": "一句话总结(没有就空字符串)", '
+    '"summary": "当前状态快照(没有就空字符串)", '
     '"perception": {"intent": "情绪/查询/执行/...", "ambiguity": 0, "emotion": "无", "emo_strength": 0}}'
 )
 
@@ -134,15 +136,20 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> No
         out = await _extract(user_name, user_msg, assistant_reply, existing, existing_summary, settings)
         # 感知遥测:把本轮 perception 打日志 + 推 Redis（不写记忆）
         await _emit_perc(_perc_rec(user_id, out.get("perception"), getattr(getattr(settings, "ai", None), "model", "")))
-        facts = out.get("facts") or []
         daily_note = (out.get("daily") or "").strip()
         summary = (out.get("summary") or "").strip()
 
-        # 调和重写：facts 是反思输出的"更新后完整事实集"，覆盖写回。
-        new_text = store.format_facts(facts)
-        # 防误删兜底：原本有事实、模型却返回空 → 视为异常，保留原文件不覆盖。
-        if new_text.strip() or not existing.strip():
+        # facts 更新：优先走 2b 增量（facts_add/facts_remove，反思只吐变化、输出不随 facts 增长）；
+        # 旧 prompt 仍回显整份 facts 时回退到「调和覆盖」（兼容灰度，防 prompt 滚动滞后）。
+        f_add, f_rem = out.get("facts_add"), out.get("facts_remove")
+        if f_add is not None or f_rem is not None:
+            new_text = store.apply_facts_delta(existing, f_add or [], f_rem or [])
             if new_text.strip() != existing.strip():
+                await store.write_facts(user_id, new_text)
+        else:
+            new_text = store.format_facts(out.get("facts") or [])
+            # 防误删兜底：原本有事实、模型却返回空 → 视为异常，保留原文件不覆盖。
+            if (new_text.strip() or not existing.strip()) and new_text.strip() != existing.strip():
                 await store.write_facts(user_id, new_text)
         # summary 同理：非空才覆盖、变了才写（防把已有快照清空/瞎改）
         if summary and summary != existing_summary.strip():
@@ -161,13 +168,11 @@ async def _extract(user_name, user_msg, assistant_reply, existing_facts, existin
         f"已知的全部事实：\n{existing_facts or '（暂无）'}\n\n"
         f"当前状态快照：\n{existing_summary or '（暂无）'}\n\n"
         f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n"
-        f"请输出更新后的完整事实列表 + 当前状态快照 + 本轮 perception（保留仍成立的、修正矛盾、合并重复；"
-        f"快照基于原快照演进、没变就原样返回；都别清空。perception 照本轮用户消息判，始终给）。"
+        f"请只报本轮 facts 的增删（facts_add / facts_remove，没变动就都给空数组、别重列旧事实）"
+        f"+ 当前状态快照（基于原快照演进、没变就原样返回、别清空）+ 本轮 perception（照本轮用户消息判、始终给）。"
     )
-    # 输出要回显**整份 facts** + daily/summary/perception；max_tokens 跟 facts 量走、上限放到
-    # 模型最大输出（实际意义上的「不限制」），否则 facts 一多输出被截断 → JSON 解析失败 → 反思静默
-    # 返回 {}（老用户反思全废，踩过大坑）。⚠️ 这只是治标：根治是 2b「facts 结构化 + 增量更新」，
-    # 让反思只吐 delta、不回显整份 facts（见 docs/agent-决策环.md ⑩ 未做项）。
+    # 2b：反思只吐 facts 的增删（delta）+ daily/summary/perception，输出体量**不再随 facts 增长**，
+    # 根治了「facts 一多 → 回显整份超 max_tokens → 截断 → JSON 解析失败 → 静默返回 {}」的老坑。
+    # 故 max_tokens 给个稳妥固定值即可（不必再跟 facts 量走）；仍按模型上限兜底。
     _cap = getattr(getattr(settings, "ai", None), "max_tokens", 0) or 4096
-    mt = min(_cap, max(1500, int(len(existing_facts or "") * 1.6) + 700))
-    return await complete_json(_load_sys(), user, settings, max_tokens=mt)
+    return await complete_json(_load_sys(), user, settings, max_tokens=min(_cap, 900))
