@@ -9,11 +9,13 @@
 
 ## [Unreleased]
 
-> 感知系统升级（遥测/行为模块/解读先验）、记忆增量化与时间衰减、时区统一、IM 时间修复、后台脱敏、体验修缮。
+## [0.14.0] - 2026-06-29 · 感知系统（遥测/行为模块/解读先验）+ 记忆 2b（结构化 facts/事件总线/控制命令）
 
-### 感知系统 P0–P2（`docs/感知系统-架构升级.md`）
+> 本版两根主线：① 给决策环最上游的「感知」装上**可观测 + 可 per-user 成长**的体系——A+B 感知遥测 + 误判捕获 + Admin 诊断面板 / 情境行为模块库 / per-user 解读先验 lens，**观测与学习全在异步反思里、零聊天延迟**；② 记忆补齐 **Phase 2b**——facts 升级为带置信/重要度/时间衰减的结构化 `facts.json`、反思增量化、事件总线、`/memory`·`/forget` 控制命令。外加 IM 跨 session 续接、会话一句话总结、在线/离线状态、一轮时区显示统一。
 
-把决策环最上游的「感知」从隐式变显式、可观测、可 per-user 成长，**全程不给聊天热路径加 LLM 跳**（观测/学习都在异步反思里）。
+### 感知系统 P0–P2（新子系统，详见 `docs/感知系统-架构升级.md`）
+
+把「感知用户要什么」从隐式（埋在一次 LLM 调用里）变显式、可观测、可学，**全程不给聊天热路径加 LLM 跳**。
 
 - **P0 · A+B 感知遥测 + 误判捕获**（`memory/reflection.py`）：反思多吐 `perception`（intent/ambiguity/emotion/emo_strength）打 `agent.perc` 日志 + 推 Redis capped list；正则捕获用户纠正（`misperc`）当客观误判信号。Admin「感知诊断」面板（`/admin/perception` + 前端深色页）按**活跃用户宏平均**聚合误判率/意图分布/by-model。
   - **面板阈值可调**：顶部阈值条（活跃门槛 / 标红误判率 / 歧义偏高线 / 最小样本，改完即时重切，带「复位默认」）；后端把 `rate_hi`/`min_n`/`ambig_hi` 提成 query 参数（默认即原常量），标红/标黄/高亮全随面板阈值联动。**只改「怎么看」这屏数据，不动系统行为阈值**（lens/decay 等仍留代码常量、按红线人调走部署）。
@@ -31,12 +33,6 @@
 - **事件总线（2b）**（`agent/events/bus.py` + `types.py`）：轻量异步发布/订阅，事件用类（`MemoryUpdated`）不用字符串。反思 / `remember` / `/forget` 在 facts 变更后 `publish`，内置 listener 落 `agent.events` 审计日志；成就/分析等下游以后挂 listener 即可、不动发布方。
 - **记忆控制命令（2b）**（`agent/commands.py`）：聊天里直接打 `/memory`（看咕咕记得你哪些事，按重要度排、标「推测」）、`/forget <内容>`（忘掉对得上的那条 fact）——确定性短路、零 LLM、不计精力、不触发反思。`/newchat` 未做（网页 UI 已有「新对话」）。
 - **summary 时间衰减**（`agent/decay.py` + `store`）：summary 写时盖 `summary.ts`，注入时按半衰期（5 天）权重换话术档（新鲜直接给 / 半旧标「约 N 天前、可能已变」/ 过时标「多半过时、别据此提具体事」），过期状态不被当成近况。`decay.py` 为通用件，facts/lens confidence 衰减复用。
-- **summary 时间衰减**（`agent/decay.py` + `store`）：summary 写时盖 `summary.ts`，注入时按半衰期（5 天）权重换话术档（新鲜直接给 / 半旧标「约 N 天前、可能已变」/ 过时标「多半过时、别据此提具体事」），过期状态不被当成近况。`decay.py` 为通用件，lens confidence 衰减复用。
-
-### 多模态：mimo 音视频理解 + 语音条
-
-- **mimo 音视频理解**：听语音/音频、看视频；带媒体时强制路由到 mimo（`runner` 防 `pick_model` 把 IM 静默路由到无音频能力的模型而丢媒体）。IM 语音 SILK→mp3 转码（`pilk` + ffmpeg，`-ar 24000` 防 25MB 巨文件）。
-- **语音条**：QQ 语音 / 网页录音存独立 `.voice/`、30 天清理（非文件卡），咕咕「让我听听」直接听内容回应。
 
 ### 跨 session 续接修复（IM「没续上之前的聊天」）
 
@@ -54,26 +50,10 @@ IM 会话是 12h 滑动 TTL，过期会起新空会话 → 咕咕丢掉上一条
 
 未接入任何 IM（微信 / QQ / 飞书）→ 状态显示「**离线**」（原硬编码恒「在线」）。离线做成**克制的可点暗示**（灰点、文字弱化、hover 才微亮 + tooltip，不抢眼）；点击 → 展开大窗 + 摊开 IM 抽屉露出「扫码连接」+ 高亮 IM 区，引导接入。`open` 时即加载 bot 列表，小窗状态也准。
 
-### 修复
+### 修复 / 其它
 
-- **IM 聊天气泡时间偏 8 小时**：`agent.py` 的 `createdAt` / `updatedAt` 补 `"Z"` 后缀，前端 `new Date()` 正确按 UTC 解析后 `toLocaleTimeString` 转本地时间。
-- **后台管理面板时间偏 8 小时**：系统日志 / 邀请码 / 反馈 / 定时任务的 `strftime` 改为 `fmt_local()`，直接下发本地时区字符串。
-- **所有时区散落 `timedelta(hours=8)` 集中**：新增 `app/core/tz.py`（`LOCAL_TZ` / `local_now` / `local_day_start_utc` / `fmt_local`），quota / search / overview / greeting / scheduled_tasks / builder / admin_analytics 统一引用，消除各模块各自硬编码。
-- **删除项目工具崩溃**：`agent/tools/projects.py` `_delete_project` 修复 `rehome_project_files_to_personal` ImportError（该函数已删除），改为直接软删文件 + 删项目。
-- **IM 「确认用的嗯」被吞**：新增 `runtime_state.set/is_awaiting`（20 min Redis TTL），咕咕以提问/确认收尾 → worker 置标志 → `router.decide()` awaiting=True 时 ACK/CANCEL 放行进 agent。
-
-### 新增
-
-- **飞书语音消息**：`adapters/feishu.py` 接 `audio` 类型，opus → mp3（ffmpeg）→ 语音条 + 30 天存储；缺 ffmpeg 则原样兜底。
-- **深夜语境提示（0–4 点）**：`builder.py` 注入「日出为一天分界」hint，避免咕咕把深夜用户口中的「明天」误当作日历后天。
-
-### 改进
-
-- **DAU 改为登录即算**：后台统计从「当天有 AI 对话」改为 `last_active_at >= 今日零点`（`GET /me` 节流更新），`User` 加 `last_active_at` 字段 + 迁移。
-- **问候优先级重排**（`greeting.py`）：上下文注入顺序改为「最近推进项目 → 当前状态快照 → 近期日程 → 近 7 天 daily → 长期 facts（标注为背景、禁止当「最近在忙」提）」，防止陈年旧事被当近况说出来。
-- **服务状态脱敏**：隐藏 PID / 主机名 / 网关所属用户名，定时任务列表改为只显示数量。
-- **登录页备案号**：底部加「Created by Claude with love · 苏ICP备2026042185号」。
-- **通知气泡关闭即已读**：关闭气泡同时调 `uiStore.markRead`，与侧边栏通知中心状态同步。
+- **时区显示统一**：聊天气泡（`agent.py` 补 `"Z"` 后缀让前端按 UTC 解析）、后台各面板时间（系统日志/邀请码/反馈/定时任务 `strftime` → `fmt_local`）偏 8 小时修复——新增 `app/core/tz.py`（`LOCAL_TZ`/`local_now`/`local_day_start_utc`/`fmt_local`），quota/search/overview/greeting/scheduled_tasks/builder/admin 统一引用，消除各模块散落的硬编码 `timedelta(hours=8)`。
+- **服务状态脱敏**：隐藏 PID / 主机名 / 网关所属用户名，定时任务列表只显示数量。
 
 ## [0.13.2] - 2026-06-28 · 微信接入 + 记忆四层 + 音视频·语音 + 精力修复 + 体验打磨
 
