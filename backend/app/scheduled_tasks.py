@@ -31,7 +31,7 @@ def build_trigger(cron: str):
     return CronTrigger.from_crontab(cron, timezone="Asia/Shanghai")
 
 
-_ONCE_GC_GRACE = timedelta(seconds=120)   # 一次性任务过点后多久可被 GC（留窗口给正在触发的 execute_task 先删）
+_ONCE_GC_GRACE = timedelta(hours=1)   # 一次性任务过点 1h 后才 GC（正常触发的由 execute_task 即时删；这宽限只管没触发到/残留的，过期后多留 1h 可见再清）
 
 
 def _once_expired(cron: str, now_naive: datetime) -> bool:
