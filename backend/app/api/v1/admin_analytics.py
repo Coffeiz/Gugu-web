@@ -86,6 +86,38 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
     all_row   = (await db.execute(_usage_stmt())).first()
     today_row = (await db.execute(_usage_stmt(AgentUsage.created_at >= today_start))).first()
 
+    # ── 留存率：注册超过 N 天的用户中，过去 N 天仍有活跃的比例 ─────────────────────
+    # 分母：注册时间早于 N 天前（已过留存观察窗口）
+    cohort_7d  = (await db.execute(
+        select(func.count()).select_from(User).where(User.created_at < d7)
+    )).scalar() or 0
+    cohort_30d = (await db.execute(
+        select(func.count()).select_from(User).where(User.created_at < d30)
+    )).scalar() or 0
+    # 分子：分母内、且最近 N 天有对话（AgentUsage）或网页活跃（last_active_at）
+    _r7_chat = set((await db.execute(
+        select(distinct(AgentUsage.user_id))
+        .join(User, AgentUsage.user_id == User.id)
+        .where(AgentUsage.created_at >= d7, User.created_at < d7)
+    )).scalars().all())
+    _r7_web = set((await db.execute(
+        select(User.id).where(User.last_active_at >= d7, User.created_at < d7)
+    )).scalars().all())
+    retained_7d = len(_r7_chat | _r7_web)
+
+    _r30_chat = set((await db.execute(
+        select(distinct(AgentUsage.user_id))
+        .join(User, AgentUsage.user_id == User.id)
+        .where(AgentUsage.created_at >= d30, User.created_at < d30)
+    )).scalars().all())
+    _r30_web = set((await db.execute(
+        select(User.id).where(User.last_active_at >= d30, User.created_at < d30)
+    )).scalars().all())
+    retained_30d = len(_r30_chat | _r30_web)
+
+    retention_7d  = round(retained_7d  / cohort_7d,  4) if cohort_7d  else 0
+    retention_30d = round(retained_30d / cohort_30d, 4) if cohort_30d else 0
+
     # ── 漏斗：每步有过该行为的去重用户数 ───────────────────────────────────────
     users_with_proj = (await db.execute(
         select(func.count(distinct(Project.user_id))).where(Project.archived == False)
@@ -126,9 +158,15 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
             "today_tokens_out": today_row.tokens_out if today_row else 0,
         },
         "funnel": {
-            "registered":       total_users,
-            "created_project":  users_with_proj,
+            "registered":        total_users,
+            "created_project":   users_with_proj,
             "completed_project": users_completed,
+            "retention_7d":      retention_7d,    # 0.0–1.0
+            "retention_30d":     retention_30d,
+            "retained_7d":       retained_7d,     # 留存人数（便于前端展示分子/分母）
+            "retained_30d":      retained_30d,
+            "cohort_7d":         cohort_7d,       # 分母
+            "cohort_30d":        cohort_30d,
         },
     }
 

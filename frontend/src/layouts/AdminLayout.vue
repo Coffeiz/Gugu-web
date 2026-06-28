@@ -196,7 +196,12 @@ function handleLogout() {
 .sidebar-nav {
   flex: 1; padding: 14px 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: 2px;
+  margin-right: -14px; padding-right: 14px;   /* 延伸到侧边栏右边缘，滚动条贴边 */
+  scrollbar-gutter: stable;
 }
+.sidebar-nav::-webkit-scrollbar { width: 4px; }
+.sidebar-nav::-webkit-scrollbar-track { background: transparent; }
+.sidebar-nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 99px; }
 .nav-group-label {
   font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
   color: rgba(255,255,255,0.2); text-transform: uppercase;

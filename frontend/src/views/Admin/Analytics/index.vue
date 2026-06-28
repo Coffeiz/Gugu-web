@@ -44,6 +44,29 @@
             </svg>
           </div>
         </template>
+        <!-- 留存率：接在完成项目后 -->
+        <div class="funnel-arr">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 8h10M9 4l4 4-4 4"/>
+          </svg>
+        </div>
+        <div class="funnel-box">
+          <div class="f-num">{{ pct(data.funnel.retention_7d ?? 0) }}<span style="font-size:16px;font-weight:500">%</span></div>
+          <div class="f-lbl">7 日留存</div>
+          <div class="f-rate">{{ data.funnel.retained_7d ?? 0 }} / {{ data.funnel.cohort_7d ?? 0 }} 人</div>
+        </div>
+        <div class="funnel-arr">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 8h10M9 4l4 4-4 4"/>
+          </svg>
+        </div>
+        <div class="funnel-box">
+          <div class="f-num">{{ pct(data.funnel.retention_30d ?? 0) }}<span style="font-size:16px;font-weight:500">%</span></div>
+          <div class="f-lbl">30 日留存</div>
+          <div class="f-rate">{{ data.funnel.retained_30d ?? 0 }} / {{ data.funnel.cohort_30d ?? 0 }} 人</div>
+        </div>
       </div>
 
       <!-- ── 咕咕行为漏斗 ── -->
