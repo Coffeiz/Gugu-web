@@ -1030,7 +1030,7 @@ const IM_PLATFORMS = [
 ]
 const bots   = ref([])
 const imOpen = reactive({ feishu: false, qqbot: false, wechat: false })
-const imOnline    = computed(() => bots.value.length > 0)   // 接了任意 IM bot = 在线，否则离线
+const imOnline    = computed(() => bots.value.some(b => b.enabled))   // 有「启用中」的 IM bot 才算在线（停用/残留不算）
 const imHighlight = ref(false)
 const imGroupEl   = ref(null)
 const botsOf = (platform) => bots.value.filter(b => b.platform === platform)
