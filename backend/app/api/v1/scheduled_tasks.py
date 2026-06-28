@@ -20,7 +20,7 @@ from app.models import ScheduledTask, User
 
 router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-tasks"])
 
-_CHANNELS = {"web", "feishu", "qq", "im", "chat"}   # web=站内通知、feishu/qq=各 IM；chat=web、im=全部 IM（历史别名）
+_CHANNELS = {"web", "feishu", "qq", "wechat", "im", "chat"}   # web=站内通知、feishu/qq/wechat=各 IM；chat=web、im=全部 IM（历史别名）
 
 
 def _validate_cron(cron: str) -> None:

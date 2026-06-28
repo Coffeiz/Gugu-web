@@ -89,6 +89,15 @@
               </span>
               QQ
             </label>
+            <label v-if="imChannels.includes('wechat')" class="chk-row">
+              <input type="checkbox" value="wechat" v-model="form.channels" class="chk-input" />
+              <span class="chk-box">
+                <svg v-if="form.channels.includes('wechat')" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              微信
+            </label>
           </div>
         </div>
 
@@ -184,7 +193,7 @@ function openEdit(t) {
   repeatMode.value      = parsed.mode
   customStartDate.value = parsed.startDate ?? ''
   const chans = [...new Set([...t.channels].flatMap(c =>
-    c === 'chat' ? ['web'] : c === 'im' ? ['feishu', 'qq'] : [c]))]
+    c === 'chat' ? ['web'] : c === 'im' ? ['feishu', 'qq', 'wechat'] : [c]))]
   Object.assign(form, { name: t.name, payload: t.payload, time: parsed.time, channels: filterChannels(chans) })
   formErr.value = ''
   showModal.value = true
@@ -231,7 +240,7 @@ function cronLabel(cron) {
   return `${labels[p.mode] ?? '每天'} ${p.time}`
 }
 function channelLabel(chs) {
-  const map = { web: '通知', chat: '通知', feishu: '飞书', qq: 'QQ', im: '飞书/QQ' }
+  const map = { web: '通知', chat: '通知', feishu: '飞书', qq: 'QQ', wechat: '微信', im: '飞书/QQ/微信' }
   return (chs || []).map(c => map[c] || c).join(' + ') || '—'
 }
 function fmtTime(iso) {

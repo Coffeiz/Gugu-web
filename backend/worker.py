@@ -228,7 +228,8 @@ async def handle(msg_id: str, payload: dict):
     # 记一份「可触达地址」：定时任务/主动推送时按 user_id 反查这里发 IM
     try:
         from app import scheduled_tasks as schedtasks
-        await schedtasks.save_imreach(user_id, platform, payload.get("channel_id"), payload.get("chat_id"), puid)
+        await schedtasks.save_imreach(user_id, platform, payload.get("channel_id"), payload.get("chat_id"), puid,
+                                       payload.get("context_token", ""))
     except Exception:
         pass
     # State Manager：标记「忙」——网关据此短路「还在吗 / 算了」（IM 单 worker 顺序消费，忙时它看不到后续消息）

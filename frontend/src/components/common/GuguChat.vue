@@ -288,6 +288,7 @@
 
 <script setup>
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import QRCode from 'qrcode'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
@@ -318,6 +319,7 @@ const audioStore    = useAudioStore()
 const projectStore  = useProjectStore()
 const liveStore     = useLiveStore()
 const uiStore       = useUiStore()
+const router        = useRouter()
 
 // 顶栏全局搜索点「对话」结果：打开聊天面板并切到该会话
 watch(() => uiStore.pendingChatSession, async (id) => {
@@ -1129,8 +1131,14 @@ function onChatActionClick(e) {
   const a = e.target.closest?.('a[href^="gugu://"]')
   if (!a) return
   e.preventDefault()
-  const m = (a.getAttribute('href') || '').match(/^gugu:\/\/bind-im\/([a-z]+)/i)
-  if (m) openChatImBind(m[1])
+  const href = a.getAttribute('href') || ''
+  const mBind = href.match(/^gugu:\/\/bind-im\/([a-z]+)/i)
+  if (mBind) { openChatImBind(mBind[1]); return }
+  const mFile = href.match(/^gugu:\/\/open-file\/(\d+)/i)
+  if (mFile) {
+    uiStore.pendingFileTarget = { kind: 'file', id: parseInt(mFile[1]) }
+    router.push('/files')
+  }
 }
 
 async function openChatImBind(platform) {

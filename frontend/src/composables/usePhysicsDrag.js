@@ -11,10 +11,11 @@
 let _ghostImg = null
 function _transparentGhost() {
   if (_ghostImg) return _ghostImg
-  const img = new Image()
-  img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
-  _ghostImg = img
-  return img
+  // canvas 同步可用（不需要异步解码），避免第一次拖动时 Image 未 ready 导致退回浏览器默认 ghost（favicon）
+  const c = document.createElement('canvas')
+  c.width = 1; c.height = 1
+  _ghostImg = c
+  return c
 }
 
 let _active = null   // 同一时刻只有一个拖拽

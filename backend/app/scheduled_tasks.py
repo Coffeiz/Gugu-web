@@ -129,8 +129,8 @@ async def _run_agent(user_id, prompt: str) -> str:
 
 
 # 渠道 → IM 平台标识（worker 里 QQ 的 platform 是 "qqbot"）
-_CHAN_PLATFORM = {"feishu": "feishu", "qq": "qqbot"}
-_PLAT_LABEL = {"feishu": "飞书", "qqbot": "QQ"}
+_CHAN_PLATFORM = {"feishu": "feishu", "qq": "qqbot", "wechat": "wechat"}
+_PLAT_LABEL = {"feishu": "飞书", "qqbot": "QQ", "wechat": "微信"}
 
 
 # ── IM 投递 ──────────────────────────────────────────────────────────────────
@@ -165,6 +165,7 @@ async def _deliver_im(user_id, text: str, platform: str | None = None) -> bool:
         "channel_id": reach.get("channel_id"),
         "chat_id": reach.get("chat_id"),
         "platform_user_id": reach.get("puid"),
+        "context_token": reach.get("context_token", ""),   # 微信 iLink 必需，其他平台为空
     }
     await worker._send(payload, text)
     return True
@@ -175,9 +176,10 @@ def _reach_key(user_id, platform: str | None = None) -> str:
     return f"imreach:{user_id}:{platform}" if platform else f"imreach:{user_id}"
 
 
-async def save_imreach(user_id, platform, channel_id, chat_id, puid) -> None:
+async def save_imreach(user_id, platform, channel_id, chat_id, puid, context_token: str = "") -> None:
     from app.core import redis as R
-    data = json.dumps({"platform": platform, "channel_id": channel_id, "chat_id": chat_id, "puid": puid})
+    data = json.dumps({"platform": platform, "channel_id": channel_id, "chat_id": chat_id, "puid": puid,
+                       "context_token": context_token})
     try:
         r = R.get_redis()
         # 按平台键（精确投递）+ 最近键（兜底/旧逻辑），都 90 天滚动刷新

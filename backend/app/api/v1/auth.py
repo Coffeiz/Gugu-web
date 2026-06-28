@@ -96,6 +96,9 @@ async def me(current_user: User = Depends(get_current_user), db: AsyncSession = 
     ))
     if qq_bot:
         im_channels.append("qq")
+    wechat_reach = await get_imreach(current_user.id, "wechat")
+    if wechat_reach:
+        im_channels.append("wechat")
     current_user._im_channels = im_channels
     return UserResponse.from_user(current_user)
 
