@@ -50,11 +50,7 @@
         </div>
 
         <div v-if="s.name === 'worker' && s.extra?.jobs?.length" class="svc-jobs">
-          <div class="svc-jobs-title">定时任务</div>
-          <div v-for="j in s.extra.jobs" :key="j.id" class="svc-job">
-            <span class="svc-job-name">{{ j.name || j.id }}</span>
-            <span class="svc-job-next">{{ j.next ? '下次 ' + j.next : '未排程' }}</span>
-          </div>
+          <span class="svc-jobs-count">定时任务 {{ s.extra.jobs.length }} 个</span>
         </div>
 
         <div class="svc-card-actions">
@@ -182,13 +178,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 
 
 .svc-jobs { margin-top: 10px; }
-.svc-jobs-title { font-size: 11px; color: rgba(255,255,255,0.35); margin-bottom: 5px; }
-.svc-job {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
-  font-size: 11.5px; padding: 3px 0; border-top: 1px solid rgba(255,255,255,0.05);
-}
-.svc-job-name { color: rgba(255,255,255,0.75); }
-.svc-job-next { color: rgba(255,255,255,0.4); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.svc-jobs-count { font-size: 11px; color: rgba(255,255,255,0.4); }
 
 .svc-card-actions { margin-top: auto; padding-top: 14px; display: flex; justify-content: flex-end; }
 .svc-restart {
