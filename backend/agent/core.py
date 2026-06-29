@@ -493,7 +493,7 @@ class LLMRunner:
             if _m.get("role") == "system" and isinstance(_m.get("content"), str) and _builder.CACHE_BREAK in _m["content"]:
                 _m["content"] = _builder.strip_cache_marker(_m["content"])
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
-        from agent.llm_select import openai_default_headers
+        from agent.llm_select import openai_default_headers, supports_thinking_toggle
         client = AsyncOpenAI(
             api_key=ai.api_key or "dummy",
             base_url=ai.base_url,
@@ -503,9 +503,11 @@ class LLMRunner:
 
         max_tokens  = ai.max_tokens
         temperature = ai.temperature
-        # mimo：思考关时显式传 thinking:disabled（官方两套 API 都支持此参数）——从源头避免「输出全进
-        # reasoning_content、正文空」的空气泡。思考开（adaptive）则不传，用 mimo 默认（开），靠下方空回复兜底。
-        _mimo_extra = {"thinking": {"type": "disabled"}} if (is_mimo and getattr(ai, "thinking", "disabled") != "adaptive") else {}
+        # 思考开关：mimo 与 deepseek 都用同一 OpenAI 参数 `{"thinking":{"type":...}}`（见各自官方文档）。
+        # 思考关时显式传 disabled——mimo 从源头避免「正文全进 reasoning_content、content 空」的空气泡，
+        # deepseek 则省下推理 token/延迟。思考开（adaptive）则不传、用厂商默认（两家默认都是开），靠下方空回复兜底。
+        # 仅对支持该参数的厂商发（qwen/openai 没这参数，传了可能报错）。reasoning_content 的多轮回传已统一处理。
+        _think_extra = {"thinking": {"type": "disabled"}} if (supports_thinking_toggle(ai) and getattr(ai, "thinking", "disabled") != "adaptive") else {}
         total_in = total_out = 0
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; round_i = 0; empty_retry = 0
@@ -527,7 +529,7 @@ class LLMRunner:
                 temperature=temperature,
                 stream=True,
                 stream_options={"include_usage": True},
-                extra_body=_mimo_extra,
+                extra_body=_think_extra,
             )
             content = ""
             reasoning = ""                   # mimo 深度思考产出（reasoning_content）：多轮+工具调用必须原样回传，否则 400

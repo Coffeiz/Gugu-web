@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### 改进
+
+- **DeepSeek 支持优化:思考开关真正生效 + 反思走结构化输出**（`agent/llm_select.py` + `agent/core.py` + `agent/memory/_llm.py`）：对照 DeepSeek 官方「思考模式」文档——DeepSeek 与 mimo **用同一个 OpenAI 思考参数** `{"thinking":{"type":...}}`，但此前思考开关 gate 在 `is_mimo`、DeepSeek 完全忽略 `thinking` 配置（恒用厂商默认＝思考开）。① 新增 `_is_deepseek` / `supports_thinking_toggle`，把开关扩到 DeepSeek：现在 `thinking=disabled`（默认）真能关掉 DeepSeek 思考、省延迟/token，`adaptive` 才开；qwen/openai 不支持该参数仍不发，避免误伤。② 记忆/反思 `complete_json` 的 `response_format=json_object + thinking:disabled` 同步从 mimo 扩到 DeepSeek（同样支持，避免推理挤占 `max_tokens` 截断大 JSON）。③ **已覆盖无需改**：DeepSeek 文档「思考+工具多轮必须回传 `reasoning_content`」——0.14.2 给 mimo 加的 `reasoning_content` 捕获+回传本就模型无关，DeepSeek 自动受益、不会 400；空正文兜底同理。
+
 ## [0.14.2] - 2026-06-29 · 防「说了没做」意图守卫（A-lite+B 的 B）+ mimo 深度思考可与多轮工具共存 + 反思走 json_object 结构化输出 + 个人设置 UI（重开接续 / 接入咕咕独立面板）
 
 ### 改进

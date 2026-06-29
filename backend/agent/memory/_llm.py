@@ -60,7 +60,7 @@ async def _anthropic(sys: str, user: str, settings, max_tokens: int) -> str:
 async def _openai(sys: str, user: str, settings, max_tokens: int, json_mode: bool = False) -> str:
     import httpx
     from openai import AsyncOpenAI
-    from agent.llm_select import openai_default_headers, _is_mimo
+    from agent.llm_select import openai_default_headers, supports_thinking_toggle
 
     client = AsyncOpenAI(
         api_key=settings.ai.api_key or "dummy",
@@ -74,11 +74,11 @@ async def _openai(sys: str, user: str, settings, max_tokens: int, json_mode: boo
         max_tokens=max_tokens,
         temperature=0.3,
     )
-    # 结构化输出：mimo 支持 response_format=json_object（不支持 json_schema）→ 开 JSON 模式让正文必为合法 JSON，
-    # 比纯靠 prompt + _parse_json 抠更稳。并显式关思考（thinking:disabled）——否则 reasoning 与正文共用
-    # max_completion_tokens 预算，反思这种大 JSON 容易被推理挤到截断。仅 mimo 开（别的 openai 兼容厂商支持度
-    # 不一，避免误伤）；非 mimo 仍走 prompt + _parse_json 容错。
-    if json_mode and _is_mimo(settings.ai):
+    # 结构化输出：mimo / deepseek 都支持 response_format=json_object → 开 JSON 模式让正文必为合法 JSON，
+    # 比纯靠 prompt + _parse_json 抠更稳。并显式关思考（thinking:disabled，两家同一参数）——否则 reasoning 与正文
+    # 共用 max_completion_tokens 预算，反思这种大 JSON 容易被推理挤到截断。仅这两家开（别的 openai 兼容厂商
+    # 支持度不一，避免误伤）；其余仍走 prompt + _parse_json 容错。
+    if json_mode and supports_thinking_toggle(settings.ai):
         kwargs["response_format"] = {"type": "json_object"}
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     resp = await client.chat.completions.create(**kwargs)
