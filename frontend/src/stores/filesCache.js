@@ -139,8 +139,9 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     return allFolders.value.find(f => f.id === id) ?? null
   }
 
-  // 实时：咕咕/IM 改了文件库 → 已加载过才重新拉取
-  watch(() => useLiveStore().rev.files, () => { if (loaded.value) refresh() })
+  // 实时：咕咕/IM 改了文件库 → 重新拉取。走 _checkVersion（先比版本号）：真变了才整库重拉 + 重渲染；
+  // 没变（如重连 catch-up 时文件其实没动）直接跳过，省掉一次几百项的大重绘。
+  watch(() => useLiveStore().rev.files, () => { _checkVersion() })
 
   return {
     allFiles, allFolders, loaded, loading,

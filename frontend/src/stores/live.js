@@ -36,6 +36,13 @@ export const useLiveStore = defineStore('live', () => {
     if (resource in rev) rev[resource]++
   }
 
+  // 重连补刷：错峰逐个 bump，别在回到前台那一帧挤爆主线程（见 _loop 注释）
+  let _catchUpTimers = []
+  function _catchUp() {
+    _catchUpTimers.forEach(clearTimeout)   // 短时间多次重连不叠加
+    _catchUpTimers = RESOURCES.map((r, i) => setTimeout(() => bump(r), 300 + i * 250))
+  }
+
   async function _loop() {
     while (running) {
       const token = getToken()
@@ -49,9 +56,11 @@ export const useLiveStore = defineStore('live', () => {
         if (!res.ok || !res.body) throw new Error(`live stream ${res.status}`)
         connected.value = true
         retry = 0
-        // 重连成功 → bump 所有 rev，让各视图重新拉一次、补上断线期间漏掉的变更（SSE 不补发历史
-        // 事件；后端 reload / 网络抖动断开期间咕咕改的文件等，就靠这步刷出来，不用手动重载页面）。
-        if (everConnected) for (const r of RESOURCES) bump(r)
+        // 重连成功 → 补上断线期间漏掉的变更（SSE 不补发历史事件；后端 reload / 网络抖动 / 久置标签页
+        // 断开期间咕咕改的文件等，靠这步刷出来）。**但错峰 + 延后**：久置标签页回到前台那一下，若 5 个
+        // 资源同时 refetch + 替换大数组 + 重渲染，会卡住主线程约 1 秒。逐个延迟 bump，把这波刷新摊开、
+        // 让出主线程，回来就不卡了（总量不变、只是不挤在一帧）。
+        if (everConnected) _catchUp()
         everConnected = true
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
