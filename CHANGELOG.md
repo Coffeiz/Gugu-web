@@ -11,6 +11,7 @@
 
 ### 新增
 
+- **md 文件预览任务勾选框可点 + 回存**（`api/v1/files.py` + `viewers/TextViewer.vue` + `services/api.js`）：md 预览里的 GFM 任务清单（`- [ ]` / `- [x]`）此前是只读禁用框，现在可直接点勾/取消、即时改文件并持久化。后端新增 `PUT /files/{fid}/content`（改文本正文，仅文本类、限 1MB、校验 owner）；前端渲染时去掉 marked 默认的 `disabled`、按文档顺序给每个框打 `data-task`，点击翻转源里第 N 个任务行的 `[ ]`↔`[x]` 经 `filesApi.saveContent` 回存、存失败回滚。**仅 md + 真实文件 id 可交互**（聊天附件是 hex id，保持只读）。勾选框样式对齐注册页确认框（`.ack-box`）：16px 圆角 5px、紫灰边白底、选中紫渐变+阴影+同一条 SVG polyline 勾；因 marked 18 不输出 `task-list-item` class，改用 `:has(> input[type=checkbox])` 选含勾选框的 li。
 - **日历活动加「时间」+ 可绑定提醒定时任务（后端 phase 1）**（`models` + `alembic` + `events.py` + `scheduled_tasks.py` + `tools/calendar.py`）：日历事件此前只有日期、无时间。新增 `calendar_events.time`（HH:MM，可选，空=全天）+ `scheduled_tasks.event_id`（绑定到某活动的提醒；含 alembic 迁移 `20260629000001`，**生产 pull 后需 `make migrate`**）。① `create_event`/`update_event`/`list_event` 工具 + events REST API 收/返 `time`；② 定时任务 `create` 收 `event_id`（校验本人事件）、list 可按 `event_id` 过滤、`_to_resp` 带 `event_id`；③ **删活动连带删其绑定提醒**（应用层级联，event_id 故意不设 DB 外键、更可移植）。devserver 实测：time 存取、event_id 绑定、删活动级联删提醒(`deleted_reminders=1`)全过。④ **网页日历 UI**（phase 2）：加/编辑活动弹窗加时间输入(`<input type=time>`)+ 侧栏显示时间；**编辑面板内「提醒」区**——列出该活动绑定的定时任务、`datetime-local` 选时刻直接建 `@once` 提醒(用户自定义时间、`event_id` 绑定)、可删，建/删实时刷定时面板。vite 编译通过。**生产 pull 后需 `make migrate`。**
 
 ### 安全
@@ -21,6 +22,10 @@
 
 - **DeepSeek 思考强度（reasoning_effort）后台可调 + 上下文缓存命中监控**（`config.py` + `agent_admin.py` + `agent/core.py` + `Admin/Agent/index.vue`）：① **思考强度**——DeepSeek 思考模式下 temperature 失效，`reasoning_effort`（high/max）是唯一质量/成本旋钮。配置加 `reasoning_effort` 字段，后台「Agent 配置」卡片在 **provider=DeepSeek 且思考开** 时显示「思考强度：默认/high/max」；思考开（adaptive）时对 DeepSeek 带上（mimo 无此参数不带）。**针对历史「面板保存了却不生效」的坑**：`agent_admin.py` 里 create/update/activate **三处手挑字段同步 `ai` 段** 收口成单一来源 `_AI_SYNC_KEYS`/`_ai_segment`（漏一处=active 模型拿不到新字段），新增字段只改一处；并验证 `reasoning_effort` 贯穿 `model_fields`→`PresetCreate/Update`→`_AI_SYNC_KEYS`→`apply_override` 全链路、不被任何一环丢弃。② **缓存命中监控**——DeepSeek 自动上下文缓存（无需 `cache_control`，且咕咕的 system「稳定前缀在前」拆分已天然吃到命中）；openai 路采集 `prompt_cache_hit_tokens` 进 `_usage` 事件的 `cache_read`（与 anthropic 路统一），可观测命中率。
 - **DeepSeek 支持优化:思考开关真正生效 + 反思走结构化输出**（`agent/llm_select.py` + `agent/core.py` + `agent/memory/_llm.py`）：对照 DeepSeek 官方「思考模式」文档——DeepSeek 与 mimo **用同一个 OpenAI 思考参数** `{"thinking":{"type":...}}`，但此前思考开关 gate 在 `is_mimo`、DeepSeek 完全忽略 `thinking` 配置（恒用厂商默认＝思考开）。① 新增 `_is_deepseek` / `supports_thinking_toggle`，把开关扩到 DeepSeek：现在 `thinking=disabled`（默认）真能关掉 DeepSeek 思考、省延迟/token，`adaptive` 才开；qwen/openai 不支持该参数仍不发，避免误伤。② 记忆/反思 `complete_json` 的 `response_format=json_object + thinking:disabled` 同步从 mimo 扩到 DeepSeek（同样支持，避免推理挤占 `max_tokens` 截断大 JSON）。③ **已覆盖无需改**：DeepSeek 文档「思考+工具多轮必须回传 `reasoning_content`」——0.14.2 给 mimo 加的 `reasoning_content` 捕获+回传本就模型无关，DeepSeek 自动受益、不会 400；空正文兜底同理。
+
+### 修复
+
+- **日历跨月活动不显示**（`Calendar/index.vue`）：月视图是 6 周网格，首/末行会溢出到上/下月（如月底最后一行带下月 1~5 号）。这些「其他月」格子的单日活动此前**查不到**——`extraEvents` 只按 cursor 当月加载，溢出格的 iso（下月日期）在 `filter(e => e.date === iso)` 里匹配不到（项目条走日期区间、本就跨月正常，不受影响）。新增 `spilloverEvents` 按 cursor 取**上月 + 下月**活动（与给「即将到来」侧栏用、按真实今天算的 `nextMonthEvents` 区分），合并成 `visibleEvents`（按 id 去重）供网格格子与选中日详情用，溢出格活动 + 点开溢出日的详情都能看到。挂载 / 切月 / 实时 rev / 咕咕改日历 / 删除对账都会重取溢出月，拖拽·编辑·删除均同步 `spilloverEvents` 防显示不更新。
 
 ## [0.14.2] - 2026-06-29 · 防「说了没做」意图守卫（A-lite+B 的 B）+ mimo 深度思考可与多轮工具共存 + 反思走 json_object 结构化输出 + 个人设置 UI（重开接续 / 接入咕咕独立面板）
 

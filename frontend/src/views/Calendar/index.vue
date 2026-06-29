@@ -694,12 +694,13 @@ async function commitDrag() {
     }
     patch(extraEvents.value)
     patch(nextMonthEvents.value)
+    patch(spilloverEvents.value)
     buildUpcomingList()
     eventsCache[`${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`] = [...extraEvents.value]
     try {
       const updated = await eventsApi.update(ev.id, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version })
       const applyVer = (list) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
-      applyVer(extraEvents.value); applyVer(nextMonthEvents.value)
+      applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
     } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await loadEvents() } }
   }
 
@@ -959,13 +960,43 @@ async function fetchEvents() {
   } catch { }
 }
 
-// 咕咕在对话里增删改了活动 → 清月缓存并重取当前月
+// 网格首/末行会溢出到上/下月（首行最多 6 天上月、末行最多 6 天下月），这些「其他月」格子上的
+// 单日活动也要显示。按 cursor 取上、下月活动（与 nextMonthEvents 区分：那个按真实今天算、给「即将到来」侧栏用）。
+const spilloverEvents = ref([])
+async function fetchSpilloverEvents() {
+  const y = cursor.value.getFullYear()
+  const m = cursor.value.getMonth()
+  const fetchMonth = async (date) => {
+    const yy = date.getFullYear(), mm = date.getMonth() + 1
+    const key = `${yy}-${mm}`
+    if (eventsCache[key]) return eventsCache[key]
+    try {
+      const norm = (await eventsApi.list(yy, mm)).map(normalizeEvent)
+      eventsCache[key] = norm
+      return norm
+    } catch { return [] }
+  }
+  const [prev, next] = await Promise.all([
+    fetchMonth(new Date(y, m - 1, 1)),
+    fetchMonth(new Date(y, m + 1, 1)),
+  ])
+  spilloverEvents.value = [...prev, ...next]
+}
+
+// 咕咕在对话里增删改了活动 → 清月缓存并重取当前月 + 溢出月
 watch(calendarSignal, () => {
   for (const k in eventsCache) delete eventsCache[k]
   fetchEvents()
+  fetchSpilloverEvents()
 })
 
-function singleEvents(iso) { return extraEvents.value.filter(e => e.date === iso) }
+// 当前月 + 溢出月（按 id 去重）——渲染溢出格、选中日详情都用它，保证跨月活动可见
+const visibleEvents = computed(() => {
+  const ids = new Set(extraEvents.value.map(e => e.id))
+  return [...extraEvents.value, ...spilloverEvents.value.filter(e => !ids.has(e.id))]
+})
+
+function singleEvents(iso) { return visibleEvents.value.filter(e => e.date === iso) }
 
 function openProject(bar) {
   const pid = Number(bar.id.replace(/^p/, ''))
@@ -1004,10 +1035,11 @@ const effectiveProjectTimelines = computed(() => {
 })
 
 const effectiveExtraEvents = computed(() => {
+  const base = visibleEvents.value
   const range = dragOverRange.value
-  if (!drag.active || drag.type !== 'event' || !range || !drag.item) return extraEvents.value
+  if (!drag.active || drag.type !== 'event' || !range || !drag.item) return base
   const evId = drag.item.id
-  return extraEvents.value.map(e =>
+  return base.map(e =>
     e.id === evId ? { ...e, date: range.start } : e
   )
 })
@@ -1344,6 +1376,7 @@ async function saveEditEvent() {
   }
   update(extraEvents.value)
   update(nextMonthEvents.value)
+  update(spilloverEvents.value)
   buildUpcomingList()
   const cacheKey = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   eventsCache[cacheKey] = [...extraEvents.value]
@@ -1351,7 +1384,7 @@ async function saveEditEvent() {
   try {
     const updated = await eventsApi.update(ev.id, { title: ev.name, date: ev.date, time: ev.time || null, endTime: ev.endTime || null, description: ev.description || undefined, version: ev.version })
     const applyVer = (list) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
-    applyVer(extraEvents.value); applyVer(nextMonthEvents.value)
+    applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
     await applyReminders(ev.id, ev.name, ev.date, ev.time)   // 按提前量/渠道落地提醒
   } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await loadEvents() } }
 }
@@ -1384,6 +1417,7 @@ onMounted(() => {
   document.addEventListener('click', handleClickOutside, true)
   fetchEvents()
   fetchNextMonthEvents()
+  fetchSpilloverEvents()
   nextTick(setupRO)
   scheduleMidnightTick()
   loadHolidays()
@@ -1395,8 +1429,8 @@ onUnmounted(() => {
 })
 
 // 实时：咕咕/IM 改了日历 → 重新拉当前+下月活动
-watch(() => liveStore.rev.calendar, () => { fetchEvents(); fetchNextMonthEvents() })
-watch(cursor, () => { fetchEvents(); loadHolidays() })
+watch(() => liveStore.rev.calendar, () => { fetchEvents(); fetchNextMonthEvents(); fetchSpilloverEvents() })
+watch(cursor, () => { fetchEvents(); fetchSpilloverEvents(); loadHolidays() })
 watch(monthWeeks, () => nextTick(setupRO))
 watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 
@@ -1406,6 +1440,7 @@ async function deleteEvent(ev) {
   const match = (e) => (ev._uid != null ? e._uid === ev._uid : String(e.id) === String(ev.id))
   extraEvents.value     = extraEvents.value.filter(e => !match(e))
   nextMonthEvents.value = nextMonthEvents.value.filter(e => !match(e))
+  spilloverEvents.value = spilloverEvents.value.filter(e => !match(e))
   buildUpcomingList()
   const key = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   eventsCache[key] = extraEvents.value
@@ -1414,7 +1449,7 @@ async function deleteEvent(ev) {
   } catch { /* 已删/网络等 → 下面对账兜底，不再静默留下脏状态 */ }
   finally {
     // ③ 与服务器对账：不管成功/404 都按最新刷一次，杜绝「删了还在 / 删了又回来 / 再删报错」
-    fetchEvents(); fetchNextMonthEvents()
+    fetchEvents(); fetchNextMonthEvents(); fetchSpilloverEvents()
   }
 }
 
