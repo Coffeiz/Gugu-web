@@ -483,9 +483,19 @@ class LLMRunner:
                 extra_body=_mimo_extra,
             )
             content = ""
+            reasoning = ""                   # mimo 深度思考产出（reasoning_content）：多轮+工具调用必须原样回传，否则 400
             tool_buf: dict[int, dict] = {}   # index → {id, name, args}，流式分片累积
             announced = False                # 工具参数流式期间先亮个指示，免得前端空窗以为卡死
             _tok = 0
+            def _asst(text, tool_calls=None):
+                # 统一构造 assistant 历史消息：mimo 开思考时把本轮 reasoning_content 一并带回（文档硬性要求，
+                # 多轮 Function Call 缺它 → 400）。思考关时 reasoning 恒空、不加该字段，行为与原先逐字一致。
+                m = {"role": "assistant", "content": text}
+                if tool_calls is not None:
+                    m["tool_calls"] = tool_calls
+                if reasoning:
+                    m["reasoning_content"] = reasoning
+                return m
             async for chunk in stream:
                 if getattr(chunk, "usage", None):
                     total_in  += chunk.usage.prompt_tokens or 0
@@ -493,6 +503,9 @@ class LLMRunner:
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
+                _rc = getattr(delta, "reasoning_content", None)
+                if _rc:
+                    reasoning += _rc   # 思考分片（流式里先于 content 到）；只入历史回传，不流式发给用户
                 if delta.content:
                     content += delta.content
                     if not verify_mode:   # 核实阶段不实时发，攒到 content 里待回合末定夺
@@ -528,15 +541,14 @@ class LLMRunner:
                 if verify_mode and not verify_fixed and content and any(b["name"] in _mutset for b in ordered):
                     async for _line in genstream.typed_stream(content):   # 逐字流式，与正常回复一致
                         yield _line
-                messages.append({
-                    "role": "assistant",
-                    "content": content or None,
-                    "tool_calls": [
+                messages.append(_asst(
+                    content or None,
+                    tool_calls=[
                         {"id": b["id"], "type": "function",
                          "function": {"name": b["name"], "arguments": b["args"]}}
                         for b in ordered
                     ],
-                })
+                ))
                 for b in ordered:
                     label = self._label(b["name"])
                     if verify_mode:   # 复查前缀后端拼接（可在「状态命名」面板改 _verify_prefix；支持多候选随机）
@@ -587,7 +599,7 @@ class LLMRunner:
             if (not any_tool_called and not verify_mode and narration_retry < 1
                     and _looks_like_narration(content)):
                 narration_retry += 1
-                messages.append({"role": "assistant", "content": content or "（…）"})
+                messages.append(_asst(content or "（…）"))
                 messages.append({"role": "user", "content": _NARRATION_NUDGE})
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
@@ -595,7 +607,7 @@ class LLMRunner:
             if (not any_tool_called and not verify_mode and decision_retry < 1
                     and _is_decision_dodge(_user_req, content)):
                 decision_retry += 1
-                messages.append({"role": "assistant", "content": content or "（…）"})
+                messages.append(_asst(content or "（…）"))
                 messages.append({"role": "user", "content": _DECISION_NUDGE})
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
@@ -606,7 +618,7 @@ class LLMRunner:
                 verify_count += 1
                 did_mutate = False
                 verify_mode = True   # 进入/保持核实阶段 → 之后文字先缓冲
-                messages.append({"role": "assistant", "content": content or ""})
+                messages.append(_asst(content or ""))
                 messages.append({"role": "user", "content": _VERIFY_FORCE_PROMPT if _need_force else _VERIFY_PROMPT})
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue

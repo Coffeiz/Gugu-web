@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### 改进
+
+- **mimo 深度思考可与「多轮工具调用」共存 + 记忆/反思走结构化输出（json_object）**（`agent/core.py` + `agent/memory/_llm.py`）：对照 mimo 官方「深度思考」「结构化输出」文档查漏补缺——① **深度思考**：openai 路此前**完全没读 `reasoning_content`**，而 mimo 文档硬性要求「多轮 Function Call 必须把上一轮的 `reasoning_content` 完整回传，否则 400」→ 开思考时 mimo 一旦多步调工具就会 400（此前靠默认关思考绕开）。现在流式里捕获 `reasoning_content`、在**所有** assistant 回填点（工具轮 / narration·decision·verify 各 nudge 轮）统一带回（`_asst` 收口）；只在**当轮内存**回传、不入库（openai 路中间轮本就不持久化），思考关时 `reasoning` 恒空、行为与原先逐字一致。② **结构化输出**：记忆/反思的 `complete_json` 对 mimo 开 `response_format={"type":"json_object"}`（mimo 不支持 json_schema，仅 json_object）让正文必为合法 JSON，比纯靠 prompt + `_parse_json` 抠更稳；并显式 `thinking:disabled`——否则 reasoning 与正文共用 `max_completion_tokens`、大 JSON（如反思回显整份 facts）易被推理挤到截断。两项都**仅 mimo 生效**（`_is_mimo` 门控），MiniMax/Anthropic 与其它 openai 兼容厂商行为不变。
+
 ## [0.14.1] - 2026-06-29 · prompt 缓存真正生效 + 独立语音识别模型 + 密码找回 + IM 发图/多图修复 + 缩略图/拖拽/定时等体验打磨
 
 ### 新增
