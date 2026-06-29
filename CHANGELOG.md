@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### 改进
+
+- **前端引入 TypeScript 工具链 + api 层迁移（JS→TS 阶段 0+1，纯内部、无用户可见变化）**（`frontend/tsconfig.json` + `vite.config.js` + `services/api.ts` + `types/api.ts` + `package.json`）：为渐进式 JS→TS 迁移搭好地基。① **工具链（阶段 0）**：`tsconfig`（`allowJs` + `checkJs:false` + `strict:false` 起步——存量 `.js` 与无 `lang=ts` 的组件**不检查**，只查新写的 `.ts` / `<script setup lang="ts">`）；`npm run typecheck`（`vue-tsc --noEmit`）作类型门禁（基线绿、已验证能抓错）；vite 开 AutoImport/Components 的 `dts`，让 vue-tsc 认得自动导入的 `ref`/`computed` 与 Arco 组件（生成物 gitignore）。② **类型地基（阶段 1）**：`npm run gen:types` 用 `openapi-typescript` 从后端 OpenAPI 生成 `src/types/api.ts`（**入库**，CI/typecheck 不依赖后端在跑、且前后端对齐）；`services/api.js → api.ts`，`request`/`get`/`post`… 泛型化（默认 `any` 不阻塞存量 JS 调用方），projects/events/files/folders/clients/preferences 用 OpenAPI 实体类型标注返回值，其余留 `any` 待增量升级。**约定：新代码一律 TS，改到的 JS 顺带转、不主动批量重写。** 详见 `docs/前端-JS转TS迁移指南.md`。
+
 ## [0.14.3] - 2026-06-30 · 日历提醒完整体系 + 文件库 UX 打磨 + DeepSeek 思考可调 + 工具错误脱敏
 
 > md 任务清单可交互、日历活动时间与提醒完整落地（phase 1–3）、工具错误脱敏纵深防御、DeepSeek 思考强度后台可调、文件库多选/拖拽体验对齐、日历已完成项目显示优化。
