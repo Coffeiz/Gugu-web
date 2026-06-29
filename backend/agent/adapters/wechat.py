@@ -19,11 +19,66 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 
 from app.core import redis as R
 from agent.adapters.wechat_client import ILinkClient, DEFAULT_BASE_URL
 
 STREAM = R.IM_INBOUND_STREAM
+_ACK_COOLDOWN = 10.0    # 同一用户「收到啦」秒回冷却：连发多条/多图只 ack 一次，不刷屏（同 qq）
+_last_ack: dict = {}    # from_user -> 上次 ack 时刻（单 bot 单网关进程，模块级即可）
+
+
+def _aes128_ecb_decrypt(raw: bytes, key: bytes) -> bytes:
+    """iLink 媒体解密：AES-128-ECB（key=16B）+ PKCS7 去填充。"""
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    dec = Cipher(algorithms.AES(key), modes.ECB()).decryptor()
+    out = dec.update(raw) + dec.finalize()
+    if out:
+        pad = out[-1]
+        if 1 <= pad <= 16 and out[-pad:] == bytes([pad]) * pad:
+            out = out[:-pad]
+    return out
+
+
+def _img_ext_mime(data: bytes) -> tuple[str, str]:
+    """按 magic bytes 判图片类型。"""
+    if data[:3] == b"\xff\xd8\xff":                       return "jpg", "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":                  return "png", "image/png"
+    if data[:4] == b"GIF8":                               return "gif", "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":     return "webp", "image/webp"
+    return "jpg", "image/jpeg"   # 兜底当 jpg
+
+
+async def _ingest_wechat_media(items: list, owner: str) -> list:
+    """下载并解密微信图片项 → 暂存 → 返回 [attach_id]（照搬 qq `_ingest_qq_media` 模式）。
+    iLink 媒体走 CDN（`image_item.media.full_url`）+ AES-128-ECB（key=`image_item.aeskey` hex）。
+    file/voice 项格式暂未知 → 留日志待补。"""
+    import httpx
+    from app.core import chat_attach
+    out: list = []
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as cli:
+        for it in items:
+            img = it.get("image_item")
+            if not img:
+                other = [k for k, v in it.items() if k.endswith("_item") and v]
+                if other:
+                    print(f"[wechat] 暂不支持的媒体项（格式待补）: {other}", flush=True)
+                continue
+            aeskey = img.get("aeskey") or ""
+            url = (img.get("media") or {}).get("full_url") or ""
+            if not aeskey or not url:
+                print("[wechat] 图片项缺 aeskey/full_url，跳过", flush=True)
+                continue
+            try:
+                raw = (await cli.get(url)).content
+                data = _aes128_ecb_decrypt(raw, bytes.fromhex(aeskey))
+                ext, mime = _img_ext_mime(data)
+                meta = await chat_attach.stage(owner, "微信图片", ext, mime, data, kind="image")
+                out.append(meta["attach_id"])
+            except Exception as e:
+                print(f"[wechat] 图片下载/解密失败: {type(e).__name__}: {e}", flush=True)
+    return out
 
 
 # ── 接收（网关子进程，long-poll）────────────────────────────────────────────────
@@ -33,11 +88,32 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
     from_user = msg.get("from_user_id", "")
     context_token = msg.get("context_token", "")
     group_id = msg.get("group_id", "")
+    items = msg.get("item_list") or []
     text = "".join(
         (it.get("text_item") or {}).get("text", "")
-        for it in (msg.get("item_list") or [])
+        for it in items
     ).strip()
-    if not from_user or not text:   # MVP 只处理文本（图片/语音/文件后补）
+    # 非文本项（图片/语音/文件）：iLink 媒体 AES-128-ECB + CDN，下载解密暂存（图片已支持，见 _ingest）。
+    non_text = [it for it in items if it.get("type") != 1]
+    if not from_user:
+        return
+    if not text and not non_text:   # 真空消息
+        return
+
+    # 即时反馈：先回一句「收到」，免得 agent 慢处理时用户干等（赶在 worker 之前）。**10s 冷却**：
+    # 连发多条/多图只 ack 一次，不刷屏（真实回复由 worker 防抖合并成一条）。
+    now = time.monotonic()
+    if now - _last_ack.get(from_user, 0.0) > _ACK_COOLDOWN:
+        _last_ack[from_user] = now
+        try:
+            await client.send_text(from_user, "收到啦，让我看看哈~", context_token)
+        except Exception as e:
+            print(f"[wechat] 即时反馈失败: {type(e).__name__}: {e}", flush=True)
+
+    # 下载+解密+暂存媒体 → attach_id（图片走 _ingest_wechat_media；file/voice 暂留日志待补）
+    attachments = await _ingest_wechat_media(non_text, owner) if non_text else []
+    print(f"[wechat:{channel_id}] 收到 {from_user}: text={text[:40]!r} att={len(attachments)}", flush=True)
+    if not text and not attachments:   # 只有不支持的媒体、啥也没取到 → 不入队（agent 无内容）
         return
     payload = {
         "platform": "wechat",
@@ -49,16 +125,9 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
         "wechat_group_id": group_id,
         "context_token": context_token,     # ⚠️ iLink 回复必需，worker 透传回 send_text
         "text": text,
-        "attachments": [],
+        "attachments": attachments,
     }
-    print(f"[wechat:{channel_id}] 收到 {from_user}: {text[:40]!r}", flush=True)
-    # 即时反馈：先回一句「收到」，免得 agent 慢处理时用户在微信干等没动静（赶在 worker 之前）。
-    # 复用入站消息的 context_token；ack + 正式回复共 2 条，远低于 iLink 每 token 的回复上限。
-    try:
-        await client.send_text(from_user, "收到啦，让我看看哈~", context_token)
-    except Exception as e:
-        print(f"[wechat] 即时反馈失败: {type(e).__name__}: {e}", flush=True)
-    # TODO: 接 Intent Router 短路（仿 qq：任务进行中的「还在吗/算了/嗯」网关层处理）；先直接入队
+    # TODO: 接 Intent Router 短路（仿 qq）
     try:
         await R.produce(STREAM, payload)
     except Exception as e:
@@ -135,7 +204,10 @@ async def send_text(to_user_id: str, text: str, channel_id: str | None = None,
     for attempt in (1, 2):
         try:
             client = await _client_for(channel_id)
-            await client.send_text(to_user_id, text, context_token)
+            resp = await client.send_text(to_user_id, text, context_token)
+            ret = (resp or {}).get("ret") if isinstance(resp, dict) else None
+            if ret not in (0, None):   # iLink HTTP 200 但 ret≠0 = 业务失败（如 context_token 过期），不抛异常→在此暴露
+                print(f"[wechat] sendmessage ret={ret}（消息可能未投递）resp={str(resp)[:200]}", flush=True)
             return True
         except Exception as e:
             print(f"[wechat] 发送失败(第{attempt}次): {type(e).__name__}: {e}", flush=True)
