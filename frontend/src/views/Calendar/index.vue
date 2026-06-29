@@ -330,9 +330,9 @@
         <input v-model="newEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" @keydown.esc="showAddForm = false" autofocus />
         <DatePicker v-model="newEvent.date" placeholder="选择日期" />
         <div class="time-box">
-          <input :value="newEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="$event.target.select()" @input="onTimeInput($event, newEvent, 'time')" @blur="newEvent.time = normTime(newEvent.time)" />
+          <input :value="newEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, newEvent, 'time')" @blur="newEvent.time = normTime(newEvent.time)" />
           <span class="time-dash">—</span>
-          <input :value="newEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="$event.target.select()" @input="onTimeInput($event, newEvent, 'endTime')" @blur="newEvent.endTime = normTime(newEvent.endTime)" />
+          <input :value="newEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, newEvent, 'endTime')" @blur="newEvent.endTime = normTime(newEvent.endTime)" />
           <span v-if="isNextDay(newEvent.time, newEvent.endTime)" class="nextday-tag">次日</span>
         </div>
         <textarea v-model="newEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
@@ -393,9 +393,9 @@
         <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
         <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
         <div class="time-box">
-          <input :value="editingEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="$event.target.select()" @input="onTimeInput($event, editingEvent, 'time')" @blur="editingEvent.time = normTime(editingEvent.time)" />
+          <input :value="editingEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, editingEvent, 'time')" @blur="editingEvent.time = normTime(editingEvent.time)" />
           <span class="time-dash">—</span>
-          <input :value="editingEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="$event.target.select()" @input="onTimeInput($event, editingEvent, 'endTime')" @blur="editingEvent.endTime = normTime(editingEvent.endTime)" />
+          <input :value="editingEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, editingEvent, 'endTime')" @blur="editingEvent.endTime = normTime(editingEvent.endTime)" />
           <span v-if="isNextDay(editingEvent.time, editingEvent.endTime)" class="nextday-tag">次日</span>
         </div>
         <textarea v-model="editingEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
@@ -432,12 +432,12 @@
   </Teleport>
 </template>
 
-<script>
-const eventsCache = {}
-const upcomingEventsCache = { data: null }
+<script lang="ts">
+const eventsCache: Record<string, any> = {}
+const upcomingEventsCache: { data: any } = { data: null }
 </script>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
@@ -462,7 +462,7 @@ const todayIso = ref(toIso(new Date()))
 let _midnightTimer = null
 function scheduleMidnightTick() {
   const now = new Date()
-  const msUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) - now
+  const msUntilMidnight = +new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) - +now
   _midnightTimer = setTimeout(() => {
     todayIso.value = toIso(new Date())
     scheduleMidnightTick()
@@ -691,7 +691,7 @@ function barSegFill(bar) {
 }
 
 function daysBetween(isoA, isoB) {
-  return Math.round((new Date(isoB + 'T00:00:00') - new Date(isoA + 'T00:00:00')) / 86400000)
+  return Math.round((+new Date(isoB + 'T00:00:00') - +new Date(isoA + 'T00:00:00')) / 86400000)
 }
 function isoFromPoint(x, y) {
   // elementsFromPoint won't reach month-cell behind bars-layer; use grid bounds instead
@@ -791,7 +791,7 @@ async function commitDrag() {
       const updated = await eventsApi.update(ev.id, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version })
       const applyVer = (list) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
       applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
-    } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await loadEvents() } }
+    } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
   }
 
   if (['proj-chip', 'proj-bar', 'proj-resize-start', 'proj-resize-end'].includes(drag.type)) {
@@ -833,7 +833,7 @@ function setupRO() {
   ro = new ResizeObserver(entries => {
     const next = { ...weekHeights.value }
     entries.forEach(e => {
-      const wi = parseInt(e.target.dataset.wi)
+      const wi = parseInt((e.target as HTMLElement).dataset.wi)
       if (!isNaN(wi)) next[wi] = e.contentRect.height
     })
     weekHeights.value = next
@@ -1185,6 +1185,7 @@ function weekBars(week) {
         endsHere:     p.endDate   >= ws && p.endDate   <= we,
         segStartIso:  week[cs].iso,
         segEndIso:    week[ce].iso,
+        row:          0,   // 占位，下方贪心分行回填（让 TS 认得 .row）
       }
     })
 
@@ -1409,7 +1410,7 @@ async function _persistEvent(s) {
   try {
     const updated = await eventsApi.update(s.id, { title: s.name, date: s.date, time: s.time || null, endTime: s.endTime || null, description: s.description || undefined, version: s.version })
     if (updated?.version) _setEventLocal(s.id, { version: updated.version })
-  } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await loadEvents() } }
+  } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
 }
 
 function onEvResize(ev, edge, e) {   // 拖边缘改起止时间
@@ -1553,7 +1554,7 @@ function buildUpcomingList() {
   const midnight    = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
   function label(iso) {
-    const d = Math.round((new Date(iso + 'T00:00:00') - midnight) / 86400000)
+    const d = Math.round((+new Date(iso + 'T00:00:00') - +midnight) / 86400000)
     return { daysLeft: d, daysLabel: d === 0 ? '今天' : d === 1 ? '明天' : d + '天后' }
   }
 
@@ -1774,7 +1775,7 @@ async function loadReminders(ev) {
     reminders.value = tasks.map(t => {
       let leadMin = 0
       if ((t.cron || '').startsWith('@once:')) {
-        const raw = Math.round((new Date(`${ev.date}T${ev.time || '09:00'}`) - new Date(t.cron.slice(6))) / 60000)
+        const raw = Math.round((+new Date(`${ev.date}T${ev.time || '09:00'}`) - +new Date(t.cron.slice(6))) / 60000)
         leadMin = LEAD_OPTIONS.reduce((b, o) => Math.abs(o.min - raw) < Math.abs(b - raw) ? o.min : b, 0)
       }
       return { id: t.id, leadMin }
@@ -1821,7 +1822,7 @@ async function saveEditEvent() {
     const applyVer = (list) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
     applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
     await applyReminders(ev.id, ev.name, ev.date, ev.time)   // 按提前量/渠道落地提醒
-  } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await loadEvents() } }
+  } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
 }
 
 function handleClickOutside(e) {
