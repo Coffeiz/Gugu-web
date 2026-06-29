@@ -155,6 +155,41 @@ _DECISION_NUDGE = (
 )
 
 
+# 意图守卫（B · 防「说了要做却没动手」）：宣告"我这就去查/建/改…"的**将来式**，区别于 narration 的"假装已做完"。
+# 要求一个明确的"将要"引导词（我去 / 我来 / 这就 / 稍等我 / 让我 / 接下来 / 那我…）+ 动作词，避免裸"我+动词"误伤
+# （如「我改天再看」）。命中即"宣告了要做"。
+_INTENT_RE = _re.compile(
+    r"("
+    r"我(这就|马上|现在|先|稍后)?(去|来)"          # 我去 / 我来 / 我先去 / 我马上来
+    r"|我(先|这就|马上|现在|稍后)"                  # 我先 / 我这就 / 我现在（无去/来）
+    r"|这就(去|帮你|帮您|给你|来)?"                # 这就 / 这就去 / 这就帮你
+    r"|稍等[，,]?\s*我(去|来)?"                     # 稍等我去 / 稍等，我
+    r"|让我(去|来|先)?"                            # 让我 / 让我去
+    r"|接下来我?(去|来)?"                          # 接下来 / 接下来我去
+    r"|那我(去|来|就)"                             # 那我去 / 那我就
+    r")"
+    r"(帮你|帮您|给你)?\s*"
+    r"(查|搜索?|找|看|读|翻|问|建|创建|新建|做|改|修改|删除?|发送?|存|保存|记录?|整理|安排|设置?|调取?|生成|算|统计)"
+)
+# 问句/征询硬排除：「要我去查吗?」是在等用户拍板，绝不能逼它执行（误逼=替用户做没同意的事，比卡住还糟）。
+_QUESTION_RE = _re.compile(r"[?？]|吗|呢|要不要|需不需要|好不好|可不可以|行不行|是否|要我帮|需要我")
+
+
+def _announces_intent(text: str) -> bool:
+    """文字宣告"我这就去做某动作"（将来式），却（由调用方确认本轮零工具）没真动手 → 多半说完就停。
+    先排除问句/征询（要我去查吗?）——那是在等用户拍板，命中即返回 False、绝不逼。"""
+    if not text or _QUESTION_RE.search(text):
+        return False
+    return bool(_INTENT_RE.search(text))
+
+
+_INTENT_NUDGE = (
+    "【系统提醒 · 你说了要做却没动手】你刚表示要去做某件事（查/搜/找/建/改/记/整理等），"
+    "但本轮**没有真的调用任何工具**。别只宣告意图就停下——**现在就这一轮发出真正的工具调用**去把它做了。"
+    "若其实需要先问用户确认或缺少信息，就直接把问题问清楚，而不是说一句『我去做』然后停住。"
+)
+
+
 def _user_text(content) -> str:
     """从 user 消息 content 取纯文本（content 可能是 str，或带图时的 [{text}, {image}] 列表）。"""
     if isinstance(content, str):
@@ -294,7 +329,7 @@ class LLMRunner:
 
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; round_i = 0
-        any_tool_called = False; narration_retry = 0; decision_retry = 0   # 真实性守卫状态
+        any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0   # 真实性守卫状态
         _user_req = _user_text(messages[-1]["content"]) if messages and messages[-1].get("role") == "user" else ""
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
@@ -414,6 +449,15 @@ class LLMRunner:
                 messages.append({"role": "user", "content": _NARRATION_NUDGE})
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
+            # 意图守卫（B）：宣告「我这就去查/建/改…」却本轮零工具 → 逼它当场做（_announces_intent 已排除问句/征询）。只追一次。
+            if (not any_tool_called and not verify_mode and intent_retry < 1
+                    and _announces_intent(_final_text)):
+                intent_retry += 1
+                content_dicts = [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in final.content]
+                messages.append({"role": "assistant", "content": content_dicts})
+                messages.append({"role": "user", "content": _INTENT_NUDGE})
+                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                continue
             # P3 决策守卫：用户明确要改、模型零工具却用「不用改/已合理」驳回 → 逼它执行或问清，别擅自不做。
             if (not any_tool_called and not verify_mode and decision_retry < 1
                     and _is_decision_dodge(_user_req, _final_text)):
@@ -465,7 +509,7 @@ class LLMRunner:
         total_in = total_out = 0
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; round_i = 0; empty_retry = 0
-        any_tool_called = False; narration_retry = 0; decision_retry = 0   # 真实性守卫状态
+        any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0   # 真实性守卫状态
         _user_req = _user_text(messages[-1]["content"]) if messages and messages[-1].get("role") == "user" else ""
         # 自我核实阶段：进入后持续到收尾，期间文字先缓冲——干净通过整段丢弃、补做了才发一次说明（同 Anthropic 路）
         verify_mode = False; verify_fixed = False; verify_queried = False
@@ -604,6 +648,14 @@ class LLMRunner:
                 narration_retry += 1
                 messages.append(_asst(content or "（…）"))
                 messages.append({"role": "user", "content": _NARRATION_NUDGE})
+                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                continue
+            # 意图守卫（B）：宣告要做却本轮零工具 → 逼它当场做（_announces_intent 已排除问句）。只追一次。
+            if (not any_tool_called and not verify_mode and intent_retry < 1
+                    and _announces_intent(content)):
+                intent_retry += 1
+                messages.append(_asst(content or "（…）"))
+                messages.append({"role": "user", "content": _INTENT_NUDGE})
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
             # P3 决策守卫：用户明确要改、模型零工具却用「不用改/已合理」驳回 → 逼它执行或问清。
