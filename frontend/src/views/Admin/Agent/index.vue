@@ -194,7 +194,7 @@
             <div class="modal-field modal-field--row">
               <div class="thinking-label">
                 <span>深度思考</span>
-                <span class="thinking-hint">仅支持 MiniMax M3 / Anthropic（adaptive 模式）</span>
+                <span class="thinking-hint">MiniMax M3 / Anthropic / mimo / DeepSeek（adaptive 模式）</span>
               </div>
               <button
                 class="toggle-switch"
@@ -203,6 +203,18 @@
               >
                 <span class="toggle-knob" />
               </button>
+            </div>
+
+            <div class="modal-field modal-field--row" v-if="editTarget.provider === 'deepseek' && editTarget.thinking === 'adaptive'">
+              <div class="thinking-label">
+                <span>思考强度</span>
+                <span class="thinking-hint">DeepSeek 思考开时生效（思考模式下 temperature 失效，强度是质量/成本旋钮）</span>
+              </div>
+              <div style="display:flex; gap:6px;">
+                <button type="button" class="toggle-btn" :class="{ active: !editTarget.reasoning_effort }" @click="editTarget.reasoning_effort = ''">默认</button>
+                <button type="button" class="toggle-btn" :class="{ active: editTarget.reasoning_effort === 'high' }" @click="editTarget.reasoning_effort = 'high'">high</button>
+                <button type="button" class="toggle-btn" :class="{ active: editTarget.reasoning_effort === 'max' }" @click="editTarget.reasoning_effort = 'max'">max</button>
+              </div>
             </div>
 
             <div class="modal-field modal-field--row">
@@ -1166,7 +1178,7 @@ async function togglePool(p) {
 
 function openNewPreset() {
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 2000, temperature: 0.7, context_tokens: 3000, thinking: 'disabled', vision: false, api_format: '' }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 2000, temperature: 0.7, context_tokens: 3000, thinking: 'disabled', reasoning_effort: '', vision: false, api_format: '' }
   editError.value  = ''
 }
 
