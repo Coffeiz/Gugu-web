@@ -1,0 +1,336 @@
+/**
+ * 咕咕 API 客户端
+ * 所有请求统一走这里，自动附加 user Bearer token
+ */
+import type { components } from '@/types/api'
+
+// 后端 Pydantic 模型（由 OpenAPI 生成，见 npm run gen:types）。高频实体直接复用，前后端对齐。
+type Schemas = components['schemas']
+
+const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
+
+export function getToken(): string {
+  return localStorage.getItem('user_token') ?? ''
+}
+
+// 泛型默认 any：未显式标注返回类型的调用方拿到 any（不给存量代码添堵）；
+// 标注了 <T> 的端点拿到精确类型。逐步把更多端点标上类型即可收紧。
+async function request<T = any>(method: string, path: string, body: any = null, isForm = false): Promise<T> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const opts: RequestInit = { method, headers }
+  if (body !== null) {
+    if (isForm) {
+      opts.body = body
+    } else {
+      headers['Content-Type'] = 'application/json'
+      opts.body = JSON.stringify(body)
+    }
+  }
+
+  const res = await fetch(`${BASE_URL}${path}`, opts)
+
+  if (!res.ok) {
+    // token 失效时自动清除并跳转登录
+    if (res.status === 401) {
+      localStorage.removeItem('user_token')
+      window.location.href = '/login'
+      throw new Error('请重新登录')
+    }
+    const err = await res.json().catch(() => ({}))
+    const d = err.detail
+    const msg = !d ? `HTTP ${res.status}`
+      : typeof d === 'string' ? d
+      : Array.isArray(d) ? d.map((e: any) => e.msg ?? e).join('；')
+      : `HTTP ${res.status}`
+    const apiErr = new Error(msg) as Error & { status?: number }
+    apiErr.status = res.status
+    throw apiErr
+  }
+
+  if (res.status === 204) return null as T
+  return res.json()
+}
+
+const get    = <T = any>(path: string)             => request<T>('GET',    path)
+const post   = <T = any>(path: string, body?: any) => request<T>('POST',   path, body)
+const patch  = <T = any>(path: string, body?: any) => request<T>('PATCH',  path, body)
+const put    = <T = any>(path: string, body?: any) => request<T>('PUT',    path, body)
+const del    = <T = any>(path: string)             => request<T>('DELETE', path)
+const upload = <T = any>(path: string, form: FormData) => request<T>('POST', path, form, true)
+
+export function uploadWithProgress(path: string, form: FormData, onProgress: (p: number) => void): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${BASE_URL}${path}`)
+    const token = getToken()
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total)
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText)) } catch { resolve(null) }
+      } else {
+        try {
+          const d = JSON.parse(xhr.responseText).detail
+          const msg = !d ? `HTTP ${xhr.status}`
+            : typeof d === 'string' ? d
+            : Array.isArray(d) ? d.map((e: any) => e.msg ?? e).join('；')
+            : `HTTP ${xhr.status}`
+          reject(new Error(msg))
+        } catch { reject(new Error(`HTTP ${xhr.status}`)) }
+      }
+    }
+    xhr.onerror = () => reject(new Error('网络错误'))
+    xhr.send(form)
+  })
+}
+
+export function uploadDirectWithProgress(url: string, file: File, onProgress: (p: number) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', url)
+    if (file.type) xhr.setRequestHeader('Content-Type', file.type)
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total)
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve()
+      else reject(new Error(`OSS 直传失败: HTTP ${xhr.status}`))
+    }
+    xhr.onerror = () => reject(new Error('网络错误'))
+    xhr.send(file)
+  })
+}
+
+// ── Projects ─────────────────────────────────────────────────────────────────
+export const projectsApi = {
+  list:   ()                                       => get<Schemas['ProjectResponse'][]>('/projects'),
+  get:    (id: number)                             => get<Schemas['ProjectResponse']>(`/projects/${id}`),
+  create: (data: Schemas['ProjectCreate'])         => post<Schemas['ProjectResponse']>('/projects', data),
+  update: (id: number, data: Schemas['ProjectUpdate']) => patch<Schemas['ProjectResponse']>(`/projects/${id}`, data),
+  delete: (id: number)                             => del(`/projects/${id}`),
+}
+
+// ── ScheduledTasks（定时任务）─────────────────────────────────────────────────
+export const scheduledTasksApi = {
+  list:         ()                  => get('/scheduled-tasks'),
+  listForEvent: (eventId: number)   => get(`/scheduled-tasks?event_id=${eventId}`),   // 某日历活动绑定的提醒
+  create:       (data: any)         => post('/scheduled-tasks', data),
+  update:       (id: number, data: any) => patch(`/scheduled-tasks/${id}`, data),
+  delete:       (id: number)        => del(`/scheduled-tasks/${id}`),
+  run:          (id: number)        => post(`/scheduled-tasks/${id}/run`),
+  testNotify:   (data: any)         => post('/scheduled-tasks/test-notify', data),   // 测试提醒渠道（不建任务）
+}
+
+// ── Files ─────────────────────────────────────────────────────────────────────
+interface FileListParams {
+  space?: string
+  projectId?: number
+  folderId?: number
+  mindMapId?: number
+  ext?: string
+  q?: string
+}
+export const filesApi = {
+  list: ({ space, projectId, folderId, mindMapId, ext, q }: FileListParams = {}) => {
+    const p: Record<string, any> = {}
+    if (space      != null) p.space       = space
+    if (projectId  != null) p.project_id  = projectId
+    if (folderId   != null) p.folder_id   = folderId
+    if (mindMapId  != null) p.mind_map_id = mindMapId
+    if (ext        != null) p.ext         = ext
+    if (q          != null) p.q           = q
+    const qs = new URLSearchParams(p).toString()
+    return get<Schemas['FileResponse'][]>(`/files${qs ? '?' + qs : ''}`)
+  },
+  tree:    ()         => get('/files/tree'),
+  all:     ()         => get<Schemas['FileResponse'][]>('/files/all'),
+  version: ()         => get('/files/version'),
+  storage: ()         => get('/files/storage'),
+  update: (id: number, data: Schemas['FileUpdate']) => patch<Schemas['FileResponse']>(`/files/${id}`, data),
+  saveContent: (id: number, content: string) => put<Schemas['FileResponse']>(`/files/${id}/content`, { content }),   // 改文本正文（md 勾选框等）
+  delete:      (id: number)   => del(`/files/${id}`),
+  batchDelete: (ids: number[])  => post('/files/batch-delete', { ids }),
+  copy: (id: number, body: Schemas['FileCopyBody']) => post<Schemas['FileResponse']>(`/files/${id}/copy`, body),
+  batchDownload: async (ids: number[], folderIds: number[] = [], filename = 'files.zip') => {
+    const token = getToken()
+    const res = await fetch(`${BASE_URL}/files/batch-download`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ ids, folderIds }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  },
+  presign: (data: any) => post('/files/presign', data),
+  confirm: (data: any) => post('/files/confirm', data),
+  // 返回 { url: "https://..." }，后端签名 URL，有效期短（5~10 分钟）
+  getStreamUrl: (id: number) => get(`/files/${id}/stream-url`),
+  download: async (id: number, filename: string) => {
+    const token = getToken()
+    const res = await fetch(`${BASE_URL}/files/${id}/download`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  },
+}
+
+// ── Events ────────────────────────────────────────────────────────────────────
+export const eventsApi = {
+  list:   (year: number, month: number) => get<Schemas['EventResponse'][]>(`/events?year=${year}&month=${month}`),
+  create: (data: Schemas['EventCreate']) => post<Schemas['EventResponse']>('/events', data),
+  update: (id: number, data: Schemas['EventUpdate']) => patch<Schemas['EventResponse']>(`/events/${id}`, data),
+  delete: (id: number)          => del(`/events/${id}`),
+}
+
+// ── Folders ───────────────────────────────────────────────────────────────────
+export const foldersApi = {
+  all:  ()                              => get<Schemas['FolderResponse'][]>('/folders/all'),
+  list: ({ projectId, parentId }: { projectId?: number; parentId?: number } = {}) => {
+    const params = new URLSearchParams()
+    if (projectId != null) params.set('project_id', String(projectId))
+    if (parentId  != null) params.set('parent_id',  String(parentId))
+    const qs = params.toString()
+    return get<Schemas['FolderResponse'][]>(qs ? `/folders?${qs}` : '/folders')
+  },
+  create: (projectId: number | null, name: string, parentId: number | null = null) => post<Schemas['FolderResponse']>('/folders', {
+    ...(projectId != null ? { projectId } : {}),
+    ...(parentId  != null ? { parentId  } : {}),
+    name,
+  }),
+  rename: (id: number, name: string)     => patch<Schemas['FolderResponse']>(`/folders/${id}`, { name }),
+  move:   (id: number, parentId: number | null) => patch<Schemas['FolderResponse']>(`/folders/${id}/parent`, { parentId }),
+  delete: (id: number)           => del(`/folders/${id}`),
+  download: async (id: number, name: string) => {
+    const token = getToken()
+    const res = await fetch(`${BASE_URL}/folders/${id}/download`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${name}.zip`
+    a.click()
+    URL.revokeObjectURL(url)
+  },
+}
+
+// ── Trash ─────────────────────────────────────────────────────────────────────
+export const trashApi = {
+  list:         ()           => get('/trash'),
+  restore:      (id: number) => post(`/trash/${id}/restore`, {}),
+  hardDelete:   (id: number) => del(`/trash/${id}`),
+  empty:        ()           => del('/trash'),
+}
+
+// ── Clients ────────────────────────────────────────────────────────────────────
+export const clientsApi = {
+  list:   ()                            => get<Schemas['ClientResponse'][]>('/clients'),
+  create: (data: Schemas['ClientCreate']) => post<Schemas['ClientResponse']>('/clients', data),
+  delete: (id: number)                  => del(`/clients/${id}`),
+}
+
+export const preferencesApi = {
+  get:    ()                                  => get<Schemas['PreferencesResponse']>('/preferences'),
+  update: (data: Schemas['PreferencesUpdate']) => request<Schemas['PreferencesResponse']>('PATCH', '/preferences', data),
+}
+
+export const notificationsApi = {
+  list:        ()    => get('/notifications'),                       // 通知中心：近期持久通知 + 未读态
+  latestBubble: ()   => get('/notifications/bubble'),               // 上线补弹：最近一条有效气泡（{bubble:null|{...}}）
+  markRead:    (ids?: number[] | null) => request('POST', '/notifications/read', { ids: ids ?? null }),  // 无 ids = 全部已读
+}
+
+export const agentApi = {
+  listSessions:    ()                  => get('/agent/sessions'),
+  getUiLabels:     ()                  => get('/agent/ui-labels'),   // 状态显示名（目前用「思考中」文字）
+  greeting:        ()                  => get('/agent/greeting'),    // 对话框默认问候（咕咕据近期记忆生成）
+  getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
+  deleteSession:   (sessionId: string) => del(`/agent/sessions/${sessionId}`),
+  clearMemory:       ()         => del('/agent/memory'),
+  clearAttachments:  ()         => del('/agent/attachments'),
+  uploadAttachment: (file: File, voice = false) => {   // 聊天附件暂存，返回 { attach_id, name, ext, size, kind, duration }
+    const form = new FormData()
+    form.append('file', file)
+    if (voice) form.append('voice', 'true')      // 录音 → 语音条 + 30 天独立存储
+    return upload('/agent/upload', form)
+  },
+}
+
+export const onboardingApi = {
+  getState:  ()             => get('/onboarding/state'),
+  claim:     (key: string)  => post(`/onboarding/claim/${key}`),
+  // demo（作用于当前用户自己）
+  devPools:  ()             => get('/onboarding/dev/pools'),
+  devFire:   (key: string)  => post(`/onboarding/dev/fire/${key}`),
+  devReset:  ()             => post('/onboarding/dev/reset'),
+  devReseed: ()             => post('/onboarding/dev/reseed'),
+}
+
+export const trackApi = {
+  track: (event: string, properties?: any) => request('POST', '/track', { event, properties }),
+}
+
+// 站内全局搜索（顶栏搜索框）
+export const searchApi = {
+  query: (q: string) => request('GET', `/search?q=${encodeURIComponent(q)}`),
+}
+
+export const authApi = {
+  updateProfile: (data: any) => request('PATCH', '/auth/profile', data),
+  getQuota:      ()          => request('GET',   '/auth/quota'),
+  uploadAvatar:  (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return request('POST', '/auth/avatar', fd, true)
+  },
+}
+
+// 飞书 OAuth 扫码绑定
+// 用户自带机器人（BYO：飞书 / QQ）
+export const userBotsApi = {
+  list:   ()                     => request('GET',    '/me/bots'),
+  create: (body: any)            => request('POST',   '/me/bots', body),
+  update: (id: number, body: any) => request('PUT',    `/me/bots/${id}`, body),
+  remove: (id: number)           => request('DELETE', `/me/bots/${id}`),
+}
+
+// QQ 扫码自动连接（建 task → 轮询 → 自动填 key）
+export const qqConnectApi = {
+  start: ()               => request('POST', '/me/qq/connect'),
+  poll:  (taskId: string) => request('GET',  `/me/qq/connect/${taskId}`),
+}
+
+// 飞书扫码自动连接（device flow → 轮询 → 自动填 key）
+export const feishuConnectApi = {
+  start: ()               => request('POST', '/me/feishu/connect'),
+  poll:  (pollId: string) => request('GET',  `/me/feishu/connect/${pollId}`),
+}
+
+// 微信 iLink 扫码自动连接（个人微信；出码 = base64 PNG → 轮询 → 自动写 bot_token）
+export const wechatConnectApi = {
+  start: ()               => request('POST', '/me/wechat/connect'),
+  poll:  (taskId: string) => request('GET',  `/me/wechat/connect/${taskId}`),
+}
