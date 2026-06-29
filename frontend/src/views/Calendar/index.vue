@@ -257,8 +257,10 @@
           </button>
         </div>
         <input v-model="newEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" @keydown.esc="showAddForm = false" autofocus />
-        <DatePicker v-model="newEvent.date" placeholder="选择日期" />
-        <input v-model="newEvent.time" type="time" class="popup-input popup-time" placeholder="时间（可选）" />
+        <div class="popup-row">
+          <DatePicker v-model="newEvent.date" placeholder="选择日期" />
+          <input v-model="newEvent.time" type="time" class="popup-input popup-time" />
+        </div>
         <textarea v-model="newEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="popup-actions">
           <button class="popup-save" @click="saveEvent" :disabled="!newEvent.name">保存</button>
@@ -297,16 +299,19 @@
           </button>
         </div>
         <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
-        <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
-        <input v-model="editingEvent.time" type="time" class="popup-input popup-time" placeholder="时间（可选）" />
+        <div class="popup-row">
+          <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
+          <input v-model="editingEvent.time" type="time" class="popup-input popup-time" />
+        </div>
         <textarea v-model="editingEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="reminder-section" v-if="typeof editingEvent.id === 'number'">
           <div class="reminder-title">提醒（定时任务）</div>
-          <div v-for="t in eventReminders" :key="t.id" class="reminder-item">
-            <span class="reminder-time"><PhBell :size="11" weight="bold" /> {{ reminderLabel(t) }}</span>
-            <button class="reminder-del" @click="removeReminder(t.id)" title="删除提醒"><PhX :size="10" weight="bold" /></button>
+          <!-- 一个活动至多一个提醒：有则显示+可删，无则可加 -->
+          <div v-if="eventReminder" class="reminder-item">
+            <span class="reminder-time"><PhBell :size="11" weight="bold" /> {{ reminderLabel(eventReminder) }}</span>
+            <button class="reminder-del" @click="removeReminder(eventReminder.id)" title="删除提醒"><PhX :size="10" weight="bold" /></button>
           </div>
-          <div class="reminder-add">
+          <div v-else class="reminder-add">
             <input v-model="newReminderAt" type="datetime-local" class="popup-input reminder-input" />
             <button class="reminder-add-btn" :disabled="reminderBusy || !newReminderAt" @click="addReminder">加提醒</button>
           </div>
@@ -1190,6 +1195,7 @@ function openEditForm(ev, nativeEv, useMousePos = false) {
 
 // ── 活动绑定的提醒（定时任务）：编辑面板内直接加/删，和定时任务面板同一套（event_id 绑定）──
 const eventReminders = ref([])
+const eventReminder  = computed(() => eventReminders.value[0] || null)   // 一个活动至多一个提醒
 const newReminderAt  = ref('')     // datetime-local 值 "YYYY-MM-DDTHH:MM"，正好是 @once 要的格式
 const reminderBusy   = ref(false)
 
@@ -1556,7 +1562,9 @@ async function saveEvent() {
 .sidebar-ev-bar { width: 3px; border-radius: 99px; align-self: stretch; flex-shrink: 0; min-height: 26px; }
 .sidebar-ev-name { font-size: 12px; font-weight: 500; color: var(--text-primary); line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
 .sidebar-ev-time { font-size: 11px; font-weight: 600; color: var(--accent, #7b7fb2); margin-right: 3px; font-variant-numeric: tabular-nums; }
-.popup-time { font-variant-numeric: tabular-nums; }
+.popup-row { display: flex; gap: 6px; align-items: center; }
+.popup-row > :first-child { flex: 1; min-width: 0; }
+.popup-time { width: 84px; flex-shrink: 0; padding-left: 8px; padding-right: 6px; font-variant-numeric: tabular-nums; }
 .ev-type-badge {
   display: inline-block; vertical-align: middle; margin-left: 4px;
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
