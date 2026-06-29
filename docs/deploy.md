@@ -334,18 +334,33 @@ cd backend && RUN_USER=youruser make install
 sudo systemctl status gugu-backend gugu-worker gugu-supervisor
 ```
 
-> ⚠️ **装完 `gugu-backend` 一直重启（`activating → failed → activating` 循环）？最常见是端口被旧进程占着。**
-> 装 systemd 之前你多半手动前台跑过 `uvicorn ...:8000` 测试，那个**没停**——systemd 的 gugu-backend 起来绑不上 8000 → 崩 → `Restart` 拉起 → 死循环。
-> 先停服务再清野进程，最后让 systemd 干净启动：
+> ⚠️ **`gugu-backend` 一直重启（`activating → failed → activating` 循环）/ `systemctl restart` 起不来、每次都要手动 pkill？根因永远是「8000 有两个主人」。**
+> systemd 的 gugu-backend 想绑 8000，但端口被**另一个非 systemd 的 uvicorn**占着（你手动前台跑的、或 dev 机的手动启动器没停）→ systemd 绑不上「address already in use」→ `Restart=on-failure` 每 3s 拉起 → 死循环。`systemctl restart` 也停不掉那个手动进程（它不归 systemd 管）→ 你只能手动 pkill。
+>
+> **铁律：一台机器上 8000 只能有一个主人——要么 systemd、要么手动，绝不并存。** 生产用 systemd，dev 机用手动（见下「dev 机重启」）。
+>
+> 一次性清干净 + 让 systemd 接管：
 > ```bash
-> systemctl stop gugu-backend
-> pkill -9 -f "uvicorn app.main"        # 杀手动跑的旧后端
-> fuser -k 8000/tcp 2>/dev/null         # 兜底
+> pkill -9 -f "uvicorn app.main"; fuser -k 8000/tcp 2>/dev/null   # 杀掉所有手动跑的旧后端
 > ss -ltnp | grep :8000 || echo 空了
-> systemctl start gugu-backend
-> journalctl -u gugu-backend -n 30 --no-pager   # 还崩就看这里：端口/配置/路径/缺依赖
+> sudo systemctl enable --now gugu-backend
 > ```
-> 注意：托管后**别再用 `pkill` 停 gugu-backend**（会被 `Restart` 立刻拉起、像「关不掉」），用 `systemctl stop`。
+>
+> **强烈建议给 `gugu-backend.service` 加「启动前自愈腾端口」**——以后 `systemctl restart` 哪怕有野进程占着 8000 也能起来，再不用手动 pkill。在 `[Service]` 段、`ExecStart` 之前加两行：
+> ```ini
+> ExecStartPre=-/usr/bin/fuser -k -n tcp 8000
+> ExecStartPre=/bin/sleep 1
+> ```
+> （`-` 前缀 = 没进程可杀也不算失败；service 的 `User=` 决定只能杀本用户的进程，正好杀掉手动那个。）改完 `sudo systemctl daemon-reload && sudo systemctl restart gugu-backend`。
+>
+> 注意：托管后**别再用 `pkill` 停 gugu-backend**（会被 `Restart` 立刻拉起、像「关不掉」），用 `systemctl stop`；`journalctl -u gugu-backend -n 30 --no-pager` 看真错。
+
+> **dev 机重启（不走 systemd、免 sudo）**：dev 机把 `gugu-backend` 保持 `disable`，用脚本一条命令干净重启（自带腾端口，不撞冲突、不用手动 pkill）：
+> ```bash
+> bash scripts/dev-restart.sh          # 全部：web + worker + supervisor
+> bash scripts/dev-restart.sh web      # 也可只重启某一个
+> ```
+> ⚠️ dev 机若 `gugu-backend` 还 enabled，会和脚本起的手动后端抢 8000 → 先 `sudo systemctl disable --now gugu-backend`。
 
 `make install` 会：
 
