@@ -21,12 +21,13 @@ async def _create_event(db, user_id, args: dict):
         user_id=user_id,
         title=args["title"],
         date=args["date"],
+        time=(args.get("time") or None),   # HH:MM，可选
         type=args.get("type", "event"),
         project_id=pid,
     )
     db.add(ev)
     await db.commit()
-    return {"success": True, "title": args["title"], "date": args["date"]}
+    return {"success": True, "title": args["title"], "date": args["date"], "time": ev.time}
 
 
 async def _list_events(db, user_id, args: dict):
@@ -40,7 +41,7 @@ async def _list_events(db, user_id, args: dict):
     stmt = stmt.order_by(CalendarEvent.date).limit(args.get("limit", 50))
     rows = (await db.execute(stmt)).scalars().all()
     return [
-        {"id": e.id, "title": e.title, "date": e.date, "type": e.type,
+        {"id": e.id, "title": e.title, "date": e.date, "time": e.time, "type": e.type,
          "project_id": e.project_id, "description": e.description}
         for e in rows
     ]
@@ -79,9 +80,9 @@ async def _update_event(db, user_id, args: dict):
     e, _err = await _resolve_event(db, user_id, args)
     if _err:
         return _err
-    fields = ("title", "date", "type", "project_id", "description")
+    fields = ("title", "date", "time", "type", "project_id", "description")
     if not any(fld in args for fld in fields):   # 没给任何要改的字段 → 别假成功（防咕咕误报"已更新"）
-        return json.dumps({"error": "没提供要修改的字段（title/date/type/project_id/description），未改动。"})
+        return json.dumps({"error": "没提供要修改的字段（title/date/time/type/project_id/description），未改动。"})
     if args.get("project_id") is not None:
         proj = await db.get(Project, args["project_id"])
         if not proj or proj.user_id != user_id:
@@ -105,9 +106,16 @@ async def _delete_event(db, user_id, args: dict):
         return blocked
 
     eid, etitle = e.id, e.title
+    # 应用层级联：连带删掉绑定到该事件的提醒任务（event_id 无 DB 外键，手动清，免留孤儿提醒）
+    from app.models import ScheduledTask
+    reminders = (await db.execute(
+        select(ScheduledTask).where(ScheduledTask.event_id == eid)
+    )).scalars().all()
+    for t in reminders:
+        await db.delete(t)
     await db.delete(e)
     await db.commit()
-    return {"success": True, "deleted_event_id": eid, "title": etitle}
+    return {"success": True, "deleted_event_id": eid, "title": etitle, "deleted_reminders": len(reminders)}
 
 
 class CalendarSkill(BaseSkill):
@@ -122,6 +130,7 @@ class CalendarSkill(BaseSkill):
                 "properties": {
                     "title":      {"type": "string"},
                     "date":       {"type": "string", "description": "YYYY-MM-DD"},
+                    "time":       {"type": "string", "description": "时间 HH:MM（可选；不填=全天/无具体时间）"},
                     "type":       {"type": "string", "enum": ["event", "deadline"], "description": "默认 event"},
                     "project_id": {"type": "integer", "description": "关联项目 ID（可选）"},
                 },
@@ -155,6 +164,7 @@ class CalendarSkill(BaseSkill):
                     "on_date":    {"type": "string", "description": "同名事件时用日期 YYYY-MM-DD 区分"},
                     "title":      {"type": "string"},
                     "date":       {"type": "string", "description": "YYYY-MM-DD"},
+                    "time":       {"type": "string", "description": "时间 HH:MM（可选；传空串清空）"},
                     "type":       {"type": "string", "enum": ["event", "deadline"]},
                     "project_id": {"type": "integer", "description": "关联项目 ID"},
                     "description": {"type": "string"},

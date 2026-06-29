@@ -49,6 +49,7 @@ def _to_resp(t: ScheduledTask) -> dict:
         "payload": t.payload, "cron": t.cron,
         "channels": [c for c in (t.channels or "").split(",") if c],
         "enabled": t.enabled,
+        "event_id": t.event_id,   # 绑定的日历事件（活动面板加的提醒）；null=独立任务
         "last_run_at": fmt_local(t.last_run_at) if t.last_run_at else None,
     }
 
@@ -59,6 +60,7 @@ class TaskCreate(BaseModel):
     cron: str                 # crontab "分 时 日 月 周"，或 @once:<ISO>
     channels: list[str] = ["web"]
     enabled: bool = True
+    event_id: int | None = None   # 绑定到某日历事件（活动面板加的提醒）；省略=独立任务
 
 
 class TaskUpdate(BaseModel):
@@ -70,10 +72,11 @@ class TaskUpdate(BaseModel):
 
 
 @router.get("")
-async def list_tasks(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    rows = (await db.execute(
-        select(ScheduledTask).where(ScheduledTask.user_id == user.id).order_by(ScheduledTask.id.desc())
-    )).scalars().all()
+async def list_tasks(event_id: int | None = None, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    stmt = select(ScheduledTask).where(ScheduledTask.user_id == user.id)
+    if event_id is not None:   # 活动面板按事件拉它的提醒
+        stmt = stmt.where(ScheduledTask.event_id == event_id)
+    rows = (await db.execute(stmt.order_by(ScheduledTask.id.desc()))).scalars().all()
     # 读时顺手清过期一次性任务：不只靠 worker 的 reconcile GC——万一 worker 滞后/没跑，
     # 面板自己也不显（也不留）过点的 @once。判据与 GC 同（过点超 120s 宽限，见 app/scheduled_tasks）。
     from app.scheduled_tasks import _once_expired
@@ -91,10 +94,17 @@ async def list_tasks(user: User = Depends(get_current_user), db: AsyncSession = 
 @router.post("", status_code=201)
 async def create_task(body: TaskCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     _validate_cron(body.cron)
+    # 绑定事件校验：event_id 必须是本人的事件，防越权/挂错
+    if body.event_id is not None:
+        from app.models import CalendarEvent
+        ev = await db.get(CalendarEvent, body.event_id)
+        if not ev or ev.user_id != user.id:
+            raise HTTPException(400, "绑定的日历事件不存在")
     t = ScheduledTask(
         user_id=user.id, name=body.name,
         payload=body.payload or "", cron=body.cron,
         channels=_norm_channels(body.channels), enabled=body.enabled,
+        event_id=body.event_id,
     )
     db.add(t)
     await db.commit()

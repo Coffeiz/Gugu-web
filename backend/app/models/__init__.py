@@ -185,6 +185,7 @@ class CalendarEvent(Base):
     user_id:     Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title:       Mapped[str]           = mapped_column(String(300))
     date:        Mapped[str]           = mapped_column(String(10))
+    time:        Mapped[Optional[str]] = mapped_column(String(5), nullable=True)   # HH:MM，可选；空=全天/无具体时间
     type:        Mapped[str]           = mapped_column(String(50),  default="event")
     client:      Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     project_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
@@ -369,6 +370,9 @@ class ScheduledTask(Base):
     id:          Mapped[int]                = mapped_column(Integer, primary_key=True, autoincrement=True)
     # null = 系统级任务（如截稿扫描，跨用户）；有值 = 用户自定义任务
     user_id:     Mapped[Optional[UUID]]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    # 绑定的日历事件 id（活动编辑面板里加的提醒）；null = 普通独立任务。
+    # 故意不设 DB 外键：删事件时由应用层显式删其提醒任务（_delete_event），避免 FK 命名/迁移复杂度、更可移植。
+    event_id:    Mapped[Optional[int]]      = mapped_column(Integer, nullable=True, index=True)
     name:        Mapped[str]                = mapped_column(String(100))
     payload:     Mapped[str]                = mapped_column(Text, default="")   # 到点要执行的指令（交给 agent 跑）
     cron:        Mapped[str]                = mapped_column(String(60))    # crontab "m h dom mon dow"

@@ -16,6 +16,7 @@ def _to_resp(e: CalendarEvent) -> EventResponse:
         id=e.id,
         title=e.title,
         date=e.date,
+        time=e.time,
         type=e.type,
         client=e.client,
         project_id=e.project_id,
@@ -87,5 +88,9 @@ async def delete_event(
     e = await db.get(CalendarEvent, eid)
     if not e or e.user_id != current_user.id:
         raise HTTPException(404, "事件不存在")
+    # 应用层级联：连带删绑定到该事件的提醒任务（event_id 无 DB 外键，手动清，免留孤儿提醒）
+    from app.models import ScheduledTask
+    for t in (await db.execute(select(ScheduledTask).where(ScheduledTask.event_id == eid))).scalars().all():
+        await db.delete(t)
     await db.delete(e)
     await db.commit()
