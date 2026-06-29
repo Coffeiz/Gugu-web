@@ -60,23 +60,24 @@ def _to_dict(t: ScheduledTask) -> dict:
 
 async def _resolve_task(db, user_id, args):
     """按 task_id 或任务名 task 定位；返回 (task|None, 错误JSON|None)。少调用：可直接按名字操作。"""
+    # 日程提醒（event_id 非空）归日历管，咕咕的定时任务工具一律视作「不存在」、不可解析/改/删
     tid = args.get("task_id")
     if tid:
         t = await db.get(ScheduledTask, tid)
-        return (t, None) if (t and t.user_id == user_id) else (None, json.dumps({"error": "定时任务不存在"}, ensure_ascii=False))
+        return (t, None) if (t and t.user_id == user_id and t.event_id is None) else (None, json.dumps({"error": "定时任务不存在"}, ensure_ascii=False))
     name = args.get("task")
     if name:
         name = str(name).strip()
         rows = (await db.execute(
-            select(ScheduledTask).where(ScheduledTask.user_id == user_id, ScheduledTask.name == name)
+            select(ScheduledTask).where(ScheduledTask.user_id == user_id, ScheduledTask.event_id.is_(None), ScheduledTask.name == name)
         )).scalars().all()
         if not rows:
             rows = (await db.execute(
-                select(ScheduledTask).where(ScheduledTask.user_id == user_id, ScheduledTask.name.ilike(f"%{name}%"))
+                select(ScheduledTask).where(ScheduledTask.user_id == user_id, ScheduledTask.event_id.is_(None), ScheduledTask.name.ilike(f"%{name}%"))
             )).scalars().all()
         if not rows:
             avail = (await db.execute(
-                select(ScheduledTask.name).where(ScheduledTask.user_id == user_id)
+                select(ScheduledTask.name).where(ScheduledTask.user_id == user_id, ScheduledTask.event_id.is_(None))
             )).scalars().all()
             return None, json.dumps({"error": f"未找到名为「{name}」的定时任务", "available": sorted(set(avail))[:20]}, ensure_ascii=False)
         if len(rows) > 1:
@@ -87,8 +88,11 @@ async def _resolve_task(db, user_id, args):
 
 
 async def _list_scheduled_tasks(db, user_id, args: dict):
+    # 日程提醒与定时任务完全分开：event_id 非空的是活动提醒（归日历管），咕咕的定时任务工具一律不碰
     rows = (await db.execute(
-        select(ScheduledTask).where(ScheduledTask.user_id == user_id).order_by(ScheduledTask.id.desc())
+        select(ScheduledTask)
+        .where(ScheduledTask.user_id == user_id, ScheduledTask.event_id.is_(None))
+        .order_by(ScheduledTask.id.desc())
     )).scalars().all()
     return [_to_dict(t) for t in rows]
 
@@ -161,13 +165,16 @@ class ScheduledTasksSkill(BaseSkill):
     tools = [
         Tool(
             name="list_scheduled_tasks", label="查看定时任务",
-            description="列出我的全部定时任务（含 id、名称、触发时间、指令、投递渠道、是否启用、上次执行）。一次返回全部。",
+            description=("列出我的全部独立定时任务（含 id、名称、触发时间、指令、投递渠道、是否启用、上次执行）。一次返回全部。"
+                         "注意：日历活动的提醒不在此列——那是活动自带、在日历里单独管理，与定时任务两套互不影响。"),
             input_schema={"type": "object", "properties": {}},
             handler=_list_scheduled_tasks,
         ),
         Tool(
             name="create_scheduled_task", label="新建定时任务",
-            description=("创建一个定时任务：到点自动按 instruction 执行并把结果投递给用户。一次带齐参数即可，无需多轮。\n"
+            description=("创建一个定时任务：到点自动按 instruction 执行并把结果投递给用户。一次带齐参数即可，无需多轮。"
+                         "（这是独立定时任务；若是给某个日历活动定提醒，改用日历的 create_event(reminders) 或 add_event_reminder，"
+                         "那种会绑定到活动、在活动卡里管理。跟活动无关的普通提醒/任务才用这个。两套互不影响。）\n"
                          + _CRON_HINT
                          + "\n渠道 channels：web(站内通知,默认) / feishu / qq；某渠道是否已连**看系统提示「当前对话来源 / 通知渠道」**——已连(✅)的直接设，只有未连(❌)才提示用户去绑（用户正用某 IM 跟你聊＝那个渠道必然已连，别让 TA 扫码）。"),
             input_schema={

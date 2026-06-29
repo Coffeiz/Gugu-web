@@ -149,7 +149,7 @@
               <div class="sidebar-ev-name" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">
                 <span v-if="!ev.isUserEvent" class="ev-type-badge ev-proj-badge" :style="{ color: darkenHex(ev.accent) }">项目</span>
                 <span v-else class="ev-type-badge ev-event-badge">{{ typeLabel(ev.type) }}</span>
-                <span v-if="ev.time" class="sidebar-ev-time">{{ ev.time }}{{ ev.endTime ? '–' + ev.endTime : '' }}</span>
+                <span v-if="ev.time" class="sidebar-ev-time">{{ ev.time }}{{ ev.endTime ? '–' + ev.endTime : '' }}<span v-if="isNextDay(ev.time, ev.endTime)" class="nextday-mini">次日</span></span>
                 {{ ev.name }}
                 <span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
               </div>
@@ -262,9 +262,10 @@
           <input :value="newEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="$event.target.select()" @input="onTimeInput($event, newEvent, 'time')" @blur="newEvent.time = normTime(newEvent.time)" />
           <span class="time-dash">—</span>
           <input :value="newEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="$event.target.select()" @input="onTimeInput($event, newEvent, 'endTime')" @blur="newEvent.endTime = normTime(newEvent.endTime)" />
+          <span v-if="isNextDay(newEvent.time, newEvent.endTime)" class="nextday-tag">次日</span>
         </div>
         <textarea v-model="newEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
-        <div class="reminder-section">
+        <div class="reminder-section" v-if="!isPastDate(activeFormDate)">
           <div class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</div>
           <div v-for="(r, i) in reminders" :key="i" class="reminder-item">
             <select v-model.number="r.leadMin" class="lead-select">
@@ -279,6 +280,7 @@
               <button class="chan-chip" :class="{ on: reminderChannels.includes('web') }" @click="toggleReminderChannel('web')">web</button>
               <button v-for="ch in imChannels" :key="ch" class="chan-chip" :class="{ on: reminderChannels.includes(ch) }" @click="toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
             </div>
+            <button class="reminder-test-bar" @click="testReminderChannels"><PhPaperPlaneTilt :size="11" weight="bold" /> 测试发送</button>
           </div>
         </div>
         <div class="popup-actions">
@@ -323,9 +325,10 @@
           <input :value="editingEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="$event.target.select()" @input="onTimeInput($event, editingEvent, 'time')" @blur="editingEvent.time = normTime(editingEvent.time)" />
           <span class="time-dash">—</span>
           <input :value="editingEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="$event.target.select()" @input="onTimeInput($event, editingEvent, 'endTime')" @blur="editingEvent.endTime = normTime(editingEvent.endTime)" />
+          <span v-if="isNextDay(editingEvent.time, editingEvent.endTime)" class="nextday-tag">次日</span>
         </div>
         <textarea v-model="editingEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
-        <div class="reminder-section">
+        <div class="reminder-section" v-if="!isPastDate(activeFormDate)">
           <div class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</div>
           <div v-for="(r, i) in reminders" :key="i" class="reminder-item">
             <select v-model.number="r.leadMin" class="lead-select">
@@ -340,6 +343,7 @@
               <button class="chan-chip" :class="{ on: reminderChannels.includes('web') }" @click="toggleReminderChannel('web')">web</button>
               <button v-for="ch in imChannels" :key="ch" class="chan-chip" :class="{ on: reminderChannels.includes(ch) }" @click="toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
             </div>
+            <button class="reminder-test-bar" @click="testReminderChannels"><PhPaperPlaneTilt :size="11" weight="bold" /> 测试发送</button>
           </div>
         </div>
         <div class="popup-actions">
@@ -347,6 +351,12 @@
           <button class="popup-delete" @click="deleteEventFromEdit">删除</button>
         </div>
       </div>
+    </Transition>
+  </Teleport>
+
+  <Teleport to="body">
+    <Transition name="cal-toast">
+      <div v-if="toastMsg" class="cal-toast">{{ toastMsg }}</div>
     </Transition>
   </Teleport>
 </template>
@@ -368,7 +378,7 @@ import DatePicker from '@/components/common/DatePicker.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
 import { projectProgress } from '@/utils/projectProgress'
-import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack, PhBell } from '@phosphor-icons/vue'
+import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack, PhBell, PhPaperPlaneTilt } from '@phosphor-icons/vue'
 
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
@@ -428,6 +438,10 @@ function normTime(v) {
   const mm = Math.min(59, parseInt(m[2] || '0', 10))
   return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
 }
+// 结束时间早于开始时间 → 视为次日（跨午夜）。HH:MM 已零填充，直接字符串比较即可
+function isNextDay(start, end) { return !!start && !!end && end < start }
+// 过去的日期（早于今天）不能加提醒——@once 到点早已过、worker 会判过期清掉，加了也白加
+function isPastDate(d) { return !!d && d < todayIso.value }
 // 默认时间段：下一个整点 → 再过一小时。如现在 22:50 → 23:00–00:00（次日）
 function defaultTimeRange() {
   const now = new Date()
@@ -442,6 +456,8 @@ const addFormStyle = ref({})
 
 const showEditForm  = ref(false)
 const editingEvent  = ref(null)
+// 当前打开的活动表单的日期（编辑优先）——提醒区共享，用它判断能否加提醒
+const activeFormDate = computed(() => showEditForm.value ? editingEvent.value?.date : newEvent.value?.date)
 const editFormRef   = ref(null)
 const editFormStyle = ref({})
 const calSidebarRef = ref(null)
@@ -542,6 +558,7 @@ function ctxAddEvent() {
     width: '240px', zIndex: 1000,
   }
   showAddForm.value = true
+  nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
 }
 
 function ctxAddProject() {
@@ -1011,8 +1028,9 @@ const projectTimelines = computed(() =>
       id:           `p${p.id}`,
       name:         p.name,
       client:       p.client,
-      startDate:    p.startDate,
-      endDate:      p.deadline,
+      startDate:    (p.status === 'done' && p.doneAt && p.doneAt.slice(0, 10) < p.startDate)
+                      ? p.doneAt.slice(0, 10) : p.startDate,
+      endDate:      (p.status === 'done' && p.doneAt) ? p.doneAt.slice(0, 10) : p.deadline,
       accent:       extractAccent(p.color),
       type:         'deadline',
       isProject:    true,
@@ -1226,6 +1244,18 @@ function _flashCalendarEvent(id) {
   }, 150)
 }
 
+// 弹窗加提醒后会变高，可能顶出屏幕底部、保存按钮被切掉。
+// 量实际高度，把 top 往上抬到「底部留 SAFE_GAP 安全距离」；超高就靠 CSS max-height 内部滚动。
+const SAFE_GAP = 12
+function clampPopupIntoView(elRef, styleRef) {
+  const el = elRef.value
+  if (!el) return
+  const h = el.offsetHeight
+  const cur = parseFloat(styleRef.value.top) || 0
+  const maxTop = window.innerHeight - h - SAFE_GAP
+  const top = Math.max(SAFE_GAP, Math.min(cur, maxTop))
+  if (Math.abs(top - cur) > 0.5) styleRef.value = { ...styleRef.value, top: top + 'px' }
+}
 function openAddForm() {
   newEvent.value = { name: '', date: selectedDate.value || todayIso.value, ...defaultTimeRange(), description: '' }
   resetReminder()
@@ -1252,6 +1282,7 @@ function openAddForm() {
     }
   }
   showAddForm.value = true
+  nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
 }
 
 function openEditForm(ev, nativeEv, useMousePos = false) {
@@ -1279,6 +1310,7 @@ function openEditForm(ev, nativeEv, useMousePos = false) {
   }
   editFormStyle.value = { position: 'fixed', top: Math.max(8, top) + 'px', left: left + 'px', width: w + 'px', zIndex: 2100 }
   showEditForm.value = true
+  nextTick(() => clampPopupIntoView(editFormRef, editFormStyle))
 }
 
 // ── 活动绑定的提醒（定时任务）：可加多个，每个用「提前量」下拉选；渠道按用户已绑（web + feishu/qq/wechat）勾选 ──
@@ -1299,6 +1331,14 @@ const reminders          = ref([])         // [{ id?, leadMin }]，可多个
 const reminderChannels   = ref(['web'])    // 渠道（web + 已绑 IM），该活动的提醒共用
 const removedReminderIds = ref([])         // 编辑里删掉的已存在提醒 id，保存时真删
 
+// 提醒条数 / 渠道变化（弹窗变高）后重新夹住当前打开的弹窗，避免保存按钮顶出屏幕底部
+watch([() => reminders.value.length, reminderChannels], () => {
+  nextTick(() => {
+    if (showEditForm.value) clampPopupIntoView(editFormRef, editFormStyle)
+    else if (showAddForm.value) clampPopupIntoView(addFormRef, addFormStyle)
+  })
+})
+
 function leadLabelOf(min) { return LEAD_OPTIONS.find(o => o.min === min)?.label || `提前 ${min} 分钟` }
 function toggleReminderChannel(ch) {
   const set = new Set(reminderChannels.value)
@@ -1309,6 +1349,21 @@ function toggleReminderChannel(ch) {
 function addReminder() {
   // 点一下就建一条提醒（默认提前 30 分钟），之后用它自己的下拉改时间
   reminders.value.push({ leadMin: 30 })
+}
+const toastMsg = ref('')
+let toastTimer = null
+function showToast(msg) {
+  toastMsg.value = msg
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toastMsg.value = '' }, 3200)
+}
+// 测试提醒渠道：往当前选的渠道发一条测试消息（不建任务，新建/编辑活动都能测）
+async function testReminderChannels() {
+  try {
+    const name = (showEditForm.value ? editingEvent.value?.name : newEvent.value?.name) || '活动提醒'
+    const res = await scheduledTasksApi.testNotify({ channels: reminderChannels.value, name })
+    showToast(res?.msg || '已发送测试消息')
+  } catch { showToast('测试失败，请稍后重试') }
 }
 function removeReminderAt(i) {
   const r = reminders.value[i]
@@ -1689,7 +1744,7 @@ async function saveEvent() {
 .sidebar-ev-time { font-size: 11px; font-weight: 600; color: var(--accent, #7b7fb2); margin-left: 7px; margin-right: 4px; font-variant-numeric: tabular-nums; }
 .popup-row { display: flex; gap: 6px; align-items: center; }
 .popup-row > :first-child { flex: 1; min-width: 0; }
-.time-box { display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; box-sizing: border-box; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); transition: border-color 0.15s, box-shadow 0.15s; }
+.time-box { position: relative; display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; box-sizing: border-box; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); transition: border-color 0.15s, box-shadow 0.15s; }
 .time-box:focus-within { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
 .time-inner { border: none; background: none; outline: none; font-size: 13px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028; padding: 0; width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
 .time-dash { color: #8a8fa8; font-size: 12px; font-weight: 600; }
@@ -1769,7 +1824,7 @@ async function saveEvent() {
 .more-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .more-pop-enter-from,.more-pop-leave-to { opacity: 0; transform: scaleY(0.88); }
 
-.add-event-popup { background: rgba(255,255,255,0.6); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; }
+.add-event-popup { background: rgba(255,255,255,0.6); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
 .popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 .popup-title { font-size: 13px; font-weight: 700; color: #1e2028; }
 .popup-input { width: 100%; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 12px; font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028; outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }
@@ -1787,6 +1842,8 @@ async function saveEvent() {
 .reminder-label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: #8a8fa8; }
 .reminder-item { display: flex; align-items: center; gap: 6px; }
 .reminder-lead { font-size: 11px; font-weight: 600; color: #65688f; }
+.reminder-test-bar { width: 100%; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 7px; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.4); background: rgba(123,127,178,0.08); color: #65688f; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
+.reminder-test-bar:hover { border-color: rgba(123,127,178,0.7); background: rgba(123,127,178,0.16); color: #54577a; }
 .reminder-del { display: flex; align-items: center; padding: 2px; border: none; background: none; cursor: pointer; color: #b07858; border-radius: 5px; }
 .reminder-del:hover { background: rgba(176,120,88,0.12); }
 .reminder-add { display: flex; gap: 6px; align-items: center; }
@@ -1797,6 +1854,9 @@ async function saveEvent() {
 .reminder-cancel:hover { background: rgba(0,0,0,0.06); }
 .reminder-add-toggle { width: 100%; box-sizing: border-box; text-align: center; padding: 6px 10px; border-radius: 8px; border: 1px dashed rgba(123,127,178,0.4); background: none; color: #8a8fa8; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
 .reminder-add-toggle:hover { border-color: rgba(123,127,178,0.7); color: #65688f; background: rgba(123,127,178,0.06); }
+/* 绝对定位浮在右侧，不参与 flex 居中，保证「开始—结束」时间仍水平居中 */
+.nextday-tag { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 600; color: #9590c4; background: rgba(123,127,178,0.1); padding: 1px 6px; border-radius: 5px; white-space: nowrap; pointer-events: none; }
+.nextday-mini { margin-left: 4px; font-size: 9px; font-weight: 600; color: #a8a3c8; padding: 1px 4px; border-radius: 4px; background: rgba(123,127,178,0.1); vertical-align: 1px; }
 .chan-block { display: flex; flex-direction: column; gap: 5px; }
 .chan-chips { display: flex; gap: 5px; flex-wrap: wrap; }
 .chan-chip { padding: 3px 11px; border-radius: 99px; border: 1px solid rgba(123,127,178,0.3); background: rgba(255,255,255,0.5); color: #8a8fa8; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
@@ -1812,4 +1872,16 @@ async function saveEvent() {
   35%  { background: rgba(123,127,178,0.22); }
   100% { background: transparent; }
 }
+.cal-toast {
+  position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
+  background: rgba(30,32,40,0.92); backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
+  padding: 11px 20px; font-size: 13px; line-height: 1.5; color: rgba(255,255,255,0.85);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  pointer-events: none; white-space: pre-line; max-width: 360px; z-index: 99999;
+  font-family: 'PingFang SC','Segoe UI',sans-serif;
+}
+.cal-toast-enter-active, .cal-toast-leave-active { transition: opacity 0.2s, transform 0.2s; }
+.cal-toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+.cal-toast-leave-to   { opacity: 0; transform: translateX(-50%) translateY(8px); }
 </style>

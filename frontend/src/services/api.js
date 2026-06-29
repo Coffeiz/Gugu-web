@@ -122,6 +122,7 @@ export const scheduledTasksApi = {
   update:       (id, data) => patch(`/scheduled-tasks/${id}`, data),
   delete:       (id)       => del(`/scheduled-tasks/${id}`),
   run:          (id)       => post(`/scheduled-tasks/${id}/run`),
+  testNotify:   (data)     => post('/scheduled-tasks/test-notify', data),   // 测试提醒渠道（不建任务）
 }
 
 // ── Files ─────────────────────────────────────────────────────────────────────

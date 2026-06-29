@@ -134,27 +134,34 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             f"请以咕咕的身份完成这项任务，并将结果告知用户。"
         )
         text = await _run_agent(uid, prompt)
-        # 按用户选的渠道投递。chat=web 历史别名；im=发到用过的所有 IM 平台（旧任务兼容）。
-        if {"web", "chat"} & chans:
-            from app.core import events as _ev
-            await _ev.publish(uid, notification={"title": name, "content": text})
-            result["web 通知"] = "已发送"
-        im_targets = {_CHAN_PLATFORM[c] for c in chans if c in _CHAN_PLATFORM}
-        if "im" in chans:
-            im_targets.update(_CHAN_PLATFORM.values())
-        for platform in im_targets:
-            lbl = _PLAT_LABEL.get(platform, platform)
-            try:
-                sent = await _deliver_im(uid, f"⏰ {name}\n\n{text}", platform)
-                result[lbl] = "已发送" if sent else "无可触达地址（先给该 bot 发条消息）"
-            except Exception as e:
-                result[lbl] = f"失败：{type(e).__name__}"
-                print(f"[sched] {platform} 投递失败: {type(e).__name__}: {e}", flush=True)
+        result = await deliver_to_channels(uid, name, text, chans)
     except Exception as e:
         import traceback
         result["错误"] = f"{type(e).__name__}: {e}"
         print(f"[sched] 执行任务 {task_id} 出错: {type(e).__name__}: {e}", flush=True)
         traceback.print_exc()
+    return result
+
+
+async def deliver_to_channels(uid, name: str, text: str, chans: set) -> dict:
+    """把 text 投递到选定渠道，返回 {渠道: 状态}。供定时任务执行 / 提醒测试复用。
+    chat=web 历史别名；im=发到用过的所有 IM 平台（旧任务兼容）。"""
+    result: dict = {}
+    if {"web", "chat"} & chans:
+        from app.core import events as _ev
+        await _ev.publish(uid, notification={"title": name, "content": text})
+        result["web 通知"] = "已发送"
+    im_targets = {_CHAN_PLATFORM[c] for c in chans if c in _CHAN_PLATFORM}
+    if "im" in chans:
+        im_targets.update(_CHAN_PLATFORM.values())
+    for platform in im_targets:
+        lbl = _PLAT_LABEL.get(platform, platform)
+        try:
+            sent = await _deliver_im(uid, f"⏰ {name}\n\n{text}", platform)
+            result[lbl] = "已发送" if sent else "无可触达地址（先给该 bot 发条消息）"
+        except Exception as e:
+            result[lbl] = f"失败：{type(e).__name__}"
+            print(f"[sched] {platform} 投递失败: {type(e).__name__}: {e}", flush=True)
     return result
 
 

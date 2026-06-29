@@ -76,6 +76,8 @@ async def list_tasks(event_id: int | None = None, user: User = Depends(get_curre
     stmt = select(ScheduledTask).where(ScheduledTask.user_id == user.id)
     if event_id is not None:   # 活动面板按事件拉它的提醒
         stmt = stmt.where(ScheduledTask.event_id == event_id)
+    else:                      # 定时任务面板：排除日程提醒（与日历解耦，作为活动的提醒单独存在）
+        stmt = stmt.where(ScheduledTask.event_id.is_(None))
     rows = (await db.execute(stmt.order_by(ScheduledTask.id.desc()))).scalars().all()
     # 读时顺手清过期一次性任务：不只靠 worker 的 reconcile GC——万一 worker 滞后/没跑，
     # 面板自己也不显（也不留）过点的 @once。判据与 GC 同（过点超 120s 宽限，见 app/scheduled_tasks）。
@@ -143,6 +145,28 @@ async def delete_task(task_id: int, user: User = Depends(get_current_user), db: 
     t = await _owned(task_id, user, db)
     await db.delete(t)
     await db.commit()
+
+
+class TestNotify(BaseModel):
+    channels: list[str] = ["web"]
+    name: str = "活动提醒"
+
+
+@router.post("/test-notify")
+async def test_notify(body: TestNotify, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """测试提醒渠道：立即往选定渠道投一条测试消息（不依赖已保存的任务，新建活动时也能测）。
+
+    日程提醒与定时任务完全分开——提醒的测试不创建任何任务，只验证渠道能否触达。
+    """
+    chans = {c for c in (body.channels or []) if c in _CHANNELS} or {"web"}
+    name = (body.name or "活动提醒").strip()
+    text = f"这是一条测试提醒——「{name}」。如果你收到了这条消息，说明提醒渠道工作正常。"
+    from app import scheduled_tasks as ST
+    result = await ST.deliver_to_channels(user.id, f"{name}（测试）", text, chans)
+    if not result:
+        return {"ok": True, "msg": "已发送（未选任何投递渠道）"}
+    msg = "测试发送结果：\n" + "\n".join(f"· {k}：{v}" for k, v in result.items())
+    return {"ok": True, "result": result, "msg": msg}
 
 
 @router.post("/{task_id}/run")
