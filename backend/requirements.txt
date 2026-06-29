@@ -1,0 +1,32 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+sqlalchemy>=2.0.0
+alembic>=1.13.0
+asyncpg>=0.29.0
+redis>=5.0.0
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.9
+pydantic-settings>=2.0.0
+httpx>=0.27.0
+# AI
+openai>=1.30.0
+anthropic>=0.111.0
+langchain>=0.2.0
+langchain-community>=0.2.0
+# OSS
+oss2>=2.18.0
+# IM 平台接入（飞书 WebSocket 长连 + API）
+lark-oapi>=1.6.0
+# QQ 官方机器人（botpy WebSocket 长连 + API，C2C 单聊）
+qq-botpy>=1.2.0
+# Utils
+python-dotenv>=1.0.0
+pypinyin>=0.50.0
+pykakasi>=2.2.0
+uuid6>=2024.1.12
+email-validator>=2.0.0
+pendulum>=3.0.0
+Pillow>=10.0.0
+pillow-heif>=0.16.0   # 解码 iPhone HEIC/HEIF 图片，喂给 vision 模型前转 JPEG
+pilk>=0.2.4           # 解码 QQ/微信 SILK 语音 → pcm，配合系统 ffmpeg 转 mp3 喂 mimo（IM 语音理解）

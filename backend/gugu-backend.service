@@ -1,0 +1,30 @@
+[Unit]
+Description=Gugu Backend (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+# 运行用户，由 start.sh install 按 RUN_USER 填入（默认 www-data，不要用 root）
+User=__RUN_USER__
+Group=__RUN_USER__
+# 以下路径由 start.sh install 按实际安装目录(APP_DIR)自动填入，勿手改占位符
+WorkingDirectory=__APP_DIR__
+Environment="PATH=__APP_DIR__/.venv/bin"
+Environment="DB_STARTUP_TIMEOUT=10"
+ExecStart=__APP_DIR__/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=on-failure
+RestartSec=3
+
+# 写进 Debug 面板读的日志文件（而非 journal），让后台「Debug 实时日志」能 tail 到
+StandardOutput=append:__APP_DIR__/logs/gugu.log
+StandardError=append:__APP_DIR__/logs/gugu.log
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# 运行时需要写的目标（必须真实存在，否则 systemd namespace 报 226）
+ReadWritePaths=__APP_DIR__/uploads __APP_DIR__/logs __APP_DIR__/config.override.json
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,70 @@
+# ===== Python / Backend =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+backend/venv/
+backend/.venv/
+backend/env/
+backend/.env
+*.sqlite
+*.db
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ===== Node / Frontend =====
+frontend/node_modules/
+frontend/dist/
+frontend/dist.zip
+frontend/build/
+frontend/.vite/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+frontend/.pnpm-store/
+
+# ===== 通用 =====
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+*.swo
+*~
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+
+# ===== 项目特定 =====
+# 用户上传文件（运行时产生，不入版本控制）—— 含咕咕私有记忆 .agent/
+uploads/
+backend/uploads/
+# 进程 PID 文件（运行时产生）
+*.pid
+# 备份文件
+backup/
+
+# 构建产物 / 大字体资源
+gugu-backend-*.tar.gz
+docs/smiley-sans/
+
+# 性能 trace / 抓的日志（大文件，勿提交）
+/logs/
+Trace-*.json
+
+# 部署打包产物
+backend.zip

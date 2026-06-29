@@ -1,0 +1,275 @@
+import secrets
+from datetime import datetime, timedelta
+from pathlib import Path
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File as FastAPIFile
+from fastapi.responses import Response
+from sqlalchemy import select, func, and_
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
+
+from app.db.session import get_db
+from app.models import User, InviteCode, AgentUsage
+from app.core.security import hash_password, verify_password, create_user_token, get_current_user
+from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword
+from app.core.config import get_settings
+from app.core.redis import get_redis
+from app.services import email as email_svc
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.post("/register", response_model=TokenResponse, status_code=201)
+async def register(body: UserRegister, db: AsyncSession = Depends(get_db)):
+    # 验证邀请码
+    inv_result = await db.execute(
+        select(InviteCode).where(InviteCode.code == body.invite_code.strip().upper())
+    )
+    invite = inv_result.scalars().first()
+    if not invite:
+        raise HTTPException(400, "邀请码无效")
+    if invite.used_at is not None:
+        raise HTTPException(400, "邀请码已被使用")
+
+    existing = await db.execute(
+        select(User).where(
+            (User.username == body.username) | (User.email == body.email)
+        )
+    )
+    if existing.scalars().first():
+        raise HTTPException(400, "用户名或邮箱已被注册")
+
+    user = User(
+        username=body.username,
+        email=body.email,
+        hashed_password=hash_password(body.password),
+        display_name=body.username,
+    )
+    db.add(user)
+    await db.flush()
+
+    invite.used_at = datetime.utcnow()
+    invite.used_by = user.id
+    await db.commit()
+    await db.refresh(user)
+
+    # 新手引导播种（独立子系统，best-effort：内部已吞异常，不影响注册）
+    from onboarding.seed import seed_for_user
+    await seed_for_user(db, user)
+
+    return TokenResponse(
+        access_token=create_user_token(user.id),
+        user=UserResponse.from_user(user),
+    )
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(body: UserLogin, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.username == body.username))
+    user = result.scalars().first()
+
+    if not user or not verify_password(body.password, user.hashed_password):
+        raise HTTPException(401, "用户名或密码错误")
+    if not user.is_active:
+        raise HTTPException(403, "账号已停用，请联系管理员")
+
+    return TokenResponse(
+        access_token=create_user_token(user.id),
+        user=UserResponse.from_user(user),
+    )
+
+
+# ── 密码找回 ────────────────────────────────────────────────────────────────
+_RESET_TOKEN_TTL = 30 * 60   # 重置链接有效期 30 分钟
+_RESET_COOLDOWN  = 60        # 同一邮箱 60s 内只发一封，防刷
+_RESET_GENERIC   = {"ok": True, "message": "若该邮箱已注册，重置链接已发送，请查收邮箱（含垃圾箱）。"}
+
+
+@router.post("/forgot-password")
+async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSession = Depends(get_db)):
+    """申请重置：生成一次性 token 存 Redis，发邮件给注册邮箱。
+
+    **无论邮箱是否注册都返回同一句**——避免通过接口枚举哪些邮箱已注册。"""
+    email_in = (body.email or "").strip().lower()
+    if not email_in or "@" not in email_in:
+        return _RESET_GENERIC
+    r = get_redis()
+    cd_key = f"pwdreset:cd:{email_in}"
+    if await r.get(cd_key):        # 冷却中，静默返回（不重复发信）
+        return _RESET_GENERIC
+    user = (await db.execute(
+        select(User).where(func.lower(User.email) == email_in)
+    )).scalars().first()
+    if not user:
+        return _RESET_GENERIC
+
+    token = secrets.token_urlsafe(32)
+    await r.set(f"pwdreset:tok:{token}", str(user.id), ex=_RESET_TOKEN_TTL)
+    await r.set(cd_key, "1", ex=_RESET_COOLDOWN)
+
+    # 重置链接基址：优先用请求 Origin（用户当前所在站点），退到 base_url——不写死域名
+    origin = request.headers.get("origin") or str(request.base_url).rstrip("/")
+    link = f"{origin}/reset-password?token={token}"
+    # 发信 best-effort：smtplib 是同步的，丢线程池避免阻塞事件循环；失败不暴露给前端
+    try:
+        await run_in_threadpool(
+            email_svc.send_reset_email,
+            to_addr=user.email, username=user.display_name or user.username, link=link,
+        )
+    except Exception:
+        pass
+    return _RESET_GENERIC
+
+
+@router.post("/reset-password")
+async def reset_password(body: ResetPassword, db: AsyncSession = Depends(get_db)):
+    """凭一次性 token 设新密码：校验 token + 密码长度 → 改密 → 删 token（一次性）。"""
+    token = (body.token or "").strip()
+    pw = body.new_password or ""
+    if len(pw) < 8:
+        raise HTTPException(400, "密码至少 8 位")
+    if not token:
+        raise HTTPException(400, "链接无效")
+    r = get_redis()
+    uid = await r.get(f"pwdreset:tok:{token}")
+    if not uid:
+        raise HTTPException(400, "链接已失效或已被使用，请重新申请")
+    user = await db.get(User, UUID(uid))
+    if not user:
+        raise HTTPException(400, "账号不存在")
+    user.hashed_password = hash_password(pw)
+    await db.commit()
+    await r.delete(f"pwdreset:tok:{token}")   # 一次性：用完即焚
+    return {"ok": True}
+
+
+@router.get("/me", response_model=UserResponse)
+async def me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    now = datetime.utcnow()
+    if current_user.last_active_at is None or (now - current_user.last_active_at) >= timedelta(hours=1):
+        current_user.last_active_at = now
+        await db.commit()
+    from app.models import UserBot
+    from app.scheduled_tasks import get_imreach
+    from sqlalchemy import select as _select
+    im_channels = []
+    feishu_reach = await get_imreach(current_user.id, "feishu")
+    if feishu_reach:
+        im_channels.append("feishu")
+    qq_bot = await db.scalar(_select(UserBot).where(
+        UserBot.user_id == current_user.id,
+        UserBot.platform == "qqbot",
+        UserBot.enabled == True,
+    ))
+    if qq_bot:
+        im_channels.append("qq")
+    wechat_reach = await get_imreach(current_user.id, "wechat")
+    if wechat_reach:
+        im_channels.append("wechat")
+    current_user._im_channels = im_channels
+    return UserResponse.from_user(current_user)
+
+
+@router.patch("/profile", response_model=UserResponse)
+async def update_profile(
+    body: UpdateProfile,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if body.display_name is not None:
+        current_user.display_name = body.display_name.strip() or None
+
+    if body.new_password:
+        if not body.current_password:
+            raise HTTPException(400, "请输入当前密码")
+        if not verify_password(body.current_password, current_user.hashed_password):
+            raise HTTPException(400, "当前密码错误")
+        current_user.hashed_password = hash_password(body.new_password)
+
+    await db.commit()
+    await db.refresh(current_user)
+    return UserResponse.from_user(current_user)
+
+
+_ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+_AVATAR_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+@router.post("/avatar", response_model=UserResponse)
+async def upload_avatar(
+    file: UploadFile = FastAPIFile(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if file.content_type not in _ALLOWED_AVATAR_TYPES:
+        raise HTTPException(400, "仅支持 JPEG/PNG/WebP/GIF 格式")
+    data = await file.read()
+    if len(data) > _AVATAR_MAX_BYTES:
+        raise HTTPException(400, "头像文件不能超过 5MB")
+
+    ext = (file.filename or "avatar").rsplit(".", 1)[-1].lower() or "jpg"
+    settings = get_settings()
+    avatar_dir = Path(settings.storage.local_path) / "avatars"
+    avatar_dir.mkdir(parents=True, exist_ok=True)
+    avatar_path = avatar_dir / f"{current_user.id}.{ext}"
+    avatar_path.write_bytes(data)
+
+    current_user.avatar = f"avatars/{current_user.id}.{ext}"
+    db.add(current_user)
+    await db.commit()
+    await db.refresh(current_user)
+    return UserResponse.from_user(current_user)
+
+
+@router.get("/quota")
+async def get_quota(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    settings = get_settings()
+    now = datetime.utcnow()
+
+    async def _used(since: datetime) -> int:
+        r = await db.execute(
+            select(func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out))
+            .where(and_(AgentUsage.user_id == current_user.id, AgentUsage.created_at >= since))
+        )
+        return r.scalar() or 0
+
+    # 6h 固定窗口 + 周窗口：**与 quota.is_exhausted（硬拦）共用同一套 CST 口径**——
+    # 否则 UI 按 UTC 窗口显示「精力已恢复」、后端按 CST 窗口仍判耗尽 → 出现「明明恢复了还被拦」的矛盾。
+    from agent import quota as _quota
+    window_start = _quota.six_h_window_start(now)
+    reset_6h_at = window_start + timedelta(hours=6)   # 下次重置（精力清零）时刻
+    used_6h = await _used(window_start)
+
+    week_start = _quota._week_start(now)
+    used_weekly = await _used(week_start)
+
+    limit_6h     = current_user.token_limit_6h     or settings.quota.default_token_limit_6h
+    limit_weekly = current_user.token_limit_weekly  or settings.quota.default_token_limit_weekly
+
+    return {
+        "used_6h":      used_6h,
+        "limit_6h":     limit_6h,
+        "reset_6h_at":  reset_6h_at.isoformat() + "Z",   # 下次精力重置时刻
+        "used_weekly":  used_weekly,
+        "limit_weekly": limit_weekly,
+    }
+
+
+@router.get("/avatar/{user_id}")
+async def get_avatar(user_id: UUID, db: AsyncSession = Depends(get_db)):
+    user = await db.get(User, user_id)
+    if not user or not user.avatar:
+        raise HTTPException(404, "头像不存在")
+    settings = get_settings()
+    avatar_path = Path(settings.storage.local_path) / user.avatar
+    if not avatar_path.exists():
+        raise HTTPException(404, "头像文件不存在")
+    ext = user.avatar.rsplit(".", 1)[-1].lower()
+    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+            "webp": "image/webp", "gif": "image/gif"}.get(ext, "image/jpeg")
+    return Response(content=avatar_path.read_bytes(), media_type=mime,
+                    headers={"Cache-Control": "no-cache"})

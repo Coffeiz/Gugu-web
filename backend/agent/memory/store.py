@@ -1,0 +1,242 @@
+"""记忆存储：读写 {user_id}/.agent/ 下的文件，经 StorageBackend（本地/OSS 通吃）。
+
+不进 File 表，是咕咕私有档案。单库，无 DB/物理同步问题。
+- facts.json 稳定事实（2b 结构化）：每条带 kind(observed/inferred)/conf/imp/ts，反思增删改、
+  注入时按 effective(置信×衰减) 过滤排序；observed=用户亲述不衰减、inferred=推断按半衰期淡出。
+  （旧 facts.md 首次读取时自动迁移成 facts.json；md 文件保留不删，但不再写。）
+- daily.md   近期记忆：每次对话提炼的要点，带日期，新在上
+- memory.md  长期记忆：daily 老条目压缩沉淀的长期叙述（compress 生成）
+
+daily 不再"满了直接丢"，而是**按累积条数压缩**：攒到 DAILY_COMPACT_AT 触发，
+最老的并入 memory.md、daily 留回最近 DAILY_KEEP_RECENT 条（见 compress.py）。
+DAILY_HARD_CAP 是压缩失败时的安全上限，防 daily 无限膨胀。
+"""
+from __future__ import annotations
+
+import json
+import secrets
+import time
+
+from app.services.storage import get_storage
+
+_DIR = ".agent"
+DAILY_KEEP_RECENT = 30   # 压缩后 daily 保留的最近条数（也是注入 prompt 的量）
+DAILY_COMPACT_AT  = 40   # daily 达到此条数触发一次压缩（每约 10 轮一次）
+DAILY_HARD_CAP    = 60   # 压缩失败时的硬安全上限
+
+# ── 结构化 facts（2b）参数 ──
+FACTS_FILE                = "facts.json"
+FACTS_INFERRED_HALF_LIFE  = 45.0   # 推断类 facts 置信半衰期(天)；observed 不衰减
+FACT_RETIRE_EFF           = 0.2    # effective 置信低于此 → 不注入（退休淡出）
+FACTS_INJECT_MAX          = 40     # 注入上限；超了按 effective×importance 砍低分（importance 过滤）
+_FACT_DEFAULT_CONF        = {"observed": 0.9, "inferred": 0.6}
+_FACT_CONFIRM_STEP        = 0.1
+_FACT_MAX_CONF            = 0.97
+
+
+def _key(user_id, name: str) -> str:
+    return f"{user_id}/{_DIR}/{name}"
+
+
+async def _read(key: str) -> str:
+    try:
+        data = await get_storage().get(key)
+        return data.decode("utf-8", errors="replace")
+    except Exception:
+        return ""  # 文件不存在（本地 FileNotFoundError / OSS NoSuchKey）→ 空
+
+
+async def _write(key: str, text: str) -> None:
+    await get_storage().put(key, text.encode("utf-8"), "text/markdown")
+
+
+async def read_memory(user_id) -> dict:
+    """返回 {facts, memory, daily, summary, summary_ts, lens}，缺失为空串/None。
+    summary_ts = summary 上次更新的 epoch（给时间衰减用，见 agent/decay.py）。
+    lens = 渲染好的「解读镜片」注入块（per-user 解读先验，见 agent/memory/lens.py），无则空串。"""
+    facts   = render_facts(await read_facts_list(user_id))   # 结构化 → 注入用 markdown（已过滤衰减）
+    memory  = (await _read(_key(user_id, "memory.md"))).strip()
+    daily   = (await _read(_key(user_id, "daily.md"))).strip()
+    summary = (await _read(_key(user_id, "summary.md"))).strip()
+    summary_ts = await read_summary_ts(user_id)
+    from agent.memory import lens as _lens   # 局部导入避免包内循环
+    lens_block = await _lens.read_block(user_id)
+    return {"facts": facts, "memory": memory, "daily": daily,
+            "summary": summary, "summary_ts": summary_ts, "lens": lens_block}
+
+
+async def read_summary_ts(user_id) -> float | None:
+    """summary 上次更新时间（epoch）；无/解析失败返回 None（衰减件按"新鲜"处理）。"""
+    raw = (await _read(_key(user_id, "summary.ts"))).strip()
+    try:
+        return float(raw) if raw else None
+    except Exception:
+        return None
+
+
+# ── 结构化 facts（2b）：facts.json，每条 {id,text,kind,conf,imp,ts} ──
+def _fact_id() -> str:
+    return secrets.token_hex(3)
+
+
+def _fact_norm(s) -> str:
+    return "".join(ch for ch in str(s).strip().lstrip("-").strip().lower() if ch.isalnum())
+
+
+def _fact_bigrams(s) -> set:
+    n = _fact_norm(s)
+    if len(n) < 2:
+        return {n} if n else set()
+    return {n[i:i + 2] for i in range(len(n) - 1)}
+
+
+def _fact_similar(a, b) -> bool:
+    """两条 facts 是否算「同一条」：归一相等 / 较短(≥6)是较长子串 / bigram Jaccard≥0.7。
+    阈值取高(0.7)是刻意保守——短中文事实里「喜欢猫」「喜欢狗」bigram≈0.6，低阈值会把不同事实
+    误并成一条丢信息；宁可留近似重复（render 顶多多一行、reflection 可后续 remove），绝不误并。"""
+    na, nb = _fact_norm(a), _fact_norm(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    short, long = (na, nb) if len(na) <= len(nb) else (nb, na)
+    if len(short) >= 6 and short in long:
+        return True
+    ba, bb = _fact_bigrams(a), _fact_bigrams(b)
+    u = len(ba | bb)
+    return u > 0 and len(ba & bb) / u >= 0.7
+
+
+def _fact_eff(f: dict) -> float:
+    """effective 置信 = conf ×（observed 不衰减 / inferred 按半衰期衰减）。"""
+    conf = float(f.get("conf", 0.6) or 0.6)
+    if f.get("kind") == "inferred":
+        from agent import decay
+        conf *= decay.weight(f.get("ts"), FACTS_INFERRED_HALF_LIFE)
+    return conf
+
+
+def _migrate_md(md: str) -> list[dict]:
+    """旧 facts.md 各行 → 结构化（无从判 kind，一律当 observed/中置信，避免被衰减淘汰）。"""
+    now = time.time()
+    out = []
+    for line in md.splitlines():
+        t = line.strip().lstrip("-").strip()
+        if t:
+            out.append({"id": _fact_id(), "text": t, "kind": "observed",
+                        "conf": 0.75, "imp": 3, "ts": now})
+    return out
+
+
+async def read_facts_list(user_id) -> list[dict]:
+    """读结构化 facts。facts.json 不存在但有旧 facts.md → 迁移并写回 json（一次性）。"""
+    raw = await _read(_key(user_id, FACTS_FILE))
+    if raw.strip():
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                return [f for f in data if isinstance(f, dict) and (f.get("text") or "").strip()]
+        except Exception:
+            pass
+    md = (await _read(_key(user_id, "facts.md"))).strip()
+    if md:
+        facts = _migrate_md(md)
+        if facts:
+            await write_facts_list(user_id, facts)
+        return facts
+    return []
+
+
+async def write_facts_list(user_id, facts: list[dict]) -> None:
+    await _write(_key(user_id, FACTS_FILE), json.dumps(facts, ensure_ascii=False))
+
+
+def render_facts(facts: list[dict]) -> str:
+    """结构化 facts → 注入用 markdown：退休低 effective、按 effective×importance 排序取前 N
+    （importance 过滤）、低置信推断标「不太确定」。供 builder 注入（read_memory['facts']）。"""
+    scored = [(f, _fact_eff(f)) for f in (facts or [])]
+    scored = [(f, e) for f, e in scored if e >= FACT_RETIRE_EFF and (f.get("text") or "").strip()]
+    scored.sort(key=lambda x: -(x[1] * (x[0].get("imp", 3) or 3)))
+    lines = []
+    for f, eff in scored[:FACTS_INJECT_MAX]:
+        text = f["text"].strip()
+        if f.get("kind") == "inferred" and eff < 0.45:
+            lines.append(f"- {text}（不太确定）")
+        else:
+            lines.append(f"- {text}")
+    return "\n".join(lines)
+
+
+def apply_facts_ops(facts: list[dict], add, remove) -> list[dict]:
+    """对结构化 facts 应用一轮增删改。add 可为 str(旧式→inferred) 或 dict{text,kind,importance}：
+    命中已有相似条 → **印证**（升 conf、刷新 ts、user 亲述可升级 observed、采更具体文本）；否则新增。
+    remove 按相似匹配删除。返回新列表（不就地改入参）。"""
+    out = [dict(f) for f in (facts or [])]
+    now = time.time()
+    rem = [r for r in (remove or []) if str(r).strip()]
+    if rem:
+        out = [f for f in out if not any(_fact_similar(f.get("text", ""), r) for r in rem)]
+    for a in (add or []):
+        if isinstance(a, dict):
+            text = (a.get("text") or "").strip()
+            kind = a.get("kind")
+            imp = a.get("importance")
+        else:
+            text, kind, imp = str(a).strip(), None, None
+        if not text:
+            continue
+        kind = kind if kind in ("observed", "inferred") else "inferred"
+        hit = next((f for f in out if _fact_similar(f.get("text", ""), text)), None)
+        if hit:
+            hit["conf"] = min(_FACT_MAX_CONF, float(hit.get("conf", 0.6) or 0.6) + _FACT_CONFIRM_STEP)
+            hit["ts"] = now
+            if kind == "observed":           # 用户亲述 > 推断
+                hit["kind"] = "observed"
+            if len(text) > len(hit.get("text", "")):
+                hit["text"] = text
+            if imp:
+                hit["imp"] = int(imp)
+        else:
+            out.append({"id": _fact_id(), "text": text, "kind": kind,
+                        "conf": _FACT_DEFAULT_CONF[kind], "imp": int(imp) if imp else 3, "ts": now})
+    return out
+
+
+# ── summary.md（当前状态快照「用户现在在做什么」，反思写）──
+async def read_summary(user_id) -> str:
+    return (await _read(_key(user_id, "summary.md"))).strip()
+
+
+async def write_summary(user_id, text: str) -> None:
+    await _write(_key(user_id, "summary.md"), text.strip() + "\n")
+    import time
+    await _write(_key(user_id, "summary.ts"), str(time.time()))   # 盖更新时间戳（时间衰减用）
+
+
+# ── memory.md（长期记忆，compress 写）──
+async def read_memory_doc(user_id) -> str:
+    return (await _read(_key(user_id, "memory.md"))).strip()
+
+
+async def write_memory_doc(user_id, text: str) -> None:
+    await _write(_key(user_id, "memory.md"), text.strip() + "\n")
+
+
+# ── daily.md（按行存，新在上）──
+async def read_daily_lines(user_id) -> list[str]:
+    existing = await _read(_key(user_id, "daily.md"))
+    return [l for l in existing.splitlines() if l.strip()]
+
+
+async def write_daily_lines(user_id, lines: list[str]) -> None:
+    await _write(_key(user_id, "daily.md"), "\n".join(lines) + "\n")
+
+
+async def append_daily(user_id, date: str, note: str) -> None:
+    """daily.md 顶部加一条带日期记录。压缩由 compress.compact 处理；此处只兜底硬上限。"""
+    note = note.strip()
+    if not note:
+        return
+    lines = await read_daily_lines(user_id)
+    lines.insert(0, f"- {date} {note}")
+    await write_daily_lines(user_id, lines[:DAILY_HARD_CAP])

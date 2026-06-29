@@ -1,0 +1,2282 @@
+<template>
+  <div class="agent-page">
+
+    <div class="page-header">
+      <div class="page-title-block">
+        <h2 class="page-title">Agent 配置</h2>
+        <p class="page-desc">管理 LLM 连接、系统提示词与行为参数</p>
+      </div>
+    </div>
+
+    <!-- 标签栏 -->
+    <div class="tab-bar">
+      <button
+        v-for="tab in tabs"
+        :key="tab.key"
+        class="tab-btn"
+        :class="{ active: activeTab === tab.key }"
+        :data-label="tab.label"
+        @click="switchTab(tab.key)"
+      >{{ tab.label }}</button>
+    </div>
+
+    <div class="panels-wrap">
+
+      <!-- ── LLM 预设 ── -->
+      <div v-if="activeTab === 'llm'">
+        <!-- 标题行 -->
+        <div class="presets-header">
+          <div>
+            <h3 class="presets-title">LLM 预设</h3>
+            <p class="presets-desc">管理多套模型配置；选模型策略 = 单一激活 / 多 key 分流 / 智能路由</p>
+          </div>
+          <div class="presets-header-right">
+            <label class="strategy-select" title="worker 同时跑几条 agent。单 key 安全上限≈16，多 key 分流可设 key数×16。改完 ≤30s 热生效">
+              <span>并发</span>
+              <input type="number" min="1" max="64" class="conc-input"
+                     v-model.number="agentDraft.worker_concurrency" @change="saveConcurrency" />
+            </label>
+            <div class="strategy-select">
+              <span>策略</span>
+              <AdminSelect
+                :model-value="strategy"
+                :options="[
+                  { value: 'active', label: '单一激活' },
+                  { value: 'pool',   label: '多 key 分流' },
+                  { value: 'router', label: '智能路由（待接入）' },
+                ]"
+                @update:model-value="setStrategy"
+              />
+            </div>
+            <div v-if="strategy === 'pool'" class="strategy-select" title="随机=简单均匀；轮询=严格交替；最少在途=自动多发给快的 key、避开慢的（key 速度差异大时最优）">
+              <span>分流</span>
+              <AdminSelect
+                :model-value="poolMode"
+                :options="[
+                  { value: 'random',       label: '随机' },
+                  { value: 'round_robin',  label: '轮询' },
+                  { value: 'least_loaded', label: '最少在途' },
+                ]"
+                @update:model-value="setPoolMode"
+              />
+            </div>
+            <button class="btn-primary" @click="openNewPreset">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 1v11M1 6.5h11"/></svg>
+            新建预设
+            </button>
+          </div>
+        </div>
+
+        <div v-if="presetsLoading" class="presets-loading">加载中…</div>
+
+        <div v-else class="preset-list">
+          <div
+            v-for="p in presets"
+            :key="p.id"
+            class="preset-card"
+            :class="{ 'preset-card--active': p.id === activePresetId }"
+          >
+            <div class="preset-card-left">
+              <span class="provider-dot" :class="`dot-${p.provider}`"></span>
+            </div>
+            <div class="preset-card-body">
+              <div class="preset-card-top">
+                <span class="preset-name">{{ p.name }}</span>
+                <span v-if="p.id === activePresetId" class="active-badge">当前</span>
+                <span class="provider-label">{{ p.provider }}</span>
+              </div>
+              <div class="preset-card-meta">
+                <span class="preset-model">{{ p.model }}</span>
+                <span class="preset-meta-item">out {{ p.max_tokens ?? 2000 }}</span>
+                <span class="preset-meta-item">ctx {{ p.context_tokens ?? 3000 }}</span>
+                <span class="preset-meta-item">temp {{ p.temperature ?? 0.7 }}</span>
+                <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think"><PhBrain :size="11" weight="bold" />思考</span>
+                <span v-if="p.vision" class="preset-meta-item preset-meta-vision"><PhEye :size="11" weight="bold" />多模态</span>
+                <span class="preset-key" :title="p.api_key || '未设置 Key'">{{ p.api_key || '未设置 Key' }}</span>
+              </div>
+            </div>
+            <div class="preset-card-actions">
+              <button v-if="strategy === 'pool'" class="pca-btn" :class="{ 'pca-btn--pool-on': p.in_pool }" @click="togglePool(p)">
+                {{ p.in_pool ? '✓ 分流中' : '加入分流' }}
+              </button>
+              <button class="pca-btn" @click="openEditPreset(p)">编辑</button>
+              <button class="pca-btn" :class="{ 'pca-btn--testing': testingId === p.id }" @click="testPreset(p.id)">
+                {{ testingId === p.id ? '测试中…' : '测试' }}
+              </button>
+              <button class="pca-btn" :class="{ 'pca-btn--testing': probingId === p.id }" @click="probeVision(p.id)">
+                {{ probingId === p.id ? '检测中…' : '检测多模态' }}
+              </button>
+              <button
+                v-if="p.id !== activePresetId"
+                class="pca-btn pca-btn--activate"
+                :class="{ 'pca-btn--activating': activatingId === p.id }"
+                @click="activatePreset(p.id)"
+              >{{ activatingId === p.id ? '切换中…' : '设为当前' }}</button>
+              <button
+                v-if="p.id !== activePresetId"
+                class="pca-btn pca-btn--del"
+                @click="deletePreset(p.id)"
+              >删除</button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="llmMsg" class="llm-msg" :class="{ 'llm-msg--error': llmMsgError }">{{ llmMsg }}</div>
+      </div>
+
+      <!-- 新建 / 编辑预设 Modal -->
+      <Teleport to="body">
+        <div
+          v-if="editTarget"
+          class="modal-mask"
+          @mousedown.self="editMaskDown = true"
+          @mouseup.self="editMaskDown && (editTarget = null); editMaskDown = false"
+        >
+          <div class="modal-box">
+            <h4 class="modal-title">{{ editIsNew ? '新建预设' : '编辑预设' }}</h4>
+
+            <div class="modal-field">
+              <label>预设名称</label>
+              <input v-model="editTarget.name" placeholder="MiniMax 主力" class="modal-input" />
+            </div>
+
+            <div class="modal-field">
+              <label>Provider</label>
+              <div class="toggle-group" style="margin-bottom:0">
+                <button v-for="pv in PROVIDERS" :key="pv.key"
+                  class="toggle-btn" :class="{ active: editTarget.provider === pv.key }"
+                  :data-label="pv.label"
+                  @click="setEditProvider(pv.key)">{{ pv.label }}</button>
+              </div>
+            </div>
+
+            <div class="modal-field">
+              <label>API Key</label>
+              <input v-model="editTarget.api_key" type="password" autocomplete="new-password"
+                placeholder="留空表示不修改" class="modal-input" />
+            </div>
+
+            <div class="modal-field">
+              <label>Base URL</label>
+              <input v-model="editTarget.base_url" placeholder="https://…" class="modal-input" />
+            </div>
+
+            <div class="modal-field">
+              <label>模型名称</label>
+              <input v-model="editTarget.model" placeholder="qwen-max" class="modal-input" />
+            </div>
+
+            <div class="modal-field" v-if="editTarget.provider === 'mimo'">
+              <label>API 格式 <span class="thinking-hint" style="font-weight:400">Anthropic 格式可用思考块 / 缓存 / 看库内图</span></label>
+              <div class="api-format-grid">
+                <button v-for="f in API_FORMATS" :key="f.key" type="button"
+                  class="toggle-btn" :class="{ active: (editTarget.api_format || 'openai') === f.key }"
+                  @click="pickApiFormat(f.key)">{{ f.label }}</button>
+              </div>
+            </div>
+
+            <div class="modal-field-row">
+              <div class="modal-field">
+                <label>最大输出 Tokens</label>
+                <input v-model.number="editTarget.max_tokens" type="number" min="100" max="32000" step="100" class="modal-input" />
+              </div>
+              <div class="modal-field">
+                <label>发散度 Temperature</label>
+                <input v-model.number="editTarget.temperature" type="number" min="0" max="2" step="0.05" class="modal-input" />
+              </div>
+            </div>
+
+            <div class="modal-field">
+              <label>上下文历史 Tokens</label>
+              <input v-model.number="editTarget.context_tokens" type="number" min="500" max="200000" step="500" class="modal-input" />
+            </div>
+
+            <div class="modal-field modal-field--row">
+              <div class="thinking-label">
+                <span>深度思考</span>
+                <span class="thinking-hint">仅支持 MiniMax M3 / Anthropic（adaptive 模式）</span>
+              </div>
+              <button
+                class="toggle-switch"
+                :class="{ on: editTarget.thinking === 'adaptive' }"
+                @click="editTarget.thinking = editTarget.thinking === 'adaptive' ? 'disabled' : 'adaptive'"
+              >
+                <span class="toggle-knob" />
+              </button>
+            </div>
+
+            <div class="modal-field modal-field--row">
+              <div class="thinking-label">
+                <span>多模态（看图）</span>
+                <span class="thinking-hint">开启后用户发的图片直接给模型「看」；不确定就用卡片上的「检测多模态」自动判定</span>
+              </div>
+              <button
+                class="toggle-switch"
+                :class="{ on: editTarget.vision }"
+                @click="editTarget.vision = !editTarget.vision"
+              >
+                <span class="toggle-knob" />
+              </button>
+            </div>
+
+            <div class="modal-actions">
+              <span class="save-hint" :class="{ error: !!editError }">{{ editError }}</span>
+              <button class="btn-ghost" @click="editTarget = null">取消</button>
+              <button class="btn-primary" :disabled="editSaving" @click="savePreset">
+                <svg v-if="editSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+                {{ editSaving ? '保存中…' : '保存' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
+
+
+      <!-- ── 系统提示词 ── -->
+      <section v-if="activeTab === 'prompts'" class="config-card prompts-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(122,184,200,0.14);--stroke:#7ab8c8">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 6h12M4 10h8M4 14h6"/>
+            </svg>
+          </div>
+          <div class="card-title-block">
+            <h3>系统提示词</h3>
+            <p>各 Profile 的 Prompt 模板，支持占位符，保存后热更新</p>
+          </div>
+          <div class="profile-switcher">
+            <button
+              v-for="p in profiles"
+              :key="p.profile"
+              class="toggle-btn"
+              :class="{ active: activeProfile === p.profile }"
+              :data-label="p.profile"
+              @click="switchProfile(p.profile)"
+            >{{ ({persona:'人格', skills:'工具准则', policy:'内容政策', reflection:'记忆反思', compress:'记忆压缩'})[p.profile] || p.profile }}</button>
+          </div>
+        </div>
+
+        <div v-if="activeProfile === 'persona'" class="persona-caution"
+          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
+                 background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
+          ⚠️ 这是咕咕的<strong>人格设定</strong>，所有对话共享。谨慎修改 —— 会直接改变咕咕的性格、主动性、对话模式与说话方式。
+        </div>
+
+        <div v-if="activeProfile === 'skills'" class="persona-caution"
+          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
+                 background:rgba(123,127,178,0.12);border:1px solid rgba(123,127,178,0.3);color:#5b5f96">
+          🛠️ 这是<strong>工具使用准则</strong>（Execution Policy），紧跟人格注入、所有对话共享。决定咕咕何时该动手、动几下、别重复验证/查询。越短越好用，改它直接影响咕咕调工具的行为模式。
+        </div>
+
+        <div v-if="activeProfile === 'policy'" class="persona-caution"
+          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
+                 background:rgba(214,90,90,0.12);border:1px solid rgba(214,90,90,0.3);color:#b04343">
+          🚫 这是<strong>内容政策（红线）</strong>，所有对话共享。定义咕咕不参与的话题（政治、色情等）和专业领域免责。以后加新红线就在这里加一行。
+        </div>
+
+        <div v-if="activeProfile === 'reflection'" class="persona-caution"
+          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
+                 background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
+          ⚠️ 这是<strong>记忆反思提炼词</strong>，决定咕咕每次对话后从中记住什么。改它会影响记忆质量；需保持输出 JSON 格式 <code>{"facts":[...],"daily":"..."}</code>。
+        </div>
+
+        <div v-if="activeProfile === 'compress'" class="persona-caution"
+          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
+                 background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
+          ⚠️ 这是<strong>记忆压缩提炼词</strong>，决定老的近期记忆怎么沉淀进长期记忆。改它会影响长期记忆质量；需保持输出 JSON 格式 <code>{"memory":"..."}</code>。
+        </div>
+
+        <div class="prompt-editor-wrap">
+          <textarea
+            class="prompt-textarea"
+            v-model="promptContent"
+            placeholder="输入系统提示词模板…"
+            spellcheck="false"
+          />
+          <div class="placeholder-panel">
+            <div class="placeholder-title">可用占位符</div>
+            <div
+              v-for="ph in placeholders"
+              :key="ph.key"
+              class="placeholder-item"
+              @click="insertPlaceholder(ph.key)"
+              title="点击插入"
+            >
+              <code>{{ ph.key }}</code>
+              <span>{{ ph.desc }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <span class="save-hint" :class="{ error: !!promptError, muted: !promptSaved && !promptError }">
+            <template v-if="promptSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-else-if="promptError">{{ promptError }}</template>
+            <template v-else>修改后点击保存即时生效，无需重启</template>
+          </span>
+          <button class="btn-primary" :class="{ loading: promptSaving }" :disabled="promptSaving" @click="savePrompt">
+            <svg v-if="promptSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            {{ promptSaving ? '保存中…' : '保存提示词' }}
+          </button>
+        </div>
+      </section>
+
+      <!-- ── 行为配置 ── -->
+      <section v-if="activeTab === 'behavior'" class="config-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 2a8 8 0 100 16A8 8 0 0010 2z"/>
+              <path d="M10 6v4l3 3"/>
+            </svg>
+          </div>
+          <div class="card-title-block">
+            <h3>行为配置</h3>
+            <p>记忆系统参数（记忆系统实装后生效）</p>
+          </div>
+        </div>
+
+        <div class="behavior-grid">
+          <div class="behavior-item">
+            <div class="behavior-label">
+              <span>记忆系统</span>
+              <span class="behavior-desc">开启后 Agent 将自动从对话中提炼记忆</span>
+            </div>
+            <button
+              class="toggle-switch"
+              :class="{ on: agentDraft.memory_enabled }"
+              @click="agentDraft.memory_enabled = !agentDraft.memory_enabled; saveBehavior()"
+            >
+              <span class="toggle-knob" />
+            </button>
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
+              <span>对话历史压缩</span>
+              <span class="behavior-desc">超长会话把旧消息总结成摘要省 token；关闭后只截断不摘要</span>
+            </div>
+            <button
+              class="toggle-switch"
+              :class="{ on: agentDraft.conv_compress_enabled }"
+              @click="agentDraft.conv_compress_enabled = !agentDraft.conv_compress_enabled; saveBehavior()"
+            >
+              <span class="toggle-knob" />
+            </button>
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
+              <span>Reflection 触发阈值</span>
+              <span class="behavior-desc">每隔多少条消息触发一次记忆整理</span>
+            </div>
+            <input
+              type="number"
+              class="behavior-input"
+              v-model.number="agentDraft.reflection_threshold"
+              min="1" max="100"
+            />
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
+              <span>Daily 记忆保留天数</span>
+              <span class="behavior-desc">超出后压缩进 Weekly</span>
+            </div>
+            <input
+              type="number"
+              class="behavior-input"
+              v-model.number="agentDraft.daily_retention_days"
+              min="1" max="90"
+            />
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
+              <span>Weekly 记忆保留周数</span>
+              <span class="behavior-desc">超出后提炼进 memory.md（长期记忆）</span>
+            </div>
+            <input
+              type="number"
+              class="behavior-input"
+              v-model.number="agentDraft.weekly_retention_weeks"
+              min="1" max="52"
+            />
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <span class="save-hint" :class="{ error: !!behaviorError }">
+            <template v-if="behaviorSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-else-if="behaviorError">{{ behaviorError }}</template>
+          </span>
+          <button class="btn-ghost" @click="resetBehavior">撤销修改</button>
+          <button class="btn-primary" :class="{ loading: behaviorSaving }" :disabled="behaviorSaving" @click="saveBehavior">
+            <svg v-if="behaviorSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            {{ behaviorSaving ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </section>
+
+      <!-- ── 联网搜索（Tavily）── -->
+      <section v-if="activeTab === 'behavior'" class="config-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(122,184,200,0.15);--stroke:#7ab8c8">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="9" cy="9" r="6"/>
+              <path d="M17 17l-3.5-3.5"/>
+            </svg>
+          </div>
+          <div class="card-title-block">
+            <h3>联网搜索</h3>
+            <p>通用搜索走自建 SearXNG（免费、不计配额），深度研究 / 总结走 Tavily（有每日次数上限，在「配额管理」设置）</p>
+          </div>
+        </div>
+
+        <div class="behavior-grid">
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>SearXNG 地址（通用搜索 web_search）</span>
+              <span class="behavior-desc">自建 SearXNG 实例地址，留空=禁用通用搜索、全部走 Tavily。同机填 http://127.0.0.1:端口，内网/1Panel 部署填对应内网 IP:端口</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:0;">
+              <span v-if="searchTest.searxng.msg" :title="searchTest.searxng.msg"
+                    :style="{ color: searchTest.searxng.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
+                {{ searchTest.searxng.msg }}
+              </span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.searxng.loading" @click="testSearch('searxng')">
+                {{ searchTest.searxng.loading ? '测试中…' : '测试' }}
+              </button>
+              <input
+                type="text"
+                class="behavior-input"
+                style="width: 280px; flex-shrink:0;"
+                v-model="searchDraft.searxng_url"
+                placeholder="http://127.0.0.1:8888（留空=禁用）"
+              />
+            </div>
+          </div>
+
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>SearXNG 引擎</span>
+              <span class="behavior-desc">逗号分隔。国内服务器一般只有这几个可达；google/bing 会超时</span>
+            </div>
+            <input
+              type="text"
+              class="behavior-input"
+              style="width: 280px;"
+              v-model="searchDraft.searxng_engines"
+              placeholder="sogou,quark,360search"
+            />
+          </div>
+
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>Tavily API Key（深度研究 deep_research）</span>
+              <span class="behavior-desc">留空表示不修改；清空并保存不会删除已存的 key</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:0;">
+              <span v-if="searchTest.tavily.msg" :title="searchTest.tavily.msg"
+                    :style="{ color: searchTest.tavily.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
+                {{ searchTest.tavily.msg }}
+              </span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.tavily.loading" @click="testSearch('tavily')">
+                {{ searchTest.tavily.loading ? '测试中…' : '测试' }}
+              </button>
+              <input
+                type="password"
+                class="behavior-input"
+                style="width: 280px; flex-shrink:0;"
+                v-model="searchDraft.tavily_api_key"
+                placeholder="tvly-… （留空表示不修改）"
+                autocomplete="new-password"
+              />
+            </div>
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
+              <span>默认返回结果数</span>
+              <span class="behavior-desc">每次搜索返回多少条结果</span>
+            </div>
+            <input
+              type="number"
+              class="behavior-input"
+              v-model.number="searchDraft.max_results"
+              min="1" max="20"
+            />
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <span class="save-hint" :class="{ error: !!searchError }">
+            <template v-if="searchSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-else-if="searchError">{{ searchError }}</template>
+          </span>
+          <button class="btn-ghost" @click="resetSearch">撤销修改</button>
+          <button class="btn-primary" :class="{ loading: searchSaving }" :disabled="searchSaving" @click="saveSearch">
+            <svg v-if="searchSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            {{ searchSaving ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </section>
+
+      <!-- ── 语音识别模型 ── -->
+      <section v-if="activeTab === 'behavior'" class="config-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <rect x="7.5" y="2" width="5" height="10" rx="2.5"/>
+              <path d="M5 9a5 5 0 0 0 10 0M10 14.5V18M7 18h6"/>
+            </svg>
+          </div>
+          <div class="card-title-block">
+            <h3>语音识别模型</h3>
+            <p>独立于主模型，把语音 / 音视频转成文字后交主模型处理（主模型不再被强切）。<b>留空 = 不支持语音</b>（咕咕收到语音回「不支持」）。<b>固定走 OpenAI 兼容方式</b>（chat + input_audio）——推荐阿里百炼 <code>qwen3-asr-flash</code>。</p>
+          </div>
+        </div>
+
+        <div class="behavior-grid">
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc"><b>留空 = 不支持语音</b>。MiMo 填 <code>mimo-v2.5-asr</code>；Qwen 填 <code>qwen3-asr-flash</code>（选下方 provider 会自动带上）</span></div>
+            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.model" placeholder="留空=不支持语音" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>Base URL</span><span class="behavior-desc">OpenAI 兼容端点。百炼如 https://&#123;WorkspaceId&#125;.cn-beijing.maas.aliyuncs.com/compatible-mode/v1</span></div>
+            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.base_url" placeholder="https://…/compatible-mode/v1" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>API Key<span v-if="configStore.secretSet.voiceApiKey" style="margin-left:6px;color:var(--color-primary);font-size:11px;font-weight:600">· 已配置 ✓</span></span><span class="behavior-desc">已存的 Key 出于安全不回显；留空＝保留不变，要换填新值覆盖</span></div>
+            <input type="password" class="behavior-input" style="width:280px" v-model="voiceDraft.api_key"
+                   :placeholder="configStore.secretSet.voiceApiKey ? '已配置，留空＝不修改' : '填入语音模型 API Key'" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>provider</span><span class="behavior-desc">选服务商——端点/模型为空时顺带填模板（不覆盖你已填的，比如套餐端点），自行补 Key</span></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;align-items:center;">
+              <button v-for="vp in VOICE_PROVIDERS" :key="vp.provider" type="button" class="btn-ghost"
+                      :style="voiceDraft.provider === vp.provider ? 'border-color:var(--color-primary);color:var(--color-primary)' : ''"
+                      @click="pickVoiceProvider(vp)">{{ vp.label }}</button>
+              <input type="text" class="behavior-input" style="width:120px" v-model="voiceDraft.provider" placeholder="自定义" />
+            </div>
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <span class="save-hint" :class="{ error: !!voiceError }">
+            <template v-if="voiceSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-else-if="voiceError">{{ voiceError }}</template>
+          </span>
+          <button class="btn-ghost" @click="resetVoice">撤销修改</button>
+          <button class="btn-primary" :class="{ loading: voiceSaving }" :disabled="voiceSaving" @click="saveVoice">
+            <svg v-if="voiceSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            {{ voiceSaving ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </section>
+
+      <!-- ── 状态命名 ── -->
+      <section v-if="activeTab === 'labels'" class="config-card labels-card">
+        <div class="card-head">
+          <h3>状态命名</h3>
+          <p>自定义对话里「状态指示」的显示名。留空＝用默认值。改完保存即时生效（工具名立即生效，「思考中」需刷新对话页）。</p>
+        </div>
+
+        <div class="labels-tip">
+          <span class="labels-tip-icon">💡</span>
+          <span>一个状态可填<b>多个名称</b>，用竖线 <code>|</code> 分隔，每次显示<b>随机取一个</b>。例：<code>咕咕在想…|让我捋捋一下|动动小脑瓜</code></span>
+        </div>
+
+        <div v-if="labelsLoading" class="placeholder-panel">加载中…</div>
+        <template v-else>
+          <!-- 特殊状态 -->
+          <div class="labels-group-title">特殊状态</div>
+          <div class="labels-list">
+            <div v-for="row in stateLabels.special" :key="row.key" class="label-row">
+              <div class="label-meta">
+                <span class="label-key">{{ row.key }}</span>
+                <span class="label-default">默认：{{ row.default || '（空·回退三个点）' }}</span>
+              </div>
+              <div class="label-input-wrap">
+                <input v-model="row.custom" :placeholder="row.default || '留空＝三个点；多个用 | 分隔'" class="label-input" />
+                <button v-if="row.custom" class="label-reset" title="恢复默认" @click="resetStateLabel(row)">×</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 工具 -->
+          <div class="labels-group-title">
+            工具（{{ filteredTools.length }}/{{ stateLabels.tools.length }}）
+            <input v-model="labelsFilter" placeholder="筛选工具名 / 文案…" class="labels-filter" />
+          </div>
+          <div class="labels-list">
+            <div v-for="row in filteredTools" :key="row.key" class="label-row">
+              <div class="label-meta">
+                <span class="label-key">{{ row.key }}</span>
+                <span class="label-default">默认：{{ row.default }}</span>
+              </div>
+              <div class="label-input-wrap">
+                <input v-model="row.custom" :placeholder="row.default" class="label-input" />
+                <button v-if="row.custom" class="label-reset" title="恢复默认" @click="resetStateLabel(row)">×</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="labels-save-bar">
+            <span v-if="labelsSaved" class="labels-saved-tip">已保存 ✓</span>
+            <button class="btn-primary" :disabled="labelsSaving" @click="saveStateLabels">
+              {{ labelsSaving ? '保存中…' : '保存' }}
+            </button>
+          </div>
+        </template>
+      </section>
+
+      <!-- ── 用量统计 ── -->
+      <div v-if="activeTab === 'usage'">
+        <div v-if="usageLoading && !usage" class="usage-loading">加载中…</div>
+        <template v-else-if="usage">
+
+          <!-- 汇总卡片 -->
+          <div class="usage-summary">
+            <div class="usage-stat-card">
+              <div class="usc-label">今日对话</div>
+              <div class="usc-num">{{ usage.today.calls }}</div>
+              <div class="usc-sub">总计 {{ usage.total.calls }}</div>
+            </div>
+            <div class="usage-stat-card">
+              <div class="usc-label">今日输入 tokens</div>
+              <div class="usc-num">{{ fmtNum(usage.today.tokens_in) }}</div>
+              <div class="usc-sub">总计 {{ fmtNum(usage.total.tokens_in) }}</div>
+            </div>
+            <div class="usage-stat-card">
+              <div class="usc-label">今日输出 tokens</div>
+              <div class="usc-num">{{ fmtNum(usage.today.tokens_out) }}</div>
+              <div class="usc-sub">总计 {{ fmtNum(usage.total.tokens_out) }}</div>
+            </div>
+          </div>
+
+          <!-- 折线图 -->
+          <div class="config-card chart-card">
+            <div class="chart-header">
+              <!-- 指标切换 -->
+              <div class="metric-tabs">
+                <button v-for="m in metrics" :key="m.key"
+                  class="metric-tab" :class="{ active: activeMetric === m.key }"
+                  :data-label="m.label"
+                  @click="activeMetric = m.key">{{ m.label }}</button>
+                <span v-if="activeModel" class="model-filter-tag">
+                  {{ activeModel }}
+                </span>
+              </div>
+              <!-- 月份切换 -->
+              <div class="month-nav">
+                <button class="month-arrow" :disabled="monthIndex >= usage.months.length - 1"
+                  @click="switchMonth(1)">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 12L6 8l4-4"/></svg>
+                </button>
+                <span class="month-label">{{ usage.month }}</span>
+                <button class="month-arrow" :disabled="monthIndex <= 0"
+                  @click="switchMonth(-1)">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 12l4-4-4-4"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- SVG 折线图 -->
+            <div class="chart-wrap" ref="chartWrap" :style="usageLoading ? 'opacity:0.5;transition:opacity 0.15s' : 'opacity:1;transition:opacity 0.15s'">
+              <svg class="line-chart" :width="CHART_W" :height="CHART_H">
+                <defs>
+                  <linearGradient :id="`grad-${activeMetric}`" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%"   stop-color="rgba(149,144,196,0.18)"/>
+                    <stop offset="75%"  stop-color="rgba(149,144,196,0.04)"/>
+                    <stop offset="100%" stop-color="rgba(149,144,196,0)"/>
+                  </linearGradient>
+                  <filter id="glow">
+                    <feGaussianBlur stdDeviation="2" result="blur"/>
+                    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                  </filter>
+                </defs>
+
+                <!-- 网格线（只画横线，更干净） -->
+                <line v-for="(y, i) in gridYs.slice(1)" :key="'gy'+i"
+                  :x1="PAD_L" :y1="y" :x2="chartRight" :y2="y"
+                  stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+
+                <!-- 底部基线 -->
+                <line :x1="PAD_L" :y1="CHART_H - PAD_B"
+                  :x2="chartRight" :y2="CHART_H - PAD_B"
+                  stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+
+                <!-- 填充区域 -->
+                <path v-if="chartPoints.length > 1"
+                  :d="fillPath" :fill="`url(#grad-${activeMetric})`"/>
+
+                <!-- 折线 -->
+                <path v-if="chartPoints.length > 1"
+                  :d="linePath"
+                  fill="none" stroke="rgba(149,144,196,0.15)" stroke-width="4"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+                <path v-if="chartPoints.length > 1"
+                  :d="linePath"
+                  fill="none" stroke="rgba(169,164,216,0.75)" stroke-width="1.2"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+
+                <!-- hover 竖线 -->
+                <line v-if="hoverIdx >= 0"
+                  :x1="chartPoints[hoverIdx].x" :y1="PAD_T"
+                  :x2="chartPoints[hoverIdx].x" :y2="CHART_H - PAD_B"
+                  stroke="rgba(255,255,255,0.1)" stroke-width="1" stroke-dasharray="4 4"/>
+
+                <!-- 数据点（只在 hover 时显示高亮点） -->
+                <g v-if="hoverIdx >= 0 && chartPoints[hoverIdx]">
+                  <circle
+                    :cx="chartPoints[hoverIdx].x" :cy="chartPoints[hoverIdx].y" r="5"
+                    fill="rgba(149,144,196,0.2)" stroke="none"/>
+                  <circle
+                    :cx="chartPoints[hoverIdx].x" :cy="chartPoints[hoverIdx].y" r="3"
+                    fill="#a9a4d8" stroke="rgba(13,13,20,0.9)" stroke-width="1.5"/>
+                </g>
+
+                <!-- 不可见的 hover 感应区（每列宽条） -->
+                <rect v-for="(pt, i) in chartPoints" :key="'hr'+i"
+                  :x="pt.x - hoverColW / 2" :y="PAD_T"
+                  :width="hoverColW" :height="CHART_H - PAD_T - PAD_B"
+                  fill="transparent"
+                  @mouseenter="hoverIdx = i" @mouseleave="hoverIdx = -1"
+                  style="cursor:crosshair"/>
+
+                <!-- X 轴标签 -->
+                <text v-for="(pt, i) in xLabels" :key="'xl'+i"
+                  :x="pt.x" :y="CHART_H - PAD_B + 13"
+                  text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.18)"
+                  font-family="system-ui,sans-serif">{{ pt.label }}</text>
+
+                <!-- Y 轴标签 -->
+                <text v-for="(v, i) in gridValues.slice(0, -1)" :key="'yv'+i"
+                  :x="PAD_L - 7" :y="gridYs[i] + 3"
+                  text-anchor="end" font-size="9" fill="rgba(255,255,255,0.18)"
+                  font-family="system-ui,sans-serif">{{ fmtNum(v) }}</text>
+              </svg>
+
+              <!-- Tooltip -->
+              <Transition name="tt">
+                <div v-if="hoverIdx >= 0 && chartPoints[hoverIdx]"
+                  class="chart-tooltip"
+                  :style="tooltipStyle">
+                  <div class="tt-date">{{ usage.daily[hoverIdx]?.date }}</div>
+                  <div class="tt-val">
+                    {{ fmtNum(usage.daily[hoverIdx]?.[activeMetric] ?? 0) }}
+                    <span>{{ metrics.find(m => m.key === activeMetric)?.unit }}</span>
+                  </div>
+                </div>
+              </Transition>
+            </div>
+          </div>
+
+          <!-- 按模型分组 -->
+          <div class="config-card" v-if="usage.by_model.length">
+            <div class="card-head">
+              <div class="card-title-block">
+                <h3>按模型</h3>
+                <p>点击行在图表中单独查看</p>
+              </div>
+              <button v-if="activeModel" class="clear-model-btn" @click="toggleModel(activeModel)">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg>
+                清除筛选
+              </button>
+            </div>
+            <div class="model-table">
+              <div class="mt-row mt-head">
+                <span>模型</span><span>对话数</span><span>输入</span><span>输出</span>
+              </div>
+              <div
+                class="mt-row mt-clickable"
+                :class="{ 'mt-active': activeModel === m.model, 'mt-dimmed': activeModel && activeModel !== m.model }"
+                v-for="m in usage.by_model"
+                :key="m.model"
+                @click="toggleModel(m.model)"
+              >
+                <span class="mt-model">
+                  {{ m.model }}<em>{{ m.provider }}</em>
+                </span>
+                <span>{{ m.calls }}</span>
+                <span>{{ fmtNum(m.tokens_in) }}</span>
+                <span>{{ fmtNum(m.tokens_out) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="!usage.by_model.length && !usage.daily.some(d => d.calls > 0)" class="usage-empty">
+            暂无数据，发起对话后将开始记录
+          </div>
+
+        </template>
+      </div>
+
+      <!-- ── 决策轨迹（只读调试）── -->
+      <div v-if="activeTab === 'trace'" class="trace-wrap">
+        <!-- 会话列表 -->
+        <div class="trace-list">
+          <div class="trace-search">
+            <input v-model="traceUser" placeholder="按用户名筛选…" @keyup.enter="fetchTraceSessions" />
+            <button @click="fetchTraceSessions">搜索</button>
+          </div>
+          <div v-if="traceLoading" class="trace-hint">加载中…</div>
+          <template v-else>
+            <div v-for="s in traceSessions" :key="s.id"
+              class="trace-sess" :class="{ active: traceSel === s.id }" @click="openTrace(s.id)">
+              <div class="ts-top"><span class="ts-src" :class="'src-'+s.source">{{ s.source }}</span><span class="ts-title">{{ s.title }}</span></div>
+              <div class="ts-meta">{{ s.user }} · {{ s.msgCount }} 条 · #{{ s.id }} · {{ fmtTraceTime(s.updatedAt) }}</div>
+            </div>
+            <div v-if="!traceSessions.length" class="trace-hint">无会话</div>
+          </template>
+        </div>
+        <!-- 轨迹时间线 -->
+        <div class="trace-detail">
+          <div v-if="traceDetailLoading" class="trace-empty">加载中…</div>
+          <div v-else-if="!traceData" class="trace-empty">← 左侧选一个会话，查看咕咕每轮的决策轨迹</div>
+          <template v-else>
+            <div class="trace-head">
+              <div class="th-title">{{ traceData.session.title }}</div>
+              <div class="th-meta">{{ traceData.session.user }} · {{ traceData.session.source }} · #{{ traceData.session.id }}
+                · LLM 调用 {{ traceData.usage.length }} 次 · token 入 {{ traceTokens.in }} / 出 {{ traceTokens.out }}</div>
+            </div>
+            <div class="trace-timeline">
+              <div v-for="(step, i) in traceSteps" :key="i" class="tstep" :class="'k-'+step.kind">
+                <template v-if="step.kind === 'user'">
+                  <div class="tstep-role user">用户</div>
+                  <div class="tstep-text">{{ step.text }}</div>
+                </template>
+                <template v-else-if="step.kind === 'ai'">
+                  <div class="tstep-role ai">咕咕</div>
+                  <div class="tstep-text">{{ step.text }}</div>
+                  <div v-if="step.files && step.files.length" class="tstep-files">📎 {{ step.files.map(f => f.name + '.' + f.ext).join('，') }}</div>
+                </template>
+                <template v-else-if="step.kind === 'tool_call'">
+                  <div class="tstep-tool">
+                    <span class="tool-badge call">🔧 {{ step.name }}</span>
+                    <button class="tool-toggle" @click="step._open = !step._open">{{ step._open ? '收起入参' : '入参' }}</button>
+                  </div>
+                  <pre v-if="step._open" class="tool-json">{{ step.input }}</pre>
+                </template>
+                <template v-else-if="step.kind === 'tool_result'">
+                  <div class="tstep-tool">
+                    <span class="tool-badge res" :class="{ err: step.isError }">↩ {{ step.isError ? '结果（错误）' : '结果' }}</span>
+                    <button class="tool-toggle" @click="step._open = !step._open">{{ step._open ? '收起' : '展开' }}</button>
+                  </div>
+                  <pre v-if="step._open" class="tool-json">{{ step.result }}</pre>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { PhBrain, PhEye } from '@phosphor-icons/vue'
+import AdminSelect from '@/components/AdminSelect.vue'
+import { useConfigStore } from '@/stores/config'
+import { useAdminStore } from '@/stores/admin'
+import ConfigField from '../Config/components/ConfigField.vue'
+
+const configStore = useConfigStore()
+const adminStore  = useAdminStore()
+
+const tabs = [
+  { key: 'llm',      label: 'LLM 配置' },
+  { key: 'behavior', label: '行为配置' },
+  { key: 'labels',   label: '状态命名' },
+  { key: 'usage',    label: '用量统计' },
+  { key: 'trace',    label: '决策轨迹' },
+  { key: 'prompts',  label: '系统提示词' },
+]
+const activeTab = ref('llm')
+
+function switchTab(key) {
+  activeTab.value = key
+  if (key === 'llm'     && presets.value.length === 0) fetchPresets()
+  if (key === 'prompts' && profiles.value.length === 0) fetchProfiles()
+  if (key === 'usage'   && !usage.value) fetchUsage()
+  if (key === 'trace'   && traceSessions.value.length === 0) fetchTraceSessions()
+  if (key === 'labels'  && !stateLabels.special.length && !stateLabels.tools.length) fetchStateLabels()
+}
+
+// ── 状态命名（对话里状态指示的显示名）──────────────────────────────────────────
+const stateLabels  = reactive({ special: [], tools: [] })
+const labelsLoading = ref(false)
+const labelsSaving  = ref(false)
+const labelsFilter  = ref('')
+const labelsSaved   = ref(false)
+
+const filteredTools = computed(() => {
+  const q = labelsFilter.value.trim().toLowerCase()
+  if (!q) return stateLabels.tools
+  return stateLabels.tools.filter(r =>
+    r.key.toLowerCase().includes(q) || (r.default || '').includes(q) || (r.custom || '').includes(q))
+})
+
+async function fetchStateLabels() {
+  labelsLoading.value = true
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/state-labels')
+    const data = await res.json()
+    stateLabels.special = (data.special || []).map(r => ({ ...r }))
+    stateLabels.tools   = (data.tools   || []).map(r => ({ ...r }))
+  } catch (e) {
+    console.error('加载状态命名失败', e)
+  } finally {
+    labelsLoading.value = false
+  }
+}
+
+async function saveStateLabels() {
+  labelsSaving.value = true
+  labelsSaved.value = false
+  try {
+    const overrides = {}
+    for (const r of [...stateLabels.special, ...stateLabels.tools]) {
+      const v = (r.custom || '').trim()
+      if (v && v !== r.default) overrides[r.key] = v   // 只提交「改过且非空」的，空/同默认走回退
+    }
+    const res = await adminStore.authFetch('/api/v1/admin/agent/state-labels', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overrides }),
+    })
+    if (!res.ok) throw new Error('保存失败')
+    labelsSaved.value = true
+    setTimeout(() => { labelsSaved.value = false }, 2000)
+  } catch (e) {
+    console.error('保存状态命名失败', e)
+    alert('保存失败，请重试')
+  } finally {
+    labelsSaving.value = false
+  }
+}
+
+function resetStateLabel(row) { row.custom = '' }
+
+// ── 决策轨迹（只读调试）──────────────────────────────────────────────────────
+const traceSessions      = ref([])
+const traceLoading       = ref(false)
+const traceSel           = ref(null)
+const traceData          = ref(null)
+const traceSteps         = ref([])
+const traceDetailLoading = ref(false)
+const traceSearch        = ref('')
+const traceUser          = ref('')
+
+function fmtTraceTime(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+const traceTokens = computed(() => {
+  const u = traceData.value?.usage ?? []
+  return {
+    in:  u.reduce((a, x) => a + (x.tokensIn  || 0), 0),
+    out: u.reduce((a, x) => a + (x.tokensOut || 0), 0),
+  }
+})
+
+async function fetchTraceSessions() {
+  traceLoading.value = true
+  try {
+    const qs = new URLSearchParams()
+    if (traceSearch.value.trim()) qs.set('q', traceSearch.value.trim())
+    if (traceUser.value.trim())   qs.set('user', traceUser.value.trim())
+    const url = `/api/v1/admin/agent/sessions${qs.toString() ? '?' + qs : ''}`
+    const res = await adminStore.authFetch(url)
+    if (res.ok) traceSessions.value = await res.json()
+  } catch { /* ignore */ }
+  finally { traceLoading.value = false }
+}
+
+// content_json 块 → 可读结果文本（content 可能是字符串或块数组）
+function _extractResult(content) {
+  if (content == null) return ''
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) return content.map(c => typeof c === 'string' ? c : (c?.text ?? JSON.stringify(c))).join('\n')
+  return JSON.stringify(content, null, 2)
+}
+
+// 把消息序列拍平成时间线步骤（含被 getMessages 过滤的 tool_use/tool_result）
+function _buildSteps(messages) {
+  const steps = []
+  for (const m of messages) {
+    const cj = m.contentJson
+    if (!cj) {
+      const text = (m.content || '').trim()
+      if (text) steps.push({ kind: (m.role === 'assistant' || m.role === 'ai') ? 'ai' : 'user', text, files: m.files, _open: false })
+      continue
+    }
+    for (const b of cj) {
+      if (!b || typeof b !== 'object') continue
+      if (b.type === 'text' && (b.text || '').trim()) {
+        steps.push({ kind: 'ai', text: b.text, _open: false })
+      } else if (b.type === 'tool_use') {
+        steps.push({ kind: 'tool_call', name: b.name, input: JSON.stringify(b.input ?? {}, null, 2), _open: false })
+      } else if (b.type === 'tool_result') {
+        steps.push({ kind: 'tool_result', result: _extractResult(b.content), isError: !!b.is_error, _open: false })
+      }
+    }
+  }
+  return steps
+}
+
+async function openTrace(id) {
+  traceSel.value = id
+  traceDetailLoading.value = true
+  traceData.value = null
+  traceSteps.value = []
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/agent/sessions/${id}/trace`)
+    if (res.ok) {
+      const data = await res.json()
+      traceData.value = data
+      traceSteps.value = _buildSteps(data.messages)
+    }
+  } catch { /* ignore */ }
+  finally { traceDetailLoading.value = false }
+}
+
+
+// ── LLM 预设 ──────────────────────────────────────────────────────────────
+const PROVIDERS = [
+  { key: 'openai',    label: 'OpenAI 兼容', base_url: 'https://api.openai.com/v1',                          model: 'gpt-4o' },
+  { key: 'anthropic', label: 'Anthropic',   base_url: 'https://api.anthropic.com/v1',                       model: 'claude-opus-4-8' },
+  { key: 'qwen',      label: '通义千问',    base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
+  { key: 'deepseek',  label: 'DeepSeek',    base_url: 'https://api.deepseek.com',                           model: 'deepseek-chat' },
+  { key: 'minimax',   label: 'MiniMax',     base_url: 'https://api.minimaxi.com/anthropic',                 model: 'MiniMax-M3' },
+  { key: 'mimo',      label: 'MiMo (小米)',  base_url: 'https://token-plan-cn.xiaomimimo.com/v1',            model: 'mimo-v2.5' },
+]
+
+// MiMo 同时提供 OpenAI / Anthropic 两套兼容 API，按预设选格式（影响后端走哪条通道）
+const API_FORMATS = [
+  { key: 'openai',    label: 'OpenAI 格式' },
+  { key: 'anthropic', label: 'Anthropic 格式' },
+]
+
+const presets        = ref([])
+const activePresetId = ref('')
+const strategy       = ref('active')   // active 单一激活 | pool 多 key 分流 | router 智能路由
+const poolMode       = ref('random')   // pool 分流方式：random | round_robin | least_loaded
+const presetsLoading = ref(false)
+const llmMsg         = ref('')
+const llmMsgError    = ref(false)
+const testingId      = ref(null)
+const activatingId   = ref(null)
+const probingId      = ref(null)
+
+// edit modal
+const editTarget   = ref(null)
+const editIsNew    = ref(false)
+const editSaving   = ref(false)
+const editError    = ref('')
+const editMaskDown = ref(false)
+
+function showMsg(msg, isError = false) {
+  llmMsg.value      = msg
+  llmMsgError.value = isError
+  setTimeout(() => { llmMsg.value = '' }, isError ? 5000 : 3000)
+}
+
+async function fetchPresets() {
+  presetsLoading.value = true
+  try {
+    const res  = await adminStore.authFetch('/api/v1/admin/agent/llm-presets')
+    const data = await res.json()
+    presets.value        = data.items || []
+    activePresetId.value = data.active_id || ''
+    strategy.value       = data.strategy || 'active'
+    poolMode.value       = data.pool_mode || 'random'
+  } catch (e) {
+    showMsg('加载失败：' + e.message, true)
+  } finally {
+    presetsLoading.value = false
+  }
+}
+
+async function setStrategy(s) {
+  const prev = strategy.value
+  strategy.value = s
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/llm-presets/strategy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strategy: s }),
+    })
+    if (!res.ok) throw new Error((await res.json()).detail || '设置失败')
+    showMsg(s === 'pool' ? '已切到多 key 分流（勾选要参与分流的预设）' : s === 'router' ? '已切到智能路由（待 Router 接入，暂等同单一激活）' : '已切到单一激活')
+  } catch (e) {
+    strategy.value = prev
+    showMsg('切换策略失败：' + e.message, true)
+  }
+}
+
+async function setPoolMode(m) {
+  const prev = poolMode.value
+  poolMode.value = m
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/llm-presets/strategy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pool_mode: m }),
+    })
+    if (!res.ok) throw new Error('设置失败')
+    showMsg({ random: '分流方式：随机', round_robin: '分流方式：轮询', least_loaded: '分流方式：最少在途（自动避开慢 key）' }[m])
+  } catch (e) {
+    poolMode.value = prev
+    showMsg('设置分流方式失败：' + e.message, true)
+  }
+}
+
+async function saveConcurrency() {
+  const n = agentDraft.worker_concurrency
+  if (!Number.isFinite(n) || n < 1) { agentDraft.worker_concurrency = 16; return }
+  try {
+    await configStore.saveConfig({ agent: { ...agentDraft } })
+    showMsg(`并发量已设为 ${n}（worker ≤30s 热生效）`)
+  } catch (e) {
+    showMsg('保存并发量失败：' + e.message, true)
+  }
+}
+
+async function togglePool(p) {
+  const next = !p.in_pool
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${p.id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ in_pool: next }),
+    })
+    if (!res.ok) throw new Error('更新失败')
+    p.in_pool = next
+  } catch (e) {
+    showMsg('更新分流失败：' + e.message, true)
+  }
+}
+
+function openNewPreset() {
+  editIsNew.value  = true
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 2000, temperature: 0.7, context_tokens: 3000, thinking: 'disabled', vision: false, api_format: '' }
+  editError.value  = ''
+}
+
+function openEditPreset(p) {
+  editIsNew.value  = false
+  editTarget.value = { ...p, api_key: '' }
+  editError.value  = ''
+}
+
+function setEditProvider(key) {
+  const pv = PROVIDERS.find(p => p.key === key)
+  if (!pv) return
+  editTarget.value.provider = key
+  editTarget.value.base_url = pv.base_url
+  editTarget.value.model    = pv.model
+  // mimo 同时提供两套 API：默认 openai 格式；切到别的 provider 清掉（走自动判定）
+  editTarget.value.api_format = key === 'mimo' ? 'openai' : ''
+}
+
+// 选 API 格式时，同步切换 mimo 端点后缀（host 保留，只改 /v1 ↔ /anthropic）
+function pickApiFormat(fmt) {
+  editTarget.value.api_format = fmt
+  const bu = (editTarget.value.base_url || '').replace(/\/(v1|anthropic)\/?$/, '')
+  if (bu.includes('xiaomimimo')) {
+    editTarget.value.base_url = bu + (fmt === 'anthropic' ? '/anthropic' : '/v1')
+  }
+}
+
+async function savePreset() {
+  editSaving.value = true
+  editError.value  = ''
+  try {
+    const body = { ...editTarget.value }
+    let res
+    if (editIsNew.value) {
+      res = await adminStore.authFetch('/api/v1/admin/agent/llm-presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    } else {
+      res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${body.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `保存失败（${res.status}）`)
+    }
+    editTarget.value = null
+    await fetchPresets()
+    showMsg('已保存')
+  } catch (e) {
+    editError.value = e.message
+  } finally {
+    editSaving.value = false
+  }
+}
+
+async function activatePreset(id) {
+  activatingId.value = id
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/activate`, { method: 'POST' })
+    if (!res.ok) throw new Error(`切换失败（${res.status}）`)
+    activePresetId.value = id
+    showMsg('已切换，即时生效')
+  } catch (e) {
+    showMsg(e.message, true)
+  } finally {
+    activatingId.value = null
+  }
+}
+
+async function deletePreset(id) {
+  if (!confirm('确定删除该预设？')) return
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `删除失败（${res.status}）`)
+    }
+    await fetchPresets()
+  } catch (e) {
+    showMsg(e.message, true)
+  }
+}
+
+async function testPreset(id) {
+  testingId.value = id
+  try {
+    const res  = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/test`, { method: 'POST' })
+    const data = await res.json()
+    showMsg(data.ok ? `连通正常（${data.status}）` : `连接失败（${data.status}）：${data.detail}`, !data.ok)
+  } catch (e) {
+    showMsg('测试失败：' + e.message, true)
+  } finally {
+    testingId.value = null
+  }
+}
+
+// 多模态探测：发一张极小图给该预设模型，按响应判定是否支持看图，结论自动写回 vision
+async function probeVision(id) {
+  probingId.value = id
+  try {
+    const res  = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/probe-vision`, { method: 'POST' })
+    const data = await res.json()
+    if (data.supported === true)       showMsg(`✅ 支持多模态（${data.status}），已开启`)
+    else if (data.supported === false) showMsg(`该模型不支持多模态，已设为关闭：${data.detail}`, true)
+    else                               showMsg(`测不准：${data.detail}`, true)
+    await fetchPresets()   // 刷新「👁 多模态」徽章
+  } catch (e) {
+    showMsg('检测失败：' + e.message, true)
+  } finally {
+    probingId.value = null
+  }
+}
+
+// ── 系统提示词 ────────────────────────────────────────────────────────────
+const activeProfile  = ref('default')
+const profiles       = ref([])
+const placeholders   = ref([])
+const promptContent  = ref('')
+const promptSaving   = ref(false)
+const promptSaved    = ref(false)
+const promptError    = ref('')
+const promptCache    = {}
+
+async function fetchProfiles() {
+  try {
+    const res  = await adminStore.authFetch('/api/v1/admin/agent/prompts')
+    const data = await res.json()
+    profiles.value     = data.profiles
+    placeholders.value = data.placeholders
+    await loadPrompt('default')
+  } catch (e) {
+    promptError.value = '加载失败：' + e.message
+  }
+}
+
+async function loadPrompt(profile) {
+  if (promptCache[profile] !== undefined) {
+    promptContent.value = promptCache[profile]
+    return
+  }
+  try {
+    const res  = await adminStore.authFetch(`/api/v1/admin/agent/prompts/${profile}`)
+    const data = await res.json()
+    promptCache[profile] = data.content
+    promptContent.value  = data.content
+  } catch (e) {
+    promptError.value = '加载失败：' + e.message
+  }
+}
+
+async function switchProfile(profile) {
+  promptCache[activeProfile.value] = promptContent.value
+  activeProfile.value = profile
+  await loadPrompt(profile)
+}
+
+function insertPlaceholder(key) {
+  const ta = document.querySelector('.prompt-textarea')
+  if (!ta) return
+  const start = ta.selectionStart
+  const end   = ta.selectionEnd
+  const text  = promptContent.value
+  promptContent.value = text.slice(0, start) + key + text.slice(end)
+}
+
+async function savePrompt() {
+  promptSaving.value = true
+  promptSaved.value  = false
+  promptError.value  = ''
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/agent/prompts/${activeProfile.value}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: promptContent.value }),
+    })
+    if (!res.ok) throw new Error(`保存失败（${res.status}）`)
+    promptCache[activeProfile.value] = promptContent.value
+    promptSaved.value = true
+    setTimeout(() => { promptSaved.value = false }, 3000)
+  } catch (e) {
+    promptError.value = e.message
+    setTimeout(() => { promptError.value = '' }, 5000)
+  } finally {
+    promptSaving.value = false
+  }
+}
+
+// ── 行为配置 ──────────────────────────────────────────────────────────────
+const agentDraft    = reactive({ ...configStore.cfg.agent })
+const behaviorSaving = ref(false)
+const behaviorSaved  = ref(false)
+const behaviorError  = ref('')
+
+function resetBehavior() {
+  Object.assign(agentDraft, configStore.cfg.agent)
+}
+
+async function saveBehavior() {
+  behaviorSaving.value = true
+  behaviorSaved.value  = false
+  behaviorError.value  = ''
+  try {
+    await configStore.saveConfig({ agent: { ...agentDraft } })
+    behaviorSaved.value = true
+    setTimeout(() => { behaviorSaved.value = false }, 3000)
+  } catch (e) {
+    behaviorError.value = e.message
+    setTimeout(() => { behaviorError.value = '' }, 5000)
+  } finally {
+    behaviorSaving.value = false
+  }
+}
+
+// ── 联网搜索（Tavily）────────────────────────────────────────────────────────
+const searchDraft   = reactive({ ...configStore.cfg.search })
+const searchSaving  = ref(false)
+const searchSaved   = ref(false)
+const searchError   = ref('')
+
+function resetSearch() {
+  Object.assign(searchDraft, configStore.cfg.search)
+}
+
+// ── 语音识别模型 ──
+const voiceDraft  = reactive({ ...configStore.cfg.voice })
+const voiceSaving = ref(false)
+const voiceSaved  = ref(false)
+const voiceError  = ref('')
+function resetVoice() { Object.assign(voiceDraft, configStore.cfg.voice) }
+const VOICE_PROVIDERS = [
+  { label: 'MiMo',  provider: 'mimo', model: 'mimo-v2.5-asr',   base_url: 'https://api.xiaomimimo.com/v1' },
+  { label: 'Qwen',  provider: 'qwen', model: 'qwen3-asr-flash', base_url: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1' },
+]
+function pickVoiceProvider(vp) {
+  voiceDraft.provider = vp.provider
+  if (!(voiceDraft.model || '').trim())    voiceDraft.model    = vp.model      // 只在空时填模板，
+  if (!(voiceDraft.base_url || '').trim()) voiceDraft.base_url = vp.base_url    // 不覆盖你已填的（如套餐端点）
+}
+async function saveVoice() {
+  voiceSaving.value = true; voiceSaved.value = false; voiceError.value = ''
+  try {
+    await configStore.saveConfig({ voice: { ...voiceDraft } })
+    voiceSaved.value = true
+    Object.assign(voiceDraft, configStore.cfg.voice)   // key 存后回 ****，同步回「不修改」态
+    setTimeout(() => { voiceSaved.value = false }, 3000)
+  } catch (e) {
+    voiceError.value = e.message || '保存失败'
+  } finally {
+    voiceSaving.value = false
+  }
+}
+
+// ── 搜索连通测试（SearXNG / Tavily）──
+const searchTest = reactive({
+  searxng: { loading: false, ok: false, msg: '' },
+  tavily:  { loading: false, ok: false, msg: '' },
+})
+async function testSearch(target) {
+  const t = searchTest[target]
+  t.loading = true; t.msg = ''
+  try {
+    const payload = target === 'searxng'
+      ? { target, searxng_url: searchDraft.searxng_url || '', searxng_engines: searchDraft.searxng_engines || '' }
+      : { target, tavily_api_key: searchDraft.tavily_api_key || '' }   // 留空=用已存 key
+    const res = await adminStore.authFetch('/api/v1/admin/config/test-search', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    const data = await res.json()
+    t.ok = !!data.ok
+    t.msg = data.message || (data.ok ? 'OK' : '失败')
+  } catch (e) {
+    t.ok = false
+    t.msg = '请求失败：' + e.message
+  } finally {
+    t.loading = false
+  }
+}
+
+async function saveSearch() {
+  searchSaving.value = true
+  searchSaved.value  = false
+  searchError.value  = ''
+  try {
+    await configStore.saveConfig({ search: { ...searchDraft } })
+    searchSaved.value = true
+    // key 保存后后端返回 ****，清空输入回到「不修改」态
+    Object.assign(searchDraft, configStore.cfg.search)
+    setTimeout(() => { searchSaved.value = false }, 3000)
+  } catch (e) {
+    searchError.value = e.message
+    setTimeout(() => { searchError.value = '' }, 5000)
+  } finally {
+    searchSaving.value = false
+  }
+}
+
+// ── 用量统计 ──────────────────────────────────────────────────────────────
+const usage        = ref(null)
+const usageLoading = ref(false)
+
+const activeModel = ref(null)
+
+async function fetchUsage(month = undefined, model = activeModel.value) {
+  usageLoading.value = true
+  try {
+    const params = new URLSearchParams()
+    if (month) params.set('month', month)
+    if (model) params.set('model', model)
+    const qs = params.toString()
+    const url = `/api/v1/admin/agent/usage${qs ? '?' + qs : ''}`
+    const res = await adminStore.authFetch(url)
+    usage.value = await res.json()
+  } finally {
+    usageLoading.value = false
+  }
+}
+
+function toggleModel(model) {
+  activeModel.value = activeModel.value === model ? null : model
+  fetchUsage(usage.value?.month, activeModel.value)
+}
+
+function fmtNum(n) {
+  if (n == null) return '0'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
+
+// ── 折线图 ────────────────────────────────────────────────────────────────
+const CHART_H = 240
+const PAD_L   = 40
+const PAD_R   = 12
+const PAD_T   = 14
+const PAD_B   = 28
+
+const CHART_W    = ref(600)
+const activeMetric = ref('calls')
+const hoverIdx     = ref(-1)
+const chartWrap    = ref(null)
+
+onMounted(() => {
+  const ro = new ResizeObserver(entries => {
+    CHART_W.value = entries[0].contentRect.width || 600
+  })
+  watch(chartWrap, el => { if (el) ro.observe(el) }, { immediate: true })
+})
+
+const metrics = [
+  { key: 'calls',      label: '对话次数', unit: '次' },
+  { key: 'tokens_in',  label: '输入 tokens', unit: '' },
+  { key: 'tokens_out', label: '输出 tokens', unit: '' },
+]
+
+const monthIndex = computed(() => {
+  if (!usage.value?.months) return 0
+  return usage.value.months.indexOf(usage.value.month)
+})
+
+async function switchMonth(dir) {
+  if (!usage.value?.months) return
+  const idx = monthIndex.value + dir
+  if (idx < 0 || idx >= usage.value.months.length) return
+  await fetchUsage(usage.value.months[idx], activeModel.value)
+}
+
+const chartPoints = computed(() => {
+  if (!usage.value?.daily) return []
+  const data = usage.value.daily
+  const vals = data.map(d => d[activeMetric.value] ?? 0)
+  const maxV = Math.max(...vals, 1)
+  const n    = data.length
+  const w    = CHART_W.value
+  const xStep = (w - PAD_L - PAD_R) / Math.max(n - 1, 1)
+  return vals.map((v, i) => ({
+    x: PAD_L + i * xStep,
+    y: PAD_T + (1 - v / maxV) * (CHART_H - PAD_T - PAD_B),
+  }))
+})
+
+function smoothPath(pts) {
+  if (pts.length < 2) return ''
+  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`
+  for (let i = 1; i < pts.length; i++) {
+    const cpx = ((pts[i - 1].x + pts[i].x) / 2).toFixed(1)
+    d += ` C ${cpx} ${pts[i-1].y.toFixed(1)} ${cpx} ${pts[i].y.toFixed(1)} ${pts[i].x.toFixed(1)} ${pts[i].y.toFixed(1)}`
+  }
+  return d
+}
+
+const linePath = computed(() => smoothPath(chartPoints.value))
+
+const fillPath = computed(() => {
+  const pts = chartPoints.value
+  if (pts.length < 2) return ''
+  const base = CHART_H - PAD_B
+  return `${smoothPath(pts)} L ${pts[pts.length-1].x.toFixed(1)} ${base} L ${pts[0].x.toFixed(1)} ${base} Z`
+})
+
+const gridYs = computed(() => {
+  const steps = 4
+  return Array.from({ length: steps + 1 }, (_, i) =>
+    PAD_T + (i / steps) * (CHART_H - PAD_T - PAD_B)
+  )
+})
+
+const gridValues = computed(() => {
+  if (!usage.value?.daily) return []
+  const vals = usage.value.daily.map(d => d[activeMetric.value] ?? 0)
+  const maxV = Math.max(...vals, 1)
+  const steps = 4
+  return Array.from({ length: steps + 1 }, (_, i) =>
+    Math.round(maxV * (1 - i / steps))
+  )
+})
+
+const xLabels = computed(() => {
+  const pts  = chartPoints.value
+  const data = usage.value?.daily ?? []
+  if (!pts.length) return []
+  const step = Math.ceil(pts.length / 7)
+  return pts
+    .map((pt, i) => ({ x: pt.x, label: data[i]?.date?.slice(8) ?? '' }))
+    .filter((_, i) => i % step === 0 || i === pts.length - 1)
+})
+
+const chartRight = computed(() => CHART_W.value - PAD_R)
+
+const hoverColW = computed(() => {
+  const n = chartPoints.value.length
+  const w = CHART_W.value
+  return n > 1 ? (w - PAD_L - PAD_R) / (n - 1) : w - PAD_L - PAD_R
+})
+
+const tooltipStyle = computed(() => {
+  const pt = hoverIdx.value >= 0 ? chartPoints.value[hoverIdx.value] : null
+  if (!pt) return {}
+  const w   = CHART_W.value
+  const pct = (pt.x - PAD_L) / (w - PAD_L - PAD_R)
+  return {
+    left: `${Math.min(Math.max(pct * 100, 8), 75)}%`,
+    top:  `${Math.max(4, (pt.y - PAD_T) / (CHART_H - PAD_T - PAD_B) * 72)}%`,
+  }
+})
+
+// ── 初始化 ────────────────────────────────────────────────────────────────
+onMounted(async () => {
+  await configStore.fetchConfig()
+  Object.assign(agentDraft, configStore.cfg.agent)
+  Object.assign(voiceDraft, configStore.cfg.voice)
+  fetchPresets()
+})
+</script>
+
+<style scoped>
+.agent-page { min-height: 100%; display: flex; flex-direction: column; }
+
+.page-header {
+  padding: 32px 36px 0;
+  flex-shrink: 0;
+}
+.page-title { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
+.page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
+
+/* ── 标签栏 ── */
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  padding: 18px 36px 0;
+  flex-shrink: 0;
+}
+.tab-btn {
+  padding: 7px 18px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04);
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.35);
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+}
+.tab-btn::after {
+  content: attr(data-label);
+  font-weight: 600;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+.tab-btn:hover:not(.active) {
+  background: rgba(255,255,255,0.07);
+  color: rgba(255,255,255,0.6);
+}
+.tab-btn.active {
+  background: rgba(123,127,178,0.18);
+  border-color: rgba(123,127,178,0.32);
+  color: rgba(255,255,255,0.9);
+  font-weight: 600;
+}
+
+/* ── 面板区 ── */
+.panels-wrap {
+  flex: 1;
+  padding: 14px 36px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.config-card {
+  background: rgba(255,255,255,0.05);
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255,255,255,0.09); border-radius: 16px;
+  padding: 22px 24px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+.card-head {
+  display: flex; align-items: center; gap: 13px; margin-bottom: 20px;
+}
+.card-icon {
+  width: 38px; height: 38px; border-radius: 11px; background: var(--ic);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.card-icon svg { width: 18px; height: 18px; color: var(--stroke); }
+.card-title-block { flex: 1; }
+.card-title-block h3 { font-size: 14px; font-weight: 700; color: rgba(255,255,255,0.88); }
+.card-title-block p  { font-size: 12px; color: rgba(255,255,255,0.38); margin-top: 2px; }
+
+/* ── Provider 切换 ── */
+.toggle-group { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+.provider-grid { }
+.profile-switcher { display: flex; gap: 6px; margin-left: auto; }
+.toggle-btn {
+  padding: 6px 16px; border-radius: 9px;
+  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
+  font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.38);
+  cursor: pointer; transition: all 0.15s;
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.toggle-btn::after {
+  content: attr(data-label);
+  font-weight: 600;
+  height: 0; overflow: hidden; visibility: hidden; pointer-events: none;
+}
+.toggle-btn.active {
+  background: rgba(123,127,178,0.2); border-color: rgba(123,127,178,0.35);
+  color: rgba(255,255,255,0.88); font-weight: 600;
+}
+.toggle-btn:hover:not(.active) { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); }
+
+/* ── 字段网格 ── */
+.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field-grid :deep(.span2) { grid-column: span 2; }
+
+/* ── 操作栏 ── */
+.card-actions {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 18px; padding-top: 16px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+}
+.save-hint {
+  flex: 1; font-size: 12px; color: #5ab899;
+  display: flex; align-items: center; gap: 5px;
+}
+.save-hint.muted { color: rgba(255,255,255,0.28); }
+.save-hint.error { color: #e07878; }
+
+.btn-ghost {
+  padding: 6px 14px; border-radius: 9px;
+  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.45); font-size: 13px; cursor: pointer; transition: all 0.15s;
+}
+.btn-ghost:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); }
+.btn-primary {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 16px; border-radius: 9px; border: none;
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  color: white; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: opacity 0.15s;
+  box-shadow: 0 2px 8px rgba(123,127,178,0.18);
+}
+.btn-primary:hover:not(:disabled) { opacity: 0.88; }
+.btn-primary:disabled { opacity: 0.5; cursor: default; }
+
+/* ── 提示词编辑器 ── */
+.prompts-card .card-head { align-items: flex-start; }
+.prompt-editor-wrap {
+  display: grid;
+  grid-template-columns: 1fr 200px;
+  gap: 14px;
+  min-height: 380px;
+}
+.prompt-textarea {
+  width: 100%;
+  min-height: 380px;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  color: rgba(255,255,255,0.82);
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.prompt-textarea:focus {
+  border-color: rgba(123,127,178,0.4);
+}
+.prompt-textarea::placeholder { color: rgba(255,255,255,0.2); }
+/* 暗色滚动条 + 去掉右下角横竖交汇处的白块（scrollbar-corner 默认是白的） */
+.prompt-textarea::-webkit-scrollbar { width: 10px; height: 10px; }
+.prompt-textarea::-webkit-scrollbar-track { background: transparent; }
+.prompt-textarea::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 6px; }
+.prompt-textarea::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+.prompt-textarea::-webkit-scrollbar-corner { background: transparent; }
+.prompt-textarea { scrollbar-color: rgba(255,255,255,0.18) transparent; }  /* Firefox */
+
+.placeholder-panel {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.placeholder-title {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.07em;
+  color: rgba(255,255,255,0.25); text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.placeholder-item {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 10px; border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.07);
+  cursor: pointer; transition: all 0.15s;
+}
+.placeholder-item:hover {
+  background: rgba(123,127,178,0.12);
+  border-color: rgba(123,127,178,0.25);
+}
+.placeholder-item code {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px; color: rgba(149,144,196,0.9);
+}
+.placeholder-item span {
+  font-size: 11px; color: rgba(255,255,255,0.3);
+}
+
+/* ── 行为配置 ── */
+.behavior-grid {
+  display: flex; flex-direction: column; gap: 2px;
+}
+.behavior-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.behavior-item:last-child { border-bottom: none; }
+.behavior-label { display: flex; flex-direction: column; gap: 3px; }
+.behavior-label span:first-child { font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.8); }
+.behavior-desc { font-size: 12px; color: rgba(255,255,255,0.3); }
+
+.toggle-switch {
+  width: 42px; height: 24px; border-radius: 99px;
+  background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.12);
+  position: relative; cursor: pointer; transition: all 0.2s; flex-shrink: 0;
+}
+.toggle-switch.on {
+  background: rgba(123,127,178,0.5); border-color: rgba(123,127,178,0.6);
+}
+.toggle-knob {
+  position: absolute; top: 3px; left: 3px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: rgba(255,255,255,0.6);
+  transition: transform 0.2s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+.toggle-switch.on .toggle-knob {
+  transform: translateX(18px);
+  background: white;
+}
+
+.behavior-input {
+  width: 72px;
+  background: rgba(0,0,0,0.2);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px; font-weight: 600;
+  color: rgba(255,255,255,0.8);
+  text-align: center; outline: none;
+  transition: border-color 0.15s;
+}
+.behavior-input:focus { border-color: rgba(123,127,178,0.4); }
+
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin-icon { animation: spin 0.8s linear infinite; }
+
+/* ── 用量统计 ── */
+.usage-loading, .usage-empty {
+  text-align: center; padding: 64px 0;
+  font-size: 13px; color: rgba(255,255,255,0.2);
+}
+
+.usage-summary {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 12px; margin-bottom: 12px;
+}
+.usage-stat-card {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.09); border-radius: 14px;
+  padding: 20px 22px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+.usc-label { font-size: 11px; color: rgba(255,255,255,0.3); font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 10px; }
+.usc-num   { font-size: 28px; font-weight: 700; color: rgba(255,255,255,0.88); line-height: 1; }
+.usc-sub   { font-size: 12px; color: rgba(255,255,255,0.25); margin-top: 6px; }
+
+/* ── 折线图 ── */
+.chart-card { margin-bottom: 12px; }
+.chart-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px;
+}
+.metric-tabs { display: flex; gap: 4px; }
+.metric-tab {
+  padding: 5px 14px; border-radius: 8px; font-size: 12px; font-weight: 500;
+  border: 1px solid rgba(255,255,255,0.09); background: rgba(255,255,255,0.04);
+  color: rgba(255,255,255,0.35); cursor: pointer; transition: all 0.15s;
+  display: inline-flex; flex-direction: column; align-items: center;
+}
+.metric-tab::after {
+  content: attr(data-label);
+  font-weight: 600;
+  height: 0; overflow: hidden; visibility: hidden; pointer-events: none;
+}
+.metric-tab.active {
+  background: rgba(123,127,178,0.2); border-color: rgba(123,127,178,0.35);
+  color: rgba(255,255,255,0.88);
+}
+.metric-tab:hover:not(.active) { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.6); }
+
+.month-nav { display: flex; align-items: center; gap: 8px; }
+.month-label { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.7); min-width: 64px; text-align: center; }
+.month-arrow {
+  width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(255,255,255,0.09); background: rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
+}
+.month-arrow svg { width: 14px; height: 14px; }
+.month-arrow:hover:not(:disabled) { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
+.month-arrow:disabled { opacity: 0.3; cursor: default; }
+
+.chart-wrap { position: relative; width: 100%; }
+.line-chart { display: block; overflow: visible; }
+
+.chart-tooltip {
+  position: absolute; pointer-events: none;
+  background: rgba(16,16,26,0.95);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(149,144,196,0.25); border-radius: 10px;
+  padding: 9px 14px; transform: translate(-50%, -115%);
+  white-space: nowrap;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+.tt-date { font-size: 11px; color: rgba(255,255,255,0.35); margin-bottom: 4px; letter-spacing: 0.04em; }
+.tt-val  { font-size: 18px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
+.tt-val span { font-size: 11px; font-weight: 400; color: rgba(255,255,255,0.35); margin-left: 3px; }
+
+.tt-enter-active, .tt-leave-active { transition: opacity 0.1s, transform 0.1s; }
+.tt-enter-from, .tt-leave-to { opacity: 0; transform: translate(-50%, -105%); }
+
+.model-table { display: flex; flex-direction: column; gap: 0; }
+.mt-row {
+  display: grid; grid-template-columns: 1fr 80px 90px 90px;
+  padding: 10px 4px; font-size: 13px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  align-items: center;
+  transition: background 0.15s, opacity 0.15s;
+  border-radius: 8px;
+}
+.mt-row:last-child { border-bottom: none; }
+.mt-head { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.25); text-transform: uppercase; letter-spacing: 0.06em; }
+.mt-clickable { cursor: pointer; }
+.mt-clickable:hover { background: rgba(255,255,255,0.04); }
+.mt-active { background: rgba(123,127,178,0.12) !important; }
+.mt-active .mt-model { color: rgba(169,164,216,0.95); }
+.mt-dimmed { opacity: 0.35; }
+.mt-model { color: rgba(255,255,255,0.8); font-weight: 500; }
+.mt-model em { display: block; font-style: normal; font-size: 11px; color: rgba(255,255,255,0.28); margin-top: 2px; }
+.mt-row span:not(:first-child) { color: rgba(255,255,255,0.55); text-align: right; }
+
+.model-filter-tag {
+  display: inline-flex; align-items: center;
+  padding: 3px 10px; border-radius: 6px;
+  background: rgba(123,127,178,0.18); border: 1px solid rgba(123,127,178,0.3);
+  font-size: 12px; color: rgba(169,164,216,0.9);
+  margin-left: 6px; max-width: 200px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.clear-model-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-left: auto;
+  padding: 5px 12px; border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
+  font-size: 12px; color: rgba(255,255,255,0.4);
+  cursor: pointer; transition: all 0.15s;
+}
+.clear-model-btn:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.7); }
+
+/* ── LLM 预设 ── */
+.presets-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 16px;
+}
+.presets-title { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.88); }
+.presets-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 4px; }
+.presets-header-right { display: flex; align-items: center; gap: 10px; }
+.strategy-select { display: flex; align-items: center; gap: 6px; font-size: 12px; color: rgba(255,255,255,0.5); }
+.pca-btn--pool-on { background: rgba(123,127,178,0.22); color: rgba(180,176,224,1); }
+.conc-input {
+  width: 52px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 8px; color: rgba(255,255,255,0.85); font-size: 12px; padding: 5px 8px; outline: none;
+}
+.presets-loading { padding: 40px 0; text-align: center; font-size: 13px; color: rgba(255,255,255,0.25); }
+
+.preset-list { display: flex; flex-direction: column; gap: 8px; }
+
+.preset-card {
+  display: flex; align-items: center; gap: 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08); border-radius: 14px;
+  padding: 14px 16px;
+  transition: border-color 0.2s, background 0.2s;
+}
+.preset-card--active {
+  background: rgba(123,127,178,0.1);
+  border-color: rgba(123,127,178,0.3);
+}
+
+.preset-card-left { flex-shrink: 0; }
+.provider-dot {
+  display: block; width: 10px; height: 10px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.dot-openai    { background: #74c69d; }
+.dot-anthropic { background: #e08060; }
+.dot-qwen      { background: #60aedb; }
+.dot-deepseek  { background: #6090d8; }
+.dot-minimax   { background: #9590c4; }
+.dot-mimo      { background: #ff6a00; }
+.api-format-grid { display: flex; gap: 8px; flex-wrap: wrap; }
+.api-format-grid .toggle-btn { flex: 1; min-width: 0; white-space: nowrap; }
+
+.preset-card-body { flex: 1; min-width: 0; }
+.preset-card-top  { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.preset-name { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.88); }
+.active-badge {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
+  padding: 1px 7px; border-radius: 20px;
+  background: rgba(123,127,178,0.25); color: rgba(169,164,216,0.9);
+  border: 1px solid rgba(123,127,178,0.35);
+}
+.provider-label {
+  font-size: 11px; color: rgba(255,255,255,0.28);
+  background: rgba(255,255,255,0.06); border-radius: 5px; padding: 1px 6px;
+}
+.preset-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; min-width: 0; }
+.preset-model { font-size: 12px; color: rgba(255,255,255,0.55); white-space: nowrap; }
+/* key 独占整行、过长截断带省略号（悬停看全文），不再撑破页面宽度 */
+.preset-key   { flex: 1 1 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; color: rgba(255,255,255,0.28); font-family: 'SF Mono', ui-monospace, monospace; }
+
+.preset-card-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.pca-btn {
+  padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: 500;
+  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
+}
+.pca-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.75); }
+
+/* ── 频道：飞书回调地址 ── */
+.bots-redirect {
+  margin: 4px 0 16px; padding: 14px 16px;
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 12px;
+}
+.bots-redirect-head { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+.bots-redirect-title { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.85); }
+.bots-redirect-hint { font-size: 11px; color: rgba(255,255,255,0.4); }
+.bots-redirect-row { display: flex; gap: 8px; align-items: center; }
+
+/* ── 频道：卡片网格 ── */
+.bots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.bot-card {
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px; padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 5px;
+  transition: opacity 0.2s;
+}
+.bot-card--off { opacity: 0.45; }
+.bot-card-top { display: flex; align-items: center; justify-content: space-between; }
+.bot-plat {
+  font-size: 11px; font-weight: 600; color: rgba(150,160,220,0.95);
+  background: rgba(123,127,178,0.16); padding: 2px 8px; border-radius: 6px;
+}
+.bot-status { font-size: 11px; color: rgba(255,255,255,0.4); }
+.bot-status.on { color: #74c69d; }
+.bot-name { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.9); }
+.bot-appid {
+  font-size: 11px; color: rgba(255,255,255,0.38);
+  font-family: 'SF Mono','Consolas',monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bot-card-actions { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; }
+.bot-card-actions .btn-ghost { font-size: 12px; padding: 4px 10px; }
+.bot-del { color: #d88; }
+
+/* ── 频道弹窗：飞书事件订阅 Webhook 区 ── */
+.bot-webhook-sep {
+  margin: 16px 0 4px; font-size: 11px; color: rgba(255,255,255,0.4);
+  border-top: 1px solid rgba(255,255,255,0.08); padding-top: 12px;
+}
+.bot-webhook-url {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px; padding: 7px 10px;
+}
+.bot-webhook-url code {
+  flex: 1; font-size: 11.5px; color: rgba(150,200,220,0.95);
+  font-family: 'SF Mono','Consolas',monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  user-select: all;   /* 复制兜底失败时，点一下即可全选手动复制 */
+}
+.bot-webhook-url .tb-copy {
+  flex-shrink: 0; font-size: 11px; padding: 3px 10px; border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.6); cursor: pointer; transition: all 0.15s;
+}
+.bot-webhook-url .tb-copy:hover { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.85); }
+.bot-webhook-hint { font-size: 11.5px; color: rgba(255,255,255,0.35); padding: 2px 0; }
+
+/* ── 频道编辑表单 ── */
+.bot-edit-card { padding: 18px 20px; max-width: 480px; }
+.bot-edit-title { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.88); margin: 0 0 14px; }
+.bot-form { display: flex; flex-direction: column; gap: 12px; max-width: 400px; }
+.bot-field { display: flex; flex-direction: column; gap: 5px; }
+.bot-field > span { font-size: 12px; color: rgba(255,255,255,0.55); }
+.bot-field > span em { font-style: normal; color: rgba(255,255,255,0.32); margin-left: 6px; }
+.bot-field--row { flex-direction: row; align-items: center; justify-content: space-between; }
+.bot-input {
+  width: 100%; box-sizing: border-box;
+  background: rgba(0,0,0,0.22); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px; padding: 8px 11px; font-size: 13px;
+  color: rgba(255,255,255,0.85); outline: none;
+  transition: border-color 0.15s;
+}
+.bot-input:focus { border-color: rgba(123,127,178,0.5); }
+.pca-btn--activate {
+  border-color: rgba(123,127,178,0.3); background: rgba(123,127,178,0.1);
+  color: rgba(169,164,216,0.85);
+}
+.pca-btn--activate:hover { background: rgba(123,127,178,0.2); color: rgba(169,164,216,1); }
+.pca-btn--del { color: rgba(200,100,100,0.7); }
+.pca-btn--del:hover { background: rgba(200,80,80,0.12); color: rgba(220,100,100,0.9); }
+.pca-btn--testing, .pca-btn--activating { opacity: 0.6; cursor: default; }
+
+.llm-msg {
+  margin-top: 12px; padding: 10px 14px; border-radius: 10px;
+  font-size: 13px; color: #5ab899;
+  background: rgba(90,184,153,0.1); border: 1px solid rgba(90,184,153,0.2);
+}
+.llm-msg--error {
+  color: #e07878;
+  background: rgba(220,100,100,0.1); border-color: rgba(220,100,100,0.2);
+}
+
+/* ── 编辑 Modal ── */
+.modal-mask {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-box {
+  width: 480px; max-width: 92vw;
+  background: rgba(22,22,34,0.97);
+  backdrop-filter: blur(32px); -webkit-backdrop-filter: blur(32px);
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 18px;
+  padding: 28px 28px 22px;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+}
+.modal-title { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.88); margin-bottom: 20px; }
+.modal-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.modal-field label { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.07em; }
+.modal-input {
+  width: 100%; padding: 9px 12px; border-radius: 9px;
+  background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.1);
+  font-size: 13px; color: rgba(255,255,255,0.82); outline: none;
+  transition: border-color 0.15s; box-sizing: border-box;
+}
+.modal-input:focus { border-color: rgba(123,127,178,0.45); }
+.modal-input::placeholder { color: rgba(255,255,255,0.2); }
+.modal-actions {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 20px; padding-top: 16px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+}
+.modal-actions .save-hint { flex: 1; }
+.modal-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+.modal-field-row .modal-field { margin-bottom: 0; }
+.modal-field--row { flex-direction: row; align-items: center; justify-content: space-between; }
+.modal-field--row > span { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.35); letter-spacing: 0.07em; }
+.thinking-label { display: flex; flex-direction: column; gap: 3px; }
+.thinking-label > span:first-child { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.07em; }
+.thinking-hint { font-size: 11px; color: rgba(255,255,255,0.2); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.preset-meta-item { font-size: 12px; color: rgba(255,255,255,0.35); white-space: nowrap; flex-shrink: 0; }
+/* 思考 / 多模态：图标 + 文字横排，不被挤成竖排 */
+.preset-meta-think, .preset-meta-vision { display: inline-flex; align-items: center; gap: 3px; }
+.preset-meta-think { color: rgba(149,144,196,0.85); background: rgba(149,144,196,0.1); padding: 1px 6px; border-radius: 4px; }
+.preset-meta-vision { color: rgba(122,184,200,0.95); background: rgba(122,184,200,0.12); padding: 1px 6px; border-radius: 4px; }
+.modal-input[type="number"] { -moz-appearance: textfield; }
+.modal-input[type="number"]::-webkit-inner-spin-button,
+.modal-input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* ── 决策轨迹 ── */
+.trace-wrap { display: grid; grid-template-columns: 300px 1fr; gap: 14px; height: calc(100vh - 230px); min-height: 420px; }
+.trace-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; padding-right: 4px; }
+.trace-search { display: flex; gap: 6px; position: sticky; top: 0; padding-bottom: 6px; }
+.trace-search input { flex: 1; min-width: 0; padding: 7px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); color: #fff; font-size: 12px; }
+.trace-search button { padding: 0 12px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.4); background: rgba(123,127,178,0.18); color: #cdd0ee; font-size: 12px; cursor: pointer; }
+.trace-search button:hover { background: rgba(123,127,178,0.3); }
+.trace-hint { color: rgba(255,255,255,0.3); font-size: 12px; padding: 12px; text-align: center; }
+.trace-sess { padding: 9px 11px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.03); cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.trace-sess:hover { background: rgba(255,255,255,0.06); }
+.trace-sess.active { background: rgba(123,127,178,0.16); border-color: rgba(123,127,178,0.45); }
+.ts-top { display: flex; align-items: center; gap: 6px; }
+.ts-src { flex-shrink: 0; font-size: 10px; padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.5); }
+.ts-src.src-feishu { background: rgba(80,150,255,0.18); color: #9cc0ff; }
+.ts-src.src-qqbot { background: rgba(90,200,160,0.18); color: #8fe0c0; }
+.ts-title { font-size: 13px; color: #e8e9f2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-meta { font-size: 11px; color: rgba(255,255,255,0.32); margin-top: 3px; }
+.trace-detail { overflow-y: auto; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; background: rgba(255,255,255,0.02); padding: 16px; }
+.trace-empty { color: rgba(255,255,255,0.3); font-size: 13px; text-align: center; padding-top: 60px; }
+.trace-head { border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px; margin-bottom: 14px; }
+.th-title { font-size: 15px; font-weight: 600; color: #f0f1f8; }
+.th-meta { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 4px; }
+.trace-timeline { display: flex; flex-direction: column; gap: 10px; }
+.tstep { display: flex; flex-direction: column; gap: 5px; }
+.tstep-role { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; }
+.tstep-role.user { color: #c4afc8; }
+.tstep-role.ai   { color: #9aa0d8; }
+.tstep-text { font-size: 13px; line-height: 1.55; color: #d8d9e6; white-space: pre-wrap; word-break: break-word;
+  background: rgba(255,255,255,0.03); border-radius: 8px; padding: 8px 11px; }
+.k-user .tstep-text { background: rgba(196,175,200,0.08); }
+.tstep-files { font-size: 11px; color: #8fe0c0; }
+.k-tool_call, .k-tool_result { padding-left: 14px; border-left: 2px solid rgba(255,255,255,0.08); margin-left: 4px; }
+.tstep-tool { display: flex; align-items: center; gap: 8px; }
+.tool-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
+.tool-badge.call { background: rgba(123,127,178,0.2); color: #b6b9e6; }
+.tool-badge.res  { background: rgba(90,180,140,0.15); color: #8fd8b4; }
+.tool-badge.res.err { background: rgba(224,85,85,0.18); color: #f0a0a0; }
+.tool-toggle { font-size: 11px; color: rgba(255,255,255,0.4); background: none; border: none; cursor: pointer; padding: 2px 4px; }
+.tool-toggle:hover { color: rgba(255,255,255,0.7); }
+.tool-json { font-size: 11px; line-height: 1.5; color: #c2c4d6; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px; padding: 9px 11px; margin: 0; max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+
+/* ── 状态命名 ── */
+.labels-tip { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 16px; padding: 10px 13px;
+  background: rgba(120,170,255,0.09); border: 1px solid rgba(120,170,255,0.22); border-radius: 10px;
+  font-size: 12.5px; line-height: 1.6; color: rgba(255,255,255,0.78); }
+.labels-tip-icon { flex: 0 0 auto; font-size: 14px; line-height: 1.4; }
+.labels-tip b { color: #fff; font-weight: 600; }
+.labels-tip code, .card-head code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+  background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 5px; padding: 1px 6px; color: #ffd9a8; }
+.labels-group-title { display: flex; align-items: center; gap: 10px; margin: 18px 2px 8px; font-size: 12px; font-weight: 600;
+  color: rgba(255,255,255,0.42); text-transform: uppercase; letter-spacing: 0.06em; }
+.labels-filter { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; width: 180px;
+  background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.1); border-radius: 7px; padding: 5px 9px; color: #e6e7f0; font-size: 12px; }
+.labels-filter:focus { outline: none; border-color: rgba(255,255,255,0.28); }
+.labels-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+.label-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: rgba(255,255,255,0.025);
+  border: 1px solid rgba(255,255,255,0.06); border-radius: 9px; }
+.label-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 0 0 40%; }
+.label-key { font-size: 12px; color: #cdd0e4; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.label-default { font-size: 10.5px; color: rgba(255,255,255,0.3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.label-input-wrap { position: relative; flex: 1; min-width: 0; }
+.label-input { width: 100%; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.1); border-radius: 7px;
+  padding: 6px 26px 6px 9px; color: #e6e7f0; font-size: 12.5px; }
+.label-input:focus { outline: none; border-color: rgba(255,255,255,0.3); }
+.label-reset { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; line-height: 1;
+  border: none; background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.55); border-radius: 50%; cursor: pointer; font-size: 13px; }
+.label-reset:hover { background: rgba(255,255,255,0.16); color: #fff; }
+.labels-save-bar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 18px;
+  padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.07); }
+.labels-saved-tip { font-size: 12.5px; color: #7fd6a0; }
+@media (max-width: 720px) { .labels-list { grid-template-columns: 1fr; } }
+</style>
