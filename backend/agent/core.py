@@ -25,7 +25,10 @@ async def _stream_round(client, kwargs):
     yield ('token', delta) 逐字；结束 yield ('final', message)。重试用尽 / 不可重试 → 抛出。"""
     import anthropic
     transient = (anthropic.RateLimitError, anthropic.APITimeoutError,
-                 anthropic.APIConnectionError, anthropic.InternalServerError)
+                 anthropic.APIConnectionError, anthropic.InternalServerError,
+                 # MiniMax 偶发返回空/异常的流式响应 → anthropic SDK 解析时 IndexError/KeyError 越界。
+                 # 视为瞬时：出 token 前退避重试（emitted 守卫保证不会重复输出），多半重试即成。
+                 IndexError, KeyError)
     last = None
     for i in range(len(_RETRY_BACKOFF) + 1):
         emitted = False
