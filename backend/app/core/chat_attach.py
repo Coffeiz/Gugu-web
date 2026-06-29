@@ -323,14 +323,32 @@ def strip_vision_for_history(content):
     return out
 
 
-async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> tuple[str, list, list, list]:
+async def has_image(user_id, attach_ids) -> bool:
+    """这批附件里有没有图片——给上游决定「要不要为这轮强切 vision 模型」。"""
+    for aid in (attach_ids or []):
+        m = await get_meta(user_id, aid)
+        if m and m.get("kind") == "image":
+            return True
+    return False
+
+
+async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, model_cfg=None) -> tuple[str, list, list, list]:
     """把附件解析成：① 注入给模型的增广文本（文本读内容、图片/二进制给提示）
     ② 给前端气泡的附件卡片列表 ③ 图片块列表（仅 vision 模型，喂给模型「看」）。
-    失效/过期的 attach_id 跳过。"""
+    失效/过期的 attach_id 跳过。
+
+    `model_cfg`：**这轮真正要跑的模型**（IM 走 pick_model 选 pool/router，可能 ≠ 顶层 ai）。
+    传了就按它判 vision / media，避免「门控用静态 ai、实跑用别的模型」→ 喂图却看不了 / 不喂却能看
+    的不一致（图时好时坏的根因）。没传则退回顶层 settings.ai（web 路一直用激活模型，一致）。"""
     if not attach_ids:
         return base_message, [], [], []
-    vision = _vision_enabled()
-    media_ok = _media_understanding_enabled()
+    if model_cfg is not None:
+        from agent.llm_select import _is_mimo, use_anthropic_for
+        vision = bool(getattr(model_cfg, "vision", False))
+        media_ok = _is_mimo(model_cfg) and not use_anthropic_for(model_cfg)
+    else:
+        vision = _vision_enabled()
+        media_ok = _media_understanding_enabled()
     voice_ok = _voice_recognition_enabled()   # 配了独立语音识别模型 → 音频/语音也构建 media 交 transcribe
     parts = [base_message] if base_message else []
     cards = []
@@ -358,17 +376,24 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str) -> t
                     raw = await read_bytes(meta)
                     fitted = _fit_image_for_vision(raw, ext)
                     if fitted:
-                        data, media = fitted
-                        images.append({"media_type": media,
+                        data, img_media_type = fitted   # 别用 `media`——那是音视频列表，会被覆盖成字符串 → aug_media 变 str → transcribe 崩
+                        images.append({"media_type": img_media_type,
                                        "b64": base64.b64encode(data).decode()})
                         parts.append(f"\n\n📎 用户上传了图片{tag}（见随附图像）；"
                                      f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
                         continue
                 except Exception:
                     pass   # 读图/压缩失败 → 退回文字提示
-            why = "当前模型看不到图像内容" if not vision else "这张图没法直接看（格式不支持）"
-            parts.append(f"\n\n📎 用户上传了图片{tag}。{why}；"
-                         f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
+            if not vision:
+                # 没有任何能看图的模型 → **当普通文件处理**：正常收下、按需保存，
+                # 别向用户抱怨「看不了图 / 看不到内容」（那样体验很差，用户只是想发个文件）。
+                parts.append(f"\n\n📎 用户发来图片{tag}（图片文件；当前没有能看图的模型，"
+                             f"**就当普通文件正常处理**——别说「看不了图 / 看不到内容」，正常回应；"
+                             f"用户要存就 save_uploaded_file(attach_id) 存进文件库）。")
+            else:
+                # vision 开着但这张没喂成（格式不支持 / 读图失败）
+                parts.append(f"\n\n📎 用户上传了图片{tag}（这张没法直接看：格式不支持）；"
+                             f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
         elif meta["kind"] in ("audio", "video", "voice"):
             is_voice = meta["kind"] == "voice"
             is_video = meta["kind"] == "video"

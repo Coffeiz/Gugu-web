@@ -146,6 +146,15 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     profile = DefaultProfile()
     settings = get_settings()
     model_cfg = pick_model(settings, req)   # 解析层：active/pool/router 选一个模型配置
+    # 带图但这轮 pick 到的模型看不了图 → 强切到可用的 vision 模型（pool/random 常轮到非 vision
+    # 模型，否则图被丢、咕咕回「看不了图」时好时坏）。下面 resolve 也按这个 model_cfg 判 vision。
+    if getattr(req, "attachments", None) and not getattr(model_cfg, "vision", False):
+        from app.core import chat_attach as _ca
+        if await _ca.has_image(user_id, req.attachments):
+            from agent.llm_select import vision_model as _vm
+            _vis = _vm(settings)
+            if _vis is not None:
+                model_cfg = _vis
 
     import app.db.session as _sess
     if _sess._engine is None:
@@ -202,7 +211,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
-            user_id, getattr(req, "attachments", None) or [], req.message)
+            user_id, getattr(req, "attachments", None) or [], req.message, model_cfg=model_cfg)
         if getattr(req, "attachments", None):   # 诊断：带附件时记 kind/ext/media 数，排查语音为何没转写
             import logging as _lg
             _lg.getLogger("agent.runner").info(
