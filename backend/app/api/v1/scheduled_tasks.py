@@ -74,6 +74,17 @@ async def list_tasks(user: User = Depends(get_current_user), db: AsyncSession = 
     rows = (await db.execute(
         select(ScheduledTask).where(ScheduledTask.user_id == user.id).order_by(ScheduledTask.id.desc())
     )).scalars().all()
+    # 读时顺手清过期一次性任务：不只靠 worker 的 reconcile GC——万一 worker 滞后/没跑，
+    # 面板自己也不显（也不留）过点的 @once。判据与 GC 同（过点超 120s 宽限，见 app/scheduled_tasks）。
+    from app.scheduled_tasks import _once_expired
+    from app.core.tz import local_now
+    now_naive = local_now().replace(tzinfo=None)
+    expired = [t for t in rows if _once_expired(t.cron, now_naive)]
+    if expired:
+        for t in expired:
+            await db.delete(t)
+        await db.commit()
+        rows = [t for t in rows if t not in expired]
     return {"tasks": [_to_resp(t) for t in rows]}
 
 
