@@ -139,9 +139,11 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     return allFolders.value.find(f => f.id === id) ?? null
   }
 
-  // 实时：咕咕/IM 改了文件库 → 重新拉取。走 _checkVersion（先比版本号）：真变了才整库重拉 + 重渲染；
-  // 没变（如重连 catch-up 时文件其实没动）直接跳过，省掉一次几百项的大重绘。
-  watch(() => useLiveStore().rev.files, () => { _checkVersion() })
+  // 实时：咕咕/IM 改了文件库 → 已加载过就重新拉取（无条件 refresh）。
+  // ⚠️ 别在这里改走 _checkVersion 做版本门控——/files/version 的 GET 可能被浏览器缓存、拿到旧版本号
+  //    → 以为没变就不刷新 → IM 存文件后项目卡片文件数不实时更新（踩过）。卡顿修复靠 live.js 重连错峰，
+  //    不靠这里省刷新。
+  watch(() => useLiveStore().rev.files, () => { if (loaded.value) refresh() })
 
   return {
     allFiles, allFolders, loaded, loading,
