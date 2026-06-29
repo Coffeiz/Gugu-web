@@ -9,12 +9,13 @@
 
 ## [Unreleased]
 
-## [0.14.2] - 2026-06-29 · 防「说了没做」意图守卫（A-lite+B 的 B）+ mimo 深度思考可与多轮工具共存 + 反思走 json_object 结构化输出
+## [0.14.2] - 2026-06-29 · 防「说了没做」意图守卫（A-lite+B 的 B）+ mimo 深度思考可与多轮工具共存 + 反思走 json_object 结构化输出 + 个人设置 UI（重开接续 / 接入咕咕独立面板）
 
 ### 改进
 
 - **意图守卫:治「说了要做却没动手」（咕咕"我去查一下"然后停住）**（`agent/core.py`）：回复循环里「自由文字+无工具=终止态」，模型随口宣告意图就触发结束。新增第三类确定性守卫 `_announces_intent`——检测「**我去/我来/这就/稍等我/让我/接下来 + 查/搜/建/改/记/整理…**」这类**将来式宣告**且本轮零工具 → 逼一轮当场调工具（与现有 narration「假装已做完」、decision「擅自不做」守卫并排，anthropic/openai 两路都接）。要求明确的"将要"引导词（避免裸"我+动词"误伤如「我改天再看」）；**问句/征询硬排除**（「要我去查吗?」是在等用户拍板，命中即放过、绝不误逼）。只追一次、不死循环。属「A-lite+B」方案的 phase 1（B），finish 工具 + 翻转终止规则（A-lite 结构件）留待观察后再上。详见 `docs/agent-多步执行与防停顿.md`。
 - **mimo 深度思考可与「多轮工具调用」共存 + 记忆/反思走结构化输出（json_object）**（`agent/core.py` + `agent/memory/_llm.py`）：对照 mimo 官方「深度思考」「结构化输出」文档查漏补缺——① **深度思考**：openai 路此前**完全没读 `reasoning_content`**，而 mimo 文档硬性要求「多轮 Function Call 必须把上一轮的 `reasoning_content` 完整回传，否则 400」→ 开思考时 mimo 一旦多步调工具就会 400（此前靠默认关思考绕开）。现在流式里捕获 `reasoning_content`、在**所有** assistant 回填点（工具轮 / narration·decision·verify 各 nudge 轮）统一带回（`_asst` 收口）；只在**当轮内存**回传、不入库（openai 路中间轮本就不持久化），思考关时 `reasoning` 恒空、行为与原先逐字一致。② **结构化输出**：记忆/反思的 `complete_json` 对 mimo 开 `response_format={"type":"json_object"}`（mimo 不支持 json_schema，仅 json_object）让正文必为合法 JSON，比纯靠 prompt + `_parse_json` 抠更稳；并显式 `thinking:disabled`——否则 reasoning 与正文共用 `max_completion_tokens`、大 JSON（如反思回显整份 facts）易被推理挤到截断。两项都**仅 mimo 生效**（`_is_mimo` 门控），MiniMax/Anthropic 与其它 openai 兼容厂商行为不变。
+- **个人设置：加「重开浏览器接续上次对话」开关 + 接入咕咕独立成面板**（`ProfileModal.vue` + `GuguChat.vue`）：① 个人设置→咕咕设置新增「对话」区——可选**重开浏览器时「接着上次」/「开新对话」**（默认开新，与历史一致）。会话 id 除 sessionStorage（本标签刷新保留）外再存 localStorage（`gugu_last_session_id`，跨浏览器留最近一段），GuguChat `onMounted` 据设置 `gugu_reopen_resume` 决定接续上次还是开新对话+问候；那段会话被删则退回新对话。② 把「**接入咕咕**」（飞书/QQ/微信 扫码连接、机器人启停删）从「咕咕设置」面板拆出、单独成一个 nav 面板（放咕咕设置下面），咕咕设置只留 精力 / 回复风格 / 对话 / 记忆。
 
 ## [0.14.1] - 2026-06-29 · prompt 缓存真正生效 + 独立语音识别模型 + 密码找回 + IM 发图/多图修复 + 缩略图/拖拽/定时等体验打磨
 
