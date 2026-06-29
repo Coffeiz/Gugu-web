@@ -97,18 +97,3 @@ def pick_model(settings, ctx=None):
                 return _pick_pool(pool, getattr(presets, "pool_mode", "random"))
     # active（默认）/ 兜底：用顶层 settings.ai（activate 时已把激活预设同步到这里）
     return settings.ai
-
-
-def vision_model(settings):
-    """挑一个支持 vision 的模型配置：顶层 ai（若标了 vision）优先，否则 presets 里 vision=True 的
-    （先 in_pool 的、再任意）。都没有 → None。用于「这轮带图但 pick 到的模型看不了图」时强切。"""
-    ai = getattr(settings, "ai", None)
-    if ai is not None and getattr(ai, "vision", False):
-        return ai
-    presets = getattr(settings, "ai_presets", None)
-    items = list(getattr(presets, "items", None) or []) if presets else []
-    vis = [it for it in items if getattr(it, "vision", False)]
-    if not vis:
-        return None
-    pooled = [it for it in vis if getattr(it, "in_pool", False)]
-    return (pooled or vis)[0]

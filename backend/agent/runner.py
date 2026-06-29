@@ -146,15 +146,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     profile = DefaultProfile()
     settings = get_settings()
     model_cfg = pick_model(settings, req)   # 解析层：active/pool/router 选一个模型配置
-    # 带图但这轮 pick 到的模型看不了图 → 强切到可用的 vision 模型（pool/random 常轮到非 vision
-    # 模型，否则图被丢、咕咕回「看不了图」时好时坏）。下面 resolve 也按这个 model_cfg 判 vision。
-    if getattr(req, "attachments", None) and not getattr(model_cfg, "vision", False):
-        from app.core import chat_attach as _ca
-        if await _ca.has_image(user_id, req.attachments):
-            from agent.llm_select import vision_model as _vm
-            _vis = _vm(settings)
-            if _vis is not None:
-                model_cfg = _vis
+    # 不强切 vision 模型：这轮 pick 到的模型看得了图就识图、看不了就当普通文件存（下面 resolve
+    # 按 model_cfg 判 vision）。避免硬切到「标了 vision 实则不收图片块」的模型（如 MiniMax 兼容口）。
 
     import app.db.session as _sess
     if _sess._engine is None:
@@ -290,6 +283,9 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             content = h.content_json if h.content_json is not None else (h.content or "")
             anthr_messages.append({"role": h.role, "content": content})
         anthr_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, True)})
+        # 清洗：去孤儿 tool_use/tool_result、空块、块里的 None 字段（MiniMax 严格校验，否则
+        # 历史里带非标字段/不配对工具块会报 `text is not set` 等）。**IM 路此前漏了这步，web 路一直有**。
+        anthr_messages = sanitize.sanitize_messages(anthr_messages)
         anthr_initial_len = len(anthr_messages)
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True, model_cfg=model_cfg)
     else:

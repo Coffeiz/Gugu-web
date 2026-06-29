@@ -111,15 +111,22 @@ def _nonempty_block(b) -> bool:
     return True
 
 
+def _clean_block(b):
+    """去掉 block 里值为 None 的字段。MiniMax SDK 响应对象序列化进历史时常带 `caller`/`citations`/
+    `parsed_output`=None 等**非请求字段**，回发给 API 时严格校验可能拒（如 `text is not set`）。
+    只删 None 值（真实字段 text/thinking/signature/id/input… 都非 None，保留）。"""
+    return {k: v for k, v in b.items() if v is not None} if isinstance(b, dict) else b
+
+
 def _to_norm(m) -> dict:
-    """把一条消息规整成 {role, content: [blocks]}（字符串 → text block；丢空 text block）。"""
+    """把一条消息规整成 {role, content: [blocks]}（字符串 → text block；丢空 text block；清 None 字段）。"""
     c = m.get("content")
     if isinstance(c, str):
         blocks = [{"type": "text", "text": c}] if c.strip() else []
     elif isinstance(c, list):
-        blocks = [b for b in c if _nonempty_block(b)]
+        blocks = [_clean_block(b) for b in c if _nonempty_block(b)]
     elif c:
-        blocks = [c]
+        blocks = [_clean_block(c)]
     else:
         blocks = []
     return {"role": m.get("role"), "content": blocks}
