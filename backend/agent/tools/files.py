@@ -251,15 +251,25 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
     except Exception as e:
         return {"error": f"读取失败：{str(e)[:80]}", "name": nm}
     mode = spec.get("mode", "replace_all")
+    # `change`：一句话改动摘要——给模型「反馈用户改了啥」的事实依据（按回执说，别自己编）。
+    def _clip(s, n=24):
+        s = (s or "").replace("\n", " ")
+        return s[:n] + ("…" if len(s) > n else "")
     if mode == "replace_all":
         new = spec.get("content", "")
+        change = f"整体覆盖（{len(old)} → {len(new)} 字）"
     elif mode == "append":
-        new = old + spec.get("content", "")
+        add = spec.get("content", "")
+        new = old + add
+        change = f"末尾追加 {len(add)} 字"
     elif mode == "find_replace":
         find = spec.get("find", "")
         if not find or find not in old:
             return {"error": "未找到要替换的内容（find）", "name": nm}
-        new = old.replace(find, spec.get("replace", ""))
+        rep = spec.get("replace", "")
+        n = old.count(find)
+        new = old.replace(find, rep)
+        change = f"替换 {n} 处：「{_clip(find)}」→「{_clip(rep)}」"
     else:
         return {"error": f"未知 mode: {mode}", "name": nm}
     data = new.encode("utf-8")
@@ -268,7 +278,7 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
     f.size = _fmt_size(len(data))
     f.updated_at = datetime.utcnow()
     await db.commit()
-    result = {"success": True, "file_id": f.id, "name": nm, "new_size": f.size}
+    result = {"success": True, "file_id": f.id, "name": nm, "new_size": f.size, "change": change}
     # P2c · 内容骤降告警：replace_all 最容易把整段覆盖丢。改后显著变短时确定性提示模型核对，
     # 不全靠它自己「读回来发现」（配合 skills.md「改正文必须 read_file 读回比对」铁律）。
     if len(old) >= 200 and len(new) < len(old) * 0.5:
