@@ -42,7 +42,7 @@ _inflight: set = set()                         # 在跑任务集：背压计数 
 #    纯附件（图/文件没配文字）= 多半还在补图 / 正手打指令 → 给更长窗口等后面的指令（先发图、隔
 #    几秒再打「存一下」也能并进同一轮，否则指令那轮手上没图、咕咕反问「存什么」）。
 DEBOUNCE_SEC = 1.0          # 带文字：用户说完了，快速处理
-DEBOUNCE_ATT_SEC = 6.0     # 纯附件：等后续指令 / 更多图（网关已秒回「收到」，不怕这点延迟）
+DEBOUNCE_ATT_SEC = 1.0     # 纯附件：与文字同 1s（reset 仍能攒连发的图；快，但发完图停顿>1s 再打指令会拆轮）
 _user_buffers: dict[str, list] = {}            # puid -> [(msg_id, payload)] 待处理缓冲
 _user_deadline: dict[str, float] = {}          # puid -> 防抖截止时刻（loop.time()），每条新消息推后
 _user_flush: dict[str, asyncio.Task] = {}      # puid -> 正在跑的 flush loop（每用户至多一个）
