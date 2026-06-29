@@ -264,3 +264,23 @@ body.phys-dragging .sidebar {
 }
 /* pointer 驱动拖拽没有原生 drag 光标，整页给个抓取态补回手感 */
 body.phys-dragging, body.phys-dragging * { cursor: grabbing !important; }
+
+/* 多文件拖拽数量徽章（右上角圆形数字） */
+.phys-drag-badge {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  background: var(--color-primary, #6c6ef5);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 22px;
+  border-radius: 99px;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+  z-index: 1;
+}
