@@ -1,12 +1,12 @@
-"""轻量 Intent Router（关键词 + 状态机）。
+"""轻量 Intent Router（精简版）。
 
-网关在**入队前**调用 `decide(text, state)`：据当前 State Manager 状态决定——
-- 状态查询（还在吗）/ 情绪（急、快点）/ 闲聊确认（嗯、好的）→ 短路，网关直接回话术、不进主模型、不入队
-- 取消（算了、停一下）→ 置取消标志 + 回话术（core 工具循环协作中断）
-- 其余 → 正常入队给主 Agent
+网关在**入队前**调用 `decide(text, state)`。**刻意只保留两件确定性的短路**，其余一律进主模型：
+- 斜杠命令 `/stop` `/status` `/help`（显式、确定）。
+- 咕咕**正忙时**回答「是否在思考」类进度追问（还在吗 / 查了吗 / 好了吗 / 进度）→ 回一句状态、不打断。
 
-关键词版（P0）。将来换小模型分类（输出 `{intent, confidence}`）时 `decide()` 接口不变。
-原则：**短词歧义大，宁可漏判进主模型、不误判短路**——整条消息匹配，取消/情绪只在短消息上判。
+**去掉了原先的关键词短路**（嗯/好/谢谢、催、算了…）：它会把『好/嗯』这类确认 / 真实意图当闲聊吞掉、
+又把带话题的句子误判（如「法拉利怎么这么慢」当成催咕咕）。现在这些一律交主模型，由它据上下文回应。
+取消改走显式 `/stop`（不再靠「算了」关键词猜）。`classify()` 仅历史保留、decide 不再用。
 """
 from agent import runtime_state as st
 
@@ -29,9 +29,10 @@ _ACK = {
     "谢谢", "谢了", "多谢", "thanks", "thx", "哈哈", "哈哈哈", "嘿嘿", "赞", "👍", "👌", "🙏",
 }
 
-# 整条命中（去标点后）才算状态查询
+# 整条命中（去标点后）才算「是否在思考」的进度追问（仅咕咕在忙时短路回状态）
 _PROGRESS = {
     "还在吗", "在吗", "在不在", "好了吗", "好了没", "弄好了吗", "完成了吗", "做完了吗",
+    "查了吗", "查到了吗", "查好了吗", "搜到了吗", "搜好了吗", "找到了吗", "找到没",
     "怎么没反应", "怎么没回", "怎么没动静", "咋还没好", "进度", "进度呢", "怎么样了", "咋样了", "到哪了",
     "进度怎么样了", "进度怎么样", "进度如何", "现在怎么样了", "做到哪了", "弄到哪了",
 }
@@ -120,18 +121,26 @@ def reply_awaits_answer(text: str) -> bool:
     return any(m in t[-24:] for m in _AWAIT_MARKERS)
 
 
-def decide(text: str, state: str, awaiting: bool = False) -> dict:
-    """返回 {action, reply?}。
-    action：
-      'reply'  网关直接回 reply（短路，不入队）
-      'cancel' 置取消标志 + 回 reply（不入队）
-      'drop'   忽略（不回不入队）
-      'agent'  正常入队给主 Agent
-    `awaiting`：咕咕上轮以提问/确认收尾、正等用户回话——此时「嗯/好/算了」是回答，须放行进 agent。
-    """
-    busy = state and state != st.IDLE
+def _is_progress(text: str) -> bool:
+    """整条是『还在吗 / 查了吗 / 好了吗 / 进度』这类「是否在思考」的进度追问。"""
+    raw = (text or "").strip()
+    if raw in _PUNCT_PROGRESS:
+        return True
+    t = raw.strip(_STRIP)
+    return bool(t) and t in _PROGRESS
 
-    # 斜杠强制命令优先：确定性、绕过关键词分类。/stop 无条件置取消标志（不靠"是否判定为忙"）
+
+def decide(text: str, state: str, awaiting: bool = False) -> dict:
+    """返回 {action, reply?}。action：'reply'(短路直接回) / 'cancel'(置取消标志+回) / 'agent'(入队给主 Agent)。
+
+    **精简版**：只做两件确定性短路，其余一律 'agent' 交主模型——
+      ① 斜杠命令 /stop /status /help；
+      ② 咕咕**正忙时**的进度追问（还在吗/查了吗/好了吗/进度）→ 回一句状态、不打断、不重复入队。
+    **不再用关键词把「嗯/好/谢谢/催/算了」短路掉**（曾把确认吞掉、把带话题的句子误判）。
+    `awaiting` 保留兼容、当前不参与路由；取消走显式 `/stop`。
+    """
+    busy = bool(state and state != st.IDLE)
+
     cmd = parse_command(text)
     if cmd == "stop":
         return ({"action": "cancel", "reply": "🛑 已停止当前任务"} if busy
@@ -141,25 +150,7 @@ def decide(text: str, state: str, awaiting: bool = False) -> dict:
     if cmd == "help":
         return {"action": "reply", "reply": _HELP_TEXT}
 
-    intent = classify(text)
-
-    if intent == PROGRESS:
+    # 只保留「是否在思考」的进度追问：咕咕在忙、且整条是进度问询 → 回状态、别打断；其余全进 agent
+    if busy and _is_progress(text):
         return {"action": "reply", "reply": _PROGRESS_REPLY.get(state, _PROGRESS_REPLY[st.IDLE])}
-    if intent == EMOTION:
-        # 催促只在咕咕**真的在忙**（思考/搜索/生成/等确认）时才拦截，回一句状态化的「还在想/正在弄」安抚；
-        # 空闲时根本没在干活，回「在的你说」是答非所问 → 不拦，交主 Agent 正常回应。
-        return ({"action": "reply", "reply": _PROGRESS_REPLY.get(state, _EMOTION_BUSY)} if busy
-                else {"action": "agent"})
-    if intent == ACK:
-        # 咕咕刚问了问题、正等回话 → 这声「嗯/好」是确认/回答，必须放行进 agent（别当闲聊吞了）
-        if awaiting:
-            return {"action": "agent"}
-        # 否则：任务进行中的「嗯/好」多半是搭话——别打断也别喂主模型；空闲时轻量回一句
-        return {"action": "drop"} if busy else {"action": "reply", "reply": _ACK_REPLY}
-    if intent == CANCEL:
-        # 咕咕在等确认时「算了/不用」是回答（否）→ 交 agent 让它收场，别当成「取消任务」
-        if awaiting and not busy:
-            return {"action": "agent"}
-        # 只有真在忙才当取消；空闲时「算了」可能是「算了换个想法」→ 交主模型
-        return {"action": "cancel", "reply": _CANCEL_REPLY} if busy else {"action": "agent"}
     return {"action": "agent"}
