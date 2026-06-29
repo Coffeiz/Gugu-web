@@ -13,6 +13,7 @@
 
 - **密码找回（邮件重置链接）**（`api/v1/auth.py` + `ForgotPassword`/`ResetPassword` 页）：`POST /auth/forgot-password` 按邮箱查用户 → `secrets.token_urlsafe(32)` 存 Redis（`pwdreset:tok`，30 分钟 TTL）→ 线程池发重置邮件；邮箱不存在 / 冷却中**都返回同一句**（防枚举），同邮箱 60s 冷却防刷。`POST /auth/reset-password` 校验 token + 新密码 ≥8 位 → 改密 → 删 token（一次性）。重置链接基址取请求 `Origin`（用户当前站点）不写死域名；登录页加「忘记密码？」入口，`reset-password` 不加 `authPublic`（已登录点邮件链接也可用）。
 - **独立语音识别模型（与主模型解耦）**（`settings.voice` + `agent/voice.py`）：语音 / 音视频转写改用**独立配置的 ASR 模型**把音频转成文字、再交主模型处理，主模型不再被强切 mimo（根治「主模型非 mimo 时媒体块被静默丢弃、语音被当文件」）。`model` 留空 = 未配置 → 收到语音咕咕直接回「不支持」。固定走 OpenAI 兼容 `input_audio`（chat + base64，纯 ASR 不传 thinking）；Admin「Agent 配置」加语音模型卡（model / base_url / api_key / provider，含 MiMo·Qwen 模板按钮）。
+- **IM 连发多图聚合 + 微信图片接收**（`worker.py` + `agent/adapters/wechat.py`·`qq.py`）：QQ/微信「一张图一条消息」，连发的图 + 后面的指令本是一次表达。worker 加**输入防抖**——投 per-user 缓冲、每条把截止时刻推后，**静默 1s** 才把缓冲里所有消息合并成**一轮** `run_collect`（拼文字 + 合并所有附件）、**只回一次**（reset 续上连发的图；ack 推迟到 flush，崩了 claim_stale 60s 重投；**仅单 worker 有效**）。网关侧「收到啦」秒回 ack 加 **10s 冷却**（连发只一次）。**微信图片接入**：iLink 媒体首版只文本，补 `image_item` → 下载 CDN `media.full_url` → **AES-128-ECB 解密**（key=`aeskey` hex 16B）+ 去 PKCS7 → 暂存（kind=image）→ 接上 QQ 同一链路（vision 看图 + 存）；file/voice 项格式未知暂留日志待补。
 
 ### 改进
 
@@ -22,6 +23,9 @@
 
 ### 修复
 
+- **IM 发图咕咕「看不到 / 没收到」**（`core/chat_attach.py` + `agent/runner.py` + `llm_select.py`）：① **图片识别崩溃真凶**——`resolve_for_message` 图片分支 `data, media = fitted` 把音视频列表变量 `media` 覆盖成图片 mime 字符串 → 返回的 `aug_media` 变 `str` → `run_collect` 见 `if aug_media:`（非空串=真）触发 `voice.transcribe(str)` → `'str' object has no attribute 'get'` 崩 → 图那轮被 except 吞、ack 丢弃。改名 `img_media_type` 根治（凡喂图必崩的既有 bug；「时好时坏」= 池子轮到非 vision 模型不喂图就不崩）。② vision 门控改用**这轮真正要跑的模型**（resolve 加 `model_cfg` 入参）——IM 走 `pick_model` 选 pool/router 可能 ≠ 顶层 ai，旧代码用静态 `settings.ai.vision` 判 → 喂图/看图不一致；带图且选中模型非 vision → 强切 `vision_model`；没 vision 模型则图当普通文件处理（别喊「看不了图」）。
+- **保存上传附件传项目名当 id 直接崩**（`tools/files.py`）：`_as_int`/`_i` 解析失败返回原字符串而非 None → 非数字项目名流进整数主键查询 → asyncpg `DataError` 崩（`save_uploaded_file` 等）。改成失败返 None，由上层干净报错让模型用 `list_projects` 拿 id 重试。
+- **语音 ffmpeg 找不到（进程 PATH 收窄）**（`agent/voice.py`）：裸 `"ffmpeg"` 在 setsid/systemd 起的进程里 PATH 找不到 → `create_subprocess_exec` `FileNotFoundError` → 转码失败、语音识别不了。复用 `media_transcode._ffmpeg_bin()`（PATH → `/usr/bin/ffmpeg` 等绝对路径兜底）。
 - **网关把「嗯/好」等确认吞掉**（`agent/router.py`）：IM 网关原先用关键词把「嗯/好/谢谢」这类 ACK 短路回「嗯嗋～」或 drop，吃掉用户真实意图（如咕咕说「我去查」后用户回「好」被吞、搜索没接上）。**只去掉这一类 ACK 短路**——现在「嗯/好/谢谢」一律交主模型据上下文回应。**其余保留**：斜杠命令；咕咕**在忙（思考/搜索/生成/等确认）时**的进度追问（还在吗/查了吗/好了吗/进度，顺手补「查了吗/搜到了吗」进词表）与催促（急/快点）→ 回一句状态、不打断；在忙时取消（算了/停）→ 中断任务。
 - **说要查却不查（只口头宣告不执行）**（`prompts/skills.md`）：「有没有 X 新闻 / 帮我查 Y」→ 咕咕回「我去查一下」就结束这轮、干等用户再问「查了吗」才动手。强化：**说了要查/要做就这一轮真发出工具调用**，别只宣告然后停。
 - **要提醒却没真建定时任务（只口头答应 / 谎称已建）**（`prompts/skills.md`）：用户明说「中午提醒我修 bug」，咕咕回「好~12点提醒你」却没调 `create_scheduled_task`，甚至「目前没有定时任务」之后又谎称「我新建了」。根因：旧指针对**已明确**的提醒请求也走「先确认一句」流程，给了模型「口头应承当确认、不落地」的口子。改：**明确要提醒 / 定时的请求 → 这一轮立刻调 `create_scheduled_task` 建好、拿 success 再回话**（只有「是否要设定时」本身不明确才先问）；红线绑死到话术——「会提醒你 / 已设好提醒」在本轮工具没收到 `success` 前一个字不许说，谎称「我新建了」是最严重失败。线上验证：「中午12点提醒我修bug」→ 真建 `@once` 任务 + 据实回执。
