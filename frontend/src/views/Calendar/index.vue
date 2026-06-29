@@ -267,17 +267,12 @@
         <div class="reminder-section">
           <div class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</div>
           <div v-for="(r, i) in reminders" :key="i" class="reminder-item">
-            <span class="reminder-lead">{{ leadLabelOf(r.leadMin) }}</span>
-            <button class="reminder-del" @click="removeReminderAt(i)" title="移除"><PhX :size="10" weight="bold" /></button>
-          </div>
-          <div v-if="addingReminder" class="reminder-add">
-            <select v-model="newLeadMin" class="lead-select">
+            <select v-model.number="r.leadMin" class="lead-select">
               <option v-for="o in LEAD_OPTIONS" :key="o.min" :value="o.min">{{ o.label }}</option>
             </select>
-            <button class="reminder-add-btn" @click="addReminderLead">添加</button>
-            <button class="reminder-cancel" @click="addingReminder = false" title="取消"><PhX :size="10" weight="bold" /></button>
+            <button class="reminder-del" @click="removeReminderAt(i)" title="移除"><PhX :size="10" weight="bold" /></button>
           </div>
-          <button v-else class="reminder-add-toggle" @click="addingReminder = true">＋ 添加提醒</button>
+          <button class="reminder-add-toggle" @click="addReminder">＋ 添加提醒</button>
           <div class="chan-block" v-if="reminders.length">
             <div class="reminder-label">渠道</div>
             <div class="chan-chips">
@@ -333,17 +328,12 @@
         <div class="reminder-section">
           <div class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</div>
           <div v-for="(r, i) in reminders" :key="i" class="reminder-item">
-            <span class="reminder-lead">{{ leadLabelOf(r.leadMin) }}</span>
-            <button class="reminder-del" @click="removeReminderAt(i)" title="移除"><PhX :size="10" weight="bold" /></button>
-          </div>
-          <div v-if="addingReminder" class="reminder-add">
-            <select v-model="newLeadMin" class="lead-select">
+            <select v-model.number="r.leadMin" class="lead-select">
               <option v-for="o in LEAD_OPTIONS" :key="o.min" :value="o.min">{{ o.label }}</option>
             </select>
-            <button class="reminder-add-btn" @click="addReminderLead">添加</button>
-            <button class="reminder-cancel" @click="addingReminder = false" title="取消"><PhX :size="10" weight="bold" /></button>
+            <button class="reminder-del" @click="removeReminderAt(i)" title="移除"><PhX :size="10" weight="bold" /></button>
           </div>
-          <button v-else class="reminder-add-toggle" @click="addingReminder = true">＋ 添加提醒</button>
+          <button class="reminder-add-toggle" @click="addReminder">＋ 添加提醒</button>
           <div class="chan-block" v-if="reminders.length">
             <div class="reminder-label">渠道</div>
             <div class="chan-chips">
@@ -1244,7 +1234,7 @@ function openEditForm(ev, nativeEv, useMousePos = false) {
 // ── 活动绑定的提醒（定时任务）：可加多个，每个用「提前量」下拉选；渠道按用户已绑（web + feishu/qq/wechat）勾选 ──
 // 加/编辑两个表单共用；提醒在「保存活动」时一并对账落地（新增建、删除的删、改渠道）。
 const LEAD_OPTIONS = [
-  { label: '准点',        min: 0 },
+  { label: '活动开始时',  min: 0 },
   { label: '提前 5 分钟', min: 5 },
   { label: '提前 15 分钟', min: 15 },
   { label: '提前 30 分钟', min: 30 },
@@ -1257,8 +1247,6 @@ const CHAN_LABEL = { web: 'web', feishu: '飞书', qq: 'QQ', wechat: '微信' }
 const imChannels = computed(() => authStore.user?.imChannels ?? [])   // 用户已绑的 IM 平台
 const reminders          = ref([])         // [{ id?, leadMin }]，可多个
 const reminderChannels   = ref(['web'])    // 渠道（web + 已绑 IM），该活动的提醒共用
-const newLeadMin         = ref(30)         // 添加用：下拉选的提前量（分钟）
-const addingReminder     = ref(false)      // 待办式：点「＋ 添加提醒」才展开选择
 const removedReminderIds = ref([])         // 编辑里删掉的已存在提醒 id，保存时真删
 
 function leadLabelOf(min) { return LEAD_OPTIONS.find(o => o.min === min)?.label || `提前 ${min} 分钟` }
@@ -1268,10 +1256,9 @@ function toggleReminderChannel(ch) {
   if (set.size === 0) set.add(ch)   // 至少留一个
   reminderChannels.value = [...set]
 }
-function addReminderLead() {
-  if (!reminders.value.some(r => r.leadMin === Number(newLeadMin.value)))   // 同提前量不重复加
-    reminders.value.push({ leadMin: Number(newLeadMin.value) })
-  addingReminder.value = false
+function addReminder() {
+  // 点一下就建一条提醒（默认提前 30 分钟），之后用它自己的下拉改时间
+  reminders.value.push({ leadMin: 30 })
 }
 function removeReminderAt(i) {
   const r = reminders.value[i]
@@ -1282,8 +1269,6 @@ function resetReminder() {
   reminders.value = []
   reminderChannels.value = ['web']
   removedReminderIds.value = []
-  newLeadMin.value = 30
-  addingReminder.value = false
 }
 
 function _pad2(n) { return String(n).padStart(2, '0') }
@@ -1651,9 +1636,9 @@ async function saveEvent() {
 .sidebar-ev-time { font-size: 11px; font-weight: 600; color: var(--accent, #7b7fb2); margin-right: 3px; font-variant-numeric: tabular-nums; }
 .popup-row { display: flex; gap: 6px; align-items: center; }
 .popup-row > :first-child { flex: 1; min-width: 0; }
-.time-box { display: inline-flex; align-items: center; gap: 2px; width: auto; padding: 5px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); transition: border-color 0.15s, box-shadow 0.15s; }
+.time-box { display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; box-sizing: border-box; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); transition: border-color 0.15s, box-shadow 0.15s; }
 .time-box:focus-within { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
-.time-inner { border: none; background: none; outline: none; font-size: 12px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028; padding: 0; width: 56px; font-variant-numeric: tabular-nums; }
+.time-inner { border: none; background: none; outline: none; font-size: 13px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028; padding: 0; width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
 .time-dash { color: #8a8fa8; font-size: 12px; font-weight: 600; }
 .ev-type-badge {
   display: inline-block; vertical-align: middle; margin-left: 4px;
@@ -1747,7 +1732,7 @@ async function saveEvent() {
 .reminder-section { display: flex; flex-direction: column; gap: 6px; padding-top: 7px; border-top: 1px solid rgba(123,127,178,0.18); }
 .reminder-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .reminder-label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: #8a8fa8; }
-.reminder-item { display: flex; align-items: center; justify-content: space-between; gap: 6px; background: rgba(123,127,178,0.08); border-radius: 7px; padding: 3px 6px 3px 9px; }
+.reminder-item { display: flex; align-items: center; gap: 6px; }
 .reminder-lead { font-size: 11px; font-weight: 600; color: #65688f; }
 .reminder-del { display: flex; align-items: center; padding: 2px; border: none; background: none; cursor: pointer; color: #b07858; border-radius: 5px; }
 .reminder-del:hover { background: rgba(176,120,88,0.12); }
@@ -1757,7 +1742,7 @@ async function saveEvent() {
 .reminder-add-btn:hover { background: rgba(123,127,178,0.2); }
 .reminder-cancel { flex-shrink: 0; display: flex; align-items: center; padding: 4px; border: none; background: none; cursor: pointer; color: #8a8fa8; border-radius: 6px; }
 .reminder-cancel:hover { background: rgba(0,0,0,0.06); }
-.reminder-add-toggle { align-self: flex-start; padding: 4px 10px; border-radius: 8px; border: 1px dashed rgba(123,127,178,0.4); background: none; color: #8a8fa8; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
+.reminder-add-toggle { width: 100%; box-sizing: border-box; text-align: center; padding: 6px 10px; border-radius: 8px; border: 1px dashed rgba(123,127,178,0.4); background: none; color: #8a8fa8; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
 .reminder-add-toggle:hover { border-color: rgba(123,127,178,0.7); color: #65688f; background: rgba(123,127,178,0.06); }
 .chan-block { display: flex; flex-direction: column; gap: 5px; }
 .chan-chips { display: flex; gap: 5px; flex-wrap: wrap; }
