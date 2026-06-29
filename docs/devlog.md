@@ -11,7 +11,7 @@
 
 **结论：这一例直接危害低，但暴露了一个该修的"原始透传"模式。** 低的原因查实了三点：`/uploads` 没被静态托管（全后端无 `.mount()`）、文件访问全走鉴权 API（逐用户归属校验）、且这报告是给文件主人本人看——所以泄露路径/UUID **换不来文件访问**。但模式本身不安全：`agent/tools/files.py` 多处 `return {"error": f"…{str(e)}"}` 把原始异常（含路径）透传，一旦哪天异常引用到**别人**的路径/UUID、或藏了**连接串/API key/token**，就会原样漏出去；而且原始串进了**模型上下文 + 决策轨迹 + 日志**，扩散面不止用户那一眼。
 
-**设计定了三层（药+网+出口），待实现**：① 工具按"在做什么"造业务层错误消息、原始只进日志（**根治**）；② `sanitize_error()` 挂 `registry.dispatch`（工具唯一咽喉）、在 tool_result **回模型之前**统一抹 path/UUID/连接串/key/traceback（一处覆盖 55 工具）；③ 出口再过 `sanitize_outbound` 兜底。注意脱敏边界要在 **dispatch（给模型前）**，不是 UI 层——否则模型上下文/轨迹已被污染。详见 `docs/安全-工具错误信息脱敏.md`。
+**设计三层（药+网+出口）；② 网当天就落地了。** ② `sanitize_error()` + `_redact_result()` 挂 `registry.dispatch`（工具唯一咽喉），在 tool_result **回模型之前**统一抹 path/UUID/连接串/key/traceback——一处覆盖全部 55 工具，且**只动 error 字段、绝不碰正常结果**（`read_file` 正文含 uploads/UUID 字样也原样不动，实测验过），原始异常仍 print+traceback 进服务端日志。脱敏边界刻意放 **dispatch（给模型前）**，不是 UI 层——否则模型上下文/决策轨迹已被污染。③ 出口复用已有 `sanitize_outbound`。① 药（工具按业务层造干净消息）可继续收敛、非必需（网已兜住）。详见 `docs/安全-工具错误信息脱敏.md`。
 
 **教训 / 红线**：**绝不把 `str(e)`/traceback 直接放进给用户或模型的字段**。异常里常藏路径、UUID、连接串、API key、token——用户/模型只该看业务层描述，原始细节走 log。新工具的 except 默认走 dispatch 级脱敏，别各自 `f"…{e}"`。另：咕咕生成的 bug 报告外发前先抹 UUID/路径。（顺带：那个移动失败本身是 OS 文件权限问题、不是鉴权漏洞，咕咕"token 只有 read 权限"的推测是错的、会误导排查。）
 
