@@ -327,6 +327,21 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ### 4.5 后端服务（systemd · 一次装全 3 个）
 
+> ⚠️ **首次上线必须跑 `make install`，绝不能跳过直接 `make restart`。**
+>
+> `make install` 是一次性动作（把 service 注册到 systemd、设好 `User=www-data`、建好目录权限）。**跳过它**、直接用 `make restart` 或 `./start.sh start` 起 uvicorn：你是 root SSH 进去的，uvicorn 就以 **root** 身份跑，uploads/ 下创建或修改的文件 / 目录会变成 root:root —— 下次改成 www-data 运行后，这些 root 目录 **写不进去** (`[Errno 13] Permission denied`)，咕咕移动文件、写临时文件都会报错。
+>
+> **判断是否漏跑过 install**：
+> ```bash
+> ps aux | grep uvicorn   # 看 USER 列：www-data = 正常，root = 漏了
+> ls -la uploads/         # 子目录 owner 应全为 www-data，有 root 的说明 uvicorn 曾以 root 跑过
+> ```
+> **修复**（已有 root 目录时）：
+> ```bash
+> chown -R www-data:www-data /opt/1panel/www/sites/www.gugugu.site/Gugu-web-main/backend/uploads/
+> # 然后补跑 make install，或确认 gugu-backend.service 里有 User=www-data 再 systemctl restart gugu-backend
+> ```
+
 项目自带三个单元模板（`gugu-backend.service` / `gugu-worker.service` / `gugu-supervisor.service`，均用 `__APP_DIR__`/`__RUN_USER__` 占位符）。一条命令全装：
 
 ```bash
@@ -550,7 +565,7 @@ sudo journalctl -u gugu-supervisor -f                # 看频道起停日志
 # scp/rsync 传新代码后：
 cd backend
 make update              # = deps + migrate（装依赖 + 跑迁移）
-make restart             # 重启 web
+sudo systemctl restart gugu-backend   # 重启 web（生产走 systemd，别用 make restart，见 §6.2）
 sudo systemctl restart gugu-worker gugu-supervisor   # 重启 IM（若改了 agent 代码，见 §6.1）
 cd ../frontend && npm install && npm run build        # 前端重新构建
 # 或一键：make deploy（备份 + 依赖 + 迁移 + 前端 build + 重启）
@@ -710,6 +725,7 @@ MemoryMax=512M
 | 建项目/任务报 `null value in column "xxx" violates not-null constraint`（如 `notes`） | 新代码删了该字段、INSERT 不再带它，但旧库那列还是 `NOT NULL` 无默认 → 必须把废弃列删掉：`ALTER TABLE 表 DROP COLUMN IF EXISTS 列`。用 `alembic revision --autogenerate` 全量核对漏补/漏删（详见 §10.2） |
 | `make stop` 说「未运行」但 `systemctl` 显示服务在跑 | 生产 backend 由 systemd `gugu-backend.service` 托管，`make start/stop` 管的是另起的手动 uvicorn → 两者不是一个进程。生产一律用 `systemctl`（详见 §6.2） |
 | 部署后数据页全部「加载失败 / summary 401」 | 重建 `.env` 时 `SECRET_KEY` 变了 → 旧登录 token 全失效。**重新登录即恢复**；根治:`SECRET_KEY` 跨部署保持同一值，别每次重新生成（详见 §7 ⚠️ / §4.2） |
+| 咕咕移动文件报 `[Errno 13] Permission denied: '.../uploads/.../个人文件'` | 首次部署漏跑了 `make install`，uvicorn 以 root 跑过一段时间 → uploads/ 下部分目录 owner 是 root，后续改 www-data 运行后写不进去。`ps aux | grep uvicorn` 看 USER 列；`ls -la uploads/` 看子目录 owner。修复：`chown -R www-data:www-data uploads/` + 确认 `gugu-backend.service` 有 `User=www-data` → `systemctl restart gugu-backend`（详见 §4.5）|
 
 
 ### 10.2 数据库迁移恢复：alembic 与 create_all 不同步（生产实战）

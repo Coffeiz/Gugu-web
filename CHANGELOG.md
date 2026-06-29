@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### 安全
+
+- **工具错误信息脱敏（防原始异常透传泄露）**（`agent/tools/base.py`）：咕咕移动文件失败时把原始 OS 异常原样转述给用户——`Permission denied: 'uploads/<user_uuid>/个人文件'`，泄露了内部存储布局 + 用户 UUID。根因是多个工具 `return {"error": f"…{str(e)}"}` 把原始异常透传，一路经 `registry.dispatch` → 模型 → 用户/决策轨迹/日志。在**工具执行唯一咽喉 `registry.dispatch`** 加 `sanitize_error()` 兜底：dispatch 异常路径 + 工具自返回的 error 字段，统一抹掉**绝对/相对路径（`uploads`·`.agent`·`.thumbs` 等）、UUID、DB 连接串、API key/token、traceback**——在 **tool_result 回模型之前**做，一处覆盖全部 55 工具，且保护模型上下文/轨迹。**只动 error 字段、绝不碰正常结果**（如 `read_file` 正文可能含任意文本，已测原样不动）；原始异常仍 `print`+traceback 进服务端日志，排查不丢。当前危害本就低（`/uploads` 未静态托管 + 文件访问全走鉴权 API），此为纵深防御 + 防未来跨用户/密钥泄露。详见 `docs/安全-工具错误信息脱敏.md`。（后续「药」层——工具按业务造干净消息——可继续收敛，本次先上 dispatch 级「网」。）
+
 ### 改进
 
 - **DeepSeek 思考强度（reasoning_effort）后台可调 + 上下文缓存命中监控**（`config.py` + `agent_admin.py` + `agent/core.py` + `Admin/Agent/index.vue`）：① **思考强度**——DeepSeek 思考模式下 temperature 失效，`reasoning_effort`（high/max）是唯一质量/成本旋钮。配置加 `reasoning_effort` 字段，后台「Agent 配置」卡片在 **provider=DeepSeek 且思考开** 时显示「思考强度：默认/high/max」；思考开（adaptive）时对 DeepSeek 带上（mimo 无此参数不带）。**针对历史「面板保存了却不生效」的坑**：`agent_admin.py` 里 create/update/activate **三处手挑字段同步 `ai` 段** 收口成单一来源 `_AI_SYNC_KEYS`/`_ai_segment`（漏一处=active 模型拿不到新字段），新增字段只改一处；并验证 `reasoning_effort` 贯穿 `model_fields`→`PresetCreate/Update`→`_AI_SYNC_KEYS`→`apply_override` 全链路、不被任何一环丢弃。② **缓存命中监控**——DeepSeek 自动上下文缓存（无需 `cache_control`，且咕咕的 system「稳定前缀在前」拆分已天然吃到命中）；openai 路采集 `prompt_cache_hit_tokens` 进 `_usage` 事件的 `cache_read`（与 anthropic 路统一），可观测命中率。

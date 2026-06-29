@@ -8,12 +8,57 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
 # 工具调用轨迹（可观测，reliability Roadmap P1）：每次 dispatch 落一行 JSON 到 `agent.traj` logger
 # → 经 INFO 进 gugu.log（Debug 面板 tail 得到）。「调没调工具/调了啥/成没成」翻一眼即得，不用复现+猜。
 _traj_log = logging.getLogger("agent.traj")
+
+
+# ── 工具错误信息脱敏（安全：别把原始异常里的路径/UUID/连接串/密钥/traceback 透传给模型/用户/轨迹）──
+# 详见 docs/安全-工具错误信息脱敏.md。这是「网」层（dispatch 级兜底）；原始细节仍 print 到服务端日志。
+# ⚠️ 只用于 error 字段，绝不动正常工具结果（如 read_file 正文可能含任意文本）。
+_CONN_RE = re.compile(r"\b(?:postgres(?:ql)?|redis|rediss|mysql|mongodb)://[^\s'\"]+", re.I)
+_KEY_RE  = re.compile(r"\b(?:sk-[A-Za-z0-9]{16,}|(?:api[_-]?key|token|secret|bearer)[\"'=:\s]+[A-Za-z0-9._\-]{12,})", re.I)
+_PATH_RE = re.compile(r"(?:\.{0,2}/)?(?:uploads|\.agent|\.thumbs|\.chat_staging)/[^\s'\"]*|/(?:home|opt|Users|var|etc|root|tmp|private)/[^\s'\"]*")
+_UUID_RE = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
+_TB_RE   = re.compile(r"\n?\s*File \"[^\"]+\", line \d+[^\n]*(?:\n\s+[^\n]+)?")
+
+
+def sanitize_error(s: str) -> str:
+    """抹掉错误串里的敏感内部信息（连接串/密钥/路径/UUID/traceback）。顺序有讲究：
+    连接串、密钥含路径/uuid 片段，先抹；再抹路径、UUID；最后去 traceback 帧。"""
+    if not s or not isinstance(s, str):
+        return s
+    s = _CONN_RE.sub("‹连接串已隐藏›", s)
+    s = _KEY_RE.sub("‹密钥已隐藏›", s)
+    s = _PATH_RE.sub("‹路径已隐藏›", s)
+    s = _UUID_RE.sub("‹id已隐藏›", s)
+    s = _TB_RE.sub("", s)
+    return s.strip()
+
+
+def _redact_result(name: str, result):
+    """脱敏工具结果里的 error 字段（dict 的 error 键 / `{"error":...}` 字符串）。
+    **只动 error，绝不碰正常内容**（line 212 同款判别）。脱敏前把原始 error print 到服务端日志、保排查。"""
+    if isinstance(result, dict):
+        err = result.get("error")
+        if isinstance(err, str) and err:
+            print(f"[skill] 工具 {name} 返回错误(原始): {err[:300]}", flush=True)
+            return {**result, "error": sanitize_error(err)}
+        return result
+    if isinstance(result, str) and result.lstrip().startswith('{"error"'):
+        print(f"[skill] 工具 {name} 返回错误(原始): {result[:300]}", flush=True)
+        try:
+            d = json.loads(result)
+            if isinstance(d.get("error"), str):
+                d["error"] = sanitize_error(d["error"])
+                return json.dumps(d, ensure_ascii=False)
+        except Exception:
+            return sanitize_error(result)
+    return result
 
 
 def _log_traj(name: str, user_id, args: dict, ok: bool, note: str, t0: float) -> None:
@@ -201,9 +246,15 @@ class SkillRegistry:
         except Exception as e:
             import traceback
             print(f"[skill] 工具 {name} 执行出错: {type(e).__name__}: {e}", flush=True)
-            traceback.print_exc()
-            _log_traj(name, user_id, args, False, f"{type(e).__name__}: {e}", t0)
-            return json.dumps({"error": f"工具 {name} 执行出错：{type(e).__name__}: {e}"}, ensure_ascii=False), None
+            traceback.print_exc()   # 原始 traceback 进服务端日志，排查不丢
+            # 给模型/用户/轨迹的版本脱敏：异常串常含路径/UUID/连接串/密钥（见 docs/安全-工具错误信息脱敏.md）
+            _safe = sanitize_error(f"{type(e).__name__}: {e}")
+            _log_traj(name, user_id, args, False, _safe, t0)
+            return json.dumps({"error": f"工具 {name} 执行出错：{_safe}"}, ensure_ascii=False), None
+
+        # 脱敏工具自己返回的 error 字段（如 files.py 的 `{"error": f"…{str(e)}"}`）：只动 error、不碰正常内容；
+        # 原始 error 已在 _redact_result 内 print 到日志。放在轨迹记录前，让 traj 也存脱敏版。
+        result = _redact_result(name, result)
 
         # 工具调用轨迹（成功路径，一次覆盖 str / 图片块 / dict 三种返回）
         if isinstance(result, dict):
