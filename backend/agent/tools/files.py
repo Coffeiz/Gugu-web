@@ -125,7 +125,7 @@ def _coerce_loc(space, project_id, folder_id):
         try:
             return int(str(v).strip().lstrip("#")) if v not in (None, "") else None
         except (ValueError, TypeError):
-            return v
+            return None   # 解析不出（如把项目名当 id 传进来）→ None，别回原串：否则非数字会流进整数主键查询 → asyncpg DataError 崩
     project_id = _as_int(project_id)
     folder_id = _as_int(folder_id)
     if space == "project" and not project_id:
@@ -159,7 +159,7 @@ def _target_loc(f, target: dict):
         try:
             return int(str(v).strip().lstrip("#")) if v not in (None, "") else None
         except (ValueError, TypeError):
-            return v
+            return None   # 同 _as_int：非数字（项目名误当 id）→ None，别让它流进整数查询崩
     if "space" in target:
         space = target["space"]
     elif target.get("project_id") not in (None, ""):
