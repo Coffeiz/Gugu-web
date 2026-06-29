@@ -16,6 +16,7 @@ supervisor 为每个启用的 user_bot 起一条本网关子进程。bot 收到�
 from __future__ import annotations
 
 import os
+import time
 
 import botpy
 from botpy.message import C2CMessage
@@ -23,6 +24,7 @@ from botpy.message import C2CMessage
 from app.core import redis as R
 
 STREAM = R.IM_INBOUND_STREAM
+_ACK_COOLDOWN = 10.0   # 同一用户「文件收到啦」秒回的冷却秒数：连发多图/文件只 ack 一次，不刷屏
 
 
 # ── 接收（网关子进程，凭据/归属从 env 注入）──
@@ -31,6 +33,7 @@ class _GuguQQClient(botpy.Client):
         super().__init__(**kw)
         self._channel_id = channel_id
         self._owner = owner_user_id
+        self._last_ack: dict = {}   # openid -> 上次「文件收到」秒回的时刻；连发多图只 ack 一次
 
     async def on_ready(self):
         print(f"[qq:{self._channel_id}] 网关就绪（owner={self._owner}），WebSocket 长连接中…", flush=True)
@@ -38,12 +41,17 @@ class _GuguQQClient(botpy.Client):
     async def on_c2c_message_create(self, message: C2CMessage):
         text = (message.content or "").strip()
         openid = message.author.user_openid if message.author else None
-        # 用户发来文件：先瞬发一句「收到」（在下载/暂存/入队之前，赶在 worker 慢处理之前给即时反馈）
+        # 用户发来文件：先瞬发一句「收到」（在下载/暂存/入队之前，赶在 worker 慢处理之前给即时反馈）。
+        # **连发多图/文件只 ack 一次**（10s 冷却）——否则一张图一条「文件收到啦」会刷屏；真正的回复由
+        # worker 防抖合并成一条。
         if getattr(message, "attachments", None):
-            try:
-                await _post(self.api, openid, "文件收到啦，让我看看~", message.id)
-            except Exception as e:
-                print(f"[qq] 文件 ack 失败: {type(e).__name__}: {e}", flush=True)
+            now = time.monotonic()
+            if now - self._last_ack.get(openid, 0.0) > _ACK_COOLDOWN:
+                self._last_ack[openid] = now
+                try:
+                    await _post(self.api, openid, "文件收到啦，让我看看~", message.id)
+                except Exception as e:
+                    print(f"[qq] 文件 ack 失败: {type(e).__name__}: {e}", flush=True)
         # 下载 → 暂存 → 走 attachments（和飞书同一套）
         attachments = await _ingest_qq_media(message, self._owner)
         if not text and not attachments:
