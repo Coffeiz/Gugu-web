@@ -57,6 +57,20 @@ async def _update_project(db, user_id, args: dict):
     if "status" in args:
         if args["status"] == "done" and p.done_at is None:
             p.done_at = datetime.utcnow()
+            # 与前端「手拖到已完成」一致：标完成 = 整项收尾——自动勾选所有阶段的全部待办、
+            # 当前阶段推到最后、进度置 100。未完成的待办打 autoCompleted + 快照原状态，
+            # 之后从「已完成」退回时前端按此还原（同 GuguChat moveProject 约定）。
+            stages = p.stages
+            for s in stages:
+                s["todos"] = [
+                    t if t.get("done")
+                    else {**t, "_savedDone": False, "done": True, "autoCompleted": True}
+                    for t in (s.get("todos") or [])
+                ]
+            p.stages = stages   # 触发 setter 持久化 stages_json
+            if stages:
+                p.current_stage = stages[-1].get("key")
+            p.progress = 100
         p.status = args["status"]
     for field in ("deadline", "start_date", "client", "name"):
         if field in args:
