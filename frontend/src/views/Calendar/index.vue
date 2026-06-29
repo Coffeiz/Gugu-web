@@ -258,10 +258,10 @@
         </div>
         <input v-model="newEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" @keydown.esc="showAddForm = false" autofocus />
         <DatePicker v-model="newEvent.date" placeholder="选择日期" />
-        <div class="popup-row time-range">
-          <input v-model="newEvent.time" type="time" class="popup-input popup-time" />
-          <span class="time-sep">–</span>
-          <input v-model="newEvent.endTime" type="time" class="popup-input popup-time" />
+        <div class="time-box">
+          <input v-model="newEvent.time" type="time" class="time-inner" />
+          <span class="time-dash">-</span>
+          <input v-model="newEvent.endTime" type="time" class="time-inner" />
         </div>
         <textarea v-model="newEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="reminder-section">
@@ -270,14 +270,16 @@
             <span class="reminder-lead">{{ leadLabelOf(r.leadMin) }}</span>
             <button class="reminder-del" @click="removeReminderAt(i)" title="移除"><PhX :size="10" weight="bold" /></button>
           </div>
-          <div class="reminder-add">
+          <div v-if="addingReminder" class="reminder-add">
             <select v-model="newLeadMin" class="lead-select">
               <option v-for="o in LEAD_OPTIONS" :key="o.min" :value="o.min">{{ o.label }}</option>
             </select>
-            <button class="reminder-add-btn" @click="addReminderLead">+ 添加</button>
+            <button class="reminder-add-btn" @click="addReminderLead">添加</button>
+            <button class="reminder-cancel" @click="addingReminder = false" title="取消"><PhX :size="10" weight="bold" /></button>
           </div>
-          <div class="reminder-row" v-if="reminders.length">
-            <span class="reminder-label">渠道</span>
+          <button v-else class="reminder-add-toggle" @click="addingReminder = true">＋ 添加提醒</button>
+          <div class="chan-block" v-if="reminders.length">
+            <div class="reminder-label">渠道</div>
             <div class="chan-chips">
               <button class="chan-chip" :class="{ on: reminderChannels.includes('web') }" @click="toggleReminderChannel('web')">web</button>
               <button v-for="ch in imChannels" :key="ch" class="chan-chip" :class="{ on: reminderChannels.includes(ch) }" @click="toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
@@ -322,10 +324,10 @@
         </div>
         <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
         <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
-        <div class="popup-row time-range">
-          <input v-model="editingEvent.time" type="time" class="popup-input popup-time" />
-          <span class="time-sep">–</span>
-          <input v-model="editingEvent.endTime" type="time" class="popup-input popup-time" />
+        <div class="time-box">
+          <input v-model="editingEvent.time" type="time" class="time-inner" />
+          <span class="time-dash">-</span>
+          <input v-model="editingEvent.endTime" type="time" class="time-inner" />
         </div>
         <textarea v-model="editingEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="reminder-section">
@@ -334,14 +336,16 @@
             <span class="reminder-lead">{{ leadLabelOf(r.leadMin) }}</span>
             <button class="reminder-del" @click="removeReminderAt(i)" title="移除"><PhX :size="10" weight="bold" /></button>
           </div>
-          <div class="reminder-add">
+          <div v-if="addingReminder" class="reminder-add">
             <select v-model="newLeadMin" class="lead-select">
               <option v-for="o in LEAD_OPTIONS" :key="o.min" :value="o.min">{{ o.label }}</option>
             </select>
-            <button class="reminder-add-btn" @click="addReminderLead">+ 添加</button>
+            <button class="reminder-add-btn" @click="addReminderLead">添加</button>
+            <button class="reminder-cancel" @click="addingReminder = false" title="取消"><PhX :size="10" weight="bold" /></button>
           </div>
-          <div class="reminder-row" v-if="reminders.length">
-            <span class="reminder-label">渠道</span>
+          <button v-else class="reminder-add-toggle" @click="addingReminder = true">＋ 添加提醒</button>
+          <div class="chan-block" v-if="reminders.length">
+            <div class="reminder-label">渠道</div>
             <div class="chan-chips">
               <button class="chan-chip" :class="{ on: reminderChannels.includes('web') }" @click="toggleReminderChannel('web')">web</button>
               <button v-for="ch in imChannels" :key="ch" class="chan-chip" :class="{ on: reminderChannels.includes(ch) }" @click="toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
@@ -1254,6 +1258,7 @@ const imChannels = computed(() => authStore.user?.imChannels ?? [])   // 用户�
 const reminders          = ref([])         // [{ id?, leadMin }]，可多个
 const reminderChannels   = ref(['web'])    // 渠道（web + 已绑 IM），该活动的提醒共用
 const newLeadMin         = ref(30)         // 添加用：下拉选的提前量（分钟）
+const addingReminder     = ref(false)      // 待办式：点「＋ 添加提醒」才展开选择
 const removedReminderIds = ref([])         // 编辑里删掉的已存在提醒 id，保存时真删
 
 function leadLabelOf(min) { return LEAD_OPTIONS.find(o => o.min === min)?.label || `提前 ${min} 分钟` }
@@ -1264,8 +1269,9 @@ function toggleReminderChannel(ch) {
   reminderChannels.value = [...set]
 }
 function addReminderLead() {
-  if (reminders.value.some(r => r.leadMin === Number(newLeadMin.value))) return   // 同提前量不重复加
-  reminders.value.push({ leadMin: Number(newLeadMin.value) })
+  if (!reminders.value.some(r => r.leadMin === Number(newLeadMin.value)))   // 同提前量不重复加
+    reminders.value.push({ leadMin: Number(newLeadMin.value) })
+  addingReminder.value = false
 }
 function removeReminderAt(i) {
   const r = reminders.value[i]
@@ -1277,6 +1283,7 @@ function resetReminder() {
   reminderChannels.value = ['web']
   removedReminderIds.value = []
   newLeadMin.value = 30
+  addingReminder.value = false
 }
 
 function _pad2(n) { return String(n).padStart(2, '0') }
@@ -1644,10 +1651,10 @@ async function saveEvent() {
 .sidebar-ev-time { font-size: 11px; font-weight: 600; color: var(--accent, #7b7fb2); margin-right: 3px; font-variant-numeric: tabular-nums; }
 .popup-row { display: flex; gap: 6px; align-items: center; }
 .popup-row > :first-child { flex: 1; min-width: 0; }
-.popup-time { width: 70px; flex-shrink: 0; text-align: center; padding-left: 4px; padding-right: 4px; font-variant-numeric: tabular-nums; }
-.time-range { justify-content: flex-start; gap: 8px; }
-.time-range > :first-child { flex: 0 0 auto; }
-.time-sep { color: #8a8fa8; font-size: 13px; font-weight: 600; }
+.time-box { display: inline-flex; align-items: center; gap: 2px; width: auto; padding: 5px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); transition: border-color 0.15s, box-shadow 0.15s; }
+.time-box:focus-within { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
+.time-inner { border: none; background: none; outline: none; font-size: 12px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028; padding: 0; width: 56px; font-variant-numeric: tabular-nums; }
+.time-dash { color: #8a8fa8; font-size: 12px; font-weight: 600; }
 .ev-type-badge {
   display: inline-block; vertical-align: middle; margin-left: 4px;
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
@@ -1748,6 +1755,11 @@ async function saveEvent() {
 .lead-select { flex: 1; height: 28px; padding: 0 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 11px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028; cursor: pointer; outline: none; }
 .reminder-add-btn { flex-shrink: 0; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.1); color: #65688f; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: background 0.12s; }
 .reminder-add-btn:hover { background: rgba(123,127,178,0.2); }
+.reminder-cancel { flex-shrink: 0; display: flex; align-items: center; padding: 4px; border: none; background: none; cursor: pointer; color: #8a8fa8; border-radius: 6px; }
+.reminder-cancel:hover { background: rgba(0,0,0,0.06); }
+.reminder-add-toggle { align-self: flex-start; padding: 4px 10px; border-radius: 8px; border: 1px dashed rgba(123,127,178,0.4); background: none; color: #8a8fa8; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
+.reminder-add-toggle:hover { border-color: rgba(123,127,178,0.7); color: #65688f; background: rgba(123,127,178,0.06); }
+.chan-block { display: flex; flex-direction: column; gap: 5px; }
 .chan-chips { display: flex; gap: 5px; flex-wrap: wrap; }
 .chan-chip { padding: 3px 11px; border-radius: 99px; border: 1px solid rgba(123,127,178,0.3); background: rgba(255,255,255,0.5); color: #8a8fa8; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
 .chan-chip.on { background: rgba(123,127,178,0.16); border-color: rgba(123,127,178,0.55); color: #5b5f8c; }
