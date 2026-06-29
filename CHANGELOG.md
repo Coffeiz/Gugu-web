@@ -11,7 +11,7 @@
 
 ### 新增
 
-- **日历活动加「时间」+ 可绑定提醒定时任务（后端 phase 1）**（`models` + `alembic` + `events.py` + `scheduled_tasks.py` + `tools/calendar.py`）：日历事件此前只有日期、无时间。新增 `calendar_events.time`（HH:MM，可选，空=全天）+ `scheduled_tasks.event_id`（绑定到某活动的提醒；含 alembic 迁移 `20260629000001`，**生产 pull 后需 `make migrate`**）。① `create_event`/`update_event`/`list_event` 工具 + events REST API 收/返 `time`；② 定时任务 `create` 收 `event_id`（校验本人事件）、list 可按 `event_id` 过滤、`_to_resp` 带 `event_id`；③ **删活动连带删其绑定提醒**（应用层级联，event_id 故意不设 DB 外键、更可移植）。devserver 实测：time 存取、event_id 绑定、删活动级联删提醒(`deleted_reminders=1`)全过。**网页日历 UI（时间选择 + 活动面板直接加提醒）为 phase 2、待做。**
+- **日历活动加「时间」+ 可绑定提醒定时任务（后端 phase 1）**（`models` + `alembic` + `events.py` + `scheduled_tasks.py` + `tools/calendar.py`）：日历事件此前只有日期、无时间。新增 `calendar_events.time`（HH:MM，可选，空=全天）+ `scheduled_tasks.event_id`（绑定到某活动的提醒；含 alembic 迁移 `20260629000001`，**生产 pull 后需 `make migrate`**）。① `create_event`/`update_event`/`list_event` 工具 + events REST API 收/返 `time`；② 定时任务 `create` 收 `event_id`（校验本人事件）、list 可按 `event_id` 过滤、`_to_resp` 带 `event_id`；③ **删活动连带删其绑定提醒**（应用层级联，event_id 故意不设 DB 外键、更可移植）。devserver 实测：time 存取、event_id 绑定、删活动级联删提醒(`deleted_reminders=1`)全过。④ **网页日历 UI**（phase 2）：加/编辑活动弹窗加时间输入(`<input type=time>`)+ 侧栏显示时间；**编辑面板内「提醒」区**——列出该活动绑定的定时任务、`datetime-local` 选时刻直接建 `@once` 提醒(用户自定义时间、`event_id` 绑定)、可删，建/删实时刷定时面板。vite 编译通过。**生产 pull 后需 `make migrate`。**
 
 ### 安全
 
