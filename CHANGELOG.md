@@ -9,6 +9,8 @@
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-06-29 · prompt 缓存真正生效 + 独立语音识别模型 + 密码找回 + IM 发图/多图修复 + 缩略图/拖拽/定时等体验打磨
+
 ### 新增
 
 - **密码找回（邮件重置链接）**（`api/v1/auth.py` + `ForgotPassword`/`ResetPassword` 页）：`POST /auth/forgot-password` 按邮箱查用户 → `secrets.token_urlsafe(32)` 存 Redis（`pwdreset:tok`，30 分钟 TTL）→ 线程池发重置邮件；邮箱不存在 / 冷却中**都返回同一句**（防枚举），同邮箱 60s 冷却防刷。`POST /auth/reset-password` 校验 token + 新密码 ≥8 位 → 改密 → 删 token（一次性）。重置链接基址取请求 `Origin`（用户当前站点）不写死域名；登录页加「忘记密码？」入口，`reset-password` 不加 `authPublic`（已登录点邮件链接也可用）。
