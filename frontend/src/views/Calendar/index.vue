@@ -262,6 +262,23 @@
           <input v-model="newEvent.time" type="time" class="popup-input popup-time" />
         </div>
         <textarea v-model="newEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
+        <div class="reminder-section">
+          <div class="reminder-row">
+            <span class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</span>
+            <div class="lead-stepper">
+              <button class="lead-step" @click="stepLead(-1)" :disabled="reminderLeadIdx === 0">−</button>
+              <span class="lead-val">{{ leadLabel }}</span>
+              <button class="lead-step" @click="stepLead(1)" :disabled="reminderLeadIdx === LEAD_PRESETS.length - 1">+</button>
+            </div>
+          </div>
+          <div class="reminder-row" v-if="reminderLeadIdx > 0">
+            <span class="reminder-label">渠道</span>
+            <div class="chan-chips">
+              <button class="chan-chip" :class="{ on: reminderChannels.includes('web') }" @click="toggleReminderChannel('web')">web</button>
+              <button class="chan-chip" :class="{ on: reminderChannels.includes('im') }" @click="toggleReminderChannel('im')">IM</button>
+            </div>
+          </div>
+        </div>
         <div class="popup-actions">
           <button class="popup-save" @click="saveEvent" :disabled="!newEvent.name">保存</button>
         </div>
@@ -304,16 +321,21 @@
           <input v-model="editingEvent.time" type="time" class="popup-input popup-time" />
         </div>
         <textarea v-model="editingEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
-        <div class="reminder-section" v-if="typeof editingEvent.id === 'number'">
-          <div class="reminder-title">提醒（定时任务）</div>
-          <!-- 一个活动至多一个提醒：有则显示+可删，无则可加 -->
-          <div v-if="eventReminder" class="reminder-item">
-            <span class="reminder-time"><PhBell :size="11" weight="bold" /> {{ reminderLabel(eventReminder) }}</span>
-            <button class="reminder-del" @click="removeReminder(eventReminder.id)" title="删除提醒"><PhX :size="10" weight="bold" /></button>
+        <div class="reminder-section">
+          <div class="reminder-row">
+            <span class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</span>
+            <div class="lead-stepper">
+              <button class="lead-step" @click="stepLead(-1)" :disabled="reminderLeadIdx === 0">−</button>
+              <span class="lead-val">{{ leadLabel }}</span>
+              <button class="lead-step" @click="stepLead(1)" :disabled="reminderLeadIdx === LEAD_PRESETS.length - 1">+</button>
+            </div>
           </div>
-          <div v-else class="reminder-add">
-            <input v-model="newReminderAt" type="datetime-local" class="popup-input reminder-input" />
-            <button class="reminder-add-btn" :disabled="reminderBusy || !newReminderAt" @click="addReminder">加提醒</button>
+          <div class="reminder-row" v-if="reminderLeadIdx > 0">
+            <span class="reminder-label">渠道</span>
+            <div class="chan-chips">
+              <button class="chan-chip" :class="{ on: reminderChannels.includes('web') }" @click="toggleReminderChannel('web')">web</button>
+              <button class="chan-chip" :class="{ on: reminderChannels.includes('im') }" @click="toggleReminderChannel('im')">IM</button>
+            </div>
           </div>
         </div>
         <div class="popup-actions">
@@ -477,6 +499,7 @@ function ctxAddEvent() {
   cellCtx.show = false
   const iso = cellCtx.range?.start ?? cellCtx.iso
   newEvent.value = { name: '', date: iso, time: '', description: '' }
+  resetReminder()
   const ADD_H = 260
   const ctxTop = (window.innerHeight - cellCtx.y - 8 >= ADD_H)
     ? cellCtx.y + 8
@@ -1141,6 +1164,7 @@ function _flashCalendarEvent(id) {
 
 function openAddForm() {
   newEvent.value = { name: '', date: selectedDate.value || todayIso.value, time: '', description: '' }
+  resetReminder()
   const btnEl = addBtnRef.value
   if (btnEl) {
     const btnRect    = btnEl.getBoundingClientRect()
@@ -1193,54 +1217,78 @@ function openEditForm(ev, nativeEv, useMousePos = false) {
   showEditForm.value = true
 }
 
-// ── 活动绑定的提醒（定时任务）：编辑面板内直接加/删，和定时任务面板同一套（event_id 绑定）──
-const eventReminders = ref([])
-const eventReminder  = computed(() => eventReminders.value[0] || null)   // 一个活动至多一个提醒
-const newReminderAt  = ref('')     // datetime-local 值 "YYYY-MM-DDTHH:MM"，正好是 @once 要的格式
-const reminderBusy   = ref(false)
+// ── 活动绑定的提醒（定时任务）：提前量 + 渠道（web/im，和定时任务同一通道、event_id 绑定）──
+// 加/编辑两个表单共用同一套 UI 与逻辑；提醒在「保存活动」时一并落地（建/改/删）。
+const LEAD_PRESETS = [
+  { label: '无提醒', min: null },
+  { label: '准点', min: 0 },
+  { label: '提前 5 分钟', min: 5 },
+  { label: '提前 15 分钟', min: 15 },
+  { label: '提前 30 分钟', min: 30 },
+  { label: '提前 1 小时', min: 60 },
+  { label: '提前 2 小时', min: 120 },
+  { label: '提前 1 天', min: 1440 },
+  { label: '提前 2 天', min: 2880 },
+]
+const reminderLeadIdx    = ref(0)         // LEAD_PRESETS 下标；0 = 无提醒
+const reminderChannels   = ref(['web'])   // web / im，同定时任务
+const existingReminderId = ref(null)      // 该活动已有的提醒 id（有则改/删，无则建）
+const leadLabel = computed(() => LEAD_PRESETS[reminderLeadIdx.value]?.label || '无提醒')
+
+function stepLead(dir) {
+  reminderLeadIdx.value = Math.min(LEAD_PRESETS.length - 1, Math.max(0, reminderLeadIdx.value + dir))
+}
+function toggleReminderChannel(ch) {
+  const set = new Set(reminderChannels.value)
+  set.has(ch) ? set.delete(ch) : set.add(ch)
+  if (set.size === 0) set.add(ch)   // 至少留一个
+  reminderChannels.value = [...set]
+}
+function resetReminder() {
+  reminderLeadIdx.value = 0
+  reminderChannels.value = ['web']
+  existingReminderId.value = null
+}
+
+function _pad2(n) { return String(n).padStart(2, '0') }
+function _reminderAtIso(date, time, leadMin) {
+  const [h, mm] = (time || '09:00').split(':').map(Number)
+  const d = new Date(`${date}T00:00:00`)
+  d.setHours(h, mm - leadMin, 0, 0)   // 负分钟/跨天由 Date 自动回退
+  return `${d.getFullYear()}-${_pad2(d.getMonth()+1)}-${_pad2(d.getDate())}T${_pad2(d.getHours())}:${_pad2(d.getMinutes())}`
+}
 
 async function loadReminders(ev) {
-  eventReminders.value = []
-  // 默认提醒时刻 = 活动当天 + 时间（没时间则 09:00），用户可改
-  newReminderAt.value = `${ev.date}T${ev.time || '09:00'}`
-  if (typeof ev.id !== 'number') return   // 临时事件（还没存）不拉提醒
+  resetReminder()
+  if (typeof ev.id !== 'number') return   // 临时事件（还没存）：保持 reset 态
   try {
-    const data = await scheduledTasksApi.listForEvent(ev.id)
-    eventReminders.value = data?.tasks || []
-  } catch { eventReminders.value = [] }
+    const t = ((await scheduledTasksApi.listForEvent(ev.id))?.tasks || [])[0]
+    if (!t) return
+    existingReminderId.value = t.id
+    reminderChannels.value = (t.channels && t.channels.length) ? t.channels : ['web']
+    if ((t.cron || '').startsWith('@once:')) {   // 由（活动时刻 − 提醒时刻）反推最接近的提前量预设
+      const lead = Math.round((new Date(`${ev.date}T${ev.time || '09:00'}`) - new Date(t.cron.slice(6))) / 60000)
+      let best = 1, bd = Infinity
+      LEAD_PRESETS.forEach((p, i) => { if (p.min != null) { const d = Math.abs(p.min - lead); if (d < bd) { bd = d; best = i } } })
+      reminderLeadIdx.value = best
+    } else { reminderLeadIdx.value = 1 }
+  } catch { /* 保持 reset 态 */ }
 }
 
-function reminderLabel(t) {
-  // @once:2026-12-31T14:00 → 12-31 14:00
-  const c = t.cron || ''
-  if (c.startsWith('@once:')) return c.slice(6).replace('T', ' ').slice(5)
-  return c
-}
-
-async function addReminder() {
-  const ev = editingEvent.value
-  if (!ev || typeof ev.id !== 'number' || !newReminderAt.value || reminderBusy.value) return
-  reminderBusy.value = true
+// 保存活动后调用：按当前提前量/渠道，对该活动的提醒建/改/删
+async function applyReminder(eventId, name, date, time) {
+  const lead = LEAD_PRESETS[reminderLeadIdx.value]?.min
   try {
-    await scheduledTasksApi.create({
-      name: `${ev.name} 提醒`,
-      payload: `提醒：${ev.name}（${newReminderAt.value.replace('T', ' ')}）`,
-      cron: `@once:${newReminderAt.value}`,
-      channels: ['web'],
-      event_id: ev.id,
-    })
-    await loadReminders(ev)
-    liveStore.bump?.('scheduled_tasks')   // 让定时面板也实时刷
-  } catch (e) { alert('添加提醒失败：' + (e?.message || '请检查时间')) }
-  finally { reminderBusy.value = false }
-}
-
-async function removeReminder(id) {
-  try {
-    await scheduledTasksApi.delete(id)
-    eventReminders.value = eventReminders.value.filter(t => t.id !== id)
+    if (lead == null) {                        // 无提醒：有旧的就删
+      if (existingReminderId.value) { await scheduledTasksApi.delete(existingReminderId.value); existingReminderId.value = null }
+    } else {
+      const cron = `@once:${_reminderAtIso(date, time, lead)}`
+      const data = { name: `${name} 提醒`, payload: `提醒：${name}（${date}${time ? ' ' + time : ''}）`, cron, channels: reminderChannels.value }
+      if (existingReminderId.value) await scheduledTasksApi.update(existingReminderId.value, data)
+      else { const t = await scheduledTasksApi.create({ ...data, event_id: eventId }); existingReminderId.value = t?.id ?? null }
+    }
     liveStore.bump?.('scheduled_tasks')
-  } catch { /* 忽略，下次打开会对账 */ }
+  } catch { /* 提醒失败不挡活动保存 */ }
 }
 
 async function saveEditEvent() {
@@ -1265,6 +1313,7 @@ async function saveEditEvent() {
     const updated = await eventsApi.update(ev.id, { title: ev.name, date: ev.date, time: ev.time || null, description: ev.description || undefined, version: ev.version })
     const applyVer = (list) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
     applyVer(extraEvents.value); applyVer(nextMonthEvents.value)
+    await applyReminder(ev.id, ev.name, ev.date, ev.time)   // 按提前量/渠道落地提醒
   } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await loadEvents() } }
 }
 
@@ -1364,6 +1413,7 @@ async function saveEvent() {
     const norm = { ...normalizeEvent(created), _uid: uid }   // 保留同一 _uid，删/改才能稳定匹配
     const idx = extraEvents.value.findIndex(e => e._uid === uid)
     if (idx !== -1) extraEvents.value[idx] = norm
+    if (typeof created?.id === 'number') await applyReminder(created.id, localItem.name, date, localItem.time)   // 新活动按提前量/渠道建提醒
   } catch { }
   eventsCache[cacheKey] = [...extraEvents.value]
 }
@@ -1564,7 +1614,7 @@ async function saveEvent() {
 .sidebar-ev-time { font-size: 11px; font-weight: 600; color: var(--accent, #7b7fb2); margin-right: 3px; font-variant-numeric: tabular-nums; }
 .popup-row { display: flex; gap: 6px; align-items: center; }
 .popup-row > :first-child { flex: 1; min-width: 0; }
-.popup-time { width: 84px; flex-shrink: 0; padding-left: 8px; padding-right: 6px; font-variant-numeric: tabular-nums; }
+.popup-time { width: 70px; flex-shrink: 0; text-align: center; padding-left: 4px; padding-right: 4px; font-variant-numeric: tabular-nums; }
 .ev-type-badge {
   display: inline-block; vertical-align: middle; margin-left: 4px;
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
@@ -1654,17 +1704,17 @@ async function saveEvent() {
 .popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
 .popup-save:disabled { opacity: 0.38; cursor: default; }
 .popup-save:not(:disabled):hover { opacity: 0.88; }
-.reminder-section { display: flex; flex-direction: column; gap: 5px; padding-top: 7px; border-top: 1px solid rgba(123,127,178,0.18); }
-.reminder-title { font-size: 10px; font-weight: 700; color: #8a8fa8; letter-spacing: 0.04em; }
-.reminder-item { display: flex; align-items: center; justify-content: space-between; gap: 6px; background: rgba(123,127,178,0.08); border-radius: 7px; padding: 3px 6px 3px 8px; }
-.reminder-time { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: #65688f; font-variant-numeric: tabular-nums; }
-.reminder-del { display: flex; align-items: center; padding: 2px; border: none; background: none; cursor: pointer; color: #b07858; border-radius: 5px; }
-.reminder-del:hover { background: rgba(176,120,88,0.12); }
-.reminder-add { display: flex; gap: 6px; align-items: center; }
-.reminder-input { flex: 1; padding: 5px 8px; font-size: 11px; }
-.reminder-add-btn { flex-shrink: 0; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.1); color: #65688f; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: background 0.12s; }
-.reminder-add-btn:hover:not(:disabled) { background: rgba(123,127,178,0.2); }
-.reminder-add-btn:disabled { opacity: 0.4; cursor: default; }
+.reminder-section { display: flex; flex-direction: column; gap: 6px; padding-top: 7px; border-top: 1px solid rgba(123,127,178,0.18); }
+.reminder-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.reminder-label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: #8a8fa8; }
+.lead-stepper { display: flex; align-items: center; gap: 2px; background: rgba(123,127,178,0.08); border-radius: 8px; padding: 2px; }
+.lead-step { width: 22px; height: 22px; border: none; background: none; border-radius: 6px; cursor: pointer; color: #65688f; font-size: 15px; font-weight: 700; line-height: 1; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
+.lead-step:hover:not(:disabled) { background: rgba(123,127,178,0.18); }
+.lead-step:disabled { opacity: 0.3; cursor: default; }
+.lead-val { min-width: 80px; text-align: center; font-size: 11px; font-weight: 600; color: #65688f; }
+.chan-chips { display: flex; gap: 5px; }
+.chan-chip { padding: 3px 11px; border-radius: 99px; border: 1px solid rgba(123,127,178,0.3); background: rgba(255,255,255,0.5); color: #8a8fa8; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
+.chan-chip.on { background: rgba(123,127,178,0.16); border-color: rgba(123,127,178,0.55); color: #5b5f8c; }
 .form-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
 .form-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .form-pop-enter-from, .form-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-6px); }
