@@ -27,8 +27,9 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, computed } from 'vue'
 import { PhWarningCircle } from '@phosphor-icons/vue'
+import { filesApi } from '@/services/api'
 
 const MAX_BYTES = 500 * 1024
 
@@ -84,6 +85,9 @@ const LANG_LOADERS = {
 
 const lines       = ref([])
 const mdHtml      = ref(null)
+const rawText     = ref('')   // md 源文本（用于勾选任务框时改写 [ ]↔[x] 并回存）
+// 可交互勾选 = md 文件 + 真实文件 id（纯数字；聊天附件是 16 位 hex、不可存）
+const savable = computed(() => /^(md|markdown)$/i.test(props.ext || '') && /^\d+$/.test(String(props.fileKey ?? '')))
 const loading     = ref(false)
 const error       = ref(null)
 const truncated   = ref(false)
@@ -153,8 +157,39 @@ async function renderMarkdown(text) {
   return marked.parse(text)
 }
 
-// ── 复制按钮点击（事件委托）─────────────────────────
+// ── 任务勾选框可交互：去掉 marked 默认的 disabled、按文档顺序标 data-task（仅 md + 真实文件）──
+function makeTasksInteractive(html) {
+  if (!savable.value) return html
+  let i = 0
+  return html.replace(/<input\b[^>]*?type="checkbox"[^>]*?>/gi, (tag) =>
+    tag.replace(/\sdisabled(="[^"]*")?/i, '').replace(/^<input/i, `<input data-task="${i++}"`)
+  )
+}
+
+const _TASK_RE = /^(\s*(?:[-*+]|\d+\.)\s+)\[([ xX])\]/
+// 勾第 idx 个任务（文档顺序）：按勾选框的新状态翻转源里对应行 [ ]↔[x]、回存文件；存失败回滚视觉
+async function toggleTask(idx, cb) {
+  const ls = rawText.value.split('\n')
+  let n = -1, hit = -1
+  for (let li = 0; li < ls.length; li++) {
+    if (_TASK_RE.test(ls[li]) && ++n === idx) { hit = li; break }
+  }
+  if (hit < 0) return
+  const before = rawText.value
+  ls[hit] = ls[hit].replace(/\[[ xX]\]/, cb.checked ? '[x]' : '[ ]')
+  rawText.value = ls.join('\n')
+  try {
+    await filesApi.saveContent(props.fileKey, rawText.value)
+  } catch {
+    rawText.value = before          // 存失败 → 回滚源 + 视觉
+    cb.checked = !cb.checked
+  }
+}
+
+// ── md 区域点击（事件委托）：任务勾选框 → 切换+存；复制按钮 → 复制代码 ──
 function onMdClick(e) {
+  const cb = e.target.closest('input[type="checkbox"][data-task]')
+  if (cb) { toggleTask(Number(cb.dataset.task), cb); return }   // 不 preventDefault：原生勾选即时显示
   const btn = e.target.closest('.md-copy-btn')
   if (!btn) return
   const code = btn.closest('.md-pre')?.querySelector('code')?.textContent ?? ''
@@ -206,7 +241,8 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
     const extUp = ext?.toUpperCase()
 
     if (extUp === 'MD') {
-      mdHtml.value = await renderMarkdown(text)
+      rawText.value = text
+      mdHtml.value = makeTasksInteractive(await renderMarkdown(text))
     } else {
       const lang = LANG_MAP[extUp]
       if (lang) {
@@ -465,30 +501,40 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
 .tv-md :deep(.hljs-strong)         { font-weight: bold; }
 
 /* task list */
-.tv-md :deep(ul.contains-task-list) { list-style: none; padding-left: 0.5em; }
-.tv-md :deep(li.task-list-item) { display: flex; align-items: baseline; gap: 8px; }
-.tv-md :deep(li.task-list-item input[type="checkbox"]) {
-  appearance: none;
-  width: 14px; height: 14px;
-  border: 1.5px solid rgba(100, 110, 200, 0.4);
-  border-radius: 3px;
+/* marked 18 不输出 task-list-item/contains-task-list class，故用 :has 选「含勾选框的 li」去 bullet + flex 对齐 */
+.tv-md :deep(li:has(> input[type="checkbox"])) {
+  list-style: none;
+  display: flex; align-items: baseline; gap: 8px;
+}
+/* 风格与注册页确认勾选框（.ack-box）一致：16px 圆角 5px、紫灰边白底、选中紫色渐变 + 阴影 + 白勾 */
+.tv-md :deep(input[type="checkbox"]) {
+  appearance: none; -webkit-appearance: none;
+  width: 16px; height: 16px;
+  border: 1.5px solid rgba(123, 127, 178, 0.35);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.6);
   flex-shrink: 0;
   position: relative;
   top: 2px;
   cursor: default;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
-.tv-md :deep(li.task-list-item input[type="checkbox"]:checked) {
-  background: rgba(100, 110, 200, 0.7);
-  border-color: rgba(100, 110, 200, 0.7);
+/* 可交互勾选框（md + 真实文件）：手型 + hover 提示可点 */
+.tv-md :deep(input[type="checkbox"][data-task]) { cursor: pointer; }
+.tv-md :deep(input[type="checkbox"][data-task]:hover) { border-color: rgba(123, 127, 178, 0.6); }
+.tv-md :deep(input[type="checkbox"]:checked) {
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(123, 127, 178, 0.35);
 }
-.tv-md :deep(li.task-list-item input[type="checkbox"]:checked::after) {
+/* 勾用注册页同一条 SVG polyline（圆头折线），保证 icon 一致 */
+.tv-md :deep(input[type="checkbox"]:checked::after) {
   content: '';
   position: absolute;
-  left: 3px; top: 1px;
-  width: 6px; height: 4px;
-  border-left: 1.5px solid white;
-  border-bottom: 1.5px solid white;
-  transform: rotate(-45deg);
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='10'%20height='10'%20viewBox='0%200%2010%2010'%20fill='none'%3E%3Cpolyline%20points='1.5,5%204,7.5%208.5,2.5'%20stroke='white'%20stroke-width='1.6'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
 }
 
 .tv-md :deep(blockquote) {

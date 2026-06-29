@@ -682,6 +682,36 @@ async def update_file(
     return _to_resp(f, project_name or None, project_color, folder_name or None)
 
 
+class _FileContentBody(_BaseModel):
+    content: str
+
+
+@router.put("/{fid}/content", response_model=FileResponse)
+async def update_file_content(
+    fid: int,
+    body: _FileContentBody,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """改文本文件正文（md 预览里点任务勾选框等场景，前端直接存）。仅文本类、限 1MB。"""
+    from app.core.chat_attach import TEXT_EXTS
+    f = await db.get(File, fid)
+    if not f or f.user_id != current_user.id:
+        raise HTTPException(404, "文件不存在")
+    if (f.ext or "").lower() not in TEXT_EXTS:
+        raise HTTPException(400, "仅文本类文件可改内容")
+    data = body.content.encode("utf-8")
+    if len(data) > 1024 * 1024:
+        raise HTTPException(400, "内容过大（上限 1MB）")
+    await get_storage().put(f.storage_key, data, f.mime_type or "text/markdown")
+    f.size_bytes = len(data)
+    f.size = _fmt_size(len(data))
+    f.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(f)
+    return _to_resp(f)
+
+
 # ── POST /files/{fid}/copy ────────────────────────────────────────────────────
 
 @router.post("/{fid}/copy", response_model=FileResponse)
