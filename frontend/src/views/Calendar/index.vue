@@ -149,6 +149,7 @@
               <div class="sidebar-ev-name" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">
                 <span v-if="!ev.isUserEvent" class="ev-type-badge ev-proj-badge" :style="{ color: darkenHex(ev.accent) }">项目</span>
                 <span v-else class="ev-type-badge ev-event-badge">{{ typeLabel(ev.type) }}</span>
+                <span v-if="ev.time" class="sidebar-ev-time">{{ ev.time }}</span>
                 {{ ev.name }}
                 <span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
               </div>
@@ -257,6 +258,7 @@
         </div>
         <input v-model="newEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" @keydown.esc="showAddForm = false" autofocus />
         <DatePicker v-model="newEvent.date" placeholder="选择日期" />
+        <input v-model="newEvent.time" type="time" class="popup-input popup-time" placeholder="时间（可选）" />
         <textarea v-model="newEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="popup-actions">
           <button class="popup-save" @click="saveEvent" :disabled="!newEvent.name">保存</button>
@@ -296,6 +298,7 @@
         </div>
         <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
         <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
+        <input v-model="editingEvent.time" type="time" class="popup-input popup-time" placeholder="时间（可选）" />
         <textarea v-model="editingEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="popup-actions">
           <button class="popup-save" @click="saveEditEvent" :disabled="!editingEvent.name">保存</button>
@@ -363,7 +366,7 @@ function hdayType(isoDate) {
   return getHolidayType(hdayCache.value[yr], isoDate)
 }
 const showAddForm  = ref(false)
-const newEvent     = ref({ name: '', date: todayIso.value, description: '' })
+const newEvent     = ref({ name: '', date: todayIso.value, time: '', description: '' })
 const addBtnRef    = ref(null)
 const addFormRef   = ref(null)
 const addFormStyle = ref({})
@@ -457,7 +460,7 @@ function onWeekContextMenu(e, week) {
 function ctxAddEvent() {
   cellCtx.show = false
   const iso = cellCtx.range?.start ?? cellCtx.iso
-  newEvent.value = { name: '', date: iso, description: '' }
+  newEvent.value = { name: '', date: iso, time: '', description: '' }
   const ADD_H = 260
   const ctxTop = (window.innerHeight - cellCtx.y - 8 >= ADD_H)
     ? cellCtx.y + 8
@@ -843,6 +846,7 @@ function normalizeEvent(e) {
     _uid:        e._uid ?? ('e' + e.id),   // 稳定客户端标识：本地增删改按它匹配，不受临时→真 id 替换影响
     id:          e.id,
     date:        e.date,
+    time:        e.time ?? '',
     name:        e.title,
     client:      e.client ?? '',
     type:        e.type,
@@ -1120,7 +1124,7 @@ function _flashCalendarEvent(id) {
 }
 
 function openAddForm() {
-  newEvent.value = { name: '', date: selectedDate.value || todayIso.value, description: '' }
+  newEvent.value = { name: '', date: selectedDate.value || todayIso.value, time: '', description: '' }
   const btnEl = addBtnRef.value
   if (btnEl) {
     const btnRect    = btnEl.getBoundingClientRect()
@@ -1148,7 +1152,7 @@ function openAddForm() {
 
 function openEditForm(ev, nativeEv, useMousePos = false) {
   showAddForm.value = false
-  editingEvent.value = { _uid: ev._uid, id: ev.id, name: ev.name, date: ev.date, description: ev.description || '' }
+  editingEvent.value = { _uid: ev._uid, id: ev.id, name: ev.name, date: ev.date, time: ev.time || '', description: ev.description || '' }
   const w = 240
   const EDIT_H = 220
   let left, top
@@ -1181,7 +1185,7 @@ async function saveEditEvent() {
   const update = (list) => {
     const idx = list.findIndex(e => e.id === ev.id)
     if (idx !== -1) {
-      list[idx] = { ...list[idx], name: ev.name, date: ev.date, description: ev.description }
+      list[idx] = { ...list[idx], name: ev.name, date: ev.date, time: ev.time || '', description: ev.description }
     }
   }
   update(extraEvents.value)
@@ -1191,7 +1195,7 @@ async function saveEditEvent() {
   eventsCache[cacheKey] = [...extraEvents.value]
 
   try {
-    const updated = await eventsApi.update(ev.id, { title: ev.name, date: ev.date, description: ev.description || undefined, version: ev.version })
+    const updated = await eventsApi.update(ev.id, { title: ev.name, date: ev.date, time: ev.time || null, description: ev.description || undefined, version: ev.version })
     const applyVer = (list) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
     applyVer(extraEvents.value); applyVer(nextMonthEvents.value)
   } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await loadEvents() } }
@@ -1274,6 +1278,7 @@ async function saveEvent() {
     _uid:        uid,
     id:          uid,                    // 临时 id；create 回来换成真数字 id，但 _uid 不变
     date,
+    time:        newEvent.value.time || '',
     name:        newEvent.value.name,
     client:      '',
     type:        'event',
@@ -1283,12 +1288,12 @@ async function saveEvent() {
   }
   extraEvents.value.push(localItem)
   selectedDate.value = date
-  newEvent.value = { name: '', date: todayIso.value, description: '' }
+  newEvent.value = { name: '', date: todayIso.value, time: '', description: '' }
   showAddForm.value = false
 
   const cacheKey = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   try {
-    const created = await eventsApi.create({ title: localItem.name, date, type: 'event', description: localItem.description || undefined })
+    const created = await eventsApi.create({ title: localItem.name, date, time: localItem.time || undefined, type: 'event', description: localItem.description || undefined })
     const norm = { ...normalizeEvent(created), _uid: uid }   // 保留同一 _uid，删/改才能稳定匹配
     const idx = extraEvents.value.findIndex(e => e._uid === uid)
     if (idx !== -1) extraEvents.value[idx] = norm
@@ -1489,6 +1494,8 @@ async function saveEvent() {
 .ev-del-btn:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); transform: scale(1.1); }
 .sidebar-ev-bar { width: 3px; border-radius: 99px; align-self: stretch; flex-shrink: 0; min-height: 26px; }
 .sidebar-ev-name { font-size: 12px; font-weight: 500; color: var(--text-primary); line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
+.sidebar-ev-time { font-size: 11px; font-weight: 600; color: var(--accent, #7b7fb2); margin-right: 3px; font-variant-numeric: tabular-nums; }
+.popup-time { font-variant-numeric: tabular-nums; }
 .ev-type-badge {
   display: inline-block; vertical-align: middle; margin-left: 4px;
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
