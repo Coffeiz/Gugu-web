@@ -9,41 +9,33 @@
 
 ## [Unreleased]
 
-### 文件管理交互完善
+## [0.14.3] - 2026-06-30 · 日历提醒完整体系 + 文件库 UX 打磨 + DeepSeek 思考可调 + 工具错误脱敏
 
-- **文件夹多选堆叠拖拽动画**：文件夹和混合选中（文件+文件夹）拖拽时同样出现折叠堆叠效果，与文件多选体验对齐。两个面板（文件库 / 项目编辑卡）均已支持，mode2 下 `pm-clone-expanded` 正确传入。
-- **混合拖拽 drop 支持**：文件夹与文件同时选中后拖入目标文件夹，文件夹和文件都会被移动（之前文件夹部分 return 后文件被丢弃）。项目编辑卡额外补了文件夹→文件夹的移动能力。
-- **文件夹 Shift 范围多选**：`handleFolderClick` 修复 shift+click 无锚点时的 fall-through bug——原来没有锚点时会误导航进文件夹，现在对齐文件的处理：shift 按下时一律不导航，无锚点则选中并设锚点，有锚点则做范围选（可跨文件/文件夹混合）。
-- **多选选中样式统一**：`.selected` 状态改为白底 + 紫色 `::before` 覆盖层（原为半透明紫底），文件卡和文件夹卡对齐。`::before` 去掉 `:not(.fc-has-thumb)` 限制，图片卡的白色标签区现在也有紫色蒙层。文件夹卡补 `position: relative` 使伪元素定位生效。
-- **拖拽克隆视觉修正**：影子卡（第 2、3 张）保留 `.selected` class，选中边框和 `::before` 覆盖层不再丢失；移除 inline `border` 白色覆盖，让 CSS 选中边框生效。主克隆 `opacity` 降至 0.88，与单卡拖拽视觉一致。
-
-### 日历体验
-
-- **已完成项目按完成日截止**：日历中已完成项目不再延伸到截止日，改为显示到实际完成时间（`done_at`）。若提前完成（完成日早于开始日），则在完成日单日显示。
-- **偏好开关**：个人设置 → 偏好设置 → 日历，新增「已完成项目显示」选项，可在「按完成日」（默认）和「按截止日」（原行为）之间切换，偏好持久化到后端。
-
-### 修复
-
-- **中断生成不再误报「没有收到回复」**（`GuguChat.vue`）：用户中断（stop）流式生成时，`consumeStream` 捕获 `AbortError` 后返回 `aborted: true`，`send()` 检查该标志跳过兜底错误气泡，不再弹出「收到，但没有收到回复，请稍后再试」。
+> md 任务清单可交互、日历活动时间与提醒完整落地（phase 1–3）、工具错误脱敏纵深防御、DeepSeek 思考强度后台可调、文件库多选/拖拽体验对齐、日历已完成项目显示优化。
 
 ### 新增
 
-- **md 文件预览任务勾选框可点 + 回存**（`api/v1/files.py` + `viewers/TextViewer.vue` + `services/api.js`）：md 预览里的 GFM 任务清单（`- [ ]` / `- [x]`）此前是只读禁用框，现在可直接点勾/取消、即时改文件并持久化。后端新增 `PUT /files/{fid}/content`（改文本正文，仅文本类、限 1MB、校验 owner）；前端渲染时去掉 marked 默认的 `disabled`、按文档顺序给每个框打 `data-task`，点击翻转源里第 N 个任务行的 `[ ]`↔`[x]` 经 `filesApi.saveContent` 回存、存失败回滚。**仅 md + 真实文件 id 可交互**（聊天附件是 hex id，保持只读）。勾选框样式对齐注册页确认框（`.ack-box`）：16px 圆角 5px、紫灰边白底、选中紫渐变+阴影+同一条 SVG polyline 勾；因 marked 18 不输出 `task-list-item` class，改用 `:has(> input[type=checkbox])` 选含勾选框的 li。
-- **日历活动加「时间」+ 可绑定提醒定时任务（后端 phase 1）**（`models` + `alembic` + `events.py` + `scheduled_tasks.py` + `tools/calendar.py`）：日历事件此前只有日期、无时间。新增 `calendar_events.time`（HH:MM，可选，空=全天）+ `scheduled_tasks.event_id`（绑定到某活动的提醒；含 alembic 迁移 `20260629000001`，**生产 pull 后需 `make migrate`**）。① `create_event`/`update_event`/`list_event` 工具 + events REST API 收/返 `time`；② 定时任务 `create` 收 `event_id`（校验本人事件）、list 可按 `event_id` 过滤、`_to_resp` 带 `event_id`；③ **删活动连带删其绑定提醒**（应用层级联，event_id 故意不设 DB 外键、更可移植）。devserver 实测：time 存取、event_id 绑定、删活动级联删提醒(`deleted_reminders=1`)全过。④ **网页日历 UI**（phase 2）：加/编辑活动弹窗加时间输入(`<input type=time>`)+ 侧栏显示时间；**编辑面板内「提醒」区**——列出该活动绑定的定时任务、`datetime-local` 选时刻直接建 `@once` 提醒(用户自定义时间、`event_id` 绑定)、可删，建/删实时刷定时面板。vite 编译通过。**生产 pull 后需 `make migrate`。**
-- **日历活动提醒：与定时任务彻底解耦 + 咕咕活动提醒工具 + 渠道测试 + UI 打磨**（`tools/calendar.py` + `tools/scheduled_tasks.py` + `api/v1/scheduled_tasks.py` + `app/scheduled_tasks.py` + `services/api.js` + `Calendar/index.vue`）：在上条 phase1/2 基础上把「活动提醒」做成**独立于定时任务**的一等公民。**① 彻底解耦**——活动提醒（`event_id` 非空的 `@once` 任务）不再混进定时任务：web 面板 `GET /scheduled-tasks`（无 `event_id`）只返 `event_id IS NULL`；咕咕的独立任务工具 `list_scheduled_tasks`/按名按 id 解析全部加 `event_id IS NULL`，**看不到也碰不到**活动提醒。**② 咕咕活动提醒工具**——新增 `add_event_reminder`/`list_event_reminders`/`remove_event_reminder`（绑 `event_id`、过去时间跳过、全天按 09:00 计），咕咕能像网页一样给活动加/查/删提醒，不再「空口承诺」。**③ 工具合并少调用**——`create_event` 收 `reminders:[30,1440]` + `reminder_channels` 一步「建活动+设提醒」；`list_events` 每个活动**连同自己的 reminders 一起返回**（无则省略）；`add_event_reminder` 支持批量。**④ 渠道测试**——新增 `POST /scheduled-tasks/test-notify`（不建任务，直接把测试消息投到选定渠道、返回各渠道状态），网页活动卡渠道下方加「测试发送」横条（新建/编辑都能测）；抽出 `deliver_to_channels` 供执行/测试复用。**⑤ 删活动确认透明化**——`delete_event` 二次确认如实告知「及其 N 条提醒」。**⑥ UI 打磨**——加 `end_time`（结束<开始算次日，淡紫「次日」标、绝对定位不挤时间居中）、时间改直接文本输入+点击全选+自动插冒号、**过去日期隐藏整个提醒区**、弹窗加提醒后自动上抬保证保存按钮不出屏幕底部（+ `max-height` 内滚兜底）。devserver e2e 全过、解耦 0 泄漏、清理无残留。**无新迁移（复用 `event_id` 列）。**
+- **md 文件预览任务勾选框可点 + 回存**（`api/v1/files.py` + `viewers/TextViewer.vue` + `services/api.js`）：md 预览里的 GFM 任务清单（`- [ ]` / `- [x]`）此前是只读禁用框，现在可直接点勾/取消、即时改文件并持久化。后端新增 `PUT /files/{fid}/content`（改文本正文，仅文本类、限 1MB、校验 owner）；前端渲染时去掉 marked 默认的 `disabled`、按文档顺序给每个框打 `data-task`，点击翻转源里第 N 个任务行的 `[ ]`↔`[x]` 经 `filesApi.saveContent` 回存、存失败回滚。**仅 md + 真实文件 id 可交互**（聊天附件是 hex id，保持只读）。
+- **日历活动时间 + 提醒完整体系**（`models` + `alembic` + `events.py` + `scheduled_tasks.py` + `tools/calendar.py` + `Calendar/index.vue`）：三阶段落地——① **后端 phase 1**：新增 `calendar_events.time`（HH:MM，可选，空=全天）+ `scheduled_tasks.event_id`（绑定到某活动的提醒），含 alembic 迁移 `20260629000001`（**生产 pull 后需 `make migrate`**）；工具 + REST API 全链路收/返 `time`，删活动连带删绑定提醒（应用层级联）。② **网页 UI phase 2**：加/编辑活动弹窗加时间输入 + 侧栏显示时间；编辑面板内「提醒」区列出绑定定时任务、可直接建 `@once` 提醒并实时刷新定时面板。③ **解耦 + 咕咕工具 phase 3**：活动提醒与定时任务**彻底解耦**——`GET /scheduled-tasks` 只返 `event_id IS NULL`，咕咕工具同步屏蔽；新增 `add_event_reminder`/`list_event_reminders`/`remove_event_reminder` 工具，咕咕能像网页一样管理活动提醒；`create_event` 支持一步「建活动+设提醒」；`list_events` 连同每个活动的 reminders 一起返回；新增「渠道测试」（不建任务，直接投测试消息到选定渠道）；加 `end_time`（结束<开始算次日）+ UI 打磨（时间文本输入 + 过去日期隐藏提醒区 + 弹窗自动上抬）。**无新迁移（复用 `event_id` 列）。**
 
 ### 安全
 
-- **工具错误信息脱敏（防原始异常透传泄露）**（`agent/tools/base.py`）：咕咕移动文件失败时把原始 OS 异常原样转述给用户——`Permission denied: 'uploads/<user_uuid>/个人文件'`，泄露了内部存储布局 + 用户 UUID。根因是多个工具 `return {"error": f"…{str(e)}"}` 把原始异常透传，一路经 `registry.dispatch` → 模型 → 用户/决策轨迹/日志。在**工具执行唯一咽喉 `registry.dispatch`** 加 `sanitize_error()` 兜底：dispatch 异常路径 + 工具自返回的 error 字段，统一抹掉**绝对/相对路径（`uploads`·`.agent`·`.thumbs` 等）、UUID、DB 连接串、API key/token、traceback**——在 **tool_result 回模型之前**做，一处覆盖全部 55 工具，且保护模型上下文/轨迹。**只动 error 字段、绝不碰正常结果**（如 `read_file` 正文可能含任意文本，已测原样不动）；原始异常仍 `print`+traceback 进服务端日志，排查不丢。当前危害本就低（`/uploads` 未静态托管 + 文件访问全走鉴权 API），此为纵深防御 + 防未来跨用户/密钥泄露。详见 `docs/安全-工具错误信息脱敏.md`。（后续「药」层——工具按业务造干净消息——可继续收敛，本次先上 dispatch 级「网」。）
+- **工具错误信息脱敏（防原始异常透传泄露）**（`agent/tools/base.py`）：在工具执行唯一咽喉 `registry.dispatch` 加 `sanitize_error()` 兜底——dispatch 异常路径 + 工具自返回的 error 字段，统一抹掉**绝对/相对路径、UUID、DB 连接串、API key/token、traceback**，在 tool_result 回模型之前做，一处覆盖全部 55 工具。只动 error 字段、绝不碰正常结果；原始异常仍进服务端日志，排查不丢。详见 `docs/安全-工具错误信息脱敏.md`。
 
 ### 改进
 
-- **DeepSeek 思考强度（reasoning_effort）后台可调 + 上下文缓存命中监控**（`config.py` + `agent_admin.py` + `agent/core.py` + `Admin/Agent/index.vue`）：① **思考强度**——DeepSeek 思考模式下 temperature 失效，`reasoning_effort`（high/max）是唯一质量/成本旋钮。配置加 `reasoning_effort` 字段，后台「Agent 配置」卡片在 **provider=DeepSeek 且思考开** 时显示「思考强度：默认/high/max」；思考开（adaptive）时对 DeepSeek 带上（mimo 无此参数不带）。**针对历史「面板保存了却不生效」的坑**：`agent_admin.py` 里 create/update/activate **三处手挑字段同步 `ai` 段** 收口成单一来源 `_AI_SYNC_KEYS`/`_ai_segment`（漏一处=active 模型拿不到新字段），新增字段只改一处；并验证 `reasoning_effort` 贯穿 `model_fields`→`PresetCreate/Update`→`_AI_SYNC_KEYS`→`apply_override` 全链路、不被任何一环丢弃。② **缓存命中监控**——DeepSeek 自动上下文缓存（无需 `cache_control`，且咕咕的 system「稳定前缀在前」拆分已天然吃到命中）；openai 路采集 `prompt_cache_hit_tokens` 进 `_usage` 事件的 `cache_read`（与 anthropic 路统一），可观测命中率。
-- **DeepSeek 支持优化:思考开关真正生效 + 反思走结构化输出**（`agent/llm_select.py` + `agent/core.py` + `agent/memory/_llm.py`）：对照 DeepSeek 官方「思考模式」文档——DeepSeek 与 mimo **用同一个 OpenAI 思考参数** `{"thinking":{"type":...}}`，但此前思考开关 gate 在 `is_mimo`、DeepSeek 完全忽略 `thinking` 配置（恒用厂商默认＝思考开）。① 新增 `_is_deepseek` / `supports_thinking_toggle`，把开关扩到 DeepSeek：现在 `thinking=disabled`（默认）真能关掉 DeepSeek 思考、省延迟/token，`adaptive` 才开；qwen/openai 不支持该参数仍不发，避免误伤。② 记忆/反思 `complete_json` 的 `response_format=json_object + thinking:disabled` 同步从 mimo 扩到 DeepSeek（同样支持，避免推理挤占 `max_tokens` 截断大 JSON）。③ **已覆盖无需改**：DeepSeek 文档「思考+工具多轮必须回传 `reasoning_content`」——0.14.2 给 mimo 加的 `reasoning_content` 捕获+回传本就模型无关，DeepSeek 自动受益、不会 400；空正文兜底同理。
+- **DeepSeek 思考强度（reasoning_effort）后台可调 + 缓存命中监控**（`config.py` + `agent_admin.py` + `agent/core.py` + `Admin/Agent/index.vue`）：DeepSeek 思考模式下 `reasoning_effort`（high/max）是唯一质量/成本旋钮，后台「Agent 配置」在 provider=DeepSeek 且思考开时显示调节控件；修复 create/update/activate 三处字段同步收口成 `_AI_SYNC_KEYS`，防「面板保存了却不生效」。并采集 `prompt_cache_hit_tokens` 进 `_usage` 事件，openai 路缓存命中可观测。
+- **DeepSeek 思考开关真正生效 + 反思走结构化输出**（`agent/llm_select.py` + `agent/core.py` + `agent/memory/_llm.py`）：新增 `supports_thinking_toggle`，把思考开关扩到 DeepSeek（`thinking=disabled` 真能关掉、省延迟/token）；记忆/反思 `complete_json` 对 DeepSeek 开 `response_format=json_object + thinking:disabled`，避免推理挤占 `max_tokens` 截断大 JSON。
+
+### 体验
+
+- **文件库多选拖拽 UX 完善**（`usePhysicsDrag.js` + `Files/index.vue` + `ProjectModal.vue`）：文件夹与混合选中（文件+文件夹）拖拽时出现折叠堆叠动画；混合拖拽 drop 同时移动文件夹和文件；文件夹 Shift 范围多选（修复无锚点时误导航 bug）；选中样式统一为白底 + 紫色 `::before` 覆盖层，文件卡和文件夹卡对齐；拖拽克隆视觉修正（影子卡保留 `.selected`，主克隆 opacity 0.88）。两个面板（文件库 / 项目编辑卡）全局生效。
+- **日历已完成项目显示优化**（`Calendar/index.vue` + `preferences.js` + `ProfileModal.vue`）：已完成项目不再延伸到截止日，改为显示到实际完成时间（`done_at`）；若提前完成（完成日早于开始日）则在完成日单日显示。个人设置 → 偏好设置 → 日历新增「已完成项目显示」开关，可在「按完成日」（默认）/ 「按截止日」间切换，偏好持久化到后端。
 
 ### 修复
 
-- **日历跨月活动不显示**（`Calendar/index.vue`）：月视图是 6 周网格，首/末行会溢出到上/下月（如月底最后一行带下月 1~5 号）。这些「其他月」格子的单日活动此前**查不到**——`extraEvents` 只按 cursor 当月加载，溢出格的 iso（下月日期）在 `filter(e => e.date === iso)` 里匹配不到（项目条走日期区间、本就跨月正常，不受影响）。新增 `spilloverEvents` 按 cursor 取**上月 + 下月**活动（与给「即将到来」侧栏用、按真实今天算的 `nextMonthEvents` 区分），合并成 `visibleEvents`（按 id 去重）供网格格子与选中日详情用，溢出格活动 + 点开溢出日的详情都能看到。挂载 / 切月 / 实时 rev / 咕咕改日历 / 删除对账都会重取溢出月，拖拽·编辑·删除均同步 `spilloverEvents` 防显示不更新。
+- **中断生成不再误报「没有收到回复」**（`GuguChat.vue`）：用户中断流式生成时，`consumeStream` 捕获 `AbortError` 后返回 `aborted: true`，`send()` 检查该标志跳过兜底错误气泡。
+- **日历月视图溢出格单日活动不显示**（`Calendar/index.vue`）：月视图首/末行溢出到上/下月的格子，其单日活动此前因 `extraEvents` 只按当月加载而匹配不到。新增 `spilloverEvents` 取上月 + 下月活动，合并成 `visibleEvents`（去重）供网格与侧栏详情使用；切月/实时刷新/删除均同步。
 
 ## [0.14.2] - 2026-06-29 · 防「说了没做」意图守卫（A-lite+B 的 B）+ mimo 深度思考可与多轮工具共存 + 反思走 json_object 结构化输出 + 个人设置 UI（重开接续 / 接入咕咕独立面板）
 
