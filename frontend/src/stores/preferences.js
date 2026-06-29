@@ -7,8 +7,9 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const stageTemplates   = ref([])
   const replyTone        = ref(null)   // natural(null) / formal / lively
   const replyLength      = ref(null)   // medium(null) / short / detailed
-  const pmStagesExpanded = ref(false)  // 项目编辑卡阶段区展开版面记忆
-  const loaded           = ref(false)
+  const pmStagesExpanded  = ref(false)  // 项目编辑卡阶段区展开版面记忆
+  const calendarDoneMode  = ref('done') // 'done' = 已完成项目显示到完成日；'deadline' = 显示到截止日
+  const loaded            = ref(false)
 
   async function fetch() {
     try {
@@ -18,6 +19,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
       replyTone.value        = data.replyTone      ?? null
       replyLength.value      = data.replyLength    ?? null
       pmStagesExpanded.value = data.pmStagesExpanded ?? false
+      calendarDoneMode.value = data.calendarDoneMode ?? 'done'
       loaded.value = true
     } catch {}
   }
@@ -25,6 +27,11 @@ export const usePreferencesStore = defineStore('preferences', () => {
   async function savePmStagesExpanded(v) {
     pmStagesExpanded.value = v
     try { await preferencesApi.update({ pmStagesExpanded: v }) } catch {}
+  }
+
+  async function saveCalendarDoneMode(v) {
+    calendarDoneMode.value = v
+    try { await preferencesApi.update({ calendarDoneMode: v }) } catch {}
   }
 
   async function saveLastStages(stages) {
@@ -49,7 +56,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded,
-    loaded, fetch, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarDoneMode,
+    loaded, fetch, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarDoneMode,
   }
 })

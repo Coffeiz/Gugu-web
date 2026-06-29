@@ -247,7 +247,7 @@
               @click.stop="handleFolderClick(f, $event)"
               draggable="true"
               @dragstart="onFolderCardDragStart(f, $event)"
-              @dragend="draggingFolderIds = new Set()"
+              @dragend="onFolderCardDragEnd"
               @dragover="onFolderDragOver(f, $event)"
               @dragleave="onFolderDragLeave(f)"
               @drop="onFolderDrop(f, $event)"
@@ -408,7 +408,7 @@
               @contextmenu.prevent.stop="openCtx('folder', f, $event)"
               draggable="true"
               @dragstart="onFolderCardDragStart(f, $event)"
-              @dragend="draggingFolderIds = new Set()"
+              @dragend="onFolderCardDragEnd"
               @dragover="onFolderDragOver(f, $event)"
               @dragleave="onFolderDragLeave(f)"
               @drop="onFolderDrop(f, $event)"
@@ -690,7 +690,7 @@ import { useUiStore } from '@/stores/ui'
 import { cardBlobReadyIds } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt, fileExtCategory, fileIconColor, fileListIcon } from '@/utils/fileTypes'
-import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
+import { startPhysicsDrag, startMultiPhysicsDrag } from '@/composables/usePhysicsDrag'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
 import { useBoxSelection } from '@/composables/useBoxSelection'
@@ -1254,7 +1254,14 @@ function _shiftSelect(type, id) {
 }
 
 function handleFolderClick(folder, event) {
-  if (event.shiftKey && _shiftSelect('folder', folder.id)) return
+  if (event.shiftKey) {
+    if (!_shiftSelect('folder', folder.id)) {
+      // 没有锚点时 shift+click 当作普通选中，设置锚点，不导航
+      toggleFolderSelect(folder.id)
+      lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'folder' && i.id === folder.id)
+    }
+    return
+  }
   if (inSelectionMode.value) {
     toggleFolderSelect(folder.id)
     lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'folder' && i.id === folder.id)
@@ -1661,29 +1668,68 @@ const dragOverFolderId  = ref(null)
 const bcDragOverIdx     = ref(null)
 
 function onFolderCardDragStart(f, e) {
-  draggingFolderIds.value = new Set([f.folderId])
-  e.dataTransfer.setData('application/x-folder-ids', JSON.stringify([f.folderId]))
+  const isMultiSelect = selectedFolderKeys.value.has(f.id) && selectedFolderKeys.value.size > 0
+  const folderObjs = isMultiSelect
+    ? sortedContents.value.folders.filter(item => selectedFolderKeys.value.has(item.id))
+    : [f]
+  const fileIds = isMultiSelect ? [...selectedIds.value] : []
+
+  draggingFolderIds.value = new Set(folderObjs.map(item => item.folderId))
+  if (fileIds.length) draggingFileIds.value = new Set(fileIds)
+
+  e.dataTransfer.setData('application/x-folder-ids', JSON.stringify(folderObjs.map(item => item.folderId)))
+  if (fileIds.length) e.dataTransfer.setData('text/plain', JSON.stringify(fileIds))
   e.dataTransfer.effectAllowed = 'move'
+
   if (e.currentTarget?.classList?.contains('folder-card')) {
-    startPhysicsDrag(e, e.currentTarget)
+    const total = folderObjs.length + fileIds.length
+    if (total > 1) {
+      const extraFolderEls = folderObjs.filter(item => item.id !== f.id)
+        .map(item => document.querySelector(`[data-folder-key="${item.id}"]`)).filter(Boolean)
+      const extraFileEls = fileIds
+        .map(id => document.querySelector(`[data-file-id="${id}"]`)).filter(Boolean)
+      const extras = [...extraFolderEls, ...extraFileEls].slice(0, 2)
+      startMultiPhysicsDrag(e, e.currentTarget, total, extras)
+    } else {
+      startPhysicsDrag(e, e.currentTarget)
+    }
   }
+}
+function onFolderCardDragEnd() {
+  draggingFolderIds.value = new Set()
+  draggingFileIds.value   = new Set()
+  dragOverFolderId.value  = null
 }
 
 function onFileDragStart(f, e) {
-  const ids = selectedIds.value.has(f.id) && selectedIds.value.size > 0
+  const fileIds = selectedIds.value.has(f.id) && selectedIds.value.size > 0
     ? [...selectedIds.value] : [f.id]
-  draggingFileIds.value = new Set(ids)
-  e.dataTransfer.setData('text/plain', JSON.stringify(ids))
+  const isFileSelected = selectedIds.value.has(f.id)
+  const folderObjs = isFileSelected
+    ? sortedContents.value.folders.filter(item => selectedFolderKeys.value.has(item.id))
+    : []
+
+  draggingFileIds.value = new Set(fileIds)
+  if (folderObjs.length) draggingFolderIds.value = new Set(folderObjs.map(item => item.folderId))
+
+  e.dataTransfer.setData('text/plain', JSON.stringify(fileIds))
+  if (folderObjs.length) e.dataTransfer.setData('application/x-folder-ids', JSON.stringify(folderObjs.map(item => item.folderId)))
   e.dataTransfer.effectAllowed = 'move'
-  // 物理拖拽：仅网格卡片（列表行整条飞起来不好看），单选时启用
-  const usePhysics = e.currentTarget?.classList?.contains('fc-card') && ids.length === 1
-  if (usePhysics) {
-    // 走物理拖：克隆体飞动当唯一视觉，startPhysicsDrag 内部把原生拖影设成透明 ghost。
-    // ⚠️ 这里别再 setDragImage(卡片)——双重 setDragImage 部分浏览器只认第一次（卡片），
-    //    随后源卡被隐藏 → 拖影变空 → 退回浏览器默认小地球 favicon。让透明 ghost 当唯一拖影。
+
+  const total = fileIds.length + folderObjs.length
+  if (total > 1) {
+    const extraFileEls = fileIds.filter(id => id !== f.id)
+      .map(id => document.querySelector(`[data-file-id="${id}"]`)).filter(Boolean)
+    const extraFolderEls = folderObjs
+      .map(item => document.querySelector(`[data-folder-key="${item.id}"]`)).filter(Boolean)
+    const extras = [...extraFileEls, ...extraFolderEls].slice(0, 2)
+    startMultiPhysicsDrag(e, e.currentTarget, total, extras)
+  } else if (e.currentTarget?.classList?.contains('fc-card')) {
+    // 单选网格卡：物理弹簧拖拽
+    // ⚠️ 别再 setDragImage(卡片)——双重 setDragImage 部分浏览器只认第一次，随后源卡隐藏→退回 favicon
     startPhysicsDrag(e, e.currentTarget)
   } else {
-    // 列表行 / 多选：用卡片/行自身作拖拽图，覆盖浏览器对 text/plain 的「带网站 favicon 的文本预览」
+    // 单选列表行：用行自身作拖影，覆盖浏览器 text/plain 的「favicon+文本预览」
     try {
       const _r = e.currentTarget.getBoundingClientRect()
       e.dataTransfer.setDragImage(e.currentTarget, e.clientX - _r.left, e.clientY - _r.top)
@@ -1771,28 +1817,33 @@ async function onFolderDrop(f, e) {
   dragOverFolderId.value = null
   if (f.type !== 'folder') return
 
-  // 文件夹拖入文件夹
-  if (draggingFolderIds.value.size > 0) {
+  const hasDraggingFolders = draggingFolderIds.value.size > 0
+  const hasDraggingFiles   = draggingFileIds.value.size > 0
+
+  // 文件夹拖入文件夹（含混合）
+  if (hasDraggingFolders) {
     const folderIds = [...draggingFolderIds.value].filter(id => id !== f.folderId)
     draggingFolderIds.value = new Set()
-    if (!folderIds.length) return
-    const backups = folderIds.map(id => cacheStore.getFolder(id)).filter(Boolean)
-    folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: f.folderId }))
     selectedFolderKeys.value = new Set()
-    loadContents()
-    try {
-      await Promise.all(folderIds.map(id => foldersApi.move(id, f.folderId)))
-    } catch (err) {
-      backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId }))
+    if (folderIds.length) {
+      const backups = folderIds.map(id => cacheStore.getFolder(id)).filter(Boolean)
+      folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: f.folderId }))
       loadContents()
-      console.error('[Files] 移动文件夹失败:', err.message)
+      try {
+        await Promise.all(folderIds.map(id => foldersApi.move(id, f.folderId)))
+      } catch (err) {
+        backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId }))
+        loadContents()
+        console.error('[Files] 移动文件夹失败:', err.message)
+      }
     }
-    return
+    if (!hasDraggingFiles) return
   }
 
-  // 文件拖入文件夹（原逻辑）
-  let ids
-  try { ids = JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return }
+  // 文件拖入文件夹（含混合拖拽中的文件部分）
+  const ids = hasDraggingFiles
+    ? [...draggingFileIds.value]
+    : (() => { try { return JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return null } })()
   if (!ids?.length) return
   const backups = ids.map(id => cacheStore.getFile(id)).filter(Boolean)
   ids.forEach(id => cacheStore.updateFile(id, { folderId: f.folderId }))
@@ -2256,10 +2307,16 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 
 /* ── 文件夹选中态 ── */
+.folder-card { position: relative; }
 .folder-card.selected {
-  border-color: rgba(123,127,178,0.6);
-  background: rgba(123,127,178,0.08);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.85), 0 0 0 2px rgba(123,127,178,0.18);
+  border-color: rgba(123,127,178,0.55);
+  background: rgba(255,255,255,0.92);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 0 0 2px rgba(123,127,178,0.28);
+}
+.folder-card.selected::before {
+  content: ''; position: absolute; inset: 0; z-index: 2;
+  pointer-events: none; border-radius: inherit;
+  background: rgba(123,127,178,0.14);
 }
 .list-row.folder-row.selected {
   background: rgba(123,127,178,0.09);
@@ -2335,8 +2392,14 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 .fc-card.selected {
   border-color: rgba(123,127,178,0.55);
-  background: rgba(123,127,178,0.07);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 0 0 2px rgba(123,127,178,0.18);
+  background: rgba(255,255,255,0.92);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 0 0 2px rgba(123,127,178,0.28);
+}
+/* 选中覆盖层：::before 覆盖整张卡（含图片卡白色标签区），::after 在缩略图上额外叠加 */
+.fc-card.selected::before {
+  content: ''; position: absolute; inset: 0; z-index: 2;
+  pointer-events: none; border-radius: inherit;
+  background: rgba(123,127,178,0.14);
 }
 .fc-card.selected .fc-thumb-area::after,
 .fc-card.pre-selected .fc-thumb-area::after {

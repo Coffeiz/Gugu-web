@@ -372,6 +372,7 @@ import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { useLiveStore } from '@/stores/live'
 import { useAuthStore } from '@/stores/auth'
+import { usePreferencesStore } from '@/stores/preferences'
 import { eventsApi, scheduledTasksApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
@@ -384,6 +385,7 @@ const projectStore = useProjectStore()
 const uiStore = useUiStore()
 const liveStore = useLiveStore()
 const authStore = useAuthStore()
+const prefsStore = usePreferencesStore()
 const todayIso = ref(toIso(new Date()))
 
 let _midnightTimer = null
@@ -1028,9 +1030,10 @@ const projectTimelines = computed(() =>
       id:           `p${p.id}`,
       name:         p.name,
       client:       p.client,
-      startDate:    (p.status === 'done' && p.doneAt && p.doneAt.slice(0, 10) < p.startDate)
+      startDate:    (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt && p.doneAt.slice(0, 10) < p.startDate)
                       ? p.doneAt.slice(0, 10) : p.startDate,
-      endDate:      (p.status === 'done' && p.doneAt) ? p.doneAt.slice(0, 10) : p.deadline,
+      endDate:      (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt)
+                      ? p.doneAt.slice(0, 10) : p.deadline,
       accent:       extractAccent(p.color),
       type:         'deadline',
       isProject:    true,

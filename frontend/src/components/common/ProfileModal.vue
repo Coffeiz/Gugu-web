@@ -325,6 +325,16 @@
                 </div>
                 <div class="pm-coming">咕了</div>
               </div>
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">已完成项目显示</span>
+                  <span class="pm-field-hint">日历中已完成项目的截止日期显示方式</span>
+                </div>
+                <div class="pm-style-group">
+                  <button class="pm-style-chip" :class="{ active: prefsStore.calendarDoneMode === 'done' }" @click="prefsStore.saveCalendarDoneMode('done')">按完成日</button>
+                  <button class="pm-style-chip" :class="{ active: prefsStore.calendarDoneMode === 'deadline' }" @click="prefsStore.saveCalendarDoneMode('deadline')">按截止日</button>
+                </div>
+              </div>
             </div>
 
             <div class="pm-sep"></div>

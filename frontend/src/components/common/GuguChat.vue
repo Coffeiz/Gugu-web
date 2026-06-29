@@ -1364,7 +1364,7 @@ onUnmounted(() => {
 // 返回 { aiIdx, usedTools }，供调用方做收尾（首条空回复兜底、刷新视图）。
 async function consumeStream(reader, ownerSid) {
   const decoder = new TextDecoder()
-  let buf = '', aiIdx = -1
+  let buf = '', aiIdx = -1, aborted = false
   let sid = ownerSid           // 本流归属的会话（新对话在 session_id 事件前为 null）
   let detached = false         // 一旦用户切到别的会话，本流永久脱离、不再污染当前视图
   const usedTools = new Set()
@@ -1378,7 +1378,7 @@ async function consumeStream(reader, ownerSid) {
     while (true) {
       let chunk
       try { chunk = await reader.read() }
-      catch (e) { if (e.name === 'AbortError') break; throw e }   // 切会话会 abort：优雅收尾，别当网络错
+      catch (e) { if (e.name === 'AbortError') { aborted = true; break; } throw e }   // 切会话会 abort：优雅收尾，别当网络错
       const { done, value } = chunk
       if (done) break
       buf += decoder.decode(value, { stream: true })
@@ -1450,7 +1450,7 @@ async function consumeStream(reader, ownerSid) {
       }
     }
   }
-  return { aiIdx, usedTools, detached, sid }
+  return { aiIdx, usedTools, detached, sid, aborted }
 }
 
 // 续看：打开会话时若它正在生成（messages 接口返回 active），重连看后端跑完。
@@ -1523,7 +1523,7 @@ async function send(forcedText) {
     aiIdx = r.aiIdx
     r.usedTools.forEach(t => usedTools.add(t))
     // 用户中途切走了 → 别把兜底气泡塞进当前别的会话视图（回复已在后端，切回会重载）
-    if (aiIdx === -1 && !r.detached) {
+    if (aiIdx === -1 && !r.detached && !r.aborted) {
       messages.value.push({ id: mkid(), role: 'ai', text: '收到，但没有收到回复，请稍后再试。', time: now() })
       await scrollBottom()
     }

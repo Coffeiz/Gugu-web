@@ -395,3 +395,238 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
   }
   _active.raf = requestAnimationFrame(frame)
 }
+
+/**
+ * 多文件拖拽物理效果（折叠堆叠动画）
+ *
+ * 在 startPhysicsDrag 基础上叠加「多张卡片折叠成一叠」的视觉：
+ *   - 主克隆：同 startPhysicsDrag 的弹簧跟随 + 后仰摆动；
+ *   - 影子克隆（最多 2 张）：从「扇开」状态（较大旋转/偏移）ease-out 折叠到「紧贴」状态；
+ *   - 右上角数量徽章（.phys-drag-badge）；
+ *   - 落点：吸入文件夹 or 归位，影子克隆淡出。
+ *
+ * @param {DragEvent} event    dragstart 事件
+ * @param {HTMLElement} sourceEl  被拖的卡片
+ * @param {number} count       选中文件总数（含 sourceEl）
+ * @param {object} [opts]      同 startPhysicsDrag opts
+ */
+/**
+ * @param {HTMLElement[]} extras  其余选中文件的 DOM 元素（最多取前 2 张作影子卡）
+ */
+export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts = {}) {
+  if (!sourceEl || _active) return
+  try { event.dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {}
+
+  const SPRING = opts.spring  ?? 190
+  const ZETA   = opts.damping ?? 0.82
+  const LIFT   = opts.lift    ?? 1.045
+  const SWAY   = opts.sway    ?? 0.25
+  const TILT   = opts.tilt    ?? 5
+  const GRABY  = opts.grabY   ?? 28
+
+  const rect = sourceEl.getBoundingClientRect()
+  const half = { x: rect.width / 2, y: rect.height / 2 }
+  const container = sourceEl.parentElement
+
+  // 影子卡：spread（扇开起始，dx/dy 大偏移让动画明显）→ tight（紧贴叠放，卡片从右下角露出）
+  // dx/dy: 相对主克隆左上角的像素偏移；rz: 额外 Z 轴旋转(deg)；sc: 相对 LIFT 的缩放系数
+  const SHADOW_CFGS = [
+    { spread: { dx: +50, dy: -20, rz: +20, sc: 1.00 }, tight: { dx: +7,  dy: +6,  rz: +4, sc: 0.97 } },
+    { spread: { dx: +90, dy: -38, rz: +34, sc: 1.00 }, tight: { dx: +13, dy: +12, rz: +8, sc: 0.94 } },
+  ].slice(0, Math.min(count - 1, 2))
+
+  // 读实际卡片圆角，影子卡与主卡保持一致（ProjectModal mode2 / 文件库 card 圆角可能不同）
+  const cardRadius = getComputedStyle(sourceEl).borderRadius || '14px'
+
+  const shadows = SHADOW_CFGS.map((cfg, i) => {
+    const extraEl = extras[i]
+    const initTf =
+      `translate3d(${(rect.left + cfg.spread.dx).toFixed(2)}px,` +
+      `${(rect.top + half.y - GRABY + cfg.spread.dy).toFixed(2)}px, 0)` +
+      ` perspective(760px) rotateX(${(TILT * 0.6).toFixed(2)}deg)` +
+      ` rotateZ(${cfg.spread.rz.toFixed(2)}deg) scale(${(LIFT * cfg.spread.sc).toFixed(4)})`
+
+    let el
+    if (extraEl) {
+      // 克隆真实文件卡内容
+      el = extraEl.cloneNode(true)
+      // 去掉拖拽状态类；保留 .selected 以保持选中边框和 ::before 覆盖层
+      el.classList.remove('pre-selected', 'dragging', 'cut')
+      if (opts.cloneClass) el.classList.add(opts.cloneClass)
+      // 移除多选框、hover 操作按钮等交互元素，避免「多选模式下样式不一致」
+      el.querySelectorAll('.sel-checkbox, .fc-hover-actions, .fd-hover-actions').forEach(n => n.remove())
+    } else {
+      // 无对应元素时退回空白卡
+      el = document.createElement('div')
+    }
+    el.classList.add('phys-drag-clone')
+    Object.assign(el.style, {
+      position: 'fixed', left: '0', top: '0',
+      width: rect.width + 'px', height: rect.height + 'px',
+      margin: '0', boxSizing: 'border-box', overflow: 'hidden',
+      borderRadius: cardRadius,
+      // 强制实心白底：脱离组件 scoped 上下文后 background 可能丢失
+      // 用 !important 等价的内联写法保证盖过所有 class（selected/scoped 等）
+      background: 'white',
+      zIndex: String(9997 - i), pointerEvents: 'none',
+      willChange: 'transform', transition: 'none',
+      opacity: i === 0 ? '0.55' : '0.35',
+      transform: initTf,
+    })
+    document.body.appendChild(el)
+    return { el, cfg }
+  })
+
+  // 主克隆（zIndex 最高，带数量徽章）
+  const clone = sourceEl.cloneNode(true)
+  clone.classList.add('phys-drag-clone')
+  // 移除拖拽/剪切态，保留 .selected 以显示选中边框和覆盖层
+  clone.classList.remove('dragging', 'cut')
+  clone.querySelectorAll('.sel-checkbox, .fc-hover-actions, .fd-hover-actions').forEach(n => n.remove())
+  // opts.cloneClass 补回脱离上下文后丢失的版式（如 ProjectModal mode2 的 pm-clone-expanded）
+  if (opts.cloneClass) clone.classList.add(opts.cloneClass)
+  Object.assign(clone.style, {
+    position: 'fixed', left: '0', top: '0',
+    width: rect.width + 'px', height: rect.height + 'px',
+    margin: '0', boxSizing: 'border-box', overflow: 'visible',
+    background: 'white', borderRadius: cardRadius, opacity: '0.88',
+    zIndex: '9999', pointerEvents: 'none', willChange: 'transform', transition: 'none',
+  })
+  const badge = document.createElement('div')
+  badge.className = 'phys-drag-badge'
+  badge.textContent = String(count)
+  clone.appendChild(badge)
+  clone.style.transform =
+    `translate3d(${rect.left.toFixed(2)}px, ${(rect.top + half.y - GRABY).toFixed(2)}px, 0)` +
+    ` perspective(760px) rotateX(${TILT}deg) scale(${LIFT})`
+  document.body.appendChild(clone)
+
+  document.body.classList.add('phys-dragging')
+
+  // 多文件拖拽：源卡原地不动（保留布局），只有克隆体+影子飞出
+  // 单文件 startPhysicsDrag 才做 display:none + FLIP
+
+  const pos    = { x: rect.left + half.x, y: rect.top + half.y }
+  const target = { x: pos.x, y: pos.y }
+  const vel    = { x: 0, y: 0 }
+  let vxs = 0, vys = 0
+  const DAMP = 2 * ZETA * Math.sqrt(SPRING)
+  const KV   = -Math.log(1 - 0.12) * 60
+  let lastT = null
+  let foldT = 0           // 0→1: 折叠进度（扇开→紧贴）
+  const FOLD_DUR = 0.30   // 秒
+
+  function onOver(e) {
+    e.preventDefault()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    if (e.clientX || e.clientY) { target.x = e.clientX; target.y = e.clientY }
+  }
+
+  function frame(now) {
+    let dt = lastT === null ? 1 / 60 : (now - lastT) / 1000
+    lastT = now
+    if (dt > 1 / 20) dt = 1 / 20
+
+    // 折叠动画进度（ease-out 二次方）
+    foldT = Math.min(1, foldT + dt / FOLD_DUR)
+    const fold = 1 - Math.pow(1 - foldT, 2)
+
+    // 弹簧积分
+    let rem = dt
+    while (rem > 1e-4) {
+      const h = Math.min(rem, 1 / 120)
+      rem -= h
+      const ax = SPRING * (target.x - pos.x) - DAMP * vel.x
+      const ay = SPRING * (target.y - pos.y) - DAMP * vel.y
+      vel.x += ax * h; vel.y += ay * h
+      pos.x += vel.x * h; pos.y += vel.y * h
+    }
+
+    const av = 1 - Math.exp(-KV * dt)
+    vxs += (vel.x - vxs) * av; vys += (vel.y - vys) * av
+    const rotZ = Math.max(-5, Math.min(5, (vxs / 60) * SWAY))
+    const rotX = TILT + Math.max(-4, Math.min(4, (vys / 60) * 0.16))
+
+    // 主克隆
+    clone.style.transform =
+      `translate3d(${(pos.x - half.x).toFixed(2)}px, ${(pos.y - GRABY).toFixed(2)}px, 0)` +
+      ` perspective(760px) rotateX(${rotX.toFixed(2)}deg) rotateZ(${rotZ.toFixed(2)}deg) scale(${LIFT})`
+
+    // 影子克隆：spread→tight，并随主克隆一起移动
+    for (const { el, cfg } of shadows) {
+      const dx = cfg.spread.dx + (cfg.tight.dx - cfg.spread.dx) * fold
+      const dy = cfg.spread.dy + (cfg.tight.dy - cfg.spread.dy) * fold
+      const rz = cfg.spread.rz + (cfg.tight.rz - cfg.spread.rz) * fold
+      const sc = cfg.spread.sc + (cfg.tight.sc - cfg.spread.sc) * fold
+      el.style.transform =
+        `translate3d(${(pos.x - half.x + dx).toFixed(2)}px, ${(pos.y - GRABY + dy).toFixed(2)}px, 0)` +
+        ` perspective(760px) rotateX(${(rotX * 0.6).toFixed(2)}deg)` +
+        ` rotateZ(${(rotZ * 0.4 + rz).toFixed(2)}deg) scale(${(LIFT * sc).toFixed(4)})`
+    }
+
+    _active.raf = requestAnimationFrame(frame)
+  }
+
+  function end() {
+    if (!_active) return
+    cancelAnimationFrame(_active.raf)
+    _active = null
+    document.body.classList.remove('phys-dragging')
+    document.removeEventListener('dragover', onOver)
+    document.removeEventListener('drop', end, true)
+    sourceEl.removeEventListener('dragend', end)
+
+    // 影子克隆淡出移除
+    for (const { el } of shadows) {
+      el.style.transition = 'opacity 0.18s ease'
+      el.style.opacity = '0'
+      setTimeout(() => el.remove(), 220)
+    }
+
+    const dropX = target.x, dropY = target.y
+    const SLOT = box => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(1)`
+
+    let done = false, onEnd = null
+    const flyTo = (box, shrink) => {
+      clone.style.transition = `transform 0.42s ${_SETTLE}, opacity 0.4s ease`
+      if (shrink) {
+        const cx = box.left + box.width / 2, cy = box.top + box.height / 2
+        clone.style.opacity = '0'
+        clone.style.transform =
+          `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(0.32)`
+      } else {
+        // 归位：飞回源卡并淡出（源卡始终可见，克隆体直接消失）
+        clone.style.transform = SLOT(box)
+        clone.style.opacity = '0'
+      }
+      const finish = () => {
+        if (done) return
+        done = true
+        clone.removeEventListener('transitionend', onEnd)
+        clone.remove()
+      }
+      onEnd = finish
+      clone.addEventListener('transitionend', onEnd)
+      setTimeout(finish, 560)
+    }
+
+    requestAnimationFrame(() => {
+      // 吸入文件夹/面包屑
+      const under = document.elementFromPoint(dropX, dropY)
+      const absorb = under?.closest?.('.folder-card, .bc-item')
+      if (absorb) { flyTo(absorb.getBoundingClientRect(), true); return }
+
+      // 归位：克隆体飞回源卡位置并淡出，源卡本身始终可见（多文件模式不隐藏源卡）
+      const box = sourceEl.isConnected
+        ? sourceEl.getBoundingClientRect()
+        : { left: dropX - half.x, top: dropY - half.y, width: rect.width, height: rect.height }
+      flyTo(box, false)
+    })
+  }
+
+  _active = { raf: 0, end }
+  document.addEventListener('dragover', onOver)
+  document.addEventListener('drop', end, true)
+  sourceEl.addEventListener('dragend', end)
+  _active.raf = requestAnimationFrame(frame)
+}

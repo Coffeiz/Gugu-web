@@ -293,8 +293,11 @@
                   class="folder-card" :style="{ '--fd-color': accentColor }"
                   :class="{ 'drag-over': pmDragOverFolderId === folder.id, selected: pmSelectedFolderIds.has(folder.id), 'pre-selected': pmPreviewFolderIds.has(folder.id) }"
                   :data-pm-folder-id="folder.id"
+                  draggable="true"
                   @click.stop="onPmFolderClick(folder, $event)"
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
+                  @dragstart="onPmFolderCardDragStart(folder, $event)"
+                  @dragend="onPmFolderCardDragEnd"
                   @dragover="onPmFolderDragOver(folder, $event)"
                   @dragleave="onPmFolderDragLeave(folder)"
                   @drop="onPmFolderDrop(folder, $event)">
@@ -478,8 +481,11 @@
                   class="list-row folder-list-row"
                   :class="{ 'drag-over': pmDragOverFolderId === folder.id, selected: pmSelectedFolderIds.has(folder.id), 'pre-selected': pmPreviewFolderIds.has(folder.id) }"
                   :data-pm-folder-id="folder.id"
+                  draggable="true"
                   @click.stop="onPmFolderClick(folder, $event)"
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
+                  @dragstart="onPmFolderCardDragStart(folder, $event)"
+                  @dragend="onPmFolderCardDragEnd"
                   @dragover="onPmFolderDragOver(folder, $event)"
                   @dragleave="onPmFolderDragLeave(folder)"
                   @drop="onPmFolderDrop(folder, $event)">
@@ -702,7 +708,7 @@ import { pLimit, UPLOAD_CONCURRENCY } from '@/utils/concurrency'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
 import { useBoxSelection } from '@/composables/useBoxSelection'
-import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
+import { startPhysicsDrag, startMultiPhysicsDrag } from '@/composables/usePhysicsDrag'
 import { fireHint } from '@/composables/useOnboarding'
 import DatePicker from '@/components/common/DatePicker.vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
@@ -1008,27 +1014,70 @@ async function deleteSelectedPm() {
 }
 
 // ── 拖动移动 ──────────────────────────────────────────────────────────────────
-const pmDraggingFileIds  = ref(new Set())
-const pmDragOverFolderId = ref(null)
-const pmBcDragOverIdx    = ref(null)
+const pmDraggingFileIds   = ref(new Set())
+const pmDraggingFolderIds = ref(new Set())
+const pmDragOverFolderId  = ref(null)
+const pmBcDragOverIdx     = ref(null)
+
+function onPmFolderCardDragStart(folder, e) {
+  const isMultiSelect = pmSelectedFolderIds.value.has(folder.id) && pmSelectedFolderIds.value.size > 0
+  const folderIds = isMultiSelect ? [...pmSelectedFolderIds.value] : [folder.id]
+  const fileIds = isMultiSelect ? [...pmSelectedFileIds.value] : []
+
+  pmDraggingFolderIds.value = new Set(folderIds)
+  if (fileIds.length) pmDraggingFileIds.value = new Set(fileIds)
+
+  e.dataTransfer.setData('application/x-folder-ids', JSON.stringify(folderIds))
+  if (fileIds.length) e.dataTransfer.setData('text/plain', JSON.stringify(fileIds))
+  e.dataTransfer.effectAllowed = 'move'
+
+  if (e.currentTarget?.classList?.contains('folder-card')) {
+    const opts = stagesExpanded.value ? { cloneClass: 'pm-clone-expanded' } : {}
+    const total = folderIds.length + fileIds.length
+    if (total > 1) {
+      const extraFolderEls = folderIds.filter(id => id !== folder.id)
+        .map(id => document.querySelector(`[data-pm-folder-id="${id}"]`)).filter(Boolean)
+      const extraFileEls = fileIds
+        .map(id => document.querySelector(`[data-pm-file-id="${id}"]`)).filter(Boolean)
+      const extras = [...extraFolderEls, ...extraFileEls].slice(0, 2)
+      startMultiPhysicsDrag(e, e.currentTarget, total, extras, opts)
+    } else {
+      startPhysicsDrag(e, e.currentTarget, opts)
+    }
+  }
+}
+function onPmFolderCardDragEnd() {
+  pmDraggingFolderIds.value = new Set()
+  pmDraggingFileIds.value   = new Set()
+  pmDragOverFolderId.value  = null
+}
 
 function onPmFileDragStart(file, e) {
-  const ids = pmSelectedFileIds.value.has(file.id) && pmSelectedFileIds.value.size > 0
+  const fileIds = pmSelectedFileIds.value.has(file.id) && pmSelectedFileIds.value.size > 0
     ? [...pmSelectedFileIds.value] : [file.id]
-  pmDraggingFileIds.value = new Set(ids)
-  e.dataTransfer.setData('text/plain', JSON.stringify(ids))
+  const isFileSelected = pmSelectedFileIds.value.has(file.id)
+  const folderIds = isFileSelected ? [...pmSelectedFolderIds.value] : []
+
+  pmDraggingFileIds.value = new Set(fileIds)
+  if (folderIds.length) pmDraggingFolderIds.value = new Set(folderIds)
+
+  e.dataTransfer.setData('text/plain', JSON.stringify(fileIds))
+  if (folderIds.length) e.dataTransfer.setData('application/x-folder-ids', JSON.stringify(folderIds))
   e.dataTransfer.effectAllowed = 'move'
-  // 物理拖拽：仅网格卡片、单选时启用（列表行整条飞起来不好看）
-  const usePhysics = e.currentTarget?.classList?.contains('fc-card') && ids.length === 1
-  if (usePhysics) {
-    // 走物理拖：克隆体飞动当唯一视觉，startPhysicsDrag 内部把原生拖影设成透明 ghost。
-    // ⚠️ 这里别再 setDragImage(卡片)——双重 setDragImage 部分浏览器只认第一次（卡片），
-    //    随后源卡被隐藏 → 拖影变空 → 退回浏览器默认小地球 favicon。让透明 ghost 当唯一拖影。
-    // mode2（stages-expanded）下卡片用 aspect-ratio 压扁；克隆体在 body 层丢了该上下文，
-    // 给它打标记类把 mode2 版式补回去，否则拖影回落 mode1 的更大尺寸、与面板卡对不上。
-    startPhysicsDrag(e, e.currentTarget, stagesExpanded.value ? { cloneClass: 'pm-clone-expanded' } : {})
+
+  const isCard = e.currentTarget?.classList?.contains('fc-card')
+  const opts = stagesExpanded.value ? { cloneClass: 'pm-clone-expanded' } : {}
+  const total = fileIds.length + folderIds.length
+  if (isCard && total > 1) {
+    const extraFileEls = fileIds.filter(id => id !== file.id)
+      .map(id => document.querySelector(`[data-pm-file-id="${id}"]`)).filter(Boolean)
+    const extraFolderEls = folderIds
+      .map(id => document.querySelector(`[data-pm-folder-id="${id}"]`)).filter(Boolean)
+    const extras = [...extraFileEls, ...extraFolderEls].slice(0, 2)
+    startMultiPhysicsDrag(e, e.currentTarget, total, extras, opts)
+  } else if (isCard) {
+    startPhysicsDrag(e, e.currentTarget, opts)
   } else {
-    // 列表行 / 多选：用卡片/行自身作拖拽图，覆盖浏览器对 text/plain 的「带网站 favicon 的文本预览」
     try {
       const _r = e.currentTarget.getBoundingClientRect()
       e.dataTransfer.setDragImage(e.currentTarget, e.clientX - _r.left, e.clientY - _r.top)
@@ -1037,8 +1086,9 @@ function onPmFileDragStart(file, e) {
   _cancelPmBoxDrag()
 }
 function onPmFileDragEnd() {
-  pmDraggingFileIds.value = new Set()
-  pmDragOverFolderId.value = null
+  pmDraggingFileIds.value   = new Set()
+  pmDraggingFolderIds.value = new Set()
+  pmDragOverFolderId.value  = null
 }
 function onPmBcDragOver(idx, _seg, e) {
   if (!pmDraggingFileIds.value.size) return
@@ -1078,21 +1128,51 @@ function onPmFolderDragLeave(folder) {
 }
 async function onPmFolderDrop(folder, e) {
   e.preventDefault(); pmDragOverFolderId.value = null
-  let ids; try { ids = JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return }
-  if (!ids?.length) return
-  try {
-    await Promise.all(ids.map(id => filesApi.update(id, { folder_id: folder.id })))
-    pmDraggingFileIds.value = new Set(); clearPmSelection()
-    const pid = props.project?.id; if (!pid) return
-    const [files, folders] = await Promise.all([
-      filesApi.list({ projectId: pid }),
-      foldersApi.list({ projectId: pid }),
-    ])
-    projectFiles.value   = files.filter(f => !f.folderId)
-    projectFolders.value = folders
-    folderFilesMap.value = {}; subFolderMap.value = {}; folderStack.value = []
-    pmNavStack.value = [[]]; pmNavCursor.value = 0
-  } catch (err) { console.error('[ProjectModal] 移动失败:', err.message) }
+
+  const hasDraggingFolders = pmDraggingFolderIds.value.size > 0
+  const hasDraggingFiles   = pmDraggingFileIds.value.size > 0
+
+  if (hasDraggingFolders) {
+    const ids = [...pmDraggingFolderIds.value].filter(id => id !== folder.id)
+    pmDraggingFolderIds.value = new Set()
+    if (ids.length) {
+      try {
+        await Promise.all(ids.map(id => foldersApi.move(id, folder.id)))
+      } catch (err) { console.error('[ProjectModal] 移动文件夹失败:', err.message) }
+    }
+    if (!hasDraggingFiles) {
+      clearPmSelection()
+      const pid = props.project?.id; if (!pid) return
+      const [files, allFolders] = await Promise.all([
+        filesApi.list({ projectId: pid }),
+        foldersApi.list({ projectId: pid }),
+      ])
+      projectFiles.value = files.filter(f => !f.folderId)
+      projectFolders.value = allFolders
+      folderFilesMap.value = {}; subFolderMap.value = {}; folderStack.value = []
+      pmNavStack.value = [[]]; pmNavCursor.value = 0
+      return
+    }
+  }
+
+  const fileIds = hasDraggingFiles
+    ? [...pmDraggingFileIds.value]
+    : (() => { try { return JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return null } })()
+  if (fileIds?.length) {
+    try {
+      await Promise.all(fileIds.map(id => filesApi.update(id, { folder_id: folder.id })))
+    } catch (err) { console.error('[ProjectModal] 移动文件失败:', err.message) }
+  }
+  pmDraggingFileIds.value = new Set(); clearPmSelection()
+  const pid = props.project?.id; if (!pid) return
+  const [files, allFolders] = await Promise.all([
+    filesApi.list({ projectId: pid }),
+    foldersApi.list({ projectId: pid }),
+  ])
+  projectFiles.value   = files.filter(f => !f.folderId)
+  projectFolders.value = allFolders
+  folderFilesMap.value = {}; subFolderMap.value = {}; folderStack.value = []
+  pmNavStack.value = [[]]; pmNavCursor.value = 0
 }
 
 // ── 排序 ──────────────────────────────────────────────────────────────────────
@@ -2717,9 +2797,15 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* ── 拖动 / 选中状态 ── */
 .fc-card.dragging, .list-row.dragging { opacity: 0.35; cursor: grabbing; }
 .fc-card.selected {
-  border-color: rgba(123,127,178,0.5);
-  background: rgba(123,127,178,0.08);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 0 0 1.5px rgba(123,127,178,0.2);
+  border-color: rgba(123,127,178,0.55);
+  background: rgba(255,255,255,0.92);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 0 0 2px rgba(123,127,178,0.28);
+}
+/* icon 卡（无缩略图）的选中紫色覆盖层，图片卡用 .fc-thumb-area::after */
+.fc-card.selected:not(.fc-has-thumb)::before {
+  content: ''; position: absolute; inset: 0; z-index: 2;
+  pointer-events: none; border-radius: inherit;
+  background: rgba(123,127,178,0.14);
 }
 .fc-card.pre-selected { border-color: rgba(123,127,178,0.35); background: rgba(123,127,178,0.05); }
 .fc-card.selected .fc-thumb-area::after,
