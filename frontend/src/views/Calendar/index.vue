@@ -300,6 +300,17 @@
         <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
         <input v-model="editingEvent.time" type="time" class="popup-input popup-time" placeholder="时间（可选）" />
         <textarea v-model="editingEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
+        <div class="reminder-section" v-if="typeof editingEvent.id === 'number'">
+          <div class="reminder-title">提醒（定时任务）</div>
+          <div v-for="t in eventReminders" :key="t.id" class="reminder-item">
+            <span class="reminder-time"><PhBell :size="11" weight="bold" /> {{ reminderLabel(t) }}</span>
+            <button class="reminder-del" @click="removeReminder(t.id)" title="删除提醒"><PhX :size="10" weight="bold" /></button>
+          </div>
+          <div class="reminder-add">
+            <input v-model="newReminderAt" type="datetime-local" class="popup-input reminder-input" />
+            <button class="reminder-add-btn" :disabled="reminderBusy || !newReminderAt" @click="addReminder">加提醒</button>
+          </div>
+        </div>
         <div class="popup-actions">
           <button class="popup-save" @click="saveEditEvent" :disabled="!editingEvent.name">保存</button>
           <button class="popup-delete" @click="deleteEventFromEdit">删除</button>
@@ -319,13 +330,13 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { useLiveStore } from '@/stores/live'
-import { eventsApi } from '@/services/api'
+import { eventsApi, scheduledTasksApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
 import { projectProgress } from '@/utils/projectProgress'
-import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack } from '@phosphor-icons/vue'
+import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack, PhBell } from '@phosphor-icons/vue'
 
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
@@ -1153,8 +1164,9 @@ function openAddForm() {
 function openEditForm(ev, nativeEv, useMousePos = false) {
   showAddForm.value = false
   editingEvent.value = { _uid: ev._uid, id: ev.id, name: ev.name, date: ev.date, time: ev.time || '', description: ev.description || '' }
+  loadReminders(ev)
   const w = 240
-  const EDIT_H = 220
+  const EDIT_H = 300
   let left, top
   if (useMousePos) {
     left = Math.max(8, Math.min(nativeEv.clientX - w / 2, window.innerWidth - w - 8))
@@ -1174,6 +1186,55 @@ function openEditForm(ev, nativeEv, useMousePos = false) {
   }
   editFormStyle.value = { position: 'fixed', top: Math.max(8, top) + 'px', left: left + 'px', width: w + 'px', zIndex: 2100 }
   showEditForm.value = true
+}
+
+// ── 活动绑定的提醒（定时任务）：编辑面板内直接加/删，和定时任务面板同一套（event_id 绑定）──
+const eventReminders = ref([])
+const newReminderAt  = ref('')     // datetime-local 值 "YYYY-MM-DDTHH:MM"，正好是 @once 要的格式
+const reminderBusy   = ref(false)
+
+async function loadReminders(ev) {
+  eventReminders.value = []
+  // 默认提醒时刻 = 活动当天 + 时间（没时间则 09:00），用户可改
+  newReminderAt.value = `${ev.date}T${ev.time || '09:00'}`
+  if (typeof ev.id !== 'number') return   // 临时事件（还没存）不拉提醒
+  try {
+    const data = await scheduledTasksApi.listForEvent(ev.id)
+    eventReminders.value = data?.tasks || []
+  } catch { eventReminders.value = [] }
+}
+
+function reminderLabel(t) {
+  // @once:2026-12-31T14:00 → 12-31 14:00
+  const c = t.cron || ''
+  if (c.startsWith('@once:')) return c.slice(6).replace('T', ' ').slice(5)
+  return c
+}
+
+async function addReminder() {
+  const ev = editingEvent.value
+  if (!ev || typeof ev.id !== 'number' || !newReminderAt.value || reminderBusy.value) return
+  reminderBusy.value = true
+  try {
+    await scheduledTasksApi.create({
+      name: `${ev.name} 提醒`,
+      payload: `提醒：${ev.name}（${newReminderAt.value.replace('T', ' ')}）`,
+      cron: `@once:${newReminderAt.value}`,
+      channels: ['web'],
+      event_id: ev.id,
+    })
+    await loadReminders(ev)
+    liveStore.bump?.('scheduled_tasks')   // 让定时面板也实时刷
+  } catch (e) { alert('添加提醒失败：' + (e?.message || '请检查时间')) }
+  finally { reminderBusy.value = false }
+}
+
+async function removeReminder(id) {
+  try {
+    await scheduledTasksApi.delete(id)
+    eventReminders.value = eventReminders.value.filter(t => t.id !== id)
+    liveStore.bump?.('scheduled_tasks')
+  } catch { /* 忽略，下次打开会对账 */ }
 }
 
 async function saveEditEvent() {
@@ -1585,6 +1646,17 @@ async function saveEvent() {
 .popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
 .popup-save:disabled { opacity: 0.38; cursor: default; }
 .popup-save:not(:disabled):hover { opacity: 0.88; }
+.reminder-section { display: flex; flex-direction: column; gap: 5px; padding-top: 7px; border-top: 1px solid rgba(123,127,178,0.18); }
+.reminder-title { font-size: 10px; font-weight: 700; color: #8a8fa8; letter-spacing: 0.04em; }
+.reminder-item { display: flex; align-items: center; justify-content: space-between; gap: 6px; background: rgba(123,127,178,0.08); border-radius: 7px; padding: 3px 6px 3px 8px; }
+.reminder-time { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: #65688f; font-variant-numeric: tabular-nums; }
+.reminder-del { display: flex; align-items: center; padding: 2px; border: none; background: none; cursor: pointer; color: #b07858; border-radius: 5px; }
+.reminder-del:hover { background: rgba(176,120,88,0.12); }
+.reminder-add { display: flex; gap: 6px; align-items: center; }
+.reminder-input { flex: 1; padding: 5px 8px; font-size: 11px; }
+.reminder-add-btn { flex-shrink: 0; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.1); color: #65688f; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: background 0.12s; }
+.reminder-add-btn:hover:not(:disabled) { background: rgba(123,127,178,0.2); }
+.reminder-add-btn:disabled { opacity: 0.4; cursor: default; }
 .form-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
 .form-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .form-pop-enter-from, .form-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-6px); }

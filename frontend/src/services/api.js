@@ -56,6 +56,7 @@ async function request(method, path, body = null, isForm = false) {
 const get    = (path)        => request('GET',    path)
 const post   = (path, body)  => request('POST',   path, body)
 const patch  = (path, body)  => request('PATCH',  path, body)
+const put    = (path, body)  => request('PUT',    path, body)
 const del    = (path)        => request('DELETE', path)
 const upload = (path, form)  => request('POST',   path, form, true)
 
@@ -116,6 +117,7 @@ export const projectsApi = {
 // ── ScheduledTasks（定时任务）─────────────────────────────────────────────────
 export const scheduledTasksApi = {
   list:         ()         => get('/scheduled-tasks'),
+  listForEvent: (eventId)  => get(`/scheduled-tasks?event_id=${eventId}`),   // 某日历活动绑定的提醒
   create:       (data)     => post('/scheduled-tasks', data),
   update:       (id, data) => patch(`/scheduled-tasks/${id}`, data),
   delete:       (id)       => del(`/scheduled-tasks/${id}`),
@@ -140,6 +142,7 @@ export const filesApi = {
   version: ()         => get('/files/version'),
   storage: ()         => get('/files/storage'),
   update: (id, data) => patch(`/files/${id}`, data),
+  saveContent: (id, content) => put(`/files/${id}/content`, { content }),   // 改文本正文（md 勾选框等）
   delete:      (id)   => del(`/files/${id}`),
   batchDelete: (ids)  => post('/files/batch-delete', { ids }),
   copy: (id, body) => post(`/files/${id}/copy`, body),
