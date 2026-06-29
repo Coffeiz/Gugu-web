@@ -149,7 +149,7 @@
               <div class="sidebar-ev-name" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">
                 <span v-if="!ev.isUserEvent" class="ev-type-badge ev-proj-badge" :style="{ color: darkenHex(ev.accent) }">项目</span>
                 <span v-else class="ev-type-badge ev-event-badge">{{ typeLabel(ev.type) }}</span>
-                <span v-if="ev.time" class="sidebar-ev-time">{{ ev.time }}</span>
+                <span v-if="ev.time" class="sidebar-ev-time">{{ ev.time }}{{ ev.endTime ? '–' + ev.endTime : '' }}</span>
                 {{ ev.name }}
                 <span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
               </div>
@@ -257,25 +257,30 @@
           </button>
         </div>
         <input v-model="newEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" @keydown.esc="showAddForm = false" autofocus />
-        <div class="popup-row">
-          <DatePicker v-model="newEvent.date" placeholder="选择日期" />
+        <DatePicker v-model="newEvent.date" placeholder="选择日期" />
+        <div class="popup-row time-range">
           <input v-model="newEvent.time" type="time" class="popup-input popup-time" />
+          <span class="time-sep">–</span>
+          <input v-model="newEvent.endTime" type="time" class="popup-input popup-time" />
         </div>
         <textarea v-model="newEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="reminder-section">
-          <div class="reminder-row">
-            <span class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</span>
-            <div class="lead-stepper">
-              <button class="lead-step" @click="stepLead(-1)" :disabled="reminderLeadIdx === 0">−</button>
-              <span class="lead-val">{{ leadLabel }}</span>
-              <button class="lead-step" @click="stepLead(1)" :disabled="reminderLeadIdx === LEAD_PRESETS.length - 1">+</button>
-            </div>
+          <div class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</div>
+          <div v-for="(r, i) in reminders" :key="i" class="reminder-item">
+            <span class="reminder-lead">{{ leadLabelOf(r.leadMin) }}</span>
+            <button class="reminder-del" @click="removeReminderAt(i)" title="移除"><PhX :size="10" weight="bold" /></button>
           </div>
-          <div class="reminder-row" v-if="reminderLeadIdx > 0">
+          <div class="reminder-add">
+            <select v-model="newLeadMin" class="lead-select">
+              <option v-for="o in LEAD_OPTIONS" :key="o.min" :value="o.min">{{ o.label }}</option>
+            </select>
+            <button class="reminder-add-btn" @click="addReminderLead">+ 添加</button>
+          </div>
+          <div class="reminder-row" v-if="reminders.length">
             <span class="reminder-label">渠道</span>
             <div class="chan-chips">
               <button class="chan-chip" :class="{ on: reminderChannels.includes('web') }" @click="toggleReminderChannel('web')">web</button>
-              <button class="chan-chip" :class="{ on: reminderChannels.includes('im') }" @click="toggleReminderChannel('im')">IM</button>
+              <button v-for="ch in imChannels" :key="ch" class="chan-chip" :class="{ on: reminderChannels.includes(ch) }" @click="toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
             </div>
           </div>
         </div>
@@ -316,25 +321,30 @@
           </button>
         </div>
         <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
-        <div class="popup-row">
-          <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
+        <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
+        <div class="popup-row time-range">
           <input v-model="editingEvent.time" type="time" class="popup-input popup-time" />
+          <span class="time-sep">–</span>
+          <input v-model="editingEvent.endTime" type="time" class="popup-input popup-time" />
         </div>
         <textarea v-model="editingEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="reminder-section">
-          <div class="reminder-row">
-            <span class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</span>
-            <div class="lead-stepper">
-              <button class="lead-step" @click="stepLead(-1)" :disabled="reminderLeadIdx === 0">−</button>
-              <span class="lead-val">{{ leadLabel }}</span>
-              <button class="lead-step" @click="stepLead(1)" :disabled="reminderLeadIdx === LEAD_PRESETS.length - 1">+</button>
-            </div>
+          <div class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</div>
+          <div v-for="(r, i) in reminders" :key="i" class="reminder-item">
+            <span class="reminder-lead">{{ leadLabelOf(r.leadMin) }}</span>
+            <button class="reminder-del" @click="removeReminderAt(i)" title="移除"><PhX :size="10" weight="bold" /></button>
           </div>
-          <div class="reminder-row" v-if="reminderLeadIdx > 0">
+          <div class="reminder-add">
+            <select v-model="newLeadMin" class="lead-select">
+              <option v-for="o in LEAD_OPTIONS" :key="o.min" :value="o.min">{{ o.label }}</option>
+            </select>
+            <button class="reminder-add-btn" @click="addReminderLead">+ 添加</button>
+          </div>
+          <div class="reminder-row" v-if="reminders.length">
             <span class="reminder-label">渠道</span>
             <div class="chan-chips">
               <button class="chan-chip" :class="{ on: reminderChannels.includes('web') }" @click="toggleReminderChannel('web')">web</button>
-              <button class="chan-chip" :class="{ on: reminderChannels.includes('im') }" @click="toggleReminderChannel('im')">IM</button>
+              <button v-for="ch in imChannels" :key="ch" class="chan-chip" :class="{ on: reminderChannels.includes(ch) }" @click="toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
             </div>
           </div>
         </div>
@@ -357,6 +367,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { useLiveStore } from '@/stores/live'
+import { useAuthStore } from '@/stores/auth'
 import { eventsApi, scheduledTasksApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
@@ -368,6 +379,7 @@ import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, P
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
 const liveStore = useLiveStore()
+const authStore = useAuthStore()
 const todayIso = ref(toIso(new Date()))
 
 let _midnightTimer = null
@@ -404,7 +416,14 @@ function hdayType(isoDate) {
   return getHolidayType(hdayCache.value[yr], isoDate)
 }
 const showAddForm  = ref(false)
-const newEvent     = ref({ name: '', date: todayIso.value, time: '', description: '' })
+// 默认时间段：下一个整点 → 再过一小时。如现在 22:50 → 23:00–00:00（次日）
+function defaultTimeRange() {
+  const now = new Date()
+  const p = n => String(n).padStart(2, '0')
+  const sh = (now.getHours() + 1) % 24
+  return { time: `${p(sh)}:00`, endTime: `${p((sh + 1) % 24)}:00` }
+}
+const newEvent     = ref({ name: '', date: todayIso.value, ...defaultTimeRange(), description: '' })
 const addBtnRef    = ref(null)
 const addFormRef   = ref(null)
 const addFormStyle = ref({})
@@ -498,7 +517,7 @@ function onWeekContextMenu(e, week) {
 function ctxAddEvent() {
   cellCtx.show = false
   const iso = cellCtx.range?.start ?? cellCtx.iso
-  newEvent.value = { name: '', date: iso, time: '', description: '' }
+  newEvent.value = { name: '', date: iso, ...defaultTimeRange(), description: '' }
   resetReminder()
   const ADD_H = 260
   const ctxTop = (window.innerHeight - cellCtx.y - 8 >= ADD_H)
@@ -886,6 +905,7 @@ function normalizeEvent(e) {
     id:          e.id,
     date:        e.date,
     time:        e.time ?? '',
+    endTime:     e.endTime ?? '',
     name:        e.title,
     client:      e.client ?? '',
     type:        e.type,
@@ -1163,7 +1183,7 @@ function _flashCalendarEvent(id) {
 }
 
 function openAddForm() {
-  newEvent.value = { name: '', date: selectedDate.value || todayIso.value, time: '', description: '' }
+  newEvent.value = { name: '', date: selectedDate.value || todayIso.value, ...defaultTimeRange(), description: '' }
   resetReminder()
   const btnEl = addBtnRef.value
   if (btnEl) {
@@ -1192,7 +1212,7 @@ function openAddForm() {
 
 function openEditForm(ev, nativeEv, useMousePos = false) {
   showAddForm.value = false
-  editingEvent.value = { _uid: ev._uid, id: ev.id, name: ev.name, date: ev.date, time: ev.time || '', description: ev.description || '' }
+  editingEvent.value = { _uid: ev._uid, id: ev.id, name: ev.name, date: ev.date, time: ev.time || '', endTime: ev.endTime || '', description: ev.description || '' }
   loadReminders(ev)
   const w = 240
   const EDIT_H = 300
@@ -1217,37 +1237,46 @@ function openEditForm(ev, nativeEv, useMousePos = false) {
   showEditForm.value = true
 }
 
-// ── 活动绑定的提醒（定时任务）：提前量 + 渠道（web/im，和定时任务同一通道、event_id 绑定）──
-// 加/编辑两个表单共用同一套 UI 与逻辑；提醒在「保存活动」时一并落地（建/改/删）。
-const LEAD_PRESETS = [
-  { label: '无提醒', min: null },
-  { label: '准点', min: 0 },
+// ── 活动绑定的提醒（定时任务）：可加多个，每个用「提前量」下拉选；渠道按用户已绑（web + feishu/qq/wechat）勾选 ──
+// 加/编辑两个表单共用；提醒在「保存活动」时一并对账落地（新增建、删除的删、改渠道）。
+const LEAD_OPTIONS = [
+  { label: '准点',        min: 0 },
   { label: '提前 5 分钟', min: 5 },
   { label: '提前 15 分钟', min: 15 },
   { label: '提前 30 分钟', min: 30 },
   { label: '提前 1 小时', min: 60 },
   { label: '提前 2 小时', min: 120 },
-  { label: '提前 1 天', min: 1440 },
-  { label: '提前 2 天', min: 2880 },
+  { label: '提前 1 天',   min: 1440 },
+  { label: '提前 2 天',   min: 2880 },
 ]
-const reminderLeadIdx    = ref(0)         // LEAD_PRESETS 下标；0 = 无提醒
-const reminderChannels   = ref(['web'])   // web / im，同定时任务
-const existingReminderId = ref(null)      // 该活动已有的提醒 id（有则改/删，无则建）
-const leadLabel = computed(() => LEAD_PRESETS[reminderLeadIdx.value]?.label || '无提醒')
+const CHAN_LABEL = { web: 'web', feishu: '飞书', qq: 'QQ', wechat: '微信' }
+const imChannels = computed(() => authStore.user?.imChannels ?? [])   // 用户已绑的 IM 平台
+const reminders          = ref([])         // [{ id?, leadMin }]，可多个
+const reminderChannels   = ref(['web'])    // 渠道（web + 已绑 IM），该活动的提醒共用
+const newLeadMin         = ref(30)         // 添加用：下拉选的提前量（分钟）
+const removedReminderIds = ref([])         // 编辑里删掉的已存在提醒 id，保存时真删
 
-function stepLead(dir) {
-  reminderLeadIdx.value = Math.min(LEAD_PRESETS.length - 1, Math.max(0, reminderLeadIdx.value + dir))
-}
+function leadLabelOf(min) { return LEAD_OPTIONS.find(o => o.min === min)?.label || `提前 ${min} 分钟` }
 function toggleReminderChannel(ch) {
   const set = new Set(reminderChannels.value)
   set.has(ch) ? set.delete(ch) : set.add(ch)
   if (set.size === 0) set.add(ch)   // 至少留一个
   reminderChannels.value = [...set]
 }
+function addReminderLead() {
+  if (reminders.value.some(r => r.leadMin === Number(newLeadMin.value))) return   // 同提前量不重复加
+  reminders.value.push({ leadMin: Number(newLeadMin.value) })
+}
+function removeReminderAt(i) {
+  const r = reminders.value[i]
+  if (r?.id) removedReminderIds.value.push(r.id)
+  reminders.value.splice(i, 1)
+}
 function resetReminder() {
-  reminderLeadIdx.value = 0
+  reminders.value = []
   reminderChannels.value = ['web']
-  existingReminderId.value = null
+  removedReminderIds.value = []
+  newLeadMin.value = 30
 }
 
 function _pad2(n) { return String(n).padStart(2, '0') }
@@ -1262,30 +1291,30 @@ async function loadReminders(ev) {
   resetReminder()
   if (typeof ev.id !== 'number') return   // 临时事件（还没存）：保持 reset 态
   try {
-    const t = ((await scheduledTasksApi.listForEvent(ev.id))?.tasks || [])[0]
-    if (!t) return
-    existingReminderId.value = t.id
-    reminderChannels.value = (t.channels && t.channels.length) ? t.channels : ['web']
-    if ((t.cron || '').startsWith('@once:')) {   // 由（活动时刻 − 提醒时刻）反推最接近的提前量预设
-      const lead = Math.round((new Date(`${ev.date}T${ev.time || '09:00'}`) - new Date(t.cron.slice(6))) / 60000)
-      let best = 1, bd = Infinity
-      LEAD_PRESETS.forEach((p, i) => { if (p.min != null) { const d = Math.abs(p.min - lead); if (d < bd) { bd = d; best = i } } })
-      reminderLeadIdx.value = best
-    } else { reminderLeadIdx.value = 1 }
+    const tasks = (await scheduledTasksApi.listForEvent(ev.id))?.tasks || []
+    if (!tasks.length) return
+    reminderChannels.value = (tasks[0].channels && tasks[0].channels.length) ? tasks[0].channels : ['web']
+    reminders.value = tasks.map(t => {
+      let leadMin = 0
+      if ((t.cron || '').startsWith('@once:')) {
+        const raw = Math.round((new Date(`${ev.date}T${ev.time || '09:00'}`) - new Date(t.cron.slice(6))) / 60000)
+        leadMin = LEAD_OPTIONS.reduce((b, o) => Math.abs(o.min - raw) < Math.abs(b - raw) ? o.min : b, 0)
+      }
+      return { id: t.id, leadMin }
+    })
   } catch { /* 保持 reset 态 */ }
 }
 
-// 保存活动后调用：按当前提前量/渠道，对该活动的提醒建/改/删
-async function applyReminder(eventId, name, date, time) {
-  const lead = LEAD_PRESETS[reminderLeadIdx.value]?.min
+// 保存活动后调用：对账该活动的提醒——删掉移除的、改已存在的渠道/时刻、建新增的
+async function applyReminders(eventId, name, date, time) {
   try {
-    if (lead == null) {                        // 无提醒：有旧的就删
-      if (existingReminderId.value) { await scheduledTasksApi.delete(existingReminderId.value); existingReminderId.value = null }
-    } else {
-      const cron = `@once:${_reminderAtIso(date, time, lead)}`
+    for (const id of removedReminderIds.value) await scheduledTasksApi.delete(id)
+    removedReminderIds.value = []
+    for (const r of reminders.value) {
+      const cron = `@once:${_reminderAtIso(date, time, r.leadMin)}`
       const data = { name: `${name} 提醒`, payload: `提醒：${name}（${date}${time ? ' ' + time : ''}）`, cron, channels: reminderChannels.value }
-      if (existingReminderId.value) await scheduledTasksApi.update(existingReminderId.value, data)
-      else { const t = await scheduledTasksApi.create({ ...data, event_id: eventId }); existingReminderId.value = t?.id ?? null }
+      if (r.id) await scheduledTasksApi.update(r.id, data)
+      else { const t = await scheduledTasksApi.create({ ...data, event_id: eventId }); r.id = t?.id ?? null }
     }
     liveStore.bump?.('scheduled_tasks')
   } catch { /* 提醒失败不挡活动保存 */ }
@@ -1300,7 +1329,7 @@ async function saveEditEvent() {
   const update = (list) => {
     const idx = list.findIndex(e => e.id === ev.id)
     if (idx !== -1) {
-      list[idx] = { ...list[idx], name: ev.name, date: ev.date, time: ev.time || '', description: ev.description }
+      list[idx] = { ...list[idx], name: ev.name, date: ev.date, time: ev.time || '', endTime: ev.endTime || '', description: ev.description }
     }
   }
   update(extraEvents.value)
@@ -1310,10 +1339,10 @@ async function saveEditEvent() {
   eventsCache[cacheKey] = [...extraEvents.value]
 
   try {
-    const updated = await eventsApi.update(ev.id, { title: ev.name, date: ev.date, time: ev.time || null, description: ev.description || undefined, version: ev.version })
+    const updated = await eventsApi.update(ev.id, { title: ev.name, date: ev.date, time: ev.time || null, endTime: ev.endTime || null, description: ev.description || undefined, version: ev.version })
     const applyVer = (list) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
     applyVer(extraEvents.value); applyVer(nextMonthEvents.value)
-    await applyReminder(ev.id, ev.name, ev.date, ev.time)   // 按提前量/渠道落地提醒
+    await applyReminders(ev.id, ev.name, ev.date, ev.time)   // 按提前量/渠道落地提醒
   } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await loadEvents() } }
 }
 
@@ -1395,6 +1424,7 @@ async function saveEvent() {
     id:          uid,                    // 临时 id；create 回来换成真数字 id，但 _uid 不变
     date,
     time:        newEvent.value.time || '',
+    endTime:     newEvent.value.endTime || '',
     name:        newEvent.value.name,
     client:      '',
     type:        'event',
@@ -1404,16 +1434,16 @@ async function saveEvent() {
   }
   extraEvents.value.push(localItem)
   selectedDate.value = date
-  newEvent.value = { name: '', date: todayIso.value, time: '', description: '' }
+  newEvent.value = { name: '', date: todayIso.value, ...defaultTimeRange(), description: '' }
   showAddForm.value = false
 
   const cacheKey = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   try {
-    const created = await eventsApi.create({ title: localItem.name, date, time: localItem.time || undefined, type: 'event', description: localItem.description || undefined })
+    const created = await eventsApi.create({ title: localItem.name, date, time: localItem.time || undefined, endTime: localItem.endTime || undefined, type: 'event', description: localItem.description || undefined })
     const norm = { ...normalizeEvent(created), _uid: uid }   // 保留同一 _uid，删/改才能稳定匹配
     const idx = extraEvents.value.findIndex(e => e._uid === uid)
     if (idx !== -1) extraEvents.value[idx] = norm
-    if (typeof created?.id === 'number') await applyReminder(created.id, localItem.name, date, localItem.time)   // 新活动按提前量/渠道建提醒
+    if (typeof created?.id === 'number') await applyReminders(created.id, localItem.name, date, localItem.time)   // 新活动按提前量/渠道建提醒
   } catch { }
   eventsCache[cacheKey] = [...extraEvents.value]
 }
@@ -1615,6 +1645,9 @@ async function saveEvent() {
 .popup-row { display: flex; gap: 6px; align-items: center; }
 .popup-row > :first-child { flex: 1; min-width: 0; }
 .popup-time { width: 70px; flex-shrink: 0; text-align: center; padding-left: 4px; padding-right: 4px; font-variant-numeric: tabular-nums; }
+.time-range { justify-content: flex-start; gap: 8px; }
+.time-range > :first-child { flex: 0 0 auto; }
+.time-sep { color: #8a8fa8; font-size: 13px; font-weight: 600; }
 .ev-type-badge {
   display: inline-block; vertical-align: middle; margin-left: 4px;
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
@@ -1707,12 +1740,15 @@ async function saveEvent() {
 .reminder-section { display: flex; flex-direction: column; gap: 6px; padding-top: 7px; border-top: 1px solid rgba(123,127,178,0.18); }
 .reminder-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .reminder-label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: #8a8fa8; }
-.lead-stepper { display: flex; align-items: center; gap: 2px; background: rgba(123,127,178,0.08); border-radius: 8px; padding: 2px; }
-.lead-step { width: 22px; height: 22px; border: none; background: none; border-radius: 6px; cursor: pointer; color: #65688f; font-size: 15px; font-weight: 700; line-height: 1; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
-.lead-step:hover:not(:disabled) { background: rgba(123,127,178,0.18); }
-.lead-step:disabled { opacity: 0.3; cursor: default; }
-.lead-val { min-width: 80px; text-align: center; font-size: 11px; font-weight: 600; color: #65688f; }
-.chan-chips { display: flex; gap: 5px; }
+.reminder-item { display: flex; align-items: center; justify-content: space-between; gap: 6px; background: rgba(123,127,178,0.08); border-radius: 7px; padding: 3px 6px 3px 9px; }
+.reminder-lead { font-size: 11px; font-weight: 600; color: #65688f; }
+.reminder-del { display: flex; align-items: center; padding: 2px; border: none; background: none; cursor: pointer; color: #b07858; border-radius: 5px; }
+.reminder-del:hover { background: rgba(176,120,88,0.12); }
+.reminder-add { display: flex; gap: 6px; align-items: center; }
+.lead-select { flex: 1; height: 28px; padding: 0 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 11px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028; cursor: pointer; outline: none; }
+.reminder-add-btn { flex-shrink: 0; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.1); color: #65688f; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: background 0.12s; }
+.reminder-add-btn:hover { background: rgba(123,127,178,0.2); }
+.chan-chips { display: flex; gap: 5px; flex-wrap: wrap; }
 .chan-chip { padding: 3px 11px; border-radius: 99px; border: 1px solid rgba(123,127,178,0.3); background: rgba(255,255,255,0.5); color: #8a8fa8; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
 .chan-chip.on { background: rgba(123,127,178,0.16); border-color: rgba(123,127,178,0.55); color: #5b5f8c; }
 .form-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
