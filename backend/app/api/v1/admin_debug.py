@@ -45,10 +45,31 @@ def _resolve(name: str) -> Path:
     return LOG_FILES[name]
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mK]")
+# app logger 行首时间戳：「06-29 05:04:32 ...」（MM-DD HH:MM:SS，无年份）
+_TS_RE = re.compile(r"^(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})")
+import datetime as _dt
+_EPOCH = _dt.datetime(1970, 1, 1)
 
 
 def _strip(s: str) -> str:
     return _ANSI_RE.sub("", s)
+
+
+def _line_dt(line: str, carried: "_dt.datetime") -> "_dt.datetime":
+    """解析行首 emit 时间用于排序；**无时间戳的行（uvicorn `INFO:` / print / traceback）沿用上一条**，
+    使续行紧跟其父行、整体能按 emit 时间归并（而非各源拼接、或用接收时间）。无年份 → 用当前年。"""
+    m = _TS_RE.match(line)
+    if m:
+        mo, d, h, mi, s = map(int, m.groups())
+        try:
+            return _dt.datetime(_dt.datetime.utcnow().year, mo, d, h, mi, s)
+        except ValueError:
+            return carried
+    return carried
+
+
+def _fmt_time(dt: "_dt.datetime") -> str:
+    return dt.strftime("%H:%M:%S") if dt > _EPOCH else ""
 
 
 def _tail(path: Path, n: int = 200) -> list[str]:
@@ -70,11 +91,15 @@ def _tail(path: Path, n: int = 200) -> list[str]:
 @router.get("/logs/tail")
 async def tail_logs(lines: int = 200, source: str | None = None):
     sources = [source] if source and source in LOG_FILES else list(LOG_FILES)
-    result = []
+    rows = []
     for src in sources:
-        for line in _tail(_resolve(src), lines):
-            result.append({"source": src, "line": line})
-    return {"lines": result}
+        carried = _EPOCH
+        for i, line in enumerate(_tail(_resolve(src), lines)):
+            carried = _line_dt(line, carried)
+            rows.append((carried, src, i, line))
+    # 按 emit 时间归并（不再各源拼接）；同刻按源+原序稳定，使 traceback 等续行紧跟其父行
+    rows.sort(key=lambda r: (r[0], r[1], r[2]))
+    return {"lines": [{"source": s, "line": l, "time": _fmt_time(dt)} for (dt, s, i, l) in rows]}
 
 
 @router.get("/logs/stream")
@@ -89,8 +114,10 @@ async def stream_logs(
 
     async def generator():
         positions: dict[str, int] = {}
+        carried: dict[str, "_dt.datetime"] = {}
         for name, path in sources.items():
             positions[name] = path.stat().st_size if path.exists() else 0
+            carried[name] = _EPOCH
 
         while not await request.is_disconnected():
             for name, path in sources.items():
@@ -107,7 +134,8 @@ async def stream_logs(
                         for raw_line in new_data.splitlines():
                             line = _strip(raw_line).strip()
                             if line:
-                                yield f"data: {json.dumps({'source': name, 'line': line})}\n\n"
+                                carried[name] = _line_dt(line, carried[name])
+                                yield f"data: {json.dumps({'source': name, 'line': line, 'time': _fmt_time(carried[name])})}\n\n"
                     except Exception:
                         pass
             yield ": keepalive\n\n"

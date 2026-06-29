@@ -104,14 +104,17 @@ const liveCount = computed(() => filtered.value.length)
 function clearLines() { lines.value = [] }
 
 function parseTime(line) {
-  // app logger 格式：06-26 08:03:21 INFO ...  → 取 HH:MM:SS
+  // app logger 格式：06-26 08:03:21 INFO ...  → 取 HH:MM:SS；无行内时间戳返回空（不再用 new Date 当接收时间）
   const m = line.match(/^\d{2}-\d{2} (\d{2}:\d{2}:\d{2})/)
-  if (m) return m[1]
-  return new Date().toTimeString().slice(0, 8)
+  return m ? m[1] : ''
 }
 
-function addLine(source, line) {
-  lines.value.push({ id: uid++, source, line, time: parseTime(line) })
+let lastLogTime = ''   // 续行 / uvicorn / print / traceback 无时间戳 → 沿用上一条 emit 时间，绝不用接收时间
+function addLine(source, line, time) {
+  // 优先用后端给的 emit 时间（已解析+继承+归并排序）；退到行内解析；再退到上一条；都没有才空
+  const t = time || parseTime(line) || lastLogTime
+  if (t) lastLogTime = t
+  lines.value.push({ id: uid++, source, line, time: t })
   if (lines.value.length > 2000) lines.value.splice(0, 200)
   if (autoScroll.value) {
     nextTick(() => {
@@ -124,7 +127,8 @@ async function loadTail() {
   try {
     const res = await adminStore.authFetch('/api/v1/admin/debug/logs/tail?lines=200')
     const data = await res.json()
-    for (const { source, line } of (data.lines ?? [])) addLine(source, line)
+    lastLogTime = ''
+    for (const { source, line, time } of (data.lines ?? [])) addLine(source, line, time)
   } catch {}
 }
 
@@ -135,8 +139,8 @@ function startSSE() {
   sse.onopen = () => { connected.value = true }
   sse.onmessage = (e) => {
     try {
-      const { source, line } = JSON.parse(e.data)
-      addLine(source, line)
+      const { source, line, time } = JSON.parse(e.data)
+      addLine(source, line, time)
     } catch {}
   }
   sse.onerror = () => {
