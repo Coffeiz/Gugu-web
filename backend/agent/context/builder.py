@@ -12,6 +12,25 @@ from app.core.tz import local_now
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 
+# prompt 缓存断点标记（ASCII Group Separator，正常 prompt 文本绝不出现）：
+# build() 在「稳定前缀 ┃ 动态后缀」边界插一个，让 core 据它把 system 切成两块、
+# 只缓存稳定前缀（人格/政策/技能索引，一个 session 内不变）。两块拼接后与原单块逐字一致。
+CACHE_BREAK = "\x1d"
+
+
+def split_for_cache(text: str) -> tuple[str, str]:
+    """按 CACHE_BREAK 把 system 切成（稳定前缀, 动态后缀）。无标记 → (原文, '')，调用方按单块处理。"""
+    if CACHE_BREAK in text:
+        a, b = text.split(CACHE_BREAK, 1)
+        return a, b
+    return text, ""
+
+
+def strip_cache_marker(text: str) -> str:
+    """去掉缓存断点标记，还原成普通 system 串（openai 路 / 不支持 cache_control 的通道用）。"""
+    return text.replace(CACHE_BREAK, "")
+
+
 # 项目状态英文枚举 → 中文（注入上下文时翻好，免得咕咕照搬英文说给用户）
 _STATUS_ZH = {"pending": "待开始", "active": "进行中", "done": "已完成"}
 
@@ -135,35 +154,44 @@ def build(profile: str, user_name: str, projects: list, events: list,
     except Exception:
         beh_block = ""
 
-    # 顺序：人格 → 本轮行为模块 → 工具准则 → 内容政策 → 风格偏好 → 技能索引 → 记忆 → 当前状态
-    sections = []
+    # 顺序不变：人格 → 本轮行为模块 → lens → 工具准则 → 内容政策 → 风格 → 技能索引 ┃ 记忆 → 来源 → 当前状态
+    # ┃ = prompt 缓存断点（插 CACHE_BREAK）：左侧「稳定前缀」一个 session 内基本不变 → 可被缓存、命中读取便宜
+    #   ~90%；右侧每轮会变（记忆写入、分钟级时间、项目/日历/文件）→ 不缓存。把「必变」的挡在缓存块外，
+    #   避免整块每分钟失效（原先整段一个 cache_control、含分钟级时间 → 几乎每次 miss）。段落顺序与语义不变。
+    stable, dynamic = [], []
     if persona:
-        sections.append(persona)
+        stable.append(persona)
     if beh_block:
-        sections.append(beh_block)
+        stable.append(beh_block)
     # 解读镜片（per-user lens）：紧跟行为模块、置于工具准则之前——它偏置「怎么读懂 TA」，
     # 是最上游的感知偏好。read_memory 已渲染好（按 confidence 选话术、退休低分规则）。
     lens_block = (memory.get("lens") or "").strip()
     if lens_block:
-        sections.append(lens_block)
+        stable.append(lens_block)
     if skills_policy:
-        sections.append(skills_policy)
+        stable.append(skills_policy)
     if content_policy:
-        sections.append(content_policy)
+        stable.append(content_policy)
     style_block = _style_block(style_prefs or {})
     if style_block:
-        sections.append(style_block)
+        stable.append(style_block)
     skills_block = _skills_index_block(skills)
     if skills_block:
-        sections.append(skills_block)
+        stable.append(skills_block)
     mem_block = _memory_block(memory)
     if mem_block:
-        sections.append(mem_block)
+        dynamic.append(mem_block)
     src_block = _source_block(source, im_channels)
     if src_block:
-        sections.append(src_block)
-    sections.append(result)
-    return "\n\n---\n\n".join(sections)
+        dynamic.append(src_block)
+    dynamic.append(result)
+
+    stable_str  = "\n\n---\n\n".join(stable)
+    dynamic_str = "\n\n---\n\n".join(dynamic)
+    if not dynamic_str:
+        return stable_str
+    # CACHE_BREAK 紧贴正常分隔符插入：拼接/strip 后与「单段 join」逐字一致，仅多一个缓存断点位置信息。
+    return stable_str + CACHE_BREAK + "\n\n---\n\n" + dynamic_str
 
 
 _SOURCE_NAME = {"qqbot": "QQ", "feishu": "飞书", "web": "网页"}

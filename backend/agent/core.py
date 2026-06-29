@@ -177,6 +177,22 @@ def _mutating_tools(tool_names) -> set:
     return by_name | set(RESOURCE_BY_TOOL)
 
 
+def _with_history_cache(messages: list) -> list:
+    """给「发给 API 的 messages」打一个滚动 prompt 缓存断点：在最后一条 message 的最后一个内容块上加
+    cache_control。多轮工具循环里历史越滚越长，这样能缓存住已发生的几轮、下一轮只重算新增的块。
+    返回浅拷贝、**不改原 messages**（原列表要持久化，绝不能混入 cache_control，否则下次加载历史会带着
+    旧断点、累积超过 4 个上限）。只在最后一块是 list[dict]（assistant 块 / tool_result 块）时打；
+    首轮 user 的纯字符串 content 跳过（那轮的静态部分已由 system 缓存覆盖）。"""
+    if not messages:
+        return messages
+    last = messages[-1]
+    c = last.get("content")
+    if not isinstance(c, list) or not c or not isinstance(c[-1], dict) or not c[-1].get("type"):
+        return messages
+    new_block = {**c[-1], "cache_control": {"type": "ephemeral"}}
+    return [*messages[:-1], {**last, "content": [*c[:-1], new_block]}]
+
+
 async def _im_cancelled() -> bool:
     """IM 路：用户中途发「算了」→ 网关置了取消标志。web 路无 imctx，恒 False。"""
     from agent import imctx
@@ -252,15 +268,24 @@ class LLMRunner:
         else:
             thinking_param = {"thinking": {"type": thinking_val}} if thinking_val == "adaptive" else {}
 
-        # prompt 缓存：把 system（含人格/记忆/上下文）作为稳定前缀缓存。
-        # Anthropic 顺序 tools→system→messages，断点打在 system 即缓存 tools+system，
-        # 多轮工具循环只重算新增 messages，命中后读取便宜 ~90%。
-        # 例外：mimo 的 anthropic 端点不支持 prompt caching，不能发 cache_control（可能报错）。
+        # prompt 缓存：system 由 builder 拆成「稳定前缀（人格/政策/技能索引，session 内不变）┃ 动态后缀
+        # （记忆/分钟级时间/项目日历文件，每轮变）」，断点（CACHE_BREAK）在边界。缓存块只含稳定前缀 →
+        # 命中读取便宜 ~90%；动态后缀不缓存，避免整块每分钟失效。两块顺序拼接与单段逐字一致。
+        # Anthropic 顺序 tools→system→messages，故缓存块实含 tools+稳定前缀。
+        # 例外：mimo 的 anthropic 端点不支持 prompt caching，不发 cache_control（strip 掉标记即可）。
+        from agent.context import builder as _builder
         if system_text:
-            _sys_blk = {"type": "text", "text": system_text}
-            if not is_mimo:
-                _sys_blk["cache_control"] = {"type": "ephemeral"}
-            system_param = [_sys_blk]
+            stable, dynamic = _builder.split_for_cache(system_text)
+            if dynamic and not is_mimo:
+                system_param = [
+                    {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": dynamic},
+                ]
+            else:
+                _sys_blk = {"type": "text", "text": _builder.strip_cache_marker(system_text)}
+                if not is_mimo:
+                    _sys_blk["cache_control"] = {"type": "ephemeral"}
+                system_param = [_sys_blk]
         else:
             system_param = system_text
 
@@ -279,8 +304,12 @@ class LLMRunner:
                 return
             # 单次流式调用：既实时流式输出文本，又能拿到 tool_use（无双调用、无敷衍）
             # 经 _stream_round 包一层瞬时错误退避重试（⑦）；流式途中仍协作检查取消。
+            # ② 给发出去的 messages 打一个滚动缓存断点（最后一条 message 的最后一个块）：多轮工具循环里
+            #    历史越滚越长，缓存住已发生的几轮、每轮只重算新增。用副本、不改原 messages（原列表要持久化，
+            #    绝不能混入 cache_control）。mimo 不支持 cache_control → 原样发。
+            _msgs = messages if is_mimo else _with_history_cache(messages)
             _kwargs = dict(
-                model=ai.model, system=system_param, messages=messages,
+                model=ai.model, system=system_param, messages=_msgs,
                 tools=tools, max_tokens=max_tokens, temperature=temperature, **thinking_param,
             )
             _tok = 0
@@ -410,6 +439,12 @@ class LLMRunner:
         # 空回复/空气泡。据此单独适配（下方空 content 兜底）。
         is_mimo = (ai.provider or "").lower() == "mimo" or "xiaomimimo" in (ai.base_url or "").lower()
         tools = registry.openai_schemas(self.tool_names)
+        # system 里可能带 builder 的缓存断点标记（CACHE_BREAK）——openai 通道不支持 anthropic 式 cache_control，
+        # 去掉它还原成普通 system 串（标记仅出现在 system 消息里，每轮重建、改它无副作用）。
+        from agent.context import builder as _builder
+        for _m in messages:
+            if _m.get("role") == "system" and isinstance(_m.get("content"), str) and _builder.CACHE_BREAK in _m["content"]:
+                _m["content"] = _builder.strip_cache_marker(_m["content"])
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
         from agent.llm_select import openai_default_headers
         client = AsyncOpenAI(
