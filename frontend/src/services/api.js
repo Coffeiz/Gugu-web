@@ -256,7 +256,8 @@ export const agentApi = {
   greeting:        ()           => get('/agent/greeting'),    // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId) => get(`/agent/sessions/${sessionId}/messages`),
   deleteSession:   (sessionId) => del(`/agent/sessions/${sessionId}`),
-  clearMemory:     ()           => del('/agent/memory'),
+  clearMemory:       ()         => del('/agent/memory'),
+  clearAttachments:  ()         => del('/agent/attachments'),
   uploadAttachment: (file, voice = false) => {   // 聊天附件暂存，返回 { attach_id, name, ext, size, kind, duration }
     const form = new FormData()
     form.append('file', file)

@@ -3,7 +3,7 @@
 - 咕咕能「看」：文本类读内容注入上下文；图片给提示（看内容需 vision 模型）。
 - 咕咕能「存」：用户说存时，`save_uploaded_file` 工具把暂存字节落成正式文件库记录。
 
-字节走 StorageBackend（key 放 `.chat_staging/` 下），元数据走 Redis（TTL 6h，过期自动失效）。
+字节走 StorageBackend（key 放 `.chat_staging/` 下），元数据走 Redis（TTL 7天，过期自动失效）。
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ try:
 except Exception:
     pass
 
-TTL = 6 * 3600          # 普通附件暂存 6 小时
-TTL_VOICE = 30 * 24 * 3600   # 语音条独立留存 30 天（语音是对话内容，比临时附件留得久）
+TTL = 7 * 24 * 3600     # 普通附件暂存 7 天
+TTL_VOICE = 7 * 24 * 3600    # 语音条暂存 7 天（与普通附件统一）
 _PREFIX = "chatfile:"
 MAX_TEXT_INJECT = 32000  # 注入给模型的文本上限（字符）
 
@@ -166,6 +166,31 @@ async def list_staged(user_id) -> list[dict]:
             continue
     out.sort(key=lambda m: m.get("_ttl", 0), reverse=True)
     return out
+
+
+async def clear_staged(user_id) -> int:
+    """删除该用户所有未过期的暂存附件（字节 + Redis 元数据），返回删除数量。"""
+    from app.services.storage import get_storage
+    r = get_redis()
+    storage = get_storage()
+    prefix = f"{_PREFIX}{user_id}:"
+    keys, deleted = [], 0
+    async for k in r.scan_iter(match=f"{prefix}*", count=200):
+        keys.append(k if isinstance(k, str) else k.decode())
+    for k in keys:
+        try:
+            raw = await r.get(k)
+            if raw:
+                meta = json.loads(raw)
+                try:
+                    await storage.delete(meta["storage_key"])
+                except Exception:
+                    pass
+            await r.delete(k)
+            deleted += 1
+        except Exception:
+            pass
+    return deleted
 
 
 async def resolve_attach(user_id, attach_id: str) -> tuple[dict | None, str]:
@@ -321,15 +346,6 @@ def strip_vision_for_history(content):
         else:
             out.append(blk)
     return out
-
-
-async def has_image(user_id, attach_ids) -> bool:
-    """这批附件里有没有图片——给上游决定「要不要为这轮强切 vision 模型」。"""
-    for aid in (attach_ids or []):
-        m = await get_meta(user_id, aid)
-        if m and m.get("kind") == "image":
-            return True
-    return False
 
 
 async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, model_cfg=None) -> tuple[str, list, list, list]:

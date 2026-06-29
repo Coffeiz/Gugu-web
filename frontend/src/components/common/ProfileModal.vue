@@ -206,6 +206,16 @@
                 </button>
               </div>
               <div v-if="memoryMsg" class="pm-msg" :class="memoryMsgType">{{ memoryMsg }}</div>
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">删除临时文件</span>
+                  <span class="pm-field-hint">清除发给咕咕但未存入文件库的聊天附件（图片、文件等），临时文件 7 天后自动过期</span>
+                </div>
+                <button class="pm-danger-btn" :disabled="attachClearing" @click="clearAttachments">
+                  {{ attachClearing ? '清除中…' : '删除临时文件' }}
+                </button>
+              </div>
+              <div v-if="attachMsg" class="pm-msg" :class="attachMsgType">{{ attachMsg }}</div>
             </div>
 
             <div class="pm-sep"></div>
@@ -478,8 +488,29 @@ async function clearMemory() {
   }
 }
 
+// 临时文件清除
+const attachClearing = ref(false)
+const attachMsg      = ref('')
+const attachMsgType  = ref('ok')
+
+async function clearAttachments() {
+  if (!confirm('确定要删除所有临时文件吗？')) return
+  attachClearing.value = true
+  attachMsg.value = ''
+  try {
+    const r = await agentApi.clearAttachments()
+    attachMsg.value    = r.deleted > 0 ? `已删除 ${r.deleted} 个临时文件` : '没有可删除的临时文件'
+    attachMsgType.value = 'ok'
+  } catch (e) {
+    attachMsg.value    = e.message ?? '删除失败'
+    attachMsgType.value = 'err'
+  } finally {
+    attachClearing.value = false
+  }
+}
+
 watch(activeNav, (v, old) => {
-  if (v === 'gugu') { loadQuota(); loadBots(); memoryMsg.value = '' }
+  if (v === 'gugu') { loadQuota(); loadBots(); memoryMsg.value = ''; attachMsg.value = '' }
   if (old === 'gugu') cancelConnect()
 })
 

@@ -262,6 +262,13 @@ async def get_session_messages(
     }
 
 
+@router.delete("/attachments", status_code=200)
+async def clear_attachments(current_user: User = Depends(get_current_user)):
+    """清除当前用户所有未过期的聊天暂存附件（字节 + Redis 元数据）。"""
+    n = await chat_attach.clear_staged(current_user.id)
+    return {"deleted": n}
+
+
 @router.delete("/memory", status_code=204)
 async def clear_memory(
     current_user: User = Depends(get_current_user),
