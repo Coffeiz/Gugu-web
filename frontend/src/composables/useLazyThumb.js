@@ -12,7 +12,7 @@ import { getThumb, getCachedThumb } from '@/composables/useThumbCache'
 
 const ROOT_MARGIN = { tiny: '400px', card: '250px' }
 
-function _load(el, id, size) {
+function _load(el, id, size, tries = 0) {
   const cached = getCachedThumb(id, size)
   if (cached) {
     el.src = cached
@@ -24,6 +24,11 @@ function _load(el, id, size) {
     obs.disconnect(); el._lazyThumbObs = null
     getThumb(id, size).then(url => {
       if (url) { el.src = url; if (size === 'card') el.decode?.().catch(() => {}) }
+      // 失败（瞬时网络抖动 / 并发槽超时）别永久空着——退避后重挂观察，下次进视口再试。
+      // 有上限（最多 3 次）+ setTimeout 退避，避免「仍在视口 → 立即再触发 → 失败 → 再试」的紧贴死循环。
+      else if (tries < 3) {
+        el._lazyThumbRetry = setTimeout(() => { el._lazyThumbRetry = null; _load(el, id, size, tries + 1) }, 600 * (tries + 1))
+      }
     })
   }, { rootMargin: ROOT_MARGIN[size] ?? '250px' })
   obs.observe(el)
@@ -37,10 +42,12 @@ export const vLazyThumb = {
   updated(el, { value: { id, size }, oldValue }) {
     if (id === oldValue?.id && size === oldValue?.size) return
     el._lazyThumbObs?.disconnect()
+    if (el._lazyThumbRetry) { clearTimeout(el._lazyThumbRetry); el._lazyThumbRetry = null }
     if (id) _load(el, id, size)
   },
   unmounted(el) {
     el._lazyThumbObs?.disconnect()
     el._lazyThumbObs = null
+    if (el._lazyThumbRetry) { clearTimeout(el._lazyThumbRetry); el._lazyThumbRetry = null }
   },
 }

@@ -29,10 +29,16 @@ export function getThumb(id, size = 'card') {
   if (pending.has(key)) return pending.get(key)
 
   const token = localStorage.getItem('user_token') ?? ''
-  const p = thumbLimit(() =>
-    fetch(`${BASE}/files/${id}/thumb?size=${size}`, {
+  const p = thumbLimit(() => {
+    // ⚠️ 必须带超时：fetch 默认永不超时，卡住的请求会一直占着并发槽（pLimit 只 6 个）→
+    //   批量改名/上传时一波请求里只要有几个卡住，后面的缩略图就永远排不上 → 永久没缩略图。
+    //   abort 后 reject → 释放槽位 + 让懒加载指令下次进视口重试。
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 15000)
+    return fetch(`${BASE}/files/${id}/thumb?size=${size}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       cache: 'no-cache',
+      signal: ctrl.signal,
     })
       .then(r => (r.ok ? r.blob() : Promise.reject()))
       .then(blob => {
@@ -41,7 +47,8 @@ export function getThumb(id, size = 'card') {
         if (size === 'card') thumbLoadedIds.add(id)
         return url
       })
-  )
+      .finally(() => clearTimeout(timer))
+  })
     .then(url => { pending.delete(key); return url })
     .catch(() => { pending.delete(key); return null })
 
@@ -59,10 +66,13 @@ export function getThumbUrl(key, url) {
   if (pending.has(key)) return pending.get(key)
 
   const token = localStorage.getItem('user_token') ?? ''
-  const p = thumbLimit(() =>
-    fetch(url, {
+  const p = thumbLimit(() => {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 15000)   // 同 getThumb：卡住的请求别永久占并发槽
+    return fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       cache: 'no-cache',
+      signal: ctrl.signal,
     })
       .then(r => (r.ok ? r.blob() : Promise.reject()))
       .then(blob => {
@@ -70,7 +80,8 @@ export function getThumbUrl(key, url) {
         cache.set(key, blobUrl)
         return blobUrl
       })
-  )
+      .finally(() => clearTimeout(timer))
+  })
     .then(blobUrl => { pending.delete(key); return blobUrl })
     .catch(() => { pending.delete(key); return null })
 

@@ -11,9 +11,15 @@
 let _ghostImg = null
 function _transparentGhost() {
   if (_ghostImg) return _ghostImg
-  // canvas 同步可用（不需要异步解码），避免第一次拖动时 Image 未 ready 导致退回浏览器默认 ghost（favicon）
+  // canvas 同步可用（不需要异步解码），避免第一次拖动时 Image 未 ready 导致退回浏览器默认 ghost（favicon）。
+  // ⚠️ 必须挂进 DOM（离屏）：脱离 DOM 的 canvas 部分浏览器会忽略 setDragImage → 退回默认小地球 favicon。
   const c = document.createElement('canvas')
   c.width = 1; c.height = 1
+  Object.assign(c.style, {
+    position: 'fixed', top: '-10px', left: '-10px',
+    width: '1px', height: '1px', opacity: '0', pointerEvents: 'none',
+  })
+  document.body.appendChild(c)
   _ghostImg = c
   return c
 }

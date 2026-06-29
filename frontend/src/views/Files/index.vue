@@ -1675,14 +1675,19 @@ function onFileDragStart(f, e) {
   draggingFileIds.value = new Set(ids)
   e.dataTransfer.setData('text/plain', JSON.stringify(ids))
   e.dataTransfer.effectAllowed = 'move'
-  // 用卡片/行自身作拖拽图，覆盖浏览器对 text/plain 的「带网站 favicon 的文本预览」
-  try {
-    const _r = e.currentTarget.getBoundingClientRect()
-    e.dataTransfer.setDragImage(e.currentTarget, e.clientX - _r.left, e.clientY - _r.top)
-  } catch {}
   // 物理拖拽：仅网格卡片（列表行整条飞起来不好看），单选时启用
-  if (e.currentTarget?.classList?.contains('fc-card') && ids.length === 1) {
+  const usePhysics = e.currentTarget?.classList?.contains('fc-card') && ids.length === 1
+  if (usePhysics) {
+    // 走物理拖：克隆体飞动当唯一视觉，startPhysicsDrag 内部把原生拖影设成透明 ghost。
+    // ⚠️ 这里别再 setDragImage(卡片)——双重 setDragImage 部分浏览器只认第一次（卡片），
+    //    随后源卡被隐藏 → 拖影变空 → 退回浏览器默认小地球 favicon。让透明 ghost 当唯一拖影。
     startPhysicsDrag(e, e.currentTarget)
+  } else {
+    // 列表行 / 多选：用卡片/行自身作拖拽图，覆盖浏览器对 text/plain 的「带网站 favicon 的文本预览」
+    try {
+      const _r = e.currentTarget.getBoundingClientRect()
+      e.dataTransfer.setDragImage(e.currentTarget, e.clientX - _r.left, e.clientY - _r.top)
+    } catch {}
   }
   // 清除框选状态（mousedown 可能提前启动了框选，但 drag 开始后 mouseup 不会触发）
   _cancelBoxDrag()
@@ -2405,8 +2410,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   overflow: hidden;
   border-radius: 14px 14px 0 0;
   background: rgba(0,0,0,0.05);
-  will-change: transform;
-  transform: translateZ(0);
+  transform: translateZ(0);   /* 去掉常驻 will-change：大量卡片常驻 will-change 会让合成器层预算耗尽、滚动时偶发闪屏（ProjectModal 同款已改） */
   mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
 }
