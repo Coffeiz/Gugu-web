@@ -272,7 +272,8 @@ class FileTreeResponse(CamelModel):
 class EventCreate(CamelModel):
     title: str
     date: str
-    time: Optional[str] = None   # HH:MM，可选
+    time: Optional[str] = None       # 开始时间 HH:MM，可选
+    end_time: Optional[str] = None   # 结束时间 HH:MM，可选
     type: str = "event"
     client: Optional[str] = None
     project_id: Optional[int] = None
@@ -283,6 +284,7 @@ class EventUpdate(CamelModel):
     title: Optional[str] = None
     date: Optional[str] = None
     time: Optional[str] = None
+    end_time: Optional[str] = None
     type: Optional[str] = None
     client: Optional[str] = None
     project_id: Optional[int] = None
@@ -295,6 +297,7 @@ class EventResponse(CamelModel):
     title: str
     date: str
     time: Optional[str] = None
+    end_time: Optional[str] = None
     type: str
     client: Optional[str]
     project_id: Optional[int]

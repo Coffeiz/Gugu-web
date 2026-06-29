@@ -21,13 +21,14 @@ async def _create_event(db, user_id, args: dict):
         user_id=user_id,
         title=args["title"],
         date=args["date"],
-        time=(args.get("time") or None),   # HH:MM，可选
+        time=(args.get("time") or None),         # 开始 HH:MM，可选
+        end_time=(args.get("end_time") or None), # 结束 HH:MM，可选
         type=args.get("type", "event"),
         project_id=pid,
     )
     db.add(ev)
     await db.commit()
-    return {"success": True, "title": args["title"], "date": args["date"], "time": ev.time}
+    return {"success": True, "title": args["title"], "date": args["date"], "time": ev.time, "end_time": ev.end_time}
 
 
 async def _list_events(db, user_id, args: dict):
@@ -41,7 +42,7 @@ async def _list_events(db, user_id, args: dict):
     stmt = stmt.order_by(CalendarEvent.date).limit(args.get("limit", 50))
     rows = (await db.execute(stmt)).scalars().all()
     return [
-        {"id": e.id, "title": e.title, "date": e.date, "time": e.time, "type": e.type,
+        {"id": e.id, "title": e.title, "date": e.date, "time": e.time, "end_time": e.end_time, "type": e.type,
          "project_id": e.project_id, "description": e.description}
         for e in rows
     ]
@@ -80,9 +81,9 @@ async def _update_event(db, user_id, args: dict):
     e, _err = await _resolve_event(db, user_id, args)
     if _err:
         return _err
-    fields = ("title", "date", "time", "type", "project_id", "description")
+    fields = ("title", "date", "time", "end_time", "type", "project_id", "description")
     if not any(fld in args for fld in fields):   # 没给任何要改的字段 → 别假成功（防咕咕误报"已更新"）
-        return json.dumps({"error": "没提供要修改的字段（title/date/time/type/project_id/description），未改动。"})
+        return json.dumps({"error": "没提供要修改的字段（title/date/time/end_time/type/project_id/description），未改动。"})
     if args.get("project_id") is not None:
         proj = await db.get(Project, args["project_id"])
         if not proj or proj.user_id != user_id:
@@ -130,7 +131,8 @@ class CalendarSkill(BaseSkill):
                 "properties": {
                     "title":      {"type": "string"},
                     "date":       {"type": "string", "description": "YYYY-MM-DD"},
-                    "time":       {"type": "string", "description": "时间 HH:MM（可选；不填=全天/无具体时间）"},
+                    "time":       {"type": "string", "description": "开始时间 HH:MM（可选；不填=全天）"},
+                    "end_time":   {"type": "string", "description": "结束时间 HH:MM（可选）"},
                     "type":       {"type": "string", "enum": ["event", "deadline"], "description": "默认 event"},
                     "project_id": {"type": "integer", "description": "关联项目 ID（可选）"},
                 },
@@ -164,7 +166,8 @@ class CalendarSkill(BaseSkill):
                     "on_date":    {"type": "string", "description": "同名事件时用日期 YYYY-MM-DD 区分"},
                     "title":      {"type": "string"},
                     "date":       {"type": "string", "description": "YYYY-MM-DD"},
-                    "time":       {"type": "string", "description": "时间 HH:MM（可选；传空串清空）"},
+                    "time":       {"type": "string", "description": "开始时间 HH:MM（可选；传空串清空）"},
+                    "end_time":   {"type": "string", "description": "结束时间 HH:MM（可选）"},
                     "type":       {"type": "string", "enum": ["event", "deadline"]},
                     "project_id": {"type": "integer", "description": "关联项目 ID"},
                     "description": {"type": "string"},

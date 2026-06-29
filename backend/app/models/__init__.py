@@ -185,7 +185,8 @@ class CalendarEvent(Base):
     user_id:     Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title:       Mapped[str]           = mapped_column(String(300))
     date:        Mapped[str]           = mapped_column(String(10))
-    time:        Mapped[Optional[str]] = mapped_column(String(5), nullable=True)   # HH:MM，可选；空=全天/无具体时间
+    time:        Mapped[Optional[str]] = mapped_column(String(5), nullable=True)   # 开始时间 HH:MM，可选；空=全天
+    end_time:    Mapped[Optional[str]] = mapped_column(String(5), nullable=True)   # 结束时间 HH:MM，可选
     type:        Mapped[str]           = mapped_column(String(50),  default="event")
     client:      Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     project_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)

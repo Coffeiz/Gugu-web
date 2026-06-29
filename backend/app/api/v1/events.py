@@ -17,6 +17,7 @@ def _to_resp(e: CalendarEvent) -> EventResponse:
         title=e.title,
         date=e.date,
         time=e.time,
+        end_time=e.end_time,
         type=e.type,
         client=e.client,
         project_id=e.project_id,
