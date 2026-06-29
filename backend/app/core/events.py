@@ -32,6 +32,9 @@ RESOURCE_BY_TOOL: dict[str, str] = {
     "save_uploaded_file": "files",
     # 客户
     "create_client": "clients", "update_client": "clients", "delete_client": "clients",
+    # 定时任务（咕咕建/改/删 → 网页定时面板实时刷）
+    "create_scheduled_task": "scheduled_tasks", "update_scheduled_task": "scheduled_tasks",
+    "delete_scheduled_task": "scheduled_tasks",
     # 回收站（恢复/彻底删都影响文件库）
     "restore_file": "files", "permanent_delete": "files",
 }

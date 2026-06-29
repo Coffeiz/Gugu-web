@@ -13,7 +13,7 @@ import { getToken } from '@/services/api'
 import { useUiStore } from '@/stores/ui'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
-const RESOURCES = ['projects', 'calendar', 'files', 'clients', 'sessions']
+const RESOURCES = ['projects', 'calendar', 'files', 'clients', 'sessions', 'scheduled_tasks']
 
 export const useLiveStore = defineStore('live', () => {
   // 每个资源一个递增计数，视图 watch 它来触发 refetch

@@ -119,6 +119,7 @@
 import { ref, reactive, onMounted, computed, nextTick } from 'vue'
 import { scheduledTasksApi } from '@/services/api'
 import { fireHint } from '@/composables/useOnboarding'
+import { useLiveRefresh } from '@/composables/useLiveRefresh'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { useAuthStore } from '@/stores/auth'
 import { PhAlarm } from '@phosphor-icons/vue'
@@ -171,6 +172,8 @@ async function load() {
   } finally { loading.value = false }
 }
 onMounted(() => { fireHint('schedules'); load() })   // 新手引导：第一次进定时任务页
+// 实时：咕咕（web/IM）建/改/删定时任务、或过期任务被 GC 自动清 → 列表实时刷新（不用手动重载）
+useLiveRefresh('scheduled_tasks', load)
 
 function blankForm() { return { name: '', payload: '', time: '09:00', channels: ['web'] } }
 function openCreate() {

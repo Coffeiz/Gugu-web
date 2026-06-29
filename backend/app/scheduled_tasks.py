@@ -47,6 +47,17 @@ def _once_expired(cron: str, now_naive: datetime) -> bool:
     return when < now_naive - _ONCE_GC_GRACE
 
 
+async def _notify_tasks_changed(user_ids) -> None:
+    """定时任务有**自动**变化（GC 清理 / 一次性触发即删）→ 推 `scheduled_tasks` 事件，
+    网页定时面板实时刷（咕咕主动建/改/删走 tool dispatch 的 RESOURCE_BY_TOOL，不在此列）。永不抛。"""
+    from app.core import events
+    for uid in set(user_ids):
+        try:
+            await events.publish(uid, "scheduled_tasks")
+        except Exception:
+            pass
+
+
 # ── reconcile：DB → APScheduler ──────────────────────────────────────────────
 async def reconcile() -> None:
     from app.core import scheduler as sched
@@ -62,14 +73,16 @@ async def reconcile() -> None:
         # GC 过期的一次性任务：一次性任务过点就「用完了」——正常触发的已被 execute_task 即时删，
         # 这里兜底清理漏网的（misfire 没触发、被停用、或残留），否则它们永远僵在面板里。
         now_naive = local_now().replace(tzinfo=None)
-        gc_ids = [t.id for t in all_tasks if _once_expired(t.cron, now_naive)]
-        if gc_ids:
-            for t in all_tasks:
-                if t.id in gc_ids:
-                    await db.delete(t)
+        gc = [t for t in all_tasks if _once_expired(t.cron, now_naive)]
+        gc_ids = {t.id for t in gc}
+        if gc:
+            gc_uids = {t.user_id for t in gc}
+            for t in gc:
+                await db.delete(t)
             await db.commit()
-            print(f"[sched] GC {len(gc_ids)} 个过期一次性任务: {gc_ids}", flush=True)
-        tasks = [t for t in all_tasks if t.enabled and t.id not in set(gc_ids)]
+            print(f"[sched] GC {len(gc)} 个过期一次性任务: {sorted(gc_ids)}", flush=True)
+            await _notify_tasks_changed(gc_uids)   # 自动清 → 定时面板实时刷
+        tasks = [t for t in all_tasks if t.enabled and t.id not in gc_ids]
 
     desired: dict[str, str] = {}
     for t in tasks:
@@ -107,9 +120,12 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
         payload, uid, name = t.payload or "", t.user_id, t.name
         chans = {c for c in (t.channels or "").split(",") if c}
         t.last_run_at = datetime.utcnow()
-        if not is_trial and (t.cron or "").startswith("@once:"):
+        once_deleted = not is_trial and (t.cron or "").startswith("@once:")
+        if once_deleted:
             await db.delete(t)
         await db.commit()
+    if once_deleted:
+        await _notify_tasks_changed([uid])   # 一次性任务触发即删 → 定时面板实时刷
     try:
         now_str = local_now().strftime("%Y-%m-%d %H:%M")
         prompt = (

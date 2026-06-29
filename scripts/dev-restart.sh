@@ -45,8 +45,9 @@ start_worker() {
   sleep 1
   nohup setsid "$PY" -m worker >> logs/gugu-worker-dev.log 2>&1 < /dev/null &
   disown 2>/dev/null || true
-  sleep 2
-  pgrep -f "python -m worker" >/dev/null && echo "[worker] up" || echo "[worker] 没起来，看 logs/gugu-worker-dev.log"
+  sleep 4
+  grep -q "\[worker\] started" <(tail -5 logs/gugu-worker-dev.log 2>/dev/null) && echo "[worker] up" \
+    || { pgrep -f "python -m worker" >/dev/null && echo "[worker] up（起来了）" || echo "[worker] 没起来，看 logs/gugu-worker-dev.log"; }
 }
 
 start_supervisor() {
