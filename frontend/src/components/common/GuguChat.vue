@@ -544,6 +544,10 @@ function _markResizing() {
 const miniPinned = ref(localStorage.getItem('gugu_mini_pinned') !== 'false')
 watch(miniPinned, v => localStorage.setItem('gugu_mini_pinned', v))
 
+// 设置：重开浏览器时是否接续上次对话（默认关＝开新对话）。开关在个人设置→咕咕设置里，
+// 写 localStorage『gugu_reopen_resume』；这里 onMounted 时读一次决定要不要接续。
+const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') === '1')
+
 const fabRef      = ref(null)
 const windowRef   = ref(null)
 const playerRef   = ref(null)
@@ -646,14 +650,20 @@ onMounted(() => {
   agentApi.getUiLabels?.().then(r => {
     thinkingLabels.value = Array.isArray(r?.thinking) ? r.thinking : (r?.thinking ? [r.thinking] : [])
   }).catch(() => {})
-  // 刷新后恢复上次会话（sessionStorage 仍在则拉回那段对话；失败则当作新对话并清除存档）
+  // 恢复上次会话：① 本标签刷新 → sessionStorage 仍在，直接接续；② 重开浏览器（sessionStorage 已清）
+  //   → 仅当设置「重开接续上次」打开时，从 localStorage 的最近一段接续；否则开新对话。
   const saved = sessionStorage.getItem(SESSION_KEY)
+              || (reopenResume.value ? localStorage.getItem(LAST_SESSION_KEY) : null)
   if (saved) {
     loadSession(Number(saved)).then(() => {
-      if (sessionId.value !== Number(saved)) sessionStorage.removeItem(SESSION_KEY)
+      if (sessionId.value !== Number(saved)) {   // 那段会话没了（删了/无权限）→ 清存档、当新对话
+        sessionStorage.removeItem(SESSION_KEY)
+        localStorage.removeItem(LAST_SESSION_KEY)
+        prefetchGreeting()
+      }
     })
   } else {
-    // 全新对话（无可恢复会话）才需要默认问候 → 此刻后台生成；刷新停在老会话时不空跑。
+    // 全新对话（无可恢复会话）才需要默认问候 → 此刻后台生成；刷新/接续停在老会话时不空跑。
     prefetchGreeting()
   }
 })
@@ -867,11 +877,14 @@ async function toggleVoice(f) {
 
 let _sessionTurn = 0             // 当前 session 已发消息轮次（埋点用，切换 session 重置）
 
-// 会话 id 存入 sessionStorage：刷新页面保留当前对话，关闭浏览器/标签页才清空（=开新对话）
-const SESSION_KEY = 'gugu_session_id'
+// 会话 id 存入 sessionStorage：刷新页面保留当前对话，关闭浏览器/标签页才清空。
+// 同时把「最后一段对话」存进 localStorage（跨浏览器重开仍在）——重开浏览器是否接续上次，
+// 由设置 reopenResume 控制（见侧栏开关）；默认关＝重开开新对话（与历史行为一致）。
+const SESSION_KEY = 'gugu_session_id'            // sessionStorage：本标签刷新保留
+const LAST_SESSION_KEY = 'gugu_last_session_id'  // localStorage：最近一段对话（跨浏览器重开可接续）
 watch(sessionId, (v) => {
-  if (v) sessionStorage.setItem(SESSION_KEY, String(v))
-  else sessionStorage.removeItem(SESSION_KEY)
+  if (v) { sessionStorage.setItem(SESSION_KEY, String(v)); localStorage.setItem(LAST_SESSION_KEY, String(v)) }
+  else sessionStorage.removeItem(SESSION_KEY)   // 新对话只清当前标签；localStorage 留最后一段供重开接续
 })
 
 function stopStreaming() {

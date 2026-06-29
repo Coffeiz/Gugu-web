@@ -195,6 +195,22 @@
             <div class="pm-sep"></div>
 
             <div class="pm-section">
+              <div class="pm-section-label">对话</div>
+              <div class="pm-field-row">
+                <div class="pm-field-desc">
+                  <span class="pm-field-name">重开浏览器时</span>
+                  <span class="pm-field-hint">下次重新打开浏览器，是接着上次的对话、还是开一段新对话</span>
+                </div>
+                <div class="pm-style-group">
+                  <button class="pm-style-chip" :class="{ active: reopenResume }" @click="setReopenResume(true)">接着上次</button>
+                  <button class="pm-style-chip" :class="{ active: !reopenResume }" @click="setReopenResume(false)">开新对话</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="pm-sep"></div>
+
+            <div class="pm-section">
               <div class="pm-section-label">记忆</div>
               <div class="pm-field-row">
                 <div class="pm-field-desc">
@@ -218,8 +234,10 @@
               <div v-if="attachMsg" class="pm-msg" :class="attachMsgType">{{ attachMsg }}</div>
             </div>
 
-            <div class="pm-sep"></div>
+          </template>
 
+          <!-- 接入咕咕（个人设置里单独一个面板，放咕咕设置下面）-->
+          <template v-if="activeNav === 'im'">
             <div class="pm-section">
               <div class="pm-section-label">接入咕咕</div>
 
@@ -338,7 +356,7 @@ import { usePreferencesStore } from '@/stores/preferences'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { authApi, agentApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi } from '@/services/api'
 import { fireHint } from '@/composables/useOnboarding'
-import { PhX, PhSignOut, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird } from '@phosphor-icons/vue'
+import { PhX, PhSignOut, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird, PhChatsCircle } from '@phosphor-icons/vue'
 
 const TONE_OPTS   = [
   { value: 'natural', label: '自然' },
@@ -367,9 +385,17 @@ const navItems = [
   { key: 'prefs',   label: '偏好设置', icon: PhSliders },
   { divider: true },
   { key: 'gugu',    label: '咕咕设置', icon: PhBird },
+  { key: 'im',      label: '接入咕咕', icon: PhChatsCircle },
 ]
 const activeNav = ref('info')
 const currentNavLabel = computed(() => navItems.find(n => !n.divider && n.key === activeNav.value)?.label ?? '')
+
+// 重开浏览器是否接续上次对话：存 localStorage『gugu_reopen_resume』，GuguChat onMounted 读它决定接续/新对话
+const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') === '1')
+function setReopenResume(v) {
+  reopenResume.value = v
+  localStorage.setItem('gugu_reopen_resume', v ? '1' : '0')
+}
 
 // 打开时重置
 watch(() => props.show, v => {
@@ -379,6 +405,7 @@ watch(() => props.show, v => {
     infoMsg.value      = ''
     pwdMsg.value       = ''
     currentPwd.value   = newPwd.value = confirmPwd.value = ''
+    reopenResume.value = localStorage.getItem('gugu_reopen_resume') === '1'
   }
 })
 
