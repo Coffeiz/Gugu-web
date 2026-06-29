@@ -259,9 +259,9 @@
         <input v-model="newEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" @keydown.esc="showAddForm = false" autofocus />
         <DatePicker v-model="newEvent.date" placeholder="选择日期" />
         <div class="time-box">
-          <input v-model="newEvent.time" type="time" class="time-inner" />
-          <span class="time-dash">-</span>
-          <input v-model="newEvent.endTime" type="time" class="time-inner" />
+          <input v-model="newEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @blur="newEvent.time = normTime(newEvent.time)" />
+          <span class="time-dash">—</span>
+          <input v-model="newEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @blur="newEvent.endTime = normTime(newEvent.endTime)" />
         </div>
         <textarea v-model="newEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="reminder-section">
@@ -320,9 +320,9 @@
         <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
         <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
         <div class="time-box">
-          <input v-model="editingEvent.time" type="time" class="time-inner" />
-          <span class="time-dash">-</span>
-          <input v-model="editingEvent.endTime" type="time" class="time-inner" />
+          <input v-model="editingEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @blur="editingEvent.time = normTime(editingEvent.time)" />
+          <span class="time-dash">—</span>
+          <input v-model="editingEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @blur="editingEvent.endTime = normTime(editingEvent.endTime)" />
         </div>
         <textarea v-model="editingEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="reminder-section">
@@ -410,6 +410,17 @@ function hdayType(isoDate) {
   return getHolidayType(hdayCache.value[yr], isoDate)
 }
 const showAddForm  = ref(false)
+// 时间直接输入：失焦时规整成 HH:MM（容忍「2330」「9:5」「23：00」等）；空/非法 → 空串
+function normTime(v) {
+  if (!v) return ''
+  let s = String(v).replace(/[：]/g, ':').replace(/[^\d:]/g, '')
+  if (/^\d{3,4}$/.test(s)) s = s.slice(0, -2) + ':' + s.slice(-2)   // 2330 → 23:30
+  const m = s.match(/^(\d{1,2}):?(\d{0,2})$/)
+  if (!m) return ''
+  const h = Math.min(23, parseInt(m[1] || '0', 10))
+  const mm = Math.min(59, parseInt(m[2] || '0', 10))
+  return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+}
 // 默认时间段：下一个整点 → 再过一小时。如现在 22:50 → 23:00–00:00（次日）
 function defaultTimeRange() {
   const now = new Date()
