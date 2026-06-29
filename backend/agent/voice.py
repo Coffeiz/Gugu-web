@@ -28,12 +28,19 @@ async def _to_wav(raw: bytes) -> bytes | None:
     """用 ffmpeg 把任意音频转成 16k 单声道 WAV。失败返回 None。
 
     输入走临时文件而非管道：mp4 的 moov 原子可能在尾部、需要可寻址输入，pipe 不可寻址会失败。"""
+    # 不能用裸 "ffmpeg"——uvicorn / IM 网关进程 PATH 常被收窄，create_subprocess_exec 直接
+    # FileNotFoundError。复用 media_transcode 的解析器（PATH → /usr/bin/ffmpeg 等绝对路径兜底）。
+    from app.core.media_transcode import _ffmpeg_bin
+    ffmpeg = _ffmpeg_bin()
+    if not ffmpeg:
+        logger.warning("找不到 ffmpeg 可执行，音频无法转码")
+        return None
     fd, inp = tempfile.mkstemp(suffix=".bin")
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(raw)
         proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-nostdin", "-i", inp, "-ar", "16000", "-ac", "1", "-f", "wav", "pipe:1",
+            ffmpeg, "-nostdin", "-i", inp, "-ar", "16000", "-ac", "1", "-f", "wav", "pipe:1",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         out, err = await asyncio.wait_for(proc.communicate(), timeout=30)
         if proc.returncode != 0 or not out:
