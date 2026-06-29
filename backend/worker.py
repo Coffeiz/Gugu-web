@@ -36,6 +36,19 @@ _max_concurrency = 16                          # 当前生效值（_refresh_conc
 _user_locks: dict[str, asyncio.Lock] = {}      # user_gate：同用户串行保序、不同用户并发
 _inflight: set = set()                         # 在跑任务集：背压计数 + 优雅 drain
 
+# ── 输入防抖：QQ 等平台「一张图一条消息」，连发的图 + 后面的指令本是一次表达。
+#    不立即处理，攒进缓冲；同一用户每来一条就把「截止时刻」推后；静默到期才把缓冲里所有消息
+#    合并成「一轮」处理、只回一次。**非对称窗口**：带文字的消息 = 用户说完了 → 短窗口快速回；
+#    纯附件（图/文件没配文字）= 多半还在补图 / 正手打指令 → 给更长窗口等后面的指令（先发图、隔
+#    几秒再打「存一下」也能并进同一轮，否则指令那轮手上没图、咕咕反问「存什么」）。
+DEBOUNCE_SEC = 1.0          # 带文字：用户说完了，快速处理
+DEBOUNCE_ATT_SEC = 6.0     # 纯附件：等后续指令 / 更多图（网关已秒回「收到」，不怕这点延迟）
+_user_buffers: dict[str, list] = {}            # puid -> [(msg_id, payload)] 待处理缓冲
+_user_deadline: dict[str, float] = {}          # puid -> 防抖截止时刻（loop.time()），每条新消息推后
+_user_flush: dict[str, asyncio.Task] = {}      # puid -> 正在跑的 flush loop（每用户至多一个）
+_flush_tasks: set = set()                       # 所有 flush loop：供优雅 drain 等它们跑完
+_run_sem = asyncio.Semaphore(_max_concurrency)  # flush 阶段真正跑 agent 的全局并发上限
+
 
 def _refresh_concurrency():
     """从 config.override.json 直接热读并发上限（隔离读，不动全局 settings 缓存）。"""
@@ -264,9 +277,59 @@ async def handle(msg_id: str, payload: dict):
     return resp
 
 
+def _merge_payloads(payloads: list) -> dict:
+    """把同一用户连发的多条消息合并成一条：拼接非空文字、合并所有附件；路由字段（message_id /
+    channel_id 等）取**最后一条**——被动回复 / 表情挂在最近那条上。"""
+    base = dict(payloads[-1])
+    texts, atts = [], []
+    for p in payloads:
+        t = (p.get("text") or "").strip()
+        if t:
+            texts.append(t)
+        atts.extend(p.get("attachments") or [])
+    base["text"] = "\n".join(texts)
+    base["attachments"] = atts
+    return base
+
+
+async def _flush_loop(puid: str):
+    """等该用户「静默满 DEBOUNCE_SEC」→ 把缓冲里所有消息合并成一轮处理、只回一次。
+    处理期间新到的消息进新缓冲，本 loop 跑完会再攒再处理，直到缓冲空才退出。
+    用「截止时刻不断被推后」轮询、不 cancel——cancel 会打断正在跑的 run_collect。"""
+    loop = asyncio.get_event_loop()
+    try:
+        while True:
+            # 等防抖：截止时刻被新消息不断推后，就一直等到它不再往后挪
+            while True:
+                now = loop.time()
+                dl = _user_deadline.get(puid, now)
+                if now >= dl:
+                    break
+                await asyncio.sleep(dl - now)
+            lock = _user_locks.setdefault(puid, asyncio.Lock())
+            async with lock:
+                batch = _user_buffers.pop(puid, [])
+                if not batch:
+                    _user_deadline.pop(puid, None)
+                    _user_flush.pop(puid, None)
+                    return
+                merged = _merge_payloads([p for _, p in batch])
+                rep_msg_id = batch[-1][0]
+                async with _run_sem:     # 多用户同时活跃时，跑 agent 的全局并发上限
+                    try:
+                        await handle(rep_msg_id, merged)
+                    except Exception as e:
+                        print(f"[worker] flush handle 出错（已 ack 丢弃，避免毒消息循环）: {type(e).__name__}: {e}", flush=True)
+                    finally:
+                        for mid, _ in batch:
+                            await R.ack(STREAM, GROUP, mid)
+    finally:
+        _user_flush.pop(puid, None)
+
+
 async def _dispatch(msg_id: str, payload: dict):
-    """并发处理一条：幂等去重 → 按用户串行 → 限流执行 → ack。"""
-    # 幂等：同一 stream 条目被 claim_stale（60s）重投时跳过，防重复回复（在拿锁/槽前就丢）
+    """幂等去重 → 投入「防抖缓冲」（不立即处理）。同一用户 1s 内连发的消息攒成一轮、只回一次。"""
+    # 幂等：同一 stream 条目被 claim_stale（60s）重投时跳过，防重复（在投缓冲前就丢）
     try:
         fresh = await R.get_redis().set(f"imseen:{msg_id}", "1", ex=3600, nx=True)
     except Exception:
@@ -275,15 +338,17 @@ async def _dispatch(msg_id: str, payload: dict):
         await R.ack(STREAM, GROUP, msg_id)
         return
     puid = payload.get("platform_user_id") or msg_id
-    lock = _user_locks.setdefault(puid, asyncio.Lock())
-    async with lock:                # user_gate：同用户串行，不抢同一 session_id、不乱序
-        # 全局并发上限由 run_once 按 _max_concurrency 留空闲槽控制（_inflight ≤ 上限）
-        try:
-            await handle(msg_id, payload)
-        except Exception as e:
-            print(f"[worker] handle 出错（已 ack 丢弃，避免毒消息循环）: {type(e).__name__}: {e}", flush=True)
-        finally:
-            await R.ack(STREAM, GROUP, msg_id)
+    # 投缓冲 + 把截止时刻推后；**不在这里 ack**，留到 flush（崩了未 ack → claim_stale 60s 重投兜底）
+    _user_buffers.setdefault(puid, []).append((msg_id, payload))
+    has_text = bool((payload.get("text") or "").strip())   # 这条带文字 = 短窗口；纯附件 = 长窗口等指令
+    window = DEBOUNCE_SEC if has_text else DEBOUNCE_ATT_SEC
+    _user_deadline[puid] = asyncio.get_event_loop().time() + window
+    t = _user_flush.get(puid)
+    if t is None or t.done():
+        nt = asyncio.create_task(_flush_loop(puid))
+        _user_flush[puid] = nt
+        _flush_tasks.add(nt)
+        nt.add_done_callback(_flush_tasks.discard)
 
 
 async def run_once(block_ms: int = 5000) -> int:
@@ -347,9 +412,11 @@ async def serve():
             print(f"[worker] loop 出错，2s 后重试: {type(e).__name__}: {e}", flush=True)
             await asyncio.sleep(2)
     # 优雅 drain：收到 SIGTERM 停收新消息后，等在跑的处理完再退（并发后必须，别截断回复）
-    if _inflight:
-        print(f"[worker] drain：等 {len(_inflight)} 条在跑的完成…", flush=True)
-        await asyncio.gather(*list(_inflight), return_exceptions=True)
+    #   含防抖 flush loop——停收新消息后它们各自把缓冲清空就退出，别截断正在生成的回复。
+    pending = list(_inflight) + list(_flush_tasks)
+    if pending:
+        print(f"[worker] drain：等 {len(_inflight)} 条派发 + {len(_flush_tasks)} 个缓冲收尾…", flush=True)
+        await asyncio.gather(*pending, return_exceptions=True)
     hb.cancel()
     sched_task.cancel()
     sched.shutdown()
