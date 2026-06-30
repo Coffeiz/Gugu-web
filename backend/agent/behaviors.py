@@ -1,60 +1,47 @@
-"""行为模块（Behavior Skills）：一文件一能力（DO+DON'T），按感知信号**条件点亮**、拼进 system prompt。
+"""行为模块（Behavior Skills）：一文件一能力（DO+DON'T），按本轮 stance 条件点亮、拼进 system prompt。
 
-现有三个：`emotion-first`（接情绪·Presence）、`stuck-first`（卡住给最小一步·Advance）、
-`decision-explore`（纠结里陪想清·Decide-with）。选择走**廉价线索**（本句 cue）+ World Model(summary)——
-不跑前置 LLM、零延迟；**软偏置、非硬切换**（persona 仍留四态地图，模型可自纠）。
-增量长：以后加能力 = 加一个 behaviors/*.md + 在 select 里加点亮条件。
-详见 docs/感知系统-架构升级.md §3.2 / §3.3。
+选择走**反思驱动 stance**（异步 LLM 判，非正则）：反思把本轮 `perception.intent` 当 stance 落 per-user，
+builder 下一轮读它 + 新鲜度闸 → 1:1 点亮模块。`baseline` **永远在场**（四态地图 + 中性默认），
+具体 stance 模块叠在其上；stance 过期/缺失 → 仅 baseline。详见 docs/感知系统-架构升级.md §2.6。
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 _DIR = Path(__file__).parent / "prompts" / "behaviors"
 
-# 情绪 cue（本句）。有明确任务动词则**不**点亮——"我好累，帮我把这个删了"仍是任务，照做。
-_EMO_CUES = (
-    "好累", "累死", "累惨", "疲惫", "烦死", "好烦", "烦躁", "难受", "难过", "伤心",
-    "想哭", "崩溃", "压力好大", "压力大", "焦虑", "好丧", "emo", "摆烂", "不想干",
-    "撑不住", "心累", "委屈", "郁闷", "没意思", "好无聊", "孤独", "孤单", "失眠", "扛不住",
-)
-_TASK_VERBS = (
-    "帮我", "创建", "建个", "建一个", "改一下", "改成", "删掉", "删了", "查一下",
-    "查查", "搜一下", "整理", "列一下", "移到", "重命名", "设个", "提醒我", "记一下",
-)
-# 卡住 cue（推进·家族 A）：带任务动词也照点（"帮我推进，卡住了" 仍是要找最小一步）
-_STUCK_CUES = (
-    "卡住", "卡了", "卡在", "推进不", "进行不", "搞不定", "弄不下去", "做不下去",
-    "没思路", "没头绪", "无从下手", "不知道怎么开始", "不知道从哪", "不知道先做",
-    "迈不开", "动不了", "停滞", "一直拖", "推不动", "进展不", "起不了头",
-)
-# 纠结 cue（决策探索·家族 B）：带任务动词也照点（"帮我选" 仍是陪决策、非替决）
-_DECISION_CUES = (
-    "纠结", "犹豫", "拿不定", "拿不准", "选哪个", "选哪", "哪个好", "哪个更",
-    "二选一", "要不要", "该不该", "举棋不定", "难抉择", "难选", "不知道选",
-    "怎么选", "做不了决定", "下不了决心",
-)
+# stance（= 反思 perception.intent）→ 行为模块。1:1 映射（见 §2.6）。
+_STANCE_MODULE = {
+    "执行": "execution",
+    "推进": "stuck-first", "卡住": "stuck-first",
+    "记录": "record",
+    "查询": "query",
+    "决策": "decision-explore", "决策探索": "decision-explore",
+    "反思": "reflect",
+    "情绪": "emotion-first",
+    "陪伴": "companion", "闲聊": "companion", "分享": "companion",
+}
+
+# 新鲜度闸：stance 超此秒数（默认 30 分钟）视为过期 → 退回仅 baseline。
+# stance 是 per-user、跨 session（一天可能多 session），防昨晚某 stance 污染今早新 session 首轮。
+STANCE_FRESH_SECS = 1800
 
 
-def select(user_msg: str, summary: str = "") -> list[str]:
-    """据本句廉价线索 + World Model 软点亮行为模块。保守：宁可不点、别误伤（过度共情也烦）。
-    最小裁决（完整组合裁决待做，见 §8.2）：**情绪在场优先接情绪**、不与任务型模块叠加——
-    避免"该好好接住却又开始给方案/摆权衡"；其余任务型模块（stuck/decision）可共存。"""
-    t = (user_msg or "").strip()
-    if not t:
-        return []
-    tl = t.lower()   # 小写化容英文选项（"选A还是B"）；中文 cue 不受影响
-    has_emo = any(c in tl for c in _EMO_CUES)
-    has_task = any(v in tl for v in _TASK_VERBS)
-    if has_emo and not has_task:
-        return ["emotion-first"]
-    out: list[str] = []
-    if any(c in tl for c in _STUCK_CUES):
-        out.append("stuck-first")
-    # "还是"单独太宽（"还是算了"），但与"选"同现是明确"选 A 还是 B"决策信号
-    if any(c in tl for c in _DECISION_CUES) or ("还是" in tl and "选" in tl):
-        out.append("decision-explore")
-    return out
+def select(stance: str | None, stance_ts: float | None = None) -> list[str]:
+    """据 per-user stance（反思上轮判的 intent）+ 新鲜度软点亮。
+    `baseline` 永远在场；stance 新鲜且有映射 → 叠上对应模块；过期/缺失 → 仅 baseline。"""
+    names = ["baseline"]
+    s = (stance or "").strip()
+    if not s:
+        return names
+    # 新鲜度闸：有 ts 且超窗口 → 当过期（无 ts 兼容旧数据，按新鲜处理）
+    if stance_ts is not None and (time.time() - stance_ts) > STANCE_FRESH_SECS:
+        return names
+    mod = _STANCE_MODULE.get(s)
+    if mod and mod not in names:
+        names.append(mod)
+    return names
 
 
 def render(names: list[str]) -> str:

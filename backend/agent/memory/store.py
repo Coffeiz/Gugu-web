@@ -53,7 +53,8 @@ async def _write(key: str, text: str) -> None:
 
 
 async def read_memory(user_id, query: str = "") -> dict:
-    """返回 {facts, memory, daily, summary, summary_ts, lens}，缺失为空串/None。
+    """返回 {facts, memory, daily, summary, summary_ts, stance, stance_ts, lens}，缺失为空串/None。
+    stance = 上轮反思判的相处姿态（= perception.intent），stance_ts 给新鲜度闸用（见 behaviors.select）。
     summary_ts = summary 上次更新的 epoch（给时间衰减用，见 agent/decay.py）。
     lens = 渲染好的「解读镜片」注入块（per-user 解读先验，见 agent/memory/lens.py），无则空串。
     query = 当前用户消息（可选）：facts 超注入上限时用它做相关性优先挑选，见 render_facts。"""
@@ -62,10 +63,12 @@ async def read_memory(user_id, query: str = "") -> dict:
     daily   = (await _read(_key(user_id, "daily.md"))).strip()
     summary = (await _read(_key(user_id, "summary.md"))).strip()
     summary_ts = await read_summary_ts(user_id)
+    stance, stance_ts = await read_stance(user_id)
     from agent.memory import lens as _lens   # 局部导入避免包内循环
     lens_block = await _lens.read_block(user_id)
     return {"facts": facts, "memory": memory, "daily": daily,
-            "summary": summary, "summary_ts": summary_ts, "lens": lens_block}
+            "summary": summary, "summary_ts": summary_ts,
+            "stance": stance, "stance_ts": stance_ts, "lens": lens_block}
 
 
 async def read_summary_ts(user_id) -> float | None:
@@ -247,6 +250,31 @@ async def write_summary(user_id, text: str) -> None:
     await _write(_key(user_id, "summary.md"), text.strip() + "\n")
     import time
     await _write(_key(user_id, "summary.ts"), str(time.time()))   # 盖更新时间戳（时间衰减用）
+
+
+# ── stance.json（本轮相处姿态 = perception.intent；反思写，builder 据此 + 新鲜度点亮行为模块）──
+async def read_stance(user_id) -> tuple[str | None, float | None]:
+    """返回 (stance, ts)；无/解析失败返回 (None, None)。stance = 上轮反思判的 intent。"""
+    raw = (await _read(_key(user_id, "stance.json"))).strip()
+    if not raw:
+        return None, None
+    try:
+        d = json.loads(raw)
+        s = (d.get("stance") or "").strip() or None
+        ts = d.get("ts")
+        return s, (float(ts) if ts is not None else None)
+    except Exception:
+        return None, None
+
+
+async def write_stance(user_id, stance: str | None) -> None:
+    """反思后写本轮 stance（带时间戳，给新鲜度闸用）。空 stance 不写（保留上一个直到过期）。"""
+    s = (stance or "").strip()
+    if not s:
+        return
+    import time
+    await _write(_key(user_id, "stance.json"),
+                 json.dumps({"stance": s, "ts": time.time()}, ensure_ascii=False))
 
 
 # ── memory.md（长期记忆，compress 写）──

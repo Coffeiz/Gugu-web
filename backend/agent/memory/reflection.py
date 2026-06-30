@@ -171,6 +171,8 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> No
     try:
         # 感知遥测:把本轮 perception 打日志 + 推 Redis（不写记忆）
         await _emit_perc(_perc_rec(user_id, out.get("perception"), getattr(getattr(settings, "ai", None), "model", "")))
+        # 行为模块选择：把本轮 stance（= perception.intent）落 per-user，供下一轮 builder 点亮模块（带新鲜度闸）
+        await store.write_stance(user_id, (out.get("perception") or {}).get("intent"))
         daily_note = (out.get("daily") or "").strip()
         summary = (out.get("summary") or "").strip()
 

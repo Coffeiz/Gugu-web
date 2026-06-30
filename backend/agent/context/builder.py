@@ -146,11 +146,11 @@ def build(profile: str, user_name: str, projects: list, events: list,
     except FileNotFoundError:
         content_policy = ""
 
-    # 行为模块（Behavior Skills）：按本轮感知信号（本句线索 + World Model summary）软点亮，
-    # 置于人格之后、最高优先——本轮"特别这么相处"，盖过默认的任务倾向。详见感知系统升级 §3.2。
+    # 行为模块（Behavior Skills）：反思驱动 stance 软点亮（per-user + 新鲜度闸，非正则），
+    # 置于人格之后、最高优先——本轮"特别这么相处"，盖过默认倾向。`baseline` 永远在场。详见感知系统升级 §2.6。
     try:
         from agent import behaviors as _bh
-        beh_block = _bh.render(_bh.select(user_msg, (memory.get("summary") or "")))
+        beh_block = _bh.render(_bh.select(memory.get("stance"), memory.get("stance_ts")))
     except Exception:
         beh_block = ""
 
