@@ -8,6 +8,20 @@
  *     文件被收进文件夹/面包屑 → 缩小吸入；没变化 → 占位 FLIP 重新展开、克隆体归位。
  */
 
+// 拖拽物理可选项（startPhysicsDrag / startMultiPhysicsDrag 共用）
+interface PhysicsDragOpts {
+  pointer?: boolean
+  spring?: number
+  damping?: number
+  lift?: number
+  sway?: number
+  tilt?: number
+  grabY?: number
+  cloneClass?: string
+  onDrop?: (pos: { x: number; y: number }) => void
+  skipAbsorb?: boolean
+}
+
 let _ghostImg = null
 function _transparentGhost() {
   if (_ghostImg) return _ghostImg
@@ -93,7 +107,7 @@ function _invertPlay(kids, fromRects, toRects, dur = 340) {
  *   pointer:true 改用 pointer 事件驱动（setPointerCapture 跳过每帧命中测试，省掉原生 dragover 的 HitTest）；
  *   onDrop({x,y}): pointer 模式下松手时回调，由调用方据落点执行业务移动（原生模式靠各列 @drop 落定）。
  */
-export function startPhysicsDrag(event, sourceEl, opts = {}) {
+export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
   if (!sourceEl || _active) return
   const pointer = opts.pointer === true
   const pointerId = pointer ? event.pointerId : null
@@ -141,7 +155,7 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
   // 拖拽期间锁住看板列的滚动：挡掉浏览器原生拖拽的「边缘自动滚动」——否则列在拖动时就被原生滚到底，
   // 落点时已无可滚（dy≈0），我们的受控平滑滚动跑不起来，看着就是「瞬间到底部」。列用的是 3px overlay
   // 滚动条，overflow:hidden 不会引起布局位移。结束时在 end() 还原。
-  const _lockedScrollers = [...document.querySelectorAll('.col-body')]
+  const _lockedScrollers = [...document.querySelectorAll<HTMLElement>('.col-body')]
   const _savedScrollTop = new Map()
   for (const s of _lockedScrollers) { _savedScrollTop.set(s, s.scrollTop); s.style.overflowY = 'hidden' }
 
@@ -335,14 +349,14 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
 
       // 2) 卡片落到新位置（换列/重排）
       if (sel) {
-        const el = document.querySelector(sel)
+        const el = document.querySelector<HTMLElement>(sel)
         if (el && el.isConnected && el !== sourceEl) {
           if (el.offsetWidth > 0) {   // 落点可见 → 占位 FLIP 展开；双克隆同轨迹飞行 + 样式渐变
             animateOpen(el.parentElement, el)   // 它为量 FLIP 会瞬间 display:none 落点卡，故滚动放其后
             // 落点在可滚动列里若滚出视口 → 快速滚进可视区，box 取滚动后的最终落点
             const sc = _scrollParent(el)
             const box = revealInScroller(sc, el.getBoundingClientRect())
-            const clone2 = el.cloneNode(true)   // 新状态样式
+            const clone2 = el.cloneNode(true) as HTMLElement   // 新状态样式
             clone2.classList.add('phys-drag-clone')
             if (opts.cloneClass) clone2.classList.add(opts.cloneClass)
             Object.assign(clone2.style, {
@@ -413,7 +427,7 @@ export function startPhysicsDrag(event, sourceEl, opts = {}) {
 /**
  * @param {HTMLElement[]} extras  其余选中文件的 DOM 元素（最多取前 2 张作影子卡）
  */
-export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts = {}) {
+export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts: PhysicsDragOpts = {}) {
   if (!sourceEl || _active) return
   try { event.dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {}
 
