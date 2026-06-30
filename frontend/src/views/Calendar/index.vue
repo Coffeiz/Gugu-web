@@ -2360,7 +2360,8 @@ async function saveEvent() {
 .wv-dhead.weekend .wv-dow { color: #b06a78; }
 .wv-dow { font-size: 11px; font-weight: 600; color: #8a8fa8; }
 .wv-dnum { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 15px; font-weight: 600; color: #3a3d52; line-height: 1; }
-.wv-dnum.today { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; }
+/* 今日数字：方形圆角（同月视图 .is-today .cell-num，非圆形）；周末同月视图暖红渐变 */
+.wv-dnum.today { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: rgba(255,255,255,0.88); font-weight: 700; border-radius: 6px; }
 .wv-dhead.weekend .wv-dnum.today { background: linear-gradient(135deg,#b85c5c,#c97070); }
 /* 选中日：内嵌的小底色块（左右留白 → 相邻不连片）+ 浅色；周末同步暖红 */
 .wv-dhead.selected { position: relative; }
