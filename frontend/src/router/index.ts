@@ -1,7 +1,7 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import DefaultLayout from '@/layouts/DefaultLayout.vue'
 
-const routes = [
+const routes: RouteRecordRaw[] = [
   // ── 用户认证页（无 layout）──
   {
     path: '/login',
