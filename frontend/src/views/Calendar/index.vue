@@ -1416,7 +1416,7 @@ async function _persistEvent(s) {
 function onEvResize(ev, edge, e) {   // 拖边缘改起止时间
   const colEl = e.currentTarget.closest('.wv-col')
   _evDrag = { kind: 'resize', edge, colRect: colEl.getBoundingClientRect(), moved: false,
-              id: ev.id, name: ev.name, description: ev.description, version: ev.version, date: ev.date,
+              id: ev.id, _uid: ev._uid, name: ev.name, description: ev.description, version: ev.version, date: ev.date, time: ev.time, endTime: ev.endTime,
               startMin: _toMin(ev.time || '09:00'), endMin: ev.endTime ? _toMin(ev.endTime) : _toMin(ev.time || '09:00') + 60 }
   if (_evDrag.endMin <= _evDrag.startMin) _evDrag.endMin = 1440
   document.body.style.userSelect = 'none'
@@ -1487,8 +1487,8 @@ function _evDragUp(e) {
   document.body.style.userSelect = ''
   const s = _evDrag; _evDrag = null
   if (!s) return
-  if (!s.moved) {   // 没拖动：move=视为点击编辑；resize 边缘点一下=不操作
-    if (s.kind === 'move') openEditForm({ _uid: s._uid, id: s.id, name: s.name, date: s.date, time: s.time, endTime: s.endTime, description: s.description, version: s.version }, e, true)
+  if (!s.moved) {   // 没拖动 = 单击 → 打开编辑（无论按在边缘还是中间）
+    openEditForm({ _uid: s._uid, id: s.id, name: s.name, date: s.date, time: s.time, endTime: s.endTime, description: s.description, version: s.version }, e, true)
     return
   }
   selectedDate.value = s.date
