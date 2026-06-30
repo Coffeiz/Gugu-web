@@ -16,6 +16,7 @@ from app.core.redis import get_redis
 router = APIRouter(prefix="/admin/perception", tags=["admin"])
 
 _PERC_KEY = "perc:events"
+_MISREAD_KEY = "perc:misread_cases"   # 错读案例 live 列表（给面板预览；持久那份是 md，见 misread_export）
 
 # 异常阈值（默认值；可由面板按 query 参数覆盖，仅影响本次「怎么看」，不改系统行为）
 _RATE_HI = 0.25        # 某 intent 误判率超此 → 标红
@@ -169,6 +170,21 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
         "flags": flags,
         "note": f"口径：活跃用户（窗口内 ≥{min_events} 轮）{len(active)} 人；头部指标按用户宏平均（重度用户不主导）",
     }
+
+
+@router.get("/misread/recent")
+async def misread_recent(n: int = 30):
+    """最近 N 条错读案例（脱敏，给面板预览）。读 Redis live 列表 perc:misread_cases。"""
+    n = max(1, min(int(n or 30), 200))
+    r = get_redis()
+    raw = await r.lrange(_MISREAD_KEY, 0, n - 1)
+    cases = []
+    for x in raw:
+        try:
+            cases.append(json.loads(x if isinstance(x, str) else x.decode()))
+        except Exception:
+            pass
+    return {"total": len(cases), "cases": cases}
 
 
 @router.get("/misread/export")

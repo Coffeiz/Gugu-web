@@ -118,6 +118,19 @@
         </div>
       </template>
     </template>
+
+    <!-- 错读案例预览（独立于活跃用户统计，始终显示） -->
+    <div class="section-label">错读案例<span class="sl-hint">咕咕「读错需求」的脱敏反思 · 最近 {{ misread.length }} 条</span>
+      <button class="dl-btn" @click="downloadMisread" :disabled="dling">{{ dling ? '下载中…' : '下载完整记录' }}</button>
+    </div>
+    <div v-if="!misread.length" class="state-msg sm-sm">暂无错读案例（需发生一次「误读 + 用户纠正」才记一条）</div>
+    <div v-else class="mr-list">
+      <div v-for="(c, i) in misread" :key="i" class="mr-row">
+        <span class="mr-time">{{ fmtTs(c.ts) }}</span>
+        <span class="mr-flow"><b>{{ c.miss?.read_as || '—' }}</b><i>→</i><b>{{ c.miss?.actual || '—' }}</b></span>
+        <span class="mr-pattern">{{ c.miss?.pattern || '—' }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -150,8 +163,12 @@ function resetThresholds() {
 
 const intents = computed(() => data.value.intent_distribution || [])
 
+const misread = ref([])
+const dling = ref(false)
+
 async function load() {
   loading.value = true
+  loadMisread()   // 错读案例独立拉取（不受活跃用户/阈值影响），刷新时一并更新
   try {
     const me = Math.max(1, minEvents.value || 1)
     const rate = Math.min(1, Math.max(0, (rateHiPct.value || 0) / 100))
@@ -173,6 +190,31 @@ function rateClass(v) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return
 function rateCard(v) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return v != null && v > hi ? 'card-bad' : (v != null && v > mid ? 'card-active' : '') }
 // 纠错构成配色：感知误读=红（该优化）、数据/执行错=琥珀（归数据/工具）、未判=灰
 function kindCls(k) { return k === '感知误读' ? 'kc-bad' : (k === '数据或执行错' ? 'kc-warn' : 'kc-dim') }
+
+async function loadMisread() {
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/perception/misread/recent?n=30')
+    if (res.ok) misread.value = (await res.json()).cases || []
+  } catch (e) { /* 预览失败不打断主面板 */ }
+}
+async function downloadMisread() {
+  dling.value = true
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/perception/misread/export')
+    if (!res.ok) throw new Error()
+    const blob = new Blob([await res.text()], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = 'misread_reflections.md'
+    document.body.appendChild(a); a.click(); a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e) { /* 忽略 */ } finally { dling.value = false }
+}
+function fmtTs(ts) {
+  if (!ts) return '—'
+  const d = new Date(ts * 1000)
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 
 onMounted(load)
 </script>
@@ -254,4 +296,16 @@ onMounted(load)
 .kind-chip.kc-bad  { background: rgba(224,112,112,0.12); color: rgba(235,150,150,0.95); border-color: rgba(224,112,112,0.28); }
 .kind-chip.kc-warn { background: rgba(201,148,58,0.12); color: rgba(215,165,75,0.95); border-color: rgba(201,148,58,0.25); }
 .kind-chip.kc-dim  { color: rgba(255,255,255,0.4); }
+
+/* ── 错读案例预览 ── */
+.dl-btn { margin-left: auto; background: rgba(123,127,178,0.16); border: 1px solid rgba(123,127,178,0.3); color: rgba(170,175,225,0.95); font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; border-radius: 7px; padding: 5px 12px; cursor: pointer; transition: all .15s; }
+.dl-btn:hover:not(:disabled) { background: rgba(123,127,178,0.26); }
+.dl-btn:disabled { opacity: .5; cursor: not-allowed; }
+.mr-list { padding: 0 36px; display: flex; flex-direction: column; gap: 8px; }
+.mr-row { display: flex; align-items: baseline; gap: 12px; font-size: 12.5px; padding: 9px 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 9px; }
+.mr-time { flex-shrink: 0; width: 78px; color: rgba(255,255,255,0.32); font-size: 11.5px; }
+.mr-flow { flex-shrink: 0; color: rgba(255,255,255,0.7); display: flex; align-items: baseline; gap: 6px; }
+.mr-flow b { font-weight: 600; }
+.mr-flow i { font-style: normal; color: rgba(255,255,255,0.3); }
+.mr-pattern { color: rgba(255,255,255,0.5); line-height: 1.5; }
 </style>
