@@ -156,6 +156,7 @@ function dismiss(id) {
   align-items: flex-end;
   pointer-events: none;
   transition: bottom 0.42s cubic-bezier(0.16, 1, 0.3, 1);   /* 小窗开合时平滑避让 */
+  transform: translateZ(0);   /* 提升为稳定合成层：固定容器背后页面滚动时，子项 backdrop-filter 不再反复重绘闪烁 */
 }
 
 /* 气泡风与 GuguChat 小窗/播放器一致：玻璃面板 + blur(28) + 20 圆角 */
