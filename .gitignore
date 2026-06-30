@@ -68,3 +68,7 @@ Trace-*.json
 
 # 部署打包产物
 backend.zip
+
+# macOS SMB AppleDouble 资源叉垃圾（在 SMB 上编辑会生成）
+._*
+.AppleDouble/
