@@ -655,10 +655,12 @@ onMounted(() => {
   const saved = sessionStorage.getItem(SESSION_KEY)
               || (reopenResume.value ? localStorage.getItem(LAST_SESSION_KEY) : null)
   if (saved) {
+    messages.value = []   // 续聊：立刻清掉默认问候占位，避免 loadSession 异步加载期间 animateGreeting 闪问候
     loadSession(Number(saved)).then(() => {
-      if (sessionId.value !== Number(saved)) {   // 那段会话没了（删了/无权限）→ 清存档、当新对话
+      if (sessionId.value !== Number(saved)) {   // 那段会话没了（删了/无权限）→ 清存档、恢复问候、当新对话
         sessionStorage.removeItem(SESSION_KEY)
         localStorage.removeItem(LAST_SESSION_KEY)
+        messages.value = [{ id: mkid(), role: 'ai', text: '', html: '', time: now(), _greeting: true }]
         prefetchGreeting()
       }
     })
