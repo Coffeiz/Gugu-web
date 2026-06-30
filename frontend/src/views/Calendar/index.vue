@@ -135,7 +135,8 @@
           <!-- 日期表头 -->
           <div class="wv-head">
             <div class="wv-gutter"></div>
-            <div v-for="d in weekDays" :key="d.iso" class="wv-dhead" :class="{ today: d.isToday, weekend: d.isWeekend, selected: d.iso === selectedDate }" @click="selectedDate = d.iso">
+            <div v-for="d in weekDays" :key="d.iso" class="wv-dhead" :class="{ today: d.isToday, weekend: d.isWeekend, selected: wvDaySelected(d.iso) }"
+                 @mousedown="onAllDayDown" @contextmenu.prevent="onAllDayContextMenu">
               <span class="wv-dow">周{{ d.cn }}</span>
               <span class="wv-dnum" :class="{ today: d.isToday }">{{ d.dateNum }}</span>
             </div>
@@ -147,7 +148,7 @@
             <div class="wv-allday-grid" ref="wvAllDayGridRef" :style="{ height: wvAllDayH + 'px' }"
                  @mousedown="onAllDayDown" @contextmenu.prevent="onAllDayContextMenu">
               <div v-for="(d, ci) in weekDays" :key="d.iso" class="wv-aco" :class="{ today: d.isToday, weekend: d.isWeekend }" :style="{ left: ci / 7 * 100 + '%' }"></div>
-              <div v-for="ci in wvSelCols" :key="'adsel' + ci" class="wv-ad-sel" :style="{ left: ci / 7 * 100 + '%' }"></div>
+              <div v-for="ci in wvSelCols" :key="'adsel' + ci" class="wv-ad-sel" :class="{ weekend: weekDays[ci]?.isWeekend }" :style="{ left: ci / 7 * 100 + '%' }"></div>
               <div v-for="bar in weekAllDayShown" :key="bar.id" class="wv-pbar cal-chip" :class="{ 'cal-done': bar.status === 'done' }"
                    :style="pbarStyle(bar)" @click.stop="openProject(bar)" :title="bar.name">
                 <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>{{ bar.name }}
@@ -666,12 +667,19 @@ const wvSelCols = computed(() => {
   if (!r) return []
   return weekDays.value.map((d, ci) => (d.iso >= r.start && d.iso <= r.end ? ci : -1)).filter(ci => ci >= 0)
 })
+// 「日选择」判定：只看 activeRange（顶部日期格 + 全天区共用）。单选也走 selRange={iso,iso}，
+// 故与「时段选择」(wvSelectedSlot) 互不干扰、互斥（见 onAllDayDown / onColDown）。
+function wvDaySelected(iso) {
+  const r = activeRange.value
+  return r ? (iso >= r.start && iso <= r.end) : false
+}
 function onAllDayDown(e) {
   if (e.button !== 0) return
   if (e.target.closest('.wv-pbar,.wv-allday-ev,.wv-more')) return   // 点在已有条/活动上 → 不框选
   const startIso = _isoFromAllDayX(e.clientX)
   if (!startIso) return
   e.preventDefault()
+  wvSelectedSlot.value = null   // 选日期 → 清掉小时格选区（两者用途不同，互斥）
   rangeSelect.active = true
   rangeSelect.anchor = startIso
   hoverRangeEnd.value = startIso
@@ -688,8 +696,8 @@ function onAllDayDown(e) {
       const [a, b] = [startIso, endIso].sort()
       selRange.value = { start: a, end: b }
       document.addEventListener('click', ce => ce.stopPropagation(), { capture: true, once: true })
-    } else {                     // 单选：选中该天
-      selRange.value = null
+    } else {                     // 单选：单天也用 range 表示（统一高亮 + 可右键建单天项目）
+      selRange.value = { start: startIso, end: startIso }
       selectedDate.value = startIso
     }
   }
@@ -1445,6 +1453,7 @@ function onColLeave() { if (!wvSel.value) wvHover.value = null }
 
 function onColDown(e, d) {
   if (e.button !== 0) return
+  selRange.value = null   // 选时段 → 清掉日期选择（两者用途不同，互斥）
   _wvColRect = e.currentTarget.getBoundingClientRect()
   const h = _hourAt(e.clientY, _wvColRect)
   wvSel.value = { iso: d.iso, h0: h, h1: h }
@@ -2353,9 +2362,11 @@ async function saveEvent() {
 .wv-dnum { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 15px; font-weight: 600; color: #3a3d52; line-height: 1; }
 .wv-dnum.today { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; }
 .wv-dhead.weekend .wv-dnum.today { background: linear-gradient(135deg,#b85c5c,#c97070); }
-/* 选中日的数字（非今日）——同月视图 .is-selected .cell-num */
-.wv-dhead.selected .wv-dnum:not(.today) { background: rgba(123,127,178,0.15); color: var(--color-primary); }
-.wv-dhead.selected.weekend .wv-dnum:not(.today) { background: rgba(195,90,90,0.15); color: rgba(195,90,90,0.9); }
+/* 选中日：整格暗色被选中（取代数字外的浅色球）；周末同步暖红 */
+.wv-dhead.selected { background: rgba(123,127,178,0.16); }
+.wv-dhead.selected.weekend { background: rgba(195,90,90,0.14); }
+.wv-dhead.selected .wv-dnum:not(.today) { color: var(--color-primary); }
+.wv-dhead.selected.weekend .wv-dnum:not(.today) { color: rgba(195,90,90,0.95); }
 
 .wv-allday { display: flex; align-items: stretch; border-bottom: 1px solid rgba(123,127,178,0.18); }
 .wv-allday-tag { display: flex; align-items: flex-start; justify-content: flex-end; padding: 4px 6px 0 0; font-size: 10px; color: #a8acc4; }
@@ -2363,8 +2374,9 @@ async function saveEvent() {
 .wv-aco { position: absolute; top: 0; bottom: 0; width: 14.2857%; box-sizing: border-box; border-left: 1px solid rgba(123,127,178,0.1); pointer-events: none; }
 .wv-aco.today { background: rgba(123,127,178,0.06); }
 .wv-aco.weekend { background: rgba(195,90,90,0.028); }
-/* 全天区多日框选高亮（DOM 在列底之后、chip 之前 → 盖列底、垫 chip 下）*/
-.wv-ad-sel { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.18); pointer-events: none; }
+/* 全天区多日框选高亮（DOM 在列底之后、chip 之前 → 盖列底、垫 chip 下）；色同月视图 in-range */
+.wv-ad-sel { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.08); pointer-events: none; }
+.wv-ad-sel.weekend { background: rgba(195,90,90,0.07); }
 .wv-pbar, .wv-allday-ev { position: absolute; height: 18px; box-sizing: border-box; display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid; border-radius: 5px; font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; z-index: 1; }
 .wv-allday-ev { width: 14.2857%; margin-left: 1px; padding-right: 8px; }
 .wv-pbar { margin: 0 1px; }
