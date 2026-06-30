@@ -55,6 +55,8 @@ _PERC_INTENTS = {"执行", "推进", "记录", "查询", "决策", "反思", "�
 
 _PERC_KEY = "perc:events"    # Redis capped list:给 Admin 聚合面板（/admin/perception）读
 _PERC_CAP = 20000
+_MISREAD_KEY = "perc:misread_cases"   # 错读需求案例收集（带脱敏 miss 诊断，便于翻「具体原因」）
+_MISREAD_CAP = 500
 
 
 def _now_ts() -> float:
@@ -68,9 +70,15 @@ def _misperc_llm(user_id, corr) -> dict | None:
     if not isinstance(corr, dict) or not corr.get("is_correction"):
         return None
     kind = corr.get("kind")
-    return {"t": "misperc", "u": str(user_id)[:8],
-            "kind": kind if kind in _CORRECTION_KINDS else "未判",
-            "via": "llm", "ts": _now_ts()}
+    kind = kind if kind in _CORRECTION_KINDS else "未判"
+    rec = {"t": "misperc", "u": str(user_id)[:8], "kind": kind, "via": "llm", "ts": _now_ts()}
+    # 感知误读 → 顺带收一条「错读案例」（脱敏结构化诊断：read_as/actual/pattern，截断兜底防夹带原文）
+    miss = corr.get("miss")
+    if kind == "感知误读" and isinstance(miss, dict):
+        m = {k: (str(miss.get(k) or "").strip())[:80] for k in ("read_as", "actual", "pattern")}
+        if any(m.values()):
+            rec["miss"] = m
+    return rec
 
 
 def _misperc_regex(user_id, user_msg: str) -> dict | None:
@@ -108,6 +116,10 @@ async def _emit_perc(rec: dict | None) -> None:
         r = get_redis()
         await r.lpush(_PERC_KEY, line)
         await r.ltrim(_PERC_KEY, 0, _PERC_CAP - 1)
+        # 带 miss 诊断的感知误读 → 另收进案例列表，便于翻「具体原因」（已脱敏）
+        if rec.get("t") == "misperc" and rec.get("miss"):
+            await r.lpush(_MISREAD_KEY, line)
+            await r.ltrim(_MISREAD_KEY, 0, _MISREAD_CAP - 1)
     except Exception:
         pass
 
