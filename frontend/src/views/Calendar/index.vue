@@ -2362,11 +2362,16 @@ async function saveEvent() {
 .wv-dnum { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 15px; font-weight: 600; color: #3a3d52; line-height: 1; }
 .wv-dnum.today { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; }
 .wv-dhead.weekend .wv-dnum.today { background: linear-gradient(135deg,#b85c5c,#c97070); }
-/* 选中日：整格暗色被选中（取代数字外的浅色球）；周末同步暖红 */
-.wv-dhead.selected { background: rgba(123,127,178,0.16); }
-.wv-dhead.selected.weekend { background: rgba(195,90,90,0.14); }
+/* 选中日：内嵌的小底色块（左右留白 → 相邻不连片）+ 浅色；周末同步暖红 */
+.wv-dhead.selected { position: relative; }
+.wv-dhead.selected > span { position: relative; z-index: 1; }
+.wv-dhead.selected::before {
+  content: ''; position: absolute; inset: 2px 4px; border-radius: 7px;
+  background: rgba(123,127,178,0.09);
+}
+.wv-dhead.selected.weekend::before { background: rgba(195,90,90,0.08); }
 .wv-dhead.selected .wv-dnum:not(.today) { color: var(--color-primary); }
-.wv-dhead.selected.weekend .wv-dnum:not(.today) { color: rgba(195,90,90,0.95); }
+.wv-dhead.selected.weekend .wv-dnum:not(.today) { color: rgba(195,90,90,0.9); }
 
 .wv-allday { display: flex; align-items: stretch; border-bottom: 1px solid rgba(123,127,178,0.18); }
 .wv-allday-tag { display: flex; align-items: flex-start; justify-content: flex-end; padding: 4px 6px 0 0; font-size: 10px; color: #a8acc4; }
