@@ -116,11 +116,13 @@ npm run typecheck      # vue-tsc --noEmit，绿 = 0 错
 
 > 备注：`src/types/api.ts` 是生成物但**入库**（这样 CI/`typecheck` 不依赖后端在跑）；改了后端模型后跑 `npm run gen:types` 重生并提交。
 
-### 阶段 2 · 低风险层（~2–4 天）
-- [ ] `utils/`（5）→ ts（练手）
-- [ ] `stores/`（12）→ ts
-- [ ] `composables/`（11）→ ts（`usePhysicsDrag` 留到最后）
-- [ ] 小型 `components/`（22 里的简单件）→ lang=ts
+### ✅ 阶段 2 · 低风险层（基本完成，2026-06-30）
+- [x] `utils/`（5）→ ts —— 纯 rename（commit `54ec693`）
+- [x] `stores/`（12）→ ts —— rename + 修真实类型错（admin 的 RequestInit、config 的 Record、projects 的 Date.getTime()、preferences 的 calendarDoneMode 暂 as any）（`98e0559`）
+- [x] `composables/`（10）→ ts —— 纯 rename（`21c44fa`）；`usePhysicsDrag` 仍按计划留最后
+- [~] 小型 `components/` → lang=ts —— 已转 8 个最简单叶子件（ContextMenu/NavItem/PdfViewer/BaseModal/MarkdownView/AdminSelect/SegBar/FileInfoPopup，`702a138`）；中型（200–650 行）待续
+
+> 踩坑记：在 SMB 上用编辑器写文件会生成 `._*` AppleDouble 垃圾（一度误提交），已 `.gitignore` 忽略；**改文件走 devserver 服务端（SSH），别用 Mac 侧编辑器写 SMB**。
 
 ### 阶段 3 · 巨型视图（主要工作量，~3–5 天）
 > 这 5 个文件 ≈ 37% 代码、≈80% 的痛，**配合功能迭代逐个转**、别集中硬啃：
