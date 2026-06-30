@@ -19,7 +19,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
       replyTone.value        = data.replyTone      ?? null
       replyLength.value      = data.replyLength    ?? null
       pmStagesExpanded.value = data.pmStagesExpanded ?? false
-      calendarDoneMode.value = data.calendarDoneMode ?? 'done'
+      calendarDoneMode.value = (data as any).calendarDoneMode ?? 'done'   // 类型待后端 calendarDoneMode 入 OpenAPI 后 gen:types 收回
       loaded.value = true
     } catch {}
   }
@@ -31,7 +31,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
 
   async function saveCalendarDoneMode(v) {
     calendarDoneMode.value = v
-    try { await preferencesApi.update({ calendarDoneMode: v }) } catch {}
+    try { await preferencesApi.update({ calendarDoneMode: v } as any) } catch {}
   }
 
   async function saveLastStages(stages) {

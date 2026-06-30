@@ -30,7 +30,7 @@ export const useAdminStore = defineStore('admin', () => {
   }
 
   // 带 Token 的 fetch 封装
-  async function authFetch(url, options = {}) {
+  async function authFetch(url: string, options: RequestInit = {}) {
     return fetch(url, {
       ...options,
       headers: {

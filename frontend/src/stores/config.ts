@@ -122,7 +122,7 @@ export const useConfigStore = defineStore('config', () => {
     saved.value  = false
     saveError.value = ''
     const adminStore = useAdminStore()
-    const cleanPatch = {}
+    const cleanPatch: Record<string, any> = {}
     for (const [section, vals] of Object.entries(patch)) {
       cleanPatch[section] = stripUnchangedPasswords(vals)
     }

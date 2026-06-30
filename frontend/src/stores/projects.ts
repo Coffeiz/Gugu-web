@@ -24,7 +24,7 @@ export const useProjectStore = defineStore('projects', () => {
     const today = new Date(); today.setHours(0, 0, 0, 0)
     return projects.value.filter(p => {
       if (!p.deadline) return false
-      const days = (new Date(p.deadline + 'T00:00:00') - today) / 86400000
+      const days = (new Date(p.deadline + 'T00:00:00').getTime() - today.getTime()) / 86400000
       return days >= 0 && days <= 7
     }).length
   })
@@ -33,7 +33,7 @@ export const useProjectStore = defineStore('projects', () => {
     const today = new Date(); today.setHours(0, 0, 0, 0)
     return projects.value.filter(p => {
       if (!p.deadline) return false
-      const days = (new Date(p.deadline + 'T00:00:00') - today) / 86400000
+      const days = (new Date(p.deadline + 'T00:00:00').getTime() - today.getTime()) / 86400000
       return days <= 3
     })
   })
