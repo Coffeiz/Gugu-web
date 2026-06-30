@@ -144,8 +144,10 @@
           <!-- 全天行：项目跨天条 + 无时间活动 -->
           <div class="wv-allday">
             <div class="wv-gutter wv-allday-tag">全天</div>
-            <div class="wv-allday-grid" :style="{ height: wvAllDayH + 'px' }">
+            <div class="wv-allday-grid" ref="wvAllDayGridRef" :style="{ height: wvAllDayH + 'px' }"
+                 @mousedown="onAllDayDown" @contextmenu.prevent="onAllDayContextMenu">
               <div v-for="(d, ci) in weekDays" :key="d.iso" class="wv-aco" :class="{ today: d.isToday, weekend: d.isWeekend }" :style="{ left: ci / 7 * 100 + '%' }"></div>
+              <div v-for="ci in wvSelCols" :key="'adsel' + ci" class="wv-ad-sel" :style="{ left: ci / 7 * 100 + '%' }"></div>
               <div v-for="bar in weekAllDayShown" :key="bar.id" class="wv-pbar cal-chip" :class="{ 'cal-done': bar.status === 'done' }"
                    :style="pbarStyle(bar)" @click.stop="openProject(bar)" :title="bar.name">
                 <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>{{ bar.name }}
@@ -175,7 +177,8 @@
               </div>
               <div v-for="d in weekDays" :key="d.iso" class="wv-col" :class="{ today: d.isToday, weekend: d.isWeekend }"
                    :style="{ backgroundSize: '100% ' + HOUR_H + 'px' }"
-                   @mousedown="onColDown($event, d)" @mousemove="onColMove($event, d)" @mouseleave="onColLeave">
+                   @mousedown="onColDown($event, d)" @mousemove="onColMove($event, d)" @mouseleave="onColLeave"
+                   @contextmenu.prevent="onColContextMenu($event, d)">
                 <div v-if="wvSelectedSlot && wvSelectedSlot.iso === d.iso" class="wv-selected" :style="{ top: Math.min(wvSelectedSlot.h0, wvSelectedSlot.h1) * HOUR_H + 'px', height: (Math.abs(wvSelectedSlot.h1 - wvSelectedSlot.h0) + 1) * HOUR_H + 'px' }"></div>
                 <div v-if="wvHover && wvHover.iso === d.iso && !wvSel" class="wv-hover" :style="{ top: wvHover.h * HOUR_H + 'px', height: HOUR_H + 'px' }"></div>
                 <div v-if="wvSel && wvSel.iso === d.iso" class="wv-selbox" :style="{ top: Math.min(wvSel.h0, wvSel.h1) * HOUR_H + 'px', height: (Math.abs(wvSel.h1 - wvSel.h0) + 1) * HOUR_H + 'px' }"></div>
@@ -373,7 +376,7 @@
         <PhCalendarPlus :size="13" weight="bold" />
         新建活动
       </button>
-      <button class="popup-menu-item" @click="ctxAddProject">
+      <button v-if="cellCtx.kind !== 'timed'" class="popup-menu-item" @click="ctxAddProject">
         <PhFolderPlus :size="13" weight="bold" />
         新建项目
       </button>
@@ -601,13 +604,15 @@ function onCellMouseDown(d, e) {
 }
 
 // ── 右键菜单 ─────────────────────────────────────────────────────────────────
-const cellCtx = reactive({ show: false, x: 0, y: 0, iso: null, range: null })
+const cellCtx = reactive({ show: false, x: 0, y: 0, iso: null, range: null, kind: 'month', time: '', endTime: '' })
 const cellCtxRef = ref(null)
 
 function onWeekContextMenu(e, week) {
   if (e.target.closest('.event-chip,.chip-more-btn,.project-bar')) return
   const iso = isoFromPoint(e.clientX, e.clientY)
   if (!iso) return
+  cellCtx.kind  = 'month'
+  cellCtx.time  = ''; cellCtx.endTime = ''
   cellCtx.iso   = iso
   cellCtx.range = activeRange.value ?? null   // 右键时快照，避免后续被 handleClickOutside 清掉
   cellCtx.x     = e.clientX
@@ -618,7 +623,10 @@ function onWeekContextMenu(e, week) {
 function ctxAddEvent() {
   cellCtx.show = false
   const iso = cellCtx.range?.start ?? cellCtx.iso
-  newEvent.value = { name: '', date: iso, ...defaultTimeRange(), description: '' }
+  const tr = cellCtx.kind === 'timed'  ? { time: cellCtx.time, endTime: cellCtx.endTime }
+           : cellCtx.kind === 'allday' ? { time: '', endTime: '' }       // 全天区 → 无时间活动
+           : defaultTimeRange()
+  newEvent.value = { name: '', date: iso, ...tr, description: '' }
   resetReminder()
   const ADD_H = 260
   const ctxTop = (window.innerHeight - cellCtx.y - 8 >= ADD_H)
@@ -640,6 +648,82 @@ function ctxAddProject() {
     ?? activeRange.value
     ?? { start: cellCtx.iso || selectedDate.value, end: cellCtx.iso || selectedDate.value }
   uiStore.openNewProject = true
+}
+
+// ── 周视图·全天区：横向多日框选（复用 rangeSelect/selRange/activeRange）+ 右键新建项目 ──
+const wvAllDayGridRef = ref(null)
+function _isoFromAllDayX(clientX) {
+  const grid = wvAllDayGridRef.value
+  if (!grid) return null
+  const r = grid.getBoundingClientRect()
+  const ci = Math.max(0, Math.min(6, Math.floor((clientX - r.left) / r.width * 7)))
+  return weekDays.value[ci]?.iso ?? null
+}
+// 当前周里落在 activeRange 内的列索引（全天区高亮）
+const wvSelCols = computed(() => {
+  if (viewMode.value !== 'week') return []
+  const r = activeRange.value
+  if (!r) return []
+  return weekDays.value.map((d, ci) => (d.iso >= r.start && d.iso <= r.end ? ci : -1)).filter(ci => ci >= 0)
+})
+function onAllDayDown(e) {
+  if (e.button !== 0) return
+  if (e.target.closest('.wv-pbar,.wv-allday-ev,.wv-more')) return   // 点在已有条/活动上 → 不框选
+  const startIso = _isoFromAllDayX(e.clientX)
+  if (!startIso) return
+  e.preventDefault()
+  rangeSelect.active = true
+  rangeSelect.anchor = startIso
+  hoverRangeEnd.value = startIso
+  selRange.value = null
+  cellCtx.show = false
+  const mm = (ev) => { const iso = _isoFromAllDayX(ev.clientX); if (iso) hoverRangeEnd.value = iso }
+  const mu = (ev) => {
+    document.removeEventListener('mousemove', mm)
+    document.removeEventListener('mouseup', mu)
+    rangeSelect.active = false
+    const endIso = _isoFromAllDayX(ev.clientX) || startIso
+    hoverRangeEnd.value = null
+    if (endIso !== startIso) {   // 多选：提交日期区间
+      const [a, b] = [startIso, endIso].sort()
+      selRange.value = { start: a, end: b }
+      document.addEventListener('click', ce => ce.stopPropagation(), { capture: true, once: true })
+    } else {                     // 单选：选中该天
+      selRange.value = null
+      selectedDate.value = startIso
+    }
+  }
+  document.addEventListener('mousemove', mm)
+  document.addEventListener('mouseup', mu)
+}
+function onAllDayContextMenu(e) {
+  if (e.target.closest('.wv-pbar,.wv-allday-ev,.wv-more')) return
+  const iso = _isoFromAllDayX(e.clientX)
+  if (!iso) return
+  cellCtx.kind  = 'allday'
+  cellCtx.iso   = iso
+  cellCtx.range = activeRange.value ?? null
+  cellCtx.time  = ''; cellCtx.endTime = ''
+  cellCtx.x = e.clientX; cellCtx.y = e.clientY; cellCtx.show = true
+}
+// ── 周视图·小时区：右键在该天该时刻新建活动（有暗色选区则用选区时间段）──
+function onColContextMenu(e, d) {
+  if (e.target.closest('.wv-ev')) return
+  const p = n => String(n).padStart(2, '0')
+  let time, endTime
+  const sel = wvSelectedSlot.value
+  if (sel && sel.iso === d.iso) {        // 复用左键拖出的选区时间段
+    const a = Math.min(sel.h0, sel.h1), b = Math.max(sel.h0, sel.h1) + 1
+    time = `${p(a)}:00`; endTime = b >= 24 ? '00:00' : `${p(b)}:00`
+  } else {                               // 单选：右键点击处的整点 → 1 小时
+    const h = _hourAt(e.clientY, e.currentTarget.getBoundingClientRect())
+    time = `${p(h)}:00`; endTime = h + 1 >= 24 ? '00:00' : `${p(h + 1)}:00`
+  }
+  cellCtx.kind = 'timed'
+  cellCtx.iso  = d.iso
+  cellCtx.range = null
+  cellCtx.time = time; cellCtx.endTime = endTime
+  cellCtx.x = e.clientX; cellCtx.y = e.clientY; cellCtx.show = true
 }
 
 function onWeekMouseMove(e, week) {
@@ -2279,6 +2363,8 @@ async function saveEvent() {
 .wv-aco { position: absolute; top: 0; bottom: 0; width: 14.2857%; box-sizing: border-box; border-left: 1px solid rgba(123,127,178,0.1); pointer-events: none; }
 .wv-aco.today { background: rgba(123,127,178,0.06); }
 .wv-aco.weekend { background: rgba(195,90,90,0.028); }
+/* 全天区多日框选高亮（DOM 在列底之后、chip 之前 → 盖列底、垫 chip 下）*/
+.wv-ad-sel { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.18); pointer-events: none; }
 .wv-pbar, .wv-allday-ev { position: absolute; height: 18px; box-sizing: border-box; display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid; border-radius: 5px; font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; z-index: 1; }
 .wv-allday-ev { width: 14.2857%; margin-left: 1px; padding-right: 8px; }
 .wv-pbar { margin: 0 1px; }
