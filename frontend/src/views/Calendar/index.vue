@@ -2355,21 +2355,20 @@ async function saveEvent() {
 .week-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .wv-gutter { width: 46px; flex: none; }
 .wv-head { display: flex; border-bottom: 1px solid rgba(123,127,178,0.18); padding-bottom: 4px; }
-.wv-dhead { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 3px 0; cursor: pointer; border-radius: 8px; transition: background 0.12s; }
-.wv-dhead:hover { background: rgba(123,127,178,0.07); }
+.wv-dhead { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 3px 0; cursor: pointer; }
+.wv-dhead > span { position: relative; z-index: 1; }
+/* 悬停 / 选中 共用同一内嵌底色块（inset 一致 → 大小相同）*/
+.wv-dhead::before { content: ''; position: absolute; inset: 2px 4px; border-radius: 7px; background: transparent; transition: background 0.12s; }
+.wv-dhead:hover::before { background: rgba(123,127,178,0.07); }
+.wv-dhead.weekend:hover::before { background: rgba(195,90,90,0.06); }
 .wv-dhead.weekend .wv-dow { color: #b06a78; }
 .wv-dow { font-size: 11px; font-weight: 600; color: #8a8fa8; }
 .wv-dnum { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 15px; font-weight: 600; color: #3a3d52; line-height: 1; }
 /* 今日数字：方形圆角（同月视图 .is-today .cell-num，非圆形）；周末同月视图暖红渐变 */
 .wv-dnum.today { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: rgba(255,255,255,0.88); font-weight: 700; border-radius: 6px; }
 .wv-dhead.weekend .wv-dnum.today { background: linear-gradient(135deg,#b85c5c,#c97070); }
-/* 选中日：内嵌的小底色块（左右留白 → 相邻不连片）+ 浅色；周末同步暖红 */
-.wv-dhead.selected { position: relative; }
-.wv-dhead.selected > span { position: relative; z-index: 1; }
-.wv-dhead.selected::before {
-  content: ''; position: absolute; inset: 2px 4px; border-radius: 7px;
-  background: rgba(123,127,178,0.09);
-}
+/* 选中日：同一内嵌块、只改背景色（与 hover 同尺寸）；周末同步暖红 */
+.wv-dhead.selected::before { background: rgba(123,127,178,0.09); }
 .wv-dhead.selected.weekend::before { background: rgba(195,90,90,0.08); }
 .wv-dhead.selected .wv-dnum:not(.today) { color: var(--color-primary); }
 .wv-dhead.selected.weekend .wv-dnum:not(.today) { color: rgba(195,90,90,0.9); }
