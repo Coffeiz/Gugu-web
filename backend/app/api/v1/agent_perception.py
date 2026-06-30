@@ -9,7 +9,7 @@ import json
 import time
 from collections import Counter, defaultdict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 
 from app.core.redis import get_redis
 
@@ -169,3 +169,13 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
         "flags": flags,
         "note": f"口径：活跃用户（窗口内 ≥{min_events} 轮）{len(active)} 人；头部指标按用户宏平均（重度用户不主导）",
     }
+
+
+@router.get("/misread/export")
+async def misread_export():
+    """下载全局「错读反思记录」（md，已脱敏：只 read_as/actual/抽象 pattern，无用户原话）。"""
+    from agent.memory import store
+    md = await store.read_misread()
+    body = md if md else "# 错读反思记录\n\n暂无——需发生一次「感知误读 + 用户纠正」才会记一条。\n"
+    return Response(content=body, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="misread_reflections.md"'})

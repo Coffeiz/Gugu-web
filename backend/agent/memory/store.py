@@ -277,6 +277,30 @@ async def write_stance(user_id, stance: str | None) -> None:
                  json.dumps({"stance": s, "ts": time.time()}, ensure_ascii=False))
 
 
+# ── 错读反思记录（全局 md：跨 Redis 持久 + 可下载，已脱敏只留结构）──
+_MISREAD_MD_KEY = "_analytics/misread.md"
+_MISREAD_MD_CAP = 2000   # 保留最近 N 个反思块，防文件无限增长（误读罕见，够用很久）
+
+
+async def append_misread(entry_md: str) -> None:
+    """把一条（已脱敏的）错读反思块追加进全局 md（新在上）。永不抛、不影响反思。"""
+    entry_md = (entry_md or "").strip()
+    if not entry_md:
+        return
+    try:
+        cur = await _read(_MISREAD_MD_KEY)
+        blocks = [b for b in cur.split("\n\n---\n\n") if b.strip()] if cur.strip() else []
+        blocks.insert(0, entry_md)
+        await _write(_MISREAD_MD_KEY, "\n\n---\n\n".join(blocks[:_MISREAD_MD_CAP]) + "\n")
+    except Exception:
+        pass
+
+
+async def read_misread() -> str:
+    """读全局错读反思 md（给下载端点用）。"""
+    return (await _read(_MISREAD_MD_KEY)).strip()
+
+
 # ── memory.md（长期记忆，compress 写）──
 async def read_memory_doc(user_id) -> str:
     return (await _read(_key(user_id, "memory.md"))).strip()

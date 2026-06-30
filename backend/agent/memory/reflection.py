@@ -122,6 +122,18 @@ async def _emit_perc(rec: dict | None) -> None:
             await r.ltrim(_MISREAD_KEY, 0, _MISREAD_CAP - 1)
     except Exception:
         pass
+    # 持久化:把感知误读反思块追加进全局 md（跨 Redis 持久 + 可下载，已脱敏）。独立于 Redis、失败不影响。
+    if rec.get("t") == "misperc" and rec.get("miss"):
+        try:
+            m = rec["miss"]
+            when = datetime.fromtimestamp(rec.get("ts") or 0).strftime("%Y-%m-%d %H:%M")
+            entry = (f"## {when} · u={rec.get('u')} · 感知误读\n"
+                     f"- 读成：{m.get('read_as') or '—'}\n"
+                     f"- 实际：{m.get('actual') or '—'}\n"
+                     f"- 反思：{m.get('pattern') or '—'}")
+            await store.append_misread(entry)
+        except Exception:
+            pass
 
 
 def _load_sys() -> str:
