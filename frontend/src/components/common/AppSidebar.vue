@@ -265,7 +265,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
   flex-shrink: 0;
 }
 .nav-label {
-  font-size: 10px; font-weight: 600; color: var(--text-secondary);
+  font-size: 10px; font-weight: 600; color: #6e7289;   /* 比 --text-secondary(#8a8fa8) 调深一档，提分组标题可读性 */
   text-transform: uppercase; letter-spacing: 0.08em; padding: 0 10px; margin-bottom: 4px;
 }
 

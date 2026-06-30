@@ -39,7 +39,7 @@ function go() {
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   font-size: 14px;
-  color: rgba(30,32,40,0.62);
+  color: rgba(30,32,40,0.8);
   text-decoration: none;
   cursor: pointer;
   transition: all 0.15s;
@@ -47,7 +47,7 @@ function go() {
 }
 .nav-item:hover {
   background: rgba(123,127,178,0.08);
-  color: rgba(30,32,40,0.82);
+  color: rgba(30,32,40,0.92);
 }
 .nav-item.active {
   background: rgba(255,255,255,0.38);
