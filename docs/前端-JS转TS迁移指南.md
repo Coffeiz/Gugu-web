@@ -116,13 +116,16 @@ npm run typecheck      # vue-tsc --noEmit，绿 = 0 错
 
 > 备注：`src/types/api.ts` 是生成物但**入库**（这样 CI/`typecheck` 不依赖后端在跑）；改了后端模型后跑 `npm run gen:types` 重生并提交。
 
-### ✅ 阶段 2 · 低风险层（基本完成，2026-06-30）
+### ✅ 阶段 2 · 低风险层（完成，2026-06-30）
 - [x] `utils/`（5）→ ts —— 纯 rename（commit `54ec693`）
 - [x] `stores/`（12）→ ts —— rename + 修真实类型错（admin 的 RequestInit、config 的 Record、projects 的 Date.getTime()、preferences 的 calendarDoneMode 暂 as any）（`98e0559`）
-- [x] `composables/`（10）→ ts —— 纯 rename（`21c44fa`）；`usePhysicsDrag` 仍按计划留最后
+- [x] `composables/`（11，含 `usePhysicsDrag`）→ ts —— 前 10 个纯 rename（`21c44fa`）；`usePhysicsDrag`（632 行）修 opts 接口 + DOM 泛型/cast（`6bef46c`）
+- [x] 零散入口/路由/service（main/admin/router/cache）→ ts —— 入口 HTML `<script src>` 同步改 + routes 标 `RouteRecordRaw[]`（`e42fa74`）
 - [~] 小型 `components/` → lang=ts —— 已转 8 个最简单叶子件（ContextMenu/NavItem/PdfViewer/BaseModal/MarkdownView/AdminSelect/SegBar/FileInfoPopup，`702a138`）；中型（200–650 行）待续
 
-> 踩坑记：在 SMB 上用编辑器写文件会生成 `._*` AppleDouble 垃圾（一度误提交），已 `.gitignore` 忽略；**改文件走 devserver 服务端（SSH），别用 Mac 侧编辑器写 SMB**。
+> **里程碑（2026-06-30）：`frontend/src/` 已无 `.js` 文件**——所有逻辑/store/composable/util/入口/路由全是 `.ts`。剩余非-TS 是「未加 `lang="ts"` 的 `.vue`」（中型组件 + 阶段 3 巨型视图）。
+
+> 工作流变更：已从「SMB 编辑」改为**本地编辑 + Mutagen 双向同步**（见 [[gugu-mutagen-sync]]）——本地用编辑器改、git 本地跑、typecheck/重启走 SSH。`._*` AppleDouble 坑随之消失。
 
 ### 阶段 3 · 巨型视图（主要工作量，~3–5 天）
 > 这 5 个文件 ≈ 37% 代码、≈80% 的痛，**配合功能迭代逐个转**、别集中硬啃：
