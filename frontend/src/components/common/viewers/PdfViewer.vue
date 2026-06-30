@@ -13,7 +13,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 /**
  * PDF 预览：用 <iframe> 走浏览器原生 PDF 引擎（Chrome PDFium 等）。
  * 原生引擎是 native code，大文件 / 多页 / 缩放滚动都比自渲染 canvas 流畅得多；

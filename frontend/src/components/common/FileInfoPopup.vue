@@ -50,7 +50,7 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { PhX } from '@phosphor-icons/vue'
 

@@ -21,12 +21,12 @@
   </div>
 </template>
 
-<script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+<script setup lang="ts">
+import { ref, computed, onMounted, onBeforeUnmount, type PropType } from 'vue'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
-  options:    { type: Array, default: () => [] },
+  options:    { type: Array as PropType<{ value: any; label: string }[]>, default: () => [] },
   placeholder:{ type: String, default: '请选择' },
 })
 const emit = defineEmits(['update:modelValue'])
@@ -62,7 +62,7 @@ function position() {
   const below = rect.bottom + props.options.length * 36 + 16 < window.innerHeight
   // Trigger already auto-sized to fit longest option; popup matches trigger width
   const overflow = rect.right > window.innerWidth - 8
-  const style = {
+  const style: Record<string, any> = {
     position: 'fixed',
     minWidth: `${rect.width}px`,
     top: below ? `${rect.bottom + 5}px` : `${rect.top - props.options.length * 36 - 16}px`,

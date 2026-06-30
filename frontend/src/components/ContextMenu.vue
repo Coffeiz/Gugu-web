@@ -6,7 +6,7 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 
 const props = defineProps({ show: Boolean, x: Number, y: Number })
@@ -14,7 +14,7 @@ const emit  = defineEmits(['close'])
 const el    = ref(null)
 
 const style = computed(() => ({
-  position: 'fixed',
+  position: 'fixed' as const,
   left: props.x + 'px',
   top:  props.y + 'px',
   zIndex: 9999,
