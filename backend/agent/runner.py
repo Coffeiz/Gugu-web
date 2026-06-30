@@ -253,7 +253,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     except Exception:
         pass
 
-    memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
+    memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
     im_channels = await loaders.load_im_channels(user_id)
     prompt_name = profile.prompt_file.removesuffix(".md")
     system_prompt = builder.build(

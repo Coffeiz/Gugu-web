@@ -28,7 +28,9 @@ DAILY_HARD_CAP    = 60   # 压缩失败时的硬安全上限
 FACTS_FILE                = "facts.json"
 FACTS_INFERRED_HALF_LIFE  = 45.0   # 推断类 facts 置信半衰期(天)；observed 不衰减
 FACT_RETIRE_EFF           = 0.2    # effective 置信低于此 → 不注入（退休淡出）
-FACTS_INJECT_MAX          = 40     # 注入上限；超了按 effective×importance 砍低分（importance 过滤）
+FACTS_INJECT_MAX          = 40     # 注入上限；超了优先按相关性挑、重要度保底+补齐（见 render_facts）
+FACTS_FLOOR_K             = 6      # 重要度保底：facts 超上限时，最重要的前 K 条无论是否相关都注入（核心档案不被相关性挤掉）
+FACTS_REL_CONF_BONUS      = 0.1    # 相关性排序里给置信度的小加成系数（同等相关时更可信的在前）
 _FACT_DEFAULT_CONF        = {"observed": 0.9, "inferred": 0.6}
 _FACT_CONFIRM_STEP        = 0.1
 _FACT_MAX_CONF            = 0.97
@@ -50,11 +52,12 @@ async def _write(key: str, text: str) -> None:
     await get_storage().put(key, text.encode("utf-8"), "text/markdown")
 
 
-async def read_memory(user_id) -> dict:
+async def read_memory(user_id, query: str = "") -> dict:
     """返回 {facts, memory, daily, summary, summary_ts, lens}，缺失为空串/None。
     summary_ts = summary 上次更新的 epoch（给时间衰减用，见 agent/decay.py）。
-    lens = 渲染好的「解读镜片」注入块（per-user 解读先验，见 agent/memory/lens.py），无则空串。"""
-    facts   = render_facts(await read_facts_list(user_id))   # 结构化 → 注入用 markdown（已过滤衰减）
+    lens = 渲染好的「解读镜片」注入块（per-user 解读先验，见 agent/memory/lens.py），无则空串。
+    query = 当前用户消息（可选）：facts 超注入上限时用它做相关性优先挑选，见 render_facts。"""
+    facts   = render_facts(await read_facts_list(user_id), query)   # 结构化 → 注入用 markdown（相关性优先 + 重要度保底）
     memory  = (await _read(_key(user_id, "memory.md"))).strip()
     daily   = (await _read(_key(user_id, "daily.md"))).strip()
     summary = (await _read(_key(user_id, "summary.md"))).strip()
@@ -151,14 +154,47 @@ async def write_facts_list(user_id, facts: list[dict]) -> None:
     await _write(_key(user_id, FACTS_FILE), json.dumps(facts, ensure_ascii=False))
 
 
-def render_facts(facts: list[dict]) -> str:
-    """结构化 facts → 注入用 markdown：退休低 effective、按 effective×importance 排序取前 N
-    （importance 过滤）、低置信推断标「不太确定」。供 builder 注入（read_memory['facts']）。"""
+def _jaccard(a: set, b: set) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def render_facts(facts: list[dict], query: str = "") -> str:
+    """结构化 facts → 注入用 markdown。退休低 effective、低置信推断标「不太确定」。
+
+    选取策略（供 builder 注入，read_memory['facts']）：
+    - facts 未超 `FACTS_INJECT_MAX` 或没传 query → 全部按 effective×importance 排序注入（旧行为）。
+    - 超上限且有当前消息 query → **相关性优先**挑：① 重要度保底（前 `FACTS_FLOOR_K`，核心档案不被挤掉）
+      → ② 按对 query 的词法相关性（字 bigram Jaccard，置信小加成）填充 → ③ 仍没满用重要度补齐（不浪费预算）。
+      relevance > importance，但 importance 兜底。词法相关性是 v1（无 embedding 基建），后续可换向量。"""
     scored = [(f, _fact_eff(f)) for f in (facts or [])]
     scored = [(f, e) for f, e in scored if e >= FACT_RETIRE_EFF and (f.get("text") or "").strip()]
-    scored.sort(key=lambda x: -(x[1] * (x[0].get("imp", 3) or 3)))
+    by_imp = sorted(scored, key=lambda x: -(x[1] * (x[0].get("imp", 3) or 3)))
+
+    q = (query or "").strip()
+    if not q or len(scored) <= FACTS_INJECT_MAX:
+        chosen = by_imp[:FACTS_INJECT_MAX]
+    else:
+        qb = _fact_bigrams(q)
+        rel = {id(f): _jaccard(qb, _fact_bigrams(f.get("text", ""))) for f, _ in scored}
+        chosen, picked = [], set()
+        for f, e in by_imp[:FACTS_FLOOR_K]:                      # ① 重要度保底
+            chosen.append((f, e)); picked.add(id(f))
+        rest = [(f, e) for f, e in scored if id(f) not in picked and rel[id(f)] > 0]
+        rest.sort(key=lambda x: -(rel[id(x[0])] + FACTS_REL_CONF_BONUS * x[1]))
+        for f, e in rest:                                        # ② 相关性填充
+            if len(chosen) >= FACTS_INJECT_MAX:
+                break
+            chosen.append((f, e)); picked.add(id(f))
+        for f, e in by_imp:                                      # ③ 重要度补齐（不浪费预算）
+            if len(chosen) >= FACTS_INJECT_MAX:
+                break
+            if id(f) not in picked:
+                chosen.append((f, e)); picked.add(id(f))
+
     lines = []
-    for f, eff in scored[:FACTS_INJECT_MAX]:
+    for f, eff in chosen:
         text = f["text"].strip()
         if f.get("kind") == "inferred" and eff < 0.45:
             lines.append(f"- {text}（不太确定）")

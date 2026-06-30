@@ -69,10 +69,11 @@ async def load_files_overview(db, user_id, recent: int = 25) -> dict:
     }
 
 
-async def load_memory(user_id) -> dict:
-    """读取用户 .agent/ 记忆，返回 {facts, daily, memory, summary}（缺失为空串）。"""
+async def load_memory(user_id, query: str = "") -> dict:
+    """读取用户 .agent/ 记忆，返回 {facts, daily, memory, summary}（缺失为空串）。
+    query = 当前用户消息（可选）：传入则 facts 超上限时按相关性优先挑（见 store.render_facts）。"""
     from agent.memory import store
-    return await store.read_memory(user_id)
+    return await store.read_memory(user_id, query)
 
 
 async def load_im_channels(user_id) -> dict:

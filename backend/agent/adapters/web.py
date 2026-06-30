@@ -297,7 +297,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
     await genstream.begin(session_id)
 
     prompt_name = profile.prompt_file.removesuffix(".md")
-    memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
+    memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
     im_channels = await loaders.load_im_channels(user_id)
     system_prompt = builder.build(
         prompt_name, req.user_name, projects, events, memory, files_overview,
