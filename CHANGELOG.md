@@ -9,9 +9,20 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **日历周视图（时间轴）**（`views/Calendar/index.vue`）：工具栏加「月/周」切换（在「今天」旁），prev/next/今天按当前视图走。周视图为时间轴布局——左侧 0–23 点刻度 + 周一~周日 7 列、24h 可滚动、整点横线、当前时间红线；有时间的活动按 `time/end_time` 摆成色块、重叠自动并排分栏（结束<开始截到 24:00）；全天行显示跨天项目条（进度填充、封顶 10、每天列各自「更多」复用月视图 `showMore` 弹窗与排序）+ 单日项目 + 无时间活动（合并排序、高度自适应）。交互：拖空白建活动（点=1h/竖拖=多h、选中格作为新建起止时间来源）、悬停高亮小时格、活动块拖体**自由移动**（横向改日期 + 纵向平移时间、保持时长）、拖**上下边缘**改起止时间（按按下位置判定缩放/移动、互不冲突）、单击活动开编辑卡、活动 hover 整体均匀亮起、块内显示时间/名称/描述；改动均走 `eventsApi.update`（version 409 提示刷新）。
+
 ### 改进
 
 - **前端引入 TypeScript 工具链 + api 层迁移（JS→TS 阶段 0+1，纯内部、无用户可见变化）**（`frontend/tsconfig.json` + `vite.config.js` + `services/api.ts` + `types/api.ts` + `package.json`）：为渐进式 JS→TS 迁移搭好地基。① **工具链（阶段 0）**：`tsconfig`（`allowJs` + `checkJs:false` + `strict:false` 起步——存量 `.js` 与无 `lang=ts` 的组件**不检查**，只查新写的 `.ts` / `<script setup lang="ts">`）；`npm run typecheck`（`vue-tsc --noEmit`）作类型门禁（基线绿、已验证能抓错）；vite 开 AutoImport/Components 的 `dts`，让 vue-tsc 认得自动导入的 `ref`/`computed` 与 Arco 组件（生成物 gitignore）。② **类型地基（阶段 1）**：`npm run gen:types` 用 `openapi-typescript` 从后端 OpenAPI 生成 `src/types/api.ts`（**入库**，CI/typecheck 不依赖后端在跑、且前后端对齐）；`services/api.js → api.ts`，`request`/`get`/`post`… 泛型化（默认 `any` 不阻塞存量 JS 调用方），projects/events/files/folders/clients/preferences 用 OpenAPI 实体类型标注返回值，其余留 `any` 待增量升级。**约定：新代码一律 TS，改到的 JS 顺带转、不主动批量重写。** 详见 `docs/前端-JS转TS迁移指南.md`。
+- **导航栏文字对比度提升**（`components/common/NavItem.vue` + `AppSidebar.vue`）：导航项默认文字 `rgba(30,32,40,.62)→.8`、hover `.82→.92`，分组标题 `#8a8fa8→#6e7289`，可读性更清晰（「即将上线」占位项仍保持淡、表示禁用）。
+- **Calendar 视图迁移到 TypeScript**（`views/Calendar/index.vue` → `<script setup lang="ts">`，JS→TS 迁移延续）：vue-tsc 0 错；Date 相减改 `+date`、`$event.target`/`dataset` 加 HTMLElement 断言、weekBars 条目补 `row` 占位、两个 `<script>` 块统一 `lang=ts`。
+
+### 修复
+
+- **续聊（重开浏览器接续上次对话）时不再闪默认问候**（`components/common/GuguChat.vue`）：问候由打开对话框时的 `animateGreeting` 显示，它在 `loadSession` 异步加载完替换消息**之前**看到的还是初始问候占位 → 把问候打了出来，造成「续聊的旧对话」与「问候」同时出现。修法：续聊时立刻清空问候占位，加载竞态期不显示；那段会话真没了再恢复问候占位 + 重新生成。
+- **周视图活动 409 冲突误用未定义的 `loadEvents()`**（`views/Calendar/index.vue`，TS 迁移时 vue-tsc 抓出的真 bug）：改为 `fetchEvents()`，原会在「活动已被他人修改」的刷新路径上运行时抛错。
 
 ## [0.14.3] - 2026-06-30 · 日历提醒完整体系 + 文件库 UX 打磨 + DeepSeek 思考可调 + 工具错误脱敏
 
