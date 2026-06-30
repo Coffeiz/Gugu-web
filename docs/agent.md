@@ -35,7 +35,7 @@ backend/
     ├── imctx.py                # IM 上下文 contextvar 透传
     ├── models.py
     ├── context/{loaders,builder,tokens}.py
-    ├── memory/{store,reflection,compress,lens,_llm}.py + decay.py   # 五层记忆：facts(增量delta)/daily/memory/summary(时间衰减)/lens(解读先验)；reflection 提炼 + compress 压缩 + decay 衰减
+    ├── memory/{store,reflection,compress,lens,_llm}.py + decay.py   # 五层记忆：facts(增量delta)/daily/memory/summary(时间衰减)/lens(解读先验)；reflection 提炼 + compress 压缩 + decay 衰减（详见 docs/记忆系统架构.md）
     ├── behaviors.py + prompts/behaviors/   # 行为模块库（情境策略软点亮：emotion-first/stuck-first/decision-explore）
     ├── tools/                  # 函数调用工具：projects/calendar/files/clients/trash/overview/memory/search/conversations/scheduled_tasks/im（原 skills/，2026-06 改名）
     ├── skills/                 # prompt skills（带触发条件的「剧本」md，渐进式按需加载）：weather，见「Tools 与 Skills」
