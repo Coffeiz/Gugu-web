@@ -126,7 +126,7 @@ npm run typecheck      # vue-tsc --noEmit，绿 = 0 错
 > 这 5 个文件 ≈ 37% 代码、≈80% 的痛，**配合功能迭代逐个转**、别集中硬啃：
 - [ ] `views/Projects/components/ProjectModal.vue`（3017 行）
 - [ ] `views/Files/index.vue`（2760）
-- [ ] `views/Calendar/index.vue`（2313，含拖拽/网格）
+- [x] `views/Calendar/index.vue`（2313，含拖拽/网格）—— 已迁移（2026-06-30，commit `8ad54ce`），typecheck 绿
 - [ ] `views/Admin/Agent/index.vue`（2294）
 - [ ] `components/common/GuguChat.vue`（2143，聊天流）
 
