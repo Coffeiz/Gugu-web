@@ -51,6 +51,9 @@ _CORRECTION_MARKERS = ("不是我", "我是说", "我的意思是", "你理解�
                        "搞错了", "你弄错", "不是这个", "我说的是", "不对，", "不对,", "不是，", "不是,")
 _CORRECTION_KINDS = {"感知误读", "数据或执行错"}   # LLM 判的纠正类型；面板据此拆「感知误判」与「数据/执行纠错」
 _PERC_INTENTS = {"执行", "推进", "记录", "查询", "决策", "反思", "情绪", "陪伴", "闲聊"}
+# 错读案例 miss 的「只认枚举」白名单：结构上杜绝脱敏泄漏（free-text 会行内夹带，证明不可靠）
+_MISS_NEEDS = _PERC_INTENTS | {"指代旧事"}                 # read_as / actual 的需求类型
+_MISS_PATTERNS = {"潜台词漏读", "情绪当任务", "过度共情", "指代漏接", "答非所问", "场景惯性", "过度澄清"}  # 错读模式
 
 
 _PERC_KEY = "perc:events"    # Redis capped list:给 Admin 聚合面板（/admin/perception）读
@@ -75,8 +78,14 @@ def _misperc_llm(user_id, corr) -> dict | None:
     # 感知误读 → 顺带收一条「错读案例」（脱敏结构化诊断：read_as/actual/pattern，截断兜底防夹带原文）
     miss = corr.get("miss")
     if kind == "感知误读" and isinstance(miss, dict):
-        m = {k: (str(miss.get(k) or "").strip())[:80] for k in ("read_as", "actual", "pattern")}
-        if any(m.values()):
+        # 脱敏:三字段只认固定枚举，枚举外（含任何夹带具体内容的）一律落「其他」——结构上杜绝泄漏
+        def _enum(v, allowed):
+            v = str(v or "").strip()
+            return v if v in allowed else "其他"
+        m = {"read_as": _enum(miss.get("read_as"), _MISS_NEEDS),
+             "actual": _enum(miss.get("actual"), _MISS_NEEDS),
+             "pattern": _enum(miss.get("pattern"), _MISS_PATTERNS)}
+        if set(m.values()) != {"其他"}:   # 全是「其他」= 没信息，不记
             rec["miss"] = m
     return rec
 
