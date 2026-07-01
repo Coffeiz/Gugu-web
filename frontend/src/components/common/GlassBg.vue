@@ -3,7 +3,7 @@
  * GlassBg —— 不依赖 backdrop-filter 的「活玻璃」背景层，避免 backdrop-filter 在会动内容之上的
  * 边缘重栅格白带（见踩坑记录）。用于「浮在会动内容上」的元素（顶栏、日历工具栏等）。
  *
- * 当前实现：一层半透明磨砂 tint（+ 顶部 sheen + 亮边高光），让真实页面背景直接透过 → 观感等同
+ * 当前实现：一层半透明磨砂 tint（+ 亮边高光），让真实页面背景直接透过 → 观感等同
  * 原来的半透明玻璃，但没有 backdrop-filter 因而无白带。跨引擎（Blink/WebKit/WebView2）一致。
  *
  * 用法：放在一个背景 transparent、isolation:isolate 的宿主里作首个子元素；本组件以 z-index:-1
@@ -34,10 +34,7 @@
 .gb-tint {
   position: absolute;
   inset: 0;
-  /* 顶部 sheen（上沿一小段更亮，制造玻璃厚度感）叠在半透明磨砂白底上 */
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0) 28%),
-    var(--gb-tint, var(--glass-bg));
+  background: var(--gb-tint, var(--glass-bg));
   /* 亮边高光：上沿 + 左沿，比 glass-card 默认更亮一档（1.0 / 0.7），静态不重绘、无白带之虞 */
   box-shadow:
     inset 0 1.5px 0 rgba(255,255,255,1),
