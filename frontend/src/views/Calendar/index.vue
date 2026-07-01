@@ -382,7 +382,7 @@
       class="popup-menu cal-ctx-menu"
       :style="{ position:'fixed', left: cellCtx.x+'px', top: cellCtx.y+'px', zIndex: 3000, minWidth:'110px' }"
     >
-      <button class="popup-menu-item" @click="ctxAddEvent">
+      <button v-if="cellCtx.kind === 'timed'" class="popup-menu-item" @click="ctxAddEvent">
         <PhCalendarPlus :size="13" weight="bold" />
         新建活动
       </button>
@@ -1479,6 +1479,7 @@ const wvDragging = ref(false)      // 是否正在小时格拖选（仅用于门
 const wvSelectedSlot = ref(null)   // { iso, h0, h1 } 选中格（点击/拖拽直接驱动它 = 被选中深色，无中间反馈）
 let _wvColRect = null
 let _wvFormOpening = false   // mouseup 打开表单后屏蔽紧随的 click → handleClickOutside 误关
+let _prevSelectedSlot = null // 记录 mousedown 前的选中格，用于判断是否二次点击同格
 function _hourAt(clientY, rect) { return Math.max(0, Math.min(23, Math.floor((clientY - rect.top) / HOUR_H))) }
 
 function onColMove(e, d) {
@@ -1493,6 +1494,7 @@ function onColDown(e, d) {
   selRange.value = null   // 选时段 → 清掉日期选择（两者用途不同，互斥）
   _wvColRect = e.currentTarget.getBoundingClientRect()
   const h = _hourAt(e.clientY, _wvColRect)
+  _prevSelectedSlot = wvSelectedSlot.value ? { ...wvSelectedSlot.value } : null
   wvDragging.value = true
   wvSelectedSlot.value = { iso: d.iso, h0: h, h1: h }   // 直接进入「被选中」深色（取代原 selbox 点击反馈）
   wvHover.value = null
@@ -1518,12 +1520,18 @@ function _wvUp(e) {
   selectedDate.value = sel.iso
   newEvent.value = { name: '', date: sel.iso, time: `${p(a)}:00`, endTime: endV >= 24 ? '00:00' : `${p(endV)}:00`, description: '' }
   resetReminder()
-  const w = 240
-  const left = Math.max(8, Math.min(e.clientX - w / 2, window.innerWidth - w - 8))
-  addFormStyle.value = { position: 'fixed', top: Math.max(8, e.clientY + 8) + 'px', left: left + 'px', width: w + 'px', zIndex: 1000 }
-  _wvFormOpening = true
-  showAddForm.value = true
-  nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
+  // 单击同一格的二次点击才弹出添加活动弹窗；拖选或首次单击只做格子选中
+  const prev = _prevSelectedSlot
+  const isSameClick = a === b && prev && prev.iso === sel.iso &&
+    Math.min(prev.h0, prev.h1) === a && Math.max(prev.h0, prev.h1) === b
+  if (isSameClick) {
+    const w = 240
+    const left = Math.max(8, Math.min(e.clientX - w / 2, window.innerWidth - w - 8))
+    addFormStyle.value = { position: 'fixed', top: Math.max(8, e.clientY + 8) + 'px', left: left + 'px', width: w + 'px', zIndex: 1000 }
+    _wvFormOpening = true
+    showAddForm.value = true
+    nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
+  }
 }
 
 // ── 周视图：拖活动边缘改起止时间 / 拖活动体改日期 ──
