@@ -181,8 +181,7 @@
                    @mousedown="onColDown($event, d)" @mousemove="onColMove($event, d)" @mouseleave="onColLeave"
                    @contextmenu.prevent="onColContextMenu($event, d)">
                 <div v-if="wvSelectedSlot && wvSelectedSlot.iso === d.iso" class="wv-selected" :style="{ top: Math.min(wvSelectedSlot.h0, wvSelectedSlot.h1) * HOUR_H + 'px', height: (Math.abs(wvSelectedSlot.h1 - wvSelectedSlot.h0) + 1) * HOUR_H + 'px' }"></div>
-                <div v-if="wvHover && wvHover.iso === d.iso && !wvSel" class="wv-hover" :style="{ top: wvHover.h * HOUR_H + 'px', height: HOUR_H + 'px' }"></div>
-                <div v-if="wvSel && wvSel.iso === d.iso" class="wv-selbox" :style="{ top: Math.min(wvSel.h0, wvSel.h1) * HOUR_H + 'px', height: (Math.abs(wvSel.h1 - wvSel.h0) + 1) * HOUR_H + 'px' }"></div>
+                <div v-if="wvHover && wvHover.iso === d.iso && !wvDragging" class="wv-hover" :style="{ top: wvHover.h * HOUR_H + 'px', height: HOUR_H + 'px' }"></div>
                 <div v-if="d.isToday" class="wv-now" :style="{ top: nowTop + 'px' }"></div>
                 <div v-for="b in timedLayoutFor(d.iso)" :key="b.ev._uid" class="wv-ev cal-chip"
                      :style="{ top: b.top + 'px', height: b.height + 'px', left: 'calc(' + b.leftPct + '% + 1px)', width: 'calc(' + b.widthPct + '% - 2px)', background: b.ev.accent + '2e', borderColor: b.ev.accent + '85', color: darkenHex(b.ev.accent) }"
@@ -1439,38 +1438,39 @@ watch(weekRef, v => {
 
 // 周视图：悬停高亮小时格 + 按下拖拽选时段建活动
 const wvHover = ref(null)   // { iso, h } 悬停的小时格
-const wvSel   = ref(null)   // { iso, h0, h1 } 拖拽中选区
-const wvSelectedSlot = ref(null)   // { iso, h0, h1 } 点击/拖拽后保持暗色的选中格
+const wvDragging = ref(false)      // 是否正在小时格拖选（仅用于门控 hover，不再有单独的 selbox）
+const wvSelectedSlot = ref(null)   // { iso, h0, h1 } 选中格（点击/拖拽直接驱动它 = 被选中深色，无中间反馈）
 let _wvColRect = null
 function _hourAt(clientY, rect) { return Math.max(0, Math.min(23, Math.floor((clientY - rect.top) / HOUR_H))) }
 
 function onColMove(e, d) {
-  if (wvSel.value || _evDrag) return                          // 选区/活动拖拽中：不高亮小时格
+  if (wvDragging.value || _evDrag) return                     // 选区/活动拖拽中：不高亮小时格
   if (e.target.closest('.wv-ev')) { wvHover.value = null; return }   // 鼠标在活动上：不高亮下方格（替代原 .stop，避免挡住 document 拖拽监听）
   wvHover.value = { iso: d.iso, h: _hourAt(e.clientY, e.currentTarget.getBoundingClientRect()) }
 }
-function onColLeave() { if (!wvSel.value) wvHover.value = null }
+function onColLeave() { if (!wvDragging.value) wvHover.value = null }
 
 function onColDown(e, d) {
   if (e.button !== 0) return
   selRange.value = null   // 选时段 → 清掉日期选择（两者用途不同，互斥）
   _wvColRect = e.currentTarget.getBoundingClientRect()
   const h = _hourAt(e.clientY, _wvColRect)
-  wvSel.value = { iso: d.iso, h0: h, h1: h }
+  wvDragging.value = true
+  wvSelectedSlot.value = { iso: d.iso, h0: h, h1: h }   // 直接进入「被选中」深色（取代原 selbox 点击反馈）
   wvHover.value = null
   document.addEventListener('mousemove', _wvDrag)
   document.addEventListener('mouseup', _wvUp)
   e.preventDefault()
 }
 function _wvDrag(e) {
-  if (!wvSel.value || !_wvColRect) return
-  wvSel.value = { ...wvSel.value, h1: _hourAt(e.clientY, _wvColRect) }
+  if (!wvDragging.value || !_wvColRect || !wvSelectedSlot.value) return
+  wvSelectedSlot.value = { ...wvSelectedSlot.value, h1: _hourAt(e.clientY, _wvColRect) }
 }
 function _wvUp(e) {
   document.removeEventListener('mousemove', _wvDrag)
   document.removeEventListener('mouseup', _wvUp)
-  const sel = wvSel.value
-  wvSel.value = null
+  wvDragging.value = false
+  const sel = wvSelectedSlot.value
   if (!sel) return
   const a = Math.min(sel.h0, sel.h1), b = Math.max(sel.h0, sel.h1)
   const p = n => String(n).padStart(2, '0')
@@ -2403,8 +2403,8 @@ async function saveEvent() {
 .wv-hover { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.06); pointer-events: none; z-index: 5; transition: none; }
 .wv-col.weekend .wv-hover { background: rgba(195,90,90,0.07); }
 /* 选中/拖拽选区：直接纯色变暗，无边框、无过渡动画（点击那一下不闪）*/
-.wv-selected, .wv-selbox { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.1); pointer-events: none; z-index: 1; transition: none; }
-.wv-col.weekend .wv-selected, .wv-col.weekend .wv-selbox { background: rgba(195,90,90,0.1); }
+.wv-selected { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.1); pointer-events: none; z-index: 1; transition: none; }
+.wv-col.weekend .wv-selected { background: rgba(195,90,90,0.1); }
 .wv-now { position: absolute; left: 0; right: 0; height: 0; border-top: 2px solid #e5484d; z-index: 6; pointer-events: none; }
 .wv-now::before { content: ''; position: absolute; left: -3px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: #e5484d; }
 .wv-ev { position: absolute; box-sizing: border-box; border: 1px solid; border-radius: 6px; padding: 1px 5px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; line-height: 1.25; z-index: 3; transition: box-shadow 0.25s ease; }
