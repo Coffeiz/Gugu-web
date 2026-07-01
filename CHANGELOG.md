@@ -28,6 +28,7 @@
 - **续聊（重开浏览器接续上次对话）时不再闪默认问候**（`components/common/GuguChat.vue`）：问候由打开对话框时的 `animateGreeting` 显示，它在 `loadSession` 异步加载完替换消息**之前**看到的还是初始问候占位 → 把问候打了出来，造成「续聊的旧对话」与「问候」同时出现。修法：续聊时立刻清空问候占位，加载竞态期不显示；那段会话真没了再恢复问候占位 + 重新生成。
 - **周视图活动 409 冲突误用未定义的 `loadEvents()`**（`views/Calendar/index.vue`，TS 迁移时 vue-tsc 抓出的真 bug）：改为 `fetchEvents()`，原会在「活动已被他人修改」的刷新路径上运行时抛错。
 - **定时推送/主动消息现在进 IM 会话历史**（`app/scheduled_tasks.py` + `agent/runner.py`）：之前定时任务走 `run_ephemeral`（不建 session / 不存 DB）+ 直发 IM，推送从不进会话历史 → 用户回复时咕咕零上下文（发完新闻速览、用户回「4」咕咕不知道指什么）。修法：投递成功后把推送 append 到该用户 IM 最近会话（`imsession` 指向的那个，无则建普通会话并指过去、刷新 12h TTL）；冷启动时推送是会话首条 assistant（前导会被 sanitize 剥掉）→ 塞进 system prompt 兜底，让咕咕知道自己刚主动发了啥。
+- **加粗小标题 `** 标题**`（`**` 后带空格）不渲染加粗**（`components/common/GuguChat.vue`）：模型有时把加粗写成 `** 标题**`，开头 `**` 后带空格是无效 md，marked 原样输出。`renderMd` 前加 `fixLooseBold`：在代码块/行内代码之外把成对 `**` 内侧紧邻空格去掉（`** x**`→`**x**`），不碰代码里的 `x ** 2` / `` `a ** b` ``。全局生效，定时推送新闻的小标题正常加粗。
 
 ## [0.14.3] - 2026-06-30 · 日历提醒完整体系 + 文件库 UX 打磨 + DeepSeek 思考可调 + 工具错误脱敏
 
