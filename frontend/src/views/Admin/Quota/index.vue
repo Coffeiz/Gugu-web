@@ -469,15 +469,7 @@ onMounted(async () => {
 }
 .section-desc { font-size: 12px; color: rgba(255,255,255,0.25); flex: 1; }
 
-.icon-btn {
-  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.4); cursor: pointer; transition: all 0.15s;
-}
-.icon-btn:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.75); }
-.icon-btn.spinning svg { animation: spin 0.5s ease-out; transform-box: fill-box; transform-origin: center; }
-@keyframes spin { to { transform: rotate(360deg); } }
+/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue，统一 34×34） */
 
 /* 全局配额卡片 */
 .global-card {

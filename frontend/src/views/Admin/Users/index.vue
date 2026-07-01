@@ -277,15 +277,7 @@ onMounted(load)
 .search-input::placeholder { color: rgba(255,255,255,0.25); }
 .toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); margin-left: 4px; }
 
-.icon-btn {
-  width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
-}
-.icon-btn:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.8); }
-.icon-btn.spinning svg { animation: spin 0.5s ease-out; transform-box: fill-box; transform-origin: center; }
-@keyframes spin { to { transform: rotate(360deg); } }
+/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 .table-wrap { margin: 14px 36px 32px; }
 
@@ -302,7 +294,7 @@ onMounted(load)
 
 .ut-head {
   display: grid;
-  grid-template-columns: 200px 180px 96px 1fr 1fr 62px 120px;
+  grid-template-columns: 200px 180px 96px 1fr 1fr 62px 178px;
   padding: 10px 16px;
   font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
   color: rgba(255,255,255,0.25);
@@ -311,7 +303,7 @@ onMounted(load)
 
 .ut-row {
   display: grid;
-  grid-template-columns: 200px 180px 96px 1fr 1fr 62px 120px;
+  grid-template-columns: 200px 180px 96px 1fr 1fr 62px 178px;
   padding: 10px 16px;
   align-items: center;
   border-bottom: 1px solid rgba(255,255,255,0.05);
@@ -371,9 +363,10 @@ onMounted(load)
 .status-tag.active { background: rgba(80,180,140,0.12); color: rgba(100,200,160,0.9); }
 .status-tag.banned { background: rgba(220,80,80,0.12); color: rgba(240,120,120,0.9); }
 
-.col-action { display: flex; align-items: center; gap: 6px; }
+.col-action { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
 .action-btn {
   padding: 3px 10px; border-radius: 7px; font-size: 12px; cursor: pointer;
+  white-space: nowrap; flex-shrink: 0;
   border: 1px solid rgba(255,255,255,0.1);
   background: rgba(255,255,255,0.05);
   color: rgba(255,255,255,0.55);

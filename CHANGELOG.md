@@ -16,6 +16,10 @@
 - **图片搜索 `image_search` + `send_file` 支持网络图片**（`backend/agent/tools/search.py`、`tools/files.py`）：新增 `image_search` 工具，走自建 SearXNG `categories=images`（免配额），返回候选（标题+来源页+图片直链+缩略图）；`send_file` 加可选 `url` 参数，传入图片直链会下载（SSRF 防护：仅 http/https、挡内网/回环/云元数据地址）后暂存为聊天附件发出，网页端复用既有的 `attach_id` 图片卡片渲染、IM 端（飞书/QQ）由 `worker.py` 新增的 `attach_id` 分支发送——搜到图后可在同一轮直接发给用户，网页和 IM 都能收到。新增独立技能文档 `agent/skills/web-search.md`（联网搜索路由/成本/发图规则，`prompts/skills.md` 精简为一行指针）。管理后台「联网搜索」新增「图片搜索引擎」配置项 + 连通测试（`Admin/Agent/index.vue`，本次顺带转 `lang="ts"`）。
 - **微信支持语音消息**（`backend/agent/adapters/wechat.py`）：iLink 语音消息（`item.type==3`）自带 ASR 转写在 `voice_item.text`，不同于图片走 CDN+AES-128-ECB 那套下载解密，直接读转写文字注入对话即可；转写文本包一层「🎤 用户发来一条语音（已转文字）…」提示，语气对齐 QQ/飞书语音处理，转写为空（ASR 失败）给兜底提示、不静默丢消息。字段结构来自开源参考 [hao-ji-xing/openclaw-weixin](https://github.com/hao-ji-xing/openclaw-weixin)，已用真实语音验证跑通。文本/图片/语音三平台（飞书/QQ/微信）至此全部打通。
 
+### 改进
+
+- **后台刷新按钮全局统一 + 用户管理操作按钮横排**（`AdminApp.vue` + 12 个 Admin 页面）：① 所有页面的刷新按钮统一为邀请码页样式（34×34 方形图标钮 + PhArrowClockwise + 点击转一圈），样式抽成 **Admin 全局共用**（`AdminApp.vue` 非 scoped style，只进 admin 打包、不影响前台同名 `.icon-btn`），各页删除本地重复定义；服务状态页的纯文字「刷新」、反馈/数据页的「图标+文字」款一并收编；顺手隔离通知页「发送中持续转圈」与新样式的 `.spinning` 类名冲突（改 `spinning-inf`）。② 用户管理操作列 120→178px + 禁折行，修复加 DEV 按钮后「DEV/封禁/删除」被挤成竖排。
+
 ### 修复
 
 - **浮动预览窗打开低分辨率图片先猜大窗口再骤缩**（`components/common/FloatPreviewWindow.vue`）：缩略图长边未顶到 `CARD_THUMB_CAP` 时按缩略图真实尺寸定窗口，准；顶到上限时原图真实尺寸未知（可能是低分辨率图，也可能是被压缩过的大图，两者无法区分），此前套 4K 估算兜底——遇到实际是低分辨率图的情况会把窗口猜得远大于真实尺寸，真图加载完再缩回去，观感是「先变超大再骤缩」。改为不猜：顶到上限时窗口暂不出现，等真图加载完直接按正确尺寸定窗（同「快速下载」路径），不做中间的错误估算。

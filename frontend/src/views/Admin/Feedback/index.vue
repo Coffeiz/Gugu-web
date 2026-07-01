@@ -5,9 +5,8 @@
         <h2 class="page-title">用户反馈</h2>
         <p class="page-desc">来自用户的 Bug 报告、功能建议和其他反馈</p>
       </div>
-      <button class="btn-refresh" :class="{ loading }" @click="load">
-        <PhArrowClockwise :size="14" :class="{ 'spin-icon': loading }" />
-        刷新
+      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" title="刷新">
+        <PhArrowClockwise :size="15" weight="bold" />
       </button>
     </div>
 
@@ -61,6 +60,7 @@ const page     = ref(1)
 const pageSize = 30
 const filter   = ref('')
 const loading  = ref(false)
+const refreshing = ref(false)
 
 function categoryLabel(cat) {
   return { bug: 'Bug', suggestion: '建议', other: '其他' }[cat] ?? cat
@@ -72,6 +72,8 @@ function adminToken() {
 
 async function load() {
   loading.value = true
+  refreshing.value = true
+  setTimeout(() => { refreshing.value = false }, 550)
   try {
     const params = new URLSearchParams({ page: page.value, page_size: pageSize })
     if (filter.value) params.set('category', filter.value)
@@ -108,15 +110,7 @@ onMounted(load)
 .page-title { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
 .page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
 
-.btn-refresh {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; font-weight: 500; padding: 7px 14px; border-radius: 9px;
-  border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.07);
-  color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s; white-space: nowrap;
-  font-family: var(--font-sans, sans-serif);
-}
-.btn-refresh:hover:not(.loading) { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); color: rgba(255,255,255,0.75); }
-.btn-refresh.loading { opacity: 0.5; cursor: default; }
+/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 /* ── 分类过滤 ── */
 .filter-bar { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
@@ -190,11 +184,4 @@ onMounted(load)
 .page-btn:hover:not(:disabled) { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); }
 .page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 .page-info { font-size: 12px; color: rgba(255,255,255,0.3); min-width: 60px; text-align: center; }
-
-@keyframes spin { to { transform: rotate(360deg); } }
-.spin-icon {
-  animation: spin 0.8s linear infinite;
-  transform-box: fill-box;
-  transform-origin: center;
-}
 </style>

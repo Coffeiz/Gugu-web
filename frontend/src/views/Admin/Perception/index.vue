@@ -11,13 +11,8 @@
             :class="['range-tab', { active: hours === r.h }]"
             @click="setRange(r.h)">{{ r.label }}</button>
         </div>
-        <button class="refresh-btn" @click="load" :disabled="loading">
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ spinning: loading }">
-            <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2"/>
-            <polyline points="10 1 14 5 10 5"/>
-          </svg>
-          刷新
+        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
+          <PhArrowClockwise :size="15" weight="bold" />
         </button>
       </div>
     </div>
@@ -137,12 +132,13 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
-import { PhUsers, PhChats, PhPulse, PhBrain } from '@phosphor-icons/vue'
+import { PhUsers, PhChats, PhPulse, PhBrain, PhArrowClockwise } from '@phosphor-icons/vue'
 
 const adminStore = useAdminStore()
 const data = ref({})
 const hours = ref(168)
 const loading = ref(false)
+const refreshing = ref(false)
 const loaded = ref(false)
 const err = ref('')
 const ranges = [{ h: 24, label: '24h' }, { h: 168, label: '7天' }, { h: 720, label: '30天' }, { h: 0, label: '全部' }]
@@ -168,6 +164,8 @@ const dling = ref(false)
 
 async function load() {
   loading.value = true
+  refreshing.value = true
+  setTimeout(() => { refreshing.value = false }, 550)
   loadMisread()   // 错读案例独立拉取（不受活跃用户/阈值影响），刷新时一并更新
   try {
     const me = Math.max(1, minEvents.value || 1)
@@ -232,11 +230,7 @@ onMounted(load)
 .range-tab { font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer; color: rgba(255,255,255,0.4); background: transparent; border: none; transition: all .15s; }
 .range-tab.active { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
 .range-tab:hover:not(.active) { color: rgba(255,255,255,0.6); }
-.refresh-btn { display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.55); font-size: 12px; border-radius: 8px; padding: 7px 14px; cursor: pointer; transition: all .15s; }
-.refresh-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); }
-.refresh-btn:disabled { opacity: .4; cursor: not-allowed; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.spinning { animation: spin .8s linear infinite; }
+/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 /* ── 阈值条 ── */
 .ctrl-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding: 16px 36px 0; }

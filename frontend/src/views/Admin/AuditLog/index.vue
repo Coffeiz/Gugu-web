@@ -32,7 +32,7 @@
           </svg>
           导出 CSV
         </button>
-        <button class="btn-refresh" :class="{ spinning: refreshing }" @click="load(true)">
+        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" title="刷新">
           <PhArrowClockwise :size="15" weight="bold" />
         </button>
       </div>
@@ -253,14 +253,7 @@ onMounted(load)
 .btn-export:hover:not(:disabled) { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.85); }
 .btn-export:disabled { opacity: 0.35; cursor: default; }
 
-.btn-refresh {
-  width: 34px; height: 34px; border-radius: 9px;
-  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.5); cursor: pointer; display: flex;
-  align-items: center; justify-content: center; transition: all 0.15s;
-}
-.btn-refresh:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.8); }
-.btn-refresh.spinning svg { animation: spin 0.5s ease-out; transform-box: fill-box; transform-origin: center; }
+/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue）；spin 保留给下方 .spinner */
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* 表格 */

@@ -15,14 +15,8 @@
             :class="['range-tab', { active: rangeDays === r.days }]"
             @click="setRange(r.days)">{{ r.label }}</button>
         </div>
-        <button class="refresh-btn" @click="load" :disabled="loading">
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            :class="{ spinning: loading }">
-            <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2"/>
-            <polyline points="10 1 14 5 10 5"/>
-          </svg>
-          刷新
+        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
+          <PhArrowClockwise :size="15" weight="bold" />
         </button>
       </div>
     </div>
@@ -251,7 +245,7 @@ import {
 } from 'chart.js'
 import {
   PhUserPlus, PhFolders, PhFolderPlus, PhCheckCircle, PhRobot, PhLightning,
-  PhChats, PhCaretDown, PhCalendarBlank, PhFile, PhBellRinging,
+  PhChats, PhCaretDown, PhCalendarBlank, PhFile, PhBellRinging, PhArrowClockwise,
 } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 import {
@@ -270,6 +264,7 @@ const dims = ref<any>(null)
 const toolDist = ref<any[]>([])
 const toolExpanded = ref(false)
 const loading = ref(false)
+const refreshing = ref(false)
 const err = ref('')
 const rangeDays = ref(30)
 
@@ -375,6 +370,8 @@ const barOpts = {
 // ── 数据加载 ───────────────────────────────────────────────────────────────
 async function load() {
   loading.value = true
+  refreshing.value = true
+  setTimeout(() => { refreshing.value = false }, 550)
   err.value = ''
   try {
     const xd = xdQuery('&')
@@ -436,16 +433,7 @@ onMounted(load)
 .range-tab.active { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
 .range-tab:hover:not(.active) { color: rgba(255,255,255,0.6); }
 
-.refresh-btn {
-  display: flex; align-items: center; gap: 6px;
-  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-  color: rgba(255,255,255,0.55); font-size: 12px; border-radius: 8px;
-  padding: 7px 14px; cursor: pointer; transition: all .15s;
-}
-.refresh-btn:hover  { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); }
-.refresh-btn:disabled { opacity: .4; cursor: not-allowed; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.spinning { animation: spin .8s linear infinite; }
+/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 /* ── states ── */
 .state-msg { padding: 60px 36px; text-align: center; color: rgba(255,255,255,0.3); font-size: 14px; }

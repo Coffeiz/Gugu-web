@@ -83,7 +83,7 @@
           <button class="filter-btn" :class="{ active: filter === 'valid' }" @click="filter = 'valid'">可用</button>
           <button class="filter-btn" :class="{ active: filter === 'used' }" @click="filter = 'used'">已用</button>
         </div>
-        <button class="btn-refresh" :class="{ spinning: refreshing }" @click="load(true)" title="刷新">
+        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" title="刷新">
           <PhArrowClockwise :size="15" weight="bold" />
         </button>
       </div>
@@ -361,15 +361,7 @@ onMounted(load)
   background: rgba(123,127,178,0.18); border-color: rgba(123,127,178,0.3);
   color: rgba(255,255,255,0.85); font-weight: 600;
 }
-.btn-refresh {
-  width: 34px; height: 34px; border-radius: 9px;
-  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.5); cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s;
-}
-.btn-refresh:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.8); }
-.btn-refresh.spinning svg { animation: spin 0.5s ease-out; transform-box: fill-box; transform-origin: center; }
+/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 .list-loading, .list-empty {
   text-align: center; padding: 48px 0;

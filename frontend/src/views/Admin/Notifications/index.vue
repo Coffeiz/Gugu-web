@@ -64,7 +64,7 @@
         <div v-if="err" class="err-msg">{{ err }}</div>
 
         <button class="send-btn" :disabled="sending || (!form.title.trim() && !form.content.trim())" @click="send">
-          <svg v-if="sending" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="spinning"><path d="M12 7A5 5 0 1 1 7 2"/></svg>
+          <svg v-if="sending" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="spinning-inf"><path d="M12 7A5 5 0 1 1 7 2"/></svg>
           <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2L2 8l4 2 2 4 2-6z"/></svg>
           发送给所有用户
         </button>
@@ -74,10 +74,8 @@
       <div class="history-card">
         <div class="history-header">
           <span class="compose-title">发送历史</span>
-          <button class="refresh-btn" @click="loadHistory" :disabled="loadingHistory">
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ spinning: loadingHistory }">
-              <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2"/><polyline points="10 1 14 5 10 5"/>
-            </svg>
+          <button class="icon-btn" :class="{ spinning: refreshingHistory }" @click="loadHistory" :disabled="loadingHistory" title="刷新">
+            <PhArrowClockwise :size="15" weight="bold" />
           </button>
         </div>
 
@@ -109,6 +107,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
+import { PhArrowClockwise } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 import { renderMarkdown } from '@/utils/markdown'
 
@@ -131,6 +130,7 @@ const sending = ref(false)
 const err = ref('')
 const history = ref([])
 const loadingHistory = ref(false)
+const refreshingHistory = ref(false)
 const toastMsg = ref('')
 let toastTimer = null
 
@@ -169,6 +169,8 @@ async function send() {
 
 async function loadHistory() {
   loadingHistory.value = true
+  refreshingHistory.value = true
+  setTimeout(() => { refreshingHistory.value = false }, 550)
   try {
     const res = await admin.authFetch('/api/v1/admin/notifications/history')
     if (!res.ok) throw new Error()
@@ -319,13 +321,7 @@ onMounted(loadHistory)
 
 /* 历史 */
 .history-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.refresh-btn {
-  display: flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; border-radius: 7px; border: none;
-  background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.4); cursor: pointer;
-  transition: background 0.12s; padding: 0;
-}
-.refresh-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); }
+/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 .empty-hint { font-size: 12px; color: rgba(255,255,255,0.2); padding: 16px 0; }
 
@@ -352,7 +348,7 @@ onMounted(loadHistory)
 
 /* Spinner */
 @keyframes spin { to { transform: rotate(360deg); } }
-.spinning { animation: spin 0.8s linear infinite; }
+.spinning-inf { animation: spin 0.8s linear infinite; }   /* 发送中持续转；刷新按钮用全局 .icon-btn.spinning（转一圈） */
 
 /* Toast */
 .toast {

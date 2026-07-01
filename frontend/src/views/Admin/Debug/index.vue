@@ -175,13 +175,7 @@ onUnmounted(() => { sse?.close() })
 }
 .toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); }
 
-.icon-btn {
-  width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
-}
-.icon-btn:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.8); }
+/* .icon-btn 基础用 Admin 全局样式（AdminApp.vue）；本页保留 active 变体（实时开关） */
 .icon-btn.active { background: rgba(100,200,160,0.12); border-color: rgba(100,200,160,0.3); color: rgba(100,200,160,0.9); }
 
 .live-dot {

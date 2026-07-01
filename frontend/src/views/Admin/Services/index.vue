@@ -10,7 +10,9 @@
           <span class="dep" :class="deps.redis ? 'ok' : 'bad'">Redis {{ deps.redis ? '通' : '断' }}</span>
           <span class="dep" :class="deps.db ? 'ok' : 'bad'">DB {{ deps.db ? '通' : '断' }}</span>
         </span>
-        <button class="svc-refresh" @click="load(true)" :disabled="loading">刷新</button>
+        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" title="刷新">
+          <PhArrowClockwise :size="15" weight="bold" />
+        </button>
       </div>
     </div>
 
@@ -68,6 +70,7 @@
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { PhArrowClockwise } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 
 const adminStore = useAdminStore()
@@ -75,6 +78,7 @@ const services = ref([])
 const deps = ref({ redis: false, db: false })
 const queue = ref({})
 const loading = ref(false)
+const refreshing = ref(false)
 const err = ref('')
 const restarting = ref('')
 const msg = reactive({})
@@ -82,7 +86,11 @@ const msgOk = reactive({})
 let timer = null
 
 async function load(manual = false) {
-  if (manual) loading.value = true
+  if (manual) {
+    loading.value = true
+    refreshing.value = true
+    setTimeout(() => { refreshing.value = false }, 550)
+  }
   try {
     const res = await adminStore.authFetch('/api/v1/admin/services')
     if (!res.ok) throw new Error(`加载失败 (${res.status})`)
@@ -131,11 +139,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .dep { font-size: 11px; padding: 3px 9px; border-radius: 6px; }
 .dep.ok { color: #74c69d; background: rgba(116,198,157,0.12); }
 .dep.bad { color: #e08a8a; background: rgba(224,138,138,0.14); }
-.svc-refresh {
-  font-size: 12px; padding: 5px 14px; border-radius: 8px; cursor: pointer;
-  border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.7);
-}
-.svc-refresh:hover { background: rgba(255,255,255,0.1); }
+/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 .svc-err { color: #e08a8a; font-size: 13px; margin-bottom: 12px; }
 
 .svc-queue {
