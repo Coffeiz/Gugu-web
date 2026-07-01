@@ -4,6 +4,7 @@
     <main class="layout-main">
       <!-- 顶栏 -->
       <header class="topbar glass-card">
+        <GlassBg />
         <div class="topbar-title">
           <h1>{{ currentTitle }}</h1>
           <p>{{ todayStr }}</p>
@@ -79,6 +80,7 @@ import AppSidebar from '@/components/common/AppSidebar.vue'
 import GuguChat from '@/components/common/GuguChat.vue'
 import { PhPlus, PhUploadSimple } from '@phosphor-icons/vue'
 import GlobalSearch from '@/components/common/GlobalSearch.vue'
+import GlassBg from '@/components/common/GlassBg.vue'
 import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'
 import ProjectModal    from '@/views/Projects/components/ProjectModal.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
@@ -194,10 +196,12 @@ const todayStr = computed(() => {
   align-items: center;
   gap: 14px;
   padding: 14px 20px;
-  /* 去掉 .glass-card 默认的 backdrop-filter：顶栏浮在约 50px 空隙上、blur 几乎只作用于空白背景，
-     去掉后外观几乎无差别，但彻底消除 Chrome backdrop-filter 在下方内容 hover 重绘时的下沿白带伪影
-     （合成隔离 translateZ/isolation/page-content 提层均无法根治，见排查记录）。保留 .glass-card
-     的 0.56 半透明背景不变——不加白、不变实。*/
+  /* 顶栏浮在会动的 page-content 之上，用 backdrop-filter 会闪白带（Chrome 边缘重栅格伪影，
+     合成隔离无法根治，见排查记录）。改用 <GlassBg>：background-attachment:fixed 的页面背景副本 +
+     普通 filter:blur 预模糊（静态、可缓存、跨引擎一致、无白带）。宿主自身透明、建层叠上下文让
+     GlassBg(z-index:-1) 压在内容下；backdrop-filter 显式关掉。*/
+  isolation: isolate;
+  background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }

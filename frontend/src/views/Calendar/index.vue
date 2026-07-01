@@ -3,6 +3,7 @@
 
     <!-- 工具栏 -->
     <div class="cal-toolbar glass-card">
+      <GlassBg />
       <div class="toolbar-left">
         <button class="nav-btn" @click="prev">
           <PhCaretLeft :size="14" weight="bold" />
@@ -450,6 +451,7 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { eventsApi, scheduledTasksApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
+import GlassBg from '@/components/common/GlassBg.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
 import { projectProgress } from '@/utils/projectProgress'
@@ -2039,8 +2041,9 @@ async function saveEvent() {
 .cal-done:hover { opacity: 0.7; }   /* 悬停略恢复，方便看清要操作的那条 */
 
 .cal-page { display: flex; flex-direction: column; gap: 14px; height: 100%; }
-/* 去掉 .glass-card 的 backdrop-filter：消除内容 hover 重绘时下沿白带（同顶栏，见 DefaultLayout 注释）；保留 0.56 半透明背景不变 */
-.cal-toolbar { display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; backdrop-filter: none; -webkit-backdrop-filter: none; }
+/* 浮在会动内容之上，用 backdrop-filter 会闪白带 → 改用 <GlassBg> faux 玻璃（同顶栏，见 DefaultLayout 注释）。
+   宿主透明 + isolation 建层叠上下文让 GlassBg(z-index:-1) 压在内容下；backdrop-filter 显式关掉。*/
+.cal-toolbar { display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; position: relative; isolation: isolate; background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .toolbar-left { display: flex; align-items: center; gap: 4px; }
 .nav-btn { width: 30px; height: 30px; border-radius: 8px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); transition: background 0.15s; }
 .nav-btn:hover { background: rgba(0,0,0,0.06); }
