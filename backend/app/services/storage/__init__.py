@@ -41,6 +41,13 @@ class StorageBackend(ABC):
     async def list_keys(self) -> list[str]:
         """列出存储里所有对象 key（对账用；含 .agent/.chat_staging 等内部 key，由调用方过滤）"""
 
+    @abstractmethod
+    async def delete_prefix(self, prefix: str) -> int:
+        """删除该前缀下**所有**对象（账户注销清数据用），返回删除数量。
+
+        前缀必须非空（如 f"{user_id}/"）——空/根前缀直接抛 ValueError，防止把整个存储清了。
+        """
+
 
 class LocalStorageBackend(StorageBackend):
 
@@ -93,6 +100,24 @@ class LocalStorageBackend(StorageBackend):
             return [p.relative_to(self.root).as_posix()
                     for p in self.root.rglob("*") if p.is_file()]
         return await asyncio.to_thread(_walk)
+
+    async def delete_prefix(self, prefix: str) -> int:
+        import asyncio
+        import shutil
+        if not prefix or not prefix.strip("/ ."):
+            raise ValueError("delete_prefix 前缀不能为空/根（防误清整个存储）")
+        target = (self.root / prefix.strip("/")).resolve()
+        root = self.root.resolve()
+        if target == root or root not in target.parents:
+            raise ValueError("delete_prefix 目标越出存储根目录")
+
+        def _rm() -> int:
+            if not target.exists():
+                return 0
+            n = sum(1 for p in target.rglob("*") if p.is_file())
+            shutil.rmtree(target, ignore_errors=True)
+            return n
+        return await asyncio.to_thread(_rm)
 
 
 class OSSStorageBackend(StorageBackend):
@@ -165,6 +190,18 @@ class OSSStorageBackend(StorageBackend):
             return [obj.key[n:] for obj in oss2.ObjectIterator(self.bucket, prefix=self.pfx)
                     if not obj.key.endswith("/")]
         return await asyncio.to_thread(_list)
+
+    async def delete_prefix(self, prefix: str) -> int:
+        import asyncio, oss2
+        if not prefix or not prefix.strip("/ ."):
+            raise ValueError("delete_prefix 前缀不能为空/根（防误清整个存储）")
+
+        def _rm() -> int:
+            keys = [obj.key for obj in oss2.ObjectIterator(self.bucket, prefix=self.pfx + prefix)]
+            for i in range(0, len(keys), 1000):   # batch_delete 单次上限 1000
+                self.bucket.batch_delete_objects(keys[i:i + 1000])
+            return len(keys)
+        return await asyncio.to_thread(_rm)
 
 
 def get_storage() -> StorageBackend:

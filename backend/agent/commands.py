@@ -3,7 +3,8 @@
 - `/memory`（/记忆 /记得）  看咕咕目前记得你哪些事（facts + 最近状态）
 - `/forget <内容>`（/忘记 /忘掉）  让咕咕忘掉对得上的那条 fact
 
-在 web `stream()` 短路返回（像配额硬拦那样 typed_stream 回一句）。IM 侧待接。
+在 web `stream()` 短路返回（像配额硬拦那样 typed_stream 回一句）；IM 侧在 worker.handle()
+消费后、跑 agent 之前同样短路（飞书/QQ/微信用户同享隐私控制权，P0-5）。
 `/newchat` 不在此处理：网页已有「新对话」按钮，斜杠新建会话与会话编排耦合，UI 操作即可。
 """
 from __future__ import annotations

@@ -253,6 +253,15 @@ async def handle(msg_id: str, payload: dict):
         source=platform,
         attachments=payload.get("attachments") or [],
     )
+    # 记忆控制命令（/memory /forget，中文别名 /记忆 /忘记）：确定性短路，零 LLM、不计精力、
+    # 不反思、不进会话历史——与 web 路（adapters/web.py）同一处理，IM 用户同享隐私控制权（P0-5）
+    from agent import commands as _commands
+    cmd_reply = await _commands.handle(user_id, req.message)
+    if cmd_reply is not None:
+        await _send(payload, cmd_reply)
+        print(f"[worker] {platform} 记忆命令(trace={_tid}) → 已短路回复", flush=True)
+        return None
+
     # 把 IM 上下文透传给工具层（react 工具据此给用户这条消息加表情；State Manager 据此打细粒度状态）
     from agent import imctx
     imctx.set_im(platform, payload.get("message_id"), payload.get("channel_id"), payload.get("chat_id"), puid)
