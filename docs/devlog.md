@@ -1,9 +1,23 @@
 # PM Studio · 早期开发记录
 
-> 更新：2026-06-29
+> 更新：2026-07-01
 > 状态：早期阶段记录，当前进度见 `docs/overview.md`
 
 ---
+
+## 2026-07-01 · 磨砂玻璃「白带」查凶记：被冤枉的 backdrop-filter，与两个搅在一起的 bug
+
+顶栏和日历工具栏的磨砂玻璃，一 hover 下方可点击内容，下沿就闪一条**白带**；快速点小时格，整个日历面板还会**暗一下**。查这俩花了很久，绕了一大圈，教训比 bug 本身值钱：**别把两个 bug 当一个，别靠猜、要靠 perf trace。**
+
+**① 一路被 backdrop-filter 带偏。** 白带在磨砂卡下沿，第一反应就是 `backdrop-filter` 的锅，于是把「合成隔离」的招试了个遍：顶栏 `transform: translateZ(0)`、`isolation: isolate`、把 `.page-content` 提成独立合成层、把玻璃搬到 `::before` 隔离层……**全部无效**，还顺手搞出圆角被 squircle 裁歪的新问题。关键线索是用户给的两条：(a) DevTools **性能录制时白带不出现**（录制走了另一条栅格路径 → 这是**栅格时序**问题，不是布局）；(b)「感觉和 `.page-content` 覆盖面太广有关」。
+
+**② perf trace 一录，真凶现形。** 让用户录了段 trace，重绘榜首是 `.cal-chip`（日历里的活动条/项目条）——**2800+ 次重绘**，`compositeFailed` 里挂着 `box-shadow`。根因在 `global.css`：`.cal-chip:hover` 的高光用了 **`box-shadow: inset 0 0 0 100px rgba(255,255,255,.45)`**（拿超大 inset 阴影当「白色叠层」）。**inset box-shadow 无法 GPU 合成** → 每次 hover 一个条就是 0.25s 的主线程重绘 → 级联把父级 glass-card / layout-main 一起重绘 → 拖累顶栏/工具栏 `backdrop-filter` 的边缘重栅格 → 露白带。**不是 backdrop-filter 的锅，是 box-shadow 把它拖下水的。** 修法：所有 hover/高光从 `box-shadow`/`background` 改成 **`::after` + `opacity` 叠层**（opacity 走合成器线程、零主线程重绘），一处处换掉（`.cal-chip`、月格 `.cell-hovered`、周日期头、`.wv-ev`、`transition: all` 的 `.cell-num`……）。
+
+**③ 规则沉淀 + faux 玻璃。** 白带本质是 **Chrome `backdrop-filter` 在「背后内容会变」时的边缘重栅格伪影**——Safari/WebKit 架在 Core Animation 上没这问题。于是定下一条设计红线：**`backdrop-filter` 只给「背后是静态的」元素**——「包着内容」的卡片（cal-main、侧栏、弹窗，背后是静态页面渐变）随便用；「浮在会动内容之上」的浮层（顶栏、工具栏）**绝不能用**。给这类浮层做了个不依赖 backdrop-filter 的 **`GlassBg` 活玻璃组件**（页面背景副本 + 半透明 tint + 高光，跨引擎一致、无白带，还给将来「自定义壁纸」留了接入点：换成服务端预模糊的壁纸图 + `background-attachment: fixed` 即可）。
+
+**④ 那个「变暗」根本是另一个 bug，跟 backdrop-filter 无关。** 白带治好后，「快速点小时格面板变暗」还在。又往 backdrop-filter 重栅格上猜了几轮（`contain: paint`、去 cal-main 的 blur……全没用），最后是**用户自己诊断对的**：「好像是 hover 效果短暂消失导致的」。真凶是 `.glass-card:hover` —— hover 时背景从 `--glass-bg`(0.56) 变到 `--glass-bg-hover`(0.70，更白)、带 0.25s 过渡。你在日历里操作时鼠标一直在 cal-main 上 = 常态 0.70；**快速点击时 `:hover` 掉一帧 → 背景朝 0.56 淡回 = 「暗一下」**，hover 回来又淡亮。修法一行：中和 `cal-main:hover`（背景/阴影与基态一致，无可闪的变化）。
+
+**教训**：① **两个症状不一定同源**——白带（box-shadow 拖累 backdrop-filter）和变暗（`:hover` 背景过渡掉帧）搅在一起，把「变暗」也当 backdrop-filter 猜，白绕好几轮；② **视觉/渲染 bug 别靠猜合成属性**，perf trace 里 `compositeFailed` + 重绘 nodeName 榜一录一个准，比试十个 `translateZ` 都强；③ **用户的观察是一等情报**（「录制时不闪」定性成栅格时序、「hover 效果消失」直接点破变暗真因）；④ 顺带一条通用红线：**`backdrop-filter` 只在静态背后用，浮层走 faux 玻璃。** 详见 `CHANGELOG` 0.15.1。
 
 ## 2026-06-29 · 安全隐患记一笔：工具错误信息泄露（原始异常透传）
 
