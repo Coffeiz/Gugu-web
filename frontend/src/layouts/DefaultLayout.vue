@@ -202,6 +202,7 @@ const todayStr = computed(() => {
      GlassBg(z-index:-1) 压在内容下；backdrop-filter 显式关掉。*/
   isolation: isolate;
   background: transparent;
+  overflow: hidden;   /* 用顶栏自己的 squircle 圆角裁 GlassBg（圆角对齐）；搜索下拉是 Teleport 的、不受影响 */
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
