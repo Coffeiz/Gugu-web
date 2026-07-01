@@ -2660,7 +2660,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .view-toggle button {
   width: 28px; height: 28px; border-radius: 6px; border: none;
   background: none; cursor: pointer; color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center; transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
 .view-toggle button.on {
   background: rgba(255,255,255,0.85); color: var(--color-primary);

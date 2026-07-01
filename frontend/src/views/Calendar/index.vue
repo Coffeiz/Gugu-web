@@ -2091,10 +2091,7 @@ async function saveEvent() {
 .today-btn:hover { background: rgba(255,255,255,0.82); color: var(--text-primary); }
 
 .cal-layout { display: grid; grid-template-columns: 1fr 260px; gap: 14px; flex: 1; min-height: 0; }
-/* 去 backdrop-filter：cal-main 背后是静态渐变、内容都在里面，小时格/选中重绘时 Chrome 会过度失效它的
-   磨砂层导致「快速点击整片变暗」（translateZ 圈重绘挡不住）。去 blur 后观感一样（模糊平滑渐变≈渐变），
-   但没有可被重栅格的磨砂层 → 变暗根除。保留 glass-card 的 0.56 半透明 + 高光 + 描边。*/
-.cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden; }
 .weekday-row { display: grid; grid-template-columns: repeat(7, 1fr); flex-shrink: 0; margin-bottom: 2px; }
 .weekday-hdr { text-align: center; font-size: 11px; font-weight: 600; color: var(--text-secondary); padding: 3px 0 8px; border-right: 1px solid rgba(123,127,178,0.15); }
 .weekday-hdr:last-child { border-right: none; }
