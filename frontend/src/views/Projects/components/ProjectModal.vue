@@ -2804,8 +2804,8 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   background: rgba(255,255,255,0.92);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 0 0 2px rgba(123,127,178,0.28);
 }
-/* icon 卡（无缩略图）的选中紫色覆盖层，图片卡用 .fc-thumb-area::after */
-.fc-card.selected:not(.fc-has-thumb)::before {
+/* 选中覆盖层：::before 覆盖整张卡（含图片卡下方的白色文件名标签区），::after 在缩略图上额外叠加（同文件库） */
+.fc-card.selected::before {
   content: ''; position: absolute; inset: 0; z-index: 2;
   pointer-events: none; border-radius: inherit;
   background: rgba(123,127,178,0.14);
