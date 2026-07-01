@@ -2117,7 +2117,7 @@ async function saveEvent() {
 .month-cell.range-end.is-weekend .cell-num { background: rgba(195,90,90,0.15); color: rgba(195,90,90,0.9); }
 
 .cell-head { display: flex; align-items: center; gap: 3px; height: 24px; }
-.cell-num { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; color: var(--text-primary); flex-shrink: 0; transition: all 0.15s; }
+.cell-num { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; color: var(--text-primary); flex-shrink: 0; }  /* 去掉 transition: all（选中/今天时 border/color/font 一起动 → 合成失败重绘） */
 .hday-badge { font-size: 9px; font-weight: 700; line-height: 1; padding: 2px 3px; border-radius: 3px; flex-shrink: 0; }
 .hday-holiday { background: rgba(210,75,75,0.1); color: rgba(210,75,75,0.82); }
 .hday-workday { background: rgba(210,130,20,0.14); color: rgba(170,100,5,0.9); }
@@ -2431,7 +2431,7 @@ async function saveEvent() {
 .wv-now::before { content: ''; position: absolute; left: -3px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: #e5484d; }
 .wv-ev { position: absolute; box-sizing: border-box; border: 1px solid; border-radius: 6px; padding: 1px 5px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; line-height: 1.25; z-index: 3; }
 /* hover 高光由 .cal-chip::after 统一处理（opacity 合成，不触发 repaint） */
-.wv-ev.cal-chip:hover { box-shadow: 0 2px 8px rgba(80,90,110,0.16); z-index: 5; }
+.wv-ev.cal-chip:hover { z-index: 5; }  /* 高光由 .cal-chip::after(opacity) 提供，去掉 box-shadow(合成失败) */
 .wv-ev-t, .wv-ev-n, .wv-ev-d { position: relative; z-index: 1; }   /* 文字盖在白光层之上，保持清晰 */
 .wv-ev-d { font-size: 10px; font-weight: 400; opacity: 0.78; line-height: 1.3; margin-top: 1px; overflow: hidden; min-height: 0; flex: 1; word-break: break-word; }
 .wv-ev { cursor: grab; }   /* 中间=grab、上下 7px 边缘=ns-resize，由 onEvHover 动态切换 */
