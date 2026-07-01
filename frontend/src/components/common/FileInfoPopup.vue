@@ -114,8 +114,8 @@ onUnmounted(() => {
   border-radius: 12px;
   overflow: hidden;
   background: rgba(242, 243, 248, 0.97);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: var(--popup-blur);
+  -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow: 0 8px 32px rgba(20, 25, 60, 0.18), 0 2px 8px rgba(0, 0, 0, 0.07);
   user-select: none;

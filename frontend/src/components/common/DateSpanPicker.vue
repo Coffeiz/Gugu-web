@@ -288,7 +288,7 @@ watch(() => props.startDate, v => {
 <style>
 .drp-popup {
   background: var(--panel-bg);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.78);
   border-radius: 16px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 12px 36px rgba(30,40,80,0.14);

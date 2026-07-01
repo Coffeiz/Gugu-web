@@ -237,7 +237,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
   width: var(--sidebar-width);
   height: 100vh; flex-shrink: 0;
   background: rgba(255,255,255,0.42);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border-right: 1px solid rgba(255,255,255,0.62);
   box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
   display: flex; flex-direction: column;
@@ -362,7 +362,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 .notif-popup {
   /* 与 .popup-menu（右键/排序弹窗）统一外观 */
   background: rgba(255,255,255,0.6);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.75); border-radius: 10px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.1);
   overflow: hidden;

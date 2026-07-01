@@ -1624,8 +1624,8 @@ async function send(forcedText) {
 /* 主区域负责背景 blur */
 .chat-main {
   background: var(--panel-bg);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   transform: translateZ(0);
 }
 
@@ -2117,7 +2117,7 @@ async function send(forcedText) {
 .mini-player {
   position: fixed; right: 28px; box-sizing: border-box; width: 360px;   /* border-box 外宽 360，与小窗/气泡严格对齐 */
   transition: bottom 0.28s cubic-bezier(0.34, 1.2, 0.64, 1);
-  background: var(--panel-bg); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
+  background: var(--panel-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255,255,255,0.65); border-radius: 20px;
   box-shadow: var(--glass-shadow-lg); padding: 12px 14px 10px;
   display: flex; flex-direction: column; gap: 7px;   /* z-index 由 :style 动态(跟随聊天窗 ±1) */

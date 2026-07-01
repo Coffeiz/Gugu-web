@@ -2311,7 +2311,7 @@ async function saveEvent() {
 <style>
 .overflow-popup {
   background: var(--panel-bg);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.82);
   border-radius: 14px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 28px rgba(30,40,80,0.14);
@@ -2338,7 +2338,7 @@ async function saveEvent() {
 
 .cal-month-picker {
   background: var(--panel-bg);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.82);
   border-radius: 16px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 10px 36px rgba(30,40,80,0.14);
@@ -2362,7 +2362,7 @@ async function saveEvent() {
 .more-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .more-pop-enter-from,.more-pop-leave-to { opacity: 0; transform: scaleY(0.88); }
 
-.add-event-popup { background: rgba(255,255,255,0.72); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
+.add-event-popup { background: rgba(255,255,255,0.72); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
 .popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 .popup-title { font-size: 13px; font-weight: 700; color: #1e2028; }
 .popup-input { width: 100%; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }

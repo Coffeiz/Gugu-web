@@ -168,8 +168,8 @@ function dismiss(id) {
   width: 360px;          /* 固定宽度，与 GuguChat 小窗/播放器同宽、右对齐成一列 */
   padding: 13px 15px 15px;   /* 左右对称，内容区占满整宽 */
   background: var(--panel-bg);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255,255,255,0.65);
   border-radius: 20px;
   box-shadow: var(--glass-shadow-lg);

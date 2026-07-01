@@ -74,8 +74,8 @@ onBeforeUnmount(() => unregEsc?.())
   position: relative;
   width: 100%;
   background: rgba(238, 240, 246, 0.94);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 20px;
   box-shadow: 0 24px 64px rgba(20, 25, 50, 0.2);

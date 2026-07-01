@@ -134,7 +134,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
     position: 'fixed', left: '0', top: '0',
     width: rect.width + 'px', height: rect.height + 'px',
     margin: '0', boxSizing: 'border-box',
-    zIndex: '9999', pointerEvents: 'none', willChange: 'transform', transition: 'none',
+    zIndex: '99999', pointerEvents: 'none', willChange: 'transform', transition: 'none',
   })
   // 克隆体初始就摆到源卡位置，避免首帧停在左上角(0,0)闪一下
   clone.style.transform =
@@ -362,7 +362,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
             Object.assign(clone2.style, {
               position: 'fixed', left: '0', top: '0',
               width: clone.style.width, height: clone.style.height,
-              margin: '0', boxSizing: 'border-box', zIndex: '9999', pointerEvents: 'none',
+              margin: '0', boxSizing: 'border-box', zIndex: '99999', pointerEvents: 'none',
               willChange: 'transform', transition: 'none', opacity: '0',
               transform: clone.style.transform,   // 起点与旧克隆重叠
             })
@@ -479,10 +479,8 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
       width: rect.width + 'px', height: rect.height + 'px',
       margin: '0', boxSizing: 'border-box', overflow: 'hidden',
       borderRadius: cardRadius,
-      // 强制实心白底：脱离组件 scoped 上下文后 background 可能丢失
-      // 用 !important 等价的内联写法保证盖过所有 class（selected/scoped 等）
-      background: 'white',
-      zIndex: String(9997 - i), pointerEvents: 'none',
+      // 底色/毛玻璃统一由 global.css 的 .phys-drag-clone 定义（全站拖拽克隆一处控）
+      zIndex: String(99997 - i), pointerEvents: 'none',
       willChange: 'transform', transition: 'none',
       opacity: i === 0 ? '0.55' : '0.35',
       transform: initTf,
@@ -503,8 +501,8 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
     position: 'fixed', left: '0', top: '0',
     width: rect.width + 'px', height: rect.height + 'px',
     margin: '0', boxSizing: 'border-box', overflow: 'visible',
-    background: 'white', borderRadius: cardRadius, opacity: '0.88',
-    zIndex: '9999', pointerEvents: 'none', willChange: 'transform', transition: 'none',
+    borderRadius: cardRadius, opacity: '0.88',   // 底色/毛玻璃由 .phys-drag-clone 全局定义
+    zIndex: '99999', pointerEvents: 'none', willChange: 'transform', transition: 'none',
   })
   const badge = document.createElement('div')
   badge.className = 'phys-drag-badge'

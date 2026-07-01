@@ -243,8 +243,8 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(255, 255, 255, 0.75);
   border-radius: 16px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.98), 0 8px 32px rgba(60, 70, 100, 0.12);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur);
+  -webkit-backdrop-filter: var(--popup-blur);
   /* z-index 由 :style 动态 */
 }
 

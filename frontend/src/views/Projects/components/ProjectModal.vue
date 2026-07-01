@@ -2458,7 +2458,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   display: flex; flex-direction: column; min-height: 0;
   flex: 1 1 0; min-width: 0; position: relative;
   background: var(--panel-bg);
-  backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98);
 }
 /* 切换期间临时关掉嵌套 backdrop-filter：它套在 .bm-card 的毛玻璃里、宽度又随动画变，

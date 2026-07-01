@@ -201,7 +201,7 @@ function handleLogout() {
   flex: 1; padding: 14px 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: 2px;
   margin-right: -14px; padding-right: 14px;   /* 延伸到侧边栏右边缘，滚动条贴边 */
-  scrollbar-gutter: stable;
+  /* scrollbar-gutter: stable 提到 global.css（Admin 后台滚动条统一规则） */
 }
 .sidebar-nav::-webkit-scrollbar { width: 4px; }
 .sidebar-nav::-webkit-scrollbar-track { background: transparent; }

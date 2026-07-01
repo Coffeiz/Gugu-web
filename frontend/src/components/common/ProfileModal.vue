@@ -759,7 +759,7 @@ function handleLogout() {
 .pm-content {
   display: flex; flex-direction: column; min-height: 0;
   background: var(--panel-bg);
-  backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98);
 }
 

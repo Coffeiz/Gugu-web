@@ -1,7 +1,7 @@
 # 咕咕 · Admin 后台设计规范
 
 > 后台与前台是独立的两套视觉体系，前台浅色毛玻璃，后台深色暗玻璃。
-> 最后更新：2026-06-22（刷新按钮行为统一、页面上半部分间距统一）
+> 最后更新：2026-07-02（`.icon-btn` 收编为 AdminApp.vue 全局唯一定义；`.popup-menu-dark` 模糊接 `--popup-blur` 变量）
 
 ---
 
@@ -139,7 +139,7 @@ background: rgba(255,255,255,0.06);
 color: rgba(255,255,255,0.45); font-size: 13px;
 ```
 
-**图标按钮（`.icon-btn` / `.btn-refresh`）**：
+**图标按钮（`.icon-btn`，Admin 全局唯一定义）**：样式在 **`AdminApp.vue` 非 scoped `<style>`**（只进 admin 打包、不影响前台同名类），**所有页面共用、别在页面里再定义**（历史上各页复制了 7 份 + `.btn-refresh`/`.svc-refresh` 变体，2026-07-02 已全部收编）：
 ```css
 width: 34px; height: 34px; border-radius: 9px;
 border: 1px solid rgba(255,255,255,0.1);
@@ -147,7 +147,7 @@ background: rgba(255,255,255,0.05);
 color: rgba(255,255,255,0.5);
 display: flex; align-items: center; justify-content: center;
 ```
-旋转动画：`.spinning svg { animation: spin 0.7s linear infinite; transform-box: fill-box; transform-origin: center; }`
+旋转动画（点击转一圈，非持续转）：`.icon-btn.spinning svg { animation: admin-icon-spin 0.5s ease-out; }`；图标统一 `<PhArrowClockwise :size="15" weight="bold" />`。
 
 **全局规则：刷新按钮只在手动点击时旋转**，初始加载不触发。实现方式：用独立的 `refreshing` ref 控制 `.spinning` class，不与 `loading` 绑定；`load(manual = false)` 中 `refreshing.value = manual`，`onMounted` 调用 `load()` 不传参。
 
@@ -202,7 +202,7 @@ Admin 后台所有下拉/弹窗使用暗色版本，与前台 `.popup-menu` 结�
 ```css
 .popup-menu-dark {
   background: rgba(20, 22, 38, 0.94);
-  backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur);   /* 小弹窗统一 12px，变量在 variables.css，与前台同一套 */
   border: 1px solid rgba(255,255,255,0.11);
   border-radius: 10px;
   box-shadow: 0 4px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);

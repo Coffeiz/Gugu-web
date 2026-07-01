@@ -4,6 +4,17 @@
 
 svg { shape-rendering: geometricPrecision; }
 
+/* Admin 后台：滚动条不挤压内容宽度——内容变长/变短、滚动条出现/消失时，面板宽度不跳动。
+   所有 Admin 页共用同一个滚动容器 .admin-main（管一次=覆盖所有面板），侧栏导航 .sidebar-nav
+   与内部几处独立滚动的子面板一并列上，同一条规则、别各自散着写。 */
+.admin-main,
+.sidebar-nav,
+.trace-list,
+.trace-detail,
+.log-table-wrap {
+  scrollbar-gutter: stable;
+}
+
 /* date/time input 弹窗跟随系统深色 */
 input[type="date"],
 input[type="datetime-local"],
@@ -182,7 +193,7 @@ body {
 /* ── 弹出面板（右键菜单 / 排序菜单 / 表单弹窗）全局共用 ── */
 .popup-menu {
   background: rgba(255,255,255,0.6);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.75);
   border-radius: 10px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.1);
@@ -215,7 +226,7 @@ body {
 /* 暗色弹窗（Admin 用）— 对齐 .popup-menu 结构，暗色配色 */
 .popup-menu-dark {
   background: rgba(20, 22, 38, 0.94);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.11);
   border-radius: 10px;
   box-shadow: 0 4px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
@@ -271,8 +282,14 @@ body {
 ::placeholder { color: var(--text-secondary); opacity: 0.75; }
 
 /* ── 拖拽物理效果（usePhysicsDrag）── */
-/* 克隆体：跟着指针弹簧跟随的卡片，抬起阴影强化「拎起来」的感觉 */
+/* 克隆体：跟着指针弹簧跟随的卡片，抬起阴影 + 毛玻璃强化「拎起来」的感觉。
+   全站唯一定义（文件库/项目编辑卡/看板项目卡的拖拽克隆共用）——别在组件里各自定义。
+   background 带 !important：盖过 cloneNode 保留的源卡 scoped 白底与历史内联底色。 */
 .phys-drag-clone {
+  background: rgba(255, 255, 255, 0.42) !important;
+  backdrop-filter: blur(12px) saturate(1.15);
+  -webkit-backdrop-filter: blur(12px) saturate(1.15);
+  border: 1px solid rgba(255, 255, 255, 0.72);
   box-shadow: 0 22px 50px rgba(30, 35, 60, 0.30);
   cursor: grabbing;
   opacity: 0.97;
