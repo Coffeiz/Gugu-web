@@ -7,6 +7,7 @@ import json
 from sqlalchemy import select
 
 from app.models import CalendarEvent, Project
+from app.core.ownership import get_owned
 from agent import confirm
 from agent.tools.base import BaseSkill, Tool
 
@@ -14,8 +15,8 @@ from agent.tools.base import BaseSkill, Tool
 async def _create_event(db, user_id, args: dict):
     pid = args.get("project_id")
     if pid is not None:
-        proj = await db.get(Project, pid)
-        if not proj or proj.user_id != user_id:
+        proj = await get_owned(db, Project, pid, user_id)
+        if not proj:
             return json.dumps({"error": "项目不存在"})
     ev = CalendarEvent(
         user_id=user_id,
@@ -77,8 +78,8 @@ async def _resolve_event(db, user_id, args):
     """按 event_id 或事件标题 event（+可选 on_date）定位；返回 (Event|None, 错误JSON|None)。"""
     eid = args.get("event_id")
     if eid:
-        e = await db.get(CalendarEvent, eid)
-        if not e or e.user_id != user_id:
+        e = await get_owned(db, CalendarEvent, eid, user_id)
+        if not e:
             return None, json.dumps({"error": "事件不存在"})
         return e, None
     title = args.get("event")
@@ -110,8 +111,8 @@ async def _update_event(db, user_id, args: dict):
     if not any(fld in args for fld in fields):   # 没给任何要改的字段 → 别假成功（防咕咕误报"已更新"）
         return json.dumps({"error": "没提供要修改的字段（title/date/time/end_time/type/project_id/description），未改动。"})
     if args.get("project_id") is not None:
-        proj = await db.get(Project, args["project_id"])
-        if not proj or proj.user_id != user_id:
+        proj = await get_owned(db, Project, args["project_id"], user_id)
+        if not proj:
             return json.dumps({"error": "关联项目不存在"})
     for field in fields:
         if field in args:
@@ -261,9 +262,9 @@ async def _remove_event_reminder(db, user_id, args: dict):
     rid = args.get("reminder_id")
     if not rid:
         return json.dumps({"error": "需提供 reminder_id（用 list_event_reminders 查）"}, ensure_ascii=False)
-    t = await db.get(ScheduledTask, rid)
-    # 必须是本人的、且是活动提醒（event_id 非空）——独立定时任务不归这个工具删
-    if not t or t.user_id != user_id or t.event_id is None:
+    t = await get_owned(db, ScheduledTask, rid, user_id)
+    # 必须是活动提醒（event_id 非空）——独立定时任务不归这个工具删（归属已由 get_owned 强制）
+    if not t or t.event_id is None:
         return json.dumps({"error": "活动提醒不存在"}, ensure_ascii=False)
     tid = t.id
     await db.delete(t)

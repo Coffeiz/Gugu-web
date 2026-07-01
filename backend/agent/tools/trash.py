@@ -8,6 +8,7 @@ import json
 from sqlalchemy import select
 
 from app.models import File
+from app.core.ownership import get_owned
 from app.services.storage import get_storage
 from app.api.v1.trash import _restore_file_storage
 from app.api.v1.files import _delete_thumb_cache
@@ -33,8 +34,8 @@ async def _list_trash(db, user_id, args: dict):
 
 
 async def _restore_file(db, user_id, args: dict):
-    f = await db.get(File, args["file_id"])
-    if not f or f.user_id != user_id or f.deleted_at is None:
+    f = await get_owned(db, File, args["file_id"], user_id)
+    if not f or f.deleted_at is None:
         return json.dumps({"error": "文件不在回收站"})
     await _restore_file_storage(f, db)
     f.deleted_at = None
@@ -72,8 +73,8 @@ async def _permanent_delete(db, user_id, args: dict):
     fid = args.get("file_id")
     if not fid:
         return json.dumps({"error": "需提供 file_id（单个删除）或 all=true（清空全部）"})
-    f = await db.get(File, fid)
-    if not f or f.user_id != user_id or f.deleted_at is None:
+    f = await get_owned(db, File, fid, user_id)
+    if not f or f.deleted_at is None:
         return json.dumps({"error": "文件不在回收站（只能永久删除回收站里的文件）"})
 
     # 不可逆 → 二次确认保底

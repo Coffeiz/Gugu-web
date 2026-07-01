@@ -14,6 +14,7 @@ from datetime import datetime
 from sqlalchemy import select
 
 from app.models import File, Folder, Project
+from app.core.ownership import get_owned
 from app.services.storage import get_storage
 from app.api.v1.files import (
     _build_key, _resolve_conflict, _fmt_size, _move_to_trash, _color,
@@ -89,15 +90,15 @@ async def _resolve_key(db, user_id, space, display_name, ext,
                        project_id=None, folder_id=None):
     project_name = project_year = project_month = folder_name = ""
     if space == "project" and project_id:
-        p = await db.get(Project, project_id)
-        if not p or p.user_id != user_id:
+        p = await get_owned(db, Project, project_id, user_id)
+        if not p:
             raise ValueError("目标项目不存在")
         project_name = p.name
         date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
         project_year, project_month = date_str[:4], date_str[5:7]
     if folder_id:
-        fo = await db.get(Folder, folder_id)
-        if not fo or fo.user_id != user_id:
+        fo = await get_owned(db, Folder, folder_id, user_id)
+        if not fo:
             raise ValueError("目标文件夹不存在")
         folder_name = fo.name
     key = _build_key(
@@ -491,8 +492,8 @@ async def _resolve_file(db, user_id, args):
     """按 file_id 或文件名 file 定位（仅未删除文件）；返回 (File|None, 错误JSON|None)。"""
     fid = args.get("file_id")
     if fid:
-        f = await db.get(File, fid)
-        if not f or str(f.user_id) != str(user_id) or f.deleted_at is not None:
+        f = await get_owned(db, File, fid, user_id)
+        if not f or f.deleted_at is not None:
             return None, json.dumps({"error": "文件不存在"})
         return f, None
     name = args.get("file")
@@ -605,13 +606,13 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
 
     folder_name = "（根目录）"
     if folder_id:
-        fo = await db.get(Folder, folder_id)
+        fo = await get_owned(db, Folder, folder_id, user_id)
         folder_name = fo.name if fo else "（根目录）"
     # 明确回报落点的「空间/项目/文件夹」，别只给文件夹名——否则模型无从确认到底进了哪个项目，
     # 容易自行脑补位置（曾出现移到项目根目录后谎报项目/文件名的情况）
     project_name = None
     if f.space == "project" and f.project_id:
-        p = await db.get(Project, f.project_id)
+        p = await get_owned(db, Project, f.project_id, user_id)
         project_name = p.name if p else None
     return {"success": True, "file_id": f.id, "name": f"{f.display_name}.{f.ext}",
             "space": f.space, "project_id": f.project_id, "project_name": project_name,
@@ -652,8 +653,8 @@ async def _resolve_target(db, user_id, target: dict):
     folder_id = target.get("folder_id")
     fname = target.get("folder")
     if folder_id:
-        fo = await db.get(Folder, folder_id)
-        if not fo or fo.user_id != user_id:
+        fo = await get_owned(db, Folder, folder_id, user_id)
+        if not fo:
             return None, None, None, {"error": "目标文件夹不存在"}
         return ("project" if fo.project_id else "personal"), fo.project_id, fo.id, None
     if fname is not None:
@@ -686,7 +687,7 @@ async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id) -> dict
     if not same_project:
         # 子孙文件夹的 project_id 跟着改
         for sid in sub_ids[1:]:
-            sf = await db.get(Folder, sid)
+            sf = await get_owned(db, Folder, sid, user_id)
             if sf:
                 sf.project_id = t_pid
         # 子孙文件：物理 key 重搬 + 改 space/project（folder_id 不变，仍在各自文件夹里）
@@ -743,9 +744,7 @@ async def _move_items(db, user_id, args: dict):
     # 文件夹
     for it in (args.get("folders") or []):
         if isinstance(it, int) or (isinstance(it, str) and str(it).strip().isdigit()):
-            fo = await db.get(Folder, int(it))
-            if fo and fo.user_id != user_id:
-                fo = None
+            fo = await get_owned(db, Folder, int(it), user_id)
         else:
             # 按名找：在源处可能任意空间，这里全局按名匹配（重名则提示用 id）
             rows = (await db.execute(
@@ -770,12 +769,12 @@ async def _move_items(db, user_id, args: dict):
 
 async def _create_folder(db, user_id, args: dict):
     if args.get("project_id"):
-        p = await db.get(Project, args["project_id"])
-        if not p or p.user_id != user_id:
+        p = await get_owned(db, Project, args["project_id"], user_id)
+        if not p:
             return json.dumps({"error": "项目不存在"})
     if args.get("parent_id"):
-        par = await db.get(Folder, args["parent_id"])
-        if not par or par.user_id != user_id:
+        par = await get_owned(db, Folder, args["parent_id"], user_id)
+        if not par:
             return json.dumps({"error": "父文件夹不存在"})
     fo = Folder(
         user_id=user_id, name=args["name"],
@@ -821,8 +820,8 @@ async def _find_folder(db, user_id, args: dict):
             fid = int(str(fid).strip())
         except (ValueError, TypeError):
             pass
-        fo = await db.get(Folder, fid)
-        if not fo or fo.user_id != user_id:
+        fo = await get_owned(db, Folder, fid, user_id)
+        if not fo:
             return json.dumps({"error": "文件夹不存在"})
         return fo
     name = args.get("name") or args.get("folder")

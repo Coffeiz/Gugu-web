@@ -127,7 +127,7 @@ async def _deep_research(db, user_id, args: dict):
 
     # ── 每日次数配额（None=不限制；优先用户个人配置，否则回落全局）──
     from app.models import User as _User
-    _user_obj = await db.get(_User, user_id)
+    _user_obj = await db.get(_User, user_id)   # ownership-exempt: 按本人 id 取本人 User 行，无归属语义
     limit = (
         _user_obj.search_limit_daily
         if _user_obj and _user_obj.search_limit_daily is not None

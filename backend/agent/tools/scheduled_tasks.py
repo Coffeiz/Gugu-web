@@ -14,6 +14,7 @@ from fastapi import HTTPException
 
 from app.models import ScheduledTask
 from app.api.v1.scheduled_tasks import _validate_cron, _norm_channels
+from app.core.ownership import get_owned
 from agent import confirm
 from agent.tools.base import BaseSkill, Tool
 
@@ -63,8 +64,8 @@ async def _resolve_task(db, user_id, args):
     # 日程提醒（event_id 非空）归日历管，咕咕的定时任务工具一律视作「不存在」、不可解析/改/删
     tid = args.get("task_id")
     if tid:
-        t = await db.get(ScheduledTask, tid)
-        return (t, None) if (t and t.user_id == user_id and t.event_id is None) else (None, json.dumps({"error": "定时任务不存在"}, ensure_ascii=False))
+        t = await get_owned(db, ScheduledTask, tid, user_id)
+        return (t, None) if (t and t.event_id is None) else (None, json.dumps({"error": "定时任务不存在"}, ensure_ascii=False))
     name = args.get("task")
     if name:
         name = str(name).strip()

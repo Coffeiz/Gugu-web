@@ -7,6 +7,7 @@ import json
 from sqlalchemy import select
 
 from app.models import Client
+from app.core.ownership import get_owned
 from agent import confirm
 from agent.tools.base import BaseSkill, Tool
 
@@ -40,8 +41,8 @@ async def _resolve_client(db, user_id, args):
     """按 client_id 或客户名 client 定位；返回 (Client|None, 错误JSON|None)。"""
     cid = args.get("client_id")
     if cid:
-        c = await db.get(Client, cid)
-        if not c or c.user_id != user_id:
+        c = await get_owned(db, Client, cid, user_id)
+        if not c:
             return None, json.dumps({"error": "客户不存在"})
         return c, None
     name = args.get("client")
