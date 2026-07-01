@@ -40,7 +40,7 @@ let _typeTimer = null      // 全局单计时器：同一时刻只让最新那�
 let _typingId  = null      // 正在打字的 item id（手动关掉它时要停表）
 const TITLE_MS = 30        // 标题每字间隔
 const BODY_MS  = 15        // 正文每字间隔（比标题快，长文不拖沓）
-const AUTO_MS  = 5000      // 自动消失时限：**仅教程气泡(gugu)** 打完后停留 5s 再收（被新气泡顶替则 0.5s）
+const AUTO_MS  = 5000      // 自动消失时限：所有气泡打完后停留 5s 再收，无需手动点 ✕（被新气泡顶替则 0.5s）
 const PAUSE_TOKEN = '[[p]]'  // 文案里的停顿标记（不显示）
 const PAUSE_MS = 1000        // 打到停顿标记时暂停时长
 const SLOW_MS  = 400         // [[slow]]…[[/slow]] 段内逐字慢速冒出的每字间隔
@@ -70,13 +70,13 @@ function startTyping(item) {
   const STRIP_RE = /\[\[\/?(?:p(?::\d+)?|slow)\]\]/g   // 去 [[p]] / [[p:1500]] / [[slow]] / [[/slow]]
   const fullTitle = (item.title || '').replace(STRIP_RE, '')
   const fullBody = raw.replace(STRIP_RE, '')   // 去所有标记，用于空判断
-  if (!fullTitle && !fullBody) { item.typing = false; if (!item.superseded && item.gugu) scheduleDismiss(item.id, AUTO_MS); return }
+  if (!fullTitle && !fullBody) { item.typing = false; if (!item.superseded) scheduleDismiss(item.id, AUTO_MS); return }
   _typingId = item.id
   item.phase = fullTitle ? 'title' : 'body'
   let ti = 0
   const run = (ms, tick) => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = setInterval(tick, ms) }
-  // 只有教程气泡（gugu）打完后 5s 自动消失；其它通知（IM/广播）留到手动关或被新气泡顶掉
-  const stop = () => { if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }; item.typing = false; if (_typingId === item.id) _typingId = null; if (!item.superseded && item.gugu) scheduleDismiss(item.id, AUTO_MS) }
+  // 打完字 5s 后自动消失（所有气泡一视同仁，无需点 ✕ 手动关；气泡本就只弹一次，见 uiStore._markBubbleSeen）
+  const stop = () => { if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }; item.typing = false; if (_typingId === item.id) _typingId = null; if (!item.superseded) scheduleDismiss(item.id, AUTO_MS) }
 
   let typeBody
   if (!hasMarkers) {
