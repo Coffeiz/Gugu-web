@@ -42,7 +42,9 @@
                 {{ avatarChar(u) }}
               </span>
               <span class="user-info">
-                <span class="display-name">{{ u.display_name || u.username }}</span>
+                <span class="display-name">{{ u.display_name || u.username }}
+                  <span class="dev-badge" v-if="u.is_developer" title="开发者（数据面板可一键排除）">DEV</span>
+                </span>
                 <span class="username" v-if="u.display_name">@{{ u.username }}</span>
               </span>
             </span>
@@ -76,6 +78,10 @@
               </span>
             </span>
             <span class="col-action">
+              <button class="action-btn" :class="{ dev: u.is_developer }" @click="toggleDev(u)"
+                :title="u.is_developer ? '取消开发者标记' : '标记为开发者（数据面板可一键排除）'">
+                {{ u.is_developer ? '取消DEV' : 'DEV' }}
+              </button>
               <button class="action-btn" @click="toggleBan(u)" :title="u.is_active ? '封禁' : '解封'">
                 {{ u.is_active ? '封禁' : '解封' }}
               </button>
@@ -182,6 +188,12 @@ async function toggleBan(u) {
   const res  = await adminStore.authFetch(`/api/v1/admin/users/${u.id}/ban`, { method: 'PATCH' })
   const data = await res.json()
   u.is_active = data.is_active
+}
+
+async function toggleDev(u) {
+  const res  = await adminStore.authFetch(`/api/v1/admin/users/${u.id}/developer`, { method: 'PATCH' })
+  const data = await res.json()
+  u.is_developer = data.is_developer
 }
 
 function confirmDelete(u) {
@@ -370,6 +382,14 @@ onMounted(load)
 .action-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
 .action-btn.danger { border-color: rgba(220,80,80,0.2); color: rgba(220,100,100,0.7); }
 .action-btn.danger:hover { background: rgba(220,80,80,0.12); color: rgba(240,120,120,0.9); }
+.action-btn.dev { border-color: rgba(123,127,178,0.35); color: rgba(170,175,225,0.9); background: rgba(123,127,178,0.12); }
+
+.dev-badge {
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 5px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.05em; vertical-align: 1px;
+  background: rgba(123,127,178,0.18); color: rgba(170,175,225,0.95);
+  border: 1px solid rgba(123,127,178,0.35);
+}
 
 .pagination {
   display: flex; align-items: center; justify-content: center; gap: 12px;

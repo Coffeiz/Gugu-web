@@ -35,6 +35,7 @@ class User(Base):
     storage_limit_bytes:  Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, default=None)
     search_limit_daily:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     last_active_at:       Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None, index=True)
+    is_developer:         Mapped[bool]          = mapped_column(Boolean, default=False)   # 开发者标记：数据面板可一键排除，看真实用户数据
 
     projects:      Mapped[list["Project"]]             = relationship(back_populates="owner", cascade="all, delete-orphan")
     files:         Mapped[list["File"]]                = relationship(back_populates="owner", cascade="all, delete-orphan")

@@ -24,7 +24,13 @@ const routes: RouteRecordRaw[] = [
         path: 'analytics',
         name: 'AdminAnalytics',
         component: () => import('@/views/Admin/Analytics/index.vue'),
-        meta: { title: '数据分析' },
+        meta: { title: '数据总览' },
+      },
+      {
+        path: 'analytics-usage',
+        name: 'AdminAnalyticsUsage',
+        component: () => import('@/views/Admin/Analytics/Usage.vue'),
+        meta: { title: '使用分析' },
       },
       {
         path: 'perception',

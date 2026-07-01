@@ -84,6 +84,7 @@ async def list_users(
             "email":                u.email,
             "display_name":         u.display_name,
             "is_active":            u.is_active,
+            "is_developer":         bool(getattr(u, "is_developer", False)),
             "created_at":           u.created_at.isoformat() if u.created_at else None,
             "tokens_week":         week_map.get(uid, 0),
             "tokens_6h":           h6_map.get(uid, 0),
@@ -108,6 +109,20 @@ async def toggle_ban(user_id: str, request: Request, db: AsyncSession = Depends(
     username = getattr(request.state, "admin_username", "admin")
     await write_log(db, username, "user", f"{action}用户 {user.username}", request)
     return {"id": user_id, "is_active": user.is_active}
+
+
+@router.patch("/{user_id}/developer")
+async def toggle_developer(user_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """切换开发者标记（数据面板可一键排除开发者数据）。"""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    user.is_developer = not user.is_developer
+    await db.commit()
+    action = "标记开发者" if user.is_developer else "取消开发者标记"
+    username = getattr(request.state, "admin_username", "admin")
+    await write_log(db, username, "user", f"{action} {user.username}", request)
+    return {"id": user_id, "is_developer": user.is_developer}
 
 
 @router.delete("/{user_id}")

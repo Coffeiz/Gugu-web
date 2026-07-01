@@ -37,7 +37,11 @@
         <div class="nav-group-label">数据</div>
         <div class="nav-item" :class="{ active: isActive('/analytics') }" role="link" tabindex="0" @click="go('/analytics')">
           <PhChartLine :size="14" />
-          数据分析
+          数据总览
+        </div>
+        <div class="nav-item" :class="{ active: isActive('/analytics-usage') }" role="link" tabindex="0" @click="go('/analytics-usage')">
+          <PhChartBar :size="14" />
+          使用分析
         </div>
         <div class="nav-item" :class="{ active: isActive('/perception') }" role="link" tabindex="0" @click="go('/perception')">
           <PhBrain :size="14" />
@@ -116,7 +120,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
 import {
-  PhGear, PhRobot, PhChartLine, PhFlag, PhTicket, PhUsers,
+  PhGear, PhRobot, PhChartLine, PhChartBar, PhFlag, PhTicket, PhUsers,
   PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging, PhBrain,
 } from '@phosphor-icons/vue'
 

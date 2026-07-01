@@ -11,6 +11,7 @@
 
 ### 新增
 
+- **后台数据面板拆两页 + 新指标 + 开发者标记**（`api/v1/admin_analytics.py` + `users_admin.py` + `Admin/Analytics/{index.vue,Usage.vue,_shared.ts}` + `Users` + 路由/侧边栏 + 迁移 `20260702000001`）：原「数据分析」单页 7 段太挤，按「生意好不好 / 用户怎么用」拆成 **数据总览**（新增**日活跃用户曲线**〔agent_usage ∪ frontend_events 按日去重〕+ 旅程/行为漏斗 + 新增**项目留存数值**〔创建过项目 / 创建过第 2 个项目 / 注册满一周仍有进行中项目〕+ 用户·项目卡）与 **使用分析**（新增**新建项目曲线**、**会话深度分布**〔每用户最深会话按 1/2–3/4–10/11–30/30+ 轮分档〕、**周活跃维度**〔聊天/项目/日历/文件/提醒，「操作过」口径、纯浏览未埋点不含〕+ 原趋势/工具/模型分布挪入）。**开发者标记**：`users.is_developer` 列 + 用户管理页 DEV 打标按钮/徽章 + 两个数据页「排除开发者」全局开关（localStorage 持久，所有端点支持 `exclude_dev`）——一键看真实用户数据。新端点 `session-depth`/`active-dimensions`；新前端代码全 TS（总览页顺带转 `lang="ts"`）。
 - **图片搜索 `image_search` + `send_file` 支持网络图片**（`backend/agent/tools/search.py`、`tools/files.py`）：新增 `image_search` 工具，走自建 SearXNG `categories=images`（免配额），返回候选（标题+来源页+图片直链+缩略图）；`send_file` 加可选 `url` 参数，传入图片直链会下载（SSRF 防护：仅 http/https、挡内网/回环/云元数据地址）后暂存为聊天附件发出，网页端复用既有的 `attach_id` 图片卡片渲染、IM 端（飞书/QQ）由 `worker.py` 新增的 `attach_id` 分支发送——搜到图后可在同一轮直接发给用户，网页和 IM 都能收到。新增独立技能文档 `agent/skills/web-search.md`（联网搜索路由/成本/发图规则，`prompts/skills.md` 精简为一行指针）。管理后台「联网搜索」新增「图片搜索引擎」配置项 + 连通测试（`Admin/Agent/index.vue`，本次顺带转 `lang="ts"`）。
 - **微信支持语音消息**（`backend/agent/adapters/wechat.py`）：iLink 语音消息（`item.type==3`）自带 ASR 转写在 `voice_item.text`，不同于图片走 CDN+AES-128-ECB 那套下载解密，直接读转写文字注入对话即可；转写文本包一层「🎤 用户发来一条语音（已转文字）…」提示，语气对齐 QQ/飞书语音处理，转写为空（ASR 失败）给兜底提示、不静默丢消息。字段结构来自开源参考 [hao-ji-xing/openclaw-weixin](https://github.com/hao-ji-xing/openclaw-weixin)，已用真实语音验证跑通。文本/图片/语音三平台（飞书/QQ/微信）至此全部打通。
 
