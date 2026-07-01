@@ -180,8 +180,12 @@
                    :style="{ backgroundSize: '100% ' + HOUR_H + 'px' }"
                    @mousedown="onColDown($event, d)" @mousemove="onColMove($event, d)" @mouseleave="onColLeave"
                    @contextmenu.prevent="onColContextMenu($event, d)">
-                <div v-if="wvSelectedSlot && wvSelectedSlot.iso === d.iso" class="wv-selected" :style="{ top: Math.min(wvSelectedSlot.h0, wvSelectedSlot.h1) * HOUR_H + 'px', height: (Math.abs(wvSelectedSlot.h1 - wvSelectedSlot.h0) + 1) * HOUR_H + 'px' }"></div>
-                <div v-if="wvHover && wvHover.iso === d.iso && !wvDragging" class="wv-hover" :style="{ top: wvHover.h * HOUR_H + 'px', height: HOUR_H + 'px' }"></div>
+                <Transition name="wvfade">
+                  <div v-if="wvSelectedSlot && wvSelectedSlot.iso === d.iso" class="wv-selected" :style="{ top: Math.min(wvSelectedSlot.h0, wvSelectedSlot.h1) * HOUR_H + 'px', height: (Math.abs(wvSelectedSlot.h1 - wvSelectedSlot.h0) + 1) * HOUR_H + 'px' }"></div>
+                </Transition>
+                <Transition name="wvfade">
+                  <div v-if="wvHover && wvHover.iso === d.iso && !wvDragging && !wvHoverOnSel()" class="wv-hover" :style="{ top: wvHover.h * HOUR_H + 'px', height: HOUR_H + 'px' }"></div>
+                </Transition>
                 <div v-if="d.isToday" class="wv-now" :style="{ top: nowTop + 'px' }"></div>
                 <div v-for="b in timedLayoutFor(d.iso)" :key="b.ev._uid" class="wv-ev cal-chip"
                      :style="{ top: b.top + 'px', height: b.height + 'px', left: 'calc(' + b.leftPct + '% + 1px)', width: 'calc(' + b.widthPct + '% - 2px)', background: b.ev.accent + '2e', borderColor: b.ev.accent + '85', color: darkenHex(b.ev.accent) }"
@@ -1449,6 +1453,11 @@ function onColMove(e, d) {
   wvHover.value = { iso: d.iso, h: _hourAt(e.clientY, e.currentTarget.getBoundingClientRect()) }
 }
 function onColLeave() { if (!wvDragging.value) wvHover.value = null }
+// 悬停的小时格是否落在当前选中区内 → 是则不显示 hover 浅色（避免和选中深色叠加，同月视图单元格背景互斥）
+function wvHoverOnSel() {
+  const hv = wvHover.value, s = wvSelectedSlot.value
+  return !!(hv && s && hv.iso === s.iso && hv.h >= Math.min(s.h0, s.h1) && hv.h <= Math.max(s.h0, s.h1))
+}
 
 function onColDown(e, d) {
   if (e.button !== 0) return
@@ -2405,6 +2414,9 @@ async function saveEvent() {
 /* 选中/拖拽选区：直接纯色变暗，无边框、无过渡动画（点击那一下不闪）*/
 .wv-selected { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.1); pointer-events: none; z-index: 1; transition: none; }
 .wv-col.weekend .wv-selected { background: rgba(195,90,90,0.1); }
+/* 淡入淡出（同月视图单元格背景 0.12s）；仅淡 opacity，拖拽时的 top/height 变化仍瞬时（不卡） */
+.wvfade-enter-active, .wvfade-leave-active { transition: opacity 0.12s ease; }
+.wvfade-enter-from, .wvfade-leave-to { opacity: 0; }
 .wv-now { position: absolute; left: 0; right: 0; height: 0; border-top: 2px solid #e5484d; z-index: 6; pointer-events: none; }
 .wv-now::before { content: ''; position: absolute; left: -3px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: #e5484d; }
 .wv-ev { position: absolute; box-sizing: border-box; border: 1px solid; border-radius: 6px; padding: 1px 5px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; line-height: 1.25; z-index: 3; transition: box-shadow 0.25s ease; }
