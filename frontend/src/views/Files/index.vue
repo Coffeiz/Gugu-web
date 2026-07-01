@@ -2186,13 +2186,16 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .view-toggle {
   display: flex; background: rgba(0,0,0,0.05);
   border-radius: 8px; padding: 2px; gap: 2px;
+  flex-shrink: 0;   /* 工具栏拥挤时不被挤压，否则按钮/带 viewBox 的 SVG 会缩成 2~3px（首屏/久置后布局最紧时最明显）*/
 }
 .view-toggle button {
   width: 28px; height: 28px; border-radius: 6px; border: none;
   background: none; cursor: pointer; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
   transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+  flex-shrink: 0;
 }
+.view-toggle button svg { flex-shrink: 0; }
 .view-toggle button.on {
   background: rgba(255,255,255,0.85); color: var(--color-primary);
   box-shadow: 0 1px 4px rgba(0,0,0,0.08);

@@ -9,6 +9,14 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **日历磨砂玻璃「白带」根治 + `GlassBg` 活玻璃组件**（`layouts/DefaultLayout.vue`、`views/Calendar/index.vue`、`components/common/GlassBg.vue`）：顶栏与日历工具栏在 hover 可点击内容时下沿闪白带——Chrome `backdrop-filter` 在动态背景上的边缘重栅格伪影，各种合成隔离（translateZ/isolation/page-content 提层）均无法根治。改用不依赖 `backdrop-filter` 的 `<GlassBg>`（页面背景副本做半透明磨砂，跨引擎一致、无白带，为将来自定义壁纸留好接入点）。真凶经 perf trace 定位为 `.cal-chip` 的 `box-shadow: inset 0 0 0 100px` 等**主线程重绘**拖累磨砂层，已把日历各 hover/高光改为合成层友好的 opacity 叠层（`.cal-chip`、月格、周日期头、`.wv-ev` 等）。
+- **日历快速点击/切换面板「变暗」修复**：真因是 `.glass-card:hover` 的背景过渡（0.56↔0.70）在快速交互时 `:hover` 掉帧、`cal-main` 背景朝基态淡回=变暗。中和 `cal-main:hover`（与基态一致、无可闪变化）。
+- **日历 hover/选中统一淡入淡出 + 叠加**（月/周/全天/日期头四处一致）：悬停与选中反馈改为 opacity 淡入淡出、可叠加（悬停已选中格 = 相加变深），并给全天区补上悬停高亮、日期头拆成选中/悬停两层。
+- **日历点击选中不再「先变淡 / 闪现旧格」**：全天/日期头/月格的 mousedown 不再提前清空选区（只有真拖到别的天才进 range 选择），单击直接切到选中暗色；月视图多选后点单日不再闪现上一个单日格。
+- **文件库 / 项目编辑卡「网格·列表」切换图标变小修复**（`views/Files/index.vue`、`views/Projects/components/ProjectModal.vue`）：工具栏拥挤时 `.view-toggle` 被 flex 挤压，带 `viewBox` 的 SVG 图标随之缩成 2~3px（首屏/从别页回来布局最紧时最明显）。给切换组 + 按钮 + 图标加 `flex-shrink: 0`。
+
 ## [0.15.0] - 2026-07-01 · 日历周视图 + 咕咕相处方式重构（反思驱动 stance）+ 前端 TS 迁移 + 定时推送进 IM 会话
 
 > 日历新增周视图（时间轴，含全天/日期多日框选 + 右键新建项目/活动）；咕咕相处方式从「爱推进」重构为反思驱动的 stance 行为模块 + 感知误读案例收集器；前端搭起 TS 工具链并迁移 api/stores/composables/utils/Calendar（`src` 已无 `.js`）；定时推送/主动消息现在写进 IM 会话历史（用户回复能接上上下文）+ 加粗小标题渲染兜底。
