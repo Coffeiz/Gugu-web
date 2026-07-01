@@ -514,7 +514,16 @@ marked.use({
     return r
   })(),
 })
-function renderMd(text) { return text ? marked.parse(text) : '' }
+// 兜底：模型有时把加粗小标题写成 `** 标题**`（** 后带空格 = 无效 md，不渲染加粗）。
+// 在代码块/行内代码之外，把成对 ** 内侧紧邻的空格去掉，让它正常加粗（不碰代码里的 `x ** 2`）。
+function fixLooseBold(text) {
+  return text.split(/(```[\s\S]*?```|`[^`\n]*`)/g).map((seg, i) =>
+    i % 2 ? seg
+      : seg.replace(/\*\*[ \t]+([^*\n]+?)\*\*/g, '**$1**')
+           .replace(/\*\*([^*\n]+?)[ \t]+\*\*/g, '**$1**')
+  ).join('')
+}
+function renderMd(text) { return text ? marked.parse(fixLooseBold(text)) : '' }
 
 // 流式渲染专用：补全未闭合的代码围栏，避免 marked 把半段代码块解析成残缺 HTML
 // 单条缓存：同一帧内 text 未变则直接返回上次结果，避免重复解析
