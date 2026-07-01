@@ -194,14 +194,18 @@ const todayStr = computed(() => {
   align-items: center;
   gap: 14px;
   padding: 14px 20px;
-  /* 原本 backdrop-filter 磨砂：其 backdrop 取自下方 .page-content，Chrome/macOS 下页面内容
-     （日历格/项目卡等）hover 改背景触发重绘时，顶栏 backdrop-filter 栅格失效、下沿闪一条白带
-     （Safari 无此问题）。translateZ(0) 提升合成层没能根治 → 直接去磨砂、改近实底白，彻底消除。*/
-  background: rgba(255,255,255,0.9);
+  /* 原本 backdrop-filter 磨砂在顶栏本体：其 backdrop 取自下方 .page-content，Chrome/macOS 下
+     页面内容 hover 重绘时顶栏栅格失效、下沿闪白带（Safari 无此问题）；translateZ 未能根治。
+     改：玻璃放到 ::before 隔离层（+ isolation:isolate），filter 在独立合成层更稳、白带消除，
+     且保留与其他卡片一致的玻璃观感。isolation 不影响 position:fixed 子孙，安全。*/
+  isolation: isolate;
+  background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-.topbar:hover { background: rgba(255,255,255,0.9); }
+.topbar::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); }
+.topbar:hover { background: transparent; }
 
 .topbar-title h1 {
   font-size: 20px;

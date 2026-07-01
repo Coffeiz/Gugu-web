@@ -2056,11 +2056,14 @@ async function saveEvent() {
 .today-btn:hover { background: rgba(255,255,255,0.82); color: var(--text-primary); }
 
 .cal-layout { display: grid; grid-template-columns: 1fr 260px; gap: 14px; flex: 1; min-height: 0; }
-/* 去掉 backdrop-filter：磨砂层上元素 hover/选中变化会触发 Chrome 重绘整块 → 闪白块/整片变暗。
-   改近实底白（保留卡片观感）；:hover 不变底色，避免 glass-card:hover 又引发重绘。*/
+/* 玻璃放到 ::before 隔离层（+ isolation:isolate）：backdrop-filter 在独立合成层上更稳，
+   页面内容 hover/选中变化不再触发整块磨砂重绘（消除闪白块/整片变暗），观感与其他卡片一致。
+   isolation 不像 transform 会影响 position:fixed 子孙，安全。*/
 .cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden;
-  background: rgba(255,255,255,0.94); backdrop-filter: none; -webkit-backdrop-filter: none; }
-.cal-main:hover { background: rgba(255,255,255,0.94); }
+  position: relative; isolation: isolate; background: transparent;
+  backdrop-filter: none; -webkit-backdrop-filter: none; }
+.cal-main::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); }
 .weekday-row { display: grid; grid-template-columns: repeat(7, 1fr); flex-shrink: 0; margin-bottom: 2px; }
 .weekday-hdr { text-align: center; font-size: 11px; font-weight: 600; color: var(--text-secondary); padding: 3px 0 8px; border-right: 1px solid rgba(123,127,178,0.15); }
 .weekday-hdr:last-child { border-right: none; }
