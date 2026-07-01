@@ -22,6 +22,7 @@
 - **通知气泡改为一次显示、自动消失，无需手动点关闭**（`components/common/NotificationBubble.vue`）：此前只有教程气泡打完字 5s 后自动消失，其它通知（IM/广播）会一直停留、需手动点 ✕。现在所有气泡一视同仁，打完字 5s 后自动消失；气泡本身已有「只弹一次」机制，不受影响。
 - **输入框中文候选词回车被误当提交**：中文输入法下敲回车确认候选词，浏览器也会派发一次 keydown Enter，各输入框此前各自手写「回车=提交/确认」的判断、没排除 IME 组合态，候选词还没选完就被误触发提交。新增全局自定义指令 `v-enter`（`directives/enter.ts`，`main.ts`/`admin.ts` 两个应用入口注册），判据用标准 `event.isComposing`；全仓 20 处回车确认输入框统一迁移，GuguChat.vue 原本手写正确的聊天输入框也一并收敛，删掉不再需要的 `isComposing` 状态。
 - **网关秒崩无限重启刷日志**（`backend/agent/adapters/supervisor.py`）：`reconcile()` 发现子进程退出就立即重启、完全没有退避——凭据错误等必现问题会导致进程几乎瞬间崩溃，变成每 5s 重启一次的死循环。加指数退避：存活不到 5s 判定「秒崩」，退避 10s→20s→40s…封顶 5 分钟；正常跑了一阵子才挂的（更像网络抖动）不退避、立即重启。退避期间只是暂不重启、不是放弃——凭据修好后最多 5 分钟内自动捡回。
+- **重命名输入框自适应宽度提为全局共用样式，补齐项目模板改名遗漏**（`assets/styles/global.css`、`views/Projects/components/{ProjectModal,NewProjectModal}.vue`、`views/Dashboard/components/FilePanel.vue`、`views/Files/index.vue`）：项目模板改名输入框此前用 `flex:1` 撑满整行，不像文件卡/文件夹/文件库的重命名输入框那样随文字自适应宽度——四处重命名 UI 里唯独这一处没跟上，根因是自适应技术（ghost 隐形测量撑开容器宽度 + 输入框绝对定位铺满）在三个文件里各自本地复制了一份，新增时漏抄。提到 `global.css` 做唯一共享定义（`.rename-sizer`/`.rename-ghost`/`.rename-input-inline`），四个文件删掉本地重复定义、类名统一（原来两处用不带 `-inline` 的旧名 `.rename-input`，一并改名），以后新增重命名输入框不会再漏。
 
 ## [0.15.1] - 2026-07-01 · 日历磨砂玻璃白带根治（GlassBg 活玻璃）+ 交互反馈打磨 + 视图切换图标修复
 
