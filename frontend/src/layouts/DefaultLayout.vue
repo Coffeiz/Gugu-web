@@ -274,5 +274,10 @@ const todayStr = computed(() => {
   scrollbar-gutter: stable;
   padding: 128px 34px 24px 30px;
   box-sizing: border-box;
+  /* 提为独立合成层：page-content 是顶栏/cal-toolbar 等磨砂玻璃卡共同的 backdrop 来源，
+     作为一个大滚动绘制面，其内部任意角落的 hover 重绘都会让这些玻璃卡的 backdrop-filter
+     跟着重采样、下沿闪白带。独立成层后，内容绘制进自己的 GPU 纹理，玻璃卡采样稳定的合成
+     结果而非实时主线程绘制面（与 DevTools 录制时强制合成、白带消失同理）。*/
+  transform: translateZ(0);
 }
 </style>
