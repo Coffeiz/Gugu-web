@@ -12,6 +12,15 @@
 ### 新增
 
 - **图片搜索 `image_search` + `send_file` 支持网络图片**（`backend/agent/tools/search.py`、`tools/files.py`）：新增 `image_search` 工具，走自建 SearXNG `categories=images`（免配额），返回候选（标题+来源页+图片直链+缩略图）；`send_file` 加可选 `url` 参数，传入图片直链会下载（SSRF 防护：仅 http/https、挡内网/回环/云元数据地址）后暂存为聊天附件发出，网页端复用既有的 `attach_id` 图片卡片渲染、IM 端（飞书/QQ）由 `worker.py` 新增的 `attach_id` 分支发送——搜到图后可在同一轮直接发给用户，网页和 IM 都能收到。新增独立技能文档 `agent/skills/web-search.md`（联网搜索路由/成本/发图规则，`prompts/skills.md` 精简为一行指针）。管理后台「联网搜索」新增「图片搜索引擎」配置项 + 连通测试（`Admin/Agent/index.vue`，本次顺带转 `lang="ts"`）。
+- **微信支持语音消息**（`backend/agent/adapters/wechat.py`）：iLink 语音消息（`item.type==3`）自带 ASR 转写在 `voice_item.text`，不同于图片走 CDN+AES-128-ECB 那套下载解密，直接读转写文字注入对话即可；转写文本包一层「🎤 用户发来一条语音（已转文字）…」提示，语气对齐 QQ/飞书语音处理，转写为空（ASR 失败）给兜底提示、不静默丢消息。字段结构来自开源参考 [hao-ji-xing/openclaw-weixin](https://github.com/hao-ji-xing/openclaw-weixin)，已用真实语音验证跑通。文本/图片/语音三平台（飞书/QQ/微信）至此全部打通。
+
+### 修复
+
+- **多附件误存**（`backend/app/core/chat_attach.py`、`agent/tools/files.py`）：QQ 连发 4 张图后跟一句「存到XX项目」，实际只存了 1 个不相关的语音文件。真因是 `resolve_attach()` 的兜底逻辑"没对上 attach_id 就用最近暂存的一个"，取的是该用户全局暂存池里最后写入的一条，不分类型也不分渠道——图片+语音混存、或多个渠道（飞书/QQ/微信/网页）共用同一暂存池时会误取无关附件。修复：`stage`/`stage_sync` 新增 `platform` 字段打渠道标签；`resolve_attach` 兜底前先按当前渠道（`imctx`）收窄候选，再判断类型是否一致，只有无歧义（单候选或类型全一致）才自动兜底，否则返回歧义候选列表而非静默瞎猜；`save_uploaded_file` 新增 `attach_ids` 批量参数（同 `_rename_file` 的 `renames` 模式），一次调用存多个、不再逐个调用各自回退。
+- **项目编辑卡图片文件多选，文件名标签区未被选中暗色覆盖**（`views/Projects/components/ProjectModal.vue`）：`.fc-card.selected` 的选中覆盖层错误地写成 `:not(.fc-has-thumb)::before`（只对无缩略图的卡生效），导致有缩略图的图片卡选中时只有缩略图变暗、下方文件名区域没跟着变。对齐文件库正确实现，去掉多余的 `:not()` 限定。
+- **通知气泡改为一次显示、自动消失，无需手动点关闭**（`components/common/NotificationBubble.vue`）：此前只有教程气泡打完字 5s 后自动消失，其它通知（IM/广播）会一直停留、需手动点 ✕。现在所有气泡一视同仁，打完字 5s 后自动消失；气泡本身已有「只弹一次」机制，不受影响。
+- **输入框中文候选词回车被误当提交**：中文输入法下敲回车确认候选词，浏览器也会派发一次 keydown Enter，各输入框此前各自手写「回车=提交/确认」的判断、没排除 IME 组合态，候选词还没选完就被误触发提交。新增全局自定义指令 `v-enter`（`directives/enter.ts`，`main.ts`/`admin.ts` 两个应用入口注册），判据用标准 `event.isComposing`；全仓 20 处回车确认输入框统一迁移，GuguChat.vue 原本手写正确的聊天输入框也一并收敛，删掉不再需要的 `isComposing` 状态。
+- **网关秒崩无限重启刷日志**（`backend/agent/adapters/supervisor.py`）：`reconcile()` 发现子进程退出就立即重启、完全没有退避——凭据错误等必现问题会导致进程几乎瞬间崩溃，变成每 5s 重启一次的死循环。加指数退避：存活不到 5s 判定「秒崩」，退避 10s→20s→40s…封顶 5 分钟；正常跑了一阵子才挂的（更像网络抖动）不退避、立即重启。退避期间只是暂不重启、不是放弃——凭据修好后最多 5 分钟内自动捡回。
 
 ## [0.15.1] - 2026-07-01 · 日历磨砂玻璃白带根治（GlassBg 活玻璃）+ 交互反馈打磨 + 视图切换图标修复
 

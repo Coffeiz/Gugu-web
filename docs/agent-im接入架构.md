@@ -1,8 +1,8 @@
 # 咕咕 · IM 多平台接入架构
 
-> **状态**：🟢 飞书 + QQ 已上线（BYO 扫码自连）｜微信待接｜队列+worker+supervisor 三进程已部署
+> **状态**：🟢 飞书 + QQ + 微信三平台均已上线（飞书/QQ BYO 扫码自连，微信 iLink 长轮询）｜文本/图片/语音三平台打通｜队列+worker+supervisor 三进程已部署，supervisor 带秒崩退避
 > **分类**：技术架构 / Agent 平台接入
-> **创建**：2026-06-23 ｜ **更新**：2026-06-24
+> **创建**：2026-06-23 ｜ **更新**：2026-07-02
 > **目标**：把咕咕接入飞书 / QQ / 微信三个 IM 平台，**不依赖 OpenClaw**，且架构**未来可平滑扩到高流量**。
 >
 > 运行时一轮对话内部决策环（含 IM 前置路由 / 状态机 / 自然语言取消）见 [`agent-决策环.md`](agent-决策环.md)。
@@ -36,7 +36,7 @@
 |------|---------|--------|---------|------------|
 | **飞书** | `lark-oapi` SDK | WebSocket 长连 或 webhook | **不需要**（长连） | 🟢 最易，文档最好 |
 | **QQ** | `botpy` SDK | WebSocket | 不需要 | 🟢 易，官方稳定 |
-| **微信** | 直连 iLink（自写 HTTP 客户端） | 长轮询 getupdates | 不需要 | 🟡 中，文本可控；个人号有风险 |
+| **微信** | 直连 iLink（自写 HTTP 客户端） | 长轮询 getupdates | 不需要 | 🟢 已落地，文本/图片/语音全通；个人号自动化仍有政策风险 |
 
 ### 3.1 飞书 — `lark-oapi`（larksuite/oapi-sdk-python）· 已落地（BYO + device-flow 扫码自动创建）
 
@@ -86,17 +86,20 @@ POST q.qq.com/lite/create_bind_task {"key": base64(随机32字节)} → task_id 
 - `source` 仅为来源标签（非白名单，任意值都跳转）。
 - 拆解过程见 `docs/devlog.md` 2026-06-23 QQ 条 + `qq-scan-connect` 记忆。
 
-### 3.3 微信 — 直连 iLink（参考 SiverKing/weixin-ClawBot-API）
+### 3.3 微信 — 直连 iLink · 已落地（BYO + HTTP 长轮询，文本/图片/语音全通）
 
-无 QQ 那种开放 bot 平台；官方新通道是 **iLink**（`ilinkai.weixin.qq.com`）。**纯文本不涉及加密**，就是个 HTTP 长轮询客户端：
+无 QQ 那种开放 bot 平台；官方新通道是 **iLink**（`ilinkai.weixin.qq.com`）。代码 `agent/adapters/wechat.py` + `agent/adapters/wechat_client.py`，与飞书/QQ 同 BYO 模型（凭据存 `user_bots`，`bot_token` 复用 `app_secret` 字段、`base_url` 复用 `app_id` 字段）。
 
 - **登录**：扫码 → 拿 iLink bot token（24h 过期需重扫，要做自动重连）
 - **请求头**：`Authorization: Bearer <token>` + `AuthorizationType: ilink_bot_token` + `X-WECHAT-UIN`（每次随机 uint32 base64）+ `iLink-App-Id: bot`
 - **收**：`POST getupdates` 长轮询（服务端挂 ~35s）
-- **发**：`POST sendmessage`，必填 `from_user_id` / `to_user_id` / `client_id` / `message_type:2` / `message_state:2` / `context_token` + `item_list`
+- **发**：`POST sendmessage`，必填 `from_user_id` / `to_user_id` / `client_id` / `message_type:2` / `message_state:2` / `context_token` + `item_list`（iLink 特有：回复须带入站消息给的 `context_token`，是和飞书/QQ 唯一的接口差异）
 - **打字指示**：`getconfig`(取 typing_ticket) → `sendtyping{1}` → 生成 → `sendmessage` → `sendtyping{2}`
-- **媒体**（图片/语音）：AES-128-ECB + CDN，**首版不做，文本先行**
-- **风险**：须守《微信 ClawBot 功能使用条款》，腾讯保留内容过滤/限速；个人号自动化风险自负 → **建议三平台里最后接**
+- **消息体 `item_list`**：每项按 `type` 区分——`1`=文本(`text_item.text`)、`2`=图片(`image_item`)、`3`=语音(`voice_item`)、`4`=文件(`file_item`)、`5`=视频。同一条消息可以带多个 item（不像 QQ/飞书一图一消息）。
+- **图片**：CDN + AES-128-ECB 解密（`image_item.media.full_url` 下载 → key=`image_item.aeskey`(32 hex) → ECB 解密去 PKCS7 padding → 按 magic bytes 判 ext/mime），走 `chat_attach.stage(kind="image")` 接入统一附件链路，见 `_ingest_wechat_media`。
+- **语音**：iLink **自带 ASR 转写**在 `voice_item.text`，不用像图片那样下载解密音频——直接把转写文字包一层「🎤 用户发来一条语音（已转文字）…」的提示注入对话文本即可，逻辑在 `_handle_msg` 里、不经过 `_ingest_wechat_media`。转写为空（ASR 失败/听不清）给兜底提示，不静默丢消息。字段名来自开源参考 [hao-ji-xing/openclaw-weixin](https://github.com/hao-ji-xing/openclaw-weixin) 的 `wechat-claude-bridge.mjs`，已用真实语音验证跑通。
+- **文件**（`file_item`）：格式仍未逆向，暂留日志待补（`_ingest_wechat_media` 里非 `image_item` 的项会打印 `暂不支持的媒体项` 日志）。
+- **风险**：须守《微信 ClawBot 功能使用条款》，腾讯保留内容过滤/限速；个人号自动化风险自负。
 
 ---
 
@@ -149,7 +152,9 @@ QQ WS网关  ├→ 规范化成 AgentRequest ──→ [Redis Streams 队列] �
 | 队列 / worker 框架 | ✅ **已建**：`app/core/redis.py`(Streams 封装) + `worker.py`(独立进程消费) |
 | Redis | ✅ **已接入**：共享异步客户端（懒加载单例）+ Streams；config 改 redis 配置 reset 重建 |
 | 非流式 runner | ✅ **已有**：`agent/runner.py` `run_collect()`，复用大脑收成完整回复 |
-| 网关进程管理 | ✅ **已建**：`agent/adapters/supervisor.py` 按 DB `user_bots` 动态 spawn/kill 飞书·QQ 网关子进程（详见 §10） |
+| 网关进程管理 | ✅ **已建**：`agent/adapters/supervisor.py` 按 DB `user_bots` 动态 spawn/kill 飞书·QQ·微信网关子进程，带指数退避（详见 §10） |
+| 微信接入 | ✅ **已落地**：`agent/adapters/wechat.py`，BYO + iLink 长轮询，文本/图片/语音全通（图片 CDN+AES-128-ECB 解密，语音走 iLink 自带 ASR 转写，见 §3.3） |
+| 多渠道附件解析隔离 | ✅ **已加固**：`chat_attach.resolve_attach` 兜底解析按当前渠道（`imctx`）收窄候选，避免跨渠道/跨类型误取（如把另一渠道的语音当成这次要存的图片）；`stage`/`stage_sync` 新增 `platform` 字段打标签 |
 | Runtime Router + 状态机（文档 29 / Phase 1.7） | ✅ **已落地**：`agent/router.py`(关键词分类) + `agent/runtime_state.py`(Redis 状态机 IDLE/THINKING/SEARCHING/GENERATING + 取消标志)；网关层短路状态查询/取消，详见 [`agent-决策环.md`](agent-决策环.md) §⓪。**注**：情绪/催词用「句首锚定」防话题误判（「法拉利怎么这么慢」不算催咕咕）；催促只在咕咕真在忙时才拦、回「还在想/正在弄」，空闲交主模型 |
 | 平台用户 ↔ 咕咕用户映射 | ✅ **BYO 免映射**：每用户自带 bot，消息天然归属 owner，入队 payload 带 `owner_user_id`，worker 直接认人——无需 `(platform, platform_user_id) → user_id` 绑定表 |
 
@@ -191,7 +196,7 @@ QQ WS网关  ├→ 规范化成 AgentRequest ──→ [Redis Streams 队列] �
 
 ## 9. 待定决策
 
-1. **第一个平台**：飞书（文档最顺）还是 QQ（看受众）？微信最后。
+1. ~~**第一个平台**：飞书（文档最顺）还是 QQ（看受众）？微信最后。~~ 已解决：三平台均已落地（飞书/QQ 先行，微信最后接，符合当初计划）。
 2. **用户映射策略**：IM 用户首次对话即自动建咕咿号，还是要求绑定已有账号？
 3. **反思等附加 LLM 调用是否计入用户配额**（现不计，高流量下成本需重算）。
 
@@ -211,21 +216,22 @@ IM 这套在生产以 **三个 systemd 常驻服务**跑（单元文件在 `back
 
 ### 10.1 网关是 supervisor 动态 spawn 的子进程（无独立单元）
 
-`supervisor.py` 不是固定起几个网关，而是**对账循环**（每 ~1s）：
+`supervisor.py` 不是固定起几个网关，而是**对账循环**（`POLL_SEC=5`，每 5s 一轮）：
 
-1. 读 `user_bots` 表里 `enabled=True` 的 bot（BYO：每用户自带 bot，凭据在 DB，不在 `.env`）
-2. 每个启用的 bot → `subprocess.Popen([python, -m, agent.adapters.feishu|qq])`，凭据（`app_id`/`app_secret`/`owner`/QQ `sandbox`）作为**环境变量注入**子进程（不走 argv，避免 `ps` 泄漏）
+1. 读 `user_bots` 表里 `enabled=True` 的 bot（BYO：每用户自带 bot，凭据在 DB，不在 `.env`），平台→模块映射 `feishu`/`qqbot`/`wechat` → `agent.adapters.{feishu,qq,wechat}`
+2. 每个启用的 bot → `subprocess.Popen([python, -m, 对应模块])`，凭据（`app_id`/`app_secret`/`owner`/QQ `sandbox`）作为**环境变量注入**子进程（不走 argv，避免 `ps` 泄漏）
 3. 持续 reconcile：新启用/挂掉的 → 拉起；停用/删除的 → kill
-4. 单元设 `KillMode=control-group`：重启 supervisor 会**连带杀掉它 spawn 的全部网关子进程**，再由新进程统一拉起
+4. **秒崩退避**（防凭据错误等必现问题无限重启刷日志）：进程存活不到 5s 就退出，判定「秒崩」→ 指数退避（10s→20s→40s…封顶 5 分钟）再重试；正常跑了一阵子才挂的（更像网络抖动）不退避、立即重启。退避期间只是暂不重启、不是放弃——凭据修好后最多 5 分钟内自动捡回，不用重启服务。（实战：某测试 bot QQ 凭据填错，加退避前每 5s 重启刷屏、184MB 日志有很大一部分是这么来的）
+5. 单元设 `KillMode=control-group`：重启 supervisor 会**连带杀掉它 spawn 的全部网关子进程**，再由新进程统一拉起
 
-> 含义：**在 Admin 里启用/停用某个 bot 不用碰 systemd**——supervisor 1 秒内自动 spawn/kill 对应网关。只有改了代码/凭据机制才需重启服务。
+> 含义：**在 Admin 里启用/停用某个 bot 不用碰 systemd**——supervisor 5 秒内自动 spawn/kill 对应网关。只有改了代码/凭据机制才需重启服务。
 
 ### 10.2 启停命令
 
 **生产（有 systemd）：**
 ```bash
 systemctl restart gugu-worker        # 改了 agent 代码（core.py / skills / runner）→ 重启大脑
-systemctl restart gugu-supervisor    # 改了网关或路由（router.py / feishu.py / qq.py / supervisor.py）→ 重启网关（连带子进程）
+systemctl restart gugu-supervisor    # 改了网关或路由（router.py / feishu.py / qq.py / wechat.py / supervisor.py）→ 重启网关（连带子进程）
 systemctl status gugu-backend gugu-worker gugu-supervisor
 journalctl -u gugu-worker -f         # 或 tail -f logs/gugu-worker.log
 ```
@@ -241,7 +247,7 @@ journalctl -u gugu-worker -f         # 或 tail -f logs/gugu-worker.log
 | 改了什么 | 重启 |
 |---------|------|
 | `agent/core.py`、`skills/*`、`runner.py`、prompts 之外的 agent 逻辑 | `gugu-worker` |
-| `router.py`、`runtime_state.py`、`adapters/feishu.py`/`qq.py`/`supervisor.py` | `gugu-supervisor`（取消标志的*读*在 worker，故路由判定改了也重启 worker 稳妥） |
+| `router.py`、`runtime_state.py`、`adapters/feishu.py`/`qq.py`/`wechat.py`/`supervisor.py` | `gugu-supervisor`（取消标志的*读*在 worker，故路由判定改了也重启 worker 稳妥） |
 | `app/` 下的 Web/API | `gugu-backend` |
 | `prompts/*.md`（persona/skills/policy/reflection 等） | 不用重启，每轮现读热生效 |
 
@@ -250,7 +256,7 @@ journalctl -u gugu-worker -f         # 或 tail -f logs/gugu-worker.log
 ## 附：相关文件 / 现有缝
 
 - `agent/models.py` — `AgentRequest` / `AgentResponse`（`cancelled` 透传取消）
-- `agent/adapters/web.py`（SSE 流式）/ `feishu.py` / `qq.py`（IM 网关，BYO env 注入）/ `supervisor.py`（网关管家，按 DB spawn）
+- `agent/adapters/web.py`（SSE 流式）/ `feishu.py` / `qq.py` / `wechat.py`（IM 网关，BYO env 注入）/ `supervisor.py`（网关管家，按 DB spawn，带秒崩退避）
 - `agent/core.py` — `LLMRunner`（流式 + 轮顶/流式途中查取消）；`agent/runner.py` — `run_collect()` 非流式收集
 - `agent/router.py` + `agent/runtime_state.py` — 前置路由 + Redis 状态机/取消标志
 - `worker.py`（顶层）— IM 队列消费进程；`app/core/redis.py` — Streams 封装（produce/consume/ack/claim）
@@ -262,4 +268,5 @@ journalctl -u gugu-worker -f         # 或 tail -f logs/gugu-worker.log
 - [tencent-connect/botpy](https://github.com/tencent-connect/botpy)（QQ 官方 SDK）
 - [larksuite/oapi-sdk-python](https://github.com/larksuite/oapi-sdk-python)（飞书官方 SDK）
 - [SiverKing/weixin-ClawBot-API](https://github.com/SiverKing/weixin-ClawBot-API)（微信 iLink 直连示例）
+- [hao-ji-xing/openclaw-weixin](https://github.com/hao-ji-xing/openclaw-weixin)（`wechat-claude-bridge.mjs` 给出 `item_list` 各 type 字段，语音 `voice_item.text` 自带 ASR 转写就是从这份代码逆向出来的）
 - 三个 OpenClaw 插件（不采用）：`Tencent/openclaw-weixin`、`tencent-connect/openclaw-qqbot`、`larksuite/openclaw-lark`
