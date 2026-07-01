@@ -2056,7 +2056,11 @@ async function saveEvent() {
 .today-btn:hover { background: rgba(255,255,255,0.82); color: var(--text-primary); }
 
 .cal-layout { display: grid; grid-template-columns: 1fr 260px; gap: 14px; flex: 1; min-height: 0; }
-.cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden; }
+/* 去掉 backdrop-filter：磨砂层上元素 hover/选中变化会触发 Chrome 重绘整块 → 闪白块/整片变暗。
+   改近实底白（保留卡片观感）；:hover 不变底色，避免 glass-card:hover 又引发重绘。*/
+.cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden;
+  background: rgba(255,255,255,0.94); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.cal-main:hover { background: rgba(255,255,255,0.94); }
 .weekday-row { display: grid; grid-template-columns: repeat(7, 1fr); flex-shrink: 0; margin-bottom: 2px; }
 .weekday-hdr { text-align: center; font-size: 11px; font-weight: 600; color: var(--text-secondary); padding: 3px 0 8px; border-right: 1px solid rgba(123,127,178,0.15); }
 .weekday-hdr:last-child { border-right: none; }
