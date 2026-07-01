@@ -332,7 +332,7 @@
             <PhX :size="12" weight="bold" />
           </button>
         </div>
-        <input v-model="newEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" @keydown.esc="showAddForm = false" autofocus />
+        <input v-model="newEvent.name" ref="addInputRef" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" @keydown.esc="showAddForm = false" />
         <DatePicker v-model="newEvent.date" placeholder="选择日期" />
         <div class="time-box">
           <input :value="newEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, newEvent, 'time')" @blur="newEvent.time = normTime(newEvent.time)" />
@@ -498,6 +498,10 @@ function hdayType(isoDate) {
   return getHolidayType(hdayCache.value[yr], isoDate)
 }
 const showAddForm  = ref(false)
+const addInputRef  = ref(null)
+// 打开新建表单时聚焦输入框，但 preventScroll——原来用 <input autofocus> 会让浏览器滚动去露出
+// position:fixed 的表单（点底部时尤其明显）→ 布局跳动、顶栏闪白块。preventScroll 聚焦不触发滚动。
+watch(showAddForm, (v) => { if (v) nextTick(() => addInputRef.value?.focus?.({ preventScroll: true })) })
 // 边打边格式化：取数字（最多4位），第2位后自动插冒号。1200 → 12:00、120 → 12:0
 function onTimeInput(e, obj, key) {
   const d = e.target.value.replace(/\D/g, '').slice(0, 4)
@@ -1471,6 +1475,7 @@ function onColDown(e, d) {
 }
 function _wvDrag(e) {
   if (!wvDragging.value || !_wvColRect || !wvSelectedSlot.value) return
+  e.preventDefault()   // 拖拽期间彻底禁掉文本/元素选中（防整片染暗）
   wvSelectedSlot.value = { ...wvSelectedSlot.value, h1: _hourAt(e.clientY, _wvColRect) }
 }
 function _wvUp(e) {
