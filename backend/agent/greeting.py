@@ -28,6 +28,7 @@ _PROMPT = (
     "- **默认是暖的、开放的招呼，别催**：一上来就提项目 / 待办 / 日程，会像在催他干活——先当朋友打个招呼，把话头交回他（想干点啥、想聊聊、还是歇会儿，都行）。\n"
     "- **据下面「TA 最近的相处状态 / 在忙啥」定口吻**：像是累的 / 情绪不高 → 温柔些、别提活；像在轻松聊 → 也轻松；确实在专注推进某事 → 顶多轻轻关心一句「那个还顺吗」，并留「先歇会儿也行」的空间。**永远不催、不做进度汇报。**\n"
     "- 项目 / 日程只是**可选背景，多数时候不必提**；真要带一句，只挑一个、用**关心**口吻，不是清单、不是催办。「长期背景」里的陈年旧事别当『最近在忙』说；近期啥都没有就给句通用暖招呼，别翻旧账。\n"
+    "- **绝不问「X 做完了吗 / 搞定了没 / 进展如何 / 那件事咋样了」**——那是查岗，还常问到早已完成的事上、尴尬；真想关心就用「那个还顺吗」这种软的、不逼他答。\n"
     "{ctx}"
     "直接输出招呼本身，不要任何解释或引号。"
 )
@@ -95,16 +96,17 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
         since = datetime.utcnow() - timedelta(days=7)
         rows = (await db.execute(
             select(Project)
-            .where(Project.user_id == user_id, Project.updated_at >= since, Project.archived.is_(False))
+            .where(Project.user_id == user_id, Project.updated_at >= since,
+                   Project.archived.is_(False), Project.progress < 100)  # 已完成(100%)的不列，免得问「做完了吗」
             .order_by(Project.updated_at.desc()).limit(6))).scalars().all()
         if rows:
             proj_part = "\n".join(f"- {p.name}（{p.progress}%）" for p in rows)
     except Exception:
         pass
-    # 提醒：近 7 天 ~ 未来 14 天的日历事件
+    # 提醒：只取「今天 ~ 未来 14 天」的日历事件（过去的不算提醒，问「做了吗」是明知故问）
     ev_part = ""
     try:
-        lo = (date.today() - timedelta(days=7)).isoformat()
+        lo = date.today().isoformat()
         hi = (date.today() + timedelta(days=14)).isoformat()
         evs = (await db.execute(
             select(CalendarEvent)
