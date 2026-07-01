@@ -855,7 +855,7 @@ input:not(.name-input):not(.header-name-input):focus {
 
 <style>
 .np-stage-ghost {
-  position: fixed; z-index: 9999; pointer-events: none;
+  position: fixed; z-index: 100000; pointer-events: none;   /* 压顶带:拖拽克隆体不被窗口盖住 */
   display: flex; align-items: center; gap: 8px;
   padding: 6px 12px 6px 10px;
   background: rgba(238,240,246,0.94);

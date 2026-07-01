@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="!!project" width="1060px" height="780px" :zIndex="200" @close="onModalClose">
+  <BaseModal :show="!!project" width="1060px" height="780px" @close="onModalClose">
       <div class="modal" :class="{ 'stages-expanded': stagesExpanded, 'info-expanded': infoExpanded, 'pm-switching': pmSwitching }">
         <!-- 悬浮操作按钮 -->
         <div class="float-actions">
@@ -2966,7 +2966,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 
 <style>
 .stage-drag-ghost-full {
-  position: fixed; z-index: 9999; pointer-events: none;
+  position: fixed; z-index: 100000; pointer-events: none;   /* 压顶带:拖拽克隆体不被窗口盖住 */
   display: flex; flex-direction: column; align-items: stretch;
   padding: 6px 12px 8px;
   opacity: 0.85; box-sizing: border-box;   /* 只显示克隆内容，不要底色框/边框/阴影 */

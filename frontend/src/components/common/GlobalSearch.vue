@@ -47,6 +47,7 @@
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { nextZ } from '@/composables/windowz'
 import { useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import {
@@ -90,6 +91,7 @@ function updatePanelPos() {
     top: `${r.bottom + 8}px`,
     left: `${r.left}px`,
     width: `${r.width}px`,
+    zIndex: nextZ(),   // 盖当前最顶窗口
   }
 }
 
@@ -243,7 +245,7 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.98), 0 8px 32px rgba(60, 70, 100, 0.12);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  z-index: 300;
+  /* z-index 由 :style 动态 */
 }
 
 .gs-hint {

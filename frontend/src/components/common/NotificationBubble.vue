@@ -149,7 +149,7 @@ function dismiss(id) {
 .nb-stack {
   position: fixed;
   right: 28px;
-  z-index: 9999;
+  z-index: 100000;   /* 压顶带:通知永远可见(见 composables/windowz.ts) */
   display: flex;
   flex-direction: column-reverse;  /* 新条目在底部，贴近球 */
   gap: 8px;

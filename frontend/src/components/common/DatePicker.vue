@@ -93,6 +93,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { nextZ } from '@/composables/windowz'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -196,7 +197,7 @@ function calcPopupStyle() {
     top: rect.bottom + 6 + 'px',
     left: left + 'px',
     width: popW + 'px',
-    zIndex: 9999,
+    zIndex: nextZ(),
   }
 }
 

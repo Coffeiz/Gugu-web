@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="fp" :duration="{ enter: 420, leave: 280 }">
-      <div v-if="show && !!file" class="fp-root">
+      <div v-if="show && !!file" class="fp-root" :style="{ zIndex: myZ }" @mousedown.capture="raise">
         <div class="fp-overlay" @click="$emit('close')" />
         <div class="fp-panel">
           <!-- 顶栏 -->
@@ -48,7 +48,7 @@
     <!-- 文件信息弹窗 -->
     <Transition name="info-pop">
       <div v-if="showInfo" class="fp-info-win"
-        :style="{ left: infoX+'px', top: infoY+'px' }"
+        :style="{ left: infoX+'px', top: infoY+'px', zIndex: myZ + 1 }"
         @mousedown.stop
       >
         <div class="fp-info-title" @mousedown.prevent="startInfoDrag">
@@ -107,6 +107,7 @@ import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
 
 import { filesApi } from '@/services/api'
 import { isImageExt, isTextExt, isVideoExt, isOfficeExt, isAudioExt } from '@/stores/preview'
+import { nextZ, registerEsc } from '@/composables/windowz'
 
 const props = defineProps({
   show: Boolean,
@@ -204,10 +205,17 @@ watch(() => liveStore.rev.files, () => {
   if (props.show && props.file && isText.value) load(props.file, true)
 })
 
-function onKey(e) { if (e.key === 'Escape') emit('close') }
+// 窗口层级:打开领新 z、点击置顶;ESC 统一走 windowz(只关最顶层)
+const myZ = ref(0)
+function raise() { myZ.value = nextZ() }
+let _unregEsc = null
 watch(() => props.show, v => {
-  if (v) document.addEventListener('keydown', onKey)
-  else   document.removeEventListener('keydown', onKey)
+  if (v) {
+    raise()
+    _unregEsc = registerEsc({ getZ: () => myZ.value, close: () => emit('close') })
+  } else {
+    _unregEsc?.(); _unregEsc = null
+  }
 }, { immediate: true })
 
 async function handleDownload() {
@@ -221,7 +229,7 @@ async function handleDownload() {
 
 onUnmounted(() => {
   revoke()
-  document.removeEventListener('keydown', onKey)
+  _unregEsc?.()
   window.removeEventListener('mousemove', onInfoDragMove)
   window.removeEventListener('mouseup',   onInfoDragUp)
 })
@@ -269,7 +277,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
 .fp-root {
   position: fixed;
   inset: 0;
-  z-index: 11000;   /* 高于 GuguChat 窗口（10001/10002） */
+  /* z-index 由 :style 动态(统一窗口带,点谁谁上) */
   overflow: hidden;
   /* 整个预览模态提升为独立 GPU 合成层，防止 OOPIF（PDF iframe）的创建/销毁
      触发外层 sidebar/topbar backdrop-filter 的重合成闪烁 */
@@ -413,7 +421,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   border: 1px solid rgba(255,255,255,0.7);
   box-shadow: 0 8px 32px rgba(20,25,60,0.18), 0 2px 8px rgba(0,0,0,0.07);
   user-select: none;
-  z-index: 11100;   /* 配合 .fp-root 抬高，信息窗仍在面板之上 */
+  /* z-index 由 :style 动态(myZ+1,信息窗在面板之上) */
 }
 .fp-info-title {
   display: flex;

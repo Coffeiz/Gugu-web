@@ -16,6 +16,10 @@
 - **图片搜索 `image_search` + `send_file` 支持网络图片**（`backend/agent/tools/search.py`、`tools/files.py`）：新增 `image_search` 工具，走自建 SearXNG `categories=images`（免配额），返回候选（标题+来源页+图片直链+缩略图）；`send_file` 加可选 `url` 参数，传入图片直链会下载（SSRF 防护：仅 http/https、挡内网/回环/云元数据地址）后暂存为聊天附件发出，网页端复用既有的 `attach_id` 图片卡片渲染、IM 端（飞书/QQ）由 `worker.py` 新增的 `attach_id` 分支发送——搜到图后可在同一轮直接发给用户，网页和 IM 都能收到。新增独立技能文档 `agent/skills/web-search.md`（联网搜索路由/成本/发图规则，`prompts/skills.md` 精简为一行指针）。管理后台「联网搜索」新增「图片搜索引擎」配置项 + 连通测试（`Admin/Agent/index.vue`，本次顺带转 `lang="ts"`）。
 - **微信支持语音消息**（`backend/agent/adapters/wechat.py`）：iLink 语音消息（`item.type==3`）自带 ASR 转写在 `voice_item.text`，不同于图片走 CDN+AES-128-ECB 那套下载解密，直接读转写文字注入对话即可；转写文本包一层「🎤 用户发来一条语音（已转文字）…」提示，语气对齐 QQ/飞书语音处理，转写为空（ASR 失败）给兜底提示、不静默丢消息。字段结构来自开源参考 [hao-ji-xing/openclaw-weixin](https://github.com/hao-ji-xing/openclaw-weixin)，已用真实语音验证跑通。文本/图片/语音三平台（飞书/QQ/微信）至此全部打通。
 
+### 新增
+
+- **窗口系统：点谁谁到最上层（工作环境式多窗口）**（新 `composables/windowz.ts` + `BaseModal.vue` + 16 个组件接入）：原来 BaseModal(200)/通知气泡(9999)/GuguChat(10000)/预览窗(11000) 四套 z 各自为政、谁盖谁看出生数字。统一为四带：遮罩带 19000 固定 / **窗口带 20000+ 递增（mousedown 置顶）** / 咕咕悬浮球 99999 / 压顶带 100000（通知·拖拽克隆·tooltip）。① **项目编辑卡、图片/视频预览窗、咕咕聊天窗、PDF 预览自由叠放，点谁谁上**；② **BaseModal 遮罩与卡片拆成平级节点**——遮罩固定在一切窗口之下，背景模糊只糊页面、**物理上糊不到预览器等任何窗口**（居中容器 `pointer-events:none`，下层窗口照点）；③ **ESC 只关最顶层**（统一注册制，聊天窗防误关不注册）；④ 右键菜单/日期选择器/文件信息/全局搜索/反馈弹窗每次弹出领新 z，永远盖当前最顶窗口；⑤ 音乐播放器保持与聊天窗 ±1 相对层级。
+
 ### 改进
 
 - **后台刷新按钮全局统一 + 用户管理操作按钮横排**（`AdminApp.vue` + 12 个 Admin 页面）：① 所有页面的刷新按钮统一为邀请码页样式（34×34 方形图标钮 + PhArrowClockwise + 点击转一圈），样式抽成 **Admin 全局共用**（`AdminApp.vue` 非 scoped style，只进 admin 打包、不影响前台同名 `.icon-btn`），各页删除本地重复定义；服务状态页的纯文字「刷新」、反馈/数据页的「图标+文字」款一并收编；顺手隔离通知页「发送中持续转圈」与新样式的 `.spinning` 类名冲突（改 `spinning-inf`）。② 用户管理操作列 120→178px + 禁折行，修复加 DEV 按钮后「DEV/封禁/删除」被挤成竖排。

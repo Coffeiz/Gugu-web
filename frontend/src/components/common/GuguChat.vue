@@ -70,6 +70,7 @@
   <!-- 聊天窗口（单一元素，小/大状态通过位置过渡） -->
   <Transition name="chat-open">
     <div v-if="open" class="chat-window" :class="{ 'win-grow': streaming && !expanded }" :style="windowStyle" ref="windowRef"
+      @mousedown.capture="raiseChat"
       @dragenter="onChatDragEnter" @dragover="onChatDragOver" @dragleave="onChatDragLeave" @drop="onChatDrop">
 
       <!-- 拖入遮罩（覆盖整个窗口，大小窗通用）-->
@@ -291,6 +292,7 @@ import QRCode from 'qrcode'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import { useAudioStore } from '@/stores/audio'
+import { nextZ } from '@/composables/windowz'
 import { useProjectStore } from '@/stores/projects'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
@@ -587,17 +589,23 @@ function syncSmallH() {
 
 // 单一窗口的位置样式：小状态与大状态都用 top/left/right/bottom 像素值，保证过渡正常
 // transition 放在 CSS 而非 inline style，避免覆盖 Vue Transition 的 opacity/transform 动画
+// 窗口层级：进统一窗口带（点谁谁上，见 composables/windowz.ts）；打开时置顶
+const chatZ = ref(nextZ())
+function raiseChat() { chatZ.value = nextZ() }
+watch(open, v => { if (v) raiseChat() })
+
 const windowStyle = computed(() => {
   if (expanded.value) {
     // 右锚 720px，遇到窄屏时不超过导航栏右边界
     const left = Math.max(SIDEBAR_W + 12, vw.value * 0.4 - 12)
-    return { top: '12px', right: '12px', bottom: '12px', left: `${left}px` }
+    return { top: '12px', right: '12px', bottom: '12px', left: `${left}px`, zIndex: chatZ.value }
   }
   return {
     top:    `${vh.value - 88 - smallH.value}px`,
     left:   `${vw.value - 28 - SMALL_W}px`,
     right:  '28px',
     bottom: '88px',
+    zIndex: chatZ.value,
   }
 })
 
@@ -608,8 +616,8 @@ const miniPlayerStyle = computed(() => {
   const origin = (open.value && !expanded.value)
     ? '50% 50%'
     : `calc(100% - 25px) calc(100% + ${bottom - 53}px)`
-  // 展开态层级低于咕咕窗口（10001），使播放器显示在窗口后方
-  const zIndex = expanded.value ? 10000 : 10002
+  // 跟随聊天窗相对层级：展开态在窗后（-1）、小窗态顶在窗前（+1）
+  const zIndex = expanded.value ? chatZ.value - 1 : chatZ.value + 1
   return { bottom: `${bottom}px`, transformOrigin: origin, zIndex }
 })
 
@@ -1571,7 +1579,7 @@ async function send(forcedText) {
   position: fixed; bottom: 28px; right: 28px;
   isolation: isolate; width: 50px; height: 50px; border-radius: 50%;
   background: linear-gradient(135deg, #7b7fb2, #9590c4); border: none;
-  cursor: pointer; z-index: 10000;   /* 高于卡片拖拽克隆体（9999） */
+  cursor: pointer; z-index: 99999;   /* 常驻唤起入口:永远在窗口带(20000+)之上、通知(100000)之下 */
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 4px 18px rgba(123,127,178,0.32), inset 0 1px 0 rgba(255,255,255,0.45);
   transition: transform 0.2s, box-shadow 0.2s;
@@ -1597,7 +1605,7 @@ async function send(forcedText) {
 /* ── 单一聊天窗口 ── */
 .chat-window {
   position: fixed;
-  z-index: 10001;   /* 高于卡片拖拽克隆体（9999） */
+  /* z-index 由 :style 动态(统一窗口带,点谁谁上) */
   border: 1px solid rgba(255,255,255,0.7);
   border-radius: 20px;
   overflow: hidden;
@@ -2112,7 +2120,7 @@ async function send(forcedText) {
   background: var(--panel-bg); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
   border: 1px solid rgba(255,255,255,0.65); border-radius: 20px;
   box-shadow: var(--glass-shadow-lg); padding: 12px 14px 10px;
-  z-index: 10002; display: flex; flex-direction: column; gap: 7px;   /* 高于卡片拖拽克隆体（9999） */
+  display: flex; flex-direction: column; gap: 7px;   /* z-index 由 :style 动态(跟随聊天窗 ±1) */
 }
 .mp-info { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .mp-name { font-size: 12px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }

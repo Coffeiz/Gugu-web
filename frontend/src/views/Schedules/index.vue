@@ -418,7 +418,7 @@ async function removeTask(t) {
   border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
   padding: 10px 20px; font-size: 13px; color: rgba(255,255,255,0.82);
   box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-  pointer-events: none; white-space: nowrap; z-index: 9999;
+  pointer-events: none; white-space: nowrap; z-index: 100000;
 }
 .toast-enter-active, .toast-leave-active { transition: opacity 0.2s, transform 0.2s; }
 .toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(8px); }

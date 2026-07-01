@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="modal-fade">
-      <div v-if="show" class="modal-mask" @click.self="$emit('close')">
+      <div v-if="show" class="modal-mask" :style="{ zIndex: myZ }" @click.self="$emit('close')">
         <div class="modal-card">
           <div class="modal-header">
             <span class="modal-title">提交反馈</span>
@@ -54,9 +54,14 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { PhWarningOctagon, PhLightbulb, PhChatCircle } from '@phosphor-icons/vue'
+import { nextZ } from '@/composables/windowz'
 
 const props = defineProps({ show: Boolean })
 defineEmits(['close'])
+
+// 打断式弹窗:打开时领新 z,盖当前最顶窗口
+const myZ = ref(0)
+watch(() => props.show, v => { if (v) myZ.value = nextZ() })
 
 async function apiFeedback(category, content) {
   const token = localStorage.getItem('user_token')
@@ -112,7 +117,7 @@ async function submit() {
 
 <style scoped>
 .modal-mask {
-  position: fixed; inset: 0; z-index: 1000;
+  position: fixed; inset: 0;   /* z-index 由 :style 动态(打开时盖当前最顶窗口) */
   background: rgba(0,0,0,0.25);
   display: flex; align-items: center; justify-content: center;
 }

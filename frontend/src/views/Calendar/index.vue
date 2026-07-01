@@ -2498,7 +2498,7 @@ async function saveEvent() {
   border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
   padding: 11px 20px; font-size: 13px; line-height: 1.5; color: rgba(255,255,255,0.85);
   box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-  pointer-events: none; white-space: pre-line; max-width: 360px; z-index: 99999;
+  pointer-events: none; white-space: pre-line; max-width: 360px; z-index: 100000;
   font-family: 'PingFang SC','Segoe UI',sans-serif;
 }
 .cal-toast-enter-active, .cal-toast-leave-active { transition: opacity 0.2s, transform 0.2s; }

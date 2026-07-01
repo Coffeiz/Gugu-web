@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { nextZ } from '@/composables/windowz'
 
 const IMAGE_EXTS  = new Set(['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG', 'BMP'])
 const TEXT_EXTS   = new Set(['TXT', 'MD', 'JSON', 'CSV', 'JS', 'TS', 'CSS', 'HTML', 'PY', 'YAML', 'XML', 'SH'])
@@ -25,7 +26,7 @@ export const usePreviewStore = defineStore('preview', () => {
   const singleFile = ref(null)
 
   let _nextId = 1
-  let _topZ   = 11000   // 高于 GuguChat 窗口（10001/10002），从聊天打开的预览要盖在上面
+  // z 统一走 windowz.nextZ()（窗口带 20000+，点谁谁上；见 composables/windowz.ts）
 
   function open(f) {
     if (isImageExt(f.ext) || isVideoExt(f.ext) || isTextExt(f.ext)) {
@@ -40,7 +41,7 @@ export const usePreviewStore = defineStore('preview', () => {
         y:      Math.round((window.innerHeight - PH) / 2) + idx * 30,
         w:      PW,
         h:      PH,
-        zIndex: ++_topZ,
+        zIndex: nextZ(),
         _idx:   idx,
       })
     } else {
@@ -54,7 +55,7 @@ export const usePreviewStore = defineStore('preview', () => {
 
   function bringToFront(id) {
     const w = windows.value.find(w => w.id === id)
-    if (w) w.zIndex = ++_topZ
+    if (w) w.zIndex = nextZ()
   }
 
   // 兼容旧调用 previewStore.file / previewStore.close()

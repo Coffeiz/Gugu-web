@@ -103,6 +103,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { nextZ } from '@/composables/windowz'
 
 const props = defineProps({
   startDate: { type: String, default: '' },
@@ -229,7 +230,7 @@ function calcPopupStyle() {
   const popW = 240
   const centerX = rect.left + rect.width / 2
   const left = Math.max(8, Math.min(centerX - popW / 2, window.innerWidth - popW - 8))
-  popupStyle.value = { position: 'fixed', top: rect.bottom + 6 + 'px', left: left + 'px', width: popW + 'px', zIndex: 9999 }
+  popupStyle.value = { position: 'fixed', top: rect.bottom + 6 + 'px', left: left + 'px', width: popW + 'px', zIndex: nextZ() }
 }
 
 function toggle() {

@@ -134,9 +134,16 @@ import { filesApi } from '@/services/api'
 import { isImageExt, isVideoExt, isTextExt, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/useThumbCache'
 import { useLiveStore } from '@/stores/live'
+import { registerEsc } from '@/composables/windowz'
 
 const props = defineProps({ win: { type: Object, required: true } })
 const previewStore = usePreviewStore()
+
+// ESC 只关最顶层窗口（统一走 windowz：谁 z 最大关谁）
+const _unregEsc = registerEsc({
+  getZ: () => props.win.zIndex,
+  close: () => previewStore.closeWindow(props.win.id),
+})
 
 // ── 位置 / 尺寸（本地 reactive，同步回 store） ──────────────────────────────
 const x = ref(props.win.x)
@@ -447,6 +454,7 @@ function onResizeUp() {
 }
 
 onUnmounted(() => {
+  _unregEsc()
   if (blobUrl.value) URL.revokeObjectURL(blobUrl.value)
   window.removeEventListener('mousemove', onDragMove)
   window.removeEventListener('mouseup',   onDragUp)
