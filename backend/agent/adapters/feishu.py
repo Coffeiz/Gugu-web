@@ -179,6 +179,8 @@ def _make_on_message(channel_id: str, owner: str, api_client):
         if not text and not attachments:
             return
         open_id = ev.sender.sender_id.open_id if (ev.sender and ev.sender.sender_id) else None
+        from agent import trace
+        tid = trace.new_trace()
         payload = {
             "platform": "feishu",
             "channel_id": channel_id,
@@ -189,8 +191,9 @@ def _make_on_message(channel_id: str, owner: str, api_client):
             "message_id": msg.message_id,
             "text": text,
             "attachments": attachments,
+            "trace_id": tid,             # 全链路 trace：worker/工具日志同 id，grep 可串联
         }
-        print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text={text[:40]!r} att={len(attachments)}", flush=True)
+        print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text={text[:40]!r} att={len(attachments)} trace={tid}", flush=True)
 
         # Intent Router：纯文本消息先据当前状态判一手——任务进行中的「还在吗/算了/嗯」由网关
         # 直接处理，不入队（IM 单 worker 顺序消费，忙时它根本看不到队列后面的消息）。带附件一律进主模型。

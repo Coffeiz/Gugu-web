@@ -129,7 +129,9 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
 
     # 下载+解密+暂存媒体 → attach_id（图片走 _ingest_wechat_media；file/voice 暂留日志待补）
     attachments = await _ingest_wechat_media(non_text, owner) if non_text else []
-    print(f"[wechat:{channel_id}] 收到 {from_user}: text={text[:40]!r} att={len(attachments)}", flush=True)
+    from agent import trace
+    tid = trace.new_trace()
+    print(f"[wechat:{channel_id}] 收到 {from_user}: text={text[:40]!r} att={len(attachments)} trace={tid}", flush=True)
     if not text and not attachments:   # 只有不支持的媒体、啥也没取到 → 不入队（agent 无内容）
         return
     payload = {
@@ -143,6 +145,7 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
         "context_token": context_token,     # ⚠️ iLink 回复必需，worker 透传回 send_text
         "text": text,
         "attachments": attachments,
+        "trace_id": tid,                    # 全链路 trace：worker/工具日志同 id，grep 可串联
     }
     # TODO: 接 Intent Router 短路（仿 qq）
     try:

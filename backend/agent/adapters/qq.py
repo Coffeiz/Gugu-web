@@ -56,6 +56,8 @@ class _GuguQQClient(botpy.Client):
         attachments = await _ingest_qq_media(message, self._owner)
         if not text and not attachments:
             return
+        from agent import trace
+        tid = trace.new_trace()
         payload = {
             "platform": "qqbot",
             "channel_id": self._channel_id,
@@ -65,8 +67,9 @@ class _GuguQQClient(botpy.Client):
             "chat_type": "c2c",
             "text": text,
             "attachments": attachments,
+            "trace_id": tid,                   # 全链路 trace：worker/工具日志同 id，grep 可串联
         }
-        print(f"[qq:{self._channel_id}] 收到 {openid}: text={text[:40]!r} att={len(attachments)}", flush=True)
+        print(f"[qq:{self._channel_id}] 收到 {openid}: text={text[:40]!r} att={len(attachments)} trace={tid}", flush=True)
 
         # Intent Router：纯文本消息据当前状态短路——任务进行中的「还在吗/算了/嗯」网关直接处理、不入队
         if not attachments:

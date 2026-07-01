@@ -71,11 +71,17 @@ def _log_traj(name: str, user_id, args: dict, ok: bool, note: str, t0: float) ->
         summary = {}
         for k, v in (args or {}).items():
             summary[k] = v if isinstance(v, (int, float, bool)) or v is None else "***"
-        rec = {"t": "tool", "tool": name, "user": str(user_id)[:8],
-               "ok": ok, "ms": int((time.monotonic() - t0) * 1000), "args": summary}
+        _ms = int((time.monotonic() - t0) * 1000)
+        rec = {"t": "tool", "tool": name, "user": str(user_id)[:8], "ok": ok, "ms": _ms, "args": summary}
+        from agent.trace import get_trace
+        if get_trace():
+            rec["trace"] = get_trace()   # 全链路 trace：与网关「收到」行、worker 回复行同 id 可 grep 串联
         if not ok and note:
             rec["err"] = note[:120]
         _traj_log.info(json.dumps(rec, ensure_ascii=False))
+        # 运维指标旁路（失败率/延迟分布，Redis 按日聚合）：fire-and-forget，绝不影响工具
+        from app.core import opsmetrics
+        opsmetrics.record_tool(name, ok, _ms)
     except Exception:
         pass
 

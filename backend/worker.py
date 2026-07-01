@@ -241,6 +241,11 @@ async def handle(msg_id: str, payload: dict):
     puid = payload.get("platform_user_id")
     sid = payload.get("session_id") or await _im_session_get(platform, puid)
 
+    # 恢复全链路 trace（网关生成、payload 接力；防抖合并取最后一条的）——此后本任务内
+    # 的工具轨迹/回复日志自动带同一 trace，可与网关「收到」行 grep 串联
+    from agent import trace
+    _tid = trace.set_trace(payload.get("trace_id"))
+
     req = AgentRequest(
         message=payload.get("text", ""),
         user_id=user_id, user_name=user_name,
@@ -286,7 +291,7 @@ async def handle(msg_id: str, payload: dict):
     # 这条以提问/确认收尾 → 置「等回话」标志，网关下条「嗯/好/算了」就放行进 agent（别当闲聊吞了）
     from agent import router as _router
     await rtstate.set_awaiting(platform, puid, _router.reply_awaits_answer(reply_text))
-    print(f"[worker] {platform} 回复(session={resp.session_id}) → {resp.text!r}", flush=True)
+    print(f"[worker] {platform} 回复(session={resp.session_id} trace={_tid}) → {resp.text!r}", flush=True)
     return resp
 
 

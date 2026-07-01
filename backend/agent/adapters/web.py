@@ -137,6 +137,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     user_id = req.user_id
     profile = DefaultProfile()
     settings = get_settings()
+    from agent import trace
+    trace.new_trace()   # 全链路 trace（web 路入口）：本轮工具轨迹日志自动带同一 id
 
     import app.db.session as _sess
     if _sess._engine is None:
