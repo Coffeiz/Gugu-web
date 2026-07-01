@@ -259,7 +259,7 @@
                 <div class="fd-name" :title="f.displayName">
                   <span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop>
                     <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                    <input class="rename-input" v-model="renameText"
+                    <input class="rename-input-inline" v-model="renameText"
                       @keydown="onRenameKey" @blur="commitRename" @focus="$event.target.select()" />
                   </span>
                   <template v-else>{{ f.displayName }}</template>
@@ -322,7 +322,7 @@
                 <div class="fc-name" :title="f.displayName">
                   <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
                     <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                    <input class="rename-input" v-model="renameText"
+                    <input class="rename-input-inline" v-model="renameText"
                       @keydown="onRenameKey" @blur="commitRename" @focus="$event.target.select()" />
                   </span>
                   <template v-else>{{ f.displayName }}</template>
@@ -418,7 +418,7 @@
                 <span class="lr-filename" :title="f.displayName">
                   <span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop>
                     <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                    <input class="rename-input rename-input-inline" v-model="renameText"
+                    <input class="rename-input-inline" v-model="renameText"
                       @keydown="onRenameKey" @blur="commitRename" @focus="$event.target.select()" />
                   </span>
                   <template v-else>{{ f.displayName }}</template>
@@ -469,7 +469,7 @@
                 <span class="lr-filename" :title="f.displayName">
                   <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
                     <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                    <input class="rename-input rename-input-inline" v-model="renameText"
+                    <input class="rename-input-inline" v-model="renameText"
                       @keydown="onRenameKey" @blur="commitRename" @focus="$event.target.select()" />
                   </span>
                   <template v-else>{{ f.displayName }}</template>
@@ -1604,14 +1604,14 @@ function startRenameFile(f) {
   renamingFolderKey.value = null
   renamingFileId.value    = f.id
   renameText.value        = f.displayName
-  nextTick(() => document.querySelector('.rename-input')?.select())
+  nextTick(() => document.querySelector('.rename-input-inline')?.select())
 }
 
 function startRenameFolder(f) {
   renamingFileId.value    = null
   renamingFolderKey.value = f.folderId
   renameText.value        = f.displayName
-  nextTick(() => document.querySelector('.rename-input')?.select())
+  nextTick(() => document.querySelector('.rename-input-inline')?.select())
 }
 
 function cancelRename() {
@@ -2523,24 +2523,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 .fc-card:hover .fc-hover-actions { opacity: 1; }
 
-
-/* ── 重命名内联输入 ── */
-.rename-sizer {
-  display: inline-block; position: relative;
-  max-width: 100%; vertical-align: top;
-}
-.rename-ghost {
-  display: block; visibility: hidden; white-space: pre;
-  font: inherit; padding: 0 5px; min-width: 2ch;
-}
-.rename-input, .rename-input-inline {
-  position: absolute; inset: 0; width: 100%;
-  outline: none;
-  background: rgba(255,255,255,0.9); border: 1px solid rgba(123,127,178,0.4);
-  border-radius: 4px;
-  font: inherit; color: inherit;
-  padding: 0 4px;
-}
+/* .rename-sizer / .rename-ghost / .rename-input-inline 已提到 global.css（全站重命名输入框共用） */
 
 /* ── 拖动状态 ── */
 .fc-card.dragging, .list-row.dragging { opacity: 0.35; cursor: grabbing; }

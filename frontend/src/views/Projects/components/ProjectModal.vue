@@ -2946,21 +2946,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   border-radius: var(--radius-sm); transition: background 0.12s; border: 1px dashed transparent;
 }
 .list-upload-row:hover { background: rgba(123,127,178,0.05); border-color: rgba(123,127,178,0.3); color: var(--color-primary); }
-.rename-sizer {
-  display: inline-block; position: relative;
-  max-width: 100%; vertical-align: top;
-}
-.rename-ghost {
-  display: block; visibility: hidden; white-space: pre;
-  font: inherit; padding: 0 5px; min-width: 2ch;
-}
-.rename-input-inline {
-  position: absolute; inset: 0; width: 100%;
-  outline: none;
-  background: rgba(255,255,255,0.9); border: 1px solid rgba(123,127,178,0.4);
-  border-radius: 4px; padding: 0 4px;
-  font: inherit; color: inherit;
-}
+/* .rename-sizer / .rename-ghost / .rename-input-inline 已提到 global.css（全站重命名输入框共用） */
 
 .fc-upload {
   border: 1.5px dashed rgba(0,0,0,0.09);

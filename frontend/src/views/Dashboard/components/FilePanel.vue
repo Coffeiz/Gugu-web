@@ -35,7 +35,7 @@
               <span class="rename-ghost">{{ renameText || ' ' }}</span>
               <input
                 ref="renameInputRef"
-                class="rename-input"
+                class="rename-input-inline"
                 v-model="renameText"
                 v-enter.prevent="() => commitRename(f)"
                 @keydown.esc="renamingId = null"
@@ -384,20 +384,5 @@ const files = computed(() =>
 }
 .fc-card:hover .fc-hover-actions { opacity: 1; }
 
-
-.rename-sizer {
-  display: inline-block; position: relative;
-  max-width: 100%; vertical-align: top;
-}
-.rename-ghost {
-  display: block; visibility: hidden; white-space: pre;
-  font: inherit; padding: 0 5px; min-width: 2ch;
-}
-.rename-input {
-  position: absolute; inset: 0; width: 100%;
-  outline: none;
-  background: rgba(255,255,255,0.9); border: 1px solid rgba(123,127,178,0.4);
-  border-radius: 4px; padding: 0 4px;
-  font: inherit; color: inherit;
-}
+/* .rename-sizer / .rename-ghost / .rename-input-inline 已提到 global.css（全站重命名输入框共用） */
 </style>

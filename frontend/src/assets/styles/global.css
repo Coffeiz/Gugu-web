@@ -151,6 +151,26 @@ body {
 .fc-card:active:not(:has(.fc-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }
 .folder-card:active:not(:has(.fd-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }
 
+/* 重命名输入框（宽度随文字自适应，Dashboard FilePanel、文件库、ProjectModal 文件卡/文件夹/
+   项目模板改名共用）：.rename-ghost 隐形渲染同样的文字撑开 .rename-sizer 的宽度（display:
+   inline-block 天然收缩到内容宽度），.rename-input-inline 绝对定位铺满 sizer、随之伸缩。
+   ghost 与 input 用 font: inherit 各自跟随所在组件的字号/字体，不用逐处硬编码。 */
+.rename-sizer {
+  display: inline-block; position: relative;
+  max-width: 100%; vertical-align: top;
+}
+.rename-ghost {
+  display: block; visibility: hidden; white-space: pre;
+  font: inherit; padding: 0 5px; min-width: 2ch;
+}
+.rename-input-inline {
+  position: absolute; inset: 0; width: 100%;
+  outline: none;
+  background: rgba(255,255,255,0.9); border: 1px solid rgba(123,127,178,0.4);
+  border-radius: 4px; padding: 0 4px;
+  font: inherit; color: inherit;
+}
+
 /* ── 面板左侧栏通用毛玻璃样式 ── */
 .panel-left {
   background: rgba(255,255,255,0.6);
