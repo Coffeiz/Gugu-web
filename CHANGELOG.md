@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-07-01 · 日历磨砂玻璃白带根治（GlassBg 活玻璃）+ 交互反馈打磨 + 视图切换图标修复
+
+> 收尾 0.15.0 日历周视图后的一批体验修复：顶栏/日历工具栏磨砂玻璃在 hover 时闪「白带」根治（改用不依赖 backdrop-filter 的 `GlassBg` 活玻璃）；快速点击面板「变暗」修复；月/周/全天/日期头的 hover 与选中统一为淡入淡出 + 可叠加、点击不再闪现旧态；文件库/项目卡「网格·列表」切换图标被 flex 挤压变小修复。
+
 ### 修复
 
 - **日历磨砂玻璃「白带」根治 + `GlassBg` 活玻璃组件**（`layouts/DefaultLayout.vue`、`views/Calendar/index.vue`、`components/common/GlassBg.vue`）：顶栏与日历工具栏在 hover 可点击内容时下沿闪白带——Chrome `backdrop-filter` 在动态背景上的边缘重栅格伪影，各种合成隔离（translateZ/isolation/page-content 提层）均无法根治。改用不依赖 `backdrop-filter` 的 `<GlassBg>`（页面背景副本做半透明磨砂，跨引擎一致、无白带，为将来自定义壁纸留好接入点）。真凶经 perf trace 定位为 `.cal-chip` 的 `box-shadow: inset 0 0 0 100px` 等**主线程重绘**拖累磨砂层，已把日历各 hover/高光改为合成层友好的 opacity 叠层（`.cal-chip`、月格、周日期头、`.wv-ev` 等）。
