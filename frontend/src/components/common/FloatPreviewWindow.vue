@@ -265,16 +265,13 @@ function onImageLoaded() {
 function onPlaceholderLoad(e) {
   if (blobUrl.value) return  // 快速下载：全图已到，不显示占位图
   const { naturalWidth: nw, naturalHeight: nh } = e.target
-  if (nw && nh && !ready.value) {
-    if (Math.max(nw, nh) < CARD_THUMB_CAP) {
-      // 缩略图长边没到 card 上限 → 没被 Pillow 缩过，就是原图真实尺寸，直接按它定窗口，
-      // 别再套 4K 估算把小图错误放大（等会真图加载完还得缩回去，观感很差）
-      fitWindow(nw, nh)
-    } else {
-      // 缩略图已顶到上限，原图可能更大（被压缩过）→ 沿用 4K 估算兜底，真图加载完会再校正一次
-      const s = 3840 / Math.max(nw, nh)
-      fitWindow(Math.round(nw * s), Math.round(nh * s))
-    }
+  // 缩略图长边没到 card 上限 → 没被 Pillow 缩过，就是原图真实尺寸，直接按它定窗口。
+  // 顶到上限则原图真实尺寸未知（可能是刚好 192 附近的低分辨率图，也可能是被压缩过的大图，
+  // 无法区分）——不再瞎猜（之前套 4K 估算，遇到实际是低分辨率图时会把窗口猜得比真实大得多，
+  // 真图加载完再缩回真实尺寸，观感是「先变超大再骤缩」）；宁可窗口暂不出现，等真图加载完
+  // 直接定到正确尺寸（同「快速下载」路径），不做中间的错误猜测。
+  if (nw && nh && !ready.value && Math.max(nw, nh) < CARD_THUMB_CAP) {
+    fitWindow(nw, nh)
   }
   placeholderReady.value = true
 }
