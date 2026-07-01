@@ -47,5 +47,9 @@
   position: absolute;
   inset: 0;
   background: var(--gb-tint, var(--glass-bg));
+  /* 玻璃亮边高光：GlassBg 不透明填充会盖住宿主 .glass-card 自身的 inset 高光，这里补回，
+     和其他玻璃卡一致的「上沿高光 + 左沿高光」。inset 阴影静态、不随交互变，无重绘白带之虞。*/
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.95),
+              inset 1px 0 0 rgba(255,255,255,0.55);
 }
 </style>
