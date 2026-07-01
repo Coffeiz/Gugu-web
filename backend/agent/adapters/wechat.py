@@ -53,7 +53,8 @@ def _img_ext_mime(data: bytes) -> tuple[str, str]:
 async def _ingest_wechat_media(items: list, owner: str) -> list:
     """下载并解密微信图片项 → 暂存 → 返回 [attach_id]（照搬 qq `_ingest_qq_media` 模式）。
     iLink 媒体走 CDN（`image_item.media.full_url`）+ AES-128-ECB（key=`image_item.aeskey` hex）。
-    file/voice 项格式暂未知 → 留日志待补。"""
+    语音（type==3）已在 `_handle_msg` 里用自带的 `voice_item.text` 转写文字处理，不会传进这里；
+    file 项格式仍未知 → 留日志待补。"""
     import httpx
     from app.core import chat_attach
     out: list = []
@@ -93,8 +94,24 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
         (it.get("text_item") or {}).get("text", "")
         for it in items
     ).strip()
-    # 非文本项（图片/语音/文件）：iLink 媒体 AES-128-ECB + CDN，下载解密暂存（图片已支持，见 _ingest）。
-    non_text = [it for it in items if it.get("type") != 1]
+    # 语音消息（type==3）：iLink 自带 ASR 转写在 item.voice_item.text，直接当对话文本注入，
+    # 不用像图片那样走 CDN + AES-128-ECB 下载解密（微信官方已经转好文字了）。转写偶尔为空
+    # （ASR 失败/听不清）给个兜底提示，不静默丢消息。
+    voice_parts = []
+    for it in items:
+        if it.get("type") != 3:
+            continue
+        vt = (it.get("voice_item") or {}).get("text", "").strip()
+        voice_parts.append(
+            f"🎤 用户发来一条语音（已转文字）：「{vt}」。请直接听懂这段话并自然回应——"
+            f"这是对话内容，不是文件，别问「要不要保存」这类话。"
+            if vt else "🎤 用户发来一条语音，但转写失败/没听清，麻烦让用户用文字重新说一下。"
+        )
+    if voice_parts:
+        text = (text + "\n\n" if text else "") + "\n\n".join(voice_parts)
+    # 非文本项（图片/文件）：iLink 媒体 AES-128-ECB + CDN，下载解密暂存（图片已支持，见 _ingest）。
+    # 语音（type==3）已在上面转成文本处理，这里排除掉，不再走媒体暂存流程。
+    non_text = [it for it in items if it.get("type") not in (1, 3)]
     if not from_user:
         return
     if not text and not non_text:   # 真空消息
