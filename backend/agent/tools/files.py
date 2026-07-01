@@ -954,6 +954,33 @@ def _url_is_safe(url: str) -> str | None:
     return None
 
 
+def _fmt_age(ttl_left: int, total_ttl: int) -> str:
+    """按剩余 TTL 反推大致存了多久（暂存无绝对时间戳，只能这样估）。"""
+    if ttl_left is None or ttl_left < 0:
+        return "未知"
+    elapsed = max(0, total_ttl - ttl_left)
+    if elapsed < 3600:
+        return f"约{max(1, elapsed // 60)}分钟前"
+    if elapsed < 86400:
+        return f"约{elapsed // 3600}小时前"
+    return f"约{elapsed // 86400}天前"
+
+
+async def _list_recent_attachments(db, user_id, args: dict):
+    """列出该用户当前暂存区（未过期）的附件，供模型在「刚刚的图/那张图」等模糊指代时反查 attach_id。"""
+    from app.core import chat_attach
+    staged = await chat_attach.list_staged(user_id)
+    if not staged:
+        return {"count": 0, "items": [], "note": "暂存区当前没有未过期的附件"}
+    items = [{
+        "attach_id": m["attach_id"], "name": m.get("name"), "ext": m.get("ext"),
+        "kind": m.get("kind"), "platform": m.get("platform"),
+        "size_bytes": m.get("size"), "img_width": m.get("img_width"), "img_height": m.get("img_height"),
+        "staged_about": _fmt_age(m.get("_ttl"), chat_attach.TTL),
+    } for m in staged]
+    return {"count": len(items), "items": items}
+
+
 async def _send_file_from_url(user_id, url: str, title: str):
     """下载一张网络图片（如 image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。"""
     reason = _url_is_safe(url)
@@ -1004,11 +1031,29 @@ async def _send_file_from_url(user_id, url: str, title: str):
 
 async def _send_file(db, user_id, args: dict):
     """把文件发到对话窗口（前端渲染可下载卡片）：文件库里的文件用 file_id/file；
-    网络图片（如 image_search 搜到的）用 url——下载后暂存成聊天附件，同一套 _artifact 机制。
+    网络图片（如 image_search 搜到的）用 url——下载后暂存成聊天附件，同一套 _artifact 机制；
+    之前收到/发过、还在暂存区的附件用 attach_id——直接重发，不重新下载、不进文件库。
     返回 _artifact，core 据此推一个 file 事件给前端；普通字段回给 LLM。"""
     url = (args.get("url") or "").strip()
     if url:
         return await _send_file_from_url(user_id, url, args.get("title") or "")
+
+    attach_id = (args.get("attach_id") or "").strip()
+    if attach_id:
+        from app.core import chat_attach
+        meta, note = await chat_attach.resolve_attach(user_id, attach_id)
+        if not meta:
+            return json.dumps({"error": "没找到这个附件，可能已经过期了（聊天附件只暂存 7 天）"}, ensure_ascii=False)
+        name = f"{meta['name']}.{meta['ext']}" if meta.get("ext") else meta["name"]
+        return {
+            "ok": True,
+            "message": f"已把《{name}》重新发到对话窗口。{note}".strip(),
+            "_artifact": {
+                "attach_id": meta["attach_id"], "name": meta["name"], "ext": meta.get("ext"),
+                "size_bytes": meta.get("size"), "kind": meta.get("kind"),
+                "img_width": meta.get("img_width"), "img_height": meta.get("img_height"),
+            },
+        }
 
     f, err = await _resolve_file(db, user_id, args)
     if err:
@@ -1033,7 +1078,8 @@ class FilesSkill(BaseSkill):
     tools = [
         Tool(
             name="list_files", label="查询文件",
-            description="查询文件，可按空间(project/mind/asset/personal)、项目、扩展名、名称关键词筛选。",
+            description="查询文件，可按空间(project/mind/asset/personal)、项目、扩展名、名称关键词筛选。"
+                        "结果回给用户时按列表呈现（每个文件一行，多文件夹/项目时分组），别写成一段话堆文件名。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1259,11 +1305,14 @@ class FilesSkill(BaseSkill):
         Tool(
             name="send_file", label="发送文件",
             description="把一个文件**真正发给用户**（网页显示下载/图片卡片；飞书/QQ 直接把文件发到对方聊天里）。"
-                        "两种来源：① 用户文件库里的文件——用 file 指定文件名（如「合同.pdf」）或 file_id；"
-                        "② 网络图片——用 url 传图片直链（如 image_search 结果的 img_src），会下载后作为聊天附件发出（不进文件库）。"
+                        "三种来源：① 用户文件库里的文件——用 file 指定文件名（如「合同.pdf」）或 file_id；"
+                        "② 网络图片——用 url 传图片直链（如 image_search 结果的 img_src），会下载后作为聊天附件发出（不进文件库）；"
+                        "③ 之前收到/发过、还在暂存区的附件——用 attach_id 直接重发，不重新下载、不进文件库。"
+                        "attach_id 来自当轮上下文「用户上传了文件…(attach_id=X)」的提示；如果用户说「刚刚的图/那张图/X平台发的那个」"
+                        "但你不知道 attach_id，先调 list_recent_attachments 查出来再传。"
                         "当用户说「把X发给我/给我那个文件/发过来」时**必须调用本工具**——绝不能只回「正在发送/已发给你」却不调用。"
                         "文件库文件**仅在用户明确要文件时才调**；创建/保存文档后**别自动发**——一句话告诉用户存在哪个目录即可。"
-                        "但用 url 发网络图片时不受此限——用户要找图/要一张图本身就是要看/要发，搜到后可直接调用，不用再问一句「要不要发」。",
+                        "但用 url/attach_id 发图时不受此限——用户要找图/要一张图本身就是要看/要发，搜到/查到后可直接调用，不用再问一句「要不要发」。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1271,9 +1320,19 @@ class FilesSkill(BaseSkill):
                     "file_id": {"type": "integer", "description": "文件 id（已知时可用），发文件库文件时用"},
                     "url": {"type": "string", "description": "网络图片直链（如 image_search 结果的 img_src），传了则忽略 file/file_id"},
                     "title": {"type": "string", "description": "配合 url 用：给这张图起个名字（可选，不传默认「图片」）"},
+                    "attach_id": {"type": "string", "description": "之前暂存过的附件 attach_id（见上下文提示，或先调 list_recent_attachments 查），传了则忽略 file/file_id/url"},
                 },
             },
             handler=_send_file,
+        ),
+        Tool(
+            name="list_recent_attachments", label="查最近暂存的附件",
+            description="列出该用户当前所有还在暂存区、未过期的聊天附件（用户发来的图/文件、机器人搜图发过的图等，暂存 7 天）。"
+                        "当用户提到「刚刚的图/那张图/昨天发的那个/X平台那张」但当轮上下文里没有 attach_id 提示时用——"
+                        "查到后从返回列表里挑出匹配的（按名称/平台/大约多久前判断），再用 send_file(attach_id=...) 重发，"
+                        "或 save_uploaded_file(attach_id=...) 存进文件库。列表按暂存时间从新到旧排。",
+            input_schema={"type": "object", "properties": {}},
+            handler=_list_recent_attachments,
         ),
         Tool(
             name="save_uploaded_file", label="保存上传文件",
