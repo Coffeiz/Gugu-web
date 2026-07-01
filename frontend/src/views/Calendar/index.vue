@@ -180,9 +180,7 @@
                    :style="{ backgroundSize: '100% ' + HOUR_H + 'px' }"
                    @mousedown="onColDown($event, d)" @mousemove="onColMove($event, d)" @mouseleave="onColLeave"
                    @contextmenu.prevent="onColContextMenu($event, d)">
-                <Transition name="wvfade">
-                  <div v-if="wvSelectedSlot && wvSelectedSlot.iso === d.iso" class="wv-selected" :style="{ top: Math.min(wvSelectedSlot.h0, wvSelectedSlot.h1) * HOUR_H + 'px', height: (Math.abs(wvSelectedSlot.h1 - wvSelectedSlot.h0) + 1) * HOUR_H + 'px' }"></div>
-                </Transition>
+                <div v-if="wvSelectedSlot && wvSelectedSlot.iso === d.iso" class="wv-selected" :style="{ top: Math.min(wvSelectedSlot.h0, wvSelectedSlot.h1) * HOUR_H + 'px', height: (Math.abs(wvSelectedSlot.h1 - wvSelectedSlot.h0) + 1) * HOUR_H + 'px' }"></div>
                 <div v-if="wvHover && wvHover.iso === d.iso && !wvDragging && !wvHoverOnSel()" class="wv-hover" :style="{ top: wvHover.h * HOUR_H + 'px', height: HOUR_H + 'px' }"></div>
                 <div v-if="d.isToday" class="wv-now" :style="{ top: nowTop + 'px' }"></div>
                 <div v-for="b in timedLayoutFor(d.iso)" :key="b.ev._uid" class="wv-ev cal-chip"
@@ -2310,7 +2308,7 @@ async function saveEvent() {
 .more-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .more-pop-enter-from,.more-pop-leave-to { opacity: 0; transform: scaleY(0.88); }
 
-.add-event-popup { background: rgba(255,255,255,0.6); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
+.add-event-popup { background: rgba(255,255,255,0.98); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
 .popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 .popup-title { font-size: 13px; font-weight: 700; color: #1e2028; }
 .popup-input { width: 100%; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 12px; font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028; outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }
@@ -2417,9 +2415,6 @@ async function saveEvent() {
 /* 选中/拖拽选区：直接纯色变暗，无边框、无过渡动画（点击那一下不闪）*/
 .wv-selected { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.1); pointer-events: none; z-index: 1; transition: none; }
 .wv-col.weekend .wv-selected { background: rgba(195,90,90,0.1); }
-/* 淡入淡出（同月视图单元格背景 0.12s）；仅淡 opacity，拖拽时的 top/height 变化仍瞬时（不卡） */
-.wvfade-enter-active, .wvfade-leave-active { transition: opacity 0.12s ease; }
-.wvfade-enter-from, .wvfade-leave-to { opacity: 0; }
 .wv-now { position: absolute; left: 0; right: 0; height: 0; border-top: 2px solid #e5484d; z-index: 6; pointer-events: none; }
 .wv-now::before { content: ''; position: absolute; left: -3px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: #e5484d; }
 .wv-ev { position: absolute; box-sizing: border-box; border: 1px solid; border-radius: 6px; padding: 1px 5px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; line-height: 1.25; z-index: 3; transition: box-shadow 0.25s ease; }
