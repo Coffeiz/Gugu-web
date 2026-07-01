@@ -13,6 +13,8 @@
 
 - **日历周视图（时间轴）**（`views/Calendar/index.vue`）：工具栏加「月/周」切换（在「今天」旁），prev/next/今天按当前视图走。周视图为时间轴布局——左侧 0–23 点刻度 + 周一~周日 7 列、24h 可滚动、整点横线、当前时间红线；有时间的活动按 `time/end_time` 摆成色块、重叠自动并排分栏（结束<开始截到 24:00）；全天行显示跨天项目条（进度填充、封顶 10、每天列各自「更多」复用月视图 `showMore` 弹窗与排序）+ 单日项目 + 无时间活动（合并排序、高度自适应）。交互：拖空白建活动（点=1h/竖拖=多h、选中格作为新建起止时间来源）、悬停高亮小时格、活动块拖体**自由移动**（横向改日期 + 纵向平移时间、保持时长）、拖**上下边缘**改起止时间（按按下位置判定缩放/移动、互不冲突）、单击活动开编辑卡、活动 hover 整体均匀亮起、块内显示时间/名称/描述；改动均走 `eventsApi.update`（version 409 提示刷新）。
 
+- **周视图：全天/顶部日期多日框选 + 右键菜单**（`views/Calendar/index.vue`）：全天区与顶部日期格支持横向拖拽多选（复用月视图 rangeSelect/activeRange，单选也高亮）；右键菜单——全天/日期区「新建项目」（带框选日期区间，单选则单天）、小时区「新建活动」（用左键拖出的选区时间段或右键点击处整点起 1h），菜单按区域智能显隐（时段只显活动）。日选择与时段选择互斥（选一个清另一个）。样式打磨：今日数字改方形圆角（同月视图）、选中/悬停统一为内嵌小底色块（相邻不连片）、配色对齐月视图 in-range（含周末暖红）。
+
 ### 改进
 
 - **咕咕相处方式重构：persona 纯人格 + 反思驱动 stance 选行为模块**（`prompts/persona.md` + `prompts/behaviors/*.md` + `agent/behaviors.py` + `memory/{store,reflection}.py` + `context/builder.py`）：解决「总爱把对话往推进项目上带、想闲聊时没闲聊感」。① persona **瘦身为纯人格**（删四态打法 + 主动思考），相处行为全部抽成独立模块；② 新增常驻 `baseline`（四态地图 + 中性默认「先理解、别急着推进」）+ `companion`（陪聊）/`execution`/`record`/`query`/`reflect`，与既有 `emotion-first`/`stuck-first`/`decision-explore` 一起按 **1:1 stance** 点亮；③ 模块选择从「正则猜本句」改为**反思（异步 LLM）产出的 stance 驱动**（= `perception.intent`，落 per-user `.agent/stance.json`、带新鲜度衰减 30min 闸；热路径零 LLM、滞后一轮可接受）。效果：推进从「无脑默认」降为「判成执行/推进 stance 才点亮」，闲聊轮纯陪聊、无压力。详见 `docs/感知系统-架构升级.md` §2.6。
@@ -25,6 +27,7 @@
 
 - **续聊（重开浏览器接续上次对话）时不再闪默认问候**（`components/common/GuguChat.vue`）：问候由打开对话框时的 `animateGreeting` 显示，它在 `loadSession` 异步加载完替换消息**之前**看到的还是初始问候占位 → 把问候打了出来，造成「续聊的旧对话」与「问候」同时出现。修法：续聊时立刻清空问候占位，加载竞态期不显示；那段会话真没了再恢复问候占位 + 重新生成。
 - **周视图活动 409 冲突误用未定义的 `loadEvents()`**（`views/Calendar/index.vue`，TS 迁移时 vue-tsc 抓出的真 bug）：改为 `fetchEvents()`，原会在「活动已被他人修改」的刷新路径上运行时抛错。
+- **定时推送/主动消息现在进 IM 会话历史**（`app/scheduled_tasks.py` + `agent/runner.py`）：之前定时任务走 `run_ephemeral`（不建 session / 不存 DB）+ 直发 IM，推送从不进会话历史 → 用户回复时咕咕零上下文（发完新闻速览、用户回「4」咕咕不知道指什么）。修法：投递成功后把推送 append 到该用户 IM 最近会话（`imsession` 指向的那个，无则建普通会话并指过去、刷新 12h TTL）；冷启动时推送是会话首条 assistant（前导会被 sanitize 剥掉）→ 塞进 system prompt 兜底，让咕咕知道自己刚主动发了啥。
 
 ## [0.14.3] - 2026-06-30 · 日历提醒完整体系 + 文件库 UX 打磨 + DeepSeek 思考可调 + 工具错误脱敏
 
