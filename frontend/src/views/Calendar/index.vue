@@ -702,24 +702,33 @@ function onAllDayDown(e) {
   const startIso = _isoFromAllDayX(e.clientX)
   if (!startIso) return
   e.preventDefault()
-  wvSelectedSlot.value = null   // 选日期 → 清掉小时格选区（两者用途不同，互斥）
-  rangeSelect.active = true
-  rangeSelect.anchor = startIso
-  hoverRangeEnd.value = startIso
-  selRange.value = null
   cellCtx.show = false
-  const mm = (ev) => { const iso = _isoFromAllDayX(ev.clientX); if (iso) hoverRangeEnd.value = iso }
+  // 关键：mousedown 不清空 selRange、不进 range 态，否则单击时选中层会先淡出(变淡)再淡入。
+  // 只有真拖到「别的天」才进入 range 选择；单击在 mouseup 直接切到被选中态（旧选区一直在，无变淡反馈）。
+  let dragging = false
+  const mm = (ev) => {
+    const iso = _isoFromAllDayX(ev.clientX)
+    if (!iso) return
+    if (!dragging && iso !== startIso) {
+      dragging = true
+      wvSelectedSlot.value = null   // 拖日期 → 清小时格选区（互斥）
+      rangeSelect.active = true
+      rangeSelect.anchor = startIso
+    }
+    if (dragging) hoverRangeEnd.value = iso
+  }
   const mu = (ev) => {
     document.removeEventListener('mousemove', mm)
     document.removeEventListener('mouseup', mu)
-    rangeSelect.active = false
     const endIso = _isoFromAllDayX(ev.clientX) || startIso
+    rangeSelect.active = false
     hoverRangeEnd.value = null
-    if (endIso !== startIso) {   // 多选：提交日期区间
+    if (dragging && endIso !== startIso) {   // 跨天多选：提交日期区间
       const [a, b] = [startIso, endIso].sort()
       selRange.value = { start: a, end: b }
       document.addEventListener('click', ce => ce.stopPropagation(), { capture: true, once: true })
-    } else {                     // 单选：单天也用 range 表示（统一高亮 + 可右键建单天项目）
+    } else {                     // 单击：直接切到被选中态（单天也用 range 表示，统一高亮 + 可右键建单天项目）
+      wvSelectedSlot.value = null   // 选日期 → 清小时格选区（互斥）
       selRange.value = { start: startIso, end: startIso }
       selectedDate.value = startIso
     }
