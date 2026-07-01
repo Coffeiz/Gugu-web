@@ -84,13 +84,19 @@ body {
 }
 
 /* 日历可点击条/chip 通用 hover（event-chip、chip-more-btn、overflow-item、project-bar 共用） */
-.cal-chip {
-  transition: box-shadow 0.25s ease;
+/* hover 高光：原来用 box-shadow: inset 0 0 0 100px 当白色叠层——inset box-shadow 无法 GPU 合成，
+   每次 hover 条都 0.25s 主线程重绘、级联到 glass-card/layout-main，拖累顶栏 backdrop-filter 重栅格
+   → 下沿闪白带（见 perf trace，wv-pbar/project-bar 上千次重绘）。改用 ::after + opacity 过渡：
+   opacity 走合成器线程、不触发主线程重绘，观感一致（hover 变亮），彻底断掉级联。*/
+.cal-chip { position: relative; }
+.cal-chip > * { position: relative; z-index: 1; }   /* 内容压在高光叠层之上 */
+.cal-chip::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; z-index: 0;
+  background: rgba(255,255,255,0.45); opacity: 0;
+  transition: opacity 0.2s ease; pointer-events: none;
 }
-.cal-chip:hover,
-.cal-chip.bar-hovered {
-  box-shadow: inset 0 0 0 100px rgba(255,255,255,0.45), 0 2px 6px rgba(80,90,110,0.1);
-}
+.cal-chip:hover::after,
+.cal-chip.bar-hovered::after { opacity: 1; }
 
 /* 文件操作按钮（卡片悬浮，默认 20×20） */
 .file-card-btn {
