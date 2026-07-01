@@ -974,6 +974,9 @@ function openFileFromChat(f) {
       ext: (f.ext || '').toUpperCase(),
       displayName: f.name,
       size: fmtSize(f.size_bytes),
+      // 真实像素尺寸（有的话）：预览窗口直接按此定尺，不用再靠缩略图猜大小
+      imgWidth: f.img_width ?? null,
+      imgHeight: f.img_height ?? null,
     })
     return
   }
@@ -1495,7 +1498,7 @@ async function send(forcedText) {
   if (fromInput) {
     _sessionTurn++
     messages.value.push({ id: mkid(), role: 'user', text, time: now(),
-      files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl })) : undefined })
+      files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined })
     inputText.value = ''
     pendingAtt.value = []
     if (expInputEl.value) expInputEl.value.style.height = 'auto'

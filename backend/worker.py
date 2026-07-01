@@ -116,7 +116,8 @@ _FEISHU_FILE_MAX = 30 * 1024 * 1024
 
 
 async def _send_files(payload: dict, files: list):
-    """咕咕 send_file 工具产出的文件，按平台发回。
+    """咕咕 send_file 工具产出的文件，按平台发回。两种来源：① 文件库文件（_artifact 带 file_id）；
+    ② 网络图片/暂存附件（_artifact 带 attach_id，如 image_search 配 send_file(url=...) 下载暂存的图）。
     飞书：图片/文件都能发（≤10/30MB）；QQ：⚠️ 官方只开放发图片，文档发不了 → 兜底提示。"""
     if not files:
         return
@@ -131,34 +132,46 @@ async def _send_files(payload: dict, files: list):
         _S._build_engine()
     for f in files:
         fid = f.get("file_id")
-        if not fid:
-            continue
+        attach_id = f.get("attach_id")
         try:
-            async with _S._SessionLocal() as db:
-                rec = await db.get(File, fid)
-            if not rec:
-                continue
-            fname = f"{rec.display_name}.{rec.ext}"
-            if platform == "feishu":
-                data = await get_storage().get(rec.storage_key)
-                await _send_file_feishu(payload, rec, data, fname)
+            if fid:
+                async with _S._SessionLocal() as db:
+                    rec = await db.get(File, fid)
+                if not rec:
+                    continue
+                display_name, ext, storage_key = rec.display_name, rec.ext, rec.storage_key
+            elif attach_id:
+                from app.core import chat_attach
+                owner = payload.get("owner_user_id")
+                meta = await chat_attach.get_meta(owner, attach_id) if owner else None
+                if not meta:
+                    continue
+                display_name = f.get("name") or meta.get("name") or "图片"
+                ext, storage_key = meta.get("ext", ""), meta["storage_key"]
             else:
-                await _send_file_qq(payload, rec, fname)   # OSS 用 URL 模式时不必读字节
+                continue
+            fname = f"{display_name}.{ext}"
+            if platform == "feishu":
+                data = await get_storage().get(storage_key)
+                await _send_file_feishu(payload, ext, data, fname)
+            else:
+                await _send_file_qq(payload, storage_key, ext, display_name, fname)   # OSS 用 URL 模式时不必读字节
         except Exception as e:
-            print(f"[worker] 发文件出错 {fid}: {type(e).__name__}: {e}", flush=True)
+            print(f"[worker] 发文件出错 {fid or attach_id}: {type(e).__name__}: {e}", flush=True)
 
 
-async def _send_file_feishu(payload, rec, data: bytes, fname: str):
+async def _send_file_feishu(payload, ext: str, data: bytes, fname: str):
     from agent.adapters import feishu
     # 超限直接拦下，别让飞书返回错误页把 SDK 撞成 JSONDecodeError；改发一句说明
-    is_img = (rec.ext or "").lower() in _FEISHU_IMAGE_EXTS
+    is_img = (ext or "").lower() in _FEISHU_IMAGE_EXTS
     limit = _FEISHU_IMAGE_MAX if is_img else _FEISHU_FILE_MAX
     if len(data) > limit:
         mb, lim_mb = len(data) / 1048576, limit // 1048576
         print(f"[worker] feishu 发文件 {fname}: 跳过（{mb:.1f}MB > {lim_mb}MB 上限）", flush=True)
         await _send(payload, f"《{fname}》有 {mb:.0f}MB，超过飞书 {lim_mb}MB 上限发不了 😅 你去网页对话或文件库里下载吧。")
         return
-    ok = await feishu.send_file(payload.get("chat_id"), data, rec.display_name, rec.ext, payload.get("channel_id"))
+    display_name = fname.rsplit(".", 1)[0] if "." in fname else fname
+    ok = await feishu.send_file(payload.get("chat_id"), data, display_name, ext, payload.get("channel_id"))
     print(f"[worker] feishu 发文件 {fname}: {'ok' if ok else '失败'}", flush=True)
     if not ok:
         await _send(payload, f"《{fname}》没发出去（飞书那边拒了），你去网页对话或文件库里下载吧。")
@@ -169,22 +182,22 @@ async def _send_file_feishu(payload, rec, data: bytes, fname: str):
 _QQ_FILE_MAX = 10 * 1024 * 1024
 
 
-async def _send_file_qq(payload, rec, fname: str):
+async def _send_file_qq(payload, storage_key: str, ext: str, display_name: str, fname: str):
     from agent.adapters import qq
     from app.services.storage import get_storage
     openid = payload.get("platform_user_id")
     storage = get_storage()
-    url = storage.fetch_url(rec.storage_key)   # OSS→签名 URL（无体积限制）；本地→None
+    url = storage.fetch_url(storage_key)   # OSS→签名 URL（无体积限制）；本地→None
     if url:
-        ok = await qq.send_file(openid, None, rec.display_name, rec.ext,
+        ok = await qq.send_file(openid, None, display_name, ext,
                                 payload.get("channel_id"), payload.get("message_id"), url=url)
     else:
         # 本地存储没公网 URL，只能 base64 上传，受 ~10MB 限制
-        data = await storage.get(rec.storage_key)
+        data = await storage.get(storage_key)
         if len(data) > _QQ_FILE_MAX:
             await _send(payload, f"《{fname}》有 {len(data)/1048576:.0f}MB，超过 QQ 上限（本地存储约 10MB）发不了，去网页/文件库下载吧。")
             return
-        ok = await qq.send_file(openid, data, rec.display_name, rec.ext,
+        ok = await qq.send_file(openid, data, display_name, ext,
                                 payload.get("channel_id"), payload.get("message_id"))
     print(f"[worker] qq 发文件 {fname}: {'ok' if ok else '失败'}{'（URL模式）' if url else ''}", flush=True)
     if not ok:

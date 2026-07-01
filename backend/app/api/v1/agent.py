@@ -59,7 +59,7 @@ async def upload_attachment(
         meta = await chat_attach.stage_voice(current_user.id, name or "语音", ext, mime, data, duration=dur)
     else:
         meta = await chat_attach.stage(current_user.id, name, ext, mime, data)
-    return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration")}
+    return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration", "img_width", "img_height")}
 
 
 @router.get("/attachment/{attach_id}/thumb")

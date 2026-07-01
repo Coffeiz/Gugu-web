@@ -888,9 +888,101 @@ async def _copy_file(db, user_id, args: dict):
     return {"success": True, "file_id": new_file.id, "name": f"{new_display}.{f.ext}"}
 
 
+# ── 网络图片下载（send_file 的 url 分支用）：SSRF 防护 ─────────────────────────
+_SEND_URL_MAX_BYTES = 15 * 1024 * 1024   # 下载体积上限
+_SEND_URL_IMAGE_EXT = {
+    "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/gif": "gif",
+    "image/webp": "webp", "image/bmp": "bmp",
+}
+
+
+def _url_is_safe(url: str) -> str | None:
+    """校验一个外部 URL 能不能拿去下载：只准 http/https，挡掉内网/回环/链路本地/云元数据地址。
+    返回 None=安全；否则返回拒绝原因。"""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return "URL 格式不合法"
+    if parsed.scheme not in ("http", "https"):
+        return "只支持 http/https 链接"
+    host = parsed.hostname
+    if not host:
+        return "URL 缺少主机名"
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return "域名解析失败"
+    for info in infos:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
+            return "该地址指向内网/本机，出于安全考虑不予下载"
+    return None
+
+
+async def _send_file_from_url(user_id, url: str, title: str):
+    """下载一张网络图片（如 image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。"""
+    reason = _url_is_safe(url)
+    if reason:
+        return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
+
+    import httpx
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0),
+            follow_redirects=True,
+        ) as client:
+            resp = await client.get(url)
+    except Exception as e:
+        return json.dumps({"error": f"图片下载失败（{type(e).__name__}），换一张或换个来源试试"}, ensure_ascii=False)
+    if resp.status_code != 200:
+        return json.dumps({"error": f"图片下载失败（HTTP {resp.status_code}）"}, ensure_ascii=False)
+
+    ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+    data = resp.content
+    ext = _SEND_URL_IMAGE_EXT.get(ctype)
+    if not ext:
+        return json.dumps({"error": f"这个链接返回的不是支持的图片格式（{ctype or '未知类型'}）"}, ensure_ascii=False)
+    if not data:
+        return json.dumps({"error": "下载到的内容是空的"}, ensure_ascii=False)
+    if len(data) > _SEND_URL_MAX_BYTES:
+        return json.dumps({"error": f"图片过大（{len(data) / 1048576:.1f}MB），超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限"}, ensure_ascii=False)
+
+    from app.core import chat_attach
+    name = (title or "").strip()[:80] or "图片"
+    meta = await chat_attach.stage(user_id, name, ext, ctype, data, kind="image")
+    return {
+        "ok": True,
+        "message": f"已把「{name}」发到对话窗口。",
+        "_artifact": {
+            "attach_id": meta["attach_id"],
+            "name": name,
+            "ext": ext,
+            "size_bytes": len(data),
+            "kind": "image",
+            # 带上真实像素尺寸：前端预览窗口直接按此定尺，不用再靠缩略图猜（猜不准会出现
+            # 「先弹很大的窗口再缩小」的问题，小图/非4K图尤其明显）
+            "img_width": meta.get("img_width"),
+            "img_height": meta.get("img_height"),
+        },
+    }
+
+
 async def _send_file(db, user_id, args: dict):
-    """把用户文件库里的文件发到对话窗口（前端渲染可下载卡片）。
+    """把文件发到对话窗口（前端渲染可下载卡片）：文件库里的文件用 file_id/file；
+    网络图片（如 image_search 搜到的）用 url——下载后暂存成聊天附件，同一套 _artifact 机制。
     返回 _artifact，core 据此推一个 file 事件给前端；普通字段回给 LLM。"""
+    url = (args.get("url") or "").strip()
+    if url:
+        return await _send_file_from_url(user_id, url, args.get("title") or "")
+
     f, err = await _resolve_file(db, user_id, args)
     if err:
         return err
@@ -903,6 +995,8 @@ async def _send_file(db, user_id, args: dict):
             "name": f.display_name,
             "ext": f.ext,
             "size_bytes": f.size_bytes,
+            "img_width": f.img_width,
+            "img_height": f.img_height,
         },
     }
 
@@ -1137,12 +1231,19 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="send_file", label="发送文件",
-            description="把用户文件库里的一个文件**真正发给用户**（网页显示下载卡片；飞书/QQ 直接把文件发到对方聊天里）。当用户说「把X发给我/给我那个文件/发过来」时**必须调用本工具**——绝不能只回「正在发送/已发给你」却不调用。**仅在用户明确要文件时才调**；创建 / 保存文档后**别自动发**——那只需用一句话告诉用户文件存在哪个目录即可。用 file 指定文件名（如「合同.pdf」）或 file_id。",
+            description="把一个文件**真正发给用户**（网页显示下载/图片卡片；飞书/QQ 直接把文件发到对方聊天里）。"
+                        "两种来源：① 用户文件库里的文件——用 file 指定文件名（如「合同.pdf」）或 file_id；"
+                        "② 网络图片——用 url 传图片直链（如 image_search 结果的 img_src），会下载后作为聊天附件发出（不进文件库）。"
+                        "当用户说「把X发给我/给我那个文件/发过来」时**必须调用本工具**——绝不能只回「正在发送/已发给你」却不调用。"
+                        "文件库文件**仅在用户明确要文件时才调**；创建/保存文档后**别自动发**——一句话告诉用户存在哪个目录即可。"
+                        "但用 url 发网络图片时不受此限——用户要找图/要一张图本身就是要看/要发，搜到后可直接调用，不用再问一句「要不要发」。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file": {"type": "string", "description": "文件名（如 合同.pdf）"},
-                    "file_id": {"type": "integer", "description": "文件 id（已知时可用）"},
+                    "file": {"type": "string", "description": "文件名（如 合同.pdf），发文件库文件时用"},
+                    "file_id": {"type": "integer", "description": "文件 id（已知时可用），发文件库文件时用"},
+                    "url": {"type": "string", "description": "网络图片直链（如 image_search 结果的 img_src），传了则忽略 file/file_id"},
+                    "title": {"type": "string", "description": "配合 url 用：给这张图起个名字（可选，不传默认「图片」）"},
                 },
             },
             handler=_send_file,

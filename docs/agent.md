@@ -493,9 +493,9 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 
 ---
 
-## 六、工具清单（共 54，已实现）
+## 六、工具清单（共 55，已实现）
 
-> 下表领域工具，另加 `web`（`http_get`）、`meta`（`use_skill`）两个工具集（见「Tools 与 Skills」）；搜索为 `web_search`(SearXNG) + `deep_research`(Tavily) 两个，合计 54。
+> 下表领域工具，另加 `web`（`http_get`）、`meta`（`use_skill`）两个工具集（见「Tools 与 Skills」）；搜索为 `web_search`(SearXNG) + `deep_research`(Tavily) + `image_search`(SearXNG images) 三个，合计 55。
 
 > 🔒 = 不可逆操作，受删除二次确认保底（显式 `confirm` 参数，`agent/confirm.py`）保护。所有工具带 `user_id` 所有权校验。
 
@@ -530,7 +530,7 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 | `rename_file` / `move_file` / `copy_file` | 重命名 / 移动 / 复制 |
 | `delete_file` | 删除（进回收站，可还原） |
 | `create_folder` / `list_folders` / `rename_folder` / `delete_folder` | 文件夹增删改查（删夹内文件移至根） |
-| `send_file` | 给用户发可下载文件（见「发送文件」） |
+| `send_file` | 给用户发可下载文件：文件库文件用 `file`/`file_id`；网络图片（如 `image_search` 结果）用 `url`，下载后作为聊天附件发出（见「发送文件」） |
 | `save_uploaded_file` | 把暂存上传附件存进文件库（见「接收文件」） |
 
 ### 客户 · `tools/clients.py`（4）
@@ -549,11 +549,12 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 
 `remember`：把一条关于用户的长期信息写进 `.agent/facts.md`（与反思共用 `merge_facts` 去重）
 
-### 联网搜索 · `tools/search.py`（2）
+### 联网搜索 · `tools/search.py`（3）
 
 - `web_search`：**通用搜索，走自建 SearXNG**（`settings.search.searxng_url`，免费、无配额、快）。返回标题+链接+摘要，适合找官网/文档/GitHub/事实/新闻标题。国内服务器只有 `sogou/quark/360search` 可达，固定带 `engines` 避开会超时的 google/bing。
+- `image_search`：**图片搜索，同样走 SearXNG**（`categories=images`，免费、无配额）。返回候选（标题+来源页+图片直链 `img_src`+缩略图），只列不发；能用的引擎不一定和文本搜索是同一批，独立配 `settings.search.searxng_image_engines`（留空回退复用文本引擎列表）。
 - `deep_research`：**深度研究，走 Tavily**（`settings.search.tavily_api_key`，抓正文+清洗+给 answer），适合读+总结+比较+研究+给引用；受每日次数配额（`SearchUsage`）。
-- 路由（见 `skills.md`）：普通查找走 web_search，读总结走 deep_research，SearXNG 超时/没结果由模型兜底转 deep_research。后台 Admin → Agent 可配两者并各带「测试」按钮（`/admin/config/test-search`）。
+- 路由与成本预算详见按需加载的技能文档 `agent/skills/web-search.md`（`prompts/skills.md` 只留一行指针）：普通查找走 web_search，读总结走 deep_research，找图走 image_search，SearXNG 超时/没结果由模型兜底转 deep_research；图片搜到后配合 `send_file(url=...)` 直接发出。后台 Admin → Agent 可配三者并各带「测试」按钮（`/admin/config/test-search`，`target` 含 `searxng`/`searxng_images`/`tavily`）。
 
 ### 对话 · `tools/conversations.py`（2）
 

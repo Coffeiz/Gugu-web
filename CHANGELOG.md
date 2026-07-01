@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **图片搜索 `image_search` + `send_file` 支持网络图片**（`backend/agent/tools/search.py`、`tools/files.py`）：新增 `image_search` 工具，走自建 SearXNG `categories=images`（免配额），返回候选（标题+来源页+图片直链+缩略图）；`send_file` 加可选 `url` 参数，传入图片直链会下载（SSRF 防护：仅 http/https、挡内网/回环/云元数据地址）后暂存为聊天附件发出，网页端复用既有的 `attach_id` 图片卡片渲染、IM 端（飞书/QQ）由 `worker.py` 新增的 `attach_id` 分支发送——搜到图后可在同一轮直接发给用户，网页和 IM 都能收到。新增独立技能文档 `agent/skills/web-search.md`（联网搜索路由/成本/发图规则，`prompts/skills.md` 精简为一行指针）。管理后台「联网搜索」新增「图片搜索引擎」配置项 + 连通测试（`Admin/Agent/index.vue`，本次顺带转 `lang="ts"`）。
+
 ## [0.15.1] - 2026-07-01 · 日历磨砂玻璃白带根治（GlassBg 活玻璃）+ 交互反馈打磨 + 视图切换图标修复
 
 > 收尾 0.15.0 日历周视图后的一批体验修复：顶栏/日历工具栏磨砂玻璃在 hover 时闪「白带」根治（改用不依赖 backdrop-filter 的 `GlassBg` 活玻璃）；快速点击面板「变暗」修复；月/周/全天/日期头的 hover 与选中统一为淡入淡出 + 可叠加、点击不再闪现旧态；文件库/项目卡「网格·列表」切换图标被 flex 挤压变小修复。

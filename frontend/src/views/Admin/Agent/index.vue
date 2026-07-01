@@ -474,7 +474,7 @@
 
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label">
-              <span>SearXNG 引擎</span>
+              <span>SearXNG 引擎（文本搜索 web_search）</span>
               <span class="behavior-desc">逗号分隔。国内服务器一般只有这几个可达；google/bing 会超时</span>
             </div>
             <input
@@ -484,6 +484,29 @@
               v-model="searchDraft.searxng_engines"
               placeholder="sogou,quark,360search"
             />
+          </div>
+
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>图片搜索引擎（image_search）</span>
+              <span class="behavior-desc">逗号分隔，留空则回退复用上面的文本引擎列表。图片分类能连通的引擎不一定和文本分类是同一批，部署后建议用测试按钮实测调整</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:0;">
+              <span v-if="searchTest.searxng_images.msg" :title="searchTest.searxng_images.msg"
+                    :style="{ color: searchTest.searxng_images.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
+                {{ searchTest.searxng_images.msg }}
+              </span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.searxng_images.loading" @click="testSearch('searxng_images')">
+                {{ searchTest.searxng_images.loading ? '测试中…' : '测试' }}
+              </button>
+              <input
+                type="text"
+                class="behavior-input"
+                style="width: 280px; flex-shrink:0;"
+                v-model="searchDraft.searxng_image_engines"
+                placeholder="留空=复用文本引擎"
+              />
+            </div>
           </div>
 
           <div class="behavior-item" style="grid-column: 1 / -1;">
@@ -892,7 +915,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { PhBrain, PhEye } from '@phosphor-icons/vue'
 import AdminSelect from '@/components/AdminSelect.vue'
@@ -1342,10 +1365,10 @@ async function switchProfile(profile) {
 }
 
 function insertPlaceholder(key) {
-  const ta = document.querySelector('.prompt-textarea')
+  const ta = document.querySelector<HTMLTextAreaElement>('.prompt-textarea')
   if (!ta) return
-  const start = ta.selectionStart
-  const end   = ta.selectionEnd
+  const start = ta.selectionStart ?? 0
+  const end   = ta.selectionEnd ?? 0
   const text  = promptContent.value
   promptContent.value = text.slice(0, start) + key + text.slice(end)
 }
@@ -1439,16 +1462,19 @@ async function saveVoice() {
 
 // ── 搜索连通测试（SearXNG / Tavily）──
 const searchTest = reactive({
-  searxng: { loading: false, ok: false, msg: '' },
-  tavily:  { loading: false, ok: false, msg: '' },
+  searxng:        { loading: false, ok: false, msg: '' },
+  searxng_images: { loading: false, ok: false, msg: '' },
+  tavily:         { loading: false, ok: false, msg: '' },
 })
-async function testSearch(target) {
+async function testSearch(target: 'searxng' | 'searxng_images' | 'tavily') {
   const t = searchTest[target]
   t.loading = true; t.msg = ''
   try {
-    const payload = target === 'searxng'
-      ? { target, searxng_url: searchDraft.searxng_url || '', searxng_engines: searchDraft.searxng_engines || '' }
-      : { target, tavily_api_key: searchDraft.tavily_api_key || '' }   // 留空=用已存 key
+    const payload = target === 'tavily'
+      ? { target, tavily_api_key: searchDraft.tavily_api_key || '' }   // 留空=用已存 key
+      : target === 'searxng_images'
+        ? { target, searxng_url: searchDraft.searxng_url || '', searxng_image_engines: searchDraft.searxng_image_engines || '' }
+        : { target, searxng_url: searchDraft.searxng_url || '', searxng_engines: searchDraft.searxng_engines || '' }
     const res = await adminStore.authFetch('/api/v1/admin/config/test-search', {
       method: 'POST',
       body: JSON.stringify(payload),

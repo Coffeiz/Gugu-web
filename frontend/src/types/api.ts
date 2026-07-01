@@ -3063,7 +3063,7 @@ export interface components {
              * Target
              * @enum {string}
              */
-            target: "searxng" | "tavily";
+            target: "searxng" | "searxng_images" | "tavily";
             /**
              * Searxng Url
              * @default
@@ -3074,6 +3074,11 @@ export interface components {
              * @default
              */
             searxng_engines: string;
+            /**
+             * Searxng Image Engines
+             * @default
+             */
+            searxng_image_engines: string;
             /**
              * Tavily Api Key
              * @default

@@ -123,6 +123,7 @@ class SearchSettings(BaseModel):
     tavily_api_key: str = Field("", description="Tavily API Key（空=禁用 deep_research 深度研究）")
     searxng_url:    str = Field("", description="自建 SearXNG 实例地址（空=禁用 web_search 通用搜索），如 http://127.0.0.1:8888")
     searxng_engines: str = Field("sogou,quark,360search", description="SearXNG 启用的引擎（逗号分隔；国内服务器只有这几个可达）")
+    searxng_image_engines: str = Field("", description="SearXNG 图片搜索（image_search）启用的引擎（逗号分隔）；留空则回退复用 searxng_engines。图片分类能连通的引擎不一定和文本分类是同一批，需部署后用「测试」按钮实测调整")
     max_results:    int = Field(5, description="默认返回结果数")
 
 

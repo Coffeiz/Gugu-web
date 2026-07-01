@@ -4,10 +4,14 @@
   适合找官网/文档/GitHub/某个事实/新闻标题/下载地址等"普通查找"。无配额。
 - `deep_research`：深度研究，走 **Tavily**（抓取并清洗网页正文 + 给 answer），适合
   需要"读内容并总结/比较/研究/给引用"的任务。有每日次数配额（SearchUsage）。
+- `image_search`：图片搜索，同样走 SearXNG（`categories=images`），免配额。只返回候选
+  （标题+来源页+图片直链 img_src+缩略图），**不会自动发送**——真要把图发进对话/IM，
+  接着调 `files.py` 的 `send_file(url=候选的 img_src)`。
 
-成本梯队（见 prompts/skills.md）：专有技能 → web_search(SearXNG) → deep_research(Tavily)。
+成本梯队（见 `agent/skills/web-search.md`）：专有技能 → web_search(SearXNG) → deep_research(Tavily)。
 SearXNG 部署在后端同机（127.0.0.1），由 settings.search.searxng_url 配；国内服务器只有
-sogou/quark/360search 可达，固定带 engines 避开会超时的 google/bing 等。
+sogou/quark/360search 可达，固定带 engines 避开会超时的 google/bing 等。图片搜索能用的引擎不一定
+是同一批（`settings.search.searxng_image_engines`，留空回退文本引擎列表）。
 """
 import json
 from datetime import datetime
@@ -60,6 +64,53 @@ async def _searxng_search(db, user_id, args: dict):
     ]
     if not results:
         return {"query": query, "results": [], "note": "没搜到结果；换个关键词，或改用 deep_research 深度研究兜底"}
+    return {"query": query, "results": results}
+
+
+# ── image_search：SearXNG images 分类（通用、免费、无配额）───────────────────
+async def _searxng_image_search(db, user_id, args: dict):
+    settings = get_settings()
+    base = (settings.search.searxng_url or "").rstrip("/")
+    if not base:
+        return {"error": "管理员尚未配置通用搜索（SearXNG）；图片搜索也用不了"}
+    query = (args.get("query") or "").strip()
+    if not query:
+        return {"error": "需要提供搜索关键词 query"}
+
+    max_results = args.get("max_results") or settings.search.max_results
+    # 图片分类能用的引擎不一定和文本分类（sogou/quark/360search）是同一批；留空则先复用
+    # 文本引擎列表兜底，管理员实测后可在后台单独配 searxng_image_engines。
+    engines = settings.search.searxng_image_engines or settings.search.searxng_engines
+    params = {"q": query, "format": "json", "categories": "images", "engines": engines}
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
+        ) as client:
+            resp = await client.get(f"{base}/search", params=params)
+    except Exception as e:
+        return {"error": f"图片搜索暂时失败（{type(e).__name__}）"}
+    if resp.status_code == 403:
+        return {"error": "图片搜索（SearXNG）返回 403：未开启 JSON 输出，需管理员在 settings.yml 加 search.formats: json"}
+    if resp.status_code != 200:
+        return {"error": f"图片搜索失败（HTTP {resp.status_code}）；可换个关键词重试，或提醒管理员检查 searxng_image_engines 配置"}
+    try:
+        data = resp.json()
+    except Exception:
+        return {"error": "图片搜索返回的不是 JSON（多半未开启 json 格式）"}
+
+    results = [
+        {
+            "title": r.get("title"),
+            "url": r.get("url"),                              # 来源页（供了解出处）
+            "img_src": r.get("img_src"),                       # 图片直链——发图/展示用这个
+            "thumbnail": r.get("thumbnail_src") or r.get("thumbnail"),
+        }
+        for r in (data.get("results") or [])[:max_results]
+        if r.get("img_src")
+    ]
+    if not results:
+        return {"query": query, "results": [],
+                "note": "没搜到图片；换个关键词重试，或该实例的图片搜索引擎可能未配置/不可达（searxng_image_engines）"}
     return {"query": query, "results": results}
 
 
@@ -141,6 +192,24 @@ class SearchSkill(BaseSkill):
                 "required": ["query"],
             },
             handler=_searxng_search,
+        ),
+        Tool(
+            name="image_search", label="图片搜索",
+            description=(
+                "图片搜索（自建 SearXNG images 分类，免费、无配额）：用户要找图/配图/看看某样东西长什么样时用。"
+                "返回候选列表（标题+来源页+图片直链 img_src+缩略图），**只是列出候选，不会自动发送**。"
+                "用户明确要看图/要一张图 → 搜到后接着调 files 技能的 send_file(url=选中候选的 img_src) 把图发出去，"
+                "不用再问一句「要不要发」（找图本身就是要看/要发，没有额外的保存步骤）。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "搜索关键词"},
+                    "max_results": {"type": "integer", "description": "返回候选数（默认 5）"},
+                },
+                "required": ["query"],
+            },
+            handler=_searxng_image_search,
         ),
         Tool(
             name="deep_research", label="深度研究",

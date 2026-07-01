@@ -175,6 +175,10 @@ const placeholderSrc = ref(null)   // 从 blob Map 取，避免与全图下载�
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const TITLE_H  = 40
 const PAD      = 48
+// 「card」缩略图上限（须与后端 files.py 的 _THUMB_SIZE_MAP["card"] 保持一致）：
+// Pillow 的 thumbnail() 只缩小不放大，缩略图长边小于这个值就说明原图从没被缩过，
+// 即缩略图尺寸 = 原图真实尺寸，可直接当真实尺寸用，不用再套 4K 估算。
+const CARD_THUMB_CAP = 192
 
 const ready        = ref(false)
 const maximized    = ref(false)
@@ -262,9 +266,15 @@ function onPlaceholderLoad(e) {
   if (blobUrl.value) return  // 快速下载：全图已到，不显示占位图
   const { naturalWidth: nw, naturalHeight: nh } = e.target
   if (nw && nh && !ready.value) {
-    // 没有已知尺寸时才用 4K trick 估算定窗口
-    const s  = 3840 / Math.max(nw, nh)
-    fitWindow(Math.round(nw * s), Math.round(nh * s))
+    if (Math.max(nw, nh) < CARD_THUMB_CAP) {
+      // 缩略图长边没到 card 上限 → 没被 Pillow 缩过，就是原图真实尺寸，直接按它定窗口，
+      // 别再套 4K 估算把小图错误放大（等会真图加载完还得缩回去，观感很差）
+      fitWindow(nw, nh)
+    } else {
+      // 缩略图已顶到上限，原图可能更大（被压缩过）→ 沿用 4K 估算兜底，真图加载完会再校正一次
+      const s = 3840 / Math.max(nw, nh)
+      fitWindow(Math.round(nw * s), Math.round(nh * s))
+    }
   }
   placeholderReady.value = true
 }

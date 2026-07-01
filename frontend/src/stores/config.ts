@@ -69,6 +69,8 @@ export const useConfigStore = defineStore('config', () => {
     agent: {
       memory_enabled: true,
       reflection_threshold: 10,
+      worker_concurrency: 16,
+      conv_compress_enabled: true,
       daily_retention_days: 14,
       weekly_retention_weeks: 6,
     },
@@ -82,6 +84,7 @@ export const useConfigStore = defineStore('config', () => {
       tavily_api_key: '',
       searxng_url: '',
       searxng_engines: 'sogou,quark,360search',
+      searxng_image_engines: '',
       max_results: 5,
     },
     smtp: {

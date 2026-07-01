@@ -310,9 +310,10 @@ async def test_connection(body: TestConnectionRequest):
 # ── 搜索测试（SearXNG / Tavily）──────────────────────────────────────────────
 
 class SearchTestRequest(BaseModel):
-    target:          Literal["searxng", "tavily"]
+    target:          Literal["searxng", "searxng_images", "tavily"]
     searxng_url:     str = ""   # 留空=用已存配置
     searxng_engines: str = ""
+    searxng_image_engines: str = ""
     tavily_api_key:  str = ""   # 留空=用已存配置
 
 
@@ -320,15 +321,21 @@ class SearchTestRequest(BaseModel):
 async def test_search(body: SearchTestRequest):
     cfg = get_settings()
 
-    if body.target == "searxng":
+    if body.target in ("searxng", "searxng_images"):
         url = (body.searxng_url or cfg.search.searxng_url or "").rstrip("/")
         if not url:
             return {"ok": False, "message": "未填 SearXNG 地址"}
-        engines = body.searxng_engines or cfg.search.searxng_engines
+        is_images = body.target == "searxng_images"
+        if is_images:
+            engines = body.searxng_image_engines or cfg.search.searxng_image_engines or cfg.search.searxng_engines
+        else:
+            engines = body.searxng_engines or cfg.search.searxng_engines
+        params = {"q": "test", "format": "json", "engines": engines}
+        if is_images:
+            params["categories"] = "images"
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(12.0)) as client:
-                resp = await client.get(f"{url}/search",
-                                        params={"q": "test", "format": "json", "engines": engines})
+                resp = await client.get(f"{url}/search", params=params)
         except Exception as e:
             return {"ok": False, "message": f"连不上：{type(e).__name__}: {str(e)[:80]}"}
         if resp.status_code == 403:

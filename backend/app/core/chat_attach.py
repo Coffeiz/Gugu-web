@@ -75,11 +75,28 @@ def _kind(ext: str) -> str:
     return "binary"
 
 
+def _probe_image_size(data: bytes, ext: str) -> tuple[int | None, int | None]:
+    """探真实像素尺寸（与 files.py 上传时同一套逻辑）：SVG 是矢量、Pillow 读不出「像素」尺寸，跳过；
+    失败也别报错——没探到就是 None，前端退回旧的占位图估算兜底。"""
+    if (ext or "").lower() == "svg":
+        return None, None
+    try:
+        from PIL import Image
+        import io as _io
+        img = Image.open(_io.BytesIO(data))
+        w, h = img.size
+        img.close()
+        return w, h
+    except Exception:
+        return None, None
+
+
 async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
                 *, kind: str | None = None, ttl: int = TTL,
                 subdir: str = ".chat_staging", extra: dict | None = None) -> dict:
     """暂存一个上传文件，返回元数据（含 attach_id）。
-    语音条走 kind='voice' / ttl=TTL_VOICE / subdir='.voice'（见 stage_voice）。"""
+    语音条走 kind='voice' / ttl=TTL_VOICE / subdir='.voice'（见 stage_voice）。
+    图片顺带探真实像素尺寸（img_width/img_height）：前端预览窗口据此直接定尺，不用再靠缩略图猜。"""
     attach_id = uuid.uuid4().hex[:16]
     ext_l = (ext or "").lower()[:10]
     storage_key = f"{user_id}/{subdir}/{attach_id}.{ext_l or 'bin'}"
@@ -88,6 +105,9 @@ async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
         "attach_id": attach_id, "name": name, "ext": ext_l, "mime": mime or "",
         "size": len(data), "storage_key": storage_key, "kind": kind or _kind(ext_l),
     }
+    if meta["kind"] == "image":
+        img_w, img_h = _probe_image_size(data, ext_l)
+        meta["img_width"], meta["img_height"] = img_w, img_h
     if extra:
         meta.update(extra)
     await get_redis().set(_key(user_id, attach_id), json.dumps(meta, ensure_ascii=False), ex=ttl)
@@ -134,6 +154,9 @@ def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
         "attach_id": attach_id, "name": name, "ext": ext_l, "mime": mime or "",
         "size": len(data), "storage_key": storage_key, "kind": kind or _kind(ext_l),
     }
+    if meta["kind"] == "image":
+        img_w, img_h = _probe_image_size(data, ext_l)
+        meta["img_width"], meta["img_height"] = img_w, img_h
     if extra:
         meta.update(extra)
     get_redis_sync().set(_key(user_id, attach_id), json.dumps(meta, ensure_ascii=False), ex=ttl)
@@ -378,6 +401,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
             "attach_id": meta["attach_id"], "name": meta["name"], "ext": meta["ext"],
             "size_bytes": meta["size"], "kind": meta["kind"], "upload": True,
             "duration": meta.get("duration"),   # 语音条用：前端显示时长 + 渲染成播放条
+            "img_width": meta.get("img_width"), "img_height": meta.get("img_height"),
         })
         fname = f"{meta['name']}.{meta['ext']}" if meta["ext"] else meta["name"]
         tag = f"《{fname}》(attach_id={meta['attach_id']})"
