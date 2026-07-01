@@ -79,9 +79,10 @@ def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
     try:
         if is_voice:
             aid = chat_attach.stage_voice_sync(
-                owner, name, ext, "audio/mpeg" if ext == "mp3" else None, data, duration=duration).get("attach_id", "")
+                owner, name, ext, "audio/mpeg" if ext == "mp3" else None, data,
+                duration=duration, platform="feishu").get("attach_id", "")
         else:
-            aid = chat_attach.stage_sync(owner, name, ext, None, data).get("attach_id", "")
+            aid = chat_attach.stage_sync(owner, name, ext, None, data, platform="feishu").get("attach_id", "")
     except Exception as e:
         print(f"[feishu] 暂存失败: {type(e).__name__}: {e}", flush=True)
         aid = ""

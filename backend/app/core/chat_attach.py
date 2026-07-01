@@ -91,12 +91,30 @@ def _probe_image_size(data: bytes, ext: str) -> tuple[int | None, int | None]:
         return None, None
 
 
+def _current_platform(explicit: str | None) -> str | None:
+    """暂存项打上「来自哪个渠道」标签：网关（qq/feishu/wechat）在收到消息、队列还没派发给
+    worker 前就调用 stage，此时 imctx 还没 set，必须显式传 platform；其余在 agent 工具/请求
+    处理过程中调用的（如生图/网络图暂存），走 imctx 自动识别当前所在的 IM 对话（web 路径不
+    set imctx，识别不到即 None，等同网页上传）。用途：resolve_attach 按渠道收窄候选，避免
+    「同一用户在别的渠道/网页留下的旧附件」被这边的模糊匹配误取（见 resolve_attach 文档字符串）。"""
+    if explicit:
+        return explicit
+    try:
+        from agent import imctx
+        ctx = imctx.get_im()
+        return ctx.get("platform") if ctx else None
+    except Exception:
+        return None
+
+
 async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
                 *, kind: str | None = None, ttl: int = TTL,
-                subdir: str = ".chat_staging", extra: dict | None = None) -> dict:
+                subdir: str = ".chat_staging", extra: dict | None = None,
+                platform: str | None = None) -> dict:
     """暂存一个上传文件，返回元数据（含 attach_id）。
     语音条走 kind='voice' / ttl=TTL_VOICE / subdir='.voice'（见 stage_voice）。
-    图片顺带探真实像素尺寸（img_width/img_height）：前端预览窗口据此直接定尺，不用再靠缩略图猜。"""
+    图片顺带探真实像素尺寸（img_width/img_height）：前端预览窗口据此直接定尺，不用再靠缩略图猜。
+    `platform`：附件来自哪个渠道（qq/feishu/wechat/web），不传则按 imctx 自动识别，见 _current_platform。"""
     attach_id = uuid.uuid4().hex[:16]
     ext_l = (ext or "").lower()[:10]
     storage_key = f"{user_id}/{subdir}/{attach_id}.{ext_l or 'bin'}"
@@ -104,6 +122,7 @@ async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
     meta = {
         "attach_id": attach_id, "name": name, "ext": ext_l, "mime": mime or "",
         "size": len(data), "storage_key": storage_key, "kind": kind or _kind(ext_l),
+        "platform": _current_platform(platform),
     }
     if meta["kind"] == "image":
         img_w, img_h = _probe_image_size(data, ext_l)
@@ -115,27 +134,31 @@ async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
 
 
 async def stage_voice(user_id, name: str, ext: str, mime: str | None, data: bytes,
-                      duration: float | None = None) -> dict:
+                      duration: float | None = None, platform: str | None = None) -> dict:
     """语音消息（IM 语音 / 网页录音）：独立 .voice/ 存储 + 30 天留存 + kind='voice' + 时长。"""
     return await stage(user_id, name, ext, mime, data, kind="voice", ttl=TTL_VOICE,
-                       subdir=".voice", extra={"duration": duration} if duration is not None else None)
+                       subdir=".voice", extra={"duration": duration} if duration is not None else None,
+                       platform=platform)
 
 
 def stage_voice_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
-                     duration: float | None = None) -> dict:
+                     duration: float | None = None, platform: str | None = None) -> dict:
     return stage_sync(user_id, name, ext, mime, data, kind="voice", ttl=TTL_VOICE,
-                      subdir=".voice", extra={"duration": duration} if duration is not None else None)
+                      subdir=".voice", extra={"duration": duration} if duration is not None else None,
+                      platform=platform)
 
 
 def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
                *, kind: str | None = None, ttl: int = TTL,
-               subdir: str = ".chat_staging", extra: dict | None = None) -> dict:
+               subdir: str = ".chat_staging", extra: dict | None = None,
+               platform: str | None = None) -> dict:
     """同步暂存（给 IM 网关用）。
 
     网关 handler 跑在一个**已运行的 asyncio loop** 里（lark SDK），所以不能在当前线程
     new_event_loop().run_until_complete。改为把 async 的 storage.put 丢到**独立线程**用
     asyncio.run 跑（新线程无运行中的 loop，storage 后端不绑定 loop）；元数据用同步 redis
     （避免复用 async 客户端的跨 loop 问题）。
+    `platform`：附件来自哪个渠道，网关调用时必须显式传（此时 imctx 还没 set，见 _current_platform）。
     """
     import asyncio
     import concurrent.futures
@@ -153,6 +176,7 @@ def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
     meta = {
         "attach_id": attach_id, "name": name, "ext": ext_l, "mime": mime or "",
         "size": len(data), "storage_key": storage_key, "kind": kind or _kind(ext_l),
+        "platform": _current_platform(platform),
     }
     if meta["kind"] == "image":
         img_w, img_h = _probe_image_size(data, ext_l)
@@ -219,7 +243,16 @@ async def clear_staged(user_id) -> int:
 async def resolve_attach(user_id, attach_id: str) -> tuple[dict | None, str]:
     """容错解析附件，返回 (meta|None, note)。
     LLM 抄 16 位 hex 的 attach_id 经常抄错/截断，别动不动报"过期"：
-    精确命中 → 前缀/子串唯一命中 → 退到最近上传的一个。全空才算真过期。"""
+    精确命中 → 前缀/子串唯一命中 → 无歧义时退到最近上传的一个。全空才算真过期。
+
+    暂存池按 user_id 全局共享（不分渠道），同一用户可能同时绑定 QQ/飞书/微信/网页——先按「当前
+    所在渠道」（imctx，见 _current_platform）收窄候选，避免把另一个渠道、甚至更早不相关对话里
+    还没保存的旧附件当成这次要存的（同渠道内互相干扰的可能性也不小，但至少不会跨渠道串）。
+
+    「无歧义」= 收窄后只剩一个附件，或类型全一致（如连发的都是图片）——这两种情况瞎猜大概率对。
+    类型不一（比如同时有图片和语音）时**不再盲目取「最新」那个**：曾有真实事故——QQ 连发 4 张图
+    后跟了句语音，指令那轮因防抖拆轮没带上图片 attach_id，工具退到「最近暂存」时抓到了更晚落地
+    的语音、把语音当图片存进了文件库。改为返回歧义候选列表，让调用方/模型明确指定。"""
     aid = (attach_id or "").strip()
     if aid:
         meta = await get_meta(user_id, aid)
@@ -232,7 +265,19 @@ async def resolve_attach(user_id, attach_id: str) -> tuple[dict | None, str]:
         hit = [m for m in staged if aid in m["attach_id"] or m["attach_id"] in aid]
         if len(hit) == 1:
             return hit[0], "（按最接近的附件匹配）"
-    return staged[0], "（没对上 attach_id，用了你最近上传的那个附件）"
+
+    pool = staged
+    cur_platform = _current_platform(None)
+    if cur_platform:
+        same_ch = [m for m in staged if m.get("platform") == cur_platform]
+        if same_ch:   # 同渠道有候选才收窄；没有则说明这渠道确实没暂存过（如刚绑定），退回全池
+            pool = same_ch
+
+    kinds = {m.get("kind") for m in pool}
+    if len(pool) == 1 or len(kinds) == 1:
+        return pool[0], "（没对上 attach_id，用了你最近上传的那个附件）"
+    cands = "、".join(f"{m['name']}.{m['ext']}（{m['kind']}，attach_id={m['attach_id']}）" for m in pool[:8])
+    return None, f"当前暂存了多个不同类型的附件，无法安全猜测该存哪个，请明确指定 attach_id。候选：{cands}"
 
 
 async def read_bytes(meta: dict) -> bytes:

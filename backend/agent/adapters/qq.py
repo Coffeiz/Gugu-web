@@ -127,9 +127,9 @@ async def _ingest_qq_media(message: C2CMessage, owner: str) -> list:
                         is_voice = True
                 if is_voice:
                     dur = media_transcode.probe_duration(data, ext)
-                    meta = await chat_attach.stage_voice(owner, name, ext, mime, data, duration=dur)
+                    meta = await chat_attach.stage_voice(owner, name, ext, mime, data, duration=dur, platform="qq")
                 else:
-                    meta = await chat_attach.stage(owner, name, ext, mime, data)
+                    meta = await chat_attach.stage(owner, name, ext, mime, data, platform="qq")
                 out.append(meta["attach_id"])
             except Exception as e:
                 print(f"[qq] 暂存附件出错: {type(e).__name__}: {e}", flush=True)

@@ -56,9 +56,9 @@ async def upload_attachment(
     mime = "audio/mpeg" if ext == "mp3" else file.content_type
     if voice:
         dur = media_transcode.probe_duration(data, ext)
-        meta = await chat_attach.stage_voice(current_user.id, name or "语音", ext, mime, data, duration=dur)
+        meta = await chat_attach.stage_voice(current_user.id, name or "语音", ext, mime, data, duration=dur, platform="web")
     else:
-        meta = await chat_attach.stage(current_user.id, name, ext, mime, data)
+        meta = await chat_attach.stage(current_user.id, name, ext, mime, data, platform="web")
     return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration", "img_width", "img_height")}
 
 

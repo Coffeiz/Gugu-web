@@ -364,33 +364,21 @@ async def _create_document(db, user_id, args: dict):
             "name": f"{final_name}.{fmt}", "size": db_file.size}
 
 
-async def _save_uploaded_file(db, user_id, args: dict):
-    """把用户聊天里上传的暂存附件保存进文件库。默认 personal，可直接指定项目/文件夹。"""
+async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder_id):
+    """把一个已解析好的暂存附件 meta 落成文件库记录，返回 (ok, item)。供单个/批量 save 共用。"""
     from app.core import chat_attach
-    # 容错解析：LLM 常把 attach_id 抄错/截断，找不到就退到最近上传的，别误报"过期"
-    meta, note = await chat_attach.resolve_attach(user_id, args.get("attach_id") or "")
-    if not meta:
-        return json.dumps({"error": "没找到可保存的附件，可能确实过期了（聊天附件只暂存 6 小时）。"
-                                    "麻烦让用户重新发一下～"}, ensure_ascii=False)
+    ext = meta.get("ext") or "bin"
+    display_name = meta.get("name") or "上传文件"
     try:
         data = await chat_attach.read_bytes(meta)
     except Exception as e:
-        return json.dumps({"error": f"读取附件失败：{str(e)[:80]}"}, ensure_ascii=False)
-    ext = meta.get("ext") or "bin"
-    display_name = meta.get("name") or "上传文件"
-
-    # 目标位置：默认 personal；给了 project_id 就直接进项目（一步到位，省得再 move）
-    space = args.get("space") or ("project" if args.get("project_id") else "personal")
-    space, project_id, folder_id, loc_err = _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
-    if loc_err:
-        return loc_err
-
+        return False, {"name": f"{display_name}.{ext}", "error": f"读取附件失败：{str(e)[:80]}"}
     storage = get_storage()
     try:
         base_key = await _resolve_key(db, user_id, space, display_name, ext,
                                       project_id=project_id, folder_id=folder_id)
     except ValueError as e:
-        return json.dumps({"error": str(e)}, ensure_ascii=False)
+        return False, {"name": f"{display_name}.{ext}", "error": str(e)}
     final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
     await storage.put(final_key, data, meta.get("mime") or "application/octet-stream")
     db_file = File(
@@ -402,9 +390,48 @@ async def _save_uploaded_file(db, user_id, args: dict):
     db.add(db_file)
     await db.commit()
     await db.refresh(db_file)
-    return {"success": True, "file_id": db_file.id, "name": f"{final_name}.{ext}",
-            "space": space, "project_id": db_file.project_id, "size": db_file.size,
-            **({"note": note} if note else {})}
+    return True, {"file_id": db_file.id, "name": f"{final_name}.{ext}",
+                  "space": space, "project_id": db_file.project_id, "size": db_file.size}
+
+
+async def _save_uploaded_file(db, user_id, args: dict):
+    """把用户聊天里上传的暂存附件保存进文件库。默认 personal，可直接指定项目/文件夹。
+    单个：attach_id。批量（同一批连发的多个附件，如连拍的几张图）：attach_ids=[id1,id2,...]——
+    每个各自精确解析，比逐个分别调用更可靠（避免每次没对上都各自回退、可能救回不相关的附件，
+    如把连发图片之外的一条语音存进来了；见 resolve_attach 的歧义防护）。"""
+    from app.core import chat_attach
+
+    space = args.get("space") or ("project" if args.get("project_id") else "personal")
+    space, project_id, folder_id, loc_err = _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
+    if loc_err:
+        return loc_err
+
+    ids = args.get("attach_ids")
+    if ids:
+        if not isinstance(ids, list):
+            return json.dumps({"error": "attach_ids 需要是数组"}, ensure_ascii=False)
+        saved, failed = [], []
+        for aid in ids:
+            meta, note = await chat_attach.resolve_attach(user_id, str(aid or ""))
+            if not meta:
+                failed.append({"attach_id": aid,
+                               "error": note or "没找到可保存的附件，可能确实过期了（聊天附件只暂存 7 天）。"})
+                continue
+            ok, item = await _save_one_attach(db, user_id, meta, space=space,
+                                              project_id=project_id, folder_id=folder_id)
+            (saved if ok else failed).append(item)
+        return {"success": True, "saved_count": len(saved), "failed_count": len(failed),
+                "saved": saved, "failed": failed}
+
+    # 单个（兼容旧行为）
+    meta, note = await chat_attach.resolve_attach(user_id, args.get("attach_id") or "")
+    if not meta:
+        return json.dumps({"error": note or "没找到可保存的附件，可能确实过期了（聊天附件只暂存 7 天）。"
+                                    "麻烦让用户重新发一下～"}, ensure_ascii=False)
+    ok, item = await _save_one_attach(db, user_id, meta, space=space, project_id=project_id, folder_id=folder_id)
+    if not ok:
+        return json.dumps(item, ensure_ascii=False)
+    return {**item, **({"note": note} if note else {})}
 
 
 async def _rename_one(db, user_id, f, new_name: str) -> dict:
@@ -1251,12 +1278,18 @@ class FilesSkill(BaseSkill):
         Tool(
             name="save_uploaded_file", label="保存上传文件",
             description="把用户在对话里**上传的附件**保存进文件库。当用户上传文件后说「存一下/保存到文件库/存到某项目」时用。"
-                        "attach_id 来自上下文「用户上传了文件…(attach_id=X)」的提示——抄不准也没关系，系统会自动退到用户最近上传的那个。"
+                        "**用户一次发了多个附件（如连拍的几张图）要用 attach_ids 传数组一次性存全部**——"
+                        "别为每张图分别调用，那样每次没对上 id 都各自回退，容易存漏、甚至存错成不相关的附件。"
+                        "单个附件用 attach_id。attach_id(s) 来自上下文「用户上传了文件…(attach_id=X)」的提示——"
+                        "抄不准也没关系，系统会尽量容错匹配；但当前暂存区里同时有多种不同类型附件（比如图+语音）"
+                        "时无法安全瞎猜，会报错列出候选，需要照着给准。"
                         "要存进某个项目就带上 project_id（不传则进 personal）。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "attach_id": {"type": "string", "description": "上传附件的 attach_id（见上下文提示；可不填，自动取最近上传的）"},
+                    "attach_id": {"type": "string", "description": "单个附件的 attach_id（见上下文提示；可不填，自动取最近上传的——仅当前暂存区无歧义时有效）"},
+                    "attach_ids": {"type": "array", "items": {"type": "string"},
+                                   "description": "批量保存多个附件时用（如用户连发的几张图），传所有 attach_id，比逐个调用更可靠"},
                     "project_id": {"type": "integer", "description": "存进哪个项目（不填=personal 个人空间）"},
                     "folder_id": {"type": "integer", "description": "存进哪个文件夹（可选）"},
                 },

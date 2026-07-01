@@ -74,7 +74,7 @@ async def _ingest_wechat_media(items: list, owner: str) -> list:
                 raw = (await cli.get(url)).content
                 data = _aes128_ecb_decrypt(raw, bytes.fromhex(aeskey))
                 ext, mime = _img_ext_mime(data)
-                meta = await chat_attach.stage(owner, "微信图片", ext, mime, data, kind="image")
+                meta = await chat_attach.stage(owner, "微信图片", ext, mime, data, kind="image", platform="wechat")
                 out.append(meta["attach_id"])
             except Exception as e:
                 print(f"[wechat] 图片下载/解密失败: {type(e).__name__}: {e}", flush=True)
