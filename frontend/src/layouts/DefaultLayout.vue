@@ -194,18 +194,13 @@ const todayStr = computed(() => {
   align-items: center;
   gap: 14px;
   padding: 14px 20px;
-  /* 原本 backdrop-filter 磨砂在顶栏本体：其 backdrop 取自下方 .page-content，Chrome/macOS 下
-     页面内容 hover 重绘时顶栏栅格失效、下沿闪白带（Safari 无此问题）；translateZ 未能根治。
-     改：玻璃放到 ::before 隔离层（+ isolation:isolate），filter 在独立合成层更稳、白带消除，
-     且保留与其他卡片一致的玻璃观感。isolation 不影响 position:fixed 子孙，安全。*/
-  isolation: isolate;
-  background: transparent;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  /* 顶栏绝对定位 + backdrop-filter，backdrop 取自下方 .page-content。Chrome/macOS 下页面内容
+     hover 重绘时顶栏栅格失效、下沿闪白带。translateZ(0) 提升为独立合成层稳定栅格（月视图/总览
+     已够）；周视图的滚动网格另在 .wv-body 上 translateZ 隔离其重绘，见 Calendar/index.vue。 */
+  transform: translateZ(0);
 }
-.topbar::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
-  background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); }
-.topbar:hover { background: transparent; }
 
 .topbar-title h1 {
   font-size: 20px;

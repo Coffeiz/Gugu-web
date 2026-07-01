@@ -2056,14 +2056,7 @@ async function saveEvent() {
 .today-btn:hover { background: rgba(255,255,255,0.82); color: var(--text-primary); }
 
 .cal-layout { display: grid; grid-template-columns: 1fr 260px; gap: 14px; flex: 1; min-height: 0; }
-/* 玻璃放到 ::before 隔离层（+ isolation:isolate）：backdrop-filter 在独立合成层上更稳，
-   页面内容 hover/选中变化不再触发整块磨砂重绘（消除闪白块/整片变暗），观感与其他卡片一致。
-   isolation 不像 transform 会影响 position:fixed 子孙，安全。*/
-.cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden;
-  position: relative; isolation: isolate; background: transparent;
-  backdrop-filter: none; -webkit-backdrop-filter: none; }
-.cal-main::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
-  background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); }
+.cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden; }
 .weekday-row { display: grid; grid-template-columns: repeat(7, 1fr); flex-shrink: 0; margin-bottom: 2px; }
 .weekday-hdr { text-align: center; font-size: 11px; font-weight: 600; color: var(--text-secondary); padding: 3px 0 8px; border-right: 1px solid rgba(123,127,178,0.15); }
 .weekday-hdr:last-child { border-right: none; }
@@ -2369,7 +2362,9 @@ async function saveEvent() {
 .view-toggle button { border: none; background: none; padding: 4px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; color: #8a8fa8; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.15s; }
 .view-toggle button.on { background: #fff; color: #5a5e86; box-shadow: 0 1px 4px rgba(60,70,100,0.12); }
 
-.week-view { display: flex; flex-direction: column; flex: 1; min-height: 0; user-select: none; -webkit-user-select: none; }
+/* translateZ 提为独立合成层：隔离周视图（日期头/全天/小时格）hover/选中的重绘，使其不脏掉
+   .cal-main / 顶栏的 backdrop-filter 磨砂（治「点小时格整片变暗」「hover 顶栏闪白带」），玻璃全保留。*/
+.week-view { display: flex; flex-direction: column; flex: 1; min-height: 0; user-select: none; -webkit-user-select: none; transform: translateZ(0); }
 .wv-gutter { width: 46px; flex: none; }
 .wv-head { display: flex; border-bottom: 1px solid rgba(123,127,178,0.18); padding-bottom: 4px; }
 .wv-dhead { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 3px 0; cursor: pointer; }
