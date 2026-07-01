@@ -148,7 +148,7 @@
             :style="t.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
             placeholder="待办事项"
             @blur="editingTp = null; persistTodos()"
-            @keydown.enter="editingTp = null; persistTodos()"
+            v-enter="() => (editingTp = null, persistTodos())"
             @keydown.esc="editingTp = null"
             @keydown.backspace="!t.text && removeTodo(t.id)"
           />

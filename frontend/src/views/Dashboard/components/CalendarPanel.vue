@@ -59,7 +59,7 @@
       <div v-if="showEditForm && editingEvent" class="dash-edit-popup" ref="editFormRef" :style="editFormStyle">
         <div class="dash-popup-title">编辑活动</div>
         <input v-model="editingEvent.name" class="dash-popup-input" placeholder="活动名称"
-          @keydown.enter="saveEditForm" @keydown.esc="showEditForm = false" autofocus />
+          v-enter="saveEditForm" @keydown.esc="showEditForm = false" autofocus />
         <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
         <textarea v-model="editingEvent.description" class="dash-popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="dash-popup-actions">

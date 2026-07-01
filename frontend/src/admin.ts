@@ -7,10 +7,12 @@ import '@/assets/styles/global.css'
 
 import AdminApp from './AdminApp.vue'
 import router from './router/admin'
+import { installEnterDirective } from '@/directives/enter'
 
 const app = createApp(AdminApp)
 
 app.use(createPinia())
 app.use(router)
+installEnterDirective(app)
 
 app.mount('#app')

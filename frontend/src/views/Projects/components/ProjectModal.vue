@@ -25,7 +25,7 @@
                 class="header-name-input"
                 placeholder="项目名称"
                 @blur="saveName"
-                @keydown.enter="$event.target.blur()"
+                v-enter="(e) => e.target.blur()"
                 @keydown.esc="cancelName"
               />
             </div>
@@ -108,7 +108,7 @@
                       v-if="editingStage === stage.key"
                       v-model="stage.label"
                       class="stage-input"
-                      @blur="saveStages" @keydown.enter="saveStages" @keydown.esc="editingStage = null" @click.stop
+                      @blur="saveStages" v-enter="saveStages" @keydown.esc="editingStage = null" @click.stop
                       ref="stageInputRef"
                     />
                     <span v-else class="node-label" @click.stop="startEdit(stage.key)">{{ stage.label }}</span>
@@ -140,7 +140,7 @@
                       :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
                       placeholder="待办事项"
                       @blur="editingTodo = null; saveStages()"
-                      @keydown.enter.prevent="editingTodo = null; saveStages()"
+                      v-enter.prevent="() => (editingTodo = null, saveStages())"
                       @keydown.esc="editingTodo = null"
                       @keydown.backspace="!todo.text && removeTodo(stage, todo.id)"
                     />
@@ -234,7 +234,7 @@
             </button>
             <div v-else class="new-folder-inline" @click.stop>
               <input class="new-folder-input" v-model="newFolderName" placeholder="文件夹名称"
-                @keyup.enter="createFolder" @keyup.esc="showNewFolder = false; newFolderName = ''"
+                v-enter="createFolder" @keyup.esc="showNewFolder = false; newFolderName = ''"
                 ref="folderInputRef" autofocus />
               <button class="btn-confirm-sm" :disabled="folderLoading" @click="createFolder">确定</button>
               <button class="btn-cancel-sm" @click="showNewFolder = false; newFolderName = ''">✕</button>
@@ -329,7 +329,7 @@
                       <span v-if="renamingFolderId === folder.id" class="rename-sizer" @click.stop>
                         <span class="rename-ghost">{{ folderRenameText || ' ' }}</span>
                         <input class="rename-input-inline" v-model="folderRenameText"
-                          @keydown.enter="commitFolderRename" @keydown.esc="cancelFolderRename" @blur="commitFolderRename" @focus="$event.target.select()" />
+                          v-enter="commitFolderRename" @keydown.esc="cancelFolderRename" @blur="commitFolderRename" @focus="$event.target.select()" />
                       </span>
                       <template v-else>{{ folder.name }}</template>
                     </div>
@@ -405,7 +405,7 @@
                       <span v-if="renamingFileId === file.id" class="rename-sizer" @click.stop>
                         <span class="rename-ghost">{{ renameText || ' ' }}</span>
                         <input class="rename-input-inline" v-model="renameText"
-                          @keydown.enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="$event.target.select()" />
+                          v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="$event.target.select()" />
                       </span>
                       <template v-else>{{ file.displayName }}</template>
                     </div>
@@ -495,7 +495,7 @@
                       <span v-if="renamingFolderId === folder.id" class="rename-sizer" @click.stop>
                         <span class="rename-ghost">{{ folderRenameText || ' ' }}</span>
                         <input class="rename-input-inline" v-model="folderRenameText"
-                          @keydown.enter="commitFolderRename" @keydown.esc="cancelFolderRename" @blur="commitFolderRename" @focus="$event.target.select()" />
+                          v-enter="commitFolderRename" @keydown.esc="cancelFolderRename" @blur="commitFolderRename" @focus="$event.target.select()" />
                       </span>
                       <template v-else>{{ folder.name }}</template>
                     </span>
@@ -536,7 +536,7 @@
                       <span v-if="renamingFileId === file.id" class="rename-sizer" @click.stop>
                         <span class="rename-ghost">{{ renameText || ' ' }}</span>
                         <input class="rename-input-inline" v-model="renameText"
-                          @keydown.enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="$event.target.select()" />
+                          v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="$event.target.select()" />
                       </span>
                       <template v-else>{{ file.displayName }}</template>
                     </span>

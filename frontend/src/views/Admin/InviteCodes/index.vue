@@ -26,7 +26,7 @@
           class="gen-input"
           v-model="genNote"
           placeholder="备注（可选，如：朋友 / 测试）"
-          @keydown.enter="generate"
+          v-enter="generate"
         />
         <div class="count-picker">
           <button class="count-btn" @click="genCount > 1 && genCount--">−</button>

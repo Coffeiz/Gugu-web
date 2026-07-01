@@ -83,7 +83,7 @@
               class="new-folder-input"
               v-model="newFolderName"
               placeholder="文件夹名称"
-              @keyup.enter="createFolder"
+              v-enter="createFolder"
               @keyup.esc="showNewFolderInput = false; newFolderName = ''"
               ref="folderInputRef"
             />

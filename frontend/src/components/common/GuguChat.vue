@@ -263,9 +263,7 @@
             ref="expInputEl"
             placeholder="问问项目进度、截止日期…"
             rows="1"
-            @compositionstart="isComposing = true"
-            @compositionend="isComposing = false"
-            @keydown.enter.exact.prevent="!isComposing && send()"
+            v-enter.exact.prevent="send"
             @input="autoResize"
           />
           <div v-else class="rec-bar">
@@ -685,7 +683,6 @@ onUnmounted(() => {
 
 // ── 对话状态 ────────────────────────────────────────────
 const inputText      = ref('')
-const isComposing    = ref(false)
 const thinkingLabels = ref([])   // 「思考中」候选文案（后台「状态命名」_thinking，可多个 | 分隔；空=三个点）
 const streaming      = ref(false)
 // 状态指示走「动画队列」：SSE 事件入队、逐个播放（文字打字机入场），切换太快也排队、不抢拍、不闪。

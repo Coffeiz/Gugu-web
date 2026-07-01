@@ -88,7 +88,7 @@
                             v-else
                             class="tpl-rename-input"
                             v-model="renameText"
-                            @keyup.enter="commitRename(t.id)"
+                            v-enter="() => commitRename(t.id)"
                             @keyup.esc="renamingId = null"
                             ref="renameInputRef"
                           />
@@ -122,7 +122,7 @@
                           class="tpl-name-input"
                           v-model="newTplName"
                           placeholder="模板名称"
-                          @keyup.enter="commitSave"
+                          v-enter="commitSave"
                           @keyup.esc="savingTpl = false; newTplName = ''"
                           ref="tplNameInputRef"
                         />
@@ -173,7 +173,7 @@
                       :title="todo.text"
                       :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
                       placeholder="待办事项"
-                      @keydown.enter.prevent="addNpTodo(stage.origIdx)"
+                      v-enter.prevent="() => addNpTodo(stage.origIdx)"
                       @keydown.backspace="!todo.text && removeNpTodo(stage.origIdx, todo.id)"
                     />
                     <button class="np-todo-del" @click.stop="removeNpTodo(stage.origIdx, todo.id)"><PhX :size="10" weight="bold" /></button>

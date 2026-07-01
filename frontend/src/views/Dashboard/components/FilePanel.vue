@@ -37,7 +37,7 @@
                 ref="renameInputRef"
                 class="rename-input"
                 v-model="renameText"
-                @keydown.enter.prevent="commitRename(f)"
+                v-enter.prevent="() => commitRename(f)"
                 @keydown.esc="renamingId = null"
                 @blur="commitRename(f)"
                 @focus="$event.target.select()"

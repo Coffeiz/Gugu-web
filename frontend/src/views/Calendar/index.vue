@@ -340,7 +340,7 @@
             <PhX :size="12" weight="bold" />
           </button>
         </div>
-        <input v-model="newEvent.name" ref="addInputRef" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" @keydown.esc="showAddForm = false" />
+        <input v-model="newEvent.name" ref="addInputRef" class="popup-input" placeholder="活动名称" v-enter="saveEvent" @keydown.esc="showAddForm = false" />
         <DatePicker v-model="newEvent.date" placeholder="选择日期" />
         <div class="time-box">
           <input :value="newEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, newEvent, 'time')" @blur="newEvent.time = normTime(newEvent.time)" />
@@ -403,7 +403,7 @@
             <PhX :size="12" weight="bold" />
           </button>
         </div>
-        <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
+        <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" v-enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
         <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
         <div class="time-box">
           <input :value="editingEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, editingEvent, 'time')" @blur="editingEvent.time = normTime(editingEvent.time)" />
