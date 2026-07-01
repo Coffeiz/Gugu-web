@@ -147,9 +147,14 @@
           <div class="wv-allday">
             <div class="wv-gutter wv-allday-tag">全天</div>
             <div class="wv-allday-grid" ref="wvAllDayGridRef" :style="{ height: wvAllDayH + 'px' }"
-                 @mousedown="onAllDayDown" @contextmenu.prevent="onAllDayContextMenu">
+                 @mousedown="onAllDayDown" @mousemove="onAllDayHover" @mouseleave="onAllDayLeave" @contextmenu.prevent="onAllDayContextMenu">
               <div v-for="(d, ci) in weekDays" :key="d.iso" class="wv-aco" :class="{ today: d.isToday, weekend: d.isWeekend }" :style="{ left: ci / 7 * 100 + '%' }"></div>
-              <div v-for="ci in wvSelCols" :key="'adsel' + ci" class="wv-ad-sel" :class="{ weekend: weekDays[ci]?.isWeekend }" :style="{ left: ci / 7 * 100 + '%' }"></div>
+              <TransitionGroup name="cal-fade">
+                <div v-for="ci in wvSelCols" :key="'adsel' + ci" class="wv-ad-sel" :class="{ weekend: weekDays[ci]?.isWeekend }" :style="{ left: ci / 7 * 100 + '%' }"></div>
+              </TransitionGroup>
+              <Transition name="cal-fade">
+                <div v-if="wvAdHover >= 0 && !rangeSelect.active" :key="'adhov' + wvAdHover" class="wv-ad-hover" :class="{ weekend: weekDays[wvAdHover]?.isWeekend }" :style="{ left: wvAdHover / 7 * 100 + '%' }"></div>
+              </Transition>
               <div v-for="bar in weekAllDayShown" :key="bar.id" class="wv-pbar cal-chip" :class="{ 'cal-done': bar.status === 'done' }"
                    :style="pbarStyle(bar)" @click.stop="openProject(bar)" :title="bar.name">
                 <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>{{ bar.name }}
@@ -181,8 +186,12 @@
                    :style="{ backgroundSize: '100% ' + HOUR_H + 'px' }"
                    @mousedown="onColDown($event, d)" @mousemove="onColMove($event, d)" @mouseleave="onColLeave"
                    @contextmenu.prevent="onColContextMenu($event, d)">
-                <div v-if="wvSelectedSlot && wvSelectedSlot.iso === d.iso" class="wv-selected" :style="{ top: Math.min(wvSelectedSlot.h0, wvSelectedSlot.h1) * HOUR_H + 'px', height: (Math.abs(wvSelectedSlot.h1 - wvSelectedSlot.h0) + 1) * HOUR_H + 'px' }"></div>
-                <div v-if="wvHover && wvHover.iso === d.iso && !wvDragging && !wvHoverOnSel()" class="wv-hover" :style="{ top: wvHover.h * HOUR_H + 'px', height: HOUR_H + 'px' }"></div>
+                <Transition name="cal-fade">
+                  <div v-if="wvSelectedSlot && wvSelectedSlot.iso === d.iso" :key="'sel' + wvSelectedSlot.h0" class="wv-selected" :style="{ top: Math.min(wvSelectedSlot.h0, wvSelectedSlot.h1) * HOUR_H + 'px', height: (Math.abs(wvSelectedSlot.h1 - wvSelectedSlot.h0) + 1) * HOUR_H + 'px' }"></div>
+                </Transition>
+                <Transition name="cal-fade">
+                  <div v-if="wvHover && wvHover.iso === d.iso && !wvDragging" :key="'hov' + wvHover.h" class="wv-hover" :style="{ top: wvHover.h * HOUR_H + 'px', height: HOUR_H + 'px' }"></div>
+                </Transition>
                 <div v-if="d.isToday" class="wv-now" :style="{ top: nowTop + 'px' }"></div>
                 <div v-for="b in timedLayoutFor(d.iso)" :key="b.ev._uid" class="wv-ev cal-chip"
                      :style="{ top: b.top + 'px', height: b.height + 'px', left: 'calc(' + b.leftPct + '% + 1px)', width: 'calc(' + b.widthPct + '% - 2px)', background: b.ev.accent + '2e', borderColor: b.ev.accent + '85', color: darkenHex(b.ev.accent) }"
@@ -678,6 +687,15 @@ function wvDaySelected(iso) {
   const r = activeRange.value
   return r ? (iso >= r.start && iso <= r.end) : false
 }
+// 全天区悬停列（与小时格 hover 同理：opacity 叠层、可叠加在选区上）
+const wvAdHover = ref(-1)
+function onAllDayHover(e) {
+  const grid = wvAllDayGridRef.value
+  if (!grid) return
+  const r = grid.getBoundingClientRect()
+  wvAdHover.value = Math.max(0, Math.min(6, Math.floor((e.clientX - r.left) / r.width * 7)))
+}
+function onAllDayLeave() { wvAdHover.value = -1 }
 function onAllDayDown(e) {
   if (e.button !== 0) return
   if (e.target.closest('.wv-pbar,.wv-allday-ev,.wv-more')) return   // 点在已有条/活动上 → 不框选
@@ -2066,7 +2084,8 @@ async function saveEvent() {
 .weekday-hdr:last-child { border-right: none; }
 .weekday-hdr.weekend { color: rgba(195,90,90,0.85); }
 
-.month-body { flex: 1; display: flex; flex-direction: column; border-top: 1px solid rgba(123,127,178,0.15); overflow: hidden; }
+/* translateZ 提独立合成层：隔离月格 hover/选中的重绘，不脏 cal-main 的 backdrop-filter（防「快速点击变暗」），同 .week-view */
+.month-body { flex: 1; display: flex; flex-direction: column; border-top: 1px solid rgba(123,127,178,0.15); overflow: hidden; transform: translateZ(0); }
 
 .week-row {
   flex: 1;
@@ -2084,6 +2103,7 @@ async function saveEvent() {
   cursor: pointer;
   overflow: hidden;
   position: relative;
+  transition: background 0.12s ease;   /* 选中/范围态淡入淡出（hover 走 ::before opacity；grid 已提合成层不会拖累 cal-main） */
 }
 .month-cell:last-child { border-right: none; }
 /* hover 高光：用 ::before + opacity（合成层，零主线程重绘），不再走背景变化——背景变化会 0.12s
@@ -2382,20 +2402,22 @@ async function saveEvent() {
 .wv-head { display: flex; border-bottom: 1px solid rgba(123,127,178,0.18); padding-bottom: 4px; }
 .wv-dhead { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 3px 0; cursor: pointer; }
 .wv-dhead > span { position: relative; z-index: 1; }
-/* 悬停 / 选中 共用同一内嵌底色块（inset 一致 → 大小相同）*/
-/* hover/selected 高光走 opacity（合成层，零主线程重绘）而非背景变化，避免拖累顶栏/toolbar 的 backdrop-filter 白带 */
-.wv-dhead::before { content: ''; position: absolute; inset: 2px 4px; border-radius: 7px; background: rgba(123,127,178,0.08); opacity: 0; transition: opacity 0.12s; pointer-events: none; }
-.wv-dhead:hover::before { opacity: 1; }
-.wv-dhead.weekend::before { background: rgba(195,90,90,0.07); }
+/* 选中层(::before) + 悬停层(::after)：两层独立、可叠加（hover 选中日 = 两层相加），均 opacity 淡入淡出，
+   与小时格/月格一致；opacity 走合成层、零主线程重绘，不拖累磨砂背景 */
+.wv-dhead::before, .wv-dhead::after { content: ''; position: absolute; inset: 2px 4px; border-radius: 7px; opacity: 0; transition: opacity 0.12s; pointer-events: none; }
+.wv-dhead::before { background: rgba(123,127,178,0.10); }
+.wv-dhead::after  { background: rgba(123,127,178,0.06); }
+.wv-dhead.selected::before { opacity: 1; }
+.wv-dhead:hover::after { opacity: 1; }
+.wv-dhead.weekend::before { background: rgba(195,90,90,0.09); }
+.wv-dhead.weekend::after  { background: rgba(195,90,90,0.06); }
 .wv-dhead.weekend .wv-dow { color: #b06a78; }
 .wv-dow { font-size: 11px; font-weight: 600; color: #8a8fa8; }
 .wv-dnum { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 15px; font-weight: 600; color: #3a3d52; line-height: 1; }
 /* 今日数字：方形圆角（同月视图 .is-today .cell-num，非圆形）；周末同月视图暖红渐变 */
 .wv-dnum.today { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: rgba(255,255,255,0.88); font-weight: 700; border-radius: 6px; }
 .wv-dhead.weekend .wv-dnum.today { background: linear-gradient(135deg,#b85c5c,#c97070); }
-/* 选中日：同一内嵌块、只改背景色（与 hover 同尺寸）；周末同步暖红 */
-.wv-dhead.selected::before { opacity: 1; }
-.wv-dhead.selected.weekend::before { opacity: 1; }
+/* 选中日的数字配色（选中底色由上方 .selected::before 负责）；周末同步暖红 */
 .wv-dhead.selected .wv-dnum:not(.today) { color: var(--color-primary); }
 .wv-dhead.selected.weekend .wv-dnum:not(.today) { color: rgba(195,90,90,0.9); }
 
@@ -2408,6 +2430,9 @@ async function saveEvent() {
 /* 全天区多日框选高亮（DOM 在列底之后、chip 之前 → 盖列底、垫 chip 下）；色同月视图 in-range */
 .wv-ad-sel { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.08); pointer-events: none; }
 .wv-ad-sel.weekend { background: rgba(195,90,90,0.07); }
+/* 全天区悬停高亮：叠加在选区之上（hover 已选列 = 相加），opacity 淡入淡出（见 .cal-fade），色同小时格/月格 hover */
+.wv-ad-hover { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.06); pointer-events: none; }
+.wv-ad-hover.weekend { background: rgba(195,90,90,0.06); }
 .wv-pbar, .wv-allday-ev { position: absolute; height: 18px; box-sizing: border-box; display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid; border-radius: 5px; font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; z-index: 1; }
 .wv-allday-ev { width: 14.2857%; margin-left: 1px; padding-right: 8px; }
 .wv-pbar { margin: 0 1px; }
@@ -2426,10 +2451,15 @@ async function saveEvent() {
 /* 悬停/周末——与月视图 .month-cell 同一套调色（冷紫；周末转 195,90,90 暖红）。
    选中不落在小时格上，而是落在日期数字上（同月视图选中日）*/
 /* 悬停带提到活动块之上（z-index>事件的 3），否则活动占据/下方的小时格悬停被活动遮住；pointer-events:none 不挡点击 */
-.wv-hover { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.06); pointer-events: none; z-index: 5; transition: none; }
+.wv-hover { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.06); pointer-events: none; z-index: 5; }
 .wv-col.weekend .wv-hover { background: rgba(195,90,90,0.07); }
+/* hover/选中叠层的淡入淡出（opacity，合成层、不引起 cal-main 磨砂重栅格变暗）。
+   配合模板里的 <Transition> + key：hover 移动到新格、选中切换到新格都会 crossfade。月视图 hover
+   用 .month-cell::before 的 opacity 过渡、选中用 .month-cell 的 background 过渡，两边观感同步。*/
+.cal-fade-enter-active, .cal-fade-leave-active { transition: opacity 0.12s ease; }
+.cal-fade-enter-from, .cal-fade-leave-to { opacity: 0; }
 /* 选中/拖拽选区：直接纯色变暗，无边框、无过渡动画（点击那一下不闪）*/
-.wv-selected { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.1); pointer-events: none; z-index: 1; transition: none; }
+.wv-selected { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.1); pointer-events: none; z-index: 1; }
 .wv-col.weekend .wv-selected { background: rgba(195,90,90,0.1); }
 .wv-now { position: absolute; left: 0; right: 0; height: 0; border-top: 2px solid #e5484d; z-index: 6; pointer-events: none; }
 .wv-now::before { content: ''; position: absolute; left: -3px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: #e5484d; }
