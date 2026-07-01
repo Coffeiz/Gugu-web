@@ -159,10 +159,54 @@ async def deliver_to_channels(uid, name: str, text: str, chans: set) -> dict:
         try:
             sent = await _deliver_im(uid, f"⏰ {name}\n\n{text}", platform)
             result[lbl] = "已发送" if sent else "无可触达地址（先给该 bot 发条消息）"
+            if sent:
+                # 把推送写进 IM 会话历史，用户回复时咕咕才有上下文（隐藏临时会话，回复即转正）
+                try:
+                    await _persist_push_im(uid, platform, name, text)
+                except Exception as e:
+                    print(f"[sched] {platform} 推送入会话失败: {type(e).__name__}: {e}", flush=True)
         except Exception as e:
             result[lbl] = f"失败：{type(e).__name__}"
             print(f"[sched] {platform} 投递失败: {type(e).__name__}: {e}", flush=True)
     return result
+
+
+async def _persist_push_im(uid, platform: str, title: str, text: str) -> None:
+    """把一条主动推送 append 到该用户在 IM 的最近会话（imsession 指向的那个），使下次回复带上上下文。
+    无 imsession（如隔夜冷启）→ 建一个普通会话并把 imsession 指过去。刷新 imsession 12h TTL，
+    保证「推送后 12h 内回复」能路由回此会话。"""
+    from app.core import redis as R
+    import app.db.session as ss
+    from app.models import ConversationSession, ConversationMessage
+
+    reach = await get_imreach(uid, platform)
+    puid = (reach or {}).get("puid")
+    if not puid:
+        return
+    r = R.get_redis()
+    sess_key = f"imsession:{platform}:{puid}"   # 与 worker._im_sess_key 同格式
+    try:
+        raw = await r.get(sess_key)
+        sid = int(raw) if raw else None
+    except (TypeError, ValueError):
+        sid = None
+
+    uid_u = _as_uuid(uid)
+    async with ss._SessionLocal() as db:
+        session = await db.get(ConversationSession, sid) if sid else None
+        if session is None or session.user_id != uid_u:
+            session = ConversationSession(user_id=uid_u, title=(title[:50] or "主动消息"), source=platform)
+            db.add(session)
+            await db.flush()
+        db.add(ConversationMessage(session_id=session.id, role="assistant", content=f"⏰ {title}\n\n{text}"))
+        session.updated_at = datetime.utcnow()
+        await db.commit()
+        new_sid = session.id
+
+    try:
+        await r.set(sess_key, str(new_sid), ex=12 * 3600)
+    except Exception:
+        pass
 
 
 async def _run_agent(user_id, prompt: str) -> str:

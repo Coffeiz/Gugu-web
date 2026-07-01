@@ -200,6 +200,10 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             .limit(tokens.HISTORY_MAX_MSGS)
         )
         history = tokens.select_history(hist_res.scalars().all(), token_budget=model_cfg.context_tokens)
+        # 主动推送（定时任务/活动提醒）若是会话首条 assistant（前导，sanitize 会剥掉）→ 记下来塞进 system，
+        # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
+        _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
+        _proactive_lead = _nonsumm[0].content if _nonsumm and _nonsumm[0].role == "assistant" else ""
 
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
@@ -264,6 +268,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     )
     if im_bridge:               # IM 新会话续接桥（见 _im_continuity_bridge）
         system_prompt += im_bridge
+    if _proactive_lead:         # 主动推送是会话首条 assistant → sanitize 会剥掉，塞 system 兜底
+        system_prompt += "\n\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead
 
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
     from agent.context import compress_conv
