@@ -165,6 +165,9 @@ const todayStr = computed(() => {
   flex: 1;
   position: relative;
   overflow: hidden;
+  /* 把 topbar(磨砂,z10) + ::after 渐变(z5) + 内容 圈进同一隔离层叠上下文，
+     让顶栏 backdrop-filter 的合成/栅格更稳，减少内容 hover 重绘时下沿的白带伪影。*/
+  isolation: isolate;
 }
 
 /* 顶部背景色渐变遮罩：让卡片顶部"溶"进背景，降低视觉重心 */
