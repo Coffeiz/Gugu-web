@@ -190,7 +190,7 @@
                   <div v-if="wvSelectedSlot && wvSelectedSlot.iso === d.iso" :key="'sel' + wvSelectedSlot.h0" class="wv-selected" :style="{ top: Math.min(wvSelectedSlot.h0, wvSelectedSlot.h1) * HOUR_H + 'px', height: (Math.abs(wvSelectedSlot.h1 - wvSelectedSlot.h0) + 1) * HOUR_H + 'px' }"></div>
                 </Transition>
                 <Transition name="cal-fade">
-                  <div v-if="wvHover && wvHover.iso === d.iso && !wvDragging" :key="'hov' + wvHover.h" class="wv-hover" :style="{ top: wvHover.h * HOUR_H + 'px', height: HOUR_H + 'px' }"></div>
+                  <div v-if="wvHover && wvHover.iso === d.iso && !wvDragging" class="wv-hover" :style="{ top: wvHover.h * HOUR_H + 'px', height: HOUR_H + 'px' }"></div>
                 </Transition>
                 <div v-if="d.isToday" class="wv-now" :style="{ top: nowTop + 'px' }"></div>
                 <div v-for="b in timedLayoutFor(d.iso)" :key="b.ev._uid" class="wv-ev cal-chip"
@@ -1478,6 +1478,7 @@ const wvHover = ref(null)   // { iso, h } 悬停的小时格
 const wvDragging = ref(false)      // 是否正在小时格拖选（仅用于门控 hover，不再有单独的 selbox）
 const wvSelectedSlot = ref(null)   // { iso, h0, h1 } 选中格（点击/拖拽直接驱动它 = 被选中深色，无中间反馈）
 let _wvColRect = null
+let _wvFormOpening = false   // mouseup 打开表单后屏蔽紧随的 click → handleClickOutside 误关
 function _hourAt(clientY, rect) { return Math.max(0, Math.min(23, Math.floor((clientY - rect.top) / HOUR_H))) }
 
 function onColMove(e, d) {
@@ -1487,11 +1488,6 @@ function onColMove(e, d) {
 }
 function onColLeave() { if (!wvDragging.value) wvHover.value = null }
 // 悬停的小时格是否落在当前选中区内 → 是则不显示 hover 浅色（避免和选中深色叠加，同月视图单元格背景互斥）
-function wvHoverOnSel() {
-  const hv = wvHover.value, s = wvSelectedSlot.value
-  return !!(hv && s && hv.iso === s.iso && hv.h >= Math.min(s.h0, s.h1) && hv.h <= Math.max(s.h0, s.h1))
-}
-
 function onColDown(e, d) {
   if (e.button !== 0) return
   selRange.value = null   // 选时段 → 清掉日期选择（两者用途不同，互斥）
@@ -1525,6 +1521,7 @@ function _wvUp(e) {
   const w = 240
   const left = Math.max(8, Math.min(e.clientX - w / 2, window.innerWidth - w - 8))
   addFormStyle.value = { position: 'fixed', top: Math.max(8, e.clientY + 8) + 'px', left: left + 'px', width: w + 'px', zIndex: 1000 }
+  _wvFormOpening = true
   showAddForm.value = true
   nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
 }
@@ -1964,6 +1961,7 @@ async function saveEditEvent() {
 function handleClickOutside(e) {
   if (e.target.closest('.dp-popup')) return
   if (showAddForm.value) {
+    if (_wvFormOpening) { _wvFormOpening = false; return }
     if (!addBtnRef.value?.contains(e.target) && !addFormRef.value?.contains(e.target))
       showAddForm.value = false
   }
@@ -2092,13 +2090,15 @@ async function saveEvent() {
 
 .cal-layout { display: grid; grid-template-columns: 1fr 260px; gap: 14px; flex: 1; min-height: 0; }
 .cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden; }
+/* 中和 .glass-card:hover 的背景/阴影变化：cal-main 是常驻操作面板，鼠标一直在其上=常态 hover(0.70)，
+   快速点击时 :hover 掉一帧 → 背景朝 0.56 淡回=「暗一下」。hover 保持与基态一致 → 无可闪的变化。 */
+.cal-main:hover { background: var(--glass-bg); box-shadow: var(--glass-shadow); }
 .weekday-row { display: grid; grid-template-columns: repeat(7, 1fr); flex-shrink: 0; margin-bottom: 2px; }
 .weekday-hdr { text-align: center; font-size: 11px; font-weight: 600; color: var(--text-secondary); padding: 3px 0 8px; border-right: 1px solid rgba(123,127,178,0.15); }
 .weekday-hdr:last-child { border-right: none; }
 .weekday-hdr.weekend { color: rgba(195,90,90,0.85); }
 
-/* translateZ 提独立合成层：隔离月格 hover/选中的重绘，不脏 cal-main 的 backdrop-filter（防「快速点击变暗」），同 .week-view */
-.month-body { flex: 1; display: flex; flex-direction: column; border-top: 1px solid rgba(123,127,178,0.15); overflow: hidden; transform: translateZ(0); }
+.month-body { flex: 1; display: flex; flex-direction: column; border-top: 1px solid rgba(123,127,178,0.15); overflow: hidden; }
 
 .week-row {
   flex: 1;
@@ -2357,10 +2357,10 @@ async function saveEvent() {
 .add-event-popup { background: rgba(255,255,255,0.72); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
 .popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 .popup-title { font-size: 13px; font-weight: 700; color: #1e2028; }
-.popup-input { width: 100%; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 12px; font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028; outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }
-.popup-input:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
-.popup-textarea { width: 100%; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 12px; font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028; outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; resize: none; line-height: 1.5; }
-.popup-textarea:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
+.popup-input { width: 100%; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }
+.popup-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); background: rgba(255,255,255,0.85); }
+.popup-textarea { width: 100%; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; resize: none; line-height: 1.5; }
+.popup-textarea:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); background: rgba(255,255,255,0.85); }
 .popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
 .popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: 'PingFang SC', 'Segoe UI', sans-serif; font-weight: 600; transition: background 0.12s, border-color 0.12s; }
 .popup-delete:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); }
@@ -2408,9 +2408,7 @@ async function saveEvent() {
 .view-toggle button { border: none; background: none; padding: 4px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; color: #8a8fa8; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.15s; }
 .view-toggle button.on { background: #fff; color: #5a5e86; box-shadow: 0 1px 4px rgba(60,70,100,0.12); }
 
-/* translateZ 提为独立合成层：隔离周视图（日期头/全天/小时格）hover/选中的重绘，使其不脏掉
-   .cal-main / 顶栏的 backdrop-filter 磨砂（治「点小时格整片变暗」「hover 顶栏闪白带」），玻璃全保留。*/
-.week-view { display: flex; flex-direction: column; flex: 1; min-height: 0; user-select: none; -webkit-user-select: none; transform: translateZ(0); }
+.week-view { display: flex; flex-direction: column; flex: 1; min-height: 0; user-select: none; -webkit-user-select: none; }
 .wv-gutter { width: 46px; flex: none; }
 .wv-head { display: flex; border-bottom: 1px solid rgba(123,127,178,0.18); padding-bottom: 4px; }
 .wv-dhead { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 3px 0; cursor: pointer; }
