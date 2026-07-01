@@ -2039,7 +2039,8 @@ async function saveEvent() {
 .cal-done:hover { opacity: 0.7; }   /* 悬停略恢复，方便看清要操作的那条 */
 
 .cal-page { display: flex; flex-direction: column; gap: 14px; height: 100%; }
-.cal-toolbar { display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; transform: translateZ(0); }
+/* 去掉 .glass-card 的 backdrop-filter：消除内容 hover 重绘时下沿白带（同顶栏，见 DefaultLayout 注释）；保留 0.56 半透明背景不变 */
+.cal-toolbar { display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .toolbar-left { display: flex; align-items: center; gap: 4px; }
 .nav-btn { width: 30px; height: 30px; border-radius: 8px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); transition: background 0.15s; }
 .nav-btn:hover { background: rgba(0,0,0,0.06); }

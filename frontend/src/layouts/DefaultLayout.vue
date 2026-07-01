@@ -165,9 +165,6 @@ const todayStr = computed(() => {
   flex: 1;
   position: relative;
   overflow: hidden;
-  /* 把 topbar(磨砂,z10) + ::after 渐变(z5) + 内容 圈进同一隔离层叠上下文，
-     让顶栏 backdrop-filter 的合成/栅格更稳，减少内容 hover 重绘时下沿的白带伪影。*/
-  isolation: isolate;
 }
 
 /* 顶部背景色渐变遮罩：让卡片顶部"溶"进背景，降低视觉重心 */
@@ -197,12 +194,12 @@ const todayStr = computed(() => {
   align-items: center;
   gap: 14px;
   padding: 14px 20px;
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  /* 顶栏绝对定位 + backdrop-filter，backdrop 取自下方 .page-content。Chrome/macOS 下页面内容
-     hover 重绘时顶栏栅格失效、下沿闪白带。translateZ(0) 提升为独立合成层稳定栅格（月视图/总览
-     已够）；周视图的滚动网格另在 .wv-body 上 translateZ 隔离其重绘，见 Calendar/index.vue。 */
-  transform: translateZ(0);
+  /* 去掉 .glass-card 默认的 backdrop-filter：顶栏浮在约 50px 空隙上、blur 几乎只作用于空白背景，
+     去掉后外观几乎无差别，但彻底消除 Chrome backdrop-filter 在下方内容 hover 重绘时的下沿白带伪影
+     （合成隔离 translateZ/isolation/page-content 提层均无法根治，见排查记录）。保留 .glass-card
+     的 0.56 半透明背景不变——不加白、不变实。*/
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .topbar-title h1 {
@@ -274,10 +271,5 @@ const todayStr = computed(() => {
   scrollbar-gutter: stable;
   padding: 128px 34px 24px 30px;
   box-sizing: border-box;
-  /* 提为独立合成层：page-content 是顶栏/cal-toolbar 等磨砂玻璃卡共同的 backdrop 来源，
-     作为一个大滚动绘制面，其内部任意角落的 hover 重绘都会让这些玻璃卡的 backdrop-filter
-     跟着重采样、下沿闪白带。独立成层后，内容绘制进自己的 GPU 纹理，玻璃卡采样稳定的合成
-     结果而非实时主线程绘制面（与 DevTools 录制时强制合成、白带消失同理）。*/
-  transform: translateZ(0);
 }
 </style>
