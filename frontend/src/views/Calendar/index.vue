@@ -589,23 +589,27 @@ function onCellMouseDown(d, e) {
   e.preventDefault()
 
   const startIso = d.iso
-  rangeSelect.active = true
-  rangeSelect.anchor = startIso
-  hoverRangeEnd.value = startIso
-  selRange.value = null
   cellCtx.show = false
-
+  // mousedown 不清 selRange、不进 range 态：否则单击时 activeRange 瞬间变 null，会露出旧 selectedDate（跳一下）。
+  // 只有真拖到别的天才进 range；单击在 mouseup 直接切到 selectedDate。
+  let dragging = false
   const mm = (ev) => {
     const iso = isoFromPoint(ev.clientX, ev.clientY)
-    if (iso) hoverRangeEnd.value = iso
+    if (!iso) return
+    if (!dragging && iso !== startIso) {
+      dragging = true
+      rangeSelect.active = true
+      rangeSelect.anchor = startIso
+    }
+    if (dragging) hoverRangeEnd.value = iso
   }
   const mu = (ev) => {
     document.removeEventListener('mousemove', mm)
     document.removeEventListener('mouseup', mu)
-    rangeSelect.active = false
     const endIso = isoFromPoint(ev.clientX, ev.clientY) || startIso
+    rangeSelect.active = false
     hoverRangeEnd.value = null
-    if (endIso !== startIso) {
+    if (dragging && endIso !== startIso) {
       const [a, b] = [startIso, endIso].sort()
       selRange.value = { start: a, end: b }
       document.addEventListener('click', ce => ce.stopPropagation(), { capture: true, once: true })
