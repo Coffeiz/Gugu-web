@@ -1,0 +1,4 @@
+# 开发/测试专用依赖（生产不装）：pip install -r requirements-dev.txt
+pytest>=8.0
+pytest-asyncio>=0.23
+aiosqlite>=0.20        # 测试用内存 SQLite（conftest.py），不碰真实 Postgres
