@@ -1,0 +1,52 @@
+<svg viewBox="0 0 680 348" xmlns="http://www.w3.org/2000/svg" role="img" font-family="system-ui, -apple-system, 'Segoe UI', 'PingFang SC', sans-serif">
+<title>感知系统落地路线图（Roadmap）</title>
+<desc>七步路线：step0 stance+companion 已落、step1 错读案例收集器 已落、step1.5 先攒真实数据（当前）、step2 误判→lens写回、step3 lens→Person Model、step4 置信度+探问、step5 Relationship 蒸馏。数据优先、自下而上。</desc>
+<rect width="680" height="348" fill="#FFFFFF"/>
+
+<text x="40" y="30" font-family="Georgia, 'Songti SC', serif" font-size="17" font-weight="600" fill="#2C2C2A">感知系统 · 落地路线（Roadmap）</text>
+<text x="40" y="48" font-size="11" fill="#888780">数据优先、自下而上 —— ✅ 已落　▶ 当前　○ 待做</text>
+
+<!-- 竖轴 -->
+<line x1="64" y1="80" x2="64" y2="296" stroke="#D3D1C7" stroke-width="2"/>
+
+<!-- 当前步高亮 -->
+<rect x="40" y="138" width="600" height="30" rx="8" fill="#FAECE7" stroke="#D85A30" stroke-width="1.2"/>
+
+<!-- step 0 · done -->
+<circle cx="64" cy="80" r="8" fill="#3B6D11"/>
+<text x="84" y="84" font-size="12.5" font-weight="600" fill="#2C2C2A">step 0 · stance + companion 松绑</text>
+<text x="640" y="84" text-anchor="end" font-size="11" fill="#3B6D11">已落</text>
+
+<!-- step 1 · done -->
+<circle cx="64" cy="118" r="8" fill="#3B6D11"/>
+<text x="84" y="122" font-size="12.5" font-weight="600" fill="#2C2C2A">step 1 · 错读案例收集器（枚举 · 结构性零泄漏）</text>
+<text x="640" y="122" text-anchor="end" font-size="11" fill="#3B6D11">已落 · 已验证</text>
+
+<!-- step 1.5 · current -->
+<circle cx="64" cy="153" r="9" fill="#D85A30"/>
+<circle cx="64" cy="153" r="3.2" fill="#FFFFFF"/>
+<text x="84" y="157" font-size="12.5" font-weight="700" fill="#993C1D">step 1.5 · 先攒真实数据（让它在真实对话里跑）</text>
+<text x="640" y="157" text-anchor="end" font-size="11" font-weight="700" fill="#D85A30">▶ 当前</text>
+
+<!-- step 2 · todo -->
+<circle cx="64" cy="191" r="7" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="2"/>
+<text x="84" y="195" font-size="12.5" fill="#5F5E5A">step 2 · 误判 → lens 写回（最高杠杆）</text>
+<text x="640" y="195" text-anchor="end" font-size="11" fill="#888780">待做</text>
+
+<!-- step 3 · todo -->
+<circle cx="64" cy="229" r="7" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="2"/>
+<text x="84" y="233" font-size="12.5" fill="#5F5E5A">step 3 · lens → Person Model（观察为真、特质派生）</text>
+<text x="640" y="233" text-anchor="end" font-size="11" fill="#888780">待做</text>
+
+<!-- step 4 · todo -->
+<circle cx="64" cy="267" r="7" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="2"/>
+<text x="84" y="271" font-size="12.5" fill="#5F5E5A">step 4 · 加置信度 + 低置信探问</text>
+<text x="640" y="271" text-anchor="end" font-size="11" fill="#888780">待做</text>
+
+<!-- step 5 · todo -->
+<circle cx="64" cy="296" r="7" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="2"/>
+<text x="84" y="300" font-size="12.5" fill="#5F5E5A">step 5 · Relationship 自然蒸馏（最远的星）</text>
+<text x="640" y="300" text-anchor="end" font-size="11" fill="#888780">待做</text>
+
+<text x="40" y="332" font-size="9.5" fill="#888780">⚠️ 感知误读检测召回随机偏低 = 案例是下界（会漏抓一部分，LLM 固有抖动，非 bug）</text>
+</svg>
