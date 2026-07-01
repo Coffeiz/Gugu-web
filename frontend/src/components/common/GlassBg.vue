@@ -35,9 +35,9 @@
   position: absolute;
   inset: 0;
   background: var(--gb-tint, var(--glass-bg));
-  /* 亮边高光：上沿 + 左沿，比 glass-card 默认更亮一档（1.0 / 0.7），静态不重绘、无白带之虞 */
+  /* 亮边高光：与 glass-card 完全一致（上沿 1px/0.95 + 左沿 0.55），静态不重绘、无白带之虞 */
   box-shadow:
-    inset 0 1.5px 0 rgba(255,255,255,1),
-    inset 1px 0 0 rgba(255,255,255,0.7);
+    inset 0 1px 0 rgba(255,255,255,0.95),
+    inset 1px 0 0 rgba(255,255,255,0.55);
 }
 </style>
