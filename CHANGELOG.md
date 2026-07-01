@@ -11,12 +11,14 @@
 
 ### 新增
 
+- **聊天附件可回查重发 + `list_files` 结果格式化指引**（`backend/agent/tools/files.py`、`agent/skills/file-ops.md`）：修复「把刚刚的图/QQ那张发我一下」这类模糊指代找不到原图的问题——根因不是暂存过期（附件暂存 7 天），而是 `attach_id` 只在收到那一轮的上下文里可见（`resolve_for_message` 把它写进当轮增广文本），存进数据库的历史消息用的是原始 `req.message`、不含 attach_id，且暂存区已有的 `list_staged()` 查询函数从未被注册成 agent 工具——一旦翻篇，模型对「刚才那张图」就彻底失忆。新增 `list_recent_attachments` 工具查该用户暂存区未过期附件（含 `platform`/大致存了多久）；`send_file` 新增 `attach_id` 来源，直接重发暂存附件（不重新下载、不进文件库），复用 `resolve_attach` 现有的容错模糊匹配 + 同渠道收窄逻辑。另外 `list_files` 的工具 description 与 `file-ops.md` 补格式指引：结果按列表呈现（多文件夹/项目分组），别写成一段话堆文件名。
 - **后台数据面板拆两页 + 新指标 + 开发者标记**（`api/v1/admin_analytics.py` + `users_admin.py` + `Admin/Analytics/{index.vue,Usage.vue,_shared.ts}` + `Users` + 路由/侧边栏 + 迁移 `20260702000001`）：原「数据分析」单页 7 段太挤，按「生意好不好 / 用户怎么用」拆成 **数据总览**（新增**日活跃用户曲线**〔agent_usage ∪ frontend_events 按日去重〕+ 旅程/行为漏斗 + 新增**项目留存数值**〔创建过项目 / 创建过第 2 个项目 / 注册满一周仍有进行中项目〕+ 用户·项目卡）与 **使用分析**（新增**新建项目曲线**、**会话深度分布**〔每用户最深会话按 1/2–3/4–10/11–30/30+ 轮分档〕、**周活跃维度**〔聊天/项目/日历/文件/提醒，「操作过」口径、纯浏览未埋点不含〕+ 原趋势/工具/模型分布挪入）。**开发者标记**：`users.is_developer` 列 + 用户管理页 DEV 打标按钮/徽章 + 两个数据页「排除开发者」全局开关（localStorage 持久，所有端点支持 `exclude_dev`）——一键看真实用户数据。新端点 `session-depth`/`active-dimensions`；新前端代码全 TS（总览页顺带转 `lang="ts"`）。
 - **图片搜索 `image_search` + `send_file` 支持网络图片**（`backend/agent/tools/search.py`、`tools/files.py`）：新增 `image_search` 工具，走自建 SearXNG `categories=images`（免配额），返回候选（标题+来源页+图片直链+缩略图）；`send_file` 加可选 `url` 参数，传入图片直链会下载（SSRF 防护：仅 http/https、挡内网/回环/云元数据地址）后暂存为聊天附件发出，网页端复用既有的 `attach_id` 图片卡片渲染、IM 端（飞书/QQ）由 `worker.py` 新增的 `attach_id` 分支发送——搜到图后可在同一轮直接发给用户，网页和 IM 都能收到。新增独立技能文档 `agent/skills/web-search.md`（联网搜索路由/成本/发图规则，`prompts/skills.md` 精简为一行指针）。管理后台「联网搜索」新增「图片搜索引擎」配置项 + 连通测试（`Admin/Agent/index.vue`，本次顺带转 `lang="ts"`）。
 - **微信支持语音消息**（`backend/agent/adapters/wechat.py`）：iLink 语音消息（`item.type==3`）自带 ASR 转写在 `voice_item.text`，不同于图片走 CDN+AES-128-ECB 那套下载解密，直接读转写文字注入对话即可；转写文本包一层「🎤 用户发来一条语音（已转文字）…」提示，语气对齐 QQ/飞书语音处理，转写为空（ASR 失败）给兜底提示、不静默丢消息。字段结构来自开源参考 [hao-ji-xing/openclaw-weixin](https://github.com/hao-ji-xing/openclaw-weixin)，已用真实语音验证跑通。文本/图片/语音三平台（飞书/QQ/微信）至此全部打通。
 
 ### 修复
 
+- **浮动预览窗打开低分辨率图片先猜大窗口再骤缩**（`components/common/FloatPreviewWindow.vue`）：缩略图长边未顶到 `CARD_THUMB_CAP` 时按缩略图真实尺寸定窗口，准；顶到上限时原图真实尺寸未知（可能是低分辨率图，也可能是被压缩过的大图，两者无法区分），此前套 4K 估算兜底——遇到实际是低分辨率图的情况会把窗口猜得远大于真实尺寸，真图加载完再缩回去，观感是「先变超大再骤缩」。改为不猜：顶到上限时窗口暂不出现，等真图加载完直接按正确尺寸定窗（同「快速下载」路径），不做中间的错误估算。
 - **多附件误存**（`backend/app/core/chat_attach.py`、`agent/tools/files.py`）：QQ 连发 4 张图后跟一句「存到XX项目」，实际只存了 1 个不相关的语音文件。真因是 `resolve_attach()` 的兜底逻辑"没对上 attach_id 就用最近暂存的一个"，取的是该用户全局暂存池里最后写入的一条，不分类型也不分渠道——图片+语音混存、或多个渠道（飞书/QQ/微信/网页）共用同一暂存池时会误取无关附件。修复：`stage`/`stage_sync` 新增 `platform` 字段打渠道标签；`resolve_attach` 兜底前先按当前渠道（`imctx`）收窄候选，再判断类型是否一致，只有无歧义（单候选或类型全一致）才自动兜底，否则返回歧义候选列表而非静默瞎猜；`save_uploaded_file` 新增 `attach_ids` 批量参数（同 `_rename_file` 的 `renames` 模式），一次调用存多个、不再逐个调用各自回退。
 - **项目编辑卡图片文件多选，文件名标签区未被选中暗色覆盖**（`views/Projects/components/ProjectModal.vue`）：`.fc-card.selected` 的选中覆盖层错误地写成 `:not(.fc-has-thumb)::before`（只对无缩略图的卡生效），导致有缩略图的图片卡选中时只有缩略图变暗、下方文件名区域没跟着变。对齐文件库正确实现，去掉多余的 `:not()` 限定。
 - **通知气泡改为一次显示、自动消失，无需手动点关闭**（`components/common/NotificationBubble.vue`）：此前只有教程气泡打完字 5s 后自动消失，其它通知（IM/广播）会一直停留、需手动点 ✕。现在所有气泡一视同仁，打完字 5s 后自动消失；气泡本身已有「只弹一次」机制，不受影响。
@@ -34,6 +36,7 @@
 - **日历快速点击/切换面板「变暗」修复**：真因是 `.glass-card:hover` 的背景过渡（0.56↔0.70）在快速交互时 `:hover` 掉帧、`cal-main` 背景朝基态淡回=变暗。中和 `cal-main:hover`（与基态一致、无可闪变化）。
 - **日历 hover/选中统一淡入淡出 + 叠加**（月/周/全天/日期头四处一致）：悬停与选中反馈改为 opacity 淡入淡出、可叠加（悬停已选中格 = 相加变深），并给全天区补上悬停高亮、日期头拆成选中/悬停两层。
 - **日历点击选中不再「先变淡 / 闪现旧格」**：全天/日期头/月格的 mousedown 不再提前清空选区（只有真拖到别的天才进 range 选择），单击直接切到选中暗色；月视图多选后点单日不再闪现上一个单日格。
+- **周视图交互优化 + 右键菜单精简**（`views/Calendar/index.vue`）：单击/拖选小时格改为只做格子选中，不再点一下就弹出添加活动弹窗，同一格二次单击才弹（拖选、切换到别的格不受影响）；顺带修复弹窗一闪而过的问题——`mouseup` 打开弹窗后紧跟的 `click` 事件被 `handleClickOutside`（捕获阶段监听）误判成「点击外部」随即关掉，加 `_wvFormOpening` 标志屏蔽这一次误关。右键菜单按区域精简：全天区/日期表头只保留「新建项目」，小时格只保留「新建活动」（此前两处都同时显示两个选项，实际全天/日期头从不支持建活动）。
 - **文件库 / 项目编辑卡「网格·列表」切换图标变小修复**（`views/Files/index.vue`、`views/Projects/components/ProjectModal.vue`）：工具栏拥挤时 `.view-toggle` 被 flex 挤压，带 `viewBox` 的 SVG 图标随之缩成 2~3px（首屏/从别页回来布局最紧时最明显）。给切换组 + 按钮 + 图标加 `flex-shrink: 0`。
 
 ## [0.15.0] - 2026-07-01 · 日历周视图 + 咕咕相处方式重构（反思驱动 stance）+ 前端 TS 迁移 + 定时推送进 IM 会话
