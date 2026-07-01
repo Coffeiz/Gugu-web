@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.models import File, Project, User
 from app.schemas import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.core.security import get_current_user
+from app.core.ownership import get_owned
 from app.services.storage import get_storage
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -117,8 +118,8 @@ async def update_project(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    p = await db.get(Project, pid)
-    if not p or p.user_id != current_user.id:
+    p = await get_owned(db, Project, pid, current_user.id)
+    if not p:
         raise HTTPException(404, "项目不存在")
 
     data = body.model_dump(exclude_unset=True, by_alias=False)
@@ -173,8 +174,8 @@ async def delete_project(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    p = await db.get(Project, pid)
-    if not p or p.user_id != current_user.id:
+    p = await get_owned(db, Project, pid, current_user.id)
+    if not p:
         raise HTTPException(404, "项目不存在")
     # 连项目内的文件/文件夹一并删除（不再把文件归个人空间）：
     #   · 文件：软删（置 deleted_at），保留物理与「可恢复」语义，与单文件删除一致；

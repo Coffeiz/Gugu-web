@@ -13,6 +13,7 @@ from app.models import File, Folder, Project, User
 from app.schemas import FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry, BatchDeleteBody, FileCopyBody, BatchDownloadBody
 from jose import jwt, JWTError
 from app.core.security import get_current_user, create_stream_token, verify_stream_token
+from app.core.ownership import get_owned
 from app.core.config import get_settings
 from app.services.storage import get_storage
 
@@ -370,8 +371,8 @@ async def upload_file(
     project_month = ""
     folder_name = ""
     if space == "project" and project_id:
-        p = await db.get(Project, project_id)
-        if not p or p.user_id != current_user.id:
+        p = await get_owned(db, Project, project_id, current_user.id)
+        if not p:
             raise HTTPException(400, "项目不存在")
         project_name = p.name
         project_color = _color(p.color)
@@ -381,8 +382,8 @@ async def upload_file(
         raise HTTPException(400, "project 空间需要提供 project_id")
 
     if folder_id is not None:
-        fo = await db.get(Folder, folder_id)
-        if not fo or fo.user_id != current_user.id:
+        fo = await get_owned(db, Folder, folder_id, current_user.id)
+        if not fo:
             raise HTTPException(400, "文件夹不存在")
         folder_name = fo.name
 
@@ -491,8 +492,8 @@ async def presign_upload(
     folder_name = ""
 
     if body.space == "project" and body.project_id:
-        p = await db.get(Project, body.project_id)
-        if not p or p.user_id != current_user.id:
+        p = await get_owned(db, Project, body.project_id, current_user.id)
+        if not p:
             raise HTTPException(400, "项目不存在")
         project_name = p.name
         project_color = _color(p.color)
@@ -502,8 +503,8 @@ async def presign_upload(
         raise HTTPException(400, "project 空间需要提供 project_id")
 
     if body.folder_id is not None:
-        fo = await db.get(Folder, body.folder_id)
-        if not fo or fo.user_id != current_user.id:
+        fo = await get_owned(db, Folder, body.folder_id, current_user.id)
+        if not fo:
             raise HTTPException(400, "文件夹不存在")
         folder_name = fo.name
 
@@ -586,15 +587,15 @@ async def confirm_upload(
     folder_name = ""
 
     if body.space == "project" and body.project_id:
-        p = await db.get(Project, body.project_id)
-        if not p or p.user_id != current_user.id:
+        p = await get_owned(db, Project, body.project_id, current_user.id)
+        if not p:
             raise HTTPException(400, "项目不存在")
         project_name = p.name
         project_color = _color(p.color)
 
     if body.folder_id is not None:
-        fo = await db.get(Folder, body.folder_id)
-        if not fo or fo.user_id != current_user.id:
+        fo = await get_owned(db, Folder, body.folder_id, current_user.id)
+        if not fo:
             raise HTTPException(400, "文件夹不存在")
         folder_name = fo.name
 
@@ -627,8 +628,8 @@ async def update_file(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f:
         raise HTTPException(404, "文件不存在")
 
     new_display = body.display_name if body.display_name is not None else f.display_name
@@ -642,15 +643,15 @@ async def update_file(
     project_month = ""
     folder_name = ""
     if f.space == "project" and f.project_id:
-        p = await db.get(Project, f.project_id)
+        p = await get_owned(db, Project, f.project_id, current_user.id)
         if p:
             project_name = p.name
             project_color = _color(p.color)
             date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
             project_year, project_month = date_str[:4], date_str[5:7]
     if new_fid:
-        fo = await db.get(Folder, new_fid)
-        if not fo or fo.user_id != current_user.id:
+        fo = await get_owned(db, Folder, new_fid, current_user.id)
+        if not fo:
             raise HTTPException(400, "目标文件夹不存在")
         folder_name = fo.name
 
@@ -695,8 +696,8 @@ async def update_file_content(
 ):
     """改文本文件正文（md 预览里点任务勾选框等场景，前端直接存）。仅文本类、限 1MB。"""
     from app.core.chat_attach import TEXT_EXTS
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f:
         raise HTTPException(404, "文件不存在")
     if (f.ext or "").lower() not in TEXT_EXTS:
         raise HTTPException(400, "仅文本类文件可改内容")
@@ -721,8 +722,8 @@ async def copy_file(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id or f.deleted_at:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f or f.deleted_at:
         raise HTTPException(404, "文件不存在")
 
     new_folder_id  = body.folder_id
@@ -731,8 +732,8 @@ async def copy_file(
 
     project_name = ""; project_color = None; project_year = ""; project_month = ""
     if new_space == "project" and new_project_id:
-        p = await db.get(Project, new_project_id)
-        if not p or p.user_id != current_user.id:
+        p = await get_owned(db, Project, new_project_id, current_user.id)
+        if not p:
             raise HTTPException(400, "目标项目不存在")
         project_name  = p.name; project_color = _color(p.color)
         date_str      = p.start_date or p.created_at.strftime("%Y-%m-%d")
@@ -740,8 +741,8 @@ async def copy_file(
 
     folder_name = ""
     if new_folder_id:
-        fo = await db.get(Folder, new_folder_id)
-        if not fo or fo.user_id != current_user.id:
+        fo = await get_owned(db, Folder, new_folder_id, current_user.id)
+        if not fo:
             raise HTTPException(400, "目标文件夹不存在")
         folder_name = fo.name
 
@@ -793,8 +794,8 @@ async def delete_file(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id or f.deleted_at is not None:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f or f.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
     await _move_to_trash(get_storage(), f)
     f.deleted_at = datetime.utcnow()
@@ -859,8 +860,8 @@ async def batch_download_files(
 
     # 2. 文件夹（递归）
     async def collect_folder(folder_id: int, prefix: str):
-        folder = await db.get(Folder, folder_id)
-        if not folder or folder.user_id != current_user.id:
+        folder = await get_owned(db, Folder, folder_id, current_user.id)
+        if not folder:
             return
         folder_prefix = f"{prefix}{folder.name}/"
         # 该文件夹内的文件
@@ -938,8 +939,8 @@ async def get_thumb(
     except (JWTError, KeyError, ValueError):
         raise HTTPException(401, "Token 无效")
 
-    f = await db.get(File, fid)
-    if not f or f.user_id != user_id or f.deleted_at is not None:
+    f = await get_owned(db, File, fid, user_id)
+    if not f or f.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
 
     mime = (f.mime_type or '').lower()
@@ -1004,8 +1005,8 @@ async def download_file(
     from fastapi.responses import Response
     from urllib.parse import quote
 
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f:
         raise HTTPException(404, "文件不存在")
     data = await get_storage().get(f.storage_key)
     filename = quote(f"{f.display_name}.{f.ext.lower()}")
@@ -1055,8 +1056,8 @@ async def preview_pdf(
 ):
     from fastapi.responses import Response
 
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id or f.deleted_at is not None:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f or f.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
     if f.ext.upper() not in _OFFICE_EXTS:
         raise HTTPException(400, "不支持的格式")
@@ -1085,8 +1086,8 @@ async def get_stream_url(
 ):
     from app.core.config import get_settings
 
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f:
         raise HTTPException(404, "文件不存在")
 
     storage = get_storage()
@@ -1118,8 +1119,8 @@ async def stream_file(
     if token_fid != fid:
         raise HTTPException(401, "token 与文件不符")
 
-    f = await db.get(File, fid)
-    if not f or f.user_id != user_id:
+    f = await get_owned(db, File, fid, user_id)
+    if not f:
         raise HTTPException(404, "文件不存在")
 
     storage = get_storage()

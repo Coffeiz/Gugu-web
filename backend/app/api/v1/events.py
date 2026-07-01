@@ -7,6 +7,7 @@ from app.db.session import get_db
 from app.models import CalendarEvent, User
 from app.schemas import EventCreate, EventUpdate, EventResponse
 from app.core.security import get_current_user
+from app.core.ownership import get_owned
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -65,8 +66,8 @@ async def update_event(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    e = await db.get(CalendarEvent, eid)
-    if not e or e.user_id != current_user.id:
+    e = await get_owned(db, CalendarEvent, eid, current_user.id)
+    if not e:
         raise HTTPException(404, "事件不存在")
     data = body.model_dump(exclude_unset=True, by_alias=False)
     client_version = data.pop("version", None)
@@ -86,8 +87,8 @@ async def delete_event(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    e = await db.get(CalendarEvent, eid)
-    if not e or e.user_id != current_user.id:
+    e = await get_owned(db, CalendarEvent, eid, current_user.id)
+    if not e:
         raise HTTPException(404, "事件不存在")
     # 应用层级联：连带删绑定到该事件的提醒任务（event_id 无 DB 外键，手动清，免留孤儿提醒）
     from app.models import ScheduledTask

@@ -6,6 +6,7 @@ from app.db.session import get_db
 from app.models import Client, User
 from app.schemas import ClientCreate, ClientResponse
 from app.core.security import get_current_user
+from app.core.ownership import get_owned
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -47,8 +48,8 @@ async def delete_client(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    c = await db.get(Client, cid)
-    if not c or c.user_id != current_user.id:
+    c = await get_owned(db, Client, cid, current_user.id)
+    if not c:
         raise HTTPException(404, "客户不存在")
     await db.delete(c)
     await db.commit()

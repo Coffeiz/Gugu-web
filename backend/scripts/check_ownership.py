@@ -17,26 +17,38 @@ import re
 import sys
 from pathlib import Path
 
-TOOLS_DIR = Path(__file__).parent.parent / "agent" / "tools"
+BACKEND = Path(__file__).parent.parent
+# 受守卫的目录：agent 工具层 + 用户态 REST 层
+GUARDED_DIRS = [BACKEND / "agent" / "tools", BACKEND / "app" / "api" / "v1"]
+# REST 层里整文件豁免的（管理员合法跨用户访问 / 无归属语义的模型）：
+#   auth.py         按 token 取本人 User 行（User 无 user_id 列）
+#   config.py       管理员改配置时确认用户存在
+#   *_admin.py      管理员后台（用户管理/会话轨迹/站内通知），本就跨用户
+#   invite_codes.py 邀请码管理（管理员）
+ADMIN_EXEMPT_FILES = {"auth.py", "config.py", "agent_admin.py", "users_admin.py",
+                      "notifications_admin.py", "admin_analytics.py", "invite_codes.py"}
 EXEMPT_MARK = "ownership-exempt"
 BARE_GET = re.compile(r"\bdb\.get\(")
 
 
 def main() -> int:
     violations: list[str] = []
-    for py in sorted(TOOLS_DIR.glob("*.py")):
-        for lineno, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
-            stripped = line.strip()
-            if stripped.startswith("#"):          # 纯注释行（含解释老模式的文档注释）不算
+    for d in GUARDED_DIRS:
+        for py in sorted(d.glob("*.py")):
+            if py.name in ADMIN_EXEMPT_FILES or py.name.startswith("._"):   # ._* = macOS AppleDouble 残留（SMB 时代遗产），非代码
                 continue
-            if BARE_GET.search(line) and EXEMPT_MARK not in line:
-                violations.append(f"{py.relative_to(TOOLS_DIR.parent.parent)}:{lineno}: {stripped[:100]}")
+            for lineno, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
+                stripped = line.strip()
+                if stripped.startswith("#"):          # 纯注释行（含解释老模式的文档注释）不算
+                    continue
+                if BARE_GET.search(line) and EXEMPT_MARK not in line:
+                    violations.append(f"{py.relative_to(BACKEND)}:{lineno}: {stripped[:100]}")
     if violations:
         print("❌ 发现裸 db.get()（应改用 app.core.ownership.get_owned，或加 # ownership-exempt 标记说明豁免理由）：")
         for v in violations:
             print("  " + v)
         return 1
-    print("✅ ownership 守卫通过：agent/tools/ 无裸 db.get()")
+    print("✅ ownership 守卫通过：agent/tools/ 与 app/api/v1/（用户态）无裸 db.get()")
     return 0
 
 

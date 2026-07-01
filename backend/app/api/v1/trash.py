@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.models import File, MindMap, Project, Folder, User
 from app.schemas import FileResponse, BatchDeleteBody
 from app.core.security import get_current_user
+from app.core.ownership import get_owned
 from app.services.storage import get_storage
 from app.api.v1.files import _to_resp, _color, _delete_thumb_cache, _build_key, _resolve_conflict
 
@@ -41,20 +42,21 @@ async def _restore_file_storage(f: File, db: AsyncSession) -> None:
     from app.services.storage import get_storage
     storage = get_storage()
 
-    # 获取所属项目/文件夹/思维导图信息，重建原始路径
+    # 获取所属项目/文件夹/思维导图信息，重建原始路径（f 已归属校验；其所属对象按不变量应同属 f 的主人，
+    # 用 f.user_id 走归属强制——万一数据串了宁可当"不存在"回根目录，也不读到别人的名字）
     project_name = project_year = project_month = folder_name = mind_map_title = ""
     if f.project_id:
-        p = await db.get(Project, f.project_id)
+        p = await get_owned(db, Project, f.project_id, f.user_id)
         if p:
             project_name = p.name
             date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
             project_year, project_month = date_str[:4], date_str[5:7]
     if f.folder_id:
-        fo = await db.get(Folder, f.folder_id)
+        fo = await get_owned(db, Folder, f.folder_id, f.user_id)
         if fo:
             folder_name = fo.name
     if f.mind_map_id:
-        mm = await db.get(MindMap, f.mind_map_id)
+        mm = await get_owned(db, MindMap, f.mind_map_id, f.user_id)
         if mm:
             mind_map_title = mm.title
 
@@ -87,8 +89,8 @@ async def restore_file(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id or f.deleted_at is None:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f or f.deleted_at is None:
         raise HTTPException(404, "文件不存在")
     await _restore_file_storage(f, db)
     f.deleted_at = None
@@ -125,8 +127,8 @@ async def hard_delete_file(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id or f.deleted_at is None:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f or f.deleted_at is None:
         raise HTTPException(404, "文件不存在")
     fid = f.id
     try:

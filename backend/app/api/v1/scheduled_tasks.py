@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
+from app.core.ownership import get_owned
 from app.core.tz import fmt_local
 from app.db.session import get_db
 from app.models import ScheduledTask, User
@@ -99,8 +100,8 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
     # 绑定事件校验：event_id 必须是本人的事件，防越权/挂错
     if body.event_id is not None:
         from app.models import CalendarEvent
-        ev = await db.get(CalendarEvent, body.event_id)
-        if not ev or ev.user_id != user.id:
+        ev = await get_owned(db, CalendarEvent, body.event_id, user.id)
+        if not ev:
             raise HTTPException(400, "绑定的日历事件不存在")
     t = ScheduledTask(
         user_id=user.id, name=body.name,
@@ -115,8 +116,8 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
 
 
 async def _owned(task_id: int, user: User, db: AsyncSession) -> ScheduledTask:
-    t = await db.get(ScheduledTask, task_id)
-    if not t or t.user_id != user.id:
+    t = await get_owned(db, ScheduledTask, task_id, user.id)
+    if not t:
         raise HTTPException(404, "任务不存在")
     return t
 

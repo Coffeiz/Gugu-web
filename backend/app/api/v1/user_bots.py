@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import redis as R
 from app.core.security import get_current_user
+from app.core.ownership import get_owned
 from app.db.session import get_db
 from app.models import User, UserBot
 
@@ -100,8 +101,8 @@ async def update_my_bot(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    bot = await db.get(UserBot, bot_id)
-    if not bot or bot.user_id != current_user.id:
+    bot = await get_owned(db, UserBot, bot_id, current_user.id)
+    if not bot:
         raise HTTPException(404, "机器人不存在")
     if body.name is not None:
         bot.name = body.name
@@ -126,8 +127,8 @@ async def delete_my_bot(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    bot = await db.get(UserBot, bot_id)
-    if not bot or bot.user_id != current_user.id:
+    bot = await get_owned(db, UserBot, bot_id, current_user.id)
+    if not bot:
         raise HTTPException(404, "机器人不存在")
     platform = bot.platform
     await db.delete(bot)

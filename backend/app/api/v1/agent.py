@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import chat_attach
 from app.core.security import get_current_user
+from app.core.ownership import get_owned
 from app.db.session import get_db
 from app.models import ConversationMessage, ConversationSession, User
 
@@ -170,8 +171,8 @@ async def resume_stream(
     db: AsyncSession = Depends(get_db),
 ):
     """续看进行中的生成（刷新后重连）。无进行中的生成则立即返回 idle done。"""
-    session = await db.get(ConversationSession, session_id)
-    if not session or session.user_id != current_user.id:
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if not session:
         raise HTTPException(404, "对话不存在")
     return StreamingResponse(
         web_adapter.resume(session_id),
@@ -238,8 +239,8 @@ async def get_session_messages(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    session = await db.get(ConversationSession, session_id)
-    if not session or session.user_id != current_user.id:
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if not session:
         raise HTTPException(404, "对话不存在")
     res = await db.execute(
         select(ConversationMessage)
@@ -291,8 +292,8 @@ async def delete_session(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    session = await db.get(ConversationSession, session_id)
-    if not session or session.user_id != current_user.id:
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if not session:
         raise HTTPException(404, "对话不存在")
     await db.delete(session)
     await db.commit()
