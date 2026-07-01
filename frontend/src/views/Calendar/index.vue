@@ -2039,7 +2039,7 @@ async function saveEvent() {
 .cal-done:hover { opacity: 0.7; }   /* 悬停略恢复，方便看清要操作的那条 */
 
 .cal-page { display: flex; flex-direction: column; gap: 14px; height: 100%; }
-.cal-toolbar { display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; }
+.cal-toolbar { display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; transform: translateZ(0); }
 .toolbar-left { display: flex; align-items: center; gap: 4px; }
 .nav-btn { width: 30px; height: 30px; border-radius: 8px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); transition: background 0.15s; }
 .nav-btn:hover { background: rgba(0,0,0,0.06); }
@@ -2077,14 +2077,23 @@ async function saveEvent() {
 .month-cell {
   padding: 7px 6px 4px;
   border-right: 1px solid rgba(123,127,178,0.15);
-  cursor: pointer; transition: background 0.12s;
+  cursor: pointer;
   overflow: hidden;
+  position: relative;
 }
 .month-cell:last-child { border-right: none; }
-.month-cell.cell-hovered { background: rgba(123,127,178,0.06); }
+/* hover 高光：用 ::before + opacity（合成层，零主线程重绘），不再走背景变化——背景变化会 0.12s
+   主线程重绘并级联拖累顶栏/cal-toolbar 的 backdrop-filter 重栅格、闪白带（见 perf trace）。*/
+.month-cell::before {
+  content: ''; position: absolute; inset: 0; z-index: 0;
+  background: rgba(123,127,178,0.06); opacity: 0;
+  transition: opacity 0.12s ease; pointer-events: none;
+}
+.month-cell.cell-hovered::before { opacity: 1; }
+.month-cell.is-weekend::before { background: rgba(195,90,90,0.07); }
+.month-cell > * { position: relative; z-index: 1; }
 .month-cell.other-month { opacity: 0.3; }
 .month-cell.is-weekend { background: rgba(195,90,90,0.028); }
-.month-cell.is-weekend.cell-hovered { background: rgba(195,90,90,0.07); }
 .month-cell.is-today { background: rgba(123,127,178,0.07); }
 .month-cell.is-today.is-weekend { background: rgba(195,90,90,0.07); }
 .month-cell.is-today .cell-num { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: rgba(255,255,255,0.88) !important; font-weight: 700; border-radius: 6px; }
@@ -2370,9 +2379,10 @@ async function saveEvent() {
 .wv-dhead { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 3px 0; cursor: pointer; }
 .wv-dhead > span { position: relative; z-index: 1; }
 /* 悬停 / 选中 共用同一内嵌底色块（inset 一致 → 大小相同）*/
-.wv-dhead::before { content: ''; position: absolute; inset: 2px 4px; border-radius: 7px; background: transparent; transition: background 0.12s; }
-.wv-dhead:hover::before { background: rgba(123,127,178,0.07); }
-.wv-dhead.weekend:hover::before { background: rgba(195,90,90,0.06); }
+/* hover/selected 高光走 opacity（合成层，零主线程重绘）而非背景变化，避免拖累顶栏/toolbar 的 backdrop-filter 白带 */
+.wv-dhead::before { content: ''; position: absolute; inset: 2px 4px; border-radius: 7px; background: rgba(123,127,178,0.08); opacity: 0; transition: opacity 0.12s; pointer-events: none; }
+.wv-dhead:hover::before { opacity: 1; }
+.wv-dhead.weekend::before { background: rgba(195,90,90,0.07); }
 .wv-dhead.weekend .wv-dow { color: #b06a78; }
 .wv-dow { font-size: 11px; font-weight: 600; color: #8a8fa8; }
 .wv-dnum { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 15px; font-weight: 600; color: #3a3d52; line-height: 1; }
@@ -2380,8 +2390,8 @@ async function saveEvent() {
 .wv-dnum.today { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: rgba(255,255,255,0.88); font-weight: 700; border-radius: 6px; }
 .wv-dhead.weekend .wv-dnum.today { background: linear-gradient(135deg,#b85c5c,#c97070); }
 /* 选中日：同一内嵌块、只改背景色（与 hover 同尺寸）；周末同步暖红 */
-.wv-dhead.selected::before { background: rgba(123,127,178,0.09); }
-.wv-dhead.selected.weekend::before { background: rgba(195,90,90,0.08); }
+.wv-dhead.selected::before { opacity: 1; }
+.wv-dhead.selected.weekend::before { opacity: 1; }
 .wv-dhead.selected .wv-dnum:not(.today) { color: var(--color-primary); }
 .wv-dhead.selected.weekend .wv-dnum:not(.today) { color: rgba(195,90,90,0.9); }
 
@@ -2419,10 +2429,8 @@ async function saveEvent() {
 .wv-col.weekend .wv-selected { background: rgba(195,90,90,0.1); }
 .wv-now { position: absolute; left: 0; right: 0; height: 0; border-top: 2px solid #e5484d; z-index: 6; pointer-events: none; }
 .wv-now::before { content: ''; position: absolute; left: -3px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: #e5484d; }
-.wv-ev { position: absolute; box-sizing: border-box; border: 1px solid; border-radius: 6px; padding: 1px 5px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; line-height: 1.25; z-index: 3; transition: box-shadow 0.25s ease; }
-/* hover 高光：整块白光叠层「均匀淡入」（不走 .cal-chip 的 inset 阴影外→内扫光），观感同项目胶囊 */
-.wv-ev::before { content: ''; position: absolute; inset: 0; border-radius: inherit; background: rgba(255,255,255,0.45); opacity: 0; transition: opacity 0.2s ease; pointer-events: none; }
-.wv-ev:hover::before { opacity: 1; }
+.wv-ev { position: absolute; box-sizing: border-box; border: 1px solid; border-radius: 6px; padding: 1px 5px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; line-height: 1.25; z-index: 3; }
+/* hover 高光由 .cal-chip::after 统一处理（opacity 合成，不触发 repaint） */
 .wv-ev.cal-chip:hover { box-shadow: 0 2px 8px rgba(80,90,110,0.16); z-index: 5; }
 .wv-ev-t, .wv-ev-n, .wv-ev-d { position: relative; z-index: 1; }   /* 文字盖在白光层之上，保持清晰 */
 .wv-ev-d { font-size: 10px; font-weight: 400; opacity: 0.78; line-height: 1.3; margin-top: 1px; overflow: hidden; min-height: 0; flex: 1; word-break: break-word; }
