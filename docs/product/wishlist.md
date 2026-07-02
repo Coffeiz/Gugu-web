@@ -16,7 +16,17 @@
 
 ## 进行中 🚧
 
-- _（里程碑之间，下一项待锁定）_
+> 当前主线（2026-07-02 定,详见 [`../agent/proposals/反馈信号系统-设计.md`](../agent/proposals/反馈信号系统-设计.md)）:
+
+- **发版 0.16.0 + 生产部署**（清 Unreleased 库存:窗口系统/毛玻璃三档/数据面板拆两页+开发者标记/安全 P0 系列/图片搜索/微信语音…;⚠️ 含 `is_developer` 迁移,生产 pull 后须 `alembic upgrade head`）
+- **反馈信号采集器**（提案 §5 的 ①feedback 枚举采集 + ②温度聚合 + ④时长注入——不依赖攒数据、立即建;③lens 写回等 feedback 攒 1–2 周）
+
+**排队中（有依赖/等数据）**:
+- lens 印证/反驳写回（③,等 feedback 数据 1–2 周）
+- 复盘错读案例质量（pattern 是否常落「其他」、召回如何——step 1.5 数据攒够后）
+- 置信度原语设计（stance→Need Hypothesis 范式切换图纸,可先纸面设计）
+- 检索基建 embedding 召回（Person Model 前置,见 [`../agent/11-记忆系统.md`](../agent/11-记忆系统.md) §10）
+- 观察:窗口系统边缘 case、问候/闲聊体感
 
 ## 规划中 🔜
 
