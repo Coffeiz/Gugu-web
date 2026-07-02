@@ -1,6 +1,6 @@
 <svg viewBox="0 0 680 348" xmlns="http://www.w3.org/2000/svg" role="img" font-family="system-ui, -apple-system, 'Segoe UI', 'PingFang SC', sans-serif">
 <title>感知系统落地路线图（Roadmap）</title>
-<desc>七步路线：step0 stance+companion 已落、step1 错读案例收集器 已落、step1.5 先攒真实数据（当前）、step2 误判→lens写回、step3 lens→Person Model、step4 置信度+探问、step5 Relationship 蒸馏。数据优先、自下而上。</desc>
+<desc>七步路线：step0 stance+companion 已落、step1 错读案例收集器 已落、step1.5 先攒真实数据（当前）、step2 反馈信号系统→写回(显式+隐式,设计已定稿)、step3 lens→Person Model、step4 置信度+探问、step5 Relationship 蒸馏。数据优先、自下而上。</desc>
 <rect width="680" height="348" fill="#FFFFFF"/>
 
 <text x="40" y="30" font-family="Georgia, 'Songti SC', serif" font-size="17" font-weight="600" fill="#2C2C2A">感知系统 · 落地路线（Roadmap）</text>
@@ -30,7 +30,7 @@
 
 <!-- step 2 · todo -->
 <circle cx="64" cy="191" r="7" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="2"/>
-<text x="84" y="195" font-size="12.5" fill="#5F5E5A">step 2 · 误判 → lens 写回（最高杠杆）</text>
+<text x="84" y="195" font-size="12.5" fill="#5F5E5A">step 2 · 反馈信号系统 → 写回（最高杠杆 · 设计已定稿）</text>
 <text x="640" y="195" text-anchor="end" font-size="11" fill="#888780">待做</text>
 
 <!-- step 3 · todo -->
