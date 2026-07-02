@@ -13,6 +13,7 @@ from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Boolean, Big
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
+from app.core.crypto import EncryptedString
 from app.db.base import Base
 
 
@@ -293,8 +294,10 @@ class UserBot(Base):
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     platform:   Mapped[str]      = mapped_column(String(20), default="qqbot")
     name:       Mapped[str]      = mapped_column(String(100), default="")
+    # app_id 是公开标识符（qq_connect.py/feishu_connect.py 用它做 SQL 等值查询去重），不加密；
+    # app_secret 是真正的凭据，落库前 AES-256-GCM 加密（见 app/core/crypto.py）
     app_id:     Mapped[str]      = mapped_column(String(128), default="")
-    app_secret: Mapped[str]      = mapped_column(String(256), default="")
+    app_secret: Mapped[str]      = mapped_column(EncryptedString, default="")
     sandbox:    Mapped[bool]     = mapped_column(Boolean, default=False)
     enabled:    Mapped[bool]     = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

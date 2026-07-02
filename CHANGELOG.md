@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### 安全
+
+- **IM Bot 凭据补上静态加密**（`app/core/crypto.py` 新增 + `app/models/__init__.py` + 迁移 `20260702000002`）：整理隐私政策时核实发现文档写"AES-256-GCM 加密后存储"，但 `UserBot.app_secret`（飞书/QQ/微信机器人的真正密钥）实际是明文落库——数据库一旦泄露凭据可直接冒用；此前的 AES-256-GCM 只用在 QQ 绑定流程密钥"传输途中"的一次性加解密，不覆盖静态存储。新增 `EncryptedString`（SQLAlchemy `TypeDecorator`，密钥由 `secret_key` 通过 HKDF 派生）让 `app_secret` 读写对业务代码透明加解密；`app_id` 保持明文（它是公开标识符而非密钥本身，且被 QQ/飞书绑定流程用于等值查询去重，加密会打断该匹配）。迁移把列宽松为 `TEXT` 并原地加密历史明文行，已在 devserver 实测：4 条历史行全部转为密文、新写入自动加密、供职中的飞书/QQ/微信网关重启后正常解密重连并处理真实消息。同步订正 `docs/security/privacy.md` 与用户可见的 `frontend/src/views/Privacy.vue`（隐私政策 1.0→1.1），把此前"文档承诺加密、代码实际明文"的合规缺口改成"代码和文档一致"。
+
 ### 改进
 
 - **通知气泡改回只能手动关闭**（`components/common/NotificationBubble.vue`）：0.15.2 把气泡改成打完字 5s 后自动消失（被新气泡顶替则 0.5s），实际用起来经常没看完就没了。撤回自动消失，气泡打完字后停在原地，只能点右上角 ✕ 关；新气泡到来时旧气泡照常堆叠，不再被顶掉。「只弹一次」的语义不受影响——那是 `uiStore._markBubbleSeen` 在气泡创建时独立标记的，跟怎么关闭无关。删掉不再需要的计时器相关代码（`timers`/`scheduleDismiss`/`rescheduleDismiss`/`superseded`）。
