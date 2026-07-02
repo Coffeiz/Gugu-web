@@ -69,7 +69,12 @@ class _GuguQQClient(botpy.Client):
             "attachments": attachments,
             "trace_id": tid,                   # 全链路 trace：worker/工具日志同 id，grep 可串联
         }
-        print(f"[qq:{self._channel_id}] 收到 {openid}: text={text[:40]!r} att={len(attachments)} trace={tid}", flush=True)
+        # 隐私：不打印消息原文（Debug 面板可搜索，聊天内容不该落进可查阅日志），只留结构+指纹——
+        # 长度/附件数/trace 够排查「有没有收到、收没收到附件」，指纹（不可逆）够排查「是不是被
+        # 重复处理了」，同 agent.traj 的脱敏口径。
+        from agent import logsafe
+        print(f"[qq:{self._channel_id}] 收到 {openid}: text_len={len(text)} fp={logsafe.fingerprint(text)} "
+              f"att={len(attachments)} trace={tid}", flush=True)
 
         # Intent Router：纯文本消息据当前状态短路——任务进行中的「还在吗/算了/嗯」网关直接处理、不入队
         if not attachments:

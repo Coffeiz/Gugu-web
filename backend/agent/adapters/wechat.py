@@ -131,7 +131,10 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
     attachments = await _ingest_wechat_media(non_text, owner) if non_text else []
     from agent import trace
     tid = trace.new_trace()
-    print(f"[wechat:{channel_id}] 收到 {from_user}: text={text[:40]!r} att={len(attachments)} trace={tid}", flush=True)
+    # 隐私：不打印消息原文，只留结构+指纹（见 agent/logsafe.py），同 agent.traj 脱敏口径
+    from agent import logsafe
+    print(f"[wechat:{channel_id}] 收到 {from_user}: text_len={len(text)} fp={logsafe.fingerprint(text)} "
+          f"att={len(attachments)} trace={tid}", flush=True)
     if not text and not attachments:   # 只有不支持的媒体、啥也没取到 → 不入队（agent 无内容）
         return
     payload = {

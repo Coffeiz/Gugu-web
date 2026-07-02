@@ -13,12 +13,30 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import signal
 import socket
 
 from app.core import redis as R
 from agent.models import AgentRequest
 from agent.runner import run_collect
+
+# 模型偶尔把加粗写成「** 文字**」（** 后带空格），这种松散写法不是标准 markdown。网页端
+# marked.js 已有同款修复（GuguChat.vue fixLooseBold），但只在网页生效；IM 各渠道自己的
+# markdown 渲染器（QQ 官方 msg_type=2、飞书卡片 markdown 元素）比 marked.js 严格，解析不了
+# 就原样显示 **文字**——QQ 电脑端容忍度更高看不出来，手机端会露出星号。这里补给所有 IM
+# 渠道共用的出口，发送前统一清理一遍，跳过代码块/行内代码不动（里面的 ** 可能是真实内容）。
+_CODE_SPLIT_RE = re.compile(r'(```[\s\S]*?```|`[^`\n]*`)')
+_BOLD_LEAD_WS_RE = re.compile(r'\*\*[ \t]+([^*\n]+?)\*\*')
+_BOLD_TRAIL_WS_RE = re.compile(r'\*\*([^*\n]+?)[ \t]+\*\*')
+
+
+def _fix_loose_bold(text: str) -> str:
+    parts = _CODE_SPLIT_RE.split(text)
+    for i in range(0, len(parts), 2):   # 偶数下标是非代码段，奇数下标是代码块/行内代码，原样保留
+        parts[i] = _BOLD_LEAD_WS_RE.sub(r'**\1**', parts[i])
+        parts[i] = _BOLD_TRAIL_WS_RE.sub(r'**\1**', parts[i])
+    return ''.join(parts)
 
 STREAM = R.IM_INBOUND_STREAM
 GROUP = "agent-workers"
@@ -106,7 +124,8 @@ async def _send(payload: dict, text: str):
         await wechat.send_text(payload["platform_user_id"], text,
                                payload.get("channel_id"), payload.get("context_token", ""))
     else:
-        print(f"[worker] (无发送通道) {platform}: {text!r}", flush=True)
+        from agent import logsafe
+        print(f"[worker] (无发送通道) {platform}: len={len(text)} fp={logsafe.fingerprint(text)}", flush=True)
 
 
 # 飞书上传上限：图片 10MB、文件 30MB（超限飞书返回非 JSON 错误页，SDK 会 JSONDecodeError）
@@ -289,7 +308,7 @@ async def handle(msg_id: str, payload: dict):
     # 表情回应已由网关「秒回」（_on_message 收到即发），这里不再补
     # QQ 的「思考中」占位只认文本/markdown 被动回复，不认媒体消息（文件/图片）。
     # 咕咕光发文件、没配文字时补一句短文本，让被动回复成立、思考态能正常消解。
-    reply_text = resp.text
+    reply_text = _fix_loose_bold(resp.text or "")
     if not (reply_text or "").strip():
         # 模型没出文本：有文件配一句「给你～」，纯空则给个兜底——别发空
         #（空内容发 QQ 会报「无效 markdown content」，用户啥也收不到）
@@ -300,7 +319,10 @@ async def handle(msg_id: str, payload: dict):
     # 这条以提问/确认收尾 → 置「等回话」标志，网关下条「嗯/好/算了」就放行进 agent（别当闲聊吞了）
     from agent import router as _router
     await rtstate.set_awaiting(platform, puid, _router.reply_awaits_answer(reply_text))
-    print(f"[worker] {platform} 回复(session={resp.session_id} trace={_tid}) → {resp.text!r}", flush=True)
+    # 隐私：不打印回复原文（此前全文不截断，比收到那侧还暴露），只留结构+指纹（见 agent/logsafe.py）
+    from agent import logsafe
+    print(f"[worker] {platform} 回复(session={resp.session_id} trace={_tid}) len={len(reply_text)} "
+          f"fp={logsafe.fingerprint(reply_text)}", flush=True)
     return resp
 
 

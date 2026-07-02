@@ -193,7 +193,10 @@ def _make_on_message(channel_id: str, owner: str, api_client):
             "attachments": attachments,
             "trace_id": tid,             # 全链路 trace：worker/工具日志同 id，grep 可串联
         }
-        print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text={text[:40]!r} att={len(attachments)} trace={tid}", flush=True)
+        # 隐私：不打印消息原文，只留结构+指纹（见 agent/logsafe.py），同 agent.traj 脱敏口径
+        from agent import logsafe
+        print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text_len={len(text)} "
+              f"fp={logsafe.fingerprint(text)} att={len(attachments)} trace={tid}", flush=True)
 
         # Intent Router：纯文本消息先据当前状态判一手——任务进行中的「还在吗/算了/嗯」由网关
         # 直接处理，不入队（IM 单 worker 顺序消费，忙时它根本看不到队列后面的消息）。带附件一律进主模型。
