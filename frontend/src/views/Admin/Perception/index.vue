@@ -11,6 +11,7 @@
             :class="['range-tab', { active: hours === r.h }]"
             @click="setRange(r.h)">{{ r.label }}</button>
         </div>
+        <button class="dl-btn" @click="exportData" :disabled="exporting">{{ exporting ? '导出中…' : '导出数据' }}</button>
         <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
           <PhArrowClockwise :size="15" weight="bold" />
         </button>
@@ -208,6 +209,21 @@ async function loadMisread() {
     if (res.ok) misread.value = (await res.json()).cases || []
   } catch (e) { /* 预览失败不打断主面板 */ }
 }
+const exporting = ref(false)
+async function exportData() {
+  exporting.value = true
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/perception/export?hours=${hours.value}`)
+    if (!res.ok) throw new Error()
+    const blob = new Blob([await res.text()], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `perception_events_${hours.value || 'all'}h.json`
+    document.body.appendChild(a); a.click(); a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e) { /* 忽略 */ } finally { exporting.value = false }
+}
+
 async function downloadMisread() {
   dling.value = true
   try {

@@ -179,6 +179,28 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
     }
 
 
+@router.get("/export")
+async def export_events(hours: int = 0):
+    """导出感知遥测原始事件（perc/misperc/fb,JSON 附件,供离线分析）。
+    hours=时间窗（0=全部）。数据全部是脱敏结构化字段（u 为前 8 位、枚举/数值,无用户原文）。"""
+    r = get_redis()
+    raw = await r.lrange(_PERC_KEY, 0, -1)
+    events = []
+    for x in raw:
+        try:
+            events.append(json.loads(x if isinstance(x, str) else x.decode()))
+        except Exception:
+            pass
+    if hours:
+        cutoff = time.time() - hours * 3600
+        events = [e for e in events if (e.get("ts") or 0) >= cutoff]
+    events.sort(key=lambda e: e.get("ts") or 0)
+    body = json.dumps(events, ensure_ascii=False, indent=1)
+    fname = f"perception_events_{hours or 'all'}h.json"
+    return Response(content=body, media_type="application/json; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
 @router.get("/misread/recent")
 async def misread_recent(n: int = 30):
     """最近 N 条错读案例（脱敏，给面板预览）。读 Redis live 列表 perc:misread_cases。"""
