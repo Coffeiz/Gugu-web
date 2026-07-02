@@ -179,7 +179,7 @@ cd backend
 .venv/bin/python -m worker                        # 队列消费 worker
 ```
 
-频道在 **Admin → Agent 配置 → 频道** 里加（详见 `[飞书接入指南.md](../agent/飞书接入指南.md)`）。
+频道在 **Admin → Agent 配置 → 频道** 里加（详见 `[21-飞书接入指南.md](../agent/21-飞书接入指南.md)`）。
 
 > ⚠️ 改了 `agent/` 大脑代码后要重启 **worker**（不是 web、也不是 supervisor）——「改了什么、重启哪个」的完整决策表见 **§6.1**。
 
@@ -442,7 +442,7 @@ sudo systemctl status gugu-backend gugu-worker gugu-supervisor
 
 ### 5.1 接入步骤
 
-飞书 bot 创建、权限、长连接事件订阅、凭据填写、频道面板原理，**完整步骤见 `[飞书接入指南.md](../agent/飞书接入指南.md)`**。QQ / 微信（个人微信 iLink）走 Admin 面板扫码自连。
+飞书 bot 创建、权限、长连接事件订阅、凭据填写、频道面板原理，**完整步骤见 `[21-飞书接入指南.md](../agent/21-飞书接入指南.md)`**。QQ / 微信（个人微信 iLink）走 Admin 面板扫码自连。
 
 生产前提：确保 `gugu-supervisor` + `gugu-worker` 两个服务在跑（§4.5），频道在 Admin 面板增删启停**即时生效**（日常增删启停、重启管家见 §6.4 / §6.3）。
 

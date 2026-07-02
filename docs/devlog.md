@@ -103,7 +103,7 @@
 
 把 GuguChat 打开时那条写死的默认问候改成**咕咕自己生成**（带点记忆、像熟人开口），方案沉在 `agent/proposals/对话默认问候-生成方案.md`。几轮迭代把节奏定型：**进入全新对话时**后台轻量直连生成一句（不走 agent 循环、不计精力），内存 ref 不跨刷新缓存；打开对话框时走**打字机动画**逐字冒（生成版 / 兜底都走）；生成没好就从静态兜底池随机取一条。中途纠了个浪费：本来「每次刷新都生成」，但刷新常停在老会话（`SESSION_KEY` 还在、问候根本不显示）→ 改成由 `GuguChat` 据 `SESSION_KEY` 判断，只在真·全新对话才生成。
 
-**真正值得记的是「问候纳入对话」逮到的坑。** 用户回复问候后，咕咕却**当成对话刚开始又重新寒暄**。第一反应是「问候没发给后端」，但其实它发了、也入库为新会话首条 `assistant`（`created_at` 早于用户消息）了。真正的根因藏在 `agent/sanitize.py`：发给 Anthropic/MiniMax 的消息序列**首条必须是 user**，`sanitize_messages` 第 4 步据此 `while norm[0].role != "user": pop(0)`——把那条**前导 assistant 问候每轮都剥掉**，模型永远收不到。所以「把非用户发出的话塞成历史前导 assistant」这条路根本走不通。改法：新会话首轮把问候**注入 system prompt**（"你已经说过：「…」，别重复"），保持序列 user 开头；DB 那条 assistant 仍留着只供会话回看显示。教训沉成通用约束写进了 `agent/agent.md`「五、消息序列约束」：**想让模型看到非用户输入的上下文，走 system prompt，别靠前导 assistant 历史**；排查「模型无视某条历史」先看它 sanitize 后还在不在。又一次印证——**先怀疑数据没到，往往其实是到了又被某层清洗悄悄丢了**（和之前 best-effort SSE 丢事件同型）。
+**真正值得记的是「问候纳入对话」逮到的坑。** 用户回复问候后，咕咕却**当成对话刚开始又重新寒暄**。第一反应是「问候没发给后端」，但其实它发了、也入库为新会话首条 `assistant`（`created_at` 早于用户消息）了。真正的根因藏在 `agent/sanitize.py`：发给 Anthropic/MiniMax 的消息序列**首条必须是 user**，`sanitize_messages` 第 4 步据此 `while norm[0].role != "user": pop(0)`——把那条**前导 assistant 问候每轮都剥掉**，模型永远收不到。所以「把非用户发出的话塞成历史前导 assistant」这条路根本走不通。改法：新会话首轮把问候**注入 system prompt**（"你已经说过：「…」，别重复"），保持序列 user 开头；DB 那条 assistant 仍留着只供会话回看显示。教训沉成通用约束写进了 `agent/00-总览.md`「五、消息序列约束」：**想让模型看到非用户输入的上下文，走 system prompt，别靠前导 assistant 历史**；排查「模型无视某条历史」先看它 sanitize 后还在不在。又一次印证——**先怀疑数据没到，往往其实是到了又被某层清洗悄悄丢了**（和之前 best-effort SSE 丢事件同型）。
 
 ---
 
@@ -142,7 +142,7 @@
 
 **live 验证**。devserver 网页后端跑 `uvicorn --reload`，代码同步进来自动重载；真实循环 ×N 跑下来，**run3 亲眼看到守卫自动接管**（mimo 第一轮假装→循环代码自己 `_new_round` 注入 nudge→转去真调 `read_file`），全链路 ~93% 最终真调工具。IM（飞书/QQ）的 systemd 服务没 --reload，得 `sudo systemctl restart gugu-worker gugu-supervisor` 才让 mimo-on-IM 拿到代码守卫（提示词在 IM 也热读，故 M3-on-IM 已好）。
 
-**体会**：① **能确定性化的别交给模型**——但「决定要不要调工具」这步确定性化不了，守卫只能「检测失败→重试」，这是天花板。② **先可观测再优化**——今天「调没调工具」猜了好几轮，有了 `agent.traj` 轨迹就是翻一眼。③ **弱模型靠工程补、强模型省一半事**——守卫把 mimo 从「经常假装」拉到 ~93%，但补不平残余不确定性，重工具任务 M3 仍更稳。沉淀成三份文档：`agent/架构图.md`（三张图）、`agent/可靠性.md`（可靠性工程 + P0–P4 Roadmap）、本文。
+**体会**：① **能确定性化的别交给模型**——但「决定要不要调工具」这步确定性化不了，守卫只能「检测失败→重试」，这是天花板。② **先可观测再优化**——今天「调没调工具」猜了好几轮，有了 `agent.traj` 轨迹就是翻一眼。③ **弱模型靠工程补、强模型省一半事**——守卫把 mimo 从「经常假装」拉到 ~93%，但补不平残余不确定性，重工具任务 M3 仍更稳。沉淀成三份文档：`agent/01-架构图.md`（三张图）、`agent/03-可靠性.md`（可靠性工程 + P0–P4 Roadmap）、本文。
 
 ---
 
@@ -506,7 +506,7 @@ web 聊天本来有 `refreshAfterTools`——流结束后按用过的工具刷�
 
 web 自身聊天（`web.py` 流式）暂未 publish → 同账号多网页标签不互相同步。做站内 IM 时让 web 也 publish 即可，链路现成。已读/送达/在线状态/顺序去重是 IM 进阶项，地基已就位。
 
-详见 `agent/agent.md`「实时刷新」一节、`CHANGELOG.md`。
+详见 `agent/00-总览.md`「实时刷新」一节、`CHANGELOG.md`。
 
 ---
 
@@ -571,7 +571,7 @@ Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面
 - `create_project` 未填日期默认 start=今天、deadline=一周后。
 - IM 对话**补上会话历史**（之前 `run_collect` 没读历史 → "聊着聊着变新会话"）。
 
-详见 `agent/agent.md`、`agent/IM接入架构.md`、`CHANGELOG.md`。
+详见 `agent/00-总览.md`、`agent/20-IM接入架构.md`、`CHANGELOG.md`。
 
 ---
 
@@ -623,13 +623,13 @@ Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面
 
 - **别替用户判"够不着"**：一个 `curl` 就能验证的事（create_bind_task 无鉴权），比三轮"我觉得是合作墙"有用得多。
 - **开源参照物先扒源码**：QwenPaw 开源，机制全在 `qrcode_auth_handler.py`，早看早做完。
-- 详细机制见 `qq-scan-connect` 记忆 + `agent/IM接入架构.md` §3.2。
+- 详细机制见 `qq-scan-connect` 记忆 + `agent/20-IM接入架构.md` §3.2。
 
 ---
 
 ## 2026-06-23 · 里程碑：咕咕首个 IM 平台（飞书）端到端打通 🎉
 
-**第一次让咕咕住进 IM**——飞书私聊里发消息，咕咕带完整人格/记忆/工具回复，全程经队列+独立 worker，平台无关骨架可复用到 QQ/微信。架构与决策见 `agent/IM接入架构.md`、`agent/agent.md` Phase 4。
+**第一次让咕咕住进 IM**——飞书私聊里发消息，咕咕带完整人格/记忆/工具回复，全程经队列+独立 worker，平台无关骨架可复用到 QQ/微信。架构与决策见 `agent/20-IM接入架构.md`、`agent/00-总览.md` Phase 4。
 
 ### 端到端链路
 
@@ -666,7 +666,7 @@ Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面
 
 ## 2026-06-23 · Agent：记忆深化 + prompt 缓存 + IM 接入架构
 
-接上一日，把记忆系统从"能记"做到"记得干净、注入便宜、写得克制"，并定下 IM 接入方案。详见 `agent/agent.md`、`agent/IM接入架构.md`。
+接上一日，把记忆系统从"能记"做到"记得干净、注入便宜、写得克制"，并定下 IM 接入方案。详见 `agent/00-总览.md`、`agent/20-IM接入架构.md`。
 
 ### 1. 记忆 facts 调和重写（治矛盾/膨胀）
 
@@ -702,13 +702,13 @@ Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面
 
 ### 7. IM 多平台接入架构（设计，未开工）
 
-新增 `agent/IM接入架构.md`：飞书 / QQ / 微信**官方直连、不用 OpenClaw**（lark-oapi / botpy / iLink）；从一开始按「收消息 ↔ 跑大模型」解耦的**队列 + worker 架构**建，为高流量留缝（AgentRequest/Response + dispatch 间接层）。现状：Redis 配了没用、无队列/worker、`--workers 1`；落地从 Redis+Streams 起步、6 步逐缝验证。agent.md Phase 4 已对齐、删 OpenClaw/webhook 旧话；小模型相关项统一标「最后做·暂无条件」。
+新增 `agent/20-IM接入架构.md`：飞书 / QQ / 微信**官方直连、不用 OpenClaw**（lark-oapi / botpy / iLink）；从一开始按「收消息 ↔ 跑大模型」解耦的**队列 + worker 架构**建，为高流量留缝（AgentRequest/Response + dispatch 间接层）。现状：Redis 配了没用、无队列/worker、`--workers 1`；落地从 Redis+Streams 起步、6 步逐缝验证。00-总览.md Phase 4 已对齐、删 OpenClaw/webhook 旧话；小模型相关项统一标「最后做·暂无条件」。
 
 ---
 
 ## 2026-06-22 · Agent：Skill 一等公民 + 记忆 Phase 2a + 联网搜索
 
-详细架构见 `agent/agent.md`。本次四块工作：
+详细架构见 `agent/00-总览.md`。本次四块工作：
 
 ### 1. Skill 一等公民重构
 
