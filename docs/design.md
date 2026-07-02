@@ -106,6 +106,12 @@ backend/
 | 成功 | `#5a9e88` |
 | 警告 | `#b07858` |
 
+**次要文字/图标统一走 `var(--text-secondary)`（不要硬编码 `#8a8fa8` 或另开近似色）**：顶栏日期、文件库/项目编辑卡路径面包屑的上层路径段、文件库工具栏纯图标按钮（`.nav-hist-btn`/`.select-mode-btn`/`.view-toggle button`）、顶栏「上传文件」按钮、日历工具栏「今天」按钮与「月/周」切换未选中态、日历周视图星期栏、定时任务卡片的时间行、日历活动提醒的渠道描述区（标签/chip/测试发送按钮）、通知弹窗「全部已读」按钮，均属此类。此前 `.reminder-lead`/`.reminder-add-btn`/`.reminder-test-bar`（渠道相关几处）、通知弹窗 `.notif-mark-all`、日历工具栏 `.view-toggle button` 各自硬编码了 `#65688f`/`#7b7fb2`/`#8a8fa8`，与其余次要文字不一致或没走变量，已统一改用 `var(--text-secondary)`。
+
+注意：`.paste-btn`/`.sort-btn`/`.select-all-btn`/`.new-folder-btn` 这类**强调色小按钮**（默认态即 `var(--color-primary)`、非灰色）是另一种有意的视觉层级，不属于"次要文字"范畴，不要一并改灰。
+
+**导航项（三态：未选中/hover/选中）另有一套专用配色，不套用「次要文字」规则**：未选中 `#767980`（比 `--text-secondary` 更深、更低饱和度）、hover `var(--text-primary)`、选中 `#6b6fa0`（比 `--color-primary` 更深一档）+ `font-weight:700` + 白色玻璃背景 `rgba(255,255,255,0.38)` + 描边 `rgba(255,255,255,0.62)` + `inset 0 1px 0 rgba(255,255,255,0.85)`。已应用于 `AppSidebar.vue` 主导航（`NavItem.vue`）、`AppSidebar.vue` 通知按钮（`.notif-btn`）、`ProfileModal.vue` 设置弹窗左侧导航（`.pm-nav-item`/`.pm-logout`）——这三处结构相同（各自手写一份 CSS，非共用组件），新增同类导航项时按此配色抄一份，不要沿用旧的 `rgba(30,32,40,0.62/0.82)` 或直接用 `var(--color-primary)` 做选中色。
+
 ### 项目品牌色的文字用法
 
 项目品牌色（`accent`）直接用于文字会因亮度不足导致可读性差（如 `#9590c4` 在白底上对比度不够）。规范如下：

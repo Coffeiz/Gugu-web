@@ -734,12 +734,12 @@ function handleLogout() {
   width: 100%; padding: 10px 12px; border-radius: var(--radius-sm);
   border: 1px solid transparent; background: none;
   font-size: 14px; font-family: var(--font-sans);
-  color: rgba(30,32,40,0.62); cursor: pointer; text-align: left;
+  color: #767980; cursor: pointer; text-align: left;
   transition: all 0.15s;
 }
-.pm-nav-item:hover { background: rgba(123,127,178,0.08); color: rgba(30,32,40,0.82); }
+.pm-nav-item:hover { background: rgba(123,127,178,0.08); color: var(--text-primary); }
 .pm-nav-item.active {
-  background: rgba(255,255,255,0.38); color: var(--color-primary);
+  background: rgba(255,255,255,0.38); color: #6b6fa0;
   font-weight: 700; border-color: rgba(255,255,255,0.62);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
 }
@@ -750,7 +750,7 @@ function handleLogout() {
   display: flex; align-items: center; gap: 9px;
   padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid transparent;
   cursor: pointer; font-size: 14px; font-family: var(--font-sans);
-  color: rgba(30,32,40,0.62); background: none; width: 100%;
+  color: #767980; background: none; width: 100%;
   transition: all 0.15s;
 }
 .pm-logout:hover { background: rgba(176,120,88,0.08); color: #b07858; border-color: rgba(176,120,88,0.15); }

@@ -39,7 +39,7 @@ function go() {
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   font-size: 14px;
-  color: rgba(30,32,40,0.8);
+  color: #767980;   /* 比 --text-secondary(#8a8fa8) 饱和度更低、且更深的灰 */
   text-decoration: none;
   cursor: pointer;
   transition: all 0.15s;
@@ -47,11 +47,11 @@ function go() {
 }
 .nav-item:hover {
   background: rgba(123,127,178,0.08);
-  color: rgba(30,32,40,0.92);
+  color: var(--text-primary);
 }
 .nav-item.active {
   background: rgba(255,255,255,0.38);
-  color: var(--color-primary);
+  color: #6b6fa0;   /* 比 --color-primary(#7b7fb2) 更深一档，同色相 */
   font-weight: 700;
   border-color: rgba(255,255,255,0.62);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
