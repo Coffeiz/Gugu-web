@@ -76,6 +76,22 @@ function _animateScroll(el, dy, dur = 300) {
   requestAnimationFrame(tick)
 }
 
+// 拾起时源卡正被鼠标悬停着（拖拽即从悬停它开始）；display:none 隐藏、动画结束后再显示回来，
+// 浏览器有时不会在这个过程里重新计算 hover 命中，导致它「记得」自己被悬停过、卡在高亮态，
+// 直到下次真有 mousemove 扫过才会被纠正——鼠标松手后常常不再动，就一直卡亮。
+// 修法：不瞎猜（试过用 pointer-events 开关强行摘掉命中测试，但那样会连「鼠标确实压在卡片上」
+// 的真实 hover 也一并错误抹掉，之后还得等下次真实 mousemove 才能纠正回来，变成「先亮一下又灭」）。
+// 改为在落定那一刻，用拖拽结束后临时监听到的**真实当前指针位置**派发一次合成 mousemove——
+// 这跟浏览器处理一次真实鼠标移动是同一条路径，该亮就亮、该灭就灭，不会误判。
+function _kickStaleHover(x, y) {
+  if (x == null || y == null) return
+  requestAnimationFrame(() => {
+    document.dispatchEvent(new MouseEvent('mousemove', {
+      clientX: x, clientY: y, bubbles: true, cancelable: true, view: window,
+    }))
+  })
+}
+
 // 到位缓动：强 ease-out（快进慢收，非线性），不过冲、不回弹
 const _SETTLE = 'cubic-bezier(0.22, 1, 0.36, 1)'
 
@@ -109,6 +125,13 @@ function _invertPlay(kids, fromRects, toRects, dur = 340) {
  */
 export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
   if (!sourceEl || _active) return
+  // 上一次拖拽的落地动画要等 transitionend（~420~580ms）才把这张卡复位显示；这段窗口期内
+  // 若重新抓同一张卡，getBoundingClientRect 会在它还是 display:none 时量出 0×0——克隆体宽高
+  // 从一开始就定死是 0，看起来「卡片凭空消失」（_active 只挡真正重叠的拖拽，挡不住这个：
+  // 前一次拖拽的 end() 早就把 _active 清空了，落地动画是它结束后才独立跑的）。抓之前先强制
+  // 复位，不管源卡此刻处于什么中间态。
+  sourceEl.style.display = ''
+  sourceEl.style.opacity = ''
   const pointer = opts.pointer === true
   const pointerId = pointer ? event.pointerId : null
   if (!pointer) { try { event.dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {} }
@@ -127,7 +150,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
   const container = sourceEl.parentElement
 
   // 克隆体（保留 data-v scoped 属性 → 外观一致），它就是飞动的「本体」
-  const clone = sourceEl.cloneNode(true)
+  const clone = sourceEl.cloneNode(true) as HTMLElement
   clone.classList.add('phys-drag-clone')
   if (opts.cloneClass) clone.classList.add(opts.cloneClass)   // 调用方补回脱离上下文后丢失的版式（如 mode2）
   Object.assign(clone.style, {
@@ -248,11 +271,20 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
                  : null
     const sel = idAttr ? `[${idAttr[0]}="${idAttr[1]}"]` : null
 
+    // 卡片重新可见/落定那一刻，_kickStaleHover 要按「此刻真实指针在哪」纠正 hover——
+    // 拖拽这段原生 dragover/pointermove 已经在实时更新 target.x/y，但落地动画还要跑
+    // 300~560ms，这段时间指针可能已经移开；额外挂一个真实 mousemove 监听，跟到动画结束再拆。
+    let liveX = dropX, liveY = dropY
+    const _trackLive = (e) => { liveX = e.clientX; liveY = e.clientY }
+    document.addEventListener('mousemove', _trackLive)
+    const _stopTrackLive = () => document.removeEventListener('mousemove', _trackLive)
+
     let done = false, onEnd = null
     const SLOT = box => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(1)`
 
-    // 单克隆：吸入(shrink) / 归位(同样式，飞到位再露出真卡)
-    const flyTo = (box, shrink, revealEl) => {
+    // 单克隆：只用于吸入(shrink)——缩小淡出进文件夹/面包屑，没有「露出真卡」这一步，
+    // 不存在克隆→真卡外观不一致的问题。归位/落到新位置一律走下面的 flyMorph（双克隆交叉淡变）。
+    const flyTo = (box, shrink) => {
       clone.style.transition = `transform 0.42s ${_SETTLE}, opacity 0.4s ease`
       if (shrink) {
         const cx = box.left + box.width / 2, cy = box.top + box.height / 2
@@ -267,7 +299,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
         done = true
         clone.removeEventListener('transitionend', onEnd)
         clone.remove()
-        if (revealEl) { revealEl.style.opacity = ''; revealEl.style.transition = '' }
+        _stopTrackLive()
       }
       onEnd = finish
       clone.addEventListener('transitionend', onEnd)
@@ -296,7 +328,8 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
         done = true
         clone2.removeEventListener('transitionend', onEnd)
         clone.remove(); clone2.remove()
-        revealEl.style.opacity = ''; revealEl.style.transition = ''
+        _stopTrackLive()
+        revealEl.style.opacity = ''; revealEl.style.transition = ''; _kickStaleHover(liveX, liveY)
       }
       onEnd = finish
       clone2.addEventListener('transitionend', onEnd)
@@ -344,7 +377,24 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
       if (!opts.skipAbsorb) {
         const under = document.elementFromPoint(dropX, dropY)
         const absorb = under && under.closest && under.closest('.folder-card, .bc-item')
-        if (absorb) { flyTo(absorb.getBoundingClientRect(), true, null); return }
+        if (absorb) { flyTo(absorb.getBoundingClientRect(), true); return }
+      }
+
+      // clone2 不再套 .phys-drag-clone/光晕——直接是目标元素此刻真实 DOM 的克隆，从交叉淡变
+      // 一开始就长得跟真卡一样（背景/描边/阴影/文件夹颜色渲染全部原样带过来，不用手动猜数值）。
+      // flyMorph 结尾把 revealEl 揭示出来时，clone2 早已跟它像素级一致，不会再有「跳一下」的硬切换。
+      const _cloneLanding = (el: HTMLElement) => {
+        const c = el.cloneNode(true) as HTMLElement
+        if (opts.cloneClass) c.classList.add(opts.cloneClass)
+        Object.assign(c.style, {
+          position: 'fixed', left: '0', top: '0',
+          width: clone.style.width, height: clone.style.height,
+          margin: '0', boxSizing: 'border-box', zIndex: '99999', pointerEvents: 'none',
+          willChange: 'transform', transition: 'none', opacity: '0',
+          transform: clone.style.transform,   // 起点与旧克隆重叠
+        })
+        document.body.appendChild(c)
+        return c
       }
 
       // 2) 卡片落到新位置（换列/重排）
@@ -356,26 +406,16 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
             // 落点在可滚动列里若滚出视口 → 快速滚进可视区，box 取滚动后的最终落点
             const sc = _scrollParent(el)
             const box = revealInScroller(sc, el.getBoundingClientRect())
-            const clone2 = el.cloneNode(true) as HTMLElement   // 新状态样式
-            clone2.classList.add('phys-drag-clone')
-            if (opts.cloneClass) clone2.classList.add(opts.cloneClass)
-            Object.assign(clone2.style, {
-              position: 'fixed', left: '0', top: '0',
-              width: clone.style.width, height: clone.style.height,
-              margin: '0', boxSizing: 'border-box', zIndex: '99999', pointerEvents: 'none',
-              willChange: 'transform', transition: 'none', opacity: '0',
-              transform: clone.style.transform,   // 起点与旧克隆重叠
-            })
-            document.body.appendChild(clone2)
-            flyMorph(box, el, clone2)
+            flyMorph(box, el, _cloneLanding(el))
           } else {                    // 落点在折叠分组里不可见（如已完成列折叠的月份）→ 就地缩小淡出
-            flyTo({ left: dropX - half.x, top: dropY - half.y, width: rect.width, height: rect.height }, true, null)
+            flyTo({ left: dropX - half.x, top: dropY - half.y, width: rect.width, height: rect.height }, true)
           }
           return
         }
       }
 
-      // 3) 没变化 → 归位（原位若在列里滚出视口，也要快速滚回去）
+      // 3) 没变化 → 归位（原位若在列里滚出视口，也要快速滚回去）；同样走 flyMorph 交叉淡变，
+      // 不用 flyTo 硬切换——克隆体本来就比真卡「更实」（撑对比度用），硬切一帧很容易看出跳变。
       if (container && sourceEl.style.display === 'none') {
         // 已收合 → 先占位 FLIP 重新展开源卡（列恢复溢出），再算滚动容器，否则收合时列不溢出 → 取不到 sc
         const box0 = animateOpen(container, sourceEl)
@@ -383,16 +423,19 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
         // 锁列期间源卡收合，浏览器可能把 scrollTop 夹小了；展开后还原到拖动前，revealInScroller 再据此滚到原位
         if (sc && _savedScrollTop.has(sc)) {
           sc.scrollTop = _savedScrollTop.get(sc)
-          flyTo(revealInScroller(sc, sourceEl.getBoundingClientRect()), false, sourceEl)
+          const box = revealInScroller(sc, sourceEl.getBoundingClientRect())
+          flyMorph(box, sourceEl, _cloneLanding(sourceEl))
         } else {
-          flyTo(revealInScroller(sc, box0), false, sourceEl)
+          const box = revealInScroller(sc, box0)
+          flyMorph(box, sourceEl, _cloneLanding(sourceEl))
         }
       } else {
         // 收合还没来得及发生（极快的拖放）→ 直接归位即可
         sourceEl.style.display = ''
         sourceEl.style.opacity = '0'
         const sc = _scrollParent(sourceEl)
-        flyTo(revealInScroller(sc, sourceEl.getBoundingClientRect()), false, sourceEl)
+        const box = revealInScroller(sc, sourceEl.getBoundingClientRect())
+        flyMorph(box, sourceEl, _cloneLanding(sourceEl))
       }
     })
   }
@@ -430,6 +473,13 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
 export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts: PhysicsDragOpts = {}) {
   if (!sourceEl || _active) return
   try { event.dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {}
+
+  // 上一次拖拽的落地动画要等 transitionend（~420~580ms）才把卡片复位显示，这段窗口期内重新
+  // 抓同一批卡会读到 0×0 的 rect、克隆出不可见的卡（同 startPhysicsDrag 的坑，见其注释）。
+  // sourceEl 与每个 extras 成员都可能是刚从上一次拖拽落地、还没轮到 finish() 的卡。
+  sourceEl.style.display = ''
+  sourceEl.style.opacity = ''
+  for (const ex of extras) { if (ex) { ex.style.display = ''; ex.style.opacity = '' } }
 
   const SPRING = opts.spring  ?? 190
   const ZETA   = opts.damping ?? 0.82
@@ -490,7 +540,7 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
   })
 
   // 主克隆（zIndex 最高，带数量徽章）
-  const clone = sourceEl.cloneNode(true)
+  const clone = sourceEl.cloneNode(true) as HTMLElement
   clone.classList.add('phys-drag-clone')
   // 移除拖拽/剪切态，保留 .selected 以显示选中边框和覆盖层
   clone.classList.remove('dragging', 'cut')
