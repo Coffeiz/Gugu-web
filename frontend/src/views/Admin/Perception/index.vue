@@ -112,6 +112,14 @@
           <span v-for="e in data.emotion_distribution" :key="e.emotion" class="emo-chip">{{ e.emotion }} · {{ e.count }}</span>
         </div>
       </template>
+
+      <div class="section-label">反馈信号<span class="sl-hint">学习闭环的燃料 · 用户怎么接上一轮（正:确认夸赞/顺着聊/主动分享 · 负:改写重问/无视跳开）</span></div>
+      <div v-if="!data.feedback_distribution?.length" class="state-msg sm-sm">暂无反馈信号（采集器 2026-07-02 上线,聊几轮就会积累）</div>
+      <div v-else class="emo-strip">
+        <span v-for="f in data.feedback_distribution" :key="f.feedback"
+          :class="['kind-chip', fbCls(f.feedback)]">{{ f.feedback }} · {{ f.count }}</span>
+        <span class="kind-chip">共 {{ data.feedback_total }} 条</span>
+      </div>
     </template>
 
     <!-- 错读案例预览（独立于活跃用户统计，始终显示） -->
@@ -188,6 +196,11 @@ function rateClass(v) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return
 function rateCard(v) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return v != null && v > hi ? 'card-bad' : (v != null && v > mid ? 'card-active' : '') }
 // 纠错构成配色：感知误读=红（该优化）、数据/执行错=琥珀（归数据/工具）、未判=灰
 function kindCls(k) { return k === '感知误读' ? 'kc-bad' : (k === '数据或执行错' ? 'kc-warn' : 'kc-dim') }
+function fbCls(v) {
+  if (['确认夸赞', '顺着聊', '主动分享'].includes(v)) return 'kc-good'
+  if (['改写重问', '无视跳开'].includes(v)) return 'kc-bad'
+  return 'kc-dim'
+}
 
 async function loadMisread() {
   try {
@@ -290,6 +303,7 @@ onMounted(load)
 .kind-chip.kc-bad  { background: rgba(224,112,112,0.12); color: rgba(235,150,150,0.95); border-color: rgba(224,112,112,0.28); }
 .kind-chip.kc-warn { background: rgba(201,148,58,0.12); color: rgba(215,165,75,0.95); border-color: rgba(201,148,58,0.25); }
 .kind-chip.kc-dim  { color: rgba(255,255,255,0.4); }
+.kind-chip.kc-good { background: rgba(90,158,136,0.12); color: rgba(120,190,160,0.95); border-color: rgba(90,158,136,0.28); }
 
 /* ── 错读案例预览 ── */
 .dl-btn { margin-left: auto; background: rgba(123,127,178,0.16); border: 1px solid rgba(123,127,178,0.3); color: rgba(170,175,225,0.95); font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; border-radius: 7px; padding: 5px 12px; cursor: pointer; transition: all .15s; }

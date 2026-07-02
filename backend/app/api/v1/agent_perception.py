@@ -69,6 +69,7 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
                 "perception_misperc_rate": None, "misperc_by_kind": [],
                 "avg_ambiguity": None, "avg_emo_strength": None,
                 "intent_distribution": [], "by_model": [], "emotion_distribution": [],
+                "feedback_distribution": [], "feedback_total": 0,
                 "flags": [], "note": f"暂无活跃用户（窗口内对话 ≥{min_events} 轮的用户）—— 多聊几轮再看"}
 
     # 误判按 user+ts 相邻配对到「被误判那轮」的 intent/model（仅活跃用户内）。
@@ -138,6 +139,10 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
     emotion_count = Counter(e.get("emotion") for e in perc
                             if e.get("emotion") and e.get("emotion") != "无")
 
+    # 反馈信号分布（t=fb,学习闭环的燃料;见 docs/agent/proposals/反馈信号系统-设计.md）
+    fb_events = [e for e in events if e.get("t") == "fb" and e.get("u") in active]
+    feedback_count = Counter(e.get("v") for e in fb_events if e.get("v"))
+
     # 异常标记
     flags = []
     for row in by_intent:
@@ -167,6 +172,8 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
         "intent_distribution": by_intent,
         "by_model": by_model,
         "emotion_distribution": [{"emotion": k, "count": v} for k, v in emotion_count.most_common()],
+        "feedback_distribution": [{"feedback": k, "count": v} for k, v in feedback_count.most_common()],
+        "feedback_total": len(fb_events),
         "flags": flags,
         "note": f"口径：活跃用户（窗口内 ≥{min_events} 轮）{len(active)} 人；头部指标按用户宏平均（重度用户不主导）",
     }
