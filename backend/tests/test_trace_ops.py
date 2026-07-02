@@ -35,6 +35,17 @@ def test_bucket_edges():
     assert opsmetrics._bucket(30001) == "inf"
 
 
+def test_security_events_defined():
+    # 面板依赖这两个 key 恒存在（正常为 0），别随意改名
+    assert "ownership.denied" in opsmetrics.SECURITY_EVENTS
+    assert "confirm-gate.bypassed" in opsmetrics.SECURITY_EVENTS
+
+
+def test_record_security_no_loop_is_safe():
+    # 无 event loop（同步上下文）时 record_security 必须静默返回、不抛
+    opsmetrics.record_security("ownership.denied")
+
+
 def test_log_traj_carries_trace(caplog):
     from agent.tools.base import _log_traj
     tid = trace.new_trace()

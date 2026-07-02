@@ -7,6 +7,10 @@
       </div>
     </div>
 
+    <Transition name="flash-fade">
+      <div v-if="flash" class="users-flash">{{ flash }}</div>
+    </Transition>
+
     <div class="toolbar">
       <input
         v-model="search"
@@ -140,6 +144,7 @@ const search      = ref('')
 const page        = ref(1)
 const pageSize    = 20
 const deleteTarget = ref(null)
+const flash = ref('')
 const deleting    = ref(false)
 
 const AVATAR_COLORS = [
@@ -204,9 +209,17 @@ async function doDelete() {
   if (!deleteTarget.value) return
   deleting.value = true
   try {
-    await adminStore.authFetch(`/api/v1/admin/users/${deleteTarget.value.id}`, { method: 'DELETE' })
+    const uname = deleteTarget.value.display_name || deleteTarget.value.username
+    const res = await adminStore.authFetch(`/api/v1/admin/users/${deleteTarget.value.id}`, { method: 'DELETE' })
+    let removed = null
+    try { removed = (await res.json())?.storage_objects_removed } catch {}
     items.value = items.value.filter(u => u.id !== deleteTarget.value.id)
     deleteTarget.value = null
+    // 确认隐私政策「注销后从存储中永久删除」真执行了：展示清除的存储对象数
+    flash.value = removed === -1
+      ? `已删除 ${uname}（存储清理失败，请查日志手动清）`
+      : `已删除 ${uname}，清除 ${removed ?? 0} 个存储对象`
+    setTimeout(() => { flash.value = '' }, 4000)
   } finally {
     deleting.value = false
   }
@@ -261,6 +274,14 @@ onMounted(load)
 .page-title-block { display: flex; flex-direction: column; }
 .page-title       { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
 .page-desc        { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
+
+.users-flash {
+  margin: 0 0 14px; padding: 10px 14px; border-radius: 10px;
+  background: rgba(90,180,120,0.12); border: 1px solid rgba(90,180,120,0.28);
+  color: #8fd6a8; font-size: 13px;
+}
+.flash-fade-enter-active, .flash-fade-leave-active { transition: opacity 0.3s, transform 0.3s; }
+.flash-fade-enter-from, .flash-fade-leave-to { opacity: 0; transform: translateY(-4px); }
 
 .toolbar {
   display: flex; align-items: center; gap: 10px;

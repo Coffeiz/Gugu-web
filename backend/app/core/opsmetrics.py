@@ -15,7 +15,12 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from datetime import datetime, timezone
+
+# 测试隔离：pytest 里 dispatch/get_owned 的越权用例会触发这些旁路，若真写就污染生产 Redis
+# 的 ops 计数（测试连的是真 devserver Redis）。检测到 pytest 在跑就整体禁写。
+_DISABLED = "pytest" in sys.modules
 
 TTL = 14 * 24 * 3600
 # 延迟桶上界（ms）；"inf" 收尾。P99 用桶上界近似（偏保守，够运维用）
@@ -51,6 +56,8 @@ async def _incr(tool: str, ok: bool, ms: int) -> None:
 
 def record_tool(tool: str, ok: bool, ms: int) -> None:
     """dispatch 旁路调用：fire-and-forget，任何异常吞掉（指标绝不影响工具执行）。"""
+    if _DISABLED:
+        return
     async def _run():
         try:
             await _incr(tool, ok, ms)
@@ -60,6 +67,31 @@ def record_tool(tool: str, ok: bool, ms: int) -> None:
         asyncio.get_running_loop().create_task(_run())
     except RuntimeError:
         pass   # 无运行中的 loop（同步上下文/测试）：跳过，指标是 best-effort
+
+
+# ── 安全事件计数（正常应恒为 0，非零即需关注）──────────────────────────────
+# ownership.denied：越权访问被拦（模型幻觉他人 id / 有人探测）
+# confirm-gate.bypassed：不可逆工具未经确认执行了（确认门被绕，已无法撤销）
+SECURITY_EVENTS = ("ownership.denied", "confirm-gate.bypassed")
+
+
+def record_security(event: str) -> None:
+    """安全事件旁路计数：fire-and-forget，异常自吞。event 见 SECURITY_EVENTS。"""
+    if _DISABLED:
+        return
+    async def _run():
+        try:
+            from app.core.redis import get_redis
+            r = get_redis()
+            k = f"ops:sec:{_day()}"
+            await r.hincrby(k, event, 1)
+            await r.expire(k, TTL)
+        except Exception:
+            pass
+    try:
+        asyncio.get_running_loop().create_task(_run())
+    except RuntimeError:
+        pass
 
 
 async def summary(days: int = 1) -> dict:
@@ -80,6 +112,13 @@ async def summary(days: int = 1) -> dict:
         lh = await r.hgetall(f"ops:lat:{day}") or {}
         for b, v in lh.items():
             lat[b] = lat.get(b, 0) + int(v)
+
+    sec = {e: 0 for e in SECURITY_EVENTS}
+    for i in range(max(1, days)):
+        day = (now - timedelta(days=i)).strftime("%Y%m%d")
+        sh = await r.hgetall(f"ops:sec:{day}") or {}
+        for e, v in sh.items():
+            sec[e] = sec.get(e, 0) + int(v)
 
     rows = []
     for tool, d in tools.items():
@@ -111,4 +150,5 @@ async def summary(days: int = 1) -> dict:
         "p99_ms": p99,             # None = 超过最大桶（>30s）或无数据
         "latency_buckets": {b: lat.get(b, 0) for b in [str(x) for x in BUCKETS] + ["inf"]},
         "tools": rows,
+        "security": sec,           # {ownership.denied, confirm-gate.bypassed}：正常应恒为 0
     }

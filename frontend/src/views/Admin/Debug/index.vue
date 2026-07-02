@@ -10,6 +10,7 @@
     <div class="toolbar">
       <AdminSelect v-model="filterSource" :options="sourceOptions" style="width:140px" />
       <AdminSelect v-model="filterLevel"  :options="levelOptions"  style="width:130px" />
+      <input v-model="filterText" class="debug-search" placeholder="搜索关键词（如 trace=xxxx 串起全链路）" />
       <button class="icon-btn" :class="{ active: autoScroll }" @click="autoScroll = !autoScroll" title="自动滚动">
         <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
           <path d="M7.5 2v11M4 10l3.5 3.5L11 10"/>
@@ -65,6 +66,7 @@ const adminStore = useAdminStore()
 const lines      = ref([])
 const filterSource = ref('')
 const filterLevel  = ref('')
+const filterText   = ref('')
 const autoScroll   = ref(true)
 const connected    = ref(false)
 const tableWrap    = ref(null)
@@ -96,6 +98,8 @@ const filtered = computed(() => {
   let list = lines.value
   if (filterSource.value) list = list.filter(r => r.source === filterSource.value)
   if (filterLevel.value) list = list.filter(r => rowLevel(r.line) === `lvl-${filterLevel.value}`)
+  const q = filterText.value.trim().toLowerCase()
+  if (q) list = list.filter(r => r.line.toLowerCase().includes(q))
   return list
 })
 
@@ -174,6 +178,14 @@ onUnmounted(() => { sse?.close() })
   padding: 18px 36px 0; flex-shrink: 0;
 }
 .toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); }
+.debug-search {
+  width: 280px; height: 30px; padding: 0 11px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px; color: rgba(255,255,255,0.85); font-size: 12px;
+  font-family: var(--font-mono, monospace); outline: none; transition: border-color 0.15s;
+}
+.debug-search::placeholder { color: rgba(255,255,255,0.28); font-family: var(--font-sans); }
+.debug-search:focus { border-color: rgba(123,127,178,0.6); }
 
 /* .icon-btn 基础用 Admin 全局样式（AdminApp.vue）；本页保留 active 变体（实时开关） */
 .icon-btn.active { background: rgba(100,200,160,0.12); border-color: rgba(100,200,160,0.3); color: rgba(100,200,160,0.9); }

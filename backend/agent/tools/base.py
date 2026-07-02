@@ -280,6 +280,8 @@ class SkillRegistry:
         if tool.destructive and _ok and not _confirm.is_confirmed(args) and not _confirm.is_block(result):
             print(f"[skill] ⚠️ confirm-gate.bypassed 工具 {name} 未经确认执行了不可逆操作！", flush=True)
             _traj_log.critical("confirm-gate.bypassed tool=%s user=%s", name, str(user_id)[:8])
+            from app.core import opsmetrics
+            opsmetrics.record_security("confirm-gate.bypassed")
 
         _log_traj(name, user_id, args, _ok, _note, t0)
 

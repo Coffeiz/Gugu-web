@@ -38,5 +38,10 @@ async def get_owned(db, model, obj_id, user_id):
             "ownership.denied model=%s id=%s owner=%s requester=%s",
             model.__name__, obj_id, str(owner)[:8], str(user_id)[:8],
         )
+        try:
+            from app.core import opsmetrics
+            opsmetrics.record_security("ownership.denied")
+        except Exception:
+            pass
         return None
     return obj

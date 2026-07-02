@@ -70,6 +70,10 @@
           <PhPulse :size="14" />
           服务状态
         </div>
+        <div class="nav-item" :class="{ active: isActive('/ops') }" role="link" tabindex="0" @click="go('/ops')">
+          <PhGauge :size="14" />
+          运维监控
+        </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">运营</div>
@@ -121,7 +125,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
 import {
   PhGear, PhRobot, PhChartLine, PhChartBar, PhFlag, PhTicket, PhUsers,
-  PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging, PhBrain,
+  PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging, PhBrain, PhGauge,
 } from '@phosphor-icons/vue'
 
 const route = useRoute()

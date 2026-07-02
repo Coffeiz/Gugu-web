@@ -87,6 +87,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '服务状态' },
       },
       {
+        path: 'ops',
+        name: 'AdminOps',
+        component: () => import('@/views/Admin/Ops/index.vue'),
+        meta: { title: '运维监控' },
+      },
+      {
         path: 'debug',
         name: 'AdminDebug',
         component: () => import('@/views/Admin/Debug/index.vue'),
