@@ -1,0 +1,76 @@
+# 咕咕 · 文档导航
+
+`docs/` 按主题分成五类文件夹。每篇文档内部现在统一按**「易读概述」+「专业细节」**两段式组织——前半段给不熟代码、想快速了解"这是什么/为什么这样做"的人看；后半段给要对照代码实现、动手改东西的人看，保留具体文件路径、函数名、行号。想快速上手就只看每篇的「易读概述」，想动代码再往下翻。
+
+想找变更历史看 [`../CHANGELOG.md`](../CHANGELOG.md)（逐条记录），想按时间线看开发过程 / 踩坑排查看 [`devlog.md`](devlog.md)（本目录唯一不分类、留在根目录的文档，性质是日志不是规范）。
+
+---
+
+## agent/ —— Agent / AI 相关（这个项目最大最核心的一类）
+
+**核心架构（活文档，持续维护）**
+
+| 文档 | 讲什么 |
+|------|--------|
+| [`agent.md`](agent/agent.md) | 架构总览 + 完整工具清单 + 现状，其它 agent 文档的总入口 |
+| [`agent-architecture.md`](agent/agent-architecture.md) | 两张架构全景图：可靠性执行链路、系统模块全景 |
+| [`agent-决策环.md`](agent/agent-决策环.md) | 一轮「用户说话→咕咕回应」内部到底走了哪些步 |
+| [`agent-reliability.md`](agent/agent-reliability.md) | 可靠性工程：怎么保证「说做了就真做了」 |
+| [`agent-多步执行与防停顿.md`](agent/agent-多步执行与防停顿.md) | 回复循环终止策略，防止「说了要做却没动手」 |
+| [`agent-im接入架构.md`](agent/agent-im接入架构.md) | 飞书 / QQ / 微信接入架构 |
+| [`记忆系统架构.md`](agent/记忆系统架构.md) | 私有 `.agent/` 五层记忆档案 + 反思机制 |
+| [`感知系统-架构升级.md`](agent/感知系统-架构升级.md)（+ 两张 svg） | 相处方式系统：感知 / 反思 / stance 行为模块 / 错读案例收集，体量最大的一篇 |
+| [`精力系统架构.md`](agent/精力系统架构.md) | Token 配额（精力）系统：窗口计算、硬拦、封顶记账 |
+| [`LLM-支持清单与适配优化.md`](agent/LLM-支持清单与适配优化.md) | 支持哪些模型厂商、怎么适配 |
+| [`提示词优化指南.md`](agent/提示词优化指南.md) | prompt 怎么组织、渐进式披露（`use_skill`）机制 |
+| [`feishu接入指南.md`](agent/feishu接入指南.md) | 飞书接入操作指南（BYO 扫码自连） |
+
+**proposals/ —— 单功能实现方案 / 待评审草案**（跟上面"已落地、持续维护"的架构文档性质不同，这里是"某个具体功能怎么做"的方案记录，有的已实现有的还是提案，每篇开头都标了现状）
+
+- [`决策层与主动触达-架构草案.md`](agent/proposals/决策层与主动触达-架构草案.md) —— 💡 讨论稿，未实现
+- [`新手引导-实现方案.md`](agent/proposals/新手引导-实现方案.md) —— ✅ 已实现
+- [`对话默认问候-生成方案.md`](agent/proposals/对话默认问候-生成方案.md) —— ✅ 已实现
+- [`提案-bug反馈-咕咕辅助生成.md`](agent/proposals/提案-bug反馈-咕咕辅助生成.md) —— 💡 提案阶段，未实现
+
+**_archive/ —— 历史设计稿（已过期，仅供考古）**
+
+原 `agent设计/` 文件夹，2026-06-22～06-29 一次性导入的早期 PRD 文档，之后再没更新过；部分内容已被上面的活文档取代（文中有注明）。去掉了原本的数字编号前缀，按内容重新命名。日常查资料不用进这个文件夹，除非要追溯某个设计决策的最初讨论。
+
+---
+
+## backend/ —— 后端通用架构（不特指 agent 子系统）
+
+- [`backend.md`](backend/backend.md) —— 技术栈、数据模型、API 路由全貌
+- [`storage.md`](backend/storage.md) —— 文件存储结构规范（空间划分、存储 key 规则、暂存 vs 持久化）
+
+## product/ —— 产品 / 前端
+
+- [`overview.md`](product/overview.md) —— 项目总览、技术栈、目录结构、进度（**新人从这篇开始看**）
+- [`mvp.md`](product/mvp.md) —— MVP 功能清单与状态
+- [`wishlist.md`](product/wishlist.md) —— 功能规划
+- [`design.md`](product/design.md) —— 前台 UI/UX 设计规范（色彩、组件、交互）
+- [`design-admin.md`](product/design-admin.md) —— Admin 后台设计规范
+- [`file-preview.md`](product/file-preview.md) —— 文件预览功能（抽屉 + 浮动窗口两套系统）
+- [`前端-JS转TS迁移指南.md`](product/前端-JS转TS迁移指南.md) —— JS→TS 渐进迁移的约定与进度
+
+## ops/ —— 部署 / 性能 / 并发
+
+- [`deploy.md`](ops/deploy.md) —— 部署文档（devserver、systemd + 手动脚本混合运维）
+- [`performance.md`](ops/performance.md) —— 性能优化记录
+- [`并发优化ROADMAP.md`](ops/并发优化ROADMAP.md) —— P0–P4 扩量分期规划
+- [`并发压测结果.md`](ops/并发压测结果.md) —— 压测数据快照（历史记录，不做内容更新）
+
+## security/ —— 安全 / 合规
+
+- [`privacy.md`](security/privacy.md) —— 隐私政策
+- [`安全-工具错误信息脱敏.md`](security/安全-工具错误信息脱敏.md) —— 工具错误信息脱敏机制
+- [`商用就绪评审-核实版.md`](security/商用就绪评审-核实版.md) —— 对一份外部评审的逐条代码核实记录（审计快照，不做内容更新，只保证引用的文件路径/行号有效）
+
+---
+
+## 维护约定
+
+- **新增文档放对文件夹**：agent 子系统相关（含单功能方案）进 `agent/`（方案类进 `agent/proposals/`）；纯后端通用架构进 `backend/`；前端/产品进 `product/`；部署/性能/并发进 `ops/`；安全/合规进 `security/`。
+- **新文档也按"易读概述 + 专业细节"两段式写**，方便不同读者各取所需。
+- **审计/压测类的"快照文档"**（如 `并发压测结果.md`、`商用就绪评审-核实版.md`）不要拿"提升可读性"当理由重写内容——它们的价值就在于忠实记录某个时间点的状态，只需保证里面引用的路径/行号还有效。
+- 文档间互相引用一律用**相对路径**（不要写 `docs/xxx.md` 这种从仓库根算起的路径，除非是仓库根目录的 `README.md`/`CHANGELOG.md`/`ROADMAP.md` 引用 `docs/` 内文档）。

@@ -11,6 +11,23 @@
 
 ---
 
+## 易读概述
+
+**解决什么问题**：用户不一定总是打开咕咕的网页/App 才能找它——很多人习惯直接在自己常用的聊天软件（飞书、QQ、微信）里发消息。这套架构就是把咕咕接进这三个平台，让用户能在自己已经在用的 IM 软件里，像和朋友聊天一样直接找咕咕对话、管理项目/文件/日程,而不需要额外打开一个 App。
+
+**大致怎么运作**：
+- 每个平台都有咕咕自己写的"连接器"（不借助第三方网关工具），负责收发消息，把不同平台的消息格式统一整理成咕咕能理解的样子。
+- 每个用户在这三个平台上用的"机器人账号"都是自己的（不是所有用户共用咕咕的官方账号）——用户扫码就能自动创建/绑定专属于自己的机器人，这样即使某个用户的账号出问题，也不会影响到其他用户。
+- 收消息和"思考怎么回复"这两件事被拆开、中间放了一个队列排队处理：因为让大模型思考是最慢的一步，如果收消息的连接直接等大模型算完再动，一旦大模型卡住或用户很多，消息会大量积压甚至掉线。拆开之后，即使思考环节慢，收消息这一头也不受影响，将来量大了只要多加几个"思考"的处理进程就能扛住，不需要推倒重来。
+- 三个平台目前都已经把文字、图片、语音打通（微信最新做到语音消息可用，是三个平台里最晚补齐的一项能力）。用户发一张图、发一段语音，咕咕原则上都能"看懂"或"听懂"再回应。
+- 用户在对话里发的文件/图片/语音会先被"暂存"7 天（不会立刻正式存进用户的文件库），咕咕可以读取暂存的内容来回应，用户明确说"存一下"才会正式归档。这是为了避免"随手发的每张图都被强行存档"的困扰。
+
+**不懂代码的读者可以先记住三件事**：① 三个平台都是"各用户自己的机器人"，不是共用一个官方账号，安全风险因此分散到个人；② 收消息和大模型思考是分开的两步，中间有缓冲，不会互相拖累；③ 发来的文件/图片/语音默认只是"临时存放"，明确要求才会永久保存。
+
+---
+
+## 专业细节
+
 ## 1. 目标与原则
 
 - 咕咕（独立 FastAPI 后端）作为"大脑"，接入飞书 / QQ / 微信，让用户在 IM 里直接和咕咕对话、管理项目/文件/日程。
@@ -84,7 +101,7 @@ POST q.qq.com/lite/create_bind_task {"key": base64(随机32字节)} → task_id 
 ```
 - **安全**：接口本身无鉴权，但 secret 用调用方本地 key 加密回传，只有创建者能解；aes_key 只存服务端 Redis（按 task_id），不下发前端。
 - `source` 仅为来源标签（非白名单，任意值都跳转）。
-- 拆解过程见 `docs/devlog.md` 2026-06-23 QQ 条 + `qq-scan-connect` 记忆。
+- 拆解过程见 `../devlog.md` 2026-06-23 QQ 条 + `qq-scan-connect` 记忆。
 
 ### 3.3 微信 — 直连 iLink · 已落地（BYO + HTTP 长轮询，文本/图片/语音全通）
 
@@ -109,7 +126,7 @@ POST q.qq.com/lite/create_bind_task {"key": base64(随机32字节)} → task_id 
 | **QQ** | 《QQ 机器人开发者协议》（q.qq.com）+ 平台内容规范 | BYO：bot 由用户在官方开发者后台创建；C2C 单聊能力需平台审批，sandbox/生产分环境；消息内容经官方 API，受平台内容审核约束 | 🟢 低——官方 bot 平台正规通道；风险点是**内容审核**（回复触发平台过滤会发送失败，已有 ret 日志），非封号 |
 | **微信** | 《微信 ClawBot 功能使用条款》 | iLink 是官方新通道但形态是**个人号自动化**；腾讯保留内容过滤/限速权 | 🟡 中——三平台里唯一挂"个人号"的，条款明确风险自负；商用放量前建议：向用户明示该风险 + 微信侧默认不开启、用户主动选择接入 |
 
-> 共同点：三平台都是 **BYO（用户自带 bot/凭据）**——封禁风险落在单个用户自己的 bot 上，不存在"咕咕官方账号被封、全体用户中断"的单点。隐私政策（`privacy.md` 第三节）已列三家隐私政策链接；本表补的是**平台服务条款**维度的合规确认（商用就绪评审 P0-5）。
+> 共同点：三平台都是 **BYO（用户自带 bot/凭据）**——封禁风险落在单个用户自己的 bot 上，不存在"咕咕官方账号被封、全体用户中断"的单点。隐私政策（`../security/privacy.md` 第三节）已列三家隐私政策链接；本表补的是**平台服务条款**维度的合规确认（商用就绪评审 P0-5）。
 
 ---
 
@@ -165,6 +182,7 @@ QQ WS网关  ├→ 规范化成 AgentRequest ──→ [Redis Streams 队列] �
 | 网关进程管理 | ✅ **已建**：`agent/adapters/supervisor.py` 按 DB `user_bots` 动态 spawn/kill 飞书·QQ·微信网关子进程，带指数退避（详见 §10） |
 | 微信接入 | ✅ **已落地**：`agent/adapters/wechat.py`，BYO + iLink 长轮询，文本/图片/语音全通（图片 CDN+AES-128-ECB 解密，语音走 iLink 自带 ASR 转写，见 §3.3） |
 | 多渠道附件解析隔离 | ✅ **已加固**：`chat_attach.resolve_attach` 兜底解析按当前渠道（`imctx`）收窄候选，避免跨渠道/跨类型误取（如把另一渠道的语音当成这次要存的图片）；`stage`/`stage_sync` 新增 `platform` 字段打标签 |
+| 反查暂存附件 | ✅ **已加**（本轮新增）：`agent/tools/files.py` 的 `list_recent_attachments` 工具——列出该用户当前暂存区（未过期）的附件（含 `platform`/`kind`/大致存了多久），供模型在用户说「刚刚的图/那张图/X平台那张」等模糊指代、当轮又没带 attach_id 提示时反查，再配合 `send_file`/`save_uploaded_file` 用 attach_id 精确操作。跨渠道场景尤其有用：用户可能在飞书发了图，过会儿在网页说"把刚才那张图存一下" |
 | Runtime Router + 状态机（文档 29 / Phase 1.7） | ✅ **已落地**：`agent/router.py`(关键词分类) + `agent/runtime_state.py`(Redis 状态机 IDLE/THINKING/SEARCHING/GENERATING + 取消标志)；网关层短路状态查询/取消，详见 [`agent-决策环.md`](agent-决策环.md) §⓪。**注**：情绪/催词用「句首锚定」防话题误判（「法拉利怎么这么慢」不算催咕咕）；催促只在咕咕真在忙时才拦、回「还在想/正在弄」，空闲交主模型 |
 | 平台用户 ↔ 咕咕用户映射 | ✅ **BYO 免映射**：每用户自带 bot，消息天然归属 owner，入队 payload 带 `owner_user_id`，worker 直接认人——无需 `(platform, platform_user_id) → user_id` 绑定表 |
 
@@ -214,7 +232,7 @@ QQ WS网关  ├→ 规范化成 AgentRequest ──→ [Redis Streams 队列] �
 
 ## 10. 进程部署与启停（现状）
 
-> **部署形态：默认单机**（2026-06-24 决策）——三个服务 + 网关同机，一套配置管全部、Admin 配置/重启全生效。跨主机为可选路径（§10.3 / [`deploy.md`](deploy.md) §4.3）、Admin 推不到远端；扩量靠单机内手段。详见 [`并发优化ROADMAP.md`](并发优化ROADMAP.md) 部署形态决策。
+> **部署形态：默认单机**（2026-06-24 决策）——三个服务 + 网关同机，一套配置管全部、Admin 配置/重启全生效。跨主机为可选路径（§10.3 / [`../ops/deploy.md`](../ops/deploy.md) §4.3）、Admin 推不到远端；扩量靠单机内手段。详见 [`../ops/并发优化ROADMAP.md`](../ops/并发优化ROADMAP.md) 部署形态决策。
 
 IM 这套在生产以 **三个 systemd 常驻服务**跑（单元文件在 `backend/*.service`，由 `./start.sh install` 按 `RUN_USER`/`APP_DIR` 填占位符后写到 `/etc/systemd/system/`）：
 
@@ -271,6 +289,7 @@ journalctl -u gugu-worker -f         # 或 tail -f logs/gugu-worker.log
 - `agent/router.py` + `agent/runtime_state.py` — 前置路由 + Redis 状态机/取消标志
 - `worker.py`（顶层）— IM 队列消费进程；`app/core/redis.py` — Streams 封装（produce/consume/ack/claim）
 - `app/api/v1/user_bots.py` / `feishu_connect.py` / `qq_connect.py` — bot CRUD + 扫码自连
+- `app/core/chat_attach.py` — 聊天附件暂存（`stage`/`stage_sync`/`resolve_attach`/`list_staged`，TTL 7 天，`platform` 字段做渠道隔离）；`agent/tools/files.py` 的 `send_file`/`save_uploaded_file`/`list_recent_attachments` 是它的消费方
 - `backend/{gugu-backend,gugu-worker,gugu-supervisor}.service` + `start.sh install` — 三进程部署（见 §10）
 
 ## 附：参考来源

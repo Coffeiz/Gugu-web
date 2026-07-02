@@ -1,7 +1,7 @@
 # PM Studio · 早期开发记录
 
 > 更新：2026-07-01
-> 状态：早期阶段记录，当前进度见 `docs/overview.md`
+> 状态：早期阶段记录，当前进度见 `product/overview.md`
 
 ---
 
@@ -25,7 +25,7 @@
 
 **结论：这一例直接危害低，但暴露了一个该修的"原始透传"模式。** 低的原因查实了三点：`/uploads` 没被静态托管（全后端无 `.mount()`）、文件访问全走鉴权 API（逐用户归属校验）、且这报告是给文件主人本人看——所以泄露路径/UUID **换不来文件访问**。但模式本身不安全：`agent/tools/files.py` 多处 `return {"error": f"…{str(e)}"}` 把原始异常（含路径）透传，一旦哪天异常引用到**别人**的路径/UUID、或藏了**连接串/API key/token**，就会原样漏出去；而且原始串进了**模型上下文 + 决策轨迹 + 日志**，扩散面不止用户那一眼。
 
-**设计三层（药+网+出口）；② 网当天就落地了。** ② `sanitize_error()` + `_redact_result()` 挂 `registry.dispatch`（工具唯一咽喉），在 tool_result **回模型之前**统一抹 path/UUID/连接串/key/traceback——一处覆盖全部 55 工具，且**只动 error 字段、绝不碰正常结果**（`read_file` 正文含 uploads/UUID 字样也原样不动，实测验过），原始异常仍 print+traceback 进服务端日志。脱敏边界刻意放 **dispatch（给模型前）**，不是 UI 层——否则模型上下文/决策轨迹已被污染。③ 出口复用已有 `sanitize_outbound`。① 药（工具按业务层造干净消息）可继续收敛、非必需（网已兜住）。详见 `docs/安全-工具错误信息脱敏.md`。
+**设计三层（药+网+出口）；② 网当天就落地了。** ② `sanitize_error()` + `_redact_result()` 挂 `registry.dispatch`（工具唯一咽喉），在 tool_result **回模型之前**统一抹 path/UUID/连接串/key/traceback——一处覆盖全部 55 工具，且**只动 error 字段、绝不碰正常结果**（`read_file` 正文含 uploads/UUID 字样也原样不动，实测验过），原始异常仍 print+traceback 进服务端日志。脱敏边界刻意放 **dispatch（给模型前）**，不是 UI 层——否则模型上下文/决策轨迹已被污染。③ 出口复用已有 `sanitize_outbound`。① 药（工具按业务层造干净消息）可继续收敛、非必需（网已兜住）。详见 `security/安全-工具错误信息脱敏.md`。
 
 **教训 / 红线**：**绝不把 `str(e)`/traceback 直接放进给用户或模型的字段**。异常里常藏路径、UUID、连接串、API key、token——用户/模型只该看业务层描述，原始细节走 log。新工具的 except 默认走 dispatch 级脱敏，别各自 `f"…{e}"`。另：咕咕生成的 bug 报告外发前先抹 UUID/路径。（顺带：那个移动失败本身是 OS 文件权限问题、不是鉴权漏洞，咕咕"token 只有 read 权限"的推测是错的、会误导排查。）
 
@@ -65,7 +65,7 @@
 
 ## 2026-06-27 · 生产部署连环坑：被冲的状态文件、create_all/alembic 不同步、废弃 NOT NULL 列
 
-本地改完一批（默认问候、精力硬拦等）push 到 main、devserver `git reset --hard` 对齐后，往**生产**（`www.gugugu.site`，阿里云 1Panel + systemd，和 192.168.110.51 那台 dev 是两台机）推这版，结果踩了一长串坑——几乎每一步都暴露一个「dev 想当然、prod 不成立」的假设，逐个记下来（都已沉进 `deploy.md`）。
+本地改完一批（默认问候、精力硬拦等）push 到 main、devserver `git reset --hard` 对齐后，往**生产**（`www.gugugu.site`，阿里云 1Panel + systemd，和 192.168.110.51 那台 dev 是两台机）推这版，结果踩了一长串坑——几乎每一步都暴露一个「dev 想当然、prod 不成立」的假设，逐个记下来（都已沉进 `ops/deploy.md`）。
 
 **① `make stop` 说「未运行」但服务在跑。** 生产 backend 是 systemd `gugu-backend.service` 托管的，而 `make start/stop` 管的是 Makefile 另起的手动 uvicorn——两套进程。在生产用 `make` 控制后端只会迷惑 +抢端口，**一律 `systemctl`**。
 
@@ -81,13 +81,13 @@
 
 **附带两记:** 部署后所有数据页 `summary 401` —— 重建 env 时 `SECRET_KEY` 变了、旧登录 token 全失效，**重新登录即恢复**（根治:SECRET_KEY 跨部署保持同一值）。还有 1.6G 小机上 `make install` 把 unit 重置回 `--workers 2`（≈660M）贴着 OOM 线，得重新 `sed` 降单 worker。
 
-**一句话总结:** 这串坑的共同根:**生产环境的真实状态和 dev 的脑内模型不一致**——prod 的 schema 是 `create_all` 攒的不是 alembic 迁的、状态文件会被部署冲掉、删字段的迁移不跑就留下挡路的 NOT NULL 列。排查的通用解法也统一:**别逐个撞，用工具拿全量真相**（`alembic autogenerate` 看 schema 差异、`pg_stat_activity`/配置确认连的哪个库、`journalctl`+`logs/gugu.log` 分清 systemd 视角和 Python 真错）。全部订正/补进了 `deploy.md` §5.1 / §6 / §6.2 + 常见问题表。
+**一句话总结:** 这串坑的共同根:**生产环境的真实状态和 dev 的脑内模型不一致**——prod 的 schema 是 `create_all` 攒的不是 alembic 迁的、状态文件会被部署冲掉、删字段的迁移不跑就留下挡路的 NOT NULL 列。排查的通用解法也统一:**别逐个撞，用工具拿全量真相**（`alembic autogenerate` 看 schema 差异、`pg_stat_activity`/配置确认连的哪个库、`journalctl`+`logs/gugu.log` 分清 systemd 视角和 Python 真错）。全部订正/补进了 `ops/deploy.md` §5.1 / §6 / §6.2 + 常见问题表。
 
 ## 2026-06-27 · 对话默认问候改成生成 + 一个「前导 assistant 被剥」的隐蔽坑
 
-把 GuguChat 打开时那条写死的默认问候改成**咕咕自己生成**（带点记忆、像熟人开口），方案沉在 `docs/对话默认问候-生成方案.md`。几轮迭代把节奏定型：**进入全新对话时**后台轻量直连生成一句（不走 agent 循环、不计精力），内存 ref 不跨刷新缓存；打开对话框时走**打字机动画**逐字冒（生成版 / 兜底都走）；生成没好就从静态兜底池随机取一条。中途纠了个浪费：本来「每次刷新都生成」，但刷新常停在老会话（`SESSION_KEY` 还在、问候根本不显示）→ 改成由 `GuguChat` 据 `SESSION_KEY` 判断，只在真·全新对话才生成。
+把 GuguChat 打开时那条写死的默认问候改成**咕咕自己生成**（带点记忆、像熟人开口），方案沉在 `agent/proposals/对话默认问候-生成方案.md`。几轮迭代把节奏定型：**进入全新对话时**后台轻量直连生成一句（不走 agent 循环、不计精力），内存 ref 不跨刷新缓存；打开对话框时走**打字机动画**逐字冒（生成版 / 兜底都走）；生成没好就从静态兜底池随机取一条。中途纠了个浪费：本来「每次刷新都生成」，但刷新常停在老会话（`SESSION_KEY` 还在、问候根本不显示）→ 改成由 `GuguChat` 据 `SESSION_KEY` 判断，只在真·全新对话才生成。
 
-**真正值得记的是「问候纳入对话」逮到的坑。** 用户回复问候后，咕咕却**当成对话刚开始又重新寒暄**。第一反应是「问候没发给后端」，但其实它发了、也入库为新会话首条 `assistant`（`created_at` 早于用户消息）了。真正的根因藏在 `agent/sanitize.py`：发给 Anthropic/MiniMax 的消息序列**首条必须是 user**，`sanitize_messages` 第 4 步据此 `while norm[0].role != "user": pop(0)`——把那条**前导 assistant 问候每轮都剥掉**，模型永远收不到。所以「把非用户发出的话塞成历史前导 assistant」这条路根本走不通。改法：新会话首轮把问候**注入 system prompt**（"你已经说过：「…」，别重复"），保持序列 user 开头；DB 那条 assistant 仍留着只供会话回看显示。教训沉成通用约束写进了 `docs/agent.md`「五、消息序列约束」：**想让模型看到非用户输入的上下文，走 system prompt，别靠前导 assistant 历史**；排查「模型无视某条历史」先看它 sanitize 后还在不在。又一次印证——**先怀疑数据没到，往往其实是到了又被某层清洗悄悄丢了**（和之前 best-effort SSE 丢事件同型）。
+**真正值得记的是「问候纳入对话」逮到的坑。** 用户回复问候后，咕咕却**当成对话刚开始又重新寒暄**。第一反应是「问候没发给后端」，但其实它发了、也入库为新会话首条 `assistant`（`created_at` 早于用户消息）了。真正的根因藏在 `agent/sanitize.py`：发给 Anthropic/MiniMax 的消息序列**首条必须是 user**，`sanitize_messages` 第 4 步据此 `while norm[0].role != "user": pop(0)`——把那条**前导 assistant 问候每轮都剥掉**，模型永远收不到。所以「把非用户发出的话塞成历史前导 assistant」这条路根本走不通。改法：新会话首轮把问候**注入 system prompt**（"你已经说过：「…」，别重复"），保持序列 user 开头；DB 那条 assistant 仍留着只供会话回看显示。教训沉成通用约束写进了 `agent/agent.md`「五、消息序列约束」：**想让模型看到非用户输入的上下文，走 system prompt，别靠前导 assistant 历史**；排查「模型无视某条历史」先看它 sanitize 后还在不在。又一次印证——**先怀疑数据没到，往往其实是到了又被某层清洗悄悄丢了**（和之前 best-effort SSE 丢事件同型）。
 
 ---
 
@@ -101,7 +101,7 @@
 
 **又一轮真实性守卫——这次靠轨迹日志逮到。** 用户：「咕咕说复制进项目了，其实在原地复制了一份。」翻 `agent.traj`（上一波加的 P1 轨迹）当场还原：`copy_file` target 传得对，是工具 bug——跨项目复制时 `folder_id` 默认继承了源文件夹（属于原项目）→ 落回原地，却照样 `ok`，模型据此谎报。抽 `_target_loc` 统一目标定位（跨项目不继承源文件夹）。然后**举一反三扫了所有工具**，逮到一批同类「空转报成功」：`update_client/event/scheduled_task/todo` 没给任何改动字段也 commit + 报 success → 全改成「没实际改动就报错」。沉淀出一条工具自律：**没产生实际效果（no-op / 解析失败退化 / 目标解析不出）一律报错，绝不 return success**，否则就是给上层喂谎报素材。MAX_VERIFY 也按用户要求 3→5。这波再次印证上次的体会——**先有可观测（轨迹），这种「谎报」才从「猜」变「翻一眼就定位」**。
 
-**杂项 + 起步。** mimo 标题不更新（思考吃光 30 token 取不到标题，禁 thinking + 挑 text 块修了）；mode2 文件卡拖影比面板卡大（克隆体挂 body 丢了 `.modal.stages-expanded` 上下文，给克隆打标记类补回版式）。最后和用户讨论了**新手引导**方案并落成 `docs/新手引导-实现方案.md`（注册播种 + 延迟欢迎气泡 + claim-once 情境引导 + 回头看 + demo 控制面板，全静态文案随机、后端持久化），待开工。
+**杂项 + 起步。** mimo 标题不更新（思考吃光 30 token 取不到标题，禁 thinking + 挑 text 块修了）；mode2 文件卡拖影比面板卡大（克隆体挂 body 丢了 `.modal.stages-expanded` 上下文，给克隆打标记类补回版式）。最后和用户讨论了**新手引导**方案并落成 `agent/proposals/新手引导-实现方案.md`（注册播种 + 延迟欢迎气泡 + claim-once 情境引导 + 回头看 + demo 控制面板，全静态文案随机、后端持久化），待开工。
 
 ---
 
@@ -126,7 +126,7 @@
 
 **live 验证**。devserver 网页后端跑 `uvicorn --reload`，代码同步进来自动重载；真实循环 ×N 跑下来，**run3 亲眼看到守卫自动接管**（mimo 第一轮假装→循环代码自己 `_new_round` 注入 nudge→转去真调 `read_file`），全链路 ~93% 最终真调工具。IM（飞书/QQ）的 systemd 服务没 --reload，得 `sudo systemctl restart gugu-worker gugu-supervisor` 才让 mimo-on-IM 拿到代码守卫（提示词在 IM 也热读，故 M3-on-IM 已好）。
 
-**体会**：① **能确定性化的别交给模型**——但「决定要不要调工具」这步确定性化不了，守卫只能「检测失败→重试」，这是天花板。② **先可观测再优化**——今天「调没调工具」猜了好几轮，有了 `agent.traj` 轨迹就是翻一眼。③ **弱模型靠工程补、强模型省一半事**——守卫把 mimo 从「经常假装」拉到 ~93%，但补不平残余不确定性，重工具任务 M3 仍更稳。沉淀成三份文档：`agent-architecture.md`（三张图）、`agent-reliability.md`（可靠性工程 + P0–P4 Roadmap）、本文。
+**体会**：① **能确定性化的别交给模型**——但「决定要不要调工具」这步确定性化不了，守卫只能「检测失败→重试」，这是天花板。② **先可观测再优化**——今天「调没调工具」猜了好几轮，有了 `agent.traj` 轨迹就是翻一眼。③ **弱模型靠工程补、强模型省一半事**——守卫把 mimo 从「经常假装」拉到 ~93%，但补不平残余不确定性，重工具任务 M3 仍更稳。沉淀成三份文档：`agent/agent-architecture.md`（三张图）、`agent/agent-reliability.md`（可靠性工程 + P0–P4 Roadmap）、本文。
 
 ---
 
@@ -212,7 +212,7 @@
 
 三处限流现状：① 上传 = `ProjectModal` 套 `pLimit(3)`（新增；`UploadModal`/`ProjectCard` 本就 `for` 串行）；② 缩略图加载 = `useThumbCache` 改用共享 `pLimit(6)`（替换原 `_acquire/_release`）；③ 缩略图生成（后端）= `_THUMB_SEM=Semaphore(cpu-1)`（早有，2C=1）。
 
-注意：仅**单客户端内**限流，多用户并发仍可能叠加——真要全局限得后端中间件信号量，当前量级不必要。`npx vite build` 通过。详见 `performance.md` 十三节。
+注意：仅**单客户端内**限流，多用户并发仍可能叠加——真要全局限得后端中间件信号量，当前量级不必要。`npx vite build` 通过。详见 `ops/performance.md` 十三节。
 
 ---
 
@@ -374,7 +374,7 @@ pgAdmin 崩溃重启循环 → 烧满 CPU + 吃内存 → 整机卡 + 内存到�
 - **整机卡死先 `ps aux --sort=-%cpu | head` 看是谁，别先怀疑自己刚改的东西**——这次真凶是个完全无关的第三方应用。
 - **`status=9/KILL` 八成是 OOM**，不是代码 bug。2G 小机必配 swap。
 - **生产机别堆非必要的重应用**（pgAdmin、各种面板插件）——它们和你的服务抢同一份 CPU/内存，一个崩溃循环就能拖垮全机。
-- 调优细节见 `deploy.md` §3.8「低配服务器调优」。
+- 调优细节见 `ops/deploy.md` §3.8「低配服务器调优」。
 
 ---
 
@@ -451,7 +451,7 @@ pgAdmin 崩溃重启循环 → 烧满 CPU + 吃内存 → 整机卡 + 内存到�
 
 ### 教训
 
-- **改 `agent/` 大脑代码必须重启 worker**，光重启 supervisor 没用；`make restart` 只管 web。已写进 `deploy.md` 2.7。
+- **改 `agent/` 大脑代码必须重启 worker**，光重启 supervisor 没用；`make restart` 只管 web。已写进 `ops/deploy.md` 2.7。
 - 调试顺序对了：先盯一个**具体的可证伪现象**（source 没写对），顺着它确认「代码对 → 那就是进程旧」，比对着「实时为什么不工作」空想快得多。
 - 进程模型要在脑子里清晰：web(uvicorn) / supervisor(+网关子进程) / worker 是**三个**独立常驻进程，各管一段，别当成一坨。
 
@@ -490,7 +490,7 @@ web 聊天本来有 `refreshAfterTools`——流结束后按用过的工具刷�
 
 web 自身聊天（`web.py` 流式）暂未 publish → 同账号多网页标签不互相同步。做站内 IM 时让 web 也 publish 即可，链路现成。已读/送达/在线状态/顺序去重是 IM 进阶项，地基已就位。
 
-详见 `docs/agent.md`「实时刷新」一节、`CHANGELOG.md`。
+详见 `agent/agent.md`「实时刷新」一节、`CHANGELOG.md`。
 
 ---
 
@@ -555,7 +555,7 @@ Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面
 - `create_project` 未填日期默认 start=今天、deadline=一周后。
 - IM 对话**补上会话历史**（之前 `run_collect` 没读历史 → "聊着聊着变新会话"）。
 
-详见 `docs/agent.md`、`docs/agent-im接入架构.md`、`CHANGELOG.md`。
+详见 `agent/agent.md`、`agent/agent-im接入架构.md`、`CHANGELOG.md`。
 
 ---
 
@@ -607,13 +607,13 @@ Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面
 
 - **别替用户判"够不着"**：一个 `curl` 就能验证的事（create_bind_task 无鉴权），比三轮"我觉得是合作墙"有用得多。
 - **开源参照物先扒源码**：QwenPaw 开源，机制全在 `qrcode_auth_handler.py`，早看早做完。
-- 详细机制见 `qq-scan-connect` 记忆 + `docs/agent-im接入架构.md` §3.2。
+- 详细机制见 `qq-scan-connect` 记忆 + `agent/agent-im接入架构.md` §3.2。
 
 ---
 
 ## 2026-06-23 · 里程碑：咕咕首个 IM 平台（飞书）端到端打通 🎉
 
-**第一次让咕咕住进 IM**——飞书私聊里发消息，咕咕带完整人格/记忆/工具回复，全程经队列+独立 worker，平台无关骨架可复用到 QQ/微信。架构与决策见 `docs/agent-im接入架构.md`、`docs/agent.md` Phase 4。
+**第一次让咕咕住进 IM**——飞书私聊里发消息，咕咕带完整人格/记忆/工具回复，全程经队列+独立 worker，平台无关骨架可复用到 QQ/微信。架构与决策见 `agent/agent-im接入架构.md`、`agent/agent.md` Phase 4。
 
 ### 端到端链路
 
@@ -650,7 +650,7 @@ Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面
 
 ## 2026-06-23 · Agent：记忆深化 + prompt 缓存 + IM 接入架构
 
-接上一日，把记忆系统从"能记"做到"记得干净、注入便宜、写得克制"，并定下 IM 接入方案。详见 `docs/agent.md`、`docs/agent-im接入架构.md`。
+接上一日，把记忆系统从"能记"做到"记得干净、注入便宜、写得克制"，并定下 IM 接入方案。详见 `agent/agent.md`、`agent/agent-im接入架构.md`。
 
 ### 1. 记忆 facts 调和重写（治矛盾/膨胀）
 
@@ -686,13 +686,13 @@ Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面
 
 ### 7. IM 多平台接入架构（设计，未开工）
 
-新增 `docs/agent-im接入架构.md`：飞书 / QQ / 微信**官方直连、不用 OpenClaw**（lark-oapi / botpy / iLink）；从一开始按「收消息 ↔ 跑大模型」解耦的**队列 + worker 架构**建，为高流量留缝（AgentRequest/Response + dispatch 间接层）。现状：Redis 配了没用、无队列/worker、`--workers 1`；落地从 Redis+Streams 起步、6 步逐缝验证。agent.md Phase 4 已对齐、删 OpenClaw/webhook 旧话；小模型相关项统一标「最后做·暂无条件」。
+新增 `agent/agent-im接入架构.md`：飞书 / QQ / 微信**官方直连、不用 OpenClaw**（lark-oapi / botpy / iLink）；从一开始按「收消息 ↔ 跑大模型」解耦的**队列 + worker 架构**建，为高流量留缝（AgentRequest/Response + dispatch 间接层）。现状：Redis 配了没用、无队列/worker、`--workers 1`；落地从 Redis+Streams 起步、6 步逐缝验证。agent.md Phase 4 已对齐、删 OpenClaw/webhook 旧话；小模型相关项统一标「最后做·暂无条件」。
 
 ---
 
 ## 2026-06-22 · Agent：Skill 一等公民 + 记忆 Phase 2a + 联网搜索
 
-详细架构见 `docs/agent.md`。本次四块工作：
+详细架构见 `agent/agent.md`。本次四块工作：
 
 ### 1. Skill 一等公民重构
 

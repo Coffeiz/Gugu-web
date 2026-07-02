@@ -18,7 +18,7 @@ _traj_log = logging.getLogger("agent.traj")
 
 
 # ── 工具错误信息脱敏（安全：别把原始异常里的路径/UUID/连接串/密钥/traceback 透传给模型/用户/轨迹）──
-# 详见 docs/安全-工具错误信息脱敏.md。这是「网」层（dispatch 级兜底）；原始细节仍 print 到服务端日志。
+# 详见 docs/security/安全-工具错误信息脱敏.md。这是「网」层（dispatch 级兜底）；原始细节仍 print 到服务端日志。
 # ⚠️ 只用于 error 字段，绝不动正常工具结果（如 read_file 正文可能含任意文本）。
 _CONN_RE = re.compile(r"\b(?:postgres(?:ql)?|redis|rediss|mysql|mongodb)://[^\s'\"]+", re.I)
 _KEY_RE  = re.compile(r"\b(?:sk-[A-Za-z0-9]{16,}|(?:api[_-]?key|token|secret|bearer)[\"'=:\s]+[A-Za-z0-9._\-]{12,})", re.I)
@@ -253,7 +253,7 @@ class SkillRegistry:
             import traceback
             print(f"[skill] 工具 {name} 执行出错: {type(e).__name__}: {e}", flush=True)
             traceback.print_exc()   # 原始 traceback 进服务端日志，排查不丢
-            # 给模型/用户/轨迹的版本脱敏：异常串常含路径/UUID/连接串/密钥（见 docs/安全-工具错误信息脱敏.md）
+            # 给模型/用户/轨迹的版本脱敏：异常串常含路径/UUID/连接串/密钥（见 docs/security/安全-工具错误信息脱敏.md）
             _safe = sanitize_error(f"{type(e).__name__}: {e}")
             _log_traj(name, user_id, args, False, _safe, t0)
             return json.dumps({"error": f"工具 {name} 执行出错：{_safe}"}, ensure_ascii=False), None

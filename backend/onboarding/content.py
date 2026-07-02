@@ -1,7 +1,7 @@
-"""新手引导 · 静态文案池（取自 docs/新手引导设计.md）。
+"""新手引导 · 静态文案池（取自 docs/agent/proposals/新手引导-实现方案.md）。
 
 全部静态 + 随机：**绝不过 LLM**。改文案只动这里。`pick()` 随机取一条。
-对应章节见 docs/新手引导-实现方案.md §5。
+对应章节见 docs/agent/proposals/新手引导-实现方案.md §5。
 """
 import random
 

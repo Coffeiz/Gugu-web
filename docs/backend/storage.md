@@ -1,23 +1,41 @@
 # 文件存储结构规范
 
-> 更新：2026-06-24
+> 更新：2026-07-02
 > 项目：咕咕 / gugugu.site
 
 ---
 
-## 一、空间划分
+## 一、易读概述
+
+### 这是什么
+
+咕咕的"文件"分两种存在方式：**正式文件**（用户在文件库里能看到、管理的文件，进数据库有记录）和**聊天暂存附件**（用户在对话里随手发的文件，先临时存着，用户明确说"存一下"才会变成正式文件）。这份文档讲的是这两类东西分别存在哪、怎么组织、怎么和数据库对应上。
+
+### 空间划分
+
+文件库按"空间"分了四类，目前真正做完、能用的只有前两个：
 
 | 空间 | 说明 | 开发状态 |
 |------|------|---------|
-| 个人文件 | 用户自由上传，支持自建文件夹无限嵌套 | ✅ 已完成 |
-| 项目文件 | 关联项目，按年/月/项目/用户文件夹分层 | ✅ 已完成 |
-| 回收站 | 软删除文件，30 天自动清理 | ✅ 已完成 |
-| 思维画布 | 附件存储 | 🔜 预留 |
-| 素材板 | 素材管理 | 🔜 预留 |
+| 个人文件 | 用户自由上传，支持自建文件夹无限嵌套 | 已完成 |
+| 项目文件 | 关联项目，按年/月/项目/用户文件夹分层 | 已完成 |
+| 回收站 | 软删除文件，30 天自动清理 | 已完成 |
+| 思维画布（mind） | 附件存储 | 预留，数据库表已建但无功能入口 |
+| 素材板（asset） | 素材管理 | 预留，连数据库表都还没有 |
+
+### 存储后端可以热切换
+
+开发阶段文件存在本机磁盘，正式上线后可以切到阿里云 OSS——这个切换在 Admin 后台点一下就完成，不用重启、不用改代码，因为磁盘和 OSS 背后走的是同一套抽象接口。但**切换本身不会自动把旧文件搬过去**，这是运维时最容易踩的坑，详见 §五。
+
+### 聊天附件为什么要"暂存"
+
+用户在跟咕咕聊天时随口发个图或文件，大多数时候只是想让咕咕"看一眼"，不一定要真的存进文件库占位置。所以这类文件先扔进一个临时目录（7 天自动过期），只有用户明确要求保存时，咕咕才会把它复制一份变成正式的文件库记录。
 
 ---
 
-## 二、磁盘目录结构
+## 二、专业细节
+
+### 2.1 磁盘目录结构
 
 ```
 uploads/
@@ -33,10 +51,23 @@ uploads/
     │               ├── 文件.pdf
     │               └── {用户文件夹}/
     │                   └── 文件.pdf
+    ├── 思维/
+    │   └── {mind_map_title} #{mind_map_id}/
+    │       └── 文件.pdf          ← 预留，storage_key 已能构造，但无 API 可用（见 §四）
+    ├── 素材板/
+    │   └── 文件.pdf              ← 预留，纯 key 分支，无数据库模型支撑
+    ├── .chat_staging/
+    │   └── {attach_id}.ext       ← 聊天暂存附件，7 天 TTL（见 §六）
+    ├── .voice/
+    │   └── {attach_id}.ext       ← 语音条暂存，7 天 TTL（独立子目录，见 §六）
+    ├── .thumbs/
+    │   └── {file_id}_{size}.webp ← 缩略图磁盘缓存
     └── trash/
         └── {file_id}/
-            └── 原文件名.ext   ← 软删除时移入，30 天后自动永久删除
+            └── 原文件名.ext       ← 软删除时移入，30 天后自动永久删除
 ```
+
+`{user_id}` 现在是 UUID（`uuid7`）字符串，不是自增整数。
 
 **用户隔离：** 回收站路径包含 `{user_id}/`，不同用户的回收站完全隔离。`/uploads/` 目录不对外静态暴露，所有访问必须经后端鉴权接口（`/files/{id}/download` 等）。
 
@@ -44,136 +75,97 @@ uploads/
 
 **项目目录带 `#{id}` 的原因：** 项目改名时目录同步重命名，`#{id}` 不变，未来桌面客户端可通过 ID 定位关联，不依赖名称匹配。
 
----
+**storage_key 构造函数：** `_build_key()`（`backend/app/api/v1/files.py`）和 Agent 工具侧的 `_resolve_key()`（`backend/agent/tools/files.py`）各自实现了一遍同样的路径拼接规则，两处需保持一致。
 
-## 三、数据库表
+### 2.2 数据库表
 
-### 3.1 `files` 表
+#### 2.2.1 `files` 表（SQLAlchemy 模型，`backend/app/models/__init__.py`）
 
-```sql
-CREATE TABLE files (
-    id           SERIAL PRIMARY KEY,
-    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    display_name VARCHAR(300) NOT NULL,
-    ext          VARCHAR(20)  NOT NULL,
-    project_id   INTEGER REFERENCES projects(id) ON DELETE SET NULL,
-    folder_id    INTEGER REFERENCES folders(id) ON DELETE SET NULL,
-    stage_name   VARCHAR(100) NOT NULL DEFAULT '',  -- 标签字段，非导航层级
-    storage_key  VARCHAR(500) NOT NULL,
-    size         VARCHAR(50)  NOT NULL DEFAULT '',
-    size_bytes   BIGINT       NOT NULL DEFAULT 0,
-    mime_type    VARCHAR(200),
-    deleted_at   TIMESTAMP NULL,                    -- 软删除时间戳
-    created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMP NOT NULL DEFAULT NOW()
-);
-```
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | Integer PK 自增 | |
+| user_id | Uuid FK → users.id, CASCADE | |
+| display_name | String(300) | |
+| ext | String(20) | |
+| space | String(20)，默认 `personal` | `project` \| `mind` \| `asset` \| `personal` |
+| project_id | FK → projects.id, SET NULL | NULL = 个人文件 |
+| folder_id | FK → folders.id, SET NULL | NULL = 当前空间根目录 |
+| stage_name | String(100)，默认空 | 标签字段，非导航层级 |
+| mind_map_id | FK → mind_maps.id, SET NULL | 预留 |
+| storage_key | String(500) | 相对于 `UPLOAD_DIR` 的路径，OSS 迁移时直接用作 object key |
+| size | String(50) | 人类可读格式，如 `2.3 MB` |
+| size_bytes | BigInteger，默认 0 | |
+| mime_type | String(200)? | |
+| img_width / img_height | Integer? | 图片尺寸，上传时提取 |
+| created_at / updated_at | DateTime | |
+| deleted_at | DateTime?，索引 | 非 NULL 表示已移入回收站 |
 
-| 字段 | 说明 |
-|------|------|
-| `project_id` | NULL = 个人文件；有值 = 项目文件 |
-| `folder_id` | NULL = 当前空间根目录；有值 = 所在用户文件夹 |
-| `stage_name` | 文件标签，不作为导航层级，可选填 |
-| `storage_key` | 相对于 `UPLOAD_DIR` 的路径，OSS 迁移时直接用作 object key |
-| `deleted_at` | 非 NULL 表示已移入回收站 |
+#### 2.2.2 `folders` 表
 
-### 3.2 `folders` 表
+`id`（自增 PK）、`user_id`（FK CASCADE）、`project_id`（FK → projects.id，CASCADE，NULL=个人文件夹）、`parent_id`（FK → folders.id，CASCADE，自引用，NULL=根目录，支持无限嵌套）、`name`（String(200)）、`created_at`。删除文件夹时级联删除所有子文件夹，文件的 `folder_id` SET NULL。
 
-```sql
-CREATE TABLE folders (
-    id         SERIAL PRIMARY KEY,
-    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = 个人文件夹
-    parent_id  INTEGER REFERENCES folders(id) ON DELETE CASCADE,   -- NULL = 根目录，自引用支持无限嵌套
-    name       VARCHAR(300) NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-```
-
-- `project_id = NULL`：个人文件夹
-- `parent_id = NULL`：该空间根目录下的文件夹
-- 删除文件夹时级联删除所有子文件夹，文件的 `folder_id` SET NULL
-
-### 3.3 自动迁移
+#### 2.2.3 自动迁移
 
 `session.py` 的 `create_all_tables()` 执行后自动跑 `_MIGRATIONS` 列表里的 `ALTER TABLE`，新增 nullable 列时加到此列表即可，无需手动执行 SQL。
 
-```python
-_MIGRATIONS = [
-    "ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL",
-    # 新增列在此追加
-]
-```
+### 2.3 API 接口
 
----
-
-## 四、API 接口
-
-### 4.1 Files
+#### 2.3.1 Files（`backend/app/api/v1/files.py`，约 1100 行，目前最大的路由文件）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/files` | 列出文件（支持过滤） |
 | `GET` | `/files/all` | 当前用户所有文件元数据（前端全量缓存用） |
-| `POST` | `/files` | 上传文件 |
+| `GET` | `/files/version` | 变更感知摘要 `count:max_updated:max_deleted` |
+| `GET` | `/files/storage` | 存储用量统计 |
+| `GET` | `/files/tree` | 文件树结构 |
+| `POST` | `/files` | 上传文件（服务器代理，本地后端走这条） |
+| `POST` | `/files/presign` | OSS 直传：计算 storage_key、查配额，返回预签名 URL（见 §七） |
+| `POST` | `/files/confirm` | OSS 直传完成后注册 DB 记录 |
 | `PATCH` | `/files/{id}` | 重命名 / 移动文件 |
+| `PUT` | `/files/{id}/content` | 直接编辑保存文本内容 |
 | `DELETE` | `/files/{id}` | 软删除（移入回收站） |
 | `POST` | `/files/batch-delete` | 批量软删除 |
+| `POST` | `/files/batch-download` | 批量打包下载 |
 | `POST` | `/files/{id}/copy` | 复制文件到指定目录 |
 | `GET` | `/files/{id}/download` | 下载（Bearer token 鉴权） |
 | `GET` | `/files/{id}/preview-pdf` | Office → PDF 转换预览（LibreOffice headless） |
-| `GET` | `/files/{id}/stream` | 视频流 URL |
-| `GET` | `/files/{id}/thumb` | 图片缩略图（`?size=tiny` 20×20 JPEG，`?size=card` 192×192 JPEG，`?size=full` 原图；后端磁盘缓存，Authorization Bearer 鉴权） |
+| `GET` | `/files/{id}/stream-url` / `/files/{id}/stream` | 视频流地址 / 流式播放 |
+| `GET` | `/files/{id}/thumb` | 图片缩略图（`?size=tiny\|card\|full`），见 §九 |
 
-**`GET /files` Query 参数：**
+**`GET /files` Query 参数：** `project_id`（省略则返回个人文件）、`folder_id`（省略则返回根目录文件）、`include_deleted`（回收站模式）。
 
-| 参数 | 说明 |
-|------|------|
-| `project_id` | 过滤指定项目（省略则返回个人文件） |
-| `folder_id` | 过滤指定文件夹（省略则返回根目录文件） |
-| `include_deleted` | 回收站模式 |
-
-### 4.2 Folders
+#### 2.3.2 Folders
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/folders` | 列出文件夹 |
-| `GET` | `/folders/all` | 当前用户所有文件夹（前端全量缓存用） |
+| `GET` | `/folders` / `/folders/all` | 列出（后者全量，前端缓存用） |
 | `POST` | `/folders` | 新建文件夹 |
 | `PATCH` | `/folders/{id}` | 重命名 |
+| `PATCH` | `/folders/{id}/parent` | 移动（含循环引用检查） |
 | `DELETE` | `/folders/{id}` | 删除（级联删除子文件夹，文件 SET NULL） |
 | `GET` | `/folders/{id}/download-zip` | 打包下载文件夹 |
 
-**`GET /folders` Query 参数：**
-
-| 参数 | 说明 |
-|------|------|
-| `project_id` | 省略 = 个人文件夹；有值 = 项目文件夹 |
-| `parent_id` | 省略 = 只返回根目录文件夹（`parent_id IS NULL`） |
-
-### 4.3 Trash
+#### 2.3.3 Trash
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/trash` | 列出回收站文件 |
-| `POST` | `/trash/{id}/restore` | 恢复单个文件 |
-| `POST` | `/trash/batch-restore` | 批量恢复 |
+| `POST` | `/trash/{id}/restore` / `/trash/batch-restore` | 恢复单个 / 批量 |
 | `DELETE` | `/trash/{id}` | 永久删除单个文件 |
-| `DELETE` | `/trash/empty` | 清空回收站 |
+| `DELETE` | `/trash/empty`（内部为 `/trash`，方法 DELETE） | 清空回收站 |
 
-后端 lifespan 启动定时清理任务，每小时检查一次，自动永久删除 `deleted_at` 超过 30 天的文件。
+后端 lifespan 启动定时清理任务（`_auto_cleanup_loop`，`app/main.py`），每小时检查一次，自动永久删除 `deleted_at` 超过 30 天的文件。
 
----
+### 2.4 存储后端抽象层
 
-## 五、存储后端抽象层
-
-### 5.1 设计目标
+#### 2.4.1 设计目标
 
 - 开发期用本地磁盘，上线后切换 OSS，**只改配置，不改业务代码**
 - Admin 面板实时切换，无需重启服务
 - `storage_key` 对两种后端完全一致，DB 不变
 
-### 5.2 接口定义
+#### 2.4.2 接口定义（`backend/app/services/storage/__init__.py`）
 
 ```python
 class StorageBackend(ABC):
@@ -183,19 +175,21 @@ class StorageBackend(ABC):
     async def rename_file(self, old_key: str, new_key: str) -> None: ...
     async def rename_dir(self, old_prefix: str, new_prefix: str) -> None: ...
     def public_url(self, key: str) -> str: ...
-    def fetch_url(self, key: str) -> str | None: ...     # 第三方可直接 HTTP 抓取的临时 URL（QQ 富媒体用），本地存储返回 None
-    async def exists(self, key: str) -> bool: ...         # 物理对象是否存在（对账用）
-    async def list_keys(self) -> list[str]: ...           # 枚举所有对象 key（对账用；Local 走 rglob，OSS 走 ObjectIterator）
+    async def exists(self, key: str) -> bool: ...          # 物理对象是否存在（对账用）
+    async def list_keys(self) -> list[str]: ...             # 枚举所有对象 key（对账用；Local 走 rglob，OSS 走 ObjectIterator）
+    async def delete_prefix(self, prefix: str) -> int: ...  # 删除前缀下所有对象（账户注销清数据用），空/根前缀直接抛 ValueError 防误清全库
 ```
 
-`OSSStorageBackend` 额外提供（本地后端无此方法，presign 端点在返回 `mode:proxy` 前不调用）：
+`fetch_url(key) -> str | None` **不是抽象方法**，基类给了默认实现直接返回 `None`；只有 `OSSStorageBackend` 覆写它，返回**外部第三方可直接 HTTP 抓取**的临时签名 URL（1 小时有效，QQ 富媒体 url 模式用）。本地存储没有公网地址，调用方拿到 `None` 后应退回 base64 上传。
+
+`OSSStorageBackend` 额外提供（**不在 ABC 接口里，仅 OSS 后端有**）：
 
 ```python
 def presign_put(self, key: str, mime_type: str | None = None, expires: int = 600) -> str:
     """返回有效期 expires 秒的 presigned PUT URL，供浏览器绕过服务器直传 OSS。"""
 ```
 
-### 5.3 工厂函数
+#### 2.4.3 工厂函数
 
 ```python
 def get_storage() -> StorageBackend:
@@ -206,32 +200,34 @@ def get_storage() -> StorageBackend:
     return LocalStorageBackend(Path(cfg.storage.local_path))
 ```
 
-### 5.4 OSS 切换与迁移注意
+#### 2.4.4 OSS 切换与迁移注意
 
 **配置项**（Admin → 存储，落到 `settings.storage`）：`backend`（`local` | `oss`）、`oss_access_key_id` / `oss_access_key_secret` / `oss_bucket` / `oss_endpoint` / `oss_prefix`。OSS 凭据即使 `backend=local` 也会保存在 settings 里，方便切换前先验证。
 
 **切换即时生效**：`get_storage()` 每次请求重读 settings，把 `backend` 改成 `oss` 后**下一请求**就走 OSS，无需重启。
 
-**⚠️ 现有本地文件不自动迁移**：`files.storage_key` 是相对路径（如 `{uid}/项目文件/…/x.png`），本地与 OSS **共用同一套 key**。切到 OSS 后，老文件的 key 在 OSS 上并不存在 → 读取/缩略图会 404（`get_thumb` 等已改为缺文件返回 404、不再 500）。**平滑切换需先把 `uploads/` 全量同步到 OSS 同名 key**（`StorageBackend.list_keys()` 可枚举：Local 走 `rglob`、OSS 走 `ObjectIterator`，对账工具即基于此）。
+**现有本地文件不自动迁移**：`files.storage_key` 是相对路径（如 `{uid}/项目文件/…/x.png`），本地与 OSS **共用同一套 key**。切到 OSS 后，老文件的 key 在 OSS 上并不存在 → 读取/缩略图会 404（`get_thumb` 等已改为缺文件返回 404、不再 500）。**平滑切换需先把 `uploads/` 全量同步到 OSS 同名 key**（`StorageBackend.list_keys()` 可枚举：Local 走 `rglob`、OSS 走 `ObjectIterator`，对账工具即基于此）。
 
 **Endpoint 协议**：`oss_endpoint` 不带协议时 oss2 默认 `http://`，签名 URL（`fetch_url`，QQ 抓媒体用）也是 http。需要 https 就把 endpoint 配成 `https://oss-cn-…aliyuncs.com`。
 
 **冒烟验证**：可直接实例化 `OSSStorageBackend(get_settings().storage)` 跑 `put → exists → get → fetch_url → rename_file → delete` 往返（用 `.smoketest/` 前缀的临时 key，跑完清理），确认凭据/连通正常，不必先切活跃 backend。
 
----
+### 2.5 项目重命名联动
 
-## 六、项目重命名联动
+`PATCH /projects/{id}` 修改 `name` 时（逻辑内联在 `update_project` 里，`backend/app/api/v1/projects.py`，并非单独函数）：
 
-`PATCH /projects/{id}` 修改 `name` 时：
+1. 用 `_proj_date(p)` 取 `(year, month)`（优先 `start_date`，否则 `created_at`），构造旧目录前缀 `{uid}/项目文件/{year}/{month}/{旧名} #{id}/`
+2. `get_storage().rename_dir(old_prefix, new_prefix)` 重命名磁盘/OSS 目录
+3. 批量替换该项目下所有 `files.storage_key` 前缀
+4. 更新 `projects.name`，`version` 字段 +1（乐观锁）
 
-1. 读出旧项目名，构造旧目录前缀 `{uid}/项目文件/{year}/{month}/{旧名} #{id}/`
-2. `get_storage().rename_dir(old_prefix, new_prefix)` 重命名磁盘目录
-3. 批量替换 `files.storage_key` 前缀
-4. 更新 `projects.name`
+### 2.6 项目删除时的文件处理（与早期设计不同，已重写）
 
----
+**当前行为**：删除项目（`DELETE /projects/{id}`，或 Agent 的 `delete_project` 工具）时，项目下的文件**软删除进回收站**（`deleted_at` 置为当前时间），文件夹通过 `folders.project_id` 的 `ON DELETE CASCADE` 随项目一起硬删除。物理文件和 `storage_key` 不动，走的是与单文件删除完全一致的回收站语义——30 天后由定时任务永久清理。前端在项目下有文件/文件夹时会先弹确认，之后直接执行这套级联删除。
 
-## 七、同名文件冲突处理
+> 早期方案是删项目前把文件"rehome"成个人文件（`space` 改 `personal`，`project_id`/`folder_id` 清空），用来防止 `project_id` 被 `SET NULL` 后変成"孤儿文件"却混进个人空间视图。这套函数（曾用名 `rehome_project_files_to_personal`）**在当前代码里已不存在**——现在的解法是直接软删而不是脱钩重挂，从源头避免了孤儿文件问题。如果你在别处（旧文档、旧 commit message）看到这个函数名，按当前代码为准。
+
+### 2.7 同名文件冲突处理
 
 同一目录下已存在同名文件时，追加 `(n)`：
 
@@ -241,28 +237,26 @@ def get_storage() -> StorageBackend:
 
 `display_name` 字段同步更新。
 
----
+### 2.8 前端文件缓存策略
 
-## 八、前端文件缓存策略 ✅
-
-### 8.1 目标
+#### 2.8.1 目标
 
 消除文件库导航时的"白屏/加载"感，使文件夹切换、返回上级的体验接近本地应用。
 
-### 8.2 方案：全量元数据缓存 + 乐观更新
+#### 2.8.2 方案：全量元数据缓存 + 乐观更新
 
 进入文件库时一次性拉取当前用户所有文件和文件夹的**元数据**（不含文件内容/Blob），构建内存索引，所有导航为纯内存查找，写操作先更新本地缓存再后台同步服务端。
 
 **数据量评估：** 单条文件元数据约 300–600 字节，10,000 个文件约 5 MB，对浏览器无压力。
 
-### 8.3 后端接口
+#### 2.8.3 后端接口
 
 ```
 GET /files/all    → 当前用户所有未删除文件元数据（FileResponse[]）
 GET /folders/all  → 当前用户所有文件夹（FolderResponse[]）
 ```
 
-### 8.4 前端内存索引（`src/stores/filesCache.js`）
+#### 2.8.4 前端内存索引（`src/stores/filesCache.js`）
 
 Computed Map 双索引，O(1) 查找：
 
@@ -273,7 +267,7 @@ const _fileIdx = computed(() => { ... })
 const _folderIdx = computed(() => { ... })
 ```
 
-### 8.5 乐观更新 + 服务端验证
+#### 2.8.5 乐观更新 + 服务端验证
 
 | 操作 | 本地先做 | 失败时 |
 |------|---------|--------|
@@ -283,14 +277,14 @@ const _folderIdx = computed(() => { ... })
 | 新建文件夹 | 插入临时负数 ID 条目 | 移除临时条目 + 报错 |
 | 剪切粘贴 | 更新 folderId/projectId | 还原 + 报错 |
 
-### 8.6 缓存失效策略
+#### 2.8.6 缓存失效策略
 
 - **主动失效**：写操作后局部更新索引（addFile/removeFile/updateFile 等乐观更新接口）
 - **版本校验**：Tab 切回（`visibilitychange` 事件）时调 `GET /files/version`，返回 `count:max_updated:max_deleted` 摘要；与上次版本不一致则静默重拉全量数据
 - **本地文件删除检测**：`GET /files/all` 在 LocalStorageBackend 下扫描每个文件实体是否存在；不存在的直接硬删数据库记录（不进回收站），确保 UI 与文件系统一致
 - 多标签/多设备场景由版本校验覆盖，无需 WebSocket
 
-### 8.7 加载体验优化
+#### 2.8.7 加载体验优化
 
 - **内容过渡动画**：导航切换时 `content-fade` 淡出（40ms）+ 淡入（120ms），`mode="out-in"` 避免双层叠放
 - **热缓存同步初始化**：`onMounted` 检测 `cacheStore.loaded && projectStore.projects.length > 0` 时同步调 `restoreNav() + loadContents()`，跳过 `await`，SPA 内导航回文件库无空帧闪烁
@@ -298,22 +292,22 @@ const _folderIdx = computed(() => { ... })
 - **项目编辑卡文件预填**：打开项目时先从 `filesCacheStore` 同步填充文件/文件夹列表，API 刷新后覆盖，消除等待期间文件区域为空的问题
 - 回收站仍走异步请求（需要 `deleted_at` 字段，不在主缓存中）
 
----
+### 2.9 图片缩略图
 
-## 九、图片缩略图
-
-### 9.1 接口
+#### 2.9.1 接口
 
 ```
 GET /files/{id}/thumb?size=full|tiny|card
 Authorization: Bearer <user_token>
 ```
 
-| size | 说明 |
-|------|------|
-| `full`（默认）| 返回原始图片文件 |
-| `tiny` | 20×20px JPEG（约 1 KB），用于 blur-up 模糊占位 |
-| `card` | 192×192px JPEG（约 10–40 KB），网格卡片显示用 |
+| size | 分辨率 | 格式 | 质量 | 用途 |
+|------|--------|------|------|------|
+| `tiny` | 20px | WebP | q75 | blur-up 模糊占位 |
+| `card` | 192px | WebP | q82 | 网格卡片显示 |
+| `full`（默认） | 原图 | 原格式 | — | 全尺寸预览 |
+
+具体尺寸/质量定义在 `_THUMB_SIZE_MAP = {"tiny": (20, 75), "card": (192, 82)}`（`backend/app/api/v1/files.py`）。**当前格式是 WebP，不是 JPEG**——JPEG（quality=80）只在 WebP 编码失败时作为降级兜底（`_generate_thumb_jpeg_fallback`），正常路径不会走到。
 
 - 鉴权：`Authorization: Bearer` 请求头（URL 不含 token，HTTP 缓存 key 稳定）
 - 响应头：`Cache-Control: private, max-age=86400`（浏览器缓存 24 小时）
@@ -321,9 +315,9 @@ Authorization: Bearer <user_token>
 
 支持格式：JPEG / PNG / GIF / WEBP / AVIF / BMP / HEIC / HEIF / SVG。
 
-### 9.2 后端磁盘缓存
+#### 2.9.2 后端磁盘缓存
 
-生成的缩略图持久化到 `uploads/.thumbs/{fid}_{size}.jpg`。请求到来时优先命中缓存，跳过 Pillow，响应时间从数百毫秒降至毫秒级。
+生成的缩略图持久化到 `uploads/.thumbs/{fid}_{size}.webp`（旧版遗留的 `.jpg` 缓存文件在 lifespan 启动时会被清理）。请求到来时优先命中缓存，跳过 Pillow，响应时间从数百毫秒降至毫秒级。
 
 **生成策略：**
 
@@ -334,7 +328,7 @@ Authorization: Bearer <user_token>
 
 **磁盘占用估算：** 单张图片缓存约 10–50 KB（tiny ~1 KB + card ~10–40 KB），1000 张图片约 10–50 MB。
 
-### 9.3 Blur-up 渐进式加载
+#### 2.9.3 Blur-up 渐进式加载
 
 前端卡片双层叠放：
 
@@ -343,15 +337,15 @@ Authorization: Bearer <user_token>
 
 **跨页导航不重播动画：** `thumbLoadedIds`（模块级 `reactive(new Set())`，`useThumbCache.js`）记录 card 尺寸已加载的文件 id，SPA 内跨页导航回文件库/总览/项目卡时 `fc-loaded` 类直接存在，无淡入动画。
 
-### 9.4 IntersectionObserver 懒加载
+#### 2.9.4 IntersectionObserver 懒加载
 
 `vLazySrc` 本地指令（`Files/index.vue`）：只有当卡片进入视口 250px 范围内才设置 `img.src`，避免进入大文件夹时同时发出数十个请求打满浏览器连接池（HTTP/1.1 每域名 6 个）。
 
-### 9.5 缩略图加载并发限流
+#### 2.9.5 缩略图加载并发限流
 
-懒加载只控制「进视口才请求」，但一屏内仍可能同时进入几十张卡片。`useThumbCache.js` 的 `getThumb`/`getThumbUrl` 经 `@/utils/concurrency` 的 `pLimit(THUMB_CONCURRENCY=6)` 限流——与批量上传共用同一限流器实现，把同时在途的 `/thumb` 请求压在 6 个内，尾部不再超时。详见 `performance.md` 十三节。
+懒加载只控制「进视口才请求」，但一屏内仍可能同时进入几十张卡片。`useThumbCache.js` 的 `getThumb`/`getThumbUrl` 经 `@/utils/concurrency` 的 `pLimit(THUMB_CONCURRENCY=6)` 限流——与批量上传共用同一限流器实现，把同时在途的 `/thumb` 请求压在 6 个内，尾部不再超时。详见 [`../ops/performance.md`](../ops/performance.md) 十三节。
 
-### 9.6 缓存层汇总
+#### 2.9.6 缓存层汇总
 
 | 位置 | 持久范围 | 说明 |
 |------|---------|------|
@@ -361,13 +355,11 @@ Authorization: Bearer <user_token>
 | `thumbLoadedIds`（`useThumbCache.js`） | SPA 生命周期 | 模块级 `reactive(new Set())`，记录 card 已加载 id，导航回来直接应用 `fc-loaded`，无重播淡入 |
 | `filesCache` sessionStorage | 页面会话 | 文件列表持久化到 `sessionStorage`，刷新页面后总览文件卡第一帧即可渲染 |
 
----
-
-## 十、存储↔DB 对账与修复（Admin · 数据库）
+### 2.10 存储↔DB 对账与修复（Admin · 数据库）
 
 **以物理存储为准**核对 DB 记录与磁盘/OSS 对象，修复两者不一致。起因：DB 在两台服务器间迁移、两边 `uploads/` 都有文件，配置一改两边数据就串了。
 
-### 10.1 两类不一致
+#### 2.10.1 两类不一致
 
 | 类型 | 定义 | 修复 |
 |------|------|------|
@@ -376,36 +368,30 @@ Authorization: Bearer <user_token>
 
 内部 key 不计入孤儿：`.agent/`、`.chat_staging`、`.thumbs/`、`_thumb`、`.thumbcache`、`avatars/`（`_is_internal_key`，`backend/app/api/v1/config.py`）。
 
-### 10.2 接口
+**待核实/已知潜在缺口**：语音暂存用的 `.voice/` 子目录**不在**这份内部 key 白名单里（当前列表只覆盖 `.chat_staging`）。理论上语音条暂存文件如果凑巧被对账工具扫到，可能被误判为"孤儿"。是否已有其他机制规避（比如语音条留存周期短、TTL 内不会被扫到等）待核实，未来加固建议把 `.voice/` 一并加进 `_is_internal_key`。
+
+#### 2.10.2 接口
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/admin/config/reconcile-storage` | **只读**对账，返回 `db_file_rows / storage_objects / matched / ghost_count / orphan_count` + 幽灵/孤儿明细 |
+| `GET` | `/admin/config/reconcile-storage` | **只读**对账，返回 `db_file_rows / storage_objects / matched / ghost_count / orphan_count` + 幽灵/孤儿明细（各截断 300 条，`truncated` 标记） |
 | `POST` | `/admin/config/reconcile-storage/repair` | **写**修复，body `{action: "delete"\|"import", keys: [...]}`，返回 `{action, done, failed, done_keys}`（逐 key try/except，单条失败不中断） |
 
 - **`import` 反推规则**：从 `storage_key` 拆 `{uid}/空间/...` → 校验 user 存在 → `项目文件` 段按 `#{id}` 取 `project_id`、`个人文件` 段按文件夹名匹配 `folder_id` → 回填 `File` 行（`size_bytes` 取实际字节、`mime_type` 用 `mimetypes` 猜）
-- 依赖存储后端的 `list_keys()`（枚举）与 `exists()`（核对），见 §5.2
+- 依赖存储后端的 `list_keys()`（枚举）与 `exists()`（核对），见 §2.4.2
 - Admin → 系统配置 → 数据库 有「存储对账」按钮：出报告 + 每条孤儿「导入/删除」+ 批量
 
----
+### 2.11 禁止使用的字符
 
-## 十一、项目删除与孤儿文件防护
+项目名、文件夹名、文件名均不允许：`\ / : * ? " < > |`
 
-`File.project_id` 外键是 `ON DELETE SET NULL`：直接删项目会把文件 `project_id` 抹成 `NULL`、但 `space` 仍是 `'project'`，成为「孤儿文件」。前端 `filesCache` 按「`projectId` 为空即归个人」分组，会把这些孤儿**漏进个人空间视图**（曾导致已删项目的文件出现在用户个人文件里）。
+### 2.12 OSS 预签名直传
 
-**防护**：删项目前先调 `rehome_project_files_to_personal(db, user_id, pid)`（`backend/app/api/v1/projects.py`）——把项目下文件 `space='personal'`、`project_id/folder_id/stage_name` 一并置空，干净归个人。`storage_key` 不动（物理文件仍在、仍可访问，路径里的旧项目名残留无害）。HTTP `DELETE /projects/{id}` 与 Agent `delete_project` 工具两条路都先 rehome 再删。
-
-> 历史遗留的孤儿可用 §十 的对账工具 `import` 重建记录、或 `delete` 清理。
-
----
-
-## 十三、OSS 预签名直传
-
-### 13.1 设计背景
+#### 2.12.1 设计背景
 
 普通上传路径：浏览器 → FastAPI → OSS（文件经过服务器两次），消耗服务器带宽。OSS 直传路径：浏览器先向服务器要一个预签名 URL，然后直接 PUT 到 OSS 边缘节点，服务器只参与签发 URL 和注册 DB 记录，带宽消耗降为零。
 
-### 13.2 适配逻辑
+#### 2.12.2 适配逻辑
 
 | 后端 | 上传路径 | 触发条件 |
 |------|---------|---------|
@@ -414,7 +400,7 @@ Authorization: Bearer <user_token>
 
 Admin 切换后端后，下一次上传立即走对应路径，无需重启、无需前端改动。
 
-### 13.3 新增端点
+#### 2.12.3 新增端点
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -451,13 +437,13 @@ Admin 切换后端后，下一次上传立即走对应路径，无需重启、�
 }
 ```
 
-### 13.4 安全校验
+#### 2.12.4 安全校验
 
-- `storage_key` 必须以当前登录用户的 UUID 开头，否则 403（防跨用户伪造）
+- `storage_key` 必须以当前登录用户的 ID 开头，否则 403（防跨用户伪造）
 - OSS 对象必须实际存在（`storage.exists(key)`），否则 400（防 confirm 注入不存在的文件记录）
 - 配额检查在 `/presign` 阶段完成，超出配额直接 400，不签发 URL
 
-### 13.5 前端实现
+#### 2.12.5 前端实现
 
 `frontend/src/services/api.js`：
 - `filesApi.presign(data)` — 调 `POST /files/presign`
@@ -466,6 +452,32 @@ Admin 切换后端后，下一次上传立即走对应路径，无需重启、�
 
 `UploadModal.vue` 上传循环：先调 `/presign` 查后端类型，`mode === 'oss'` 走直传（进度 0→95%）+ confirm（95%→100%），否则走原有代理上传。
 
-## 十二、禁止使用的字符
+### 2.13 聊天附件暂存（`backend/app/core/chat_attach.py`）
 
-项目名、文件夹名、文件名均不允许：`\ / : * ? " < > |`
+#### 2.13.1 定位
+
+用户在对话里发给咕咕的文件**先暂存，不进文件库**。咕咕能"看"（文本类读内容注入上下文；图片走 vision 模型），能"存"（用户明确要求时，`save_uploaded_file` 工具把暂存字节**复制**成正式文件库记录——是新建一条 File 记录 + 新的 storage 对象，不是把暂存文件原地转正/改名移动）。
+
+#### 2.13.2 存储与元数据
+
+- 字节走 `StorageBackend`，key 格式固定为 `{user_id}/{subdir}/{attach_id}.{ext}`，扁平结构不再分层。
+  - 普通附件：`subdir=".chat_staging"`，TTL 7 天
+  - 语音条：`subdir=".voice"`（独立子目录，非 `.chat_staging`），TTL 同为 7 天（`TTL_VOICE` 常量名不同但取值相同）
+- 元数据走 Redis，key 为 `chatfile:{user_id}:{attach_id}`，随字节写入同时 `SET ... EX <ttl>`，过期自动失效（字节和元数据各自独立过期，无强一致保证）。
+- `stage()` / `stage_sync()`（供 IM 网关同步上下文调用）两套实现并存；语音条对应 `stage_voice()` / `stage_voice_sync()`。
+
+#### 2.13.3 附件类型与"能力门控"
+
+按扩展名分类（`_kind()`）：`image` / `audio` / `video` / `text`（含 PDF/Office，走 `doctext` 提取）/ `binary`。是否能真正"喂给模型看/听"取决于当前激活模型的能力：
+
+- **看图**：`ai.vision=True` 时才把图片编码成 vision 内容块；未开启则退化为"当普通文件"处理，不跟用户说"看不了图"（体验考虑）。
+- **听音视频**：仅 mimo 系模型 + OpenAI 兼容格式路径支持原生 `input_audio`/`video_url` 扩展块；否则退回"配置了独立语音识别模型就转写，没配就说明局限"。
+- 图片过大/尺寸过大时自动降采样重编码（`_fit_image_for_vision`，长边压到 2048px，体积压到约 4.5MB 内），不再直接因超限丢弃。
+
+#### 2.13.4 附件 ID 容错解析（`resolve_attach`）
+
+LLM 经常把 16 位 hex 的 `attach_id` 抄错/截断，`resolve_attach` 按"精确命中 → 前缀/子串唯一命中 → 无歧义时退到最近上传的一个"逐级容错。会先按当前 IM 渠道（`imctx`，qq/feishu/wechat/web）收窄候选，避免跨渠道甚至跨对话的旧附件被误当成这次要存的文件；候选类型不一致（比如同时有图片和语音）时不再瞎猜最新的，而是把候选列表返回给调用方，要求模型明确指定——这是踩过真实事故坑后加的（连发图片后跟一句语音，防抖拆轮导致图片 ID 没跟上，误把语音存成了图片）。
+
+---
+
+*待核实：`.voice/` 未计入 `_is_internal_key` 白名单是否会导致对账工具误报孤儿，需要实测或补充豁免规则确认。*

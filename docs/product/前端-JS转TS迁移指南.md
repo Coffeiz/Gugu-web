@@ -1,29 +1,48 @@
 # 前端 JS → TS 迁移指南 + Roadmap
 
 > 适用范围：`frontend/`（Vue 3 + Vite）。后端是 Python/FastAPI，与本文无关。
-> 状态：工具链已就绪（2026-06-30），处于**增量迁移**阶段。
+> 状态：工具链已就绪（2026-06-30），处于**增量迁移**阶段，逻辑层已全部迁完，组件层进行中。
+> 本文档核实更新：2026-07-02
 
 ---
 
-## 1. 为什么做 / 可行性
+## 易读概述
+
+**这篇文档讲的是：前端代码正在从 JavaScript 换成 TypeScript，换到哪一步了、以后新代码怎么写。**
+
+简单说，TypeScript 是给 JavaScript 加了"类型标注"的升级版——写代码时编辑器能提前告诉你"这里传错类型了""这个字段不存在"，减少上线后才发现的低级 bug，重构时也更有信心。咕咕前端从 2026-06-30 开始渐进式地把 `.js` 文件和 Vue 组件迁移到 TS，不是一次性推倒重写，而是"改到哪个文件就顺手把哪个文件转掉"，避免大改动和别人的并发提交打架。
+
+**目前进度（本次核实，2026-07-02）**：
+- 所有"逻辑类"代码（api 请求封装、状态管理 store、composable、工具函数、路由、入口文件）**已经 100% 是 TS**，`frontend/src/` 目录下已经找不到一个 `.js` 文件了。
+- Vue 组件（`.vue` 文件）还在推进：全项目 67 个 `.vue` 文件里，14 个已经加上 `lang="ts"`（约 21%），其余大部分是还没排上号的中小型组件，加上 5 个"巨型视图"（1000+ 行的大文件）是剩余工作量的大头。
+- 类型检查命令 `npm run typecheck` 目前是绿的（没有类型错误），说明这套渐进迁移的门禁是真实生效的，不是摆设。
+
+对不太懂代码的人来说，这件事的意义是：**不会影响你能看到的功能**，纯粹是让代码更不容易出低级错误、后续开发更快更稳。
+
+---
+
+## 专业细节
+
+### 1. 为什么做 / 可行性
 
 把前端从 JS 渐进迁到 TS，拿到类型安全、重构信心、更好的编辑器提示。
 
 可行性高——最硬的活儿已经不存在：
 
-| 指标 | 数据 | 含义 |
-|---|---|---|
-| `.vue` 文件 | 64 个（30.3k 行） | 中等规模 |
-| `.js` 文件 | 34 个（3.1k 行） | 逻辑/store/composable/util |
-| **`<script setup>`** | **62 / 64**，Options API **0 个** | ✅ 无范式重写，迁移≈「加 `lang="ts"` + 标注类型」 |
-| `defineProps` | 27 文件**全对象式**，数组式 0 | ✅ 易加类型 |
-| 第三方依赖类型 | 几乎全自带（pinia/axios/vue/marked/dayjs/chart.js/phosphor/arco/pdfjs…） | ✅ 仅 `qrcode` 可能需 `@types/qrcode` |
+| 指标 | 数据（原文档 06-30） | 数据（本次核实 07-02） | 含义 |
+|---|---|---|---|
+| `.vue` 文件 | 64 个（30.3k 行） | **67 个（约 31.1k 行）** | 中等规模，期间新增了几个组件 |
+| `.js` 文件（`frontend/src` 内） | 34 个 | **0 个** | ✅ 逻辑层已全部转完，见 §6 阶段 2 里程碑 |
+| `<script setup lang="ts">` 组件数 | 0 | **14 / 67**（约 21%） | 组件层迁移进行中 |
+| Options API | 0 个 | 0 个 | ✅ 无范式重写，迁移≈「加 `lang="ts"` + 标注类型」 |
+| `defineProps` | 27 文件全对象式，数组式 0 | 与原文档一致 | ✅ 易加类型 |
+| 第三方依赖类型 | 几乎全自带 | 同左，`@types/qrcode` 已装 | ✅ |
 
-**结论：低难度、低风险、可增量、永不阻塞功能。** 主要成本在「建领域类型」+「啃 5 个巨型文件」（见 §6）。
+**结论：低难度、低风险、可增量、永不阻塞功能。** 主要成本在"建领域类型"+"啃 5 个巨型文件"（见 §6）。
 
 ---
 
-## 2. 工具链现状（已搭好）
+### 2. 工具链现状（已搭好）
 
 | 文件 | 作用 |
 |---|---|
@@ -40,11 +59,11 @@ cd frontend
 npm run typecheck      # vue-tsc --noEmit，绿 = 0 错
 ```
 
-当前基线：**绿（exit 0）**。已用「故意写错的 .ts」验证门禁确实会抓错（`TS2322`），不是摆设。
+**核实**：本次核实实测跑过一次 `npm run typecheck`，**绿（exit 0）**，门禁确实生效。已用「故意写错的 .ts」验证门禁确实会抓错（`TS2322`），不是摆设。
 
 ---
 
-## 3. 日常约定（强制）
+### 3. 日常约定（强制）
 
 > 长期偏好：**新代码一律 TS，不再新建 `.js`；改到的 JS 顺带转 TS。**
 
@@ -59,56 +78,57 @@ npm run typecheck      # vue-tsc --noEmit，绿 = 0 错
 
 ---
 
-## 4. 转换操作细则 / 注意事项
+### 4. 转换操作细则 / 注意事项
 
-### 4.1 `.vue` 转 lang=ts
+#### 4.1 `.vue` 转 lang=ts
 最省事：只改 `<script setup>` → `<script setup lang="ts">`。然后 vue-tsc 会**连模板一起**类型检查，按提示补：
 - `defineProps` → 用泛型式：`defineProps<{ id: number; title?: string }>()`（替代运行时对象式）
 - `defineEmits` → `defineEmits<{ (e: 'save', id: number): void }>()`
 - 模板 ref → `const el = ref<HTMLElement | null>(null)`；组件 ref → `ref<InstanceType<typeof Foo> | null>(null)`
 
-### 4.2 `.js` rename `.ts` 的坑
+#### 4.2 `.js` rename `.ts` 的坑
 - Vite 无后缀 import 两者都解析，**但别处用显式 `.js` 后缀** import 该文件会断。转前先 grep：
   ```bash
   grep -rn "from '.*<文件名>\.js'" frontend/src
   ```
-- `services/api.js` 是**类型咽喉**：把请求/响应泛型化后，类型顺着 api → store → 组件全链路自动流，优先转。
+- `services/api.ts`（原 `api.js`，已完成迁移）是**类型咽喉**：请求/响应泛型化后，类型顺着 api → store → 组件全链路自动流。
 
-### 4.3 自动导入
+#### 4.3 自动导入
 项目用 `unplugin-auto-import`，`ref`/`computed`/`watch`/`defineProps` 等**全局可用、可不显式 import**。`dts` 已开，vue-tsc 认得。但**新代码建议显式 import**（TS 下更清晰、利于 tree-shaking 判断）。
 
-### 4.4 SMB / devserver 注意
+#### 4.4 SMB / devserver 注意
 - 在 SMB 盘开发：git 必设 `core.fileMode false`（已设），否则满屏 filemode 假改动。
 - `npm install` 必须在 **devserver（Linux）** 跑，别在 Mac 上对 SMB 装 —— esbuild 等有平台二进制，会错乱。
 - 改 `tsconfig` / `vite.config` 后 vite 会自动重启；`auto-imports.d.ts` / `components.d.ts` 随之重建。
+- **核实补充**：工作流已从"SMB 编辑"改为**本地编辑 + Mutagen 双向同步**（本地用编辑器改、git 本地跑、typecheck/重启走 SSH），`._*` AppleDouble 坑随之消失，详见记忆 `gugu-mutagen-sync`。
 
 ---
 
-## 5. 类型怎么建（按收益排序）
+### 5. 类型怎么建（按收益排序）
 
 1. **领域实体类型（最高收益）**：后端是 Pydantic，**用 OpenAPI 一键生成**，顺带前后端对齐：
    ```bash
    cd frontend
    npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/types/api.ts
    ```
-   拿到 Project / Event / File / Stage / Todo / Message 等类型，替代手搓对象（`normalizeEvent` 之类）。
-2. **api 层**：`services/api.js` → `.ts`，请求/响应套上 §1 生成的类型。
-3. **stores（12 个）**：Pinia 原生 TS，setup store 类型很顺。
-4. **composables（11 个）**：通常干净好类型；`usePhysicsDrag` 这种重逻辑较费劲。
-5. **utils（5 个）**：纯函数，最易转，可当练手。
+   拿到 Project / Event / File / Stage / Todo / Message 等类型，替代手搓对象（`normalizeEvent` 之类）。**已完成**，见 §6 阶段 1。
+2. **api 层**：`services/api.ts`，请求/响应套上 §1 生成的类型。**已完成**。
+3. **stores（12 个）**：Pinia 原生 TS，setup store 类型很顺。**已完成**。
+4. **composables（11 个）**：通常干净好类型；`usePhysicsDrag` 这种重逻辑较费劲。**已完成**。
+5. **utils（5 个）**：纯函数，最易转，可当练手。**已完成**。
 
 ---
 
-## 6. Roadmap（分阶段）
+### 6. Roadmap（分阶段）
 
 > 原则：每阶段结束 `npm run typecheck` 必须绿；增量推进，不阻塞功能开发。
 
-### ✅ 阶段 0 · 工具链（已完成，2026-06-30）
+#### ✅ 阶段 0 · 工具链（已完成，2026-06-30）
 - [x] `tsconfig.json`（allowJs / checkJs:false / strict:false）
 - [x] `vue-tsc` + `typecheck` 脚本，基线绿 + 门禁验证
 - [x] AutoImport/Components dts、`vite-env.d.ts`、`.gitignore`
 
-### ✅ 阶段 1 · 类型地基（已完成，2026-06-30）
+#### ✅ 阶段 1 · 类型地基（已完成，2026-06-30）
 - [x] OpenAPI 生成 `src/types/api.ts`（7468 行；`npm run gen:types` 一键重生，需后端 dev 在 :8000）
 - [x] `services/api.js` → `api.ts`：`request`/`get`/`post`… 泛型化（默认 `any` 不阻塞存量）；projects/events/files/folders/clients/preferences 用 OpenAPI 类型标注返回值，其余留 `any` 待增量升级
 - [x] ~~补 `window.*` 自定义全局的 `global.d.ts`~~ —— **实测不需要**：109 处 `window.*` 全是标准属性读取，无自定义全局赋值
@@ -116,35 +136,38 @@ npm run typecheck      # vue-tsc --noEmit，绿 = 0 错
 
 > 备注：`src/types/api.ts` 是生成物但**入库**（这样 CI/`typecheck` 不依赖后端在跑）；改了后端模型后跑 `npm run gen:types` 重生并提交。
 
-### ✅ 阶段 2 · 低风险层（完成，2026-06-30）
+#### ✅ 阶段 2 · 低风险层（完成，2026-06-30）
 - [x] `utils/`（5）→ ts —— 纯 rename（commit `54ec693`）
 - [x] `stores/`（12）→ ts —— rename + 修真实类型错（admin 的 RequestInit、config 的 Record、projects 的 Date.getTime()、preferences 的 calendarDoneMode 暂 as any）（`98e0559`）
 - [x] `composables/`（11，含 `usePhysicsDrag`）→ ts —— 前 10 个纯 rename（`21c44fa`）；`usePhysicsDrag`（632 行）修 opts 接口 + DOM 泛型/cast（`6bef46c`）
 - [x] 零散入口/路由/service（main/admin/router/cache）→ ts —— 入口 HTML `<script src>` 同步改 + routes 标 `RouteRecordRaw[]`（`e42fa74`）
-- [~] 小型 `components/` → lang=ts —— 已转 8 个最简单叶子件（ContextMenu/NavItem/PdfViewer/BaseModal/MarkdownView/AdminSelect/SegBar/FileInfoPopup，`702a138`）；中型（200–650 行）待续
+- [x] 小型 `components/` → lang=ts —— 已转 8 个最简单叶子件（ContextMenu/NavItem/PdfViewer/BaseModal/MarkdownView/AdminSelect/SegBar/FileInfoPopup，`702a138`）
+- [x] **（本次核实更新）中型组件持续推进**：核实时点（2026-07-02）实际已 `lang="ts"` 的组件共 **14 个**，除阶段 2 提交的 8 个叶子件外，另有 `GlassBg.vue`（新组件，玻璃背景，直接以 TS 落地）、`views/Calendar/index.vue`（阶段 3 提前完成，见下）、`views/Admin/Agent/index.vue`、`views/Admin/Ops/index.vue`、`views/Admin/Analytics/index.vue`、`views/Admin/Analytics/Usage.vue`（均为新增/大改页面顺手转 TS）
 
-> **里程碑（2026-06-30）：`frontend/src/` 已无 `.js` 文件**——所有逻辑/store/composable/util/入口/路由全是 `.ts`。剩余非-TS 是「未加 `lang="ts"` 的 `.vue`」（中型组件 + 阶段 3 巨型视图）。
+> **里程碑（2026-06-30）：`frontend/src/` 已无 `.js` 文件**——所有逻辑/store/composable/util/入口/路由全是 `.ts`。剩余非-TS 是「未加 `lang="ts"` 的 `.vue`」（中型组件 + 阶段 3 巨型视图）。**本次核实（2026-07-02）复查仍成立**：`frontend/src` 下 grep 不到任何 `.js` 文件。
 
 > 工作流变更：已从「SMB 编辑」改为**本地编辑 + Mutagen 双向同步**（见 [[gugu-mutagen-sync]]）——本地用编辑器改、git 本地跑、typecheck/重启走 SSH。`._*` AppleDouble 坑随之消失。
 
-### 阶段 3 · 巨型视图（主要工作量，~3–5 天）
+#### 阶段 3 · 巨型视图（主要工作量，~3–5 天）
 > 这 5 个文件 ≈ 37% 代码、≈80% 的痛，**配合功能迭代逐个转**、别集中硬啃：
 - [ ] `views/Projects/components/ProjectModal.vue`（3017 行）
 - [ ] `views/Files/index.vue`（2760）
 - [x] `views/Calendar/index.vue`（2313，含拖拽/网格）—— 已迁移（2026-06-30，commit `8ad54ce`），typecheck 绿
-- [ ] `views/Admin/Agent/index.vue`（2294）
+- [ ] `views/Admin/Agent/index.vue`（2294）—— **核实：该文件已加 `lang="ts"`**，与本条待办状态不符，见下方说明
 - [ ] `components/common/GuguChat.vue`（2143，聊天流）
 
-### 阶段 4 · 收紧 + 守门（~1–2 天）
+> **核实发现**：`views/Admin/Agent/index.vue` 实测已是 `<script setup lang="ts">`，但 Roadmap 复选框仍显示未完成——原因是该文件规模已随功能迭代超出原「阶段 3」清单统计时的 2294 行基准，且转换是跟着功能改动顺手做的、未回填 Roadmap 勾选。这里保留待办原状供参考，但请注意**该项目实际已完成 TS 化**，剩余巨型视图待转的是 `ProjectModal.vue`、`Files/index.vue`、`GuguChat.vue` 三个。
+
+#### 阶段 4 · 收紧 + 守门（~1–2 天）
 - [ ] 全量绿后，`tsconfig` 渐进开严：`noImplicitAny` → `strict` 子项 → `strict:true`
 - [ ] CI / 部署流程加 `npm run typecheck` 门禁（红则挡）
-- [ ] 存量 `.js` 清零后，`tsconfig` 关 `allowJs`
+- [ ] 存量 `.js` 清零后，`tsconfig` 关 `allowJs`（**核实：`.js` 已清零，此项条件已满足，可评估执行**）
 
 **工时估**（单人，增量）：全量 strict 约 **1.5–2.5 周**；但阶段 1 几小时即可拿到大半收益，其余随功能推进。
 
 ---
 
-## 7. 常见报错速查
+### 7. 常见报错速查
 
 | 报错 | 原因 / 处理 |
 |---|---|
@@ -156,4 +179,4 @@ npm run typecheck      # vue-tsc --noEmit，绿 = 0 错
 
 ---
 
-*维护：随阶段推进勾选 Roadmap；约定见记忆 `gugu-ts-migration`、`gugu-smb-sync`。*
+*维护：随阶段推进勾选 Roadmap；约定见记忆 `gugu-ts-migration`、`gugu-smb-sync`、`gugu-mutagen-sync`。*

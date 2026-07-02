@@ -2,6 +2,10 @@
 
 > 整理自产品讨论，最后更新：2026-06-22
 
+## 概述
+
+这是咕咕前台（用户侧 Web 应用）的设计规范手册，给写代码的人（含未来改代码的 AI）对照用——不是产品介绍。设计语言是 **Glassmorphism（毛玻璃）+ 冷淡紫灰色调**：浅灰到冷灰蓝的渐变背景上叠加半透明白色卡片、`backdrop-filter` 模糊、细边框高光，视觉上克制、不张扬。全文按「产品定位 → 技术选型 → 文件架构 → UI 设计规范（色彩/字重/交互等具体规则）→ 核心页面与组件 → 功能清单 → 文案规范 → 设计文件」组织，越往后越具体到像素值和 CSS 属性，改代码时直接定位对应章节查数值即可。
+
 ---
 
 ## 一、产品定位
@@ -37,7 +41,7 @@ frontend/
 ├── src/
 │   ├── assets/          # 字体、图片、全局 CSS
 │   ├── components/
-│   │   ├── common/      # DatePicker、AppSidebar、NavItem、AiFloatBall 等通用组件
+│   │   ├── common/      # DatePicker、AppSidebar、NavItem、GuguChat（悬浮球对话）等通用组件
 │   │   └── business/    # ProjectCard、CalendarCell 等业务组件
 │   ├── views/
 │   │   ├── Dashboard/
@@ -183,15 +187,14 @@ function darkenHex(hex, amount = 0.60) {
 ### 排版
 
 - 字体：`PingFang SC`，fallback `Segoe UI`
-- 导航文字：`13px`，选中态 `font-weight: 600`
+- 导航文字：`14px`，选中态 `font-weight: 700`（配色见「色彩」章节「导航项（三态）」）
 - 卡片标题：`16px / 700`
 - 正文：`13–14px / 400`
-- 辅助信息：`11–12px`，`color: #8a8fa8`
+- 辅助信息：`11–12px`，`color: var(--text-secondary)`
 
 ### 交互规范
 
-- 导航项 hover：背景 `rgba(123,127,178,0.08)`，文字 `rgba(30,32,40,0.82)`（不变为纯黑，保持克制）
-- 导航项 active：背景 `rgba(255,255,255,0.38)`，文字 `var(--color-primary)`，`font-weight: 600`
+- 导航项三态配色见「色彩」章节「导航项（三态）」一节，此处不再重复（旧版曾写 hover 文字 `rgba(30,32,40,0.82)`、active 文字 `var(--color-primary)` + `font-weight:600`，已被色彩章节的新配色取代，勿沿用）
 - 底层面板 hover：`background`、`box-shadow` 以 `0.25s ease` 过渡，淡入淡出不突兀；统一定义在 `.glass-card` 的 `transition`，所有面板自动继承
 - 按钮/卡片 hover：轻微 `translateY(-2px)` + 阴影增强，`transition: 0.25s cubic-bezier(0.34,1.2,0.64,1)`
 - 文件/文件夹卡片 active：`translateY(1px) + opacity 0.93`，通过 `:active:not(:has(.fc-hover-actions:active))` 排除操作按钮点击时的下沉效果；卡片行为（布局、过渡、hover lift、active sink）统一提取至 `global.css` 的 `.fc-card` / `.folder-card`，各组件只保留 scoped 的颜色、尺寸、圆角差异
@@ -248,12 +251,13 @@ function darkenHex(hex, amount = 0.60) {
 
 `components/common/DateSpanPicker.vue`，项目周期选择器（开始日 + 截止日）。
 
-- 日期展示格式：**始终显示完整年份** `YYYY/M/D`，不因当前年份而省略（避免跨年项目歧义）
+- 日期展示格式：`M/D`，仅当年份**非当前年**时才前缀完整年份 `YYYY/M/D`（跨年项目才显示年份，同年不冗余展示）
   ```js
   function fmt(iso) {
     if (!iso) return ''
     const d = new Date(iso + 'T00:00:00')
-    return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`
+    const base = `${d.getMonth()+1}/${d.getDate()}`
+    return d.getFullYear() !== todayYear ? `${d.getFullYear()}/${base}` : base
   }
   ```
 
@@ -458,4 +462,4 @@ function darkenHex(hex, amount = 0.60) {
 | 文件 | 说明 |
 |------|------|
 | `design/prototype.html` | 可交互 HTML 原型稿（Dashboard 总览） |
-| `docs/design.md` | 本文档 |
+| `design.md` | 本文档 |

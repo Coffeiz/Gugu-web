@@ -13,7 +13,7 @@ from app.db.base import Base
 
 
 def default_state() -> dict:
-    """新用户的初始 onboarding 状态。键见 docs/新手引导-实现方案.md §2。"""
+    """新用户的初始 onboarding 状态。键见 docs/agent/proposals/新手引导-实现方案.md §2。"""
     return {
         "seeded": False,
         "seeded_project_id": None,

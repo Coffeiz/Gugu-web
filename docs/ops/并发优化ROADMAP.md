@@ -1,7 +1,16 @@
 # 咕咕 · 并发优化 Roadmap
 
-> 创建 2026-06-24｜范围：IM/Agent 扩量主线的分期 + 依赖 + Admin 可管理项
-> 相关：[决策环](agent-决策环.md) · [IM 接入架构](agent-im接入架构.md) · [压测结果](并发压测结果.md)
+> 创建 2026-06-24｜核实 2026-07-02（对照代码 + CHANGELOG 复核 P0–P4 完成度，见文中 ✅ 更新标注）
+> 范围：IM/Agent 扩量主线的分期 + 依赖 + Admin 可管理项
+> 相关：[决策环](../agent/agent-决策环.md) · [IM 接入架构](../agent/agent-im接入架构.md) · [压测结果](并发压测结果.md)
+
+## 易读概述（不懂后端也能看懂）
+
+> 想直接看"不带术语的大白话版"，跳到下方 [每一步在做什么（通俗版）](#每一步在做什么通俗版) ——已经写好了逐条大白话解释，这里只做全局导读。
+
+这份文档在回答一个问题：**咕咕现在能同时服务多少人聊天，还能不能撑更多？** 现状是"够用但有上限"——不是加机器就能无脑扩容，真正的瓶颈是**大模型 API 的限流额度**（每个 key 同时能处理的请求数是有上限的，超了会被拒绝）。
+
+优化按"从便宜到贵"分成五期（P0–P4）：先调几个配置数字（免费）、再让程序能同时处理多个人的消息而不是排队（P1，核心改动，已完成）、然后加用户看得见的功能页面（P2）、真撑不住了再加机器或多备几个 API key（P3，按数据触发，不提前做）、远期才是更大的功能构想（P4）。**当前 P0/P1 已完成，P2 大部分就绪，P3/P4 尚未开始**（见下方状态总览表）。
 
 **核心决策：默认单机。** 扩量靠单机内手段（async 并发、多 LLM key、DB 池、`uvicorn --workers N`），不上跨主机控制面。`user_gate` 用进程内锁即终态，P3 多 worker/分片 park。**瓶颈是 LLM provider 限流额度，不是机器。**
 
@@ -117,7 +126,7 @@ flowchart TD
 - **③ 多开 worker 进程**：一个 worker 进程不够用时，多开几个分担（Redis 消费组会自动把消息分给它们）。⏸️ 数据触发才做。
 - **④ uvicorn 多 worker**：web 接口进程也多开几个吃满多核 CPU。后推（要先做地基 A，否则周期任务会重复跑）。
 - **⑤ 数据库连接池调大**：数据库同时能开的连接数原来默认才 15，高并发会不够用。调到 40。✅
-- **⑥ 换/加大模型 provider**：换个更快更稳的模型，或多备几个 API key（每个 key 一份限流额度，凑起来吞吐更高）。按需，随时可换，不阻塞。
+- **⑥ 换/加大模型 provider**：换个更快更稳的模型，或多备几个 API key（每个 key 一份限流额度，凑起来吞吐更高）。**多备 key 分流已做完**（后台选「多 key 分流」策略即可用）；换用更智能的路由算法自动选模型仍是空插槽，按需再接。
 - **⑦ 慢尾兜底（重试）**：大模型偶尔抽风（限流 429、超时）。原来直接失败，现在**自动等几秒重发**，把「硬失败」变「慢几秒但成功」。✅
 - **⑧ IM 流式体验**：飞书/QQ 里**边生成边显示**，或先回个「思考中…」占位，让慢的时候有反馈、不像卡死。
 - **⑨ 队列监控+告警**：盯着消息队列**积压了多少**，超过阈值就告警提醒「该加 worker 了」。监控已有，告警待做。
@@ -136,7 +145,7 @@ flowchart TD
 | ③ | 多开 worker（消费组 + systemd） | P3 | ⏸️ 依赖 ①；需 `user_gate` 升级分片/Redis 锁 |
 | ④ | uvicorn --workers N | P1 后推 | ⬜ 需先做地基A；dev 现用 --reload 单进程 |
 | ⑤ | DB 连接池调大 | P0 | ✅ 完成（15+25） |
-| ⑥ | 换/加 provider · 多 key 分流 | 按需 | 🔜 预设+激活已有；正铺 `pick_model` 解析层（active/pool/router 可选，见上节）→ 多 key 分流 + Router 铺路 |
+| ⑥ | 换/加 provider · 多 key 分流 | 按需 | 🟡 多 key 分流已完成（`pick_model` 解析层 active/pool/router 已实现，见上节 + [压测](并发压测结果.md) §三点五）；Router 策略仍是空插槽，智能路由本身待做 |
 | ⑦ | 慢尾兜底：瞬时错误退避重试 | P1 | ✅ 完成（anthropic 路；实测 sem=20 全 429→全成功） |
 | ⑧ | IM 流式体验 | P2 | ⬜ 独立 UX 轨 |
 | ⑨ | 队列水位监控 + 告警 | P2 | 🟡 监控已有，告警待做 |
@@ -147,25 +156,26 @@ flowchart TD
 
 > 给 ⑥（多 key 扩吞吐）和未来 Router 铺一层统一的「选哪个模型」抽象——调用层只对接这一个口子。
 
-**现状**：预设 CRUD + 激活已有（`agent_admin.py` / `Admin/Agent`），但调用层**直接读 `settings.ai`**（写死单一激活预设），无分流、无路由。
+**✅ 已实现（核实于 2026-07-02，`backend/agent/llm_select.py`）**：下面描述的铺路方案**已经落地**，不再是计划中——`pick_model(settings, ctx)` 已是调用层唯一决策点，三种策略（`active`/`pool`/`router`）、三种池内选取方式（`random`/`round_robin`/`least_loaded`）均已实现并在[压测结果](并发压测结果.md) §三点五 实测验证（`least_loaded` 吞吐最优，已成结论）。`release()` 配合 `least_loaded` 做在途计数、`set_router()` 是给未来 Router 的注册口。
 
-**铺路**：调用层「读 `settings.ai`」→ 改成「调 `pick_model(settings, ctx)`」。这是**唯一的选模型决策点**，按策略分支：
+**现状**（原描述，仍准确刻画了设计动机）：预设 CRUD + 激活已有（`agent_admin.py` / `Admin/Agent`），调用层**不再**直接读 `settings.ai`，而是统一走 `pick_model`。
+
+**分支逻辑**（已实现，非计划）：
 
 ```
-strategy = active → 激活预设            （= 现状，行为不变，默认）
-strategy = pool   → 勾了 in_pool 的预设里随机挑（多 key：每 key 一份限流额度，总并发≈key数×16）
-strategy = router → 调注册的 router(ctx)，没注册退回 active（未来 Router 的插槽）
-无预设 → 退回 settings.ai 兜底
+strategy = active → 激活预设            （= 老行为，默认，无预设/兜底走此路）
+strategy = pool   → 勾了 in_pool 的预设里按 pool_mode 选一个（random / round_robin / least_loaded）
+strategy = router → 调注册的 router(ctx)，没注册退回 active（Router 插槽，尚未接入具体路由器）
 ```
 
-**配置**（`ai_presets`）：加 `strategy`（active/pool/router）+ 每个预设 `in_pool` 布尔。
-**后台 LLM 页**：策略下拉（单一激活 / 多 key 分流 / 智能路由<待接入>）+ 选「分流」时每预设显示「加入分流池」勾选。
+**配置**（`ai_presets`）：`strategy`（active/pool/router）+ 每个预设 `in_pool` 布尔 + `pool_mode`。
+**后台 LLM 页**：策略下拉（单一激活 / 多 key 分流 / 智能路由）+ 选「分流」时每预设显示「加入分流池」勾选。
 
 **收益**：
-- 后台点一下切策略，不改代码；多 key 分流今天可用（选 pool + 勾几个 key）。
-- **Router 以后只是「注册一个 picker」**——core 一行不动，下拉里「智能路由」自动激活。这就是「只对接一个」。
+- 后台点一下切策略，不改代码；多 key 分流已可用（选 pool + 勾几个 key，`pool_mode` 建议选 `least_loaded`，见压测结论）。
+- **Router 目前仍是插槽未接入**——`set_router()` 已就位，等真正的智能路由器实现后注册进去即可，`pick_model` 内部逻辑不用再动。
 
-**改动**：`config.py`（加字段）+ `agent/llm_select.py`（新，`pick_model`）+ `runner.py`/`core.py`（改用 `pick_model`）+ 前端 LLM 配置页。默认 `active` → 行为不变。关联 backlog ⑥。
+**改动**：`config.py`（已加字段）+ `agent/llm_select.py`（已实现 `pick_model`）+ `runner.py`/`core.py`（已改用 `pick_model`）+ 前端 LLM 配置页（已有策略下拉）。关联 backlog ⑥（⑥ 本身"多 key 分流"已完成，"智能路由"仍待做）。
 
 ---
 

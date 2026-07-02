@@ -109,13 +109,13 @@ npm run dev                # http://localhost:5173
 
 ```
 Gugu-web/
-├── docs/                       # 项目文档
-│   ├── overview.md             # 总览 / 技术栈 / 进度
-│   ├── backend.md              # 后端开发参考
-│   ├── design.md               # UI/UX 设计规范
-│   ├── storage.md              # 文件存储规范（权威）
-│   ├── wishlist.md             # 功能 Wishlist
-│   └── devlog.md              # 早期开发日志
+├── docs/                       # 项目文档（按主题分类，导航见 docs/README.md）
+│   ├── agent/                   # Agent/AI：架构、记忆、感知、IM 接入、proposals/、_archive/
+│   ├── backend/                 # 后端通用架构：backend.md、storage.md
+│   ├── product/                 # 产品/前端：overview.md、design.md、wishlist.md 等
+│   ├── ops/                     # 部署/性能/并发
+│   ├── security/                # 隐私/安全/合规
+│   └── devlog.md                # 早期开发日志（根目录，不分类）
 ├── design/
 │   └── prototype.html          # 可交互原型稿
 ├── frontend/                   # Vue 3 前端
@@ -208,7 +208,7 @@ Gugu-web/
 
 存储后端（local / oss）可**实时热切换**，`storage_key` 格式两种后端完全一致。
 
-权威规范见 [`docs/storage.md`](docs/storage.md)。
+权威规范见 [`docs/backend/storage.md`](docs/backend/storage.md)。
 
 ---
 
@@ -245,19 +245,21 @@ make backup      # 备份数据库
 - [ ] 团队 / 企业版（ToB）
 - [ ] 客户管理
 
-详细规划见 [`docs/wishlist.md`](docs/wishlist.md)。
+详细规划见 [`docs/product/wishlist.md`](docs/product/wishlist.md)。
 
 ---
 
 ## 📖 文档索引
 
+`docs/` 按主题分成 `agent/`（AI Agent 相关，含子目录 `proposals/`/`_archive/`）、`backend/`、`product/`、`ops/`、`security/` 五类，完整导航见 [`docs/README.md`](docs/README.md)。常用入口：
+
 | 文档 | 内容 |
 |------|------|
-| [docs/overview.md](docs/overview.md) | 项目总览、技术栈、API、进度 |
-| [docs/storage.md](docs/storage.md) | 文件存储结构（权威） |
-| [docs/backend.md](docs/backend.md) | 后端开发参考 |
-| [docs/design.md](docs/design.md) | UI/UX 设计规范 |
-| [docs/wishlist.md](docs/wishlist.md) | 功能规划 |
+| [docs/product/overview.md](docs/product/overview.md) | 项目总览、技术栈、API、进度 |
+| [docs/backend/storage.md](docs/backend/storage.md) | 文件存储结构（权威） |
+| [docs/backend/backend.md](docs/backend/backend.md) | 后端开发参考 |
+| [docs/product/design.md](docs/product/design.md) | UI/UX 设计规范 |
+| [docs/product/wishlist.md](docs/product/wishlist.md) | 功能规划 |
 | [docs/devlog.md](docs/devlog.md) | 早期开发记录 |
 
 ---

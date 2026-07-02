@@ -1,19 +1,44 @@
 # Agent 架构方案
 
 > 想看**一轮对话内部走哪些步、每步谁负责**，见 [`agent-决策环.md`](agent-决策环.md)（运行时决策环专题）。
-> 本文是**架构总览 + 完整工具清单 + 现状**；**架构全景图**（可靠性执行 + 系统模块两张图）见 [`agent-architecture.md`](agent-architecture.md)，可靠性工程见 [`agent-reliability.md`](agent-reliability.md)；并发/扩量分期见 [`并发优化ROADMAP.md`](并发优化ROADMAP.md)，变更记录见 [`CHANGELOG.md`](../CHANGELOG.md)，决策过程见 [`devlog.md`](devlog.md)。
-
-## 一、定位
-
-咕咕不是助理，是伙伴。
-
-助理等待指令、完成任务、不留印象。伙伴记得你说过的事，注意到你的状态，在你需要之前就知道你需要什么。这个区别决定了整个 Agent 的设计方向：记忆不是功能，是核心；主动性不是增强，是基本要求。
-
-技术上，重构 `app/api/v1/agent.py` 的单文件实现为独立 `agent/` 包（不依赖 FastAPI），支持：用户记忆系统、多平台接入（Web SSE / 飞书 / QQ）、MCP、Skills 插件化、Prompt 文件化、Profile 机制、事件总线。
+> 本文是**架构总览 + 完整工具清单 + 现状**；**架构全景图**（可靠性执行 + 系统模块两张图）见 [`agent-architecture.md`](agent-architecture.md)，可靠性工程见 [`agent-reliability.md`](agent-reliability.md)；并发/扩量分期见 [`../ops/并发优化ROADMAP.md`](../ops/并发优化ROADMAP.md)，变更记录见 [`CHANGELOG.md`](../../CHANGELOG.md)，决策过程见 [`../devlog.md`](../devlog.md)。
 
 ---
 
-## 二、目录结构
+# 一、易读概述
+
+## 咕咕是什么
+
+咕咕不是助理，是伙伴。
+
+助理等待指令、完成任务、不留印象。伙伴记得你说过的事，注意到你的状态，在你需要之前就知道你需要什么。这个区别决定了整个 Agent 的设计方向：**记忆不是功能，是核心；主动性不是增强，是基本要求**。
+
+早期咕咕的对话逻辑挤在一个文件里（`app/api/v1/agent.py`），什么都往里塞。后来把它拆成了一个独立的 `agent/` 包，不依赖 FastAPI 框架本身，专心做一件事：把「用户说了什么」变成「咕咕该怎么想、该做什么、该怎么回」。这样做的好处是这套大脑可以插到不同的地方——网页聊天、飞书、QQ——而不用重写三遍。
+
+## 它要解决的问题
+
+一个像伙伴一样的 AI，光靠"聊得好"不够，还得扛住几件事：
+
+- **记性要真实、不能瞎编**：没聊过的事不能说"你之前提过"，这是底线。
+- **说到要做到**：用户让改一个文件、建一个项目，不能嘴上说"好的已经改好了"实际上什么都没做——这是所有 AI Agent 最容易栽的坑，咕咕专门为此加了好几层代码兜底（不只是靠提示词自觉），详见下文"自我核实"和 [`agent-reliability.md`](agent-reliability.md)。
+- **随时随地都在**：不只是网页对话框，飞书、QQ 里也能找它说话，而且这几个入口共用同一个"大脑"，记忆和习惯是通的。
+- **扛得住多人同时用**：不是单人玩具，要在合理的服务器成本下让几十上百人同时聊天不卡顿、不串号。
+
+## 怎么做到的（大白话版本）
+
+**两条进门的路，一个共用的大脑**：网页聊天和 IM（飞书/QQ）走不同的入口，但最终都汇入同一套"思考流程"——读上下文、想清楚要不要用工具、调用工具、把结果核实一遍、再回复用户。这保证了"咕咕在哪个平台都是同一个咕咕"，记忆不会分裂成好几份。
+
+**记忆分成几层，越往深越稳定**：短期的"今天聊了什么"、中期的"最近这段时间在忙什么"、长期的"这人是什么样的人"，各自用不同的文件存、不同的规则更新。新鲜的事记得清楚，很久没提起的推测会自然淡化——就像人的记忆一样，不是所有事情都一直记得同样清楚。
+
+**说到做到，靠代码兜底而不是靠模型"自觉"**：模型每次说"做完了"，代码会强制它再核实一遍——真的去查数据库确认改动生效了吗？如果发现说了没做，会被打回去重做。这套机制经过参考同类开源项目（38 万星标的 OpenClaw）验证过设计思路是对的，细节见下文与 [`agent-reliability.md`](agent-reliability.md)。
+
+**工具是"手"，Skills 是"说明书"**：咕咕能直接调用的操作（建项目、查天气、发文件……）是"工具"（Tool），像手一样直接执行；而一些"这种情况该怎么做"的经验说明（比如"怎么批量移动文件不容易出错"）写成按需加载的说明文档（Skill），用到时才读，不会一直占着上下文。这样工具可以无限扩展，不会把每次对话都撑得很臃肿。
+
+---
+
+# 二、专业细节
+
+## 目录结构
 
 ```
 backend/
@@ -26,7 +51,7 @@ backend/
     ├── core.py                 # LLM 主循环
     ├── llm_select.py           # 模型解析层 pick_model（active/pool/router）
     ├── runner.py               # 非流式 run_collect / run_ephemeral（IM·定时任务用）
-    ├── router.py               # 轻量 Intent Router（网关入队前短路）
+    ├── router.py                # 轻量 Intent Router（网关入队前短路）
     ├── runtime_state.py        # State Manager（IM 状态机 + 取消标志 + 等回话标志，走 Redis）
     ├── outbound.py             # IM 出口兜底清洗
     ├── sanitize.py             # MiniMax 标记流式清洗
@@ -35,10 +60,10 @@ backend/
     ├── imctx.py                # IM 上下文 contextvar 透传
     ├── models.py
     ├── context/{loaders,builder,tokens}.py
-    ├── memory/{store,reflection,compress,lens,_llm}.py + decay.py   # 五层记忆：facts(增量delta)/daily/memory/summary(时间衰减)/lens(解读先验)；reflection 提炼 + compress 压缩 + decay 衰减（详见 docs/记忆系统架构.md）
+    ├── memory/{store,reflection,compress,lens,_llm}.py + decay.py   # 五层记忆：facts(增量delta)/daily/memory/summary(时间衰减)/lens(解读先验)；reflection 提炼 + compress 压缩 + decay 衰减（详见 记忆系统架构.md）
     ├── behaviors.py + prompts/behaviors/   # 行为模块库（情境策略软点亮：emotion-first/stuck-first/decision-explore）
     ├── tools/                  # 函数调用工具：projects/calendar/files/clients/trash/overview/memory/search/conversations/scheduled_tasks/im（原 skills/，2026-06 改名）
-    ├── skills/                 # prompt skills（带触发条件的「剧本」md，渐进式按需加载）：weather，见「Tools 与 Skills」
+    ├── skills/                 # prompt skills（带触发条件的「剧本」md，渐进式按需加载）：见「Tools 与 Skills」（核实：目前实际 6 个 .md 文件，其中 5 个已接线进 default profile，详见下）
     ├── profiles/{base,default}.py
     ├── mcp/{client,registry}.py
     ├── adapters/{base,web,qq,feishu,supervisor}.py
@@ -46,9 +71,9 @@ backend/
     └── prompts/                # persona / skills(工具准则) / policy / default / reflection / compress
 ```
 
----
+> **核实说明**：以上目录结构逐项与代码核对过，与当前 `backend/agent/` 实际模块划分一致（额外确认了 `quota.py`/`trace.py`/`voice.py`/`greeting.py`/`commands.py` 等文件也在 `agent/` 顶层，属于本文后续小节各自介绍的模块，未在此总览图重复列出）。
 
-## 三、消息链路总览
+## 消息链路总览
 
 两条入口，共用「大脑」（context → core 工具循环 → 记忆反思）：
 
@@ -64,9 +89,7 @@ IM 路：飞书/QQ → 网关(WS 长连，BYO 子进程) → router.decide 短�
 - **网关**只做收消息 + 秒回反馈 + 入队，毫秒级；**worker** 跑大脑，是耗时所在（已并发化，见「并发模型」）。
 - 改动型工具执行 → `events.publish` → SSE → 网页实时刷新（web/IM 共用，见「实时刷新」）。
 
----
-
-## 四、核心模块
+## 核心模块
 
 ### 大脑
 
@@ -79,7 +102,7 @@ LLM 主循环。负责：
   - **OpenAI 路**：思考关时传 `extra_body={"thinking":{"type":"disabled"}}`（官方两套 API 都支持此参）——避免「输出全进 `reasoning_content`、正文空」的**空气泡**；仍空（思考开）则**追一轮要正文、再空给得体兜底**（`empty_retry`），绝不留空气泡
   - **Anthropic 路**：去掉 `cache_control`（mimo 无 prompt caching）；thinking 取值用 `disabled`（想开则不传、用其默认）。该路原生处理思考块 → 免疫空气泡，且 `read_file` 能看库内图（见「多模态看图」）
   - 鉴权：mimo 两套 API 都收 `api-key` 头与 `Bearer`；客户端经 `openai_default_headers` / `anthropic_default_headers` 补 `api-key` 头（多发无害）
-- 工具调用执行与结果回填（`MAX_ROUNDS = 6`：配合 skills.md 执行准则 + 强工具，多步任务 2~3 轮够用；超限给友好提示「前面已生效，要接着做吗」）
+- 工具调用执行与结果回填（`MAX_ROUNDS = 6`：配合 skills.md 执行准则 + 强工具，多步任务 2~3 轮够用；超限给友好提示「前面已生效，要接着做吗」）——已核对代码，`MAX_ROUNDS`/`MAX_VERIFY` 常量值与下文一致（`backend/agent/core.py`）
 - **自我核实闭环（`MAX_VERIFY = 5`）**：本轮调过增删改工具（即 `RESOURCE_BY_TOOL` 全集）后，模型说"完成"时强制注入一轮「系统自检」——让它用查询工具（`get_project`/`list_files` …）查证真生效且完整，**不全就当场补做**。**触发条件是"这一轮做过增删改"（`did_mutate`）**：自检轮若只查证没改动 → 结束；若补做了（又调增删改）→ `did_mutate` 重新置位、再来一轮，直到"只查不改"或封顶 5 轮。**不是固定跑 5 轮**：通过即停，只读任务零额外开销。两路（Anthropic/OpenAI）同构，轮预算 `MAX_ROUNDS + MAX_VERIFY*2` 不挤占任务轮
   - **静默自检（`verify_mode`/`verify_fixed`）**：核实阶段（含其 `get_*` 查证轮）模型的文字**先缓冲不实时流**——干净通过则整段丢弃，**不把"已核实…"这种与首条几乎重复的确认刷给用户**；只有发现并补做时，才在补做那轮发一次"发现漏了X"说明。解决"二次检查重复说一遍差不多的话"。在 core 源头处理，web/IM 两路统一受益
 - **真实性守卫（确定性兜底「说了没做」幻觉，两路同构）**：无工具收尾时检测两类幻觉、各追一轮逼纠偏（封顶 1 次）——① **narration 兜底**（`_looks_like_narration`：「让我读…读到了…改好了/已创建/已保存」等过程叙述或完成断言 **+ 本轮零工具** → 注入 `_NARRATION_NUDGE` 逼真调）；② **决策守卫**（`_is_decision_dodge`：用户明确命令改动 **+** 回复「不用改/已合理」驳回 **+** 零工具 → 注入 `_DECISION_NUDGE` 逼执行或问清）。配合自我核实闭环，覆盖**真实性三大坑**「动嘴不动手 / 改了不核对 / 自作主张不做」。**提示词软、守卫硬**——弱模型（mimo）尤其靠此层兜（已 live 验证守卫在真实循环里自动接管）。完整设计见 [`agent-reliability.md`](agent-reliability.md)
@@ -93,12 +116,11 @@ LLM 主循环。负责：
 
 > **通道判定也统一在此**：`use_anthropic_for(ai)` 是全后端唯一的「走 anthropic 块格式还是 openai 格式」判定口（聊天 / 记忆 / IM 共用，杜绝各处不一致）——优先看预设显式 `api_format`（`openai`/`anthropic`，给 mimo 等同时提供两套 API 的厂商选），否则按 `provider==minimax` / base_url 含 `anthropic` 自动判。`openai_default_headers` / `anthropic_default_headers` 在此给非标准鉴权（mimo 的 `api-key` 头）补头。
 
-
 - **active**（默认）：用激活预设（= `settings.ai`，行为不变）。
 - **pool** 多 key 分流：勾了 `in_pool` 的预设里按 `pool_mode` 挑——`random` / `round_robin` / `least_loaded` 最少在途（`release()` 跟踪每 key 在途，请求结束 `runner` 在 finally 里减；不等速 key 下最优）。每 key 一份限流额度，总并发 ≈ key 数 × 16。
 - **router** 智能路由：调 `set_router(fn)` 注册的 picker，没注册退回 active —— **未来 Router 的插槽**。
 - 无预设 → 退回 `settings.ai` 兜底。
-  > 后台 Agent→LLM 预设 顶部「策略 / 分流 / 并发」可调；web 写即热，worker 每 30s 热读。详见 [`并发优化ROADMAP.md`](并发优化ROADMAP.md)「模型解析层」。
+  > 后台 Agent→LLM 预设 顶部「策略 / 分流 / 并发」可调；web 写即热，worker 每 30s 热读。详见 [`../ops/并发优化ROADMAP.md`](../ops/并发优化ROADMAP.md)「模型解析层」。
 
 #### `models.py`
 
@@ -145,7 +167,7 @@ Session（最近 N 条聊天，短期）与 Memory（长期认知，经 Reflecti
   - **`summary` 当前状态快照（`summary.md`）**：一段「用户此刻在忙什么 / 近期重心」的话，和反思**同一次 LLM 调用顺带产出**（零额外开销），基于原快照**增量演进**——重心没变就原样返回、变了才改（写回有"非空 + 变了"双重守卫，防清空/瞎改）。写时盖 `summary.ts` 时间戳，**时间衰减**（`agent/decay.py`，半衰期 5 天）：`builder._memory_block` 与 `greeting.py` 注入时按权重换话术档（新鲜直接给 / 半旧标「约 N 天前、可能已变」/ 过时标「多半过时、别据此提具体事」），过期状态不当近况。
   - **`lens_hint` 解读先验燃料**：见下「lens.py」；绝大多数轮为空，事件驱动地喂 lens。
   - **`perception` 感知遥测 + `correction` 误判捕获**：本轮观察（intent/ambiguity/emotion/emo_strength）+ 反思 LLM 判的 `correction`（用户这条是否纠正上一条 + `kind`=感知误读/数据或执行错），只打 `agent.perc` 日志 + 推 Redis capped list，喂 Admin「感知诊断」面板，不写记忆、不影响回复。**误判捕获主信号是 LLM 判**（能分「读错需求」与「查错数据/做错操作」，后者不算进感知误判率）；正则只在反思 extract 失败时兜底（高精度、漏召回，如「错了，…」抓不到）。
-- **`lens.py`（per-user 解读先验，第 5 类记忆）**：「怎么读懂这个用户」的偏置规则（如 `「还行」→ 多半不太行`），存 `.agent/lens.json`。**事件驱动**（吃反思 `lens_hint`、零热路径 LLM）；**防过拟合双闸**（模型自律 + 候选须复现 `PROMOTE_AT=2` 次、**以触发语为键**合并同义改写才提拔）；confidence 新规则 0.6 / 印证↑ / 半衰期 30 天衰减（复用 `decay.py`）/ 低于 `RETIRE_EFF=0.25` 退休；`builder` 注入「解读镜片」**偏置不独裁**、按 effective 选话术档（笃定/多半/也许）。⚠️ v1 未做：被反驳时 confidence↓（靠衰减自然淘汰）。详见 `docs/感知系统-架构升级.md` §3.5。
+- **`lens.py`（per-user 解读先验，第 5 类记忆）**：「怎么读懂这个用户」的偏置规则（如 `「还行」→ 多半不太行`），存 `.agent/lens.json`。**事件驱动**（吃反思 `lens_hint`、零热路径 LLM）；**防过拟合双闸**（模型自律 + 候选须复现 `PROMOTE_AT=2` 次、**以触发语为键**合并同义改写才提拔）；confidence 新规则 0.6 / 印证↑ / 半衰期 30 天衰减（复用 `decay.py`）/ 低于 `RETIRE_EFF=0.25` 退休；`builder` 注入「解读镜片」**偏置不独裁**、按 effective 选话术档（笃定/多半/也许）。⚠️ v1 未做：被反驳时 confidence↓（靠衰减自然淘汰）。详见 `感知系统-架构升级.md` §3.5。
 - **`store.py`**：读写 `.agent/` 下 `facts.json`（结构化）+ `daily.md` + `memory.md` + `summary.md` + `summary.ts` + `lens.json`，经 `StorageBackend`（本地/OSS 通吃）。`read_memory` 一次返回五层（facts 已 `render_facts` 成注入用 markdown、含渲染好的 lens 块与 summary_ts）；facts 结构化读写/应用走 `read_facts_list` / `write_facts_list` / `apply_facts_ops` / `render_facts`，`append_daily` 滚动保留最近 30 条。**算法细节见下「记忆算法详解」**。
 - **`commands.py`**：聊天里的斜杠记忆命令 `/memory`（看记得啥）、`/forget X`（忘掉一条），在 web `stream()` 短路即时回（零 LLM、不计精力、不反思）。见「记忆算法详解 §C」。
 - **`agent/events/`**：记忆变更事件总线（`bus.py` 发布/订阅 + `types.py` 类事件）。见「记忆算法详解 §D」。
@@ -266,10 +288,12 @@ publish(event)                            # 对该类型每个 listener 各起�
 #### Tools 与 Skills（两层概念）
 
 - **Tools（`agent/tools/`，已落地）**：函数调用的**原子能力**，模型通过 tool call 直接执行，handler 落到数据库 / 外部 API。即本文「工具清单」全部条目。
-- **Skills（`agent/skills/`，已落地）**：带触发条件的**「剧本」**——每个 skill 一个 markdown（frontmatter `name` / `description`(=何时用) / `emoji` + 正文），正文是一段可复用的做法说明，可指挥模型调用若干 tool。现有 `weather`（wttr.in 天气）。（`news` 曾用 RSS，因 RSS 易失效、新闻查询本质是普通搜索，已删除，改由 `web_search` 覆盖。）
+- **Skills（`agent/skills/`，已落地）**：带触发条件的**「剧本」**——每个 skill 一个 markdown（frontmatter `name` / `description`(=何时用) / `emoji` + 正文），正文是一段可复用的做法说明，可指挥模型调用若干 tool。
+  - **核实更新**：`agent/skills/` 目录当前实际有 **6 个** `.md` 文件：`weather`（wttr.in 天气）、`project-planning`（项目规划怎么拆阶段/待办）、`scheduled-tasks`（定时任务 cron 怎么写/渠道怎么选）、`im-bind`（引导用户扫码绑定飞书/QQ）、`web-search`（联网搜索三件套怎么选）、`file-ops`（文件批量操作的做法说明）。其中 **`default` Profile 实际启用 5 个**——`weather` / `project-planning` / `scheduled-tasks` / `im-bind` / `web-search`（见 `agent/profiles/default.py` 的 `skills` 列表，`agent/skills/__init__.py` 模块文档也自述"现有 5 个"）；`file-ops.md` 这个文件存在但**未出现在 default profile 的 skills 列表里**，也未在代码任何地方被引用——**待核实**：不确定是遗留的孤立文件还是尚未接线的新增 skill，改动前建议先向维护者确认再决定是接线还是清理。
+  - （`news` 曾用 RSS，因 RSS 易失效、新闻查询本质是普通搜索，**已确认删除**，代码中无残留引用，改由 `web_search` 覆盖。）
   - **加载方式：渐进式按需**。`agent/skills/__init__.py` 扫 `*.md` 解析 frontmatter（不缓存、改 md 免重启）；builder 只注入 skill 索引（每个一行 `名字 — 何时用`，见系统提示「## 可用技能」）；模型判断相关时调 `use_skill(name)`（`tools/meta.py`）把正文拉进上下文再照做。skill 数量可无限扩，不撑常驻上下文。
   - **执行原语**：需要联网/取数的 skill 靠 `http_get(url)`（`tools/web.py`）——**带 SSRF 私网拦截**（私网/环回/链路本地/元数据全拦）、不跟随重定向、响应截断；正文里写 `curl <URL>` 时 builder 提示模型用 `http_get` 抓。例：天气=抓 `wttr.in/{城市}?format=3`。
-  - **Profile 接线**：`BaseProfile.tools`（工具集名）+ `BaseProfile.skills`（启用的 prompt skill slug）；`default` 启用 prompt skill `weather` + `web`/`meta` 工具集。
+  - **Profile 接线**：`BaseProfile.tools`（工具集名）+ `BaseProfile.skills`（启用的 prompt skill slug）；`default` 启用上述 5 个 prompt skill + `web`/`meta` 工具集。
   - 依赖单向：`tools/`（`use_skill`）→ `skills/`（加载器）。冒烟：`scripts/smoke_skills.py`。
   > 命名历史：`agent/tools/` 在 2026-06 前叫 `skills/`（名实不符，它本就是工具）；改名后 `skills/` 一词腾给上面的 prompt skills。`prompts/skills.md`（工具使用准则）后续将一并改名 `tools.md`。
 
@@ -288,6 +312,7 @@ send_file 返回 {..., _artifact:{file_id,name,ext,size}}
 ```
 
 - 任何工具想给前端推 UI 元素都可走这条路（结果带 `_artifact`）。
+- **配套工具 `list_recent_attachments`**（核实新增，原文未收录）：列出用户当前暂存区里还没过期的附件（用户发来的图/文件、机器人搜图发过的图等，暂存 7 天）。当用户提到"刚刚的图/那张图"但当轮上下文没有 `attach_id` 提示时，先查这个再用 `send_file(attach_id=...)` 重发或 `save_uploaded_file(attach_id=...)` 存进文件库。
 - **IM 也真发文件**：`runner._collect` 收 `file` 事件 → `AgentResponse.files` → `worker._send_files` 按平台分发。
   - **飞书** `feishu.send_file`：图片 10MB / 文件 30MB，超限飞书返非 JSON 错误页撞 `JSONDecodeError` → 发前查大小、超限改文字。
   - **QQ** `qq.send_file`：C2C 富媒体上传（私聊支持、群聊不支持）。本地存储 base64 ~10MB 为界；OSS 走签名 URL 模式无体积限制（自动切换）。`msg_seq` 用 Redis `INCR qqseq:{msg_id}` 跨进程发号。
@@ -329,7 +354,7 @@ vision 模型（`ai.vision=True`）下咕咕真看图——聊天发的图 + 文
 - ⚠️ **音视频被模型池静默打掉**（`runner.py`）：IM 经 `pick_model` 可能路由到非 mimo 模型（MiniMax-M3 走 anthropic 路），`build_user_content` 把 `media` 丢掉 → 咕咕只当文件回「收到 mp3」。**带 `media` 的这轮强制切到 active mimo+openai 模型**，保证发得出去。排查媒体「时好时坏」先查 `pick_model` 实际返回哪个模型，别只看全局 active。
 - **mimo 默认思考 → 空正文**：两套 API 调用都显式传 `thinking: disabled`，否则音频转写返回空。
 
-> **MiniMax 只做生成（T2A 语音合成 / Hailuo 视频生成），不做音视频理解、无 ASR**——「听」只能 mimo。「咕咕回语音（T2A）」在 [`wishlist.md`](wishlist.md)。
+> **MiniMax 只做生成（T2A 语音合成 / Hailuo 视频生成），不做音视频理解、无 ASR**——「听」只能 mimo。「咕咕回语音（T2A）」在 [`../product/wishlist.md`](../product/wishlist.md)。
 
 #### 语音消息（语音条 · 30 天独立存储）
 
@@ -353,7 +378,7 @@ Web SSE adapter：`stream()` 同步做配额检查 → 上下文 → 会话 get/
 - **生成解耦 + 刷新续看**（`genstream.py`）：生成在后台跑，**浏览器刷新/断连杀不掉、回复不丢**。刷新后经 `GET /agent/sessions/{id}/stream`（`resume()`）先补已生成内容、再订阅后续。
   - **首条空气泡修复**：`stream()` 改为 `open_subscription()` **先 attach 订阅、再启动生成**——pub/sub 发完即弃，旧逻辑「先起生成后订阅」会把头几个 token（短回复时是全部）在订阅建好前发空 → 首条消息空气泡（快模型更易触发）。先订阅后，频道消息进连接缓冲不丢。
 - **错误文案分类**：精力/配额「咕咕精力不足…」、网络「网络不太好 📡」、其他「开小差了 😵‍💫」；工具异常不在此（已在 dispatch 兜住）。
-- **配额能力降级**：精力耗尽不再一刀切拦死，降级到只读工具集（13/53）+ 婉拒重操作，查询/对话照常（`profile.light_tool_names`）。
+- **配额策略（核实：与原文描述不符，已按实际代码更正）**：原文称"精力耗尽降级到只读工具集（`profile.light_tool_names`）、查询/对话照常"——**代码里已确认没有 `light_tool_names` 这个属性**（`agent/profiles/base.py` 只有 `tools`/`skills`/`tool_names`），`agent/quota.py` 也没有任何"只读降级"逻辑。实际现状是**精力耗尽走硬拦截**：`web.stream()`（`agent/adapters/web.py`）、`runner.run_collect`/`run_ephemeral`（IM、定时任务）三处口径一致，都在 `quota.is_exhausted(db, user_id, settings)` 命中时**直接不启动生成**，落一句「咕咕累了，休息会儿再来～」持久化后返回，连只读查询也一起拦（不是能力降级，是全拦）。配额本身按 6 小时固定窗口 + 每周窗口双重计（`quota.six_h_window_start`/`_week_start`），单轮 token 按 6h 剩余额度封顶（`cap_usage`）、填满即冻结记账，直到窗口整点自然解冻——详见 [`Gugu Energy System` 相关记忆] 与 `agent/quota.py` 顶部文档字符串。**这处"能力降级"的说法应视为已废弃的旧设计，不是当前行为**。
 - **网页生成中排队**（`pendingQueue`）：流式中再发不丢，结束接力发；IM 天生排队（Redis 队列 + worker）。
 
 #### `adapters/qq.py` / `feishu.py` / `supervisor.py`
@@ -399,7 +424,7 @@ IM 回复完  → publish('sessions', appended=[助手消息])  # 再推
 
 - **细粒度分两次推**：用户消息先推（先看到发了什么）、回复完再推，呈现正常聊天节奏。
 - **IM 会话标题**：`_schedule_title` 后台 fire-and-forget 起 ≤10 字标题、再异步推 `title` 事件，不阻塞回复。
-- ⚠️ **新增改动型工具记得登记 `RESOURCE_BY_TOOL`**，否则改完网页不实时刷新。
+- ⚠️ **新增改动型工具记得登记 `RESOURCE_BY_TOOL`**（`backend/app/core/events.py`），否则改完网页不实时刷新。核实：该映射表目前覆盖项目/日历/文件库/客户/定时任务/回收站六类，**日历的三个提醒工具（`add_event_reminder`/`list_event_reminders`/`remove_event_reminder`）未登记在内**——待核实是否需要补上（提醒本身不直接影响日历列表展示，可能是有意不登记，也可能是遗漏）。
 - ⚠️ 推送 `events` 模块要 `as _evmod` 别名导入，否则覆盖 `run_collect` 里同名日历局部变量。
 - 当前 web 自身聊天走 `web.py` 流式（自带刷新），未 publish → 同账号多标签不互相同步（将来让 web 也 publish 即可，链路现成）。
 
@@ -411,7 +436,7 @@ IM 回复完  → publish('sessions', appended=[助手消息])  # 再推
 
 #### `profiles/`
 
-`base.py` Profile 基类（skills / prompt_file / memory_enabled / mcp_enabled）。`default.py` 唯一会话 Profile（web/飞书/QQ 共用）：`skills=[projects,calendar,files,clients,trash,overview,memory,search,conversations]`、`memory_enabled=True`、`light_tool_names`（配额降级用只读集）。
+`base.py` Profile 基类（skills / prompt_file / memory_enabled / mcp_enabled）。`default.py` 唯一会话 Profile（web/飞书/QQ 共用）：`tools=[projects,calendar,files,clients,trash,overview,memory,search,conversations,scheduled_tasks,web,meta]`（工具集名，字段名沿用旧的 `skills`）、`skills=[weather,project-planning,scheduled-tasks,im-bind,web-search]`（启用的 prompt skill）、`memory_enabled=True`。核实：原文此处提到的 `light_tool_names`（配额降级用只读集）在当前 `agent/profiles/base.py` 里**不存在**——配额耗尽的实际处理方式见「adapters/web.py」小节的更正说明（硬拦截，非能力降级）。
 
 > `im` skill（LLM 版 `react` 表情）已注册但**未进 default**（秒回表情走网关关键词）。早期 qqbot/mini profile 从未接线，已弃。
 
@@ -445,7 +470,7 @@ IM 回复完  → publish('sessions', appended=[助手消息])  # 再推
 
 **推论**：想让模型「看到」一条**不是用户发出**的 assistant 上下文（对话框默认问候、系统旁白、注入的伪助手发言），**别指望把它当历史里的前导 assistant 消息**——它会被剥掉，模型永远收不到。正确做法是**注入 system prompt**（或拼进某条 user 消息），保持序列 user 开头。
 
-> **踩坑实例（默认问候）**：对话框默认问候用户回复后，曾把它入库为新会话首条 `assistant`（`created_at` 早于用户消息），指望模型看到「自己已打招呼」。结果 sanitize 每轮剥掉它，模型把用户的回复当成对话开头又重新寒暄。改法：`web.py` 在 `is_new_session and req.greeting` 时把问候拼进 system prompt（"你已经说过：「…」，别重复"）；DB 那条 assistant 仍留着只供会话回看显示。详见 `对话默认问候-生成方案.md` §4.2。
+> **踩坑实例（默认问候）**：对话框默认问候用户回复后，曾把它入库为新会话首条 `assistant`（`created_at` 早于用户消息），指望模型看到「自己已打招呼」。结果 sanitize 每轮剥掉它，模型把用户的回复当成对话开头又重新寒暄。改法：`web.py` 在 `is_new_session and req.greeting` 时把问候拼进 system prompt（"你已经说过：「…」，别重复"）；DB 那条 assistant 仍留着只供会话回看显示。详见 `proposals/对话默认问候-生成方案.md` §4.2。
 
 **排查提示**：遇到「模型无视某条历史消息」，先确认它在 `sanitize_messages` 之后是否还在（前导 assistant / 孤儿 tool 块 / 空消息都会被清掉）。
 
@@ -455,7 +480,7 @@ IM 回复完  → publish('sessions', appended=[助手消息])  # 再推
 
 - **不进对话**：`execute_task` 用 `run_ephemeral` 跑 agent——不建/不复用 session、不写 `conversation_messages`、不推 `sessions` 事件，结果不出现在任何聊天窗口。
 - **统一走 agent**：无 `reminder` 类型，payload 始终经 agent 处理后再投递，咕咕用自然语气包装提醒。`action_type` 字段（reminder|agent|deadline_scan 遗留）已整列删除（迁移 `20260626000001`）——执行器本就不分支它。
-- **两种创建入口**：`/schedules` 页面 UI，或**对咕咕说话**——`scheduled_tasks` 技能（`create/update/delete/list_scheduled_task`，见「工具清单」）让咕咕据自然语言生成 cron 直接建。
+- **两种创建入口**：`/schedules` 页面 UI，或**对咕咕说话**——`scheduled_tasks` 技能（`create/update/delete/list_scheduled_task`，见「工具清单」）让咕咕据自然语言生成 cron 直接建。此外日历活动自带的提醒（`add_event_reminder` 等）是另一条独立子链路，与这里的独立定时任务分开管理（见工具清单「日历」小节）。
 - **prompt 上下文注入消歧**：用户填的 payload 是面向自己的指令（「让我喝水」），裸传会让 `我` 指向歧义。触发时包裹：
 
 ```python
@@ -473,11 +498,11 @@ APScheduler 触发 → execute_task → 构造上下文 prompt → run_ephemeral
   → 试运行同步返回各渠道结果（已发送 / 无地址 / 失败）给用户看
 ```
 
-- **多平台精确投递**：`imreach:{uid}:{platform}` 按平台存可触达地址（worker 收消息时记），投递时按渠道精确发、互不覆盖。详见 `app/scheduled_tasks.py` + [`CHANGELOG.md`](../CHANGELOG.md)。
+- **多平台精确投递**：`imreach:{uid}:{platform}` 按平台存可触达地址（worker 收消息时记），投递时按渠道精确发、互不覆盖。详见 `app/scheduled_tasks.py` + [`CHANGELOG.md`](../../CHANGELOG.md)。
 
 ### IM 接入（BYO + 动态网关）
 
-> **完整方案见 [`agent-im接入架构.md`](agent-im接入架构.md)；飞书扫码细节见 [`feishu接入指南.md`](feishu接入指南.md)；拆解过程见 [`devlog.md`](devlog.md)。** 飞书/QQ/微信均**官方直连、不用 OpenClaw**；按「收消息 ↔ 跑大模型」解耦的**队列 + worker 架构**建。
+> **完整方案见 [`agent-im接入架构.md`](agent-im接入架构.md)；飞书扫码细节见 [`feishu接入指南.md`](feishu接入指南.md)；拆解过程见 [`../devlog.md`](../devlog.md)。** 飞书/QQ/微信均**官方直连、不用 OpenClaw**；按「收消息 ↔ 跑大模型」解耦的**队列 + worker 架构**建。
 
 - **BYO（Bring-Your-Own）**：每用户接自己的 bot，**扫码 device-flow 自动创建并连接**（飞书 RFC 8628 设备授权流 / QQ q.qq.com 绑定任务，复刻 QwenPaw，实测无需合作方资质）。凭据存 `user_bots` 表（用户级 CRUD，secret 打码）。早期「Admin 共享 bot + OAuth 绑定」已废，删了 `PlatformBinding`。
 - **动态网关 · 进程级**（`adapters/supervisor.py`）：lark/botpy 连接只有 `start()`、**无 `stop()`** → 一个 bot 一个子进程，kill 子进程=断开。supervisor 每 5s 查 `user_bots` reconcile（增/删/崩溃自愈）；**凭据走环境变量注入**（不走 argv，避免 `ps` 泄漏 secret）。
@@ -487,15 +512,17 @@ APScheduler 触发 → execute_task → 构造上下文 prompt → run_ephemeral
 
 ### 并发模型
 
-> **完整方案、分期与压测见 [`并发优化ROADMAP.md`](并发优化ROADMAP.md) + [`并发压测结果.md`](并发压测结果.md)。**
+> **完整方案、分期与压测见 [`../ops/并发优化ROADMAP.md`](../ops/并发优化ROADMAP.md) + [`../ops/并发压测结果.md`](../ops/并发压测结果.md)。**
 
 worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore`，默认 16）+ **`user_gate(puid)` 按用户串行**（进程内 `asyncio.Lock`，同用户保序、不同用户并行，单机即终态）+ 优雅 drain + `msg_id` 去重（SETNX），实测 **~6×** 吞吐（串行 ~21 → 并发 ~190 条/分，带工具）；配 **⑦ 慢尾兜底**（429 退避重试）。瓶颈是 **LLM key 额度（单 key 安全并发 ≈16）**、非机器——再扩吞吐靠**多备 provider key**（总并发 ≈16×key 数，least_loaded 分流），多 worker 横向扩按埋点数据触发、暂不做。`并发治排队 · 多 key 治吞吐`。
 
 ---
 
-## 六、工具清单（共 55，已实现）
+## 六、工具清单（共 59，已实现；核实：原文写 55/47 均已过时，见下方逐条更新）
 
-> 下表领域工具，另加 `web`（`http_get`）、`meta`（`use_skill`）两个工具集（见「Tools 与 Skills」）；搜索为 `web_search`(SearXNG) + `deep_research`(Tavily) + `image_search`(SearXNG images) 三个，合计 55。
+> 下表领域工具，另加 `web`（`http_get`）、`meta`（`use_skill`）两个工具集（见「Tools 与 Skills」）；搜索为 `web_search`(SearXNG) + `deep_research`(Tavily) + `image_search`(SearXNG images) 三个。
+>
+> **核实说明（总数）**：逐个 `grep -rn 'name="' backend/agent/tools/*.py` 清点，default profile 实际接线的工具总数为 **59**（项目 16 + 日历 7 + 文件 15 + 客户 4 + 回收站 3 + 聚合 2 + 记忆 1 + 搜索 3 + 对话 2 + 定时任务 4 + web 1 + meta 1）。原文「共 55」「47 工具」两处数字均已过时——主要差异来自：日历新增了 3 个活动提醒工具（`add_event_reminder`/`list_event_reminders`/`remove_event_reminder`），文件库新增了 1 个 `list_recent_attachments`，且 `move_file` 已重构为 `move_items`（见下）。另有 `im.react`（1 个）已注册但不在 default profile 里，不计入此总数（见文末「工具一等公民」小节）。
 
 > 🔒 = 不可逆操作，受删除二次确认保底（显式 `confirm` 参数，`agent/confirm.py`）保护。所有工具带 `user_id` 所有权校验。
 
@@ -515,11 +542,21 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 | `archive_project` | 归档 / 取消归档 |
 | `delete_project` 🔒 | 永久删除项目 |
 
-### 日历 · `tools/calendar.py`（4）
+### 日历 · `tools/calendar.py`（7，核实：原文只列 4 个，漏了新增的 3 个活动提醒工具）
 
-`create_event` / `list_events`（日期范围/类型）/ `update_event` / `delete_event` 🔒（无回收站，不可逆）
+| 工具 | 说明 |
+| --- | --- |
+| `create_event` | 新建日历事件/活动 |
+| `list_events` | 按日期范围/类型查询 |
+| `update_event` | 改事件信息 |
+| `delete_event` 🔒 | 删除（无回收站，不可逆；会连带删除该活动自带的提醒） |
+| `add_event_reminder` | **（新增，原文未收录）** 给已有日历活动加提醒，绑定到该活动、与独立定时任务分开管理；提前量按分钟（0=开始时/30/60/1440 等），可一次加多个；渠道 web/feishu/qq/wechat |
+| `list_event_reminders` | **（新增，原文未收录）** 列出某活动的全部提醒（含 reminder_id、触发时间、渠道、启用状态），改/删前先查它拿 id |
+| `remove_event_reminder` | **（新增，原文未收录）** 按 `reminder_id` 删除某条活动提醒，不影响独立定时任务 |
 
-### 文件 · `tools/files.py`（14）
+> 活动提醒与「提醒工作流」小节的独立定时任务是两套东西：前者绑定 `event_id`、随事件走；后者是用户单独设置的周期/一次性任务。⚠️ 待核实：这三个提醒工具目前未登记进 `backend/app/core/events.py` 的 `RESOURCE_BY_TOOL`，改动是否会实时刷新网页日历尚不确定。
+
+### 文件 · `tools/files.py`（15，核实：原文写 14 且仍用旧名 `move_file`）
 
 | 工具 | 说明 |
 | --- | --- |
@@ -527,11 +564,14 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 | `read_file` | 文本（≤256KB）直读 / PDF·Office 提文本 / **图片识别**（vision + Anthropic，含 HEIC，大图自动压缩） |
 | `edit_file` | 改文本（整体替换/追加/查找替换） |
 | `create_document` | md/txt/json/csv 直写；docx/pdf 由 HTML、xlsx 由 CSV 经 LibreOffice 转 |
-| `rename_file` / `move_file` / `copy_file` | 重命名 / 移动 / 复制 |
-| `delete_file` | 删除（进回收站，可还原） |
+| `rename_file` | 重命名（支持 `renames` 批量） |
+| `move_items` | **（核实：已由旧的 `move_file` 重构而来）** 文件+文件夹混合一次移动到同一目标；移文件夹会连里面的文件和子文件夹递归一起搬，不用逐个搬 |
+| `copy_file` | 复制 |
 | `create_folder` / `list_folders` / `rename_folder` / `delete_folder` | 文件夹增删改查（删夹内文件移至根） |
-| `send_file` | 给用户发可下载文件：文件库文件用 `file`/`file_id`；网络图片（如 `image_search` 结果）用 `url`，下载后作为聊天附件发出（见「发送文件」） |
-| `save_uploaded_file` | 把暂存上传附件存进文件库（见「接收文件」） |
+| `delete_file` | 删除（进回收站，可还原） |
+| `send_file` | 给用户发可下载文件：文件库文件用 `file`/`file_id`；网络图片（如 `image_search` 结果）用 `url`，下载后作为聊天附件发出（见「发送文件」）；也支持 `attach_id` 重发暂存附件 |
+| `list_recent_attachments` | **（新增，原文未收录）** 列出用户暂存区里还没过期的附件（7 天有效），配合 `send_file(attach_id=...)` 重发或 `save_uploaded_file(attach_id=...)` 存档 |
+| `save_uploaded_file` | 把暂存上传附件存进文件库（见「接收文件」），支持 `attach_ids` 批量 |
 
 ### 客户 · `tools/clients.py`（4）
 
@@ -547,7 +587,7 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 
 ### 记忆 · `tools/memory.py`（1）
 
-`remember`：把一条关于用户的长期信息写进 `.agent/facts.md`（与反思共用 `merge_facts` 去重）
+`remember`：把一条关于用户的长期信息写进结构化 `.agent/facts.json`（核实：原文写"写进 `facts.md`"，代码里已经是走 `store.apply_facts_ops` 直接落 `facts.json`，与反思共用同一套增量/印证逻辑，见「记忆算法详解 §A」）
 
 ### 联网搜索 · `tools/search.py`（3）
 
@@ -568,31 +608,31 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 
 ### 工具一等公民（Profile 组合工具集，不再手抄工具名）
 
-原 `DefaultProfile.tool_names` 手列工具名，与各工具集的 `Tool` 声明双重维护（漏一处静默失效）。已重构为：`registry` 增 `tools_of(...)`，`BaseProfile.skills`（工具集名列表，沿用旧字段名）+ `tool_names` 派生属性（去重保序）。新增工具 = 在对应工具集（`agent/tools/*.py`）加 `Tool` 声明 + handler（自动派生 Anthropic/OpenAI 双格式并注册），不可逆操作加 `destructive=True`。
+原 `DefaultProfile.tool_names` 手列工具名，与各工具集的 `Tool` 声明双重维护（漏一处静默失效）。已重构为：`registry` 增 `tools_of(...)`，`BaseProfile.skills`（工具集名列表，沿用旧字段名）+ `tool_names` 派生属性（去重保序）。新增工具 = 在对应工具集（`agent/tools/*.py`）加 `Tool` 声明 + handler（自动派生 Anthropic/OpenAI 双格式并注册），不可逆操作加 `destructive=True`。**这也是为什么本文工具数量容易和代码脱节**——工具集自己会增删，"完整清单"这类文档需要定期用 `grep -rn 'name="' backend/agent/tools/*.py` 重新核对，而不是手改一次就当永久准确。
 
 ---
 
 ## 七、现状与演进
 
-> 分期/扩量权威 → [`并发优化ROADMAP.md`](并发优化ROADMAP.md)（P0–P4 + ①–⑨ + 压测）；变更逐条 → [`CHANGELOG.md`](../CHANGELOG.md)；决策过程 / 踩坑 → [`devlog.md`](devlog.md)；产品设计依据 → [`agent设计/`](agent设计/) 八份文档。
+> 分期/扩量权威 → [`../ops/并发优化ROADMAP.md`](../ops/并发优化ROADMAP.md)（P0–P4 + ①–⑨ + 压测）；变更逐条 → [`CHANGELOG.md`](../../CHANGELOG.md)；决策过程 / 踩坑 → [`../devlog.md`](../devlog.md)；产品设计依据 → [`_archive/`](_archive/)（原 `agent设计/`，已归档并去编号）八份文档。
 
 ### 已落地能力一览
 
-- **核心**：独立 `agent/` 包、双路 LLM 工具循环、47 工具、工具一等公民（Profile 组合工具集）、prompt 分层（persona/skills/policy）、删除二次确认、单次流式调用、token 预算历史窗口。
+- **核心**：独立 `agent/` 包、双路 LLM 工具循环、**59 工具**（核实：原文「47 工具」已过时，见「工具清单」逐条更新）、工具一等公民（Profile 组合工具集）、prompt 分层（persona/skills/policy）、删除二次确认、单次流式调用、token 预算历史窗口。
 - **记忆**：`facts.md`（增量 delta）+ `daily.md` + `memory.md` + `summary.md`（时间衰减）+ `lens.json`（解读先验）**五层**（daily→memory 压缩、summary 快照、反思增量化、per-user lens 自学均已落地），对话后 fire-and-forget 反思，`remember` 主动记忆。
 - **感知系统（P0–P2）**：A+B 感知遥测 + 误判捕获 → Admin「感知诊断」面板（活跃用户宏平均）；行为模块库（`emotion-first`/`stuck-first`/`decision-explore` 软点亮、情绪优先裁决）；per-user 解读先验 lens（事件驱动自学、偏置不独裁）。详见 [`感知系统-架构升级.md`](感知系统-架构升级.md)。
 - **IM 接入**：飞书 + QQ BYO 官方直连，扫码 device-flow 自动连接，三进程（web/worker/supervisor）。
 - **多模态**：vision 看图（聊天图 + 库内图）；**mimo 音视频理解**（听语音/音频、看视频，IM 语音 SILK→mp3 转码），**语音条 + 30 天独立存储**（QQ 语音 / 网页录音）。
 - **运行时（Phase 1.7）**：轻量 Intent Router + State Manager（网关短路「还在吗/算了」，自然语言取消轮间中断）。
 - **并发（P1）**：worker 有界并发 + `user_gate` + drain + 去重（~6×），⑦ 慢尾兜底，模型解析层多 key 分流（least_loaded）。
-- **韧性/运维（P1/P2）**：配额能力降级（只读集），稳定 consumer 名 + 死 consumer 清理，服务状态页（三进程状态/PID/心跳/一键重启 + IM 队列水位）。
-- **定时任务**：用户自定义任务 + 提醒工作流（结果走通知/IM 不进对话）。
+- **韧性/运维（P1/P2）**：配额硬拦截 + 6h/周双窗口封顶记账（核实：原文"配额能力降级（只读集）"的描述在当前代码中查无实据，已更正为实际的硬拦截机制，见「adapters/web.py」小节），稳定 consumer 名 + 死 consumer 清理，服务状态页（三进程状态/PID/心跳/一键重启 + IM 队列水位）。
+- **定时任务**：用户自定义任务 + 提醒工作流（结果走通知/IM 不进对话）+ 日历活动自带的提醒子系统（核实新增，见「工具清单·日历」）。
 
 ### 关键架构决策
 
 - **默认单机部署**：web+worker+supervisor+网关同机，一套 `.env`/override 管全部。瓶颈是大模型延迟非机器，一台远超 50 人才到头 → `user_gate` 进程内锁即**终态**，多 worker/分片 park。
 - **BYO bot**：每用户自带 bot、扫码自动创建，bot 即归属 owner → 省掉绑定表 + OAuth。
-- **配额「能力降级」而非硬切**：精力耗尽降到只读工具集，查询/对话照常。
+- **配额「硬拦截 + 冻结记账」**（核实更正：原文写「能力降级而非硬切」，与当前代码不符）：精力耗尽后 web/IM/定时任务三路一律不再生成、直接回「咕咕累了，休息会儿再来～」，查询/对话不再照常；配额计费本身则做了「6h 窗口封顶 + 满额冻结」的柔性处理（单轮 token 超出 6h 剩余额度的部分丢弃、不倒扣，直到窗口整点自然解冻）。
 - **不预造 Planner / 多 Agent**：当前 LLM 工具循环本身即轻量 planner；雄心路线常死在过早抽象，等出现具体「模型编排不了」的场景再加。
 - **安全瘦身**：咕咕不跑 shell，不引入命令白名单/Docker 沙箱；「二次确认 + 审计 + 权限分级」即覆盖。
 - **记忆五层 + 自学 + 事件化**：`facts.json`（结构化 kind/conf/imp、增量增删改、importance 过滤、inferred 衰减）/ daily / memory / summary（衰减）/ lens（解读先验自学）；记忆变更走 `events/bus.py`；`/memory` `/forget` 控制命令。仍刻意不做：facts 完整来源链、weekly 层。
@@ -603,3 +643,4 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 - **扩展能力（Phase 3）**：MCP 外部工具、多 Profile 路由、🅼 小模型意图分类（需自托管 GPU）。
 - **伙伴深化**：主动触达（异常沉默/情绪关注）、成就/正反馈系统、行为分析 Listener。
 - **多 worker + 分片**：撞单进程 CPU 上限才上（届时 `user_gate` 换 Redis 锁，上层不动）。
+- **待核实/待决定的孤立文件**：`agent/skills/file-ops.md` 存在于代码库但未接入 `default` profile 的 `skills` 列表、代码中也无处引用（见「Tools 与 Skills」）。建议下次改动这块时顺手确认它是该接线还是该清理，避免继续悬空。
