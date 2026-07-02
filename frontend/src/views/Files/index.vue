@@ -241,6 +241,7 @@
               :class="{ selected: selectedFolderKeys.has(f.id), 'pre-selected': previewFolderKeys.has(f.id), 'drag-over': dragOverFolderId === f.folderId }"
               @contextmenu.prevent.stop="openCtx('folder', f, $event)"
               :data-folder-key="f.id"
+              :data-folder-id="f.folderId"
               :style="{ '--fd-color': folderAccentColor(f) }"
               @click.stop="handleFolderClick(f, $event)"
               @pointerdown="onFolderPointerDown(f, $event)"
@@ -400,6 +401,7 @@
               class="list-row folder-row"
               :class="{ selected: selectedFolderKeys.has(f.id), 'pre-selected': previewFolderKeys.has(f.id), 'drag-over': dragOverFolderId === f.folderId }"
               :data-folder-key="f.id"
+              :data-folder-id="f.folderId"
               @click.stop="handleFolderClick(f, $event)"
               @contextmenu.prevent.stop="openCtx('folder', f, $event)"
               @pointerdown="onFolderPointerDown(f, $event)"
@@ -683,7 +685,7 @@ import { useUiStore } from '@/stores/ui'
 import { cardBlobReadyIds } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt, fileExtCategory, fileIconColor, fileListIcon } from '@/utils/fileTypes'
-import { startPhysicsDrag, startMultiPhysicsDrag } from '@/composables/usePhysicsDrag'
+import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
 import { readDroppedEntries, filesToItems, uploadFilesWithFolders } from '@/composables/useFileUpload'
@@ -1546,10 +1548,20 @@ async function uploadFiles(items) {
     const total = items.filter(it => it.relativePath.startsWith(top + '/')).length
     folderGhosts.set(top, createFolderGhost(top, total))
   }
+  // 顶层文件夹（正被 ghost 追踪进度的那几个）先别实时插进可见列表——插了会跟它的 ghost 卡
+  // 同时出现，看起来像「两个文件夹」。攒着，等这组文件全传完（ghost 即将消失那一刻）再插入，
+  // 从「上传中」无缝换成「已完成」。更深层的子文件夹本来就不在当前视图里，直接插不会重复。
+  const pendingTopFolders = new Map()
 
   await uploadFilesWithFolders(items, {
     projectId, baseFolderId: folderId,
-    onFolderCreated: (folder) => cacheStore.addFolder(folder),   // 新建的子文件夹实时进本地缓存，不用刷新页面才看得到
+    onFolderCreated: (created) => {
+      if (folderGhosts.has(created.name) && (created.parentId ?? null) === folderId) {
+        pendingTopFolders.set(created.name, created)
+      } else {
+        cacheStore.addFolder(created)
+      }
+    },
     uploadOne: async (file, resolvedFolderId, relativePath) => {
       const top = relativePath.includes('/') ? relativePath.slice(0, relativePath.indexOf('/')) : null
       const folderGhost = top ? folderGhosts.get(top) : null
@@ -1557,6 +1569,16 @@ async function uploadFiles(items) {
         (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(0, i) : file.name })(),
         (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(i + 1).toUpperCase() : '' })(),
       )
+      // 这组文件全处理完（不管成功失败）就把攒着的真实文件夹插进可见列表——跟成功/失败两条
+      // 路径都要走，否则「文件夹最后一个文件恰好失败」时永远插不进去
+      const settleFolder = (failed) => {
+        if (!folderGhost) return
+        bumpFolderGhost(folderGhost, failed)
+        if (folderGhost.done >= folderGhost.total && pendingTopFolders.has(top)) {
+          cacheStore.addFolder(pendingTopFolders.get(top))
+          pendingTopFolders.delete(top)
+        }
+      }
       try {
         const form = new FormData()
         form.append('file', file)
@@ -1565,14 +1587,14 @@ async function uploadFiles(items) {
         if (resolvedFolderId) form.append('folder_id', String(resolvedFolderId))
         const created = await uploadWithProgress('/files', form, p => { if (ghost) updateGhostProgress(ghost, p) })
         if (ghost) removeGhost(ghost)
-        else bumpFolderGhost(folderGhost)
+        else settleFolder(false)
         cacheStore.addFile(created)
         loadContents()
         fetchStorage()
       } catch (e) {
         console.error('[Files] 上传失败:', e.message)
         if (ghost) failGhost(ghost)
-        else bumpFolderGhost(folderGhost, true)
+        else settleFolder(true)
       }
     },
   })
@@ -1680,21 +1702,11 @@ async function downloadFolder(f) {
 }
 
 // ── 拖动移动 ──
-// 改用 pointer 模式（setPointerCapture 自建拖拽，不再是原生 HTML5 draggable/dragstart）：
-// 原生拖拽从 dragstart 起浏览器会整段暂停 mouseover/mouseout 派发，抓起卡片那一刻缓存的
-// :hover=true 全程不会被清掉，只有等 dragend 后浏览器才重新判定——这段时间差导致落地揭示
-// 卡片时经常"跳一下"（perf trace 实测证实）。项目看板的拖拽已经是 pointer 模式、完全没有
-// 这个问题，这里照抄同一套思路。落点判定/高亮不再靠原生 @dragover/@drop（那要有真实原生
-// 拖拽在跑才会触发），改成 startPhysicsDrag/startMultiPhysicsDrag 新增的 onDragOver/onDrop
-// 回调，调用方自己 elementFromPoint 找目标——folder-card/folder-row 认 data-folder-key，
-// 面包屑段认 data-bc-idx（根「全部文件」项没有这个属性，天然不参与，保持原来就不可放置的行为）。
-// OS 拖文件到浏览器上传走的是页面级另一套原生监听（onDragEnter/onDragLeave/handleDrop），
-// 和这里完全独立，不受影响。
-const draggingFileIds   = ref(new Set())
-const draggingFolderIds = ref(new Set())
-const dragOverFolderId  = ref(null)
-const bcDragOverIdx     = ref(null)
-
+// pointer 模式（setPointerCapture 自建拖拽，不是原生 HTML5 draggable/dragstart——原生拖拽从
+// dragstart 起浏览器会整段暂停 mouseover/mouseout 派发，导致落地揭示卡片时 hover 高亮跳变，
+// perf trace 实测证实）。抓取判断单选/多选 → 起 startPhysicsDrag/startMultiPhysicsDrag → 拖拽
+// 中找落点高亮 → 松手判定目标并派发移动，这套编排跟 ProjectModal.vue 的文件面板完全一样，抽成
+// 了共享 composable useFileDragDrop，这里只提供 Files 特有的选择器/面包屑规则/落地 API。
 function isBcDroppable(seg) {
   return seg.type === 'folder' || seg.type === 'personal'
 }
@@ -1724,179 +1736,48 @@ async function moveFilesInto(fileIds, targetFolderId) {
   }
 }
 
-// 拖拽过程中每帧回调：找当前指针下是否压着有效放置目标，更新高亮（不能拖到自身）
-function updateDragOverHighlight({ x, y }) {
-  if (!draggingFileIds.value.size && !draggingFolderIds.value.size) {
-    dragOverFolderId.value = null; bcDragOverIdx.value = null
-    return
-  }
-  const under = document.elementFromPoint(x, y)
-  const folderEl = under?.closest?.('.folder-card, .folder-row')
-  if (folderEl) {
-    const key = Number(folderEl.getAttribute('data-folder-key'))
-    dragOverFolderId.value = draggingFolderIds.value.has(key) ? null : key
-    bcDragOverIdx.value = null
-    return
-  }
-  const bcEl = under?.closest?.('.bc-item')
-  if (bcEl?.hasAttribute('data-bc-idx')) {
-    const idx = Number(bcEl.getAttribute('data-bc-idx'))
+const {
+  draggingFileIds, draggingFolderIds, dragOverFolderId, bcDragOverIdx,
+  onFolderPointerDown: _onFolderPointerDown, onFilePointerDown: _onFilePointerDown,
+} = useFileDragDrop({
+  fileDataAttr: 'data-file-id',
+  // data-folder-key 存的是 f.id（"f:65" 这种带前缀字符串，框选那套逻辑要靠它跟 selectedFolderKeys
+  // 对上），不是真实数字 folderId——拖拽这边要拿去拼 API/跟面包屑 folderId 比较，得用另一个只放
+  // 数字 folderId 的属性，两套别混用（混用过一次：Number("f:65") 是 NaN，导致移动全部落空）。
+  folderDataAttr: 'data-folder-id',
+  folderSelector: '.folder-card, .folder-row',
+  resolveBcTarget(idx) {
     const seg = navPath.value[idx]
-    if (seg && isBcDroppable(seg)) {
-      bcDragOverIdx.value = idx
-      dragOverFolderId.value = null
-      return
-    }
-  }
-  dragOverFolderId.value = null
-  bcDragOverIdx.value = null
+    if (!seg || !isBcDroppable(seg)) return null
+    return { targetFolderId: seg.type === 'folder' ? seg.folderId : null, acceptsFiles: true, acceptsFolders: true }
+  },
+  cancelBoxDrag: () => _cancelBoxDrag(),
+  clearSelection() { selectedFolderKeys.value = new Set(); selectedIds.value = new Set() },
+  moveFolders: moveFoldersInto,
+  moveFiles: moveFilesInto,
+})
+
+// selectedFolderKeys 里放的是 f.id（"f:65"），拖拽需要真实数字 folderId——查当前层文件夹列表换算
+function _selectedFolderIdNums() {
+  const folderMap = new Map(sortedContents.value.folders.map(f => [f.id, f.folderId]))
+  return new Set([...selectedFolderKeys.value].map(k => folderMap.get(k)).filter(v => v != null))
 }
 
-// 「吸入文件夹/面包屑」缩小消失动画的目标判定，喂给 startPhysicsDrag/startMultiPhysicsDrag 的
-// resolveAbsorbTarget——跟 updateDragOverHighlight/dispatchFilesDrop 用同一套有效性判断（是否
-// 拖到自己身上、面包屑段是否真的可放置、根「全部文件」项没有 data-bc-idx 天然不算），避免数据
-// 层判定"不动"、视觉层却演了一遍"吸入消失"，两边对不上。
-function _resolveAbsorbTarget(under) {
-  const folderEl = under?.closest?.('.folder-card, .folder-row')
-  if (folderEl) {
-    const key = Number(folderEl.getAttribute('data-folder-key'))
-    return draggingFolderIds.value.has(key) ? null : folderEl
-  }
-  const bcEl = under?.closest?.('.bc-item')
-  if (bcEl?.hasAttribute('data-bc-idx')) {
-    const idx = Number(bcEl.getAttribute('data-bc-idx'))
-    const seg = navPath.value[idx]
-    if (seg && isBcDroppable(seg)) return bcEl
-  }
-  return null
-}
-
-// 松手落点判定 + 真正执行移动（startPhysicsDrag/startMultiPhysicsDrag 的 onDrop 回调）
-async function dispatchFilesDrop({ x, y }) {
-  const under = document.elementFromPoint(x, y)
-  dragOverFolderId.value = null
-  bcDragOverIdx.value = null
-
-  const draggedFolderIds = [...draggingFolderIds.value]
-  const draggedFileIds   = [...draggingFileIds.value]
-  draggingFolderIds.value = new Set()
-  draggingFileIds.value   = new Set()
-  if (!draggedFolderIds.length && !draggedFileIds.length) return
-
-  let targetFolderId = null
-  const folderEl = under?.closest?.('.folder-card, .folder-row')
-  const bcEl     = under?.closest?.('.bc-item')
-  if (folderEl) {
-    const key = Number(folderEl.getAttribute('data-folder-key'))
-    if (draggedFolderIds.includes(key)) return   // 拖到自己身上，不动
-    targetFolderId = key
-  } else if (bcEl?.hasAttribute('data-bc-idx')) {
-    const idx = Number(bcEl.getAttribute('data-bc-idx'))
-    const seg = navPath.value[idx]
-    if (!seg || !isBcDroppable(seg)) return
-    targetFolderId = seg.type === 'folder' ? seg.folderId : null
-  } else {
-    return   // 没落在有效目标上
-  }
-
-  selectedFolderKeys.value = new Set()
-  selectedIds.value = new Set()
-  if (draggedFolderIds.length) await moveFoldersInto(draggedFolderIds, targetFolderId)
-  if (draggedFileIds.length) await moveFilesInto(draggedFileIds, targetFolderId)
-}
-
-// pointerdown 起，越过 5px 阈值才真正开拖（否则当普通点击，交给原有 @click 处理）；
-// 内部操作按钮/重命名输入框先排除，原生 draggable 版本靠子元素 @mousedown.prevent 挡掉
-// dragstart，pointerdown 没有等价的天然阻挡，这里手动排除。
 function onFolderPointerDown(f, e) {
-  if (e.pointerType === 'mouse' && e.button !== 0) return
-  if (e.target.closest('button, input, .rename-sizer')) return
-  const card = e.currentTarget
-  const sx = e.clientX, sy = e.clientY
-  let started = false
-  const onMove = (ev) => {
-    if (started || Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return
-    started = true
-    teardown()
-    _cancelBoxDrag()
-
-    const isMultiSelect = selectedFolderKeys.value.has(f.id) && selectedFolderKeys.value.size > 0
-    const folderObjs = isMultiSelect
-      ? sortedContents.value.folders.filter(item => selectedFolderKeys.value.has(item.id))
-      : [f]
-    const fileIds = isMultiSelect ? [...selectedIds.value] : []
-
-    draggingFolderIds.value = new Set(folderObjs.map(item => item.folderId))
-    if (fileIds.length) draggingFileIds.value = new Set(fileIds)
-
-    const opts = { pointer: true, onDrop: dispatchFilesDrop, onDragOver: updateDragOverHighlight, resolveAbsorbTarget: _resolveAbsorbTarget }
-    const total = folderObjs.length + fileIds.length
-    if (total > 1) {
-      const extraFolderEls = folderObjs.filter(item => item.id !== f.id)
-        .map(item => document.querySelector(`[data-folder-key="${item.id}"]`)).filter(Boolean)
-      const extraFileEls = fileIds
-        .map(id => document.querySelector(`[data-file-id="${id}"]`)).filter(Boolean)
-      const extras = [...extraFolderEls, ...extraFileEls].slice(0, 2)
-      startMultiPhysicsDrag(ev, card, total, extras, opts)
-    } else {
-      startPhysicsDrag(ev, card, opts)
-    }
-  }
-  const onUp = () => teardown()
-  const teardown = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-    window.removeEventListener('pointercancel', onUp)
-  }
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
-  window.addEventListener('pointercancel', onUp)
+  _onFolderPointerDown(e, {
+    itemId: f.folderId,
+    isSelected: selectedFolderKeys.value.has(f.id),
+    selectedFileIds: selectedIds.value,
+    selectedFolderIds: _selectedFolderIdNums(),
+  })
 }
-
 function onFilePointerDown(f, e) {
-  if (e.pointerType === 'mouse' && e.button !== 0) return
-  if (e.target.closest('button, input, .rename-sizer')) return
-  const card = e.currentTarget
-  const sx = e.clientX, sy = e.clientY
-  let started = false
-  const onMove = (ev) => {
-    if (started || Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return
-    started = true
-    teardown()
-    _cancelBoxDrag()
-
-    const fileIds = selectedIds.value.has(f.id) && selectedIds.value.size > 0
-      ? [...selectedIds.value] : [f.id]
-    const isFileSelected = selectedIds.value.has(f.id)
-    const folderObjs = isFileSelected
-      ? sortedContents.value.folders.filter(item => selectedFolderKeys.value.has(item.id))
-      : []
-
-    draggingFileIds.value = new Set(fileIds)
-    if (folderObjs.length) draggingFolderIds.value = new Set(folderObjs.map(item => item.folderId))
-
-    const opts = { pointer: true, onDrop: dispatchFilesDrop, onDragOver: updateDragOverHighlight, resolveAbsorbTarget: _resolveAbsorbTarget }
-    const total = fileIds.length + folderObjs.length
-    if (total > 1) {
-      const extraFileEls = fileIds.filter(id => id !== f.id)
-        .map(id => document.querySelector(`[data-file-id="${id}"]`)).filter(Boolean)
-      const extraFolderEls = folderObjs
-        .map(item => document.querySelector(`[data-folder-key="${item.id}"]`)).filter(Boolean)
-      const extras = [...extraFileEls, ...extraFolderEls].slice(0, 2)
-      startMultiPhysicsDrag(ev, card, total, extras, opts)
-    } else {
-      startPhysicsDrag(ev, card, opts)
-    }
-  }
-  const onUp = () => teardown()
-  const teardown = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-    window.removeEventListener('pointercancel', onUp)
-  }
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
-  window.addEventListener('pointercancel', onUp)
+  _onFilePointerDown(e, {
+    itemId: f.id,
+    isSelected: selectedIds.value.has(f.id),
+    selectedFileIds: selectedIds.value,
+    selectedFolderIds: _selectedFolderIdNums(),
+  })
 }
 
 function pruneHistoryForFolders(folderIds) {

@@ -193,19 +193,15 @@
                 <PhArrowRight :size="13" weight="bold" />
               </button>
               <button class="bc-seg" :class="{ 'bc-drop-target': pmBcDragOverIdx === -1 }"
+                data-bc-idx="-1"
                 @click="navigateTo(-1)"
-                @dragover="onPmBcDragOver(-1, null, $event)"
-                @dragleave="onPmBcDragLeave(-1)"
-                @drop="onPmBcDrop(null, $event)"
               >项目文件</button>
               <template v-for="(seg, idx) in folderStack" :key="seg.id">
                 <PhCaretRight :size="10" weight="bold" class="bc-sep" />
                 <button v-if="idx < folderStack.length - 1" class="bc-seg"
                   :class="{ 'bc-drop-target': pmBcDragOverIdx === idx }"
+                  :data-bc-idx="idx"
                   @click="navigateTo(idx)"
-                  @dragover="onPmBcDragOver(idx, seg, $event)"
-                  @dragleave="onPmBcDragLeave(idx)"
-                  @drop="onPmBcDrop(seg.id, $event)"
                 >{{ seg.name }}</button>
                 <span v-else class="bc-seg bc-cur">{{ seg.name }}</span>
               </template>
@@ -294,14 +290,9 @@
                   class="folder-card" :style="{ '--fd-color': accentColor }"
                   :class="{ 'drag-over': pmDragOverFolderId === folder.id, selected: pmSelectedFolderIds.has(folder.id), 'pre-selected': pmPreviewFolderIds.has(folder.id) }"
                   :data-pm-folder-id="folder.id"
-                  draggable="true"
                   @click.stop="onPmFolderClick(folder, $event)"
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
-                  @dragstart="onPmFolderCardDragStart(folder, $event)"
-                  @dragend="onPmFolderCardDragEnd"
-                  @dragover="onPmFolderDragOver(folder, $event)"
-                  @dragleave="onPmFolderDragLeave(folder)"
-                  @drop="onPmFolderDrop(folder, $event)">
+                  @pointerdown="onPmFolderPointerDown(folder, $event)">
                   <Transition name="sel-cb">
                     <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFolderIds.has(folder.id) }">
                       <PhCheck v-if="pmSelectedFolderIds.has(folder.id)" :size="10" weight="bold" style="color:white" />
@@ -342,11 +333,9 @@
                   class="fc-card" :style="{ '--fc-color': fileIconColor(file.ext) }"
                   :class="{ selected: pmSelectedFileIds.has(file.id), 'pre-selected': pmPreviewFileIds.has(file.id), dragging: pmDraggingFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id), 'fc-has-thumb': isPmImageExt(file.ext) }"
                   :data-pm-file-id="file.id"
-                  draggable="true"
                   @contextmenu.prevent.stop="openPmCtx('file', file, $event)"
                   @click.stop="pmHandleFileClick(file, $event)"
-                  @dragstart="onPmFileDragStart(file, $event)"
-                  @dragend="onPmFileDragEnd">
+                  @pointerdown="onPmFilePointerDown(file, $event)">
                   <Transition name="sel-cb">
                     <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFileIds.has(file.id) }">
                       <PhCheck v-if="pmSelectedFileIds.has(file.id)" :size="10" weight="bold" style="color:white" />
@@ -489,14 +478,9 @@
                   class="list-row folder-list-row"
                   :class="{ 'drag-over': pmDragOverFolderId === folder.id, selected: pmSelectedFolderIds.has(folder.id), 'pre-selected': pmPreviewFolderIds.has(folder.id) }"
                   :data-pm-folder-id="folder.id"
-                  draggable="true"
                   @click.stop="onPmFolderClick(folder, $event)"
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
-                  @dragstart="onPmFolderCardDragStart(folder, $event)"
-                  @dragend="onPmFolderCardDragEnd"
-                  @dragover="onPmFolderDragOver(folder, $event)"
-                  @dragleave="onPmFolderDragLeave(folder)"
-                  @drop="onPmFolderDrop(folder, $event)">
+                  @pointerdown="onPmFolderPointerDown(folder, $event)">
                   <span class="lr-name-cell">
                     <PhFolder class="lr-folder-icon" :size="16" weight="fill" :style="{ color: accentColor }" />
                     <span class="lr-filename" :title="folder.name">
@@ -533,11 +517,9 @@
                   class="list-row"
                   :class="{ selected: pmSelectedFileIds.has(file.id), 'pre-selected': pmPreviewFileIds.has(file.id), dragging: pmDraggingFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id) }"
                   :data-pm-file-id="file.id"
-                  draggable="true"
                   @contextmenu.prevent.stop="openPmCtx('file', file, $event)"
                   @click.stop="pmHandleFileClick(file, $event)"
-                  @dragstart="onPmFileDragStart(file, $event)"
-                  @dragend="onPmFileDragEnd">
+                  @pointerdown="onPmFilePointerDown(file, $event)">
                   <span class="lr-name-cell">
                     <span class="lr-ext" :style="{ color: fileIconColor(file.ext), background: fileIconColor(file.ext) + '18' }">{{ file.ext }}</span>
                     <span class="lr-filename" :title="file.displayName">
@@ -717,7 +699,7 @@ import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
 import { readDroppedEntries, filesToItems, uploadFilesWithFolders } from '@/composables/useFileUpload'
 import { useBoxSelection } from '@/composables/useBoxSelection'
-import { startPhysicsDrag, startMultiPhysicsDrag } from '@/composables/usePhysicsDrag'
+import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { fireHint } from '@/composables/useOnboarding'
 import DatePicker from '@/components/common/DatePicker.vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
@@ -1023,156 +1005,23 @@ async function deleteSelectedPm() {
 }
 
 // ── 拖动移动 ──────────────────────────────────────────────────────────────────
-const pmDraggingFileIds   = ref(new Set())
-const pmDraggingFolderIds = ref(new Set())
-const pmDragOverFolderId  = ref(null)
-const pmBcDragOverIdx     = ref(null)
-
-function onPmFolderCardDragStart(folder, e) {
-  const isMultiSelect = pmSelectedFolderIds.value.has(folder.id) && pmSelectedFolderIds.value.size > 0
-  const folderIds = isMultiSelect ? [...pmSelectedFolderIds.value] : [folder.id]
-  const fileIds = isMultiSelect ? [...pmSelectedFileIds.value] : []
-
-  pmDraggingFolderIds.value = new Set(folderIds)
-  if (fileIds.length) pmDraggingFileIds.value = new Set(fileIds)
-
-  e.dataTransfer.setData('application/x-folder-ids', JSON.stringify(folderIds))
-  if (fileIds.length) e.dataTransfer.setData('text/plain', JSON.stringify(fileIds))
-  e.dataTransfer.effectAllowed = 'move'
-
-  if (e.currentTarget?.classList?.contains('folder-card')) {
-    const opts = stagesExpanded.value ? { cloneClass: 'pm-clone-expanded' } : {}
-    const total = folderIds.length + fileIds.length
-    if (total > 1) {
-      const extraFolderEls = folderIds.filter(id => id !== folder.id)
-        .map(id => document.querySelector(`[data-pm-folder-id="${id}"]`)).filter(Boolean)
-      const extraFileEls = fileIds
-        .map(id => document.querySelector(`[data-pm-file-id="${id}"]`)).filter(Boolean)
-      const extras = [...extraFolderEls, ...extraFileEls].slice(0, 2)
-      startMultiPhysicsDrag(e, e.currentTarget, total, extras, opts)
-    } else {
-      startPhysicsDrag(e, e.currentTarget, opts)
-    }
-  }
-}
-function onPmFolderCardDragEnd() {
-  pmDraggingFolderIds.value = new Set()
-  pmDraggingFileIds.value   = new Set()
-  pmDragOverFolderId.value  = null
-}
-
-function onPmFileDragStart(file, e) {
-  const fileIds = pmSelectedFileIds.value.has(file.id) && pmSelectedFileIds.value.size > 0
-    ? [...pmSelectedFileIds.value] : [file.id]
-  const isFileSelected = pmSelectedFileIds.value.has(file.id)
-  const folderIds = isFileSelected ? [...pmSelectedFolderIds.value] : []
-
-  pmDraggingFileIds.value = new Set(fileIds)
-  if (folderIds.length) pmDraggingFolderIds.value = new Set(folderIds)
-
-  e.dataTransfer.setData('text/plain', JSON.stringify(fileIds))
-  if (folderIds.length) e.dataTransfer.setData('application/x-folder-ids', JSON.stringify(folderIds))
-  e.dataTransfer.effectAllowed = 'move'
-
-  const isCard = e.currentTarget?.classList?.contains('fc-card')
-  const opts = stagesExpanded.value ? { cloneClass: 'pm-clone-expanded' } : {}
-  const total = fileIds.length + folderIds.length
-  if (isCard && total > 1) {
-    const extraFileEls = fileIds.filter(id => id !== file.id)
-      .map(id => document.querySelector(`[data-pm-file-id="${id}"]`)).filter(Boolean)
-    const extraFolderEls = folderIds
-      .map(id => document.querySelector(`[data-pm-folder-id="${id}"]`)).filter(Boolean)
-    const extras = [...extraFileEls, ...extraFolderEls].slice(0, 2)
-    startMultiPhysicsDrag(e, e.currentTarget, total, extras, opts)
-  } else if (isCard) {
-    startPhysicsDrag(e, e.currentTarget, opts)
-  } else {
-    try {
-      const _r = e.currentTarget.getBoundingClientRect()
-      e.dataTransfer.setDragImage(e.currentTarget, e.clientX - _r.left, e.clientY - _r.top)
-    } catch {}
-  }
-  _cancelPmBoxDrag()
-}
-function onPmFileDragEnd() {
-  pmDraggingFileIds.value   = new Set()
-  pmDraggingFolderIds.value = new Set()
-  pmDragOverFolderId.value  = null
-}
-function onPmBcDragOver(idx, _seg, e) {
-  if (!pmDraggingFileIds.value.size) return
-  e.preventDefault(); e.dataTransfer.dropEffect = 'move'
-  pmBcDragOverIdx.value = idx
-}
-function onPmBcDragLeave(idx) {
-  if (pmBcDragOverIdx.value === idx) pmBcDragOverIdx.value = null
-}
-async function onPmBcDrop(targetFolderId, e) {
-  e.preventDefault(); pmBcDragOverIdx.value = null
-  let ids; try { ids = JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return }
-  if (!ids?.length) return
+// pointer 模式，编排逻辑跟 Files/index.vue 共用同一份 useFileDragDrop——这里只提供 ProjectModal
+// 特有的规则：文件夹卡片/行选择器、面包屑只接收文件不接收文件夹（跟原生 dataTransfer 版本行为
+// 一致，未新增能力）、以及落地后的刷新策略（落面包屑只轻量刷新当前层文件；落文件夹卡片整体重
+// 新拉取文件+文件夹并把导航重置回根——这是原有行为，不是本次改造引入的）。
+async function _pmRefetchCurrentFiles() {
   const pid = props.project?.id; if (!pid) return
-  try {
-    await Promise.all(ids.map(id => filesApi.update(id, { folder_id: targetFolderId })))
-    pmDraggingFileIds.value = new Set(); clearPmSelection()
-    // 刷新当前层文件列表（文件已移走）
-    const stack = folderStack.value
-    if (!stack.length) {
-      const files = await filesApi.list({ projectId: pid })
-      projectFiles.value = files.filter(f => !f.folderId)
-    } else {
-      const fid = stack[stack.length - 1].id
-      const files = await filesApi.list({ folderId: fid })
-      folderFilesMap.value = { ...folderFilesMap.value, [fid]: files }
-    }
-  } catch (err) { console.error('[ProjectModal] 移动失败:', err.message) }
-}
-
-function onPmFolderDragOver(folder, e) {
-  e.preventDefault(); e.dataTransfer.dropEffect = 'move'
-  pmDragOverFolderId.value = folder.id
-}
-function onPmFolderDragLeave(folder) {
-  if (pmDragOverFolderId.value === folder.id) pmDragOverFolderId.value = null
-}
-async function onPmFolderDrop(folder, e) {
-  e.preventDefault(); pmDragOverFolderId.value = null
-
-  const hasDraggingFolders = pmDraggingFolderIds.value.size > 0
-  const hasDraggingFiles   = pmDraggingFileIds.value.size > 0
-
-  if (hasDraggingFolders) {
-    const ids = [...pmDraggingFolderIds.value].filter(id => id !== folder.id)
-    pmDraggingFolderIds.value = new Set()
-    if (ids.length) {
-      try {
-        await Promise.all(ids.map(id => foldersApi.move(id, folder.id)))
-      } catch (err) { console.error('[ProjectModal] 移动文件夹失败:', err.message) }
-    }
-    if (!hasDraggingFiles) {
-      clearPmSelection()
-      const pid = props.project?.id; if (!pid) return
-      const [files, allFolders] = await Promise.all([
-        filesApi.list({ projectId: pid }),
-        foldersApi.list({ projectId: pid }),
-      ])
-      projectFiles.value = files.filter(f => !f.folderId)
-      projectFolders.value = allFolders
-      folderFilesMap.value = {}; subFolderMap.value = {}; folderStack.value = []
-      pmNavStack.value = [[]]; pmNavCursor.value = 0
-      return
-    }
+  const stack = folderStack.value
+  if (!stack.length) {
+    const files = await filesApi.list({ projectId: pid })
+    projectFiles.value = files.filter(f => !f.folderId)
+  } else {
+    const fid = stack[stack.length - 1].id
+    const files = await filesApi.list({ folderId: fid })
+    folderFilesMap.value = { ...folderFilesMap.value, [fid]: files }
   }
-
-  const fileIds = hasDraggingFiles
-    ? [...pmDraggingFileIds.value]
-    : (() => { try { return JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return null } })()
-  if (fileIds?.length) {
-    try {
-      await Promise.all(fileIds.map(id => filesApi.update(id, { folder_id: folder.id })))
-    } catch (err) { console.error('[ProjectModal] 移动文件失败:', err.message) }
-  }
-  pmDraggingFileIds.value = new Set(); clearPmSelection()
+}
+async function _pmRefetchAllAndResetNav() {
   const pid = props.project?.id; if (!pid) return
   const [files, allFolders] = await Promise.all([
     filesApi.list({ projectId: pid }),
@@ -1182,6 +1031,61 @@ async function onPmFolderDrop(folder, e) {
   projectFolders.value = allFolders
   folderFilesMap.value = {}; subFolderMap.value = {}; folderStack.value = []
   pmNavStack.value = [[]]; pmNavCursor.value = 0
+}
+
+// 面包屑不接收文件夹（resolveBcTarget 的 acceptsFolders 恒为 false），这里只会在落到文件夹
+// 卡片上时被调用，所以固定走整体刷新+重置导航。
+async function movePmFoldersInto(folderIds, targetFolderId) {
+  try {
+    await Promise.all(folderIds.map(id => foldersApi.move(id, targetFolderId)))
+  } catch (err) { console.error('[ProjectModal] 移动文件夹失败:', err.message) }
+  await _pmRefetchAllAndResetNav()
+}
+async function movePmFilesInto(fileIds, targetFolderId, { droppedOn }) {
+  try {
+    await Promise.all(fileIds.map(id => filesApi.update(id, { folder_id: targetFolderId })))
+  } catch (err) { console.error('[ProjectModal] 移动失败:', err.message) }
+  if (droppedOn === 'breadcrumb') await _pmRefetchCurrentFiles()
+  else await _pmRefetchAllAndResetNav()
+}
+
+const {
+  draggingFileIds: pmDraggingFileIds, draggingFolderIds: pmDraggingFolderIds,
+  dragOverFolderId: pmDragOverFolderId, bcDragOverIdx: pmBcDragOverIdx,
+  onFolderPointerDown: _onPmFolderPointerDown, onFilePointerDown: _onPmFilePointerDown,
+} = useFileDragDrop({
+  fileDataAttr: 'data-pm-file-id',
+  folderDataAttr: 'data-pm-folder-id',
+  folderSelector: '.folder-card, .folder-list-row',
+  bcSelector: '.bc-seg',
+  resolveBcTarget(idx) {
+    if (idx === -1) return { targetFolderId: null, acceptsFiles: true, acceptsFolders: false }
+    const seg = folderStack.value[idx]
+    return seg ? { targetFolderId: seg.id, acceptsFiles: true, acceptsFolders: false } : null
+  },
+  cancelBoxDrag: () => _cancelPmBoxDrag(),
+  clearSelection: clearPmSelection,
+  moveFolders: movePmFoldersInto,
+  moveFiles: movePmFilesInto,
+})
+
+function onPmFolderPointerDown(folder, e) {
+  _onPmFolderPointerDown(e, {
+    itemId: folder.id,
+    isSelected: pmSelectedFolderIds.value.has(folder.id),
+    selectedFileIds: pmSelectedFileIds.value,
+    selectedFolderIds: pmSelectedFolderIds.value,
+    extraOpts: stagesExpanded.value ? { cloneClass: 'pm-clone-expanded' } : {},
+  })
+}
+function onPmFilePointerDown(file, e) {
+  _onPmFilePointerDown(e, {
+    itemId: file.id,
+    isSelected: pmSelectedFileIds.value.has(file.id),
+    selectedFileIds: pmSelectedFileIds.value,
+    selectedFolderIds: pmSelectedFolderIds.value,
+    extraOpts: stagesExpanded.value ? { cloneClass: 'pm-clone-expanded' } : {},
+  })
 }
 
 // ── 排序 ──────────────────────────────────────────────────────────────────────
@@ -1964,11 +1868,18 @@ async function uploadFiles(items) {
     const total = items.filter(it => it.relativePath.startsWith(top + '/')).length
     folderGhosts.set(top, createFolderGhost(top, total))
   }
+  // 顶层文件夹（正被 ghost 追踪进度的那几个）先别实时插进可见列表——插了会跟它的 ghost 卡
+  // 同时出现，看起来像「两个文件夹」。攒着，等这组文件全传完（ghost 即将消失那一刻）再插入，
+  // 从「上传中」无缝换成「已完成」。更深层的子文件夹本来就不在当前视图里，直接插不会重复。
+  const pendingTopFolders = new Map()
 
   await uploadFilesWithFolders(items, {
     projectId: props.project.id, baseFolderId,
-    // 新建的子文件夹实时插进当前层级的列表，不用等整批传完再刷新才看得到
     onFolderCreated: (created) => {
+      if (folderGhosts.has(created.name) && (created.parentId ?? null) === baseFolderId) {
+        pendingTopFolders.set(created.name, created)
+        return
+      }
       if ((created.parentId ?? null) !== baseFolderId) return
       if (baseFolderId == null) {
         projectFolders.value = [...projectFolders.value, created]
@@ -1983,6 +1894,21 @@ async function uploadFiles(items) {
         (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(0, i) : file.name })(),
         (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(i + 1).toUpperCase() : '' })(),
       )
+      // 这组文件全处理完（不管成功失败）就把攒着的真实文件夹插进可见列表——成功/失败两条
+      // 路径都要走，否则「文件夹最后一个文件恰好失败」时永远插不进去
+      const settleFolder = (failed) => {
+        if (!folderGhost) return
+        bumpFolderGhost(folderGhost, failed)
+        if (folderGhost.done >= folderGhost.total && pendingTopFolders.has(top)) {
+          const pending = pendingTopFolders.get(top)
+          if (baseFolderId == null) {
+            projectFolders.value = [...projectFolders.value, pending]
+          } else {
+            subFolderMap.value = { ...subFolderMap.value, [baseFolderId]: [...(subFolderMap.value[baseFolderId] ?? []), pending] }
+          }
+          pendingTopFolders.delete(top)
+        }
+      }
       try {
         const form = new FormData()
         form.append('file', file)
@@ -1991,7 +1917,7 @@ async function uploadFiles(items) {
         if (resolvedFolderId) form.append('folder_id', resolvedFolderId)
         const created = await uploadWithProgress('/files', form, p => { if (ghost) updateGhostProgress(ghost, p) })
         if (ghost) removeGhost(ghost)
-        else bumpFolderGhost(folderGhost)
+        else settleFolder(false)
         if (created) fileCacheStore.addFile(created)
         // 只有落在「当前正看着的」这一层才即时插进本地列表；落进拖拽新建的子文件夹（当前
         // 视图看不到）靠批量结束后的 loadFolders 刷新拿到服务端算好的 fileCount，不在这现算
@@ -2010,13 +1936,13 @@ async function uploadFiles(items) {
       } catch (e) {
         console.error('[ProjectModal] 上传失败:', e.message)
         if (ghost) failGhost(ghost)
-        else bumpFolderGhost(folderGhost, true)
+        else settleFolder(true)
       }
     },
   })
 
-  // 兜底：onFolderCreated 已经实时插过新文件夹，这里再刷新一次当前层级，把服务端算好的
-  // fileCount 校准回来（本地是边传边手动 +1，量大时可能跟服务端有细微出入）
+  // 兜底：顶层文件夹已经在 settleFolder 里随 ghost 完成同步插过了，这里再刷新一次当前层级，
+  // 把服务端算好的 fileCount 校准回来（本地是边传边手动 +1，量大时可能跟服务端有细微出入）
   if (items.some(it => it.relativePath.includes('/'))) await loadFolders(props.project.id, baseFolderId)
 }
 
