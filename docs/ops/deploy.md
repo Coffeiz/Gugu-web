@@ -179,7 +179,7 @@ cd backend
 .venv/bin/python -m worker                        # 队列消费 worker
 ```
 
-频道在 **Admin → Agent 配置 → 频道** 里加（详见 `[feishu接入指南.md](../agent/feishu接入指南.md)`）。
+频道在 **Admin → Agent 配置 → 频道** 里加（详见 `[飞书接入指南.md](../agent/飞书接入指南.md)`）。
 
 > ⚠️ 改了 `agent/` 大脑代码后要重启 **worker**（不是 web、也不是 supervisor）——「改了什么、重启哪个」的完整决策表见 **§6.1**。
 
@@ -442,7 +442,7 @@ sudo systemctl status gugu-backend gugu-worker gugu-supervisor
 
 ### 5.1 接入步骤
 
-飞书 bot 创建、权限、长连接事件订阅、凭据填写、频道面板原理，**完整步骤见 `[feishu接入指南.md](../agent/feishu接入指南.md)`**。QQ / 微信（个人微信 iLink）走 Admin 面板扫码自连。
+飞书 bot 创建、权限、长连接事件订阅、凭据填写、频道面板原理，**完整步骤见 `[飞书接入指南.md](../agent/飞书接入指南.md)`**。QQ / 微信（个人微信 iLink）走 Admin 面板扫码自连。
 
 生产前提：确保 `gugu-supervisor` + `gugu-worker` 两个服务在跑（§4.5），频道在 Admin 面板增删启停**即时生效**（日常增删启停、重启管家见 §6.4 / §6.3）。
 
@@ -741,7 +741,7 @@ MemoryMax=512M
 | 后端 500 / 启动失败                          | 必须从 `backend/` 目录起（否则 `.env` 不加载）；查 `logs/gugu.log`     |
 | 生成 Word/PDF/Excel 失败                   | 没装 **LibreOffice**（`apt install libreoffice`）           |
 | 聊天流式（SSE）被截断                           | nginx 要 `proxy_buffering off` + 拉长 `proxy_read_timeout` |
-| IM 收不到/回不出                             | Redis 没起；或 supervisor/worker 没跑；详见 feishu接入指南排错表        |
+| IM 收不到/回不出                             | Redis 没起；或 supervisor/worker 没跑；详见 飞书接入指南排错表        |
 | 「改了代码但行为没变」                            | 多半漏重启 worker（大脑在 worker，不在 web）——见 §6.1 重启决策表          |
 | worker `Timeout reading from ...:6379` | 已修：`app/core/redis.py` `socket_timeout=None`（旧版本需更新代码）  |
 | Admin 频道保存「消失」                         | 后端加了 `/admin/agent/bots` 接口后要 `make restart`            |

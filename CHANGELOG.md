@@ -43,7 +43,7 @@
 - **多用户隔离下沉查询层 + 后端首套自动化测试（商用就绪 P0-2）**（`app/core/ownership.py` + `tests/` + 9 个 REST 路由文件）：此前隔离靠每处手写「`db.get` + `if user_id !=`」，属约定而非机制。新增 `get_owned()` 取行+归属校验一体（「不存在」与「不是你的」对外同为 None 防资源枚举；对内打 `ownership.denied` 结构化告警=越权探测信号源），工具层 + REST 层 46 处裸查询全部收敛；配套 pytest + 内存 SQLite 测试基建（<2s 全程）与 7 领域越权用例 + 静态守卫防新增裸查询。
 - **删除确认门框架级强制（P0-3）**（`scripts/check_confirm_gate.py` + dispatch 绊线 + 9 测试）：`Tool.destructive` 此前只是文档性标记、确认门靠 handler 作者自觉。补两层机制：AST 静态守卫校验所有 destructive 工具源码必须引用 `needs_confirmation`（漏接提交前即被抓）+ dispatch 运行时绊线兜底。
 - **全链路 trace_id + 工具失败率/延迟运维指标（P0-4）**（`agent/trace.py` + `app/core/opsmetrics.py` + `api/v1/ops_admin.py`）：一条消息跨网关/worker 两进程此前日志无共同标识、只能时间戳对账。ContextVar 全链路 trace（IM 网关生成 12 位 hex → 随 payload 入队 → worker 恢复 → 工具轨迹/回复日志同 id）；新增工具失败率/延迟运维指标闭环（此前只有产品口径指标）。
-- **账户注销全量清数据 + IM 侧记忆命令 + 三平台 ToS 合规记录（P0-5）**（`app/services/storage/__init__.py` + `api/v1/users_admin.py` + `worker.py` + `agent-im接入架构.md` §3.4）：隐私政策承诺「注销后从数据库和存储中永久删除」，但 `delete_user` 此前只做 DB 级联——AI 记忆（`.agent/`）、上传文件、语音都在存储层，级联碰不到（文档承诺与代码不一致的合规缺口）。新增 `StorageBackend.delete_prefix()`（Local=rmtree 带越界防呆、OSS=批量删），注销按序清：缩略图缓存 → 整个 `{user_id}/` 存储前缀 → Redis 用户数据（聊天暂存元数据+IM 可达地址）→ DB 级联，审计日志记清除对象数；5 个契约测试（清净/不误伤他人/防呆拒空根越界）。`/memory` `/forget` 接入 IM 侧（worker 短路，与 web 同语义：零 LLM、不计精力、不反思），飞书/QQ/微信用户同享隐私控制权。IM 架构文档补三平台条款合规/封号风险评估表（BYO 模型无「官方号被封全体中断」单点；微信🟡中风险建议默认不开启）。
+- **账户注销全量清数据 + IM 侧记忆命令 + 三平台 ToS 合规记录（P0-5）**（`app/services/storage/__init__.py` + `api/v1/users_admin.py` + `worker.py` + `IM接入架构.md` §3.4）：隐私政策承诺「注销后从数据库和存储中永久删除」，但 `delete_user` 此前只做 DB 级联——AI 记忆（`.agent/`）、上传文件、语音都在存储层，级联碰不到（文档承诺与代码不一致的合规缺口）。新增 `StorageBackend.delete_prefix()`（Local=rmtree 带越界防呆、OSS=批量删），注销按序清：缩略图缓存 → 整个 `{user_id}/` 存储前缀 → Redis 用户数据（聊天暂存元数据+IM 可达地址）→ DB 级联，审计日志记清除对象数；5 个契约测试（清净/不误伤他人/防呆拒空根越界）。`/memory` `/forget` 接入 IM 侧（worker 短路，与 web 同语义：零 LLM、不计精力、不反思），飞书/QQ/微信用户同享隐私控制权。IM 架构文档补三平台条款合规/封号风险评估表（BYO 模型无「官方号被封全体中断」单点；微信🟡中风险建议默认不开启）。
 - **后台运维监控页 + 安全事件计数 + Debug 全链路搜索 + 注销清除反馈**（`views/Admin/Ops/index.vue` + `app/core/opsmetrics.py` + `views/Admin/Debug/index.vue` + `views/Admin/Users/index.vue`）：把 P0-4/P0-5 攒下的「有数据没界面」接进后台。① **运维监控**新页（侧边栏系统组）：安全事件横幅（越权拦截 / 确认门绕过两项计数，正常恒 0、非零红色告警）+ 概览卡（调用量/失败率/P99）+ 延迟分布条形图 + 每工具失败率/耗时明细表，今天/7天/14天切换；`opsmetrics` 加 `record_security()` 旁路计数接上 `get_owned` 与 dispatch 绊线两处埋点。② **Debug 日志加关键词搜索框**——贴 `trace=xxxx` 即过滤出一条消息跨网关/worker 的全链路。③ **删除用户后绿色横幅**显示清除的存储对象数，当场确认隐私政策「注销后从存储永久删除」真执行。④ 顺手修了个测试隔离漏洞：越权/确认门测试用例会触发计数旁路、在实时 loop 下污染生产 Redis，加 `pytest in sys.modules` 守卫禁写。前端全 TS。
 
 ### 改进
@@ -92,8 +92,8 @@
   - **不查岗**：已完成（100%）项目 + 过去事件从上下文剔除；prompt 明令绝不问「X 做完了吗 / 搞定没 / 进展如何」。
   - **暖迎、不评论间隔**：刚聊过 → 暖暖接住、像老友回来了高兴，绝不说「又回来了 / 这么快 / 刚走又来」（读着不欢迎）；确隔多日才用久别语气，且别说「刚才 / 还在…呢」。
   - **引出话题**：结尾主动递一个勾人的轻话头（从近况/当日项目挑，问「好玩不 / 朋友反馈咋样」这种体验·社交角度），别只「想聊啥都行」被动交回、也别每次硬套问句。
-- **咕咕相处方式重构：persona 纯人格 + 反思驱动 stance 选行为模块**（`prompts/persona.md` + `prompts/behaviors/*.md` + `agent/behaviors.py` + `memory/{store,reflection}.py` + `context/builder.py`）：解决「总爱把对话往推进项目上带、想闲聊时没闲聊感」。① persona **瘦身为纯人格**（删四态打法 + 主动思考），相处行为全部抽成独立模块；② 新增常驻 `baseline`（四态地图 + 中性默认「先理解、别急着推进」）+ `companion`（陪聊）/`execution`/`record`/`query`/`reflect`，与既有 `emotion-first`/`stuck-first`/`decision-explore` 一起按 **1:1 stance** 点亮；③ 模块选择从「正则猜本句」改为**反思（异步 LLM）产出的 stance 驱动**（= `perception.intent`，落 per-user `.agent/stance.json`、带新鲜度衰减 30min 闸；热路径零 LLM、滞后一轮可接受）。效果：推进从「无脑默认」降为「判成执行/推进 stance 才点亮」，闲聊轮纯陪聊、无压力。详见 `docs/agent/感知系统-架构升级.md` §2.6。
-- **错读需求案例收集器 + companion 松绑（感知系统续）**（`memory/reflection.py` + `prompts/reflection.md` + `behaviors/companion.md`）：① 反思检测到「感知误读」纠正时，顺带吐**脱敏**的结构化诊断 `miss{read_as, actual, pattern}`（三字段只认固定枚举（read_as·actual=需求类型、pattern=错读模式），枚举外落「其他」、结构上零泄漏；此为 5 轮真实反思验证逼出——free-text 会行内夹带用户内容），单独收进 Redis `perc:misread_cases`、并**持久化进全局 md `_analytics/misread.md`（跨 Redis 不丢）+ admin 下载端点 `/admin/perception/misread/export`** + **后台 Perception 面板「错读案例」预览栏（最近 30 条 read_as→actual + 模式，`/misread/recent`）+ 「下载完整记录」按钮**——把感知误判从「只有数字、没有原因」补成「有具体（脱敏）、可预览可下载的原因」，给后续「需求发现闭环」攒燃料（见 `docs/agent/感知系统-架构升级.md` §11）。② `companion` 松绑：区分「真上心地帮（查一查 / 给角度）」与「生产力式硬推」，分享时先共情、grounding 配着帮，仍保留「别任务化 / 别拐回推进」。
+- **咕咕相处方式重构：persona 纯人格 + 反思驱动 stance 选行为模块**（`prompts/persona.md` + `prompts/behaviors/*.md` + `agent/behaviors.py` + `memory/{store,reflection}.py` + `context/builder.py`）：解决「总爱把对话往推进项目上带、想闲聊时没闲聊感」。① persona **瘦身为纯人格**（删四态打法 + 主动思考），相处行为全部抽成独立模块；② 新增常驻 `baseline`（四态地图 + 中性默认「先理解、别急着推进」）+ `companion`（陪聊）/`execution`/`record`/`query`/`reflect`，与既有 `emotion-first`/`stuck-first`/`decision-explore` 一起按 **1:1 stance** 点亮；③ 模块选择从「正则猜本句」改为**反思（异步 LLM）产出的 stance 驱动**（= `perception.intent`，落 per-user `.agent/stance.json`、带新鲜度衰减 30min 闸；热路径零 LLM、滞后一轮可接受）。效果：推进从「无脑默认」降为「判成执行/推进 stance 才点亮」，闲聊轮纯陪聊、无压力。详见 `docs/agent/感知系统.md` §2.6。
+- **错读需求案例收集器 + companion 松绑（感知系统续）**（`memory/reflection.py` + `prompts/reflection.md` + `behaviors/companion.md`）：① 反思检测到「感知误读」纠正时，顺带吐**脱敏**的结构化诊断 `miss{read_as, actual, pattern}`（三字段只认固定枚举（read_as·actual=需求类型、pattern=错读模式），枚举外落「其他」、结构上零泄漏；此为 5 轮真实反思验证逼出——free-text 会行内夹带用户内容），单独收进 Redis `perc:misread_cases`、并**持久化进全局 md `_analytics/misread.md`（跨 Redis 不丢）+ admin 下载端点 `/admin/perception/misread/export`** + **后台 Perception 面板「错读案例」预览栏（最近 30 条 read_as→actual + 模式，`/misread/recent`）+ 「下载完整记录」按钮**——把感知误判从「只有数字、没有原因」补成「有具体（脱敏）、可预览可下载的原因」，给后续「需求发现闭环」攒燃料（见 `docs/agent/感知系统.md` §11）。② `companion` 松绑：区分「真上心地帮（查一查 / 给角度）」与「生产力式硬推」，分享时先共情、grounding 配着帮，仍保留「别任务化 / 别拐回推进」。
 - **前端引入 TypeScript 工具链 + api 层迁移（JS→TS 阶段 0+1，纯内部、无用户可见变化）**（`frontend/tsconfig.json` + `vite.config.js` + `services/api.ts` + `types/api.ts` + `package.json`）：为渐进式 JS→TS 迁移搭好地基。① **工具链（阶段 0）**：`tsconfig`（`allowJs` + `checkJs:false` + `strict:false` 起步——存量 `.js` 与无 `lang=ts` 的组件**不检查**，只查新写的 `.ts` / `<script setup lang="ts">`）；`npm run typecheck`（`vue-tsc --noEmit`）作类型门禁（基线绿、已验证能抓错）；vite 开 AutoImport/Components 的 `dts`，让 vue-tsc 认得自动导入的 `ref`/`computed` 与 Arco 组件（生成物 gitignore）。② **类型地基（阶段 1）**：`npm run gen:types` 用 `openapi-typescript` 从后端 OpenAPI 生成 `src/types/api.ts`（**入库**，CI/typecheck 不依赖后端在跑、且前后端对齐）；`services/api.js → api.ts`，`request`/`get`/`post`… 泛型化（默认 `any` 不阻塞存量 JS 调用方），projects/events/files/folders/clients/preferences 用 OpenAPI 实体类型标注返回值，其余留 `any` 待增量升级。**约定：新代码一律 TS，改到的 JS 顺带转、不主动批量重写。** 详见 `docs/product/前端-JS转TS迁移指南.md`。
 - **导航栏文字对比度提升**（`components/common/NavItem.vue` + `AppSidebar.vue`）：导航项默认文字 `rgba(30,32,40,.62)→.8`、hover `.82→.92`，分组标题 `#8a8fa8→#6e7289`，可读性更清晰（「即将上线」占位项仍保持淡、表示禁用）。
 - **Calendar 视图迁移到 TypeScript**（`views/Calendar/index.vue` → `<script setup lang="ts">`，JS→TS 迁移延续）：vue-tsc 0 错；Date 相减改 `+date`、`$event.target`/`dataset` 加 HTMLElement 断言、weekBars 条目补 `row` 占位、两个 `<script>` 块统一 `lang=ts`。
@@ -137,7 +137,7 @@
 
 ### 改进
 
-- **意图守卫:治「说了要做却没动手」（咕咕"我去查一下"然后停住）**（`agent/core.py`）：回复循环里「自由文字+无工具=终止态」，模型随口宣告意图就触发结束。新增第三类确定性守卫 `_announces_intent`——检测「**我去/我来/这就/稍等我/让我/接下来 + 查/搜/建/改/记/整理…**」这类**将来式宣告**且本轮零工具 → 逼一轮当场调工具（与现有 narration「假装已做完」、decision「擅自不做」守卫并排，anthropic/openai 两路都接）。要求明确的"将要"引导词（避免裸"我+动词"误伤如「我改天再看」）；**问句/征询硬排除**（「要我去查吗?」是在等用户拍板，命中即放过、绝不误逼）。只追一次、不死循环。属「A-lite+B」方案的 phase 1（B），finish 工具 + 翻转终止规则（A-lite 结构件）留待观察后再上。详见 `docs/agent/agent-多步执行与防停顿.md`。
+- **意图守卫:治「说了要做却没动手」（咕咕"我去查一下"然后停住）**（`agent/core.py`）：回复循环里「自由文字+无工具=终止态」，模型随口宣告意图就触发结束。新增第三类确定性守卫 `_announces_intent`——检测「**我去/我来/这就/稍等我/让我/接下来 + 查/搜/建/改/记/整理…**」这类**将来式宣告**且本轮零工具 → 逼一轮当场调工具（与现有 narration「假装已做完」、decision「擅自不做」守卫并排，anthropic/openai 两路都接）。要求明确的"将要"引导词（避免裸"我+动词"误伤如「我改天再看」）；**问句/征询硬排除**（「要我去查吗?」是在等用户拍板，命中即放过、绝不误逼）。只追一次、不死循环。属「A-lite+B」方案的 phase 1（B），finish 工具 + 翻转终止规则（A-lite 结构件）留待观察后再上。详见 `docs/agent/多步执行与防停顿.md`。
 - **mimo 深度思考可与「多轮工具调用」共存 + 记忆/反思走结构化输出（json_object）**（`agent/core.py` + `agent/memory/_llm.py`）：对照 mimo 官方「深度思考」「结构化输出」文档查漏补缺——① **深度思考**：openai 路此前**完全没读 `reasoning_content`**，而 mimo 文档硬性要求「多轮 Function Call 必须把上一轮的 `reasoning_content` 完整回传，否则 400」→ 开思考时 mimo 一旦多步调工具就会 400（此前靠默认关思考绕开）。现在流式里捕获 `reasoning_content`、在**所有** assistant 回填点（工具轮 / narration·decision·verify 各 nudge 轮）统一带回（`_asst` 收口）；只在**当轮内存**回传、不入库（openai 路中间轮本就不持久化），思考关时 `reasoning` 恒空、行为与原先逐字一致。② **结构化输出**：记忆/反思的 `complete_json` 对 mimo 开 `response_format={"type":"json_object"}`（mimo 不支持 json_schema，仅 json_object）让正文必为合法 JSON，比纯靠 prompt + `_parse_json` 抠更稳；并显式 `thinking:disabled`——否则 reasoning 与正文共用 `max_completion_tokens`、大 JSON（如反思回显整份 facts）易被推理挤到截断。两项都**仅 mimo 生效**（`_is_mimo` 门控），MiniMax/Anthropic 与其它 openai 兼容厂商行为不变。
 - **个人设置：加「重开浏览器接续上次对话」开关 + 接入咕咕独立成面板**（`ProfileModal.vue` + `GuguChat.vue`）：① 个人设置→咕咕设置新增「对话」区——可选**重开浏览器时「接着上次」/「开新对话」**（默认开新，与历史一致）。会话 id 除 sessionStorage（本标签刷新保留）外再存 localStorage（`gugu_last_session_id`，跨浏览器留最近一段），GuguChat `onMounted` 据设置 `gugu_reopen_resume` 决定接续上次还是开新对话+问候；那段会话被删则退回新对话。② 把「**接入咕咕**」（飞书/QQ/微信 扫码连接、机器人启停删）从「咕咕设置」面板拆出、单独成一个 nav 面板（放咕咕设置下面），咕咕设置只留 精力 / 回复风格 / 对话 / 记忆。
 
@@ -184,7 +184,7 @@
 
 > 本版两根主线：① 给决策环最上游的「感知」装上**可观测 + 可 per-user 成长**的体系——A+B 感知遥测 + 误判捕获 + Admin 诊断面板 / 情境行为模块库 / per-user 解读先验 lens，**观测与学习全在异步反思里、零聊天延迟**；② 记忆补齐 **Phase 2b**——facts 升级为带置信/重要度/时间衰减的结构化 `facts.json`、反思增量化、事件总线、`/memory`·`/forget` 控制命令。外加 IM 跨 session 续接、会话一句话总结、在线/离线状态、一轮时区显示统一。
 
-### 感知系统 P0–P2（新子系统，详见 `docs/agent/感知系统-架构升级.md`）
+### 感知系统 P0–P2（新子系统，详见 `docs/agent/感知系统.md`）
 
 把「感知用户要什么」从隐式（埋在一次 LLM 调用里）变显式、可观测、可学，**全程不给聊天热路径加 LLM 跳**。
 
@@ -388,7 +388,7 @@ agent 工具层 `_delete_project` 还在 `from app.api.v1.projects import rehome
 
 ### 精力系统：耗尽硬拦 + 满额冻结 + 逐字流式提示
 
-精力（Token 配额）从「软降级」改为「硬拦」，新增满额冻结与全局逐字流式。详见 `docs/agent/精力系统架构.md`。
+精力（Token 配额）从「软降级」改为「硬拦」，新增满额冻结与全局逐字流式。详见 `docs/agent/精力系统.md`。
 
 - **耗尽硬拦**（`web.py` / `profiles/base.py`）：6h / 周配额用尽后不再「软降级只挡重操作」，改为直接回一句「咕咕累了，休息会儿再来～」并 return，聊天 / 查询一律不放行；移除 `degraded` / `light_tool_names` / `READ_ONLY_TOOLS`。
 - **封顶 + 满额冻结记账**（新增 `agent/quota.py` `cap_usage`）：记账前按 6h 剩余额度封顶本轮用量——单轮对话顶过线只记「填满到上限」的部分、超出（对话后半段）丢弃，**精力条最多 100% 不越线**；6h 已满则本轮不写 `AgentUsage`（冻结），直到窗口整点重置。被封顶 / 冻结的 token 既不计 6h 也不计周；web `_generate` 与 runner（IM / 定时任务）两处记账都接，非 web 路径满额也不污染周精力。
@@ -471,7 +471,7 @@ agent 工具层 `_delete_project` 还在 `from app.api.v1.projects import rehome
 - **`edit_file` 差异校验**（`files.py`）：原文 ≥200 字且改后 <50% 时结果加 `warning`，逼模型 `read_file` 读回核对（非阻塞）。
 - **工具调用轨迹日志**（`tools/base.py`）：`registry.dispatch` 每次落一行 JSON（tool、args 摘要、ok、ms、user）到 `agent.traj`，三出口全覆盖，`grep '"t": "tool"'` 翻一眼即知。
 - **工具注册契约 fail-fast**（`SkillRegistry.add`）：重名/空名/`input_schema` 非 object/handler 不可调用 → 启动期抛 `ToolContractError`，实测 55 工具全过、4 类违规全拦。
-- **可靠性架构文档**：新增 `docs/agent/agent-reliability.md`（Execution Verifier 执行验证层：信 Tool 不信 Assistant）+ `docs/agent/agent-architecture.md`（可靠性执行链路 + 系统模块全景图）。
+- **可靠性架构文档**：新增 `docs/agent/可靠性.md`（Execution Verifier 执行验证层：信 Tool 不信 Assistant）+ `docs/agent/架构图.md`（可靠性执行链路 + 系统模块全景图）。
 
 ### Agent 人格与知识边界
 
@@ -637,7 +637,7 @@ agent 工具层 `_delete_project` 还在 `from app.api.v1.projects import rehome
 ### 运维 / 文档
 
 - **systemd 托管 worker / supervisor**（`Restart=always`，supervisor `KillMode=control-group`）；`make install` 一次装全 3 个——修「漏重启 worker → 进程死了不自动拉起、消息无限排队」的生产隐患
-- **文档收口**：`开发链路-roadmap.md` → `并发优化ROADMAP.md`（单一权威，P0–P4 + ①–⑨ + 压测），新增 `并发压测结果.md`，删旧 `并发与性能优化.md`；`agent.md` 重整为纯架构参考（1059→418）、`agent-决策环.md` 同步并发现状
+- **文档收口**：`开发链路-roadmap.md` → `并发优化ROADMAP.md`（单一权威，P0–P4 + ①–⑨ + 压测），新增 `并发压测结果.md`，删旧 `并发与性能优化.md`；`agent.md` 重整为纯架构参考（1059→418）、`决策环.md` 同步并发现状
 
 ### 修复
 
@@ -732,7 +732,7 @@ agent 工具层 `_delete_project` 还在 `from app.api.v1.projects import rehome
 ### 文档 / 运维
 
 - **`deploy.md` 完全重写**：开发 + 生产完整教程（venv / 依赖 / 配置 / 数据库 / nginx / systemd 含 worker+supervisor / 排错 / 备份）
-- 新增 **`feishu接入指南.md`**（从零到跑通 + 频道面板原理 + 排错表）；`agent.md` Phase 4 补频道架构
+- 新增 **`飞书接入指南.md`**（从零到跑通 + 频道面板原理 + 排错表）；`agent.md` Phase 4 补频道架构
 - **`.env.example`** 更新为当前嵌套格式（`DB__/AI__/REDIS__/FEISHU__`）；`requirements.txt` 补 `lark-oapi`
 - **`.gitignore`** 补 root `uploads/`（含咕咕 `.agent/` 记忆）+ `*.pid`，防误提交用户数据
 

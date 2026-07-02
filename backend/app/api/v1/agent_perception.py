@@ -3,7 +3,7 @@
 读 Redis `perc:events`（reflection 写入的 capped list：perc + misperc 事件）→ 聚合。
 **口径：只算「活跃用户」（窗口内 ≥ min_events 轮反思的用户，滤掉一次性/测试噪声），
 且头部指标按「每用户先算、再跨用户平均」（宏平均），不让重度用户主导全局。**
-不建表；依赖 P0 的感知遥测（见 docs/agent/感知系统-架构升级.md §3.4 / §5）。脱敏:只聚合结构化字段。
+不建表；依赖 P0 的感知遥测（见 docs/agent/感知系统.md §3.4 / §5）。脱敏:只聚合结构化字段。
 """
 import json
 import time

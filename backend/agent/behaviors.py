@@ -2,7 +2,7 @@
 
 选择走**反思驱动 stance**（异步 LLM 判，非正则）：反思把本轮 `perception.intent` 当 stance 落 per-user，
 builder 下一轮读它 + 新鲜度闸 → 1:1 点亮模块。`baseline` **永远在场**（四态地图 + 中性默认），
-具体 stance 模块叠在其上；stance 过期/缺失 → 仅 baseline。详见 docs/agent/感知系统-架构升级.md §2.6。
+具体 stance 模块叠在其上；stance 过期/缺失 → 仅 baseline。详见 docs/agent/感知系统.md §2.6。
 """
 from __future__ import annotations
 
