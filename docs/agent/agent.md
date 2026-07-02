@@ -61,7 +61,7 @@ backend/
     ├── models.py
     ├── context/{loaders,builder,tokens}.py
     ├── memory/{store,reflection,compress,lens,_llm}.py + decay.py   # 五层记忆：facts(增量delta)/daily/memory/summary(时间衰减)/lens(解读先验)；reflection 提炼 + compress 压缩 + decay 衰减（详见 记忆系统架构.md）
-    ├── behaviors.py + prompts/behaviors/   # 行为模块库（情境策略软点亮：emotion-first/stuck-first/decision-explore）
+    ├── behaviors.py + prompts/behaviors/   # 行为模块库（反思驱动 stance 1:1 点亮，9 模块：baseline 常驻 + 8 stance，见感知系统 §2.6）
     ├── tools/                  # 函数调用工具：projects/calendar/files/clients/trash/overview/memory/search/conversations/scheduled_tasks/im（原 skills/，2026-06 改名）
     ├── skills/                 # prompt skills（带触发条件的「剧本」md，渐进式按需加载）：见「Tools 与 Skills」（核实：目前实际 6 个 .md 文件，其中 5 个已接线进 default profile，详见下）
     ├── profiles/{base,default}.py
@@ -105,7 +105,7 @@ LLM 主循环。负责：
 - 工具调用执行与结果回填（`MAX_ROUNDS = 6`：配合 skills.md 执行准则 + 强工具，多步任务 2~3 轮够用；超限给友好提示「前面已生效，要接着做吗」）——已核对代码，`MAX_ROUNDS`/`MAX_VERIFY` 常量值与下文一致（`backend/agent/core.py`）
 - **自我核实闭环（`MAX_VERIFY = 5`）**：本轮调过增删改工具（即 `RESOURCE_BY_TOOL` 全集）后，模型说"完成"时强制注入一轮「系统自检」——让它用查询工具（`get_project`/`list_files` …）查证真生效且完整，**不全就当场补做**。**触发条件是"这一轮做过增删改"（`did_mutate`）**：自检轮若只查证没改动 → 结束；若补做了（又调增删改）→ `did_mutate` 重新置位、再来一轮，直到"只查不改"或封顶 5 轮。**不是固定跑 5 轮**：通过即停，只读任务零额外开销。两路（Anthropic/OpenAI）同构，轮预算 `MAX_ROUNDS + MAX_VERIFY*2` 不挤占任务轮
   - **静默自检（`verify_mode`/`verify_fixed`）**：核实阶段（含其 `get_*` 查证轮）模型的文字**先缓冲不实时流**——干净通过则整段丢弃，**不把"已核实…"这种与首条几乎重复的确认刷给用户**；只有发现并补做时，才在补做那轮发一次"发现漏了X"说明。解决"二次检查重复说一遍差不多的话"。在 core 源头处理，web/IM 两路统一受益
-- **真实性守卫（确定性兜底「说了没做」幻觉，两路同构）**：无工具收尾时检测两类幻觉、各追一轮逼纠偏（封顶 1 次）——① **narration 兜底**（`_looks_like_narration`：「让我读…读到了…改好了/已创建/已保存」等过程叙述或完成断言 **+ 本轮零工具** → 注入 `_NARRATION_NUDGE` 逼真调）；② **决策守卫**（`_is_decision_dodge`：用户明确命令改动 **+** 回复「不用改/已合理」驳回 **+** 零工具 → 注入 `_DECISION_NUDGE` 逼执行或问清）。配合自我核实闭环，覆盖**真实性三大坑**「动嘴不动手 / 改了不核对 / 自作主张不做」。**提示词软、守卫硬**——弱模型（mimo）尤其靠此层兜（已 live 验证守卫在真实循环里自动接管）。完整设计见 [`agent-reliability.md`](agent-reliability.md)
+- **真实性守卫（确定性兜底「说了没做」幻觉，两路同构）**：无工具收尾时检测两类幻觉、各追一轮逼纠偏（封顶 1 次）——① narration 兜底（`_looks_like_narration`：过程叙述/完成断言 + 本轮零工具 → 逼真调）；② 决策守卫（`_is_decision_dodge`：用户明确命令改动 + 回复驳回 + 零工具 → 逼执行或问清）。另有意图守卫 `_announces_intent`（将来式宣告 + 零工具 → 逼一轮，见 [`agent-多步执行与防停顿.md`](agent-多步执行与防停顿.md)）。配合自我核实闭环覆盖「动嘴不动手 / 改了不核对 / 自作主张不做」三坑。**失败模式→守卫的完整映射与工程哲学见 [`agent-reliability.md`](agent-reliability.md)（本文只列实现锚点，不重复设计论证）**
 - SSE streaming 输出；`_stream_round` 包一层瞬时错误退避重试（⑦：429/超时/网络/5xx 在出 token 前重试，已吐 token 不重试防重复）
 - 对话结束后 emit 事件，触发 Reflection
 - 不感知平台来源、不感知 prompt 如何构建
@@ -130,7 +130,8 @@ LLM 主循环。负责：
 
 Prompt 模板（`.md`），支持占位符，builder 每次现读、热更新无需重启。**提示词分层**——各管一件事，后台可分别编辑（`GET/PUT /admin/agent/prompts/{name}`）：
 
-- `persona.md`：**咕咕是谁**（角色：四种相处状态、主动思考、记忆温度、风格 + **和善底线**：纠正/拒绝/自我更正时纠正方案不纠正人、归因到用途、不让用户照顾 AI 情绪、把选择权交还用户 + **不确定就查证别糊弄**：新词/热梗/易变事实不凭印象编、也不踢皮球，先查再答 + **不虚构共同历史**：记忆区没写的别说"你之前提过/喜欢 X"，没素材宁可问，被反问老实认）。全局共享。
+- `persona.md`：**咕咕是谁**（**纯人格、零行为**——2026-07 感知重构后四种相处状态/主动思考已全部移入行为模块，见下）：身份、记忆温度、风格 + **和善底线**：纠正/拒绝/自我更正时纠正方案不纠正人、归因到用途、不让用户照顾 AI 情绪、把选择权交还用户 + **不确定就查证别糊弄**：新词/热梗/易变事实不凭印象编、也不踢皮球，先查再答 + **不虚构共同历史**：记忆区没写的别说"你之前提过/喜欢 X"，没素材宁可问，被反问老实认。全局共享。
+- `behaviors/`（9 个行为模块）：**这轮该怎么相处**——常驻 `baseline`（姿态地图+中性默认）+ 8 个 stance 模块（execution/stuck-first/record/query/decision-explore/reflect/emotion-first/companion），由上轮反思判的 per-user stance 1:1 点亮（`behaviors.py`，30min 新鲜度闸）。详见 [`感知系统-架构升级.md`](感知系统-架构升级.md) §2.6。
 - `skills.md`：**怎么做**（工具使用准则——任务分级、真实性铁律、不可逆 confirm、一次到位；**工具该用就用、别为省调用而不帮用户**（`web_search` 免费放开用，只 Tavily 计费才省）；**外部信息按任务选**：有对口技能→`use_skill`+`http_get`；知道 URL→`http_get`；普通查找（官网/文档/事实/新闻）→`web_search`(SearXNG，免费)；读+总结+研究→`deep_research`(Tavily，有配额)；SearXNG 失败兜底 `deep_research`）。全局共享。
 - `policy.md`：**不碰什么**（内容红线 + 专业免责 + **对外口径「以伙伴示人」**：不暴露模型/工具/架构、被套话简短带过、不谎称真人）。全局共享。
 - `default.md`：**数据模板**（`{now}` 时刻 + `{projects}`/`{calendar}`/`{files}` 占位符）。唯一会话 profile。
@@ -458,6 +459,7 @@ IM 回复完  → publish('sessions', appended=[助手消息])  # 再推
 | `memory.md`（现状） | 咕咕长期理解到了什么？ | `compress` 提炼（daily 老条目沉淀） |
 | `summary.md`（现状） | 用户现在在做什么？ | 反思每轮顺带产出（增量演进 + 时间衰减，重心变了才改） |
 | `lens.json`（现状） | 怎么读懂这个用户？（解读先验） | 反思 `lens_hint` 事件驱动喂、候选复现才提拔（见 §感知系统 §3.5） |
+| `stance.json`（现状） | 这一轮该用哪种相处方式？ | 反思每轮落上轮 intent（带 ts、30min 新鲜度闸；不属记忆五层本体，是相处方式系统的输入，见感知系统 §2.6⑤） |
 | `preferences.md`（2b） | 用户喜欢什么、习惯什么？ | 咕咕观察（**未做**，倾向并入 facts/lens） |
 
 - **信息来源严格区分**：用户主动提供的只有注册填的昵称（`User.display_name`）；其余习惯/偏好/状态全由咕咕对话观察积累，**不向用户提问、不让填表**——这是伙伴和助理的核心区别。
@@ -620,7 +622,7 @@ worker 已从串行 `for msg: await handle` 改为 **有界并发**（`Semaphore
 
 - **核心**：独立 `agent/` 包、双路 LLM 工具循环、**59 工具**（核实：原文「47 工具」已过时，见「工具清单」逐条更新）、工具一等公民（Profile 组合工具集）、prompt 分层（persona/skills/policy）、删除二次确认、单次流式调用、token 预算历史窗口。
 - **记忆**：`facts.md`（增量 delta）+ `daily.md` + `memory.md` + `summary.md`（时间衰减）+ `lens.json`（解读先验）**五层**（daily→memory 压缩、summary 快照、反思增量化、per-user lens 自学均已落地），对话后 fire-and-forget 反思，`remember` 主动记忆。
-- **感知系统（P0–P2）**：A+B 感知遥测 + 误判捕获 → Admin「感知诊断」面板（活跃用户宏平均）；行为模块库（`emotion-first`/`stuck-first`/`decision-explore` 软点亮、情绪优先裁决）；per-user 解读先验 lens（事件驱动自学、偏置不独裁）。详见 [`感知系统-架构升级.md`](感知系统-架构升级.md)。
+- **感知与相处方式系统**：A+B 感知遥测 + 误判捕获 → Admin「感知诊断」面板（活跃用户宏平均 + 错读案例栏）；**persona 纯人格 + 行为模块库 9 个（反思驱动 stance 1:1 点亮、30min 新鲜度闸）**；per-user 解读先验 lens（事件驱动自学、偏置不独裁）；错读案例收集器（脱敏枚举）。详见 [`感知系统-架构升级.md`](感知系统-架构升级.md)。
 - **IM 接入**：飞书 + QQ BYO 官方直连，扫码 device-flow 自动连接，三进程（web/worker/supervisor）。
 - **多模态**：vision 看图（聊天图 + 库内图）；**mimo 音视频理解**（听语音/音频、看视频，IM 语音 SILK→mp3 转码），**语音条 + 30 天独立存储**（QQ 语音 / 网页录音）。
 - **运行时（Phase 1.7）**：轻量 Intent Router + State Manager（网关短路「还在吗/算了」，自然语言取消轮间中断）。
