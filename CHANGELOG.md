@@ -20,6 +20,8 @@
 
 ### 新增
 
+- **反馈信号采集器 + 关系温度 + 时长锚点（感知系统 step2 采集侧）**（`memory/reflection.py` + `prompts/reflection.md` + 新 `memory/temperature.py` + `store.py` + `context/builder.py`）：学习闭环的燃料源从「仅用户显式纠正」加宽一个数量级。① **feedback 枚举采集**：反思顺带判「用户这句怎么接上一轮」（确认夸赞/改写重问/顺着聊/无视跳开/主动分享/无信号，只认枚举+后端白名单，「无信号」不打点）——反思窗口本无上一轮，用 Redis `lastturn:{uid}`（TTL 2h）内部缓存解决、零调用方改动；7 场景真实验证 6-7/7，漏判全部偏向「无信号」＝保守安全。② **关系温度**（`temperature.py`）：28 天滑动窗口聚合回访/深度/主动分享/正负延续比，四分量归一化饱和加权 → `.agent/temp.json`（反思末尾超 24h 旧才重算；温度只喂语气校准、不进语义记忆）。③ **时长锚点 + 禁自估红线**：`read_memory` 带 `first_ts`（最早 fact 时间），记忆区头部注入「记忆从 N 天前开始积累」硬数字 + 红线「无据时间词（这几个月/一直以来）＝虚构历史」——防模型把上月开始的话题说成"这几个月的观察"。设计见 `docs/agent/proposals/反馈信号系统-设计.md`。
+
 - **支持拖文件夹上传（保留目录结构）+ 统一三处上传逻辑**（新增 `composables/useFileUpload.ts` + `views/Files/{index.vue,UploadModal.vue}` + `views/Projects/components/ProjectModal.vue`）：上传文件/文件库/项目编辑卡此前拖放全部只读 `event.dataTransfer.files`（扁平 `FileList`），拖文件夹进来会被浏览器当空文件静默失败，且三处各自维护一套上传实现（并发策略互不一致：无限并发/`pLimit` 限流/严格串行）。`readDroppedEntries()` 用 `dataTransfer.items` + `webkitGetAsEntry()` 递归展开拖入的文件夹（处理 `readEntries()` 分批返回），产出 `{file, relativePath}[]`；不支持该 API 的老浏览器退回扁平文件列表，不报错。`resolveFolderTree()` 按相对路径批量建缺失的子文件夹，一次 `foldersApi.all()` 建索引，同名文件夹自动复用不重复创建；`onFolderCreated` 回调让宿主实时同步本地缓存/列表。`uploadFilesWithFolders()` 编排解析+并发调度，具体怎么上传一个文件由宿主的 `uploadOne` 回调决定，不假设本地代理 POST 还是 OSS 直传——`UploadModal.vue`（presign/OSS 双模式）保留原有严格串行+单一进度条 UX，`Files/index.vue`/`ProjectModal.vue` 换成走共享 composable（前者原本无并发上限的上传顺带统一成跟后者一样的 `UPLOAD_CONCURRENCY=3` 限流）。`useUploadQueue.ts` 新增 `createFolderGhost`/`bumpFolderGhost`：拖入的文件夹按顶层目录名分组，汇总成一张"文件夹名 · 完成数/总数"幽灵卡，不再给文件夹里每个文件各出一张卡刷屏。新建的顶层文件夹先攒着不立刻插进可见列表——插了会跟它的进度卡同时出现、看起来像"两个文件夹"；等这组文件全部处理完（不管成功失败）才无缝换成真实文件夹卡片，更深层的子文件夹本来就不在当前视图里，直接插不受影响。
 
 ### 修复

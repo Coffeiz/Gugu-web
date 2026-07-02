@@ -25,12 +25,12 @@
 <!-- step 1.5 · current -->
 <circle cx="64" cy="153" r="9" fill="#D85A30"/>
 <circle cx="64" cy="153" r="3.2" fill="#FFFFFF"/>
-<text x="84" y="157" font-size="12.5" font-weight="700" fill="#993C1D">step 1.5 · 攒错读案例（跑着攒） ∥ 并行:建反馈采集器</text>
+<text x="84" y="157" font-size="12.5" font-weight="700" fill="#993C1D">step 1.5 · 攒数据:错读案例 + feedback 信号（采集侧已就位）</text>
 <text x="640" y="157" text-anchor="end" font-size="11" font-weight="700" fill="#D85A30">▶ 当前</text>
 
 <!-- step 2 · todo -->
 <circle cx="64" cy="191" r="7" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="2"/>
-<text x="84" y="195" font-size="12.5" fill="#5F5E5A">step 2 · 反馈系统:采集①②④立即建 → lens写回③等数据</text>
+<text x="84" y="195" font-size="12.5" fill="#5F5E5A">step 2 · 反馈系统:采集①②④已落✅ → lens写回③等数据</text>
 <text x="640" y="195" text-anchor="end" font-size="11" fill="#888780">待做</text>
 
 <!-- step 3 · todo -->

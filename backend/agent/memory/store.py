@@ -57,8 +57,12 @@ async def read_memory(user_id, query: str = "") -> dict:
     stance = 上轮反思判的相处姿态（= perception.intent），stance_ts 给新鲜度闸用（见 behaviors.select）。
     summary_ts = summary 上次更新的 epoch（给时间衰减用，见 agent/decay.py）。
     lens = 渲染好的「解读镜片」注入块（per-user 解读先验，见 agent/memory/lens.py），无则空串。
-    query = 当前用户消息（可选）：facts 超注入上限时用它做相关性优先挑选，见 render_facts。"""
-    facts   = render_facts(await read_facts_list(user_id), query)   # 结构化 → 注入用 markdown（相关性优先 + 重要度保底）
+    query = 当前用户消息（可选）：facts 超注入上限时用它做相关性优先挑选，见 render_facts。
+    first_ts = 最早一条 fact 的 epoch（≈「开始了解 TA」的时间锚点，给注入侧时长计算用——
+    时长由系统算好喂模型、禁模型自估，见 proposals/反馈信号系统-设计.md §4.3）。"""
+    raw_facts = await read_facts_list(user_id)
+    facts   = render_facts(raw_facts, query)   # 结构化 → 注入用 markdown（相关性优先 + 重要度保底）
+    first_ts = min((f.get("ts") for f in raw_facts if f.get("ts")), default=None)
     memory  = (await _read(_key(user_id, "memory.md"))).strip()
     daily   = (await _read(_key(user_id, "daily.md"))).strip()
     summary = (await _read(_key(user_id, "summary.md"))).strip()
@@ -67,7 +71,7 @@ async def read_memory(user_id, query: str = "") -> dict:
     from agent.memory import lens as _lens   # 局部导入避免包内循环
     lens_block = await _lens.read_block(user_id)
     return {"facts": facts, "memory": memory, "daily": daily,
-            "summary": summary, "summary_ts": summary_ts,
+            "summary": summary, "summary_ts": summary_ts, "first_ts": first_ts,
             "stance": stance, "stance_ts": stance_ts, "lens": lens_block}
 
 
@@ -250,6 +254,22 @@ async def write_summary(user_id, text: str) -> None:
     await _write(_key(user_id, "summary.md"), text.strip() + "\n")
     import time
     await _write(_key(user_id, "summary.ts"), str(time.time()))   # 盖更新时间戳（时间衰减用）
+
+
+# ── temp.json（关系温度：滑动窗口聚合的当下互动质量，memory/temperature.py 算，只喂语气校准）──
+async def read_temperature(user_id) -> dict | None:
+    raw = (await _read(_key(user_id, "temp.json"))).strip()
+    if not raw:
+        return None
+    try:
+        d = json.loads(raw)
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+async def write_temperature(user_id, data: dict) -> None:
+    await _write(_key(user_id, "temp.json"), json.dumps(data, ensure_ascii=False))
 
 
 # ── stance.json（本轮相处姿态 = perception.intent；反思写，builder 据此 + 新鲜度点亮行为模块）──

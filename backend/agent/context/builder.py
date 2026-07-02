@@ -268,4 +268,14 @@ def _memory_block(memory: dict) -> str:
         return ("## 关于这位用户的记忆\n\n"
                 "（暂无任何长期记忆——你对 TA 还不了解。别假装记得任何共同经历或偏好，"
                 "需要了解就直接问。）")
+    # 时间锚点 + 时长红线（防时长虚构:模型的时间语感永远往「显得更熟」漂——上月开始的话题
+    # 被说成「这几个月的观察」。时长由系统算好给硬数字,禁模型自估。见 反馈信号系统-设计.md §4.3）
+    first_ts = memory.get("first_ts")
+    if first_ts:
+        from agent import decay
+        kd = decay.age_days(first_ts)
+        span = "今天" if (kd is None or kd < 1) else f"{int(kd)} 天前"
+        parts.insert(0, (f"（时间锚点：你对 TA 的记忆是从 {span} 开始积累的。谈及时间跨度只用本区块"
+                         f"给出的数字；没给数字的，**不要**用「这几个月」「一直以来」「很久」这类词"
+                         f"概括时长——无据的时间词是在虚构你们的历史。）"))
     return "\n\n".join(parts)

@@ -54,6 +54,9 @@ _PERC_INTENTS = {"执行", "推进", "记录", "查询", "决策", "反思", "�
 # 错读案例 miss 的「只认枚举」白名单：结构上杜绝脱敏泄漏（free-text 会行内夹带，证明不可靠）
 _MISS_NEEDS = _PERC_INTENTS | {"指代旧事"}                 # read_as / actual 的需求类型
 _MISS_PATTERNS = {"潜台词漏读", "情绪当任务", "过度共情", "指代漏接", "答非所问", "场景惯性", "过度澄清"}  # 错读模式
+# 反馈信号枚举（学习闭环的燃料，见 proposals/反馈信号系统-设计.md）：枚举外一律当「无信号」丢弃
+_FEEDBACK_ENUM = {"顺着聊", "无视跳开", "改写重问", "主动分享", "确认夸赞"}   # 「无信号」不打点
+_LAST_TURN_TTL = 7200   # 上一轮缓存 2h：隔太久的「上一句」已不构成对话延续语境
 
 
 _PERC_KEY = "perc:events"    # Redis capped list:给 Admin 聚合面板（/admin/perception）读
@@ -109,6 +112,42 @@ def _perc_rec(user_id, perc, model: str) -> dict | None:
             "intent": intent if intent in _PERC_INTENTS else "其他",
             "ambiguity": perc.get("ambiguity"), "emotion": perc.get("emotion"),
             "emo": perc.get("emo_strength"), "ts": _now_ts()}
+
+
+def _fb_rec(user_id, fb) -> dict | None:
+    """反思判的 feedback 枚举 → 一条 fb 记录（白名单校验,「无信号」/枚举外不打点）。"""
+    fb = str(fb or "").strip()
+    if fb not in _FEEDBACK_ENUM:
+        return None
+    return {"t": "fb", "u": str(user_id)[:8], "v": fb, "ts": _now_ts()}
+
+
+def _last_turn_key(user_id) -> str:
+    return f"lastturn:{user_id}"
+
+
+async def _read_last_turn(user_id) -> dict | None:
+    """读上一轮 {u: 用户消息, a: 咕咕回复}（判 feedback 的对照物）。无/过期/异常 → None。"""
+    try:
+        from app.core.redis import get_redis
+        raw = await get_redis().get(_last_turn_key(user_id))
+        if not raw:
+            return None
+        d = json.loads(raw if isinstance(raw, str) else raw.decode())
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+async def _write_last_turn(user_id, user_msg: str, assistant_reply: str) -> None:
+    """把本轮存为「上一轮」缓存（截断防膨胀;TTL 2h,过期即不再当延续语境）。永不抛。"""
+    try:
+        from app.core.redis import get_redis
+        payload = json.dumps({"u": (user_msg or "")[:200], "a": (assistant_reply or "")[:300]},
+                             ensure_ascii=False)
+        await get_redis().set(_last_turn_key(user_id), payload, ex=_LAST_TURN_TTL)
+    except Exception:
+        pass
 
 
 async def _emit_perc(rec: dict | None) -> None:
@@ -186,12 +225,16 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools
 
 async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> None:
     out = None
+    prev_turn = await _read_last_turn(user_id)   # 上一轮（判 feedback 用），无/过期 → None
     try:
         mem = await store.read_memory(user_id)
         existing_summary = mem.get("summary", "")
-        out = await _extract(user_name, user_msg, assistant_reply, mem["facts"], existing_summary, settings)
+        out = await _extract(user_name, user_msg, assistant_reply, mem["facts"], existing_summary, settings,
+                             prev_turn=prev_turn)
     except Exception:
         out = None
+    # 无论 extract 成败，都把本轮存为「上一轮」缓存（下轮 feedback 判定的对照物）
+    await _write_last_turn(user_id, user_msg, assistant_reply)
 
     # 误判捕获:优先信反思 LLM 判的 correction（能分「感知误读 vs 数据/执行错」，正则做不到）；
     # extract 没成（{} / 异常）才退回正则兜底（高精度、漏召回）。二选一，不重复计。
@@ -204,6 +247,8 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> No
     try:
         # 感知遥测:把本轮 perception 打日志 + 推 Redis（不写记忆）
         await _emit_perc(_perc_rec(user_id, out.get("perception"), getattr(getattr(settings, "ai", None), "model", "")))
+        # 反馈信号（feedback 枚举,白名单校验）:学习闭环的燃料,只打点（见 proposals/反馈信号系统-设计.md）
+        await _emit_perc(_fb_rec(user_id, out.get("feedback")))
         # 行为模块选择：把本轮 stance（= perception.intent）落 per-user，供下一轮 builder 点亮模块（带新鲜度闸）
         await store.write_stance(user_id, (out.get("perception") or {}).get("intent"))
         daily_note = (out.get("daily") or "").strip()
@@ -233,17 +278,27 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> No
         # lens（解读先验）gated 学习：hint 多数轮为空；候选须复现才提拔成规则。顺带做退休维护。
         from agent.memory import lens
         await lens.observe(user_id, out.get("lens_hint"))
+        # 关系温度：超 24h 旧才重算（窗口聚合、纯数据侧、自带 DB 会话,见 memory/temperature.py）
+        from agent.memory import temperature
+        await temperature.maybe_refresh(user_id)
     except Exception:
         pass  # 反思是锦上添花，任何失败都不能影响对话
 
 
-async def _extract(user_name, user_msg, assistant_reply, existing_facts, existing_summary, settings) -> dict:
+async def _extract(user_name, user_msg, assistant_reply, existing_facts, existing_summary, settings,
+                   prev_turn: dict | None = None) -> dict:
+    # 上一轮（判 feedback 的对照物）:有才注入,没有则 prompt 里已说明「没给上一轮 → 无信号」
+    prev_part = ""
+    if prev_turn:
+        prev_part = (f"【上一轮】\n用户：{prev_turn.get('u', '')}\n咕咕：{prev_turn.get('a', '')}\n\n")
     user = (
         f"已知的全部事实：\n{existing_facts or '（暂无）'}\n\n"
         f"当前状态快照：\n{existing_summary or '（暂无）'}\n\n"
+        f"{prev_part}"
         f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n"
         f"请只报本轮 facts 的增删（facts_add / facts_remove，没变动就都给空数组、别重列旧事实）"
-        f"+ 当前状态快照（基于原快照演进、没变就原样返回、别清空）+ 本轮 perception（照本轮用户消息判、始终给）。"
+        f"+ 当前状态快照（基于原快照演进、没变就原样返回、别清空）+ 本轮 perception（照本轮用户消息判、始终给）"
+        f"+ feedback（用户这句相对【上一轮】的反馈,枚举选一,没给上一轮就 无信号）。"
     )
     # 2b：反思只吐 facts 的增删（delta）+ daily/summary/perception，输出体量**不再随 facts 增长**，
     # 根治了「facts 一多 → 回显整份超 max_tokens → 截断 → JSON 解析失败 → 静默返回 {}」的老坑。
