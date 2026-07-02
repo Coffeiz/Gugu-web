@@ -1752,6 +1752,25 @@ function updateDragOverHighlight({ x, y }) {
   bcDragOverIdx.value = null
 }
 
+// 「吸入文件夹/面包屑」缩小消失动画的目标判定，喂给 startPhysicsDrag/startMultiPhysicsDrag 的
+// resolveAbsorbTarget——跟 updateDragOverHighlight/dispatchFilesDrop 用同一套有效性判断（是否
+// 拖到自己身上、面包屑段是否真的可放置、根「全部文件」项没有 data-bc-idx 天然不算），避免数据
+// 层判定"不动"、视觉层却演了一遍"吸入消失"，两边对不上。
+function _resolveAbsorbTarget(under) {
+  const folderEl = under?.closest?.('.folder-card, .folder-row')
+  if (folderEl) {
+    const key = Number(folderEl.getAttribute('data-folder-key'))
+    return draggingFolderIds.value.has(key) ? null : folderEl
+  }
+  const bcEl = under?.closest?.('.bc-item')
+  if (bcEl?.hasAttribute('data-bc-idx')) {
+    const idx = Number(bcEl.getAttribute('data-bc-idx'))
+    const seg = navPath.value[idx]
+    if (seg && isBcDroppable(seg)) return bcEl
+  }
+  return null
+}
+
 // 松手落点判定 + 真正执行移动（startPhysicsDrag/startMultiPhysicsDrag 的 onDrop 回调）
 async function dispatchFilesDrop({ x, y }) {
   const under = document.elementFromPoint(x, y)
@@ -1810,7 +1829,7 @@ function onFolderPointerDown(f, e) {
     draggingFolderIds.value = new Set(folderObjs.map(item => item.folderId))
     if (fileIds.length) draggingFileIds.value = new Set(fileIds)
 
-    const opts = { pointer: true, onDrop: dispatchFilesDrop, onDragOver: updateDragOverHighlight }
+    const opts = { pointer: true, onDrop: dispatchFilesDrop, onDragOver: updateDragOverHighlight, resolveAbsorbTarget: _resolveAbsorbTarget }
     const total = folderObjs.length + fileIds.length
     if (total > 1) {
       const extraFolderEls = folderObjs.filter(item => item.id !== f.id)
@@ -1856,7 +1875,7 @@ function onFilePointerDown(f, e) {
     draggingFileIds.value = new Set(fileIds)
     if (folderObjs.length) draggingFolderIds.value = new Set(folderObjs.map(item => item.folderId))
 
-    const opts = { pointer: true, onDrop: dispatchFilesDrop, onDragOver: updateDragOverHighlight }
+    const opts = { pointer: true, onDrop: dispatchFilesDrop, onDragOver: updateDragOverHighlight, resolveAbsorbTarget: _resolveAbsorbTarget }
     const total = fileIds.length + folderObjs.length
     if (total > 1) {
       const extraFileEls = fileIds.filter(id => id !== f.id)

@@ -19,7 +19,13 @@ interface PhysicsDragOpts {
   grabY?: number
   cloneClass?: string
   onDrop?: (pos: { x: number; y: number }) => void
+  onDragOver?: (pos: { x: number; y: number }) => void   // pointer 模式：每帧回调当前指针位置，供调用方自己 elementFromPoint 判定/高亮落点
   skipAbsorb?: boolean
+  // 「吸入文件夹/面包屑」缩小消失动画的目标判定：不传则退回默认的 .folder-card,.bc-item 类名匹配
+  // （历史行为）。传了就由调用方决定 under 是否算有效吸入目标、返回该元素（给动画取
+  // getBoundingClientRect）或 null——避免组件自己另一套判定和调用方 onDrop 里的判定不一致，
+  // 出现"数据没移动、动画却演了吸入消失"的画面和实际状态对不上。
+  resolveAbsorbTarget?: (under: Element) => Element | null
 }
 
 let _ghostImg = null
@@ -76,20 +82,24 @@ function _animateScroll(el, dy, dur = 300) {
   requestAnimationFrame(tick)
 }
 
-// 拾起时源卡正被鼠标悬停着（拖拽即从悬停它开始）；display:none 隐藏、动画结束后再显示回来，
-// 浏览器有时不会在这个过程里重新计算 hover 命中，导致它「记得」自己被悬停过、卡在高亮态，
-// 直到下次真有 mousemove 扫过才会被纠正——鼠标松手后常常不再动，就一直卡亮。
-// 修法：不瞎猜（试过用 pointer-events 开关强行摘掉命中测试，但那样会连「鼠标确实压在卡片上」
-// 的真实 hover 也一并错误抹掉，之后还得等下次真实 mousemove 才能纠正回来，变成「先亮一下又灭」）。
-// 改为在落定那一刻，用拖拽结束后临时监听到的**真实当前指针位置**派发一次合成 mousemove——
-// 这跟浏览器处理一次真实鼠标移动是同一条路径，该亮就亮、该灭就灭，不会误判。
-function _kickStaleHover(x, y) {
-  if (x == null || y == null) return
-  requestAnimationFrame(() => {
-    document.dispatchEvent(new MouseEvent('mousemove', {
-      clientX: x, clientY: y, bubbles: true, cancelable: true, view: window,
-    }))
-  })
+// 拾起时源卡正被鼠标悬停着（拖拽即从悬停它开始）。perf trace 实测过两层坑：
+// ① 原生拖拽从 dragstart 起整段暂停 mouseover/mouseout 派发——抓起那一刻缓存的 :hover=true
+//   全程不会被清掉，只有 pointerout 单独发、没有配对的 mouseout；
+// ② 「归位」飞行期间源卡只是 opacity:0（不是 display:none/pointer-events:none，opacity 不影响
+//   命中测试），drop 后几毫秒浏览器会自己重新判一次真实 hover，但那距离 opacity 真正揭示出来
+//   还有 ~400ms 飞行动画，这段时间指针可能又挪开、也可能邻近卡片 FLIP/重算触发浏览器再切换
+//   几次——揭示那一刻用哪个瞬时判定都可能被这些噪音打偏，看着是「跳一下」（.fc-card:hover 的
+//   translateY(-2px)）。试过「查实时位置再判定」，噪音太多判不准。
+// 现在不判定、直接治标：揭示后无条件短暂摘掉命中测试（:hover 物理上不可能生效，不会跳），
+// 撑过这段最容易被噪音污染的窗口再完全恢复，交给浏览器按那时的真实指针位置正常判断。
+function _revealWithoutStaleHover(el: HTMLElement, onSettled?: () => void) {
+  el.style.pointerEvents = 'none'
+  el.style.opacity = ''
+  el.style.transition = ''
+  setTimeout(() => {
+    el.style.pointerEvents = ''
+    onSettled?.()
+  }, 160)
 }
 
 // 到位缓动：强 ease-out（快进慢收，非线性），不过冲、不回弹
@@ -212,7 +222,10 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
     // 避免无效拖放时浏览器先播放「飞回源」动画、dragend 被推迟 ~250ms 的延迟
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-    if (e.clientX || e.clientY) { target.x = e.clientX; target.y = e.clientY }
+    if (e.clientX || e.clientY) {
+      target.x = e.clientX; target.y = e.clientY
+      opts.onDragOver?.({ x: e.clientX, y: e.clientY })
+    }
   }
 
   function frame(now) {
@@ -271,14 +284,6 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
                  : null
     const sel = idAttr ? `[${idAttr[0]}="${idAttr[1]}"]` : null
 
-    // 卡片重新可见/落定那一刻，_kickStaleHover 要按「此刻真实指针在哪」纠正 hover——
-    // 拖拽这段原生 dragover/pointermove 已经在实时更新 target.x/y，但落地动画还要跑
-    // 300~560ms，这段时间指针可能已经移开；额外挂一个真实 mousemove 监听，跟到动画结束再拆。
-    let liveX = dropX, liveY = dropY
-    const _trackLive = (e) => { liveX = e.clientX; liveY = e.clientY }
-    document.addEventListener('mousemove', _trackLive)
-    const _stopTrackLive = () => document.removeEventListener('mousemove', _trackLive)
-
     let done = false, onEnd = null
     const SLOT = box => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(1)`
 
@@ -299,7 +304,6 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
         done = true
         clone.removeEventListener('transitionend', onEnd)
         clone.remove()
-        _stopTrackLive()
       }
       onEnd = finish
       clone.addEventListener('transitionend', onEnd)
@@ -328,8 +332,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
         done = true
         clone2.removeEventListener('transitionend', onEnd)
         clone.remove(); clone2.remove()
-        _stopTrackLive()
-        revealEl.style.opacity = ''; revealEl.style.transition = ''; _kickStaleHover(liveX, liveY)
+        _revealWithoutStaleHover(revealEl)
       }
       onEnd = finish
       clone2.addEventListener('transitionend', onEnd)
@@ -376,7 +379,9 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
       //    会强制一次整页重排（trace 里 elementFromPoint 161ms 的大头）——白白吃掉松手那帧。
       if (!opts.skipAbsorb) {
         const under = document.elementFromPoint(dropX, dropY)
-        const absorb = under && under.closest && under.closest('.folder-card, .bc-item')
+        const absorb = opts.resolveAbsorbTarget
+          ? (under && opts.resolveAbsorbTarget(under))
+          : (under && under.closest && under.closest('.folder-card, .bc-item'))
         if (absorb) { flyTo(absorb.getBoundingClientRect(), true); return }
       }
 
@@ -472,7 +477,10 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
  */
 export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts: PhysicsDragOpts = {}) {
   if (!sourceEl || _active) return
-  try { event.dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {}
+  const pointer = opts.pointer === true
+  const pointerId = pointer ? event.pointerId : null
+  if (!pointer) { try { event.dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {} }
+  if (pointer) { try { document.body.setPointerCapture(pointerId) } catch {} }
 
   // 上一次拖拽的落地动画要等 transitionend（~420~580ms）才把卡片复位显示，这段窗口期内重新
   // 抓同一批卡会读到 0×0 的 rect、克隆出不可见的卡（同 startPhysicsDrag 的坑，见其注释）。
@@ -581,7 +589,10 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
   function onOver(e) {
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-    if (e.clientX || e.clientY) { target.x = e.clientX; target.y = e.clientY }
+    if (e.clientX || e.clientY) {
+      target.x = e.clientX; target.y = e.clientY
+      opts.onDragOver?.({ x: e.clientX, y: e.clientY })
+    }
   }
 
   function frame(now) {
@@ -634,9 +645,16 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
     cancelAnimationFrame(_active.raf)
     _active = null
     document.body.classList.remove('phys-dragging')
-    document.removeEventListener('dragover', onOver)
-    document.removeEventListener('drop', end, true)
-    sourceEl.removeEventListener('dragend', end)
+    if (pointer) {
+      document.removeEventListener('pointermove', onOver)
+      document.removeEventListener('pointerup', end)
+      document.removeEventListener('pointercancel', end)
+      try { document.body.releasePointerCapture(pointerId) } catch {}
+    } else {
+      document.removeEventListener('dragover', onOver)
+      document.removeEventListener('drop', end, true)
+      sourceEl.removeEventListener('dragend', end)
+    }
 
     // 影子克隆淡出移除
     for (const { el } of shadows) {
@@ -644,6 +662,9 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
       el.style.opacity = '0'
       setTimeout(() => el.remove(), 220)
     }
+
+    // pointer 模式：落点的业务移动（多选批量移动）由调用方在此执行（原生模式靠各列 @drop 落定）
+    if (opts.onDrop) { try { opts.onDrop({ x: target.x, y: target.y }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
 
     const dropX = target.x, dropY = target.y
     const SLOT = box => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(1)`
@@ -675,7 +696,9 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
     requestAnimationFrame(() => {
       // 吸入文件夹/面包屑
       const under = document.elementFromPoint(dropX, dropY)
-      const absorb = under?.closest?.('.folder-card, .bc-item')
+      const absorb = opts.resolveAbsorbTarget
+        ? (under && opts.resolveAbsorbTarget(under))
+        : under?.closest?.('.folder-card, .bc-item')
       if (absorb) { flyTo(absorb.getBoundingClientRect(), true); return }
 
       // 归位：克隆体飞回源卡位置并淡出，源卡本身始终可见（多文件模式不隐藏源卡）
@@ -687,8 +710,14 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
   }
 
   _active = { raf: 0, end }
-  document.addEventListener('dragover', onOver)
-  document.addEventListener('drop', end, true)
-  sourceEl.addEventListener('dragend', end)
+  if (pointer) {
+    document.addEventListener('pointermove', onOver)
+    document.addEventListener('pointerup', end)
+    document.addEventListener('pointercancel', end)
+  } else {
+    document.addEventListener('dragover', onOver)
+    document.addEventListener('drop', end, true)
+    sourceEl.addEventListener('dragend', end)
+  }
   _active.raf = requestAnimationFrame(frame)
 }
