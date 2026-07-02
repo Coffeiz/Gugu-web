@@ -1,8 +1,9 @@
 <template>
   <BaseModal :show="!!project" width="1060px" height="780px" @close="onModalClose">
       <div class="modal" :class="{ 'stages-expanded': stagesExpanded, 'info-expanded': infoExpanded, 'pm-switching': pmSwitching }">
-        <!-- 悬浮操作按钮 -->
-        <div class="float-actions">
+        <!-- 悬浮操作按钮：文件多选模式下让位给 .pm-selection-bar（同在右下角，多选栏内容多时会重叠，
+             且两边都有删除按钮离太近容易误触），多选栏自己有取消/删除，先隐藏这组项目级按钮 -->
+        <div v-if="!pmInSelectionMode" class="float-actions">
           <button class="save-float-btn" @click="$emit('close')" title="保存并关闭">
             <PhCheck :size="14" weight="bold" />
           </button>
@@ -412,15 +413,18 @@
                     <div class="fc-meta">{{ file.stageName ? file.stageName + ' · ' : '' }}{{ file.size }}</div>
                   </div>
                 </div>
-                <!-- 幽灵上传卡片 -->
+                <!-- 幽灵上传卡片：单文件 / 文件夹（拖入文件夹时汇总一张） -->
                 <div v-for="g in uploadingItems" :key="g.uid"
-                  class="fc-ghost" :class="{ error: g.error }"
-                  :style="{ '--fc-color': fileIconColor(g.ext) }">
+                  class="fc-ghost" :class="{ error: g.error, 'fc-ghost-folder': g.isFolder }"
+                  :style="{ '--fc-color': g.isFolder ? '#8a8fa8' : fileIconColor(g.ext) }">
                   <div class="fc-ghost-fill" :style="{ width: g.progress + '%' }"></div>
-                  <span class="fc-ext-badge" :style="{ color: fileIconColor(g.ext), background: fileIconColor(g.ext) + '18' }">{{ g.ext || '—' }}</span>
+                  <span v-if="!g.isFolder" class="fc-ext-badge" :style="{ color: fileIconColor(g.ext), background: fileIconColor(g.ext) + '18' }">{{ g.ext || '—' }}</span>
                   <div class="fc-icon-area">
                     <svg class="fc-big-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
-                      <template v-if="fileExtCategory(g.ext) === 'image'">
+                      <template v-if="g.isFolder">
+                        <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+                      </template>
+                      <template v-else-if="fileExtCategory(g.ext) === 'image'">
                         <rect x="3" y="3" width="18" height="18" rx="2.5"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21,15 16,10 5,21"/>
                       </template>
                       <template v-else-if="fileExtCategory(g.ext) === 'video'">
@@ -451,7 +455,11 @@
                   <div class="fc-label">
                     <div class="fc-name" :title="g.name">{{ g.name }}</div>
                     <div class="fc-meta fc-ghost-meta">
-                      <template v-if="g.error">上传失败</template>
+                      <template v-if="g.isFolder">
+                        <template v-if="g.error">{{ g.done - g.failed }}/{{ g.total }}（{{ g.failed }} 个失败）</template>
+                        <template v-else>{{ g.done }}/{{ g.total }}</template>
+                      </template>
+                      <template v-else-if="g.error">上传失败</template>
                       <template v-else>{{ g.progress }}%</template>
                     </div>
                   </div>
@@ -561,18 +569,19 @@
                     </template>
                   </span>
                 </div>
-                <!-- 幽灵上传行 -->
+                <!-- 幽灵上传行：单文件 / 文件夹（拖入文件夹时汇总一行） -->
                 <div v-for="g in uploadingItems" :key="g.uid"
                   class="list-row fc-ghost-row" :class="{ error: g.error }">
                   <div class="fc-ghost-fill" :style="{ width: g.progress + '%' }"></div>
                   <span class="lr-name-cell">
-                    <span class="lr-ext" :style="{ color: fileIconColor(g.ext), background: fileIconColor(g.ext) + '18' }">{{ g.ext || '—' }}</span>
+                    <span v-if="!g.isFolder" class="lr-ext" :style="{ color: fileIconColor(g.ext), background: fileIconColor(g.ext) + '18' }">{{ g.ext || '—' }}</span>
                     <span class="lr-filename">{{ g.name }}</span>
                   </span>
                   <span class="lr-text">—</span>
                   <span class="lr-text">—</span>
                   <span class="lr-text">
-                    <template v-if="g.error">失败</template>
+                    <template v-if="g.isFolder">{{ g.done }}/{{ g.total }}<template v-if="g.error">（{{ g.failed }} 失败）</template></template>
+                    <template v-else-if="g.error">失败</template>
                     <template v-else>{{ g.progress }}%</template>
                   </span>
                   <span class="lr-actions"></span>
@@ -704,9 +713,9 @@ import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/service
 import { thumbLoadedIds } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt as isPmImageExt, fileExtCategory, fileIconColor } from '@/utils/fileTypes'
-import { pLimit, UPLOAD_CONCURRENCY } from '@/utils/concurrency'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
+import { readDroppedEntries, filesToItems, uploadFilesWithFolders } from '@/composables/useFileUpload'
 import { useBoxSelection } from '@/composables/useBoxSelection'
 import { startPhysicsDrag, startMultiPhysicsDrag } from '@/composables/usePhysicsDrag'
 import { fireHint } from '@/composables/useOnboarding'
@@ -1933,56 +1942,93 @@ function commitStageDrag() {
   saveStages()
 }
 
-const { uploadingItems, createGhost, updateGhostProgress, removeGhost, failGhost } = useUploadQueue()
+const { uploadingItems, createGhost, updateGhostProgress, removeGhost, failGhost, createFolderGhost, bumpFolderGhost } = useUploadQueue()
 
-async function uploadFiles(files) {
-  if (!files.length || !props.project) return
+// items: UploadItem[]（{file, relativePath}）——relativePath 带 "/" 时来自拖入的文件夹，
+// 由 uploadFilesWithFolders 按路径建好子文件夹再落到各自正确的 folder_id。
+async function uploadFiles(items) {
+  if (!items.length || !props.project) return
   const folder = currentFolder.value
+  const baseFolderId = folder?.id ?? null
 
-  // 立刻为每个文件生成幽灵卡
-  const tasks = files.map(f => {
-    const dotIdx = f.name.lastIndexOf('.')
-    const ext  = dotIdx > -1 ? f.name.slice(dotIdx + 1).toUpperCase() : ''
-    const name = dotIdx > -1 ? f.name.slice(0, dotIdx) : f.name
-    return { file: f, ghost: createGhost(name, ext) }
+  // 按顶层文件夹分组：relativePath 带 "/" 的文件汇总进「文件夹名 · 完成数/总数」一张卡，
+  // 不用每个文件各出一张（大部分还落在当前看不见的子文件夹里）
+  const folderGhosts = new Map()
+  for (const { relativePath } of items) {
+    const idx = relativePath.indexOf('/')
+    if (idx === -1) continue
+    const top = relativePath.slice(0, idx)
+    if (!folderGhosts.has(top)) folderGhosts.set(top, null)
+  }
+  for (const top of folderGhosts.keys()) {
+    const total = items.filter(it => it.relativePath.startsWith(top + '/')).length
+    folderGhosts.set(top, createFolderGhost(top, total))
+  }
+
+  await uploadFilesWithFolders(items, {
+    projectId: props.project.id, baseFolderId,
+    // 新建的子文件夹实时插进当前层级的列表，不用等整批传完再刷新才看得到
+    onFolderCreated: (created) => {
+      if ((created.parentId ?? null) !== baseFolderId) return
+      if (baseFolderId == null) {
+        projectFolders.value = [...projectFolders.value, created]
+      } else {
+        subFolderMap.value = { ...subFolderMap.value, [baseFolderId]: [...(subFolderMap.value[baseFolderId] ?? []), created] }
+      }
+    },
+    uploadOne: async (file, resolvedFolderId, relativePath) => {
+      const top = relativePath.includes('/') ? relativePath.slice(0, relativePath.indexOf('/')) : null
+      const folderGhost = top ? folderGhosts.get(top) : null
+      const ghost = folderGhost ? null : createGhost(
+        (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(0, i) : file.name })(),
+        (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(i + 1).toUpperCase() : '' })(),
+      )
+      try {
+        const form = new FormData()
+        form.append('file', file)
+        form.append('space', 'project')
+        form.append('project_id', props.project.id)
+        if (resolvedFolderId) form.append('folder_id', resolvedFolderId)
+        const created = await uploadWithProgress('/files', form, p => { if (ghost) updateGhostProgress(ghost, p) })
+        if (ghost) removeGhost(ghost)
+        else bumpFolderGhost(folderGhost)
+        if (created) fileCacheStore.addFile(created)
+        // 只有落在「当前正看着的」这一层才即时插进本地列表；落进拖拽新建的子文件夹（当前
+        // 视图看不到）靠批量结束后的 loadFolders 刷新拿到服务端算好的 fileCount，不在这现算
+        if (resolvedFolderId === baseFolderId) {
+          if (folder) {
+            folderFilesMap.value = {
+              ...folderFilesMap.value,
+              [folder.id]: [created, ...(folderFilesMap.value[folder.id] ?? [])],
+            }
+            const fd = projectFolders.value.find(fd => fd.id === folder.id)
+            if (fd) fd.fileCount = (fd.fileCount ?? 0) + 1
+          } else {
+            projectFiles.value.unshift(created)
+          }
+        }
+      } catch (e) {
+        console.error('[ProjectModal] 上传失败:', e.message)
+        if (ghost) failGhost(ghost)
+        else bumpFolderGhost(folderGhost, true)
+      }
+    },
   })
 
-  const limit = pLimit(UPLOAD_CONCURRENCY)
-  await Promise.allSettled(tasks.map(({ file, ghost }) => limit(async () => {
-    try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('space', 'project')
-      form.append('project_id', props.project.id)
-      if (folder) form.append('folder_id', folder.id)
-      const created = await uploadWithProgress('/files', form, p => updateGhostProgress(ghost, p))
-      removeGhost(ghost)
-      if (created) fileCacheStore.addFile(created)
-      if (folder) {
-        folderFilesMap.value = {
-          ...folderFilesMap.value,
-          [folder.id]: [created, ...(folderFilesMap.value[folder.id] ?? [])],
-        }
-        const fd = projectFolders.value.find(fd => fd.id === folder.id)
-        if (fd) fd.fileCount = (fd.fileCount ?? 0) + 1
-      } else {
-        projectFiles.value.unshift(created)
-      }
-    } catch (e) {
-      console.error('[ProjectModal] 上传失败:', e.message)
-      failGhost(ghost)
-    }
-  })))
+  // 兜底：onFolderCreated 已经实时插过新文件夹，这里再刷新一次当前层级，把服务端算好的
+  // fileCount 校准回来（本地是边传边手动 +1，量大时可能跟服务端有细微出入）
+  if (items.some(it => it.relativePath.includes('/'))) await loadFolders(props.project.id, baseFolderId)
 }
 
 async function handleFileInput(e) {
-  await uploadFiles([...e.target.files])
+  await uploadFiles(filesToItems(e.target.files))
   e.target.value = ''
 }
 
 async function handleFileDrop(e) {
   dragging.value = false
-  await uploadFiles([...(e.dataTransfer?.files ?? [])])
+  const items = await readDroppedEntries(e.dataTransfer)
+  await uploadFiles(items)
 }
 
 function onPmDragEnter(e) {
@@ -1993,8 +2039,8 @@ function onPmDragLeave() {
 }
 async function onPmDrop(e) {
   pmDragCounter.value = 0
-  const files = [...(e.dataTransfer?.files ?? [])]
-  if (files.length) await uploadFiles(files)
+  const items = await readDroppedEntries(e.dataTransfer)
+  if (items.length) await uploadFiles(items)
 }
 
 // ── 剪贴板 & 右键菜单（ProjectModal）──────────────────────────────────────────

@@ -43,9 +43,9 @@
             <!-- 有文件：列表 + 继续添加 -->
             <template v-else>
               <div class="file-stack" @click.stop>
-                <div v-for="(f, i) in pendingFiles" :key="f.name + i" class="file-row">
+                <div v-for="(f, i) in pendingFiles" :key="pendingPaths[i] + i" class="file-row">
                   <span class="file-ext">{{ f.name.split('.').pop().toUpperCase().slice(0, 4) }}</span>
-                  <span class="file-name">{{ f.name }}</span>
+                  <span class="file-name" :title="pendingPaths[i]">{{ pendingPaths[i] }}</span>
                   <span class="file-size">{{ fmtSize(f.size) }}</span>
                   <button class="file-remove" @click="removeFile(i)" title="移除">
                     <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -65,12 +65,12 @@
 
           <!-- 上传进度 -->
           <div v-else class="upload-progress">
-            <div v-for="(f, i) in pendingFiles" :key="f.name + i" class="up-file-row">
+            <div v-for="(f, i) in pendingFiles" :key="pendingPaths[i] + i" class="up-file-row">
               <!-- 进度背景层 -->
               <div class="up-fill" :class="{ done: fileProgresses[i] >= 1 }" :style="{ width: (fileProgresses[i] * 100) + '%' }"></div>
               <!-- 内容层 -->
               <span class="file-ext">{{ f.name.split('.').pop().toUpperCase().slice(0, 4) }}</span>
-              <span class="up-file-name">{{ f.name }}</span>
+              <span class="up-file-name" :title="pendingPaths[i]">{{ pendingPaths[i] }}</span>
               <span class="up-status">
                 <svg v-if="fileProgresses[i] >= 1" width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="#5a9e88" stroke-width="2.2" stroke-linecap="round">
                   <path d="M2 7l3.5 3.5L12 3"/>
@@ -258,6 +258,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { uploadWithProgress, uploadDirectWithProgress, filesApi, foldersApi } from '@/services/api'
+import { readDroppedEntries, filesToItems, resolveFolderTree } from '@/composables/useFileUpload'
 import BaseModal from '@/components/common/BaseModal.vue'
 
 const props = defineProps({
@@ -273,6 +274,7 @@ const emit = defineEmits(['close', 'uploaded'])
 
 const fileInputRef    = ref(null)
 const pendingFiles    = ref([])
+const pendingPaths    = ref([])   // 与 pendingFiles 同下标对齐：文件相对路径（拖文件夹进来时带 "/"，否则=文件名）
 const selectedId      = ref(null)
 const selectedFolderId = ref(null)
 const selectedStage   = ref('')
@@ -325,11 +327,12 @@ watch(selectedId, () => {
 
 watch(() => props.show, v => {
   if (v) {
-    if (props.initialFiles.length) addFiles([...props.initialFiles])
+    if (props.initialFiles.length) addFiles(filesToItems(props.initialFiles))
     if (effectiveProjectId.value) loadFolders(effectiveProjectId.value)
     selectedStage.value = stageDefault()   // 打开即默认当前阶段（锁定项目入口此时 effectiveProjectId 监听不触发）
   } else {
     pendingFiles.value     = []
+    pendingPaths.value     = []
     selectedId.value       = null
     selectedFolderId.value = null
     selectedStage.value    = ''
@@ -397,25 +400,31 @@ function extractColor(colorStr) {
 }
 
 function handleFileInput(e) {
-  const picked = [...e.target.files]
-  addFiles(picked)
+  addFiles(filesToItems(e.target.files))
   e.target.value = ''
 }
 
-function handleDrop(e) {
-  const dropped = [...(e.dataTransfer?.files ?? [])]
-  addFiles(dropped)
+async function handleDrop(e) {
+  addFiles(await readDroppedEntries(e.dataTransfer))
 }
 
-function addFiles(newFiles) {
-  const existing = new Set(pendingFiles.value.map(f => f.name + f.size))
-  for (const f of newFiles) {
-    if (!existing.has(f.name + f.size)) pendingFiles.value.push(f)
+// items: UploadItem[]（{file, relativePath}）——去重键带上 relativePath，避免把「不同文件夹
+// 下同名同大小的文件」误判成重复（纯文件名+size 在有文件夹结构时不够唯一）。
+function addFiles(items) {
+  const existing = new Set(pendingPaths.value.map((p, i) => p + ':' + pendingFiles.value[i].size))
+  for (const { file, relativePath } of items) {
+    const key = relativePath + ':' + file.size
+    if (!existing.has(key)) {
+      existing.add(key)
+      pendingFiles.value.push(file)
+      pendingPaths.value.push(relativePath)
+    }
   }
 }
 
 function removeFile(i) {
   pendingFiles.value.splice(i, 1)
+  pendingPaths.value.splice(i, 1)
 }
 
 function handleClose() {
@@ -429,14 +438,20 @@ async function handleUpload() {
   uploadedCount.value  = 0
   fileProgresses.value = pendingFiles.value.map(() => 0)
 
-  const projectId = effectiveProjectId.value
-  const folderId  = props.lockedFolderId !== null ? props.lockedFolderId : selectedFolderId.value
-  const space     = projectId ? 'project' : 'personal'
+  const projectId    = effectiveProjectId.value
+  const baseFolderId = props.lockedFolderId !== null ? props.lockedFolderId : selectedFolderId.value
+  const space        = projectId ? 'project' : 'personal'
   const uploaded  = []
 
   try {
+    // 拖入的是文件夹时，先按相对路径把缺的子文件夹建好（同名复用，不重复建）——文件真正该
+    // 落的 folder_id 可能不是弹窗里选的 baseFolderId，是它底下按路径解析出的某个子文件夹
+    const items = pendingFiles.value.map((file, i) => ({ file, relativePath: pendingPaths.value[i] }))
+    const resolved = await resolveFolderTree(items, { projectId, baseFolderId })
+
     for (let i = 0; i < pendingFiles.value.length; i++) {
       const f = pendingFiles.value[i]
+      const folderId = resolved[i].folderId
 
       const presign = await filesApi.presign({
         filename:   f.name,

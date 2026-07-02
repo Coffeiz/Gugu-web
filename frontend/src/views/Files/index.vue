@@ -21,10 +21,8 @@
           </svg>
           <button class="bc-item"
             :class="{ active: i === navPath.length - 1, 'bc-drop-target': bcDragOverIdx === i && isBcDroppable(seg) }"
+            :data-bc-idx="i"
             @click="navigateTo(i)"
-            @dragover="onBcDragOver(seg, i, $event)"
-            @dragleave="onBcDragLeave(i)"
-            @drop="onBcDrop(seg, $event)"
           >
             <span v-if="seg.color" class="bc-dot" :style="{ background: seg.color }"></span>
             {{ seg.name }}
@@ -245,12 +243,7 @@
               :data-folder-key="f.id"
               :style="{ '--fd-color': folderAccentColor(f) }"
               @click.stop="handleFolderClick(f, $event)"
-              draggable="true"
-              @dragstart="onFolderCardDragStart(f, $event)"
-              @dragend="onFolderCardDragEnd"
-              @dragover="onFolderDragOver(f, $event)"
-              @dragleave="onFolderDragLeave(f)"
-              @drop="onFolderDrop(f, $event)"
+              @pointerdown="onFolderPointerDown(f, $event)"
             >
               <div class="fd-icon-area">
                 <component :is="folderListIcon(f)" class="fd-big-icon" :size="92" weight="bold" />
@@ -296,11 +289,9 @@
               :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id), dragging: draggingFileIds.has(f.id), cut: cbStore.type === 'cut' && cbStore.fileIds.includes(f.id), 'fc-has-thumb': isImageExt(f.ext) }"
               :data-file-id="f.id"
               :style="{ '--fc-color': fileIconColor(f.ext) }"
-              draggable="true"
               @contextmenu.prevent.stop="openCtx('file', f, $event)"
               @click.stop="handleFileClick(f, $event)"
-              @dragstart="onFileDragStart(f, $event)"
-              @dragend="onFileDragEnd"
+              @pointerdown="onFilePointerDown(f, $event)"
             >
               <span class="fc-ext-badge">{{ f.ext }}</span>
               <div v-if="isImageExt(f.ext)" class="fc-thumb-area">
@@ -351,19 +342,24 @@
               </div>
             </div>
 
-            <!-- 幽灵上传卡 -->
+            <!-- 幽灵上传卡：单文件 / 文件夹（拖入文件夹时汇总一张，不给里面每个文件各出一张） -->
             <div v-for="g in uploadingItems" :key="g.uid"
-              class="fc-ghost" :class="{ error: g.error }"
-              :style="{ '--fc-color': fileIconColor(g.ext) }">
+              class="fc-ghost" :class="{ error: g.error, 'fc-ghost-folder': g.isFolder }"
+              :style="{ '--fc-color': g.isFolder ? '#8a8fa8' : fileIconColor(g.ext) }">
               <div class="fc-ghost-fill" :style="{ width: g.progress + '%' }"></div>
-              <span class="fc-ext-badge">{{ g.ext || '—' }}</span>
+              <span v-if="!g.isFolder" class="fc-ext-badge">{{ g.ext || '—' }}</span>
               <div class="fc-icon-area">
-                <component :is="fileListIcon(g.ext)" class="fc-big-icon" :size="86" weight="bold" />
+                <PhFolder v-if="g.isFolder" class="fc-big-icon" :size="86" weight="bold" />
+                <component v-else :is="fileListIcon(g.ext)" class="fc-big-icon" :size="86" weight="bold" />
               </div>
               <div class="fc-label">
                 <div class="fc-name" :title="g.name">{{ g.name }}</div>
                 <div class="fc-meta fc-ghost-meta">
-                  <template v-if="g.error">上传失败</template>
+                  <template v-if="g.isFolder">
+                    <template v-if="g.error">{{ g.done - g.failed }}/{{ g.total }}（{{ g.failed }} 个失败）</template>
+                    <template v-else>{{ g.done }}/{{ g.total }}</template>
+                  </template>
+                  <template v-else-if="g.error">上传失败</template>
                   <template v-else>{{ g.progress }}%</template>
                 </div>
               </div>
@@ -406,12 +402,7 @@
               :data-folder-key="f.id"
               @click.stop="handleFolderClick(f, $event)"
               @contextmenu.prevent.stop="openCtx('folder', f, $event)"
-              draggable="true"
-              @dragstart="onFolderCardDragStart(f, $event)"
-              @dragend="onFolderCardDragEnd"
-              @dragover="onFolderDragOver(f, $event)"
-              @dragleave="onFolderDragLeave(f)"
-              @drop="onFolderDrop(f, $event)"
+              @pointerdown="onFolderPointerDown(f, $event)"
             >
               <span class="lr-name-cell">
                 <component :is="folderListIcon(f)" class="lr-folder-icon" :size="16" weight="fill" :style="{ color: folderAccentColor(f) }" />
@@ -458,11 +449,9 @@
               class="list-row"
               :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id), dragging: draggingFileIds.has(f.id), cut: cbStore.type === 'cut' && cbStore.fileIds.includes(f.id) }"
               :data-file-id="f.id"
-              draggable="true"
               @contextmenu.prevent.stop="openCtx('file', f, $event)"
               @click.stop="handleFileClick(f, $event)"
-              @dragstart="onFileDragStart(f, $event)"
-              @dragend="onFileDragEnd"
+              @pointerdown="onFilePointerDown(f, $event)"
             >
               <span class="lr-name-cell">
                 <component :is="fileListIcon(f.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color: fileIconColor(f.ext) }" />
@@ -508,19 +497,23 @@
               </span>
             </div>
 
-            <!-- 幽灵上传行 -->
+            <!-- 幽灵上传行：单文件 / 文件夹（拖入文件夹时汇总一行） -->
             <div v-for="g in uploadingItems" :key="g.uid"
               class="list-row fc-ghost-row" :class="{ error: g.error }">
               <div class="fc-ghost-fill" :style="{ width: g.progress + '%' }"></div>
               <span class="lr-name-cell">
-                <component :is="fileListIcon(g.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color: fileIconColor(g.ext) }" />
+                <PhFolder v-if="g.isFolder" class="lr-file-icon" :size="16" weight="fill" style="color:#8a8fa8" />
+                <component v-else :is="fileListIcon(g.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color: fileIconColor(g.ext) }" />
                 <span class="lr-filename">{{ g.name }}</span>
               </span>
-              <span class="lr-type-cell"><span class="lr-ext" :style="{ color: fileIconColor(g.ext), background: fileIconColor(g.ext) + '18' }">{{ g.ext || '—' }}</span></span>
+              <span class="lr-type-cell">
+                <span v-if="!g.isFolder" class="lr-ext" :style="{ color: fileIconColor(g.ext), background: fileIconColor(g.ext) + '18' }">{{ g.ext || '—' }}</span>
+              </span>
               <span class="lr-text">—</span>
               <span class="lr-text">—</span>
               <span class="lr-text">
-                <template v-if="g.error">失败</template>
+                <template v-if="g.isFolder">{{ g.done }}/{{ g.total }}<template v-if="g.error">（{{ g.failed }} 失败）</template></template>
+                <template v-else-if="g.error">失败</template>
                 <template v-else>{{ g.progress }}%</template>
               </span>
               <span class="lr-actions"></span>
@@ -693,6 +686,7 @@ import { isImageExt, fileExtCategory, fileIconColor, fileListIcon } from '@/util
 import { startPhysicsDrag, startMultiPhysicsDrag } from '@/composables/usePhysicsDrag'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
+import { readDroppedEntries, filesToItems, uploadFilesWithFolders } from '@/composables/useFileUpload'
 import { useBoxSelection } from '@/composables/useBoxSelection'
 import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
@@ -1486,7 +1480,7 @@ function formatDate(iso) {
 }
 
 // ── 上传 ──
-const { uploadingItems, createGhost, updateGhostProgress, removeGhost, failGhost } = useUploadQueue()
+const { uploadingItems, createGhost, updateGhostProgress, removeGhost, failGhost, createFolderGhost, bumpFolderGhost } = useUploadQueue()
 
 // ── 新建文件夹 ──
 const newFolderName      = ref('')
@@ -1522,8 +1516,12 @@ async function createFolder() {
   }
 }
 
-async function uploadFiles(files) {
-  if (!files.length) return
+// items: UploadItem[]（{file, relativePath}）——relativePath 带 "/" 时来自拖入的文件夹，
+// 由 uploadFilesWithFolders 按路径建好子文件夹再落到各自正确的 folder_id。
+// items: UploadItem[]（{file, relativePath}）——relativePath 带 "/" 时来自拖入的文件夹，
+// 由 uploadFilesWithFolders 按路径建好子文件夹再落到各自正确的 folder_id。
+async function uploadFiles(items) {
+  if (!items.length) return
   const type = currentType.value
   const seg  = currentSeg.value
   let space = 'personal', projectId = null, folderId = null
@@ -1534,34 +1532,54 @@ async function uploadFiles(files) {
     if (seg.projectId) { space = 'project'; projectId = seg.projectId }
   }
 
-  const tasks = files.map(f => {
-    const dotIdx = f.name.lastIndexOf('.')
-    const ext  = dotIdx > -1 ? f.name.slice(dotIdx + 1).toUpperCase() : ''
-    const name = dotIdx > -1 ? f.name.slice(0, dotIdx) : f.name
-    return { file: f, ghost: createGhost(name, ext) }
-  })
+  // 按顶层文件夹分组：relativePath 带 "/" 的文件汇总进「文件夹名 · 完成数/总数」一张卡，
+  // 不用每个文件各出一张（大部分还落在当前看不见的子文件夹里，刷屏也看不出意义）；
+  // 没有 "/" 的（本来就是单文件，或文件夹里就直接是文件不算——理论上不会有这种）仍各自一张卡。
+  const folderGhosts = new Map()
+  for (const { relativePath } of items) {
+    const idx = relativePath.indexOf('/')
+    if (idx === -1) continue
+    const top = relativePath.slice(0, idx)
+    if (!folderGhosts.has(top)) folderGhosts.set(top, null)
+  }
+  for (const top of folderGhosts.keys()) {
+    const total = items.filter(it => it.relativePath.startsWith(top + '/')).length
+    folderGhosts.set(top, createFolderGhost(top, total))
+  }
 
-  await Promise.allSettled(tasks.map(async ({ file, ghost }) => {
-    try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('space', space)
-      if (projectId) form.append('project_id', String(projectId))
-      if (folderId)  form.append('folder_id',  String(folderId))
-      const created = await uploadWithProgress('/files', form, p => updateGhostProgress(ghost, p))
-      removeGhost(ghost)
-      cacheStore.addFile(created)
-      loadContents()
-      fetchStorage()
-    } catch (e) {
-      console.error('[Files] 上传失败:', e.message)
-      failGhost(ghost)
-    }
-  }))
+  await uploadFilesWithFolders(items, {
+    projectId, baseFolderId: folderId,
+    onFolderCreated: (folder) => cacheStore.addFolder(folder),   // 新建的子文件夹实时进本地缓存，不用刷新页面才看得到
+    uploadOne: async (file, resolvedFolderId, relativePath) => {
+      const top = relativePath.includes('/') ? relativePath.slice(0, relativePath.indexOf('/')) : null
+      const folderGhost = top ? folderGhosts.get(top) : null
+      const ghost = folderGhost ? null : createGhost(
+        (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(0, i) : file.name })(),
+        (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(i + 1).toUpperCase() : '' })(),
+      )
+      try {
+        const form = new FormData()
+        form.append('file', file)
+        form.append('space', space)
+        if (projectId)        form.append('project_id', String(projectId))
+        if (resolvedFolderId) form.append('folder_id', String(resolvedFolderId))
+        const created = await uploadWithProgress('/files', form, p => { if (ghost) updateGhostProgress(ghost, p) })
+        if (ghost) removeGhost(ghost)
+        else bumpFolderGhost(folderGhost)
+        cacheStore.addFile(created)
+        loadContents()
+        fetchStorage()
+      } catch (e) {
+        console.error('[Files] 上传失败:', e.message)
+        if (ghost) failGhost(ghost)
+        else bumpFolderGhost(folderGhost, true)
+      }
+    },
+  })
 }
 
 async function handleFileInput(e) {
-  await uploadFiles([...e.target.files])
+  await uploadFiles(filesToItems(e.target.files))
   e.target.value = ''
 }
 
@@ -1572,11 +1590,11 @@ function onDragEnter(e) {
 function onDragLeave() {
   dragCounter.value = Math.max(0, dragCounter.value - 1)
 }
-function handleDrop(e) {
+async function handleDrop(e) {
   dragCounter.value = 0
   if (!canUpload.value) return
-  const files = [...(e.dataTransfer?.files ?? [])]
-  if (files.length) uploadFiles(files)
+  const items = await readDroppedEntries(e.dataTransfer)
+  if (items.length) uploadFiles(items)
 }
 
 // ── 预览 ──
@@ -1662,135 +1680,43 @@ async function downloadFolder(f) {
 }
 
 // ── 拖动移动 ──
+// 改用 pointer 模式（setPointerCapture 自建拖拽，不再是原生 HTML5 draggable/dragstart）：
+// 原生拖拽从 dragstart 起浏览器会整段暂停 mouseover/mouseout 派发，抓起卡片那一刻缓存的
+// :hover=true 全程不会被清掉，只有等 dragend 后浏览器才重新判定——这段时间差导致落地揭示
+// 卡片时经常"跳一下"（perf trace 实测证实）。项目看板的拖拽已经是 pointer 模式、完全没有
+// 这个问题，这里照抄同一套思路。落点判定/高亮不再靠原生 @dragover/@drop（那要有真实原生
+// 拖拽在跑才会触发），改成 startPhysicsDrag/startMultiPhysicsDrag 新增的 onDragOver/onDrop
+// 回调，调用方自己 elementFromPoint 找目标——folder-card/folder-row 认 data-folder-key，
+// 面包屑段认 data-bc-idx（根「全部文件」项没有这个属性，天然不参与，保持原来就不可放置的行为）。
+// OS 拖文件到浏览器上传走的是页面级另一套原生监听（onDragEnter/onDragLeave/handleDrop），
+// 和这里完全独立，不受影响。
 const draggingFileIds   = ref(new Set())
 const draggingFolderIds = ref(new Set())
 const dragOverFolderId  = ref(null)
 const bcDragOverIdx     = ref(null)
 
-function onFolderCardDragStart(f, e) {
-  const isMultiSelect = selectedFolderKeys.value.has(f.id) && selectedFolderKeys.value.size > 0
-  const folderObjs = isMultiSelect
-    ? sortedContents.value.folders.filter(item => selectedFolderKeys.value.has(item.id))
-    : [f]
-  const fileIds = isMultiSelect ? [...selectedIds.value] : []
-
-  draggingFolderIds.value = new Set(folderObjs.map(item => item.folderId))
-  if (fileIds.length) draggingFileIds.value = new Set(fileIds)
-
-  e.dataTransfer.setData('application/x-folder-ids', JSON.stringify(folderObjs.map(item => item.folderId)))
-  if (fileIds.length) e.dataTransfer.setData('text/plain', JSON.stringify(fileIds))
-  e.dataTransfer.effectAllowed = 'move'
-
-  if (e.currentTarget?.classList?.contains('folder-card')) {
-    const total = folderObjs.length + fileIds.length
-    if (total > 1) {
-      const extraFolderEls = folderObjs.filter(item => item.id !== f.id)
-        .map(item => document.querySelector(`[data-folder-key="${item.id}"]`)).filter(Boolean)
-      const extraFileEls = fileIds
-        .map(id => document.querySelector(`[data-file-id="${id}"]`)).filter(Boolean)
-      const extras = [...extraFolderEls, ...extraFileEls].slice(0, 2)
-      startMultiPhysicsDrag(e, e.currentTarget, total, extras)
-    } else {
-      startPhysicsDrag(e, e.currentTarget)
-    }
-  }
-}
-function onFolderCardDragEnd() {
-  draggingFolderIds.value = new Set()
-  draggingFileIds.value   = new Set()
-  dragOverFolderId.value  = null
-}
-
-function onFileDragStart(f, e) {
-  const fileIds = selectedIds.value.has(f.id) && selectedIds.value.size > 0
-    ? [...selectedIds.value] : [f.id]
-  const isFileSelected = selectedIds.value.has(f.id)
-  const folderObjs = isFileSelected
-    ? sortedContents.value.folders.filter(item => selectedFolderKeys.value.has(item.id))
-    : []
-
-  draggingFileIds.value = new Set(fileIds)
-  if (folderObjs.length) draggingFolderIds.value = new Set(folderObjs.map(item => item.folderId))
-
-  e.dataTransfer.setData('text/plain', JSON.stringify(fileIds))
-  if (folderObjs.length) e.dataTransfer.setData('application/x-folder-ids', JSON.stringify(folderObjs.map(item => item.folderId)))
-  e.dataTransfer.effectAllowed = 'move'
-
-  const total = fileIds.length + folderObjs.length
-  if (total > 1) {
-    const extraFileEls = fileIds.filter(id => id !== f.id)
-      .map(id => document.querySelector(`[data-file-id="${id}"]`)).filter(Boolean)
-    const extraFolderEls = folderObjs
-      .map(item => document.querySelector(`[data-folder-key="${item.id}"]`)).filter(Boolean)
-    const extras = [...extraFileEls, ...extraFolderEls].slice(0, 2)
-    startMultiPhysicsDrag(e, e.currentTarget, total, extras)
-  } else if (e.currentTarget?.classList?.contains('fc-card')) {
-    // 单选网格卡：物理弹簧拖拽
-    // ⚠️ 别再 setDragImage(卡片)——双重 setDragImage 部分浏览器只认第一次，随后源卡隐藏→退回 favicon
-    startPhysicsDrag(e, e.currentTarget)
-  } else {
-    // 单选列表行：用行自身作拖影，覆盖浏览器 text/plain 的「favicon+文本预览」
-    try {
-      const _r = e.currentTarget.getBoundingClientRect()
-      e.dataTransfer.setDragImage(e.currentTarget, e.clientX - _r.left, e.clientY - _r.top)
-    } catch {}
-  }
-  // 清除框选状态（mousedown 可能提前启动了框选，但 drag 开始后 mouseup 不会触发）
-  _cancelBoxDrag()
-}
-function onFileDragEnd() {
-  draggingFileIds.value = new Set()
-  dragOverFolderId.value = null
-}
 function isBcDroppable(seg) {
   return seg.type === 'folder' || seg.type === 'personal'
 }
-function onBcDragOver(seg, i, e) {
-  if (!isBcDroppable(seg)) return
-  if (!draggingFileIds.value.size && !draggingFolderIds.value.size) return
-  e.preventDefault()
-  e.dataTransfer.dropEffect = 'move'
-  bcDragOverIdx.value = i
-}
-function onBcDragLeave(i) {
-  if (bcDragOverIdx.value === i) bcDragOverIdx.value = null
-}
-async function onBcDrop(seg, e) {
-  e.preventDefault()
-  bcDragOverIdx.value = null
-  if (!isBcDroppable(seg)) return
-  const targetFolderId = seg.type === 'folder' ? seg.folderId : null
 
-  // 文件夹拖到面包屑
-  if (draggingFolderIds.value.size > 0) {
-    const folderIds = [...draggingFolderIds.value].filter(id => id !== targetFolderId)
-    draggingFolderIds.value = new Set()
-    if (!folderIds.length) return
-    const backups = folderIds.map(id => cacheStore.getFolder(id)).filter(Boolean)
-    folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: targetFolderId }))
-    selectedFolderKeys.value = new Set()
-    loadContents()
-    try {
-      await Promise.all(folderIds.map(id => foldersApi.move(id, targetFolderId)))
-    } catch (err) {
-      backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId }))
-      loadContents()
-      console.error('[Files] 移动文件夹失败:', err.message)
-    }
-    return
-  }
-
-  // 文件拖到面包屑（原逻辑）
-  let ids
-  try { ids = JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return }
-  if (!ids?.length) return
-  const backups = ids.map(id => cacheStore.getFile(id)).filter(Boolean)
-  ids.forEach(id => cacheStore.updateFile(id, { folderId: targetFolderId }))
-  draggingFileIds.value = new Set()
-  selectedIds.value     = new Set()
+async function moveFoldersInto(folderIds, targetFolderId) {
+  const backups = folderIds.map(id => cacheStore.getFolder(id)).filter(Boolean)
+  folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: targetFolderId }))
   loadContents()
   try {
-    await Promise.all(ids.map(id => filesApi.update(id, { folder_id: targetFolderId })))
+    await Promise.all(folderIds.map(id => foldersApi.move(id, targetFolderId)))
+  } catch (err) {
+    backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId }))
+    loadContents()
+    console.error('[Files] 移动文件夹失败:', err.message)
+  }
+}
+async function moveFilesInto(fileIds, targetFolderId) {
+  const backups = fileIds.map(id => cacheStore.getFile(id)).filter(Boolean)
+  fileIds.forEach(id => cacheStore.updateFile(id, { folderId: targetFolderId }))
+  loadContents()
+  try {
+    await Promise.all(fileIds.map(id => filesApi.update(id, { folder_id: targetFolderId })))
   } catch (err) {
     backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId }))
     loadContents()
@@ -1798,65 +1724,160 @@ async function onBcDrop(seg, e) {
   }
 }
 
-function onFolderDragOver(f, e) {
-  if (f.type !== 'folder') return
-  const hasFiles   = draggingFileIds.value.size > 0
-  const hasFolders = draggingFolderIds.value.size > 0
-  if (!hasFiles && !hasFolders) return
-  // 不能拖到自身
-  if (hasFolders && draggingFolderIds.value.has(f.folderId)) return
-  e.preventDefault()
-  e.dataTransfer.dropEffect = 'move'
-  dragOverFolderId.value = f.folderId
-}
-function onFolderDragLeave(f) {
-  if (dragOverFolderId.value === f.folderId) dragOverFolderId.value = null
-}
-async function onFolderDrop(f, e) {
-  e.preventDefault()
-  dragOverFolderId.value = null
-  if (f.type !== 'folder') return
-
-  const hasDraggingFolders = draggingFolderIds.value.size > 0
-  const hasDraggingFiles   = draggingFileIds.value.size > 0
-
-  // 文件夹拖入文件夹（含混合）
-  if (hasDraggingFolders) {
-    const folderIds = [...draggingFolderIds.value].filter(id => id !== f.folderId)
-    draggingFolderIds.value = new Set()
-    selectedFolderKeys.value = new Set()
-    if (folderIds.length) {
-      const backups = folderIds.map(id => cacheStore.getFolder(id)).filter(Boolean)
-      folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: f.folderId }))
-      loadContents()
-      try {
-        await Promise.all(folderIds.map(id => foldersApi.move(id, f.folderId)))
-      } catch (err) {
-        backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId }))
-        loadContents()
-        console.error('[Files] 移动文件夹失败:', err.message)
-      }
+// 拖拽过程中每帧回调：找当前指针下是否压着有效放置目标，更新高亮（不能拖到自身）
+function updateDragOverHighlight({ x, y }) {
+  if (!draggingFileIds.value.size && !draggingFolderIds.value.size) {
+    dragOverFolderId.value = null; bcDragOverIdx.value = null
+    return
+  }
+  const under = document.elementFromPoint(x, y)
+  const folderEl = under?.closest?.('.folder-card, .folder-row')
+  if (folderEl) {
+    const key = Number(folderEl.getAttribute('data-folder-key'))
+    dragOverFolderId.value = draggingFolderIds.value.has(key) ? null : key
+    bcDragOverIdx.value = null
+    return
+  }
+  const bcEl = under?.closest?.('.bc-item')
+  if (bcEl?.hasAttribute('data-bc-idx')) {
+    const idx = Number(bcEl.getAttribute('data-bc-idx'))
+    const seg = navPath.value[idx]
+    if (seg && isBcDroppable(seg)) {
+      bcDragOverIdx.value = idx
+      dragOverFolderId.value = null
+      return
     }
-    if (!hasDraggingFiles) return
+  }
+  dragOverFolderId.value = null
+  bcDragOverIdx.value = null
+}
+
+// 松手落点判定 + 真正执行移动（startPhysicsDrag/startMultiPhysicsDrag 的 onDrop 回调）
+async function dispatchFilesDrop({ x, y }) {
+  const under = document.elementFromPoint(x, y)
+  dragOverFolderId.value = null
+  bcDragOverIdx.value = null
+
+  const draggedFolderIds = [...draggingFolderIds.value]
+  const draggedFileIds   = [...draggingFileIds.value]
+  draggingFolderIds.value = new Set()
+  draggingFileIds.value   = new Set()
+  if (!draggedFolderIds.length && !draggedFileIds.length) return
+
+  let targetFolderId = null
+  const folderEl = under?.closest?.('.folder-card, .folder-row')
+  const bcEl     = under?.closest?.('.bc-item')
+  if (folderEl) {
+    const key = Number(folderEl.getAttribute('data-folder-key'))
+    if (draggedFolderIds.includes(key)) return   // 拖到自己身上，不动
+    targetFolderId = key
+  } else if (bcEl?.hasAttribute('data-bc-idx')) {
+    const idx = Number(bcEl.getAttribute('data-bc-idx'))
+    const seg = navPath.value[idx]
+    if (!seg || !isBcDroppable(seg)) return
+    targetFolderId = seg.type === 'folder' ? seg.folderId : null
+  } else {
+    return   // 没落在有效目标上
   }
 
-  // 文件拖入文件夹（含混合拖拽中的文件部分）
-  const ids = hasDraggingFiles
-    ? [...draggingFileIds.value]
-    : (() => { try { return JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return null } })()
-  if (!ids?.length) return
-  const backups = ids.map(id => cacheStore.getFile(id)).filter(Boolean)
-  ids.forEach(id => cacheStore.updateFile(id, { folderId: f.folderId }))
-  draggingFileIds.value = new Set()
-  selectedIds.value     = new Set()
-  loadContents()
-  try {
-    await Promise.all(ids.map(id => filesApi.update(id, { folder_id: f.folderId })))
-  } catch (err) {
-    backups.forEach(b => cacheStore.updateFile(b.id, { folderId: b.folderId }))
-    loadContents()
-    console.error('[Files] 移动失败:', err.message)
+  selectedFolderKeys.value = new Set()
+  selectedIds.value = new Set()
+  if (draggedFolderIds.length) await moveFoldersInto(draggedFolderIds, targetFolderId)
+  if (draggedFileIds.length) await moveFilesInto(draggedFileIds, targetFolderId)
+}
+
+// pointerdown 起，越过 5px 阈值才真正开拖（否则当普通点击，交给原有 @click 处理）；
+// 内部操作按钮/重命名输入框先排除，原生 draggable 版本靠子元素 @mousedown.prevent 挡掉
+// dragstart，pointerdown 没有等价的天然阻挡，这里手动排除。
+function onFolderPointerDown(f, e) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  if (e.target.closest('button, input, .rename-sizer')) return
+  const card = e.currentTarget
+  const sx = e.clientX, sy = e.clientY
+  let started = false
+  const onMove = (ev) => {
+    if (started || Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return
+    started = true
+    teardown()
+    _cancelBoxDrag()
+
+    const isMultiSelect = selectedFolderKeys.value.has(f.id) && selectedFolderKeys.value.size > 0
+    const folderObjs = isMultiSelect
+      ? sortedContents.value.folders.filter(item => selectedFolderKeys.value.has(item.id))
+      : [f]
+    const fileIds = isMultiSelect ? [...selectedIds.value] : []
+
+    draggingFolderIds.value = new Set(folderObjs.map(item => item.folderId))
+    if (fileIds.length) draggingFileIds.value = new Set(fileIds)
+
+    const opts = { pointer: true, onDrop: dispatchFilesDrop, onDragOver: updateDragOverHighlight }
+    const total = folderObjs.length + fileIds.length
+    if (total > 1) {
+      const extraFolderEls = folderObjs.filter(item => item.id !== f.id)
+        .map(item => document.querySelector(`[data-folder-key="${item.id}"]`)).filter(Boolean)
+      const extraFileEls = fileIds
+        .map(id => document.querySelector(`[data-file-id="${id}"]`)).filter(Boolean)
+      const extras = [...extraFolderEls, ...extraFileEls].slice(0, 2)
+      startMultiPhysicsDrag(ev, card, total, extras, opts)
+    } else {
+      startPhysicsDrag(ev, card, opts)
+    }
   }
+  const onUp = () => teardown()
+  const teardown = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onUp)
+  }
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onUp)
+}
+
+function onFilePointerDown(f, e) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  if (e.target.closest('button, input, .rename-sizer')) return
+  const card = e.currentTarget
+  const sx = e.clientX, sy = e.clientY
+  let started = false
+  const onMove = (ev) => {
+    if (started || Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return
+    started = true
+    teardown()
+    _cancelBoxDrag()
+
+    const fileIds = selectedIds.value.has(f.id) && selectedIds.value.size > 0
+      ? [...selectedIds.value] : [f.id]
+    const isFileSelected = selectedIds.value.has(f.id)
+    const folderObjs = isFileSelected
+      ? sortedContents.value.folders.filter(item => selectedFolderKeys.value.has(item.id))
+      : []
+
+    draggingFileIds.value = new Set(fileIds)
+    if (folderObjs.length) draggingFolderIds.value = new Set(folderObjs.map(item => item.folderId))
+
+    const opts = { pointer: true, onDrop: dispatchFilesDrop, onDragOver: updateDragOverHighlight }
+    const total = fileIds.length + folderObjs.length
+    if (total > 1) {
+      const extraFileEls = fileIds.filter(id => id !== f.id)
+        .map(id => document.querySelector(`[data-file-id="${id}"]`)).filter(Boolean)
+      const extraFolderEls = folderObjs
+        .map(item => document.querySelector(`[data-folder-key="${item.id}"]`)).filter(Boolean)
+      const extras = [...extraFileEls, ...extraFolderEls].slice(0, 2)
+      startMultiPhysicsDrag(ev, card, total, extras, opts)
+    } else {
+      startPhysicsDrag(ev, card, opts)
+    }
+  }
+  const onUp = () => teardown()
+  const teardown = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onUp)
+  }
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onUp)
 }
 
 function pruneHistoryForFolders(folderIds) {
