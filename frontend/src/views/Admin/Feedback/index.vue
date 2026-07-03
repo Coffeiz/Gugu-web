@@ -43,7 +43,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { PhArrowClockwise, PhList, PhWarningOctagon, PhLightbulb, PhChatCircle } from '@phosphor-icons/vue'
 
@@ -75,7 +75,7 @@ async function load() {
   refreshing.value = true
   setTimeout(() => { refreshing.value = false }, 550)
   try {
-    const params = new URLSearchParams({ page: page.value, page_size: pageSize })
+    const params = new URLSearchParams({ page: String(page.value), page_size: String(pageSize) })
     if (filter.value) params.set('category', filter.value)
     const res = await fetch(`/api/v1/admin/feedback?${params}`, {
       headers: { Authorization: `Bearer ${adminToken()}` },

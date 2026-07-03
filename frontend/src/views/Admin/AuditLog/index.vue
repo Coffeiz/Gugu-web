@@ -104,7 +104,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import AdminDatePicker from '@/components/AdminDatePicker.vue'
 import AdminSelect from '@/components/AdminSelect.vue'

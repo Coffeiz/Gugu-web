@@ -26,7 +26,7 @@
                 class="header-name-input"
                 placeholder="项目名称"
                 @blur="saveName"
-                v-enter="(e) => e.target.blur()"
+                v-enter="(e) => (e.target as HTMLElement).blur()"
                 @keydown.esc="cancelName"
               />
             </div>
@@ -321,7 +321,7 @@
                       <span v-if="renamingFolderId === folder.id" class="rename-sizer" @click.stop>
                         <span class="rename-ghost">{{ folderRenameText || ' ' }}</span>
                         <input class="rename-input-inline" v-model="folderRenameText"
-                          v-enter="commitFolderRename" @keydown.esc="cancelFolderRename" @blur="commitFolderRename" @focus="$event.target.select()" />
+                          v-enter="commitFolderRename" @keydown.esc="cancelFolderRename" @blur="commitFolderRename" @focus="($event.target as HTMLInputElement).select()" />
                       </span>
                       <template v-else>{{ folder.name }}</template>
                     </div>
@@ -357,7 +357,7 @@
                       :class="{ 'fc-loaded': thumbLoadedIds.has(file.id) }"
                       decoding="async" draggable="false" alt=""
                       @load="thumbLoadedIds.add(file.id)"
-                      @error="$event.target.style.display='none'" />
+                      @error="($event.target as HTMLElement).style.display='none'" />
                     <div class="fc-thumb-fade"></div>
                   </div>
                   <div v-else class="fc-icon-area">
@@ -395,7 +395,7 @@
                       <span v-if="renamingFileId === file.id" class="rename-sizer" @click.stop>
                         <span class="rename-ghost">{{ renameText || ' ' }}</span>
                         <input class="rename-input-inline" v-model="renameText"
-                          v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="$event.target.select()" />
+                          v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
                       </span>
                       <template v-else>{{ file.displayName }}</template>
                     </div>
@@ -487,7 +487,7 @@
                       <span v-if="renamingFolderId === folder.id" class="rename-sizer" @click.stop>
                         <span class="rename-ghost">{{ folderRenameText || ' ' }}</span>
                         <input class="rename-input-inline" v-model="folderRenameText"
-                          v-enter="commitFolderRename" @keydown.esc="cancelFolderRename" @blur="commitFolderRename" @focus="$event.target.select()" />
+                          v-enter="commitFolderRename" @keydown.esc="cancelFolderRename" @blur="commitFolderRename" @focus="($event.target as HTMLInputElement).select()" />
                       </span>
                       <template v-else>{{ folder.name }}</template>
                     </span>
@@ -526,7 +526,7 @@
                       <span v-if="renamingFileId === file.id" class="rename-sizer" @click.stop>
                         <span class="rename-ghost">{{ renameText || ' ' }}</span>
                         <input class="rename-input-inline" v-model="renameText"
-                          v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="$event.target.select()" />
+                          v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
                       </span>
                       <template v-else>{{ file.displayName }}</template>
                     </span>
@@ -687,7 +687,7 @@
   />
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
@@ -1043,7 +1043,7 @@ async function movePmFoldersInto(folderIds, targetFolderId) {
 }
 async function movePmFilesInto(fileIds, targetFolderId, { droppedOn }) {
   try {
-    await Promise.all(fileIds.map(id => filesApi.update(id, { folder_id: targetFolderId })))
+    await Promise.all(fileIds.map(id => filesApi.update(id, { folderId: targetFolderId })))
   } catch (err) { console.error('[ProjectModal] 移动失败:', err.message) }
   if (droppedOn === 'breadcrumb') await _pmRefetchCurrentFiles()
   else await _pmRefetchAllAndResetNav()
@@ -1206,7 +1206,7 @@ function startRename(file) {
   renamingFileId.value = file.id
   renameText.value     = file.displayName
   nextTick(() => {
-    const el = document.querySelector('.rename-input-inline')
+    const el = document.querySelector<HTMLInputElement>('.rename-input-inline')
     el?.focus(); el?.select()
   })
 }
@@ -1278,7 +1278,7 @@ function startRenameFolder(folder) {
   renamingFolderId.value = folder.id
   folderRenameText.value = folder.name
   nextTick(() => {
-    const el = document.querySelector('.rename-input-inline')
+    const el = document.querySelector<HTMLInputElement>('.rename-input-inline')
     el?.focus(); el?.select()
   })
 }
@@ -1662,7 +1662,7 @@ const todoDrag = ref(null)       // { stageKey, index } 拖动中实时更新（
 const editingTodo = ref(null)    // 正在编辑文字的待办 id
 function startEditTodo(id) {
   editingTodo.value = id
-  nextTick(() => document.querySelector(`[data-tid="${id}"]`)?.focus())
+  nextTick(() => document.querySelector<HTMLElement>(`[data-tid="${id}"]`)?.focus())
 }
 function todoDragStart(stage, ti) {
   todoDrag.value = { stageKey: stage.key, index: ti }
@@ -1742,7 +1742,7 @@ function addTodo(stage) {
   stage.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
   saveTodos()
   nextTick(() => {
-    const inputs = document.querySelectorAll(`.todo-input-${stage.key}`)
+    const inputs = document.querySelectorAll<HTMLElement>(`.todo-input-${stage.key}`)
     inputs[inputs.length - 1]?.focus()
   })
 }
@@ -1914,7 +1914,7 @@ async function uploadFiles(items) {
         form.append('file', file)
         form.append('space', 'project')
         form.append('project_id', props.project.id)
-        if (resolvedFolderId) form.append('folder_id', resolvedFolderId)
+        if (resolvedFolderId) form.append('folder_id', String(resolvedFolderId))
         const created = await uploadWithProgress('/files', form, p => { if (ghost) updateGhostProgress(ghost, p) })
         if (ghost) removeGhost(ghost)
         else settleFolder(false)
@@ -2015,7 +2015,7 @@ async function pmCtxDownload() {
     const fids = [...pmSelectedFolderIds.value]
     const dirName = folderStack.value.length
       ? folderStack.value[folderStack.value.length - 1].name
-      : (projectStore.projects.find(p => p.id === selectedProjectId.value)?.name ?? '文件')
+      : (props.project?.name ?? '文件')
     await filesApi.batchDownload(ids, fids, `${dirName}.zip`)
   }
 }
@@ -2075,11 +2075,11 @@ async function pmCtxPaste() {
   const projectId = props.project?.id
   try {
     if (pmCbStore.type === 'cut') {
-      await Promise.all(pmCbStore.fileIds.map(id => filesApi.update(id, { folder_id: folderId })))
+      await Promise.all(pmCbStore.fileIds.map(id => filesApi.update(id, { folderId })))
       pmCbStore.clear()
     } else if (pmCbStore.type === 'copy') {
       await Promise.all(pmCbStore.fileIds.map(id =>
-        filesApi.copy(id, { folder_id: folderId, project_id: projectId })
+        filesApi.copy(id, { folderId, projectId })
       ))
     }
     await pmRefreshCurrentFolder()

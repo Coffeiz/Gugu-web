@@ -207,9 +207,9 @@
                   {{ (f.ext || 'file').toUpperCase().slice(0, 4) }}
                   <template v-if="isImageFile(f)">
                     <img v-if="f._thumbUrl" class="msg-file-thumb" :src="f._thumbUrl"
-                      draggable="false" alt="" @error="$event.target.remove()" />
+                      draggable="false" alt="" @error="($event.target as HTMLElement).remove()" />
                     <img v-else class="msg-file-thumb" v-lazy-thumb="f.file_id || f.attach_id"
-                      decoding="async" draggable="false" alt="" @error="$event.target.remove()" />
+                      decoding="async" draggable="false" alt="" @error="($event.target as HTMLElement).remove()" />
                   </template>
                 </span>
                 <span class="msg-file-info">
@@ -285,7 +285,7 @@
   </Transition>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import QRCode from 'qrcode'
@@ -310,6 +310,23 @@ import {
   PhArrowRight, PhStop, PhArrowsOut, PhArrowsIn,
   PhPencilSimple, PhTrash, PhCopy, PhCheck,
 } from '@phosphor-icons/vue'
+
+// 聊天气泡的完整字段集合（TS 转换新增）：字段来自不同代码路径按需附加（默认问候/流式回复/
+// 历史消息回填/用户发送各自只带自己用得上的那几个），松散 interface 如实反映这个既有形状，
+// 不强行收紧成必填。
+interface ChatMessage {
+  id: number
+  dbId?: number
+  role: string
+  text: string
+  html?: string | null
+  files?: any[]
+  time: string
+  streaming?: boolean
+  _greeting?: boolean
+  _greetAnimated?: boolean
+  _greetFull?: string
+}
 
 const SMALL_W   = 360
 const SMALL_H   = 360
@@ -474,7 +491,7 @@ const audioVolume = ref(+(localStorage.getItem(VOL_KEY) ?? 0.5))
 const audioMuted  = ref(false)
 function audioSetVolume(e) {
   audioVolume.value = +e.target.value
-  localStorage.setItem(VOL_KEY, audioVolume.value)
+  localStorage.setItem(VOL_KEY, String(audioVolume.value))
   if (audioEl.value) { audioEl.value.volume = audioVolume.value; audioEl.value.muted = false }
   audioMuted.value = false
 }
@@ -523,7 +540,7 @@ function fixLooseBold(text) {
            .replace(/\*\*([^*\n]+?)[ \t]+\*\*/g, '**$1**')
   ).join('')
 }
-function renderMd(text) { return text ? marked.parse(fixLooseBold(text)) : '' }
+function renderMd(text) { return text ? marked.parse(fixLooseBold(text)) as string : '' }
 
 // 流式渲染专用：补全未闭合的代码围栏，避免 marked 把半段代码块解析成残缺 HTML
 // 单条缓存：同一帧内 text 未变则直接返回上次结果，避免重复解析
@@ -533,7 +550,7 @@ function renderMdStream(text) {
   if (_mdStreamCache?.text === text) return _mdStreamCache.html
   const fences = (text.match(/^```/gm) || []).length
   const patched = fences % 2 === 1 ? text + '\n```' : text
-  const html = marked.parse(patched)
+  const html = marked.parse(patched) as string
   _mdStreamCache = { text, html }
   return html
 }
@@ -551,7 +568,7 @@ function _markResizing() {
   _resizeTimer = setTimeout(() => { resizing.value = false }, 420)
 }
 const miniPinned = ref(localStorage.getItem('gugu_mini_pinned') !== 'false')
-watch(miniPinned, v => localStorage.setItem('gugu_mini_pinned', v))
+watch(miniPinned, v => localStorage.setItem('gugu_mini_pinned', String(v)))
 
 // 设置：重开浏览器时是否接续上次对话（默认关＝开新对话）。开关在个人设置→咕咕设置里，
 // 写 localStorage『gugu_reopen_resume』；这里 onMounted 时读一次决定要不要接续。
@@ -744,7 +761,7 @@ function _pumpStatus() {
 }
 
 function _playStatus(item) {
-  return new Promise(resolve => {
+  return new Promise<void>(resolve => {
     if (item.kind === 'hide') { statusKind.value = ''; statusTyped.value = ''; resolve(); return }
     statusSeq.value++          // 触发入场动画重放（:key 变化 → 气泡重建）
     statusKind.value = item.kind
@@ -768,7 +785,7 @@ const pendingAtt   = ref([])     // 待发送的聊天附件（已上传暂存�
 const attUploading = ref(false)
 const fileInput    = ref(null)
 function pickFile() { fileInput.value && fileInput.value.click() }
-async function uploadAttachFiles(files, opts = {}) {
+async function uploadAttachFiles(files, opts: { voice?: boolean } = {}) {
   if (!files.length) return
   attUploading.value = true
   try {
@@ -1025,7 +1042,7 @@ let _mid = 0
 const mkid = () => ++_mid
 
 // 默认问候：占位空消息（打开对话框时再以打字机动画显示，文案在那一刻取最新生成版/兜底）
-const messages = ref([
+const messages = ref<ChatMessage[]>([
   { id: mkid(), role: 'ai', text: '', html: '', time: now(), _greeting: true },
 ])
 
@@ -1500,7 +1517,7 @@ async function resumeStream(id) {
   }
 }
 
-async function send(forcedText) {
+async function send(forcedText?) {
   // forcedText 来自"排队接力"（队首消息）：此时用户气泡已在入队时显示过，不重复推
   const fromInput = forcedText === undefined
   const text = (fromInput ? inputText.value : forcedText).trim()

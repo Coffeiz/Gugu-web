@@ -96,6 +96,52 @@ def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
     return (f"[用户发来文件《{fname}》，但暂存失败]", [])
 
 
+def _fetch_quoted_text(client, parent_id: str) -> str | None:
+    """按 parent_id 反查被引用的原消息文字（同步，供 _on_message 直接调用）。
+    非文字类型给占位说明；查询失败返回 None，调用方静默跳过、不阻塞主消息。"""
+    from lark_oapi.api.im.v1 import GetMessageRequest
+    try:
+        req = GetMessageRequest.builder().message_id(parent_id).build()
+        resp = client.im.v1.message.get(req)
+        if not resp.success() or not resp.data or not resp.data.items:
+            return None
+        m = resp.data.items[0]
+        if m.msg_type == "text":
+            try:
+                c = json.loads(m.body.content) if (m.body and m.body.content) else {}
+            except Exception:
+                return "[解析失败]"
+            return (c.get("text") or "").strip() or "[空消息]"
+        if m.msg_type == "interactive":
+            # 咕咕自己发的回复走卡片（见 _do_send 的 _build_card_elements），引用到的大概率是这种——
+            # 从卡片 markdown 元素里把文字拼回来（table 组件跳过，不还原成文字，只取叙述性内容）。
+            # GetMessage 回来的 elements 是「数组的数组」（分组/分段），不是发送时那种扁平列表，
+            # 所以要递归拍平找 markdown 节点，不能只查一层。
+            try:
+                c = json.loads(m.body.content) if (m.body and m.body.content) else {}
+            except Exception:
+                return "[解析失败]"
+            # GetMessage 回来的卡片内容会被飞书归一化：markdown 节点变成 {"tag":"text","text":...}
+            # （字段名也从 content 变成 text），跟发送时的原始结构不一样，两种字段名都认。
+            parts: list[str] = []
+            def _collect(v):
+                if isinstance(v, dict):
+                    if v.get("tag") in ("markdown", "text"):
+                        parts.append(v.get("content") or v.get("text") or "")
+                    else:
+                        for v2 in v.values():
+                            _collect(v2)
+                elif isinstance(v, list):
+                    for v2 in v:
+                        _collect(v2)
+            _collect(c.get("elements") if isinstance(c, dict) else c)
+            return "\n".join(p for p in parts if p).strip() or "[空消息]"
+        return {"image": "[图片消息]", "file": "[文件消息]", "audio": "[语音消息]"}.get(m.msg_type, "[非文字消息]")
+    except Exception as e:
+        print(f"[feishu] 查引用原消息失败: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
 # ── 接收（网关子进程，凭据/归属从 env 注入）──
 def _do_react(client, message_id: str, emoji_type: str) -> bool:
     """给某条消息加表情回应（同步，给 asyncio.to_thread 用）。失败返回 False。"""
@@ -181,6 +227,16 @@ def _make_on_message(channel_id: str, owner: str, api_client):
         open_id = ev.sender.sender_id.open_id if (ev.sender and ev.sender.sender_id) else None
         from agent import trace
         tid = trace.new_trace()
+
+        # 引用消息：用户「回复」某条历史消息时，parent_id 指向那条被引用的消息——飞书只给 id，
+        # 要反查一次内容才知道引用的是什么。只包装入队用的文本（llm_text），router/秒回表情继续
+        # 用原始 text 判关键词，包一层反而会破坏「算了/还在吗」这类短句匹配。
+        llm_text = text
+        if msg.parent_id:
+            quoted = _fetch_quoted_text(api_client, msg.parent_id)
+            if quoted:
+                llm_text = f"💬 用户引用/回复了一条历史消息（原文：「{quoted}」），针对这条消息说：\n\n{text}"
+
         payload = {
             "platform": "feishu",
             "channel_id": channel_id,
@@ -189,14 +245,14 @@ def _make_on_message(channel_id: str, owner: str, api_client):
             "chat_id": msg.chat_id,
             "chat_type": msg.chat_type,
             "message_id": msg.message_id,
-            "text": text,
+            "text": llm_text,
             "attachments": attachments,
             "trace_id": tid,             # 全链路 trace：worker/工具日志同 id，grep 可串联
         }
         # 隐私：不打印消息原文，只留结构+指纹（见 agent/logsafe.py），同 agent.traj 脱敏口径
         from agent import logsafe
-        print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text_len={len(text)} "
-              f"fp={logsafe.fingerprint(text)} att={len(attachments)} trace={tid}", flush=True)
+        print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text_len={len(llm_text)} "
+              f"fp={logsafe.fingerprint(llm_text)} att={len(attachments)} quoted={bool(msg.parent_id)} trace={tid}", flush=True)
 
         # Intent Router：纯文本消息先据当前状态判一手——任务进行中的「还在吗/算了/嗯」由网关
         # 直接处理，不入队（IM 单 worker 顺序消费，忙时它根本看不到队列后面的消息）。带附件一律进主模型。

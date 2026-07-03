@@ -45,7 +45,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { nextZ } from '@/composables/windowz'
 import { useRouter } from 'vue-router'

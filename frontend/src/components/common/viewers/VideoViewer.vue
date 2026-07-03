@@ -38,7 +38,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, watch, onUnmounted } from 'vue'
 import { PhPlay, PhPause, PhWarningCircle } from '@phosphor-icons/vue'
 

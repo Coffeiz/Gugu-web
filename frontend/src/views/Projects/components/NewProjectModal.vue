@@ -209,7 +209,7 @@
   </BaseModal>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
@@ -281,7 +281,7 @@ function addNpTodo(origIdx) {
   if (!stage.todos) stage.todos = []
   stage.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
   nextTick(() => {
-    const inputs = document.querySelectorAll(`.np-todo-input-${origIdx}`)
+    const inputs = document.querySelectorAll<HTMLElement>(`.np-todo-input-${origIdx}`)
     inputs[inputs.length - 1]?.focus()
   })
 }

@@ -115,7 +115,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, onMounted, computed, nextTick } from 'vue'
 import { scheduledTasksApi } from '@/services/api'
 import { fireHint } from '@/composables/useOnboarding'

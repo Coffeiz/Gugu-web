@@ -32,13 +32,13 @@
   </div>
 </template>
 
-<script setup>
-import { ref } from 'vue'
+<script setup lang="ts">
+import { ref, type PropType } from 'vue'
 import ProjectCard from './ProjectCard.vue'
 
 const props = defineProps({
   column:   { type: Object, required: true },
-  projects: { type: Array, default: () => [] },
+  projects: { type: Array as PropType<any[]>, default: () => [] },
 })
 const emit = defineEmits(['card-click', 'drop-project', 'add-project'])
 

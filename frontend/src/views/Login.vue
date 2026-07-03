@@ -58,7 +58,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -74,7 +74,7 @@ async function handleLogin() {
   loading.value = true; error.value = ''
   try {
     await auth.login(form.username, form.password)
-    router.push(router.currentRoute.value.query.redirect ?? '/projects')
+    router.push((router.currentRoute.value.query.redirect as string) ?? '/projects')
   } catch (e) {
     error.value = e.message
   } finally {

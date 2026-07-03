@@ -51,7 +51,7 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { PhWarningOctagon, PhLightbulb, PhChatCircle } from '@phosphor-icons/vue'
 import { nextZ } from '@/composables/windowz'

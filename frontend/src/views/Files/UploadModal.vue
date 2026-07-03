@@ -255,20 +255,20 @@
   </BaseModal>
 </template>
 
-<script setup>
-import { ref, computed, watch } from 'vue'
+<script setup lang="ts">
+import { ref, computed, watch, type PropType } from 'vue'
 import { uploadWithProgress, uploadDirectWithProgress, filesApi, foldersApi } from '@/services/api'
 import { readDroppedEntries, filesToItems, resolveFolderTree } from '@/composables/useFileUpload'
 import BaseModal from '@/components/common/BaseModal.vue'
 
 const props = defineProps({
   show:              Boolean,
-  projects:          { type: Array,  default: () => [] },
+  projects:          { type: Array as PropType<any[]>, default: () => [] },
   lockedProjectId:   { type: Number, default: null },
   lockedProjectName: { type: String, default: '' },
   lockedColor:       { type: String, default: '' },
   lockedFolderId:    { type: Number, default: null },
-  initialFiles:      { type: Array,  default: () => [] },
+  initialFiles:      { type: Array as PropType<File[]>, default: () => [] },
 })
 const emit = defineEmits(['close', 'uploaded'])
 
@@ -485,8 +485,8 @@ async function handleUpload() {
         const form = new FormData()
         form.append('file', f)
         form.append('space', space)
-        if (projectId != null) form.append('project_id', projectId)
-        if (folderId  != null) form.append('folder_id', folderId)
+        if (projectId != null) form.append('project_id', String(projectId))
+        if (folderId  != null) form.append('folder_id', String(folderId))
         form.append('stage_name', selectedStage.value)
         created = await uploadWithProgress('/files', form, (pct) => {
           const next = [...fileProgresses.value]

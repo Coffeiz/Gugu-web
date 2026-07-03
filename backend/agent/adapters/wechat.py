@@ -82,6 +82,25 @@ async def _ingest_wechat_media(items: list, owner: str) -> list:
     return out
 
 
+def _extract_quoted_text(ref_msg) -> str | None:
+    """从 item.ref_msg.message_item 里取被引用消息的文字——iLink 直接把原消息内容内嵌在
+    引用消息的 payload 里，不像飞书那样只给 id、需要额外查接口。非文字类型给占位说明；
+    结构对不上返回 None，调用方静默跳过。"""
+    if not isinstance(ref_msg, dict):
+        return None
+    mi = ref_msg.get("message_item")
+    if not isinstance(mi, dict):
+        return None
+    txt = (mi.get("text_item") or {}).get("text", "").strip()
+    if txt:
+        return txt
+    if mi.get("image_item"):
+        return "[图片消息]"
+    if mi.get("voice_item"):
+        return "[语音消息]"
+    return "[非文字消息]"
+
+
 # ── 接收（网关子进程，long-poll）────────────────────────────────────────────────
 async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
     if msg.get("message_type") != 1:   # 只处理 用户→bot（2=bot 自己发的，跳过，否则自问自答）
@@ -117,6 +136,18 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
     if not text and not non_text:   # 真空消息
         return
 
+    # 引用消息：iLink 把被引用消息的内容直接内嵌在 item.ref_msg.message_item 里（不用像飞书
+    # 那样额外查接口）。只包装入队用的 llm_text，不动原始 text（留给以后接 Intent Router 判
+    # 关键词用，同 feishu 的处理方式）。
+    llm_text = text
+    has_quote = False
+    for it in items:
+        quoted = _extract_quoted_text(it.get("ref_msg"))
+        if quoted:
+            llm_text = f"💬 用户引用/回复了一条历史消息（原文：「{quoted}」），针对这条消息说：\n\n{text}"
+            has_quote = True
+            break
+
     # 即时反馈：先回一句「收到」，免得 agent 慢处理时用户干等（赶在 worker 之前）。**10s 冷却**：
     # 连发多条/多图只 ack 一次，不刷屏（真实回复由 worker 防抖合并成一条）。
     now = time.monotonic()
@@ -133,8 +164,8 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
     tid = trace.new_trace()
     # 隐私：不打印消息原文，只留结构+指纹（见 agent/logsafe.py），同 agent.traj 脱敏口径
     from agent import logsafe
-    print(f"[wechat:{channel_id}] 收到 {from_user}: text_len={len(text)} fp={logsafe.fingerprint(text)} "
-          f"att={len(attachments)} trace={tid}", flush=True)
+    print(f"[wechat:{channel_id}] 收到 {from_user}: text_len={len(llm_text)} fp={logsafe.fingerprint(llm_text)} "
+          f"att={len(attachments)} quoted={has_quote} trace={tid}", flush=True)
     if not text and not attachments:   # 只有不支持的媒体、啥也没取到 → 不入队（agent 无内容）
         return
     payload = {
@@ -146,7 +177,7 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
         "chat_type": "group" if group_id else "c2c",
         "wechat_group_id": group_id,
         "context_token": context_token,     # ⚠️ iLink 回复必需，worker 透传回 send_text
-        "text": text,
+        "text": llm_text,
         "attachments": attachments,
         "trace_id": tid,                    # 全链路 trace：worker/工具日志同 id，grep 可串联
     }

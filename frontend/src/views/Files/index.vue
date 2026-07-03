@@ -254,7 +254,7 @@
                   <span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop>
                     <span class="rename-ghost">{{ renameText || ' ' }}</span>
                     <input class="rename-input-inline" v-model="renameText"
-                      @keydown="onRenameKey" @blur="commitRename" @focus="$event.target.select()" />
+                      @keydown="onRenameKey" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
                   </span>
                   <template v-else>{{ f.displayName }}</template>
                 </div>
@@ -304,7 +304,7 @@
                   :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }"
                   decoding="async" draggable="false" alt=""
                   @load="cardBlobReadyIds.add(f.id)"
-                  @error="$event.target.style.display='none'" />
+                  @error="($event.target as HTMLElement).style.display='none'" />
                 <div class="fc-thumb-fade"></div>
               </div>
               <div v-else class="fc-icon-area">
@@ -315,7 +315,7 @@
                   <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
                     <span class="rename-ghost">{{ renameText || ' ' }}</span>
                     <input class="rename-input-inline" v-model="renameText"
-                      @keydown="onRenameKey" @blur="commitRename" @focus="$event.target.select()" />
+                      @keydown="onRenameKey" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
                   </span>
                   <template v-else>{{ f.displayName }}</template>
                 </div>
@@ -412,7 +412,7 @@
                   <span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop>
                     <span class="rename-ghost">{{ renameText || ' ' }}</span>
                     <input class="rename-input-inline" v-model="renameText"
-                      @keydown="onRenameKey" @blur="commitRename" @focus="$event.target.select()" />
+                      @keydown="onRenameKey" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
                   </span>
                   <template v-else>{{ f.displayName }}</template>
                 </span>
@@ -461,7 +461,7 @@
                   <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
                     <span class="rename-ghost">{{ renameText || ' ' }}</span>
                     <input class="rename-input-inline" v-model="renameText"
-                      @keydown="onRenameKey" @blur="commitRename" @focus="$event.target.select()" />
+                      @keydown="onRenameKey" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
                   </span>
                   <template v-else>{{ f.displayName }}</template>
                 </span>
@@ -669,7 +669,7 @@
 
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { filesApi, foldersApi, trashApi, uploadWithProgress } from '@/services/api'
 import ContextMenu   from '@/components/ContextMenu.vue'
@@ -738,7 +738,19 @@ const isDragging  = computed(() => dragCounter.value > 0)
 const mainRef     = ref(null)
 
 // ── 导航 ──
-const navPath = ref([])
+interface NavSeg {
+  type: string
+  name: string
+  color?: string | null
+  id?: number | null
+  status?: string | null
+  year?: string | number | null
+  month?: string | number | null
+  folderId?: number | null
+  projectId?: number | null
+  space?: string
+}
+const navPath = ref<NavSeg[]>([])
 const navHistoryStack  = ref([])
 const navHistoryCursor = ref(-1)
 let _isHistoryNav = false
@@ -816,7 +828,7 @@ function enterFolder(folder) {
     ]
   } else if (folder.type === 'project') {
     // 保留 状态 + 年月 上下文
-    const path = [{ type: 'projects', name: '项目文件', color: null }]
+    const path: NavSeg[] = [{ type: 'projects', name: '项目文件', color: null }]
     const statusSeg = navPath.value.find(s => s.type === 'status')
     const yearSeg  = navPath.value.find(s => s.type === 'year')
     const monthSeg = navPath.value.find(s => s.type === 'month')
@@ -894,7 +906,7 @@ function _folderChain(folderId) {
 function _basePath(projectId) {
   if (projectId != null) {
     const p = projectStore.projects.find(p => p.id === projectId)
-    const base = [{ type: 'projects', name: '项目文件', color: null }]
+    const base: NavSeg[] = [{ type: 'projects', name: '项目文件', color: null }]
     if (p) {
       const col = projectStore.kanbanColumns.find(c => c.key === p.status)
       base.push({ type: 'status', status: p.status, name: col?.label ?? '项目', color: null })
@@ -1238,8 +1250,8 @@ function _shiftSelect(type, id) {
   const anchor = lastAnchorIndex.value
   if (anchor < 0) return false
   const [a, b] = anchor <= idx ? [anchor, idx] : [idx, anchor]
-  const ids  = new Set()
-  const keys = new Set()
+  const ids  = new Set<number>()
+  const keys = new Set<number | string>()
   flatSelectableItems.value.slice(a, b + 1).forEach(item => {
     if (item.type === 'file') ids.add(item.id)
     else keys.add(item.id)
@@ -1473,7 +1485,7 @@ async function confirmEmptyTrash() {
 // ── 回收站工具函数 ──
 function daysLeft(deletedAt) {
   if (!deletedAt) return 30
-  const gone = Math.floor((Date.now() - new Date(deletedAt)) / 86400000)
+  const gone = Math.floor((Date.now() - new Date(deletedAt).getTime()) / 86400000)
   return Math.max(0, 30 - gone)
 }
 
@@ -1644,14 +1656,14 @@ function startRenameFile(f) {
   renamingFolderKey.value = null
   renamingFileId.value    = f.id
   renameText.value        = f.displayName
-  nextTick(() => document.querySelector('.rename-input-inline')?.select())
+  nextTick(() => document.querySelector<HTMLInputElement>('.rename-input-inline')?.select())
 }
 
 function startRenameFolder(f) {
   renamingFileId.value    = null
   renamingFolderKey.value = f.folderId
   renameText.value        = f.displayName
-  nextTick(() => document.querySelector('.rename-input-inline')?.select())
+  nextTick(() => document.querySelector<HTMLInputElement>('.rename-input-inline')?.select())
 }
 
 function cancelRename() {
@@ -1671,7 +1683,7 @@ async function commitRename() {
     const oldName = cacheStore.getFile(fileId)?.displayName
     cacheStore.updateFile(fileId, { displayName: name })
     loadContents()
-    filesApi.update(fileId, { display_name: name }).catch(e => {
+    filesApi.update(fileId, { displayName: name }).catch(e => {
       if (oldName != null) cacheStore.updateFile(fileId, { displayName: oldName })
       loadContents()
       console.error('[Files] 重命名失败:', e.message)
@@ -1728,7 +1740,7 @@ async function moveFilesInto(fileIds, targetFolderId) {
   fileIds.forEach(id => cacheStore.updateFile(id, { folderId: targetFolderId }))
   loadContents()
   try {
-    await Promise.all(fileIds.map(id => filesApi.update(id, { folder_id: targetFolderId })))
+    await Promise.all(fileIds.map(id => filesApi.update(id, { folderId: targetFolderId })))
   } catch (err) {
     backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId }))
     loadContents()
@@ -1962,7 +1974,7 @@ async function ctxPaste() {
       cbStore.clear()
       loadContents()
       try {
-        await Promise.all(backups.map(f => filesApi.update(f.id, { folder_id: folderId })))
+        await Promise.all(backups.map(f => filesApi.update(f.id, { folderId })))
       } catch (e) {
         backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId, projectId: f.projectId }))
         loadContents()
@@ -1970,7 +1982,7 @@ async function ctxPaste() {
       }
     } else if (cbStore.type === 'copy') {
       const created = await Promise.all(cbStore.fileIds.map(id =>
-        filesApi.copy(id, { folder_id: folderId, project_id: projectId })
+        filesApi.copy(id, { folderId, projectId })
       ))
       created.forEach(f => cacheStore.addFile(f))
       loadContents()

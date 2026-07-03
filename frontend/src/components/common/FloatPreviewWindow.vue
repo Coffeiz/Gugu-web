@@ -124,7 +124,7 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { PhInfo, PhDownloadSimple, PhCornersOut, PhCornersIn, PhX, PhWarningCircle, PhMinus, PhPlus } from '@phosphor-icons/vue'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
@@ -336,7 +336,7 @@ async function load(f, refresh = false) {
         videoSrc.value = url
       }
       // 探视频尺寸
-      await new Promise(resolve => {
+      await new Promise<void>(resolve => {
         const vid = document.createElement('video')
         vid.preload = 'metadata'
         vid.onloadedmetadata = () => {

@@ -1,21 +1,30 @@
-import { ref, computed } from 'vue'
+import { ref, shallowRef, computed } from 'vue'
 
-export function useBoxSelection(containerRef, {
+type Id = number | string
+
+export function useBoxSelection<F extends Id = Id>(containerRef, {
   fileAttr        = 'data-file-id',
   folderAttr      = 'data-folder-key',
   excludeSelector = 'button, .fc-card, .folder-card, .fc-upload, .list-row',
   parseFileId     = Number,
-  parseFolderId   = v => v,
+  parseFolderId   = ((v: string) => v as F),
   onBoxSelect     = null,
+}: {
+  fileAttr?: string
+  folderAttr?: string
+  excludeSelector?: string
+  parseFileId?: (v: string) => number
+  parseFolderId?: (v: string) => F
+  onBoxSelect?: ((sel: { fileIds: Set<number>; folderIds: Set<F> }, e: MouseEvent) => void) | null
 } = {}) {
-  const selectedFileIds   = ref(new Set())
-  const selectedFolderIds = ref(new Set())
-  const previewFileIds    = ref(new Set())
-  const previewFolderIds  = ref(new Set())
+  const selectedFileIds   = shallowRef(new Set<number>())
+  const selectedFolderIds = shallowRef(new Set<F>())
+  const previewFileIds    = shallowRef(new Set<number>())
+  const previewFolderIds  = shallowRef(new Set<F>())
   const boxStart          = ref(null)
   const boxEnd            = ref(null)
   let   _cRect            = null
-  let   _latestPreview    = { fileIds: new Set(), folderIds: new Set() }
+  let   _latestPreview: { fileIds: Set<number>; folderIds: Set<F> } = { fileIds: new Set(), folderIds: new Set() }
 
   const selectionRect = computed(() => {
     if (!boxStart.value || !boxEnd.value) return null
@@ -46,11 +55,11 @@ export function useBoxSelection(containerRef, {
 
   function _getItemsInBox() {
     const rect = selectionRect.value
-    if (!rect || !containerRef.value) return { fileIds: new Set(), folderIds: new Set() }
+    if (!rect || !containerRef.value) return { fileIds: new Set<number>(), folderIds: new Set<F>() }
     const cRect     = containerRef.value.getBoundingClientRect()
     const st        = containerRef.value.scrollTop
-    const fileIds   = new Set()
-    const folderIds = new Set()
+    const fileIds   = new Set<number>()
+    const folderIds = new Set<F>()
     containerRef.value.querySelectorAll(`[${fileAttr}], [${folderAttr}]`).forEach(el => {
       const er = el.getBoundingClientRect()
       const l  = er.left - cRect.left

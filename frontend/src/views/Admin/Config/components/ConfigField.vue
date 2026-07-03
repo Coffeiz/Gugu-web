@@ -6,12 +6,12 @@
       :type="type"
       :value="modelValue"
       :placeholder="placeholder"
-      @input="$emit('update:modelValue', type === 'number' ? +$event.target.value : $event.target.value)"
+      @input="$emit('update:modelValue', type === 'number' ? +($event.target as HTMLInputElement).value : ($event.target as HTMLInputElement).value)"
     />
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 defineProps({
   label:       String,
   modelValue:  [String, Number],

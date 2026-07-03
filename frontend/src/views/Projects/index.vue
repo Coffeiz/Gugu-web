@@ -19,7 +19,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, watch } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
@@ -49,7 +49,7 @@ watch(() => uiStore.pendingProjectHighlight, (id) => {
 function _flashProject(id, ms = 1800, cls = 'search-flash') {
   let tries = 0
   const tick = () => {
-    const el = document.querySelector(`[data-project-id="${id}"]`)
+    const el = document.querySelector<HTMLElement>(`[data-project-id="${id}"]`)
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
       el.style.animationDuration = ms + 'ms'   // 覆盖 CSS 默认时长，让高亮整体持续 ms

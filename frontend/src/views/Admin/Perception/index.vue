@@ -138,13 +138,32 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { PhUsers, PhChats, PhPulse, PhBrain, PhArrowClockwise } from '@phosphor-icons/vue'
 
+interface PerceptionData {
+  active_users?: number
+  note?: string
+  flags?: string[]
+  min_events?: number
+  perc_total?: number
+  misperc_total?: number
+  perception_misperc_rate?: number
+  avg_ambiguity?: number
+  avg_emo_strength?: number
+  misperc_by_kind?: { kind: string; count: number }[]
+  overall_misperc_rate?: number
+  intent_distribution?: { intent: string; pct: number; misperc_rate: number; count: number }[]
+  by_model?: { model: string; count: number; misperc_rate: number }[]
+  emotion_distribution?: { emotion: string; count: number }[]
+  feedback_distribution?: { feedback: string; count: number }[]
+  feedback_total?: number
+}
+
 const adminStore = useAdminStore()
-const data = ref({})
+const data = ref<PerceptionData>({})
 const hours = ref(168)
 const loading = ref(false)
 const refreshing = ref(false)

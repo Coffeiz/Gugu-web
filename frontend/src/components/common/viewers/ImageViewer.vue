@@ -35,7 +35,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
 import { PhImageBroken, PhMinus, PhPlus } from '@phosphor-icons/vue'
 

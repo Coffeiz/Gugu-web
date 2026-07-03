@@ -275,7 +275,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, reactive } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { useConfigStore } from '@/stores/config'
@@ -290,7 +290,7 @@ const globalSaving = ref(false)
 const globalSaved  = ref(false)
 
 function _loadGlobalDraft() {
-  const q = configStore.cfg?.quota || {}
+  const q = (configStore.cfg?.quota || {}) as typeof configStore.cfg.quota
   globalDraft.token6h   = q.default_token_limit_6h     ?? null
   globalDraft.tokenWeek = q.default_token_limit_weekly  ?? null
   globalDraft.storageGB = q.default_storage_limit_bytes != null
@@ -360,7 +360,7 @@ function onSearch() {
 // ── 编辑弹窗 ─────────────────────────────────────────────────────────────────
 const editTarget = ref(null)
 const editSaving = ref(false)
-let maskMousedownSelf = false
+const maskMousedownSelf = ref(false)
 const editForm   = reactive({ token6h: null, tokenWeek: null, storageGB: null, searchDaily: null })
 
 function openEdit(u) {

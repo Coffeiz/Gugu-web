@@ -22,7 +22,7 @@
             :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }"
             decoding="async" draggable="false" alt=""
             @load="cardBlobReadyIds.add(f.id)"
-            @error="$event.target.style.display='none'" />
+            @error="($event.target as HTMLElement).style.display='none'" />
           <div class="fc-thumb-fade"></div>
         </div>
         <div v-else class="fc-icon-area">
@@ -40,7 +40,7 @@
                 v-enter.prevent="() => commitRename(f)"
                 @keydown.esc="renamingId = null"
                 @blur="commitRename(f)"
-                @focus="$event.target.select()"
+                @focus="($event.target as HTMLInputElement).select()"
               />
             </span>
             <template v-else>{{ f.name }}</template>
@@ -93,7 +93,7 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, shallowRef, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { filesApi } from '@/services/api'
 import { filesCache } from '@/services/cache'
@@ -114,7 +114,7 @@ const cardVisible   = ref(false) // 面板是否已进入视口（触发过 card
 const dragging      = ref(false)
 const uploadOpen    = ref(false)
 const rawFiles      = ref(filesCache.data ?? [])
-const thumbMap      = shallowRef({}) // id → { tiny, card }，shallowRef 批量更新减少 trigger 次数
+const thumbMap      = shallowRef<Record<number, { tiny?: string | null; card?: string | null }>>({}) // id → { tiny, card }，shallowRef 批量更新减少 trigger 次数
 const renamingId    = ref(null)
 const renameText    = ref('')
 const renameInputRef = ref(null)
@@ -164,7 +164,7 @@ function loadCards(list) {
   }
 }
 
-function preDecodeBlobs(map) {
+function preDecodeBlobs(map: Record<number, { tiny?: string | null; card?: string | null }>) {
   for (const entry of Object.values(map)) {
     for (const url of [entry?.tiny, entry?.card]) {
       if (url) { const i = new Image(); i.src = url; i.decode().catch(() => {}) }

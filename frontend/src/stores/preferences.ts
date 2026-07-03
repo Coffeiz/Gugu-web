@@ -44,7 +44,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
     try { await preferencesApi.update({ stageTemplates: templates }) } catch {}
   }
 
-  async function saveStyle({ tone, length }) {
+  async function saveStyle({ tone, length }: { tone?: string | null; length?: string | null }) {
     if (tone      !== undefined) replyTone.value   = tone
     if (length    !== undefined) replyLength.value = length
     try {

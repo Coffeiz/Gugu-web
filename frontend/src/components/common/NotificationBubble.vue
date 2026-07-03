@@ -23,7 +23,7 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, watch } from 'vue'
 import { PhX } from '@phosphor-icons/vue'
 import { useUiStore } from '@/stores/ui'

@@ -140,7 +140,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { PhArrowClockwise } from '@phosphor-icons/vue'

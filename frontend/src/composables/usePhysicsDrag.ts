@@ -537,11 +537,20 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
       width: rect.width + 'px', height: rect.height + 'px',
       margin: '0', boxSizing: 'border-box', overflow: 'hidden',
       borderRadius: cardRadius,
-      // 底色/毛玻璃统一由 global.css 的 .phys-drag-clone 定义（全站拖拽克隆一处控）
+      // 底色/毛玻璃统一由 global.css 的 .phys-drag-clone 定义（全站拖拽克隆一处控）。不再额外
+      // 叠 opacity 做「影子卡更透」——那会跟卡片自己的白底透明度相乘，稀释掉白底，跟单文件拖拽
+      // 观感不一致（0.5 白 × 0.35 opacity ≈ 快透明了）。层次感已经靠位置偏移/旋转/缩放/zIndex/
+      // box-shadow 表达，不需要再用透明度区分「叠了几张」。
       zIndex: String(99997 - i), pointerEvents: 'none',
       willChange: 'transform', transition: 'none',
-      opacity: i === 0 ? '0.55' : '0.35',
       transform: initTf,
+      // backdrop-filter 每叠一层都是一次独立的背景采样+高斯模糊，GPU 开销随层数线性上升——
+      // 多选拖拽最多叠 3 层（主卡+2 张影子），全做全尺寸模糊太费。只留前两层：紧贴主卡那张
+      // （i===0）降到 6px（CSS 默认 12px 的一半），再往后那张（i===1，仅 3+ 文件才会出现）
+      // 干脆不模糊——这张本来就压在最底下、被前两张挡掉大半，模糊不模糊肉眼也分不出来。
+      // CSS 类里的 backdrop-filter 没加 !important，内联样式能直接覆盖。
+      backdropFilter: i === 0 ? 'blur(6px) saturate(1.15)' : 'none',
+      WebkitBackdropFilter: i === 0 ? 'blur(6px) saturate(1.15)' : 'none',
     })
     document.body.appendChild(el)
     return { el, cfg }
@@ -559,7 +568,9 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
     position: 'fixed', left: '0', top: '0',
     width: rect.width + 'px', height: rect.height + 'px',
     margin: '0', boxSizing: 'border-box', overflow: 'visible',
-    borderRadius: cardRadius, opacity: '0.88',   // 底色/毛玻璃由 .phys-drag-clone 全局定义
+    borderRadius: cardRadius,
+    // 不再叠额外 opacity——底色/毛玻璃由 .phys-drag-clone 全局定义，主克隆跟单文件拖拽走
+    // 同一份（CSS 的 opacity:0.97），不用内联值覆盖掉、稀释白底
     zIndex: '99999', pointerEvents: 'none', willChange: 'transform', transition: 'none',
   })
   const badge = document.createElement('div')

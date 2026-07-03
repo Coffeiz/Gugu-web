@@ -96,7 +96,7 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import { PhInfo, PhDownloadSimple, PhX, PhWarningCircle } from '@phosphor-icons/vue'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'

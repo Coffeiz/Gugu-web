@@ -144,7 +144,7 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import MarkdownView from './MarkdownView.vue'
 import { useRouter } from 'vue-router'

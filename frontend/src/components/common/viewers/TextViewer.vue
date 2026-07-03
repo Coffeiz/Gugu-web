@@ -26,7 +26,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, watch, nextTick, computed } from 'vue'
 import { PhWarningCircle } from '@phosphor-icons/vue'
 import { filesApi } from '@/services/api'
@@ -179,7 +179,7 @@ async function toggleTask(idx, cb) {
   ls[hit] = ls[hit].replace(/\[[ xX]\]/, cb.checked ? '[x]' : '[ ]')
   rawText.value = ls.join('\n')
   try {
-    await filesApi.saveContent(props.fileKey, rawText.value)
+    await filesApi.saveContent(Number(props.fileKey), rawText.value)
   } catch {
     rawText.value = before          // 存失败 → 回滚源 + 视觉
     cb.checked = !cb.checked

@@ -68,7 +68,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { PhArrowClockwise } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
@@ -76,7 +76,7 @@ import { useAdminStore } from '@/stores/admin'
 const adminStore = useAdminStore()
 const services = ref([])
 const deps = ref({ redis: false, db: false })
-const queue = ref({})
+const queue = ref<{ length?: number; lag?: number; pending?: number }>({})
 const loading = ref(false)
 const refreshing = ref(false)
 const err = ref('')

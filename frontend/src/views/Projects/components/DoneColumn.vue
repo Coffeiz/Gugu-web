@@ -108,13 +108,13 @@
   </div>
 </template>
 
-<script setup>
-import { ref, computed, onMounted } from 'vue'
+<script setup lang="ts">
+import { ref, computed, onMounted, type PropType } from 'vue'
 import ProjectCard from './ProjectCard.vue'
 import { PhFolder, PhFolderOpen, PhCheckCircle } from '@phosphor-icons/vue'
 
 const props = defineProps({
-  projects: { type: Array, default: () => [] },
+  projects: { type: Array as PropType<any[]>, default: () => [] },
 })
 const emit = defineEmits(['card-click', 'drop-project'])
 

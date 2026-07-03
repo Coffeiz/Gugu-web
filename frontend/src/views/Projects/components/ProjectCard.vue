@@ -163,7 +163,7 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, ref, nextTick, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
@@ -289,7 +289,7 @@ const tpDrag = ref(null)         // 拖动中实时 index
 const editingTp = ref(null)
 function startEditTp(id) {
   editingTp.value = id
-  nextTick(() => document.querySelector(`[data-tpid="${id}"]`)?.focus())
+  nextTick(() => document.querySelector<HTMLElement>(`[data-tpid="${id}"]`)?.focus())
 }
 function tpDragStart(i) { tpDrag.value = i }
 // dragover + 中线判断：指针越过目标待办中线才换位，避免来回横跳
@@ -360,7 +360,7 @@ const daysLeft  = computed(() => {
   if (!props.project.deadline) return null
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const dl    = new Date(props.project.deadline + 'T00:00:00')
-  return Math.ceil((dl - today) / 86400000)
+  return Math.ceil((dl.getTime() - today.getTime()) / 86400000)
 })
 const isUrgent = computed(() => props.project.status !== 'done' && daysLeft.value <= 3)
 const thisYear = new Date().getFullYear()
