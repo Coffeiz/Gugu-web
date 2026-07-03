@@ -90,12 +90,18 @@ function _animateScroll(el, dy, dur = 300) {
 //   还有 ~400ms 飞行动画，这段时间指针可能又挪开、也可能邻近卡片 FLIP/重算触发浏览器再切换
 //   几次——揭示那一刻用哪个瞬时判定都可能被这些噪音打偏，看着是「跳一下」（.fc-card:hover 的
 //   translateY(-2px)）。试过「查实时位置再判定」，噪音太多判不准。
-// 现在不判定、直接治标：揭示后无条件短暂摘掉命中测试（:hover 物理上不可能生效，不会跳），
-// 撑过这段最容易被噪音污染的窗口再完全恢复，交给浏览器按那时的真实指针位置正常判断。
-function _revealWithoutStaleHover(el: HTMLElement, onSettled?: () => void) {
-  el.style.pointerEvents = 'none'
+// 原生拖拽下不判定、直接治标：揭示后无条件短暂摘掉命中测试（:hover 物理上不可能生效，不会
+// 跳），撑过这段最容易被噪音污染的窗口再完全恢复，交给浏览器按那时的真实指针位置正常判断。
+// pointer 模式不走这段——它全程用 pointerdown/pointermove 驱动，浏览器的 mouseover/mouseout
+// 派发从没被暂停过，①②两条根因都不成立，:hover 判定一直是准的。若仍套用这段摘命中测试的
+// 窗口，会引出另一个新坑：松手时指针原地不动（这正是文件拖完不动手最常见的情形）——窗口期内
+// 浏览器正确判定「摘了命中测试=没有 hover」，窗口结束后指针没挪动、没有新 mousemove 触发重新
+// 判定，:hover 就永远卡在「没悬停」，实际指针明明正压在卡片上。
+function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettled?: () => void) {
   el.style.opacity = ''
   el.style.transition = ''
+  if (pointerMode) { onSettled?.(); return }
+  el.style.pointerEvents = 'none'
   setTimeout(() => {
     el.style.pointerEvents = ''
     onSettled?.()
@@ -169,10 +175,15 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
     margin: '0', boxSizing: 'border-box',
     zIndex: '99999', pointerEvents: 'none', willChange: 'transform', transition: 'none',
   })
-  // 克隆体初始就摆到源卡位置，避免首帧停在左上角(0,0)闪一下
+  // 克隆体初始按源卡原始大小(scale 1)摆到源卡位置——避免首帧停在左上角(0,0)闪一下，也避免跟
+  // 同一帧刚隐藏的源卡尺寸对不上（source opacity:0 换成 clone 那一刻若已经是 LIFT 放大，观感就是
+  // 「抓起来卡片瞬间变大一圈」）。抬起放大改由 frame() 每帧用纯数值渐入（见下面 liftT），不用
+  // CSS transition——克隆体从下一帧起全靠 frame() 直接写 transform 保持跟手，留一份 transition
+  // 在身上会让每帧的写入都被浏览器重新插值，反而拖慢跟手，且松手瞬间若跟这份 transition 撞车还
+  // 会把落地动画写坏（曾经这样实现过，松手时「先放大字体、再突然切回本体」就是这个撞车导致的）。
   clone.style.transform =
     `translate3d(${rect.left.toFixed(2)}px, ${(rect.top + half.y - GRABY).toFixed(2)}px, 0)` +
-    ` perspective(760px) rotateX(${TILT}deg) scale(${LIFT})`
+    ` perspective(760px) rotateX(${TILT}deg) scale(1)`
   document.body.appendChild(clone)
 
   // 拖拽期间给浏览器减负（性能：trace 显示 CPU 几乎全在浏览器渲染，非物理 JS）：
@@ -216,6 +227,8 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
   const DAMP = 2 * ZETA * Math.sqrt(SPRING)   // 阻尼系数（临界=2√k）
   const KV   = -Math.log(1 - 0.12) * 60       // 旋转速度低通（每秒）
   let lastT = null
+  const GROW_MS = 160   // 抓起→抬起(LIFT)的渐入时长，纯时间驱动、跟位置弹簧无关
+  let liftT = 0         // 0→1 抬起放大进度，frame() 里推进
 
   function onOver(e) {
     // 让整页都成为有效放置区：在任意处（包括拖出范围）松手都立刻触发 drop，
@@ -250,9 +263,14 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
     // 旋转按 px/秒 → 1/60 归一，任何刷新率下后仰/摆动幅度与原先一致
     const rotZ = Math.max(-5, Math.min(5, (vxs / 60) * SWAY))
     const rotX = TILT + Math.max(-4, Math.min(4, (vys / 60) * 0.16))
+    // 抬起放大渐入：ease-out cubic，跟位置弹簧一样纯数值驱动，不用 CSS transition
+    // （transition 会跟这里每帧的直接写入打架，且松手瞬间容易跟落地动画的 transition 撞车）
+    liftT = Math.min(1, liftT + dt * 1000 / GROW_MS)
+    const liftEase = 1 - Math.pow(1 - liftT, 3)
+    const curLift = 1 + (LIFT - 1) * liftEase
     clone.style.transform =
       `translate3d(${(pos.x - half.x).toFixed(2)}px, ${(pos.y - GRABY).toFixed(2)}px, 0)` +
-      ` perspective(760px) rotateX(${rotX.toFixed(2)}deg) rotateZ(${rotZ.toFixed(2)}deg) scale(${LIFT})`
+      ` perspective(760px) rotateX(${rotX.toFixed(2)}deg) rotateZ(${rotZ.toFixed(2)}deg) scale(${curLift})`
     _active.raf = requestAnimationFrame(frame)
   }
 
@@ -290,7 +308,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
     // 单克隆：只用于吸入(shrink)——缩小淡出进文件夹/面包屑，没有「露出真卡」这一步，
     // 不存在克隆→真卡外观不一致的问题。归位/落到新位置一律走下面的 flyMorph（双克隆交叉淡变）。
     const flyTo = (box, shrink) => {
-      clone.style.transition = `transform 0.42s ${_SETTLE}, opacity 0.4s ease`
+      clone.style.transition = `transform 0.55s ${_SETTLE}, opacity 0.4s ease`
       if (shrink) {
         const cx = box.left + box.width / 2, cy = box.top + box.height / 2
         clone.style.opacity = '0'
@@ -307,7 +325,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
       }
       onEnd = finish
       clone.addEventListener('transitionend', onEnd)
-      setTimeout(finish, 560)
+      setTimeout(finish, 680)
     }
 
     // 双克隆样式渐变：clone(旧样式) 与 clone2(新样式) 同起点、同轨迹飞向落点，飞行途中：
@@ -321,7 +339,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
       const tf = `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0)` +
                  ` perspective(760px) rotateX(0deg) rotateZ(0deg) scale(${sx}, ${sy})`
       clone2.getBoundingClientRect()   // 提交初始态（与 clone 重叠、opacity 0），下面才会从此处动画
-      const trans = `transform 0.42s ${_SETTLE}, opacity 0.42s ease`
+      const trans = `transform 0.55s ${_SETTLE}, opacity 0.42s ease`
       clone.style.transition = trans
       clone2.style.transition = trans
       clone.style.transform = tf;  clone.style.opacity = '0'
@@ -331,12 +349,25 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
         if (done) return
         done = true
         clone2.removeEventListener('transitionend', onEnd)
-        clone.remove(); clone2.remove()
-        _revealWithoutStaleHover(revealEl)
+        // 收尾前把 clone2 钉死成跟 revealEl 完全一致的「纯 2D」状态，排除两种可能的残留误差：
+        // ① scale(sx,sy) 是按 box.width/rect.width 算出来的近似值，不保证正好是 1，哪怕差
+        //    0.1% 在图标/小字上也会被人眼当成「大小不对」；这里直接钉宽高像素值，不再依赖缩放。
+        // ② transform 里的 perspective()/rotateX() 即使角度是 0，仍会把元素留在 3D 渲染/GPU
+        //    合成层里，跟 revealEl 的普通 2D 布局渲染方式不同，字重/清晰度有细微差异；这里换成
+        //    不带 perspective/rotate 的纯 translate，退出 3D 上下文。连同 will-change 一起清掉，
+        //    等一帧生效、彻底长得跟 revealEl 一样了，再切换过去。
+        clone2.style.willChange = 'auto'
+        clone2.style.width  = box.width  + 'px'
+        clone2.style.height = box.height + 'px'
+        clone2.style.transform = `translate(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px)`
+        requestAnimationFrame(() => {
+          clone.remove(); clone2.remove()
+          _revealWithoutStaleHover(revealEl, pointer)
+        })
       }
       onEnd = finish
       clone2.addEventListener('transitionend', onEnd)
-      setTimeout(finish, 580)
+      setTimeout(finish, 700)
     }
 
     // 占位重新展开：FLIP 邻居从「合拢」动到「展开」。el 当前可能已收合(home)或已展开(落点新卡)，
@@ -682,7 +713,7 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
 
     let done = false, onEnd = null
     const flyTo = (box, shrink) => {
-      clone.style.transition = `transform 0.42s ${_SETTLE}, opacity 0.4s ease`
+      clone.style.transition = `transform 0.55s ${_SETTLE}, opacity 0.4s ease`
       if (shrink) {
         const cx = box.left + box.width / 2, cy = box.top + box.height / 2
         clone.style.opacity = '0'
@@ -701,7 +732,7 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
       }
       onEnd = finish
       clone.addEventListener('transitionend', onEnd)
-      setTimeout(finish, 560)
+      setTimeout(finish, 680)
     }
 
     requestAnimationFrame(() => {
