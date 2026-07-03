@@ -1974,7 +1974,7 @@ async function ctxPaste() {
       cbStore.clear()
       loadContents()
       try {
-        await Promise.all(backups.map(f => filesApi.update(f.id, { folderId })))
+        await Promise.all(backups.map(f => filesApi.update(f.id, { folderId, projectId })))
       } catch (e) {
         backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId, projectId: f.projectId }))
         loadContents()

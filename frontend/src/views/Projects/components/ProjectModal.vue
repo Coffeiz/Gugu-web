@@ -2075,7 +2075,7 @@ async function pmCtxPaste() {
   const projectId = props.project?.id
   try {
     if (pmCbStore.type === 'cut') {
-      await Promise.all(pmCbStore.fileIds.map(id => filesApi.update(id, { folderId })))
+      await Promise.all(pmCbStore.fileIds.map(id => filesApi.update(id, { folderId, projectId })))
       pmCbStore.clear()
     } else if (pmCbStore.type === 'copy') {
       await Promise.all(pmCbStore.fileIds.map(id =>

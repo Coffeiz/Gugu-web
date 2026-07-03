@@ -210,6 +210,7 @@ class FileUpdate(CamelModel):
     display_name: Optional[str] = None
     stage_name: Optional[str] = None
     folder_id: Optional[int] = None
+    project_id: Optional[int] = None
 
     @field_validator("display_name")
     @classmethod

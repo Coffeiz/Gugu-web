@@ -641,21 +641,27 @@ async def update_file(
 
     new_display = body.display_name if body.display_name is not None else f.display_name
     new_stage   = body.stage_name   if body.stage_name   is not None else f.stage_name
-    # folder_id 显式出现在请求体时（含 null）才更新，否则保持原值
-    new_fid = body.folder_id if 'folder_id' in body.model_fields_set else f.folder_id
+    # folder_id/project_id 显式出现在请求体时（含 null）才更新，否则保持原值——纯改名等局部
+    # patch 不会带这两个字段，不能被当成「移到个人空间」误处理。project_id 显式传了才切空间，
+    # 不从源文件继承（同 copy_file 的教训：继承会导致「项目文件剪切到个人文件库」跨空间移动
+    # 静默失败，文件还留在原项目里）。
+    new_fid = body.folder_id  if 'folder_id'  in body.model_fields_set else f.folder_id
+    new_pid = body.project_id if 'project_id' in body.model_fields_set else f.project_id
+    new_space = "project" if new_pid else "personal"
 
     project_name = ""
     project_color = None
     project_year = ""
     project_month = ""
     folder_name = ""
-    if f.space == "project" and f.project_id:
-        p = await get_owned(db, Project, f.project_id, current_user.id)
-        if p:
-            project_name = p.name
-            project_color = _color(p.color)
-            date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
-            project_year, project_month = date_str[:4], date_str[5:7]
+    if new_space == "project" and new_pid:
+        p = await get_owned(db, Project, new_pid, current_user.id)
+        if not p:
+            raise HTTPException(400, "目标项目不存在")
+        project_name = p.name
+        project_color = _color(p.color)
+        date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
+        project_year, project_month = date_str[:4], date_str[5:7]
     if new_fid:
         fo = await get_owned(db, Folder, new_fid, current_user.id)
         if not fo:
@@ -664,11 +670,11 @@ async def update_file(
 
     new_key = _build_key(
         uid=current_user.id,
-        space=f.space,
+        space=new_space,
         display_name=new_display,
         ext=f.ext,
         project_name=project_name,
-        project_id=f.project_id or 0,
+        project_id=new_pid or 0,
         project_year=project_year,
         project_month=project_month,
         folder_name=folder_name,
@@ -683,6 +689,8 @@ async def update_file(
     f.display_name = new_display
     f.stage_name   = new_stage
     f.folder_id    = new_fid
+    f.project_id   = new_pid
+    f.space        = new_space
     f.updated_at   = datetime.utcnow()
     await db.commit()
     await db.refresh(f)
@@ -733,9 +741,12 @@ async def copy_file(
     if not f or f.deleted_at:
         raise HTTPException(404, "文件不存在")
 
+    # 目标空间由调用方明确指定的 project_id 决定，不从源文件继承——否则「项目文件复制到个人
+    # 文件库」这类跨空间粘贴会静默失败，复制出的文件还留在原项目里（两处前端调用都会显式带上
+    # 目标 project_id，个人空间传 null）
     new_folder_id  = body.folder_id
-    new_project_id = body.project_id if body.project_id is not None else f.project_id
-    new_space      = f.space
+    new_project_id = body.project_id
+    new_space      = "project" if new_project_id else "personal"
 
     project_name = ""; project_color = None; project_year = ""; project_month = ""
     if new_space == "project" and new_project_id:
