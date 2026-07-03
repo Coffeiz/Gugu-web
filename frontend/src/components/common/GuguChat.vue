@@ -562,10 +562,25 @@ const open       = ref(false)
 const expanded   = ref(false)
 const resizing   = ref(false)   // 展开/缩小动画期间：关 backdrop-filter、停跟随，降卡顿
 let _resizeTimer = null
+let _onResizeTransitionEnd = null
 function _markResizing() {
   resizing.value = true
   if (_resizeTimer) clearTimeout(_resizeTimer)
-  _resizeTimer = setTimeout(() => { resizing.value = false }, 420)
+  if (windowRef.value && _onResizeTransitionEnd) {
+    windowRef.value.removeEventListener('transitionend', _onResizeTransitionEnd)
+  }
+  // 用真实 transitionend 结束 resizing，而不是硬编码 420ms 定时器——.chat-window 的位移过渡
+  // 也是 0.42s，正常情况下两者前后脚触发看不出差别；但性能不足时（掉帧/主线程繁忙）CSS 过渡
+  // 的视觉完成时间会被拖慢，定时器却按固定墙钟时间准点触发，导致 backdrop-filter/跟随在过渡
+  // 还没走完时就被重新打开，看起来「闪一下」。定时器保留作兜底（万一没有属性真正变化、不会
+  // 触发 transitionend），加了缓冲、不再和过渡时长完全对齐。
+  _onResizeTransitionEnd = (e) => {
+    if (e.target !== windowRef.value) return   // 只认窗口自己的位移过渡，冒泡上来的子元素过渡不算
+    if (!['top', 'left', 'right', 'bottom'].includes(e.propertyName)) return
+    resizing.value = false
+  }
+  windowRef.value?.addEventListener('transitionend', _onResizeTransitionEnd)
+  _resizeTimer = setTimeout(() => { resizing.value = false }, 600)
 }
 const miniPinned = ref(localStorage.getItem('gugu_mini_pinned') !== 'false')
 watch(miniPinned, v => localStorage.setItem('gugu_mini_pinned', String(v)))

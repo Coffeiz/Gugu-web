@@ -309,6 +309,21 @@ body {
   backdrop-filter: blur(12px) saturate(1.15);
   -webkit-backdrop-filter: blur(12px) saturate(1.15);
 }
+/* 图片文件卡：缩略图（.fc-thumb-area）是完全不透明的真实图片，铺在 .fc-card 上层，挡住了
+   卡片自己 backdrop-filter 模糊到的「背后内容」（拖过其他卡片时应该透出模糊的其他卡片，
+   不是把缩略图自己的画面弄模糊）。给 .fc-thumb-area 单独挂一份跟卡片同参数的
+   backdrop-filter（模糊它背后——也就是正被拖过的其他文件卡），图片本身不加 filter，只降
+   透明度让这份模糊透出来，跟卡片主体「半透明白底 + backdrop-filter 模糊背景」的双层观感
+   对齐。 */
+.phys-drag-clone.fc-card .fc-thumb-area {
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(12px) saturate(1.15);
+  -webkit-backdrop-filter: blur(12px) saturate(1.15);
+}
+.phys-drag-clone.fc-card .fc-thumb-tiny,
+.phys-drag-clone.fc-card .fc-thumb-full.fc-loaded {
+  opacity: 0.75;
+}
 /* 源卡 / 落点卡：隐藏但保留布局占位，让飞动的克隆体看起来就是卡片本体 */
 .phys-drag-source { opacity: 0 !important; }
 

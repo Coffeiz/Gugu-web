@@ -1840,6 +1840,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/perception/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Events
+         * @description 导出感知遥测原始事件（perc/misperc/fb,JSON 附件,供离线分析）。
+         *     hours=时间窗（0=全部）。数据全部是脱敏结构化字段（u 为前 8 位、枚举/数值,无用户原文）。
+         */
+        get: operations["export_events_api_v1_admin_perception_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/perception/misread/recent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Misread Recent
+         * @description 最近 N 条错读案例（脱敏，给面板预览）。读 Redis live 列表 perc:misread_cases。
+         */
+        get: operations["misread_recent_api_v1_admin_perception_misread_recent_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/perception/misread/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Misread Export
+         * @description 下载全局「错读反思记录」（md，已脱敏：只 read_as/actual/抽象 pattern，无用户原话）。
+         */
+        get: operations["misread_export_api_v1_admin_perception_misread_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/invite-codes/generate": {
         parameters: {
             query?: never;
@@ -1959,6 +2020,26 @@ export interface paths {
         patch: operations["toggle_ban_api_v1_admin_users__user_id__ban_patch"];
         trace?: never;
     };
+    "/api/v1/admin/users/{user_id}/developer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Toggle Developer
+         * @description 切换开发者标记（数据面板可一键排除开发者数据）。
+         */
+        patch: operations["toggle_developer_api_v1_admin_users__user_id__developer_patch"];
+        trace?: never;
+    };
     "/api/v1/admin/users/{user_id}": {
         parameters: {
             query?: never;
@@ -1969,7 +2050,12 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete User */
+        /**
+         * Delete User
+         * @description 删除用户 = 账户注销：DB 级联之外，还必须清**存储层**——AI 记忆（.agent/）、上传文件、
+         *     语音（.voice/）、聊天暂存都不在 DB 表里，级联碰不到；不清就违背隐私政策「注销后从数据库
+         *     和存储中永久删除」的承诺（商用就绪评审 P0-5 缺口）。顺序：先清盘外数据，再删 DB 行。
+         */
         delete: operations["delete_user_api_v1_admin_users__user_id__delete"];
         options?: never;
         head?: never;
@@ -2127,6 +2213,69 @@ export interface paths {
          * @description 工具调用频次分布（按工具名聚合，降序 Top 20）。
          */
         get: operations["get_tool_distribution_api_v1_admin_analytics_tool_distribution_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/analytics/session-depth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Session Depth
+         * @description 会话深度分布：每用户取其历史最深会话的用户消息轮数，分档统计用户数。
+         *     档位：1 / 2–3 / 4–10 / 11–30 / 30+（按用户去重，不然重度用户霸占所有档）。
+         */
+        get: operations["get_session_depth_api_v1_admin_analytics_session_depth_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/analytics/active-dimensions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Active Dimensions
+         * @description 周活跃维度（近 7 天，去重用户数）。口径 v1 = 「操作过」（服务器有记录的创建/更新/触发），
+         *     纯浏览（查看）未埋点、不含——见 docs/product/design-admin.md 面板备注。
+         */
+        get: operations["get_active_dimensions_api_v1_admin_analytics_active_dimensions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/ops/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ops Summary
+         * @description 近 N 天（默认今天）工具调用运维汇总：每工具调用量/失败数/失败率/平均耗时，
+         *     全局失败率 + 延迟桶分布 + P99 近似（桶上界，>30s 或无数据为 null）。
+         */
+        get: operations["ops_summary_api_v1_admin_ops_summary_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2656,6 +2805,8 @@ export interface components {
             stageName?: string | null;
             /** Folderid */
             folderId?: number | null;
+            /** Projectid */
+            projectId?: number | null;
         };
         /** FolderCreate */
         FolderCreate: {
@@ -6755,6 +6906,88 @@ export interface operations {
             };
         };
     };
+    export_events_api_v1_admin_perception_export_get: {
+        parameters: {
+            query?: {
+                hours?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    misread_recent_api_v1_admin_perception_misread_recent_get: {
+        parameters: {
+            query?: {
+                n?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    misread_export_api_v1_admin_perception_misread_export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     generate_codes_api_v1_admin_invite_codes_generate_post: {
         parameters: {
             query?: never;
@@ -6934,6 +7167,37 @@ export interface operations {
         };
     };
     toggle_ban_api_v1_admin_users__user_id__ban_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    toggle_developer_api_v1_admin_users__user_id__developer_patch: {
         parameters: {
             query?: never;
             header?: never;
@@ -7149,7 +7413,9 @@ export interface operations {
     };
     get_summary_api_v1_admin_analytics_summary_get: {
         parameters: {
-            query?: never;
+            query?: {
+                exclude_dev?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7165,12 +7431,22 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     get_trends_api_v1_admin_analytics_trends_get: {
         parameters: {
             query?: {
                 days?: number;
+                exclude_dev?: boolean;
             };
             header?: never;
             path?: never;
@@ -7200,7 +7476,9 @@ export interface operations {
     };
     get_chat_funnel_api_v1_admin_analytics_chat_funnel_get: {
         parameters: {
-            query?: never;
+            query?: {
+                exclude_dev?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7216,11 +7494,22 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     get_tool_distribution_api_v1_admin_analytics_tool_distribution_get: {
         parameters: {
-            query?: never;
+            query?: {
+                exclude_dev?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7234,6 +7523,108 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_session_depth_api_v1_admin_analytics_session_depth_get: {
+        parameters: {
+            query?: {
+                exclude_dev?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_active_dimensions_api_v1_admin_analytics_active_dimensions_get: {
+        parameters: {
+            query?: {
+                exclude_dev?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ops_summary_api_v1_admin_ops_summary_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
