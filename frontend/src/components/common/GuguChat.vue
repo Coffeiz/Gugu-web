@@ -54,7 +54,7 @@
   />
 
   <!-- 悬浮球 -->
-  <button class="ai-fab" :class="{ 'ai-fab--playing': rippleActive }" ref="fabRef" @click="toggleOpen" title="咕咕">
+  <button class="ai-fab" :class="{ 'ai-fab--playing': rippleActive }" :style="{ zIndex: fabZ }" ref="fabRef" @click="toggleOpen" title="咕咕">
     <svg ref="fabSvgRef"
          :class="{ 'ai-fab-spin': audioStore.file && !spinningBack, 'ai-fab--typing': fabJumping }"
          :style="audioStore.file && !spinningBack ? { animationPlayState: audioPlaying ? 'running' : 'paused' } : {}"
@@ -593,6 +593,12 @@ function syncSmallH() {
 const chatZ = ref(nextZ())
 function raiseChat() { chatZ.value = nextZ() }
 watch(open, v => { if (v) raiseChat() })
+
+// 悬浮球层级：完全关闭时常驻在窗口带之上（99999，随时可点、可唤起聊天）；
+// 一旦聊天窗打开（不论小窗还是展开大窗口）就压到窗口之下——球固定在右下角，
+// 小窗 bottom:88px 离球顶只有 10px 空隙、大窗口更是直接铺到 bottom:12px 盖住球的位置，
+// 球若仍固定最上层会遮住窗口自己的边角。球永远不高于自己的聊天窗，靠窗口自身的关闭按钮/再点球关。
+const fabZ = computed(() => open.value ? chatZ.value - 1 : 99999)
 
 const windowStyle = computed(() => {
   if (expanded.value) {
@@ -1579,7 +1585,7 @@ async function send(forcedText) {
   position: fixed; bottom: 28px; right: 28px;
   isolation: isolate; width: 50px; height: 50px; border-radius: 50%;
   background: linear-gradient(135deg, #7b7fb2, #9590c4); border: none;
-  cursor: pointer; z-index: 99999;   /* 常驻唤起入口:永远在窗口带(20000+)之上、通知(100000)之下 */
+  cursor: pointer;   /* z-index 由 :style 动态(fabZ)：默认在窗口带之上，大窗口展开时压到其下，见 script */
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 4px 18px rgba(123,127,178,0.32), inset 0 1px 0 rgba(255,255,255,0.45);
   transition: transform 0.2s, box-shadow 0.2s;
