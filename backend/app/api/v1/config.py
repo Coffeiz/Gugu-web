@@ -54,7 +54,8 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
         await write_log(db, username, "config", f"修改配置：{sections}", request)
         return {"message": "配置已更新", "data": _mask(new_cfg.model_dump())}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}\n{_tb.format_exc()}")
+        print(f"[config] 操作失败: {type(e).__name__}: {e}\n{_tb.format_exc()}", flush=True)
+        raise HTTPException(status_code=500, detail="操作失败，请查看服务端日志排查")
 
 
 @router.post("/init-db")
@@ -73,7 +74,8 @@ async def init_db():
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="数据库 10s 内未连通，请检查连接信息")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}\n{_tb.format_exc()}")
+        print(f"[config] 操作失败: {type(e).__name__}: {e}\n{_tb.format_exc()}", flush=True)
+        raise HTTPException(status_code=500, detail="操作失败，请查看服务端日志排查")
 
 
 # ── 存储 ↔ DB 对账（只读）────────────────────────────────────────────────

@@ -37,6 +37,9 @@ def _thumb_path(fid: int, size: str) -> _Path:
 
 _THUMB_SIZE_MAP = {"tiny": (20, 75), "card": (192, 82)}
 
+# 单文件上传硬上限（字节）——独立于存储配额，防一次性 read 进内存打爆。
+_MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+
 # 缩略图生成是 CPU 密集（解码/缩放/编码）；小核机器上多个并发跑会占满 CPU、卡住其他请求。
 # 闸门：最多 (核数-1) 个并发，至少留一个核给事件循环（2 核 → 1）。
 _THUMB_SEM = asyncio.Semaphore(max(1, (os.cpu_count() or 2) - 1))
@@ -404,6 +407,10 @@ async def upload_file(
 
     data = await file.read()
     size_bytes = len(data)
+
+    # 单文件硬上限：整个请求体一次性进内存，配额可能为 None（无限），需独立的字节闸防内存打爆。
+    if size_bytes > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"文件过大（单文件上限 {_MAX_UPLOAD_BYTES // 1048576}MB）")
 
     # 检查存储配额（优先个人配额，fallback 全局默认）
     _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes

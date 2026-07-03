@@ -41,21 +41,32 @@ def sanitize_error(s: str) -> str:
 
 
 def _redact_result(name: str, result):
-    """脱敏工具结果里的 error 字段（dict 的 error 键 / `{"error":...}` 字符串）。
-    **只动 error，绝不碰正常内容**（line 212 同款判别）。脱敏前把原始 error print 到服务端日志、保排查。"""
+    """脱敏工具结果里的 error 字段——**任意深度**的 dict `error` 键 / `{"error":...}` 字符串。
+    **只动 error 键，绝不碰正常内容**。脱敏前把原始 error print 到服务端日志、保排查。
+    递归的原因：批量工具（如多文件保存）把 `{"error": str(e)}` 收进 `failed`/`saved` 列表，
+    顶层只看 `error` 会漏掉这些嵌套错误串，导致原始 str(e)（含路径/UUID）直达模型。"""
+    def _walk(obj):
+        if isinstance(obj, dict):
+            out = {}
+            for k, v in obj.items():
+                if k == "error" and isinstance(v, str) and v:
+                    print(f"[skill] 工具 {name} 返回错误(原始): {v[:300]}", flush=True)
+                    out[k] = sanitize_error(v)
+                else:
+                    out[k] = _walk(v)
+            return out
+        if isinstance(obj, list):
+            return [_walk(x) for x in obj]
+        return obj
+
     if isinstance(result, dict):
-        err = result.get("error")
-        if isinstance(err, str) and err:
-            print(f"[skill] 工具 {name} 返回错误(原始): {err[:300]}", flush=True)
-            return {**result, "error": sanitize_error(err)}
-        return result
+        return _walk(result)
     if isinstance(result, str) and result.lstrip().startswith('{"error"'):
         print(f"[skill] 工具 {name} 返回错误(原始): {result[:300]}", flush=True)
         try:
             d = json.loads(result)
-            if isinstance(d.get("error"), str):
-                d["error"] = sanitize_error(d["error"])
-                return json.dumps(d, ensure_ascii=False)
+            if isinstance(d, (dict, list)):
+                return json.dumps(_walk(d), ensure_ascii=False)
         except Exception:
             return sanitize_error(result)
     return result

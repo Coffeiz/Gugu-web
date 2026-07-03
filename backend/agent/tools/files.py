@@ -987,12 +987,26 @@ async def _send_file_from_url(user_id, url: str, title: str):
         return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
 
     import httpx
+    from urllib.parse import urljoin
     try:
+        # 手动跟随重定向 + 逐跳重新校验：自动 follow 会让公网页 302 跳内网/云元数据绕过上面的 _url_is_safe（SSRF）。
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0),
-            follow_redirects=True,
+            follow_redirects=False,
         ) as client:
-            resp = await client.get(url)
+            cur = url
+            resp = await client.get(cur)
+            for _ in range(3):   # 最多跟 3 跳
+                if resp.status_code not in (301, 302, 303, 307, 308):
+                    break
+                loc = resp.headers.get("location")
+                if not loc:
+                    break
+                cur = urljoin(cur, loc)
+                reason = _url_is_safe(cur)   # 每一跳的目标都重新过内网校验
+                if reason:
+                    return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
+                resp = await client.get(cur)
     except Exception as e:
         return json.dumps({"error": f"图片下载失败（{type(e).__name__}），换一张或换个来源试试"}, ensure_ascii=False)
     if resp.status_code != 200:

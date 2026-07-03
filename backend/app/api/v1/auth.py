@@ -15,13 +15,15 @@ from app.core.security import hash_password, verify_password, create_user_token,
 from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword
 from app.core.config import get_settings
 from app.core.redis import get_redis
+from app.core.ratelimit import rate_limit
 from app.services import email as email_svc
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
-async def register(body: UserRegister, db: AsyncSession = Depends(get_db)):
+async def register(body: UserRegister, request: Request, db: AsyncSession = Depends(get_db)):
+    await rate_limit(request, "register", 20, 3600)   # 同 IP 每小时最多 20 次注册尝试
     # 验证邀请码
     inv_result = await db.execute(
         select(InviteCode).where(InviteCode.code == body.invite_code.strip().upper())
@@ -49,8 +51,15 @@ async def register(body: UserRegister, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.flush()
 
-    invite.used_at = datetime.utcnow()
-    invite.used_by = user.id
+    # 原子占用邀请码：WHERE used_at IS NULL 保证并发下只有一个请求能抢到（防 TOCTOU 一码多注册）。
+    claimed = await db.execute(
+        InviteCode.__table__.update()
+        .where(and_(InviteCode.id == invite.id, InviteCode.used_at.is_(None)))
+        .values(used_at=datetime.utcnow(), used_by=user.id)
+    )
+    if claimed.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(400, "邀请码已被使用")
     await db.commit()
     await db.refresh(user)
 
@@ -65,7 +74,8 @@ async def register(body: UserRegister, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: UserLogin, db: AsyncSession = Depends(get_db)):
+async def login(body: UserLogin, request: Request, db: AsyncSession = Depends(get_db)):
+    await rate_limit(request, "login", 10, 300, extra=body.username)   # 同 IP+用户名 5 分钟最多 10 次
     result = await db.execute(select(User).where(User.username == body.username))
     user = result.scalars().first()
 
@@ -91,6 +101,7 @@ async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSessi
     """申请重置：生成一次性 token 存 Redis，发邮件给注册邮箱。
 
     **无论邮箱是否注册都返回同一句**——避免通过接口枚举哪些邮箱已注册。"""
+    await rate_limit(request, "forgot", 5, 3600)   # 同 IP 每小时最多 5 次找回请求
     email_in = (body.email or "").strip().lower()
     if not email_in or "@" not in email_in:
         return _RESET_GENERIC
@@ -108,8 +119,9 @@ async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSessi
     await r.set(f"pwdreset:tok:{token}", str(user.id), ex=_RESET_TOKEN_TTL)
     await r.set(cd_key, "1", ex=_RESET_COOLDOWN)
 
-    # 重置链接基址：优先用请求 Origin（用户当前所在站点），退到 base_url——不写死域名
-    origin = request.headers.get("origin") or str(request.base_url).rstrip("/")
+    # 重置链接基址：用服务端自身 base_url（经 nginx 固定为真实域名），**不信任可被任意伪造的 Origin 头**
+    # ——否则攻击者伪造 Origin 即可把受害者邮件里的重置链接域名换成钓鱼站。
+    origin = str(request.base_url).rstrip("/")
     link = f"{origin}/reset-password?token={token}"
     # 发信 best-effort：smtplib 是同步的，丢线程池避免阻塞事件循环；失败不暴露给前端
     try:

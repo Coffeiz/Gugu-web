@@ -180,11 +180,25 @@ app.add_middleware(
 )
 
 
-def require_admin(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """基础安全响应头。CSP 未加（Vue 内联样式/脚本易误伤，需单独调），先补低风险的几项。"""
+    resp = await call_next(request)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # HSTS：仅 HTTPS 下浏览器生效，纯 HTTP 部署忽略之，带着无副作用
+    resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return resp
+
+
+def require_admin(request: Request, credentials: HTTPAuthorizationCredentials = Depends(bearer)):
     try:
         payload = jwt.decode(credentials.credentials, settings.secret_key, algorithms=["HS256"])
         if payload.get("role") not in ("superadmin", "admin"):
             raise HTTPException(status_code=403, detail="权限不足")
+        # 审计归因：把真实管理员用户名落到 request.state，供 write_log 读取（否则多管理员时恒记字面量 "admin"）
+        request.state.admin_username = payload.get("sub") or "admin"
         return payload
     except JWTError:
         raise HTTPException(status_code=401, detail="Token 无效或已过期")
