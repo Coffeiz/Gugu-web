@@ -7,6 +7,9 @@ POST  /api/v1/admin/config/init-db           → 手动初始化数据库（建�
 """
 
 import asyncio
+import json
+import time
+
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
@@ -412,6 +415,69 @@ async def test_embedding(body: EmbeddingTestRequest):
     if not isinstance(vec, list) or not vec:
         return {"ok": False, "message": "返回的向量为空"}
     return {"ok": True, "message": f"OK — 连通，向量维度 {len(vec)}"}
+
+
+# ── Embedding 向量重建（换模型后批量重算所有用户的 facts 向量）────────────────────
+_REBUILD_KEY = "emb:rebuild"
+
+
+async def _rebuild_worker(user_ids: list[str]) -> None:
+    """后台批量重算。进度写 Redis（跨 worker 可读）。best-effort，末尾标 done/error。"""
+    from agent.memory import embedding, store
+    from app.core.redis import get_redis
+    r = get_redis()
+    tag = embedding.model_tag()
+
+    async def prog(done: int, total: int) -> None:
+        if done % 5 == 0 or done == total:
+            await r.set(_REBUILD_KEY, json.dumps(
+                {"status": "running", "done": done, "total": total, "tag": tag, "ts": time.time()}))
+
+    try:
+        res = await store.rebuild_all_fact_vecs(user_ids, on_progress=prog)
+        await r.set(_REBUILD_KEY, json.dumps(
+            {"status": "done", **res, "tag": tag, "ts": time.time()}), ex=3600)
+    except Exception as e:
+        await r.set(_REBUILD_KEY, json.dumps(
+            {"status": "error", "message": str(e)[:100], "ts": time.time()}), ex=3600)
+
+
+@router.post("/embedding-rebuild")
+async def embedding_rebuild(db: AsyncSession = Depends(get_db)):
+    """换 embedding 模型后，批量给所有用户的 facts 重算向量（force）。后台跑、立即返回。
+    未启用/已在跑 → 拒绝。进度用 GET /embedding-rebuild/status 轮询。"""
+    from agent.memory import embedding
+    from app.core.redis import get_redis
+    from app.models import User
+    if not embedding.is_enabled():
+        return {"ok": False, "message": "请先启用并配置 embedding 模型（保存后再重建）"}
+    r = get_redis()
+    cur = await r.get(_REBUILD_KEY)
+    if cur:
+        try:
+            d = json.loads(cur if isinstance(cur, str) else cur.decode())
+            if d.get("status") == "running":
+                return {"ok": False, "message": "已有重建任务在跑", "status": d}
+        except Exception:
+            pass
+    rows = (await db.execute(select(User.id))).scalars().all()
+    user_ids = [str(u) for u in rows]
+    await r.set(_REBUILD_KEY, json.dumps(
+        {"status": "running", "done": 0, "total": len(user_ids), "ts": time.time()}))
+    asyncio.create_task(_rebuild_worker(user_ids))
+    return {"ok": True, "message": f"重建已启动，共 {len(user_ids)} 个用户", "total": len(user_ids)}
+
+
+@router.get("/embedding-rebuild/status")
+async def embedding_rebuild_status():
+    from app.core.redis import get_redis
+    cur = await get_redis().get(_REBUILD_KEY)
+    if not cur:
+        return {"status": "idle"}
+    try:
+        return json.loads(cur if isinstance(cur, str) else cur.decode())
+    except Exception:
+        return {"status": "idle"}
 
 
 # ── SMTP 测试发送 ──────────────────────────────────────────────────────────

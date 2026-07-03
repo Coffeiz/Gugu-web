@@ -673,6 +673,18 @@
               </button>
             </div>
           </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>重建向量</span><span class="behavior-desc">换了模型/维度后点一次，给所有用户的 facts 用新模型重算向量（后台跑，期间检索自动退回词法）。日常不用点</span></div>
+            <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;min-width:0;">
+              <span v-if="rebuild.msg" :title="rebuild.msg"
+                    :style="{ color: rebuild.error ? '#e07070' : '#4caf7d', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
+                {{ rebuild.msg }}
+              </span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="rebuild.running" @click="startRebuild">
+                {{ rebuild.running ? `重建中… ${rebuild.done}/${rebuild.total}` : '重建向量' }}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div class="card-actions">
@@ -990,7 +1002,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { PhBrain, PhEye } from '@phosphor-icons/vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
@@ -1577,6 +1589,47 @@ async function testEmbedding() {
   }
 }
 
+// 向量重建（换模型后批量重算，后台跑 + 轮询进度）
+const rebuild = reactive({ running: false, done: 0, total: 0, msg: '', error: false })
+let rebuildTimer: ReturnType<typeof setInterval> | null = null
+function stopRebuildPoll() { if (rebuildTimer) { clearInterval(rebuildTimer); rebuildTimer = null } }
+async function pollRebuild() {
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/embedding-rebuild/status')
+    const d = await res.json()
+    if (d.status === 'running') {
+      rebuild.running = true; rebuild.done = d.done || 0; rebuild.total = d.total || 0
+      rebuild.msg = `重建中 ${rebuild.done}/${rebuild.total}`; rebuild.error = false
+      if (!rebuildTimer) rebuildTimer = setInterval(pollRebuild, 2000)   // 自续轮询（含页面重载接续）
+    } else if (d.status === 'done') {
+      rebuild.running = false; rebuild.error = false
+      rebuild.msg = `完成：${d.with_facts || 0} 个用户有 facts（共处理 ${d.done || 0}）`
+      stopRebuildPoll()
+    } else if (d.status === 'error') {
+      rebuild.running = false; rebuild.error = true; rebuild.msg = '失败：' + (d.message || '')
+      stopRebuildPoll()
+    } else {
+      rebuild.running = false; stopRebuildPoll()
+    }
+  } catch { /* 忽略单次轮询失败 */ }
+}
+async function startRebuild() {
+  rebuild.msg = ''; rebuild.error = false
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/embedding-rebuild', { method: 'POST' })
+    const d = await res.json()
+    if (d.ok) {
+      rebuild.running = true; rebuild.total = d.total || 0; rebuild.done = 0
+      rebuild.msg = `已启动，共 ${d.total} 个用户`
+    } else {
+      rebuild.error = true; rebuild.msg = d.message || '启动失败'
+    }
+    pollRebuild()   // 拉一次进度；若在跑会自启轮询
+  } catch (e) {
+    rebuild.error = true; rebuild.msg = '请求失败：' + e.message
+  }
+}
+
 // ── 搜索连通测试（SearXNG / Tavily）──
 const searchTest = reactive({
   searxng:        { loading: false, ok: false, msg: '' },
@@ -1781,7 +1834,10 @@ onMounted(async () => {
   Object.assign(voiceDraft, configStore.cfg.voice)
   Object.assign(embeddingDraft, configStore.cfg.embedding)
   fetchPresets()
+  pollRebuild()   // 若有重建任务在跑，页面加载即反映进度并接续轮询
 })
+
+onUnmounted(() => stopRebuildPoll())
 </script>
 
 <style scoped>

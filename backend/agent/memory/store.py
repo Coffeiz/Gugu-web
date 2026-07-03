@@ -195,8 +195,9 @@ async def write_fact_vecs(user_id, vecs: dict) -> None:
     await _write(_key(user_id, FACTS_VEC_FILE), json.dumps(vecs, ensure_ascii=False))
 
 
-async def sync_fact_vecs(user_id, facts: list[dict]) -> None:
+async def sync_fact_vecs(user_id, facts: list[dict], force: bool = False) -> None:
     """给 facts 增量补向量缓存：只 embed **新 fact / 换过模型(tag 失配)** 的，已删 fact 的向量顺带清掉。
+    `force=True`（重建 job 用）→ 无视 tag 全部重算。
     embedding 未启用 → `embed()` 返回 None → 整体 no-op。best-effort，永不抛（反思路径不能被它拖垮）。"""
     from agent.memory import embedding as _emb
     if not _emb.is_enabled():
@@ -213,8 +214,8 @@ async def sync_fact_vecs(user_id, facts: list[dict]) -> None:
             if not fid or not text:
                 continue
             c = vecs.get(fid)
-            if c and c.get("t") == tag:
-                continue   # 已有当前模型的向量，跳过
+            if not force and c and c.get("t") == tag:
+                continue   # 已有当前模型的向量，跳过（force 时不跳、全部重算）
             v = await _emb.embed(text)
             if v:
                 vecs[fid] = {"v": v, "t": tag}
@@ -223,6 +224,27 @@ async def sync_fact_vecs(user_id, facts: list[dict]) -> None:
             await write_fact_vecs(user_id, vecs)
     except Exception:
         pass
+
+
+async def rebuild_all_fact_vecs(user_ids, on_progress=None) -> dict:
+    """给一批用户 force 重算 facts 向量（换 embedding 模型后调）。复用 `sync_fact_vecs(force=True)`。
+    每个用户独立 try（一个失败不拖垮整批）。返回 {done, total, with_facts}。on_progress(done, total) 可选回调。"""
+    total, done, with_facts = len(user_ids), 0, 0
+    for uid in user_ids:
+        try:
+            facts = await read_facts_list(uid)
+            if facts:
+                await sync_fact_vecs(uid, facts, force=True)
+                with_facts += 1
+        except Exception:
+            pass
+        done += 1
+        if on_progress:
+            try:
+                await on_progress(done, total)
+            except Exception:
+                pass
+    return {"done": done, "total": total, "with_facts": with_facts}
 
 
 def _jaccard(a: set, b: set) -> float:
