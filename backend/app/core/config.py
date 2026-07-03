@@ -144,6 +144,20 @@ class SmtpSettings(BaseModel):
     use_ssl:  bool          = Field(True, description="True=SSL(465)，False=STARTTLS(587)")
 
 
+class EmbeddingSettings(BaseModel):
+    """向量 embedding 模型——**独立于聊天/语音模型，单独 pin**（见 docs/agent/参考/咕咕改进方案-MaiBot借鉴.md 改进一）。
+
+    聊天模型天天轮换，embedding 必须钉死一个：换了它 = 所有已存向量作废、需整体重建。故意**不进 pick_model 路由**。
+    走 OpenAI 兼容的 `/embeddings` 接口。`enabled=False` 或未配 model → `embed()` 返回 None，
+    记忆检索自动退回词法相关性（bigram），零副作用——这也是"模型待定先搭框架"阶段的默认状态。"""
+    enabled:    bool = Field(False, description="是否启用向量检索（False=embed 全程 no-op，退回词法相关性）")
+    provider:   str  = Field("", description="提供方（仅记录用；固定走 OpenAI 兼容 /embeddings）")
+    base_url:   str  = Field("", description="Embedding Base URL（到 /v1 那层，不含 /embeddings）")
+    api_key:    str  = Field("", description="API Key")
+    model:      str  = Field("", description="embedding 模型名（空=未配置→退回词法）")
+    dimensions: int  = Field(0, description="请求维度（0=用模型默认；部分模型支持指定）")
+
+
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -164,6 +178,7 @@ class AppSettings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     ai: AISettings = Field(default_factory=AISettings)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)   # 独立语音识别模型（空=不支持语音）
+    embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)   # 独立向量模型（disabled=退回词法检索）
     ai_presets: AIPresets = Field(default_factory=AIPresets)
     agent: AgentBehaviorSettings = Field(default_factory=AgentBehaviorSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
@@ -218,6 +233,13 @@ class AppSettings(BaseSettings):
                 }}
                 updates["voice"] = VoiceSettings.model_construct(**merged)
 
+            if "embedding" in override:
+                merged = {**self.embedding.model_dump(), **{
+                    k: v for k, v in override["embedding"].items()
+                    if k in EmbeddingSettings.model_fields
+                }}
+                updates["embedding"] = EmbeddingSettings.model_construct(**merged)
+
             if "quota" in override:
                 merged = {**self.quota.model_dump(), **{
                     k: v for k, v in override["quota"].items()
@@ -267,7 +289,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "voice"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "voice", "embedding"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]

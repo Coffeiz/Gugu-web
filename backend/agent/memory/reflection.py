@@ -264,6 +264,7 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> No
             new = store.apply_facts_ops(cur, adds, f_rem or [])
             if new != cur:
                 await store.write_facts_list(user_id, new)
+                await store.sync_fact_vecs(user_id, new)   # 增量补向量缓存（embedding 未启用=no-op）
                 from agent import events
                 events.publish(events.types.MemoryUpdated(
                     user_id=user_id, added=len(adds or []), removed=len(f_rem or []), source="reflection"))

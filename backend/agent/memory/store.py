@@ -61,7 +61,19 @@ async def read_memory(user_id, query: str = "") -> dict:
     first_ts = 最早一条 fact 的 epoch（≈「开始了解 TA」的时间锚点，给注入侧时长计算用——
     时长由系统算好喂模型、禁模型自估，见 proposals/反馈信号系统-设计.md §4.3）。"""
     raw_facts = await read_facts_list(user_id)
-    facts   = render_facts(raw_facts, query)   # 结构化 → 注入用 markdown（相关性优先 + 重要度保底）
+    # 向量语义检索：仅在 embedding 启用 + 有 query + facts 真超上限时才 embed query（热路径省调用）。
+    # 只认与当前模型 tag 匹配的向量（换过模型的旧向量忽略 → 自动退回词法，直到重建）。embed 失败 → 词法。
+    query_vec, vec_map = None, None
+    if query and len(raw_facts) > FACTS_INJECT_MAX:
+        from agent.memory import embedding as _emb
+        if _emb.is_enabled():
+            qv = await _emb.embed(query)
+            if qv:
+                tag = _emb.model_tag()
+                raw_vecs = await read_fact_vecs(user_id)
+                query_vec = qv
+                vec_map = {k: v.get("v") for k, v in raw_vecs.items() if v.get("t") == tag}
+    facts   = render_facts(raw_facts, query, query_vec, vec_map)   # 有向量走 cosine，无则词法
     first_ts = min((f.get("ts") for f in raw_facts if f.get("ts")), default=None)
     memory  = (await _read(_key(user_id, "memory.md"))).strip()
     daily   = (await _read(_key(user_id, "daily.md"))).strip()
@@ -161,20 +173,76 @@ async def write_facts_list(user_id, facts: list[dict]) -> None:
     await _write(_key(user_id, FACTS_FILE), json.dumps(facts, ensure_ascii=False))
 
 
+# ── facts 向量缓存（.agent/facts_vec.json，key=fact_id → {"v": [...], "t": model_tag}）──
+# 与 facts.json 分开存：向量体积大、facts 是热读文件，不该被向量撑肿。文本才是主数据，
+# 向量是可重建缓存——换 embedding 模型时 tag 失配即视为过期、可整体重算（见 embedding.py）。
+FACTS_VEC_FILE = "facts_vec.json"
+
+
+async def read_fact_vecs(user_id) -> dict:
+    """读向量缓存 {fact_id: {"v": [...], "t": tag}}。不存在/坏 → {}。"""
+    raw = await _read(_key(user_id, FACTS_VEC_FILE))
+    if not raw:
+        return {}
+    try:
+        d = json.loads(raw)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+async def write_fact_vecs(user_id, vecs: dict) -> None:
+    await _write(_key(user_id, FACTS_VEC_FILE), json.dumps(vecs, ensure_ascii=False))
+
+
+async def sync_fact_vecs(user_id, facts: list[dict]) -> None:
+    """给 facts 增量补向量缓存：只 embed **新 fact / 换过模型(tag 失配)** 的，已删 fact 的向量顺带清掉。
+    embedding 未启用 → `embed()` 返回 None → 整体 no-op。best-effort，永不抛（反思路径不能被它拖垮）。"""
+    from agent.memory import embedding as _emb
+    if not _emb.is_enabled():
+        return
+    try:
+        vecs = await read_fact_vecs(user_id)
+        before = len(vecs)
+        tag = _emb.model_tag()
+        alive = {f.get("id") for f in facts if f.get("id")}
+        vecs = {k: v for k, v in vecs.items() if k in alive}   # GC 已删 fact 的向量
+        changed = len(vecs) != before
+        for f in facts:
+            fid, text = f.get("id"), (f.get("text") or "").strip()
+            if not fid or not text:
+                continue
+            c = vecs.get(fid)
+            if c and c.get("t") == tag:
+                continue   # 已有当前模型的向量，跳过
+            v = await _emb.embed(text)
+            if v:
+                vecs[fid] = {"v": v, "t": tag}
+                changed = True
+        if changed:
+            await write_fact_vecs(user_id, vecs)
+    except Exception:
+        pass
+
+
 def _jaccard(a: set, b: set) -> float:
     if not a or not b:
         return 0.0
     return len(a & b) / len(a | b)
 
 
-def render_facts(facts: list[dict], query: str = "") -> str:
+def render_facts(facts: list[dict], query: str = "",
+                 query_vec: list[float] | None = None, vec_map: dict | None = None) -> str:
     """结构化 facts → 注入用 markdown。退休低 effective、低置信推断标「不太确定」。
 
     选取策略（供 builder 注入，read_memory['facts']）：
     - facts 未超 `FACTS_INJECT_MAX` 或没传 query → 全部按 effective×importance 排序注入（旧行为）。
     - 超上限且有当前消息 query → **相关性优先**挑：① 重要度保底（前 `FACTS_FLOOR_K`，核心档案不被挤掉）
-      → ② 按对 query 的词法相关性（字 bigram Jaccard，置信小加成）填充 → ③ 仍没满用重要度补齐（不浪费预算）。
-      relevance > importance，但 importance 兜底。词法相关性是 v1（无 embedding 基建），后续可换向量。"""
+      → ② 按对 query 的相关性（置信小加成）填充 → ③ 仍没满用重要度补齐（不浪费预算）。
+      relevance > importance，但 importance 兜底。
+    - **相关性打分**：给了 `query_vec` + `vec_map`（read_memory 在 embedding 启用且超上限时算好）→ 用**向量 cosine**
+      （语义）；否则退回**字 bigram 词法**（v1 默认、embedding 未启用时）。没缓存到向量的 fact → cosine 记 0，
+      靠重要度保底/补齐兜住（下轮反思会补上它的向量）。"""
     scored = [(f, _fact_eff(f)) for f in (facts or [])]
     scored = [(f, e) for f, e in scored if e >= FACT_RETIRE_EFF and (f.get("text") or "").strip()]
     by_imp = sorted(scored, key=lambda x: -(x[1] * (x[0].get("imp", 3) or 3)))
@@ -183,8 +251,13 @@ def render_facts(facts: list[dict], query: str = "") -> str:
     if not q or len(scored) <= FACTS_INJECT_MAX:
         chosen = by_imp[:FACTS_INJECT_MAX]
     else:
-        qb = _fact_bigrams(q)
-        rel = {id(f): _jaccard(qb, _fact_bigrams(f.get("text", ""))) for f, _ in scored}
+        use_vec = query_vec is not None and vec_map is not None
+        if use_vec:
+            from agent.memory.embedding import cosine
+            rel = {id(f): cosine(query_vec, vec_map.get(f.get("id")) or []) for f, _ in scored}
+        else:
+            qb = _fact_bigrams(q)
+            rel = {id(f): _jaccard(qb, _fact_bigrams(f.get("text", ""))) for f, _ in scored}
         chosen, picked = [], set()
         for f, e in by_imp[:FACTS_FLOOR_K]:                      # ① 重要度保底
             chosen.append((f, e)); picked.add(id(f))

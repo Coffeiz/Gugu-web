@@ -374,6 +374,46 @@ async def test_search(body: SearchTestRequest):
     return {"ok": False, "message": "未知测试目标"}
 
 
+# ── Embedding 模型连通测试 ────────────────────────────────────────────────────
+
+class EmbeddingTestRequest(BaseModel):
+    base_url:   str = ""   # 留空=用已存配置
+    api_key:    str = ""   # 留空=用已存配置
+    model:      str = ""
+    dimensions: int = 0
+
+
+@router.post("/test-embedding")
+async def test_embedding(body: EmbeddingTestRequest):
+    """用当前输入的参数测 embedding 端点是否通，成功返回向量维度。走 OpenAI 兼容 /embeddings。"""
+    cfg = get_settings().embedding
+    base_url = (body.base_url or cfg.base_url or "").rstrip("/")
+    api_key  = body.api_key or cfg.api_key
+    model    = body.model or cfg.model
+    dims     = body.dimensions or cfg.dimensions
+    if not base_url or not model:
+        return {"ok": False, "message": "缺少 Base URL 或模型名"}
+    payload: dict = {"model": model, "input": "连通性测试"}
+    if dims:
+        payload["dimensions"] = dims
+    # key 为空就不发 Authorization 头（Ollama 无需鉴权；空 key 拼 "Bearer " 是非法 header）
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+            resp = await client.post(f"{base_url}/embeddings", json=payload, headers=headers)
+    except Exception as e:
+        return {"ok": False, "message": f"连不上：{type(e).__name__}: {str(e)[:80]}"}
+    if resp.status_code != 200:
+        return {"ok": False, "message": f"HTTP {resp.status_code}：{resp.text[:120]}"}
+    try:
+        vec = resp.json()["data"][0]["embedding"]
+    except Exception:
+        return {"ok": False, "message": "返回格式不对（不是 OpenAI 兼容 /embeddings 响应）"}
+    if not isinstance(vec, list) or not vec:
+        return {"ok": False, "message": "返回的向量为空"}
+    return {"ok": True, "message": f"OK — 连通，向量维度 {len(vec)}"}
+
+
 # ── SMTP 测试发送 ──────────────────────────────────────────────────────────
 
 class SmtpTestParams(BaseModel):

@@ -614,6 +614,80 @@
         </div>
       </section>
 
+      <!-- ── 向量 Embedding 模型 ── -->
+      <section v-if="activeTab === 'behavior'" class="config-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="5" cy="6" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="10" cy="14" r="2"/>
+              <path d="M6.5 7.3l2.2 5.4M13.5 7.3l-2.2 5.4M7 6h6"/>
+            </svg>
+          </div>
+          <div class="card-title-block">
+            <h3>向量 Embedding 模型</h3>
+            <p>独立于聊天/语音模型，<b>单独 pin 一个</b>——换它会作废所有已存向量、需重建，故意不进模型轮换。用于记忆的语义检索（facts 超量时按语义挑，而非词法）。<b>关闭 = 退回词法检索</b>，零副作用。<b>走 OpenAI 兼容 <code>/embeddings</code></b>——自托管 Ollama 填 <code>http://NAS:11434/v1</code>、模型 <code>qwen3-embedding:0.6b</code>、Key 随便填。</p>
+          </div>
+        </div>
+
+        <div class="behavior-grid">
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>启用向量检索</span>
+              <span class="behavior-desc">关闭＝退回词法相关性（bigram），零副作用；改完记得下方保存</span>
+            </div>
+            <button
+              class="toggle-switch"
+              :class="{ on: embeddingDraft.enabled }"
+              @click="embeddingDraft.enabled = !embeddingDraft.enabled"
+            >
+              <span class="toggle-knob" />
+            </button>
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc">Ollama 填 <code>qwen3-embedding:0.6b</code>；dashscope 填 <code>text-embedding-v3</code></span></div>
+            <input type="text" class="behavior-input" style="width:280px" v-model="embeddingDraft.model" placeholder="qwen3-embedding:0.6b" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>Base URL</span><span class="behavior-desc">OpenAI 兼容端点，到 /v1 那层（不含 /embeddings）。Ollama：http://NAS-IP:11434/v1</span></div>
+            <input type="text" class="behavior-input" style="width:280px" v-model="embeddingDraft.base_url" placeholder="http://…:11434/v1" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>API Key<span v-if="configStore.secretSet.embeddingApiKey" style="margin-left:6px;color:var(--color-primary);font-size:11px;font-weight:600">· 已配置 ✓</span></span><span class="behavior-desc"><b>Ollama 无需鉴权、可留空</b>；用 dashscope / OpenAI 才需填。已存的 Key 不回显，留空＝保留不变</span></div>
+            <input type="password" class="behavior-input" style="width:280px" v-model="embeddingDraft.api_key" autocomplete="new-password"
+                   :placeholder="configStore.secretSet.embeddingApiKey ? '已配置，留空＝不修改' : 'Ollama 可留空；dashscope/OpenAI 才填'" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>维度 dimensions</span><span class="behavior-desc">0＝用模型默认（qwen3-embedding:0.6b 默认 1024）；部分模型支持指定降维。<b>改了维度＝换模型，需重建向量</b></span></div>
+            <input type="number" class="behavior-input" style="width:280px" v-model.number="embeddingDraft.dimensions" placeholder="0（模型默认）" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>连通测试</span><span class="behavior-desc">用上面填的参数发一次 embed，看通不通、返回几维（改完先保存再测更准，测试用的是当前输入值）</span></div>
+            <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;min-width:0;">
+              <span v-if="embTest.msg" :title="embTest.msg"
+                    :style="{ color: embTest.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
+                {{ embTest.msg }}
+              </span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="embTest.loading" @click="testEmbedding">
+                {{ embTest.loading ? '测试中…' : '测试' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <span class="save-hint" :class="{ error: !!embeddingError }">
+            <template v-if="embeddingSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-else-if="embeddingError">{{ embeddingError }}</template>
+          </span>
+          <button class="btn-ghost" @click="resetEmbedding">撤销修改</button>
+          <button class="btn-primary" :class="{ loading: embeddingSaving }" :disabled="embeddingSaving" @click="saveEmbedding">
+            <svg v-if="embeddingSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            {{ embeddingSaving ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </section>
+
       <!-- ── 状态命名 ── -->
       <section v-if="activeTab === 'labels'" class="config-card labels-card">
         <div class="card-head">
@@ -1460,6 +1534,49 @@ async function saveVoice() {
   }
 }
 
+// ── 向量 Embedding 模型 ──
+const embeddingDraft  = reactive({ ...configStore.cfg.embedding })
+const embeddingSaving = ref(false)
+const embeddingSaved  = ref(false)
+const embeddingError  = ref('')
+const embTest = reactive({ loading: false, ok: false, msg: '' })
+function resetEmbedding() { Object.assign(embeddingDraft, configStore.cfg.embedding) }
+async function saveEmbedding() {
+  embeddingSaving.value = true; embeddingSaved.value = false; embeddingError.value = ''
+  try {
+    await configStore.saveConfig({ embedding: { ...embeddingDraft } })
+    embeddingSaved.value = true
+    Object.assign(embeddingDraft, configStore.cfg.embedding)   // key 存后回 ****，同步回「不修改」态
+    setTimeout(() => { embeddingSaved.value = false }, 3000)
+  } catch (e) {
+    embeddingError.value = e.message || '保存失败'
+  } finally {
+    embeddingSaving.value = false
+  }
+}
+async function testEmbedding() {
+  embTest.loading = true; embTest.msg = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/test-embedding', {
+      method: 'POST',
+      body: JSON.stringify({
+        base_url:   embeddingDraft.base_url || '',   // 留空=用已存配置
+        api_key:    embeddingDraft.api_key || '',
+        model:      embeddingDraft.model || '',
+        dimensions: embeddingDraft.dimensions || 0,
+      }),
+    })
+    const data = await res.json()
+    embTest.ok = !!data.ok
+    embTest.msg = data.message || (data.ok ? 'OK' : '失败')
+  } catch (e) {
+    embTest.ok = false
+    embTest.msg = '请求失败：' + e.message
+  } finally {
+    embTest.loading = false
+  }
+}
+
 // ── 搜索连通测试（SearXNG / Tavily）──
 const searchTest = reactive({
   searxng:        { loading: false, ok: false, msg: '' },
@@ -1662,6 +1779,7 @@ onMounted(async () => {
   await configStore.fetchConfig()
   Object.assign(agentDraft, configStore.cfg.agent)
   Object.assign(voiceDraft, configStore.cfg.voice)
+  Object.assign(embeddingDraft, configStore.cfg.embedding)
   fetchPresets()
 })
 </script>

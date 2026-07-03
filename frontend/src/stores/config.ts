@@ -29,7 +29,7 @@ export const useConfigStore = defineStore('config', () => {
   const saveError = ref('')
   // 后端把已存的密钥脱敏成 ****、前端又清空显示，导致「已存」无任何痕迹 → 看着像没保存。
   // 这里记录各保密字段后端当前是否已有值，供 UI 显示「已配置」指示。
-  const secretSet = reactive({ voiceApiKey: false })
+  const secretSet = reactive({ voiceApiKey: false, embeddingApiKey: false })
 
   const cfg = reactive({
     db: {
@@ -65,6 +65,14 @@ export const useConfigStore = defineStore('config', () => {
       base_url: '',
       model: '',
       api_format: 'openai',
+    },
+    embedding: {
+      enabled: false,
+      provider: '',
+      api_key: '',
+      base_url: '',
+      model: '',
+      dimensions: 0,
     },
     agent: {
       memory_enabled: true,
@@ -109,6 +117,7 @@ export const useConfigStore = defineStore('config', () => {
       if (data.storage) Object.assign(cfg.storage, sanitizeForEdit(data.storage))
       if (data.ai)      Object.assign(cfg.ai,      sanitizeForEdit(data.ai))
       if (data.voice) { secretSet.voiceApiKey = data.voice.api_key === '****'; Object.assign(cfg.voice, sanitizeForEdit(data.voice)) }
+      if (data.embedding) { secretSet.embeddingApiKey = data.embedding.api_key === '****'; Object.assign(cfg.embedding, sanitizeForEdit(data.embedding)) }
       if (data.agent)   Object.assign(cfg.agent,   data.agent)
       if (data.quota)   Object.assign(cfg.quota,   data.quota)
       if (data.search)  Object.assign(cfg.search,  sanitizeForEdit(data.search))
@@ -142,6 +151,7 @@ export const useConfigStore = defineStore('config', () => {
         if (cfg[section]) Object.assign(cfg[section], vals)
       }
       if (cleanPatch.voice?.api_key) secretSet.voiceApiKey = true   // 这次确实写了新 key
+      if (cleanPatch.embedding?.api_key) secretSet.embeddingApiKey = true
       saved.value = true
       setTimeout(() => { saved.value = false }, 3000)
     } catch (e) {
