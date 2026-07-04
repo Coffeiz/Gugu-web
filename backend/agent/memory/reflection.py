@@ -56,7 +56,8 @@ _MISS_NEEDS = _PERC_INTENTS | {"指代旧事"}                 # read_as / actua
 _MISS_PATTERNS = {"潜台词漏读", "情绪当任务", "过度共情", "指代漏接", "答非所问", "场景惯性", "过度澄清"}  # 错读模式
 # 反馈信号枚举（学习闭环的燃料，见 proposals/反馈信号系统-设计.md）：枚举外一律当「无信号」丢弃
 _FEEDBACK_ENUM = {"顺着聊", "无视跳开", "改写重问", "主动分享", "确认夸赞"}   # 「无信号」不打点
-_LAST_TURN_TTL = 7200   # 上一轮缓存 2h：隔太久的「上一句」已不构成对话延续语境
+_LAST_TURN_TTL = 86400   # 上一轮缓存 24h（仅作陈旧上限）：延续性靠 session 判，不靠时间窗
+                         # ——有了 session 闸后可放宽到一天，让同会话隔几小时回来接上话题也算延续
 
 
 _PERC_KEY = "perc:events"    # Redis capped list:给 Admin 聚合面板（/admin/perception）读
@@ -126,24 +127,32 @@ def _last_turn_key(user_id) -> str:
     return f"lastturn:{user_id}"
 
 
-async def _read_last_turn(user_id) -> dict | None:
-    """读上一轮 {u: 用户消息, a: 咕咕回复}（判 feedback 的对照物）。无/过期/异常 → None。"""
+async def _read_last_turn(user_id, session_id=None) -> dict | None:
+    """读上一轮 {u: 用户消息, a: 咕咕回复}（判 feedback 的对照物）。
+    **延续性按 session 判**：存的 session 与本轮不同 → 视为「另起对话」，返回 None（不跨会话比）。
+    无/过期/换会话/异常 → None。"""
     try:
         from app.core.redis import get_redis
         raw = await get_redis().get(_last_turn_key(user_id))
         if not raw:
             return None
         d = json.loads(raw if isinstance(raw, str) else raw.decode())
-        return d if isinstance(d, dict) else None
+        if not isinstance(d, dict):
+            return None
+        # session 闸：不是同一会话就不算延续（换了话题/新对话，别拿上段的话当上一轮）
+        if session_id is not None and str(d.get("sid") or "") != str(session_id):
+            return None
+        return {"u": d.get("u", ""), "a": d.get("a", "")}
     except Exception:
         return None
 
 
-async def _write_last_turn(user_id, user_msg: str, assistant_reply: str) -> None:
-    """把本轮存为「上一轮」缓存（截断防膨胀;TTL 2h,过期即不再当延续语境）。永不抛。"""
+async def _write_last_turn(user_id, user_msg: str, assistant_reply: str, session_id=None) -> None:
+    """把本轮存为「上一轮」缓存（带 session_id 供下轮判延续;截断防膨胀;TTL 24h 陈旧上限）。永不抛。"""
     try:
         from app.core.redis import get_redis
-        payload = json.dumps({"u": (user_msg or "")[:200], "a": (assistant_reply or "")[:300]},
+        payload = json.dumps({"u": (user_msg or "")[:200], "a": (assistant_reply or "")[:300],
+                              "sid": str(session_id) if session_id is not None else ""},
                              ensure_ascii=False)
         await get_redis().set(_last_turn_key(user_id), payload, ex=_LAST_TURN_TTL)
     except Exception:
@@ -210,22 +219,23 @@ def _worth_reflecting(user_msg: str) -> bool:
     return cleaned not in _TRIVIAL
 
 
-def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools=None) -> None:
+def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools=None, session_id=None) -> None:
     """非阻塞触发一次反思。琐碎应答（嗯/好的/谢谢…）默认跳过省调用——
     但若这轮咕咕**用了工具**（如「要建项目吗？」→「嗯」→真建了），即便用户只说「嗯」也反思，
-    以记下这轮做了啥（daily/summary）。used_tools 传列表(web)或 bool(IM 代理)皆可，truthy 即视为有动作。"""
+    以记下这轮做了啥（daily/summary）。used_tools 传列表(web)或 bool(IM 代理)皆可，truthy 即视为有动作。
+    session_id 供 feedback 判「是否延续同一对话」（换会话不跨比，见 _read_last_turn）。"""
     if not _worth_reflecting(user_msg) and not used_tools:
         return
     task = asyncio.create_task(
-        reflect(user_id, user_name, user_msg, assistant_reply, settings)
+        reflect(user_id, user_name, user_msg, assistant_reply, settings, session_id=session_id)
     )
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)
 
 
-async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> None:
+async def reflect(user_id, user_name, user_msg, assistant_reply, settings, session_id=None) -> None:
     out = None
-    prev_turn = await _read_last_turn(user_id)   # 上一轮（判 feedback 用），无/过期 → None
+    prev_turn = await _read_last_turn(user_id, session_id)   # 上一轮（判 feedback），换会话/过期 → None
     try:
         mem = await store.read_memory(user_id)
         existing_summary = mem.get("summary", "")
@@ -233,8 +243,8 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings) -> No
                              prev_turn=prev_turn)
     except Exception:
         out = None
-    # 无论 extract 成败，都把本轮存为「上一轮」缓存（下轮 feedback 判定的对照物）
-    await _write_last_turn(user_id, user_msg, assistant_reply)
+    # 无论 extract 成败，都把本轮存为「上一轮」缓存（带 session_id，下轮据此判是否延续）
+    await _write_last_turn(user_id, user_msg, assistant_reply, session_id)
 
     # 误判捕获:优先信反思 LLM 判的 correction（能分「感知误读 vs 数据/执行错」，正则做不到）；
     # extract 没成（{} / 异常）才退回正则兜底（高精度、漏召回）。二选一，不重复计。

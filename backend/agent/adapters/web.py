@@ -478,7 +478,8 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
         # ── 对话后反思：提炼长期记忆（fire-and-forget）──
         if profile.memory_enabled and full_reply:
             from agent.memory import reflection
-            reflection.schedule(user_id, req.user_name, req.message, full_reply, settings, used_tools=used_tools)
+            reflection.schedule(user_id, req.user_name, req.message, full_reply, settings,
+                                used_tools=used_tools, session_id=session_id)
 
         # ── 对话压缩：token 超阈值时后台静默压缩旧消息（fire-and-forget）──
         from agent.context import compress_conv

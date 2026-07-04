@@ -363,7 +363,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         if profile.memory_enabled and text:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
-            reflection.schedule(user_id, req.user_name, req.message, text, settings, used_tools=im_used_tools)
+            reflection.schedule(user_id, req.user_name, req.message, text, settings,
+                                used_tools=im_used_tools, session_id=session_id)
 
         # 对话压缩（fire-and-forget）
         from agent.context import compress_conv
