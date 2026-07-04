@@ -156,7 +156,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
   //   SPRING 越大越跟手、越小越拖；ZETA<1 略带动量回弹，=1 临界不过冲。
   const SPRING = opts.spring   ?? 190    // 弹簧刚度（rad²/s²），≈2.2Hz 固有频率
   const ZETA   = opts.damping  ?? 0.82   // 阻尼比：略欠阻尼，给一点「甩出去」的灵动
-  const LIFT  = opts.lift      ?? 1.045  // 克隆抬起的放大
+  const LIFT  = opts.lift      ?? 1       // 克隆抬起的放大（1=不放大）
   const SWAY  = opts.sway      ?? 0.25   // 横向摆动幅度
   const TILT  = opts.tilt      ?? 5      // 后仰角(deg)：上小下大，像被拎起
   const GRABY = opts.grabY     ?? 28     // 抓取点到卡片顶部的距离：挂在指针下方
@@ -522,7 +522,7 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
 
   const SPRING = opts.spring  ?? 190
   const ZETA   = opts.damping ?? 0.82
-  const LIFT   = opts.lift    ?? 1.045
+  const LIFT   = opts.lift    ?? 1       // 1=不放大
   const SWAY   = opts.sway    ?? 0.25
   const TILT   = opts.tilt    ?? 5
   const GRABY  = opts.grabY   ?? 28

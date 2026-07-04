@@ -1776,6 +1776,10 @@ function _selectedFolderIdNums() {
 }
 
 function onFolderPointerDown(f, e) {
+  // 全部文件根目录下"个人文件/项目文件/回收站"是伪文件夹卡片（type 不是 'folder'，没有真实
+  // folderId），不能拖拽——之前没挡，f.folderId 是 undefined，落点判定/吸入动画照样能触发
+  // （只是数据层最终 API 调用会因 id 无效而静默失败），表现为"能拖进别的卡片，但只有动画有效果"。
+  if (f.type !== 'folder') return
   _onFolderPointerDown(e, {
     itemId: f.folderId,
     isSelected: selectedFolderKeys.value.has(f.id),
