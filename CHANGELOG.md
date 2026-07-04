@@ -11,6 +11,7 @@
 
 ### 改进
 
+- **建项目支持优先级：`set_priority` 独立工具下线，并入 `create_project`/`update_project`**（`agent/tools/projects.py`、`app/core/events.py`）：优先级此前只能建完项目后另外调一次 `set_priority` 补上，且这个字段从没被主动问过或推荐过——用户想设的话得自己开口说"设成高优先级"。现在 `create_project`/`update_project` 都直接接受 `priority` 参数，能一次性建好；并给 `create_project` 的工具说明加了三档指引：对话里有明确紧急/重要信号（"赶紧""不着急"）就直接给一个合理优先级、顺带说判断依据，不追问；项目分量不轻（阶段多/周期长/涉及客户交付）但语气看不出紧急度，创建前顺口问一句要不要标、带上推荐（不问开放式问题）；明显是日常小事就不问不设，别打扰。`set_priority` 作为独立工具意义不大（`update_project` 已经是通用的项目字段更新入口，单独开一个工具只为一个字段不一致），已删除该工具及其 handler，`events.py` 的资源映射表同步摘除；工具清单从 59→58（详见 `docs/agent/00-总览.md`「工具清单」）。`set_color`（颜色）维持独立工具不变，本次只动优先级。
 - **记忆向量检索扩展：facts 上限 40→100 + memory.md 也做块级向量**（`agent/memory/{store,compress,embedding}.py`、`api/v1/config.py`、`Admin/Agent/index.vue`）：接着 0.16.0 的 facts 向量地基往下补两块。① **facts 注入上限 40→100**：多数用户仍全量注入，超 100 才走相关性挑选（token 换更完整的记忆，`FACTS_INJECT_MAX`）。② **memory.md（长期记忆）块级向量检索**：这是唯一「全量注入、无上限」的记忆层，随 compress 融合越攒越长——超 `MEMORY_INJECT_CHARS`(1500 字) 且 embedding 启用时，把叙述切块（按段/超长按句，块用文本哈希当 key）、按 cosine 挑相关块拼到预算内并**保原文顺序**保叙述连贯；无向量/覆盖不足/未超预算 → 退回整篇，零回归。compress 每次重写 memory.md 后自动重嵌变动的块（旧块 GC、新块补）。③ **query 只 embed 一次** facts/memory 共用。④ **重建按钮**同步覆盖 facts + 长期记忆（后端 `rebuild_all_vecs`、前端文案订正）。整套默认关闭、增量自动嵌新内容（不是定时任务）、收益要真超阈值才兑现。文档见 `docs/agent/11-记忆系统.md` §11。
 
 ### 修复

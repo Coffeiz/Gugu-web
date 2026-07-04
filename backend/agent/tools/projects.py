@@ -72,12 +72,15 @@ async def _update_project(db, user_id, args: dict):
                 p.current_stage = stages[-1].get("key")
             p.progress = 100
         p.status = args["status"]
+    if "priority" in args:
+        pr = (args.get("priority") or "").strip().lower()
+        p.priority = pr if pr in ("high", "medium", "low") else None
     for field in ("deadline", "start_date", "client", "name"):
         if field in args:
             setattr(p, field, args[field])
     p.updated_at = datetime.utcnow()
     await db.commit()
-    return {"success": True, "project_id": p.id, "name": p.name}
+    return {"success": True, "project_id": p.id, "name": p.name, "priority": p.priority}
 
 
 _DEFAULT_STAGES = [
@@ -134,6 +137,7 @@ async def _create_project(db, user_id, args: dict):
     _now = datetime.now()
     start_date = args.get("start_date") or _now.strftime("%Y-%m-%d")
     deadline = args.get("deadline") or (_now + timedelta(days=7)).strftime("%Y-%m-%d")
+    priority = (args.get("priority") or "").strip().lower()
     p = Project(
         user_id=user_id,
         name=args["name"],
@@ -142,6 +146,7 @@ async def _create_project(db, user_id, args: dict):
         deadline=deadline,
         start_date=start_date,
         color=args.get("color") or await _pick_unused_color(db, user_id),
+        priority=priority if priority in ("high", "medium", "low") else None,
         stages_json=json.dumps(stages, ensure_ascii=False),
         current_stage=stages[0]["key"],
     )
@@ -202,17 +207,6 @@ async def _update_stage(db, user_id, args: dict):
     p.updated_at = datetime.utcnow()
     await db.commit()
     return {"success": True, "project_id": p.id, "current_stage": p.current_stage}
-
-
-async def _set_priority(db, user_id, args: dict):
-    p, _err = await _resolve_project(db, user_id, args)
-    if _err:
-        return _err
-    pr = (args.get("priority") or "").strip().lower()
-    p.priority = pr if pr in ("high", "medium", "low") else None
-    p.updated_at = datetime.utcnow()
-    await db.commit()
-    return {"success": True, "project_id": p.id, "priority": p.priority}
 
 
 async def _set_color(db, user_id, args: dict):
@@ -569,7 +563,7 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="update_project",
             label="更新项目",
-            description="修改项目的状态、截止日期、开始日期、客户名称。",
+            description="修改项目的状态、截止日期、开始日期、客户名称、优先级。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -580,6 +574,7 @@ class ProjectsSkill(BaseSkill):
                     "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
                     "client":     {"type": "string", "description": "客户名称"},
                     "name":       {"type": "string", "description": "项目名称"},
+                    "priority":   {"type": "string", "enum": ["high", "medium", "low", "none"], "description": "优先级；传空或 none 清除"},
                 },
                 "required": [],
             },
@@ -588,7 +583,7 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="create_project",
             label="新建项目",
-            description="创建新项目，可一次性带上自定义阶段和待办（无需再逐个 add_stage/add_todo）。用户没明确说日期时不用追问：开始日期默认今天、截止日期默认一周后；不传 stages 用默认「计划/执行/交付」三段。\n\n颜色（color）：不传则随机从预设中选。如果能从上下文清楚判断项目类型（如设计、开发、运营、拍摄等），直接选一个合适色系创建，无需追问。如果类型模糊或无法推断，在调用工具前先问一句，给出 2~3 个色系选项让用户选（如「暖橙金 / 薰衣草紫 / 薄荷绿，你倾向哪种风格？」），拿到答案后再建。",
+            description="创建新项目，可一次性带上自定义阶段和待办（无需再逐个 add_stage/add_todo）。用户没明确说日期时不用追问：开始日期默认今天、截止日期默认一周后；不传 stages 用默认「计划/执行/交付」三段。\n\n颜色（color）：不传则随机从预设中选。如果能从上下文清楚判断项目类型（如设计、开发、运营、拍摄等），直接选一个合适色系创建，无需追问。如果类型模糊或无法推断，在调用工具前先问一句，给出 2~3 个色系选项让用户选（如「暖橙金 / 薰衣草紫 / 薄荷绿，你倾向哪种风格？」），拿到答案后再建。\n\n优先级（priority）：不传则不设（None），不是每个项目都要有优先级，别为了凑一个值追问。分三种情况：① 对话里有明确的紧急/重要信号（如「赶紧」「很急」「不着急」），直接给一个合理优先级、顺带说一句判断依据，无需追问；② 看起来是个分量不轻的项目（阶段多、周期长、涉及客户交付等）但语气里判断不出紧急程度，创建前顺口问一句要不要标个优先级、可以带上你的推荐（如「这个项目看起来分量不小，要标成高优先级吗？」），别问开放式的「优先级是什么」；③ 明显是日常小事/临时任务，不问不设，别打扰。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -598,6 +593,7 @@ class ProjectsSkill(BaseSkill):
                     "deadline":   {"type": "string", "description": "YYYY-MM-DD；不填默认一周后"},
                     "start_date": {"type": "string", "description": "YYYY-MM-DD；不填默认今天"},
                     "color":      {"type": "string", "description": "渐变色字符串，如 linear-gradient(135deg,#7b7fb2,#c4afc8)；不传则随机从预设中选"},
+                    "priority":   {"type": "string", "enum": ["high", "medium", "low"], "description": "优先级；不传则不设"},
                     "stages": {
                         "type": "array",
                         "description": '自定义阶段（按顺序）。两种写法：纯名称 ["需求","开发","测试"]，或带待办 [{"label":"开发","todos":["接口","联调"]}]。',
@@ -638,21 +634,6 @@ class ProjectsSkill(BaseSkill):
                 "required": [],
             },
             handler=_update_stage,
-        ),
-        Tool(
-            name="set_priority",
-            label="设置优先级",
-            description="设置项目优先级。传 high/medium/low；传空或 none 清除优先级。",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选，已知时用）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字，无需 id）"},
-                    "priority": {"type": "string", "enum": ["high", "medium", "low", "none"]},
-                },
-                "required": ["priority"],
-            },
-            handler=_set_priority,
         ),
         Tool(
             name="set_color", label="设置项目颜色",
