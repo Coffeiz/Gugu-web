@@ -55,6 +55,7 @@ async def compact(user_id, settings) -> bool:
 
         if new_memory:
             await store.write_memory_doc(user_id, new_memory)
+            await store.sync_memory_vecs(user_id, new_memory)   # 长期记忆重写→重嵌块向量（embedding 未启用=no-op）
         # 压缩成功才裁 daily（沉淀的内容已进 memory）
         await store.write_daily_lines(user_id, recent)
         return True

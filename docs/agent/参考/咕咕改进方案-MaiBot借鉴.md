@@ -57,7 +57,7 @@
 1. **config pin 一个 embedding 模型**:独立 `EmbeddingSettings` 段(照 `VoiceSettings` 那种"独立模型"写法)+ 连通测试按钮(测通 + 记维度)。⚠️ 加嵌套 config 段要**三处同步**(`apply_override`),否则段静默变 dict/不加载(smtp/voice 踩过)。
 2. **反思写 fact 时顺手 embed 并缓存**——在**异步反思里**做,off 热路径;向量随 fact 存。
 3. **`render_facts` 里 embed query + 暴力 cosine**,替/补现在的 bigram 词法相关性。
-4. **只在 facts 超注入上限(`FACTS_INJECT_MAX=40`)时才启用检索**;轻用户继续全量注入、零成本、零改动。
+4. **只在 facts 超注入上限(`FACTS_INJECT_MAX`,现 100)时才启用检索**;轻用户继续全量注入、零成本、零改动。
 - 热路径提醒:query 要在 context-build 前 embed 一次(**热路径新增一个快 API 调用**,~几十 ms,远小于 LLM 调用),用"只对超 40 条用户做"兜住。
 
 **embedding 模型必须和聊天模型解耦、单独 pin(最重要,因聊天模型天天切)**:
@@ -86,6 +86,8 @@
 方向已定,落地路径已清(见上);是**唯一够格现在就排期**的一块——不依赖反馈数据、不依赖改进二三、从零新增但天数级工作量。
 
 **决策(2026-07-03):提前做,定位为「共享 embedding 地基」而非单纯 facts 优化。** 实查 facts 尚未有人超 40 条(facts 检索的收益暂时潜伏),但决定仍先建——因为向量是一层**多消费者的公共基建**:记忆检索(改进一)只是第一个头,相处镜片的"引用哪些记忆更合适"、未来的检索排序/跨记忆语义关联都要靠它。先把原语(config + embed 服务 + cosine 缓存)建好、facts 接第一个头。
+
+**进展(2026-07-04)**:原语 + facts(上限升 100)+ **memory.md 块级向量检索**(第二个头,超 1500 字切块检索、compress 后重嵌)均已落地;重建按钮覆盖 facts+memory。详见 [`../11-记忆系统.md`](../11-记忆系统.md) §11。剩余消费者(相处镜片记忆引用、检索排序)按需再接。
 
 承重点 = 选定并 pin 一个**专用 embedding 模型**(与聊天 provider 解耦——当前只配了 minimax 且它在聊天轮换里,不宜复用)+ `EmbeddingSettings` 段(三处同步)+ embed 服务/cosine 通用件 + `render_facts` 暴力 cosine 改造。
 

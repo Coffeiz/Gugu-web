@@ -434,7 +434,7 @@ async def _rebuild_worker(user_ids: list[str]) -> None:
                 {"status": "running", "done": done, "total": total, "tag": tag, "ts": time.time()}))
 
     try:
-        res = await store.rebuild_all_fact_vecs(user_ids, on_progress=prog)
+        res = await store.rebuild_all_vecs(user_ids, on_progress=prog)
         await r.set(_REBUILD_KEY, json.dumps(
             {"status": "done", **res, "tag": tag, "ts": time.time()}), ex=3600)
     except Exception as e:

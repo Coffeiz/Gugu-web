@@ -13,7 +13,9 @@ DAILY_HARD_CAP 是压缩失败时的安全上限，防 daily 无限膨胀。
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import secrets
 import time
 
@@ -28,12 +30,16 @@ DAILY_HARD_CAP    = 60   # 压缩失败时的硬安全上限
 FACTS_FILE                = "facts.json"
 FACTS_INFERRED_HALF_LIFE  = 45.0   # 推断类 facts 置信半衰期(天)；observed 不衰减
 FACT_RETIRE_EFF           = 0.2    # effective 置信低于此 → 不注入（退休淡出）
-FACTS_INJECT_MAX          = 40     # 注入上限；超了优先按相关性挑、重要度保底+补齐（见 render_facts）
+FACTS_INJECT_MAX          = 100    # 注入上限；超了优先按相关性挑（向量/词法）、重要度保底+补齐（见 render_facts）
 FACTS_FLOOR_K             = 6      # 重要度保底：facts 超上限时，最重要的前 K 条无论是否相关都注入（核心档案不被相关性挤掉）
 FACTS_REL_CONF_BONUS      = 0.1    # 相关性排序里给置信度的小加成系数（同等相关时更可信的在前）
 _FACT_DEFAULT_CONF        = {"observed": 0.9, "inferred": 0.6}
 _FACT_CONFIRM_STEP        = 0.1
 _FACT_MAX_CONF            = 0.97
+
+# ── memory.md 长期记忆向量检索参数 ──
+MEMORY_INJECT_CHARS = 1500   # memory.md 超此字数才走向量挑相关块，否则整块注入（小的没必要检索）
+MEMORY_CHUNK_MAX    = 400    # 切块粒度：单块最大字数（超长段按句子边界再切）
 
 
 def _key(user_id, name: str) -> str:
@@ -61,21 +67,27 @@ async def read_memory(user_id, query: str = "") -> dict:
     first_ts = 最早一条 fact 的 epoch（≈「开始了解 TA」的时间锚点，给注入侧时长计算用——
     时长由系统算好喂模型、禁模型自估，见 proposals/反馈信号系统-设计.md §4.3）。"""
     raw_facts = await read_facts_list(user_id)
-    # 向量语义检索：仅在 embedding 启用 + 有 query + facts 真超上限时才 embed query（热路径省调用）。
-    # 只认与当前模型 tag 匹配的向量（换过模型的旧向量忽略 → 自动退回词法，直到重建）。embed 失败 → 词法。
-    query_vec, vec_map = None, None
-    if query and len(raw_facts) > FACTS_INJECT_MAX:
+    memory_doc = (await _read(_key(user_id, "memory.md"))).strip()
+    # 向量语义检索：facts 超上限 / memory 超预算 时才动向量。query **只 embed 一次**、两边共用（热路径省调用）。
+    # 只认与当前模型 tag 匹配的向量（换过模型的旧向量忽略 → facts 退回词法、memory 退回整篇，直到重建）。
+    facts_over = len(raw_facts) > FACTS_INJECT_MAX
+    mem_over   = len(memory_doc) > MEMORY_INJECT_CHARS
+    query_vec, fact_vec_map, mem_vec_map = None, None, None
+    if query and (facts_over or mem_over):
         from agent.memory import embedding as _emb
         if _emb.is_enabled():
-            qv = await _emb.embed(query)
-            if qv:
+            query_vec = await _emb.embed(query)
+            if query_vec:
                 tag = _emb.model_tag()
-                raw_vecs = await read_fact_vecs(user_id)
-                query_vec = qv
-                vec_map = {k: v.get("v") for k, v in raw_vecs.items() if v.get("t") == tag}
-    facts   = render_facts(raw_facts, query, query_vec, vec_map)   # 有向量走 cosine，无则词法
+                if facts_over:
+                    fv = await read_fact_vecs(user_id)
+                    fact_vec_map = {k: v.get("v") for k, v in fv.items() if v.get("t") == tag}
+                if mem_over:
+                    mv = await read_memory_vecs(user_id)
+                    mem_vec_map = {k: v.get("v") for k, v in mv.items() if v.get("t") == tag}
+    facts   = render_facts(raw_facts, query, query_vec if facts_over else None, fact_vec_map)  # 有向量走 cosine，无则词法
+    memory  = retrieve_memory_block(memory_doc, query_vec if mem_over else None, mem_vec_map)  # 超预算挑相关段，无向量则整篇
     first_ts = min((f.get("ts") for f in raw_facts if f.get("ts")), default=None)
-    memory  = (await _read(_key(user_id, "memory.md"))).strip()
     daily   = (await _read(_key(user_id, "daily.md"))).strip()
     summary = (await _read(_key(user_id, "summary.md"))).strip()
     summary_ts = await read_summary_ts(user_id)
@@ -226,9 +238,10 @@ async def sync_fact_vecs(user_id, facts: list[dict], force: bool = False) -> Non
         pass
 
 
-async def rebuild_all_fact_vecs(user_ids, on_progress=None) -> dict:
-    """给一批用户 force 重算 facts 向量（换 embedding 模型后调）。复用 `sync_fact_vecs(force=True)`。
-    每个用户独立 try（一个失败不拖垮整批）。返回 {done, total, with_facts}。on_progress(done, total) 可选回调。"""
+async def rebuild_all_vecs(user_ids, on_progress=None) -> dict:
+    """给一批用户 force 重算**facts + 长期记忆(memory.md)** 的向量（换 embedding 模型后调）。
+    复用 `sync_fact_vecs`/`sync_memory_vecs`（均 force=True）。每个用户独立 try（一个失败不拖垮整批）。
+    返回 {done, total, with_facts}（with_facts=有 facts 的用户数；memory 一并重算，不单独计数）。"""
     total, done, with_facts = len(user_ids), 0, 0
     for uid in user_ids:
         try:
@@ -236,6 +249,9 @@ async def rebuild_all_fact_vecs(user_ids, on_progress=None) -> dict:
             if facts:
                 await sync_fact_vecs(uid, facts, force=True)
                 with_facts += 1
+            mem = await read_memory_doc(uid)   # 长期记忆的块向量也一并重建
+            if mem:
+                await sync_memory_vecs(uid, mem, force=True)
         except Exception:
             pass
         done += 1
@@ -245,6 +261,110 @@ async def rebuild_all_fact_vecs(user_ids, on_progress=None) -> dict:
             except Exception:
                 pass
     return {"done": done, "total": total, "with_facts": with_facts}
+
+
+# ── memory.md（长期记忆）向量检索：切块 + 逐块缓存 + 语义挑相关段 ──
+# facts 天生离散，memory.md 是 compress 融合的一整篇叙述——先切块再 embed；且 compress 每次
+# **重写全文**，块文本随之变，用「块文本哈希」当 key：一压，旧哈希 GC、新块补嵌（= 自动重嵌）。
+MEMORY_VEC_FILE = "memory_vec.json"
+
+
+def _chunk_key(text: str) -> str:
+    return hashlib.md5(text.strip().encode("utf-8")).hexdigest()[:12]
+
+
+def _memory_chunks(text: str) -> list[str]:
+    """把 memory.md 切成可 embed 的段：先按空行分段，超长段再按句子边界切到 MEMORY_CHUNK_MAX。"""
+    text = (text or "").strip()
+    if not text:
+        return []
+    out: list[str] = []
+    for para in re.split(r"\n\s*\n", text):
+        para = para.strip()
+        if not para:
+            continue
+        if len(para) <= MEMORY_CHUNK_MAX:
+            out.append(para)
+            continue
+        buf = ""
+        for sent in re.split(r"(?<=[。！？!?\n])", para):
+            if buf and len(buf) + len(sent) > MEMORY_CHUNK_MAX:
+                out.append(buf.strip())
+                buf = sent
+            else:
+                buf += sent
+        if buf.strip():
+            out.append(buf.strip())
+    return [c for c in out if c]
+
+
+async def read_memory_vecs(user_id) -> dict:
+    """读 memory 块向量缓存 {chunk_key: {"v": [...], "t": tag}}。不存在/坏 → {}。"""
+    raw = await _read(_key(user_id, MEMORY_VEC_FILE))
+    if not raw:
+        return {}
+    try:
+        d = json.loads(raw)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+async def write_memory_vecs(user_id, vecs: dict) -> None:
+    await _write(_key(user_id, MEMORY_VEC_FILE), json.dumps(vecs, ensure_ascii=False))
+
+
+async def sync_memory_vecs(user_id, memory_text: str, force: bool = False) -> None:
+    """给 memory.md 的块增量补向量（compress 写完 memory.md 后调）。块文本变/换模型才重嵌，消失的块 GC。
+    embedding 未启用 → no-op。best-effort，永不抛。"""
+    from agent.memory import embedding as _emb
+    if not _emb.is_enabled():
+        return
+    try:
+        chunks = _memory_chunks(memory_text)
+        vecs = await read_memory_vecs(user_id)
+        before = len(vecs)
+        tag = _emb.model_tag()
+        alive = {_chunk_key(c) for c in chunks}
+        vecs = {k: v for k, v in vecs.items() if k in alive}   # GC 改动/消失的块
+        changed = len(vecs) != before
+        for c in chunks:
+            k = _chunk_key(c)
+            cur = vecs.get(k)
+            if not force and cur and cur.get("t") == tag:
+                continue
+            v = await _emb.embed(c)
+            if v:
+                vecs[k] = {"v": v, "t": tag}
+                changed = True
+        if changed:
+            await write_memory_vecs(user_id, vecs)
+    except Exception:
+        pass
+
+
+def retrieve_memory_block(memory_text: str, query_vec, vec_map, budget: int = MEMORY_INJECT_CHARS) -> str:
+    """memory.md 语义检索：超预算 + 有 query 向量 → 按 cosine 挑相关块拼到预算内（保原文顺序）；
+    否则/无向量/覆盖不足 → 原样返回整篇（= 现有行为，零回归）。"""
+    memory_text = (memory_text or "").strip()
+    if not query_vec or not vec_map or len(memory_text) <= budget:
+        return memory_text
+    from agent.memory.embedding import cosine
+    chunks = _memory_chunks(memory_text)
+    # 覆盖不足（多数块没缓存向量，如刚启用还没重嵌）→ 别乱挑，退回整篇
+    covered = sum(1 for c in chunks if vec_map.get(_chunk_key(c)))
+    if covered < max(1, len(chunks) // 2):
+        return memory_text
+    scored = [(cosine(query_vec, vec_map.get(_chunk_key(c)) or []), i, c) for i, c in enumerate(chunks)]
+    scored.sort(key=lambda x: -x[0])
+    picked, used = [], 0
+    for _s, i, c in scored:
+        if picked and used + len(c) > budget:
+            break
+        picked.append((i, c))
+        used += len(c)
+    picked.sort(key=lambda x: x[0])   # 恢复原文顺序，保叙述连贯
+    return "\n\n".join(c for _i, c in picked)
 
 
 def _jaccard(a: set, b: set) -> float:

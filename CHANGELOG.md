@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### 改进
+
+- **记忆向量检索扩展：facts 上限 40→100 + memory.md 也做块级向量**（`agent/memory/{store,compress,embedding}.py`、`api/v1/config.py`、`Admin/Agent/index.vue`）：接着 0.16.0 的 facts 向量地基往下补两块。① **facts 注入上限 40→100**：多数用户仍全量注入，超 100 才走相关性挑选（token 换更完整的记忆，`FACTS_INJECT_MAX`）。② **memory.md（长期记忆）块级向量检索**：这是唯一「全量注入、无上限」的记忆层，随 compress 融合越攒越长——超 `MEMORY_INJECT_CHARS`(1500 字) 且 embedding 启用时，把叙述切块（按段/超长按句，块用文本哈希当 key）、按 cosine 挑相关块拼到预算内并**保原文顺序**保叙述连贯；无向量/覆盖不足/未超预算 → 退回整篇，零回归。compress 每次重写 memory.md 后自动重嵌变动的块（旧块 GC、新块补）。③ **query 只 embed 一次** facts/memory 共用。④ **重建按钮**同步覆盖 facts + 长期记忆（后端 `rebuild_all_vecs`、前端文案订正）。整套默认关闭、增量自动嵌新内容（不是定时任务）、收益要真超阈值才兑现。文档见 `docs/agent/11-记忆系统.md` §11。
+
 ## [0.16.0] - 2026-07-04 · 记忆向量语义检索（可选自托管 embedding）+ 全项目安全审计与加固 + 感知反馈信号采集
 
 > 记忆检索从词法（bigram）升级到可选的向量语义（默认关闭、随时可退回，支持自托管 Ollama）；对照认证授权 / 注入·SSRF·文件 / 密钥·配置·日志三个攻击面做了一轮完整安全审计并修复 SSRF 重定向绕过、全站无限流、邀请码注册竞态等；感知系统补上反馈信号采集 + 关系温度 + 时长锚点；IM 补飞书/微信消息引用识别。

@@ -674,7 +674,7 @@
             </div>
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>重建向量</span><span class="behavior-desc">换了模型/维度后点一次，给所有用户的 facts 用新模型重算向量（后台跑，期间检索自动退回词法）。日常不用点</span></div>
+            <div class="behavior-label"><span>重建向量</span><span class="behavior-desc">换了模型/维度后点一次，给所有用户的 facts + 长期记忆用新模型重算向量（后台跑，期间检索自动退回词法）。日常不用点</span></div>
             <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;min-width:0;">
               <span v-if="rebuild.msg" :title="rebuild.msg"
                     :style="{ color: rebuild.error ? '#e07070' : '#4caf7d', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
@@ -1603,7 +1603,7 @@ async function pollRebuild() {
       if (!rebuildTimer) rebuildTimer = setInterval(pollRebuild, 2000)   // 自续轮询（含页面重载接续）
     } else if (d.status === 'done') {
       rebuild.running = false; rebuild.error = false
-      rebuild.msg = `完成：${d.with_facts || 0} 个用户有 facts（共处理 ${d.done || 0}）`
+      rebuild.msg = `完成：重算了 ${d.done || 0} 个用户的 facts + 长期记忆向量（${d.with_facts || 0} 个有 facts）`
       stopRebuildPoll()
     } else if (d.status === 'error') {
       rebuild.running = false; rebuild.error = true; rebuild.msg = '失败：' + (d.message || '')
