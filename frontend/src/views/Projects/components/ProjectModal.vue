@@ -1261,7 +1261,7 @@ function downloadFile(file) {
 
 // ── 预览 ──
 const previewStore = usePreviewStore()
-const openPreview = (f) => previewStore.open(f)
+const openPreview = (f) => previewStore.open(f, sortedCurrentFiles.value)
 
 // ── 文件类型辅助 ──────────────────────────────────────────────────────────────
 

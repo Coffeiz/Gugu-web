@@ -62,6 +62,15 @@
           />
         </div>
       </Transition>
+      <!-- 同目录图片左右切换 -->
+      <template v-if="canNav">
+        <button class="fpw-nav fpw-nav-prev" title="上一张" @click.stop="goPrev">
+          <PhCaretLeft weight="bold" :size="18" />
+        </button>
+        <button class="fpw-nav fpw-nav-next" title="下一张" @click.stop="goNext">
+          <PhCaretRight weight="bold" :size="18" />
+        </button>
+      </template>
     </div>
 
     <!-- resize 角标 -->
@@ -126,7 +135,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
-import { PhInfo, PhDownloadSimple, PhCornersOut, PhCornersIn, PhX, PhWarningCircle, PhMinus, PhPlus } from '@phosphor-icons/vue'
+import { PhInfo, PhDownloadSimple, PhCornersOut, PhCornersIn, PhX, PhWarningCircle, PhMinus, PhPlus, PhCaretLeft, PhCaretRight } from '@phosphor-icons/vue'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
@@ -134,7 +143,7 @@ import { filesApi } from '@/services/api'
 import { isImageExt, isVideoExt, isTextExt, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/useThumbCache'
 import { useLiveStore } from '@/stores/live'
-import { registerEsc } from '@/composables/windowz'
+import { registerEsc, registerArrowNav } from '@/composables/windowz'
 
 const props = defineProps({ win: { type: Object, required: true } })
 const previewStore = usePreviewStore()
@@ -155,6 +164,19 @@ const h = ref(props.win.h)
 const isImg  = computed(() => isImageExt(props.win.file.ext))
 const isVid  = computed(() => isVideoExt(props.win.file.ext))
 const isText = computed(() => isTextExt(props.win.file.ext))
+
+// ── 图片左右切换（同目录，来自打开时传入的 win.siblings） ─────────────────────
+const navImages = computed(() => (props.win.siblings || []).filter(f => isImageExt(f.ext)))
+const canNav    = computed(() => isImg.value && navImages.value.length > 1)
+function goPrev() { previewStore.navigate(props.win.id, -1) }
+function goNext() { previewStore.navigate(props.win.id, 1) }
+
+// 方向键只切最顶层窗口（同 ESC：多个预览窗同时开着，谁 z 最大谁响应）
+const _unregArrowNav = registerArrowNav({
+  getZ: () => props.win.zIndex,
+  prev: () => { if (canNav.value) goPrev() },
+  next: () => { if (canNav.value) goNext() },
+})
 
 const textFontSize = ref(13)
 
@@ -455,6 +477,7 @@ function onResizeUp() {
 
 onUnmounted(() => {
   _unregEsc()
+  _unregArrowNav()
   if (blobUrl.value) URL.revokeObjectURL(blobUrl.value)
   window.removeEventListener('mousemove', onDragMove)
   window.removeEventListener('mouseup',   onDragUp)
@@ -595,6 +618,33 @@ onUnmounted(() => {
 
 /* ── info 按钮激活态 ── */
 .fpw-btn.active { background: rgba(123,127,178,0.15); color: var(--color-primary, #7b7fb2); }
+
+/* ── 图片左右切换按钮：平时隐藏，鼠标移进内容区才淡入；跟 ImageViewer 缩放胶囊
+   （.iv-toolbar）同一套毛玻璃参数，视觉上是一家人 ── */
+.fpw-nav {
+  position: absolute; top: 50%; z-index: 2;
+  width: 34px; height: 34px;
+  margin-top: -17px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  box-shadow:
+    0 4px 16px rgba(80, 90, 110, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 1px 0 0 rgba(255, 255, 255, 0.55);
+  color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;   /* 隐藏时别挡住底下图片的点击/拖拽 */
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.fpw-body:hover .fpw-nav { opacity: 1; pointer-events: auto; }
+.fpw-nav:hover { background: rgba(123, 127, 178, 0.16); color: var(--color-primary); }
+.fpw-nav-prev { left: 10px; }
+.fpw-nav-next { right: 10px; }
 
 /* ── 信息独立弹窗 ── */
 .fpw-info-win {

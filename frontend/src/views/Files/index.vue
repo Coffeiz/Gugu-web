@@ -1635,7 +1635,7 @@ async function handleDrop(e) {
 const previewStore = usePreviewStore()
 const openPreview = (f) => {
   if (isAudioExt(f.ext)) fireHint('music')   // 新手引导：第一次打开音乐文件（🎵😌 彩蛋）
-  previewStore.open(f)
+  previewStore.open(f, sortedContents.value.files)
 }
 
 // ── 下载 ──

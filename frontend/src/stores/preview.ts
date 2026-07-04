@@ -28,15 +28,18 @@ export const usePreviewStore = defineStore('preview', () => {
   let _nextId = 1
   // z 统一走 windowz.nextZ()（窗口带 20000+，点谁谁上；见 composables/windowz.ts）
 
-  function open(f) {
+  // siblings：调用方传同目录下的完整文件列表（可选），供图片预览左右切换用；
+  // 只在图片间导航，siblings 里混着非图片文件会被 navigate() 自动跳过。
+  function open(f, siblings = null) {
     if (isImageExt(f.ext) || isVideoExt(f.ext) || isTextExt(f.ext)) {
       const existing = windows.value.find(w => w.file.id === f.id)
       if (existing) { bringToFront(existing.id); return }
       const idx = windows.value.length
       const PW = 320, PH = 200
       windows.value.push({
-        id:     _nextId++,
-        file:   f,
+        id:       _nextId++,
+        file:     f,
+        siblings: siblings || [],
         x:      Math.round((window.innerWidth  - PW) / 2) + idx * 30,
         y:      Math.round((window.innerHeight - PH) / 2) + idx * 30,
         w:      PW,
@@ -47,6 +50,17 @@ export const usePreviewStore = defineStore('preview', () => {
     } else {
       singleFile.value = f
     }
+  }
+
+  // 图片预览左右切换：在 win.siblings 里过滤出图片、按当前文件定位、按 dir(±1) 移动，
+  // 到边界后循环（体验上更顺手，跟大多数看图软件一致）。siblings 不足 2 张图时静默不动。
+  function navigate(id, dir) {
+    const w = windows.value.find(w => w.id === id)
+    if (!w || !w.siblings?.length) return
+    const imgs = w.siblings.filter(f => isImageExt(f.ext))
+    const curIdx = imgs.findIndex(f => f.id === w.file.id)
+    if (curIdx === -1 || imgs.length < 2) return
+    w.file = imgs[(curIdx + dir + imgs.length) % imgs.length]
   }
 
   function closeWindow(id) {
@@ -62,5 +76,5 @@ export const usePreviewStore = defineStore('preview', () => {
   const file  = singleFile
   function close() { singleFile.value = null }
 
-  return { windows, singleFile, file, open, close, closeWindow, bringToFront }
+  return { windows, singleFile, file, open, close, closeWindow, bringToFront, navigate }
 })

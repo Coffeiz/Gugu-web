@@ -49,3 +49,38 @@ export function registerEsc(layer: EscLayer): () => void {
   }
   return () => { _escLayers.delete(layer) }
 }
+
+// ── 方向键只切最顶层的图片预览 ────────────────────────────────────────────────
+interface ArrowNavLayer { getZ: () => number; prev: () => void; next: () => void }
+
+const _arrowNavLayers = new Set<ArrowNavLayer>()
+let _arrowNavBound = false
+
+function _isEditableTarget(el: EventTarget | null): boolean {
+  const tag = (el as HTMLElement)?.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || !!(el as HTMLElement)?.isContentEditable
+}
+
+function _onArrowKeydown(e: KeyboardEvent) {
+  if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || _arrowNavLayers.size === 0) return
+  if (_isEditableTarget(e.target)) return   // 输入框/富文本里的方向键走光标移动，不抢
+  let top: ArrowNavLayer | null = null
+  for (const l of _arrowNavLayers) {
+    if (!top || l.getZ() > top.getZ()) top = l
+  }
+  if (top) {
+    e.stopPropagation()
+    e.key === 'ArrowLeft' ? top.prev() : top.next()
+  }
+}
+
+/** 注册一个方向键可切换层（图片预览窗打开时注册、关闭时调返回的注销函数）。
+ *  同 ESC：多个预览窗同时开着时，只有 getZ() 最大（最顶层）的那个响应。 */
+export function registerArrowNav(layer: ArrowNavLayer): () => void {
+  _arrowNavLayers.add(layer)
+  if (!_arrowNavBound) {
+    _arrowNavBound = true
+    document.addEventListener('keydown', _onArrowKeydown, true)
+  }
+  return () => { _arrowNavLayers.delete(layer) }
+}

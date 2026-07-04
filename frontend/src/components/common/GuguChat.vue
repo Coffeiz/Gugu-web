@@ -264,7 +264,7 @@
             ref="expInputEl"
             placeholder="问问项目进度、截止日期…"
             rows="1"
-            v-enter.exact.prevent="send"
+            v-enter.exact.prevent="() => send()"
             @input="autoResize"
           />
           <div v-else class="rec-bar">
