@@ -76,7 +76,10 @@ async def register(body: UserRegister, request: Request, db: AsyncSession = Depe
 @router.post("/login", response_model=TokenResponse)
 async def login(body: UserLogin, request: Request, db: AsyncSession = Depends(get_db)):
     await rate_limit(request, "login", 10, 300, extra=body.username)   # 同 IP+用户名 5 分钟最多 10 次
-    result = await db.execute(select(User).where(User.username == body.username))
+    # 登录标识既可以是用户名也可以是邮箱——两个字段都有唯一约束，不会互相碰撞匹配到别人。
+    result = await db.execute(
+        select(User).where((User.username == body.username) | (User.email == body.username))
+    )
     user = result.scalars().first()
 
     if not user or not verify_password(body.password, user.hashed_password):
