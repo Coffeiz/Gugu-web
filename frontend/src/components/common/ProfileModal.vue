@@ -255,12 +255,23 @@
                 </div>
 
                 <div v-for="b in botsOf(p.key)" :key="b.id" class="pm-bot-item">
-                  <div class="pm-bot-info">
-                    <span class="pm-bot-name">{{ b.name }}<span v-if="b.sandbox" class="pm-bot-tag">沙箱</span></span>
-                    <span class="pm-bot-appid">{{ b.app_id }}</span>
+                  <div class="pm-bot-item-top">
+                    <div class="pm-bot-info">
+                      <span class="pm-bot-name">{{ b.name }}<span v-if="b.sandbox" class="pm-bot-tag">沙箱</span></span>
+                      <span class="pm-bot-appid">{{ b.app_id }}</span>
+                    </div>
+                    <button class="pm-mini-toggle" :class="{ on: b.enabled }" @click="toggleBot(b)">{{ b.enabled ? '已启用' : '已停用' }}</button>
+                    <button class="pm-bot-del" @click="removeBot(b)">删除</button>
                   </div>
-                  <button class="pm-mini-toggle" :class="{ on: b.enabled }" @click="toggleBot(b)">{{ b.enabled ? '已启用' : '已停用' }}</button>
-                  <button class="pm-bot-del" @click="removeBot(b)">删除</button>
+                  <div class="pm-bot-item-group">
+                    <button class="pm-mini-toggle" :class="{ on: b.group_chat_enabled }" @click="toggleGroupChat(b)">
+                      {{ b.group_chat_enabled ? '群聊已开启' : '群聊已关闭' }}
+                    </button>
+                    <button v-if="p.key !== 'qqbot'" class="pm-mini-toggle" :class="{ on: b.group_requires_at }" @click="toggleGroupAt(b)">
+                      {{ b.group_requires_at ? '群聊需要@' : '群聊无需@' }}
+                    </button>
+                    <span v-else class="pm-field-hint pm-group-at-fixed">需要@（QQ 平台限制：群消息本就只有@它才能收到，恒开启）</span>
+                  </div>
                 </div>
               </template>
 
@@ -547,8 +558,12 @@ async function clearAttachments() {
 }
 
 watch(activeNav, (v, old) => {
-  if (v === 'gugu') { loadQuota(); loadBots(); memoryMsg.value = ''; attachMsg.value = '' }
-  if (old === 'gugu') cancelConnect()
+  if (v === 'gugu') { loadQuota(); memoryMsg.value = ''; attachMsg.value = '' }
+  // 「接入咕咕」页（im 页签）才是真正展示/操作 bots 列表和扫码连接的地方——之前误绑在
+  // 'gugu'（咕咕设置页签，跟 bots 完全无关）上，导致切到 im 页签从不刷新 bots，刷新页面后
+  // 只要没经过 'gugu' 页签，bots 就一直是初始空数组，所有平台被误判成"需要扫码连接"。
+  if (v === 'im') loadBots()
+  if (old === 'im') cancelConnect()
 })
 
 // ── 接入咕咕：飞书 / QQ 都是自带机器人(BYO) + 扫码自动连接 ──
@@ -623,6 +638,16 @@ function cancelConnect() {
 
 async function toggleBot(b) {
   try { await userBotsApi.update(b.id, { enabled: !b.enabled }); await loadBots() }
+  catch (e) { connectErr.value = e.message }
+}
+
+async function toggleGroupChat(b) {
+  try { await userBotsApi.update(b.id, { group_chat_enabled: !b.group_chat_enabled }); await loadBots() }
+  catch (e) { connectErr.value = e.message }
+}
+
+async function toggleGroupAt(b) {
+  try { await userBotsApi.update(b.id, { group_requires_at: !b.group_requires_at }); await loadBots() }
   catch (e) { connectErr.value = e.message }
 }
 
@@ -847,10 +872,16 @@ function handleLogout() {
 
 /* QQ BYO：机器人列表 + 表单 */
 .pm-bot-item {
-  margin-top: 8px; display: flex; align-items: center; gap: 10px;
+  margin-top: 8px; display: flex; flex-direction: column; gap: 8px;
   padding: 9px 12px; border-radius: 10px;
   background: rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.06);
 }
+.pm-bot-item-top { display: flex; align-items: center; gap: 10px; }
+.pm-bot-item-group {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.05);
+}
+.pm-group-at-fixed { font-size: 11px; }
 .pm-bot-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pm-bot-name { font-size: 13px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
 .pm-bot-tag { font-size: 10px; font-weight: 600; color: #b8860b; background: rgba(212,160,23,0.14); padding: 1px 6px; border-radius: 5px; }

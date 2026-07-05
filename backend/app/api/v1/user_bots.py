@@ -35,6 +35,8 @@ def _out(b: UserBot) -> dict:
         "app_secret": _mask(b.app_secret),
         "sandbox": b.sandbox,
         "enabled": b.enabled,
+        "group_chat_enabled": b.group_chat_enabled,
+        "group_requires_at": b.group_requires_at,
     }
 
 
@@ -92,6 +94,8 @@ class BotUpdate(BaseModel):
     app_secret: str | None = None
     sandbox: bool | None = None
     enabled: bool | None = None
+    group_chat_enabled: bool | None = None
+    group_requires_at: bool | None = None
 
 
 @router.put("/{bot_id}")
@@ -115,6 +119,10 @@ async def update_my_bot(
         bot.sandbox = body.sandbox
     if body.enabled is not None:
         bot.enabled = body.enabled
+    if body.group_chat_enabled is not None:
+        bot.group_chat_enabled = body.group_chat_enabled
+    if body.group_requires_at is not None:
+        bot.group_requires_at = body.group_requires_at
     await db.commit()
     await db.refresh(bot)
     await _touch_supervisor()

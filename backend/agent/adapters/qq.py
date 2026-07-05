@@ -1,4 +1,7 @@
-"""QQ 官方机器人网关（单聊 C2C，BYO 每用户自带 bot）。
+"""QQ 官方机器人网关（单聊 C2C + 群聊，BYO 每用户自带 bot）。
+
+群聊需要在「接入咕咕」页开启 group_chat_enabled 开关；QQ 官方 SDK 层面群消息本就只有
+@ 了机器人才会触发事件（没有"收全部群消息"的能力），group_requires_at 对 QQ 恒为 True。
 
 和飞书长连接同模式：botpy WebSocket outbound 主动连，**不需要公网**（备案前也能用）。
 BYO 模型：每个用户在「个人设置 → 接入咕咕 → QQ」填自己的 AppID/Secret（存 user_bots 表），
@@ -19,7 +22,7 @@ import os
 import time
 
 import botpy
-from botpy.message import C2CMessage
+from botpy.message import C2CMessage, GroupMessage
 
 from app.core import redis as R
 
@@ -97,8 +100,59 @@ class _GuguQQClient(botpy.Client):
         except Exception as e:
             print(f"[qq] 入队失败: {type(e).__name__}: {e}", flush=True)
 
+    async def on_group_at_message_create(self, message: GroupMessage):
+        """群消息（QQ 官方 SDK 只有群里 @ 了机器人才会触发这个事件，没有"收全部群消息"的能力）。
+        群聊要单独一个开关（user_bots.group_chat_enabled）——**每条群消息都现查一次 DB**（而不是
+        启动时从 env 注入一次），这样用户在「接入咕咕」页切换开关立刻生效，不用重启这条网关子进程。"""
+        group_enabled, _requires_at = await _group_settings(self._channel_id)
+        if not group_enabled:
+            return
+        text = (message.content or "").strip()
+        group_openid = message.group_openid
+        member_openid = message.author.member_openid if message.author else None
+        attachments = await _ingest_qq_media(message, self._owner)
+        if not text and not attachments:
+            return
+        from agent import trace
+        tid = trace.new_trace()
+        payload = {
+            "platform": "qqbot",
+            "channel_id": self._channel_id,
+            "owner_user_id": self._owner,      # BYO：bot 归属即用户，worker 直接用
+            "platform_user_id": member_openid,  # 群内发言人（用于会话/状态按用户维度隔离）
+            "chat_id": group_openid,            # 回复路由用（区别于 c2c 直接用 platform_user_id）
+            "message_id": message.id,
+            "chat_type": "group",
+            "text": text,
+            "attachments": attachments,
+            "trace_id": tid,
+        }
+        from agent import logsafe
+        print(f"[qq:{self._channel_id}] 收到群 {group_openid} 内 {member_openid}: "
+              f"text_len={len(text)} fp={logsafe.fingerprint(text)} att={len(attachments)} trace={tid}", flush=True)
 
-async def _ingest_qq_media(message: C2CMessage, owner: str) -> list:
+        if not attachments:
+            from agent import router, runtime_state as rtstate
+            dec = router.decide(text, await rtstate.get_state("qqbot", member_openid),
+                                await rtstate.is_awaiting("qqbot", member_openid))
+            if dec["action"] == "drop":
+                return
+            if dec["action"] in ("reply", "cancel"):
+                if dec["action"] == "cancel":
+                    await rtstate.request_cancel("qqbot", member_openid)
+                try:
+                    await _post_group(self.api, group_openid, dec["reply"], message.id)
+                except Exception as e:
+                    print(f"[qq] 群短路回复失败: {type(e).__name__}: {e}", flush=True)
+                return
+
+        try:
+            await R.produce(STREAM, payload)
+        except Exception as e:
+            print(f"[qq] 群消息入队失败: {type(e).__name__}: {e}", flush=True)
+
+
+async def _ingest_qq_media(message: C2CMessage | GroupMessage, owner: str) -> list:
     """下载 QQ 消息里的图片/文件 → 暂存 → 返回 [attach_id]。handler 是 async，直接用 async stage。"""
     atts = getattr(message, "attachments", None) or []
     if not atts:
@@ -191,6 +245,20 @@ async def _creds_by_id(bot_id: str) -> tuple[str, str, bool]:
         return b.app_id, b.app_secret, b.sandbox
 
 
+async def _group_settings(bot_id: str) -> tuple[bool, bool]:
+    """网关接收端用：按 user_bots.id 现查 (group_chat_enabled, group_requires_at)。
+    每条群消息都查一次而不是启动时缓存，换来「切开关立即生效、不用重启网关子进程」。"""
+    import app.db.session as _sess
+    if _sess._engine is None:
+        _sess._build_engine()
+    from app.models import UserBot
+    async with _sess._SessionLocal() as db:
+        b = await db.get(UserBot, int(bot_id))
+        if not b:
+            return False, True
+        return b.group_chat_enabled, b.group_requires_at
+
+
 async def _api_for(channel_id: str):
     if channel_id not in _apis:
         from botpy import Token
@@ -224,6 +292,18 @@ async def _post(api, openid: str, text: str, msg_id: str | None):
                                    content=text, msg_id=msg_id, msg_seq=await _next_seq(msg_id))
 
 
+async def _post_group(api, group_openid: str, text: str, msg_id: str | None):
+    """群聊版 _post：先发原生 markdown，该 bot 无 md 权限则回退纯文本。"""
+    try:
+        await api.post_group_message(group_openid=group_openid, msg_type=2,
+                                     markdown={"content": text}, msg_id=msg_id, msg_seq=await _next_seq(msg_id))
+    except Exception as me:
+        if not _markdown_blocked(me):
+            raise
+        await api.post_group_message(group_openid=group_openid, msg_type=0,
+                                     content=text, msg_id=msg_id, msg_seq=await _next_seq(msg_id))
+
+
 async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                    channel_id: str | None = None) -> bool:
     """给指定用户发 C2C 被动回复（带原 msg_id）。token 过期等异常时重建一次再试。"""
@@ -235,6 +315,20 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
         except Exception as e:
             print(f"[qq] 发送失败(第{attempt}次): {type(e).__name__}: {e}", flush=True)
             _apis.pop(channel_id, None)   # 丢弃缓存，下次重新 login
+    return False
+
+
+async def send_group(group_openid: str, text: str, msg_id: str | None = None,
+                     channel_id: str | None = None) -> bool:
+    """给指定群发被动回复（带原 msg_id）。token 过期等异常时重建一次再试。"""
+    for attempt in (1, 2):
+        try:
+            api = await _api_for(channel_id)
+            await _post_group(api, group_openid, text, msg_id)
+            return True
+        except Exception as e:
+            print(f"[qq] 群发送失败(第{attempt}次): {type(e).__name__}: {e}", flush=True)
+            _apis.pop(channel_id, None)
     return False
 
 

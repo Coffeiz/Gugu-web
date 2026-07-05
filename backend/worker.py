@@ -114,10 +114,15 @@ async def _send(payload: dict, text: str):
         # chat_id（消息学到的会话）优先，否则用 open_id（连接时存的 owner 地址）
         rid = payload.get("chat_id") or payload.get("platform_user_id")
         await feishu.send_text(rid, text, payload.get("channel_id"))
-    elif platform == "qqbot" and payload.get("platform_user_id"):
+    elif platform == "qqbot" and (payload.get("chat_id") or payload.get("platform_user_id")):
         from agent.adapters import qq
-        await qq.send_c2c(payload["platform_user_id"], text,
-                          payload.get("message_id"), payload.get("channel_id"))
+        if payload.get("chat_type") == "group":
+            # 群聊回复要发到群（chat_id=group_openid），不能发到发言人的 C2C 私聊
+            await qq.send_group(payload["chat_id"], text,
+                                payload.get("message_id"), payload.get("channel_id"))
+        else:
+            await qq.send_c2c(payload["platform_user_id"], text,
+                              payload.get("message_id"), payload.get("channel_id"))
     elif platform == "wechat" and payload.get("platform_user_id"):
         from agent.adapters import wechat
         # iLink 回复必须带入站消息的 context_token（worker 透传）
@@ -143,6 +148,10 @@ async def _send_files(payload: dict, files: list):
     platform = payload.get("platform")
     if platform not in ("feishu", "qqbot"):
         print(f"[worker] {platform} 暂不支持发文件（{len(files)} 个）", flush=True)
+        return
+    if platform == "qqbot" and payload.get("chat_type") == "group":
+        # QQ 群聊图片/文件发送走另一套受限接口（暂未接），先兜底提示，别悄悄丢文件
+        await _send(payload, f"（群里暂不支持发图片/文件，私聊我看 {len(files)} 个文件吧～）")
         return
     import app.db.session as _S
     from app.models import File

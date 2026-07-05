@@ -300,6 +300,11 @@ class UserBot(Base):
     app_secret: Mapped[str]      = mapped_column(EncryptedString, default="")
     sandbox:    Mapped[bool]     = mapped_column(Boolean, default=False)
     enabled:    Mapped[bool]     = mapped_column(Boolean, default=True)
+    # 群聊：是否处理群消息、群消息是否要求 @ 机器人才响应。
+    # QQ 官方机器人 SDK 只有群消息 @ 了机器人时才会触发事件（没有"接收全部群消息"的能力），
+    # 所以 group_requires_at 对 QQ 是平台层面硬约束，前端对 QQ 会强制显示为开启且不可关闭。
+    group_chat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
