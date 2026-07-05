@@ -11,7 +11,7 @@
 
 ### 新增
 
-- **项目支持归档/查看已归档/取消归档**（`app/api/v1/projects.py`、`views/Projects/index.vue` + 新增 `ArchivedProjectsModal.vue`、`ProjectModal.vue`）：`archive_project` 工具此前只有 agent 侧能力，网页端毫无入口——只能靠咕咕归档，归档后项目从看板消失即无处可寻，也无法撤销。`GET /projects` 补 `archived` 查询参数（默认只看未归档，看板不再混入已归档项目）；项目编辑卡悬浮操作区加「归档」按钮（可逆、不用二次确认）；项目页新增「已归档」入口，弹窗列出已归档项目并可一键「取消归档」。
+- **项目支持归档/查看已归档/取消归档**（`app/api/v1/projects.py`、`views/Projects/index.vue` + 新增 `ArchivedProjectsModal.vue`、`ProjectModal.vue`）：`archive_project` 工具此前只有 agent 侧能力，网页端毫无入口——只能靠咕咕归档，归档后项目从看板消失即无处可寻，也无法撤销。`GET /projects` 补 `archived` 查询参数（默认只看未归档，看板不再混入已归档项目）；项目编辑卡悬浮操作区加「归档」按钮（可逆、不用二次确认）；项目页新增「已归档」入口，弹窗列出已归档项目并可一键「取消归档」，按年/月折叠分层（复用「已完成」列现成约定），避免归档一多就变成长列表。
 
 ### 修复
 
