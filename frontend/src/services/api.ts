@@ -108,7 +108,7 @@ export function uploadDirectWithProgress(url: string, file: File, onProgress: (p
 
 // ── Projects ─────────────────────────────────────────────────────────────────
 export const projectsApi = {
-  list:   ()                                       => get<Schemas['ProjectResponse'][]>('/projects'),
+  list:   (archived = false)                       => get<Schemas['ProjectResponse'][]>(`/projects${archived ? '?archived=true' : ''}`),
   get:    (id: number)                             => get<Schemas['ProjectResponse']>(`/projects/${id}`),
   create: (data: Schemas['ProjectCreate'])         => post<Schemas['ProjectResponse']>('/projects', data),
   update: (id: number, data: Schemas['ProjectUpdate']) => patch<Schemas['ProjectResponse']>(`/projects/${id}`, data),

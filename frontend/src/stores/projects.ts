@@ -15,6 +15,9 @@ export const useProjectStore = defineStore('projects', () => {
   const loading  = ref(false)
   const error    = ref(null)
 
+  const archivedProjects = ref([])
+  const archivedLoading  = ref(false)
+
   const activeCount = computed(() =>
     projects.value.filter(p => p.status === 'active').length
   )
@@ -72,6 +75,24 @@ export const useProjectStore = defineStore('projects', () => {
   async function deleteProject(id) {
     await projectsApi.delete(id)
     projects.value = projects.value.filter(p => p.id !== id)
+  }
+
+  async function fetchArchivedProjects() {
+    archivedLoading.value = true
+    try {
+      archivedProjects.value = await projectsApi.list(true)
+    } catch (e) {
+      error.value = e.message
+    } finally {
+      archivedLoading.value = false
+    }
+  }
+
+  async function unarchiveProject(id) {
+    const p = archivedProjects.value.find(p => p.id === id)
+    await projectsApi.update(id, { archived: false, version: p?.version })
+    archivedProjects.value = archivedProjects.value.filter(p => p.id !== id)
+    await fetchProjects()
   }
 
   async function _patchProject(id, payload) {
@@ -248,5 +269,6 @@ export const useProjectStore = defineStore('projects', () => {
     setStage, updateStages, updateProject,
     modalProject, openModal, closeModal,
     upcomingCalEvents, fetchUpcomingCalEvents,
+    archivedProjects, archivedLoading, fetchArchivedProjects, unarchiveProject,
   }
 })
