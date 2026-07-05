@@ -15,7 +15,7 @@
 
 ### 修复
 
-- **弹窗毛玻璃透明效果全局失真**（`components/common/BaseModal.vue` + `ArchivedProjectsModal.vue`/`UploadModal.vue`/`Schedules/index.vue`）：`BaseModal` 的卡片自带一层几乎不透明的底色，双栏弹窗（项目编辑卡）左右栏各自的玻璃背景其实是叠在这层底色上、穿透看到的是底色不是页面，玻璃感被垫死；即便弹窗自己用 `:deep` 覆盖成透明，跟 `BaseModal` 自身定义同优先级，谁生效看样式表加载顺序，覆盖并不稳定。改为 `bm-card` 本身不带背景色，交给各弹窗自己叠一层，咕咕聊天窗一直是这个正确写法；`ArchivedProjectsModal` 顺带把叠的那层从 `--panel-bg`（96% 不透明）改成和 panel-left/咕咕聊天窗左侧栏同一套（60% 白 + 24px 模糊），观感统一。
+- **弹窗毛玻璃背景/阴影全局失真——`:deep(.bm-card)` 根本没生效**（`components/common/BaseModal.vue` + `ProfileModal.vue`/`ProjectModal.vue`/`NewProjectModal.vue`/`UploadModal.vue`/`Schedules/index.vue`/`ArchivedProjectsModal.vue`）：`BaseModal` 是多根组件（遮罩 + 卡片两个平级根），Vue scoped CSS 的父作用域属性只挂在组件根节点，穿不到嵌套一层的 `.bm-card`——各弹窗一直靠 `:deep(.bm-card)` 定制背景/阴影，实测这条选择器压根没命中该元素（DevTools 里连「被覆盖」都算不上，是完全不在匹配规则列表里）。只是巧合地 `BaseModal` 原本的默认底色和多数弹窗的期望值接近，这个问题才一直没被发现，直到项目编辑卡（想要透明）和已归档弹窗（想要浅色玻璃）对比出明显差异才暴露。改法：不再依赖跨组件 CSS 选择器，`BaseModal` 加 `background`/`blur` prop 由调用方直接传值；项目编辑卡/个人设置一直想要的「透明 + 内嵌高光阴影」直接并入 `BaseModal` 默认值；已归档弹窗的玻璃参数对齐 panel-left/咕咕聊天窗左侧栏（60% 白 + 24px 模糊）。
 - **定时任务生成的消息误报「IM 渠道未连」**（`agent/runner.py`）：`run_ephemeral`（定时任务专用执行入口）没有加载 `im_channels` 就传给 prompt builder，导致定时任务结果里的「通知渠道」上下文永远显示 QQ/飞书未连 ❌，不管用户实际是否已绑定。现在跟直接对话一样读取真实连接状态。
 - **浮动预览窗打开低分辨率图片先猜大窗口再骤缩**（`components/common/FloatPreviewWindow.vue`）：缩略图顶到 192px 上限时原图真实尺寸未知，此前套 4K 估算兜底，遇到实际是低分辨率图会把窗口猜得远大于真实尺寸，真图加载完再缩回去。改为不猜——顶到上限时窗口暂不出现，等真图加载完直接定到正确尺寸。
 
