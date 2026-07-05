@@ -260,22 +260,31 @@
                       <span class="pm-bot-name">{{ b.name }}<span v-if="b.sandbox" class="pm-bot-tag">沙箱</span></span>
                       <span class="pm-bot-appid">{{ b.app_id }}</span>
                     </div>
-                    <button class="pm-switch" :class="{ on: b.enabled }" @click="toggleBot(b)">
-                      <span class="pm-switch-track"><span class="pm-switch-knob"></span></span>
-                      <span class="pm-switch-label">{{ b.enabled ? '已启用' : '已停用' }}</span>
-                    </button>
+                    <span class="pm-switch-wrap">
+                      <label class="switch sm">
+                        <input type="checkbox" :checked="b.enabled" @change="toggleBot(b)" />
+                        <span class="slider"></span>
+                      </label>
+                      <span class="pm-switch-label" :class="{ on: b.enabled }">{{ b.enabled ? '已启用' : '已停用' }}</span>
+                    </span>
                     <button class="pm-bot-del" @click="removeBot(b)">删除</button>
                   </div>
                   <!-- 群聊开关目前只有 QQ 网关真正接了（每条群消息现查这两个字段）——飞书群聊本就
                        不区分开关地全量处理，微信群聊回复路由另有独立遗留问题，两家都还没接这个开关，
                        先不在 UI 上摆一个不生效的假开关误导用户 -->
                   <div v-if="p.key === 'qqbot'" class="pm-bot-item-group">
-                    <button class="pm-switch" :class="{ on: b.group_chat_enabled }" @click="toggleGroupChat(b)">
-                      <span class="pm-switch-track"><span class="pm-switch-knob"></span></span>
-                      <span class="pm-switch-label">{{ b.group_chat_enabled ? '群聊已开启' : '群聊已关闭' }}</span>
-                    </button>
-                    <span class="pm-switch pm-switch-locked on" title="QQ 平台限制：群消息本就只有@它才能收到，恒开启，无法关闭">
-                      <span class="pm-switch-track"><span class="pm-switch-knob"></span></span>
+                    <span class="pm-switch-wrap">
+                      <label class="switch sm">
+                        <input type="checkbox" :checked="b.group_chat_enabled" @change="toggleGroupChat(b)" />
+                        <span class="slider"></span>
+                      </label>
+                      <span class="pm-switch-label" :class="{ on: b.group_chat_enabled }">{{ b.group_chat_enabled ? '群聊已开启' : '群聊已关闭' }}</span>
+                    </span>
+                    <span class="pm-switch-wrap pm-switch-locked" title="QQ 平台限制：群消息本就只有@它才能收到，恒开启，无法关闭">
+                      <label class="switch sm">
+                        <input type="checkbox" checked disabled />
+                        <span class="slider"></span>
+                      </label>
                       <span class="pm-switch-label">需要@</span>
                     </span>
                   </div>
@@ -888,33 +897,25 @@ function handleLogout() {
 .pm-bot-tag { font-size: 10px; font-weight: 600; color: #b8860b; background: rgba(212,160,23,0.14); padding: 1px 6px; border-radius: 5px; }
 .pm-bot-appid { font-size: 11px; color: var(--text-secondary); font-family: 'SF Mono','Consolas',monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 开关型按钮：真正的"轨道+滑块"视觉，别再用纯色文字块假装按钮（之前 .pm-mini-toggle 就是文字
-   块，没有 hover 反馈，看起来像静态标签——这是用户反馈"看不出能点"的根因） */
-.pm-switch {
-  flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 9px 3px 3px; border-radius: 999px; cursor: pointer;
-  border: 1px solid rgba(0,0,0,0.1); background: rgba(0,0,0,0.03);
-  transition: background 0.15s, border-color 0.15s;
-}
-.pm-switch:hover { background: rgba(0,0,0,0.07); border-color: rgba(0,0,0,0.18); }
-.pm-switch:active { transform: scale(0.97); }
-.pm-switch-track {
-  position: relative; flex-shrink: 0; width: 26px; height: 15px; border-radius: 999px;
-  background: rgba(0,0,0,0.18); transition: background 0.15s;
-}
-.pm-switch-knob {
-  position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%;
-  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.3); transition: transform 0.15s;
-}
+/* 开关按钮：和「定时任务」页同一套 .switch/.slider（checkbox 原生开关，样式统一）——
+   之前自己另起一套纯色文字块（.pm-mini-toggle）没有 hover 反馈，看起来像静态标签，
+   是用户反馈"看不出能点"的根因；现在跟全站已验证过的开关视觉保持一致 */
+.pm-switch-wrap { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
 .pm-switch-label { font-size: 11px; color: var(--text-secondary); }
-.pm-switch.on { border-color: rgba(42,140,90,0.35); background: rgba(42,140,90,0.08); }
-.pm-switch.on:hover { background: rgba(42,140,90,0.14); }
-.pm-switch.on .pm-switch-track { background: #2a8c5a; }
-.pm-switch.on .pm-switch-knob { transform: translateX(11px); }
-.pm-switch.on .pm-switch-label { color: #2a8c5a; font-weight: 600; }
-.pm-switch-locked { cursor: not-allowed; opacity: 0.65; }
-.pm-switch-locked:hover { background: rgba(42,140,90,0.08); border-color: rgba(42,140,90,0.35); }
-.pm-switch-locked:active { transform: none; }
+.pm-switch-label.on { color: var(--color-primary); font-weight: 600; }
+.pm-switch-locked { opacity: 0.6; }
+.pm-switch-locked .switch, .pm-switch-locked .slider { cursor: not-allowed; }
+
+.switch { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
+.switch.sm { width: 32px; height: 19px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .slider { position: absolute; inset: 0; background: rgba(0,0,0,0.18); border-radius: 22px; transition: 0.2s; cursor: pointer; }
+.switch .slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: 0.2s; }
+.switch.sm .slider::before { height: 13px; width: 13px; }
+.switch input:checked + .slider { background: var(--color-primary); }
+.switch input:checked + .slider::before { transform: translateX(16px); }
+.switch.sm input:checked + .slider::before { transform: translateX(13px); }
+
 .pm-bot-del { flex-shrink: 0; font-size: 12px; color: #c05050; background: none; border: none; cursor: pointer; }
 .pm-add-bot {
   margin-top: 8px; width: 100%; padding: 8px; border-radius: 9px; cursor: pointer;
