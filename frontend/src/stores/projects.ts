@@ -77,6 +77,12 @@ export const useProjectStore = defineStore('projects', () => {
     projects.value = projects.value.filter(p => p.id !== id)
   }
 
+  async function archiveProject(id) {
+    const p = projects.value.find(p => p.id === id)
+    await projectsApi.update(id, { archived: true, version: p?.version })
+    projects.value = projects.value.filter(p => p.id !== id)
+  }
+
   async function fetchArchivedProjects() {
     archivedLoading.value = true
     try {
@@ -265,7 +271,7 @@ export const useProjectStore = defineStore('projects', () => {
   return {
     kanbanColumns, projects, loading, error,
     activeCount, totalCount, upcomingCount, urgentProjects,
-    fetchProjects, addProject, deleteProject, moveProject,
+    fetchProjects, addProject, deleteProject, archiveProject, moveProject,
     setStage, updateStages, updateProject,
     modalProject, openModal, closeModal,
     upcomingCalEvents, fetchUpcomingCalEvents,

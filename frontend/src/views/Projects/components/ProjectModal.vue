@@ -7,6 +7,9 @@
           <button class="save-float-btn" @click="$emit('close')" title="保存并关闭">
             <PhCheck :size="14" weight="bold" />
           </button>
+          <button class="archive-float-btn" @click="handleArchive" title="归档此项目（可逆，随时可在「已归档」里恢复）">
+            <PhArchive :size="14" weight="bold" />
+          </button>
           <button class="del-float-btn" @click="handleDelete" title="删除此项目">
             <PhTrash :size="14" weight="bold" />
           </button>
@@ -709,7 +712,7 @@ import {
   PhFolder, PhArrowLeft, PhArrowRight, PhCaretLeft, PhCaretRight, PhCaretDown, PhSortAscending, PhSquaresFour, PhList,
   PhCheckSquare, PhFolderPlus, PhUploadSimple, PhPencilSimple,
   PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX, PhCheck,
-  PhInfo, PhWarningCircle, PhDotsThree, PhTrash,
+  PhInfo, PhWarningCircle, PhDotsThree, PhTrash, PhArchive,
 } from '@phosphor-icons/vue'
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
@@ -1646,6 +1649,12 @@ async function handleDelete() {
   emit('close')
 }
 
+async function handleArchive() {
+  if (!props.project) return
+  await projectStore.archiveProject(props.project.id)
+  emit('close')
+}
+
 function startEdit(key) {
   editingStage.value = key
   nextTick(() => stageInputRef.value?.[0]?.focus())
@@ -2423,6 +2432,19 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .del-float-btn:hover {
   background: rgba(176,120,88,0.18);
   box-shadow: 0 4px 14px rgba(176,120,88,0.25);
+}
+.archive-float-btn {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: rgba(123,127,178,0.1);
+  border: 1px solid rgba(123,127,178,0.25);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--color-primary, #7b7fb2);
+  box-shadow: 0 2px 10px rgba(123,127,178,0.12);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.archive-float-btn:hover {
+  background: rgba(123,127,178,0.18);
+  box-shadow: 0 4px 14px rgba(123,127,178,0.22);
 }
 
 /* ── 右栏：文件 ── */
