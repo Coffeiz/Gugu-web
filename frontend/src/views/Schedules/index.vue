@@ -29,7 +29,7 @@
     </div>
 
     <!-- 新建/编辑弹窗（共享 BaseModal，与项目弹窗同款风格+动画）-->
-    <BaseModal :show="showModal" width="360px" @close="showModal = false">
+    <BaseModal :show="showModal" width="360px" background="var(--panel-bg)" @close="showModal = false">
       <div class="sched-modal">
         <input v-model="form.name" ref="nameRef" class="title-input" placeholder="任务名称" maxlength="100" />
         <div class="divider divider-full"></div>
@@ -281,8 +281,6 @@ async function removeTask(t) {
 </script>
 
 <style scoped>
-/* bm-card 本身不带背景（见 BaseModal.vue），单栏弹窗自己叠一层 */
-:deep(.bm-card) { background: var(--panel-bg); }
 .sched-page { height: 100%; font-family: var(--font-sans); }
 
 /* 和顶栏「新建项目」按钮一致（同 radius，且不用 squircle，与其圆角形状对齐） */

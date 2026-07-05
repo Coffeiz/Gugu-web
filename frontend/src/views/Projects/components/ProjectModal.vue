@@ -2114,13 +2114,6 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 </script>
 
 <style scoped>
-/* bm-card 透明，左栏自己带玻璃背景 */
-:deep(.bm-card) {
-  background: transparent;
-  box-shadow: 0 24px 64px rgba(20,25,50,0.2),
-              inset 0 1px 0 rgba(255,255,255,0.95),
-              inset 1px 0 0 rgba(255,255,255,0.55);
-}
 :deep(.drp-input) {
   background: rgba(255,255,255,0.5);
 }

@@ -704,13 +704,6 @@ function handleLogout() {
 </script>
 
 <style scoped>
-/* 让 bm-card 背景透明，边缘倒角与 glass-card 一致 */
-:deep(.bm-card) {
-  background: transparent;
-  box-shadow: 0 24px 64px rgba(20,25,50,0.2),
-              inset 0 1px 0 rgba(255,255,255,0.95),
-              inset 1px 0 0 rgba(255,255,255,0.55);
-}
 
 .pm-layout {
   display: grid;

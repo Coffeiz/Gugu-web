@@ -1,6 +1,6 @@
 <template>
-  <!-- 遮罩与卡片是平级 fixed 节点（不 Teleport：保住调用方 :deep(.bm-card) 定制；
-       fixed 同属 root stacking context，z 可与 body 下的预览窗等直接比较） -->
+  <!-- 遮罩与卡片是平级 fixed 节点（不 Teleport：fixed 同属 root stacking context，
+       z 可与 body 下的预览窗等直接比较） -->
   <!-- 遮罩：固定低带（OVERLAY_Z），在一切浮动窗口之下——blur 只糊页面，糊不到预览器/聊天窗 -->
   <Transition name="bm-ov">
     <div v-if="show" class="bm-overlay" :style="{ zIndex: OVERLAY_Z }" @click="$emit('close')" />
@@ -24,6 +24,13 @@ const props = defineProps({
   width:   { type: String,  default: '560px' },
   // 传入则作为固定高度上限（height:100% + max-height），不传则高度随内容自适应
   height:  { type: String,  default: null },
+  // 卡片背景：不传=透明（双栏弹窗自己叠玻璃背景，如 ProjectModal）；单栏弹窗传
+  // var(--panel-bg) 等撑起整卡底色。用 prop 而非调用方 :deep(.bm-card) 覆盖——
+  // BaseModal 是多根组件（.bm-overlay + .bm-center 两个平级根），:deep() 的父作用域
+  // 属性只挂在组件根节点上，穿不到 .bm-card 这层（.bm-center 的子节点），调用方的
+  // :deep(.bm-card) 选择器实测完全不命中该元素（不是被覆盖，是根本没匹配上）。
+  background: { type: String, default: '' },
+  blur:       { type: String, default: '' },   // 同理，不传走 CSS 默认 var(--glass-blur)
 })
 
 const emit = defineEmits(['close'])
@@ -33,6 +40,8 @@ const cardStyle = computed(() => ({
   ...(props.height
     ? { height: '100%', maxHeight: props.height }
     : { maxHeight: 'calc(100vh - 48px)' }),
+  ...(props.background ? { background: props.background } : {}),
+  ...(props.blur ? { backdropFilter: props.blur, WebkitBackdropFilter: props.blur } : {}),
 }))
 
 // 窗口层级：打开领新 z、mousedown 置顶；ESC 统一走 windowz（只关最顶层）
@@ -69,10 +78,9 @@ onBeforeUnmount(() => unregEsc?.())
 }
 
 /* ── 卡片 ──
-   不设背景色：交给调用方——单栏弹窗自己叠一层 background（通常 var(--panel-bg)），
-   双栏弹窗（如 ProjectModal）各栏自带玻璃背景、bm-card 本身透明，让 backdrop-filter
-   直接穿透样式表层级冲突（.bm-card 若自带背景，跟调用方 :deep 覆盖同优先级时
-   谁赢看样式表加载顺序，曾导致「明明覆写了却看不出透明」）。 */
+   不设背景色：交给调用方走 background/blur prop（原因见上方 props 定义处的注释）。
+   双栏弹窗（如 ProjectModal）各栏自带玻璃背景、不传 background，bm-card 本身透明，
+   让各栏的 backdrop-filter 直接穿透到页面。 */
 .bm-card {
   pointer-events: auto;
   position: relative;
@@ -81,7 +89,9 @@ onBeforeUnmount(() => unregEsc?.())
   -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 20px;
-  box-shadow: 0 24px 64px rgba(20, 25, 50, 0.2);
+  box-shadow: 0 24px 64px rgba(20, 25, 50, 0.2),
+              inset 0 1px 0 rgba(255, 255, 255, 0.95),
+              inset 1px 0 0 rgba(255, 255, 255, 0.55);
   display: flex; flex-direction: column;
   overflow: hidden;
 }

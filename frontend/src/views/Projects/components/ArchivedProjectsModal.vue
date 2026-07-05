@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="show" width="480px" @close="$emit('close')">
+  <BaseModal :show="show" width="480px" background="rgba(255,255,255,0.6)" blur="blur(24px)" @close="$emit('close')">
     <div class="ap-modal">
       <div class="ap-header">
         <span class="ap-title">已归档项目</span>
@@ -134,9 +134,6 @@ async function restore(id: number) {
 </script>
 
 <style scoped>
-/* bm-card 本身不带背景（见 BaseModal.vue），单栏弹窗自己叠一层——对齐 panel-left /
-   咕咕聊天窗左侧栏同一套玻璃参数（60% 白 + 24px 模糊），不用更不透明的 --panel-bg */
-:deep(.bm-card) { background: rgba(255,255,255,0.6); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
 .ap-modal { display: flex; flex-direction: column; max-height: 70vh; }
 .ap-header {
   display: flex; align-items: center; justify-content: space-between;

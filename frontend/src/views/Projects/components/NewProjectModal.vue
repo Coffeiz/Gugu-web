@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="show" width="480px" @close="$emit('close')">
+  <BaseModal :show="show" width="480px" background="var(--panel-bg)" @close="$emit('close')">
     <div class="modal">
 
       <!-- 头部 -->
@@ -517,8 +517,6 @@ function handleCreate() {
 </script>
 
 <style scoped>
-:deep(.bm-card) { background: var(--panel-bg); }
-
 .modal { display: contents; }
 
 /* ── 头部 ── */
