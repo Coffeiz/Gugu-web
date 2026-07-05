@@ -15,6 +15,7 @@
 
 ### 修复
 
+- **弹窗毛玻璃透明效果全局失真**（`components/common/BaseModal.vue` + `ArchivedProjectsModal.vue`/`UploadModal.vue`/`Schedules/index.vue`）：`BaseModal` 的卡片自带一层几乎不透明的底色，双栏弹窗（项目编辑卡）左右栏各自的玻璃背景其实是叠在这层底色上、穿透看到的是底色不是页面，玻璃感被垫死；即便弹窗自己用 `:deep` 覆盖成透明，跟 `BaseModal` 自身定义同优先级，谁生效看样式表加载顺序，覆盖并不稳定。改为 `bm-card` 本身不带背景色，交给各弹窗自己叠一层，咕咕聊天窗一直是这个正确写法。
 - **定时任务生成的消息误报「IM 渠道未连」**（`agent/runner.py`）：`run_ephemeral`（定时任务专用执行入口）没有加载 `im_channels` 就传给 prompt builder，导致定时任务结果里的「通知渠道」上下文永远显示 QQ/飞书未连 ❌，不管用户实际是否已绑定。现在跟直接对话一样读取真实连接状态。
 - **浮动预览窗打开低分辨率图片先猜大窗口再骤缩**（`components/common/FloatPreviewWindow.vue`）：缩略图顶到 192px 上限时原图真实尺寸未知，此前套 4K 估算兜底，遇到实际是低分辨率图会把窗口猜得远大于真实尺寸，真图加载完再缩回去。改为不猜——顶到上限时窗口暂不出现，等真图加载完直接定到正确尺寸。
 
