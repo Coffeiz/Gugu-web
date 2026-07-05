@@ -263,14 +263,14 @@
                     <button class="pm-mini-toggle" :class="{ on: b.enabled }" @click="toggleBot(b)">{{ b.enabled ? '已启用' : '已停用' }}</button>
                     <button class="pm-bot-del" @click="removeBot(b)">删除</button>
                   </div>
-                  <div class="pm-bot-item-group">
+                  <!-- 群聊开关目前只有 QQ 网关真正接了（每条群消息现查这两个字段）——飞书群聊本就
+                       不区分开关地全量处理，微信群聊回复路由另有独立遗留问题，两家都还没接这个开关，
+                       先不在 UI 上摆一个不生效的假开关误导用户 -->
+                  <div v-if="p.key === 'qqbot'" class="pm-bot-item-group">
                     <button class="pm-mini-toggle" :class="{ on: b.group_chat_enabled }" @click="toggleGroupChat(b)">
                       {{ b.group_chat_enabled ? '群聊已开启' : '群聊已关闭' }}
                     </button>
-                    <button v-if="p.key !== 'qqbot'" class="pm-mini-toggle" :class="{ on: b.group_requires_at }" @click="toggleGroupAt(b)">
-                      {{ b.group_requires_at ? '群聊需要@' : '群聊无需@' }}
-                    </button>
-                    <span v-else class="pm-field-hint pm-group-at-fixed">需要@（QQ 平台限制：群消息本就只有@它才能收到，恒开启）</span>
+                    <span class="pm-field-hint pm-group-at-fixed">需要@（QQ 平台限制：群消息本就只有@它才能收到，恒开启）</span>
                   </div>
                 </div>
               </template>
@@ -643,11 +643,6 @@ async function toggleBot(b) {
 
 async function toggleGroupChat(b) {
   try { await userBotsApi.update(b.id, { group_chat_enabled: !b.group_chat_enabled }); await loadBots() }
-  catch (e) { connectErr.value = e.message }
-}
-
-async function toggleGroupAt(b) {
-  try { await userBotsApi.update(b.id, { group_requires_at: !b.group_requires_at }); await loadBots() }
   catch (e) { connectErr.value = e.message }
 }
 
