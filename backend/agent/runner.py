@@ -441,8 +441,10 @@ async def run_ephemeral(user_id, user_name: str, prompt: str) -> str:
         files_overview = await loaders.load_files_overview(db, user_id)
 
     memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
+    im_channels = await loaders.load_im_channels(user_id)
     prompt_name = profile.prompt_file.removesuffix(".md")
-    system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview, skills=profile.skills)
+    system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview,
+                                  skills=profile.skills, im_channels=im_channels)
 
     from agent.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
