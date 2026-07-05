@@ -281,6 +281,8 @@ async function removeTask(t) {
 </script>
 
 <style scoped>
+/* bm-card 本身不带背景（见 BaseModal.vue），单栏弹窗自己叠一层 */
+:deep(.bm-card) { background: var(--panel-bg); }
 .sched-page { height: 100%; font-family: var(--font-sans); }
 
 /* 和顶栏「新建项目」按钮一致（同 radius，且不用 squircle，与其圆角形状对齐） */

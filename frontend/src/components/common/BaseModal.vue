@@ -68,12 +68,15 @@ onBeforeUnmount(() => unregEsc?.())
   pointer-events: none;
 }
 
-/* ── 卡片 ── */
+/* ── 卡片 ──
+   不设背景色：交给调用方——单栏弹窗自己叠一层 background（通常 var(--panel-bg)），
+   双栏弹窗（如 ProjectModal）各栏自带玻璃背景、bm-card 本身透明，让 backdrop-filter
+   直接穿透样式表层级冲突（.bm-card 若自带背景，跟调用方 :deep 覆盖同优先级时
+   谁赢看样式表加载顺序，曾导致「明明覆写了却看不出透明」）。 */
 .bm-card {
   pointer-events: auto;
   position: relative;
   width: 100%;
-  background: rgba(238, 240, 246, 0.94);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255, 255, 255, 0.72);

@@ -54,6 +54,8 @@ async function restore(id: number) {
 </script>
 
 <style scoped>
+/* bm-card 本身不带背景（见 BaseModal.vue），单栏弹窗自己叠一层 */
+:deep(.bm-card) { background: var(--panel-bg); }
 .ap-modal { display: flex; flex-direction: column; max-height: 70vh; }
 .ap-header {
   display: flex; align-items: center; justify-content: space-between;
