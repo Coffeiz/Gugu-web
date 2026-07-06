@@ -15,6 +15,7 @@
 - **感知诊断面板新增「关系温度」当前值列表**（`api/v1/agent_perception.py` + `Admin/Perception/index.vue`）：`agent/memory/temperature.py` 算的关系温度（回访+深度+分享+正负延续比加权）此前只有后端在算/存，Admin 完全没有展示入口。新增 `GET /admin/perception/temperature` 按温度降序列出各用户当前值；v1 范围有限——`.agent/temp.json` 每次重算是整份覆盖不留历史，所以只有当前值列表，暂无随时间变化的曲线（要做真正曲线得先改存储为追加历史）。
 - **感知诊断面板加「排除开发者」开关**（`api/v1/agent_perception.py` + `Admin/Perception/index.vue`）：跟 Admin/Analytics（数据总览）同款 `exclude_dev` 语义和 UI。感知这边数据源是 Redis 事件（`u` 字段是 `str(user_id)[:8]` 脱敏前缀，不是完整 user_id），排除逻辑得先查 DB 里 `is_developer` 用户的 id、算出前缀集合，再按前缀比对过滤——跟 `admin_analytics.py` 直接 SQL where 排除不是同一实现方式，但语义一致；总览统计/错读案例/关系温度三处数据源都接了这个开关。
 - **项目支持归档/查看已归档/取消归档**（`app/api/v1/projects.py`、`views/Projects/index.vue` + 新增 `ArchivedProjectsModal.vue`、`ProjectModal.vue`）：`archive_project` 工具此前只有 agent 侧能力，网页端毫无入口——只能靠咕咕归档，归档后项目从看板消失即无处可寻，也无法撤销。`GET /projects` 补 `archived` 查询参数（默认只看未归档，看板不再混入已归档项目）；项目编辑卡悬浮操作区加「归档」按钮（可逆、不用二次确认）；项目页新增「已归档」入口，弹窗列出已归档项目并可一键「取消归档」，按年/月折叠分层（复用「已完成」列现成约定），避免归档一多就变成长列表。
+- **IM 慢工具触发时先发一句进度声明，缓解非流式对话的等待感**（`agent/tools/base.py`、`agent/imctx.py`、`worker.py`、`app/core/config.py` 新增 `im_progress_announce_enabled` 开关 + `Admin/Agent/index.vue`）：QQ/飞书/微信这类非流式 IM 渠道，模型调联网搜索/深度研究这类慢工具时用户只能干等，容易误以为没反应。声明文案**只能来自工具定义时写死的 `start_message`（字符串或按 args 生成），绝不能由模型现场生成**——避免"说了却没做"的可靠性问题重新引入；`dispatch()` 派发到带 `start_message` 的工具时，若处于 IM 上下文（web 路径不触发）且本轮会话尚未声明过，发一条声明消息，同一会话内只发一次。目前接了 `web_search`/`image_search`/`deep_research` 三个慢工具；`http_get` 因同时服务快查询（天气）和慢查询（读长网页）、派发时无法区分，暂不接，避免快路径被误报"较慢"。全局开关默认开启，可在 Admin→Agent 配置关闭。
 
 ### 修复
 
@@ -25,6 +26,8 @@
 - **定时任务生成的消息误报「IM 渠道未连」**（`agent/runner.py`）：`run_ephemeral`（定时任务专用执行入口）没有加载 `im_channels` 就传给 prompt builder，导致定时任务结果里的「通知渠道」上下文永远显示 QQ/飞书未连 ❌，不管用户实际是否已绑定。现在跟直接对话一样读取真实连接状态。
 - **浮动预览窗打开低分辨率图片先猜大窗口再骤缩**（`components/common/FloatPreviewWindow.vue`）：缩略图顶到 192px 上限时原图真实尺寸未知，此前套 4K 估算兜底，遇到实际是低分辨率图会把窗口猜得远大于真实尺寸，真图加载完再缩回去。改为不猜——顶到上限时窗口暂不出现，等真图加载完直接定到正确尺寸。
 - **记忆 summary 快照里的相对时间没法换算**（`agent/memory/reflection.py` + `agent/prompts/reflection.md`）：真实翻车案例——summary 写「今晚 02:30 银石冲刺赛后报告走 QQ 推送」，这条快照过了一天再被注入时，模型没法判断「今晚」是不是已经过去了，因为反思这次 LLM 调用压根没被告知当前日期。`_extract()` 组 prompt 时补一行「现在是 xxx（星期x）HH:MM」，并要求涉及具体时间点一律换算成绝对日期写进 summary（facts/daily 不受影响：facts 本不该记一时状态，daily 的日期由代码而非模型写入）。
+- **头像存盘后缀从客户端文件名推导，粘贴图片时出错**（`app/api/v1/auth.py`）：`upload_avatar` 此前用 `file.filename` 猜后缀，剪贴板/粘贴上传的图片浏览器常给不带扩展名的文件名（如 `blob`），存出 `avatars/{id}.blob` 这种垃圾后缀；`get_avatar` 取图时按后缀猜 MIME 类型查不到会兜底成 `image/jpeg`，跟真实图片格式不符导致显示异常。改为直接从已校验过的 `content_type` 映射后缀，不再依赖客户端可控的文件名。
+- **个人设置面板隐藏未生效的 QQ 群聊开关**（`components/common/ProfileModal.vue`）：「接入咕咕」面板此前给每个 QQ 机器人都摆了个群聊开关，但群聊逻辑目前只有 QQ 网关真正接了（每条群消息现查这两个字段），飞书群聊本就不分开关全量处理、微信群聊回复路由另有独立遗留问题，两家都没接——开关点了没反应，误导用户。先隐藏，两家网关接上后再统一放出来。
 
 ## [0.16.1] - 2026-07-05 · 登录支持邮箱 + 项目优先级 + 记忆向量扩展 + 对话追问路由修复
 
