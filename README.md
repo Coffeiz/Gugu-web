@@ -16,14 +16,15 @@
 | 功能 | 状态 | 说明 |
 |------|:---:|------|
 | 📋 项目看板 | ✅ | 阶段跟踪、截止日期、改名联动存储目录 |
-| 📅 日历排期 | ✅ | 项目节点可视化 + 自定义事件 |
-| 🗂️ 文件库 | ✅ | 四空间（项目/思维/素材/个人），支持本地 / OSS 双后端 |
+| 📅 日历排期 | ✅ | 月/周视图、项目节点、自定义事件、活动提醒 |
+| 🗂️ 文件库 | ✅ | 四空间（项目/思维/素材/个人），支持本地 / OSS 双后端和文件预览 |
 | 🏠 总览 | ✅ | 统计卡片 + 近期节点 + 最近文件 |
 | 🧠 思维画布 | 🔜 | 节点图创意空间，可挂文件 |
 | 🎨 素材板 | 🔜 | 素材管理 + 自动打 tag |
-| 👤 客户管理 | 🔜 | 客户信息归档 |
-| 💬 自然语言管理 | ✅ | SSE 流式 AI 对话，支持 Anthropic / OpenAI / 通义 / DeepSeek |
-| ⚙️ 管理后台 | ✅ | DB / Redis / Storage 在线配置 + 热更新 |
+| 👤 客户管理 | 🔜 | 后端与 Agent 工具已就绪，前端页面待开发 |
+| 💬 自然语言管理 | ✅ | SSE 流式 AI 对话，支持 Anthropic / OpenAI / 通义 / DeepSeek / MiniMax / MiMo |
+| ⏰ 定时任务 | ✅ | 一次性/周期提醒，支持通知与 IM 推送 |
+| ⚙️ 管理后台 | ✅ | 配置热更新、用户管理、审计日志、运维监控、数据分析 |
 
 ---
 
@@ -49,7 +50,7 @@
 
 ### 部署
 - **容器化**：Docker Compose 一键起全栈
-- **进程管理**：systemd unit（`gugu-backend.service`）
+- **进程管理**：systemd 三服务（`gugu-web` / `gugu-worker` / `gugu-supervisor`）
 
 ---
 
@@ -124,7 +125,7 @@ Gugu-web/
 │       ├── components/         # 通用 + 业务组件
 │       ├── stores/             # Pinia stores（projects / filesCache / preview / audio / clipboard）
 │       ├── composables/        # useThumbCache（blob Map 缩略图缓存）
-│       ├── services/           # api.js（所有 API 封装）+ cache.js（filesCache sessionStorage）
+│       ├── services/           # api.ts（所有 API 封装）+ cache.ts（filesCache sessionStorage）
 │       ├── layouts/            # DefaultLayout / AdminLayout
 │       └── router/
 ├── backend/                    # FastAPI 后端
@@ -135,8 +136,9 @@ Gugu-web/
 │       ├── models/             # SQLAlchemy 模型
 │       ├── schemas/            # Pydantic schemas
 │       └── services/
-│           ├── storage/        # LocalStorage / OSSStorage
-│           └── agent/          # 智能助手（规划中）
+│           └── storage/        # LocalStorage / OSSStorage
+├── backend/agent/              # 独立 Agent 包：工具、记忆、感知、IM 适配、提示词
+├── backend/onboarding/         # 新手引导：教程项目/文件/日历活动 + 引导气泡
 ├── docker-compose.yml
 └── .env.example
 ```
@@ -179,6 +181,9 @@ Gugu-web/
 | `GET/POST/PATCH/DELETE` | `/api/v1/events` | 日历事件 CRUD |
 | `GET/POST/DELETE` | `/api/v1/clients` | 客户 CRUD |
 | `GET/PATCH` | `/api/v1/preferences` | 用户偏好（阶段模板等） |
+| `GET/POST` | `/api/v1/scheduled-tasks` | 用户自定义定时任务 |
+| `GET/POST` | `/api/v1/notifications` | 通知列表 / 气泡 / 标已读 |
+| `POST` | `/api/v1/feedback` | 用户反馈提交 |
 | `POST` | `/api/v1/agent/chat` | AI Agent 对话（SSE 流式） |
 
 ### Admin API（需 Admin Token）
@@ -188,6 +193,7 @@ Gugu-web/
 | `POST` | `/api/v1/admin/auth/login` | 管理员登录 |
 | `GET/PATCH` | `/api/v1/admin/config` | 系统配置读写（热更新） |
 | `POST` | `/api/v1/admin/config/test-connection` | 测试 DB / OSS 连通性 |
+| — | `/api/v1/admin/*` | 用户管理、审计日志、系统日志、运维监控、Agent/感知诊断、通知广播 |
 
 完整 OpenAPI 文档：启动后访问 `http://localhost:8000/docs`。
 
@@ -240,10 +246,10 @@ make backup      # 备份数据库
 - [x] 管理后台（在线配置 + 热更新）
 - [x] 本地 / OSS 存储双后端
 - [x] 自然语言管理（SSE 流式 AI Agent，支持多 provider）
-- [ ] 定时任务（按周期自动提醒 / 归档 / 同步）
+- [x] 定时任务（一次性 / 周期提醒，通知或 IM 推送）
 - [ ] 思维画布（节点图）
 - [ ] 团队 / 企业版（ToB）
-- [ ] 客户管理
+- [ ] 客户管理前端页面
 
 详细规划见 [`docs/product/wishlist.md`](docs/product/wishlist.md)。
 
