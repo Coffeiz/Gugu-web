@@ -60,8 +60,13 @@ async def _lo_convert(data: bytes, src_ext: str, target: str) -> bytes:
     try:
         src = tmp / f"input.{src_ext}"
         src.write_bytes(data)
+        # -env:UserInstallation 指到本次专属临时目录：systemd 服务 ProtectSystem=strict 下
+        # $HOME/.config 只读，LibreOffice 建不了默认 profile 会直接失败（同 files.py 的
+        # _office_to_pdf 踩过的坑）。tmp 由 PrivateTmp=true 保证可写。
         rc, _, err = await _run([
-            "libreoffice", "--headless", "--convert-to", target,
+            "libreoffice", "--headless",
+            f"-env:UserInstallation=file://{tmp}/loprofile",
+            "--convert-to", target,
             "--outdir", str(tmp), str(src),
         ])
         out = tmp / f"input.{target.split(':')[0]}"

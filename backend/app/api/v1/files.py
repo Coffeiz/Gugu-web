@@ -1045,8 +1045,14 @@ async def _office_to_pdf(data: bytes, ext: str) -> bytes:
     try:
         src = tmpdir / f"input.{ext.lower()}"
         src.write_bytes(data)
+        # -env:UserInstallation 把 LibreOffice 的用户配置目录指到本次专属的临时目录：
+        # systemd 服务开了 ProtectSystem=strict，$HOME/.config 对进程是只读的，LibreOffice
+        # 默认要在那建 profile，建不了直接 returncode=1（stderr 只有条不相关的 javaldx 警告，
+        # 真实原因被吞掉）。指到 tmpdir 下（PrivateTmp=true 保证可写），每次调用互不干扰。
         proc = await asyncio.create_subprocess_exec(
-            "libreoffice", "--headless", "--convert-to", "pdf",
+            "libreoffice", "--headless",
+            f"-env:UserInstallation=file://{tmpdir}/loprofile",
+            "--convert-to", "pdf",
             "--outdir", str(tmpdir), str(src),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
