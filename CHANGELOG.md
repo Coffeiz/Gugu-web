@@ -15,6 +15,7 @@
 
 ### 修复
 
+- **弹窗叠在浮动窗口上打开时，淡入动画期间毛玻璃完全不模糊**（`components/common/BaseModal.vue`、`assets/styles/global.css`，设计规范同步更新 `docs/product/design.md`「弹窗动画规范」）：GuguChat 大窗口开着再叠开项目/新建项目等弹窗，0.2s 淡入全程能清晰透视底下窗口的内容，动画结束一瞬间模糊才突然贴上。根因是 CSS 规范行为而非性能：`opacity<1` 的元素是隔离组（backdrop root），子孙的 `backdrop-filter` 只能在组内采样——旧版把 opacity 淡入挂在卡片容器上，整个动画期间玻璃面板被祖先隔离、采不到弹窗后面的内容（will-change 预热/延迟露出均无效，不是算得慢是被隔离）。进场改为「玻璃 ramp」：遮罩压暗+模糊、玻璃面板的 blur 半径本身从 0 过渡到满值，全程无半透明祖先，模糊从第一帧就生效；离场保留淡出（模糊瞬失被同步淡出盖住，不可察）。排查过程详见 `docs/devlog.md` 2026-07-06。
 - **弹窗毛玻璃背景/阴影全局失真——`:deep(.bm-card)` 根本没生效**（`components/common/BaseModal.vue` + `ProfileModal.vue`/`ProjectModal.vue`/`NewProjectModal.vue`/`UploadModal.vue`/`Schedules/index.vue`/`ArchivedProjectsModal.vue`）：`BaseModal` 是多根组件（遮罩 + 卡片两个平级根），Vue scoped CSS 的父作用域属性只挂在组件根节点，穿不到嵌套一层的 `.bm-card`——各弹窗一直靠 `:deep(.bm-card)` 定制背景/阴影，实测这条选择器压根没命中该元素（DevTools 里连「被覆盖」都算不上，是完全不在匹配规则列表里）。只是巧合地 `BaseModal` 原本的默认底色和多数弹窗的期望值接近，这个问题才一直没被发现，直到项目编辑卡（想要透明）和已归档弹窗（想要浅色玻璃）对比出明显差异才暴露。改法：不再依赖跨组件 CSS 选择器，`BaseModal` 加 `background`/`blur` prop 由调用方直接传值；项目编辑卡/个人设置一直想要的「透明 + 内嵌高光阴影」直接并入 `BaseModal` 默认值；已归档弹窗的玻璃参数对齐 panel-left/咕咕聊天窗左侧栏（60% 白 + 24px 模糊）。
 - **定时任务生成的消息误报「IM 渠道未连」**（`agent/runner.py`）：`run_ephemeral`（定时任务专用执行入口）没有加载 `im_channels` 就传给 prompt builder，导致定时任务结果里的「通知渠道」上下文永远显示 QQ/飞书未连 ❌，不管用户实际是否已绑定。现在跟直接对话一样读取真实连接状态。
 - **浮动预览窗打开低分辨率图片先猜大窗口再骤缩**（`components/common/FloatPreviewWindow.vue`）：缩略图顶到 192px 上限时原图真实尺寸未知，此前套 4K 估算兜底，遇到实际是低分辨率图会把窗口猜得远大于真实尺寸，真图加载完再缩回去。改为不猜——顶到上限时窗口暂不出现，等真图加载完直接定到正确尺寸。

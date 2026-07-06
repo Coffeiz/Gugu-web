@@ -352,9 +352,11 @@ function darkenHex(hex, amount = 0.60) {
 
 所有弹窗基于 `BaseModal.vue`，**禁止**在子弹窗重复定义遮罩、动画、Esc 逻辑。
 
-- Transition name `bm`，duration `{ enter: 340, leave: 220 }`
-- `.bm-overlay` 和 `.bm-card` 各自**纯 opacity** 过渡（进入 `cubic-bezier(0.4,0,0.2,1)` / 退出 `cubic-bezier(0.4,0,1,1)`）
-- **禁止 transform**：`scale` 或 `translateY` 会让含 `backdrop-filter` 的浮层元素在动画帧间产生像素跳位（GPU compositing 问题）；底层 `.glass-card` 面板含 backdrop-filter，弹窗使用纯 opacity 动画同样避免此问题
+- Transition name `bm`，`:duration="200"` 定时收尾（进场根节点自身没有任何过渡属性可监听，必须显式给时长，否则 Vue 下一帧就摘掉 enter-active、玻璃 ramp 跑不完）
+- **进场 = 「玻璃 ramp」，绝不动 opacity（2026-07-06 定版）**：遮罩的压暗（`background-color`）+ 模糊、卡片/玻璃面板（`.bm-card` / `.panel-left` / `.modal-right`）的 `backdrop-filter` blur 半径本身从 0 过渡到各自满值（`cubic-bezier(0.4,0,0.2,1)`，0.2s）。面板部分的 ramp 规则在 `global.css`（BaseModal 的 scoped 样式够不到 slot 里带调用方 scope id 的玻璃面板），from 态用 `!important` 压过 blur prop 写到 `.bm-card` 上的 inline 样式
+  - **为什么进场禁止 opacity**：CSS 规范（filter-effects-2）里 `opacity < 1` 的元素是隔离组（backdrop root），其**子孙的 `backdrop-filter` 只能在组内采样、采不到组外的页面/窗口**。旧版把 opacity 淡入挂在卡片容器上，弹窗叠在 GuguChat 大窗口等浮动窗口上打开时，整个淡入期间玻璃面板被祖先隔离、模糊完全失效，动画结束一瞬间才"啪"地糊上（性能 trace 帧序列实测）。`will-change` 预热、延迟几帧再露出都治不了——不是算得慢，是被隔离。同理，**任何含 backdrop-filter 的玻璃元素，祖先链上都不要挂 opacity/filter/mask 类动画**
+- **离场保留纯 opacity 淡出**（`cubic-bezier(0.4,0,1,1)`，0.2s）：关闭瞬间的模糊失效会被同步的淡出盖住，肉眼基本不可察，不值得再做一次反向 ramp
+- **禁止 transform**：`scale` 或 `translateY` 会让含 `backdrop-filter` 的浮层元素在动画帧间产生像素跳位（GPU compositing 问题）；底层 `.glass-card` 面板含 backdrop-filter，弹窗进出场均不使用 transform
 
 | 弹窗 | width | height | zIndex |
 |------|-------|--------|--------|
