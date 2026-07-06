@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 本文件记录 Gugu-web 项目的开发约定，供后续开发/重构参考。技术栈见 [README.md](README.md)（前端 Vue 3 + TS，后端 FastAPI + Python，`requirements.txt` 管理依赖，无 `pyproject.toml`/`uv`）。
 
