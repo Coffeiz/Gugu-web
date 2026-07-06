@@ -30,7 +30,8 @@ _SYS_FALLBACK = (
     "不记推测、世界常识、一时状态，不评判用户，宁少勿多。**只报本轮的增删**：新值得长期记的"
     "进 facts_add（每条对象 {text, kind: observed=亲述/inferred=推断, importance: 1-5}）；"
     "被推翻/过时/被替换的旧条进 facts_remove（字符串、尽量照抄原文）；没变动就都给空数组、别重列旧事实。"
-    "summary 是一句「用户当下在忙什么/近期重心」的快照，基于原快照演进、没变就原样返回。"
+    "summary 是一句「用户当下在忙什么/近期重心」的快照，基于原快照演进、没变就原样返回；"
+    "涉及具体时间点一律换算成绝对日期（如「7/6 晚」而非「今晚」），照 user 消息开头给的当前日期换算。"
     "perception 是本轮观察（intent/ambiguity/emotion/emo_strength），照实判、只打点。"
     "correction 唯一判 true 的条件：错的主体是**你（咕咕）本人这次的回答/理解**（用户说「你错了/不是这个/我说的是…」）。"
     "错的若是**别人**一律 false：用户认自己错/确认你是对的（是我错了/你是对的/哦原来如此）、说第三方或外部信息错"
@@ -302,7 +303,13 @@ async def _extract(user_name, user_msg, assistant_reply, existing_facts, existin
     prev_part = ""
     if prev_turn:
         prev_part = (f"【上一轮】\n用户：{prev_turn.get('u', '')}\n咕咕：{prev_turn.get('a', '')}\n\n")
+    # 当前日期：不给的话模型没法把「今晚/明天/这周」这类相对时间换算成绝对日期写进 summary——
+    # 快照隔几天被注入时,这些相对说法就已经读不出是哪天了（见 reflection.md summary 节的日期要求）。
+    from app.core.tz import local_now
+    _now = local_now()
+    now_str = f"{_now.strftime('%Y-%m-%d')}（星期{'一二三四五六日'[_now.weekday()]}）{_now.strftime('%H:%M')}"
     user = (
+        f"现在是 {now_str}。\n\n"
         f"已知的全部事实：\n{existing_facts or '（暂无）'}\n\n"
         f"当前状态快照：\n{existing_summary or '（暂无）'}\n\n"
         f"{prev_part}"
