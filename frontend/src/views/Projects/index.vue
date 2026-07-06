@@ -1,11 +1,5 @@
 <template>
   <div class="projects-page">
-    <div class="page-toolbar">
-      <button class="archived-entry" @click="showArchived = true">
-        <PhArchive :size="12" weight="bold" />
-        已归档
-      </button>
-    </div>
     <div class="kanban">
       <KanbanColumn
         v-for="col in nonDoneColumns"
@@ -20,6 +14,7 @@
         :projects="columnProjects('done')"
         @card-click="projectStore.openModal"
         @drop-project="handleDrop"
+        @open-archived="showArchived = true"
       />
     </div>
 
@@ -29,7 +24,6 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { PhArchive } from '@phosphor-icons/vue'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
@@ -112,38 +106,13 @@ function openNewWithStatus(status) {
 <style scoped>
 .projects-page {
   height: calc(100vh - 152px);
-  display: flex;
-  flex-direction: column;
-}
-
-.page-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 10px;
-  flex-shrink: 0;
-}
-.archived-entry {
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(0,0,0,0.08);
-  background: rgba(255,255,255,0.5);
-  color: var(--text-secondary);
-  font-size: 12px; font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.archived-entry:hover {
-  background: rgba(255,255,255,0.8);
-  color: var(--text-primary);
 }
 
 .kanban {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
-  flex: 1;
-  min-height: 0;
+  height: 100%;
   align-items: stretch;
 }
 </style>

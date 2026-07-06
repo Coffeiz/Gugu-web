@@ -12,7 +12,13 @@
         <span class="col-dot"></span>
         已完成
       </div>
-      <span class="col-count">{{ projects.length }}</span>
+      <div class="col-header-right">
+        <button class="archived-entry-mini" @click="$emit('open-archived')" title="查看已归档项目">
+          <PhArchive :size="11" weight="bold" />
+          已归档
+        </button>
+        <span class="col-count">{{ projects.length }}</span>
+      </div>
     </div>
 
     <div class="col-body">
@@ -111,12 +117,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, type PropType } from 'vue'
 import ProjectCard from './ProjectCard.vue'
-import { PhFolder, PhFolderOpen, PhCheckCircle } from '@phosphor-icons/vue'
+import { PhFolder, PhFolderOpen, PhCheckCircle, PhArchive } from '@phosphor-icons/vue'
 
 const props = defineProps({
   projects: { type: Array as PropType<any[]>, default: () => [] },
 })
-const emit = defineEmits(['card-click', 'drop-project'])
+const emit = defineEmits(['card-click', 'drop-project', 'open-archived'])
 
 const isDragOver  = ref(false)
 const openYears   = ref(new Set())
@@ -239,6 +245,24 @@ function onDrop(e) {
   font-size: 11px; font-weight: 700; color: #fff;
   background: rgba(123,127,178,0.42); border-radius: 20px;
   padding: 1px 7px; min-width: 22px; text-align: center;
+}
+.col-header-right {
+  display: flex; align-items: center; gap: 8px;
+}
+.archived-entry-mini {
+  display: flex; align-items: center; gap: 4px;
+  padding: 2px 8px;
+  border-radius: 7px;
+  border: 1px solid rgba(0,0,0,0.08);
+  background: rgba(255,255,255,0.5);
+  color: var(--text-secondary);
+  font-size: 11px; font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.archived-entry-mini:hover {
+  background: rgba(255,255,255,0.85);
+  color: var(--text-primary);
 }
 
 .col-body {
