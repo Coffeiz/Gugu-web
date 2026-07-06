@@ -345,7 +345,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 > **大白话**：生产服务器上，咕咕的三个后端进程交给 systemd（Linux 自带的服务管理器）托管——进程崩了它自动拉起来、服务器重启它自动跟着启动，不用人守着敲命令。前提是**一次性**先跑 `make install` 把三个进程"注册"给 systemd（相当于登记造册），之后才能用 `systemctl restart/stop/status` 这类命令管它们。**这一步千万别漏**，漏了会导致用错身份跑服务、后续权限报错（见下）。
 >
-> **本项目部署现状**：生产环境（如 gugugu.site）三个服务都走 systemd。但 dev 机（`192.168.110.51`）是例外——**它刻意不让 systemd 管 web**，改用 `scripts/dev-restart.sh` 脚本手动起停（worker/supervisor 目前也在 systemd 名下，但该机日常靠脚本重启）。原因是 dev 机上代码改动频繁，手动脚本比一遍遍 `systemctl restart` 更快、也避免了「一个端口两个主人」互相打架的问题。两种方式**不能同时用在同一台机器的同一个端口上**，选一个当唯一主人（详见下文「铁律」和「dev 机重启」）。
+> **本项目部署现状**：生产环境（如 gugugu.site）和 dev 机（`192.168.110.51`）三个服务**都走 systemd**（2026-07-07 起统一，此前 dev 机曾用 `scripts/dev-restart.sh` 手动起停 web，现已弃用该例外，全环境一致方便排查）。两种方式**不能同时用在同一台机器的同一个端口上**，选一个当唯一主人（详见下文「铁律」）；`scripts/dev-restart.sh` 仍保留在仓库供以后需要免 sudo 快速迭代的场景参考，但目前没有环境在用它。
 >
 > ⚠️ **首次上线必须跑 `make install`，绝不能跳过直接 `make restart`。**
 >
@@ -390,12 +390,12 @@ sudo systemctl status gugu-backend gugu-worker gugu-supervisor
 >
 > 注意：托管后**别再用 `pkill` 停 gugu-backend**（会被 `Restart` 立刻拉起、像「关不掉」），用 `systemctl stop`；`journalctl -u gugu-backend -n 30 --no-pager` 看真错。
 
-> **dev 机重启（不走 systemd、免 sudo）**：dev 机把 `gugu-backend` 保持 `disable`，用脚本一条命令干净重启（自带腾端口，不撞冲突、不用手动 pkill）：
+> **备选方案（不走 systemd、免 sudo，目前没有环境在用）**：想避开 sudo、图快速迭代的场合，`scripts/dev-restart.sh` 提供了另一条路——把 `gugu-backend` 保持 `disable`，用脚本一条命令干净重启（自带腾端口，不撞冲突、不用手动 pkill）：
 > ```bash
 > bash scripts/dev-restart.sh          # 全部：web + worker + supervisor
 > bash scripts/dev-restart.sh web      # 也可只重启某一个
 > ```
-> ⚠️ dev 机若 `gugu-backend` 还 enabled，会和脚本起的手动后端抢 8000 → 先 `sudo systemctl disable --now gugu-backend`。
+> ⚠️ 若某台机器要切到这条路，先 `sudo systemctl disable --now gugu-backend` 再用脚本，避免两边抢 8000。
 
 `make install` 会：
 
@@ -419,7 +419,7 @@ sudo systemctl status gugu-backend gugu-worker gugu-supervisor
 
 > 1Panel 部署：backend 一般在 `/opt/1panel/www/sites/<域名>/backend`，直接在该目录 `make install`，路径自动对上。
 
-> ⚠️ **ProtectSystem=strict 沙箱 + LibreOffice**：单元开了 `ProtectSystem=strict`，LibreOffice 转 Office（docx/xlsx/pptx 预览、`read_file` 读 Office）可能写不了配置目录而失败（PDF 走 pdftotext 不受影响）。真遇到：给对应单元加可写 HOME（`Environment=HOME=__APP_DIR__/logs` + 相应 `ReadWritePaths`）或去掉 `ProtectSystem=strict`。
+> ⚠️ **ProtectSystem=strict 沙箱 + LibreOffice**（2026-07-07 实测踩过、已修）：单元开了 `ProtectSystem=strict`，`$HOME/.config` 对进程只读，LibreOffice 转 Office（docx/xlsx/pptx 预览、`read_file` 读 Office）默认要在那建用户 profile，建不了直接 `returncode=1` 失败（PDF 走 pdftotext 不受影响，stderr 只留一条不相关的 `javaldx` 警告，真实原因不会自己冒出来）。**已在代码里修好，不用改 systemd 配置**：`app/api/v1/files.py` 的 `_office_to_pdf` 和 `app/core/doctext.py` 的 `_lo_convert` 调 LibreOffice 时都带了 `-env:UserInstallation=file://<本次临时目录>/loprofile`，把 profile 指到 `PrivateTmp=true` 保证可写的临时目录，不用放宽 `ProtectSystem=strict`、也不用碰 HOME。
 
 > worker 想扩吞吐可起多个实例（共享 Redis 消费组自动负载均衡）；supervisor 一台机一个即可。多机拆分见 §5.2。
 
