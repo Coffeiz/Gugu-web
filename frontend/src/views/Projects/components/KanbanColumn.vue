@@ -57,11 +57,11 @@ function onDrop(e) {
 <style scoped>
 .column {
   display: flex; flex-direction: column;
-  background: rgba(255,255,255,0.18);
-  border: 1px solid rgba(255,255,255,0.45);
+  background: rgba(255,255,255,0.25); border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   corner-shape: squircle;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   padding: 12px 10px; gap: 8px;
   min-width: 0; min-height: 0; overflow: hidden;
   transition: background 0.15s, box-shadow 0.15s;

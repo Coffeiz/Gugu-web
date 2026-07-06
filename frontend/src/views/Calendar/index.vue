@@ -155,20 +155,21 @@
               <Transition name="cal-fade">
                 <div v-if="wvAdHover >= 0 && !rangeSelect.active" :key="'adhov' + wvAdHover" class="wv-ad-hover" :class="{ weekend: weekDays[wvAdHover]?.isWeekend }" :style="{ left: wvAdHover / 7 * 100 + '%' }"></div>
               </Transition>
-              <div v-for="bar in weekAllDayShown" :key="bar.id" class="wv-pbar cal-chip" :class="{ 'cal-done': bar.status === 'done' }"
+              <div v-for="bar in weekAllDayShown" :key="bar.id" class="wv-pbar cal-chip"
+                   :class="{ 'cal-done': bar.status === 'done', 'bar-start': bar.startsHere, 'bar-end': bar.endsHere }"
                    :style="pbarStyle(bar)" @click.stop="openProject(bar)" :title="bar.name">
                 <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>{{ bar.name }}
               </div>
               <template v-for="(d, ci) in weekDays" :key="'it' + d.iso">
                 <div v-for="(it, ii) in allDayItemsFor(d.iso)" :key="it.isProject ? it.id : it._uid"
                      class="wv-allday-ev cal-chip" :class="{ 'cal-done': it.isProject && it.status === 'done' }"
-                     :style="{ left: ci / 7 * 100 + '%', top: ((wvShownRows + ii) * 20) + 'px', background: it.isProject ? capBg(it.accent, it.progress) : it.accent + '28', color: darkenHex(it.accent), borderColor: it.accent + '70' }"
+                     :style="{ left: `calc(${ci / 7 * 100}% + 6px)`, right: `calc(${(6 - ci) / 7 * 100}% + 6px)`, top: ((wvShownRows + ii) * 20) + 'px', background: it.isProject ? capBg(it.accent, it.progress) : it.accent + '28', color: darkenHex(it.accent), borderColor: it.accent + '70' }"
                      @click.stop="it.isProject ? openProject(it) : openEditForm(it, $event, true)" :title="it.name">
                   <span v-if="it.isProject" class="bar-status-dot" :class="'bsd-' + it.status"></span>{{ it.name }}
                 </div>
                 <!-- 该天列被隐藏的跨天项目 → 在该列底部显示「+K 更多」（样式/逻辑完全同月视图，按天各自计数）-->
                 <button v-if="weekMoreFor(ci).length" class="chip-more-btn cal-chip wv-more"
-                        :style="{ left: ci / 7 * 100 + '%', top: ((wvShownRows + allDayItemsFor(d.iso).length) * 20) + 'px' }"
+                        :style="{ left: `calc(${ci / 7 * 100}% + 6px)`, right: `calc(${(6 - ci) / 7 * 100}% + 6px)`, top: ((wvShownRows + allDayItemsFor(d.iso).length) * 20) + 'px' }"
                         @click.stop="showMore($event, d.iso, weekMoreFor(ci))">+{{ weekMoreFor(ci).length }} 更多</button>
               </template>
             </div>
@@ -1451,8 +1452,10 @@ const wvShownRows     = computed(() => weekAllDayShown.value.reduce((m, b) => Ma
 // 第 ci 列被隐藏（超出 10）的跨天项目 = 覆盖该天的隐藏条；每天列各自「更多」，按实际位置显示（同月视图）
 function weekMoreFor(ci) { return weekAllDayMore.value.filter(b => b.colStart <= ci && b.colEnd >= ci) }
 function pbarStyle(bar) {
-  return { left: bar.colStart / 7 * 100 + '%',
-           width: (bar.colEnd - bar.colStart + 1) / 7 * 100 + '%',
+  // left/right 同月视图 .project-bar：真正 start/end 的那一端留 6px 安全间距（对齐日格 padding），
+  // 跨周中间段（不 start 也不 end）不留，贴到格边表示还在连续
+  return { left:  bar.startsHere ? `calc(${bar.colStart / 7 * 100}% + 6px)` : (bar.colStart / 7 * 100) + '%',
+           right: bar.endsHere   ? `calc(${(7 - bar.colEnd - 1) / 7 * 100}% + 6px)` : ((7 - bar.colEnd - 1) / 7 * 100) + '%',
            top: bar.row * 20 + 'px',
            background: [deadlineWarnLayer(bar), capBg(bar.accent, bar.progress)].filter(Boolean).join(', '),   // 进度填充：与月视图/侧栏胶囊一致；deadlineWarnLayer 叠加临近截止日的标红
            borderColor: bar.accent + '70', color: darkenHex(bar.accent) }
@@ -2466,11 +2469,20 @@ async function saveEvent() {
 /* 全天区悬停高亮：叠加在选区之上（hover 已选列 = 相加），opacity 淡入淡出（见 .cal-fade），色同小时格/月格 hover */
 .wv-ad-hover { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.06); pointer-events: none; }
 .wv-ad-hover.weekend { background: rgba(195,90,90,0.06); }
-.wv-pbar, .wv-allday-ev { position: absolute; height: 18px; box-sizing: border-box; display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid; border-radius: 5px; font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; z-index: 1; }
-.wv-allday-ev { width: 14.2857%; margin-left: 1px; padding-right: 8px; }
-.wv-pbar { margin: 0 1px; }
+.wv-pbar, .wv-allday-ev { position: absolute; height: 18px; box-sizing: border-box; display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid; font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; z-index: 1; }
+.wv-allday-ev { padding-right: 8px; border-radius: 99px; }
+/* 项目条圆角同月视图 .project-bar：跨周项目中间段（既不 start 也不 end）不带圆角，代表还在连续；
+   只在真正开始/结束的那一段收圆角胶囊，不用小圆角方块（那是普通活动 chip 的样式，见 .wv-allday-ev）。
+   左右安全间距不再靠这里的 margin/width 兜底，改成跟月视图一样在内联 left/right 里按需 +6px
+   （见 pbarStyle / 单日活动条 / 更多按钮的 :style 绑定）。 */
+.wv-pbar.bar-start { border-radius: 99px 0 0 99px; }
+.wv-pbar.bar-end   { border-radius: 0 99px 99px 0; }
+.wv-pbar.bar-start.bar-end { border-radius: 99px; }
 /* 周视图全天行的「更多」：视觉完全复用月视图 .chip-more-btn，这里只加绝对定位 + 列宽 */
-.wv-more { position: absolute; width: 14.2857%; box-sizing: border-box; margin: 0 1px; overflow: hidden; z-index: 1; }
+.wv-more { position: absolute; box-sizing: border-box; overflow: hidden; z-index: 1; }
+/* 用组合选择器（.chip-more-btn.wv-more）提高特异性，确保能盖过基类 .chip-more-btn 的 height:16px——
+   跟同行的 .wv-pbar/.wv-allday-ev 对齐到 18px */
+.chip-more-btn.wv-more { height: 18px; }
 .wv-more:hover { background: rgba(123,127,178,0.22); }
 
 .wv-body { flex: 1; overflow-y: auto; min-height: 0; scrollbar-gutter: stable; }

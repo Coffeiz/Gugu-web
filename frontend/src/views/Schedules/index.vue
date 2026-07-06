@@ -299,7 +299,7 @@ async function removeTask(t) {
 .panel {
   height: 100%; box-sizing: border-box;
   display: flex; flex-direction: column;
-  background: rgba(255,255,255,0.34); border: 1px solid var(--glass-border);
+  background: rgba(255,255,255,0.25); border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg); corner-shape: squircle;
   box-shadow: var(--glass-shadow);
   backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
