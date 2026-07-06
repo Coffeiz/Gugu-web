@@ -829,7 +829,7 @@ function deadlineWarnLayer(bar) {
   if (segTotal <= 0) return null
   const warnDays = Math.min(DEADLINE_WARN_DAYS, segTotal)
   const warnStartPct = Math.round((segTotal - warnDays) / segTotal * 100)
-  return `linear-gradient(to right, transparent 0%, transparent ${warnStartPct}%, rgba(200,70,70,0.55) 100%)`
+  return `linear-gradient(to right, transparent 0%, transparent ${warnStartPct}%, rgba(200,70,70,0.3) 100%)`
 }
 
 function daysBetween(isoA, isoB) {
