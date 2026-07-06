@@ -123,6 +123,18 @@
       </div>
     </template>
 
+    <!-- 关系温度（独立于活跃用户统计，始终显示；v1 只有当前值，无历史曲线——见 temperature.py） -->
+    <div class="section-label">关系温度<span class="sl-hint">28 天滑动窗口·回访+深度+分享+正负延续比 · 只有当前值，暂无历史曲线</span></div>
+    <div v-if="!temps.length" class="state-msg sm-sm">暂无数据（用户对话满一轮反思才会算，且现存值 24h 内不重算）</div>
+    <div v-else class="dist">
+      <div v-for="t in temps" :key="t.user_id" class="dist-row">
+        <span class="dist-name">{{ t.name }}</span>
+        <div class="dist-track"><div class="dist-fill" :style="{ width: (t.temp * 100) + '%' }"></div></div>
+        <span class="dist-pct">{{ (t.temp * 100).toFixed(0) }}%</span>
+        <span class="dist-rate">回访{{ t.components?.raw?.active_days ?? '—' }}天<i>深度{{ t.components?.raw?.avg_depth ?? '—' }}</i></span>
+      </div>
+    </div>
+
     <!-- 错读案例预览（独立于活跃用户统计，始终显示） -->
     <div class="section-label">错读案例<span class="sl-hint">咕咕「读错需求」的脱敏反思 · 最近 {{ misread.length }} 条</span>
       <button class="dl-btn" @click="downloadMisread" :disabled="dling">{{ dling ? '下载中…' : '下载完整记录' }}</button>
@@ -189,12 +201,14 @@ const intents = computed(() => data.value.intent_distribution || [])
 
 const misread = ref([])
 const dling = ref(false)
+const temps = ref([])
 
 async function load() {
   loading.value = true
   refreshing.value = true
   setTimeout(() => { refreshing.value = false }, 550)
   loadMisread()   // 错读案例独立拉取（不受活跃用户/阈值影响），刷新时一并更新
+  loadTemperature()   // 关系温度同样独立拉取
   try {
     const me = Math.max(1, minEvents.value || 1)
     const rate = Math.min(1, Math.max(0, (rateHiPct.value || 0) / 100))
@@ -226,6 +240,13 @@ async function loadMisread() {
   try {
     const res = await adminStore.authFetch('/api/v1/admin/perception/misread/recent?n=30')
     if (res.ok) misread.value = (await res.json()).cases || []
+  } catch (e) { /* 预览失败不打断主面板 */ }
+}
+
+async function loadTemperature() {
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/perception/temperature')
+    if (res.ok) temps.value = (await res.json()).users || []
   } catch (e) { /* 预览失败不打断主面板 */ }
 }
 const exporting = ref(false)
