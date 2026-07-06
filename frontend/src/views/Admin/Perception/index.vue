@@ -6,6 +6,10 @@
         <p class="page-desc">咕咕「读懂用户需求」健康度 · 仅活跃用户、按用户宏平均（重度用户不主导）</p>
       </div>
       <div class="header-right">
+        <label class="xd-toggle" :class="{ on: excludeDev }">
+          <input type="checkbox" v-model="excludeDev" @change="load">
+          排除开发者
+        </label>
         <div class="range-tabs">
           <button v-for="r in ranges" :key="r.h"
             :class="['range-tab', { active: hours === r.h }]"
@@ -202,6 +206,7 @@ const intents = computed(() => data.value.intent_distribution || [])
 const misread = ref([])
 const dling = ref(false)
 const temps = ref([])
+const excludeDev = ref(false)
 
 async function load() {
   loading.value = true
@@ -214,7 +219,7 @@ async function load() {
     const rate = Math.min(1, Math.max(0, (rateHiPct.value || 0) / 100))
     const amb = Math.max(0, ambigHi.value || 0)
     const mn = Math.max(1, minN.value || 1)
-    const q = `hours=${hours.value}&min_events=${me}&rate_hi=${rate}&ambig_hi=${amb}&min_n=${mn}`
+    const q = `hours=${hours.value}&min_events=${me}&rate_hi=${rate}&ambig_hi=${amb}&min_n=${mn}&exclude_dev=${excludeDev.value}`
     const res = await adminStore.authFetch(`/api/v1/admin/perception?${q}`)
     if (!res.ok) throw new Error(`加载失败 (${res.status})`)
     data.value = await res.json()
@@ -238,14 +243,14 @@ function fbCls(v) {
 
 async function loadMisread() {
   try {
-    const res = await adminStore.authFetch('/api/v1/admin/perception/misread/recent?n=30')
+    const res = await adminStore.authFetch(`/api/v1/admin/perception/misread/recent?n=30&exclude_dev=${excludeDev.value}`)
     if (res.ok) misread.value = (await res.json()).cases || []
   } catch (e) { /* 预览失败不打断主面板 */ }
 }
 
 async function loadTemperature() {
   try {
-    const res = await adminStore.authFetch('/api/v1/admin/perception/temperature')
+    const res = await adminStore.authFetch(`/api/v1/admin/perception/temperature?exclude_dev=${excludeDev.value}`)
     if (res.ok) temps.value = (await res.json()).users || []
   } catch (e) { /* 预览失败不打断主面板 */ }
 }
@@ -295,6 +300,17 @@ onMounted(load)
 .page-title { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
 .page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
 .header-right { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+
+/* 排除开发者开关（同 Admin/Analytics/index.vue） */
+.xd-toggle {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: rgba(255,255,255,0.45); cursor: pointer;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 8px; padding: 6px 12px; transition: all .15s; user-select: none;
+}
+.xd-toggle input { accent-color: #7b7fb2; cursor: pointer; margin: 0; }
+.xd-toggle.on { color: rgba(170,175,225,0.95); border-color: rgba(123,127,178,0.4); background: rgba(123,127,178,0.12); }
+
 .range-tabs { display: flex; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 3px; }
 .range-tab { font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer; color: rgba(255,255,255,0.4); background: transparent; border: none; transition: all .15s; }
 .range-tab.active { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }

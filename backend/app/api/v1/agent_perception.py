@@ -10,10 +10,12 @@ import time
 from collections import Counter, defaultdict
 
 from fastapi import APIRouter, Depends, Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.redis import get_redis
 from app.db.session import get_db
+from app.models import User
 
 router = APIRouter(prefix="/admin/perception", tags=["admin"])
 
@@ -31,11 +33,20 @@ def _mean(xs, nd=1):
     return round(sum(xs) / len(xs), nd) if xs else None
 
 
+async def _dev_prefixes(db: AsyncSession) -> set:
+    """开发者账号的匿名化前缀集合（perc 事件的 u 字段是 str(user_id)[:8]，不是完整 user_id，
+    只能靠前缀比对排除，同 admin_analytics.py 的 exclude_dev 语义）。"""
+    ids = (await db.execute(select(User.id).where(User.is_developer == True))).scalars().all()
+    return {str(uid)[:8] for uid in ids}
+
+
 @router.get("")
 async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int = 1,
-                           rate_hi: float = _RATE_HI, min_n: int = _MIN_N, ambig_hi: float = _AMBIG_HI):
+                           rate_hi: float = _RATE_HI, min_n: int = _MIN_N, ambig_hi: float = _AMBIG_HI,
+                           exclude_dev: bool = False, db: AsyncSession = Depends(get_db)):
     """感知总览。hours=时间窗（默认 7 天，0=不限）;min_events=活跃用户门槛（窗口内 ≥N 轮反思）;
-    rate_hi/min_n/ambig_hi=标红阈值（误判率/最小样本/歧义度），默认即原常量，仅改「怎么看」不改系统行为。"""
+    rate_hi/min_n/ambig_hi=标红阈值（误判率/最小样本/歧义度），默认即原常量，仅改「怎么看」不改系统行为；
+    exclude_dev=排除开发者账号（is_developer 标记）。"""
     thresholds = {"rate_hi": rate_hi, "min_n": min_n, "ambig_hi": ambig_hi}
     r = get_redis()
     raw = await r.lrange(_PERC_KEY, 0, limit - 1)
@@ -48,6 +59,9 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
     if hours:
         cutoff = time.time() - hours * 3600
         events = [e for e in events if (e.get("ts") or 0) >= cutoff]
+    if exclude_dev:
+        dev_prefixes = await _dev_prefixes(db)
+        events = [e for e in events if e.get("u") not in dev_prefixes]
 
     # 按用户分组
     by_user_all = defaultdict(list)
@@ -204,17 +218,21 @@ async def export_events(hours: int = 0):
 
 
 @router.get("/misread/recent")
-async def misread_recent(n: int = 30):
-    """最近 N 条错读案例（脱敏，给面板预览）。读 Redis live 列表 perc:misread_cases。"""
+async def misread_recent(n: int = 30, exclude_dev: bool = False, db: AsyncSession = Depends(get_db)):
+    """最近 N 条错读案例（脱敏，给面板预览）。读 Redis live 列表 perc:misread_cases。
+    exclude_dev=排除开发者账号——超采一批（封顶 200）再过滤再截断到 n，避免被排除的案例挤占名额。"""
     n = max(1, min(int(n or 30), 200))
     r = get_redis()
-    raw = await r.lrange(_MISREAD_KEY, 0, n - 1)
+    raw = await r.lrange(_MISREAD_KEY, 0, 199 if exclude_dev else n - 1)
     cases = []
     for x in raw:
         try:
             cases.append(json.loads(x if isinstance(x, str) else x.decode()))
         except Exception:
             pass
+    if exclude_dev:
+        dev_prefixes = await _dev_prefixes(db)
+        cases = [c for c in cases if c.get("u") not in dev_prefixes][:n]
     return {"total": len(cases), "cases": cases}
 
 
@@ -229,14 +247,16 @@ async def misread_export():
 
 
 @router.get("/temperature")
-async def temperature_list(db: AsyncSession = Depends(get_db)):
+async def temperature_list(exclude_dev: bool = False, db: AsyncSession = Depends(get_db)):
     """关系温度当前值列表（v1：只读当前快照，无历史曲线——temp.json 每次重算是整份覆盖，
-    见 agent/memory/temperature.py。按温度降序，没算过温度（.agent/temp.json 不存在）的用户不列入。"""
-    from sqlalchemy import select
+    见 agent/memory/temperature.py。按温度降序，没算过温度（.agent/temp.json 不存在）的用户不列入。
+    exclude_dev=排除开发者账号（is_developer 标记）。"""
     from agent.memory import store
-    from app.models import User
 
-    users = (await db.execute(select(User.id, User.username, User.display_name))).all()
+    stmt = select(User.id, User.username, User.display_name)
+    if exclude_dev:
+        stmt = stmt.where(User.is_developer == False)
+    users = (await db.execute(stmt)).all()
     rows = []
     for uid, username, display_name in users:
         data = await store.read_temperature(uid)
