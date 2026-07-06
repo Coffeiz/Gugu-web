@@ -269,25 +269,6 @@
                     </span>
                     <button class="pm-bot-del" @click="removeBot(b)">删除</button>
                   </div>
-                  <!-- 群聊开关目前只有 QQ 网关真正接了（每条群消息现查这两个字段）——飞书群聊本就
-                       不区分开关地全量处理，微信群聊回复路由另有独立遗留问题，两家都还没接这个开关，
-                       先不在 UI 上摆一个不生效的假开关误导用户 -->
-                  <div v-if="p.key === 'qqbot'" class="pm-bot-item-group">
-                    <span class="pm-switch-wrap">
-                      <label class="switch sm">
-                        <input type="checkbox" :checked="b.group_chat_enabled" @change="toggleGroupChat(b)" />
-                        <span class="slider"></span>
-                      </label>
-                      <span class="pm-switch-label" :class="{ on: b.group_chat_enabled }">{{ b.group_chat_enabled ? '群聊已开启' : '群聊已关闭' }}</span>
-                    </span>
-                    <span class="pm-switch-wrap pm-switch-locked" title="QQ 平台限制：群消息本就只有@它才能收到，恒开启，无法关闭">
-                      <label class="switch sm">
-                        <input type="checkbox" checked disabled />
-                        <span class="slider"></span>
-                      </label>
-                      <span class="pm-switch-label">需要@</span>
-                    </span>
-                  </div>
                 </div>
               </template>
 
@@ -657,11 +638,6 @@ async function toggleBot(b) {
   catch (e) { connectErr.value = e.message }
 }
 
-async function toggleGroupChat(b) {
-  try { await userBotsApi.update(b.id, { group_chat_enabled: !b.group_chat_enabled }); await loadBots() }
-  catch (e) { connectErr.value = e.message }
-}
-
 async function removeBot(b) {
   if (!confirm(`删除「${b.name}」？删除后这个机器人不再连咕咕。`)) return
   try { await userBotsApi.remove(b.id); await loadBots() }
@@ -881,10 +857,6 @@ function handleLogout() {
   background: rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.06);
 }
 .pm-bot-item-top { display: flex; align-items: center; gap: 10px; }
-.pm-bot-item-group {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.05);
-}
 .pm-bot-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pm-bot-name { font-size: 13px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
 .pm-bot-tag { font-size: 10px; font-weight: 600; color: #b8860b; background: rgba(212,160,23,0.14); padding: 1px 6px; border-radius: 5px; }
@@ -896,8 +868,6 @@ function handleLogout() {
 .pm-switch-wrap { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
 .pm-switch-label { font-size: 11px; color: var(--text-secondary); }
 .pm-switch-label.on { color: var(--color-primary); font-weight: 600; }
-.pm-switch-locked { opacity: 0.6; }
-.pm-switch-locked .switch, .pm-switch-locked .slider { cursor: not-allowed; }
 
 .switch { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
 .switch.sm { width: 32px; height: 19px; }

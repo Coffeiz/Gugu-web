@@ -223,7 +223,10 @@ async def upload_avatar(
     if len(data) > _AVATAR_MAX_BYTES:
         raise HTTPException(400, "头像文件不能超过 5MB")
 
-    ext = (file.filename or "avatar").rsplit(".", 1)[-1].lower() or "jpg"
+    # 存盘后缀从已校验的 content_type 推导，不用客户端传的 filename——粘贴/剪贴板图片
+    # 常常没有扩展名（如 "blob"），若从 filename 推导会存出垃圾后缀，导致 get_avatar()
+    # 按后缀猜 MIME 时全部兜底成 image/jpeg，显示异常。
+    ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}[file.content_type]
     settings = get_settings()
     avatar_dir = Path(settings.storage.local_path) / "avatars"
     avatar_dir.mkdir(parents=True, exist_ok=True)
