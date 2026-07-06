@@ -16,6 +16,7 @@
 - **感知诊断面板加「排除开发者」开关**（`api/v1/agent_perception.py` + `Admin/Perception/index.vue`）：跟 Admin/Analytics（数据总览）同款 `exclude_dev` 语义和 UI。感知这边数据源是 Redis 事件（`u` 字段是 `str(user_id)[:8]` 脱敏前缀，不是完整 user_id），排除逻辑得先查 DB 里 `is_developer` 用户的 id、算出前缀集合，再按前缀比对过滤——跟 `admin_analytics.py` 直接 SQL where 排除不是同一实现方式，但语义一致；总览统计/错读案例/关系温度三处数据源都接了这个开关。
 - **项目支持归档/查看已归档/取消归档**（`app/api/v1/projects.py`、`views/Projects/index.vue` + 新增 `ArchivedProjectsModal.vue`、`ProjectModal.vue`）：`archive_project` 工具此前只有 agent 侧能力，网页端毫无入口——只能靠咕咕归档，归档后项目从看板消失即无处可寻，也无法撤销。`GET /projects` 补 `archived` 查询参数（默认只看未归档，看板不再混入已归档项目）；项目编辑卡悬浮操作区加「归档」按钮（可逆、不用二次确认）；项目页新增「已归档」入口，弹窗列出已归档项目并可一键「取消归档」，按年/月折叠分层（复用「已完成」列现成约定），避免归档一多就变成长列表。
 - **IM 慢工具触发时先发一句进度声明，缓解非流式对话的等待感**（`agent/tools/base.py`、`agent/imctx.py`、`worker.py`、`app/core/config.py` 新增 `im_progress_announce_enabled` 开关 + `Admin/Agent/index.vue`）：QQ/飞书/微信这类非流式 IM 渠道，模型调联网搜索/深度研究这类慢工具时用户只能干等，容易误以为没反应。声明文案**只能来自工具定义时写死的 `start_message`（字符串或按 args 生成），绝不能由模型现场生成**——避免"说了却没做"的可靠性问题重新引入；`dispatch()` 派发到带 `start_message` 的工具时，若处于 IM 上下文（web 路径不触发）且本轮会话尚未声明过，发一条声明消息，同一会话内只发一次。目前接了 `web_search`/`image_search`/`deep_research` 三个慢工具；`http_get` 因同时服务快查询（天气）和慢查询（读长网页）、派发时无法区分，暂不接，避免快路径被误报"较慢"。全局开关默认开启，可在 Admin→Agent 配置关闭。
+- **浮动预览窗四角都能拖拽调整大小**（`components/common/FloatPreviewWindow.vue`）：之前只有右下角一个手柄能拉伸，另外三个角完全不能拖。`startResize` 改成按方向（`nw`/`ne`/`sw`/`se`）算——左侧/上侧的角在改宽高的同时要反向挪动窗口的 x/y（不然窗口会往右下"飘"），到最小宽高时按实际收缩量钳位、不会和鼠标脱节。可见的拉伸手柄图标仍只留右下角，其余三角只留可拖拽热区（对应方向的 resize 光标），视觉上不额外加图标。
 
 ### 修复
 

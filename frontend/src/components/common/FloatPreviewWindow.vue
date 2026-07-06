@@ -73,8 +73,13 @@
       </template>
     </div>
 
-    <!-- resize 角标 -->
-    <div v-if="!maximized" class="fpw-resize" @mousedown.stop.prevent="startResize"></div>
+    <!-- resize：右下角带图标手柄，其余三角只留可拖拽热区（无图标） -->
+    <template v-if="!maximized">
+      <div class="fpw-resize" @mousedown.stop.prevent="startResize('se', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-nw" @mousedown.stop.prevent="startResize('nw', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-ne" @mousedown.stop.prevent="startResize('ne', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-sw" @mousedown.stop.prevent="startResize('sw', $event)"></div>
+    </template>
   </div>
 
   <!-- 文件信息浮窗（独立弹窗） -->
@@ -452,21 +457,37 @@ function onDragUp() {
   window.removeEventListener('mouseup',   onDragUp)
 }
 
-// ── 右下角 resize ─────────────────────────────────────────────────────────────
+// ── 四角 resize（可见手柄只留右下角，其余三角只是能拖、没有图标）────────────────
 let resizeOrig = null
 const MIN_W = 320, MIN_H = 240
 
-function startResize(e) {
+function startResize(dir, e) {
   if (e.button !== 0) return
-  resizeOrig = { mx: e.clientX, my: e.clientY, w: w.value, h: h.value }
+  resizeOrig = { mx: e.clientX, my: e.clientY, w: w.value, h: h.value, x: x.value, y: y.value, dir }
   window.addEventListener('mousemove', onResizeMove)
   window.addEventListener('mouseup',   onResizeUp)
 }
 
 function onResizeMove(e) {
   if (!resizeOrig) return
-  w.value = Math.max(MIN_W, resizeOrig.w + e.clientX - resizeOrig.mx)
-  h.value = Math.max(MIN_H, resizeOrig.h + e.clientY - resizeOrig.my)
+  const { mx, my, w: ow, h: oh, x: ox, y: oy, dir } = resizeOrig
+  const dx = e.clientX - mx
+  const dy = e.clientY - my
+  // 左侧的角：一边收缩宽度一边把 x 往右挪，钳到 MIN_W 后用实际收缩量算 x，避免碰到下限后窗口和鼠标脱节
+  if (dir.includes('e')) {
+    w.value = Math.max(MIN_W, ow + dx)
+  } else {
+    const newW = Math.max(MIN_W, ow - dx)
+    x.value = Math.max(0, ox + (ow - newW))
+    w.value = newW
+  }
+  if (dir.includes('s')) {
+    h.value = Math.max(MIN_H, oh + dy)
+  } else {
+    const newH = Math.max(MIN_H, oh - dy)
+    y.value = Math.max(0, oy + (oh - newH))
+    h.value = newH
+  }
 }
 
 function onResizeUp() {
@@ -710,4 +731,10 @@ onUnmounted(() => {
 .fpw-resize:hover {
   background: linear-gradient(135deg, transparent 50%, rgba(123,127,178,0.5) 50%);
 }
+/* 其余三角：只留可拖拽热区，不放图标——右下角已经有明确的可见手柄提示"这个窗口能拉伸"，
+   其它角再摆一个图标视觉上会太抢/太碎，用鼠标指针（resize 光标）作为唯一提示就够 */
+.fpw-resize-edge { position: absolute; width: 14px; height: 14px; }
+.fpw-resize-nw { top: 0; left: 0; cursor: nwse-resize; }
+.fpw-resize-ne { top: 0; right: 0; cursor: nesw-resize; }
+.fpw-resize-sw { bottom: 0; left: 0; cursor: nesw-resize; }
 </style>
