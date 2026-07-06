@@ -190,6 +190,24 @@ body {
   box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
 }
 
+/* 弹窗进场「玻璃 ramp」（机制注释见 BaseModal.vue 的过渡段）：模糊半径本身从 0 过渡
+   到各自满值，全程不碰 opacity——否则半透明祖先形成隔离组，backdrop-filter 采不到
+   弹窗后面的页面/窗口，动画期间模糊是死的。规则放全局是因为 BaseModal 的 scoped
+   样式够不到 slot 里的玻璃面板（slot 内容带的是调用方组件的 scope id）。
+   !important 用于压过 BaseModal 通过 blur prop 写到 .bm-card 上的 inline 样式。 */
+.bm-enter-from .bm-card,
+.bm-enter-from .panel-left,
+.bm-enter-from .modal-right {
+  backdrop-filter: blur(0px) !important;
+  -webkit-backdrop-filter: blur(0px) !important;
+}
+.bm-enter-active .bm-card,
+.bm-enter-active .panel-left,
+.bm-enter-active .modal-right {
+  transition: backdrop-filter 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              -webkit-backdrop-filter 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 /* ── 弹出面板（右键菜单 / 排序菜单 / 表单弹窗）全局共用 ── */
 .popup-menu {
   background: rgba(255,255,255,0.6);

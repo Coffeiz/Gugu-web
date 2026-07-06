@@ -5,8 +5,11 @@
   <Transition name="bm-ov">
     <div v-if="show" class="bm-overlay" :style="{ zIndex: OVERLAY_Z }" @click="$emit('close')" />
   </Transition>
-  <!-- 卡片：进窗口带，点击置顶（与预览窗/聊天窗自由叠放） -->
-  <Transition name="bm">
+  <!-- 卡片：进窗口带，点击置顶（与预览窗/聊天窗自由叠放）。
+       :duration 定时收尾——进场根节点自身没有任何过渡属性（见下方过渡注释），
+       不给固定时长的话 Vue 监听不到 transitionend、会立刻摘掉 enter-active，
+       玻璃 ramp 就跑不完。 -->
+  <Transition name="bm" :duration="200">
     <div v-if="show" class="bm-center" :style="{ zIndex: myZ }">
       <div class="bm-card" :style="cardStyle" @mousedown.capture="raise">
         <slot />
@@ -96,12 +99,29 @@ onBeforeUnmount(() => unregEsc?.())
   overflow: hidden;
 }
 
-/* ── 过渡：遮罩 / 卡片各自淡入淡出（与原节奏一致）── */
-.bm-ov-enter-active { transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+/* ── 过渡 ──
+   ⚠️ 进场绝不能动 opacity（卡片或它的任何祖先）：CSS 规范里 opacity<1 的元素是一个
+   隔离组（backdrop root），其子孙的 backdrop-filter 在整个淡入期间只能在组内采样、
+   糊不到组外的页面/窗口（如叠在下面的 GuguChat 大窗口），表现为「打开动画全程不
+   模糊、动画结束的一瞬间才突然糊上」（性能 trace 帧序列实测确认）。之前试过的
+   will-change 预热/双 rAF 都治不了，因为不是算得慢、是被隔离。
+   进场改成「玻璃 ramp」：遮罩的压暗+模糊、卡片/玻璃面板的 blur 半径本身从 0 过渡
+   到满值，全程无半透明祖先，采样从第一帧就是活的。面板部分的 ramp 规则在
+   global.css（scoped 样式够不到 slot 里的玻璃面板）。
+   离场保留 opacity 淡出：关闭瞬间模糊失效会被同步的淡出盖住，肉眼基本不可察。 */
+.bm-ov-enter-active {
+  transition: background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              backdrop-filter 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              -webkit-backdrop-filter 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
 .bm-ov-leave-active { transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1); }
-.bm-ov-enter-from, .bm-ov-leave-to { opacity: 0; }
+.bm-ov-enter-from {
+  background-color: rgba(20, 22, 30, 0);
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
+}
+.bm-ov-leave-to { opacity: 0; }
 
-.bm-enter-active { transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
 .bm-leave-active { transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1); }
-.bm-enter-from, .bm-leave-to { opacity: 0; }
+.bm-leave-to { opacity: 0; }
 </style>
