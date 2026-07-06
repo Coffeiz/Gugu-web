@@ -10,7 +10,7 @@ import json
 import logging
 import re
 import time
-from typing import Any
+from typing import Any, Callable
 
 # 工具调用轨迹（可观测，reliability Roadmap P1）：每次 dispatch 落一行 JSON 到 `agent.traj` logger
 # → 经 INFO 进 gugu.log（Debug 面板 tail 得到）。「调没调工具/调了啥/成没成」翻一眼即得，不用复现+猜。
@@ -125,17 +125,51 @@ def _coerce_int_ids(args) -> None:
                 tgt[k] = _to_int_id(tgt[k])
 
 
+async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
+    """IM 慢工具进度声明（见 docs/agent/proposals/IM慢工具进度声明-设计.md）：工具即将真正执行
+    时，若登记了 start_message 就发一条声明给用户，让 IM 非流式的长时间沉默有个"人在动手"的信号。
+    文案 100% 来自工具自己的 metadata，绝不是模型现场生成——只在「工具确定要执行」这一刻触发，
+    不存在"说了没做"的风险。仅 IM 生效（imctx 只有 IM 路径会 set）、每个 Busy Session（THINKING
+    状态期间）最多发一次、失败不影响工具本身执行（fire-and-forget）。"""
+    if not tool.start_message:
+        return
+    from agent import imctx
+    payload = imctx.to_send_payload()
+    if not payload:             # web 路径：imctx 没 set 过，压根不在 IM 上下文里
+        return
+    if imctx.was_announced():  # 本 Busy Session 已经发过声明，不重复发
+        return
+    try:
+        from app.core.config import get_settings
+        if not get_settings().agent.im_progress_announce_enabled:
+            return
+        text = tool.start_message(args) if callable(tool.start_message) else tool.start_message
+        if not text:
+            return
+        imctx.mark_announced()   # 先标记再发送：即便发送失败也别在本 session 里反复重试打扰用户
+        import worker
+        await worker._send(payload, text)
+    except Exception as e:
+        print(f"[skill] 慢工具进度声明发送失败（不影响工具执行）: {type(e).__name__}: {e}", flush=True)
+
+
 class Tool:
     """单个工具的声明 + 执行入口。"""
 
     def __init__(self, name: str, description: str, input_schema: dict,
-                 handler, label: str | None = None, destructive: bool = False):
+                 handler, label: str | None = None, destructive: bool = False,
+                 start_message: str | Callable[[dict], str] | None = None):
         self.name = name
         self.description = description
         self.input_schema = input_schema
         self.handler = handler          # async (db, user_id, args) -> dict | list
         self.label = label or name
         self.destructive = destructive  # 不可逆操作，handler 内走 confirm.gate
+        # IM 慢工具进度声明用（仅 IM、每个 Busy Session 最多发一次，见 dispatch）：固定文案或
+        # 按调用参数变化措辞的函数——只能读 dispatch 时已知的参数，不能猜返回结果（见设计文档 §2.3
+        # 的边界：像 http_get 这种响应类型要等结果才知道的工具，就别细分，用统一粗粒度文案）。
+        # 不设置 = 该工具认为自己够快，不需要这条声明。
+        self.start_message = start_message
 
     def to_anthropic(self) -> dict:
         return {
@@ -234,6 +268,8 @@ class SkillRegistry:
         if tool is None:
             _log_traj(name, user_id, args, False, "未知工具", t0)
             return json.dumps({"error": f"未知工具: {name}"}), None
+
+        await _maybe_announce_progress(tool, args)
 
         # user_id 归一成 UUID：IM 路（worker）传进来的是字符串，而 ORM 对象的 .user_id 是
         # UUID 对象。SQL 查询（File.user_id == user_id）能自动转型，但工具里 python 层的

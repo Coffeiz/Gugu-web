@@ -79,6 +79,7 @@ export const useConfigStore = defineStore('config', () => {
       reflection_threshold: 10,
       worker_concurrency: 16,
       conv_compress_enabled: true,
+      im_progress_announce_enabled: true,
       daily_retention_days: 14,
       weekly_retention_weeks: 6,
     },

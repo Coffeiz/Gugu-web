@@ -290,9 +290,11 @@ async def handle(msg_id: str, payload: dict):
         print(f"[worker] {platform} 记忆命令(trace={_tid}) → 已短路回复", flush=True)
         return None
 
-    # 把 IM 上下文透传给工具层（react 工具据此给用户这条消息加表情；State Manager 据此打细粒度状态）
+    # 把 IM 上下文透传给工具层（react 工具据此给用户这条消息加表情；State Manager 据此打细粒度状态；
+    # chat_type/context_token 供慢工具进度声明主动推送时直接拼 worker._send() 的 payload 用）
     from agent import imctx
-    imctx.set_im(platform, payload.get("message_id"), payload.get("channel_id"), payload.get("chat_id"), puid)
+    imctx.set_im(platform, payload.get("message_id"), payload.get("channel_id"), payload.get("chat_id"), puid,
+                payload.get("chat_type"), payload.get("context_token", ""))
     # 记一份「可触达地址」：定时任务/主动推送时按 user_id 反查这里发 IM
     try:
         from app import scheduled_tasks as schedtasks

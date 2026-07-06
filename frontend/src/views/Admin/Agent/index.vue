@@ -381,6 +381,20 @@
 
           <div class="behavior-item">
             <div class="behavior-label">
+              <span>IM 慢工具进度声明</span>
+              <span class="behavior-desc">多步工具循环期间先发一句"我去查一下"再执行，减少 IM 非流式的长时间沉默感；文案来自工具自身登记的固定文案，不是模型现场生成；只在 IM 生效，网页不受影响</span>
+            </div>
+            <button
+              class="toggle-switch"
+              :class="{ on: agentDraft.im_progress_announce_enabled }"
+              @click="agentDraft.im_progress_announce_enabled = !agentDraft.im_progress_announce_enabled; saveBehavior()"
+            >
+              <span class="toggle-knob" />
+            </button>
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
               <span>Reflection 触发阈值</span>
               <span class="behavior-desc">每隔多少条消息触发一次记忆整理</span>
             </div>

@@ -13,8 +13,10 @@ SearXNG 部署在后端同机（127.0.0.1），由 settings.search.searxng_url �
 sogou/quark/360search 可达，固定带 engines 避开会超时的 google/bing 等。图片搜索能用的引擎不一定
 是同一批（`settings.search.searxng_image_engines`，留空回退文本引擎列表）。
 """
-import json
 from datetime import datetime
+
+import json
+import random
 
 from app.core.tz import local_day_start_utc
 
@@ -192,6 +194,7 @@ class SearchSkill(BaseSkill):
                 "required": ["query"],
             },
             handler=_searxng_search,
+            start_message=lambda args: random.choice(["我去查一下。", "我搜一下最新的资料。", "我确认一下这个。"]),
         ),
         Tool(
             name="image_search", label="图片搜索",
@@ -210,6 +213,7 @@ class SearchSkill(BaseSkill):
                 "required": ["query"],
             },
             handler=_searxng_image_search,
+            start_message=lambda args: random.choice(["我去找张图。", "我搜搜看有没有合适的图。"]),
         ),
         Tool(
             name="deep_research", label="深度研究",
@@ -230,6 +234,7 @@ class SearchSkill(BaseSkill):
                 "required": ["query"],
             },
             handler=_deep_research,
+            start_message=lambda args: random.choice(["我深入研究一下这个。", "我仔细看看，等会儿告诉你。"]),
         ),
     ]
 

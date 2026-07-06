@@ -107,6 +107,7 @@ class AgentBehaviorSettings(BaseModel):
     reflection_threshold: int = Field(10, description="触发 Reflection 的消息数")
     worker_concurrency: int = Field(16, description="IM worker 同时跑几条 agent（实测单 MiniMax key 安全上限≈16；worker 每 30s 热读）")
     conv_compress_enabled: bool = Field(True, description="对话历史压缩：超长会话把旧消息总结成摘要省 token；关闭后只按 token 截断、不摘要（web 即时、worker 每 30s 热读）")
+    im_progress_announce_enabled: bool = Field(True, description="IM 慢工具进度声明：多步工具循环期间（IM 非流式、用户容易觉得沉默）先发一句「我去查一下」这类声明再执行，文案来自工具自身登记的 start_message（不是模型现场生成，见 docs/agent/proposals/IM慢工具进度声明-设计.md）；只在 IM 生效，网页不受影响")
     daily_retention_days: int = Field(14, description="daily 记忆保留天数（过期直接压进 memory.md）")
     # 已废弃：weekly 层已砍，压缩定为 daily→memory 两段；字段暂留兼容旧 override，不再使用
     weekly_retention_weeks: int = Field(6, description="（已废弃，weekly 层取消）")
