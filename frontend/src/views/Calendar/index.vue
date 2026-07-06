@@ -112,7 +112,7 @@
                     left:  bar.startsHere ? `calc(${bar.colStart / 7 * 100}% + 6px)` : (bar.colStart / 7 * 100) + '%',
                     right: bar.endsHere   ? `calc(${(7 - bar.colEnd - 1) / 7 * 100}% + 6px)` : ((7 - bar.colEnd - 1) / 7 * 100) + '%',
                     top:   (HEADER_H + bar.row * BAR_H) + 'px',
-                    background: [deadlineWarnLayer(bar), `linear-gradient(to right, ${bar.accent}50 0%, ${bar.accent}50 ${barSegFill(bar)}%, ${bar.accent}1a ${barSegFill(bar)}%, ${bar.accent}1a 100%)`].filter(Boolean).join(', '),
+                    background: `linear-gradient(to right, ${bar.accent}50 0%, ${bar.accent}50 ${barSegFill(bar)}%, ${bar.accent}1a ${barSegFill(bar)}%, ${bar.accent}1a 100%)`,
                     borderColor: bar.accent + '70',
                     color:       darkenHex(bar.accent),
                   }"
@@ -818,20 +818,6 @@ function barSegFill(bar) {
   return Math.round((progressDays - segStartOff) / (segEndOff - segStartOff) * 100)
 }
 
-const DEADLINE_WARN_DAYS = 3   // 临近截止日的标红范围（天）：跟 store 里 urgentProjects 的阈值一致
-
-// 项目条最后几天渐变标红，提示临近截止日：只在真正落到 bar.endDate 那一段（跨周项目其余段不提前标红，
-// 同 barSegFill 一样按「段内」而非全局天数近似计算）计算；已完成的项目没有「临近」这回事，跳过。
-// 返回一层可叠加的 CSS 背景（前景层，盖在原有进度填充渐变之上），没有警示时返回 null。
-function deadlineWarnLayer(bar) {
-  if (!bar.endsHere || bar.status === 'done') return null
-  const segTotal = daysBetween(bar.segStartIso, bar.segEndIso) + 1
-  if (segTotal <= 0) return null
-  const warnDays = Math.min(DEADLINE_WARN_DAYS, segTotal)
-  const warnStartPct = Math.round((segTotal - warnDays) / segTotal * 100)
-  return `linear-gradient(to right, transparent 0%, transparent ${warnStartPct}%, rgba(200,70,70,0.55) 100%)`
-}
-
 function daysBetween(isoA, isoB) {
   return Math.round((+new Date(isoB + 'T00:00:00') - +new Date(isoA + 'T00:00:00')) / 86400000)
 }
@@ -1454,7 +1440,7 @@ function pbarStyle(bar) {
   return { left: bar.colStart / 7 * 100 + '%',
            width: (bar.colEnd - bar.colStart + 1) / 7 * 100 + '%',
            top: bar.row * 20 + 'px',
-           background: [deadlineWarnLayer(bar), capBg(bar.accent, bar.progress)].filter(Boolean).join(', '),   // 进度填充：与月视图/侧栏胶囊一致；deadlineWarnLayer 叠加临近截止日的标红
+           background: capBg(bar.accent, bar.progress),   // 进度填充：与月视图/侧栏胶囊一致
            borderColor: bar.accent + '70', color: darkenHex(bar.accent) }
 }
 
