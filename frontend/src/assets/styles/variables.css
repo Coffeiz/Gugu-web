@@ -8,7 +8,7 @@
   --popup-blur: blur(12px);   /* 小弹窗统一模糊(右键/排序/日期/活动表单/通知等)——改这里全站生效 */
   --glass-shadow: 0 4px 16px rgba(80,90,110,0.08), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55);
   --glass-shadow-lg: 0 8px 28px rgba(80,90,110,0.11), inset 0 1px 0 rgba(255,255,255,0.98), inset 1px 0 0 rgba(255,255,255,0.65);
-  --panel-bg: rgba(238,240,246,0.96);
+  --panel-bg: rgba(238,240,246,0.9);
   --color-primary: #7b7fb2;
   --color-secondary: #c4afc8;
   --color-tertiary: #7ab8c8;

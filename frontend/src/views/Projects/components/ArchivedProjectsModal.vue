@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="show" width="480px" background="rgba(255,255,255,0.6)" blur="blur(24px)" @close="$emit('close')">
+  <BaseModal :show="show" width="480px" background="var(--panel-bg)" @close="$emit('close')">
     <div class="ap-modal">
       <div class="ap-header">
         <span class="ap-title">已归档项目</span>
