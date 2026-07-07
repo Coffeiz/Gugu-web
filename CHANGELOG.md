@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### 改进
+
+- **咕咕聊天改用虚拟滚动**（`components/common/GuguChat.vue`，新增 `@tanstack/vue-virtual`）：长会话不再一次性渲染全部消息、markdown 也在消息首次进入视口时才补解析；滚动条始终代表整条会话真实长度，高度不定的消息由 `useVirtualizer` 自带的 `measureElement` + ResizeObserver 持续纠偏（图片/缩略图延迟加载导致消息变高也能跟上）。
+
 ### 新增
 
 - **`http_get` 按 Content-Type 自动提取正文**（`agent/tools/web.py`）：HTML 用 trafilatura 提取正文转 markdown，PDF 复用现成的 pdftotext 提取，避免把截断的原始响应体喂给模型。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
