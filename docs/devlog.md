@@ -5,6 +5,72 @@
 
 ---
 
+## 2026-07-04 · 飞书/微信支持消息引用识别，QQ 协议层做不到
+
+用户在 IM 里"引用/回复"某条历史消息发送时，之前咕咕只看到新发的这条文本，感知不到"这句话是针对哪条历史消息说的"——三个平台的接入代码原本都没读取引用字段。用真实引用消息在三个平台上实测，能力差异很大。
+
+**QQ** 官方机器人 C2C 单聊协议（`botpy` 的 `message_reference`）验证是空的、引用内容也没拼进文本，协议层硬限制，判定不可行、跳过。
+
+**飞书** SDK 收消息事件自带 `parent_id`（被引用消息 id），但只给 id，需要多调一次 `GetMessage` API 反查内容——中间踩了个坑：咕咕自己的回复走 `interactive` 卡片（`_do_send` 优先发卡片，不是纯 `text`），反查回来的卡片内容被飞书归一化成 `{"tag":"text","text":...}`，跟发送时原始的 `{"tag":"markdown","content":...}` 结构不一样，且 `elements` 是数组的数组（按分组/分段组织），第一版按扁平列表解析直接崩 `AttributeError`，改成递归拍平 + 两种字段名兼容后才拿到真实内容。
+
+**微信** iLink 最省事，引用消息的 `item.ref_msg.message_item` 直接内嵌了被引用消息的完整内容（含 `text_item`），不用额外查询。
+
+两边实现都只包装送进 LLM 的文本（新增 `llm_text`，不改原始 `text`），router/秒回表情逻辑继续用原始文本判关键词，不受影响。改动：`agent/adapters/{feishu,wechat}.py` 新增 `_fetch_quoted_text`/`_extract_quoted_text`。
+
+## 2026-07-04 · 全项目安全审计 + 一批修复
+
+对认证授权与多租户隔离 / 注入·SSRF·文件与工具 / 密钥·配置·日志·部署面三个攻击面做了一轮完整审计（报告 [docs/security/安全审计报告-2026-07-03.md](docs/security/安全审计报告-2026-07-03.md)）。核心结论是应用层内核扎实——`get_owned` 归属校验全覆盖、错误脱敏真挂在 `registry.dispatch` 唯一收口、IM 凭据 AES-GCM 加密且经 env 注入子进程、登录防枚举、JWT 算法固定、SQL 全参数化、无命令注入/反序列化面、13 个 `/admin/*` 全挂 `require_admin`，逐条核实到位；审计中还证伪了两条误报（上传 `ext` "路径穿越"——`rsplit('.',1)` 取的段按定义不含 `..`，实测所有 PoC 都逃不出用户目录；admin 决策轨迹"IDOR 泄露对话"——正文其实已 `_redact_text` 脱敏）。默认凭据（默认 admin 口令 / 默认 `secret_key`）经确认生产端已设强值、不成立，仅建议将来加启动 fail-closed 守卫。
+
+本次修复的真实问题：
+
+1. **H3 SSRF 重定向绕过**——`send_file` 下载网络图片时 `follow_redirects=True`，而私网校验只查初始 URL，公网页可 302 跳 `169.254.169.254`/内网绕过（对比 `http_get` 早已 `follow_redirects=False`，两处不一致即遗漏）；改为手动跟随、每一跳都重新过 `_url_is_safe`（最多 3 跳）。
+2. **H2 全站无限流**——新增轻量 Redis 固定窗口限流件（fail-open，Redis 挂了不锁死登录），挂到用户登录（10 次/5min·按 IP+用户名）、注册（20/h）、找回密码（5/h）、admin 登录（10/5min）。
+3. **H4 邀请码注册竞态**——查 `used_at is None` 与置位之间无行锁，并发同码可注册多号；改为原子 `UPDATE … WHERE used_at IS NULL`、`rowcount≠1` 即拒（实测两并发抢同码 `rowcounts=[1,0]`）。
+4. **上传无大小上限**——加单文件 200MB 硬闸（整个请求体一次性进内存、配额可能为 None）。
+5. **安全响应头缺失**——中间件补 `X-Content-Type-Options`/`X-Frame-Options: SAMEORIGIN`/`Referrer-Policy`/`HSTS`（CSP 因 Vue 内联风险暂缓）。
+6. **config 端点回传 traceback**——PATCH/init-db 的 500 不再把 `format_exc()` 塞进 detail，改服务端日志 + 前端通用消息。
+7. **嵌套 error 漏脱敏**——`_redact_result` 改递归，批量工具 `failed`/`saved` 列表里 `{"error": str(e)}` 的原始路径/连接串也过 `sanitize_error`（实测嵌套已抹、正常内容不动）。
+8. **重置链接信任 Origin 头**——改用服务端 `request.base_url`（经 nginx 固定为真实域名），防伪造 Origin 投毒钓鱼。
+9. **审计日志恒记 "admin"**——`require_admin` 把 `payload["sub"]` 落到 `request.state.admin_username`，多管理员可归因。
+
+全部改动经 `py_compile` + 模块导入 + devserver 上 10 项回归测试（真实 DB/Redis）验证通过。暂缓项（需更大改动，报告 §9 列明）：H3 的 DNS-rebinding 残留（pin IP 会破 HTTPS）、token 撤销、admin 日志 SSE token 走 URL（需前端换 fetch 流式）、加密密钥与 JWT 密钥解耦（需迁移重加密）、XFF 可信代理白名单。改动文件：`app/core/ratelimit.py` 新增 + `agent/tools/{files,base}.py` + `app/api/v1/{auth,admin_auth,config}.py` + `app/main.py`。
+
+## 2026-07-07 · 文件编辑功能：从 hljs 叠加到 CodeMirror 的弯路
+
+给预览窗加文本/代码编辑功能，txt/md 直接上普通 textarea 没问题。代码类扩展名想要"编辑的同时也有语法高亮"，第一版走的是经典 highlight-overlay 手法：透明 textarea 叠在 hljs 高亮结果的 `<pre>` 上面，每次 `@input` 重新跑一次 `hljs.highlight()` 更新下层显示。
+
+实测 1100 行文件打字直接卡到几秒——用户在 Chrome Performance 面板量出来单次按键"处理用时"从 520ms 一路涨到 3300+ms，越打越卡。一开始怀疑是 hljs 计算本身慢，加了 150ms 防抖，结果引出新问题：因为编辑框文字色是透明的、全靠下层高亮层显色，防抖等于人为让每个刚打的字符必须等 150ms 才"显形"，体验更差。回头单独测 `hljs.highlight()` 才发现它其实只要 15-25ms——真正的开销在于每次都要把高亮结果整个通过 `v-html` 塞回 DOM（大量 `<span>`，浏览器重新解析/布局/绘制），这是"整份重新高亮 + 整体替换 DOM"这个架构本身的问题，不是调参能解决的。
+
+换成 CodeMirror 6 之后从根上解决：它做虚拟滚动（只渲染可视区域）+ 增量分词，编辑大文件的开销跟总行数无关。中间又踩了个小坑——`vue-codemirror` 组件内部本来就默认带了一份 `basicSetup`（含行号 + 折叠 gutter），跟 `:extensions` 传参无关；一开始自己又在 `:extensions` 里传了一份 `basicSetup`，两份的行号 gutter + 折叠 gutter 叠在一起，表现为编辑器左侧出现"4 列行号"。改法是不再自己传 `basicSetup`，只传主题和语法高亮配色，行号/折叠交给组件内置的那份。
+
+最后代码类文件的语法高亮配色没有照抄只读预览的 hljs 配色方案——试过手工把 lezer 的 tag 分类映射到 hljs 同款 atom-one-light 配色，两套语法树分类方式差太多、对不齐，效果反而更别扭，最终代码正文用 CodeMirror 自己的默认配色（`defaultHighlightStyle`），只有左侧行号 gutter 数值抄了只读预览的 `.tv-ln` 样式。
+
+CodeMirror 全部懒加载（`defineAsyncComponent` + 动态 `import()`），只有真正编辑代码文件才会下载，不影响主 bundle 体积。
+
+**教训**：性能问题先测量再下结论——"防抖"是治"调用太频繁"的药，不是治"单次调用本身太贵"的药，吃错药只会让问题从一种难受的形态变成另一种。
+
+## 2026-07-06 · http_get 按 Content-Type 自动提取正文
+
+真实验证案例——某文档站首页截断到 4000 字符给模型的内容 100% 是 `<meta>`/CSS/JS 头部噪音，网页明明抓得到（200），但截断发生在提取正文之前，模型拿到的东西完全没法用。
+
+`agent/tools/web.py` 新增依赖 `trafilatura`：`text/html` 用 trafilatura 提取正文转 markdown（去导航/广告噪音，带内联链接——想接着读某条链接直接再调一次 `http_get`，不用重新搜，等于免费拿到"多跳阅读"能力）；提取不出实质内容（可能是纯 JS 渲染页面）直接提示模型改走 `web_search`/`deep_research`，不把空内容硬塞给模型自己猜；`application/pdf` 复用 `app/core/doctext.py` 现成的 pdftotext 提取；其它（JSON/纯文本，含天气用的 wttr.in）原样返回不受影响。
+
+## 2026-07-06 · docx/xlsx/pptx 预览转换失败：两层部署配置问题叠在一起
+
+真实翻车案例，用户传的 docx 打不开，报"转换失败 (500)"。
+
+① 三个 systemd 单元（`gugu-backend`/`gugu-worker`/`gugu-supervisor`）的 `Environment="PATH=..."` 只填了 venv 的 bin 目录、把系统路径整个顶掉，`libreoffice`/`pdftotext` 这些系统命令再装也找不到（`FileNotFoundError`）。改成 venv bin 优先、后面接完整系统路径。
+
+② 修完①露出第二层：三个单元开了 `ProtectSystem=strict`，`$HOME/.config` 对进程只读，LibreOffice 建不了默认用户 profile 直接失败（`returncode=1`，stderr 只留一条不相关的 `javaldx` 警告，真实原因不会自己冒出来）。给两处 LibreOffice 调用都加 `-env:UserInstallation` 指到本次调用专属的临时目录（`PrivateTmp=true` 保证可写），不用放宽沙箱安全设置。
+
+均已在 devserver 实测验证。
+
+## 2026-07-06 · 弹窗毛玻璃背景/阴影全局失真：`:deep(.bm-card)` 根本没生效
+
+`BaseModal` 是多根组件（遮罩 + 卡片两个平级根），Vue scoped CSS 的父作用域属性只挂在组件根节点，穿不到嵌套一层的 `.bm-card`——各弹窗一直靠 `:deep(.bm-card)` 定制背景/阴影，实测这条选择器压根没命中该元素（DevTools 里连"被覆盖"都算不上，是完全不在匹配规则列表里）。只是巧合地 `BaseModal` 原本的默认底色和多数弹窗的期望值接近，这个问题才一直没被发现，直到项目编辑卡（想要透明）和已归档弹窗（想要浅色玻璃）对比出明显差异才暴露。
+
+改法：不再依赖跨组件 CSS 选择器，`BaseModal` 加 `background`/`blur` prop 由调用方直接传值；项目编辑卡/个人设置一直想要的「透明 + 内嵌高光阴影」直接并入 `BaseModal` 默认值；单栏弹窗（新建项目/上传文件/定时任务/已归档）统一走 `--panel-bg`，顺带把这个变量的不透明度从 96% 降到 90%，全站用到它的地方（含咕咕聊天窗主区、项目编辑卡右栏）一起调整。涉及组件：`ProfileModal.vue`/`ProjectModal.vue`/`NewProjectModal.vue`/`UploadModal.vue`/`Schedules/index.vue`/`ArchivedProjectsModal.vue`。
+
 ## 2026-07-06 · 弹窗淡入期间玻璃不糊：又一次冤枉 backdrop-filter 的性能，真凶是 CSS 规范里的隔离组
 
 GuguChat 大窗口开着，再叠开一个项目/新建项目弹窗，弹窗的毛玻璃在**整个 0.2s 淡入动画期间完全不模糊**——底下聊天窗的文字清清楚楚透上来，动画一结束模糊才"啪"地贴上，观感就是玻璃迟到了。
