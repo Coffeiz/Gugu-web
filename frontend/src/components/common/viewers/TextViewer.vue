@@ -8,17 +8,42 @@
       <PhWarningCircle :size="28" style="opacity:.5" />
       <span>{{ error }}</span>
     </div>
+    <!-- 代码类扩展名：直接就是 CodeMirror，没有单独的只读预览态——它本身就能当预览用
+         （虚拟滚动+增量分词，大文件不卡）。真实文件可编辑，改动自动保存（防抖）；聊天附件等
+         非真实文件只读（:disabled，CodeMirror 自己处理成 editable:false + readOnly:true）。 -->
+    <template v-else-if="isCodeExt">
+      <div class="tv-edit-cm-wrap">
+        <Codemirror
+          v-model="editText" :extensions="cmExtensions" :disabled="!isRealFile" :indent-with-tab="true"
+          @ready="onCmReady" @change="scheduleAutoSave"
+        />
+      </div>
+    </template>
+    <!-- md/txt：保留原来的「预览 + 编辑」切换，本来就不大，没必要换 CodeMirror -->
+    <template v-else-if="editing">
+      <textarea
+        ref="editArea" v-model="editText" class="tv-edit-textarea"
+        spellcheck="false" @keydown.esc="cancelEdit"
+      ></textarea>
+      <div class="tv-edit-bar">
+        <span v-if="saveError" class="tv-edit-error">{{ saveError }}</span>
+        <button class="tv-edit-btn" :disabled="saving" @click="cancelEdit">取消</button>
+        <button class="tv-edit-btn tv-edit-save" :disabled="saving" @click="saveEdit">{{ saving ? '保存中…' : '保存' }}</button>
+      </div>
+    </template>
     <div v-else ref="tvScroll" class="tv-scroll" @scroll="onScroll">
+      <button v-if="editable" class="tv-edit-toggle" title="编辑" @click="startEdit">
+        <PhPencilSimple weight="bold" :size="13" />
+      </button>
       <div v-if="truncated" class="tv-notice">仅显示前 500 KB</div>
       <!-- Markdown 渲染 -->
       <div v-if="mdHtml" class="tv-md" v-html="mdHtml" @click="onMdClick" />
-      <!-- 代码 / 纯文本 -->
+      <!-- 纯文本（txt；代码类扩展名走上面的 CodeMirror，不会落到这里） -->
       <table v-else class="tv-table" cellspacing="0">
         <tbody>
           <tr v-for="(line, i) in lines" :key="i">
             <td class="tv-ln">{{ i + 1 }}</td>
-            <td v-if="highlighted" class="tv-code tv-code--hl" v-html="line" />
-            <td v-else class="tv-code">{{ line }}</td>
+            <td class="tv-code">{{ line }}</td>
           </tr>
         </tbody>
       </table>
@@ -27,9 +52,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed } from 'vue'
-import { PhWarningCircle } from '@phosphor-icons/vue'
+import { ref, watch, nextTick, computed, defineAsyncComponent } from 'vue'
+import { PhWarningCircle, PhPencilSimple } from '@phosphor-icons/vue'
 import { filesApi } from '@/services/api'
+
+// CodeMirror 全部延迟加载：TextViewer 从 FloatPreviewWindow 静态引入，FloatPreviewWindow
+// 又从 DefaultLayout 静态引入（基本每个登录页都会经过这条链路）——顶层 import codemirror/
+// vue-codemirror 会把这些包打进所有用户都要下载的主 chunk，不管有没有用过预览/编辑。跟这个
+// 文件里 hljs/marked 已有的做法一致，只在真正点了「编辑」且是代码类扩展名时才动态加载。
+const Codemirror = defineAsyncComponent(() => import('vue-codemirror').then(m => m.Codemirror))
+let CM = null   // 加载完后缓存 { EditorView, basicSetup }，见 ensureCm()
 
 const MAX_BYTES = 500 * 1024
 
@@ -83,15 +115,194 @@ const LANG_LOADERS = {
   scss:       () => import('highlight.js/lib/languages/scss'),
 }
 
+// 能编辑的扩展名：跟后端 app/core/chat_attach.py 的 TEXT_EXTS 保持一致（那边才是真正决定
+// PUT /files/{id}/content 接不接受的地方），两边各自维护、改一边记得同步另一边。
+const EDITABLE_EXTS = new Set([
+  'md', 'txt', 'json', 'csv', 'yaml', 'yml', 'log', 'py', 'js', 'ts', 'tsx', 'jsx',
+  'vue', 'html', 'css', 'scss', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'sh',
+  'sql', 'xml', 'toml', 'ini', 'conf', 'env', 'tex',
+])
+
+// 扩展名 → CodeMirror 语言扩展的按需 loader（编辑用，跟上面 hljs 的 LANG_MAP 是两套独立映射：
+// CM6 按语言拆成独立小包，命名和覆盖范围跟 hljs 不是一一对应，且 CM6 官方包覆盖了 hljs 这边
+// 没接的 java/go/rust/cpp/sql，编辑时能比只读预览多几种语言的高亮）。没在这张表里的扩展名
+// （csv/log/toml/ini/conf/env/tex）用 CodeMirror 编辑但不高亮，比之前退回纯 textarea 依然要好
+// （撤销栈、多光标、大文件不卡这些能力还在，只是没有配色）。
+const CM_LANG_LOADERS = {
+  JS:   () => import('@codemirror/lang-javascript').then(m => m.javascript()),
+  JSX:  () => import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true })),
+  TS:   () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true })),
+  TSX:  () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true, jsx: true })),
+  PY:   () => import('@codemirror/lang-python').then(m => m.python()),
+  CSS:  () => import('@codemirror/lang-css').then(m => m.css()),
+  SCSS: () => import('@codemirror/lang-css').then(m => m.css()),
+  HTML: () => import('@codemirror/lang-html').then(m => m.html()),
+  VUE:  () => import('@codemirror/lang-html').then(m => m.html()),   // 没有成熟的 vue SFC 语言包，html 近似
+  JSON: () => import('@codemirror/lang-json').then(m => m.json()),
+  YAML: () => import('@codemirror/lang-yaml').then(m => m.yaml()),
+  YML:  () => import('@codemirror/lang-yaml').then(m => m.yaml()),
+  XML:  () => import('@codemirror/lang-xml').then(m => m.xml()),
+  SQL:  () => import('@codemirror/lang-sql').then(m => m.sql()),
+  JAVA: () => import('@codemirror/lang-java').then(m => m.java()),
+  GO:   () => import('@codemirror/lang-go').then(m => m.go()),
+  RS:   () => import('@codemirror/lang-rust').then(m => m.rust()),
+  C:    () => import('@codemirror/lang-cpp').then(m => m.cpp()),
+  CPP:  () => import('@codemirror/lang-cpp').then(m => m.cpp()),
+  H:    () => import('@codemirror/lang-cpp').then(m => m.cpp()),
+  HPP:  () => import('@codemirror/lang-cpp').then(m => m.cpp()),
+  SH:   () => Promise.all([import('@codemirror/legacy-modes/mode/shell'), import('@codemirror/language')])
+                .then(([{ shell }, { StreamLanguage }]) => StreamLanguage.define(shell)),
+}
+
 const lines       = ref([])
 const mdHtml      = ref(null)
-const rawText     = ref('')   // md 源文本（用于勾选任务框时改写 [ ]↔[x] 并回存）
-// 可交互勾选 = md 文件 + 真实文件 id（纯数字；聊天附件是 16 位 hex、不可存）
-const savable = computed(() => /^(md|markdown)$/i.test(props.ext || '') && /^\d+$/.test(String(props.fileKey ?? '')))
+const rawText     = ref('')   // 源文本（md 勾选任务框改写 [ ]↔[x]、md/txt 编辑模式的保存基于这个）
+// 真实文件（纯数字 id）才能存——聊天附件是 16 位 hex，PUT /files/{id}/content 存不了
+const isRealFile = computed(() => /^\d+$/.test(String(props.fileKey ?? '')))
+// 可交互勾选 = md 文件 + 真实文件
+const savable  = computed(() => /^(md|markdown)$/i.test(props.ext || '') && isRealFile.value)
+// 可编辑 = 后端认得的文本类扩展名 + 真实文件（md/txt 走「编辑」按钮切换态用得到；代码类扩展名
+// 不看这个——代码文件不管是不是真实文件都直接显示 CodeMirror，只是能不能保存的区别，见 isCodeExt）
+const editable = computed(() => EDITABLE_EXTS.has((props.ext || '').toLowerCase()) && isRealFile.value)
+const isMarkdownFile = computed(() => /^(md|markdown)$/i.test(props.ext || ''))
+// 代码类扩展名：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror——它本身既能当
+// 预览用（只读态），也能编辑（真实文件时），不需要 .tv-table + 单独编辑框这套双视图。
+// md/txt 太小，双视图切换本来就没问题，不用换。
+const isCodeExt = computed(() => {
+  const e = (props.ext || '').toLowerCase()
+  return EDITABLE_EXTS.has(e) && e !== 'md' && e !== 'markdown' && e !== 'txt'
+})
 const loading     = ref(false)
 const error       = ref(null)
 const truncated   = ref(false)
-const highlighted = ref(false)
+
+// ── 编辑模式：md/txt 的「预览+编辑」切换态，见 editable；代码类扩展名见 isCodeExt（没有切换态） ──
+const editing   = ref(false)
+const editText  = ref('')
+const editArea  = ref(null)   // md/txt 用的纯文本 textarea
+const saving    = ref(false)
+const saveError = ref('')
+
+const cmView       = ref(null)   // 当前 CodeMirror 的 EditorView 实例（@ready 拿到）
+const cmExtensions = ref([])     // 基础扩展 + 按需加载的语言扩展，进编辑态前异步准备好
+
+// vue-codemirror 的 <Codemirror> 组件内部本来就默认带了一份 basicSetup（含行号+代码折叠两个
+// gutter），跟组件本身无关、不受 :extensions 传参影响；不要自己再传 basicSetup（或任何行号类
+// 扩展），只在 :extensions 里加主题和语法高亮配色，行号/折叠/撤销栈交给组件内置的那份就够。
+async function ensureCm() {
+  if (!CM) {
+    const [{ EditorView }, { defaultHighlightStyle, syntaxHighlighting }] = await Promise.all([
+      import('@codemirror/view'),
+      import('@codemirror/language'),
+    ])
+    CM = { EditorView, highlighting: syntaxHighlighting(defaultHighlightStyle, { fallback: true }) }
+  }
+  return CM
+}
+
+async function loadCmExtensions(ext) {
+  const cm = await ensureCm()
+  const theme = cm.EditorView.theme({
+    '&': { height: '100%', fontSize: 'var(--tv-font-size, 13px)' },
+    '&.cm-focused': { outline: 'none' },
+    '.cm-content': { fontFamily: "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,monospace" },
+    '.cm-scroller': { overflow: 'auto' },
+    // 组件内置的 basicSetup 除了行号还带一个代码折叠 gutter，用不上，隐藏掉不留预留空白
+    '.cm-foldGutter': { display: 'none' },
+  })
+  const loader = CM_LANG_LOADERS[(ext || '').toUpperCase()]
+  const langExt = loader ? await loader() : null
+  cmExtensions.value = [theme, cm.highlighting, ...(langExt ? [langExt] : [])]
+}
+function onCmReady({ view }) {
+  cmView.value = view
+}
+
+// 代码文件自动保存（防抖，改一下等 800ms 没有新改动再存，不是敲一个字符存一次）。fileKey/待存
+// 内容在「排队时」（每次改动都会重新排一次）就地闭包捕获，不是等定时器触发才现读——就算这中间
+// 文件被切走（props.fileKey/editText 已经变成新文件的），排队中的这次还是会把旧文件的旧内容存
+// 到旧文件自己的 id 上，不会存错文件。没有保存中/已保存的 UI 提示；失败了只打 console，不打扰
+// 编辑——真要盯保存状态可以开 devtools 看。
+let autoSaveTimer = null
+
+function scheduleAutoSave() {
+  if (!isRealFile.value) return
+  if (autoSaveTimer) clearTimeout(autoSaveTimer)
+  const targetKey = props.fileKey
+  const content   = editText.value
+  autoSaveTimer = setTimeout(() => { autoSaveTimer = null; doAutoSave(targetKey, content) }, 800)
+}
+async function doAutoSave(targetKey, content) {
+  try {
+    await filesApi.saveContent(Number(targetKey), content)
+    rawText.value = content
+  } catch (e) {
+    console.error('[TextViewer] 自动保存失败:', e)
+  }
+}
+
+// md/txt 的预览/编辑双视图是两套独立 DOM，进出编辑态要把滚动位置对上：md 渲染成 HTML 后跟源码
+// 行号没有线性对应关系（标题/段落/代码块各自高度不同），只能按滚动比例（scrollTop / 可滚动
+// 距离）估算；txt 是等高的行号表格，能精确算「顶部是第几行」，textarea 按自己的行高换算对应。
+let scrollFrac  = 0     // md 用
+let pendingLine = 0     // txt 用
+
+function rowHeightOf(el) {
+  if (!el) return 0
+  if (el.tagName === 'TEXTAREA') return parseFloat(getComputedStyle(el).lineHeight) || 0
+  const tr = el.querySelector('tr')
+  return tr ? tr.getBoundingClientRect().height : 0
+}
+function captureScroll(el) {
+  if (isMarkdownFile.value) {
+    const max = el ? el.scrollHeight - el.clientHeight : 0
+    scrollFrac = (el && max > 0) ? el.scrollTop / max : 0
+    return
+  }
+  const rh = rowHeightOf(el)
+  pendingLine = (el && rh) ? Math.round(el.scrollTop / rh) : 0
+}
+function applyScroll(el) {
+  if (!el) return
+  if (isMarkdownFile.value) {
+    const max = el.scrollHeight - el.clientHeight
+    el.scrollTop = max > 0 ? scrollFrac * max : 0
+    return
+  }
+  const rh = rowHeightOf(el)
+  el.scrollTop = rh ? pendingLine * rh : 0
+}
+
+async function startEdit() {
+  captureScroll(tvScroll.value)
+  editText.value = rawText.value
+  saveError.value = ''
+  editing.value = true
+  await nextTick()
+  editArea.value?.focus()
+  applyScroll(editArea.value)
+}
+function cancelEdit() {
+  captureScroll(editArea.value)
+  editing.value = false
+  nextTick(() => applyScroll(tvScroll.value))
+}
+async function saveEdit() {
+  saving.value = true
+  saveError.value = ''
+  try {
+    captureScroll(editArea.value)
+    await filesApi.saveContent(Number(props.fileKey), editText.value)
+    await processText(editText.value, props.ext)
+    editing.value = false
+    await nextTick()
+    applyScroll(tvScroll.value)
+  } catch (e) {
+    saveError.value = '保存失败：' + (e.message || '未知错误')
+  } finally {
+    saving.value = false
+  }
+}
 
 let hljs = null
 
@@ -199,38 +410,29 @@ function onMdClick(e) {
   })
 }
 
-// 将 highlight.js 输出的 HTML 按行拆分，保持 span 标签完整闭合
-function splitHtmlLines(html) {
-  const result = []
-  let openSpans = []
+// 把一段文本渲染成 mdHtml / 纯文本行（首次加载、md/txt 编辑保存后重渲都走这条）。代码类扩展名
+// 不在这里处理——它们直接显示 CodeMirror，不需要 mdHtml/lines 这套只读渲染，见 isCodeExt。
+async function processText(text, ext) {
+  mdHtml.value  = null
+  lines.value   = []
+  rawText.value = text
+  const extUp = (ext || '').toUpperCase()
 
-  for (const line of html.split('\n')) {
-    const prefix = openSpans.map(cls => `<span class="${cls}">`).join('')
-    const stack  = [...openSpans]
-
-    const tagRe = /<span class="([^"]+)">|<\/span>/g
-    let m
-    while ((m = tagRe.exec(line)) !== null) {
-      if (m[0].startsWith('</')) stack.pop()
-      else stack.push(m[1])
-    }
-
-    const suffix = stack.map(() => '</span>').join('')
-    result.push(prefix + line + suffix)
-    openSpans = stack
+  if (extUp === 'MD') {
+    mdHtml.value = makeTasksInteractive(await renderMarkdown(text))
+  } else if (!isCodeExt.value) {
+    lines.value = text.split('\n')
   }
-
-  return result
 }
 
 watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
   if (!url) return
-  loading.value     = true
-  error.value       = null
-  truncated.value   = false
-  highlighted.value = false
-  mdHtml.value      = null
-  lines.value       = []
+  loading.value   = true
+  error.value     = null
+  truncated.value = false
+  editing.value   = false   // 切换文件/重新加载时退出编辑态，别把上一份文件的编辑框留着
+  cmView.value    = null
+  saveError.value = ''
 
   try {
     const res  = await fetch(url)
@@ -238,28 +440,20 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
     truncated.value = buf.byteLength > MAX_BYTES
     const slice = truncated.value ? buf.slice(0, MAX_BYTES) : buf
     const text  = new TextDecoder('utf-8', { fatal: false }).decode(slice)
-    const extUp = ext?.toUpperCase()
-
-    if (extUp === 'MD') {
-      rawText.value = text
-      mdHtml.value = makeTasksInteractive(await renderMarkdown(text))
-    } else {
-      const lang = LANG_MAP[extUp]
-      if (lang) {
-        await ensureHljs(lang)
-        const html = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value
-        lines.value       = splitHtmlLines(html)
-        highlighted.value = true
-      } else {
-        lines.value = text.split('\n')
-      }
+    await processText(text, ext)
+    if (isCodeExt.value) {
+      // 代码类扩展名没有单独的只读渲染，CodeMirror 直接从 editText 显示——加载完就把内容和
+      // 对应语言扩展准备好，不用等用户点什么「编辑」
+      editText.value = text
+      await loadCmExtensions(ext)
     }
   } catch (e) {
     error.value = '读取失败：' + e.message
   } finally {
     loading.value = false
   }
-  // 渲染完从 localStorage 还原该文件的滚动位置（新内容更短时浏览器自动夹到底部）
+  // 渲染完从 localStorage 还原该文件的滚动位置（新内容更短时浏览器自动夹到底部）——只对 md/txt
+  // 的 .tv-scroll 有意义，代码文件走 CodeMirror 自己的视图，这段对它是 no-op（tvScroll 是 null）
   const k = _posKey()
   const saved = k ? parseInt(localStorage.getItem(k) || '0', 10) : 0
   if (saved > 0) {
@@ -298,6 +492,47 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
   margin-bottom: 8px;
 }
 
+/* ── 编辑入口（浮在只读视图右上角） ── */
+.tv-edit-toggle {
+  position: absolute; top: 10px; right: 14px; z-index: 2;
+  width: 26px; height: 26px; border-radius: 7px;
+  border: none; background: rgba(123,127,178,0.1); color: rgba(80,85,130,0.6);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.12s, color 0.12s;
+}
+.tv-edit-toggle:hover { background: rgba(123,127,178,0.2); color: rgba(80,85,130,0.9); }
+
+/* ── 编辑模式：纯文本框 + 底部操作条 ── */
+.tv-edit-textarea {
+  flex: 1; width: 100%; box-sizing: border-box;
+  border: none; outline: none; resize: none;
+  padding: 20px 24px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  font-size: var(--tv-font-size, 13px);
+  line-height: 1.7; color: #383a42; background: #fff;
+}
+.tv-edit-bar {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  padding: 10px 16px; border-top: 1px solid rgba(0,0,0,0.06); background: #f7f7fb;
+}
+.tv-edit-error { flex: 1; font-size: 12px; color: rgba(180,80,80,0.85); }
+.tv-edit-btn {
+  padding: 6px 16px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  border: 1px solid rgba(0,0,0,0.08); background: #fff; color: var(--text-secondary);
+  cursor: pointer; transition: background 0.12s;
+}
+.tv-edit-btn:hover:not(:disabled) { background: rgba(0,0,0,0.03); }
+.tv-edit-btn:disabled { opacity: 0.5; cursor: default; }
+.tv-edit-save {
+  border-color: transparent; color: #fff;
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+}
+.tv-edit-save:hover:not(:disabled) { opacity: 0.92; background: linear-gradient(135deg, #7b7fb2, #9590c4); }
+
+/* ── 代码文件编辑：CodeMirror（字体/字号走 theme 里的 --tv-font-size，容器负责撑满高度） ── */
+.tv-edit-cm-wrap { flex: 1; overflow: hidden; }
+.tv-edit-cm-wrap :deep(.cm-editor) { height: 100%; }
+
 .tv-table {
   width: 100%;
   border-collapse: collapse;
@@ -330,43 +565,6 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
 
 tr:hover .tv-ln  { background: #eaebf2; }
 tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
-
-/* ── highlight.js 配色（atom-one-light 风格） ── */
-.tv-code--hl :deep(.hljs-comment),
-.tv-code--hl :deep(.hljs-quote)          { color: #a0a1a7; font-style: italic; }
-
-.tv-code--hl :deep(.hljs-keyword),
-.tv-code--hl :deep(.hljs-selector-tag),
-.tv-code--hl :deep(.hljs-built_in),
-.tv-code--hl :deep(.hljs-name),
-.tv-code--hl :deep(.hljs-tag)            { color: #a626a4; }
-
-.tv-code--hl :deep(.hljs-string),
-.tv-code--hl :deep(.hljs-title),
-.tv-code--hl :deep(.hljs-section),
-.tv-code--hl :deep(.hljs-attribute),
-.tv-code--hl :deep(.hljs-literal),
-.tv-code--hl :deep(.hljs-template-tag),
-.tv-code--hl :deep(.hljs-template-variable),
-.tv-code--hl :deep(.hljs-type),
-.tv-code--hl :deep(.hljs-addition)       { color: #50a14f; }
-
-.tv-code--hl :deep(.hljs-deletion),
-.tv-code--hl :deep(.hljs-selector-class),
-.tv-code--hl :deep(.hljs-doctag),
-.tv-code--hl :deep(.hljs-number),
-.tv-code--hl :deep(.hljs-regexp),
-.tv-code--hl :deep(.hljs-variable),
-.tv-code--hl :deep(.hljs-symbol),
-.tv-code--hl :deep(.hljs-bullet)         { color: #e45649; }
-
-.tv-code--hl :deep(.hljs-link),
-.tv-code--hl :deep(.hljs-selector-id),
-.tv-code--hl :deep(.hljs-title.class_),
-.tv-code--hl :deep(.hljs-class .hljs-title) { color: #c18401; }
-
-.tv-code--hl :deep(.hljs-emphasis)       { font-style: italic; }
-.tv-code--hl :deep(.hljs-strong)         { font-weight: bold; }
 
 /* ── Markdown 渲染 ── */
 .tv-md {
