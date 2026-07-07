@@ -9,6 +9,7 @@ from app.models import (
     CalendarEvent, File, ScheduledTask,
 )
 from app.core.tz import LOCAL_TZ, local_day_start_utc, utc_to_local_date_expr
+from onboarding.models import OnboardingState
 
 router = APIRouter(prefix="/admin/analytics", tags=["admin"])
 
@@ -22,6 +23,13 @@ _DEV_NOT_IN = " AND user_id NOT IN (SELECT id FROM users WHERE is_developer) "
 def _xd(stmt, col, exclude: bool):
     """exclude_dev 时给 ORM 查询追加「user_id 不是开发者」过滤。"""
     return stmt.where(col.notin_(_DEV_SQ)) if exclude else stmt
+
+
+# ── 排除新手引导播种的教程项目（恒生效，不受 exclude_dev 影响）───────────────────
+# 每个新用户注册都会播种一个「活的示例项目」，id 记在 onboarding_state.state.seeded_project_id。
+# 它不是用户真实创建的项目，不该计入项目相关的统计指标。
+_seeded_pid = OnboardingState.state["seeded_project_id"].as_integer()
+_ONBOARD_SQ = select(_seeded_pid).where(_seeded_pid.is_not(None))
 
 
 @router.get("/summary")
@@ -60,9 +68,10 @@ async def get_summary(exclude_dev: bool = Query(False), db: AsyncSession = Depen
     _web_ids = set((await db.execute(_web_stmt)).scalars().all())
     wau = len(_chat_ids | _web_ids)
 
-    # ── 项目（排除归档）────────────────────────────────────────────────────────
+    # ── 项目（排除归档 + 排除引导教程项目）───────────────────────────────────────
     def _proj_stmt(*where):
-        s = select(func.count()).select_from(Project).where(Project.archived == False, *where)
+        s = select(func.count()).select_from(Project).where(
+            Project.archived == False, Project.id.notin_(_ONBOARD_SQ), *where)
         return _xd(s, Project.user_id, xd)
 
     total_proj   = (await db.execute(_proj_stmt())).scalar() or 0
@@ -123,24 +132,27 @@ async def get_summary(exclude_dev: bool = Query(False), db: AsyncSession = Depen
 
     # ── 漏斗：每步有过该行为的去重用户数 ───────────────────────────────────────
     users_with_proj = (await db.execute(_xd(
-        select(func.count(distinct(Project.user_id))).where(Project.archived == False),
+        select(func.count(distinct(Project.user_id)))
+        .where(Project.archived == False, Project.id.notin_(_ONBOARD_SQ)),
         Project.user_id, xd)
     )).scalar() or 0
     users_completed = (await db.execute(_xd(
-        select(func.count(distinct(Project.user_id))).where(Project.status == "done"),
+        select(func.count(distinct(Project.user_id)))
+        .where(Project.status == "done", Project.id.notin_(_ONBOARD_SQ)),
         Project.user_id, xd)
     )).scalar() or 0
 
     # ── 留存数值指标（wishlist）────────────────────────────────────────────────
-    # 创建过第 2 个项目的人数（重复创建行为，含归档——建过就算行为发生）
+    # 创建过第 2 个项目的人数（重复创建行为，含归档——建过就算行为发生；不含引导教程项目）
     _multi_sq = (select(Project.user_id)
+                 .where(Project.id.notin_(_ONBOARD_SQ))
                  .group_by(Project.user_id)
                  .having(func.count(Project.id) >= 2)).subquery()
     _multi_stmt = select(func.count()).select_from(_multi_sq)
     if xd:
         _multi_stmt = select(func.count()).select_from(
             select(Project.user_id)
-            .where(Project.user_id.notin_(_DEV_SQ))
+            .where(Project.user_id.notin_(_DEV_SQ), Project.id.notin_(_ONBOARD_SQ))
             .group_by(Project.user_id)
             .having(func.count(Project.id) >= 2).subquery())
     second_project_users = (await db.execute(_multi_stmt)).scalar() or 0
@@ -149,7 +161,7 @@ async def get_summary(exclude_dev: bool = Query(False), db: AsyncSession = Depen
     _wk_stmt = (select(func.count(distinct(Project.user_id)))
                 .join(User, Project.user_id == User.id)
                 .where(Project.status == "active", Project.archived == False,
-                       User.created_at < d7))
+                       Project.id.notin_(_ONBOARD_SQ), User.created_at < d7))
     if xd:
         _wk_stmt = _wk_stmt.where(User.is_developer == False)
     week_active_project_users = (await db.execute(_wk_stmt)).scalar() or 0
