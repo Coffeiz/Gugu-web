@@ -30,6 +30,9 @@ frontend/yarn-debug.log*
 frontend/yarn-error.log*
 frontend/pnpm-debug.log*
 frontend/.pnpm-store/
+# 根目录的 package-lock.json 是误操作产物（误在根目录跑 npm install 会留下空 lockfile，
+# 还会让 npm 误判项目根），前端真锁在 frontend/package-lock.json 里
+/package-lock.json
 
 # ===== 通用 =====
 .DS_Store
@@ -42,6 +45,7 @@ Thumbs.db
 # ===== IDE =====
 .idea/
 .vscode/
+.claude/   # Claude Code 本地 IDE 配置（launch.json / 进程锁等），不入仓
 *.iml
 *.iws
 *.ipr
