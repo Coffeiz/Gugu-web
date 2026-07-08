@@ -28,7 +28,7 @@ from agent.tools.base import BaseSkill, Tool
 async def _list_projects(db, user_id, args: dict):
     stmt = select(Project).where(
         Project.user_id == user_id,
-        Project.archived == False,
+        Project.archived == bool(args.get("archived", False)),
     ).order_by(Project.updated_at.desc())
     result = await db.execute(stmt)
     projects = result.scalars().all()
@@ -547,7 +547,9 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="list_projects",
             label="查询项目列表",
-            description="获取用户的项目列表，可按状态筛选。返回 id、名称、状态、截止日期、客户、阶段进度。",
+            description=("获取用户的项目列表，可按状态筛选。返回 id、名称、状态、截止日期、客户、阶段进度。"
+                        "默认只返回未归档项目；用户问「归档的项目/之前归档的 XX」时传 archived=true 单独查已归档的一批，"
+                        "不会跟未归档的混在一起返回。"),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -555,7 +557,11 @@ class ProjectsSkill(BaseSkill):
                         "type": "string",
                         "enum": ["pending", "active", "done"],
                         "description": "按状态筛选（不传则返回全部）",
-                    }
+                    },
+                    "archived": {
+                        "type": "boolean",
+                        "description": "true=只看已归档项目；默认 false=只看未归档（跟网页看板一致）",
+                    },
                 },
             },
             handler=_list_projects,
