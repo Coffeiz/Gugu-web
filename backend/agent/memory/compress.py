@@ -1,10 +1,10 @@
 """记忆压缩：daily 攒够后，把最老的条目沉淀进 memory.md（长期记忆）。
 
 机制（按累积条数，不按天数，便于直接控住注入 prompt 的体积）：
-- daily 达到 `DAILY_COMPACT_AT`(40) 触发
-- 取最老的 `len - DAILY_KEEP_RECENT`(余 30) 条 → 连同已有 memory.md 交 LLM 融合
-- 写回 memory.md，daily 留最近 DAILY_KEEP_RECENT(30) 条
-即约每 10 轮对话压一次。由 reflection 在写完 daily 后顺带触发，失败不影响主流程。
+- daily 达到 `DAILY_COMPACT_AT`(75) 触发
+- 取最老的 `len - DAILY_KEEP_RECENT`(余 50) 条 → 连同已有 memory.md 交 LLM 融合
+- 写回 memory.md，daily 留最近 DAILY_KEEP_RECENT(50) 条
+即约每 25 轮对话压一次。由 reflection 在写完 daily 后顺带触发，失败不影响主流程。
 """
 from __future__ import annotations
 
