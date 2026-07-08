@@ -1,9 +1,13 @@
 """记忆存储：读写 {user_id}/.agent/ 下的文件，经 StorageBackend（本地/OSS 通吃）。
 
 不进 File 表，是咕咕私有档案。单库，无 DB/物理同步问题。
-- facts.json 稳定事实（2b 结构化）：每条带 kind(observed/inferred)/conf/imp/ts，反思增删改、
+- profile.json 用户画像：只回答"这个人是谁"，`{id,text,ts}`——不带 kind/conf，不衰减，不参与
+  周期复核（内容本来就该稳定）。见 docs/agent/11-记忆系统.md §2。
+- pattern.json 行为/决策模式（2b 结构化）：每条带 kind(observed/inferred)/conf/imp/ts，反思增删改、
   注入时按 effective(置信×衰减) 过滤排序；observed=用户亲述不衰减、inferred=推断按半衰期淡出。
-  （旧 facts.md 首次读取时自动迁移成 facts.json；md 文件保留不删，但不再写。）
+  （2026-07-08 从 facts.json 更名而来——profile/pattern 拆分前两者混在一份 facts.json 里，
+  见 docs/agent/11-记忆系统.md §2 的教训记录。旧 facts.json / facts.md 首次读取时自动迁移成
+  pattern.json；旧文件保留不删，但不再写。）
 - daily.md   近期记忆：每次对话提炼的要点，带日期，新在上
 - memory.md  长期记忆：daily 老条目压缩沉淀的长期叙述（compress 生成）
 
@@ -26,9 +30,12 @@ DAILY_KEEP_RECENT = 30   # 压缩后 daily 保留的最近条数（也是注入 
 DAILY_COMPACT_AT  = 40   # daily 达到此条数触发一次压缩（每约 10 轮一次）
 DAILY_HARD_CAP    = 60   # 压缩失败时的硬安全上限
 
-# ── 结构化 facts（2b）参数 ──
-FACTS_FILE                = "facts.json"
-FACTS_INFERRED_HALF_LIFE  = 45.0   # 推断类 facts 置信半衰期(天)；observed 不衰减
+# ── 用户画像（profile.json，无需衰减）──
+PROFILE_FILE = "profile.json"
+
+# ── 结构化 pattern（2b）参数 ──
+FACTS_FILE                = "pattern.json"   # 文件名沿用 2026-07-08 前的 facts.json 概念，现存的是「行为模式」
+FACTS_INFERRED_HALF_LIFE  = 45.0   # 推断类 pattern 置信半衰期(天)；observed 不衰减
 FACT_RETIRE_EFF           = 0.2    # effective 置信低于此 → 不注入（退休淡出）
 FACTS_INJECT_MAX          = 100    # 注入上限；超了优先按相关性挑（向量/词法）、重要度保底+补齐（见 render_facts）
 FACTS_FLOOR_K             = 6      # 重要度保底：facts 超上限时，最重要的前 K 条无论是否相关都注入（核心档案不被相关性挤掉）
@@ -59,17 +66,19 @@ async def _write(key: str, text: str) -> None:
 
 
 async def read_memory(user_id, query: str = "") -> dict:
-    """返回 {facts, memory, daily, summary, summary_ts, stance, stance_ts, lens}，缺失为空串/None。
+    """返回 {profile, pattern, memory, daily, summary, summary_ts, stance, stance_ts, lens}，缺失为空串/None。
+    profile = 用户画像(身份/稳定喜好，全量注入，不衰减)；pattern = 行为/决策模式(结构化，超上限时按相关性挑)。
     stance = 上轮反思判的相处姿态（= perception.intent），stance_ts 给新鲜度闸用（见 behaviors.select）。
     summary_ts = summary 上次更新的 epoch（给时间衰减用，见 agent/decay.py）。
     lens = 渲染好的「解读镜片」注入块（per-user 解读先验，见 agent/memory/lens.py），无则空串。
-    query = 当前用户消息（可选）：facts 超注入上限时用它做相关性优先挑选，见 render_facts。
-    first_ts = 最早一条 fact 的 epoch（≈「开始了解 TA」的时间锚点，给注入侧时长计算用——
+    query = 当前用户消息（可选）：pattern 超注入上限时用它做相关性优先挑选，见 render_facts。
+    first_ts = 最早一条 pattern 的 epoch（≈「开始了解 TA」的时间锚点，给注入侧时长计算用——
     时长由系统算好喂模型、禁模型自估，见 proposals/反馈信号系统-设计.md §4.3）。"""
+    raw_profile = await read_profile_list(user_id)
     raw_facts = await read_facts_list(user_id)
     memory_doc = (await _read(_key(user_id, "memory.md"))).strip()
-    # 向量语义检索：facts 超上限 / memory 超预算 时才动向量。query **只 embed 一次**、两边共用（热路径省调用）。
-    # 只认与当前模型 tag 匹配的向量（换过模型的旧向量忽略 → facts 退回词法、memory 退回整篇，直到重建）。
+    # 向量语义检索：pattern 超上限 / memory 超预算 时才动向量。query **只 embed 一次**、两边共用（热路径省调用）。
+    # 只认与当前模型 tag 匹配的向量（换过模型的旧向量忽略 → pattern 退回词法、memory 退回整篇，直到重建）。
     facts_over = len(raw_facts) > FACTS_INJECT_MAX
     mem_over   = len(memory_doc) > MEMORY_INJECT_CHARS
     query_vec, fact_vec_map, mem_vec_map = None, None, None
@@ -85,7 +94,8 @@ async def read_memory(user_id, query: str = "") -> dict:
                 if mem_over:
                     mv = await read_memory_vecs(user_id)
                     mem_vec_map = {k: v.get("v") for k, v in mv.items() if v.get("t") == tag}
-    facts   = render_facts(raw_facts, query, query_vec if facts_over else None, fact_vec_map)  # 有向量走 cosine，无则词法
+    profile = render_profile(raw_profile)   # 无上限，全量注入
+    pattern = render_facts(raw_facts, query, query_vec if facts_over else None, fact_vec_map)  # 有向量走 cosine，无则词法
     memory  = retrieve_memory_block(memory_doc, query_vec if mem_over else None, mem_vec_map)  # 超预算挑相关段，无向量则整篇
     first_ts = min((f.get("ts") for f in raw_facts if f.get("ts")), default=None)
     daily   = (await _read(_key(user_id, "daily.md"))).strip()
@@ -94,7 +104,7 @@ async def read_memory(user_id, query: str = "") -> dict:
     stance, stance_ts = await read_stance(user_id)
     from agent.memory import lens as _lens   # 局部导入避免包内循环
     lens_block = await _lens.read_block(user_id)
-    return {"facts": facts, "memory": memory, "daily": daily,
+    return {"profile": profile, "pattern": pattern, "memory": memory, "daily": daily,
             "summary": summary, "summary_ts": summary_ts, "first_ts": first_ts,
             "stance": stance, "stance_ts": stance_ts, "lens": lens_block}
 
@@ -163,13 +173,19 @@ def _migrate_md(md: str) -> list[dict]:
 
 
 async def read_facts_list(user_id) -> list[dict]:
-    """读结构化 facts。facts.json 不存在但有旧 facts.md → 迁移并写回 json（一次性）。"""
+    """读结构化 pattern。pattern.json 不存在 → 依次找旧 facts.json(2026-07-08 前的名字)、
+    再旧的 facts.md，找到就迁移并写回 pattern.json(一次性)；旧文件保留不删，但不再写。"""
     raw = await _read(_key(user_id, FACTS_FILE))
+    if not raw.strip():
+        raw = await _read(_key(user_id, "facts.json"))   # 拆分前的旧名字，一次性兼容
     if raw.strip():
         try:
             data = json.loads(raw)
             if isinstance(data, list):
-                return [f for f in data if isinstance(f, dict) and (f.get("text") or "").strip()]
+                facts = [f for f in data if isinstance(f, dict) and (f.get("text") or "").strip()]
+                if facts:
+                    await write_facts_list(user_id, facts)   # 落到新文件名，下次直接命中
+                return facts
         except Exception:
             pass
     md = (await _read(_key(user_id, "facts.md"))).strip()
@@ -182,13 +198,61 @@ async def read_facts_list(user_id) -> list[dict]:
 
 
 async def write_facts_list(user_id, facts: list[dict]) -> None:
-    await _write(_key(user_id, FACTS_FILE), json.dumps(facts, ensure_ascii=False))
+    await _write(_key(user_id, FACTS_FILE), json.dumps(facts, ensure_ascii=False, indent=2))
 
 
-# ── facts 向量缓存（.agent/facts_vec.json，key=fact_id → {"v": [...], "t": model_tag}）──
-# 与 facts.json 分开存：向量体积大、facts 是热读文件，不该被向量撑肿。文本才是主数据，
+# ── 用户画像（profile.json）：{id,text,ts}，不带 kind/conf，不衰减 ──
+async def read_profile_list(user_id) -> list[dict]:
+    """读用户画像列表。全新概念，没有旧文件可迁移，不存在就是空列表。"""
+    raw = (await _read(_key(user_id, PROFILE_FILE))).strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return [p for p in data if isinstance(p, dict) and (p.get("text") or "").strip()]
+    except Exception:
+        pass
+    return []
+
+
+async def write_profile_list(user_id, profile: list[dict]) -> None:
+    await _write(_key(user_id, PROFILE_FILE), json.dumps(profile, ensure_ascii=False, indent=2))
+
+
+def render_profile(profile: list[dict]) -> str:
+    """用户画像 → 注入用 markdown。不做衰减/退休/相关性挑选——profile 预期规模很小，全量注入。"""
+    lines = [f"- {p['text'].strip()}" for p in (profile or []) if (p.get("text") or "").strip()]
+    return "\n".join(lines)
+
+
+def apply_profile_ops(profile: list[dict], add, remove) -> list[dict]:
+    """对用户画像应用一轮增删。比 apply_facts_ops 简单得多：命中相似条只刷新 ts、采更具体文本，
+    不涉及 conf/kind。add 是字符串数组，remove 同理（按相似匹配删除）。返回新列表，不就地改入参。"""
+    out = [dict(p) for p in (profile or [])]
+    now = time.time()
+    rem = [r for r in (remove or []) if str(r).strip()]
+    if rem:
+        out = [p for p in out if not any(_fact_similar(p.get("text", ""), r) for r in rem)]
+    for a in (add or []):
+        text = str(a).strip()
+        if not text:
+            continue
+        hit = next((p for p in out if _fact_similar(p.get("text", ""), text)), None)
+        if hit:
+            hit["ts"] = now
+            if len(text) > len(hit.get("text", "")):
+                hit["text"] = text
+        else:
+            out.append({"id": _fact_id(), "text": text, "ts": now})
+    return out
+
+
+# ── pattern 向量缓存（.agent/pattern_vec.json，key=fact_id → {"v": [...], "t": model_tag}）──
+# 与 pattern.json 分开存：向量体积大、pattern 是热读文件，不该被向量撑肿。文本才是主数据，
 # 向量是可重建缓存——换 embedding 模型时 tag 失配即视为过期、可整体重算（见 embedding.py）。
-FACTS_VEC_FILE = "facts_vec.json"
+# 改名自 facts_vec.json：纯缓存，没有旧数据也没关系，缺失时按「没缓存」自然重嵌，不用迁移。
+FACTS_VEC_FILE = "pattern_vec.json"
 
 
 async def read_fact_vecs(user_id) -> dict:

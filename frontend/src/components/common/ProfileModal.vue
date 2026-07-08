@@ -37,9 +37,9 @@
 
         <div class="pm-nav-spacer"></div>
 
-        <button class="pm-logout" @click="handleLogout">
-          <PhSignOut :size="13" weight="bold" />
-          退出登录
+        <button class="pm-logout pm-danger-nav" @click="openDeleteAccount">
+          <PhUserMinus :size="13" weight="bold" />
+          注销账号
         </button>
       </div>
 
@@ -362,7 +362,36 @@
         </div>
       </div>
     </div>
+
   </BaseModal>
+
+  <!-- 注销账号二次确认弹窗：不用 BaseModal——BaseModal 的卡片是「点哪个哪个置顶」(mousedown 领新 z)，
+       两个 BaseModal 叠着开会互相抢最顶层，点一下父面板就把它的 z 顶到这个弹窗之上（不是关闭，只是
+       盖住+蒙层还留着），得多点一次才能真正关掉。这里直接钉在 TOP_Z（跟 toast/拖拽克隆一个band，
+       "永远最顶层"），不参与常规窗口的抢位——不管父面板怎么点/怎么重新领 z，这层永远在最上面。 -->
+  <Teleport to="body">
+    <Transition name="pm-confirm">
+    <div v-if="showDeleteAccount" class="pm-confirm-overlay" :style="{ zIndex: TOP_Z }" @click.self="closeDeleteAccount">
+      <div class="pm-confirm-box">
+        <p class="pm-confirm-title">确认注销账号？</p>
+        <p class="pm-confirm-desc">
+          账号及全部数据（项目、文件、日历、聊天记录、咕咕记忆等）将被<strong>永久删除</strong>，此操作不可恢复。
+        </p>
+        <input
+          v-model="deletePwd" type="password" class="form-input pm-confirm-input"
+          placeholder="输入密码确认" @keyup.enter="doDeleteAccount"
+        />
+        <p v-if="deleteErr" class="pm-msg err">{{ deleteErr }}</p>
+        <div class="pm-confirm-actions">
+          <button class="btn-cancel" @click="closeDeleteAccount">取消</button>
+          <button class="pm-danger-btn" :disabled="!deletePwd || deleting" @click="doDeleteAccount">
+            {{ deleting ? '注销中…' : '确认注销' }}
+          </button>
+        </div>
+      </div>
+    </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -374,7 +403,8 @@ import { usePreferencesStore } from '@/stores/preferences'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { authApi, agentApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi } from '@/services/api'
 import { fireHint } from '@/composables/useOnboarding'
-import { PhX, PhSignOut, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird, PhChatsCircle } from '@phosphor-icons/vue'
+import { TOP_Z } from '@/composables/windowz'
+import { PhX, PhUserMinus, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird, PhChatsCircle } from '@phosphor-icons/vue'
 
 const TONE_OPTS   = [
   { value: 'natural', label: '自然' },
@@ -424,6 +454,9 @@ watch(() => props.show, v => {
     pwdMsg.value       = ''
     currentPwd.value   = newPwd.value = confirmPwd.value = ''
     reopenResume.value = localStorage.getItem('gugu_reopen_resume') === '1'
+    showDeleteAccount.value = false
+    deletePwd.value = ''
+    deleteErr.value = ''
   }
 })
 
@@ -644,7 +677,10 @@ async function removeBot(b) {
   catch (e) { connectErr.value = e.message }
 }
 
-onUnmounted(_stopConnectPoll)
+onUnmounted(() => {
+  _stopConnectPoll()
+  document.removeEventListener('keydown', _onDeleteAccountKeydown, true)
+})
 
 const recoverLabel = computed(() => {
   if (!quota.value.used_6h || !quota.value.reset_6h_at) return '精力充沛'
@@ -672,10 +708,45 @@ function quotaPctClass(used, limit) {
   return pct >= 90 ? 'pct-danger' : pct >= 70 ? 'pct-warn' : ''
 }
 
-function handleLogout() {
-  authStore.logout()
-  router.push('/login')
-  emit('close')
+// 注销账号：需要密码二次确认，成功后清会话跳登录页（跟退出登录一样，但数据已经删了）
+const showDeleteAccount = ref(false)
+const deletePwd = ref('')
+const deleteErr = ref('')
+const deleting = ref(false)
+
+function openDeleteAccount() {
+  showDeleteAccount.value = true
+}
+
+function closeDeleteAccount() {
+  showDeleteAccount.value = false
+  deletePwd.value = ''
+  deleteErr.value = ''
+}
+
+// ESC 关闭：本弹窗钉在 TOP_Z，开着时必然是最顶层，不用像 BaseModal 那样跟别的窗口比 z 才决定谁接 ESC
+function _onDeleteAccountKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeDeleteAccount()
+}
+watch(showDeleteAccount, v => {
+  if (v) document.addEventListener('keydown', _onDeleteAccountKeydown, true)
+  else document.removeEventListener('keydown', _onDeleteAccountKeydown, true)
+})
+
+async function doDeleteAccount() {
+  if (!deletePwd.value || deleting.value) return
+  deleting.value = true
+  deleteErr.value = ''
+  try {
+    await authApi.deleteAccount(deletePwd.value)
+    authStore.logout()
+    router.push('/login')
+    emit('close')
+  } catch (e) {
+    deleteErr.value = e.message ?? '注销失败'
+  } finally {
+    deleting.value = false
+  }
 }
 </script>
 
@@ -758,7 +829,58 @@ function handleLogout() {
   color: #767980; background: none; width: 100%;
   transition: all 0.15s;
 }
-.pm-logout:hover { background: rgba(176,120,88,0.08); color: #b07858; border-color: rgba(176,120,88,0.15); }
+.pm-logout:hover,
+.pm-logout.pm-danger-nav:hover { background: rgba(196,80,80,0.08); color: #c45050; border-color: rgba(196,80,80,0.18); }
+
+/* 注销账号二次确认弹窗——视觉上照抄 BaseModal 的 .bm-overlay/.bm-card（背景/模糊/边框/阴影），
+   但不用 BaseModal 本体：BaseModal 卡片自带「点击置顶」，两个 BaseModal 叠着会抢 z，见上方模板注释 */
+.pm-confirm-overlay {
+  position: fixed; inset: 0;
+  background: rgba(20, 22, 30, 0.3);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.pm-confirm-box {
+  width: 100%; max-width: 380px; padding: 22px;
+  background: var(--panel-bg);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid rgba(255,255,255,0.72); border-radius: 20px;
+  box-shadow: 0 24px 64px rgba(20,25,50,0.2), inset 0 1px 0 rgba(255,255,255,0.95);
+  display: flex; flex-direction: column; gap: 12px;
+}
+
+/* 进场淡入淡出——照抄 BaseModal 的「玻璃 ramp」原理（机制见 BaseModal.vue 过渡段注释）：
+   进场绝不能动 opacity（会形成半透明隔离组，backdrop-filter 在动画期间采不到身后内容，
+   看起来像「淡入完才突然糊上」），改成遮罩的压暗/模糊、卡片的模糊半径本身从 0 ramp 到满值；
+   离场简单得多、直接 opacity 淡出即可（关闭瞬间模糊失效会被同步的淡出盖住，肉眼不可察）。
+   这里不用像 BaseModal 那样借 global.css——overlay 和 card 都在本组件同一个 scope 里，
+   scoped 的后代选择器直接够得到，不用全局规则。 */
+.pm-confirm-enter-active {
+  transition: background-color 0.2s cubic-bezier(0.4,0,0.2,1),
+              backdrop-filter 0.2s cubic-bezier(0.4,0,0.2,1),
+              -webkit-backdrop-filter 0.2s cubic-bezier(0.4,0,0.2,1);
+}
+.pm-confirm-enter-from { background-color: rgba(20,22,30,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
+.pm-confirm-enter-active .pm-confirm-box {
+  transition: backdrop-filter 0.2s cubic-bezier(0.4,0,0.2,1),
+              -webkit-backdrop-filter 0.2s cubic-bezier(0.4,0,0.2,1);
+}
+.pm-confirm-enter-from .pm-confirm-box { backdrop-filter: blur(0px) !important; -webkit-backdrop-filter: blur(0px) !important; }
+.pm-confirm-leave-active { transition: opacity 0.2s cubic-bezier(0.4,0,1,1); }
+.pm-confirm-leave-to { opacity: 0; }
+
+.pm-confirm-title { font-size: 15px; font-weight: 700; color: var(--text-primary); margin: 0; }
+.pm-confirm-desc { font-size: 12.5px; line-height: 1.6; color: var(--text-secondary); margin: 0; }
+.pm-confirm-desc strong { color: #c45050; }
+.pm-confirm-input { width: 100%; box-sizing: border-box; }
+.pm-confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+.btn-cancel {
+  padding: 7px 16px; border-radius: 8px; border: 1px solid rgba(0,0,0,0.1);
+  background: none; color: var(--text-secondary); font-size: 13px;
+  font-family: var(--font-sans); cursor: pointer; transition: all 0.15s;
+}
+.btn-cancel:hover { background: rgba(0,0,0,0.04); color: var(--text-primary); }
 
 /* 右侧内容 */
 .pm-content {

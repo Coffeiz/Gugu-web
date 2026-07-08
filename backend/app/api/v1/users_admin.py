@@ -127,43 +127,16 @@ async def toggle_developer(user_id: str, request: Request, db: AsyncSession = De
 
 @router.delete("/{user_id}")
 async def delete_user(user_id: str, request: Request, db: AsyncSession = Depends(get_db)):
-    """删除用户 = 账户注销：DB 级联之外，还必须清**存储层**——AI 记忆（.agent/）、上传文件、
-    语音（.voice/）、聊天暂存都不在 DB 表里，级联碰不到；不清就违背隐私政策「注销后从数据库
-    和存储中永久删除」的承诺（商用就绪评审 P0-5 缺口）。顺序：先清盘外数据，再删 DB 行。"""
+    """删除用户 = 账户注销（管理员代操作）。实际删除逻辑与用户自助注销（DELETE /auth/me）
+    共用 app/services/account_deletion.delete_account，避免两处各写一份、后续改动漂移。"""
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     uname = user.username
 
-    # ① 缩略图缓存（按 file_id 存共享目录，不在用户前缀下，得按文件逐个清）
-    from sqlalchemy import select as _select
-    from app.models import File as _File
-    from app.api.v1.files import _delete_thumb_cache
-    fids = (await db.execute(_select(_File.id).where(_File.user_id == user.id))).scalars().all()
-    for fid in fids:
-        _delete_thumb_cache(fid)
+    from app.services.account_deletion import delete_account
+    removed = await delete_account(db, user)
 
-    # ② 存储层：整个 {user_id}/ 前缀（上传文件 + .agent/ 记忆 + .voice/ + .chat_staging/ 全在其下）
-    from app.services.storage import get_storage
-    try:
-        removed = await get_storage().delete_prefix(f"{user.id}/")
-    except Exception as e:
-        # 存储清理失败不拦 DB 删除（人工可重清），但必须留痕
-        print(f"[users_admin] 注销清存储失败 user={uname}: {type(e).__name__}: {e}", flush=True)
-        removed = -1
-
-    # ③ Redis 侧用户数据：聊天暂存附件元数据 + IM 可达地址
-    try:
-        from app.core import chat_attach
-        from app.core.redis import get_redis
-        await chat_attach.clear_staged(user.id)
-        await get_redis().delete(f"imreach:{user.id}")
-    except Exception:
-        pass
-
-    # ④ DB 行（cascade 级联清 projects/files/folders/events/clients/conversations 等）
-    await db.delete(user)
-    await db.commit()
     username = getattr(request.state, "admin_username", "admin")
     await write_log(db, username, "user", f"删除用户 {uname}（存储对象清除 {removed} 个）", request)
     return {"deleted": True, "storage_objects_removed": removed}

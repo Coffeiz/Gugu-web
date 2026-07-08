@@ -12,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from app.db.session import get_db
 from app.models import User, InviteCode, AgentUsage
 from app.core.security import hash_password, verify_password, create_user_token, get_current_user
-from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword
+from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount
 from app.core.config import get_settings
 from app.core.redis import get_redis
 from app.core.ratelimit import rate_limit
@@ -205,6 +205,22 @@ async def update_profile(
     await db.commit()
     await db.refresh(current_user)
     return UserResponse.from_user(current_user)
+
+
+@router.delete("/me", status_code=204)
+async def delete_my_account(
+    body: DeleteAccount,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """用户自助注销：本人验证密码后永久删除账号 + 全部数据，不可恢复。
+    实际删除逻辑复用 app/services/account_deletion.delete_account（与 admin 代删同一份，避免两处漂移）。
+    要密码而不只信前端弹窗确认——JWT 会话可能被盗用/误触，这种不可逆操作值得多一道校验
+    （跟改密码要输入当前密码是同一个安全标准）。"""
+    if not verify_password(body.password, current_user.hashed_password):
+        raise HTTPException(400, "密码错误")
+    from app.services.account_deletion import delete_account
+    await delete_account(db, current_user)
 
 
 _ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}

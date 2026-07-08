@@ -22,21 +22,23 @@ async def complete_text(sys: str, user: str, settings, max_tokens: int = 800) ->
         return ""
 
 
-async def complete_json(sys: str, user: str, settings, max_tokens: int = 1500) -> dict:
+async def complete_json(sys: str, user: str, settings, max_tokens: int = 1500, temperature: float = 0.3) -> dict:
     """单次非流式调用 → 解析 JSON。失败/解析不出返回 {}。
     ⚠️ max_tokens 太小会把 JSON 截断 → 解析失败静默返回 {}；要回显大内容（如反思回显整份
-    facts）的调用方必须按内容量调大 max_tokens（默认曾 500，导致老用户反思全静默，踩过大坑）。"""
+    facts）的调用方必须按内容量调大 max_tokens（默认曾 500，导致老用户反思全静默，踩过大坑）。
+    temperature 默认 0.3（跟反思/压缩一致）；判断稳定性要求高、容错低的调用方（如批量删除类）
+    可传更低的值换取更一致的输出。"""
     from agent.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(settings.ai)
     text = (
-        await _anthropic(sys, user, settings, max_tokens)
+        await _anthropic(sys, user, settings, max_tokens, temperature)
         if use_anthropic
-        else await _openai(sys, user, settings, max_tokens, json_mode=True)
+        else await _openai(sys, user, settings, max_tokens, temperature, json_mode=True)
     )
     return _parse_json(text)
 
 
-async def _anthropic(sys: str, user: str, settings, max_tokens: int) -> str:
+async def _anthropic(sys: str, user: str, settings, max_tokens: int, temperature: float = 0.3) -> str:
     import httpx
     from anthropic import AsyncAnthropic
 
@@ -52,12 +54,12 @@ async def _anthropic(sys: str, user: str, settings, max_tokens: int) -> str:
         system=sys,
         messages=[{"role": "user", "content": user}],
         max_tokens=max_tokens,
-        temperature=0.3,
+        temperature=temperature,
     )
     return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
 
 
-async def _openai(sys: str, user: str, settings, max_tokens: int, json_mode: bool = False) -> str:
+async def _openai(sys: str, user: str, settings, max_tokens: int, temperature: float = 0.3, json_mode: bool = False) -> str:
     import httpx
     from openai import AsyncOpenAI
     from agent.llm_select import openai_default_headers, supports_thinking_toggle
@@ -72,7 +74,7 @@ async def _openai(sys: str, user: str, settings, max_tokens: int, json_mode: boo
         model=settings.ai.model,
         messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
         max_tokens=max_tokens,
-        temperature=0.3,
+        temperature=temperature,
     )
     # 结构化输出：mimo / deepseek 都支持 response_format=json_object → 开 JSON 模式让正文必为合法 JSON，
     # 比纯靠 prompt + _parse_json 抠更稳。并显式关思考（thinking:disabled，两家同一参数）——否则 reasoning 与正文

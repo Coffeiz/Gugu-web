@@ -95,6 +95,10 @@ class UpdateProfile(CamelModel):
     new_password: Optional[str] = None
 
 
+class DeleteAccount(CamelModel):
+    password: str
+
+
 class TokenResponse(CamelModel):
     access_token: str
     token_type: str = "bearer"

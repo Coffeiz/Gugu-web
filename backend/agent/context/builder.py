@@ -270,7 +270,8 @@ def _memory_block(memory: dict) -> str:
     """咕咕对用户的记忆。全空时也注入一句明确声明——给"我不知道"一个锚点，防模型
     在空白处脑补共同经历（伪个性化）；不再返回空串。顺序：稳定事实 → 长期记忆 → 最近。"""
     summary = (memory.get("summary") or "").strip()
-    facts   = (memory.get("facts") or "").strip()
+    profile = (memory.get("profile") or "").strip()
+    facts   = (memory.get("pattern") or "").strip()
     longterm = (memory.get("memory") or "").strip()
     daily   = (memory.get("daily") or "").strip()
     parts = []
@@ -285,8 +286,10 @@ def _memory_block(memory: dict) -> str:
             parts.append(f"## TA 的状态（约 {int(ad)} 天前记的，仅供参考、可能已变）\n\n" + summary)
         else:
             parts.append(f"## TA 较早前的状态（约 {int(ad)} 天前，多半过时——别当成现在、别据此主动提具体事）\n\n" + summary)
+    if profile:
+        parts.append("## 用户画像\n\n" + profile)
     if facts:
-        parts.append("## 我对你的了解\n\n" + facts)
+        parts.append("## TA 的行为/决策习惯\n\n" + facts)
     if longterm:
         parts.append("## 长期记忆\n\n" + longterm)
     if daily:

@@ -274,16 +274,12 @@ async def clear_attachments(current_user: User = Depends(get_current_user)):
 async def clear_memory(
     current_user: User = Depends(get_current_user),
 ):
-    """清除当前用户的全部 AI 记忆（facts / daily / memory / summary / lens）。"""
-    from agent.memory.store import _key, _DIR
+    """清除当前用户的全部 AI 记忆——直接删掉 .agent/ 整个目录（含向量缓存等一切衍生文件），
+    不再一个个列文件名：新增记忆文件时忘了加进清单会漏删，这个类别的坑一次性堵死。"""
+    from agent.memory.store import _DIR
     from app.services.storage import get_storage
     storage = get_storage()
-    for name in ("facts.md", "facts.json", "daily.md", "memory.md",
-                 "summary.md", "summary.ts", "lens.json"):
-        try:
-            await storage.delete(_key(current_user.id, name))
-        except Exception:
-            pass
+    await storage.delete_prefix(f"{current_user.id}/{_DIR}/")
 
 
 @router.delete("/sessions/{session_id}", status_code=204)

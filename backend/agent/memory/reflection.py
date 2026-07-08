@@ -240,8 +240,8 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
     try:
         mem = await store.read_memory(user_id)
         existing_summary = mem.get("summary", "")
-        out = await _extract(user_name, user_msg, assistant_reply, mem["facts"], existing_summary, settings,
-                             prev_turn=prev_turn)
+        out = await _extract(user_name, user_msg, assistant_reply, mem["profile"], mem["pattern"], existing_summary,
+                             settings, prev_turn=prev_turn)
     except Exception:
         out = None
     # 无论 extract 成败，都把本轮存为「上一轮」缓存（带 session_id，下轮据此判是否延续）
@@ -265,9 +265,20 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         daily_note = (out.get("daily") or "").strip()
         summary = (out.get("summary") or "").strip()
 
-        # facts 更新（2b 结构化）：反思只吐增删 facts_add(带 kind/importance)/facts_remove，
-        # apply_facts_ops 应用到 facts.json（命中相似条→印证升 conf，否则新增）。输出不随 facts 增长。
-        f_add, f_rem = out.get("facts_add"), out.get("facts_remove")
+        # profile 更新：身份/稳定喜好，字符串数组、无 kind/importance。apply_profile_ops 命中相似条只刷新 ts。
+        p_add, p_rem = out.get("profile_add"), out.get("profile_remove")
+        if p_add is not None or p_rem is not None:
+            cur_p = await store.read_profile_list(user_id)
+            new_p = store.apply_profile_ops(cur_p, p_add or [], p_rem or [])
+            if new_p != cur_p:
+                await store.write_profile_list(user_id, new_p)
+                from agent import events
+                events.publish(events.types.MemoryUpdated(
+                    user_id=user_id, added=len(p_add or []), removed=len(p_rem or []), source="reflection"))
+
+        # pattern 更新（2b 结构化）：反思只吐增删 pattern_add(带 kind/importance)/pattern_remove，
+        # apply_facts_ops 应用到 pattern.json（命中相似条→印证升 conf，否则新增）。输出不随 pattern 增长。
+        f_add, f_rem = out.get("pattern_add"), out.get("pattern_remove")
         legacy = out.get("facts")   # 旧 prompt 回显整份 facts（灰度兼容）→ 当 inferred 增量并入
         if f_add is not None or f_rem is not None or legacy:
             cur = await store.read_facts_list(user_id)
@@ -297,8 +308,8 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         pass  # 反思是锦上添花，任何失败都不能影响对话
 
 
-async def _extract(user_name, user_msg, assistant_reply, existing_facts, existing_summary, settings,
-                   prev_turn: dict | None = None) -> dict:
+async def _extract(user_name, user_msg, assistant_reply, existing_profile, existing_pattern, existing_summary,
+                   settings, prev_turn: dict | None = None) -> dict:
     # 上一轮（判 feedback 的对照物）:有才注入,没有则 prompt 里已说明「没给上一轮 → 无信号」
     prev_part = ""
     if prev_turn:
@@ -310,16 +321,19 @@ async def _extract(user_name, user_msg, assistant_reply, existing_facts, existin
     now_str = f"{_now.strftime('%Y-%m-%d')}（星期{'一二三四五六日'[_now.weekday()]}）{_now.strftime('%H:%M')}"
     user = (
         f"现在是 {now_str}。\n\n"
-        f"已知的全部事实：\n{existing_facts or '（暂无）'}\n\n"
+        f"已知的用户画像：\n{existing_profile or '（暂无）'}\n\n"
+        f"已知的行为模式：\n{existing_pattern or '（暂无）'}\n\n"
         f"当前状态快照：\n{existing_summary or '（暂无）'}\n\n"
         f"{prev_part}"
         f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n"
-        f"请只报本轮 facts 的增删（facts_add / facts_remove，没变动就都给空数组、别重列旧事实）"
+        f"请只报本轮 profile 的增删（profile_add / profile_remove，字符串数组）"
+        f"+ 本轮 pattern 的增删（pattern_add / pattern_remove，pattern_add 带 kind/importance）"
+        f"——没变动就都给空数组、别重列旧内容"
         f"+ 当前状态快照（基于原快照演进、没变就原样返回、别清空）+ 本轮 perception（照本轮用户消息判、始终给）"
         f"+ feedback（用户这句相对【上一轮】的反馈,枚举选一,没给上一轮就 无信号）。"
     )
-    # 2b：反思只吐 facts 的增删（delta）+ daily/summary/perception，输出体量**不再随 facts 增长**，
+    # 2b：反思只吐 profile/pattern 的增删（delta）+ daily/summary/perception，输出体量**不再随存量增长**，
     # 根治了「facts 一多 → 回显整份超 max_tokens → 截断 → JSON 解析失败 → 静默返回 {}」的老坑。
-    # 故 max_tokens 给个稳妥固定值即可（不必再跟 facts 量走）；仍按模型上限兜底。
+    # 故 max_tokens 给个稳妥固定值即可（不必再跟存量走）；仍按模型上限兜底。
     _cap = getattr(getattr(settings, "ai", None), "max_tokens", 0) or 4096
     return await complete_json(_load_sys(), user, settings, max_tokens=min(_cap, 900))

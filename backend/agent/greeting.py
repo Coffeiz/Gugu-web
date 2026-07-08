@@ -71,7 +71,7 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
         mem = await mem_store.read_memory(user_id)
         summary = (mem.get("summary") or "").strip()[:400]
         summary_ts = mem.get("summary_ts")
-        facts = (mem.get("facts") or "").strip()[:800]
+        facts = "\n".join(x for x in [(mem.get("profile") or "").strip(), (mem.get("pattern") or "").strip()] if x)[:800]
         cutoff = (local_now().date() - timedelta(days=7)).isoformat()
         daily_lines = [ln for ln in (mem.get("daily") or "").splitlines()
                        if ln.strip().startswith("- ") and ln[2:12] >= cutoff]

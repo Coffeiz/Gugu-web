@@ -304,8 +304,9 @@ export const searchApi = {
 }
 
 export const authApi = {
-  updateProfile: (data: any) => request('PATCH', '/auth/profile', data),
-  getQuota:      ()          => request('GET',   '/auth/quota'),
+  updateProfile: (data: any)     => request('PATCH',  '/auth/profile', data),
+  getQuota:      ()              => request('GET',    '/auth/quota'),
+  deleteAccount: (password: string) => request('DELETE', '/auth/me', { password }),
   uploadAvatar:  (file: File) => {
     const fd = new FormData()
     fd.append('file', file)

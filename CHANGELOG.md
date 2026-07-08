@@ -12,6 +12,7 @@
 ### 改进
 
 - **咕咕聊天改用虚拟滚动**（`components/common/GuguChat.vue`）：长会话不再一次性渲染全部消息，打开更快、滚动更流畅。
+- **记忆系统拆分为用户画像/行为模式两个文件**（`agent/memory/store.py`、`agent/memory/reflection.py`）：不再用一份文件混装稳定身份和行为习惯，各自判断标准更清晰、不共用不必要的置信度/衰减机制。详见 [devlog.md](docs/devlog.md) 2026-07-08 条目。
 
 ### 新增
 
@@ -24,6 +25,7 @@
 - **IM 慢工具触发时先发一句进度声明**（`agent/tools/base.py`）：缓解飞书/QQ/微信这类非流式渠道调慢工具时的干等感。
 - **浮动预览窗四角都能拖拽调整大小**（`components/common/FloatPreviewWindow.vue`）：之前只有右下角一个手柄能拉伸。
 - **文件预览窗支持直接编辑文本/代码文件**（`components/common/viewers/TextViewer.vue`）：代码类文件改用 CodeMirror 6，直接编辑、自动保存。详见 [devlog.md](docs/devlog.md) 2026-07-07 条目。
+- **个人设置支持自助注销账号**（`components/common/ProfileModal.vue`、`app/api/v1/auth.py`）：需输入密码二次确认，注销后账号与全部数据永久删除。
 
 ### 修复
 
@@ -40,6 +42,7 @@
 - **记忆 summary 快照里的相对时间没法换算**（`agent/memory/reflection.py`）：补充当前日期，涉及时间点换算成绝对日期。
 - **头像存盘后缀从客户端文件名推导，粘贴图片时出错**（`app/api/v1/auth.py`）：改用真实文件类型判断后缀。
 - **个人设置面板隐藏未生效的 QQ 群聊开关**（`components/common/ProfileModal.vue`）：功能还没接入其它平台，先隐藏。
+- **清除记忆接口漏删部分记忆文件**（`app/api/v1/agent.py`）：改成直接清空整个记忆目录，不再挨个列文件名，以后新增记忆文件不会再漏。
 
 ## [0.16.1] - 2026-07-05 · 登录支持邮箱 + 项目优先级 + 记忆向量扩展 + 对话追问路由修复
 
