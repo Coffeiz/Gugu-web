@@ -30,6 +30,7 @@ import base64
 import hashlib
 import secrets
 
+from cryptography.hazmat.primitives import padding as _crypto_padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 # AES-128 = 16 字节 key
@@ -65,27 +66,37 @@ def aes_ecb_padded_size(plaintext_size: int) -> int:
 
 
 def encrypt_aes_ecb(plaintext: bytes, key: bytes) -> bytes:
-    """AES-128-ECB + PKCS7 加密。key 必须是 16 字节。"""
+    """AES-128-ECB + PKCS7 加密。key 必须是 16 字节。
+
+    ⚠️ **必须显式 PKCS7 padding**：cryptography 库的 ECB 模式**不会自动 padding**——
+    plaintext 不是 16 字节倍数时 `cipher.update()` 直接抛
+    `ValueError: The length of the provided data is not a multiple of the block length`。
+    跟 OpenSSL 默认行为一致（ECB 没规定 padding，得显式加）。
+    """
     if len(key) != _AES_KEY_BYTES:
         raise ValueError(f"AES-128 key must be {_AES_KEY_BYTES} bytes, got {len(key)}")
+    padder = _crypto_padding.PKCS7(_AES_BLOCK_BYTES * 8).padder()  # 块大小按 bit
+    padded = padder.update(plaintext) + padder.finalize()
     cipher = Cipher(algorithms.AES(key), modes.ECB())
     enc = cipher.encryptor()
-    return enc.update(plaintext) + enc.finalize()
+    return enc.update(padded) + enc.finalize()
 
 
 def decrypt_aes_ecb(ciphertext: bytes, key: bytes) -> bytes:
-    """AES-128-ECB + PKCS7 解密。key 必须是 16 字节。"""
+    """AES-128-ECB + PKCS7 解密。key 必须是 16 字节。
+
+    入站数据 iLink 服务端已经 pad 过，ciphertext 必是 16 倍数；用 cryptography 自带
+    Unpadder 去掉 PKCS7 填充（保留旧的 manual unpadding 兼容路径在 `_aes128_ecb_decrypt` 里）。
+    """
     if len(key) != _AES_KEY_BYTES:
         raise ValueError(f"AES-128 key must be {_AES_KEY_BYTES} bytes, got {len(key)}")
+    if len(ciphertext) % _AES_BLOCK_BYTES != 0:
+        raise ValueError(f"ciphertext length {len(ciphertext)} is not a multiple of {_AES_BLOCK_BYTES}")
     cipher = Cipher(algorithms.AES(key), modes.ECB())
     dec = cipher.decryptor()
-    out = dec.update(ciphertext) + dec.finalize()
-    # PKCS7 去填充
-    if out:
-        pad = out[-1]
-        if 1 <= pad <= _AES_BLOCK_BYTES and out[-pad:] == bytes([pad]) * pad:
-            out = out[:-pad]
-    return out
+    padded_out = dec.update(ciphertext) + dec.finalize()
+    unpadder = _crypto_padding.PKCS7(_AES_BLOCK_BYTES * 8).unpadder()
+    return unpadder.update(padded_out) + unpadder.finalize()
 
 
 def gen_filekey_hex() -> str:
