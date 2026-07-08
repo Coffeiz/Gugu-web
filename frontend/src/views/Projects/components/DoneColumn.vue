@@ -1,6 +1,6 @@
 <template>
   <div
-    class="done-col"
+    class="done-col glass-card"
     data-col-status="done"
     :class="{ 'drag-over': isDragOver }"
     @dragover.prevent="isDragOver = true"
@@ -210,19 +210,17 @@ function onDrop(e) {
 }
 .recent-done .month-cards { display: flex; flex-direction: column; gap: 6px; }
 
+/* 玻璃质感走全局 .glass-card，跟另外两列（KanbanColumn）对齐同一档透明度——之前这里是
+   本地写死的 0.18 且没有 backdrop-filter，是「统一玻璃透明度」那次改动漏掉的历史遗留。 */
 .done-col {
+  --glass-bg: rgba(255,255,255,0.25);
+  --glass-bg-hover: rgba(255,255,255,0.25);
   display: flex;
   flex-direction: column;
-  background: rgba(255,255,255,0.18);
-  border: 1px solid rgba(255,255,255,0.45);
-  border-radius: var(--radius-lg);
-  corner-shape: squircle;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
   padding: 12px 10px;
   gap: 8px;
   min-height: 0;
   overflow: hidden;
-  transition: background 0.15s, box-shadow 0.15s;
 }
 .done-col.drag-over {
   background: rgba(90,158,136,0.08);

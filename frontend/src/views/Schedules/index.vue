@@ -1,6 +1,6 @@
 <template>
   <div class="sched-page">
-    <div class="panel">
+    <div class="panel glass-card">
       <div class="section-header">
         <button class="btn-primary" @click="openCreate"><PhAlarm :size="14" weight="bold" style="vertical-align:-1px;margin-right:5px" />新建任务</button>
       </div>
@@ -295,14 +295,14 @@ async function removeTask(t) {
 .btn-primary:hover { box-shadow: 0 6px 18px rgba(123,127,178,0.4); opacity: 0.92; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; transform: none; }
 
-/* 大版面：填满内容区（等宽 + 高到顶栏底），对齐原型 .glass-panel */
+/* 大版面：填满内容区（等宽 + 高到顶栏底）。玻璃质感走全局 .glass-card，
+   覆盖成看板同款的 0.25（比 --glass-bg 标准大面板值 0.56 更透），且不跟随
+   .glass-card:hover 变亮。 */
 .panel {
+  --glass-bg: rgba(255,255,255,0.25);
+  --glass-bg-hover: rgba(255,255,255,0.25);
   height: 100%; box-sizing: border-box;
   display: flex; flex-direction: column;
-  background: rgba(255,255,255,0.25); border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg); corner-shape: squircle;
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   padding: 22px 24px;
 }
 .section-header { display: flex; align-items: center; justify-content: flex-start; margin-bottom: 16px; flex-shrink: 0; }

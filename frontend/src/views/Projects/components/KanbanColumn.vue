@@ -1,6 +1,6 @@
 <template>
   <div
-    class="column"
+    class="column glass-card"
     :data-col-status="column.key"
     :class="{ 'drag-over': isDragOver }"
     @dragover.prevent="isDragOver = true"
@@ -55,16 +55,15 @@ function onDrop(e) {
 </script>
 
 <style scoped>
+/* 玻璃质感（background/border/圆角/box-shadow/backdrop-filter）走全局 .glass-card；
+   看板列比 --glass-bg 标准的大面板值（0.56）更透，覆盖成看板专用的 0.25，且不跟随
+   .glass-card:hover 变亮（悬停/拖拽状态另有 .drag-over own 语义，不该被通用 hover 抢）。 */
 .column {
+  --glass-bg: rgba(255,255,255,0.25);
+  --glass-bg-hover: rgba(255,255,255,0.25);
   display: flex; flex-direction: column;
-  background: rgba(255,255,255,0.25); border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
-  corner-shape: squircle;
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   padding: 12px 10px; gap: 8px;
   min-width: 0; min-height: 0; overflow: hidden;
-  transition: background 0.15s, box-shadow 0.15s;
 }
 .column.drag-over {
   background: rgba(123,127,178,0.1);
