@@ -53,8 +53,22 @@ def aeskey_to_hex(key: bytes) -> str:
 
 
 def aeskey_to_b64(key: bytes) -> str:
-    """raw bytes → base64 字符串（喂给 sendmessage.item_list.*.aes_key）。"""
-    return base64.b64encode(key).decode()
+    """raw bytes → hex 字符串 → utf-8 字节 → base64 编码（44 字符）。
+
+    仿 OpenClaw `messaging/send.ts` 写法：
+        aes_key: Buffer.from(uploaded.aeskey).toString("base64")
+    其中 `uploaded.aeskey` 是 hex string，`Buffer.from(hex).toString("base64")` 就是
+    「把 hex 字符串当 ASCII 字节再 base64 编码」= 44 字符。
+
+    **为什么不是直接 base64(raw 16 bytes)**：iLink 服务端对 `aes_key` 字段的解码路径是
+    「base64 decode → hex decode → 16 字节 raw」，期望 base64 解码后是 32 字节 ASCII。
+    传 24 字符 base64(raw) 的话 base64 decode 后只有 16 字节 raw，服务端 hex-decode 失败，
+    客户端用错 key 解密 → 微信收到「灰色打不开」的占位图（2026-07-09 实测《海边码头.jpg》）。
+
+    入站方向（`wechat.py:_ingest_wechat_media`）也是 hex 字符串格式（`bytes.fromhex(aeskey)`），
+    两边对称。
+    """
+    return base64.b64encode(key.hex().encode("utf-8")).decode()
 
 
 def aes_ecb_padded_size(plaintext_size: int) -> int:
