@@ -15,6 +15,7 @@
 
 ### 新增
 
+- **定时任务按需精简工具/上下文，省 token**（`agent/tools/scheduled_tasks.py`、`agent/runner.py`、`agent/context/builder.py`）：创建/修改任务时顺手判断这个任务用得上哪些工具组、要不要带项目/日历/文件/记忆，存下来执行时按需注入；判断不出来就用回全量，安全优先。详见 [devlog.md](docs/devlog.md) 2026-07-08 条目。
 - **文件上传同名冲突支持覆盖/保留两者/跳过**（`views/Files/index.vue`、`Projects/components/ProjectModal.vue`）：上传前列出冲突文件，可选覆盖、保留两者或跳过。
 - **`http_get` 按 Content-Type 自动提取正文**（`agent/tools/web.py`）：HTML/PDF 自动提取正文，不再把截断的原始响应喂给模型。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
 - **感知诊断面板新增「关系温度」当前值列表**（`Admin/Perception/index.vue`）：按温度降序列出各用户当前值。
@@ -26,6 +27,8 @@
 
 ### 修复
 
+- **看板已完成列玻璃质感跟另外两列不一致**（`Projects/components/{KanbanColumn,DoneColumn}.vue`、`Schedules/index.vue`）：已完成列一直是历史遗留的写死样式、连 `backdrop-filter` 都没有，改成跟另外两列一样接入全局 `.glass-card`，定时任务页大版面顺带一起统一。
+- **IM/定时任务推送里混入模型过程性旁白**（`agent/runner.py`、`agent/context/builder.py`、`agent/skills/weather.md`）：多轮工具调用间的过渡话被原样拼进推送内容，现在只取最后一轮总结文本；顺带修了天气 skill 容易查出超大 JSON 被截断、逼模型反复重试的问题。详见 [devlog.md](docs/devlog.md) 2026-07-08 条目。
 - **文件库改名输入框不支持中文输入法**（`views/Files/index.vue`）：敲回车上屏候选词会被误判成确认改名，已修复。
 - **docx/xlsx/pptx 预览「转换失败 (500)」**（`app/api/v1/files.py`）：部署配置问题导致转换失败，已修复。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
 - **`http_get` 反复超时后咕咕答非所问**（`agent/prompts/skills.md`）：现在会如实告知连不上，不再用无关话搪塞。

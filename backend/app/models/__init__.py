@@ -388,6 +388,9 @@ class ScheduledTask(Base):
     cron:        Mapped[str]                = mapped_column(String(60))    # crontab "m h dom mon dow"
     channels:    Mapped[str]                = mapped_column(String(40), default="chat,im")   # chat / im 逗号分隔
     enabled:     Mapped[bool]               = mapped_column(Boolean, default=True)
+    # 执行时按需精简注入用：{"tool_groups": ["web","meta"], "projects": false, "calendar": false,
+    # "files": false, "memory": false}。null = 不裁剪，走全量（兼容旧任务/未判断出结果时的安全默认）。
+    context_config: Mapped[Optional[dict]]  = mapped_column(JSON, nullable=True, default=None)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
     created_at:  Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow)
     updated_at:  Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

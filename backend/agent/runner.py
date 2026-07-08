@@ -265,6 +265,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         skills=profile.skills, style_prefs=style_prefs,
         source=getattr(req, "source", None), im_channels=im_channels,
         user_msg=req.message,   # 行为模块软点亮（emotion-first 等）
+        non_streaming=True,     # run_collect 是 IM 专用（worker.py 调用），不流式展示给用户
     )
     if im_bridge:               # IM 新会话续接桥（见 _im_continuity_bridge）
         system_prompt += im_bridge
@@ -377,8 +378,12 @@ async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool,
     """消费 LLMRunner 的 SSE 流：清洗后攒文本 + 取用量 + 收集咕咕要发的文件。
     返回 (文本, in, out, errored, files)；errored=True 时文本是错误文案（不入历史/不反思）。
 
-    文本**按轮分段收集、结尾去重拼接**：MiniMax 多轮工具调用时常把上一轮的开场白
-    整段重述一遍，无脑拼接会让开场白叠 N 遍（QQ 还会把口语的 ~ 渲染成删除线）。
+    文本**按轮分段收集，只取最后一轮**：这条路径（run_collect/run_ephemeral）不流式展示给
+    用户，工具调用之间模型说的过渡性旁白（"我先查一下""这条数据不对我再试试"）不该被当成
+    正文发出去——之前拼接所有轮次+简单去重，会把这些旁白原样推给用户（真实翻车案例：定时
+    任务查天气时反复重试，旁白被整段推送）。配合 builder._NON_STREAMING_BLOCK 提示模型把
+    完整答案收在最后一轮，这里只取 rounds[-1]（若为空则回退到最近一条非空轮次，不让用户
+    啥也没收到）。
     """
     san = sanitize.StreamSanitizer()
     rounds: list[str] = []   # 每轮文本分开存
@@ -412,43 +417,61 @@ async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool,
     cur += san.flush()
     rounds.append(cur)
 
-    # 去重拼接：若本轮以上一轮全文为前缀（模型重述了开场白），用本轮替换上一轮，不叠加
-    parts: list[str] = []
-    for r in rounds:
+    text = ""
+    for r in reversed(rounds):
         r = r.strip()
-        if not r:
-            continue
-        if parts and r.startswith(parts[-1]):
-            parts[-1] = r
-        else:
-            parts.append(r)
-    return ("".join(parts).strip(), tin, tout, False, files, cancelled)
+        if r:
+            text = r
+            break
+    return (text, tin, tout, False, files, cancelled)
 
 
-async def run_ephemeral(user_id, user_name: str, prompt: str) -> str:
-    """定时任务专用：跑 agent 拿结果，不建 session、不存 DB、不推 SSE。"""
+async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: dict | None = None) -> str:
+    """定时任务专用：跑 agent 拿结果，不建 session、不存 DB、不推 SSE。
+
+    context_config（来自 ScheduledTask.context_config，创建/改任务时顺手判断出来的）非空时按需
+    精简：只加载/注入这个任务真正用得上的工具组和项目/日历/文件/记忆——这条路径不建 session、
+    没有 prompt 缓存，每次触发都是全价，省下来的是真金白银。None（没判断出结果的旧任务/默认值）
+    就走全量，安全优先。
+    """
     profile = DefaultProfile()
     settings = get_settings()
     model_cfg = pick_model(settings, None)   # 解析层：active/pool/router 选一个模型配置
+
+    cfg = context_config or {}
+    inc_projects = bool(cfg.get("projects")) if context_config else True
+    inc_calendar = bool(cfg.get("calendar")) if context_config else True
+    inc_files    = bool(cfg.get("files"))    if context_config else True
+    inc_memory   = bool(cfg.get("memory"))   if context_config else True
 
     import app.db.session as _sess
     if _sess._engine is None:
         _sess._build_engine()
 
     async with _sess._SessionLocal() as db:
-        projects = await loaders.load_projects(db, user_id)
-        events = await loaders.load_events(db, user_id)
-        files_overview = await loaders.load_files_overview(db, user_id)
+        projects = await loaders.load_projects(db, user_id) if inc_projects else []
+        events = await loaders.load_events(db, user_id) if inc_calendar else []
+        files_overview = await loaders.load_files_overview(db, user_id) if inc_files else None
 
-    memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
+    memory = await loaders.load_memory(user_id) if (profile.memory_enabled and inc_memory) else {}
     im_channels = await loaders.load_im_channels(user_id)
     prompt_name = profile.prompt_file.removesuffix(".md")
     system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview,
-                                  skills=profile.skills, im_channels=im_channels)
+                                  skills=profile.skills, im_channels=im_channels, non_streaming=True,
+                                  include_projects=inc_projects, include_calendar=inc_calendar,
+                                  include_files=inc_files, include_memory=inc_memory)
 
     from agent.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
-    runner = LLMRunner(profile.tool_names, settings)
+    tool_groups = context_config.get("tool_groups") if context_config else None
+    if tool_groups:
+        # meta（use_skill）恒带上，不管分类判断有没有选它——漏了这一组，天气等按需 skill 就彻底
+        # 拉不到，属于「功能直接坏掉」而不是「多花点 token」，安全代价不对等，不能只信分类结果。
+        from agent.tools import registry
+        tool_names = registry.tools_of(list(set(tool_groups) | {"meta"}))
+    else:
+        tool_names = profile.tool_names
+    runner = LLMRunner(tool_names, settings)
 
     from app.core.chat_attach import build_user_content
     if use_anthropic:

@@ -118,6 +118,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
         if not t or not t.enabled:
             return {"错误": "任务不存在或已停用"}
         payload, uid, name = t.payload or "", t.user_id, t.name
+        context_config = t.context_config
         chans = {c for c in (t.channels or "").split(",") if c}
         t.last_run_at = datetime.utcnow()
         once_deleted = not is_trial and (t.cron or "").startswith("@once:")
@@ -133,7 +134,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             f"现在是 {now_str}，用户设置了一条定时任务：{payload}\n"
             f"请以咕咕的身份完成这项任务，并将结果告知用户。"
         )
-        text = await _run_agent(uid, prompt)
+        text = await _run_agent(uid, prompt, context_config)
         result = await deliver_to_channels(uid, name, text, chans)
     except Exception as e:
         import traceback
@@ -209,14 +210,14 @@ async def _persist_push_im(uid, platform: str, title: str, text: str) -> None:
         pass
 
 
-async def _run_agent(user_id, prompt: str) -> str:
+async def _run_agent(user_id, prompt: str, context_config: dict | None = None) -> str:
     from agent.runner import run_ephemeral
     import app.db.session as ss
     from app.models import User
     async with ss._SessionLocal() as db:
         u = await db.get(User, _as_uuid(user_id))
         uname = (u.display_name or u.username) if u else ""
-    text = await run_ephemeral(user_id, uname, prompt)
+    text = await run_ephemeral(user_id, uname, prompt, context_config=context_config)
     return text or "（咕咕这次没有产出内容）"
 
 

@@ -86,8 +86,13 @@ def build(profile: str, user_name: str, projects: list, events: list,
           skills: list[str] | None = None,
           style_prefs: dict | None = None,
           source: str | None = None, im_channels: dict | None = None,
-          user_msg: str = "") -> str:
-    memory = memory or {}
+          user_msg: str = "", non_streaming: bool = False,
+          include_projects: bool = True, include_calendar: bool = True,
+          include_files: bool = True, include_memory: bool = True) -> str:
+    # include_* 四个开关只给 run_ephemeral（定时任务）按 ScheduledTask.context_config 用——
+    # 交互式对话（web/IM）永远全量传 True，不受影响。跳过时不省 header 文字（便宜），
+    # 省的是 header 底下那块真正贵的内容（最多 25 个项目 / 10 条日程 / 完整记忆，这才是大头）。
+    memory = memory if (include_memory and memory) else {}
     _now = local_now()
     today = _now.strftime("%Y-%m-%d")
     # 当前完整时刻（含星期、时分），让咕咕知道"现在几点、星期几"，能答时间、按时段问候、排期
@@ -97,17 +102,23 @@ def build(profile: str, user_name: str, projects: list, events: list,
     if _now.hour < 4:
         now_str += "，深夜未眠——以日出为一天的分界：用户口中的「今天」指尚未结束的这个主观白天（日历昨天），「明天」指日出后的那天（日历今天），涉及日期时请按此理解"
 
-    proj_lines = []
-    for p in projects[:25]:
-        deadline = f"截止 {p.deadline}" if p.deadline else "无截止"
-        done_cnt  = sum(1 for s in p.stages if s.get("done"))
-        total_cnt = len(p.stages)
-        prog = f"{done_cnt}/{total_cnt}阶段" if total_cnt else "无阶段"
-        proj_lines.append(f"- [id={p.id}] [{_STATUS_ZH.get(p.status, p.status)}] {p.name}（{prog}，{deadline}，客户：{p.client or '无'}）")
+    if include_projects:
+        proj_lines = []
+        for p in projects[:25]:
+            deadline = f"截止 {p.deadline}" if p.deadline else "无截止"
+            done_cnt  = sum(1 for s in p.stages if s.get("done"))
+            total_cnt = len(p.stages)
+            prog = f"{done_cnt}/{total_cnt}阶段" if total_cnt else "无阶段"
+            proj_lines.append(f"- [id={p.id}] [{_STATUS_ZH.get(p.status, p.status)}] {p.name}（{prog}，{deadline}，客户：{p.client or '无'}）")
+        proj_block = "\n".join(proj_lines) if proj_lines else "暂无项目"
+    else:
+        proj_block = "（本次任务不需要项目上下文，未加载）"
 
-    ev_lines   = [f"- {ev.date} {ev.title}" for ev in events[:10]]
-    proj_block = "\n".join(proj_lines) if proj_lines else "暂无项目"
-    ev_block   = "\n".join(ev_lines)   if ev_lines   else "暂无近期事件"
+    if include_calendar:
+        ev_lines = [f"- {ev.date} {ev.title}" for ev in events[:10]]
+        ev_block = "\n".join(ev_lines) if ev_lines else "暂无近期事件"
+    else:
+        ev_block = "（本次任务不需要日历上下文，未加载）"
 
     prompt_file = _PROMPTS_DIR / f"{profile}.md"
     try:
@@ -115,13 +126,15 @@ def build(profile: str, user_name: str, projects: list, events: list,
     except FileNotFoundError:
         template = "今天是 {today}。\n\n## 项目\n{projects}\n\n## 日历\n{calendar}"
 
+    files_block = (_files_block(files, {p.id: p.name for p in projects})
+                   if include_files else "（本次任务不需要文件上下文，未加载）")
     replacements = {
         "{today}":    today,
         "{now}":      now_str,
         "{name}":     user_name,
         "{projects}": proj_block,
         "{calendar}": ev_block,
-        "{files}":    _files_block(files, {p.id: p.name for p in projects}),
+        "{files}":    files_block,
     }
     result = template
     for key, val in replacements.items():
@@ -184,6 +197,8 @@ def build(profile: str, user_name: str, projects: list, events: list,
     src_block = _source_block(source, im_channels)
     if src_block:
         dynamic.append(src_block)
+    if non_streaming:
+        dynamic.append(_NON_STREAMING_BLOCK)
     dynamic.append(result)
 
     stable_str  = "\n\n---\n\n".join(stable)
@@ -214,6 +229,18 @@ def _source_block(source: str | None, im_channels: dict | None) -> str:
                      f"**无需再绑定、绝不让 TA 扫码**（说『没绑』就错了）。")
     lines.append("- 设 qq/feishu 通知渠道前看这里：已连(✅)的直接用；只有未连(❌)才提示用户去「设置 → 连接 IM」绑定。")
     return "## 当前对话来源 / 通知渠道\n\n" + "\n".join(lines)
+
+
+# IM 消息（run_collect）/ 定时任务（run_ephemeral）都不流式展示给用户，中间轮次说的话
+# 和最终答案会被一并收进推送文本（见 runner._collect），别在工具调用之间输出「我先查一下 /
+# 再看看」这类过程性旁白——那些话在网页流式场景里用户能看到没问题，这里会被当成正文发出去。
+_NON_STREAMING_BLOCK = (
+    "## 输出方式\n\n"
+    "这轮对话不会流式展示给用户，所有工具都用完之后再一次性给出完整回复；"
+    "工具调用之间不要输出过程性旁白（如「我先查一下」「这条数据不对我再试试」），"
+    "那些话会被原样发给用户看到。要是这次任务包含好几个部分（比如新闻+天气），"
+    "把所有部分都放进最后这一条回复里说完，别拆成好几条分别说。"
+)
 
 
 def _style_block(prefs: dict) -> str:

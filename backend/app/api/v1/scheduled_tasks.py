@@ -23,6 +23,42 @@ router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-tasks"])
 
 _CHANNELS = {"web", "feishu", "qq", "wechat", "im", "chat"}   # web=站内通知、feishu/qq/wechat=各 IM；chat=web、im=全部 IM（历史别名）
 
+# 定时任务执行（run_ephemeral）按需精简注入用的工具组清单——直接引用 DefaultProfile.tools
+# 本身（不抄一份重复列表），以后加/删工具组只用改那一处，这里自动跟着变，不用两边同步维护
+# （踩过教训：devlog.md 2026-07-03「抽共享拖拽 composable」那次两份『该刷哪些』的清单分散在
+# 前后端，迟早漂移）。放在这层（而非 agent/tools/scheduled_tasks.py）供两边共用：agent 那边
+# 已经反向 import 这个文件的 _validate_cron/_norm_channels，这里再定义一遍会兜圈子循环 import。
+from agent.profiles.default import DefaultProfile
+TOOL_GROUPS = DefaultProfile.tools
+
+
+async def classify_context_config(instruction: str) -> dict | None:
+    """网页表单创建/改指令时没有 agent 在场顺手判断，补一次轻量分类调用（复用记忆/反思共用的
+    complete_json，prompt 和输出都很小）。判断不出来就返回 None——退回全量，安全优先于省钱。"""
+    instruction = (instruction or "").strip()
+    if not instruction:
+        return None
+    from app.core.config import get_settings
+    from agent.memory._llm import complete_json
+    sys = (
+        "你要判断一个定时任务到点执行时实际需要哪些工具/上下文，用来精简注入、省 token。"
+        "只输出 JSON，不要任何解释文字。字段：\n"
+        f"- tool_groups：数组，从这些里选（判断不出来就给空数组）：{TOOL_GROUPS}\n"
+        "- projects/calendar/files/memory：布尔，是否需要项目列表/日历事件/文件概览/长期记忆作为参考\n"
+        "meta 工具组（use_skill，用来拉取天气等技能）通常都该带上。"
+    )
+    result = await complete_json(sys, instruction, get_settings(), max_tokens=300)
+    groups = result.get("tool_groups")
+    if not isinstance(groups, list):
+        return None
+    return {
+        "tool_groups": [g for g in groups if g in TOOL_GROUPS],
+        "projects": bool(result.get("projects")),
+        "calendar": bool(result.get("calendar")),
+        "files":    bool(result.get("files")),
+        "memory":   bool(result.get("memory")),
+    }
+
 
 def _validate_cron(cron: str) -> None:
     if (cron or "").startswith("@once:"):
@@ -52,6 +88,7 @@ def _to_resp(t: ScheduledTask) -> dict:
         "enabled": t.enabled,
         "event_id": t.event_id,   # 绑定的日历事件（活动面板加的提醒）；null=独立任务
         "last_run_at": fmt_local(t.last_run_at) if t.last_run_at else None,
+        "context_config": t.context_config,   # null=全量注入；非空=按需精简（见 agent/runner.py run_ephemeral）
     }
 
 
@@ -108,6 +145,7 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         payload=body.payload or "", cron=body.cron,
         channels=_norm_channels(body.channels), enabled=body.enabled,
         event_id=body.event_id,
+        context_config=await classify_context_config(body.payload or ""),
     )
     db.add(t)
     await db.commit()
@@ -132,6 +170,9 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.name = body.name
     if body.payload is not None:
         t.payload = body.payload
+        # 指令变了，旧的 context_config 是按旧指令判断的，可能不再适用——重新分类一次，
+        # 而不是留着可能已经过期的裁剪配置导致新指令要用的工具/上下文被裁掉、任务悄悄跑不动。
+        t.context_config = await classify_context_config(body.payload)
     if body.channels is not None:
         t.channels = _norm_channels(body.channels)
     if body.enabled is not None:
