@@ -344,11 +344,29 @@ async def handle(msg_id: str, payload: dict):
     from agent.adapters import wechat as _wechat
     _typing_ind = await _wechat.start_typing(payload)
     try:
-        resp = await run_collect(req)
+        # 飞书流式回复（2026-07-09 接入）：feishu 平台走 run_stream → feishu.send_text_stream，
+        # 把 token 实时 patch 到飞书卡片（IM 端模拟 SSE 体感）；其他平台继续走 run_collect 非流式。
+        if platform == "feishu":
+            from agent.runner import run_stream
+            from agent.adapters import feishu as _feishu
+            token_iter = run_stream(req)
+            rid = payload.get("chat_id") or payload.get("platform_user_id")
+            await _feishu.send_text_stream(rid, token_iter, payload.get("channel_id"))
+            # 从 final 事件拿 AgentResponse（注：run_stream 最后 yield 一次 final）
+            resp: AgentResponse | None = None
+            async for kind, payload_yield in token_iter:
+                if kind == "final":
+                    resp = payload_yield
+                    break
+            if resp is None:
+                # run_stream 没 yield final（极端情况，比如一 token 没生成就崩了）
+                resp = AgentResponse(text="", session_id=None, tokens_in=0, tokens_out=0)
+        else:
+            resp = await run_collect(req)
     finally:
         await rtstate.clear_state(platform, puid)
         await rtstate.clear_cancel(platform, puid)
-        await _wechat.stop_typing(_typing_ind)   # 无论 run_collect 成败都关 typing
+        await _wechat.stop_typing(_typing_ind)   # 无论成败都关 typing
     await _im_session_set(platform, puid, resp.session_id)   # 续上同一会话
     if resp.cancelled:
         # 用户中途「算了」：网关已回「先不继续啦」，这里不再补发任何内容
@@ -363,7 +381,10 @@ async def handle(msg_id: str, payload: dict):
         # 模型没出文本：有文件配一句「给你～」，纯空则给个兜底——别发空
         #（空内容发 QQ 会报「无效 markdown content」，用户啥也收不到）
         reply_text = "给你～" if resp.files else "嗯~在的，你说～"
-    if reply_text.strip():
+    # 飞书流式回复已在 feishu.send_text_stream 内把最终文本 patch 到卡片 → 跳过 _send
+    # 避免双发（feishu.send_text_stream 成功时卡片已有最终内容；fallback 到普通 send_text 的情况下
+    # 也已由 send_text_stream 内部调过 send_text，这里再 _send 是重复）。
+    if platform != "feishu" and reply_text.strip():
         await _send(payload, reply_text)
     await _send_files(payload, resp.files)   # 咕咕 send_file 的文件发回平台
     # 这条以提问/确认收尾 → 置「等回话」标志，网关下条「嗯/好/算了」就放行进 agent（别当闲聊吞了）

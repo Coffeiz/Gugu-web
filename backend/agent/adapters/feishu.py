@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 import re
+import time
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
@@ -496,6 +497,145 @@ async def send_file(chat_id: str, data: bytes, name: str, ext: str, channel_id: 
     if channel_id not in _clients:
         _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
     return await asyncio.to_thread(_do_send_file, _clients[channel_id], chat_id, data, name, ext)
+
+
+# ── 流式回复（飞书 cardkit v1 create/update card，2026-07-09 接入）───────────────
+# 流程：
+#   1) send_text_stream 收到 token_iter（来自 agent.runner.run_stream）
+#   2) 先发一张「咕咕正在想…」占位卡片 → 拿到 card_id
+#   3) 每个 token 累加到 accumulated_text；每 ≥200ms 或 ≥30 字 增量 patch 一次
+#   4) token_iter 结束 → 用最终 accumulated 调 finish_card（覆盖占位文本为完整回复）
+#   5) 任何环节失败 → fallback 普通 send_text，行为退化到非流式体验
+#
+# 权限：飞书后台要给应用加 cardkit:card:write，否则 create_card 返回非 0；
+# 没权限时 fallback 不挡用户主流程，log 一次提示管理员加权限。
+
+# 节流参数（实测值：飞书 cardkit update 接口有 QPS 限制 ~20/s，留余量）
+_STREAM_PATCH_INTERVAL_S = 0.2
+_STREAM_PATCH_MIN_CHARS = 30
+
+
+def _make_card_payload(text: str) -> str:
+    """构造卡片 2.0 的 data 字段（JSON 字符串）——elements 用现有 _build_card_elements 复用 GFM 表格解析。"""
+    return json.dumps({"elements": _build_card_elements(text)}, ensure_ascii=False)
+
+
+def _do_create_card(client, receive_id: str, text: str) -> str | None:
+    """同步版 create_card：返回 card_id 或 None。失败 log。"""
+    from lark_oapi.api.cardkit.v1 import (
+        CreateCardRequest, CreateCardRequestBody,
+    )
+    body = (CreateCardRequestBody.builder()
+            .type("card_json")
+            .data(_make_card_payload(text))
+            .build())
+    try:
+        req = CreateCardRequest.builder().request_body(body).build()
+        resp = client.cardkit.v1.card.create(req)
+    except Exception as e:
+        print(f"[feishu] create_card 异常: {type(e).__name__}: {e}", flush=True)
+        return None
+    if not resp.success():
+        print(f"[feishu] create_card 失败: code={resp.code} msg={resp.msg}", flush=True)
+        return None
+    return (resp.data.card_id if (resp.data and resp.data.card_id) else None)
+
+
+def _do_update_card(client, card_id: str, text: str) -> bool:
+    """同步版 update_card：节流策略由 caller 控制（每 ≥200ms 或 ≥30 字调一次）。"""
+    from lark_oapi.api.cardkit.v1 import (
+        UpdateCardRequest, UpdateCardRequestBody, Card as CardModel,
+    )
+    body = (UpdateCardRequestBody.builder()
+            .card(CardModel.builder().type("card_json").data(_make_card_payload(text)).build())
+            .sequence(int(time.time() * 1000))    # 防乱序：单调递增
+            .build())
+    try:
+        req = UpdateCardRequest.builder().card_id(card_id).request_body(body).build()
+        resp = client.cardkit.v1.card.update(req)
+    except Exception as e:
+        print(f"[feishu] update_card 异常: {type(e).__name__}: {e}", flush=True)
+        return False
+    if not resp.success():
+        print(f"[feishu] update_card 失败: code={resp.code} msg={resp.msg}", flush=True)
+        return False
+    return True
+
+
+async def send_text_stream(receive_id: str, token_iter, channel_id: str | None = None,
+                          placeholder: str = "咕咕正在想…") -> bool:
+    """飞书流式回复（IM 端模拟 SSE）。
+
+    Args:
+        receive_id: chat_id（oc_xxx）或 open_id（ou_xxx）
+        token_iter: async iterator，yield ("token", str) / ("final", AgentResponse)（agent.runner.run_stream）
+        channel_id: user_bot.id
+        placeholder: 占位卡片首屏文案
+
+    Returns: True=流式成功 / False=fallback 后也不成功（极端情况）。
+    节流：每 _STREAM_PATCH_INTERVAL_S 秒 OR 每 _STREAM_PATCH_MIN_CHARS 字 patch 一次卡片。
+    """
+    app_id, app_secret = await _creds_by_id(channel_id)
+    if not app_id:
+        print(f"[feishu] user_bot {channel_id} 无凭据，流式回复跳过", flush=True)
+        return False
+    if channel_id not in _clients:
+        _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
+    client = _clients[channel_id]
+
+    # 1) 创建占位卡片
+    card_id = await asyncio.to_thread(_do_create_card, client, receive_id, placeholder)
+    if not card_id:
+        # 权限不够 / 接口失败 → fallback 普通 send_text（攒完 token 后一次性发）
+        print(f"[feishu] 流式 fallback：create_card 失败，改走普通 send_text", flush=True)
+        accumulated = ""
+        async for kind, payload in token_iter:
+            if kind == "token":
+                accumulated += payload
+            elif kind == "final":
+                resp = payload
+                final_text = (resp.text or accumulated).strip()
+                if final_text:
+                    return await send_text(receive_id, final_text, channel_id)
+                return False
+        return False
+
+    # 2) 流式消费 token + 节流 patch
+    accumulated = ""
+    last_patch_ts = time.monotonic()
+    last_patched_len = 0
+    pending_final_text: str | None = None
+    try:
+        async for kind, payload in token_iter:
+            if kind == "token":
+                accumulated += payload
+                now = time.monotonic()
+                # 节流：时间 OR 长度任一满足就 patch（保证短响应也能及时显示）
+                if (now - last_patch_ts >= _STREAM_PATCH_INTERVAL_S
+                        or len(accumulated) - last_patched_len >= _STREAM_PATCH_MIN_CHARS):
+                    await asyncio.to_thread(_do_update_card, client, card_id, accumulated)
+                    last_patch_ts = now
+                    last_patched_len = len(accumulated)
+            elif kind == "final":
+                # final AgentResponse：text 可能比 accumulated 多（出口兜底 sanitize_outbound/strip_disallowed_emoji
+                # 在 runner 末尾做过清洗，最终版更准）；如果不同就以 final.text 为准再 patch 一次
+                resp = payload
+                if resp.cancelled:
+                    # 用户中途取消 → 卡片保留 partial 内容（不清空，避免给用户错觉"什么都没了"）
+                    break
+                pending_final_text = (resp.text or accumulated).strip()
+                break
+    except Exception as e:
+        print(f"[feishu] 流式消费异常: {type(e).__name__}: {e}", flush=True)
+
+    # 3) 收尾：把最终版（final.text 优先；如果 final 没拿到就用 accumulated）patch 进卡片
+    final_text = pending_final_text or accumulated
+    if final_text and final_text != accumulated:
+        await asyncio.to_thread(_do_update_card, client, card_id, final_text)
+    elif final_text:
+        # 已 patch 过同文本 → 不用再 patch，但仍显式结束一下（飞书卡 update 是幂等的）
+        await asyncio.to_thread(_do_update_card, client, card_id, final_text)
+    return True
 
 
 if __name__ == "__main__":
