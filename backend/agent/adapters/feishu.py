@@ -520,8 +520,14 @@ def _make_card_payload(text: str) -> str:
     return json.dumps({"elements": _build_card_elements(text)}, ensure_ascii=False)
 
 
-def _do_create_card(client, receive_id: str, text: str) -> str | None:
-    """同步版 create_card：返回 card_id 或 None。失败 log。"""
+async def _do_create_card(client, receive_id: str, text: str) -> str | None:
+    """async 版 create_card：用 SDK 的 acreate()（内部走 httpx + json= 参数，更稳）。
+    SDK 同步 create() 走 Transport.execute → requests + data=bytes 路径，
+    实测在 2.x 版本有 bug 会丢 body（飞书返回 200610 "body is nil"）。
+    直接走 httpx raw HTTP 是验证过的 fallback 路径，但用 SDK 的 acreate 复用 token 管理更省事。
+
+    Returns: card_id 或 None（失败 log）。
+    """
     from lark_oapi.api.cardkit.v1 import (
         CreateCardRequest, CreateCardRequestBody,
     )
@@ -531,7 +537,7 @@ def _do_create_card(client, receive_id: str, text: str) -> str | None:
             .build())
     try:
         req = CreateCardRequest.builder().request_body(body).build()
-        resp = client.cardkit.v1.card.create(req)
+        resp = await client.cardkit.v1.card.acreate(req)
     except Exception as e:
         print(f"[feishu] create_card 异常: {type(e).__name__}: {e}", flush=True)
         return None
@@ -541,8 +547,8 @@ def _do_create_card(client, receive_id: str, text: str) -> str | None:
     return (resp.data.card_id if (resp.data and resp.data.card_id) else None)
 
 
-def _do_update_card(client, card_id: str, text: str) -> bool:
-    """同步版 update_card：节流策略由 caller 控制（每 ≥200ms 或 ≥30 字调一次）。"""
+async def _do_update_card(client, card_id: str, text: str) -> bool:
+    """async 版 update_card：节流策略由 caller 控制（每 ≥200ms 或 ≥30 字调一次）。"""
     from lark_oapi.api.cardkit.v1 import (
         UpdateCardRequest, UpdateCardRequestBody, Card as CardModel,
     )
@@ -552,7 +558,7 @@ def _do_update_card(client, card_id: str, text: str) -> bool:
             .build())
     try:
         req = UpdateCardRequest.builder().card_id(card_id).request_body(body).build()
-        resp = client.cardkit.v1.card.update(req)
+        resp = await client.cardkit.v1.card.aupdate(req)
     except Exception as e:
         print(f"[feishu] update_card 异常: {type(e).__name__}: {e}", flush=True)
         return False
@@ -584,7 +590,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
     client = _clients[channel_id]
 
     # 1) 创建占位卡片
-    card_id = await asyncio.to_thread(_do_create_card, client, receive_id, placeholder)
+    card_id = await _do_create_card(client, receive_id, placeholder)
     if not card_id:
         # 权限不够 / 接口失败 → fallback 普通 send_text（攒完 token 后一次性发）
         print(f"[feishu] 流式 fallback：create_card 失败，改走普通 send_text", flush=True)
@@ -613,7 +619,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                 # 节流：时间 OR 长度任一满足就 patch（保证短响应也能及时显示）
                 if (now - last_patch_ts >= _STREAM_PATCH_INTERVAL_S
                         or len(accumulated) - last_patched_len >= _STREAM_PATCH_MIN_CHARS):
-                    await asyncio.to_thread(_do_update_card, client, card_id, accumulated)
+                    await _do_update_card(client, card_id, accumulated)
                     last_patch_ts = now
                     last_patched_len = len(accumulated)
             elif kind == "final":
@@ -631,10 +637,10 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
     # 3) 收尾：把最终版（final.text 优先；如果 final 没拿到就用 accumulated）patch 进卡片
     final_text = pending_final_text or accumulated
     if final_text and final_text != accumulated:
-        await asyncio.to_thread(_do_update_card, client, card_id, final_text)
+        await _do_update_card(client, card_id, final_text)
     elif final_text:
         # 已 patch 过同文本 → 不用再 patch，但仍显式结束一下（飞书卡 update 是幂等的）
-        await asyncio.to_thread(_do_update_card, client, card_id, final_text)
+        await _do_update_card(client, card_id, final_text)
     return True
 
 
