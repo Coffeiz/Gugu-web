@@ -290,7 +290,7 @@
         <div v-if="activeProfile === 'reflection'" class="persona-caution"
           style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
                  background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
-          ⚠️ 这是<strong>记忆反思提炼词</strong>，决定咕咕每次对话后从中记住什么。改它会影响记忆质量；需保持输出 JSON 格式 <code>{"facts":[...],"daily":"..."}</code>。
+          ⚠️ 这是<strong>记忆反思提炼词</strong>，决定咕咕每次对话后从中记住什么。改它会影响记忆质量；需保持输出 JSON 格式 <code>{"profile_add":[...],"pattern_add":[...],"daily":"..."}</code>。
         </div>
 
         <div v-if="activeProfile === 'compress'" class="persona-caution"
@@ -640,7 +640,7 @@
           </div>
           <div class="card-title-block">
             <h3>向量 Embedding 模型</h3>
-            <p>独立于聊天/语音模型，<b>单独 pin 一个</b>——换它会作废所有已存向量、需重建，故意不进模型轮换。用于记忆的语义检索（facts 超量时按语义挑，而非词法）。<b>关闭 = 退回词法检索</b>，零副作用。<b>走 OpenAI 兼容 <code>/embeddings</code></b>——自托管 Ollama 填 <code>http://NAS:11434/v1</code>、模型 <code>qwen3-embedding:0.6b</code>、Key 随便填。</p>
+            <p>独立于聊天/语音模型，<b>单独 pin 一个</b>——换它会作废所有已存向量、需重建，故意不进模型轮换。用于记忆的语义检索（pattern 超量时按语义挑，而非词法）。<b>关闭 = 退回词法检索</b>，零副作用。<b>走 OpenAI 兼容 <code>/embeddings</code></b>——自托管 Ollama 填 <code>http://NAS:11434/v1</code>、模型 <code>qwen3-embedding:0.6b</code>、Key 随便填。</p>
           </div>
         </div>
 
@@ -688,7 +688,7 @@
             </div>
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>重建向量</span><span class="behavior-desc">换了模型/维度后点一次，给所有用户的 facts + 长期记忆用新模型重算向量（后台跑，期间检索自动退回词法）。日常不用点</span></div>
+            <div class="behavior-label"><span>重建向量</span><span class="behavior-desc">换了模型/维度后点一次，给所有用户的 pattern + 长期记忆用新模型重算向量（后台跑，期间检索自动退回词法）。日常不用点</span></div>
             <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;min-width:0;">
               <span v-if="rebuild.msg" :title="rebuild.msg"
                     :style="{ color: rebuild.error ? '#e07070' : '#4caf7d', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
@@ -714,7 +714,7 @@
         </div>
       </section>
 
-      <!-- ── 记忆维护：pattern.json 批量复核清理（先预览再确认，见 scripts/refresh_memory.py） ── -->
+      <!-- ── 记忆维护：一键复核清理，见 scripts/refresh_memory.py ── -->
       <section v-if="activeTab === 'behavior'" class="config-card">
         <div class="card-head">
           <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
@@ -725,7 +725,7 @@
           </div>
           <div class="card-title-block">
             <h3>记忆维护</h3>
-            <p>批量复核所有用户的「行为模式」记忆（pattern.json），挑出不符合当前标准的旧条目。<b>先预览、确认没问题再真删</b>——同一批数据 LLM 判断可能不稳定，预览看到的就是真删的，不会重新判断一遍。</p>
+            <p>批量复核所有用户的记忆，一次做三件事：① 删掉 pattern.json 里不符合当前标准的旧条目 ② 把其中该算「用户画像」的条目搬进 profile.json ③ 清掉已迁移完的遗留 facts.json/facts.md。<b>先预览、确认没问题再真执行</b>——①②涉及 LLM 判断、同一批数据可能不稳定，预览看到的就是真执行的，不会重新判断一遍；③是文件是否存在的确定性判断，不受此影响。</p>
           </div>
         </div>
 
@@ -746,7 +746,7 @@
           <div v-if="memCleanup.status === 'done'" class="behavior-item" style="grid-column: 1 / -1; flex-direction:column; align-items:stretch; gap:10px;">
             <div style="display:flex; align-items:center; justify-content:space-between;">
               <span class="behavior-desc">
-                {{ memCleanupUserCount === 0 ? '预览完成：没有需要删除的内容' : `预览完成：${memCleanupUserCount} 个用户共 ${memCleanupTotalRemoved} 条待删除` }}
+                {{ memCleanupUserCount === 0 ? '预览完成：没有需要处理的内容' : `预览完成：${memCleanupUserCount} 个用户，共删 ${memCleanupTotalRemoved} 条 / 搬 ${memCleanupTotalMoved} 条去画像 / 清 ${memCleanupTotalLegacy} 个遗留文件` }}
               </span>
               <button v-if="memCleanupUserCount > 0" class="btn-ghost" style="font-size:12px;padding:4px 10px;" @click="memCleanup.expanded = !memCleanup.expanded">
                 {{ memCleanup.expanded ? '收起明细' : '查看明细' }}
@@ -754,9 +754,11 @@
             </div>
             <div v-if="memCleanup.expanded && memCleanupUserCount > 0" class="mem-cleanup-detail">
               <div v-for="(p, uid) in memCleanup.plan" :key="uid">
-                <template v-if="p.removed_texts?.length">
-                  <div class="mem-cleanup-uid">{{ uid }}（{{ p.removed_texts.length }}/{{ p.total }} 条）</div>
-                  <div v-for="(t, i) in p.removed_texts" :key="i" class="mem-cleanup-text">· {{ t }}</div>
+                <template v-if="p.removed_texts?.length || p.moved_texts?.length || p.legacy_files?.length">
+                  <div class="mem-cleanup-uid">{{ uid }}（{{ p.total }} 条）</div>
+                  <div v-for="(t, i) in p.removed_texts" :key="'r'+i" class="mem-cleanup-text">· [删] {{ t }}</div>
+                  <div v-for="(t, i) in p.moved_texts" :key="'m'+i" class="mem-cleanup-text" style="color:rgba(123,127,178,0.85);">· [搬去画像] {{ t }}</div>
+                  <div v-for="(f, i) in p.legacy_files" :key="'l'+i" class="mem-cleanup-text" style="color:rgba(255,255,255,0.4);">· [清遗留文件] {{ f }}</div>
                 </template>
                 <template v-else-if="p.error">
                   <div class="mem-cleanup-uid" style="color:#e07070;">{{ uid }}：{{ p.error }}</div>
@@ -766,7 +768,7 @@
             <div style="display:flex; justify-content:flex-end; gap:10px;">
               <span v-if="memCleanupApplyMsg" :style="{ fontSize:'12px', color: memCleanup.applyError ? '#e07070' : '#4caf7d' }">{{ memCleanupApplyMsg }}</span>
               <button v-if="memCleanupUserCount > 0" class="btn-primary" :disabled="memCleanup.applying" @click="applyMemCleanup">
-                {{ memCleanup.applying ? '删除中…' : '确认执行清理' }}
+                {{ memCleanup.applying ? '执行中…' : '确认执行' }}
               </button>
             </div>
           </div>
@@ -1676,7 +1678,7 @@ async function pollRebuild() {
       if (!rebuildTimer) rebuildTimer = setInterval(pollRebuild, 2000)   // 自续轮询（含页面重载接续）
     } else if (d.status === 'done') {
       rebuild.running = false; rebuild.error = false
-      rebuild.msg = `完成：重算了 ${d.done || 0} 个用户的 facts + 长期记忆向量（${d.with_facts || 0} 个有 facts）`
+      rebuild.msg = `完成：重算了 ${d.done || 0} 个用户的 pattern + 长期记忆向量（${d.with_facts || 0} 个有 pattern）`
       stopRebuildPoll()
     } else if (d.status === 'error') {
       rebuild.running = false; rebuild.error = true; rebuild.msg = '失败：' + (d.message || '')
@@ -1704,16 +1706,25 @@ async function startRebuild() {
 }
 
 // ── 记忆维护：pattern.json 批量复核清理（先预览再确认，见 backend scripts/refresh_memory.py）──
+interface MemCleanupPlanItem {
+  removed_ids?: string[]; removed_texts?: string[]
+  moved_ids?: string[]; moved_texts?: string[]
+  legacy_files?: string[]
+  total?: number; error?: string
+}
 const memCleanup = reactive({
   running: false, done: 0, total: 0, msg: '', error: false,
   status: 'idle' as 'idle' | 'running' | 'done',
-  plan: {} as Record<string, { removed_ids?: string[]; removed_texts?: string[]; total?: number; error?: string }>,
+  plan: {} as Record<string, MemCleanupPlanItem>,
   expanded: false, applying: false, applyError: false, applyMsg: '',
 })
 let memCleanupTimer: ReturnType<typeof setInterval> | null = null
 function stopMemCleanupPoll() { if (memCleanupTimer) { clearInterval(memCleanupTimer); memCleanupTimer = null } }
-const memCleanupUserCount = computed(() => Object.values(memCleanup.plan).filter(p => (p.removed_texts?.length ?? 0) > 0).length)
+const memCleanupUserCount = computed(() => Object.values(memCleanup.plan).filter(p =>
+  (p.removed_texts?.length ?? 0) > 0 || (p.moved_texts?.length ?? 0) > 0 || (p.legacy_files?.length ?? 0) > 0).length)
 const memCleanupTotalRemoved = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.removed_texts?.length ?? 0), 0))
+const memCleanupTotalMoved = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.moved_texts?.length ?? 0), 0))
+const memCleanupTotalLegacy = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.legacy_files?.length ?? 0), 0))
 const memCleanupApplyMsg = computed(() => memCleanup.applyMsg)
 
 async function pollMemCleanup() {
@@ -1753,13 +1764,13 @@ async function startMemCleanupPreview() {
   }
 }
 async function applyMemCleanup() {
-  if (!confirm(`确定要删除这 ${memCleanupTotalRemoved.value} 条记忆吗？此操作不可恢复。`)) return
+  if (!confirm(`确定要删 ${memCleanupTotalRemoved.value} 条、搬 ${memCleanupTotalMoved.value} 条去画像、清 ${memCleanupTotalLegacy.value} 个遗留文件吗？删除/搬动不可恢复。`)) return
   memCleanup.applying = true; memCleanup.applyMsg = ''; memCleanup.applyError = false
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/memory-cleanup/apply', { method: 'POST' })
     const d = await res.json()
     if (d.ok) {
-      memCleanup.applyMsg = `已删除 ${d.total_removed} 条（${d.users_applied} 个用户）`
+      memCleanup.applyMsg = `完成：删 ${d.total_removed} 条 / 搬 ${d.total_moved} 条 / 清 ${d.legacy_files_removed} 个文件（共 ${d.users_applied} 个用户）`
       memCleanup.plan = {}; memCleanup.status = 'idle'; memCleanup.expanded = false
     } else {
       memCleanup.applyError = true; memCleanup.applyMsg = d.detail || d.message || '执行失败'

@@ -26,7 +26,7 @@
 - **浮动预览窗四角都能拖拽调整大小**（`components/common/FloatPreviewWindow.vue`）：之前只有右下角一个手柄能拉伸。
 - **文件预览窗支持直接编辑文本/代码文件**（`components/common/viewers/TextViewer.vue`）：代码类文件改用 CodeMirror 6，直接编辑、自动保存。详见 [devlog.md](docs/devlog.md) 2026-07-07 条目。
 - **个人设置支持自助注销账号**（`components/common/ProfileModal.vue`、`app/api/v1/auth.py`）：需输入密码二次确认，注销后账号与全部数据永久删除。
-- **Admin 面板支持批量复核清理记忆**（`Admin/Agent/index.vue`、`app/api/v1/config.py`）：先预览再确认执行，预览看到的和真删的是同一份结果，不会重新判断一遍。
+- **Admin 面板支持一键复核清理记忆**（`Admin/Agent/index.vue`、`app/api/v1/config.py`、`scripts/refresh_memory.py`）：一次预览同时算出该删的旧条目、该搬去用户画像的条目、可清理的遗留文件，确认后一并执行，不会重新判断一遍。
 
 ### 修复
 

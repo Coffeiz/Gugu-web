@@ -480,27 +480,41 @@ async def embedding_rebuild_status():
         return {"status": "idle"}
 
 
-# ── pattern.json 批量复核清理（2026-07-08，见 scripts/refresh_memory.py）──────────
-# 预览(preview) 和真删(apply) 分两步：预览只跑一次 LLM 复核（多数票，dry_run），结果连同
-# 具体 fact id 存 Redis；apply 直接按存下来的 id 删，**不重新调用 LLM**——同一批数据前后两次
-# 调用结果可能差很多（今天踩过：40%→94%），"预览看到的" 必须等于 "真删的"，不能是"重新掷一次骰子"。
+# ── 记忆一键维护：pattern 复核删除 + 身份内容搬去 profile + 清遗留文件，三件事一次预览、一次确认
+# （2026-07-09，见 scripts/refresh_memory.py）────────────────────────────────────
+# 预览(preview) 和真删(apply) 分两步：预览只跑一次 LLM 判断（review + split，各 3 次投票，
+# dry_run），结果连同具体 fact id 存 Redis；apply 直接按存下来的 id 执行，**不重新调用 LLM**——
+# 同一批数据前后两次调用结果可能差很多（今天踩过：40%→94%），"预览看到的" 必须等于 "真删的"，
+# 不能是"重新掷一次骰子"。legacy 文件清理是纯文件存在性判断，没有 LLM 参与，本身就是确定性的，
+# 不需要投票/预览确认，但为了"一键"体验一起在 apply 时顺带做掉。
 _MEM_CLEANUP_KEY = "mem_cleanup:plan"
 
 
 async def _mem_cleanup_worker(user_ids: list[str]) -> None:
-    from scripts.refresh_memory import _review_facts
+    from scripts.refresh_memory import _review_facts, _split_profile
+    from agent.memory.store import _key, FACTS_FILE
+    from app.services.storage import get_storage
     from app.core.redis import get_redis
     r = get_redis()
     settings = get_settings()
+    storage = get_storage()
     plan: dict = {}
     done = 0
     for uid in user_ids:
         try:
-            res = await _review_facts(uid, settings, dry_run=True, trials=3, temperature=0.1)
-            if res.get("removed"):
+            review = await _review_facts(uid, settings, dry_run=True, trials=3, temperature=0.1)
+            split = await _split_profile(uid, settings, dry_run=True, trials=3, temperature=0.1)
+            legacy_files = []
+            if await storage.exists(_key(uid, FACTS_FILE)):
+                for legacy_name in ("facts.json", "facts.md"):
+                    if await storage.exists(_key(uid, legacy_name)):
+                        legacy_files.append(legacy_name)
+            if review.get("removed") or split.get("moved") or legacy_files:
                 plan[uid] = {
-                    "removed_ids": res["removed_ids"], "removed_texts": res["removed_texts"],
-                    "total": res["total"],
+                    "removed_ids": review.get("removed_ids", []), "removed_texts": review.get("removed_texts", []),
+                    "moved_ids": split.get("moved_ids", []), "moved_texts": split.get("moved_texts", []),
+                    "legacy_files": legacy_files,
+                    "total": review.get("total", 0),
                 }
         except Exception as e:
             plan[uid] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
@@ -548,31 +562,60 @@ async def memory_cleanup_status():
 
 @router.post("/memory-cleanup/apply")
 async def memory_cleanup_apply():
-    """按上一次 preview 存下来的具体 fact id 执行真删——不重新调 LLM，预览看到的就是真删的。
+    """一键执行上一次 preview 存下来的全部结果——不重新调 LLM，预览看到的就是真删/真搬的。
+    三件事都做：① 删 pattern 里过时的条目 ② 把该属于画像的条目搬进 profile.json
+    ③ 清掉已迁移完的遗留 facts.json/facts.md（纯文件存在性判断，无需 LLM，顺带做掉）。
     执行完清掉 Redis 里的 plan，防止同一份 plan 被误重复应用（比如两次点了确认）。"""
     from app.core.redis import get_redis
     from agent.memory import store
+    from agent.memory.store import _key
+    from app.services.storage import get_storage
     r = get_redis()
+    storage = get_storage()
     raw = await r.get(_MEM_CLEANUP_KEY)
     if not raw:
         raise HTTPException(400, "没有可执行的清理预览，先跑一次预览")
     data = json.loads(raw if isinstance(raw, str) else raw.decode())
     if data.get("status") != "done":
         raise HTTPException(400, "预览还没跑完，等它跑完再确认")
-    applied_users, applied_total = 0, 0
+    applied_users, applied_total, moved_total, legacy_total = 0, 0, 0, 0
     for uid, p in (data.get("plan") or {}).items():
-        ids = set(p.get("removed_ids") or [])
-        if not ids:
-            continue
-        facts = await store.read_facts_list(uid)
-        new_facts = [f for f in facts if f["id"] not in ids]
-        if len(new_facts) != len(facts):
-            await store.write_facts_list(uid, new_facts)
-            await store.sync_fact_vecs(uid, new_facts)
+        remove_ids = set(p.get("removed_ids") or [])
+        move_ids = set(p.get("moved_ids") or [])
+        moved_texts = p.get("moved_texts") or []
+        touched = False
+
+        if remove_ids or move_ids:
+            facts = await store.read_facts_list(uid)
+            drop_ids = remove_ids | move_ids
+            new_facts = [f for f in facts if f["id"] not in drop_ids]
+            if len(new_facts) != len(facts):
+                await store.write_facts_list(uid, new_facts)
+                await store.sync_fact_vecs(uid, new_facts)
+                applied_total += len(remove_ids)
+                touched = True
+
+        if moved_texts:
+            profile = await store.read_profile_list(uid)
+            profile = store.apply_profile_ops(profile, moved_texts, [])
+            await store.write_profile_list(uid, profile)
+            moved_total += len(moved_texts)
+            touched = True
+
+        for legacy_name in (p.get("legacy_files") or []):
+            legacy_key = _key(uid, legacy_name)
+            if await storage.exists(legacy_key):
+                await storage.delete(legacy_key)
+                legacy_total += 1
+                touched = True
+
+        if touched:
             applied_users += 1
-            applied_total += len(facts) - len(new_facts)
     await r.delete(_MEM_CLEANUP_KEY)
-    return {"ok": True, "users_applied": applied_users, "total_removed": applied_total}
+    return {
+        "ok": True, "users_applied": applied_users,
+        "total_removed": applied_total, "total_moved": moved_total, "legacy_files_removed": legacy_total,
+    }
 
 
 # ── SMTP 测试发送 ──────────────────────────────────────────────────────────

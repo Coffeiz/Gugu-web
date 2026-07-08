@@ -11,12 +11,16 @@ compress.py 之类的算法，照着 OPS 里的样子加一个新函数、注册
   被误删），所以对每个用户跑 --trials 次独立判断、只删多数次都判定该删的条目，不信单次结果。
 - cleanup-legacy：pattern.json 已存在（说明该用户已经迁移过）时，删掉不再被读写的旧
   facts.json / facts.md，纯粹清死重量，不影响任何记忆内容
+- split-profile：profile.json 是全新概念，没有旧数据自动迁移过去——用户 2026-07-08 前记的
+  "住哪/是干嘛的"这类身份信息，都跟着旧 facts.json 整份进了 pattern.json，没有被区分出来。
+  这个操作把 pattern.json 里其实该算「画像」的条目挑出来搬进 profile.json（一次性迁移债）。
 
 跑法：
     cd backend && .venv/bin/python scripts/refresh_memory.py --facts            # 真的写（默认 3 次投票）
     cd backend && .venv/bin/python scripts/refresh_memory.py --facts --dry-run  # 只看会删什么，不写
     cd backend && .venv/bin/python scripts/refresh_memory.py --facts --user <uuid> --trials 5  # 调试/调参
     cd backend && .venv/bin/python scripts/refresh_memory.py --cleanup-legacy --dry-run
+    cd backend && .venv/bin/python scripts/refresh_memory.py --split-profile --dry-run
 """
 from __future__ import annotations
 
@@ -124,9 +128,79 @@ async def _cleanup_legacy(user_id: str, settings, dry_run: bool, **_ignored) -> 
     return {"removed": len(removed), "removed_texts": removed}
 
 
+_SPLIT_SYS_PROMPT = (
+    "你在复核一份「行为/决策模式」列表(pattern)，挑出其中其实该属于「用户画像」(profile)的条目——\n"
+    "这些条目该搬到画像文件里，不该继续留在这份行为模式列表里。\n"
+    "判据：这条是不是「这个人是谁」的稳定属性——身份/职业/所在地/稳定喜好，跟"
+    "「这个人做事/做决定的习惯」（行为模式，该留在原地）是两回事。\n"
+    "例：\"用户住南京\"\"用户是自由创作者\"该搬去画像；"
+    "\"对方案持审慎态度，要求核实事实\"是行为模式，不搬。\n"
+    "- 拿不准就留在原地不搬（宁可漏搬也别误搬）\n"
+    "只输出 JSON：{\"move\": [编号, ...]}（该搬去 profile 的条目编号数组，没有就给空数组）"
+)
+
+
+async def _split_once(facts: list[dict], settings, temperature: float) -> set[int] | None:
+    from agent.memory._llm import complete_json
+
+    lines = "\n".join(f"[{i}] ({f.get('kind')}) {f.get('text', '')}" for i, f in enumerate(facts))
+    result = await complete_json(_SPLIT_SYS_PROMPT, lines, settings, max_tokens=800, temperature=temperature)
+    idxs = result.get("move")
+    if not isinstance(idxs, list):
+        return None
+    return {i for i in idxs if isinstance(i, int) and 0 <= i < len(facts)}
+
+
+async def _split_profile(user_id: str, settings, dry_run: bool,
+                          trials: int = 3, temperature: float = 0.1, **_ignored) -> dict:
+    """把 pattern.json 里其实该属于 profile 的条目搬过去——2026-07-08 拆分时 profile.json
+    是全新文件，没有旧数据可迁移，这批「身份类」内容当时跟着整份 facts.json 进了 pattern.json，
+    一直没被区分出来。同样用多数票机制（理由跟 _review_facts 一样：单次调用不可信）。"""
+    from agent.memory import store
+
+    facts = await store.read_facts_list(user_id)
+    if not facts:
+        return {"total": 0, "moved": 0}
+
+    votes: dict[int, int] = {}
+    ok_trials = 0
+    for _ in range(trials):
+        r = await _split_once(facts, settings, temperature)
+        if r is None:
+            continue
+        ok_trials += 1
+        for i in r:
+            votes[i] = votes.get(i, 0) + 1
+    if ok_trials == 0:
+        return {"total": len(facts), "moved": 0, "error": "所有轮次模型输出都解析失败，本用户跳过"}
+
+    majority = ok_trials / 2
+    valid = sorted(i for i, v in votes.items() if v > majority)
+    if not valid:
+        return {"total": len(facts), "moved": 0, "trials_ok": ok_trials,
+                "unstable": {i: v for i, v in votes.items() if v <= majority}}
+
+    moved_texts = [facts[i]["text"] for i in valid]
+    moved_ids = {facts[i]["id"] for i in valid}
+    if not dry_run:
+        profile = await store.read_profile_list(user_id)
+        profile = store.apply_profile_ops(profile, moved_texts, [])
+        await store.write_profile_list(user_id, profile)
+        new_facts = [f for f in facts if f["id"] not in moved_ids]
+        await store.write_facts_list(user_id, new_facts)
+        await store.sync_fact_vecs(user_id, new_facts)
+    return {
+        "total": len(facts), "moved": len(valid),
+        "moved_texts": moved_texts, "moved_ids": sorted(moved_ids),
+        "trials_ok": ok_trials,
+        "unstable": {i: v for i, v in votes.items() if v <= majority and v > 0},
+    }
+
+
 OPS = {
     "facts": _review_facts,
     "cleanup-legacy": _cleanup_legacy,
+    "split-profile": _split_profile,
 }
 
 
@@ -166,7 +240,7 @@ async def main() -> None:
         touched = 0
         for uid in user_ids:
             res = await op(uid, settings, args.dry_run, trials=args.trials, temperature=args.temperature)
-            if res.get("removed") or res.get("error") or res.get("unstable"):
+            if res.get("removed") or res.get("moved") or res.get("error") or res.get("unstable"):
                 touched += 1
                 print(f"[{op_name}] {uid}: {res}")
         print(f"[{op_name}] 完成，{len(user_ids)} 个用户里 {touched} 个有改动/有分歧")
