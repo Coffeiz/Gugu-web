@@ -714,6 +714,65 @@
         </div>
       </section>
 
+      <!-- ── 记忆维护：pattern.json 批量复核清理（先预览再确认，见 scripts/refresh_memory.py） ── -->
+      <section v-if="activeTab === 'behavior'" class="config-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 10a6 6 0 1 1 2 4.5M4 10V6M4 10H8"/>
+            </svg>
+          </div>
+          <div class="card-title-block">
+            <h3>记忆维护</h3>
+            <p>批量复核所有用户的「行为模式」记忆（pattern.json），挑出不符合当前标准的旧条目。<b>先预览、确认没问题再真删</b>——同一批数据 LLM 判断可能不稳定，预览看到的就是真删的，不会重新判断一遍。</p>
+          </div>
+        </div>
+
+        <div class="behavior-grid">
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>生成预览</span><span class="behavior-desc">对所有用户跑一次复核（每人独立判断 3 次取多数票），只读不写，后台跑</span></div>
+            <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;min-width:0;">
+              <span v-if="memCleanup.msg" :title="memCleanup.msg"
+                    :style="{ color: memCleanup.error ? '#e07070' : '#4caf7d', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
+                {{ memCleanup.msg }}
+              </span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="memCleanup.running" @click="startMemCleanupPreview">
+                {{ memCleanup.running ? `预览中… ${memCleanup.done}/${memCleanup.total}` : '生成预览' }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="memCleanup.status === 'done'" class="behavior-item" style="grid-column: 1 / -1; flex-direction:column; align-items:stretch; gap:10px;">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <span class="behavior-desc">
+                {{ memCleanupUserCount === 0 ? '预览完成：没有需要删除的内容' : `预览完成：${memCleanupUserCount} 个用户共 ${memCleanupTotalRemoved} 条待删除` }}
+              </span>
+              <button v-if="memCleanupUserCount > 0" class="btn-ghost" style="font-size:12px;padding:4px 10px;" @click="memCleanup.expanded = !memCleanup.expanded">
+                {{ memCleanup.expanded ? '收起明细' : '查看明细' }}
+              </button>
+            </div>
+            <div v-if="memCleanup.expanded && memCleanupUserCount > 0" class="mem-cleanup-detail">
+              <div v-for="(p, uid) in memCleanup.plan" :key="uid">
+                <template v-if="p.removed_texts?.length">
+                  <div class="mem-cleanup-uid">{{ uid }}（{{ p.removed_texts.length }}/{{ p.total }} 条）</div>
+                  <div v-for="(t, i) in p.removed_texts" :key="i" class="mem-cleanup-text">· {{ t }}</div>
+                </template>
+                <template v-else-if="p.error">
+                  <div class="mem-cleanup-uid" style="color:#e07070;">{{ uid }}：{{ p.error }}</div>
+                </template>
+              </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+              <span v-if="memCleanupApplyMsg" :style="{ fontSize:'12px', color: memCleanup.applyError ? '#e07070' : '#4caf7d' }">{{ memCleanupApplyMsg }}</span>
+              <button v-if="memCleanupUserCount > 0" class="btn-primary" :disabled="memCleanup.applying" @click="applyMemCleanup">
+                {{ memCleanup.applying ? '删除中…' : '确认执行清理' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- ── 状态命名 ── -->
       <section v-if="activeTab === 'labels'" class="config-card labels-card">
         <div class="card-head">
@@ -1644,6 +1703,74 @@ async function startRebuild() {
   }
 }
 
+// ── 记忆维护：pattern.json 批量复核清理（先预览再确认，见 backend scripts/refresh_memory.py）──
+const memCleanup = reactive({
+  running: false, done: 0, total: 0, msg: '', error: false,
+  status: 'idle' as 'idle' | 'running' | 'done',
+  plan: {} as Record<string, { removed_ids?: string[]; removed_texts?: string[]; total?: number; error?: string }>,
+  expanded: false, applying: false, applyError: false, applyMsg: '',
+})
+let memCleanupTimer: ReturnType<typeof setInterval> | null = null
+function stopMemCleanupPoll() { if (memCleanupTimer) { clearInterval(memCleanupTimer); memCleanupTimer = null } }
+const memCleanupUserCount = computed(() => Object.values(memCleanup.plan).filter(p => (p.removed_texts?.length ?? 0) > 0).length)
+const memCleanupTotalRemoved = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.removed_texts?.length ?? 0), 0))
+const memCleanupApplyMsg = computed(() => memCleanup.applyMsg)
+
+async function pollMemCleanup() {
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/memory-cleanup/status')
+    const d = await res.json()
+    memCleanup.status = d.status ?? 'idle'
+    if (d.status === 'running') {
+      memCleanup.running = true; memCleanup.done = d.done || 0; memCleanup.total = d.total || 0
+      memCleanup.msg = `预览中 ${memCleanup.done}/${memCleanup.total}`; memCleanup.error = false
+      if (!memCleanupTimer) memCleanupTimer = setInterval(pollMemCleanup, 2000)
+    } else if (d.status === 'done') {
+      memCleanup.running = false; memCleanup.error = false
+      memCleanup.plan = d.plan || {}
+      memCleanup.msg = `预览完成（共 ${d.total || 0} 个用户）`
+      stopMemCleanupPoll()
+    } else {
+      memCleanup.running = false; stopMemCleanupPoll()
+    }
+  } catch { /* 忽略单次轮询失败 */ }
+}
+async function startMemCleanupPreview() {
+  memCleanup.msg = ''; memCleanup.error = false; memCleanup.applyMsg = ''; memCleanup.expanded = false
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/memory-cleanup/preview', { method: 'POST' })
+    const d = await res.json()
+    if (d.ok) {
+      memCleanup.running = true; memCleanup.total = d.total || 0; memCleanup.done = 0
+      memCleanup.status = 'running'
+      memCleanup.msg = `已启动，共 ${d.total} 个用户`
+    } else {
+      memCleanup.error = true; memCleanup.msg = d.message || '启动失败'
+    }
+    pollMemCleanup()
+  } catch (e) {
+    memCleanup.error = true; memCleanup.msg = '请求失败：' + e.message
+  }
+}
+async function applyMemCleanup() {
+  if (!confirm(`确定要删除这 ${memCleanupTotalRemoved.value} 条记忆吗？此操作不可恢复。`)) return
+  memCleanup.applying = true; memCleanup.applyMsg = ''; memCleanup.applyError = false
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/memory-cleanup/apply', { method: 'POST' })
+    const d = await res.json()
+    if (d.ok) {
+      memCleanup.applyMsg = `已删除 ${d.total_removed} 条（${d.users_applied} 个用户）`
+      memCleanup.plan = {}; memCleanup.status = 'idle'; memCleanup.expanded = false
+    } else {
+      memCleanup.applyError = true; memCleanup.applyMsg = d.detail || d.message || '执行失败'
+    }
+  } catch (e) {
+    memCleanup.applyError = true; memCleanup.applyMsg = '请求失败：' + e.message
+  } finally {
+    memCleanup.applying = false
+  }
+}
+
 // ── 搜索连通测试（SearXNG / Tavily）──
 const searchTest = reactive({
   searxng:        { loading: false, ok: false, msg: '' },
@@ -1849,9 +1976,10 @@ onMounted(async () => {
   Object.assign(embeddingDraft, configStore.cfg.embedding)
   fetchPresets()
   pollRebuild()   // 若有重建任务在跑，页面加载即反映进度并接续轮询
+  pollMemCleanup()   // 同理：若有记忆清理预览在跑/已完成，页面加载即反映
 })
 
-onUnmounted(() => stopRebuildPoll())
+onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll() })
 </script>
 
 <style scoped>
@@ -2065,6 +2193,18 @@ onUnmounted(() => stopRebuildPoll())
 .behavior-label { display: flex; flex-direction: column; gap: 3px; }
 .behavior-label span:first-child { font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.8); }
 .behavior-desc { font-size: 12px; color: rgba(255,255,255,0.3); }
+
+.mem-cleanup-detail {
+  max-height: 260px; overflow-y: auto;
+  padding: 10px 12px; border-radius: 8px;
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+}
+.mem-cleanup-uid {
+  font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.5);
+  margin: 10px 0 4px; font-family: 'SF Mono','Consolas',monospace;
+}
+.mem-cleanup-uid:first-child { margin-top: 0; }
+.mem-cleanup-text { font-size: 12px; color: rgba(255,255,255,0.65); line-height: 1.6; padding-left: 4px; }
 
 .toggle-switch {
   width: 42px; height: 24px; border-radius: 99px;

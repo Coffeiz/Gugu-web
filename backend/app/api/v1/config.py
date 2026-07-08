@@ -480,6 +480,101 @@ async def embedding_rebuild_status():
         return {"status": "idle"}
 
 
+# ── pattern.json 批量复核清理（2026-07-08，见 scripts/refresh_memory.py）──────────
+# 预览(preview) 和真删(apply) 分两步：预览只跑一次 LLM 复核（多数票，dry_run），结果连同
+# 具体 fact id 存 Redis；apply 直接按存下来的 id 删，**不重新调用 LLM**——同一批数据前后两次
+# 调用结果可能差很多（今天踩过：40%→94%），"预览看到的" 必须等于 "真删的"，不能是"重新掷一次骰子"。
+_MEM_CLEANUP_KEY = "mem_cleanup:plan"
+
+
+async def _mem_cleanup_worker(user_ids: list[str]) -> None:
+    from scripts.refresh_memory import _review_facts
+    from app.core.redis import get_redis
+    r = get_redis()
+    settings = get_settings()
+    plan: dict = {}
+    done = 0
+    for uid in user_ids:
+        try:
+            res = await _review_facts(uid, settings, dry_run=True, trials=3, temperature=0.1)
+            if res.get("removed"):
+                plan[uid] = {
+                    "removed_ids": res["removed_ids"], "removed_texts": res["removed_texts"],
+                    "total": res["total"],
+                }
+        except Exception as e:
+            plan[uid] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
+        done += 1
+        await r.set(_MEM_CLEANUP_KEY, json.dumps(
+            {"status": "running", "done": done, "total": len(user_ids), "plan": plan, "ts": time.time()}))
+    await r.set(_MEM_CLEANUP_KEY, json.dumps(
+        {"status": "done", "done": done, "total": len(user_ids), "plan": plan, "ts": time.time()}), ex=3600)
+
+
+@router.post("/memory-cleanup/preview")
+async def memory_cleanup_preview(db: AsyncSession = Depends(get_db)):
+    """对所有用户的 pattern.json 跑一次批量复核（3 次投票，dry-run，不写），后台跑、立即返回。
+    进度/结果用 GET /memory-cleanup/status 轮询；确认没问题再调 POST /memory-cleanup/apply。"""
+    from app.core.redis import get_redis
+    from app.models import User
+    r = get_redis()
+    cur = await r.get(_MEM_CLEANUP_KEY)
+    if cur:
+        try:
+            d = json.loads(cur if isinstance(cur, str) else cur.decode())
+            if d.get("status") == "running":
+                return {"ok": False, "message": "已有清理预览在跑", "status": d}
+        except Exception:
+            pass
+    rows = (await db.execute(select(User.id))).scalars().all()
+    user_ids = [str(u) for u in rows]
+    await r.set(_MEM_CLEANUP_KEY, json.dumps(
+        {"status": "running", "done": 0, "total": len(user_ids), "plan": {}, "ts": time.time()}))
+    asyncio.create_task(_mem_cleanup_worker(user_ids))
+    return {"ok": True, "message": f"预览已启动，共 {len(user_ids)} 个用户", "total": len(user_ids)}
+
+
+@router.get("/memory-cleanup/status")
+async def memory_cleanup_status():
+    from app.core.redis import get_redis
+    cur = await get_redis().get(_MEM_CLEANUP_KEY)
+    if not cur:
+        return {"status": "idle"}
+    try:
+        return json.loads(cur if isinstance(cur, str) else cur.decode())
+    except Exception:
+        return {"status": "idle"}
+
+
+@router.post("/memory-cleanup/apply")
+async def memory_cleanup_apply():
+    """按上一次 preview 存下来的具体 fact id 执行真删——不重新调 LLM，预览看到的就是真删的。
+    执行完清掉 Redis 里的 plan，防止同一份 plan 被误重复应用（比如两次点了确认）。"""
+    from app.core.redis import get_redis
+    from agent.memory import store
+    r = get_redis()
+    raw = await r.get(_MEM_CLEANUP_KEY)
+    if not raw:
+        raise HTTPException(400, "没有可执行的清理预览，先跑一次预览")
+    data = json.loads(raw if isinstance(raw, str) else raw.decode())
+    if data.get("status") != "done":
+        raise HTTPException(400, "预览还没跑完，等它跑完再确认")
+    applied_users, applied_total = 0, 0
+    for uid, p in (data.get("plan") or {}).items():
+        ids = set(p.get("removed_ids") or [])
+        if not ids:
+            continue
+        facts = await store.read_facts_list(uid)
+        new_facts = [f for f in facts if f["id"] not in ids]
+        if len(new_facts) != len(facts):
+            await store.write_facts_list(uid, new_facts)
+            await store.sync_fact_vecs(uid, new_facts)
+            applied_users += 1
+            applied_total += len(facts) - len(new_facts)
+    await r.delete(_MEM_CLEANUP_KEY)
+    return {"ok": True, "users_applied": applied_users, "total_removed": applied_total}
+
+
 # ── SMTP 测试发送 ──────────────────────────────────────────────────────────
 
 class SmtpTestParams(BaseModel):

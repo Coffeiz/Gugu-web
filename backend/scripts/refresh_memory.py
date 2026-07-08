@@ -90,13 +90,15 @@ async def _review_facts(user_id: str, settings, dry_run: bool,
                 "unstable": {i: v for i, v in votes.items() if v <= majority}}
 
     removed_texts = [facts[i]["text"] for i in valid]
+    removed_ids = [facts[i]["id"] for i in valid]
     if not dry_run:
-        keep_ids = {f["id"] for i, f in enumerate(facts) if i not in valid}
-        new_facts = [f for f in facts if f["id"] in keep_ids]
+        remove_set = set(removed_ids)
+        new_facts = [f for f in facts if f["id"] not in remove_set]
         await store.write_facts_list(user_id, new_facts)
         await store.sync_fact_vecs(user_id, new_facts)
     return {
-        "total": len(facts), "removed": len(valid), "removed_texts": removed_texts,
+        "total": len(facts), "removed": len(valid),
+        "removed_texts": removed_texts, "removed_ids": removed_ids,
         "trials_ok": ok_trials,
         "unstable": {i: v for i, v in votes.items() if v <= majority and v > 0},
     }
