@@ -15,7 +15,7 @@
 
 ### 新增
 
-- **文件上传同名冲突支持覆盖/保留两者/跳过**（`app/api/v1/files.py` 新增 `check-conflicts` 端点、`upload_file`/`presign_upload`/`confirm_upload` 加 `on_conflict` 参数；新增 `components/common/UploadConflictDialog.vue`、`composables/useFileUpload.ts`）：此前同名文件是"看运气"——本地存储按物理路径静默改名、OSS 存储完全不检测直接同名共存。改为按 `folder_id+display_name+ext` 统一查数据库，上传前一次性列出所有冲突（列表式确认，可批量选"全部按此处理"），覆盖时原地替换已有文件内容（保留同一个 file id，聊天里发过的 `gugu://open-file` 链接不会失效）。接入文件库和项目编辑卡的拖拽/选择上传；仪表盘上传面板和看板卡片拖拽两处独立入口暂未接入。
+- **文件上传同名冲突支持覆盖/保留两者/跳过**：上传前列出冲突文件，可选覆盖、保留两者（自动改名）或跳过；已接入文件库与项目编辑卡的上传流程。
 - **`http_get` 按 Content-Type 自动提取正文**（`agent/tools/web.py`）：HTML 用 trafilatura 提取正文转 markdown，PDF 复用现成的 pdftotext 提取，避免把截断的原始响应体喂给模型。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
 - **感知诊断面板新增「关系温度」当前值列表**（`api/v1/agent_perception.py` + `Admin/Perception/index.vue`）：新增 `GET /admin/perception/temperature` 按温度降序列出各用户当前值；v1 只有当前值，暂无时间曲线（存储是整份覆盖，做曲线得先改存储）。
 - **感知诊断面板加「排除开发者」开关**（`api/v1/agent_perception.py` + `Admin/Perception/index.vue`）：跟 Admin/Analytics（数据总览）同款 `exclude_dev` 语义和 UI，总览统计/错读案例/关系温度三处数据源都接了这个开关。
@@ -26,7 +26,7 @@
 
 ### 修复
 
-- **文件库改名输入框不支持中文输入法**（`views/Files/index.vue`）：改名框手写了 `@keydown` 判断回车/Esc，没排除 IME 组合态，敲回车上屏候选词会被误判成确认改名。换成全仓统一的 `v-enter` 指令，跟项目编辑卡等其它三处改名输入框对齐。
+- **文件库改名输入框不支持中文输入法**：敲回车上屏候选词会被误判成确认改名，换成全仓统一的 `v-enter` 指令修复。
 - **docx/xlsx/pptx 预览「转换失败 (500)」**（`gugu-backend.service`/`gugu-worker.service`/`gugu-supervisor.service`、`app/api/v1/files.py`、`app/core/doctext.py`）：两层部署配置问题叠在一起——systemd 单元的 `PATH` 顶掉了系统命令、`ProtectSystem=strict` 又挡了 LibreOffice 建 profile。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
 - **`http_get` 反复超时后咕咕答非所问**（`agent/prompts/skills.md`）：工具报错已正确回传给模型，但最终回复是无关的填充语——不知道怎么如实说「连不上」。补一句要求：试一两次仍失败就直接告诉用户，别用无关话搪塞。
 - **弹窗叠在浮动窗口上打开时，淡入动画期间毛玻璃完全不模糊**（`components/common/BaseModal.vue`、`assets/styles/global.css`）：根因是 CSS 规范行为（`opacity<1` 元素是隔离组，子孙 `backdrop-filter` 只能组内采样）而非性能。进场改为「玻璃 ramp」（blur 半径从 0 过渡到满值，全程无半透明祖先）。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目，设计规范同步更新 `docs/product/design.md`「弹窗动画规范」。
