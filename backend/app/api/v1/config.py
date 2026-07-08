@@ -506,7 +506,7 @@ async def _mem_cleanup_worker(user_ids: list[str]) -> None:
             split = await _split_profile(uid, settings, dry_run=True, trials=3, temperature=0.1)
             legacy_files = []
             if await storage.exists(_key(uid, FACTS_FILE)):
-                for legacy_name in ("facts.json", "facts.md"):
+                for legacy_name in ("facts.json", "facts.md", "facts_vec.json"):
                     if await storage.exists(_key(uid, legacy_name)):
                         legacy_files.append(legacy_name)
             if review.get("removed") or split.get("moved") or legacy_files:

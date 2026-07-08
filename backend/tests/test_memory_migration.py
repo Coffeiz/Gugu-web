@@ -198,11 +198,13 @@ async def test_cleanup_legacy_removes_old_files_once_migrated(storage):
     await storage.put(f"{UID}/.agent/pattern.json", b"[]")
     await storage.put(f"{UID}/.agent/facts.json", b"[]")
     await storage.put(f"{UID}/.agent/facts.md", b"- old\n")
+    await storage.put(f"{UID}/.agent/facts_vec.json", b"{}")   # 向量缓存改名前的旧文件，也该清
 
     result = await rm._cleanup_legacy(UID, settings=object(), dry_run=False)
-    assert result["removed"] == 2
+    assert result["removed"] == 3
     assert not await storage.exists(f"{UID}/.agent/facts.json")
     assert not await storage.exists(f"{UID}/.agent/facts.md")
+    assert not await storage.exists(f"{UID}/.agent/facts_vec.json")
     assert await storage.exists(f"{UID}/.agent/pattern.json")   # 新文件不受影响
 
 
