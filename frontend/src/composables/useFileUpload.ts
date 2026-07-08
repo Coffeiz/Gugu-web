@@ -1,4 +1,4 @@
-import { foldersApi } from '@/services/api'
+import { foldersApi, filesApi } from '@/services/api'
 import { pLimit, UPLOAD_CONCURRENCY } from '@/utils/concurrency'
 
 /** 一个待上传项：文件本体 + 相对路径（无子文件夹时就是文件名本身）。 */
@@ -122,6 +122,22 @@ export async function resolveFolderTree(
     const dir = idx > -1 ? relativePath.slice(0, idx) : ''
     return { file, relativePath, folderId: pathToId.get(dir) ?? baseFolderId }
   })
+}
+
+// ── 同名冲突探测（上传前调用）──────────────────────────────────────────────────
+// 只检查「直接落在目标文件夹」的顶层文件（relativePath 不含 '/'）——被拖入的子文件夹本身
+// 是新建的，里面的文件不可能跟已有文件冲突，不用查。返回的每一项对应一个真冲突，宿主拿去
+// 喂 UploadConflictDialog；没有冲突时返回空数组，宿主直接按 keep_both 走原来的流程即可。
+export async function checkUploadConflicts(
+  items: UploadItem[],
+  opts: { space: string; projectId?: number | null; folderId?: number | null },
+): Promise<{ filename: string; existingFile: any }[]> {
+  const topLevel = items.filter(it => !it.relativePath.includes('/'))
+  if (!topLevel.length) return []
+  const res = await filesApi.checkConflicts(topLevel.map(it => ({
+    filename: it.relativePath, space: opts.space, projectId: opts.projectId, folderId: opts.folderId,
+  })))
+  return res.filter(r => r.conflict).map(r => ({ filename: r.filename, existingFile: r.existing_file }))
 }
 
 /**

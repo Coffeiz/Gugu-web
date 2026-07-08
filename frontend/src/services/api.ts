@@ -177,6 +177,11 @@ export const filesApi = {
   },
   presign: (data: any) => post('/files/presign', data),
   confirm: (data: any) => post('/files/confirm', data),
+  // 批量探测同名冲突（上传前调用），items: [{filename, space, projectId?, folderId?}]
+  checkConflicts: (items: { filename: string; space: string; projectId?: number | null; folderId?: number | null }[]) =>
+    post<{ filename: string; conflict: boolean; existing_file: any }[]>('/files/check-conflicts', {
+      items: items.map(it => ({ filename: it.filename, space: it.space, project_id: it.projectId ?? null, folder_id: it.folderId ?? null })),
+    }),
   // 返回 { url: "https://..." }，后端签名 URL，有效期短（5~10 分钟）
   getStreamUrl: (id: number) => get(`/files/${id}/stream-url`),
   download: async (id: number, filename: string) => {

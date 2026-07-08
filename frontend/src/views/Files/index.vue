@@ -254,7 +254,7 @@
                   <span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop>
                     <span class="rename-ghost">{{ renameText || ' ' }}</span>
                     <input class="rename-input-inline" v-model="renameText"
-                      @keydown="onRenameKey" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
+                      v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
                   </span>
                   <template v-else>{{ f.displayName }}</template>
                 </div>
@@ -315,7 +315,7 @@
                   <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
                     <span class="rename-ghost">{{ renameText || ' ' }}</span>
                     <input class="rename-input-inline" v-model="renameText"
-                      @keydown="onRenameKey" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
+                      v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
                   </span>
                   <template v-else>{{ f.displayName }}</template>
                 </div>
@@ -412,7 +412,7 @@
                   <span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop>
                     <span class="rename-ghost">{{ renameText || ' ' }}</span>
                     <input class="rename-input-inline" v-model="renameText"
-                      @keydown="onRenameKey" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
+                      v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
                   </span>
                   <template v-else>{{ f.displayName }}</template>
                 </span>
@@ -461,7 +461,7 @@
                   <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
                     <span class="rename-ghost">{{ renameText || ' ' }}</span>
                     <input class="rename-input-inline" v-model="renameText"
-                      @keydown="onRenameKey" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
+                      v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
                   </span>
                   <template v-else>{{ f.displayName }}</template>
                 </span>
@@ -667,6 +667,9 @@
     @close="infoPopup.show = false"
   />
 
+  <!-- 上传同名冲突确认 -->
+  <UploadConflictDialog ref="conflictDialogRef" />
+
 </template>
 
 <script setup lang="ts">
@@ -682,14 +685,15 @@ import { fireHint } from '@/composables/useOnboarding'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
-import { cardBlobReadyIds } from '@/composables/useThumbCache'
+import { cardBlobReadyIds, clearThumbCache } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt, fileExtCategory, fileIconColor, fileListIcon } from '@/utils/fileTypes'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
-import { readDroppedEntries, filesToItems, uploadFilesWithFolders } from '@/composables/useFileUpload'
+import { readDroppedEntries, filesToItems, uploadFilesWithFolders, checkUploadConflicts } from '@/composables/useFileUpload'
 import { useBoxSelection } from '@/composables/useBoxSelection'
+import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
 import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
   PhClock, PhPlayCircle, PhCheckCircle,
@@ -1534,6 +1538,8 @@ async function createFolder() {
 // 由 uploadFilesWithFolders 按路径建好子文件夹再落到各自正确的 folder_id。
 // items: UploadItem[]（{file, relativePath}）——relativePath 带 "/" 时来自拖入的文件夹，
 // 由 uploadFilesWithFolders 按路径建好子文件夹再落到各自正确的 folder_id。
+const conflictDialogRef = ref(null)
+
 async function uploadFiles(items) {
   if (!items.length) return
   const type = currentType.value
@@ -1544,6 +1550,16 @@ async function uploadFiles(items) {
   } else if (type === 'folder' && seg) {
     folderId = seg.folderId
     if (seg.projectId) { space = 'project'; projectId = seg.projectId }
+  }
+
+  // 上传前探测同名冲突（只查直接落在这个文件夹的顶层文件，子文件夹本身是新建的不会冲突）；
+  // 有冲突才弹列表式确认，选「跳过」的文件直接从这批里剔除，不会真的发上传请求。
+  const conflicts = await checkUploadConflicts(items, { space, projectId, folderId })
+  let decisions = new Map()
+  if (conflicts.length) {
+    decisions = await conflictDialogRef.value.show(conflicts)
+    items = items.filter(it => decisions.get(it.relativePath)?.action !== 'skip')
+    if (!items.length) return
   }
 
   // 按顶层文件夹分组：relativePath 带 "/" 的文件汇总进「文件夹名 · 完成数/总数」一张卡，
@@ -1597,10 +1613,22 @@ async function uploadFiles(items) {
         form.append('space', space)
         if (projectId)        form.append('project_id', String(projectId))
         if (resolvedFolderId) form.append('folder_id', String(resolvedFolderId))
+        const decision = decisions.get(relativePath)
+        if (decision?.action === 'overwrite' && decision.existingFileId) {
+          form.append('on_conflict', 'overwrite')
+          form.append('overwrite_file_id', String(decision.existingFileId))
+        }
         const created = await uploadWithProgress('/files', form, p => { if (ghost) updateGhostProgress(ghost, p) })
         if (ghost) removeGhost(ghost)
         else settleFolder(false)
-        cacheStore.addFile(created)
+        if (decision?.action === 'overwrite' && decision.existingFileId) {
+          // 覆盖：同一个文件 id 换了内容，更新缓存里的这条记录而不是插一条新的；旧缩略图
+          // 客户端缓存也要清掉，否则卡片显示的还是覆盖前的图（服务端缓存已经在后端清过）。
+          cacheStore.updateFile(decision.existingFileId, created)
+          clearThumbCache(decision.existingFileId)   // 顺带清 thumbLoadedIds/cardBlobReadyIds
+        } else {
+          cacheStore.addFile(created)
+        }
         loadContents()
         fetchStorage()
       } catch (e) {
@@ -1698,11 +1726,6 @@ async function commitRename() {
       console.error('[Files] 重命名失败:', e.message)
     })
   }
-}
-
-function onRenameKey(e) {
-  if (e.key === 'Enter')  { e.preventDefault(); commitRename() }
-  if (e.key === 'Escape') { e.preventDefault(); cancelRename() }
 }
 
 async function downloadFolder(f) {

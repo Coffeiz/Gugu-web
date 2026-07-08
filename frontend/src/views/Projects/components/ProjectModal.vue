@@ -688,6 +688,9 @@
     :y="pmInfoPopup.y"
     @close="pmInfoPopup.show = false"
   />
+
+  <!-- 上传同名冲突确认 -->
+  <UploadConflictDialog ref="conflictDialogRef" />
 </template>
 
 <script setup lang="ts">
@@ -695,18 +698,19 @@ import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/services/api'
-import { thumbLoadedIds } from '@/composables/useThumbCache'
+import { thumbLoadedIds, clearThumbCache } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt as isPmImageExt, fileExtCategory, fileIconColor } from '@/utils/fileTypes'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
-import { readDroppedEntries, filesToItems, uploadFilesWithFolders } from '@/composables/useFileUpload'
+import { readDroppedEntries, filesToItems, uploadFilesWithFolders, checkUploadConflicts } from '@/composables/useFileUpload'
 import { useBoxSelection } from '@/composables/useBoxSelection'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { fireHint } from '@/composables/useOnboarding'
 import DatePicker from '@/components/common/DatePicker.vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import {
   PhFolder, PhArrowLeft, PhArrowRight, PhCaretLeft, PhCaretRight, PhCaretDown, PhSortAscending, PhSquaresFour, PhList,
@@ -1859,10 +1863,22 @@ const { uploadingItems, createGhost, updateGhostProgress, removeGhost, failGhost
 
 // items: UploadItem[]（{file, relativePath}）——relativePath 带 "/" 时来自拖入的文件夹，
 // 由 uploadFilesWithFolders 按路径建好子文件夹再落到各自正确的 folder_id。
+const conflictDialogRef = ref(null)
+
 async function uploadFiles(items) {
   if (!items.length || !props.project) return
   const folder = currentFolder.value
   const baseFolderId = folder?.id ?? null
+
+  // 上传前探测同名冲突（只查直接落在这个文件夹的顶层文件）；有冲突才弹列表式确认，
+  // 选「跳过」的文件从这批里剔除，不会真的发上传请求。
+  const conflicts = await checkUploadConflicts(items, { space: 'project', projectId: props.project.id, folderId: baseFolderId })
+  let decisions = new Map()
+  if (conflicts.length) {
+    decisions = await conflictDialogRef.value.show(conflicts)
+    items = items.filter(it => decisions.get(it.relativePath)?.action !== 'skip')
+    if (!items.length) return
+  }
 
   // 按顶层文件夹分组：relativePath 带 "/" 的文件汇总进「文件夹名 · 完成数/总数」一张卡，
   // 不用每个文件各出一张（大部分还落在当前看不见的子文件夹里）
@@ -1924,22 +1940,42 @@ async function uploadFiles(items) {
         form.append('space', 'project')
         form.append('project_id', props.project.id)
         if (resolvedFolderId) form.append('folder_id', String(resolvedFolderId))
+        const decision = decisions.get(relativePath)
+        const overwriteId = decision?.action === 'overwrite' ? decision.existingFileId : null
+        if (overwriteId) {
+          form.append('on_conflict', 'overwrite')
+          form.append('overwrite_file_id', String(overwriteId))
+        }
         const created = await uploadWithProgress('/files', form, p => { if (ghost) updateGhostProgress(ghost, p) })
         if (ghost) removeGhost(ghost)
         else settleFolder(false)
-        if (created) fileCacheStore.addFile(created)
-        // 只有落在「当前正看着的」这一层才即时插进本地列表；落进拖拽新建的子文件夹（当前
-        // 视图看不到）靠批量结束后的 loadFolders 刷新拿到服务端算好的 fileCount，不在这现算
-        if (resolvedFolderId === baseFolderId) {
+
+        if (overwriteId) {
+          // 覆盖：同一个文件 id 换了内容，更新缓存/本地列表里已有那条，不再插一条新的；
+          // 旧缩略图缓存也要清（服务端缓存已经在后端清过）。
+          if (created) fileCacheStore.updateFile(overwriteId, created)
+          clearThumbCache(overwriteId)
+          const replaceIn = (arr) => arr.map(f => f.id === overwriteId ? created : f)
           if (folder) {
-            folderFilesMap.value = {
-              ...folderFilesMap.value,
-              [folder.id]: [created, ...(folderFilesMap.value[folder.id] ?? [])],
-            }
-            const fd = projectFolders.value.find(fd => fd.id === folder.id)
-            if (fd) fd.fileCount = (fd.fileCount ?? 0) + 1
+            folderFilesMap.value = { ...folderFilesMap.value, [folder.id]: replaceIn(folderFilesMap.value[folder.id] ?? []) }
           } else {
-            projectFiles.value.unshift(created)
+            projectFiles.value = replaceIn(projectFiles.value)
+          }
+        } else {
+          if (created) fileCacheStore.addFile(created)
+          // 只有落在「当前正看着的」这一层才即时插进本地列表；落进拖拽新建的子文件夹（当前
+          // 视图看不到）靠批量结束后的 loadFolders 刷新拿到服务端算好的 fileCount，不在这现算
+          if (resolvedFolderId === baseFolderId) {
+            if (folder) {
+              folderFilesMap.value = {
+                ...folderFilesMap.value,
+                [folder.id]: [created, ...(folderFilesMap.value[folder.id] ?? [])],
+              }
+              const fd = projectFolders.value.find(fd => fd.id === folder.id)
+              if (fd) fd.fileCount = (fd.fileCount ?? 0) + 1
+            } else {
+              projectFiles.value.unshift(created)
+            }
           }
         }
       } catch (e) {
