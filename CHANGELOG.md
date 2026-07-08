@@ -11,31 +11,31 @@
 
 ### 改进
 
-- **咕咕聊天改用虚拟滚动**（`components/common/GuguChat.vue`，新增 `@tanstack/vue-virtual`）：长会话不再一次性渲染全部消息、markdown 也在消息首次进入视口时才补解析；滚动条始终代表整条会话真实长度，高度不定的消息由 `useVirtualizer` 自带的 `measureElement` + ResizeObserver 持续纠偏（图片/缩略图延迟加载导致消息变高也能跟上）。
+- **咕咕聊天改用虚拟滚动**（`components/common/GuguChat.vue`）：长会话不再一次性渲染全部消息，打开更快、滚动更流畅。
 
 ### 新增
 
-- **文件上传同名冲突支持覆盖/保留两者/跳过**：上传前列出冲突文件，可选覆盖、保留两者（自动改名）或跳过；已接入文件库与项目编辑卡的上传流程。
-- **`http_get` 按 Content-Type 自动提取正文**（`agent/tools/web.py`）：HTML 用 trafilatura 提取正文转 markdown，PDF 复用现成的 pdftotext 提取，避免把截断的原始响应体喂给模型。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
-- **感知诊断面板新增「关系温度」当前值列表**（`api/v1/agent_perception.py` + `Admin/Perception/index.vue`）：新增 `GET /admin/perception/temperature` 按温度降序列出各用户当前值；v1 只有当前值，暂无时间曲线（存储是整份覆盖，做曲线得先改存储）。
-- **感知诊断面板加「排除开发者」开关**（`api/v1/agent_perception.py` + `Admin/Perception/index.vue`）：跟 Admin/Analytics（数据总览）同款 `exclude_dev` 语义和 UI，总览统计/错读案例/关系温度三处数据源都接了这个开关。
-- **项目支持归档/查看已归档/取消归档**（`app/api/v1/projects.py`、`views/Projects/index.vue` + `ArchivedProjectsModal.vue`）：`archive_project` 此前只有 agent 侧能力，网页端无入口、也无法撤销。补齐 `archived` 查询参数、项目编辑卡「归档」按钮、「已归档」弹窗（按年/月折叠 + 一键取消归档）。
-- **IM 慢工具触发时先发一句进度声明**（`agent/tools/base.py`、`agent/imctx.py`、`worker.py`、`app/core/config.py` 新增 `im_progress_announce_enabled` 开关）：缓解 QQ/飞书/微信这类非流式渠道调慢工具时的干等感。声明文案只能来自工具定义时写死的 `start_message`，绝不由模型现场生成（避免"说了却没做"的可靠性问题）；`web_search`/`image_search`/`deep_research` 已接，`http_get` 因无法区分快慢查询暂不接。全局开关默认开启。
-- **浮动预览窗四角都能拖拽调整大小**（`components/common/FloatPreviewWindow.vue`）：之前只有右下角一个手柄能拉伸。`startResize` 改成按方向算，左/上侧的角改宽高时同步反向挪动窗口坐标；可见手柄仍只留右下角，其余三角留可拖拽热区。
-- **文件预览窗支持直接编辑文本/代码文件**（`components/common/viewers/TextViewer.vue`，新增 `codemirror`/`vue-codemirror`）：txt/md 保留原有"预览+编辑"切换；代码类扩展名改用 CodeMirror 6，直接是编辑态，真实文件改动防抖 800ms 自动保存。中途踩过一版弯路（hljs 高亮叠透明 textarea 大文件打字卡到几秒），详见 [devlog.md](docs/devlog.md) 2026-07-07 条目。
+- **文件上传同名冲突支持覆盖/保留两者/跳过**（`views/Files/index.vue`、`Projects/components/ProjectModal.vue`）：上传前列出冲突文件，可选覆盖、保留两者或跳过。
+- **`http_get` 按 Content-Type 自动提取正文**（`agent/tools/web.py`）：HTML/PDF 自动提取正文，不再把截断的原始响应喂给模型。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
+- **感知诊断面板新增「关系温度」当前值列表**（`Admin/Perception/index.vue`）：按温度降序列出各用户当前值。
+- **感知诊断面板加「排除开发者」开关**（`Admin/Perception/index.vue`）：跟数据总览同款开关，一键排除开发者账号数据。
+- **项目支持归档/查看已归档/取消归档**（`views/Projects/index.vue`）：网页端补齐入口，之前只有咕咕自己能归档。
+- **IM 慢工具触发时先发一句进度声明**（`agent/tools/base.py`）：缓解飞书/QQ/微信这类非流式渠道调慢工具时的干等感。
+- **浮动预览窗四角都能拖拽调整大小**（`components/common/FloatPreviewWindow.vue`）：之前只有右下角一个手柄能拉伸。
+- **文件预览窗支持直接编辑文本/代码文件**（`components/common/viewers/TextViewer.vue`）：代码类文件改用 CodeMirror 6，直接编辑、自动保存。详见 [devlog.md](docs/devlog.md) 2026-07-07 条目。
 
 ### 修复
 
-- **文件库改名输入框不支持中文输入法**：敲回车上屏候选词会被误判成确认改名，换成全仓统一的 `v-enter` 指令修复。
-- **docx/xlsx/pptx 预览「转换失败 (500)」**（`gugu-backend.service`/`gugu-worker.service`/`gugu-supervisor.service`、`app/api/v1/files.py`、`app/core/doctext.py`）：两层部署配置问题叠在一起——systemd 单元的 `PATH` 顶掉了系统命令、`ProtectSystem=strict` 又挡了 LibreOffice 建 profile。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
-- **`http_get` 反复超时后咕咕答非所问**（`agent/prompts/skills.md`）：工具报错已正确回传给模型，但最终回复是无关的填充语——不知道怎么如实说「连不上」。补一句要求：试一两次仍失败就直接告诉用户，别用无关话搪塞。
-- **弹窗叠在浮动窗口上打开时，淡入动画期间毛玻璃完全不模糊**（`components/common/BaseModal.vue`、`assets/styles/global.css`）：根因是 CSS 规范行为（`opacity<1` 元素是隔离组，子孙 `backdrop-filter` 只能组内采样）而非性能。进场改为「玻璃 ramp」（blur 半径从 0 过渡到满值，全程无半透明祖先）。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目，设计规范同步更新 `docs/product/design.md`「弹窗动画规范」。
-- **弹窗毛玻璃背景/阴影全局失真——`:deep(.bm-card)` 根本没生效**（`components/common/BaseModal.vue` + 6 个弹窗组件）：`BaseModal` 是多根组件，Vue scoped CSS 的父作用域属性穿不到嵌套一层的 `.bm-card`，各弹窗一直靠的 `:deep(.bm-card)` 压根没命中过。改为 `BaseModal` 加 `background`/`blur` prop 由调用方直接传值。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
-- **定时任务生成的消息误报「IM 渠道未连」**（`agent/runner.py`）：`run_ephemeral` 没有加载 `im_channels` 就传给 prompt builder。现在跟直接对话一样读取真实连接状态。
-- **浮动预览窗打开低分辨率图片先猜大窗口再骤缩**（`components/common/FloatPreviewWindow.vue`）：顶到缩略图上限时原图真实尺寸未知，此前套 4K 估算兜底，遇到低分辨率图会先猜大再骤缩。改为不猜——等真图加载完直接定到正确尺寸。
-- **记忆 summary 快照里的相对时间没法换算**（`agent/memory/reflection.py` + `agent/prompts/reflection.md`）：summary 写「今晚 02:30…」，隔天再注入时模型没法判断是否已过去，因为反思那次 LLM 调用没被告知当前日期。补一行「现在是 xxx」，要求涉及具体时间点换算成绝对日期。
-- **头像存盘后缀从客户端文件名推导，粘贴图片时出错**（`app/api/v1/auth.py`）：剪贴板粘贴的图片常没有扩展名（如 `blob`），存出垃圾后缀导致取图时 MIME 类型猜错、显示异常。改为直接从已校验的 `content_type` 映射后缀。
-- **个人设置面板隐藏未生效的 QQ 群聊开关**（`components/common/ProfileModal.vue`）：群聊逻辑目前只有 QQ 网关接了，飞书/微信都没接，开关点了没反应、误导用户，先隐藏。
+- **文件库改名输入框不支持中文输入法**（`views/Files/index.vue`）：敲回车上屏候选词会被误判成确认改名，已修复。
+- **docx/xlsx/pptx 预览「转换失败 (500)」**（`app/api/v1/files.py`）：部署配置问题导致转换失败，已修复。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
+- **`http_get` 反复超时后咕咕答非所问**（`agent/prompts/skills.md`）：现在会如实告知连不上，不再用无关话搪塞。
+- **弹窗叠在浮动窗口上打开时，淡入动画期间毛玻璃完全不模糊**（`components/common/BaseModal.vue`）：进场动画改为「玻璃 ramp」修复。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
+- **弹窗毛玻璃背景/阴影全局失真**（`components/common/BaseModal.vue`）：scoped CSS 没生效导致，改用 prop 传值修复。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
+- **定时任务生成的消息误报「IM 渠道未连」**（`agent/runner.py`）：现在跟直接对话一样读取真实连接状态。
+- **浮动预览窗打开低分辨率图片先猜大窗口再骤缩**（`components/common/FloatPreviewWindow.vue`）：改为等真图加载完再定尺寸。
+- **记忆 summary 快照里的相对时间没法换算**（`agent/memory/reflection.py`）：补充当前日期，涉及时间点换算成绝对日期。
+- **头像存盘后缀从客户端文件名推导，粘贴图片时出错**（`app/api/v1/auth.py`）：改用真实文件类型判断后缀。
+- **个人设置面板隐藏未生效的 QQ 群聊开关**（`components/common/ProfileModal.vue`）：功能还没接入其它平台，先隐藏。
 
 ## [0.16.1] - 2026-07-05 · 登录支持邮箱 + 项目优先级 + 记忆向量扩展 + 对话追问路由修复
 
