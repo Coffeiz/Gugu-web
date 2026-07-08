@@ -142,11 +142,12 @@ _FEISHU_FILE_MAX = 30 * 1024 * 1024
 async def _send_files(payload: dict, files: list):
     """咕咕 send_file 工具产出的文件，按平台发回。两种来源：① 文件库文件（_artifact 带 file_id）；
     ② 网络图片/暂存附件（_artifact 带 attach_id，如 image_search 配 send_file(url=...) 下载暂存的图）。
-    飞书：图片/文件都能发（≤10/30MB）；QQ：⚠️ 官方只开放发图片，文档发不了 → 兜底提示。"""
+    飞书：图片/文件都能发（≤10/30MB）；QQ：⚠️ 官方只开放发图片，文档发不了 → 兜底提示。
+    微信：图片走 `send_image`（item.type=2），其他文件走 `send_file`（item.type=4），均经 CDN 上传。"""
     if not files:
         return
     platform = payload.get("platform")
-    if platform not in ("feishu", "qqbot"):
+    if platform not in ("feishu", "qqbot", "wechat"):
         print(f"[worker] {platform} 暂不支持发文件（{len(files)} 个）", flush=True)
         return
     if platform == "qqbot" and payload.get("chat_type") == "group":
@@ -182,10 +183,44 @@ async def _send_files(payload: dict, files: list):
             if platform == "feishu":
                 data = await get_storage().get(storage_key)
                 await _send_file_feishu(payload, ext, data, fname)
-            else:
+            elif platform == "qqbot":
                 await _send_file_qq(payload, storage_key, ext, display_name, fname)   # OSS 用 URL 模式时不必读字节
+            else:  # wechat
+                await _send_file_wechat(payload, storage_key, ext, fname)
         except Exception as e:
             print(f"[worker] 发文件出错 {fid or attach_id}: {type(e).__name__}: {e}", flush=True)
+
+
+# 微信 CDN 上传对图片/文件大小没硬上限，但大文件 AES 加密 + CDN POST 慢且占内存；
+# 设个软上限防意外（飞书图片 10MB / 文件 30MB；QQ 10MB；这里用飞书的限作通用上限，避免 worker 内存炸）
+_WECHAT_FILE_MAX = 30 * 1024 * 1024   # 30 MB，跟飞书文件上限对齐
+
+
+async def _send_file_wechat(payload, storage_key: str, ext: str, fname: str):
+    """微信发图/文件：图片走 wechat.send_image，其他走 wechat.send_file。
+    两者底层都是 iLink CDN + AES-128-ECB 上传（见 wechat.py / wechat_media_crypto.py）。"""
+    from agent.adapters import wechat as _wechat
+    from app.services.storage import get_storage
+    openid = payload.get("platform_user_id")
+    if not openid:
+        return
+    context_token = payload.get("context_token", "")
+    storage = get_storage()
+    data = await storage.get(storage_key)
+    if len(data) > _WECHAT_FILE_MAX:
+        mb = len(data) / 1048576
+        await _send(payload, f"《{fname}》有 {mb:.0f}MB，超过微信 {int(_WECHAT_FILE_MAX/1048576)}MB 上限发不了 😅")
+        return
+    is_img = (ext or "").lower() in {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
+    if is_img:
+        ok = await _wechat.send_image(openid, data, context_token, payload.get("channel_id"))
+        label = "图片"
+    else:
+        ok = await _wechat.send_file(openid, data, fname, context_token, payload.get("channel_id"))
+        label = "文件"
+    print(f"[worker] wechat 发{label} {fname}: {'ok' if ok else '失败'}（{len(data)} bytes）", flush=True)
+    if not ok:
+        await _send(payload, f"《{fname}》没发出去（微信那边拒了），你去网页对话或文件库里下载吧。")
 
 
 async def _send_file_feishu(payload, ext: str, data: bytes, fname: str):
@@ -305,11 +340,15 @@ async def handle(msg_id: str, payload: dict):
     # State Manager：标记「忙」——网关据此短路「还在吗 / 算了」（IM 单 worker 顺序消费，忙时它看不到后续消息）
     from agent import runtime_state as rtstate
     await rtstate.set_state(platform, puid, rtstate.THINKING)
+    # 微信 typing indicator：处理期间给对方微信显示「正在输入」，处理完自动关（仅 wechat 平台、其他平台退化）
+    from agent.adapters import wechat as _wechat
+    _typing_ind = await _wechat.start_typing(payload)
     try:
         resp = await run_collect(req)
     finally:
         await rtstate.clear_state(platform, puid)
         await rtstate.clear_cancel(platform, puid)
+        await _wechat.stop_typing(_typing_ind)   # 无论 run_collect 成败都关 typing
     await _im_session_set(platform, puid, resp.session_id)   # 续上同一会话
     if resp.cancelled:
         # 用户中途「算了」：网关已回「先不继续啦」，这里不再补发任何内容
