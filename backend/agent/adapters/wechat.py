@@ -21,6 +21,7 @@ import asyncio
 import os
 import signal
 import time
+import uuid
 
 from app.core import redis as R
 from agent.adapters.wechat_client import ILinkClient, DEFAULT_BASE_URL
