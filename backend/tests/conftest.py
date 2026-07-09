@@ -6,6 +6,9 @@
   B 的资源 id 调工具，必须得到『不存在』而非数据」。
 - 模型列类型全部方言无关（Uuid/JSON/Text…），SQLite 可直接建表；若未来引入
   JSONB/ARRAY 等 PG 专属类型，这里会在 create_all 时立刻报错——那时再迁真 PG。
+- `db` fixture 顺带把 `app.db.session._engine/_SessionLocal` 接到同一个内存库：
+  后台任务（fire-and-forget，比如 _apply_context_config_bg 那类）自己开
+  `_sess._SessionLocal()` 新 session，不这样接的话会摸到未初始化/真实配置的引擎。
 """
 from __future__ import annotations
 
@@ -14,12 +17,13 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.pool import StaticPool
 from uuid6 import uuid7
 
+import app.db.session as _sess
 from app.db.base import Base
 from app.models import User
 
 
 @pytest_asyncio.fixture
-async def db():
+async def db(monkeypatch):
     engine = create_async_engine(
         "sqlite+aiosqlite://",
         poolclass=StaticPool,                    # 内存库靠同一条连接共享
@@ -28,6 +32,8 @@ async def db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(_sess, "_engine", engine)
+    monkeypatch.setattr(_sess, "_SessionLocal", Session)
     async with Session() as session:
         yield session
     await engine.dispose()

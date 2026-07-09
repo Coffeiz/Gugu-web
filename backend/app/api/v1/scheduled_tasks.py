@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -58,6 +59,37 @@ async def classify_context_config(instruction: str) -> dict | None:
         "files":    bool(result.get("files")),
         "memory":   bool(result.get("memory")),
     }
+
+
+# 后台任务引用，防止被 GC（fire-and-forget 的 context_config 分类，同 agent/runner.py 的 _bg_tasks 手法）
+_bg_tasks: set = set()
+
+
+def _schedule_context_config(task_id: int, instruction: str) -> None:
+    """创建/改指令后台判断 tool_groups 等精简配置——别让用户等这次 LLM 调用，点创建/保存要秒回。
+    分类完成前 context_config 保持 None（全量注入，安全默认），完成后再补丁进去。"""
+    task = asyncio.create_task(_apply_context_config_bg(task_id, instruction))
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
+async def _apply_context_config_bg(task_id: int, instruction: str) -> None:
+    try:
+        cfg = await classify_context_config(instruction)
+        if cfg is None:
+            return   # 判断不出来就保持 None（全量），不用写回
+        import app.db.session as _sess
+        async with _sess._SessionLocal() as db:
+            # task_id 是 create_task/update_task 已按 user.id 校验过归属后自己生成/持有的行 id，
+            # 不是用户在这个调用点重新传入、需要当场校验的输入。
+            t = await db.get(ScheduledTask, task_id)   # ownership-exempt: 见上，非用户直接输入的 id
+            # 任务可能在这期间被删了，或指令又被改了一次（那次改动会自己再触发一轮分类）——
+            # 两种情况都不该用这次基于旧指令算出来的结果覆盖，找不到/指令对不上就算了。
+            if t and t.payload == instruction:
+                t.context_config = cfg
+                await db.commit()
+    except Exception as e:
+        print(f"[scheduled_tasks] 后台分类 context_config 失败: {type(e).__name__}: {e}", flush=True)
 
 
 def _validate_cron(cron: str) -> None:
@@ -145,11 +177,12 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         payload=body.payload or "", cron=body.cron,
         channels=_norm_channels(body.channels), enabled=body.enabled,
         event_id=body.event_id,
-        context_config=await classify_context_config(body.payload or ""),
+        context_config=None,   # 先给安全默认（全量），分类结果后台补丁进来，别让创建等 LLM 调用
     )
     db.add(t)
     await db.commit()
     await db.refresh(t)
+    _schedule_context_config(t.id, body.payload or "")
     return _to_resp(t)
 
 
@@ -170,15 +203,18 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.name = body.name
     if body.payload is not None:
         t.payload = body.payload
-        # 指令变了，旧的 context_config 是按旧指令判断的，可能不再适用——重新分类一次，
-        # 而不是留着可能已经过期的裁剪配置导致新指令要用的工具/上下文被裁掉、任务悄悄跑不动。
-        t.context_config = await classify_context_config(body.payload)
+        # 指令变了，旧的 context_config 是按旧指令判断的，可能不再适用——先重置为安全默认
+        # （全量），再后台重新分类一次补丁进来，别让保存等 LLM 调用。
+        t.context_config = None
     if body.channels is not None:
         t.channels = _norm_channels(body.channels)
     if body.enabled is not None:
         t.enabled = body.enabled
+    payload_changed = body.payload is not None
     await db.commit()
     await db.refresh(t)
+    if payload_changed:
+        _schedule_context_config(t.id, t.payload)
     return _to_resp(t)
 
 

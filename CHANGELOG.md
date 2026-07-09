@@ -16,6 +16,7 @@
 
 ### 改进
 
+- **定时任务创建/保存不再等 LLM 分类调用**（`app/api/v1/scheduled_tasks.py`）：点创建/保存立即返回，工具组/上下文精简判断改成后台异步补丁，不影响前端动画和交互。
 - **联网搜索工具组改名 `web_search`**（`agent/tools/search.py`、`agent/profiles/default.py`）：跟新增的站内 `global_search` 撞名太像，改名区分（实测存量定时任务无一命中旧组名，无需数据迁移）。
 - **定时任务工具组名对不上就整体回退全量，不再悄悄裁没工具**（`agent/runner.py`、`agent/tools/base.py`）：`context_config.tool_groups` 里如果有 registry 不认识的组名（改名/拼写错误/枚举漂移），以前会静默丢弃那部分工具，现在改成整体不信这份精简结果、退回全量执行。
 - **飞书流式回复卡片收尾改标题**（`agent/adapters/feishu.py`）：回复完成后把卡片标题从「咕咕思考中」改成「咕咕」，不再挂着思考中的标题。
