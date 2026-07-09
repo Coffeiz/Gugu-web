@@ -327,6 +327,14 @@ const ICON_COPY = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 const ICON_CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
 
 // ── Markdown 渲染（含语法高亮 + 复制按钮）────────────
+// 用 `new Marked()` 建一个独立实例，绝不能 `import { marked } from 'marked'` 再 `.use()`——
+// 那是全站共享的默认单例，GuguChat 聊天气泡自己也在同一个单例上注册了 code 渲染器
+// （纯文字按钮，没有 md-pre/md-copy-icon 这些 class）。两边都调 .use() 会互相覆盖全局配置：
+// 谁后调用谁生效，一旦用户此前打开过一次文件预览，这里的渲染器就会全局顶替掉聊天的，之后聊天
+// 消息里的代码块复制按钮就会带着这里的 SVG 图标出现——但聊天的 CSS 没给这几个 class 定过尺寸，
+// 图标就会没有约束地放大。真实症状：GuguChat 里代码块偶尔冒出一个巨大的图标（devlog 2026-07-10）。
+let _tvMarked = null
+
 async function renderMarkdown(text) {
   // 先确保 hljs core 已加载，然后批量注册所有支持的语言
   if (!hljs) {
@@ -342,30 +350,31 @@ async function renderMarkdown(text) {
     })
   )
 
-  const { marked } = await import('marked')
-
-  marked.use({
-    renderer: {
-      code({ text, lang }) {
-        const validLang = lang && hljs.getLanguage(lang) ? lang : null
-        const body = validLang
-          ? hljs.highlight(text, { language: validLang, ignoreIllegals: true }).value
-          : escHtml(text)
-        const badge = validLang
-          ? `<span class="md-code-lang">${validLang}</span>`
-          : ''
-        const btn = `<button class="md-copy-btn" title="复制">
-          <span class="md-copy-icon">${ICON_COPY}</span>
-          <span class="md-check-icon">${ICON_CHECK}</span>
-        </button>`
-        return `<pre class="md-pre">${badge}${btn}<code>${body}</code></pre>`
+  if (!_tvMarked) {
+    const { Marked } = await import('marked')
+    _tvMarked = new Marked({
+      renderer: {
+        code({ text, lang }) {
+          const validLang = lang && hljs.getLanguage(lang) ? lang : null
+          const body = validLang
+            ? hljs.highlight(text, { language: validLang, ignoreIllegals: true }).value
+            : escHtml(text)
+          const badge = validLang
+            ? `<span class="md-code-lang">${validLang}</span>`
+            : ''
+          const btn = `<button class="md-copy-btn" title="复制">
+            <span class="md-copy-icon">${ICON_COPY}</span>
+            <span class="md-check-icon">${ICON_CHECK}</span>
+          </button>`
+          return `<pre class="md-pre">${badge}${btn}<code>${body}</code></pre>`
+        },
       },
-    },
-    gfm: true,
-    breaks: false,
-  })
+      gfm: true,
+      breaks: false,
+    })
+  }
 
-  return marked.parse(text)
+  return _tvMarked.parse(text)
 }
 
 // ── 任务勾选框可交互：去掉 marked 默认的 disabled、按文档顺序标 data-task（仅 md + 真实文件）──
