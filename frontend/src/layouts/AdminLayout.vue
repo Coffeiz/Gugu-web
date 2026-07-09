@@ -37,7 +37,11 @@
         <div class="nav-group-label">数据</div>
         <div class="nav-item" :class="{ active: isActive('/analytics') }" role="link" tabindex="0" @click="go('/analytics')">
           <PhChartLine :size="14" />
-          数据分析
+          数据总览
+        </div>
+        <div class="nav-item" :class="{ active: isActive('/analytics-usage') }" role="link" tabindex="0" @click="go('/analytics-usage')">
+          <PhChartBar :size="14" />
+          使用分析
         </div>
         <div class="nav-item" :class="{ active: isActive('/perception') }" role="link" tabindex="0" @click="go('/perception')">
           <PhBrain :size="14" />
@@ -65,6 +69,10 @@
         <div class="nav-item" :class="{ active: isActive('/services') }" role="link" tabindex="0" @click="go('/services')">
           <PhPulse :size="14" />
           服务状态
+        </div>
+        <div class="nav-item" :class="{ active: isActive('/ops') }" role="link" tabindex="0" @click="go('/ops')">
+          <PhGauge :size="14" />
+          运维监控
         </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
@@ -111,13 +119,13 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
 import {
-  PhGear, PhRobot, PhChartLine, PhFlag, PhTicket, PhUsers,
-  PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging, PhBrain,
+  PhGear, PhRobot, PhChartLine, PhChartBar, PhFlag, PhTicket, PhUsers,
+  PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging, PhBrain, PhGauge,
 } from '@phosphor-icons/vue'
 
 const route = useRoute()
@@ -197,7 +205,7 @@ function handleLogout() {
   flex: 1; padding: 14px 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: 2px;
   margin-right: -14px; padding-right: 14px;   /* 延伸到侧边栏右边缘，滚动条贴边 */
-  scrollbar-gutter: stable;
+  /* scrollbar-gutter: stable 提到 global.css（Admin 后台滚动条统一规则） */
 }
 .sidebar-nav::-webkit-scrollbar { width: 4px; }
 .sidebar-nav::-webkit-scrollbar-track { background: transparent; }

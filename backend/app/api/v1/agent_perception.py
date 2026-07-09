@@ -3,19 +3,24 @@
 读 Redis `perc:events`（reflection 写入的 capped list：perc + misperc 事件）→ 聚合。
 **口径：只算「活跃用户」（窗口内 ≥ min_events 轮反思的用户，滤掉一次性/测试噪声），
 且头部指标按「每用户先算、再跨用户平均」（宏平均），不让重度用户主导全局。**
-不建表；依赖 P0 的感知遥测（见 docs/感知系统-架构升级.md §3.4 / §5）。脱敏:只聚合结构化字段。
+不建表；依赖 P0 的感知遥测（见 docs/agent/10-感知系统.md §3.4 / §5）。脱敏:只聚合结构化字段。
 """
 import json
 import time
 from collections import Counter, defaultdict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.redis import get_redis
+from app.db.session import get_db
+from app.models import User
 
 router = APIRouter(prefix="/admin/perception", tags=["admin"])
 
 _PERC_KEY = "perc:events"
+_MISREAD_KEY = "perc:misread_cases"   # 错读案例 live 列表（给面板预览；持久那份是 md，见 misread_export）
 
 # 异常阈值（默认值；可由面板按 query 参数覆盖，仅影响本次「怎么看」，不改系统行为）
 _RATE_HI = 0.25        # 某 intent 误判率超此 → 标红
@@ -28,11 +33,20 @@ def _mean(xs, nd=1):
     return round(sum(xs) / len(xs), nd) if xs else None
 
 
+async def _dev_prefixes(db: AsyncSession) -> set:
+    """开发者账号的匿名化前缀集合（perc 事件的 u 字段是 str(user_id)[:8]，不是完整 user_id，
+    只能靠前缀比对排除，同 admin_analytics.py 的 exclude_dev 语义）。"""
+    ids = (await db.execute(select(User.id).where(User.is_developer == True))).scalars().all()
+    return {str(uid)[:8] for uid in ids}
+
+
 @router.get("")
 async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int = 1,
-                           rate_hi: float = _RATE_HI, min_n: int = _MIN_N, ambig_hi: float = _AMBIG_HI):
+                           rate_hi: float = _RATE_HI, min_n: int = _MIN_N, ambig_hi: float = _AMBIG_HI,
+                           exclude_dev: bool = False, db: AsyncSession = Depends(get_db)):
     """感知总览。hours=时间窗（默认 7 天，0=不限）;min_events=活跃用户门槛（窗口内 ≥N 轮反思）;
-    rate_hi/min_n/ambig_hi=标红阈值（误判率/最小样本/歧义度），默认即原常量，仅改「怎么看」不改系统行为。"""
+    rate_hi/min_n/ambig_hi=标红阈值（误判率/最小样本/歧义度），默认即原常量，仅改「怎么看」不改系统行为；
+    exclude_dev=排除开发者账号（is_developer 标记）。"""
     thresholds = {"rate_hi": rate_hi, "min_n": min_n, "ambig_hi": ambig_hi}
     r = get_redis()
     raw = await r.lrange(_PERC_KEY, 0, limit - 1)
@@ -45,6 +59,9 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
     if hours:
         cutoff = time.time() - hours * 3600
         events = [e for e in events if (e.get("ts") or 0) >= cutoff]
+    if exclude_dev:
+        dev_prefixes = await _dev_prefixes(db)
+        events = [e for e in events if e.get("u") not in dev_prefixes]
 
     # 按用户分组
     by_user_all = defaultdict(list)
@@ -68,6 +85,7 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
                 "perception_misperc_rate": None, "misperc_by_kind": [],
                 "avg_ambiguity": None, "avg_emo_strength": None,
                 "intent_distribution": [], "by_model": [], "emotion_distribution": [],
+                "feedback_distribution": [], "feedback_total": 0,
                 "flags": [], "note": f"暂无活跃用户（窗口内对话 ≥{min_events} 轮的用户）—— 多聊几轮再看"}
 
     # 误判按 user+ts 相邻配对到「被误判那轮」的 intent/model（仅活跃用户内）。
@@ -137,6 +155,10 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
     emotion_count = Counter(e.get("emotion") for e in perc
                             if e.get("emotion") and e.get("emotion") != "无")
 
+    # 反馈信号分布（t=fb,学习闭环的燃料;见 docs/agent/proposals/反馈信号系统-设计.md）
+    fb_events = [e for e in events if e.get("t") == "fb" and e.get("u") in active]
+    feedback_count = Counter(e.get("v") for e in fb_events if e.get("v"))
+
     # 异常标记
     flags = []
     for row in by_intent:
@@ -166,6 +188,87 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
         "intent_distribution": by_intent,
         "by_model": by_model,
         "emotion_distribution": [{"emotion": k, "count": v} for k, v in emotion_count.most_common()],
+        "feedback_distribution": [{"feedback": k, "count": v} for k, v in feedback_count.most_common()],
+        "feedback_total": len(fb_events),
         "flags": flags,
         "note": f"口径：活跃用户（窗口内 ≥{min_events} 轮）{len(active)} 人；头部指标按用户宏平均（重度用户不主导）",
     }
+
+
+@router.get("/export")
+async def export_events(hours: int = 0):
+    """导出感知遥测原始事件（perc/misperc/fb,JSON 附件,供离线分析）。
+    hours=时间窗（0=全部）。数据全部是脱敏结构化字段（u 为前 8 位、枚举/数值,无用户原文）。"""
+    r = get_redis()
+    raw = await r.lrange(_PERC_KEY, 0, -1)
+    events = []
+    for x in raw:
+        try:
+            events.append(json.loads(x if isinstance(x, str) else x.decode()))
+        except Exception:
+            pass
+    if hours:
+        cutoff = time.time() - hours * 3600
+        events = [e for e in events if (e.get("ts") or 0) >= cutoff]
+    events.sort(key=lambda e: e.get("ts") or 0)
+    body = json.dumps(events, ensure_ascii=False, indent=1)
+    fname = f"perception_events_{hours or 'all'}h.json"
+    return Response(content=body, media_type="application/json; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/misread/recent")
+async def misread_recent(n: int = 30, exclude_dev: bool = False, db: AsyncSession = Depends(get_db)):
+    """最近 N 条错读案例（脱敏，给面板预览）。读 Redis live 列表 perc:misread_cases。
+    exclude_dev=排除开发者账号——超采一批（封顶 200）再过滤再截断到 n，避免被排除的案例挤占名额。"""
+    n = max(1, min(int(n or 30), 200))
+    r = get_redis()
+    raw = await r.lrange(_MISREAD_KEY, 0, 199 if exclude_dev else n - 1)
+    cases = []
+    for x in raw:
+        try:
+            cases.append(json.loads(x if isinstance(x, str) else x.decode()))
+        except Exception:
+            pass
+    if exclude_dev:
+        dev_prefixes = await _dev_prefixes(db)
+        cases = [c for c in cases if c.get("u") not in dev_prefixes][:n]
+    return {"total": len(cases), "cases": cases}
+
+
+@router.get("/misread/export")
+async def misread_export():
+    """下载全局「错读反思记录」（md，已脱敏：只 read_as/actual/抽象 pattern，无用户原话）。"""
+    from agent.memory import store
+    md = await store.read_misread()
+    body = md if md else "# 错读反思记录\n\n暂无——需发生一次「感知误读 + 用户纠正」才会记一条。\n"
+    return Response(content=body, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="misread_reflections.md"'})
+
+
+@router.get("/temperature")
+async def temperature_list(exclude_dev: bool = False, db: AsyncSession = Depends(get_db)):
+    """关系温度当前值列表（v1：只读当前快照，无历史曲线——temp.json 每次重算是整份覆盖，
+    见 agent/memory/temperature.py。按温度降序，没算过温度（.agent/temp.json 不存在）的用户不列入。
+    exclude_dev=排除开发者账号（is_developer 标记）。"""
+    from agent.memory import store
+
+    stmt = select(User.id, User.username, User.display_name)
+    if exclude_dev:
+        stmt = stmt.where(User.is_developer == False)
+    users = (await db.execute(stmt)).all()
+    rows = []
+    for uid, username, display_name in users:
+        data = await store.read_temperature(uid)
+        if not data:
+            continue
+        rows.append({
+            "user_id": str(uid),
+            "name": display_name or username,
+            "temp": data.get("temp"),
+            "components": data.get("components"),
+            "window_days": data.get("window_days"),
+            "ts": data.get("ts"),
+        })
+    rows.sort(key=lambda r: r["temp"] or 0, reverse=True)
+    return {"total": len(rows), "users": rows}

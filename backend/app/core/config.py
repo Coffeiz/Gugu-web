@@ -63,6 +63,7 @@ class AISettings(BaseModel):
     temperature: float = Field(0.7, description="发散度 0~2")
     context_tokens: int = Field(3000, description="历史上下文 token 预算")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
+    reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | high | max")
     vision: bool = Field(False, description="模型是否支持多模态（看图）。后台「检测」按钮探测后写入，亦可手动改")
     api_format: str = Field("", description="API 格式: openai | anthropic | 空=按 provider/base_url 自动判（mimo 等同时提供两套 API 的厂商可显式选）")
 
@@ -88,6 +89,7 @@ class AIPresetItem(BaseModel):
     temperature: float = 0.7
     context_tokens: int = 3000
     thinking: str = "disabled"
+    reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | high | max
     vision: bool = False
     api_format: str = ""         # API 格式: openai | anthropic | 空=自动（mimo 等双 API 厂商可显式选）
     in_pool: bool = False        # 是否加入「多 key 分流」池（strategy=pool 时随机挑这些）
@@ -105,6 +107,7 @@ class AgentBehaviorSettings(BaseModel):
     reflection_threshold: int = Field(10, description="触发 Reflection 的消息数")
     worker_concurrency: int = Field(16, description="IM worker 同时跑几条 agent（实测单 MiniMax key 安全上限≈16；worker 每 30s 热读）")
     conv_compress_enabled: bool = Field(True, description="对话历史压缩：超长会话把旧消息总结成摘要省 token；关闭后只按 token 截断、不摘要（web 即时、worker 每 30s 热读）")
+    im_progress_announce_enabled: bool = Field(True, description="IM 慢工具进度声明：多步工具循环期间（IM 非流式、用户容易觉得沉默）先发一句「我去查一下」这类声明再执行，文案来自工具自身登记的 start_message（不是模型现场生成，见 docs/agent/proposals/IM慢工具进度声明-设计.md）；只在 IM 生效，网页不受影响")
     daily_retention_days: int = Field(14, description="daily 记忆保留天数（过期直接压进 memory.md）")
     # 已废弃：weekly 层已砍，压缩定为 daily→memory 两段；字段暂留兼容旧 override，不再使用
     weekly_retention_weeks: int = Field(6, description="（已废弃，weekly 层取消）")
@@ -121,6 +124,7 @@ class SearchSettings(BaseModel):
     tavily_api_key: str = Field("", description="Tavily API Key（空=禁用 deep_research 深度研究）")
     searxng_url:    str = Field("", description="自建 SearXNG 实例地址（空=禁用 web_search 通用搜索），如 http://127.0.0.1:8888")
     searxng_engines: str = Field("sogou,quark,360search", description="SearXNG 启用的引擎（逗号分隔；国内服务器只有这几个可达）")
+    searxng_image_engines: str = Field("", description="SearXNG 图片搜索（image_search）启用的引擎（逗号分隔）；留空则回退复用 searxng_engines。图片分类能连通的引擎不一定和文本分类是同一批，需部署后用「测试」按钮实测调整")
     max_results:    int = Field(5, description="默认返回结果数")
 
 
@@ -139,6 +143,20 @@ class SmtpSettings(BaseModel):
     from_addr: str          = Field("", description="发件人地址（默认同 user）")
     to_addr:  str           = Field("", description="反馈通知收件人地址")
     use_ssl:  bool          = Field(True, description="True=SSL(465)，False=STARTTLS(587)")
+
+
+class EmbeddingSettings(BaseModel):
+    """向量 embedding 模型——**独立于聊天/语音模型，单独 pin**（见 docs/agent/参考/咕咕改进方案-MaiBot借鉴.md 改进一）。
+
+    聊天模型天天轮换，embedding 必须钉死一个：换了它 = 所有已存向量作废、需整体重建。故意**不进 pick_model 路由**。
+    走 OpenAI 兼容的 `/embeddings` 接口。`enabled=False` 或未配 model → `embed()` 返回 None，
+    记忆检索自动退回词法相关性（bigram），零副作用——这也是"模型待定先搭框架"阶段的默认状态。"""
+    enabled:    bool = Field(False, description="是否启用向量检索（False=embed 全程 no-op，退回词法相关性）")
+    provider:   str  = Field("", description="提供方（仅记录用；固定走 OpenAI 兼容 /embeddings）")
+    base_url:   str  = Field("", description="Embedding Base URL（到 /v1 那层，不含 /embeddings）")
+    api_key:    str  = Field("", description="API Key")
+    model:      str  = Field("", description="embedding 模型名（空=未配置→退回词法）")
+    dimensions: int  = Field(0, description="请求维度（0=用模型默认；部分模型支持指定）")
 
 
 class AppSettings(BaseSettings):
@@ -161,6 +179,7 @@ class AppSettings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     ai: AISettings = Field(default_factory=AISettings)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)   # 独立语音识别模型（空=不支持语音）
+    embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)   # 独立向量模型（disabled=退回词法检索）
     ai_presets: AIPresets = Field(default_factory=AIPresets)
     agent: AgentBehaviorSettings = Field(default_factory=AgentBehaviorSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
@@ -215,6 +234,13 @@ class AppSettings(BaseSettings):
                 }}
                 updates["voice"] = VoiceSettings.model_construct(**merged)
 
+            if "embedding" in override:
+                merged = {**self.embedding.model_dump(), **{
+                    k: v for k, v in override["embedding"].items()
+                    if k in EmbeddingSettings.model_fields
+                }}
+                updates["embedding"] = EmbeddingSettings.model_construct(**merged)
+
             if "quota" in override:
                 merged = {**self.quota.model_dump(), **{
                     k: v for k, v in override["quota"].items()
@@ -264,7 +290,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "voice"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "voice", "embedding"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]

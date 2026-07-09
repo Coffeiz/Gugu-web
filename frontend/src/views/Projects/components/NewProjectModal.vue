@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="show" width="480px" @close="$emit('close')">
+  <BaseModal :show="show" width="480px" background="var(--panel-bg)" @close="$emit('close')">
     <div class="modal">
 
       <!-- 头部 -->
@@ -84,14 +84,16 @@
                             <span class="tpl-name">{{ t.name }}</span>
                             <span class="tpl-stages-preview">{{ t.stages.map(s => s.label ?? s).join(' · ') }}</span>
                           </button>
-                          <input
-                            v-else
-                            class="tpl-rename-input"
-                            v-model="renameText"
-                            @keyup.enter="commitRename(t.id)"
-                            @keyup.esc="renamingId = null"
-                            ref="renameInputRef"
-                          />
+                          <span v-else class="rename-sizer" @click.stop>
+                            <span class="rename-ghost">{{ renameText || ' ' }}</span>
+                            <input
+                              class="rename-input-inline"
+                              v-model="renameText"
+                              v-enter="() => commitRename(t.id)"
+                              @keyup.esc="renamingId = null"
+                              ref="renameInputRef"
+                            />
+                          </span>
                           <!-- 编辑/确认按钮（始终显示） -->
                           <button
                             class="tpl-rename-btn"
@@ -122,7 +124,7 @@
                           class="tpl-name-input"
                           v-model="newTplName"
                           placeholder="模板名称"
-                          @keyup.enter="commitSave"
+                          v-enter="commitSave"
                           @keyup.esc="savingTpl = false; newTplName = ''"
                           ref="tplNameInputRef"
                         />
@@ -173,7 +175,7 @@
                       :title="todo.text"
                       :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
                       placeholder="待办事项"
-                      @keydown.enter.prevent="addNpTodo(stage.origIdx)"
+                      v-enter.prevent="() => addNpTodo(stage.origIdx)"
                       @keydown.backspace="!todo.text && removeNpTodo(stage.origIdx, todo.id)"
                     />
                     <button class="np-todo-del" @click.stop="removeNpTodo(stage.origIdx, todo.id)"><PhX :size="10" weight="bold" /></button>
@@ -207,13 +209,13 @@
   </BaseModal>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import DateRangePicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
-import { useStageTemplates } from '@/composables/useStageTemplates.js'
+import { useStageTemplates } from '@/composables/useStageTemplates'
 import { usePreferencesStore } from '@/stores/preferences'
 import { onboardingProjectId } from '@/composables/useOnboarding'
 import { PhX, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour } from '@phosphor-icons/vue'
@@ -279,7 +281,7 @@ function addNpTodo(origIdx) {
   if (!stage.todos) stage.todos = []
   stage.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
   nextTick(() => {
-    const inputs = document.querySelectorAll(`.np-todo-input-${origIdx}`)
+    const inputs = document.querySelectorAll<HTMLElement>(`.np-todo-input-${origIdx}`)
     inputs[inputs.length - 1]?.focus()
   })
 }
@@ -515,8 +517,6 @@ function handleCreate() {
 </script>
 
 <style scoped>
-:deep(.bm-card) { background: var(--panel-bg); }
-
 .modal { display: contents; }
 
 /* ── 头部 ── */
@@ -705,18 +705,15 @@ input:not(.name-input):not(.header-name-input):focus {
 .tpl-rename-btn:hover { background: rgba(0,0,0,0.07); color: var(--text-primary); }
 .tpl-del-btn:hover { background: rgba(200,90,90,0.1); color: #c85a5a; }
 
-.tpl-rename-input {
-  flex: 1; align-self: stretch; padding: 0 8px; border-radius: 6px;
-  border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.9);
-  font-size: 12px; font-family: var(--font-sans); outline: none; min-width: 0;
-}
-.tpl-rename-input:focus { border-color: rgba(123,127,178,0.4); }
+/* .rename-sizer / .rename-ghost / .rename-input-inline 已提到 global.css（全站重命名输入框共用）；
+   这里只覆盖本组件专属的字号——ghost/input 靠 font:inherit 跟随，scoped 选择器优先级更高，安全叠加 */
+.rename-sizer { font-size: 12px; font-family: var(--font-sans); }
 .tpl-name-input { height: 28px;
   flex: 1; height: 26px; padding: 0 8px; border-radius: 6px;
   border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.8);
   font-size: 12px; font-family: var(--font-sans); outline: none;
 }
-.tpl-rename-input:focus, .tpl-name-input:focus { border-color: rgba(123,127,178,0.4); }
+.tpl-name-input:focus { border-color: rgba(123,127,178,0.4); }
 
 .tpl-divider { height: 1px; background: rgba(0,0,0,0.07); margin: 4px 0; }
 .tpl-save-row { padding: 2px 8px 4px; }
@@ -856,7 +853,7 @@ input:not(.name-input):not(.header-name-input):focus {
 
 <style>
 .np-stage-ghost {
-  position: fixed; z-index: 9999; pointer-events: none;
+  position: fixed; z-index: 100000; pointer-events: none;   /* 压顶带:拖拽克隆体不被窗口盖住 */
   display: flex; align-items: center; gap: 8px;
   padding: 6px 12px 6px 10px;
   background: rgba(238,240,246,0.94);

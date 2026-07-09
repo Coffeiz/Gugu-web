@@ -64,7 +64,7 @@
             :class="{ 'notif-active': notifOpen }"
             @click.stop="toggleNotif"
           >
-            <PhBell class="nav-icon" :size="15" />
+            <PhBell class="nav-icon" :size="14" weight="bold" />
             <span class="nav-label-text">通知</span>
             <span v-if="uiStore.notifCount" class="badge">{{ uiStore.notifCount }}</span>
           </button>
@@ -144,7 +144,7 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import MarkdownView from './MarkdownView.vue'
 import { useRouter } from 'vue-router'
@@ -237,7 +237,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
   width: var(--sidebar-width);
   height: 100vh; flex-shrink: 0;
   background: rgba(255,255,255,0.42);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border-right: 1px solid rgba(255,255,255,0.62);
   box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
   display: flex; flex-direction: column;
@@ -265,7 +265,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
   flex-shrink: 0;
 }
 .nav-label {
-  font-size: 10px; font-weight: 600; color: var(--text-secondary);
+  font-size: 10px; font-weight: 600; color: #6e7289;   /* 比 --text-secondary(#8a8fa8) 调深一档，提分组标题可读性 */
   text-transform: uppercase; letter-spacing: 0.08em; padding: 0 10px; margin-bottom: 4px;
 }
 
@@ -273,15 +273,15 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 .notif-anchor { position: relative; }
 .notif-btn {
   width: 100%; display: flex; align-items: center; gap: 9px;
-  padding: 9px 10px; border-radius: var(--radius-sm);
-  font-size: 13px; font-family: var(--font-sans);
-  color: rgba(30,32,40,0.62);
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  font-size: 14px; font-family: var(--font-sans);
+  color: #767980;   /* 同 NavItem.vue：比 --text-secondary 饱和度更低、更深的灰 */
   background: none; border: 1px solid transparent;
   cursor: pointer; text-align: left; transition: all 0.15s;
 }
-.notif-btn:hover { background: rgba(123,127,178,0.08); color: rgba(30,32,40,0.82); }
+.notif-btn:hover { background: rgba(123,127,178,0.08); color: var(--text-primary); }
 .notif-btn.notif-active {
-  background: rgba(255,255,255,0.38); color: var(--color-primary);
+  background: rgba(255,255,255,0.38); color: #6b6fa0;   /* 同 NavItem.vue：比 --color-primary 更深一档 */
   font-weight: 700; border-color: rgba(255,255,255,0.62);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
 }
@@ -362,7 +362,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 .notif-popup {
   /* 与 .popup-menu（右键/排序弹窗）统一外观 */
   background: rgba(255,255,255,0.6);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.75); border-radius: 10px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.1);
   overflow: hidden;
@@ -378,7 +378,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
   font-size: 13px; font-weight: 700; color: #1e2028;
 }
 .notif-mark-all {
-  font-size: 11px; font-weight: 500; color: #7b7fb2;
+  font-size: 11px; font-weight: 500; color: var(--text-secondary);
   background: none; border: none; cursor: pointer;
   font-family: 'PingFang SC', 'Segoe UI', sans-serif;
   padding: 2px 6px; border-radius: 6px; transition: background 0.12s;

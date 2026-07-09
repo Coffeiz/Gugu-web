@@ -10,6 +10,7 @@ import json
 from sqlalchemy import select, desc, or_
 
 from app.models import ConversationMessage, ConversationSession
+from app.core.ownership import get_owned
 from agent.tools.base import BaseSkill, Tool
 
 
@@ -74,8 +75,8 @@ async def _read_conversation(db, user_id, args: dict):
     sid = args.get("session_id")
     if not sid:
         return json.dumps({"error": "需提供 session_id（先用 search_conversations 找）"}, ensure_ascii=False)
-    sess = await db.get(ConversationSession, int(sid))
-    if not sess or str(sess.user_id) != str(user_id):
+    sess = await get_owned(db, ConversationSession, int(sid), user_id)
+    if not sess:
         return json.dumps({"error": "对话不存在或不属于你"}, ensure_ascii=False)
 
     limit = max(1, min(int(args.get("limit", 40) or 40), 100))

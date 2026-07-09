@@ -118,6 +118,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
         if not t or not t.enabled:
             return {"错误": "任务不存在或已停用"}
         payload, uid, name = t.payload or "", t.user_id, t.name
+        context_config = t.context_config
         chans = {c for c in (t.channels or "").split(",") if c}
         t.last_run_at = datetime.utcnow()
         once_deleted = not is_trial and (t.cron or "").startswith("@once:")
@@ -133,23 +134,8 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             f"现在是 {now_str}，用户设置了一条定时任务：{payload}\n"
             f"请以咕咕的身份完成这项任务，并将结果告知用户。"
         )
-        text = await _run_agent(uid, prompt)
-        # 按用户选的渠道投递。chat=web 历史别名；im=发到用过的所有 IM 平台（旧任务兼容）。
-        if {"web", "chat"} & chans:
-            from app.core import events as _ev
-            await _ev.publish(uid, notification={"title": name, "content": text})
-            result["web 通知"] = "已发送"
-        im_targets = {_CHAN_PLATFORM[c] for c in chans if c in _CHAN_PLATFORM}
-        if "im" in chans:
-            im_targets.update(_CHAN_PLATFORM.values())
-        for platform in im_targets:
-            lbl = _PLAT_LABEL.get(platform, platform)
-            try:
-                sent = await _deliver_im(uid, f"⏰ {name}\n\n{text}", platform)
-                result[lbl] = "已发送" if sent else "无可触达地址（先给该 bot 发条消息）"
-            except Exception as e:
-                result[lbl] = f"失败：{type(e).__name__}"
-                print(f"[sched] {platform} 投递失败: {type(e).__name__}: {e}", flush=True)
+        text = await _run_agent(uid, prompt, context_config)
+        result = await deliver_to_channels(uid, name, text, chans)
     except Exception as e:
         import traceback
         result["错误"] = f"{type(e).__name__}: {e}"
@@ -158,14 +144,80 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
     return result
 
 
-async def _run_agent(user_id, prompt: str) -> str:
+async def deliver_to_channels(uid, name: str, text: str, chans: set) -> dict:
+    """把 text 投递到选定渠道，返回 {渠道: 状态}。供定时任务执行 / 提醒测试复用。
+    chat=web 历史别名；im=发到用过的所有 IM 平台（旧任务兼容）。"""
+    result: dict = {}
+    if {"web", "chat"} & chans:
+        from app.core import events as _ev
+        await _ev.publish(uid, notification={"title": name, "content": text})
+        result["web 通知"] = "已发送"
+    im_targets = {_CHAN_PLATFORM[c] for c in chans if c in _CHAN_PLATFORM}
+    if "im" in chans:
+        im_targets.update(_CHAN_PLATFORM.values())
+    for platform in im_targets:
+        lbl = _PLAT_LABEL.get(platform, platform)
+        try:
+            sent = await _deliver_im(uid, f"⏰ {name}\n\n{text}", platform)
+            result[lbl] = "已发送" if sent else "无可触达地址（先给该 bot 发条消息）"
+            if sent:
+                # 把推送写进 IM 会话历史，用户回复时咕咕才有上下文（隐藏临时会话，回复即转正）
+                try:
+                    await _persist_push_im(uid, platform, name, text)
+                except Exception as e:
+                    print(f"[sched] {platform} 推送入会话失败: {type(e).__name__}: {e}", flush=True)
+        except Exception as e:
+            result[lbl] = f"失败：{type(e).__name__}"
+            print(f"[sched] {platform} 投递失败: {type(e).__name__}: {e}", flush=True)
+    return result
+
+
+async def _persist_push_im(uid, platform: str, title: str, text: str) -> None:
+    """把一条主动推送 append 到该用户在 IM 的最近会话（imsession 指向的那个），使下次回复带上上下文。
+    无 imsession（如隔夜冷启）→ 建一个普通会话并把 imsession 指过去。刷新 imsession 12h TTL，
+    保证「推送后 12h 内回复」能路由回此会话。"""
+    from app.core import redis as R
+    import app.db.session as ss
+    from app.models import ConversationSession, ConversationMessage
+
+    reach = await get_imreach(uid, platform)
+    puid = (reach or {}).get("puid")
+    if not puid:
+        return
+    r = R.get_redis()
+    sess_key = f"imsession:{platform}:{puid}"   # 与 worker._im_sess_key 同格式
+    try:
+        raw = await r.get(sess_key)
+        sid = int(raw) if raw else None
+    except (TypeError, ValueError):
+        sid = None
+
+    uid_u = _as_uuid(uid)
+    async with ss._SessionLocal() as db:
+        session = await db.get(ConversationSession, sid) if sid else None
+        if session is None or session.user_id != uid_u:
+            session = ConversationSession(user_id=uid_u, title=(title[:50] or "主动消息"), source=platform)
+            db.add(session)
+            await db.flush()
+        db.add(ConversationMessage(session_id=session.id, role="assistant", content=f"⏰ {title}\n\n{text}"))
+        session.updated_at = datetime.utcnow()
+        await db.commit()
+        new_sid = session.id
+
+    try:
+        await r.set(sess_key, str(new_sid), ex=12 * 3600)
+    except Exception:
+        pass
+
+
+async def _run_agent(user_id, prompt: str, context_config: dict | None = None) -> str:
     from agent.runner import run_ephemeral
     import app.db.session as ss
     from app.models import User
     async with ss._SessionLocal() as db:
         u = await db.get(User, _as_uuid(user_id))
         uname = (u.display_name or u.username) if u else ""
-    text = await run_ephemeral(user_id, uname, prompt)
+    text = await run_ephemeral(user_id, uname, prompt, context_config=context_config)
     return text or "（咕咕这次没有产出内容）"
 
 

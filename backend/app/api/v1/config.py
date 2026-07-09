@@ -7,6 +7,9 @@ POST  /api/v1/admin/config/init-db           → 手动初始化数据库（建�
 """
 
 import asyncio
+import json
+import time
+
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
@@ -54,7 +57,8 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
         await write_log(db, username, "config", f"修改配置：{sections}", request)
         return {"message": "配置已更新", "data": _mask(new_cfg.model_dump())}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}\n{_tb.format_exc()}")
+        print(f"[config] 操作失败: {type(e).__name__}: {e}\n{_tb.format_exc()}", flush=True)
+        raise HTTPException(status_code=500, detail="操作失败，请查看服务端日志排查")
 
 
 @router.post("/init-db")
@@ -73,7 +77,8 @@ async def init_db():
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="数据库 10s 内未连通，请检查连接信息")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}\n{_tb.format_exc()}")
+        print(f"[config] 操作失败: {type(e).__name__}: {e}\n{_tb.format_exc()}", flush=True)
+        raise HTTPException(status_code=500, detail="操作失败，请查看服务端日志排查")
 
 
 # ── 存储 ↔ DB 对账（只读）────────────────────────────────────────────────
@@ -310,9 +315,10 @@ async def test_connection(body: TestConnectionRequest):
 # ── 搜索测试（SearXNG / Tavily）──────────────────────────────────────────────
 
 class SearchTestRequest(BaseModel):
-    target:          Literal["searxng", "tavily"]
+    target:          Literal["searxng", "searxng_images", "tavily"]
     searxng_url:     str = ""   # 留空=用已存配置
     searxng_engines: str = ""
+    searxng_image_engines: str = ""
     tavily_api_key:  str = ""   # 留空=用已存配置
 
 
@@ -320,15 +326,21 @@ class SearchTestRequest(BaseModel):
 async def test_search(body: SearchTestRequest):
     cfg = get_settings()
 
-    if body.target == "searxng":
+    if body.target in ("searxng", "searxng_images"):
         url = (body.searxng_url or cfg.search.searxng_url or "").rstrip("/")
         if not url:
             return {"ok": False, "message": "未填 SearXNG 地址"}
-        engines = body.searxng_engines or cfg.search.searxng_engines
+        is_images = body.target == "searxng_images"
+        if is_images:
+            engines = body.searxng_image_engines or cfg.search.searxng_image_engines or cfg.search.searxng_engines
+        else:
+            engines = body.searxng_engines or cfg.search.searxng_engines
+        params = {"q": "test", "format": "json", "engines": engines}
+        if is_images:
+            params["categories"] = "images"
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(12.0)) as client:
-                resp = await client.get(f"{url}/search",
-                                        params={"q": "test", "format": "json", "engines": engines})
+                resp = await client.get(f"{url}/search", params=params)
         except Exception as e:
             return {"ok": False, "message": f"连不上：{type(e).__name__}: {str(e)[:80]}"}
         if resp.status_code == 403:
@@ -363,6 +375,269 @@ async def test_search(body: SearchTestRequest):
         return {"ok": True, "message": "OK — Tavily Key 有效（本次测试消耗 1 次调用）"}
 
     return {"ok": False, "message": "未知测试目标"}
+
+
+# ── Embedding 模型连通测试 ────────────────────────────────────────────────────
+
+class EmbeddingTestRequest(BaseModel):
+    base_url:   str = ""   # 留空=用已存配置
+    api_key:    str = ""   # 留空=用已存配置
+    model:      str = ""
+    dimensions: int = 0
+
+
+@router.post("/test-embedding")
+async def test_embedding(body: EmbeddingTestRequest):
+    """用当前输入的参数测 embedding 端点是否通，成功返回向量维度。走 OpenAI 兼容 /embeddings。"""
+    cfg = get_settings().embedding
+    base_url = (body.base_url or cfg.base_url or "").rstrip("/")
+    api_key  = body.api_key or cfg.api_key
+    model    = body.model or cfg.model
+    dims     = body.dimensions or cfg.dimensions
+    if not base_url or not model:
+        return {"ok": False, "message": "缺少 Base URL 或模型名"}
+    payload: dict = {"model": model, "input": "连通性测试"}
+    if dims:
+        payload["dimensions"] = dims
+    # key 为空就不发 Authorization 头（Ollama 无需鉴权；空 key 拼 "Bearer " 是非法 header）
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+            resp = await client.post(f"{base_url}/embeddings", json=payload, headers=headers)
+    except Exception as e:
+        return {"ok": False, "message": f"连不上：{type(e).__name__}: {str(e)[:80]}"}
+    if resp.status_code != 200:
+        return {"ok": False, "message": f"HTTP {resp.status_code}：{resp.text[:120]}"}
+    try:
+        vec = resp.json()["data"][0]["embedding"]
+    except Exception:
+        return {"ok": False, "message": "返回格式不对（不是 OpenAI 兼容 /embeddings 响应）"}
+    if not isinstance(vec, list) or not vec:
+        return {"ok": False, "message": "返回的向量为空"}
+    return {"ok": True, "message": f"OK — 连通，向量维度 {len(vec)}"}
+
+
+# ── Embedding 向量重建（换模型后批量重算所有用户的 facts 向量）────────────────────
+_REBUILD_KEY = "emb:rebuild"
+
+
+async def _rebuild_worker(user_ids: list[str]) -> None:
+    """后台批量重算。进度写 Redis（跨 worker 可读）。best-effort，末尾标 done/error。"""
+    from agent.memory import embedding, store
+    from app.core.redis import get_redis
+    r = get_redis()
+    tag = embedding.model_tag()
+
+    async def prog(done: int, total: int) -> None:
+        if done % 5 == 0 or done == total:
+            await r.set(_REBUILD_KEY, json.dumps(
+                {"status": "running", "done": done, "total": total, "tag": tag, "ts": time.time()}))
+
+    try:
+        res = await store.rebuild_all_vecs(user_ids, on_progress=prog)
+        await r.set(_REBUILD_KEY, json.dumps(
+            {"status": "done", **res, "tag": tag, "ts": time.time()}), ex=3600)
+    except Exception as e:
+        await r.set(_REBUILD_KEY, json.dumps(
+            {"status": "error", "message": str(e)[:100], "ts": time.time()}), ex=3600)
+
+
+@router.post("/embedding-rebuild")
+async def embedding_rebuild(db: AsyncSession = Depends(get_db)):
+    """换 embedding 模型后，批量给所有用户的 facts 重算向量（force）。后台跑、立即返回。
+    未启用/已在跑 → 拒绝。进度用 GET /embedding-rebuild/status 轮询。"""
+    from agent.memory import embedding
+    from app.core.redis import get_redis
+    from app.models import User
+    if not embedding.is_enabled():
+        return {"ok": False, "message": "请先启用并配置 embedding 模型（保存后再重建）"}
+    r = get_redis()
+    cur = await r.get(_REBUILD_KEY)
+    if cur:
+        try:
+            d = json.loads(cur if isinstance(cur, str) else cur.decode())
+            if d.get("status") == "running":
+                return {"ok": False, "message": "已有重建任务在跑", "status": d}
+        except Exception:
+            pass
+    rows = (await db.execute(select(User.id))).scalars().all()
+    user_ids = [str(u) for u in rows]
+    await r.set(_REBUILD_KEY, json.dumps(
+        {"status": "running", "done": 0, "total": len(user_ids), "ts": time.time()}))
+    asyncio.create_task(_rebuild_worker(user_ids))
+    return {"ok": True, "message": f"重建已启动，共 {len(user_ids)} 个用户", "total": len(user_ids)}
+
+
+@router.get("/embedding-rebuild/status")
+async def embedding_rebuild_status():
+    from app.core.redis import get_redis
+    cur = await get_redis().get(_REBUILD_KEY)
+    if not cur:
+        return {"status": "idle"}
+    try:
+        return json.loads(cur if isinstance(cur, str) else cur.decode())
+    except Exception:
+        return {"status": "idle"}
+
+
+# ── 记忆一键维护：pattern 复核删除 + 身份内容搬去 profile + 画像事件迁 memory + daily 改格式 + 清遗留文件
+# （2026-07-09，见 scripts/refresh_memory.py）────────────────────────────────────
+# 预览(preview) 和真删(apply) 分两步：预览只跑一次 LLM 判断（review + split，各 3 次投票，
+# dry_run），结果连同具体 fact id 存 Redis；apply 直接按存下来的 id 执行，**不重新调用 LLM**——
+# 同一批数据前后两次调用结果可能差很多（今天踩过：40%→94%），"预览看到的" 必须等于 "真删的"，
+# 不能是"重新掷一次骰子"。画像事件迁移 / daily 迁格式 / legacy 文件清理都是确定性改写，
+# 没有 LLM 参与，但也一起挂进 preview/apply，保持一个入口做完。
+_MEM_CLEANUP_KEY = "mem_cleanup:plan"
+
+
+async def _mem_cleanup_worker(user_ids: list[str]) -> None:
+    from scripts.refresh_memory import _migrate_daily, _migrate_profile_events, _review_facts, _split_profile
+    from agent.memory.store import _key, FACTS_FILE
+    from app.services.storage import get_storage
+    from app.core.redis import get_redis
+    r = get_redis()
+    settings = get_settings()
+    storage = get_storage()
+    plan: dict = {}
+    done = 0
+    for uid in user_ids:
+        try:
+            review = await _review_facts(uid, settings, dry_run=True, trials=3, temperature=0.1)
+            split = await _split_profile(uid, settings, dry_run=True, trials=3, temperature=0.1)
+            profile_events = await _migrate_profile_events(uid, settings, dry_run=True)
+            daily = await _migrate_daily(uid, settings, dry_run=True)
+            legacy_files = []
+            if await storage.exists(_key(uid, FACTS_FILE)):
+                for legacy_name in ("facts.json", "facts.md", "facts_vec.json"):
+                    if await storage.exists(_key(uid, legacy_name)):
+                        legacy_files.append(legacy_name)
+            if review.get("removed") or split.get("moved") or profile_events.get("migrated") or daily.get("migrated") or legacy_files:
+                plan[uid] = {
+                    "removed_ids": review.get("removed_ids", []), "removed_texts": review.get("removed_texts", []),
+                    "moved_ids": split.get("moved_ids", []), "moved_texts": split.get("moved_texts", []),
+                    "profile_event_migrated": profile_events.get("migrated", 0),
+                    "profile_event_texts": profile_events.get("moved_texts", []),
+                    "daily_migrated": daily.get("migrated", 0),
+                    "daily_texts": daily.get("migrated_texts", []),
+                    "legacy_files": legacy_files,
+                    "total": review.get("total", 0),
+                }
+        except Exception as e:
+            plan[uid] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
+        done += 1
+        await r.set(_MEM_CLEANUP_KEY, json.dumps(
+            {"status": "running", "done": done, "total": len(user_ids), "plan": plan, "ts": time.time()}))
+    await r.set(_MEM_CLEANUP_KEY, json.dumps(
+        {"status": "done", "done": done, "total": len(user_ids), "plan": plan, "ts": time.time()}), ex=3600)
+
+
+@router.post("/memory-cleanup/preview")
+async def memory_cleanup_preview(db: AsyncSession = Depends(get_db)):
+    """对所有用户的 pattern.json 跑一次批量复核（3 次投票，dry-run，不写），后台跑、立即返回。
+    进度/结果用 GET /memory-cleanup/status 轮询；确认没问题再调 POST /memory-cleanup/apply。"""
+    from app.core.redis import get_redis
+    from app.models import User
+    r = get_redis()
+    cur = await r.get(_MEM_CLEANUP_KEY)
+    if cur:
+        try:
+            d = json.loads(cur if isinstance(cur, str) else cur.decode())
+            if d.get("status") == "running":
+                return {"ok": False, "message": "已有清理预览在跑", "status": d}
+        except Exception:
+            pass
+    rows = (await db.execute(select(User.id))).scalars().all()
+    user_ids = [str(u) for u in rows]
+    await r.set(_MEM_CLEANUP_KEY, json.dumps(
+        {"status": "running", "done": 0, "total": len(user_ids), "plan": {}, "ts": time.time()}))
+    asyncio.create_task(_mem_cleanup_worker(user_ids))
+    return {"ok": True, "message": f"预览已启动，共 {len(user_ids)} 个用户", "total": len(user_ids)}
+
+
+@router.get("/memory-cleanup/status")
+async def memory_cleanup_status():
+    from app.core.redis import get_redis
+    cur = await get_redis().get(_MEM_CLEANUP_KEY)
+    if not cur:
+        return {"status": "idle"}
+    try:
+        return json.loads(cur if isinstance(cur, str) else cur.decode())
+    except Exception:
+        return {"status": "idle"}
+
+
+@router.post("/memory-cleanup/apply")
+async def memory_cleanup_apply():
+    """一键执行上一次 preview 存下来的全部结果——不重新调 LLM，预览看到的就是真删/真搬的。
+    五件事都做：① 删 pattern 里过时的条目 ② 把该属于画像的条目搬进 profile.json
+    ③ 把误进 profile 的阶段性事件迁去 memory.md ④ 把旧 daily.md 改成按日期分组的新格式
+    ⑤ 清掉已迁移完的遗留 facts.json/facts.md。
+    执行完清掉 Redis 里的 plan，防止同一份 plan 被误重复应用（比如两次点了确认）。"""
+    from app.core.redis import get_redis
+    from agent.memory import store
+    from agent.memory.store import _key
+    from app.services.storage import get_storage
+    from scripts.refresh_memory import _migrate_profile_events
+    r = get_redis()
+    storage = get_storage()
+    raw = await r.get(_MEM_CLEANUP_KEY)
+    if not raw:
+        raise HTTPException(400, "没有可执行的清理预览，先跑一次预览")
+    data = json.loads(raw if isinstance(raw, str) else raw.decode())
+    if data.get("status") != "done":
+        raise HTTPException(400, "预览还没跑完，等它跑完再确认")
+    applied_users, applied_total, moved_total, profile_event_total, daily_total, legacy_total = 0, 0, 0, 0, 0, 0
+    for uid, p in (data.get("plan") or {}).items():
+        remove_ids = set(p.get("removed_ids") or [])
+        move_ids = set(p.get("moved_ids") or [])
+        moved_texts = p.get("moved_texts") or []
+        profile_event_count = int(p.get("profile_event_migrated") or 0)
+        daily_count = int(p.get("daily_migrated") or 0)
+        touched = False
+
+        if remove_ids or move_ids:
+            facts = await store.read_facts_list(uid)
+            drop_ids = remove_ids | move_ids
+            new_facts = [f for f in facts if f["id"] not in drop_ids]
+            if len(new_facts) != len(facts):
+                await store.write_facts_list(uid, new_facts)
+                await store.sync_fact_vecs(uid, new_facts)
+                applied_total += len(remove_ids)
+                touched = True
+
+        if moved_texts:
+            profile = await store.read_profile_list(uid)
+            profile = store.apply_profile_ops(profile, moved_texts, [])
+            await store.write_profile_list(uid, profile)
+            moved_total += len(moved_texts)
+            touched = True
+
+        if profile_event_count:
+            profile_events = await _migrate_profile_events(uid, get_settings(), dry_run=False)
+            profile_event_total += int(profile_events.get("migrated") or 0)
+            touched = True
+
+        if daily_count:
+            daily = await store.migrate_legacy_daily(uid, dry_run=False)
+            daily_total += int(daily.get("migrated") or 0)
+            touched = True
+
+        for legacy_name in (p.get("legacy_files") or []):
+            legacy_key = _key(uid, legacy_name)
+            if await storage.exists(legacy_key):
+                await storage.delete(legacy_key)
+                legacy_total += 1
+                touched = True
+
+        if touched:
+            applied_users += 1
+    await r.delete(_MEM_CLEANUP_KEY)
+    return {
+        "ok": True, "users_applied": applied_users,
+        "total_removed": applied_total, "total_moved": moved_total,
+        "total_profile_events_migrated": profile_event_total,
+        "total_daily_migrated": daily_total, "legacy_files_removed": legacy_total,
+    }
 
 
 # ── SMTP 测试发送 ──────────────────────────────────────────────────────────

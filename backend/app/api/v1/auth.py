@@ -12,16 +12,18 @@ from starlette.concurrency import run_in_threadpool
 from app.db.session import get_db
 from app.models import User, InviteCode, AgentUsage
 from app.core.security import hash_password, verify_password, create_user_token, get_current_user
-from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword
+from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount
 from app.core.config import get_settings
 from app.core.redis import get_redis
+from app.core.ratelimit import rate_limit
 from app.services import email as email_svc
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
-async def register(body: UserRegister, db: AsyncSession = Depends(get_db)):
+async def register(body: UserRegister, request: Request, db: AsyncSession = Depends(get_db)):
+    await rate_limit(request, "register", 20, 3600)   # 同 IP 每小时最多 20 次注册尝试
     # 验证邀请码
     inv_result = await db.execute(
         select(InviteCode).where(InviteCode.code == body.invite_code.strip().upper())
@@ -49,8 +51,15 @@ async def register(body: UserRegister, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.flush()
 
-    invite.used_at = datetime.utcnow()
-    invite.used_by = user.id
+    # 原子占用邀请码：WHERE used_at IS NULL 保证并发下只有一个请求能抢到（防 TOCTOU 一码多注册）。
+    claimed = await db.execute(
+        InviteCode.__table__.update()
+        .where(and_(InviteCode.id == invite.id, InviteCode.used_at.is_(None)))
+        .values(used_at=datetime.utcnow(), used_by=user.id)
+    )
+    if claimed.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(400, "邀请码已被使用")
     await db.commit()
     await db.refresh(user)
 
@@ -65,8 +74,12 @@ async def register(body: UserRegister, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: UserLogin, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.username == body.username))
+async def login(body: UserLogin, request: Request, db: AsyncSession = Depends(get_db)):
+    await rate_limit(request, "login", 10, 300, extra=body.username)   # 同 IP+用户名 5 分钟最多 10 次
+    # 登录标识既可以是用户名也可以是邮箱——两个字段都有唯一约束，不会互相碰撞匹配到别人。
+    result = await db.execute(
+        select(User).where((User.username == body.username) | (User.email == body.username))
+    )
     user = result.scalars().first()
 
     if not user or not verify_password(body.password, user.hashed_password):
@@ -91,6 +104,7 @@ async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSessi
     """申请重置：生成一次性 token 存 Redis，发邮件给注册邮箱。
 
     **无论邮箱是否注册都返回同一句**——避免通过接口枚举哪些邮箱已注册。"""
+    await rate_limit(request, "forgot", 5, 3600)   # 同 IP 每小时最多 5 次找回请求
     email_in = (body.email or "").strip().lower()
     if not email_in or "@" not in email_in:
         return _RESET_GENERIC
@@ -108,8 +122,9 @@ async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSessi
     await r.set(f"pwdreset:tok:{token}", str(user.id), ex=_RESET_TOKEN_TTL)
     await r.set(cd_key, "1", ex=_RESET_COOLDOWN)
 
-    # 重置链接基址：优先用请求 Origin（用户当前所在站点），退到 base_url——不写死域名
-    origin = request.headers.get("origin") or str(request.base_url).rstrip("/")
+    # 重置链接基址：用服务端自身 base_url（经 nginx 固定为真实域名），**不信任可被任意伪造的 Origin 头**
+    # ——否则攻击者伪造 Origin 即可把受害者邮件里的重置链接域名换成钓鱼站。
+    origin = str(request.base_url).rstrip("/")
     link = f"{origin}/reset-password?token={token}"
     # 发信 best-effort：smtplib 是同步的，丢线程池避免阻塞事件循环；失败不暴露给前端
     try:
@@ -192,6 +207,22 @@ async def update_profile(
     return UserResponse.from_user(current_user)
 
 
+@router.delete("/me", status_code=204)
+async def delete_my_account(
+    body: DeleteAccount,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """用户自助注销：本人验证密码后永久删除账号 + 全部数据，不可恢复。
+    实际删除逻辑复用 app/services/account_deletion.delete_account（与 admin 代删同一份，避免两处漂移）。
+    要密码而不只信前端弹窗确认——JWT 会话可能被盗用/误触，这种不可逆操作值得多一道校验
+    （跟改密码要输入当前密码是同一个安全标准）。"""
+    if not verify_password(body.password, current_user.hashed_password):
+        raise HTTPException(400, "密码错误")
+    from app.services.account_deletion import delete_account
+    await delete_account(db, current_user)
+
+
 _ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 _AVATAR_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 
@@ -208,7 +239,10 @@ async def upload_avatar(
     if len(data) > _AVATAR_MAX_BYTES:
         raise HTTPException(400, "头像文件不能超过 5MB")
 
-    ext = (file.filename or "avatar").rsplit(".", 1)[-1].lower() or "jpg"
+    # 存盘后缀从已校验的 content_type 推导，不用客户端传的 filename——粘贴/剪贴板图片
+    # 常常没有扩展名（如 "blob"），若从 filename 推导会存出垃圾后缀，导致 get_avatar()
+    # 按后缀猜 MIME 时全部兜底成 image/jpeg，显示异常。
+    ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}[file.content_type]
     settings = get_settings()
     avatar_dir = Path(settings.storage.local_path) / "avatars"
     avatar_dir.mkdir(parents=True, exist_ok=True)

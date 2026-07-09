@@ -59,7 +59,7 @@
       <div v-if="showEditForm && editingEvent" class="dash-edit-popup" ref="editFormRef" :style="editFormStyle">
         <div class="dash-popup-title">编辑活动</div>
         <input v-model="editingEvent.name" class="dash-popup-input" placeholder="活动名称"
-          @keydown.enter="saveEditForm" @keydown.esc="showEditForm = false" autofocus />
+          v-enter="saveEditForm" @keydown.esc="showEditForm = false" autofocus />
         <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
         <textarea v-model="editingEvent.description" class="dash-popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
         <div class="dash-popup-actions">
@@ -97,7 +97,7 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { eventsApi } from '@/services/api'
 import { useProjectStore } from '@/stores/projects'
@@ -300,7 +300,7 @@ const visibleEvents = computed(() => {
   const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   for (const e of upcomingCalEvents.value) {
     if (e.date >= todayIso && e.date <= cutoff) {
-      const dl = Math.round((new Date(e.date + 'T00:00:00') - nowMidnight) / 86400000)
+      const dl = Math.round((new Date(e.date + 'T00:00:00').getTime() - nowMidnight.getTime()) / 86400000)
       items.push({
         id:          'ev-' + e.id,
         rawId:       e.id,
@@ -315,7 +315,7 @@ const visibleEvents = computed(() => {
   }
   for (const p of projectStore.projects) {
     if (p.deadline && p.deadline >= todayIso && p.deadline <= cutoff && p.status !== 'done') {
-      const dl = Math.round((new Date(p.deadline + 'T00:00:00') - nowMidnight) / 86400000)
+      const dl = Math.round((new Date(p.deadline + 'T00:00:00').getTime() - nowMidnight.getTime()) / 86400000)
       items.push({
         id:        'pr-' + p.id,
         name:      p.name,

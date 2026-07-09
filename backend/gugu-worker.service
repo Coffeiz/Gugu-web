@@ -7,7 +7,9 @@ Type=simple
 User=__RUN_USER__
 Group=__RUN_USER__
 WorkingDirectory=__APP_DIR__
-Environment="PATH=__APP_DIR__/.venv/bin"
+# venv bin 优先、后面接完整系统路径——只给 venv bin 会让 subprocess 调用系统命令
+# （libreoffice/pdftotext/ffmpeg 等）时报 FileNotFoundError
+Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="DB_STARTUP_TIMEOUT=10"
 ExecStart=__APP_DIR__/.venv/bin/python -m worker
 # IM 大脑，死了必须立刻拉起，否则消息无限排队

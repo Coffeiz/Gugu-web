@@ -23,9 +23,14 @@ _PROMPT = (
     "- **不要自我介绍**（他早就认识你了），别说「你好，我是咕咕」这类。\n"
     "- **别罗列功能清单**（项目 / 文件 / 日历这种名词菜单）。\n"
     "- 暖、像朋友、可以一点点俏皮但真诚；**表情极简**，能不用就不用。\n"
-    "- 2~3 句，结尾把话交回他（想做点啥、想理清啥、随便聊聊都行）。\n"
-    "- **据下面「上次和你说话」定口吻**：若就在最近（几小时内 / 今天 / 昨天），**绝不要说「好久不见 / 好久没见 / 这阵子忙啥 / 最近怎么样」这类久别重逢的话**——就自然接上、像刚才还在聊；只有确实隔了好些天，才适合久别重逢的语气。没有聊天记录就给个轻松招呼，也别说好久不见。\n"
-    "- 若下面有近期上下文，自然带一句——**优先挑「最近在推进的项目 / 当下重心 / 近期日程」**来提；**「长期背景」里的陈年事实（早就聊过的旧项目、老偏好）别拿来当『最近在忙』说**，那是旧的、未必还在做。**别硬塞、别像念清单**；近期啥都没有就给一句通用暖招呼，别翻旧账。\n"
+    "- 2~3 句；**结尾主动递一个轻的、勾人的话头**——一个 TA 会想接的小问题 / 好奇，把天往下引；别只干巴巴「想聊啥都行」把话丢回去。但也**别硬凑、别每次都套一个问句**，自然就好。\n"
+    "- **据下面「上次和你说话」定时间感**：刚聊过（几小时内 / 今天 / 昨天）→ **暖暖地接住、像老友回来了很高兴**，别说「好久不见」，更**别去评论『又回来了 / 这么快 / 刚走又来』这种间隔**（那读着像嫌他来太勤、不欢迎）；确实隔了好些天 → 才用久别语气，且别说「刚才 / 还在…呢」这种『就在刚刚』的话。没聊天记录就轻松招呼一句。\n"
+    "- **据下面「TA 最近的相处状态 / 在忙啥」定口吻**：像累的 / 情绪不高 → 温柔、别提活；像在轻松聊 → 也轻松；在专注做事 → 关心一句就好、留「先歇会儿也行」的空间。\n"
+    "- **话头可以从 TA 最近 / 今天在弄的项目或近况里挑一个**，但**只问「体验 / 感受 / 社交生活」角度，绝不问「进度 / 完成」**：\n"
+    "  ✅「在弄 X 呀，好玩不 / 累不累 / 啥感觉」「那个 X 被朋友试用了，反馈咋样」——问的是滋味和人。\n"
+    "  ❌「X 整理好了吗 / 弄完没 / 咋样了 / 到哪一步了」——这些**都是在问进度**，别问；也别提待办 / 下一步 / 该做了，不催、不做进度汇报。\n"
+    "  只挑一个、别念清单；陈年旧事别当『最近』说，近期没料就走通用暖开场 + 一句好奇。\n"
+    "- **绝不问「X 做完了吗 / 搞定了没 / 进展如何」**——那是查岗、还常问到早已完成的事上。真想关心就用「那个还顺吗」这种软的、不逼他答。\n"
     "{ctx}"
     "直接输出招呼本身，不要任何解释或引号。"
 )
@@ -66,29 +71,44 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
         mem = await mem_store.read_memory(user_id)
         summary = (mem.get("summary") or "").strip()[:400]
         summary_ts = mem.get("summary_ts")
-        facts = (mem.get("facts") or "").strip()[:800]
+        facts = "\n".join(x for x in [(mem.get("profile") or "").strip(), (mem.get("pattern") or "").strip()] if x)[:800]
         cutoff = (local_now().date() - timedelta(days=7)).isoformat()
-        daily_lines = [ln for ln in (mem.get("daily") or "").splitlines()
-                       if ln.strip().startswith("- ") and ln[2:12] >= cutoff]
+        daily_entries = mem_store.extract_daily_entries(mem.get("daily") or "")
+        daily_lines = [f"- {date} {note}" for date, note in daily_entries if date >= cutoff]
         daily = "\n".join(daily_lines[:10])
     except Exception:
         pass
-    # 近 7 天有动静的项目（greeting 最该优先参考的「最近在做什么」）
+    # 上次的相处状态（stance）→ 定口吻。**只在够新鲜时用**：stance 是快变的当下 mode，
+    # 隔太久就不代表现在了；不 gate 会把两周前的旧状态当「最近」→ 让久别对话被说成「刚才」。
+    stance_hint = ""
+    try:
+        st, st_ts = await mem_store.read_stance(user_id)
+        from agent import decay as _decay
+        _age = _decay.age_days(st_ts)   # 天；None=无 ts
+        if st and _age is not None and _age < 0.75:   # 18h 内才算「最近状态」，过期不提
+            _SMAP = {"情绪": "情绪需要被接住", "陪伴": "想找人说说话", "闲聊": "在轻松闲聊",
+                     "执行": "在动手做事", "推进": "在推进某事", "决策": "在纠结拿主意",
+                     "记录": "在记点日常", "查询": "在查东西", "反思": "在复盘自己"}
+            stance_hint = _SMAP.get(st.strip(), "")
+    except Exception:
+        pass
+    # 近 7 天有动静的项目（可选背景，不是必提项）
     proj_part = ""
     try:
         since = datetime.utcnow() - timedelta(days=7)
         rows = (await db.execute(
             select(Project)
-            .where(Project.user_id == user_id, Project.updated_at >= since, Project.archived.is_(False))
+            .where(Project.user_id == user_id, Project.updated_at >= since,
+                   Project.archived.is_(False), Project.progress < 100)  # 已完成(100%)的不列，免得问「做完了吗」
             .order_by(Project.updated_at.desc()).limit(6))).scalars().all()
         if rows:
             proj_part = "\n".join(f"- {p.name}（{p.progress}%）" for p in rows)
     except Exception:
         pass
-    # 提醒：近 7 天 ~ 未来 14 天的日历事件
+    # 提醒：只取「今天 ~ 未来 14 天」的日历事件（过去的不算提醒，问「做了吗」是明知故问）
     ev_part = ""
     try:
-        lo = (date.today() - timedelta(days=7)).isoformat()
+        lo = date.today().isoformat()
         hi = (date.today() + timedelta(days=14)).isoformat()
         evs = (await db.execute(
             select(CalendarEvent)
@@ -103,8 +123,10 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
     parts: list[str] = []
     if seen:
         parts.append(seen)
+    if stance_hint:
+        parts.append(f"【TA 最近的相处状态】上次聊下来，TA 像是「{stance_hint}」——据此定问候口吻（尤其情绪/闲聊类，别提活）。")
     if proj_part:
-        parts.append("【最近在推进的项目】（greeting 优先从这里挑一个自然带）\n" + proj_part)
+        parts.append("【TA 最近 / 今天在弄的项目】（可挑一个当**闲聊话头**：用「在弄 X 呀，咋样」这种好奇/关心口吻聊，**绝不往推进/进度/待办带**）\n" + proj_part)
     if summary:
         from agent import decay
         w = decay.weight(summary_ts)

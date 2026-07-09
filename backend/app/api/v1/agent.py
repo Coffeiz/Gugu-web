@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import chat_attach
 from app.core.security import get_current_user
+from app.core.ownership import get_owned
 from app.db.session import get_db
 from app.models import ConversationMessage, ConversationSession, User
 
@@ -56,10 +57,10 @@ async def upload_attachment(
     mime = "audio/mpeg" if ext == "mp3" else file.content_type
     if voice:
         dur = media_transcode.probe_duration(data, ext)
-        meta = await chat_attach.stage_voice(current_user.id, name or "语音", ext, mime, data, duration=dur)
+        meta = await chat_attach.stage_voice(current_user.id, name or "语音", ext, mime, data, duration=dur, platform="web")
     else:
-        meta = await chat_attach.stage(current_user.id, name, ext, mime, data)
-    return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration")}
+        meta = await chat_attach.stage(current_user.id, name, ext, mime, data, platform="web")
+    return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration", "img_width", "img_height")}
 
 
 @router.get("/attachment/{attach_id}/thumb")
@@ -170,8 +171,8 @@ async def resume_stream(
     db: AsyncSession = Depends(get_db),
 ):
     """续看进行中的生成（刷新后重连）。无进行中的生成则立即返回 idle done。"""
-    session = await db.get(ConversationSession, session_id)
-    if not session or session.user_id != current_user.id:
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if not session:
         raise HTTPException(404, "对话不存在")
     return StreamingResponse(
         web_adapter.resume(session_id),
@@ -238,8 +239,8 @@ async def get_session_messages(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    session = await db.get(ConversationSession, session_id)
-    if not session or session.user_id != current_user.id:
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if not session:
         raise HTTPException(404, "对话不存在")
     res = await db.execute(
         select(ConversationMessage)
@@ -256,6 +257,7 @@ async def get_session_messages(
         "active": await genstream.is_active(session_id),   # 该会话是否正在生成（前端据此续看）
         "messages": [
             {"id": m.id, "role": m.role, "content": m.content, "files": m.files or [],
+             "quotedText": m.quoted_text,
              "createdAt": m.created_at.isoformat() + "Z"}
             for m in msgs
         ],
@@ -273,16 +275,12 @@ async def clear_attachments(current_user: User = Depends(get_current_user)):
 async def clear_memory(
     current_user: User = Depends(get_current_user),
 ):
-    """清除当前用户的全部 AI 记忆（facts / daily / memory / summary / lens）。"""
-    from agent.memory.store import _key, _DIR
+    """清除当前用户的全部 AI 记忆——直接删掉 .agent/ 整个目录（含向量缓存等一切衍生文件），
+    不再一个个列文件名：新增记忆文件时忘了加进清单会漏删，这个类别的坑一次性堵死。"""
+    from agent.memory.store import _DIR
     from app.services.storage import get_storage
     storage = get_storage()
-    for name in ("facts.md", "facts.json", "daily.md", "memory.md",
-                 "summary.md", "summary.ts", "lens.json"):
-        try:
-            await storage.delete(_key(current_user.id, name))
-        except Exception:
-            pass
+    await storage.delete_prefix(f"{current_user.id}/{_DIR}/")
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
@@ -291,8 +289,8 @@ async def delete_session(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    session = await db.get(ConversationSession, session_id)
-    if not session or session.user_id != current_user.id:
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if not session:
         raise HTTPException(404, "对话不存在")
     await db.delete(session)
     await db.commit()

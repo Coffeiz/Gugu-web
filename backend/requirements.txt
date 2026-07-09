@@ -18,8 +18,7 @@ langchain-community>=0.2.0
 oss2>=2.18.0
 # IM 平台接入（飞书 WebSocket 长连 + API）
 lark-oapi>=1.6.0
-# QQ 官方机器人（botpy WebSocket 长连 + API，C2C 单聊）
-qq-botpy>=1.2.0
+# QQ 官方机器人接收/发送均为自建 raw WebSocket + raw HTTP，不再依赖 qq-botpy
 # Utils
 python-dotenv>=1.0.0
 pypinyin>=0.50.0
@@ -30,3 +29,4 @@ pendulum>=3.0.0
 Pillow>=10.0.0
 pillow-heif>=0.16.0   # 解码 iPhone HEIC/HEIF 图片，喂给 vision 模型前转 JPEG
 pilk>=0.2.4           # 解码 QQ/微信 SILK 语音 → pcm，配合系统 ffmpeg 转 mp3 喂 mimo（IM 语音理解）
+trafilatura>=2.0.0    # http_get 抓到网页后提取正文（去导航/广告/JS 噪音），转 markdown 喂模型

@@ -8,12 +8,68 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
-from typing import Any
+from typing import Any, Callable
 
 # 工具调用轨迹（可观测，reliability Roadmap P1）：每次 dispatch 落一行 JSON 到 `agent.traj` logger
 # → 经 INFO 进 gugu.log（Debug 面板 tail 得到）。「调没调工具/调了啥/成没成」翻一眼即得，不用复现+猜。
 _traj_log = logging.getLogger("agent.traj")
+
+
+# ── 工具错误信息脱敏（安全：别把原始异常里的路径/UUID/连接串/密钥/traceback 透传给模型/用户/轨迹）──
+# 详见 docs/security/安全-工具错误信息脱敏.md。这是「网」层（dispatch 级兜底）；原始细节仍 print 到服务端日志。
+# ⚠️ 只用于 error 字段，绝不动正常工具结果（如 read_file 正文可能含任意文本）。
+_CONN_RE = re.compile(r"\b(?:postgres(?:ql)?|redis|rediss|mysql|mongodb)://[^\s'\"]+", re.I)
+_KEY_RE  = re.compile(r"\b(?:sk-[A-Za-z0-9]{16,}|(?:api[_-]?key|token|secret|bearer)[\"'=:\s]+[A-Za-z0-9._\-]{12,})", re.I)
+_PATH_RE = re.compile(r"(?:\.{0,2}/)?(?:uploads|\.agent|\.thumbs|\.chat_staging)/[^\s'\"]*|/(?:home|opt|Users|var|etc|root|tmp|private)/[^\s'\"]*")
+_UUID_RE = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
+_TB_RE   = re.compile(r"\n?\s*File \"[^\"]+\", line \d+[^\n]*(?:\n\s+[^\n]+)?")
+
+
+def sanitize_error(s: str) -> str:
+    """抹掉错误串里的敏感内部信息（连接串/密钥/路径/UUID/traceback）。顺序有讲究：
+    连接串、密钥含路径/uuid 片段，先抹；再抹路径、UUID；最后去 traceback 帧。"""
+    if not s or not isinstance(s, str):
+        return s
+    s = _CONN_RE.sub("‹连接串已隐藏›", s)
+    s = _KEY_RE.sub("‹密钥已隐藏›", s)
+    s = _PATH_RE.sub("‹路径已隐藏›", s)
+    s = _UUID_RE.sub("‹id已隐藏›", s)
+    s = _TB_RE.sub("", s)
+    return s.strip()
+
+
+def _redact_result(name: str, result):
+    """脱敏工具结果里的 error 字段——**任意深度**的 dict `error` 键 / `{"error":...}` 字符串。
+    **只动 error 键，绝不碰正常内容**。脱敏前把原始 error print 到服务端日志、保排查。
+    递归的原因：批量工具（如多文件保存）把 `{"error": str(e)}` 收进 `failed`/`saved` 列表，
+    顶层只看 `error` 会漏掉这些嵌套错误串，导致原始 str(e)（含路径/UUID）直达模型。"""
+    def _walk(obj):
+        if isinstance(obj, dict):
+            out = {}
+            for k, v in obj.items():
+                if k == "error" and isinstance(v, str) and v:
+                    print(f"[skill] 工具 {name} 返回错误(原始): {v[:300]}", flush=True)
+                    out[k] = sanitize_error(v)
+                else:
+                    out[k] = _walk(v)
+            return out
+        if isinstance(obj, list):
+            return [_walk(x) for x in obj]
+        return obj
+
+    if isinstance(result, dict):
+        return _walk(result)
+    if isinstance(result, str) and result.lstrip().startswith('{"error"'):
+        print(f"[skill] 工具 {name} 返回错误(原始): {result[:300]}", flush=True)
+        try:
+            d = json.loads(result)
+            if isinstance(d, (dict, list)):
+                return json.dumps(_walk(d), ensure_ascii=False)
+        except Exception:
+            return sanitize_error(result)
+    return result
 
 
 def _log_traj(name: str, user_id, args: dict, ok: bool, note: str, t0: float) -> None:
@@ -26,11 +82,17 @@ def _log_traj(name: str, user_id, args: dict, ok: bool, note: str, t0: float) ->
         summary = {}
         for k, v in (args or {}).items():
             summary[k] = v if isinstance(v, (int, float, bool)) or v is None else "***"
-        rec = {"t": "tool", "tool": name, "user": str(user_id)[:8],
-               "ok": ok, "ms": int((time.monotonic() - t0) * 1000), "args": summary}
+        _ms = int((time.monotonic() - t0) * 1000)
+        rec = {"t": "tool", "tool": name, "user": str(user_id)[:8], "ok": ok, "ms": _ms, "args": summary}
+        from agent.trace import get_trace
+        if get_trace():
+            rec["trace"] = get_trace()   # 全链路 trace：与网关「收到」行、worker 回复行同 id 可 grep 串联
         if not ok and note:
             rec["err"] = note[:120]
         _traj_log.info(json.dumps(rec, ensure_ascii=False))
+        # 运维指标旁路（失败率/延迟分布，Redis 按日聚合）：fire-and-forget，绝不影响工具
+        from app.core import opsmetrics
+        opsmetrics.record_tool(name, ok, _ms)
     except Exception:
         pass
 
@@ -63,17 +125,51 @@ def _coerce_int_ids(args) -> None:
                 tgt[k] = _to_int_id(tgt[k])
 
 
+async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
+    """IM 慢工具进度声明（见 docs/agent/proposals/IM慢工具进度声明-设计.md）：工具即将真正执行
+    时，若登记了 start_message 就发一条声明给用户，让 IM 非流式的长时间沉默有个"人在动手"的信号。
+    文案 100% 来自工具自己的 metadata，绝不是模型现场生成——只在「工具确定要执行」这一刻触发，
+    不存在"说了没做"的风险。仅 IM 生效（imctx 只有 IM 路径会 set）、每个 Busy Session（THINKING
+    状态期间）最多发一次、失败不影响工具本身执行（fire-and-forget）。"""
+    if not tool.start_message:
+        return
+    from agent import imctx
+    payload = imctx.to_send_payload()
+    if not payload:             # web 路径：imctx 没 set 过，压根不在 IM 上下文里
+        return
+    if imctx.was_announced():  # 本 Busy Session 已经发过声明，不重复发
+        return
+    try:
+        from app.core.config import get_settings
+        if not get_settings().agent.im_progress_announce_enabled:
+            return
+        text = tool.start_message(args) if callable(tool.start_message) else tool.start_message
+        if not text:
+            return
+        imctx.mark_announced()   # 先标记再发送：即便发送失败也别在本 session 里反复重试打扰用户
+        import worker
+        await worker._send(payload, text)
+    except Exception as e:
+        print(f"[skill] 慢工具进度声明发送失败（不影响工具执行）: {type(e).__name__}: {e}", flush=True)
+
+
 class Tool:
     """单个工具的声明 + 执行入口。"""
 
     def __init__(self, name: str, description: str, input_schema: dict,
-                 handler, label: str | None = None, destructive: bool = False):
+                 handler, label: str | None = None, destructive: bool = False,
+                 start_message: str | Callable[[dict], str] | None = None):
         self.name = name
         self.description = description
         self.input_schema = input_schema
         self.handler = handler          # async (db, user_id, args) -> dict | list
         self.label = label or name
         self.destructive = destructive  # 不可逆操作，handler 内走 confirm.gate
+        # IM 慢工具进度声明用（仅 IM、每个 Busy Session 最多发一次，见 dispatch）：固定文案或
+        # 按调用参数变化措辞的函数——只能读 dispatch 时已知的参数，不能猜返回结果（见设计文档 §2.3
+        # 的边界：像 http_get 这种响应类型要等结果才知道的工具，就别细分，用统一粗粒度文案）。
+        # 不设置 = 该工具认为自己够快，不需要这条声明。
+        self.start_message = start_message
 
     def to_anthropic(self) -> dict:
         return {
@@ -152,6 +248,11 @@ class SkillRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
+    def known_skill_names(self) -> set[str]:
+        """已注册的 skill 组名集合，供调用方校验存量数据里的组名是否还认识
+        （比如定时任务存的 tool_groups——组名改了/拼错了不该悄悄裁没工具）。"""
+        return set(self._skills.keys())
+
     def labels(self) -> dict[str, str]:
         return {name: t.label for name, t in self._tools.items()}
 
@@ -172,6 +273,8 @@ class SkillRegistry:
         if tool is None:
             _log_traj(name, user_id, args, False, "未知工具", t0)
             return json.dumps({"error": f"未知工具: {name}"}), None
+
+        await _maybe_announce_progress(tool, args)
 
         # user_id 归一成 UUID：IM 路（worker）传进来的是字符串，而 ORM 对象的 .user_id 是
         # UUID 对象。SQL 查询（File.user_id == user_id）能自动转型，但工具里 python 层的
@@ -201,9 +304,15 @@ class SkillRegistry:
         except Exception as e:
             import traceback
             print(f"[skill] 工具 {name} 执行出错: {type(e).__name__}: {e}", flush=True)
-            traceback.print_exc()
-            _log_traj(name, user_id, args, False, f"{type(e).__name__}: {e}", t0)
-            return json.dumps({"error": f"工具 {name} 执行出错：{type(e).__name__}: {e}"}, ensure_ascii=False), None
+            traceback.print_exc()   # 原始 traceback 进服务端日志，排查不丢
+            # 给模型/用户/轨迹的版本脱敏：异常串常含路径/UUID/连接串/密钥（见 docs/security/安全-工具错误信息脱敏.md）
+            _safe = sanitize_error(f"{type(e).__name__}: {e}")
+            _log_traj(name, user_id, args, False, _safe, t0)
+            return json.dumps({"error": f"工具 {name} 执行出错：{_safe}"}, ensure_ascii=False), None
+
+        # 脱敏工具自己返回的 error 字段（如 files.py 的 `{"error": f"…{str(e)}"}`）：只动 error、不碰正常内容；
+        # 原始 error 已在 _redact_result 内 print 到日志。放在轨迹记录前，让 traj 也存脱敏版。
+        result = _redact_result(name, result)
 
         # 工具调用轨迹（成功路径，一次覆盖 str / 图片块 / dict 三种返回）
         if isinstance(result, dict):
@@ -213,6 +322,19 @@ class SkillRegistry:
             _note = "" if _ok else result[:120]
         else:
             _ok, _note = True, ""
+
+        # destructive 绊线：不可逆工具在「未带 confirm」的调用里，合法结果只有两种——
+        # needs_confirm 拦截（handler 内 confirm.needs_confirmation 返回）或业务错误。
+        # 返回了"成功执行" = 该 handler 漏接确认门、无确认就做了不可逆操作——已无法撤销，
+        # 但必须响亮地被看见（静态守卫 scripts/check_confirm_gate.py 在提交前拦同类问题，
+        # 这里是运行时兜底，抓静态分析覆盖不到的动态路径）。
+        from agent import confirm as _confirm
+        if tool.destructive and _ok and not _confirm.is_confirmed(args) and not _confirm.is_block(result):
+            print(f"[skill] ⚠️ confirm-gate.bypassed 工具 {name} 未经确认执行了不可逆操作！", flush=True)
+            _traj_log.critical("confirm-gate.bypassed tool=%s user=%s", name, str(user_id)[:8])
+            from app.core import opsmetrics
+            opsmetrics.record_security("confirm-gate.bypassed")
+
         _log_traj(name, user_id, args, _ok, _note, t0)
 
         if isinstance(result, str):

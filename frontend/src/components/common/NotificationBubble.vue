@@ -23,7 +23,7 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, watch } from 'vue'
 import { PhX } from '@phosphor-icons/vue'
 import { useUiStore } from '@/stores/ui'
@@ -32,7 +32,6 @@ import MarkdownView from '@/components/common/MarkdownView.vue'
 const uiStore = useUiStore()
 const visible = ref([])
 let _vk = 0                 // 气泡本地 key（与后端 id 解耦）
-const timers = new Map()   // id -> setTimeout 句柄
 
 // 状态气泡那套「类 SSE 逐字流式」搬到通知上：新通知不直接出全文，而是标题先逐字冒出、
 // 再正文逐字流式（正文渲染「已打出的子串」，与咕咕回复的流式 markdown 同源）。
@@ -40,7 +39,6 @@ let _typeTimer = null      // 全局单计时器：同一时刻只让最新那�
 let _typingId  = null      // 正在打字的 item id（手动关掉它时要停表）
 const TITLE_MS = 30        // 标题每字间隔
 const BODY_MS  = 15        // 正文每字间隔（比标题快，长文不拖沓）
-const AUTO_MS  = 5000      // 自动消失时限：**仅教程气泡(gugu)** 打完后停留 5s 再收（被新气泡顶替则 0.5s）
 const PAUSE_TOKEN = '[[p]]'  // 文案里的停顿标记（不显示）
 const PAUSE_MS = 1000        // 打到停顿标记时暂停时长
 const SLOW_MS  = 400         // [[slow]]…[[/slow]] 段内逐字慢速冒出的每字间隔
@@ -48,10 +46,10 @@ const SLOW_MS  = 400         // [[slow]]…[[/slow]] 段内逐字慢速冒出的
 // 气泡 = 纯「实时到达」的瞬态弹层，**只监听 uiStore.liveNotification**（SSE 实时置位）——
 // 关浏览器重开拉回来的历史通知**不弹气泡**（那是导航栏通知中心的事）。气泡与导航栏彻底分开：
 // 气泡关闭只动本组件 visible，不影响 uiStore.notifications，也不改已读态（气泡不算已读）。
+// 不自动消失，只能靠用户点 ✕ 关（是否显示过只弹一次由 uiStore._markBubbleSeen 独立保证，
+// 与关闭方式无关）——新气泡到来时旧气泡照常堆叠在上方，都留着等用户处理。
 watch(() => uiStore.liveNotification, (n) => {
   if (!n) return
-  // 现有可见的旧气泡：被顶上去后 0.5 秒消失（覆盖其原有的 5s 自动时限，顶替更快）
-  visible.value.forEach(item => { item.superseded = true; rescheduleDismiss(item.id, 500) })
   // 新气泡插到队首（视觉上在底部、贴近球），把旧的顶上去；reactive 让打字机改属性能驱动视图
   const item = reactive({
     id: ++_vk, notifId: n.id ?? null, title: n.title || '', content: n.content || '', gugu: !!n.gugu,
@@ -70,13 +68,13 @@ function startTyping(item) {
   const STRIP_RE = /\[\[\/?(?:p(?::\d+)?|slow)\]\]/g   // 去 [[p]] / [[p:1500]] / [[slow]] / [[/slow]]
   const fullTitle = (item.title || '').replace(STRIP_RE, '')
   const fullBody = raw.replace(STRIP_RE, '')   // 去所有标记，用于空判断
-  if (!fullTitle && !fullBody) { item.typing = false; if (!item.superseded && item.gugu) scheduleDismiss(item.id, AUTO_MS); return }
+  if (!fullTitle && !fullBody) { item.typing = false; return }
   _typingId = item.id
   item.phase = fullTitle ? 'title' : 'body'
   let ti = 0
   const run = (ms, tick) => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = setInterval(tick, ms) }
-  // 只有教程气泡（gugu）打完后 5s 自动消失；其它通知（IM/广播）留到手动关或被新气泡顶掉
-  const stop = () => { if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }; item.typing = false; if (_typingId === item.id) _typingId = null; if (!item.superseded && item.gugu) scheduleDismiss(item.id, AUTO_MS) }
+  // 打完字后停在原地，不自动消失（只能点 ✕ 关，见上方 watch 的说明）
+  const stop = () => { if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }; item.typing = false; if (_typingId === item.id) _typingId = null }
 
   let typeBody
   if (!hasMarkers) {
@@ -122,20 +120,7 @@ function startTyping(item) {
   } else { typeBody() }
 }
 
-function scheduleDismiss(id, delay) {
-  if (timers.has(id)) return   // 已排程，避免重复计时
-  timers.set(id, setTimeout(() => dismiss(id), delay))
-}
-
-function rescheduleDismiss(id, delay) {   // 覆盖已有计时（顶替时用更短的 0.5s 抢过来）
-  const t = timers.get(id)
-  if (t) clearTimeout(t)
-  timers.set(id, setTimeout(() => dismiss(id), delay))
-}
-
 function dismiss(id) {
-  const t = timers.get(id)
-  if (t) { clearTimeout(t); timers.delete(id) }
   // 关掉的正是当前在打字的那条 → 停表，别让计时器空转
   if (_typingId === id && _typeTimer) { clearInterval(_typeTimer); _typeTimer = null; _typingId = null }
   const item = visible.value.find(n => n.id === id)
@@ -149,13 +134,14 @@ function dismiss(id) {
 .nb-stack {
   position: fixed;
   right: 28px;
-  z-index: 9999;
+  z-index: 100000;   /* 压顶带:通知永远可见(见 composables/windowz.ts) */
   display: flex;
   flex-direction: column-reverse;  /* 新条目在底部，贴近球 */
   gap: 8px;
   align-items: flex-end;
   pointer-events: none;
   transition: bottom 0.42s cubic-bezier(0.16, 1, 0.3, 1);   /* 小窗开合时平滑避让 */
+  transform: translateZ(0);   /* 提升为稳定合成层：固定容器背后页面滚动时，子项 backdrop-filter 不再反复重绘闪烁 */
 }
 
 /* 气泡风与 GuguChat 小窗/播放器一致：玻璃面板 + blur(28) + 20 圆角 */
@@ -167,8 +153,8 @@ function dismiss(id) {
   width: 360px;          /* 固定宽度，与 GuguChat 小窗/播放器同宽、右对齐成一列 */
   padding: 13px 15px 15px;   /* 左右对称，内容区占满整宽 */
   background: var(--panel-bg);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255,255,255,0.65);
   border-radius: 20px;
   box-shadow: var(--glass-shadow-lg);

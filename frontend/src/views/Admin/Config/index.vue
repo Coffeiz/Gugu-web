@@ -272,7 +272,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { reactive, computed, onMounted, defineComponent, h, ref } from 'vue'
 import { PhEnvelopeSimple } from '@phosphor-icons/vue'
 import { useConfigStore } from '@/stores/config'

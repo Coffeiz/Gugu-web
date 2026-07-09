@@ -91,8 +91,9 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { nextZ } from '@/composables/windowz'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -196,7 +197,7 @@ function calcPopupStyle() {
     top: rect.bottom + 6 + 'px',
     left: left + 'px',
     width: popW + 'px',
-    zIndex: 9999,
+    zIndex: nextZ(),
   }
 }
 
@@ -265,8 +266,8 @@ watch(() => props.modelValue, v => {
 <style>
 .dp-popup {
   background: var(--panel-bg);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur);
+  -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.78);
   border-radius: 16px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 12px 36px rgba(30,40,80,0.14);

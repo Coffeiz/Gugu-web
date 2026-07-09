@@ -17,12 +17,12 @@ export default defineConfig({
     vue(),
     Components({
       resolvers: [ArcoResolver({ sideEffect: true })],
-      dts: false,
+      dts: 'components.d.ts',   // 生成全局组件类型声明，供 vue-tsc / 编辑器识别（已 gitignore）
     }),
     AutoImport({
       imports: ['vue', 'vue-router', 'pinia'],
       resolvers: [ArcoResolver()],
-      dts: false,
+      dts: 'auto-imports.d.ts', // 生成自动导入（ref/computed/watch…）类型声明（已 gitignore）
     }),
   ],
   resolve: {

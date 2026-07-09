@@ -28,7 +28,13 @@ PLATFORM_MODULE = {
 }
 _procs: dict[str, subprocess.Popen] = {}
 _procs_spec: dict[str, dict] = {}
+_spawned_at: dict[str, float] = {}     # key -> 上次启动时刻，判断是否「秒崩」
+_fail_count: dict[str, int] = {}       # key -> 连续秒崩次数，驱动指数退避
+_next_retry_at: dict[str, float] = {}  # key -> 下次允许重启的时刻（秒崩时才会设）
 _stop = False
+FAST_CRASH_SEC = 5     # 存活不到这个时长 = 判定「秒崩」（多半是凭据错误等必现问题，不是网络抖动）
+BACKOFF_BASE_SEC = 10
+BACKOFF_MAX_SEC = 300   # 封顶 5 分钟，仍保留自愈能力（用户改好凭据后最多 5 分钟内自动捡回）
 # 给 DB 查询用的常驻事件循环（复用同一 loop，保持 asyncpg engine 有效）
 _loop = asyncio.new_event_loop()
 
@@ -100,15 +106,43 @@ def _kill(key: str, proc: subprocess.Popen) -> None:
 
 def reconcile() -> None:
     desired = _desired()
+    now = time.time()
     for key, spec in desired.items():
         p = _procs.get(key)
-        if p is None or p.poll() is not None:
+        if p is None:
             _procs[key] = _spawn(key, spec)
             _procs_spec[key] = spec
+            _spawned_at[key] = now
+            continue
+        if p.poll() is None:
+            continue   # 还活着
+        # 进程已退出。key 在 _next_retry_at 里 = 已经分类过、正在退避等待中，
+        # 不能再用旧的 _spawned_at 重新判断「秒崩」（退避越久，lived 会越长、误判成"不是秒崩"）。
+        if key in _next_retry_at:
+            if now < _next_retry_at[key]:
+                continue   # 还没到重试时间，继续等
+            _next_retry_at.pop(key, None)   # 到点了，respawn，退出「等待」状态
+        else:
+            # 首次发现这次退出：判断是不是「秒崩」（多半凭据错误等必现问题）
+            lived = now - _spawned_at.get(key, now)
+            if lived < FAST_CRASH_SEC:
+                _fail_count[key] = _fail_count.get(key, 0) + 1
+                backoff = min(BACKOFF_BASE_SEC * (2 ** (_fail_count[key] - 1)), BACKOFF_MAX_SEC)
+                _next_retry_at[key] = now + backoff
+                print(f"[supervisor] {key} 启动后 {lived:.1f}s 内退出（第 {_fail_count[key]} 次连续秒崩，"
+                      f"疑似凭据错误），退避 {backoff:.0f}s 后再试", flush=True)
+                continue   # 这次先不重启，等退避到期的 tick 再重启
+            _fail_count[key] = 0   # 跑了一阵子才挂，多半是网络抖动之类，不算秒崩，重置计数、立即重启
+        _procs[key] = _spawn(key, spec)
+        _procs_spec[key] = spec
+        _spawned_at[key] = now
     for key in list(_procs):
         if key not in desired:
             _kill(key, _procs.pop(key))
             _procs_spec.pop(key, None)
+            _spawned_at.pop(key, None)
+            _fail_count.pop(key, None)
+            _next_retry_at.pop(key, None)
 
 
 def main() -> None:

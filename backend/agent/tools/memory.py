@@ -1,7 +1,8 @@
 """记忆技能：让咕咕能主动"记住"用户的长期信息。
 
-remember 把一条事实写进结构化 .agent/facts.json（与反思共用 store.apply_facts_ops 去重/印证）。
-用户明确让记 → kind=observed（亲述、确凿、不衰减）、importance 给高（4）。
+remember 把一条画像写进结构化 .agent/profile.json（与反思共用 store.apply_profile_ops 去重/印证）。
+用户明确让记的东西通常就是"这个人是谁"（身份/偏好/习惯），profile 不带 kind/conf、不衰减，
+跟"用户明确说了、该永久记住"这个语义天然匹配——不需要反思那套观察/推断的置信度机制。
 handler 不需要 db（记忆走文件），但保持 (db, user_id, args) 统一签名。
 """
 import json
@@ -14,9 +15,9 @@ async def _remember(db, user_id, args: dict):
     fact = (args.get("fact") or "").strip()
     if not fact:
         return json.dumps({"error": "需要提供要记住的内容 fact"})
-    facts = await store.read_facts_list(user_id)
-    facts = store.apply_facts_ops(facts, [{"text": fact, "kind": "observed", "importance": 4}], [])
-    await store.write_facts_list(user_id, facts)
+    profile = await store.read_profile_list(user_id)
+    profile = store.apply_profile_ops(profile, [fact], [])
+    await store.write_profile_list(user_id, profile)
     from agent import events
     events.publish(events.types.MemoryUpdated(user_id=user_id, added=1, removed=0, source="remember"))
     return {"success": True, "remembered": fact}

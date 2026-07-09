@@ -62,10 +62,24 @@
           />
         </div>
       </Transition>
+      <!-- 同目录图片左右切换 -->
+      <template v-if="canNav">
+        <button class="fpw-nav fpw-nav-prev" title="上一张" @click.stop="goPrev">
+          <PhCaretLeft weight="bold" :size="18" />
+        </button>
+        <button class="fpw-nav fpw-nav-next" title="下一张" @click.stop="goNext">
+          <PhCaretRight weight="bold" :size="18" />
+        </button>
+      </template>
     </div>
 
-    <!-- resize 角标 -->
-    <div v-if="!maximized" class="fpw-resize" @mousedown.stop.prevent="startResize"></div>
+    <!-- resize：右下角带图标手柄，其余三角只留可拖拽热区（无图标） -->
+    <template v-if="!maximized">
+      <div class="fpw-resize" @mousedown.stop.prevent="startResize('se', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-nw" @mousedown.stop.prevent="startResize('nw', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-ne" @mousedown.stop.prevent="startResize('ne', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-sw" @mousedown.stop.prevent="startResize('sw', $event)"></div>
+    </template>
   </div>
 
   <!-- 文件信息浮窗（独立弹窗） -->
@@ -124,9 +138,9 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
-import { PhInfo, PhDownloadSimple, PhCornersOut, PhCornersIn, PhX, PhWarningCircle, PhMinus, PhPlus } from '@phosphor-icons/vue'
+import { PhInfo, PhDownloadSimple, PhCornersOut, PhCornersIn, PhX, PhWarningCircle, PhMinus, PhPlus, PhCaretLeft, PhCaretRight } from '@phosphor-icons/vue'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
@@ -134,9 +148,16 @@ import { filesApi } from '@/services/api'
 import { isImageExt, isVideoExt, isTextExt, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/useThumbCache'
 import { useLiveStore } from '@/stores/live'
+import { registerEsc, registerArrowNav } from '@/composables/windowz'
 
 const props = defineProps({ win: { type: Object, required: true } })
 const previewStore = usePreviewStore()
+
+// ESC 只关最顶层窗口（统一走 windowz：谁 z 最大关谁）
+const _unregEsc = registerEsc({
+  getZ: () => props.win.zIndex,
+  close: () => previewStore.closeWindow(props.win.id),
+})
 
 // ── 位置 / 尺寸（本地 reactive，同步回 store） ──────────────────────────────
 const x = ref(props.win.x)
@@ -148,6 +169,19 @@ const h = ref(props.win.h)
 const isImg  = computed(() => isImageExt(props.win.file.ext))
 const isVid  = computed(() => isVideoExt(props.win.file.ext))
 const isText = computed(() => isTextExt(props.win.file.ext))
+
+// ── 图片左右切换（同目录，来自打开时传入的 win.siblings） ─────────────────────
+const navImages = computed(() => (props.win.siblings || []).filter(f => isImageExt(f.ext)))
+const canNav    = computed(() => isImg.value && navImages.value.length > 1)
+function goPrev() { previewStore.navigate(props.win.id, -1) }
+function goNext() { previewStore.navigate(props.win.id, 1) }
+
+// 方向键只切最顶层窗口（同 ESC：多个预览窗同时开着，谁 z 最大谁响应）
+const _unregArrowNav = registerArrowNav({
+  getZ: () => props.win.zIndex,
+  prev: () => { if (canNav.value) goPrev() },
+  next: () => { if (canNav.value) goNext() },
+})
 
 const textFontSize = ref(13)
 
@@ -175,6 +209,10 @@ const placeholderSrc = ref(null)   // 从 blob Map 取，避免与全图下载�
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const TITLE_H  = 40
 const PAD      = 48
+// 「card」缩略图上限（须与后端 files.py 的 _THUMB_SIZE_MAP["card"] 保持一致）：
+// Pillow 的 thumbnail() 只缩小不放大，缩略图长边小于这个值就说明原图从没被缩过，
+// 即缩略图尺寸 = 原图真实尺寸，可直接当真实尺寸用，不用再套 4K 估算。
+const CARD_THUMB_CAP = 192
 
 const ready        = ref(false)
 const maximized    = ref(false)
@@ -261,10 +299,13 @@ function onImageLoaded() {
 function onPlaceholderLoad(e) {
   if (blobUrl.value) return  // 快速下载：全图已到，不显示占位图
   const { naturalWidth: nw, naturalHeight: nh } = e.target
-  if (nw && nh && !ready.value) {
-    // 没有已知尺寸时才用 4K trick 估算定窗口
-    const s  = 3840 / Math.max(nw, nh)
-    fitWindow(Math.round(nw * s), Math.round(nh * s))
+  // 缩略图长边没到 card 上限 → 没被 Pillow 缩过，就是原图真实尺寸，直接按它定窗口。
+  // 顶到上限则原图真实尺寸未知（可能是刚好 192 附近的低分辨率图，也可能是被压缩过的大图，
+  // 无法区分）——不再瞎猜（之前套 4K 估算，遇到实际是低分辨率图时会把窗口猜得比真实大得多，
+  // 真图加载完再缩回真实尺寸，观感是「先变超大再骤缩」）；宁可窗口暂不出现，等真图加载完
+  // 直接定到正确尺寸（同「快速下载」路径），不做中间的错误猜测。
+  if (nw && nh && !ready.value && Math.max(nw, nh) < CARD_THUMB_CAP) {
+    fitWindow(nw, nh)
   }
   placeholderReady.value = true
 }
@@ -322,7 +363,7 @@ async function load(f, refresh = false) {
         videoSrc.value = url
       }
       // 探视频尺寸
-      await new Promise(resolve => {
+      await new Promise<void>(resolve => {
         const vid = document.createElement('video')
         vid.preload = 'metadata'
         vid.onloadedmetadata = () => {
@@ -416,21 +457,37 @@ function onDragUp() {
   window.removeEventListener('mouseup',   onDragUp)
 }
 
-// ── 右下角 resize ─────────────────────────────────────────────────────────────
+// ── 四角 resize（可见手柄只留右下角，其余三角只是能拖、没有图标）────────────────
 let resizeOrig = null
 const MIN_W = 320, MIN_H = 240
 
-function startResize(e) {
+function startResize(dir, e) {
   if (e.button !== 0) return
-  resizeOrig = { mx: e.clientX, my: e.clientY, w: w.value, h: h.value }
+  resizeOrig = { mx: e.clientX, my: e.clientY, w: w.value, h: h.value, x: x.value, y: y.value, dir }
   window.addEventListener('mousemove', onResizeMove)
   window.addEventListener('mouseup',   onResizeUp)
 }
 
 function onResizeMove(e) {
   if (!resizeOrig) return
-  w.value = Math.max(MIN_W, resizeOrig.w + e.clientX - resizeOrig.mx)
-  h.value = Math.max(MIN_H, resizeOrig.h + e.clientY - resizeOrig.my)
+  const { mx, my, w: ow, h: oh, x: ox, y: oy, dir } = resizeOrig
+  const dx = e.clientX - mx
+  const dy = e.clientY - my
+  // 左侧的角：一边收缩宽度一边把 x 往右挪，钳到 MIN_W 后用实际收缩量算 x，避免碰到下限后窗口和鼠标脱节
+  if (dir.includes('e')) {
+    w.value = Math.max(MIN_W, ow + dx)
+  } else {
+    const newW = Math.max(MIN_W, ow - dx)
+    x.value = Math.max(0, ox + (ow - newW))
+    w.value = newW
+  }
+  if (dir.includes('s')) {
+    h.value = Math.max(MIN_H, oh + dy)
+  } else {
+    const newH = Math.max(MIN_H, oh - dy)
+    y.value = Math.max(0, oy + (oh - newH))
+    h.value = newH
+  }
 }
 
 function onResizeUp() {
@@ -440,6 +497,8 @@ function onResizeUp() {
 }
 
 onUnmounted(() => {
+  _unregEsc()
+  _unregArrowNav()
   if (blobUrl.value) URL.revokeObjectURL(blobUrl.value)
   window.removeEventListener('mousemove', onDragMove)
   window.removeEventListener('mouseup',   onDragUp)
@@ -581,6 +640,33 @@ onUnmounted(() => {
 /* ── info 按钮激活态 ── */
 .fpw-btn.active { background: rgba(123,127,178,0.15); color: var(--color-primary, #7b7fb2); }
 
+/* ── 图片左右切换按钮：平时隐藏，鼠标移进内容区才淡入；跟 ImageViewer 缩放胶囊
+   （.iv-toolbar）同一套毛玻璃参数，视觉上是一家人 ── */
+.fpw-nav {
+  position: absolute; top: 50%; z-index: 2;
+  width: 34px; height: 34px;
+  margin-top: -17px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  box-shadow:
+    0 4px 16px rgba(80, 90, 110, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 1px 0 0 rgba(255, 255, 255, 0.55);
+  color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;   /* 隐藏时别挡住底下图片的点击/拖拽 */
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.fpw-body:hover .fpw-nav { opacity: 1; pointer-events: auto; }
+.fpw-nav:hover { background: rgba(123, 127, 178, 0.16); color: var(--color-primary); }
+.fpw-nav-prev { left: 10px; }
+.fpw-nav-next { right: 10px; }
+
 /* ── 信息独立弹窗 ── */
 .fpw-info-win {
   position: fixed;
@@ -645,4 +731,10 @@ onUnmounted(() => {
 .fpw-resize:hover {
   background: linear-gradient(135deg, transparent 50%, rgba(123,127,178,0.5) 50%);
 }
+/* 其余三角：只留可拖拽热区，不放图标——右下角已经有明确的可见手柄提示"这个窗口能拉伸"，
+   其它角再摆一个图标视觉上会太抢/太碎，用鼠标指针（resize 光标）作为唯一提示就够 */
+.fpw-resize-edge { position: absolute; width: 14px; height: 14px; }
+.fpw-resize-nw { top: 0; left: 0; cursor: nwse-resize; }
+.fpw-resize-ne { top: 0; right: 0; cursor: nesw-resize; }
+.fpw-resize-sw { bottom: 0; left: 0; cursor: nesw-resize; }
 </style>

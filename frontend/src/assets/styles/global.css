@@ -4,6 +4,75 @@
 
 svg { shape-rendering: geometricPrecision; }
 
+/* Admin 后台：滚动条不挤压内容宽度——内容变长/变短、滚动条出现/消失时，面板宽度不跳动。
+   所有 Admin 页共用同一个滚动容器 .admin-main（管一次=覆盖所有面板），侧栏导航 .sidebar-nav
+   与内部几处独立滚动的子面板一并列上，同一条规则、别各自散着写。 */
+.admin-main,
+.sidebar-nav,
+.trace-list,
+.trace-detail,
+.log-table-wrap {
+  scrollbar-gutter: stable;
+}
+
+/* 全局勾选框样式：注册页确认勾选（原 .ack-box）与 markdown 预览 task list 用的同一套视觉，
+   统一收到这里，避免各处各抄一份字面量。16px 圆角 5px，紫灰边白底，选中紫色渐变 + 阴影 + 白勾。
+   排除掉 arco 组件自带的 checkbox（它们有自己的 class，不吃这条全局规则）。 */
+input[type="checkbox"]:not(.arco-checkbox-icon) {
+  appearance: none; -webkit-appearance: none;
+  width: 16px; height: 16px; flex-shrink: 0;
+  border: 1.5px solid rgba(123, 127, 178, 0.35);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.6);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+input[type="checkbox"]:not(.arco-checkbox-icon):hover {
+  border-color: rgba(123, 127, 178, 0.6);
+}
+input[type="checkbox"]:not(.arco-checkbox-icon):checked {
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(123, 127, 178, 0.35);
+}
+input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
+  content: '';
+  position: absolute; inset: 0;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='10'%20height='10'%20viewBox='0%200%2010%2010'%20fill='none'%3E%3Cpolyline%20points='1.5,5%204,7.5%208.5,2.5'%20stroke='white'%20stroke-width='1.6'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* 悬停抬起 + 按下下沉的通用反馈：文件卡/项目卡统一用这一套手感（真正的“卡片”才抬起）。
+   各自静止态的背景/边框/圆角/圆角阴影不用动，加这个类就有抬起+按下的动效；
+   数值抄项目卡（原来只有项目卡自己有这套效果）。 */
+.hover-card-fx {
+  transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.3s ease;
+}
+.hover-card-fx:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(80,90,110,0.13);
+}
+.hover-card-fx:active {
+  transform: translateY(1px);
+  opacity: 0.93;
+}
+/* 只要按下反馈、不要悬停抬起：顶栏「上传文件/新建项目」、定时任务「新建任务」按钮、
+   咕咕聊天里的文件条都是这一挂——按钮/挤在气泡堆里的文件条，抬起要么跟布局不搭要么显得
+   跟旁边气泡割裂，只保留点击下沉这一半效果。 */
+.press-fx {
+  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.2s ease-out;
+}
+.press-fx.press-fx:hover {
+  --topbar-btn-shadow: 0 4px 14px rgba(80,90,110,0.3);
+  box-shadow: 0 4px 14px rgba(80,90,110,0.3) !important;   /* 按钮面积更小，阴影提到 30% 才看得见；仍不做上浮 */
+}
+.press-fx:active {
+  transform: translateY(1px);
+  opacity: 0.93;
+}
+
 /* date/time input 弹窗跟随系统深色 */
 input[type="date"],
 input[type="datetime-local"],
@@ -84,13 +153,19 @@ body {
 }
 
 /* 日历可点击条/chip 通用 hover（event-chip、chip-more-btn、overflow-item、project-bar 共用） */
-.cal-chip {
-  transition: box-shadow 0.25s ease;
+/* hover 高光：原来用 box-shadow: inset 0 0 0 100px 当白色叠层——inset box-shadow 无法 GPU 合成，
+   每次 hover 条都 0.25s 主线程重绘、级联到 glass-card/layout-main，拖累顶栏 backdrop-filter 重栅格
+   → 下沿闪白带（见 perf trace，wv-pbar/project-bar 上千次重绘）。改用 ::after + opacity 过渡：
+   opacity 走合成器线程、不触发主线程重绘，观感一致（hover 变亮），彻底断掉级联。*/
+.cal-chip { position: relative; }
+.cal-chip > * { position: relative; z-index: 1; }   /* 内容压在高光叠层之上 */
+.cal-chip::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; z-index: 0;
+  background: rgba(255,255,255,0.45); opacity: 0;
+  transition: opacity 0.2s ease; pointer-events: none;
 }
-.cal-chip:hover,
-.cal-chip.bar-hovered {
-  box-shadow: inset 0 0 0 100px rgba(255,255,255,0.45), 0 2px 6px rgba(80,90,110,0.1);
-}
+.cal-chip:hover::after,
+.cal-chip.bar-hovered::after { opacity: 1; }
 
 /* 文件操作按钮（卡片悬浮，默认 20×20） */
 .file-card-btn {
@@ -145,6 +220,26 @@ body {
 .fc-card:active:not(:has(.fc-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }
 .folder-card:active:not(:has(.fd-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }
 
+/* 重命名输入框（宽度随文字自适应，Dashboard FilePanel、文件库、ProjectModal 文件卡/文件夹/
+   项目模板改名共用）：.rename-ghost 隐形渲染同样的文字撑开 .rename-sizer 的宽度（display:
+   inline-block 天然收缩到内容宽度），.rename-input-inline 绝对定位铺满 sizer、随之伸缩。
+   ghost 与 input 用 font: inherit 各自跟随所在组件的字号/字体，不用逐处硬编码。 */
+.rename-sizer {
+  display: inline-block; position: relative;
+  max-width: 100%; vertical-align: top;
+}
+.rename-ghost {
+  display: block; visibility: hidden; white-space: pre;
+  font: inherit; padding: 0 5px; min-width: 2ch;
+}
+.rename-input-inline {
+  position: absolute; inset: 0; width: 100%;
+  outline: none;
+  background: rgba(255,255,255,0.9); border: 1px solid rgba(123,127,178,0.4);
+  border-radius: 4px; padding: 0 4px;
+  font: inherit; color: inherit;
+}
+
 /* ── 面板左侧栏通用毛玻璃样式 ── */
 .panel-left {
   background: rgba(255,255,255,0.6);
@@ -153,10 +248,28 @@ body {
   box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
 }
 
+/* 弹窗进场「玻璃 ramp」（机制注释见 BaseModal.vue 的过渡段）：模糊半径本身从 0 过渡
+   到各自满值，全程不碰 opacity——否则半透明祖先形成隔离组，backdrop-filter 采不到
+   弹窗后面的页面/窗口，动画期间模糊是死的。规则放全局是因为 BaseModal 的 scoped
+   样式够不到 slot 里的玻璃面板（slot 内容带的是调用方组件的 scope id）。
+   !important 用于压过 BaseModal 通过 blur prop 写到 .bm-card 上的 inline 样式。 */
+.bm-enter-from .bm-card,
+.bm-enter-from .panel-left,
+.bm-enter-from .modal-right {
+  backdrop-filter: blur(0px) !important;
+  -webkit-backdrop-filter: blur(0px) !important;
+}
+.bm-enter-active .bm-card,
+.bm-enter-active .panel-left,
+.bm-enter-active .modal-right {
+  transition: backdrop-filter 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              -webkit-backdrop-filter 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 /* ── 弹出面板（右键菜单 / 排序菜单 / 表单弹窗）全局共用 ── */
 .popup-menu {
   background: rgba(255,255,255,0.6);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.75);
   border-radius: 10px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.1);
@@ -189,7 +302,7 @@ body {
 /* 暗色弹窗（Admin 用）— 对齐 .popup-menu 结构，暗色配色 */
 .popup-menu-dark {
   background: rgba(20, 22, 38, 0.94);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.11);
   border-radius: 10px;
   box-shadow: 0 4px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
@@ -245,11 +358,47 @@ body {
 ::placeholder { color: var(--text-secondary); opacity: 0.75; }
 
 /* ── 拖拽物理效果（usePhysicsDrag）── */
-/* 克隆体：跟着指针弹簧跟随的卡片，抬起阴影强化「拎起来」的感觉 */
+/* 克隆体：跟着指针弹簧跟随的卡片，抬起阴影 + 毛玻璃强化「拎起来」的感觉。
+   全站唯一定义（文件库/项目编辑卡/看板项目卡的拖拽克隆共用）——别在组件里各自定义。
+   background 带 !important：盖过 cloneNode 保留的源卡 scoped 白底与历史内联底色。 */
 .phys-drag-clone {
+  background: rgba(255, 255, 255, 0.42) !important;
+  backdrop-filter: blur(12px) saturate(1.15);
+  -webkit-backdrop-filter: blur(12px) saturate(1.15);
+  border: 1px solid rgba(255, 255, 255, 0.72);
   box-shadow: 0 22px 50px rgba(30, 35, 60, 0.30);
   cursor: grabbing;
   opacity: 0.97;
+}
+/* 文件卡 / 文件夹卡 / 项目卡拖拽：卡片容器自己背景+模糊，不加外圈装饰层（试过用负
+   z-index 子元素做「本体不透明+外圈单独模糊」的分层方案，box-shadow 柔光/backdrop-filter
+   都试过，效果要么是装饰光晕、要么在拖拽自带的 3D 后仰变换下失真变成硬边白框——都不是
+   「卡片本身透出背后模糊内容」，撤回，改回最简单的单层容器）。
+   透明度对照过站内其余玻璃面板量级（--glass-bg 0.56、--glass-bg-hover 0.70），选比二者
+   都更透的 0.5：更高时 20% 见光量对肉眼来说模糊基本不可感知（实测截图确认），0.5 是能看出
+   背后模糊内容、同时不至于完全「只剩玻璃感」的折中点。ProjectModal 内的文件/文件夹卡同时
+   带 .pm-clone-expanded，仍会命中 .fc-card/.folder-card，不用单独再写一条。 */
+.phys-drag-clone.fc-card,
+.phys-drag-clone.folder-card,
+.phys-drag-clone.proj-card {
+  background: rgba(255, 255, 255, 0.5) !important;
+  backdrop-filter: blur(12px) saturate(1.15);
+  -webkit-backdrop-filter: blur(12px) saturate(1.15);
+}
+/* 图片文件卡：缩略图（.fc-thumb-area）是完全不透明的真实图片，铺在 .fc-card 上层，挡住了
+   卡片自己 backdrop-filter 模糊到的「背后内容」（拖过其他卡片时应该透出模糊的其他卡片，
+   不是把缩略图自己的画面弄模糊）。给 .fc-thumb-area 单独挂一份跟卡片同参数的
+   backdrop-filter（模糊它背后——也就是正被拖过的其他文件卡），图片本身不加 filter，只降
+   透明度让这份模糊透出来，跟卡片主体「半透明白底 + backdrop-filter 模糊背景」的双层观感
+   对齐。 */
+.phys-drag-clone.fc-card .fc-thumb-area {
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(12px) saturate(1.15);
+  -webkit-backdrop-filter: blur(12px) saturate(1.15);
+}
+.phys-drag-clone.fc-card .fc-thumb-tiny,
+.phys-drag-clone.fc-card .fc-thumb-full.fc-loaded {
+  opacity: 0.75;
 }
 /* 源卡 / 落点卡：隐藏但保留布局占位，让飞动的克隆体看起来就是卡片本体 */
 .phys-drag-source { opacity: 0 !important; }
@@ -264,3 +413,23 @@ body.phys-dragging .sidebar {
 }
 /* pointer 驱动拖拽没有原生 drag 光标，整页给个抓取态补回手感 */
 body.phys-dragging, body.phys-dragging * { cursor: grabbing !important; }
+
+/* 多文件拖拽数量徽章（右上角圆形数字） */
+.phys-drag-badge {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  background: var(--color-primary, #6c6ef5);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 22px;
+  border-radius: 99px;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+  z-index: 1;
+}

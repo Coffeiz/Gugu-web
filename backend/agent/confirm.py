@@ -17,6 +17,21 @@ def _truthy(v) -> bool:
     return v is True or (isinstance(v, str) and v.strip().lower() in ("true", "1", "yes"))
 
 
+def is_confirmed(args: dict) -> bool:
+    """本次调用是否带有效 confirm（dispatch 层绊线用，与 needs_confirmation 同一判定口径）。"""
+    return _truthy(args.get("confirm"))
+
+
+def is_block(result) -> bool:
+    """判断工具返回是否是 needs_confirmation 的拦截结果（dispatch 层绊线用）。"""
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except Exception:
+            return False
+    return isinstance(result, dict) and bool(result.get("needs_confirm"))
+
+
 def needs_confirmation(args: dict, summary: str) -> str | None:
     """返回 None=已确认可执行；返回 JSON 字符串=需确认（调用方直接返回给模型）。"""
     if _truthy(args.get("confirm")):

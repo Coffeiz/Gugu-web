@@ -1,6 +1,6 @@
 <template>
   <div
-    class="column"
+    class="column glass-card"
     :data-col-status="column.key"
     :class="{ 'drag-over': isDragOver }"
     @dragover.prevent="isDragOver = true"
@@ -32,13 +32,13 @@
   </div>
 </template>
 
-<script setup>
-import { ref } from 'vue'
+<script setup lang="ts">
+import { ref, type PropType } from 'vue'
 import ProjectCard from './ProjectCard.vue'
 
 const props = defineProps({
   column:   { type: Object, required: true },
-  projects: { type: Array, default: () => [] },
+  projects: { type: Array as PropType<any[]>, default: () => [] },
 })
 const emit = defineEmits(['card-click', 'drop-project', 'add-project'])
 
@@ -55,16 +55,15 @@ function onDrop(e) {
 </script>
 
 <style scoped>
+/* 玻璃质感（background/border/圆角/box-shadow/backdrop-filter）走全局 .glass-card；
+   看板列比 --glass-bg 标准的大面板值（0.56）更透，覆盖成看板专用的 0.25，且不跟随
+   .glass-card:hover 变亮（悬停/拖拽状态另有 .drag-over own 语义，不该被通用 hover 抢）。 */
 .column {
+  --glass-bg: rgba(255,255,255,0.25);
+  --glass-bg-hover: rgba(255,255,255,0.25);
   display: flex; flex-direction: column;
-  background: rgba(255,255,255,0.18);
-  border: 1px solid rgba(255,255,255,0.45);
-  border-radius: var(--radius-lg);
-  corner-shape: squircle;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
   padding: 12px 10px; gap: 8px;
   min-width: 0; min-height: 0; overflow: hidden;
-  transition: background 0.15s, box-shadow 0.15s;
 }
 .column.drag-over {
   background: rgba(123,127,178,0.1);
@@ -91,6 +90,7 @@ function onDrop(e) {
 .col-body::-webkit-scrollbar { width: 3px; }
 .col-body::-webkit-scrollbar-track { background: transparent; margin-top: 8px; margin-bottom: 8px; }
 .col-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 99px; }
+/* 跟文件库「上传文件」(.fc-upload) 同款：只换边框/文字/背景色，不带外阴影、不抬起 */
 .add-card {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   width: 100%; flex-shrink: 0; min-height: 96px;
@@ -98,7 +98,6 @@ function onDrop(e) {
   border: 1.5px dashed rgba(0,0,0,0.1);
   border-radius: var(--radius-md);
   corner-shape: squircle;
-  box-shadow: 0 2px 8px rgba(80,90,110,0.04);
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.18s;
@@ -107,7 +106,6 @@ function onDrop(e) {
   border-color: rgba(123,127,178,0.35);
   color: var(--color-primary);
   background: rgba(255,255,255,0.3);
-  box-shadow: 0 4px 14px rgba(80,90,110,0.1);
 }
 .add-card-text { font-size: 11px; font-weight: 600; }
 </style>

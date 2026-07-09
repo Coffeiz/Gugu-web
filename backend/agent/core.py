@@ -156,19 +156,24 @@ _DECISION_NUDGE = (
 
 
 # 意图守卫（B · 防「说了要做却没动手」）：宣告"我这就去查/建/改…"的**将来式**，区别于 narration 的"假装已做完"。
-# 要求一个明确的"将要"引导词（我去 / 我来 / 这就 / 稍等我 / 让我 / 接下来 / 那我…）+ 动作词，避免裸"我+动词"误伤
-# （如「我改天再看」）。命中即"宣告了要做"。
+# 要求一个明确的"将要"引导词（我去 / 我来 / 这就 / 马上 / 稍等我 / 让我 / 接下来 / 那我…）+ 动作词，避免裸
+# "我+动词"误伤（如「我改天再看」）。命中即"宣告了要做"。
+# 实测漏网案例（2026-07-04，F1 战报纠错场景）：「马上重新查一下」——① 中文口语常见主语省略（"我"隐含在
+# 上一句里），"马上/现在/稍后"当时只在带"我"的分支里出现，裸着开头的"马上重新查一下"整句测不中；
+# ② 时间副词和动词之间常插「重新/再」这类修饰词，原正则只留了"帮你/帮您/给你"这几个空当，卡住了匹配。
+# 现在把"这就/马上/现在/稍后"都放开成可以不带"我"（前面不是"你"就行，避免误伤"你现在查一下"这种让用户
+# 自己去做的建议句），并把"重新/再"也纳入动词前的可选修饰词。
 _INTENT_RE = _re.compile(
     r"("
     r"我(这就|马上|现在|先|稍后)?(去|来)"          # 我去 / 我来 / 我先去 / 我马上来
     r"|我(先|这就|马上|现在|稍后)"                  # 我先 / 我这就 / 我现在（无去/来）
-    r"|这就(去|帮你|帮您|给你|来)?"                # 这就 / 这就去 / 这就帮你
-    r"|稍等[，,]?\s*我(去|来)?"                     # 稍等我去 / 稍等，我
+    r"|(?<!你)(这就|马上|现在|稍后)(去|帮你|帮您|给你|来)?"   # 这就/马上/现在/稍后（可以不带"我"，前面不是"你"）
+    r"|稍等[，,]?\s*我?(去|来)?"                     # 稍等我去 / 稍等，我 / 稍等，去
     r"|让我(去|来|先)?"                            # 让我 / 让我去
     r"|接下来我?(去|来)?"                          # 接下来 / 接下来我去
     r"|那我(去|来|就)"                             # 那我去 / 那我就
     r")"
-    r"(帮你|帮您|给你)?\s*"
+    r"(帮你|帮您|给你|重新|再)?\s*"
     r"(查|搜索?|找|看|读|翻|问|建|创建|新建|做|改|修改|删除?|发送?|存|保存|记录?|整理|安排|设置?|调取?|生成|算|统计)"
 )
 # 问句/征询硬排除：「要我去查吗?」是在等用户拍板，绝不能逼它执行（误逼=替用户做没同意的事，比卡住还糟）。
@@ -493,7 +498,7 @@ class LLMRunner:
             if _m.get("role") == "system" and isinstance(_m.get("content"), str) and _builder.CACHE_BREAK in _m["content"]:
                 _m["content"] = _builder.strip_cache_marker(_m["content"])
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
-        from agent.llm_select import openai_default_headers
+        from agent.llm_select import openai_default_headers, supports_thinking_toggle, _is_deepseek
         client = AsyncOpenAI(
             api_key=ai.api_key or "dummy",
             base_url=ai.base_url,
@@ -503,10 +508,19 @@ class LLMRunner:
 
         max_tokens  = ai.max_tokens
         temperature = ai.temperature
-        # mimo：思考关时显式传 thinking:disabled（官方两套 API 都支持此参数）——从源头避免「输出全进
-        # reasoning_content、正文空」的空气泡。思考开（adaptive）则不传，用 mimo 默认（开），靠下方空回复兜底。
-        _mimo_extra = {"thinking": {"type": "disabled"}} if (is_mimo and getattr(ai, "thinking", "disabled") != "adaptive") else {}
-        total_in = total_out = 0
+        # 思考开关：mimo 与 deepseek 都用同一 OpenAI 参数 `{"thinking":{"type":...}}`（见各自官方文档）。
+        # 思考关时显式传 disabled——mimo 从源头避免「正文全进 reasoning_content、content 空」的空气泡，
+        # deepseek 则省下推理 token/延迟。思考开（adaptive）则不传、用厂商默认（两家默认都是开），靠下方空回复兜底。
+        # 仅对支持该参数的厂商发（qwen/openai 没这参数，传了可能报错）。reasoning_content 的多轮回传已统一处理。
+        # 思考开（adaptive）时，DeepSeek 还可带「思考强度」reasoning_effort（high/max；思考模式下 temperature 失效，
+        # effort 是唯一质量/成本旋钮）。mimo 文档无此参数，故只对 deepseek 发。
+        _think_extra = {}
+        if supports_thinking_toggle(ai):
+            if getattr(ai, "thinking", "disabled") != "adaptive":
+                _think_extra["thinking"] = {"type": "disabled"}
+            elif _is_deepseek(ai) and getattr(ai, "reasoning_effort", ""):
+                _think_extra["reasoning_effort"] = ai.reasoning_effort
+        total_in = total_out = total_cache_hit = 0   # cache_hit：DeepSeek 自动上下文缓存命中 token（观测命中率用）
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; round_i = 0; empty_retry = 0
         any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0   # 真实性守卫状态
@@ -527,7 +541,7 @@ class LLMRunner:
                 temperature=temperature,
                 stream=True,
                 stream_options={"include_usage": True},
-                extra_body=_mimo_extra,
+                extra_body=_think_extra,
             )
             content = ""
             reasoning = ""                   # mimo 深度思考产出（reasoning_content）：多轮+工具调用必须原样回传，否则 400
@@ -547,6 +561,8 @@ class LLMRunner:
                 if getattr(chunk, "usage", None):
                     total_in  += chunk.usage.prompt_tokens or 0
                     total_out += chunk.usage.completion_tokens or 0
+                    # DeepSeek 自动上下文缓存命中（prompt_cache_hit_tokens）；非 DeepSeek 厂商无此字段 → 0
+                    total_cache_hit += getattr(chunk.usage, "prompt_cache_hit_tokens", 0) or 0
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -678,7 +694,7 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
             # 收尾：干净核实阶段的确认文字（content，未实时发）直接丢弃，用户看不到重复确认
-            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out})}\n\n"
+            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out, 'cache_read': total_cache_hit})}\n\n"
             return
 
         yield f"data: {json.dumps({'type': 'error', 'detail': '这步操作有点多，咕咕没在一口气里全做完 😅 前面几步已经生效了，要我接着把剩下的做完吗？'}, ensure_ascii=False)}\n\n"

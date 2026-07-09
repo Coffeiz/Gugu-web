@@ -137,6 +137,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     user_id = req.user_id
     profile = DefaultProfile()
     settings = get_settings()
+    from agent import trace
+    trace.new_trace()   # 全链路 trace（web 路入口）：本轮工具轨迹日志自动带同一 id
 
     import app.db.session as _sess
     if _sess._engine is None:
@@ -297,7 +299,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
     await genstream.begin(session_id)
 
     prompt_name = profile.prompt_file.removesuffix(".md")
-    memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
+    memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
     im_channels = await loaders.load_im_channels(user_id)
     system_prompt = builder.build(
         prompt_name, req.user_name, projects, events, memory, files_overview,
@@ -476,7 +478,8 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
         # ── 对话后反思：提炼长期记忆（fire-and-forget）──
         if profile.memory_enabled and full_reply:
             from agent.memory import reflection
-            reflection.schedule(user_id, req.user_name, req.message, full_reply, settings, used_tools=used_tools)
+            reflection.schedule(user_id, req.user_name, req.message, full_reply, settings,
+                                used_tools=used_tools, session_id=session_id)
 
         # ── 对话压缩：token 超阈值时后台静默压缩旧消息（fire-and-forget）──
         from agent.context import compress_conv

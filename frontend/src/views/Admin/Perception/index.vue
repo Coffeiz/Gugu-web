@@ -6,18 +6,18 @@
         <p class="page-desc">咕咕「读懂用户需求」健康度 · 仅活跃用户、按用户宏平均（重度用户不主导）</p>
       </div>
       <div class="header-right">
+        <label class="xd-toggle" :class="{ on: excludeDev }">
+          <input type="checkbox" v-model="excludeDev" @change="load">
+          排除开发者
+        </label>
         <div class="range-tabs">
           <button v-for="r in ranges" :key="r.h"
             :class="['range-tab', { active: hours === r.h }]"
             @click="setRange(r.h)">{{ r.label }}</button>
         </div>
-        <button class="refresh-btn" @click="load" :disabled="loading">
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ spinning: loading }">
-            <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2"/>
-            <polyline points="10 1 14 5 10 5"/>
-          </svg>
-          刷新
+        <button class="dl-btn" @click="exportData" :disabled="exporting">{{ exporting ? '导出中…' : '导出数据' }}</button>
+        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
+          <PhArrowClockwise :size="15" weight="bold" />
         </button>
       </div>
     </div>
@@ -117,19 +117,72 @@
           <span v-for="e in data.emotion_distribution" :key="e.emotion" class="emo-chip">{{ e.emotion }} · {{ e.count }}</span>
         </div>
       </template>
+
+      <div class="section-label">反馈信号<span class="sl-hint">学习闭环的燃料 · 用户怎么接上一轮（正:确认夸赞/顺着聊/主动分享 · 负:改写重问/无视跳开）</span></div>
+      <div v-if="!data.feedback_distribution?.length" class="state-msg sm-sm">暂无反馈信号（采集器 2026-07-02 上线,聊几轮就会积累）</div>
+      <div v-else class="emo-strip">
+        <span v-for="f in data.feedback_distribution" :key="f.feedback"
+          :class="['kind-chip', fbCls(f.feedback)]">{{ f.feedback }} · {{ f.count }}</span>
+        <span class="kind-chip">共 {{ data.feedback_total }} 条</span>
+      </div>
     </template>
+
+    <!-- 关系温度（独立于活跃用户统计，始终显示；v1 只有当前值，无历史曲线——见 temperature.py） -->
+    <div class="section-label">关系温度<span class="sl-hint">28 天滑动窗口·回访+深度+分享+正负延续比 · 只有当前值，暂无历史曲线</span></div>
+    <div v-if="!temps.length" class="state-msg sm-sm">暂无数据（用户对话满一轮反思才会算，且现存值 24h 内不重算）</div>
+    <div v-else class="dist">
+      <div v-for="t in temps" :key="t.user_id" class="dist-row">
+        <span class="dist-name">{{ t.name }}</span>
+        <div class="dist-track"><div class="dist-fill" :style="{ width: (t.temp * 100) + '%' }"></div></div>
+        <span class="dist-pct">{{ (t.temp * 100).toFixed(0) }}%</span>
+        <span class="dist-rate">回访{{ t.components?.raw?.active_days ?? '—' }}天<i>深度{{ t.components?.raw?.avg_depth ?? '—' }}</i></span>
+      </div>
+    </div>
+
+    <!-- 错读案例预览（独立于活跃用户统计，始终显示） -->
+    <div class="section-label">错读案例<span class="sl-hint">咕咕「读错需求」的脱敏反思 · 最近 {{ misread.length }} 条</span>
+      <button class="dl-btn" @click="downloadMisread" :disabled="dling">{{ dling ? '下载中…' : '下载完整记录' }}</button>
+    </div>
+    <div v-if="!misread.length" class="state-msg sm-sm">暂无错读案例（需发生一次「误读 + 用户纠正」才记一条）</div>
+    <div v-else class="mr-list">
+      <div v-for="(c, i) in misread" :key="i" class="mr-row">
+        <span class="mr-time">{{ fmtTs(c.ts) }}</span>
+        <span class="mr-flow"><b>{{ c.miss?.read_as || '—' }}</b><i>→</i><b>{{ c.miss?.actual || '—' }}</b></span>
+        <span class="mr-pattern">{{ c.miss?.pattern || '—' }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
-import { PhUsers, PhChats, PhPulse, PhBrain } from '@phosphor-icons/vue'
+import { PhUsers, PhChats, PhPulse, PhBrain, PhArrowClockwise } from '@phosphor-icons/vue'
+
+interface PerceptionData {
+  active_users?: number
+  note?: string
+  flags?: string[]
+  min_events?: number
+  perc_total?: number
+  misperc_total?: number
+  perception_misperc_rate?: number
+  avg_ambiguity?: number
+  avg_emo_strength?: number
+  misperc_by_kind?: { kind: string; count: number }[]
+  overall_misperc_rate?: number
+  intent_distribution?: { intent: string; pct: number; misperc_rate: number; count: number }[]
+  by_model?: { model: string; count: number; misperc_rate: number }[]
+  emotion_distribution?: { emotion: string; count: number }[]
+  feedback_distribution?: { feedback: string; count: number }[]
+  feedback_total?: number
+}
 
 const adminStore = useAdminStore()
-const data = ref({})
+const data = ref<PerceptionData>({})
 const hours = ref(168)
 const loading = ref(false)
+const refreshing = ref(false)
 const loaded = ref(false)
 const err = ref('')
 const ranges = [{ h: 24, label: '24h' }, { h: 168, label: '7天' }, { h: 720, label: '30天' }, { h: 0, label: '全部' }]
@@ -150,14 +203,23 @@ function resetThresholds() {
 
 const intents = computed(() => data.value.intent_distribution || [])
 
+const misread = ref([])
+const dling = ref(false)
+const temps = ref([])
+const excludeDev = ref(false)
+
 async function load() {
   loading.value = true
+  refreshing.value = true
+  setTimeout(() => { refreshing.value = false }, 550)
+  loadMisread()   // 错读案例独立拉取（不受活跃用户/阈值影响），刷新时一并更新
+  loadTemperature()   // 关系温度同样独立拉取
   try {
     const me = Math.max(1, minEvents.value || 1)
     const rate = Math.min(1, Math.max(0, (rateHiPct.value || 0) / 100))
     const amb = Math.max(0, ambigHi.value || 0)
     const mn = Math.max(1, minN.value || 1)
-    const q = `hours=${hours.value}&min_events=${me}&rate_hi=${rate}&ambig_hi=${amb}&min_n=${mn}`
+    const q = `hours=${hours.value}&min_events=${me}&rate_hi=${rate}&ambig_hi=${amb}&min_n=${mn}&exclude_dev=${excludeDev.value}`
     const res = await adminStore.authFetch(`/api/v1/admin/perception?${q}`)
     if (!res.ok) throw new Error(`加载失败 (${res.status})`)
     data.value = await res.json()
@@ -173,6 +235,58 @@ function rateClass(v) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return
 function rateCard(v) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return v != null && v > hi ? 'card-bad' : (v != null && v > mid ? 'card-active' : '') }
 // 纠错构成配色：感知误读=红（该优化）、数据/执行错=琥珀（归数据/工具）、未判=灰
 function kindCls(k) { return k === '感知误读' ? 'kc-bad' : (k === '数据或执行错' ? 'kc-warn' : 'kc-dim') }
+function fbCls(v) {
+  if (['确认夸赞', '顺着聊', '主动分享'].includes(v)) return 'kc-good'
+  if (['改写重问', '无视跳开'].includes(v)) return 'kc-bad'
+  return 'kc-dim'
+}
+
+async function loadMisread() {
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/perception/misread/recent?n=30&exclude_dev=${excludeDev.value}`)
+    if (res.ok) misread.value = (await res.json()).cases || []
+  } catch (e) { /* 预览失败不打断主面板 */ }
+}
+
+async function loadTemperature() {
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/perception/temperature?exclude_dev=${excludeDev.value}`)
+    if (res.ok) temps.value = (await res.json()).users || []
+  } catch (e) { /* 预览失败不打断主面板 */ }
+}
+const exporting = ref(false)
+async function exportData() {
+  exporting.value = true
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/perception/export?hours=${hours.value}`)
+    if (!res.ok) throw new Error()
+    const blob = new Blob([await res.text()], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `perception_events_${hours.value || 'all'}h.json`
+    document.body.appendChild(a); a.click(); a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e) { /* 忽略 */ } finally { exporting.value = false }
+}
+
+async function downloadMisread() {
+  dling.value = true
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/perception/misread/export')
+    if (!res.ok) throw new Error()
+    const blob = new Blob([await res.text()], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = 'misread_reflections.md'
+    document.body.appendChild(a); a.click(); a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e) { /* 忽略 */ } finally { dling.value = false }
+}
+function fmtTs(ts) {
+  if (!ts) return '—'
+  const d = new Date(ts * 1000)
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 
 onMounted(load)
 </script>
@@ -186,15 +300,22 @@ onMounted(load)
 .page-title { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
 .page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
 .header-right { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+
+/* 排除开发者开关（同 Admin/Analytics/index.vue） */
+.xd-toggle {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: rgba(255,255,255,0.45); cursor: pointer;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 8px; padding: 6px 12px; transition: all .15s; user-select: none;
+}
+.xd-toggle input { accent-color: #7b7fb2; cursor: pointer; margin: 0; }
+.xd-toggle.on { color: rgba(170,175,225,0.95); border-color: rgba(123,127,178,0.4); background: rgba(123,127,178,0.12); }
+
 .range-tabs { display: flex; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 3px; }
 .range-tab { font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer; color: rgba(255,255,255,0.4); background: transparent; border: none; transition: all .15s; }
 .range-tab.active { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
 .range-tab:hover:not(.active) { color: rgba(255,255,255,0.6); }
-.refresh-btn { display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.55); font-size: 12px; border-radius: 8px; padding: 7px 14px; cursor: pointer; transition: all .15s; }
-.refresh-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); }
-.refresh-btn:disabled { opacity: .4; cursor: not-allowed; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.spinning { animation: spin .8s linear infinite; }
+/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 /* ── 阈值条 ── */
 .ctrl-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding: 16px 36px 0; }
@@ -254,4 +375,17 @@ onMounted(load)
 .kind-chip.kc-bad  { background: rgba(224,112,112,0.12); color: rgba(235,150,150,0.95); border-color: rgba(224,112,112,0.28); }
 .kind-chip.kc-warn { background: rgba(201,148,58,0.12); color: rgba(215,165,75,0.95); border-color: rgba(201,148,58,0.25); }
 .kind-chip.kc-dim  { color: rgba(255,255,255,0.4); }
+.kind-chip.kc-good { background: rgba(90,158,136,0.12); color: rgba(120,190,160,0.95); border-color: rgba(90,158,136,0.28); }
+
+/* ── 错读案例预览 ── */
+.dl-btn { margin-left: auto; background: rgba(123,127,178,0.16); border: 1px solid rgba(123,127,178,0.3); color: rgba(170,175,225,0.95); font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; border-radius: 7px; padding: 5px 12px; cursor: pointer; transition: all .15s; }
+.dl-btn:hover:not(:disabled) { background: rgba(123,127,178,0.26); }
+.dl-btn:disabled { opacity: .5; cursor: not-allowed; }
+.mr-list { padding: 0 36px; display: flex; flex-direction: column; gap: 8px; }
+.mr-row { display: flex; align-items: baseline; gap: 12px; font-size: 12.5px; padding: 9px 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 9px; }
+.mr-time { flex-shrink: 0; width: 78px; color: rgba(255,255,255,0.32); font-size: 11.5px; }
+.mr-flow { flex-shrink: 0; color: rgba(255,255,255,0.7); display: flex; align-items: baseline; gap: 6px; }
+.mr-flow b { font-weight: 600; }
+.mr-flow i { font-style: normal; color: rgba(255,255,255,0.3); }
+.mr-pattern { color: rgba(255,255,255,0.5); line-height: 1.5; }
 </style>

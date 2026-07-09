@@ -1,6 +1,6 @@
 <template>
   <div
-    class="proj-card"
+    class="proj-card hover-card-fx"
     :data-project-id="project.id"
     :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
     :class="{ 'file-drag-over': fileDragOver }"
@@ -148,7 +148,7 @@
             :style="t.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
             placeholder="待办事项"
             @blur="editingTp = null; persistTodos()"
-            @keydown.enter="editingTp = null; persistTodos()"
+            v-enter="() => (editingTp = null, persistTodos())"
             @keydown.esc="editingTp = null"
             @keydown.backspace="!t.text && removeTodo(t.id)"
           />
@@ -163,7 +163,7 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, ref, nextTick, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
@@ -289,7 +289,7 @@ const tpDrag = ref(null)         // 拖动中实时 index
 const editingTp = ref(null)
 function startEditTp(id) {
   editingTp.value = id
-  nextTick(() => document.querySelector(`[data-tpid="${id}"]`)?.focus())
+  nextTick(() => document.querySelector<HTMLElement>(`[data-tpid="${id}"]`)?.focus())
 }
 function tpDragStart(i) { tpDrag.value = i }
 // dragover + 中线判断：指针越过目标待办中线才换位，避免来回横跳
@@ -360,7 +360,7 @@ const daysLeft  = computed(() => {
   if (!props.project.deadline) return null
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const dl    = new Date(props.project.deadline + 'T00:00:00')
-  return Math.ceil((dl - today) / 86400000)
+  return Math.ceil((dl.getTime() - today.getTime()) / 86400000)
 })
 const isUrgent = computed(() => props.project.status !== 'done' && daysLeft.value <= 3)
 const thisYear = new Date().getFullYear()
@@ -484,6 +484,8 @@ async function setPriority(n) {
   corner-shape: squircle;
   box-shadow: 0 2px 8px rgba(80,90,110,0.07);
   overflow: hidden; cursor: pointer;
+  /* transition 是覆盖式属性，不会跟全局 .hover-card-fx 的 transition 叠加（只有其中一份生效）——
+     这里仍自带完整的一份（含 background），确保不管层叠顺序谁赢，效果都一致，不丢 background 过渡 */
   transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1),
               box-shadow 0.3s ease, background 0.25s ease-out;
   user-select: none;
@@ -529,12 +531,11 @@ async function setPriority(n) {
   transition: opacity 0.25s ease;
   pointer-events: none;
 }
-.proj-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 18px rgba(80,90,110,0.13);
-}
+/* 抬起(:hover)/按下(:active)本体效果来自全局 .hover-card-fx（模板里已加这个类）；
+   这里补文件卡同款阴影和项目卡专属的 hover 高光，以及按下时排除嵌套可交互子元素（评分/进度条/阶段点）。 */
+.proj-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
 .proj-card:hover::after { opacity: 1; }
-.proj-card:active:not(:has(.stars:active, .seg-bar-wrap:active, .proj-stage:active)) { transform: translateY(1px); opacity: 0.93; }
+.proj-card:active:has(.stars:active, .seg-bar-wrap:active, .proj-stage:active) { transform: none; opacity: 1; }
 
 .card-body { flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card-top { display: flex; align-items: flex-start; gap: 6px; }

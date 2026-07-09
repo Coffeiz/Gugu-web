@@ -23,8 +23,8 @@
 
       <form @submit.prevent="handleLogin">
         <div class="field">
-          <label>用户名</label>
-          <input v-model="form.username" type="text" placeholder="输入用户名"
+          <label>用户名 / 邮箱</label>
+          <input v-model="form.username" type="text" placeholder="输入用户名或邮箱"
             autocomplete="username" :disabled="loading" />
         </div>
         <div class="field">
@@ -58,7 +58,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -70,11 +70,11 @@ const loading  = ref(false)
 const error    = ref('')
 
 async function handleLogin() {
-  if (!form.username || !form.password) { error.value = '请填写用户名和密码'; return }
+  if (!form.username || !form.password) { error.value = '请填写用户名/邮箱和密码'; return }
   loading.value = true; error.value = ''
   try {
     await auth.login(form.username, form.password)
-    router.push(router.currentRoute.value.query.redirect ?? '/projects')
+    router.push((router.currentRoute.value.query.redirect as string) ?? '/projects')
   } catch (e) {
     error.value = e.message
   } finally {

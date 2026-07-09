@@ -54,7 +54,7 @@
   />
 
   <!-- 悬浮球 -->
-  <button class="ai-fab" :class="{ 'ai-fab--playing': rippleActive }" ref="fabRef" @click="toggleOpen" title="咕咕">
+  <button class="ai-fab" :class="{ 'ai-fab--playing': rippleActive }" :style="{ zIndex: fabZ }" ref="fabRef" @click="toggleOpen" title="咕咕">
     <svg ref="fabSvgRef"
          :class="{ 'ai-fab-spin': audioStore.file && !spinningBack, 'ai-fab--typing': fabJumping }"
          :style="audioStore.file && !spinningBack ? { animationPlayState: audioPlaying ? 'running' : 'paused' } : {}"
@@ -70,6 +70,7 @@
   <!-- 聊天窗口（单一元素，小/大状态通过位置过渡） -->
   <Transition name="chat-open">
     <div v-if="open" class="chat-window" :class="{ 'win-grow': streaming && !expanded }" :style="windowStyle" ref="windowRef"
+      @mousedown.capture="raiseChat"
       @dragenter="onChatDragEnter" @dragover="onChatDragOver" @dragleave="onChatDragLeave" @drop="onChatDrop">
 
       <!-- 拖入遮罩（覆盖整个窗口，大小窗通用）-->
@@ -184,47 +185,61 @@
           </div>
         </div>
 
-        <!-- 单一消息列表 -->
+        <!-- 单一消息列表：真虚拟列表（@tanstack/vue-virtual），任何时刻只挂载视口 ± overscan
+             内的消息 DOM，其余用下面这段按测量/估算高度撑出来的占位空间代替，滚动条始终代表
+             整个会话的真实长度。messagesEl 是真实可滚动容器，虚拟列表只管它内部挂多少 DOM。 -->
         <div class="chat-messages" ref="messagesEl">
-          <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]" :data-db-id="msg.dbId || ''">
-            <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onChatActionClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : msg.html" :text="msg.text" /></div>
-            <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
-            <div v-if="msg.files && msg.files.length" class="msg-files">
-              <template v-for="f in msg.files" :key="f.file_id || f.attach_id">
-              <!-- 语音条：点一下播放（带鉴权拉 blob），不是文件卡 -->
-              <div v-if="f.kind === 'voice'" class="msg-voice" :class="{ playing: voicePlayingId === f.attach_id }"
-                   @click="toggleVoice(f)" title="点击播放语音">
-                <span class="mv-btn">
-                  <PhPause v-if="voicePlayingId === f.attach_id" weight="fill" :size="13" />
-                  <PhPlay  v-else weight="fill" :size="13" />
-                </span>
-                <span class="mv-wave"><i v-for="n in 13" :key="n" :style="{ height: voiceBar(n) }" /></span>
-                <span class="mv-dur">{{ fmtDur(f.duration) }}</span>
-              </div>
-              <div v-else class="msg-file" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
-                <span class="msg-file-ext">
-                  {{ (f.ext || 'file').toUpperCase().slice(0, 4) }}
-                  <template v-if="isImageFile(f)">
-                    <img v-if="f._thumbUrl" class="msg-file-thumb" :src="f._thumbUrl"
-                      draggable="false" alt="" @error="$event.target.remove()" />
-                    <img v-else class="msg-file-thumb" v-lazy-thumb="f.file_id || f.attach_id"
-                      decoding="async" draggable="false" alt="" @error="$event.target.remove()" />
+          <div class="msg-virtual-spacer" :style="{ height: virtualTotalSize + 'px' }">
+            <!-- v-memo：同一帧内其它消息在变（比如正在流式输出的那条）时，跳过这一行没变的
+                 子树重新生成——虚拟列表已经把同时挂载的行数摁在个位数附近，这里收益比之前小，
+                 但仍能省掉一趟不必要的 vnode diff。 -->
+            <div v-for="{ row, msg } in rowsWithMsg" :key="row.index" :data-index="row.index" :ref="measureRow"
+                 class="msg-virtual-row" :style="{ transform: `translateY(${row.start + msgsPadTop}px)` }">
+              <div :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
+                   v-memo="[msg.text, msg.html, msg.streaming, msg.files?.length, msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
+                <!-- IM 引用/回复：单独一条浅色预览条，跟真正打的话分开显示，别把引用原文
+                     （可能带 markdown 表格等）直接摊平混进正文气泡（devlog 2026-07-10）。 -->
+                <div v-if="msg.role !== 'ai' && msg.quotedText" class="msg-quoted" :title="msg.quotedText">{{ msg.quotedText }}</div>
+                <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onChatActionClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : msg.html" :text="msg.text" /></div>
+                <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
+                <div v-if="msg.files && msg.files.length" class="msg-files">
+                  <template v-for="f in msg.files" :key="f.file_id || f.attach_id">
+                  <!-- 语音条：点一下播放（带鉴权拉 blob），不是文件卡 -->
+                  <div v-if="f.kind === 'voice'" class="msg-voice" :class="{ playing: voicePlayingId === f.attach_id }"
+                       @click="toggleVoice(f)" title="点击播放语音">
+                    <span class="mv-btn">
+                      <PhPause v-if="voicePlayingId === f.attach_id" weight="fill" :size="13" />
+                      <PhPlay  v-else weight="fill" :size="13" />
+                    </span>
+                    <span class="mv-wave"><i v-for="n in 13" :key="n" :style="{ height: voiceBar(n) }" /></span>
+                    <span class="mv-dur">{{ fmtDur(f.duration) }}</span>
+                  </div>
+                  <div v-else class="msg-file press-fx" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
+                    <span class="msg-file-ext">
+                      {{ (f.ext || 'file').toUpperCase().slice(0, 4) }}
+                      <template v-if="isImageFile(f)">
+                        <img v-if="f._thumbUrl" class="msg-file-thumb" :src="f._thumbUrl"
+                          draggable="false" alt="" @error="($event.target as HTMLElement).remove()" />
+                        <img v-else class="msg-file-thumb" v-lazy-thumb="f.file_id || f.attach_id"
+                          decoding="async" draggable="false" alt="" @error="($event.target as HTMLElement).remove()" />
+                      </template>
+                    </span>
+                    <span class="msg-file-info">
+                      <span class="msg-file-name">{{ f.name }}.{{ f.ext }}</span>
+                      <span class="msg-file-meta">{{ fmtSize(f.size_bytes) }} · {{ canPreview(f) ? '预览' : '下载' }}</span>
+                    </span>
+                    <svg class="msg-file-dl" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>
+                  </div>
                   </template>
-                </span>
-                <span class="msg-file-info">
-                  <span class="msg-file-name">{{ f.name }}.{{ f.ext }}</span>
-                  <span class="msg-file-meta">{{ fmtSize(f.size_bytes) }} · {{ canPreview(f) ? '预览' : '下载' }}</span>
-                </span>
-                <svg class="msg-file-dl" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>
+                </div>
+                <div class="msg-footer">
+                  <span class="msg-time">{{ msg.time }}</span>
+                  <button class="msg-copy-btn" @click="copyMsg(msg)" title="复制">
+                    <PhCheck v-if="copiedId === msg.id" :size="11" weight="bold" />
+                    <PhCopy  v-else :size="11" />
+                  </button>
+                </div>
               </div>
-              </template>
-            </div>
-            <div class="msg-footer">
-              <span class="msg-time">{{ msg.time }}</span>
-              <button class="msg-copy-btn" @click="copyMsg(msg)" title="复制">
-                <PhCheck v-if="copiedId === msg.id" :size="11" weight="bold" />
-                <PhCopy  v-else :size="11" />
-              </button>
             </div>
           </div>
           <!-- 状态指示：动画队列驱动，:key 让每条重建以重放入场动画；文字走打字机、点点为默认思考态 -->
@@ -238,7 +253,6 @@
               </template>
             </div>
           </div>
-          <div class="msg-sentinel" />
         </div>
 
         <!-- 输入框 -->
@@ -263,9 +277,7 @@
             ref="expInputEl"
             placeholder="问问项目进度、截止日期…"
             rows="1"
-            @compositionstart="isComposing = true"
-            @compositionend="isComposing = false"
-            @keydown.enter.exact.prevent="!isComposing && send()"
+            v-enter.exact.prevent="() => send()"
             @input="autoResize"
           />
           <div v-else class="rec-bar">
@@ -286,13 +298,15 @@
   </Transition>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useVirtualizer } from '@tanstack/vue-virtual'
 import QRCode from 'qrcode'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import { useAudioStore } from '@/stores/audio'
+import { nextZ } from '@/composables/windowz'
 import { useProjectStore } from '@/stores/projects'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
@@ -310,6 +324,24 @@ import {
   PhArrowRight, PhStop, PhArrowsOut, PhArrowsIn,
   PhPencilSimple, PhTrash, PhCopy, PhCheck,
 } from '@phosphor-icons/vue'
+
+// 聊天气泡的完整字段集合（TS 转换新增）：字段来自不同代码路径按需附加（默认问候/流式回复/
+// 历史消息回填/用户发送各自只带自己用得上的那几个），松散 interface 如实反映这个既有形状，
+// 不强行收紧成必填。
+interface ChatMessage {
+  id: number
+  dbId?: number
+  role: string
+  text: string
+  html?: string | null
+  files?: any[]
+  quotedText?: string
+  time: string
+  streaming?: boolean
+  _greeting?: boolean
+  _greetAnimated?: boolean
+  _greetFull?: string
+}
 
 const SMALL_W   = 360
 const SMALL_H   = 360
@@ -329,7 +361,7 @@ watch(() => uiStore.pendingChatSession, async (id) => {
   const msgId = uiStore.pendingChatMessageId
   uiStore.pendingChatSession = null
   uiStore.pendingChatMessageId = null
-  if (msgId) _flashChatMessage(msgId)
+  if (msgId) { await _revealMessage(msgId); _flashChatMessage(msgId) }
 })
 
 function _flashChatMessage(dbId) {
@@ -357,6 +389,7 @@ watch(() => liveStore.sessionEvent, async (e) => {
       text: m.text || '',
       html: isAi ? renderMd(m.text || '') : null,
       files: (m.files && m.files.length) ? m.files : undefined,
+      quotedText: m.quoted_text || undefined,
       time: now(),
     })
   }
@@ -474,7 +507,7 @@ const audioVolume = ref(+(localStorage.getItem(VOL_KEY) ?? 0.5))
 const audioMuted  = ref(false)
 function audioSetVolume(e) {
   audioVolume.value = +e.target.value
-  localStorage.setItem(VOL_KEY, audioVolume.value)
+  localStorage.setItem(VOL_KEY, String(audioVolume.value))
   if (audioEl.value) { audioEl.value.volume = audioVolume.value; audioEl.value.muted = false }
   audioMuted.value = false
 }
@@ -514,7 +547,16 @@ marked.use({
     return r
   })(),
 })
-function renderMd(text) { return text ? marked.parse(text) : '' }
+// 兜底：模型有时把加粗小标题写成 `** 标题**`（** 后带空格 = 无效 md，不渲染加粗）。
+// 在代码块/行内代码之外，把成对 ** 内侧紧邻的空格去掉，让它正常加粗（不碰代码里的 `x ** 2`）。
+function fixLooseBold(text) {
+  return text.split(/(```[\s\S]*?```|`[^`\n]*`)/g).map((seg, i) =>
+    i % 2 ? seg
+      : seg.replace(/\*\*[ \t]+([^*\n]+?)\*\*/g, '**$1**')
+           .replace(/\*\*([^*\n]+?)[ \t]+\*\*/g, '**$1**')
+  ).join('')
+}
+function renderMd(text) { return text ? marked.parse(fixLooseBold(text)) as string : '' }
 
 // 流式渲染专用：补全未闭合的代码围栏，避免 marked 把半段代码块解析成残缺 HTML
 // 单条缓存：同一帧内 text 未变则直接返回上次结果，避免重复解析
@@ -524,7 +566,7 @@ function renderMdStream(text) {
   if (_mdStreamCache?.text === text) return _mdStreamCache.html
   const fences = (text.match(/^```/gm) || []).length
   const patched = fences % 2 === 1 ? text + '\n```' : text
-  const html = marked.parse(patched)
+  const html = marked.parse(patched) as string
   _mdStreamCache = { text, html }
   return html
 }
@@ -536,13 +578,28 @@ const open       = ref(false)
 const expanded   = ref(false)
 const resizing   = ref(false)   // 展开/缩小动画期间：关 backdrop-filter、停跟随，降卡顿
 let _resizeTimer = null
+let _onResizeTransitionEnd = null
 function _markResizing() {
   resizing.value = true
   if (_resizeTimer) clearTimeout(_resizeTimer)
-  _resizeTimer = setTimeout(() => { resizing.value = false }, 420)
+  if (windowRef.value && _onResizeTransitionEnd) {
+    windowRef.value.removeEventListener('transitionend', _onResizeTransitionEnd)
+  }
+  // 用真实 transitionend 结束 resizing，而不是硬编码 420ms 定时器——.chat-window 的位移过渡
+  // 也是 0.42s，正常情况下两者前后脚触发看不出差别；但性能不足时（掉帧/主线程繁忙）CSS 过渡
+  // 的视觉完成时间会被拖慢，定时器却按固定墙钟时间准点触发，导致 backdrop-filter/跟随在过渡
+  // 还没走完时就被重新打开，看起来「闪一下」。定时器保留作兜底（万一没有属性真正变化、不会
+  // 触发 transitionend），加了缓冲、不再和过渡时长完全对齐。
+  _onResizeTransitionEnd = (e) => {
+    if (e.target !== windowRef.value) return   // 只认窗口自己的位移过渡，冒泡上来的子元素过渡不算
+    if (!['top', 'left', 'right', 'bottom'].includes(e.propertyName)) return
+    resizing.value = false
+  }
+  windowRef.value?.addEventListener('transitionend', _onResizeTransitionEnd)
+  _resizeTimer = setTimeout(() => { resizing.value = false }, 600)
 }
 const miniPinned = ref(localStorage.getItem('gugu_mini_pinned') !== 'false')
-watch(miniPinned, v => localStorage.setItem('gugu_mini_pinned', v))
+watch(miniPinned, v => localStorage.setItem('gugu_mini_pinned', String(v)))
 
 // 设置：重开浏览器时是否接续上次对话（默认关＝开新对话）。开关在个人设置→咕咕设置里，
 // 写 localStorage『gugu_reopen_resume』；这里 onMounted 时读一次决定要不要接续。
@@ -580,17 +637,29 @@ function syncSmallH() {
 
 // 单一窗口的位置样式：小状态与大状态都用 top/left/right/bottom 像素值，保证过渡正常
 // transition 放在 CSS 而非 inline style，避免覆盖 Vue Transition 的 opacity/transform 动画
+// 窗口层级：进统一窗口带（点谁谁上，见 composables/windowz.ts）；打开时置顶
+const chatZ = ref(nextZ())
+function raiseChat() { chatZ.value = nextZ() }
+watch(open, v => { if (v) raiseChat() })
+
+// 悬浮球层级：完全关闭时常驻在窗口带之上（99999，随时可点、可唤起聊天）；
+// 一旦聊天窗打开（不论小窗还是展开大窗口）就压到窗口之下——球固定在右下角，
+// 小窗 bottom:88px 离球顶只有 10px 空隙、大窗口更是直接铺到 bottom:12px 盖住球的位置，
+// 球若仍固定最上层会遮住窗口自己的边角。球永远不高于自己的聊天窗，靠窗口自身的关闭按钮/再点球关。
+const fabZ = computed(() => open.value ? chatZ.value - 1 : 99999)
+
 const windowStyle = computed(() => {
   if (expanded.value) {
     // 右锚 720px，遇到窄屏时不超过导航栏右边界
     const left = Math.max(SIDEBAR_W + 12, vw.value * 0.4 - 12)
-    return { top: '12px', right: '12px', bottom: '12px', left: `${left}px` }
+    return { top: '12px', right: '12px', bottom: '12px', left: `${left}px`, zIndex: chatZ.value }
   }
   return {
     top:    `${vh.value - 88 - smallH.value}px`,
     left:   `${vw.value - 28 - SMALL_W}px`,
     right:  '28px',
     bottom: '88px',
+    zIndex: chatZ.value,
   }
 })
 
@@ -601,8 +670,8 @@ const miniPlayerStyle = computed(() => {
   const origin = (open.value && !expanded.value)
     ? '50% 50%'
     : `calc(100% - 25px) calc(100% + ${bottom - 53}px)`
-  // 展开态层级低于咕咕窗口（10001），使播放器显示在窗口后方
-  const zIndex = expanded.value ? 10000 : 10002
+  // 跟随聊天窗相对层级：展开态在窗后（-1）、小窗态顶在窗前（+1）
+  const zIndex = expanded.value ? chatZ.value - 1 : chatZ.value + 1
   return { bottom: `${bottom}px`, transformOrigin: origin, zIndex }
 })
 
@@ -637,9 +706,9 @@ async function toggleOpen() {
     if (!expanded.value) contentH.value = SMALL_H
     trackApi.track('chat_open').catch(() => {})
     await nextTick()
-    atBottom.value = true; stick.value = true
+    stick.value = true
     _baseScrollH = messagesEl.value?.scrollHeight || 0   // 基线 = 打开时的历史内容高度
-    if (messagesEl.value) scrollToBottom(messagesEl.value)
+    scrollToBottom()
   }
 }
 
@@ -655,10 +724,12 @@ onMounted(() => {
   const saved = sessionStorage.getItem(SESSION_KEY)
               || (reopenResume.value ? localStorage.getItem(LAST_SESSION_KEY) : null)
   if (saved) {
+    messages.value = []   // 续聊：立刻清掉默认问候占位，避免 loadSession 异步加载期间 animateGreeting 闪问候
     loadSession(Number(saved)).then(() => {
-      if (sessionId.value !== Number(saved)) {   // 那段会话没了（删了/无权限）→ 清存档、当新对话
+      if (sessionId.value !== Number(saved)) {   // 那段会话没了（删了/无权限）→ 清存档、恢复问候、当新对话
         sessionStorage.removeItem(SESSION_KEY)
         localStorage.removeItem(LAST_SESSION_KEY)
+        messages.value = [{ id: mkid(), role: 'ai', text: '', html: '', time: now(), _greeting: true }]
         prefetchGreeting()
       }
     })
@@ -674,7 +745,6 @@ onUnmounted(() => {
 
 // ── 对话状态 ────────────────────────────────────────────
 const inputText      = ref('')
-const isComposing    = ref(false)
 const thinkingLabels = ref([])   // 「思考中」候选文案（后台「状态命名」_thinking，可多个 | 分隔；空=三个点）
 const streaming      = ref(false)
 // 状态指示走「动画队列」：SSE 事件入队、逐个播放（文字打字机入场），切换太快也排队、不抢拍、不闪。
@@ -722,7 +792,7 @@ function _pumpStatus() {
 }
 
 function _playStatus(item) {
-  return new Promise(resolve => {
+  return new Promise<void>(resolve => {
     if (item.kind === 'hide') { statusKind.value = ''; statusTyped.value = ''; resolve(); return }
     statusSeq.value++          // 触发入场动画重放（:key 变化 → 气泡重建）
     statusKind.value = item.kind
@@ -746,7 +816,7 @@ const pendingAtt   = ref([])     // 待发送的聊天附件（已上传暂存�
 const attUploading = ref(false)
 const fileInput    = ref(null)
 function pickFile() { fileInput.value && fileInput.value.click() }
-async function uploadAttachFiles(files, opts = {}) {
+async function uploadAttachFiles(files, opts: { voice?: boolean } = {}) {
   if (!files.length) return
   attUploading.value = true
   try {
@@ -963,6 +1033,9 @@ function openFileFromChat(f) {
       ext: (f.ext || '').toUpperCase(),
       displayName: f.name,
       size: fmtSize(f.size_bytes),
+      // 真实像素尺寸（有的话）：预览窗口直接按此定尺，不用再靠缩略图猜大小
+      imgWidth: f.img_width ?? null,
+      imgHeight: f.img_height ?? null,
     })
     return
   }
@@ -1000,9 +1073,55 @@ let _mid = 0
 const mkid = () => ++_mid
 
 // 默认问候：占位空消息（打开对话框时再以打字机动画显示，文案在那一刻取最新生成版/兜底）
-const messages = ref([
+const messages = ref<ChatMessage[]>([
   { id: mkid(), role: 'ai', text: '', html: '', time: now(), _greeting: true },
 ])
+
+// ── 长会话虚拟列表 ────────────────────────────────────────────────────────────
+// 网络层不变，仍一次性把整条会话历史拉回来（messages 是完整数据，搜索跳转靠它按 dbId
+// 定位）。DOM 层交给 @tanstack/vue-virtual：任何时刻只挂载视口 ± overscan 内的消息，
+// 其余用一段按「已测量高度 / 估算高度」撑出来的占位空间代替，滚动条因此始终代表整个
+// 会话的真实长度（顶部滚到底也准），而不是只随「挂了多少条」变化。
+// 消息高度不定长（纯文本/代码块/文件卡片/语音条差异很大），measureElement 首次挂载
+// 后用真实高度回填、并自带 ResizeObserver 持续纠偏（图片/缩略图迟一拍加载导致变高也能跟上）。
+const virtualizer = useVirtualizer({
+  get count() { return messages.value.length },
+  getScrollElement: () => messagesEl.value,
+  estimateSize: () => 96,
+  overscan: 6,
+})
+const virtualRows = computed(() => virtualizer.value.getVirtualItems())
+// 绝对定位的子元素不会跟着祖先的 padding 走（top:0/left:0 是相对祖先的边框盒，不是内容盒），
+// 所以顶部留白只能自己在 translateY 里加、不能指望 .msg-virtual-spacer 的 padding-top 生效；
+// 水平方向的留白则放在每一行自己的左右 padding 上（CSS，见下）。
+const msgsPadTop = computed(() => expanded.value ? 20 : 12)
+// 占位容器总高度 = 虚拟列表算出的内容高度 + 顶部留白（底部留白由最后一行自带的 padding-bottom 覆盖）
+const virtualTotalSize = computed(() => virtualizer.value.getTotalSize() + msgsPadTop.value)
+// v-for 需要同时拿到虚拟行的定位信息（row）和它对应的消息（msg），zip 成一个数组，
+// 这样消息行内部的模板完全不用改，照样按 msg.xxx 取值。
+const rowsWithMsg = computed(() => virtualRows.value.map(row => ({ row, msg: messages.value[row.index] })))
+function measureRow(el) { if (el) virtualizer.value.measureElement(el) }
+
+// 只有真正挂进视口 ± overscan 的消息才需要解析 markdown——不在 loadSession 时就把
+// 整个历史一次性跑一遍 marked.parse，等消息第一次进虚拟窗口再补，减轻长会话打开时的
+// 一次性 CPU 尖峰；已经解析过的（html 非空）不重复解析。
+watch(virtualRows, (rows) => {
+  for (const row of rows) {
+    const m = messages.value[row.index]
+    if (m && m.role === 'ai' && !m.streaming && m.html == null) m.html = renderMd(m.text)
+  }
+})
+
+// 会话内定位到某条历史消息（全局搜索跳转用）：先按 dbId 找到下标，用虚拟列表的
+// scrollToIndex 滚过去（数据本来就在 messages 里，不用管它当前有没有挂 DOM），
+// 等它挂载出来再交给 _flashChatMessage 做高亮。
+async function _revealMessage(dbId) {
+  const idx = messages.value.findIndex(m => m.dbId === dbId)
+  if (idx === -1) return
+  stick.value = false   // 跳去的多半是历史消息，不该被当成「回到底部」处理
+  virtualizer.value.scrollToIndex(idx, { align: 'center', behavior: 'auto' })
+  await nextTick()
+}
 
 // 打开对话框时让默认问候像回复一样「打字机」冒出来（生成版 / 兜底都走这套）。每条问候只播一次。
 let _greetTimer = null
@@ -1201,7 +1320,7 @@ async function enterExpanded() {
   await fetchSessions()
   await nextTick()
   expInputEl.value?.focus()
-  atBottom.value = true; stick.value = true
+  stick.value = true
   const el = messagesEl.value
   if (!el) return
   el.scrollTop = 999999; _lastTop = el.scrollTop
@@ -1220,7 +1339,7 @@ async function exitExpanded() {
   await nextTick()
   const el = messagesEl.value
   if (!el) return
-  atBottom.value = true; stick.value = true
+  stick.value = true
   el.scrollTop = 999999; _lastTop = el.scrollTop
   // CSS transition 让窗口从大尺寸平滑缩小（0.38s），期间 clientHeight 持续变化
   // ResizeObserver 跟着一直滚底，过渡结束后断开；动画结束、小窗布局稳定后再测真实基线
@@ -1241,13 +1360,16 @@ async function loadSession(id) {
     const data = await agentApi.getMessages(id)
     sessionId.value = id
     clearStatus()   // 切会话先清掉上个会话残留的状态指示（active 会话下面 resumeStream 会重置）
+    // html 先留空、不在这一步就把整个历史都跑一遍 marked.parse——只有真正挂进虚拟列表
+    // 视口的那些消息才会被 watch(virtualRows, ...) 补上，减轻长会话打开时的一次性 CPU 尖峰。
     messages.value = data.messages.map(m => ({
       id: mkid(),
       dbId: m.id,
       role: m.role === 'assistant' ? 'ai' : m.role,
       text: m.content,
-      html: m.role === 'assistant' ? renderMd(m.content) : null,
+      html: null,
       files: m.files && m.files.length ? m.files : undefined,
+      quotedText: m.quotedText || undefined,
       time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
     }))
     contentH.value = SMALL_H; _sessionTurn = 0
@@ -1279,27 +1401,24 @@ function autoResize(e) {
   el.style.height = Math.min(el.scrollHeight, 120) + 'px'
 }
 
-// IntersectionObserver 哨兵取代 scroll 事件 + scrollHeight 读取，消除强制回流
-const atBottom = ref(true)
-let _sentinelObs = null
-
 // streaming 跟随意图：只有用户主动上翻才取消，回到底部附近恢复。
-// 不依赖异步的 atBottom（大窗固定高度时，每个流式块把哨兵顶出视口，IO 会比
-// MutationObserver 早一帧把 atBottom 置 false，导致跟随脱手）。
 const stick   = ref(true)
 let _lastTop  = 0     // 上次（多为程序化）滚动后的 scrollTop，用于判别用户上翻
 
-// streaming 用即时滚动跟随，避免 smooth 叠加追不上
-function scrollToBottom(el, smooth = false) {
-  if (smooth) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-  else el.scrollTop = el.scrollHeight
-  _lastTop = el.scrollTop   // 记录落点：程序化滚动产生的 scroll 事件不会误判为上翻
+// streaming 用即时滚动跟随，避免 smooth 叠加追不上。用虚拟列表的 scrollToIndex 而不是
+// 直接写 scrollTop——最后一条消息的高度可能还只是估算值（还没被 measureElement 量过），
+// scrollToIndex 会按当前最新的测量/估算结果算，比直接读 scrollHeight 更准。
+function scrollToBottom(smooth = false) {
+  const idx = messages.value.length - 1
+  if (idx < 0) return
+  virtualizer.value.scrollToIndex(idx, { align: 'end', behavior: smooth ? 'smooth' : 'auto' })
+  _lastTop = messagesEl.value?.scrollTop ?? 0   // 记录落点：程序化滚动产生的 scroll 事件不会误判为上翻
 }
 
-// 用户上翻 → 停住；滚回接近底部 → 恢复跟随
+// 用户上翻 → 停住；滚回接近底部 → 恢复跟随。messagesEl 是真实可滚动容器，scrollHeight
+// 由虚拟列表的占位高度撑出来，即使视口外的消息没挂 DOM，这个距离判断依然准确。
 function onMsgScroll() {
   const el = messagesEl.value; if (!el) return
-  // 用「距底距离」判定，对窗口增高导致的 scrollTop clamp 鲁棒（不会误判成用户上翻 → 停止跟随）
   const dist = el.scrollHeight - el.scrollTop - el.clientHeight
   stick.value = dist < 40
   _lastTop = el.scrollTop
@@ -1312,50 +1431,20 @@ async function scrollBottom(force = false) {
   const el = messagesEl.value; if (!el) return
   syncSmallH()   // 发送/加载后按内容真实高度更新窗口高（含刚加的用户气泡）
   if (force) {
-    atBottom.value = true; stick.value = true
-    scrollToBottom(el)
-    requestAnimationFrame(() => { if (stick.value && messagesEl.value) scrollToBottom(messagesEl.value) })
+    stick.value = true
+    scrollToBottom()
+    requestAnimationFrame(() => { if (stick.value) scrollToBottom() })
   }
-  else if (stick.value) scrollToBottom(el)   // 跟随用稳健的 stick，不用异步竞态的 atBottom
+  else if (stick.value) scrollToBottom()
 }
 
-// MutationObserver：内容变化时跟随（仅 streaming 且用户未上翻）
-let msgMo = null
-
 watch(messagesEl, (el, oldEl) => {
-  msgMo?.disconnect()
-  _sentinelObs?.disconnect()
   oldEl?.removeEventListener('scroll', onMsgScroll)
   if (!el) return
-
   el.addEventListener('scroll', onMsgScroll, { passive: true })
-
-  // IntersectionObserver：观察哨兵 div 是否可见，替代 scrollHeight 读取
-  const sentinel = el.querySelector('.msg-sentinel')
-  if (sentinel) {
-    _sentinelObs = new IntersectionObserver(
-      ([entry]) => { atBottom.value = entry.isIntersecting },
-      { root: el, threshold: 0 }
-    )
-    _sentinelObs.observe(sentinel)
-  }
-
-  // MutationObserver：streaming 时内容变化自动滚底，小窗模式额外累计高度增量
-  msgMo = new MutationObserver(() => {
-    const el = messagesEl.value
-    if (!el || resizing.value) return
-    syncSmallH()                          // 按内容真实高度更新小窗高度（含用户气泡 + AI 气泡）
-    if (stick.value) {
-      scrollToBottom(el)                                                                          // 立即滚底
-      requestAnimationFrame(() => { if (stick.value && messagesEl.value) scrollToBottom(messagesEl.value) })  // 等窗口增高后的布局再滚一次
-    }
-  })
-  msgMo.observe(el, { childList: true, subtree: true })
 })
 
 onUnmounted(() => {
-  msgMo?.disconnect()
-  _sentinelObs?.disconnect()
   messagesEl.value?.removeEventListener('scroll', onMsgScroll)
   _stopImPoll()
 })
@@ -1364,7 +1453,7 @@ onUnmounted(() => {
 // 返回 { aiIdx, usedTools }，供调用方做收尾（首条空回复兜底、刷新视图）。
 async function consumeStream(reader, ownerSid) {
   const decoder = new TextDecoder()
-  let buf = '', aiIdx = -1
+  let buf = '', aiIdx = -1, aborted = false
   let sid = ownerSid           // 本流归属的会话（新对话在 session_id 事件前为 null）
   let detached = false         // 一旦用户切到别的会话，本流永久脱离、不再污染当前视图
   const usedTools = new Set()
@@ -1378,7 +1467,7 @@ async function consumeStream(reader, ownerSid) {
     while (true) {
       let chunk
       try { chunk = await reader.read() }
-      catch (e) { if (e.name === 'AbortError') break; throw e }   // 切会话会 abort：优雅收尾，别当网络错
+      catch (e) { if (e.name === 'AbortError') { aborted = true; break; } throw e }   // 切会话会 abort：优雅收尾，别当网络错
       const { done, value } = chunk
       if (done) break
       buf += decoder.decode(value, { stream: true })
@@ -1450,7 +1539,7 @@ async function consumeStream(reader, ownerSid) {
       }
     }
   }
-  return { aiIdx, usedTools, detached, sid }
+  return { aiIdx, usedTools, detached, sid, aborted }
 }
 
 // 续看：打开会话时若它正在生成（messages 接口返回 active），重连看后端跑完。
@@ -1475,7 +1564,7 @@ async function resumeStream(id) {
   }
 }
 
-async function send(forcedText) {
+async function send(forcedText?) {
   // forcedText 来自"排队接力"（队首消息）：此时用户气泡已在入队时显示过，不重复推
   const fromInput = forcedText === undefined
   const text = (fromInput ? inputText.value : forcedText).trim()
@@ -1484,7 +1573,7 @@ async function send(forcedText) {
   if (fromInput) {
     _sessionTurn++
     messages.value.push({ id: mkid(), role: 'user', text, time: now(),
-      files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl })) : undefined })
+      files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined })
     inputText.value = ''
     pendingAtt.value = []
     if (expInputEl.value) expInputEl.value.style.height = 'auto'
@@ -1523,7 +1612,7 @@ async function send(forcedText) {
     aiIdx = r.aiIdx
     r.usedTools.forEach(t => usedTools.add(t))
     // 用户中途切走了 → 别把兜底气泡塞进当前别的会话视图（回复已在后端，切回会重载）
-    if (aiIdx === -1 && !r.detached) {
+    if (aiIdx === -1 && !r.detached && !r.aborted) {
       messages.value.push({ id: mkid(), role: 'ai', text: '收到，但没有收到回复，请稍后再试。', time: now() })
       await scrollBottom()
     }
@@ -1560,7 +1649,7 @@ async function send(forcedText) {
   position: fixed; bottom: 28px; right: 28px;
   isolation: isolate; width: 50px; height: 50px; border-radius: 50%;
   background: linear-gradient(135deg, #7b7fb2, #9590c4); border: none;
-  cursor: pointer; z-index: 10000;   /* 高于卡片拖拽克隆体（9999） */
+  cursor: pointer;   /* z-index 由 :style 动态(fabZ)：默认在窗口带之上，大窗口展开时压到其下，见 script */
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 4px 18px rgba(123,127,178,0.32), inset 0 1px 0 rgba(255,255,255,0.45);
   transition: transform 0.2s, box-shadow 0.2s;
@@ -1586,7 +1675,7 @@ async function send(forcedText) {
 /* ── 单一聊天窗口 ── */
 .chat-window {
   position: fixed;
-  z-index: 10001;   /* 高于卡片拖拽克隆体（9999） */
+  /* z-index 由 :style 动态(统一窗口带,点谁谁上) */
   border: 1px solid rgba(255,255,255,0.7);
   border-radius: 20px;
   overflow: hidden;
@@ -1605,8 +1694,8 @@ async function send(forcedText) {
 /* 主区域负责背景 blur */
 .chat-main {
   background: var(--panel-bg);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   transform: translateZ(0);
 }
 
@@ -1703,13 +1792,20 @@ async function send(forcedText) {
 .popup-close-btn:hover { background: rgba(200,80,80,0.1) !important; color: rgba(200,80,80,0.8) !important; }
 
 .chat-messages {
-  flex: 1; overflow-y: auto; overflow-x: hidden;
-  padding: 12px 13px;
-  display: flex; flex-direction: column; gap: 8px;
+  flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
-.chat-main.is-expanded .chat-messages { padding: 20px 24px; gap: 12px; }
 .chat-main.is-expanded .chat-messages .msg-bubble { max-width: 72%; font-size: 14px; }
-.msg-sentinel { flex-shrink: 0; height: 1px; }
+.chat-main.is-expanded .chat-messages .msg-quoted { max-width: 72%; font-size: 13.5px; }
+/* 虚拟列表占位容器：高度由 JS 撑出来（虚拟内容高度 + 顶部留白），撑出的空间给绝对定位的消息行腾地方 */
+.msg-virtual-spacer { position: relative; width: 100%; }
+/* 绝对定位的行不认祖先的 padding（top:0/left:0 是相对边框盒，不是内容盒），
+   横向留白（原来 .chat-messages 的左右 padding）和「gap」只能各自摆在每一行自己身上，
+   用 box-sizing:border-box 保证不溢出 100% 宽度。 */
+.msg-virtual-row { position: absolute; top: 0; left: 0; width: 100%; box-sizing: border-box; padding: 0 13px 8px; }
+.chat-main.is-expanded .msg-virtual-row { padding: 0 24px 12px; }
+/* 状态指示气泡不在虚拟列表里，是紧跟在占位容器后面的普通流内元素，补回同款左右留白 + gap */
+.chat-messages > .msg { margin: 8px 13px 12px; }
+.chat-main.is-expanded .chat-messages > .msg { margin: 12px 24px 20px; }
 
 .chat-att-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 6px; }
 .chat-att-chip { display: flex; align-items: center; gap: 5px; max-width: 180px;
@@ -1904,19 +2000,21 @@ async function send(forcedText) {
 .im-qr-hint { font-size: 11.5px; color: var(--text-secondary); text-align: center; line-height: 1.5; }
 .im-qr-err { font-size: 11.5px; color: rgba(200,80,80,0.9); padding: 4px 0; }
 
-/* 咕咕回复里的「扫码绑定」动作按钮：md 里的 gugu:// 链接渲染成按钮（onChatActionClick 拦截点击）*/
+/* 咕咕回复里的动作按钮：md 里的 gugu:// 链接渲染成按钮（onChatActionClick 拦截点击）——
+   跟全局 .press-fx 一套手感（悬停不上浮，只在按下时下沉），这些 <a> 是 markdown 渲染出来的、
+   没法在模板里挂 class，数值直接写这里（hover/active 与全局 .press-fx 保持一致） */
 .msg-bubble.md-body :deep(a[href^="gugu://"]) {
   display: inline-flex; align-items: center; gap: 5px;
   margin: 3px 4px 3px 0; padding: 5px 12px;
   font-size: 12.5px; font-weight: 600; text-decoration: none;
   color: #fff; background: linear-gradient(135deg, #7b7fb2, #9590c4);
   border-radius: 999px; box-shadow: 0 2px 8px rgba(123,127,178,0.28);
-  cursor: pointer; transition: transform 0.12s, box-shadow 0.12s; user-select: none;
+  cursor: pointer; transition: box-shadow 0.12s, transform 0.15s ease, opacity 0.15s ease; user-select: none;
 }
 .msg-bubble.md-body :deep(a[href^="gugu://"]:hover) {
-  transform: translateY(-1px); box-shadow: 0 4px 12px rgba(123,127,178,0.36); opacity: 1;
+  box-shadow: 0 4px 14px rgba(80,90,110,0.3); opacity: 1;
 }
-.msg-bubble.md-body :deep(a[href^="gugu://"]:active) { transform: translateY(0); }
+.msg-bubble.md-body :deep(a[href^="gugu://"]:active) { transform: translateY(1px); opacity: 0.93; }
 
 /* 扫码绑定弹窗（聊天上弹小窗）*/
 .cb-overlay {
@@ -1994,8 +2092,19 @@ async function send(forcedText) {
   background: linear-gradient(135deg, #7b7fb2, #9590c4); color: white;
   border-bottom-right-radius: 4px;
 }
+/* 引用/回复预览条：浅色小字，跟正文气泡区分开——只是提示"引用了什么"，不是正文。
+   截到 8 行，超出部分靠 hover 的原生 title 提示看全文，避免长引用只剩一小段看不出内容。 */
+.msg-quoted {
+  max-width: 88%; margin-bottom: 4px; padding: 6px 10px;
+  font-size: 12.5px; line-height: 1.5; color: var(--text-secondary);
+  background: rgba(123,127,178,0.08); border-left: 2.5px solid rgba(123,127,178,0.45);
+  border-radius: 4px; white-space: pre-wrap; word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden;
+}
 /* 咕咕发来的文件卡片 */
 .msg-files { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 88%; min-width: 0; }
+/* 按下反馈来自全局 .press-fx（模板里已加）——只要点击下沉，不要悬停抬起：
+   这条挤在其它消息气泡中间，抬起会显得跟旁边气泡割裂 */
 .msg-file {
   display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer;
   max-width: 100%; box-sizing: border-box;
@@ -2003,7 +2112,9 @@ async function send(forcedText) {
   background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.65);
   border-radius: 14px; border-bottom-left-radius: 5px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px rgba(80,80,120,0.06);
-  transition: background 0.15s, box-shadow 0.15s;
+  /* transform/opacity 是按下反馈(.press-fx)要用的——跟这里自己的 transition 写一起，
+     避免两条规则的 transition 互相整体覆盖、丢掉其中一份 */
+  transition: background 0.15s, box-shadow 0.15s, transform 0.15s ease, opacity 0.15s ease;
 }
 .msg-file:hover {
   background: rgba(255,255,255,0.7);
@@ -2098,10 +2209,10 @@ async function send(forcedText) {
 .mini-player {
   position: fixed; right: 28px; box-sizing: border-box; width: 360px;   /* border-box 外宽 360，与小窗/气泡严格对齐 */
   transition: bottom 0.28s cubic-bezier(0.34, 1.2, 0.64, 1);
-  background: var(--panel-bg); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
+  background: var(--panel-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255,255,255,0.65); border-radius: 20px;
   box-shadow: var(--glass-shadow-lg); padding: 12px 14px 10px;
-  z-index: 10002; display: flex; flex-direction: column; gap: 7px;   /* 高于卡片拖拽克隆体（9999） */
+  display: flex; flex-direction: column; gap: 7px;   /* z-index 由 :style 动态(跟随聊天窗 ±1) */
 }
 .mp-info { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .mp-name { font-size: 12px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }

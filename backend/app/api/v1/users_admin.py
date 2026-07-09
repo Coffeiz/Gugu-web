@@ -84,6 +84,7 @@ async def list_users(
             "email":                u.email,
             "display_name":         u.display_name,
             "is_active":            u.is_active,
+            "is_developer":         bool(getattr(u, "is_developer", False)),
             "created_at":           u.created_at.isoformat() if u.created_at else None,
             "tokens_week":         week_map.get(uid, 0),
             "tokens_6h":           h6_map.get(uid, 0),
@@ -110,17 +111,35 @@ async def toggle_ban(user_id: str, request: Request, db: AsyncSession = Depends(
     return {"id": user_id, "is_active": user.is_active}
 
 
+@router.patch("/{user_id}/developer")
+async def toggle_developer(user_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """切换开发者标记（数据面板可一键排除开发者数据）。"""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    user.is_developer = not user.is_developer
+    await db.commit()
+    action = "标记开发者" if user.is_developer else "取消开发者标记"
+    username = getattr(request.state, "admin_username", "admin")
+    await write_log(db, username, "user", f"{action} {user.username}", request)
+    return {"id": user_id, "is_developer": user.is_developer}
+
+
 @router.delete("/{user_id}")
 async def delete_user(user_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """删除用户 = 账户注销（管理员代操作）。实际删除逻辑与用户自助注销（DELETE /auth/me）
+    共用 app/services/account_deletion.delete_account，避免两处各写一份、后续改动漂移。"""
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     uname = user.username
-    await db.delete(user)
-    await db.commit()
+
+    from app.services.account_deletion import delete_account
+    removed = await delete_account(db, user)
+
     username = getattr(request.state, "admin_username", "admin")
-    await write_log(db, username, "user", f"删除用户 {uname}", request)
-    return {"deleted": True}
+    await write_log(db, username, "user", f"删除用户 {uname}（存储对象清除 {removed} 个）", request)
+    return {"deleted": True, "storage_objects_removed": removed}
 
 
 @router.patch("/{user_id}/quota")

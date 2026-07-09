@@ -24,6 +24,16 @@ def _is_mimo(ai) -> bool:
     return (getattr(ai, "provider", "") or "").lower() == "mimo" or "xiaomimimo" in (getattr(ai, "base_url", "") or "").lower()
 
 
+def _is_deepseek(ai) -> bool:
+    return (getattr(ai, "provider", "") or "").lower() == "deepseek" or "deepseek" in (getattr(ai, "base_url", "") or "").lower()
+
+
+def supports_thinking_toggle(ai) -> bool:
+    """该模型(OpenAI 通道)是否支持 `{"thinking":{"type":...}}` 思考开关：mimo 与 deepseek 都用同一参数。
+    其它 openai 兼容厂商(qwen/openai)没这参数，传了可能报错，故只对这两家发。"""
+    return _is_mimo(ai) or _is_deepseek(ai)
+
+
 def use_anthropic_for(ai) -> bool:
     """该模型走 anthropic 块格式还是 openai 格式 —— 全后端唯一判定口（聊天/记忆/IM 共用，避免各处不一致）。
     优先显式 `api_format`（mimo 等同时提供两套 API 的厂商可选）；否则按 provider/base_url 自动判。"""

@@ -66,7 +66,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import SegBar from '@/components/common/SegBar.vue'
@@ -161,7 +161,7 @@ function isUrgent(p) {
   if (p.status === 'done' || !p.deadline) return false
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const dl    = new Date(p.deadline + 'T00:00:00')
-  return Math.ceil((dl - today) / 86400000) <= 3
+  return Math.ceil((dl.getTime() - today.getTime()) / 86400000) <= 3
 }
 
 const thisYear = new Date().getFullYear()

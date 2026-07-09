@@ -10,6 +10,7 @@
     <div class="toolbar">
       <AdminSelect v-model="filterSource" :options="sourceOptions" style="width:140px" />
       <AdminSelect v-model="filterLevel"  :options="levelOptions"  style="width:130px" />
+      <input v-model="filterText" class="debug-search" placeholder="搜索关键词（如 trace=xxxx 串起全链路）" />
       <button class="icon-btn" :class="{ active: autoScroll }" @click="autoScroll = !autoScroll" title="自动滚动">
         <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
           <path d="M7.5 2v11M4 10l3.5 3.5L11 10"/>
@@ -55,7 +56,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import AdminSelect from '@/components/AdminSelect.vue'
@@ -65,6 +66,7 @@ const adminStore = useAdminStore()
 const lines      = ref([])
 const filterSource = ref('')
 const filterLevel  = ref('')
+const filterText   = ref('')
 const autoScroll   = ref(true)
 const connected    = ref(false)
 const tableWrap    = ref(null)
@@ -96,6 +98,8 @@ const filtered = computed(() => {
   let list = lines.value
   if (filterSource.value) list = list.filter(r => r.source === filterSource.value)
   if (filterLevel.value) list = list.filter(r => rowLevel(r.line) === `lvl-${filterLevel.value}`)
+  const q = filterText.value.trim().toLowerCase()
+  if (q) list = list.filter(r => r.line.toLowerCase().includes(q))
   return list
 })
 
@@ -104,14 +108,17 @@ const liveCount = computed(() => filtered.value.length)
 function clearLines() { lines.value = [] }
 
 function parseTime(line) {
-  // app logger 格式：06-26 08:03:21 INFO ...  → 取 HH:MM:SS
+  // app logger 格式：06-26 08:03:21 INFO ...  → 取 HH:MM:SS；无行内时间戳返回空（不再用 new Date 当接收时间）
   const m = line.match(/^\d{2}-\d{2} (\d{2}:\d{2}:\d{2})/)
-  if (m) return m[1]
-  return new Date().toTimeString().slice(0, 8)
+  return m ? m[1] : ''
 }
 
-function addLine(source, line) {
-  lines.value.push({ id: uid++, source, line, time: parseTime(line) })
+let lastLogTime = ''   // 续行 / uvicorn / print / traceback 无时间戳 → 沿用上一条 emit 时间，绝不用接收时间
+function addLine(source, line, time) {
+  // 优先用后端给的 emit 时间（已解析+继承+归并排序）；退到行内解析；再退到上一条；都没有才空
+  const t = time || parseTime(line) || lastLogTime
+  if (t) lastLogTime = t
+  lines.value.push({ id: uid++, source, line, time: t })
   if (lines.value.length > 2000) lines.value.splice(0, 200)
   if (autoScroll.value) {
     nextTick(() => {
@@ -124,7 +131,8 @@ async function loadTail() {
   try {
     const res = await adminStore.authFetch('/api/v1/admin/debug/logs/tail?lines=200')
     const data = await res.json()
-    for (const { source, line } of (data.lines ?? [])) addLine(source, line)
+    lastLogTime = ''
+    for (const { source, line, time } of (data.lines ?? [])) addLine(source, line, time)
   } catch {}
 }
 
@@ -135,8 +143,8 @@ function startSSE() {
   sse.onopen = () => { connected.value = true }
   sse.onmessage = (e) => {
     try {
-      const { source, line } = JSON.parse(e.data)
-      addLine(source, line)
+      const { source, line, time } = JSON.parse(e.data)
+      addLine(source, line, time)
     } catch {}
   }
   sse.onerror = () => {
@@ -170,14 +178,16 @@ onUnmounted(() => { sse?.close() })
   padding: 18px 36px 0; flex-shrink: 0;
 }
 .toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); }
-
-.icon-btn {
-  width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
+.debug-search {
+  width: 280px; height: 30px; padding: 0 11px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px; color: rgba(255,255,255,0.85); font-size: 12px;
+  font-family: var(--font-mono, monospace); outline: none; transition: border-color 0.15s;
 }
-.icon-btn:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.8); }
+.debug-search::placeholder { color: rgba(255,255,255,0.28); font-family: var(--font-sans); }
+.debug-search:focus { border-color: rgba(123,127,178,0.6); }
+
+/* .icon-btn 基础用 Admin 全局样式（AdminApp.vue）；本页保留 active 变体（实时开关） */
 .icon-btn.active { background: rgba(100,200,160,0.12); border-color: rgba(100,200,160,0.3); color: rgba(100,200,160,0.9); }
 
 .live-dot {

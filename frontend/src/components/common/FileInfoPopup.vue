@@ -2,7 +2,7 @@
   <Teleport to="body">
     <Transition name="info-pop">
       <div v-if="show && file" ref="el" class="fp-info-win"
-        :style="{ left: posX + 'px', top: posY + 'px' }"
+        :style="{ left: posX + 'px', top: posY + 'px', zIndex: myZ }"
         @mousedown.stop
       >
         <div class="fp-info-title" @mousedown.prevent="startDrag">
@@ -50,8 +50,9 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, watch, nextTick, onUnmounted } from 'vue'
+import { nextZ } from '@/composables/windowz'
 import { PhX } from '@phosphor-icons/vue'
 
 const props = defineProps({
@@ -65,9 +66,11 @@ const emit = defineEmits(['close'])
 const el   = ref(null)
 const posX = ref(0)
 const posY = ref(0)
+const myZ  = ref(0)   // 每次弹出领新 z,盖当前最顶窗口
 
 watch(() => [props.show, props.x, props.y], async ([v]) => {
   if (!v) return
+  myZ.value = nextZ()
   posX.value = props.x
   posY.value = props.y
   await nextTick()
@@ -111,12 +114,12 @@ onUnmounted(() => {
   border-radius: 12px;
   overflow: hidden;
   background: rgba(242, 243, 248, 0.97);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: var(--popup-blur);
+  -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow: 0 8px 32px rgba(20, 25, 60, 0.18), 0 2px 8px rgba(0, 0, 0, 0.07);
   user-select: none;
-  z-index: 9999;
+  /* z-index 由 :style 动态(每次弹出盖当前最顶窗口) */
 }
 .fp-info-title {
   display: flex;

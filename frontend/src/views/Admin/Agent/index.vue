@@ -194,7 +194,7 @@
             <div class="modal-field modal-field--row">
               <div class="thinking-label">
                 <span>深度思考</span>
-                <span class="thinking-hint">仅支持 MiniMax M3 / Anthropic（adaptive 模式）</span>
+                <span class="thinking-hint">MiniMax M3 / Anthropic / mimo / DeepSeek（adaptive 模式）</span>
               </div>
               <button
                 class="toggle-switch"
@@ -203,6 +203,18 @@
               >
                 <span class="toggle-knob" />
               </button>
+            </div>
+
+            <div class="modal-field modal-field--row" v-if="editTarget.provider === 'deepseek' && editTarget.thinking === 'adaptive'">
+              <div class="thinking-label">
+                <span>思考强度</span>
+                <span class="thinking-hint">DeepSeek 思考开时生效（思考模式下 temperature 失效，强度是质量/成本旋钮）</span>
+              </div>
+              <div style="display:flex; gap:6px;">
+                <button type="button" class="toggle-btn" :class="{ active: !editTarget.reasoning_effort }" @click="editTarget.reasoning_effort = ''">默认</button>
+                <button type="button" class="toggle-btn" :class="{ active: editTarget.reasoning_effort === 'high' }" @click="editTarget.reasoning_effort = 'high'">high</button>
+                <button type="button" class="toggle-btn" :class="{ active: editTarget.reasoning_effort === 'max' }" @click="editTarget.reasoning_effort = 'max'">max</button>
+              </div>
             </div>
 
             <div class="modal-field modal-field--row">
@@ -278,7 +290,7 @@
         <div v-if="activeProfile === 'reflection'" class="persona-caution"
           style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
                  background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
-          ⚠️ 这是<strong>记忆反思提炼词</strong>，决定咕咕每次对话后从中记住什么。改它会影响记忆质量；需保持输出 JSON 格式 <code>{"facts":[...],"daily":"..."}</code>。
+          ⚠️ 这是<strong>记忆反思提炼词</strong>，决定咕咕每次对话后从中记住什么。改它会影响记忆质量；需保持输出 JSON 格式 <code>{"profile_add":[...],"pattern_add":[...],"daily":"..."}</code>。
         </div>
 
         <div v-if="activeProfile === 'compress'" class="persona-caution"
@@ -362,6 +374,20 @@
               class="toggle-switch"
               :class="{ on: agentDraft.conv_compress_enabled }"
               @click="agentDraft.conv_compress_enabled = !agentDraft.conv_compress_enabled; saveBehavior()"
+            >
+              <span class="toggle-knob" />
+            </button>
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
+              <span>IM 慢工具进度声明</span>
+              <span class="behavior-desc">多步工具循环期间先发一句"我去查一下"再执行，减少 IM 非流式的长时间沉默感；文案来自工具自身登记的固定文案，不是模型现场生成；只在 IM 生效，网页不受影响</span>
+            </div>
+            <button
+              class="toggle-switch"
+              :class="{ on: agentDraft.im_progress_announce_enabled }"
+              @click="agentDraft.im_progress_announce_enabled = !agentDraft.im_progress_announce_enabled; saveBehavior()"
             >
               <span class="toggle-knob" />
             </button>
@@ -462,7 +488,7 @@
 
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label">
-              <span>SearXNG 引擎</span>
+              <span>SearXNG 引擎（文本搜索 web_search）</span>
               <span class="behavior-desc">逗号分隔。国内服务器一般只有这几个可达；google/bing 会超时</span>
             </div>
             <input
@@ -472,6 +498,29 @@
               v-model="searchDraft.searxng_engines"
               placeholder="sogou,quark,360search"
             />
+          </div>
+
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>图片搜索引擎（image_search）</span>
+              <span class="behavior-desc">逗号分隔，留空则回退复用上面的文本引擎列表。图片分类能连通的引擎不一定和文本分类是同一批，部署后建议用测试按钮实测调整</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:0;">
+              <span v-if="searchTest.searxng_images.msg" :title="searchTest.searxng_images.msg"
+                    :style="{ color: searchTest.searxng_images.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
+                {{ searchTest.searxng_images.msg }}
+              </span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.searxng_images.loading" @click="testSearch('searxng_images')">
+                {{ searchTest.searxng_images.loading ? '测试中…' : '测试' }}
+              </button>
+              <input
+                type="text"
+                class="behavior-input"
+                style="width: 280px; flex-shrink:0;"
+                v-model="searchDraft.searxng_image_engines"
+                placeholder="留空=复用文本引擎"
+              />
+            </div>
           </div>
 
           <div class="behavior-item" style="grid-column: 1 / -1;">
@@ -576,6 +625,155 @@
             <svg v-if="voiceSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
             {{ voiceSaving ? '保存中…' : '保存' }}
           </button>
+        </div>
+      </section>
+
+      <!-- ── 向量 Embedding 模型 ── -->
+      <section v-if="activeTab === 'behavior'" class="config-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="5" cy="6" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="10" cy="14" r="2"/>
+              <path d="M6.5 7.3l2.2 5.4M13.5 7.3l-2.2 5.4M7 6h6"/>
+            </svg>
+          </div>
+          <div class="card-title-block">
+            <h3>向量 Embedding 模型</h3>
+            <p>独立于聊天/语音模型，<b>单独 pin 一个</b>——换它会作废所有已存向量、需重建，故意不进模型轮换。用于记忆的语义检索（pattern 超量时按语义挑，而非词法）。<b>关闭 = 退回词法检索</b>，零副作用。<b>走 OpenAI 兼容 <code>/embeddings</code></b>——自托管 Ollama 填 <code>http://NAS:11434/v1</code>、模型 <code>qwen3-embedding:0.6b</code>、Key 随便填。</p>
+          </div>
+        </div>
+
+        <div class="behavior-grid">
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>启用向量检索</span>
+              <span class="behavior-desc">关闭＝退回词法相关性（bigram），零副作用；改完记得下方保存</span>
+            </div>
+            <button
+              class="toggle-switch"
+              :class="{ on: embeddingDraft.enabled }"
+              @click="embeddingDraft.enabled = !embeddingDraft.enabled"
+            >
+              <span class="toggle-knob" />
+            </button>
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc">Ollama 填 <code>qwen3-embedding:0.6b</code>；dashscope 填 <code>text-embedding-v3</code></span></div>
+            <input type="text" class="behavior-input" style="width:280px" v-model="embeddingDraft.model" placeholder="qwen3-embedding:0.6b" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>Base URL</span><span class="behavior-desc">OpenAI 兼容端点，到 /v1 那层（不含 /embeddings）。Ollama：http://NAS-IP:11434/v1</span></div>
+            <input type="text" class="behavior-input" style="width:280px" v-model="embeddingDraft.base_url" placeholder="http://…:11434/v1" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>API Key<span v-if="configStore.secretSet.embeddingApiKey" style="margin-left:6px;color:var(--color-primary);font-size:11px;font-weight:600">· 已配置 ✓</span></span><span class="behavior-desc"><b>Ollama 无需鉴权、可留空</b>；用 dashscope / OpenAI 才需填。已存的 Key 不回显，留空＝保留不变</span></div>
+            <input type="password" class="behavior-input" style="width:280px" v-model="embeddingDraft.api_key" autocomplete="new-password"
+                   :placeholder="configStore.secretSet.embeddingApiKey ? '已配置，留空＝不修改' : 'Ollama 可留空；dashscope/OpenAI 才填'" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>维度 dimensions</span><span class="behavior-desc">0＝用模型默认（qwen3-embedding:0.6b 默认 1024）；部分模型支持指定降维。<b>改了维度＝换模型，需重建向量</b></span></div>
+            <input type="number" class="behavior-input" style="width:280px" v-model.number="embeddingDraft.dimensions" placeholder="0（模型默认）" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>连通测试</span><span class="behavior-desc">用上面填的参数发一次 embed，看通不通、返回几维（改完先保存再测更准，测试用的是当前输入值）</span></div>
+            <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;min-width:0;">
+              <span v-if="embTest.msg" :title="embTest.msg"
+                    :style="{ color: embTest.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
+                {{ embTest.msg }}
+              </span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="embTest.loading" @click="testEmbedding">
+                {{ embTest.loading ? '测试中…' : '测试' }}
+              </button>
+            </div>
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>重建向量</span><span class="behavior-desc">换了模型/维度后点一次，给所有用户的 pattern + 长期记忆用新模型重算向量（后台跑，期间检索自动退回词法）。日常不用点</span></div>
+            <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;min-width:0;">
+              <span v-if="rebuild.msg" :title="rebuild.msg"
+                    :style="{ color: rebuild.error ? '#e07070' : '#4caf7d', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
+                {{ rebuild.msg }}
+              </span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="rebuild.running" @click="startRebuild">
+                {{ rebuild.running ? `重建中… ${rebuild.done}/${rebuild.total}` : '重建向量' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <span class="save-hint" :class="{ error: !!embeddingError }">
+            <template v-if="embeddingSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-else-if="embeddingError">{{ embeddingError }}</template>
+          </span>
+          <button class="btn-ghost" @click="resetEmbedding">撤销修改</button>
+          <button class="btn-primary" :class="{ loading: embeddingSaving }" :disabled="embeddingSaving" @click="saveEmbedding">
+            <svg v-if="embeddingSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            {{ embeddingSaving ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </section>
+
+      <!-- ── 记忆维护：一键复核清理，见 scripts/refresh_memory.py ── -->
+      <section v-if="activeTab === 'behavior'" class="config-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 10a6 6 0 1 1 2 4.5M4 10V6M4 10H8"/>
+            </svg>
+          </div>
+          <div class="card-title-block">
+            <h3>记忆维护</h3>
+            <p>批量复核所有用户的记忆，一次做五件事：① 删掉 pattern.json 里不符合当前标准的旧条目 ② 把其中该算「用户画像」的条目搬进 profile.json ③ 把误进 profile 的阶段性事件迁去 memory.md ④ 把旧 daily.md 单行格式改成按日期分组的新格式 ⑤ 清掉已迁移完的遗留 facts.json/facts.md。<b>先预览、确认没问题再真执行</b>——①②涉及 LLM 判断、同一批数据可能不稳定，预览看到的就是真执行的，不会重新判断一遍；③④⑤是确定性改写，不受此影响。</p>
+          </div>
+        </div>
+
+        <div class="behavior-grid">
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>生成预览</span><span class="behavior-desc">对所有用户跑一次复核（每人独立判断 3 次取多数票），只读不写，后台跑</span></div>
+            <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;min-width:0;">
+              <span v-if="memCleanup.msg" :title="memCleanup.msg"
+                    :style="{ color: memCleanup.error ? '#e07070' : '#4caf7d', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
+                {{ memCleanup.msg }}
+              </span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="memCleanup.running" @click="startMemCleanupPreview">
+                {{ memCleanup.running ? `预览中… ${memCleanup.done}/${memCleanup.total}` : '生成预览' }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="memCleanup.status === 'done'" class="behavior-item" style="grid-column: 1 / -1; flex-direction:column; align-items:stretch; gap:10px;">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <span class="behavior-desc">
+                {{ memCleanupUserCount === 0 ? '预览完成：没有需要处理的内容' : `预览完成：${memCleanupUserCount} 个用户，共删 ${memCleanupTotalRemoved} 条 / 搬 ${memCleanupTotalMoved} 条去画像 / 迁 ${memCleanupTotalProfileEvents} 条画像事件到 memory / 迁 ${memCleanupTotalDaily} 条 daily / 清 ${memCleanupTotalLegacy} 个遗留文件` }}
+              </span>
+              <button v-if="memCleanupUserCount > 0" class="btn-ghost" style="font-size:12px;padding:4px 10px;" @click="memCleanup.expanded = !memCleanup.expanded">
+                {{ memCleanup.expanded ? '收起明细' : '查看明细' }}
+              </button>
+            </div>
+            <div v-if="memCleanup.expanded && memCleanupUserCount > 0" class="mem-cleanup-detail">
+              <div v-for="(p, uid) in memCleanup.plan" :key="uid">
+                <template v-if="p.removed_texts?.length || p.moved_texts?.length || p.profile_event_texts?.length || p.daily_texts?.length || p.legacy_files?.length">
+                  <div class="mem-cleanup-uid">{{ uid }}（{{ p.total }} 条）</div>
+                  <div v-for="(t, i) in p.removed_texts" :key="'r'+i" class="mem-cleanup-text">· [删] {{ t }}</div>
+                  <div v-for="(t, i) in p.moved_texts" :key="'m'+i" class="mem-cleanup-text" style="color:rgba(123,127,178,0.85);">· [搬去画像] {{ t }}</div>
+                  <div v-for="(t, i) in p.profile_event_texts" :key="'pe'+i" class="mem-cleanup-text" style="color:rgba(255, 196, 122, 0.9);">· [画像事件迁 memory] {{ t }}</div>
+                  <div v-for="(t, i) in p.daily_texts" :key="'d'+i" class="mem-cleanup-text" style="color:rgba(117, 183, 255, 0.85);">· [迁 daily] {{ t }}</div>
+                  <div v-for="(f, i) in p.legacy_files" :key="'l'+i" class="mem-cleanup-text" style="color:rgba(255,255,255,0.4);">· [清遗留文件] {{ f }}</div>
+                </template>
+                <template v-else-if="p.error">
+                  <div class="mem-cleanup-uid" style="color:#e07070;">{{ uid }}：{{ p.error }}</div>
+                </template>
+              </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+              <span v-if="memCleanupApplyMsg" :style="{ fontSize:'12px', color: memCleanup.applyError ? '#e07070' : '#4caf7d' }">{{ memCleanupApplyMsg }}</span>
+              <button v-if="memCleanupUserCount > 0" class="btn-primary" :disabled="memCleanup.applying" @click="applyMemCleanup">
+                {{ memCleanup.applying ? '执行中…' : '确认执行' }}
+              </button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -822,7 +1020,7 @@
         <!-- 会话列表 -->
         <div class="trace-list">
           <div class="trace-search">
-            <input v-model="traceUser" placeholder="按用户名筛选…" @keyup.enter="fetchTraceSessions" />
+            <input v-model="traceUser" placeholder="按用户名筛选…" v-enter="fetchTraceSessions" />
             <button @click="fetchTraceSessions">搜索</button>
           </div>
           <div v-if="traceLoading" class="trace-hint">加载中…</div>
@@ -880,8 +1078,8 @@
   </div>
 </template>
 
-<script setup>
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+<script setup lang="ts">
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { PhBrain, PhEye } from '@phosphor-icons/vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
@@ -1166,7 +1364,7 @@ async function togglePool(p) {
 
 function openNewPreset() {
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 2000, temperature: 0.7, context_tokens: 3000, thinking: 'disabled', vision: false, api_format: '' }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 2000, temperature: 0.7, context_tokens: 3000, thinking: 'disabled', reasoning_effort: '', vision: false, api_format: '' }
   editError.value  = ''
 }
 
@@ -1330,10 +1528,10 @@ async function switchProfile(profile) {
 }
 
 function insertPlaceholder(key) {
-  const ta = document.querySelector('.prompt-textarea')
+  const ta = document.querySelector<HTMLTextAreaElement>('.prompt-textarea')
   if (!ta) return
-  const start = ta.selectionStart
-  const end   = ta.selectionEnd
+  const start = ta.selectionStart ?? 0
+  const end   = ta.selectionEnd ?? 0
   const text  = promptContent.value
   promptContent.value = text.slice(0, start) + key + text.slice(end)
 }
@@ -1425,18 +1623,187 @@ async function saveVoice() {
   }
 }
 
+// ── 向量 Embedding 模型 ──
+const embeddingDraft  = reactive({ ...configStore.cfg.embedding })
+const embeddingSaving = ref(false)
+const embeddingSaved  = ref(false)
+const embeddingError  = ref('')
+const embTest = reactive({ loading: false, ok: false, msg: '' })
+function resetEmbedding() { Object.assign(embeddingDraft, configStore.cfg.embedding) }
+async function saveEmbedding() {
+  embeddingSaving.value = true; embeddingSaved.value = false; embeddingError.value = ''
+  try {
+    await configStore.saveConfig({ embedding: { ...embeddingDraft } })
+    embeddingSaved.value = true
+    Object.assign(embeddingDraft, configStore.cfg.embedding)   // key 存后回 ****，同步回「不修改」态
+    setTimeout(() => { embeddingSaved.value = false }, 3000)
+  } catch (e) {
+    embeddingError.value = e.message || '保存失败'
+  } finally {
+    embeddingSaving.value = false
+  }
+}
+async function testEmbedding() {
+  embTest.loading = true; embTest.msg = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/test-embedding', {
+      method: 'POST',
+      body: JSON.stringify({
+        base_url:   embeddingDraft.base_url || '',   // 留空=用已存配置
+        api_key:    embeddingDraft.api_key || '',
+        model:      embeddingDraft.model || '',
+        dimensions: embeddingDraft.dimensions || 0,
+      }),
+    })
+    const data = await res.json()
+    embTest.ok = !!data.ok
+    embTest.msg = data.message || (data.ok ? 'OK' : '失败')
+  } catch (e) {
+    embTest.ok = false
+    embTest.msg = '请求失败：' + e.message
+  } finally {
+    embTest.loading = false
+  }
+}
+
+// 向量重建（换模型后批量重算，后台跑 + 轮询进度）
+const rebuild = reactive({ running: false, done: 0, total: 0, msg: '', error: false })
+let rebuildTimer: ReturnType<typeof setInterval> | null = null
+function stopRebuildPoll() { if (rebuildTimer) { clearInterval(rebuildTimer); rebuildTimer = null } }
+async function pollRebuild() {
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/embedding-rebuild/status')
+    const d = await res.json()
+    if (d.status === 'running') {
+      rebuild.running = true; rebuild.done = d.done || 0; rebuild.total = d.total || 0
+      rebuild.msg = `重建中 ${rebuild.done}/${rebuild.total}`; rebuild.error = false
+      if (!rebuildTimer) rebuildTimer = setInterval(pollRebuild, 2000)   // 自续轮询（含页面重载接续）
+    } else if (d.status === 'done') {
+      rebuild.running = false; rebuild.error = false
+      rebuild.msg = `完成：重算了 ${d.done || 0} 个用户的 pattern + 长期记忆向量（${d.with_facts || 0} 个有 pattern）`
+      stopRebuildPoll()
+    } else if (d.status === 'error') {
+      rebuild.running = false; rebuild.error = true; rebuild.msg = '失败：' + (d.message || '')
+      stopRebuildPoll()
+    } else {
+      rebuild.running = false; stopRebuildPoll()
+    }
+  } catch { /* 忽略单次轮询失败 */ }
+}
+async function startRebuild() {
+  rebuild.msg = ''; rebuild.error = false
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/embedding-rebuild', { method: 'POST' })
+    const d = await res.json()
+    if (d.ok) {
+      rebuild.running = true; rebuild.total = d.total || 0; rebuild.done = 0
+      rebuild.msg = `已启动，共 ${d.total} 个用户`
+    } else {
+      rebuild.error = true; rebuild.msg = d.message || '启动失败'
+    }
+    pollRebuild()   // 拉一次进度；若在跑会自启轮询
+  } catch (e) {
+    rebuild.error = true; rebuild.msg = '请求失败：' + e.message
+  }
+}
+
+// ── 记忆维护：pattern.json 批量复核清理（先预览再确认，见 backend scripts/refresh_memory.py）──
+interface MemCleanupPlanItem {
+  removed_ids?: string[]; removed_texts?: string[]
+  moved_ids?: string[]; moved_texts?: string[]
+  profile_event_migrated?: number; profile_event_texts?: string[]
+  daily_migrated?: number; daily_texts?: string[]
+  legacy_files?: string[]
+  total?: number; error?: string
+}
+const memCleanup = reactive({
+  running: false, done: 0, total: 0, msg: '', error: false,
+  status: 'idle' as 'idle' | 'running' | 'done',
+  plan: {} as Record<string, MemCleanupPlanItem>,
+  expanded: false, applying: false, applyError: false, applyMsg: '',
+})
+let memCleanupTimer: ReturnType<typeof setInterval> | null = null
+function stopMemCleanupPoll() { if (memCleanupTimer) { clearInterval(memCleanupTimer); memCleanupTimer = null } }
+const memCleanupUserCount = computed(() => Object.values(memCleanup.plan).filter(p =>
+  (p.removed_texts?.length ?? 0) > 0 || (p.moved_texts?.length ?? 0) > 0 ||
+  (p.profile_event_texts?.length ?? 0) > 0 || (p.daily_texts?.length ?? 0) > 0 || (p.legacy_files?.length ?? 0) > 0).length)
+const memCleanupTotalRemoved = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.removed_texts?.length ?? 0), 0))
+const memCleanupTotalMoved = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.moved_texts?.length ?? 0), 0))
+const memCleanupTotalProfileEvents = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.profile_event_migrated ?? 0), 0))
+const memCleanupTotalDaily = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.daily_migrated ?? 0), 0))
+const memCleanupTotalLegacy = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.legacy_files?.length ?? 0), 0))
+const memCleanupApplyMsg = computed(() => memCleanup.applyMsg)
+
+async function pollMemCleanup() {
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/memory-cleanup/status')
+    const d = await res.json()
+    memCleanup.status = d.status ?? 'idle'
+    if (d.status === 'running') {
+      memCleanup.running = true; memCleanup.done = d.done || 0; memCleanup.total = d.total || 0
+      memCleanup.msg = `预览中 ${memCleanup.done}/${memCleanup.total}`; memCleanup.error = false
+      if (!memCleanupTimer) memCleanupTimer = setInterval(pollMemCleanup, 2000)
+    } else if (d.status === 'done') {
+      memCleanup.running = false; memCleanup.error = false
+      memCleanup.plan = d.plan || {}
+      memCleanup.msg = `预览完成（共 ${d.total || 0} 个用户）`
+      stopMemCleanupPoll()
+    } else {
+      memCleanup.running = false; stopMemCleanupPoll()
+    }
+  } catch { /* 忽略单次轮询失败 */ }
+}
+async function startMemCleanupPreview() {
+  memCleanup.msg = ''; memCleanup.error = false; memCleanup.applyMsg = ''; memCleanup.expanded = false
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/memory-cleanup/preview', { method: 'POST' })
+    const d = await res.json()
+    if (d.ok) {
+      memCleanup.running = true; memCleanup.total = d.total || 0; memCleanup.done = 0
+      memCleanup.status = 'running'
+      memCleanup.msg = `已启动，共 ${d.total} 个用户`
+    } else {
+      memCleanup.error = true; memCleanup.msg = d.message || '启动失败'
+    }
+    pollMemCleanup()
+  } catch (e) {
+    memCleanup.error = true; memCleanup.msg = '请求失败：' + e.message
+  }
+}
+async function applyMemCleanup() {
+  if (!confirm(`确定要删 ${memCleanupTotalRemoved.value} 条、搬 ${memCleanupTotalMoved.value} 条去画像、迁 ${memCleanupTotalProfileEvents.value} 条画像事件到 memory、迁 ${memCleanupTotalDaily.value} 条 daily、清 ${memCleanupTotalLegacy.value} 个遗留文件吗？删除/搬动不可恢复。`)) return
+  memCleanup.applying = true; memCleanup.applyMsg = ''; memCleanup.applyError = false
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/memory-cleanup/apply', { method: 'POST' })
+    const d = await res.json()
+    if (d.ok) {
+      memCleanup.applyMsg = `完成：删 ${d.total_removed} 条 / 搬 ${d.total_moved} 条 / 迁 ${d.total_profile_events_migrated} 条画像事件 / 迁 ${d.total_daily_migrated} 条 daily / 清 ${d.legacy_files_removed} 个文件（共 ${d.users_applied} 个用户）`
+      memCleanup.plan = {}; memCleanup.status = 'idle'; memCleanup.expanded = false
+    } else {
+      memCleanup.applyError = true; memCleanup.applyMsg = d.detail || d.message || '执行失败'
+    }
+  } catch (e) {
+    memCleanup.applyError = true; memCleanup.applyMsg = '请求失败：' + e.message
+  } finally {
+    memCleanup.applying = false
+  }
+}
+
 // ── 搜索连通测试（SearXNG / Tavily）──
 const searchTest = reactive({
-  searxng: { loading: false, ok: false, msg: '' },
-  tavily:  { loading: false, ok: false, msg: '' },
+  searxng:        { loading: false, ok: false, msg: '' },
+  searxng_images: { loading: false, ok: false, msg: '' },
+  tavily:         { loading: false, ok: false, msg: '' },
 })
-async function testSearch(target) {
+async function testSearch(target: 'searxng' | 'searxng_images' | 'tavily') {
   const t = searchTest[target]
   t.loading = true; t.msg = ''
   try {
-    const payload = target === 'searxng'
-      ? { target, searxng_url: searchDraft.searxng_url || '', searxng_engines: searchDraft.searxng_engines || '' }
-      : { target, tavily_api_key: searchDraft.tavily_api_key || '' }   // 留空=用已存 key
+    const payload = target === 'tavily'
+      ? { target, tavily_api_key: searchDraft.tavily_api_key || '' }   // 留空=用已存 key
+      : target === 'searxng_images'
+        ? { target, searxng_url: searchDraft.searxng_url || '', searxng_image_engines: searchDraft.searxng_image_engines || '' }
+        : { target, searxng_url: searchDraft.searxng_url || '', searxng_engines: searchDraft.searxng_engines || '' }
     const res = await adminStore.authFetch('/api/v1/admin/config/test-search', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -1624,8 +1991,13 @@ onMounted(async () => {
   await configStore.fetchConfig()
   Object.assign(agentDraft, configStore.cfg.agent)
   Object.assign(voiceDraft, configStore.cfg.voice)
+  Object.assign(embeddingDraft, configStore.cfg.embedding)
   fetchPresets()
+  pollRebuild()   // 若有重建任务在跑，页面加载即反映进度并接续轮询
+  pollMemCleanup()   // 同理：若有记忆清理预览在跑/已完成，页面加载即反映
 })
+
+onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll() })
 </script>
 
 <style scoped>
@@ -1839,6 +2211,18 @@ onMounted(async () => {
 .behavior-label { display: flex; flex-direction: column; gap: 3px; }
 .behavior-label span:first-child { font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.8); }
 .behavior-desc { font-size: 12px; color: rgba(255,255,255,0.3); }
+
+.mem-cleanup-detail {
+  max-height: 260px; overflow-y: auto;
+  padding: 10px 12px; border-radius: 8px;
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+}
+.mem-cleanup-uid {
+  font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.5);
+  margin: 10px 0 4px; font-family: 'SF Mono','Consolas',monospace;
+}
+.mem-cleanup-uid:first-child { margin-top: 0; }
+.mem-cleanup-text { font-size: 12px; color: rgba(255,255,255,0.65); line-height: 1.6; padding-left: 4px; }
 
 .toggle-switch {
   width: 42px; height: 24px; border-radius: 99px;

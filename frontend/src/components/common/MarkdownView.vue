@@ -2,7 +2,7 @@
   <div class="md-view" v-html="rendered" />
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 import { renderMarkdown } from '@/utils/markdown'
 

@@ -77,7 +77,7 @@ PROFILES = ["default"]   # qqbot/mini 是早期占位、从未接线（运行时
 PLACEHOLDERS = [
     {"key": "{today}",       "desc": "今天日期"},
     {"key": "{summary}",     "desc": "当前状态快照（summary.md）"},
-    {"key": "{facts}",       "desc": "咕咕观察到的客观事实（facts.json 导出）"},
+    {"key": "{facts}",       "desc": "咕咕对用户的画像+行为模式（profile.json + pattern.json 导出）"},
     {"key": "{preferences}", "desc": "咕咕对用户偏好的理解（preferences.md）"},
     {"key": "{memory}",      "desc": "长期认知积累（memory.md）"},
     {"key": "{weekly}",      "desc": "本周记忆摘要"},
@@ -315,6 +315,19 @@ async def set_llm_strategy(body: StrategyUpdate):
     return {"strategy": presets.get("strategy", "active"), "pool_mode": presets.get("pool_mode", "random")}
 
 
+# 同步到 `ai`（当前激活段）的字段 + 默认值——create/update/activate 三处共用，**单一来源**：
+# 漏一个字段，active 模型就拿不到 → 表现为「面板保存了却不生效」。新增模型字段时只改这里。
+_AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens", "temperature",
+                 "context_tokens", "thinking", "reasoning_effort", "vision", "api_format")
+_AI_DEFAULTS = {"max_tokens": 2000, "temperature": 0.7, "context_tokens": 3000,
+                "thinking": "disabled", "reasoning_effort": "", "vision": False, "api_format": ""}
+
+
+def _ai_segment(item: dict) -> dict:
+    """从预设 item 抽出要写进 `ai`（激活段）的字段，缺省补默认。"""
+    return {k: item.get(k, _AI_DEFAULTS.get(k)) for k in _AI_SYNC_KEYS}
+
+
 class PresetCreate(BaseModel):
     name: str
     provider: str
@@ -325,6 +338,7 @@ class PresetCreate(BaseModel):
     temperature: float = 0.7
     context_tokens: int = 3000
     thinking: str = "disabled"
+    reasoning_effort: str = ""
     vision: bool = False
     api_format: str = ""
 
@@ -345,13 +359,14 @@ async def create_llm_preset(body: PresetCreate):
         "temperature": body.temperature,
         "context_tokens": body.context_tokens,
         "thinking": body.thinking,
+        "reasoning_effort": body.reasoning_effort,
         "vision": body.vision,
         "api_format": body.api_format,
     }
     presets["items"].append(item)
     if not presets.get("active_id"):
         presets["active_id"] = new_id
-        override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled","vision":False,"api_format":""}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking", "vision", "api_format")}
+        override["ai"] = _ai_segment(item)
     _write_override(override)
     return {**item, "api_key": _mask_key(item["api_key"])}
 
@@ -366,6 +381,7 @@ class PresetUpdate(BaseModel):
     temperature: float | None = None
     context_tokens: int | None = None
     thinking: str | None = None
+    reasoning_effort: str | None = None
     vision: bool | None = None
     api_format: str | None = None
     in_pool: bool | None = None
@@ -396,6 +412,8 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
         item["context_tokens"] = body.context_tokens
     if body.thinking is not None:
         item["thinking"] = body.thinking
+    if body.reasoning_effort is not None:
+        item["reasoning_effort"] = body.reasoning_effort
     if body.vision is not None:
         item["vision"] = body.vision
     if body.api_format is not None:
@@ -403,7 +421,7 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
     if body.in_pool is not None:
         item["in_pool"] = body.in_pool
     if presets.get("active_id") == preset_id:
-        override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled","vision":False,"api_format":""}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking", "vision", "api_format")}
+        override["ai"] = _ai_segment(item)
     _write_override(override)
     return {**item, "api_key": _mask_key(item["api_key"])}
 
@@ -429,7 +447,7 @@ async def activate_llm_preset(preset_id: str):
     if not item:
         raise HTTPException(404, "预设不存在")
     presets["active_id"] = preset_id
-    override["ai"] = {k: item.get(k, {"max_tokens":2000,"temperature":0.7,"context_tokens":3000,"thinking":"disabled","vision":False,"api_format":""}.get(k)) for k in ("provider", "api_key", "base_url", "model", "max_tokens", "temperature", "context_tokens", "thinking", "vision", "api_format")}
+    override["ai"] = _ai_segment(item)
     _write_override(override)
     return {"active_id": preset_id}
 

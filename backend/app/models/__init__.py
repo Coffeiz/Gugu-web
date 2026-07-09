@@ -13,6 +13,7 @@ from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Boolean, Big
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
+from app.core.crypto import EncryptedString
 from app.db.base import Base
 
 
@@ -35,6 +36,7 @@ class User(Base):
     storage_limit_bytes:  Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, default=None)
     search_limit_daily:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     last_active_at:       Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None, index=True)
+    is_developer:         Mapped[bool]          = mapped_column(Boolean, default=False)   # 开发者标记：数据面板可一键排除，看真实用户数据
 
     projects:      Mapped[list["Project"]]             = relationship(back_populates="owner", cascade="all, delete-orphan")
     files:         Mapped[list["File"]]                = relationship(back_populates="owner", cascade="all, delete-orphan")
@@ -185,6 +187,8 @@ class CalendarEvent(Base):
     user_id:     Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title:       Mapped[str]           = mapped_column(String(300))
     date:        Mapped[str]           = mapped_column(String(10))
+    time:        Mapped[Optional[str]] = mapped_column(String(5), nullable=True)   # 开始时间 HH:MM，可选；空=全天
+    end_time:    Mapped[Optional[str]] = mapped_column(String(5), nullable=True)   # 结束时间 HH:MM，可选
     type:        Mapped[str]           = mapped_column(String(50),  default="event")
     client:      Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     project_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
@@ -242,6 +246,10 @@ class ConversationMessage(Base):
     content:      Mapped[str]             = mapped_column(Text, default="")
     content_json: Mapped[Optional[list]]  = mapped_column(JSON, nullable=True, default=None)
     files:        Mapped[Optional[list]]  = mapped_column(JSON, nullable=True, default=None)  # 咕咕发的文件卡片 [{file_id,name,ext,size_bytes}]
+    # IM 引用/回复的原消息文字（仅 IM 来源的 user 消息可能有）；null=这条不是引用。
+    # 单独一列，别拼进 content——网页气泡按纯文本渲染 content，拼进去会把引用原文（可能带 markdown
+    # 表格等）原样摊平显示，见 devlog 2026-07-10。
+    quoted_text:  Mapped[Optional[str]]    = mapped_column(Text, nullable=True, default=None)
     created_at:   Mapped[datetime]        = mapped_column(DateTime, default=datetime.utcnow)
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
@@ -290,10 +298,17 @@ class UserBot(Base):
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     platform:   Mapped[str]      = mapped_column(String(20), default="qqbot")
     name:       Mapped[str]      = mapped_column(String(100), default="")
+    # app_id 是公开标识符（qq_connect.py/feishu_connect.py 用它做 SQL 等值查询去重），不加密；
+    # app_secret 是真正的凭据，落库前 AES-256-GCM 加密（见 app/core/crypto.py）
     app_id:     Mapped[str]      = mapped_column(String(128), default="")
-    app_secret: Mapped[str]      = mapped_column(String(256), default="")
+    app_secret: Mapped[str]      = mapped_column(EncryptedString, default="")
     sandbox:    Mapped[bool]     = mapped_column(Boolean, default=False)
     enabled:    Mapped[bool]     = mapped_column(Boolean, default=True)
+    # 群聊：是否处理群消息、群消息是否要求 @ 机器人才响应。
+    # QQ 官方机器人 SDK 只有群消息 @ 了机器人时才会触发事件（没有"接收全部群消息"的能力），
+    # 所以 group_requires_at 对 QQ 是平台层面硬约束，前端对 QQ 会强制显示为开启且不可关闭。
+    group_chat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -369,11 +384,17 @@ class ScheduledTask(Base):
     id:          Mapped[int]                = mapped_column(Integer, primary_key=True, autoincrement=True)
     # null = 系统级任务（如截稿扫描，跨用户）；有值 = 用户自定义任务
     user_id:     Mapped[Optional[UUID]]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    # 绑定的日历事件 id（活动编辑面板里加的提醒）；null = 普通独立任务。
+    # 故意不设 DB 外键：删事件时由应用层显式删其提醒任务（_delete_event），避免 FK 命名/迁移复杂度、更可移植。
+    event_id:    Mapped[Optional[int]]      = mapped_column(Integer, nullable=True, index=True)
     name:        Mapped[str]                = mapped_column(String(100))
     payload:     Mapped[str]                = mapped_column(Text, default="")   # 到点要执行的指令（交给 agent 跑）
     cron:        Mapped[str]                = mapped_column(String(60))    # crontab "m h dom mon dow"
     channels:    Mapped[str]                = mapped_column(String(40), default="chat,im")   # chat / im 逗号分隔
     enabled:     Mapped[bool]               = mapped_column(Boolean, default=True)
+    # 执行时按需精简注入用：{"tool_groups": ["web","meta"], "projects": false, "calendar": false,
+    # "files": false, "memory": false}。null = 不裁剪，走全量（兼容旧任务/未判断出结果时的安全默认）。
+    context_config: Mapped[Optional[dict]]  = mapped_column(JSON, nullable=True, default=None)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
     created_at:  Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow)
     updated_at:  Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

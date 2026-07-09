@@ -67,6 +67,8 @@ def _verify_token(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
 @router.post("/login")
 async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     from app.api.v1.audit_log import write_log
+    from app.core.ratelimit import rate_limit
+    await rate_limit(request, "adminlogin", 10, 300)   # 同 IP 5 分钟最多 10 次 admin 登录尝试
     user = _get_admin_users().get(body.username)
     if not user or not _verify_pw(body.password, user["hashed_password"]):
         try:

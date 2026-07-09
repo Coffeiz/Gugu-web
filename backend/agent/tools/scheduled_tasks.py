@@ -13,11 +13,30 @@ from sqlalchemy import select
 from fastapi import HTTPException
 
 from app.models import ScheduledTask
-from app.api.v1.scheduled_tasks import _validate_cron, _norm_channels
+from app.api.v1.scheduled_tasks import _validate_cron, _norm_channels, TOOL_GROUPS
+from app.core.ownership import get_owned
 from agent import confirm
 from agent.tools.base import BaseSkill, Tool
 
 _WEEK = {"0": "周日", "1": "周一", "2": "周二", "3": "周三", "4": "周四", "5": "周五", "6": "周六", "7": "周日"}
+
+# 到点执行（run_ephemeral）不流式展示给用户、也不建 session，享受不到 prompt 缓存——全量工具集
+# + 项目/日历/文件/记忆每次都是全价。这里让创建/修改任务的这一轮顺手判断这个任务实际用得上什么，
+# 存进 context_config，执行时按需精简注入（见 agent/runner.py run_ephemeral）。
+# 不确定就别传（None）——退回全量，安全优先于省钱。
+_CONTEXT_CONFIG_SCHEMA = {
+    "type": "object",
+    "description": ("这个任务到点执行时实际需要什么，用来精简注入、省 token（不流式展示给用户，"
+                    "浪费的都是白花的）。**不确定就整个不传**，退回全量最安全。"),
+    "properties": {
+        "tool_groups": {"type": "array", "items": {"type": "string", "enum": TOOL_GROUPS},
+                        "description": "执行这个任务需要用到的工具组，按需选、少而准；meta（use_skill）通常都该带上，天气等技能靠它拉取"},
+        "projects": {"type": "boolean", "description": "是否需要项目列表作为参考（默认 false）"},
+        "calendar": {"type": "boolean", "description": "是否需要日历事件作为参考（默认 false）"},
+        "files":    {"type": "boolean", "description": "是否需要文件概览作为参考（默认 false）"},
+        "memory":   {"type": "boolean", "description": "是否需要长期记忆作为参考（默认 false）"},
+    },
+}
 
 
 def _humanize_cron(cron: str) -> str:
@@ -55,28 +74,30 @@ def _to_dict(t: ScheduledTask) -> dict:
         "channels": [c for c in (t.channels or "").split(",") if c],
         "enabled": t.enabled,
         "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,
+        "context_config": t.context_config,
     }
 
 
 async def _resolve_task(db, user_id, args):
     """按 task_id 或任务名 task 定位；返回 (task|None, 错误JSON|None)。少调用：可直接按名字操作。"""
+    # 日程提醒（event_id 非空）归日历管，咕咕的定时任务工具一律视作「不存在」、不可解析/改/删
     tid = args.get("task_id")
     if tid:
-        t = await db.get(ScheduledTask, tid)
-        return (t, None) if (t and t.user_id == user_id) else (None, json.dumps({"error": "定时任务不存在"}, ensure_ascii=False))
+        t = await get_owned(db, ScheduledTask, tid, user_id)
+        return (t, None) if (t and t.event_id is None) else (None, json.dumps({"error": "定时任务不存在"}, ensure_ascii=False))
     name = args.get("task")
     if name:
         name = str(name).strip()
         rows = (await db.execute(
-            select(ScheduledTask).where(ScheduledTask.user_id == user_id, ScheduledTask.name == name)
+            select(ScheduledTask).where(ScheduledTask.user_id == user_id, ScheduledTask.event_id.is_(None), ScheduledTask.name == name)
         )).scalars().all()
         if not rows:
             rows = (await db.execute(
-                select(ScheduledTask).where(ScheduledTask.user_id == user_id, ScheduledTask.name.ilike(f"%{name}%"))
+                select(ScheduledTask).where(ScheduledTask.user_id == user_id, ScheduledTask.event_id.is_(None), ScheduledTask.name.ilike(f"%{name}%"))
             )).scalars().all()
         if not rows:
             avail = (await db.execute(
-                select(ScheduledTask.name).where(ScheduledTask.user_id == user_id)
+                select(ScheduledTask.name).where(ScheduledTask.user_id == user_id, ScheduledTask.event_id.is_(None))
             )).scalars().all()
             return None, json.dumps({"error": f"未找到名为「{name}」的定时任务", "available": sorted(set(avail))[:20]}, ensure_ascii=False)
         if len(rows) > 1:
@@ -87,8 +108,11 @@ async def _resolve_task(db, user_id, args):
 
 
 async def _list_scheduled_tasks(db, user_id, args: dict):
+    # 日程提醒与定时任务完全分开：event_id 非空的是活动提醒（归日历管），咕咕的定时任务工具一律不碰
     rows = (await db.execute(
-        select(ScheduledTask).where(ScheduledTask.user_id == user_id).order_by(ScheduledTask.id.desc())
+        select(ScheduledTask)
+        .where(ScheduledTask.user_id == user_id, ScheduledTask.event_id.is_(None))
+        .order_by(ScheduledTask.id.desc())
     )).scalars().all()
     return [_to_dict(t) for t in rows]
 
@@ -107,6 +131,7 @@ async def _create_scheduled_task(db, user_id, args: dict):
         cron=cron,
         channels=_norm_channels(args.get("channels")),
         enabled=args.get("enabled", True),
+        context_config=args.get("context_config"),
     )
     db.add(t)
     await db.commit()
@@ -119,8 +144,8 @@ async def _update_scheduled_task(db, user_id, args: dict):
     t, err = await _resolve_task(db, user_id, args)
     if err:
         return err
-    if not any(args.get(fld) is not None for fld in ("cron", "name", "instruction", "channels", "enabled")):
-        return json.dumps({"error": "没提供要修改的字段（cron/name/instruction/channels/enabled），未改动。"})
+    if not any(args.get(fld) is not None for fld in ("cron", "name", "instruction", "channels", "enabled", "context_config")):
+        return json.dumps({"error": "没提供要修改的字段（cron/name/instruction/channels/enabled/context_config），未改动。"})
     if args.get("cron") is not None:
         c = _check_cron(str(args["cron"]).strip())
         if c:
@@ -130,6 +155,13 @@ async def _update_scheduled_task(db, user_id, args: dict):
         t.name = str(args["name"]).strip()
     if args.get("instruction") is not None:
         t.payload = str(args["instruction"]).strip()
+        # 指令变了，旧的 context_config（工具组/上下文开关）是按旧指令判断的，可能不再适用；
+        # 这次调用若没有顺带给出新的 context_config，就退回全量，避免「指令改了但工具集没跟上」
+        # 导致新指令要用的工具/上下文被裁掉、任务悄悄跑不动。
+        if args.get("context_config") is None:
+            t.context_config = None
+    if args.get("context_config") is not None:
+        t.context_config = args["context_config"]
     if args.get("channels") is not None:
         t.channels = _norm_channels(args["channels"])
     if args.get("enabled") is not None:
@@ -161,13 +193,16 @@ class ScheduledTasksSkill(BaseSkill):
     tools = [
         Tool(
             name="list_scheduled_tasks", label="查看定时任务",
-            description="列出我的全部定时任务（含 id、名称、触发时间、指令、投递渠道、是否启用、上次执行）。一次返回全部。",
+            description=("列出我的全部独立定时任务（含 id、名称、触发时间、指令、投递渠道、是否启用、上次执行）。一次返回全部。"
+                         "注意：日历活动的提醒不在此列——那是活动自带、在日历里单独管理，与定时任务两套互不影响。"),
             input_schema={"type": "object", "properties": {}},
             handler=_list_scheduled_tasks,
         ),
         Tool(
             name="create_scheduled_task", label="新建定时任务",
-            description=("创建一个定时任务：到点自动按 instruction 执行并把结果投递给用户。一次带齐参数即可，无需多轮。\n"
+            description=("创建一个定时任务：到点自动按 instruction 执行并把结果投递给用户。一次带齐参数即可，无需多轮。"
+                         "（这是独立定时任务；若是给某个日历活动定提醒，改用日历的 create_event(reminders) 或 add_event_reminder，"
+                         "那种会绑定到活动、在活动卡里管理。跟活动无关的普通提醒/任务才用这个。两套互不影响。）\n"
                          + _CRON_HINT
                          + "\n渠道 channels：web(站内通知,默认) / feishu / qq；某渠道是否已连**看系统提示「当前对话来源 / 通知渠道」**——已连(✅)的直接设，只有未连(❌)才提示用户去绑（用户正用某 IM 跟你聊＝那个渠道必然已连，别让 TA 扫码）。"),
             input_schema={
@@ -179,6 +214,7 @@ class ScheduledTasksSkill(BaseSkill):
                     "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq"]},
                                     "description": "投递渠道，默认 [web]"},
                     "enabled":     {"type": "boolean", "description": "是否启用，默认 true"},
+                    "context_config": _CONTEXT_CONFIG_SCHEMA,
                 },
                 "required": ["name", "instruction", "cron"],
             },
@@ -199,6 +235,8 @@ class ScheduledTasksSkill(BaseSkill):
                     "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq"]},
                                     "description": "改投递渠道（可选）"},
                     "enabled":     {"type": "boolean", "description": "启用/停用（可选）"},
+                    "context_config": {**_CONTEXT_CONFIG_SCHEMA,
+                        "description": _CONTEXT_CONFIG_SCHEMA["description"] + "改了 instruction 又没传这个字段，会自动退回全量，避免指令和工具集脱节。"},
                 },
                 "required": [],
             },

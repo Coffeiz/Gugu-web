@@ -9,7 +9,9 @@ User=__RUN_USER__
 Group=__RUN_USER__
 # 以下路径由 start.sh install 按实际安装目录(APP_DIR)自动填入，勿手改占位符
 WorkingDirectory=__APP_DIR__
-Environment="PATH=__APP_DIR__/.venv/bin"
+# venv bin 优先、后面接完整系统路径——只给 venv bin 会让 subprocess 调用系统命令
+# （libreoffice/pdftotext 等，见 app/core/doctext.py）时报 FileNotFoundError
+Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="DB_STARTUP_TIMEOUT=10"
 ExecStart=__APP_DIR__/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
 Restart=on-failure

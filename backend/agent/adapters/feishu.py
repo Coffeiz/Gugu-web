@@ -14,17 +14,25 @@ lark 无 stop()，单连接断不掉 → 一个 bot 一个子进程，由 superv
 """
 from __future__ import annotations
 
+from collections import OrderedDict
+
 import asyncio
 import json
 import os
 import re
+import time
+import uuid
 
+import httpx
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 
 from app.core import redis as R
 
 STREAM = R.IM_INBOUND_STREAM
+
+_FEISHU_PROCESSED_IDS_MAX = 1000
+_FEISHU_STALE_MSG_THRESHOLD_MS = 20_000
 
 
 # 能被咕咕「读内容」的文本类扩展名（与 chat_attach 同口径）
@@ -33,41 +41,26 @@ _TEXT_EXTS = {"md", "txt", "json", "csv", "yaml", "yml", "log", "py", "js", "ts"
               "hpp", "sh", "sql", "xml", "toml", "ini", "conf", "env"}
 
 
-def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
-    """下载用户发来的图片/文件 → 暂存 → 返回 (干净 caption, [attach_id])。
-
-    内容/卡片由 run_collect 的 resolve_for_message 据 attach_id 统一处理（和网页上传同一套），
-    所以这里 caption 留空、只回 attach_id。暂存失败才退回把内容塞进文本。
-    """
+def _download_and_stage(client, message_id: str, owner: str, key: str, rtype: str,
+                        fname: str, is_voice: bool) -> tuple[str, str]:
+    """下载单个飞书资源（图片/文件/视频共用）→ 转码（语音）→ 暂存。
+    返回 (fallback 文本, attach_id)；成功时 fallback 为空串，失败时 attach_id 为空串。"""
     from lark_oapi.api.im.v1 import GetMessageResourceRequest
     from app.core import chat_attach
-    mt = msg.message_type
-    try:
-        c = json.loads(msg.content) if msg.content else {}
-    except Exception:
-        c = {}
-    if mt == "image":
-        key, rtype, fname = c.get("image_key", ""), "image", "图片.jpg"
-    elif mt == "audio":
-        # 飞书语音是 opus（资源按 file 下）；当「语音消息」处理 → 转 mp3 喂 mimo + 语音条 + 30 天存储
-        key, rtype, fname = c.get("file_key", ""), "file", "语音.opus"
-    else:
-        key, rtype, fname = c.get("file_key", ""), "file", (c.get("file_name") or "文件")
     if not key:
-        noun = "语音" if mt == "audio" else ("图片" if mt == "image" else "文件")
-        return (f"[用户发来一个{noun}，但没取到资源]", [])
+        noun = "语音" if is_voice else "文件"
+        return (f"[用户发来一个{noun}，但没取到资源]", "")
     try:
-        req = GetMessageResourceRequest.builder().message_id(msg.message_id).file_key(key).type(rtype).build()
+        req = GetMessageResourceRequest.builder().message_id(message_id).file_key(key).type(rtype).build()
         resp = client.im.v1.message_resource.get(req)
         data = resp.file.read() if (resp.success() and resp.file) else b""
     except Exception as e:
         print(f"[feishu] 下载资源出错: {type(e).__name__}: {e}", flush=True)
         data = b""
     if not data:
-        return (f"[用户发来文件《{fname}》，但下载失败]", [])
+        return (f"[用户发来文件《{fname}》，但下载失败]", "")
     name = fname.rsplit(".", 1)[0] if "." in fname else fname
-    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ("jpg" if mt == "image" else "")
-    is_voice = (mt == "audio")
+    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
     duration = None
     if is_voice:
         # opus（mimo 不收）→ ffmpeg 转 mp3；缺 ffmpeg 则原样、退文字提示（resolve 兜底）
@@ -79,23 +72,215 @@ def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
     try:
         if is_voice:
             aid = chat_attach.stage_voice_sync(
-                owner, name, ext, "audio/mpeg" if ext == "mp3" else None, data, duration=duration).get("attach_id", "")
+                owner, name, ext, "audio/mpeg" if ext == "mp3" else None, data,
+                duration=duration, platform="feishu").get("attach_id", "")
         else:
-            aid = chat_attach.stage_sync(owner, name, ext, None, data).get("attach_id", "")
+            aid = chat_attach.stage_sync(owner, name, ext, None, data, platform="feishu").get("attach_id", "")
     except Exception as e:
         print(f"[feishu] 暂存失败: {type(e).__name__}: {e}", flush=True)
         aid = ""
     if aid:
-        return ("", [aid])   # caption 空，文件卡/语音条 + 内容由 resolve_for_message 据 attach_id 注入
+        return ("", aid)   # 文件卡/语音条/视频条内容由 resolve_for_message 据 attach_id 注入
     if is_voice:
-        return ("[用户发来一条语音，但处理失败]", [])
+        return ("[用户发来一条语音，但处理失败]", "")
     # 暂存失败兜底：文本类至少把内容塞进文本，让咕咕能读
     if ext in _TEXT_EXTS:
-        return (f"[用户发来文件《{fname}》内容：]\n```\n{data.decode('utf-8', 'replace')[:30000]}\n```", [])
-    return (f"[用户发来文件《{fname}》，但暂存失败]", [])
+        return (f"[用户发来文件《{fname}》内容：]\n```\n{data.decode('utf-8', 'replace')[:30000]}\n```", "")
+    return (f"[用户发来文件《{fname}》，但暂存失败]", "")
+
+
+def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
+    """下载用户发来的图片/文件/语音/视频（单附件消息）→ 暂存 → 返回 (干净 caption, [attach_id])。
+
+    内容/卡片由 run_collect 的 resolve_for_message 据 attach_id 统一处理（和网页上传同一套），
+    所以这里 caption 留空、只回 attach_id。暂存失败才退回把内容塞进文本。
+    """
+    mt = msg.message_type
+    try:
+        c = json.loads(msg.content) if msg.content else {}
+    except Exception:
+        c = {}
+    if mt == "image":
+        key, rtype, fname = c.get("image_key", ""), "image", "图片.jpg"
+    elif mt == "audio":
+        # 飞书语音是 opus（资源按 file 下）；当「语音消息」处理 → 转 mp3 喂 mimo + 语音条 + 30 天存储
+        key, rtype, fname = c.get("file_key", ""), "file", "语音.opus"
+    elif mt == "media":
+        # 飞书视频消息：file_key 是视频本体，image_key 是封面缩略图（暂不单独取封面）
+        key, rtype, fname = c.get("file_key", ""), "file", "视频.mp4"
+    else:
+        key, rtype, fname = c.get("file_key", ""), "file", (c.get("file_name") or "文件")
+    fallback, aid = _download_and_stage(client, msg.message_id, owner, key, rtype, fname, is_voice=(mt == "audio"))
+    if aid:
+        return ("", [aid])
+    return (fallback, [])
+
+
+def _ingest_post(client, msg, owner: str) -> tuple[str, list]:
+    """富文本图文消息（post）：拼接各段落文字，内嵌图片/视频按普通附件下载暂存。"""
+    try:
+        c = json.loads(msg.content) if msg.content else {}
+    except Exception:
+        c = {}
+    title = (c.get("title") or "").strip()
+    rows = c.get("content") or []
+    lines: list[str] = []
+    media_keys: list[tuple[str, str, str]] = []   # (key, rtype, fname)
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, list):
+            continue
+        parts: list[str] = []
+        for el in row:
+            if not isinstance(el, dict):
+                continue
+            tag = el.get("tag")
+            if tag == "text":
+                parts.append(el.get("text") or "")
+            elif tag == "a":
+                parts.append(el.get("text") or el.get("href") or "")
+            elif tag == "at":
+                parts.append(f"@{el.get('user_name') or el.get('user_id') or ''}")
+            elif tag == "img" and el.get("image_key"):
+                media_keys.append((el["image_key"], "image", "图片.jpg"))
+            elif tag == "media" and el.get("file_key"):
+                media_keys.append((el["file_key"], "file", "视频.mp4"))
+        if parts:
+            lines.append("".join(parts))
+    text = "\n".join(lines).strip()
+    if title:
+        text = f"{title}\n{text}".strip()
+    attachments: list = []
+    for key, rtype, fname in media_keys:
+        fallback, aid = _download_and_stage(client, msg.message_id, owner, key, rtype, fname, is_voice=False)
+        if aid:
+            attachments.append(aid)
+        elif fallback:
+            text = f"{text}\n{fallback}".strip()
+    return (text, attachments)
+
+
+def _extract_card_text(content) -> str:
+    """从卡片 JSON 里递归拍平抽取可读文字（markdown/text 节点），跳过 table 等非叙述性组件。
+
+    直接从整个 content 开始递归，不假设 elements 在哪一层——旧版非流式卡片是扁平的
+    `{"elements": [...]}`，咕咕现在的流式卡片是 CardKit schema 2.0 的
+    `{"schema": "2.0", "body": {"elements": [...]}}`，elements 嵌在 body 里一层。
+    之前只从 `content["elements"]` 起步，流式卡片这层结构对不上，导致引用咕咕自己的
+    流式回复时永远抽出空文本（[空消息]）。递归整个 content 两种结构都能兼容。
+    """
+    parts: list[str] = []
+
+    def _collect(v):
+        if isinstance(v, dict):
+            if v.get("tag") in ("markdown", "text"):
+                parts.append(v.get("content") or v.get("text") or "")
+            else:
+                for v2 in v.values():
+                    _collect(v2)
+        elif isinstance(v, list):
+            for v2 in v:
+                _collect(v2)
+
+    _collect(content)
+    return "\n".join(p for p in parts if p).strip()
+
+
+def _ingest_interactive(msg) -> str:
+    """用户转发一张卡片消息过来：只提取可读文字，不下载卡片内嵌图片（组件结构太杂，暂不处理媒体）。"""
+    try:
+        c = json.loads(msg.content) if msg.content else {}
+    except Exception:
+        return "[卡片消息，解析失败]"
+    return _extract_card_text(c) or "[卡片消息]"
+
+
+def _fetch_quoted_text(client, parent_id: str) -> str | None:
+    """按 parent_id 反查被引用的原消息文字（同步，供 _on_message 直接调用）。
+    非文字类型给占位说明；查询失败返回 None，调用方静默跳过、不阻塞主消息。"""
+    from lark_oapi.api.im.v1 import GetMessageRequest
+    try:
+        # card_msg_content_type=user_card_content：不传这个参数时，飞书对 CardKit 动态卡片
+        # （引用 card_id 而非内联 elements，咕咕的流式回复卡片就是这种）返回的是一段兼容性占位
+        # 文案「请升级至最新版本客户端，以查看内容」，不是卡片真实内容——QwenPaw 同款反查逻辑
+        # 也带了这个参数，实测确认是这个字段控制的。
+        req = (GetMessageRequest.builder().message_id(parent_id)
+              .card_msg_content_type("user_card_content").build())
+        resp = client.im.v1.message.get(req)
+        if not resp.success() or not resp.data or not resp.data.items:
+            return None
+        m = resp.data.items[0]
+        if m.msg_type == "text":
+            try:
+                c = json.loads(m.body.content) if (m.body and m.body.content) else {}
+            except Exception:
+                return "[解析失败]"
+            return (c.get("text") or "").strip() or "[空消息]"
+        if m.msg_type == "interactive":
+            # 咕咕自己发的回复走卡片（见 _do_send 的 _build_card_elements），引用到的大概率是这种——
+            # 从卡片 markdown 元素里把文字拼回来（table 组件跳过，不还原成文字，只取叙述性内容）。
+            # GetMessage 回来的 elements 是「数组的数组」（分组/分段），不是发送时那种扁平列表，
+            # 所以要递归拍平找 markdown 节点，不能只查一层；字段名也被归一化成 {"tag":"text","text":...}。
+            try:
+                c = json.loads(m.body.content) if (m.body and m.body.content) else {}
+            except Exception:
+                return "[解析失败]"
+            return _extract_card_text(c) or "[空消息]"
+        if m.msg_type == "post":
+            return "[图文消息]"
+        return {"image": "[图片消息]", "file": "[文件消息]", "audio": "[语音消息]", "media": "[视频消息]"}.get(m.msg_type, "[非文字消息]")
+    except Exception as e:
+        print(f"[feishu] 查引用原消息失败: {type(e).__name__}: {e}", flush=True)
+        return None
 
 
 # ── 接收（网关子进程，凭据/归属从 env 注入）──
+def _header_value(data, name: str):
+    """兼容 lark SDK 对象和测试 dict，读取事件 header 字段。"""
+    header = getattr(data, "header", None)
+    if isinstance(header, dict):
+        return header.get(name)
+    return getattr(header, name, None)
+
+
+def _drop_misrouted_event(data, expected_app_id: str, channel_id: str) -> bool:
+    """丢弃被 lark SDK 错投到当前子进程的其他 app 事件。"""
+    event_app_id = _header_value(data, "app_id")
+    if event_app_id and expected_app_id and event_app_id != expected_app_id:
+        print(f"[feishu:{channel_id}] 丢弃错投事件 app_id={str(event_app_id)[-6:]}", flush=True)
+        return True
+    return False
+
+
+def _drop_stale_event(data, channel_id: str, now_ms: int | None = None) -> bool:
+    """丢弃飞书 retry 推来的旧消息，避免同一用户收到迟到重复回复。"""
+    create_time = _header_value(data, "create_time")
+    if not create_time:
+        return False
+    try:
+        create_ms = int(create_time)
+    except (TypeError, ValueError):
+        return False
+    now = now_ms if now_ms is not None else int(time.time() * 1000)
+    age_ms = now - create_ms
+    if age_ms > _FEISHU_STALE_MSG_THRESHOLD_MS:
+        print(f"[feishu:{channel_id}] 丢弃飞书旧 retry age={age_ms / 1000:.1f}s", flush=True)
+        return True
+    return False
+
+
+def _seen_message_id(processed: OrderedDict[str, None], message_id: str) -> bool:
+    """message_id 进程内 LRU 去重；返回 True 表示已处理过。"""
+    mid = (message_id or "").strip()
+    if not mid:
+        return False
+    if mid in processed:
+        return True
+    processed[mid] = None
+    while len(processed) > _FEISHU_PROCESSED_IDS_MAX:
+        processed.popitem(last=False)
+    return False
+
+
 def _do_react(client, message_id: str, emoji_type: str) -> bool:
     """给某条消息加表情回应（同步，给 asyncio.to_thread 用）。失败返回 False。"""
     try:
@@ -158,11 +343,20 @@ def _quick_react(text: str, has_media: bool) -> tuple[str, str]:
     return _random.choice(_DEFAULT[1]), _DEFAULT[0]
 
 
-def _make_on_message(channel_id: str, owner: str, api_client):
+def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: str = ""):
+    processed_message_ids: OrderedDict[str, None] = OrderedDict()
+
     def _on_message(data: P2ImMessageReceiveV1) -> None:
+        if _drop_misrouted_event(data, expected_app_id, channel_id):
+            return
+        if _drop_stale_event(data, channel_id):
+            return
         ev = data.event
         msg = ev.message
         if not msg:
+            return
+        if _seen_message_id(processed_message_ids, msg.message_id):
+            print(f"[feishu:{channel_id}] 丢弃重复消息 message_id={str(msg.message_id)[-8:]}", flush=True)
             return
         mt = msg.message_type
         attachments: list = []
@@ -171,13 +365,28 @@ def _make_on_message(channel_id: str, owner: str, api_client):
                 text = ((json.loads(msg.content) if msg.content else {}) or {}).get("text", "").strip()
             except Exception:
                 text = ""
-        elif mt in ("image", "file", "audio"):
+        elif mt in ("image", "file", "audio", "media"):
             text, attachments = _ingest_media(api_client, msg, owner)
+        elif mt == "post":
+            text, attachments = _ingest_post(api_client, msg, owner)
+        elif mt == "interactive":
+            text = _ingest_interactive(msg)
         else:
             return  # 表情/位置/合并转发等暂不处理
         if not text and not attachments:
             return
         open_id = ev.sender.sender_id.open_id if (ev.sender and ev.sender.sender_id) else None
+        from agent import trace
+        tid = trace.new_trace()
+
+        # 引用消息：用户「回复」某条历史消息时，parent_id 指向那条被引用的消息——飞书只给 id，
+        # 要反查一次内容才知道引用的是什么。引用原文单独存 quoted_text，不拼进 text——
+        # runner.py 只把它喂给模型当上下文，ConversationMessage.content/网页展示仍是用户
+        # 自己打的话，router/秒回表情继续用原始 text 判关键词（同一份），别再把引用原文拼进
+        # 正文（网页气泡纯文本渲染，拼进去会把引用的 markdown 原样摊平显示得很难看，见 devlog
+        # 2026-07-10）。
+        quoted_text = _fetch_quoted_text(api_client, msg.parent_id) if msg.parent_id else None
+
         payload = {
             "platform": "feishu",
             "channel_id": channel_id,
@@ -187,9 +396,14 @@ def _make_on_message(channel_id: str, owner: str, api_client):
             "chat_type": msg.chat_type,
             "message_id": msg.message_id,
             "text": text,
+            "quoted_text": quoted_text,
             "attachments": attachments,
+            "trace_id": tid,             # 全链路 trace：worker/工具日志同 id，grep 可串联
         }
-        print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text={text[:40]!r} att={len(attachments)}", flush=True)
+        # 隐私：不打印消息原文，只留结构+指纹（见 agent/logsafe.py），同 agent.traj 脱敏口径
+        from agent import logsafe
+        print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text_len={len(text)} "
+              f"fp={logsafe.fingerprint(text)} att={len(attachments)} quoted={bool(msg.parent_id)} trace={tid}", flush=True)
 
         # Intent Router：纯文本消息先据当前状态判一手——任务进行中的「还在吗/算了/嗯」由网关
         # 直接处理，不入队（IM 单 worker 顺序消费，忙时它根本看不到队列后面的消息）。带附件一律进主模型。
@@ -230,7 +444,7 @@ def serve() -> None:
     # 「processor not found」ERROR 刷屏（看着像断开，其实不是）。注册个 no-op 吞掉即可。
     handler = (
         lark.EventDispatcherHandler.builder("", "")
-        .register_p2_im_message_receive_v1(_make_on_message(channel_id, owner, api_client))
+        .register_p2_im_message_receive_v1(_make_on_message(channel_id, owner, api_client, app_id))
         .register_p2_im_message_reaction_created_v1(lambda data: None)
         .register_p2_im_message_reaction_deleted_v1(lambda data: None)
         .build()
@@ -309,9 +523,15 @@ def _parse_md_table(block: list[str]) -> dict | None:
 
 
 def _build_card_elements(text: str) -> list[dict]:
-    """拆成卡片元素：连续 |…| 段试解析为 table 组件，其余转 markdown 元素。"""
+    """拆成卡片元素：连续 |…| 段试解析为 table 组件，其余转 markdown 元素。
+
+    第一个 markdown 元素固定挂 `element_id="markdown_1"`，方便后续 element 级 streaming update
+    （PUT /open-apis/cardkit/v1/cards/:card_id/elements/markdown_1/content）按 id 增量更新纯文本。
+    card 内部 element_id 必须全局唯一（spec 300301），所以只给第一个 markdown 挂。
+    """
     lines = text.split("\n")
     elements: list[dict] = []
+    md_assigned = False
     i = 0
     while i < len(lines):
         if _TABLE_LINE.match(lines[i]):
@@ -320,8 +540,14 @@ def _build_card_elements(text: str) -> list[dict]:
                 block.append(lines[i])
                 i += 1
             tbl = _parse_md_table(block)
-            elements.append(tbl if tbl else
-                            {"tag": "markdown", "content": _md_to_bold("\n".join(block))})
+            if tbl:
+                elements.append(tbl)
+            else:
+                md = {"tag": "markdown", "content": _md_to_bold("\n".join(block))}
+                if not md_assigned:
+                    md["element_id"] = "markdown_1"
+                    md_assigned = True
+                elements.append(md)
         else:
             block = []
             while i < len(lines) and not _TABLE_LINE.match(lines[i]):
@@ -329,8 +555,14 @@ def _build_card_elements(text: str) -> list[dict]:
                 i += 1
             content = "\n".join(block).strip()
             if content:
-                elements.append({"tag": "markdown", "content": _md_to_bold(content)})
-    return elements or [{"tag": "markdown", "content": _md_to_bold(text)}]
+                md = {"tag": "markdown", "content": _md_to_bold(content)}
+                if not md_assigned:
+                    md["element_id"] = "markdown_1"
+                    md_assigned = True
+                elements.append(md)
+    if not elements:
+        elements = [{"tag": "markdown", "content": _md_to_bold(text), "element_id": "markdown_1"}]
+    return elements
 
 
 def _do_send(client, receive_id: str, text: str) -> bool:
@@ -433,6 +665,444 @@ async def send_file(chat_id: str, data: bytes, name: str, ext: str, channel_id: 
     if channel_id not in _clients:
         _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
     return await asyncio.to_thread(_do_send_file, _clients[channel_id], chat_id, data, name, ext)
+
+
+# ── 流式回复（飞书 cardkit v1 create/update card，2026-07-09 接入）───────────────
+# 流程：
+#   1) send_text_stream 收到 token_iter（来自 agent.runner.run_stream）
+#   2) 先发一张「咕咕正在想…」占位卡片 → 拿到 card_id
+#   3) 每个 token 累加到 accumulated_text；每 ≥200ms 或 ≥30 字 增量 patch 一次
+#   4) token_iter 结束 → 用最终 accumulated 调 finish_card（覆盖占位文本为完整回复）
+#   5) 任何环节失败 → fallback 普通 send_text，行为退化到非流式体验
+#
+# 权限：飞书后台要给应用加 cardkit:card:write，否则 create_card 返回非 0；
+# 没权限时 fallback 不挡用户主流程，log 一次提示管理员加权限。
+
+# 节流参数（实测值：飞书 cardkit update 接口有 QPS 限制 ~20/s，留余量）
+_STREAM_PATCH_INTERVAL_S = 0.2
+_STREAM_PATCH_MIN_CHARS = 30
+
+
+def _make_card_payload(text: str, title: str = "咕咕思考中", color: str = "blue",
+                       streaming_mode: bool = True) -> str:
+    """构造 CardKit 卡片 2.0 的 data 字段（JSON 字符串）。
+
+    OpenAPI 要求 schema 2.0 的内嵌 card JSON 必须有 schema + header + body 结构：
+        {"schema": "2.0", "header": {...}, "body": {"elements": [...]}}
+    顶层直接放 elements 会触发 99992402（field validation failed），
+    而不带 body 包络时串化整个对象做 form 又会让飞书网关解析成 body is nil。
+
+    config.streaming_mode=true 让服务端启用 typewriter 渲染（飞书 7.20+ 支持，spec
+    streaming-updates-openapi-overview）；先开是默认行为，收尾改标题时传 False 关掉。
+    """
+    return json.dumps({
+        "schema": "2.0",
+        "update_multi": True,   # CardKit 流式更新要求 update_multi=true（官方 spec 300302）
+        "config": {
+            "streaming_mode": streaming_mode,
+            "streaming_config": {
+                "print_frequency_ms": {"default": 70, "android": 70, "ios": 70, "pc": 70},
+                "print_step": {"default": 1, "android": 1, "ios": 1, "pc": 1},
+                "print_strategy": "fast",
+            },
+            "summary": {"content": ""},   # 占位卡片不显示 summary 旧文
+        },
+        "header": {
+            "title": {"tag": "plain_text", "content": title},
+            "template": color,
+        },
+        "body": {
+            "elements": _build_card_elements(text),
+        },
+    }, ensure_ascii=False)
+
+
+# ── 飞书 API 直接走 httpx（绕开 lark SDK Transport 同步/异步两条路径都有 body 丢失 bug）──
+# 现象：worker 日志一直报 code=200610 msg=ErrMsg: body is nil；同样的 body 直接 HTTP 调能成功
+# （实测 card_id 7660280254204284101）。SDK 的 create()/acreate() 都坏——lark SDK 2.x 的 Transport
+# 在 cardkit v1 端点上 body 序列化有 bug。所以 raw httpx 直调 + 自己管 token。
+
+# tenant_access_token 缓存：飞书 token 默认 2h 过期。app_id 维度缓存，提前 60s 过期避免边界问题。
+_tenant_token_cache: dict[str, tuple[str, float]] = {}   # app_id -> (token, expire_ts)
+
+
+async def _get_tenant_token(app_id: str, app_secret: str) -> str:
+    now = time.time()
+    cached = _tenant_token_cache.get(app_id)
+    if cached and cached[1] > now + 60:
+        return cached[0]
+    async with httpx.AsyncClient(timeout=10.0) as cli:
+        resp = await cli.post(
+            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+            json={"app_id": app_id, "app_secret": app_secret},
+        )
+        data = resp.json()
+    token = data.get("tenant_access_token", "")
+    if not token or data.get("code", -1) != 0:
+        raise RuntimeError(f"飞书 tenant_access_token 获取失败: {data}")
+    expire = int(data.get("expire", 7200))
+    _tenant_token_cache[app_id] = (token, now + expire)
+    return token
+
+
+async def _do_create_card(app_id: str, app_secret: str, text: str) -> str | None:
+    """raw httpx 版 create_card：返回 card_id 或 None。
+
+    已知坑：
+      - lark SDK 的 Transport.execute 把 dict body 用 `requests.request(data=...)`（form-encoded）
+        发出去，飞书 CardKit 服务端校验 schema 失败返 99992402；包络结构 + data 是 JSON string 又会
+        被网关注解成「body is nil」(200610)。SDK 的 create()/acreate()/update() 都不能用。
+      - httpx 的 `json=` 自动设 Content-Type 为 application/json（不带 charset），服务端 spec 强制
+        `application/json; charset=utf-8`，实测也会触发 200610。必须用 `content=` + 手动设带 charset。
+      - 内嵌 card JSON 必须是 schema 2.0 完整结构（schema + header + body.elements），否则
+        field validation 失败。
+    """
+    try:
+        token = await _get_tenant_token(app_id, app_secret)
+    except Exception as e:
+        print(f"[feishu] tenant_token 拿失败: {type(e).__name__}: {e}", flush=True)
+        return None
+    body = {"type": "card_json", "data": _make_card_payload(text)}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as cli:
+            resp = await cli.post(
+                "https://open.feishu.cn/open-apis/cardkit/v1/cards",
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json; charset=utf-8"},
+                content=json.dumps(body, ensure_ascii=False),
+            )
+        data = resp.json()
+    except Exception as e:
+        print(f"[feishu] create_card 异常: {type(e).__name__}: {e}", flush=True)
+        return None
+    if data.get("code") != 0:
+        print(f"[feishu] create_card 失败: code={data.get('code')} msg={data.get('msg')}", flush=True)
+        return None
+    return data.get("data", {}).get("card_id")
+
+
+async def _do_send_card_message(app_id: str, app_secret: str, receive_id: str,
+                                card_id: str) -> bool:
+    """把 CardKit card entity 当一条 interactive 消息发出去——这是用户能看到卡片的「桥」步骤。
+
+    仅 create_card 不发，user 端永远看不到；必须 POST /open-apis/im/v1/messages，
+    content 是 {"type":"card","data":{"card_id":<card_id>}} 的 JSON-string。
+
+    ⚠ 关键：这里 type 是 "card" 不是 "template"！
+    - type="card" + data.card_id = CardKit card entity（我用的，流式更新专用）
+    - type="template" + data.template_id = Card Builder GUI 创建的模板（与 API 路线不同）
+    之前这里误写成 template 卡 ID 被飞书当 template_id 找，返 200380 "template does not exist"。
+
+    card entity 只能 send 一次（官方 spec "A card entity can only be sent once"），后续靠
+    _do_update_card（或 element 级别 streaming update endpoint）改内容。
+    """
+    try:
+        token = await _get_tenant_token(app_id, app_secret)
+    except Exception as e:
+        print(f"[feishu] tenant_token 拿失败: {type(e).__name__}: {e}", flush=True)
+        return False
+    rid_type = "open_id" if str(receive_id).startswith("ou_") else "chat_id"
+    body = {
+        "receive_id": receive_id,
+        "msg_type": "interactive",
+        "content": json.dumps({"type": "card", "data": {"card_id": card_id}}, ensure_ascii=False),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as cli:
+            resp = await cli.post(
+                f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type={rid_type}",
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json; charset=utf-8"},
+                content=json.dumps(body, ensure_ascii=False),
+            )
+        data = resp.json()
+    except Exception as e:
+        print(f"[feishu] send_card_message 异常: {type(e).__name__}: {e}", flush=True)
+        return False
+    if data.get("code") != 0:
+        print(f"[feishu] send_card_message 失败: code={data.get('code')} msg={data.get('msg')}", flush=True)
+        return False
+    return True
+
+
+_card_seq: dict[str, int] = {}   # card_id -> 当前最大 sequence（同进程内防乱序；跨进程由各 worker 自管）
+
+
+# Element 级 streaming text update 用的固定 element_id（_build_card_elements 给第一个 markdown 元素挂的）
+_STREAM_TARGET_ELEMENT_ID = "markdown_1"
+
+
+async def _do_streaming_update_text(app_id: str, app_secret: str, card_id: str,
+                                     content: str, sequence: int, uuid: str) -> bool:
+    """element 级别流式更新（PUT /open-apis/cardkit/v1/cards/{cid}/elements/{eid}/content）。
+
+    这是飞书官方的「Streaming Update Text」接口，比整卡 PUT 更轻——服务端自动增量渲染
+    typewriter 效果（spec streaming-updates-openapi-overview / 300310 等；要求 card config 中
+    streaming_mode=true + element_id 存在 + sequence 单调递增 + uuid 唯一避免冲突）。
+    """
+    try:
+        token = await _get_tenant_token(app_id, app_secret)
+    except Exception as e:
+        print(f"[feishu] tenant_token 拿失败: {type(e).__name__}: {e}", flush=True)
+        return False
+    body = {"content": content, "sequence": sequence, "uuid": uuid}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as cli:
+            resp = await cli.request(
+                "PUT",
+                f"https://open.feishu.cn/open-apis/cardkit/v1/cards/{card_id}/elements/{_STREAM_TARGET_ELEMENT_ID}/content",
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json; charset=utf-8"},
+                content=json.dumps(body, ensure_ascii=False),
+            )
+        data = resp.json()
+    except Exception as e:
+        print(f"[feishu] streaming_update_text 异常: {type(e).__name__}: {e}", flush=True)
+        return False
+    if data.get("code") != 0:
+        print(f"[feishu] streaming_update_text 失败: code={data.get('code')} msg={data.get('msg')}", flush=True)
+        return False
+    return True
+
+
+async def _do_finalize_streaming_card(app_id: str, app_secret: str, card_id: str,
+                                      summary_text: str, sequence: int, uuid: str) -> bool:
+    """关闭 CardKit streaming_mode，并设置会话列表 summary。
+
+    这是纯收尾动作：失败不影响用户已经看到的最终卡片正文。
+    """
+    try:
+        token = await _get_tenant_token(app_id, app_secret)
+    except Exception as e:
+        print(f"[feishu] tenant_token 拿失败: {type(e).__name__}: {e}", flush=True)
+        return False
+    preview = (summary_text or "").strip()
+    if len(preview) > 80:
+        preview = preview[:77] + "..."
+    if not preview:
+        preview = "✅"
+    settings = {
+        "config": {
+            "streaming_mode": False,
+            "summary": {"content": preview},
+        },
+    }
+    body = {
+        "settings": json.dumps(settings, ensure_ascii=False),
+        "sequence": sequence,
+        "uuid": uuid,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as cli:
+            resp = await cli.request(
+                "PATCH",
+                f"https://open.feishu.cn/open-apis/cardkit/v1/cards/{card_id}/settings",
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json; charset=utf-8"},
+                content=json.dumps(body, ensure_ascii=False),
+            )
+        data = resp.json()
+    except Exception as e:
+        print(f"[feishu] finalize_streaming_card 异常: {type(e).__name__}: {e}", flush=True)
+        return False
+    if data.get("code") != 0:
+        print(f"[feishu] finalize_streaming_card 失败: code={data.get('code')} msg={data.get('msg')}", flush=True)
+        return False
+    return True
+
+
+async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str, *, sequence: int,
+                          title: str = "咕咕思考中", streaming_mode: bool = True) -> bool:
+    """raw httpx 版 update_card：节流策略由 caller 控制（每 ≥200ms 或 ≥30 字调一次）。
+
+    HTTP method 是 **PUT**——SDK update() 签名的也是 PUT（cardkit/v1/model/update_card_request
+    源码：update_card_request.http_method = HttpMethod.PUT）。
+    `sequence` 必须由调用方传入且严格递增——**同一 card_id 下，element 级 streaming update /
+    settings PATCH / 整卡 PUT 共用同一套单调递增序列**（之前误以为整卡 PUT 是独立序列空间，
+    自己另开一个 `_card_seq[card_id]` 计数器从 1 起，结果实测报 300317 sequence number
+    compare failed——飞书服务端按 card_id 维度判断，不分端点）。所以收尾改标题必须复用
+    调用方（send_text_stream）手上那个 `_stream_seq_key` 计数器继续往上加，不能自己另起。
+
+    `title`/`streaming_mode`：流式收尾时用来把卡片标题从「咕咕思考中」改成「咕咕」、
+    同时关掉 streaming_mode（见 send_text_stream 收尾调用）。
+    """
+    try:
+        token = await _get_tenant_token(app_id, app_secret)
+    except Exception as e:
+        print(f"[feishu] tenant_token 拿失败: {type(e).__name__}: {e}", flush=True)
+        return False
+    body = {
+        "card": {
+            "type": "card_json",
+            "data": _make_card_payload(text, title=title, streaming_mode=streaming_mode),
+        },
+        "sequence": sequence,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as cli:
+            resp = await cli.request(
+                "PUT",
+                f"https://open.feishu.cn/open-apis/cardkit/v1/cards/{card_id}",
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json; charset=utf-8"},
+                content=json.dumps(body, ensure_ascii=False),
+            )
+        data = resp.json()
+    except Exception as e:
+        print(f"[feishu] update_card 异常: {type(e).__name__}: {e}", flush=True)
+        return False
+    if data.get("code") != 0:
+        print(f"[feishu] update_card 失败: code={data.get('code')} msg={data.get('msg')}", flush=True)
+        return False
+    return True
+
+
+def _stream_fallback_text(text: str, has_files: bool) -> str:
+    """模型只调工具（比如发文件）没配文字说明时的兜底，跟 worker.py 非流式路径同一套文案。
+
+    实测踩坑：模型光发文件不说话时 final_text 是空串，之前的 _patch/finalize/rename 全部
+    `if final_text:` 短路跳过，导致卡片正文真的是空的——用户得追问「发了吗」模型才在下一轮
+    正常说话。worker.py 的非流式路径本来就有这个兜底（有文件配「给你～」），但只在
+    `not (platform == "feishu" and stream_sent)` 时才发送，飞书流式成功时被跳过，
+    所以流式卡片这边必须自己兜底一次，不能指望 worker.py 那份。"""
+    text = (text or "").strip()
+    if text:
+        return text
+    return "给你～" if has_files else "嗯~在的，你说～"
+
+
+async def send_text_stream(receive_id: str, token_iter, channel_id: str | None = None,
+                          placeholder: str = "咕咕正在想…") -> tuple[bool, "AgentResponse | None"]:
+    """飞书流式回复（IM 端模拟 SSE）。
+
+    Args:
+        receive_id: chat_id（oc_xxx）或 open_id（ou_xxx）
+        token_iter: async iterator，yield ("token", str) / ("final", AgentResponse)（agent.runner.run_stream）
+        channel_id: user_bot.id
+        placeholder: 占位卡片首屏文案
+
+    Returns: (ok, final_response)——ok 表示流式/fallback 是否成功；final_response 是 run_stream
+    yield 的 AgentResponse（含 session_id），消费端需要它来续写 Redis 会话映射。如果 token_iter
+    没 yield final（异常退出等），final_response 为 None。
+    """
+    app_id, app_secret = await _creds_by_id(channel_id)
+    if not app_id:
+        print(f"[feishu] user_bot {channel_id} 无凭据，流式回复跳过", flush=True)
+        return (False, None)
+    # 之前的 lark.Client 缓存不再使用——card API 直走 httpx（绕 SDK bug）。
+    # _clients 仍保留供 send_text / react / send_file 等其他路径继续用 SDK。
+
+    # 1) 创建占位卡片
+    card_id = await _do_create_card(app_id, app_secret, placeholder)
+    if not card_id:
+        # 权限不够 / 接口失败 → fallback 普通 send_text（攒完 token 后一次性发）
+        print(f"[feishu] 流式 fallback：create_card 失败，改走普通 send_text", flush=True)
+        accumulated = ""
+        final_resp = None
+        async for kind, payload in token_iter:
+            if kind == "token":
+                accumulated += payload
+            elif kind == "final":
+                final_resp = payload
+                final_text = _stream_fallback_text(payload.text or accumulated, bool(payload.files))
+                if final_text:
+                    ok = await send_text(receive_id, final_text, channel_id)
+                    return (ok, final_resp)
+                return (False, final_resp)
+        return (False, final_resp)
+
+    # 2) 把 card_id 当一条 interactive 消息发出去——不 send，user 端永远看不到。
+    # card entity 官方约束：只能 send 一次（spec 200305），所以后续靠 update_card 改内容。
+    if not await _do_send_card_message(app_id, app_secret, receive_id, card_id):
+        print(f"[feishu] 流式 fallback：send_card_message 失败，退到普通 send_text", flush=True)
+        accumulated = ""
+        final_resp = None
+        async for kind, payload in token_iter:
+            if kind == "token":
+                accumulated += payload
+            elif kind == "final":
+                final_resp = payload
+                final_text = _stream_fallback_text(payload.text or accumulated, bool(payload.files))
+                if final_text:
+                    ok = await send_text(receive_id, final_text, channel_id)
+                    return (ok, final_resp)
+                return (False, final_resp)
+        return (False, final_resp)
+
+    # 3) 初始化 element 级流式更新的 sequence（sequence 从 1 开始严格递增）
+    stream_seq = 0
+
+    _stream_seq_key = f"{card_id}:stream"
+
+    async def _patch(text: str) -> bool:
+        """element 级别 streaming update 本地计数器 + 调用。
+
+        uuid 是幂等键——飞书 spec 200770 同 UUID 只生效一次，所以每次 patch 都需要新 UUID。
+        """
+        _card_seq[_stream_seq_key] = _card_seq.get(_stream_seq_key, 0) + 1
+        try:
+            return await _do_streaming_update_text(app_id, app_secret, card_id, text,
+                                                   sequence=_card_seq[_stream_seq_key],
+                                                   uuid=uuid.uuid4().hex)
+        except Exception as e:
+            print(f"[feishu] streaming_update_text 异常: {type(e).__name__}: {e}", flush=True)
+            return False
+
+    # 4) 流式消费 token + 节流 patch（element 级接口，服务端自动增量渲染）
+    accumulated = ""
+    last_patch_ts = time.monotonic()
+    last_patched_len = 0
+    pending_final_text: str | None = None
+    final_resp = None
+    stream_ok = True
+    try:
+        async for kind, payload in token_iter:
+            if kind == "token":
+                accumulated += payload
+                now = time.monotonic()
+                # 节流：时间 OR 长度任一满足就 patch（保证短响应也能及时显示）
+                if (now - last_patch_ts >= _STREAM_PATCH_INTERVAL_S
+                        or len(accumulated) - last_patched_len >= _STREAM_PATCH_MIN_CHARS):
+                    if stream_ok:
+                        stream_ok = await _patch(accumulated)
+                    last_patch_ts = now
+                    last_patched_len = len(accumulated)
+            elif kind == "final":
+                # final AgentResponse：text 可能比 accumulated 多（出口兜底 sanitize_outbound/strip_disallowed_emoji
+                # 在 runner 末尾做过清洗，最终版更准）；如果不同就以 final.text 为准再 patch 一次
+                final_resp = payload
+                if payload.cancelled:
+                    # 用户中途取消 → 卡片保留 partial 内容（不清空，避免给用户错觉"什么都没了"）
+                    break
+                pending_final_text = _stream_fallback_text(payload.text or accumulated, bool(payload.files))
+                break
+    except Exception as e:
+        print(f"[feishu] 流式消费异常: {type(e).__name__}: {e}", flush=True)
+
+    # 5) 收尾：把最终版（final.text 优先；如果 final 没拿到就用 accumulated）patch 进卡片
+    final_text = pending_final_text or accumulated
+    if stream_ok and final_text and final_text != accumulated:
+        stream_ok = await _patch(final_text)
+    elif stream_ok and final_text:
+        # 已 patch 过同文本 → 不用再 patch，但仍显式结束一下（飞书端 streaming update 幂等）
+        stream_ok = await _patch(final_text)
+    if stream_ok:
+        _card_seq[_stream_seq_key] = _card_seq.get(_stream_seq_key, 0) + 1
+        finalized = await _do_finalize_streaming_card(
+            app_id, app_secret, card_id, final_text,
+            sequence=_card_seq[_stream_seq_key], uuid=uuid.uuid4().hex)
+        if not finalized:
+            print(f"[feishu] finalize_streaming_card 失败但保留已更新卡片: card_id={card_id}", flush=True)
+        # 收尾把标题从「咕咕思考中」改成「咕咕」——思考已经结束，继续挂着思考中的标题很怪。
+        # 复用同一个 _stream_seq_key 计数器继续递增（这张卡的 sequence 是跨端点共享的，
+        # 见 _do_update_card 里的踩坑记录），不能自己另起一套。
+        _card_seq[_stream_seq_key] = _card_seq.get(_stream_seq_key, 0) + 1
+        renamed = await _do_update_card(app_id, app_secret, card_id, final_text,
+                                        sequence=_card_seq[_stream_seq_key],
+                                        title="咕咕", streaming_mode=False)
+        if not renamed:
+            print(f"[feishu] 收尾改标题失败，保留「咕咕思考中」: card_id={card_id}", flush=True)
+    return (stream_ok, final_resp)
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ from app.core.redis import get_redis
 RESOURCE_BY_TOOL: dict[str, str] = {
     # 项目
     "create_project": "projects", "update_project": "projects", "delete_project": "projects",
-    "archive_project": "projects", "update_stage": "projects", "set_priority": "projects",
+    "archive_project": "projects", "update_stage": "projects",
     "set_color": "projects", "add_stage": "projects", "remove_stage": "projects",
     "rename_stage": "projects", "add_todo": "projects", "remove_todo": "projects",
     "set_stages": "projects", "update_todo": "projects",

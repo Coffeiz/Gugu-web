@@ -74,7 +74,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import AdminSelect from '@/components/AdminSelect.vue'
@@ -174,15 +174,7 @@ onMounted(load)
 }
 .toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); margin-left: 4px; }
 
-.icon-btn {
-  width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
-}
-.icon-btn:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.8); }
-.icon-btn.spinning svg { animation: spin 0.5s ease-out; transform-box: fill-box; transform-origin: center; }
-@keyframes spin { to { transform: rotate(360deg); } }
+/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 .log-table-wrap {
   flex: 1; padding: 14px 36px 0; overflow: hidden;

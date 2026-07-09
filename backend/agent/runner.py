@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import AsyncGenerator
+from typing import AsyncGenerator, AsyncIterator
 
 from sqlalchemy import func, select
 
@@ -97,6 +97,16 @@ def _schedule_summary(user_id, session_id, force: bool, settings, use_anthropic:
 _IM_SOURCES = ("feishu", "qqbot", "wechat")
 _CONTINUE_CUES = ("继续", "刚刚", "刚才", "刚说", "刚聊", "上次", "上回", "之前",
                   "接着", "那个事", "那件事", "没续上")
+
+
+def _with_quoted_context(message: str, quoted_text: str | None) -> str:
+    """给模型看的输入：引用/回复场景下把被引用原文包进去。只在**喂给模型**这一步用，
+    不能拿它当 ConversationMessage.content 存/当网页展示文本——那样会把引用原文（可能带
+    markdown 表格等）直接拼进用户消息正文，网页气泡按纯文本渲染，会被原样摊平显示得很难看
+    （devlog 2026-07-10）。展示层面引用原文走 quoted_text 单独一列，前端另起一个引用预览块。"""
+    if not quoted_text:
+        return message
+    return f"💬 用户引用/回复了一条历史消息（原文：「{quoted_text}」），针对这条消息说：\n\n{message}"
 
 
 async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str) -> str:
@@ -200,11 +210,16 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             .limit(tokens.HISTORY_MAX_MSGS)
         )
         history = tokens.select_history(hist_res.scalars().all(), token_budget=model_cfg.context_tokens)
+        # 主动推送（定时任务/活动提醒）若是会话首条 assistant（前导，sanitize 会剥掉）→ 记下来塞进 system，
+        # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
+        _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
+        _proactive_lead = _nonsumm[0].content if _nonsumm and _nonsumm[0].role == "assistant" else ""
 
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
+        llm_text = _with_quoted_context(req.message, getattr(req, "quoted_text", None))
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
-            user_id, getattr(req, "attachments", None) or [], req.message, model_cfg=model_cfg)
+            user_id, getattr(req, "attachments", None) or [], llm_text, model_cfg=model_cfg)
         if getattr(req, "attachments", None):   # 诊断：带附件时记 kind/ext/media 数，排查语音为何没转写
             import logging as _lg
             _lg.getLogger("agent.runner").info(
@@ -213,7 +228,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                 [c.get("kind") for c in (attach_cards or [])],
                 [c.get("ext") for c in (attach_cards or [])])
         db.add(ConversationMessage(session_id=session_id, role="user", content=req.message,
-                                   files=attach_cards or None))
+                                   files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None)))
         await db.commit()
 
         # 精力耗尽 → 硬拦（IM / 定时任务，与网页 web.stream 同口径）：用户消息已记，不再生成，直接回一句
@@ -249,11 +264,12 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     try:
         from app.core import events as _evmod
         await _evmod.publish(user_id, "sessions", session_id=session_id,
-                             appended=[{"role": "user", "text": req.message, "files": attach_cards or None}])
+                             appended=[{"role": "user", "text": req.message, "files": attach_cards or None,
+                                       "quoted_text": getattr(req, "quoted_text", None)}])
     except Exception:
         pass
 
-    memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
+    memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
     im_channels = await loaders.load_im_channels(user_id)
     prompt_name = profile.prompt_file.removesuffix(".md")
     system_prompt = builder.build(
@@ -261,9 +277,12 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         skills=profile.skills, style_prefs=style_prefs,
         source=getattr(req, "source", None), im_channels=im_channels,
         user_msg=req.message,   # 行为模块软点亮（emotion-first 等）
+        non_streaming=True,     # run_collect 是 IM 专用（worker.py 调用），不流式展示给用户
     )
     if im_bridge:               # IM 新会话续接桥（见 _im_continuity_bridge）
         system_prompt += im_bridge
+    if _proactive_lead:         # 主动推送是会话首条 assistant → sanitize 会剥掉，塞 system 兜底
+        system_prompt += "\n\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead
 
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
     from agent.context import compress_conv
@@ -357,21 +376,296 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         if profile.memory_enabled and text:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
-            reflection.schedule(user_id, req.user_name, req.message, text, settings, used_tools=im_used_tools)
+            reflection.schedule(user_id, req.user_name, req.message, text, settings,
+                                used_tools=im_used_tools, session_id=session_id)
 
-        # 对话压缩（fire-and-forget）
-        from agent.context import compress_conv
-        compress_conv.schedule(session_id, user_id, settings, model_cfg.context_tokens)
+# 对话压缩（fire-and-forget）
+    from agent.context import compress_conv
+    compress_conv.schedule(session_id, user_id, settings, model_cfg.context_tokens)
 
     return AgentResponse(text=text, session_id=session_id, tokens_in=tin, tokens_out=tout, files=sent_files)
+
+
+# ── 流式版本（飞书 send_text_stream 用，2026-07-09 接入）──────────────────────
+# run_collect 的"流式"变体：行为完全一致（同样的 loads / 记忆 / 工具循环 / 持久化 / 反思），
+# 唯一差别是消费 LLMRunner 流时逐字 yield token，让飞书 IM 端能实时 patch 卡片（参见 feishu.py
+# send_text_stream）。
+#
+# Yield 类型（call 端用 isinstance 区分）：
+#   ("token", str)            — 已过 StreamSanitizer 清洗的逐字片段
+#   ("final", AgentResponse)  — 生成结束，含完整 text/files/cancelled/session_id/tokens
+#                                session_id 来自 run_collect 同款会话创建流程（line 165-193）
+#                                持久化 / 反思 / 压缩跟 run_collect 完全一致
+async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
+    """run_collect 的流式版本：逐字 yield token + 末尾 yield AgentResponse。"""
+    user_id = req.user_id
+    profile = DefaultProfile()
+    settings = get_settings()
+    model_cfg = pick_model(settings, req)
+
+    import app.db.session as _sess
+    if _sess._engine is None:
+        _sess._build_engine()
+    from app.models import (
+        AgentUsage, ConversationMessage, ConversationSession,
+    )
+
+    async with _sess._SessionLocal() as db:
+        projects = await loaders.load_projects(db, user_id)
+        events = await loaders.load_events(db, user_id)
+        files_overview = await loaders.load_files_overview(db, user_id)
+        style_prefs = await loaders.load_style_prefs(db, user_id)
+
+        # ── 会话 get / create（跟 run_collect 同款）──
+        session = None
+        if req.session_id:
+            session = (await db.execute(
+                select(ConversationSession).where(
+                    ConversationSession.id == req.session_id,
+                    ConversationSession.user_id == user_id,
+                )
+            )).scalars().first()
+        is_new_session = False
+        if not session:
+            session_count = (await db.execute(
+                select(func.count()).select_from(ConversationSession)
+                .where(ConversationSession.user_id == user_id)
+            )).scalar_one()
+            if session_count >= 50:
+                oldest = (await db.execute(
+                    select(ConversationSession)
+                    .where(ConversationSession.user_id == user_id)
+                    .order_by(ConversationSession.updated_at.asc())
+                    .limit(1)
+                )).scalars().first()
+                if oldest:
+                    await db.delete(oldest)
+            session = ConversationSession(user_id=user_id, title=(req.message[:50] or "新对话"), source=getattr(req, "source", "web"))
+            db.add(session)
+            await db.flush()
+            is_new_session = True
+        session_id = session.id
+
+        # 历史窗口
+        hist_res = await db.execute(
+            select(ConversationMessage)
+            .where(ConversationMessage.session_id == session_id)
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(tokens.HISTORY_MAX_MSGS)
+        )
+        history = tokens.select_history(hist_res.scalars().all(), token_budget=model_cfg.context_tokens)
+        _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
+        _proactive_lead = _nonsumm[0].content if _nonsumm and _nonsumm[0].role == "assistant" else ""
+
+        from app.core import chat_attach
+        llm_text = _with_quoted_context(req.message, getattr(req, "quoted_text", None))
+        aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
+            user_id, getattr(req, "attachments", None) or [], llm_text, model_cfg=model_cfg)
+        db.add(ConversationMessage(session_id=session_id, role="user", content=req.message,
+                                   files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None)))
+        await db.commit()
+
+        if await quota.is_exhausted(db, user_id, settings):
+            yield ("final", AgentResponse(text="咕咕累了，休息会儿再来～", session_id=session_id,
+                                          tokens_in=0, tokens_out=0))
+            return
+
+        im_bridge = ""
+        if is_new_session and getattr(req, "source", None) in _IM_SOURCES:
+            try:
+                im_bridge = await _im_continuity_bridge(db, user_id, session_id, req.message)
+            except Exception:
+                im_bridge = ""
+
+    # 用户消息先推给网页（跟 run_collect 一致）
+    try:
+        from app.core import events as _evmod
+        await _evmod.publish(user_id, "sessions", session_id=session_id,
+                             appended=[{"role": "user", "text": req.message, "files": attach_cards or None,
+                                       "quoted_text": getattr(req, "quoted_text", None)}])
+    except Exception:
+        pass
+
+    # 语音转写（跟 run_collect 一致）：不支持时直接结束
+    if aug_media:
+        from agent import voice as _voice
+        transcript = await _voice.transcribe(aug_media, settings)
+        if transcript is None:
+            _release_model(model_cfg)
+            yield ("final", AgentResponse(
+                text="抱歉，我现在还不能处理语音 / 音视频消息哦，打字告诉我就行～",
+                session_id=session_id, tokens_in=0, tokens_out=0))
+            return
+        spoken = transcript.strip() or "（用户发来一段语音，但这次没听清内容）"
+        aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
+        aug_media = []
+
+    memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
+    im_channels = await loaders.load_im_channels(user_id)
+    prompt_name = profile.prompt_file.removesuffix(".md")
+    system_prompt = builder.build(
+        prompt_name, req.user_name, projects, events, memory, files_overview,
+        skills=profile.skills, style_prefs=style_prefs,
+        source=getattr(req, "source", None), im_channels=im_channels,
+        user_msg=req.message,
+        non_streaming=False,     # ★ 流式：让 core.py 走流式生成路径（不走 builder._NON_STREAMING_BLOCK 抑制）
+    )
+    if im_bridge:
+        system_prompt += im_bridge
+    if _proactive_lead:
+        system_prompt += "\n\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead
+
+    from agent.context import compress_conv
+    _summary, history = compress_conv.pop_summary(history)
+    if _summary:
+        system_prompt += compress_conv.system_block(_summary)
+
+    from agent.llm_select import use_anthropic_for
+    use_anthropic = use_anthropic_for(model_cfg)
+    runner = LLMRunner(profile.tool_names, settings)
+
+    from app.core.chat_attach import build_user_content
+    anthr_messages: list = []
+    anthr_initial_len = 0
+    if use_anthropic:
+        for h in history:
+            content = h.content_json if h.content_json is not None else (h.content or "")
+            anthr_messages.append({"role": h.role, "content": content})
+        anthr_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, True)})
+        anthr_messages = sanitize.sanitize_messages(anthr_messages)
+        anthr_initial_len = len(anthr_messages)
+        gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True, model_cfg=model_cfg)
+    else:
+        oa_messages = [{"role": "system", "content": system_prompt}]
+        for h in history:
+            oa_messages.append({"role": h.role, "content": h.content or ""})
+        oa_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, False, media=aug_media)})
+        gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
+
+    # ── 流式消费 generator（替代 _collect：逐字 yield + 末尾 yield final）──
+    san = sanitize.StreamSanitizer()
+    rounds: list[str] = []
+    cur = ""
+    tin = tout = 0
+    files: list = []
+    cancelled = False
+    errored = False
+    errored_text = ""
+    try:
+        async for evt_str in gen:
+            try:
+                evt = json.loads(evt_str[6:])  # strip "data: "
+            except Exception:
+                continue
+            t = evt.get("type")
+            if t == "_new_round":
+                cur += san.flush()
+                rounds.append(cur)
+                cur = ""
+                san = sanitize.StreamSanitizer()
+            elif t == "_usage":
+                tin = evt.get("input", 0)
+                tout = evt.get("output", 0)
+            elif t == "token":
+                # 走同一清洗器（跟 _collect 一致）保证输出文本跟 run_collect 完全等价
+                token = san.feed(evt.get("content", ""))
+                cur += token
+                if token:
+                    yield ("token", token)
+            elif t == "file" and evt.get("file"):
+                files.append(evt["file"])
+            elif t == "_cancelled":
+                cancelled = True
+                break
+            elif t == "error":
+                errored_text = evt.get("message") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
+                errored = True
+                break
+    finally:
+        _release_model(model_cfg)
+
+    if cancelled:
+        yield ("final", AgentResponse(text="", session_id=session_id,
+                                      tokens_in=tin, tokens_out=tout, cancelled=True))
+        return
+
+    if not errored:
+        cur += san.flush()
+        rounds.append(cur)
+        text = ""
+        for r in reversed(rounds):
+            r = r.strip()
+            if r:
+                text = r
+                break
+    else:
+        text = errored_text
+
+    # 出口兜底清洗（跟 run_collect 一致）
+    if not errored:
+        from agent.outbound import sanitize_outbound
+        text = sanitize_outbound(text)
+        text = sanitize.strip_disallowed_emoji(text)
+
+    # 持久化（跟 run_collect 一致）：写入 db + schedule_title/summary/reflection/compress
+    if not errored:
+        async with _sess._SessionLocal() as db2:
+            if use_anthropic:
+                for tm in anthr_messages[anthr_initial_len:]:
+                    db2.add(ConversationMessage(
+                        session_id=session_id, role=tm["role"],
+                        content="", content_json=chat_attach.strip_vision_for_history(tm["content"]),
+                    ))
+            if text or files:
+                db2.add(ConversationMessage(session_id=session_id, role="assistant",
+                                            content=text, files=files or None))
+            _cap_in, _cap_out = await quota.cap_usage(db2, user_id, settings, tin, tout)
+            if _cap_in or _cap_out:
+                db2.add(AgentUsage(
+                    user_id=user_id, session_id=session_id,
+                    tokens_in=_cap_in, tokens_out=_cap_out,
+                    model=model_cfg.model, provider=model_cfg.provider,
+                ))
+            await db2.commit()
+
+        if is_new_session and text:
+            _schedule_title(user_id, session_id, req.message, text, settings, use_anthropic)
+        if text:
+            _schedule_summary(user_id, session_id, is_new_session, settings, use_anthropic)
+
+        try:
+            from app.core import events as _evmod
+            if text or files:
+                await _evmod.publish(user_id, "sessions", session_id=session_id,
+                                     appended=[{"role": "assistant", "text": text, "files": files or None}])
+            else:
+                await _evmod.publish(user_id, "sessions", session_id=session_id)
+        except Exception:
+            pass
+
+        if profile.memory_enabled and text:
+            from agent.memory import reflection
+            im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
+            reflection.schedule(user_id, req.user_name, req.message, text, settings,
+                                used_tools=im_used_tools, session_id=session_id)
+
+        from agent.context import compress_conv as _cc
+        _cc.schedule(session_id, user_id, settings, model_cfg.context_tokens)
+
+    yield ("final", AgentResponse(text=text, session_id=session_id, tokens_in=tin,
+                                  tokens_out=tout, files=files, cancelled=False))
 
 
 async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool, list]:
     """消费 LLMRunner 的 SSE 流：清洗后攒文本 + 取用量 + 收集咕咕要发的文件。
     返回 (文本, in, out, errored, files)；errored=True 时文本是错误文案（不入历史/不反思）。
 
-    文本**按轮分段收集、结尾去重拼接**：MiniMax 多轮工具调用时常把上一轮的开场白
-    整段重述一遍，无脑拼接会让开场白叠 N 遍（QQ 还会把口语的 ~ 渲染成删除线）。
+    文本**按轮分段收集，只取最后一轮**：这条路径（run_collect/run_ephemeral）不流式展示给
+    用户，工具调用之间模型说的过渡性旁白（"我先查一下""这条数据不对我再试试"）不该被当成
+    正文发出去——之前拼接所有轮次+简单去重，会把这些旁白原样推给用户（真实翻车案例：定时
+    任务查天气时反复重试，旁白被整段推送）。配合 builder._NON_STREAMING_BLOCK 提示模型把
+    完整答案收在最后一轮，这里只取 rounds[-1]（若为空则回退到最近一条非空轮次，不让用户
+    啥也没收到）。
     """
     san = sanitize.StreamSanitizer()
     rounds: list[str] = []   # 每轮文本分开存
@@ -405,41 +699,71 @@ async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool,
     cur += san.flush()
     rounds.append(cur)
 
-    # 去重拼接：若本轮以上一轮全文为前缀（模型重述了开场白），用本轮替换上一轮，不叠加
-    parts: list[str] = []
-    for r in rounds:
+    text = ""
+    for r in reversed(rounds):
         r = r.strip()
-        if not r:
-            continue
-        if parts and r.startswith(parts[-1]):
-            parts[-1] = r
-        else:
-            parts.append(r)
-    return ("".join(parts).strip(), tin, tout, False, files, cancelled)
+        if r:
+            text = r
+            break
+    return (text, tin, tout, False, files, cancelled)
 
 
-async def run_ephemeral(user_id, user_name: str, prompt: str) -> str:
-    """定时任务专用：跑 agent 拿结果，不建 session、不存 DB、不推 SSE。"""
+def _resolve_ephemeral_tool_names(tool_groups: list[str] | None, profile_tool_names: list[str]) -> list[str]:
+    """按 context_config.tool_groups 精简工具集；组名有不认识的（改名/拼写错误/枚举漂移）
+    就不信这份结果，退回全量，安全优先于省 token（同 run_ephemeral 里"判断不出来就走全量"
+    是同一个原则）。"""
+    if not tool_groups:
+        return profile_tool_names
+    from agent.tools import registry
+    unknown = [g for g in tool_groups if g not in registry.known_skill_names()]
+    if unknown:
+        print(f"[runner] tool_groups 里有未知组名 {unknown}，退回全量工具集", flush=True)
+        return profile_tool_names
+    # meta（use_skill）恒带上，不管分类判断有没有选它——漏了这一组，天气等按需 skill 就彻底
+    # 拉不到，属于「功能直接坏掉」而不是「多花点 token」，安全代价不对等，不能只信分类结果。
+    return registry.tools_of(list(set(tool_groups) | {"meta"}))
+
+
+async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: dict | None = None) -> str:
+    """定时任务专用：跑 agent 拿结果，不建 session、不存 DB、不推 SSE。
+
+    context_config（来自 ScheduledTask.context_config，创建/改任务时顺手判断出来的）非空时按需
+    精简：只加载/注入这个任务真正用得上的工具组和项目/日历/文件/记忆——这条路径不建 session、
+    没有 prompt 缓存，每次触发都是全价，省下来的是真金白银。None（没判断出结果的旧任务/默认值）
+    就走全量，安全优先。
+    """
     profile = DefaultProfile()
     settings = get_settings()
     model_cfg = pick_model(settings, None)   # 解析层：active/pool/router 选一个模型配置
+
+    cfg = context_config or {}
+    inc_projects = bool(cfg.get("projects")) if context_config else True
+    inc_calendar = bool(cfg.get("calendar")) if context_config else True
+    inc_files    = bool(cfg.get("files"))    if context_config else True
+    inc_memory   = bool(cfg.get("memory"))   if context_config else True
 
     import app.db.session as _sess
     if _sess._engine is None:
         _sess._build_engine()
 
     async with _sess._SessionLocal() as db:
-        projects = await loaders.load_projects(db, user_id)
-        events = await loaders.load_events(db, user_id)
-        files_overview = await loaders.load_files_overview(db, user_id)
+        projects = await loaders.load_projects(db, user_id) if inc_projects else []
+        events = await loaders.load_events(db, user_id) if inc_calendar else []
+        files_overview = await loaders.load_files_overview(db, user_id) if inc_files else None
 
-    memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
+    memory = await loaders.load_memory(user_id) if (profile.memory_enabled and inc_memory) else {}
+    im_channels = await loaders.load_im_channels(user_id)
     prompt_name = profile.prompt_file.removesuffix(".md")
-    system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview, skills=profile.skills)
+    system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview,
+                                  skills=profile.skills, im_channels=im_channels, non_streaming=True,
+                                  include_projects=inc_projects, include_calendar=inc_calendar,
+                                  include_files=inc_files, include_memory=inc_memory)
 
     from agent.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
-    runner = LLMRunner(profile.tool_names, settings)
+    tool_groups = context_config.get("tool_groups") if context_config else None
+    tool_names = _resolve_ephemeral_tool_names(tool_groups, profile.tool_names)
+    runner = LLMRunner(tool_names, settings)
 
     from app.core.chat_attach import build_user_content
     if use_anthropic:

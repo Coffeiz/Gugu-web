@@ -1,0 +1,6 @@
+# unplugin 生成的类型声明（每次 vite 运行自动重建，不入库）
+auto-imports.d.ts
+components.d.ts
+
+# TS 构建信息
+*.tsbuildinfo

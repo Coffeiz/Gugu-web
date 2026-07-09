@@ -13,6 +13,7 @@ from app.db.session import get_db
 from app.models import File, Folder, Project, User
 from app.schemas import FolderCreate, FolderMove, FolderRename, FolderResponse
 from app.core.security import get_current_user
+from app.core.ownership import get_owned
 from app.services.storage import get_storage
 
 router = APIRouter(prefix="/folders", tags=["folders"])
@@ -74,8 +75,8 @@ async def list_folders(
     db: AsyncSession = Depends(get_db),
 ):
     if project_id is not None:
-        proj = await db.get(Project, project_id)
-        if not proj or proj.user_id != current_user.id:
+        proj = await get_owned(db, Project, project_id, current_user.id)
+        if not proj:
             raise HTTPException(404, "项目不存在")
 
     stmt = (
@@ -121,8 +122,8 @@ async def create_folder(
     db: AsyncSession = Depends(get_db),
 ):
     if body.project_id is not None:
-        proj = await db.get(Project, body.project_id)
-        if not proj or proj.user_id != current_user.id:
+        proj = await get_owned(db, Project, body.project_id, current_user.id)
+        if not proj:
             raise HTTPException(404, "项目不存在")
 
     existing = (await db.execute(
@@ -157,8 +158,8 @@ async def download_folder(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    folder = await db.get(Folder, fid)
-    if not folder or folder.user_id != current_user.id:
+    folder = await get_owned(db, Folder, fid, current_user.id)
+    if not folder:
         raise HTTPException(404, "文件夹不存在")
 
     storage = get_storage()
@@ -208,8 +209,8 @@ async def rename_folder(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    folder = await db.get(Folder, fid)
-    if not folder or folder.user_id != current_user.id:
+    folder = await get_owned(db, Folder, fid, current_user.id)
+    if not folder:
         raise HTTPException(404, "文件夹不存在")
     folder.name = body.name
     await db.commit()
@@ -227,15 +228,15 @@ async def move_folder(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    folder = await db.get(Folder, fid)
-    if not folder or folder.user_id != current_user.id:
+    folder = await get_owned(db, Folder, fid, current_user.id)
+    if not folder:
         raise HTTPException(404, "文件夹不存在")
 
     new_parent_id = body.parent_id
 
     if new_parent_id is not None:
-        target = await db.get(Folder, new_parent_id)
-        if not target or target.user_id != current_user.id:
+        target = await get_owned(db, Folder, new_parent_id, current_user.id)
+        if not target:
             raise HTTPException(404, "目标文件夹不存在")
         # Walk up from target to detect circular dependency
         cur = new_parent_id
@@ -246,7 +247,7 @@ async def move_folder(
             if cur in visited:
                 break
             visited.add(cur)
-            f = await db.get(Folder, cur)
+            f = await get_owned(db, Folder, cur, current_user.id)   # 祖先链应全属本人，异常即视为断链
             if f is None:
                 break
             cur = f.parent_id
@@ -267,8 +268,8 @@ async def delete_folder(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    folder = await db.get(Folder, fid)
-    if not folder or folder.user_id != current_user.id:
+    folder = await get_owned(db, Folder, fid, current_user.id)
+    if not folder:
         raise HTTPException(404, "文件夹不存在")
 
     now = datetime.utcnow()
@@ -293,9 +294,9 @@ async def delete_folder(
         for f in files_res.scalars().all():
             f.deleted_at = now
 
-    # 删除所有子文件夹（从最深层开始，避免外键约束）
+    # 删除所有子文件夹（从最深层开始，避免外键约束）；子树 id 虽已按 user_id 收集，删除前仍走归属强制
     for folder_id in reversed(all_fids):
-        f = await db.get(Folder, folder_id)
+        f = await get_owned(db, Folder, folder_id, current_user.id)
         if f:
             await db.delete(f)
 

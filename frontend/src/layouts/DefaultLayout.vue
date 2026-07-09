@@ -4,14 +4,15 @@
     <main class="layout-main">
       <!-- 顶栏 -->
       <header class="topbar glass-card">
+        <GlassBg />
         <div class="topbar-title">
           <h1>{{ currentTitle }}</h1>
           <p>{{ todayStr }}</p>
         </div>
         <GlobalSearch />
         <div class="topbar-actions">
-          <a-button class="btn-ghost-custom" @click="openUpload"><PhUploadSimple :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />上传文件</a-button>
-          <a-button type="primary" class="btn-primary-custom" @click="openNewProject"><PhPlus :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />新建项目</a-button>
+          <a-button class="btn-ghost-custom press-fx" @click="openUpload"><PhUploadSimple :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />上传文件</a-button>
+          <a-button type="primary" class="btn-primary-custom press-fx" @click="openNewProject"><PhPlus :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />新建项目</a-button>
         </div>
       </header>
 
@@ -65,7 +66,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { runOnboarding } from '@/composables/useOnboarding'
@@ -79,6 +80,7 @@ import AppSidebar from '@/components/common/AppSidebar.vue'
 import GuguChat from '@/components/common/GuguChat.vue'
 import { PhPlus, PhUploadSimple } from '@phosphor-icons/vue'
 import GlobalSearch from '@/components/common/GlobalSearch.vue'
+import GlassBg from '@/components/common/GlassBg.vue'
 import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'
 import ProjectModal    from '@/views/Projects/components/ProjectModal.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
@@ -194,13 +196,15 @@ const todayStr = computed(() => {
   align-items: center;
   gap: 14px;
   padding: 14px 20px;
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  /* 顶栏绝对定位 + backdrop-filter，其 backdrop 取自下方的 .page-content。Chrome/macOS 下，
-     页面内容（日历日期格、总览项目卡等）hover 改背景触发重绘时，顶栏的 backdrop-filter 栅格
-     会失效，在其下沿渲染出一条白色伪影带（Safari 无此问题）。translateZ(0) 把顶栏提升为独立
-     GPU 合成层，稳定 backdrop-filter 的栅格，消除该白带。 */
-  transform: translateZ(0);
+  /* 顶栏浮在会动的 page-content 之上，用 backdrop-filter 会闪白带（Chrome 边缘重栅格伪影，
+     合成隔离无法根治，见排查记录）。改用 <GlassBg>：background-attachment:fixed 的页面背景副本 +
+     普通 filter:blur 预模糊（静态、可缓存、跨引擎一致、无白带）。宿主自身透明、建层叠上下文让
+     GlassBg(z-index:-1) 压在内容下；backdrop-filter 显式关掉。*/
+  isolation: isolate;
+  background: transparent;
+  overflow: visible;  /* GlassBg 自己继承圆角裁切；宿主放开，按钮外发阴影才能露出来 */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .topbar-title h1 {
@@ -235,36 +239,38 @@ const todayStr = computed(() => {
   gap: 8px;
 }
 
+/* 顶栏按钮不做悬停上浮；上传文件保留较轻的玻璃阴影，新建项目走全局 press-fx 阴影。 */
 .btn-ghost-custom {
+  --topbar-btn-shadow: inset 0 1px 0 rgba(255,255,255,0.95);
   background: rgba(255, 255, 255, 0.52) !important;
   border: 1px solid rgba(255, 255, 255, 0.78) !important;
   border-radius: var(--radius-sm) !important;
   color: var(--text-secondary) !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.95) !important;
+  box-shadow: var(--topbar-btn-shadow) !important;
   font-size: 13px; font-weight: 500;
-  transition: transform 0.3s cubic-bezier(0.34, 1.2, 0.64, 1),
-              background 0.2s ease-out, box-shadow 0.2s ease-out !important;
+  transition: background 0.2s ease-out, box-shadow 0.2s ease-out,
+              transform 0.15s ease, opacity 0.15s ease !important;
 }
-.btn-ghost-custom:hover {
-  transform: translateY(-2px);
+.topbar .btn-ghost-custom:hover {
   background: rgba(255,255,255,0.72) !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 4px 12px rgba(80,90,110,0.1) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 3px 10px rgba(80,90,110,0.12) !important;
 }
+.btn-ghost-custom:active { transform: translateY(1px) !important; opacity: 0.93; }
 
 .btn-primary-custom {
+  --topbar-btn-shadow: 0 3px 12px rgba(123,127,178,0.3);
   background: linear-gradient(135deg, #7b7fb2, #9590c4) !important;
   border: none !important;
   border-radius: var(--radius-sm) !important;
-  box-shadow: 0 3px 12px rgba(123,127,178,0.3) !important;
+  box-shadow: var(--topbar-btn-shadow) !important;
   font-size: 13px; font-weight: 500;
-  transition: transform 0.3s cubic-bezier(0.34, 1.2, 0.64, 1),
-              box-shadow 0.2s ease-out, opacity 0.2s ease-out !important;
+  transition: box-shadow 0.2s ease-out, opacity 0.2s ease-out,
+              transform 0.15s ease !important;
 }
 .btn-primary-custom:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 18px rgba(123,127,178,0.4) !important;
   opacity: 0.92;
 }
+.btn-primary-custom:active { transform: translateY(1px) !important; opacity: 0.93; }
 
 .page-content {
   height: 100%;

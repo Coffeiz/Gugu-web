@@ -7,7 +7,7 @@
 ![status](https://img.shields.io/badge/status-active-success)
 ![frontend](https://img.shields.io/badge/frontend-Vue%203-42b883)
 ![backend](https://img.shields.io/badge/backend-FastAPI-009688)
-![license](https://img.shields.io/badge/license-MIT-blue)
+![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 ---
 
@@ -16,14 +16,15 @@
 | 功能 | 状态 | 说明 |
 |------|:---:|------|
 | 📋 项目看板 | ✅ | 阶段跟踪、截止日期、改名联动存储目录 |
-| 📅 日历排期 | ✅ | 项目节点可视化 + 自定义事件 |
-| 🗂️ 文件库 | ✅ | 四空间（项目/思维/素材/个人），支持本地 / OSS 双后端 |
+| 📅 日历排期 | ✅ | 月/周视图、项目节点、自定义事件、活动提醒 |
+| 🗂️ 文件库 | ✅ | 四空间（项目/思维/素材/个人），支持本地 / OSS 双后端和文件预览 |
 | 🏠 总览 | ✅ | 统计卡片 + 近期节点 + 最近文件 |
 | 🧠 思维画布 | 🔜 | 节点图创意空间，可挂文件 |
 | 🎨 素材板 | 🔜 | 素材管理 + 自动打 tag |
-| 👤 客户管理 | 🔜 | 客户信息归档 |
-| 💬 自然语言管理 | ✅ | SSE 流式 AI 对话，支持 Anthropic / OpenAI / 通义 / DeepSeek |
-| ⚙️ 管理后台 | ✅ | DB / Redis / Storage 在线配置 + 热更新 |
+| 👤 客户管理 | 🔜 | 后端与 Agent 工具已就绪，前端页面待开发 |
+| 💬 自然语言管理 | ✅ | SSE 流式 AI 对话，支持 Anthropic / OpenAI / 通义 / DeepSeek / MiniMax / MiMo |
+| ⏰ 定时任务 | ✅ | 一次性/周期提醒，支持通知与 IM 推送 |
+| ⚙️ 管理后台 | ✅ | 配置热更新、用户管理、审计日志、运维监控、数据分析 |
 
 ---
 
@@ -49,7 +50,7 @@
 
 ### 部署
 - **容器化**：Docker Compose 一键起全栈
-- **进程管理**：systemd unit（`gugu-backend.service`）
+- **进程管理**：systemd 三服务（`gugu-web` / `gugu-worker` / `gugu-supervisor`）
 
 ---
 
@@ -109,13 +110,13 @@ npm run dev                # http://localhost:5173
 
 ```
 Gugu-web/
-├── docs/                       # 项目文档
-│   ├── overview.md             # 总览 / 技术栈 / 进度
-│   ├── backend.md              # 后端开发参考
-│   ├── design.md               # UI/UX 设计规范
-│   ├── storage.md              # 文件存储规范（权威）
-│   ├── wishlist.md             # 功能 Wishlist
-│   └── devlog.md              # 早期开发日志
+├── docs/                       # 项目文档（按主题分类，导航见 docs/README.md）
+│   ├── agent/                   # Agent/AI：架构、记忆、感知、IM 接入、proposals/、_archive/
+│   ├── backend/                 # 后端通用架构：backend.md、storage.md
+│   ├── product/                 # 产品/前端：overview.md、design.md、wishlist.md 等
+│   ├── ops/                     # 部署/性能/并发
+│   ├── security/                # 隐私/安全/合规
+│   └── devlog.md                # 早期开发日志（根目录，不分类）
 ├── design/
 │   └── prototype.html          # 可交互原型稿
 ├── frontend/                   # Vue 3 前端
@@ -124,7 +125,7 @@ Gugu-web/
 │       ├── components/         # 通用 + 业务组件
 │       ├── stores/             # Pinia stores（projects / filesCache / preview / audio / clipboard）
 │       ├── composables/        # useThumbCache（blob Map 缩略图缓存）
-│       ├── services/           # api.js（所有 API 封装）+ cache.js（filesCache sessionStorage）
+│       ├── services/           # api.ts（所有 API 封装）+ cache.ts（filesCache sessionStorage）
 │       ├── layouts/            # DefaultLayout / AdminLayout
 │       └── router/
 ├── backend/                    # FastAPI 后端
@@ -135,8 +136,9 @@ Gugu-web/
 │       ├── models/             # SQLAlchemy 模型
 │       ├── schemas/            # Pydantic schemas
 │       └── services/
-│           ├── storage/        # LocalStorage / OSSStorage
-│           └── agent/          # 智能助手（规划中）
+│           └── storage/        # LocalStorage / OSSStorage
+├── backend/agent/              # 独立 Agent 包：工具、记忆、感知、IM 适配、提示词
+├── backend/onboarding/         # 新手引导：教程项目/文件/日历活动 + 引导气泡
 ├── docker-compose.yml
 └── .env.example
 ```
@@ -179,6 +181,9 @@ Gugu-web/
 | `GET/POST/PATCH/DELETE` | `/api/v1/events` | 日历事件 CRUD |
 | `GET/POST/DELETE` | `/api/v1/clients` | 客户 CRUD |
 | `GET/PATCH` | `/api/v1/preferences` | 用户偏好（阶段模板等） |
+| `GET/POST` | `/api/v1/scheduled-tasks` | 用户自定义定时任务 |
+| `GET/POST` | `/api/v1/notifications` | 通知列表 / 气泡 / 标已读 |
+| `POST` | `/api/v1/feedback` | 用户反馈提交 |
 | `POST` | `/api/v1/agent/chat` | AI Agent 对话（SSE 流式） |
 
 ### Admin API（需 Admin Token）
@@ -188,6 +193,7 @@ Gugu-web/
 | `POST` | `/api/v1/admin/auth/login` | 管理员登录 |
 | `GET/PATCH` | `/api/v1/admin/config` | 系统配置读写（热更新） |
 | `POST` | `/api/v1/admin/config/test-connection` | 测试 DB / OSS 连通性 |
+| — | `/api/v1/admin/*` | 用户管理、审计日志、系统日志、运维监控、Agent/感知诊断、通知广播 |
 
 完整 OpenAPI 文档：启动后访问 `http://localhost:8000/docs`。
 
@@ -208,7 +214,7 @@ Gugu-web/
 
 存储后端（local / oss）可**实时热切换**，`storage_key` 格式两种后端完全一致。
 
-权威规范见 [`docs/storage.md`](docs/storage.md)。
+权威规范见 [`docs/backend/storage.md`](docs/backend/storage.md)。
 
 ---
 
@@ -240,24 +246,35 @@ make backup      # 备份数据库
 - [x] 管理后台（在线配置 + 热更新）
 - [x] 本地 / OSS 存储双后端
 - [x] 自然语言管理（SSE 流式 AI Agent，支持多 provider）
-- [ ] 定时任务（按周期自动提醒 / 归档 / 同步）
+- [x] 定时任务（一次性 / 周期提醒，通知或 IM 推送）
 - [ ] 思维画布（节点图）
 - [ ] 团队 / 企业版（ToB）
-- [ ] 客户管理
+- [ ] 客户管理前端页面
 
-详细规划见 [`docs/wishlist.md`](docs/wishlist.md)。
+详细规划见 [`docs/product/wishlist.md`](docs/product/wishlist.md)。
+
+---
+
+## ⚠️ 当前限制 / 已知问题
+
+- 微信（iLink）引用消息暂不支持识别原文——平台协议限制，非代码 bug。
+- QQ 引用较早消息时，可能因平台时效窗口拿不到引用上下文。
+
+完整记录（现象/影响/结论/规避）见 [`docs/ops/known-issues.md`](docs/ops/known-issues.md)。
 
 ---
 
 ## 📖 文档索引
 
+`docs/` 按主题分成 `agent/`（AI Agent 相关，含子目录 `proposals/`/`_archive/`）、`backend/`、`product/`、`ops/`、`security/` 五类，完整导航见 [`docs/README.md`](docs/README.md)。常用入口：
+
 | 文档 | 内容 |
 |------|------|
-| [docs/overview.md](docs/overview.md) | 项目总览、技术栈、API、进度 |
-| [docs/storage.md](docs/storage.md) | 文件存储结构（权威） |
-| [docs/backend.md](docs/backend.md) | 后端开发参考 |
-| [docs/design.md](docs/design.md) | UI/UX 设计规范 |
-| [docs/wishlist.md](docs/wishlist.md) | 功能规划 |
+| [docs/product/overview.md](docs/product/overview.md) | 项目总览、技术栈、API、进度 |
+| [docs/backend/storage.md](docs/backend/storage.md) | 文件存储结构（权威） |
+| [docs/backend/backend.md](docs/backend/backend.md) | 后端开发参考 |
+| [docs/product/design.md](docs/product/design.md) | UI/UX 设计规范 |
+| [docs/product/wishlist.md](docs/product/wishlist.md) | 功能规划 |
 | [docs/devlog.md](docs/devlog.md) | 早期开发记录 |
 
 ---
@@ -274,7 +291,7 @@ make backup      # 备份数据库
 
 ## 📄 License
 
-MIT
+Apache-2.0
 
 ---
 

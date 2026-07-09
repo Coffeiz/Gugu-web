@@ -3,6 +3,7 @@
 
     <!-- 工具栏 -->
     <div class="cal-toolbar glass-card">
+      <GlassBg />
       <div class="toolbar-left">
         <button class="nav-btn" @click="prev">
           <PhCaretLeft :size="14" weight="bold" />
@@ -15,7 +16,13 @@
           <PhCaretRight :size="14" weight="bold" />
         </button>
       </div>
-      <button class="today-btn" @click="goToday">今天</button>
+      <div class="toolbar-right">
+        <div class="view-toggle">
+          <button :class="{ on: viewMode === 'month' }" @click="setView('month')">月</button>
+          <button :class="{ on: viewMode === 'week' }" @click="setView('week')">周</button>
+        </div>
+        <button class="today-btn" @click="goToday">今天</button>
+      </div>
     </div>
 
     <!-- 主体 -->
@@ -23,6 +30,8 @@
 
       <!-- 日历主区 -->
       <div class="cal-main glass-card">
+        <!-- ───── 月视图 ───── -->
+        <template v-if="viewMode === 'month'">
         <div class="weekday-row">
           <span v-for="w in weekdays" :key="w" class="weekday-hdr" :class="{ weekend: w === '六' || w === '日' }">{{ w }}</span>
         </div>
@@ -103,7 +112,7 @@
                     left:  bar.startsHere ? `calc(${bar.colStart / 7 * 100}% + 6px)` : (bar.colStart / 7 * 100) + '%',
                     right: bar.endsHere   ? `calc(${(7 - bar.colEnd - 1) / 7 * 100}% + 6px)` : ((7 - bar.colEnd - 1) / 7 * 100) + '%',
                     top:   (HEADER_H + bar.row * BAR_H) + 'px',
-                    background: `linear-gradient(to right, ${bar.accent}50 0%, ${bar.accent}50 ${barSegFill(bar)}%, ${bar.accent}1a ${barSegFill(bar)}%, ${bar.accent}1a 100%)`,
+                    background: [deadlineWarnLayer(bar), `linear-gradient(to right, ${bar.accent}50 0%, ${bar.accent}50 ${barSegFill(bar)}%, ${bar.accent}1a ${barSegFill(bar)}%, ${bar.accent}1a 100%)`].filter(Boolean).join(', '),
                     borderColor: bar.accent + '70',
                     color:       darkenHex(bar.accent),
                   }"
@@ -117,6 +126,84 @@
                   <div v-if="bar.endsHere" class="bar-rh bar-rh-right" @mousedown.stop.prevent="startBarResize(bar, 'end', $event)"></div>
                 </div>
               </template>
+            </div>
+          </div>
+        </div>
+        </template>
+
+        <!-- ───── 周视图（时间轴）───── -->
+        <div v-else class="week-view">
+          <!-- 日期表头 -->
+          <div class="wv-head">
+            <div class="wv-gutter"></div>
+            <div v-for="d in weekDays" :key="d.iso" class="wv-dhead" :class="{ today: d.isToday, weekend: d.isWeekend, selected: wvDaySelected(d.iso) }"
+                 @mousedown="onAllDayDown" @contextmenu.prevent="onAllDayContextMenu">
+              <span class="wv-dow">周{{ d.cn }}</span>
+              <span class="wv-dnum" :class="{ today: d.isToday }">{{ d.dateNum }}</span>
+            </div>
+          </div>
+
+          <!-- 全天行：项目跨天条 + 无时间活动 -->
+          <div class="wv-allday">
+            <div class="wv-gutter wv-allday-tag">全天</div>
+            <div class="wv-allday-grid" ref="wvAllDayGridRef" :style="{ height: wvAllDayH + 'px' }"
+                 @mousedown="onAllDayDown" @mousemove="onAllDayHover" @mouseleave="onAllDayLeave" @contextmenu.prevent="onAllDayContextMenu">
+              <div v-for="(d, ci) in weekDays" :key="d.iso" class="wv-aco" :class="{ today: d.isToday, weekend: d.isWeekend }" :style="{ left: ci / 7 * 100 + '%' }"></div>
+              <TransitionGroup name="cal-fade">
+                <div v-for="ci in wvSelCols" :key="'adsel' + ci" class="wv-ad-sel" :class="{ weekend: weekDays[ci]?.isWeekend }" :style="{ left: ci / 7 * 100 + '%' }"></div>
+              </TransitionGroup>
+              <Transition name="cal-fade">
+                <div v-if="wvAdHover >= 0 && !rangeSelect.active" :key="'adhov' + wvAdHover" class="wv-ad-hover" :class="{ weekend: weekDays[wvAdHover]?.isWeekend }" :style="{ left: wvAdHover / 7 * 100 + '%' }"></div>
+              </Transition>
+              <div v-for="bar in weekAllDayShown" :key="bar.id" class="wv-pbar cal-chip"
+                   :class="{ 'cal-done': bar.status === 'done', 'bar-start': bar.startsHere, 'bar-end': bar.endsHere }"
+                   :style="pbarStyle(bar)" @click.stop="openProject(bar)" :title="bar.name">
+                <span class="bar-proj-tag">项目</span>
+                <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>{{ bar.name }}
+              </div>
+              <template v-for="(d, ci) in weekDays" :key="'it' + d.iso">
+                <div v-for="(it, ii) in allDayItemsFor(d.iso)" :key="it.isProject ? it.id : it._uid"
+                     class="wv-allday-ev cal-chip" :class="{ 'cal-done': it.isProject && it.status === 'done' }"
+                     :style="{ left: `calc(${ci / 7 * 100}% + 6px)`, right: `calc(${(6 - ci) / 7 * 100}% + 6px)`, top: ((wvShownRows + ii) * 20) + 'px', background: it.isProject ? capBg(it.accent, it.progress) : it.accent + '28', color: darkenHex(it.accent), borderColor: it.accent + '70' }"
+                     @click.stop="it.isProject ? openProject(it) : openEditForm(it, $event, true)" :title="it.name">
+                  <span class="chip-proj-tag" :class="{ 'chip-ev-tag': !it.isProject }">{{ it.isProject ? '项目' : '活动' }}</span>
+                  <span v-if="it.isProject" class="bar-status-dot" :class="'bsd-' + it.status"></span>{{ it.name }}
+                </div>
+                <!-- 该天列被隐藏的跨天项目 → 在该列底部显示「+K 更多」（样式/逻辑完全同月视图，按天各自计数）-->
+                <button v-if="weekMoreFor(ci).length" class="chip-more-btn cal-chip wv-more"
+                        :style="{ left: `calc(${ci / 7 * 100}% + 6px)`, right: `calc(${(6 - ci) / 7 * 100}% + 6px)`, top: ((wvShownRows + allDayItemsFor(d.iso).length) * 20) + 'px' }"
+                        @click.stop="showMore($event, d.iso, weekMoreFor(ci))">+{{ weekMoreFor(ci).length }} 更多</button>
+              </template>
+            </div>
+          </div>
+
+          <!-- 时间网格（可滚动）-->
+          <div class="wv-body" ref="wvBodyRef">
+            <div class="wv-grid" :style="{ height: 24 * HOUR_H + 'px' }">
+              <div class="wv-hours">
+                <div v-for="h in 24" :key="h" class="wv-hour" :style="{ height: HOUR_H + 'px' }">
+                  <span v-if="h > 1">{{ h - 1 }}:00</span>
+                </div>
+              </div>
+              <div v-for="d in weekDays" :key="d.iso" class="wv-col" :class="{ today: d.isToday, weekend: d.isWeekend }"
+                   :style="{ backgroundSize: '100% ' + HOUR_H + 'px' }"
+                   @mousedown="onColDown($event, d)" @mousemove="onColMove($event, d)" @mouseleave="onColLeave"
+                   @contextmenu.prevent="onColContextMenu($event, d)">
+                <Transition name="cal-fade">
+                  <div v-if="wvSelectedSlot && wvSelectedSlot.iso === d.iso" :key="'sel' + wvSelectedSlot.h0" class="wv-selected" :style="{ top: Math.min(wvSelectedSlot.h0, wvSelectedSlot.h1) * HOUR_H + 'px', height: (Math.abs(wvSelectedSlot.h1 - wvSelectedSlot.h0) + 1) * HOUR_H + 'px' }"></div>
+                </Transition>
+                <Transition name="cal-fade">
+                  <div v-if="wvHover && wvHover.iso === d.iso && !wvDragging" class="wv-hover" :style="{ top: wvHover.h * HOUR_H + 'px', height: HOUR_H + 'px' }"></div>
+                </Transition>
+                <div v-if="d.isToday" class="wv-now" :style="{ top: nowTop + 'px' }"></div>
+                <div v-for="b in timedLayoutFor(d.iso)" :key="b.ev._uid" class="wv-ev cal-chip"
+                     :style="{ top: b.top + 'px', height: b.height + 'px', left: 'calc(' + b.leftPct + '% + 1px)', width: 'calc(' + b.widthPct + '% - 2px)', background: b.ev.accent + '2e', borderColor: b.ev.accent + '85', color: darkenHex(b.ev.accent) }"
+                     @mousedown.stop="onEvDown(b.ev, $event)" @mousemove="onEvHover($event)" :title="b.ev.name">
+                  <span class="wv-ev-t">{{ b.ev.time }}{{ b.ev.endTime ? '–' + b.ev.endTime : '' }}</span>
+                  <span class="wv-ev-n"><span class="chip-proj-tag chip-ev-tag">活动</span>{{ b.ev.name }}</span>
+                  <span v-if="b.ev.description" class="wv-ev-d">{{ b.ev.description }}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -149,6 +236,7 @@
               <div class="sidebar-ev-name" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">
                 <span v-if="!ev.isUserEvent" class="ev-type-badge ev-proj-badge" :style="{ color: darkenHex(ev.accent) }">项目</span>
                 <span v-else class="ev-type-badge ev-event-badge">{{ typeLabel(ev.type) }}</span>
+                <span v-if="ev.time" class="sidebar-ev-time">{{ ev.time }}{{ ev.endTime ? '–' + ev.endTime : '' }}<span v-if="isNextDay(ev.time, ev.endTime)" class="nextday-mini">次日</span></span>
                 {{ ev.name }}
                 <span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
               </div>
@@ -255,9 +343,39 @@
             <PhX :size="12" weight="bold" />
           </button>
         </div>
-        <input v-model="newEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEvent" @keydown.esc="showAddForm = false" autofocus />
-        <DatePicker v-model="newEvent.date" placeholder="选择日期" />
+        <input v-model="newEvent.name" ref="addInputRef" class="popup-input" placeholder="活动名称" v-enter="saveEvent" @keydown.esc="showAddForm = false" />
+        <div class="date-row">
+          <DatePicker class="date-row-picker" v-model="newEvent.date" placeholder="选择日期" />
+          <label class="allday-toggle">
+            <input type="checkbox" v-model="newEvent.allDay" @change="onToggleAllDay(newEvent)" />
+            全天
+          </label>
+        </div>
+        <div class="time-box" v-if="!newEvent.allDay">
+          <input :value="newEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, newEvent, 'time')" @blur="newEvent.time = normTime(newEvent.time)" />
+          <span class="time-dash">—</span>
+          <input :value="newEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, newEvent, 'endTime')" @blur="newEvent.endTime = normTime(newEvent.endTime)" />
+          <span v-if="isNextDay(newEvent.time, newEvent.endTime)" class="nextday-tag">次日</span>
+        </div>
         <textarea v-model="newEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
+        <div class="reminder-section" v-if="!isPastDate(activeFormDate)">
+          <div class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</div>
+          <div v-for="(r, i) in reminders" :key="i" class="reminder-item">
+            <select v-model.number="r.leadMin" class="lead-select">
+              <option v-for="o in LEAD_OPTIONS" :key="o.min" :value="o.min">{{ o.label }}</option>
+            </select>
+            <button class="reminder-del" @click="removeReminderAt(i)" title="移除"><PhX :size="10" weight="bold" /></button>
+          </div>
+          <button class="reminder-add-toggle" @click="addReminder">＋ 添加提醒</button>
+          <div class="chan-block" v-if="reminders.length">
+            <div class="reminder-label">渠道</div>
+            <div class="chan-chips">
+              <button class="chan-chip" :class="{ on: reminderChannels.includes('web') }" @click="toggleReminderChannel('web')">web</button>
+              <button v-for="ch in imChannels" :key="ch" class="chan-chip" :class="{ on: reminderChannels.includes(ch) }" @click="toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
+            </div>
+            <button class="reminder-test-bar" @click="testReminderChannels"><PhPaperPlaneTilt :size="11" weight="bold" /> 测试发送</button>
+          </div>
+        </div>
         <div class="popup-actions">
           <button class="popup-save" @click="saveEvent" :disabled="!newEvent.name">保存</button>
         </div>
@@ -273,11 +391,11 @@
       class="popup-menu cal-ctx-menu"
       :style="{ position:'fixed', left: cellCtx.x+'px', top: cellCtx.y+'px', zIndex: 3000, minWidth:'110px' }"
     >
-      <button class="popup-menu-item" @click="ctxAddEvent">
+      <button v-if="cellCtx.kind === 'timed'" class="popup-menu-item" @click="ctxAddEvent">
         <PhCalendarPlus :size="13" weight="bold" />
         新建活动
       </button>
-      <button class="popup-menu-item" @click="ctxAddProject">
+      <button v-if="cellCtx.kind !== 'timed'" class="popup-menu-item" @click="ctxAddProject">
         <PhFolderPlus :size="13" weight="bold" />
         新建项目
       </button>
@@ -294,9 +412,39 @@
             <PhX :size="12" weight="bold" />
           </button>
         </div>
-        <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" @keydown.enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
-        <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
+        <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" v-enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
+        <div class="date-row">
+          <DatePicker class="date-row-picker" v-model="editingEvent.date" placeholder="选择日期" />
+          <label class="allday-toggle">
+            <input type="checkbox" v-model="editingEvent.allDay" @change="onToggleAllDay(editingEvent)" />
+            全天
+          </label>
+        </div>
+        <div class="time-box" v-if="!editingEvent.allDay">
+          <input :value="editingEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, editingEvent, 'time')" @blur="editingEvent.time = normTime(editingEvent.time)" />
+          <span class="time-dash">—</span>
+          <input :value="editingEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, editingEvent, 'endTime')" @blur="editingEvent.endTime = normTime(editingEvent.endTime)" />
+          <span v-if="isNextDay(editingEvent.time, editingEvent.endTime)" class="nextday-tag">次日</span>
+        </div>
         <textarea v-model="editingEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
+        <div class="reminder-section" v-if="!isPastDate(activeFormDate)">
+          <div class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</div>
+          <div v-for="(r, i) in reminders" :key="i" class="reminder-item">
+            <select v-model.number="r.leadMin" class="lead-select">
+              <option v-for="o in LEAD_OPTIONS" :key="o.min" :value="o.min">{{ o.label }}</option>
+            </select>
+            <button class="reminder-del" @click="removeReminderAt(i)" title="移除"><PhX :size="10" weight="bold" /></button>
+          </div>
+          <button class="reminder-add-toggle" @click="addReminder">＋ 添加提醒</button>
+          <div class="chan-block" v-if="reminders.length">
+            <div class="reminder-label">渠道</div>
+            <div class="chan-chips">
+              <button class="chan-chip" :class="{ on: reminderChannels.includes('web') }" @click="toggleReminderChannel('web')">web</button>
+              <button v-for="ch in imChannels" :key="ch" class="chan-chip" :class="{ on: reminderChannels.includes(ch) }" @click="toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
+            </div>
+            <button class="reminder-test-bar" @click="testReminderChannels"><PhPaperPlaneTilt :size="11" weight="bold" /> 测试发送</button>
+          </div>
+        </div>
         <div class="popup-actions">
           <button class="popup-save" @click="saveEditEvent" :disabled="!editingEvent.name">保存</button>
           <button class="popup-delete" @click="deleteEventFromEdit">删除</button>
@@ -304,35 +452,46 @@
       </div>
     </Transition>
   </Teleport>
+
+  <Teleport to="body">
+    <Transition name="cal-toast">
+      <div v-if="toastMsg" class="cal-toast">{{ toastMsg }}</div>
+    </Transition>
+  </Teleport>
 </template>
 
-<script>
-const eventsCache = {}
-const upcomingEventsCache = { data: null }
+<script lang="ts">
+const eventsCache: Record<string, any> = {}
+const upcomingEventsCache: { data: any } = { data: null }
 </script>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { useLiveStore } from '@/stores/live'
-import { eventsApi } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
+import { usePreferencesStore } from '@/stores/preferences'
+import { eventsApi, scheduledTasksApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
+import GlassBg from '@/components/common/GlassBg.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
 import { projectProgress } from '@/utils/projectProgress'
-import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack } from '@phosphor-icons/vue'
+import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack, PhBell, PhPaperPlaneTilt } from '@phosphor-icons/vue'
 
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
 const liveStore = useLiveStore()
+const authStore = useAuthStore()
+const prefsStore = usePreferencesStore()
 const todayIso = ref(toIso(new Date()))
 
 let _midnightTimer = null
 function scheduleMidnightTick() {
   const now = new Date()
-  const msUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) - now
+  const msUntilMidnight = +new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) - +now
   _midnightTimer = setTimeout(() => {
     todayIso.value = toIso(new Date())
     scheduleMidnightTick()
@@ -363,13 +522,52 @@ function hdayType(isoDate) {
   return getHolidayType(hdayCache.value[yr], isoDate)
 }
 const showAddForm  = ref(false)
-const newEvent     = ref({ name: '', date: todayIso.value, description: '' })
+const addInputRef  = ref(null)
+// 打开新建表单时聚焦输入框，但 preventScroll——原来用 <input autofocus> 会让浏览器滚动去露出
+// position:fixed 的表单（点底部时尤其明显）→ 布局跳动、顶栏闪白块。preventScroll 聚焦不触发滚动。
+watch(showAddForm, (v) => { if (v) nextTick(() => addInputRef.value?.focus?.({ preventScroll: true })) })
+// 边打边格式化：取数字（最多4位），第2位后自动插冒号。1200 → 12:00、120 → 12:0
+function onTimeInput(e, obj, key) {
+  const d = e.target.value.replace(/\D/g, '').slice(0, 4)
+  const out = d.length > 2 ? d.slice(0, 2) + ':' + d.slice(2) : d
+  obj[key] = out
+  e.target.value = out
+}
+// 时间直接输入：失焦时规整成 HH:MM（容忍「2330」「9:5」「23：00」等）；空/非法 → 空串
+function normTime(v) {
+  if (!v) return ''
+  let s = String(v).replace(/[：]/g, ':').replace(/[^\d:]/g, '')
+  if (/^\d{3,4}$/.test(s)) s = s.slice(0, -2) + ':' + s.slice(-2)   // 2330 → 23:30
+  const m = s.match(/^(\d{1,2}):?(\d{0,2})$/)
+  if (!m) return ''
+  const h = Math.min(23, parseInt(m[1] || '0', 10))
+  const mm = Math.min(59, parseInt(m[2] || '0', 10))
+  return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+}
+// 结束时间早于开始时间 → 视为次日（跨午夜）。HH:MM 已零填充，直接字符串比较即可
+function isNextDay(start, end) { return !!start && !!end && end < start }
+// 过去的日期（早于今天）不能加提醒——@once 到点早已过、worker 会判过期清掉，加了也白加
+function isPastDate(d) { return !!d && d < todayIso.value }
+// 默认时间段：下一个整点 → 再过一小时。如现在 22:50 → 23:00–00:00（次日）
+function defaultTimeRange() {
+  const now = new Date()
+  const p = n => String(n).padStart(2, '0')
+  const sh = (now.getHours() + 1) % 24
+  return { time: `${p(sh)}:00`, endTime: `${p((sh + 1) % 24)}:00` }
+}
+// 取消勾选「全天」时，若时间还是空的（比如从全天区新建 / 编辑一个原本全天的活动），补一个默认时间段
+function onToggleAllDay(obj) {
+  if (!obj.allDay && !obj.time) Object.assign(obj, defaultTimeRange())
+}
+const newEvent     = ref({ name: '', date: todayIso.value, ...defaultTimeRange(), description: '', allDay: false })
 const addBtnRef    = ref(null)
 const addFormRef   = ref(null)
 const addFormStyle = ref({})
 
 const showEditForm  = ref(false)
 const editingEvent  = ref(null)
+// 当前打开的活动表单的日期（编辑优先）——提醒区共享，用它判断能否加提醒
+const activeFormDate = computed(() => showEditForm.value ? editingEvent.value?.date : newEvent.value?.date)
 const editFormRef   = ref(null)
 const editFormStyle = ref({})
 const calSidebarRef = ref(null)
@@ -410,23 +608,27 @@ function onCellMouseDown(d, e) {
   e.preventDefault()
 
   const startIso = d.iso
-  rangeSelect.active = true
-  rangeSelect.anchor = startIso
-  hoverRangeEnd.value = startIso
-  selRange.value = null
   cellCtx.show = false
-
+  // mousedown 不清 selRange、不进 range 态：否则单击时 activeRange 瞬间变 null，会露出旧 selectedDate（跳一下）。
+  // 只有真拖到别的天才进 range；单击在 mouseup 直接切到 selectedDate。
+  let dragging = false
   const mm = (ev) => {
     const iso = isoFromPoint(ev.clientX, ev.clientY)
-    if (iso) hoverRangeEnd.value = iso
+    if (!iso) return
+    if (!dragging && iso !== startIso) {
+      dragging = true
+      rangeSelect.active = true
+      rangeSelect.anchor = startIso
+    }
+    if (dragging) hoverRangeEnd.value = iso
   }
   const mu = (ev) => {
     document.removeEventListener('mousemove', mm)
     document.removeEventListener('mouseup', mu)
-    rangeSelect.active = false
     const endIso = isoFromPoint(ev.clientX, ev.clientY) || startIso
+    rangeSelect.active = false
     hoverRangeEnd.value = null
-    if (endIso !== startIso) {
+    if (dragging && endIso !== startIso) {
       const [a, b] = [startIso, endIso].sort()
       selRange.value = { start: a, end: b }
       document.addEventListener('click', ce => ce.stopPropagation(), { capture: true, once: true })
@@ -440,13 +642,15 @@ function onCellMouseDown(d, e) {
 }
 
 // ── 右键菜单 ─────────────────────────────────────────────────────────────────
-const cellCtx = reactive({ show: false, x: 0, y: 0, iso: null, range: null })
+const cellCtx = reactive({ show: false, x: 0, y: 0, iso: null, range: null, kind: 'month', time: '', endTime: '' })
 const cellCtxRef = ref(null)
 
 function onWeekContextMenu(e, week) {
   if (e.target.closest('.event-chip,.chip-more-btn,.project-bar')) return
   const iso = isoFromPoint(e.clientX, e.clientY)
   if (!iso) return
+  cellCtx.kind  = 'month'
+  cellCtx.time  = ''; cellCtx.endTime = ''
   cellCtx.iso   = iso
   cellCtx.range = activeRange.value ?? null   // 右键时快照，避免后续被 handleClickOutside 清掉
   cellCtx.x     = e.clientX
@@ -457,7 +661,11 @@ function onWeekContextMenu(e, week) {
 function ctxAddEvent() {
   cellCtx.show = false
   const iso = cellCtx.range?.start ?? cellCtx.iso
-  newEvent.value = { name: '', date: iso, description: '' }
+  const tr = cellCtx.kind === 'timed'  ? { time: cellCtx.time, endTime: cellCtx.endTime }
+           : cellCtx.kind === 'allday' ? { time: '', endTime: '' }       // 全天区 → 无时间活动
+           : defaultTimeRange()
+  newEvent.value = { name: '', date: iso, ...tr, description: '', allDay: cellCtx.kind === 'allday' }
+  resetReminder()
   const ADD_H = 260
   const ctxTop = (window.innerHeight - cellCtx.y - 8 >= ADD_H)
     ? cellCtx.y + 8
@@ -469,6 +677,7 @@ function ctxAddEvent() {
     width: '240px', zIndex: 1000,
   }
   showAddForm.value = true
+  nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
 }
 
 function ctxAddProject() {
@@ -477,6 +686,107 @@ function ctxAddProject() {
     ?? activeRange.value
     ?? { start: cellCtx.iso || selectedDate.value, end: cellCtx.iso || selectedDate.value }
   uiStore.openNewProject = true
+}
+
+// ── 周视图·全天区：横向多日框选（复用 rangeSelect/selRange/activeRange）+ 右键新建项目 ──
+const wvAllDayGridRef = ref(null)
+function _isoFromAllDayX(clientX) {
+  const grid = wvAllDayGridRef.value
+  if (!grid) return null
+  const r = grid.getBoundingClientRect()
+  const ci = Math.max(0, Math.min(6, Math.floor((clientX - r.left) / r.width * 7)))
+  return weekDays.value[ci]?.iso ?? null
+}
+// 当前周里落在 activeRange 内的列索引（全天区高亮）
+const wvSelCols = computed(() => {
+  if (viewMode.value !== 'week') return []
+  const r = activeRange.value
+  if (!r) return []
+  return weekDays.value.map((d, ci) => (d.iso >= r.start && d.iso <= r.end ? ci : -1)).filter(ci => ci >= 0)
+})
+// 「日选择」判定：只看 activeRange（顶部日期格 + 全天区共用）。单选也走 selRange={iso,iso}，
+// 故与「时段选择」(wvSelectedSlot) 互不干扰、互斥（见 onAllDayDown / onColDown）。
+function wvDaySelected(iso) {
+  const r = activeRange.value
+  return r ? (iso >= r.start && iso <= r.end) : false
+}
+// 全天区悬停列（与小时格 hover 同理：opacity 叠层、可叠加在选区上）
+const wvAdHover = ref(-1)
+function onAllDayHover(e) {
+  const grid = wvAllDayGridRef.value
+  if (!grid) return
+  const r = grid.getBoundingClientRect()
+  wvAdHover.value = Math.max(0, Math.min(6, Math.floor((e.clientX - r.left) / r.width * 7)))
+}
+function onAllDayLeave() { wvAdHover.value = -1 }
+function onAllDayDown(e) {
+  if (e.button !== 0) return
+  if (e.target.closest('.wv-pbar,.wv-allday-ev,.wv-more')) return   // 点在已有条/活动上 → 不框选
+  const startIso = _isoFromAllDayX(e.clientX)
+  if (!startIso) return
+  e.preventDefault()
+  cellCtx.show = false
+  // 关键：mousedown 不清空 selRange、不进 range 态，否则单击时选中层会先淡出(变淡)再淡入。
+  // 只有真拖到「别的天」才进入 range 选择；单击在 mouseup 直接切到被选中态（旧选区一直在，无变淡反馈）。
+  let dragging = false
+  const mm = (ev) => {
+    const iso = _isoFromAllDayX(ev.clientX)
+    if (!iso) return
+    if (!dragging && iso !== startIso) {
+      dragging = true
+      wvSelectedSlot.value = null   // 拖日期 → 清小时格选区（互斥）
+      rangeSelect.active = true
+      rangeSelect.anchor = startIso
+    }
+    if (dragging) hoverRangeEnd.value = iso
+  }
+  const mu = (ev) => {
+    document.removeEventListener('mousemove', mm)
+    document.removeEventListener('mouseup', mu)
+    const endIso = _isoFromAllDayX(ev.clientX) || startIso
+    rangeSelect.active = false
+    hoverRangeEnd.value = null
+    if (dragging && endIso !== startIso) {   // 跨天多选：提交日期区间
+      const [a, b] = [startIso, endIso].sort()
+      selRange.value = { start: a, end: b }
+      document.addEventListener('click', ce => ce.stopPropagation(), { capture: true, once: true })
+    } else {                     // 单击：直接切到被选中态（单天也用 range 表示，统一高亮 + 可右键建单天项目）
+      wvSelectedSlot.value = null   // 选日期 → 清小时格选区（互斥）
+      selRange.value = { start: startIso, end: startIso }
+      selectedDate.value = startIso
+    }
+  }
+  document.addEventListener('mousemove', mm)
+  document.addEventListener('mouseup', mu)
+}
+function onAllDayContextMenu(e) {
+  if (e.target.closest('.wv-pbar,.wv-allday-ev,.wv-more')) return
+  const iso = _isoFromAllDayX(e.clientX)
+  if (!iso) return
+  cellCtx.kind  = 'allday'
+  cellCtx.iso   = iso
+  cellCtx.range = activeRange.value ?? null
+  cellCtx.time  = ''; cellCtx.endTime = ''
+  cellCtx.x = e.clientX; cellCtx.y = e.clientY; cellCtx.show = true
+}
+// ── 周视图·小时区：右键在该天该时刻新建活动（有暗色选区则用选区时间段）──
+function onColContextMenu(e, d) {
+  if (e.target.closest('.wv-ev')) return
+  const p = n => String(n).padStart(2, '0')
+  let time, endTime
+  const sel = wvSelectedSlot.value
+  if (sel && sel.iso === d.iso) {        // 复用左键拖出的选区时间段
+    const a = Math.min(sel.h0, sel.h1), b = Math.max(sel.h0, sel.h1) + 1
+    time = `${p(a)}:00`; endTime = b >= 24 ? '00:00' : `${p(b)}:00`
+  } else {                               // 单选：右键点击处的整点 → 1 小时
+    const h = _hourAt(e.clientY, e.currentTarget.getBoundingClientRect())
+    time = `${p(h)}:00`; endTime = h + 1 >= 24 ? '00:00' : `${p(h + 1)}:00`
+  }
+  cellCtx.kind = 'timed'
+  cellCtx.iso  = d.iso
+  cellCtx.range = null
+  cellCtx.time = time; cellCtx.endTime = endTime
+  cellCtx.x = e.clientX; cellCtx.y = e.clientY; cellCtx.show = true
 }
 
 function onWeekMouseMove(e, week) {
@@ -527,8 +837,22 @@ function barSegFill(bar) {
   return Math.round((progressDays - segStartOff) / (segEndOff - segStartOff) * 100)
 }
 
+const DEADLINE_WARN_DAYS = 3   // 临近截止日的标红范围（天）：跟 store 里 urgentProjects 的阈值一致
+
+// 项目条最后几天渐变标红，提示临近截止日：只在真正落到 bar.endDate 那一段（跨周项目其余段不提前标红，
+// 同 barSegFill 一样按「段内」而非全局天数近似计算）计算；已完成的项目没有「临近」这回事，跳过。
+// 返回一层可叠加的 CSS 背景（前景层，盖在原有进度填充渐变之上），没有警示时返回 null。
+function deadlineWarnLayer(bar) {
+  if (!bar.endsHere || bar.status === 'done') return null
+  const segTotal = daysBetween(bar.segStartIso, bar.segEndIso) + 1
+  if (segTotal <= 0) return null
+  const warnDays = Math.min(DEADLINE_WARN_DAYS, segTotal)
+  const warnStartPct = Math.round((segTotal - warnDays) / segTotal * 100)
+  return `linear-gradient(to right, transparent 0%, transparent ${warnStartPct}%, rgba(200,70,70,0.3) 100%)`
+}
+
 function daysBetween(isoA, isoB) {
-  return Math.round((new Date(isoB + 'T00:00:00') - new Date(isoA + 'T00:00:00')) / 86400000)
+  return Math.round((+new Date(isoB + 'T00:00:00') - +new Date(isoA + 'T00:00:00')) / 86400000)
 }
 function isoFromPoint(x, y) {
   // elementsFromPoint won't reach month-cell behind bars-layer; use grid bounds instead
@@ -621,13 +945,14 @@ async function commitDrag() {
     }
     patch(extraEvents.value)
     patch(nextMonthEvents.value)
+    patch(spilloverEvents.value)
     buildUpcomingList()
     eventsCache[`${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`] = [...extraEvents.value]
     try {
       const updated = await eventsApi.update(ev.id, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version })
       const applyVer = (list) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
-      applyVer(extraEvents.value); applyVer(nextMonthEvents.value)
-    } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await loadEvents() } }
+      applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
+    } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
   }
 
   if (['proj-chip', 'proj-bar', 'proj-resize-start', 'proj-resize-end'].includes(drag.type)) {
@@ -669,7 +994,7 @@ function setupRO() {
   ro = new ResizeObserver(entries => {
     const next = { ...weekHeights.value }
     entries.forEach(e => {
-      const wi = parseInt(e.target.dataset.wi)
+      const wi = parseInt((e.target as HTMLElement).dataset.wi)
       if (!isNaN(wi)) next[wi] = e.contentRect.height
     })
     weekHeights.value = next
@@ -843,6 +1168,8 @@ function normalizeEvent(e) {
     _uid:        e._uid ?? ('e' + e.id),   // 稳定客户端标识：本地增删改按它匹配，不受临时→真 id 替换影响
     id:          e.id,
     date:        e.date,
+    time:        e.time ?? '',
+    endTime:     e.endTime ?? '',
     name:        e.title,
     client:      e.client ?? '',
     type:        e.type,
@@ -884,13 +1211,43 @@ async function fetchEvents() {
   } catch { }
 }
 
-// 咕咕在对话里增删改了活动 → 清月缓存并重取当前月
+// 网格首/末行会溢出到上/下月（首行最多 6 天上月、末行最多 6 天下月），这些「其他月」格子上的
+// 单日活动也要显示。按 cursor 取上、下月活动（与 nextMonthEvents 区分：那个按真实今天算、给「即将到来」侧栏用）。
+const spilloverEvents = ref([])
+async function fetchSpilloverEvents() {
+  const y = cursor.value.getFullYear()
+  const m = cursor.value.getMonth()
+  const fetchMonth = async (date) => {
+    const yy = date.getFullYear(), mm = date.getMonth() + 1
+    const key = `${yy}-${mm}`
+    if (eventsCache[key]) return eventsCache[key]
+    try {
+      const norm = (await eventsApi.list(yy, mm)).map(normalizeEvent)
+      eventsCache[key] = norm
+      return norm
+    } catch { return [] }
+  }
+  const [prev, next] = await Promise.all([
+    fetchMonth(new Date(y, m - 1, 1)),
+    fetchMonth(new Date(y, m + 1, 1)),
+  ])
+  spilloverEvents.value = [...prev, ...next]
+}
+
+// 咕咕在对话里增删改了活动 → 清月缓存并重取当前月 + 溢出月
 watch(calendarSignal, () => {
   for (const k in eventsCache) delete eventsCache[k]
   fetchEvents()
+  fetchSpilloverEvents()
 })
 
-function singleEvents(iso) { return extraEvents.value.filter(e => e.date === iso) }
+// 当前月 + 溢出月（按 id 去重）——渲染溢出格、选中日详情都用它，保证跨月活动可见
+const visibleEvents = computed(() => {
+  const ids = new Set(extraEvents.value.map(e => e.id))
+  return [...extraEvents.value, ...spilloverEvents.value.filter(e => !ids.has(e.id))]
+})
+
+function singleEvents(iso) { return visibleEvents.value.filter(e => e.date === iso) }
 
 function openProject(bar) {
   const pid = Number(bar.id.replace(/^p/, ''))
@@ -905,8 +1262,10 @@ const projectTimelines = computed(() =>
       id:           `p${p.id}`,
       name:         p.name,
       client:       p.client,
-      startDate:    p.startDate,
-      endDate:      p.deadline,
+      startDate:    (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt && p.doneAt.slice(0, 10) < p.startDate)
+                      ? p.doneAt.slice(0, 10) : p.startDate,
+      endDate:      (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt)
+                      ? p.doneAt.slice(0, 10) : p.deadline,
       accent:       extractAccent(p.color),
       type:         'deadline',
       isProject:    true,
@@ -929,10 +1288,11 @@ const effectiveProjectTimelines = computed(() => {
 })
 
 const effectiveExtraEvents = computed(() => {
+  const base = visibleEvents.value
   const range = dragOverRange.value
-  if (!drag.active || drag.type !== 'event' || !range || !drag.item) return extraEvents.value
+  if (!drag.active || drag.type !== 'event' || !range || !drag.item) return base
   const evId = drag.item.id
-  return extraEvents.value.map(e =>
+  return base.map(e =>
     e.id === evId ? { ...e, date: range.start } : e
   )
 })
@@ -986,6 +1346,7 @@ function weekBars(week) {
         endsHere:     p.endDate   >= ws && p.endDate   <= we,
         segStartIso:  week[cs].iso,
         segEndIso:    week[ce].iso,
+        row:          0,   // 占位，下方贪心分行回填（让 TS 认得 .row）
       }
     })
 
@@ -1012,16 +1373,328 @@ function weekBars(week) {
   return bars
 }
 
+// ───────────────── 周视图（时间轴）─────────────────
+const viewMode  = ref('month')        // 'month' | 'week'
+const weekRef   = ref(new Date())     // 可视周内任一日期
+const HOUR_H    = 48                   // 每小时像素高
+const wvBodyRef = ref(null)
+const _CN_DOW   = ['日','一','二','三','四','五','六']
+
+function _mondayOf(d) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7))   // 回到本周一
+  return x
+}
+const weekDays = computed(() => {
+  const mon = _mondayOf(weekRef.value)
+  const out = []
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + i)
+    const iso = toIso(d)
+    out.push({ iso, dateNum: d.getDate(), cn: _CN_DOW[d.getDay()],
+               md: (d.getMonth()+1) + '/' + d.getDate(),
+               isToday: iso === todayIso.value,
+               isWeekend: d.getDay() === 0 || d.getDay() === 6 })
+  }
+  return out
+})
+
+function _parseMin(t) { const [h, m] = (t || '').split(':').map(Number); return (h || 0) * 60 + (m || 0) }
+
+// 某天「有时间」的活动 → 计算位置 + 重叠分栏（聚簇贪心分列）
+function timedLayoutFor(iso) {
+  const items = visibleEvents.value
+    .filter(e => e.date === iso && e.time)
+    .map(e => {
+      const s = _parseMin(e.time)
+      let en = e.endTime ? _parseMin(e.endTime) : s + 60
+      if (en <= s) en = 1440          // 结束<=开始（次日/无效）→ 当天截到 24:00
+      return { ev: e, s, e: Math.min(1440, en) }
+    })
+    .sort((a, b) => a.s - b.s || a.e - b.e)
+  const res = []
+  let cluster = [], cEnd = -1
+  const flush = () => {
+    const colEnds = []
+    cluster.forEach(it => {
+      let c = 0
+      while (c < colEnds.length && colEnds[c] > it.s) c++
+      it._col = c; colEnds[c] = it.e
+    })
+    const n = Math.max(1, colEnds.length)
+    cluster.forEach(it => { it._n = n })
+    res.push(...cluster); cluster = []; cEnd = -1
+  }
+  items.forEach(it => {
+    if (cluster.length && it.s >= cEnd) flush()
+    cluster.push(it); cEnd = Math.max(cEnd, it.e)
+  })
+  flush()
+  return res.map(it => ({
+    ev: it.ev,
+    top: it.s / 60 * HOUR_H,
+    height: Math.max(15, (it.e - it.s) / 60 * HOUR_H - 2),
+    leftPct: it._col / it._n * 100,
+    widthPct: 100 / it._n,
+  }))
+}
+
+// 某天「无时间」的活动 → 全天行
+function allDayEventsFor(iso) { return visibleEvents.value.filter(e => e.date === iso && !e.time) }
+// 单日项目（startDate===endDate）：weekBars 只收跨天条，这类在全天行当单天条目显示（同月视图把它当 chip）
+function singleDayProjectsFor(iso) {
+  return effectiveProjectTimelines.value
+    .filter(p => p.startDate === p.endDate && p.startDate === iso)
+    .map(p => ({ ...p, isProject: true }))
+}
+// 某天全天行的单天条目 = 单日项目 + 无时间活动，按月视图 chip 排序（done 末尾→优先级→开始/日期→创建）
+function allDayItemsFor(iso) {
+  const items = [...singleDayProjectsFor(iso), ...allDayEventsFor(iso).map(e => ({ ...e, isProject: false }))]
+  const prio = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
+  return items.sort((a, b) => {
+    const da = a.status === 'done' ? 1 : 0, db = b.status === 'done' ? 1 : 0
+    if (da !== db) return da - db
+    const pd = prio(b) - prio(a); if (pd) return pd
+    const as_ = a.startDate ?? a.date ?? '', bs = b.startDate ?? b.date ?? ''
+    if (as_ !== bs) return as_.localeCompare(bs)
+    return (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
+  })
+}
+// 本周项目跨天条（复用月视图的 weekBars 布局）
+// weekBars 已按月视图同一逻辑排序（done 末尾→优先级→开始日→截止日→创建时间）并贪心分行
+const weekAllDayBars  = computed(() => weekBars(weekDays.value))
+const _WEEK_MAX_PROJ  = 10   // 全天行最多显示的项目数，超出收入「更多」（同月视图：封顶 + 更多）
+const weekAllDayShown = computed(() => weekAllDayBars.value.slice(0, _WEEK_MAX_PROJ))
+const weekAllDayMore  = computed(() => weekAllDayBars.value.slice(_WEEK_MAX_PROJ).map(b => ({ ...b, isProject: true })))
+const wvShownRows     = computed(() => weekAllDayShown.value.reduce((m, b) => Math.max(m, b.row + 1), 0))
+// 第 ci 列被隐藏（超出 10）的跨天项目 = 覆盖该天的隐藏条；每天列各自「更多」，按实际位置显示（同月视图）
+function weekMoreFor(ci) { return weekAllDayMore.value.filter(b => b.colStart <= ci && b.colEnd >= ci) }
+function pbarStyle(bar) {
+  // left/right 同月视图 .project-bar：真正 start/end 的那一端留 6px 安全间距（对齐日格 padding），
+  // 跨周中间段（不 start 也不 end）不留，贴到格边表示还在连续
+  return { left:  bar.startsHere ? `calc(${bar.colStart / 7 * 100}% + 6px)` : (bar.colStart / 7 * 100) + '%',
+           right: bar.endsHere   ? `calc(${(7 - bar.colEnd - 1) / 7 * 100}% + 6px)` : ((7 - bar.colEnd - 1) / 7 * 100) + '%',
+           top: bar.row * 20 + 'px',
+           background: [deadlineWarnLayer(bar), capBg(bar.accent, bar.progress)].filter(Boolean).join(', '),   // 进度填充：与月视图/侧栏胶囊一致；deadlineWarnLayer 叠加临近截止日的标红
+           borderColor: bar.accent + '70', color: darkenHex(bar.accent) }
+}
+
+// 全天行高度：取各列「跨天条行 + 该列单日条目行 + 该列若有更多再 +1」的最大行数（避免溢出）
+const wvAllDayH = computed(() => {
+  let maxRows = wvShownRows.value
+  weekDays.value.forEach((d, ci) => {
+    const rows = wvShownRows.value + allDayItemsFor(d.iso).length + (weekMoreFor(ci).length ? 1 : 0)
+    if (rows > maxRows) maxRows = rows
+  })
+  return Math.max(maxRows * 20 + 6, 26)
+})
+
+// 当前时间红线（每分钟更新）
+const nowMinutes = ref(new Date().getHours() * 60 + new Date().getMinutes())
+const nowTop = computed(() => nowMinutes.value / 60 * HOUR_H)
+let _nowTimer = null
+onMounted(() => { _nowTimer = setInterval(() => { nowMinutes.value = new Date().getHours() * 60 + new Date().getMinutes() }, 60000) })
+onUnmounted(() => clearInterval(_nowTimer))
+
+function setView(m) {
+  if (m === viewMode.value) return
+  if (m === 'week') weekRef.value = new Date((selectedDate.value || todayIso.value) + 'T00:00:00')
+  else cursor.value = new Date(weekRef.value.getFullYear(), weekRef.value.getMonth(), 1)
+  viewMode.value = m
+}
+// 周视图导航/切换时把 cursor 同步到当周月份 → 触发按月 fetch（含 spillover，覆盖跨月那周）
+watch(weekRef, v => {
+  const m0 = new Date(v.getFullYear(), v.getMonth(), 1)
+  if (m0.getFullYear() !== cursor.value.getFullYear() || m0.getMonth() !== cursor.value.getMonth()) cursor.value = m0
+})
+
+// 周视图：悬停高亮小时格 + 按下拖拽选时段建活动
+const wvHover = ref(null)   // { iso, h } 悬停的小时格
+const wvDragging = ref(false)      // 是否正在小时格拖选（仅用于门控 hover，不再有单独的 selbox）
+const wvSelectedSlot = ref(null)   // { iso, h0, h1 } 选中格（点击/拖拽直接驱动它 = 被选中深色，无中间反馈）
+let _wvColRect = null
+let _wvFormOpening = false   // mouseup 打开表单后屏蔽紧随的 click → handleClickOutside 误关
+let _prevSelectedSlot = null // 记录 mousedown 前的选中格，用于判断是否二次点击同格
+function _hourAt(clientY, rect) { return Math.max(0, Math.min(23, Math.floor((clientY - rect.top) / HOUR_H))) }
+
+function onColMove(e, d) {
+  if (wvDragging.value || _evDrag) return                     // 选区/活动拖拽中：不高亮小时格
+  if (e.target.closest('.wv-ev')) { wvHover.value = null; return }   // 鼠标在活动上：不高亮下方格（替代原 .stop，避免挡住 document 拖拽监听）
+  wvHover.value = { iso: d.iso, h: _hourAt(e.clientY, e.currentTarget.getBoundingClientRect()) }
+}
+function onColLeave() { if (!wvDragging.value) wvHover.value = null }
+// 悬停的小时格是否落在当前选中区内 → 是则不显示 hover 浅色（避免和选中深色叠加，同月视图单元格背景互斥）
+function onColDown(e, d) {
+  if (e.button !== 0) return
+  selRange.value = null   // 选时段 → 清掉日期选择（两者用途不同，互斥）
+  _wvColRect = e.currentTarget.getBoundingClientRect()
+  const h = _hourAt(e.clientY, _wvColRect)
+  _prevSelectedSlot = wvSelectedSlot.value ? { ...wvSelectedSlot.value } : null
+  wvDragging.value = true
+  wvSelectedSlot.value = { iso: d.iso, h0: h, h1: h }   // 直接进入「被选中」深色（取代原 selbox 点击反馈）
+  wvHover.value = null
+  document.addEventListener('mousemove', _wvDrag)
+  document.addEventListener('mouseup', _wvUp)
+  e.preventDefault()
+}
+function _wvDrag(e) {
+  if (!wvDragging.value || !_wvColRect || !wvSelectedSlot.value) return
+  e.preventDefault()   // 拖拽期间彻底禁掉文本/元素选中（防整片染暗）
+  wvSelectedSlot.value = { ...wvSelectedSlot.value, h1: _hourAt(e.clientY, _wvColRect) }
+}
+function _wvUp(e) {
+  document.removeEventListener('mousemove', _wvDrag)
+  document.removeEventListener('mouseup', _wvUp)
+  wvDragging.value = false
+  const sel = wvSelectedSlot.value
+  if (!sel) return
+  const a = Math.min(sel.h0, sel.h1), b = Math.max(sel.h0, sel.h1)
+  const p = n => String(n).padStart(2, '0')
+  const endV = b + 1   // 拖到 B 点 → 覆盖到 (B+1):00；点一下不拖 → 1 小时
+  wvSelectedSlot.value = { iso: sel.iso, h0: a, h1: b }   // 点击后格子保持暗色
+  selectedDate.value = sel.iso
+  newEvent.value = { name: '', date: sel.iso, time: `${p(a)}:00`, endTime: endV >= 24 ? '00:00' : `${p(endV)}:00`, description: '', allDay: false }
+  resetReminder()
+  // 单击同一格的二次点击才弹出添加活动弹窗；拖选或首次单击只做格子选中
+  const prev = _prevSelectedSlot
+  const isSameClick = a === b && prev && prev.iso === sel.iso &&
+    Math.min(prev.h0, prev.h1) === a && Math.max(prev.h0, prev.h1) === b
+  if (isSameClick) {
+    const w = 240
+    const left = Math.max(8, Math.min(e.clientX - w / 2, window.innerWidth - w - 8))
+    addFormStyle.value = { position: 'fixed', top: Math.max(8, e.clientY + 8) + 'px', left: left + 'px', width: w + 'px', zIndex: 1000 }
+    _wvFormOpening = true
+    showAddForm.value = true
+    nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
+  }
+}
+
+// ── 周视图：拖活动边缘改起止时间 / 拖活动体改日期 ──
+const _SNAP = 30   // 分钟吸附
+let _evDrag = null
+function _toMin(t) { const [h, m] = (t || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0) }
+function _fromMin(min) { const p = n => String(n).padStart(2, '0'); min = ((Math.round(min) % 1440) + 1440) % 1440; return `${p(Math.floor(min / 60))}:${p(min % 60)}` }
+function _snapMin(min) { return Math.max(0, Math.min(1440, Math.round(min / _SNAP) * _SNAP)) }
+
+function _setEventLocal(id, fields) {
+  const apply = (list) => { const i = list.findIndex(e => e.id === id); if (i !== -1) list[i] = { ...list[i], ...fields } }
+  apply(extraEvents.value); apply(nextMonthEvents.value); apply(spilloverEvents.value)
+}
+async function _persistEvent(s) {
+  buildUpcomingList()
+  eventsCache[`${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`] = [...extraEvents.value]
+  try {
+    const updated = await eventsApi.update(s.id, { title: s.name, date: s.date, time: s.time || null, endTime: s.endTime || null, description: s.description || undefined, version: s.version })
+    if (updated?.version) _setEventLocal(s.id, { version: updated.version })
+  } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
+}
+
+function onEvResize(ev, edge, e) {   // 拖边缘改起止时间
+  const colEl = e.currentTarget.closest('.wv-col')
+  _evDrag = { kind: 'resize', edge, colRect: colEl.getBoundingClientRect(), moved: false,
+              id: ev.id, _uid: ev._uid, name: ev.name, description: ev.description, version: ev.version, date: ev.date, time: ev.time, endTime: ev.endTime,
+              startMin: _toMin(ev.time || '09:00'), endMin: ev.endTime ? _toMin(ev.endTime) : _toMin(ev.time || '09:00') + 60 }
+  if (_evDrag.endMin <= _evDrag.startMin) _evDrag.endMin = 1440
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', _evDragMove)
+  document.addEventListener('mouseup', _evDragUp)
+  e.preventDefault()
+}
+function _evEdge(e) {   // 按下/悬停位置离上下边缘的判定：'start'(上) / 'end'(下) / null(中间)
+  const rect = e.currentTarget.getBoundingClientRect()
+  const off = e.clientY - rect.top
+  const EDGE = Math.min(7, rect.height / 2)   // 短块时减半，免上下交叠
+  if (off <= EDGE) return 'start'
+  if (off >= rect.height - EDGE) return 'end'
+  return null
+}
+function onEvHover(e) {   // 悬停活动：清掉小时格悬停 + 按位置切换光标（边缘=ns-resize、中间=grab）
+  wvHover.value = null
+  e.currentTarget.style.cursor = _evEdge(e) ? 'ns-resize' : 'grab'
+}
+function onEvDown(ev, e) {   // 按下活动体：近边缘=缩放起止，中间=自由移动，未拖=编辑
+  if (e.button !== 0) return
+  const edge = _evEdge(e)
+  if (edge) return onEvResize(ev, edge, e)
+  const sM = _toMin(ev.time || '09:00')
+  let eM = ev.endTime ? _toMin(ev.endTime) : sM + 60
+  if (eM <= sM) eM = sM + 60
+  _evDrag = { kind: 'move', x0: e.clientX, y0: e.clientY, moved: false,
+              id: ev.id, _uid: ev._uid, name: ev.name, description: ev.description, version: ev.version,
+              date: ev.date, time: ev.time, endTime: ev.endTime,
+              startMin0: sM, dur: eM - sM,
+              cols: [...document.querySelectorAll('.week-view .wv-col')].map((el, i) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, iso: weekDays.value[i]?.iso } }) }
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', _evDragMove)
+  document.addEventListener('mouseup', _evDragUp)
+}
+function _evDragMove(e) {
+  if (!_evDrag) return
+  if (_evDrag.kind === 'resize') {
+    _evDrag.moved = true
+    const min = _snapMin((e.clientY - _evDrag.colRect.top) / HOUR_H * 60)
+    if (_evDrag.edge === 'start') _evDrag.startMin = Math.min(min, _evDrag.endMin - _SNAP)
+    else _evDrag.endMin = Math.max(min, _evDrag.startMin + _SNAP)
+    _evDrag.time = _fromMin(_evDrag.startMin)
+    _evDrag.endTime = _evDrag.endMin >= 1440 ? '00:00' : _fromMin(_evDrag.endMin)
+    _setEventLocal(_evDrag.id, { time: _evDrag.time, endTime: _evDrag.endTime })
+    return
+  }
+  if (!_evDrag.moved && Math.abs(e.clientX - _evDrag.x0) + Math.abs(e.clientY - _evDrag.y0) < 5) return
+  _evDrag.moved = true
+  wvHover.value = null
+  // 纵向：整体平移时间，保持时长，30 分吸附，限制在当天内
+  let ns = _snapMin(_evDrag.startMin0 + (e.clientY - _evDrag.y0) / HOUR_H * 60)
+  ns = Math.max(0, Math.min(1440 - _evDrag.dur, ns))
+  const newTime = _fromMin(ns)
+  const ne = ns + _evDrag.dur
+  const newEnd = ne >= 1440 ? '00:00' : _fromMin(ne)
+  // 横向：落在哪一列就是哪天
+  const col = _evDrag.cols.find(c => e.clientX >= c.left && e.clientX < c.right)
+  const newDate = (col && col.iso) ? col.iso : _evDrag.date
+  if (newDate !== _evDrag.date || newTime !== _evDrag.time || newEnd !== _evDrag.endTime) {
+    _evDrag.date = newDate; _evDrag.time = newTime; _evDrag.endTime = newEnd
+    _setEventLocal(_evDrag.id, { date: newDate, time: newTime, endTime: newEnd })
+  }
+}
+function _evDragUp(e) {
+  document.removeEventListener('mousemove', _evDragMove)
+  document.removeEventListener('mouseup', _evDragUp)
+  document.body.style.userSelect = ''
+  const s = _evDrag; _evDrag = null
+  if (!s) return
+  if (!s.moved) {   // 没拖动 = 单击 → 打开编辑（无论按在边缘还是中间）
+    // mouseup 之后浏览器还会补发一次 click，冒泡到 handleClickOutside 时表单刚打开、
+    // target 自然不在表单内——不设这个屏蔽标记，编辑弹窗会开出来又被那次补发的 click 秒关
+    _wvFormOpening = true
+    openEditForm({ _uid: s._uid, id: s.id, name: s.name, date: s.date, time: s.time, endTime: s.endTime, description: s.description, version: s.version }, e, true)
+    return
+  }
+  selectedDate.value = s.date
+  _persistEvent(s)
+}
+
 const periodLabel = computed(() => {
+  if (viewMode.value === 'week') {
+    const ds = weekDays.value
+    return new Date(ds[0].iso + 'T00:00:00').getFullYear() + '年 ' + ds[0].md + ' - ' + ds[6].md
+  }
   const c = cursor.value
   return c.getFullYear() + '年 ' + (c.getMonth()+1) + '月'
 })
 
-function prev() { const d = new Date(cursor.value); d.setMonth(d.getMonth()-1); cursor.value = d }
-function next() { const d = new Date(cursor.value); d.setMonth(d.getMonth()+1); cursor.value = d }
+function prev() {
+  if (viewMode.value === 'week') { const d = new Date(weekRef.value); d.setDate(d.getDate() - 7); weekRef.value = d }
+  else { const d = new Date(cursor.value); d.setMonth(d.getMonth()-1); cursor.value = d }
+}
+function next() {
+  if (viewMode.value === 'week') { const d = new Date(weekRef.value); d.setDate(d.getDate() + 7); weekRef.value = d }
+  else { const d = new Date(cursor.value); d.setMonth(d.getMonth()+1); cursor.value = d }
+}
 function goToday() {
   const now = new Date()
   cursor.value = new Date(now.getFullYear(), now.getMonth(), 1)
+  weekRef.value = now
   selectedDate.value = todayIso.value
 }
 
@@ -1060,7 +1733,7 @@ function buildUpcomingList() {
   const midnight    = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
   function label(iso) {
-    const d = Math.round((new Date(iso + 'T00:00:00') - midnight) / 86400000)
+    const d = Math.round((+new Date(iso + 'T00:00:00') - +midnight) / 86400000)
     return { daysLeft: d, daysLabel: d === 0 ? '今天' : d === 1 ? '明天' : d + '天后' }
   }
 
@@ -1098,7 +1771,10 @@ function buildUpcomingList() {
 watch([projectTimelines, extraEvents, nextMonthEvents], buildUpcomingList, { immediate: true })
 watch(activeRange, r => { uiStore.calendarActiveRange = r })
 
-// 搜索跳转：导航到日程所在月份并高亮
+// 搜索跳转：导航到日程所在月份并高亮。immediate:true 是关键——从别的页面搜索时，
+// GlobalSearch 先把 pendingCalendarEvent 设好值再 router.push 过来，日历页组件这时才挂载、
+// 这个 watch 才第一次建立，值早已经是目标值、没有"变化"可触发；不给 immediate 就只有已经
+// 停在日历页时再搜（ref 从有值→新值，watch 活着能看到变化）才会跳，这正是用户反馈的现象。
 watch(() => uiStore.pendingCalendarEvent, async (target) => {
   if (!target) return
   uiStore.pendingCalendarEvent = null
@@ -1107,20 +1783,48 @@ watch(() => uiStore.pendingCalendarEvent, async (target) => {
   selectedDate.value = target.date
   await nextTick()
   _flashCalendarEvent(target.id)
-})
+}, { immediate: true })
 
-function _flashCalendarEvent(id) {
+// 从别的页面搜索跳转时，日历页刚挂载、fetchEvents() 还在飞网络请求，侧栏这时可能还没渲染出
+// 目标活动的 data-event-id——固定延时 150ms 一次性查大概率扑空（只跳对了月份/日期，没有高亮闪一下）。
+// 改成轮询，等数据到位、DOM 出现再闪，最多等 2s（10 次 × 200ms）。
+function _flashCalendarEvent(id, tries = 10) {
   setTimeout(() => {
     const el = document.querySelector(`[data-event-id="${id}"]`)
-    if (!el) return
+    if (!el) { if (tries > 0) _flashCalendarEvent(id, tries - 1); return }
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     el.classList.add('search-flash')
     setTimeout(() => el.classList.remove('search-flash'), 1800)
-  }, 150)
+  }, 200)
+}
+
+// 弹窗加提醒后会变高，可能顶出屏幕底部、保存按钮被切掉。
+// 量实际高度，把 top 往上抬到「底部留 SAFE_GAP 安全距离」；超高就靠 CSS max-height 内部滚动。
+const SAFE_GAP = 12
+function clampPopupIntoView(elRef, styleRef) {
+  const el = elRef.value
+  if (!el) return
+  const h = el.offsetHeight
+  const cur = parseFloat(styleRef.value.top) || 0
+  const maxTop = window.innerHeight - h - SAFE_GAP
+  const top = Math.max(SAFE_GAP, Math.min(cur, maxTop))
+  if (Math.abs(top - cur) > 0.5) styleRef.value = { ...styleRef.value, top: top + 'px' }
+}
+// 新建活动的默认日期/时间：周视图里若有选中格 → 用选中格时段；否则下一个整点
+function _addDefaults() {
+  if (viewMode.value === 'week' && wvSelectedSlot.value) {
+    const s = wvSelectedSlot.value
+    const a = Math.min(s.h0, s.h1), b = Math.max(s.h0, s.h1)
+    const p = n => String(n).padStart(2, '0')
+    const endV = b + 1
+    return { date: s.iso, time: `${p(a)}:00`, endTime: endV >= 24 ? '00:00' : `${p(endV)}:00` }
+  }
+  return { date: selectedDate.value || todayIso.value, ...defaultTimeRange() }
 }
 
 function openAddForm() {
-  newEvent.value = { name: '', date: selectedDate.value || todayIso.value, description: '' }
+  newEvent.value = { name: '', ..._addDefaults(), description: '', allDay: false }
+  resetReminder()
   const btnEl = addBtnRef.value
   if (btnEl) {
     const btnRect    = btnEl.getBoundingClientRect()
@@ -1144,13 +1848,15 @@ function openAddForm() {
     }
   }
   showAddForm.value = true
+  nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
 }
 
 function openEditForm(ev, nativeEv, useMousePos = false) {
   showAddForm.value = false
-  editingEvent.value = { _uid: ev._uid, id: ev.id, name: ev.name, date: ev.date, description: ev.description || '' }
+  editingEvent.value = { _uid: ev._uid, id: ev.id, name: ev.name, date: ev.date, time: ev.time || '', endTime: ev.endTime || '', description: ev.description || '', allDay: !ev.time }
+  loadReminders(ev)
   const w = 240
-  const EDIT_H = 220
+  const EDIT_H = 300
   let left, top
   if (useMousePos) {
     left = Math.max(8, Math.min(nativeEv.clientX - w / 2, window.innerWidth - w - 8))
@@ -1170,35 +1876,146 @@ function openEditForm(ev, nativeEv, useMousePos = false) {
   }
   editFormStyle.value = { position: 'fixed', top: Math.max(8, top) + 'px', left: left + 'px', width: w + 'px', zIndex: 2100 }
   showEditForm.value = true
+  nextTick(() => clampPopupIntoView(editFormRef, editFormStyle))
+}
+
+// ── 活动绑定的提醒（定时任务）：可加多个，每个用「提前量」下拉选；渠道按用户已绑（web + feishu/qq/wechat）勾选 ──
+// 加/编辑两个表单共用；提醒在「保存活动」时一并对账落地（新增建、删除的删、改渠道）。
+const LEAD_OPTIONS = [
+  { label: '活动开始时',  min: 0 },
+  { label: '提前 5 分钟', min: 5 },
+  { label: '提前 15 分钟', min: 15 },
+  { label: '提前 30 分钟', min: 30 },
+  { label: '提前 1 小时', min: 60 },
+  { label: '提前 2 小时', min: 120 },
+  { label: '提前 1 天',   min: 1440 },
+  { label: '提前 2 天',   min: 2880 },
+]
+const CHAN_LABEL = { web: 'web', feishu: '飞书', qq: 'QQ', wechat: '微信' }
+const imChannels = computed(() => authStore.user?.imChannels ?? [])   // 用户已绑的 IM 平台
+const reminders          = ref([])         // [{ id?, leadMin }]，可多个
+const reminderChannels   = ref(['web'])    // 渠道（web + 已绑 IM），该活动的提醒共用
+const removedReminderIds = ref([])         // 编辑里删掉的已存在提醒 id，保存时真删
+
+// 提醒条数 / 渠道变化（弹窗变高）后重新夹住当前打开的弹窗，避免保存按钮顶出屏幕底部
+watch([() => reminders.value.length, reminderChannels], () => {
+  nextTick(() => {
+    if (showEditForm.value) clampPopupIntoView(editFormRef, editFormStyle)
+    else if (showAddForm.value) clampPopupIntoView(addFormRef, addFormStyle)
+  })
+})
+
+function leadLabelOf(min) { return LEAD_OPTIONS.find(o => o.min === min)?.label || `提前 ${min} 分钟` }
+function toggleReminderChannel(ch) {
+  const set = new Set(reminderChannels.value)
+  set.has(ch) ? set.delete(ch) : set.add(ch)
+  if (set.size === 0) set.add(ch)   // 至少留一个
+  reminderChannels.value = [...set]
+}
+function addReminder() {
+  // 点一下就建一条提醒（默认提前 30 分钟），之后用它自己的下拉改时间
+  reminders.value.push({ leadMin: 30 })
+}
+const toastMsg = ref('')
+let toastTimer = null
+function showToast(msg) {
+  toastMsg.value = msg
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toastMsg.value = '' }, 3200)
+}
+// 测试提醒渠道：往当前选的渠道发一条测试消息（不建任务，新建/编辑活动都能测）
+async function testReminderChannels() {
+  try {
+    const name = (showEditForm.value ? editingEvent.value?.name : newEvent.value?.name) || '活动提醒'
+    const res = await scheduledTasksApi.testNotify({ channels: reminderChannels.value, name })
+    showToast(res?.msg || '已发送测试消息')
+  } catch { showToast('测试失败，请稍后重试') }
+}
+function removeReminderAt(i) {
+  const r = reminders.value[i]
+  if (r?.id) removedReminderIds.value.push(r.id)
+  reminders.value.splice(i, 1)
+}
+function resetReminder() {
+  reminders.value = []
+  reminderChannels.value = ['web']
+  removedReminderIds.value = []
+}
+
+function _pad2(n) { return String(n).padStart(2, '0') }
+function _reminderAtIso(date, time, leadMin) {
+  const [h, mm] = (time || '09:00').split(':').map(Number)
+  const d = new Date(`${date}T00:00:00`)
+  d.setHours(h, mm - leadMin, 0, 0)   // 负分钟/跨天由 Date 自动回退
+  return `${d.getFullYear()}-${_pad2(d.getMonth()+1)}-${_pad2(d.getDate())}T${_pad2(d.getHours())}:${_pad2(d.getMinutes())}`
+}
+
+async function loadReminders(ev) {
+  resetReminder()
+  if (typeof ev.id !== 'number') return   // 临时事件（还没存）：保持 reset 态
+  try {
+    const tasks = (await scheduledTasksApi.listForEvent(ev.id))?.tasks || []
+    if (!tasks.length) return
+    reminderChannels.value = (tasks[0].channels && tasks[0].channels.length) ? tasks[0].channels : ['web']
+    reminders.value = tasks.map(t => {
+      let leadMin = 0
+      if ((t.cron || '').startsWith('@once:')) {
+        const raw = Math.round((+new Date(`${ev.date}T${ev.time || '09:00'}`) - +new Date(t.cron.slice(6))) / 60000)
+        leadMin = LEAD_OPTIONS.reduce((b, o) => Math.abs(o.min - raw) < Math.abs(b - raw) ? o.min : b, 0)
+      }
+      return { id: t.id, leadMin }
+    })
+  } catch { /* 保持 reset 态 */ }
+}
+
+// 保存活动后调用：对账该活动的提醒——删掉移除的、改已存在的渠道/时刻、建新增的
+async function applyReminders(eventId, name, date, time) {
+  try {
+    for (const id of removedReminderIds.value) await scheduledTasksApi.delete(id)
+    removedReminderIds.value = []
+    for (const r of reminders.value) {
+      const cron = `@once:${_reminderAtIso(date, time, r.leadMin)}`
+      const data = { name: `${name} 提醒`, payload: `提醒：${name}（${date}${time ? ' ' + time : ''}）`, cron, channels: reminderChannels.value }
+      if (r.id) await scheduledTasksApi.update(r.id, data)
+      else { const t = await scheduledTasksApi.create({ ...data, event_id: eventId }); r.id = t?.id ?? null }
+    }
+    liveStore.bump?.('scheduled_tasks')
+  } catch { /* 提醒失败不挡活动保存 */ }
 }
 
 async function saveEditEvent() {
   const ev = editingEvent.value
   if (!ev?.name) return
+  if (ev.allDay) { ev.time = ''; ev.endTime = '' }
   showEditForm.value = false
 
   // 更新本地列表
   const update = (list) => {
     const idx = list.findIndex(e => e.id === ev.id)
     if (idx !== -1) {
-      list[idx] = { ...list[idx], name: ev.name, date: ev.date, description: ev.description }
+      list[idx] = { ...list[idx], name: ev.name, date: ev.date, time: ev.time || '', endTime: ev.endTime || '', description: ev.description }
     }
   }
   update(extraEvents.value)
   update(nextMonthEvents.value)
+  update(spilloverEvents.value)
   buildUpcomingList()
   const cacheKey = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   eventsCache[cacheKey] = [...extraEvents.value]
 
   try {
-    const updated = await eventsApi.update(ev.id, { title: ev.name, date: ev.date, description: ev.description || undefined, version: ev.version })
+    const updated = await eventsApi.update(ev.id, { title: ev.name, date: ev.date, time: ev.time || null, endTime: ev.endTime || null, description: ev.description || undefined, version: ev.version })
     const applyVer = (list) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
-    applyVer(extraEvents.value); applyVer(nextMonthEvents.value)
-  } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await loadEvents() } }
+    applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
+    await applyReminders(ev.id, ev.name, ev.date, ev.time)   // 按提前量/渠道落地提醒
+  } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
 }
 
 function handleClickOutside(e) {
   if (e.target.closest('.dp-popup')) return
+  // mouseup 打开表单（周视图选时段新建 / 单击活动编辑）后，浏览器紧接着补发的 click 会冒泡到这里，
+  // 此时表单刚打开、target 显然不在表单内——不拦会被当成"点了外面"瞬间关掉。屏蔽这一次即可。
+  if (_wvFormOpening) { _wvFormOpening = false; return }
   if (showAddForm.value) {
     if (!addBtnRef.value?.contains(e.target) && !addFormRef.value?.contains(e.target))
       showAddForm.value = false
@@ -1225,6 +2042,7 @@ onMounted(() => {
   document.addEventListener('click', handleClickOutside, true)
   fetchEvents()
   fetchNextMonthEvents()
+  fetchSpilloverEvents()
   nextTick(setupRO)
   scheduleMidnightTick()
   loadHolidays()
@@ -1236,8 +2054,8 @@ onUnmounted(() => {
 })
 
 // 实时：咕咕/IM 改了日历 → 重新拉当前+下月活动
-watch(() => liveStore.rev.calendar, () => { fetchEvents(); fetchNextMonthEvents() })
-watch(cursor, () => { fetchEvents(); loadHolidays() })
+watch(() => liveStore.rev.calendar, () => { fetchEvents(); fetchNextMonthEvents(); fetchSpilloverEvents() })
+watch(cursor, () => { fetchEvents(); fetchSpilloverEvents(); loadHolidays() })
 watch(monthWeeks, () => nextTick(setupRO))
 watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 
@@ -1247,6 +2065,7 @@ async function deleteEvent(ev) {
   const match = (e) => (ev._uid != null ? e._uid === ev._uid : String(e.id) === String(ev.id))
   extraEvents.value     = extraEvents.value.filter(e => !match(e))
   nextMonthEvents.value = nextMonthEvents.value.filter(e => !match(e))
+  spilloverEvents.value = spilloverEvents.value.filter(e => !match(e))
   buildUpcomingList()
   const key = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   eventsCache[key] = extraEvents.value
@@ -1255,7 +2074,7 @@ async function deleteEvent(ev) {
   } catch { /* 已删/网络等 → 下面对账兜底，不再静默留下脏状态 */ }
   finally {
     // ③ 与服务器对账：不管成功/404 都按最新刷一次，杜绝「删了还在 / 删了又回来 / 再删报错」
-    fetchEvents(); fetchNextMonthEvents()
+    fetchEvents(); fetchNextMonthEvents(); fetchSpilloverEvents()
   }
 }
 
@@ -1268,12 +2087,15 @@ async function deleteEventFromEdit() {
 
 async function saveEvent() {
   if (!newEvent.value.name) return
+  if (newEvent.value.allDay) { newEvent.value.time = ''; newEvent.value.endTime = '' }
   const date = newEvent.value.date || selectedDate.value
   const uid = 'u' + Date.now()
   const localItem = {
     _uid:        uid,
     id:          uid,                    // 临时 id；create 回来换成真数字 id，但 _uid 不变
     date,
+    time:        newEvent.value.time || '',
+    endTime:     newEvent.value.endTime || '',
     name:        newEvent.value.name,
     client:      '',
     type:        'event',
@@ -1283,15 +2105,16 @@ async function saveEvent() {
   }
   extraEvents.value.push(localItem)
   selectedDate.value = date
-  newEvent.value = { name: '', date: todayIso.value, description: '' }
+  newEvent.value = { name: '', date: todayIso.value, ...defaultTimeRange(), description: '', allDay: false }
   showAddForm.value = false
 
   const cacheKey = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   try {
-    const created = await eventsApi.create({ title: localItem.name, date, type: 'event', description: localItem.description || undefined })
+    const created = await eventsApi.create({ title: localItem.name, date, time: localItem.time || undefined, endTime: localItem.endTime || undefined, type: 'event', description: localItem.description || undefined })
     const norm = { ...normalizeEvent(created), _uid: uid }   // 保留同一 _uid，删/改才能稳定匹配
     const idx = extraEvents.value.findIndex(e => e._uid === uid)
     if (idx !== -1) extraEvents.value[idx] = norm
+    if (typeof created?.id === 'number') await applyReminders(created.id, localItem.name, date, localItem.time)   // 新活动按提前量/渠道建提醒
   } catch { }
   eventsCache[cacheKey] = [...extraEvents.value]
 }
@@ -1303,7 +2126,9 @@ async function saveEvent() {
 .cal-done:hover { opacity: 0.7; }   /* 悬停略恢复，方便看清要操作的那条 */
 
 .cal-page { display: flex; flex-direction: column; gap: 14px; height: 100%; }
-.cal-toolbar { display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; }
+/* 浮在会动内容之上，用 backdrop-filter 会闪白带 → 改用 <GlassBg> faux 玻璃（同顶栏，见 DefaultLayout 注释）。
+   宿主透明 + isolation 建层叠上下文让 GlassBg(z-index:-1) 压在内容下；backdrop-filter 显式关掉。*/
+.cal-toolbar { display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; position: relative; isolation: isolate; background: transparent; overflow: hidden; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .toolbar-left { display: flex; align-items: center; gap: 4px; }
 .nav-btn { width: 30px; height: 30px; border-radius: 8px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); transition: background 0.15s; }
 .nav-btn:hover { background: rgba(0,0,0,0.06); }
@@ -1321,6 +2146,9 @@ async function saveEvent() {
 
 .cal-layout { display: grid; grid-template-columns: 1fr 260px; gap: 14px; flex: 1; min-height: 0; }
 .cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden; }
+/* 中和 .glass-card:hover 的背景/阴影变化：cal-main 是常驻操作面板，鼠标一直在其上=常态 hover(0.70)，
+   快速点击时 :hover 掉一帧 → 背景朝 0.56 淡回=「暗一下」。hover 保持与基态一致 → 无可闪的变化。 */
+.cal-main:hover { background: var(--glass-bg); box-shadow: var(--glass-shadow); }
 .weekday-row { display: grid; grid-template-columns: repeat(7, 1fr); flex-shrink: 0; margin-bottom: 2px; }
 .weekday-hdr { text-align: center; font-size: 11px; font-weight: 600; color: var(--text-secondary); padding: 3px 0 8px; border-right: 1px solid rgba(123,127,178,0.15); }
 .weekday-hdr:last-child { border-right: none; }
@@ -1341,14 +2169,24 @@ async function saveEvent() {
 .month-cell {
   padding: 7px 6px 4px;
   border-right: 1px solid rgba(123,127,178,0.15);
-  cursor: pointer; transition: background 0.12s;
+  cursor: pointer;
   overflow: hidden;
+  position: relative;
+  transition: background 0.12s ease;   /* 选中/范围态淡入淡出（hover 走 ::before opacity；grid 已提合成层不会拖累 cal-main） */
 }
 .month-cell:last-child { border-right: none; }
-.month-cell.cell-hovered { background: rgba(123,127,178,0.06); }
+/* hover 高光：用 ::before + opacity（合成层，零主线程重绘），不再走背景变化——背景变化会 0.12s
+   主线程重绘并级联拖累顶栏/cal-toolbar 的 backdrop-filter 重栅格、闪白带（见 perf trace）。*/
+.month-cell::before {
+  content: ''; position: absolute; inset: 0; z-index: 0;
+  background: rgba(123,127,178,0.06); opacity: 0;
+  transition: opacity 0.12s ease; pointer-events: none;
+}
+.month-cell.cell-hovered::before { opacity: 1; }
+.month-cell.is-weekend::before { background: rgba(195,90,90,0.07); }
+.month-cell > * { position: relative; z-index: 1; }
 .month-cell.other-month { opacity: 0.3; }
 .month-cell.is-weekend { background: rgba(195,90,90,0.028); }
-.month-cell.is-weekend.cell-hovered { background: rgba(195,90,90,0.07); }
 .month-cell.is-today { background: rgba(123,127,178,0.07); }
 .month-cell.is-today.is-weekend { background: rgba(195,90,90,0.07); }
 .month-cell.is-today .cell-num { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: rgba(255,255,255,0.88) !important; font-weight: 700; border-radius: 6px; }
@@ -1372,7 +2210,7 @@ async function saveEvent() {
 .month-cell.range-end.is-weekend .cell-num { background: rgba(195,90,90,0.15); color: rgba(195,90,90,0.9); }
 
 .cell-head { display: flex; align-items: center; gap: 3px; height: 24px; }
-.cell-num { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; color: var(--text-primary); flex-shrink: 0; transition: all 0.15s; }
+.cell-num { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; color: var(--text-primary); flex-shrink: 0; }  /* 去掉 transition: all（选中/今天时 border/color/font 一起动 → 合成失败重绘） */
 .hday-badge { font-size: 9px; font-weight: 700; line-height: 1; padding: 2px 3px; border-radius: 3px; flex-shrink: 0; }
 .hday-holiday { background: rgba(210,75,75,0.1); color: rgba(210,75,75,0.82); }
 .hday-workday { background: rgba(210,130,20,0.14); color: rgba(170,100,5,0.9); }
@@ -1489,6 +2327,19 @@ async function saveEvent() {
 .ev-del-btn:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); transform: scale(1.1); }
 .sidebar-ev-bar { width: 3px; border-radius: 99px; align-self: stretch; flex-shrink: 0; min-height: 26px; }
 .sidebar-ev-name { font-size: 12px; font-weight: 500; color: var(--text-primary); line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
+/* min-width 按最长内容「00:00–00:00」固定：周视图拖拽改时间时这里跟着实时刷新，
+   光靠 tabular-nums 治不住——省略结束时间时整串变短，仍会把后面的活动名往左右推一下，
+   固定宽度左对齐，数字随便怎么变，名字位置纹丝不动。 */
+.sidebar-ev-time { display: inline-block; min-width: 11ch; font-size: 11px; font-weight: 600; color: var(--accent, #7b7fb2); margin-left: 7px; margin-right: 4px; font-variant-numeric: tabular-nums; }
+.popup-row { display: flex; gap: 6px; align-items: center; }
+.popup-row > :first-child { flex: 1; min-width: 0; }
+.date-row { display: flex; align-items: center; gap: 8px; }
+.date-row-picker { flex: 1; min-width: 0; }
+.allday-toggle { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12.5px; color: var(--text-secondary); cursor: pointer; user-select: none; white-space: nowrap; }
+.time-box { position: relative; display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; box-sizing: border-box; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); transition: border-color 0.15s, box-shadow 0.15s; }
+.time-box:focus-within { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
+.time-inner { border: none; background: none; outline: none; font-size: 13px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028; padding: 0; width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
+.time-dash { color: #8a8fa8; font-size: 12px; font-weight: 600; }
 .ev-type-badge {
   display: inline-block; vertical-align: middle; margin-left: 4px;
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
@@ -1514,7 +2365,7 @@ async function saveEvent() {
 <style>
 .overflow-popup {
   background: var(--panel-bg);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.82);
   border-radius: 14px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 28px rgba(30,40,80,0.14);
@@ -1541,7 +2392,7 @@ async function saveEvent() {
 
 .cal-month-picker {
   background: var(--panel-bg);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.82);
   border-radius: 16px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 10px 36px rgba(30,40,80,0.14);
@@ -1565,28 +2416,154 @@ async function saveEvent() {
 .more-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .more-pop-enter-from,.more-pop-leave-to { opacity: 0; transform: scaleY(0.88); }
 
-.add-event-popup { background: rgba(255,255,255,0.6); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; }
+.add-event-popup { background: rgba(255,255,255,0.72); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
 .popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 .popup-title { font-size: 13px; font-weight: 700; color: #1e2028; }
-.popup-input { width: 100%; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 12px; font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028; outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }
-.popup-input:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
-.popup-textarea { width: 100%; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 12px; font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028; outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; resize: none; line-height: 1.5; }
-.popup-textarea:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
+.popup-input { width: 100%; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }
+.popup-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); background: rgba(255,255,255,0.85); }
+.popup-textarea { width: 100%; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; resize: none; line-height: 1.5; }
+.popup-textarea:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); background: rgba(255,255,255,0.85); }
 .popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
 .popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: 'PingFang SC', 'Segoe UI', sans-serif; font-weight: 600; transition: background 0.12s, border-color 0.12s; }
 .popup-delete:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); }
 .popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
 .popup-save:disabled { opacity: 0.38; cursor: default; }
 .popup-save:not(:disabled):hover { opacity: 0.88; }
+.reminder-section { display: flex; flex-direction: column; gap: 6px; padding-top: 7px; border-top: 1px solid rgba(123,127,178,0.18); }
+.reminder-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.reminder-label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+.reminder-item { display: flex; align-items: center; gap: 6px; }
+.reminder-lead { font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+.reminder-test-bar { width: 100%; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 7px; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.4); background: rgba(123,127,178,0.08); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
+.reminder-test-bar:hover { border-color: rgba(123,127,178,0.7); background: rgba(123,127,178,0.16); color: var(--text-primary); }
+.reminder-del { display: flex; align-items: center; padding: 2px; border: none; background: none; cursor: pointer; color: #b07858; border-radius: 5px; }
+.reminder-del:hover { background: rgba(176,120,88,0.12); }
+.reminder-add { display: flex; gap: 6px; align-items: center; }
+.lead-select { flex: 1; height: 28px; padding: 0 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 11px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028; cursor: pointer; outline: none; }
+.reminder-add-btn { flex-shrink: 0; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.1); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: background 0.12s; }
+.reminder-add-btn:hover { background: rgba(123,127,178,0.2); }
+.reminder-cancel { flex-shrink: 0; display: flex; align-items: center; padding: 4px; border: none; background: none; cursor: pointer; color: var(--text-secondary); border-radius: 6px; }
+.reminder-cancel:hover { background: rgba(0,0,0,0.06); }
+.reminder-add-toggle { width: 100%; box-sizing: border-box; text-align: center; padding: 6px 10px; border-radius: 8px; border: 1px dashed rgba(123,127,178,0.4); background: none; color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
+.reminder-add-toggle:hover { border-color: rgba(123,127,178,0.7); color: var(--text-primary); background: rgba(123,127,178,0.06); }
+/* 绝对定位浮在右侧，不参与 flex 居中，保证「开始—结束」时间仍水平居中 */
+.nextday-tag { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 600; color: #9590c4; background: rgba(123,127,178,0.1); padding: 1px 6px; border-radius: 5px; white-space: nowrap; pointer-events: none; }
+.nextday-mini { margin-left: 4px; font-size: 9px; font-weight: 600; color: #a8a3c8; padding: 1px 4px; border-radius: 4px; background: rgba(123,127,178,0.1); vertical-align: 1px; }
+.chan-block { display: flex; flex-direction: column; gap: 5px; }
+.chan-chips { display: flex; gap: 5px; flex-wrap: wrap; }
+.chan-chip { padding: 3px 11px; border-radius: 99px; border: 1px solid rgba(123,127,178,0.3); background: rgba(255,255,255,0.5); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
+.chan-chip.on { background: rgba(123,127,178,0.16); border-color: rgba(123,127,178,0.55); color: #5b5f8c; }
 .form-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
 .form-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .form-pop-enter-from, .form-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-6px); }
 
-/* 搜索跳转高亮 */
+/* 搜索跳转高亮：跟文件/项目搜索命中一样的外发光，不再是纯色背景闪一下 */
 .search-flash { animation: search-flash 1.8s ease forwards; border-radius: 10px; }
 @keyframes search-flash {
-  0%   { background: rgba(123,127,178,0.22); }
-  35%  { background: rgba(123,127,178,0.22); }
-  100% { background: transparent; }
+  0%, 60%  { box-shadow: 0 0 0 2px var(--color-primary), 0 0 14px rgba(123,127,178,0.55); }
+  100%     { box-shadow: 0 0 0 0 rgba(123,127,178,0); }
 }
+/* ───────── 周视图（时间轴）───────── */
+.toolbar-right { display: flex; align-items: center; gap: 8px; }
+.view-toggle { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: rgba(123,127,178,0.1); }
+.view-toggle button { border: none; background: none; padding: 4px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.15s; }
+.view-toggle button.on { background: #fff; color: #5a5e86; box-shadow: 0 1px 4px rgba(60,70,100,0.12); }
+
+.week-view { display: flex; flex-direction: column; flex: 1; min-height: 0; user-select: none; -webkit-user-select: none; }
+.wv-gutter { width: 46px; flex: none; }
+.wv-head { display: flex; border-bottom: 1px solid rgba(123,127,178,0.18); padding-bottom: 4px; }
+.wv-dhead { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 0; cursor: pointer; }
+.wv-dhead > span { position: relative; z-index: 1; }
+/* 选中层(::before) + 悬停层(::after)：两层独立、可叠加（hover 选中日 = 两层相加），均 opacity 淡入淡出，
+   与小时格/月格一致；opacity 走合成层、零主线程重绘，不拖累磨砂背景 */
+.wv-dhead::before, .wv-dhead::after { content: ''; position: absolute; inset: 2px 4px; border-radius: 7px; opacity: 0; transition: opacity 0.12s; pointer-events: none; }
+.wv-dhead::before { background: rgba(123,127,178,0.10); }
+.wv-dhead::after  { background: rgba(123,127,178,0.06); }
+.wv-dhead.selected::before { opacity: 1; }
+.wv-dhead:hover::after { opacity: 1; }
+.wv-dhead.weekend::before { background: rgba(195,90,90,0.09); }
+.wv-dhead.weekend::after  { background: rgba(195,90,90,0.06); }
+.wv-dhead.weekend .wv-dow { color: #b06a78; }
+.wv-dow { font-size: 11px; font-weight: 600; color: #8a8fa8; }
+.wv-dnum { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 15px; font-weight: 600; color: #3a3d52; line-height: 1; }
+/* 今日数字：方形圆角（同月视图 .is-today .cell-num，非圆形）；周末同月视图暖红渐变 */
+.wv-dnum.today { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: rgba(255,255,255,0.88); font-weight: 700; border-radius: 6px; }
+.wv-dhead.weekend .wv-dnum.today { background: linear-gradient(135deg,#b85c5c,#c97070); }
+/* 选中日的数字配色（选中底色由上方 .selected::before 负责）；周末同步暖红 */
+.wv-dhead.selected .wv-dnum:not(.today) { color: var(--color-primary); }
+.wv-dhead.selected.weekend .wv-dnum:not(.today) { color: rgba(195,90,90,0.9); }
+
+.wv-allday { display: flex; align-items: stretch; border-bottom: 1px solid rgba(123,127,178,0.18); }
+.wv-allday-tag { display: flex; align-items: flex-start; justify-content: flex-end; padding: 4px 6px 0 0; font-size: 10px; color: #a8acc4; }
+.wv-allday-grid { position: relative; flex: 1; min-height: 26px; overflow: hidden; }
+.wv-aco { position: absolute; top: 0; bottom: 0; width: 14.2857%; box-sizing: border-box; border-left: 1px solid rgba(123,127,178,0.1); pointer-events: none; }
+.wv-aco.today { background: rgba(123,127,178,0.06); }
+.wv-aco.weekend { background: rgba(195,90,90,0.028); }
+/* 全天区多日框选高亮（DOM 在列底之后、chip 之前 → 盖列底、垫 chip 下）；色同月视图 in-range */
+.wv-ad-sel { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.08); pointer-events: none; }
+.wv-ad-sel.weekend { background: rgba(195,90,90,0.07); }
+/* 全天区悬停高亮：叠加在选区之上（hover 已选列 = 相加），opacity 淡入淡出（见 .cal-fade），色同小时格/月格 hover */
+.wv-ad-hover { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.06); pointer-events: none; }
+.wv-ad-hover.weekend { background: rgba(195,90,90,0.06); }
+.wv-pbar, .wv-allday-ev { position: absolute; height: 18px; box-sizing: border-box; display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid; font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; z-index: 1; }
+.wv-allday-ev { padding-right: 8px; border-radius: 99px; }
+/* 项目条圆角同月视图 .project-bar：跨周项目中间段（既不 start 也不 end）不带圆角，代表还在连续；
+   只在真正开始/结束的那一段收圆角胶囊，不用小圆角方块（那是普通活动 chip 的样式，见 .wv-allday-ev）。
+   左右安全间距不再靠这里的 margin/width 兜底，改成跟月视图一样在内联 left/right 里按需 +6px
+   （见 pbarStyle / 单日活动条 / 更多按钮的 :style 绑定）。 */
+.wv-pbar.bar-start { border-radius: 99px 0 0 99px; }
+.wv-pbar.bar-end   { border-radius: 0 99px 99px 0; }
+.wv-pbar.bar-start.bar-end { border-radius: 99px; }
+/* 周视图全天行的「更多」：视觉完全复用月视图 .chip-more-btn，这里只加绝对定位 + 列宽 */
+.wv-more { position: absolute; box-sizing: border-box; overflow: hidden; z-index: 1; }
+/* 用组合选择器（.chip-more-btn.wv-more）提高特异性，确保能盖过基类 .chip-more-btn 的 height:16px——
+   跟同行的 .wv-pbar/.wv-allday-ev 对齐到 18px */
+.chip-more-btn.wv-more { height: 18px; }
+.wv-more:hover { background: rgba(123,127,178,0.22); }
+
+.wv-body { flex: 1; overflow-y: auto; min-height: 0; scrollbar-gutter: stable; }
+.wv-grid { display: flex; position: relative; }
+.wv-hours { width: 46px; flex: none; }
+.wv-hour { position: relative; }
+.wv-hour span { position: absolute; top: -7px; right: 6px; font-size: 10px; color: #a8acc4; font-variant-numeric: tabular-nums; }
+.wv-col { flex: 1; position: relative; border-left: 1px solid rgba(123,127,178,0.1); background-image: linear-gradient(to bottom, rgba(123,127,178,0.13) 1px, transparent 1px); background-repeat: repeat-y; cursor: pointer; }
+.wv-col.today { background-color: rgba(123,127,178,0.045); }
+.wv-col.weekend { background-color: rgba(195,90,90,0.028); }
+/* 悬停/周末——与月视图 .month-cell 同一套调色（冷紫；周末转 195,90,90 暖红）。
+   选中不落在小时格上，而是落在日期数字上（同月视图选中日）*/
+/* 悬停带提到活动块之上（z-index>事件的 3），否则活动占据/下方的小时格悬停被活动遮住；pointer-events:none 不挡点击 */
+.wv-hover { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.06); pointer-events: none; z-index: 5; }
+.wv-col.weekend .wv-hover { background: rgba(195,90,90,0.07); }
+/* hover/选中叠层的淡入淡出（opacity，合成层、不引起 cal-main 磨砂重栅格变暗）。
+   配合模板里的 <Transition> + key：hover 移动到新格、选中切换到新格都会 crossfade。月视图 hover
+   用 .month-cell::before 的 opacity 过渡、选中用 .month-cell 的 background 过渡，两边观感同步。*/
+.cal-fade-enter-active, .cal-fade-leave-active { transition: opacity 0.12s ease; }
+.cal-fade-enter-from, .cal-fade-leave-to { opacity: 0; }
+/* 选中/拖拽选区：直接纯色变暗，无边框、无过渡动画（点击那一下不闪）*/
+.wv-selected { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.1); pointer-events: none; z-index: 1; }
+.wv-col.weekend .wv-selected { background: rgba(195,90,90,0.1); }
+.wv-now { position: absolute; left: 0; right: 0; height: 0; border-top: 2px solid #e5484d; z-index: 6; pointer-events: none; }
+.wv-now::before { content: ''; position: absolute; left: -3px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: #e5484d; }
+.wv-ev { position: absolute; box-sizing: border-box; border: 1px solid; border-radius: 6px; padding: 1px 5px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; line-height: 1.25; z-index: 3; }
+/* hover 高光由 .cal-chip::after 统一处理（opacity 合成，不触发 repaint） */
+.wv-ev.cal-chip:hover { z-index: 5; }  /* 高光由 .cal-chip::after(opacity) 提供，去掉 box-shadow(合成失败) */
+.wv-ev-t, .wv-ev-n, .wv-ev-d { position: relative; z-index: 1; }   /* 文字盖在白光层之上，保持清晰 */
+.wv-ev-d { font-size: 10px; font-weight: 400; opacity: 0.78; line-height: 1.3; margin-top: 1px; overflow: hidden; min-height: 0; flex: 1; word-break: break-word; }
+.wv-ev { cursor: grab; }   /* 中间=grab、上下 7px 边缘=ns-resize，由 onEvHover 动态切换 */
+.wv-ev:active { cursor: grabbing; }
+.wv-ev-t { font-size: 9.5px; font-weight: 600; opacity: 0.85; white-space: nowrap; }
+.wv-ev-n { font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.cal-toast {
+  position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
+  background: rgba(30,32,40,0.92); backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
+  padding: 11px 20px; font-size: 13px; line-height: 1.5; color: rgba(255,255,255,0.85);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  pointer-events: none; white-space: pre-line; max-width: 360px; z-index: 100000;
+  font-family: 'PingFang SC','Segoe UI',sans-serif;
+}
+.cal-toast-enter-active, .cal-toast-leave-active { transition: opacity 0.2s, transform 0.2s; }
+.cal-toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+.cal-toast-leave-to   { opacity: 0; transform: translateX(-50%) translateY(8px); }
 </style>

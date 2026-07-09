@@ -7,6 +7,10 @@
       </div>
     </div>
 
+    <Transition name="flash-fade">
+      <div v-if="flash" class="users-flash">{{ flash }}</div>
+    </Transition>
+
     <div class="toolbar">
       <input
         v-model="search"
@@ -42,7 +46,9 @@
                 {{ avatarChar(u) }}
               </span>
               <span class="user-info">
-                <span class="display-name">{{ u.display_name || u.username }}</span>
+                <span class="display-name">{{ u.display_name || u.username }}
+                  <span class="dev-badge" v-if="u.is_developer" title="开发者（数据面板可一键排除）">DEV</span>
+                </span>
                 <span class="username" v-if="u.display_name">@{{ u.username }}</span>
               </span>
             </span>
@@ -76,6 +82,10 @@
               </span>
             </span>
             <span class="col-action">
+              <button class="action-btn" :class="{ dev: u.is_developer }" @click="toggleDev(u)"
+                :title="u.is_developer ? '取消开发者标记' : '标记为开发者（数据面板可一键排除）'">
+                {{ u.is_developer ? '取消DEV' : 'DEV' }}
+              </button>
               <button class="action-btn" @click="toggleBan(u)" :title="u.is_active ? '封禁' : '解封'">
                 {{ u.is_active ? '封禁' : '解封' }}
               </button>
@@ -120,7 +130,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { PhArrowClockwise } from '@phosphor-icons/vue'
@@ -134,6 +144,7 @@ const search      = ref('')
 const page        = ref(1)
 const pageSize    = 20
 const deleteTarget = ref(null)
+const flash = ref('')
 const deleting    = ref(false)
 
 const AVATAR_COLORS = [
@@ -184,6 +195,12 @@ async function toggleBan(u) {
   u.is_active = data.is_active
 }
 
+async function toggleDev(u) {
+  const res  = await adminStore.authFetch(`/api/v1/admin/users/${u.id}/developer`, { method: 'PATCH' })
+  const data = await res.json()
+  u.is_developer = data.is_developer
+}
+
 function confirmDelete(u) {
   deleteTarget.value = u
 }
@@ -192,9 +209,17 @@ async function doDelete() {
   if (!deleteTarget.value) return
   deleting.value = true
   try {
-    await adminStore.authFetch(`/api/v1/admin/users/${deleteTarget.value.id}`, { method: 'DELETE' })
+    const uname = deleteTarget.value.display_name || deleteTarget.value.username
+    const res = await adminStore.authFetch(`/api/v1/admin/users/${deleteTarget.value.id}`, { method: 'DELETE' })
+    let removed = null
+    try { removed = (await res.json())?.storage_objects_removed } catch {}
     items.value = items.value.filter(u => u.id !== deleteTarget.value.id)
     deleteTarget.value = null
+    // 确认隐私政策「注销后从存储中永久删除」真执行了：展示清除的存储对象数
+    flash.value = removed === -1
+      ? `已删除 ${uname}（存储清理失败，请查日志手动清）`
+      : `已删除 ${uname}，清除 ${removed ?? 0} 个存储对象`
+    setTimeout(() => { flash.value = '' }, 4000)
   } finally {
     deleting.value = false
   }
@@ -250,6 +275,14 @@ onMounted(load)
 .page-title       { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
 .page-desc        { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
 
+.users-flash {
+  margin: 0 0 14px; padding: 10px 14px; border-radius: 10px;
+  background: rgba(90,180,120,0.12); border: 1px solid rgba(90,180,120,0.28);
+  color: #8fd6a8; font-size: 13px;
+}
+.flash-fade-enter-active, .flash-fade-leave-active { transition: opacity 0.3s, transform 0.3s; }
+.flash-fade-enter-from, .flash-fade-leave-to { opacity: 0; transform: translateY(-4px); }
+
 .toolbar {
   display: flex; align-items: center; gap: 10px;
   padding: 18px 36px 0;
@@ -265,15 +298,7 @@ onMounted(load)
 .search-input::placeholder { color: rgba(255,255,255,0.25); }
 .toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); margin-left: 4px; }
 
-.icon-btn {
-  width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
-}
-.icon-btn:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.8); }
-.icon-btn.spinning svg { animation: spin 0.5s ease-out; transform-box: fill-box; transform-origin: center; }
-@keyframes spin { to { transform: rotate(360deg); } }
+/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 .table-wrap { margin: 14px 36px 32px; }
 
@@ -290,7 +315,7 @@ onMounted(load)
 
 .ut-head {
   display: grid;
-  grid-template-columns: 200px 180px 96px 1fr 1fr 62px 120px;
+  grid-template-columns: 200px 180px 96px 1fr 1fr 62px 178px;
   padding: 10px 16px;
   font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
   color: rgba(255,255,255,0.25);
@@ -299,7 +324,7 @@ onMounted(load)
 
 .ut-row {
   display: grid;
-  grid-template-columns: 200px 180px 96px 1fr 1fr 62px 120px;
+  grid-template-columns: 200px 180px 96px 1fr 1fr 62px 178px;
   padding: 10px 16px;
   align-items: center;
   border-bottom: 1px solid rgba(255,255,255,0.05);
@@ -359,9 +384,10 @@ onMounted(load)
 .status-tag.active { background: rgba(80,180,140,0.12); color: rgba(100,200,160,0.9); }
 .status-tag.banned { background: rgba(220,80,80,0.12); color: rgba(240,120,120,0.9); }
 
-.col-action { display: flex; align-items: center; gap: 6px; }
+.col-action { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
 .action-btn {
   padding: 3px 10px; border-radius: 7px; font-size: 12px; cursor: pointer;
+  white-space: nowrap; flex-shrink: 0;
   border: 1px solid rgba(255,255,255,0.1);
   background: rgba(255,255,255,0.05);
   color: rgba(255,255,255,0.55);
@@ -370,6 +396,14 @@ onMounted(load)
 .action-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
 .action-btn.danger { border-color: rgba(220,80,80,0.2); color: rgba(220,100,100,0.7); }
 .action-btn.danger:hover { background: rgba(220,80,80,0.12); color: rgba(240,120,120,0.9); }
+.action-btn.dev { border-color: rgba(123,127,178,0.35); color: rgba(170,175,225,0.9); background: rgba(123,127,178,0.12); }
+
+.dev-badge {
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 5px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.05em; vertical-align: 1px;
+  background: rgba(123,127,178,0.18); color: rgba(170,175,225,0.95);
+  border: 1px solid rgba(123,127,178,0.35);
+}
 
 .pagination {
   display: flex; align-items: center; justify-content: center; gap: 12px;

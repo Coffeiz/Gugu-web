@@ -13,6 +13,7 @@ from app.models import File, Folder, Project, User
 from app.schemas import FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry, BatchDeleteBody, FileCopyBody, BatchDownloadBody
 from jose import jwt, JWTError
 from app.core.security import get_current_user, create_stream_token, verify_stream_token
+from app.core.ownership import get_owned
 from app.core.config import get_settings
 from app.services.storage import get_storage
 
@@ -35,6 +36,9 @@ def _thumb_path(fid: int, size: str) -> _Path:
     return _thumb_dir() / f"{fid}_{size}.webp"
 
 _THUMB_SIZE_MAP = {"tiny": (20, 75), "card": (192, 82)}
+
+# 单文件上传硬上限（字节）——独立于存储配额，防一次性 read 进内存打爆。
+_MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
 # 缩略图生成是 CPU 密集（解码/缩放/编码）；小核机器上多个并发跑会占满 CPU、卡住其他请求。
 # 闸门：最多 (核数-1) 个并发，至少留一个核给事件循环（2 核 → 1）。
@@ -143,6 +147,18 @@ async def _resolve_conflict(storage, base_key: str, display_name: str, ext: str)
         prefix = base_key.rsplit("/", 1)[0]
         key = f"{prefix}/{_safe_name(name)}.{ext.lower()}"
     return key, name
+
+
+async def _find_conflict(db: AsyncSession, user_id, space: str, project_id: Optional[int],
+                          folder_id: Optional[int], display_name: str, ext: str) -> Optional[File]:
+    """同一空间/项目/文件夹下，是否已经存在「同名 + 同扩展名」的未删除文件。"""
+    stmt = select(File).where(
+        File.user_id == user_id, File.deleted_at.is_(None),
+        File.space == space, File.display_name == display_name, File.ext == ext.upper(),
+    )
+    stmt = stmt.where(File.project_id == project_id) if project_id is not None else stmt.where(File.project_id.is_(None))
+    stmt = stmt.where(File.folder_id == folder_id) if folder_id is not None else stmt.where(File.folder_id.is_(None))
+    return (await db.execute(stmt)).scalars().first()
 
 
 def _color(raw: str | None) -> str | None:
@@ -333,6 +349,44 @@ async def file_tree(
     return FileTreeResponse(projects=tree_projects, personal_count=personal_count)
 
 
+# ── POST /files/check-conflicts ─────────────────────────────────────────────
+# 上传前批量探测同名冲突，前端拿到结果后一次性把所有冲突列给用户挑（覆盖/保留两者/跳过），
+# 而不是每上传一个文件弹一次——不落库、不占用配额、纯查询。
+
+from pydantic import BaseModel as _BaseModel
+
+
+class ConflictCheckItem(_BaseModel):
+    filename: str            # 含扩展名，如 "报告.pdf"
+    space: str = "personal"
+    project_id: Optional[int] = None
+    folder_id: Optional[int] = None
+
+
+class ConflictCheckRequest(_BaseModel):
+    items: list[ConflictCheckItem]
+
+
+@router.post("/check-conflicts")
+async def check_conflicts(
+    body: ConflictCheckRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    out = []
+    for item in body.items:
+        parts = item.filename.rsplit(".", 1)
+        display_name = parts[0]
+        ext = parts[1].upper()[:10] if len(parts) > 1 else "FILE"
+        existing = await _find_conflict(db, current_user.id, item.space, item.project_id, item.folder_id, display_name, ext)
+        out.append({
+            "filename": item.filename,
+            "conflict": existing is not None,
+            "existing_file": _to_resp(existing).model_dump() if existing else None,
+        })
+    return out
+
+
 # ── POST /files ───────────────────────────────────────────────────────────────
 
 async def _pregen_thumb(storage_key: str, fid: int) -> None:
@@ -355,6 +409,8 @@ async def upload_file(
     folder_id: Optional[int] = Form(None),
     stage_name: str = Form(""),
     mind_map_id: Optional[int] = Form(None),
+    on_conflict: str = Form("keep_both"),          # keep_both（默认，同名自动加后缀）| overwrite
+    overwrite_file_id: Optional[int] = Form(None),  # on_conflict=overwrite 时，目标文件 id
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -370,8 +426,8 @@ async def upload_file(
     project_month = ""
     folder_name = ""
     if space == "project" and project_id:
-        p = await db.get(Project, project_id)
-        if not p or p.user_id != current_user.id:
+        p = await get_owned(db, Project, project_id, current_user.id)
+        if not p:
             raise HTTPException(400, "项目不存在")
         project_name = p.name
         project_color = _color(p.color)
@@ -381,40 +437,20 @@ async def upload_file(
         raise HTTPException(400, "project 空间需要提供 project_id")
 
     if folder_id is not None:
-        fo = await db.get(Folder, folder_id)
-        if not fo or fo.user_id != current_user.id:
+        fo = await get_owned(db, Folder, folder_id, current_user.id)
+        if not fo:
             raise HTTPException(400, "文件夹不存在")
         folder_name = fo.name
-
-    base_key = _build_key(
-        uid=current_user.id,
-        space=space,
-        display_name=display_name,
-        ext=ext,
-        project_name=project_name,
-        project_id=project_id or 0,
-        project_year=project_year,
-        project_month=project_month,
-        folder_name=folder_name,
-    )
-
-    storage = get_storage()
-    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
 
     data = await file.read()
     size_bytes = len(data)
 
-    # 检查存储配额（优先个人配额，fallback 全局默认）
-    _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
-    if _storage_limit is not None:
-        used_res = await db.execute(
-            select(func.sum(File.size_bytes)).where(File.user_id == current_user.id)
-        )
-        used = used_res.scalar() or 0
-        if used + size_bytes > _storage_limit:
-            raise HTTPException(status_code=400, detail="存储空间已满，无法上传")
+    # 单文件硬上限：整个请求体一次性进内存，配额可能为 None（无限），需独立的字节闸防内存打爆。
+    if size_bytes > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"文件过大（单文件上限 {_MAX_UPLOAD_BYTES // 1048576}MB）")
 
-    await storage.put(final_key, data, mime_type)
+    storage = get_storage()
+    _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
 
     img_width, img_height = None, None
     if mime_type and mime_type.lower() in _IMAGE_MIMES and mime_type.lower() != "image/svg+xml":
@@ -426,6 +462,60 @@ async def upload_file(
             _pil.close()
         except Exception:
             pass
+
+    # ── 覆盖已有同名文件：原地替换内容，保留同一个 file id（聊天里 gugu://open-file 这类
+    # 链接、历史对话里提过的文件引用不会因为覆盖而失效）；旧缩略图缓存必须清掉，否则显示的
+    # 还是覆盖前的图。配额按「新旧文件大小差值」算，不能整份新文件都计成新增。──
+    if on_conflict == "overwrite" and overwrite_file_id is not None:
+        existing = await get_owned(db, File, overwrite_file_id, current_user.id)
+        if not existing:
+            raise HTTPException(400, "要覆盖的文件不存在")
+        if _storage_limit is not None:
+            used_res = await db.execute(select(func.sum(File.size_bytes)).where(File.user_id == current_user.id))
+            used = used_res.scalar() or 0
+            if used - existing.size_bytes + size_bytes > _storage_limit:
+                raise HTTPException(status_code=400, detail="存储空间已满，无法上传")
+
+        await storage.put(existing.storage_key, data, mime_type)
+        _delete_thumb_cache(existing.id)
+
+        existing.size = _fmt_size(size_bytes)
+        existing.size_bytes = size_bytes
+        existing.mime_type = mime_type
+        existing.img_width = img_width
+        existing.img_height = img_height
+        await db.commit()
+        await db.refresh(existing)
+
+        resp = _to_resp(existing, project_name or None, project_color, folder_name or None)
+        if mime_type and mime_type.lower() in _IMAGE_MIMES and mime_type.lower() != "image/svg+xml":
+            background_tasks.add_task(_pregen_thumb, existing.storage_key, existing.id)
+        return resp
+
+    # ── 常规上传（保留两者：同名自动加后缀）──
+    base_key = _build_key(
+        uid=current_user.id,
+        space=space,
+        display_name=display_name,
+        ext=ext,
+        project_name=project_name,
+        project_id=project_id or 0,
+        project_year=project_year,
+        project_month=project_month,
+        folder_name=folder_name,
+    )
+    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
+
+    # 检查存储配额（优先个人配额，fallback 全局默认）
+    if _storage_limit is not None:
+        used_res = await db.execute(
+            select(func.sum(File.size_bytes)).where(File.user_id == current_user.id)
+        )
+        used = used_res.scalar() or 0
+        if used + size_bytes > _storage_limit:
+            raise HTTPException(status_code=400, detail="存储空间已满，无法上传")
+
+    await storage.put(final_key, data, mime_type)
 
     db_file = File(
         user_id=current_user.id,
@@ -459,8 +549,6 @@ async def upload_file(
 
 # ── POST /files/presign ───────────────────────────────────────────────────────
 
-from pydantic import BaseModel as _BaseModel
-
 class PresignRequest(_BaseModel):
     filename: str
     size_bytes: int
@@ -469,6 +557,8 @@ class PresignRequest(_BaseModel):
     project_id: Optional[int] = None
     folder_id: Optional[int] = None
     stage_name: str = ""
+    on_conflict: str = "keep_both"          # keep_both | overwrite
+    overwrite_file_id: Optional[int] = None
 
 
 @router.post("/presign")
@@ -491,8 +581,8 @@ async def presign_upload(
     folder_name = ""
 
     if body.space == "project" and body.project_id:
-        p = await db.get(Project, body.project_id)
-        if not p or p.user_id != current_user.id:
+        p = await get_owned(db, Project, body.project_id, current_user.id)
+        if not p:
             raise HTTPException(400, "项目不存在")
         project_name = p.name
         project_color = _color(p.color)
@@ -502,35 +592,50 @@ async def presign_upload(
         raise HTTPException(400, "project 空间需要提供 project_id")
 
     if body.folder_id is not None:
-        fo = await db.get(Folder, body.folder_id)
-        if not fo or fo.user_id != current_user.id:
+        fo = await get_owned(db, Folder, body.folder_id, current_user.id)
+        if not fo:
             raise HTTPException(400, "文件夹不存在")
         folder_name = fo.name
 
-    base_key = _build_key(
-        uid=current_user.id,
-        space=body.space,
-        display_name=display_name,
-        ext=ext,
-        project_name=project_name,
-        project_id=body.project_id or 0,
-        project_year=project_year,
-        project_month=project_month,
-        folder_name=folder_name,
-    )
-
     storage = get_storage()
-    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
 
-    # 配额检查
-    _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
-    if _storage_limit is not None:
-        used_res = await db.execute(
-            select(func.sum(File.size_bytes)).where(File.user_id == current_user.id)
+    # 覆盖已有同名文件：直接对已有文件的 storage_key 签 URL，不再走 _resolve_conflict 改名；
+    # 配额按新旧大小差值算。
+    existing = None
+    if body.on_conflict == "overwrite" and body.overwrite_file_id is not None:
+        existing = await get_owned(db, File, body.overwrite_file_id, current_user.id)
+        if not existing:
+            raise HTTPException(400, "要覆盖的文件不存在")
+        final_key, final_name = existing.storage_key, existing.display_name
+
+        _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
+        if _storage_limit is not None:
+            used_res = await db.execute(select(func.sum(File.size_bytes)).where(File.user_id == current_user.id))
+            used = used_res.scalar() or 0
+            if used - existing.size_bytes + body.size_bytes > _storage_limit:
+                raise HTTPException(status_code=400, detail="存储空间已满，无法上传")
+    else:
+        base_key = _build_key(
+            uid=current_user.id,
+            space=body.space,
+            display_name=display_name,
+            ext=ext,
+            project_name=project_name,
+            project_id=body.project_id or 0,
+            project_year=project_year,
+            project_month=project_month,
+            folder_name=folder_name,
         )
-        used = used_res.scalar() or 0
-        if used + body.size_bytes > _storage_limit:
-            raise HTTPException(status_code=400, detail="存储空间已满，无法上传")
+        final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
+
+        _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
+        if _storage_limit is not None:
+            used_res = await db.execute(
+                select(func.sum(File.size_bytes)).where(File.user_id == current_user.id)
+            )
+            used = used_res.scalar() or 0
+            if used + body.size_bytes > _storage_limit:
+                raise HTTPException(status_code=400, detail="存储空间已满，无法上传")
 
     if isinstance(storage, OSSStorageBackend):
         import asyncio as _asyncio
@@ -543,6 +648,7 @@ async def presign_upload(
             "storage_key": final_key,
             "final_name": final_name,
             "ext": ext,
+            "overwrite_file_id": existing.id if existing else None,
         }
 
     return {"mode": "proxy"}
@@ -560,6 +666,7 @@ class ConfirmRequest(_BaseModel):
     project_id: Optional[int] = None
     folder_id: Optional[int] = None
     stage_name: str = ""
+    overwrite_file_id: Optional[int] = None   # presign 阶段返回的目标文件 id，覆盖时原地更新而非新建
 
 
 @router.post("/confirm", response_model=FileResponse, status_code=201)
@@ -568,7 +675,7 @@ async def confirm_upload(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """OSS 直传完成后，注册 DB 记录。"""
+    """OSS 直传完成后，注册 DB 记录（或覆盖已有文件时，原地更新那条记录）。"""
     from app.services.storage import get_storage, OSSStorageBackend
 
     if not body.storage_key.startswith(f"{current_user.id}/"):
@@ -586,17 +693,31 @@ async def confirm_upload(
     folder_name = ""
 
     if body.space == "project" and body.project_id:
-        p = await db.get(Project, body.project_id)
-        if not p or p.user_id != current_user.id:
+        p = await get_owned(db, Project, body.project_id, current_user.id)
+        if not p:
             raise HTTPException(400, "项目不存在")
         project_name = p.name
         project_color = _color(p.color)
 
     if body.folder_id is not None:
-        fo = await db.get(Folder, body.folder_id)
-        if not fo or fo.user_id != current_user.id:
+        fo = await get_owned(db, Folder, body.folder_id, current_user.id)
+        if not fo:
             raise HTTPException(400, "文件夹不存在")
         folder_name = fo.name
+
+    if body.overwrite_file_id is not None:
+        existing = await get_owned(db, File, body.overwrite_file_id, current_user.id)
+        if not existing:
+            raise HTTPException(400, "要覆盖的文件不存在")
+        if existing.storage_key != body.storage_key:
+            raise HTTPException(400, "覆盖目标与直传路径不一致")
+        _delete_thumb_cache(existing.id)
+        existing.size = _fmt_size(body.size_bytes)
+        existing.size_bytes = body.size_bytes
+        existing.mime_type = body.mime_type
+        await db.commit()
+        await db.refresh(existing)
+        return _to_resp(existing, project_name or None, project_color, folder_name or None)
 
     db_file = File(
         user_id=current_user.id,
@@ -627,40 +748,46 @@ async def update_file(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f:
         raise HTTPException(404, "文件不存在")
 
     new_display = body.display_name if body.display_name is not None else f.display_name
     new_stage   = body.stage_name   if body.stage_name   is not None else f.stage_name
-    # folder_id 显式出现在请求体时（含 null）才更新，否则保持原值
-    new_fid = body.folder_id if 'folder_id' in body.model_fields_set else f.folder_id
+    # folder_id/project_id 显式出现在请求体时（含 null）才更新，否则保持原值——纯改名等局部
+    # patch 不会带这两个字段，不能被当成「移到个人空间」误处理。project_id 显式传了才切空间，
+    # 不从源文件继承（同 copy_file 的教训：继承会导致「项目文件剪切到个人文件库」跨空间移动
+    # 静默失败，文件还留在原项目里）。
+    new_fid = body.folder_id  if 'folder_id'  in body.model_fields_set else f.folder_id
+    new_pid = body.project_id if 'project_id' in body.model_fields_set else f.project_id
+    new_space = "project" if new_pid else "personal"
 
     project_name = ""
     project_color = None
     project_year = ""
     project_month = ""
     folder_name = ""
-    if f.space == "project" and f.project_id:
-        p = await db.get(Project, f.project_id)
-        if p:
-            project_name = p.name
-            project_color = _color(p.color)
-            date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
-            project_year, project_month = date_str[:4], date_str[5:7]
+    if new_space == "project" and new_pid:
+        p = await get_owned(db, Project, new_pid, current_user.id)
+        if not p:
+            raise HTTPException(400, "目标项目不存在")
+        project_name = p.name
+        project_color = _color(p.color)
+        date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
+        project_year, project_month = date_str[:4], date_str[5:7]
     if new_fid:
-        fo = await db.get(Folder, new_fid)
-        if not fo or fo.user_id != current_user.id:
+        fo = await get_owned(db, Folder, new_fid, current_user.id)
+        if not fo:
             raise HTTPException(400, "目标文件夹不存在")
         folder_name = fo.name
 
     new_key = _build_key(
         uid=current_user.id,
-        space=f.space,
+        space=new_space,
         display_name=new_display,
         ext=f.ext,
         project_name=project_name,
-        project_id=f.project_id or 0,
+        project_id=new_pid or 0,
         project_year=project_year,
         project_month=project_month,
         folder_name=folder_name,
@@ -675,11 +802,43 @@ async def update_file(
     f.display_name = new_display
     f.stage_name   = new_stage
     f.folder_id    = new_fid
+    f.project_id   = new_pid
+    f.space        = new_space
     f.updated_at   = datetime.utcnow()
     await db.commit()
     await db.refresh(f)
 
     return _to_resp(f, project_name or None, project_color, folder_name or None)
+
+
+class _FileContentBody(_BaseModel):
+    content: str
+
+
+@router.put("/{fid}/content", response_model=FileResponse)
+async def update_file_content(
+    fid: int,
+    body: _FileContentBody,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """改文本文件正文（md 预览里点任务勾选框等场景，前端直接存）。仅文本类、限 1MB。"""
+    from app.core.chat_attach import TEXT_EXTS
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f:
+        raise HTTPException(404, "文件不存在")
+    if (f.ext or "").lower() not in TEXT_EXTS:
+        raise HTTPException(400, "仅文本类文件可改内容")
+    data = body.content.encode("utf-8")
+    if len(data) > 1024 * 1024:
+        raise HTTPException(400, "内容过大（上限 1MB）")
+    await get_storage().put(f.storage_key, data, f.mime_type or "text/markdown")
+    f.size_bytes = len(data)
+    f.size = _fmt_size(len(data))
+    f.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(f)
+    return _to_resp(f)
 
 
 # ── POST /files/{fid}/copy ────────────────────────────────────────────────────
@@ -691,18 +850,21 @@ async def copy_file(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id or f.deleted_at:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f or f.deleted_at:
         raise HTTPException(404, "文件不存在")
 
+    # 目标空间由调用方明确指定的 project_id 决定，不从源文件继承——否则「项目文件复制到个人
+    # 文件库」这类跨空间粘贴会静默失败，复制出的文件还留在原项目里（两处前端调用都会显式带上
+    # 目标 project_id，个人空间传 null）
     new_folder_id  = body.folder_id
-    new_project_id = body.project_id if body.project_id is not None else f.project_id
-    new_space      = f.space
+    new_project_id = body.project_id
+    new_space      = "project" if new_project_id else "personal"
 
     project_name = ""; project_color = None; project_year = ""; project_month = ""
     if new_space == "project" and new_project_id:
-        p = await db.get(Project, new_project_id)
-        if not p or p.user_id != current_user.id:
+        p = await get_owned(db, Project, new_project_id, current_user.id)
+        if not p:
             raise HTTPException(400, "目标项目不存在")
         project_name  = p.name; project_color = _color(p.color)
         date_str      = p.start_date or p.created_at.strftime("%Y-%m-%d")
@@ -710,8 +872,8 @@ async def copy_file(
 
     folder_name = ""
     if new_folder_id:
-        fo = await db.get(Folder, new_folder_id)
-        if not fo or fo.user_id != current_user.id:
+        fo = await get_owned(db, Folder, new_folder_id, current_user.id)
+        if not fo:
             raise HTTPException(400, "目标文件夹不存在")
         folder_name = fo.name
 
@@ -763,8 +925,8 @@ async def delete_file(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id or f.deleted_at is not None:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f or f.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
     await _move_to_trash(get_storage(), f)
     f.deleted_at = datetime.utcnow()
@@ -829,8 +991,8 @@ async def batch_download_files(
 
     # 2. 文件夹（递归）
     async def collect_folder(folder_id: int, prefix: str):
-        folder = await db.get(Folder, folder_id)
-        if not folder or folder.user_id != current_user.id:
+        folder = await get_owned(db, Folder, folder_id, current_user.id)
+        if not folder:
             return
         folder_prefix = f"{prefix}{folder.name}/"
         # 该文件夹内的文件
@@ -908,8 +1070,8 @@ async def get_thumb(
     except (JWTError, KeyError, ValueError):
         raise HTTPException(401, "Token 无效")
 
-    f = await db.get(File, fid)
-    if not f or f.user_id != user_id or f.deleted_at is not None:
+    f = await get_owned(db, File, fid, user_id)
+    if not f or f.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
 
     mime = (f.mime_type or '').lower()
@@ -974,8 +1136,8 @@ async def download_file(
     from fastapi.responses import Response
     from urllib.parse import quote
 
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f:
         raise HTTPException(404, "文件不存在")
     data = await get_storage().get(f.storage_key)
     filename = quote(f"{f.display_name}.{f.ext.lower()}")
@@ -996,8 +1158,14 @@ async def _office_to_pdf(data: bytes, ext: str) -> bytes:
     try:
         src = tmpdir / f"input.{ext.lower()}"
         src.write_bytes(data)
+        # -env:UserInstallation 把 LibreOffice 的用户配置目录指到本次专属的临时目录：
+        # systemd 服务开了 ProtectSystem=strict，$HOME/.config 对进程是只读的，LibreOffice
+        # 默认要在那建 profile，建不了直接 returncode=1（stderr 只有条不相关的 javaldx 警告，
+        # 真实原因被吞掉）。指到 tmpdir 下（PrivateTmp=true 保证可写），每次调用互不干扰。
         proc = await asyncio.create_subprocess_exec(
-            "libreoffice", "--headless", "--convert-to", "pdf",
+            "libreoffice", "--headless",
+            f"-env:UserInstallation=file://{tmpdir}/loprofile",
+            "--convert-to", "pdf",
             "--outdir", str(tmpdir), str(src),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -1025,8 +1193,8 @@ async def preview_pdf(
 ):
     from fastapi.responses import Response
 
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id or f.deleted_at is not None:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f or f.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
     if f.ext.upper() not in _OFFICE_EXTS:
         raise HTTPException(400, "不支持的格式")
@@ -1055,8 +1223,8 @@ async def get_stream_url(
 ):
     from app.core.config import get_settings
 
-    f = await db.get(File, fid)
-    if not f or f.user_id != current_user.id:
+    f = await get_owned(db, File, fid, current_user.id)
+    if not f:
         raise HTTPException(404, "文件不存在")
 
     storage = get_storage()
@@ -1088,8 +1256,8 @@ async def stream_file(
     if token_fid != fid:
         raise HTTPException(401, "token 与文件不符")
 
-    f = await db.get(File, fid)
-    if not f or f.user_id != user_id:
+    f = await get_owned(db, File, fid, user_id)
+    if not f:
         raise HTTPException(404, "文件不存在")
 
     storage = get_storage()

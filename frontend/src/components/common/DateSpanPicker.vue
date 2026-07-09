@@ -101,8 +101,9 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { nextZ } from '@/composables/windowz'
 
 const props = defineProps({
   startDate: { type: String, default: '' },
@@ -229,7 +230,7 @@ function calcPopupStyle() {
   const popW = 240
   const centerX = rect.left + rect.width / 2
   const left = Math.max(8, Math.min(centerX - popW / 2, window.innerWidth - popW - 8))
-  popupStyle.value = { position: 'fixed', top: rect.bottom + 6 + 'px', left: left + 'px', width: popW + 'px', zIndex: 9999 }
+  popupStyle.value = { position: 'fixed', top: rect.bottom + 6 + 'px', left: left + 'px', width: popW + 'px', zIndex: nextZ() }
 }
 
 function toggle() {
@@ -287,7 +288,7 @@ watch(() => props.startDate, v => {
 <style>
 .drp-popup {
   background: var(--panel-bg);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.78);
   border-radius: 16px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 12px 36px rgba(30,40,80,0.14);

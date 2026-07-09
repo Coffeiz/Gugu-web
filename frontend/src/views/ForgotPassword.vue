@@ -59,7 +59,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref } from 'vue'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'

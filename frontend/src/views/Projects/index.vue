@@ -14,22 +14,29 @@
         :projects="columnProjects('done')"
         @card-click="projectStore.openModal"
         @drop-project="handleDrop"
+        @open-archived="showArchived = true"
       />
     </div>
+
+    <ArchivedProjectsModal :show="showArchived" @close="showArchived = false" />
   </div>
 </template>
 
-<script setup>
-import { computed, onMounted, watch } from 'vue'
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
 import KanbanColumn from './components/KanbanColumn.vue'
 import DoneColumn   from './components/DoneColumn.vue'
+import ArchivedProjectsModal from './components/ArchivedProjectsModal.vue'
 
 const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
+
+const showArchived = ref(false)
+watch(showArchived, v => { if (v) projectStore.fetchArchivedProjects() })
 
 onMounted(() => {
   if (!cacheStore.loaded && !cacheStore.loading) cacheStore.load()
@@ -49,7 +56,7 @@ watch(() => uiStore.pendingProjectHighlight, (id) => {
 function _flashProject(id, ms = 1800, cls = 'search-flash') {
   let tries = 0
   const tick = () => {
-    const el = document.querySelector(`[data-project-id="${id}"]`)
+    const el = document.querySelector<HTMLElement>(`[data-project-id="${id}"]`)
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
       el.style.animationDuration = ms + 'ms'   // 覆盖 CSS 默认时长，让高亮整体持续 ms
@@ -99,16 +106,13 @@ function openNewWithStatus(status) {
 <style scoped>
 .projects-page {
   height: calc(100vh - 152px);
-  display: flex;
-  flex-direction: column;
 }
 
 .kanban {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
-  flex: 1;
-  min-height: 0;
+  height: 100%;
   align-items: stretch;
 }
 </style>

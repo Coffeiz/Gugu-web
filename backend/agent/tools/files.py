@@ -14,6 +14,7 @@ from datetime import datetime
 from sqlalchemy import select
 
 from app.models import File, Folder, Project
+from app.core.ownership import get_owned
 from app.services.storage import get_storage
 from app.api.v1.files import (
     _build_key, _resolve_conflict, _fmt_size, _move_to_trash, _color,
@@ -89,15 +90,15 @@ async def _resolve_key(db, user_id, space, display_name, ext,
                        project_id=None, folder_id=None):
     project_name = project_year = project_month = folder_name = ""
     if space == "project" and project_id:
-        p = await db.get(Project, project_id)
-        if not p or p.user_id != user_id:
+        p = await get_owned(db, Project, project_id, user_id)
+        if not p:
             raise ValueError("目标项目不存在")
         project_name = p.name
         date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
         project_year, project_month = date_str[:4], date_str[5:7]
     if folder_id:
-        fo = await db.get(Folder, folder_id)
-        if not fo or fo.user_id != user_id:
+        fo = await get_owned(db, Folder, folder_id, user_id)
+        if not fo:
             raise ValueError("目标文件夹不存在")
         folder_name = fo.name
     key = _build_key(
@@ -364,33 +365,21 @@ async def _create_document(db, user_id, args: dict):
             "name": f"{final_name}.{fmt}", "size": db_file.size}
 
 
-async def _save_uploaded_file(db, user_id, args: dict):
-    """把用户聊天里上传的暂存附件保存进文件库。默认 personal，可直接指定项目/文件夹。"""
+async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder_id):
+    """把一个已解析好的暂存附件 meta 落成文件库记录，返回 (ok, item)。供单个/批量 save 共用。"""
     from app.core import chat_attach
-    # 容错解析：LLM 常把 attach_id 抄错/截断，找不到就退到最近上传的，别误报"过期"
-    meta, note = await chat_attach.resolve_attach(user_id, args.get("attach_id") or "")
-    if not meta:
-        return json.dumps({"error": "没找到可保存的附件，可能确实过期了（聊天附件只暂存 6 小时）。"
-                                    "麻烦让用户重新发一下～"}, ensure_ascii=False)
+    ext = meta.get("ext") or "bin"
+    display_name = meta.get("name") or "上传文件"
     try:
         data = await chat_attach.read_bytes(meta)
     except Exception as e:
-        return json.dumps({"error": f"读取附件失败：{str(e)[:80]}"}, ensure_ascii=False)
-    ext = meta.get("ext") or "bin"
-    display_name = meta.get("name") or "上传文件"
-
-    # 目标位置：默认 personal；给了 project_id 就直接进项目（一步到位，省得再 move）
-    space = args.get("space") or ("project" if args.get("project_id") else "personal")
-    space, project_id, folder_id, loc_err = _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
-    if loc_err:
-        return loc_err
-
+        return False, {"name": f"{display_name}.{ext}", "error": f"读取附件失败：{str(e)[:80]}"}
     storage = get_storage()
     try:
         base_key = await _resolve_key(db, user_id, space, display_name, ext,
                                       project_id=project_id, folder_id=folder_id)
     except ValueError as e:
-        return json.dumps({"error": str(e)}, ensure_ascii=False)
+        return False, {"name": f"{display_name}.{ext}", "error": str(e)}
     final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
     await storage.put(final_key, data, meta.get("mime") or "application/octet-stream")
     db_file = File(
@@ -402,9 +391,48 @@ async def _save_uploaded_file(db, user_id, args: dict):
     db.add(db_file)
     await db.commit()
     await db.refresh(db_file)
-    return {"success": True, "file_id": db_file.id, "name": f"{final_name}.{ext}",
-            "space": space, "project_id": db_file.project_id, "size": db_file.size,
-            **({"note": note} if note else {})}
+    return True, {"file_id": db_file.id, "name": f"{final_name}.{ext}",
+                  "space": space, "project_id": db_file.project_id, "size": db_file.size}
+
+
+async def _save_uploaded_file(db, user_id, args: dict):
+    """把用户聊天里上传的暂存附件保存进文件库。默认 personal，可直接指定项目/文件夹。
+    单个：attach_id。批量（同一批连发的多个附件，如连拍的几张图）：attach_ids=[id1,id2,...]——
+    每个各自精确解析，比逐个分别调用更可靠（避免每次没对上都各自回退、可能救回不相关的附件，
+    如把连发图片之外的一条语音存进来了；见 resolve_attach 的歧义防护）。"""
+    from app.core import chat_attach
+
+    space = args.get("space") or ("project" if args.get("project_id") else "personal")
+    space, project_id, folder_id, loc_err = _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
+    if loc_err:
+        return loc_err
+
+    ids = args.get("attach_ids")
+    if ids:
+        if not isinstance(ids, list):
+            return json.dumps({"error": "attach_ids 需要是数组"}, ensure_ascii=False)
+        saved, failed = [], []
+        for aid in ids:
+            meta, note = await chat_attach.resolve_attach(user_id, str(aid or ""))
+            if not meta:
+                failed.append({"attach_id": aid,
+                               "error": note or "没找到可保存的附件，可能确实过期了（聊天附件只暂存 7 天）。"})
+                continue
+            ok, item = await _save_one_attach(db, user_id, meta, space=space,
+                                              project_id=project_id, folder_id=folder_id)
+            (saved if ok else failed).append(item)
+        return {"success": True, "saved_count": len(saved), "failed_count": len(failed),
+                "saved": saved, "failed": failed}
+
+    # 单个（兼容旧行为）
+    meta, note = await chat_attach.resolve_attach(user_id, args.get("attach_id") or "")
+    if not meta:
+        return json.dumps({"error": note or "没找到可保存的附件，可能确实过期了（聊天附件只暂存 7 天）。"
+                                    "麻烦让用户重新发一下～"}, ensure_ascii=False)
+    ok, item = await _save_one_attach(db, user_id, meta, space=space, project_id=project_id, folder_id=folder_id)
+    if not ok:
+        return json.dumps(item, ensure_ascii=False)
+    return {**item, **({"note": note} if note else {})}
 
 
 async def _rename_one(db, user_id, f, new_name: str) -> dict:
@@ -464,8 +492,8 @@ async def _resolve_file(db, user_id, args):
     """按 file_id 或文件名 file 定位（仅未删除文件）；返回 (File|None, 错误JSON|None)。"""
     fid = args.get("file_id")
     if fid:
-        f = await db.get(File, fid)
-        if not f or str(f.user_id) != str(user_id) or f.deleted_at is not None:
+        f = await get_owned(db, File, fid, user_id)
+        if not f or f.deleted_at is not None:
             return None, json.dumps({"error": "文件不存在"})
         return f, None
     name = args.get("file")
@@ -578,13 +606,13 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
 
     folder_name = "（根目录）"
     if folder_id:
-        fo = await db.get(Folder, folder_id)
+        fo = await get_owned(db, Folder, folder_id, user_id)
         folder_name = fo.name if fo else "（根目录）"
     # 明确回报落点的「空间/项目/文件夹」，别只给文件夹名——否则模型无从确认到底进了哪个项目，
     # 容易自行脑补位置（曾出现移到项目根目录后谎报项目/文件名的情况）
     project_name = None
     if f.space == "project" and f.project_id:
-        p = await db.get(Project, f.project_id)
+        p = await get_owned(db, Project, f.project_id, user_id)
         project_name = p.name if p else None
     return {"success": True, "file_id": f.id, "name": f"{f.display_name}.{f.ext}",
             "space": f.space, "project_id": f.project_id, "project_name": project_name,
@@ -625,8 +653,8 @@ async def _resolve_target(db, user_id, target: dict):
     folder_id = target.get("folder_id")
     fname = target.get("folder")
     if folder_id:
-        fo = await db.get(Folder, folder_id)
-        if not fo or fo.user_id != user_id:
+        fo = await get_owned(db, Folder, folder_id, user_id)
+        if not fo:
             return None, None, None, {"error": "目标文件夹不存在"}
         return ("project" if fo.project_id else "personal"), fo.project_id, fo.id, None
     if fname is not None:
@@ -659,7 +687,7 @@ async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id) -> dict
     if not same_project:
         # 子孙文件夹的 project_id 跟着改
         for sid in sub_ids[1:]:
-            sf = await db.get(Folder, sid)
+            sf = await get_owned(db, Folder, sid, user_id)
             if sf:
                 sf.project_id = t_pid
         # 子孙文件：物理 key 重搬 + 改 space/project（folder_id 不变，仍在各自文件夹里）
@@ -716,9 +744,7 @@ async def _move_items(db, user_id, args: dict):
     # 文件夹
     for it in (args.get("folders") or []):
         if isinstance(it, int) or (isinstance(it, str) and str(it).strip().isdigit()):
-            fo = await db.get(Folder, int(it))
-            if fo and fo.user_id != user_id:
-                fo = None
+            fo = await get_owned(db, Folder, int(it), user_id)
         else:
             # 按名找：在源处可能任意空间，这里全局按名匹配（重名则提示用 id）
             rows = (await db.execute(
@@ -743,12 +769,12 @@ async def _move_items(db, user_id, args: dict):
 
 async def _create_folder(db, user_id, args: dict):
     if args.get("project_id"):
-        p = await db.get(Project, args["project_id"])
-        if not p or p.user_id != user_id:
+        p = await get_owned(db, Project, args["project_id"], user_id)
+        if not p:
             return json.dumps({"error": "项目不存在"})
     if args.get("parent_id"):
-        par = await db.get(Folder, args["parent_id"])
-        if not par or par.user_id != user_id:
+        par = await get_owned(db, Folder, args["parent_id"], user_id)
+        if not par:
             return json.dumps({"error": "父文件夹不存在"})
     fo = Folder(
         user_id=user_id, name=args["name"],
@@ -794,8 +820,8 @@ async def _find_folder(db, user_id, args: dict):
             fid = int(str(fid).strip())
         except (ValueError, TypeError):
             pass
-        fo = await db.get(Folder, fid)
-        if not fo or fo.user_id != user_id:
+        fo = await get_owned(db, Folder, fid, user_id)
+        if not fo:
             return json.dumps({"error": "文件夹不存在"})
         return fo
     name = args.get("name") or args.get("folder")
@@ -888,9 +914,160 @@ async def _copy_file(db, user_id, args: dict):
     return {"success": True, "file_id": new_file.id, "name": f"{new_display}.{f.ext}"}
 
 
+# ── 网络图片下载（send_file 的 url 分支用）：SSRF 防护 ─────────────────────────
+_SEND_URL_MAX_BYTES = 15 * 1024 * 1024   # 下载体积上限
+_SEND_URL_IMAGE_EXT = {
+    "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/gif": "gif",
+    "image/webp": "webp", "image/bmp": "bmp",
+}
+
+
+def _url_is_safe(url: str) -> str | None:
+    """校验一个外部 URL 能不能拿去下载：只准 http/https，挡掉内网/回环/链路本地/云元数据地址。
+    返回 None=安全；否则返回拒绝原因。"""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return "URL 格式不合法"
+    if parsed.scheme not in ("http", "https"):
+        return "只支持 http/https 链接"
+    host = parsed.hostname
+    if not host:
+        return "URL 缺少主机名"
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return "域名解析失败"
+    for info in infos:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
+            return "该地址指向内网/本机，出于安全考虑不予下载"
+    return None
+
+
+def _fmt_age(ttl_left: int, total_ttl: int) -> str:
+    """按剩余 TTL 反推大致存了多久（暂存无绝对时间戳，只能这样估）。"""
+    if ttl_left is None or ttl_left < 0:
+        return "未知"
+    elapsed = max(0, total_ttl - ttl_left)
+    if elapsed < 3600:
+        return f"约{max(1, elapsed // 60)}分钟前"
+    if elapsed < 86400:
+        return f"约{elapsed // 3600}小时前"
+    return f"约{elapsed // 86400}天前"
+
+
+async def _list_recent_attachments(db, user_id, args: dict):
+    """列出该用户当前暂存区（未过期）的附件，供模型在「刚刚的图/那张图」等模糊指代时反查 attach_id。"""
+    from app.core import chat_attach
+    staged = await chat_attach.list_staged(user_id)
+    if not staged:
+        return {"count": 0, "items": [], "note": "暂存区当前没有未过期的附件"}
+    items = [{
+        "attach_id": m["attach_id"], "name": m.get("name"), "ext": m.get("ext"),
+        "kind": m.get("kind"), "platform": m.get("platform"),
+        "size_bytes": m.get("size"), "img_width": m.get("img_width"), "img_height": m.get("img_height"),
+        "staged_about": _fmt_age(m.get("_ttl"), chat_attach.TTL),
+    } for m in staged]
+    return {"count": len(items), "items": items}
+
+
+async def _send_file_from_url(user_id, url: str, title: str):
+    """下载一张网络图片（如 image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。"""
+    reason = _url_is_safe(url)
+    if reason:
+        return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
+
+    import httpx
+    from urllib.parse import urljoin
+    try:
+        # 手动跟随重定向 + 逐跳重新校验：自动 follow 会让公网页 302 跳内网/云元数据绕过上面的 _url_is_safe（SSRF）。
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0),
+            follow_redirects=False,
+        ) as client:
+            cur = url
+            resp = await client.get(cur)
+            for _ in range(3):   # 最多跟 3 跳
+                if resp.status_code not in (301, 302, 303, 307, 308):
+                    break
+                loc = resp.headers.get("location")
+                if not loc:
+                    break
+                cur = urljoin(cur, loc)
+                reason = _url_is_safe(cur)   # 每一跳的目标都重新过内网校验
+                if reason:
+                    return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
+                resp = await client.get(cur)
+    except Exception as e:
+        return json.dumps({"error": f"图片下载失败（{type(e).__name__}），换一张或换个来源试试"}, ensure_ascii=False)
+    if resp.status_code != 200:
+        return json.dumps({"error": f"图片下载失败（HTTP {resp.status_code}）"}, ensure_ascii=False)
+
+    ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+    data = resp.content
+    ext = _SEND_URL_IMAGE_EXT.get(ctype)
+    if not ext:
+        return json.dumps({"error": f"这个链接返回的不是支持的图片格式（{ctype or '未知类型'}）"}, ensure_ascii=False)
+    if not data:
+        return json.dumps({"error": "下载到的内容是空的"}, ensure_ascii=False)
+    if len(data) > _SEND_URL_MAX_BYTES:
+        return json.dumps({"error": f"图片过大（{len(data) / 1048576:.1f}MB），超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限"}, ensure_ascii=False)
+
+    from app.core import chat_attach
+    name = (title or "").strip()[:80] or "图片"
+    meta = await chat_attach.stage(user_id, name, ext, ctype, data, kind="image")
+    return {
+        "ok": True,
+        "message": f"已把「{name}」发到对话窗口。",
+        "_artifact": {
+            "attach_id": meta["attach_id"],
+            "name": name,
+            "ext": ext,
+            "size_bytes": len(data),
+            "kind": "image",
+            # 带上真实像素尺寸：前端预览窗口直接按此定尺，不用再靠缩略图猜（猜不准会出现
+            # 「先弹很大的窗口再缩小」的问题，小图/非4K图尤其明显）
+            "img_width": meta.get("img_width"),
+            "img_height": meta.get("img_height"),
+        },
+    }
+
+
 async def _send_file(db, user_id, args: dict):
-    """把用户文件库里的文件发到对话窗口（前端渲染可下载卡片）。
+    """把文件发到对话窗口（前端渲染可下载卡片）：文件库里的文件用 file_id/file；
+    网络图片（如 image_search 搜到的）用 url——下载后暂存成聊天附件，同一套 _artifact 机制；
+    之前收到/发过、还在暂存区的附件用 attach_id——直接重发，不重新下载、不进文件库。
     返回 _artifact，core 据此推一个 file 事件给前端；普通字段回给 LLM。"""
+    url = (args.get("url") or "").strip()
+    if url:
+        return await _send_file_from_url(user_id, url, args.get("title") or "")
+
+    attach_id = (args.get("attach_id") or "").strip()
+    if attach_id:
+        from app.core import chat_attach
+        meta, note = await chat_attach.resolve_attach(user_id, attach_id)
+        if not meta:
+            return json.dumps({"error": "没找到这个附件，可能已经过期了（聊天附件只暂存 7 天）"}, ensure_ascii=False)
+        name = f"{meta['name']}.{meta['ext']}" if meta.get("ext") else meta["name"]
+        return {
+            "ok": True,
+            "message": f"已把《{name}》重新发到对话窗口。{note}".strip(),
+            "_artifact": {
+                "attach_id": meta["attach_id"], "name": meta["name"], "ext": meta.get("ext"),
+                "size_bytes": meta.get("size"), "kind": meta.get("kind"),
+                "img_width": meta.get("img_width"), "img_height": meta.get("img_height"),
+            },
+        }
+
     f, err = await _resolve_file(db, user_id, args)
     if err:
         return err
@@ -903,6 +1080,8 @@ async def _send_file(db, user_id, args: dict):
             "name": f.display_name,
             "ext": f.ext,
             "size_bytes": f.size_bytes,
+            "img_width": f.img_width,
+            "img_height": f.img_height,
         },
     }
 
@@ -912,7 +1091,8 @@ class FilesSkill(BaseSkill):
     tools = [
         Tool(
             name="list_files", label="查询文件",
-            description="查询文件，可按空间(project/mind/asset/personal)、项目、扩展名、名称关键词筛选。",
+            description="查询文件，可按空间(project/mind/asset/personal)、项目、扩展名、名称关键词筛选。"
+                        "结果回给用户时按列表呈现（每个文件一行，多文件夹/项目时分组），别写成一段话堆文件名。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1137,25 +1317,51 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="send_file", label="发送文件",
-            description="把用户文件库里的一个文件**真正发给用户**（网页显示下载卡片；飞书/QQ 直接把文件发到对方聊天里）。当用户说「把X发给我/给我那个文件/发过来」时**必须调用本工具**——绝不能只回「正在发送/已发给你」却不调用。**仅在用户明确要文件时才调**；创建 / 保存文档后**别自动发**——那只需用一句话告诉用户文件存在哪个目录即可。用 file 指定文件名（如「合同.pdf」）或 file_id。",
+            description="把一个文件**真正发给用户**（网页显示下载/图片卡片；飞书/QQ 直接把文件发到对方聊天里）。"
+                        "三种来源：① 用户文件库里的文件——用 file 指定文件名（如「合同.pdf」）或 file_id；"
+                        "② 网络图片——用 url 传图片直链（如 image_search 结果的 img_src），会下载后作为聊天附件发出（不进文件库）；"
+                        "③ 之前收到/发过、还在暂存区的附件——用 attach_id 直接重发，不重新下载、不进文件库。"
+                        "attach_id 来自当轮上下文「用户上传了文件…(attach_id=X)」的提示；如果用户说「刚刚的图/那张图/X平台发的那个」"
+                        "但你不知道 attach_id，先调 list_recent_attachments 查出来再传。"
+                        "当用户说「把X发给我/给我那个文件/发过来」时**必须调用本工具**——绝不能只回「正在发送/已发给你」却不调用。"
+                        "文件库文件**仅在用户明确要文件时才调**；创建/保存文档后**别自动发**——一句话告诉用户存在哪个目录即可。"
+                        "但用 url/attach_id 发图时不受此限——用户要找图/要一张图本身就是要看/要发，搜到/查到后可直接调用，不用再问一句「要不要发」。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file": {"type": "string", "description": "文件名（如 合同.pdf）"},
-                    "file_id": {"type": "integer", "description": "文件 id（已知时可用）"},
+                    "file": {"type": "string", "description": "文件名（如 合同.pdf），发文件库文件时用"},
+                    "file_id": {"type": "integer", "description": "文件 id（已知时可用），发文件库文件时用"},
+                    "url": {"type": "string", "description": "网络图片直链（如 image_search 结果的 img_src），传了则忽略 file/file_id"},
+                    "title": {"type": "string", "description": "配合 url 用：给这张图起个名字（可选，不传默认「图片」）"},
+                    "attach_id": {"type": "string", "description": "之前暂存过的附件 attach_id（见上下文提示，或先调 list_recent_attachments 查），传了则忽略 file/file_id/url"},
                 },
             },
             handler=_send_file,
         ),
         Tool(
+            name="list_recent_attachments", label="查最近暂存的附件",
+            description="列出该用户当前所有还在暂存区、未过期的聊天附件（用户发来的图/文件、机器人搜图发过的图等，暂存 7 天）。"
+                        "当用户提到「刚刚的图/那张图/昨天发的那个/X平台那张」但当轮上下文里没有 attach_id 提示时用——"
+                        "查到后从返回列表里挑出匹配的（按名称/平台/大约多久前判断），再用 send_file(attach_id=...) 重发，"
+                        "或 save_uploaded_file(attach_id=...) 存进文件库。列表按暂存时间从新到旧排。",
+            input_schema={"type": "object", "properties": {}},
+            handler=_list_recent_attachments,
+        ),
+        Tool(
             name="save_uploaded_file", label="保存上传文件",
             description="把用户在对话里**上传的附件**保存进文件库。当用户上传文件后说「存一下/保存到文件库/存到某项目」时用。"
-                        "attach_id 来自上下文「用户上传了文件…(attach_id=X)」的提示——抄不准也没关系，系统会自动退到用户最近上传的那个。"
+                        "**用户一次发了多个附件（如连拍的几张图）要用 attach_ids 传数组一次性存全部**——"
+                        "别为每张图分别调用，那样每次没对上 id 都各自回退，容易存漏、甚至存错成不相关的附件。"
+                        "单个附件用 attach_id。attach_id(s) 来自上下文「用户上传了文件…(attach_id=X)」的提示——"
+                        "抄不准也没关系，系统会尽量容错匹配；但当前暂存区里同时有多种不同类型附件（比如图+语音）"
+                        "时无法安全瞎猜，会报错列出候选，需要照着给准。"
                         "要存进某个项目就带上 project_id（不传则进 personal）。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "attach_id": {"type": "string", "description": "上传附件的 attach_id（见上下文提示；可不填，自动取最近上传的）"},
+                    "attach_id": {"type": "string", "description": "单个附件的 attach_id（见上下文提示；可不填，自动取最近上传的——仅当前暂存区无歧义时有效）"},
+                    "attach_ids": {"type": "array", "items": {"type": "string"},
+                                   "description": "批量保存多个附件时用（如用户连发的几张图），传所有 attach_id，比逐个调用更可靠"},
                     "project_id": {"type": "integer", "description": "存进哪个项目（不填=personal 个人空间）"},
                     "folder_id": {"type": "integer", "description": "存进哪个文件夹（可选）"},
                 },

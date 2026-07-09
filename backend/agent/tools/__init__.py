@@ -12,6 +12,7 @@ from agent.tools.overview import OverviewSkill
 from agent.tools.trash import TrashSkill
 from agent.tools.memory import MemorySkill
 from agent.tools.search import SearchSkill
+from agent.tools.global_search import GlobalSearchSkill
 from agent.tools.conversations import ConversationsSkill
 from agent.tools.im import IMSkill
 from agent.tools.scheduled_tasks import ScheduledTasksSkill
@@ -22,6 +23,7 @@ __all__ = [
     "BaseSkill", "registry",
     "ProjectsSkill", "CalendarSkill", "FilesSkill", "ClientsSkill",
     "OverviewSkill", "TrashSkill", "MemorySkill", "SearchSkill",
+    "GlobalSearchSkill",
     "ConversationsSkill", "IMSkill", "ScheduledTasksSkill",
     "WebSkill", "MetaSkill",
 ]
