@@ -11,6 +11,7 @@
 
 ### 改进
 
+- **飞书流式回复卡片收尾改标题**（`agent/adapters/feishu.py`）：回复完成后把卡片标题从「咕咕思考中」改成「咕咕」，不再挂着思考中的标题。
 - **QQ 彻底移除 botpy 依赖**（`agent/adapters/qq.py`、`requirements.txt`）：收发两侧全部改为自建 raw WebSocket/HTTP，不再需要 qq-botpy 包。
 - **项目许可证改为 Apache-2.0**（`LICENSE`、`README.md`）：项目开源协议从 MIT 调整为 Apache License 2.0，并补齐许可证文件与前端包元数据。
 - **咕咕聊天改用虚拟滚动**（`components/common/GuguChat.vue`）：长会话不再一次性渲染全部消息，打开更快、滚动更流畅。

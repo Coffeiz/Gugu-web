@@ -671,7 +671,8 @@ _STREAM_PATCH_INTERVAL_S = 0.2
 _STREAM_PATCH_MIN_CHARS = 30
 
 
-def _make_card_payload(text: str, title: str = "咕咕思考中", color: str = "blue") -> str:
+def _make_card_payload(text: str, title: str = "咕咕思考中", color: str = "blue",
+                       streaming_mode: bool = True) -> str:
     """构造 CardKit 卡片 2.0 的 data 字段（JSON 字符串）。
 
     OpenAPI 要求 schema 2.0 的内嵌 card JSON 必须有 schema + header + body 结构：
@@ -680,13 +681,13 @@ def _make_card_payload(text: str, title: str = "咕咕思考中", color: str = "
     而不带 body 包络时串化整个对象做 form 又会让飞书网关解析成 body is nil。
 
     config.streaming_mode=true 让服务端启用 typewriter 渲染（飞书 7.20+ 支持，spec
-    streaming-updates-openapi-overview）；先开是默认行为，后续流式完了可以关。
+    streaming-updates-openapi-overview）；先开是默认行为，收尾改标题时传 False 关掉。
     """
     return json.dumps({
         "schema": "2.0",
         "update_multi": True,   # CardKit 流式更新要求 update_multi=true（官方 spec 300302）
         "config": {
-            "streaming_mode": True,
+            "streaming_mode": streaming_mode,
             "streaming_config": {
                 "print_frequency_ms": {"default": 70, "android": 70, "ios": 70, "pc": 70},
                 "print_step": {"default": 1, "android": 1, "ios": 1, "pc": 1},
@@ -898,14 +899,19 @@ async def _do_finalize_streaming_card(app_id: str, app_secret: str, card_id: str
     return True
 
 
-async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str) -> bool:
+async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str,
+                          title: str = "咕咕思考中", streaming_mode: bool = True) -> bool:
     """raw httpx 版 update_card：节流策略由 caller 控制（每 ≥200ms 或 ≥30 字调一次）。
 
     HTTP method 是 **PUT**——SDK update() 签名的也是 PUT（cardkit/v1/model/update_card_request
     源码：update_card_request.http_method = HttpMethod.PUT）。
     sequence 必须严格递增（int 类型，从 1 开始）——之前踩坑：timestamp 形式被服务端判为
     非法参数类型返 9499。同进程用模块级 dict 跨调用递增，多 worker 进程各自从 1 计起互不冲突
-    （飞书服务端按 card_id 维度判 sequence 单调，不要求跨进程全局连续）。
+    （飞书服务端按 card_id 维度判 sequence 单调，不要求跨进程全局连续；这是独立于 element 级
+    streaming update 的另一套 sequence 空间，互不影响）。
+
+    `title`/`streaming_mode`：流式收尾时用来把卡片标题从「咕咕思考中」改成「咕咕」、
+    同时关掉 streaming_mode（见 send_text_stream 收尾调用）。
     """
     try:
         token = await _get_tenant_token(app_id, app_secret)
@@ -916,7 +922,7 @@ async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str)
     body = {
         "card": {
             "type": "card_json",
-            "data": _make_card_payload(text),
+            "data": _make_card_payload(text, title=title, streaming_mode=streaming_mode),
         },
         "sequence": _card_seq[card_id],
     }
@@ -1061,6 +1067,12 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
             sequence=_card_seq[_stream_seq_key], uuid=uuid.uuid4().hex)
         if not finalized:
             print(f"[feishu] finalize_streaming_card 失败但保留已更新卡片: card_id={card_id}", flush=True)
+        # 收尾把标题从「咕咕思考中」改成「咕咕」——思考已经结束，继续挂着思考中的标题很怪。
+        # 独立于上面 finalize（各自失败域不同），失败不影响用户已经看到的正文。
+        renamed = await _do_update_card(app_id, app_secret, card_id, final_text,
+                                        title="咕咕", streaming_mode=False)
+        if not renamed:
+            print(f"[feishu] 收尾改标题失败，保留「咕咕思考中」: card_id={card_id}", flush=True)
     return (stream_ok, final_resp)
 
 

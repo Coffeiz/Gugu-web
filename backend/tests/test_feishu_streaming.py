@@ -10,6 +10,24 @@ async def _empty_stream():
         yield ("token", "")
 
 
+def test_make_card_payload_defaults_to_thinking_title_and_streaming_on():
+    import json as _json
+
+    data = _json.loads(feishu._make_card_payload("正文"))
+
+    assert data["header"]["title"]["content"] == "咕咕思考中"
+    assert data["config"]["streaming_mode"] is True
+
+
+def test_make_card_payload_supports_final_title_and_streaming_off():
+    import json as _json
+
+    data = _json.loads(feishu._make_card_payload("正文", title="咕咕", streaming_mode=False))
+
+    assert data["header"]["title"]["content"] == "咕咕"
+    assert data["config"]["streaming_mode"] is False
+
+
 async def test_feishu_stream_returns_tuple_when_creds_missing(monkeypatch):
     async def fake_creds(channel_id):
         return "", ""
@@ -52,6 +70,7 @@ async def test_feishu_stream_reports_patch_failure(monkeypatch):
 
 async def test_feishu_stream_finalizes_card_after_success(monkeypatch):
     finalized: list[dict] = []
+    renamed: list[dict] = []
 
     async def fake_creds(channel_id):
         return "app_id", "app_secret"
@@ -73,6 +92,10 @@ async def test_feishu_stream_finalizes_card_after_success(monkeypatch):
         })
         return True
 
+    async def fake_update_card(app_id, app_secret, card_id, text, title="咕咕思考中", streaming_mode=True):
+        renamed.append({"card_id": card_id, "text": text, "title": title, "streaming_mode": streaming_mode})
+        return True
+
     async def token_iter():
         yield ("final", AgentResponse(text="最终文本", session_id=123))
 
@@ -81,6 +104,7 @@ async def test_feishu_stream_finalizes_card_after_success(monkeypatch):
     monkeypatch.setattr(feishu, "_do_send_card_message", fake_send_card)
     monkeypatch.setattr(feishu, "_do_streaming_update_text", fake_update_text)
     monkeypatch.setattr(feishu, "_do_finalize_streaming_card", fake_finalize)
+    monkeypatch.setattr(feishu, "_do_update_card", fake_update_card)
     feishu._card_seq.pop("card_finalize:stream", None)
 
     ok, resp = await feishu.send_text_stream("oc_test", token_iter(), "bot-1")
@@ -91,6 +115,12 @@ async def test_feishu_stream_finalizes_card_after_success(monkeypatch):
         "card_id": "card_finalize",
         "summary_text": "最终文本",
         "sequence": 2,
+    }]
+    assert renamed == [{
+        "card_id": "card_finalize",
+        "text": "最终文本",
+        "title": "咕咕",
+        "streaming_mode": False,
     }]
 
 
@@ -110,6 +140,9 @@ async def test_feishu_stream_keeps_ok_when_finalize_fails(monkeypatch):
     async def fake_finalize(app_id, app_secret, card_id, summary_text, sequence, uuid):
         return False
 
+    async def fake_update_card(app_id, app_secret, card_id, text, title="咕咕思考中", streaming_mode=True):
+        return True
+
     async def token_iter():
         yield ("final", AgentResponse(text="最终文本", session_id=123))
 
@@ -118,6 +151,7 @@ async def test_feishu_stream_keeps_ok_when_finalize_fails(monkeypatch):
     monkeypatch.setattr(feishu, "_do_send_card_message", fake_send_card)
     monkeypatch.setattr(feishu, "_do_streaming_update_text", fake_update_text)
     monkeypatch.setattr(feishu, "_do_finalize_streaming_card", fake_finalize)
+    monkeypatch.setattr(feishu, "_do_update_card", fake_update_card)
     feishu._card_seq.pop("card_finalize_fail:stream", None)
 
     ok, resp = await feishu.send_text_stream("oc_test", token_iter(), "bot-1")
