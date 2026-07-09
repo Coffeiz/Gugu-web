@@ -28,6 +28,20 @@ def test_make_card_payload_supports_final_title_and_streaming_off():
     assert data["config"]["streaming_mode"] is False
 
 
+def test_stream_fallback_text_keeps_real_text():
+    assert feishu._stream_fallback_text("这是正文", has_files=False) == "这是正文"
+    assert feishu._stream_fallback_text("这是正文", has_files=True) == "这是正文"
+
+
+def test_stream_fallback_text_when_model_only_calls_tool_with_files():
+    # 模型光发文件不说话时 payload.text 是空串——这次踩坑：卡片正文之前会真的是空的
+    assert feishu._stream_fallback_text("", has_files=True) == "给你～"
+
+
+def test_stream_fallback_text_when_model_says_nothing_at_all():
+    assert feishu._stream_fallback_text("  ", has_files=False) == "嗯~在的，你说～"
+
+
 async def test_feishu_stream_returns_tuple_when_creds_missing(monkeypatch):
     async def fake_creds(channel_id):
         return "", ""
@@ -125,6 +139,55 @@ async def test_feishu_stream_finalizes_card_after_success(monkeypatch):
         "title": "咕咕",
         "streaming_mode": False,
     }]
+
+
+async def test_feishu_stream_card_not_empty_when_model_only_sends_file(monkeypatch):
+    """回归测试：模型调 send_file 工具没配文字说明时，final.text 是空串——之前会真的把
+    空字符串 patch 进卡片，用户看到一张空卡片，得追问「发了吗」模型才在下一轮正常说话。"""
+    patched: list[str] = []
+    finalized: list[str] = []
+    renamed: list[str] = []
+
+    async def fake_creds(channel_id):
+        return "app_id", "app_secret"
+
+    async def fake_create_card(app_id, app_secret, text):
+        return "card_file_only"
+
+    async def fake_send_card(app_id, app_secret, receive_id, card_id):
+        return True
+
+    async def fake_update_text(app_id, app_secret, card_id, content, sequence, uuid):
+        patched.append(content)
+        return True
+
+    async def fake_finalize(app_id, app_secret, card_id, summary_text, sequence, uuid):
+        finalized.append(summary_text)
+        return True
+
+    async def fake_update_card(app_id, app_secret, card_id, text, *, sequence,
+                               title="咕咕思考中", streaming_mode=True):
+        renamed.append(text)
+        return True
+
+    async def token_iter():
+        # 模型只调工具，没有任何 token 输出，final.text 也是空串，但带了文件
+        yield ("final", AgentResponse(text="", session_id=123, files=[{"attach_id": "a1"}]))
+
+    monkeypatch.setattr(feishu, "_creds_by_id", fake_creds)
+    monkeypatch.setattr(feishu, "_do_create_card", fake_create_card)
+    monkeypatch.setattr(feishu, "_do_send_card_message", fake_send_card)
+    monkeypatch.setattr(feishu, "_do_streaming_update_text", fake_update_text)
+    monkeypatch.setattr(feishu, "_do_finalize_streaming_card", fake_finalize)
+    monkeypatch.setattr(feishu, "_do_update_card", fake_update_card)
+    feishu._card_seq.pop("card_file_only:stream", None)
+
+    ok, resp = await feishu.send_text_stream("oc_test", token_iter(), "bot-1")
+
+    assert ok is True
+    assert patched == ["给你～"]
+    assert finalized == ["给你～"]
+    assert renamed == ["给你～"]
 
 
 async def test_feishu_stream_keeps_ok_when_finalize_fails(monkeypatch):

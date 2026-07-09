@@ -957,6 +957,20 @@ async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str,
     return True
 
 
+def _stream_fallback_text(text: str, has_files: bool) -> str:
+    """模型只调工具（比如发文件）没配文字说明时的兜底，跟 worker.py 非流式路径同一套文案。
+
+    实测踩坑：模型光发文件不说话时 final_text 是空串，之前的 _patch/finalize/rename 全部
+    `if final_text:` 短路跳过，导致卡片正文真的是空的——用户得追问「发了吗」模型才在下一轮
+    正常说话。worker.py 的非流式路径本来就有这个兜底（有文件配「给你～」），但只在
+    `not (platform == "feishu" and stream_sent)` 时才发送，飞书流式成功时被跳过，
+    所以流式卡片这边必须自己兜底一次，不能指望 worker.py 那份。"""
+    text = (text or "").strip()
+    if text:
+        return text
+    return "给你～" if has_files else "嗯~在的，你说～"
+
+
 async def send_text_stream(receive_id: str, token_iter, channel_id: str | None = None,
                           placeholder: str = "咕咕正在想…") -> tuple[bool, "AgentResponse | None"]:
     """飞书流式回复（IM 端模拟 SSE）。
@@ -990,7 +1004,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                 accumulated += payload
             elif kind == "final":
                 final_resp = payload
-                final_text = (payload.text or accumulated).strip()
+                final_text = _stream_fallback_text(payload.text or accumulated, bool(payload.files))
                 if final_text:
                     ok = await send_text(receive_id, final_text, channel_id)
                     return (ok, final_resp)
@@ -1008,7 +1022,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                 accumulated += payload
             elif kind == "final":
                 final_resp = payload
-                final_text = (payload.text or accumulated).strip()
+                final_text = _stream_fallback_text(payload.text or accumulated, bool(payload.files))
                 if final_text:
                     ok = await send_text(receive_id, final_text, channel_id)
                     return (ok, final_resp)
@@ -1060,7 +1074,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                 if payload.cancelled:
                     # 用户中途取消 → 卡片保留 partial 内容（不清空，避免给用户错觉"什么都没了"）
                     break
-                pending_final_text = (payload.text or accumulated).strip()
+                pending_final_text = _stream_fallback_text(payload.text or accumulated, bool(payload.files))
                 break
     except Exception as e:
         print(f"[feishu] 流式消费异常: {type(e).__name__}: {e}", flush=True)

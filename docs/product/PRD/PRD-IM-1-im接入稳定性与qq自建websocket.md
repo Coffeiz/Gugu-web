@@ -19,6 +19,7 @@
 | 清理：完全移除 botpy | ✅ 已完成 | `_GuguQQClient`（botpy `Client` 子类）、monkey patch、`QQ_RAW_WS_ENABLED` 回退开关、`qq-botpy` 依赖全部删除；本地已 `pip uninstall qq-botpy` 验证 83 个测试仍全过。QQ 目前不开放 aigcbot 群聊功能，群聊代码路径保留但暂无法验证。 |
 | 飞书多媒体入站补齐 post/media/interactive | ✅ 已完成 | `post`（图文）拼接段落文字+下载内嵌图片/视频；`media`（视频消息）复用单附件下载逻辑；`interactive`（用户转发卡片）抽取可读文字，不下载卡片内嵌媒体（组件结构太杂，价值有限）。`_fetch_quoted_text` 引用反查同步支持这三种类型的占位/文字提取。 |
 | 修复：引用咕咕自己的流式卡片回复反查失败 | ✅ 已完成并经用户 devserver 实测确认（两轮踩坑才修好） | **devserver 实测踩坑 #1**：不带 `card_msg_content_type=user_card_content` 查询参数时反查拿到的是飞书兼容性占位文案「请升级至最新版本客户端，以查看内容」，不是卡片真实内容；对照 QwenPaw 同款逻辑补上参数后修复。**踩坑 #2**：补完参数后又变成反查出「[空消息]」——`_extract_card_text` 一直只从 `content["elements"]` 起步找文字，但咕咕流式卡片是 CardKit schema 2.0，elements 实际嵌在 `content["body"]["elements"]` 里一层，旧代码假设的是非流式卡片那种扁平 `{"elements":[...]}` 结构。改成直接从整个 `content` 递归（两种结构都能兼容）后才真正修好。**用户实测确认引用文字和引用图片都恢复正常。** |
+| 修复：只发文件不说话时飞书卡片是空的 | ✅ 已完成 | **devserver 实测踩坑**：用户让咕咕发个 md 文件，模型调 `send_file` 工具没配任何文字说明，`AgentResponse.text` 是空串——流式卡片的 `_patch`/`_do_finalize_streaming_card`/`_do_update_card` 全部拿这个空串去更新，卡片正文真的是空的，用户得追问「发了吗」模型才在下一轮正常说话。worker.py 非流式路径本来就有「有文件配一句给你～」的兜底，但只在 `not (platform == "feishu" and stream_sent)` 时才发送，飞书流式成功时被跳过，所以两边逻辑没对齐。新增 `_stream_fallback_text()`，在流式路径的三处 final 处理（两个 create_card/send_card_message 失败的 fallback 分支 + 主路径）都补上同款兜底文案。 |
 
 已验证：
 
