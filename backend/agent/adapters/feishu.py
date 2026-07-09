@@ -41,41 +41,26 @@ _TEXT_EXTS = {"md", "txt", "json", "csv", "yaml", "yml", "log", "py", "js", "ts"
               "hpp", "sh", "sql", "xml", "toml", "ini", "conf", "env"}
 
 
-def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
-    """下载用户发来的图片/文件 → 暂存 → 返回 (干净 caption, [attach_id])。
-
-    内容/卡片由 run_collect 的 resolve_for_message 据 attach_id 统一处理（和网页上传同一套），
-    所以这里 caption 留空、只回 attach_id。暂存失败才退回把内容塞进文本。
-    """
+def _download_and_stage(client, message_id: str, owner: str, key: str, rtype: str,
+                        fname: str, is_voice: bool) -> tuple[str, str]:
+    """下载单个飞书资源（图片/文件/视频共用）→ 转码（语音）→ 暂存。
+    返回 (fallback 文本, attach_id)；成功时 fallback 为空串，失败时 attach_id 为空串。"""
     from lark_oapi.api.im.v1 import GetMessageResourceRequest
     from app.core import chat_attach
-    mt = msg.message_type
-    try:
-        c = json.loads(msg.content) if msg.content else {}
-    except Exception:
-        c = {}
-    if mt == "image":
-        key, rtype, fname = c.get("image_key", ""), "image", "图片.jpg"
-    elif mt == "audio":
-        # 飞书语音是 opus（资源按 file 下）；当「语音消息」处理 → 转 mp3 喂 mimo + 语音条 + 30 天存储
-        key, rtype, fname = c.get("file_key", ""), "file", "语音.opus"
-    else:
-        key, rtype, fname = c.get("file_key", ""), "file", (c.get("file_name") or "文件")
     if not key:
-        noun = "语音" if mt == "audio" else ("图片" if mt == "image" else "文件")
-        return (f"[用户发来一个{noun}，但没取到资源]", [])
+        noun = "语音" if is_voice else "文件"
+        return (f"[用户发来一个{noun}，但没取到资源]", "")
     try:
-        req = GetMessageResourceRequest.builder().message_id(msg.message_id).file_key(key).type(rtype).build()
+        req = GetMessageResourceRequest.builder().message_id(message_id).file_key(key).type(rtype).build()
         resp = client.im.v1.message_resource.get(req)
         data = resp.file.read() if (resp.success() and resp.file) else b""
     except Exception as e:
         print(f"[feishu] 下载资源出错: {type(e).__name__}: {e}", flush=True)
         data = b""
     if not data:
-        return (f"[用户发来文件《{fname}》，但下载失败]", [])
+        return (f"[用户发来文件《{fname}》，但下载失败]", "")
     name = fname.rsplit(".", 1)[0] if "." in fname else fname
-    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ("jpg" if mt == "image" else "")
-    is_voice = (mt == "audio")
+    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
     duration = None
     if is_voice:
         # opus（mimo 不收）→ ffmpeg 转 mp3；缺 ffmpeg 则原样、退文字提示（resolve 兜底）
@@ -95,13 +80,111 @@ def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
         print(f"[feishu] 暂存失败: {type(e).__name__}: {e}", flush=True)
         aid = ""
     if aid:
-        return ("", [aid])   # caption 空，文件卡/语音条 + 内容由 resolve_for_message 据 attach_id 注入
+        return ("", aid)   # 文件卡/语音条/视频条内容由 resolve_for_message 据 attach_id 注入
     if is_voice:
-        return ("[用户发来一条语音，但处理失败]", [])
+        return ("[用户发来一条语音，但处理失败]", "")
     # 暂存失败兜底：文本类至少把内容塞进文本，让咕咕能读
     if ext in _TEXT_EXTS:
-        return (f"[用户发来文件《{fname}》内容：]\n```\n{data.decode('utf-8', 'replace')[:30000]}\n```", [])
-    return (f"[用户发来文件《{fname}》，但暂存失败]", [])
+        return (f"[用户发来文件《{fname}》内容：]\n```\n{data.decode('utf-8', 'replace')[:30000]}\n```", "")
+    return (f"[用户发来文件《{fname}》，但暂存失败]", "")
+
+
+def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
+    """下载用户发来的图片/文件/语音/视频（单附件消息）→ 暂存 → 返回 (干净 caption, [attach_id])。
+
+    内容/卡片由 run_collect 的 resolve_for_message 据 attach_id 统一处理（和网页上传同一套），
+    所以这里 caption 留空、只回 attach_id。暂存失败才退回把内容塞进文本。
+    """
+    mt = msg.message_type
+    try:
+        c = json.loads(msg.content) if msg.content else {}
+    except Exception:
+        c = {}
+    if mt == "image":
+        key, rtype, fname = c.get("image_key", ""), "image", "图片.jpg"
+    elif mt == "audio":
+        # 飞书语音是 opus（资源按 file 下）；当「语音消息」处理 → 转 mp3 喂 mimo + 语音条 + 30 天存储
+        key, rtype, fname = c.get("file_key", ""), "file", "语音.opus"
+    elif mt == "media":
+        # 飞书视频消息：file_key 是视频本体，image_key 是封面缩略图（暂不单独取封面）
+        key, rtype, fname = c.get("file_key", ""), "file", "视频.mp4"
+    else:
+        key, rtype, fname = c.get("file_key", ""), "file", (c.get("file_name") or "文件")
+    fallback, aid = _download_and_stage(client, msg.message_id, owner, key, rtype, fname, is_voice=(mt == "audio"))
+    if aid:
+        return ("", [aid])
+    return (fallback, [])
+
+
+def _ingest_post(client, msg, owner: str) -> tuple[str, list]:
+    """富文本图文消息（post）：拼接各段落文字，内嵌图片/视频按普通附件下载暂存。"""
+    try:
+        c = json.loads(msg.content) if msg.content else {}
+    except Exception:
+        c = {}
+    title = (c.get("title") or "").strip()
+    rows = c.get("content") or []
+    lines: list[str] = []
+    media_keys: list[tuple[str, str, str]] = []   # (key, rtype, fname)
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, list):
+            continue
+        parts: list[str] = []
+        for el in row:
+            if not isinstance(el, dict):
+                continue
+            tag = el.get("tag")
+            if tag == "text":
+                parts.append(el.get("text") or "")
+            elif tag == "a":
+                parts.append(el.get("text") or el.get("href") or "")
+            elif tag == "at":
+                parts.append(f"@{el.get('user_name') or el.get('user_id') or ''}")
+            elif tag == "img" and el.get("image_key"):
+                media_keys.append((el["image_key"], "image", "图片.jpg"))
+            elif tag == "media" and el.get("file_key"):
+                media_keys.append((el["file_key"], "file", "视频.mp4"))
+        if parts:
+            lines.append("".join(parts))
+    text = "\n".join(lines).strip()
+    if title:
+        text = f"{title}\n{text}".strip()
+    attachments: list = []
+    for key, rtype, fname in media_keys:
+        fallback, aid = _download_and_stage(client, msg.message_id, owner, key, rtype, fname, is_voice=False)
+        if aid:
+            attachments.append(aid)
+        elif fallback:
+            text = f"{text}\n{fallback}".strip()
+    return (text, attachments)
+
+
+def _extract_card_text(content) -> str:
+    """从卡片 JSON 里递归拍平抽取可读文字（markdown/text 节点），跳过 table 等非叙述性组件。"""
+    parts: list[str] = []
+
+    def _collect(v):
+        if isinstance(v, dict):
+            if v.get("tag") in ("markdown", "text"):
+                parts.append(v.get("content") or v.get("text") or "")
+            else:
+                for v2 in v.values():
+                    _collect(v2)
+        elif isinstance(v, list):
+            for v2 in v:
+                _collect(v2)
+
+    _collect(content.get("elements") if isinstance(content, dict) else content)
+    return "\n".join(p for p in parts if p).strip()
+
+
+def _ingest_interactive(msg) -> str:
+    """用户转发一张卡片消息过来：只提取可读文字，不下载卡片内嵌图片（组件结构太杂，暂不处理媒体）。"""
+    try:
+        c = json.loads(msg.content) if msg.content else {}
+    except Exception:
+        return "[卡片消息，解析失败]"
+    return _extract_card_text(c) or "[卡片消息]"
 
 
 def _fetch_quoted_text(client, parent_id: str) -> str | None:
@@ -124,27 +207,15 @@ def _fetch_quoted_text(client, parent_id: str) -> str | None:
             # 咕咕自己发的回复走卡片（见 _do_send 的 _build_card_elements），引用到的大概率是这种——
             # 从卡片 markdown 元素里把文字拼回来（table 组件跳过，不还原成文字，只取叙述性内容）。
             # GetMessage 回来的 elements 是「数组的数组」（分组/分段），不是发送时那种扁平列表，
-            # 所以要递归拍平找 markdown 节点，不能只查一层。
+            # 所以要递归拍平找 markdown 节点，不能只查一层；字段名也被归一化成 {"tag":"text","text":...}。
             try:
                 c = json.loads(m.body.content) if (m.body and m.body.content) else {}
             except Exception:
                 return "[解析失败]"
-            # GetMessage 回来的卡片内容会被飞书归一化：markdown 节点变成 {"tag":"text","text":...}
-            # （字段名也从 content 变成 text），跟发送时的原始结构不一样，两种字段名都认。
-            parts: list[str] = []
-            def _collect(v):
-                if isinstance(v, dict):
-                    if v.get("tag") in ("markdown", "text"):
-                        parts.append(v.get("content") or v.get("text") or "")
-                    else:
-                        for v2 in v.values():
-                            _collect(v2)
-                elif isinstance(v, list):
-                    for v2 in v:
-                        _collect(v2)
-            _collect(c.get("elements") if isinstance(c, dict) else c)
-            return "\n".join(p for p in parts if p).strip() or "[空消息]"
-        return {"image": "[图片消息]", "file": "[文件消息]", "audio": "[语音消息]"}.get(m.msg_type, "[非文字消息]")
+            return _extract_card_text(c) or "[空消息]"
+        if m.msg_type == "post":
+            return "[图文消息]"
+        return {"image": "[图片消息]", "file": "[文件消息]", "audio": "[语音消息]", "media": "[视频消息]"}.get(m.msg_type, "[非文字消息]")
     except Exception as e:
         print(f"[feishu] 查引用原消息失败: {type(e).__name__}: {e}", flush=True)
         return None
@@ -282,8 +353,12 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
                 text = ((json.loads(msg.content) if msg.content else {}) or {}).get("text", "").strip()
             except Exception:
                 text = ""
-        elif mt in ("image", "file", "audio"):
+        elif mt in ("image", "file", "audio", "media"):
             text, attachments = _ingest_media(api_client, msg, owner)
+        elif mt == "post":
+            text, attachments = _ingest_post(api_client, msg, owner)
+        elif mt == "interactive":
+            text = _ingest_interactive(msg)
         else:
             return  # 表情/位置/合并转发等暂不处理
         if not text and not attachments:

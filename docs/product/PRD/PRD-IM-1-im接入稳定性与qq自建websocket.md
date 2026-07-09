@@ -17,6 +17,7 @@
 | Phase 2：QQ 自建 WebSocket 接收侧 | ✅ 已完成 | `serve()` 走 raw WebSocket；支持 C2C 与群 @ raw event、引用文本/引用附件解析、现有 worker payload 兼容。 |
 | Phase 3：QQ raw HTTP 发送侧 | ✅ 已完成（未按 3-7 天灰度期提前实施） | `send_c2c`/`send_group`/`send_file`/短路回复/ack 全部改 raw HTTP 直连 QQ Bot API，按 channel_id 缓存 access_token 并在过期前刷新；markdown 无权限回退纯文本、401 清缓存重试逻辑保留。 |
 | 清理：完全移除 botpy | ✅ 已完成 | `_GuguQQClient`（botpy `Client` 子类）、monkey patch、`QQ_RAW_WS_ENABLED` 回退开关、`qq-botpy` 依赖全部删除；本地已 `pip uninstall qq-botpy` 验证 83 个测试仍全过。QQ 目前不开放 aigcbot 群聊功能，群聊代码路径保留但暂无法验证。 |
+| 飞书多媒体入站补齐 post/media/interactive | ✅ 已完成 | `post`（图文）拼接段落文字+下载内嵌图片/视频；`media`（视频消息）复用单附件下载逻辑；`interactive`（用户转发卡片）抽取可读文字，不下载卡片内嵌媒体（组件结构太杂，价值有限）。`_fetch_quoted_text` 引用反查同步支持这三种类型的占位/文字提取。 |
 
 已验证：
 
@@ -24,7 +25,8 @@
 - 本地后端全量：`74 passed`
 - devserver 专项测试：`15 passed`
 - devserver 后端全量：`74 passed`
-- Phase 3 本地全量：`83 passed`（新增 `tests/test_qq_raw_send.py` 覆盖 markdown 回退、401 重试清缓存、token 缓存复用、URL 模式发文件）；devserver 待部署后跑一遍全量确认。
+- Phase 3 本地全量：`83 passed`（新增 `tests/test_qq_raw_send.py` 覆盖 markdown 回退、401 重试清缓存、token 缓存复用、URL 模式发文件）
+- 飞书多媒体补齐后本地全量：`89 passed`（新增 `tests/test_feishu_media.py` 覆盖 post 段落拼接+媒体下载、卡片文字抽取、视频消息）；devserver 待部署后跑一遍全量确认。
 
 ---
 
@@ -86,7 +88,7 @@
 | stale retry 丢弃 | ✅ 已实现 | 基于 event `create_time` + server Date offset | 已补齐（首期用本机时间，保留校时扩展点） |
 | `message_id` 去重 | ✅ 已实现 | OrderedDict LRU | 已补齐 |
 | 引用消息 | 支持 `parent_id` 反查文字/interactive card 文本 | 支持文字和引用媒体 | 保持，后续可扩引用媒体 |
-| 多媒体入站 | image/file/audio | text/post/image/file/media/audio/interactive | 可补 `post/media/interactive`，不强制首期 |
+| 多媒体入站 | ✅ text/post/image/file/media/audio/interactive | text/post/image/file/media/audio/interactive | 已补齐 `post`（图文拼段落+内嵌图片/视频下载）、`media`（视频）、`interactive`（转发卡片抽取文字，不下载内嵌媒体） |
 | 流式回复 | ✅ raw httpx CardKit，失败回落普通文本，成功后 finalize | SDK CardKit hook | 已补 finalize |
 
 ### 4.2 QQ
