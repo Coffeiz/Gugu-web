@@ -17,6 +17,8 @@ compress.py 之类的算法，照着 OPS 里的样子加一个新函数、注册
   这个操作把 pattern.json 里其实该算「画像」的条目挑出来搬进 profile.json（一次性迁移债）。
 - migrate-daily：旧版 daily.md 用的是每行 `- YYYY-MM-DD 内容`；现在改成 `## 日期` 下挂多条
   bullet。运行时不再兼容旧格式，这个操作负责一次性改写存量 daily.md。
+- migrate-profile-events：早期 profile 里混进过「最近/刚/这阵子」这类阶段性事件。它们不该留在
+  画像层，而应迁去 memory.md；这个操作负责一次性把这批条目从 profile 挪到长期叙事层。
 
 跑法：
     cd backend && .venv/bin/python scripts/refresh_memory.py --facts            # 真的写（默认 3 次投票）
@@ -25,15 +27,20 @@ compress.py 之类的算法，照着 OPS 里的样子加一个新函数、注册
     cd backend && .venv/bin/python scripts/refresh_memory.py --cleanup-legacy --dry-run
     cd backend && .venv/bin/python scripts/refresh_memory.py --split-profile --dry-run
     cd backend && .venv/bin/python scripts/refresh_memory.py --migrate-daily --dry-run
+    cd backend && .venv/bin/python scripts/refresh_memory.py --migrate-profile-events --dry-run
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # backend/ 入 path
+
+
+_PROFILE_TEMPORAL_RE = re.compile(r"(最近|刚|刚刚|这阵子|这几天|这周|本周|目前|现在|近期)")
 
 
 _REVIEW_SYS_PROMPT = (
@@ -214,10 +221,52 @@ async def _migrate_daily(user_id: str, settings, dry_run: bool, **_ignored) -> d
     }
 
 
+def _render_profile_event_block(texts: list[str]) -> str:
+    lines = ["## 画像迁移补记"]
+    lines.extend(f"- {text}" for text in texts)
+    return "\n".join(lines).strip()
+
+
+async def _migrate_profile_events(user_id: str, settings, dry_run: bool, **_ignored) -> dict:
+    from agent.memory import store
+
+    profile = await store.read_profile_list(user_id)
+    if not profile:
+        return {"migrated": 0}
+
+    existing_memory = await store.read_memory_doc(user_id)
+    moved_texts: list[str] = []
+    keep_profile: list[dict] = []
+    for item in profile:
+        text = str(item.get("text") or "").strip()
+        if text and _PROFILE_TEMPORAL_RE.search(text):
+            moved_texts.append(text)
+            continue
+        keep_profile.append(item)
+
+    if not moved_texts:
+        return {"migrated": 0}
+
+    new_memory_items = [text for text in moved_texts if text not in existing_memory]
+    if not dry_run:
+        await store.write_profile_list(user_id, keep_profile)
+        if new_memory_items:
+            blocks = [existing_memory.strip()] if existing_memory.strip() else []
+            blocks.append(_render_profile_event_block(new_memory_items))
+            await store.write_memory_doc(user_id, "\n\n".join(blocks))
+            await store.sync_memory_vecs(user_id, "\n\n".join(blocks))
+    return {
+        "migrated": len(moved_texts),
+        "moved_texts": moved_texts,
+        "memory_appended_texts": new_memory_items,
+    }
+
+
 OPS = {
     "facts": _review_facts,
     "cleanup-legacy": _cleanup_legacy,
     "migrate-daily": _migrate_daily,
+    "migrate-profile-events": _migrate_profile_events,
     "split-profile": _split_profile,
 }
 

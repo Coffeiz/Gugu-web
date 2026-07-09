@@ -10,6 +10,7 @@
 - refresh_memory 的 cleanup-legacy
 """
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -144,6 +145,22 @@ async def test_render_profile_no_relevance_filtering(storage):
     profile = [{"id": "1", "text": "条目一", "ts": 1.0}, {"id": "2", "text": "条目二", "ts": 2.0}]
     rendered = store.render_profile(profile)
     assert "条目一" in rendered and "条目二" in rendered   # 全量注入，不做衰减/退休/相关性挑选
+
+
+def test_reflection_splits_temporal_profile_into_daily():
+    from agent.memory import reflection
+
+    profile_adds, staged = reflection._split_profile_adds([
+        "用户最近刚换了新空调",
+        "用户住南京",
+        "用户目前在集中处理引用消息识别",
+    ])
+
+    assert profile_adds == ["用户住南京"]
+    assert staged == ["用户最近刚换了新空调", "用户目前在集中处理引用消息识别"]
+    assert reflection._merge_daily_note("本轮确认了微信引用能力边界", staged) == (
+        "本轮确认了微信引用能力边界；用户最近刚换了新空调；用户目前在集中处理引用消息识别"
+    )
 
 
 # ── pattern 增删/印证 ───────────────────────────────────────────────────
@@ -283,3 +300,72 @@ async def test_migrate_daily_reports_preview_lines(storage):
     result = await rm._migrate_daily(UID, settings=object(), dry_run=True)
     assert result["migrated"] == 2
     assert result["migrated_texts"] == ["2026-07-10 第一条", "2026-07-09 第二条"]
+
+
+async def test_migrate_profile_events_moves_temporal_profile_to_memory(storage):
+    import scripts.refresh_memory as rm
+    from agent.memory import store
+
+    await store.write_profile_list(UID, [
+        {"id": "p1", "text": "用户最近刚换了新空调", "ts": 1.0},
+        {"id": "p2", "text": "用户住南京", "ts": 2.0},
+    ])
+    await store.write_memory_doc(UID, "## 既有长期记忆\n- 用户最近在折腾网关接入")
+
+    result = await rm._migrate_profile_events(UID, settings=object(), dry_run=False)
+    assert result["migrated"] == 1
+    assert result["moved_texts"] == ["用户最近刚换了新空调"]
+    assert result["memory_appended_texts"] == ["用户最近刚换了新空调"]
+
+    profile = await store.read_profile_list(UID)
+    assert [p["text"] for p in profile] == ["用户住南京"]
+    memory = await store.read_memory_doc(UID)
+    assert "## 画像迁移补记" in memory
+    assert "- 用户最近刚换了新空调" in memory
+
+
+async def test_migrate_profile_events_dedupes_existing_memory(storage):
+    import scripts.refresh_memory as rm
+    from agent.memory import store
+
+    await store.write_profile_list(UID, [
+        {"id": "p1", "text": "用户最近刚换了新空调", "ts": 1.0},
+    ])
+    await store.write_memory_doc(UID, "用户最近刚换了新空调")
+
+    result = await rm._migrate_profile_events(UID, settings=object(), dry_run=False)
+    assert result["migrated"] == 1
+    assert result["memory_appended_texts"] == []
+    assert await store.read_memory_doc(UID) == "用户最近刚换了新空调"
+
+
+async def test_compress_includes_profile_and_pattern_context(storage, monkeypatch):
+    from agent.memory import compress, store
+
+    for i in range(store.DAILY_COMPACT_AT):
+        date = "2026-07-10" if i < store.DAILY_KEEP_RECENT else "2026-07-09"
+        await store.append_daily(UID, date, f"第{i}条")
+    await store.write_profile_list(UID, [{"id": "p1", "text": "用户住南京", "ts": 1.0}])
+    await store.write_facts_list(UID, [
+        {"id": "f1", "text": "用户做决定前会先核实事实", "kind": "observed", "conf": 0.9, "imp": 4, "ts": 1.0},
+    ])
+
+    captured = {}
+
+    async def fake_complete_json(sys_prompt, user, settings, max_tokens=1500, temperature=0.3):
+        captured["user"] = user
+        return {"memory": "保留事件背景，不复写稳定结论"}
+
+    async def fake_sync_memory_vecs(user_id, memory_text, force=False):
+        captured["synced"] = (user_id, memory_text, force)
+
+    monkeypatch.setattr("agent.memory.compress.complete_json", fake_complete_json)
+    monkeypatch.setattr("agent.memory.store.sync_memory_vecs", fake_sync_memory_vecs)
+
+    ok = await compress.compact(UID, SimpleNamespace())
+    assert ok is True
+    assert "已结构化的用户画像" in captured["user"]
+    assert "用户住南京" in captured["user"]
+    assert "已结构化的行为模式" in captured["user"]
+    assert "用户做决定前会先核实事实" in captured["user"]
+    assert "别在长期记忆里原句复写" in captured["user"]

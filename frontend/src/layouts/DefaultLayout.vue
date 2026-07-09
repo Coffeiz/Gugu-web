@@ -202,7 +202,7 @@ const todayStr = computed(() => {
      GlassBg(z-index:-1) 压在内容下；backdrop-filter 显式关掉。*/
   isolation: isolate;
   background: transparent;
-  overflow: hidden;   /* 用顶栏自己的 squircle 圆角裁 GlassBg（圆角对齐）；搜索下拉是 Teleport 的、不受影响 */
+  overflow: visible;  /* GlassBg 自己继承圆角裁切；宿主放开，按钮外发阴影才能露出来 */
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -239,35 +239,35 @@ const todayStr = computed(() => {
   gap: 8px;
 }
 
-/* 顶栏按钮不做悬停上浮，只保留轻微亮起 + 阴影和按下下沉。这里就地定义 hover 阴影，
-   避免被组件内静止态 box-shadow 的 !important 把全局 .press-fx:hover 压掉。 */
+/* 顶栏按钮不做悬停上浮；上传文件保留较轻的玻璃阴影，新建项目走全局 press-fx 阴影。 */
 .btn-ghost-custom {
+  --topbar-btn-shadow: inset 0 1px 0 rgba(255,255,255,0.95);
   background: rgba(255, 255, 255, 0.52) !important;
   border: 1px solid rgba(255, 255, 255, 0.78) !important;
   border-radius: var(--radius-sm) !important;
   color: var(--text-secondary) !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.95) !important;
+  box-shadow: var(--topbar-btn-shadow) !important;
   font-size: 13px; font-weight: 500;
   transition: background 0.2s ease-out, box-shadow 0.2s ease-out,
               transform 0.15s ease, opacity 0.15s ease !important;
 }
-.btn-ghost-custom:hover {
+.topbar .btn-ghost-custom:hover {
   background: rgba(255,255,255,0.72) !important;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 3px 10px rgba(80,90,110,0.12) !important;
 }
 .btn-ghost-custom:active { transform: translateY(1px) !important; opacity: 0.93; }
 
 .btn-primary-custom {
+  --topbar-btn-shadow: 0 3px 12px rgba(123,127,178,0.3);
   background: linear-gradient(135deg, #7b7fb2, #9590c4) !important;
   border: none !important;
   border-radius: var(--radius-sm) !important;
-  box-shadow: 0 3px 12px rgba(123,127,178,0.3) !important;
+  box-shadow: var(--topbar-btn-shadow) !important;
   font-size: 13px; font-weight: 500;
   transition: box-shadow 0.2s ease-out, opacity 0.2s ease-out,
               transform 0.15s ease !important;
 }
 .btn-primary-custom:hover {
-  box-shadow: 0 5px 16px rgba(123,127,178,0.38) !important;
   opacity: 0.92;
 }
 .btn-primary-custom:active { transform: translateY(1px) !important; opacity: 0.93; }

@@ -2002,7 +2002,7 @@ async function send(forcedText?) {
 
 /* 咕咕回复里的动作按钮：md 里的 gugu:// 链接渲染成按钮（onChatActionClick 拦截点击）——
    跟全局 .press-fx 一套手感（悬停不上浮，只在按下时下沉），这些 <a> 是 markdown 渲染出来的、
-   没法在模板里挂 class，数值直接写这里（悬停阴影跟 .press-fx:hover 保持同一个值） */
+   没法在模板里挂 class，数值直接写这里（hover/active 与全局 .press-fx 保持一致） */
 .msg-bubble.md-body :deep(a[href^="gugu://"]) {
   display: inline-flex; align-items: center; gap: 5px;
   margin: 3px 4px 3px 0; padding: 5px 12px;
@@ -2012,7 +2012,7 @@ async function send(forcedText?) {
   cursor: pointer; transition: box-shadow 0.12s, transform 0.15s ease, opacity 0.15s ease; user-select: none;
 }
 .msg-bubble.md-body :deep(a[href^="gugu://"]:hover) {
-  box-shadow: 0 4px 14px rgba(80,90,110,0.5); opacity: 1;
+  box-shadow: 0 4px 14px rgba(80,90,110,0.3); opacity: 1;
 }
 .msg-bubble.md-body :deep(a[href^="gugu://"]:active) { transform: translateY(1px); opacity: 0.93; }
 

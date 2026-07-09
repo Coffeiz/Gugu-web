@@ -17,6 +17,7 @@ _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 _SYS_FALLBACK = (
     "你在帮咕咕维护用户的长期记忆。把近期记录里值得长期保留的并入已有长期记忆，"
     "合并重复、修正矛盾、丢弃琐碎，控制篇幅、越压越精，不评判不推测。"
+    "已经能被用户画像/行为模式清楚表达的稳定结论，不要在长期记忆里原句复写；长期记忆只保留事件背景、时间脉络、变化过程。"
     '严格只输出 JSON：{"memory": "更新后的长期记忆全文（没有可沉淀的就原样返回，别清空）"}'
 )
 
@@ -41,8 +42,14 @@ async def compact(user_id, settings) -> bool:
             return False
 
         existing_memory = await store.read_memory_doc(user_id)
+        profile = await store.read_profile_list(user_id)
+        pattern = await store.read_facts_list(user_id)
         user = (
             f"已有的长期记忆：\n{existing_memory or '（暂无）'}\n\n"
+            f"已结构化的用户画像（这些是稳定结论，别在长期记忆里原句复写）：\n"
+            f"{store.render_profile(profile) or '（暂无）'}\n\n"
+            f"已结构化的行为模式（这些是可复用规律，别在长期记忆里原句复写）：\n"
+            f"{store.render_facts(pattern) or '（暂无）'}\n\n"
             f"要沉淀进来的近期记录（旧→可丢琐碎）：\n" + "\n".join(overflow) + "\n\n"
             f"请输出融合后的长期记忆全文。"
         )

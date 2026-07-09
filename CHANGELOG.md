@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-10 · QQ 自建 WebSocket 全面替换 botpy + 飞书流式/富媒体/引用识别 + 站内全局搜索 + 记忆画像·行为拆分 + IM 引用消息重构
+
+> QQ 收发两侧改为自建 raw WebSocket/HTTP，彻底移除 botpy 依赖；飞书接入流式输出、图文/视频/转发入站与引用消息识别；新增咕咕站内 `global_search` 一次性跨类搜索；记忆系统拆成用户画像 / 行为模式两层并加阶段性状态门；IM 引用消息改为单独存储与展示，不再把 markdown 原文摊进正文；定时任务创建/保存不再阻塞 LLM、按需精简工具与上下文；前端统一卡片/按钮按压反馈并修复顶栏按钮阴影；思维面板设计 / 数据模型 / 实现方案三份草案冻结待开工。
+
 ### 修复
 
 - **顶栏按钮悬停阴影与高度异常**（`frontend/src/layouts/DefaultLayout.vue`）：调整顶栏玻璃效果时把 `topbar` 撑高了，顺手又把「上传文件 / 新建项目」按钮的悬停阴影压没了；现已恢复原有高度节奏，并保留悬停亮起 + 按下下沉的手感。
@@ -22,6 +26,8 @@
 
 ### 改进
 
+- **反思不再把阶段性状态误存进稳定画像**（`agent/memory/reflection.py`）：带「最近 / 这周 / 目前」这类时效措辞的候选，以前会被当成身份画像写进 profile，现在拦下并回 daily；一键记忆维护同步加了把误入 profile 的阶段事件迁去 memory 的步骤（`app/api/v1/config.py`、`scripts/refresh_memory.py`）。
+- **思维面板设计/数据模型/实现方案草案落地**（`docs/product/思维面板/`）：产品设计、schema（全局节点 + 画布视图 + 关系边，含引用代理节点、墓碑删除、乐观锁）与逐阶段逐文件的工程方案成套冻结，待开工。
 - **前台设计规范补齐近期样式约定**（`docs/product/design.md`）：同步记录全局按压反馈、活玻璃圆角裁切、GuguChat 文件链接样式与日历周视图细节等最新 CSS 规则，避免设计文档与实际实现脱节。
 - **卡片/按钮按压反馈统一**（`frontend/src/assets/styles/global.css`、`frontend/src/views/{Files,Schedules}/index.vue`、`frontend/src/views/Projects/components/{ProjectCard,ProjectModal,KanbanColumn}.vue`、`frontend/src/components/common/GuguChat.vue`）：补出统一的 `hover-card-fx` / `press-fx` 手感，文件卡、项目卡、聊天文件条、定时任务按钮和项目列新增按钮的悬停/按下反馈更一致；顺手修了项目编辑卡待办项长文本被单行截断的问题。
 - **定时任务创建/保存不再等 LLM 分类调用**（`app/api/v1/scheduled_tasks.py`）：点创建/保存立即返回，工具组/上下文精简判断改成后台异步补丁，不影响前端动画和交互。

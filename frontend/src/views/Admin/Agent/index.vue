@@ -725,7 +725,7 @@
           </div>
           <div class="card-title-block">
             <h3>记忆维护</h3>
-            <p>批量复核所有用户的记忆，一次做四件事：① 删掉 pattern.json 里不符合当前标准的旧条目 ② 把其中该算「用户画像」的条目搬进 profile.json ③ 把旧 daily.md 单行格式改成按日期分组的新格式 ④ 清掉已迁移完的遗留 facts.json/facts.md。<b>先预览、确认没问题再真执行</b>——①②涉及 LLM 判断、同一批数据可能不稳定，预览看到的就是真执行的，不会重新判断一遍；③④是确定性改写，不受此影响。</p>
+            <p>批量复核所有用户的记忆，一次做五件事：① 删掉 pattern.json 里不符合当前标准的旧条目 ② 把其中该算「用户画像」的条目搬进 profile.json ③ 把误进 profile 的阶段性事件迁去 memory.md ④ 把旧 daily.md 单行格式改成按日期分组的新格式 ⑤ 清掉已迁移完的遗留 facts.json/facts.md。<b>先预览、确认没问题再真执行</b>——①②涉及 LLM 判断、同一批数据可能不稳定，预览看到的就是真执行的，不会重新判断一遍；③④⑤是确定性改写，不受此影响。</p>
           </div>
         </div>
 
@@ -746,7 +746,7 @@
           <div v-if="memCleanup.status === 'done'" class="behavior-item" style="grid-column: 1 / -1; flex-direction:column; align-items:stretch; gap:10px;">
             <div style="display:flex; align-items:center; justify-content:space-between;">
               <span class="behavior-desc">
-                {{ memCleanupUserCount === 0 ? '预览完成：没有需要处理的内容' : `预览完成：${memCleanupUserCount} 个用户，共删 ${memCleanupTotalRemoved} 条 / 搬 ${memCleanupTotalMoved} 条去画像 / 迁 ${memCleanupTotalDaily} 条 daily / 清 ${memCleanupTotalLegacy} 个遗留文件` }}
+                {{ memCleanupUserCount === 0 ? '预览完成：没有需要处理的内容' : `预览完成：${memCleanupUserCount} 个用户，共删 ${memCleanupTotalRemoved} 条 / 搬 ${memCleanupTotalMoved} 条去画像 / 迁 ${memCleanupTotalProfileEvents} 条画像事件到 memory / 迁 ${memCleanupTotalDaily} 条 daily / 清 ${memCleanupTotalLegacy} 个遗留文件` }}
               </span>
               <button v-if="memCleanupUserCount > 0" class="btn-ghost" style="font-size:12px;padding:4px 10px;" @click="memCleanup.expanded = !memCleanup.expanded">
                 {{ memCleanup.expanded ? '收起明细' : '查看明细' }}
@@ -754,10 +754,11 @@
             </div>
             <div v-if="memCleanup.expanded && memCleanupUserCount > 0" class="mem-cleanup-detail">
               <div v-for="(p, uid) in memCleanup.plan" :key="uid">
-                <template v-if="p.removed_texts?.length || p.moved_texts?.length || p.daily_texts?.length || p.legacy_files?.length">
+                <template v-if="p.removed_texts?.length || p.moved_texts?.length || p.profile_event_texts?.length || p.daily_texts?.length || p.legacy_files?.length">
                   <div class="mem-cleanup-uid">{{ uid }}（{{ p.total }} 条）</div>
                   <div v-for="(t, i) in p.removed_texts" :key="'r'+i" class="mem-cleanup-text">· [删] {{ t }}</div>
                   <div v-for="(t, i) in p.moved_texts" :key="'m'+i" class="mem-cleanup-text" style="color:rgba(123,127,178,0.85);">· [搬去画像] {{ t }}</div>
+                  <div v-for="(t, i) in p.profile_event_texts" :key="'pe'+i" class="mem-cleanup-text" style="color:rgba(255, 196, 122, 0.9);">· [画像事件迁 memory] {{ t }}</div>
                   <div v-for="(t, i) in p.daily_texts" :key="'d'+i" class="mem-cleanup-text" style="color:rgba(117, 183, 255, 0.85);">· [迁 daily] {{ t }}</div>
                   <div v-for="(f, i) in p.legacy_files" :key="'l'+i" class="mem-cleanup-text" style="color:rgba(255,255,255,0.4);">· [清遗留文件] {{ f }}</div>
                 </template>
@@ -1710,6 +1711,7 @@ async function startRebuild() {
 interface MemCleanupPlanItem {
   removed_ids?: string[]; removed_texts?: string[]
   moved_ids?: string[]; moved_texts?: string[]
+  profile_event_migrated?: number; profile_event_texts?: string[]
   daily_migrated?: number; daily_texts?: string[]
   legacy_files?: string[]
   total?: number; error?: string
@@ -1724,9 +1726,10 @@ let memCleanupTimer: ReturnType<typeof setInterval> | null = null
 function stopMemCleanupPoll() { if (memCleanupTimer) { clearInterval(memCleanupTimer); memCleanupTimer = null } }
 const memCleanupUserCount = computed(() => Object.values(memCleanup.plan).filter(p =>
   (p.removed_texts?.length ?? 0) > 0 || (p.moved_texts?.length ?? 0) > 0 ||
-  (p.daily_texts?.length ?? 0) > 0 || (p.legacy_files?.length ?? 0) > 0).length)
+  (p.profile_event_texts?.length ?? 0) > 0 || (p.daily_texts?.length ?? 0) > 0 || (p.legacy_files?.length ?? 0) > 0).length)
 const memCleanupTotalRemoved = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.removed_texts?.length ?? 0), 0))
 const memCleanupTotalMoved = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.moved_texts?.length ?? 0), 0))
+const memCleanupTotalProfileEvents = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.profile_event_migrated ?? 0), 0))
 const memCleanupTotalDaily = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.daily_migrated ?? 0), 0))
 const memCleanupTotalLegacy = computed(() => Object.values(memCleanup.plan).reduce((n, p) => n + (p.legacy_files?.length ?? 0), 0))
 const memCleanupApplyMsg = computed(() => memCleanup.applyMsg)
@@ -1768,13 +1771,13 @@ async function startMemCleanupPreview() {
   }
 }
 async function applyMemCleanup() {
-  if (!confirm(`确定要删 ${memCleanupTotalRemoved.value} 条、搬 ${memCleanupTotalMoved.value} 条去画像、迁 ${memCleanupTotalDaily.value} 条 daily、清 ${memCleanupTotalLegacy.value} 个遗留文件吗？删除/搬动不可恢复。`)) return
+  if (!confirm(`确定要删 ${memCleanupTotalRemoved.value} 条、搬 ${memCleanupTotalMoved.value} 条去画像、迁 ${memCleanupTotalProfileEvents.value} 条画像事件到 memory、迁 ${memCleanupTotalDaily.value} 条 daily、清 ${memCleanupTotalLegacy.value} 个遗留文件吗？删除/搬动不可恢复。`)) return
   memCleanup.applying = true; memCleanup.applyMsg = ''; memCleanup.applyError = false
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/memory-cleanup/apply', { method: 'POST' })
     const d = await res.json()
     if (d.ok) {
-      memCleanup.applyMsg = `完成：删 ${d.total_removed} 条 / 搬 ${d.total_moved} 条 / 迁 ${d.total_daily_migrated} 条 daily / 清 ${d.legacy_files_removed} 个文件（共 ${d.users_applied} 个用户）`
+      memCleanup.applyMsg = `完成：删 ${d.total_removed} 条 / 搬 ${d.total_moved} 条 / 迁 ${d.total_profile_events_migrated} 条画像事件 / 迁 ${d.total_daily_migrated} 条 daily / 清 ${d.legacy_files_removed} 个文件（共 ${d.users_applied} 个用户）`
       memCleanup.plan = {}; memCleanup.status = 'idle'; memCleanup.expanded = false
     } else {
       memCleanup.applyError = true; memCleanup.applyMsg = d.detail || d.message || '执行失败'

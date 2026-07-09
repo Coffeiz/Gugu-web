@@ -532,7 +532,8 @@ async function setPriority(n) {
   pointer-events: none;
 }
 /* 抬起(:hover)/按下(:active)本体效果来自全局 .hover-card-fx（模板里已加这个类）；
-   这里只留项目卡专属的部分：hover 高光淡入，以及按下时排除嵌套可交互子元素（评分/进度条/阶段点）*/
+   这里补文件卡同款阴影和项目卡专属的 hover 高光，以及按下时排除嵌套可交互子元素（评分/进度条/阶段点）。 */
+.proj-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
 .proj-card:hover::after { opacity: 1; }
 .proj-card:active:has(.stars:active, .seg-bar-wrap:active, .proj-stage:active) { transform: none; opacity: 1; }
 

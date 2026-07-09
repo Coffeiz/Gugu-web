@@ -28,8 +28,11 @@
 .glass-bg {
   position: absolute;
   inset: 0;
-  z-index: -1;            /* 压在宿主内容之下；半透明 → 宿主背后真实背景透过来。裁剪由宿主 overflow 负责 */
+  z-index: -1;            /* 压在宿主内容之下；半透明 → 宿主背后真实背景透过来。 */
   pointer-events: none;
+  border-radius: inherit;
+  corner-shape: inherit;
+  overflow: hidden;
 }
 .gb-tint {
   position: absolute;

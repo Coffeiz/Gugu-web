@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -59,6 +60,7 @@ _MISS_PATTERNS = {"潜台词漏读", "情绪当任务", "过度共情", "指代�
 _FEEDBACK_ENUM = {"顺着聊", "无视跳开", "改写重问", "主动分享", "确认夸赞"}   # 「无信号」不打点
 _LAST_TURN_TTL = 86400   # 上一轮缓存 24h（仅作陈旧上限）：延续性靠 session 判，不靠时间窗
                          # ——有了 session 闸后可放宽到一天，让同会话隔几小时回来接上话题也算延续
+_PROFILE_TEMPORAL_RE = re.compile(r"(最近|刚|刚刚|这阵子|这几天|这周|本周|目前|现在|近期)")
 
 
 _PERC_KEY = "perc:events"    # Redis capped list:给 Admin 聚合面板（/admin/perception）读
@@ -220,6 +222,31 @@ def _worth_reflecting(user_msg: str) -> bool:
     return cleaned not in _TRIVIAL
 
 
+def _split_profile_adds(items: list[str]) -> tuple[list[str], list[str]]:
+    """把明显阶段性的 profile 候选拦下，转去 daily/memory 侧。"""
+    profile_adds: list[str] = []
+    staged_events: list[str] = []
+    for raw in items or []:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        if _PROFILE_TEMPORAL_RE.search(text):
+            staged_events.append(text)
+            continue
+        profile_adds.append(text)
+    return profile_adds, staged_events
+
+
+def _merge_daily_note(daily_note: str, staged_events: list[str]) -> str:
+    """被 profile 闸门拦下的阶段性事件并回 daily，避免信息直接丢掉。"""
+    events = [text for text in staged_events if text and text not in daily_note]
+    if not events:
+        return daily_note
+    if daily_note:
+        return f"{daily_note}；" + "；".join(events)
+    return "；".join(events)
+
+
 def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools=None, session_id=None) -> None:
     """非阻塞触发一次反思。琐碎应答（嗯/好的/谢谢…）默认跳过省调用——
     但若这轮咕咕**用了工具**（如「要建项目吗？」→「嗯」→真建了），即便用户只说「嗯」也反思，
@@ -268,13 +295,15 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         # profile 更新：身份/稳定喜好，字符串数组、无 kind/importance。apply_profile_ops 命中相似条只刷新 ts。
         p_add, p_rem = out.get("profile_add"), out.get("profile_remove")
         if p_add is not None or p_rem is not None:
+            p_add, staged_profile_events = _split_profile_adds(p_add or [])
+            daily_note = _merge_daily_note(daily_note, staged_profile_events)
             cur_p = await store.read_profile_list(user_id)
-            new_p = store.apply_profile_ops(cur_p, p_add or [], p_rem or [])
+            new_p = store.apply_profile_ops(cur_p, p_add, p_rem or [])
             if new_p != cur_p:
                 await store.write_profile_list(user_id, new_p)
                 from agent import events
                 events.publish(events.types.MemoryUpdated(
-                    user_id=user_id, added=len(p_add or []), removed=len(p_rem or []), source="reflection"))
+                    user_id=user_id, added=len(p_add), removed=len(p_rem or []), source="reflection"))
 
         # pattern 更新（2b 结构化）：反思只吐增删 pattern_add(带 kind/importance)/pattern_remove，
         # apply_facts_ops 应用到 pattern.json（命中相似条→印证升 conf，否则新增）。输出不随 pattern 增长。

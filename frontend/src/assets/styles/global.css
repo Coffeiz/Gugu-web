@@ -64,8 +64,9 @@ input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
 .press-fx {
   transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.2s ease-out;
 }
-.press-fx:hover {
-  box-shadow: 0 4px 14px rgba(80,90,110,0.5) !important;   /* !important：几处消费者原本各自带 !important 的阴影，统一由这里压过去 */
+.press-fx.press-fx:hover {
+  --topbar-btn-shadow: 0 4px 14px rgba(80,90,110,0.3);
+  box-shadow: 0 4px 14px rgba(80,90,110,0.3) !important;   /* 按钮面积更小，阴影提到 30% 才看得见；仍不做上浮 */
 }
 .press-fx:active {
   transform: translateY(1px);
