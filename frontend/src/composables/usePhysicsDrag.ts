@@ -403,6 +403,11 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
       return { left: box.left, top: box.top - dy, width: box.width, height: box.height }
     }
 
+    // 松手即进入「归位/落位」飞行动画（0.55~0.7s）。飞行途中克隆体仍是 fixed 定位，
+    // 若继续顶着抓取时的压顶 z(99999)，飞行路径经过悬浮窗口（文件预览/咕咕聊天，20000+ 那一带）
+    // 时会整个盖住窗口，动画结束克隆体一 remove 又突然消失——观感是「窗口被糊一下又露出来」。
+    // 松手这一刻起改用低 z：只需盖过页面里同层的兄弟卡片（都在自然堆叠序，≈0），远低于窗口带。
+    clone.style.zIndex = '2'
     // 业务 drop + Vue 重渲染在微任务里已落定；本 rAF 在 paint 前做落点 FLIP，避免闪一下
     requestAnimationFrame(() => {
       // 1) 释放点压着文件夹/面包屑 → 吸入（不依赖异步重渲染）
@@ -425,7 +430,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
         Object.assign(c.style, {
           position: 'fixed', left: '0', top: '0',
           width: clone.style.width, height: clone.style.height,
-          margin: '0', boxSizing: 'border-box', zIndex: '99999', pointerEvents: 'none',
+          margin: '0', boxSizing: 'border-box', zIndex: clone.style.zIndex, pointerEvents: 'none',
           willChange: 'transform', transition: 'none', opacity: '0',
           transform: clone.style.transform,   // 起点与旧克隆重叠
         })
@@ -735,6 +740,8 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
       setTimeout(finish, 680)
     }
 
+    // 松手即进入归位/落位飞行（见单选 end() 里同名注释）：不再顶着压顶 z，避免飞行路径盖住悬浮窗口
+    clone.style.zIndex = '2'
     requestAnimationFrame(() => {
       // 吸入文件夹/面包屑
       const under = document.elementFromPoint(dropX, dropY)
