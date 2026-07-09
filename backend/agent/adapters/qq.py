@@ -20,14 +20,64 @@ from __future__ import annotations
 
 import os
 import time
+from typing import Any, Dict, List, Optional
 
 import botpy
 from botpy.message import C2CMessage, GroupMessage
+from botpy.message import Message as _BaseMessage
 
 from app.core import redis as R
 
 STREAM = R.IM_INBOUND_STREAM
 _ACK_COOLDOWN = 10.0   # 同一用户「文件收到啦」秒回的冷却秒数：连发多图/文件只 ack 一次，不刷屏
+
+# ── monkey-patch：让 botpy 消息对象保留原始 payload（用于引用消息解析）──
+_orig_base_init = _BaseMessage.__init__
+def _patched_base_init(self, api, event_id, data):
+    _orig_base_init(self, api, event_id, data)
+    self._raw_data = data
+_BaseMessage.__init__ = _patched_base_init
+
+
+def _find_quoted_element(raw_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """从原始 payload 中找到被引用的消息元素。
+
+    QQ 的 msg_elements 列表包含当前会话的上下文消息，其中用户引用的消息
+    通过 message_scene.ext 里的 ref_msg_idx 定位。
+    """
+    msg_elements: List[Dict[str, Any]] = raw_data.get("msg_elements") or []
+    if not msg_elements:
+        return None
+
+    scene_ext = (raw_data.get("message_scene") or {}).get("ext") or []
+    ref_idx = ""
+    for entry in scene_ext:
+        if isinstance(entry, str) and entry.startswith("ref_msg_idx="):
+            ref_idx = entry[len("ref_msg_idx="):]
+            break
+
+    if ref_idx:
+        for elem in msg_elements:
+            if elem.get("msg_idx") == ref_idx:
+                return elem
+
+    # fallback：返回第一条不是自己的消息
+    msg_id = raw_data.get("id", "")
+    for elem in msg_elements:
+        if elem.get("msg_id") != msg_id:
+            return elem
+    return None
+
+
+def _extract_quoted_text(raw_data: Dict[str, Any]) -> Optional[str]:
+    """从原始 payload 提取引用消息的文本内容，用于拼接到 LLM 输入。"""
+    elem = _find_quoted_element(raw_data)
+    if not elem:
+        return None
+    content = (elem.get("content") or "").strip()
+    # 转义 HTML 实体（QQ 消息文本中的 &lt; &gt; &amp;）
+    content = content.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+    return content or None
 
 
 # ── 接收（网关子进程，凭据/归属从 env 注入）──
@@ -44,6 +94,11 @@ class _GuguQQClient(botpy.Client):
     async def on_c2c_message_create(self, message: C2CMessage):
         text = (message.content or "").strip()
         openid = message.author.user_openid if message.author else None
+        # 引用消息解析：从原始 payload 中提取被引用的消息文本
+        raw_data = getattr(message, "_raw_data", {})
+        quoted_text = _extract_quoted_text(raw_data)
+        if quoted_text:
+            text = f"[引用消息: {quoted_text}]\n{text}"
         # 用户发来文件：先瞬发一句「收到」（在下载/暂存/入队之前，赶在 worker 慢处理之前给即时反馈）。
         # **连发多图/文件只 ack 一次**（10s 冷却）——否则一张图一条「文件收到啦」会刷屏；真正的回复由
         # worker 防抖合并成一条。
@@ -110,6 +165,11 @@ class _GuguQQClient(botpy.Client):
         text = (message.content or "").strip()
         group_openid = message.group_openid
         member_openid = message.author.member_openid if message.author else None
+        # 引用消息解析：从原始 payload 中提取被引用的消息文本
+        raw_data = getattr(message, "_raw_data", {})
+        quoted_text = _extract_quoted_text(raw_data)
+        if quoted_text:
+            text = f"[引用消息: {quoted_text}]\n{text}"
         attachments = await _ingest_qq_media(message, self._owner)
         if not text and not attachments:
             return
