@@ -255,6 +255,15 @@ make backup      # 备份数据库
 
 ---
 
+## ⚠️ 当前限制 / 已知问题
+
+- 微信（iLink）引用消息暂不支持识别原文——平台协议限制，非代码 bug。
+- QQ 引用较早消息时，可能因平台时效窗口拿不到引用上下文。
+
+完整记录（现象/影响/结论/规避）见 [`docs/ops/known-issues.md`](docs/ops/known-issues.md)。
+
+---
+
 ## 📖 文档索引
 
 `docs/` 按主题分成 `agent/`（AI Agent 相关，含子目录 `proposals/`/`_archive/`）、`backend/`、`product/`、`ops/`、`security/` 五类，完整导航见 [`docs/README.md`](docs/README.md)。常用入口：

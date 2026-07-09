@@ -496,9 +496,9 @@ worker.py/logsafe.py/runner.py 的每一条 print/log）：
 
 - ✅ QQ raw WS 已按 `QQ_SANDBOX` 切 `api.sgroup.qq.com` / `sandbox.api.sgroup.qq.com`，仍需真实 sandbox/生产各测一次。
 - 🔲 QQ `GROUP_AT_MESSAGE_CREATE` raw payload 中引用消息的 `msg_elements` 是否在所有群类型都稳定提供。
-- ✅ QQ 引用图片 attachments URL 可直接沿用现有 `_ingest_qq_media()` 下载逻辑（devserver 日志实测 `att=1` 成功下载暂存）。真实观察到的失败案例是 `msg_elements=0`（QQ 侧压根没给引用上下文），怀疑是 QQ 引用功能本身对「多久之前的消息」有时效窗口，超出窗口引用不到任何上下文，不是解析代码的问题；具体窗口时长未知，暂无用户可感知的提示（`msg_elements=0` 时用户只会看到「没引用上」而不知道原因），后续如高频出现再补提示文案。
+- ✅ QQ 引用图片 attachments URL 可直接沿用现有 `_ingest_qq_media()` 下载逻辑（devserver 日志实测 `att=1` 成功下载暂存）。引用消息 `msg_elements=0` 的已知限制（疑似平台时效窗口）详见 [`docs/ops/known-issues.md`](../../ops/known-issues.md)。
 - ✅ 飞书 stale retry 首期使用本机时间，后续如遇误杀再补平台 Date header 校时。
 - ✅ Phase 2 原计划保留 botpy 接收路径开关至少一个小版本，实际因功能验证完成、决定直接全部移除（`_GuguQQClient`/monkey patch/`QQ_RAW_WS_ENABLED`/`qq-botpy` 依赖），不再保留回退路径。
 - 🔲 Phase 3 raw HTTP 发送侧（文本/markdown 回退/URL 与 base64 发文件/群消息）尚未在真实 QQ 环境端到端验证，仅本地 mock 测试覆盖；`_send_tokens` 无锁，理论上并发首次请求可能重复取 token（浪费一次调用，不影响正确性）。
 - 🔲 QQ 群聊（aigcbot 群聊功能）目前平台未开放，`group_chat_enabled`/`GROUP_AT_MESSAGE_CREATE` 相关代码路径无法在真实环境验证，等平台开放后再测。
-- ✅ 微信 iLink 引用消息时，`message_item`（type=0）实测只有 `msg_id`/`create_time_ms`/`update_time_ms`/`is_completed`/空的 `button_item_list`，不带原文——**且不分是引用咕咕的回复还是用户自己发的文字，两种实测结构完全一样**，一开始误以为是"机器人消息才没原文"，后来发现引用自己发的文字也是同一种空壳结构，才确认是 iLink `getupdates` 接口本身对"引用消息"这件事就不回传原文，跟发消息的是谁无关。iLink 客户端（gugu 和 QwenPaw 均如此）也没有按 `msg_id` 反查内容的接口——平台限制，不是解析代码漏字段/判断错类型。占位文案最终统一成「[微信暂不支持消息引用识别]」——用户确认微信官方 issue 里也有其他人反馈过这个限制，不必再纠结"取不回原文"这种听起来还像能修的技术措辞，直说平台不支持更清楚。引用图片单独确认过是下载地址问题（`encrypt_query_param` vs `full_url`），已修复。**核实过 `@tencent-weixin/openclaw-weixin`（npm 发布包，非文档）真实源码**：`RefMessage.title`（注释"摘要"）是咱代码之前漏查的一个字段，`message_item` 没文字时 openclaw 会优先用它兜底；已照抄补上防御性覆盖。但对照过 openclaw 的 `MessageItem` 类型定义，它也没有 `button_item_list` 这个字段、没有任何代码处理这次实测到的空壳结构，且实测的 `ref_msg` 里也没有 `title` key——说明这次的具体案例上 openclaw 同样拿不到文字（它会静默丢弃整条引用，不像咱这边显式给占位符），不是"抄漏了就能解决"的情况，`button_item_list` 目前两边都不认识，疑似更新的 iLink 协议字段或"引用已过期/不可预览"这类特殊状态。
+- ✅ 微信 iLink 引用消息无法识别原文，已确认是平台/协议限制（`getupdates` 接口本身不回传引用原文，不分发送者），非代码 bug。已核实 `@tencent-weixin/openclaw-weixin` 真实源码同样无法覆盖这一场景。占位文案统一为「[微信暂不支持消息引用识别]」。完整排查过程（含参考实现对比）详见 [`docs/ops/known-issues.md`](../../ops/known-issues.md)。引用图片下载失败已修复（`encrypt_query_param` vs `full_url`）。
