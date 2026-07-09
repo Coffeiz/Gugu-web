@@ -38,10 +38,10 @@ def test_wechat_extracts_quoted_title_as_fallback_summary():
     assert quoted_items == []
 
 
-def test_wechat_extracts_quoted_message_as_unrecoverable_placeholder():
+def test_wechat_extracts_quoted_message_as_unsupported_placeholder():
     # 真实反馈：不管引用的是咕咕的回复还是用户自己发的文字，iLink 都只给
     # msg_id/时间戳/完成状态等元数据（button_item_list 空数组），不带原文，也没有按 msg_id
-    # 反查内容的接口——iLink 接口本身的限制，措辞要说清楚"取不回原文"而不是暗示"这条不是文字"。
+    # 反查内容的接口——平台限制（官方 issue 里也有人提过），直说"暂不支持"，不再纠结措辞细节。
     quoted_text, quoted_items = wechat._extract_quoted({
         "message_item": {
             "type": 0,
@@ -53,7 +53,7 @@ def test_wechat_extracts_quoted_message_as_unrecoverable_placeholder():
         },
     })
 
-    assert quoted_text == "[引用了一条历史消息，微信 iLink 接口没有提供可取回的原文]"
+    assert quoted_text == "[微信暂不支持消息引用识别]"
     assert quoted_items == []
 
 

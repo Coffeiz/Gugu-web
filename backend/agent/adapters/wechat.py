@@ -194,14 +194,12 @@ def _extract_quoted(ref_msg) -> tuple[str | None, list]:
     _log_quoted_shape_if_needed(ref_msg, False)
     if title:
         return title, []
-    if quoted_type == 0:
-        # type=0：实测发现 iLink 的 getupdates 接口对"引用消息"这件事，不管原消息是机器人发的
-        # 还是用户自己发的文字，message_item 都只给 msg_id/时间戳/完成状态等元数据（外加空的
-        # button_item_list），压根不带原文，也没有按 msg_id 反查完整内容的接口（qwenpaw 同款
-        # 客户端同样没有）。这是 iLink 接口本身的限制，不是解析代码把类型判断错了，措辞要说清楚
-        # "取不回原文"而不是"这条不是文字"，别误导模型以为引用的东西本身不是文字。
-        return "[引用了一条历史消息，微信 iLink 接口没有提供可取回的原文]", []
-    return "[非文字消息]", []
+    # type=0（外加不少其他拿不到文字的情况）：实测 + 核对 openclaw-weixin 源码确认，iLink
+    # 的 getupdates 接口在这种情况下 message_item 只给 msg_id/时间戳/完成状态等元数据（外加
+    # 空的 button_item_list），压根不带原文，也没有反查接口；官方 issue 里也有人提过同样问题。
+    # 这是平台限制，不是咱解析代码判断错了类型——干脆直说"暂不支持"，别继续用容易让人以为是
+    # bug 的措辞（之前"取不回原文"听起来还像是能修的技术细节，其实修不了）。
+    return "[微信暂不支持消息引用识别]", []
 
 
 # ── 接收（网关子进程，long-poll）────────────────────────────────────────────────

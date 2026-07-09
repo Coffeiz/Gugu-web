@@ -11,7 +11,7 @@
 
 ### 修复
 
-- **微信引用消息时提示不准确**（`agent/adapters/wechat.py`）：实测确认不管引用咕咕的回复还是用户自己的文字，iLink 接口都只给消息 id/时间戳等元数据、不带原文，也没有反查接口——平台限制，占位文案从容易误导的「[非文字消息]」改成「引用了一条历史消息，微信 iLink 接口没有提供可取回的原文」。顺带补上 `ref_msg.title`（引用摘要）字段兜底，对照 openclaw-weixin 发布包源码确认存在，防御性覆盖其他引用场景。
+- **微信引用消息时提示不准确**（`agent/adapters/wechat.py`）：实测确认不管引用咕咕的回复还是用户自己的文字，iLink 接口都只给消息 id/时间戳等元数据、不带原文，也没有反查接口——平台限制（官方 issue 也有人反馈过），占位文案统一改成「[微信暂不支持消息引用识别]」，不再用容易让人以为是 bug 的技术措辞。顺带补上 `ref_msg.title`（引用摘要）字段兜底，对照 openclaw-weixin 发布包源码确认存在，防御性覆盖其他引用场景。
 - **微信引用图片下载不到**（`agent/adapters/wechat.py`）：引用/回复里带的图片没有 `media.full_url`，只有 `media.encrypt_query_param`，之前只认前者，导致引用图片一律因为"缺 full_url"被跳过；补上 `encrypt_query_param` 的 CDN 下载地址拼接（对照 QwenPaw 实现确认）。
 - **IM 引用消息在网页上显示成一堆原始 markdown**（`agent/runner.py`、`agent/adapters/{feishu,qq}.py`、`app/models`、`app/api/v1/agent.py`、`components/common/GuguChat.vue`）：引用原文之前直接拼进用户消息正文一起存/一起显示，网页气泡是纯文本渲染，引用了一条带表格的历史回复就会把整段 markdown 源码原样摊平显示。改成 `quoted_text` 单独一列存、单独一个浅色预览条展示，完整内容仍然喂给模型。顺带修了微信 iLink 的 `quoted_text` 字段一直没被 `worker.py` 读取的问题。
 - **咕咕聊天代码块复制按钮偶尔冒出巨大图标**（`components/common/viewers/TextViewer.vue`）：文件预览的 markdown 渲染器之前直接改写全站共享的 marked 单例，只要打开过一次文件预览，聊天代码块的复制按钮就会被顶替成没有样式约束的 SVG 图标版本；改成用独立 `Marked` 实例，不再污染共享配置。
