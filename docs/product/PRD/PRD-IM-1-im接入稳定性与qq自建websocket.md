@@ -1,8 +1,8 @@
 # IM 接入稳定性与 QQ 自建 WebSocket PRD
 
-> 状态：Phase 1 / Phase 2 已实现，Phase 3 待评估
+> 状态：Phase 1 / Phase 2 / Phase 3 已实现
 > 创建：2026-07-09
-> 最近更新：2026-07-09
+> 最近更新：2026-07-10
 > 关联模块：`backend/agent/adapters/feishu.py`、`backend/agent/adapters/qq.py`、`backend/worker.py`
 > 背景参考：QwenPaw `src/qwenpaw/app/channels/{feishu,qq}/channel.py`
 
@@ -15,7 +15,7 @@
 | Phase 1：飞书稳定性补强 | ✅ 已完成 | 已实现 `app_id` 错投保护、`message_id` LRU 去重、stale retry 丢弃，并补充网关入口测试。 |
 | FR-FS-4：飞书流式收尾 | ✅ 已完成 | 流式卡片最终 patch 成功后调用 CardKit settings 接口关闭 `streaming_mode` 并设置 summary；finalize 失败不触发重复普通文本。 |
 | Phase 2：QQ 自建 WebSocket 接收侧 | ✅ 已完成 | `serve()` 默认走 raw WebSocket；支持 C2C 与群 @ raw event、引用文本/引用附件解析、现有 worker payload 兼容；`QQ_RAW_WS_ENABLED=0` 可回退 botpy 接收路径。 |
-| Phase 3：QQ raw HTTP 发送侧 | 🔲 待评估 | 发送侧仍保留 botpy `BotAPI`，待 raw WebSocket 接收侧真实运行稳定后再决定是否移除 botpy。 |
+| Phase 3：QQ raw HTTP 发送侧 | ✅ 已完成（未按 3-7 天灰度期提前实施） | `send_c2c`/`send_group`/`send_file`/短路回复/ack 全部改 raw HTTP 直连 QQ Bot API，按 channel_id 缓存 access_token 并在过期前刷新；markdown 无权限回退纯文本、401 清缓存重试逻辑保留。接收侧 botpy 回退路径（`QQ_RAW_WS_ENABLED=0`）未动，仍需 botpy 依赖。 |
 
 已验证：
 
@@ -23,6 +23,7 @@
 - 本地后端全量：`74 passed`
 - devserver 专项测试：`15 passed`
 - devserver 后端全量：`74 passed`
+- Phase 3 本地全量：`83 passed`（新增 `tests/test_qq_raw_send.py` 覆盖 markdown 回退、401 重试清缓存、token 缓存复用、URL 模式发文件）；devserver 待部署后跑一遍全量确认。
 
 ---
 
@@ -437,7 +438,8 @@ QQ raw event 转咕咕 payload 时保持现有字段：
 |---|---|---|
 | QQ Gateway 协议字段与 QwenPaw 观察不一致 | 引用识别失败 | 单测覆盖已知 raw payload，真实联调时保留短期结构日志，只打印 keys 和指纹 |
 | raw WS 重连不如 botpy 稳 | QQ 掉线 | 实现 heartbeat、resume、invalid session token refresh、指数退避 |
-| 发送侧仍依赖 botpy，接收侧已 raw | 代码短期并存复杂 | Phase 2 明确只改接收侧，接口边界保持 `send_*` 不变 |
+| 发送侧仍依赖 botpy，接收侧已 raw | 代码短期并存复杂 | ~~Phase 2 明确只改接收侧~~ Phase 3 已把发送侧也改成 raw HTTP，`send_*` 对外签名不变；接收侧 botpy 回退路径暂保留 |
+| Phase 3 未按建议等 3-7 天灰度就直接实施 | 若 Phase 2 接收侧仍有未暴露的问题，发送侧同时变更放大排查难度 | 发送侧改动与接收侧解耦（各自独立函数），出问题可单独定位；本地/devserver 需各跑一遍全量再上线 |
 | 飞书 stale 阈值误杀正常消息 | 用户消息无回复 | 阈值先保守，日志记录 age；必要时做配置项 |
 | raw event 日志泄露正文 | 隐私风险 | 默认禁止打印 raw payload，测试中也断言日志不含正文 |
 
@@ -447,6 +449,7 @@ QQ raw event 转咕咕 payload 时保持现有字段：
 
 - ✅ QQ raw WS 已按 `QQ_SANDBOX` 切 `api.sgroup.qq.com` / `sandbox.api.sgroup.qq.com`，仍需真实 sandbox/生产各测一次。
 - 🔲 QQ `GROUP_AT_MESSAGE_CREATE` raw payload 中引用消息的 `msg_elements` 是否在所有群类型都稳定提供。
-- 🔲 QQ 引用图片时 attachments URL 是否可直接沿用现有 `_ingest_qq_media()` 下载逻辑，需要真实端到端确认。
+- ✅ QQ 引用图片 attachments URL 可直接沿用现有 `_ingest_qq_media()` 下载逻辑（devserver 日志实测 `att=1` 成功下载暂存）。真实观察到的失败案例是 `msg_elements=0`（QQ 侧压根没给引用上下文），怀疑是 QQ 引用功能本身对「多久之前的消息」有时效窗口，超出窗口引用不到任何上下文，不是解析代码的问题；具体窗口时长未知，暂无用户可感知的提示（`msg_elements=0` 时用户只会看到「没引用上」而不知道原因），后续如高频出现再补提示文案。
 - ✅ 飞书 stale retry 首期使用本机时间，后续如遇误杀再补平台 Date header 校时。
 - 🔲 Phase 2 建议保留 botpy 接收路径开关至少一个小版本后再删除。
+- 🔲 Phase 3 raw HTTP 发送侧（文本/markdown 回退/URL 与 base64 发文件/群消息）尚未在真实 QQ 环境端到端验证，仅本地 mock 测试覆盖；`_send_tokens` 无锁，理论上并发首次请求可能重复取 token（浪费一次调用，不影响正确性）。

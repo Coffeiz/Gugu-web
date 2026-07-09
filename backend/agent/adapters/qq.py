@@ -278,7 +278,7 @@ class _GuguQQClient(botpy.Client):
             if now - self._last_ack.get(openid, 0.0) > _ACK_COOLDOWN:
                 self._last_ack[openid] = now
                 try:
-                    await _post(self.api, openid, "文件收到啦，让我看看~", message.id)
+                    await _post(self._channel_id, openid, "文件收到啦，让我看看~", message.id)
                 except Exception as e:
                     print(f"[qq] 文件 ack 失败: {type(e).__name__}: {e}", flush=True)
         # 下载 → 暂存 → 走 attachments（和飞书同一套）
@@ -316,7 +316,7 @@ class _GuguQQClient(botpy.Client):
                 if dec["action"] == "cancel":
                     await rtstate.request_cancel("qqbot", openid)
                 try:
-                    await _post(self.api, openid, dec["reply"], message.id)
+                    await _post(self._channel_id, openid, dec["reply"], message.id)
                 except Exception as e:
                     print(f"[qq] 短路回复失败: {type(e).__name__}: {e}", flush=True)
                 return
@@ -372,7 +372,7 @@ class _GuguQQClient(botpy.Client):
                 if dec["action"] == "cancel":
                     await rtstate.request_cancel("qqbot", member_openid)
                 try:
-                    await _post_group(self.api, group_openid, dec["reply"], message.id)
+                    await _post_group(self._channel_id, group_openid, dec["reply"], message.id)
                 except Exception as e:
                     print(f"[qq] 群短路回复失败: {type(e).__name__}: {e}", flush=True)
                 return
@@ -448,6 +448,21 @@ async def _qq_access_token(app_id: str, secret: str) -> str:
     return token
 
 
+async def _qq_access_token_with_ttl(app_id: str, secret: str) -> tuple[str, int]:
+    async with aiohttp.ClientSession() as sess:
+        async with sess.post(
+            _QQ_TOKEN_URL,
+            json={"appId": app_id, "clientSecret": secret},
+            headers={"Content-Type": "application/json"},
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            data = await resp.json()
+    token = data.get("access_token", "")
+    if not token:
+        raise RuntimeError(f"QQ access_token 获取失败: {data}")
+    return token, int(data.get("expires_in") or 0)
+
+
 async def _qq_gateway_url(token: str, sandbox: bool) -> str:
     async with aiohttp.ClientSession() as sess:
         async with sess.get(
@@ -464,11 +479,10 @@ async def _qq_gateway_url(token: str, sandbox: bool) -> str:
 
 async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, msg_id: str) -> None:
     try:
-        api = await _api_for(channel_id)
         if chat_type == "group":
-            await _post_group(api, target_id, text, msg_id)
+            await _post_group(channel_id, target_id, text, msg_id)
         else:
-            await _post(api, target_id, text, msg_id)
+            await _post(channel_id, target_id, text, msg_id)
     except Exception as e:
         print(f"[qq] 即时回复失败: {type(e).__name__}: {e}", flush=True)
 
@@ -644,8 +658,9 @@ def serve() -> None:
     client.run(appid=app_id, secret=secret)   # 同步阻塞，botpy 自带断线重连
 
 
-# ── 发送（worker 用，按 bot id 现查 DB 取凭据，缓存 BotAPI）──
-_apis: dict = {}
+# ── 发送（worker 用，按 bot id 现查 DB 取凭据，raw HTTP 直连 QQ Bot API，不再依赖 botpy）──
+_QQ_TOKEN_SAFETY_MARGIN = 60   # 提前 60s 判过期，避免请求发出瞬间 token 恰好过期
+_send_tokens: dict = {}   # channel_id -> {"token", "base", "expires_at"}
 
 # msg_seq：QQ 按 (msg_id, msg_seq) 去重，同一条用户消息的多次回复/重试必须用不同 seq。
 # 网关 ack 和 worker 回复是**两个进程**，都回同一条 msg_id，得跨进程发号——用 Redis INCR
@@ -691,18 +706,42 @@ async def _group_settings(bot_id: str) -> tuple[bool, bool]:
         return b.group_chat_enabled, b.group_requires_at
 
 
-async def _api_for(channel_id: str):
-    if channel_id not in _apis:
-        from botpy import Token
-        from botpy.api import BotAPI
-        from botpy.http import BotHttp
-        app_id, secret, sandbox = await _creds_by_id(channel_id)
-        if not app_id:
-            raise RuntimeError(f"user_bot {channel_id} 不存在或无凭据")
-        http = BotHttp(timeout=20, is_sandbox=sandbox, app_id=app_id, secret=secret)
-        await http.login(Token(app_id, secret))   # 取 access_token
-        _apis[channel_id] = BotAPI(http)
-    return _apis[channel_id]
+async def _send_token(channel_id: str) -> tuple[str, str]:
+    """返回 (access_token, api_base)，按 channel_id 缓存，过期前自动刷新。"""
+    cached = _send_tokens.get(channel_id)
+    now = time.time()
+    if cached and now < cached["expires_at"] - _QQ_TOKEN_SAFETY_MARGIN:
+        return cached["token"], cached["base"]
+    app_id, secret, sandbox = await _creds_by_id(channel_id)
+    if not app_id:
+        raise RuntimeError(f"user_bot {channel_id} 不存在或无凭据")
+    token, expires_in = await _qq_access_token_with_ttl(app_id, secret)
+    base = _qq_api_base(sandbox)
+    _send_tokens[channel_id] = {"token": token, "base": base, "expires_at": now + expires_in}
+    return token, base
+
+
+async def _qq_request(channel_id: str, method: str, path: str, *,
+                      json_body: dict | None = None, retry_on_401: bool = True):
+    """raw HTTP 调 QQ Bot API；401 时清缓存重取 token 重试一次。"""
+    token, base = await _send_token(channel_id)
+    async with aiohttp.ClientSession() as sess:
+        async with sess.request(
+            method, f"{base}{path}", json=json_body,
+            headers={"Authorization": f"QQBot {token}", "Content-Type": "application/json"},
+            timeout=aiohttp.ClientTimeout(total=20),
+        ) as resp:
+            status = resp.status
+            try:
+                data = await resp.json(content_type=None)
+            except Exception:
+                data = await resp.text()
+    if status in (200, 201, 204):
+        return data
+    if status == 401 and retry_on_401:
+        _send_tokens.pop(channel_id, None)
+        return await _qq_request(channel_id, method, path, json_body=json_body, retry_on_401=False)
+    raise RuntimeError(f"QQ API {method} {path} 失败 status={status} data={data}")
 
 
 def _markdown_blocked(exc: Exception) -> bool:
@@ -711,56 +750,64 @@ def _markdown_blocked(exc: Exception) -> bool:
     return ("50056" in s or "40034012" in s or "不允许发送原生 markdown" in s)
 
 
-async def _post(api, openid: str, text: str, msg_id: str | None):
+async def _post(channel_id: str, openid: str, text: str, msg_id: str | None):
     """先发原生 markdown(msg_type=2) 让 QQ 渲染；该 bot 无 md 权限则回退纯文本(msg_type=0)。
     每次发都取新 msg_seq，避免重复 seq 被去重。"""
+    path = f"/v2/users/{openid}/messages"
     try:
-        await api.post_c2c_message(openid=openid, msg_type=2,
-                                   markdown={"content": text}, msg_id=msg_id, msg_seq=await _next_seq(msg_id))
+        await _qq_request(channel_id, "POST", path, json_body={
+            "msg_type": 2, "markdown": {"content": text},
+            "msg_id": msg_id, "msg_seq": await _next_seq(msg_id),
+        })
     except Exception as me:
         if not _markdown_blocked(me):
             raise
-        await api.post_c2c_message(openid=openid, msg_type=0,
-                                   content=text, msg_id=msg_id, msg_seq=await _next_seq(msg_id))
+        await _qq_request(channel_id, "POST", path, json_body={
+            "msg_type": 0, "content": text,
+            "msg_id": msg_id, "msg_seq": await _next_seq(msg_id),
+        })
 
 
-async def _post_group(api, group_openid: str, text: str, msg_id: str | None):
+async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str | None):
     """群聊版 _post：先发原生 markdown，该 bot 无 md 权限则回退纯文本。"""
+    path = f"/v2/groups/{group_openid}/messages"
     try:
-        await api.post_group_message(group_openid=group_openid, msg_type=2,
-                                     markdown={"content": text}, msg_id=msg_id, msg_seq=await _next_seq(msg_id))
+        await _qq_request(channel_id, "POST", path, json_body={
+            "msg_type": 2, "markdown": {"content": text},
+            "msg_id": msg_id, "msg_seq": await _next_seq(msg_id),
+        })
     except Exception as me:
         if not _markdown_blocked(me):
             raise
-        await api.post_group_message(group_openid=group_openid, msg_type=0,
-                                     content=text, msg_id=msg_id, msg_seq=await _next_seq(msg_id))
+        await _qq_request(channel_id, "POST", path, json_body={
+            "msg_type": 0, "content": text,
+            "msg_id": msg_id, "msg_seq": await _next_seq(msg_id),
+        })
 
 
 async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                    channel_id: str | None = None) -> bool:
-    """给指定用户发 C2C 被动回复（带原 msg_id）。token 过期等异常时重建一次再试。"""
+    """给指定用户发 C2C 被动回复（带原 msg_id）。发送失败重试一次。"""
     for attempt in (1, 2):
         try:
-            api = await _api_for(channel_id)
-            await _post(api, openid, text, msg_id)
+            await _post(channel_id, openid, text, msg_id)
             return True
         except Exception as e:
             print(f"[qq] 发送失败(第{attempt}次): {type(e).__name__}: {e}", flush=True)
-            _apis.pop(channel_id, None)   # 丢弃缓存，下次重新 login
+            _send_tokens.pop(channel_id, None)   # 丢弃缓存，下次重新取 token
     return False
 
 
 async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                      channel_id: str | None = None) -> bool:
-    """给指定群发被动回复（带原 msg_id）。token 过期等异常时重建一次再试。"""
+    """给指定群发被动回复（带原 msg_id）。发送失败重试一次。"""
     for attempt in (1, 2):
         try:
-            api = await _api_for(channel_id)
-            await _post_group(api, group_openid, text, msg_id)
+            await _post_group(channel_id, group_openid, text, msg_id)
             return True
         except Exception as e:
             print(f"[qq] 群发送失败(第{attempt}次): {type(e).__name__}: {e}", flush=True)
-            _apis.pop(channel_id, None)
+            _send_tokens.pop(channel_id, None)
     return False
 
 
@@ -774,8 +821,6 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
     """给 QQ 用户发图片/文件。**有 url（OSS 公网/签名地址）→ URL 模式让 QQ 自己抓（无体积限制）；
     否则 base64 上传 data（本地存储用，受 ~10MB 限制）**。C2C 图片→file_type 1、其余文件→4。"""
     import base64
-    from botpy.http import Route
-    import asyncio
     ext_l = (ext or "").lower()
     is_img = ext_l in _IMAGE_EXTS
     file_type = 1 if is_img else 4
@@ -784,7 +829,6 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
     # 上传 inner proxy 偶发抖动，多重试几次（每次取新 msg_seq，避免去重）
     for attempt in range(1, 5):
         try:
-            api = await _api_for(channel_id)
             # 1) 上传到 QQ 富媒体，拿 file_info（url 模式让 QQ 抓；否则 base64 file_data）
             body = {"file_type": file_type, "srv_send_msg": False}
             if url:
@@ -793,23 +837,24 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
                 body["file_data"] = b64
             if not is_img:
                 body["file_name"] = fname
-            route = Route("POST", "/v2/users/{openid}/files", openid=openid)
-            media = await api._http.request(route, json=body)
-            file_info = media.get("file_info") if isinstance(media, dict) else getattr(media, "file_info", None)
+            media = await _qq_request(channel_id, "POST", f"/v2/users/{openid}/files", json_body=body)
+            file_info = media.get("file_info") if isinstance(media, dict) else None
             if not file_info:
                 print(f"[qq] 富媒体上传无 file_info: {media}", flush=True)
                 return False
             # 2) 发媒体消息（被动回复带 msg_id；文件用 content 让 QQ 显示文件名）
-            kw = {"content": fname} if not is_img else {}
-            await api.post_c2c_message(openid=openid, msg_type=7,
-                                      media={"file_info": file_info}, msg_id=msg_id, msg_seq=await _next_seq(msg_id), **kw)
+            msg_body = {"msg_type": 7, "media": {"file_info": file_info},
+                       "msg_id": msg_id, "msg_seq": await _next_seq(msg_id)}
+            if not is_img:
+                msg_body["content"] = fname
+            await _qq_request(channel_id, "POST", f"/v2/users/{openid}/messages", json_body=msg_body)
             return True
         except Exception as e:
             s = str(e)
             print(f"[qq] 发文件失败(第{attempt}次): {type(e).__name__}: {e}", flush=True)
-            # token 失效才重建 api；inner proxy 等抖动直接重试
-            if "token" in s.lower() or "code: 401" in s:
-                _apis.pop(channel_id, None)
+            # token 失效才重建缓存；inner proxy 等抖动直接重试
+            if "token" in s.lower() or "code: 401" in s or "status=401" in s:
+                _send_tokens.pop(channel_id, None)
             if attempt < 4:
                 await asyncio.sleep(0.6 * attempt)
     return False
