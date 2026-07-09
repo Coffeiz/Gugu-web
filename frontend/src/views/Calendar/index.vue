@@ -1662,6 +1662,9 @@ function _evDragUp(e) {
   const s = _evDrag; _evDrag = null
   if (!s) return
   if (!s.moved) {   // 没拖动 = 单击 → 打开编辑（无论按在边缘还是中间）
+    // mouseup 之后浏览器还会补发一次 click，冒泡到 handleClickOutside 时表单刚打开、
+    // target 自然不在表单内——不设这个屏蔽标记，编辑弹窗会开出来又被那次补发的 click 秒关
+    _wvFormOpening = true
     openEditForm({ _uid: s._uid, id: s.id, name: s.name, date: s.date, time: s.time, endTime: s.endTime, description: s.description, version: s.version }, e, true)
     return
   }
@@ -2002,8 +2005,10 @@ async function saveEditEvent() {
 
 function handleClickOutside(e) {
   if (e.target.closest('.dp-popup')) return
+  // mouseup 打开表单（周视图选时段新建 / 单击活动编辑）后，浏览器紧接着补发的 click 会冒泡到这里，
+  // 此时表单刚打开、target 显然不在表单内——不拦会被当成"点了外面"瞬间关掉。屏蔽这一次即可。
+  if (_wvFormOpening) { _wvFormOpening = false; return }
   if (showAddForm.value) {
-    if (_wvFormOpening) { _wvFormOpening = false; return }
     if (!addBtnRef.value?.contains(e.target) && !addFormRef.value?.contains(e.target))
       showAddForm.value = false
   }
