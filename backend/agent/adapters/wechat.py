@@ -184,11 +184,12 @@ def _extract_quoted(ref_msg) -> tuple[str | None, list]:
         return "[视频消息]", []
     _log_quoted_shape_if_needed(ref_msg, False)
     if quoted_type == 0:
-        # type=0：引用机器人自己发过的历史消息——实测 iLink 这种情况下 message_item 只给
-        # msg_id/时间戳/完成状态等元数据，压根不带原文，也没有按 msg_id 反查内容的接口
-        # （qwenpaw 同款客户端也没有）。这是平台限制，不是解析漏了字段，措辞要说清楚
+        # type=0：实测发现 iLink 的 getupdates 接口对"引用消息"这件事，不管原消息是机器人发的
+        # 还是用户自己发的文字，message_item 都只给 msg_id/时间戳/完成状态等元数据（外加空的
+        # button_item_list），压根不带原文，也没有按 msg_id 反查完整内容的接口（qwenpaw 同款
+        # 客户端同样没有）。这是 iLink 接口本身的限制，不是解析代码把类型判断错了，措辞要说清楚
         # "取不回原文"而不是"这条不是文字"，别误导模型以为引用的东西本身不是文字。
-        return "[引用了机器人自己的历史消息，微信没有提供可取回的原文]", []
+        return "[引用了一条历史消息，微信 iLink 接口没有提供可取回的原文]", []
     return "[非文字消息]", []
 
 
