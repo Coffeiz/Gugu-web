@@ -93,3 +93,28 @@ def test_ingest_media_handles_video_message(monkeypatch):
 
     assert text == ""
     assert attachments == ["att_video"]
+
+
+def test_fetch_quoted_text_requests_user_card_content():
+    """引用咕咕自己发的 CardKit 流式卡片时，不带 card_msg_content_type 会拿到飞书的
+    「请升级至最新版本客户端」占位文案而不是真实内容——回归测试锁定这个查询参数。"""
+    captured_reqs = []
+
+    body = SimpleNamespace(content=json.dumps({
+        "elements": [[{"tag": "markdown", "content": "卡片正文"}]],
+    }, ensure_ascii=False))
+    item = SimpleNamespace(msg_type="interactive", body=body)
+    resp = SimpleNamespace(success=lambda: True, data=SimpleNamespace(items=[item]))
+
+    class _FakeMessageApi:
+        def get(self, req):
+            captured_reqs.append(req)
+            return resp
+
+    client = SimpleNamespace(im=SimpleNamespace(v1=SimpleNamespace(message=_FakeMessageApi())))
+
+    text = feishu._fetch_quoted_text(client, "om_parent")
+
+    assert text == "卡片正文"
+    assert len(captured_reqs) == 1
+    assert captured_reqs[0].card_msg_content_type == "user_card_content"

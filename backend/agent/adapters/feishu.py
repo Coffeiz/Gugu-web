@@ -192,7 +192,12 @@ def _fetch_quoted_text(client, parent_id: str) -> str | None:
     非文字类型给占位说明；查询失败返回 None，调用方静默跳过、不阻塞主消息。"""
     from lark_oapi.api.im.v1 import GetMessageRequest
     try:
-        req = GetMessageRequest.builder().message_id(parent_id).build()
+        # card_msg_content_type=user_card_content：不传这个参数时，飞书对 CardKit 动态卡片
+        # （引用 card_id 而非内联 elements，咕咕的流式回复卡片就是这种）返回的是一段兼容性占位
+        # 文案「请升级至最新版本客户端，以查看内容」，不是卡片真实内容——QwenPaw 同款反查逻辑
+        # 也带了这个参数，实测确认是这个字段控制的。
+        req = (GetMessageRequest.builder().message_id(parent_id)
+              .card_msg_content_type("user_card_content").build())
         resp = client.im.v1.message.get(req)
         if not resp.success() or not resp.data or not resp.data.items:
             return None
