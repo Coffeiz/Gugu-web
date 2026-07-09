@@ -694,6 +694,22 @@ async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool,
     return (text, tin, tout, False, files, cancelled)
 
 
+def _resolve_ephemeral_tool_names(tool_groups: list[str] | None, profile_tool_names: list[str]) -> list[str]:
+    """按 context_config.tool_groups 精简工具集；组名有不认识的（改名/拼写错误/枚举漂移）
+    就不信这份结果，退回全量，安全优先于省 token（同 run_ephemeral 里"判断不出来就走全量"
+    是同一个原则）。"""
+    if not tool_groups:
+        return profile_tool_names
+    from agent.tools import registry
+    unknown = [g for g in tool_groups if g not in registry.known_skill_names()]
+    if unknown:
+        print(f"[runner] tool_groups 里有未知组名 {unknown}，退回全量工具集", flush=True)
+        return profile_tool_names
+    # meta（use_skill）恒带上，不管分类判断有没有选它——漏了这一组，天气等按需 skill 就彻底
+    # 拉不到，属于「功能直接坏掉」而不是「多花点 token」，安全代价不对等，不能只信分类结果。
+    return registry.tools_of(list(set(tool_groups) | {"meta"}))
+
+
 async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: dict | None = None) -> str:
     """定时任务专用：跑 agent 拿结果，不建 session、不存 DB、不推 SSE。
 
@@ -732,13 +748,7 @@ async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: di
     from agent.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
     tool_groups = context_config.get("tool_groups") if context_config else None
-    if tool_groups:
-        # meta（use_skill）恒带上，不管分类判断有没有选它——漏了这一组，天气等按需 skill 就彻底
-        # 拉不到，属于「功能直接坏掉」而不是「多花点 token」，安全代价不对等，不能只信分类结果。
-        from agent.tools import registry
-        tool_names = registry.tools_of(list(set(tool_groups) | {"meta"}))
-    else:
-        tool_names = profile.tool_names
+    tool_names = _resolve_ephemeral_tool_names(tool_groups, profile.tool_names)
     runner = LLMRunner(tool_names, settings)
 
     from app.core.chat_attach import build_user_content

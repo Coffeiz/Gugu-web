@@ -248,6 +248,11 @@ class SkillRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
+    def known_skill_names(self) -> set[str]:
+        """已注册的 skill 组名集合，供调用方校验存量数据里的组名是否还认识
+        （比如定时任务存的 tool_groups——组名改了/拼错了不该悄悄裁没工具）。"""
+        return set(self._skills.keys())
+
     def labels(self) -> dict[str, str]:
         return {name: t.label for name, t in self._tools.items()}
 
