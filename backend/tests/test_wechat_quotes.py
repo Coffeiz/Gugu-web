@@ -22,6 +22,25 @@ def _wechat_text_msg(**overrides):
     return msg
 
 
+def test_wechat_extracts_quoted_bot_message_as_unrecoverable_placeholder():
+    # 真实反馈：引用咕咕自己发过的历史回复时，iLink 只给 msg_id/时间戳/完成状态等元数据，
+    # 不带原文（button_item_list 空数组），也没有按 msg_id 反查内容的接口——平台限制，
+    # 措辞要说清楚"取不回原文"而不是暗示"这条不是文字"。
+    quoted_text, quoted_items = wechat._extract_quoted({
+        "message_item": {
+            "type": 0,
+            "create_time_ms": 1720000000000,
+            "update_time_ms": 1720000000000,
+            "is_completed": True,
+            "msg_id": "abc123",
+            "button_item_list": [],
+        },
+    })
+
+    assert quoted_text == "[引用了机器人自己的历史消息，微信没有提供可取回的原文]"
+    assert quoted_items == []
+
+
 def test_wechat_extracts_quoted_image_item():
     quoted_text, quoted_items = wechat._extract_quoted(
         {
