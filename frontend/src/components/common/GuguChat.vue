@@ -196,7 +196,10 @@
             <div v-for="{ row, msg } in rowsWithMsg" :key="row.index" :data-index="row.index" :ref="measureRow"
                  class="msg-virtual-row" :style="{ transform: `translateY(${row.start + msgsPadTop}px)` }">
               <div :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
-                   v-memo="[msg.text, msg.html, msg.streaming, msg.files?.length, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
+                   v-memo="[msg.text, msg.html, msg.streaming, msg.files?.length, msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
+                <!-- IM 引用/回复：单独一条浅色预览条，跟真正打的话分开显示，别把引用原文
+                     （可能带 markdown 表格等）直接摊平混进正文气泡（devlog 2026-07-10）。 -->
+                <div v-if="msg.role !== 'ai' && msg.quotedText" class="msg-quoted" :title="msg.quotedText">{{ msg.quotedText }}</div>
                 <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onChatActionClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : msg.html" :text="msg.text" /></div>
                 <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
                 <div v-if="msg.files && msg.files.length" class="msg-files">
@@ -332,6 +335,7 @@ interface ChatMessage {
   text: string
   html?: string | null
   files?: any[]
+  quotedText?: string
   time: string
   streaming?: boolean
   _greeting?: boolean
@@ -385,6 +389,7 @@ watch(() => liveStore.sessionEvent, async (e) => {
       text: m.text || '',
       html: isAi ? renderMd(m.text || '') : null,
       files: (m.files && m.files.length) ? m.files : undefined,
+      quotedText: m.quoted_text || undefined,
       time: now(),
     })
   }
@@ -1364,6 +1369,7 @@ async function loadSession(id) {
       text: m.content,
       html: null,
       files: m.files && m.files.length ? m.files : undefined,
+      quotedText: m.quotedText || undefined,
       time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
     }))
     contentH.value = SMALL_H; _sessionTurn = 0
@@ -2082,6 +2088,14 @@ async function send(forcedText?) {
 .msg.user .msg-bubble {
   background: linear-gradient(135deg, #7b7fb2, #9590c4); color: white;
   border-bottom-right-radius: 4px;
+}
+/* 引用/回复预览条：浅色小字，截 3 行，跟正文气泡区分开——只是提示"引用了什么"，不是正文 */
+.msg-quoted {
+  max-width: 88%; margin-bottom: 4px; padding: 5px 10px;
+  font-size: 12px; line-height: 1.5; color: var(--text-secondary);
+  background: rgba(123,127,178,0.08); border-left: 2.5px solid rgba(123,127,178,0.45);
+  border-radius: 4px; white-space: pre-wrap; word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 /* 咕咕发来的文件卡片 */
 .msg-files { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 88%; min-width: 0; }

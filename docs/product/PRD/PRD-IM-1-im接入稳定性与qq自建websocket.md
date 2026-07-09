@@ -307,7 +307,7 @@ websocket-client>=1.8.0
 
 ### 7.1 Payload 兼容
 
-QQ raw event 转咕咕 payload 时保持现有字段：
+QQ raw event 转咕咕 payload 时保持现有字段；**2026-07-10 起 `text` 不再包装引用原文，引用原文单独一个 `quoted_text` 字段**（None=没有引用）——网页气泡是纯文本渲染 `text`，引用原文拼进去会把整段 markdown 原样摊平显示得很难看（真实反馈：引用一条带表格的历史回复，网页上看到一堆 `**粗体**`/`| P | 车手 |` 符号）。`quoted_text` 只在 `agent/runner.py` 组装喂给模型的输入时才会跟 `text`拼接（`_with_quoted_context`），`ConversationMessage.content` 和网页展示只用裸 `text`，`quoted_text` 单独一列存、前端单独渲染成一条浅色引用预览：
 
 ```json
 {
@@ -318,11 +318,14 @@ QQ raw event 转咕咕 payload 时保持现有字段：
   "chat_id": "<group_openid, 群聊时存在>",
   "message_id": "<qq message id>",
   "chat_type": "c2c|group",
-  "text": "<包装引用后的文本>",
+  "text": "<用户自己打的话，不含引用原文>",
+  "quoted_text": "<引用的原消息文字，没有引用则为 null>",
   "attachments": ["<attach_id>"],
   "trace_id": "<trace id>"
 }
 ```
+
+飞书/微信同款（`agent/adapters/feishu.py`/`wechat.py`）也是 `text`+`quoted_text` 分开两个字段；微信 iLink 在这次改动前就已经在 payload 里带 `quoted_text` 了，但 `worker.py` 从没把它读进 `AgentRequest`（`AgentRequest` 之前压根没有这个字段），等于微信引用功能一直没真正喂给模型过，这次顺带修了。
 
 ### 7.2 日志要求
 

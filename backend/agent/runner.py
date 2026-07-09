@@ -99,6 +99,16 @@ _CONTINUE_CUES = ("继续", "刚刚", "刚才", "刚说", "刚聊", "上次", "�
                   "接着", "那个事", "那件事", "没续上")
 
 
+def _with_quoted_context(message: str, quoted_text: str | None) -> str:
+    """给模型看的输入：引用/回复场景下把被引用原文包进去。只在**喂给模型**这一步用，
+    不能拿它当 ConversationMessage.content 存/当网页展示文本——那样会把引用原文（可能带
+    markdown 表格等）直接拼进用户消息正文，网页气泡按纯文本渲染，会被原样摊平显示得很难看
+    （devlog 2026-07-10）。展示层面引用原文走 quoted_text 单独一列，前端另起一个引用预览块。"""
+    if not quoted_text:
+        return message
+    return f"💬 用户引用/回复了一条历史消息（原文：「{quoted_text}」），针对这条消息说：\n\n{message}"
+
+
 async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str) -> str:
     """IM 新会话开场的「续接桥」：IM 会话是 12h 滑动 TTL，过期会起一条新空会话，咕咕会丢掉
     上一条的上下文（「没续上之前的聊天」根因）。这里趁 db 还开着补两档：
@@ -207,8 +217,9 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
+        llm_text = _with_quoted_context(req.message, getattr(req, "quoted_text", None))
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
-            user_id, getattr(req, "attachments", None) or [], req.message, model_cfg=model_cfg)
+            user_id, getattr(req, "attachments", None) or [], llm_text, model_cfg=model_cfg)
         if getattr(req, "attachments", None):   # 诊断：带附件时记 kind/ext/media 数，排查语音为何没转写
             import logging as _lg
             _lg.getLogger("agent.runner").info(
@@ -217,7 +228,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                 [c.get("kind") for c in (attach_cards or [])],
                 [c.get("ext") for c in (attach_cards or [])])
         db.add(ConversationMessage(session_id=session_id, role="user", content=req.message,
-                                   files=attach_cards or None))
+                                   files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None)))
         await db.commit()
 
         # 精力耗尽 → 硬拦（IM / 定时任务，与网页 web.stream 同口径）：用户消息已记，不再生成，直接回一句
@@ -253,7 +264,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     try:
         from app.core import events as _evmod
         await _evmod.publish(user_id, "sessions", session_id=session_id,
-                             appended=[{"role": "user", "text": req.message, "files": attach_cards or None}])
+                             appended=[{"role": "user", "text": req.message, "files": attach_cards or None,
+                                       "quoted_text": getattr(req, "quoted_text", None)}])
     except Exception:
         pass
 
@@ -446,10 +458,11 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         _proactive_lead = _nonsumm[0].content if _nonsumm and _nonsumm[0].role == "assistant" else ""
 
         from app.core import chat_attach
+        llm_text = _with_quoted_context(req.message, getattr(req, "quoted_text", None))
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
-            user_id, getattr(req, "attachments", None) or [], req.message, model_cfg=model_cfg)
+            user_id, getattr(req, "attachments", None) or [], llm_text, model_cfg=model_cfg)
         db.add(ConversationMessage(session_id=session_id, role="user", content=req.message,
-                                   files=attach_cards or None))
+                                   files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None)))
         await db.commit()
 
         if await quota.is_exhausted(db, user_id, settings):
@@ -468,7 +481,8 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     try:
         from app.core import events as _evmod
         await _evmod.publish(user_id, "sessions", session_id=session_id,
-                             appended=[{"role": "user", "text": req.message, "files": attach_cards or None}])
+                             appended=[{"role": "user", "text": req.message, "files": attach_cards or None,
+                                       "quoted_text": getattr(req, "quoted_text", None)}])
     except Exception:
         pass
 

@@ -128,7 +128,8 @@ async def test_qq_raw_c2c_event_to_payload(monkeypatch):
     assert produced[0]["platform"] == "qqbot"
     assert produced[0]["platform_user_id"] == "ou_1"
     assert produced[0]["chat_type"] == "c2c"
-    assert produced[0]["text"] == "[引用消息: 之前那句]\n现在呢"
+    assert produced[0]["text"] == "现在呢"
+    assert produced[0]["quoted_text"] == "之前那句"
 
 
 async def test_qq_raw_group_event_to_payload(monkeypatch):

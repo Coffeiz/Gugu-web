@@ -11,6 +11,7 @@
 
 ### 修复
 
+- **IM 引用消息在网页上显示成一堆原始 markdown**（`agent/runner.py`、`agent/adapters/{feishu,qq}.py`、`app/models`、`app/api/v1/agent.py`、`components/common/GuguChat.vue`）：引用原文之前直接拼进用户消息正文一起存/一起显示，网页气泡是纯文本渲染，引用了一条带表格的历史回复就会把整段 markdown 源码原样摊平显示。改成 `quoted_text` 单独一列存、单独一个浅色预览条展示，完整内容仍然喂给模型。顺带修了微信 iLink 的 `quoted_text` 字段一直没被 `worker.py` 读取的问题。
 - **咕咕聊天代码块复制按钮偶尔冒出巨大图标**（`components/common/viewers/TextViewer.vue`）：文件预览的 markdown 渲染器之前直接改写全站共享的 marked 单例，只要打开过一次文件预览，聊天代码块的复制按钮就会被顶替成没有样式约束的 SVG 图标版本；改成用独立 `Marked` 实例，不再污染共享配置。
 - **飞书咕咕只发文件不说话时卡片是空的**（`agent/adapters/feishu.py`）：模型调发文件工具没配文字说明时，流式卡片正文之前会真的是空的，得追问「发了吗」才恢复正常；现在跟非流式渠道一样兜底一句「给你～」。
 - **飞书引用咕咕自己的流式卡片回复时看不到真实内容**（`agent/adapters/feishu.py`）：先是拿到「请升级至最新版本客户端」占位文案，补参数后又变成「[空消息]」——根因是抽取逻辑没适配流式卡片的 schema 2.0 嵌套结构，两处都修了。

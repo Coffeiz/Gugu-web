@@ -355,11 +355,10 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     raw_attachments = data.get("attachments") or []
     if not isinstance(raw_attachments, list):
         raw_attachments = []
+    # 引用原文单独存 quoted_text，不拼进 text——runner.py 只把它喂给模型当上下文，
+    # ConversationMessage.content/网页展示仍是用户自己打的话，别再把引用原文拼进正文
+    # （网页气泡纯文本渲染，拼进去会把引用的 markdown 原样摊平显示得很难看，见 devlog 2026-07-10）。
     quoted_text, quoted_attachments = _extract_quoted(data)
-    if quoted_text:
-        text = f"[引用消息: {quoted_text}]\n{text}".strip()
-    elif quoted_attachments:
-        text = f"[引用消息包含附件]\n{text}".strip()
     _log_quote_shape_if_needed(
         channel_id, data, bool(quoted_text or quoted_attachments), len(quoted_attachments))
     all_attachments = raw_attachments + quoted_attachments
@@ -371,7 +370,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
             last_ack[ack_key] = now
             await _qq_ack(channel_id, chat_type, ack_target, "文件收到啦，让我看看~", msg_id)
     attachments = await _ingest_qq_media(_raw_attachments_to_message(all_attachments), owner)
-    if not text and not attachments:
+    if not text and not attachments and not quoted_text:
         return
     from agent import trace
     tid = trace.new_trace()
@@ -383,6 +382,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         "message_id": msg_id,
         "chat_type": chat_type,
         "text": text,
+        "quoted_text": quoted_text or None,
         "attachments": attachments,
         "trace_id": tid,
     }

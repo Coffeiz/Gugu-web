@@ -315,6 +315,7 @@ async def handle(msg_id: str, payload: dict):
         session_id=sid,
         source=platform,
         attachments=payload.get("attachments") or [],
+        quoted_text=payload.get("quoted_text"),
     )
     # 记忆控制命令（/memory /forget，中文别名 /记忆 /忘记）：确定性短路，零 LLM、不计精力、
     # 不反思、不进会话历史——与 web 路（adapters/web.py）同一处理，IM 用户同享隐私控制权（P0-5）

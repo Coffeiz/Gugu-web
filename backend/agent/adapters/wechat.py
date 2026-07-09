@@ -107,23 +107,31 @@ async def _ingest_wechat_media(items: list, owner: str) -> list:
     return out
 
 
-def _extract_quoted_text(ref_msg) -> str | None:
-    """从 item.ref_msg.message_item 里取被引用消息的文字——iLink 直接把原消息内容内嵌在
-    引用消息的 payload 里，不像飞书那样只给 id、需要额外查接口。非文字类型给占位说明；
-    结构对不上返回 None，调用方静默跳过。"""
+def _extract_quoted(ref_msg) -> tuple[str | None, list]:
+    """从 item.ref_msg.message_item 里提取 (引用文字, 引用媒体项列表)。
+
+    微信 iLink 会把被引用消息内嵌在 `ref_msg.message_item`，这里把文字单独抽出来给
+    `quoted_text`，把引用图片等媒体按普通 item 结构返给 `_ingest_wechat_media` 继续下载/
+    解密/暂存。"""
     if not isinstance(ref_msg, dict):
-        return None
+        return None, []
     mi = ref_msg.get("message_item")
     if not isinstance(mi, dict):
-        return None
+        return None, []
+    quoted_type = mi.get("type")
     txt = (mi.get("text_item") or {}).get("text", "").strip()
     if txt:
-        return txt
-    if mi.get("image_item"):
-        return "[图片消息]"
-    if mi.get("voice_item"):
-        return "[语音消息]"
-    return "[非文字消息]"
+        return txt, []
+    if quoted_type == 3 or mi.get("voice_item"):
+        voice_text = (mi.get("voice_item") or {}).get("text", "").strip()
+        return (voice_text or "[语音消息]"), []
+    if quoted_type == 2 or mi.get("image_item"):
+        return "[图片消息]", [{"type": 2, "image_item": mi.get("image_item") or {}}]
+    if quoted_type == 4 or mi.get("file_item"):
+        return "[文件消息]", []
+    if quoted_type == 5 or mi.get("video_item"):
+        return "[视频消息]", []
+    return "[非文字消息]", []
 
 
 # ── 接收（网关子进程，long-poll）────────────────────────────────────────────────
@@ -161,15 +169,15 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
     if not text and not non_text:   # 真空消息
         return
 
-    # 引用消息：iLink 把被引用消息的内容直接内嵌在 item.ref_msg.message_item 里（不用像飞书
-    # 那样额外查接口）。只包装入队用的 llm_text，不动原始 text（留给以后接 Intent Router 判
-    # 关键词用，同 feishu 的处理方式）。
-    llm_text = text
+    # 引用消息：把被引用原文单独塞 quoted_text，引用图片等媒体继续按普通附件入队。
+    quoted_text = None
+    quoted_items = []
     has_quote = False
     for it in items:
-        quoted = _extract_quoted_text(it.get("ref_msg"))
-        if quoted:
-            llm_text = f"💬 用户引用/回复了一条历史消息（原文：「{quoted}」），针对这条消息说：\n\n{text}"
+        quoted, quoted_media = _extract_quoted(it.get("ref_msg"))
+        if quoted or quoted_media:
+            quoted_text = quoted
+            quoted_items = quoted_media
             has_quote = True
             break
 
@@ -183,13 +191,14 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
         except Exception as e:
             print(f"[wechat] 即时反馈失败: {type(e).__name__}: {e}", flush=True)
 
-    # 下载+解密+暂存媒体 → attach_id（图片走 _ingest_wechat_media；file/voice 暂留日志待补）
-    attachments = await _ingest_wechat_media(non_text, owner) if non_text else []
+    # 下载+解密+暂存媒体：当前消息附件 + 引用里的图片附件一并入队。
+    media_items = non_text + quoted_items
+    attachments = await _ingest_wechat_media(media_items, owner) if media_items else []
     from agent import trace
     tid = trace.new_trace()
     # 隐私：不打印消息原文，只留结构+指纹（见 agent/logsafe.py），同 agent.traj 脱敏口径
     from agent import logsafe
-    print(f"[wechat:{channel_id}] 收到 {from_user}: text_len={len(llm_text)} fp={logsafe.fingerprint(llm_text)} "
+    print(f"[wechat:{channel_id}] 收到 {from_user}: text_len={len(text)} fp={logsafe.fingerprint(text)} "
           f"att={len(attachments)} quoted={has_quote} trace={tid}", flush=True)
     if not text and not attachments:   # 只有不支持的媒体、啥也没取到 → 不入队（agent 无内容）
         return
@@ -216,7 +225,8 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
         "chat_type": "group" if group_id else "c2c",
         "wechat_group_id": group_id,
         "context_token": context_token,     # ⚠️ iLink 回复必需，worker 透传回 send_text
-        "text": llm_text,
+        "text": text,
+        "quoted_text": quoted_text,
         "attachments": attachments,
         "trace_id": tid,                    # 全链路 trace：worker/工具日志同 id，grep 可串联
         "typing_ticket": typing_ticket,     # 空 = 不发 typing（worker 端按空 ticket 退化）

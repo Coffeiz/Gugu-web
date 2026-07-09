@@ -246,6 +246,10 @@ class ConversationMessage(Base):
     content:      Mapped[str]             = mapped_column(Text, default="")
     content_json: Mapped[Optional[list]]  = mapped_column(JSON, nullable=True, default=None)
     files:        Mapped[Optional[list]]  = mapped_column(JSON, nullable=True, default=None)  # 咕咕发的文件卡片 [{file_id,name,ext,size_bytes}]
+    # IM 引用/回复的原消息文字（仅 IM 来源的 user 消息可能有）；null=这条不是引用。
+    # 单独一列，别拼进 content——网页气泡按纯文本渲染 content，拼进去会把引用原文（可能带 markdown
+    # 表格等）原样摊平显示，见 devlog 2026-07-10。
+    quoted_text:  Mapped[Optional[str]]    = mapped_column(Text, nullable=True, default=None)
     created_at:   Mapped[datetime]        = mapped_column(DateTime, default=datetime.utcnow)
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")

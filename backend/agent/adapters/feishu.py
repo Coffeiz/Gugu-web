@@ -380,13 +380,12 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
         tid = trace.new_trace()
 
         # 引用消息：用户「回复」某条历史消息时，parent_id 指向那条被引用的消息——飞书只给 id，
-        # 要反查一次内容才知道引用的是什么。只包装入队用的文本（llm_text），router/秒回表情继续
-        # 用原始 text 判关键词，包一层反而会破坏「算了/还在吗」这类短句匹配。
-        llm_text = text
-        if msg.parent_id:
-            quoted = _fetch_quoted_text(api_client, msg.parent_id)
-            if quoted:
-                llm_text = f"💬 用户引用/回复了一条历史消息（原文：「{quoted}」），针对这条消息说：\n\n{text}"
+        # 要反查一次内容才知道引用的是什么。引用原文单独存 quoted_text，不拼进 text——
+        # runner.py 只把它喂给模型当上下文，ConversationMessage.content/网页展示仍是用户
+        # 自己打的话，router/秒回表情继续用原始 text 判关键词（同一份），别再把引用原文拼进
+        # 正文（网页气泡纯文本渲染，拼进去会把引用的 markdown 原样摊平显示得很难看，见 devlog
+        # 2026-07-10）。
+        quoted_text = _fetch_quoted_text(api_client, msg.parent_id) if msg.parent_id else None
 
         payload = {
             "platform": "feishu",
@@ -396,14 +395,15 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
             "chat_id": msg.chat_id,
             "chat_type": msg.chat_type,
             "message_id": msg.message_id,
-            "text": llm_text,
+            "text": text,
+            "quoted_text": quoted_text,
             "attachments": attachments,
             "trace_id": tid,             # 全链路 trace：worker/工具日志同 id，grep 可串联
         }
         # 隐私：不打印消息原文，只留结构+指纹（见 agent/logsafe.py），同 agent.traj 脱敏口径
         from agent import logsafe
-        print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text_len={len(llm_text)} "
-              f"fp={logsafe.fingerprint(llm_text)} att={len(attachments)} quoted={bool(msg.parent_id)} trace={tid}", flush=True)
+        print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text_len={len(text)} "
+              f"fp={logsafe.fingerprint(text)} att={len(attachments)} quoted={bool(msg.parent_id)} trace={tid}", flush=True)
 
         # Intent Router：纯文本消息先据当前状态判一手——任务进行中的「还在吗/算了/嗯」由网关
         # 直接处理，不入队（IM 单 worker 顺序消费，忙时它根本看不到队列后面的消息）。带附件一律进主模型。
