@@ -92,8 +92,10 @@ async def test_feishu_stream_finalizes_card_after_success(monkeypatch):
         })
         return True
 
-    async def fake_update_card(app_id, app_secret, card_id, text, title="咕咕思考中", streaming_mode=True):
-        renamed.append({"card_id": card_id, "text": text, "title": title, "streaming_mode": streaming_mode})
+    async def fake_update_card(app_id, app_secret, card_id, text, *, sequence,
+                               title="咕咕思考中", streaming_mode=True):
+        renamed.append({"card_id": card_id, "text": text, "sequence": sequence,
+                        "title": title, "streaming_mode": streaming_mode})
         return True
 
     async def token_iter():
@@ -119,6 +121,7 @@ async def test_feishu_stream_finalizes_card_after_success(monkeypatch):
     assert renamed == [{
         "card_id": "card_finalize",
         "text": "最终文本",
+        "sequence": 3,   # 必须严格大于上面 finalize 用的 sequence=2（同一张卡跨端点共享一套序列）
         "title": "咕咕",
         "streaming_mode": False,
     }]
@@ -140,7 +143,8 @@ async def test_feishu_stream_keeps_ok_when_finalize_fails(monkeypatch):
     async def fake_finalize(app_id, app_secret, card_id, summary_text, sequence, uuid):
         return False
 
-    async def fake_update_card(app_id, app_secret, card_id, text, title="咕咕思考中", streaming_mode=True):
+    async def fake_update_card(app_id, app_secret, card_id, text, *, sequence,
+                               title="咕咕思考中", streaming_mode=True):
         return True
 
     async def token_iter():

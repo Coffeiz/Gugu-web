@@ -899,16 +899,17 @@ async def _do_finalize_streaming_card(app_id: str, app_secret: str, card_id: str
     return True
 
 
-async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str,
+async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str, *, sequence: int,
                           title: str = "咕咕思考中", streaming_mode: bool = True) -> bool:
     """raw httpx 版 update_card：节流策略由 caller 控制（每 ≥200ms 或 ≥30 字调一次）。
 
     HTTP method 是 **PUT**——SDK update() 签名的也是 PUT（cardkit/v1/model/update_card_request
     源码：update_card_request.http_method = HttpMethod.PUT）。
-    sequence 必须严格递增（int 类型，从 1 开始）——之前踩坑：timestamp 形式被服务端判为
-    非法参数类型返 9499。同进程用模块级 dict 跨调用递增，多 worker 进程各自从 1 计起互不冲突
-    （飞书服务端按 card_id 维度判 sequence 单调，不要求跨进程全局连续；这是独立于 element 级
-    streaming update 的另一套 sequence 空间，互不影响）。
+    `sequence` 必须由调用方传入且严格递增——**同一 card_id 下，element 级 streaming update /
+    settings PATCH / 整卡 PUT 共用同一套单调递增序列**（之前误以为整卡 PUT 是独立序列空间，
+    自己另开一个 `_card_seq[card_id]` 计数器从 1 起，结果实测报 300317 sequence number
+    compare failed——飞书服务端按 card_id 维度判断，不分端点）。所以收尾改标题必须复用
+    调用方（send_text_stream）手上那个 `_stream_seq_key` 计数器继续往上加，不能自己另起。
 
     `title`/`streaming_mode`：流式收尾时用来把卡片标题从「咕咕思考中」改成「咕咕」、
     同时关掉 streaming_mode（见 send_text_stream 收尾调用）。
@@ -918,13 +919,12 @@ async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str,
     except Exception as e:
         print(f"[feishu] tenant_token 拿失败: {type(e).__name__}: {e}", flush=True)
         return False
-    _card_seq[card_id] = _card_seq.get(card_id, 0) + 1
     body = {
         "card": {
             "type": "card_json",
             "data": _make_card_payload(text, title=title, streaming_mode=streaming_mode),
         },
-        "sequence": _card_seq[card_id],
+        "sequence": sequence,
     }
     try:
         async with httpx.AsyncClient(timeout=15.0) as cli:
@@ -1068,8 +1068,11 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         if not finalized:
             print(f"[feishu] finalize_streaming_card 失败但保留已更新卡片: card_id={card_id}", flush=True)
         # 收尾把标题从「咕咕思考中」改成「咕咕」——思考已经结束，继续挂着思考中的标题很怪。
-        # 独立于上面 finalize（各自失败域不同），失败不影响用户已经看到的正文。
+        # 复用同一个 _stream_seq_key 计数器继续递增（这张卡的 sequence 是跨端点共享的，
+        # 见 _do_update_card 里的踩坑记录），不能自己另起一套。
+        _card_seq[_stream_seq_key] = _card_seq.get(_stream_seq_key, 0) + 1
         renamed = await _do_update_card(app_id, app_secret, card_id, final_text,
+                                        sequence=_card_seq[_stream_seq_key],
                                         title="咕咕", streaming_mode=False)
         if not renamed:
             print(f"[feishu] 收尾改标题失败，保留「咕咕思考中」: card_id={card_id}", flush=True)
