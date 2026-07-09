@@ -3,7 +3,7 @@
 群聊需要在「接入咕咕」页开启 group_chat_enabled 开关；QQ 官方 SDK 层面群消息本就只有
 @ 了机器人才会触发事件（没有"收全部群消息"的能力），group_requires_at 对 QQ 恒为 True。
 
-和飞书长连接同模式：botpy WebSocket outbound 主动连，**不需要公网**（备案前也能用）。
+和飞书长连接同模式：raw WebSocket outbound 主动连，**不需要公网**（备案前也能用）。
 BYO 模型：每个用户在「个人设置 → 接入咕咕 → QQ」填自己的 AppID/Secret（存 user_bots 表），
 supervisor 为每个启用的 user_bot 起一条本网关子进程。bot 收到的消息天然归属该 bot 的 owner，
 所以入队 payload 直接带 owner_user_id，worker 无需再做绑定。
@@ -18,14 +18,11 @@ supervisor 为每个启用的 user_bot 起一条本网关子进程。bot 收到�
 """
 from __future__ import annotations
 
-from botpy.message import C2CMessage, GroupMessage
-from botpy.message import Message as _BaseMessage
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import aiohttp
 import asyncio
-import botpy
 import json
 import os
 import time
@@ -50,14 +47,6 @@ _OP_HEARTBEAT_ACK = 11
 
 _INTENT_GROUP_AND_C2C = 1 << 25
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
-
-# ── monkey-patch：让 botpy 消息对象保留原始 payload（用于引用消息解析）──
-_orig_base_init = _BaseMessage.__init__
-def _patched_base_init(self, api, event_id, data):
-    _orig_base_init(self, api, event_id, data)
-    self._raw_data = data
-_BaseMessage.__init__ = _patched_base_init
-
 
 def _find_quoted_element(raw_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """从原始 payload 中找到被引用的消息元素。
@@ -109,17 +98,6 @@ def _scene_ext_value(scene_ext: list, key: str) -> str:
             if key in entry:
                 return str(entry.get(key) or "").strip()
     return ""
-
-
-def _extract_quoted_text(raw_data: Dict[str, Any]) -> Optional[str]:
-    """从原始 payload 提取引用消息的文本内容，用于拼接到 LLM 输入。"""
-    elem = _find_quoted_element(raw_data)
-    if not elem:
-        return None
-    content = (elem.get("content") or elem.get("text") or "").strip()
-    # 转义 HTML 实体（QQ 消息文本中的 &lt; &gt; &amp;）
-    content = content.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
-    return content or None
 
 
 def _extract_quoted(raw_data: Dict[str, Any]) -> tuple[str, list]:
@@ -249,141 +227,7 @@ def _raw_attachments_to_message(attachments: list):
     )
 
 
-# ── 接收（网关子进程，凭据/归属从 env 注入）──
-class _GuguQQClient(botpy.Client):
-    def __init__(self, channel_id: str, owner_user_id: str, **kw):
-        super().__init__(**kw)
-        self._channel_id = channel_id
-        self._owner = owner_user_id
-        self._last_ack: dict = {}   # openid -> 上次「文件收到」秒回的时刻；连发多图只 ack 一次
-
-    async def on_ready(self):
-        print(f"[qq:{self._channel_id}] 网关就绪（owner={self._owner}），WebSocket 长连接中…", flush=True)
-
-    async def on_c2c_message_create(self, message: C2CMessage):
-        text = (message.content or "").strip()
-        openid = message.author.user_openid if message.author else None
-        # 引用消息解析：从原始 payload 中提取被引用的消息文本
-        raw_data = getattr(message, "_raw_data", {})
-        # DEBUG: 打印原始 payload 的 keys，确认是否包含 msg_elements/message_scene
-        print(f"[qq-debug] raw_data keys: {list(raw_data.keys())}", flush=True)
-        quoted_text = _extract_quoted_text(raw_data)
-        if quoted_text:
-            text = f"[引用消息: {quoted_text}]\n{text}"
-        # 用户发来文件：先瞬发一句「收到」（在下载/暂存/入队之前，赶在 worker 慢处理之前给即时反馈）。
-        # **连发多图/文件只 ack 一次**（10s 冷却）——否则一张图一条「文件收到啦」会刷屏；真正的回复由
-        # worker 防抖合并成一条。
-        if getattr(message, "attachments", None):
-            now = time.monotonic()
-            if now - self._last_ack.get(openid, 0.0) > _ACK_COOLDOWN:
-                self._last_ack[openid] = now
-                try:
-                    await _post(self._channel_id, openid, "文件收到啦，让我看看~", message.id)
-                except Exception as e:
-                    print(f"[qq] 文件 ack 失败: {type(e).__name__}: {e}", flush=True)
-        # 下载 → 暂存 → 走 attachments（和飞书同一套）
-        attachments = await _ingest_qq_media(message, self._owner)
-        if not text and not attachments:
-            return
-        from agent import trace
-        tid = trace.new_trace()
-        payload = {
-            "platform": "qqbot",
-            "channel_id": self._channel_id,
-            "owner_user_id": self._owner,      # BYO：bot 归属即用户，worker 直接用
-            "platform_user_id": openid,
-            "message_id": message.id,
-            "chat_type": "c2c",
-            "text": text,
-            "attachments": attachments,
-            "trace_id": tid,                   # 全链路 trace：worker/工具日志同 id，grep 可串联
-        }
-        # 隐私：不打印消息原文（Debug 面板可搜索，聊天内容不该落进可查阅日志），只留结构+指纹——
-        # 长度/附件数/trace 够排查「有没有收到、收没收到附件」，指纹（不可逆）够排查「是不是被
-        # 重复处理了」，同 agent.traj 的脱敏口径。
-        from agent import logsafe
-        print(f"[qq:{self._channel_id}] 收到 {openid}: text_len={len(text)} fp={logsafe.fingerprint(text)} "
-              f"att={len(attachments)} trace={tid}", flush=True)
-
-        # Intent Router：纯文本消息据当前状态短路——任务进行中的「还在吗/算了/嗯」网关直接处理、不入队
-        if not attachments:
-            from agent import router, runtime_state as rtstate
-            dec = router.decide(text, await rtstate.get_state("qqbot", openid),
-                                await rtstate.is_awaiting("qqbot", openid))
-            if dec["action"] == "drop":
-                return
-            if dec["action"] in ("reply", "cancel"):
-                if dec["action"] == "cancel":
-                    await rtstate.request_cancel("qqbot", openid)
-                try:
-                    await _post(self._channel_id, openid, dec["reply"], message.id)
-                except Exception as e:
-                    print(f"[qq] 短路回复失败: {type(e).__name__}: {e}", flush=True)
-                return
-
-        try:
-            await R.produce(STREAM, payload)
-        except Exception as e:
-            print(f"[qq] 入队失败: {type(e).__name__}: {e}", flush=True)
-
-    async def on_group_at_message_create(self, message: GroupMessage):
-        """群消息（QQ 官方 SDK 只有群里 @ 了机器人才会触发这个事件，没有"收全部群消息"的能力）。
-        群聊要单独一个开关（user_bots.group_chat_enabled）——**每条群消息都现查一次 DB**（而不是
-        启动时从 env 注入一次），这样用户在「接入咕咕」页切换开关立刻生效，不用重启这条网关子进程。"""
-        group_enabled, _requires_at = await _group_settings(self._channel_id)
-        if not group_enabled:
-            return
-        text = (message.content or "").strip()
-        group_openid = message.group_openid
-        member_openid = message.author.member_openid if message.author else None
-        # 引用消息解析：从原始 payload 中提取被引用的消息文本
-        raw_data = getattr(message, "_raw_data", {})
-        quoted_text = _extract_quoted_text(raw_data)
-        if quoted_text:
-            text = f"[引用消息: {quoted_text}]\n{text}"
-        attachments = await _ingest_qq_media(message, self._owner)
-        if not text and not attachments:
-            return
-        from agent import trace
-        tid = trace.new_trace()
-        payload = {
-            "platform": "qqbot",
-            "channel_id": self._channel_id,
-            "owner_user_id": self._owner,      # BYO：bot 归属即用户，worker 直接用
-            "platform_user_id": member_openid,  # 群内发言人（用于会话/状态按用户维度隔离）
-            "chat_id": group_openid,            # 回复路由用（区别于 c2c 直接用 platform_user_id）
-            "message_id": message.id,
-            "chat_type": "group",
-            "text": text,
-            "attachments": attachments,
-            "trace_id": tid,
-        }
-        from agent import logsafe
-        print(f"[qq:{self._channel_id}] 收到群 {group_openid} 内 {member_openid}: "
-              f"text_len={len(text)} fp={logsafe.fingerprint(text)} att={len(attachments)} trace={tid}", flush=True)
-
-        if not attachments:
-            from agent import router, runtime_state as rtstate
-            dec = router.decide(text, await rtstate.get_state("qqbot", member_openid),
-                                await rtstate.is_awaiting("qqbot", member_openid))
-            if dec["action"] == "drop":
-                return
-            if dec["action"] in ("reply", "cancel"):
-                if dec["action"] == "cancel":
-                    await rtstate.request_cancel("qqbot", member_openid)
-                try:
-                    await _post_group(self._channel_id, group_openid, dec["reply"], message.id)
-                except Exception as e:
-                    print(f"[qq] 群短路回复失败: {type(e).__name__}: {e}", flush=True)
-                return
-
-        try:
-            await R.produce(STREAM, payload)
-        except Exception as e:
-            print(f"[qq] 群消息入队失败: {type(e).__name__}: {e}", flush=True)
-
-
-async def _ingest_qq_media(message: C2CMessage | GroupMessage, owner: str) -> list:
+async def _ingest_qq_media(message: Any, owner: str) -> list:
     """下载 QQ 消息里的图片/文件 → 暂存 → 返回 [attach_id]。handler 是 async，直接用 async stage。"""
     atts = getattr(message, "attachments", None) or []
     if not atts:
@@ -648,14 +492,8 @@ def serve() -> None:
     owner = os.environ.get("QQ_OWNER", "")
     if not app_id or not secret:
         raise SystemExit("缺少 QQ_APP_ID / QQ_APP_SECRET 环境变量（应由 supervisor 注入）。")
-    if os.environ.get("QQ_RAW_WS_ENABLED", "1") not in ("0", "false", "False"):
-        print(f"[qq:{channel_id}] 网关启动（raw WebSocket, sandbox={sandbox}）…", flush=True)
-        asyncio.run(_run_raw_ws(app_id, secret, sandbox, channel_id, owner))
-        return
-    intents = botpy.Intents(public_messages=True)   # C2C / 群 公域消息
-    client = _GuguQQClient(channel_id, owner, intents=intents, is_sandbox=sandbox, bot_log=False)
-    print(f"[qq:{channel_id}] 网关启动（sandbox={sandbox}）…", flush=True)
-    client.run(appid=app_id, secret=secret)   # 同步阻塞，botpy 自带断线重连
+    print(f"[qq:{channel_id}] 网关启动（raw WebSocket, sandbox={sandbox}）…", flush=True)
+    asyncio.run(_run_raw_ws(app_id, secret, sandbox, channel_id, owner))
 
 
 # ── 发送（worker 用，按 bot id 现查 DB 取凭据，raw HTTP 直连 QQ Bot API，不再依赖 botpy）──

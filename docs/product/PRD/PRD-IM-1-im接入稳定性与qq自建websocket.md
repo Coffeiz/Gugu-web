@@ -14,8 +14,9 @@
 |---|---|---|
 | Phase 1：飞书稳定性补强 | ✅ 已完成 | 已实现 `app_id` 错投保护、`message_id` LRU 去重、stale retry 丢弃，并补充网关入口测试。 |
 | FR-FS-4：飞书流式收尾 | ✅ 已完成 | 流式卡片最终 patch 成功后调用 CardKit settings 接口关闭 `streaming_mode` 并设置 summary；finalize 失败不触发重复普通文本。 |
-| Phase 2：QQ 自建 WebSocket 接收侧 | ✅ 已完成 | `serve()` 默认走 raw WebSocket；支持 C2C 与群 @ raw event、引用文本/引用附件解析、现有 worker payload 兼容；`QQ_RAW_WS_ENABLED=0` 可回退 botpy 接收路径。 |
-| Phase 3：QQ raw HTTP 发送侧 | ✅ 已完成（未按 3-7 天灰度期提前实施） | `send_c2c`/`send_group`/`send_file`/短路回复/ack 全部改 raw HTTP 直连 QQ Bot API，按 channel_id 缓存 access_token 并在过期前刷新；markdown 无权限回退纯文本、401 清缓存重试逻辑保留。接收侧 botpy 回退路径（`QQ_RAW_WS_ENABLED=0`）未动，仍需 botpy 依赖。 |
+| Phase 2：QQ 自建 WebSocket 接收侧 | ✅ 已完成 | `serve()` 走 raw WebSocket；支持 C2C 与群 @ raw event、引用文本/引用附件解析、现有 worker payload 兼容。 |
+| Phase 3：QQ raw HTTP 发送侧 | ✅ 已完成（未按 3-7 天灰度期提前实施） | `send_c2c`/`send_group`/`send_file`/短路回复/ack 全部改 raw HTTP 直连 QQ Bot API，按 channel_id 缓存 access_token 并在过期前刷新；markdown 无权限回退纯文本、401 清缓存重试逻辑保留。 |
+| 清理：完全移除 botpy | ✅ 已完成 | `_GuguQQClient`（botpy `Client` 子类）、monkey patch、`QQ_RAW_WS_ENABLED` 回退开关、`qq-botpy` 依赖全部删除；本地已 `pip uninstall qq-botpy` 验证 83 个测试仍全过。QQ 目前不开放 aigcbot 群聊功能，群聊代码路径保留但暂无法验证。 |
 
 已验证：
 
@@ -451,5 +452,6 @@ QQ raw event 转咕咕 payload 时保持现有字段：
 - 🔲 QQ `GROUP_AT_MESSAGE_CREATE` raw payload 中引用消息的 `msg_elements` 是否在所有群类型都稳定提供。
 - ✅ QQ 引用图片 attachments URL 可直接沿用现有 `_ingest_qq_media()` 下载逻辑（devserver 日志实测 `att=1` 成功下载暂存）。真实观察到的失败案例是 `msg_elements=0`（QQ 侧压根没给引用上下文），怀疑是 QQ 引用功能本身对「多久之前的消息」有时效窗口，超出窗口引用不到任何上下文，不是解析代码的问题；具体窗口时长未知，暂无用户可感知的提示（`msg_elements=0` 时用户只会看到「没引用上」而不知道原因），后续如高频出现再补提示文案。
 - ✅ 飞书 stale retry 首期使用本机时间，后续如遇误杀再补平台 Date header 校时。
-- 🔲 Phase 2 建议保留 botpy 接收路径开关至少一个小版本后再删除。
+- ✅ Phase 2 原计划保留 botpy 接收路径开关至少一个小版本，实际因功能验证完成、决定直接全部移除（`_GuguQQClient`/monkey patch/`QQ_RAW_WS_ENABLED`/`qq-botpy` 依赖），不再保留回退路径。
 - 🔲 Phase 3 raw HTTP 发送侧（文本/markdown 回退/URL 与 base64 发文件/群消息）尚未在真实 QQ 环境端到端验证，仅本地 mock 测试覆盖；`_send_tokens` 无锁，理论上并发首次请求可能重复取 token（浪费一次调用，不影响正确性）。
+- 🔲 QQ 群聊（aigcbot 群聊功能）目前平台未开放，`group_chat_enabled`/`GROUP_AT_MESSAGE_CREATE` 相关代码路径无法在真实环境验证，等平台开放后再测。
