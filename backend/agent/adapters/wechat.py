@@ -75,9 +75,32 @@ def _img_ext_mime(data: bytes) -> tuple[str, str]:
     return "jpg", "image/jpeg"   # 兜底当 jpg
 
 
+_WECHAT_CDN_BASE = "https://novac2c.cdn.weixin.qq.com/c2c"
+
+
+def _wechat_media_url(media: dict) -> str:
+    """解析图片项的下载地址。iLink 媒体有两种形态：
+
+    - 直发的图片消息：`media.full_url` 是可以直接 GET 的完整 CDN 地址。
+    - **引用/回复里带的图片**：没有 `full_url`，只有 `media.encrypt_query_param`——
+      得自己拼 CDN 下载地址（对照 QwenPaw 的 `ILinkClient.download_media` 实现确认，
+      参数名是 `encrypted_query_param`，注意比字段名 `encrypt_query_param` 多一个 d）。
+      之前只认 `full_url`，导致引用图片一律因为「缺 full_url」被跳过、下载不到，
+      引用识别本身没问题、卡在下载这一步。"""
+    full_url = media.get("full_url") or ""
+    if full_url:
+        return full_url
+    encrypt_query_param = media.get("encrypt_query_param") or ""
+    if encrypt_query_param:
+        from urllib.parse import quote
+        return f"{_WECHAT_CDN_BASE}/download?encrypted_query_param={quote(encrypt_query_param, safe='')}"
+    return ""
+
+
 async def _ingest_wechat_media(items: list, owner: str) -> list:
     """下载并解密微信图片项 → 暂存 → 返回 [attach_id]（照搬 qq `_ingest_qq_media` 模式）。
-    iLink 媒体走 CDN（`image_item.media.full_url`）+ AES-128-ECB（key=`image_item.aeskey` hex）。
+    iLink 媒体走 CDN（`image_item.media.full_url` 或引用场景的 `encrypt_query_param`，
+    见 `_wechat_media_url`）+ AES-128-ECB（key=`image_item.aeskey` hex）。
     语音（type==3）已在 `_handle_msg` 里用自带的 `voice_item.text` 转写文字处理，不会传进这里；
     file 项格式仍未知 → 留日志待补。"""
     import httpx
@@ -92,9 +115,9 @@ async def _ingest_wechat_media(items: list, owner: str) -> list:
                     print(f"[wechat] 暂不支持的媒体项（格式待补）: {other}", flush=True)
                 continue
             aeskey = img.get("aeskey") or ""
-            url = (img.get("media") or {}).get("full_url") or ""
+            url = _wechat_media_url(img.get("media") or {})
             if not aeskey or not url:
-                print("[wechat] 图片项缺 aeskey/full_url，跳过", flush=True)
+                print("[wechat] 图片项缺 aeskey/可用下载地址，跳过", flush=True)
                 continue
             try:
                 raw = (await cli.get(url)).content
