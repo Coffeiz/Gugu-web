@@ -130,20 +130,31 @@ async def _ingest_wechat_media(items: list, owner: str) -> list:
     return out
 
 
+def _key_shape(value, limit: int = 12, _depth: int = 0):
+    """递归拍平抽取 dict/list 的 key 名（不含值），供结构调试用——同 qq.py `_nested_key_shape`
+    思路，只是这版顺带下钻进 list（第一版只查了 dict，button_item_list 是数组，没查到里面）。"""
+    if _depth > 4:
+        return "…"
+    if isinstance(value, dict):
+        return {k: _key_shape(v, limit, _depth + 1) for k, v in list(value.items())[:limit]}
+    if isinstance(value, list):
+        return [_key_shape(v, limit, _depth + 1) for v in value[:3]]  # 数组只看前 3 项
+    return type(value).__name__   # 叶子只打类型名，不打值本身
+
+
 def _log_quoted_shape_if_needed(ref_msg, found: bool) -> None:
-    """引用识别退化成占位符时打印结构（只打印字段名，不打印正文），同 qq.py 的
-    `_log_quote_shape_if_needed` 思路——真实反馈过"引用了纯文字消息却识别成 [非文字消息]"，
-    但 message_item 的真实字段形状跟直发消息是否完全一致没有实测验证过（图片项那次已经证实
-    引用结构会跟直发结构不一样：直发有 media.full_url，引用只有 media.encrypt_query_param），
-    所以退化时打日志比继续照抄"结构应该跟直发一样"的假设猜下去更快找到根因。"""
+    """引用识别退化成占位符时打印结构（只打印字段名/类型，不打印正文），同 qq.py 的
+    `_log_quote_shape_if_needed` 思路——真实反馈过"引用咕咕自己发的文字回复却识别成
+    [非文字消息]"，第一版日志显示 message_item 是 `{button_item_list, create_time_ms,
+    is_completed, msg_id, type=0, update_time_ms}`，没有 text_item，但 button_item_list
+    是数组，之前的日志没往数组里钻，这版补上。"""
     if found:
         return
     mi = ref_msg.get("message_item") if isinstance(ref_msg, dict) else None
     ref_keys = sorted(ref_msg.keys()) if isinstance(ref_msg, dict) else None
-    mi_keys = sorted(mi.keys()) if isinstance(mi, dict) else None
-    nested = {k: sorted(v.keys()) for k, v in (mi or {}).items() if isinstance(v, dict)} if isinstance(mi, dict) else None
-    print(f"[wechat] 引用结构未命中: ref_msg_keys={ref_keys} message_item_keys={mi_keys} "
-          f"type={mi.get('type') if isinstance(mi, dict) else None} nested_keys={nested}", flush=True)
+    shape = _key_shape(mi) if isinstance(mi, dict) else None
+    print(f"[wechat] 引用结构未命中: ref_msg_keys={ref_keys} "
+          f"type={mi.get('type') if isinstance(mi, dict) else None} shape={shape}", flush=True)
 
 
 def _extract_quoted(ref_msg) -> tuple[str | None, list]:
