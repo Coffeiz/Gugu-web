@@ -713,36 +713,17 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   list-style: none;
   display: flex; align-items: baseline; gap: 8px;
 }
-/* 风格与注册页确认勾选框（.ack-box）一致：16px 圆角 5px、紫灰边白底、选中紫色渐变 + 阴影 + 白勾 */
+/* 外观（边框/选中态/勾）已收进全局 input[type="checkbox"] 样式（src/assets/styles/global.css），
+   这里只留 markdown 场景特有的布局/交互覆盖：跟文字对齐、非任务勾选框禁用手型。 */
 .tv-md :deep(input[type="checkbox"]) {
-  appearance: none; -webkit-appearance: none;
-  width: 16px; height: 16px;
-  border: 1.5px solid rgba(123, 127, 178, 0.35);
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.6);
   flex-shrink: 0;
   position: relative;
   top: 2px;
   cursor: default;
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 /* 可交互勾选框（md + 真实文件）：手型 + hover 提示可点 */
 .tv-md :deep(input[type="checkbox"][data-task]) { cursor: pointer; }
 .tv-md :deep(input[type="checkbox"][data-task]:hover) { border-color: rgba(123, 127, 178, 0.6); }
-.tv-md :deep(input[type="checkbox"]:checked) {
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-  border-color: transparent;
-  box-shadow: 0 2px 8px rgba(123, 127, 178, 0.35);
-}
-/* 勾用注册页同一条 SVG polyline（圆头折线），保证 icon 一致 */
-.tv-md :deep(input[type="checkbox"]:checked::after) {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='10'%20height='10'%20viewBox='0%200%2010%2010'%20fill='none'%3E%3Cpolyline%20points='1.5,5%204,7.5%208.5,2.5'%20stroke='white'%20stroke-width='1.6'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: center;
-}
 
 .tv-md :deep(blockquote) {
   margin: 1em 0;

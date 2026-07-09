@@ -342,8 +342,14 @@
           </button>
         </div>
         <input v-model="newEvent.name" ref="addInputRef" class="popup-input" placeholder="活动名称" v-enter="saveEvent" @keydown.esc="showAddForm = false" />
-        <DatePicker v-model="newEvent.date" placeholder="选择日期" />
-        <div class="time-box">
+        <div class="date-row">
+          <DatePicker class="date-row-picker" v-model="newEvent.date" placeholder="选择日期" />
+          <label class="allday-toggle">
+            <input type="checkbox" v-model="newEvent.allDay" @change="onToggleAllDay(newEvent)" />
+            全天
+          </label>
+        </div>
+        <div class="time-box" v-if="!newEvent.allDay">
           <input :value="newEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, newEvent, 'time')" @blur="newEvent.time = normTime(newEvent.time)" />
           <span class="time-dash">—</span>
           <input :value="newEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, newEvent, 'endTime')" @blur="newEvent.endTime = normTime(newEvent.endTime)" />
@@ -405,8 +411,14 @@
           </button>
         </div>
         <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" v-enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
-        <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
-        <div class="time-box">
+        <div class="date-row">
+          <DatePicker class="date-row-picker" v-model="editingEvent.date" placeholder="选择日期" />
+          <label class="allday-toggle">
+            <input type="checkbox" v-model="editingEvent.allDay" @change="onToggleAllDay(editingEvent)" />
+            全天
+          </label>
+        </div>
+        <div class="time-box" v-if="!editingEvent.allDay">
           <input :value="editingEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, editingEvent, 'time')" @blur="editingEvent.time = normTime(editingEvent.time)" />
           <span class="time-dash">—</span>
           <input :value="editingEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, editingEvent, 'endTime')" @blur="editingEvent.endTime = normTime(editingEvent.endTime)" />
@@ -541,7 +553,11 @@ function defaultTimeRange() {
   const sh = (now.getHours() + 1) % 24
   return { time: `${p(sh)}:00`, endTime: `${p((sh + 1) % 24)}:00` }
 }
-const newEvent     = ref({ name: '', date: todayIso.value, ...defaultTimeRange(), description: '' })
+// 取消勾选「全天」时，若时间还是空的（比如从全天区新建 / 编辑一个原本全天的活动），补一个默认时间段
+function onToggleAllDay(obj) {
+  if (!obj.allDay && !obj.time) Object.assign(obj, defaultTimeRange())
+}
+const newEvent     = ref({ name: '', date: todayIso.value, ...defaultTimeRange(), description: '', allDay: false })
 const addBtnRef    = ref(null)
 const addFormRef   = ref(null)
 const addFormStyle = ref({})
@@ -646,7 +662,7 @@ function ctxAddEvent() {
   const tr = cellCtx.kind === 'timed'  ? { time: cellCtx.time, endTime: cellCtx.endTime }
            : cellCtx.kind === 'allday' ? { time: '', endTime: '' }       // 全天区 → 无时间活动
            : defaultTimeRange()
-  newEvent.value = { name: '', date: iso, ...tr, description: '' }
+  newEvent.value = { name: '', date: iso, ...tr, description: '', allDay: cellCtx.kind === 'allday' }
   resetReminder()
   const ADD_H = 260
   const ctxTop = (window.innerHeight - cellCtx.y - 8 >= ADD_H)
@@ -1535,7 +1551,7 @@ function _wvUp(e) {
   const endV = b + 1   // 拖到 B 点 → 覆盖到 (B+1):00；点一下不拖 → 1 小时
   wvSelectedSlot.value = { iso: sel.iso, h0: a, h1: b }   // 点击后格子保持暗色
   selectedDate.value = sel.iso
-  newEvent.value = { name: '', date: sel.iso, time: `${p(a)}:00`, endTime: endV >= 24 ? '00:00' : `${p(endV)}:00`, description: '' }
+  newEvent.value = { name: '', date: sel.iso, time: `${p(a)}:00`, endTime: endV >= 24 ? '00:00' : `${p(endV)}:00`, description: '', allDay: false }
   resetReminder()
   // 单击同一格的二次点击才弹出添加活动弹窗；拖选或首次单击只做格子选中
   const prev = _prevSelectedSlot
@@ -1796,7 +1812,7 @@ function _addDefaults() {
 }
 
 function openAddForm() {
-  newEvent.value = { name: '', ..._addDefaults(), description: '' }
+  newEvent.value = { name: '', ..._addDefaults(), description: '', allDay: false }
   resetReminder()
   const btnEl = addBtnRef.value
   if (btnEl) {
@@ -1826,7 +1842,7 @@ function openAddForm() {
 
 function openEditForm(ev, nativeEv, useMousePos = false) {
   showAddForm.value = false
-  editingEvent.value = { _uid: ev._uid, id: ev.id, name: ev.name, date: ev.date, time: ev.time || '', endTime: ev.endTime || '', description: ev.description || '' }
+  editingEvent.value = { _uid: ev._uid, id: ev.id, name: ev.name, date: ev.date, time: ev.time || '', endTime: ev.endTime || '', description: ev.description || '', allDay: !ev.time }
   loadReminders(ev)
   const w = 240
   const EDIT_H = 300
@@ -1959,6 +1975,7 @@ async function applyReminders(eventId, name, date, time) {
 async function saveEditEvent() {
   const ev = editingEvent.value
   if (!ev?.name) return
+  if (ev.allDay) { ev.time = ''; ev.endTime = '' }
   showEditForm.value = false
 
   // 更新本地列表
@@ -2057,6 +2074,7 @@ async function deleteEventFromEdit() {
 
 async function saveEvent() {
   if (!newEvent.value.name) return
+  if (newEvent.value.allDay) { newEvent.value.time = ''; newEvent.value.endTime = '' }
   const date = newEvent.value.date || selectedDate.value
   const uid = 'u' + Date.now()
   const localItem = {
@@ -2074,7 +2092,7 @@ async function saveEvent() {
   }
   extraEvents.value.push(localItem)
   selectedDate.value = date
-  newEvent.value = { name: '', date: todayIso.value, ...defaultTimeRange(), description: '' }
+  newEvent.value = { name: '', date: todayIso.value, ...defaultTimeRange(), description: '', allDay: false }
   showAddForm.value = false
 
   const cacheKey = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
@@ -2299,6 +2317,9 @@ async function saveEvent() {
 .sidebar-ev-time { font-size: 11px; font-weight: 600; color: var(--accent, #7b7fb2); margin-left: 7px; margin-right: 4px; font-variant-numeric: tabular-nums; }
 .popup-row { display: flex; gap: 6px; align-items: center; }
 .popup-row > :first-child { flex: 1; min-width: 0; }
+.date-row { display: flex; align-items: center; gap: 8px; }
+.date-row-picker { flex: 1; min-width: 0; }
+.allday-toggle { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12.5px; color: var(--text-secondary); cursor: pointer; user-select: none; white-space: nowrap; }
 .time-box { position: relative; display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; box-sizing: border-box; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); transition: border-color 0.15s, box-shadow 0.15s; }
 .time-box:focus-within { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
 .time-inner { border: none; background: none; outline: none; font-size: 13px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028; padding: 0; width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
