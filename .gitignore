@@ -45,7 +45,10 @@ Thumbs.db
 # ===== IDE =====
 .idea/
 .vscode/
-.claude/   # Claude Code 本地 IDE 配置（launch.json / 进程锁等），不入仓
+# Claude Code 本地 IDE 配置（launch.json / 进程锁等），不入仓
+.claude/
+# 其他 agent 工具的本地目录，与本项目无关，不入仓
+.aionrs/
 *.iml
 *.iws
 *.ipr
