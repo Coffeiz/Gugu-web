@@ -27,6 +27,7 @@
 
 ### 新增
 
+- **咕咕新增站内全局搜索工具**（`agent/tools/global_search.py`、`app/api/v1/search.py`）：一次性跨项目/文件/文件夹/日程/客户/对话搜索，复用顶栏全局搜索同一套查询逻辑，定位「东西在哪」比挨个调专用工具更快更全。
 - **飞书支持图文消息/视频/转发卡片入站**（`agent/adapters/feishu.py`）：图文消息拼接段落文字并下载内嵌图片/视频，视频消息复用附件下载逻辑，转发的卡片消息抽取可读文字。
 - **定时任务按需精简工具/上下文，省 token**（`agent/tools/scheduled_tasks.py`、`agent/runner.py`、`agent/context/builder.py`）：创建/修改任务时顺手判断这个任务用得上哪些工具组、要不要带项目/日历/文件/记忆，存下来执行时按需注入；判断不出来就用回全量，安全优先。详见 [devlog.md](docs/devlog.md) 2026-07-08 条目。
 - **文件上传同名冲突支持覆盖/保留两者/跳过**（`views/Files/index.vue`、`Projects/components/ProjectModal.vue`）：上传前列出冲突文件，可选覆盖、保留两者或跳过。
