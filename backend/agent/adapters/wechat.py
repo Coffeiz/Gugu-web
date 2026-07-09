@@ -162,11 +162,20 @@ def _extract_quoted(ref_msg) -> tuple[str | None, list]:
 
     微信 iLink 会把被引用消息内嵌在 `ref_msg.message_item`，这里把文字单独抽出来给
     `quoted_text`，把引用图片等媒体按普通 item 结构返给 `_ingest_wechat_media` 继续下载/
-    解密/暂存。"""
+    解密/暂存。
+
+    `ref_msg.title`：对照 openclaw-weixin（`@tencent-weixin/openclaw-weixin` 发布包）源码
+    确认这是 iLink 协议里的引用摘要字段，`message_item` 拿不到文字时优先兜底用它——但实测
+    过的「type=0 + 空 button_item_list」这种空壳结构里，`ref_msg` 只有 `message_item` 一个
+    key，没有 `title`，说明这种情况下 openclaw 的代码也一样拿不到文字（它会静默丢弃这条引用，
+    不像这里显式给占位符）。加上 `title` 判断是防御性覆盖，不是这次真实案例的解法。"""
     if not isinstance(ref_msg, dict):
         return None, []
+    title = (ref_msg.get("title") or "").strip()
     mi = ref_msg.get("message_item")
     if not isinstance(mi, dict):
+        if title:
+            return title, []
         _log_quoted_shape_if_needed(ref_msg, False)
         return None, []
     quoted_type = mi.get("type")
@@ -183,6 +192,8 @@ def _extract_quoted(ref_msg) -> tuple[str | None, list]:
     if quoted_type == 5 or mi.get("video_item"):
         return "[视频消息]", []
     _log_quoted_shape_if_needed(ref_msg, False)
+    if title:
+        return title, []
     if quoted_type == 0:
         # type=0：实测发现 iLink 的 getupdates 接口对"引用消息"这件事，不管原消息是机器人发的
         # 还是用户自己发的文字，message_item 都只给 msg_id/时间戳/完成状态等元数据（外加空的

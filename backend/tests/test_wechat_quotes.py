@@ -22,6 +22,22 @@ def _wechat_text_msg(**overrides):
     return msg
 
 
+def test_wechat_extracts_quoted_title_as_fallback_summary():
+    # 对照 openclaw-weixin 源码确认 ref_msg.title 是引用摘要字段，message_item 没有可用文字
+    # 时优先用它兜底（防御性覆盖，不是本轮真实案例的解法——那次 ref_msg 没有 title）。
+    quoted_text, quoted_items = wechat._extract_quoted({
+        "title": "之前那条消息的摘要",
+        "message_item": {
+            "type": 0,
+            "msg_id": "abc123",
+            "button_item_list": [],
+        },
+    })
+
+    assert quoted_text == "之前那条消息的摘要"
+    assert quoted_items == []
+
+
 def test_wechat_extracts_quoted_message_as_unrecoverable_placeholder():
     # 真实反馈：不管引用的是咕咕的回复还是用户自己发的文字，iLink 都只给
     # msg_id/时间戳/完成状态等元数据（button_item_list 空数组），不带原文，也没有按 msg_id
