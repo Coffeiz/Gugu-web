@@ -1795,6 +1795,7 @@ async function send(forcedText?) {
   flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
 .chat-main.is-expanded .chat-messages .msg-bubble { max-width: 72%; font-size: 14px; }
+.chat-main.is-expanded .chat-messages .msg-quoted { max-width: 72%; font-size: 13.5px; }
 /* 虚拟列表占位容器：高度由 JS 撑出来（虚拟内容高度 + 顶部留白），撑出的空间给绝对定位的消息行腾地方 */
 .msg-virtual-spacer { position: relative; width: 100%; }
 /* 绝对定位的行不认祖先的 padding（top:0/left:0 是相对边框盒，不是内容盒），
@@ -2089,13 +2090,14 @@ async function send(forcedText?) {
   background: linear-gradient(135deg, #7b7fb2, #9590c4); color: white;
   border-bottom-right-radius: 4px;
 }
-/* 引用/回复预览条：浅色小字，截 3 行，跟正文气泡区分开——只是提示"引用了什么"，不是正文 */
+/* 引用/回复预览条：浅色小字，跟正文气泡区分开——只是提示"引用了什么"，不是正文。
+   截到 8 行，超出部分靠 hover 的原生 title 提示看全文，避免长引用只剩一小段看不出内容。 */
 .msg-quoted {
-  max-width: 88%; margin-bottom: 4px; padding: 5px 10px;
-  font-size: 12px; line-height: 1.5; color: var(--text-secondary);
+  max-width: 88%; margin-bottom: 4px; padding: 6px 10px;
+  font-size: 12.5px; line-height: 1.5; color: var(--text-secondary);
   background: rgba(123,127,178,0.08); border-left: 2.5px solid rgba(123,127,178,0.45);
   border-radius: 4px; white-space: pre-wrap; word-break: break-word;
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden;
 }
 /* 咕咕发来的文件卡片 */
 .msg-files { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 88%; min-width: 0; }
