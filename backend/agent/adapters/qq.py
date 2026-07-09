@@ -96,6 +96,8 @@ class _GuguQQClient(botpy.Client):
         openid = message.author.user_openid if message.author else None
         # 引用消息解析：从原始 payload 中提取被引用的消息文本
         raw_data = getattr(message, "_raw_data", {})
+        # DEBUG: 打印原始 payload 的 keys，确认是否包含 msg_elements/message_scene
+        print(f"[qq-debug] raw_data keys: {list(raw_data.keys())}", flush=True)
         quoted_text = _extract_quoted_text(raw_data)
         if quoted_text:
             text = f"[引用消息: {quoted_text}]\n{text}"
