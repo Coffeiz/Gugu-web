@@ -175,7 +175,8 @@ async def _deep_research(db, user_id, args: dict):
 
 
 class SearchSkill(BaseSkill):
-    name = "search"
+    name = "web_search"   # 2026-07-10 前叫 "search"，跟站内 global_search 撞名太像，改名区分；
+                          # 旧定时任务 tool_groups 里存的 "search" 兼容映射见 agent/runner.py
     tools = [
         Tool(
             name="web_search", label="联网搜索",
