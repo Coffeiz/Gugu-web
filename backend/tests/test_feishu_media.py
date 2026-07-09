@@ -24,6 +24,26 @@ def test_extract_card_text_collects_markdown_and_text_nodes():
     assert feishu._extract_card_text(content) == "第一段\n第二段"
 
 
+def test_extract_card_text_handles_streaming_card_schema():
+    """咕咕的流式回复卡片是 CardKit schema 2.0，elements 嵌在 body 里一层，
+    不是旧版扁平的 {"elements": [...]}——回归测试锁定这两种结构都要能抽出文字。"""
+    content = {
+        "schema": "2.0",
+        "config": {"streaming_mode": False},
+        "header": {"title": {"tag": "plain_text", "content": "咕咕"}},
+        "body": {
+            "elements": [
+                {"tag": "markdown", "content": "流式卡片正文", "element_id": "markdown_1"},
+            ],
+        },
+    }
+
+    text = feishu._extract_card_text(content)
+
+    assert text == "流式卡片正文"
+    assert "咕咕" not in text   # header 标题不该混进正文
+
+
 def test_ingest_interactive_returns_card_text(monkeypatch):
     msg = _msg("interactive", {"elements": [[{"tag": "markdown", "content": "卡片正文"}]]})
 

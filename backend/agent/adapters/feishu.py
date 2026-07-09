@@ -160,7 +160,14 @@ def _ingest_post(client, msg, owner: str) -> tuple[str, list]:
 
 
 def _extract_card_text(content) -> str:
-    """从卡片 JSON 里递归拍平抽取可读文字（markdown/text 节点），跳过 table 等非叙述性组件。"""
+    """从卡片 JSON 里递归拍平抽取可读文字（markdown/text 节点），跳过 table 等非叙述性组件。
+
+    直接从整个 content 开始递归，不假设 elements 在哪一层——旧版非流式卡片是扁平的
+    `{"elements": [...]}`，咕咕现在的流式卡片是 CardKit schema 2.0 的
+    `{"schema": "2.0", "body": {"elements": [...]}}`，elements 嵌在 body 里一层。
+    之前只从 `content["elements"]` 起步，流式卡片这层结构对不上，导致引用咕咕自己的
+    流式回复时永远抽出空文本（[空消息]）。递归整个 content 两种结构都能兼容。
+    """
     parts: list[str] = []
 
     def _collect(v):
@@ -174,7 +181,7 @@ def _extract_card_text(content) -> str:
             for v2 in v:
                 _collect(v2)
 
-    _collect(content.get("elements") if isinstance(content, dict) else content)
+    _collect(content)
     return "\n".join(p for p in parts if p).strip()
 
 

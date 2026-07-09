@@ -18,7 +18,7 @@
 | Phase 3：QQ raw HTTP 发送侧 | ✅ 已完成（未按 3-7 天灰度期提前实施） | `send_c2c`/`send_group`/`send_file`/短路回复/ack 全部改 raw HTTP 直连 QQ Bot API，按 channel_id 缓存 access_token 并在过期前刷新；markdown 无权限回退纯文本、401 清缓存重试逻辑保留。 |
 | 清理：完全移除 botpy | ✅ 已完成 | `_GuguQQClient`（botpy `Client` 子类）、monkey patch、`QQ_RAW_WS_ENABLED` 回退开关、`qq-botpy` 依赖全部删除；本地已 `pip uninstall qq-botpy` 验证 83 个测试仍全过。QQ 目前不开放 aigcbot 群聊功能，群聊代码路径保留但暂无法验证。 |
 | 飞书多媒体入站补齐 post/media/interactive | ✅ 已完成 | `post`（图文）拼接段落文字+下载内嵌图片/视频；`media`（视频消息）复用单附件下载逻辑；`interactive`（用户转发卡片）抽取可读文字，不下载卡片内嵌媒体（组件结构太杂，价值有限）。`_fetch_quoted_text` 引用反查同步支持这三种类型的占位/文字提取。 |
-| 修复：引用咕咕自己的流式卡片回复反查失败 | ✅ 已完成 | **devserver 实测踩坑**：引用一条咕咕自己发的流式卡片回复时，`_fetch_quoted_text` 反查拿到的是飞书的兼容性占位文案「请升级至最新版本客户端，以查看内容」，不是卡片真实内容——因为咕咕的流式卡片是 CardKit 动态卡片（消息体引用 `card_id`，不是内联 `elements`），`GetMessageRequest` 默认不返回这类卡片的渲染内容。对照 QwenPaw 同款逻辑发现要带 `card_msg_content_type=user_card_content` 查询参数才能拿到真实文本，补上后修复。 |
+| 修复：引用咕咕自己的流式卡片回复反查失败 | ✅ 已完成（两轮踩坑才修好） | **devserver 实测踩坑 #1**：不带 `card_msg_content_type=user_card_content` 查询参数时反查拿到的是飞书兼容性占位文案「请升级至最新版本客户端，以查看内容」，不是卡片真实内容；对照 QwenPaw 同款逻辑补上参数后修复。**踩坑 #2**：补完参数后又变成反查出「[空消息]」——`_extract_card_text` 一直只从 `content["elements"]` 起步找文字，但咕咕流式卡片是 CardKit schema 2.0，elements 实际嵌在 `content["body"]["elements"]` 里一层，旧代码假设的是非流式卡片那种扁平 `{"elements":[...]}` 结构。改成直接从整个 `content` 递归（两种结构都能兼容）后才真正修好。 |
 
 已验证：
 
