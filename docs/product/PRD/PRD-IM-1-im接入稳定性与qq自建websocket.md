@@ -90,7 +90,7 @@
 | `app_id` 错投保护 | ✅ 已实现 | 检查 event header `app_id` | 已补齐 |
 | stale retry 丢弃 | ✅ 已实现 | 基于 event `create_time` + server Date offset | 已补齐（首期用本机时间，保留校时扩展点） |
 | `message_id` 去重 | ✅ 已实现 | OrderedDict LRU | 已补齐 |
-| 引用消息 | 支持 `parent_id` 反查文字/interactive card 文本 | 支持文字和引用媒体 | 保持，后续可扩引用媒体 |
+| 引用消息 | ✅ 支持 `parent_id` 反查文字/interactive card 文本/流式卡片文本，引用图片可正常识别（见 FR-FS-5） | 支持文字和引用媒体 | 已完成并经 devserver 实测确认 |
 | 多媒体入站 | ✅ text/post/image/file/media/audio/interactive | text/post/image/file/media/audio/interactive | 已补齐 `post`（图文拼段落+内嵌图片/视频下载）、`media`（视频）、`interactive`（转发卡片抽取文字，不下载内嵌媒体） |
 | 流式回复 | ✅ raw httpx CardKit，失败回落普通文本，成功后 finalize | SDK CardKit hook | 已补 finalize |
 
@@ -161,6 +161,27 @@
 
 - finalize 失败不影响最终回复展示。
 - finalize 失败时不重复发送普通文本，除非最终 patch 也失败。
+
+#### FR-FS-5：引用消息识别（✅ 已完成，已用户 devserver 实测确认）
+
+飞书引用/回复历史消息时，`_fetch_quoted_text` 按 `parent_id` 反查原消息内容；引用咕咕自己发的
+CardKit 流式卡片回复时，需要额外处理两个坑：
+
+- `GetMessageRequest` 必须带 `card_msg_content_type=user_card_content` 查询参数，否则反查拿到
+  的是飞书兼容性占位文案「请升级至最新版本客户端」，不是卡片真实内容。
+- `_extract_card_text` 抽取卡片文字时要直接从整个 `content` 递归查找，不能假设 `elements` 在
+  哪一层——流式卡片是 CardKit schema 2.0，`elements` 嵌在 `content["body"]["elements"]`，跟
+  非流式卡片扁平的 `{"elements":[...]}` 结构不一样。
+
+引用原文单独走 `quoted_text`（不拼进 `text`/`ConversationMessage.content`），网页展示单独渲染
+预览条，完整内容仍喂给模型（见 §7.1、`agent/runner.py` 的 `_with_quoted_context`）。
+
+验收标准：
+
+- 引用普通文字消息：反查出真实文字。✅
+- 引用咕咕自己的流式卡片回复：反查出真实正文，不是占位文案/空消息。✅ devserver 实测确认。
+- 引用图片：识别出附件并进入模型输入。✅ devserver 实测确认。
+- 网页聊天记录里引用原文单独一条预览展示，不与正文混在一起摊平显示。✅
 
 ### 5.2 QQ 自建 WebSocket 接收侧
 
@@ -334,6 +355,23 @@ QQ raw event 转咕咕 payload 时保持现有字段；**2026-07-10 起 `text` �
 - 涉及消息内容时只打印 `len`、`fingerprint()`、附件数量、trace_id。
 - raw QQ event 仅允许在本地临时调试时手动打开，默认不得打印完整 payload。
 - 移除当前 QQ 适配器中的 raw keys debug 日志。
+
+**2026-07-10 全量审计**（用 general-purpose agent 逐文件核对 feishu.py/qq.py/wechat*.py/
+worker.py/logsafe.py/runner.py 的每一条 print/log）：
+
+- ✅ 确认：所有"收到消息"/"发送回复"日志行都走 `logsafe.fingerprint()` + `len()`，没有一处
+  直接打印 `message.text`/`content`；引用结构诊断日志（`_log_quote_shape_if_needed` 系列）
+  只打 key 名/类型，不打值。`logsafe.fingerprint()` 本身是 md5 前 8 位单向摘要，没有可逆
+  风险。
+- 🔧 发现真实违规并修复：`worker.py` 里三处"发文件"日志（wechat/feishu/qq）直接打印真实文件名
+  （可能带敏感信息，如"张三合同.pdf"），跟本节要求的"附件文件名原文"红线不符——已改成
+  `logsafe.fingerprint(fname)`。
+- 🔧 顺手收紧三处 BORDERLINE（非确认违规但不够谨慎）：`qq.py` 富媒体上传失败日志、QQ
+  session 失效日志、`wechat.py` sendmessage 失败日志，之前分别打印完整响应体/原始 WS
+  payload，改成只打字段名或去掉整个 payload。
+- 剩余约 35 处 `... 失败: {type(e).__name__}: {e}` 异常信息打印（分布在四个适配器）标记
+  BORDERLINE 未动：`str(e)` 理论上可能在极端情况下回显请求/响应片段，但都是网络库/SDK 抛出
+  的异常，正常运行下不含聊天正文，暂不逐一处理，后续如有实锤再改。
 
 ---
 

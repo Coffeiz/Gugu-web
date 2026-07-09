@@ -471,7 +471,7 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
                             print(f"[qq:{channel_id}] QQ 要求重连", flush=True)
                             break
                         elif op == _OP_INVALID_SESSION:
-                            print(f"[qq:{channel_id}] QQ session 失效: {data}", flush=True)
+                            print(f"[qq:{channel_id}] QQ session 失效", flush=True)
                             session_id = None
                             last_seq = None
                             break
@@ -678,7 +678,9 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
             media = await _qq_request(channel_id, "POST", f"/v2/users/{openid}/files", json_body=body)
             file_info = media.get("file_info") if isinstance(media, dict) else None
             if not file_info:
-                print(f"[qq] 富媒体上传无 file_info: {media}", flush=True)
+                # 只打字段名，不打整个响应体（万一 QQ 把请求里的 file_name 之类字段原样回显）
+                keys = sorted(media.keys()) if isinstance(media, dict) else type(media).__name__
+                print(f"[qq] 富媒体上传无 file_info: keys={keys}", flush=True)
                 return False
             # 2) 发媒体消息（被动回复带 msg_id；文件用 content 让 QQ 显示文件名）
             msg_body = {"msg_type": 7, "media": {"file_info": file_info},

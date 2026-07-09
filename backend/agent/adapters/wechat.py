@@ -433,7 +433,9 @@ async def send_text(to_user_id: str, text: str, channel_id: str | None = None,
             resp = await client.send_text(to_user_id, text, context_token)
             ret = (resp or {}).get("ret") if isinstance(resp, dict) else None
             if ret not in (0, None):   # iLink HTTP 200 但 ret≠0 = 业务失败（如 context_token 过期），不抛异常→在此暴露
-                print(f"[wechat] sendmessage ret={ret}（消息可能未投递）resp={str(resp)[:200]}", flush=True)
+                # 只打字段名，不打整个响应体（万一原样回显了发送内容）
+                keys = sorted(resp.keys()) if isinstance(resp, dict) else type(resp).__name__
+                print(f"[wechat] sendmessage ret={ret}（消息可能未投递）resp_keys={keys}", flush=True)
             return True
         except Exception as e:
             print(f"[wechat] 发送失败(第{attempt}次): {type(e).__name__}: {e}", flush=True)

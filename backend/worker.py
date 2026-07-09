@@ -218,24 +218,28 @@ async def _send_file_wechat(payload, storage_key: str, ext: str, fname: str):
     else:
         ok = await _wechat.send_file(openid, data, fname, context_token, payload.get("channel_id"))
         label = "文件"
-    print(f"[worker] wechat 发{label} {fname}: {'ok' if ok else '失败'}（{len(data)} bytes）", flush=True)
+    from agent import logsafe
+    print(f"[worker] wechat 发{label} fp={logsafe.fingerprint(fname)}: "
+          f"{'ok' if ok else '失败'}（{len(data)} bytes）", flush=True)
     if not ok:
         await _send(payload, f"《{fname}》没发出去（微信那边拒了），你去网页对话或文件库里下载吧。")
 
 
 async def _send_file_feishu(payload, ext: str, data: bytes, fname: str):
     from agent.adapters import feishu
+    from agent import logsafe
     # 超限直接拦下，别让飞书返回错误页把 SDK 撞成 JSONDecodeError；改发一句说明
     is_img = (ext or "").lower() in _FEISHU_IMAGE_EXTS
     limit = _FEISHU_IMAGE_MAX if is_img else _FEISHU_FILE_MAX
     if len(data) > limit:
         mb, lim_mb = len(data) / 1048576, limit // 1048576
-        print(f"[worker] feishu 发文件 {fname}: 跳过（{mb:.1f}MB > {lim_mb}MB 上限）", flush=True)
+        print(f"[worker] feishu 发文件 fp={logsafe.fingerprint(fname)}: "
+              f"跳过（{mb:.1f}MB > {lim_mb}MB 上限）", flush=True)
         await _send(payload, f"《{fname}》有 {mb:.0f}MB，超过飞书 {lim_mb}MB 上限发不了 😅 你去网页对话或文件库里下载吧。")
         return
     display_name = fname.rsplit(".", 1)[0] if "." in fname else fname
     ok = await feishu.send_file(payload.get("chat_id"), data, display_name, ext, payload.get("channel_id"))
-    print(f"[worker] feishu 发文件 {fname}: {'ok' if ok else '失败'}", flush=True)
+    print(f"[worker] feishu 发文件 fp={logsafe.fingerprint(fname)}: {'ok' if ok else '失败'}", flush=True)
     if not ok:
         await _send(payload, f"《{fname}》没发出去（飞书那边拒了），你去网页对话或文件库里下载吧。")
 
@@ -247,6 +251,7 @@ _QQ_FILE_MAX = 10 * 1024 * 1024
 
 async def _send_file_qq(payload, storage_key: str, ext: str, display_name: str, fname: str):
     from agent.adapters import qq
+    from agent import logsafe
     from app.services.storage import get_storage
     openid = payload.get("platform_user_id")
     storage = get_storage()
@@ -262,7 +267,8 @@ async def _send_file_qq(payload, storage_key: str, ext: str, display_name: str, 
             return
         ok = await qq.send_file(openid, data, display_name, ext,
                                 payload.get("channel_id"), payload.get("message_id"))
-    print(f"[worker] qq 发文件 {fname}: {'ok' if ok else '失败'}{'（URL模式）' if url else ''}", flush=True)
+    print(f"[worker] qq 发文件 fp={logsafe.fingerprint(fname)}: "
+          f"{'ok' if ok else '失败'}{'（URL模式）' if url else ''}", flush=True)
     if not ok:
         await _send(payload, f"《{fname}》没发出去（QQ 那边拒了），你去网页对话或文件库里下载吧。")
 
