@@ -11,7 +11,7 @@
 
 ### 改进
 
-- **QQ 发送侧改用 raw HTTP，不再依赖 botpy**（`agent/adapters/qq.py`）：文本/markdown 回退/图片文件发送全部直连 QQ Bot API。
+- **QQ 彻底移除 botpy 依赖**（`agent/adapters/qq.py`、`requirements.txt`）：收发两侧全部改为自建 raw WebSocket/HTTP，不再需要 qq-botpy 包。
 - **项目许可证改为 Apache-2.0**（`LICENSE`、`README.md`）：项目开源协议从 MIT 调整为 Apache License 2.0，并补齐许可证文件与前端包元数据。
 - **咕咕聊天改用虚拟滚动**（`components/common/GuguChat.vue`）：长会话不再一次性渲染全部消息，打开更快、滚动更流畅。
 - **记忆系统拆分为用户画像/行为模式两个文件**（`agent/memory/store.py`、`agent/memory/reflection.py`）：不再用一份文件混装稳定身份和行为习惯，各自判断标准更清晰、不共用不必要的置信度/衰减机制。详见 [devlog.md](docs/devlog.md) 2026-07-08 条目。
