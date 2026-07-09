@@ -158,6 +158,7 @@
               <div v-for="bar in weekAllDayShown" :key="bar.id" class="wv-pbar cal-chip"
                    :class="{ 'cal-done': bar.status === 'done', 'bar-start': bar.startsHere, 'bar-end': bar.endsHere }"
                    :style="pbarStyle(bar)" @click.stop="openProject(bar)" :title="bar.name">
+                <span class="bar-proj-tag">项目</span>
                 <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>{{ bar.name }}
               </div>
               <template v-for="(d, ci) in weekDays" :key="'it' + d.iso">
@@ -165,6 +166,7 @@
                      class="wv-allday-ev cal-chip" :class="{ 'cal-done': it.isProject && it.status === 'done' }"
                      :style="{ left: `calc(${ci / 7 * 100}% + 6px)`, right: `calc(${(6 - ci) / 7 * 100}% + 6px)`, top: ((wvShownRows + ii) * 20) + 'px', background: it.isProject ? capBg(it.accent, it.progress) : it.accent + '28', color: darkenHex(it.accent), borderColor: it.accent + '70' }"
                      @click.stop="it.isProject ? openProject(it) : openEditForm(it, $event, true)" :title="it.name">
+                  <span class="chip-proj-tag" :class="{ 'chip-ev-tag': !it.isProject }">{{ it.isProject ? '项目' : '活动' }}</span>
                   <span v-if="it.isProject" class="bar-status-dot" :class="'bsd-' + it.status"></span>{{ it.name }}
                 </div>
                 <!-- 该天列被隐藏的跨天项目 → 在该列底部显示「+K 更多」（样式/逻辑完全同月视图，按天各自计数）-->
@@ -198,7 +200,7 @@
                      :style="{ top: b.top + 'px', height: b.height + 'px', left: 'calc(' + b.leftPct + '% + 1px)', width: 'calc(' + b.widthPct + '% - 2px)', background: b.ev.accent + '2e', borderColor: b.ev.accent + '85', color: darkenHex(b.ev.accent) }"
                      @mousedown.stop="onEvDown(b.ev, $event)" @mousemove="onEvHover($event)" :title="b.ev.name">
                   <span class="wv-ev-t">{{ b.ev.time }}{{ b.ev.endTime ? '–' + b.ev.endTime : '' }}</span>
-                  <span class="wv-ev-n">{{ b.ev.name }}</span>
+                  <span class="wv-ev-n"><span class="chip-proj-tag chip-ev-tag">活动</span>{{ b.ev.name }}</span>
                   <span v-if="b.ev.description" class="wv-ev-d">{{ b.ev.description }}</span>
                 </div>
               </div>
@@ -2319,7 +2321,10 @@ async function saveEvent() {
 .ev-del-btn:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); transform: scale(1.1); }
 .sidebar-ev-bar { width: 3px; border-radius: 99px; align-self: stretch; flex-shrink: 0; min-height: 26px; }
 .sidebar-ev-name { font-size: 12px; font-weight: 500; color: var(--text-primary); line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
-.sidebar-ev-time { font-size: 11px; font-weight: 600; color: var(--accent, #7b7fb2); margin-left: 7px; margin-right: 4px; font-variant-numeric: tabular-nums; }
+/* min-width 按最长内容「00:00–00:00」固定：周视图拖拽改时间时这里跟着实时刷新，
+   光靠 tabular-nums 治不住——省略结束时间时整串变短，仍会把后面的活动名往左右推一下，
+   固定宽度左对齐，数字随便怎么变，名字位置纹丝不动。 */
+.sidebar-ev-time { display: inline-block; min-width: 11ch; font-size: 11px; font-weight: 600; color: var(--accent, #7b7fb2); margin-left: 7px; margin-right: 4px; font-variant-numeric: tabular-nums; }
 .popup-row { display: flex; gap: 6px; align-items: center; }
 .popup-row > :first-child { flex: 1; min-width: 0; }
 .date-row { display: flex; align-items: center; gap: 8px; }
@@ -2462,7 +2467,7 @@ async function saveEvent() {
 .week-view { display: flex; flex-direction: column; flex: 1; min-height: 0; user-select: none; -webkit-user-select: none; }
 .wv-gutter { width: 46px; flex: none; }
 .wv-head { display: flex; border-bottom: 1px solid rgba(123,127,178,0.18); padding-bottom: 4px; }
-.wv-dhead { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 3px 0; cursor: pointer; }
+.wv-dhead { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 0; cursor: pointer; }
 .wv-dhead > span { position: relative; z-index: 1; }
 /* 选中层(::before) + 悬停层(::after)：两层独立、可叠加（hover 选中日 = 两层相加），均 opacity 淡入淡出，
    与小时格/月格一致；opacity 走合成层、零主线程重绘，不拖累磨砂背景 */
