@@ -14,6 +14,8 @@ lark 无 stop()，单连接断不掉 → 一个 bot 一个子进程，由 superv
 """
 from __future__ import annotations
 
+from collections import OrderedDict
+
 import asyncio
 import json
 import os
@@ -28,6 +30,9 @@ from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 from app.core import redis as R
 
 STREAM = R.IM_INBOUND_STREAM
+
+_FEISHU_PROCESSED_IDS_MAX = 1000
+_FEISHU_STALE_MSG_THRESHOLD_MS = 20_000
 
 
 # 能被咕咕「读内容」的文本类扩展名（与 chat_attach 同口径）
@@ -146,6 +151,53 @@ def _fetch_quoted_text(client, parent_id: str) -> str | None:
 
 
 # ── 接收（网关子进程，凭据/归属从 env 注入）──
+def _header_value(data, name: str):
+    """兼容 lark SDK 对象和测试 dict，读取事件 header 字段。"""
+    header = getattr(data, "header", None)
+    if isinstance(header, dict):
+        return header.get(name)
+    return getattr(header, name, None)
+
+
+def _drop_misrouted_event(data, expected_app_id: str, channel_id: str) -> bool:
+    """丢弃被 lark SDK 错投到当前子进程的其他 app 事件。"""
+    event_app_id = _header_value(data, "app_id")
+    if event_app_id and expected_app_id and event_app_id != expected_app_id:
+        print(f"[feishu:{channel_id}] 丢弃错投事件 app_id={str(event_app_id)[-6:]}", flush=True)
+        return True
+    return False
+
+
+def _drop_stale_event(data, channel_id: str, now_ms: int | None = None) -> bool:
+    """丢弃飞书 retry 推来的旧消息，避免同一用户收到迟到重复回复。"""
+    create_time = _header_value(data, "create_time")
+    if not create_time:
+        return False
+    try:
+        create_ms = int(create_time)
+    except (TypeError, ValueError):
+        return False
+    now = now_ms if now_ms is not None else int(time.time() * 1000)
+    age_ms = now - create_ms
+    if age_ms > _FEISHU_STALE_MSG_THRESHOLD_MS:
+        print(f"[feishu:{channel_id}] 丢弃飞书旧 retry age={age_ms / 1000:.1f}s", flush=True)
+        return True
+    return False
+
+
+def _seen_message_id(processed: OrderedDict[str, None], message_id: str) -> bool:
+    """message_id 进程内 LRU 去重；返回 True 表示已处理过。"""
+    mid = (message_id or "").strip()
+    if not mid:
+        return False
+    if mid in processed:
+        return True
+    processed[mid] = None
+    while len(processed) > _FEISHU_PROCESSED_IDS_MAX:
+        processed.popitem(last=False)
+    return False
+
+
 def _do_react(client, message_id: str, emoji_type: str) -> bool:
     """给某条消息加表情回应（同步，给 asyncio.to_thread 用）。失败返回 False。"""
     try:
@@ -208,11 +260,20 @@ def _quick_react(text: str, has_media: bool) -> tuple[str, str]:
     return _random.choice(_DEFAULT[1]), _DEFAULT[0]
 
 
-def _make_on_message(channel_id: str, owner: str, api_client):
+def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: str = ""):
+    processed_message_ids: OrderedDict[str, None] = OrderedDict()
+
     def _on_message(data: P2ImMessageReceiveV1) -> None:
+        if _drop_misrouted_event(data, expected_app_id, channel_id):
+            return
+        if _drop_stale_event(data, channel_id):
+            return
         ev = data.event
         msg = ev.message
         if not msg:
+            return
+        if _seen_message_id(processed_message_ids, msg.message_id):
+            print(f"[feishu:{channel_id}] 丢弃重复消息 message_id={str(msg.message_id)[-8:]}", flush=True)
             return
         mt = msg.message_type
         attachments: list = []
@@ -296,7 +357,7 @@ def serve() -> None:
     # 「processor not found」ERROR 刷屏（看着像断开，其实不是）。注册个 no-op 吞掉即可。
     handler = (
         lark.EventDispatcherHandler.builder("", "")
-        .register_p2_im_message_receive_v1(_make_on_message(channel_id, owner, api_client))
+        .register_p2_im_message_receive_v1(_make_on_message(channel_id, owner, api_client, app_id))
         .register_p2_im_message_reaction_created_v1(lambda data: None)
         .register_p2_im_message_reaction_deleted_v1(lambda data: None)
         .build()
@@ -716,6 +777,52 @@ async def _do_streaming_update_text(app_id: str, app_secret: str, card_id: str,
     return True
 
 
+async def _do_finalize_streaming_card(app_id: str, app_secret: str, card_id: str,
+                                      summary_text: str, sequence: int, uuid: str) -> bool:
+    """关闭 CardKit streaming_mode，并设置会话列表 summary。
+
+    这是纯收尾动作：失败不影响用户已经看到的最终卡片正文。
+    """
+    try:
+        token = await _get_tenant_token(app_id, app_secret)
+    except Exception as e:
+        print(f"[feishu] tenant_token 拿失败: {type(e).__name__}: {e}", flush=True)
+        return False
+    preview = (summary_text or "").strip()
+    if len(preview) > 80:
+        preview = preview[:77] + "..."
+    if not preview:
+        preview = "✅"
+    settings = {
+        "config": {
+            "streaming_mode": False,
+            "summary": {"content": preview},
+        },
+    }
+    body = {
+        "settings": json.dumps(settings, ensure_ascii=False),
+        "sequence": sequence,
+        "uuid": uuid,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as cli:
+            resp = await cli.request(
+                "PATCH",
+                f"https://open.feishu.cn/open-apis/cardkit/v1/cards/{card_id}/settings",
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json; charset=utf-8"},
+                content=json.dumps(body, ensure_ascii=False),
+            )
+        data = resp.json()
+    except Exception as e:
+        print(f"[feishu] finalize_streaming_card 异常: {type(e).__name__}: {e}", flush=True)
+        return False
+    if data.get("code") != 0:
+        print(f"[feishu] finalize_streaming_card 失败: code={data.get('code')} msg={data.get('msg')}", flush=True)
+        return False
+    return True
+
+
 async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str) -> bool:
     """raw httpx 版 update_card：节流策略由 caller 控制（每 ≥200ms 或 ≥30 字调一次）。
 
@@ -872,6 +979,13 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
     elif stream_ok and final_text:
         # 已 patch 过同文本 → 不用再 patch，但仍显式结束一下（飞书端 streaming update 幂等）
         stream_ok = await _patch(final_text)
+    if stream_ok:
+        _card_seq[_stream_seq_key] = _card_seq.get(_stream_seq_key, 0) + 1
+        finalized = await _do_finalize_streaming_card(
+            app_id, app_secret, card_id, final_text,
+            sequence=_card_seq[_stream_seq_key], uuid=uuid.uuid4().hex)
+        if not finalized:
+            print(f"[feishu] finalize_streaming_card 失败但保留已更新卡片: card_id={card_id}", flush=True)
     return (stream_ok, final_resp)
 
 
