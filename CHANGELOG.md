@@ -11,6 +11,7 @@
 
 ### 改进
 
+- **项目许可证改为 Apache-2.0**（`LICENSE`、`README.md`）：项目开源协议从 MIT 调整为 Apache License 2.0，并补齐许可证文件与前端包元数据。
 - **咕咕聊天改用虚拟滚动**（`components/common/GuguChat.vue`）：长会话不再一次性渲染全部消息，打开更快、滚动更流畅。
 - **记忆系统拆分为用户画像/行为模式两个文件**（`agent/memory/store.py`、`agent/memory/reflection.py`）：不再用一份文件混装稳定身份和行为习惯，各自判断标准更清晰、不共用不必要的置信度/衰减机制。详见 [devlog.md](docs/devlog.md) 2026-07-08 条目。
 - **`/memory` `/forget` 命令适配 profile+pattern 拆分**（`agent/commands.py`）：`/memory` 分开展示「关于你」（画像）和「行为习惯」（模式），`/forget` 同时搜索两者。

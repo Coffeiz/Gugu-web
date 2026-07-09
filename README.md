@@ -7,7 +7,7 @@
 ![status](https://img.shields.io/badge/status-active-success)
 ![frontend](https://img.shields.io/badge/frontend-Vue%203-42b883)
 ![backend](https://img.shields.io/badge/backend-FastAPI-009688)
-![license](https://img.shields.io/badge/license-MIT-blue)
+![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 ---
 
@@ -282,7 +282,7 @@ make backup      # 备份数据库
 
 ## 📄 License
 
-MIT
+Apache-2.0
 
 ---
 

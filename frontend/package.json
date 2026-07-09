@@ -2,6 +2,7 @@
   "name": "gugu-web",
   "version": "0.15.2",
   "private": true,
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",
     "dev:admin": "vite --config vite.admin.config.js",
