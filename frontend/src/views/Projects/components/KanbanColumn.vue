@@ -90,6 +90,7 @@ function onDrop(e) {
 .col-body::-webkit-scrollbar { width: 3px; }
 .col-body::-webkit-scrollbar-track { background: transparent; margin-top: 8px; margin-bottom: 8px; }
 .col-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 99px; }
+/* 跟文件库「上传文件」(.fc-upload) 同款：只换边框/文字/背景色，不带外阴影、不抬起 */
 .add-card {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   width: 100%; flex-shrink: 0; min-height: 96px;
@@ -97,7 +98,6 @@ function onDrop(e) {
   border: 1.5px dashed rgba(0,0,0,0.1);
   border-radius: var(--radius-md);
   corner-shape: squircle;
-  box-shadow: 0 2px 8px rgba(80,90,110,0.04);
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.18s;
@@ -106,7 +106,6 @@ function onDrop(e) {
   border-color: rgba(123,127,178,0.35);
   color: var(--color-primary);
   background: rgba(255,255,255,0.3);
-  box-shadow: 0 4px 14px rgba(80,90,110,0.1);
 }
 .add-card-text { font-size: 11px; font-weight: 600; }
 </style>

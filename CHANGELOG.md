@@ -11,6 +11,7 @@
 
 ### 修复
 
+- **顶栏按钮悬停阴影与高度异常**（`frontend/src/layouts/DefaultLayout.vue`）：调整顶栏玻璃效果时把 `topbar` 撑高了，顺手又把「上传文件 / 新建项目」按钮的悬停阴影压没了；现已恢复原有高度节奏，并保留悬停亮起 + 按下下沉的手感。
 - **IM 发文件日志打印真实文件名**（`worker.py`、`agent/adapters/{qq,wechat}.py`）：审计发现发文件的日志行直接打印真实文件名（可能带敏感信息，如"张三合同.pdf"），跟项目其余收发日志"只留长度/指纹，不留原文"的口径不一致；改成指纹。顺带把另外几处打印完整 API 响应体/原始 WS payload 的日志收紧成只打字段名。
 - **微信引用消息时提示不准确**（`agent/adapters/wechat.py`）：实测确认不管引用咕咕的回复还是用户自己的文字，iLink 接口都只给消息 id/时间戳等元数据、不带原文，也没有反查接口——平台限制（官方 issue 也有人反馈过），占位文案统一改成「[微信暂不支持消息引用识别]」，不再用容易让人以为是 bug 的技术措辞。顺带补上 `ref_msg.title`（引用摘要）字段兜底，对照 openclaw-weixin 发布包源码确认存在，防御性覆盖其他引用场景。
 - **微信引用图片下载不到**（`agent/adapters/wechat.py`）：引用/回复里带的图片没有 `media.full_url`，只有 `media.encrypt_query_param`，之前只认前者，导致引用图片一律因为"缺 full_url"被跳过；补上 `encrypt_query_param` 的 CDN 下载地址拼接（对照 QwenPaw 实现确认）。
@@ -21,6 +22,7 @@
 
 ### 改进
 
+- **卡片/按钮按压反馈统一**（`frontend/src/assets/styles/global.css`、`frontend/src/views/{Files,Schedules}/index.vue`、`frontend/src/views/Projects/components/{ProjectCard,ProjectModal,KanbanColumn}.vue`、`frontend/src/components/common/GuguChat.vue`）：补出统一的 `hover-card-fx` / `press-fx` 手感，文件卡、项目卡、聊天文件条、定时任务按钮和项目列新增按钮的悬停/按下反馈更一致；顺手修了项目编辑卡待办项长文本被单行截断的问题。
 - **定时任务创建/保存不再等 LLM 分类调用**（`app/api/v1/scheduled_tasks.py`）：点创建/保存立即返回，工具组/上下文精简判断改成后台异步补丁，不影响前端动画和交互。
 - **联网搜索工具组改名 `web_search`**（`agent/tools/search.py`、`agent/profiles/default.py`）：跟新增的站内 `global_search` 撞名太像，改名区分（实测存量定时任务无一命中旧组名，无需数据迁移）。
 - **定时任务工具组名对不上就整体回退全量，不再悄悄裁没工具**（`agent/runner.py`、`agent/tools/base.py`）：`context_config.tool_groups` 里如果有 registry 不认识的组名（改名/拼写错误/枚举漂移），以前会静默丢弃那部分工具，现在改成整体不信这份精简结果、退回全量执行。

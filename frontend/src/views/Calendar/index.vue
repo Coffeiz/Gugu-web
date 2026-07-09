@@ -1771,7 +1771,10 @@ function buildUpcomingList() {
 watch([projectTimelines, extraEvents, nextMonthEvents], buildUpcomingList, { immediate: true })
 watch(activeRange, r => { uiStore.calendarActiveRange = r })
 
-// 搜索跳转：导航到日程所在月份并高亮
+// 搜索跳转：导航到日程所在月份并高亮。immediate:true 是关键——从别的页面搜索时，
+// GlobalSearch 先把 pendingCalendarEvent 设好值再 router.push 过来，日历页组件这时才挂载、
+// 这个 watch 才第一次建立，值早已经是目标值、没有"变化"可触发；不给 immediate 就只有已经
+// 停在日历页时再搜（ref 从有值→新值，watch 活着能看到变化）才会跳，这正是用户反馈的现象。
 watch(() => uiStore.pendingCalendarEvent, async (target) => {
   if (!target) return
   uiStore.pendingCalendarEvent = null
@@ -1780,16 +1783,19 @@ watch(() => uiStore.pendingCalendarEvent, async (target) => {
   selectedDate.value = target.date
   await nextTick()
   _flashCalendarEvent(target.id)
-})
+}, { immediate: true })
 
-function _flashCalendarEvent(id) {
+// 从别的页面搜索跳转时，日历页刚挂载、fetchEvents() 还在飞网络请求，侧栏这时可能还没渲染出
+// 目标活动的 data-event-id——固定延时 150ms 一次性查大概率扑空（只跳对了月份/日期，没有高亮闪一下）。
+// 改成轮询，等数据到位、DOM 出现再闪，最多等 2s（10 次 × 200ms）。
+function _flashCalendarEvent(id, tries = 10) {
   setTimeout(() => {
     const el = document.querySelector(`[data-event-id="${id}"]`)
-    if (!el) return
+    if (!el) { if (tries > 0) _flashCalendarEvent(id, tries - 1); return }
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     el.classList.add('search-flash')
     setTimeout(() => el.classList.remove('search-flash'), 1800)
-  }, 150)
+  }, 200)
 }
 
 // 弹窗加提醒后会变高，可能顶出屏幕底部、保存按钮被切掉。
@@ -2451,12 +2457,11 @@ async function saveEvent() {
 .form-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .form-pop-enter-from, .form-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-6px); }
 
-/* 搜索跳转高亮 */
+/* 搜索跳转高亮：跟文件/项目搜索命中一样的外发光，不再是纯色背景闪一下 */
 .search-flash { animation: search-flash 1.8s ease forwards; border-radius: 10px; }
 @keyframes search-flash {
-  0%   { background: rgba(123,127,178,0.22); }
-  35%  { background: rgba(123,127,178,0.22); }
-  100% { background: transparent; }
+  0%, 60%  { box-shadow: 0 0 0 2px var(--color-primary), 0 0 14px rgba(123,127,178,0.55); }
+  100%     { box-shadow: 0 0 0 0 rgba(123,127,178,0); }
 }
 /* ───────── 周视图（时间轴）───────── */
 .toolbar-right { display: flex; align-items: center; gap: 8px; }

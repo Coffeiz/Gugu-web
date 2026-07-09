@@ -2389,9 +2389,10 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   background-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.06) 20%, rgba(0,0,0,0.06) 80%, transparent 100%);
   background-size: 100% 1px; background-repeat: no-repeat; background-position: center bottom; }
 .stage-node:last-child .todo-list { background-image: none; }
-.todo-item { display: flex; align-items: center; gap: 6px; height: 24px; }
+.todo-item { display: flex; align-items: flex-start; gap: 6px; min-height: 24px; }
 .todo-item + .todo-item { border-top: 1px solid rgba(0,0,0,0.05); }
-.todo-name { flex: 1; min-width: 0; font-size: 12px; color: var(--text-primary); padding: 2px 0; cursor: grab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.todo-check, .todo-del { margin-top: 4px; }   /* 文字换行后多行居中不好看，改顶部对齐；单行时用这个偏移凑回原来的视觉居中 */
+.todo-name { flex: 1; min-width: 0; font-size: 12px; line-height: 1.5; color: var(--text-primary); padding: 2px 0; cursor: grab; overflow-wrap: break-word; word-break: break-word; white-space: normal; }
 .todo-item:active .todo-name { cursor: grabbing; }
 .todo-ghost { opacity: 0.35; }   /* 被拖的那条淡化，让位预览更清楚 */
 .todo-check {

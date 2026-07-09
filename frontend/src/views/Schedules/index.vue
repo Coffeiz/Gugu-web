@@ -2,7 +2,7 @@
   <div class="sched-page">
     <div class="panel glass-card">
       <div class="section-header">
-        <button class="btn-primary" @click="openCreate"><PhAlarm :size="14" weight="bold" style="vertical-align:-1px;margin-right:5px" />新建任务</button>
+        <button class="btn-primary press-fx" @click="openCreate"><PhAlarm :size="14" weight="bold" style="vertical-align:-1px;margin-right:5px" />新建任务</button>
       </div>
       <div v-if="!loading && !tasks.length" class="empty">还没有自定义任务，点上方「新建任务」试试～</div>
       <div v-else-if="tasks.length" class="task-grid">
@@ -292,7 +292,7 @@ async function removeTask(t) {
   box-shadow: 0 3px 12px rgba(123,127,178,0.3);
   transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.2s ease-out, opacity 0.2s ease-out;
 }
-.btn-primary:hover { box-shadow: 0 6px 18px rgba(123,127,178,0.4); opacity: 0.92; }
+.btn-primary:hover { opacity: 0.92; }   /* 悬停阴影统一交给全局 .press-fx:hover */
 .btn-primary:disabled { opacity: 0.5; cursor: default; transform: none; }
 
 /* 大版面：填满内容区（等宽 + 高到顶栏底）。玻璃质感走全局 .glass-card，

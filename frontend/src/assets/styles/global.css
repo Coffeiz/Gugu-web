@@ -44,6 +44,34 @@ input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
   background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='10'%20height='10'%20viewBox='0%200%2010%2010'%20fill='none'%3E%3Cpolyline%20points='1.5,5%204,7.5%208.5,2.5'%20stroke='white'%20stroke-width='1.6'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
+/* 悬停抬起 + 按下下沉的通用反馈：文件卡/项目卡统一用这一套手感（真正的“卡片”才抬起）。
+   各自静止态的背景/边框/圆角/圆角阴影不用动，加这个类就有抬起+按下的动效；
+   数值抄项目卡（原来只有项目卡自己有这套效果）。 */
+.hover-card-fx {
+  transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.3s ease;
+}
+.hover-card-fx:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(80,90,110,0.13);
+}
+.hover-card-fx:active {
+  transform: translateY(1px);
+  opacity: 0.93;
+}
+/* 只要按下反馈、不要悬停抬起：顶栏「上传文件/新建项目」、定时任务「新建任务」按钮、
+   咕咕聊天里的文件条都是这一挂——按钮/挤在气泡堆里的文件条，抬起要么跟布局不搭要么显得
+   跟旁边气泡割裂，只保留点击下沉这一半效果。 */
+.press-fx {
+  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.2s ease-out;
+}
+.press-fx:hover {
+  box-shadow: 0 4px 14px rgba(80,90,110,0.5) !important;   /* !important：几处消费者原本各自带 !important 的阴影，统一由这里压过去 */
+}
+.press-fx:active {
+  transform: translateY(1px);
+  opacity: 0.93;
+}
+
 /* date/time input 弹窗跟随系统深色 */
 input[type="date"],
 input[type="datetime-local"],

@@ -11,8 +11,8 @@
         </div>
         <GlobalSearch />
         <div class="topbar-actions">
-          <a-button class="btn-ghost-custom" @click="openUpload"><PhUploadSimple :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />上传文件</a-button>
-          <a-button type="primary" class="btn-primary-custom" @click="openNewProject"><PhPlus :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />新建项目</a-button>
+          <a-button class="btn-ghost-custom press-fx" @click="openUpload"><PhUploadSimple :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />上传文件</a-button>
+          <a-button type="primary" class="btn-primary-custom press-fx" @click="openNewProject"><PhPlus :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />新建项目</a-button>
         </div>
       </header>
 
@@ -239,6 +239,8 @@ const todayStr = computed(() => {
   gap: 8px;
 }
 
+/* 顶栏按钮不做悬停上浮，只保留轻微亮起 + 阴影和按下下沉。这里就地定义 hover 阴影，
+   避免被组件内静止态 box-shadow 的 !important 把全局 .press-fx:hover 压掉。 */
 .btn-ghost-custom {
   background: rgba(255, 255, 255, 0.52) !important;
   border: 1px solid rgba(255, 255, 255, 0.78) !important;
@@ -246,14 +248,14 @@ const todayStr = computed(() => {
   color: var(--text-secondary) !important;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.95) !important;
   font-size: 13px; font-weight: 500;
-  transition: transform 0.3s cubic-bezier(0.34, 1.2, 0.64, 1),
-              background 0.2s ease-out, box-shadow 0.2s ease-out !important;
+  transition: background 0.2s ease-out, box-shadow 0.2s ease-out,
+              transform 0.15s ease, opacity 0.15s ease !important;
 }
 .btn-ghost-custom:hover {
-  transform: translateY(-2px);
   background: rgba(255,255,255,0.72) !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 4px 12px rgba(80,90,110,0.1) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 3px 10px rgba(80,90,110,0.12) !important;
 }
+.btn-ghost-custom:active { transform: translateY(1px) !important; opacity: 0.93; }
 
 .btn-primary-custom {
   background: linear-gradient(135deg, #7b7fb2, #9590c4) !important;
@@ -261,14 +263,14 @@ const todayStr = computed(() => {
   border-radius: var(--radius-sm) !important;
   box-shadow: 0 3px 12px rgba(123,127,178,0.3) !important;
   font-size: 13px; font-weight: 500;
-  transition: transform 0.3s cubic-bezier(0.34, 1.2, 0.64, 1),
-              box-shadow 0.2s ease-out, opacity 0.2s ease-out !important;
+  transition: box-shadow 0.2s ease-out, opacity 0.2s ease-out,
+              transform 0.15s ease !important;
 }
 .btn-primary-custom:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 18px rgba(123,127,178,0.4) !important;
+  box-shadow: 0 5px 16px rgba(123,127,178,0.38) !important;
   opacity: 0.92;
 }
+.btn-primary-custom:active { transform: translateY(1px) !important; opacity: 0.93; }
 
 .page-content {
   height: 100%;

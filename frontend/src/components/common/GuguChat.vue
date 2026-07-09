@@ -214,7 +214,7 @@
                     <span class="mv-wave"><i v-for="n in 13" :key="n" :style="{ height: voiceBar(n) }" /></span>
                     <span class="mv-dur">{{ fmtDur(f.duration) }}</span>
                   </div>
-                  <div v-else class="msg-file" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
+                  <div v-else class="msg-file press-fx" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
                     <span class="msg-file-ext">
                       {{ (f.ext || 'file').toUpperCase().slice(0, 4) }}
                       <template v-if="isImageFile(f)">
@@ -2000,19 +2000,21 @@ async function send(forcedText?) {
 .im-qr-hint { font-size: 11.5px; color: var(--text-secondary); text-align: center; line-height: 1.5; }
 .im-qr-err { font-size: 11.5px; color: rgba(200,80,80,0.9); padding: 4px 0; }
 
-/* 咕咕回复里的「扫码绑定」动作按钮：md 里的 gugu:// 链接渲染成按钮（onChatActionClick 拦截点击）*/
+/* 咕咕回复里的动作按钮：md 里的 gugu:// 链接渲染成按钮（onChatActionClick 拦截点击）——
+   跟全局 .press-fx 一套手感（悬停不上浮，只在按下时下沉），这些 <a> 是 markdown 渲染出来的、
+   没法在模板里挂 class，数值直接写这里（悬停阴影跟 .press-fx:hover 保持同一个值） */
 .msg-bubble.md-body :deep(a[href^="gugu://"]) {
   display: inline-flex; align-items: center; gap: 5px;
   margin: 3px 4px 3px 0; padding: 5px 12px;
   font-size: 12.5px; font-weight: 600; text-decoration: none;
   color: #fff; background: linear-gradient(135deg, #7b7fb2, #9590c4);
   border-radius: 999px; box-shadow: 0 2px 8px rgba(123,127,178,0.28);
-  cursor: pointer; transition: transform 0.12s, box-shadow 0.12s; user-select: none;
+  cursor: pointer; transition: box-shadow 0.12s, transform 0.15s ease, opacity 0.15s ease; user-select: none;
 }
 .msg-bubble.md-body :deep(a[href^="gugu://"]:hover) {
-  transform: translateY(-1px); box-shadow: 0 4px 12px rgba(123,127,178,0.36); opacity: 1;
+  box-shadow: 0 4px 14px rgba(80,90,110,0.5); opacity: 1;
 }
-.msg-bubble.md-body :deep(a[href^="gugu://"]:active) { transform: translateY(0); }
+.msg-bubble.md-body :deep(a[href^="gugu://"]:active) { transform: translateY(1px); opacity: 0.93; }
 
 /* 扫码绑定弹窗（聊天上弹小窗）*/
 .cb-overlay {
@@ -2101,6 +2103,8 @@ async function send(forcedText?) {
 }
 /* 咕咕发来的文件卡片 */
 .msg-files { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 88%; min-width: 0; }
+/* 按下反馈来自全局 .press-fx（模板里已加）——只要点击下沉，不要悬停抬起：
+   这条挤在其它消息气泡中间，抬起会显得跟旁边气泡割裂 */
 .msg-file {
   display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer;
   max-width: 100%; box-sizing: border-box;
@@ -2108,7 +2112,9 @@ async function send(forcedText?) {
   background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.65);
   border-radius: 14px; border-bottom-left-radius: 5px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px rgba(80,80,120,0.06);
-  transition: background 0.15s, box-shadow 0.15s;
+  /* transform/opacity 是按下反馈(.press-fx)要用的——跟这里自己的 transition 写一起，
+     避免两条规则的 transition 互相整体覆盖、丢掉其中一份 */
+  transition: background 0.15s, box-shadow 0.15s, transform 0.15s ease, opacity 0.15s ease;
 }
 .msg-file:hover {
   background: rgba(255,255,255,0.7);

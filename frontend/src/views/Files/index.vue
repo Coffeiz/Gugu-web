@@ -286,7 +286,7 @@
             <div
               v-for="f in sortedContents.files"
               :key="f.id"
-              class="fc-card"
+              class="fc-card hover-card-fx"
               :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id), dragging: draggingFileIds.has(f.id), cut: cbStore.type === 'cut' && cbStore.fileIds.includes(f.id), 'fc-has-thumb': isImageExt(f.ext) }"
               :data-file-id="f.id"
               :style="{ '--fc-color': fileIconColor(f.ext) }"
@@ -2342,6 +2342,9 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .folder-card:hover .fd-hover-actions { opacity: 1; }
 
 /* ── 文件卡片 ── */
+/* 抬起(:hover 的 transform)/按下(:active)动效来自全局 .hover-card-fx（模板里已加）；
+   box-shadow 在这里自己覆盖一份——要保留文件卡自带的内高光(inset)层，跟 .hover-card-fx
+   单纯的外阴影不一样，不能直接吃它那份，数值仍照抄项目卡的抬起阴影，保证手感一致。 */
 .fc-card {
   background: rgba(255,255,255,0.72);
   border: 1px solid rgba(255,255,255,0.9);
@@ -2350,7 +2353,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   min-height: 122px;
 }
 .fc-card:hover {
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 18px rgba(80,90,110,0.13);
   background: rgba(255,255,255,0.86);
 }
 .fc-card.selected {
