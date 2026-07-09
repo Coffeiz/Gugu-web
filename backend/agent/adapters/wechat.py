@@ -130,6 +130,22 @@ async def _ingest_wechat_media(items: list, owner: str) -> list:
     return out
 
 
+def _log_quoted_shape_if_needed(ref_msg, found: bool) -> None:
+    """引用识别退化成占位符时打印结构（只打印字段名，不打印正文），同 qq.py 的
+    `_log_quote_shape_if_needed` 思路——真实反馈过"引用了纯文字消息却识别成 [非文字消息]"，
+    但 message_item 的真实字段形状跟直发消息是否完全一致没有实测验证过（图片项那次已经证实
+    引用结构会跟直发结构不一样：直发有 media.full_url，引用只有 media.encrypt_query_param），
+    所以退化时打日志比继续照抄"结构应该跟直发一样"的假设猜下去更快找到根因。"""
+    if found:
+        return
+    mi = ref_msg.get("message_item") if isinstance(ref_msg, dict) else None
+    ref_keys = sorted(ref_msg.keys()) if isinstance(ref_msg, dict) else None
+    mi_keys = sorted(mi.keys()) if isinstance(mi, dict) else None
+    nested = {k: sorted(v.keys()) for k, v in (mi or {}).items() if isinstance(v, dict)} if isinstance(mi, dict) else None
+    print(f"[wechat] 引用结构未命中: ref_msg_keys={ref_keys} message_item_keys={mi_keys} "
+          f"type={mi.get('type') if isinstance(mi, dict) else None} nested_keys={nested}", flush=True)
+
+
 def _extract_quoted(ref_msg) -> tuple[str | None, list]:
     """从 item.ref_msg.message_item 里提取 (引用文字, 引用媒体项列表)。
 
@@ -140,6 +156,7 @@ def _extract_quoted(ref_msg) -> tuple[str | None, list]:
         return None, []
     mi = ref_msg.get("message_item")
     if not isinstance(mi, dict):
+        _log_quoted_shape_if_needed(ref_msg, False)
         return None, []
     quoted_type = mi.get("type")
     txt = (mi.get("text_item") or {}).get("text", "").strip()
@@ -154,6 +171,7 @@ def _extract_quoted(ref_msg) -> tuple[str | None, list]:
         return "[文件消息]", []
     if quoted_type == 5 or mi.get("video_item"):
         return "[视频消息]", []
+    _log_quoted_shape_if_needed(ref_msg, False)
     return "[非文字消息]", []
 
 
