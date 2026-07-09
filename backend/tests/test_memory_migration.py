@@ -2,6 +2,7 @@
 
 覆盖：
 - read_facts_list 的迁移链（pattern.json → 旧 facts.json → 更旧的 facts.md → 空）
+- daily.md 新格式读写与旧格式迁移
 - profile 的增删（apply_profile_ops）
 - pattern 的增删/印证（apply_facts_ops）
 - refresh_memory 的多数票复核机制（本身就是今天真实踩过坑的地方，
@@ -68,6 +69,50 @@ async def test_read_facts_list_migrates_ancient_facts_md(storage):
 async def test_read_facts_list_empty_when_nothing_exists(storage):
     from agent.memory import store
     assert await store.read_facts_list(UID) == []
+
+
+# ── daily.md 新格式 / 迁移 ───────────────────────────────────────────────
+
+async def test_read_daily_lines_reads_grouped_daily(storage):
+    from agent.memory import store
+
+    await storage.put(
+        f"{UID}/.agent/daily.md",
+        "## 2026-07-10\n- 第一条\n- 第二条\n\n## 2026-07-09\n- 更早一条\n".encode(),
+    )
+
+    lines = await store.read_daily_lines(UID)
+    assert lines == [
+        "- 2026-07-10 第一条",
+        "- 2026-07-10 第二条",
+        "- 2026-07-09 更早一条",
+    ]
+
+
+async def test_read_daily_lines_does_not_compat_legacy_daily(storage):
+    from agent.memory import store
+
+    await storage.put(
+        f"{UID}/.agent/daily.md",
+        "- 2026-07-10 老格式一条\n- 2026-07-09 老格式二条\n".encode(),
+    )
+
+    assert await store.read_daily_lines(UID) == []
+
+
+async def test_migrate_legacy_daily_rewrites_grouped_format(storage):
+    from agent.memory import store
+
+    await storage.put(
+        f"{UID}/.agent/daily.md",
+        "- 2026-07-10 第一条\n- 2026-07-10 第二条\n- 2026-07-09 更早一条\n".encode(),
+    )
+
+    result = await store.migrate_legacy_daily(UID, dry_run=False)
+    assert result["migrated"] == 3
+
+    text = (await storage.get(f"{UID}/.agent/daily.md")).decode()
+    assert text == "## 2026-07-10\n- 第一条\n- 第二条\n\n## 2026-07-09\n- 更早一条\n"
 
 
 # ── profile 增删 ────────────────────────────────────────────────────────
@@ -225,3 +270,16 @@ async def test_cleanup_legacy_dry_run_does_not_delete(storage):
     result = await rm._cleanup_legacy(UID, settings=object(), dry_run=True)
     assert result["removed"] == 1
     assert await storage.exists(f"{UID}/.agent/facts.json")   # dry-run 不应该真删
+
+
+async def test_migrate_daily_reports_preview_lines(storage):
+    import scripts.refresh_memory as rm
+
+    await storage.put(
+        f"{UID}/.agent/daily.md",
+        "- 2026-07-10 第一条\n- 2026-07-09 第二条\n".encode(),
+    )
+
+    result = await rm._migrate_daily(UID, settings=object(), dry_run=True)
+    assert result["migrated"] == 2
+    assert result["migrated_texts"] == ["2026-07-10 第一条", "2026-07-09 第二条"]

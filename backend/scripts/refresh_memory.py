@@ -15,6 +15,8 @@ compress.py 之类的算法，照着 OPS 里的样子加一个新函数、注册
 - split-profile：profile.json 是全新概念，没有旧数据自动迁移过去——用户 2026-07-08 前记的
   "住哪/是干嘛的"这类身份信息，都跟着旧 facts.json 整份进了 pattern.json，没有被区分出来。
   这个操作把 pattern.json 里其实该算「画像」的条目挑出来搬进 profile.json（一次性迁移债）。
+- migrate-daily：旧版 daily.md 用的是每行 `- YYYY-MM-DD 内容`；现在改成 `## 日期` 下挂多条
+  bullet。运行时不再兼容旧格式，这个操作负责一次性改写存量 daily.md。
 
 跑法：
     cd backend && .venv/bin/python scripts/refresh_memory.py --facts            # 真的写（默认 3 次投票）
@@ -22,6 +24,7 @@ compress.py 之类的算法，照着 OPS 里的样子加一个新函数、注册
     cd backend && .venv/bin/python scripts/refresh_memory.py --facts --user <uuid> --trials 5  # 调试/调参
     cd backend && .venv/bin/python scripts/refresh_memory.py --cleanup-legacy --dry-run
     cd backend && .venv/bin/python scripts/refresh_memory.py --split-profile --dry-run
+    cd backend && .venv/bin/python scripts/refresh_memory.py --migrate-daily --dry-run
 """
 from __future__ import annotations
 
@@ -200,9 +203,21 @@ async def _split_profile(user_id: str, settings, dry_run: bool,
     }
 
 
+async def _migrate_daily(user_id: str, settings, dry_run: bool, **_ignored) -> dict:
+    from agent.memory import store
+
+    res = await store.migrate_legacy_daily(user_id, dry_run=dry_run)
+    entries = res.get("entries") or []
+    return {
+        "migrated": res.get("migrated", 0),
+        "migrated_texts": [f"{date} {note}" for date, note in entries],
+    }
+
+
 OPS = {
     "facts": _review_facts,
     "cleanup-legacy": _cleanup_legacy,
+    "migrate-daily": _migrate_daily,
     "split-profile": _split_profile,
 }
 
@@ -243,7 +258,7 @@ async def main() -> None:
         touched = 0
         for uid in user_ids:
             res = await op(uid, settings, args.dry_run, trials=args.trials, temperature=args.temperature)
-            if res.get("removed") or res.get("moved") or res.get("error") or res.get("unstable"):
+            if res.get("removed") or res.get("moved") or res.get("migrated") or res.get("error") or res.get("unstable"):
                 touched += 1
                 print(f"[{op_name}] {uid}: {res}")
         print(f"[{op_name}] 完成，{len(user_ids)} 个用户里 {touched} 个有改动/有分歧")

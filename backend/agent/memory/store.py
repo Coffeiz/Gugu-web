@@ -609,18 +609,93 @@ async def write_memory_doc(user_id, text: str) -> None:
     await _write(_key(user_id, "memory.md"), text.strip() + "\n")
 
 
-# ── daily.md（按行存，新在上）──
+# ── daily.md（按日期分组渲染；内部仍按「一条记录」计数/压缩）──
+_DAILY_HEAD_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\s*$")
+_DAILY_OLD_RE = re.compile(r"^-\s+(\d{4}-\d{2}-\d{2})\s+(.+?)\s*$")
+_DAILY_BULLET_RE = re.compile(r"^-\s+(.+?)\s*$")
+
+
+def extract_daily_entries(text: str) -> list[tuple[str, str]]:
+    """把新 daily.md 解析成 [(date, note)]。只认 `## 日期` + `- 内容` 分组格式。"""
+    entries: list[tuple[str, str]] = []
+    current_date = ""
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        m = _DAILY_HEAD_RE.match(line)
+        if m:
+            current_date = m.group(1)
+            continue
+        m = _DAILY_BULLET_RE.match(line)
+        if m and current_date:
+            entries.append((current_date, m.group(1).strip()))
+    return [(date, note) for date, note in entries if date and note]
+
+
+def extract_legacy_daily_entries(text: str) -> list[tuple[str, str]]:
+    """旧 daily.md `- YYYY-MM-DD 内容` → [(date, note)]，只给迁移脚本用。"""
+    entries: list[tuple[str, str]] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        m = _DAILY_OLD_RE.match(line)
+        if m:
+            entries.append((m.group(1), m.group(2).strip()))
+    return [(date, note) for date, note in entries if date and note]
+
+
+def _render_daily_entries(entries: list[tuple[str, str]]) -> str:
+    """[(date, note)] → daily.md 文本：按日期标题分组，同日多条记在同一组下。"""
+    if not entries:
+        return ""
+    out: list[str] = []
+    current_date = None
+    for date, note in entries:
+        if date != current_date:
+            if out:
+                out.append("")
+            out.append(f"## {date}")
+            current_date = date
+        out.append(f"- {note}")
+    return "\n".join(out).strip() + "\n"
+
+
 async def read_daily_lines(user_id) -> list[str]:
     existing = await _read(_key(user_id, "daily.md"))
-    return [l for l in existing.splitlines() if l.strip()]
+    return [f"- {date} {note}" for date, note in extract_daily_entries(existing)]
 
 
 async def write_daily_lines(user_id, lines: list[str]) -> None:
-    await _write(_key(user_id, "daily.md"), "\n".join(lines) + "\n")
+    entries: list[tuple[str, str]] = []
+    for raw in lines:
+        line = str(raw or "").strip()
+        if not line:
+            continue
+        m = _DAILY_OLD_RE.match(line)
+        if m:
+            entries.append((m.group(1), m.group(2).strip()))
+    await _write(_key(user_id, "daily.md"), _render_daily_entries(entries))
+
+
+async def migrate_legacy_daily(user_id, dry_run: bool = False) -> dict:
+    """把旧 daily.md 单行格式迁到按日期分组；运行时不再兼容旧格式，只在维护入口迁一次。"""
+    raw = await _read(_key(user_id, "daily.md"))
+    if not raw.strip():
+        return {"migrated": 0}
+    if extract_daily_entries(raw):
+        return {"migrated": 0}
+    entries = extract_legacy_daily_entries(raw)
+    if not entries:
+        return {"migrated": 0}
+    if not dry_run:
+        await _write(_key(user_id, "daily.md"), _render_daily_entries(entries))
+    return {"migrated": len(entries), "entries": entries}
 
 
 async def append_daily(user_id, date: str, note: str) -> None:
-    """daily.md 顶部加一条带日期记录。压缩由 compress.compact 处理；此处只兜底硬上限。"""
+    """daily.md 顶部加一条记录；落盘按 `## 日期` 分组，同日多条归到同一标题下面。"""
     note = note.strip()
     if not note:
         return

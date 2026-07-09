@@ -73,8 +73,8 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
         summary_ts = mem.get("summary_ts")
         facts = "\n".join(x for x in [(mem.get("profile") or "").strip(), (mem.get("pattern") or "").strip()] if x)[:800]
         cutoff = (local_now().date() - timedelta(days=7)).isoformat()
-        daily_lines = [ln for ln in (mem.get("daily") or "").splitlines()
-                       if ln.strip().startswith("- ") and ln[2:12] >= cutoff]
+        daily_entries = mem_store.extract_daily_entries(mem.get("daily") or "")
+        daily_lines = [f"- {date} {note}" for date, note in daily_entries if date >= cutoff]
         daily = "\n".join(daily_lines[:10])
     except Exception:
         pass
