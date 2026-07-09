@@ -1,6 +1,6 @@
 # 咕咕 · 前台设计规范
 
-> 整理自产品讨论，最后更新：2026-06-22
+> 整理自产品讨论，最后更新：2026-07-10
 
 ## 概述
 
@@ -89,6 +89,12 @@ backend/
 - **边缘高光**：`inset 0 1px 0 rgba(255,255,255,0.95)` 顶边亮线模拟玻璃切割倒角
 - **阴影**：轻阴影 `0 4px 16px rgba(80,90,110,0.08)`，扁平化，不堆叠
 - **圆角**：面板 `18px`，小元素 `10–12px`
+
+**圆角形状分层约定**：
+- `.glass-card` 面板统一 `border-radius: var(--radius-lg)` + `corner-shape: squircle`
+- 顶栏这类用 `GlassBg` 的活玻璃宿主，背景层必须 `border-radius: inherit` + `corner-shape: inherit`，保证背景磨砂层和外框走同一条曲线
+- `GlassBg` 自己负责圆角裁切（`overflow: hidden` 放在背景层，不放在宿主），宿主本体保持 `overflow: visible`，否则顶栏按钮这类外发阴影会被裁掉
+- 小按钮、输入框、chip、页内工具条按钮一律用普通圆角，不跟 squircle 混用
 
 **毛玻璃三档（全走 CSS 变量，改一处全站生效，别再写死 blur 值）：**
 
@@ -197,10 +203,16 @@ function darkenHex(hex, amount = 0.60) {
 - 导航项三态配色见「色彩」章节「导航项（三态）」一节，此处不再重复（旧版曾写 hover 文字 `rgba(30,32,40,0.82)`、active 文字 `var(--color-primary)` + `font-weight:600`，已被色彩章节的新配色取代，勿沿用）
 - 底层面板 hover：`background`、`box-shadow` 以 `0.25s ease` 过渡，淡入淡出不突兀；统一定义在 `.glass-card` 的 `transition`，所有面板自动继承
 - 按钮/卡片 hover：轻微 `translateY(-2px)` + 阴影增强，`transition: 0.25s cubic-bezier(0.34,1.2,0.64,1)`
+- **按钮按压反馈分两类，别混用**：
+  - `press-fx`：**只按下、不悬停上浮**。统一定义在 `global.css`，hover 只加阴影 `0 4px 14px rgba(80,90,110,0.3)`，active 才 `translateY(1px) + opacity 0.93`。适用场景：顶栏「上传文件 / 新建项目」、定时任务「新建任务」、聊天里的文件卡/动作按钮等“贴着布局边缘、不适合抬起”的按钮
+  - 卡片类 / 独立按钮：可以上浮时，才用 `translateY(-2px)` 那套 hover lift
+- **顶栏按钮统一走全局 `press-fx`**：不要再在 `DefaultLayout.vue` 里单独写一套 hover 阴影；本地类只保留静止态底色/边框/圆角，hover 阴影统一交给全局
+- **顶栏按钮若需要保留静止态自身阴影，统一通过 CSS 变量让 hover 可覆盖**：例如 `--topbar-btn-shadow`，静止态 `box-shadow: var(--topbar-btn-shadow)`，hover 时由 `.press-fx:hover` 改写这个变量。不要在本地类里直接写死 `box-shadow ... !important`，否则会把全局 hover 阴影压没
 - 文件/文件夹卡片 active：`translateY(1px) + opacity 0.93`，通过 `:active:not(:has(.fc-hover-actions:active))` 排除操作按钮点击时的下沉效果；卡片行为（布局、过渡、hover lift、active sink）统一提取至 `global.css` 的 `.fc-card` / `.folder-card`，各组件只保留 scoped 的颜色、尺寸、圆角差异
 - **文件/文件夹卡片 hover 白色高亮**：`::after` 伪元素叠加 `rgba(255,255,255,0.15)`，`opacity 0→1`，`0.25s ease`，`z-index: 1`，定义在 `global.css`；内容层（文件名 `.fc-label`、类型徽章 `.fc-ext-badge` z-index:2、操作按钮 z-index:3）均高于 `::after`，白色仅覆盖缩略图/图标
 - **不可拖动的卡片禁止 hover 浮起**：全局 `.fc-card:hover` 默认 `translateY(-2px)`；若卡片不支持拖动（如 Dashboard 最近文件），需在 scoped CSS 覆盖 `transform: none`，保留阴影加深和白色高亮，不产生位移
 - **彩色胶囊/条 hover**：统一使用 `box-shadow: inset 0 0 0 100px rgba(255,255,255,0.45), 0 2px 6px rgba(80,90,110,0.1)`，`0.25s ease` 过渡；inset 阴影天然在内容之下，无需 z-index 操控，可覆盖 inline background。适用场景：近期节点胶囊（`.cap-row:hover .cap-capsule`，global.css 统一定义）、日历事件 chip、项目条、更多按钮、更多弹窗条目
+- **勾选框样式已全局统一**：原生 `input[type="checkbox"]` 统一走 16px、5px 圆角、紫灰边白底；选中态是紫色渐变 + 白勾。登录/注册确认框、markdown 任务列表、日历“全天”等都复用这套，不要在局部组件再复制一份外观 CSS
 - **卡片拖拽一律用 pointer 模式，别用原生 HTML5 `draggable`/`dragstart`**：原生拖拽从 `dragstart` 起浏览器会整段暂停 `mouseover`/`mouseout` 派发，抓起卡片那一刻缓存的 `:hover` 状态全程不会被清掉，直到 `dragend` 后才重新判定——这段时间差会导致拖拽落地揭示卡片时出现 hover 高亮跳变（perf trace 实测证实，见 `usePhysicsDrag.ts` 注释）。改用 `pointerdown` + 阈值检测（越过 5px 才真正起拖，否则当普通点击）+ `setPointerCapture` 自建拖拽，浏览器的 hover 判定全程正常，不存在这个问题。项目看板卡片（`ProjectCard.vue`）和文件库文件/文件夹卡片（`Files/index.vue`）均已是这套模式；落点判定（拖进文件夹/拖到面包屑）不再靠原生 `@dragover`/`@drop`，改成 `usePhysicsDrag.ts` 的 `onDragOver`/`onDrop` 回调里手动 `elementFromPoint` 判定。OS 文件拖拽上传是唯一仍需要原生 `dataTransfer` 的场景（只有原生拖拽才能拿到 OS 文件），走页面级独立的 `@dragenter`/`@dragover`/`@drop` 监听，和卡片自身的拖拽机制无关，互不影响。
 - **文件/文件夹/项目卡拖拽克隆：容器自己背景+模糊，不加外圈装饰层**（`global.css` 的 `.phys-drag-clone.fc-card` 等规则）：定版为 `background: rgba(255,255,255,0.5) !important` + `backdrop-filter: blur(12px) saturate(1.15)`，单层，卡片本体直接承担"能看出白底、又能看出背后内容被模糊"两个诉求。中间试过的方案都放弃了——纯调透明度/blur 半径两头兼顾（试了 0.42/0.7/0.8 几档，实测"够白"和"模糊可见"重叠区间几乎不存在，20% 见光量对 20px 模糊来说观感上等于没有）；本体不透明+外圈单独一层模糊光晕的分层方案（无论 `backdrop-filter` 真模糊还是 `box-shadow` 柔光），backdrop-filter 版在拖拽自带的 3D 后仰变换（`perspective`+`rotateX`）下不会正常柔化、渲染成一圈硬边白框；且因为文件夹树解析先于文件上传创建真实文件夹，「本体不透明」还会导致真实文件夹和进度用的克隆卡同时出现，看起来像"两个文件夹"。缩略图区域（`.fc-thumb-area`）本身是不透明真图，只有它自带的渐隐蒙版露出的过渡区、以及底部文字标签条能看到卡片的模糊背景，这是预期行为，不是 bug——图片本来就该保持清晰、不该被强行蒙一层雾。
 - **多选拖拽的主克隆/影子叠层不叠额外 `opacity`**：曾经影子卡（`i===0`/`i===1`）各叠 `opacity: 0.55`/`0.35`、主克隆叠 `0.88`，跟卡片自身 `background` 的 `0.5` 透明度相乘后严重稀释白底（0.5×0.35≈0.18，肉眼看基本只剩玻璃感），跟单文件拖拽观感不一致。层次感（"这是叠了好几张"）已经靠位置偏移（`dx`/`dy`）、旋转（`rz`）、缩放（`sc`）、`zIndex`、`box-shadow` 表达，不需要再用透明度区分，故去掉这层额外 opacity，多选拖拽的每一层都跟单文件走同一份底色/透明度。**`backdrop-filter` 分层限制**：每叠一层都是一次独立的背景采样+高斯模糊，GPU 开销随层数线性上升，多选最多叠 3 层（主卡+2 张影子）全做全尺寸模糊太费——只留前两层做模糊：主克隆 `blur(12px)`（CSS 默认值），紧贴主卡的第一张影子（`i===0`）降到 `blur(6px)`（内联样式覆盖，CSS 规则未加 `!important` 故可覆盖），再往后那张（`i===1`，仅选中 3+ 项才出现）`backdrop-filter: none`——这张压在最底下、被前两张挡掉大半，模糊不模糊肉眼分不出来。
@@ -376,6 +388,7 @@ function darkenHex(hex, amount = 0.60) {
   - 项目条圆角：默认 0，仅在起始端 `border-radius: 99px 0 0 99px`，终止端 `0 99px 99px 0`，单日满圆 `99px`
   - **日期格 hover**：用 `mousemove` 在 `.week-row` 级别计算当前列（`Math.floor((x / width) * 7)`），设 `hoveredDateIso`，通过 `.cell-hovered` class 触发背景高亮，替代 CSS `:hover`；原因：`.bars-layer` 是 `.month-cell` 的兄弟元素，鼠标移到项目条上时 `:hover` 会丢失导致闪烁，`mousemove` 方案不受 DOM 层级影响
   - **交互元素 hover 统一**：项目条、事件 chip、更多按钮、更多弹窗条目全部使用 `inset 0 0 0 100px rgba(255,255,255,0.45)` + `0 2px 6px rgba(80,90,110,0.1)` box-shadow，`0.25s ease` 淡入淡出；多行项目条用 `hoveredBarId` ref 联动，鼠标进入任意段即高亮全部段
+  - **周视图小修正（2026-07-10 定版）**：全天条 / 时间轴活动都补上“项目 / 活动”文字标签；侧栏时间列固定 `11ch` 宽度，拖拽改时间时标题不左右抖；顶部日期选中框上下内边距加到 `7px`
   - **项目条进度可视化**：背景使用进度渐变（同胶囊规范），以项目实际日期计算每周段的填充比（`barSegFill`），跨行段进度连贯；已完成区域 `accent` 32% 不透明，未完成区域 10%
 - **侧栏**：
   - 当天日程：事件名 + 元信息（客户 + 类型标签）；无客户时省略分隔符 `·`；未知类型显示"事件"；卡片 hover 叠加 `rgba(255,255,255,0.2)` inset + `0 3px 10px rgba(0,0,0,0.10)` 外阴影，`0.25s ease` 淡入淡出
@@ -412,6 +425,9 @@ function darkenHex(hex, amount = 0.60) {
 - 右下角固定圆形按钮（`52px`，渐变背景），z-index: 1000
 - 点击弹出对话浮层（`320px` 宽），z-index: 999
 - 点击悬浮球或浮层外部均可关闭（capture 阶段监听）
+- 咕咕回复里的 `gugu://...` markdown 动作链接（打开文件、扫码绑定等）视觉上视作**小型 press-fx 按钮**：悬停不上浮，hover 阴影与全局 `press-fx` 一致，active 仍是 `translateY(1px) + opacity 0.93`
+- 这类 markdown 产出的 `<a>` 不能在模板里直接挂 class，因此在 `GuguChat.vue` 的局部 CSS 中手写同一套 hover/active 数值；改全局 `press-fx` 时，记得同步这里，别让聊天里的文件链接和顶栏/任务按钮分家
+- IM 引用预览（`.msg-quoted`）默认放宽到 **最多 8 行**，字号比旧版略大，保证长引用能看出内容，不再只截 3 行
 
 ---
 
