@@ -774,7 +774,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
     app_id, app_secret = await _creds_by_id(channel_id)
     if not app_id:
         print(f"[feishu] user_bot {channel_id} 无凭据，流式回复跳过", flush=True)
-        return False
+        return (False, None)
     # 之前的 lark.Client 缓存不再使用——card API 直走 httpx（绕 SDK bug）。
     # _clients 仍保留供 send_text / react / send_file 等其他路径继续用 SDK。
 
@@ -820,15 +820,19 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
 
     _stream_seq_key = f"{card_id}:stream"
 
-    async def _patch(text: str) -> None:
+    async def _patch(text: str) -> bool:
         """element 级别 streaming update 本地计数器 + 调用。
 
         uuid 是幂等键——飞书 spec 200770 同 UUID 只生效一次，所以每次 patch 都需要新 UUID。
         """
         _card_seq[_stream_seq_key] = _card_seq.get(_stream_seq_key, 0) + 1
-        await _do_streaming_update_text(app_id, app_secret, card_id, text,
-                                        sequence=_card_seq[_stream_seq_key],
-                                        uuid=uuid.uuid4().hex)
+        try:
+            return await _do_streaming_update_text(app_id, app_secret, card_id, text,
+                                                   sequence=_card_seq[_stream_seq_key],
+                                                   uuid=uuid.uuid4().hex)
+        except Exception as e:
+            print(f"[feishu] streaming_update_text 异常: {type(e).__name__}: {e}", flush=True)
+            return False
 
     # 4) 流式消费 token + 节流 patch（element 级接口，服务端自动增量渲染）
     accumulated = ""
@@ -836,6 +840,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
     last_patched_len = 0
     pending_final_text: str | None = None
     final_resp = None
+    stream_ok = True
     try:
         async for kind, payload in token_iter:
             if kind == "token":
@@ -844,7 +849,8 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                 # 节流：时间 OR 长度任一满足就 patch（保证短响应也能及时显示）
                 if (now - last_patch_ts >= _STREAM_PATCH_INTERVAL_S
                         or len(accumulated) - last_patched_len >= _STREAM_PATCH_MIN_CHARS):
-                    await _patch(accumulated)
+                    if stream_ok:
+                        stream_ok = await _patch(accumulated)
                     last_patch_ts = now
                     last_patched_len = len(accumulated)
             elif kind == "final":
@@ -861,12 +867,12 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
 
     # 5) 收尾：把最终版（final.text 优先；如果 final 没拿到就用 accumulated）patch 进卡片
     final_text = pending_final_text or accumulated
-    if final_text and final_text != accumulated:
-        await _patch(final_text)
-    elif final_text:
+    if stream_ok and final_text and final_text != accumulated:
+        stream_ok = await _patch(final_text)
+    elif stream_ok and final_text:
         # 已 patch 过同文本 → 不用再 patch，但仍显式结束一下（飞书端 streaming update 幂等）
-        await _patch(final_text)
-    return (True, final_resp)
+        stream_ok = await _patch(final_text)
+    return (stream_ok, final_resp)
 
 
 if __name__ == "__main__":

@@ -343,6 +343,7 @@ async def handle(msg_id: str, payload: dict):
     # 微信 typing indicator：处理期间给对方微信显示「正在输入」，处理完自动关（仅 wechat 平台、其他平台退化）
     from agent.adapters import wechat as _wechat
     _typing_ind = await _wechat.start_typing(payload)
+    stream_sent = False
     try:
         # 飞书流式回复（2026-07-09 接入）：feishu 平台走 run_stream → feishu.send_text_stream，
         # 把 token 实时 patch 到飞书卡片（IM 端模拟 SSE 体感）；其他平台继续走 run_collect 非流式。
@@ -353,6 +354,7 @@ async def handle(msg_id: str, payload: dict):
             rid = payload.get("chat_id") or payload.get("platform_user_id")
             # send_text_stream 消费完整个 token_iter（包括 final 事件），返回 (ok, final_resp)
             _ok, resp = await _feishu.send_text_stream(rid, token_iter, payload.get("channel_id"))
+            stream_sent = bool(_ok)
             if resp is None:
                 # run_stream 没 yield final（极端情况，比如一 token 没生成就崩了）
                 resp = AgentResponse(text="", session_id=None, tokens_in=0, tokens_out=0)
@@ -376,10 +378,8 @@ async def handle(msg_id: str, payload: dict):
         # 模型没出文本：有文件配一句「给你～」，纯空则给个兜底——别发空
         #（空内容发 QQ 会报「无效 markdown content」，用户啥也收不到）
         reply_text = "给你～" if resp.files else "嗯~在的，你说～"
-    # 飞书流式回复已在 feishu.send_text_stream 内把最终文本 patch 到卡片 → 跳过 _send
-    # 避免双发（feishu.send_text_stream 成功时卡片已有最终内容；fallback 到普通 send_text 的情况下
-    # 也已由 send_text_stream 内部调过 send_text，这里再 _send 是重复）。
-    if platform != "feishu" and reply_text.strip():
+    # 飞书流式回复成功时，最终文本已在 feishu.send_text_stream 内 patch 到卡片；失败则回落普通文本发送。
+    if not (platform == "feishu" and stream_sent) and reply_text.strip():
         await _send(payload, reply_text)
     await _send_files(payload, resp.files)   # 咕咕 send_file 的文件发回平台
     # 这条以提问/确认收尾 → 置「等回话」标志，网关下条「嗯/好/算了」就放行进 agent（别当闲聊吞了）
