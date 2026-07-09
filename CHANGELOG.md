@@ -13,20 +13,25 @@
 
 - **咕咕聊天改用虚拟滚动**（`components/common/GuguChat.vue`）：长会话不再一次性渲染全部消息，打开更快、滚动更流畅。
 - **记忆系统拆分为用户画像/行为模式两个文件**（`agent/memory/store.py`、`agent/memory/reflection.py`）：不再用一份文件混装稳定身份和行为习惯，各自判断标准更清晰、不共用不必要的置信度/衰减机制。详见 [devlog.md](docs/devlog.md) 2026-07-08 条目。
+- **`/memory` `/forget` 命令适配 profile+pattern 拆分**（`agent/commands.py`）：`/memory` 分开展示「关于你」（画像）和「行为习惯」（模式），`/forget` 同时搜索两者。
+- **`complete_json` 支持 temperature 参数**（`agent/memory/_llm.py`）：默认 0.3，稳定性要求高的调用方（如批量删除类）可传更低值。
+- **Admin 数据总览排除新手引导教程项目**（`app/api/v1/admin_analytics.py`）：每个新用户注册都会播种一个引导项目，不计入项目相关统计指标。
 
 ### 新增
 
 - **定时任务按需精简工具/上下文，省 token**（`agent/tools/scheduled_tasks.py`、`agent/runner.py`、`agent/context/builder.py`）：创建/修改任务时顺手判断这个任务用得上哪些工具组、要不要带项目/日历/文件/记忆，存下来执行时按需注入；判断不出来就用回全量，安全优先。详见 [devlog.md](docs/devlog.md) 2026-07-08 条目。
 - **文件上传同名冲突支持覆盖/保留两者/跳过**（`views/Files/index.vue`、`Projects/components/ProjectModal.vue`）：上传前列出冲突文件，可选覆盖、保留两者或跳过。
 - **`http_get` 按 Content-Type 自动提取正文**（`agent/tools/web.py`）：HTML/PDF 自动提取正文，不再把截断的原始响应喂给模型。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
+- **飞书 IM 支持流式输出**（`agent/runner.py`、`agent/adapters/feishu.py`）：新增 `run_stream` 逐字 yield token，飞书端实时 patch 卡片内容，体感速度与 web 端对齐。
+- **微信 iLink 接入「正在输入」状态**（`agent/adapters/wechat.py`、`wechat_client.py`、`wechat_config_cache.py`、`wechat_typing.py`）：咕咕思考时在微信端显示"对方正在输入…"，缓解等待感。
+- **个人设置支持自助注销账号**（`components/common/ProfileModal.vue`、`app/api/v1/auth.py`）：需输入密码二次确认，注销后账号与全部数据永久删除。
+- **Admin 面板支持一键复核清理记忆**（`Admin/Agent/index.vue`、`app/api/v1/config.py`、`scripts/refresh_memory.py`）：一次预览同时算出该删的旧条目、该搬去用户画像的条目、可清理的遗留文件，确认后一并执行，不会重新判断一遍。
 - **感知诊断面板新增「关系温度」当前值列表**（`Admin/Perception/index.vue`）：按温度降序列出各用户当前值。
 - **感知诊断面板加「排除开发者」开关**（`Admin/Perception/index.vue`）：跟数据总览同款开关，一键排除开发者账号数据。
 - **项目支持归档/查看已归档/取消归档**（`views/Projects/index.vue`）：网页端补齐入口，之前只有咕咕自己能归档。
 - **IM 慢工具触发时先发一句进度声明**（`agent/tools/base.py`）：缓解飞书/QQ/微信这类非流式渠道调慢工具时的干等感。
 - **浮动预览窗四角都能拖拽调整大小**（`components/common/FloatPreviewWindow.vue`）：之前只有右下角一个手柄能拉伸。
 - **文件预览窗支持直接编辑文本/代码文件**（`components/common/viewers/TextViewer.vue`）：代码类文件改用 CodeMirror 6，直接编辑、自动保存。详见 [devlog.md](docs/devlog.md) 2026-07-07 条目。
-- **个人设置支持自助注销账号**（`components/common/ProfileModal.vue`、`app/api/v1/auth.py`）：需输入密码二次确认，注销后账号与全部数据永久删除。
-- **Admin 面板支持一键复核清理记忆**（`Admin/Agent/index.vue`、`app/api/v1/config.py`、`scripts/refresh_memory.py`）：一次预览同时算出该删的旧条目、该搬去用户画像的条目、可清理的遗留文件，确认后一并执行，不会重新判断一遍。
 
 ### 修复
 
@@ -43,7 +48,8 @@
 - **记忆 summary 快照里的相对时间没法换算**（`agent/memory/reflection.py`）：补充当前日期，涉及时间点换算成绝对日期。
 - **头像存盘后缀从客户端文件名推导，粘贴图片时出错**（`app/api/v1/auth.py`）：改用真实文件类型判断后缀。
 - **个人设置面板隐藏未生效的 QQ 群聊开关**（`components/common/ProfileModal.vue`）：功能还没接入其它平台，先隐藏。
-- **清除记忆接口漏删部分记忆文件**（`app/api/v1/agent.py`）：改成直接清空整个记忆目录，不再挨个列文件名，以后新增记忆文件不会再漏。
+- **清除记忆接口漏删部分记忆文件**（`app/api/v1/agent.py`）：改成直接清空整个 `.agent/` 目录，不再挨个列文件名，以后新增记忆文件不会再漏。
+- **飞书流式输出全部 200770 幂等失败**（`agent/adapters/feishu.py`）：飞书 `streaming_update_text` 的 UUID 是幂等键，同 UUID 只生效一次，原代码整个流式会话复用同一 UUID 导致第二次及之后的 patch 全被拒绝，改为每次 patch 生成新 UUID。
 
 ## [0.16.1] - 2026-07-05 · 登录支持邮箱 + 项目优先级 + 记忆向量扩展 + 对话追问路由修复
 

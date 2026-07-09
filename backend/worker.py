@@ -351,13 +351,8 @@ async def handle(msg_id: str, payload: dict):
             from agent.adapters import feishu as _feishu
             token_iter = run_stream(req)
             rid = payload.get("chat_id") or payload.get("platform_user_id")
-            await _feishu.send_text_stream(rid, token_iter, payload.get("channel_id"))
-            # 从 final 事件拿 AgentResponse（注：run_stream 最后 yield 一次 final）
-            resp: AgentResponse | None = None
-            async for kind, payload_yield in token_iter:
-                if kind == "final":
-                    resp = payload_yield
-                    break
+            # send_text_stream 消费完整个 token_iter（包括 final 事件），返回 (ok, final_resp)
+            _ok, resp = await _feishu.send_text_stream(rid, token_iter, payload.get("channel_id"))
             if resp is None:
                 # run_stream 没 yield final（极端情况，比如一 token 没生成就崩了）
                 resp = AgentResponse(text="", session_id=None, tokens_in=0, tokens_out=0)

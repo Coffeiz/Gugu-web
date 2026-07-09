@@ -1,7 +1,21 @@
 # PM Studio · 早期开发记录
 
-> 更新：2026-07-06
+> 更新：2026-07-09
 > 状态：早期阶段记录，当前进度见 `product/overview.md`
+
+---
+
+## 2026-07-09 · 飞书 CardKit 流式回复接入：type=template、SDK 同步路径丢 body、sequence 严格递增，三个坑一个比一个隐蔽
+
+目标很朴素：飞书 IM 收到消息后，agent 生成期间实时 patch 同一张卡片内容，模拟 SSE 体感（飞书客户端不支持真流式推送，patch 是唯一可行方案）。最终落地的链路是 `agent.runner.run_stream` 异步生成器逐字 yield → `feishu.send_text_stream` 边累积边 PUT element content，typewriter 效果由飞书服务端在 `streaming_mode=true` 下自动渲染。一路撞上三个坑，**第一个最容易被再撞上**（文档把两条路线写一起，不仔细看就混），后两个属于 SDK/服务端细节但同样会让排错时间翻倍。
+
+**坑一：`type=template` 跟 `type=card` 是两条不同的路线，混了直接 200380 "template does not exist"。** 飞书 IM 发送 `interactive` 消息时，`content` JSON 长得像 `{"type": "X", "data": {...}}`，但 `X` 取值不同就走完全不同的卡系统：① `type=template` + `data.template_id` 对应**飞书 Card Builder GUI** 创建的"模板"（可视化拖拽那种），走模板管理 API 提前创建、提前分配 id；② `type=card` + `data.card_id` 对应**CardKit v1 card entity**（API 现场 create 出来、可被 streaming update 那种）。两者 id 形态一样（都是 `7660...` 开头的 19 位数字串），飞书拿到的是 `type=card`+`template_id` 时会**按 template 路线找**，找不到就返 `200380`。**官方文档把两种 type 写在同一节里**，第一遍很容易照着「interactive 消息 content 格式」示例直接照抄一个，示例里恰好给的是 template，模板一抄就用——但实际项目要做的是 CardKit 流式，差一步就撞墙。修复明确落在 `backend/agent/adapters/feishu.py:659` 的 `content` 字段，并把"为什么是 card 不是 template"写进了 docstring。教训：飞书 IM 的 `interactive.content.type` 选错不是"功能降级"，是**直接 200380 不可达**——以后给任何新平台接 CardKit 都要先确认走哪条路、写代码前就把 type 选对，不要等撞了再回来查。
+
+**坑二：lark SDK `client.cardkit.v1.card.create()` 同步路径丢 body（200610 body is nil），用 `acreate()` 异步路径绕过。** 排查路径本身就是个反例：① 怀疑 body 构造——`{type: 'card_json', data: '<stringified card 2.0 JSON>'}` 用 `JSON.marshal` 出来格式正确；② 怀疑权限——但用户后台 `cardkit:card:write` 是开过的；③ 同样的 body 直接走 `httpx + 手动取 tenant_access_token` 调 → **200 成功**，拿到真实 card_id（如 `7660280254204284101`），说明 body 没问题、权限没问题；④ 缩到 SDK 内部——`Transport.execute` 同步路径走的是 `requests + data=bytes`，headers 合并用的是 `request.headers` 引用、body 走 `requests` 的 `data` 参数，实际发出去的 body 是空的。**SDK 自己的 `cardkit_create`（`channel/driver.py:266`）就是用 `acreate` 异步路径绕开这个 bug 的**，等于官方代码自己已经踩过。修复：`_do_create_card` / `_do_update_card` 从 `def` 改成 `async def`，内部用 `client.cardkit.v1.card.acreate/aupdate`（走 `httpx + json=` 参数），外层 `send_text_stream` 直接 `await`，去掉 `asyncio.to_thread` 包装。教训：**当 SDK 同步调用报 body 异常、而同样的 body 走直 HTTP 又成功时，第一反应应该是「绕 SDK」而不是「改 body」**——SDK 是飞书官方在维护，但它的 Transport 同步路径在 2.x 确实有 bug（不一定每个版本都修，且不一定在 changelog 里明写），cardkit 这条路官方自己都默认走异步，不要硬刚同步。
+
+**坑三：`sequence` 必须是严格递增的 int（从 1 起），不能是 timestamp，否则返 9499。** PUT element 跟 PUT 全卡 body 都需要 `sequence` 字段（流式更新服务端判"第几段"用），最初图省事用了 `int(time.time()*1000)` 当 sequence——服务端判参数类型不是合法 int（更可能是嫌跳跃太大或非正整数），返 9499。改成模块级 `dict[card_id, int]` 跨调用递增、每张卡从 1 计起，跨 worker 进程各自从 1 开始互不冲突（飞书按 `card_id` 维度判单调、不要求跨进程全局连续）。`uuid` 字段每段必须新值——spec 200770 同 UUID 只生效一次，复用旧的会被服务端当"重复段"直接丢弃，所以每次 patch 都是 `uuid.uuid4().hex`。节流参数（实测：飞书 cardkit update QPS ~20/s）：每 ≥200ms 或 ≥30 字才调一次，避免抖动；单次失败只 log 不中断，下一次继续。
+
+**整套修复两个 commit 上线（`5ecf20b` 接入、`50bacda` 修 SDK bug），仅本机 worker 进程有效；supervisor 会热重载，但生产 worker 实际加载的是哪个版本需要看启动时间确认**——若 `send_card_message` 仍报 200380，多半是 worker 进程加载的是 `5ecf20b`（修了坑二但没修坑一那个早期版本），需要 `kill -TERM <pid>` 让 supervisor 重新拉起。**注意只动对应平台子进程、不要重启整个 `gugu-supervisor.service`**，会连累 QQ/微信两个平台的长连接一起断。
 
 ---
 
