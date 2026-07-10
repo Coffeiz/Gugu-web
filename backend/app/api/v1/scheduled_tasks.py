@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
 from app.core.ownership import get_owned
-from app.core.tz import fmt_local
 from app.db.session import get_db
 from app.models import ScheduledTask, User
 
@@ -119,7 +118,7 @@ def _to_resp(t: ScheduledTask) -> dict:
         "channels": [c for c in (t.channels or "").split(",") if c],
         "enabled": t.enabled,
         "event_id": t.event_id,   # 绑定的日历事件（活动面板加的提醒）；null=独立任务
-        "last_run_at": fmt_local(t.last_run_at) if t.last_run_at else None,
+        "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,   # 原始 UTC ISO，前端按浏览器 tz 显示
         "context_config": t.context_config,   # null=全量注入；非空=按需精简（见 agent/runner.py run_ephemeral）
     }
 

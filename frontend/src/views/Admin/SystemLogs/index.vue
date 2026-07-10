@@ -78,6 +78,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import AdminSelect from '@/components/AdminSelect.vue'
+import { fmtLocalDateTime } from '@/utils/dateAttribution'
 import { PhArrowClockwise } from '@phosphor-icons/vue'
 
 const adminStore = useAdminStore()
@@ -151,7 +152,7 @@ async function copyLog(row) {
 }
 
 function fmtTime(iso) {
-  return iso ? iso.replace('T', ' ').slice(0, 19) : ''
+  return fmtLocalDateTime(iso, { seconds: true })   // 按查看者浏览器 tz（不是字符串截取的 UTC）
 }
 
 function firstLine(msg) {

@@ -133,6 +133,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
+import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import { PhArrowClockwise } from '@phosphor-icons/vue'
 
 const adminStore = useAdminStore()
@@ -234,7 +235,7 @@ const paginated  = computed(() => {
 
 function fmtDate(iso) {
   if (!iso) return '—'
-  return iso.slice(0, 10)
+  return localDayKey(parseUtc(iso))   // 查看者本地日（不是 iso 截取的 UTC 日）
 }
 
 function fmtTokens(n) {

@@ -106,7 +106,7 @@
           <div class="code-meta">
             <span v-if="code.used" class="badge-used">
               <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>
-              已使用 · {{ code.used_at }}
+              已使用 · {{ fmtLocalDateTime(code.used_at) }}
             </span>
             <span v-else class="badge-valid">可用</span>
           </div>
@@ -143,6 +143,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
+import { fmtLocalDateTime } from '@/utils/dateAttribution'
 import { PhArrowClockwise } from '@phosphor-icons/vue'
 
 const adminStore = useAdminStore()
