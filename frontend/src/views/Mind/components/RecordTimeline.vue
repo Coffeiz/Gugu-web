@@ -1,69 +1,65 @@
 <template>
   <div class="timeline">
-    <div v-for="g in groups" :key="g.date" class="tl-group">
+    <div v-for="g in groups" :key="g.date" class="tl-group" :data-date="g.date">
       <div class="tl-date">
         <span class="tl-date-main">{{ fmtDate(g.date) }}</span>
         <span class="tl-date-sub">{{ weekdayOf(g.date) }}</span>
         <span class="tl-count">{{ g.items.length }}</span>
       </div>
 
-      <div v-for="n in g.items" :key="n.id" class="tl-note hover-card-fx"
-           :class="{ editing: editingId === n.id }">
-        <!-- 编辑态：同一个窄口径编辑器 -->
-        <template v-if="editingId === n.id">
-          <NoteEditor v-model="draft" autofocus @submit="commit(n)" />
-          <div class="tl-edit-foot">
-            <span v-if="conflict" class="tl-conflict">这条便签已被其他端改过，已刷新为最新内容</span>
-            <button class="tl-btn" @click="cancel">取消</button>
-            <button class="tl-btn primary" @click="commit(n)">保存</button>
-          </div>
-        </template>
-
-        <!-- 只读态：轻量 HTML 预览（一条便签一个 TipTap 实例太重） -->
-        <template v-else>
-          <div class="tl-body md-preview" v-html="mdToPreviewHtml(n.contentMd)" @click="startEdit(n)"></div>
-          <div class="tl-meta">
-            <span class="tl-time">{{ fmtTime(n.capturedAt) }}</span>
-            <button class="tl-icon" title="编辑" @click.stop="startEdit(n)">
-              <PhPencilSimple :size="12" weight="bold" />
-            </button>
-            <button class="tl-icon danger" title="删除" @click.stop="emit('delete', n)">
-              <PhTrash :size="12" weight="bold" />
-            </button>
-          </div>
-        </template>
-      </div>
+      <!-- 日期组内双列（窄屏塌回单列，不跨天）。TransitionGroup 的 move 过渡兜住
+           编辑卡跨两列展开时其余卡片的让位重排（卡片是纸、非玻璃，transform 随便用）。
+           单日单条右格空着：规则稳定 > 局部满铺（2026-07-10 定）。 -->
+      <TransitionGroup tag="div" class="tl-grid" name="tlc">
+        <NoteCard
+          v-for="n in g.items"
+          :key="n.id"
+          :note="n"
+          :editing="editingId === n.id"
+          :highlight="highlightId === n.id"
+          :conflict="editingId === n.id && conflict"
+          :class="{ 'tl-span': editingId === n.id }"
+          @edit="startEdit(n)"
+          @cancel="cancel"
+          @save="md => commit(n, md)"
+          @delete="emit('delete', n)"
+          @toggle-task="idx => emit('toggleTask', n, idx)"
+        />
+      </TransitionGroup>
     </div>
 
-    <div v-if="!groups.length" class="tl-empty">还没有记录，上面写第一条吧～</div>
+    <div v-if="!groups.length" class="tl-empty">
+      {{ filtered ? '没有匹配的便签' : '还没有记录，在下面记一条试试～' }}
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
-import { mdToPreviewHtml } from '@/composables/useMindEditor'
 import type { MindNote } from '@/services/api'
-import NoteEditor from './NoteEditor.vue'
+import NoteCard from './NoteCard.vue'
 
-defineProps<{ groups: { date: string; items: MindNote[] }[] }>()
+defineProps<{
+  groups: { date: string; items: MindNote[] }[]
+  highlightId: number | null
+  filtered: boolean
+}>()
 const emit = defineEmits<{
   (e: 'save', note: MindNote, md: string): void
   (e: 'delete', note: MindNote): void
+  (e: 'toggleTask', note: MindNote, idx: number): void
 }>()
 
 const editingId = ref<number | null>(null)
-const draft     = ref('')
 const conflict  = ref(false)
 
 function startEdit(n: MindNote) {
   editingId.value = n.id
-  draft.value = n.contentMd
   conflict.value = false
 }
 function cancel() { editingId.value = null; conflict.value = false }
-function commit(n: MindNote) {
-  if (draft.value !== n.contentMd) emit('save', n, draft.value)
+function commit(n: MindNote, md: string) {
+  emit('save', n, md)
   editingId.value = null
 }
 
@@ -77,72 +73,36 @@ function fmtDate(iso: string) {
   return y === thisYear ? `${+m} 月 ${+d} 日` : `${y} 年 ${+m} 月 ${+d} 日`
 }
 function weekdayOf(iso: string) { return '周' + WEEK[new Date(iso + 'T00:00:00').getDay()] }
-function fmtTime(ts: string) { return ts.slice(11, 16) }
 
 defineExpose({ flagConflict: () => { conflict.value = true } })
 </script>
 
 <style scoped>
-.timeline { display: flex; flex-direction: column; gap: 18px; }
+.timeline { display: flex; flex-direction: column; gap: 16px; }
 
 .tl-group { display: flex; flex-direction: column; gap: 8px; }
 .tl-date { display: flex; align-items: baseline; gap: 8px; padding-left: 2px; }
 .tl-date-main { font-size: 13px; font-weight: 700; color: var(--text-primary); }
 .tl-date-sub  { font-size: 11px; color: var(--text-secondary); }
 .tl-count {
-  margin-left: auto; font-size: 10.5px; color: var(--text-secondary);
+  font-size: 10.5px; color: var(--text-secondary);
   background: rgba(123,127,178,0.1); border-radius: 99px; padding: 1px 7px;
 }
 
-.tl-note {
-  position: relative;
-  padding: 10px 13px; border-radius: 12px;
-  background: rgba(255,255,255,0.66);
-  border: 1px solid rgba(255,255,255,0.88);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 4px rgba(80,90,110,0.05);
+.tl-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px; align-items: start;
 }
-.tl-note.editing { background: rgba(255,255,255,0.9); cursor: default; }
-.tl-note:not(.editing) .tl-body { cursor: text; }
+@media (max-width: 900px) {
+  .tl-grid { grid-template-columns: minmax(0, 1fr); }
+}
+/* 编辑中的卡就地展开、跨满两列，其余卡由 TransitionGroup move 让位 */
+.tl-span { grid-column: 1 / -1; }
 
-.tl-meta {
-  display: flex; align-items: center; gap: 4px;
-  margin-top: 6px; opacity: 0; transition: opacity 0.15s;
-}
-.tl-note:hover .tl-meta { opacity: 1; }
-.tl-time { font-size: 10.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.tl-icon {
-  margin-left: 2px; padding: 3px; border: none; border-radius: 5px;
-  background: transparent; color: var(--text-secondary); cursor: pointer;
-  display: inline-flex; align-items: center;
-}
-.tl-icon:hover { background: rgba(123,127,178,0.12); color: var(--color-primary); }
-.tl-icon.danger:hover { background: rgba(176,120,88,0.12); color: #b07858; }
+.tlc-move { transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
+.tlc-enter-active { transition: opacity 0.2s ease, transform 0.2s ease; }
+.tlc-enter-from { opacity: 0; transform: translateY(6px); }
+.tlc-leave-active { display: none; }   /* 删除即消失，让位动画交给 move */
 
-.tl-edit-foot { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
-.tl-conflict { margin-right: auto; font-size: 11px; color: #b07858; }
-.tl-btn {
-  padding: 4px 12px; border-radius: 7px; cursor: pointer;
-  border: 1px solid rgba(123,127,178,0.3); background: rgba(255,255,255,0.6);
-  font-size: 12px; color: var(--text-secondary); font-family: var(--font-sans);
-}
-.tl-btn:first-of-type { margin-left: auto; }
-.tl-btn.primary {
-  border-color: transparent; color: #fff;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-}
-
-.tl-empty { padding: 40px 0; text-align: center; font-size: 12.5px; color: var(--text-secondary); }
-</style>
-
-<style>
-/* v-html 出来的预览内容，不能 scoped */
-.md-preview { font-size: 13.5px; line-height: 1.65; color: var(--text-primary); }
-.md-preview p { margin: 0.25em 0; }
-.md-preview h1 { font-size: 16px; font-weight: 700; margin: 0.3em 0 0.2em; }
-.md-preview h2 { font-size: 14.5px; font-weight: 700; margin: 0.3em 0 0.2em; }
-.md-preview h3 { font-size: 13.5px; font-weight: 600; margin: 0.3em 0 0.2em; }
-.md-preview .np-tasks { list-style: none; padding: 0; margin: 0.3em 0; }
-.md-preview .np-tasks li { display: flex; align-items: flex-start; gap: 8px; }
-.md-preview .np-tasks li.done > span { opacity: 0.45; text-decoration: line-through; }
-.md-preview .np-tasks input { margin-top: 3px; }
+.tl-empty { padding: 48px 0; text-align: center; font-size: 12.5px; color: var(--text-secondary); }
 </style>

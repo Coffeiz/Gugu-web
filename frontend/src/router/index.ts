@@ -68,16 +68,18 @@ const routes: RouteRecordRaw[] = [
       },
       {
         // 思维面板：壳 + 子路由。记录（P1）已就绪；画布是 P2，届时加 canvases/:id
+        // fullBleed：思维是「工作台」不是「管理」视图，隐藏 topbar 让便签流/画布铺满内容区
+        // （记录页UI设计.md）；topbar 的全局搜索由页内胶囊条的便签筛选补位
         path: 'mind',
         component: () => import('@/views/Mind/index.vue'),
-        meta: { title: '思维' },
+        meta: { title: '思维', fullBleed: true },
         children: [
           { path: '', redirect: '/mind/records' },
           {
             path: 'records',
             name: 'MindRecords',
             component: () => import('@/views/Mind/RecordsView.vue'),
-            meta: { title: '思维' },
+            meta: { title: '思维', fullBleed: true },
           },
         ],
       },

@@ -1,0 +1,193 @@
+<template>
+  <div class="note-card" :class="{ editing, highlight, ['tint-' + (note.color || '')]: !!note.color }">
+    <!-- 编辑态：就地展开（跨两列由父级 grid-column 控制），同一个窄口径编辑器 -->
+    <template v-if="editing">
+      <NoteEditor v-model="draft" autofocus @submit="commit" />
+      <div class="nc-edit-foot">
+        <span v-if="conflict" class="nc-conflict">这条便签已被其他端改过，已刷新为最新内容</span>
+        <button class="nc-btn" @click="emit('cancel')">取消</button>
+        <button class="nc-btn primary" @click="commit">保存</button>
+      </div>
+    </template>
+
+    <!-- 只读态：轻量 HTML 预览。待办 checkbox 卡上直接勾（不进编辑）；长内容 clamp + 展开 -->
+    <template v-else>
+      <div class="nc-head">
+        <span class="nc-time" :title="note.capturedAt.slice(0, 16).replace('T', ' ')">{{ timeLabel }}</span>
+        <span class="nc-actions">
+          <button class="nc-icon" title="编辑" @click.stop="emit('edit')">
+            <PhPencilSimple :size="12" weight="bold" />
+          </button>
+          <button class="nc-icon danger" title="删除" @click.stop="emit('delete')">
+            <PhTrash :size="12" weight="bold" />
+          </button>
+        </span>
+      </div>
+      <div ref="bodyRef" class="nc-body md-preview" :class="{ clamped: clamped && !expanded }"
+           @click="onBodyClick" v-html="mdToPreviewHtml(note.contentMd)"></div>
+      <button v-if="clamped" class="nc-expand" @click.stop="expanded = !expanded">
+        {{ expanded ? '收起' : '展开' }}
+      </button>
+    </template>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
+import { mdToPreviewHtml } from '@/composables/useMindEditor'
+import type { MindNote } from '@/services/api'
+import NoteEditor from './NoteEditor.vue'
+
+const props = defineProps<{
+  note: MindNote
+  editing: boolean
+  highlight: boolean
+  conflict: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'edit'): void
+  (e: 'cancel'): void
+  (e: 'save', md: string): void
+  (e: 'delete'): void
+  (e: 'toggle-task', idx: number): void
+}>()
+
+const draft    = ref('')
+const expanded = ref(false)
+const clamped  = ref(false)
+const bodyRef  = ref<HTMLElement | null>(null)
+
+// 进入编辑时灌当前内容为草稿；退出编辑复位
+watch(() => props.editing, v => { if (v) draft.value = props.note.contentMd })
+
+function commit() {
+  if (draft.value !== props.note.contentMd) emit('save', draft.value)
+  else emit('cancel')
+}
+
+/** 时间戳常驻：当天只显 HH:MM，补录/往日显完整日期，扫一眼就知道这条是什么时候的 */
+const timeLabel = computed(() => {
+  const ts = props.note.capturedAt
+  return ts.slice(0, 10) === new Date().toISOString().slice(0, 10)
+    ? ts.slice(11, 16)
+    : `${+ts.slice(5, 7)}月${+ts.slice(8, 10)}日 ${ts.slice(11, 16)}`
+})
+
+/** 是否溢出 clamp 高度（内容/展开态变了都重测）。scrollHeight 对比要在未展开的 clamp 态量 */
+async function measureClamp() {
+  await nextTick()
+  const el = bodyRef.value
+  if (!el) return
+  if (expanded.value) return   // 展开着就保持"可收起"，不重判
+  clamped.value = el.scrollHeight > el.clientHeight + 2
+}
+onMounted(measureClamp)
+watch(() => props.note.contentMd, () => { expanded.value = false; measureClamp() })
+
+/** 卡上直接勾待办：点击落在预览里的 checkbox 时翻转对应任务，不进编辑态 */
+function onBodyClick(e: MouseEvent) {
+  const t = e.target as HTMLElement
+  if (t instanceof HTMLInputElement && t.dataset.taskIdx !== undefined) {
+    e.preventDefault()   // 视觉状态由 PATCH 成功后的数据回流驱动，别让浏览器先勾上
+    emit('toggle-task', Number(t.dataset.taskIdx))
+    return
+  }
+  // 点引用 chip 不进编辑（将来跳对应对象页）；点其他区域进编辑
+  if (t.closest('.mind-ref')) return
+  emit('edit')
+}
+</script>
+
+<style scoped>
+/* 纸质卡：近实底、薄、无投影（借右键菜单的"薄"、去掉它的"浮"），不用 backdrop-filter——
+   纸的质感本该实，还顺带绕开白带/隔离组两个玻璃坑，重排动画可放心用 transform */
+.note-card {
+  position: relative;
+  padding: 9px 12px 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.82);
+  border: 1px solid rgba(0,0,0,0.06);
+  min-width: 0;
+}
+/* hover 反馈走 ::after + opacity 叠层（白带红线：不动 background/box-shadow） */
+.note-card::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  background: rgba(255,255,255,0.5); opacity: 0; pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.note-card:not(.editing):hover::after { opacity: 1; }
+
+.note-card.editing { background: rgba(255,255,255,0.92); }
+
+/* 新建高亮：紫灰 tint 淡出（提交滚回顶部后让新卡自己说"我在这") */
+.note-card.highlight { animation: nc-flash 1.6s ease-out; }
+@keyframes nc-flash {
+  0% { background-color: rgba(123,127,178,0.16); }
+  100% { background-color: rgba(255,255,255,0.82); }
+}
+
+/* 可选低饱和颜色：整卡淡染（便签纸语言），不做左侧色条（那是管理系统语言） */
+.note-card.tint-purple { background: rgba(123,127,178,0.1); }
+.note-card.tint-pink   { background: rgba(196,175,200,0.14); }
+.note-card.tint-cyan   { background: rgba(122,184,200,0.11); }
+.note-card.tint-amber  { background: rgba(212,178,112,0.12); }
+
+.nc-head {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 2px; position: relative; z-index: 1;
+}
+.nc-time {
+  font-size: 10.5px; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums; opacity: 0.85;
+}
+.nc-actions { margin-left: auto; display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s; }
+.note-card:hover .nc-actions { opacity: 1; }
+.nc-icon {
+  padding: 3px; border: none; border-radius: 5px;
+  background: transparent; color: var(--text-secondary); cursor: pointer;
+  display: inline-flex; align-items: center;
+}
+.nc-icon:hover { background: rgba(123,127,178,0.12); color: var(--color-primary); }
+.nc-icon.danger:hover { background: rgba(176,120,88,0.12); color: #b07858; }
+
+.nc-body { position: relative; z-index: 1; cursor: text; }
+.nc-body.clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  overflow: hidden;
+}
+.nc-expand {
+  margin-top: 4px; padding: 0; border: none; background: none;
+  font-size: 11px; color: var(--color-primary); cursor: pointer;
+  font-family: var(--font-sans); position: relative; z-index: 1;
+}
+
+.nc-edit-foot { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.nc-conflict { margin-right: auto; font-size: 11px; color: #b07858; }
+.nc-btn {
+  padding: 4px 12px; border-radius: 7px; cursor: pointer;
+  border: 1px solid rgba(123,127,178,0.3); background: rgba(255,255,255,0.6);
+  font-size: 12px; color: var(--text-secondary); font-family: var(--font-sans);
+}
+.nc-btn:first-of-type { margin-left: auto; }
+.nc-btn.primary {
+  border-color: transparent; color: #fff;
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+}
+</style>
+
+<style>
+/* v-html 出来的预览内容，不能 scoped */
+.md-preview { font-size: 13px; line-height: 1.6; color: var(--text-primary); }
+.md-preview p { margin: 0.2em 0; }
+.md-preview h1 { font-size: 15px; font-weight: 700; margin: 0.25em 0 0.15em; }
+.md-preview .np-tasks { list-style: none; padding: 0; margin: 0.25em 0; }
+.md-preview .np-tasks li { display: flex; align-items: flex-start; gap: 8px; }
+.md-preview .np-tasks li.done > span { opacity: 0.45; text-decoration: line-through; }
+.md-preview .np-tasks input { margin-top: 3px; cursor: pointer; }
+.md-preview .np-list { padding-left: 1.2em; margin: 0.25em 0; }
+.md-preview .np-list li { margin: 0.1em 0; }
+</style>

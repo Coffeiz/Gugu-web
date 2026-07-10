@@ -1,23 +1,25 @@
 <template>
   <div class="note-editor" :class="{ compact }">
-    <!-- 窄口径工具栏：只有四种块，没有 / 菜单、没有加粗斜体 -->
+    <!-- 窄口径工具栏：正文/标题(单级)/待办/列表，没有 / 菜单（/ 预留给咕咕）、没有加粗斜体 -->
     <div class="ne-toolbar" v-if="editor">
       <button class="ne-tool" :class="{ on: editor.isActive('paragraph') }"
               @mousedown.prevent="editor.chain().focus().setParagraph().run()" title="正文">正文</button>
-      <button class="ne-tool" :class="{ on: editor.isActive('heading', { level: 1 }) }"
-              @mousedown.prevent="editor.chain().focus().toggleHeading({ level: 1 }).run()" title="标题">H1</button>
-      <button class="ne-tool" :class="{ on: editor.isActive('heading', { level: 2 }) }"
-              @mousedown.prevent="editor.chain().focus().toggleHeading({ level: 2 }).run()" title="小标题">H2</button>
+      <button class="ne-tool" :class="{ on: editor.isActive('heading') }"
+              @mousedown.prevent="editor.chain().focus().toggleHeading({ level: 1 }).run()" title="标题">标题</button>
       <button class="ne-tool" :class="{ on: editor.isActive('taskList') }"
               @mousedown.prevent="editor.chain().focus().toggleTaskList().run()" title="待办">
         <PhCheckSquare :size="13" weight="bold" />
       </button>
-      <span class="ne-hint">输入 <code>[[</code> 引用项目/文件/活动</span>
+      <button class="ne-tool" :class="{ on: editor.isActive('bulletList') }"
+              @mousedown.prevent="editor.chain().focus().toggleBulletList().run()" title="列表">
+        <PhListBullets :size="13" weight="bold" />
+      </button>
+      <span class="ne-hint">输入 <code>@</code> 引用项目/文件/活动</span>
     </div>
 
     <EditorContent class="ne-body" :editor="editor" />
 
-    <!-- `[[` 引用补全下拉：跟随光标定位 -->
+    <!-- `@` 引用补全下拉：跟随光标定位 -->
     <div v-if="picker.open" class="ne-picker" :style="{ left: picker.x + 'px', top: picker.y + 'px' }">
       <div v-if="loading" class="ne-pick-empty">搜索中…</div>
       <div v-else-if="!items.length" class="ne-pick-empty">没找到「{{ picker.query }}」</div>
@@ -35,7 +37,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, reactive, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
-import { PhCheckSquare } from '@phosphor-icons/vue'
+import { PhCheckSquare, PhListBullets } from '@phosphor-icons/vue'
 import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/useMindEditor'
 import { useMindObjectPicker } from '@/composables/useMindObjectPicker'
 import type { MindRefSuggestItem } from '@/services/api'
@@ -57,19 +59,22 @@ const TYPE_LABEL: Record<string, string> = { project: '项目', file: '文件', 
 const { items, loading, active, search, reset, move } = useMindObjectPicker()
 const picker = reactive({ open: false, query: '', from: 0, to: 0, x: 0, y: 0 })
 
-/** 光标前找 `[[关键词`（不跨行、不含 `]`），找到就是触发态 */
+/** 光标前找 `@关键词`。防误触两条：`@` 前必须是行首或空白（挡住邮箱地址）；
+ *  关键词不含空白/再一个 @（对象名带空格的场景靠前缀就能搜到，比误触发划算）。 */
 function findTrigger(ed: any): { query: string; from: number; to: number } | null {
   const { from } = ed.state.selection
-  const start = Math.max(0, from - 80)
+  const start = Math.max(0, from - 60)
   const before = ed.state.doc.textBetween(start, from, '\n', '￼')
-  const m = /\[\[([^[\]\n]*)$/.exec(before)
+  const m = /(^|[\s￼])@([^\s@]*)$/.exec(before)
   if (!m) return null
-  return { query: m[1], from: from - m[0].length, to: from }
+  const len = m[2].length + 1   // '@' + 关键词
+  return { query: m[2], from: from - len, to: from }
 }
 
 function closePicker() {
   picker.open = false
   picker.query = ''
+  emptyStreak = 0
   reset()
 }
 
@@ -87,11 +92,22 @@ function syncPicker(ed: any) {
   search(t.query)
 }
 
+// 连续无结果自动关面板（防误触兜底：色值、随手打的 @xx 等），继续打字不再骚扰
+let emptyStreak = 0
+watch([items, loading], () => {
+  if (!picker.open || loading.value) return
+  if (picker.query && !items.value.length) {
+    if (++emptyStreak >= 2) closePicker()
+  } else {
+    emptyStreak = 0
+  }
+})
+
 function choose(it: MindRefSuggestItem) {
   const ed = editor.value
   if (!ed) return
   ed.chain().focus()
-    .deleteRange({ from: picker.from, to: picker.to })   // 连同 `[[关键词` 一起删掉
+    .deleteRange({ from: picker.from, to: picker.to })   // 连同 `@关键词` 一起删掉
     .insertContent({ type: 'mindRef', attrs: { refType: it.type, refId: it.id, label: it.label } })
     .insertContent(' ')
     .run()
@@ -102,6 +118,9 @@ const editor = useEditor({
   content: markdownToDoc(props.modelValue) as any,
   extensions: mindExtensions(props.placeholder) as any,
   autofocus: props.autofocus,
+  // 无 Markdown 输入规则（2026-07-10 定）：行首 #/- 不触发格式转换，格式只走工具栏——
+  // 所见即所得里"看到的是排版、却要敲语法改排版"是自相矛盾的
+  enableInputRules: false,
   editorProps: {
     handleKeyDown(_view, event) {
       // 下拉开着时，方向键/回车归下拉；否则交回编辑器
@@ -170,7 +189,7 @@ onBeforeUnmount(() => editor.value?.destroy())
 .ne-body { font-size: 13.5px; line-height: 1.65; color: var(--text-primary); }
 .note-editor.compact .ne-body { min-height: 48px; }
 
-/* `[[` 补全下拉 */
+/* `@` 补全下拉 */
 .ne-picker {
   position: absolute; z-index: 30; min-width: 220px; max-width: 320px;
   padding: 4px; border-radius: 10px;
@@ -200,9 +219,7 @@ onBeforeUnmount(() => editor.value?.destroy())
 /* 编辑器内部由 ProseMirror 生成，不能用 scoped */
 .ne-body .ProseMirror { outline: none; min-height: 24px; }
 .ne-body .ProseMirror p { margin: 0.25em 0; }
-.ne-body .ProseMirror h1 { font-size: 17px; font-weight: 700; margin: 0.5em 0 0.25em; }
-.ne-body .ProseMirror h2 { font-size: 15px; font-weight: 700; margin: 0.45em 0 0.2em; }
-.ne-body .ProseMirror h3 { font-size: 14px; font-weight: 600; margin: 0.4em 0 0.2em; }
+.ne-body .ProseMirror h1 { font-size: 16px; font-weight: 700; margin: 0.5em 0 0.25em; }
 
 /* 占位符：空文档第一段显示 */
 .ne-body .ProseMirror p.is-editor-empty:first-child::before {
@@ -217,6 +234,11 @@ onBeforeUnmount(() => editor.value?.destroy())
 .ne-body .ProseMirror ul[data-type="taskList"] li > label { margin-top: 3px; }
 .ne-body .ProseMirror ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
 .ne-body .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div { opacity: 0.45; text-decoration: line-through; }
+
+/* 无序列表（平铺不嵌套） */
+.ne-body .ProseMirror ul:not([data-type="taskList"]) { padding-left: 1.2em; margin: 0.3em 0; }
+.ne-body .ProseMirror ul:not([data-type="taskList"]) li { margin: 0.1em 0; }
+.ne-body .ProseMirror ul:not([data-type="taskList"]) li p { margin: 0; }
 
 /* 对象引用 chip：整体选中/删除的原子节点 */
 .mind-ref {

@@ -1,9 +1,9 @@
 <template>
   <div class="layout">
     <AppSidebar />
-    <main class="layout-main">
-      <!-- 顶栏 -->
-      <header class="topbar glass-card">
+    <main class="layout-main" :class="{ 'full-bleed': fullBleed }">
+      <!-- 顶栏（fullBleed 页隐藏：思维面板等「工作台」视图自己管头部，见 router meta） -->
+      <header v-if="!fullBleed" class="topbar glass-card">
         <GlassBg />
         <div class="topbar-title">
           <h1>{{ currentTitle }}</h1>
@@ -148,6 +148,7 @@ onMounted(async () => {
 onBeforeUnmount(() => liveStore.disconnect())
 
 const currentTitle = computed(() => route.meta.title || '总览')
+const fullBleed    = computed(() => !!route.meta.fullBleed)
 
 const todayStr = computed(() => {
   const d = new Date()
@@ -278,5 +279,14 @@ const todayStr = computed(() => {
   scrollbar-gutter: stable;
   padding: 128px 34px 24px 30px;
   box-sizing: border-box;
+}
+
+/* ── fullBleed（思维面板等工作台视图）──
+   没有 topbar：顶部渐变遮罩（为"内容溶进 topbar"设计）一并去掉；padding-top 从 128px
+   收到 18px；滚动交给页面自己管（记录页要在内部做便签流滚动 + 底部停靠捕捉条）。 */
+.layout-main.full-bleed::after { display: none; }
+.layout-main.full-bleed .page-content {
+  overflow: hidden;
+  padding: 18px 24px 18px 20px;
 }
 </style>

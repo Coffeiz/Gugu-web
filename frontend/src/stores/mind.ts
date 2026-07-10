@@ -21,15 +21,25 @@ function byCapturedDesc(a: MindNote, b: MindNote): number {
   return b.id - a.id
 }
 
+/** 引用锚点 `[[project:7|某项目]]` 只留显示名，给前端筛选当纯文本用 */
+function plainOf(md: string): string {
+  return md.replace(/\[\[[a-z_]+:\d+\|([^\]]*)\]\]/g, '$1')
+}
+
 export const useMindStore = defineStore('mind', () => {
   const notes   = ref<MindNote[]>([])
   const loading = ref(false)
   const loaded  = ref(false)
+  const filterQ = ref('')   // 胶囊条的便签筛选（客户端过滤已加载的便签）
 
-  /** 时间流：按 capturedAt 分组成「一天一组」，供 RecordTimeline 渲染 */
+  /** 时间流：按 capturedAt 分组成「一天一组」，供 RecordTimeline 渲染；筛选词命中正文才留 */
   const timeline = computed(() => {
+    const q = filterQ.value.trim().toLowerCase()
+    const pool = q
+      ? notes.value.filter(n => plainOf(n.contentMd).toLowerCase().includes(q))
+      : notes.value
     const groups: { date: string; items: MindNote[] }[] = []
-    for (const n of [...notes.value].sort(byCapturedDesc)) {
+    for (const n of [...pool].sort(byCapturedDesc)) {
       const date = n.capturedAt.slice(0, 10)
       const last = groups[groups.length - 1]
       if (last && last.date === date) last.items.push(n)
@@ -74,5 +84,5 @@ export const useMindStore = defineStore('mind', () => {
     notes.value = notes.value.filter(n => n.id !== id)
   }
 
-  return { notes, loading, loaded, timeline, fetchNotes, createNote, updateNote, deleteNote }
+  return { notes, loading, loaded, filterQ, timeline, fetchNotes, createNote, updateNote, deleteNote }
 })
