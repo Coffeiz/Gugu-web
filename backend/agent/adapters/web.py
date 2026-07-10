@@ -435,7 +435,8 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
             async with _sess._SessionLocal() as db2:
                 sess_alive = await db2.get(ConversationSession, session_id) is not None
                 if sess_alive:
-                    for tm in anthr_messages[anthr_initial_len:]:
+                    # 只落真工具往返；守卫注入的合成 prompt / 核实内心戏是控制信令，不进历史（否则每轮重灌污染上下文）
+                    for tm in sanitize.tool_rounds_only(anthr_messages[anthr_initial_len:]):
                         db2.add(ConversationMessage(
                             session_id=session_id, role=tm["role"], content="",
                             content_json=chat_attach.strip_vision_for_history(tm["content"]),

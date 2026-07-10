@@ -201,3 +201,25 @@ def sanitize_messages(messages: list) -> list:
         else:
             merged.append({"role": m["role"], "content": m["content"]})
     return merged
+
+
+def tool_rounds_only(messages: list) -> list:
+    """从「工具循环 delta」里只留真正的工具往返（assistant 的 tool_use / user 的 tool_result），
+    丢弃 core 里守卫注入的合成控制消息和核实轮被 UI 隐藏的内心戏——它们是控制信令、不是对话：
+
+    - `_VERIFY_PROMPT` / `_VERIFY_FORCE_PROMPT` / `_NARRATION_NUDGE` / `_INTENT_NUDGE` /
+      `_DECISION_NUDGE` 这些合成 user 消息（纯字符串 content，无工具块）；
+    - 核实/narration/intent/decision 守卫那几轮的 assistant 文字（纯文本、无 tool_use，UI 已丢弃）。
+
+    这些若落进 ConversationMessage.content_json，下一轮会从 content_json 重建进 LLM 上下文、
+    还被压缩/反思吃进去——每轮重复灌「【系统自检】…」白烧 token 且污染行为。最终回复另存为
+    assistant text，不在此 delta 里，所以「只留带工具块的消息」不会漏掉真答复。
+    判据基于工具块存在性（tool_use / tool_result），故对 anthropic 与 openai 两种 content 形态都成立。"""
+    out = []
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, list) and any(
+            isinstance(b, dict) and b.get("type") in ("tool_use", "tool_result") for b in c
+        ):
+            out.append(m)
+    return out

@@ -333,7 +333,7 @@ class LLMRunner:
             system_param = system_text
 
         _mutset = _mutating_tools(self.tool_names)
-        did_mutate = False; verify_count = 0; round_i = 0
+        did_mutate = False; verify_count = 0; round_i = 0; empty_retry = 0
         any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0   # 真实性守卫状态
         _user_req = _user_text(messages[-1]["content"]) if messages and messages[-1].get("role") == "user" else ""
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
@@ -443,9 +443,24 @@ class LLMRunner:
                 messages.append({"role": "user", "content": _VERIFY_FORCE_PROMPT if _need_force else _VERIFY_PROMPT})
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
+            _final_text = "".join(b.text for b in final.content if b.type == "text")
+            # 空回复兜底（与 OpenAI 路对齐；此前仅 OpenAI 路有 → Anthropic 端点的 mimo 思考吞正文/精力降级
+            # 不说话时会裸露成空气泡）：整轮无正文、没动工具、不在核实阶段 → 先追一轮要正文，仍空给句得体兜底。
+            if not _final_text.strip() and not did_mutate and not verify_mode:
+                if empty_retry < 1:
+                    empty_retry += 1
+                    # 占位保证 user/assistant 交替合法（真·空 content 会被 Anthropic 拒）；这条守卫消息不入历史（tool_rounds_only 过滤）
+                    content_dicts = [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in final.content] or [{"type": "text", "text": "（…）"}]
+                    messages.append({"role": "assistant", "content": content_dicts})
+                    messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})
+                    yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                    continue
+                fb = "嗯…我这下没太接住，你再说一遍、或者换个说法，我马上跟上～"
+                async for _line in genstream.typed_stream(fb):   # 空回复兜底也走逐字流式，与 OpenAI 路一致
+                    yield _line
+                _final_text = fb
             # narration 兜底：整段生成一个工具都没真调，但文字在"假装"读/改文件 → 追一轮逼它真调。
             # 只追一次；核实阶段不算（那是另一套）。content 在 verify_mode 下被缓冲，故取 _verify_buf 兜底。
-            _final_text = "".join(b.text for b in final.content if b.type == "text")
             if (not any_tool_called and not verify_mode and narration_retry < 1
                     and _looks_like_narration(_final_text)):
                 narration_retry += 1
@@ -619,10 +634,19 @@ class LLMRunner:
                     try:
                         args = json.loads(b["args"])
                     except Exception:
-                        # 参数 JSON 解析失败（常见于长内容被 max_tokens 截断）→ 记下原文便于排查
+                        # 参数 JSON 解析失败（多为长内容被 max_tokens 截断）→ 别拿空参跑：增删改工具吃到 {} 会
+                        # 误伤数据或报错，还会白置 did_mutate 触发一整轮核实。改回一条错误 tool_result 让模型把这次
+                        # 调用参数精简后重发；本轮不 dispatch、不置 did_mutate。tool_call 已在上面 append，这里补齐配对的 result。
                         print(f"[core] 工具 {b['name']} 参数解析失败(疑似 max_tokens 截断), "
                               f"len={len(b['args'])} 尾部={b['args'][-120:]!r}", flush=True)
-                        args = {}
+                        yield f"data: {json.dumps({'type': 'tool_call', 'name': b['name'], 'label': label, 'input': {}, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                        yield f"data: {json.dumps({'type': 'tool_done', 'name': b['name'], 'label': label, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": b["id"],
+                            "content": json.dumps({"error": "参数不完整（内容可能过长被截断），请精简这次调用的参数后重试"}, ensure_ascii=False),
+                        })
+                        continue
                     await _im_set_tool_state(b["name"])
                     # 自检轮工具照常显示，但打 verify 标记：前端标注「复查·」且收尾不冒「生成中」点点（否则回复完还在转、像卡住）
                     yield f"data: {json.dumps({'type': 'tool_call', 'name': b['name'], 'label': label, 'input': args, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
