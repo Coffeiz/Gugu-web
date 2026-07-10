@@ -55,6 +55,7 @@
 import { ref, watch, nextTick, computed, defineAsyncComponent } from 'vue'
 import { PhWarningCircle, PhPencilSimple } from '@phosphor-icons/vue'
 import { filesApi } from '@/services/api'
+import { sanitizeHtml } from '@/utils/markdown'
 
 // CodeMirror 全部延迟加载：TextViewer 从 FloatPreviewWindow 静态引入，FloatPreviewWindow
 // 又从 DefaultLayout 静态引入（基本每个登录页都会经过这条链路）——顶层 import codemirror/
@@ -374,7 +375,7 @@ async function renderMarkdown(text) {
     })
   }
 
-  return _tvMarked.parse(text)
+  return sanitizeHtml(_tvMarked.parse(text) as string)
 }
 
 // ── 任务勾选框可交互：去掉 marked 默认的 disabled、按文档顺序标 data-task（仅 md + 真实文件）──
