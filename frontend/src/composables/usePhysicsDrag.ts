@@ -141,20 +141,24 @@ function _animateScroll(el, dy, dur = 300) {
 // 浏览器正确判定「摘了命中测试=没有 hover」，窗口结束后指针没挪动、没有新 mousemove 触发重新
 // 判定，:hover 就永远卡在「没悬停」，实际指针明明正压在卡片上。
 // pointer 模式下 :hover 判定本身全程是准的（见上面的注释），但揭示这一刻鼠标可能恰好压在
-// 卡片刚落地的位置——:hover 立即生效会带着 translateY(-2px) 抬起，跟落地动画前后脚发生，
-// 两个动作叠在一起看着像抖了一下。用类名压 200ms：不摘 pointer-events、不碰命中测试，
-// :hover 状态本身继续实时准确更新，只是这段时间内不让它的视觉抬起效果显形；200ms 后摘掉
-// 类名，若那时鼠标真压在卡片上，:hover 早已是 true，效果立刻正常呈现（不会有「指针不动
-// 就再也不触发」的坑——因为压根没碰过命中测试）。CSS 见 global.css .phys-just-revealed。
-function _suppressHoverBump(el: HTMLElement, dur = 200) {
-  el.classList.add('phys-just-revealed')
-  setTimeout(() => el.classList.remove('phys-just-revealed'), dur)
-}
-
+// 卡片刚落地的位置。要解决的是揭示瞬间的两处「陈旧 hover 态回弹」：卡片飞行期间是 opacity:0
+// （命中测试仍在、:hover 已为真），CSS 的 hover 早把整张卡推到了 hover 终态——只是看不见：
+//   ① 卡片本体 transform 已在 -2px；② 悬停操作按钮（重命名/下载/删除）opacity 已在 1。
+// 若揭示时只恢复 opacity、各自的过渡又都是激活的，卡片会从 -2px 动画回落到压制态 0（下沉）、
+// 按钮会从 1 淡出到 0，200ms 后又双双反向动回来——就是「先下沉再上浮」+「按钮闪好几次」。
+// 解法：加压制类（把 hover 的 transform/阴影/底色/按钮 opacity 全钉在非 hover 态）的同时，再加
+// 一个「快照」类，用 !important 把卡片**及其所有子元素**的 transition 一并关掉；恢复可见、强制
+// 提交这一帧——整张卡（含按钮）直接坐在压制态、零动画；随即摘掉快照类恢复过渡（此刻各属性值
+// 未变、不会触发任何过渡）。200ms 到点摘掉压制类时，卡片上浮 + 按钮淡入 + 阴影渐显作为一次
+// 干净的 hover-in 平滑发生。全程不摘 pointer-events、不碰命中测试，:hover 一直实时准确
+// （不会有「指针不动就再也不触发」的坑）。CSS 见 global.css .phys-just-revealed / .phys-reveal-snap。
 function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettled?: () => void) {
+  el.classList.add('phys-just-revealed')   // 压制：hover 的 transform/阴影/底色/按钮 opacity 全归非 hover 态
+  el.classList.add('phys-reveal-snap')     // 快照：本帧关掉卡片+全部子元素的过渡，让上面这步瞬间生效、零动画
   el.style.opacity = ''
-  el.style.transition = ''
-  _suppressHoverBump(el)
+  void el.offsetWidth                      // 强制提交：整张卡（含按钮）直接坐在压制态，不下沉、按钮不淡出
+  el.classList.remove('phys-reveal-snap')  // 恢复过渡：此刻各属性值未变 → 不触发过渡；只为 200ms 后的上浮/淡入铺路
+  setTimeout(() => el.classList.remove('phys-just-revealed'), 200)
   if (pointerMode) { onSettled?.(); return }
   el.style.pointerEvents = 'none'
   setTimeout(() => {

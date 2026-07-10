@@ -217,9 +217,33 @@ body {
 }
 .fc-card:hover::after, .folder-card:hover::after { opacity: 1; }
 .fc-card:hover, .folder-card:hover { transform: translateY(-2px); }
-/* 拖拽落地揭示后短暂压住 hover 抬起效果，见 usePhysicsDrag.ts 的 _suppressHoverBump——
-   :hover 判定没被拦，只是这段时间内不让 translateY 显形，避免跟落地动画前后脚抖一下 */
-.fc-card.phys-just-revealed:hover, .folder-card.phys-just-revealed:hover { transform: none; }
+/* 拖拽落地揭示后短暂压住全部 hover 效果，见 usePhysicsDrag.ts 的 _revealWithoutStaleHover——
+   :hover 判定没被拦（一直照真实指针位置实时判定），只是这段时间内不让视觉效果显形。
+   之前只压了 transform，文件库/项目编辑卡两处 scoped 样式里的 box-shadow/background/
+   操作按钮渐显没压住：位移之外的 hover 效果瞬间就到位，200ms 后位移才补上，看着像
+   「先出现一半 hover 效果、再跳一下变全 hover」。这里把每一项都摘掉，200ms 内看起来是
+   完整的非 hover 态，200ms 后（还压着的话）一次性正常呈现完整 hover，不再分两截。
+   background/box-shadow 用 !important——scoped 样式编译后带 data-v 属性选择器，跟这里的
+   类选择器特异度可能刚好打平，谁赢要看两份样式表的实际注入顺序，不保真，直接 !important
+   免得赌。 */
+.fc-card.phys-just-revealed:hover, .folder-card.phys-just-revealed:hover {
+  transform: none !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06) !important;
+}
+.fc-card.phys-just-revealed:hover { background: rgba(255,255,255,0.72) !important; }
+.folder-card.phys-just-revealed:hover {
+  background: color-mix(in srgb, var(--fd-color, #8888a0) 6%, rgba(255,255,255,0.82)) !important;
+}
+.fc-card.phys-just-revealed:hover::after, .folder-card.phys-just-revealed:hover::after { opacity: 0 !important; }
+.fc-card.phys-just-revealed:hover .fc-hover-actions,
+.folder-card.phys-just-revealed:hover .fd-hover-actions { opacity: 0 !important; }
+/* 揭示当帧：把卡片及其所有子元素的过渡一并关掉，让「压制态」瞬间生效、零动画（卡片不下沉、
+   操作按钮不从陈旧的 hover opacity 淡出）。只挂一帧，提交后立即由 JS 摘掉。见 _revealWithoutStaleHover。
+   必须连 ::before/::after 一起关：通配符 * 匹配不到伪元素，而 hover 高光遮罩正是 .fc-card::after，
+   漏了它高光就仍会从陈旧的 hover opacity 淡出、200ms 后再淡入（表现为「高光闪一下」）。 */
+.phys-reveal-snap, .phys-reveal-snap *,
+.phys-reveal-snap::before, .phys-reveal-snap::after,
+.phys-reveal-snap *::before, .phys-reveal-snap *::after { transition: none !important; }
 .fc-card:active:not(:has(.fc-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }
 .folder-card:active:not(:has(.fd-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }
 
