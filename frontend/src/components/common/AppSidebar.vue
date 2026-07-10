@@ -238,6 +238,9 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
   box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
   display: flex; flex-direction: column;
   padding: 24px 14px; gap: 0;
+  /* 浮到主区之上：记录页横向列滚动区铺满视口宽、会钻到侧栏底下（#3），侧栏得盖在其上
+     用自身磨砂玻璃把钻进来的历史列糊住（而不是被列盖住） */
+  position: relative; z-index: 20;
 }
 
 .logo {

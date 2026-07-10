@@ -19,13 +19,14 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{
   groups: { date: string; count: number }[]
   active: string
 }>()
-const emit = defineEmits<{ (e: 'jump', date: string): void }>()
+// animate=false → 列瞬时滚过去（滑杆拖动的实时联动）；不传/true → 平滑
+const emit = defineEmits<{ (e: 'jump', date: string, animate?: boolean): void }>()
 
 const stripRef = ref<HTMLElement | null>(null)
 const trackRef = ref<HTMLElement | null>(null)
@@ -55,27 +56,36 @@ function nearestIndex(): number {
   return best
 }
 
-// 外部（列滚动）改了 active → 把对应刻度带到中线（拖动中不抢，避免和手指打架）
+// 外部（列滚动）改了 active → 把对应刻度带到中线（拖动中不抢，避免和手指打架）。
+// 全程无 CSS 过渡：实时、瞬时定位，不会有"飞入"动画（打开页面/resize 也就不飞了）。
 watch(() => props.active, async (d) => {
   if (dragging.value || !d) return
   await nextTick()
   const idx = props.groups.findIndex(g => g.date === d)
   if (idx >= 0) offset.value = centerOffsetFor(idx)
 })
-// 数据/尺寸就绪后先摆正一次
+// 数据/尺寸就绪后先摆正一次（瞬时，无动画）
 watch(() => props.groups, async () => {
   await nextTick()
-  const idx = Math.max(0, props.groups.findIndex(g => g.date === props.active))
-  offset.value = centerOffsetFor(idx)
+  recenter()
 }, { immediate: true })
 
-// ── 拖动：1:1 跟手（linear），松手 spring 吸附最近刻度并 emit ──────────────────
-let startX = 0, startOffset = 0, moved = false, downIdx = -1
+function recenter() {
+  const idx = Math.max(0, props.groups.findIndex(g => g.date === props.active))
+  offset.value = centerOffsetFor(idx)
+}
+// 窗口尺寸变了：容器中线变了，瞬时重新摆正（不飞入）
+function onResize() { if (!dragging.value) recenter() }
+onMounted(() => window.addEventListener('resize', onResize))
+
+// ── 拖动：1:1 跟手，实时联动列（松手吸附到最近刻度，全程无过渡）──────────────
+let startX = 0, startOffset = 0, moved = false, downIdx = -1, lastEmit = -1
 
 function onDown(e: PointerEvent) {
   startX = e.clientX
   startOffset = offset.value
   moved = false
+  lastEmit = -1
   // 记录按下的是哪根刻度（用于"点击直接吸过去"，与"拖动"区分）
   const el = (e.target as HTMLElement).closest<HTMLElement>('.dsb-tick')
   downIdx = el ? Number(el.dataset.idx) : -1
@@ -88,23 +98,27 @@ function onDown(e: PointerEvent) {
 function onMove(e: PointerEvent) {
   const dx = e.clientX - startX
   if (Math.abs(dx) > 3) moved = true
-  offset.value = startOffset + dx   // 跟手：无过渡，1:1
+  offset.value = startOffset + dx   // 跟手：1:1，无过渡
+  // 实时联动：中线所在刻度一变，立刻让列滚过去（瞬时，见父级 jumpTo auto）
+  const idx = nearestIndex()
+  if (idx !== lastEmit) { lastEmit = idx; emit('jump', props.groups[idx]?.date, false) }
 }
 
 function onUp() {
   window.removeEventListener('pointermove', onMove)
   window.removeEventListener('pointerup', onUp)
   dragging.value = false
-  // 点击（没拖动）→ 吸到点的那根；拖动 → 吸到离中线最近的那根
+  // 点击（没拖动）→ 吸到点的那根；拖动 → 吸到离中线最近的那根（瞬时对齐）
   const idx = (!moved && downIdx >= 0) ? downIdx : nearestIndex()
-  offset.value = centerOffsetFor(idx)   // transition 恢复 → spring 吸附
+  offset.value = centerOffsetFor(idx)
   const date = props.groups[idx]?.date
-  if (date && date !== props.active) emit('jump', date)
+  if (date) emit('jump', date, false)
 }
 
 onBeforeUnmount(() => {
   window.removeEventListener('pointermove', onMove)
   window.removeEventListener('pointerup', onUp)
+  window.removeEventListener('resize', onResize)
 })
 
 const _today = new Date().toISOString().slice(0, 10)
@@ -128,10 +142,7 @@ function fmtLabel(iso: string) {
   position: absolute; top: 4px; left: 0;
   display: flex; align-items: flex-end; gap: 3px;
   will-change: transform;
-}
-/* 松手吸附走 spring；拖动中去掉过渡（跟手） */
-.ds-track:not(.dragging) {
-  transition: transform 0.42s cubic-bezier(0.34, 1.3, 0.5, 1);
+  /* 无 transition：全程瞬时（拖动跟手、列联动、打开/resize 定位都实时，不飞入） */
 }
 
 /* 每根刻度 10px 透明命中区，视觉只露中间 3px 的杆 */

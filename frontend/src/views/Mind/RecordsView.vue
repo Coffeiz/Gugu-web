@@ -59,18 +59,23 @@ function onWheel(e: WheelEvent) {
   e.preventDefault()
 }
 
-// ── 滑杆语义：聚焦哪天、那天的列停在屏幕正中 ─────────────────────────────────
-// 「当前」= 中心离容器中心最近的列（不是最左的列）。判定要随每个滚动像素连续变化，
-// IntersectionObserver 只在进出边界时回调、跟不上"最近"的易主，这里是它的能力边界，
-// 改用 rAF 节流的 scroll 手算（列数就几十个，一次遍历微不足道）。
+// ── 滑杆语义：聚焦哪天、那天的列停在「内容区正中」（= 滑杆 playhead 那条竖线所在）──
+// 列的滚动条铺满整个视口宽（#3：可被侧栏遮住），但对齐中心不是视口中心、而是内容区
+// 中心（侧栏右侧那块的正中），才能和上方胶囊/滑杆的居中对齐。
+// 「当前」= 中心离内容区中线最近的列。判定要随每个滚动像素连续变化，超出 IntersectionObserver
+// 的能力（只在进出边界回调），改用 rAF 节流的 scroll 手算（几十列一次遍历微不足道）。
+const SIDEBAR_W = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 220
 const indexGroups = computed(() => store.timeline.map(g => ({ date: g.date, count: g.items.length })))
 const activeDate  = ref('')
 let scrollRaf = 0
 
+/** 内容区中线在滚动容器坐标里的 x（容器左边缘 = 视口左边缘 = 0） */
+function contentCenter(root: HTMLElement) { return (SIDEBAR_W + root.clientWidth) / 2 }
+
 function updateActive() {
   const root = scrollRef.value
   if (!root) return
-  const centerX = root.scrollLeft + root.clientWidth / 2
+  const centerX = root.scrollLeft + contentCenter(root)
   let best = ''; let bestDist = Infinity
   root.querySelectorAll<HTMLElement>('.tl-col[data-date]').forEach(col => {
     const d = Math.abs(col.offsetLeft + col.offsetWidth / 2 - centerX)
@@ -83,16 +88,26 @@ function onScroll() {
   if (scrollRaf) return
   scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; updateActive() })
 }
-onBeforeUnmount(() => { if (scrollRaf) cancelAnimationFrame(scrollRaf) })
 
-/** 把某天的列滚到容器正中（首末列靠 .timeline-cols 两端的半屏 padding 也能居中） */
-function jumpTo(date: string, behavior: ScrollBehavior = 'smooth') {
+/** 把某天的列滚到内容区正中。animate=false → 瞬时（滑杆拖动的实时联动）、true → 平滑 */
+function jumpTo(date: string, animate = true) {
   const root = scrollRef.value
   const col = root?.querySelector<HTMLElement>(`.tl-col[data-date="${date}"]`)
   if (root && col) {
-    root.scrollTo({ left: col.offsetLeft + col.offsetWidth / 2 - root.clientWidth / 2, behavior })
+    root.scrollTo({
+      left: col.offsetLeft + col.offsetWidth / 2 - contentCenter(root),
+      behavior: animate ? 'smooth' : 'auto',
+    })
   }
 }
+
+// resize：内容区中线变了，把当前列瞬时重新居中（不飞入）
+function onResize() { if (activeDate.value) jumpTo(activeDate.value, false) }
+onMounted(() => window.addEventListener('resize', onResize))
+onBeforeUnmount(() => {
+  if (scrollRaf) cancelAnimationFrame(scrollRaf)
+  window.removeEventListener('resize', onResize)
+})
 
 // 首次数据就绪：今天（最新一列）直接定在正中，不播滚动动画
 let centeredOnce = false
@@ -100,7 +115,7 @@ watch(() => store.timeline, async (groups) => {
   await nextTick()
   if (!centeredOnce && groups.length) {
     centeredOnce = true
-    jumpTo(groups[0].date, 'auto')
+    jumpTo(groups[0].date, false)
   }
   updateActive()
 }, { immediate: true })
@@ -123,7 +138,7 @@ async function onCreated(md: string, capturedAt?: string) {
     return
   }
   await nextTick()               // 今天的列可能是刚创建出来的，等它进 DOM 再居中
-  jumpTo(_today())
+  jumpTo(_today(), true)
   highlightId.value = created.id
   if (highlightTimer) clearTimeout(highlightTimer)
   highlightTimer = setTimeout(() => { highlightId.value = null }, 1800)
@@ -164,21 +179,27 @@ async function onDelete(note: MindNote) {
   display: flex; flex-direction: column; gap: 18px; min-height: 0;   /* 滑杆↔列的安全距离 */
 }
 
+/* #3：列的横向滚动区铺满整个视口宽——向左顶开（侧栏宽 + fullBleed 左内边距 20），
+   宽度取 100vw，最左的列滚到侧栏底下（侧栏 z 更高、玻璃磨砂，自然把它们糊住）。
+   列在容器内仍按「内容区中心」居中（见 timeline-cols 两端 padding + JS contentCenter），
+   所以活动列和上方胶囊/滑杆对齐，只是溢出的历史列能钻到侧栏后面。 */
 .rec-hscroll {
-  flex: 1; min-height: 0; min-width: 0;
+  flex: 1; min-height: 0;
+  width: 100vw;
+  margin-left: calc(-1 * (var(--sidebar-width) + 20px));
   overflow-x: auto; overflow-y: hidden;
   /* 横向导航靠滚轮/触控板/日期条，滚动条藏掉（露在捕捉条底下很脏） */
   scrollbar-width: none;
-  padding-bottom: 96px;   /* 给底部停靠的捕捉条让空间，最左列底部的卡不被盖住 */
+  padding-bottom: 96px;   /* 给底部停靠的捕捉条让空间，最下的卡不被盖住 */
 }
 .rec-hscroll::-webkit-scrollbar { display: none; }
 
 .rec-loading { padding: 40px 24px; font-size: 12.5px; color: var(--text-secondary); }
 
-/* 捕捉条：停靠底部、水平居中（与居中胶囊呼应）。
-   18px + fullBleed 的 10px 内边距 = 视口底 28px，与咕咕悬浮球（.ai-fab bottom:28px）齐平 */
+/* 捕捉条：停靠底部、在内容区水平居中（与胶囊/滑杆对齐）。
+   bottom:28 与胶囊顶 28（fullBleed padding-top）等距，跟咕咕悬浮球 bottom:28 齐平 */
 .rec-capture {
-  position: absolute; bottom: 18px; left: 0; right: 0;
+  position: absolute; bottom: 28px; left: 0; right: 0;
   margin: 0 auto;
   width: min(100% - 24px, 680px);
   z-index: 8;

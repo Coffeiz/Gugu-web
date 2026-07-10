@@ -285,10 +285,15 @@ const todayStr = computed(() => {
    没有 topbar：顶部渐变遮罩（为"内容溶进 topbar"设计）一并去掉；padding-top 从 128px
    收到 18px；滚动交给页面自己管（记录页要在内部做便签流滚动 + 底部停靠捕捉条）。 */
 .layout-main.full-bleed::after { display: none; }
-/* 顶 28px 与底一致：捕捉条停在视口底 28px（bottom:18 + 这里的 10 下边距），胶囊顶
-   28px 上边距，两端离浏览器边缘等距 */
+/* fullBleed 放开左裁：默认 layout-main overflow:hidden 会在侧栏右缘(x=侧栏宽)截断，
+   记录页横向列滚动区要钻到侧栏底下就不能被这里截。外层 .layout overflow:hidden 仍兜住
+   视口边界，不会真溢出浏览器。 */
+.layout-main.full-bleed { overflow: visible; }
+/* 顶/底 28px 等距：胶囊顶 28（padding-top），捕捉条 bottom:28（padding-bottom 0）。
+   overflow 放开（不裁左侧）：让记录页的横向列滚动区能钻到侧栏底下（#3，侧栏 z 更高、
+   磨砂玻璃把钻进去的历史列糊住）。纵向仍靠内部各区自己不溢出。 */
 .layout-main.full-bleed .page-content {
-  overflow: hidden;
-  padding: 28px 24px 10px 20px;
+  overflow: visible;
+  padding: 28px 24px 0 20px;
 }
 </style>

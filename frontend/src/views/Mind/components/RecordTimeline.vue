@@ -84,8 +84,12 @@ defineExpose({ flagConflict: () => { conflict.value = true } })
 .timeline-cols {
   display: flex; gap: 14px; align-items: stretch;
   height: 100%; min-width: max-content;
-  /* 两端各留半屏空白（% 相对滚动容器宽）：滑杆语义下首末列也要能停在屏幕正中 */
-  padding: 2px calc(50% - 146px) 0;
+  /* 两端留白让首末列也能停在「内容区中线」（不是视口中线——滚动容器铺满视口宽但要跟
+     上方胶囊/滑杆的居中对齐）。内容区中线 = (侧栏宽 + 视口)/2 = 侧栏宽/2 + 50vw；
+     半列宽 146。左 padding = 中线 - 半列；右 padding = 视口 - 中线 - 半列。 */
+  padding-top: 2px;
+  padding-left: calc(var(--sidebar-width) / 2 + 50vw - 146px);
+  padding-right: calc(50vw - var(--sidebar-width) / 2 - 146px);
 }
 
 /* 一天一块玻璃底板：轻玻璃（同定时任务面板 --glass-bg 0.25），hover 不提亮（底板不是交互件） */
