@@ -161,7 +161,7 @@ async function onDelete(note: MindNote) {
 <style scoped>
 .rec-layout {
   position: relative; height: 100%;
-  display: flex; flex-direction: column; gap: 8px; min-height: 0;
+  display: flex; flex-direction: column; gap: 18px; min-height: 0;   /* 滑杆↔列的安全距离 */
 }
 
 .rec-hscroll {

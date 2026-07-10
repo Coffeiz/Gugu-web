@@ -285,8 +285,10 @@ const todayStr = computed(() => {
    没有 topbar：顶部渐变遮罩（为"内容溶进 topbar"设计）一并去掉；padding-top 从 128px
    收到 18px；滚动交给页面自己管（记录页要在内部做便签流滚动 + 底部停靠捕捉条）。 */
 .layout-main.full-bleed::after { display: none; }
+/* 顶 28px 与底一致：捕捉条停在视口底 28px（bottom:18 + 这里的 10 下边距），胶囊顶
+   28px 上边距，两端离浏览器边缘等距 */
 .layout-main.full-bleed .page-content {
   overflow: hidden;
-  padding: 10px 24px 10px 20px;
+  padding: 28px 24px 10px 20px;
 }
 </style>
