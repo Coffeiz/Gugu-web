@@ -1,6 +1,37 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
+// 导航栏通知中心的持久条目（time 在前端归一成 Date）
+interface NotifItem {
+  id: number | null
+  title?: string
+  content?: string
+  meta?: string
+  color?: string
+  unread: boolean
+  time: Date
+}
+// SSE / 后端下发的原始通知载荷（字段多为可选，前端按需取用）
+interface NotifInput {
+  id?: number | null
+  title?: string
+  content?: string
+  color?: string
+  gugu?: boolean
+  persist?: boolean
+  bubble?: boolean
+  time?: string | number | Date
+  [k: string]: unknown
+}
+// 气泡（toast）信号
+interface LiveNotif {
+  seq: number
+  id?: number | null
+  title?: string
+  content?: string
+  gugu?: boolean
+}
+
 export const useUiStore = defineStore('ui', () => {
   const openNewProject = ref(false)
   const newProjectInitStatus = ref(null)
@@ -12,8 +43,8 @@ export const useUiStore = defineStore('ui', () => {
   const pendingFileTarget    = ref(null)
   const pendingChatMessageId = ref(null)   // 对话搜索命中消息时，跳转后滚到该消息
   const pendingCalendarEvent = ref(null)   // { id, date } 日程搜索跳转
-  const pendingProjectHighlight = ref(null)   // 项目搜索跳转后高亮项目卡（不打开编辑弹窗）
-  const pendingProjectHighlightMs = ref(null) // 高亮时长(ms)：缺省 1800；新手引导用 5000（设 id 前先设它）
+  const pendingProjectHighlight = ref<number | null>(null)   // 项目搜索跳转后高亮项目卡（不打开编辑弹窗）
+  const pendingProjectHighlightMs = ref<number | null>(null) // 高亮时长(ms)：缺省 1800；新手引导用 5000（设 id 前先设它）
   const pendingProjectHighlightBreath = ref(false) // true=用「呼吸」动画（新手引导），缺省搜索 flash
 
   // 通知气泡锚点：距视口底部的 px。GuguChat 按小窗/播放器是否展开实时更新，
@@ -25,13 +56,13 @@ export const useUiStore = defineStore('ui', () => {
 
   // ── 通知 ────────────────────────────────────────────────
   // 导航栏通知中心：持久态（后端拉 + 实时追加），未读/已读落库，关浏览器重开还在。
-  const notifications = ref([])
+  const notifications = ref<NotifItem[]>([])
   const notifCount = computed(() => notifications.value.filter(n => n.unread).length)
   // 气泡（toast）专用信号：置位即弹。实时到达 + 上线补弹最近一条都走它。
-  const liveNotification = ref(null)
+  const liveNotification = ref<LiveNotif | null>(null)
   let _liveSeq = 0
   const _BUBBLE_SEEN_KEY = 'gugu_last_bubble_id'   // 本设备已弹过的最大气泡 id（"只弹一次"）
-  function _markBubbleSeen(id) {
+  function _markBubbleSeen(id: number | null | undefined) {
     if (id != null) { try { localStorage.setItem(_BUBBLE_SEEN_KEY, String(id)) } catch {} }
   }
 
@@ -39,19 +70,22 @@ export const useUiStore = defineStore('ui', () => {
   async function fetchNotifications() {
     try {
       const { notificationsApi } = await import('@/services/api')
-      const list = await notificationsApi.list()
-      notifications.value = list.map(n => ({ ...n, time: n.time ? new Date(n.time) : new Date() }))
+      const list = await notificationsApi.list() as NotifInput[]
+      notifications.value = list.map((n): NotifItem => ({
+        id: n.id ?? null, title: n.title, content: n.content, color: n.color,
+        unread: n.unread !== false, time: n.time ? new Date(n.time) : new Date(),
+      }))
     } catch { /* 后端未就绪等：静默 */ }
   }
 
   // 实时 SSE 到达：按发布方选择的渠道分流——
   // persist=true 进持久列表（导航栏，落库可追踪）；bubble=true 弹气泡（toast，转瞬）。两者独立。
   // 缺省都为 true（兼容旧 payload）。
-  function pushNotification(n) {
+  function pushNotification(n: NotifInput) {
     const persist = n.persist !== false
     const bubble  = n.bubble  !== false
     if (persist) {
-      const item = {
+      const item: NotifItem = {
         id: n.id ?? null, title: n.title, content: n.content,
         color: n.color || '#7b7fb2', unread: true, time: new Date(),
       }
@@ -80,7 +114,7 @@ export const useUiStore = defineStore('ui', () => {
     } catch { /* 静默 */ }
   }
 
-  async function _persistRead(ids) {
+  async function _persistRead(ids: number[] | null) {
     try {
       const { notificationsApi } = await import('@/services/api')
       await notificationsApi.markRead(ids)
@@ -91,7 +125,7 @@ export const useUiStore = defineStore('ui', () => {
     notifications.value.forEach(n => { n.unread = false })
     _persistRead(null)   // 全部已读
   }
-  function markRead(id) {
+  function markRead(id: number) {
     const n = notifications.value.find(x => x.id === id)
     if (n) n.unread = false
     if (id != null) _persistRead([id])

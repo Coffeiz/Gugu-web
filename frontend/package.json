@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
+    "typecheck:strict": "vue-tsc -p tsconfig.strict.json --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
     "gen:types": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/types/api.ts"

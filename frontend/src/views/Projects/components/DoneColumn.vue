@@ -118,9 +118,10 @@
 import { ref, computed, onMounted, type PropType } from 'vue'
 import ProjectCard from './ProjectCard.vue'
 import { PhFolder, PhFolderOpen, PhCheckCircle, PhArchive } from '@phosphor-icons/vue'
+import type { Project } from '@/types/project'
 
 const props = defineProps({
-  projects: { type: Array as PropType<any[]>, default: () => [] },
+  projects: { type: Array as PropType<Project[]>, default: () => [] },
 })
 const emit = defineEmits(['card-click', 'drop-project', 'open-archived'])
 

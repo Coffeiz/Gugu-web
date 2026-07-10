@@ -9,22 +9,28 @@
  *
  * 任务排队、按阈值放行；某个完成（成功或失败）即补位下一个。
  */
-export function pLimit(max) {
+interface QueueItem {
+  fn: () => unknown | Promise<unknown>
+  resolve: (v: unknown) => void
+  reject: (e: unknown) => void
+}
+
+export function pLimit(max: number) {
   let active = 0
-  const queue = []
+  const queue: QueueItem[] = []
   const drain = () => {
     while (active < max && queue.length) {
       active++
-      const { fn, resolve, reject } = queue.shift()
+      const { fn, resolve, reject } = queue.shift()!
       Promise.resolve()
         .then(fn)                                   // 即便 fn 同步抛错也被捕获
         .then(resolve, reject)
         .finally(() => { active--; drain() })
     }
   }
-  return (fn) =>
-    new Promise((resolve, reject) => {
-      queue.push({ fn, resolve, reject })
+  return <T>(fn: () => T | Promise<T>): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      queue.push({ fn: fn as QueueItem['fn'], resolve: resolve as QueueItem['resolve'], reject })
       drain()
     })
 }

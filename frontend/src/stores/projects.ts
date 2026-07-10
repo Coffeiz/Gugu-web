@@ -2,6 +2,24 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { projectsApi, eventsApi } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
+import type { Project, ProjectStage, ProjectStatus } from '@/types/project'
+import type { components } from '@/types/api'
+
+type EventResponse = components['schemas']['EventResponse']
+
+// 新建项目表单草案：stages 允许字符串（只有名字）或 {label, todos} 对象，与 Project 的结构化 stage 不同。
+interface ProjectDraft {
+  name: string
+  client?: string | null
+  status?: string
+  stages: Array<string | { label: string; todos?: ProjectStage['todos'] }>
+  currentStageIdx?: number
+  startDate?: string | null
+  deadline?: string | null
+  color?: string
+}
+
+const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 export const useProjectStore = defineStore('projects', () => {
 
@@ -11,11 +29,11 @@ export const useProjectStore = defineStore('projects', () => {
     { key: 'done',    label: '已完成' },
   ]
 
-  const projects = ref([])
+  const projects = ref<Project[]>([])
   const loading  = ref(false)
-  const error    = ref(null)
+  const error    = ref<string | null>(null)
 
-  const archivedProjects = ref([])
+  const archivedProjects = ref<Project[]>([])
   const archivedLoading  = ref(false)
 
   const activeCount = computed(() =>
@@ -45,39 +63,40 @@ export const useProjectStore = defineStore('projects', () => {
     loading.value = true
     error.value   = null
     try {
-      projects.value = await projectsApi.list()
+      // api 边界收紧：ProjectResponse（status:string / stages 未结构化）→ Project（见 types/project.ts）
+      projects.value = await projectsApi.list() as unknown as Project[]
     } catch (e) {
-      error.value = e.message
+      error.value = errMsg(e)
     } finally {
       loading.value = false
     }
   }
 
-  async function addProject(fields) {
+  async function addProject(fields: ProjectDraft) {
     const payload = {
       name:         fields.name,
       client:       fields.client || null,
       status:       fields.status || 'pending',
-      stages:       fields.stages.map((s, i) => ({ key: `s${i}`, label: typeof s === 'string' ? s : s.label, todos: s.todos ?? [] })),
+      stages:       fields.stages.map((s, i) => ({ key: `s${i}`, label: typeof s === 'string' ? s : s.label, todos: typeof s === 'string' ? [] : (s.todos ?? []) })),
       currentStage: fields.stages[0] ? `s${fields.currentStageIdx ?? 0}` : null,
       progress:     0,
       startDate:    fields.startDate || null,
       deadline:     fields.deadline  || null,
       color:        fields.color || 'linear-gradient(135deg,#7b7fb2,#c4afc8)',
     }
-    const created = await projectsApi.create(payload)
+    const created = await projectsApi.create(payload) as unknown as Project
     projects.value.unshift(created)
     // 新手引导：手动新建第一个项目后弹一句（claim-once 保证只第一次）
     import('@/composables/useOnboarding').then(m => m.fireHint('todo_newproj')).catch(() => {})
     return created
   }
 
-  async function deleteProject(id) {
+  async function deleteProject(id: number) {
     await projectsApi.delete(id)
     projects.value = projects.value.filter(p => p.id !== id)
   }
 
-  async function archiveProject(id) {
+  async function archiveProject(id: number) {
     const p = projects.value.find(p => p.id === id)
     await projectsApi.update(id, { archived: true, version: p?.version })
     projects.value = projects.value.filter(p => p.id !== id)
@@ -86,31 +105,32 @@ export const useProjectStore = defineStore('projects', () => {
   async function fetchArchivedProjects() {
     archivedLoading.value = true
     try {
-      archivedProjects.value = await projectsApi.list(true)
+      archivedProjects.value = await projectsApi.list(true) as unknown as Project[]
     } catch (e) {
-      error.value = e.message
+      error.value = errMsg(e)
     } finally {
       archivedLoading.value = false
     }
   }
 
-  async function unarchiveProject(id) {
+  async function unarchiveProject(id: number) {
     const p = archivedProjects.value.find(p => p.id === id)
     await projectsApi.update(id, { archived: false, version: p?.version })
     archivedProjects.value = archivedProjects.value.filter(p => p.id !== id)
     await fetchProjects()
   }
 
-  async function _patchProject(id, payload) {
+  async function _patchProject(id: number, payload: Partial<Project>) {
     const p = projects.value.find(p => p.id === id)
     try {
-      const updated = await projectsApi.update(id, { ...payload, version: p?.version })
+      // payload 用紧类型 Partial<Project>（stages 结构化），wire 的 ProjectUpdate 是松类型，边界处一次性收
+      const updated = await projectsApi.update(id, { ...payload, version: p?.version } as unknown as components['schemas']['ProjectUpdate'])
       if (p && updated) {
         if (updated.version) p.version = updated.version
         if ('doneAt' in updated) p.doneAt = updated.doneAt
       }
     } catch (e) {
-      if (e.status === 409) {
+      if ((e as { status?: number }).status === 409) {
         await fetchProjects()
         throw new Error('数据已被其他用户修改，已自动刷新')
       }
@@ -118,7 +138,9 @@ export const useProjectStore = defineStore('projects', () => {
     }
   }
 
-  async function moveProject(id, newStatus) {
+  async function moveProject(id: number, newStatusRaw: string) {
+    // 调用方来自看板列 key / DOM data-col-status，运行时保证是三态之一，边界收紧
+    const newStatus = newStatusRaw as ProjectStatus
     const p = projects.value.find(p => p.id === id)
     if (!p) return
     const oldStatus = p.status
@@ -143,7 +165,7 @@ export const useProjectStore = defineStore('projects', () => {
       // autoCompleted 标记，拖回进行中时按此还原）。与 setStage 前进时同一套约定。
       const stages = JSON.parse(JSON.stringify(p.stages))
       for (const stage of stages) {
-        stage.todos = (stage.todos ?? []).map(t =>
+        stage.todos = (stage.todos ?? []).map((t: any) =>
           t.done ? t : { ...t, _savedDone: false, done: true, autoCompleted: true }
         )
       }
@@ -162,7 +184,7 @@ export const useProjectStore = defineStore('projects', () => {
       // 还原所有 autoCompleted 的 todo 到快照状态
       const stages = JSON.parse(JSON.stringify(p.stages))
       for (const stage of stages) {
-        stage.todos = (stage.todos ?? []).map(t =>
+        stage.todos = (stage.todos ?? []).map((t: any) =>
           t.autoCompleted ? { ...t, done: t._savedDone ?? false, autoCompleted: false, _savedDone: undefined } : t
         )
       }
@@ -174,7 +196,7 @@ export const useProjectStore = defineStore('projects', () => {
     await _patchProject(id, { status: newStatus })
   }
 
-  async function setStage(id, stageKey, progress) {
+  async function setStage(id: number, stageKey: string, progress?: number) {
     const p = projects.value.find(p => p.id === id)
     if (!p) return
 
@@ -188,14 +210,14 @@ export const useProjectStore = defineStore('projects', () => {
       if (newIdx > oldIdx) {
         // 前进：对经过的阶段（不含新当前阶段）快照并自动打勾
         for (let i = oldIdx; i < newIdx; i++) {
-          stages[i].todos = (stages[i].todos ?? []).map(t =>
+          stages[i].todos = (stages[i].todos ?? []).map((t: any) =>
             t.done ? t : { ...t, _savedDone: false, done: true, autoCompleted: true }
           )
         }
       } else {
         // 后退：从目标阶段开始（含目标阶段自身）还原 autoCompleted 到快照状态
         for (let i = newIdx; i < stages.length; i++) {
-          stages[i].todos = (stages[i].todos ?? []).map(t =>
+          stages[i].todos = (stages[i].todos ?? []).map((t: any) =>
             t.autoCompleted ? { ...t, done: t._savedDone ?? false, autoCompleted: false, _savedDone: undefined } : t
           )
         }
@@ -224,7 +246,7 @@ export const useProjectStore = defineStore('projects', () => {
     }
   }
 
-  async function updateStages(id, newStages) {
+  async function updateStages(id: number, newStages: ProjectStage[]) {
     const p = projects.value.find(p => p.id === id)
     if (!p) return
     p.stages = newStages
@@ -234,13 +256,13 @@ export const useProjectStore = defineStore('projects', () => {
     await _patchProject(id, { stages: newStages, currentStage: p.currentStage })
   }
 
-  async function updateProject(id, fields) {
+  async function updateProject(id: number, fields: Partial<Project>) {
     const p = projects.value.find(p => p.id === id)
     if (p) Object.assign(p, fields)
     await _patchProject(id, fields)
   }
 
-  const modalProjectId = ref(null)
+  const modalProjectId = ref<number | null>(null)
   // computed 保证 fetchProjects 刷新后 modal 始终指向最新对象，不持有旧引用
   const modalProject = computed(() =>
     modalProjectId.value != null
@@ -248,11 +270,11 @@ export const useProjectStore = defineStore('projects', () => {
       : null
   )
 
-  function openModal(project) { modalProjectId.value = project?.id ?? null }
+  function openModal(project: { id?: number } | null | undefined) { modalProjectId.value = project?.id ?? null }
   function closeModal()       { modalProjectId.value = null }
 
   // 近期节点日历事件缓存（在 store 里，SPA 导航不重置）
-  const upcomingCalEvents = ref([])
+  const upcomingCalEvents = ref<EventResponse[]>([])
   async function fetchUpcomingCalEvents() {
     try {
       const today = new Date()

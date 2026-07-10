@@ -22,6 +22,10 @@
 - **咕咕聊天框支持粘贴剪贴板文件/图片**（`frontend/src/components/common/GuguChat.vue`）：截图或复制的文件直接 `Ctrl+V` 加为附件（复用拖拽上传同一条链路），纯文本粘贴不受影响。
 - **咕咕按用户本地时区判定「今天 / 日期」**（后端 `app/core/tz.py`、`app/db/types.py`、`agent/context/{builder,loaders}`、`agent/tools/overview.py`、`agent/greeting.py`、`app/api/v1/auth.py`；前端 `stores/auth.ts`）：咕咕的「今天是…」、日历「今天起的事件」、深夜时段判断等此前一律按**服务器**时区算，不在该时区的用户会被告知错误的日期（尤其本地午夜前后整体错一天）。现在浏览器加载时把本机时区回写到账号（`PATCH /auth/profile`，仅变更时写），咕咕的日期判定改按**用户本地时区**（未探测到则回退服务器时区，行为不变）。顺带把全站时间存储统一为带时区的 UTC（`timestamp → timestamptz`、`UtcDateTime`），当前时间收敛到单一出口 `now_utc()` 并加静态守卫，杜绝新老代码时区口径不一致（详见 `docs/backend/时区与时钟迁移方案.md`）。
 
+### 工程
+
+- **TypeScript 严格化棘轮（P1-b）**（`frontend/tsconfig.strict.json`、`package.json` `typecheck:strict`、`src/types/project.ts`、`src/stores/{projects,ui,live}.ts` 等）：主 `tsconfig.json` 仍全仓渐进（`strict:false`，不影响 `build`/`typecheck`），新增 `tsconfig.strict.json` 在其上开满 `strict/noImplicitAny`、只作用于 `include` 白名单——「清干净一个文件 → 入白名单 → `typecheck:strict` 常绿」的提交前门禁。粒度定为**文件**而非模块（Vue 组件 import 闭包会扇出到共享基建，整模块入档一次牵出数百存量错）。已入档 **14 源文件**：`src/types/**` + `src/utils/**` + `src/services/**` + stores `projects/ui/live` + `useOnboarding`；`projects.ts` 从 105 类型错清零。新建 `Project` 领域模型（绑定 OpenAPI `ProjectResponse` + 收紧 status/stages）作单一类型来源，确立「api 边界一次性收紧 wire→紧类型」模式；Projects 组件 `PropType<any[]>` → `PropType<Project[]>`。接力顺序见 `docs/security/代码审查-GPT复审核实版-2026-07-10.md` §4。
+
 ## [0.17.0] - 2026-07-10 · QQ 自建 WebSocket 全面替换 botpy + 飞书流式/富媒体/引用识别 + 站内全局搜索 + 记忆画像·行为拆分 + IM 引用消息重构
 
 > QQ 收发两侧改为自建 raw WebSocket/HTTP，彻底移除 botpy 依赖；飞书接入流式输出、图文/视频/转发入站与引用消息识别；新增咕咕站内 `global_search` 一次性跨类搜索；记忆系统拆成用户画像 / 行为模式两层并加阶段性状态门；IM 引用消息改为单独存储与展示，不再把 markdown 原文摊进正文；定时任务创建/保存不再阻塞 LLM、按需精简工具与上下文；前端统一卡片/按钮按压反馈并修复顶栏按钮阴影；思维面板设计 / 数据模型 / 实现方案三份草案冻结待开工。

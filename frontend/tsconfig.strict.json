@@ -1,0 +1,27 @@
+{
+  // ── TS 严格化棘轮（P1-b，见 docs/security/代码审查-GPT复审核实版-2026-07-10.md §4）──
+  // 主 tsconfig.json 全仓渐进（strict:false），保 build/typecheck 常绿；
+  // 本档在其上开满 strict，只作用于 include 白名单——「跑通一个推一个」的落地机制。
+  // 清干净一个文件 → 加进 include；typecheck:strict 必须常绿（提交前门禁）。
+  //
+  // 粒度=文件（不是模块）：strict 跨整个 program 报错，而 Vue 组件的 import 闭包会扇出到
+  // 共享基建（stores/composables/common 组件），整模块入档会牵出上百个存量错。故从**叶子**
+  // （util/type，闭包小且自洽）起步，逐步把 store/composable 类型补齐后再向组件扩张。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "checkJs": false
+  },
+  "include": [
+    "src/vite-env.d.ts",
+    "src/directives.d.ts",
+    "src/types/**/*.ts",
+    "src/utils/**/*.ts",
+    "src/services/**/*.ts",
+    "src/stores/ui.ts",
+    "src/stores/live.ts",
+    "src/stores/projects.ts",
+    "src/composables/useOnboarding.ts"
+  ]
+}

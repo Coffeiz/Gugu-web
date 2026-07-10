@@ -12,6 +12,13 @@ import { reactive, ref } from 'vue'
 import { getToken } from '@/services/api'
 import { useUiStore } from '@/stores/ui'
 
+// 细粒度会话事件：后端 SSE 推送的会话追加，供 GuguChat 增量追加消息
+interface SessionEvent {
+  session_id: number | string
+  appended: Array<{ role?: string; text?: string; files?: unknown[]; quoted_text?: string }>
+  _t: number
+}
+
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 // 'mind' 预留给思维面板：P1 咕咕还不写便签，后端暂不推这个资源，rev.mind 会一直是 0；
 // 等 P3 接入咕咕确认式写入后由后端开始推，笔记页/画布这边不用再改。
@@ -23,23 +30,23 @@ export const useLiveStore = defineStore('live', () => {
   const connected = ref(false)
 
   // 细粒度会话事件：{ session_id, appended:[{role,text}], _t }，供 GuguChat 追加消息
-  const sessionEvent = ref(null)
+  const sessionEvent = ref<SessionEvent | null>(null)
   let _seq = 0
 
   // 同步拿 uiStore（Pinia 允许在 setup 里调其他 store）
   const uiStore = useUiStore()
 
-  let abort = null        // 当前连接的 AbortController
+  let abort: AbortController | null = null   // 当前连接的 AbortController
   let running = false     // 是否应保持连接（登录中）
   let retry = 0           // 重连退避计数
   let everConnected = false   // 是否曾连上过：重连成功时据此 catch-up（首次连接不用）
 
-  function bump(resource) {
+  function bump(resource: string) {
     if (resource in rev) rev[resource]++
   }
 
   // 重连补刷：错峰逐个 bump，别在回到前台那一帧挤爆主线程（见 _loop 注释）
-  let _catchUpTimers = []
+  let _catchUpTimers: ReturnType<typeof setTimeout>[] = []
   function _catchUp() {
     _catchUpTimers.forEach(clearTimeout)   // 短时间多次重连不叠加
     _catchUpTimers = RESOURCES.map((r, i) => setTimeout(() => bump(r), 300 + i * 250))
@@ -71,7 +78,7 @@ export const useLiveStore = defineStore('live', () => {
           const { value, done } = await reader.read()
           if (done) break
           buf += decoder.decode(value, { stream: true })
-          const lines = buf.split('\n'); buf = lines.pop()
+          const lines = buf.split('\n'); buf = lines.pop() ?? ''
           for (const line of lines) {
             if (!line.startsWith('data:')) continue   // 跳过 keepalive 注释行
             const raw = line.slice(5).trim(); if (!raw) continue
@@ -88,7 +95,7 @@ export const useLiveStore = defineStore('live', () => {
           }
         }
       } catch (e) {
-        if (e.name === 'AbortError') break
+        if ((e as { name?: string }).name === 'AbortError') break
         // 连接断开（后端重启/网络抖动）→ 退避重连
       } finally {
         connected.value = false
@@ -114,6 +121,6 @@ export const useLiveStore = defineStore('live', () => {
   return { rev, connected, sessionEvent, bump, connect, disconnect }
 })
 
-function _sleep(ms) {
+function _sleep(ms: number) {
   return new Promise(r => setTimeout(r, ms))
 }

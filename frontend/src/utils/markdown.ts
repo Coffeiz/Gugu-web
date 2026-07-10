@@ -48,6 +48,6 @@ export function sanitizeChatHtml(html: string): string {
   return DOMPurify.sanitize(String(html ?? ''), { ADD_ATTR: ['target'], ALLOWED_URI_REGEXP: _CHAT_URI_REGEXP })
 }
 
-export function renderMarkdown(text) {
+export function renderMarkdown(text: string | null | undefined): string {
   return text ? sanitizeHtml(md.parse(String(text)) as string) : ''
 }
