@@ -102,30 +102,30 @@ async function save() {
 
 <style scoped>
 .capture-bar {
-  /* 收起/展开**同宽**（480），只有高度变；玻璃浓度随展开加深（动 backdrop-filter 本身安全，
-     隔离组红线只禁祖先 opacity）。收起态两侧全圆（胶囊/药丸），展开态收成 18px 圆角。 */
+  /* 收起/展开**同宽**（480），只有高度变；玻璃浓度随展开加深。
+     圆角两态**同值** 25px = 收起高度(50)/2 → 收起是全圆药丸、展开是 25px 圆角矩形，
+     角的曲率一致（#1：展开圆角匹配收起）。不再动 border-radius。 */
   --cb-dur: 0.3s;
   --cb-ease: cubic-bezier(0.22, 1, 0.36, 1);   /* 快速缓出 */
   width: 480px; max-width: 100%; margin: 0 auto;
-  border-radius: 999px;
+  border-radius: 25px;
   background: rgba(255,255,255,0.6);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255,255,255,0.78);
   box-shadow: 0 8px 28px rgba(30,40,80,0.14), inset 0 1px 0 rgba(255,255,255,0.9);
   overflow: hidden;
-  transition: border-radius var(--cb-dur) var(--cb-ease),
-              background-color var(--cb-dur) ease,
+  transition: background-color var(--cb-dur) ease,
               backdrop-filter var(--cb-dur) ease, -webkit-backdrop-filter var(--cb-dur) ease;
 }
 .capture-bar.expanded {
-  border-radius: 18px;
   background: rgba(255,255,255,0.72);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
 }
 
-/* 模糊淡入淡出与高度变换**全程同步**（同起同停，不再分三段等待）：动画一开始收起元素
-   就模糊淡出、展开元素同时模糊淡入，高度到位时两者也刚好完成。高度靠 grid-rows 0fr↔1fr
-   （head/body 反向伸缩）；快速缓出。 */
+/* 高度靠 grid-rows 0fr↔1fr（head/body 反向伸缩），快速缓出。
+   内容淡入淡出**分离于高度**：收起元素在动画一开始就快速模糊淡出；展开元素**等高度长完之后**
+   才慢慢模糊淡入（延迟 0.28s、时长更长）——所以展开内容是在满尺寸位置"就地淡入"，不会随高度
+   揭示从上往下滑出来（#3）。 */
 .cb-head, .cb-body {
   display: grid;
   transition: grid-template-rows var(--cb-dur) var(--cb-ease);
@@ -136,16 +136,26 @@ async function save() {
 .capture-bar.expanded .cb-body { grid-template-rows: 1fr; }
 .cb-clip { overflow: hidden; min-height: 0; }
 
-.cb-collapsed, .cb-pad {
-  transition: opacity var(--cb-dur) var(--cb-ease), filter var(--cb-dur) var(--cb-ease);
+/* 收起元素：收起态终点（收起时=高度收完后淡入，delay 0.2）；展开态终点（展开时=立刻快淡出） */
+.cb-collapsed { transition: opacity 0.24s ease 0.2s, filter 0.24s ease 0.2s; }
+.capture-bar.expanded .cb-collapsed {
+  opacity: 0; filter: blur(8px);
+  transition: opacity 0.18s ease 0s, filter 0.18s ease 0s;
 }
-.cb-pad { opacity: 0; filter: blur(8px); }
-.capture-bar.expanded .cb-collapsed { opacity: 0; filter: blur(8px); }
-.capture-bar.expanded .cb-pad { opacity: 1; filter: blur(0); }
+/* 展开元素：收起态终点（收起时=立刻快淡出）；展开态终点（展开时=高度长完后、慢慢淡入，delay 0.28） */
+.cb-pad {
+  opacity: 0; filter: blur(8px);
+  transition: opacity 0.2s ease 0s, filter 0.2s ease 0s;
+}
+.capture-bar.expanded .cb-pad {
+  opacity: 1; filter: blur(0);
+  transition: opacity 0.42s ease 0.28s, filter 0.42s ease 0.28s;
+}
 
 .cb-collapsed {
   display: flex; align-items: center; gap: 9px; width: 100%;
-  padding: 12px 16px; border: none;
+  height: 50px; box-sizing: border-box;   /* 收起高度 = 咕咕球 50px（#2） */
+  padding: 0 18px; border: none;
   background: none; cursor: text; text-align: left;
   font-family: var(--font-sans);
 }

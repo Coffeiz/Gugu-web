@@ -221,7 +221,7 @@ async function onDelete(note: MindNote) {
 .rec-hscroll {
   flex: 1; min-height: 0;
   width: 100vw;
-  margin-left: calc(-1 * (var(--sidebar-width) + 20px));
+  margin-left: calc(-1 * (var(--sidebar-width) + 24px));   /* 顶到视口左：侧栏宽 + fullBleed 左内边距 24 */
   overflow-x: auto; overflow-y: hidden;
   /* 横向导航靠滚轮/触控板/日期条，滚动条藏掉（露在捕捉条底下很脏） */
   scrollbar-width: none;

@@ -294,6 +294,8 @@ const todayStr = computed(() => {
    磨砂玻璃把钻进去的历史列糊住）。纵向仍靠内部各区自己不溢出。 */
 .layout-main.full-bleed .page-content {
   overflow: visible;
-  padding: 28px 24px 0 20px;
+  /* 左右**对称** 24：内容盒中心 = (侧栏 + 视口)/2 = 列的 contentCenter，胶囊/滑杆 playhead
+     和居中的日期列才真正竖直对齐（左右不等会整体偏移半个差值，日期块就偏左/右了，#4） */
+  padding: 28px 24px 0 24px;
 }
 </style>
