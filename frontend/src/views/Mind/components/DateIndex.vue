@@ -45,7 +45,8 @@ function fmtLabel(iso: string) {
   display: flex; align-items: flex-end; gap: 3px;
   /* safe center：天数少时居中，多到溢出时回退成可滚动的 start（普通 center 会把左端裁到够不着） */
   justify-content: safe center;
-  flex-shrink: 0; overflow-x: auto; padding: 4px 12px 12px;
+  /* 顶部多留一点：跟胶囊条拉开距离，刻度杆才不显得贴着导航 */
+  flex-shrink: 0; overflow-x: auto; padding: 14px 12px 12px;
   scrollbar-width: none;
 }
 .date-scrub::-webkit-scrollbar { display: none; }

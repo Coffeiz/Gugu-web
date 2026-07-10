@@ -44,7 +44,7 @@ const isRecords = computed(() => route.path.startsWith('/mind/records'))
 </script>
 
 <style scoped>
-.mind-page { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; }
+.mind-page { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; }
 
 .mind-bar {
   display: grid; grid-template-columns: 1fr auto 1fr;
@@ -54,17 +54,17 @@ const isRecords = computed(() => route.path.startsWith('/mind/records'))
 .mind-bar-side { display: flex; }
 .mind-bar-side.right { justify-content: flex-end; }
 
-/* 椭圆胶囊：整体与选中态都走全圆角 */
+/* 椭圆胶囊：颜色/透明度/尺寸对齐日历页的月/周切换（.view-toggle），只把圆角换成全圆 */
 .mind-tabs {
-  display: inline-flex; gap: 2px; padding: 3px;
+  display: inline-flex; gap: 2px; padding: 2px;
   border-radius: 999px; background: rgba(123,127,178,0.1);
 }
 .mind-tab {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 5px 16px; border-radius: 999px;
-  font-size: 12.5px; font-weight: 600; color: var(--text-secondary);
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 13px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; color: var(--text-secondary);
   text-decoration: none; cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: all 0.15s;
 }
 .mind-tab:hover:not(.disabled) { color: var(--color-primary); }
 .mind-tab.on { background: #fff; color: #5a5e86; box-shadow: 0 1px 4px rgba(60,70,100,0.12); }

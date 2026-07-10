@@ -163,15 +163,16 @@ async function onDelete(note: MindNote) {
   overflow-x: auto; overflow-y: hidden;
   /* 横向导航靠滚轮/触控板/日期条，滚动条藏掉（露在捕捉条底下很脏） */
   scrollbar-width: none;
-  padding-bottom: 84px;   /* 给底部停靠的捕捉条让空间，最左列底部的卡不被盖住 */
+  padding-bottom: 96px;   /* 给底部停靠的捕捉条让空间，最左列底部的卡不被盖住 */
 }
 .rec-hscroll::-webkit-scrollbar { display: none; }
 
 .rec-loading { padding: 40px 24px; font-size: 12.5px; color: var(--text-secondary); }
 
-/* 捕捉条：停靠底部、水平居中（与居中胶囊呼应） */
+/* 捕捉条：停靠底部、水平居中（与居中胶囊呼应）。
+   18px + fullBleed 的 10px 内边距 = 视口底 28px，与咕咕悬浮球（.ai-fab bottom:28px）齐平 */
 .rec-capture {
-  position: absolute; bottom: 6px; left: 0; right: 0;
+  position: absolute; bottom: 18px; left: 0; right: 0;
   margin: 0 auto;
   width: min(100% - 24px, 680px);
   z-index: 8;

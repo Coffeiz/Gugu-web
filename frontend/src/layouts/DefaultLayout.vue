@@ -287,6 +287,6 @@ const todayStr = computed(() => {
 .layout-main.full-bleed::after { display: none; }
 .layout-main.full-bleed .page-content {
   overflow: hidden;
-  padding: 18px 24px 18px 20px;
+  padding: 10px 24px 10px 20px;
 }
 </style>
