@@ -29,6 +29,7 @@ const emit = defineEmits<{
 }>()
 
 const stripRef = ref<HTMLElement | null>(null)
+const stripWidth = ref(0)
 const currentFrac = ref(0)
 const dragging = ref(false)
 const animating = ref(false)
@@ -48,7 +49,7 @@ const BASE_PITCH = 9
 const CENTER_EXTRA = 8
 const DRAG_RATIO = 0.45
 
-function stripCenter() { return (stripRef.value?.clientWidth ?? 0) / 2 }
+function stripCenter() { return stripWidth.value / 2 }
 function clampFrac(p: number) { return Math.max(0, Math.min(props.groups.length - 1, p)) }
 function pitchAt(interval: number, focus: number) {
   const distance = Math.abs(interval + 0.5 - focus)
@@ -113,9 +114,13 @@ watch(() => props.groups, async () => {
   if (!dragging.value && !animating.value && lockedIndex.value === null) currentFrac.value = props.centerFrac
 }, { immediate: true })
 function onResize() {
+  stripWidth.value = stripRef.value?.clientWidth ?? 0
   if (!dragging.value && !animating.value && lockedIndex.value === null) currentFrac.value = props.centerFrac
 }
-onMounted(() => window.addEventListener('resize', onResize))
+onMounted(() => {
+  onResize()
+  window.addEventListener('resize', onResize)
+})
 
 function tickFocus(i: number) {
   const d = Math.abs(i - currentFrac.value)
