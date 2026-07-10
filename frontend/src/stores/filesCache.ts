@@ -2,51 +2,62 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { filesApi, foldersApi, CLIENT_ID } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
+import type { components } from '@/types/api'
 
-let _lastVersion = null
+// 文件/文件夹领域类型：核心字段绑定 OpenAPI 生成的响应体（filesApi.all / foldersApi.all 的返回）。
+// 文件对象在各视图里是「带客户端增补的袋子」——已知 wire 字段照常有类型，另留少量历史/客户端字段
+// 与索引签名，容纳消费方现存用法（如聊天附件预览携带 attach_id、旧面板仍读 versions）。
+export type FileMeta = components['schemas']['FileResponse'] & {
+  versions?: Array<{ size?: string }>   // 历史字段：wire 现已直接给 size，个别面板仍读 versions
+  attach_id?: number | string | null    // 聊天附件预览时携带（非库文件）
+  file_id?: number | null
+}
+export type FolderMeta = components['schemas']['FolderResponse']
+
+let _lastVersion: string | number | null = null
 let _visibilityBound = false
 
 export const useFilesCacheStore = defineStore('filesCache', () => {
-  const allFiles   = ref([])
-  const allFolders = ref([])
+  const allFiles   = ref<FileMeta[]>([])
+  const allFolders = ref<FolderMeta[]>([])
   const loaded     = ref(false)
   const loading    = ref(false)
 
   // ── 索引 ──────────────────────────────────────────────────────────────────
   // files key: folderId (int) | 'proj:{id}' | 'personal'
   const _fileIdx = computed(() => {
-    const m = new Map()
+    const m = new Map<number | string, FileMeta[]>()
     for (const f of allFiles.value) {
       const key = f.folderId != null
         ? f.folderId
         : f.projectId != null ? `proj:${f.projectId}` : 'personal'
       if (!m.has(key)) m.set(key, [])
-      m.get(key).push(f)
+      m.get(key)!.push(f)
     }
     return m
   })
 
   // folders key: 'personal' | 'proj:{id}' | 'sub:{parentId}'
   const _folderIdx = computed(() => {
-    const m = new Map()
+    const m = new Map<string, FolderMeta[]>()
     for (const f of allFolders.value) {
       const key = f.parentId != null
         ? `sub:${f.parentId}`
         : f.projectId != null ? `proj:${f.projectId}` : 'personal'
       if (!m.has(key)) m.set(key, [])
-      m.get(key).push(f)
+      m.get(key)!.push(f)
     }
     return m
   })
 
   // ── 查找 ──────────────────────────────────────────────────────────────────
   const getPersonalRootFiles   = ()          => _fileIdx.value.get('personal')            ?? []
-  const getProjectRootFiles    = (projectId) => _fileIdx.value.get(`proj:${projectId}`)   ?? []
-  const getFolderFiles         = (folderId)  => _fileIdx.value.get(folderId)               ?? []
+  const getProjectRootFiles    = (projectId: number) => _fileIdx.value.get(`proj:${projectId}`)   ?? []
+  const getFolderFiles         = (folderId: number)  => _fileIdx.value.get(folderId)               ?? []
 
   const getPersonalRootFolders = ()          => _folderIdx.value.get('personal')           ?? []
-  const getProjectRootFolders  = (projectId) => _folderIdx.value.get(`proj:${projectId}`)  ?? []
-  const getSubFolders          = (parentId)  => _folderIdx.value.get(`sub:${parentId}`)    ?? []
+  const getProjectRootFolders  = (projectId: number) => _folderIdx.value.get(`proj:${projectId}`)  ?? []
+  const getSubFolders          = (parentId: number)  => _folderIdx.value.get(`sub:${parentId}`)    ?? []
 
   // ── 加载 ──────────────────────────────────────────────────────────────────
   async function load() {
@@ -59,7 +70,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
       loaded.value     = true
       _lastVersion = ver?.version ?? null
     } catch (e) {
-      console.error('[filesCache] 加载失败:', e.message)
+      console.error('[filesCache] 加载失败:', e instanceof Error ? e.message : e)
     } finally {
       loading.value = false
     }
@@ -94,35 +105,42 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   }
 
   // ── 乐观更新：文件 ────────────────────────────────────────────────────────
-  function addFile(file) {
+  function addFile(file: FileMeta) {
     allFiles.value = [file, ...allFiles.value]
   }
 
-  function removeFile(id) {
+  function removeFile(id: number) {
     allFiles.value = allFiles.value.filter(f => f.id !== id)
   }
 
-  function removeFiles(ids) {
+  function removeFiles(ids: number[]) {
     const set = new Set(ids)
     allFiles.value = allFiles.value.filter(f => !set.has(f.id))
   }
 
-  function updateFile(id, patch) {
+  function updateFile(id: number, patch: Partial<FileMeta>) {
     allFiles.value = allFiles.value.map(f => f.id === id ? { ...f, ...patch } : f)
   }
 
-  function getFile(id) {
+  function getFile(id: number) {
     return allFiles.value.find(f => f.id === id) ?? null
   }
 
   // ── 乐观更新：文件夹 ──────────────────────────────────────────────────────
-  function addFolder(folder) {
-    allFolders.value = [...allFolders.value, folder]
+  // 上传链路新建的文件夹可能不带 fileCount（useFileUpload 的 onFolderCreated 未标该字段）——
+  // 新建文件夹本就 0 文件，缺省补 0，保证入库的都是完整 FolderMeta。
+  function addFolder(folder: { id: number; name: string; projectId?: number | null; parentId?: number | null; fileCount?: number }) {
+    allFolders.value = [...allFolders.value, {
+      id: folder.id, name: folder.name,
+      projectId: folder.projectId ?? null,
+      parentId:  folder.parentId ?? null,
+      fileCount: folder.fileCount ?? 0,
+    }]
   }
 
-  function removeFolder(id) {
+  function removeFolder(id: number) {
     const toRemove = new Set()
-    const collect = (fid) => {
+    const collect = (fid: number) => {
       toRemove.add(fid)
       for (const sub of getSubFolders(fid)) collect(sub.id)
     }
@@ -131,11 +149,11 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     allFiles.value   = allFiles.value.filter(f => !toRemove.has(f.folderId))
   }
 
-  function updateFolder(id, patch) {
+  function updateFolder(id: number, patch: Partial<FolderMeta>) {
     allFolders.value = allFolders.value.map(f => f.id === id ? { ...f, ...patch } : f)
   }
 
-  function getFolder(id) {
+  function getFolder(id: number) {
     return allFolders.value.find(f => f.id === id) ?? null
   }
 

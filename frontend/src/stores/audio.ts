@@ -5,7 +5,7 @@ const AUDIO_FILE_KEY = 'gugu_audio_file'
 
 const bc = new BroadcastChannel('gugu_audio')
 
-interface AudioFile { id: number; displayName?: string; ext?: string }
+interface AudioFile { id?: number; displayName?: string; ext?: string }
 
 export const useAudioStore = defineStore('audio', () => {
   const file    = ref<AudioFile | null>(null)   // { id, displayName, ext }
@@ -27,6 +27,7 @@ export const useAudioStore = defineStore('audio', () => {
   bc.onmessage = () => stop()
 
   async function play(f: AudioFile) {
+    if (f.id == null) return              // 没有文件 id 无法取流
     if (file.value?.id === f.id) return  // 同一首不重新加载
     bc.postMessage('playing')
     revoke()

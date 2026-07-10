@@ -1,8 +1,9 @@
-import { ref, shallowRef, computed } from 'vue'
+import { ref, shallowRef, computed, type Ref } from 'vue'
 
 type Id = number | string
+interface Pt { x: number; y: number }
 
-export function useBoxSelection<F extends Id = Id>(containerRef, {
+export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement | null>, {
   fileAttr        = 'data-file-id',
   folderAttr      = 'data-folder-key',
   excludeSelector = 'button, .fc-card, .folder-card, .fc-upload, .list-row',
@@ -21,9 +22,9 @@ export function useBoxSelection<F extends Id = Id>(containerRef, {
   const selectedFolderIds = shallowRef(new Set<F>())
   const previewFileIds    = shallowRef(new Set<number>())
   const previewFolderIds  = shallowRef(new Set<F>())
-  const boxStart          = ref(null)
-  const boxEnd            = ref(null)
-  let   _cRect            = null
+  const boxStart          = ref<Pt | null>(null)
+  const boxEnd            = ref<Pt | null>(null)
+  let   _cRect: DOMRect | null = null
   let   _latestPreview: { fileIds: Set<number>; folderIds: Set<F> } = { fileIds: new Set(), folderIds: new Set() }
 
   const selectionRect = computed(() => {
@@ -41,13 +42,13 @@ export function useBoxSelection<F extends Id = Id>(containerRef, {
     selectedFolderIds.value = new Set()
   }
 
-  function toggleFileSelect(id) {
+  function toggleFileSelect(id: number) {
     const ids = new Set(selectedFileIds.value)
     if (ids.has(id)) ids.delete(id); else ids.add(id)
     selectedFileIds.value = ids
   }
 
-  function toggleFolderSelect(id) {
+  function toggleFolderSelect(id: F) {
     const ids = new Set(selectedFolderIds.value)
     if (ids.has(id)) ids.delete(id); else ids.add(id)
     selectedFolderIds.value = ids
@@ -86,16 +87,16 @@ export function useBoxSelection<F extends Id = Id>(containerRef, {
     previewFileIds.value = fileIds; previewFolderIds.value = folderIds
   }
 
-  function _swallowClick(e) { e.stopImmediatePropagation() }
+  function _swallowClick(e: Event) { e.stopImmediatePropagation() }
 
-  function _onMouseMove(e) {
+  function _onMouseMove(e: MouseEvent) {
     if (!_cRect || !containerRef.value) return
     const st = containerRef.value.scrollTop
     boxEnd.value = { x: e.clientX - _cRect.left, y: e.clientY - _cRect.top + st }
     _updatePreview()
   }
 
-  function _onMouseUp(e) {
+  function _onMouseUp(e: MouseEvent) {
     document.removeEventListener('mousemove', _onMouseMove)
     document.removeEventListener('mouseup',   _onMouseUp)
     if (selectionRect.value) {
@@ -114,14 +115,14 @@ export function useBoxSelection<F extends Id = Id>(containerRef, {
     boxStart.value = null; boxEnd.value = null; _cRect = null
   }
 
-  function onContainerMouseDown(e) {
+  function onContainerMouseDown(e: MouseEvent) {
     if (e.button !== 0) return
-    if (excludeSelector && e.target.closest(excludeSelector)) return
+    if (excludeSelector && (e.target as HTMLElement | null)?.closest(excludeSelector)) return
     if (!containerRef.value) return
     _cRect = containerRef.value.getBoundingClientRect()
     const st = containerRef.value.scrollTop
     boxStart.value = { x: e.clientX - _cRect.left, y: e.clientY - _cRect.top + st }
-    boxEnd.value   = { ...boxStart.value }
+    boxEnd.value   = { ...boxStart.value! }
     document.addEventListener('mousemove', _onMouseMove)
     document.addEventListener('mouseup',   _onMouseUp)
   }
