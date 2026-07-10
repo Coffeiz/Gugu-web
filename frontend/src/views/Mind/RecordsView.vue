@@ -14,6 +14,8 @@
         v-else
         ref="timelineRef"
         :groups="timelineGroups"
+        :center-frac="centerFrac"
+        :motion-ready="timelineMotionReady"
         :highlight-id="highlightId"
         :filtered="!!store.filterQ.trim()"
         @save="onSave"
@@ -76,7 +78,11 @@ const SIDEBAR_W = parseInt(getComputedStyle(document.documentElement).getPropert
 const timelineGroups = computed(() => [...store.timeline].reverse())
 const indexGroups = computed(() => timelineGroups.value.map(g => ({ date: g.date, count: g.items.length })))
 const activeDate  = ref('')
-const centerFrac  = ref(0)   // 连续分数位置：内容区中线落在第几列（含小数），驱动滑杆连续跟随
+// 连续分数位置：内容区中线（=屏幕上的物理中心）落在第几列（含小数）。滑杆和玻璃卡的
+// 深度效果共用同一个值，不再单独滞后平滑——卡片尺寸必须严格绑定「谁现在正在屏幕中间」，
+// 不管这一刻的当前日/选中日是谁，物理居中的那张才该是最大的。
+const centerFrac  = ref(0)
+const timelineMotionReady = ref(false)
 const todayIso    = computed(() => _today())
 let scrollRaf = 0
 
@@ -88,17 +94,24 @@ function contentCenter(root: HTMLElement) {
   const layoutRect = layout.getBoundingClientRect()
   return layoutRect.left - rootRect.left + layoutRect.width / 2
 }
-/** 各列中心（滚动内容坐标），按 date 顺序（左旧右新） */
-function colCenters(root: HTMLElement): { date: string; c: number }[] {
-  return [...root.querySelectorAll<HTMLElement>('.tl-col[data-date]')]
-    .map(el => ({ date: el.dataset.date!, c: el.offsetLeft + el.offsetWidth / 2 }))
+// 列的 DOM 节点列表缓存：日期列表结构没变时（绝大多数滚动/拖动帧）不用每帧重新
+// querySelectorAll，只在 timelineGroups 变化、DOM 实际增删列之后才重查一次。
+let colEls: HTMLElement[] = []
+function refreshColEls() {
+  const root = scrollRef.value
+  colEls = root ? [...root.querySelectorAll<HTMLElement>('.tl-col[data-date]')] : []
+}
+/** 各列中心（滚动内容坐标），按 date 顺序（左旧右新）；offsetLeft/offsetWidth 仍每次实测
+ *  （resize 等会让它们变化），只有「查哪些节点」这一步走缓存。 */
+function colCenters(): { date: string; c: number }[] {
+  return colEls.map(el => ({ date: el.dataset.date!, c: el.offsetLeft + el.offsetWidth / 2 }))
 }
 
 /** 当前滚动位置 → 连续分数 + 四舍五入的当前日 */
 function updateActive() {
   const root = scrollRef.value
   if (!root) return
-  const cols = colCenters(root)
+  const cols = colCenters()
   if (!cols.length) return
   const cx = root.scrollLeft + contentCenter(root)
   let frac = 0
@@ -166,7 +179,7 @@ function followCardsTo(left: number) {
 function onScrub(frac: number) {
   const root = scrollRef.value
   if (!root) return
-  const cols = colCenters(root)
+  const cols = colCenters()
   if (!cols.length) return
   const clamped = Math.max(0, Math.min(cols.length - 1, frac))
   const lo = Math.floor(clamped)
@@ -248,6 +261,7 @@ watch(timelineGroups, async (groups) => {
     root.scrollLeft += 306
   }
   await nextTick()
+  refreshColEls()   // 日期列增删后 DOM 已提交，这里是唯一需要重查节点的地方
   if (!centeredOnce && groups.length) {
     centeredOnce = true
     jumpTo(groups[groups.length - 1].date, false)
@@ -257,6 +271,9 @@ watch(timelineGroups, async (groups) => {
   }
   renderedDates = groups.map(group => group.date)
   updateActive()
+  if (centeredOnce && !timelineMotionReady.value) {
+    requestAnimationFrame(() => requestAnimationFrame(() => { timelineMotionReady.value = true }))
+  }
 }, { immediate: true })
 
 // ── 新建：不移动当前视野；新日期卡在右侧单独入场，补录仍 toast 报落点 ──
@@ -348,6 +365,7 @@ async function onDelete(note: MindNote) {
   position: absolute; bottom: 28px; left: 0; right: 0;
   margin: 0 auto;
   width: min(100% - 24px, 680px);
-  z-index: 8;
+  /* 深度效果给居中列写的 zIndex 最高到 100（RecordTimeline columnStyle），捕捉条必须盖过它 */
+  z-index: 120;
 }
 </style>

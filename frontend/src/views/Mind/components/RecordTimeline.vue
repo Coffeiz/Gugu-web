@@ -3,7 +3,7 @@
        没便签的日期不出列——时间轴压缩，不摆空列。列内溢出自己竖滚。
        每列一块玻璃底板（同定时任务 .panel.glass-card 的轻玻璃，背后是静态页面背景，安全）。 -->
   <div class="timeline-cols">
-    <section v-for="g in groups" :key="g.date" v-memo="[dayMemo(g)]" class="tl-col glass-card" :data-date="g.date">
+    <section v-for="(g, i) in groups" :key="g.date" v-memo="[dayMemo(g), columnVisualKey(i), motionReady]" class="tl-col glass-card" :class="{ 'tl-col-motion': motionReady }" :data-date="g.date" :style="columnStyle(i)">
       <div class="tl-col-head">
         <span class="tl-day" :class="{ today: g.date === todayIso }">{{ +g.date.slice(8, 10) }}</span>
         <span class="tl-day-side">
@@ -45,6 +45,8 @@ import NoteCard from './NoteCard.vue'
 
 const props = defineProps<{
   groups: { date: string; items: MindNote[] }[]
+  centerFrac: number
+  motionReady: boolean
   highlightId: number | null
   filtered: boolean
 }>()
@@ -73,6 +75,38 @@ function dayMemo(group: { date: string; items: MindNote[] }) {
   const highlighted = group.items.some(note => note.id === props.highlightId) ? props.highlightId : ''
   const editing = group.items.some(note => note.id === editingId.value) ? editingId.value : ''
   return `${versions};h:${highlighted};e:${editing};c:${editing ? conflict.value : ''}`
+}
+
+/** 真实列坐标不变，只压缩视觉卡片：越远越小、越靠中心越密，边缘沉到后方。 */
+function columnStyle(index: number) {
+  const distance = Math.abs(index - props.centerFrac)
+  const capped = Math.min(distance, 5)
+  const direction = index === props.centerFrac ? 0 : index < props.centerFrac ? 1 : -1
+  // 列本身的布局步长是 400px 宽 + 14px 间距；视觉中心距按缩放后的卡宽压缩，避免缩小后留白。
+  // 每段步长依次收窄（400→330→240→150），越往边缘挤得越紧，不是匀速压缩。
+  const desiredDistance = capped <= 1
+    ? capped * 400
+    : capped <= 2
+      ? 400 + (capped - 1) * 330
+      : capped <= 3
+        ? 730 + (capped - 2) * 240
+        : 970 + (capped - 3) * 150
+  const compression = capped * 414 - desiredDistance
+  // 景深模糊：中间清晰、越靠两侧越糊，跟压缩/缩放同一个 capped 距离驱动，不需要额外状态。
+  // 排查过：去掉这层 filter 白块依然在，不是它的锅，恢复回来。
+  const depthBlur = capped * 0.35
+  return {
+    transform: `translateX(${direction * compression}px) scale(${1 - capped * 0.055})`,
+    filter: `blur(${depthBlur}px)`,
+    zIndex: `${100 - Math.round(capped * 10)}`,
+  }
+}
+
+/** 只有中心附近的列随连续位置重绘；远侧卡片维持同一压缩状态。 */
+function columnVisualKey(index: number) {
+  const distance = index - props.centerFrac
+  if (Math.abs(distance) >= 5) return distance < 0 ? 'far-left' : 'far-right'
+  return Math.round(distance * 100) / 100
 }
 
 const WEEK = ['日', '一', '二', '三', '四', '五', '六']
@@ -104,13 +138,21 @@ defineExpose({ flagConflict: () => { conflict.value = true } })
 .tl-col {
   --glass-bg: rgba(255,255,255,0.25);
   --glass-bg-hover: rgba(255,255,255,0.25);
+  /* isolation:isolate 给每张卡一个独立、稳定的合成层边界，不被页面其它地方（比如日历
+     弹层里跟卡片重叠的那一角）的重绘牵连——本仓库处理 backdrop-filter 玻璃层怪异重绘
+     早就用过这招（topbar/GuguChat 悬浮球），这里同样的坑先按同样的方子试一次。 */
+  isolation: isolate;
   border-radius: 40px;
   corner-shape: squircle;
   width: 400px; flex-shrink: 0; box-sizing: border-box;
-  display: flex; flex-direction: column; min-height: 0;
+  display: flex; flex-direction: column; min-height: 0; position: relative;
   padding: 14px 12px 10px;
   scroll-snap-align: center;   /* 滚列时磁吸：列中心吸到 scroll-padding 调整后的中线（=contentCenter，#4）*/
+  transform-origin: center center;
 }
+/* 深度效果的平滑现在完全交给 RecordsView.vue 的 timelineVisualFrac 低通滤波（每帧直接
+   算出目标 transform）；这里不再叠一层 CSS transition——continuously 变化的值用 transition
+   会变成「一直在追一个每帧都挪的目标」，反而比单纯的 JS 平滑更容易看着发飘、跟不上。 */
 /* 日期头：大数字 + 小字月份/星期（周视图日历的语言） */
 .tl-col-head {
   display: flex; align-items: center; gap: 8px;

@@ -17,7 +17,14 @@
       </div>
       <div class="mind-bar-side right">
         <template v-if="isRecords">
-          <DatePicker v-model="store.jumpTarget" class="mind-cal-picker" :max="todayIso" title="选择日期跳转" />
+          <DatePicker
+            v-model="store.jumpTarget"
+            class="mind-cal-picker"
+            popup-class="mind-cal-popup"
+            :max="todayIso"
+            :allowed-dates="store.timeline.map(g => g.date)"
+            title="选择日期跳转"
+          />
           <div class="mind-filter">
             <PhMagnifyingGlass :size="13" weight="bold" class="mf-icon" />
             <input v-model="store.filterQ" type="text" placeholder="筛选便签…" />
@@ -54,8 +61,10 @@ const todayIso = computed(() => new Date().toISOString().slice(0, 10))
 .mind-bar {
   display: grid; grid-template-columns: 1fr auto 1fr;
   align-items: center; gap: 12px;
+  position: relative; z-index: 12;
   flex-shrink: 0; padding: 0 2px;
 }
+.mind-body { position: relative; z-index: 1; }
 .mind-bar-side { display: flex; align-items: center; }
 .mind-bar-side.right { justify-content: flex-end; gap: 10px; }
 
@@ -69,6 +78,16 @@ const todayIso = computed(() => new Date().toISOString().slice(0, 10))
 :deep(.mind-cal-picker .dp-input.open) { background: rgba(255,255,255,0.75); box-shadow: none; }
 :deep(.mind-cal-picker .dp-input span) { display: none; }
 :deep(.mind-cal-picker .dp-icon) { color: var(--color-primary); }
+
+/* 排查中：弹层 Teleport 到 body 后不再是本组件后代，:deep 够不到，用 popup-class + :global
+   单独测试去掉这个弹层自己的 backdrop-filter 是否是记录页玻璃卡冒白块的元凶（怀疑跟另一层
+   backdrop-filter 玻璃卡叠在一起时，弹层内部重绘要求重新采样背后内容，撞出白块）。
+   背景提高不透明度补偿视觉上失去的模糊感。 */
+:global(.mind-cal-popup) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: rgba(238,240,246,0.98) !important;
+}
 
 /* 椭圆胶囊：颜色/透明度/尺寸对齐日历页的月/周切换（.view-toggle），只把圆角换成全圆 */
 .mind-tabs {

@@ -148,6 +148,8 @@ let moved = false
 let downIdx = -1
 let rafId = 0
 let animationRun = 0
+let velocityFrac = 0   // 指数滑动平均，单位 frac/ms，驱动松手惯性
+let lastMoveTime = 0
 
 function stopAnim() {
   animationRun += 1
@@ -165,6 +167,8 @@ function onDown(e: PointerEvent) {
   startX = e.clientX
   startFrac = currentFrac.value
   moved = false
+  velocityFrac = 0
+  lastMoveTime = 0
   const el = (e.target as HTMLElement).closest<HTMLElement>('.dsb-tick')
   downIdx = el ? Number(el.dataset.idx) : -1
   dragging.value = true
@@ -177,7 +181,13 @@ function onMove(e: PointerEvent) {
   const dx = e.clientX - startX
   if (Math.abs(dx) > 3) moved = true
   const pitch = pitchAt(Math.floor(clampFrac(startFrac)), startFrac)
-  currentFrac.value = detentFrac(startFrac - (dx * DRAG_RATIO) / pitch)
+  const next = detentFrac(startFrac - (dx * DRAG_RATIO) / pitch)
+  const now = performance.now()
+  const dt = lastMoveTime ? now - lastMoveTime : 16
+  const instant = (next - currentFrac.value) / Math.max(dt, 4)
+  velocityFrac = velocityFrac * 0.6 + instant * 0.4   // 指数平滑，松手瞬间的抖动不会整个吃进去
+  lastMoveTime = now
+  currentFrac.value = next
   emit('scrub', clampFrac(currentFrac.value))
 }
 
@@ -186,9 +196,15 @@ function onUp() {
   window.removeEventListener('pointerup', onUp)
   dragging.value = false
   const last = props.groups.length - 1
-  const idx = !moved && downIdx >= 0
-    ? Math.max(0, Math.min(last, downIdx))
-    : Math.round(clampFrac(currentFrac.value))
+  let idx: number
+  if (!moved && downIdx >= 0) {
+    idx = Math.max(0, Math.min(last, downIdx))
+  } else {
+    // 惯性：按松手瞬间的速度多滑一点再吸附到最近刻度，快甩多走一点、慢放基本不动；
+    // 封顶避免用力过猛直接跳好几天——"稍微多移动一点"而不是真的做一整套抛物线减速。
+    const extra = Math.max(-1.1, Math.min(1.1, velocityFrac * 45))
+    idx = Math.round(clampFrac(currentFrac.value + extra))
+  }
   animateTo(idx)
 }
 

@@ -14,7 +14,7 @@
 
     <Teleport to="body">
       <Transition name="dp-pop">
-        <div v-if="open" class="dp-popup" :style="popupStyle" ref="popupRef">
+        <div v-if="open" class="dp-popup" :class="popupClass" :style="popupStyle" ref="popupRef">
 
           <!-- 月份导航 -->
           <div v-if="!yearMode" class="dp-header">
@@ -100,6 +100,11 @@ const props = defineProps({
   placeholder: { type: String, default: '选择日期' },
   min: { type: String, default: '' },
   max: { type: String, default: '' },
+  // 提供时只有这些日期可选（其余全部禁用）——例如「只能跳到有记录的那天」
+  allowedDates: { type: Array, default: null },
+  // Teleport 到 body 后不再是宿主的 DOM 后代，父级 scoped 样式够不到 .dp-popup，
+  // 需要单独测试/覆盖某个具体用法的弹层样式时（比如去掉 backdrop-filter）用这个传类名进来
+  popupClass: { type: [String, Array, Object], default: null },
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -177,8 +182,12 @@ function selectYear(y) {
   yearMode.value = false
 }
 
+const allowedSet = computed(() => props.allowedDates ? new Set(props.allowedDates) : null)
 function isDisabled(iso) {
-  return !!((props.min && iso < props.min) || (props.max && iso > props.max))
+  if (props.min && iso < props.min) return true
+  if (props.max && iso > props.max) return true
+  if (allowedSet.value && !allowedSet.value.has(iso)) return true
+  return false
 }
 
 function select(iso) {

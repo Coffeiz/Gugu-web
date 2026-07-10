@@ -13,7 +13,7 @@
     <!-- 只读态：顶部直接显示标题（由正文首行推导，#2），不再放日期/时间；hover 出编辑/删除 -->
     <template v-else>
       <div class="nc-head">
-        <span class="nc-title" @click="emit('edit')">{{ title }}</span>
+        <span class="nc-title" :class="{ 'nc-title-plain': !isHeading }" @click="emit('edit')">{{ title }}</span>
         <span class="nc-actions">
           <button class="nc-icon" title="编辑" @click.stop="emit('edit')">
             <PhPencilSimple :size="12" weight="bold" />
@@ -68,12 +68,15 @@ function commit() {
 }
 
 /** 标题由正文首行推导（设计草案：卡片标题从正文标题块/首行推导），正文取其余行。
- *  首行剥掉 markdown 前缀（#/- [ ]/-），引用锚点只留显示名。首行为空则给占位。 */
+ *  首行剥掉 markdown 前缀（#/- [ ]/-），引用锚点只留显示名。首行为空则给占位。
+ *  只有首行真是 `#` 标题格式（工具栏「单级标题」打出来的）才算「真标题」、显示粗体；
+ *  纯正文/待办/列表被摘做头部展示时，字重跟正文一致，不冒充没有的标题。 */
 const _split = computed(() => {
   const lines = (props.note.contentMd || '').split('\n')
   const ti = lines.findIndex(l => l.trim())
-  if (ti < 0) return { title: '（空便签）', body: '', taskOffset: 0 }
+  if (ti < 0) return { title: '（空便签）', body: '', taskOffset: 0, isHeading: false }
   const titleLine = lines[ti].trim()
+  const isHeading = /^#{1,6}\s+/.test(titleLine)
   const raw = titleLine
     .replace(/^#{1,6}\s+/, '')
     .replace(/^-\s\[[ xX]\]\s?/, '')
@@ -82,9 +85,10 @@ const _split = computed(() => {
   const body = lines.slice(ti + 1).join('\n').replace(/^\n+/, '')
   // 标题行若本身是待办，被摘走后 body 里的待办序号整体前移 1，卡上勾选要补回这个偏移
   const taskOffset = /^-\s\[[ xX]\]/.test(titleLine) ? 1 : 0
-  return { title: raw || '（无标题）', body, taskOffset }
+  return { title: raw || '（无标题）', body, taskOffset, isHeading }
 })
-const title  = computed(() => _split.value.title)
+const title     = computed(() => _split.value.title)
+const isHeading = computed(() => _split.value.isHeading)
 const bodyMd = computed(() => _split.value.body)
 
 /** 是否溢出 clamp 高度（内容/展开态变了都重测）。scrollHeight 对比要在未展开的 clamp 态量 */
@@ -120,6 +124,8 @@ function onBodyClick(e: MouseEvent) {
 .note-card {
   position: relative;
   padding: 11px 13px;
+  min-height: 140px;   /* 卡片本身兜住方形高度，不依赖 .nc-body 是否渲染（纯标题便签也不会变扁） */
+  box-sizing: border-box;
   border-radius: var(--radius-md);
   background: rgba(255,255,255,0.56);
   border: 1px solid rgba(255,255,255,0.72);
@@ -159,12 +165,19 @@ function onBodyClick(e: MouseEvent) {
   display: flex; align-items: flex-start; gap: 6px;
   margin-bottom: 4px; position: relative; z-index: 1;
 }
+/* 只有正文存在时才分割——纯标题便签不该悬空挂一条线 */
+.nc-head:has(+ .nc-body) {
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(80,90,110,0.1);
+}
 .nc-title {
   flex: 1; min-width: 0; cursor: text;
   font-size: 14px; font-weight: 600; line-height: 1.35; color: var(--text-primary);
   overflow-wrap: anywhere;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
 }
+/* 首行不是真的 # 标题（纯正文/待办/列表被摘来当头部展示）——字重跟正文一致，不冒充标题 */
+.nc-title-plain { font-weight: 400; }
 .nc-actions { margin-left: auto; flex-shrink: 0; display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s; }
 .note-card:hover .nc-actions { opacity: 1; }
 .nc-icon {
