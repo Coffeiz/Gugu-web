@@ -109,24 +109,33 @@ async def get_summary(exclude_dev: bool = Query(False), db: AsyncSession = Depen
     all_row   = (await db.execute(_usage_stmt())).first()
     today_row = (await db.execute(_usage_stmt(AgentUsage.created_at >= today_start))).first()
 
-    # ── 留存率：注册超过 N 天的用户中，过去 N 天仍有活跃的比例 ─────────────────────
+    # ── 留存率（Rolling Retention Day-N）：注册满 N 天的用户里，在「自己第 N 天当天或之后」
+    #    还回来过（≥1 次）的比例。一旦回来过就永久算 → 对同一批人单调不回退。
+    #    注意区别：这**不是**「过去 N 天窗口活跃」——那是滑动窗口活跃率（≈WAU、随近期活跃升降）；
+    #    Rolling Retention 的窗口是每个用户「第 N 天 → 现在」的无界区间，衡量「首 N 天后到底回来过没」。
     cohort_7d  = (await db.execute(_users_stmt().where(User.created_at < d7))).scalar() or 0
     cohort_30d = (await db.execute(_users_stmt().where(User.created_at < d30))).scalar() or 0
 
-    async def _retained(d):
-        chat_s = (select(distinct(AgentUsage.user_id))
-                  .join(User, AgentUsage.user_id == User.id)
-                  .where(AgentUsage.created_at >= d, User.created_at < d))
-        web_s = select(User.id).where(User.last_active_at >= d, User.created_at < d)
+    async def _retained(n):
+        """Rolling Retention Day-n 的分子：注册满 n 天、且在自己第 n 天或之后活跃过的去重用户数。
+        活跃 = 网页登录（last_active_at）或对话（AgentUsage，含 IM），时间点 ≥ 该用户 created_at + n 天。"""
+        thresh = User.created_at + timedelta(days=n)     # 每个用户各自的「第 n 天」
+        cutoff = now - timedelta(days=n)                 # 注册满 n 天（与 cohort 分母一致）
+        # 网页：last_active_at 是最后一次网页活跃时间，落在自己第 n 天或之后即算回来过（单调，取 max 即够判定）
+        web_s = select(User.id).where(User.created_at < cutoff, User.last_active_at >= thresh)
+        # 对话：存在一条落在自己第 n 天或之后的用量（IM 走 worker 不更新 last_active_at，靠这条纳入）
+        chat_s = (select(distinct(User.id))
+                  .join(AgentUsage, AgentUsage.user_id == User.id)
+                  .where(User.created_at < cutoff, AgentUsage.created_at >= thresh))
         if xd:
-            chat_s = chat_s.where(User.is_developer == False)
             web_s = web_s.where(User.is_developer == False)
-        chat = set((await db.execute(chat_s)).scalars().all())
+            chat_s = chat_s.where(User.is_developer == False)
         web = set((await db.execute(web_s)).scalars().all())
+        chat = set((await db.execute(chat_s)).scalars().all())
         return len(chat | web)
 
-    retained_7d  = await _retained(d7)
-    retained_30d = await _retained(d30)
+    retained_7d  = await _retained(7)
+    retained_30d = await _retained(30)
     retention_7d  = round(retained_7d  / cohort_7d,  4) if cohort_7d  else 0
     retention_30d = round(retained_30d / cohort_30d, 4) if cohort_30d else 0
 

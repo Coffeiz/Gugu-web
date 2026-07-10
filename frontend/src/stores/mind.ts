@@ -31,6 +31,7 @@ export const useMindStore = defineStore('mind', () => {
   const loading = ref(false)
   const loaded  = ref(false)
   const filterQ = ref('')   // 胶囊条的便签筛选（客户端过滤已加载的便签）
+  const jumpTarget = ref('')   // 顶部日历选中的日期：跨 index.vue/RecordsView.vue 传递跳转意图
 
   /** 时间流：按 capturedAt 分组成「一天一组」，供 RecordTimeline 渲染；筛选词命中正文才留 */
   const timeline = computed(() => {
@@ -84,5 +85,5 @@ export const useMindStore = defineStore('mind', () => {
     notes.value = notes.value.filter(n => n.id !== id)
   }
 
-  return { notes, loading, loaded, filterQ, timeline, fetchNotes, createNote, updateNote, deleteNote }
+  return { notes, loading, loaded, filterQ, jumpTarget, timeline, fetchNotes, createNote, updateNote, deleteNote }
 })

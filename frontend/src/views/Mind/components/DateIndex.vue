@@ -12,7 +12,6 @@
         <span class="dsb-tip" :style="tickTipStyle(tick.index)">{{ fmtLabel(tick.group.date) }}</span>
       </button>
     </div>
-    <div class="ds-playhead" aria-hidden="true"></div>
   </div>
 </template>
 
@@ -249,8 +248,8 @@ function fmtLabel(iso: string) {
   cursor: grab;
   touch-action: pan-y;
   user-select: none; -webkit-user-select: none;
-  mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent);
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 5%, #000 95%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 5%, #000 95%, transparent);
 }
 .date-scrub:active { cursor: grabbing; }
 
@@ -275,11 +274,5 @@ function fmtLabel(iso: string) {
   position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
   margin-top: 4px; font-size: 10px; white-space: nowrap;
   color: var(--text-secondary); opacity: 0; pointer-events: none;
-}
-.ds-playhead {
-  position: absolute; top: 2px; left: 50%; transform: translateX(-50%);
-  width: 2px; height: 26px; border-radius: 99px;
-  background: rgba(123,127,178,0.16);
-  pointer-events: none;
 }
 </style>

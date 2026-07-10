@@ -1,7 +1,11 @@
 <template>
   <div ref="layoutRef" class="rec-layout">
-    <!-- 顶部日期滑杆和玻璃卡列逐帧同步；松手后只做无动画的精确对齐。 -->
-    <DateIndex :groups="indexGroups" :center-frac="centerFrac" @scrub="onScrub" @snap="onSnap" />
+    <!-- 顶部日期滑杆和玻璃卡列逐帧同步；松手后只做无动画的精确对齐。
+         日历快速定位入口挪到了顶部胶囊行（index.vue，筛选框左边），选中日期写进
+         store.jumpTarget，这里只管接住并跳转。 -->
+    <div class="rec-scrub-row">
+      <DateIndex :groups="indexGroups" :center-frac="centerFrac" @scrub="onScrub" @snap="onSnap" />
+    </div>
 
     <!-- 横置便签流：左侧是过往、右侧是后来的日期；列内竖滚翻当天 -->
     <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel" @scroll="onScroll">
@@ -19,7 +23,7 @@
     </div>
 
     <div class="rec-capture">
-      <CaptureBar @created="onCreated" />
+      <CaptureBar ref="captureRef" @created="onCreated" />
     </div>
   </div>
 </template>
@@ -38,6 +42,7 @@ import RecordTimeline from './components/RecordTimeline.vue'
 const store     = useMindStore()
 const liveStore = useLiveStore()
 const timelineRef = ref<InstanceType<typeof RecordTimeline> | null>(null)
+const captureRef  = ref<InstanceType<typeof CaptureBar> | null>(null)
 const scrollRef   = ref<HTMLElement | null>(null)
 const layoutRef   = ref<HTMLElement | null>(null)
 
@@ -72,6 +77,7 @@ const timelineGroups = computed(() => [...store.timeline].reverse())
 const indexGroups = computed(() => timelineGroups.value.map(g => ({ date: g.date, count: g.items.length })))
 const activeDate  = ref('')
 const centerFrac  = ref(0)   // 连续分数位置：内容区中线落在第几列（含小数），驱动滑杆连续跟随
+const todayIso    = computed(() => _today())
 let scrollRaf = 0
 
 /** 读取记录页的实际中线，再换算到横向滚动容器坐标，避免侧栏/内边距带来的推算偏差。 */
@@ -181,6 +187,39 @@ function jumpTo(date: string, animate = true) {
     })
   }
 }
+
+// ── 快速定位：日历弹层选任意日期（弹层自带"今天"快捷按钮，选中即是同一条路径）。
+// 没便签的日期不出列（#见 RecordTimeline 注释），选中的目标日不存在时退化到最近的
+// 有记录的日期，并给出明确反馈，不静默跳偏；选的正好是今天且没记录，顺手展开捕捉条邀请写一条。 ──
+function fmtMD(iso: string) {
+  const [, m, d] = iso.split('-')
+  return `${+m}月${+d}日`
+}
+function nearestExistingDate(target: string): string | null {
+  const dates = indexGroups.value.map(g => g.date)
+  if (!dates.length) return null
+  const targetMs = new Date(target + 'T00:00:00').getTime()
+  let best = dates[0], bestDiff = Infinity
+  for (const d of dates) {
+    const diff = Math.abs(new Date(d + 'T00:00:00').getTime() - targetMs)
+    if (diff < bestDiff) { bestDiff = diff; best = d }
+  }
+  return best
+}
+watch(() => store.jumpTarget, (date) => {
+  if (!date) return
+  if (indexGroups.value.some(g => g.date === date)) { jumpTo(date); return }
+  const nearest = nearestExistingDate(date)
+  if (nearest) jumpTo(nearest)
+  if (date === todayIso.value) {
+    Message.info('今天还没有记录，写一条试试～')
+    captureRef.value?.expand()
+  } else if (nearest) {
+    Message.info(`${fmtMD(date)}没有记录，已定位到最近的 ${fmtMD(nearest)}`)
+  } else {
+    Message.info('还没有任何记录')
+  }
+})
 
 // resize：内容区中线变了，把当前列瞬时重新居中（不飞入）
 function onResize() {
@@ -298,6 +337,10 @@ async function onDelete(note: MindNote) {
 .rec-hscroll::-webkit-scrollbar { display: none; }
 
 .rec-loading { padding: 40px 24px; font-size: 12.5px; color: var(--text-secondary); }
+
+/* 日期滑杆贴齐顶部胶囊（204px）量级；日历快速定位入口挪去了顶部胶囊行，这里只剩滑杆本身 */
+.rec-scrub-row { display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.rec-scrub-row > :deep(.date-scrub) { flex: 0 0 210px; }
 
 /* 捕捉条：停靠底部、在内容区水平居中（与胶囊/滑杆对齐）。
    bottom:28 与胶囊顶 28（fullBleed padding-top）等距，跟咕咕悬浮球 bottom:28 齐平 */

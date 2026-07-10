@@ -104,6 +104,8 @@ defineExpose({ flagConflict: () => { conflict.value = true } })
 .tl-col {
   --glass-bg: rgba(255,255,255,0.25);
   --glass-bg-hover: rgba(255,255,255,0.25);
+  border-radius: 40px;
+  corner-shape: squircle;
   width: 400px; flex-shrink: 0; box-sizing: border-box;
   display: flex; flex-direction: column; min-height: 0;
   padding: 14px 12px 10px;
