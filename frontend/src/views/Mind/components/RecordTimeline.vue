@@ -99,6 +99,7 @@ defineExpose({ flagConflict: () => { conflict.value = true } })
   width: 292px; flex-shrink: 0; box-sizing: border-box;
   display: flex; flex-direction: column; min-height: 0;
   padding: 14px 12px 10px;
+  scroll-snap-align: center;   /* 滚列时磁吸：列中心吸到 scroll-padding 调整后的中线（=contentCenter，#4）*/
 }
 
 /* 日期头：大数字 + 小字月份/星期（周视图日历的语言） */

@@ -154,7 +154,7 @@ async function save() {
 }
 .capture-bar.expanded .cb-pad {
   opacity: 1; filter: blur(0);
-  transition: opacity 0.3s ease 0.14s, filter 0.3s ease 0.14s;
+  transition: opacity 0.28s ease 0.04s, filter 0.28s ease 0.04s;
 }
 .cb-pencil { flex-shrink: 0; color: var(--color-primary); opacity: 0.75; }
 .cb-placeholder {

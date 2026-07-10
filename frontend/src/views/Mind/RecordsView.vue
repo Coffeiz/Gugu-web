@@ -5,7 +5,7 @@
                @seek="onSeek" @snap="d => jumpTo(d, true)" />
 
     <!-- 横置便签流：横向翻历史（滚轮转横滚），列内竖滚翻当天 -->
-    <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel" @scroll="onScroll">
+    <div ref="scrollRef" class="rec-hscroll" :class="{ 'snap-off': snapOff }" @wheel="onWheel" @scroll="onScroll">
       <div v-if="store.loading && !store.loaded" class="rec-loading">加载中…</div>
       <RecordTimeline
         v-else
@@ -113,10 +113,22 @@ function scrollForFrac(root: HTMLElement, p: number): number {
   return cen - contentCenter(root)
 }
 
-/** 滑杆拖动：连续联动，列平滑跟手（瞬时设 scrollLeft，但 p 连续 → 视觉平滑，不跳格）*/
+// 滑杆驱动列滚动时关掉原生 scroll-snap（否则每帧 seek 都被吸附打架）；停 160ms 后自动恢复，
+// 恢复瞬间位置已在滑杆惯性补间的落点（=某列中心=吸附点），不会跳。wheel 路径不触发 seek，
+// snap 一直开着 → 触控板/滚轮滚列自带惯性 + 松开磁吸到最近日期（#4）。
+const snapOff = ref(false)
+let snapOffTimer: ReturnType<typeof setTimeout> | null = null
+function suspendSnap() {
+  snapOff.value = true
+  if (snapOffTimer) clearTimeout(snapOffTimer)
+  snapOffTimer = setTimeout(() => { snapOff.value = false }, 160)
+}
+
+/** 滑杆拖动/惯性补间：连续联动，列平滑跟手（瞬时设 scrollLeft，但 p 连续 → 视觉平滑，不跳格）*/
 function onSeek(p: number) {
   const root = scrollRef.value
   if (!root) return
+  suspendSnap()
   root.scrollLeft = scrollForFrac(root, p)
   // 立刻更新 active（不等 rAF），让刻度即时长高 + 卡片高亮跟上
   centerFrac.value = p
@@ -141,6 +153,7 @@ function onResize() { if (activeDate.value) jumpTo(activeDate.value, false) }
 onMounted(() => window.addEventListener('resize', onResize))
 onBeforeUnmount(() => {
   if (scrollRaf) cancelAnimationFrame(scrollRaf)
+  if (snapOffTimer) clearTimeout(snapOffTimer)
   window.removeEventListener('resize', onResize)
 })
 
@@ -222,11 +235,20 @@ async function onDelete(note: MindNote) {
   flex: 1; min-height: 0;
   width: 100vw;
   margin-left: calc(-1 * (var(--sidebar-width) + 24px));   /* 顶到视口左：侧栏宽 + fullBleed 左内边距 24 */
+  /* ⚠️ position:relative 必须有：让 .tl-col 的 offsetParent = 本容器，offsetLeft 才和本容器的
+     scrollLeft 同一套原点（都从视口左 x=0 算）。否则 offsetParent 落到 rec-layout（在侧栏右侧），
+     offsetLeft 从 x=244 起算、却拿去和从 x=0 起算的 scrollLeft 相减 → 列整体偏出一个侧栏宽（#1）。*/
+  position: relative;
   overflow-x: auto; overflow-y: hidden;
-  /* 横向导航靠滚轮/触控板/日期条，滚动条藏掉（露在捕捉条底下很脏） */
+  /* 横向：滚动时磁吸到日期列中心（scroll-snap），触控板/滚轮自带惯性、松开吸附到最近日期（#4）；
+     滑杆驱动时由 JS 关掉 snap（.snap-off）免得跟每帧 seek 打架。scroll-padding-left=侧栏宽 把
+     吸附中线从"视口中心"挪到"内容区中心"（= contentCenter），和滑杆 playhead 对齐。 */
+  scroll-snap-type: x proximity;
+  scroll-padding-left: var(--sidebar-width);
   scrollbar-width: none;
   padding-bottom: 96px;   /* 给底部停靠的捕捉条让空间，最下的卡不被盖住 */
 }
+.rec-hscroll.snap-off { scroll-snap-type: none; }
 .rec-hscroll::-webkit-scrollbar { display: none; }
 
 .rec-loading { padding: 40px 24px; font-size: 12.5px; color: var(--text-secondary); }

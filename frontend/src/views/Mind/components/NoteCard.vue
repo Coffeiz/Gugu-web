@@ -10,10 +10,10 @@
       </div>
     </template>
 
-    <!-- 只读态：轻量 HTML 预览。待办 checkbox 卡上直接勾（不进编辑）；长内容 clamp + 展开 -->
+    <!-- 只读态：顶部直接显示标题（由正文首行推导，#2），不再放日期/时间；hover 出编辑/删除 -->
     <template v-else>
       <div class="nc-head">
-        <span class="nc-time" :title="note.capturedAt.slice(0, 16).replace('T', ' ')">{{ timeLabel }}</span>
+        <span class="nc-title" @click="emit('edit')">{{ title }}</span>
         <span class="nc-actions">
           <button class="nc-icon" title="编辑" @click.stop="emit('edit')">
             <PhPencilSimple :size="12" weight="bold" />
@@ -23,8 +23,8 @@
           </button>
         </span>
       </div>
-      <div ref="bodyRef" class="nc-body md-preview" :class="{ clamped: clamped && !expanded }"
-           @click="onBodyClick" v-html="mdToPreviewHtml(note.contentMd)"></div>
+      <div v-if="bodyMd" ref="bodyRef" class="nc-body md-preview" :class="{ clamped: clamped && !expanded }"
+           @click="onBodyClick" v-html="mdToPreviewHtml(bodyMd)"></div>
       <button v-if="clamped" class="nc-expand" @click.stop="expanded = !expanded">
         {{ expanded ? '收起' : '展开' }}
       </button>
@@ -67,13 +67,25 @@ function commit() {
   else emit('cancel')
 }
 
-/** 时间戳常驻：当天只显 HH:MM，补录/往日显完整日期，扫一眼就知道这条是什么时候的 */
-const timeLabel = computed(() => {
-  const ts = props.note.capturedAt
-  return ts.slice(0, 10) === new Date().toISOString().slice(0, 10)
-    ? ts.slice(11, 16)
-    : `${+ts.slice(5, 7)}月${+ts.slice(8, 10)}日 ${ts.slice(11, 16)}`
+/** 标题由正文首行推导（设计草案：卡片标题从正文标题块/首行推导），正文取其余行。
+ *  首行剥掉 markdown 前缀（#/- [ ]/-），引用锚点只留显示名。首行为空则给占位。 */
+const _split = computed(() => {
+  const lines = (props.note.contentMd || '').split('\n')
+  const ti = lines.findIndex(l => l.trim())
+  if (ti < 0) return { title: '（空便签）', body: '', taskOffset: 0 }
+  const titleLine = lines[ti].trim()
+  const raw = titleLine
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^-\s\[[ xX]\]\s?/, '')
+    .replace(/^-\s+/, '')
+    .replace(/\[\[[a-z_]+:\d+\|([^\]]*)\]\]/g, '$1')
+  const body = lines.slice(ti + 1).join('\n').replace(/^\n+/, '')
+  // 标题行若本身是待办，被摘走后 body 里的待办序号整体前移 1，卡上勾选要补回这个偏移
+  const taskOffset = /^-\s\[[ xX]\]/.test(titleLine) ? 1 : 0
+  return { title: raw || '（无标题）', body, taskOffset }
 })
+const title  = computed(() => _split.value.title)
+const bodyMd = computed(() => _split.value.body)
 
 /** 是否溢出 clamp 高度（内容/展开态变了都重测）。scrollHeight 对比要在未展开的 clamp 态量 */
 async function measureClamp() {
@@ -91,7 +103,8 @@ function onBodyClick(e: MouseEvent) {
   const t = e.target as HTMLElement
   if (t instanceof HTMLInputElement && t.dataset.taskIdx !== undefined) {
     e.preventDefault()   // 视觉状态由 PATCH 成功后的数据回流驱动，别让浏览器先勾上
-    emit('toggle-task', Number(t.dataset.taskIdx))
+    // body 里的待办序号 + 标题行占的偏移 = 完整 content 里的真实序号
+    emit('toggle-task', Number(t.dataset.taskIdx) + _split.value.taskOffset)
     return
   }
   // 点引用 chip 不进编辑（将来跳对应对象页）；点其他区域进编辑
@@ -143,14 +156,16 @@ function onBodyClick(e: MouseEvent) {
 .note-card.tint-amber  { background: rgba(212,178,112,0.16); }
 
 .nc-head {
-  display: flex; align-items: center; gap: 6px;
-  margin-bottom: 2px; position: relative; z-index: 1;
+  display: flex; align-items: flex-start; gap: 6px;
+  margin-bottom: 4px; position: relative; z-index: 1;
 }
-.nc-time {
-  font-size: 10.5px; color: var(--text-secondary);
-  font-variant-numeric: tabular-nums; opacity: 0.85;
+.nc-title {
+  flex: 1; min-width: 0; cursor: text;
+  font-size: 14px; font-weight: 600; line-height: 1.35; color: var(--text-primary);
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
 }
-.nc-actions { margin-left: auto; display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s; }
+.nc-actions { margin-left: auto; flex-shrink: 0; display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s; }
 .note-card:hover .nc-actions { opacity: 1; }
 .nc-icon {
   padding: 3px; border: none; border-radius: 5px;
