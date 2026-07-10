@@ -66,12 +66,12 @@ function fracFromOffset(off: number): number {
   }
   return 0
 }
-/** 两端弹力（#1 渐进式阻尼，iOS 橡皮筋）：越往外拉越难、且有硬上限（渐近到 dim）。
- *  overshoot(x) = (1 - 1/(x·c/dim + 1))·dim —— x 越大增量越慢，永远拉不过 dim。 */
+/** 两端弹力（渐进式阻尼，iOS 橡皮筋）：拖得越远、每像素能挪的越少，且有硬上限 LIMIT——
+ *  overshoot(x) = (1 - 1/(x/LIMIT + 1))·LIMIT，x→∞ 渐近到 LIMIT，越拖越拉不动。
+ *  LIMIT 收到 72px（更严：最多只能拖出 72px，到边界很快就"拉到头"）。 */
 function overshoot(x: number): number {
-  const dim = (stripRef.value?.clientWidth ?? 300)
-  const c = 0.5
-  return (1 - 1 / (x * c / dim + 1)) * dim
+  const LIMIT = 72
+  return (1 - 1 / (x / LIMIT + 1)) * LIMIT
 }
 function rubberBand(raw: number): number {
   const n = props.groups.length
