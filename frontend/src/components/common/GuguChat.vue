@@ -200,7 +200,7 @@
                 <!-- IM 引用/回复：单独一条浅色预览条，跟真正打的话分开显示，别把引用原文
                      （可能带 markdown 表格等）直接摊平混进正文气泡（devlog 2026-07-10）。 -->
                 <div v-if="msg.role !== 'ai' && msg.quotedText" class="msg-quoted" :title="msg.quotedText">{{ msg.quotedText }}</div>
-                <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onChatActionClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : msg.html" :text="msg.text" /></div>
+                <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onChatActionClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderMd(msg.text))" :text="msg.text" chat /></div>
                 <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
                 <div v-if="msg.files && msg.files.length" class="msg-files">
                   <template v-for="f in msg.files" :key="f.file_id || f.attach_id">
@@ -543,7 +543,8 @@ marked.use({
       const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
       const highlighted = hljs.highlight(text, { language }).value
       const label = lang || 'code'
-      return `<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${label}</span><button class=\"md-copy-btn\" onclick=\"(function(b){var t=b.closest('.md-code-block').querySelector('code').innerText;var done=function(){b.textContent='已复制 ✓';setTimeout(function(){b.textContent='复制'},1200)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done).catch(done)}else{var a=document.createElement('textarea');a.value=t;a.style.position='fixed';a.style.opacity='0';document.body.appendChild(a);a.select();try{document.execCommand('copy')}catch(e){}a.remove();done()}})(this)\">复制</button></div><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`
+      // 复制按钮不写内联 onclick——DOMPurify 会剥掉所有 on* 属性；改由 onChatActionClick 事件委托处理
+      return `<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${label}</span><button class="md-copy-btn" type="button">复制</button></div><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`
     }
     return r
   })(),
@@ -1272,6 +1273,23 @@ const chatBindCanvas = ref(null)
 let chatBindPoll = null
 
 function onChatActionClick(e) {
+  // 代码块「复制」按钮：渲染时不写内联 onclick（DOMPurify 会剥掉 on*），这里事件委托兜住
+  const btn = e.target.closest?.('.md-copy-btn')
+  if (btn) {
+    e.preventDefault()
+    const text = btn.closest('.md-code-block')?.querySelector('code')?.innerText ?? ''
+    const done = () => { btn.textContent = '已复制 ✓'; setTimeout(() => { btn.textContent = '复制' }, 1200) }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(done)
+    } else {
+      const a = document.createElement('textarea')
+      a.value = text; a.style.position = 'fixed'; a.style.opacity = '0'
+      document.body.appendChild(a); a.select()
+      try { document.execCommand('copy') } catch {}
+      a.remove(); done()
+    }
+    return
+  }
   const a = e.target.closest?.('a[href^="gugu://"]')
   if (!a) return
   e.preventDefault()

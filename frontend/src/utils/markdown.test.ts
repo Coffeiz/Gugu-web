@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sanitizeHtml, renderMarkdown } from './markdown'
+import { sanitizeHtml, sanitizeChatHtml, renderMarkdown } from './markdown'
 
 // P0 XSS 回归（见 docs/security/代码审查-GPT复审核实版-2026-07-10.md）。
 // 全站 Markdown 直出经 sanitizeHtml；这里钉死「危险载荷被中和 + 正常渲染无损」两面，
@@ -69,5 +69,40 @@ describe('renderMarkdown — marked → 消毒 一体', () => {
     expect(out).toContain('<strong>粗</strong>')
     expect(out).toMatch(/<code>码<\/code>/)
     expect(out).toMatch(/<li>/)
+  })
+})
+
+// 聊天路径消毒（覆盖 P0 修复引入的两个回归：复制按钮 on* 被剥、gugu:// 动作链接被剥）
+describe('sanitizeChatHtml — 聊天路径只额外放行 gugu://', () => {
+  it('保住 gugu:// 动作链接的 href', () => {
+    const div = document.createElement('div')
+    div.innerHTML = sanitizeChatHtml('<a href="gugu://bind-im/qq">连接 QQ</a>')
+    expect(div.querySelector('a')?.getAttribute('href')).toBe('gugu://bind-im/qq')
+  })
+  it('通用 sanitizeHtml 仍剥掉 gugu://（least-privilege，只有聊天放行）', () => {
+    const div = document.createElement('div')
+    div.innerHTML = sanitizeHtml('<a href="gugu://bind-im/qq">连接 QQ</a>')
+    expect(div.querySelector('a')?.getAttribute('href')).toBeNull()   // 非聊天路径不放行
+  })
+  it('聊天路径仍是 XSS 安全：script / on* / javascript: 照样剥', () => {
+    expect(sanitizeChatHtml('<img src=x onerror=alert(1)>')).not.toMatch(/onerror/i)
+    expect(sanitizeChatHtml('<script>alert(1)</script>hi')).not.toMatch(/<script/i)
+    const div = document.createElement('div')
+    div.innerHTML = sanitizeChatHtml('<a href="javascript:alert(1)">x</a>')
+    expect(div.querySelector('a')?.getAttribute('href')).toBeNull()   // gugu 放行了，但 javascript: 仍剥
+  })
+  it('复制按钮的内联 onclick 被剥（故走事件委托，不靠 onclick）', () => {
+    const div = document.createElement('div')
+    div.innerHTML = sanitizeChatHtml('<button class="md-copy-btn" onclick="steal()">复制</button>')
+    const btn = div.querySelector('.md-copy-btn')
+    expect(btn).not.toBeNull()                       // 按钮保留
+    expect(btn?.getAttribute('onclick')).toBeNull()  // 但 onclick 没了 → 必须靠委托
+  })
+  it('通用 renderMarkdown（MarkdownView text 分支）连渲染时都剥 gugu://——故聊天必须由 GuguChat 自出 html', () => {
+    // markdown.ts 的 md link renderer 用 safeHref 白名单（无 gugu），渲染层就丢了 href；
+    // 所以 chat 的 text 回退不能走这条，GuguChat 用自己的 marked 出 html（见 GuguChat 模板 msg.html ?? renderMd）。
+    const div = document.createElement('div')
+    div.innerHTML = renderMarkdown('[连接 QQ](gugu://bind-im/qq)')
+    expect(div.querySelector('a')?.getAttribute('href') ?? '').not.toContain('gugu://')
   })
 })

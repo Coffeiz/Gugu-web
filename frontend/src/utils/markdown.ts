@@ -39,6 +39,15 @@ export function sanitizeHtml(html: string): string {
   return DOMPurify.sanitize(String(html ?? ''), { ADD_ATTR: ['target'] })
 }
 
+// 聊天专用消毒：在通用严格策略之上，**只额外放行 `gugu://` 协议**——咕咕回复里的动作链接
+// `[文案](gugu://bind-im/qq)` / `gugu://open-file/<id>` 靠它保住 href，由 GuguChat 的
+// onChatActionClick 委托严格匹配处理（受控白名单动作）。on*/script/javascript: 仍照样剥。
+// URI 白名单 = DOMPurify 默认协议 + gugu（不删默认项，只加一个）。
+const _CHAT_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|gugu):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+export function sanitizeChatHtml(html: string): string {
+  return DOMPurify.sanitize(String(html ?? ''), { ADD_ATTR: ['target'], ALLOWED_URI_REGEXP: _CHAT_URI_REGEXP })
+}
+
 export function renderMarkdown(text) {
   return text ? sanitizeHtml(md.parse(String(text)) as string) : ''
 }

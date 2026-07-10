@@ -4,7 +4,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { renderMarkdown, sanitizeHtml } from '@/utils/markdown'
+import { renderMarkdown, sanitizeHtml, sanitizeChatHtml } from '@/utils/markdown'
 
 // 全站通用的 markdown 展示组件，统一 GuguChat 聊天 / 通知气泡 / 侧边栏通知中心的 md 输出样式。
 // - text：原始 markdown 文本，用轻量 renderMarkdown 渲染；
@@ -13,9 +13,14 @@ import { renderMarkdown, sanitizeHtml } from '@/utils/markdown'
 const props = defineProps({
   text: { type: String, default: '' },
   html: { type: String, default: null },
+  // 聊天路径：额外放行 gugu:// 动作链接（由 GuguChat onChatActionClick 处理）；其余仍严格消毒
+  chat: { type: Boolean, default: false },
 })
 // html 预渲染 prop 同样不可信（来自后端/流式），也必须消毒——不能因「已是 HTML」就跳过
-const rendered = computed(() => (props.html != null ? sanitizeHtml(props.html) : renderMarkdown(props.text)))
+const rendered = computed(() =>
+  props.html != null
+    ? (props.chat ? sanitizeChatHtml(props.html) : sanitizeHtml(props.html))
+    : renderMarkdown(props.text))
 </script>
 
 <style scoped>
