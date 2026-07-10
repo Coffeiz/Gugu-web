@@ -339,6 +339,14 @@ make restart
 **Q: 缩略图不更新**
 删除 `uploads/.thumbs/` 目录下对应文件（或全部），下次请求时重新生成。
 
+### 2.13 时间与时区约定
+
+写任何涉及时间的代码，遵循三条（详见 [时区与时钟迁移方案.md](时区与时钟迁移方案.md)）：
+
+1. **存储一律 aware UTC**：datetime 列用 `app/db/types.py` 的 `UtcDateTime`（不是裸 `DateTime`）——两库进出都是 aware UTC（Postgres timestamptz / SQLite naive + 读出补 UTC），业务代码不再有 naive/aware 混用。
+2. **当前时间走单一出口 `app.core.tz.now_utc()`**（aware UTC）——**禁止裸调 `datetime.utcnow()`**（已弃用 + naive）。静态守卫 `python scripts/check_utcnow.py` 拦回归，例外加 `# utcnow-exempt` 标记。
+3. **只有「展示」和「日期归属」（今天/本周/属于哪天）才碰用户时区**：用 `tz.user_tz(user)` / `tz.day_key/today_str/is_today/is_this_week`；agent 请求内的深层代码（工具等）读 `tz.now_ctx()`（入口已 set contextvar）。绝对时刻的比较/加减一律在 UTC 下做，不碰时区。运维口径（analytics/quota）用服务器 `LOCAL_TZ`，不 per-user。
+
 ---
 
 *待核实：Agent 精力/配额系统（`token_limit_*`、`QuotaSettings`）的具体计费与窗口规则，onboarding 子系统的路由细节——体量较大，建议后续单独开文档覆盖，本文档仅做了存在性确认。*
