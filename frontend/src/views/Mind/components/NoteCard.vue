@@ -175,7 +175,7 @@ function onBodyClick(e: MouseEvent) {
 .nc-icon:hover { background: rgba(123,127,178,0.12); color: var(--color-primary); }
 .nc-icon.danger:hover { background: rgba(176,120,88,0.12); color: #b07858; }
 
-/* min-height 让短便签也有几行留白、卡片偏方形——一行字的扁条卡在 340px 列里太寒酸；
+/* min-height 让短便签也有几行留白、卡片偏方形——一行字的扁条卡在 400px 列里太寒酸；
    overflow-wrap 治连续长串（纯数字/URL）不换行撑破卡片 */
 .nc-body {
   position: relative; z-index: 1; cursor: text;

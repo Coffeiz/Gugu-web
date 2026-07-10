@@ -94,17 +94,17 @@ defineExpose({ flagConflict: () => { conflict.value = true } })
   height: 100%; min-width: max-content;
   /* 两端留白让首末列也能停在「内容区中线」（不是视口中线——滚动容器铺满视口宽但要跟
      上方胶囊/滑杆的居中对齐）。内容区中线 = (侧栏宽 + 视口)/2 = 侧栏宽/2 + 50vw；
-     半列宽 170（= .tl-col 340px 的一半）。左 padding = 中线 - 半列；右 padding = 视口 - 中线 - 半列。 */
+     半列宽 200（= .tl-col 400px 的一半）。左 padding = 中线 - 半列；右 padding = 视口 - 中线 - 半列。 */
   padding-top: 2px;
-  padding-left: calc(var(--sidebar-width) / 2 + 50vw - 170px);
-  padding-right: calc(50vw - var(--sidebar-width) / 2 - 170px);
+  padding-left: calc(var(--sidebar-width) / 2 + 50vw - 200px);
+  padding-right: calc(50vw - var(--sidebar-width) / 2 - 200px);
 }
 
 /* 一天一块玻璃底板：轻玻璃（同定时任务面板 --glass-bg 0.25），hover 不提亮（底板不是交互件） */
 .tl-col {
   --glass-bg: rgba(255,255,255,0.25);
   --glass-bg-hover: rgba(255,255,255,0.25);
-  width: 340px; flex-shrink: 0; box-sizing: border-box;
+  width: 400px; flex-shrink: 0; box-sizing: border-box;
   display: flex; flex-direction: column; min-height: 0;
   padding: 14px 12px 10px;
   scroll-snap-align: center;   /* 滚列时磁吸：列中心吸到 scroll-padding 调整后的中线（=contentCenter，#4）*/
