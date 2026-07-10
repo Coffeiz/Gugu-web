@@ -6,7 +6,7 @@
 """
 from datetime import datetime, timedelta
 
-from app.core.tz import local_now
+from app.core.tz import now_ctx
 
 from sqlalchemy import func, select
 
@@ -16,8 +16,8 @@ from agent.tools.base import BaseSkill, Tool
 
 async def _get_upcoming(db, user_id, args: dict):
     days = int(args.get("days", 7))
-    today = local_now().strftime("%Y-%m-%d")
-    until = (local_now() + timedelta(days=days)).strftime("%Y-%m-%d")
+    today = now_ctx().strftime("%Y-%m-%d")
+    until = (now_ctx() + timedelta(days=days)).strftime("%Y-%m-%d")
 
     # 近期截止的未完成项目
     proj_rows = (await db.execute(
@@ -54,7 +54,7 @@ async def _get_dashboard_stats(db, user_id, args: dict):
     async def _count(stmt):
         return (await db.execute(stmt)).scalar() or 0
 
-    today = local_now().strftime("%Y-%m-%d")
+    today = now_ctx().strftime("%Y-%m-%d")
     base_proj = select(func.count(Project.id)).where(
         Project.user_id == user_id, Project.archived == False)
 

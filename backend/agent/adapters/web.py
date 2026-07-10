@@ -18,6 +18,7 @@ from sqlalchemy import select, func, and_
 
 from app.core.config import get_settings
 from app.core import chat_attach
+from app.core.tz import set_ctx_tz
 from app.models import (
     AgentUsage, CalendarEvent, ConversationMessage, ConversationSession,
     Project, User,
@@ -290,6 +291,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
     持久化/反思仍用 req.message 原文）。
     """
     user_id = req.user_id
+    set_ctx_tz(user_tz)   # 本任务内（含 build 与 tool dispatch）「今天」按用户时区算（Phase 3）
     user_content = user_content if user_content is not None else req.message
     user_images = user_images or []
     user_media = user_media or []

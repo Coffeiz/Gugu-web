@@ -10,6 +10,7 @@
     start  = local_day_start_utc()            # 本地今日 0 点，转为 UTC naive，供 DB 比较
     today  = local_now().strftime("%Y-%m-%d") # 本地日期字符串
 """
+import contextvars
 from datetime import datetime, timezone, timedelta, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -115,3 +116,24 @@ def is_this_week(instant: datetime, tz: tzinfo | None = None, now: datetime | No
     tz = tz or LOCAL_TZ
     now = now or datetime.now(timezone.utc)
     return _monday_of(day_key(instant, tz)) == _monday_of(day_key(now, tz))
+
+
+# ── 当前请求的用户时区（contextvar）──────────────────────────────────────────────
+# agent 入口（runner/web）在加载到 user_tz 后 set 一次；tool dispatch 深处的代码（overview/
+# greeting 等拿不到 user_tz 参数的）用 now_ctx() 读，无需逐层 plumb。未 set 时回退 LOCAL_TZ
+# → 零行为变化。每个请求入口都会覆盖设置，故不跨请求泄漏（后台任务继承快照但不构建 prompt）。
+
+_ctx_tz: contextvars.ContextVar[tzinfo | None] = contextvars.ContextVar("gugu_ctx_tz", default=None)
+
+
+def set_ctx_tz(tz: tzinfo | None) -> None:
+    _ctx_tz.set(tz)
+
+
+def ctx_tz() -> tzinfo:
+    return _ctx_tz.get() or LOCAL_TZ
+
+
+def now_ctx() -> datetime:
+    """当前请求用户时区下的「现在」（tool/深层代码用；未 set 回退服务器 LOCAL_TZ）。"""
+    return datetime.now(ctx_tz())

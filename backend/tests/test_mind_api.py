@@ -4,6 +4,7 @@
 路由函数直接调（同 test_global_search.py 的做法），不起 TestClient。
 """
 from __future__ import annotations
+from app.core.tz import now_utc
 
 from datetime import datetime, timedelta, timezone
 
@@ -84,7 +85,7 @@ async def test_create_note_rejects_future_captured_at(db, user_a):
 @pytest.mark.asyncio
 async def test_timeline_orders_by_captured_at_not_created_at(db, user_a):
     """补录的旧想法必须落回它「发生」的那天，不能因为刚写就排最前。"""
-    now = datetime.utcnow()
+    now = now_utc()
     await _new_note(db, user_a, content="今天写的", captured_at=now)
     await _new_note(db, user_a, content="补录很久以前的", captured_at=now - timedelta(days=30))
     await _new_note(db, user_a, content="补录昨天的", captured_at=now - timedelta(days=1))
@@ -108,7 +109,7 @@ async def test_timeline_hides_soft_deleted_and_other_users_notes(db, user_a, use
 async def test_update_note_bumps_version_and_resets_index(db, user_a):
     note = await _new_note(db, user_a, content="原文")
     row = await _row(db, note.id)
-    row.indexed_at = datetime.utcnow()                   # 装作已经向量化过
+    row.indexed_at = now_utc()                   # 装作已经向量化过
     await db.commit()
 
     resp = await update_note(note.id, MindNoteUpdate(content_md="改了正文", version=1),

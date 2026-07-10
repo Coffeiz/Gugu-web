@@ -10,6 +10,7 @@ _resolve_* / 带归属校验的 handler。几乎所有按 id 操作的工具都�
 P0-2 的 CI 红线，scripts/check_ownership.py 静态守卫 + 本文件动态验证成对出现）。
 """
 import json
+from app.core.tz import now_utc
 
 from app.models import (
     CalendarEvent, Client, ConversationSession, ConversationMessage,
@@ -156,7 +157,7 @@ async def test_read_conversation_owner_ok(db, user_b):
 async def test_restore_cross_user(db, user_a, user_b):
     from datetime import datetime
     f = await _mk(db, File(user_id=user_b.id, display_name="del", ext="md",
-                           storage_key="k", deleted_at=datetime.utcnow()))
+                           storage_key="k", deleted_at=now_utc()))
     res = await _restore_file(db, user_a.id, {"file_id": f.id})
     assert _is_err(res)
     await db.refresh(f)
@@ -166,7 +167,7 @@ async def test_restore_cross_user(db, user_a, user_b):
 async def test_permanent_delete_cross_user(db, user_a, user_b):
     from datetime import datetime
     f = await _mk(db, File(user_id=user_b.id, display_name="del", ext="md",
-                           storage_key="k", deleted_at=datetime.utcnow()))
+                           storage_key="k", deleted_at=now_utc()))
     res = await _permanent_delete(db, user_a.id, {"file_id": f.id, "confirm": True})
     assert _is_err(res)
     assert await db.get(File, f.id) is not None   # 即便带了 confirm 也删不掉别人的

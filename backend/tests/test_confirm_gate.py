@@ -8,6 +8,7 @@
 4. 静态守卫 scripts/check_confirm_gate.py 对当前代码库必须全绿（AST 校验回归）。
 """
 import json
+from app.core.tz import now_utc
 import logging
 
 from app.models import CalendarEvent, Client, File, Project, ScheduledTask
@@ -64,7 +65,7 @@ async def test_delete_scheduled_task_requires_confirm(db, user_a):
 async def test_permanent_delete_requires_confirm(db, user_a):
     from datetime import datetime
     f = await _mk(db, File(user_id=user_a.id, display_name="del", ext="md",
-                           storage_key="k", deleted_at=datetime.utcnow()))
+                           storage_key="k", deleted_at=now_utc()))
     res = await _permanent_delete(db, user_a.id, {"file_id": f.id})
     assert _blocked(res)
     assert await db.get(File, f.id) is not None

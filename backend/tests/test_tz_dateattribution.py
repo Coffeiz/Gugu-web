@@ -58,3 +58,16 @@ def test_is_this_week_monday_start():
 
 def test_today_str_runs():
     assert len(today_str(SH)) == 10   # 'YYYY-MM-DD'
+
+
+def test_ctx_tz_contextvar():
+    """tool dispatch 深处用的 contextvar：set 后 now_ctx 反映它，未 set 回退 LOCAL_TZ。"""
+    from app.core.tz import set_ctx_tz, ctx_tz, now_ctx
+    assert ctx_tz() is LOCAL_TZ            # 默认
+    set_ctx_tz(SH)
+    try:
+        assert ctx_tz() == SH
+        assert now_ctx().strftime("%Y-%m-%d") == datetime.now(SH).strftime("%Y-%m-%d")
+    finally:
+        set_ctx_tz(None)                   # 复位，别泄漏给其它测试
+    assert ctx_tz() is LOCAL_TZ

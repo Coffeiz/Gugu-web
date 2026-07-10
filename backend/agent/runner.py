@@ -6,7 +6,7 @@ core/sanitize 这套大脑，把 SSE 流"消费成文本"。会话历史/持久�
 worker 按平台用户从 Redis 取（续聊不断），见 worker._im_session_*。
 """
 from __future__ import annotations
-from app.core.tz import now_utc
+from app.core.tz import now_utc, set_ctx_tz
 
 import asyncio
 import json
@@ -170,6 +170,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     async with _sess._SessionLocal() as db:
         projects = await loaders.load_projects(db, user_id)
         user_tz = await loaders.load_user_tz(db, user_id)   # 「今天」按用户时区算（Phase 3）
+        set_ctx_tz(user_tz)                                 # tool dispatch 深处（overview 等）也能读到
         events = await loaders.load_events(db, user_id, tz=user_tz)
         files_overview = await loaders.load_files_overview(db, user_id)
         style_prefs = await loaders.load_style_prefs(db, user_id)
@@ -417,6 +418,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     async with _sess._SessionLocal() as db:
         projects = await loaders.load_projects(db, user_id)
         user_tz = await loaders.load_user_tz(db, user_id)   # 「今天」按用户时区算（Phase 3）
+        set_ctx_tz(user_tz)                                 # tool dispatch 深处（overview 等）也能读到
         events = await loaders.load_events(db, user_id, tz=user_tz)
         files_overview = await loaders.load_files_overview(db, user_id)
         style_prefs = await loaders.load_style_prefs(db, user_id)
@@ -756,6 +758,7 @@ async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: di
     async with _sess._SessionLocal() as db:
         projects = await loaders.load_projects(db, user_id) if inc_projects else []
         user_tz = await loaders.load_user_tz(db, user_id)   # 「今天」按用户时区算（Phase 3）
+        set_ctx_tz(user_tz)                                 # tool dispatch 深处（overview 等）也能读到
         events = await loaders.load_events(db, user_id, tz=user_tz) if inc_calendar else []
         files_overview = await loaders.load_files_overview(db, user_id) if inc_files else None
 

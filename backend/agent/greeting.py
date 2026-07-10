@@ -8,7 +8,7 @@ import logging
 from app.core.tz import now_utc
 from datetime import date, datetime, timedelta
 
-from app.core.tz import local_now
+from app.core.tz import now_ctx
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -73,7 +73,7 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
         summary = (mem.get("summary") or "").strip()[:400]
         summary_ts = mem.get("summary_ts")
         facts = "\n".join(x for x in [(mem.get("profile") or "").strip(), (mem.get("pattern") or "").strip()] if x)[:800]
-        cutoff = (local_now().date() - timedelta(days=7)).isoformat()
+        cutoff = (now_ctx().date() - timedelta(days=7)).isoformat()
         daily_entries = mem_store.extract_daily_entries(mem.get("daily") or "")
         daily_lines = [f"- {date} {note}" for date, note in daily_entries if date >= cutoff]
         daily = "\n".join(daily_lines[:10])
