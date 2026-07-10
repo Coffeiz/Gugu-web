@@ -1,7 +1,10 @@
 <template>
   <div class="rec-layout">
-    <!-- 便签流滚动区（自己管滚动：full-bleed 下 page-content 不滚） -->
-    <div ref="scrollRef" class="rec-scroll">
+    <!-- 顶部日期条（胶囊下方）：横向索引，滚动联动 + 点击跳列 -->
+    <DateIndex :groups="indexGroups" :active="activeDate" @jump="jumpTo" />
+
+    <!-- 横置便签流：横向翻历史（滚轮转横滚），列内竖滚翻当天 -->
+    <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel">
       <div v-if="store.loading && !store.loaded" class="rec-loading">加载中…</div>
       <RecordTimeline
         v-else
@@ -13,11 +16,7 @@
         @delete="onDelete"
         @toggle-task="onToggleTask"
       />
-      <!-- 给底部停靠的捕捉条让出空间，最后一条便签才不会被盖住 -->
-      <div class="rec-bottom-pad"></div>
     </div>
-
-    <DateIndex :groups="indexGroups" :active="activeDate" @jump="jumpTo" />
 
     <div class="rec-capture">
       <CaptureBar @created="onCreated" />
@@ -54,42 +53,54 @@ onMounted(async () => {
 // 咕咕/多端改了便签 → 重新拉（P3 后端才开始推 mind 资源，这里先接好）
 watch(() => liveStore.rev.mind, () => store.fetchNotes())
 
-// ── 日期索引：滚动联动（IntersectionObserver 盯日期组，别用 scroll 手算）──────
+// ── 滚轮：悬在有溢出的列上→列内竖滚（浏览器默认）；否则纵滚轮转横滚（翻历史）──
+function onWheel(e: WheelEvent) {
+  const root = scrollRef.value
+  if (!root) return
+  if (e.deltaX || e.shiftKey) return   // 触控板横扫/Shift+滚轮：浏览器自己会横滚
+  const colBody = (e.target as HTMLElement).closest<HTMLElement>('.tl-col-body')
+  if (colBody && colBody.scrollHeight > colBody.clientHeight + 2) return
+  root.scrollLeft += e.deltaY
+  e.preventDefault()
+}
+
+// ── 日期条：滚动联动（IntersectionObserver 盯日期列，别用 scroll 手算）────────
 const indexGroups = computed(() => store.timeline.map(g => ({ date: g.date, count: g.items.length })))
 const activeDate  = ref('')
 let observer: IntersectionObserver | null = null
-const visibleTops = new Map<string, number>()   // date -> boundingTop（只记相交中的组）
+const visibleLefts = new Map<string, number>()   // date -> boundingLeft（只记相交中的列）
 
 function rebuildObserver() {
   observer?.disconnect()
-  visibleTops.clear()
+  visibleLefts.clear()
   const root = scrollRef.value
   if (!root) return
   observer = new IntersectionObserver(entries => {
     for (const en of entries) {
       const date = (en.target as HTMLElement).dataset.date!
-      if (en.isIntersecting) visibleTops.set(date, en.boundingClientRect.top)
-      else visibleTops.delete(date)
+      if (en.isIntersecting) visibleLefts.set(date, en.boundingClientRect.left)
+      else visibleLefts.delete(date)
     }
-    // 当前 = 顶部条带里位置最靠上的组；条带里没有（快速滚动间隙）就保持上次的值
-    let best = ''; let bestTop = Infinity
-    for (const [date, top] of visibleTops) {
-      if (top < bestTop) { best = date; bestTop = top }
+    // 当前 = 左侧条带里位置最靠左的列；条带里没有（快速滚动间隙）就保持上次的值
+    let best = ''; let bestLeft = Infinity
+    for (const [date, left] of visibleLefts) {
+      if (left < bestLeft) { best = date; bestLeft = left }
     }
     if (best) activeDate.value = best
-  }, { root, rootMargin: '0px 0px -70% 0px' })
-  root.querySelectorAll<HTMLElement>('.tl-group[data-date]').forEach(el => observer!.observe(el))
+  }, { root, rootMargin: '0px -60% 0px 0px' })
+  root.querySelectorAll<HTMLElement>('.tl-col[data-date]').forEach(el => observer!.observe(el))
 }
 
 watch(() => store.timeline, async () => { await nextTick(); rebuildObserver() }, { immediate: true })
 onBeforeUnmount(() => observer?.disconnect())
 
 function jumpTo(date: string) {
-  scrollRef.value?.querySelector<HTMLElement>(`.tl-group[data-date="${date}"]`)
-    ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const root = scrollRef.value
+  const col = root?.querySelector<HTMLElement>(`.tl-col[data-date="${date}"]`)
+  if (root && col) root.scrollTo({ left: col.offsetLeft - 4, behavior: 'smooth' })
 }
 
-// ── 新建：翻进历史 → 先滚回顶部再插入+高亮；补录 → 不滚，toast 报落点 ─────────
+// ── 新建：翻进历史 → 先滚回最左（今天）再插入+高亮；补录 → 不滚，toast 报落点 ──
 const _today = () => new Date().toISOString().slice(0, 10)
 
 async function onCreated(md: string, capturedAt?: string) {
@@ -101,12 +112,12 @@ async function onCreated(md: string, capturedAt?: string) {
     return
   }
   if (capturedAt && capturedAt.slice(0, 10) !== _today()) {
-    // 补录落进上方很远的日期组，底部不会有任何动静——不给反馈用户会以为没保存
+    // 补录落进右边很远的日期列，眼前不会有任何动静——不给反馈用户会以为没保存
     const [, m, d] = capturedAt.slice(0, 10).split('-')
     Message.success(`已记到 ${+m} 月 ${+d} 日`)
     return
   }
-  scrollRef.value?.scrollTo({ top: 0, behavior: 'smooth' })
+  scrollRef.value?.scrollTo({ left: 0, behavior: 'smooth' })
   highlightId.value = created.id
   if (highlightTimer) clearTimeout(highlightTimer)
   highlightTimer = setTimeout(() => { highlightId.value = null }, 1800)
@@ -144,27 +155,25 @@ async function onDelete(note: MindNote) {
 <style scoped>
 .rec-layout {
   position: relative; height: 100%;
-  display: flex; gap: 14px; min-height: 0;
+  display: flex; flex-direction: column; gap: 8px; min-height: 0;
 }
 
-.rec-scroll {
-  flex: 1; min-width: 0; overflow-y: auto;
-  scrollbar-gutter: stable;
-  padding: 2px 6px 0 2px;
+.rec-hscroll {
+  flex: 1; min-height: 0; min-width: 0;
+  overflow-x: auto; overflow-y: hidden;
+  /* 横向导航靠滚轮/触控板/日期条，滚动条藏掉（露在捕捉条底下很脏） */
+  scrollbar-width: none;
+  padding-bottom: 84px;   /* 给底部停靠的捕捉条让空间，最左列底部的卡不被盖住 */
 }
-/* 便签流本体宽度：双列在 ~980px 里最舒服，超宽屏不无限拉伸 */
-.rec-scroll > * { max-width: 980px; }
-.rec-bottom-pad { height: 96px; }
+.rec-hscroll::-webkit-scrollbar { display: none; }
 
-.rec-loading { padding: 40px 0; text-align: center; font-size: 12.5px; color: var(--text-secondary); }
+.rec-loading { padding: 40px 24px; font-size: 12.5px; color: var(--text-secondary); }
 
-/* 捕捉条：停靠在布局底部（视口内常驻），盖在滚动区之上、与便签流对齐 */
+/* 捕捉条：停靠底部、水平居中（与居中胶囊呼应） */
 .rec-capture {
-  position: absolute; bottom: 6px; left: 2px;
-  width: min(100% - 140px, 720px);
+  position: absolute; bottom: 6px; left: 0; right: 0;
+  margin: 0 auto;
+  width: min(100% - 24px, 680px);
   z-index: 8;
-}
-@media (max-width: 900px) {
-  .rec-capture { width: calc(100% - 12px); }
 }
 </style>

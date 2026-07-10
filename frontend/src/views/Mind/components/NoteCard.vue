@@ -120,6 +120,8 @@ function onBodyClick(e: MouseEvent) {
 .note-card:not(.editing):hover::after { opacity: 1; }
 
 .note-card.editing { background: rgba(255,255,255,0.92); }
+/* 窄列（280px）里就地编辑：工具栏放不下「输入 @ 引用…」提示文字，藏掉（捕捉条那份还在） */
+.note-card.editing :deep(.ne-hint) { display: none; }
 
 /* 新建高亮：紫灰 tint 淡出（提交滚回顶部后让新卡自己说"我在这") */
 .note-card.highlight { animation: nc-flash 1.6s ease-out; }
