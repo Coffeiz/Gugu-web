@@ -99,6 +99,7 @@ const props = defineProps({
   modelValue: { type: String, default: '' },
   placeholder: { type: String, default: '选择日期' },
   min: { type: String, default: '' },
+  max: { type: String, default: '' },
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -177,7 +178,7 @@ function selectYear(y) {
 }
 
 function isDisabled(iso) {
-  return !!(props.min && iso < props.min)
+  return !!((props.min && iso < props.min) || (props.max && iso > props.max))
 }
 
 function select(iso) {

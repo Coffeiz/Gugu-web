@@ -71,6 +71,10 @@ async def create_note(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    captured_at = body.captured_at or datetime.utcnow()
+    # 记录描述的是已经发生的想法；补录可以回填过去，但不能把记录写到未来日期。
+    if captured_at.date() > datetime.now().date():
+        raise HTTPException(422, "不能创建未来日期的记录")
     plain = to_plain_text(body.content_md)
     n = MindNode(
         user_id=current_user.id,
@@ -81,7 +85,7 @@ async def create_note(
         content_plain=plain,
         indexed_hash=content_hash(plain),
         indexed_at=None,                       # null = 待索引
-        captured_at=body.captured_at or datetime.utcnow(),
+        captured_at=captured_at,
     )
     db.add(n)
     await db.commit()

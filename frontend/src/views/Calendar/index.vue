@@ -236,7 +236,7 @@
               <div class="sidebar-ev-name" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">
                 <span v-if="!ev.isUserEvent" class="ev-type-badge ev-proj-badge" :style="{ color: darkenHex(ev.accent) }">项目</span>
                 <span v-else class="ev-type-badge ev-event-badge">{{ typeLabel(ev.type) }}</span>
-                <span v-if="ev.time" class="sidebar-ev-time">{{ ev.time }}{{ ev.endTime ? '–' + ev.endTime : '' }}<span v-if="isNextDay(ev.time, ev.endTime)" class="nextday-mini">次日</span></span>
+                <span v-if="ev.time" class="sidebar-ev-time" :class="{ 'has-end-time': ev.endTime }">{{ ev.time }}{{ ev.endTime ? '–' + ev.endTime : '' }}<span v-if="isNextDay(ev.time, ev.endTime)" class="nextday-mini">次日</span></span>
                 {{ ev.name }}
                 <span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
               </div>
@@ -2327,10 +2327,10 @@ async function saveEvent() {
 .ev-del-btn:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); transform: scale(1.1); }
 .sidebar-ev-bar { width: 3px; border-radius: 99px; align-self: stretch; flex-shrink: 0; min-height: 26px; }
 .sidebar-ev-name { font-size: 12px; font-weight: 500; color: var(--text-primary); line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
-/* min-width 按最长内容「00:00–00:00」固定：周视图拖拽改时间时这里跟着实时刷新，
-   光靠 tabular-nums 治不住——省略结束时间时整串变短，仍会把后面的活动名往左右推一下，
-   固定宽度左对齐，数字随便怎么变，名字位置纹丝不动。 */
-.sidebar-ev-time { display: inline-block; min-width: 11ch; font-size: 11px; font-weight: 600; color: var(--accent, #7b7fb2); margin-left: 7px; margin-right: 4px; font-variant-numeric: tabular-nums; }
+/* 有结束时间时按最长内容「00:00–00:00」固定，周视图拖拽改时间不会推挤活动名；
+   只有开始时间时不预留结束时间的空位，让名称紧跟日期。 */
+.sidebar-ev-time { display: inline-block; font-size: 11px; font-weight: 600; color: var(--accent, #7b7fb2); margin-left: 7px; margin-right: 4px; font-variant-numeric: tabular-nums; }
+.sidebar-ev-time.has-end-time { min-width: 11ch; }
 .popup-row { display: flex; gap: 6px; align-items: center; }
 .popup-row > :first-child { flex: 1; min-width: 0; }
 .date-row { display: flex; align-items: center; gap: 8px; }

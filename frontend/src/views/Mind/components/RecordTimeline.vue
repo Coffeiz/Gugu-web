@@ -1,9 +1,9 @@
 <template>
-  <!-- 横置时间流：一天一列（左新右旧，今天在最左），列内便签上新下旧。
+  <!-- 横置时间流：一天一列（左旧右新，今天在最右），列内便签上新下旧。
        没便签的日期不出列——时间轴压缩，不摆空列。列内溢出自己竖滚。
        每列一块玻璃底板（同定时任务 .panel.glass-card 的轻玻璃，背后是静态页面背景，安全）。 -->
   <div class="timeline-cols">
-    <section v-for="g in groups" :key="g.date" class="tl-col glass-card" :data-date="g.date">
+    <section v-for="g in groups" :key="g.date" v-memo="[dayMemo(g)]" class="tl-col glass-card" :data-date="g.date">
       <div class="tl-col-head">
         <span class="tl-day" :class="{ today: g.date === todayIso }">{{ +g.date.slice(8, 10) }}</span>
         <span class="tl-day-side">
@@ -14,7 +14,7 @@
       </div>
 
       <div class="tl-col-body">
-        <TransitionGroup tag="div" class="tl-stack" name="tlc">
+        <div class="tl-stack">
           <NoteCard
             v-for="n in g.items"
             :key="n.id"
@@ -28,13 +28,13 @@
             @delete="emit('delete', n)"
             @toggle-task="idx => emit('toggleTask', n, idx)"
           />
-        </TransitionGroup>
+        </div>
       </div>
     </section>
+  </div>
 
-    <div v-if="!groups.length" class="tl-empty">
-      {{ filtered ? '没有匹配的便签' : '还没有记录，在下面记一条试试～' }}
-    </div>
+  <div v-if="!groups.length" class="tl-empty">
+    {{ filtered ? '没有匹配的便签' : '还没有记录，在下面记一条试试～' }}
   </div>
 </template>
 
@@ -43,7 +43,7 @@ import { ref } from 'vue'
 import type { MindNote } from '@/services/api'
 import NoteCard from './NoteCard.vue'
 
-defineProps<{
+const props = defineProps<{
   groups: { date: string; items: MindNote[] }[]
   highlightId: number | null
   filtered: boolean
@@ -65,6 +65,14 @@ function cancel() { editingId.value = null; conflict.value = false }
 function commit(n: MindNote, md: string) {
   emit('save', n, md)
   editingId.value = null
+}
+
+/** 未变化的日期列完全跳过 patch，补录其它日期不会触发已有便签的列表移动计算。 */
+function dayMemo(group: { date: string; items: MindNote[] }) {
+  const versions = group.items.map(note => `${note.id}:${note.version}`).join('|')
+  const highlighted = group.items.some(note => note.id === props.highlightId) ? props.highlightId : ''
+  const editing = group.items.some(note => note.id === editingId.value) ? editingId.value : ''
+  return `${versions};h:${highlighted};e:${editing};c:${editing ? conflict.value : ''}`
 }
 
 const WEEK = ['日', '一', '二', '三', '四', '五', '六']
@@ -101,7 +109,6 @@ defineExpose({ flagConflict: () => { conflict.value = true } })
   padding: 14px 12px 10px;
   scroll-snap-align: center;   /* 滚列时磁吸：列中心吸到 scroll-padding 调整后的中线（=contentCenter，#4）*/
 }
-
 /* 日期头：大数字 + 小字月份/星期（周视图日历的语言） */
 .tl-col-head {
   display: flex; align-items: center; gap: 8px;
@@ -127,12 +134,6 @@ defineExpose({ flagConflict: () => { conflict.value = true } })
   margin: 0 -4px; padding: 2px 4px 4px;
 }
 .tl-stack { display: flex; flex-direction: column; gap: 10px; }
-
-/* 卡片让位/进场走 move（卡片自身在玻璃底板之内，动它不碰底板的 backdrop） */
-.tlc-move { transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
-.tlc-enter-active { transition: opacity 0.2s ease, transform 0.2s ease; }
-.tlc-enter-from { opacity: 0; transform: translateY(6px); }
-.tlc-leave-active { display: none; }   /* 删除即消失，让位动画交给 move */
 
 .tl-empty {
   align-self: flex-start;

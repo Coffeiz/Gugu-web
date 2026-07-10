@@ -818,7 +818,7 @@ const currentFolder = computed(() =>
 const currentFolderFiles = computed(() => currentFiles.value)
 
 // ── 侧栏两模式：false=文件区宽（现状）；true=左右各 50%、信息区 2 列 ──
-// 交叉渐变切换：内容淡出 → 不可见时瞬切两套排版 → 淡入（不实时缩放/回流）
+// 内部内容先淡出，外框在不可见时完成宽度/网格切换，最后在新锚点淡入；不让用户看到内容回流。
 // 初值取自后端记忆（preferences）；若 preferences 晚于本组件加载完成，loaded 变 true 时再同步一次
 const stagesExpanded = ref(prefsStore.pmStagesExpanded)   // 列宽/版面预设
 const infoExpanded = ref(prefsStore.pmStagesExpanded)     // 信息区 1列/2列版面预设
@@ -828,13 +828,15 @@ watch(() => prefsStore.loaded, (v) => {
 })
 function togglePmStages() {
   if (pmSwitching.value) return
-  pmSwitching.value = true                          // ① 内容淡出隐藏（之后的列宽动画不会被看到回流）
+  const FADE_MS = 180
+  const LAYOUT_MS = 360
+  pmSwitching.value = true                          // ① 内部内容快速淡出
   setTimeout(() => {
-    stagesExpanded.value = !stagesExpanded.value    // ② 列宽顺滑动画 + 换信息区版面（内容仍隐藏，看不到自适应）
+    stagesExpanded.value = !stagesExpanded.value    // ② 内容隐藏时切换列宽和信息区版面
     infoExpanded.value = stagesExpanded.value
     prefsStore.savePmStagesExpanded(stagesExpanded.value)   // 记住版面选择（存后端，跨设备）
-  }, 190)
-  setTimeout(() => { pmSwitching.value = false }, 190 + 400)  // ③ 列宽动画结束后才淡入新版面
+  }, FADE_MS)
+  setTimeout(() => { pmSwitching.value = false }, FADE_MS + LAYOUT_MS)  // ③ 新锚点落稳后淡入
 }
 
 const totalFileCount = computed(() =>
@@ -2176,16 +2178,17 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .modal-left {
   display: flex; flex-direction: column; overflow: hidden;
   width: 300px; flex-shrink: 0; will-change: width;
-  transition: width 0.4s cubic-bezier(0.45, 0, 0.18, 1);   /* 面板比例顺滑动画（内容此时已淡隐，看不到回流）*/
+  transition: width 0.36s ease-in-out;   /* 内容淡隐期间完成版面切换，缓入缓出保持对称 */
 }
 /* 列宽由 stages-expanded 驱动 */
 .modal.stages-expanded .modal-left { width: 50%; }
 
-/* 内容淡出 → 换版面 → 淡入（淡出也平滑，不再瞬隐）*/
-.left-content, .file-content, .right-header { transition: opacity 0.18s ease; }
+/* 捕捉条同款原则：内部只交叉淡变，外框单独做几何动画。 */
+.proj-header, .left-content, .file-content, .right-header { transition: opacity 0.18s ease-in-out; }
+.modal.pm-switching .proj-header,
 .modal.pm-switching .left-content,
 .modal.pm-switching .file-content,
-.modal.pm-switching .right-header { opacity: 0; }
+.modal.pm-switching .right-header { opacity: 0; pointer-events: none; }
 
 /* 信息区版面由 info-expanded 驱动（与列宽解耦，在淡隐时才换，不被看见）。
    版面1：竖排，每行之间横向分割线（沿用 .col-divider）。

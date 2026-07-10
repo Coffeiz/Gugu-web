@@ -73,6 +73,15 @@ async def test_create_note_accepts_backfilled_captured_at(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_create_note_rejects_future_captured_at(db, user_a):
+    future = datetime.now() + timedelta(days=1)
+    with pytest.raises(HTTPException) as e:
+        await _new_note(db, user_a, content="明天再想", captured_at=future)
+    assert e.value.status_code == 422
+    assert await _count_notes(db) == 0
+
+
+@pytest.mark.asyncio
 async def test_timeline_orders_by_captured_at_not_created_at(db, user_a):
     """补录的旧想法必须落回它「发生」的那天，不能因为刚写就排最前。"""
     now = datetime.utcnow()

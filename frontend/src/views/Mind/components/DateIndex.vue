@@ -1,17 +1,15 @@
 <template>
-  <!-- 日期刻度滑杆：playhead 固定正中，刻度带整体平移让当前日的高刻度停中线。
-       拖动 1:1 跟手、列随之**连续平滑**滑动（不是一格一格跳）；到两端有弹力阻尼、松手回弹吸附；
-       点某根刻度平滑吸过去。刻度 grow/shrink（选中↔脱离）带过渡动画。 -->
+  <!-- 日期刻度滑杆：逻辑日期坐标同时驱动刻度、命中区和内容列，不依赖会变动的 DOM 宽度。 -->
   <div ref="stripRef" class="date-scrub" @pointerdown="onDown">
-    <div ref="trackRef" class="ds-track"
-         :style="{ transform: `translate3d(${offset}px,0,0)` }">
+    <div class="ds-track" :style="trackStyle()">
       <button
         v-for="(g, i) in groups" :key="g.date"
-        class="dsb-tick" :class="{ on: g.date === active }"
-        :data-date="g.date" :data-idx="i"
+        class="dsb-tick"
+        :data-idx="i"
+        :style="tickSlotStyle(i)"
       >
-        <span class="dsb-bar"></span>
-        <span class="dsb-tip">{{ fmtLabel(g.date) }}</span>
+        <span class="dsb-bar" :style="tickBarStyle(i)"></span>
+        <span class="dsb-tip" :style="tickTipStyle(i)">{{ fmtLabel(g.date) }}</span>
       </button>
     </div>
     <div class="ds-playhead" aria-hidden="true"></div>
@@ -23,92 +21,132 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{
   groups: { date: string; count: number }[]
-  active: string       // 四舍五入后的当前日（刻度 .on / 高亮用）
-  centerFrac: number   // 连续分数位置（列滚动驱动时用它把刻度带连续拉过来）
+  centerFrac: number
 }>()
 const emit = defineEmits<{
-  (e: 'seek', frac: number): void        // 拖动中：连续联动列
-  (e: 'snap', date: string): void        // 松手/点击：平滑吸附到某天
+  (e: 'scrub', frac: number): void
+  (e: 'snap', date: string): void
 }>()
 
 const stripRef = ref<HTMLElement | null>(null)
-const trackRef = ref<HTMLElement | null>(null)
-const offset   = ref(0)
+const currentFrac = ref(0)
 const dragging = ref(false)
+const animating = ref(false)
+const lockedIndex = ref<number | null>(null)
+let lockTimer: ReturnType<typeof setTimeout> | null = null
 
-// ── 几何（读实测，不硬编码刻度间距）───────────────────────────────────────────
+// 每段日期间距由逻辑坐标计算，中心较疏、两侧较密；不再改变按钮的实际布局宽度。
+const BASE_PITCH = 9
+const CENTER_EXTRA = 8
+const DRAG_RATIO = 0.45
+
 function stripCenter() { return (stripRef.value?.clientWidth ?? 0) / 2 }
-function tickCenter(i: number): number {
-  const t = trackRef.value?.children[i] as HTMLElement | undefined
-  return t ? t.offsetLeft + t.offsetWidth / 2 : 0
-}
-/** 让第 i 根刻度停中线的 offset（offset 随 i 增大而减小） */
-function offsetForIndex(i: number) { return stripCenter() - tickCenter(i) }
-/** 连续分数位置 p 对应的 offset（相邻刻度线性插值） */
-function offsetForFrac(p: number): number {
-  const n = props.groups.length
-  if (n === 0) return 0
-  const f = Math.max(0, Math.min(n - 1, p))
-  const lo = Math.floor(f), hi = Math.min(lo + 1, n - 1)
-  return offsetForIndex(lo) + (offsetForIndex(hi) - offsetForIndex(lo)) * (f - lo)
-}
-/** 当前 offset 落在哪个连续分数位置 */
-function fracFromOffset(off: number): number {
-  const n = props.groups.length
-  if (n === 0) return 0
-  const centerInTrack = stripCenter() - off
-  const c0 = tickCenter(0), cN = tickCenter(n - 1)
-  if (centerInTrack <= c0) return 0
-  if (centerInTrack >= cN) return n - 1
-  for (let i = 0; i < n - 1; i++) {
-    const a = tickCenter(i), b = tickCenter(i + 1)
-    if (centerInTrack >= a && centerInTrack <= b) return i + (centerInTrack - a) / (b - a)
-  }
-  return 0
-}
-/** 两端弹力（渐进式阻尼，iOS 橡皮筋）：拖得越远、每像素能挪的越少，且有硬上限 LIMIT——
- *  overshoot(x) = (1 - 1/(x/LIMIT + 1))·LIMIT，x→∞ 渐近到 LIMIT，越拖越拉不动。
- *  LIMIT 收到 72px（更严：最多只能拖出 72px，到边界很快就"拉到头"）。 */
-function overshoot(x: number): number {
-  const LIMIT = 72
-  return (1 - 1 / (x / LIMIT + 1)) * LIMIT
-}
-function rubberBand(raw: number): number {
-  const n = props.groups.length
-  if (n === 0) return raw
-  const max = offsetForIndex(0)      // 最新（最左）刻度居中 → offset 最大
-  const min = offsetForIndex(n - 1)  // 最旧（最右）刻度居中 → offset 最小
-  if (raw > max) return max + overshoot(raw - max)
-  if (raw < min) return min - overshoot(min - raw)
-  return raw
+function clampFrac(p: number) { return Math.max(0, Math.min(props.groups.length - 1, p)) }
+function pitchAt(interval: number, focus: number) {
+  const distance = Math.abs(interval + 0.5 - focus)
+  // 只在中心两段改变间距；用连续曲线过渡，拖动时不会在跨日期边界时跳变。
+  const smoothstep = (t: number) => t * t * (3 - 2 * t)
+  let extra = 0
+  if (distance <= 0.5) extra = CENTER_EXTRA
+  else if (distance < 1.5) extra = CENTER_EXTRA * (1 - 0.5 * smoothstep(distance - 0.5))
+  else if (distance < 2.5) extra = CENTER_EXTRA * 0.5 * (1 - smoothstep(distance - 1.5))
+  return BASE_PITCH + extra
 }
 
-// ── 列滚动驱动（wheel）：连续分数 → 刻度带连续跟随（拖动/惯性动画中不抢）──────────
+/** 第 p 个日期在刻度轨道中的逻辑 x；允许边界外的小幅橡皮筋。 */
+function positionForFrac(p: number, focus = currentFrac.value) {
+  const n = props.groups.length
+  if (!n) return 0
+  if (p < 0) return p * pitchAt(0, focus)
+  if (p > n - 1) return positionForFrac(n - 1, focus) + (p - (n - 1)) * pitchAt(n - 2, focus)
+  const lo = Math.floor(p)
+  let x = 0
+  for (let i = 0; i < lo; i++) x += pitchAt(i, focus)
+  return x + (p - lo) * pitchAt(lo, focus)
+}
+
+function trackStyle() {
+  return { transform: `translate3d(${stripCenter() - positionForFrac(currentFrac.value)}px,0,0)` }
+}
+function tickSlotStyle(i: number) {
+  return { left: `${positionForFrac(i)}px` }
+}
+
+function rubberBand(raw: number) {
+  const last = props.groups.length - 1
+  if (raw >= 0 && raw <= last) return raw
+  const distance = raw < 0 ? -raw : raw - last
+  const resisted = (1 - 1 / (distance + 1)) * 0.7
+  return raw < 0 ? -resisted : last + resisted
+}
+/** 日期中心是凹槽：在日期附近更慢，在两日期之间更快。 */
+function detentFrac(raw: number) {
+  const banded = rubberBand(raw)
+  const last = props.groups.length - 1
+  if (banded < 0 || banded > last) return banded
+  const lo = Math.floor(banded)
+  if (lo >= last) return banded
+  const t = banded - lo
+  // 比普通 ease-in-out 更贴近两端，靠近日期中心时有更清晰的吸附阻尼。
+  const snapped = t * t * t * (t * (t * 6 - 15) + 10)
+  return lo + snapped
+}
+
 watch(() => props.centerFrac, (p) => {
-  if (dragging.value || animating) return
-  offset.value = offsetForFrac(p)
+  if (dragging.value || animating.value || lockedIndex.value !== null) return
+  currentFrac.value = p
 })
-// 数据/尺寸就绪后先摆正一次（瞬时）
 watch(() => props.groups, async () => {
   await nextTick()
-  if (!dragging.value && !animating) offset.value = offsetForFrac(props.centerFrac)
+  if (!dragging.value && !animating.value && lockedIndex.value === null) currentFrac.value = props.centerFrac
 }, { immediate: true })
-function onResize() { if (!dragging.value && !animating) offset.value = offsetForFrac(props.centerFrac) }
+function onResize() {
+  if (!dragging.value && !animating.value && lockedIndex.value === null) currentFrac.value = props.centerFrac
+}
 onMounted(() => window.addEventListener('resize', onResize))
 
-// ── 拖动跟手 + 弹力；松手带惯性投掷 → 磁吸到日期，缓入缓出 rAF 补间（列同步跟随）──
-let startX = 0, startOffset = 0, moved = false, downIdx = -1
-let vel = 0, lastX = 0, lastT = 0           // 速度追踪（px/ms）
-let animating = false, rafId = 0
+function tickFocus(i: number) {
+  const d = Math.abs(i - currentFrac.value)
+  return Math.exp(-d * d * 1.7)
+}
+function tickBarStyle(i: number) {
+  const focus = tickFocus(i)
+  return {
+    height: `${10 + focus * 12}px`,
+    width: `${3 + focus * 1.5}px`,
+    background: `rgba(123,127,178,${0.25 + focus * 0.75})`,
+  }
+}
+function tickTipStyle(i: number) {
+  const focus = tickFocus(i)
+  return {
+    opacity: `${Math.max(0, (focus - 0.38) / 0.62)}`,
+    color: focus > 0.82 ? '#5a5e86' : 'var(--text-secondary)',
+    fontWeight: focus > 0.82 ? '600' : '400',
+  }
+}
 
-function stopAnim() { if (rafId) { cancelAnimationFrame(rafId); rafId = 0 } animating = false }
+let startX = 0
+let startFrac = 0
+let moved = false
+let downIdx = -1
+let rafId = 0
+let animationRun = 0
+
+function stopAnim() {
+  animationRun += 1
+  if (rafId) cancelAnimationFrame(rafId)
+  rafId = 0
+  animating.value = false
+}
 
 function onDown(e: PointerEvent) {
   stopAnim()
-  startX = lastX = e.clientX
-  startOffset = offset.value
-  lastT = e.timeStamp
-  vel = 0
+  lockedIndex.value = null
+  if (lockTimer) clearTimeout(lockTimer)
+  lockTimer = null
+  startX = e.clientX
+  startFrac = currentFrac.value
   moved = false
   const el = (e.target as HTMLElement).closest<HTMLElement>('.dsb-tick')
   downIdx = el ? Number(el.dataset.idx) : -1
@@ -121,42 +159,51 @@ function onDown(e: PointerEvent) {
 function onMove(e: PointerEvent) {
   const dx = e.clientX - startX
   if (Math.abs(dx) > 3) moved = true
-  offset.value = rubberBand(startOffset + dx)          // 跟手 + 渐进阻尼
-  const dt = Math.max(1, e.timeStamp - lastT)
-  vel = 0.7 * vel + 0.3 * ((e.clientX - lastX) / dt)   // 平滑瞬时速度（px/ms）
-  lastX = e.clientX; lastT = e.timeStamp
-  emit('seek', fracFromOffset(offset.value))           // 连续联动列（跟手时列 1:1 跟）
+  const pitch = pitchAt(Math.floor(clampFrac(startFrac)), startFrac)
+  currentFrac.value = detentFrac(startFrac - (dx * DRAG_RATIO) / pitch)
+  emit('scrub', clampFrac(currentFrac.value))
 }
 
 function onUp() {
   window.removeEventListener('pointermove', onMove)
   window.removeEventListener('pointerup', onUp)
   dragging.value = false
-  const n = props.groups.length
-  if (!moved && downIdx >= 0) { animateTo(Math.max(0, Math.min(n - 1, downIdx))); return }  // 点击直接吸
-  // 惯性投掷：把速度换算成「还能滑多远」（越快甩越多），再磁吸到落点最近的日期
-  const projected = offset.value + vel * 90            // 90ms 惯性投掷距离
-  const idx = Math.max(0, Math.min(n - 1, Math.round(fracFromOffset(projected))))
+  const last = props.groups.length - 1
+  const idx = !moved && downIdx >= 0
+    ? Math.max(0, Math.min(last, downIdx))
+    : Math.round(clampFrac(currentFrac.value))
   animateTo(idx)
 }
 
-/** 缓入缓出 rAF 补间到第 idx 根刻度居中，逐帧 emit seek 让列同步跟随（磁吸落定）*/
 function animateTo(idx: number) {
-  const startOff = offset.value
-  const endOff = offsetForIndex(idx)
-  const dist = Math.abs(endOff - startOff)
-  const dur = Math.max(240, Math.min(600, 200 + dist * 0.55))   // 距离越远越久（有阻尼感）
-  const t0 = performance.now()
+  const run = ++animationRun
   const date = props.groups[idx]?.date
-  animating = true
+  let pos = currentFrac.value
+  let velocity = 0
+  let last = performance.now()
+  animating.value = true
   const frame = (now: number) => {
-    const t = Math.min(1, (now - t0) / dur)
-    // easeInOutCubic：非线性缓入缓出
-    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
-    offset.value = startOff + (endOff - startOff) * e
-    emit('seek', fracFromOffset(offset.value))
-    if (t < 1) { rafId = requestAnimationFrame(frame) }
-    else { rafId = 0; animating = false; if (date) emit('snap', date) }
+    if (run !== animationRun) return
+    const dt = Math.min(1 / 30, Math.max(1 / 240, (now - last) / 1000))
+    last = now
+    const spring = 260
+    const damping = 32
+    velocity += (spring * (idx - pos) - damping * velocity) * dt
+    pos += velocity * dt
+    currentFrac.value = pos
+    emit('scrub', clampFrac(pos))
+    if (Math.abs(idx - pos) > 0.002 || Math.abs(velocity) > 0.02) {
+      rafId = requestAnimationFrame(frame)
+      return
+    }
+    currentFrac.value = idx
+    rafId = 0
+    animating.value = false
+    lockedIndex.value = idx
+    emit('scrub', idx)
+    if (lockTimer) clearTimeout(lockTimer)
+    lockTimer = setTimeout(() => { lockedIndex.value = null; lockTimer = null }, 520)
+    if (date) emit('snap', date)
   }
   rafId = requestAnimationFrame(frame)
 }
@@ -165,6 +212,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointermove', onMove)
   window.removeEventListener('pointerup', onUp)
   window.removeEventListener('resize', onResize)
+  if (lockTimer) clearTimeout(lockTimer)
   stopAnim()
 })
 
@@ -178,47 +226,35 @@ function fmtLabel(iso: string) {
 <style scoped>
 .date-scrub {
   position: relative;
-  flex-shrink: 0; height: 46px;   /* 容下刻度(26) + 底部日期小签(~42)，overflow:hidden 才不裁掉签 */
+  flex-shrink: 0; height: 46px;
   overflow: hidden;
   cursor: grab;
-  touch-action: pan-y;   /* 竖向手势留给页面，横向自己接管 */
+  touch-action: pan-y;
 }
 .date-scrub:active { cursor: grabbing; }
 
 .ds-track {
   position: absolute; top: 4px; left: 0;
-  display: flex; align-items: flex-end; gap: 3px;
+  width: 0; height: 22px;
   will-change: transform;
-  /* 无 CSS 过渡：offset 全程由 JS 驱动（拖动跟手、wheel 连续、松手惯性磁吸 rAF 补间都逐帧算） */
 }
-
-/* 每根刻度 10px 透明命中区，视觉只露中间 3px 的杆 */
 .dsb-tick {
-  position: relative; flex-shrink: 0;
-  display: flex; align-items: flex-end; justify-content: center;
-  width: 10px; height: 22px; padding: 0;
+  position: absolute;
+  display: flex; align-items: flex-start; justify-content: center;
+  width: 14px; height: 22px; padding: 0;
+  transform: translateX(-50%);
   border: none; background: none; cursor: inherit;
 }
-/* grow/shrink（选中↔脱离）带过渡：高度/宽度/色都缓动，切日期时刻度平滑长高/回落 */
 .dsb-bar {
   width: 3px; height: 12px; border-radius: 99px;
   background: rgba(123,127,178,0.3);
-  transition: height 0.24s cubic-bezier(0.34,1.3,0.5,1), width 0.24s ease, background 0.24s ease;
+  will-change: height, width, background;
 }
-.dsb-tick:hover .dsb-bar { height: 17px; background: rgba(123,127,178,0.5); }
-.dsb-tick.on .dsb-bar { width: 4px; height: 22px; background: var(--color-primary); }
-
-/* 日期小签：当前刻度常显，其余 hover 浮出 */
 .dsb-tip {
   position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
   margin-top: 4px; font-size: 10px; white-space: nowrap;
   color: var(--text-secondary); opacity: 0; pointer-events: none;
-  transition: opacity 0.18s ease;
 }
-.dsb-tick:hover .dsb-tip { opacity: 1; }
-.dsb-tick.on .dsb-tip { opacity: 1; color: #5a5e86; font-weight: 600; }
-
-/* playhead：正中的淡竖线，标出"当前位"（刻度带在它底下滑过） */
 .ds-playhead {
   position: absolute; top: 2px; left: 50%; transform: translateX(-50%);
   width: 2px; height: 26px; border-radius: 99px;

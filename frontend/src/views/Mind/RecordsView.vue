@@ -1,16 +1,15 @@
 <template>
-  <div class="rec-layout">
-    <!-- 顶部日期滑杆：拖动连续联动列（seek）、松手/点击平滑吸附（snap）、列滚动反向驱动（centerFrac）-->
-    <DateIndex :groups="indexGroups" :active="activeDate" :center-frac="centerFrac"
-               @seek="onSeek" @snap="d => jumpTo(d, true)" />
+  <div ref="layoutRef" class="rec-layout">
+    <!-- 顶部日期滑杆和玻璃卡列逐帧同步；松手后只做无动画的精确对齐。 -->
+    <DateIndex :groups="indexGroups" :center-frac="centerFrac" @scrub="onScrub" @snap="onSnap" />
 
-    <!-- 横置便签流：横向翻历史（滚轮转横滚），列内竖滚翻当天 -->
-    <div ref="scrollRef" class="rec-hscroll" :class="{ 'snap-off': snapOff }" @wheel="onWheel" @scroll="onScroll">
+    <!-- 横置便签流：左侧是过往、右侧是后来的日期；列内竖滚翻当天 -->
+    <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel" @scroll="onScroll">
       <div v-if="store.loading && !store.loaded" class="rec-loading">加载中…</div>
       <RecordTimeline
         v-else
         ref="timelineRef"
-        :groups="store.timeline"
+        :groups="timelineGroups"
         :highlight-id="highlightId"
         :filtered="!!store.filterQ.trim()"
         @save="onSave"
@@ -40,6 +39,7 @@ const store     = useMindStore()
 const liveStore = useLiveStore()
 const timelineRef = ref<InstanceType<typeof RecordTimeline> | null>(null)
 const scrollRef   = ref<HTMLElement | null>(null)
+const layoutRef   = ref<HTMLElement | null>(null)
 
 const highlightId = ref<number | null>(null)
 let highlightTimer: ReturnType<typeof setTimeout> | null = null
@@ -56,6 +56,7 @@ function onWheel(e: WheelEvent) {
   if (e.deltaX || e.shiftKey) return   // 触控板横扫/Shift+滚轮：浏览器自己会横滚
   const colBody = (e.target as HTMLElement).closest<HTMLElement>('.tl-col-body')
   if (colBody && colBody.scrollHeight > colBody.clientHeight + 2) return
+  stopCardFollow()
   root.scrollLeft += e.deltaY
   e.preventDefault()
 }
@@ -66,14 +67,22 @@ function onWheel(e: WheelEvent) {
 // 「当前」= 中心离内容区中线最近的列。判定要随每个滚动像素连续变化，超出 IntersectionObserver
 // 的能力（只在进出边界回调），改用 rAF 节流的 scroll 手算（几十列一次遍历微不足道）。
 const SIDEBAR_W = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 220
-const indexGroups = computed(() => store.timeline.map(g => ({ date: g.date, count: g.items.length })))
+// store 保持「最新优先」，展示层改为时间正序：左侧是过往，右侧是后来的日期。
+const timelineGroups = computed(() => [...store.timeline].reverse())
+const indexGroups = computed(() => timelineGroups.value.map(g => ({ date: g.date, count: g.items.length })))
 const activeDate  = ref('')
 const centerFrac  = ref(0)   // 连续分数位置：内容区中线落在第几列（含小数），驱动滑杆连续跟随
 let scrollRaf = 0
 
-/** 内容区中线在滚动容器坐标里的 x（容器左边缘 = 视口左边缘 = 0） */
-function contentCenter(root: HTMLElement) { return (SIDEBAR_W + root.clientWidth) / 2 }
-/** 各列中心（滚动内容坐标），按 date 顺序（左新右旧） */
+/** 读取记录页的实际中线，再换算到横向滚动容器坐标，避免侧栏/内边距带来的推算偏差。 */
+function contentCenter(root: HTMLElement) {
+  const layout = layoutRef.value
+  if (!layout) return (SIDEBAR_W + root.clientWidth) / 2
+  const rootRect = root.getBoundingClientRect()
+  const layoutRect = layout.getBoundingClientRect()
+  return layoutRect.left - rootRect.left + layoutRect.width / 2
+}
+/** 各列中心（滚动内容坐标），按 date 顺序（左旧右新） */
 function colCenters(root: HTMLElement): { date: string; c: number }[] {
   return [...root.querySelectorAll<HTMLElement>('.tl-col[data-date]')]
     .map(el => ({ date: el.dataset.date!, c: el.offsetLeft + el.offsetWidth / 2 }))
@@ -103,37 +112,62 @@ function onScroll() {
   scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; updateActive() })
 }
 
-/** 连续分数位置 → 该位置居中所需的 scrollLeft（相邻列线性插值） */
-function scrollForFrac(root: HTMLElement, p: number): number {
-  const cols = colCenters(root)
-  if (!cols.length) return 0
-  const f = Math.max(0, Math.min(cols.length - 1, p))
-  const lo = Math.floor(f), hi = Math.min(lo + 1, cols.length - 1)
-  const cen = cols[lo].c + (cols[hi].c - cols[lo].c) * (f - lo)
-  return cen - contentCenter(root)
+function onSnap(date: string) {
+  activeDate.value = date
 }
 
-// 滑杆驱动列滚动时关掉原生 scroll-snap（否则每帧 seek 都被吸附打架）；停 160ms 后自动恢复，
-// 恢复瞬间位置已在滑杆惯性补间的落点（=某列中心=吸附点），不会跳。wheel 路径不触发 seek，
-// snap 一直开着 → 触控板/滚轮滚列自带惯性 + 松开磁吸到最近日期（#4）。
-const snapOff = ref(false)
-let snapOffTimer: ReturnType<typeof setTimeout> | null = null
-function suspendSnap() {
-  snapOff.value = true
-  if (snapOffTimer) clearTimeout(snapOffTimer)
-  snapOffTimer = setTimeout(() => { snapOff.value = false }, 160)
+let cardFollowRaf = 0
+let cardTargetLeft = 0
+let cardFollowVelocity = 0
+let cardFollowLast = 0
+
+function stopCardFollow() {
+  if (cardFollowRaf) cancelAnimationFrame(cardFollowRaf)
+  cardFollowRaf = 0
+  cardFollowVelocity = 0
 }
 
-/** 滑杆拖动/惯性补间：连续联动，列平滑跟手（瞬时设 scrollLeft，但 p 连续 → 视觉平滑，不跳格）*/
-function onSeek(p: number) {
+/** 让玻璃卡列带阻尼地追随目标位置；日期条本身仍直接跟手。 */
+function followCardsTo(left: number) {
   const root = scrollRef.value
   if (!root) return
-  suspendSnap()
-  root.scrollLeft = scrollForFrac(root, p)
-  // 立刻更新 active（不等 rAF），让刻度即时长高 + 卡片高亮跟上
-  centerFrac.value = p
+  cardTargetLeft = Math.max(0, Math.min(root.scrollWidth - root.clientWidth, left))
+  if (cardFollowRaf) return
+  let pos = root.scrollLeft
+  cardFollowLast = performance.now()
+  const frame = (now: number) => {
+    const current = scrollRef.value
+    if (!current) { stopCardFollow(); return }
+    const dt = Math.min(1 / 30, Math.max(1 / 240, (now - cardFollowLast) / 1000))
+    cardFollowLast = now
+    const spring = 210
+    const damping = 28
+    cardFollowVelocity += (spring * (cardTargetLeft - pos) - damping * cardFollowVelocity) * dt
+    pos += cardFollowVelocity * dt
+    current.scrollLeft = pos
+    if (Math.abs(cardTargetLeft - pos) > 0.25 || Math.abs(cardFollowVelocity) > 2) {
+      cardFollowRaf = requestAnimationFrame(frame)
+      return
+    }
+    current.scrollLeft = cardTargetLeft
+    cardFollowRaf = 0
+    cardFollowVelocity = 0
+  }
+  cardFollowRaf = requestAnimationFrame(frame)
+}
+
+/** 滑杆拖动/回正期间，让玻璃卡列按相同的连续日期位置带阻尼跟随。 */
+function onScrub(frac: number) {
+  const root = scrollRef.value
+  if (!root) return
   const cols = colCenters(root)
-  if (cols.length) activeDate.value = cols[Math.max(0, Math.min(cols.length - 1, Math.round(p)))].date
+  if (!cols.length) return
+  const clamped = Math.max(0, Math.min(cols.length - 1, frac))
+  const lo = Math.floor(clamped)
+  const hi = Math.min(lo + 1, cols.length - 1)
+  const t = clamped - lo
+  const center = cols[lo].c + (cols[hi].c - cols[lo].c) * t
+  followCardsTo(center - contentCenter(root))
 }
 
 /** 把某天的列滚到内容区正中。animate=true → 平滑（点击/松手吸附/新建）、false → 瞬时（首载/resize）*/
@@ -149,26 +183,44 @@ function jumpTo(date: string, animate = true) {
 }
 
 // resize：内容区中线变了，把当前列瞬时重新居中（不飞入）
-function onResize() { if (activeDate.value) jumpTo(activeDate.value, false) }
+function onResize() {
+  stopCardFollow()
+  if (activeDate.value) jumpTo(activeDate.value, false)
+}
 onMounted(() => window.addEventListener('resize', onResize))
 onBeforeUnmount(() => {
   if (scrollRaf) cancelAnimationFrame(scrollRaf)
-  if (snapOffTimer) clearTimeout(snapOffTimer)
+  stopCardFollow()
   window.removeEventListener('resize', onResize)
 })
 
-// 首次数据就绪：今天（最新一列）直接定在正中，不播滚动动画
+// 首次数据就绪：今天（最右一列）直接定在正中，不播滚动动画
 let centeredOnce = false
-watch(() => store.timeline, async (groups) => {
+let renderedDates: string[] = []
+watch(timelineGroups, async (groups) => {
+  const root = scrollRef.value
+  const widthBefore = root?.scrollWidth ?? 0
+  const leftBefore = root?.scrollLeft ?? 0
+  const newDateIndex = groups.findIndex(group => !renderedDates.includes(group.date))
+  const activeIndexBefore = renderedDates.indexOf(activeDate.value)
+  const insertedBeforeActive = renderedDates.length > 0 && newDateIndex >= 0 && activeIndexBefore >= newDateIndex
+  if (insertedBeforeActive && root) {
+    // watcher 默认在 DOM 提交前运行，先预补偿一个日期列宽，避免旧卡先被顶开一帧。
+    root.scrollLeft += 306
+  }
   await nextTick()
   if (!centeredOnce && groups.length) {
     centeredOnce = true
-    jumpTo(groups[0].date, false)
+    jumpTo(groups[groups.length - 1].date, false)
+  } else if (insertedBeforeActive && root) {
+    // 以实测宽度校准预补偿，兼容列宽/间距将来的调整。
+    root.scrollLeft = leftBefore + root.scrollWidth - widthBefore
   }
+  renderedDates = groups.map(group => group.date)
   updateActive()
 }, { immediate: true })
 
-// ── 新建：翻进历史 → 先滚回最左（今天）再插入+高亮；补录 → 不滚，toast 报落点 ──
+// ── 新建：不移动当前视野；新日期卡在右侧单独入场，补录仍 toast 报落点 ──
 const _today = () => new Date().toISOString().slice(0, 10)
 
 async function onCreated(md: string, capturedAt?: string) {
@@ -180,13 +232,11 @@ async function onCreated(md: string, capturedAt?: string) {
     return
   }
   if (capturedAt && capturedAt.slice(0, 10) !== _today()) {
-    // 补录落进右边很远的日期列，眼前不会有任何动静——不给反馈用户会以为没保存
+    // 补录落进左边较远的日期列，眼前不会有任何动静——不给反馈用户会以为没保存
     const [, m, d] = capturedAt.slice(0, 10).split('-')
     Message.success(`已记到 ${+m} 月 ${+d} 日`)
     return
   }
-  await nextTick()               // 今天的列可能是刚创建出来的，等它进 DOM 再居中
-  jumpTo(_today(), true)
   highlightId.value = created.id
   if (highlightTimer) clearTimeout(highlightTimer)
   highlightTimer = setTimeout(() => { highlightId.value = null }, 1800)
@@ -240,15 +290,11 @@ async function onDelete(note: MindNote) {
      offsetLeft 从 x=244 起算、却拿去和从 x=0 起算的 scrollLeft 相减 → 列整体偏出一个侧栏宽（#1）。*/
   position: relative;
   overflow-x: auto; overflow-y: hidden;
-  /* 横向：滚动时磁吸到日期列中心（scroll-snap），触控板/滚轮自带惯性、松开吸附到最近日期（#4）；
-     滑杆驱动时由 JS 关掉 snap（.snap-off）免得跟每帧 seek 打架。scroll-padding-left=侧栏宽 把
-     吸附中线从"视口中心"挪到"内容区中心"（= contentCenter），和滑杆 playhead 对齐。 */
-  scroll-snap-type: x proximity;
-  scroll-padding-left: var(--sidebar-width);
+  /* 日期条已统一管理吸附；原生 scroll-snap 会在动画结束后按另一套 padding 规则二次改写位置。 */
+  scroll-snap-type: none;
   scrollbar-width: none;
   padding-bottom: 96px;   /* 给底部停靠的捕捉条让空间，最下的卡不被盖住 */
 }
-.rec-hscroll.snap-off { scroll-snap-type: none; }
 .rec-hscroll::-webkit-scrollbar { display: none; }
 
 .rec-loading { padding: 40px 24px; font-size: 12.5px; color: var(--text-secondary); }

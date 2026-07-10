@@ -1,16 +1,11 @@
 <template>
   <!-- 底部停靠捕捉条：收起=单行占位；聚焦展开=编辑器+工具栏从条内长出来（不弹浮层）。
-       展开/收起走 grid-template-rows 0fr↔1fr 的弹性过渡（同项目卡的 spring 曲线），
-       两段（单行头/编辑区）反向伸缩，总高度连续变化；编辑器常驻挂载，收起方向才有内容可缩。
+       外框单独做高度过渡，收起态和编辑态各自绝对定位在条底并交叉淡变，避免内容被上下裁切。
        浮在滚动的便签流之上：玻璃可以用，但内部交互元素克制（hover 只做 opacity/淡背景，
        不做 box-shadow 过渡——白带红线）；本组件自身/祖先不挂 opacity 动画（隔离组红线）。 -->
-  <div ref="barRef" class="capture-bar" :class="{ expanded }">
-    <!-- 展开内容在上（grid 0fr↔1fr 向上长），收起单行在下（grid 1fr↔0fr）：
-         两行反向伸缩、都全程可动，高度动画不被 min-height 截断（缓入缓出完整，#1）；
-         收起行在条底、条底 bottom 锚定 → 展开时它在原地收缩淡出，图标文字不上蹿。 -->
-    <div class="cb-body">
-      <div class="cb-clip">
-        <div class="cb-pad">
+  <div ref="barRef" class="capture-bar" :class="{ expanded }" :style="{ height: (expanded ? expandedHeight : 50) + 'px' }">
+    <div ref="bodyRef" class="cb-body">
+      <div class="cb-pad">
           <NoteEditor
             ref="editorRef"
             v-model="md"
@@ -24,7 +19,7 @@
               <input type="checkbox" v-model="backfill" />
               补录到
             </label>
-            <DatePicker v-if="backfill" class="cb-date" v-model="date" placeholder="选择日期" />
+            <DatePicker v-if="backfill" class="cb-date" v-model="date" :max="todayIso" placeholder="选择日期" />
             <button class="cb-min" title="收起（内容保留）" @click="collapse">
               <PhCaretDown :size="13" weight="bold" />
             </button>
@@ -32,18 +27,15 @@
               {{ saving ? '记录中…' : '记录' }}
             </button>
           </div>
-        </div>
       </div>
     </div>
 
     <div class="cb-head">
-      <div class="cb-clip">
-        <button class="cb-collapsed" tabindex="-1" @click="expand">
-          <PhPencilSimple :size="13" weight="bold" class="cb-pencil" />
-          <span class="cb-placeholder">{{ md.trim() ? plainPreview : '记点什么…' }}</span>
-          <span class="cb-kbd">随手记</span>
-        </button>
-      </div>
+      <button class="cb-collapsed" tabindex="-1" @click="expand">
+        <PhPencilSimple :size="13" weight="bold" class="cb-pencil" />
+        <span class="cb-placeholder">{{ md.trim() ? plainPreview : '记点什么…' }}</span>
+        <span class="cb-kbd">随手记</span>
+      </button>
     </div>
   </div>
 </template>
@@ -59,10 +51,18 @@ const emit = defineEmits<{ (e: 'created', md: string, capturedAt?: string): void
 const expanded = ref(false)
 const md       = ref('')
 const backfill = ref(false)
-const date     = ref(new Date().toISOString().slice(0, 10))
+const localToday = () => {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+const todayIso = localToday()
+const date     = ref(todayIso)
 const saving   = ref(false)
 const barRef    = ref<HTMLElement | null>(null)
+const bodyRef   = ref<HTMLElement | null>(null)
 const editorRef = ref<InstanceType<typeof NoteEditor> | null>(null)
+const expandedHeight = ref(50)
+let resizeObserver: ResizeObserver | null = null
 
 const canSave = computed(() => md.value.trim().length > 0)
 /** 收起时草稿没丢：单行里露一眼开头，提醒"这里还有没记完的" */
@@ -70,11 +70,17 @@ const plainPreview = computed(() =>
   md.value.replace(/\[\[[a-z_]+:\d+\|([^\]]*)\]\]/g, '$1').replace(/^#+\s*|-\s\[[ xX]\]\s?|-\s+/gm, '').split('\n')[0].slice(0, 40))
 
 async function expand() {
+  measureExpandedHeight()
   expanded.value = true
   await nextTick()
+  measureExpandedHeight()
   editorRef.value?.focus()   // 编辑器常驻挂载（为了收起动画），不能用 autofocus，展开时手动聚焦
 }
 function collapse() { expanded.value = false }   // 草稿保留在 md 里，下次展开接着写
+
+function measureExpandedHeight() {
+  expandedHeight.value = Math.max(50, bodyRef.value?.scrollHeight ?? 50)
+}
 
 /** 点条外任意处收起。DatePicker 的日历 Teleport 到 body，得单独放行，选个日期不算"点外面" */
 function onDocDown(e: MouseEvent) {
@@ -84,8 +90,18 @@ function onDocDown(e: MouseEvent) {
   if (t.closest?.('.dp-popup')) return
   collapse()
 }
-onMounted(() => document.addEventListener('mousedown', onDocDown, true))
-onUnmounted(() => document.removeEventListener('mousedown', onDocDown, true))
+onMounted(() => {
+  document.addEventListener('mousedown', onDocDown, true)
+  if (bodyRef.value) {
+    resizeObserver = new ResizeObserver(() => { if (expanded.value) measureExpandedHeight() })
+    resizeObserver.observe(bodyRef.value)
+  }
+  measureExpandedHeight()
+})
+onUnmounted(() => {
+  document.removeEventListener('mousedown', onDocDown, true)
+  resizeObserver?.disconnect()
+})
 
 async function save() {
   if (!canSave.value || saving.value) return
@@ -108,17 +124,19 @@ async function save() {
   /* 收起/展开**同宽**（480），只有高度变；玻璃浓度随展开加深。圆角两态同值 25px（=收起高
      50/2）→ 收起全圆药丸、展开 25px 圆角矩形，角曲率一致（#1）。position:relative + 收起
      态最小高度 50，收起单行绝对定位贴底、条底由父级 bottom 锚定，故往上长（#3 收起 ui 不上移）。 */
-  --cb-dur: 0.4s;
-  --cb-ease: cubic-bezier(0.62, 0, 0.38, 1);   /* 强对称缓入缓出（两向一致，#1） */
+  --cb-dur: 0.26s;
+  --cb-ease: cubic-bezier(0.22, 1, 0.36, 1);   /* 快速缓出：展开收起都干脆，不拖尾 */
   position: relative;
   width: 480px; max-width: 100%; margin: 0 auto;
+  height: 50px;
   border-radius: 25px;
   background: rgba(255,255,255,0.6);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255,255,255,0.78);
   box-shadow: 0 8px 28px rgba(30,40,80,0.14), inset 0 1px 0 rgba(255,255,255,0.9);
   overflow: hidden;
-  transition: background-color var(--cb-dur) ease,
+  transition: height var(--cb-dur) var(--cb-ease),
+              background-color var(--cb-dur) ease,
               backdrop-filter var(--cb-dur) ease, -webkit-backdrop-filter var(--cb-dur) ease;
 }
 .capture-bar.expanded {
@@ -126,39 +144,22 @@ async function save() {
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
 }
 
-/* 两行反向伸缩：展开内容 cb-body 0fr↔1fr、收起单行 cb-head 1fr↔0fr，同一条缓入缓出曲线、
-   同起同停 → 高度全程可动、两向一致（收起也缓入缓出，#1）。 */
+/* 两个内容层都固定在条底。外框改变高度时，内部不会跟着上下位移。 */
 .cb-body, .cb-head {
-  display: grid;
-  transition: grid-template-rows var(--cb-dur) var(--cb-ease);
+  position: absolute; left: 0; right: 0; bottom: 0;
 }
-.cb-body { grid-template-rows: 0fr; }
-.cb-head { grid-template-rows: 1fr; }
-.capture-bar.expanded .cb-body { grid-template-rows: 1fr; }
-.capture-bar.expanded .cb-head { grid-template-rows: 0fr; }
-.cb-clip { overflow: hidden; min-height: 0; }
+.cb-body { opacity: 0; pointer-events: none; transition: opacity 0.1s ease-out; }
+.cb-head { height: 50px; opacity: 1; transition: opacity 0.12s ease-out 0.1s; }
+.capture-bar.expanded .cb-body { opacity: 1; pointer-events: auto; transition: opacity 0.14s ease-out 0.1s; }
+.capture-bar.expanded .cb-head { opacity: 0; pointer-events: none; transition: opacity 0.1s ease-out; }
 
-/* 内容淡入淡出（两向镜像）：展开时收起行快淡出(0-0.16)、展开内容就地淡入(delay 0.04)；
-   收起时展开内容快淡出、收起行就地淡入(delay 0.04)。 */
+/* 内容在各自固定位置只做交叉淡变：展开先收起、后露编辑器；收起反过来。 */
 .cb-collapsed {
   display: flex; align-items: center; gap: 9px; width: 100%;
   height: 50px; box-sizing: border-box;   /* 收起高度 = 咕咕球 50px（#2） */
   padding: 0 18px; border: none;
   background: none; cursor: text; text-align: left;
   font-family: var(--font-sans);
-  transition: opacity 0.28s var(--cb-ease) 0.04s, filter 0.28s var(--cb-ease) 0.04s;
-}
-.capture-bar.expanded .cb-collapsed {
-  opacity: 0; filter: blur(8px); pointer-events: none;
-  transition: opacity 0.16s var(--cb-ease) 0s, filter 0.16s var(--cb-ease) 0s;
-}
-.cb-pad {
-  opacity: 0; filter: blur(8px);
-  transition: opacity 0.16s var(--cb-ease) 0s, filter 0.16s var(--cb-ease) 0s;
-}
-.capture-bar.expanded .cb-pad {
-  opacity: 1; filter: blur(0);
-  transition: opacity 0.28s var(--cb-ease) 0.04s, filter 0.28s var(--cb-ease) 0.04s;
 }
 .cb-pencil { flex-shrink: 0; color: var(--color-primary); opacity: 0.75; }
 .cb-placeholder {
