@@ -7,7 +7,8 @@ from datetime import datetime
 
 from sqlalchemy import func, select
 
-from app.models import CalendarEvent, File, Folder, Project
+from app.core.tz import resolve_tz, today_str
+from app.models import CalendarEvent, File, Folder, Project, User
 
 
 async def load_projects(db, user_id) -> list:
@@ -20,9 +21,16 @@ async def load_projects(db, user_id) -> list:
     return result.scalars().all()
 
 
-async def load_events(db, user_id, limit: int = 10) -> list:
-    """今天起的近期日历事件（迁自原 _stream）。"""
-    today = datetime.now().strftime("%Y-%m-%d")
+async def load_user_tz(db, user_id):
+    """当前用户的时区（tzinfo）：User.timezone 有值就用，否则回退服务器 LOCAL_TZ。
+    供 builder / load_events 把「今天」按用户本地日算（见 docs/backend/时区与时钟迁移方案.md Phase 3）。"""
+    name = await db.scalar(select(User.timezone).where(User.id == user_id))
+    return resolve_tz(name)
+
+
+async def load_events(db, user_id, limit: int = 10, tz=None) -> list:
+    """今天起的近期日历事件（迁自原 _stream）。「今天」按 tz 的本地日算（tz=None 回退服务器 tz）。"""
+    today = today_str(tz)
     result = await db.execute(
         select(CalendarEvent)
         .where(CalendarEvent.user_id == user_id, CalendarEvent.date >= today)

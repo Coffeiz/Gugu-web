@@ -169,7 +169,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
     async with _sess._SessionLocal() as db:
         projects = await loaders.load_projects(db, user_id)
-        events = await loaders.load_events(db, user_id)
+        user_tz = await loaders.load_user_tz(db, user_id)   # 「今天」按用户时区算（Phase 3）
+        events = await loaders.load_events(db, user_id, tz=user_tz)
         files_overview = await loaders.load_files_overview(db, user_id)
         style_prefs = await loaders.load_style_prefs(db, user_id)
 
@@ -279,6 +280,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         source=getattr(req, "source", None), im_channels=im_channels,
         user_msg=req.message,   # 行为模块软点亮（emotion-first 等）
         non_streaming=True,     # run_collect 是 IM 专用（worker.py 调用），不流式展示给用户
+        user_tz=user_tz,
     )
     if im_bridge:               # IM 新会话续接桥（见 _im_continuity_bridge）
         system_prompt += im_bridge
@@ -414,7 +416,8 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
 
     async with _sess._SessionLocal() as db:
         projects = await loaders.load_projects(db, user_id)
-        events = await loaders.load_events(db, user_id)
+        user_tz = await loaders.load_user_tz(db, user_id)   # 「今天」按用户时区算（Phase 3）
+        events = await loaders.load_events(db, user_id, tz=user_tz)
         files_overview = await loaders.load_files_overview(db, user_id)
         style_prefs = await loaders.load_style_prefs(db, user_id)
 
@@ -511,6 +514,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         source=getattr(req, "source", None), im_channels=im_channels,
         user_msg=req.message,
         non_streaming=False,     # ★ 流式：让 core.py 走流式生成路径（不走 builder._NON_STREAMING_BLOCK 抑制）
+        user_tz=user_tz,
     )
     if im_bridge:
         system_prompt += im_bridge
@@ -751,7 +755,8 @@ async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: di
 
     async with _sess._SessionLocal() as db:
         projects = await loaders.load_projects(db, user_id) if inc_projects else []
-        events = await loaders.load_events(db, user_id) if inc_calendar else []
+        user_tz = await loaders.load_user_tz(db, user_id)   # 「今天」按用户时区算（Phase 3）
+        events = await loaders.load_events(db, user_id, tz=user_tz) if inc_calendar else []
         files_overview = await loaders.load_files_overview(db, user_id) if inc_files else None
 
     memory = await loaders.load_memory(user_id) if (profile.memory_enabled and inc_memory) else {}
@@ -760,7 +765,8 @@ async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: di
     system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview,
                                   skills=profile.skills, im_channels=im_channels, non_streaming=True,
                                   include_projects=inc_projects, include_calendar=inc_calendar,
-                                  include_files=inc_files, include_memory=inc_memory)
+                                  include_files=inc_files, include_memory=inc_memory,
+                                  user_tz=user_tz)
 
     from agent.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)

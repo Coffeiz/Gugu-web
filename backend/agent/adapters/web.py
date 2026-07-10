@@ -150,7 +150,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
 
         # ── 上下文：项目 + 事件 + 文件概览（每轮注入，保证咕咕看到最新状态）──
         projects = await loaders.load_projects(db, user_id)
-        events = await loaders.load_events(db, user_id)
+        user_tz = await loaders.load_user_tz(db, user_id)   # 「今天」按用户时区算（Phase 3）
+        events = await loaders.load_events(db, user_id, tz=user_tz)
         files_overview = await loaders.load_files_overview(db, user_id)
         style_prefs = await loaders.load_style_prefs(db, user_id)
 
@@ -248,7 +249,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     if not await genstream.is_active(session_id):
         task = asyncio.create_task(_generate(
             req, session_id, projects, events, files_overview, history, is_new_session, aug_text, aug_images,
-            style_prefs=style_prefs, user_media=aug_media,
+            style_prefs=style_prefs, user_media=aug_media, user_tz=user_tz,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -281,7 +282,7 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
 
 
 async def _generate(req, session_id, projects, events, files_overview, history, is_new_session,
-                    user_content=None, user_images=None, style_prefs=None, user_media=None) -> None:
+                    user_content=None, user_images=None, style_prefs=None, user_media=None, user_tz=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -306,6 +307,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
         skills=profile.skills, style_prefs=style_prefs,
         source="web", im_channels=im_channels,
         user_msg=req.message,   # 行为模块软点亮（emotion-first 等）
+        user_tz=user_tz,
     )
 
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）

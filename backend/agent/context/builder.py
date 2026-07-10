@@ -4,10 +4,10 @@
 （default.md，含实时数据与记忆占位符）。persona 定义"咕咕是谁、怎么相处、何时
 主动"，模板提供"此刻的项目/日程/记忆"。
 """
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from app.core.tz import local_now
+from app.core.tz import LOCAL_TZ, local_now
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
@@ -88,12 +88,14 @@ def build(profile: str, user_name: str, projects: list, events: list,
           source: str | None = None, im_channels: dict | None = None,
           user_msg: str = "", non_streaming: bool = False,
           include_projects: bool = True, include_calendar: bool = True,
-          include_files: bool = True, include_memory: bool = True) -> str:
+          include_files: bool = True, include_memory: bool = True,
+          user_tz=None) -> str:
     # include_* 四个开关只给 run_ephemeral（定时任务）按 ScheduledTask.context_config 用——
     # 交互式对话（web/IM）永远全量传 True，不受影响。跳过时不省 header 文字（便宜），
     # 省的是 header 底下那块真正贵的内容（最多 25 个项目 / 10 条日程 / 完整记忆，这才是大头）。
     memory = memory if (include_memory and memory) else {}
-    _now = local_now()
+    # 「今天/现在」按用户时区（user_tz）算——异地用户看到的日期才对；user_tz=None 回退服务器 LOCAL_TZ（零行为变化）。
+    _now = datetime.now(user_tz or LOCAL_TZ)
     today = _now.strftime("%Y-%m-%d")
     # 当前完整时刻（含星期、时分），让咕咕知道"现在几点、星期几"，能答时间、按时段问候、排期
     _wd = "一二三四五六日"[_now.weekday()]
