@@ -329,6 +329,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
     # IM 出口兜底：发给用户/持久化之前确定性清洗（抹 tool_id 噪声、拦系统提示词泄露）
     if not errored:
+        sanitize.probe_leak_tail(text, "collect")   # 【临时诊断】疑似泄漏尾巴，确认后删
         from agent.outbound import sanitize_outbound
         text = sanitize_outbound(text)
         text = sanitize.strip_disallowed_emoji(text)   # 出口兜底删白名单外 emoji（prompt 压不住）
@@ -611,6 +612,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
 
     # 出口兜底清洗（跟 run_collect 一致）
     if not errored:
+        sanitize.probe_leak_tail(text, "stream")   # 【临时诊断】疑似泄漏尾巴，确认后删
         from agent.outbound import sanitize_outbound
         text = sanitize_outbound(text)
         text = sanitize.strip_disallowed_emoji(text)
@@ -789,4 +791,6 @@ async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: di
         text, _, _, errored, _, _ = await _collect(gen)
     finally:
         _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
+    if not errored:
+        sanitize.probe_leak_tail(text, "collect2")   # 【临时诊断】疑似泄漏尾巴，确认后删
     return sanitize.strip_disallowed_emoji(text) if not errored else ""

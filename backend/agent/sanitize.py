@@ -87,6 +87,28 @@ def strip_disallowed_emoji(text: str) -> str:
     return _EMOJI_RE.sub(lambda m: m.group(0) if m.group(1) in _KEEP_EMOJI else "", text)
 
 
+# ── 【临时诊断】疑似 MiniMax tool-call token 泄漏尾巴探针 ──────────────────────
+# 现象：咕咕回复偶发以 `[e~[` 之类符号残片结尾——StreamSanitizer 只登记了 `]<]minimax` 一种
+# 泄漏标记，这是同源的另一变体/被截断的残片，漏网透传到了正文末尾。此探针把可疑尾巴的 repr+hex
+# 打进 gugu.log（后台 Debug 面板可见），供确认确切字节形态后登记进 TRUNCATE_MARKERS。
+# 触发条件（`[e~[` 的两个强特征，尽量避开合法收尾）：① 回复以「挂着的」开方括号结尾；② 尾部出现
+# `~[`（波浪号紧跟开方括号）。避开 `~`/`）`/表格 `|`/代码围栏 ``` /颜文字 `>_<` 这些常见合法收尾。
+# 只记尾部 ~48 字符、不含用户输入/正文主体。★确认形态后连同调用点一起删除。
+_LEAK_TAIL_RE = re.compile(r"\[\s*$")   # 结尾挂着开方括号
+_LEAK_MID_RE = re.compile(r"~\[")        # 波浪号紧跟开方括号（[e~[ 的特征）
+
+
+def probe_leak_tail(text: str, where: str) -> None:
+    if not text:
+        return
+    if not (_LEAK_TAIL_RE.search(text) or _LEAK_MID_RE.search(text[-16:])):
+        return
+    import logging
+    seg = text[-48:]
+    logging.getLogger("agent.runner").warning(
+        "[leak-probe] where=%s tail=%r hex=%s", where, seg, seg.encode("utf-8").hex())
+
+
 # ── 历史消息清洗（Anthropic / MiniMax）──────────────────────────────────────
 # token 预算窗口「整条进出」裁剪，但不守 tool_use/tool_result 配对：窗口可能从一个
 # 带 tool_result 的 user 消息开头（对应的 assistant tool_use 被裁掉）→ 孤儿 tool_result，
