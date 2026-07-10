@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import func, select
@@ -53,7 +53,7 @@ async def test_ref_node_points_at_business_object(db, user_a):
 @pytest.mark.asyncio
 async def test_captured_at_can_be_backfilled_into_the_past(db, user_a):
     """补录昨天的想法：captured_at 可写成过去，created_at 仍是落库时间。"""
-    past = datetime(2020, 1, 2, 3, 4, 5)
+    past = datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc)   # UtcDateTime 读回 aware UTC
     n = MindNode(user_id=user_a.id, content_md="补录", content_plain="补录", captured_at=past)
     db.add(n)
     await db.commit()
@@ -158,7 +158,7 @@ async def test_content_change_resets_index_watermark(db, user_a):
 async def test_non_content_change_keeps_index_watermark(db, user_a):
     """只改标题/颜色（或将来只挪画布位置）不该触发重索引。"""
     n = await _mk_note(db, user_a, "原文")
-    stamp = datetime(2026, 1, 1)
+    stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)   # UtcDateTime 读回 aware UTC
     n.indexed_at = stamp
     n.indexed_hash = content_hash("原文")
     await db.commit()

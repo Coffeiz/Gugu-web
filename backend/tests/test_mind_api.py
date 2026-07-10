@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -66,7 +66,7 @@ async def test_create_note_derives_plain_text_and_marks_pending_index(db, user_a
 
 @pytest.mark.asyncio
 async def test_create_note_accepts_backfilled_captured_at(db, user_a):
-    past = datetime(2020, 5, 6, 7, 8)
+    past = datetime(2020, 5, 6, 7, 8, tzinfo=timezone.utc)   # datetime 列走 UtcDateTime，读回是 aware UTC
     resp = await _new_note(db, user_a, content="补录昨天的想法", captured_at=past)
     assert resp.captured_at == past
     assert resp.created_at > past                        # created_at 仍是落库时间

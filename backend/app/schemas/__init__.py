@@ -53,6 +53,7 @@ class UserResponse(CamelModel):
     avatar_url: Optional[str] = None
     created_at: str = ""
     im_channels: list[str] = []
+    timezone: Optional[str] = None   # IANA 时区；前端据此判断是否需要探测并回写
 
     @field_validator('created_at', mode='before')
     @classmethod
@@ -86,6 +87,7 @@ class UserResponse(CamelModel):
             "created_at": user.created_at,
             "avatar_url": avatar_url,
             "im_channels": getattr(user, "_im_channels", []),
+            "timezone": getattr(user, "timezone", None),
         }
         return cls.model_validate(data)
 
@@ -94,6 +96,7 @@ class UpdateProfile(CamelModel):
     display_name: Optional[str] = None
     current_password: Optional[str] = None
     new_password: Optional[str] = None
+    timezone: Optional[str] = None   # IANA 时区（前端首登探测 Intl…timeZone 回写）；"" 清空
 
 
 class DeleteAccount(CamelModel):

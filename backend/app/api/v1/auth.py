@@ -196,6 +196,18 @@ async def update_profile(
     if body.display_name is not None:
         current_user.display_name = body.display_name.strip() or None
 
+    if body.timezone is not None:
+        tz = body.timezone.strip()
+        if not tz:
+            current_user.timezone = None
+        else:
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+            try:
+                ZoneInfo(tz)   # 只接受合法 IANA 名，非法直接拒（别静默存脏值）
+            except (ZoneInfoNotFoundError, ValueError):
+                raise HTTPException(400, "无效的时区")
+            current_user.timezone = tz
+
     if body.new_password:
         if not body.current_password:
             raise HTTPException(400, "请输入当前密码")
