@@ -48,12 +48,13 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { PhGraph, PhMagnifyingGlass, PhNotePencil, PhX } from '@phosphor-icons/vue'
 import { useMindStore } from '@/stores/mind'
+import { localDayKey } from '@/utils/dateAttribution'
 import DatePicker from '@/components/common/DatePicker.vue'
 
 const route = useRoute()
 const store = useMindStore()
 const isNotes = computed(() => route.path.startsWith('/mind/notes'))
-const todayIso = computed(() => new Date().toISOString().slice(0, 10))
+const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不是 UTC）
 </script>
 
 <style scoped>

@@ -1262,10 +1262,10 @@ const projectTimelines = computed(() =>
       id:           `p${p.id}`,
       name:         p.name,
       client:       p.client,
-      startDate:    (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt && p.doneAt.slice(0, 10) < p.startDate)
-                      ? p.doneAt.slice(0, 10) : p.startDate,
+      startDate:    (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt && toIso(new Date(p.doneAt)) < p.startDate)
+                      ? toIso(new Date(p.doneAt)) : p.startDate,
       endDate:      (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt)
-                      ? p.doneAt.slice(0, 10) : p.deadline,
+                      ? toIso(new Date(p.doneAt)) : p.deadline,
       accent:       extractAccent(p.color),
       type:         'deadline',
       isProject:    true,

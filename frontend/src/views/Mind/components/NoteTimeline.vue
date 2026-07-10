@@ -41,6 +41,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import type { MindNote } from '@/services/api'
+import { localDayKey } from '@/utils/dateAttribution'
 import NoteCard from './NoteCard.vue'
 
 const props = defineProps<{
@@ -109,7 +110,7 @@ function columnVisualKey(index: number) {
 }
 
 const WEEK = ['日', '一', '二', '三', '四', '五', '六']
-const todayIso = new Date().toISOString().slice(0, 10)
+const todayIso = localDayKey(new Date())   // 本地今天（不是 UTC）
 
 /** 月份小字：同年只显「7月」，跨年带年份「25年12月」 */
 function monthLabel(iso: string) {

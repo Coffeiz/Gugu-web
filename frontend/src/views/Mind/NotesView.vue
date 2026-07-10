@@ -37,6 +37,7 @@ import { useLiveStore } from '@/stores/live'
 import { MindConflictError, useMindStore } from '@/stores/mind'
 import { toggleTaskInMd } from '@/composables/useMindEditor'
 import type { MindNote } from '@/services/api'
+import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import CaptureBar from './components/CaptureBar.vue'
 import DateIndex from './components/DateIndex.vue'
 import NoteTimeline from './components/NoteTimeline.vue'
@@ -273,7 +274,7 @@ watch(timelineGroups, async (groups) => {
 }, { immediate: true })
 
 // ── 新建：不移动当前视野；新日期卡在右侧单独入场，补录仍 toast 报落点 ──
-const _today = () => new Date().toISOString().slice(0, 10)
+const _today = () => localDayKey(new Date())   // 本地今天（不是 UTC）
 
 async function onCreated(md: string, capturedAt?: string) {
   let created: MindNote
@@ -283,9 +284,9 @@ async function onCreated(md: string, capturedAt?: string) {
     Message.error('记录失败，请重试')
     return
   }
-  if (capturedAt && capturedAt.slice(0, 10) !== _today()) {
+  if (capturedAt && localDayKey(parseUtc(capturedAt)) !== _today()) {
     // 补录落进左边较远的日期列，眼前不会有任何动静——不给反馈用户会以为没保存
-    const [, m, d] = capturedAt.slice(0, 10).split('-')
+    const [, m, d] = localDayKey(parseUtc(capturedAt)).split('-')
     Message.success(`已记到 ${+m} 月 ${+d} 日`)
     return
   }

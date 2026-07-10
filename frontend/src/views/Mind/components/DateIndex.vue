@@ -17,6 +17,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { localDayKey } from '@/utils/dateAttribution'
 
 const props = defineProps<{
   groups: { date: string; count: number }[]
@@ -249,7 +250,7 @@ onBeforeUnmount(() => {
   stopAnim()
 })
 
-const _today = new Date().toISOString().slice(0, 10)
+const _today = localDayKey(new Date())   // 本地今天（不是 UTC）
 const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
 /** 刻度标签：离今天 0/1/2 天说人话，3~7 天内说星期几，更早退回具体日期——比干巴巴
  *  的日期数字更有时间感（离今天越近的刻度本来就聚焦得越大越显眼，这个改动直接受益）。 */

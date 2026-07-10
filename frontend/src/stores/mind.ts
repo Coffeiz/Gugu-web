@@ -10,6 +10,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { mindApi, type MindNote, type MindNoteCreate, type MindNoteUpdate } from '@/services/api'
+import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 
 export class MindConflictError extends Error {
   constructor() { super('便签已被其他端修改') }
@@ -41,7 +42,7 @@ export const useMindStore = defineStore('mind', () => {
       : notes.value
     const groups: { date: string; items: MindNote[] }[] = []
     for (const n of [...pool].sort(byCapturedDesc)) {
-      const date = n.capturedAt.slice(0, 10)
+      const date = localDayKey(parseUtc(n.capturedAt))   // 按用户本地日分组（不是 UTC 日，否则跨午夜错一天）
       const last = groups[groups.length - 1]
       if (last && last.date === date) last.items.push(n)
       else groups.push({ date, items: [n] })
