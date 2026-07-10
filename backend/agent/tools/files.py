@@ -852,19 +852,37 @@ async def _delete_folder(db, user_id, args: dict):
     fo = await _find_folder(db, user_id, args)
     if isinstance(fo, str):
         return fo
-    # 与后端一致：内部文件移到根（folder_id=None，文件不删），再删文件夹记录
-    files = (await db.execute(
-        select(File).where(File.folder_id == fo.id, File.user_id == user_id)
-    )).scalars().all()
-    moved = len(files)
     fid = fo.id
     fname = fo.name
-    for f in files:
-        f.folder_id = None
-    await db.delete(fo)
+    # 与网页删文件夹一致：整棵子树的文件一并软删进回收站，子文件夹连同本文件夹一起删。
+    # （旧实现把直属文件移到根目录、不删，还漏了嵌套子文件夹——跟 UI / REST delete_folder 不一致，
+    #   表现为「咕咕删文件夹后里面的文件跑到上层目录」，这里修正为跟后端 REST 完全一致。）
+    all_fids = [fo.id]
+    queue = [fo.id]
+    while queue:
+        parent = queue.pop()
+        sub_ids = (await db.execute(
+            select(Folder.id).where(Folder.parent_id == parent, Folder.user_id == user_id)
+        )).scalars().all()
+        for sid in sub_ids:
+            all_fids.append(sid)
+            queue.append(sid)
+    now = now_utc()
+    trashed = 0
+    for folder_id in all_fids:
+        files = (await db.execute(
+            select(File).where(File.folder_id == folder_id, File.user_id == user_id, File.deleted_at.is_(None))
+        )).scalars().all()
+        for f in files:
+            f.deleted_at = now
+            trashed += 1
+    for folder_id in reversed(all_fids):   # 从最深层往上删，避免外键约束
+        sub = await get_owned(db, Folder, folder_id, user_id)
+        if sub:
+            await db.delete(sub)
     await db.commit()
-    note = (f"文件夹「{fname}」已删除；原有 {moved} 个文件已移至根目录（未删除、仍在文件库根目录，不进回收站）"
-            if moved else f"空文件夹「{fname}」已删除")
+    note = (f"文件夹「{fname}」已删除，其中 {trashed} 个文件已移入回收站（30 天内可恢复）"
+            if trashed else f"空文件夹「{fname}」已删除")
     return {"success": True, "deleted_folder_id": fid, "note": note}
 
 

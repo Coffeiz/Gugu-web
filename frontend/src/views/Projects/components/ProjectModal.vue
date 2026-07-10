@@ -328,7 +328,7 @@
                       </span>
                       <template v-else>{{ folder.name }}</template>
                     </div>
-                    <div class="fd-count">{{ folder.fileCount }} 个文件</div>
+                    <div class="fd-count">{{ pmFolderCount(folder.id) }} 个文件</div>
                   </div>
                 </div>
                 <!-- 文件卡片（当前层） -->
@@ -496,7 +496,7 @@
                     </span>
                   </span>
                   <span class="lr-text">—</span>
-                  <span class="lr-text">{{ folder.fileCount }} 项</span>
+                  <span class="lr-text">{{ pmFolderCount(folder.id) }} 项</span>
                   <span class="lr-text">—</span>
                   <span class="lr-actions">
                     <Transition name="sel-cb">
@@ -760,9 +760,8 @@ const localColor        = ref('')
 const localCurrentStage = ref('')
 const localStatus       = ref('')
 const fileViewMode   = ref('grid')
-const projectFiles   = ref([])
-const projectFolders = ref([])
-const folderFilesMap = ref({})   // { [folderId]: File[] }
+// Tier 3：文件/文件夹数据统一由全局 filesCache store 提供（currentFiles/currentFolders 从它派生），
+// 不再自持 projectFiles/projectFolders/folderFilesMap/subFolderMap 本地缓存。
 const openFolders    = ref(new Set())
 const folderStack    = ref([])   // 导航路径栈，根目录 = 空数组
 const pmNavStack     = ref([[]])  // history: array of folderStack snapshots
@@ -794,21 +793,27 @@ function pmGoForward() {
   folderStack.value = [...pmNavStack.value[pmNavCursor.value]]
   nextTick(() => { _isPmHistoryNav = false })
 }
-const subFolderMap   = ref({})   // { [parentId]: Folder[] }
-
-// 当前层的文件夹（根目录用 projectFolders，子目录用 subFolderMap）
+// Tier 3：当前层的文件/文件夹直接从全局 filesCache store 派生（单一数据源，不再自持
+// projectFiles/folderFilesMap/subFolderMap/projectFolders 本地缓存）。任何页面/SSE 改了 store，
+// 这里自动更新，也不会再有「两套缓存不一致」的 stale。根目录用项目根 getter，子目录用文件夹 getter。
 const currentFolders = computed(() => {
-  if (!folderStack.value.length) return projectFolders.value
+  const pid = props.project?.id
+  if (!folderStack.value.length) return fileCacheStore.getProjectRootFolders(pid)
   const parentId = folderStack.value[folderStack.value.length - 1].id
-  return subFolderMap.value[parentId] ?? []
+  return fileCacheStore.getSubFolders(parentId)
 })
 
-// 当前层的文件（根目录用 projectFiles，子目录用 folderFilesMap）
 const currentFiles = computed(() => {
-  if (!folderStack.value.length) return projectFiles.value
+  const pid = props.project?.id
+  if (!folderStack.value.length) return fileCacheStore.getProjectRootFiles(pid)
   const folderId = folderStack.value[folderStack.value.length - 1].id
-  return folderFilesMap.value[folderId] ?? []
+  return fileCacheStore.getFolderFiles(folderId)
 })
+
+// 文件夹卡片计数徽标：从 store 现算直属文件数（永远准，不用手工增减 fileCount）
+function pmFolderCount(folderId) {
+  return fileCacheStore.getFolderFiles(folderId).length
+}
 // tiny 已由 v-lazy-src 视口门控，不再全量预热
 
 // 兼容旧模板引用（进入文件夹后的文件）
@@ -840,9 +845,16 @@ function togglePmStages() {
   setTimeout(() => { pmSwitching.value = false }, FADE_MS + LAYOUT_MS + SETTLE_MS)  // ③ 新锚点真正落稳后淡入
 }
 
-const totalFileCount = computed(() =>
-  projectFiles.value.length + projectFolders.value.reduce((s, f) => s + (f.fileCount ?? 0), 0)
-)
+// 项目文件总数：根文件 + 本项目所有文件夹（含嵌套）里的文件。按文件夹归属数，不依赖 file.projectId
+// （历史文件的 project_id 可能为 null，只靠 folder_id 关联），从 store 现算。
+const totalFileCount = computed(() => {
+  const pid = props.project?.id
+  let n = fileCacheStore.getProjectRootFiles(pid).length
+  for (const f of fileCacheStore.allFolders) {
+    if (f.projectId === pid) n += fileCacheStore.getFolderFiles(f.id).length
+  }
+  return n
+})
 
 // ── 框选 ──────────────────────────────────────────────────────────────────────
 const pmGridRef = ref(null)
@@ -990,6 +1002,11 @@ async function downloadSelectedPm() {
   }
 }
 
+// Tier 3：数据从全局 filesCache store 派生（currentFiles/currentFolders/pmFolderCount）。所有增删改
+// 只需更新 store（updateFile/updateFolder/removeFile/removeFolder/addFile/addFolder），视图自动跟随——
+// 不再各自 refetch、维护本地缓存、手工调计数徽标、或判断「刷哪一层」。删的都是当前层子项，视图自动
+// 消失、导航路径不含它们，无需重置导航（仅清理指向已删文件夹的历史快照）。
+
 async function deleteSelectedPm() {
   const fids = [...pmSelectedFileIds.value]
   const dids = [...pmSelectedFolderIds.value]
@@ -1000,83 +1017,31 @@ async function deleteSelectedPm() {
       ...fids.map(id => filesApi.delete(id)),
       ...dids.map(id => foldersApi.delete(id)),
     ])
-    if (fids.length) fileCacheStore.removeFiles(fids)
-    if (dids.length) fileCacheStore.refresh()
-    const pid = props.project?.id; if (!pid) return
-    const [files, folders] = await Promise.all([
-      filesApi.list({ projectId: pid }),
-      foldersApi.list({ projectId: pid }),
-    ])
-    projectFiles.value   = files.filter(f => !f.folderId)
-    projectFolders.value = folders
-    folderFilesMap.value = {}; subFolderMap.value = {}; folderStack.value = []
-    pmNavStack.value = [[]]; pmNavCursor.value = 0
+    fileCacheStore.removeFiles(fids)
+    dids.forEach(id => { fileCacheStore.removeFolder(id); prunePmHistoryForFolder(id) })   // removeFolder 级联删子文件夹及其文件
   } catch (err) { console.error('[ProjectModal] 批量删除失败:', err.message) }
 }
 
 // ── 拖动移动 ──────────────────────────────────────────────────────────────────
-// pointer 模式，编排逻辑跟 Files/index.vue 共用同一份 useFileDragDrop——这里只提供 ProjectModal
-// 特有的规则：文件夹卡片/行选择器、面包屑只接收文件不接收文件夹（跟原生 dataTransfer 版本行为
-// 一致，未新增能力）、以及落地后的刷新策略（落面包屑只轻量刷新当前层文件；落文件夹卡片整体重
-// 新拉取文件+文件夹并把导航重置回根——这是原有行为，不是本次改造引入的）。
-async function _pmRefetchCurrentFiles() {
-  const pid = props.project?.id; if (!pid) return
-  const stack = folderStack.value
-  if (!stack.length) {
-    const files = await filesApi.list({ projectId: pid })
-    projectFiles.value = files.filter(f => !f.folderId)
-  } else {
-    const fid = stack[stack.length - 1].id
-    const files = await filesApi.list({ folderId: fid })
-    folderFilesMap.value = { ...folderFilesMap.value, [fid]: files }
-  }
-}
-async function _pmRefetchAllAndResetNav() {
-  const pid = props.project?.id; if (!pid) return
-  const [files, allFolders] = await Promise.all([
-    filesApi.list({ projectId: pid }),
-    foldersApi.list({ projectId: pid }),
-  ])
-  projectFiles.value   = files.filter(f => !f.folderId)
-  projectFolders.value = allFolders
-  folderFilesMap.value = {}; subFolderMap.value = {}; folderStack.value = []
-  pmNavStack.value = [[]]; pmNavCursor.value = 0
-}
-
-// 面包屑不接收文件夹（resolveBcTarget 的 acceptsFolders 恒为 false），这里只会在落到文件夹
-// 卡片上时被调用，所以固定走整体刷新+重置导航。
+// pointer 模式，编排逻辑跟 Files/index.vue 共用同一份 useFileDragDrop——ProjectModal 特有规则：
+// 文件夹卡片/行选择器、面包屑可接收文件与文件夹。落地更新 store 即可（视图自动派生）。
 async function movePmFoldersInto(folderIds, targetFolderId) {
   try {
     await Promise.all(folderIds.map(id => foldersApi.move(id, targetFolderId)))
+    folderIds.forEach(id => fileCacheStore.updateFolder(id, { parentId: targetFolderId }))
   } catch (err) { console.error('[ProjectModal] 移动文件夹失败:', err.message) }
-  await _pmRefetchAllAndResetNav()
+  // 不再重置导航——store 单源，移走的文件夹自动从当前视图消失，用户停在原地即可（老代码重置到根是
+  // 全量重拉的副作用，非有意行为）。
 }
 async function movePmFilesInto(fileIds, targetFolderId, { droppedOn }) {
-  // 必须显式带上 projectId（跟剪切粘贴 pmCtxPaste 一致）：后端 update_file 在没传 project_id 时
-  // 保留文件当前 project_id，而项目文件夹里的文件 project_id 可能是 null（只靠 folder_id 关联）。
-  // 拖到根（folderId=null）时若不带 projectId，new_space 会退成 personal → 文件落到个人库根，
-  // 项目根视图按 project_id 查不到、看起来「拖不上去」。带上 projectId 后落点确定留在本项目。
+  // 必须显式带上 projectId：后端 update_file 未传 project_id 时保留原值，而项目文件夹内文件的
+  // project_id 可能为 null（只靠 folder_id 关联）；拖到根不带 projectId 会落到个人库根、项目根查不到。
   const projectId = props.project?.id
   try {
     await Promise.all(fileIds.map(id => filesApi.update(id, { folderId: targetFolderId, projectId })))
+    fileIds.forEach(id => fileCacheStore.updateFile(id, { folderId: targetFolderId, projectId }))
   } catch (err) { console.error('[ProjectModal] 移动失败:', err.message) }
-  if (droppedOn === 'breadcrumb') {
-    // 计数徽标：文件从当前层拖到面包屑某祖先层 → 源(当前)文件夹减、目标文件夹加（根 folderId==null 无卡片、无操作）
-    _pmAdjustFolderCount(pmCurrentFolderId(), -fileIds.length)
-    _pmAdjustFolderCount(targetFolderId, fileIds.length)
-    await _pmRefetchCurrentFiles()   // 当前文件夹视图：移走的文件消失
-    // 目标层（根 or 某祖先文件夹）不是当前视图，而 navigateTo 吃缓存、不重拉 → 必须主动把目标层
-    // 缓存刷新，否则导航回去看到的是旧缓存、要手动刷新才出现刚移来的文件。
-    if (targetFolderId == null) {
-      const files = await filesApi.list({ projectId })
-      projectFiles.value = files.filter(f => !f.folderId)
-    } else {
-      const files = await filesApi.list({ folderId: targetFolderId })
-      folderFilesMap.value = { ...folderFilesMap.value, [targetFolderId]: files }
-    }
-  } else {
-    await _pmRefetchAllAndResetNav()
-  }
+  // 视图/计数都从 store 现算，移走的文件自动消失、目标层自动出现，无需刷新或重置导航（停在原地）。
 }
 
 const {
@@ -1089,9 +1054,11 @@ const {
   folderSelector: '.folder-card, .folder-list-row',
   bcSelector: '.bc-seg',
   resolveBcTarget(idx) {
-    if (idx === -1) return { targetFolderId: null, acceptsFiles: true, acceptsFolders: false }
+    // 面包屑各段（项目根 idx=-1 / 各祖先文件夹）都接收文件与文件夹——把子文件夹拖到「项目文件」根
+    // 或某个祖先层。跟 Files 页面包屑一致；移动文件夹到根/祖先在 store 下是干净的 parent 改父。
+    if (idx === -1) return { targetFolderId: null, acceptsFiles: true, acceptsFolders: true }
     const seg = folderStack.value[idx]
-    return seg ? { targetFolderId: seg.id, acceptsFiles: true, acceptsFolders: false } : null
+    return seg ? { targetFolderId: seg.id, acceptsFiles: true, acceptsFolders: true } : null
   },
   cancelBoxDrag: () => _cancelPmBoxDrag(),
   clearSelection: clearPmSelection,
@@ -1164,33 +1131,6 @@ const folderInputRef = ref(null)
 
 watch(showNewFolder, v => { if (v) nextTick(() => folderInputRef.value?.focus()) })
 
-async function loadFolders(projectId, parentId = null) {
-  try {
-    const folders = await foldersApi.list({ projectId, parentId })
-    if (parentId == null) {
-      projectFolders.value = folders
-    } else {
-      subFolderMap.value = { ...subFolderMap.value, [parentId]: folders }
-    }
-  } catch {
-    if (parentId == null) projectFolders.value = []
-    else subFolderMap.value = { ...subFolderMap.value, [parentId]: [] }
-  }
-}
-
-// 本地增减某文件夹卡片的 fileCount 徽标（不打 API）。该卡片可能在 projectFolders（根层）或任意
-// subFolderMap 层里——之前删/移/传文件后只 loadFolders(根层)，嵌套文件夹的「N 个文件」徽标一直
-// stale。这里逐层找到那张卡就地增减，folderId==null（根，没有卡片）时无操作。
-function _pmAdjustFolderCount(folderId, delta) {
-  if (folderId == null || !delta) return
-  const pf = projectFolders.value.find(f => f.id === folderId)
-  if (pf) { pf.fileCount = Math.max(0, (pf.fileCount ?? 0) + delta); return }
-  for (const k of Object.keys(subFolderMap.value)) {
-    const f = (subFolderMap.value[k] || []).find(f => f.id === folderId)
-    if (f) { f.fileCount = Math.max(0, (f.fileCount ?? 0) + delta); return }
-  }
-}
-
 async function createFolder() {
   const name = newFolderName.value.trim()
   if (!name || !props.project?.id) return
@@ -1199,17 +1139,9 @@ async function createFolder() {
   folderLoading.value = true
   try {
     const created = await foldersApi.create(props.project.id, name, parentId)
+    fileCacheStore.addFolder(created)   // 视图（currentFolders）自动出现该文件夹
     newFolderName.value = ''
     showNewFolder.value = false
-    // 刷新当前层级的文件夹列表
-    if (parentId == null) {
-      await loadFolders(props.project.id)
-    } else {
-      subFolderMap.value = {
-        ...subFolderMap.value,
-        [parentId]: [created, ...(subFolderMap.value[parentId] ?? [])],
-      }
-    }
   } catch (e) {
     console.error('[ProjectModal] 新建文件夹失败:', e.message)
   } finally {
@@ -1220,19 +1152,8 @@ async function createFolder() {
 async function enterFolder(folder) {
   folderStack.value = [...folderStack.value, folder]
   _pushPmHistory()
-  // 加载该层的文件和子文件夹（如未缓存）
-  const promises = []
-  if (!folderFilesMap.value[folder.id]) {
-    promises.push(
-      filesApi.list({ folderId: folder.id })
-        .then(files => { folderFilesMap.value = { ...folderFilesMap.value, [folder.id]: files } })
-        .catch(() => { folderFilesMap.value = { ...folderFilesMap.value, [folder.id]: [] } })
-    )
-  }
-  if (!subFolderMap.value[folder.id]) {
-    promises.push(loadFolders(props.project?.id ?? null, folder.id))
-  }
-  await Promise.all(promises)
+  // Tier 3：该层文件/子文件夹已在全局 store 里（一次性全量），进入即由 currentFiles/currentFolders
+  // 现算，无需懒加载/缓存。
 }
 
 function navigateTo(idx) {
@@ -1264,13 +1185,7 @@ async function commitRename() {
   if (!id || !name) return
   try {
     await filesApi.update(id, { displayName: name })
-    // 更新本地数据
-    const inRoot = projectFiles.value.find(f => f.id === id)
-    if (inRoot) inRoot.displayName = name
-    for (const fid of Object.keys(folderFilesMap.value)) {
-      const f = folderFilesMap.value[fid]?.find(f => f.id === id)
-      if (f) f.displayName = name
-    }
+    fileCacheStore.updateFile(id, { displayName: name })
   } catch (e) {
     console.error('[ProjectModal] 重命名失败:', e.message)
   }
@@ -1282,15 +1197,6 @@ async function deleteFile(file) {
   try {
     await filesApi.delete(file.id)
     fileCacheStore.removeFile(file.id)
-    projectFiles.value = projectFiles.value.filter(f => f.id !== file.id)
-    for (const fid of Object.keys(folderFilesMap.value)) {
-      folderFilesMap.value = {
-        ...folderFilesMap.value,
-        [fid]: (folderFilesMap.value[fid] ?? []).filter(f => f.id !== file.id),
-      }
-    }
-    // 更新被删文件所属文件夹的计数徽标（就地增减，覆盖任意嵌套层；根文件 folderId==null 无操作）
-    _pmAdjustFolderCount(file.folderId, -1)
   } catch (e) {
     console.error('[ProjectModal] 删除失败:', e.message)
   }
@@ -1336,8 +1242,7 @@ async function commitFolderRename() {
   if (!id || !name) return
   try {
     await foldersApi.rename(id, name)
-    // 同 deleteFolderCard：刷当前层，否则子文件夹里重命名其子文件夹后当前视图仍显旧名。
-    await loadFolders(props.project.id, pmCurrentFolderId())
+    fileCacheStore.updateFolder(id, { name })
   } catch (e) {
     console.error('[ProjectModal] 文件夹重命名失败:', e.message)
   }
@@ -1368,10 +1273,7 @@ async function deleteFolderCard(folder) {
   prunePmHistoryForFolder(folder.id)
   try {
     await foldersApi.delete(folder.id)
-    fileCacheStore.refresh()   // 后台静默刷新，让 allFiles 准确反映删除后的状态
-    // 刷「当前层」文件夹：在子文件夹里删其子文件夹时，当前视图读 subFolderMap[当前层]，
-    // 写死 parentId=null 只刷根层 → 被删文件夹还留在网格里。按当前层 id 刷才对得上。
-    await loadFolders(props.project.id, pmCurrentFolderId())
+    fileCacheStore.removeFolder(folder.id)   // 级联删该文件夹的子文件夹及其文件；视图自动更新
   } catch (e) {
     console.error('[ProjectModal] 删除文件夹失败:', e.message)
   }
@@ -1398,53 +1300,19 @@ watch(() => props.project?.id, async (id) => {
   localStatus.value       = props.project?.status       ?? ''
   recalcStageState()
   editingStage.value   = null
-  projectFiles.value   = []
-  projectFolders.value = []
-  folderFilesMap.value = {}
-  subFolderMap.value   = {}
   openFolders.value    = new Set()
   folderStack.value    = []
+  pmNavStack.value     = [[]]
+  pmNavCursor.value    = 0
   showNewFolder.value  = false
   await nextTick()
   initializing = false
   if (!id) return
-  // 热缓存：从 filesCacheStore 立即预填，避免等待 API 时文件区域为空
-  if (fileCacheStore.loaded) {
-    projectFiles.value   = fileCacheStore.getProjectRootFiles(id)
-    projectFolders.value = fileCacheStore.getProjectRootFolders(id)
-  }
-  try {
-    const [files, folders] = await Promise.all([
-      filesApi.list({ projectId: id }),
-      foldersApi.list({ projectId: id }),
-    ])
-    projectFiles.value   = files.filter(f => !f.folderId)
-    projectFolders.value = folders
-  } catch {
-    // 后端未启动时保持空列表
-  }
+  // Tier 3：文件/文件夹从全局 filesCache store 派生（currentFiles/currentFolders），这里只确保 store
+  // 已加载（store 一次性拉全量、含本项目数据）。store 自带 SSE + visibilitychange，咕咕/IM 或别处
+  // 改了文件会自动流到 currentFiles/currentFolders，无需本组件再自持缓存或单独订阅 rev.files 重拉。
+  if (!fileCacheStore.loaded && !fileCacheStore.loading) fileCacheStore.load()
 }, { immediate: true })
-
-// 实时刷新：咕咕（web 聊天 / IM）移动·保存·删除文件后，后端推 files 事件 → 重拉本项目文件，
-// 不必关闭重开弹窗。重拉根目录文件 + 文件夹；若正停在某子文件夹里，也刷新它的文件。
-async function reloadProjectFiles() {
-  const id = props.project?.id
-  if (!id) return
-  try {
-    const [files, folders] = await Promise.all([
-      filesApi.list({ projectId: id }),
-      foldersApi.list({ projectId: id }),
-    ])
-    projectFiles.value   = files.filter(f => !f.folderId)
-    projectFolders.value = folders
-    const stack = folderStack.value
-    if (stack.length) {
-      const fid = stack[stack.length - 1].id
-      folderFilesMap.value = { ...folderFilesMap.value, [fid]: await filesApi.list({ folderId: fid }) }
-    }
-  } catch { /* 后端不可用时保持现状 */ }
-}
-watch(() => liveStore.rev.files, () => { reloadProjectFiles() })
 
 // 实时同步阶段/待办：咕咕（web 聊天 / IM）用 set_stages/update_todo/add_todo 等改了阶段后，
 // projectStore 会在 rev.projects 上 fetchProjects 刷新；这里监听 store 里本项目 stages 的变化，
@@ -1940,16 +1808,13 @@ async function uploadFiles(items) {
   await uploadFilesWithFolders(items, {
     projectId: props.project.id, baseFolderId,
     onFolderCreated: (created) => {
+      // 顶层被 ghost 追踪的文件夹（正在当前层显示上传进度）：先攒着，等 ghost 完成再加进 store，
+      // 避免卡片跟 ghost 同屏像「两个文件夹」。其余（更深层，当前层看不到）直接加进 store。
       if (folderGhosts.has(created.name) && (created.parentId ?? null) === baseFolderId) {
         pendingTopFolders.set(created.name, created)
         return
       }
-      if ((created.parentId ?? null) !== baseFolderId) return
-      if (baseFolderId == null) {
-        projectFolders.value = [...projectFolders.value, created]
-      } else {
-        subFolderMap.value = { ...subFolderMap.value, [baseFolderId]: [...(subFolderMap.value[baseFolderId] ?? []), created] }
-      }
+      fileCacheStore.addFolder(created)
     },
     uploadOne: async (file, resolvedFolderId, relativePath) => {
       const top = relativePath.includes('/') ? relativePath.slice(0, relativePath.indexOf('/')) : null
@@ -1964,12 +1829,7 @@ async function uploadFiles(items) {
         if (!folderGhost) return
         bumpFolderGhost(folderGhost, failed)
         if (folderGhost.done >= folderGhost.total && pendingTopFolders.has(top)) {
-          const pending = pendingTopFolders.get(top)
-          if (baseFolderId == null) {
-            projectFolders.value = [...projectFolders.value, pending]
-          } else {
-            subFolderMap.value = { ...subFolderMap.value, [baseFolderId]: [...(subFolderMap.value[baseFolderId] ?? []), pending] }
-          }
+          fileCacheStore.addFolder(pendingTopFolders.get(top))   // ghost 完成，真实文件夹加进 store 换上卡片
           pendingTopFolders.delete(top)
         }
       }
@@ -1990,32 +1850,11 @@ async function uploadFiles(items) {
         else settleFolder(false)
 
         if (overwriteId) {
-          // 覆盖：同一个文件 id 换了内容，更新缓存/本地列表里已有那条，不再插一条新的；
-          // 旧缩略图缓存也要清（服务端缓存已经在后端清过）。
+          // 覆盖：同一个文件 id 换了内容，更新 store 里已有那条，不再插新的；旧缩略图缓存清掉。
           if (created) fileCacheStore.updateFile(overwriteId, created)
           clearThumbCache(overwriteId)
-          const replaceIn = (arr) => arr.map(f => f.id === overwriteId ? created : f)
-          if (folder) {
-            folderFilesMap.value = { ...folderFilesMap.value, [folder.id]: replaceIn(folderFilesMap.value[folder.id] ?? []) }
-          } else {
-            projectFiles.value = replaceIn(projectFiles.value)
-          }
         } else {
-          if (created) fileCacheStore.addFile(created)
-          // 只有落在「当前正看着的」这一层才即时插进本地列表；落进拖拽新建的子文件夹（当前
-          // 视图看不到）靠批量结束后的 loadFolders 刷新拿到服务端算好的 fileCount，不在这现算
-          if (resolvedFolderId === baseFolderId) {
-            if (folder) {
-              folderFilesMap.value = {
-                ...folderFilesMap.value,
-                [folder.id]: [created, ...(folderFilesMap.value[folder.id] ?? [])],
-              }
-              const fd = projectFolders.value.find(fd => fd.id === folder.id)
-              if (fd) fd.fileCount = (fd.fileCount ?? 0) + 1
-            } else {
-              projectFiles.value.unshift(created)
-            }
-          }
+          if (created) fileCacheStore.addFile(created)   // 视图（currentFiles）与文件夹计数自动更新
         }
       } catch (e) {
         console.error('[ProjectModal] 上传失败:', e.message)
@@ -2024,10 +1863,7 @@ async function uploadFiles(items) {
       }
     },
   })
-
-  // 兜底：顶层文件夹已经在 settleFolder 里随 ghost 完成同步插过了，这里再刷新一次当前层级，
-  // 把服务端算好的 fileCount 校准回来（本地是边传边手动 +1，量大时可能跟服务端有细微出入）
-  if (items.some(it => it.relativePath.includes('/'))) await loadFolders(props.project.id, baseFolderId)
+  // Tier 3：文件/文件夹都已随上传逐个进 store，视图与计数自动准确，无需再整层重拉校准。
 }
 
 async function handleFileInput(e) {
@@ -2119,11 +1955,8 @@ async function pmCtxDelete() {
   const ids = pmCtx.value.type === 'multi-file' ? [...pmSelectedFileIds.value] : [pmCtx.value.target.id]
   pmCtx.value.visible = false
   await Promise.all(ids.map(id => filesApi.delete(id)))
-  fileCacheStore.removeFiles(ids)
-  // 删的都是当前层文件，父文件夹 = 当前所在文件夹；就地减计数徽标（之前右键删完全不更新计数）
-  _pmAdjustFolderCount(pmCurrentFolderId(), -ids.length)
+  fileCacheStore.removeFiles(ids)   // 视图与文件夹计数自动更新
   clearPmSelection()
-  await pmRefreshCurrentFolder()
 }
 
 function pmCtxDownloadFolder() {
@@ -2142,52 +1975,25 @@ async function pmCtxDeleteFolder() {
   await deleteFolderCard(f)
 }
 
-async function pmRefreshCurrentFolder() {
-  const pid = props.project?.id; if (!pid) return
-  const stack = folderStack.value
-  if (!stack.length) {
-    const files = await filesApi.list({ projectId: pid })
-    projectFiles.value = files.filter(f => !f.folderId)
-  } else {
-    const fid = stack[stack.length - 1].id
-    const files = await filesApi.list({ folderId: fid })
-    folderFilesMap.value = { ...folderFilesMap.value, [fid]: files }
-  }
-}
-
 async function pmCtxPaste() {
   pmCtx.value.visible = false
   const folderId  = pmCurrentFolderId()   // 当前所在文件夹 id；根目录为 null
   const projectId = props.project?.id
-  const cutFileIds = new Set()   // 剪切走的文件 id，粘贴后要从「源层」缓存剔除
   try {
-    let movedFolders = false
     if (pmCbStore.type === 'cut') {
-      pmCbStore.fileIds.forEach(id => cutFileIds.add(id))
-      // 之前只搬 fileIds、漏了 folderIds → 剪切文件夹后粘贴什么都不做（子文件夹没法移到项目根，
-      // 而面包屑根又不接收文件夹拖拽，等于没有任何入口）。这里补上文件夹的 parent 改父（移到当前层）。
+      // 剪切：文件改 folderId+projectId、文件夹改 parent 到当前层。更新 store 后，源层/目标层视图
+      // 与文件夹计数都自动跟随（源层文件消失、目标层出现），不再需要逐层剔除/刷新。
       await Promise.all([
         ...pmCbStore.fileIds.map(id => filesApi.update(id, { folderId, projectId })),
         ...pmCbStore.folderIds.map(id => foldersApi.move(id, folderId)),
       ])
-      movedFolders = pmCbStore.folderIds.length > 0
+      pmCbStore.fileIds.forEach(id => fileCacheStore.updateFile(id, { folderId, projectId }))
+      pmCbStore.folderIds.forEach(id => fileCacheStore.updateFolder(id, { parentId: folderId }))
       pmCbStore.clear()
     } else if (pmCbStore.type === 'copy') {
-      await Promise.all(pmCbStore.fileIds.map(id =>
-        filesApi.copy(id, { folderId, projectId })
-      ))
+      const created = await Promise.all(pmCbStore.fileIds.map(id => filesApi.copy(id, { folderId, projectId })))
+      created.forEach(c => { if (c) fileCacheStore.addFile(c) })
     }
-    // 动过文件夹 → 文件夹树变了，走整体刷新+重置导航（跟拖拽移动文件夹的 movePmFoldersInto 一致）。
-    if (movedFolders) { await _pmRefetchAllAndResetNav(); return }
-    // 剪切的文件从「源层」（可能是别的文件夹/根，源层未知）剔除——逐层过滤最稳，否则导航回源文件夹
-    // 会看到已经移走的文件（stale）。目标层随后 pmRefreshCurrentFolder 重新拉取会把它们带回来。
-    if (cutFileIds.size) {
-      projectFiles.value = projectFiles.value.filter(f => !cutFileIds.has(f.id))
-      const m = { ...folderFilesMap.value }
-      for (const k of Object.keys(m)) m[k] = (m[k] || []).filter(f => !cutFileIds.has(f.id))
-      folderFilesMap.value = m
-    }
-    await pmRefreshCurrentFolder()   // 目标（当前）层：带回刚粘进来的文件
   } catch (e) { console.error('[PM] 粘贴失败:', e) }
 }
 
