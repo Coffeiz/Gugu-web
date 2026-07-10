@@ -28,7 +28,10 @@ interface PhysicsDragOpts {
   resolveAbsorbTarget?: (under: Element) => Element | null
 }
 
-let _ghostImg = null
+interface Box { left: number; top: number; width: number; height: number }
+interface ActiveDrag { raf: number; end: () => void }
+
+let _ghostImg: HTMLCanvasElement | null = null
 function _transparentGhost() {
   if (_ghostImg) return _ghostImg
   // canvas 同步可用（不需要异步解码），避免第一次拖动时 Image 未 ready 导致退回浏览器默认 ghost（favicon）。
@@ -44,7 +47,7 @@ function _transparentGhost() {
   return c
 }
 
-let _active = null   // 同一时刻只有一个拖拽
+let _active: ActiveDrag | null = null   // 同一时刻只有一个拖拽
 
 // 落地飞行动画（flyTo/flyMorph）跑在独立的 rAF/timeout 里，跟 _active 生命周期不同步——
 // end() 一开始就清空 _active，落地动画（0.55~0.7s）还在后台继续。这期间若立刻在原位重新抓
@@ -100,17 +103,17 @@ function _retargetLandings(kids: HTMLElement[], _rectsIgnored?: any[]) {
   }
 }
 
-function _childCards(container, exclude) {
-  return [...container.children].filter(c =>
+function _childCards(container: HTMLElement, exclude: Element | null) {
+  return ([...container.children] as HTMLElement[]).filter(c =>
     c.nodeType === 1 && c !== exclude && !c.classList.contains('phys-drag-clone'))
 }
-const _rects = els => els.map(e => e.getBoundingClientRect())
+const _rects = (els: Element[]) => els.map(e => e.getBoundingClientRect())
 
 // 最近的可纵向滚动祖先（兜底：看板/文件库的已知滚动容器，避免 overflow 检测在解锁瞬间抽风）
-function _scrollParent(node) {
+function _scrollParent(node: Element | null): HTMLElement | null {
   // 先试已知滚动容器：一次 closest 命中即返回，省掉逐级 getComputedStyle 遍历。
   // drop 时布局已被 moveProject 改脏，每次 getComputedStyle 都会触发一次强制样式/布局重算（trace: get scrollTop 105ms）。
-  const known = node && node.closest && node.closest('.col-body, .files-main')
+  const known = (node && node.closest && node.closest('.col-body, .files-main')) as HTMLElement | null
   if (known && known.scrollHeight > known.clientHeight + 1) return known
   let p = node && node.parentElement
   while (p) {
@@ -123,11 +126,11 @@ function _scrollParent(node) {
 
 // 自己用 rAF 做滚动补间——scrollBy({behavior:'smooth'}) 在某些情况下(reduce-motion / drop 上下文)会退化成瞬间；
 // 自实现保证一定有动画，且时长可控（默认 300ms 的快速 ease-out）
-function _animateScroll(el, dy, dur = 300) {
+function _animateScroll(el: HTMLElement, dy: number, dur = 300) {
   const from = el.scrollTop
-  const ease = t => 1 - Math.pow(1 - t, 3)
-  let start = null
-  const tick = (now) => {
+  const ease = (t: number) => 1 - Math.pow(1 - t, 3)
+  let start: number | null = null
+  const tick = (now: number) => {
     if (start === null) start = now
     const t = Math.min(1, (now - start) / dur)
     el.scrollTop = from + dy * ease(t)
@@ -207,9 +210,9 @@ function _landingZIndex(el: HTMLElement | null): number {
 }
 
 // FLIP：布局已经变到「现状(toRects)」后，让 kids 先回到 fromRects 再动画到现状
-function _invertPlay(kids, fromRects, toRects, dur = 340) {
+function _invertPlay(kids: HTMLElement[], fromRects: DOMRect[], toRects: DOMRect[], dur = 340) {
   _retargetLandings(kids)   // 自行量干净落点，不吃这里可能被残留 transform 污染的 toRects
-  kids.forEach((c, i) => {
+  kids.forEach((c: HTMLElement, i: number) => {
     const dx = fromRects[i].left - toRects[i].left
     const dy = fromRects[i].top  - toRects[i].top
     if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return
@@ -235,7 +238,7 @@ function _invertPlay(kids, fromRects, toRects, dur = 340) {
  *   pointer:true 改用 pointer 事件驱动（setPointerCapture 跳过每帧命中测试，省掉原生 dragover 的 HitTest）；
  *   onDrop({x,y}): pointer 模式下松手时回调，由调用方据落点执行业务移动（原生模式靠各列 @drop 落定）。
  */
-export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
+export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTMLElement, opts: PhysicsDragOpts = {}) {
   if (!sourceEl || _active) return
   _flushPendingCleanup(sourceEl)   // 只打断「同一张卡」上一趟还没飞完的落地动画，避免重叠成「两张卡」
   // 上一次拖拽的落地动画要等 transitionend（~420~580ms）才把这张卡复位显示；这段窗口期内
@@ -246,8 +249,8 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
   sourceEl.style.display = ''
   sourceEl.style.opacity = ''
   const pointer = opts.pointer === true
-  const pointerId = pointer ? event.pointerId : null
-  if (!pointer) { try { event.dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {} }
+  const pointerId = pointer ? (event as PointerEvent).pointerId : null
+  if (!pointer) { try { (event as DragEvent).dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {} }
 
   // 二阶弹簧-阻尼跟随（有惯性/动量，起步被弹簧甩出去而非黏滞渗出）：
   //   SPRING 越大越跟手、越小越拖；ZETA<1 略带动量回弹，=1 临界不过冲。
@@ -291,7 +294,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
 
   // pointer 模式：把后续 pointermove 全部捕获到 body（源卡随后会 display:none，捕在它身上会丢捕获）。
   // 捕获后浏览器不再为每次移动做命中测试 —— 这正是原生 dragover 省不掉、吃掉 1.3s 的那笔 HitTest。
-  if (pointer) { try { document.body.setPointerCapture(pointerId) } catch {} }
+  if (pointer) { try { document.body.setPointerCapture(pointerId!) } catch {} }
 
   // 拖拽期间锁住看板列的滚动：挡掉浏览器原生拖拽的「边缘自动滚动」——否则列在拖动时就被原生滚到底，
   // 落点时已无可滚（dy≈0），我们的受控平滑滚动跑不起来，看着就是「瞬间到底部」。列用的是 3px overlay
@@ -323,22 +326,22 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
 
   const DAMP = 2 * ZETA * Math.sqrt(SPRING)   // 阻尼系数（临界=2√k）
   const KV   = -Math.log(1 - 0.12) * 60       // 旋转速度低通（每秒）
-  let lastT = null
+  let lastT: number | null = null
   const GROW_MS = 160   // 抓起→抬起(LIFT)的渐入时长，纯时间驱动、跟位置弹簧无关
   let liftT = 0         // 0→1 抬起放大进度，frame() 里推进
 
-  function onOver(e) {
+  function onOver(e: PointerEvent | DragEvent) {
     // 让整页都成为有效放置区：在任意处（包括拖出范围）松手都立刻触发 drop，
     // 避免无效拖放时浏览器先播放「飞回源」动画、dragend 被推迟 ~250ms 的延迟
     e.preventDefault()
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    { const _dt = (e as DragEvent).dataTransfer; if (_dt) _dt.dropEffect = 'move' }
     if (e.clientX || e.clientY) {
       target.x = e.clientX; target.y = e.clientY
       opts.onDragOver?.({ x: e.clientX, y: e.clientY })
     }
   }
 
-  function frame(now) {
+  function frame(now: number) {
     // 真实帧间隔（秒）；首帧按 1/60，单帧卡顿/切后台回来则夹住，避免一帧跳一大步
     let dt = lastT === null ? 1 / 60 : (now - lastT) / 1000
     lastT = now
@@ -368,7 +371,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
     clone.style.transform =
       `translate3d(${(pos.x - half.x).toFixed(2)}px, ${(pos.y - GRABY).toFixed(2)}px, 0)` +
       ` perspective(760px) rotateX(${rotX.toFixed(2)}deg) rotateZ(${rotZ.toFixed(2)}deg) scale(${curLift})`
-    _active.raf = requestAnimationFrame(frame)
+    _active!.raf = requestAnimationFrame(frame)
   }
 
   function end() {
@@ -381,7 +384,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
       document.removeEventListener('pointermove', onOver)
       document.removeEventListener('pointerup', end)
       document.removeEventListener('pointercancel', end)
-      try { document.body.releasePointerCapture(pointerId) } catch {}
+      try { document.body.releasePointerCapture(pointerId!) } catch {}
     } else {
       document.removeEventListener('dragover', onOver)
       document.removeEventListener('drop', end, true)
@@ -399,12 +402,12 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
                  : null
     const sel = idAttr ? `[${idAttr[0]}="${idAttr[1]}"]` : null
 
-    let done = false, onEnd = null
-    const SLOT = box => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(1)`
+    let done = false; let onEnd: (e: TransitionEvent) => void = () => {}
+    const SLOT = (box: Box) => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(1)`
 
     // 单克隆：只用于吸入(shrink)——缩小淡出进文件夹/面包屑，没有「露出真卡」这一步，
     // 不存在克隆→真卡外观不一致的问题。归位/落到新位置一律走下面的 flyMorph（双克隆交叉淡变）。
-    const flyTo = (box, shrink) => {
+    const flyTo = (box: Box, shrink: boolean) => {
       clone.style.transition = `transform 0.55s ${_SETTLE}, opacity 0.4s ease`
       if (shrink) {
         const cx = box.left + box.width / 2, cy = box.top + box.height / 2
@@ -431,7 +434,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
     // 双克隆样式渐变：clone(旧样式) 与 clone2(新样式) 同起点、同轨迹飞向落点，飞行途中：
     //  ① 用 scale 把卡片实际拉伸/缩短到落点卡的尺寸（长短按需变化，而非靠淡变蒙混）；
     //  ② 交叉淡变完成内容（旧→新样式）。看到的是飞动的卡片自己变形+变样式并落位。
-    const flyMorph = (initialBox, revealEl, clone2) => {
+    const flyMorph = (initialBox: Box, revealEl: HTMLElement, clone2: HTMLElement) => {
       // box 用 let：飞行途中可能被 _retargetLandings 改指到新位置（见其注释），finish() 收尾时
       // 要读的是「最新」这份，不是刚进来那一刻的静态快照。
       let box = initialBox
@@ -470,7 +473,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
       // 各自分解成矩阵再插，路径不稳 → 并发拖拽（先拖 B 再拖 A、松开 A 让 B 归位）时 B 的回退
       // 会瞬移/曲线不一致。改用 getBoundingClientRect 拿当前真实框、再用 tfFor 重建同款函数式
       // 表示，freeze 与 target 同构，插值干净，跟普通 FLIP 让位一致。
-      const retarget = (newBox) => {
+      const retarget = (newBox: Box) => {
         if (done) return
         const r = clone2.getBoundingClientRect()   // 当前真实可见框（含插值中间态；landing 无旋转，rect 即真位置）
         box = newBox
@@ -548,7 +551,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
 
     // 占位重新展开：FLIP 邻居从「合拢」动到「展开」。el 当前可能已收合(home)或已展开(落点新卡)，
     // 两种都要先拿到 closed 和 open 两套位置
-    const animateOpen = (cont, el) => {
+    const animateOpen = (cont: HTMLElement, el: HTMLElement) => {
       const sibs = _childCards(cont, el)
       let closedR, openR
       if (el.style.display === 'none') {   // 已收合（home）：量 closed → 展开 → 量 open
@@ -567,7 +570,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
     }
 
     // 落点若在可滚动列里滚出视口 → 快速滚进可视区，并返回滚动后的最终落点（让克隆体飞到那里）
-    const revealInScroller = (sc, box) => {
+    const revealInScroller = (sc: HTMLElement | null, box: DOMRect): Box => {
       if (!sc) return box
       const r = sc.getBoundingClientRect(), pad = 6
       let dy = box.bottom + pad > r.bottom ? box.bottom + pad - r.bottom
@@ -620,7 +623,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
         const el = document.querySelector<HTMLElement>(sel)
         if (el && el.isConnected && el !== sourceEl) {
           if (el.offsetWidth > 0) {   // 落点可见 → 占位 FLIP 展开；双克隆同轨迹飞行 + 样式渐变
-            animateOpen(el.parentElement, el)   // 它为量 FLIP 会瞬间 display:none 落点卡，故滚动放其后
+            animateOpen(el.parentElement!, el)   // 它为量 FLIP 会瞬间 display:none 落点卡，故滚动放其后
             // 落点在可滚动列里若滚出视口 → 快速滚进可视区，box 取滚动后的最终落点
             const sc = _scrollParent(el)
             const box = revealInScroller(sc, el.getBoundingClientRect())
@@ -668,7 +671,7 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
     document.addEventListener('drop', end, true)   // 捕获阶段，先于业务 drop 收尾视觉
     sourceEl.addEventListener('dragend', end)
   }
-  _active.raf = requestAnimationFrame(frame)
+  _active!.raf = requestAnimationFrame(frame)
 }
 
 /**
@@ -688,14 +691,14 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
 /**
  * @param {HTMLElement[]} extras  其余选中文件的 DOM 元素（最多取前 2 张作影子卡）
  */
-export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts: PhysicsDragOpts = {}) {
+export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTMLElement, count: number, extras: HTMLElement[] = [], opts: PhysicsDragOpts = {}) {
   if (!sourceEl || _active) return
   _flushPendingCleanup(sourceEl)   // 同 startPhysicsDrag：只打断同一张卡上一趟还没飞完的动画
   for (const ex of extras) { if (ex) _flushPendingCleanup(ex) }
   const pointer = opts.pointer === true
-  const pointerId = pointer ? event.pointerId : null
-  if (!pointer) { try { event.dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {} }
-  if (pointer) { try { document.body.setPointerCapture(pointerId) } catch {} }
+  const pointerId = pointer ? (event as PointerEvent).pointerId : null
+  if (!pointer) { try { (event as DragEvent).dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {} }
+  if (pointer) { try { document.body.setPointerCapture(pointerId!) } catch {} }
 
   // 上一次拖拽的落地动画要等 transitionend（~420~580ms）才把卡片复位显示，这段窗口期内重新
   // 抓同一批卡会读到 0×0 的 rect、克隆出不可见的卡（同 startPhysicsDrag 的坑，见其注释）。
@@ -733,10 +736,10 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
       ` perspective(760px) rotateX(${(TILT * 0.6).toFixed(2)}deg)` +
       ` rotateZ(${cfg.spread.rz.toFixed(2)}deg) scale(${(LIFT * cfg.spread.sc).toFixed(4)})`
 
-    let el
+    let el: HTMLElement
     if (extraEl) {
       // 克隆真实文件卡内容
-      el = extraEl.cloneNode(true)
+      el = extraEl.cloneNode(true) as HTMLElement
       // 去掉拖拽状态类；保留 .selected 以保持选中边框和 ::before 覆盖层
       el.classList.remove('pre-selected', 'dragging', 'cut')
       if (opts.cloneClass) el.classList.add(opts.cloneClass)
@@ -808,20 +811,20 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
   let vxs = 0, vys = 0
   const DAMP = 2 * ZETA * Math.sqrt(SPRING)
   const KV   = -Math.log(1 - 0.12) * 60
-  let lastT = null
+  let lastT: number | null = null
   let foldT = 0           // 0→1: 折叠进度（扇开→紧贴）
   const FOLD_DUR = 0.30   // 秒
 
-  function onOver(e) {
+  function onOver(e: PointerEvent | DragEvent) {
     e.preventDefault()
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    { const _dt = (e as DragEvent).dataTransfer; if (_dt) _dt.dropEffect = 'move' }
     if (e.clientX || e.clientY) {
       target.x = e.clientX; target.y = e.clientY
       opts.onDragOver?.({ x: e.clientX, y: e.clientY })
     }
   }
 
-  function frame(now) {
+  function frame(now: number) {
     let dt = lastT === null ? 1 / 60 : (now - lastT) / 1000
     lastT = now
     if (dt > 1 / 20) dt = 1 / 20
@@ -863,7 +866,7 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
         ` rotateZ(${(rotZ * 0.4 + rz).toFixed(2)}deg) scale(${(LIFT * sc).toFixed(4)})`
     }
 
-    _active.raf = requestAnimationFrame(frame)
+    _active!.raf = requestAnimationFrame(frame)
   }
 
   function end() {
@@ -875,7 +878,7 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
       document.removeEventListener('pointermove', onOver)
       document.removeEventListener('pointerup', end)
       document.removeEventListener('pointercancel', end)
-      try { document.body.releasePointerCapture(pointerId) } catch {}
+      try { document.body.releasePointerCapture(pointerId!) } catch {}
     } else {
       document.removeEventListener('dragover', onOver)
       document.removeEventListener('drop', end, true)
@@ -897,10 +900,10 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
     if (opts.onDrop) { try { opts.onDrop({ x: target.x, y: target.y }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
 
     const dropX = target.x, dropY = target.y
-    const SLOT = box => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(1)`
+    const SLOT = (box: Box) => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(1)`
 
-    let done = false, onEnd = null
-    const flyTo = (box, shrink) => {
+    let done = false; let onEnd: (e: TransitionEvent) => void = () => {}
+    const flyTo = (box: Box, shrink: boolean) => {
       clone.style.transition = `transform 0.55s ${_SETTLE}, opacity 0.4s ease`
       if (shrink) {
         const cx = box.left + box.width / 2, cy = box.top + box.height / 2
@@ -955,5 +958,5 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
     document.addEventListener('drop', end, true)
     sourceEl.addEventListener('dragend', end)
   }
-  _active.raf = requestAnimationFrame(frame)
+  _active!.raf = requestAnimationFrame(frame)
 }

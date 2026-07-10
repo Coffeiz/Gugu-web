@@ -174,8 +174,9 @@ npm run typecheck:strict   # vue-tsc -p tsconfig.strict.json（严格档白名�
 - [x] 首批入档：`src/utils/**` + `src/types/**` strict-clean；新建 `src/types/project.ts` 领域模型（绑定 OpenAPI `ProjectResponse`）；Projects 组件 `PropType<any[]>` → `Project[]`
 - [x] stores 底座入档（2026-07-11）：`projects.ts`（105→0，`ref<Project[]>` 消 ~80）+ `ui.ts` + `live.ts` + `services/**` + `composables/useOnboarding.ts`。确立「api 边界一次性收紧 wire→紧类型」模式
 - [x] 轻量 store/composable 尾批（2026-07-11）：admin/clipboard/audio/config/preferences + useSorting/useLiveRefresh/useHolidays/useStageTemplates/useThumbCache（10 文件、51 错）
-- [x] 文件簇 ③-a（2026-07-11）：filesCache/preview/useUploadQueue/useBoxSelection。定义 `FileMeta`（=OpenAPI `FileResponse` + 客户端增补字段交集）、`FolderMeta`（=`FolderResponse`）领域类型；preview 承载聊天附件故用 `Partial<FileMeta>`。**棘轮累计 28 源文件**
-- [ ] 接力：③-b usePhysicsDrag（959 行/67 错，拖拽引擎）+ useFileDragDrop → ④ Calendar `CalendarEvent`、Mind `NoteEditor` 9 处 TipTap `Editor` any → ⑤ 组件闭包净了整块入档
+- [x] 文件簇 ③-a（2026-07-11）：filesCache/preview/useUploadQueue/useBoxSelection。定义 `FileMeta`（=OpenAPI `FileResponse` + 客户端增补字段交集）、`FolderMeta`（=`FolderResponse`）领域类型；preview 承载聊天附件故用 `Partial<FileMeta>`
+- [x] 文件簇 ③-b（2026-07-11）：usePhysicsDrag（959 行/67 错→0，拖拽引擎）+ useFileDragDrop。加 `Box`/`ActiveDrag` 类型、DOM 参数标注、`event: PointerEvent\|DragEvent` 联合就地 cast、`pointerId!`/`_active!` 断言——纯类型标注零逻辑改动。**棘轮累计 30 源文件；stores/composables/services/utils/types 底座已全 strict-clean**
+- [ ] 接力：④ Calendar `CalendarEvent`、Mind `NoteEditor` 9 处 TipTap `Editor` any → ⑤ 组件闭包净了整块入档（底座已净，组件可逐个入）
 - [ ] CI / 部署流程加 `npm run typecheck` + `typecheck:strict` 门禁（红则挡）
 - [ ] 存量 `.js` 清零后，`tsconfig` 关 `allowJs`（**核实：`.js` 已清零，此项条件已满足，可评估执行**）
 

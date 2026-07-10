@@ -36,6 +36,8 @@
     "src/composables/useSorting.ts",
     "src/composables/useHolidays.ts",
     "src/composables/useStageTemplates.ts",
-    "src/composables/useThumbCache.ts"
+    "src/composables/useThumbCache.ts",
+    "src/composables/usePhysicsDrag.ts",
+    "src/composables/useFileDragDrop.ts"
   ]
 }
