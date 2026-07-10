@@ -208,6 +208,50 @@ export const eventsApi = {
   delete: (id: number)          => del(`/events/${id}`),
 }
 
+// ── Mind（思维面板 · 记录）─────────────────────────────────────────────────────
+// 类型手写而非取自 Schemas：生成的 src/types/api.ts 要跑起后端才能刷新（npm run gen:types），
+// 等下次刷新后可以换成 Schemas['MindNodeResponse'] 等。
+export interface MindNote {
+  id: number
+  kind: string
+  title: string | null
+  contentMd: string
+  color: string | null
+  capturedAt: string      // 面向用户的「发生/记录时间」，时间流按它排（不是 createdAt）
+  version: number         // 乐观锁：改的时候必须回传，版本对不上后端给 409
+  createdAt: string
+  updatedAt: string
+}
+export interface MindNoteCreate {
+  contentMd?: string
+  title?: string | null
+  color?: string | null
+  capturedAt?: string     // 不传取当前；补录旧想法时可写成过去
+}
+export interface MindNoteUpdate {
+  contentMd?: string
+  title?: string | null
+  color?: string | null
+  capturedAt?: string
+  version: number
+}
+/** `[[` 补全候选：type+id 是写进正文的稳定锚点，label 只作展示 */
+export interface MindRefSuggestItem {
+  type: 'project' | 'file' | 'event'
+  id: number
+  label: string
+  subtitle?: string | null
+}
+
+export const mindApi = {
+  listNotes:  (limit = 50, offset = 0) => get<MindNote[]>(`/mind/notes?limit=${limit}&offset=${offset}`),
+  createNote: (data: MindNoteCreate)             => post<MindNote>('/mind/notes', data),
+  updateNote: (id: number, data: MindNoteUpdate) => patch<MindNote>(`/mind/notes/${id}`, data),
+  deleteNote: (id: number)                       => del(`/mind/notes/${id}`),
+  refSuggest: (q: string, limit = 6) =>
+    get<MindRefSuggestItem[]>(`/mind/ref-suggest?q=${encodeURIComponent(q)}&limit=${limit}`),
+}
+
 // ── Folders ───────────────────────────────────────────────────────────────────
 export const foldersApi = {
   all:  ()                              => get<Schemas['FolderResponse'][]>('/folders/all'),

@@ -4,6 +4,7 @@ Pydantic v2 schemas — alias_generator=to_camel 让 API 返回 camelCase
 
 from __future__ import annotations
 import re
+from datetime import datetime
 from typing import Optional, Any
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -273,6 +274,45 @@ class FileTreeResponse(CamelModel):
 
 
 # ── CalendarEvent ─────────────────────────────────────────────────────────────
+
+# ── 思维面板（P1：记录/便签）──────────────────────────────────────────────────
+
+class MindNoteCreate(CamelModel):
+    content_md: str = ""
+    title: Optional[str] = None
+    color: Optional[str] = None
+    # 面向用户的「发生/记录时间」，可回填过去（补录昨天的想法 / 导入旧内容）；不传取当前
+    captured_at: Optional[datetime] = None
+
+
+class MindNoteUpdate(CamelModel):
+    content_md: Optional[str] = None
+    title: Optional[str] = None
+    color: Optional[str] = None
+    captured_at: Optional[datetime] = None
+    # 乐观锁：必传。服务端走原子 UPDATE（WHERE version=…），版本对不上直接 409
+    version: int
+
+
+class MindNodeResponse(CamelModel):
+    id: int
+    kind: str
+    title: Optional[str] = None
+    content_md: str = ""
+    color: Optional[str] = None
+    captured_at: datetime
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class MindRefSuggestItem(CamelModel):
+    """`[[` 补全的候选：type+id 是写进正文的稳定锚点，label 只作展示。"""
+    type: str
+    id: int
+    label: str
+    subtitle: Optional[str] = None
+
 
 class EventCreate(CamelModel):
     title: str

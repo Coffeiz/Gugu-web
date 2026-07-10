@@ -14,7 +14,7 @@ from app.db.session import get_db
 from app.core.security import get_current_user
 from app.models import (
     User, Project, File, Folder, CalendarEvent, Client,
-    ConversationSession, ConversationMessage,
+    ConversationSession, ConversationMessage, MindNode,
 )
 from app.utils.romaji import is_romaji_query, romaji_match
 
@@ -25,7 +25,7 @@ MSG_PER_TYPE = 8      # 对话消息扫描条数（合并去重后仍受 per_typ
 SNIPPET_PAD = 24      # 消息片段命中词前后各取多少字
 ROMAJI_SCAN = 200     # 拼音/罗马音搜索时每类最多扫描条数
 
-ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation"]
+ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation", "note"]
 
 
 def _snippet(text: str, q: str) -> str:
@@ -190,6 +190,40 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 {"id": c.id, "title": c.name,
                  "subtitle": " · ".join(filter(None, [c.contact, c.email, c.phone]))}
                 for c in rows
+            ]})
+
+    # ── 思维便签：标题 + 正文（便签短，正文可以直接搜，不像文件那样只能搜名）──
+    #    只搜 kind='note'：ref 节点只是业务对象的引用代理，真身已经在上面各类里搜过了，
+    #    再出一遍就是重复；软删的墓碑也不该出现在搜索里。
+    if wanted is None or "note" in wanted:
+        rows = list((await db.execute(
+            select(MindNode).where(
+                MindNode.user_id == uid,
+                MindNode.kind == "note",
+                MindNode.deleted_at.is_(None),
+                or_(MindNode.title.ilike(like), MindNode.content_plain.ilike(like)),
+            ).order_by(MindNode.captured_at.desc()).limit(per_type)
+        )).scalars().all())
+        if use_romaji and len(rows) < per_type:
+            seen = {n.id for n in rows}
+            scan = (await db.execute(
+                select(MindNode).where(
+                    MindNode.user_id == uid, MindNode.kind == "note",
+                    MindNode.deleted_at.is_(None),
+                ).order_by(MindNode.captured_at.desc()).limit(ROMAJI_SCAN)
+            )).scalars().all()
+            for n in scan:
+                # 罗马音只匹标题：正文可能很长，逐字转拼音代价不划算
+                if n.id not in seen and romaji_match(n.title or "", q):
+                    rows.append(n); seen.add(n.id)
+                    if len(rows) >= per_type:
+                        break
+        if rows:
+            groups.append({"type": "note", "label": "便签", "items": [
+                {"id": n.id,
+                 "title": n.title or _snippet(n.content_plain, q) or "无标题便签",
+                 "subtitle": _snippet(n.content_plain, q)}
+                for n in rows
             ]})
 
     # ── 对话：会话标题 + 消息正文（合并去重，正文命中给片段）──

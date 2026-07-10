@@ -1,0 +1,177 @@
+"""思维面板的两条机制化不变量——把容易写错的地方收敛成唯一入口。
+
+见 docs/product/思维面板/数据模型草案.md：
+
+1. **乐观锁用原子 UPDATE，不是先读再比**（`update_node_atomic`）
+   `Project.version` 那套「读出来 → 比 client_version → 再写」在读和写之间有窗口，
+   两个并发请求可以同时通过版本比较、再互相覆盖。这里把比较和写入合成一条
+   `UPDATE … WHERE id AND user_id AND version=:v`，由数据库在行锁下判定，靠 rowcount 定成败。
+
+2. **`related` 归一 + 幂等**（`upsert_relation`）
+   `related` 是无向的，A→B 与 B→A 必须归一成同一条边（按 id 排小的在前），
+   配合 `uq_mind_relation` 唯一约束，用户重复点连线 / 咕咕重复建议都命中已有行，
+   不堆重复边；唯一约束同时兜住并发下两个请求同时插入的竞态。
+
+另外内容变更时 `indexed_at` 必须清回 null（否则首次向量化后改正文会被漏索引），
+这条也做进 `update_node_atomic`，调用方无从忘记。
+"""
+from __future__ import annotations
+
+import hashlib
+import re
+from datetime import datetime
+from uuid import UUID
+
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
+
+from app.models import MindNode, MindRelation
+
+# 无向关系：存之前按 id 归一（src < dst）。有向类型（supports/causes/…）方向有意义，不归一。
+_SYMMETRIC_RELATIONS = {"related"}
+
+# 内容字段：任一变更都要重置索引水位
+_CONTENT_FIELDS = ("content_md", "content_plain")
+
+# 便签正文里的对象引用标记：`[[project:7|某项目]]`。
+# 存 type+id 这个稳定锚点（不只存名字，业务对象改名/重名都不会指错），
+# 竖线后的显示名只作展示；抽纯文本时保留显示名，便签才能按「某项目」被搜到。
+REF_PATTERN = re.compile(r"\[\[(?P<type>[a-z_]+):(?P<id>\d+)\|(?P<label>[^\]]*)\]\]")
+
+
+def to_plain_text(md: str | None) -> str:
+    """Markdown 源 → 去格式纯文本，喂给 global_search 的 ILIKE（将来还喂 embedding）。
+
+    只做「让正文能被搜到」这一件事，不追求还原排版：
+    - 对象引用 `[[project:7|某项目]]` → `某项目`（否则搜「某项目」搜不到引用了它的便签）
+    - 链接/图片留文字与 alt，丢 URL；标题/列表/待办/引用符号、强调符、代码围栏统统剥掉
+    """
+    if not md:
+        return ""
+    t = REF_PATTERN.sub(lambda m: m.group("label"), md)
+    t = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", t)              # 图片 → alt
+    t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)               # 链接 → 文字
+    t = re.sub(r"^\s{0,3}```.*$", "", t, flags=re.M)             # 代码围栏行
+    t = re.sub(r"`([^`]*)`", r"\1", t)                           # 行内代码
+    t = re.sub(r"^\s{0,3}#{1,6}\s*", "", t, flags=re.M)          # 标题
+    t = re.sub(r"^\s{0,3}>\s?", "", t, flags=re.M)               # 引用
+    t = re.sub(r"^\s*[-*+]\s+\[[ xX]\]\s*", "", t, flags=re.M)   # 待办（先于无序列表）
+    t = re.sub(r"^\s*[-*+]\s+", "", t, flags=re.M)               # 无序列表
+    t = re.sub(r"^\s*\d+\.\s+", "", t, flags=re.M)               # 有序列表
+    t = re.sub(r"(\*\*|__|~~|\*|_)", "", t)                      # 强调
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r"\n{2,}", "\n", t)
+    return t.strip()
+
+
+def content_hash(text: str | None) -> str:
+    """content_plain 的 sha256（64 位十六进制，正好填满 indexed_hash 列）。
+
+    索引管线据此判断「内容真变过才重索引」——只挪画布位置这类改动会动 updated_at，
+    但 content_plain 没变，哈希一致就不必重算向量。
+    """
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+
+
+def _as_uuid(user_id) -> UUID:
+    """user_id 在不同调用路径下可能是 UUID 对象或字符串，统一成 UUID 再进 SQL。"""
+    return user_id if isinstance(user_id, UUID) else UUID(str(user_id))
+
+
+async def update_node_atomic(db, node_id: int, user_id, client_version: int, fields: dict) -> bool:
+    """按乐观锁原子更新一个节点。返回 True=更新成功，False=版本已变或不归属（调用方抛 409）。
+
+    - 比较条件写在 WHERE 里，没有 read-compare-write 的窗口。
+    - `user_id` 一并进 WHERE，跨用户改不动别人的节点（get_owned 之外再兜一道）。
+    - 传入 `content_md`/`content_plain` 时，同一条 UPDATE 里把 `indexed_at` 清回 null、
+      并按新 `content_plain` 刷 `indexed_hash`——内容变了就必须重新索引。
+    """
+    if not fields:
+        return False
+
+    values = dict(fields)
+    if any(k in values for k in _CONTENT_FIELDS):
+        # content_md 与 content_plain 必须成对：正文一变就要重算纯文本、清索引水位、刷哈希。
+        # 调用方只给 content_md 时这里兜底推导 content_plain——否则 indexed_hash 会停在旧值、
+        # 与正文脱钩，P3 索引管线据此误判「内容没变」而漏掉重索引。
+        if "content_md" in values and "content_plain" not in values:
+            values["content_plain"] = to_plain_text(values["content_md"])
+        values["indexed_at"] = None
+        values["indexed_hash"] = content_hash(values["content_plain"])
+
+    values["version"] = MindNode.version + 1
+    values["updated_at"] = datetime.utcnow()
+
+    res = await db.execute(
+        update(MindNode)
+        .where(
+            MindNode.id == node_id,
+            MindNode.user_id == _as_uuid(user_id),
+            MindNode.version == client_version,
+            # 墓碑不可再改：软删与本次更新并发时（先读到 live、UPDATE 前被软删），
+            # 这道 WHERE 让写落空、rowcount=0，避免编辑静默写进已删除节点（TOCTOU 兜底）。
+            MindNode.deleted_at.is_(None),
+        )
+        .values(**values)
+    )
+    return res.rowcount == 1
+
+
+async def _find_relation(db, user_id: UUID, src: int, dst: int, rel_type: str) -> MindRelation | None:
+    return await db.scalar(
+        select(MindRelation).where(
+            MindRelation.user_id == user_id,
+            MindRelation.src_node_id == src,
+            MindRelation.dst_node_id == dst,
+            MindRelation.rel_type == rel_type,
+        )
+    )
+
+
+async def upsert_relation(
+    db,
+    user_id,
+    src_node_id: int,
+    dst_node_id: int,
+    *,
+    rel_type: str = "related",
+    origin: str = "user",
+    status: str = "confirmed",
+    note: str | None = None,
+) -> MindRelation:
+    """建一条关系，幂等：已存在就直接返回已有那条，不新建、不报错。
+
+    无向类型（related）先按 id 归一，于是 (A,B) 与 (B,A) 落同一行。
+    并发下两个请求同时插入时，唯一约束会让其中一方 IntegrityError——
+    捕获后回查返回已有行（用 SAVEPOINT 包住 flush，冲突不会带崩外层事务）。
+
+    节点连向自己在 DB 层也有 CheckConstraint 挡着，这里提前拦掉给个明确错误。
+    """
+    if src_node_id == dst_node_id:
+        raise ValueError("节点不能连向自己")
+
+    uid = _as_uuid(user_id)
+    src, dst = src_node_id, dst_node_id
+    if rel_type in _SYMMETRIC_RELATIONS and src > dst:
+        src, dst = dst, src
+
+    found = await _find_relation(db, uid, src, dst, rel_type)
+    if found is not None:
+        return found
+
+    rel = MindRelation(
+        user_id=uid, src_node_id=src, dst_node_id=dst,
+        rel_type=rel_type, origin=origin, status=status, note=note,
+    )
+    try:
+        async with db.begin_nested():          # SAVEPOINT：冲突只回滚这一小段，不带崩外层事务
+            db.add(rel)
+            await db.flush()
+    except IntegrityError:
+        # SAVEPOINT 回滚时 SQLAlchemy 已经把这个 pending 实例踢出 session 了，
+        # 这里不能再 expunge（会抛 InvalidRequestError），直接回查即可。
+        found = await _find_relation(db, uid, src, dst, rel_type)
+        if found is None:
+            raise                              # 不是唯一约束撞车（比如外键不存在），照实抛
+        return found
+    return rel

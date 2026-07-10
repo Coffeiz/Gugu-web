@@ -9,7 +9,10 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON, UniqueConstraint
+from sqlalchemy import (
+    String, Integer, Float, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON,
+    UniqueConstraint, CheckConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
@@ -44,6 +47,9 @@ class User(Base):
     events:        Mapped[list["CalendarEvent"]]       = relationship(back_populates="owner", cascade="all, delete-orphan")
     clients:       Mapped[list["Client"]]              = relationship(back_populates="owner", cascade="all, delete-orphan")
     mind_maps:     Mapped[list["MindMap"]]             = relationship(back_populates="owner", cascade="all, delete-orphan")
+    mind_nodes:    Mapped[list["MindNode"]]            = relationship(back_populates="owner", cascade="all, delete-orphan")
+    mind_canvas_items: Mapped[list["MindCanvasItem"]]  = relationship(back_populates="owner", cascade="all, delete-orphan")
+    mind_relations:    Mapped[list["MindRelation"]]    = relationship(back_populates="owner", cascade="all, delete-orphan")
     conversations: Mapped[list["ConversationSession"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     preferences:   Mapped[Optional["UserPreferences"]] = relationship(back_populates="owner", cascade="all, delete-orphan", uselist=False)
 
@@ -161,9 +167,21 @@ class Folder(Base):
     parent:   Mapped[Optional["Folder"]]  = relationship(back_populates="children", remote_side="Folder.id")
 
 
-# ── MindMap（思维画布，暂不开发，预留结构）────────────────────────────────────
+# ── 思维面板（记录 + 画布）────────────────────────────────────────────────────
+# 三层结构见 docs/product/思维面板/数据模型草案.md：
+#   mind_nodes        全局节点层（便签 / 业务对象引用代理 / 咕咕建议）
+#   mind_canvas_items 画布视图层（某节点摆在某画布上的位置，删它不碰节点）
+#   mind_relations    全局关系层（节点↔节点的有向边，跨画布跨项目成立）
+# 一条便签可出现在多张画布上；画布只保存展示状态，不拥有节点。
 
 class MindMap(Base):
+    """画布容器。
+
+    `project_id` 只是**可选关联 / 初始筛选**，不是节点归属——节点归属在 mind_nodes 自己身上。
+    `data_json` 存画布级视图状态（平移、缩放），不再塞节点数据。
+    `files.mind_map_id` 是历史字段，只留给旧的"思维空间文件存储"归档，
+    **不得再用它判断"文件在哪张画布"**——那由 ref 节点 + mind_canvas_items 表达。
+    """
     __tablename__ = "mind_maps"
 
     id:         Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -176,6 +194,119 @@ class MindMap(Base):
 
     owner: Mapped["User"]       = relationship(back_populates="mind_maps")
     files: Mapped[list["File"]] = relationship(back_populates="mind_map")
+
+
+class MindNode(Base):
+    """全局节点层。画布项和关系都只 FK 到这里，不做 (type, id) 多态外键。
+
+    kind：
+      - `note`       用户的 Markdown 便签，正文存本行
+      - `ref`        业务对象（项目/文件/活动…）的引用代理，`ref_type`+`ref_id` 指过去
+      - `suggestion` 咕咕的待确认结论（P4 才启用，届时另加节点级 status）
+
+    `ref_id` 故意**不做真实外键**：业务对象被删时不连带删节点，而是让它靠 `title` 快照
+    降级成「[已删除]」墓碑，图谱不静默断裂。
+    """
+    __tablename__ = "mind_nodes"
+
+    id:      Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind:    Mapped[str]  = mapped_column(String(20), default="note")
+
+    # note / suggestion 的内容
+    title:         Mapped[Optional[str]] = mapped_column(String(300), nullable=True)   # 便签标题 / ref 快照名 / 墓碑显示名
+    content_md:    Mapped[str]           = mapped_column(Text, default="")             # 块编辑器序列化出的 Markdown 源
+    content_plain: Mapped[str]           = mapped_column(Text, default="")             # 去格式纯文本：global_search 匹配 + 将来 embedding
+    color:         Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+
+    # ref 节点指向的业务对象
+    ref_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)   # project | file | event | client | folder
+    ref_id:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True)      # 业务对象主键（这些表都是 int PK）
+
+    # 咕咕相关
+    origin:       Mapped[str]                = mapped_column(String(10), default="user")   # user | gugu
+    indexed_at:   Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)   # null=待索引
+    indexed_hash: Mapped[Optional[str]]      = mapped_column(String(64), nullable=True, default=None) # content_plain 的 sha256
+
+    version:     Mapped[int]      = mapped_column(Integer, default=1)   # 乐观锁，走 core.mind.update_node_atomic 的原子 UPDATE
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)  # 面向用户的「发生/记录时间」，可编辑
+    created_at:  Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)              # 落库时间，只作审计
+    updated_at:  Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at:  Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None, index=True)  # 软删=墓碑
+
+    owner: Mapped["User"] = relationship(back_populates="mind_nodes")
+
+    __table_args__ = (
+        # 同一用户对同一业务对象只保留一个引用代理，关系才不会散在多个 ref 上。
+        # note 节点两列都是 NULL，SQL 里 NULL 互不相等 → 不会互相冲突。
+        UniqueConstraint("user_id", "ref_type", "ref_id", name="uq_mind_node_ref"),
+        # 底线约束，不只靠 API 校验：ref 节点两列都得有值，非 ref 两列都得为空
+        CheckConstraint(
+            "(kind = 'ref' AND ref_type IS NOT NULL AND ref_id IS NOT NULL) "
+            "OR (kind <> 'ref' AND ref_type IS NULL AND ref_id IS NULL)",
+            name="ck_mind_node_ref_shape",
+        ),
+    )
+
+
+class MindCanvasItem(Base):
+    """画布视图层：某节点摆在某画布上的展示状态。删这一行只是「从画布上拿掉」，不动节点。"""
+    __tablename__ = "mind_canvas_items"
+
+    id:      Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 冗余一份 user_id 省掉查归属时的 join；但它挡不住跨用户拼接，
+    # 真正的隔离在 API 写入路径上对 canvas_id / node_id 各过一次 get_owned（见数据模型草案）
+    user_id:   Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    canvas_id: Mapped[int]  = mapped_column(ForeignKey("mind_maps.id",  ondelete="CASCADE"), index=True)
+    node_id:   Mapped[int]  = mapped_column(ForeignKey("mind_nodes.id", ondelete="CASCADE"), index=True)
+
+    x:         Mapped[float]           = mapped_column(Float, default=0)
+    y:         Mapped[float]           = mapped_column(Float, default=0)
+    w:         Mapped[Optional[float]] = mapped_column(Float, nullable=True)   # 空=用节点默认尺寸
+    h:         Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    z:         Mapped[int]             = mapped_column(Integer, default=0)
+    collapsed: Mapped[bool]            = mapped_column(Boolean, default=False)
+    data_json: Mapped[str]             = mapped_column(Text, default="{}")     # 预留展示扩展
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner: Mapped["User"] = relationship(back_populates="mind_canvas_items")
+
+    __table_args__ = (
+        UniqueConstraint("canvas_id", "node_id", name="uq_canvas_node"),   # 同一节点在一张画布上最多一份
+    )
+
+
+class MindRelation(Base):
+    """全局关系层：节点↔节点的有向边。
+
+    P1/P2 只写默认的 `related`；P4 才开放 supports / derived_from / verifies 等少量高价值类型。
+    `related` 是无向的，服务层按 id 归一（src < dst）后配合唯一约束达成幂等——
+    重复连线、咕咕重复建议都命中同一行，不堆重复边。见 core.mind.upsert_relation。
+    """
+    __tablename__ = "mind_relations"
+
+    id:          Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:     Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    src_node_id: Mapped[int]  = mapped_column(ForeignKey("mind_nodes.id", ondelete="CASCADE"), index=True)
+    dst_node_id: Mapped[int]  = mapped_column(ForeignKey("mind_nodes.id", ondelete="CASCADE"), index=True)
+
+    rel_type: Mapped[str]           = mapped_column(String(20), default="related")
+    origin:   Mapped[str]           = mapped_column(String(10), default="user")        # user | gugu
+    status:   Mapped[str]           = mapped_column(String(10), default="confirmed")   # confirmed | suggested
+    note:     Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner: Mapped["User"] = relationship(back_populates="mind_relations")
+
+    __table_args__ = (
+        # 幂等 + 并发保护：一对节点在同一 rel_type 下只存一条边
+        UniqueConstraint("user_id", "src_node_id", "dst_node_id", "rel_type", name="uq_mind_relation"),
+        CheckConstraint("src_node_id <> dst_node_id", name="ck_mind_relation_no_self"),
+    )
 
 
 # ── CalendarEvent ─────────────────────────────────────────────────────────────

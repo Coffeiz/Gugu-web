@@ -67,6 +67,21 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '文件库' },
       },
       {
+        // 思维面板：壳 + 子路由。记录（P1）已就绪；画布是 P2，届时加 canvases/:id
+        path: 'mind',
+        component: () => import('@/views/Mind/index.vue'),
+        meta: { title: '思维' },
+        children: [
+          { path: '', redirect: '/mind/records' },
+          {
+            path: 'records',
+            name: 'MindRecords',
+            component: () => import('@/views/Mind/RecordsView.vue'),
+            meta: { title: '思维' },
+          },
+        ],
+      },
+      {
         path: 'schedules',
         name: 'Schedules',
         component: () => import('@/views/Schedules/index.vue'),

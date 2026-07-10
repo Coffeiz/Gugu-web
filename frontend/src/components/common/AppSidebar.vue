@@ -30,11 +30,7 @@
         </NavItem>
         <NavItem to="/calendar" :icon="PhCalendarBlank">日历</NavItem>
         <NavItem to="/schedules" :icon="PhAlarm">定时任务</NavItem>
-        <div class="nav-item soon-item">
-          <PhGraph class="nav-icon" :size="15" />
-          <span class="nav-label-text">思维</span>
-          <span class="soon-badge">咕了</span>
-        </div>
+        <NavItem to="/mind/records" :icon="PhGraph">思维</NavItem>
       </div>
 
       <div class="nav-divider"></div>

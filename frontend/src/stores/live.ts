@@ -13,7 +13,9 @@ import { getToken } from '@/services/api'
 import { useUiStore } from '@/stores/ui'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
-const RESOURCES = ['projects', 'calendar', 'files', 'clients', 'sessions', 'scheduled_tasks']
+// 'mind' 预留给思维面板：P1 咕咕还不写便签，后端暂不推这个资源，rev.mind 会一直是 0；
+// 等 P3 接入咕咕确认式写入后由后端开始推，记录页/画布这边不用再改。
+const RESOURCES = ['projects', 'calendar', 'files', 'clients', 'sessions', 'scheduled_tasks', 'mind']
 
 export const useLiveStore = defineStore('live', () => {
   // 每个资源一个递增计数，视图 watch 它来触发 refetch
