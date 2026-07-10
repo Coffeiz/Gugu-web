@@ -797,7 +797,8 @@ async def _delete_file(db, user_id, args: dict):
     f.deleted_at = now_utc()
     await db.commit()
     return {"success": True, "file_id": fid, "name": fname,
-            "note": "已移入回收站，30 天内可还原"}
+            "note": "已移入回收站，30 天内可还原",
+            "_file_op": {"op": "remove", "kind": "file", "id": fid}}
 
 
 async def _list_folders(db, user_id, args: dict):
@@ -883,7 +884,8 @@ async def _delete_folder(db, user_id, args: dict):
     await db.commit()
     note = (f"文件夹「{fname}」已删除，其中 {trashed} 个文件已移入回收站（30 天内可恢复）"
             if trashed else f"空文件夹「{fname}」已删除")
-    return {"success": True, "deleted_folder_id": fid, "note": note}
+    return {"success": True, "deleted_folder_id": fid, "note": note,
+            "_file_op": {"op": "remove", "kind": "folder", "id": fid}}
 
 
 async def _copy_file(db, user_id, args: dict):

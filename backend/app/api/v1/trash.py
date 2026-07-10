@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models import File, MindMap, Project, Folder, User
 from app.schemas import FileResponse, BatchDeleteBody
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
 from app.core import events
 from app.services.storage import get_storage
@@ -89,6 +89,7 @@ async def _restore_file_storage(f: File, db: AsyncSession) -> None:
 async def restore_file(
     fid: int,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     f = await get_owned(db, File, fid, current_user.id)
@@ -97,7 +98,7 @@ async def restore_file(
     await _restore_file_storage(f, db)
     f.deleted_at = None
     await db.commit()
-    await events.publish(current_user.id, "files")
+    await events.publish(current_user.id, "files", origin=origin)
 
 
 # ── POST /trash/batch-restore ─────────────────────────────────────────────────
@@ -106,6 +107,7 @@ async def restore_file(
 async def batch_restore(
     body: BatchDeleteBody,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     if not body.ids:
@@ -120,7 +122,7 @@ async def batch_restore(
         await _restore_file_storage(f, db)
         f.deleted_at = None
     await db.commit()
-    await events.publish(current_user.id, "files")
+    await events.publish(current_user.id, "files", origin=origin)
 
 
 # ── DELETE /trash/{fid} （永久删除单文件）────────────────────────────────────
@@ -129,6 +131,7 @@ async def batch_restore(
 async def hard_delete_file(
     fid: int,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     f = await get_owned(db, File, fid, current_user.id)
@@ -142,7 +145,7 @@ async def hard_delete_file(
     await db.delete(f)
     await db.commit()
     _delete_thumb_cache(fid)
-    await events.publish(current_user.id, "files")
+    await events.publish(current_user.id, "files", origin=origin)
 
 
 # ── DELETE /trash （清空回收站）──────────────────────────────────────────────
@@ -150,6 +153,7 @@ async def hard_delete_file(
 @router.delete("", status_code=204)
 async def empty_trash(
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(File).where(File.user_id == current_user.id, File.deleted_at.isnot(None))
@@ -165,7 +169,7 @@ async def empty_trash(
     await db.commit()
     for fid in fids:
         _delete_thumb_cache(fid)
-    await events.publish(current_user.id, "files")
+    await events.publish(current_user.id, "files", origin=origin)
 
 
 # ── 自动清理过期文件（由 main.py 在启动时调用）────────────────────────────────

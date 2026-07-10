@@ -13,7 +13,7 @@ from app.db.session import get_db
 from app.models import File, Folder, Project, User
 from app.schemas import FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry, BatchDeleteBody, FileCopyBody, BatchDownloadBody
 from jose import jwt, JWTError
-from app.core.security import get_current_user, create_stream_token, verify_stream_token
+from app.core.security import get_current_user, get_client_id, create_stream_token, verify_stream_token
 from app.core.ownership import get_owned
 from app.core.config import get_settings
 from app.core import events
@@ -414,6 +414,7 @@ async def upload_file(
     on_conflict: str = Form("keep_both"),          # keep_both（默认，同名自动加后缀）| overwrite
     overwrite_file_id: Optional[int] = Form(None),  # on_conflict=overwrite 时，目标文件 id
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     original_name = file.filename or "file"
@@ -538,7 +539,7 @@ async def upload_file(
     db.add(db_file)
     await db.commit()
     await db.refresh(db_file)
-    await events.publish(current_user.id, "files")
+    await events.publish(current_user.id, "files", origin=origin)
 
     resp = _to_resp(db_file, project_name or None, project_color, folder_name or None)
 
@@ -676,6 +677,7 @@ class ConfirmRequest(_BaseModel):
 async def confirm_upload(
     body: ConfirmRequest,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     """OSS 直传完成后，注册 DB 记录（或覆盖已有文件时，原地更新那条记录）。"""
@@ -720,7 +722,7 @@ async def confirm_upload(
         existing.mime_type = body.mime_type
         await db.commit()
         await db.refresh(existing)
-        await events.publish(current_user.id, "files")
+        await events.publish(current_user.id, "files", origin=origin)
         return _to_resp(existing, project_name or None, project_color, folder_name or None)
 
     db_file = File(
@@ -739,7 +741,7 @@ async def confirm_upload(
     db.add(db_file)
     await db.commit()
     await db.refresh(db_file)
-    await events.publish(current_user.id, "files")
+    await events.publish(current_user.id, "files", origin=origin)
 
     return _to_resp(db_file, project_name or None, project_color, folder_name or None)
 
@@ -751,6 +753,7 @@ async def update_file(
     fid: int,
     body: FileUpdate,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     f = await get_owned(db, File, fid, current_user.id)
@@ -812,7 +815,7 @@ async def update_file(
     f.updated_at   = now_utc()
     await db.commit()
     await db.refresh(f)
-    await events.publish(current_user.id, "files")
+    await events.publish(current_user.id, "files", origin=origin)
 
     return _to_resp(f, project_name or None, project_color, folder_name or None)
 
@@ -826,6 +829,7 @@ async def update_file_content(
     fid: int,
     body: _FileContentBody,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     """改文本文件正文（md 预览里点任务勾选框等场景，前端直接存）。仅文本类、限 1MB。"""
@@ -844,7 +848,7 @@ async def update_file_content(
     f.updated_at = now_utc()
     await db.commit()
     await db.refresh(f)
-    await events.publish(current_user.id, "files")
+    await events.publish(current_user.id, "files", origin=origin)
     return _to_resp(f)
 
 
@@ -855,6 +859,7 @@ async def copy_file(
     fid: int,
     body: FileCopyBody,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     f = await get_owned(db, File, fid, current_user.id)
@@ -904,7 +909,7 @@ async def copy_file(
     db.add(new_file)
     await db.commit()
     await db.refresh(new_file)
-    await events.publish(current_user.id, "files")
+    await events.publish(current_user.id, "files", origin=origin)
     return _to_resp(new_file, project_name or None, project_color, folder_name or None)
 
 
@@ -931,6 +936,7 @@ async def _move_to_trash(storage, f: File) -> None:
 async def delete_file(
     fid: int,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     f = await get_owned(db, File, fid, current_user.id)
@@ -939,7 +945,8 @@ async def delete_file(
     await _move_to_trash(get_storage(), f)
     f.deleted_at = now_utc()
     await db.commit()
-    await events.publish(current_user.id, "files")
+    await events.publish(current_user.id, "files", origin=origin,
+                         file_op={"op": "remove", "kind": "file", "id": fid})
 
 
 # ── POST /files/batch-delete ──────────────────────────────────────────────────
@@ -948,6 +955,7 @@ async def delete_file(
 async def batch_delete_files(
     body: BatchDeleteBody,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     if not body.ids:
@@ -964,7 +972,8 @@ async def batch_delete_files(
         await _move_to_trash(storage, f)
         f.deleted_at = now
     await db.commit()
-    await events.publish(current_user.id, "files")
+    await events.publish(current_user.id, "files", origin=origin,
+                         file_op={"op": "remove", "kind": "file", "ids": [f.id for f in files]})
 
 
 # ── POST /files/batch-download ───────────────────────────────────────────────

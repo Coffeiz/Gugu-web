@@ -13,11 +13,19 @@ export function getToken(): string {
   return localStorage.getItem('user_token') ?? ''
 }
 
+// 本标签页的 client-id：每次写操作作为 X-Client-Id 头发给后端，后端把它塞进 SSE 事件的 origin。
+// 前端收到「origin === 自己」的回声时跳过重拉（本页已乐观更新过），只让别的标签页/端刷新。
+// 每标签页独立（内存级、不持久化）——刷新页面换一个新 id 也无妨，回声抑制只是优化不影响正确性。
+export const CLIENT_ID: string =
+  (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+
 // 泛型默认 any：未显式标注返回类型的调用方拿到 any（不给存量代码添堵）；
 // 标注了 <T> 的端点拿到精确类型。逐步把更多端点标上类型即可收紧。
 async function request<T = any>(method: string, path: string, body: any = null, isForm = false): Promise<T> {
   const token = getToken()
-  const headers: Record<string, string> = {}
+  const headers: Record<string, string> = { 'X-Client-Id': CLIENT_ID }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   const opts: RequestInit = { method, headers }
@@ -67,6 +75,7 @@ export function uploadWithProgress(path: string, form: FormData, onProgress: (p:
     xhr.open('POST', `${BASE_URL}${path}`)
     const token = getToken()
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    xhr.setRequestHeader('X-Client-Id', CLIENT_ID)   // 上传也带 client-id，供后端回声抑制
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded / e.total)
     }

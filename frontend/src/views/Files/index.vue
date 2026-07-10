@@ -683,7 +683,6 @@ import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable, isAudioExt } from '@/stores/preview'
 import { fireHint } from '@/composables/useOnboarding'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { cardBlobReadyIds, clearThumbCache } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
@@ -706,7 +705,6 @@ import {
 
 const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
-const liveStore    = useLiveStore()
 const uiStore      = useUiStore()
 
 // ── 存储用量 ──
@@ -1185,9 +1183,12 @@ watch(uploadSignal, () => {
   fetchStorage()
 })
 
-// 咕咕通过工具改了文件库（如保存上传附件 / 建文档 / 删除）→ 实时刷新当前视图
-watch(() => liveStore.rev.files, () => {
-  cacheStore.refresh().then(() => loadContents())
+// 文件库数据变了（本页乐观更新 / 咕咕·IM·其它标签页经 filesCache 刷新或 remove 快路径）→ 重新投影当前视图。
+// contents 是 loadContents 从 store getter 手动投影的本地快照，不是 computed，故 store 数据一变就得重投。
+// 刷新/patch 的决策与「回声抑制」全在 filesCache 里统一做（见 filesCache.ts fileEvent 消费）；本页不再自己
+// 订阅 rev.files 重拉，避免与 filesCache 重复全量拉、并让回声抑制对本页同样生效（本页发起的改动不会再多刷一次）。
+watch([() => cacheStore.allFiles, () => cacheStore.allFolders], () => {
+  loadContents()
   fetchStorage()
 })
 
@@ -1426,7 +1427,7 @@ async function restoreFile(f) {
   try {
     await trashApi.restore(f.id)
     loadContents()
-    liveStore.bump('files')
+    cacheStore.refresh()   // 还原的文件回到文件库 → 直接刷新库 store（本页发起，SSE 回声被抑制，得自己刷）
   } catch (e) {
     console.error('[Files] 恢复失败:', e.message)
   }
@@ -1457,7 +1458,7 @@ async function restoreSelected() {
     await Promise.all(ids.map(id => trashApi.restore(id)))
     clearSelection()
     loadContents()
-    liveStore.bump('files')
+    cacheStore.refresh()   // 同上：还原的文件回到文件库，直接刷新库 store
   } catch (e) {
     console.error('[Files] 批量恢复失败:', e.message)
   }

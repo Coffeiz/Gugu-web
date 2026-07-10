@@ -1,6 +1,6 @@
 # 文件存储结构规范
 
-> 更新：2026-07-11（§2.8 前端缓存与实时刷新重写：补 SSE 通道、三套并存缓存现状、已知 stale 缺口与「免刷新保证」方案）
+> 更新：2026-07-11（§2.8 前端缓存与实时刷新重写；Tier 0–3 全部落地：三套缓存收敛为单一 `filesCache` store + SSE 细粒度化（origin 回声抑制 / fileOp remove 快路径 / 合并刷新），详见 §2.8.8）
 > 项目：咕咕 / gugugu.site
 
 ---
@@ -339,11 +339,20 @@ const _folderIdx = computed(() => { ... })
 | **1 兜底** | FilePanel 订阅 SSE(`liveStore.rev.files`)+`uploadSignal`（版本门控重拉）；计数徽标改本地增减 `_pmAdjustFolderCount`（逐层找卡片，接入删/移/传）；visibilitychange 兜底经评估**冗余**（SSE 重连 `_catchUp` 已错峰 bump 所有资源，覆盖切回标签页）→ 不做 | ✅ 已实现 |
 | **2 关键** | `files.py`/`folders.py`/`trash.py` 的所有增删改端点（16 处）commit 后 `await events.publish(current_user.id, "files")` → 用户自己的网页操作也广播，跨标签页/跨面自动同步 | ✅ 已实现（需重启后端生效） |
 | **3-A 缓存收敛** | 三套缓存统一到单一 store：Dashboard/FilePanel（Phase A，5e7f422）+ ProjectModal（Phase B，c4b725b）都改从全局 `filesCache` 派生，删除各自本地并行缓存（projectFiles/folderFilesMap/subFolderMap、services/cache 的 filesCache），所有增删改走 store 增量 API | ✅ 已实现 |
-| **3-B SSE 细粒度化** | SSE 带 id + 操作类型 → 增量 patch 替代全量重拉，解决大文件量下"任意小改动都全库重拉"的性能天花板 | ⏳ 未做（当前文件量下重拉无感，等有卡顿感再做） |
+| **3-B SSE 细粒度化 + 回声抑制** | SSE 载荷带 `origin`（发起标签页 client-id）+ `fileOp`（{op,kind,id/ids}）。前端：① 发起页收到自己的回声 → 跳过重拉（已乐观更新）；② 删除类 → 本地直接剔除（零网络）；③ 其余 → 防抖合并后全量刷新 | ✅ 已实现（需重启后端生效） |
 
-> **Tier 2 的回声成本**：用户自己的操作现在也会广播回发起标签页，导致它在乐观更新之外多做一次全量重拉。中小文件量几乎无感；文件量很大时可考虑加 **client-id 回声抑制**（发起页带自己的 id，SSE 回来时跳过自己的）——干净但要动前端请求层 + 各端点传 origin，暂未做。
+**Tier 3-B 契约（新增，2026-07-11）：**
 
-**落地后现状**：Tier 0/1/2 的最小充分集（① 所有改动广播 → ② 所有面订阅 → ③ 收到就刷新）已闭环，"所有页面免刷新即更新"的保证基本达成；Tier 3-A 缓存收敛也已完成（三套缓存 → 单一 `filesCache` store，单一数据源，不再有"一处改另两套靠全量重拉对齐"的结构缝隙）。仅剩 Tier 3-B（SSE 细粒度化）作为性能优化，等文件量大到重拉有卡顿感再做。
+- **前端**：`api.ts` 每标签页生成 `CLIENT_ID`，所有写操作（`request()` + `uploadWithProgress`）带 `X-Client-Id` 头。
+- **后端**：`get_client_id` 依赖读该头 → `events.publish(..., origin=<client_id>, file_op={...})`。删除类端点（`delete_file`/`batch_delete`/`delete_folder`，及咕咕 `_delete_file`/`_delete_folder` 经 `_file_op` 结果字段）带 `file_op={"op":"remove","kind":"file|folder","id"|"ids"}`；增改类只带 `origin`。咕咕/IM 侧无 client-id → `origin=None`，不被抑制，所有端都刷新（正确）。
+- **SSE payload**：`{"resources":["files"], "origin":"<id>|null", "fileOp":{...}?}`。
+- **前端消费分工**：
+  - `rev.files` 仍照旧 bump —— 预览窗（FilePreviewModal/FloatPreviewWindow）、回收站视图、项目卡片计数等**粗信号**消费者不动。
+  - `live.fileEvent`（新通道）供 `filesCache` 独家消费：回声抑制 / remove 快路径 / 防抖合并刷新。`filesCache` 不再订阅 `rev.files`。
+  - `Files/index.vue` 的 `contents` 是手动投影快照 → 改为 `watch([allFiles, allFolders])` 重投影（filesCache 统一负责刷新/patch，本页不再自持重拉，回声抑制对本页同样生效）。ProjectModal/FilePanel 用 computed 派生，天然响应。
+- **边界**：还原（trash→库）是唯一「不乐观更新」的网页写操作，发起页 SSE 回声被抑制拉不回来 → `restoreFile`/`restoreSelected` 显式 `cacheStore.refresh()` 自刷。断线重连 `_catchUp` 对 files 额外 poke 一次 `fileEvent` refresh（`origin=null`，不抑制）补回漏掉的改动。
+
+**落地后现状**：Tier 0/1/2/3 全部闭环。"所有页面免刷新即更新"保证达成；三套缓存收敛为单一 `filesCache` store；SSE 细粒度化后——发起页零重拉（回声抑制）、其它端删除零网络（remove 快路径）、增改合并刷新，"任意小改动全库重拉"的性能天花板消除。回声成本（Tier 2 遗留）随回声抑制一并解决。
 
 ### 2.9 图片缩略图
 

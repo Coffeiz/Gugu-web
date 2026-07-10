@@ -349,6 +349,9 @@ class SkillRegistry:
             return content, None
 
         artifact = result.pop("_artifact", None) if isinstance(result, dict) else None
+        # 细粒度增量提示（如删除类工具带 {op:remove,kind,id}）——供前端本地剔除，免全量重拉。
+        # pop 掉别让它进给模型看的 JSON。咕咕/IM 侧无 client-id，origin 恒 None → 所有端都刷新。
+        file_op = result.pop("_file_op", None) if isinstance(result, dict) else None
 
         # 改动型工具成功后，推「资源变了」事件给该用户的网页端实时刷新（best-effort）
         if not (isinstance(result, dict) and result.get("error")):
@@ -356,7 +359,7 @@ class SkillRegistry:
             res = events.RESOURCE_BY_TOOL.get(name)
             if res:
                 try:
-                    await events.publish(user_id, res)
+                    await events.publish(user_id, res, file_op=file_op if res == "files" else None)
                 except Exception:
                     pass
 
