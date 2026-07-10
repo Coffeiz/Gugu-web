@@ -1,7 +1,8 @@
 <template>
   <div class="rec-layout">
-    <!-- 顶部日期条（胶囊下方）：横向索引，滚动联动 + 点击跳列 -->
-    <DateIndex :groups="indexGroups" :active="activeDate" @jump="jumpTo" />
+    <!-- 顶部日期滑杆：拖动连续联动列（seek）、松手/点击平滑吸附（snap）、列滚动反向驱动（centerFrac）-->
+    <DateIndex :groups="indexGroups" :active="activeDate" :center-frac="centerFrac"
+               @seek="onSeek" @snap="d => jumpTo(d, true)" />
 
     <!-- 横置便签流：横向翻历史（滚轮转横滚），列内竖滚翻当天 -->
     <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel" @scroll="onScroll">
@@ -67,21 +68,34 @@ function onWheel(e: WheelEvent) {
 const SIDEBAR_W = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 220
 const indexGroups = computed(() => store.timeline.map(g => ({ date: g.date, count: g.items.length })))
 const activeDate  = ref('')
+const centerFrac  = ref(0)   // 连续分数位置：内容区中线落在第几列（含小数），驱动滑杆连续跟随
 let scrollRaf = 0
 
 /** 内容区中线在滚动容器坐标里的 x（容器左边缘 = 视口左边缘 = 0） */
 function contentCenter(root: HTMLElement) { return (SIDEBAR_W + root.clientWidth) / 2 }
+/** 各列中心（滚动内容坐标），按 date 顺序（左新右旧） */
+function colCenters(root: HTMLElement): { date: string; c: number }[] {
+  return [...root.querySelectorAll<HTMLElement>('.tl-col[data-date]')]
+    .map(el => ({ date: el.dataset.date!, c: el.offsetLeft + el.offsetWidth / 2 }))
+}
 
+/** 当前滚动位置 → 连续分数 + 四舍五入的当前日 */
 function updateActive() {
   const root = scrollRef.value
   if (!root) return
-  const centerX = root.scrollLeft + contentCenter(root)
-  let best = ''; let bestDist = Infinity
-  root.querySelectorAll<HTMLElement>('.tl-col[data-date]').forEach(col => {
-    const d = Math.abs(col.offsetLeft + col.offsetWidth / 2 - centerX)
-    if (d < bestDist) { best = col.dataset.date!; bestDist = d }
-  })
-  if (best) activeDate.value = best
+  const cols = colCenters(root)
+  if (!cols.length) return
+  const cx = root.scrollLeft + contentCenter(root)
+  let frac = 0
+  if (cx <= cols[0].c) frac = 0
+  else if (cx >= cols[cols.length - 1].c) frac = cols.length - 1
+  else {
+    for (let i = 0; i < cols.length - 1; i++) {
+      if (cx >= cols[i].c && cx <= cols[i + 1].c) { frac = i + (cx - cols[i].c) / (cols[i + 1].c - cols[i].c); break }
+    }
+  }
+  centerFrac.value = frac
+  activeDate.value = cols[Math.round(frac)].date
 }
 
 function onScroll() {
@@ -89,7 +103,28 @@ function onScroll() {
   scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; updateActive() })
 }
 
-/** 把某天的列滚到内容区正中。animate=false → 瞬时（滑杆拖动的实时联动）、true → 平滑 */
+/** 连续分数位置 → 该位置居中所需的 scrollLeft（相邻列线性插值） */
+function scrollForFrac(root: HTMLElement, p: number): number {
+  const cols = colCenters(root)
+  if (!cols.length) return 0
+  const f = Math.max(0, Math.min(cols.length - 1, p))
+  const lo = Math.floor(f), hi = Math.min(lo + 1, cols.length - 1)
+  const cen = cols[lo].c + (cols[hi].c - cols[lo].c) * (f - lo)
+  return cen - contentCenter(root)
+}
+
+/** 滑杆拖动：连续联动，列平滑跟手（瞬时设 scrollLeft，但 p 连续 → 视觉平滑，不跳格）*/
+function onSeek(p: number) {
+  const root = scrollRef.value
+  if (!root) return
+  root.scrollLeft = scrollForFrac(root, p)
+  // 立刻更新 active（不等 rAF），让刻度即时长高 + 卡片高亮跟上
+  centerFrac.value = p
+  const cols = colCenters(root)
+  if (cols.length) activeDate.value = cols[Math.max(0, Math.min(cols.length - 1, Math.round(p)))].date
+}
+
+/** 把某天的列滚到内容区正中。animate=true → 平滑（点击/松手吸附/新建）、false → 瞬时（首载/resize）*/
 function jumpTo(date: string, animate = true) {
   const root = scrollRef.value
   const col = root?.querySelector<HTMLElement>(`.tl-col[data-date="${date}"]`)
