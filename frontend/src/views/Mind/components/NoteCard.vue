@@ -101,40 +101,46 @@ function onBodyClick(e: MouseEvent) {
 </script>
 
 <style scoped>
-/* 纸质卡：近实底、薄、无投影（借右键菜单的"薄"、去掉它的"浮"），不用 backdrop-filter——
-   纸的质感本该实，还顺带绕开白带/隔离组两个玻璃坑，重排动画可放心用 transform */
+/* 便签卡：与定时任务卡/项目卡同款质感（白 56% 底 + 白描边 + 顶部高光 ::after + hover
+   加深阴影），躺在每日玻璃底板之内。卡自身不用 backdrop-filter（底板已经是玻璃），
+   卡内 hover/让位动画都发生在底板内容层，不碰底板的 backdrop。 */
 .note-card {
   position: relative;
-  padding: 9px 12px 10px;
-  border-radius: 10px;
-  background: rgba(255,255,255,0.82);
-  border: 1px solid rgba(0,0,0,0.06);
-  min-width: 0;
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  background: rgba(255,255,255,0.56);
+  border: 1px solid rgba(255,255,255,0.72);
+  box-shadow: 0 2px 8px rgba(80,90,110,0.07);
+  min-width: 0; overflow: hidden;
+  transition: box-shadow 0.3s ease, background 0.25s ease-out;
 }
-/* hover 反馈走 ::after + opacity 叠层（白带红线：不动 background/box-shadow） */
+/* 顶部高光层（task-card 同款）：hover 时整层提亮 */
 .note-card::after {
   content: ''; position: absolute; inset: 0; border-radius: inherit;
-  background: rgba(255,255,255,0.5); opacity: 0; pointer-events: none;
-  transition: opacity 0.2s ease;
+  background: linear-gradient(to top, rgba(255,255,255,0.08), transparent 50%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+  transition: background 0.3s cubic-bezier(0.34,1.2,0.64,1); pointer-events: none;
 }
-.note-card:not(.editing):hover::after { opacity: 1; }
+.note-card > * { position: relative; z-index: 1; }
+.note-card:not(.editing):hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
+.note-card:not(.editing):hover::after { background: rgba(255,255,255,0.2); }
 
-.note-card.editing { background: rgba(255,255,255,0.92); }
-/* 窄列（280px）里就地编辑：工具栏放不下「输入 @ 引用…」提示文字，藏掉（捕捉条那份还在） */
+.note-card.editing { background: rgba(255,255,255,0.9); }
+/* 窄列里就地编辑：工具栏放不下「输入 @ 引用…」提示文字，藏掉（捕捉条那份还在） */
 .note-card.editing :deep(.ne-hint) { display: none; }
 
-/* 新建高亮：紫灰 tint 淡出（提交滚回顶部后让新卡自己说"我在这") */
+/* 新建高亮：紫灰 tint 淡出（提交滚回最左后让新卡自己说"我在这") */
 .note-card.highlight { animation: nc-flash 1.6s ease-out; }
 @keyframes nc-flash {
-  0% { background-color: rgba(123,127,178,0.16); }
-  100% { background-color: rgba(255,255,255,0.82); }
+  0% { background-color: rgba(123,127,178,0.2); }
+  100% { background-color: rgba(255,255,255,0.56); }
 }
 
 /* 可选低饱和颜色：整卡淡染（便签纸语言），不做左侧色条（那是管理系统语言） */
-.note-card.tint-purple { background: rgba(123,127,178,0.1); }
-.note-card.tint-pink   { background: rgba(196,175,200,0.14); }
-.note-card.tint-cyan   { background: rgba(122,184,200,0.11); }
-.note-card.tint-amber  { background: rgba(212,178,112,0.12); }
+.note-card.tint-purple { background: rgba(123,127,178,0.14); }
+.note-card.tint-pink   { background: rgba(196,175,200,0.18); }
+.note-card.tint-cyan   { background: rgba(122,184,200,0.15); }
+.note-card.tint-amber  { background: rgba(212,178,112,0.16); }
 
 .nc-head {
   display: flex; align-items: center; gap: 6px;

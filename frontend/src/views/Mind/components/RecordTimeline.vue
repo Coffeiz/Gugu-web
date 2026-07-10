@@ -1,11 +1,15 @@
 <template>
   <!-- 横置时间流：一天一列（左新右旧，今天在最左），列内便签上新下旧。
-       没便签的日期不出列——时间轴压缩，不摆空列。列内溢出自己竖滚。 -->
+       没便签的日期不出列——时间轴压缩，不摆空列。列内溢出自己竖滚。
+       每列一块玻璃底板（同定时任务 .panel.glass-card 的轻玻璃，背后是静态页面背景，安全）。 -->
   <div class="timeline-cols">
-    <section v-for="g in groups" :key="g.date" class="tl-col" :data-date="g.date">
+    <section v-for="g in groups" :key="g.date" class="tl-col glass-card" :data-date="g.date">
       <div class="tl-col-head">
-        <span class="tl-date-main">{{ fmtDate(g.date) }}</span>
-        <span class="tl-date-sub">{{ weekdayOf(g.date) }}</span>
+        <span class="tl-day" :class="{ today: g.date === todayIso }">{{ +g.date.slice(8, 10) }}</span>
+        <span class="tl-day-side">
+          <span class="tl-month">{{ monthLabel(g.date) }}</span>
+          <span class="tl-week">{{ weekdayOf(g.date) }}</span>
+        </span>
         <span class="tl-count">{{ g.items.length }}</span>
       </div>
 
@@ -64,13 +68,12 @@ function commit(n: MindNote, md: string) {
 }
 
 const WEEK = ['日', '一', '二', '三', '四', '五', '六']
-const _today = new Date().toISOString().slice(0, 10)
+const todayIso = new Date().toISOString().slice(0, 10)
 
-function fmtDate(iso: string) {
-  if (iso === _today) return '今天'
-  const [y, m, d] = iso.split('-')
-  const thisYear = _today.slice(0, 4)
-  return y === thisYear ? `${+m} 月 ${+d} 日` : `${y} 年 ${+m} 月 ${+d} 日`
+/** 月份小字：同年只显「7月」，跨年带年份「25年12月」 */
+function monthLabel(iso: string) {
+  const [y, m] = iso.split('-')
+  return y === todayIso.slice(0, 4) ? `${+m}月` : `${y.slice(2)}年${+m}月`
 }
 function weekdayOf(iso: string) { return '周' + WEEK[new Date(iso + 'T00:00:00').getDay()] }
 
@@ -84,16 +87,28 @@ defineExpose({ flagConflict: () => { conflict.value = true } })
   padding: 2px 2px 0;
 }
 
+/* 一天一块玻璃底板：轻玻璃（同定时任务面板 --glass-bg 0.25），hover 不提亮（底板不是交互件） */
 .tl-col {
-  width: 280px; flex-shrink: 0;
+  --glass-bg: rgba(255,255,255,0.25);
+  --glass-bg-hover: rgba(255,255,255,0.25);
+  width: 292px; flex-shrink: 0; box-sizing: border-box;
   display: flex; flex-direction: column; min-height: 0;
+  padding: 14px 12px 10px;
 }
+
+/* 日期头：大数字 + 小字月份/星期（周视图日历的语言） */
 .tl-col-head {
-  display: flex; align-items: baseline; gap: 7px;
-  flex-shrink: 0; padding: 0 2px 8px;
+  display: flex; align-items: center; gap: 8px;
+  flex-shrink: 0; padding: 0 4px 10px;
 }
-.tl-date-main { font-size: 13px; font-weight: 700; color: var(--text-primary); }
-.tl-date-sub  { font-size: 11px; color: var(--text-secondary); }
+.tl-day {
+  font-size: 26px; font-weight: 700; line-height: 1;
+  color: var(--text-primary); font-variant-numeric: tabular-nums;
+}
+.tl-day.today { color: var(--color-primary); }
+.tl-day-side { display: flex; flex-direction: column; gap: 1px; }
+.tl-month { font-size: 11px; font-weight: 600; color: var(--text-secondary); line-height: 1.1; }
+.tl-week  { font-size: 10.5px; color: var(--text-secondary); opacity: 0.75; line-height: 1.1; }
 .tl-count {
   margin-left: auto; font-size: 10.5px; color: var(--text-secondary);
   background: rgba(123,127,178,0.1); border-radius: 99px; padding: 1px 7px;
@@ -103,11 +118,11 @@ defineExpose({ flagConflict: () => { conflict.value = true } })
 .tl-col-body {
   flex: 1; min-height: 0; overflow-y: auto;
   scrollbar-width: thin;
-  padding: 1px 2px 4px;
+  margin: 0 -4px; padding: 2px 4px 4px;
 }
 .tl-stack { display: flex; flex-direction: column; gap: 10px; }
 
-/* 卡片是纸（非玻璃），transform 随便用；列内让位/进场都走 move */
+/* 卡片让位/进场走 move（卡片自身在玻璃底板之内，动它不碰底板的 backdrop） */
 .tlc-move { transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
 .tlc-enter-active { transition: opacity 0.2s ease, transform 0.2s ease; }
 .tlc-enter-from { opacity: 0; transform: translateY(6px); }
