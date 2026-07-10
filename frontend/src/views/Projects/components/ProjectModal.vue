@@ -1052,11 +1052,31 @@ async function movePmFoldersInto(folderIds, targetFolderId) {
   await _pmRefetchAllAndResetNav()
 }
 async function movePmFilesInto(fileIds, targetFolderId, { droppedOn }) {
+  // 必须显式带上 projectId（跟剪切粘贴 pmCtxPaste 一致）：后端 update_file 在没传 project_id 时
+  // 保留文件当前 project_id，而项目文件夹里的文件 project_id 可能是 null（只靠 folder_id 关联）。
+  // 拖到根（folderId=null）时若不带 projectId，new_space 会退成 personal → 文件落到个人库根，
+  // 项目根视图按 project_id 查不到、看起来「拖不上去」。带上 projectId 后落点确定留在本项目。
+  const projectId = props.project?.id
   try {
-    await Promise.all(fileIds.map(id => filesApi.update(id, { folderId: targetFolderId })))
+    await Promise.all(fileIds.map(id => filesApi.update(id, { folderId: targetFolderId, projectId })))
   } catch (err) { console.error('[ProjectModal] 移动失败:', err.message) }
-  if (droppedOn === 'breadcrumb') await _pmRefetchCurrentFiles()
-  else await _pmRefetchAllAndResetNav()
+  if (droppedOn === 'breadcrumb') {
+    // 计数徽标：文件从当前层拖到面包屑某祖先层 → 源(当前)文件夹减、目标文件夹加（根 folderId==null 无卡片、无操作）
+    _pmAdjustFolderCount(pmCurrentFolderId(), -fileIds.length)
+    _pmAdjustFolderCount(targetFolderId, fileIds.length)
+    await _pmRefetchCurrentFiles()   // 当前文件夹视图：移走的文件消失
+    // 目标层（根 or 某祖先文件夹）不是当前视图，而 navigateTo 吃缓存、不重拉 → 必须主动把目标层
+    // 缓存刷新，否则导航回去看到的是旧缓存、要手动刷新才出现刚移来的文件。
+    if (targetFolderId == null) {
+      const files = await filesApi.list({ projectId })
+      projectFiles.value = files.filter(f => !f.folderId)
+    } else {
+      const files = await filesApi.list({ folderId: targetFolderId })
+      folderFilesMap.value = { ...folderFilesMap.value, [targetFolderId]: files }
+    }
+  } else {
+    await _pmRefetchAllAndResetNav()
+  }
 }
 
 const {
@@ -1158,6 +1178,19 @@ async function loadFolders(projectId, parentId = null) {
   }
 }
 
+// 本地增减某文件夹卡片的 fileCount 徽标（不打 API）。该卡片可能在 projectFolders（根层）或任意
+// subFolderMap 层里——之前删/移/传文件后只 loadFolders(根层)，嵌套文件夹的「N 个文件」徽标一直
+// stale。这里逐层找到那张卡就地增减，folderId==null（根，没有卡片）时无操作。
+function _pmAdjustFolderCount(folderId, delta) {
+  if (folderId == null || !delta) return
+  const pf = projectFolders.value.find(f => f.id === folderId)
+  if (pf) { pf.fileCount = Math.max(0, (pf.fileCount ?? 0) + delta); return }
+  for (const k of Object.keys(subFolderMap.value)) {
+    const f = (subFolderMap.value[k] || []).find(f => f.id === folderId)
+    if (f) { f.fileCount = Math.max(0, (f.fileCount ?? 0) + delta); return }
+  }
+}
+
 async function createFolder() {
   const name = newFolderName.value.trim()
   if (!name || !props.project?.id) return
@@ -1256,8 +1289,8 @@ async function deleteFile(file) {
         [fid]: (folderFilesMap.value[fid] ?? []).filter(f => f.id !== file.id),
       }
     }
-    // 更新文件夹计数
-    await loadFolders(props.project.id)
+    // 更新被删文件所属文件夹的计数徽标（就地增减，覆盖任意嵌套层；根文件 folderId==null 无操作）
+    _pmAdjustFolderCount(file.folderId, -1)
   } catch (e) {
     console.error('[ProjectModal] 删除失败:', e.message)
   }
@@ -1303,7 +1336,8 @@ async function commitFolderRename() {
   if (!id || !name) return
   try {
     await foldersApi.rename(id, name)
-    await loadFolders(props.project.id)
+    // 同 deleteFolderCard：刷当前层，否则子文件夹里重命名其子文件夹后当前视图仍显旧名。
+    await loadFolders(props.project.id, pmCurrentFolderId())
   } catch (e) {
     console.error('[ProjectModal] 文件夹重命名失败:', e.message)
   }
@@ -1335,7 +1369,9 @@ async function deleteFolderCard(folder) {
   try {
     await foldersApi.delete(folder.id)
     fileCacheStore.refresh()   // 后台静默刷新，让 allFiles 准确反映删除后的状态
-    await loadFolders(props.project.id)
+    // 刷「当前层」文件夹：在子文件夹里删其子文件夹时，当前视图读 subFolderMap[当前层]，
+    // 写死 parentId=null 只刷根层 → 被删文件夹还留在网格里。按当前层 id 刷才对得上。
+    await loadFolders(props.project.id, pmCurrentFolderId())
   } catch (e) {
     console.error('[ProjectModal] 删除文件夹失败:', e.message)
   }
@@ -2084,6 +2120,8 @@ async function pmCtxDelete() {
   pmCtx.value.visible = false
   await Promise.all(ids.map(id => filesApi.delete(id)))
   fileCacheStore.removeFiles(ids)
+  // 删的都是当前层文件，父文件夹 = 当前所在文件夹；就地减计数徽标（之前右键删完全不更新计数）
+  _pmAdjustFolderCount(pmCurrentFolderId(), -ids.length)
   clearPmSelection()
   await pmRefreshCurrentFolder()
 }
@@ -2119,18 +2157,37 @@ async function pmRefreshCurrentFolder() {
 
 async function pmCtxPaste() {
   pmCtx.value.visible = false
-  const folderId  = pmCurrentFolderId()
+  const folderId  = pmCurrentFolderId()   // 当前所在文件夹 id；根目录为 null
   const projectId = props.project?.id
+  const cutFileIds = new Set()   // 剪切走的文件 id，粘贴后要从「源层」缓存剔除
   try {
+    let movedFolders = false
     if (pmCbStore.type === 'cut') {
-      await Promise.all(pmCbStore.fileIds.map(id => filesApi.update(id, { folderId, projectId })))
+      pmCbStore.fileIds.forEach(id => cutFileIds.add(id))
+      // 之前只搬 fileIds、漏了 folderIds → 剪切文件夹后粘贴什么都不做（子文件夹没法移到项目根，
+      // 而面包屑根又不接收文件夹拖拽，等于没有任何入口）。这里补上文件夹的 parent 改父（移到当前层）。
+      await Promise.all([
+        ...pmCbStore.fileIds.map(id => filesApi.update(id, { folderId, projectId })),
+        ...pmCbStore.folderIds.map(id => foldersApi.move(id, folderId)),
+      ])
+      movedFolders = pmCbStore.folderIds.length > 0
       pmCbStore.clear()
     } else if (pmCbStore.type === 'copy') {
       await Promise.all(pmCbStore.fileIds.map(id =>
         filesApi.copy(id, { folderId, projectId })
       ))
     }
-    await pmRefreshCurrentFolder()
+    // 动过文件夹 → 文件夹树变了，走整体刷新+重置导航（跟拖拽移动文件夹的 movePmFoldersInto 一致）。
+    if (movedFolders) { await _pmRefetchAllAndResetNav(); return }
+    // 剪切的文件从「源层」（可能是别的文件夹/根，源层未知）剔除——逐层过滤最稳，否则导航回源文件夹
+    // 会看到已经移走的文件（stale）。目标层随后 pmRefreshCurrentFolder 重新拉取会把它们带回来。
+    if (cutFileIds.size) {
+      projectFiles.value = projectFiles.value.filter(f => !cutFileIds.has(f.id))
+      const m = { ...folderFilesMap.value }
+      for (const k of Object.keys(m)) m[k] = (m[k] || []).filter(f => !cutFileIds.has(f.id))
+      folderFilesMap.value = m
+    }
+    await pmRefreshCurrentFolder()   // 目标（当前）层：带回刚粘进来的文件
   } catch (e) { console.error('[PM] 粘贴失败:', e) }
 }
 

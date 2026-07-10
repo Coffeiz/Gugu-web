@@ -96,7 +96,8 @@
 <script setup lang="ts">
 import { ref, computed, shallowRef, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { filesApi } from '@/services/api'
-import { filesCache } from '@/services/cache'
+import { filesCache, filesCacheVersion, uploadSignal } from '@/services/cache'
+import { useLiveStore } from '@/stores/live'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache, cardBlobReadyIds } from '@/composables/useThumbCache'
@@ -232,6 +233,22 @@ watch(filesCache.ref, (list) => {
   loadThumbs(list.slice(0, displayCount.value))
   if (cardVisible.value) loadCards(list.slice(0, displayCount.value))
 })
+
+// 实时刷新：此前 FilePanel 只在进 Dashboard 时版本门控拉一次，开着期间任何文件变动（咕咕/IM 或
+// 本标签页其它视图）都不刷 → stale。这里订阅 SSE（liveStore.rev.files，咕咕/IM 改动）与本地
+// uploadSignal（同标签其它视图上传/改动），bump 时版本门控重拉，Dashboard 开着也免刷新更新。
+const liveStore = useLiveStore()
+async function _refreshFilesFromServer() {
+  try {
+    const { version: ver } = await filesApi.version()
+    if (ver && ver === filesCacheVersion.get() && filesCache.data) return  // 未变，跳过全量拉取
+    const fresh = await filesApi.list()
+    filesCache.set(fresh)
+    if (ver) filesCacheVersion.set(ver)
+  } catch { /* ignore */ }
+}
+watch(() => liveStore.rev.files, _refreshFilesFromServer)
+watch(uploadSignal, _refreshFilesFromServer)
 
 // 面板变宽时 displayCount 增大，补加载新出现文件的缩略图
 watch(displayCount, (newCount, oldCount) => {

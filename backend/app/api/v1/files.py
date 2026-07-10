@@ -16,6 +16,7 @@ from jose import jwt, JWTError
 from app.core.security import get_current_user, create_stream_token, verify_stream_token
 from app.core.ownership import get_owned
 from app.core.config import get_settings
+from app.core import events
 from app.services.storage import get_storage
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -537,6 +538,7 @@ async def upload_file(
     db.add(db_file)
     await db.commit()
     await db.refresh(db_file)
+    await events.publish(current_user.id, "files")
 
     resp = _to_resp(db_file, project_name or None, project_color, folder_name or None)
 
@@ -718,6 +720,7 @@ async def confirm_upload(
         existing.mime_type = body.mime_type
         await db.commit()
         await db.refresh(existing)
+        await events.publish(current_user.id, "files")
         return _to_resp(existing, project_name or None, project_color, folder_name or None)
 
     db_file = File(
@@ -736,6 +739,7 @@ async def confirm_upload(
     db.add(db_file)
     await db.commit()
     await db.refresh(db_file)
+    await events.publish(current_user.id, "files")
 
     return _to_resp(db_file, project_name or None, project_color, folder_name or None)
 
@@ -808,6 +812,7 @@ async def update_file(
     f.updated_at   = now_utc()
     await db.commit()
     await db.refresh(f)
+    await events.publish(current_user.id, "files")
 
     return _to_resp(f, project_name or None, project_color, folder_name or None)
 
@@ -839,6 +844,7 @@ async def update_file_content(
     f.updated_at = now_utc()
     await db.commit()
     await db.refresh(f)
+    await events.publish(current_user.id, "files")
     return _to_resp(f)
 
 
@@ -898,6 +904,7 @@ async def copy_file(
     db.add(new_file)
     await db.commit()
     await db.refresh(new_file)
+    await events.publish(current_user.id, "files")
     return _to_resp(new_file, project_name or None, project_color, folder_name or None)
 
 
@@ -932,6 +939,7 @@ async def delete_file(
     await _move_to_trash(get_storage(), f)
     f.deleted_at = now_utc()
     await db.commit()
+    await events.publish(current_user.id, "files")
 
 
 # ── POST /files/batch-delete ──────────────────────────────────────────────────
@@ -956,6 +964,7 @@ async def batch_delete_files(
         await _move_to_trash(storage, f)
         f.deleted_at = now
     await db.commit()
+    await events.publish(current_user.id, "files")
 
 
 # ── POST /files/batch-download ───────────────────────────────────────────────

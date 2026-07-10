@@ -15,6 +15,7 @@ from app.models import File, Folder, Project, User
 from app.schemas import FolderCreate, FolderMove, FolderRename, FolderResponse
 from app.core.security import get_current_user
 from app.core.ownership import get_owned
+from app.core import events
 from app.services.storage import get_storage
 
 router = APIRouter(prefix="/folders", tags=["folders"])
@@ -147,6 +148,7 @@ async def create_folder(
     db.add(folder)
     await db.commit()
     await db.refresh(folder)
+    await events.publish(current_user.id, "files")   # 广播给该用户所有端/标签页（含发起页），实时刷文件库
     return FolderResponse(id=folder.id, project_id=folder.project_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=0)
 
@@ -216,6 +218,7 @@ async def rename_folder(
     folder.name = body.name
     await db.commit()
     await db.refresh(folder)
+    await events.publish(current_user.id, "files")
     cnt = await _file_count(folder.id, db)
     return FolderResponse(id=folder.id, project_id=folder.project_id, name=folder.name, file_count=cnt)
 
@@ -256,6 +259,7 @@ async def move_folder(
     folder.parent_id = new_parent_id
     await db.commit()
     await db.refresh(folder)
+    await events.publish(current_user.id, "files")
     cnt = await _file_count(folder.id, db)
     return FolderResponse(id=folder.id, project_id=folder.project_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=cnt)
@@ -302,3 +306,4 @@ async def delete_folder(
             await db.delete(f)
 
     await db.commit()
+    await events.publish(current_user.id, "files")

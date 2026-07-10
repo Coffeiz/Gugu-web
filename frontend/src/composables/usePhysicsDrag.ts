@@ -77,16 +77,27 @@ function _flushPendingCleanup(key: HTMLElement | null) {
 // 卡片飞向落点的途中（0.55s），若同一容器里另一张卡被抓起/放下，触发的 FLIP 会让这张卡的
 // 真实落点跟着挪位——飞行动画一开始就把目标钉死成旧位置，不会跟着挪。这里让还在飞的落点
 // 动画登记一个「按最新位置重新定目标」的回调（键是 revealEl，即那张卡当前的真实 DOM 元素），
-// 每次 _invertPlay 产生一次 FLIP 重排，就用它权威算出的 toRects（真实布局位置，不含过渡中的
-// transform 插值，比临时再测一次 getBoundingClientRect 准）去对号更新命中的飞行目标。
-// CSS transition 天然支持「途中改目标」：从当前插值位置平滑转向新目标，不会跳变或重播。
+// 每次 _invertPlay 产生一次 FLIP 重排，就据落地卡的**干净布局落点**更新命中的飞行目标。
+// ⚠️ 不能直接用 _invertPlay 传来的 rects：并发拖拽下，这张落地卡（此刻 opacity:0、克隆才是可见
+// 本体）自己可能正挂着上一次 FLIP 没跑完的 translate——那份 rect 是「带残留 transform 的中间
+// 位置」，不是真正的布局落点。据它重定目标 → 克隆过度移动再由真卡归位（实测：先拖 B、快抓 A、
+// 松开 A，B 的克隆过度右移然后归位）。这里对每张落地卡临时把 transform 归零（opacity:0，肉眼
+// 无感）量出干净布局落点再还原。CSS transition 天然支持途中改目标：从当前插值位置平滑转向新目标。
 let _pendingRetargets = new Map<HTMLElement, (box: any) => void>()
-function _retargetLandings(kids: HTMLElement[], rects: any[]) {
+function _retargetLandings(kids: HTMLElement[], _rectsIgnored?: any[]) {
   if (!_pendingRetargets.size) return
-  kids.forEach((k, i) => {
+  for (const k of kids) {
     const fn = _pendingRetargets.get(k)
-    if (fn) fn(rects[i])
-  })
+    if (!fn) continue
+    const savedTf = k.style.transform
+    const savedTr = k.style.transition
+    k.style.transition = 'none'
+    k.style.transform = 'none'
+    const b = k.getBoundingClientRect()   // 干净布局落点（transform 已归零）
+    k.style.transform = savedTf
+    k.style.transition = savedTr
+    fn({ left: b.left, top: b.top, width: b.width, height: b.height })
+  }
 }
 
 function _childCards(container, exclude) {
@@ -197,7 +208,7 @@ function _landingZIndex(el: HTMLElement | null): number {
 
 // FLIP：布局已经变到「现状(toRects)」后，让 kids 先回到 fromRects 再动画到现状
 function _invertPlay(kids, fromRects, toRects, dur = 340) {
-  _retargetLandings(kids, toRects)
+  _retargetLandings(kids)   // 自行量干净落点，不吃这里可能被残留 transform 污染的 toRects
   kids.forEach((c, i) => {
     const dx = fromRects[i].left - toRects[i].left
     const dy = fromRects[i].top  - toRects[i].top
@@ -240,8 +251,8 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
 
   // 二阶弹簧-阻尼跟随（有惯性/动量，起步被弹簧甩出去而非黏滞渗出）：
   //   SPRING 越大越跟手、越小越拖；ZETA<1 略带动量回弹，=1 临界不过冲。
-  const SPRING = opts.spring   ?? 190    // 弹簧刚度（rad²/s²），≈2.2Hz 固有频率
-  const ZETA   = opts.damping  ?? 0.82   // 阻尼比：略欠阻尼，给一点「甩出去」的灵动
+  const SPRING = opts.spring   ?? 360    // 弹簧刚度（rad²/s²），≈3.0Hz 固有频率（越大越跟手，190 时约 0.35s 追上光标、偏拖沓，调硬到 ~0.23s）
+  const ZETA   = opts.damping  ?? 0.85   // 阻尼比：略欠阻尼，保留一点「甩出去」的灵动，但收得比 0.82 快
   const LIFT  = opts.lift      ?? 1       // 克隆抬起的放大（1=不放大）
   const SWAY  = opts.sway      ?? 0.25   // 横向摆动幅度
   const TILT  = opts.tilt      ?? 5      // 后仰角(deg)：上小下大，像被拎起
@@ -424,13 +435,18 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
       // box 用 let：飞行途中可能被 _retargetLandings 改指到新位置（见其注释），finish() 收尾时
       // 要读的是「最新」这份，不是刚进来那一刻的静态快照。
       let box = initialBox
-      // 克隆体是按源卡(旧)尺寸渲染的；缩放到落点卡尺寸，并让缩放后中心对齐落点中心
+      // 克隆体是按源卡(旧)尺寸渲染的；缩放到落点卡尺寸，并让缩放后中心对齐落点中心。
+      // 抽成纯函数：给任意一个「目标框」算出对应 transform 字符串——retarget 冻结当前位置时也复用
+      // 它（用同一套函数式表示，见下），避免跟 getComputedStyle 的 matrix3d 混用导致跨表示插值。
+      const tfFor = (b: { left: number; top: number; width: number; height: number }) => {
+        const sx = (b.width  / rect.width ).toFixed(4)
+        const sy = (b.height / rect.height).toFixed(4)
+        const cx = b.left + b.width / 2, cy = b.top + b.height / 2
+        return `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0)` +
+               ` perspective(760px) rotateX(0deg) rotateZ(0deg) scale(${sx}, ${sy})`
+      }
       const applyTransform = () => {
-        const sx = (box.width  / rect.width ).toFixed(4)
-        const sy = (box.height / rect.height).toFixed(4)
-        const cx = box.left + box.width / 2, cy = box.top + box.height / 2
-        const tf = `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0)` +
-                   ` perspective(760px) rotateX(0deg) rotateZ(0deg) scale(${sx}, ${sy})`
+        const tf = tfFor(box)
         clone.style.transform = tf
         clone2.style.transform = tf
       }
@@ -446,28 +462,50 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
       // 直接在飞行中途改 transform 目标，浏览器会当「打断」处理：新一段插值默认按当前速度
       // 顺势打断续接，而不是重新从静止起步走一遍完整缓出曲线——两段拼起来速度不连续，
       // 观感比原本单段飞行更接近匀速，缓出的「快进慢收」感被削弱。
-      // 做法：读出克隆体此刻真实渲染的位置（含插值中的中间态）→ 关过渡、把这个位置钉死成
-      // 当前态 → 重新打开过渡、指向新目标，让这一段重新从「静止的当前位置」完整跑一遍同一条
-      // 缓出曲线，手感跟原本没被打断时一致。全程同步无绘制帧插入，位置本身不会跳一下。
+      // 做法：读出克隆体此刻真实渲染的位置 → 关过渡、把这个位置钉死成当前态 → 重新打开过渡、
+      // 指向新目标，让这一段重新从「静止的当前位置」完整跑一遍同一条缓出曲线。
+      // 关键：冻结用的当前态必须跟目标态是**同一种 transform 表示**（都走 tfFor 的函数式
+      // translate3d+perspective+scale）。之前冻结读的是 getComputedStyle().transform——因为带
+      // perspective()，它返回的是 matrix3d(...)，再过渡到函数式目标属于「跨表示插值」，浏览器
+      // 各自分解成矩阵再插，路径不稳 → 并发拖拽（先拖 B 再拖 A、松开 A 让 B 归位）时 B 的回退
+      // 会瞬移/曲线不一致。改用 getBoundingClientRect 拿当前真实框、再用 tfFor 重建同款函数式
+      // 表示，freeze 与 target 同构，插值干净，跟普通 FLIP 让位一致。
       const retarget = (newBox) => {
         if (done) return
+        const r = clone2.getBoundingClientRect()   // 当前真实可见框（含插值中间态；landing 无旋转，rect 即真位置）
         box = newBox
-        const curT = getComputedStyle(clone2).transform
+        // 冻结当前位置：关过渡 + 同款函数式表示（tfFor，不用 getComputedStyle 的 matrix3d，避免跨表示插值）。
+        const frozen = tfFor({ left: r.left, top: r.top, width: r.width, height: r.height })
         clone.style.transition = 'none'
         clone2.style.transition = 'none'
-        clone.style.transform = curT
-        clone2.style.transform = curT
-        void clone2.offsetWidth
-        clone.style.transition = trans
-        clone2.style.transition = trans
-        applyTransform()
+        clone.style.transform = frozen
+        clone2.style.transform = frozen
+        // 关键：下一帧再恢复过渡 + 指向新目标，跟 _invertPlay 的 FLIP 完全同一套跨帧触发方式。
+        // 之前用同步 `void offsetWidth` 提交冻结态、同一 tick 里就恢复过渡+改目标——某些情况下浏览器
+        // 不把它当成过渡基线，过渡不 fire → 直接瞬移到目标（这就是并发拖拽时 B 回退「瞬移一下」的真凶）。
+        // rAF 跨过一个真实帧边界，保证冻结态先画出来、成为过渡起点，随后到目标是一段完整缓出。
+        requestAnimationFrame(() => {
+          if (done) return
+          clone.style.transition = trans
+          clone2.style.transition = trans
+          applyTransform()
+          armFinishTimer()
+        })
       }
       _pendingRetargets.set(revealEl, retarget)
 
       let unregister = () => {}
+      let finishTimer: ReturnType<typeof setTimeout> | null = null
+      const armFinishTimer = () => {
+        if (finishTimer) clearTimeout(finishTimer)
+        // 每次改落点都会重新跑一段 0.55s 的 transform 缓出；兜底计时也必须从这次改向重新算，
+        // 否则前一次落地的计时会在新一段动画半路把克隆撤掉，真实卡直接露在终点而瞬移。
+        finishTimer = setTimeout(finish, 700)
+      }
       const finish = () => {
         if (done) return
         done = true
+        if (finishTimer) clearTimeout(finishTimer)
         unregister()
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
@@ -494,15 +532,18 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
       const forceCleanup = () => {
         if (done) return
         done = true
+        if (finishTimer) clearTimeout(finishTimer)
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
         clone.remove(); clone2.remove()
         _revealWithoutStaleHover(revealEl, pointer)
       }
       unregister = _registerCleanup(revealEl, forceCleanup)
-      onEnd = finish
+      // clone2 的 opacity 只用来交叉淡变，420ms 就会结束；不能把它当落地完成，
+      // 否则目标中途被重定时 transform 还没走完就会提前揭示真实卡。
+      onEnd = (e) => { if (e.target === clone2 && e.propertyName === 'transform') finish() }
       clone2.addEventListener('transitionend', onEnd)
-      setTimeout(finish, 700)
+      armFinishTimer()
     }
 
     // 占位重新展开：FLIP 邻居从「合拢」动到「展开」。el 当前可能已收合(home)或已展开(落点新卡)，
@@ -663,8 +704,8 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
   sourceEl.style.opacity = ''
   for (const ex of extras) { if (ex) { ex.style.display = ''; ex.style.opacity = '' } }
 
-  const SPRING = opts.spring  ?? 190
-  const ZETA   = opts.damping ?? 0.82
+  const SPRING = opts.spring  ?? 360   // 跟单选一致：调硬跟手（原 190 偏拖沓）
+  const ZETA   = opts.damping ?? 0.85
   const LIFT   = opts.lift    ?? 1       // 1=不放大
   const SWAY   = opts.sway    ?? 0.25
   const TILT   = opts.tilt    ?? 5

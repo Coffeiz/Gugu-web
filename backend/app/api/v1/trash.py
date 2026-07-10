@@ -10,6 +10,7 @@ from app.models import File, MindMap, Project, Folder, User
 from app.schemas import FileResponse, BatchDeleteBody
 from app.core.security import get_current_user
 from app.core.ownership import get_owned
+from app.core import events
 from app.services.storage import get_storage
 from app.api.v1.files import _to_resp, _color, _delete_thumb_cache, _build_key, _resolve_conflict
 
@@ -96,6 +97,7 @@ async def restore_file(
     await _restore_file_storage(f, db)
     f.deleted_at = None
     await db.commit()
+    await events.publish(current_user.id, "files")
 
 
 # ── POST /trash/batch-restore ─────────────────────────────────────────────────
@@ -118,6 +120,7 @@ async def batch_restore(
         await _restore_file_storage(f, db)
         f.deleted_at = None
     await db.commit()
+    await events.publish(current_user.id, "files")
 
 
 # ── DELETE /trash/{fid} （永久删除单文件）────────────────────────────────────
@@ -139,6 +142,7 @@ async def hard_delete_file(
     await db.delete(f)
     await db.commit()
     _delete_thumb_cache(fid)
+    await events.publish(current_user.id, "files")
 
 
 # ── DELETE /trash （清空回收站）──────────────────────────────────────────────
@@ -161,6 +165,7 @@ async def empty_trash(
     await db.commit()
     for fid in fids:
         _delete_thumb_cache(fid)
+    await events.publish(current_user.id, "files")
 
 
 # ── 自动清理过期文件（由 main.py 在启动时调用）────────────────────────────────

@@ -1,6 +1,6 @@
 # 文件存储结构规范
 
-> 更新：2026-07-02
+> 更新：2026-07-11（§2.8 前端缓存与实时刷新重写：补 SSE 通道、三套并存缓存现状、已知 stale 缺口与「免刷新保证」方案）
 > 项目：咕咕 / gugugu.site
 
 ---
@@ -237,35 +237,46 @@ def get_storage() -> StorageBackend:
 
 `display_name` 字段同步更新。
 
-### 2.8 前端文件缓存策略
+### 2.8 前端文件缓存策略与实时刷新
 
 #### 2.8.1 目标
 
-消除文件库导航时的"白屏/加载"感，使文件夹切换、返回上级的体验接近本地应用。
+两个目标：① 消除文件库导航时的"白屏/加载"感，文件夹切换、返回上级接近本地应用；② 保证**所有展示文件的页面不需要手动刷新就能看到最新状态**——不管是本页写操作、还是咕咕/其它端/另一标签页的改动，都应自动同步。目标 ① 早已达成；目标 ②（"免刷新保证"）当前**尚未完全达成**，缺口与方案见 §2.8.8。
 
-#### 2.8.2 方案：全量元数据缓存 + 乐观更新
+#### 2.8.2 三套并存的前端缓存（现状，重要）
 
-进入文件库时一次性拉取当前用户所有文件和文件夹的**元数据**（不含文件内容/Blob），构建内存索引，所有导航为纯内存查找，写操作先更新本地缓存再后台同步服务端。
+文件数据目前在前端有**三套互不共享底层的缓存**，只在"全量重拉 / 重新进页面"时才互相对齐：
 
-**数据量评估：** 单条文件元数据约 300–600 字节，10,000 个文件约 5 MB，对浏览器无压力。
+| 缓存 | 用在哪 | 结构 / 特点 | 回前台兜底 |
+|---|---|---|---|
+| 全局 `stores/filesCache.ts`（cacheStore） | 文件库页 `views/Files/index.vue`、项目卡文件数 `views/Projects/index.vue` | 扁平 `allFiles`/`allFolders` + 两个 computed 分层索引；增量 API 齐全；`refresh()` **全量重拉** | ✅ visibilitychange 版本校验 |
+| ProjectModal **自持**本地缓存 | 项目编辑卡 `views/Projects/components/ProjectModal.vue`（`projectFiles`/`folderFilesMap`/`subFolderMap`/`projectFolders`，`:763-797`） | 只拿全局缓存当**开屏种子**，随后直连 `filesApi.list`/`foldersApi.list` 覆盖；**导航吃缓存不重拉** | ❌ 无 |
+| Dashboard FilePanel 的 sessionStorage `services/cache.ts` | `views/Dashboard/components/FilePanel.vue` | 扁平列表 | ❌ 无 |
+
+> ⚠️ 三套并存是当前最大的结构性缝隙：一处改了，另两套要靠 SSE 全量重拉或重进页面才对齐。长期方向是收敛为单一 store（见 §2.8.8 Tier 3）。
 
 #### 2.8.3 后端接口
 
 ```
 GET /files/all    → 当前用户所有未删除文件元数据（FileResponse[]）
 GET /folders/all  → 当前用户所有文件夹（FolderResponse[]）
+GET /files/version → count:max_updated:max_deleted 摘要（版本校验用）
 ```
 
-#### 2.8.4 前端内存索引（`src/stores/filesCache.js`）
+**数据量评估：** 单条文件元数据约 300–600 字节，10,000 个文件约 5 MB，对浏览器无压力。
 
-Computed Map 双索引，O(1) 查找：
+#### 2.8.4 全局内存索引（`src/stores/filesCache.ts`）
 
-```js
+扁平 `allFiles`/`allFolders` + Computed Map 双索引，O(1) 查找：
+
+```ts
 // files: 'personal' | 'proj:{id}' | folderId(int) → File[]
 const _fileIdx = computed(() => { ... })
 // folders: 'personal' | 'proj:{id}' | 'sub:{parentId}' → Folder[]
 const _folderIdx = computed(() => { ... })
 ```
+
+对外查找 `getPersonalRootFiles/getProjectRootFiles/getFolderFiles`、`getPersonalRootFolders/getProjectRootFolders/getSubFolders`；增量 API `addFile/removeFile/removeFiles/updateFile`、`addFolder/removeFolder/updateFolder`（`removeFolder` 递归级联子文件夹及其文件）。
 
 #### 2.8.5 乐观更新 + 服务端验证
 
@@ -277,20 +288,61 @@ const _folderIdx = computed(() => { ... })
 | 新建文件夹 | 插入临时负数 ID 条目 | 移除临时条目 + 报错 |
 | 剪切粘贴 | 更新 folderId/projectId | 还原 + 报错 |
 
-#### 2.8.6 缓存失效策略
+> 移动/剪切文件到"项目根"时**必须显式带 `projectId`**：后端 `update_file` 在未传 `project_id` 时保留原值，而项目文件夹内文件的 `project_id` 可能为 null，只传 `folderId:null` 会让 `new_space` 退成 personal、文件落到个人库根（项目根视图按 `project_id` 查不到 → 看似"移不过去"）。参见 §2.3 `update_file` 与 `ProjectModal.movePmFilesInto`。
 
-- **主动失效**：写操作后局部更新索引（addFile/removeFile/updateFile 等乐观更新接口）
-- **版本校验**：Tab 切回（`visibilitychange` 事件）时调 `GET /files/version`，返回 `count:max_updated:max_deleted` 摘要；与上次版本不一致则静默重拉全量数据
-- **本地文件删除检测**：`GET /files/all` 在 LocalStorageBackend 下扫描每个文件实体是否存在；不存在的直接硬删数据库记录（不进回收站），确保 UI 与文件系统一致
-- 多标签/多设备场景由版本校验覆盖，无需 WebSocket
+#### 2.8.6 缓存失效与实时刷新（三条通道叠加）
+
+1. **写操作乐观增量**：发起视图先本地改，后台同步服务端，失败回滚（见 §2.8.5）。
+2. **SSE 实时通道**（`stores/live.ts` ← 后端 `/live/stream`）：
+   - **粒度**：**粗粒度 bump**——后端只推 `{"resources":["files"]}`，**不带文件 id、不带操作类型**（`backend/app/core/events.py:47-65`）；前端 `rev.files++`，订阅者一律 `cacheStore.refresh()` **全量重拉整个文件库**（有意为之，`filesCache.ts:146`：GET `/files/version` 可能被浏览器缓存到旧值，不敢做版本门控）。
+   - **谁推**：**只有咕咕/IM 走 tool-dispatch 那条唯一钩子会 publish**（`backend/agent/tools/base.py:354-362` + `events.py:28-39` 的 `RESOURCE_BY_TOOL`）；`app/api/v1/files.py`/`folders.py` 这些 **REST 端点完全不 publish** → **用户自己在网页上的操作后端不广播**。这是"跨标签页 / 不共享缓存的面收不到用户自己操作"的根因。
+   - **谁订阅**：Files 页（`index.vue:1189`）、ProjectModal（`:1428`，只对当前项目重拉、且不刷 `subFolderMap`）。**FilePanel 没订阅**。
+   - 另有 `uploadSignal` / `liveStore.bump('files')` 纯前端递增（不过网络、不跨标签页），仅 Files 页 watch（`index.vue:1182`）。
+3. **版本校验兜底**：Tab 切回前台（`visibilitychange`）调 `GET /files/version`，与上次不一致则静默重拉。**只有全局 cacheStore 有**（`filesCache.ts:88-94`）；ProjectModal 本地缓存、FilePanel 都没绑。
+4. **本地文件删除检测**：`GET /files/all` 在 LocalStorageBackend 下扫描每个文件实体是否存在；不存在的直接硬删 DB 记录（不进回收站），保证 UI 与文件系统一致。
+
+> 早期本节曾写"多标签/多设备由版本校验覆盖，无需 WebSocket"——**已过时**：现已有 SSE `/live/stream`，但它只广播咕咕/IM 侧改动；用户自己的网页操作仍只靠本标签乐观更新 + 回前台版本校验，跨标签页/跨面尚未打通（见 §2.8.8）。
 
 #### 2.8.7 加载体验优化
 
 - **内容过渡动画**：导航切换时 `content-fade` 淡出（40ms）+ 淡入（120ms），`mode="out-in"` 避免双层叠放
 - **热缓存同步初始化**：`onMounted` 检测 `cacheStore.loaded && projectStore.projects.length > 0` 时同步调 `restoreNav() + loadContents()`，跳过 `await`，SPA 内导航回文件库无空帧闪烁
-- **tiny blob 全局预热**：任何页面获取文件列表后调 `preloadTinyThumbs(files)`，后台静默 fetch 所有图片的 tiny blob（已缓存则跳过），跨页面共享，实现渐进式加载
+- **tiny blob 全局预热**：任何页面获取文件列表后调 `preloadTinyThumbs(files)`，后台静默 fetch 所有图片 tiny blob（已缓存则跳过），跨页面共享，渐进式加载
 - **项目编辑卡文件预填**：打开项目时先从 `filesCacheStore` 同步填充文件/文件夹列表，API 刷新后覆盖，消除等待期间文件区域为空的问题
 - 回收站仍走异步请求（需要 `deleted_at` 字段，不在主缓存中）
+
+#### 2.8.8 已知 stale 缺口与「免刷新保证」方案（2026-07-11 排查）
+
+**要达成"所有页面免刷新即更新"的保证，最小充分集 = ① 所有改动都广播 → ② 所有展示面都订阅 → ③ 收到就刷新。当前 ②③ 基本有（除 FilePanel），缺的核心是 ①：用户自己的网页操作后端不 publish（§2.8.6）。**
+
+已知缺口（按严重度，均带 `文件:行号`，随代码演进可能漂移）：
+
+**A. 真 bug（当前视图当场就错，不用导航）**
+- Files 页右键"移到回收站"删文件不消失——`ctxDelete` 只调 API + `loadContents`，**漏 `cacheStore.removeFile`**（`views/Files/index.vue:1963`）；而 `loadContents` 从缓存同步重建 → 文件原地不动。同功能的悬停垃圾桶 `deleteSingleFile` 有乐观删除，两条路径不一致。
+- ProjectModal 在子文件夹里删/改其子文件夹，当前视图不更新——`deleteFolderCard`（`ProjectModal.vue:1355`）、`commitFolderRename`（`:1323`）的 `loadFolders` 写死 `parentId=null` 只刷根层，当前层读的是 `subFolderMap[父id]`。
+
+**B. 导航后 stale（换层才暴露）**
+- 剪切文件跨层粘贴，源文件夹 `folderFilesMap[src]` 残留（`ProjectModal.vue:2160`，`pmRefreshCurrentFolder` 只刷当前层）。
+- Dashboard FilePanel 开着期间几乎必 stale（不订阅任何实时信号，只进 Dashboard 时版本门控拉一次）。
+
+**C. 计数徽标 stale（数字对不上，次要）**
+- `subFolderMap.fileCount` 几乎从不增量刷新（所有单项操作调 `loadFolders` 都写死根层）；面包屑移动、右键删文件不刷两侧计数。
+
+**D. 跨面 / 跨标签不同步（结构性）**
+- 用户网页操作不进 SSE；三套缓存不互通；ProjectModal 本地缓存、FilePanel 都无 visibilitychange 兜底，回前台不自愈。
+
+**分级方案与落地状态（2026-07-11）：**
+
+| Tier | 做什么 | 状态 |
+|---|---|---|
+| **0 止血** | 修 A、B 具体处：`ctxDelete` 加乐观 `cacheStore.removeFiles`+失败回滚+`fetchStorage`；`deleteFolderCard`/`commitFolderRename` 的 `loadFolders` 改按当前层 `pmCurrentFolderId()` 刷；剪切跨层粘贴后逐层剔除源层被移走的文件 id | ✅ 已实现 |
+| **1 兜底** | FilePanel 订阅 SSE(`liveStore.rev.files`)+`uploadSignal`（版本门控重拉）；计数徽标改本地增减 `_pmAdjustFolderCount`（逐层找卡片，接入删/移/传）；visibilitychange 兜底经评估**冗余**（SSE 重连 `_catchUp` 已错峰 bump 所有资源，覆盖切回标签页）→ 不做 | ✅ 已实现 |
+| **2 关键** | `files.py`/`folders.py`/`trash.py` 的所有增删改端点（16 处）commit 后 `await events.publish(current_user.id, "files")` → 用户自己的网页操作也广播，跨标签页/跨面自动同步 | ✅ 已实现（需重启后端生效） |
+| **3 收敛** | 三套缓存统一到单一 store（ProjectModal、FilePanel 都改用全局 `filesCache`）；SSE 细粒度化（带 id + 操作类型）→ 增量 patch 替代全量重拉，解决大文件量下"任意小改动都全库重拉"的性能天花板 | ⏳ 长期，未做 |
+
+> **Tier 2 的回声成本**：用户自己的操作现在也会广播回发起标签页，导致它在乐观更新之外多做一次全量重拉。中小文件量几乎无感；文件量很大时可考虑加 **client-id 回声抑制**（发起页带自己的 id，SSE 回来时跳过自己的）——干净但要动前端请求层 + 各端点传 origin，暂未做。
+
+**落地后现状**：Tier 0/1/2 的最小充分集（① 所有改动广播 → ② 所有面订阅 → ③ 收到就刷新）已闭环，"所有页面免刷新即更新"的保证基本达成；剩下的性能天花板与缓存收敛（Tier 3）等文件量大到有卡顿感再做。
 
 ### 2.9 图片缩略图
 
