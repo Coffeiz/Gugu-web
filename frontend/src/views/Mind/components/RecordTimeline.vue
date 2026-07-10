@@ -84,7 +84,8 @@ defineExpose({ flagConflict: () => { conflict.value = true } })
 .timeline-cols {
   display: flex; gap: 14px; align-items: stretch;
   height: 100%; min-width: max-content;
-  padding: 2px 2px 0;
+  /* 两端各留半屏空白（% 相对滚动容器宽）：滑杆语义下首末列也要能停在屏幕正中 */
+  padding: 2px calc(50% - 146px) 0;
 }
 
 /* 一天一块玻璃底板：轻玻璃（同定时任务面板 --glass-bg 0.25），hover 不提亮（底板不是交互件） */

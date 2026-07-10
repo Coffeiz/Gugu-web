@@ -4,7 +4,7 @@
     <DateIndex :groups="indexGroups" :active="activeDate" @jump="jumpTo" />
 
     <!-- 横置便签流：横向翻历史（滚轮转横滚），列内竖滚翻当天 -->
-    <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel">
+    <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel" @scroll="onScroll">
       <div v-if="store.loading && !store.loaded" class="rec-loading">加载中…</div>
       <RecordTimeline
         v-else
@@ -43,12 +43,7 @@ const scrollRef   = ref<HTMLElement | null>(null)
 const highlightId = ref<number | null>(null)
 let highlightTimer: ReturnType<typeof setTimeout> | null = null
 
-onMounted(async () => {
-  if (!store.loaded) store.fetchNotes()
-  // 重访本页时 timeline 内容没变、下面的 watch 不会触发，挂载后补一次观察器
-  await nextTick()
-  rebuildObserver()
-})
+onMounted(() => { if (!store.loaded) store.fetchNotes() })
 
 // 咕咕/多端改了便签 → 重新拉（P3 后端才开始推 mind 资源，这里先接好）
 watch(() => liveStore.rev.mind, () => store.fetchNotes())
@@ -64,41 +59,51 @@ function onWheel(e: WheelEvent) {
   e.preventDefault()
 }
 
-// ── 日期条：滚动联动（IntersectionObserver 盯日期列，别用 scroll 手算）────────
+// ── 滑杆语义：聚焦哪天、那天的列停在屏幕正中 ─────────────────────────────────
+// 「当前」= 中心离容器中心最近的列（不是最左的列）。判定要随每个滚动像素连续变化，
+// IntersectionObserver 只在进出边界时回调、跟不上"最近"的易主，这里是它的能力边界，
+// 改用 rAF 节流的 scroll 手算（列数就几十个，一次遍历微不足道）。
 const indexGroups = computed(() => store.timeline.map(g => ({ date: g.date, count: g.items.length })))
 const activeDate  = ref('')
-let observer: IntersectionObserver | null = null
-const visibleLefts = new Map<string, number>()   // date -> boundingLeft（只记相交中的列）
+let scrollRaf = 0
 
-function rebuildObserver() {
-  observer?.disconnect()
-  visibleLefts.clear()
+function updateActive() {
   const root = scrollRef.value
   if (!root) return
-  observer = new IntersectionObserver(entries => {
-    for (const en of entries) {
-      const date = (en.target as HTMLElement).dataset.date!
-      if (en.isIntersecting) visibleLefts.set(date, en.boundingClientRect.left)
-      else visibleLefts.delete(date)
-    }
-    // 当前 = 左侧条带里位置最靠左的列；条带里没有（快速滚动间隙）就保持上次的值
-    let best = ''; let bestLeft = Infinity
-    for (const [date, left] of visibleLefts) {
-      if (left < bestLeft) { best = date; bestLeft = left }
-    }
-    if (best) activeDate.value = best
-  }, { root, rootMargin: '0px -60% 0px 0px' })
-  root.querySelectorAll<HTMLElement>('.tl-col[data-date]').forEach(el => observer!.observe(el))
+  const centerX = root.scrollLeft + root.clientWidth / 2
+  let best = ''; let bestDist = Infinity
+  root.querySelectorAll<HTMLElement>('.tl-col[data-date]').forEach(col => {
+    const d = Math.abs(col.offsetLeft + col.offsetWidth / 2 - centerX)
+    if (d < bestDist) { best = col.dataset.date!; bestDist = d }
+  })
+  if (best) activeDate.value = best
 }
 
-watch(() => store.timeline, async () => { await nextTick(); rebuildObserver() }, { immediate: true })
-onBeforeUnmount(() => observer?.disconnect())
+function onScroll() {
+  if (scrollRaf) return
+  scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; updateActive() })
+}
+onBeforeUnmount(() => { if (scrollRaf) cancelAnimationFrame(scrollRaf) })
 
-function jumpTo(date: string) {
+/** 把某天的列滚到容器正中（首末列靠 .timeline-cols 两端的半屏 padding 也能居中） */
+function jumpTo(date: string, behavior: ScrollBehavior = 'smooth') {
   const root = scrollRef.value
   const col = root?.querySelector<HTMLElement>(`.tl-col[data-date="${date}"]`)
-  if (root && col) root.scrollTo({ left: col.offsetLeft - 4, behavior: 'smooth' })
+  if (root && col) {
+    root.scrollTo({ left: col.offsetLeft + col.offsetWidth / 2 - root.clientWidth / 2, behavior })
+  }
 }
+
+// 首次数据就绪：今天（最新一列）直接定在正中，不播滚动动画
+let centeredOnce = false
+watch(() => store.timeline, async (groups) => {
+  await nextTick()
+  if (!centeredOnce && groups.length) {
+    centeredOnce = true
+    jumpTo(groups[0].date, 'auto')
+  }
+  updateActive()
+}, { immediate: true })
 
 // ── 新建：翻进历史 → 先滚回最左（今天）再插入+高亮；补录 → 不滚，toast 报落点 ──
 const _today = () => new Date().toISOString().slice(0, 10)
@@ -117,7 +122,8 @@ async function onCreated(md: string, capturedAt?: string) {
     Message.success(`已记到 ${+m} 月 ${+d} 日`)
     return
   }
-  scrollRef.value?.scrollTo({ left: 0, behavior: 'smooth' })
+  await nextTick()               // 今天的列可能是刚创建出来的，等它进 DOM 再居中
+  jumpTo(_today())
   highlightId.value = created.id
   if (highlightTimer) clearTimeout(highlightTimer)
   highlightTimer = setTimeout(() => { highlightId.value = null }, 1800)
