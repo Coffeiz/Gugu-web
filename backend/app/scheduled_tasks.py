@@ -6,6 +6,7 @@ worker 进程每 ~30s 调 `reconcile()`：从 `scheduled_tasks` 表读启用任�
   ② IM 主动 DM（飞书可主动；QQ best-effort）
 """
 from __future__ import annotations
+from app.core.tz import now_utc
 
 import json
 import uuid as _uuid
@@ -120,7 +121,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
         payload, uid, name = t.payload or "", t.user_id, t.name
         context_config = t.context_config
         chans = {c for c in (t.channels or "").split(",") if c}
-        t.last_run_at = datetime.utcnow()
+        t.last_run_at = now_utc()
         once_deleted = not is_trial and (t.cron or "").startswith("@once:")
         if once_deleted:
             await db.delete(t)
@@ -200,7 +201,7 @@ async def _persist_push_im(uid, platform: str, title: str, text: str) -> None:
             db.add(session)
             await db.flush()
         db.add(ConversationMessage(session_id=session.id, role="assistant", content=f"⏰ {title}\n\n{text}"))
-        session.updated_at = datetime.utcnow()
+        session.updated_at = now_utc()
         await db.commit()
         new_sid = session.id
 

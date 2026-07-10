@@ -26,6 +26,16 @@ def _detect() -> timezone:
 LOCAL_TZ: timezone = _detect()
 
 
+def now_utc() -> datetime:
+    """当前 UTC 时间——统一时钟出口（见 docs/backend/时区与时钟迁移方案.md Phase 1）。
+
+    业务代码禁止再直调已弃用的 `datetime.utcnow()`（Python 3.14 持续告警），一律走这里。
+    **过渡期返回 naive UTC**：与现有全 naive 的 DateTime 列一致，零行为变化。等 Phase 2 把列
+    迁成 `timestamptz` 后，这里去掉 `.replace(tzinfo=None)` 返回 aware 即可，不用再动调用点。
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def local_now() -> datetime:
     """返回本地当前时刻（timezone-aware）。"""
     return datetime.now(LOCAL_TZ)

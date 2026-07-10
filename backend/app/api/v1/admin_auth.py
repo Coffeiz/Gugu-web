@@ -5,6 +5,7 @@ GET  /api/v1/admin/auth/me      → 验证当前 Token
 """
 
 from datetime import datetime, timedelta
+from app.core.tz import now_utc
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -47,8 +48,8 @@ def _create_token(data: dict) -> str:
     cfg = get_settings()
     payload = {
         **data,
-        "exp": datetime.utcnow() + timedelta(minutes=cfg.access_token_expire_minutes),
-        "iat": datetime.utcnow(),
+        "exp": now_utc() + timedelta(minutes=cfg.access_token_expire_minutes),
+        "iat": now_utc(),
     }
     return jwt.encode(payload, cfg.secret_key, algorithm="HS256")
 

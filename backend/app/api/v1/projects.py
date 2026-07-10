@@ -1,4 +1,5 @@
 import json
+from app.core.tz import now_utc
 import re
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -155,7 +156,7 @@ async def update_project(
             setattr(p, k, v)
     # 仅在 done_at 为空时才记录完成时间，避免拖回已完成列重置时间
     if data.get("status") == "done" and p.done_at is None:
-        p.done_at = datetime.utcnow()
+        p.done_at = now_utc()
     elif "status" in data and data["status"] != "done":
         p.done_at = None
 
@@ -185,7 +186,7 @@ async def delete_project(
     await db.execute(
         update(File)
         .where(File.project_id == pid, File.user_id == current_user.id, File.deleted_at.is_(None))
-        .values(deleted_at=datetime.utcnow())
+        .values(deleted_at=now_utc())
     )
     await db.delete(p)
     await db.commit()

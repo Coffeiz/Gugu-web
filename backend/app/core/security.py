@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from app.core.tz import now_utc
 from uuid import UUID
 
 import bcrypt as _bcrypt
@@ -23,7 +24,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_stream_token(file_id: int, user_id: UUID, expires_minutes: int = 10) -> str:
     settings = get_settings()
-    expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
+    expire = now_utc() + timedelta(minutes=expires_minutes)
     return jwt.encode(
         {"sub": str(user_id), "fid": file_id, "role": "stream", "exp": expire},
         settings.secret_key,
@@ -45,7 +46,7 @@ def verify_stream_token(token: str) -> tuple[int, UUID]:
 
 def create_user_token(user_id: UUID) -> str:
     settings = get_settings()
-    expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
+    expire = now_utc() + timedelta(minutes=settings.access_token_expire_minutes)
     return jwt.encode(
         {"sub": str(user_id), "role": "user", "exp": expire},
         settings.secret_key,

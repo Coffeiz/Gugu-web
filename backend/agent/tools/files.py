@@ -9,6 +9,7 @@
 转换（系统已装，零新依赖）。
 """
 import json
+from app.core.tz import now_utc
 from datetime import datetime
 
 from sqlalchemy import select
@@ -277,7 +278,7 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
     await storage.put(f.storage_key, data, f.mime_type)
     f.size_bytes = len(data)
     f.size = _fmt_size(len(data))
-    f.updated_at = datetime.utcnow()
+    f.updated_at = now_utc()
     await db.commit()
     result = {"success": True, "file_id": f.id, "name": nm, "new_size": f.size, "change": change}
     # P2c · 内容骤降告警：replace_all 最容易把整段覆盖丢。改后显著变短时确定性提示模型核对，
@@ -455,7 +456,7 @@ async def _rename_one(db, user_id, f, new_name: str) -> dict:
         f.storage_key = new_key
     old = f.display_name
     f.display_name = new_display
-    f.updated_at = datetime.utcnow()
+    f.updated_at = now_utc()
     await db.commit()
     return {"success": True, "file_id": f.id, "old_name": f"{old}.{f.ext}", "name": f"{new_display}.{f.ext}"}
 
@@ -601,7 +602,7 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
     f.folder_id = folder_id
     if "stage_name" in target:
         f.stage_name = target["stage_name"]
-    f.updated_at = datetime.utcnow()
+    f.updated_at = now_utc()
     await db.commit()
 
     folder_name = "（根目录）"
@@ -707,7 +708,7 @@ async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id) -> dict
                     f.display_name = new_disp
                 f.space = t_space
                 f.project_id = t_pid
-                f.updated_at = datetime.utcnow()
+                f.updated_at = now_utc()
                 moved_files += 1
             except Exception as e:
                 failed.append({"file": f"{f.display_name}.{f.ext}", "error": str(e)[:80]})
@@ -793,7 +794,7 @@ async def _delete_file(db, user_id, args: dict):
         return _err
     fid = f.id; fname = f"{f.display_name}.{f.ext}"
     await _move_to_trash(get_storage(), f)
-    f.deleted_at = datetime.utcnow()
+    f.deleted_at = now_utc()
     await db.commit()
     return {"success": True, "file_id": fid, "name": fname,
             "note": "已移入回收站，30 天内可还原"}

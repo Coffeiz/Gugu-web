@@ -5,6 +5,7 @@ Files 四空间结构 + 项目内用户文件夹（Folder）。
 """
 
 import json
+from app.core.tz import now_utc
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -32,7 +33,7 @@ class User(Base):
     display_name:         Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default=None)
     is_active:            Mapped[bool]          = mapped_column(Boolean, default=True)
     avatar:               Mapped[Optional[str]] = mapped_column(String(500), nullable=True, default=None)
-    created_at:           Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow)
+    created_at:           Mapped[datetime]      = mapped_column(DateTime, default=now_utc)
     token_limit_monthly:  Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     token_limit_6h:       Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     token_limit_weekly:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
@@ -40,6 +41,7 @@ class User(Base):
     search_limit_daily:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     last_active_at:       Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None, index=True)
     is_developer:         Mapped[bool]          = mapped_column(Boolean, default=False)   # 开发者标记：数据面板可一键排除，看真实用户数据
+    timezone:             Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None)   # IANA 时区（如 Asia/Shanghai）；前端首登探测写入，日期归属/展示按它换算（见 docs/backend/时区与时钟迁移方案.md）
 
     projects:      Mapped[list["Project"]]             = relationship(back_populates="owner", cascade="all, delete-orphan")
     files:         Mapped[list["File"]]                = relationship(back_populates="owner", cascade="all, delete-orphan")
@@ -62,7 +64,7 @@ class UserPreferences(Base):
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
     data_json:  Mapped[str]      = mapped_column(Text, default="{}")
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, onupdate=now_utc)
 
     owner: Mapped["User"] = relationship(back_populates="preferences")
 
@@ -98,8 +100,8 @@ class Project(Base):
     version:       Mapped[int]           = mapped_column(Integer,     default=1)
     archived:      Mapped[bool]          = mapped_column(Boolean,     default=False)
     done_at:       Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    created_at:    Mapped[datetime]      = mapped_column(DateTime,    default=datetime.utcnow)
-    updated_at:    Mapped[datetime]      = mapped_column(DateTime,    default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at:    Mapped[datetime]      = mapped_column(DateTime,    default=now_utc)
+    updated_at:    Mapped[datetime]      = mapped_column(DateTime,    default=now_utc, onupdate=now_utc)
 
     owner:   Mapped["User"]          = relationship(back_populates="projects")
     files:   Mapped[list["File"]]    = relationship(back_populates="project", lazy="select")
@@ -138,8 +140,8 @@ class File(Base):
     mime_type:    Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     img_width:    Mapped[Optional[int]] = mapped_column(Integer,     nullable=True)
     img_height:   Mapped[Optional[int]] = mapped_column(Integer,     nullable=True)
-    created_at:   Mapped[datetime]      = mapped_column(DateTime,    default=datetime.utcnow)
-    updated_at:   Mapped[datetime]      = mapped_column(DateTime,    default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at:   Mapped[datetime]      = mapped_column(DateTime,    default=now_utc)
+    updated_at:   Mapped[datetime]      = mapped_column(DateTime,    default=now_utc, onupdate=now_utc)
     deleted_at:   Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None, index=True)
 
     owner:    Mapped["User"]              = relationship(back_populates="files")
@@ -158,7 +160,7 @@ class Folder(Base):
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     parent_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="CASCADE"), nullable=True, index=True)
     name:       Mapped[str]           = mapped_column(String(200))
-    created_at: Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime]      = mapped_column(DateTime, default=now_utc)
 
     owner:    Mapped["User"]              = relationship(back_populates="folders")
     project:  Mapped[Optional["Project"]] = relationship(back_populates="folders")
@@ -189,8 +191,8 @@ class MindMap(Base):
     title:      Mapped[str]           = mapped_column(String(300))
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     data_json:  Mapped[str]           = mapped_column(Text, default="{}")
-    created_at: Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime]      = mapped_column(DateTime, default=now_utc)
+    updated_at: Mapped[datetime]      = mapped_column(DateTime, default=now_utc, onupdate=now_utc)
 
     owner: Mapped["User"]       = relationship(back_populates="mind_maps")
     files: Mapped[list["File"]] = relationship(back_populates="mind_map")
@@ -229,9 +231,9 @@ class MindNode(Base):
     indexed_hash: Mapped[Optional[str]]      = mapped_column(String(64), nullable=True, default=None) # content_plain 的 sha256
 
     version:     Mapped[int]      = mapped_column(Integer, default=1)   # 乐观锁，走 core.mind.update_node_atomic 的原子 UPDATE
-    captured_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)  # 面向用户的「发生/记录时间」，可编辑
-    created_at:  Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)              # 落库时间，只作审计
-    updated_at:  Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, index=True)  # 面向用户的「发生/记录时间」，可编辑
+    created_at:  Mapped[datetime] = mapped_column(DateTime, default=now_utc)              # 落库时间，只作审计
+    updated_at:  Mapped[datetime] = mapped_column(DateTime, default=now_utc, onupdate=now_utc)
     deleted_at:  Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None, index=True)  # 软删=墓碑
 
     owner: Mapped["User"] = relationship(back_populates="mind_nodes")
@@ -268,8 +270,8 @@ class MindCanvasItem(Base):
     collapsed: Mapped[bool]            = mapped_column(Boolean, default=False)
     data_json: Mapped[str]             = mapped_column(Text, default="{}")     # 预留展示扩展
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, onupdate=now_utc)
 
     owner: Mapped["User"] = relationship(back_populates="mind_canvas_items")
 
@@ -297,8 +299,8 @@ class MindRelation(Base):
     status:   Mapped[str]           = mapped_column(String(10), default="confirmed")   # confirmed | suggested
     note:     Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, onupdate=now_utc)
 
     owner: Mapped["User"] = relationship(back_populates="mind_relations")
 
@@ -325,7 +327,7 @@ class CalendarEvent(Base):
     project_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     version:     Mapped[int]           = mapped_column(Integer, default=1)
-    created_at:  Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow)
+    created_at:  Mapped[datetime]      = mapped_column(DateTime, default=now_utc)
 
     owner: Mapped["User"] = relationship(back_populates="events")
 
@@ -342,7 +344,7 @@ class Client(Base):
     email:      Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     phone:      Mapped[Optional[str]] = mapped_column(String(50),  nullable=True)
     notes:      Mapped[str]           = mapped_column(Text,        default="")
-    created_at: Mapped[datetime]      = mapped_column(DateTime,    default=datetime.utcnow)
+    created_at: Mapped[datetime]      = mapped_column(DateTime,    default=now_utc)
 
     owner: Mapped["User"] = relationship(back_populates="clients")
 
@@ -357,8 +359,8 @@ class ConversationSession(Base):
     title:      Mapped[str]      = mapped_column(String(300), default="新对话")
     summary:    Mapped[str]      = mapped_column(Text, default="")   # 一句话「这段对话聊了啥」，供跨 session 查找/续接（随会话刷新；绑 session、删则同删）
     source:     Mapped[str]      = mapped_column(String(20), default="web")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, onupdate=now_utc)
 
     owner:    Mapped["User"]                      = relationship(back_populates="conversations")
     messages: Mapped[list["ConversationMessage"]] = relationship(
@@ -381,7 +383,7 @@ class ConversationMessage(Base):
     # 单独一列，别拼进 content——网页气泡按纯文本渲染 content，拼进去会把引用原文（可能带 markdown
     # 表格等）原样摊平显示，见 devlog 2026-07-10。
     quoted_text:  Mapped[Optional[str]]    = mapped_column(Text, nullable=True, default=None)
-    created_at:   Mapped[datetime]        = mapped_column(DateTime, default=datetime.utcnow)
+    created_at:   Mapped[datetime]        = mapped_column(DateTime, default=now_utc)
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
 
@@ -399,7 +401,7 @@ class AgentUsage(Base):
     model:      Mapped[str]           = mapped_column(String(100))
     provider:   Mapped[str]           = mapped_column(String(50))
     tools_used: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
-    created_at: Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime]      = mapped_column(DateTime, default=now_utc, index=True)
 
 
 # ── SearchUsage ───────────────────────────────────────────────────────────────
@@ -412,7 +414,7 @@ class SearchUsage(Base):
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     query:      Mapped[str]      = mapped_column(String(500), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, index=True)
 
 
 # ── UserBot（BYO：每用户自带的 IM 机器人）─────────────────────────────────────
@@ -440,7 +442,7 @@ class UserBot(Base):
     # 所以 group_requires_at 对 QQ 是平台层面硬约束，前端对 QQ 会强制显示为开启且不可关闭。
     group_chat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
 
 
 # ── InviteCode ────────────────────────────────────────────────────────────────
@@ -453,7 +455,7 @@ class InviteCode(Base):
     note:       Mapped[Optional[str]]    = mapped_column(String(200), nullable=True)
     used_at:    Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
     used_by:    Mapped[Optional[UUID]]   = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_at: Mapped[datetime]         = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime]         = mapped_column(DateTime, default=now_utc)
 
 
 # ── AuditLog ──────────────────────────────────────────────────────────────────
@@ -466,7 +468,7 @@ class AuditLog(Base):
     action:      Mapped[str]           = mapped_column(String(50), index=True)
     description: Mapped[str]           = mapped_column(Text)
     ip:          Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
-    created_at:  Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at:  Mapped[datetime]      = mapped_column(DateTime, default=now_utc, index=True)
 
 
 # ── SystemLog ─────────────────────────────────────────────────────────────────
@@ -479,7 +481,7 @@ class SystemLog(Base):
     module:     Mapped[str]           = mapped_column(String(200), index=True)
     message:    Mapped[str]           = mapped_column(Text)
     traceback:  Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime]      = mapped_column(DateTime, default=now_utc, index=True)
 
 
 # ── FrontendEvent（前端行为埋点）─────────────────────────────────────────────
@@ -491,7 +493,7 @@ class FrontendEvent(Base):
     user_id:    Mapped[UUID]               = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     event:      Mapped[str]                = mapped_column(String(64), index=True)   # chat_open / chat_expanded / chat_message
     properties: Mapped[Optional[dict]]     = mapped_column(JSON, nullable=True, default=None)
-    created_at: Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime]           = mapped_column(DateTime, default=now_utc, index=True)
 
 
 # ── Feedback（用户反馈）─────────────────────────────────────────────────────
@@ -504,7 +506,7 @@ class Feedback(Base):
     username:   Mapped[str]            = mapped_column(String(64))   # 冗余存，用户删除后仍可读
     category:   Mapped[str]            = mapped_column(String(32), index=True)   # bug / suggestion / other
     content:    Mapped[str]            = mapped_column(Text)
-    created_at: Mapped[datetime]       = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime]       = mapped_column(DateTime, default=now_utc, index=True)
 
 
 # ── ScheduledTask（定时任务）─────────────────────────────────────────────────
@@ -527,8 +529,8 @@ class ScheduledTask(Base):
     # "files": false, "memory": false}。null = 不裁剪，走全量（兼容旧任务/未判断出结果时的安全默认）。
     context_config: Mapped[Optional[dict]]  = mapped_column(JSON, nullable=True, default=None)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
-    created_at:  Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at:  Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at:  Mapped[datetime]           = mapped_column(DateTime, default=now_utc)
+    updated_at:  Mapped[datetime]           = mapped_column(DateTime, default=now_utc, onupdate=now_utc)
 
 
 # ── SiteNotification（站点通知广播）──────────────────────────────────────────
@@ -544,7 +546,7 @@ class SiteNotification(Base):
     persist:    Mapped[bool]     = mapped_column(Boolean, default=True)        # 是否进通知中心（持久列表）
     bubble_expire_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # 气泡时限，null=永久
     created_by: Mapped[str]      = mapped_column(String(100), default="admin")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
 
 
 class NotificationRead(Base):
@@ -555,4 +557,4 @@ class NotificationRead(Base):
     id:              Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:         Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     notification_id: Mapped[int]      = mapped_column(ForeignKey("site_notifications.id", ondelete="CASCADE"), index=True)
-    read_at:         Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    read_at:         Mapped[datetime] = mapped_column(DateTime, default=now_utc)

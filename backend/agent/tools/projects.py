@@ -4,6 +4,7 @@
 done_at 处理）。
 """
 import json
+from app.core.tz import now_utc
 import random
 from datetime import datetime, timedelta
 
@@ -56,7 +57,7 @@ async def _update_project(db, user_id, args: dict):
         return _err
     if "status" in args:
         if args["status"] == "done" and p.done_at is None:
-            p.done_at = datetime.utcnow()
+            p.done_at = now_utc()
             # 与前端「手拖到已完成」一致：标完成 = 整项收尾——自动勾选所有阶段的全部待办、
             # 当前阶段推到最后、进度置 100。未完成的待办打 autoCompleted + 快照原状态，
             # 之后从「已完成」退回时前端按此还原（同 GuguChat moveProject 约定）。
@@ -78,7 +79,7 @@ async def _update_project(db, user_id, args: dict):
     for field in ("deadline", "start_date", "client", "name"):
         if field in args:
             setattr(p, field, args[field])
-    p.updated_at = datetime.utcnow()
+    p.updated_at = now_utc()
     await db.commit()
     return {"success": True, "project_id": p.id, "name": p.name, "priority": p.priority}
 
@@ -204,7 +205,7 @@ async def _update_stage(db, user_id, args: dict):
     if not changed:
         return json.dumps({"error": "未指定 stage 或 todo，无操作"})
 
-    p.updated_at = datetime.utcnow()
+    p.updated_at = now_utc()
     await db.commit()
     return {"success": True, "project_id": p.id, "current_stage": p.current_stage}
 
@@ -217,7 +218,7 @@ async def _set_color(db, user_id, args: dict):
     if not color:
         return json.dumps({"error": "未提供颜色（color，如 #A3B1FF）"})
     p.color = color
-    p.updated_at = datetime.utcnow()
+    p.updated_at = now_utc()
     await db.commit()
     return {"success": True, "project_id": p.id, "color": p.color}
 
@@ -227,7 +228,7 @@ async def _archive_project(db, user_id, args: dict):
     if _err:
         return _err
     p.archived = bool(args.get("archived", True))
-    p.updated_at = datetime.utcnow()
+    p.updated_at = now_utc()
     await db.commit()
     return {"success": True, "project_id": p.id, "archived": p.archived}
 
@@ -255,7 +256,7 @@ async def _delete_project(db, user_id, args: dict):
     await db.execute(
         update(File)
         .where(File.project_id == pid, File.user_id == user_id, File.deleted_at.is_(None))
-        .values(deleted_at=datetime.utcnow())
+        .values(deleted_at=now_utc())
     )
     await db.delete(p)
     await db.commit()
@@ -356,7 +357,7 @@ async def _add_stage(db, user_id, args: dict):
     else:
         stages.insert(max(0, pos), new)
     p.stages = stages
-    p.updated_at = datetime.utcnow()
+    p.updated_at = now_utc()
     await db.commit()
     return {"success": True, "project_id": p.id, "stage_key": new["key"], "label": new["label"]}
 
@@ -375,7 +376,7 @@ async def _remove_stage(db, user_id, args: dict):
     if p.current_stage == removed_key:
         p.current_stage = stages[0]["key"] if stages else None
     p.stages = stages
-    p.updated_at = datetime.utcnow()
+    p.updated_at = now_utc()
     await db.commit()
     return {"success": True, "project_id": p.id, "removed": match.get("label"),
             "remaining_stages": [s.get("label") for s in stages]}
@@ -391,7 +392,7 @@ async def _rename_stage(db, user_id, args: dict):
         return json.dumps({"error": f"阶段不存在: {args['stage']}"})
     match["label"] = args["new_label"]
     p.stages = stages
-    p.updated_at = datetime.utcnow()
+    p.updated_at = now_utc()
     await db.commit()
     return {"success": True, "project_id": p.id, "label": args["new_label"]}
 
@@ -413,7 +414,7 @@ async def _add_todo(db, user_id, args: dict):
     for i, txt in enumerate(texts):
         match["todos"].append({"id": f"t{base + 1 + i}", "text": txt, "done": False})
     p.stages = stages
-    p.updated_at = datetime.utcnow()
+    p.updated_at = now_utc()
     await db.commit()
     return {"success": True, "project_id": p.id, "stage": match.get("label"), "added": texts}
 
@@ -433,7 +434,7 @@ async def _remove_todo(db, user_id, args: dict):
         return json.dumps({"error": f"未找到待办: {target}"})
     match["todos"] = kept
     p.stages = stages
-    p.updated_at = datetime.utcnow()
+    p.updated_at = now_utc()
     await db.commit()
     return {"success": True, "project_id": p.id, "removed": target}
 
@@ -487,7 +488,7 @@ async def _set_stages(db, user_id, args: dict):
     cur_label = old_cur.get("label") if old_cur else None
     p.current_stage = next((s["key"] for s in new_stages if s["label"] == cur_label), new_stages[0]["key"])
     p.stages = new_stages
-    p.updated_at = datetime.utcnow()
+    p.updated_at = now_utc()
     await db.commit()
     return {"success": True, "project_id": p.id, "stages": [s["label"] for s in new_stages]}
 
@@ -535,7 +536,7 @@ async def _update_todo(db, user_id, args: dict):
             dest.setdefault("todos", []).append(found)
 
     p.stages = stages
-    p.updated_at = datetime.utcnow()
+    p.updated_at = now_utc()
     await db.commit()
     return {"success": True, "project_id": p.id, "todo": found.get("text"),
             "done": found.get("done"), "stage": dest.get("label")}

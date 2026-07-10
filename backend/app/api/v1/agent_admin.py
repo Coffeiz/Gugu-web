@@ -13,6 +13,7 @@ POST   /api/v1/admin/agent/llm-presets/{id}/test     → 连通性测试
 """
 
 import json
+from app.core.tz import now_utc
 import uuid as _uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -184,7 +185,7 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
     total_calls, total_in, total_out = total_row.one()
 
     # 今日
-    today = datetime.utcnow().date()
+    today = now_utc().date()
     today_start = datetime(today.year, today.month, today.day)
     today_row = await db.execute(
         select(

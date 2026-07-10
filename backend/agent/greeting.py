@@ -5,6 +5,7 @@
 失败 / 空 → 返回 ''，由前端兜底池接手（永不慢、永不空）。问候**不自我介绍、不报功能菜单、emoji 极简**。
 """
 import logging
+from app.core.tz import now_utc
 from datetime import date, datetime, timedelta
 
 from app.core.tz import local_now
@@ -49,7 +50,7 @@ async def _last_seen_part(db: AsyncSession, user_id) -> str:
         return ""
     if last is None:
         return "【上次和你说话】没有聊天记录（第一次或很久没来）——别说「好久不见」，给个轻松招呼即可。"
-    mins = max(0.0, (datetime.utcnow() - last).total_seconds() / 60)
+    mins = max(0.0, (now_utc() - last).total_seconds() / 60)
     if mins < 60:
         when = f"就在不久前（约 {int(mins)} 分钟前）——刚聊过，千万别说「好久不见」，自然接上"
     elif mins < 60 * 12:
@@ -95,7 +96,7 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
     # 近 7 天有动静的项目（可选背景，不是必提项）
     proj_part = ""
     try:
-        since = datetime.utcnow() - timedelta(days=7)
+        since = now_utc() - timedelta(days=7)
         rows = (await db.execute(
             select(Project)
             .where(Project.user_id == user_id, Project.updated_at >= since,

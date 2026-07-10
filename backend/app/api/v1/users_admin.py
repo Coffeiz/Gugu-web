@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from app.core.tz import now_utc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -14,7 +15,7 @@ router = APIRouter(prefix="/admin/users", tags=["admin"])
 
 
 def _month_range():
-    now = datetime.utcnow()
+    now = now_utc()
     start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     last_day = calendar.monthrange(now.year, now.month)[1]
     end = now.replace(day=last_day, hour=23, minute=59, second=59, microsecond=999999)
@@ -32,7 +33,7 @@ async def list_users(
 
     month_start, month_end = _month_range()
 
-    now = datetime.utcnow()
+    now = now_utc()
 
     usage_stmt = (
         select(

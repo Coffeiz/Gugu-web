@@ -1,5 +1,6 @@
 """站点通知广播：管理员向所有/指定用户推送通知气泡。"""
 from __future__ import annotations
+from app.core.tz import now_utc
 
 from datetime import datetime, timedelta
 from typing import Optional
@@ -39,7 +40,7 @@ async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db)):
 
     bubble_expire_at = None
     if req.bubble and req.bubble_ttl_hours:
-        bubble_expire_at = datetime.utcnow() + timedelta(hours=req.bubble_ttl_hours)
+        bubble_expire_at = now_utc() + timedelta(hours=req.bubble_ttl_hours)
 
     rec = SiteNotification(
         title=req.title, content=req.content, color=req.color, target=req.target,

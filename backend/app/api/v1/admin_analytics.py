@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from app.core.tz import now_utc
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, distinct, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +35,7 @@ _ONBOARD_SQ = select(_seeded_pid).where(_seeded_pid.is_not(None))
 
 @router.get("/summary")
 async def get_summary(exclude_dev: bool = Query(False), db: AsyncSession = Depends(get_db)):
-    now = datetime.utcnow()
+    now = now_utc()
     d7  = now - timedelta(days=7)
     d30 = now - timedelta(days=30)
     today_start = local_day_start_utc()
@@ -385,7 +386,7 @@ async def get_session_depth(exclude_dev: bool = Query(False), db: AsyncSession =
 async def get_active_dimensions(exclude_dev: bool = Query(False), db: AsyncSession = Depends(get_db)):
     """周活跃维度（近 7 天，去重用户数）。口径 v1 = 「操作过」（服务器有记录的创建/更新/触发），
     纯浏览（查看）未埋点、不含——见 docs/product/design-admin.md 面板备注。"""
-    d7 = datetime.utcnow() - timedelta(days=7)
+    d7 = now_utc() - timedelta(days=7)
     xd = exclude_dev
 
     async def _cnt(col, *where):

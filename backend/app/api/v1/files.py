@@ -1,4 +1,5 @@
 import asyncio
+from app.core.tz import now_utc
 import os
 import re
 from datetime import datetime
@@ -256,7 +257,7 @@ async def list_all_files(
     storage = get_storage()
     from app.services.storage import LocalStorageBackend
     if isinstance(storage, LocalStorageBackend):
-        now = datetime.utcnow()
+        now = now_utc()
         valid_rows = []
         for row in rows:
             f, pname, pcolor, fname = row
@@ -804,7 +805,7 @@ async def update_file(
     f.folder_id    = new_fid
     f.project_id   = new_pid
     f.space        = new_space
-    f.updated_at   = datetime.utcnow()
+    f.updated_at   = now_utc()
     await db.commit()
     await db.refresh(f)
 
@@ -835,7 +836,7 @@ async def update_file_content(
     await get_storage().put(f.storage_key, data, f.mime_type or "text/markdown")
     f.size_bytes = len(data)
     f.size = _fmt_size(len(data))
-    f.updated_at = datetime.utcnow()
+    f.updated_at = now_utc()
     await db.commit()
     await db.refresh(f)
     return _to_resp(f)
@@ -929,7 +930,7 @@ async def delete_file(
     if not f or f.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
     await _move_to_trash(get_storage(), f)
-    f.deleted_at = datetime.utcnow()
+    f.deleted_at = now_utc()
     await db.commit()
 
 
@@ -950,7 +951,7 @@ async def batch_delete_files(
     )
     files = (await db.execute(stmt)).scalars().all()
     storage = get_storage()
-    now = datetime.utcnow()
+    now = now_utc()
     for f in files:
         await _move_to_trash(storage, f)
         f.deleted_at = now

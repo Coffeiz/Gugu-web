@@ -6,6 +6,7 @@
 直到 6h 窗口整点重置自然解冻。web 流式 / runner 非流式（IM、定时任务）两处记账共用此处，口径一致。
 """
 from __future__ import annotations
+from app.core.tz import now_utc
 
 from datetime import datetime, timezone, timedelta
 
@@ -35,7 +36,7 @@ async def is_exhausted(db, user_id, settings) -> bool:
     u = await db.get(User, user_id)
     if u is None:
         return False
-    now = datetime.utcnow()
+    now = now_utc()
 
     async def _used(since: datetime) -> int:
         r = await db.execute(
@@ -69,7 +70,7 @@ async def cap_usage(db, user_id, settings, tin: int, tout: int) -> tuple[int, in
     limit = u.token_limit_6h or settings.quota.default_token_limit_6h
     if limit is None:
         return tin, tout
-    win = six_h_window_start(datetime.utcnow())
+    win = six_h_window_start(now_utc())
     used = (await db.execute(
         select(func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out))
         .where(and_(AgentUsage.user_id == user_id, AgentUsage.created_at >= win))

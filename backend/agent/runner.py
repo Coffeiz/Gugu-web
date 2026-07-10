@@ -6,6 +6,7 @@ core/sanitize 这套大脑，把 SSE 流"消费成文本"。会话历史/持久�
 worker 按平台用户从 Redis 取（续聊不断），见 worker._im_session_*。
 """
 from __future__ import annotations
+from app.core.tz import now_utc
 
 import asyncio
 import json
@@ -126,7 +127,7 @@ async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str) 
         .order_by(_desc(ConversationSession.updated_at)).limit(1))).scalars().first()
     if not prev or not prev.updated_at:
         return ""
-    age_h = (datetime.utcnow() - prev.updated_at).total_seconds() / 3600
+    age_h = (now_utc() - prev.updated_at).total_seconds() / 3600
     if age_h > 48:
         return ""
     when = f"约 {int(age_h)} 小时前" if age_h >= 1 else f"约 {max(1, int(age_h * 60))} 分钟前"

@@ -1,4 +1,5 @@
 import io
+from app.core.tz import now_utc
 import zipfile
 from datetime import datetime
 from typing import Optional
@@ -272,7 +273,7 @@ async def delete_folder(
     if not folder:
         raise HTTPException(404, "文件夹不存在")
 
-    now = datetime.utcnow()
+    now = now_utc()
 
     # 递归收集所有子文件夹 id
     all_fids = [fid]

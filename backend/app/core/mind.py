@@ -16,6 +16,7 @@
 这条也做进 `update_node_atomic`，调用方无从忘记。
 """
 from __future__ import annotations
+from app.core.tz import now_utc
 
 import hashlib
 import re
@@ -100,7 +101,7 @@ async def update_node_atomic(db, node_id: int, user_id, client_version: int, fie
         values["indexed_hash"] = content_hash(values["content_plain"])
 
     values["version"] = MindNode.version + 1
-    values["updated_at"] = datetime.utcnow()
+    values["updated_at"] = now_utc()
 
     res = await db.execute(
         update(MindNode)

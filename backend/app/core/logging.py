@@ -6,6 +6,7 @@
 """
 
 import asyncio
+from app.core.tz import now_utc
 import logging
 import queue
 import traceback as _tb
@@ -29,7 +30,7 @@ class DbLogHandler(logging.Handler):
                 "module":     record.name,
                 "message":    self.format(record),
                 "traceback":  tb_text,
-                "created_at": datetime.utcnow(),
+                "created_at": now_utc(),
             })
         except queue.Full:
             pass

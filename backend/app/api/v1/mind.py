@@ -8,6 +8,7 @@
 - 正文一变就得重算 `content_plain` / 清 `indexed_at`，这层由 `update_node_atomic` 兜底。
 """
 from datetime import datetime
+from app.core.tz import now_utc
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -71,7 +72,7 @@ async def create_note(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    captured_at = body.captured_at or datetime.utcnow()
+    captured_at = body.captured_at or now_utc()
     # 记录描述的是已经发生的想法；补录可以回填过去，但不能把记录写到未来日期。
     if captured_at.date() > datetime.now().date():
         raise HTTPException(422, "不能创建未来日期的记录")
@@ -129,7 +130,7 @@ async def delete_note(
     """软删=墓碑：只写 deleted_at。节点行、它的画布项和关系全留着，图谱不静默断裂。
     真正清掉要等用户明确「清理」（那时才 DELETE 行，靠 CASCADE 连带清）。"""
     n = await _get_live_note(db, nid, current_user.id)
-    n.deleted_at = datetime.utcnow()
+    n.deleted_at = now_utc()
     await db.commit()
 
 

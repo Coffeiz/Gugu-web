@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from app.core.tz import now_utc
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -166,7 +167,7 @@ async def empty_trash(
 
 async def cleanup_expired(db: AsyncSession) -> int:
     # 系统级任务，遍历所有用户的过期回收站文件，设计上是全局执行，无需 user_id 过滤
-    cutoff = datetime.utcnow() - timedelta(days=TRASH_DAYS)
+    cutoff = now_utc() - timedelta(days=TRASH_DAYS)
     stmt = select(File).where(File.deleted_at.isnot(None), File.deleted_at <= cutoff)
     files = (await db.execute(stmt)).scalars().all()
     if not files:

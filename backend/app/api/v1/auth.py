@@ -1,4 +1,5 @@
 import secrets
+from app.core.tz import now_utc
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
@@ -55,7 +56,7 @@ async def register(body: UserRegister, request: Request, db: AsyncSession = Depe
     claimed = await db.execute(
         InviteCode.__table__.update()
         .where(and_(InviteCode.id == invite.id, InviteCode.used_at.is_(None)))
-        .values(used_at=datetime.utcnow(), used_by=user.id)
+        .values(used_at=now_utc(), used_by=user.id)
     )
     if claimed.rowcount != 1:
         await db.rollback()
@@ -161,7 +162,7 @@ async def reset_password(body: ResetPassword, db: AsyncSession = Depends(get_db)
 
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    now = datetime.utcnow()
+    now = now_utc()
     if current_user.last_active_at is None or (now - current_user.last_active_at) >= timedelta(hours=1):
         current_user.last_active_at = now
         await db.commit()
@@ -262,7 +263,7 @@ async def get_quota(
     db: AsyncSession = Depends(get_db),
 ):
     settings = get_settings()
-    now = datetime.utcnow()
+    now = now_utc()
 
     async def _used(since: datetime) -> int:
         r = await db.execute(
