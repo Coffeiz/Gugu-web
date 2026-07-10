@@ -1,30 +1,8 @@
-import { ref, shallowRef } from 'vue'
+import { ref } from 'vue'
 
-const SS_KEY  = 'gugu_files_cache'
-const VER_KEY = 'gugu_files_version'
-
-function readSS() {
-  try { return JSON.parse(sessionStorage.getItem(SS_KEY) ?? 'null') } catch { return null }
-}
-function writeSS(data: unknown) {
-  try { sessionStorage.setItem(SS_KEY, JSON.stringify(data)) } catch {}
-}
-
-const _fileList = shallowRef(readSS())
-
-export const filesCache = {
-  get data() { return _fileList.value },
-  ref: _fileList,
-  set(data: unknown) { _fileList.value = data; writeSS(data) },
-  clear()   { _fileList.value = null; try { sessionStorage.removeItem(SS_KEY) } catch {} },
-}
-
-// 上次已知的文件版本摘要（count:max_updated:max_deleted），模块级持久到 sessionStorage
-export const filesCacheVersion = {
-  get()    { try { return sessionStorage.getItem(VER_KEY) ?? null } catch { return null } },
-  set(ver: string) { try { sessionStorage.setItem(VER_KEY, ver) } catch {} },
-  clear()  { try { sessionStorage.removeItem(VER_KEY) } catch {} },
-}
+// 文件列表缓存已统一到全局 Pinia store `@/stores/filesCache`（单一数据源 + SSE + visibilitychange），
+// 原先这里那套 sessionStorage 扁平缓存（filesCache / filesCacheVersion，仅 Dashboard/FilePanel 用）已移除。
+// 这里只保留跨组件的轻量「变更信号」（纯前端递增、不过网络、不跨标签页）。
 
 export const uploadSignal = ref(0)
 // 日历事件变更信号（咕咕对话里增删改活动后 bump，日历页监听并清缓存重取）

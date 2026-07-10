@@ -96,8 +96,7 @@
 <script setup lang="ts">
 import { ref, computed, shallowRef, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { filesApi } from '@/services/api'
-import { filesCache, filesCacheVersion, uploadSignal } from '@/services/cache'
-import { useLiveStore } from '@/stores/live'
+import { useFilesCacheStore } from '@/stores/filesCache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache, cardBlobReadyIds } from '@/composables/useThumbCache'
@@ -114,7 +113,10 @@ const cardVisible   = ref(false) // 面板是否已进入视口（触发过 card
 // 使用模块级 cardBlobReadyIds：首次 @load 后写入，session 内二次访问直接显示跳过动画
 const dragging      = ref(false)
 const uploadOpen    = ref(false)
-const rawFiles      = ref(filesCache.data ?? [])
+// 统一到全局 filesCache store（原来是 services/cache 那第三套独立缓存）。「最近文件」= 全部文件按
+// id 倒序（新文件 id 更大）取前几个。增删改走 store 增量 API，任何页面/SSE 改了 store，这里自动更新。
+const store         = useFilesCacheStore()
+const rawFiles      = computed(() => [...store.allFiles].sort((a, b) => b.id - a.id))
 const thumbMap      = shallowRef<Record<number, { tiny?: string | null; card?: string | null }>>({}) // id → { tiny, card }，shallowRef 批量更新减少 trigger 次数
 const renamingId    = ref(null)
 const renameText    = ref('')
@@ -195,9 +197,7 @@ async function commitRename(f) {
   if (!name || name === f.name) return
   try {
     await filesApi.update(f.id, { displayName: name })
-    const idx = rawFiles.value.findIndex(r => r.id === f.id)
-    if (idx !== -1) rawFiles.value[idx] = { ...rawFiles.value[idx], displayName: name }
-    filesCache.set([...rawFiles.value])
+    store.updateFile(f.id, { displayName: name })
   } catch { /* ignore */ }
 }
 
@@ -209,46 +209,27 @@ async function deleteFile(f) {
   try {
     await filesApi.delete(f.id)
     clearThumbCache(f.id)
-    rawFiles.value = rawFiles.value.filter(r => r.id !== f.id)
-    filesCache.set([...rawFiles.value])
+    store.removeFile(f.id)
   } catch { /* ignore */ }
 }
 
 async function onUploaded() {
   uploadOpen.value = false
-  try {
-    const fresh = await filesApi.list()
-    filesCache.set(fresh) // 触发 watch，rawFiles / thumbs 自动更新
-  } catch { /* ignore */ }
+  // 上传走 store 全量刷新拿到新文件（也会被后端 SSE 兜一次）；store 是全局单源，别处也随之更新
+  store.refresh()
 }
 
-// 响应 index.vue 拉取或上传后写入的新数据
 // minmax(130px, 1fr) + gap:8px + padding:20px*2 → cols = floor((w - 40 + 8) / 138)
 function calcCols(width) { return Math.max(1, Math.floor((width - 32) / 138)) }
 
-watch(filesCache.ref, (list) => {
+// rawFiles 是从 store 派生的 computed；变化时（首帧、store 刷新、SSE、别处增删改）加载缩略图。
+// store 的 SSE 订阅 + visibilitychange 兜底都在 store 内部，FilePanel 不再自持刷新逻辑。
+watch(rawFiles, (list) => {
   if (!list?.length) return
-  rawFiles.value = list
   preloadTinyThumbs(list)
   loadThumbs(list.slice(0, displayCount.value))
   if (cardVisible.value) loadCards(list.slice(0, displayCount.value))
-})
-
-// 实时刷新：此前 FilePanel 只在进 Dashboard 时版本门控拉一次，开着期间任何文件变动（咕咕/IM 或
-// 本标签页其它视图）都不刷 → stale。这里订阅 SSE（liveStore.rev.files，咕咕/IM 改动）与本地
-// uploadSignal（同标签其它视图上传/改动），bump 时版本门控重拉，Dashboard 开着也免刷新更新。
-const liveStore = useLiveStore()
-async function _refreshFilesFromServer() {
-  try {
-    const { version: ver } = await filesApi.version()
-    if (ver && ver === filesCacheVersion.get() && filesCache.data) return  // 未变，跳过全量拉取
-    const fresh = await filesApi.list()
-    filesCache.set(fresh)
-    if (ver) filesCacheVersion.set(ver)
-  } catch { /* ignore */ }
-}
-watch(() => liveStore.rev.files, _refreshFilesFromServer)
-watch(uploadSignal, _refreshFilesFromServer)
+}, { immediate: true })
 
 // 面板变宽时 displayCount 增大，补加载新出现文件的缩略图
 watch(displayCount, (newCount, oldCount) => {
@@ -262,6 +243,10 @@ watch(displayCount, (newCount, oldCount) => {
 let _panelObs = null
 let _resizeObs = null
 onMounted(() => {
+  // 确保全局 store 已加载（不经文件库页也能有数据）；已加载/加载中则不重复拉。首帧缩略图由上面
+  // 的 watch(rawFiles, {immediate:true}) 处理，store 数据到位后自动触发。
+  if (!store.loaded && !store.loading) store.load()
+
   if (panelRef.value) {
     colCount.value = calcCols(panelRef.value.offsetWidth)
     _resizeObs = new ResizeObserver(([entry]) => {
@@ -270,18 +255,12 @@ onMounted(() => {
     _resizeObs.observe(panelRef.value)
   }
 
-  const list = filesCache.data
-  if (list?.length) {
-    preloadTinyThumbs(list)
-    loadThumbs(list.slice(0, displayCount.value))
-  }
-
   // card 等面板接近视口时再加载，避免屏幕外批量解码
   _panelObs = new IntersectionObserver(([entry]) => {
     if (!entry.isIntersecting) return
     _panelObs.disconnect(); _panelObs = null
     cardVisible.value = true
-    const cur = filesCache.data
+    const cur = rawFiles.value
     if (cur?.length) loadCards(cur.slice(0, displayCount.value))
   }, { rootMargin: '300px' })
   if (panelRef.value) _panelObs.observe(panelRef.value)
