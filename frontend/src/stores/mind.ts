@@ -1,5 +1,5 @@
 /**
- * 思维面板 store（P1：只管「记录」这一半）。
+ * 思维面板 store（P1：只管「笔记」这一半）。
  *
  * 时间流按 capturedAt 倒序——补录昨天的想法要落回它「发生」的那天，不能因为刚写就排最前，
  * 所以本地插入/改动后一律重排，不假设「新写的就在最前面」。
@@ -31,9 +31,9 @@ export const useMindStore = defineStore('mind', () => {
   const loading = ref(false)
   const loaded  = ref(false)
   const filterQ = ref('')   // 胶囊条的便签筛选（客户端过滤已加载的便签）
-  const jumpTarget = ref('')   // 顶部日历选中的日期：跨 index.vue/RecordsView.vue 传递跳转意图
+  const jumpTarget = ref('')   // 顶部日历选中的日期：跨 index.vue/NotesView.vue 传递跳转意图
 
-  /** 时间流：按 capturedAt 分组成「一天一组」，供 RecordTimeline 渲染；筛选词命中正文才留 */
+  /** 时间流：按 capturedAt 分组成「一天一组」，供 NoteTimeline 渲染；筛选词命中正文才留 */
   const timeline = computed(() => {
     const q = filterQ.value.trim().toLowerCase()
     const pool = q

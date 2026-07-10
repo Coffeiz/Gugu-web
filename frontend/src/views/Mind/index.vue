@@ -5,9 +5,9 @@
     <div class="mind-bar">
       <div class="mind-bar-side"></div>
       <div class="mind-tabs">
-        <RouterLink to="/mind/records" class="mind-tab" :class="{ on: isRecords }">
+        <RouterLink to="/mind/notes" class="mind-tab" :class="{ on: isNotes }">
           <PhNotePencil :size="16" weight="bold" />
-          记录
+          笔记
         </RouterLink>
         <div class="mind-tab disabled" title="画布还在做（P2）">
           <PhGraph :size="16" weight="bold" />
@@ -16,13 +16,14 @@
         </div>
       </div>
       <div class="mind-bar-side right">
-        <template v-if="isRecords">
+        <template v-if="isNotes">
           <DatePicker
             v-model="store.jumpTarget"
             class="mind-cal-picker"
             popup-class="mind-cal-popup"
             :max="todayIso"
             :allowed-dates="store.timeline.map(g => g.date)"
+            :show-clear="false"
             title="选择日期跳转"
           />
           <div class="mind-filter">
@@ -51,7 +52,7 @@ import DatePicker from '@/components/common/DatePicker.vue'
 
 const route = useRoute()
 const store = useMindStore()
-const isRecords = computed(() => route.path.startsWith('/mind/records'))
+const isNotes = computed(() => route.path.startsWith('/mind/notes'))
 const todayIso = computed(() => new Date().toISOString().slice(0, 10))
 </script>
 
@@ -79,14 +80,13 @@ const todayIso = computed(() => new Date().toISOString().slice(0, 10))
 :deep(.mind-cal-picker .dp-input span) { display: none; }
 :deep(.mind-cal-picker .dp-icon) { color: var(--color-primary); }
 
-/* 排查中：弹层 Teleport 到 body 后不再是本组件后代，:deep 够不到，用 popup-class + :global
-   单独测试去掉这个弹层自己的 backdrop-filter 是否是记录页玻璃卡冒白块的元凶（怀疑跟另一层
-   backdrop-filter 玻璃卡叠在一起时，弹层内部重绘要求重新采样背后内容，撞出白块）。
-   背景提高不透明度补偿视觉上失去的模糊感。 */
+/* 弹层 Teleport 到 body 后不再是本组件后代，:deep 够不到，用 popup-class + :global 单独去掉
+   这个弹层自己的 backdrop-filter（跟卡片的 backdrop-filter 叠一起会冒白块，见排查记录）。
+   没有 backdrop-filter 就不需要靠透明度混色装样子了，直接纯色。 */
 :global(.mind-cal-popup) {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
-  background: rgba(238,240,246,0.98) !important;
+  background: rgb(238,240,246) !important;
 }
 
 /* 椭圆胶囊：颜色/透明度/尺寸对齐日历页的月/周切换（.view-toggle），只把圆角换成全圆 */

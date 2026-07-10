@@ -1,7 +1,7 @@
 /**
  * 便签块编辑器：TipTap 文档 ⇄ Markdown 的双向转换 + 编辑器扩展装配。
  *
- * **窄口径**（2026-07-10 定版，见 docs/product/思维面板/记录页UI设计.md）：
+ * **窄口径**（2026-07-10 定版，见 docs/product/思维面板/笔记页UI设计.md）：
  *   正文 / 标题（单级——薄卡片里多级标题没有意义）/ 待办 / 无序列表（平铺不嵌套）/ 对象引用
  * 不做图片块、`/` 菜单（`/` 已预留给呼唤咕咕）、表格、加粗斜体引用代码块。
  * **无 Markdown 输入规则**：行首打 `#`/`-` 不触发格式转换，格式只走工具栏
@@ -17,6 +17,7 @@
  * UI 触发键是 `@`（原 `[[`，2026-07-10 改），只是触发键，写进存储的仍是 `[[...]]`。
  */
 import { Node, mergeAttributes } from '@tiptap/core'
+import ListItem from '@tiptap/extension-list-item'
 import Placeholder from '@tiptap/extension-placeholder'
 import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
@@ -59,6 +60,18 @@ export const MindRef = Node.create({
       'data-ref-id': String(node.attrs.refId),
       class: 'mind-ref',
     }), node.attrs.label]
+  },
+})
+
+// ── 无序列表项：不用原生 <li> + list-style 圆点（宽度不可控、跟待办的 checkbox 对不齐
+// 缩进），改成手绘的固定宽度圆点（.mind-dot，只读预览里也用这个类名），文字起点才能
+// 跟待办项精确对上。内容模型不变，只换 renderHTML。 ──
+export const BulletListItem = ListItem.extend({
+  renderHTML({ HTMLAttributes }) {
+    return ['li', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes),
+      ['span', { class: 'mind-dot' }, '•'],
+      ['div', {}, 0],
+    ]
   },
 })
 
@@ -184,12 +197,16 @@ function inlineToHtml(text: string): string {
 }
 
 /** 卡片预览。待办 checkbox 带 data-task-idx（全文第几个待办）且可点——卡上直接勾完成，
- *  点击由 NoteCard 捕获后走 toggleTaskInMd + PATCH，不进编辑态。 */
+ *  点击由 NoteCard 捕获后走 toggleTaskInMd + PATCH，不进编辑态。
+ *  每个可点行（段落/标题/待办项/列表项）都带 data-line-unit——跟 markdownToDoc 按同样
+ *  顺序、同样分类规则数的"第几个可点单元"对应，点哪行进编辑态就能把光标定到哪行后面
+ *  （见 NoteEditor.vue 的 focusAtLineUnit）。 */
 export function mdToPreviewHtml(md: string | null | undefined): string {
   const out: string[] = []
   let tasks: string[] = []
   let bullets: string[] = []
   let taskIdx = 0
+  let lineUnit = 0
   const flushTasks = () => {
     if (tasks.length) { out.push(`<ul class="np-tasks">${tasks.join('')}</ul>`); tasks = [] }
   }
@@ -206,7 +223,7 @@ export function mdToPreviewHtml(md: string | null | undefined): string {
       flushBullets()
       const done = task[1].toLowerCase() === 'x'
       tasks.push(
-        `<li class="${done ? 'done' : ''}">` +
+        `<li class="${done ? 'done' : ''}" data-line-unit="${lineUnit++}">` +
         `<input type="checkbox" data-task-idx="${taskIdx++}"${done ? ' checked' : ''}>` +
         `<span>${inlineToHtml(task[2])}</span></li>`,
       )
@@ -215,20 +232,29 @@ export function mdToPreviewHtml(md: string | null | undefined): string {
     const bullet = /^\s*-\s+(.*)$/.exec(line)
     if (bullet) {
       flushTasks()
-      bullets.push(`<li>${inlineToHtml(bullet[1])}</li>`)
+      // 跟待办同一套 flex+固定宽度标记结构（.mind-dot），文字起点才能跟 checkbox 后的文字对齐——
+      // 原生 list-style 圆点宽度不可控，没法跟 checkbox 的宽度精确对上
+      bullets.push(`<li data-line-unit="${lineUnit++}"><span class="mind-dot">•</span><span>${inlineToHtml(bullet[1])}</span></li>`)
       continue
     }
     flushTasks()
     flushBullets()
 
     const h = /^(#{1,6})\s+(.*)$/.exec(line)
-    if (h) { out.push(`<h1>${inlineToHtml(h[2])}</h1>`); continue }
+    if (h) { out.push(`<h1 data-line-unit="${lineUnit++}">${inlineToHtml(h[2])}</h1>`); continue }
 
-    out.push(`<p>${inlineToHtml(line)}</p>`)
+    out.push(`<p data-line-unit="${lineUnit++}">${inlineToHtml(line)}</p>`)
   }
   flushTasks()
   flushBullets()
   return out.join('')
+}
+
+/** 标题 + 正文拼回单串 markdown（NoteCard 编辑区/CaptureBar 共用，跟 NoteCard._split
+ *  解析约定保持一致）：没标题就只存正文，不产生假的 `#` 行。 */
+export function combineTitleBody(title: string, body: string): string {
+  const t = title.trim()
+  return t ? `# ${t}\n${body}` : body
 }
 
 /** 翻转正文里第 idx 个待办的勾选态，返回新 Markdown（找不到返回原文） */
@@ -251,7 +277,9 @@ export function mindExtensions(placeholder = '写点什么…') {
       blockquote: false, orderedList: false,
       horizontalRule: false, link: false, underline: false,
       heading: { levels: [1] },
+      listItem: false,   // 用下面 BulletListItem 的自定义渲染（手绘圆点，对齐待办缩进）
     }),
+    BulletListItem,
     TaskList,
     TaskItem.configure({ nested: false }),
     MindRef,

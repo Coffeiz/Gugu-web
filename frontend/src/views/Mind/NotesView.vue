@@ -2,7 +2,8 @@
   <div ref="layoutRef" class="rec-layout">
     <!-- 顶部日期滑杆和玻璃卡列逐帧同步；松手后只做无动画的精确对齐。
          日历快速定位入口挪到了顶部胶囊行（index.vue，筛选框左边），选中日期写进
-         store.jumpTarget，这里只管接住并跳转。 -->
+         store.jumpTarget，这里只管接住并跳转。相对日期文案（今天/昨天/…）直接改在
+         DateIndex.vue 的刻度标签里，不单独起一个标签元素。 -->
     <div class="rec-scrub-row">
       <DateIndex :groups="indexGroups" :center-frac="centerFrac" @scrub="onScrub" @snap="onSnap" />
     </div>
@@ -10,12 +11,11 @@
     <!-- 横置便签流：左侧是过往、右侧是后来的日期；列内竖滚翻当天 -->
     <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel" @scroll="onScroll">
       <div v-if="store.loading && !store.loaded" class="rec-loading">加载中…</div>
-      <RecordTimeline
+      <NoteTimeline
         v-else
         ref="timelineRef"
         :groups="timelineGroups"
         :center-frac="centerFrac"
-        :motion-ready="timelineMotionReady"
         :highlight-id="highlightId"
         :filtered="!!store.filterQ.trim()"
         @save="onSave"
@@ -39,11 +39,11 @@ import { toggleTaskInMd } from '@/composables/useMindEditor'
 import type { MindNote } from '@/services/api'
 import CaptureBar from './components/CaptureBar.vue'
 import DateIndex from './components/DateIndex.vue'
-import RecordTimeline from './components/RecordTimeline.vue'
+import NoteTimeline from './components/NoteTimeline.vue'
 
 const store     = useMindStore()
 const liveStore = useLiveStore()
-const timelineRef = ref<InstanceType<typeof RecordTimeline> | null>(null)
+const timelineRef = ref<InstanceType<typeof NoteTimeline> | null>(null)
 const captureRef  = ref<InstanceType<typeof CaptureBar> | null>(null)
 const scrollRef   = ref<HTMLElement | null>(null)
 const layoutRef   = ref<HTMLElement | null>(null)
@@ -82,11 +82,10 @@ const activeDate  = ref('')
 // 深度效果共用同一个值，不再单独滞后平滑——卡片尺寸必须严格绑定「谁现在正在屏幕中间」，
 // 不管这一刻的当前日/选中日是谁，物理居中的那张才该是最大的。
 const centerFrac  = ref(0)
-const timelineMotionReady = ref(false)
 const todayIso    = computed(() => _today())
 let scrollRaf = 0
 
-/** 读取记录页的实际中线，再换算到横向滚动容器坐标，避免侧栏/内边距带来的推算偏差。 */
+/** 读取笔记页的实际中线，再换算到横向滚动容器坐标，避免侧栏/内边距带来的推算偏差。 */
 function contentCenter(root: HTMLElement) {
   const layout = layoutRef.value
   if (!layout) return (SIDEBAR_W + root.clientWidth) / 2
@@ -202,7 +201,7 @@ function jumpTo(date: string, animate = true) {
 }
 
 // ── 快速定位：日历弹层选任意日期（弹层自带"今天"快捷按钮，选中即是同一条路径）。
-// 没便签的日期不出列（#见 RecordTimeline 注释），选中的目标日不存在时退化到最近的
+// 没便签的日期不出列（#见 NoteTimeline 注释），选中的目标日不存在时退化到最近的
 // 有记录的日期，并给出明确反馈，不静默跳偏；选的正好是今天且没记录，顺手展开捕捉条邀请写一条。 ──
 function fmtMD(iso: string) {
   const [, m, d] = iso.split('-')
@@ -271,9 +270,6 @@ watch(timelineGroups, async (groups) => {
   }
   renderedDates = groups.map(group => group.date)
   updateActive()
-  if (centeredOnce && !timelineMotionReady.value) {
-    requestAnimationFrame(() => requestAnimationFrame(() => { timelineMotionReady.value = true }))
-  }
 }, { immediate: true })
 
 // ── 新建：不移动当前视野；新日期卡在右侧单独入场，补录仍 toast 报落点 ──
@@ -365,7 +361,7 @@ async function onDelete(note: MindNote) {
   position: absolute; bottom: 28px; left: 0; right: 0;
   margin: 0 auto;
   width: min(100% - 24px, 680px);
-  /* 深度效果给居中列写的 zIndex 最高到 100（RecordTimeline columnStyle），捕捉条必须盖过它 */
+  /* 深度效果给居中列写的 zIndex 最高到 100（NoteTimeline columnStyle），捕捉条必须盖过它 */
   z-index: 120;
 }
 </style>

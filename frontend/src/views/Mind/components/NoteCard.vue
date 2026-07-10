@@ -1,21 +1,32 @@
 <template>
-  <div class="note-card" :class="{ editing, highlight, ['tint-' + (note.color || '')]: !!note.color }">
-    <!-- 编辑态：就地展开（跨两列由父级 grid-column 控制），同一个窄口径编辑器 -->
+  <div ref="cardRef" class="note-card"
+       :class="{ editing, highlight, 'nc-edit-pending': editing && !editReady, ['tint-' + (note.color || '')]: !!note.color }">
+    <!-- 编辑态：跟只读态一样按区域分标题区/正文区（不是靠"标题"文字样式段落类型），
+         就地展开（跨两列由父级 grid-column 控制）；自动保存，没有取消/保存按钮——
+         停顿一下自己存，点卡外面就算编完（先补一次保存再退出）。 -->
     <template v-if="editing">
-      <NoteEditor v-model="draft" autofocus @submit="commit" />
-      <div class="nc-edit-foot">
-        <span v-if="conflict" class="nc-conflict">这条便签已被其他端改过，已刷新为最新内容</span>
-        <button class="nc-btn" @click="emit('cancel')">取消</button>
-        <button class="nc-btn primary" @click="commit">保存</button>
-      </div>
+      <input
+        ref="titleInputRef"
+        v-model="draftTitle" class="nc-title-input" placeholder="标题（可选）"
+        @keydown.enter.prevent="bodyEditorRef?.focus()"
+      />
+      <!-- pendingFocus 有具体目标（标题/某一行）时不让编辑器自己 autofocus:'end'——它内部的
+           自动聚焦是异步触发的，晚于下面 watch 里 nextTick 后的手动定位，会把光标又抢回文档
+           末尾。只有默认进编辑态（没有具体点击目标）才用它自己的 autofocus。 -->
+      <NoteEditor ref="bodyEditorRef" v-model="draftBody" :autofocus="pendingFocus === null" @submit="finishEditing">
+        <template v-if="conflict" #foot-actions>
+          <span class="nc-conflict">改动冲突，已刷新</span>
+        </template>
+      </NoteEditor>
     </template>
 
-    <!-- 只读态：顶部直接显示标题（由正文首行推导，#2），不再放日期/时间；hover 出编辑/删除 -->
+    <!-- 只读态：真标题（# 打头）才单独摘出来放头部；纯正文/待办/列表整段就是正文，
+         不凭空造一条"标题"，编辑/删除按钮改浮在卡右上角。hover 出编辑/删除 -->
     <template v-else>
-      <div class="nc-head">
-        <span class="nc-title" :class="{ 'nc-title-plain': !isHeading }" @click="emit('edit')">{{ title }}</span>
+      <div v-if="isHeading" class="nc-head">
+        <span class="nc-title" @click="startEditAt('title')">{{ title }}</span>
         <span class="nc-actions">
-          <button class="nc-icon" title="编辑" @click.stop="emit('edit')">
+          <button class="nc-icon" title="编辑" @click.stop="startEditAt(null)">
             <PhPencilSimple :size="12" weight="bold" />
           </button>
           <button class="nc-icon danger" title="删除" @click.stop="emit('delete')">
@@ -23,6 +34,14 @@
           </button>
         </span>
       </div>
+      <span v-else class="nc-actions nc-actions-float">
+        <button class="nc-icon" title="编辑" @click.stop="startEditAt(null)">
+          <PhPencilSimple :size="12" weight="bold" />
+        </button>
+        <button class="nc-icon danger" title="删除" @click.stop="emit('delete')">
+          <PhTrash :size="12" weight="bold" />
+        </button>
+      </span>
       <div v-if="bodyMd" ref="bodyRef" class="nc-body md-preview" :class="{ clamped: clamped && !expanded }"
            @click="onBodyClick" v-html="mdToPreviewHtml(bodyMd)"></div>
       <button v-if="clamped" class="nc-expand" @click.stop="expanded = !expanded">
@@ -33,9 +52,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
-import { mdToPreviewHtml } from '@/composables/useMindEditor'
+import { combineTitleBody, mdToPreviewHtml } from '@/composables/useMindEditor'
 import type { MindNote } from '@/services/api'
 import NoteEditor from './NoteEditor.vue'
 
@@ -48,44 +67,111 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'edit'): void
-  (e: 'cancel'): void
+  (e: 'close'): void
   (e: 'save', md: string): void
   (e: 'delete'): void
   (e: 'toggle-task', idx: number): void
 }>()
 
-const draft    = ref('')
-const expanded = ref(false)
-const clamped  = ref(false)
-const bodyRef  = ref<HTMLElement | null>(null)
-
-// 进入编辑时灌当前内容为草稿；退出编辑复位
-watch(() => props.editing, v => { if (v) draft.value = props.note.contentMd })
-
-function commit() {
-  if (draft.value !== props.note.contentMd) emit('save', draft.value)
-  else emit('cancel')
+// 编辑态按区域拆成标题草稿 + 正文草稿（对齐只读态的 nc-head/nc-body 分区），
+// 存的时候再拼回 `# 标题\n正文` 这套跟只读态解析约定一致的单串 markdown。
+const draftTitle   = ref('')
+const draftBody    = ref('')
+const expanded     = ref(false)
+const clamped      = ref(false)
+const bodyRef      = ref<HTMLElement | null>(null)
+const cardRef      = ref<HTMLElement | null>(null)
+const bodyEditorRef = ref<InstanceType<typeof NoteEditor> | null>(null)
+// 编辑器初始光标落点是异步的（不管默认 autofocus:'end' 还是我们手动定位），刚挂载那一瞬间
+// 可能先落在文档默认位置（比如正文开头是待办，就会先亮一下待办的样式）再跳到正确位置。
+// 定位真正落定前先把整张卡藏起来（保留布局占位，不闪跳），避免这个过渡态被看见。
+const editReady = ref(false)
+const titleInputRef = ref<HTMLInputElement | null>(null)
+// 点哪进编辑态光标就落在哪：'title' 落标题框，数字落正文对应行（跟 mdToPreviewHtml 的
+// data-line-unit 对应），null 就随 NoteEditor 自己的 autofocus:'end'（默认落文档末尾）。
+const pendingFocus = ref<'title' | number | null>(null)
+function startEditAt(target: 'title' | number | null) {
+  pendingFocus.value = target
+  emit('edit')
 }
 
-/** 标题由正文首行推导（设计草案：卡片标题从正文标题块/首行推导），正文取其余行。
- *  首行剥掉 markdown 前缀（#/- [ ]/-），引用锚点只留显示名。首行为空则给占位。
- *  只有首行真是 `#` 标题格式（工具栏「单级标题」打出来的）才算「真标题」、显示粗体；
- *  纯正文/待办/列表被摘做头部展示时，字重跟正文一致，不冒充没有的标题。 */
+function serializeDraft(): string {
+  return combineTitleBody(draftTitle.value, draftBody.value)
+}
+
+/** 自动保存：停顿 AUTOSAVE_MS 没再改就存一次；不再有手动「保存」这个动作。 */
+const AUTOSAVE_MS = 900
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+function flushSave() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+  const md = serializeDraft()
+  if (md !== props.note.contentMd) emit('save', md)
+}
+function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(flushSave, AUTOSAVE_MS)
+}
+watch([draftTitle, draftBody], () => { if (props.editing) scheduleSave() })
+
+/** 点卡片外面：先补一次保存，再退出编辑态（不再是「取消」，没有可丢弃的东西）。 */
+function onDocDown(e: MouseEvent) {
+  if (!props.editing) return
+  const t = e.target as HTMLElement
+  if (cardRef.value?.contains(t)) return
+  finishEditing()
+}
+// finishEditing 已经同步 flush 过一次；emit('close') 会让 editing 变 false 反过来触发下面
+// 那个 watch，此时保存请求可能还没落地、props.note.contentMd 还是旧值，若 watch 再 flush
+// 一次会拿同一份 draft、同一个旧 version 再发一次 PATCH——自己把自己撞出 409。这个标记
+// 就是防止同一次关闭被 flush 两遍。
+let closedByFinish = false
+function finishEditing() {
+  closedByFinish = true
+  flushSave()
+  emit('close')
+}
+
+// 进入编辑时灌当前内容为草稿；退出时（点外面/切换到别的便签走 finishEditing 之外的路径，
+// 比如便签被删除强制退出编辑）才需要这里兜底补一次保存。编辑期间才挂全局点击监听，
+// 避免每张卡常驻一个 document 监听器。
+watch(() => props.editing, async (v, prev) => {
+  if (v) {
+    closedByFinish = false
+    editReady.value = false
+    draftTitle.value = _split.value.titleRaw
+    draftBody.value = _split.value.body
+    document.addEventListener('mousedown', onDocDown, true)
+    await nextTick()   // 等 NoteEditor 挂载、自己的 autofocus:'end' 先跑完，这里再改写光标位置
+    if (pendingFocus.value === 'title') titleInputRef.value?.focus()
+    else if (typeof pendingFocus.value === 'number') bodyEditorRef.value?.focusAtLineUnit(pendingFocus.value)
+    pendingFocus.value = null
+    editReady.value = true   // 光标真正落定了，这时候才让卡片显形
+  } else {
+    document.removeEventListener('mousedown', onDocDown, true)
+    if (prev && !closedByFinish) flushSave()
+    closedByFinish = false
+    editReady.value = false
+  }
+})
+onBeforeUnmount(() => document.removeEventListener('mousedown', onDocDown, true))
+
+/** 标题只在首行真是 `#` 标题格式时才从正文摘出来单独展示；纯正文/待办/列表开头的便签
+ *  不摘任何东西——整段原样进 body 渲染，不会凭空多出一条"标题"把第一行跟其余内容分割开。
+ *  titleRaw 是没套占位文案的原始值，给编辑态的标题草稿做种（title 那个"（空便签）"/
+ *  "（无标题）"是只读态才该出现的占位显示，塞进输入框会变成假装用户写了这几个字）。 */
 const _split = computed(() => {
-  const lines = (props.note.contentMd || '').split('\n')
+  const md = props.note.contentMd || ''
+  const lines = md.split('\n')
   const ti = lines.findIndex(l => l.trim())
-  if (ti < 0) return { title: '（空便签）', body: '', taskOffset: 0, isHeading: false }
+  if (ti < 0) return { title: '（空便签）', titleRaw: '', body: '', isHeading: true }
   const titleLine = lines[ti].trim()
   const isHeading = /^#{1,6}\s+/.test(titleLine)
+  if (!isHeading) return { title: '', titleRaw: '', body: md, isHeading: false }
   const raw = titleLine
     .replace(/^#{1,6}\s+/, '')
-    .replace(/^-\s\[[ xX]\]\s?/, '')
-    .replace(/^-\s+/, '')
     .replace(/\[\[[a-z_]+:\d+\|([^\]]*)\]\]/g, '$1')
   const body = lines.slice(ti + 1).join('\n').replace(/^\n+/, '')
-  // 标题行若本身是待办，被摘走后 body 里的待办序号整体前移 1，卡上勾选要补回这个偏移
-  const taskOffset = /^-\s\[[ xX]\]/.test(titleLine) ? 1 : 0
-  return { title: raw || '（无标题）', body, taskOffset, isHeading }
+  return { title: raw || '（无标题）', titleRaw: raw, body, isHeading: true }
 })
 const title     = computed(() => _split.value.title)
 const isHeading = computed(() => _split.value.isHeading)
@@ -107,13 +193,14 @@ function onBodyClick(e: MouseEvent) {
   const t = e.target as HTMLElement
   if (t instanceof HTMLInputElement && t.dataset.taskIdx !== undefined) {
     e.preventDefault()   // 视觉状态由 PATCH 成功后的数据回流驱动，别让浏览器先勾上
-    // body 里的待办序号 + 标题行占的偏移 = 完整 content 里的真实序号
-    emit('toggle-task', Number(t.dataset.taskIdx) + _split.value.taskOffset)
+    // 标题只会摘掉真正的 # 标题行，待办/列表都不会被摘，body 里的序号就是完整 content 里的真实序号
+    emit('toggle-task', Number(t.dataset.taskIdx))
     return
   }
-  // 点引用 chip 不进编辑（将来跳对应对象页）；点其他区域进编辑
+  // 点引用 chip 不进编辑（将来跳对应对象页）；点其他区域进编辑，光标定到点的那一行后面
   if (t.closest('.mind-ref')) return
-  emit('edit')
+  const lineEl = t.closest<HTMLElement>('[data-line-unit]')
+  startEditAt(lineEl ? Number(lineEl.dataset.lineUnit) : null)
 }
 </script>
 
@@ -145,8 +232,40 @@ function onBodyClick(e: MouseEvent) {
 .note-card:not(.editing):hover::after { background: rgba(255,255,255,0.2); }
 
 .note-card.editing { background: rgba(255,255,255,0.9); }
+/* 光标还没定位到该去的地方之前（默认落点/上一次残留选区）先藏起来，不让这个过渡态被看见——
+   比如正文开头是待办，进编辑态那一瞬容易先"亮"一下待办的默认焦点样式再跳到该定的位置。
+   用 opacity 不用 visibility：visibility:hidden 的元素浏览器不让 focus()，我们恰恰要在
+   这段隐藏期间调用 focus()/focusAtLineUnit() 把光标定过去，用 visibility 会导致这次
+   focus() 直接是空操作，编辑器永远拿不到真正的焦点（工具栏 isFocused 判断就一直是 false）。
+   opacity:0 不影响可聚焦性，配 pointer-events:none 防这段时间被点到。布局占位保留，
+   不会引起列内卡片抖动。 */
+.note-card.nc-edit-pending { opacity: 0; pointer-events: none; }
 /* 窄列里就地编辑：工具栏放不下「输入 @ 引用…」提示文字，藏掉（捕捉条那份还在） */
 .note-card.editing :deep(.ne-hint) { display: none; }
+/* 编辑态整卡走 flex 列：编辑器吃满剩余高度，取消/保存永远贴在卡片底部，不会因为内容
+   短、卡片够着 min-height 的地板价时，按钮悬在半截、下面空一大截。 */
+.note-card.editing {
+  display: flex; flex-direction: column;
+}
+.note-card.editing :deep(.note-editor) {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+}
+.note-card.editing :deep(.ne-body) {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+}
+.note-card.editing :deep(.ne-body .ProseMirror) {
+  flex: 1; min-height: 0;
+}
+/* 编辑态标题区：跟只读态 .nc-title 同样字号字重，固定分割线跟正文区隔开（不管有没有
+   打字都分——按区域区分，不是靠有没有内容判断）。 */
+.nc-title-input {
+  flex-shrink: 0; width: 100%;
+  border: none; outline: none; background: none; padding: 0 0 7px; margin-bottom: 4px;
+  border-bottom: 1px solid rgba(80,90,110,0.1);
+  font-size: 14px; font-weight: 600; line-height: 1.35;
+  color: var(--text-primary); font-family: var(--font-sans);
+}
+.nc-title-input::placeholder { color: var(--text-secondary); opacity: 0.5; font-weight: 400; }
 
 /* 新建高亮：紫灰 tint 淡出（提交滚回最左后让新卡自己说"我在这") */
 .note-card.highlight { animation: nc-flash 1.6s ease-out; }
@@ -162,7 +281,7 @@ function onBodyClick(e: MouseEvent) {
 .note-card.tint-amber  { background: rgba(212,178,112,0.16); }
 
 .nc-head {
-  display: flex; align-items: flex-start; gap: 6px;
+  display: flex; align-items: center; gap: 6px;
   margin-bottom: 4px; position: relative; z-index: 1;
 }
 /* 只有正文存在时才分割——纯标题便签不该悬空挂一条线 */
@@ -170,16 +289,21 @@ function onBodyClick(e: MouseEvent) {
   padding-bottom: 7px;
   border-bottom: 1px solid rgba(80,90,110,0.1);
 }
+/* 单行截断而不是 2 行 clamp：编辑态的标题是单行 <input>（不会换行），只读态如果允许标题
+   换行到 2 行，同一条标题在两种状态下占的高度不一样，分割线的位置就会跟着挪——标题
+   本来就该短，单行更符合预期，也让编辑/只读两态的几何完全对齐。 */
 .nc-title {
   flex: 1; min-width: 0; cursor: text;
   font-size: 14px; font-weight: 600; line-height: 1.35; color: var(--text-primary);
-  overflow-wrap: anywhere;
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-/* 首行不是真的 # 标题（纯正文/待办/列表被摘来当头部展示）——字重跟正文一致，不冒充标题 */
-.nc-title-plain { font-weight: 400; }
 .nc-actions { margin-left: auto; flex-shrink: 0; display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s; }
 .note-card:hover .nc-actions { opacity: 1; }
+/* 没有真标题的卡：编辑/删除浮在右上角，不占正文的地方、不凭空造一条头部 */
+.nc-actions-float {
+  position: absolute; top: 11px; right: 13px; z-index: 2;
+  margin-left: 0;
+}
 .nc-icon {
   padding: 3px; border: none; border-radius: 5px;
   background: transparent; color: var(--text-secondary); cursor: pointer;
@@ -207,29 +331,9 @@ function onBodyClick(e: MouseEvent) {
   font-family: var(--font-sans); position: relative; z-index: 1;
 }
 
-.nc-edit-foot { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
-.nc-conflict { margin-right: auto; font-size: 11px; color: #b07858; }
-.nc-btn {
-  padding: 4px 12px; border-radius: 7px; cursor: pointer;
-  border: 1px solid rgba(123,127,178,0.3); background: rgba(255,255,255,0.6);
-  font-size: 12px; color: var(--text-secondary); font-family: var(--font-sans);
-}
-.nc-btn:first-of-type { margin-left: auto; }
-.nc-btn.primary {
-  border-color: transparent; color: #fff;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-}
+.nc-conflict { font-size: 11px; color: #b07858; white-space: nowrap; }
 </style>
 
-<style>
-/* v-html 出来的预览内容，不能 scoped */
-.md-preview { font-size: 13px; line-height: 1.6; color: var(--text-primary); }
-.md-preview p { margin: 0.2em 0; }
-.md-preview h1 { font-size: 15px; font-weight: 700; margin: 0.25em 0 0.15em; }
-.md-preview .np-tasks { list-style: none; padding: 0; margin: 0.25em 0; }
-.md-preview .np-tasks li { display: flex; align-items: flex-start; gap: 8px; }
-.md-preview .np-tasks li.done > span { opacity: 0.45; text-decoration: line-through; }
-.md-preview .np-tasks input { margin-top: 3px; cursor: pointer; }
-.md-preview .np-list { padding-left: 1.2em; margin: 0.25em 0; }
-.md-preview .np-list li { margin: 0.1em 0; }
-</style>
+<!-- v-html 出来的预览内容不能 scoped；排版规则跟 NoteEditor.vue 共用同一份文件，
+     两边数值必须一致，见 mind-content.css 顶部注释 -->
+<style src="./mind-content.css"></style>

@@ -30,7 +30,7 @@
         </NavItem>
         <NavItem to="/calendar" :icon="PhCalendarBlank">日历</NavItem>
         <NavItem to="/schedules" :icon="PhAlarm">定时任务</NavItem>
-        <NavItem to="/mind/records" :icon="PhGraph">思维</NavItem>
+        <NavItem to="/mind/notes" :icon="PhGraph">思维</NavItem>
       </div>
 
       <div class="nav-divider"></div>
@@ -238,7 +238,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
   box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
   display: flex; flex-direction: column;
   padding: 24px 14px; gap: 0;
-  /* 浮到主区之上：记录页横向列滚动区铺满视口宽、会钻到侧栏底下（#3），侧栏得盖在其上
+  /* 浮到主区之上：笔记页横向列滚动区铺满视口宽、会钻到侧栏底下（#3），侧栏得盖在其上
      用自身磨砂玻璃把钻进来的历史列糊住（而不是被列盖住） */
   position: relative; z-index: 20;
 }

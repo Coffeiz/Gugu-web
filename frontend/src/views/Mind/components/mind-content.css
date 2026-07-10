@@ -1,0 +1,86 @@
+/* 便签正文渲染的共享排版规则：编辑态（NoteEditor.vue 的 .ne-body .ProseMirror）跟
+   只读态（NoteCard.vue 的 .md-preview）分别是 TipTap 富文本 / mdToPreviewHtml 生成的
+   纯 HTML 两套独立实现（只读态特意不用 TipTap——一天一列摆几十张卡，每张卡都起一个
+   编辑器实例太重，这条权衡是故意的，见 useMindEditor.ts 里 mdToPreviewHtml 的注释）。
+   两套实现的选择器不同，但排版数值必须一致，所以统一放这一份文件里、用组合选择器
+   写在一起——改一处两边同时生效，不会再出现"改了编辑器忘了改预览"这种间距对不齐。
+
+   顶层块间距不用「每种块各自 margin、指望相邻两块 margin 塌陷成同一个值」这套——
+   margin 塌陷规则本来就细（跟是否有 border/padding、跟具体元素类型都有关系），两套
+   独立实现的 DOM 结构又不完全一样，塌陷结果很容易对不上，就是之前"改了半天间距还是
+   不一样"的根源。改用「owl selector」：顶层块自己 margin:0，只由后一个块的
+   margin-top 撑开间距——不管前后是 p/ul[任何类型]，撑开的量永远是同一个值，没有
+   "两个 margin 碰在一起选谁"这种歧义。 */
+
+.md-preview,
+.ne-body .ProseMirror {
+  font-size: 13px; line-height: 1.6; color: var(--text-primary);
+}
+
+.md-preview > *,
+.ne-body .ProseMirror > * {
+  margin: 0;
+}
+.md-preview > * + *,
+.ne-body .ProseMirror > * + * {
+  margin-top: 0.2em;
+}
+
+.md-preview h1,
+.ne-body .ProseMirror h1 {
+  font-size: 15px; font-weight: 700;
+}
+
+/* 待办列表：TipTap 用 [data-type="taskList"]，只读预览用 .np-tasks class，选择器不同
+   但数值要一致。TipTap 的 TaskItem 内容会多包一层 <p>，要清零，不然行距比预览宽
+   （这层嵌套在 <li> 里面，不是顶层块，owl selector 管不到，还是要单独清零）。 */
+.md-preview .np-tasks,
+.ne-body .ProseMirror ul[data-type="taskList"] {
+  list-style: none; padding: 0;
+}
+.md-preview .np-tasks li,
+.ne-body .ProseMirror ul[data-type="taskList"] li {
+  display: flex; align-items: flex-start; gap: 8px;
+}
+.md-preview .np-tasks li.done > span,
+.ne-body .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
+  opacity: 0.45; text-decoration: line-through;
+}
+/* checkbox 固定宽高——原生 checkbox 尺寸跟着系统/浏览器字体走，不锁死宽度就没法
+   保证跟无序列表的圆点标记（.mind-dot）严丝合缝对齐。结构不同（预览是裸 input，
+   编辑器是 label 包 input）分开写选择器，数值保持一致。 */
+.md-preview .np-tasks input,
+.ne-body .ProseMirror ul[data-type="taskList"] input[type="checkbox"] {
+  width: 14px; height: 14px; margin-top: 3px; flex-shrink: 0; cursor: pointer;
+}
+.ne-body .ProseMirror ul[data-type="taskList"] li > label { display: flex; }
+.ne-body .ProseMirror ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
+.ne-body .ProseMirror ul[data-type="taskList"] li > div p { margin: 0; }
+
+/* 无序列表（平铺不嵌套）：不用原生 list-style（圆点宽度不可控），改成跟待办同一套
+   flex + 固定宽度标记（.mind-dot），文字起点才能跟待办项精确对齐，不再各走各的缩进。 */
+.md-preview .np-list,
+.ne-body .ProseMirror ul:not([data-type="taskList"]) {
+  list-style: none; padding: 0;
+}
+.md-preview .np-list li,
+.ne-body .ProseMirror ul:not([data-type="taskList"]) li {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0.1em 0;
+}
+.ne-body .ProseMirror ul:not([data-type="taskList"]) li > div { flex: 1; min-width: 0; }
+.ne-body .ProseMirror ul:not([data-type="taskList"]) li > div p { margin: 0; }
+
+/* 圆点标记：跟 checkbox 同宽（14px），预览/编辑态用同一个类名，一条规则两边都生效 */
+.mind-dot {
+  flex-shrink: 0; width: 14px; margin-top: 3px;
+  text-align: center; line-height: 1; color: var(--text-secondary);
+}
+
+/* 对象引用 chip：整体选中/删除的原子节点，编辑态/只读态外观必须一致 */
+.mind-ref {
+  display: inline-flex; align-items: center;
+  padding: 0 6px; margin: 0 1px; border-radius: 5px;
+  background: rgba(123,127,178,0.14);
+  color: #5b5f8c; font-size: 12.5px; font-weight: 500;
+  white-space: nowrap; cursor: default;
+}

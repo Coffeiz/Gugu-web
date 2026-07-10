@@ -250,7 +250,15 @@ onBeforeUnmount(() => {
 })
 
 const _today = new Date().toISOString().slice(0, 10)
+const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
+/** 刻度标签：离今天 0/1/2 天说人话，3~7 天内说星期几，更早退回具体日期——比干巴巴
+ *  的日期数字更有时间感（离今天越近的刻度本来就聚焦得越大越显眼，这个改动直接受益）。 */
 function fmtLabel(iso: string) {
+  const diffDays = Math.round((new Date(_today + 'T00:00:00').getTime() - new Date(iso + 'T00:00:00').getTime()) / 86400000)
+  if (diffDays === 0) return '今天'
+  if (diffDays === 1) return '昨天'
+  if (diffDays === 2) return '前天'
+  if (diffDays > 2 && diffDays <= 7) return '周' + WEEKDAY[new Date(iso + 'T00:00:00').getDay()]
   const [y, m, d] = iso.split('-')
   return y === _today.slice(0, 4) ? `${+m}月${+d}日` : `${y}年${+m}月${+d}日`
 }

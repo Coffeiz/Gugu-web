@@ -283,14 +283,14 @@ const todayStr = computed(() => {
 
 /* ── fullBleed（思维面板等工作台视图）──
    没有 topbar：顶部渐变遮罩（为"内容溶进 topbar"设计）一并去掉；padding-top 从 128px
-   收到 18px；滚动交给页面自己管（记录页要在内部做便签流滚动 + 底部停靠捕捉条）。 */
+   收到 18px；滚动交给页面自己管（笔记页要在内部做便签流滚动 + 底部停靠捕捉条）。 */
 .layout-main.full-bleed::after { display: none; }
 /* fullBleed 放开左裁：默认 layout-main overflow:hidden 会在侧栏右缘(x=侧栏宽)截断，
-   记录页横向列滚动区要钻到侧栏底下就不能被这里截。外层 .layout overflow:hidden 仍兜住
+   笔记页横向列滚动区要钻到侧栏底下就不能被这里截。外层 .layout overflow:hidden 仍兜住
    视口边界，不会真溢出浏览器。 */
 .layout-main.full-bleed { overflow: visible; }
 /* 顶/底 28px 等距：胶囊顶 28（padding-top），捕捉条 bottom:28（padding-bottom 0）。
-   overflow 放开（不裁左侧）：让记录页的横向列滚动区能钻到侧栏底下（#3，侧栏 z 更高、
+   overflow 放开（不裁左侧）：让笔记页的横向列滚动区能钻到侧栏底下（#3，侧栏 z 更高、
    磨砂玻璃把钻进去的历史列糊住）。纵向仍靠内部各区自己不溢出。 */
 .layout-main.full-bleed .page-content {
   overflow: visible;

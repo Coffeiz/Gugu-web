@@ -6,6 +6,12 @@
   <div ref="barRef" class="capture-bar" :class="{ expanded }" :style="{ height: (expanded ? expandedHeight : 50) + 'px' }">
     <div ref="bodyRef" class="cb-body">
       <div class="cb-pad">
+          <input
+            v-model="title" class="cb-title-input" placeholder="标题（可选）"
+            @keydown.enter.exact.prevent="editorRef?.focus()"
+            @keydown.enter.meta.prevent="save"
+            @keydown.enter.ctrl.prevent="save"
+          />
           <NoteEditor
             ref="editorRef"
             v-model="md"
@@ -19,7 +25,7 @@
               <input type="checkbox" v-model="backfill" />
               补录到
             </label>
-            <DatePicker v-if="backfill" class="cb-date" v-model="date" :max="todayIso" placeholder="选择日期" />
+            <DatePicker v-if="backfill" class="cb-date" v-model="date" :max="todayIso" :show-clear="false" placeholder="选择日期" />
             <button class="cb-min" title="收起（内容保留）" @click="collapse">
               <PhCaretDown :size="13" weight="bold" />
             </button>
@@ -33,7 +39,7 @@
     <div class="cb-head">
       <button class="cb-collapsed" tabindex="-1" @click="expand">
         <PhPencilSimple :size="13" weight="bold" class="cb-pencil" />
-        <span class="cb-placeholder">{{ md.trim() ? plainPreview : '记点什么…' }}</span>
+        <span class="cb-placeholder">{{ (title.trim() || md.trim()) ? plainPreview : '记点什么…' }}</span>
         <span class="cb-kbd">随手记</span>
       </button>
     </div>
@@ -44,11 +50,13 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { PhCaretDown, PhPencilSimple } from '@phosphor-icons/vue'
 import DatePicker from '@/components/common/DatePicker.vue'
+import { combineTitleBody } from '@/composables/useMindEditor'
 import NoteEditor from './NoteEditor.vue'
 
 const emit = defineEmits<{ (e: 'created', md: string, capturedAt?: string): void }>()
 
 const expanded = ref(false)
+const title    = ref('')
 const md       = ref('')
 const backfill = ref(false)
 const localToday = () => {
@@ -64,10 +72,13 @@ const editorRef = ref<InstanceType<typeof NoteEditor> | null>(null)
 const expandedHeight = ref(50)
 let resizeObserver: ResizeObserver | null = null
 
-const canSave = computed(() => md.value.trim().length > 0)
-/** 收起时草稿没丢：单行里露一眼开头，提醒"这里还有没记完的" */
-const plainPreview = computed(() =>
-  md.value.replace(/\[\[[a-z_]+:\d+\|([^\]]*)\]\]/g, '$1').replace(/^#+\s*|-\s\[[ xX]\]\s?|-\s+/gm, '').split('\n')[0].slice(0, 40))
+const canSave = computed(() => title.value.trim().length > 0 || md.value.trim().length > 0)
+/** 收起时草稿没丢：单行里露一眼开头（标题优先），提醒"这里还有没记完的" */
+const plainPreview = computed(() => {
+  const t = title.value.trim()
+  if (t) return t.slice(0, 40)
+  return md.value.replace(/\[\[[a-z_]+:\d+\|([^\]]*)\]\]/g, '$1').replace(/^#+\s*|-\s\[[ xX]\]\s?|-\s+/gm, '').split('\n')[0].slice(0, 40)
+})
 
 async function expand() {
   measureExpandedHeight()
@@ -111,7 +122,8 @@ async function save() {
   try {
     // 补录给当天正午的时间戳：只关心落在哪一天，不用纠结时分
     const capturedAt = backfill.value ? `${date.value}T12:00:00` : undefined
-    emit('created', md.value, capturedAt)
+    emit('created', combineTitleBody(title.value, md.value), capturedAt)
+    title.value = ''
     md.value = ''
     editorRef.value?.clear()
     backfill.value = false
@@ -178,8 +190,23 @@ async function save() {
 
 .cb-pad { padding: 8px 14px 10px; }
 
+/* 标题区，跟便签卡编辑态的 .nc-title-input 同款——按区域区分标题/正文，不靠段落文字样式。
+   固定分割线常驻，不看有没有内容。上下各留 8px，跟卡片顶部/正文都拉开距离。 */
+.cb-title-input {
+  display: block; width: 100%;
+  border: none; outline: none; background: none; padding: 0 0 7px; margin: 8px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+  font-size: 14px; font-weight: 600; line-height: 1.35;
+  color: var(--text-primary); font-family: var(--font-sans);
+}
+.cb-title-input::placeholder { color: var(--text-secondary); opacity: 0.5; font-weight: 400; }
+
+/* 固定总高度而不是指望每个子元素都精确同高——补录出现/消失时这条行绝不跟着变 size，
+   矮一点的子元素大不了在这个高度里居中（align-items:center），比"调到刚好一样高"更稳。
+   40px = 8px padding-top + 1px border-top + 31px 内容区（够放最高的日期选择框 ~28.4px）。 */
 .cb-foot {
   display: flex; align-items: center; gap: 8px;
+  height: 40px; flex-shrink: 0;
   margin-top: 6px; padding-top: 8px;
   border-top: 1px solid rgba(0,0,0,0.05);
 }
@@ -189,7 +216,10 @@ async function save() {
   cursor: pointer; user-select: none; white-space: nowrap;
 }
 .cb-backfill.on { color: var(--color-primary); }
-.cb-date { width: 150px; }
+.cb-date { width: 100px; }
+/* DatePicker 默认触发器（.dp-input）比这一排其它元素（补录checkbox/收起/记录按钮）高，
+   勾上补录后这条 foot 行整体变高，捕捉条展开高度跟着抖一下。缩小到跟这排其它元素齐平。 */
+.cb-date :deep(.dp-input) { padding: 6px 10px; box-sizing: border-box; font-size: 12px; }
 
 .cb-min {
   margin-left: auto; flex-shrink: 0; display: inline-flex; padding: 5px;

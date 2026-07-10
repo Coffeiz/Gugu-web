@@ -3,7 +3,7 @@
        没便签的日期不出列——时间轴压缩，不摆空列。列内溢出自己竖滚。
        每列一块玻璃底板（同定时任务 .panel.glass-card 的轻玻璃，背后是静态页面背景，安全）。 -->
   <div class="timeline-cols">
-    <section v-for="(g, i) in groups" :key="g.date" v-memo="[dayMemo(g), columnVisualKey(i), motionReady]" class="tl-col glass-card" :class="{ 'tl-col-motion': motionReady }" :data-date="g.date" :style="columnStyle(i)">
+    <section v-for="(g, i) in groups" :key="g.date" v-memo="[dayMemo(g), columnVisualKey(i)]" class="tl-col glass-card" :data-date="g.date" :style="columnStyle(i)">
       <div class="tl-col-head">
         <span class="tl-day" :class="{ today: g.date === todayIso }">{{ +g.date.slice(8, 10) }}</span>
         <span class="tl-day-side">
@@ -23,8 +23,8 @@
             :highlight="highlightId === n.id"
             :conflict="editingId === n.id && conflict"
             @edit="startEdit(n)"
-            @cancel="cancel"
-            @save="md => commit(n, md)"
+            @close="stopEditing"
+            @save="md => autosave(n, md)"
             @delete="emit('delete', n)"
             @toggle-task="idx => emit('toggleTask', n, idx)"
           />
@@ -46,7 +46,6 @@ import NoteCard from './NoteCard.vue'
 const props = defineProps<{
   groups: { date: string; items: MindNote[] }[]
   centerFrac: number
-  motionReady: boolean
   highlightId: number | null
   filtered: boolean
 }>()
@@ -63,10 +62,10 @@ function startEdit(n: MindNote) {
   editingId.value = n.id
   conflict.value = false
 }
-function cancel() { editingId.value = null; conflict.value = false }
-function commit(n: MindNote, md: string) {
+/** 点卡外面/切到别的便签才退出编辑态；自动保存本身不退出——写着写着还在存，不能把人踢出去 */
+function stopEditing() { editingId.value = null; conflict.value = false }
+function autosave(n: MindNote, md: string) {
   emit('save', n, md)
-  editingId.value = null
 }
 
 /** 未变化的日期列完全跳过 patch，补录其它日期不会触发已有便签的列表移动计算。 */
@@ -150,7 +149,7 @@ defineExpose({ flagConflict: () => { conflict.value = true } })
   scroll-snap-align: center;   /* 滚列时磁吸：列中心吸到 scroll-padding 调整后的中线（=contentCenter，#4）*/
   transform-origin: center center;
 }
-/* 深度效果的平滑现在完全交给 RecordsView.vue 的 timelineVisualFrac 低通滤波（每帧直接
+/* 深度效果的平滑现在完全交给 NotesView.vue 的 timelineVisualFrac 低通滤波（每帧直接
    算出目标 transform）；这里不再叠一层 CSS transition——continuously 变化的值用 transition
    会变成「一直在追一个每帧都挪的目标」，反而比单纯的 JS 平滑更容易看着发飘、跟不上。 */
 /* 日期头：大数字 + 小字月份/星期（周视图日历的语言） */

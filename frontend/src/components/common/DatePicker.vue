@@ -82,7 +82,7 @@
 
           <!-- 快捷 -->
           <div v-if="!yearMode" class="dp-footer">
-            <button class="dp-clear" @click.stop="clear">清除</button>
+            <button v-if="showClear" class="dp-clear" @click.stop="clear">清除</button>
             <button class="dp-today" @click.stop="select(todayIso)">今天</button>
           </div>
         </div>
@@ -105,6 +105,9 @@ const props = defineProps({
   // Teleport 到 body 后不再是宿主的 DOM 后代，父级 scoped 样式够不到 .dp-popup，
   // 需要单独测试/覆盖某个具体用法的弹层样式时（比如去掉 backdrop-filter）用这个传类名进来
   popupClass: { type: [String, Array, Object], default: null },
+  // 「清除」在纯跳转场景里没有意义（清空等于什么都不做，只是关掉弹层）；补录日期这类
+  // 真的把字段清空有意义的场景保留默认显示
+  showClear: { type: Boolean, default: true },
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -130,10 +133,11 @@ function toIso(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
+// 本年度不显示年份（跟全站其它日期展示一致的「同年只显月日」规则），跨年才带上年份
 const displayValue = computed(() => {
   if (!props.modelValue) return ''
   const d = new Date(props.modelValue + 'T00:00:00')
-  return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`
+  return d.getFullYear() === todayYear ? `${d.getMonth()+1}/${d.getDate()}` : `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`
 })
 
 const calDays = computed(() => {
@@ -204,7 +208,7 @@ function calcPopupStyle() {
   const left = Math.max(8, Math.min(centerX - popW / 2, window.innerWidth - popW - 8))
   const base = { position: 'fixed', left: left + 'px', width: popW + 'px', zIndex: nextZ() }
   // 下方放不下且上方更宽裕 → 向上开：用 bottom 锚定弹层底边（切年份模式高度变了也
-  // 自然向上生长）。触发场景：贴视口底部的输入条（记录页捕捉条的补录日期）。
+  // 自然向上生长）。触发场景：贴视口底部的输入条（笔记页捕捉条的补录日期）。
   const EST_H = 320
   const spaceBelow = window.innerHeight - rect.bottom
   popupStyle.value = (spaceBelow < EST_H + 14 && rect.top > spaceBelow)
@@ -381,7 +385,9 @@ watch(() => props.modelValue, v => {
 }
 .dp-clear { background: none; color: #8a8fa8; }
 .dp-clear:hover { background: rgba(0,0,0,0.06); color: #1e2028; }
-.dp-today { background: rgba(123,127,178,0.12); color: #7b7fb2; }
+/* 「清除」隐藏时 today 独自留在 footer 里，margin-left:auto 保它一直贴右边，不因为
+   justify-content:space-between 只剩一个子元素就跳到左边 */
+.dp-today { margin-left: auto; background: rgba(123,127,178,0.12); color: #7b7fb2; }
 .dp-today:hover { background: rgba(123,127,178,0.22); }
 
 .dp-pop-enter-active { transition: opacity 0.15s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }

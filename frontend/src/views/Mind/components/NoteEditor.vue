@@ -1,23 +1,26 @@
 <template>
   <div class="note-editor" :class="{ compact }">
-    <!-- 窄口径工具栏：正文/标题(单级)/待办/列表，没有 / 菜单（/ 预留给咕咕）、没有加粗斜体 -->
+    <EditorContent class="ne-body" :editor="editor" />
+
+    <!-- 窄口径工具栏：待办/列表，没有 / 菜单（/ 预留给咕咕）、没有加粗斜体、没有正文/标题
+         文字样式切换——标题现在是便签卡自己的独立标题区（按区域区分，不是段落样式），
+         这里只管正文格式。放在文字下方、贴着底部的操作区，不占在打字区域上头。 -->
+    <!-- on 状态额外要求 isFocused：ProseMirror 的选区在焦点挪到别处（比如便签卡的标题
+         <input>）之后依然停在原地，光靠 isActive() 会让工具栏显示一个跟当前实际操作对不上
+         的"待办/列表已激活"状态——加这层判断，编辑器没焦点就不亮。用手写的 isFocused ref
+         （见 onFocus/onBlur），不用 editor.isFocused，避免响应式更新时机跟不上。 -->
     <div class="ne-toolbar" v-if="editor">
-      <button class="ne-tool" :class="{ on: editor.isActive('paragraph') }"
-              @mousedown.prevent="editor.chain().focus().setParagraph().run()" title="正文">正文</button>
-      <button class="ne-tool" :class="{ on: editor.isActive('heading') }"
-              @mousedown.prevent="editor.chain().focus().toggleHeading({ level: 1 }).run()" title="标题">标题</button>
-      <button class="ne-tool" :class="{ on: editor.isActive('taskList') }"
+      <button class="ne-tool" :class="{ on: isFocused && editor.isActive('taskList') }"
               @mousedown.prevent="editor.chain().focus().toggleTaskList().run()" title="待办">
         <PhCheckSquare :size="13" weight="bold" />
       </button>
-      <button class="ne-tool" :class="{ on: editor.isActive('bulletList') }"
+      <button class="ne-tool" :class="{ on: isFocused && editor.isActive('bulletList') }"
               @mousedown.prevent="editor.chain().focus().toggleBulletList().run()" title="列表">
         <PhListBullets :size="13" weight="bold" />
       </button>
       <span class="ne-hint">输入 <code>@</code> 引用项目/文件/活动</span>
+      <span class="ne-toolbar-actions"><slot name="foot-actions" /></span>
     </div>
-
-    <EditorContent class="ne-body" :editor="editor" />
 
     <!-- `@` 引用补全下拉：跟随光标定位 -->
     <div v-if="picker.open" class="ne-picker" :style="{ left: picker.x + 'px', top: picker.y + 'px' }">
@@ -114,10 +117,19 @@ function choose(it: MindRefSuggestItem) {
   closePicker()
 }
 
+// 工具栏「on」态要靠这个判断编辑器是不是真的有焦点（见下方 ne-tool 的用法），不直接读
+// editor.isFocused——那个值本身没错，但 @tiptap/vue-3 对 focus/blur 触发 Vue 重渲染这件事
+// 时机不总是跟得上我们代码里手动调用 commands.focus() 的那一刻，会出现「焦点其实已经在
+// 编辑器里了，工具栏却要等下一次交互（比如点一下按钮）才刷新」的情况。onFocus/onBlur 是
+// TipTap 自己的回调，在这里手动写一个 ref，不依赖框架封装内部什么时候帮你触发响应式。
+const isFocused = ref(false)
+
 const editor = useEditor({
   content: markdownToDoc(props.modelValue) as any,
   extensions: mindExtensions(props.placeholder) as any,
-  autofocus: props.autofocus,
+  // TipTap 的 autofocus:true 默认落在文档开头；便签/捕捉条打开编辑器都是接着写，光标要落在
+  // 文字最后面，跟 defineExpose 里那个 focus('end') 保持一致
+  autofocus: props.autofocus ? 'end' : false,
   // 无 Markdown 输入规则（2026-07-10 定）：行首 #/- 不触发格式转换，格式只走工具栏——
   // 所见即所得里"看到的是排版、却要敲语法改排版"是自相矛盾的
   enableInputRules: false,
@@ -144,6 +156,8 @@ const editor = useEditor({
   onSelectionUpdate({ editor: ed }) {
     syncPicker(ed)
   },
+  onFocus() { isFocused.value = true },
+  onBlur() { isFocused.value = false },
 })
 
 // 外部换了内容（比如切到另一条便签）才重灌，避免把用户正在打的字冲掉
@@ -154,8 +168,28 @@ watch(() => props.modelValue, (md) => {
   ed.commands.setContent(markdownToDoc(md) as any, { emitUpdate: false })
 })
 
+/** 点只读预览里第 unitIdx 行（段落/标题/待办项/列表项，跟 mdToPreviewHtml 的
+ *  data-line-unit 同一套计数）进编辑态时，把光标定到那一行内容后面，不是每次都退回文档末尾。
+ *  taskItem/listItem 算一个单元就不再往里钻——它们内部还嵌着一层 paragraph，会被重复计数。 */
+function focusAtLineUnit(unitIdx: number) {
+  const ed = editor.value
+  if (!ed) return
+  const LEAF_TYPES = new Set(['paragraph', 'heading', 'taskItem', 'listItem'])
+  let count = 0
+  let target: number | null = null
+  ed.state.doc.descendants((node: any, pos: number) => {
+    if (target !== null) return false
+    if (!LEAF_TYPES.has(node.type.name)) return true
+    if (count === unitIdx) { target = pos + node.nodeSize - 1; return false }
+    count++
+    return false
+  })
+  ed.commands.focus(target ?? 'end')
+}
+
 defineExpose({
   focus: () => editor.value?.commands.focus('end'),
+  focusAtLineUnit,
   clear: () => editor.value?.commands.setContent(markdownToDoc('') as any, { emitUpdate: false }),
 })
 
@@ -167,7 +201,7 @@ onBeforeUnmount(() => editor.value?.destroy())
 
 .ne-toolbar {
   display: flex; align-items: center; gap: 4px;
-  padding: 4px 2px 6px;
+  padding: 6px 2px 4px;   /* 挪到正文下方了：上边距隔开文字，下边距接到后面的操作行 */
 }
 .ne-tool {
   display: inline-flex; align-items: center; justify-content: center;
@@ -181,12 +215,17 @@ onBeforeUnmount(() => editor.value?.destroy())
 .ne-tool:hover { background: rgba(123,127,178,0.1); color: var(--color-primary); }
 .ne-tool.on { background: rgba(123,127,178,0.16); color: var(--color-primary); }
 .ne-hint { margin-left: auto; font-size: 11px; color: var(--text-secondary); opacity: 0.65; }
+/* 消费方（便签卡的取消/保存等）塞进来的按钮，跟格式工具栏同一行；hint 隐藏时
+   （便签卡窄列会隐藏）这里自己兜住 margin-left:auto，不依赖 hint 还在场才能靠右 */
+.ne-toolbar-actions { margin-left: auto; flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
+.ne-toolbar-actions:empty { display: none; }
 .ne-hint code {
   padding: 0 3px; border-radius: 3px;
   background: rgba(123,127,178,0.12); font-size: 10.5px;
 }
 
-.ne-body { font-size: 13.5px; line-height: 1.65; color: var(--text-primary); }
+/* 跟 NoteCard.vue 里只读态用的 .md-preview 同一套字号/行高/间距，编辑和显示才是同一件事 */
+.ne-body { font-size: 13px; line-height: 1.6; color: var(--text-primary); }
 .note-editor.compact .ne-body { min-height: 48px; }
 
 /* `@` 补全下拉 */
@@ -215,11 +254,12 @@ onBeforeUnmount(() => editor.value?.destroy())
 .ne-pick-sub { margin-left: auto; font-size: 10.5px; color: var(--text-secondary); opacity: 0.7; white-space: nowrap; }
 </style>
 
+<!-- 编辑器内部由 ProseMirror 生成，不能用 scoped。段落/标题/待办/列表/引用 chip 的排版
+     规则跟 NoteCard.vue 的 .md-preview 共用同一份文件，两边数值必须一致，
+     见 mind-content.css 顶部注释；这里只留编辑态自己独有的东西。 -->
+<style src="./mind-content.css"></style>
 <style>
-/* 编辑器内部由 ProseMirror 生成，不能用 scoped */
 .ne-body .ProseMirror { outline: none; min-height: 24px; }
-.ne-body .ProseMirror p { margin: 0.25em 0; }
-.ne-body .ProseMirror h1 { font-size: 16px; font-weight: 700; margin: 0.5em 0 0.25em; }
 
 /* 占位符：空文档第一段显示 */
 .ne-body .ProseMirror p.is-editor-empty:first-child::before {
@@ -228,26 +268,7 @@ onBeforeUnmount(() => editor.value?.destroy())
   color: var(--text-secondary); opacity: 0.5;
 }
 
-/* 待办列表 */
-.ne-body .ProseMirror ul[data-type="taskList"] { list-style: none; padding: 0; margin: 0.3em 0; }
-.ne-body .ProseMirror ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 8px; }
-.ne-body .ProseMirror ul[data-type="taskList"] li > label { margin-top: 3px; }
-.ne-body .ProseMirror ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
-.ne-body .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div { opacity: 0.45; text-decoration: line-through; }
-
-/* 无序列表（平铺不嵌套） */
-.ne-body .ProseMirror ul:not([data-type="taskList"]) { padding-left: 1.2em; margin: 0.3em 0; }
-.ne-body .ProseMirror ul:not([data-type="taskList"]) li { margin: 0.1em 0; }
-.ne-body .ProseMirror ul:not([data-type="taskList"]) li p { margin: 0; }
-
-/* 对象引用 chip：整体选中/删除的原子节点 */
-.mind-ref {
-  display: inline-flex; align-items: center;
-  padding: 0 6px; margin: 0 1px; border-radius: 5px;
-  background: rgba(123,127,178,0.14);
-  color: #5b5f8c; font-size: 12.5px; font-weight: 500;
-  white-space: nowrap; cursor: default;
-}
+/* 引用 chip 被选中时的高亮环，只有编辑态会出现 */
 .ne-body .ProseMirror .mind-ref.ProseMirror-selectednode {
   box-shadow: 0 0 0 2px rgba(123,127,178,0.5);
 }
