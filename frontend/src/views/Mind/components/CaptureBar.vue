@@ -5,16 +5,7 @@
        浮在滚动的便签流之上：玻璃可以用，但内部交互元素克制（hover 只做 opacity/淡背景，
        不做 box-shadow 过渡——白带红线）；本组件自身/祖先不挂 opacity 动画（隔离组红线）。 -->
   <div ref="barRef" class="capture-bar" :class="{ expanded }">
-    <div class="cb-head">
-      <div class="cb-clip">
-        <button class="cb-collapsed" tabindex="-1" @click="expand">
-          <PhPencilSimple :size="13" weight="bold" class="cb-pencil" />
-          <span class="cb-placeholder">{{ md.trim() ? plainPreview : '记点什么…' }}</span>
-          <span class="cb-kbd">随手记</span>
-        </button>
-      </div>
-    </div>
-
+    <!-- 展开内容：grid 0fr↔1fr 提供高度，条底固定（bottom 锚定）向上长 -->
     <div class="cb-body">
       <div class="cb-clip">
         <div class="cb-pad">
@@ -42,6 +33,13 @@
         </div>
       </div>
     </div>
+
+    <!-- 收起单行：绝对定位贴在条底，展开时**原地淡出、不随高度上移**（#3 图标/文字不上蹿）-->
+    <button class="cb-collapsed" tabindex="-1" @click="expand">
+      <PhPencilSimple :size="13" weight="bold" class="cb-pencil" />
+      <span class="cb-placeholder">{{ md.trim() ? plainPreview : '记点什么…' }}</span>
+      <span class="cb-kbd">随手记</span>
+    </button>
   </div>
 </template>
 
@@ -102,12 +100,14 @@ async function save() {
 
 <style scoped>
 .capture-bar {
-  /* 收起/展开**同宽**（480），只有高度变；玻璃浓度随展开加深。
-     圆角两态**同值** 25px = 收起高度(50)/2 → 收起是全圆药丸、展开是 25px 圆角矩形，
-     角的曲率一致（#1：展开圆角匹配收起）。不再动 border-radius。 */
-  --cb-dur: 0.3s;
-  --cb-ease: cubic-bezier(0.22, 1, 0.36, 1);   /* 快速缓出 */
+  /* 收起/展开**同宽**（480），只有高度变；玻璃浓度随展开加深。圆角两态同值 25px（=收起高
+     50/2）→ 收起全圆药丸、展开 25px 圆角矩形，角曲率一致（#1）。position:relative + 收起
+     态最小高度 50，收起单行绝对定位贴底、条底由父级 bottom 锚定，故往上长（#3 收起 ui 不上移）。 */
+  --cb-dur: 0.4s;   /* 缓出放慢些（#3） */
+  --cb-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
   width: 480px; max-width: 100%; margin: 0 auto;
+  min-height: 50px;   /* 收起态高度 = 咕咕球 50px（#2） */
   border-radius: 25px;
   background: rgba(255,255,255,0.6);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
@@ -122,42 +122,39 @@ async function save() {
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
 }
 
-/* 高度靠 grid-rows 0fr↔1fr（head/body 反向伸缩），快速缓出。
-   内容淡入淡出**分离于高度**：收起元素在动画一开始就快速模糊淡出；展开元素**等高度长完之后**
-   才慢慢模糊淡入（延迟 0.28s、时长更长）——所以展开内容是在满尺寸位置"就地淡入"，不会随高度
-   揭示从上往下滑出来（#3）。 */
-.cb-head, .cb-body {
+/* 高度靠 cb-body 的 grid-rows 0fr↔1fr（放慢的缓出）。展开内容在满尺寸就地模糊淡入（延迟略
+   小于高度、不再等太久，#3），收起元素动画一开始快淡出——因为收起是绝对定位贴底、不参与
+   高度，展开时它原地淡出、图标文字不上蹿。 */
+.cb-body {
   display: grid;
+  grid-template-rows: 0fr;
   transition: grid-template-rows var(--cb-dur) var(--cb-ease);
 }
-.cb-head { grid-template-rows: 1fr; }
-.cb-body { grid-template-rows: 0fr; }
-.capture-bar.expanded .cb-head { grid-template-rows: 0fr; }
 .capture-bar.expanded .cb-body { grid-template-rows: 1fr; }
 .cb-clip { overflow: hidden; min-height: 0; }
 
-/* 收起元素：收起态终点（收起时=高度收完后淡入，delay 0.2）；展开态终点（展开时=立刻快淡出） */
-.cb-collapsed { transition: opacity 0.24s ease 0.2s, filter 0.24s ease 0.2s; }
+/* 收起元素：绝对定位贴条底（不随高度上移）。收起态=高度收完后淡入(delay 0.16)；展开态=快淡出 */
+.cb-collapsed {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; gap: 9px;
+  height: 50px; box-sizing: border-box;
+  padding: 0 18px; border: none;
+  background: none; cursor: text; text-align: left;
+  font-family: var(--font-sans); z-index: 1;
+  transition: opacity 0.22s ease 0.16s, filter 0.22s ease 0.16s;
+}
 .capture-bar.expanded .cb-collapsed {
+  opacity: 0; filter: blur(8px); pointer-events: none;
+  transition: opacity 0.16s ease 0s, filter 0.16s ease 0s;
+}
+/* 展开元素：收起态=立刻快淡出；展开态=就地慢淡入（delay 0.14、时长 0.3，比之前少等）*/
+.cb-pad {
   opacity: 0; filter: blur(8px);
   transition: opacity 0.18s ease 0s, filter 0.18s ease 0s;
 }
-/* 展开元素：收起态终点（收起时=立刻快淡出）；展开态终点（展开时=高度长完后、慢慢淡入，delay 0.28） */
-.cb-pad {
-  opacity: 0; filter: blur(8px);
-  transition: opacity 0.2s ease 0s, filter 0.2s ease 0s;
-}
 .capture-bar.expanded .cb-pad {
   opacity: 1; filter: blur(0);
-  transition: opacity 0.42s ease 0.28s, filter 0.42s ease 0.28s;
-}
-
-.cb-collapsed {
-  display: flex; align-items: center; gap: 9px; width: 100%;
-  height: 50px; box-sizing: border-box;   /* 收起高度 = 咕咕球 50px（#2） */
-  padding: 0 18px; border: none;
-  background: none; cursor: text; text-align: left;
-  font-family: var(--font-sans);
+  transition: opacity 0.3s ease 0.14s, filter 0.3s ease 0.14s;
 }
 .cb-pencil { flex-shrink: 0; color: var(--color-primary); opacity: 0.75; }
 .cb-placeholder {

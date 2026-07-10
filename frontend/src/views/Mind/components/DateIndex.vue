@@ -3,7 +3,7 @@
        拖动 1:1 跟手、列随之**连续平滑**滑动（不是一格一格跳）；到两端有弹力阻尼、松手回弹吸附；
        点某根刻度平滑吸过去。刻度 grow/shrink（选中↔脱离）带过渡动画。 -->
   <div ref="stripRef" class="date-scrub" @pointerdown="onDown">
-    <div ref="trackRef" class="ds-track" :class="{ snapping }"
+    <div ref="trackRef" class="ds-track"
          :style="{ transform: `translate3d(${offset}px,0,0)` }">
       <button
         v-for="(g, i) in groups" :key="g.date"
@@ -35,7 +35,6 @@ const stripRef = ref<HTMLElement | null>(null)
 const trackRef = ref<HTMLElement | null>(null)
 const offset   = ref(0)
 const dragging = ref(false)
-const snapping = ref(false)   // 松手回弹期间才给 track 上过渡（spring）
 
 // ── 几何（读实测，不硬编码刻度间距）───────────────────────────────────────────
 function stripCenter() { return (stripRef.value?.clientWidth ?? 0) / 2 }
@@ -67,42 +66,52 @@ function fracFromOffset(off: number): number {
   }
   return 0
 }
-/** 两端弹力：超出「最新/最旧刻度居中」的范围后，位移打三折（橡皮筋阻尼） */
+/** 两端弹力（#1 渐进式阻尼，iOS 橡皮筋）：越往外拉越难、且有硬上限（渐近到 dim）。
+ *  overshoot(x) = (1 - 1/(x·c/dim + 1))·dim —— x 越大增量越慢，永远拉不过 dim。 */
+function overshoot(x: number): number {
+  const dim = (stripRef.value?.clientWidth ?? 300)
+  const c = 0.5
+  return (1 - 1 / (x * c / dim + 1)) * dim
+}
 function rubberBand(raw: number): number {
   const n = props.groups.length
   if (n === 0) return raw
   const max = offsetForIndex(0)      // 最新（最左）刻度居中 → offset 最大
   const min = offsetForIndex(n - 1)  // 最旧（最右）刻度居中 → offset 最小
-  if (raw > max) return max + (raw - max) * 0.32
-  if (raw < min) return min + (raw - min) * 0.32
+  if (raw > max) return max + overshoot(raw - max)
+  if (raw < min) return min - overshoot(min - raw)
   return raw
 }
 
-// ── 列滚动驱动（wheel）：连续分数 → 刻度带连续跟随（拖动/回弹中不抢）──────────
+// ── 列滚动驱动（wheel）：连续分数 → 刻度带连续跟随（拖动/惯性动画中不抢）──────────
 watch(() => props.centerFrac, (p) => {
-  if (dragging.value || snapping.value) return
+  if (dragging.value || animating) return
   offset.value = offsetForFrac(p)
 })
 // 数据/尺寸就绪后先摆正一次（瞬时）
 watch(() => props.groups, async () => {
   await nextTick()
-  if (!dragging.value && !snapping.value) offset.value = offsetForFrac(props.centerFrac)
+  if (!dragging.value && !animating) offset.value = offsetForFrac(props.centerFrac)
 }, { immediate: true })
-function onResize() { if (!dragging.value && !snapping.value) offset.value = offsetForFrac(props.centerFrac) }
+function onResize() { if (!dragging.value && !animating) offset.value = offsetForFrac(props.centerFrac) }
 onMounted(() => window.addEventListener('resize', onResize))
 
-// ── 拖动：跟手 + 弹力，实时连续联动列；松手 spring 吸附最近刻度 ─────────────────
+// ── 拖动跟手 + 弹力；松手带惯性投掷 → 磁吸到日期，缓入缓出 rAF 补间（列同步跟随）──
 let startX = 0, startOffset = 0, moved = false, downIdx = -1
-let snapTimer: ReturnType<typeof setTimeout> | null = null
+let vel = 0, lastX = 0, lastT = 0           // 速度追踪（px/ms）
+let animating = false, rafId = 0
+
+function stopAnim() { if (rafId) { cancelAnimationFrame(rafId); rafId = 0 } animating = false }
 
 function onDown(e: PointerEvent) {
-  startX = e.clientX
+  stopAnim()
+  startX = lastX = e.clientX
   startOffset = offset.value
+  lastT = e.timeStamp
+  vel = 0
   moved = false
   const el = (e.target as HTMLElement).closest<HTMLElement>('.dsb-tick')
   downIdx = el ? Number(el.dataset.idx) : -1
-  snapping.value = false
-  if (snapTimer) { clearTimeout(snapTimer); snapTimer = null }
   dragging.value = true
   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   window.addEventListener('pointermove', onMove)
@@ -112,35 +121,51 @@ function onDown(e: PointerEvent) {
 function onMove(e: PointerEvent) {
   const dx = e.clientX - startX
   if (Math.abs(dx) > 3) moved = true
-  offset.value = rubberBand(startOffset + dx)   // 跟手 + 两端阻尼
-  emit('seek', fracFromOffset(offset.value))    // 连续联动列（列平滑跟随手指）
+  offset.value = rubberBand(startOffset + dx)          // 跟手 + 渐进阻尼
+  const dt = Math.max(1, e.timeStamp - lastT)
+  vel = 0.7 * vel + 0.3 * ((e.clientX - lastX) / dt)   // 平滑瞬时速度（px/ms）
+  lastX = e.clientX; lastT = e.timeStamp
+  emit('seek', fracFromOffset(offset.value))           // 连续联动列（跟手时列 1:1 跟）
 }
 
 function onUp() {
   window.removeEventListener('pointermove', onMove)
   window.removeEventListener('pointerup', onUp)
   dragging.value = false
-  // 点击（没拖）→ 吸点的那根；拖动 → 吸离中线最近（round）；都夹在 [0, n-1]
   const n = props.groups.length
-  const raw = (!moved && downIdx >= 0) ? downIdx : Math.round(fracFromOffset(offset.value))
-  const idx = Math.max(0, Math.min(n - 1, raw))
-  snapTo(idx)
+  if (!moved && downIdx >= 0) { animateTo(Math.max(0, Math.min(n - 1, downIdx))); return }  // 点击直接吸
+  // 惯性投掷：把速度换算成「还能滑多远」（越快甩越多），再磁吸到落点最近的日期
+  const projected = offset.value + vel * 90            // 90ms 惯性投掷距离
+  const idx = Math.max(0, Math.min(n - 1, Math.round(fracFromOffset(projected))))
+  animateTo(idx)
 }
 
-function snapTo(idx: number) {
-  snapping.value = true                    // 开 track 过渡 → spring 回弹
-  offset.value = offsetForIndex(idx)
+/** 缓入缓出 rAF 补间到第 idx 根刻度居中，逐帧 emit seek 让列同步跟随（磁吸落定）*/
+function animateTo(idx: number) {
+  const startOff = offset.value
+  const endOff = offsetForIndex(idx)
+  const dist = Math.abs(endOff - startOff)
+  const dur = Math.max(240, Math.min(600, 200 + dist * 0.55))   // 距离越远越久（有阻尼感）
+  const t0 = performance.now()
   const date = props.groups[idx]?.date
-  if (date) emit('snap', date)             // 列平滑滚到该天居中
-  if (snapTimer) clearTimeout(snapTimer)
-  snapTimer = setTimeout(() => { snapping.value = false }, 440)
+  animating = true
+  const frame = (now: number) => {
+    const t = Math.min(1, (now - t0) / dur)
+    // easeInOutCubic：非线性缓入缓出
+    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+    offset.value = startOff + (endOff - startOff) * e
+    emit('seek', fracFromOffset(offset.value))
+    if (t < 1) { rafId = requestAnimationFrame(frame) }
+    else { rafId = 0; animating = false; if (date) emit('snap', date) }
+  }
+  rafId = requestAnimationFrame(frame)
 }
 
 onBeforeUnmount(() => {
   window.removeEventListener('pointermove', onMove)
   window.removeEventListener('pointerup', onUp)
   window.removeEventListener('resize', onResize)
-  if (snapTimer) clearTimeout(snapTimer)
+  stopAnim()
 })
 
 const _today = new Date().toISOString().slice(0, 10)
@@ -164,10 +189,7 @@ function fmtLabel(iso: string) {
   position: absolute; top: 4px; left: 0;
   display: flex; align-items: flex-end; gap: 3px;
   will-change: transform;
-  /* 平时无过渡（拖动跟手、列联动、resize 都瞬时连续）；只有松手回弹(.snapping)给一段 spring */
-}
-.ds-track.snapping {
-  transition: transform 0.44s cubic-bezier(0.34, 1.28, 0.5, 1);
+  /* 无 CSS 过渡：offset 全程由 JS 驱动（拖动跟手、wheel 连续、松手惯性磁吸 rAF 补间都逐帧算） */
 }
 
 /* 每根刻度 10px 透明命中区，视觉只露中间 3px 的杆 */
@@ -183,7 +205,7 @@ function fmtLabel(iso: string) {
   background: rgba(123,127,178,0.3);
   transition: height 0.24s cubic-bezier(0.34,1.3,0.5,1), width 0.24s ease, background 0.24s ease;
 }
-.date-scrub:not(.snapping) .dsb-tick:hover .dsb-bar { height: 17px; background: rgba(123,127,178,0.5); }
+.dsb-tick:hover .dsb-bar { height: 17px; background: rgba(123,127,178,0.5); }
 .dsb-tick.on .dsb-bar { width: 4px; height: 22px; background: var(--color-primary); }
 
 /* 日期小签：当前刻度常显，其余 hover 浮出 */
