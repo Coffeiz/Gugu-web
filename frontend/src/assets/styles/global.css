@@ -217,6 +217,9 @@ body {
 }
 .fc-card:hover::after, .folder-card:hover::after { opacity: 1; }
 .fc-card:hover, .folder-card:hover { transform: translateY(-2px); }
+/* 拖拽落地揭示后短暂压住 hover 抬起效果，见 usePhysicsDrag.ts 的 _suppressHoverBump——
+   :hover 判定没被拦，只是这段时间内不让 translateY 显形，避免跟落地动画前后脚抖一下 */
+.fc-card.phys-just-revealed:hover, .folder-card.phys-just-revealed:hover { transform: none; }
 .fc-card:active:not(:has(.fc-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }
 .folder-card:active:not(:has(.fd-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }
 

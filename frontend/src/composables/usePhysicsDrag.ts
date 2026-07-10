@@ -46,6 +46,49 @@ function _transparentGhost() {
 
 let _active = null   // 同一时刻只有一个拖拽
 
+// 落地飞行动画（flyTo/flyMorph）跑在独立的 rAF/timeout 里，跟 _active 生命周期不同步——
+// end() 一开始就清空 _active，落地动画（0.55~0.7s）还在后台继续。这期间若立刻在原位重新抓
+// 同一张卡，startPhysicsDrag 顶部会强制把源卡摆回可见（见下方注释），但上一次拖拽还没落地
+// 完的克隆体不会被这一步清掉——于是「已复位的源卡」和「还在飞/还没消失的旧克隆」同屏重叠，
+// 看起来像多出一张卡。
+// 按「卡片元素」记账（不是全局一刀切）：只有新拖拽抓的正好是同一张卡，才打断它上一趟没放完
+// 的落地动画；抓的是别的卡，互不相干的动画不受影响、照常播完——不然随手抓别的文件也会让刚
+// 松手的那张瞬间归位，动画被腰斩。
+let _pendingCleanups = new Map<HTMLElement, Set<() => void>>()
+function _registerCleanup(key: HTMLElement, fn: () => void) {
+  let set = _pendingCleanups.get(key)
+  if (!set) { set = new Set(); _pendingCleanups.set(key, set) }
+  set.add(fn)
+  return () => {
+    const s = _pendingCleanups.get(key)
+    if (!s) return
+    s.delete(fn)
+    if (!s.size) _pendingCleanups.delete(key)
+  }
+}
+function _flushPendingCleanup(key: HTMLElement | null) {
+  if (!key) return
+  const set = _pendingCleanups.get(key)
+  if (!set) return
+  _pendingCleanups.delete(key)
+  for (const fn of [...set]) { try { fn() } catch {} }
+}
+
+// 卡片飞向落点的途中（0.55s），若同一容器里另一张卡被抓起/放下，触发的 FLIP 会让这张卡的
+// 真实落点跟着挪位——飞行动画一开始就把目标钉死成旧位置，不会跟着挪。这里让还在飞的落点
+// 动画登记一个「按最新位置重新定目标」的回调（键是 revealEl，即那张卡当前的真实 DOM 元素），
+// 每次 _invertPlay 产生一次 FLIP 重排，就用它权威算出的 toRects（真实布局位置，不含过渡中的
+// transform 插值，比临时再测一次 getBoundingClientRect 准）去对号更新命中的飞行目标。
+// CSS transition 天然支持「途中改目标」：从当前插值位置平滑转向新目标，不会跳变或重播。
+let _pendingRetargets = new Map<HTMLElement, (box: any) => void>()
+function _retargetLandings(kids: HTMLElement[], rects: any[]) {
+  if (!_pendingRetargets.size) return
+  kids.forEach((k, i) => {
+    const fn = _pendingRetargets.get(k)
+    if (fn) fn(rects[i])
+  })
+}
+
 function _childCards(container, exclude) {
   return [...container.children].filter(c =>
     c.nodeType === 1 && c !== exclude && !c.classList.contains('phys-drag-clone'))
@@ -97,9 +140,21 @@ function _animateScroll(el, dy, dur = 300) {
 // 窗口，会引出另一个新坑：松手时指针原地不动（这正是文件拖完不动手最常见的情形）——窗口期内
 // 浏览器正确判定「摘了命中测试=没有 hover」，窗口结束后指针没挪动、没有新 mousemove 触发重新
 // 判定，:hover 就永远卡在「没悬停」，实际指针明明正压在卡片上。
+// pointer 模式下 :hover 判定本身全程是准的（见上面的注释），但揭示这一刻鼠标可能恰好压在
+// 卡片刚落地的位置——:hover 立即生效会带着 translateY(-2px) 抬起，跟落地动画前后脚发生，
+// 两个动作叠在一起看着像抖了一下。用类名压 200ms：不摘 pointer-events、不碰命中测试，
+// :hover 状态本身继续实时准确更新，只是这段时间内不让它的视觉抬起效果显形；200ms 后摘掉
+// 类名，若那时鼠标真压在卡片上，:hover 早已是 true，效果立刻正常呈现（不会有「指针不动
+// 就再也不触发」的坑——因为压根没碰过命中测试）。CSS 见 global.css .phys-just-revealed。
+function _suppressHoverBump(el: HTMLElement, dur = 200) {
+  el.classList.add('phys-just-revealed')
+  setTimeout(() => el.classList.remove('phys-just-revealed'), dur)
+}
+
 function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettled?: () => void) {
   el.style.opacity = ''
   el.style.transition = ''
+  _suppressHoverBump(el)
   if (pointerMode) { onSettled?.(); return }
   el.style.pointerEvents = 'none'
   setTimeout(() => {
@@ -111,8 +166,31 @@ function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettl
 // 到位缓动：强 ease-out（快进慢收，非线性），不过冲、不回弹
 const _SETTLE = 'cubic-bezier(0.22, 1, 0.36, 1)'
 
+// 落地飞行阶段用的 z：默认 2（普通页面卡片天然堆叠 ≈0，够盖住兄弟卡片、又远低于
+// windowz.ts 的窗口带 20000+，不会在飞行途中把预览器/GuguChat 这类浮窗糊住）。
+// 但卡片若本来就活在某个浮窗/弹层里（如项目编辑卡：走 BaseModal，领的 z 本身就在 20000+
+// 带），落地时仍用 2 反而比这个浮窗自己的内容更低——克隆体飞行全程被浮窗盖住、肉眼不可见，
+// 落地揭示真卡那一刻才「凭空冒出来」，看起来像克隆体半路消失了。
+// 这里动态探测：从卡片容器往上找最近一个「真正建立了层叠上下文」的祖先（position 非
+// static 且 z-index 是数字，如 BaseModal 的 .bm-center），落地 z 就取它的 z-index+10（+10
+// 留出余量，避免同一浮窗里同时有多张卡片在飞、彼此相互覆盖判定不稳）；找不到就说明卡片
+// 本来就在普通页面里，退回原来的 2。
+function _landingZIndex(el: HTMLElement | null): number {
+  let node = el
+  while (node && node !== document.body) {
+    const cs = getComputedStyle(node)
+    if (cs.position !== 'static' && cs.zIndex !== 'auto') {
+      const z = parseInt(cs.zIndex, 10)
+      if (!Number.isNaN(z)) return z + 10
+    }
+    node = node.parentElement
+  }
+  return 2
+}
+
 // FLIP：布局已经变到「现状(toRects)」后，让 kids 先回到 fromRects 再动画到现状
 function _invertPlay(kids, fromRects, toRects, dur = 340) {
+  _retargetLandings(kids, toRects)
   kids.forEach((c, i) => {
     const dx = fromRects[i].left - toRects[i].left
     const dy = fromRects[i].top  - toRects[i].top
@@ -141,6 +219,7 @@ function _invertPlay(kids, fromRects, toRects, dur = 340) {
  */
 export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
   if (!sourceEl || _active) return
+  _flushPendingCleanup(sourceEl)   // 只打断「同一张卡」上一趟还没飞完的落地动画，避免重叠成「两张卡」
   // 上一次拖拽的落地动画要等 transitionend（~420~580ms）才把这张卡复位显示；这段窗口期内
   // 若重新抓同一张卡，getBoundingClientRect 会在它还是 display:none 时量出 0×0——克隆体宽高
   // 从一开始就定死是 0，看起来「卡片凭空消失」（_active 只挡真正重叠的拖拽，挡不住这个：
@@ -317,12 +396,15 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
       } else {
         clone.style.transform = SLOT(box)
       }
+      let unregister = () => {}
       const finish = () => {
         if (done) return
         done = true
+        unregister()
         clone.removeEventListener('transitionend', onEnd)
         clone.remove()
       }
+      unregister = _registerCleanup(sourceEl, finish)
       onEnd = finish
       clone.addEventListener('transitionend', onEnd)
       setTimeout(finish, 680)
@@ -331,23 +413,56 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
     // 双克隆样式渐变：clone(旧样式) 与 clone2(新样式) 同起点、同轨迹飞向落点，飞行途中：
     //  ① 用 scale 把卡片实际拉伸/缩短到落点卡的尺寸（长短按需变化，而非靠淡变蒙混）；
     //  ② 交叉淡变完成内容（旧→新样式）。看到的是飞动的卡片自己变形+变样式并落位。
-    const flyMorph = (box, revealEl, clone2) => {
+    const flyMorph = (initialBox, revealEl, clone2) => {
+      // box 用 let：飞行途中可能被 _retargetLandings 改指到新位置（见其注释），finish() 收尾时
+      // 要读的是「最新」这份，不是刚进来那一刻的静态快照。
+      let box = initialBox
       // 克隆体是按源卡(旧)尺寸渲染的；缩放到落点卡尺寸，并让缩放后中心对齐落点中心
-      const sx = (box.width  / rect.width ).toFixed(4)
-      const sy = (box.height / rect.height).toFixed(4)
-      const cx = box.left + box.width / 2, cy = box.top + box.height / 2
-      const tf = `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0)` +
-                 ` perspective(760px) rotateX(0deg) rotateZ(0deg) scale(${sx}, ${sy})`
+      const applyTransform = () => {
+        const sx = (box.width  / rect.width ).toFixed(4)
+        const sy = (box.height / rect.height).toFixed(4)
+        const cx = box.left + box.width / 2, cy = box.top + box.height / 2
+        const tf = `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0)` +
+                   ` perspective(760px) rotateX(0deg) rotateZ(0deg) scale(${sx}, ${sy})`
+        clone.style.transform = tf
+        clone2.style.transform = tf
+      }
       clone2.getBoundingClientRect()   // 提交初始态（与 clone 重叠、opacity 0），下面才会从此处动画
       const trans = `transform 0.55s ${_SETTLE}, opacity 0.42s ease`
       clone.style.transition = trans
       clone2.style.transition = trans
-      clone.style.transform = tf;  clone.style.opacity = '0'
-      clone2.style.transform = tf; clone2.style.opacity = '0.97'
+      applyTransform()
+      clone.style.opacity = '0'
+      clone2.style.opacity = '0.97'
 
+      // 飞行途中容器发生 FLIP 重排（另一张卡被抓起/放下）→ 落点跟着挪位，把目标改过去。
+      // 直接在飞行中途改 transform 目标，浏览器会当「打断」处理：新一段插值默认按当前速度
+      // 顺势打断续接，而不是重新从静止起步走一遍完整缓出曲线——两段拼起来速度不连续，
+      // 观感比原本单段飞行更接近匀速，缓出的「快进慢收」感被削弱。
+      // 做法：读出克隆体此刻真实渲染的位置（含插值中的中间态）→ 关过渡、把这个位置钉死成
+      // 当前态 → 重新打开过渡、指向新目标，让这一段重新从「静止的当前位置」完整跑一遍同一条
+      // 缓出曲线，手感跟原本没被打断时一致。全程同步无绘制帧插入，位置本身不会跳一下。
+      const retarget = (newBox) => {
+        if (done) return
+        box = newBox
+        const curT = getComputedStyle(clone2).transform
+        clone.style.transition = 'none'
+        clone2.style.transition = 'none'
+        clone.style.transform = curT
+        clone2.style.transform = curT
+        void clone2.offsetWidth
+        clone.style.transition = trans
+        clone2.style.transition = trans
+        applyTransform()
+      }
+      _pendingRetargets.set(revealEl, retarget)
+
+      let unregister = () => {}
       const finish = () => {
         if (done) return
         done = true
+        unregister()
+        if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
         // 收尾前把 clone2 钉死成跟 revealEl 完全一致的「纯 2D」状态，排除两种可能的残留误差：
         // ① scale(sx,sy) 是按 box.width/rect.width 算出来的近似值，不保证正好是 1，哪怕差
@@ -365,6 +480,19 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
           _revealWithoutStaleHover(revealEl, pointer)
         })
       }
+      // 被同一张卡的新拖拽强制打断时用（按 revealEl 记账，见 _registerCleanup——只有再次抓的
+      // 正是这张卡才会触发）：摘掉两张克隆、同步（非 rAF 延迟）揭示 revealEl，紧接着就被新拖拽
+      // 自己的隐藏覆盖掉，全程同步无绘制帧插入，不会闪一下。不做 finish() 里那套「钉死」精修——
+      // 反正马上就要整个移除，没必要为一个不会被看到的最终帧计算像素级样式。
+      const forceCleanup = () => {
+        if (done) return
+        done = true
+        if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
+        clone2.removeEventListener('transitionend', onEnd)
+        clone.remove(); clone2.remove()
+        _revealWithoutStaleHover(revealEl, pointer)
+      }
+      unregister = _registerCleanup(revealEl, forceCleanup)
       onEnd = finish
       clone2.addEventListener('transitionend', onEnd)
       setTimeout(finish, 700)
@@ -406,8 +534,9 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
     // 松手即进入「归位/落位」飞行动画（0.55~0.7s）。飞行途中克隆体仍是 fixed 定位，
     // 若继续顶着抓取时的压顶 z(99999)，飞行路径经过悬浮窗口（文件预览/咕咕聊天，20000+ 那一带）
     // 时会整个盖住窗口，动画结束克隆体一 remove 又突然消失——观感是「窗口被糊一下又露出来」。
-    // 松手这一刻起改用低 z：只需盖过页面里同层的兄弟卡片（都在自然堆叠序，≈0），远低于窗口带。
-    clone.style.zIndex = '2'
+    // 松手这一刻起改用低 z：默认只需盖过页面里同层的兄弟卡片（自然堆叠序≈0）；卡片若活在
+    // 浮窗/弹层里（如项目编辑卡）则动态探测那个浮窗自己的 z，见 _landingZIndex 注释。
+    clone.style.zIndex = String(_landingZIndex(sourceEl))
     // 业务 drop + Vue 重渲染在微任务里已落定；本 rAF 在 paint 前做落点 FLIP，避免闪一下
     requestAnimationFrame(() => {
       // 1) 释放点压着文件夹/面包屑 → 吸入（不依赖异步重渲染）
@@ -513,6 +642,8 @@ export function startPhysicsDrag(event, sourceEl, opts: PhysicsDragOpts = {}) {
  */
 export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts: PhysicsDragOpts = {}) {
   if (!sourceEl || _active) return
+  _flushPendingCleanup(sourceEl)   // 同 startPhysicsDrag：只打断同一张卡上一趟还没飞完的动画
+  for (const ex of extras) { if (ex) _flushPendingCleanup(ex) }
   const pointer = opts.pointer === true
   const pointerId = pointer ? event.pointerId : null
   if (!pointer) { try { event.dataTransfer?.setDragImage(_transparentGhost(), 0, 0) } catch {} }
@@ -707,7 +838,11 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
     for (const { el } of shadows) {
       el.style.transition = 'opacity 0.18s ease'
       el.style.opacity = '0'
-      setTimeout(() => el.remove(), 220)
+      let shadowDone = false
+      let unregisterShadow = () => {}
+      const removeShadow = () => { if (shadowDone) return; shadowDone = true; unregisterShadow(); el.remove() }
+      unregisterShadow = _registerCleanup(sourceEl, removeShadow)
+      setTimeout(removeShadow, 220)
     }
 
     // pointer 模式：落点的业务移动（多选批量移动）由调用方在此执行（原生模式靠各列 @drop 落定）
@@ -729,19 +864,23 @@ export function startMultiPhysicsDrag(event, sourceEl, count, extras = [], opts:
         clone.style.transform = SLOT(box)
         clone.style.opacity = '0'
       }
+      let unregister = () => {}
       const finish = () => {
         if (done) return
         done = true
+        unregister()
         clone.removeEventListener('transitionend', onEnd)
         clone.remove()
       }
+      unregister = _registerCleanup(sourceEl, finish)
       onEnd = finish
       clone.addEventListener('transitionend', onEnd)
       setTimeout(finish, 680)
     }
 
-    // 松手即进入归位/落位飞行（见单选 end() 里同名注释）：不再顶着压顶 z，避免飞行路径盖住悬浮窗口
-    clone.style.zIndex = '2'
+    // 松手即进入归位/落位飞行（见单选 end() 里同名注释 + _landingZIndex）：不再顶着压顶 z，
+    // 改按卡片所在的层叠上下文动态取值，避免飞行路径盖住悬浮窗口、也避免被卡片自己所在的浮窗盖住
+    clone.style.zIndex = String(_landingZIndex(sourceEl))
     requestAnimationFrame(() => {
       // 吸入文件夹/面包屑
       const under = document.elementFromPoint(dropX, dropY)

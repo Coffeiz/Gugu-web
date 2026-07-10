@@ -279,6 +279,7 @@
             rows="1"
             v-enter.exact.prevent="() => send()"
             @input="autoResize"
+            @paste="onPaste"
           />
           <div v-else class="rec-bar">
             <span class="rec-dot"></span>
@@ -594,9 +595,10 @@ function _markResizing() {
     if (e.target !== windowRef.value) return   // 只认窗口自己的位移过渡，冒泡上来的子元素过渡不算
     if (!['top', 'left', 'right', 'bottom'].includes(e.propertyName)) return
     resizing.value = false
+    fitTextarea()   // 过渡结束后做一次无视觉差的最终校准，处理浏览器的子像素取整
   }
   windowRef.value?.addEventListener('transitionend', _onResizeTransitionEnd)
-  _resizeTimer = setTimeout(() => { resizing.value = false }, 600)
+  _resizeTimer = setTimeout(() => { resizing.value = false; fitTextarea() }, 600)
 }
 const miniPinned = ref(localStorage.getItem('gugu_mini_pinned') !== 'false')
 watch(miniPinned, v => localStorage.setItem('gugu_mini_pinned', String(v)))
@@ -850,6 +852,16 @@ function onChatDrop(e) {
   e.preventDefault()
   chatDrag.value = 0
   uploadAttachFiles([...(e.dataTransfer?.files || [])])
+}
+// ── 粘贴文件/图片添加附件（截图直接 Ctrl+V，纯文本粘贴不受影响）──
+function onPaste(e) {
+  const files = [...(e.clipboardData?.items || [])]
+    .filter(it => it.kind === 'file')
+    .map(it => it.getAsFile())
+    .filter(Boolean)
+  if (!files.length) return
+  e.preventDefault()
+  uploadAttachFiles(files)
 }
 function removeAtt(a) {
   if (a._thumbUrl) URL.revokeObjectURL(a._thumbUrl)   // 未发送即移除，回收 objectURL
@@ -1316,6 +1328,10 @@ async function enterExpanded() {
   expanded.value = true
   loadBots()
   _markResizing()
+  // 真实输入框此时仍在从小窗宽度过渡到大窗宽度；用目标宽度离屏测量，避免把旧宽度的行数
+  // 带到动画结束才纠正，也不需要为了兜底提前撑高窗口。
+  await nextTick()
+  fitTextarea(true)
   trackApi.track('chat_expanded').catch(() => {})
   await fetchSessions()
   await nextTick()
@@ -1337,6 +1353,7 @@ async function exitExpanded() {
   expanded.value = false
   _markResizing()
   await nextTick()
+  fitTextarea(false)
   const el = messagesEl.value
   if (!el) return
   stick.value = true
@@ -1396,6 +1413,56 @@ async function deleteSession(id) {
   } catch {}
 }
 
+function textareaWidthForMode(isExpanded) {
+  if (!isExpanded) {
+    // 小窗：左右内边距 13px、两个 16px 附件按钮、28px 发送按钮和三段 8px 间距。
+    return SMALL_W - 26 - 16 - 16 - 28 - 24
+  }
+  const left = Math.max(SIDEBAR_W + 12, vw.value * 0.4 - 12)
+  const mainWidth = vw.value - left - 12 - 210
+  // 大窗：左右内边距 20px、两个 16px 附件按钮、32px 发送按钮和三段 10px 间距。
+  return Math.max(0, mainWidth - 40 - 16 - 16 - 32 - 30)
+}
+
+function fitTextarea(isExpanded = expanded.value) {
+  // 切换时 chat-window 的四条边都在过渡，直接读真实 textarea 只能拿到“当前帧”的宽度。
+  // 克隆到离屏节点按目标宽度量 scrollHeight，点击瞬间就能得到目标模式的正确行数。
+  const el = expInputEl.value
+  if (!el) return
+  const width = textareaWidthForMode(isExpanded)
+  if (!width) return
+  const style = getComputedStyle(el)
+  const sizer = document.createElement('textarea')
+  sizer.value = el.value
+  sizer.rows = 1
+  sizer.setAttribute('aria-hidden', 'true')
+  Object.assign(sizer.style, {
+    position: 'fixed',
+    visibility: 'hidden',
+    pointerEvents: 'none',
+    left: '-9999px',
+    top: '0',
+    width: `${width}px`,
+    height: 'auto',
+    minHeight: '0',
+    maxHeight: 'none',
+    overflow: 'hidden',
+    boxSizing: style.boxSizing,
+    padding: style.padding,
+    border: style.border,
+    font: style.font,
+    letterSpacing: style.letterSpacing,
+    lineHeight: style.lineHeight,
+    whiteSpace: style.whiteSpace,
+    wordBreak: style.wordBreak,
+    overflowWrap: style.overflowWrap,
+    tabSize: style.tabSize,
+  })
+  document.body.appendChild(sizer)
+  const height = Math.min(sizer.scrollHeight, 120)
+  sizer.remove()
+  el.style.height = `${height}px`
+}
 function autoResize(e) {
   const el = e.target; el.style.height = 'auto'
   el.style.height = Math.min(el.scrollHeight, 120) + 'px'
@@ -1854,6 +1921,8 @@ async function send(forcedText?) {
   resize: none; line-height: 1.5; max-height: 120px; overflow-y: auto;
   display: block; padding: 4px 0; vertical-align: middle;
 }
+/* 大窗的附件/发送按钮为 32px；单行输入也占满同一高度，图标和文字的视觉中线才一致。 */
+.chat-main.is-expanded .chat-input-row textarea { padding: 5.5px 0; }
 /* 小窗输入字号略小，与小窗整体一致 */
 .chat-main:not(.is-expanded) .chat-input-row textarea { font-size: 13px; }
 
