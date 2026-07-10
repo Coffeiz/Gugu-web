@@ -237,6 +237,14 @@ body {
 .fc-card.phys-just-revealed:hover::after, .folder-card.phys-just-revealed:hover::after { opacity: 0 !important; }
 .fc-card.phys-just-revealed:hover .fc-hover-actions,
 .folder-card.phys-just-revealed:hover .fd-hover-actions { opacity: 0 !important; }
+/* 项目页看板的项目卡（.proj-card，ProjectCard.vue）走同一套 physics 拖拽与揭示，同样加这两个类；
+   它的静止态阴影/hover 值跟文件卡不同，单独压一份：抬起(-2px，来自 .hover-card-fx)、hover 阴影
+   （0 6px 18px）、::after 高光都压回静止态。box-shadow 的静止值抄自 ProjectCard.vue 的 .proj-card。 */
+.proj-card.phys-just-revealed:hover {
+  transform: none !important;
+  box-shadow: 0 2px 8px rgba(80,90,110,0.07) !important;
+}
+.proj-card.phys-just-revealed:hover::after { opacity: 0 !important; }
 /* 揭示当帧：把卡片及其所有子元素的过渡一并关掉，让「压制态」瞬间生效、零动画（卡片不下沉、
    操作按钮不从陈旧的 hover opacity 淡出）。只挂一帧，提交后立即由 JS 摘掉。见 _revealWithoutStaleHover。
    必须连 ::before/::after 一起关：通配符 * 匹配不到伪元素，而 hover 高光遮罩正是 .fc-card::after，

@@ -145,11 +145,11 @@ function _animateScroll(el, dy, dur = 300) {
 // （命中测试仍在、:hover 已为真），CSS 的 hover 早把整张卡推到了 hover 终态——只是看不见：
 //   ① 卡片本体 transform 已在 -2px；② 悬停操作按钮（重命名/下载/删除）opacity 已在 1。
 // 若揭示时只恢复 opacity、各自的过渡又都是激活的，卡片会从 -2px 动画回落到压制态 0（下沉）、
-// 按钮会从 1 淡出到 0，200ms 后又双双反向动回来——就是「先下沉再上浮」+「按钮闪好几次」。
+// 按钮会从 1 淡出到 0，随后又双双反向动回来——就是「先下沉再上浮」+「按钮闪好几次」。
 // 解法：加压制类（把 hover 的 transform/阴影/底色/按钮 opacity 全钉在非 hover 态）的同时，再加
 // 一个「快照」类，用 !important 把卡片**及其所有子元素**的 transition 一并关掉；恢复可见、强制
 // 提交这一帧——整张卡（含按钮）直接坐在压制态、零动画；随即摘掉快照类恢复过渡（此刻各属性值
-// 未变、不会触发任何过渡）。200ms 到点摘掉压制类时，卡片上浮 + 按钮淡入 + 阴影渐显作为一次
+// 未变、不会触发任何过渡）。下一帧摘掉压制类时，卡片上浮 + 按钮淡入 + 阴影渐显作为一次
 // 干净的 hover-in 平滑发生。全程不摘 pointer-events、不碰命中测试，:hover 一直实时准确
 // （不会有「指针不动就再也不触发」的坑）。CSS 见 global.css .phys-just-revealed / .phys-reveal-snap。
 function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettled?: () => void) {
@@ -157,8 +157,11 @@ function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettl
   el.classList.add('phys-reveal-snap')     // 快照：本帧关掉卡片+全部子元素的过渡，让上面这步瞬间生效、零动画
   el.style.opacity = ''
   void el.offsetWidth                      // 强制提交：整张卡（含按钮）直接坐在压制态，不下沉、按钮不淡出
-  el.classList.remove('phys-reveal-snap')  // 恢复过渡：此刻各属性值未变 → 不触发过渡；只为 200ms 后的上浮/淡入铺路
-  setTimeout(() => el.classList.remove('phys-just-revealed'), 200)
+  el.classList.remove('phys-reveal-snap')  // 恢复过渡：此刻各属性值未变 → 不触发过渡；只为随后解除压制的上浮/淡入铺路
+  // 解除压制的延迟：0=落地即进入 hover-in（无停顿）。下沉/闪烁靠上面的快照消掉、与此延迟无关，
+  // 故 0ms 下依然不闪，只是没有「保持一会儿再 hover」的停顿，落地即平滑上浮。用 rAF 保证压制态
+  // 那一帧先真的画出来，再解除——否则同一 task 内一加一撤，浏览器可能合帧、跳过压制态直接到 hover。
+  requestAnimationFrame(() => el.classList.remove('phys-just-revealed'))
   if (pointerMode) { onSettled?.(); return }
   el.style.pointerEvents = 'none'
   setTimeout(() => {
