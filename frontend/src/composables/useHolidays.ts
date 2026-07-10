@@ -3,9 +3,11 @@
 // holiday: false → 调休补班（周末上班）
 // 按年缓存到 localStorage，30 天后重新拉取
 
-const memCache = {}
+type HolidayEntry = { holiday?: boolean }
+type HolidayMap = Record<string, HolidayEntry>
+const memCache: Record<string, HolidayMap> = {}
 
-async function fetchYear(year) {
+async function fetchYear(year: number): Promise<HolidayMap> {
   if (memCache[year]) return memCache[year]
 
   const key = `holidays_${year}`
@@ -38,7 +40,7 @@ async function fetchYear(year) {
  * 返回 'holiday'（休）| 'workday'（班）| null（普通日）
  * isoDate: "2026-06-21"
  */
-function getHolidayType(data, isoDate) {
+function getHolidayType(data: HolidayMap | null | undefined, isoDate: string | null | undefined) {
   if (!data || !isoDate) return null
   const mmdd = isoDate.slice(5)
   const entry = data[mmdd]

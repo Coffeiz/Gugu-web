@@ -24,7 +24,7 @@
 
 ### 工程
 
-- **TypeScript 严格化棘轮（P1-b）**（`frontend/tsconfig.strict.json`、`package.json` `typecheck:strict`、`src/types/project.ts`、`src/stores/{projects,ui,live}.ts` 等）：主 `tsconfig.json` 仍全仓渐进（`strict:false`，不影响 `build`/`typecheck`），新增 `tsconfig.strict.json` 在其上开满 `strict/noImplicitAny`、只作用于 `include` 白名单——「清干净一个文件 → 入白名单 → `typecheck:strict` 常绿」的提交前门禁。粒度定为**文件**而非模块（Vue 组件 import 闭包会扇出到共享基建，整模块入档一次牵出数百存量错）。已入档 **14 源文件**：`src/types/**` + `src/utils/**` + `src/services/**` + stores `projects/ui/live` + `useOnboarding`；`projects.ts` 从 105 类型错清零。新建 `Project` 领域模型（绑定 OpenAPI `ProjectResponse` + 收紧 status/stages）作单一类型来源，确立「api 边界一次性收紧 wire→紧类型」模式；Projects 组件 `PropType<any[]>` → `PropType<Project[]>`。接力顺序见 `docs/security/代码审查-GPT复审核实版-2026-07-10.md` §4。
+- **TypeScript 严格化棘轮（P1-b）**（`frontend/tsconfig.strict.json`、`package.json` `typecheck:strict`、`src/types/project.ts`、`src/stores/{projects,ui,live}.ts` 等）：主 `tsconfig.json` 仍全仓渐进（`strict:false`，不影响 `build`/`typecheck`），新增 `tsconfig.strict.json` 在其上开满 `strict/noImplicitAny`、只作用于 `include` 白名单——「清干净一个文件 → 入白名单 → `typecheck:strict` 常绿」的提交前门禁。粒度定为**文件**而非模块（Vue 组件 import 闭包会扇出到共享基建，整模块入档一次牵出数百存量错）。已入档 **24 源文件**：`src/types/**` + `src/utils/**` + `src/services/**` + stores（`projects/ui/live/admin/clipboard/audio/config/preferences`）+ 6 个 composable（`useOnboarding/useSorting/useLiveRefresh/useHolidays/useStageTemplates/useThumbCache`）；`projects.ts` 从 105 类型错清零。新建 `Project` 领域模型（绑定 OpenAPI `ProjectResponse` + 收紧 status/stages）作单一类型来源，确立「api 边界一次性收紧 wire→紧类型」模式；Projects 组件 `PropType<any[]>` → `PropType<Project[]>`。接力顺序见 `docs/security/代码审查-GPT复审核实版-2026-07-10.md` §4。
 
 ## [0.17.0] - 2026-07-10 · QQ 自建 WebSocket 全面替换 botpy + 飞书流式/富媒体/引用识别 + 站内全局搜索 + 记忆画像·行为拆分 + IM 引用消息重构
 

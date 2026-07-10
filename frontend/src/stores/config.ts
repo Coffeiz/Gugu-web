@@ -5,16 +5,16 @@ import { useAdminStore } from './admin'
 // 后端对密码类字段返回 "****"，前端拿到后清空，存回时跳过空值（视为"未修改"）
 const PASSWORD_FIELDS = new Set(['password', 'api_key', 'oss_access_key_id', 'oss_access_key_secret', 'tavily_api_key'])
 
-function sanitizeForEdit(obj) {
-  const out = {}
+function sanitizeForEdit(obj: Record<string, unknown>) {
+  const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(obj)) {
     out[k] = (PASSWORD_FIELDS.has(k) && v === '****') ? '' : v
   }
   return out
 }
 
-function stripUnchangedPasswords(obj) {
-  const out = {}
+function stripUnchangedPasswords(obj: Record<string, unknown>) {
+  const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(obj)) {
     if (PASSWORD_FIELDS.has(k) && (!v || v === '****')) continue
     out[k] = v
@@ -130,7 +130,7 @@ export const useConfigStore = defineStore('config', () => {
     }
   }
 
-  async function saveConfig(patch) {
+  async function saveConfig(patch: Record<string, Record<string, unknown>>) {
     saving.value = true
     saved.value  = false
     saveError.value = ''
@@ -149,14 +149,15 @@ export const useConfigStore = defineStore('config', () => {
         throw new Error(body.detail || `保存失败（${res.status}）`)
       }
       for (const [section, vals] of Object.entries(cleanPatch)) {
-        if (cfg[section]) Object.assign(cfg[section], vals)
+        const target = (cfg as Record<string, Record<string, unknown>>)[section]
+        if (target) Object.assign(target, vals)
       }
       if (cleanPatch.voice?.api_key) secretSet.voiceApiKey = true   // 这次确实写了新 key
       if (cleanPatch.embedding?.api_key) secretSet.embeddingApiKey = true
       saved.value = true
       setTimeout(() => { saved.value = false }, 3000)
     } catch (e) {
-      saveError.value = e.message
+      saveError.value = e instanceof Error ? e.message : String(e)
       setTimeout(() => { saveError.value = '' }, 5000)
     } finally {
       saving.value = false

@@ -172,8 +172,9 @@ npm run typecheck:strict   # vue-tsc -p tsconfig.strict.json（严格档白名�
 
 - [x] 建棘轮：`tsconfig.strict.json` + `typecheck:strict` 脚本（2026-07-11）
 - [x] 首批入档：`src/utils/**` + `src/types/**` strict-clean；新建 `src/types/project.ts` 领域模型（绑定 OpenAPI `ProjectResponse`）；Projects 组件 `PropType<any[]>` → `Project[]`
-- [x] stores 底座入档（2026-07-11）：`projects.ts`（105→0，`ref<Project[]>` 消 ~80）+ `ui.ts` + `live.ts` + `services/**` + `composables/useOnboarding.ts`，共 **14 源文件**。确立「api 边界一次性收紧 wire→紧类型」模式
-- [ ] 接力：② 轻量 store/composable 尾批（各 ≤10 错）→ ③ 文件簇（filesCache/usePhysicsDrag/useUploadQueue/preview，需 `FileMeta`/`Thumb` 类型）→ ④ Calendar `CalendarEvent`、Mind `NoteEditor` 9 处 TipTap `Editor` any → ⑤ 组件闭包净了整块入档
+- [x] stores 底座入档（2026-07-11）：`projects.ts`（105→0，`ref<Project[]>` 消 ~80）+ `ui.ts` + `live.ts` + `services/**` + `composables/useOnboarding.ts`。确立「api 边界一次性收紧 wire→紧类型」模式
+- [x] 轻量 store/composable 尾批（2026-07-11）：admin/clipboard/audio/config/preferences + useSorting/useLiveRefresh/useHolidays/useStageTemplates/useThumbCache（10 文件、51 错）。**棘轮累计 24 源文件**
+- [ ] 接力：③ 文件簇（usePhysicsDrag/useFileDragDrop/filesCache/useUploadQueue/preview/useBoxSelection，需 `FileMeta`/`Thumb` 类型）→ ④ Calendar `CalendarEvent`、Mind `NoteEditor` 9 处 TipTap `Editor` any → ⑤ 组件闭包净了整块入档
 - [ ] CI / 部署流程加 `npm run typecheck` + `typecheck:strict` 门禁（红则挡）
 - [ ] 存量 `.js` 清零后，`tsconfig` 关 `allowJs`（**核实：`.js` 已清零，此项条件已满足，可评估执行**）
 

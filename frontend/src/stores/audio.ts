@@ -5,11 +5,13 @@ const AUDIO_FILE_KEY = 'gugu_audio_file'
 
 const bc = new BroadcastChannel('gugu_audio')
 
+interface AudioFile { id: number; displayName?: string; ext?: string }
+
 export const useAudioStore = defineStore('audio', () => {
-  const file    = ref(null)   // { id, displayName, ext }
-  const blobUrl = ref(null)
+  const file    = ref<AudioFile | null>(null)   // { id, displayName, ext }
+  const blobUrl = ref<string | null>(null)
   const loading = ref(false)
-  const error   = ref(null)
+  const error   = ref<string | null>(null)
 
   // 持久化当前文件信息（blob URL 不可持久化，只存元数据）
   watch(file, (f) => {
@@ -24,7 +26,7 @@ export const useAudioStore = defineStore('audio', () => {
   // 其他 tab 开始播放时，停掉本 tab
   bc.onmessage = () => stop()
 
-  async function play(f) {
+  async function play(f: AudioFile) {
     if (file.value?.id === f.id) return  // 同一首不重新加载
     bc.postMessage('playing')
     revoke()
@@ -40,7 +42,7 @@ export const useAudioStore = defineStore('audio', () => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       blobUrl.value = URL.createObjectURL(await res.blob())
     } catch (e) {
-      error.value = e.message
+      error.value = e instanceof Error ? e.message : String(e)
     } finally {
       loading.value = false
     }

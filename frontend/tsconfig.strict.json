@@ -22,6 +22,16 @@
     "src/stores/ui.ts",
     "src/stores/live.ts",
     "src/stores/projects.ts",
-    "src/composables/useOnboarding.ts"
+    "src/stores/admin.ts",
+    "src/stores/clipboard.ts",
+    "src/stores/audio.ts",
+    "src/stores/config.ts",
+    "src/stores/preferences.ts",
+    "src/composables/useOnboarding.ts",
+    "src/composables/useLiveRefresh.ts",
+    "src/composables/useSorting.ts",
+    "src/composables/useHolidays.ts",
+    "src/composables/useStageTemplates.ts",
+    "src/composables/useThumbCache.ts"
   ]
 }

@@ -7,7 +7,7 @@ export const useAdminStore = defineStore('admin', () => {
 
   const isLoggedIn = computed(() => !!token.value)
 
-  async function login(username, password) {
+  async function login(username: string, password: string) {
     const res = await fetch('/api/v1/admin/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
