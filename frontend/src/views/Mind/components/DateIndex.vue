@@ -26,10 +26,10 @@ const emit = defineEmits<{ (e: 'jump', date: string): void }>()
 
 const stripRef = ref<HTMLElement | null>(null)
 
-// 高亮刻度跟着滚动跑出可视区时，把它带回来（天数多时刻度杆自身也会溢出）
+// 当前刻度始终滚到刻度杆正中（滑杆的指针语义：指针居中、刻度带跟着走）
 watch(() => props.active, (d) => {
   stripRef.value?.querySelector<HTMLElement>(`.dsb-tick[data-date="${d}"]`)
-    ?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' })
+    ?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
 })
 
 const _today = new Date().toISOString().slice(0, 10)

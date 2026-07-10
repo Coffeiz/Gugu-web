@@ -192,13 +192,14 @@ function calcPopupStyle() {
   const popW = 224
   const centerX = rect.left + rect.width / 2
   const left = Math.max(8, Math.min(centerX - popW / 2, window.innerWidth - popW - 8))
-  popupStyle.value = {
-    position: 'fixed',
-    top: rect.bottom + 6 + 'px',
-    left: left + 'px',
-    width: popW + 'px',
-    zIndex: nextZ(),
-  }
+  const base = { position: 'fixed', left: left + 'px', width: popW + 'px', zIndex: nextZ() }
+  // 下方放不下且上方更宽裕 → 向上开：用 bottom 锚定弹层底边（切年份模式高度变了也
+  // 自然向上生长）。触发场景：贴视口底部的输入条（记录页捕捉条的补录日期）。
+  const EST_H = 320
+  const spaceBelow = window.innerHeight - rect.bottom
+  popupStyle.value = (spaceBelow < EST_H + 14 && rect.top > spaceBelow)
+    ? { ...base, bottom: window.innerHeight - rect.top + 6 + 'px' }
+    : { ...base, top: rect.bottom + 6 + 'px' }
 }
 
 function openPicker() {

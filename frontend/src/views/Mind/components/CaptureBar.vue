@@ -1,45 +1,52 @@
 <template>
   <!-- 底部停靠捕捉条：收起=单行占位；聚焦展开=编辑器+工具栏从条内长出来（不弹浮层）。
+       展开/收起走 grid-template-rows 0fr↔1fr 的弹性过渡（同项目卡的 spring 曲线），
+       两段（单行头/编辑区）反向伸缩，总高度连续变化；编辑器常驻挂载，收起方向才有内容可缩。
        浮在滚动的便签流之上：玻璃可以用，但内部交互元素克制（hover 只做 opacity/淡背景，
        不做 box-shadow 过渡——白带红线）；本组件自身/祖先不挂 opacity 动画（隔离组红线）。 -->
-  <div class="capture-bar" :class="{ expanded }">
-    <template v-if="!expanded">
-      <button class="cb-collapsed" @click="expand">
-        <PhPencilSimple :size="13" weight="bold" class="cb-pencil" />
-        <span class="cb-placeholder">{{ md.trim() ? plainPreview : '记点什么…' }}</span>
-        <span class="cb-kbd">随手记</span>
-      </button>
-    </template>
-
-    <template v-else>
-      <NoteEditor
-        ref="editorRef"
-        v-model="md"
-        placeholder="记点什么…（Cmd/Ctrl + Enter 记录）"
-        compact
-        autofocus
-        @submit="save"
-      />
-      <div class="cb-foot">
-        <!-- 补录：日期可以往回选，落进它「发生」的那天，而不是今天 -->
-        <label class="cb-backfill" :class="{ on: backfill }">
-          <input type="checkbox" v-model="backfill" />
-          补录到
-        </label>
-        <DatePicker v-if="backfill" class="cb-date" v-model="date" placeholder="选择日期" />
-        <button class="cb-min" title="收起（内容保留）" @click="collapse">
-          <PhCaretDown :size="13" weight="bold" />
-        </button>
-        <button class="cb-save press-fx" :disabled="!canSave || saving" @click="save">
-          {{ saving ? '记录中…' : '记录' }}
+  <div ref="barRef" class="capture-bar" :class="{ expanded }">
+    <div class="cb-head">
+      <div class="cb-clip">
+        <button class="cb-collapsed" tabindex="-1" @click="expand">
+          <PhPencilSimple :size="13" weight="bold" class="cb-pencil" />
+          <span class="cb-placeholder">{{ md.trim() ? plainPreview : '记点什么…' }}</span>
+          <span class="cb-kbd">随手记</span>
         </button>
       </div>
-    </template>
+    </div>
+
+    <div class="cb-body">
+      <div class="cb-clip">
+        <div class="cb-pad">
+          <NoteEditor
+            ref="editorRef"
+            v-model="md"
+            placeholder="记点什么…（Cmd/Ctrl + Enter 记录）"
+            compact
+            @submit="save"
+          />
+          <div class="cb-foot">
+            <!-- 补录：日期可以往回选，落进它「发生」的那天，而不是今天 -->
+            <label class="cb-backfill" :class="{ on: backfill }">
+              <input type="checkbox" v-model="backfill" />
+              补录到
+            </label>
+            <DatePicker v-if="backfill" class="cb-date" v-model="date" placeholder="选择日期" />
+            <button class="cb-min" title="收起（内容保留）" @click="collapse">
+              <PhCaretDown :size="13" weight="bold" />
+            </button>
+            <button class="cb-save press-fx" :disabled="!canSave || saving" @click="save">
+              {{ saving ? '记录中…' : '记录' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { PhCaretDown, PhPencilSimple } from '@phosphor-icons/vue'
 import DatePicker from '@/components/common/DatePicker.vue'
 import NoteEditor from './NoteEditor.vue'
@@ -51,6 +58,7 @@ const md       = ref('')
 const backfill = ref(false)
 const date     = ref(new Date().toISOString().slice(0, 10))
 const saving   = ref(false)
+const barRef    = ref<HTMLElement | null>(null)
 const editorRef = ref<InstanceType<typeof NoteEditor> | null>(null)
 
 const canSave = computed(() => md.value.trim().length > 0)
@@ -58,8 +66,23 @@ const canSave = computed(() => md.value.trim().length > 0)
 const plainPreview = computed(() =>
   md.value.replace(/\[\[[a-z_]+:\d+\|([^\]]*)\]\]/g, '$1').replace(/^#+\s*|-\s\[[ xX]\]\s?|-\s+/gm, '').split('\n')[0].slice(0, 40))
 
-function expand() { expanded.value = true }
+async function expand() {
+  expanded.value = true
+  await nextTick()
+  editorRef.value?.focus()   // 编辑器常驻挂载（为了收起动画），不能用 autofocus，展开时手动聚焦
+}
 function collapse() { expanded.value = false }   // 草稿保留在 md 里，下次展开接着写
+
+/** 点条外任意处收起。DatePicker 的日历 Teleport 到 body，得单独放行，选个日期不算"点外面" */
+function onDocDown(e: MouseEvent) {
+  if (!expanded.value) return
+  const t = e.target as HTMLElement
+  if (barRef.value?.contains(t)) return
+  if (t.closest?.('.dp-popup')) return
+  collapse()
+}
+onMounted(() => document.addEventListener('mousedown', onDocDown, true))
+onUnmounted(() => document.removeEventListener('mousedown', onDocDown, true))
 
 async function save() {
   if (!canSave.value || saving.value) return
@@ -84,12 +107,23 @@ async function save() {
   backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid rgba(255,255,255,0.78);
   box-shadow: 0 8px 28px rgba(30,40,80,0.14), inset 0 1px 0 rgba(255,255,255,0.9);
+  overflow: hidden;
 }
-.capture-bar.expanded { padding: 8px 14px 10px; }
+
+/* 两段反向伸缩：head（单行）1fr↔0fr、body（编辑区）0fr↔1fr，同一条 spring 曲线 */
+.cb-head, .cb-body {
+  display: grid;
+  transition: grid-template-rows 0.38s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+.cb-head { grid-template-rows: 1fr; }
+.cb-body { grid-template-rows: 0fr; }
+.capture-bar.expanded .cb-head { grid-template-rows: 0fr; }
+.capture-bar.expanded .cb-body { grid-template-rows: 1fr; }
+.cb-clip { overflow: hidden; min-height: 0; }
 
 .cb-collapsed {
   display: flex; align-items: center; gap: 9px; width: 100%;
-  padding: 12px 16px; border: none; border-radius: inherit;
+  padding: 12px 16px; border: none;
   background: none; cursor: text; text-align: left;
   font-family: var(--font-sans);
 }
@@ -102,6 +136,8 @@ async function save() {
   flex-shrink: 0; font-size: 10px; color: var(--text-secondary); opacity: 0.55;
   padding: 2px 7px; border-radius: 5px; border: 1px solid rgba(0,0,0,0.08);
 }
+
+.cb-pad { padding: 8px 14px 10px; }
 
 .cb-foot {
   display: flex; align-items: center; gap: 8px;
