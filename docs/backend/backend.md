@@ -341,11 +341,12 @@ make restart
 
 ### 2.13 时间与时区约定
 
-写任何涉及时间的代码，遵循三条（详见 [时区与时钟迁移方案.md](时区与时钟迁移方案.md)）：
+写任何涉及时间的代码，遵循四条（详见 [时区与时钟迁移方案.md](时区与时钟迁移方案.md)）：
 
 1. **存储一律 aware UTC**：datetime 列用 `app/db/types.py` 的 `UtcDateTime`（不是裸 `DateTime`）——两库进出都是 aware UTC（Postgres timestamptz / SQLite naive + 读出补 UTC），业务代码不再有 naive/aware 混用。
 2. **当前时间走单一出口 `app.core.tz.now_utc()`**（aware UTC）——**禁止裸调 `datetime.utcnow()`**（已弃用 + naive）。静态守卫 `python scripts/check_utcnow.py` 拦回归，例外加 `# utcnow-exempt` 标记。
-3. **只有「展示」和「日期归属」（今天/本周/属于哪天）才碰用户时区**：用 `tz.user_tz(user)` / `tz.day_key/today_str/is_today/is_this_week`；agent 请求内的深层代码（工具等）读 `tz.now_ctx()`（入口已 set contextvar）。绝对时刻的比较/加减一律在 UTC 下做，不碰时区。运维口径（analytics/quota）用服务器 `LOCAL_TZ`，不 per-user。
+3. **只有「展示」和「日期归属」（今天/本周/属于哪天）才碰用户时区**：用 `tz.user_tz(user)` / `tz.day_key/today_str/is_today/is_this_week`；agent 请求内的深层代码（工具等）读 `tz.now_ctx()`（入口已 set contextvar）。绝对时刻的比较/加减一律在 UTC 下做，不碰时区。运维口径（analytics/quota）用服务器 `LOCAL_TZ`，不 per-user。前端展示后端时间统一用 `dateAttribution.ts` 的 `fmtLocalDateTime`/`localDayKey`（查看者浏览器 tz），别用 `iso.slice(0,10)`（那是 UTC）或后端 `fmt_local`（那是服务器 tz）。
+4. **SQL 按本地日分桶（GROUP BY DATE）用 `DATE(col AT TIME ZONE <tz>)`，别用 `DATE(col + INTERVAL '±Nh')`**：列迁 timestamptz 后，`col + INTERVAL` 的结果依赖 DB 会话时区（会话非 UTC 时会再偏一次），`AT TIME ZONE` 显式转 naive 本地时间、与会话时区无关且 DST 正确。见 `admin_analytics.py` + `tz.utc_to_local_date_expr`。
 
 ---
 
