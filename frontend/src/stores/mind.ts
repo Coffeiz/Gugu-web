@@ -67,6 +67,14 @@ export const useMindStore = defineStore('mind', () => {
   }
 
   async function updateNote(id: number, data: MindNoteUpdate): Promise<MindNote> {
+    // 乐观更新：改动先立刻摆进本地列表用于显示，不等网络往返——不然编辑完一关卡片，
+    // 只读态会先用回旧内容闪一下、等 PATCH 落地才变新内容，观感上不像"乐观保存"。
+    // 特意不碰 version：那是下一次乐观锁请求要带的值，得等服务端真的确认过才能往前挪，
+    // 否则两次编辑离得很近时，后一次会拿着"还没被服务端确认过"的 version 去比对，
+    // 平白撞出本不该有的 409（对不齐锁版本 ≠ 真的有冲突）。
+    const optimisticIdx = notes.value.findIndex(n => n.id === id)
+    if (optimisticIdx !== -1) notes.value[optimisticIdx] = { ...notes.value[optimisticIdx], ...data }
+
     let updated: MindNote
     try {
       updated = await mindApi.updateNote(id, data)

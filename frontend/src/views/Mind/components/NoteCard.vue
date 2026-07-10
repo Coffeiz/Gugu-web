@@ -113,11 +113,14 @@ function scheduleSave() {
 }
 watch([draftTitle, draftBody], () => { if (props.editing) scheduleSave() })
 
-/** 点卡片外面：先补一次保存，再退出编辑态（不再是「取消」，没有可丢弃的东西）。 */
+/** 点卡片外面：先补一次保存，再退出编辑态（不再是「取消」，没有可丢弃的东西）。
+ *  NoteEditor 的「样式」二级菜单 Teleport 到 body，不再是卡片的 DOM 后代，得单独放行——
+ *  同 CaptureBar.vue 对 DatePicker 的 .dp-popup 那套，点菜单里的按钮不算"点外面"。 */
 function onDocDown(e: MouseEvent) {
   if (!props.editing) return
   const t = e.target as HTMLElement
   if (cardRef.value?.contains(t)) return
+  if (t.closest?.('.ne-style-menu')) return
   finishEditing()
 }
 // finishEditing 已经同步 flush 过一次；emit('close') 会让 editing 变 false 反过来触发下面
@@ -197,8 +200,10 @@ function onBodyClick(e: MouseEvent) {
     emit('toggle-task', Number(t.dataset.taskIdx))
     return
   }
-  // 点引用 chip 不进编辑（将来跳对应对象页）；点其他区域进编辑，光标定到点的那一行后面
+  // 点引用 chip 不进编辑（将来跳对应对象页）；点链接就正常跳转，也不进编辑；
+  // 点其他区域进编辑，光标定到点的那一行后面
   if (t.closest('.mind-ref')) return
+  if (t.closest('a')) return
   const lineEl = t.closest<HTMLElement>('[data-line-unit]')
   startEditAt(lineEl ? Number(lineEl.dataset.lineUnit) : null)
 }

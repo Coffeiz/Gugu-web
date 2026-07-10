@@ -2,12 +2,12 @@
   <div class="note-editor" :class="{ compact }">
     <EditorContent class="ne-body" :editor="editor" />
 
-    <!-- 窄口径工具栏：待办/列表，没有 / 菜单（/ 预留给咕咕）、没有加粗斜体、没有正文/标题
-         文字样式切换——标题现在是便签卡自己的独立标题区（按区域区分，不是段落样式），
-         这里只管正文格式。放在文字下方、贴着底部的操作区，不占在打字区域上头。 -->
+    <!-- 窄口径工具栏：待办/列表/样式，没有 / 菜单（/ 预留给咕咕）、没有正文/标题文字样式
+         切换——标题现在是便签卡自己的独立标题区（按区域区分，不是段落样式），这里只管
+         正文格式。放在文字下方、贴着底部的操作区，不占在打字区域上头。 -->
     <!-- on 状态额外要求 isFocused：ProseMirror 的选区在焦点挪到别处（比如便签卡的标题
          <input>）之后依然停在原地，光靠 isActive() 会让工具栏显示一个跟当前实际操作对不上
-         的"待办/列表已激活"状态——加这层判断，编辑器没焦点就不亮。用手写的 isFocused ref
+         的「待办/列表已激活」状态——加这层判断，编辑器没焦点就不亮。用手写的 isFocused ref
          （见 onFocus/onBlur），不用 editor.isFocused，避免响应式更新时机跟不上。 -->
     <div class="ne-toolbar" v-if="editor">
       <button class="ne-tool" :class="{ on: isFocused && editor.isActive('taskList') }"
@@ -18,6 +18,48 @@
               @mousedown.prevent="editor.chain().focus().toggleBulletList().run()" title="列表">
         <PhListBullets :size="13" weight="bold" />
       </button>
+      <div class="ne-style-wrap">
+        <button ref="styleBtnRef" class="ne-tool" :class="{ on: stylesOpen || (isFocused && hasAnyMark) }"
+                @mousedown.prevent="toggleStylesMenu" title="文字样式">
+          <PhTextAa :size="13" weight="bold" />
+        </button>
+        <!-- 二级菜单：加粗/斜体/删除线/行内代码/链接，2026-07-11 加，成本低的一档先做——
+             跟待办/列表分开放，不占常态工具栏的视觉重量。Teleport 到 body：便签卡自己
+             overflow:hidden（裁长文字/hover 高光层），弹在卡内会被卡的边界切掉，得跳出去。
+             见 mousedown.prevent 挡住失焦——链接输入框例外：它得真的拿到焦点才能打字，
+             所以不挡。 -->
+        <Teleport to="body">
+          <div v-if="stylesOpen" class="ne-style-menu" :style="menuStyle">
+            <template v-if="!linkInputOpen">
+              <button class="ne-style-item" :class="{ on: editor.isActive('bold') }"
+                      @mousedown.prevent="editor.chain().focus().toggleBold().run()" title="加粗">
+                <PhTextB :size="13" weight="bold" />
+              </button>
+              <button class="ne-style-item" :class="{ on: editor.isActive('italic') }"
+                      @mousedown.prevent="editor.chain().focus().toggleItalic().run()" title="斜体">
+                <PhTextItalic :size="13" weight="bold" />
+              </button>
+              <button class="ne-style-item" :class="{ on: editor.isActive('strike') }"
+                      @mousedown.prevent="editor.chain().focus().toggleStrike().run()" title="删除线">
+                <PhTextStrikethrough :size="13" weight="bold" />
+              </button>
+              <button class="ne-style-item" :class="{ on: editor.isActive('code') }"
+                      @mousedown.prevent="editor.chain().focus().toggleCode().run()" title="行内代码">
+                <PhCode :size="13" weight="bold" />
+              </button>
+              <button class="ne-style-item" :class="{ on: editor.isActive('link') }"
+                      @mousedown.prevent="onLinkClick" title="链接">
+                <PhLink :size="13" weight="bold" />
+              </button>
+            </template>
+            <div v-else class="ne-link-input" @mousedown.stop>
+              <input ref="linkInputRef" v-model="linkUrl" placeholder="链接地址"
+                     @keydown.enter.prevent="confirmLink" @keydown.escape.prevent="cancelLink" />
+              <button class="ne-link-ok" @mousedown.prevent="confirmLink">确定</button>
+            </div>
+          </div>
+        </Teleport>
+      </div>
       <span class="ne-hint">输入 <code>@</code> 引用项目/文件/活动</span>
       <span class="ne-toolbar-actions"><slot name="foot-actions" /></span>
     </div>
@@ -38,11 +80,15 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, reactive, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
-import { PhCheckSquare, PhListBullets } from '@phosphor-icons/vue'
+import {
+  PhCheckSquare, PhCode, PhLink, PhListBullets,
+  PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
+} from '@phosphor-icons/vue'
 import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/useMindEditor'
 import { useMindObjectPicker } from '@/composables/useMindObjectPicker'
+import { nextZ } from '@/composables/windowz'
 import type { MindRefSuggestItem } from '@/services/api'
 
 const props = withDefaults(defineProps<{
@@ -124,6 +170,70 @@ function choose(it: MindRefSuggestItem) {
 // TipTap 自己的回调，在这里手动写一个 ref，不依赖框架封装内部什么时候帮你触发响应式。
 const isFocused = ref(false)
 
+// 「样式」二级菜单：加粗/斜体/删除线/行内代码/链接，2026-07-11 加。菜单里的按钮都是
+// mousedown.prevent（不失焦，同待办/列表），链接输入框例外——它得真的拿到焦点才能打字，
+// 所以点开输入框那一刻编辑器会失焦，靠 linkInputOpen 挡住 onBlur 里顺手关菜单的逻辑。
+const stylesOpen = ref(false)
+const linkInputOpen = ref(false)
+const linkUrl = ref('')
+const linkInputRef = ref<HTMLInputElement | null>(null)
+const styleBtnRef = ref<HTMLElement | null>(null)
+const menuStyle = ref<Record<string, string>>({})
+const hasAnyMark = computed(() => {
+  const ed = editor.value
+  if (!ed) return false
+  return ed.isActive('bold') || ed.isActive('italic') || ed.isActive('strike')
+    || ed.isActive('code') || ed.isActive('link')
+})
+
+/** 菜单 Teleport 到 body 后，位置得自己用 fixed 坐标钉在 Aa 按钮下方（同 DatePicker.vue
+ *  的 dp-popup 那套：便签卡 overflow:hidden，弹层不跳出去会被卡边界切掉）。 */
+function calcMenuStyle() {
+  const rect = styleBtnRef.value?.getBoundingClientRect()
+  if (!rect) return
+  const MENU_W = 176
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - MENU_W - 8))
+  const base = { position: 'fixed', left: left + 'px', zIndex: String(nextZ()) }
+  const spaceBelow = window.innerHeight - rect.bottom
+  menuStyle.value = spaceBelow < 60 && rect.top > spaceBelow
+    ? { ...base, bottom: (window.innerHeight - rect.top + 4) + 'px' }
+    : { ...base, top: (rect.bottom + 4) + 'px' }
+}
+
+function toggleStylesMenu() {
+  stylesOpen.value = !stylesOpen.value
+  if (stylesOpen.value) calcMenuStyle()
+  else linkInputOpen.value = false
+}
+
+function onLinkClick() {
+  const ed = editor.value
+  if (!ed) return
+  if (ed.isActive('link')) { ed.chain().focus().unsetLink().run(); return }
+  linkUrl.value = ''
+  linkInputOpen.value = true
+  nextTick(() => linkInputRef.value?.focus())
+}
+
+function confirmLink() {
+  const ed = editor.value
+  const url = linkUrl.value.trim()
+  linkInputOpen.value = false
+  stylesOpen.value = false
+  if (!ed || !url) return
+  // 没选中文字（光标只是停在某处）：没有可以挂链接 mark 的文字，直接把网址本身插成可点文字
+  if (ed.state.selection.empty) {
+    ed.chain().focus().insertContent({ type: 'text', text: url, marks: [{ type: 'link', attrs: { href: url } }] }).run()
+  } else {
+    ed.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
+  }
+}
+
+function cancelLink() {
+  linkInputOpen.value = false
+  editor.value?.commands.focus()
+}
+
 const editor = useEditor({
   content: markdownToDoc(props.modelValue) as any,
   extensions: mindExtensions(props.placeholder) as any,
@@ -157,7 +267,10 @@ const editor = useEditor({
     syncPicker(ed)
   },
   onFocus() { isFocused.value = true },
-  onBlur() { isFocused.value = false },
+  onBlur() {
+    isFocused.value = false
+    if (!linkInputOpen.value) stylesOpen.value = false
+  },
 })
 
 // 外部换了内容（比如切到另一条便签）才重灌，避免把用户正在打的字冲掉
@@ -224,6 +337,8 @@ onBeforeUnmount(() => editor.value?.destroy())
   background: rgba(123,127,178,0.12); font-size: 10.5px;
 }
 
+.ne-style-wrap { position: relative; }
+
 /* 跟 NoteCard.vue 里只读态用的 .md-preview 同一套字号/行高/间距，编辑和显示才是同一件事 */
 .ne-body { font-size: 13px; line-height: 1.6; color: var(--text-primary); }
 .note-editor.compact .ne-body { min-height: 48px; }
@@ -252,6 +367,41 @@ onBeforeUnmount(() => editor.value?.destroy())
 }
 .ne-pick-label { font-size: 12.5px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ne-pick-sub { margin-left: auto; font-size: 10.5px; color: var(--text-secondary); opacity: 0.7; white-space: nowrap; }
+
+/* 「样式」二级菜单：Teleport 到 body 后不再是宿主的 DOM 后代，scoped 样式够不到，
+   跟 DatePicker.vue 的 .dp-popup 同一套处理——位置（position/top/left/z-index）由
+   NoteEditor.vue 里 calcMenuStyle() 算好、内联 style 钉死，这里只管外观。 */
+.ne-style-menu {
+  display: flex; align-items: center; gap: 2px; padding: 4px;
+  border-radius: 9px;
+  background: rgba(255,255,255,0.96);
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: 0 8px 26px rgba(60,70,100,0.18);
+  backdrop-filter: blur(10px);
+}
+.ne-style-item {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 24px;
+  border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: var(--text-secondary); cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.ne-style-item:hover { background: rgba(123,127,178,0.1); color: var(--color-primary); }
+.ne-style-item.on { background: rgba(123,127,178,0.16); color: var(--color-primary); }
+.ne-link-input { display: flex; align-items: center; gap: 4px; }
+.ne-link-input input {
+  width: 160px; height: 24px; padding: 0 8px; box-sizing: border-box;
+  border: 1px solid rgba(123,127,178,0.25); border-radius: 6px;
+  background: rgba(255,255,255,0.7); outline: none;
+  font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
+}
+.ne-link-ok {
+  flex-shrink: 0; height: 24px; padding: 0 9px;
+  border: none; border-radius: 6px; cursor: pointer;
+  background: rgba(123,127,178,0.16); color: var(--color-primary);
+  font-size: 11.5px; font-weight: 600; font-family: var(--font-sans);
+}
+.ne-link-ok:hover { background: rgba(123,127,178,0.26); }
 </style>
 
 <!-- 编辑器内部由 ProseMirror 生成，不能用 scoped。段落/标题/待办/列表/引用 chip 的排版

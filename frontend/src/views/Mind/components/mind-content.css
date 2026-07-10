@@ -31,6 +31,7 @@
   font-size: 15px; font-weight: 700;
 }
 
+
 /* 待办列表：TipTap 用 [data-type="taskList"]，只读预览用 .np-tasks class，选择器不同
    但数值要一致。TipTap 的 TaskItem 内容会多包一层 <p>，要清零，不然行距比预览宽
    （这层嵌套在 <li> 里面，不是顶层块，owl selector 管不到，还是要单独清零）。 */
@@ -74,6 +75,21 @@
 .mind-dot {
   flex-shrink: 0; width: 14px; margin-top: 3px;
   text-align: center; line-height: 1; color: var(--text-secondary);
+}
+
+/* 加粗/斜体/删除线/行内代码/链接：2026-07-11 起支持。两套渲染出的都是标准 HTML 标签
+   （TipTap marks 默认渲染 strong/em/s/code/a，mdToPreviewHtml 手写的标签名跟它一致），
+   一份选择器两边都生效，不用再分开写 .md-preview/.ne-body 两套。 */
+.md-preview strong, .ne-body .ProseMirror strong { font-weight: 700; }
+.md-preview em, .ne-body .ProseMirror em { font-style: italic; }
+.md-preview s, .ne-body .ProseMirror s { text-decoration: line-through; opacity: 0.75; }
+.md-preview code, .ne-body .ProseMirror code {
+  padding: 1px 5px; border-radius: 4px;
+  background: rgba(123,127,178,0.12); font-size: 0.92em;
+}
+.md-preview a, .ne-body .ProseMirror a {
+  color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px;
+  cursor: pointer;
 }
 
 /* 对象引用 chip：整体选中/删除的原子节点，编辑态/只读态外观必须一致 */
