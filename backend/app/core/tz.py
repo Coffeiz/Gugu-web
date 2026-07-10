@@ -60,8 +60,13 @@ def fmt_local(dt, fmt: str = "%Y-%m-%d %H:%M") -> str:
 
 
 def utc_to_local_date_expr() -> str:
-    """PostgreSQL 表达式：把 UTC 时间戳转成本地日期，用于 GROUP BY DATE(...)。
-    例：DATE(created_at + INTERVAL '8 hours')"""
+    """PostgreSQL：服务器本地时区的偏移 INTERVAL，配合 `DATE(col AT TIME ZONE <本函数>)` 取本地日。
+    用法：`DATE(created_at AT TIME ZONE INTERVAL '8 hours')`。
+
+    **必须用 `AT TIME ZONE` 而不是 `col + INTERVAL`**：Phase 2 后列是 timestamptz，
+    `DATE(col + INTERVAL)` 的结果依赖 DB 会话时区（会话非 UTC 时会再偏一次）；
+    `AT TIME ZONE` 显式转成 naive 本地时间、与会话时区无关。LOCAL_TZ 是检测出的固定偏移
+    （无 IANA 名）；北京无 DST，偏移足够（若将来部署在有夏令时的时区，改用具名 tz 才 DST 正确）。"""
     offset_hours = int(LOCAL_TZ.utcoffset(None).total_seconds() // 3600)
     sign = "+" if offset_hours >= 0 else "-"
     return f"INTERVAL '{sign}{abs(offset_hours)} hours'"

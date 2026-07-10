@@ -236,42 +236,42 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
     local_date_list = [(start_local + timedelta(days=i)).date() for i in range(days)]
     labels = [(start_local + timedelta(days=i)).strftime("%-m/%-d") for i in range(days)]
 
-    tz_expr = utc_to_local_date_expr()   # e.g. INTERVAL '+8 hours'
+    tz_expr = utc_to_local_date_expr()   # 本地偏移，配合 DATE(col AT TIME ZONE …) 用——与 DB 会话时区无关
     nd = _DEV_NOT_IN if exclude_dev else ""
 
     agent_rows = (await db.execute(text(f"""
-        SELECT DATE(created_at + {tz_expr}) AS d,
+        SELECT DATE(created_at AT TIME ZONE {tz_expr}) AS d,
                COUNT(*)::int AS calls,
                COALESCE(SUM(tokens_in + tokens_out), 0)::bigint AS tokens
         FROM agent_usage
         WHERE created_at >= :start {nd}
-        GROUP BY DATE(created_at + {tz_expr})
+        GROUP BY DATE(created_at AT TIME ZONE {tz_expr})
     """), {"start": start_utc})).all()
     agent_map = {r.d: (r.calls, int(r.tokens)) for r in agent_rows}
 
     _u_dev = " AND NOT is_developer " if exclude_dev else ""
     user_rows = (await db.execute(text(f"""
-        SELECT DATE(created_at + {tz_expr}) AS d, COUNT(*)::int AS cnt
+        SELECT DATE(created_at AT TIME ZONE {tz_expr}) AS d, COUNT(*)::int AS cnt
         FROM users
         WHERE created_at >= :start {_u_dev}
-        GROUP BY DATE(created_at + {tz_expr})
+        GROUP BY DATE(created_at AT TIME ZONE {tz_expr})
     """), {"start": start_utc})).all()
     user_map = {r.d: r.cnt for r in user_rows}
 
     proj_rows = (await db.execute(text(f"""
-        SELECT DATE(done_at + {tz_expr}) AS d, COUNT(*)::int AS cnt
+        SELECT DATE(done_at AT TIME ZONE {tz_expr}) AS d, COUNT(*)::int AS cnt
         FROM projects
         WHERE done_at IS NOT NULL AND done_at >= :start {nd}
-        GROUP BY DATE(done_at + {tz_expr})
+        GROUP BY DATE(done_at AT TIME ZONE {tz_expr})
     """), {"start": start_utc})).all()
     proj_map = {r.d: r.cnt for r in proj_rows}
 
     # 新建项目曲线（wishlist：按日聚合）
     proj_new_rows = (await db.execute(text(f"""
-        SELECT DATE(created_at + {tz_expr}) AS d, COUNT(*)::int AS cnt
+        SELECT DATE(created_at AT TIME ZONE {tz_expr}) AS d, COUNT(*)::int AS cnt
         FROM projects
         WHERE created_at >= :start {nd}
-        GROUP BY DATE(created_at + {tz_expr})
+        GROUP BY DATE(created_at AT TIME ZONE {tz_expr})
     """), {"start": start_utc})).all()
     proj_new_map = {r.d: r.cnt for r in proj_new_rows}
 
@@ -279,10 +279,10 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
     # 口径：当日有对话（agent_usage）或有前端行为（frontend_events）的去重用户。
     active_rows = (await db.execute(text(f"""
         SELECT d, COUNT(DISTINCT uid)::int AS cnt FROM (
-            SELECT DATE(created_at + {tz_expr}) AS d, user_id AS uid
+            SELECT DATE(created_at AT TIME ZONE {tz_expr}) AS d, user_id AS uid
             FROM agent_usage WHERE created_at >= :start {nd}
             UNION
-            SELECT DATE(created_at + {tz_expr}) AS d, user_id AS uid
+            SELECT DATE(created_at AT TIME ZONE {tz_expr}) AS d, user_id AS uid
             FROM frontend_events WHERE created_at >= :start {nd}
         ) t GROUP BY d
     """), {"start": start_utc})).all()
