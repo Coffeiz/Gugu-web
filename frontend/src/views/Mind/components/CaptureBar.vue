@@ -102,30 +102,31 @@ async function save() {
 
 <style scoped>
 .capture-bar {
-  /* 收起窄条、展开加宽：宽度和高度走同一条 spring；玻璃浓度（blur+底色）随展开加深——
-     动 backdrop-filter 本身是安全的（隔离组红线只禁祖先 opacity，见 BaseModal 玻璃 ramp） */
-  width: 400px; max-width: 100%; margin: 0 auto;
+  /* 收起/展开**同宽**（480），只有高度变；玻璃浓度随展开加深（动 backdrop-filter 本身安全，
+     隔离组红线只禁祖先 opacity，见 BaseModal 玻璃 ramp）。宽度不再动。 */
+  width: 480px; max-width: 100%; margin: 0 auto;
   border-radius: 14px;
   background: rgba(255,255,255,0.6);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255,255,255,0.78);
   box-shadow: 0 8px 28px rgba(30,40,80,0.14), inset 0 1px 0 rgba(255,255,255,0.9);
   overflow: hidden;
-  transition: width 0.38s cubic-bezier(0.34, 1.2, 0.64, 1),
-              background-color 0.3s ease,
+  transition: background-color 0.3s ease,
               backdrop-filter 0.3s ease, -webkit-backdrop-filter 0.3s ease;
 }
 .capture-bar.expanded {
-  width: 560px;
   background: rgba(255,255,255,0.72);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
 }
 
-/* 两段反向伸缩：head（单行）1fr↔0fr、body（编辑区）0fr↔1fr，同一条 spring 曲线；
-   段内内容配一层「模糊淡入淡出」（filter blur + opacity 只动内容层，不碰玻璃容器） */
+/* 分三阶段（不做"从上滑下"，收起元素先走、高度中段变、展开元素后到）：
+   ① 收起元素模糊淡出（0–0.2s）② 高度缓入缓出变化（0.12–0.55s）③ 展开元素模糊淡入（0.5s+）。
+   反向收起时严格倒放。高度靠 grid-rows 0fr↔1fr（head/body 反向伸缩）；内容 opacity=0 期间
+   高度已在变，clip 揭示被透明盖住 → 看不到滑动，只看到"淡出→变大→淡入"。 */
 .cb-head, .cb-body {
   display: grid;
-  transition: grid-template-rows 0.38s cubic-bezier(0.34, 1.2, 0.64, 1);
+  /* 缓入缓出明显：强对称 ease-in-out */
+  transition: grid-template-rows 0.44s cubic-bezier(0.7, 0, 0.3, 1) 0.12s;
 }
 .cb-head { grid-template-rows: 1fr; }
 .cb-body { grid-template-rows: 0fr; }
@@ -133,12 +134,23 @@ async function save() {
 .capture-bar.expanded .cb-body { grid-template-rows: 1fr; }
 .cb-clip { overflow: hidden; min-height: 0; }
 
-.cb-collapsed, .cb-pad {
-  transition: opacity 0.26s ease, filter 0.32s ease;
+/* 收起元素：收起态是终点（淡入，等高度收完，delay 0.5）；展开态是终点（淡出，立刻走，delay 0） */
+.cb-collapsed {
+  transition: opacity 0.22s ease-in-out 0.5s, filter 0.28s ease-in-out 0.5s;
 }
-.cb-pad { opacity: 0; filter: blur(6px); }
-.capture-bar.expanded .cb-pad { opacity: 1; filter: blur(0); }
-.capture-bar.expanded .cb-collapsed { opacity: 0; filter: blur(6px); }
+.capture-bar.expanded .cb-collapsed {
+  opacity: 0; filter: blur(8px);
+  transition: opacity 0.2s ease-in-out 0s, filter 0.24s ease-in-out 0s;
+}
+/* 展开元素：收起态是终点（淡出，立刻走）；展开态是终点（淡入，等高度长完，delay 0.5） */
+.cb-pad {
+  opacity: 0; filter: blur(8px);
+  transition: opacity 0.2s ease-in-out 0s, filter 0.24s ease-in-out 0s;
+}
+.capture-bar.expanded .cb-pad {
+  opacity: 1; filter: blur(0);
+  transition: opacity 0.24s ease-in-out 0.5s, filter 0.3s ease-in-out 0.5s;
+}
 
 .cb-collapsed {
   display: flex; align-items: center; gap: 9px; width: 100%;
