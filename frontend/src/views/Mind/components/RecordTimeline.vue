@@ -130,6 +130,9 @@ defineExpose({ flagConflict: () => { conflict.value = true } })
 /* 列内溢出自己竖滚（横向翻历史、纵向翻当天，互不打架） */
 .tl-col-body {
   flex: 1; min-height: 0; overflow-y: auto;
+  /* 横向视口外的便签堆不参与绘制；列框与宽度仍保留，日期滑杆的定位几何不会改变。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 560px;
   scrollbar-width: thin;
   margin: 0 -4px; padding: 2px 4px 4px;
 }

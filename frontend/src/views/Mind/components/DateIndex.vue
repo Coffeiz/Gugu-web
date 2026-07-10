@@ -3,13 +3,13 @@
   <div ref="stripRef" class="date-scrub" @pointerdown="onDown">
     <div class="ds-track" :style="trackStyle()">
       <button
-        v-for="(g, i) in groups" :key="g.date"
+        v-for="tick in visibleTicks" :key="tick.group.date"
         class="dsb-tick"
-        :data-idx="i"
-        :style="tickSlotStyle(i)"
+        :data-idx="tick.index"
+        :style="tickSlotStyle(tick.index)"
       >
-        <span class="dsb-bar" :style="tickBarStyle(i)"></span>
-        <span class="dsb-tip" :style="tickTipStyle(i)">{{ fmtLabel(g.date) }}</span>
+        <span class="dsb-bar" :style="tickBarStyle(tick.index)"></span>
+        <span class="dsb-tip" :style="tickTipStyle(tick.index)">{{ fmtLabel(tick.group.date) }}</span>
       </button>
     </div>
     <div class="ds-playhead" aria-hidden="true"></div>
@@ -17,7 +17,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{
   groups: { date: string; count: number }[]
@@ -34,6 +34,14 @@ const dragging = ref(false)
 const animating = ref(false)
 const lockedIndex = ref<number | null>(null)
 let lockTimer: ReturnType<typeof setTimeout> | null = null
+
+// 日期条只保留选中日期前后各 10 个刻度；定位仍基于完整日期序列，窗口切换不改变拖动比例。
+const visibleTicks = computed(() => {
+  const center = Math.round(clampFrac(currentFrac.value))
+  const start = Math.max(0, center - 10)
+  const end = Math.min(props.groups.length, center + 11)
+  return props.groups.slice(start, end).map((group, offset) => ({ group, index: start + offset }))
+})
 
 // 每段日期间距由逻辑坐标计算，中心较疏、两侧较密；不再改变按钮的实际布局宽度。
 const BASE_PITCH = 9
@@ -69,7 +77,11 @@ function trackStyle() {
   return { transform: `translate3d(${stripCenter() - positionForFrac(currentFrac.value)}px,0,0)` }
 }
 function tickSlotStyle(i: number) {
-  return { left: `${positionForFrac(i)}px` }
+  const distance = Math.abs(i - currentFrac.value)
+  // 窗口边缘（第 9、10 个日期）逐步淡出，避免 21 个刻度像被硬切掉。
+  const t = Math.max(0, Math.min(1, (distance - 8) / 2))
+  const opacity = 1 - t * t * (3 - 2 * t)
+  return { left: `${positionForFrac(i)}px`, opacity: `${opacity}` }
 }
 
 function rubberBand(raw: number) {
@@ -141,6 +153,7 @@ function stopAnim() {
 }
 
 function onDown(e: PointerEvent) {
+  e.preventDefault()
   stopAnim()
   lockedIndex.value = null
   if (lockTimer) clearTimeout(lockTimer)
@@ -230,6 +243,9 @@ function fmtLabel(iso: string) {
   overflow: hidden;
   cursor: grab;
   touch-action: pan-y;
+  user-select: none; -webkit-user-select: none;
+  mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent);
 }
 .date-scrub:active { cursor: grabbing; }
 
