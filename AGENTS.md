@@ -28,6 +28,11 @@
 - 已经通过类型注解/上下文确定某变量一定是某类型时，不必再用 `or` 做防御性兜底——例如确定 `x: str`，直接 `x.strip()`，不写 `(x or "").strip()`。
 - 少用 `getattr`/`setattr`，除非在处理动态类或 pytest monkeypatch；能直接访问类属性就直接写 `instance.value`，不写 `getattr(instance, "value", "")`。
 
+## 时间与日期
+
+- 后端业务时间一律用 `app.core.tz.now_utc()`，不直接调用 `datetime.utcnow()`/`datetime.now()`；新增时间列沿用 `UtcDateTime`/timezone-aware UTC 的既有模式。
+- 存储使用 UTC，展示和“归属哪一天”的判断按用户时区转换；前端日期归属复用 `frontend/src/utils/dateAttribution.ts`，不要拿 UTC 字符串切片代替本地日期。
+
 ## API 请求体命名规范（backend ↔ frontend）
 
 后端 Pydantic model 分两种命名风格，调前端 API 前先看清楚对应的是哪一种：
@@ -45,6 +50,12 @@
 - 模板里 `$event.target` 需要访问 DOM 属性/方法时显式转型，如 `($event.target as HTMLInputElement).select()`。
 - `Date` 相减求天数/毫秒差要用 `.getTime()`，不要直接对两个 `Date` 对象做算术运算。
 - `ref(new Set())`/`ref([])` 这类空初始值容易被推断成 `Set<unknown>`/`any[]`，显式标注元素类型（如 `ref(new Set<number>())`）。
+- `frontend/tsconfig.strict.json` 是文件级 strict 棘轮：已在白名单里的文件不得降回宽松类型；新增文件或完成一个稳定边界后，先 strict-clean 再加入白名单。涉及白名单或其依赖闭包时必须跑 `npm run typecheck:strict`。
+
+## HTML 渲染
+
+- 禁止把不可信字符串直接交给 `v-html`。Markdown/HTML 必须走 `frontend/src/utils/markdown.ts` 的 `sanitizeHtml` / `sanitizeChatHtml` / `renderMarkdown`；预渲染 HTML 也同样不可信。
+- 不要手写 HTML 字符串插值来拼链接、属性或错误提示。确需扩展 Markdown 渲染时，保持协议白名单和属性转义；聊天专用 `gugu://` 仅能经聊天消毒路径放行，不能扩大到通用 sink。
 
 ## Debug 原则
 
@@ -53,14 +64,24 @@
 # 安全规范
 
 - **聊天内容不落原文日志**：任何 `print`/日志碰到用户消息正文（IM 收到的消息、发给用户的回复、附件文件名等），一律走 `agent/logsafe.py` 的 `fingerprint()`（长度 + md5 前 8 位指纹），不直接打印原文。后台 Debug 面板把日志变成可搜索的了，一旦原文落进去就等于可被随意翻查——聊天内容敏感度高于工具参数（可能涉及健康/感情/工作机密）。新增 IM 适配器（`agent/adapters/*.py`）或任何打印用户输入的地方都要过这一遍。
+- **错误信息走双出口**：`gugu.log`、SystemLog 和 Debug 面板都是可见出口，禁止写原始 `str(e)`、traceback、上游响应体或聊天正文。跨边界/可见日志的错误文案必须走 `app.core.redaction.redact()`；原始异常仅用 `diag_log()`/`diag_log_raw()` 写入受限诊断出口。`app.*` 不得反向 import `agent.*` 来复用脱敏逻辑。
+- **异常分类与重试**：业务可预期失败用 `ExpectedError`，瞬时外部失败用 `RetryableError`（`code` + 固定 `public_message` + `cause`）；未知异常让链路边界记录并降级，不在中途宽泛吞掉。重试只适用于幂等操作或带幂等/去重键的写操作；4xx、认证/参数错误和已产生副作用的操作不得盲重试。
+- **外部 URL 与文件边界**：新增网络抓取/转发能力复用既有 URL 安全校验；禁止在只校验首跳后自动跟随重定向，每一跳都要重新校验。不要绕过文件上传大小限制、存储 key 规范或下载时的归属校验。
 - **跨用户数据访问必须走 `get_owned()`**：查询「某条记录是不是当前用户的」一律用 `app/core/ownership.py` 的 `get_owned(db, model, obj_id, user_id)`，不要手写 `db.get(...) + if row.user_id != user_id`。`get_owned` 对外把「不存在」和「不是你的」统一返回 `None`（防止通过报错差异探测资源是否存在），对内在越权时打结构化告警（`ownership.denied`，接到运维监控的安全事件计数）。有静态守卫拦裸查询，新增 REST 路由/工具时留意别绕过。
 - **不可逆操作必须挂确认门**：新增的 destructive 工具（删除、清空等不可逆动作）在 `Tool` 定义里标 `destructive=True`，并在 handler 里正确接入 `confirm` 机制（`agent/tools/base.py` 里 dispatch 有运行时绊线兜底，但不能靠兜底——`scripts/check_confirm_gate.py` 会做 AST 静态检查，要求源码里真的引用了确认门逻辑，漏接会在检查阶段被拦下来）。
+- **认证与密钥边界**：不得把 token、密钥或凭据写进 URL、日志、异常、前端响应或 Git；新增认证/注册/重置等可滥用入口时接入既有 `rate_limit`，重置链接使用服务端规范 base URL，不信任请求 `Origin` 生成外链。
 
 # 开发/调试流程
 
 ## 本地开发环境
 
 Gugu-web 不是本地起服务调试——本地编辑代码，通过 Mutagen 双向同步（session 名 `gugu-web`）同步到 devserver（`192.168.110.51`），改动生效后在 devserver 上跑 `npm run typecheck`/`npm run build`（前端）或触发进程重载（后端）来验证。改完代码记得先 `mutagen sync flush gugu-web` 再去 devserver 验证，否则测的是旧代码。
+
+## 验证门禁
+
+- 前端变更至少跑 `npm run typecheck`；涉及 strict 白名单/类型边界再跑 `npm run typecheck:strict`；有行为或纯函数改动时跑 `npm run test:run`。
+- 后端变更同步后在 devserver 跑 `PYTHONPATH=. .venv/bin/pytest`。改到用户归属或 destructive 工具时，额外跑 `scripts/check_ownership.py` 与 `scripts/check_confirm_gate.py`。
+- P2-b 相关的外部 I/O/适配器改动，测试至少覆盖瞬时失败重试、4xx 不重试、非幂等写不盲重试，以及外发/可见日志不泄露原始异常。
 
 ## IM 网关重启
 
