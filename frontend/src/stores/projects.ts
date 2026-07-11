@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { projectsApi, eventsApi } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import type { Project, ProjectStage, ProjectStatus } from '@/types/project'
+import { autoCompleteTodos, restoreTodos, stageProgressByIndex } from '@/utils/projectStages'
 import type { components } from '@/types/api'
 
 type EventResponse = components['schemas']['EventResponse']
@@ -164,11 +165,7 @@ export const useProjectStore = defineStore('projects', () => {
       // 拖到「已完成」= 全项目收尾：自动勾选所有阶段里未完成的待办（快照原状态 +
       // autoCompleted 标记，拖回进行中时按此还原）。与 setStage 前进时同一套约定。
       const stages = JSON.parse(JSON.stringify(p.stages))
-      for (const stage of stages) {
-        stage.todos = (stage.todos ?? []).map((t: any) =>
-          t.done ? t : { ...t, _savedDone: false, done: true, autoCompleted: true }
-        )
-      }
+      for (const stage of stages) stage.todos = autoCompleteTodos(stage.todos ?? [])
       p.stages = stages
       await _patchProject(id, { status: newStatus, currentStage: lastKey, progress: 100, doneAt: p.doneAt, stages })
       return
@@ -179,15 +176,11 @@ export const useProjectStore = defineStore('projects', () => {
       p._stageBeforeDone = undefined
       p.currentStage = restored
       const idx = p.stages.findIndex(s => s.key === restored)
-      const progress = idx >= 0 ? Math.round((idx + 1) / p.stages.length * 100) : 0
+      const progress = stageProgressByIndex(idx, p.stages.length)
       p.progress = progress
       // 还原所有 autoCompleted 的 todo 到快照状态
       const stages = JSON.parse(JSON.stringify(p.stages))
-      for (const stage of stages) {
-        stage.todos = (stage.todos ?? []).map((t: any) =>
-          t.autoCompleted ? { ...t, done: t._savedDone ?? false, autoCompleted: false, _savedDone: undefined } : t
-        )
-      }
+      for (const stage of stages) stage.todos = restoreTodos(stage.todos ?? [])
       p.stages = stages
       await _patchProject(id, { status: newStatus, currentStage: restored, progress, stages })
       return
@@ -209,18 +202,10 @@ export const useProjectStore = defineStore('projects', () => {
       stages = JSON.parse(JSON.stringify(p.stages))
       if (newIdx > oldIdx) {
         // 前进：对经过的阶段（不含新当前阶段）快照并自动打勾
-        for (let i = oldIdx; i < newIdx; i++) {
-          stages[i].todos = (stages[i].todos ?? []).map((t: any) =>
-            t.done ? t : { ...t, _savedDone: false, done: true, autoCompleted: true }
-          )
-        }
+        for (let i = oldIdx; i < newIdx; i++) stages[i].todos = autoCompleteTodos(stages[i].todos ?? [])
       } else {
         // 后退：从目标阶段开始（含目标阶段自身）还原 autoCompleted 到快照状态
-        for (let i = newIdx; i < stages.length; i++) {
-          stages[i].todos = (stages[i].todos ?? []).map((t: any) =>
-            t.autoCompleted ? { ...t, done: t._savedDone ?? false, autoCompleted: false, _savedDone: undefined } : t
-          )
-        }
+        for (let i = newIdx; i < stages.length; i++) stages[i].todos = restoreTodos(stages[i].todos ?? [])
       }
       p.stages = stages
     }
