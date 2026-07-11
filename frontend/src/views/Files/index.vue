@@ -688,6 +688,7 @@ import { cardBlobReadyIds, clearThumbCache } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt, fileExtCategory, fileIconColor, fileListIcon } from '@/utils/fileTypes'
 import { fmtBytes } from '@/utils/fileSize'
+import { resolveFolderIds } from '@/utils/folderKeys'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
@@ -1392,8 +1393,7 @@ async function deleteSelected() {
   if (!hasFiles && !hasFolders) return
 
   const fileIds     = [...selectedIds.value]
-  const folderMap   = new Map(contents.value.folders.map(f => [f.id, f.folderId]))
-  const folderIds   = [...selectedFolderKeys.value].map(k => folderMap.get(k)).filter(Boolean)
+  const folderIds   = resolveFolderIds(selectedFolderKeys.value, contents.value.folders)
   const fileBackups = fileIds.map(id => cacheStore.getFile(id)).filter(Boolean)
 
   // 乐观更新
@@ -1789,8 +1789,7 @@ const {
 
 // selectedFolderKeys 里放的是 f.id（"f:65"），拖拽需要真实数字 folderId——查当前层文件夹列表换算
 function _selectedFolderIdNums() {
-  const folderMap = new Map(sortedContents.value.folders.map(f => [f.id, f.folderId]))
-  return new Set([...selectedFolderKeys.value].map(k => folderMap.get(k)).filter(v => v != null))
+  return new Set(resolveFolderIds(selectedFolderKeys.value, sortedContents.value.folders))
 }
 
 function onFolderPointerDown(f, e) {
@@ -1897,7 +1896,7 @@ const infoPopup = ref({ show: false, file: null, x: 0, y: 0 })
 
 function selCut() {
   const fids = [...selectedIds.value]
-  const dids = [...selectedFolderKeys.value].map(k => contents.value.folders.find(f => f.id === k)?.folderId).filter(Boolean)
+  const dids = resolveFolderIds(selectedFolderKeys.value, contents.value.folders)
   cbStore.cut(fids, dids)
   clearSelection()
 }
