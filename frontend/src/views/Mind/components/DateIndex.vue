@@ -34,6 +34,7 @@ const currentFrac = ref(0)
 const dragging = ref(false)
 const animating = ref(false)
 const lockedIndex = ref<number | null>(null)
+const switchingAnim = ref(false)   // 这次弹簧回中是不是真的在切换到不同日期
 const hoverActive = ref(false)
 const hoverIdx = ref(0)
 let lockTimer: ReturnType<typeof setTimeout> | null = null
@@ -107,13 +108,19 @@ function detentFrac(raw: number) {
   return lo + snapped
 }
 
+const selectedIdx = ref<number | null>(null)   // 上一次真正落定选中的日期，用来判断这次回弹是不是"换日期"
+
 watch(() => props.centerFrac, (p) => {
   if (dragging.value || animating.value || lockedIndex.value !== null) return
   currentFrac.value = p
+  selectedIdx.value = Math.round(p)
 })
 watch(() => props.groups, async () => {
   await nextTick()
-  if (!dragging.value && !animating.value && lockedIndex.value === null) currentFrac.value = props.centerFrac
+  if (!dragging.value && !animating.value && lockedIndex.value === null) {
+    currentFrac.value = props.centerFrac
+    selectedIdx.value = Math.round(props.centerFrac)
+  }
 }, { immediate: true })
 function onResize() {
   stripWidth.value = stripRef.value?.clientWidth ?? 0
@@ -128,6 +135,10 @@ function tickFocus(i: number) {
   const d = Math.abs(i - currentFrac.value)
   const base = Math.exp(-d * d * 1.7)
   if (hoverActive.value && i === hoverIdx.value) return 1
+  // 拖到边缘之外的橡皮筋区域时，边界日期的长条/文字保持常显，不随拖动距离继续衰减。
+  const last = props.groups.length - 1
+  if (currentFrac.value < 0 && i === 0) return 1
+  if (currentFrac.value > last && i === last) return 1
   return base
 }
 /** 悬停到别的日期时，原选中日的长条继续保留，只隐藏它的文字，避免离得近时两个日期文字重叠。 */
@@ -180,8 +191,9 @@ function tickBarStyle(i: number) {
 }
 function tickTipStyle(i: number) {
   const focus = tickFocus(i)
-  // 选中动画（弹簧回中）过程中先不露文字，等它真正落定到中间了再显示。
-  const opacity = animating.value || tipHiddenByHover(i) ? 0 : Math.max(0, (focus - 0.38) / 0.62)
+  // 真的在切换到不同日期时，弹簧回中过程中先不露文字，等落定了再显示；
+  // 如果回弹的目标本来就是已选中的日期（比如在边缘橡皮筋松手），文字不该跟着隐藏又淡入。
+  const opacity = (animating.value && switchingAnim.value) || tipHiddenByHover(i) ? 0 : Math.max(0, (focus - 0.38) / 0.62)
   return {
     opacity: `${opacity}`,
     color: focus > 0.82 ? '#5a5e86' : 'var(--text-secondary)',
@@ -262,6 +274,7 @@ function animateTo(idx: number) {
   let velocity = 0
   let last = performance.now()
   animating.value = true
+  switchingAnim.value = idx !== selectedIdx.value
   const frame = (now: number) => {
     if (run !== animationRun) return
     const dt = Math.min(1 / 30, Math.max(1 / 240, (now - last) / 1000))
@@ -279,7 +292,9 @@ function animateTo(idx: number) {
     currentFrac.value = idx
     rafId = 0
     animating.value = false
+    switchingAnim.value = false
     lockedIndex.value = idx
+    selectedIdx.value = idx
     emit('scrub', idx)
     if (lockTimer) clearTimeout(lockTimer)
     lockTimer = setTimeout(() => { lockedIndex.value = null; lockTimer = null }, 520)
