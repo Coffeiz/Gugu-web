@@ -50,6 +50,14 @@ describe('navPathFor — 项目层级归档', () => {
       { type: 'month', name: '7 月', year: '2026', month: '07', color: null },
     ])
   })
+  it('month 但当前路径缺 year 段（异常/搜索跳转）→ 退用卡片自带 year，不崩', () => {
+    expect(navPathFor(card({ type: 'month', month: '03', year: '2025' }), [])).toEqual([
+      { type: 'projects', name: '项目文件', color: null },
+      { type: 'status', status: 'done', name: '已完成', color: null },
+      { type: 'year', name: '2025 年', year: '2025', color: null },
+      { type: 'month', name: '3 月', year: '2025', month: '03', color: null },
+    ])
+  })
 })
 
 describe('navPathFor — project 卡保留 status/year/month 上下文', () => {

@@ -2,9 +2,8 @@
  * 文件库导航「路径投影规则」——纯函数：从点中的文件夹卡片 + 当前面包屑，算出新面包屑。
  *
  * 从 Files/index.vue 的 enterFolder 抽出（P2④ 子步 a），**只搬路径构建**：不含选择清理 /
- * saveNav / loadContents / 历史栈 等副作用编排（那些留在 enterFolder 壳里）。行为逐字等价——
- * String()/非空断言仅为在 strict 下编译，运行时与原 loose 实现完全一致（含「month 取 year 段」
- * 的 yearSeg 缺失潜伏 bug，本刀不修，异常路径的防御另开一刀）。
+ * saveNav / loadContents / 历史栈 等副作用编排（那些留在 enterFolder 壳里）。合法路径行为逐字等价。
+ * 子步 a 遗留的「month 取 year 段」yearSeg 缺失崩溃已加防御（退用卡片自带 year），见下。
  */
 
 export interface NavSeg {
@@ -65,11 +64,14 @@ export function navPathFor(folder: FolderCard, currentPath: NavSeg[]): NavSeg[] 
     ]
   }
   if (folder.type === 'month') {
+    // 防御：正常从「年」层进入时当前路径必有 year 段；若缺失（如搜索跳转/异常路径），
+    // 退用卡片自带的 year 重建 year 段，避免空引用崩溃。
     const yearSeg = currentPath.find(s => s.type === 'year')
+    const yr = yearSeg?.year ?? folder.year
     return [
       { type: 'projects', name: '项目文件', color: null },
       { type: 'status', status: 'done', name: '已完成', color: null },
-      { type: 'year', name: String(yearSeg!.year) + ' 年', year: yearSeg!.year, color: null },
+      { type: 'year', name: String(yr) + ' 年', year: yr, color: null },
       { type: 'month', name: parseInt(String(folder.month)) + ' 月', year: folder.year, month: folder.month, color: null },
     ]
   }
