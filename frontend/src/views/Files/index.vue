@@ -691,6 +691,7 @@ import { fmtBytes } from '@/utils/fileSize'
 import { resolveFolderIds } from '@/utils/folderKeys'
 import { doneYear, doneMonth, splitName } from '@/utils/fileParse'
 import { optimisticMutation } from '@/utils/optimisticMutation'
+import type { FileMeta } from '@/stores/filesCache'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
@@ -1003,7 +1004,22 @@ const sortedContents = computed(() => {
 })
 
 // ── 内容 ──
-const contents = ref({ folders: [], files: [] })
+// 文件夹「卡片视图模型」——loadContents 投影出的 6 种卡（personal/projects/trash/folder/
+// status/year/month/project）的并集：公共字段必填，各变体字段可选。非 FolderMeta（那是库存原型）。
+interface FolderCard {
+  id: string
+  type: string
+  displayName: string
+  count: number | null
+  folderId?: number
+  color?: string | null
+  space?: string
+  projectId?: number | null
+  status?: string
+  year?: string | number
+  month?: string
+}
+const contents = ref<{ folders: FolderCard[]; files: FileMeta[] }>({ folders: [], files: [] })
 // tiny 已由 v-lazy-src 视口门控（更大 rootMargin 先于 card），不再全量预热——避免屏幕外缩略图挤占并发队列
 
 function extractColor(colorStr) {
@@ -1240,8 +1256,8 @@ function onMainMouseDown(e) {
 
 // ── Shift 多选 ──
 const flatSelectableItems = computed(() => [
-  ...sortedContents.value.folders.map(f => ({ type: 'folder', id: f.id })),
-  ...sortedContents.value.files.map(f => ({ type: 'file', id: f.id })),
+  ...sortedContents.value.folders.map(f => ({ type: 'folder' as const, id: f.id })),
+  ...sortedContents.value.files.map(f => ({ type: 'file' as const, id: f.id })),
 ])
 
 function _shiftSelect(type, id) {
