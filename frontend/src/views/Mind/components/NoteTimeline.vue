@@ -141,15 +141,16 @@ defineExpose({ flagConflict: () => { conflict.value = true }, confirmEdit, stopE
   /* 两端留白让首末列也能停在「内容区中线」（不是视口中线——滚动容器铺满视口宽但要跟
      上方胶囊/滑杆的居中对齐）。内容区中线 = (侧栏宽 + 视口)/2 = 侧栏宽/2 + 50vw；
      半列宽 220（= .tl-col 440px 的一半）。左 padding = 中线 - 半列；右 padding = 视口 - 中线 - 半列。
-     右 padding 多留一份 var(--sidebar-width)——按这条公式，左右 padding 加一起正好等于
-     100vw - 列宽，只有一列时内容总宽恰好等于视口宽，scrollWidth == clientWidth，滚动
-     范围直接是 0，JS 那边算出来该往右滚一点（补偿侧栏偏移）也滚不动，列只能停在没补偿
-     的位置、看着往左偏了（只有单列会踩到这个退化情况——两列起总宽本来就比视口宽出一大截，
-     滚动范围够用，从没暴露过）。多留这份 sidebar-width 保证不管几列，滚动范围至少有
-     侧栏宽这么多，居中永远够滚过去。 */
+     这条 vw 公式只是估算——JS 里 contentCenter() 是拿 .rec-layout/.rec-hscroll 的
+     getBoundingClientRect() 实测算出来的真实中线，两者天然会差个几十 px（fullBleed 内
+     边距、滚动条等这条 calc 公式没算进去）。列多的时候总宽本来就比视口宽出一大截
+     （每多一列 +454px），这点误差被吞掉从没露过；只有一列时左右 padding 加起来卡死等于
+     "视口宽 - 列宽"，可滚动范围是 0，JS 算出来的目标 scrollLeft 差多少都滚不过去，
+     列只能停在滚不动的地方、看着偏左。右 padding 多留一大截缓冲（侧栏宽 + 300px 冗余），
+     不再依赖精确算出"刚好够用"的滚动范围，不管几列都留够，居中永远够滚过去。 */
   padding-top: 2px;
   padding-left: calc(var(--sidebar-width) / 2 + 50vw - 220px);
-  padding-right: calc(var(--sidebar-width) / 2 + 50vw - 220px);
+  padding-right: calc(var(--sidebar-width) + 50vw - 220px + 300px);
 }
 
 /* 一天一块玻璃底板：轻玻璃（同定时任务面板 --glass-bg 0.25），hover 不提亮（底板不是交互件） */
