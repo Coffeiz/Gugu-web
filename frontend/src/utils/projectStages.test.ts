@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   autoCompleteTodos, restoreTodos, toggleTodoDone,
-  nextStatus, stageProgressByIndex, normalizeStages,
+  nextStatus, stageProgressByIndex, normalizeStages, canAutoAdvance,
 } from './projectStages'
 import type { ProjectTodo } from '@/types/project'
 
@@ -115,5 +115,34 @@ describe('normalizeStages — 规范化', () => {
   })
   it('空/缺省输入返回空数组', () => {
     expect(normalizeStages()).toEqual([])
+  })
+})
+
+
+describe('canAutoAdvance — 推进需前置阶段全完成', () => {
+  const stage = (todos: Partial<ProjectTodo>[]) => ({ key: 'k', label: 'L', todos: todos.map((t, i) => td({ id: 'i' + i, ...t })) })
+  it('当前阶段完成 + 前面阶段也完成 → 可推进', () => {
+    const stages = [stage([{ done: true }]), stage([{ done: true }]), stage([{ done: false }])]
+    expect(canAutoAdvance(stages, 1)).toBe(true)
+  })
+  it('当前阶段完成但**前面阶段有未完成** → 不推进（本次修复的核心）', () => {
+    const stages = [stage([{ done: false }]), stage([{ done: true }]), stage([{ done: false }])]
+    expect(canAutoAdvance(stages, 1)).toBe(false)
+  })
+  it('当前阶段未全完成 → 不推进', () => {
+    const stages = [stage([{ done: true }]), stage([{ done: true }, { done: false }])]
+    expect(canAutoAdvance(stages, 1)).toBe(false)
+  })
+  it('当前是最后一个阶段 → 不推进', () => {
+    const stages = [stage([{ done: true }]), stage([{ done: true }])]
+    expect(canAutoAdvance(stages, 1)).toBe(false)
+  })
+  it('当前阶段无待办 → 不推进（无「最后一个待办」触发点）', () => {
+    const stages = [stage([]), stage([{ done: true }])]
+    expect(canAutoAdvance(stages, 0)).toBe(false)
+  })
+  it('前面的空阶段不阻挡', () => {
+    const stages = [stage([]), stage([{ done: true }]), stage([{ done: false }])]
+    expect(canAutoAdvance(stages, 1)).toBe(true)
   })
 })

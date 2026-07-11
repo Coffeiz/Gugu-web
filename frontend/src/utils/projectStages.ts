@@ -43,6 +43,19 @@ export function nextStatus(status: ProjectStatus): ProjectStatus | null {
   return _NEXT_STATUS[status] ?? null
 }
 
+/**
+ * 勾完当前阶段最后一个待办后，能否自动推进到下一阶段。要求：
+ *   ① 不是最后一个阶段；② 当前阶段有待办且全部完成；
+ *   ③ **前面所有阶段也全部完成**（空阶段视为完成）——避免跳过前面未完成的阶段直接前进。
+ * 修复：此前 ProjectCard / ProjectModal 各自只判「当前阶段完成」，会在前置阶段未完成时误推进。
+ */
+export function canAutoAdvance(stages: ProjectStage[], currIdx: number): boolean {
+  if (currIdx < 0 || currIdx >= stages.length - 1) return false
+  const cur = stages[currIdx]?.todos ?? []
+  if (cur.length === 0 || !cur.every(t => t.done)) return false
+  return stages.slice(0, currIdx).every(s => (s.todos ?? []).every(t => t.done))
+}
+
 /** 按阶段位置算进度：(当前阶段序号 + 1) / 阶段数 * 100；越界或空阶段返回 0。 */
 export function stageProgressByIndex(idx: number, total: number): number {
   if (idx < 0 || total <= 0) return 0

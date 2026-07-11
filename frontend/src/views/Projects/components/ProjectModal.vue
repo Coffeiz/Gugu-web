@@ -696,7 +696,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
-import { autoCompleteTodos, restoreTodos } from '@/utils/projectStages'
+import { autoCompleteTodos, restoreTodos, canAutoAdvance } from '@/utils/projectStages'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/services/api'
 import { thumbLoadedIds, clearThumbCache } from '@/composables/useThumbCache'
@@ -1669,11 +1669,8 @@ function toggleTodo(todo) {
   saveTodos()
   if (todo.done) {
     const currIdx = localStages.value.findIndex(s => s.key === localCurrentStage.value)
-    if (currIdx >= 0 && currIdx < localStages.value.length - 1) {
-      const currTodos = localStages.value[currIdx].todos ?? []
-      if (currTodos.length > 0 && currTodos.every(t => t.done)) {
-        setStage(localStages.value[currIdx + 1].key, currIdx + 1)
-      }
+    if (canAutoAdvance(localStages.value, currIdx)) {
+      setStage(localStages.value[currIdx + 1].key, currIdx + 1)
     }
   }
 }
