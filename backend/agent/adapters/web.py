@@ -429,6 +429,8 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
         if tail:
             await emit_clean(tail)
 
+        sanitize.probe_leak_tail(full_reply, "web")   # 【临时诊断】抓 [e~[/尾随空白真身，确认后删
+
         # ── 持久化：工具调用中间消息 + AI 最终回复 + 用量 ──
         # 会话可能在后台生成期间被用户删掉（DELETE /sessions/{id}，合法操作）。此时：
         # 不写无依附的 message；usage 降级为 session_id=None 保住计费（与删除时 SET NULL 一致）；
