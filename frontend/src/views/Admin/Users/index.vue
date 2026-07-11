@@ -138,13 +138,13 @@ import { PhArrowClockwise } from '@phosphor-icons/vue'
 
 const adminStore = useAdminStore()
 
-const items       = ref([])
+const items       = ref<any[]>([])
 const loading     = ref(false)
 const refreshing  = ref(false)
 const search      = ref('')
 const page        = ref(1)
 const pageSize    = 20
-const deleteTarget = ref(null)
+const deleteTarget = ref<any | null>(null)
 const flash = ref('')
 const deleting    = ref(false)
 
@@ -156,12 +156,12 @@ const AVATAR_COLORS = [
   ['#5a7e8e', '#78b0bf'],
 ]
 
-function avatarChar(u) {
+function avatarChar(u: any) {
   const name = u.display_name || u.username || '?'
   return name.charAt(0).toUpperCase()
 }
 
-function avatarStyle(u) {
+function avatarStyle(u: any) {
   const idx = u.username.charCodeAt(0) % AVATAR_COLORS.length
   const [c1, c2] = AVATAR_COLORS[idx]
   return { background: `linear-gradient(135deg, ${c1}, ${c2})` }
@@ -184,25 +184,25 @@ async function load(manual = false) {
   }
 }
 
-let searchTimer = null
+let searchTimer: ReturnType<typeof setTimeout> | null = null
 function onSearch() {
-  clearTimeout(searchTimer)
+  clearTimeout(searchTimer ?? undefined)
   searchTimer = setTimeout(() => load(), 300)
 }
 
-async function toggleBan(u) {
+async function toggleBan(u: any) {
   const res  = await adminStore.authFetch(`/api/v1/admin/users/${u.id}/ban`, { method: 'PATCH' })
   const data = await res.json()
   u.is_active = data.is_active
 }
 
-async function toggleDev(u) {
+async function toggleDev(u: any) {
   const res  = await adminStore.authFetch(`/api/v1/admin/users/${u.id}/developer`, { method: 'PATCH' })
   const data = await res.json()
   u.is_developer = data.is_developer
 }
 
-function confirmDelete(u) {
+function confirmDelete(u: any) {
   deleteTarget.value = u
 }
 
@@ -212,7 +212,7 @@ async function doDelete() {
   try {
     const uname = deleteTarget.value.display_name || deleteTarget.value.username
     const res = await adminStore.authFetch(`/api/v1/admin/users/${deleteTarget.value.id}`, { method: 'DELETE' })
-    let removed = null
+    let removed: any = null
     try { removed = (await res.json())?.storage_objects_removed } catch {}
     items.value = items.value.filter(u => u.id !== deleteTarget.value.id)
     deleteTarget.value = null
@@ -233,19 +233,19 @@ const paginated  = computed(() => {
   return items.value.slice(start, start + pageSize)
 })
 
-function fmtDate(iso) {
+function fmtDate(iso: string) {
   if (!iso) return '—'
   return localDayKey(parseUtc(iso))   // 查看者本地日（不是 iso 截取的 UTC 日）
 }
 
-function fmtTokens(n) {
-  if (n == null || n === '') return '—'
+function fmtTokens(n: number) {
+  if (n == null) return '—'
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
   return String(n)
 }
 
-function fmtBytes(n) {
+function fmtBytes(n: number) {
   if (n == null || n === 0) return '—'
   if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB'
   if (n >= 1048576)    return (n / 1048576).toFixed(1) + ' MB'
@@ -253,13 +253,13 @@ function fmtBytes(n) {
   return n + ' B'
 }
 
-function tokenBarStyle(u) {
+function tokenBarStyle(u: any) {
   const pct = u.token_limit_weekly ? Math.min(100, (u.tokens_week / u.token_limit_weekly) * 100) : 0
   const color = pct >= 90 ? 'rgba(220,80,80,0.8)' : pct >= 70 ? 'rgba(220,160,60,0.8)' : 'rgba(80,160,200,0.7)'
   return { width: pct + '%', background: color }
 }
 
-function storageBarStyle(u) {
+function storageBarStyle(u: any) {
   const pct = u.storage_limit_bytes ? Math.min(100, (u.storage_used / u.storage_limit_bytes) * 100) : 0
   const color = pct >= 90 ? 'rgba(220,80,80,0.8)' : pct >= 70 ? 'rgba(220,160,60,0.8)' : 'rgba(80,200,140,0.7)'
   return { width: pct + '%', background: color }

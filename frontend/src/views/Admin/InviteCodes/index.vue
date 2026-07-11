@@ -148,13 +148,13 @@ import { PhArrowClockwise } from '@phosphor-icons/vue'
 
 const adminStore = useAdminStore()
 
-const codes      = ref([])
+const codes      = ref<any[]>([])
 const loading    = ref(false)
 const refreshing = ref(false)
 const generating = ref(false)
 const genCount   = ref(1)
 const genNote    = ref('')
-const freshCodes = ref([])
+const freshCodes = ref<any[]>([])
 const filter     = ref('all')
 const toastMsg   = ref('')
 
@@ -198,14 +198,14 @@ async function generate() {
   }
 }
 
-async function deleteCode(code) {
+async function deleteCode(code: any) {
   if (code.used && !confirm(`邀请码 ${code.code} 已被使用，确认删除？`)) return
   await adminStore.authFetch(`/api/v1/admin/invite-codes/${code.id}`, { method: 'DELETE' })
   codes.value = codes.value.filter(c => c.id !== code.id)
   freshCodes.value = freshCodes.value.filter(c => c.id !== code.id)
 }
 
-async function copyText(text) {
+async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text)
     return true
@@ -223,7 +223,7 @@ async function copyText(text) {
   }
 }
 
-async function copyCode(code) {
+async function copyCode(code: any) {
   const ok = await copyText(code)
   showToast(ok ? `已复制 ${code}` : '复制失败，请手动复制')
 }
@@ -234,7 +234,7 @@ async function copyAll() {
   showToast(ok ? `已复制 ${freshCodes.value.length} 个邀请码` : '复制失败，请手动复制')
 }
 
-function showToast(msg) {
+function showToast(msg: string) {
   toastMsg.value = msg
   setTimeout(() => { toastMsg.value = '' }, 2200)
 }

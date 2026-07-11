@@ -63,14 +63,14 @@ import AdminSelect from '@/components/AdminSelect.vue'
 
 const adminStore = useAdminStore()
 
-const lines      = ref([])
+const lines      = ref<any[]>([])
 const filterSource = ref('')
 const filterLevel  = ref('')
 const filterText   = ref('')
 const autoScroll   = ref(true)
 const connected    = ref(false)
-const tableWrap    = ref(null)
-let   sse          = null
+const tableWrap    = ref<HTMLElement | null>(null)
+let   sse: EventSource | null = null
 let   uid          = 0
 
 const sourceOptions = [
@@ -86,7 +86,7 @@ const levelOptions = [
   { label: 'INFO',    value: 'info' },
 ]
 
-function rowLevel(line) {
+function rowLevel(line: any) {
   const u = line.toUpperCase()
   if (u.includes('ERROR') || u.includes('EXCEPTION') || u.includes('TRACEBACK')) return 'lvl-error'
   if (u.includes('WARNING') || u.includes('WARN')) return 'lvl-warning'
@@ -107,14 +107,14 @@ const liveCount = computed(() => filtered.value.length)
 
 function clearLines() { lines.value = [] }
 
-function parseTime(line) {
+function parseTime(line: any) {
   // app logger 格式：06-26 08:03:21 INFO ...  → 取 HH:MM:SS；无行内时间戳返回空（不再用 new Date 当接收时间）
   const m = line.match(/^\d{2}-\d{2} (\d{2}:\d{2}:\d{2})/)
   return m ? m[1] : ''
 }
 
 let lastLogTime = ''   // 续行 / uvicorn / print / traceback 无时间戳 → 沿用上一条 emit 时间，绝不用接收时间
-function addLine(source, line, time) {
+function addLine(source: string, line: string, time: any) {
   // 优先用后端给的 emit 时间（已解析+继承+归并排序）；退到行内解析；再退到上一条；都没有才空
   const t = time || parseTime(line) || lastLogTime
   if (t) lastLogTime = t
