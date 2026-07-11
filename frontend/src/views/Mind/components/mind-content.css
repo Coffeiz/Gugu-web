@@ -212,11 +212,21 @@
   background: rgba(123,127,178,0.2);
 }
 
-/* 对象引用 chip：整体选中/删除的原子节点，编辑态/只读态外观必须一致 */
+/* 对象引用 chip：整体选中/删除的原子节点，编辑态/只读态外观必须一致。
+   点击可交互（项目跳详情/文件预览下载/活动编辑，见 NoteCard.vue、NoteEditor.vue 的
+   useMindRefActions 调用）——cursor:pointer + hover 加深，跟按钮同一套反馈语言。 */
 .mind-ref {
-  display: inline-flex; align-items: center;
+  display: inline-flex; align-items: center; gap: 4px;
   padding: 0 6px; margin: 0 1px; border-radius: 5px;
   background: rgba(123,127,178,0.14);
   color: #5b5f8c; font-size: 12.5px; font-weight: 500;
-  white-space: nowrap; cursor: default;
+  white-space: nowrap; cursor: pointer;
+  transition: background 0.12s;
+}
+.mind-ref:hover { background: rgba(123,127,178,0.26); }
+/* 类型徽标：跟 NoteEditor.vue 补全下拉的 .ne-pick-type 同一套视觉语言 */
+.mind-ref-type {
+  flex-shrink: 0; font-size: 9px; font-weight: 700; line-height: 15px;
+  padding: 0 4px; border-radius: 4px;
+  background: rgba(123,127,178,0.16); color: var(--color-primary);
 }

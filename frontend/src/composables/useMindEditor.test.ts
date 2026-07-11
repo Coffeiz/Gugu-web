@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Editor } from '@tiptap/core'
 import {
-  docToMarkdown, markdownToDoc, mindExtensions, toggleTaskInMd, mdToPreviewHtml, MIND_REF_RE,
+  docToMarkdown, markdownToDoc, mindExtensions, toggleTaskInMd, mdToPreviewHtml, MIND_REF_RE, splitMindTitleBody,
 } from './useMindEditor'
 import type { MindDocNode } from './useMindEditor'
 
@@ -270,5 +270,15 @@ describe('MIND_REF_RE', () => {
   it('捕获 type / id / label', () => {
     const m = MIND_REF_RE.exec('[[client:12|张三]]')
     expect([m?.[1], m?.[2], m?.[3]]).toEqual(['client', '12', '张三'])
+  })
+})
+
+describe('splitMindTitleBody', () => {
+  it('只把首个非空的 Markdown 标题分离出来，并保留对象引用显示名', () => {
+    expect(splitMindTitleBody('\n# [[project:7|画布项目]]\n\n正文')).toEqual({ titleRaw: '画布项目', body: '正文' })
+  })
+
+  it('普通正文不伪造标题', () => {
+    expect(splitMindTitleBody('- [ ] 想法')).toEqual({ titleRaw: '', body: '- [ ] 想法' })
   })
 })

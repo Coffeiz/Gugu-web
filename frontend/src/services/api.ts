@@ -212,6 +212,7 @@ export const filesApi = {
 // ── Events ────────────────────────────────────────────────────────────────────
 export const eventsApi = {
   list:   (year: number, month: number) => get<Schemas['EventResponse'][]>(`/events?year=${year}&month=${month}`),
+  get:    (id: number) => get<Schemas['EventResponse']>(`/events/${id}`),
   create: (data: Schemas['EventCreate']) => post<Schemas['EventResponse']>('/events', data),
   update: (id: number, data: Schemas['EventUpdate']) => patch<Schemas['EventResponse']>(`/events/${id}`, data),
   delete: (id: number)          => del(`/events/${id}`),
@@ -230,6 +231,9 @@ export interface MindNote {
   version: number         // 乐观锁：改的时候必须回传，版本对不上后端给 409
   createdAt: string
   updatedAt: string
+  deletedAt?: string | null
+  refType?: 'project' | 'file' | 'event' | null
+  refId?: number | null
 }
 export interface MindNoteCreate {
   contentMd?: string
@@ -252,6 +256,50 @@ export interface MindRefSuggestItem {
   subtitle?: string | null
 }
 
+export interface MindCanvas {
+  id: number
+  title: string
+  projectId: number | null
+  data: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+export interface MindCanvasItem {
+  id: number
+  canvasId: number
+  nodeId: number
+  x: number
+  y: number
+  w: number | null
+  h: number | null
+  z: number
+  collapsed: boolean
+  data: Record<string, unknown>
+  node: MindNote
+  createdAt: string
+  updatedAt: string
+}
+export interface MindRelation {
+  id: number
+  srcNodeId: number
+  dstNodeId: number
+  relType: 'related'
+  origin: 'user' | 'gugu'
+  status: 'confirmed' | 'suggested'
+  createdAt: string
+  updatedAt: string
+}
+export interface MindCanvasNoteCreate {
+  title?: string
+  contentMd?: string
+  color?: string | null
+  x?: number
+  y?: number
+  w?: number | null
+  h?: number | null
+  z?: number
+}
+
 export const mindApi = {
   listNotes:  (limit = 50, offset = 0) => get<MindNote[]>(`/mind/notes?limit=${limit}&offset=${offset}`),
   createNote: (data: MindNoteCreate)             => post<MindNote>('/mind/notes', data),
@@ -259,6 +307,27 @@ export const mindApi = {
   deleteNote: (id: number)                       => del(`/mind/notes/${id}`),
   refSuggest: (q: string, limit = 6) =>
     get<MindRefSuggestItem[]>(`/mind/ref-suggest?q=${encodeURIComponent(q)}&limit=${limit}`),
+  listCanvases: () => get<MindCanvas[]>('/mind/canvases'),
+  createCanvas: (data: { title?: string; projectId?: number | null } = {}) =>
+    post<MindCanvas>('/mind/canvases', data),
+  updateCanvas: (id: number, data: { title?: string; data?: Record<string, unknown> }) =>
+    patch<MindCanvas>(`/mind/canvases/${id}`, data),
+  listCanvasItems: (id: number) => get<MindCanvasItem[]>(`/mind/canvases/${id}/items`),
+  addCanvasItem: (id: number, data: { nodeId: number; x?: number; y?: number; w?: number | null; h?: number | null; z?: number; collapsed?: boolean; data?: Record<string, unknown> }) =>
+    post<MindCanvasItem>(`/mind/canvases/${id}/items`, data),
+  createCanvasNote: (id: number, data: MindCanvasNoteCreate) =>
+    post<MindCanvasItem>(`/mind/canvases/${id}/notes`, data),
+  updateCanvasNote: (id: number, data: { title?: string; contentMd?: string; color?: string | null; version: number }) =>
+    patch<MindNote>(`/mind/nodes/${id}`, data),
+  updateCanvasItem: (canvasId: number, itemId: number, data: Partial<Pick<MindCanvasItem, 'x' | 'y' | 'w' | 'h' | 'z' | 'collapsed' | 'data'>>) =>
+    patch<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}`, data),
+  removeCanvasItem: (canvasId: number, itemId: number) => del(`/mind/canvases/${canvasId}/items/${itemId}`),
+  listCanvasRelations: (id: number) => get<MindRelation[]>(`/mind/canvases/${id}/relations`),
+  createRelation: (srcNodeId: number, dstNodeId: number) =>
+    post<MindRelation>('/mind/relations', { srcNodeId, dstNodeId }),
+  deleteRelation: (id: number) => del(`/mind/relations/${id}`),
+  createRefNode: (refType: 'project' | 'file' | 'event', refId: number) =>
+    post<MindNote>('/mind/nodes/ref', { refType, refId }),
 }
 
 // ── Folders ───────────────────────────────────────────────────────────────────

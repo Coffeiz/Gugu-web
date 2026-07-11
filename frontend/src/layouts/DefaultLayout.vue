@@ -1,7 +1,7 @@
 <template>
   <div class="layout">
     <AppSidebar />
-    <main class="layout-main" :class="{ 'full-bleed': fullBleed }">
+    <main class="layout-main" :class="{ 'full-bleed': fullBleed, 'canvas-workspace': isCanvasWorkspace }">
       <!-- 顶栏（fullBleed 页隐藏：思维面板等「工作台」视图自己管头部，见 router meta） -->
       <header v-if="!fullBleed" class="topbar glass-card">
         <GlassBg />
@@ -40,6 +40,9 @@
       :project="projectStore.modalProject"
       @close="projectStore.closeModal()"
     />
+
+    <!-- 全局活动编辑 Modal（笔记页的活动引用卡片点开） -->
+    <EventEditModal />
 
     <!-- 上传文件 Modal（顶栏按钮触发） -->
     <UploadModal
@@ -83,6 +86,7 @@ import GlobalSearch from '@/components/common/GlobalSearch.vue'
 import GlassBg from '@/components/common/GlassBg.vue'
 import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'
 import ProjectModal    from '@/views/Projects/components/ProjectModal.vue'
+import EventEditModal  from '@/views/Calendar/components/EventEditModal.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
 import FilePreviewModal    from '@/components/common/FilePreviewModal.vue'
 import ProfileModal        from '@/components/common/ProfileModal.vue'
@@ -149,6 +153,7 @@ onBeforeUnmount(() => liveStore.disconnect())
 
 const currentTitle = computed(() => route.meta.title || '总览')
 const fullBleed    = computed(() => !!route.meta.fullBleed)
+const isCanvasWorkspace = computed(() => route.path.startsWith('/mind/canvases'))
 
 const todayStr = computed(() => {
   const d = new Date()
@@ -298,4 +303,8 @@ const todayStr = computed(() => {
      和居中的日期列才真正竖直对齐（左右不等会整体偏移半个差值，日期块就偏左/右了，#4） */
   padding: 28px 24px 0 24px;
 }
+
+/* 空间画布是唯一允许覆盖整个浏览器的工作面：侧栏仍有更高 z-index，会像一块固定玻璃
+   盖住被拖到左侧的节点；画布本身则不会在 layout-main 的左边缘被裁掉。 */
+.layout-main.canvas-workspace .page-content { position: static; padding: 0; }
 </style>

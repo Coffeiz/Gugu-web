@@ -177,7 +177,8 @@ npm run typecheck:strict   # vue-tsc -p tsconfig.strict.json（严格档白名�
 - [x] 文件簇 ③-a（2026-07-11）：filesCache/preview/useUploadQueue/useBoxSelection。定义 `FileMeta`（=OpenAPI `FileResponse` + 客户端增补字段交集）、`FolderMeta`（=`FolderResponse`）领域类型；preview 承载聊天附件故用 `Partial<FileMeta>`
 - [x] 文件簇 ③-b（2026-07-11）：usePhysicsDrag（959 行/67 错→0，拖拽引擎）+ useFileDragDrop。加 `Box`/`ActiveDrag` 类型、DOM 参数标注、`event: PointerEvent\|DragEvent` 联合就地 cast、`pointerId!`/`_active!` 断言——纯类型标注零逻辑改动。**棘轮累计 30 源文件；stores/composables/services/utils/types 底座已全 strict-clean**
 - [x] 底座补齐 + 组件层 ⑤（2026-07-11）：补 auth/useLazyThumb 两个漏网基座；入档 **13 个 common 组件**（NavItem/PdfViewer/FeedbackModal/FileInfoPopup/DatePicker/DateSpanPicker/ImageViewer/VideoViewer/AppSidebar/GlobalSearch/GlassBg/UploadConflictDialog/AvatarCropper/SegBar/NotificationBubble/TextViewer/FilePreviewModal/FloatPreviewWindow）。**棘轮累计 72 源文件**：底座 + 20 common 组件 + AdminLayout/AdminSelect/AdminDatePicker + 全部 Admin 页（除 Agent）+ Schedules + 4 auth 页 + ContextMenu
-- [ ] 接力：仅剩 5 个巨型视图（Calendar 441/Files 295/GuguChat 227/Admin·Agent 224/ProjectModal 184）——**它们同时是 P2-a「拆大模块」的目标，归 P2-a 拆分时一起类型化**，不单独纯堆类型逐个入档（GuguChat 228 错、巨型视图是大头，随功能推进）；④ Calendar `CalendarEvent`、Mind `NoteEditor` TipTap any（Mind 待并发思维面板重构稳定后再碰）
+- [x] Mind 面板入档（2026-07-11）：`stores/mind.ts`、`useMindEditor.ts` 与 8 个视图/组件 strict-clean；递归日期坐标函数补 `number` 返回类型，`typecheck:strict` / `typecheck` / 169 个前端测试全绿
+- [ ] 接力：剩 4 个巨型视图（Calendar / Files / GuguChat / ProjectModal）——**它们同时是 P2-a「拆大模块」的目标，归 P2-a 拆分时一起类型化**，不单独纯堆类型逐个入档；Calendar `CalendarEvent` 与 Mind 以外页面的 TipTap 边界按功能稳定度继续增量入档
 - [ ] CI / 部署流程加 `npm run typecheck` + `typecheck:strict` 门禁（红则挡）
 - [ ] 存量 `.js` 清零后，`tsconfig` 关 `allowJs`（**核实：`.js` 已清零，此项条件已满足，可评估执行**）
 

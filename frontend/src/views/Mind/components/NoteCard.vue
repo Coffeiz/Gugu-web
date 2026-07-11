@@ -56,8 +56,11 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
 import { combineTitleBody, mdToPreviewHtml } from '@/composables/useMindEditor'
+import { useMindRefActions } from '@/composables/useMindRefActions'
 import type { MindNote } from '@/services/api'
 import NoteEditor from './NoteEditor.vue'
+
+const { openMindRef } = useMindRefActions()
 
 const props = defineProps<{
   note: MindNote
@@ -274,9 +277,15 @@ function onBodyClick(e: MouseEvent) {
     emit('toggle-task', Number(t.dataset.taskIdx))
     return
   }
-  // 点引用 chip 不进编辑（将来跳对应对象页）；点链接就正常跳转，也不进编辑；
-  // 点其他区域进编辑，光标定到点的那一行后面
-  if (t.closest('.mind-ref')) return
+  // 点引用 chip 跳对应对象（项目 Modal / 文件预览下载 / 活动编辑 Modal），不进编辑；
+  // 点链接就正常跳转，也不进编辑；点其他区域进编辑，光标定到点的那一行后面
+  const refEl = t.closest<HTMLElement>('.mind-ref')
+  if (refEl) {
+    const refType = refEl.dataset.refType
+    const refId = Number(refEl.dataset.refId)
+    if (refType && Number.isFinite(refId)) openMindRef(refType, refId)
+    return
+  }
   if (t.closest('a')) return
   const lineEl = t.closest<HTMLElement>('[data-line-unit]')
   startEditAt(lineEl ? Number(lineEl.dataset.lineUnit) : null)

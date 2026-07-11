@@ -204,6 +204,7 @@ class MindNode(Base):
 
     kind：
       - `note`       用户的 Markdown 便签，正文存本行
+      - `canvas_note` 画布专属便签，不进入记录时间流
       - `ref`        业务对象（项目/文件/活动…）的引用代理，`ref_type`+`ref_id` 指过去
       - `suggestion` 咕咕的待确认结论（P4 才启用，届时另加节点级 status）
 

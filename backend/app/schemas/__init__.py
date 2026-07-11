@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from typing import Optional, Any
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 _INVALID_NAME_RE = re.compile(r'[\\/:*?"<>|]')
@@ -307,6 +307,9 @@ class MindNodeResponse(CamelModel):
     version: int
     created_at: datetime
     updated_at: datetime
+    deleted_at: Optional[datetime] = None
+    ref_type: Optional[str] = None
+    ref_id: Optional[int] = None
 
 
 class MindRefSuggestItem(CamelModel):
@@ -315,6 +318,103 @@ class MindRefSuggestItem(CamelModel):
     id: int
     label: str
     subtitle: Optional[str] = None
+
+
+# ── 思维面板（P2：画布）──────────────────────────────────────────────────────
+
+class MindCanvasCreate(CamelModel):
+    title: str = "未命名画布"
+    project_id: Optional[int] = None
+
+
+class MindCanvasUpdate(CamelModel):
+    title: Optional[str] = None
+    data: Optional[dict] = None
+
+
+class MindCanvasResponse(CamelModel):
+    id: int
+    title: str
+    project_id: Optional[int] = None
+    data: dict = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class MindCanvasItemCreate(CamelModel):
+    node_id: int
+    x: float = 0
+    y: float = 0
+    w: Optional[float] = None
+    h: Optional[float] = None
+    z: int = 0
+    collapsed: bool = False
+    data: dict = Field(default_factory=dict)
+
+
+class MindCanvasNoteCreate(CamelModel):
+    title: str = "新便签"
+    content_md: str = ""
+    color: Optional[str] = None
+    x: float = 0
+    y: float = 0
+    w: Optional[float] = None
+    h: Optional[float] = None
+    z: int = 0
+
+
+class MindCanvasNoteUpdate(CamelModel):
+    title: Optional[str] = None
+    content_md: Optional[str] = None
+    color: Optional[str] = None
+    version: int
+
+
+class MindCanvasItemUpdate(CamelModel):
+    x: Optional[float] = None
+    y: Optional[float] = None
+    w: Optional[float] = None
+    h: Optional[float] = None
+    z: Optional[int] = None
+    collapsed: Optional[bool] = None
+    data: Optional[dict] = None
+
+
+class MindCanvasItemResponse(CamelModel):
+    id: int
+    canvas_id: int
+    node_id: int
+    x: float
+    y: float
+    w: Optional[float] = None
+    h: Optional[float] = None
+    z: int
+    collapsed: bool
+    data: dict = Field(default_factory=dict)
+    node: MindNodeResponse
+    created_at: datetime
+    updated_at: datetime
+
+
+class MindRelationCreate(CamelModel):
+    src_node_id: int
+    dst_node_id: int
+
+
+class MindRelationResponse(CamelModel):
+    id: int
+    src_node_id: int
+    dst_node_id: int
+    rel_type: str
+    origin: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class MindRefNodeCreate(CamelModel):
+    ref_type: str
+    ref_id: int
 
 
 class EventCreate(CamelModel):

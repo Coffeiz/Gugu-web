@@ -110,7 +110,10 @@ import {
 } from '@phosphor-icons/vue'
 import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/useMindEditor'
 import { useMindObjectPicker } from '@/composables/useMindObjectPicker'
+import { useMindRefActions } from '@/composables/useMindRefActions'
 import type { MindRefSuggestItem } from '@/services/api'
+
+const { openMindRef } = useMindRefActions()
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -306,6 +309,13 @@ const editor = useEditor({
         emit('submit'); return true
       }
       return false
+    },
+    // 点中对象引用 chip：跳对应对象（项目 Modal / 文件预览下载 / 活动编辑 Modal），
+    // 不落光标进普通编辑（原子节点本来也不可编辑内部）
+    handleClickOn(_view, _pos, node) {
+      if (node.type.name !== 'mindRef') return false
+      openMindRef(node.attrs.refType, node.attrs.refId)
+      return true
     },
   },
   onUpdate({ editor: ed }) {

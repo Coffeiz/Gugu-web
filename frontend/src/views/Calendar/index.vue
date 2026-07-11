@@ -373,7 +373,7 @@
               <button class="chan-chip" :class="{ on: reminderChannels.includes('web') }" @click="toggleReminderChannel('web')">web</button>
               <button v-for="ch in imChannels" :key="ch" class="chan-chip" :class="{ on: reminderChannels.includes(ch) }" @click="toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
             </div>
-            <button class="reminder-test-bar" @click="testReminderChannels"><PhPaperPlaneTilt :size="11" weight="bold" /> 测试发送</button>
+            <button class="reminder-test-bar" @click="testReminderChannels(newEvent.name)"><PhPaperPlaneTilt :size="11" weight="bold" /> 测试发送</button>
           </div>
         </div>
         <div class="popup-actions">
@@ -412,39 +412,9 @@
             <PhX :size="12" weight="bold" />
           </button>
         </div>
-        <input v-model="editingEvent.name" class="popup-input" placeholder="活动名称" v-enter="saveEditEvent" @keydown.esc="showEditForm = false" autofocus />
-        <div class="date-row">
-          <DatePicker class="date-row-picker" v-model="editingEvent.date" placeholder="选择日期" />
-          <label class="allday-toggle">
-            <input type="checkbox" v-model="editingEvent.allDay" @change="onToggleAllDay(editingEvent)" />
-            全天
-          </label>
-        </div>
-        <div class="time-box" v-if="!editingEvent.allDay">
-          <input :value="editingEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, editingEvent, 'time')" @blur="editingEvent.time = normTime(editingEvent.time)" />
-          <span class="time-dash">—</span>
-          <input :value="editingEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, editingEvent, 'endTime')" @blur="editingEvent.endTime = normTime(editingEvent.endTime)" />
-          <span v-if="isNextDay(editingEvent.time, editingEvent.endTime)" class="nextday-tag">次日</span>
-        </div>
-        <textarea v-model="editingEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
-        <div class="reminder-section" v-if="!isPastDate(activeFormDate)">
-          <div class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</div>
-          <div v-for="(r, i) in reminders" :key="i" class="reminder-item">
-            <select v-model.number="r.leadMin" class="lead-select">
-              <option v-for="o in LEAD_OPTIONS" :key="o.min" :value="o.min">{{ o.label }}</option>
-            </select>
-            <button class="reminder-del" @click="removeReminderAt(i)" title="移除"><PhX :size="10" weight="bold" /></button>
-          </div>
-          <button class="reminder-add-toggle" @click="addReminder">＋ 添加提醒</button>
-          <div class="chan-block" v-if="reminders.length">
-            <div class="reminder-label">渠道</div>
-            <div class="chan-chips">
-              <button class="chan-chip" :class="{ on: reminderChannels.includes('web') }" @click="toggleReminderChannel('web')">web</button>
-              <button v-for="ch in imChannels" :key="ch" class="chan-chip" :class="{ on: reminderChannels.includes(ch) }" @click="toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
-            </div>
-            <button class="reminder-test-bar" @click="testReminderChannels"><PhPaperPlaneTilt :size="11" weight="bold" /> 测试发送</button>
-          </div>
-        </div>
+        <EventEditFields :event="editingEvent" :form="eventForm" :is-past-date="isPastDate" autofocus
+                         @save="saveEditEvent" @close="showEditForm = false"
+                         @test-reminder="testReminderChannels(editingEvent.name)" />
         <div class="popup-actions">
           <button class="popup-save" @click="saveEditEvent" :disabled="!editingEvent.name">保存</button>
           <button class="popup-delete" @click="deleteEventFromEdit">删除</button>
@@ -479,6 +449,11 @@ import GlassBg from '@/components/common/GlassBg.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
 import { projectProgress } from '@/utils/projectProgress'
+import EventEditFields from './components/EventEditFields.vue'
+import {
+  useEventEditForm, onTimeInput, normTime, isNextDay, onToggleAllDay, defaultTimeRange,
+  LEAD_OPTIONS, CHAN_LABEL, type EditingEvent,
+} from '@/composables/useEventEditForm'
 import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack, PhBell, PhPaperPlaneTilt } from '@phosphor-icons/vue'
 import type { components } from '@/types/api'
 
@@ -532,20 +507,6 @@ interface NewEventForm {
   description: string
   allDay: boolean
 }
-
-interface EditingEvent {
-  _uid?: string
-  id: string | number
-  name: string
-  date: string
-  time: string
-  endTime: string
-  description: string
-  allDay: boolean
-  version?: number
-}
-
-interface Reminder { id?: number | null; leadMin: number }
 
 interface CellCtxState {
   show: boolean
@@ -623,40 +584,8 @@ const addInputRef  = ref<HTMLInputElement | null>(null)
 // 打开新建表单时聚焦输入框，但 preventScroll——原来用 <input autofocus> 会让浏览器滚动去露出
 // position:fixed 的表单（点底部时尤其明显）→ 布局跳动、顶栏闪白块。preventScroll 聚焦不触发滚动。
 watch(showAddForm, (v) => { if (v) nextTick(() => addInputRef.value?.focus?.({ preventScroll: true })) })
-// 边打边格式化：取数字（最多4位），第2位后自动插冒号。1200 → 12:00、120 → 12:0
-function onTimeInput(e: Event, obj: NewEventForm | EditingEvent, key: 'time' | 'endTime') {
-  const target = e.target as HTMLInputElement
-  const d = target.value.replace(/\D/g, '').slice(0, 4)
-  const out = d.length > 2 ? d.slice(0, 2) + ':' + d.slice(2) : d
-  obj[key] = out
-  target.value = out
-}
-// 时间直接输入：失焦时规整成 HH:MM（容忍「2330」「9:5」「23：00」等）；空/非法 → 空串
-function normTime(v: string | null | undefined) {
-  if (!v) return ''
-  let s = String(v).replace(/[：]/g, ':').replace(/[^\d:]/g, '')
-  if (/^\d{3,4}$/.test(s)) s = s.slice(0, -2) + ':' + s.slice(-2)   // 2330 → 23:30
-  const m = s.match(/^(\d{1,2}):?(\d{0,2})$/)
-  if (!m) return ''
-  const h = Math.min(23, parseInt(m[1] || '0', 10))
-  const mm = Math.min(59, parseInt(m[2] || '0', 10))
-  return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
-}
-// 结束时间早于开始时间 → 视为次日（跨午夜）。HH:MM 已零填充，直接字符串比较即可
-function isNextDay(start: string | null | undefined, end: string | null | undefined) { return !!start && !!end && end < start }
 // 过去的日期（早于今天）不能加提醒——@once 到点早已过、worker 会判过期清掉，加了也白加
 function isPastDate(d: string | null | undefined) { return !!d && d < todayIso.value }
-// 默认时间段：下一个整点 → 再过一小时。如现在 22:50 → 23:00–00:00（次日）
-function defaultTimeRange() {
-  const now = new Date()
-  const p = (n: number) => String(n).padStart(2, '0')
-  const sh = (now.getHours() + 1) % 24
-  return { time: `${p(sh)}:00`, endTime: `${p((sh + 1) % 24)}:00` }
-}
-// 取消勾选「全天」时，若时间还是空的（比如从全天区新建 / 编辑一个原本全天的活动），补一个默认时间段
-function onToggleAllDay(obj: NewEventForm | EditingEvent) {
-  if (!obj.allDay && !obj.time) Object.assign(obj, defaultTimeRange())
-}
 const newEvent     = ref<NewEventForm>({ name: '', date: todayIso.value, ...defaultTimeRange(), description: '', allDay: false })
 const addBtnRef    = ref<HTMLElement | null>(null)
 const addFormRef   = ref<HTMLElement | null>(null)
@@ -2019,22 +1948,10 @@ function openEditForm(ev: Pick<CalItem, 'id' | 'name' | 'date' | 'time' | 'endTi
 }
 
 // ── 活动绑定的提醒（定时任务）：可加多个，每个用「提前量」下拉选；渠道按用户已绑（web + feishu/qq/wechat）勾选 ──
-// 加/编辑两个表单共用；提醒在「保存活动」时一并对账落地（新增建、删除的删、改渠道）。
-const LEAD_OPTIONS = [
-  { label: '活动开始时',  min: 0 },
-  { label: '提前 5 分钟', min: 5 },
-  { label: '提前 15 分钟', min: 15 },
-  { label: '提前 30 分钟', min: 30 },
-  { label: '提前 1 小时', min: 60 },
-  { label: '提前 2 小时', min: 120 },
-  { label: '提前 1 天',   min: 1440 },
-  { label: '提前 2 天',   min: 2880 },
-]
-const CHAN_LABEL: Record<string, string> = { web: 'web', feishu: '飞书', qq: 'QQ', wechat: '微信' }
-const imChannels = computed(() => authStore.user?.imChannels ?? [])   // 用户已绑的 IM 平台
-const reminders          = ref<Reminder[]>([])         // [{ id?, leadMin }]，可多个
-const reminderChannels   = ref<string[]>(['web'])    // 渠道（web + 已绑 IM），该活动的提醒共用
-const removedReminderIds = ref<number[]>([])         // 编辑里删掉的已存在提醒 id，保存时真删
+// 加/编辑两个表单共用；提醒在「保存活动」时一并对账落地（新增建、删除的删、改渠道）——
+// 逻辑本身抽到 useEventEditForm（笔记页的活动引用卡片弹窗也用它），这里只留这一份实例。
+const eventForm = useEventEditForm()
+const { reminders, reminderChannels, imChannels, addReminder, removeReminderAt, toggleReminderChannel, resetReminder, loadReminders, applyReminders } = eventForm
 
 // 提醒条数 / 渠道变化（弹窗变高）后重新夹住当前打开的弹窗，避免保存按钮顶出屏幕底部
 watch([() => reminders.value.length, reminderChannels], () => {
@@ -2044,17 +1961,6 @@ watch([() => reminders.value.length, reminderChannels], () => {
   })
 })
 
-function leadLabelOf(min: number) { return LEAD_OPTIONS.find(o => o.min === min)?.label || `提前 ${min} 分钟` }
-function toggleReminderChannel(ch: string) {
-  const set = new Set(reminderChannels.value)
-  set.has(ch) ? set.delete(ch) : set.add(ch)
-  if (set.size === 0) set.add(ch)   // 至少留一个
-  reminderChannels.value = [...set]
-}
-function addReminder() {
-  // 点一下就建一条提醒（默认提前 30 分钟），之后用它自己的下拉改时间
-  reminders.value.push({ leadMin: 30 })
-}
 const toastMsg = ref('')
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 function showToast(msg: string) {
@@ -2063,63 +1969,11 @@ function showToast(msg: string) {
   toastTimer = setTimeout(() => { toastMsg.value = '' }, 3200)
 }
 // 测试提醒渠道：往当前选的渠道发一条测试消息（不建任务，新建/编辑活动都能测）
-async function testReminderChannels() {
+async function testReminderChannels(name?: string) {
   try {
-    const name = (showEditForm.value ? editingEvent.value?.name : newEvent.value?.name) || '活动提醒'
-    const res = await scheduledTasksApi.testNotify({ channels: reminderChannels.value, name })
+    const res = await eventForm.testReminderChannels(name || '活动提醒')
     showToast(res?.msg || '已发送测试消息')
   } catch { showToast('测试失败，请稍后重试') }
-}
-function removeReminderAt(i: number) {
-  const r = reminders.value[i]
-  if (r?.id) removedReminderIds.value.push(r.id)
-  reminders.value.splice(i, 1)
-}
-function resetReminder() {
-  reminders.value = []
-  reminderChannels.value = ['web']
-  removedReminderIds.value = []
-}
-
-function _pad2(n: number) { return String(n).padStart(2, '0') }
-function _reminderAtIso(date: string, time: string | undefined, leadMin: number) {
-  const [h, mm] = (time || '09:00').split(':').map(Number)
-  const d = new Date(`${date}T00:00:00`)
-  d.setHours(h, mm - leadMin, 0, 0)   // 负分钟/跨天由 Date 自动回退
-  return `${d.getFullYear()}-${_pad2(d.getMonth()+1)}-${_pad2(d.getDate())}T${_pad2(d.getHours())}:${_pad2(d.getMinutes())}`
-}
-
-async function loadReminders(ev: Pick<CalItem, 'id' | 'date' | 'time'>) {
-  resetReminder()
-  if (typeof ev.id !== 'number') return   // 临时事件（还没存）：保持 reset 态
-  try {
-    const tasks = (await scheduledTasksApi.listForEvent(ev.id))?.tasks || []
-    if (!tasks.length) return
-    reminderChannels.value = (tasks[0].channels && tasks[0].channels.length) ? tasks[0].channels : ['web']
-    reminders.value = tasks.map((t: any) => {
-      let leadMin = 0
-      if ((t.cron || '').startsWith('@once:')) {
-        const raw = Math.round((+new Date(`${ev.date}T${ev.time || '09:00'}`) - +new Date(t.cron.slice(6))) / 60000)
-        leadMin = LEAD_OPTIONS.reduce((b, o) => Math.abs(o.min - raw) < Math.abs(b - raw) ? o.min : b, 0)
-      }
-      return { id: t.id, leadMin }
-    })
-  } catch { /* 保持 reset 态 */ }
-}
-
-// 保存活动后调用：对账该活动的提醒——删掉移除的、改已存在的渠道/时刻、建新增的
-async function applyReminders(eventId: number, name: string, date: string, time: string | undefined) {
-  try {
-    for (const id of removedReminderIds.value) await scheduledTasksApi.delete(id)
-    removedReminderIds.value = []
-    for (const r of reminders.value) {
-      const cron = `@once:${_reminderAtIso(date, time, r.leadMin)}`
-      const data = { name: `${name} 提醒`, payload: `提醒：${name}（${date}${time ? ' ' + time : ''}）`, cron, channels: reminderChannels.value }
-      if (r.id) await scheduledTasksApi.update(r.id, data)
-      else { const t = await scheduledTasksApi.create({ ...data, event_id: eventId }); r.id = t?.id ?? null }
-    }
-    liveStore.bump?.('scheduled_tasks')
-  } catch { /* 提醒失败不挡活动保存 */ }
 }
 
 async function saveEditEvent() {

@@ -1,27 +1,34 @@
-"""思维面板 API（P1：记录/便签）。
+"""思维面板 API（P1：记录/便签；P2：画布）。
 
-只做「记录」这一半：按 `captured_at` 排的时间流 + 便签增删改 + `[[` 对象引用补全。
-画布 / 语义关系类型 / 咕咕写入都是后面的阶段（见 docs/product/思维面板/实现方案.md）。
+记录是按 `captured_at` 排的时间流；画布只保存全局便签/对象节点的摆放状态，
+不拥有也不删除节点本体。关系当前只有无类型的 `related`（见实现方案）。
 
 两条不变量走 `app/core/mind.py`，路由里不要自己手写：
 - 更新便签用 `update_node_atomic`（原子 UPDATE + rowcount），不是「先读再比再写」；
 - 正文一变就得重算 `content_plain` / 清 `indexed_at`，这层由 `update_node_atomic` 兜底。
 """
 from datetime import datetime
-from app.core.tz import now_utc
 from typing import Optional
+
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.search import run_global_search
-from app.core.mind import content_hash, to_plain_text, update_node_atomic
+from app.core.mind import content_hash, to_plain_text, update_node_atomic, upsert_relation
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
+from app.core.tz import now_utc
 from app.db.session import get_db
-from app.models import MindNode, User
-from app.schemas import MindNoteCreate, MindNodeResponse, MindNoteUpdate, MindRefSuggestItem
+from app.models import CalendarEvent, File, MindCanvasItem, MindMap, MindNode, MindRelation, Project, User
+from app.schemas import (
+    MindCanvasCreate, MindCanvasItemCreate, MindCanvasItemResponse, MindCanvasItemUpdate,
+    MindCanvasNoteCreate, MindCanvasNoteUpdate,
+    MindCanvasResponse, MindCanvasUpdate, MindNodeResponse, MindNoteCreate, MindNoteUpdate,
+    MindRefNodeCreate, MindRefSuggestItem, MindRelationCreate, MindRelationResponse,
+)
 
 router = APIRouter(prefix="/mind", tags=["mind"])
 
@@ -34,6 +41,7 @@ def _to_resp(n: MindNode) -> MindNodeResponse:
         id=n.id, kind=n.kind, title=n.title, content_md=n.content_md, color=n.color,
         captured_at=n.captured_at, version=n.version,
         created_at=n.created_at, updated_at=n.updated_at,
+        deleted_at=n.deleted_at, ref_type=n.ref_type, ref_id=n.ref_id,
     )
 
 
@@ -156,3 +164,318 @@ async def ref_suggest(
                 type=g["type"], id=it["id"], label=it["title"], subtitle=it.get("subtitle"),
             ))
     return items[: limit * len(_REF_TYPES)]
+
+
+# ── P2：画布（节点全局，画布只保存展示状态）──────────────────────────────────
+
+def _load_data(raw: str) -> dict:
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _canvas_resp(canvas: MindMap) -> MindCanvasResponse:
+    return MindCanvasResponse(
+        id=canvas.id, title=canvas.title, project_id=canvas.project_id,
+        data=_load_data(canvas.data_json),
+        created_at=canvas.created_at, updated_at=canvas.updated_at,
+    )
+
+
+def _relation_resp(rel: MindRelation) -> MindRelationResponse:
+    return MindRelationResponse(
+        id=rel.id, src_node_id=rel.src_node_id, dst_node_id=rel.dst_node_id,
+        rel_type=rel.rel_type, origin=rel.origin, status=rel.status,
+        created_at=rel.created_at, updated_at=rel.updated_at,
+    )
+
+
+def _item_resp(item: MindCanvasItem, node: MindNode) -> MindCanvasItemResponse:
+    return MindCanvasItemResponse(
+        id=item.id, canvas_id=item.canvas_id, node_id=item.node_id,
+        x=item.x, y=item.y, w=item.w, h=item.h, z=item.z, collapsed=item.collapsed,
+        data=_load_data(item.data_json), node=_to_resp(node),
+        created_at=item.created_at, updated_at=item.updated_at,
+    )
+
+
+async def _get_canvas(db: AsyncSession, cid: int, user_id) -> MindMap:
+    canvas = await get_owned(db, MindMap, cid, user_id)
+    if canvas is None:
+        raise HTTPException(404, "画布不存在")
+    return canvas
+
+
+@router.get("/canvases", response_model=list[MindCanvasResponse])
+async def list_canvases(
+    project_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(MindMap).where(MindMap.user_id == current_user.id).order_by(MindMap.updated_at.desc())
+    if project_id is not None:
+        stmt = stmt.where(MindMap.project_id == project_id)
+    rows = (await db.execute(stmt)).scalars().all()
+    return [_canvas_resp(canvas) for canvas in rows]
+
+
+@router.post("/canvases", response_model=MindCanvasResponse, status_code=201)
+async def create_canvas(
+    body: MindCanvasCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    title = body.title.strip() or "未命名画布"
+    if body.project_id is not None and await get_owned(db, Project, body.project_id, current_user.id) is None:
+        raise HTTPException(404, "项目不存在")
+    canvas = MindMap(user_id=current_user.id, title=title, project_id=body.project_id)
+    db.add(canvas)
+    await db.commit()
+    await db.refresh(canvas)
+    return _canvas_resp(canvas)
+
+
+@router.patch("/canvases/{cid}", response_model=MindCanvasResponse)
+async def update_canvas(
+    cid: int,
+    body: MindCanvasUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    canvas = await _get_canvas(db, cid, current_user.id)
+    data = body.model_dump(exclude_unset=True, by_alias=False)
+    if "title" in data:
+        canvas.title = (data["title"] or "").strip() or "未命名画布"
+    if "data" in data:
+        canvas.data_json = json.dumps(data["data"], ensure_ascii=False)
+    await db.commit()
+    await db.refresh(canvas)
+    return _canvas_resp(canvas)
+
+
+@router.get("/canvases/{cid}/items", response_model=list[MindCanvasItemResponse])
+async def list_canvas_items(
+    cid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_canvas(db, cid, current_user.id)
+    rows = (await db.execute(
+        select(MindCanvasItem, MindNode)
+        .join(MindNode, MindNode.id == MindCanvasItem.node_id)
+        .where(MindCanvasItem.canvas_id == cid, MindCanvasItem.user_id == current_user.id)
+        .order_by(MindCanvasItem.z, MindCanvasItem.id)
+    )).all()
+    return [_item_resp(item, node) for item, node in rows]
+
+
+@router.post("/canvases/{cid}/items", response_model=MindCanvasItemResponse, status_code=201)
+async def add_canvas_item(
+    cid: int,
+    body: MindCanvasItemCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_canvas(db, cid, current_user.id)
+    node = await get_owned(db, MindNode, body.node_id, current_user.id)
+    if node is None or node.deleted_at is not None:
+        raise HTTPException(404, "节点不存在")
+
+    existing = await db.scalar(select(MindCanvasItem).where(
+        MindCanvasItem.canvas_id == cid, MindCanvasItem.node_id == node.id,
+    ))
+    if existing is not None:
+        return _item_resp(existing, node)
+
+    item = MindCanvasItem(
+        user_id=current_user.id, canvas_id=cid, node_id=node.id,
+        x=body.x, y=body.y, w=body.w, h=body.h, z=body.z, collapsed=body.collapsed,
+        data_json=json.dumps(body.data, ensure_ascii=False),
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    return _item_resp(item, node)
+
+
+@router.post("/canvases/{cid}/notes", response_model=MindCanvasItemResponse, status_code=201)
+async def create_canvas_note(
+    cid: int,
+    body: MindCanvasNoteCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """新建画布专属便签：它是独立节点，不会混进记录时间流。"""
+    await _get_canvas(db, cid, current_user.id)
+    plain = to_plain_text(body.content_md)
+    node = MindNode(
+        user_id=current_user.id, kind="canvas_note", title=body.title.strip() or "新便签",
+        content_md=body.content_md, content_plain=plain, color=body.color,
+        indexed_hash=content_hash(plain), indexed_at=None,
+    )
+    db.add(node)
+    await db.flush()  # MindCanvasItem 没有 node relationship，先拿到独立节点主键
+    item = MindCanvasItem(
+        user_id=current_user.id, canvas_id=cid, node_id=node.id,
+        x=body.x, y=body.y, w=body.w, h=body.h, z=body.z,
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(node)
+    await db.refresh(item)
+    return _item_resp(item, node)
+
+
+@router.patch("/nodes/{nid}", response_model=MindNodeResponse)
+async def update_canvas_note(
+    nid: int,
+    body: MindCanvasNoteUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    node = await get_owned(db, MindNode, nid, current_user.id)
+    if node is None or node.kind != "canvas_note" or node.deleted_at is not None:
+        raise HTTPException(404, "画布便签不存在")
+    data = body.model_dump(exclude_unset=True, by_alias=False)
+    client_version = data.pop("version")
+    if "content_md" in data:
+        data["content_plain"] = to_plain_text(data["content_md"])
+    if not data:
+        return _to_resp(node)
+    if not await update_node_atomic(db, nid, current_user.id, client_version, data):
+        await db.rollback()
+        raise HTTPException(409, "画布便签已被其他端修改，请刷新后重试")
+    await db.commit()
+    await db.refresh(node)
+    return _to_resp(node)
+
+
+@router.patch("/canvases/{cid}/items/{iid}", response_model=MindCanvasItemResponse)
+async def update_canvas_item(
+    cid: int,
+    iid: int,
+    body: MindCanvasItemUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_canvas(db, cid, current_user.id)
+    item = await get_owned(db, MindCanvasItem, iid, current_user.id)
+    if item is None or item.canvas_id != cid:
+        raise HTTPException(404, "画布贴纸不存在")
+    node = await get_owned(db, MindNode, item.node_id, current_user.id)
+    if node is None:
+        raise HTTPException(404, "节点不存在")
+
+    data = body.model_dump(exclude_unset=True, by_alias=False)
+    if "data" in data:
+        item.data_json = json.dumps(data.pop("data"), ensure_ascii=False)
+    for key, value in data.items():
+        setattr(item, key, value)
+    await db.commit()
+    await db.refresh(item)
+    return _item_resp(item, node)
+
+
+@router.delete("/canvases/{cid}/items/{iid}", status_code=204)
+async def remove_canvas_item(
+    cid: int,
+    iid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_canvas(db, cid, current_user.id)
+    item = await get_owned(db, MindCanvasItem, iid, current_user.id)
+    if item is None or item.canvas_id != cid:
+        raise HTTPException(404, "画布贴纸不存在")
+    await db.delete(item)  # 只删视图项，不删 MindNode 原文
+    await db.commit()
+
+
+@router.get("/canvases/{cid}/relations", response_model=list[MindRelationResponse])
+async def list_canvas_relations(
+    cid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_canvas(db, cid, current_user.id)
+    node_ids = select(MindCanvasItem.node_id).where(
+        MindCanvasItem.canvas_id == cid, MindCanvasItem.user_id == current_user.id,
+    )
+    rows = (await db.execute(
+        select(MindRelation).where(
+            MindRelation.user_id == current_user.id,
+            MindRelation.src_node_id.in_(node_ids),
+            MindRelation.dst_node_id.in_(node_ids),
+        ).order_by(MindRelation.id)
+    )).scalars().all()
+    return [_relation_resp(rel) for rel in rows]
+
+
+@router.post("/relations", response_model=MindRelationResponse, status_code=201)
+async def create_relation(
+    body: MindRelationCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    for nid in (body.src_node_id, body.dst_node_id):
+        if await get_owned(db, MindNode, nid, current_user.id) is None:
+            raise HTTPException(404, "节点不存在")
+    try:
+        relation = await upsert_relation(db, current_user.id, body.src_node_id, body.dst_node_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    await db.commit()
+    await db.refresh(relation)
+    return _relation_resp(relation)
+
+
+@router.delete("/relations/{rid}", status_code=204)
+async def delete_relation(
+    rid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    relation = await get_owned(db, MindRelation, rid, current_user.id)
+    if relation is None:
+        raise HTTPException(404, "关联不存在")
+    await db.delete(relation)
+    await db.commit()
+
+
+@router.post("/nodes/ref", response_model=MindNodeResponse, status_code=201)
+async def create_ref_node(
+    body: MindRefNodeCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """把既有对象接入全局图层；同一用户/对象永远复用同一 ref 节点。"""
+    targets = {
+        "project": (Project, "name"),
+        "file": (File, "display_name"),
+        "event": (CalendarEvent, "title"),
+    }
+    target = targets.get(body.ref_type)
+    if target is None:
+        raise HTTPException(422, "不支持的引用类型")
+    model, label_attr = target
+    entity = await get_owned(db, model, body.ref_id, current_user.id)
+    if entity is None:
+        raise HTTPException(404, "引用对象不存在")
+
+    node = await db.scalar(select(MindNode).where(
+        MindNode.user_id == current_user.id,
+        MindNode.kind == "ref",
+        MindNode.ref_type == body.ref_type,
+        MindNode.ref_id == body.ref_id,
+    ))
+    if node is None:
+        node = MindNode(
+            user_id=current_user.id, kind="ref", ref_type=body.ref_type, ref_id=body.ref_id,
+            title=getattr(entity, label_attr), content_md="", content_plain="",
+        )
+        db.add(node)
+        await db.commit()
+        await db.refresh(node)
+    return _to_resp(node)

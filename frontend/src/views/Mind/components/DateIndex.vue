@@ -108,19 +108,13 @@ function detentFrac(raw: number) {
   return lo + snapped
 }
 
-const selectedIdx = ref<number | null>(null)   // 上一次真正落定选中的日期，用来判断这次回弹是不是"换日期"
-
 watch(() => props.centerFrac, (p) => {
   if (dragging.value || animating.value || lockedIndex.value !== null) return
   currentFrac.value = p
-  selectedIdx.value = Math.round(p)
 })
 watch(() => props.groups, async () => {
   await nextTick()
-  if (!dragging.value && !animating.value && lockedIndex.value === null) {
-    currentFrac.value = props.centerFrac
-    selectedIdx.value = Math.round(props.centerFrac)
-  }
+  if (!dragging.value && !animating.value && lockedIndex.value === null) currentFrac.value = props.centerFrac
 }, { immediate: true })
 function onResize() {
   stripWidth.value = stripRef.value?.clientWidth ?? 0
@@ -274,7 +268,9 @@ function animateTo(idx: number) {
   let velocity = 0
   let last = performance.now()
   animating.value = true
-  switchingAnim.value = idx !== selectedIdx.value
+  // 回弹前这一格的文字是不是已经在显示了（比如拖进橡皮筋区域时边界日期已经常显）——
+  // 已经显示就不用再隐藏/淡入一遍，只有真的要切到一个原本没露出文字的日期才走隐藏再淡入。
+  switchingAnim.value = tickFocus(idx) < 0.9
   const frame = (now: number) => {
     if (run !== animationRun) return
     const dt = Math.min(1 / 30, Math.max(1 / 240, (now - last) / 1000))
@@ -294,7 +290,6 @@ function animateTo(idx: number) {
     animating.value = false
     switchingAnim.value = false
     lockedIndex.value = idx
-    selectedIdx.value = idx
     emit('scrub', idx)
     if (lockTimer) clearTimeout(lockTimer)
     lockTimer = setTimeout(() => { lockedIndex.value = null; lockTimer = null }, 520)

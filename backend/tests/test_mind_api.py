@@ -4,19 +4,25 @@
 路由函数直接调（同 test_global_search.py 的做法），不起 TestClient。
 """
 from __future__ import annotations
-from app.core.tz import now_utc
-
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import func, select
 
-from app.api.v1.mind import create_note, delete_note, list_notes, ref_suggest, update_note
+from app.api.v1.mind import (
+    add_canvas_item, create_canvas, create_note, create_ref_node, create_relation,
+    create_canvas_note, delete_note, list_canvas_items, list_canvas_relations, list_notes,
+    ref_suggest, remove_canvas_item, update_canvas_item, update_canvas_note, update_note,
+)
 from app.api.v1.search import run_global_search
 from app.core.mind import content_hash, to_plain_text
-from app.models import CalendarEvent, Client, File, MindNode, Project
-from app.schemas import MindNoteCreate, MindNoteUpdate
+from app.core.tz import now_utc
+from app.models import CalendarEvent, Client, File, MindCanvasItem, MindNode, Project
+from app.schemas import (
+    MindCanvasCreate, MindCanvasItemCreate, MindCanvasItemUpdate, MindCanvasNoteCreate,
+    MindCanvasNoteUpdate, MindNoteCreate, MindNoteUpdate, MindRefNodeCreate, MindRelationCreate,
+)
 
 
 async def _new_note(db, user, content="一条想法", **kw):
@@ -242,3 +248,103 @@ async def test_global_search_isolates_notes_by_user(db, user_a, user_b):
     await _new_note(db, user_b, content="别人的秘密便签")
     result = await run_global_search(db, user_a.id, "秘密", types=["note"])
     assert result["total"] == 0
+
+
+# ── P2 画布：节点全局，画布只存展示状态 ────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_canvas_item_keeps_note_global_and_duplicate_add_is_idempotent(db, user_a):
+    note = await _new_note(db, user_a, content="# 保留原文\n\n画布只是摆放")
+    canvas = await create_canvas(MindCanvasCreate(title="方案桌面"), current_user=user_a, db=db)
+
+    first = await add_canvas_item(
+        canvas.id, MindCanvasItemCreate(node_id=note.id, x=120, y=80), current_user=user_a, db=db,
+    )
+    duplicate = await add_canvas_item(
+        canvas.id, MindCanvasItemCreate(node_id=note.id, x=999, y=999), current_user=user_a, db=db,
+    )
+    assert duplicate.id == first.id
+    assert duplicate.x == 120 and duplicate.y == 80
+
+    moved = await update_canvas_item(
+        canvas.id, first.id, MindCanvasItemUpdate(x=260, y=180, z=3), current_user=user_a, db=db,
+    )
+    assert (moved.x, moved.y, moved.z) == (260, 180, 3)
+    assert (await _row(db, note.id)).content_md.startswith("# 保留原文")
+
+    await remove_canvas_item(canvas.id, first.id, current_user=user_a, db=db)
+    assert await db.scalar(select(func.count()).select_from(MindCanvasItem)) == 0
+    assert await _row(db, note.id) is not None  # 移出画布绝不删除原记录
+
+
+@pytest.mark.asyncio
+async def test_canvas_note_is_independent_from_record_timeline(db, user_a):
+    canvas = await create_canvas(MindCanvasCreate(title="独立便签"), current_user=user_a, db=db)
+    item = await create_canvas_note(
+        canvas.id, MindCanvasNoteCreate(title="画布想法", content_md="空间里的内容", x=80, y=120),
+        current_user=user_a, db=db,
+    )
+    assert item.node.kind == "canvas_note"
+    assert item.node.title == "画布想法"
+    assert await list_notes(limit=50, offset=0, current_user=user_a, db=db) == []
+
+    updated = await update_canvas_note(
+        item.node_id, MindCanvasNoteUpdate(title="改过的画布想法", content_md="新正文", version=1),
+        current_user=user_a, db=db,
+    )
+    assert (updated.title, updated.content_md, updated.version) == ("改过的画布想法", "新正文", 2)
+
+
+@pytest.mark.asyncio
+async def test_canvas_rejects_other_users_node_and_keeps_canvas_private(db, user_a, user_b):
+    canvas = await create_canvas(MindCanvasCreate(title="我的画布"), current_user=user_a, db=db)
+    foreign = await _new_note(db, user_b, content="别人的节点")
+    with pytest.raises(HTTPException) as e:
+        await add_canvas_item(
+            canvas.id, MindCanvasItemCreate(node_id=foreign.id), current_user=user_a, db=db,
+        )
+    assert e.value.status_code == 404
+
+    with pytest.raises(HTTPException) as e:
+        await list_canvas_items(canvas.id, current_user=user_b, db=db)
+    assert e.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_canvas_relations_only_list_visible_nodes_and_are_idempotent(db, user_a):
+    canvas = await create_canvas(MindCanvasCreate(title="关系"), current_user=user_a, db=db)
+    a = await _new_note(db, user_a, content="A")
+    b = await _new_note(db, user_a, content="B")
+    outside = await _new_note(db, user_a, content="不在画布上")
+    await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=a.id), current_user=user_a, db=db)
+    await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=b.id), current_user=user_a, db=db)
+
+    one = await create_relation(MindRelationCreate(src_node_id=a.id, dst_node_id=b.id), current_user=user_a, db=db)
+    same = await create_relation(MindRelationCreate(src_node_id=b.id, dst_node_id=a.id), current_user=user_a, db=db)
+    await create_relation(MindRelationCreate(src_node_id=a.id, dst_node_id=outside.id), current_user=user_a, db=db)
+    assert one.id == same.id
+
+    relations = await list_canvas_relations(canvas.id, current_user=user_a, db=db)
+    assert [relation.id for relation in relations] == [one.id]
+
+
+@pytest.mark.asyncio
+async def test_ref_node_reuses_one_proxy_and_checks_target_ownership(db, user_a, user_b):
+    project = Project(user_id=user_a.id, name="可贴项目")
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+
+    first = await create_ref_node(
+        MindRefNodeCreate(ref_type="project", ref_id=project.id), current_user=user_a, db=db,
+    )
+    same = await create_ref_node(
+        MindRefNodeCreate(ref_type="project", ref_id=project.id), current_user=user_a, db=db,
+    )
+    assert (first.id, first.ref_type, first.ref_id, first.title) == (same.id, "project", project.id, "可贴项目")
+
+    with pytest.raises(HTTPException) as e:
+        await create_ref_node(
+            MindRefNodeCreate(ref_type="project", ref_id=project.id), current_user=user_b, db=db,
+        )
+    assert e.value.status_code == 404

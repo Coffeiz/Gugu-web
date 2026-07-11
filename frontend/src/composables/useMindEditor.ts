@@ -44,6 +44,9 @@ const lowlight = createLowlight(all)
 /** 与后端 `app/core/mind.py` 的 REF_PATTERN 保持一致 */
 export const MIND_REF_RE = /\[\[([a-z_]+):(\d+)\|([^\]]*)\]\]/
 
+/** 引用 chip 的类型徽标文案，跟 NoteEditor.vue 补全下拉的 TYPE_LABEL 是同一套 */
+export const MIND_REF_TYPE_LABEL: Record<string, string> = { project: '项目', file: '文件', event: '活动' }
+
 /** TipTap 的 JSON 文档节点（只用到我们支持的这几种，不引 tiptap 的类型免得耦合） */
 export interface MindDocNode {
   type?: string
@@ -78,7 +81,7 @@ export const MindRef = Node.create({
       'data-ref-type': node.attrs.refType,
       'data-ref-id': String(node.attrs.refId),
       class: 'mind-ref',
-    }), node.attrs.label]
+    }), ['span', { class: 'mind-ref-type' }, MIND_REF_TYPE_LABEL[node.attrs.refType] ?? node.attrs.refType], node.attrs.label]
   },
 })
 
@@ -456,7 +459,7 @@ function inlineToHtml(text: string): string {
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) out.push(marksToHtml(text.slice(last, m.index)))
-    out.push(`<span class="mind-ref" data-ref-type="${m[1]}" data-ref-id="${m[2]}">${esc(m[3])}</span>`)
+    out.push(`<span class="mind-ref" data-ref-type="${m[1]}" data-ref-id="${m[2]}"><span class="mind-ref-type">${esc(MIND_REF_TYPE_LABEL[m[1]] ?? m[1])}</span>${esc(m[3])}</span>`)
     last = m.index + m[0].length
   }
   if (last < text.length) out.push(marksToHtml(text.slice(last)))
@@ -587,6 +590,20 @@ export function mdToPreviewHtml(md: string | null | undefined): string {
 export function combineTitleBody(title: string, body: string): string {
   const t = title.trim()
   return t ? `# ${t}\n${body}` : body
+}
+
+/** 读取便签首个非空行的标题块；画布/卡片等只读视图共用，避免各自按不同规则拆标题。 */
+export function splitMindTitleBody(markdown: string | null | undefined) {
+  const md = markdown || ''
+  const lines = md.split('\n')
+  const titleIndex = lines.findIndex(line => line.trim())
+  if (titleIndex < 0) return { titleRaw: '', body: '' }
+  const titleLine = lines[titleIndex].trim()
+  if (!/^#{1,6}\s+/.test(titleLine)) return { titleRaw: '', body: md }
+  const titleRaw = titleLine
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/\[\[[a-z_]+:\d+\|([^\]]*)\]\]/g, '$1')
+  return { titleRaw, body: lines.slice(titleIndex + 1).join('\n').replace(/^\n+/, '') }
 }
 
 /** 翻转正文里第 idx 个待办的勾选态，返回新 Markdown（找不到返回原文） */

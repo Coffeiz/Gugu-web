@@ -9,7 +9,10 @@
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { mindApi, type MindNote, type MindNoteCreate, type MindNoteUpdate } from '@/services/api'
+import {
+  mindApi, type MindCanvas, type MindCanvasItem, type MindCanvasNoteCreate, type MindNote, type MindNoteCreate,
+  type MindNoteUpdate, type MindRelation,
+} from '@/services/api'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 
 export class MindConflictError extends Error {
@@ -33,6 +36,12 @@ export const useMindStore = defineStore('mind', () => {
   const loaded  = ref(false)
   const filterQ = ref('')   // 胶囊条的便签筛选（客户端过滤已加载的便签）
   const jumpTarget = ref('')   // 顶部日历选中的日期：跨 index.vue/NotesView.vue 传递跳转意图
+  const canvases = ref<MindCanvas[]>([])
+  const canvasesLoaded = ref(false)
+  const canvasLoading = ref(false)
+  const activeCanvasId = ref<number | null>(null)
+  const canvasItems = ref<MindCanvasItem[]>([])
+  const canvasRelations = ref<MindRelation[]>([])
 
   /** 时间流：按 capturedAt 分组成「一天一组」，供 NoteTimeline 渲染；筛选词命中正文才留 */
   const timeline = computed(() => {
@@ -94,5 +103,111 @@ export const useMindStore = defineStore('mind', () => {
     notes.value = notes.value.filter(n => n.id !== id)
   }
 
-  return { notes, loading, loaded, filterQ, jumpTarget, timeline, fetchNotes, createNote, updateNote, deleteNote }
+  async function fetchCanvases() {
+    canvasLoading.value = true
+    try {
+      canvases.value = await mindApi.listCanvases()
+      canvasesLoaded.value = true
+    } finally {
+      canvasLoading.value = false
+    }
+  }
+
+  async function createCanvas(title = '未命名画布') {
+    const canvas = await mindApi.createCanvas({ title })
+    canvases.value = [canvas, ...canvases.value]
+    return canvas
+  }
+
+  async function renameCanvas(id: number, title: string) {
+    const updated = await mindApi.updateCanvas(id, { title })
+    const index = canvases.value.findIndex(canvas => canvas.id === id)
+    if (index !== -1) canvases.value[index] = updated
+    return updated
+  }
+
+  async function loadCanvas(id: number) {
+    activeCanvasId.value = id
+    const [items, relations] = await Promise.all([
+      mindApi.listCanvasItems(id),
+      mindApi.listCanvasRelations(id),
+    ])
+    if (activeCanvasId.value !== id) return
+    canvasItems.value = items
+    canvasRelations.value = relations
+  }
+
+  async function addNoteToCanvas(canvasId: number, note: MindNote, x: number, y: number) {
+    const item = await mindApi.addCanvasItem(canvasId, { nodeId: note.id, x, y, z: nextCanvasZ() })
+    const index = canvasItems.value.findIndex(current => current.id === item.id)
+    if (index === -1) canvasItems.value.push(item)
+    else canvasItems.value[index] = item
+    return item
+  }
+
+  async function addRefToCanvas(canvasId: number, refType: 'project' | 'file' | 'event', refId: number, x: number, y: number) {
+    const node = await mindApi.createRefNode(refType, refId)
+    const item = await mindApi.addCanvasItem(canvasId, { nodeId: node.id, x, y, z: nextCanvasZ() })
+    const index = canvasItems.value.findIndex(current => current.id === item.id)
+    if (index === -1) canvasItems.value.push(item)
+    else canvasItems.value[index] = item
+    return item
+  }
+
+  async function createCanvasNote(canvasId: number, data: MindCanvasNoteCreate) {
+    const item = await mindApi.createCanvasNote(canvasId, { ...data, z: nextCanvasZ() })
+    canvasItems.value.push(item)
+    return item
+  }
+
+  async function updateCanvasNote(nodeId: number, fields: { title?: string; contentMd?: string; color?: string | null }) {
+    const item = canvasItems.value.find(current => current.nodeId === nodeId)
+    if (!item) return
+    const updated = await mindApi.updateCanvasNote(nodeId, { ...fields, version: item.node.version })
+    item.node = updated
+    return updated
+  }
+
+  function nextCanvasZ() {
+    return canvasItems.value.reduce((top, item) => Math.max(top, item.z), 0) + 1
+  }
+
+  async function updateCanvasItem(itemId: number, fields: Partial<Pick<MindCanvasItem, 'x' | 'y' | 'w' | 'h' | 'z' | 'collapsed' | 'data'>>) {
+    const canvasId = activeCanvasId.value
+    const index = canvasItems.value.findIndex(item => item.id === itemId)
+    if (canvasId == null || index === -1) return
+    const before = canvasItems.value[index]
+    canvasItems.value[index] = { ...before, ...fields }
+    try {
+      const updated = await mindApi.updateCanvasItem(canvasId, itemId, fields)
+      const currentIndex = canvasItems.value.findIndex(item => item.id === itemId)
+      if (currentIndex !== -1) canvasItems.value[currentIndex] = updated
+    } catch (error) {
+      const currentIndex = canvasItems.value.findIndex(item => item.id === itemId)
+      if (currentIndex !== -1) canvasItems.value[currentIndex] = before
+      throw error
+    }
+  }
+
+  async function removeCanvasItem(itemId: number) {
+    const canvasId = activeCanvasId.value
+    if (canvasId == null) return
+    await mindApi.removeCanvasItem(canvasId, itemId)
+    canvasItems.value = canvasItems.value.filter(item => item.id !== itemId)
+    const nodeIds = new Set(canvasItems.value.map(item => item.nodeId))
+    canvasRelations.value = canvasRelations.value.filter(rel => nodeIds.has(rel.srcNodeId) && nodeIds.has(rel.dstNodeId))
+  }
+
+  async function createCanvasRelation(srcNodeId: number, dstNodeId: number) {
+    const relation = await mindApi.createRelation(srcNodeId, dstNodeId)
+    if (!canvasRelations.value.some(current => current.id === relation.id)) canvasRelations.value.push(relation)
+    return relation
+  }
+
+  return {
+    notes, loading, loaded, filterQ, jumpTarget, timeline, fetchNotes, createNote, updateNote, deleteNote,
+    canvases, canvasesLoaded, canvasLoading, activeCanvasId, canvasItems, canvasRelations,
+    fetchCanvases, createCanvas, renameCanvas, loadCanvas, addNoteToCanvas, updateCanvasItem,
+    addRefToCanvas, createCanvasNote, updateCanvasNote, removeCanvasItem, createCanvasRelation, nextCanvasZ,
+  }
 })

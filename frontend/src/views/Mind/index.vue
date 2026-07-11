@@ -9,11 +9,10 @@
           <PhNotePencil :size="16" weight="bold" />
           笔记
         </RouterLink>
-        <div class="mind-tab disabled" title="画布还在做（P2）">
+        <RouterLink to="/mind/canvases" class="mind-tab" :class="{ on: isCanvas }">
           <PhGraph :size="16" weight="bold" />
           画布
-          <span class="soon">咕了</span>
-        </div>
+        </RouterLink>
       </div>
       <div class="mind-bar-side right">
         <template v-if="isNotes">
@@ -54,6 +53,7 @@ import DatePicker from '@/components/common/DatePicker.vue'
 const route = useRoute()
 const store = useMindStore()
 const isNotes = computed(() => route.path.startsWith('/mind/notes'))
+const isCanvas = computed(() => route.path.startsWith('/mind/canvases'))
 const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不是 UTC）
 </script>
 
@@ -102,14 +102,8 @@ const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不
   text-decoration: none; cursor: pointer;
   transition: all 0.15s;
 }
-.mind-tab:hover:not(.disabled) { color: var(--color-primary); }
+.mind-tab:hover { color: var(--color-primary); }
 .mind-tab.on { background: #fff; color: #5a5e86; box-shadow: 0 1px 4px rgba(60,70,100,0.12); }
-.mind-tab.disabled { opacity: 0.5; cursor: not-allowed; }
-.soon {
-  font-size: 9px; font-weight: 700; line-height: 14px;
-  padding: 0 4px; border-radius: 4px;
-  background: rgba(123,127,178,0.18); color: var(--color-primary);
-}
 
 .mind-filter {
   display: flex; align-items: center; gap: 6px;
