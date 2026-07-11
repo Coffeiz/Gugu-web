@@ -91,10 +91,10 @@ const editReady = ref(false)
 // 支持），所以手动量出切换前后两个真实高度，冻结成具体 px 值再过渡，动画播完再放回 auto——
 // 不然预览态里后续「展开/收起」长内容、编辑态里继续打字撑高，都会被钉死在这个旧的 px 值上。
 const cardHeight = ref<string>('auto')
-const HEIGHT_ANIM_MS = 300
+const HEIGHT_ANIM_MS = 190   // 跟下面 .note-card 的 height 过渡时长保持一致
 // 退出编辑态时工具栏的模糊淡出：真实工具栏马上要被 v-if 摘掉，自己没法播 transition，
 // 所以摘之前先克隆一份浮在原地继续淡出，跟下面的收起动画同时开始（见 spawnToolbarGhost）。
-const TOOLBAR_FADE_MS = 180
+const TOOLBAR_FADE_MS = 110
 const titleInputRef = ref<HTMLInputElement | null>(null)
 // 点哪进编辑态光标就落在哪：'title' 落标题框，数字落正文对应行（跟 mdToPreviewHtml 的
 // data-line-unit 对应），null 就随 NoteEditor 自己的 autofocus:'end'（默认落文档末尾）。
@@ -299,7 +299,7 @@ function onBodyClick(e: MouseEvent) {
   min-width: 0; overflow: hidden;
   /* height 过渡是编辑/预览切换的展开收回动画（见 script 里的 cardHeight/HEIGHT_ANIM_MS），
      缓动跟 NoteEditor 抽屉动画同一条缓入缓出曲线，不是线性、也不带回弹。 */
-  transition: box-shadow 0.3s ease, background 0.25s ease-out, height 0.3s cubic-bezier(0.65,0,0.35,1);
+  transition: box-shadow 0.3s ease, background 0.25s ease-out, height 0.19s cubic-bezier(0.65,0,0.35,1);
 }
 /* 顶部高光层（task-card 同款）：hover 时整层提亮 */
 .note-card::after {
@@ -334,7 +334,7 @@ function onBodyClick(e: MouseEvent) {
    动作里工具栏看起来是单独浮出来的，不是跟标题/正文一起硬切出现。 */
 .note-card.editing :deep(.ne-toolbar) {
   opacity: 0; filter: blur(6px);
-  transition: opacity 0.22s ease-in-out, filter 0.22s ease-in-out;
+  transition: opacity 0.14s ease-in-out, filter 0.14s ease-in-out;
 }
 .note-card.editing:not(.nc-edit-pending) :deep(.ne-toolbar) {
   opacity: 1; filter: blur(0);
