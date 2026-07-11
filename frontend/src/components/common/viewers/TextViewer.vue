@@ -62,7 +62,7 @@ import { sanitizeHtml } from '@/utils/markdown'
 // vue-codemirror 会把这些包打进所有用户都要下载的主 chunk，不管有没有用过预览/编辑。跟这个
 // 文件里 hljs/marked 已有的做法一致，只在真正点了「编辑」且是代码类扩展名时才动态加载。
 const Codemirror = defineAsyncComponent(() => import('vue-codemirror').then(m => m.Codemirror))
-let CM = null   // 加载完后缓存 { EditorView, basicSetup }，见 ensureCm()
+let CM: any = null   // 加载完后缓存 { EditorView, basicSetup }，见 ensureCm()
 
 const MAX_BYTES = 500 * 1024
 
@@ -74,7 +74,7 @@ const props = defineProps({
   fileKey:  { type: [String, Number], default: null },
 })
 
-const tvScroll = ref(null)   // .tv-scroll 滚动容器
+const tvScroll = ref<HTMLElement | null>(null)   // .tv-scroll 滚动容器
 
 // 滚动位置持久化到 localStorage：实时刷新会把 blobUrl 置空、整组件销毁重建，内存变量留不住，
 // 只有 localStorage 跨重建（甚至跨整页刷新）还在。按 fileKey 存，渲染完读回。
@@ -104,7 +104,7 @@ const LANG_MAP = {
 }
 
 // highlight.js 按需注册的语言
-const LANG_LOADERS = {
+const LANG_LOADERS: Record<string, () => Promise<any>> = {
   javascript: () => import('highlight.js/lib/languages/javascript'),
   typescript: () => import('highlight.js/lib/languages/typescript'),
   css:        () => import('highlight.js/lib/languages/css'),
@@ -129,7 +129,7 @@ const EDITABLE_EXTS = new Set([
 // 没接的 java/go/rust/cpp/sql，编辑时能比只读预览多几种语言的高亮）。没在这张表里的扩展名
 // （csv/log/toml/ini/conf/env/tex）用 CodeMirror 编辑但不高亮，比之前退回纯 textarea 依然要好
 // （撤销栈、多光标、大文件不卡这些能力还在，只是没有配色）。
-const CM_LANG_LOADERS = {
+const CM_LANG_LOADERS: Record<string, () => Promise<any>> = {
   JS:   () => import('@codemirror/lang-javascript').then(m => m.javascript()),
   JSX:  () => import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true })),
   TS:   () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true })),
@@ -155,8 +155,8 @@ const CM_LANG_LOADERS = {
                 .then(([{ shell }, { StreamLanguage }]) => StreamLanguage.define(shell)),
 }
 
-const lines       = ref([])
-const mdHtml      = ref(null)
+const lines       = ref<string[]>([])
+const mdHtml      = ref<string | null>(null)
 const rawText     = ref('')   // 源文本（md 勾选任务框改写 [ ]↔[x]、md/txt 编辑模式的保存基于这个）
 // 真实文件（纯数字 id）才能存——聊天附件是 16 位 hex，PUT /files/{id}/content 存不了
 const isRealFile = computed(() => /^\d+$/.test(String(props.fileKey ?? '')))
@@ -174,18 +174,18 @@ const isCodeExt = computed(() => {
   return EDITABLE_EXTS.has(e) && e !== 'md' && e !== 'markdown' && e !== 'txt'
 })
 const loading     = ref(false)
-const error       = ref(null)
+const error       = ref<string | null>(null)
 const truncated   = ref(false)
 
 // ── 编辑模式：md/txt 的「预览+编辑」切换态，见 editable；代码类扩展名见 isCodeExt（没有切换态） ──
 const editing   = ref(false)
 const editText  = ref('')
-const editArea  = ref(null)   // md/txt 用的纯文本 textarea
+const editArea  = ref<HTMLTextAreaElement | null>(null)   // md/txt 用的纯文本 textarea
 const saving    = ref(false)
 const saveError = ref('')
 
-const cmView       = ref(null)   // 当前 CodeMirror 的 EditorView 实例（@ready 拿到）
-const cmExtensions = ref([])     // 基础扩展 + 按需加载的语言扩展，进编辑态前异步准备好
+const cmView       = ref<any>(null)   // 当前 CodeMirror 的 EditorView 实例（@ready 拿到；EditorView 动态导入，标 any）
+const cmExtensions = ref<any[]>([])     // 基础扩展 + 按需加载的语言扩展（CM6 扩展类型复杂，标 any）
 
 // vue-codemirror 的 <Codemirror> 组件内部本来就默认带了一份 basicSetup（含行号+代码折叠两个
 // gutter），跟组件本身无关、不受 :extensions 传参影响；不要自己再传 basicSetup（或任何行号类
@@ -201,7 +201,7 @@ async function ensureCm() {
   return CM
 }
 
-async function loadCmExtensions(ext) {
+async function loadCmExtensions(ext: string) {
   const cm = await ensureCm()
   const theme = cm.EditorView.theme({
     '&': { height: '100%', fontSize: 'var(--tv-font-size, 13px)' },
@@ -215,7 +215,7 @@ async function loadCmExtensions(ext) {
   const langExt = loader ? await loader() : null
   cmExtensions.value = [theme, cm.highlighting, ...(langExt ? [langExt] : [])]
 }
-function onCmReady({ view }) {
+function onCmReady({ view }: { view: any }) {
   cmView.value = view
 }
 
@@ -224,7 +224,7 @@ function onCmReady({ view }) {
 // 文件被切走（props.fileKey/editText 已经变成新文件的），排队中的这次还是会把旧文件的旧内容存
 // 到旧文件自己的 id 上，不会存错文件。没有保存中/已保存的 UI 提示；失败了只打 console，不打扰
 // 编辑——真要盯保存状态可以开 devtools 看。
-let autoSaveTimer = null
+let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 function scheduleAutoSave() {
   if (!isRealFile.value) return
@@ -233,12 +233,12 @@ function scheduleAutoSave() {
   const content   = editText.value
   autoSaveTimer = setTimeout(() => { autoSaveTimer = null; doAutoSave(targetKey, content) }, 800)
 }
-async function doAutoSave(targetKey, content) {
+async function doAutoSave(targetKey: string | number, content: string) {
   try {
     await filesApi.saveContent(Number(targetKey), content)
     rawText.value = content
   } catch (e) {
-    console.error('[TextViewer] 自动保存失败:', e)
+    console.error('[TextViewer] 自动保存失败:', e)  // eslint
   }
 }
 
@@ -248,13 +248,13 @@ async function doAutoSave(targetKey, content) {
 let scrollFrac  = 0     // md 用
 let pendingLine = 0     // txt 用
 
-function rowHeightOf(el) {
+function rowHeightOf(el: HTMLElement | null) {
   if (!el) return 0
   if (el.tagName === 'TEXTAREA') return parseFloat(getComputedStyle(el).lineHeight) || 0
   const tr = el.querySelector('tr')
   return tr ? tr.getBoundingClientRect().height : 0
 }
-function captureScroll(el) {
+function captureScroll(el: HTMLElement | null) {
   if (isMarkdownFile.value) {
     const max = el ? el.scrollHeight - el.clientHeight : 0
     scrollFrac = (el && max > 0) ? el.scrollTop / max : 0
@@ -263,7 +263,7 @@ function captureScroll(el) {
   const rh = rowHeightOf(el)
   pendingLine = (el && rh) ? Math.round(el.scrollTop / rh) : 0
 }
-function applyScroll(el) {
+function applyScroll(el: HTMLElement | null) {
   if (!el) return
   if (isMarkdownFile.value) {
     const max = el.scrollHeight - el.clientHeight
@@ -299,15 +299,15 @@ async function saveEdit() {
     await nextTick()
     applyScroll(tvScroll.value)
   } catch (e) {
-    saveError.value = '保存失败：' + (e.message || '未知错误')
+    saveError.value = '保存失败：' + ((e instanceof Error ? e.message : '') || '未知错误')
   } finally {
     saving.value = false
   }
 }
 
-let hljs = null
+let hljs: any = null   // highlight.js 句柄，动态导入
 
-async function ensureHljs(lang) {
+async function ensureHljs(lang: string) {
   if (!hljs) {
     const mod = await import('highlight.js/lib/core')
     hljs = mod.default
@@ -319,7 +319,7 @@ async function ensureHljs(lang) {
 }
 
 // ── HTML 转义 ────────────────────────────────────────
-function escHtml(s) {
+function escHtml(s: string) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
 }
 
@@ -334,9 +334,9 @@ const ICON_CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 // 谁后调用谁生效，一旦用户此前打开过一次文件预览，这里的渲染器就会全局顶替掉聊天的，之后聊天
 // 消息里的代码块复制按钮就会带着这里的 SVG 图标出现——但聊天的 CSS 没给这几个 class 定过尺寸，
 // 图标就会没有约束地放大。真实症状：GuguChat 里代码块偶尔冒出一个巨大的图标（devlog 2026-07-10）。
-let _tvMarked = null
+let _tvMarked: any = null   // 独立 marked 实例，动态导入
 
-async function renderMarkdown(text) {
+async function renderMarkdown(text: string) {
   // 先确保 hljs core 已加载，然后批量注册所有支持的语言
   if (!hljs) {
     const mod = await import('highlight.js/lib/core')
@@ -379,7 +379,7 @@ async function renderMarkdown(text) {
 }
 
 // ── 任务勾选框可交互：去掉 marked 默认的 disabled、按文档顺序标 data-task（仅 md + 真实文件）──
-function makeTasksInteractive(html) {
+function makeTasksInteractive(html: string) {
   if (!savable.value) return html
   let i = 0
   return html.replace(/<input\b[^>]*?type="checkbox"[^>]*?>/gi, (tag) =>
@@ -389,7 +389,7 @@ function makeTasksInteractive(html) {
 
 const _TASK_RE = /^(\s*(?:[-*+]|\d+\.)\s+)\[([ xX])\]/
 // 勾第 idx 个任务（文档顺序）：按勾选框的新状态翻转源里对应行 [ ]↔[x]、回存文件；存失败回滚视觉
-async function toggleTask(idx, cb) {
+async function toggleTask(idx: number, cb: HTMLInputElement) {
   const ls = rawText.value.split('\n')
   let n = -1, hit = -1
   for (let li = 0; li < ls.length; li++) {
@@ -408,10 +408,10 @@ async function toggleTask(idx, cb) {
 }
 
 // ── md 区域点击（事件委托）：任务勾选框 → 切换+存；复制按钮 → 复制代码 ──
-function onMdClick(e) {
-  const cb = e.target.closest('input[type="checkbox"][data-task]')
+function onMdClick(e: MouseEvent) {
+  const cb = (e.target as HTMLElement).closest('input[type="checkbox"][data-task]') as HTMLInputElement | null
   if (cb) { toggleTask(Number(cb.dataset.task), cb); return }   // 不 preventDefault：原生勾选即时显示
-  const btn = e.target.closest('.md-copy-btn')
+  const btn = (e.target as HTMLElement).closest('.md-copy-btn') as HTMLElement | null
   if (!btn) return
   const code = btn.closest('.md-pre')?.querySelector('code')?.textContent ?? ''
   navigator.clipboard.writeText(code).then(() => {
@@ -422,7 +422,7 @@ function onMdClick(e) {
 
 // 把一段文本渲染成 mdHtml / 纯文本行（首次加载、md/txt 编辑保存后重渲都走这条）。代码类扩展名
 // 不在这里处理——它们直接显示 CodeMirror，不需要 mdHtml/lines 这套只读渲染，见 isCodeExt。
-async function processText(text, ext) {
+async function processText(text: string, ext: string) {
   mdHtml.value  = null
   lines.value   = []
   rawText.value = text
@@ -458,7 +458,7 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
       await loadCmExtensions(ext)
     }
   } catch (e) {
-    error.value = '读取失败：' + e.message
+    error.value = '读取失败：' + (e instanceof Error ? e.message : e)
   } finally {
     loading.value = false
   }

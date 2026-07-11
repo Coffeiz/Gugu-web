@@ -55,6 +55,7 @@
     "src/components/common/UploadConflictDialog.vue",
     "src/components/common/AvatarCropper.vue",
     "src/components/common/SegBar.vue",
-    "src/components/common/NotificationBubble.vue"
+    "src/components/common/NotificationBubble.vue",
+    "src/components/common/viewers/TextViewer.vue"
   ]
 }
