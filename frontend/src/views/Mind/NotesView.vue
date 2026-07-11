@@ -9,7 +9,7 @@
     </div>
 
     <!-- 横置便签流：左侧是过往、右侧是后来的日期；列内竖滚翻当天 -->
-    <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel" @scroll="onScroll" @scrollend="onScrollEnd">
+    <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel" @scroll="onScroll">
       <div v-if="store.loading && !store.loaded" class="rec-loading">加载中…</div>
       <NoteTimeline
         v-else
@@ -133,6 +133,7 @@ function onScroll() {
 }
 
 function onSnap(date: string) {
+  suppressEditGuard = false   // 同 onScrub：用户自己操作滑杆，不该再当成"飞去编辑目标"处理
   activeDate.value = date
 }
 
@@ -140,18 +141,29 @@ let cardFollowRaf = 0
 let cardTargetLeft = 0
 let cardFollowVelocity = 0
 let cardFollowLast = 0
+// 弹簧真正停稳那一刻要调的回调（点两侧便签→居中后进编辑态就靠这个，不能靠原生 scrollend——
+// 这段位移是手动改 scrollLeft 画的，不是浏览器自己的 smooth scroll，scrollend 对着这种
+// "每帧手动挪一点"的滚动会在弹簧还没真正到位时就提前触发，编辑请求那时候拿 activeDate
+// 一比对不上目标日期，直接被判定"作废"——便签飞到中间了却死活不进编辑态，就是这个原因）。
+let cardFollowOnSettled: (() => void) | null = null
 
 function stopCardFollow() {
   if (cardFollowRaf) cancelAnimationFrame(cardFollowRaf)
   cardFollowRaf = 0
   cardFollowVelocity = 0
+  cardFollowOnSettled = null   // 弹簧被打断（比如用户自己划走了）就不该再触发那个回调
+  suppressEditGuard = false   // 同上：这趟"追向编辑目标"的位移被用户自己的操作打断了，
+                              // 居中日期改判定要立刻恢复正常，该退出编辑就退出
 }
 
-/** 让玻璃卡列带阻尼地追随目标位置；日期条本身仍直接跟手。 */
-function followCardsTo(left: number) {
+/** 让玻璃卡列带阻尼地追随目标位置；日期条本身仍直接跟手。onSettled 只在弹簧真正停稳时调
+ *  一次——连续调用 followCardsTo（拖拽/连续点击）时，只有最后一次传的回调会生效，之前
+ *  排队的会被静默顶掉（跟"编辑请求以最后一次点击为准"是同一个语义）。 */
+function followCardsTo(left: number, onSettled?: () => void) {
   const root = scrollRef.value
   if (!root) return
   cardTargetLeft = Math.max(0, Math.min(root.scrollWidth - root.clientWidth, left))
+  cardFollowOnSettled = onSettled ?? null
   if (cardFollowRaf) return
   let pos = root.scrollLeft
   cardFollowLast = performance.now()
@@ -172,6 +184,9 @@ function followCardsTo(left: number) {
     current.scrollLeft = cardTargetLeft
     cardFollowRaf = 0
     cardFollowVelocity = 0
+    const settled = cardFollowOnSettled
+    cardFollowOnSettled = null
+    settled?.()
   }
   cardFollowRaf = requestAnimationFrame(frame)
 }
@@ -180,6 +195,9 @@ function followCardsTo(left: number) {
 function onScrub(frac: number) {
   const root = scrollRef.value
   if (!root) return
+  // 用户自己在拖滑杆了——这次不管是不是正在"飞去匹配编辑目标"，都算被打断，恢复正常判定
+  // （followCardsTo 下面这行会顶掉原来的 onSettled，不会再触发那个回调把它设回 false）
+  suppressEditGuard = false
   const cols = colCenters()
   if (!cols.length) return
   const clamped = Math.max(0, Math.min(cols.length - 1, frac))
@@ -202,35 +220,38 @@ function jumpTo(date: string, animate = true) {
   }
 }
 
-// ── 编辑态强制绑定居中日期：点两侧列的便签先把那天滚到正中，稳定后才真正进编辑态；
-// 点的正好是居中列就直接进。「居中日期变了就退出编辑」统一交给下面 watch(activeDate)
-// 处理，这里不用重复关一次。──
-const pendingEditNote = ref<MindNote | null>(null)
+// ── 编辑态强制绑定居中日期：点两侧列的便签立刻进编辑态（点了却要等移动完才有反应，
+// 不符合直觉），同时把那天滚到正中——先进编辑、再移动过去，不是先移动、移动完才进编辑。
+// 「居中日期变了就退出编辑」统一交给下面 watch(activeDate) 处理。──
+const editingNoteDate = ref<string | null>(null)
+// 移动去追一个"已经在编辑"的目标日期期间，中途路过的日期不该被 watch(activeDate) 当成
+// "居中变了、该退出编辑"——不然编辑态还没等飞到目标列就被沿途经过的其它日期打断了。
+// 被用户自己的操作（拖滑杆/滚轮/resize）打断就在 stopCardFollow 里恢复正常判定。
+let suppressEditGuard = false
+
 function onEditRequest(n: MindNote) {
   const noteDate = n.capturedAt.slice(0, 10)
-  if (noteDate === activeDate.value) {
-    timelineRef.value?.confirmEdit(n)
-    return
-  }
+  editingNoteDate.value = noteDate
+  timelineRef.value?.confirmEdit(n)
+  if (noteDate === activeDate.value) return
   const root = scrollRef.value
   const col = root?.querySelector<HTMLElement>(`.tl-col[data-date="${noteDate}"]`)
   if (!root || !col) return
-  pendingEditNote.value = n
+  suppressEditGuard = true
   // 用 followCardsTo（滑杆拖动松手吸附的那套阻尼弹簧），不用 jumpTo 的浏览器原生
   // smooth scroll——原生那个太快、跟切换日期时的手感对不上，统一成同一种"阻尼速度"。
-  followCardsTo(col.offsetLeft + col.offsetWidth / 2 - contentCenter(root))
+  followCardsTo(col.offsetLeft + col.offsetWidth / 2 - contentCenter(root), () => {
+    suppressEditGuard = false
+  })
 }
-/** 滚动稳定（含阻尼动画播完）才可能触发进编辑态；期间用户又滚去了别处
- *  （activeDate 跟目标日期对不上）就当这次编辑请求作废，不静默把人拽回去。 */
-function onScrollEnd() {
-  const n = pendingEditNote.value
-  if (!n) return
-  pendingEditNote.value = null
-  if (n.capturedAt.slice(0, 10) === activeDate.value) timelineRef.value?.confirmEdit(n)
-}
-// 居中日期一变（滑杆拖动/滚轮/跳转…任何原因），正在编辑的便签就不再是"居中列"了，退出编辑态
-watch(activeDate, (cur, prev) => {
-  if (cur !== prev) timelineRef.value?.stopEditing()
+// 居中日期一变（滑杆拖动/滚轮/跳转…任何原因），只要跟正在编辑的便签所在日期对不上了
+// 就退出编辑态；suppressEditGuard 为真时是"正在飞去匹配已经打开的编辑目标"，沿途路过
+// 的日期不算数，不提前判定。
+watch(activeDate, (cur) => {
+  if (suppressEditGuard) return
+  if (cur === editingNoteDate.value) return
+  timelineRef.value?.stopEditing()
+  editingNoteDate.value = null
 })
 
 // ── 快速定位：日历弹层选任意日期（弹层自带"今天"快捷按钮，选中即是同一条路径）。
