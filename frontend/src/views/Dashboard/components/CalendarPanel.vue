@@ -101,12 +101,16 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { eventsApi } from '@/services/api'
 import { useProjectStore } from '@/stores/projects'
+import { useUiStore } from '@/stores/ui'
+import { useRouter } from 'vue-router'
 import DatePicker from '@/components/common/DatePicker.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { projectProgress } from '@/utils/projectProgress'
 
 
 const projectStore = useProjectStore()
+const uiStore = useUiStore()
+const router = useRouter()
 
 const today    = new Date()
 const year     = ref(today.getFullYear())
@@ -342,7 +346,12 @@ function prevMonth() {
 function nextMonth() {
   if (month.value === 11) { month.value = 0; year.value++ } else month.value++
 }
-function selectDay(d) { /* TODO */ }
+// 点某天 → 跳完整日历视图并定位到该日（含相邻月的灰格：跳到它所属的月份）
+function selectDay(d) {
+  if (!d?.iso) return
+  uiStore.pendingCalendarDate = d.iso
+  router.push('/calendar')
+}
 
 function openProject(e) {
   const pid = Number(String(e.id).replace(/^pr-/, ''))

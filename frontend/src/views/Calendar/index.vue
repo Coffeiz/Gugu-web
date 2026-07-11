@@ -1785,6 +1785,15 @@ watch(() => uiStore.pendingCalendarEvent, async (target) => {
   _flashCalendarEvent(target.id)
 }, { immediate: true })
 
+// 仪表盘小日历点某天跳过来：定位到该日所在月并选中该日（不高亮具体活动）。immediate 同上。
+watch(() => uiStore.pendingCalendarDate, (date) => {
+  if (!date) return
+  uiStore.pendingCalendarDate = null
+  const d = new Date(date + 'T00:00:00')
+  cursor.value = new Date(d.getFullYear(), d.getMonth(), 1)
+  selectedDate.value = date
+}, { immediate: true })
+
 // 从别的页面搜索跳转时，日历页刚挂载、fetchEvents() 还在飞网络请求，侧栏这时可能还没渲染出
 // 目标活动的 data-event-id——固定延时 150ms 一次性查大概率扑空（只跳对了月份/日期，没有高亮闪一下）。
 // 改成轮询，等数据到位、DOM 出现再闪，最多等 2s（10 次 × 200ms）。
