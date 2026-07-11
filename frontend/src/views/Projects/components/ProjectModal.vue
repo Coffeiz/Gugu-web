@@ -696,6 +696,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
+import { autoCompleteTodos, restoreTodos } from '@/utils/projectStages'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/services/api'
 import { thumbLoadedIds, clearThumbCache } from '@/composables/useThumbCache'
@@ -1521,17 +1522,9 @@ function setStage(key, idx) {
   if (oldIdx !== newIdx && oldIdx >= 0 && newIdx >= 0) {
     const stages = JSON.parse(JSON.stringify(localStages.value))
     if (newIdx > oldIdx) {
-      for (let i = oldIdx; i < newIdx; i++) {
-        stages[i].todos = (stages[i].todos ?? []).map(t =>
-          t.done ? t : { ...t, _savedDone: false, done: true, autoCompleted: true }
-        )
-      }
+      for (let i = oldIdx; i < newIdx; i++) stages[i].todos = autoCompleteTodos(stages[i].todos ?? [])
     } else {
-      for (let i = newIdx; i < stages.length; i++) {
-        stages[i].todos = (stages[i].todos ?? []).map(t =>
-          t.autoCompleted ? { ...t, done: t._savedDone ?? false, autoCompleted: false, _savedDone: undefined } : t
-        )
-      }
+      for (let i = newIdx; i < stages.length; i++) stages[i].todos = restoreTodos(stages[i].todos ?? [])
     }
     _syncingFromStore = true
     localStages.value = stages
