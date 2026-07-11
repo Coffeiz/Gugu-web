@@ -111,15 +111,19 @@ def _has_weird_tail(text: str) -> bool:
 def probe_leak_tail(text: str, where: str) -> None:
     if not text:
         return
-    if not (_has_weird_tail(text) or _LEAK_TAIL_RE.search(text) or _LEAK_MID_RE.search(text[-16:])):
+    # 新增：末尾有任何尾随空白（含普通 U+0020 空格）也记——现象与「尾随空格」强相关，
+    # 不管真身是字面 [e~[、非常规空白、还是普通空格被某处转成 [e~[，都能一次抓准。
+    trailing_ws = text != text.rstrip()
+    if not (trailing_ws or _has_weird_tail(text)
+            or _LEAK_TAIL_RE.search(text) or _LEAK_MID_RE.search(text[-16:])):
         return
     import logging
     import unicodedata
-    seg = text[-40:]
-    cats = [f"{c!r}:{unicodedata.category(c)}:U+{ord(c):04X}" for c in seg[-6:]]
+    seg = text[-24:]
+    cats = [f"{c!r}:{unicodedata.category(c)}:U+{ord(c):04X}" for c in seg[-8:]]
     logging.getLogger("agent.runner").warning(
-        "[leak-probe] where=%s tail=%r hex=%s lastchars=%s",
-        where, seg, seg.encode("utf-8", "surrogatepass").hex(), cats)
+        "[leak-probe] where=%s trailing_ws=%s tail=%r hex=%s lastchars=%s",
+        where, trailing_ws, seg, seg.encode("utf-8", "surrogatepass").hex(), cats)
 
 
 # ── 历史消息清洗（Anthropic / MiniMax）──────────────────────────────────────
