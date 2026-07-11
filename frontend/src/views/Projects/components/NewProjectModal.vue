@@ -216,6 +216,7 @@ import { useUiStore } from '@/stores/ui'
 import DateRangePicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { useStageTemplates } from '@/composables/useStageTemplates'
+import { nextZ } from '@/composables/windowz'
 import { usePreferencesStore } from '@/stores/preferences'
 import { onboardingProjectId } from '@/composables/useOnboarding'
 import { PhX, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour } from '@phosphor-icons/vue'
@@ -252,7 +253,7 @@ function openTplPanel() {
   const panelW = 240
   let left = rect.right - panelW
   if (left < 8) left = 8
-  tplPanelStyle.value = { position: 'fixed', top: rect.bottom + 4 + 'px', left: left + 'px', width: panelW + 'px', zIndex: 9999 }
+  tplPanelStyle.value = { position: 'fixed', top: rect.bottom + 4 + 'px', left: left + 'px', width: panelW + 'px', zIndex: nextZ() }
 }
 
 watch(tplOpen, async v => {
