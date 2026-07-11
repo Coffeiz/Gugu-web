@@ -45,12 +45,12 @@ const emit = defineEmits(['card-click', 'drop-project', 'add-project'])
 
 const isDragOver = ref(false)
 
-const colColors = { pending: '#d46b6b', active: '#c9943a' }
+const colColors: Record<string, string> = { pending: '#d46b6b', active: '#c9943a' }
 const colColor  = colColors[props.column.key] ?? '#9e9fc4'
 
-function onDrop(e) {
+function onDrop(e: DragEvent) {
   isDragOver.value = false
-  const projectId = Number(e.dataTransfer.getData('projectId'))
+  const projectId = Number(e.dataTransfer?.getData('projectId'))
   if (projectId) emit('drop-project', { projectId, targetStatus: props.column.key })
 }
 </script>

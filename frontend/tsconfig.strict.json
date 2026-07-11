@@ -81,6 +81,10 @@
     "src/views/Login.vue",
     "src/views/Register.vue",
     "src/views/ForgotPassword.vue",
-    "src/views/ResetPassword.vue"
+    "src/views/ResetPassword.vue",
+    "src/views/Projects/components/ProjectCard.vue",
+    "src/views/Projects/components/NewProjectModal.vue",
+    "src/views/Projects/components/DoneColumn.vue",
+    "src/views/Projects/components/KanbanColumn.vue"
   ]
 }

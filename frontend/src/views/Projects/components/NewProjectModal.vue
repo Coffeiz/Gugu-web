@@ -82,7 +82,7 @@
                           <!-- 名称区：普通 or 重命名输入 -->
                           <button v-if="renamingId !== t.id" class="tpl-apply" @click.stop="applyTpl(t)">
                             <span class="tpl-name">{{ t.name }}</span>
-                            <span class="tpl-stages-preview">{{ t.stages.map(s => s.label ?? s).join(' · ') }}</span>
+                            <span class="tpl-stages-preview">{{ t.stages.map((s: any) => s.label ?? s).join(' · ') }}</span>
                           </button>
                           <span v-else class="rename-sizer" @click.stop>
                             <span class="rename-ghost">{{ renameText || ' ' }}</span>
@@ -157,7 +157,7 @@
                     class="stage-input"
                     :placeholder="`阶段 ${i + 1}`"
                     @mousedown.stop
-                    :ref="el => { if (el) stageInputRefs[stage.origIdx] = el }"
+                    :ref="el => { if (el) stageInputRefs[stage.origIdx] = el as HTMLElement }"
                   />
                   <button class="del-btn" @click.stop="removeStage(stage.origIdx)" :disabled="form.stages.length <= 1">
                     <PhX :size="10" weight="bold" />
@@ -225,8 +225,8 @@ const emit  = defineEmits(['close'])
 
 const projectStore    = useProjectStore()
 const uiStore         = useUiStore()
-const stagesEditorRef = ref(null)
-const nameInputRef    = ref(null)
+const stagesEditorRef = ref<HTMLElement | null>(null)
+const nameInputRef    = ref<HTMLInputElement | null>(null)
 async function startNameEdit() {
   await nextTick()
   nameInputRef.value?.focus()
@@ -236,15 +236,15 @@ async function startNameEdit() {
 // ── 模板 ──
 const { templates, applyTemplate, addTemplate, removeTemplate, renameTemplate } = useStageTemplates()
 const tplOpen        = ref(false)
-const tplSelectorRef = ref(null)
-const tplPanelRef    = ref(null)
+const tplSelectorRef = ref<HTMLElement | null>(null)
+const tplPanelRef    = ref<HTMLElement | null>(null)
 const tplPanelStyle  = ref({})
 const savingTpl      = ref(false)
 const newTplName     = ref('')
-const tplNameInputRef = ref(null)
-const renamingId     = ref(null)
+const tplNameInputRef = ref<HTMLInputElement | null>(null)
+const renamingId     = ref<string | null>(null)
 const renameText     = ref('')
-const renameInputRef = ref(null)
+const renameInputRef = ref<HTMLInputElement[] | null>(null)
 
 function openTplPanel() {
   const rect = tplSelectorRef.value?.getBoundingClientRect()
@@ -259,24 +259,24 @@ watch(tplOpen, async v => {
   if (v) { openTplPanel(); await nextTick(); }
 })
 
-function applyTpl(t) {
+function applyTpl(t: any) {
   const stages = applyTemplate(t.id)
   if (!stages) return
   form.stages.splice(0, form.stages.length, ...stages)
-  stageKeys.value = stages.map((_, i) => `sk_tpl_${i}_${Date.now()}`)
+  stageKeys.value = stages.map((_: any, i: number) => `sk_tpl_${i}_${Date.now()}`)
   tplOpen.value = false
 }
 
 async function commitSave() {
   const stages = form.stages.filter(s => s.label.trim())
   if (!stages.length) return
-  if (addTemplate(newTplName.value, stages)) {
+  if (await addTemplate(newTplName.value, stages)) {
     savingTpl.value = false
     newTplName.value = ''
   }
 }
 
-function addNpTodo(origIdx) {
+function addNpTodo(origIdx: number) {
   const stage = form.stages[origIdx]
   if (!stage.todos) stage.todos = []
   stage.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
@@ -285,27 +285,27 @@ function addNpTodo(origIdx) {
     inputs[inputs.length - 1]?.focus()
   })
 }
-function removeNpTodo(origIdx, id) {
+function removeNpTodo(origIdx: number, id: string) {
   form.stages[origIdx].todos = (form.stages[origIdx].todos ?? []).filter(t => t.id !== id)
 }
 
 
-async function startRename(t) {
+async function startRename(t: any) {
   renamingId.value = t.id
   renameText.value = t.name
   await nextTick()
   renameInputRef.value?.[0]?.focus()
 }
 
-function commitRename(id) {
+function commitRename(id: string) {
   renameTemplate(id, renameText.value)
   renamingId.value = null
 }
 
-function onClickOutsideTpl(e) {
+function onClickOutsideTpl(e: MouseEvent) {
   if (!tplOpen.value) return
-  if (tplSelectorRef.value?.contains(e.target)) return
-  if (tplPanelRef.value?.contains(e.target)) return
+  if (tplSelectorRef.value?.contains(e.target as Node)) return
+  if (tplPanelRef.value?.contains(e.target as Node)) return
   tplOpen.value = false
   savingTpl.value = false
   renamingId.value = null
@@ -314,7 +314,7 @@ function onClickOutsideTpl(e) {
 onMounted(() => document.addEventListener('click', onClickOutsideTpl, true))
 onUnmounted(() => document.removeEventListener('click', onClickOutsideTpl, true))
 
-function toIso(d) {
+function toIso(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 function todayIso() { return toIso(new Date()) }
@@ -335,8 +335,10 @@ const colorPresets = [
 
 const prefsStore = usePreferencesStore()
 
-function getLastStages() {
-  const toObj = s => ({ label: typeof s === 'string' ? s : (s.label ?? ''), todos: [] })
+interface FormTodo { id: string; text: string; done: boolean }
+interface FormStage { label: string; todos: FormTodo[] }
+function getLastStages(): FormStage[] {
+  const toObj = (s: any): FormStage => ({ label: typeof s === 'string' ? s : (s.label ?? ''), todos: [] })
   if (prefsStore.lastStages.length) return prefsStore.lastStages.map(toObj)
   // 兜底复制「最近一个项目」的阶段——但**排除播种的教程项目**（它的阶段是教程，不该当新项目模板）
   const projects = projectStore.projects.filter(p => p.id !== onboardingProjectId.value)
@@ -399,14 +401,14 @@ watch(() => props.show, async (v) => {
   }
 })
 
-const stageInputRefs = {}
+const stageInputRefs: Record<number, HTMLElement> = {}
 async function addStage() {
   form.stages.push({ label: '', todos: [] })
   stageKeys.value.push(`sk${Date.now()}`)
   await nextTick()
   stageInputRefs[form.stages.length - 1]?.focus()
 }
-function removeStage(origIdx) {
+function removeStage(origIdx: number) {
   if (form.stages.length > 1) {
     form.stages.splice(origIdx, 1)
     stageKeys.value.splice(origIdx, 1)
@@ -416,7 +418,7 @@ function removeStage(origIdx) {
   }
 }
 
-function stageIdxFromY(y) {
+function stageIdxFromY(y: number) {
   if (!stagesEditorRef.value) return -1
   const nodes = stagesEditorRef.value.querySelectorAll('.stage-row')
   let best = -1, bestDist = Infinity
@@ -429,15 +431,15 @@ function stageIdxFromY(y) {
   return best
 }
 
-function startStageDrag(fromIdx, e) {
+function startStageDrag(fromIdx: number, e: MouseEvent) {
   const startX = e.clientX, startY = e.clientY
-  const el = e.currentTarget
+  const el = e.currentTarget as HTMLElement
   const rect = el.getBoundingClientRect()
   const grabOffsetX = e.clientX - rect.left
   const grabOffsetY = e.clientY - rect.top
   let activated = false
 
-  const mm = (ev) => {
+  const mm = (ev: MouseEvent) => {
     if (!activated) {
       const dx = ev.clientX - startX, dy = ev.clientY - startY
       if (Math.sqrt(dx * dx + dy * dy) < 4) return

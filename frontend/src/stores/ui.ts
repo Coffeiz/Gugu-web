@@ -36,7 +36,7 @@ export const useUiStore = defineStore('ui', () => {
   const openNewProject = ref(false)
   const newProjectInitStatus = ref(null)
   const sidebarCollapsed = ref(false)
-  const newProjectRange = ref(null)
+  const newProjectRange = ref<{ start: string; end: string } | null>(null)
   const calendarActiveRange = ref(null)
   const openProfile = ref(false)
   const pendingChatSession   = ref<unknown>(null)

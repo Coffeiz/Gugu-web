@@ -92,7 +92,7 @@
     <!-- 文件拖放 overlay -->
     <Transition name="drop-overlay">
       <div v-if="fileDragOver || fileUploading" class="drop-overlay"
-           :style="{ background: fileUploading ? null : overlayHintBg }">
+           :style="{ background: fileUploading ? undefined : overlayHintBg }">
         <div v-if="fileUploading" class="upload-progress-bg"
              :style="{ width: (fileUploadDone ? 100 : fileUploadPct) + '%', background: uploadFillBg }"></div>
         <div class="drop-content" :style="{ color: nameColor }">
@@ -165,7 +165,7 @@
 
 <script setup lang="ts">
 import { computed, ref, nextTick, onUnmounted, type PropType } from 'vue'
-import type { Project } from '@/types/project'
+import type { Project, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
@@ -181,7 +181,7 @@ const projectStore = useProjectStore()
 
 // 拖到哪一列就移到哪个状态：松手时据落点找列的 data-col-status（源卡此刻 display:none、克隆体 pointer-events:none，
 // elementFromPoint 命中的就是底下真实的列）。同列不动 → 不触发 moveProject 的 API。
-function dispatchDrop({ x, y }) {
+function dispatchDrop({ x, y }: { x: number; y: number }) {
   const el = document.elementFromPoint(x, y)
   const col = el && el.closest && el.closest('[data-col-status]')
   if (!col) return
@@ -191,13 +191,13 @@ function dispatchDrop({ x, y }) {
 
 // pointer 驱动拖拽（替代原生 HTML5 drag）：先攒位移，越过阈值才真正开拖——否则当成点击开项目。
 // 内部控件（星级 / 阶段 / 进度条）自己处理点击，不在这里起拖。
-function onPointerDown(e) {
+function onPointerDown(e: PointerEvent) {
   if (e.pointerType === 'mouse' && e.button !== 0) return
-  if (e.target.closest('.stars, .proj-stage, .seg-bar-wrap')) return
-  const card = e.currentTarget
+  if ((e.target as HTMLElement).closest('.stars, .proj-stage, .seg-bar-wrap')) return
+  const card = e.currentTarget as HTMLElement
   const sx = e.clientX, sy = e.clientY
   let started = false
-  const onMove = (ev) => {
+  const onMove = (ev: PointerEvent) => {
     if (started || Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return
     started = true
     teardown()
@@ -248,8 +248,8 @@ const curDoneCount = computed(() => currentTodos.value.filter(t => t.done).lengt
 
 const stagePopOpen  = ref(false)
 const stagePopStyle = ref({})
-const stagePopRef   = ref(null)
-const stageRef      = ref(null)
+const stagePopRef   = ref<HTMLElement | null>(null)
+const stageRef      = ref<HTMLElement | null>(null)
 
 function openStagePop() {
   if (stagePopOpen.value) { closeStagePop(); return }
@@ -277,29 +277,29 @@ function closeStagePop() {
   document.removeEventListener('keydown', onKey)
   window.removeEventListener('scroll', closeStagePop, true)
 }
-function onDocDown(e) {
-  if (stagePopRef.value && !stagePopRef.value.contains(e.target) &&
-      stageRef.value && !stageRef.value.contains(e.target)) closeStagePop()
+function onDocDown(e: MouseEvent) {
+  if (stagePopRef.value && !stagePopRef.value.contains(e.target as Node) &&
+      stageRef.value && !stageRef.value.contains(e.target as Node)) closeStagePop()
 }
-function onKey(e) { if (e.key === 'Escape') closeStagePop() }
+function onKey(e: KeyboardEvent) { if (e.key === 'Escape') closeStagePop() }
 
 function persistTodos() { projectStore.updateStages(props.project.id, props.project.stages) }
 
 // 待办拖拽：拖名字行重排（当前阶段内）；编辑态不可拖。dragenter 实时 splice + TransitionGroup 让位，dragend 落库
-const tpDrag = ref(null)         // 拖动中实时 index
-const editingTp = ref(null)
-function startEditTp(id) {
+const tpDrag = ref<number | null>(null)         // 拖动中实时 index
+const editingTp = ref<string | null>(null)
+function startEditTp(id: string) {
   editingTp.value = id
   nextTick(() => document.querySelector<HTMLElement>(`[data-tpid="${id}"]`)?.focus())
 }
-function tpDragStart(i) { tpDrag.value = i }
+function tpDragStart(i: number) { tpDrag.value = i }
 // dragover + 中线判断：指针越过目标待办中线才换位，避免来回横跳
-function tpDragOver(i, e) {
+function tpDragOver(i: number, e: MouseEvent) {
   const from = tpDrag.value
   if (from == null) return
   const arr = currentStage.value?.todos
   if (!arr) return
-  const r = e.currentTarget.getBoundingClientRect()
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const after = (e.clientY - r.top) > r.height / 2
   let idx = after ? i + 1 : i
   if (from < idx) idx--
@@ -312,7 +312,7 @@ function tpDragOver(i, e) {
 function tpDragEnd() {
   if (tpDrag.value != null) { tpDrag.value = null; persistTodos() }
 }
-function toggleTodo(t) {
+function toggleTodo(t: ProjectTodo) {
   t.done = !t.done; t.autoCompleted = false
   // 勾完当前阶段最后一个待办 → 自动进入下一阶段（与项目编辑卡一致；空阶段 / 最后阶段不动）
   const stages = props.project.stages
@@ -331,11 +331,11 @@ function addTodo() {
   s.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
   persistTodos()
   nextTick(() => {
-    const inputs = stagePopRef.value?.querySelectorAll('.tp-input')
+    const inputs = stagePopRef.value?.querySelectorAll<HTMLElement>('.tp-input')
     inputs?.[inputs.length - 1]?.focus()
   })
 }
-function removeTodo(id) {
+function removeTodo(id: string) {
   const s = currentStage.value; if (!s) return
   s.todos = (s.todos ?? []).filter(t => t.id !== id)
   persistTodos()
@@ -363,9 +363,9 @@ const daysLeft  = computed(() => {
   const dl    = new Date(props.project.deadline + 'T00:00:00')
   return Math.ceil((dl.getTime() - today.getTime()) / 86400000)
 })
-const isUrgent = computed(() => props.project.status !== 'done' && daysLeft.value <= 3)
+const isUrgent = computed(() => props.project.status !== 'done' && (daysLeft.value ?? Infinity) <= 3)
 const thisYear = new Date().getFullYear()
-function fmtDate(iso) {
+function fmtDate(iso: string) {
   if (!iso) return ''
   const d = new Date(iso + 'T00:00:00')
   const mm = `${d.getMonth()+1}/${d.getDate()}`
@@ -374,6 +374,7 @@ function fmtDate(iso) {
 const deadlineLabel = computed(() => {
   if (!props.project.deadline) return '—'
   const d = daysLeft.value
+  if (d == null) return '—'
   if (d < 0) {
     if (props.project.status !== 'done') return `逾期 ${-d} 天`
     return fmtDate(props.project.deadline)
@@ -385,8 +386,8 @@ const deadlineLabel = computed(() => {
 })
 
 // ── 推进状态列 ────────────────────────────────────────────
-const STATUS_NEXT  = { pending: 'active', active: 'done' }
-const STATUS_LABEL = { pending: '移至进行中', active: '标记完成' }
+const STATUS_NEXT: Record<string, string>  = { pending: 'active', active: 'done' }
+const STATUS_LABEL: Record<string, string> = { pending: '移至进行中', active: '标记完成' }
 const advanceLabel = computed(() => STATUS_LABEL[props.project.status] ?? '')
 
 async function advance() {
@@ -396,11 +397,11 @@ async function advance() {
 
 // ── 星级优先级 ────────────────────────────────────────────
 // 1=低, 2=中, 3=高；null=无
-const PRIO_MAP    = { low: 1, medium: 2, high: 3 }
-const PRIO_LABELS = { 1: '低优先级', 2: '中优先级', 3: '高优先级' }
+const PRIO_MAP: Record<string, number>    = { low: 1, medium: 2, high: 3 }
+const PRIO_LABELS: Record<number, string> = { 1: '低优先级', 2: '中优先级', 3: '高优先级' }
 const PRIO_KEYS   = [null, 'low', 'medium', 'high']
 
-const prioValue = computed(() => PRIO_MAP[props.project.priority] ?? 0)
+const prioValue = computed(() => props.project.priority ? (PRIO_MAP[props.project.priority] ?? 0) : 0)
 
 const starColor = computed(() => {
   if (prioValue.value === 3) return '#c45050'
@@ -415,23 +416,23 @@ const fileUploadPct  = ref(0)
 const fileUploadDone = ref(false)
 let _dragEnterCount  = 0   // 处理子元素 dragleave 抖动
 
-function _isFileDrag(e) { return e.dataTransfer?.types?.includes('Files') }
+function _isFileDrag(e: DragEvent) { return e.dataTransfer?.types?.includes('Files') }
 
-function onFileDragEnter(e) {
+function onFileDragEnter(e: DragEvent) {
   if (!_isFileDrag(e)) return
   _dragEnterCount++
   fileDragOver.value = true
 }
-function onFileDragOver(e) {
+function onFileDragOver(e: DragEvent) {
   if (!_isFileDrag(e)) return
-  e.dataTransfer.dropEffect = 'copy'
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
 }
-function onFileDragLeave(e) {
+function onFileDragLeave(e: DragEvent) {
   if (!_isFileDrag(e)) return
   _dragEnterCount--
   if (_dragEnterCount <= 0) { _dragEnterCount = 0; fileDragOver.value = false }
 }
-async function onFileDrop(e) {
+async function onFileDrop(e: DragEvent) {
   _dragEnterCount = 0; fileDragOver.value = false
   const files = [...(e.dataTransfer?.files ?? [])]
   if (!files.length) return
@@ -444,7 +445,7 @@ async function onFileDrop(e) {
         mime_type: f.type || 'application/octet-stream',
         space: 'project', project_id: props.project.id, folder_id: null, stage_name: '',
       })
-      const onPct = (pct) => { fileUploadPct.value = Math.round(((i + pct) / files.length) * 100) }
+      const onPct = (pct: number) => { fileUploadPct.value = Math.round(((i + pct) / files.length) * 100) }
       let uploaded
       if (presign.mode === 'oss') {
         await uploadDirectWithProgress(presign.upload_url, f, onPct)
@@ -466,11 +467,11 @@ async function onFileDrop(e) {
     setTimeout(() => { fileUploading.value = false; fileUploadDone.value = false }, 1200)
   } catch (err) {
     fileUploading.value = false
-    alert('上传失败：' + (err?.message ?? ''))
+    alert('上传失败：' + (err instanceof Error ? err.message : ''))
   }
 }
 
-async function setPriority(n) {
+async function setPriority(n: number) {
   // 再次点击同一级别则取消
   const next = prioValue.value === n ? null : PRIO_KEYS[n]
   await projectStore.updateProject(props.project.id, { priority: next })

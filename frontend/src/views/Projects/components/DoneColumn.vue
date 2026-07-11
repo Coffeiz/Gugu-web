@@ -126,10 +126,10 @@ const props = defineProps({
 const emit = defineEmits(['card-click', 'drop-project', 'open-archived'])
 
 const isDragOver  = ref(false)
-const openYears   = ref(new Set())
-const openMonths  = ref(new Set())
+const openYears   = ref(new Set<string>())
+const openMonths  = ref(new Set<string>())
 
-function dateOf(p) {
+function dateOf(p: Project) {
   const src = p.startDate || p.deadline || p.doneAt || null
   if (!src) return null
   return new Date(src.length === 10 ? src + 'T00:00:00' : src)
@@ -183,20 +183,20 @@ onMounted(() => {
   openMonths.value = new Set([y + m])
 })
 
-function toggleYear(y) {
+function toggleYear(y: string) {
   const next = new Set(openYears.value)
   next.has(y) ? next.delete(y) : next.add(y)
   openYears.value = next
 }
-function toggleMonth(key) {
+function toggleMonth(key: string) {
   const next = new Set(openMonths.value)
   next.has(key) ? next.delete(key) : next.add(key)
   openMonths.value = next
 }
 
-function onDrop(e) {
+function onDrop(e: DragEvent) {
   isDragOver.value = false
-  const id = Number(e.dataTransfer.getData('projectId'))
+  const id = Number(e.dataTransfer?.getData('projectId'))
   if (id) emit('drop-project', { projectId: id, targetStatus: 'done' })
 }
 </script>
