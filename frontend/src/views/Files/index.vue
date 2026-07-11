@@ -687,6 +687,7 @@ import { useUiStore } from '@/stores/ui'
 import { cardBlobReadyIds, clearThumbCache } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt, fileExtCategory, fileIconColor, fileListIcon } from '@/utils/fileTypes'
+import { fmtBytes } from '@/utils/fileSize'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
@@ -716,13 +717,6 @@ async function fetchStorage() {
     storageInfo.limit  = data.limit_bytes ?? null
     storageInfo.loaded = true
   } catch {}
-}
-function fmtBytes(n) {
-  if (!n) return '0 B'
-  if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB'
-  if (n >= 1048576)    return (n / 1048576).toFixed(1) + ' MB'
-  if (n >= 1024)       return (n / 1024).toFixed(0) + ' KB'
-  return n + ' B'
 }
 const storageFillStyle = computed(() => {
   if (!storageInfo.limit) return { width: '0%' }
