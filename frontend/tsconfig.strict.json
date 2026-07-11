@@ -60,6 +60,12 @@
     "src/components/common/FilePreviewModal.vue",
     "src/components/common/FloatPreviewWindow.vue",
     "src/components/common/ProfileModal.vue",
-    "src/components/common/BaseModal.vue"
+    "src/components/common/BaseModal.vue",
+    "src/components/AdminSelect.vue",
+    "src/components/AdminDatePicker.vue",
+    "src/layouts/AdminLayout.vue",
+    "src/views/Admin/Notifications/index.vue",
+    "src/views/Admin/Perception/index.vue",
+    "src/views/Admin/SystemLogs/index.vue"
   ]
 }

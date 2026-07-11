@@ -83,11 +83,11 @@ import { PhArrowClockwise } from '@phosphor-icons/vue'
 
 const adminStore = useAdminStore()
 
-const items       = ref([])
+const items       = ref<any[]>([])
 const loading     = ref(false)
 const refreshing  = ref(false)  // 仅手动点击刷新时为 true
 const filterLevel = ref('')
-const expanded    = ref(null)
+const expanded    = ref<number | null>(null)
 const page        = ref(1)
 const pageSize    = 50
 
@@ -127,12 +127,12 @@ const paginated = computed(() => {
   return filtered.value.slice(start, start + pageSize)
 })
 
-function toggle(id) {
+function toggle(id: number) {
   expanded.value = expanded.value === id ? null : id
 }
 
-const copiedId = ref(null)
-async function copyLog(row) {
+const copiedId = ref<number | null>(null)
+async function copyLog(row: any) {
   const text = [
     `[${fmtTime(row.created_at)}] ${row.level} ${row.module}`,
     row.message,
@@ -151,11 +151,11 @@ async function copyLog(row) {
   setTimeout(() => { if (copiedId.value === row.id) copiedId.value = null }, 1500)
 }
 
-function fmtTime(iso) {
+function fmtTime(iso: string) {
   return fmtLocalDateTime(iso, { seconds: true })   // 按查看者浏览器 tz（不是字符串截取的 UTC）
 }
 
-function firstLine(msg) {
+function firstLine(msg: string) {
   return msg ? msg.split('\n')[0] : ''
 }
 

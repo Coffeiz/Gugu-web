@@ -125,18 +125,18 @@ const BUBBLE_TTLS = [
   { value: 72,   label: '3 天' },
   { value: 168,  label: '7 天' },
 ]
-const form = reactive({ title: '', content: '', channel: 'both', bubbleTtl: 24 })
+const form = reactive({ title: '', content: '', channel: 'both', bubbleTtl: 24 as number | null })
 const sending = ref(false)
 const err = ref('')
-const history = ref([])
+const history = ref<any[]>([])
 const loadingHistory = ref(false)
 const refreshingHistory = ref(false)
 const toastMsg = ref('')
-let toastTimer = null
+let toastTimer: ReturnType<typeof setTimeout> | null = null
 
-function showToast(msg) {
+function showToast(msg: string) {
   toastMsg.value = msg
-  clearTimeout(toastTimer)
+  clearTimeout(toastTimer ?? undefined)
   toastTimer = setTimeout(() => { toastMsg.value = '' }, 2800)
 }
 
@@ -161,7 +161,7 @@ async function send() {
     form.content = ''
     await loadHistory()
   } catch (e) {
-    err.value = '发送失败：' + e.message
+    err.value = '发送失败：' + (e instanceof Error ? e.message : e)
   } finally {
     sending.value = false
   }
@@ -179,14 +179,14 @@ async function loadHistory() {
   finally { loadingHistory.value = false }
 }
 
-async function deleteRecord(id) {
+async function deleteRecord(id: number) {
   try {
     await admin.authFetch(`/api/v1/admin/notifications/history/${id}`, { method: 'DELETE' })
     history.value = history.value.filter(n => n.id !== id)
   } catch {}
 }
 
-function fmtTime(iso) {
+function fmtTime(iso: string) {
   try {
     const d = new Date(iso)
     return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`

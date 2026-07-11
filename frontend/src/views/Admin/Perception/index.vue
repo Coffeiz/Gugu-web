@@ -73,7 +73,7 @@
           <div class="card-val">{{ pct(data.perception_misperc_rate) }}</div>
           <div class="card-lbl">感知误判率（仅误读·宏平均）</div>
         </div>
-        <div class="card" :class="{ 'card-active': data.avg_ambiguity > ambigHi }">
+        <div class="card" :class="{ 'card-active': (data.avg_ambiguity ?? 0) > ambigHi }">
           <div class="card-icon ic-amber"><PhBrain :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.avg_ambiguity ?? '—' }}</div>
           <div class="card-lbl">平均歧义度 · 情绪 {{ data.avg_emo_strength ?? '—' }}</div>
@@ -203,9 +203,9 @@ function resetThresholds() {
 
 const intents = computed(() => data.value.intent_distribution || [])
 
-const misread = ref([])
+const misread = ref<any[]>([])
 const dling = ref(false)
-const temps = ref([])
+const temps = ref<any[]>([])
 const excludeDev = ref(false)
 
 async function load() {
@@ -225,17 +225,17 @@ async function load() {
     data.value = await res.json()
     loaded.value = true
     err.value = ''
-  } catch (e) { err.value = e.message } finally { loading.value = false }
+  } catch (e) { err.value = e instanceof Error ? e.message : '加载失败' } finally { loading.value = false }
 }
-function setRange(h) { hours.value = h; load() }
+function setRange(h: number) { hours.value = h; load() }
 
-function pct(v) { return v == null ? '—' : (v * 100).toFixed(0) + '%' }
+function pct(v: number | null | undefined) { return v == null ? '—' : (v * 100).toFixed(0) + '%' }
 // 标红线 = 当前 rateHiPct；标黄 = 其 0.6 倍（随面板阈值联动）
-function rateClass(v) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return v != null && v > hi ? 'bad' : (v != null && v > mid ? 'warn' : '') }
-function rateCard(v) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return v != null && v > hi ? 'card-bad' : (v != null && v > mid ? 'card-active' : '') }
+function rateClass(v: number | null | undefined) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return v != null && v > hi ? 'bad' : (v != null && v > mid ? 'warn' : '') }
+function rateCard(v: number | null | undefined) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return v != null && v > hi ? 'card-bad' : (v != null && v > mid ? 'card-active' : '') }
 // 纠错构成配色：感知误读=红（该优化）、数据/执行错=琥珀（归数据/工具）、未判=灰
-function kindCls(k) { return k === '感知误读' ? 'kc-bad' : (k === '数据或执行错' ? 'kc-warn' : 'kc-dim') }
-function fbCls(v) {
+function kindCls(k: string) { return k === '感知误读' ? 'kc-bad' : (k === '数据或执行错' ? 'kc-warn' : 'kc-dim') }
+function fbCls(v: any) {
   if (['确认夸赞', '顺着聊', '主动分享'].includes(v)) return 'kc-good'
   if (['改写重问', '无视跳开'].includes(v)) return 'kc-bad'
   return 'kc-dim'
@@ -282,7 +282,7 @@ async function downloadMisread() {
     URL.revokeObjectURL(url)
   } catch (e) { /* 忽略 */ } finally { dling.value = false }
 }
-function fmtTs(ts) {
+function fmtTs(ts: number) {
   if (!ts) return '—'
   const d = new Date(ts * 1000)
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`

@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 
 export const useAdminStore = defineStore('admin', () => {
   const token = ref(localStorage.getItem('admin_token') || '')
-  const adminUser = ref(null)
+  const adminUser = ref<{ username?: string; [k: string]: any } | null>(null)
 
   const isLoggedIn = computed(() => !!token.value)
 
