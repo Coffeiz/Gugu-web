@@ -1,15 +1,11 @@
 <template>
   <div ref="cardRef" class="note-card"
-       :class="{ editing: showEditingBlock, highlight, 'nc-edit-pending': editing && !editReady,
-                 'nc-toolbar-leaving': toolbarLeaving, ['tint-' + (note.color || '')]: !!note.color }"
+       :class="{ editing, highlight, 'nc-edit-pending': editing && !editReady, ['tint-' + (note.color || '')]: !!note.color }"
        :style="{ height: cardHeight }">
     <!-- 编辑态：跟只读态一样按区域分标题区/正文区（不是靠"标题"文字样式段落类型），
          就地展开（跨两列由父级 grid-column 控制）；自动保存，没有取消/保存按钮——
-         停顿一下自己存，点卡外面就算编完（先补一次保存再退出）。
-         v-if 绑的是 showEditingBlock 不是 editing 本身——退出编辑态时要先让工具栏模糊
-         淡出（见 script 里的 toolbarLeaving），播完这段动画才真正把内容切回预览分支，
-         不然 DOM 一被摘掉就没法再播这段淡出了。 -->
-    <template v-if="showEditingBlock">
+         停顿一下自己存，点卡外面就算编完（先补一次保存再退出）。 -->
+    <template v-if="editing">
       <input
         ref="titleInputRef"
         v-model="draftTitle" class="nc-title-input" placeholder="标题（可选）"
@@ -96,10 +92,8 @@ const editReady = ref(false)
 // 不然预览态里后续「展开/收起」长内容、编辑态里继续打字撑高，都会被钉死在这个旧的 px 值上。
 const cardHeight = ref<string>('auto')
 const HEIGHT_ANIM_MS = 300
-// 退出编辑态时工具栏先模糊淡出，播完这段（TOOLBAR_FADE_MS）才真正把 v-if 切回预览分支——
-// showEditingBlock 才是模板 v-if 绑的那个值，不直接绑 props.editing（见下面的 watch）。
-const showEditingBlock = ref(props.editing)
-const toolbarLeaving = ref(false)
+// 退出编辑态时工具栏的模糊淡出：真实工具栏马上要被 v-if 摘掉，自己没法播 transition，
+// 所以摘之前先克隆一份浮在原地继续淡出，跟下面的收起动画同时开始（见 spawnToolbarGhost）。
 const TOOLBAR_FADE_MS = 180
 const titleInputRef = ref<HTMLInputElement | null>(null)
 // 点哪进编辑态光标就落在哪：'title' 落标题框，数字落正文对应行（跟 mdToPreviewHtml 的
@@ -148,62 +142,68 @@ function finishEditing() {
   emit('close')
 }
 
+/** 工具栏收起淡出：真实 .ne-toolbar 马上要被 v-if 摘掉，没法自己播 transition——摘之前
+ *  克隆一份、定位在原处叠一层继续做模糊淡出，跟卡片的收起动画同时开始（都是 editing 变
+ *  false 那一刻触发，互不等待），播完自己从 DOM 里清掉。卡片本身还在同步缩小，克隆节点
+ *  的定位是固定像素值，缩到比它矮时会被 .note-card 的 overflow:hidden 提前裁掉一截，
+ *  这是几何上跑不掉的（收起动画目标高度本来就比编辑态矮），可以接受。 */
+function spawnToolbarGhost() {
+  const cardEl = cardRef.value
+  const toolbarEl = cardEl?.querySelector<HTMLElement>('.ne-toolbar')
+  if (!cardEl || !toolbarEl) return
+  const cardRect = cardEl.getBoundingClientRect()
+  const toolbarRect = toolbarEl.getBoundingClientRect()
+  const ghost = toolbarEl.cloneNode(true) as HTMLElement
+  ghost.style.position = 'absolute'
+  ghost.style.left = (toolbarRect.left - cardRect.left) + 'px'
+  ghost.style.top = (toolbarRect.top - cardRect.top) + 'px'
+  ghost.style.width = toolbarRect.width + 'px'
+  ghost.style.margin = '0'
+  ghost.style.pointerEvents = 'none'
+  ghost.style.zIndex = '2'
+  ghost.style.opacity = '1'
+  ghost.style.filter = 'blur(0)'
+  ghost.style.transition = `opacity ${TOOLBAR_FADE_MS}ms ease-in-out, filter ${TOOLBAR_FADE_MS}ms ease-in-out`
+  cardEl.appendChild(ghost)
+  requestAnimationFrame(() => {
+    ghost.style.opacity = '0'
+    ghost.style.filter = 'blur(6px)'
+  })
+  setTimeout(() => ghost.remove(), TOOLBAR_FADE_MS + 20)
+}
+
 // 进入编辑时灌当前内容为草稿；退出时（点外面/切换到别的便签走 finishEditing 之外的路径，
 // 比如便签被删除强制退出编辑）才需要这里兜底补一次保存。编辑期间才挂全局点击监听，
 // 避免每张卡常驻一个 document 监听器。
 let heightResetTimer: ReturnType<typeof setTimeout> | null = null
-let leaveTimer: ReturnType<typeof setTimeout> | null = null
-let leaveResolve: (() => void) | null = null
-function clearPendingLeave() {
-  if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = null }
-  if (leaveResolve) { leaveResolve(); leaveResolve = null }   // 唤醒还卡在等待里的旧一轮 watch，让它自己因 token 对不上而提前退出
-}
-// watch 本身是 async 函数，同一个 watch 源可能在上一轮还没走完 await 时又触发新一轮
-// （比如淡出等待期间用户又点回编辑）——用一个自增 token 标记"当前是不是最新这一轮"，
-// 每次 await 之后都要重新检查，不是最新的就地放弃，不然新旧两轮谁先谁后地改
-// showEditingBlock/cardHeight 会乱套。
-let watchToken = 0
 watch(() => props.editing, async (v, prev) => {
-  const token = ++watchToken
   // watch 默认 flush:'pre'，这一刻卡片还是切换前的内容（v-if 还没跑），先量出旧高度当动画起点。
+  // 用 offsetHeight 不用 getBoundingClientRect——后者是变换后的视口尺寸，边缘日期卡点开时
+  // 列本身还在做居中的 translateX+scale 动画，取到的高度会跟着这个瞬时缩放值一起抖，量出来
+  // 的起点/终点对不上，卡片自己的收起/展开动画就跟着弹一下。offsetHeight 是纯布局尺寸，
+  // 不受祖先 transform 影响，边缘列也能量得准。
   if (heightResetTimer) { clearTimeout(heightResetTimer); heightResetTimer = null }
-  clearPendingLeave()
   const el = cardRef.value
-  const startH = el?.getBoundingClientRect().height ?? null
+  const startH = el?.offsetHeight ?? null
 
   if (v) {
-    toolbarLeaving.value = false
-    showEditingBlock.value = true   // 立刻进入编辑态，展开动画照旧不受下面淡出逻辑影响
     closedByFinish = false
     editReady.value = false
     draftTitle.value = _split.value.titleRaw
     draftBody.value = _split.value.body
     document.addEventListener('mousedown', onDocDown, true)
     await nextTick()   // 等 NoteEditor 挂载、自己的 autofocus:'end' 先跑完，这里再改写光标位置
-    if (token !== watchToken) return
     if (pendingFocus.value === 'title') titleInputRef.value?.focus()
     else if (typeof pendingFocus.value === 'number') bodyEditorRef.value?.focusAtLineUnit(pendingFocus.value)
     pendingFocus.value = null
     editReady.value = true   // 光标真正落定了，这时候才让卡片显形
   } else {
+    spawnToolbarGhost()   // 摘掉编辑内容之前先截一份工具栏快照，让它跟下面的收起动画同时淡出
     document.removeEventListener('mousedown', onDocDown, true)
     if (prev && !closedByFinish) flushSave()
     closedByFinish = false
     editReady.value = false
-    // 工具栏先模糊淡出（NoteEditor 还原样挂着，v-if 还没切），播完这段再真正切回预览分支——
-    // 直接把 showEditingBlock 摘掉的话 DOM 一移除就没法再播这段淡出动画了。
-    toolbarLeaving.value = true
-    await new Promise<void>(resolve => {
-      leaveResolve = resolve
-      leaveTimer = setTimeout(resolve, TOOLBAR_FADE_MS)
-    })
-    leaveTimer = null
-    leaveResolve = null
-    if (token !== watchToken) return   // 等待期间又切回了编辑态，交给新一轮 watch 处理，这轮就此打住
-    toolbarLeaving.value = false
-    showEditingBlock.value = false
     await nextTick()   // 等预览态内容渲染出来，才能量到真实目标高度
-    if (token !== watchToken) return
   }
 
   // 展开/收回动画：编辑态是 flex:1 撑满父级，卡片高度被钉住的话编辑器只会乖乖填满这个
@@ -212,21 +212,14 @@ watch(() => props.editing, async (v, prev) => {
   // offsetHeight 强制回流，让浏览器先"确认"这个旧高度，下一帧再改成目标值才会真的触发
   // 过渡（不这么做，同一帧内连续两次赋值可能被合并、直接跳到终值不播动画）。动画播完
   // 恢复 auto，不然后续内容变化（继续打字撑高、预览态点"展开"）会被钉死在这个旧 px 值上。
-  // 目标高度必须跟起点用同一套量法——踩过 scrollHeight（不含 border）配 getBoundingClientRect
-  // （含 border）的坑：.note-card 有 1px 描边，两种量法差着这 2px，动画播完切回 auto 时
-  // 高度会跟着再跳一下（展开是终点忽然长高一截，收起是刚缩完又弹回来一点）。统一用
-  // getBoundingClientRect 才能让动画终值跟 auto 真正算出来的高度严丝合缝。
   if (el && startH != null) {
     cardHeight.value = 'auto'
     await nextTick()
-    if (token !== watchToken) return
-    const endH = el.getBoundingClientRect().height
+    const endH = el.offsetHeight
     cardHeight.value = startH + 'px'
     await nextTick()
-    if (token !== watchToken) return
     void el.offsetHeight
     requestAnimationFrame(() => {
-      if (token !== watchToken) return
       cardHeight.value = endH + 'px'
       heightResetTimer = setTimeout(() => { cardHeight.value = 'auto'; heightResetTimer = null }, HEIGHT_ANIM_MS)
     })
@@ -237,7 +230,6 @@ watch(() => props.editing, async (v, prev) => {
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocDown, true)
   if (heightResetTimer) clearTimeout(heightResetTimer)
-  clearPendingLeave()
 })
 
 /** 标题只在首行真是 `#` 标题格式时才从正文摘出来单独展示；纯正文/待办/列表开头的便签
@@ -346,14 +338,6 @@ function onBodyClick(e: MouseEvent) {
 }
 .note-card.editing:not(.nc-edit-pending) :deep(.ne-toolbar) {
   opacity: 1; filter: blur(0);
-}
-/* 工具栏模糊淡出：退出编辑态时 script 里的 toolbarLeaving 先亮一小段时间（TOOLBAR_FADE_MS），
-   NoteEditor 还原样挂着没被摘掉，这里让工具栏播完淡出再让 showEditingBlock 真正切换分支。
-   三个类选择器（editing+nc-toolbar-leaving）specificity 跟上面「淡入完成」那条打平，靠
-   写在后面赢过它，覆盖回 opacity:0/blur——不这么写工具栏会一直卡在展开完成的清晰状态，
-   直到 DOM 被摘掉，收不出淡出效果。 */
-.note-card.editing.nc-toolbar-leaving :deep(.ne-toolbar) {
-  opacity: 0; filter: blur(6px);
 }
 .note-card.editing :deep(.ne-body) {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
