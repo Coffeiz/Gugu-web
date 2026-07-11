@@ -1,8 +1,8 @@
-"""流式文本清洗：过滤 MiniMax 漏进 token 流的 tool-call 标记。
+"""流式文本清洗：过滤上游模型漏进 token 流的内部尾标记。
 
 MiniMax-M3 经 Anthropic 兼容端点流式输出时，偶发把内部 tool-call 序列化
 （以 `]<]minimax...` 为分隔标记）当作正文吐出。一旦出现该标记，其后全是
-泄漏垃圾，正文在标记之前。
+泄漏垃圾，正文在标记之前。另有已确认的 `[e~[` 尾标记，会紧跟代码围栏泄漏。
 
 改为前缀感知匹配：只在 buffer 末尾确实是标记前缀时才保留最少字节，
 正常文本（不含标记前缀）立即透传，避免因保留 9 字节缓冲导致输出卡顿。
@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import re
 
-TRUNCATE_MARKERS = ["]<]minimax"]
+# `[e~[` 已由生产流日志的 hex 确认是字面泄漏（常见形态为 "```[e~["），不是前端渲染问题。
+# 它对用户没有语义，后续内容也属于同一段泄漏，和 MiniMax tool-call 标记一样从此处截断。
+_MINIMAX_TRUNCATE_MARKERS = ["]<]minimax", "[e~["]
 
 
 def _longest_suffix_prefix(s: str, marker: str) -> int:
@@ -24,7 +26,10 @@ def _longest_suffix_prefix(s: str, marker: str) -> int:
 
 
 class StreamSanitizer:
-    def __init__(self):
+    def __init__(self, minimax: bool = False):
+        # `[e~[` 和 `]<]minimax` 都只在 MiniMax 流中实测过。非 MiniMax 不保留这些前缀，
+        # 避免把其它模型正常提及的文本误当内部标记而延迟或截断。
+        self._markers = _MINIMAX_TRUNCATE_MARKERS if minimax else []
         self._buf = ""
         self._cut = False
 
@@ -35,7 +40,7 @@ class StreamSanitizer:
         self._buf += delta
 
         # 检查是否出现完整标记
-        for marker in TRUNCATE_MARKERS:
+        for marker in self._markers:
             idx = self._buf.find(marker)
             if idx != -1:
                 out = self._buf[:idx]
@@ -46,7 +51,7 @@ class StreamSanitizer:
         # 未出现完整标记：检查末尾是否是某个标记的前缀
         # 只保留最长前缀匹配部分，其余立即透传
         hold = 0
-        for marker in TRUNCATE_MARKERS:
+        for marker in self._markers:
             hold = max(hold, _longest_suffix_prefix(self._buf, marker))
 
         if hold > 0:
@@ -85,45 +90,6 @@ def strip_disallowed_emoji(text: str) -> str:
     if not text:
         return text
     return _EMOJI_RE.sub(lambda m: m.group(0) if m.group(1) in _KEEP_EMOJI else "", text)
-
-
-# ── 【临时诊断】回复尾部异常字符探针 ─────────────────────────────────────────
-# 现象：咕咕回复末尾在 Debug 面板/聊天里显示成 `[e~[`，但「以 `[` 结尾」的探针从不命中
-# → 真身不是字面 `[e~[`，而是某个**不可见/控制/非常规空白字符**被渲染/转义成了 `[e~[`
-# （咕咕自己也把它当「空格」）。这版改为：末尾若出现任何 Unicode 控制/格式/私用/未分配类别
-# （Cc/Cf/Co/Cn/Cs）或非 U+0020 的空白（Zs/Zl/Zp），就把尾部 repr + hex + 末几字符的 Unicode
-# 类别打进 gugu.log，抓到真身字节。保留原 `[`/`~[` 匹配作兜底。只记尾部 ~40 字符。★确认后删除。
-_LEAK_TAIL_RE = re.compile(r"\[\s*$")
-_LEAK_MID_RE = re.compile(r"~\[")
-
-
-def _has_weird_tail(text: str) -> bool:
-    import unicodedata
-    for c in text[-12:]:
-        if c in " \n\t":
-            continue
-        cat = unicodedata.category(c)
-        if cat[0] == "C" or cat in ("Zs", "Zl", "Zp"):   # 控制/格式/私用/未分配/非常规空白
-            return True
-    return False
-
-
-def probe_leak_tail(text: str, where: str) -> None:
-    if not text:
-        return
-    # 新增：末尾有任何尾随空白（含普通 U+0020 空格）也记——现象与「尾随空格」强相关，
-    # 不管真身是字面 [e~[、非常规空白、还是普通空格被某处转成 [e~[，都能一次抓准。
-    trailing_ws = text != text.rstrip()
-    if not (trailing_ws or _has_weird_tail(text)
-            or _LEAK_TAIL_RE.search(text) or _LEAK_MID_RE.search(text[-16:])):
-        return
-    import logging
-    import unicodedata
-    seg = text[-24:]
-    cats = [f"{c!r}:{unicodedata.category(c)}:U+{ord(c):04X}" for c in seg[-8:]]
-    logging.getLogger("agent.runner").warning(
-        "[leak-probe] where=%s trailing_ws=%s tail=%r hex=%s lastchars=%s",
-        where, trailing_ws, seg, seg.encode("utf-8", "surrogatepass").hex(), cats)
 
 
 # ── 历史消息清洗（Anthropic / MiniMax）──────────────────────────────────────

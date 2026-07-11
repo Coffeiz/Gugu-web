@@ -16,6 +16,8 @@
 ### 修复
 
 - **文件系统「免刷新即更新」补齐 + 项目文件移到根/文件夹粘贴修复**（前端 `views/Files/index.vue`、`views/Projects/components/ProjectModal.vue`、`views/Dashboard/components/FilePanel.vue`；后端 `app/api/v1/{files,folders,trash}.py`；文档 `docs/backend/storage.md` §2.8）：① 项目编辑卡里文件拖到「项目文件」根、文件夹剪切粘贴到根此前无效——`movePmFilesInto`/`pmCtxPaste` 只发 `folderId` 漏了 `projectId`（后端未传 project_id 时保留原值，项目文件夹内文件的 project_id 可能为 null → 落到个人库根、项目根查不到），且粘贴漏了 `folderIds` 分支；均补齐。② 一批 stale 修复：Files 页右键删文件不消失（`ctxDelete` 补乐观 `removeFiles`+回滚）、子文件夹里删/改子文件夹当前视图不更新（`loadFolders` 改按当前层刷）、剪切跨层粘贴源层残留（逐层剔除）、文件夹计数徽标（`_pmAdjustFolderCount` 本地增减）、移到目标层后导航过去 stale（主动刷目标层缓存）、Dashboard FilePanel 开着期间不刷新（订阅 SSE + `uploadSignal`）。③ 后端所有增删改文件/文件夹的 REST 端点（16 处）commit 后 `events.publish(current_user.id, "files")`——此前只有咕咕/IM 工具改动才广播、用户自己的网页操作不推 SSE，跨标签页/跨面收不到；现在用户自己的操作也广播，所有展示面自动同步（需重启后端生效）。方案分级与落地状态见 `docs/backend/storage.md` §2.8.8。
+- **咕咕回复偶发以 `[e~[` 残片结尾**（`agent/sanitize.py`、`agent/llm_select.py`、`agent/runner.py`、`agent/adapters/web.py`）：确认是 MiniMax-M3 经 Anthropic 兼容端点流式输出时，把内部尾标记 `[e~[` 当正文吐出（常紧跟代码围栏 ` ``` ` 之后），字面泄漏，非前端渲染/编码问题。`StreamSanitizer` 新增 `minimax` 开关（`is_minimax(ai)` 判定），只对 MiniMax 模型启用 `[e~[`/`]<]minimax` 两个尾标记的跨 token 截断，避免误伤其它模型正常提及的文本；新增分片流回归测试 `tests/test_stream_sanitize.py`。
+- **定时任务失败时无诊断信息**（`agent/runner.py`）：排查「科技新闻」定时任务某次触发「没有产出内容」时发现，`run_ephemeral` 一旦判定生成失败就直接丢弃错误详情返回空字符串，`scheduled_tasks.py` 只能兜成通用文案，日志全程无痕、无从判断真实原因（该次排查靠交叉核对 LLM 报错日志/工具调用日志/异常日志三处「均无记录」才推断出问题所在，耗时较长）。现在丢弃前记一条 `logger.warning`，带上原始错误详情，下次再犯可直接从日志定位。
 
 ### 重构
 

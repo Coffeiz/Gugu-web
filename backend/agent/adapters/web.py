@@ -26,6 +26,7 @@ from app.models import (
 from agent import sanitize, genstream, quota
 from agent.context import builder, loaders, tokens
 from agent.core import LLMRunner
+from agent.llm_select import is_minimax
 from agent.models import AgentRequest
 from agent.profiles import DefaultProfile
 
@@ -392,7 +393,8 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                 full_reply += out
                 await genstream.publish(session_id, {"type": "token", "content": out})
 
-        san = sanitize.StreamSanitizer()
+        minimax_stream = is_minimax(settings.ai)
+        san = sanitize.StreamSanitizer(minimax=minimax_stream)
         async for evt_str in gen:
             try:
                 evt = json.loads(evt_str[6:])
@@ -403,7 +405,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                 last_round = round_buf            # 上一轮完整文本
                 round_buf  = ""
                 dedup      = bool(last_round)     # 有上一轮才需去重
-                san = sanitize.StreamSanitizer()  # 新一轮重置，防止上轮 _cut 污染
+                san = sanitize.StreamSanitizer(minimax=minimax_stream)  # 新一轮重置，防止上轮 _cut 污染
                 await genstream.publish(session_id, {"type": "_new_round"})
                 continue
             if etype == "_usage":
@@ -428,8 +430,6 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
         tail = san.flush()
         if tail:
             await emit_clean(tail)
-
-        sanitize.probe_leak_tail(full_reply, "web")   # 【临时诊断】抓 [e~[/尾随空白真身，确认后删
 
         # ── 持久化：工具调用中间消息 + AI 最终回复 + 用量 ──
         # 会话可能在后台生成期间被用户删掉（DELETE /sessions/{id}，合法操作）。此时：

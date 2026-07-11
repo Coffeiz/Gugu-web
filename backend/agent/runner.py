@@ -10,7 +10,10 @@ from app.core.tz import now_utc, set_ctx_tz
 
 import asyncio
 import json
+import logging
 from typing import AsyncGenerator, AsyncIterator
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import func, select
 
@@ -18,7 +21,7 @@ from app.core.config import get_settings
 from agent import sanitize, quota
 from agent.context import builder, loaders, tokens
 from agent.core import LLMRunner
-from agent.llm_select import pick_model, release as _release_model
+from agent.llm_select import is_minimax, pick_model, release as _release_model
 from agent.models import AgentRequest, AgentResponse
 from agent.profiles import DefaultProfile
 
@@ -319,7 +322,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
 
     try:
-        text, tin, tout, errored, sent_files, cancelled = await _collect(gen)
+        text, tin, tout, errored, sent_files, cancelled = await _collect(gen, minimax=is_minimax(model_cfg))
     finally:
         _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
 
@@ -329,7 +332,6 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
     # IM 出口兜底：发给用户/持久化之前确定性清洗（抹 tool_id 噪声、拦系统提示词泄露）
     if not errored:
-        sanitize.probe_leak_tail(text, "collect")   # 【临时诊断】疑似泄漏尾巴，确认后删
         from agent.outbound import sanitize_outbound
         text = sanitize_outbound(text)
         text = sanitize.strip_disallowed_emoji(text)   # 出口兜底删白名单外 emoji（prompt 压不住）
@@ -552,7 +554,8 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
 
     # ── 流式消费 generator（替代 _collect：逐字 yield + 末尾 yield final）──
-    san = sanitize.StreamSanitizer()
+    minimax_stream = is_minimax(model_cfg)
+    san = sanitize.StreamSanitizer(minimax=minimax_stream)
     rounds: list[str] = []
     cur = ""
     tin = tout = 0
@@ -571,7 +574,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                 cur += san.flush()
                 rounds.append(cur)
                 cur = ""
-                san = sanitize.StreamSanitizer()
+                san = sanitize.StreamSanitizer(minimax=minimax_stream)
             elif t == "_usage":
                 tin = evt.get("input", 0)
                 tout = evt.get("output", 0)
@@ -612,7 +615,6 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
 
     # 出口兜底清洗（跟 run_collect 一致）
     if not errored:
-        sanitize.probe_leak_tail(text, "stream")   # 【临时诊断】疑似泄漏尾巴，确认后删
         from agent.outbound import sanitize_outbound
         text = sanitize_outbound(text)
         text = sanitize.strip_disallowed_emoji(text)
@@ -667,7 +669,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                                   tokens_out=tout, files=files, cancelled=False))
 
 
-async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool, list]:
+async def _collect(gen: AsyncGenerator[str, None], minimax: bool = False) -> tuple[str, int, int, bool, list]:
     """消费 LLMRunner 的 SSE 流：清洗后攒文本 + 取用量 + 收集咕咕要发的文件。
     返回 (文本, in, out, errored, files)；errored=True 时文本是错误文案（不入历史/不反思）。
 
@@ -678,7 +680,7 @@ async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool,
     完整答案收在最后一轮，这里只取 rounds[-1]（若为空则回退到最近一条非空轮次，不让用户
     啥也没收到）。
     """
-    san = sanitize.StreamSanitizer()
+    san = sanitize.StreamSanitizer(minimax=minimax)
     rounds: list[str] = []   # 每轮文本分开存
     cur = ""
     tin = tout = 0
@@ -694,7 +696,7 @@ async def _collect(gen: AsyncGenerator[str, None]) -> tuple[str, int, int, bool,
             cur += san.flush()
             rounds.append(cur)
             cur = ""
-            san = sanitize.StreamSanitizer()  # 新一轮重置清洗器
+            san = sanitize.StreamSanitizer(minimax=minimax)  # 新一轮重置清洗器
         elif t == "_usage":
             tin = evt.get("input", 0)
             tout = evt.get("output", 0)
@@ -788,9 +790,13 @@ async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: di
         gen = runner.run(user_id, None, messages, use_anthropic=False, model_cfg=model_cfg)
 
     try:
-        text, _, _, errored, _, _ = await _collect(gen)
+        text, _, _, errored, _, _ = await _collect(gen, minimax=is_minimax(model_cfg))
     finally:
         _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
-    if not errored:
-        sanitize.probe_leak_tail(text, "collect2")   # 【临时诊断】疑似泄漏尾巴，确认后删
-    return sanitize.strip_disallowed_emoji(text) if not errored else ""
+    if errored:
+        # 定时任务排障日志：_collect 判定失败时会把 text 换成错误详情，但调用方（scheduled_tasks.py）
+        # 只看得到这里返回的 ""，兜成通用「没有产出内容」——真实原因此前完全没留痕（2026-07-11
+        # 排查「科技新闻」任务空产出时，日志里既无 LLM 报错、也无工具调用记录，无从判断）。
+        logger.warning("[定时任务] run_ephemeral 生成失败，丢弃前的详情: %r", text)
+        return ""
+    return sanitize.strip_disallowed_emoji(text)
