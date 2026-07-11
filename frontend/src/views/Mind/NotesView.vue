@@ -353,6 +353,23 @@ watch(timelineGroups, async (groups) => {
   updateActive()
 }, { immediate: true })
 
+// 切回笔记页时 store 往往已经有缓存数据：immediate watcher 会早于 ref 挂载执行，虽标记了
+// centeredOnce，却没有真实滚动容器可对齐。等路由布局完成一帧后以实测中线补一次无动画校准。
+onMounted(async () => {
+  await nextTick()
+  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+  const root = scrollRef.value
+  const groups = timelineGroups.value
+  if (!root || !groups.length) return
+  syncTimelineGutters(root)
+  refreshColEls()
+  const date = groups.some(group => group.date === activeDate.value)
+    ? activeDate.value
+    : groups[groups.length - 1].date
+  jumpTo(date, false)
+  updateActive()
+})
+
 // ── 新建：不移动当前视野；新日期卡在右侧单独入场，补录仍 toast 报落点 ──
 const _today = () => localDayKey(new Date())   // 本地今天（不是 UTC）
 
