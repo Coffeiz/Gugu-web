@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   docToMarkdown, markdownToDoc, toggleTaskInMd, mdToPreviewHtml, MIND_REF_RE,
 } from './useMindEditor'
+import type { MindDocNode } from './useMindEditor'
 
 // 2026-07-11 起支持的行内标记（加粗/斜体/删除线/行内代码/链接）——简化解析，不认
 // `_..._` 下划线写法（避免 snake_case 被误判成斜体），也不支持标记嵌套。
@@ -161,6 +162,94 @@ describe('mdToPreviewHtml — 只读预览转义（防注入，GPT 判安全，�
     const html = mdToPreviewHtml('[点我](javascript:alert(1))')
     expect(html).toContain('href="#"')
     expect(html).not.toContain('javascript:')
+  })
+})
+
+describe('Mind md⇄doc 往返：代码块/引用块/有序列表/分割线（2026-07-11 起支持）', () => {
+  it.each([
+    '```\ncode line\n```',
+    '```js\nconst x = 1\n```',
+    '> 一条引用',
+    '> 第一行\n> 第二行',                       // 多段引用，累进同一个块
+    '1. 第一项\n2. 第二项\n3. 第三项',
+    '---',
+    '第一段\n\n```py\nprint(1)\n```\n\n第二段', // 代码块跟普通段落混排
+    '- [ ] 待办\n\n1. 有序项\n\n> 引用',        // 四种块级/待办混排，互不吞并
+  ])('%s', (md) => {
+    expect(roundTrip(md)).toBe(md)
+  })
+
+  it('代码块内容原样保留，不当 mindRef/加粗解析（[[ ]] 和 ** 都是字面量）', () => {
+    const md = '```\n[[project:1|X]] 和 **不是加粗**\n```'
+    const doc = markdownToDoc(md)
+    const code = doc.content?.[0]
+    expect(code?.type).toBe('codeBlock')
+    expect(code?.content?.[0]?.text).toBe('[[project:1|X]] 和 **不是加粗**')
+    expect(roundTrip(md)).toBe(md)
+  })
+
+  it('代码块空行是代码的一部分，不当成分段空行', () => {
+    const md = '```\na\n\nb\n```'
+    const doc = markdownToDoc(md)
+    expect(doc.content?.length).toBe(1)
+    expect(doc.content?.[0]?.content?.[0]?.text).toBe('a\n\nb')
+    expect(roundTrip(md)).toBe(md)
+  })
+
+  it('有序列表 orderedListItem 是独立节点名，不会被无序列表的圆点渲染吃掉', () => {
+    const doc = markdownToDoc('1. 项一')
+    expect(doc.content?.[0]?.type).toBe('orderedList')
+    expect(doc.content?.[0]?.content?.[0]?.type).toBe('orderedListItem')
+  })
+
+  it('分割线渲染成 <hr>，不认带空格的 "- - -" 写法（会先被无序列表吃掉）', () => {
+    expect(mdToPreviewHtml('---')).toBe('<hr class="np-hr">')
+    expect(markdownToDoc('- - -').content?.[0]?.type).toBe('bulletList')
+  })
+
+  it('空代码块（插入后什么都没打）不产生非法的空文本节点，能正常再解析回来', () => {
+    // 插入代码块后立刻保存，TipTap 自己给出的空 codeBlock 没有 content 字段
+    const emptyFromEditor: MindDocNode = { type: 'doc', content: [{ type: 'codeBlock' }] }
+    const md = docToMarkdown(emptyFromEditor)
+    expect(md).toBe('```\n\n```')
+    // 重新读回来（比如便签重开一次），不能出现 { type:'text', text:'' } 这种非法节点——
+    // ProseMirror 的 text 节点不允许零长度，带着这种节点的 JSON 灌进编辑器会直接失败
+    const doc = markdownToDoc(md)
+    const code = doc.content?.[0]
+    expect(code?.type).toBe('codeBlock')
+    expect(code?.content).toBeUndefined()
+    expect(roundTrip(md)).toBe(md)
+  })
+  it('未闭合的代码围栏结尾也不丢内容', () => {
+    const doc = markdownToDoc('```\n没有结束的代码')
+    expect(doc.content?.[0]?.type).toBe('codeBlock')
+    expect(doc.content?.[0]?.content?.[0]?.text).toBe('没有结束的代码')
+  })
+
+  it('只读预览：代码块整块一个 data-line-unit，引用块每段一个', () => {
+    const html = mdToPreviewHtml('> 第一行\n> 第二行\n\n```\nx\n```')
+    expect(html).toContain('<blockquote class="np-quote">')
+    expect(html).toContain('data-line-unit="0"')
+    expect(html).toContain('data-line-unit="1"')
+    expect(html).toContain('class="np-code-block" data-line-unit="2"')
+  })
+
+  it('只读预览：代码块按语言语法高亮，跟 GuguChat 聊天同一套 hljs token class', () => {
+    const html = mdToPreviewHtml('```js\nconst x = 1\n```')
+    expect(html).toContain('class="hljs language-js"')
+    expect(html).toContain('hljs-keyword')   // const 应该被识别成关键字
+  })
+  it('只读预览：代码块显示语言名标签（写了语言直接显示，没写就显示 highlightAuto 猜的）', () => {
+    expect(mdToPreviewHtml('```js\nconst x = 1\n```')).toContain('<div class="np-code-lang">js</div>')
+    expect(mdToPreviewHtml('```\nconst x = 1\n```')).toMatch(/<div class="np-code-lang">\S+<\/div>/)
+  })
+  it('没写语言时不报错，交给 highlightAuto 猜（用全量语言库，猜中什么算什么，不强求 plaintext）', () => {
+    expect(() => mdToPreviewHtml('```\n随便写点什么\n```')).not.toThrow()
+    expect(mdToPreviewHtml('```\n随便写点什么\n```')).toMatch(/class="hljs language-\S+"/)
+  })
+  it('写了个不存在的语言名不报错，退化成自动猜', () => {
+    expect(() => mdToPreviewHtml('```not-a-real-lang\nx\n```')).not.toThrow()
+    expect(mdToPreviewHtml('```not-a-real-lang\nx\n```')).toMatch(/class="hljs language-\S+"/)
   })
 })
 

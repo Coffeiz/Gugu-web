@@ -79,17 +79,137 @@
 
 /* 加粗/斜体/删除线/行内代码/链接：2026-07-11 起支持。两套渲染出的都是标准 HTML 标签
    （TipTap marks 默认渲染 strong/em/s/code/a，mdToPreviewHtml 手写的标签名跟它一致），
-   一份选择器两边都生效，不用再分开写 .md-preview/.ne-body 两套。 */
+   一份选择器两边都生效，不用再分开写 .md-preview/.ne-body 两套。
+   行内 code 排除 pre 里的那个——代码块自己有单独一套样式（不要行内代码的"小药丸"底色）。 */
 .md-preview strong, .ne-body .ProseMirror strong { font-weight: 700; }
 .md-preview em, .ne-body .ProseMirror em { font-style: italic; }
 .md-preview s, .ne-body .ProseMirror s { text-decoration: line-through; opacity: 0.75; }
-.md-preview code, .ne-body .ProseMirror code {
+.md-preview code:not(pre code), .ne-body .ProseMirror code:not(pre code) {
   padding: 1px 5px; border-radius: 4px;
   background: rgba(123,127,178,0.12); font-size: 0.92em;
 }
 .md-preview a, .ne-body .ProseMirror a {
   color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px;
   cursor: pointer;
+}
+
+/* 有序列表：2026-07-11 起支持。数字不锁死宽度（两位数会变宽），右对齐贴着文字，
+   跟圆点/checkbox 同一套 flex 结构对齐；序号靠 CSS counter 算，JS/HTML 侧都不用关心
+   "这是第几项"（跟 TipTap 的 start 属性没挂钩，用不到自定义起始序号）。 */
+.md-preview .np-ordered,
+.ne-body .ProseMirror ol {
+  list-style: none; padding: 0; counter-reset: mind-ol;
+}
+.md-preview .np-ordered li,
+.ne-body .ProseMirror ol li {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0.1em 0;
+  counter-increment: mind-ol;
+}
+.md-preview .np-ordered li::before,
+.ne-body .ProseMirror ol li::before {
+  content: counter(mind-ol) '.'; flex-shrink: 0; min-width: 14px; margin-top: 3px;
+  text-align: right; line-height: 1; color: var(--text-secondary); font-variant-numeric: tabular-nums;
+}
+.ne-body .ProseMirror ol li > div { flex: 1; min-width: 0; }
+.ne-body .ProseMirror ol li > div p { margin: 0; }
+
+/* 引用块：2026-07-11 起支持。左侧一条竖线 + 缩进 + 弱化文字色，标准的"引用"视觉语言；
+   允许多段（每段一行，中间不留空行——跟待办/列表"一项一行"是同一个模型）。 */
+.md-preview .np-quote,
+.ne-body .ProseMirror blockquote {
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid rgba(123,127,178,0.35);
+  color: var(--text-secondary);
+}
+.md-preview .np-quote p,
+.ne-body .ProseMirror blockquote p { margin: 0; }
+.md-preview .np-quote p + p,
+.ne-body .ProseMirror blockquote p + p { margin-top: 0.2em; }
+
+/* 代码块：2026-07-11 起支持，等宽字体 + 浅底色块，跟行内代码的"小药丸"样式区分开。
+   语法高亮 2026-07-11 补上（原来判断"窄口径不引额外的高亮库"，但 highlight.js 其实
+   已经是项目依赖——GuguChat 聊天代码块就在用）。只读预览走 hljs.highlightAuto()（「插入」
+   菜单没有语言选择器，代码块基本都没写语言，所以两边都是"没语言就自动猜"）；编辑态走
+   @tiptap/extension-code-block-lowlight（同一个 highlight.js 内核，包成 ProseMirror
+   装饰），两边 class 命名一致，这份配色两边通用。
+   语言名标签行：光靠颜色猜不出自动识别到底生没生效，加一行文字。预览是
+   mdToPreviewHtml 自己拼的 <div class="np-code-block">，编辑态是 CodeBlockView.vue 的
+   Vue NodeView（NodeViewWrapper 默认渲染成 <div class="ne-codeblock">），结构不完全一样
+   但两边的外层容器/标签行/代码区三段职责对应，选择器分开写、数值保持一致。 */
+.md-preview .np-code-block,
+.ne-body .ProseMirror .ne-codeblock {
+  border-radius: 8px; overflow: hidden;
+  background: rgba(60,70,100,0.06);
+}
+.md-preview .np-code-lang,
+.ne-body .ProseMirror .ne-codeblock-lang {
+  padding: 4px 12px; font-size: 10px; font-weight: 600;
+  color: var(--text-secondary); opacity: 0.8; text-transform: lowercase; letter-spacing: 0.03em;
+  border-bottom: 1px solid rgba(123,127,178,0.14);
+  user-select: none;
+}
+.md-preview .np-code,
+.ne-body .ProseMirror .ne-codeblock pre {
+  padding: 8px 12px; margin: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+}
+.md-preview .np-code code,
+.ne-body .ProseMirror .ne-codeblock pre code {
+  padding: 0; background: none; font-size: inherit;
+}
+/* token 配色按「谁更该赢」分了两级优先级，不只是随便列——editor 端 @tiptap/extension-
+   code-block-lowlight 是拿 ProseMirror decoration 画高亮的，decoration 画不出真实嵌套
+   的 <span>，遇到「string 嵌在 params 里、params 嵌在 function 里」这种情况，会把三层
+   class 拍扁成一个 "hljs-function hljs-params hljs-string" 全挂在同一段文字上（源码见
+   parseNodes()）。这仨类选择器优先级一样时 CSS 按「后来居上」，若不管顺序，字符串/关键字
+   这些"内层、更具体"的判断会被 function/params 这类"外层、结构性"的判断盖掉——真出过这个
+   问题：print("Hello, World!") 里的字符串，预览（真嵌套 <span>，天然只认最内层）显示成
+   正确的绿色，编辑器（拍扁成一个 class 列表）却被 function/params 的蓝色盖掉了。
+   预览走真嵌套不受影响，但编辑器这边必须显式让"更具体"的赢：给内容类 token（字符串/
+   关键字/数字/注释/内置名/变量）的选择器重复一遍 class 提高优先级（.hljs-string.hljs-string
+   比单层 .hljs-params 优先级更高，不管两条规则谁写在前面），结构性 wrapper 类
+   （function/name/type/params/title/section/selector-id/selector-class）留单层优先级、
+   自然垫底。 */
+.md-preview .np-code .hljs-keyword, .ne-body .ProseMirror pre .hljs-keyword.hljs-keyword,
+.md-preview .np-code .hljs-literal, .ne-body .ProseMirror pre .hljs-literal.hljs-literal,
+.md-preview .np-code .hljs-selector-tag, .ne-body .ProseMirror pre .hljs-selector-tag.hljs-selector-tag,
+.md-preview .np-code .hljs-tag, .ne-body .ProseMirror pre .hljs-tag.hljs-tag { color: #7b5cf0; }
+.md-preview .np-code .hljs-string, .ne-body .ProseMirror pre .hljs-string.hljs-string,
+.md-preview .np-code .hljs-regexp, .ne-body .ProseMirror pre .hljs-regexp.hljs-regexp,
+.md-preview .np-code .hljs-symbol, .ne-body .ProseMirror pre .hljs-symbol.hljs-symbol,
+.md-preview .np-code .hljs-bullet, .ne-body .ProseMirror pre .hljs-bullet.hljs-bullet,
+.md-preview .np-code .hljs-addition, .ne-body .ProseMirror pre .hljs-addition.hljs-addition { color: #2d7a4f; }
+.md-preview .np-code .hljs-comment, .ne-body .ProseMirror pre .hljs-comment.hljs-comment,
+.md-preview .np-code .hljs-quote, .ne-body .ProseMirror pre .hljs-quote.hljs-quote,
+.md-preview .np-code .hljs-meta, .ne-body .ProseMirror pre .hljs-meta.hljs-meta { color: #9a9a9a; font-style: italic; }
+.md-preview .np-code .hljs-number, .ne-body .ProseMirror pre .hljs-number.hljs-number,
+.md-preview .np-code .hljs-attr, .ne-body .ProseMirror pre .hljs-attr.hljs-attr,
+.md-preview .np-code .hljs-attribute, .ne-body .ProseMirror pre .hljs-attribute.hljs-attribute,
+.md-preview .np-code .hljs-deletion, .ne-body .ProseMirror pre .hljs-deletion.hljs-deletion { color: #b07858; }
+.md-preview .np-code .hljs-built_in, .ne-body .ProseMirror pre .hljs-built_in.hljs-built_in,
+.md-preview .np-code .hljs-builtin-name, .ne-body .ProseMirror pre .hljs-builtin-name.hljs-builtin-name,
+.md-preview .np-code .hljs-link, .ne-body .ProseMirror pre .hljs-link.hljs-link { color: #5a9e88; }
+.md-preview .np-code .hljs-variable, .ne-body .ProseMirror pre .hljs-variable.hljs-variable,
+.md-preview .np-code .hljs-template-variable, .ne-body .ProseMirror pre .hljs-template-variable.hljs-template-variable { color: #1e2028; }
+/* 下面这两组是结构性 wrapper（外层容器），优先级故意留低——单层 class 选择器，
+   不跟上面几组的"重复 class 提权"手法比 */
+.md-preview .np-code .hljs-function, .ne-body .ProseMirror pre .hljs-function,
+.md-preview .np-code .hljs-name, .ne-body .ProseMirror pre .hljs-name,
+.md-preview .np-code .hljs-type, .ne-body .ProseMirror pre .hljs-type,
+.md-preview .np-code .hljs-params, .ne-body .ProseMirror pre .hljs-params { color: #4a7fb5; }
+.md-preview .np-code .hljs-title, .ne-body .ProseMirror pre .hljs-title,
+.md-preview .np-code .hljs-section, .ne-body .ProseMirror pre .hljs-section,
+.md-preview .np-code .hljs-selector-id, .ne-body .ProseMirror pre .hljs-selector-id,
+.md-preview .np-code .hljs-selector-class, .ne-body .ProseMirror pre .hljs-selector-class { color: #4a7fb5; font-weight: 600; }
+.md-preview .np-code .hljs-emphasis, .ne-body .ProseMirror pre .hljs-emphasis { font-style: italic; }
+.md-preview .np-code .hljs-strong, .ne-body .ProseMirror pre .hljs-strong { font-weight: 700; }
+
+/* 分割线：2026-07-11 起支持。轻玻璃语言下的柔和分隔，不用默认的一条硬灰线 */
+.md-preview .np-hr,
+.ne-body .ProseMirror hr {
+  border: none; height: 1px;
+  background: rgba(123,127,178,0.2);
 }
 
 /* 对象引用 chip：整体选中/删除的原子节点，编辑态/只读态外观必须一致 */

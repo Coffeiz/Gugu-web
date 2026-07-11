@@ -18,6 +18,11 @@
               @mousedown.prevent="editor.chain().focus().toggleBulletList().run()" title="列表">
         <PhListBullets :size="13" weight="bold" />
       </button>
+      <!-- 有序列表跟无序列表放一起，都是"列表"，不该埋进「插入」的二级菜单里 -->
+      <button class="ne-tool" :class="{ on: isFocused && editor.isActive('orderedList') }"
+              @mousedown.prevent="editor.chain().focus().toggleOrderedList().run()" title="有序列表">
+        <PhListNumbers :size="13" weight="bold" />
+      </button>
       <div class="ne-style-wrap">
         <button ref="styleBtnRef" class="ne-tool" :class="{ on: stylesOpen || (isFocused && hasAnyMark) }"
                 @mousedown.prevent="toggleStylesMenu" title="文字样式">
@@ -60,6 +65,30 @@
           </div>
         </Teleport>
       </div>
+      <div class="ne-insert-wrap">
+        <button ref="insertBtnRef" class="ne-tool" :class="{ on: insertOpen || (isFocused && hasAnyBlock) }"
+                @mousedown.prevent="toggleInsertMenu" title="插入">
+          <PhPlus :size="13" weight="bold" />
+        </button>
+        <!-- 「插入」二级菜单：代码块/引用块/分割线，2026-07-11 加（中等成本那档）。有序
+             列表挪到主工具栏跟无序列表放一起了，不算在这里头。都是一次性动作，选完就
+             收起菜单，不像样式那样需要连续切换。同样 Teleport 到 body（原因同「样式」
+             菜单：卡片 overflow:hidden 会把它裁掉）。代码块不给手动选语言——交给
+             highlightAuto 自动识别，保持跟其它两个一样"点了就直接生效"。 -->
+        <Teleport to="body">
+          <div v-if="insertOpen" class="ne-insert-menu" :style="insertMenuStyle">
+            <button class="ne-insert-item" @mousedown.prevent="insertCodeBlock">
+              <PhCodeBlock :size="14" weight="bold" /><span>代码块</span>
+            </button>
+            <button class="ne-insert-item" @mousedown.prevent="insertBlockquote">
+              <PhQuotes :size="14" weight="bold" /><span>引用块</span>
+            </button>
+            <button class="ne-insert-item" @mousedown.prevent="insertHorizontalRule">
+              <PhMinus :size="14" weight="bold" /><span>分割线</span>
+            </button>
+          </div>
+        </Teleport>
+      </div>
       <span class="ne-hint">输入 <code>@</code> 引用项目/文件/活动</span>
       <span class="ne-toolbar-actions"><slot name="foot-actions" /></span>
     </div>
@@ -83,7 +112,7 @@
 import { computed, nextTick, onBeforeUnmount, reactive, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import {
-  PhCheckSquare, PhCode, PhLink, PhListBullets,
+  PhCheckSquare, PhCode, PhCodeBlock, PhLink, PhListBullets, PhListNumbers, PhMinus, PhPlus, PhQuotes,
   PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
 } from '@phosphor-icons/vue'
 import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/useMindEditor'
@@ -234,6 +263,42 @@ function cancelLink() {
   editor.value?.commands.focus()
 }
 
+// 「插入」二级菜单：代码块/引用块/有序列表/分割线，2026-07-11 加（中等成本那档，块级
+// 元素）。都是一次性动作，选完就收起菜单——不像样式那档可能要连续切换好几个。
+const insertOpen = ref(false)
+const insertBtnRef = ref<HTMLElement | null>(null)
+const insertMenuStyle = ref<Record<string, string>>({})
+
+function calcInsertMenuStyle() {
+  const rect = insertBtnRef.value?.getBoundingClientRect()
+  if (!rect) return
+  const MENU_W = 130
+  const MENU_H = 150
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - MENU_W - 8))
+  const base = { position: 'fixed', left: left + 'px', zIndex: String(nextZ()) }
+  const spaceBelow = window.innerHeight - rect.bottom
+  insertMenuStyle.value = spaceBelow < MENU_H && rect.top > spaceBelow
+    ? { ...base, bottom: (window.innerHeight - rect.top + 4) + 'px' }
+    : { ...base, top: (rect.bottom + 4) + 'px' }
+}
+
+const hasAnyBlock = computed(() => {
+  const ed = editor.value
+  if (!ed) return false
+  return ed.isActive('codeBlock') || ed.isActive('blockquote')
+})
+
+function toggleInsertMenu() {
+  insertOpen.value = !insertOpen.value
+  if (insertOpen.value) calcInsertMenuStyle()
+}
+
+// 代码块不给手动选语言，统一交给 highlightAuto 自动识别（见 useMindEditor.ts）——
+// 跟下面两个插入动作一样，点了就直接生效，不弹二次确认。
+function insertCodeBlock() { editor.value?.chain().focus().toggleCodeBlock().run(); insertOpen.value = false }
+function insertBlockquote() { editor.value?.chain().focus().toggleBlockquote().run(); insertOpen.value = false }
+function insertHorizontalRule() { editor.value?.chain().focus().setHorizontalRule().run(); insertOpen.value = false }
+
 const editor = useEditor({
   content: markdownToDoc(props.modelValue) as any,
   extensions: mindExtensions(props.placeholder) as any,
@@ -270,6 +335,7 @@ const editor = useEditor({
   onBlur() {
     isFocused.value = false
     if (!linkInputOpen.value) stylesOpen.value = false
+    insertOpen.value = false
   },
 })
 
@@ -281,13 +347,17 @@ watch(() => props.modelValue, (md) => {
   ed.commands.setContent(markdownToDoc(md) as any, { emitUpdate: false })
 })
 
-/** 点只读预览里第 unitIdx 行（段落/标题/待办项/列表项，跟 mdToPreviewHtml 的
- *  data-line-unit 同一套计数）进编辑态时，把光标定到那一行内容后面，不是每次都退回文档末尾。
- *  taskItem/listItem 算一个单元就不再往里钻——它们内部还嵌着一层 paragraph，会被重复计数。 */
+/** 点只读预览里第 unitIdx 行（段落/标题/待办项/列表项/有序列表项/代码块，跟
+ *  mdToPreviewHtml 的 data-line-unit 同一套计数）进编辑态时，把光标定到那一行内容后面，
+ *  不是每次都退回文档末尾。
+ *  taskItem/listItem/orderedListItem/codeBlock 算一个单元就不再往里钻——它们内部还嵌着
+ *  一层 paragraph（或纯文本），会被重复计数。blockquote 反过来不在这个集合里，故意让它
+ *  继续往里钻：一段引用可以有好几行（好几个 paragraph 子节点），每行都要能单独点中，
+ *  跟 mdToPreviewHtml 给引用块每段各分一个 data-line-unit 是对应的。 */
 function focusAtLineUnit(unitIdx: number) {
   const ed = editor.value
   if (!ed) return
-  const LEAF_TYPES = new Set(['paragraph', 'heading', 'taskItem', 'listItem'])
+  const LEAF_TYPES = new Set(['paragraph', 'heading', 'taskItem', 'listItem', 'orderedListItem', 'codeBlock'])
   let count = 0
   let target: number | null = null
   ed.state.doc.descendants((node: any, pos: number) => {
@@ -337,7 +407,7 @@ onBeforeUnmount(() => editor.value?.destroy())
   background: rgba(123,127,178,0.12); font-size: 10.5px;
 }
 
-.ne-style-wrap { position: relative; }
+.ne-style-wrap, .ne-insert-wrap { position: relative; }
 
 /* 跟 NoteCard.vue 里只读态用的 .md-preview 同一套字号/行高/间距，编辑和显示才是同一件事 */
 .ne-body { font-size: 13px; line-height: 1.6; color: var(--text-primary); }
@@ -402,6 +472,26 @@ onBeforeUnmount(() => editor.value?.destroy())
   font-size: 11.5px; font-weight: 600; font-family: var(--font-sans);
 }
 .ne-link-ok:hover { background: rgba(123,127,178,0.26); }
+
+/* 「插入」二级菜单：同「样式」菜单，Teleport 到 body 后位置靠内联 style 钉死，
+   这里只管外观；竖排文字菜单（不是横排图标条），跟样式菜单视觉上区分开 */
+.ne-insert-menu {
+  display: flex; flex-direction: column; gap: 1px; padding: 4px; min-width: 116px;
+  border-radius: 9px;
+  background: rgba(255,255,255,0.96);
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: 0 8px 26px rgba(60,70,100,0.18);
+  backdrop-filter: blur(10px);
+}
+.ne-insert-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border: none; border-radius: 6px;
+  background: transparent; color: var(--text-primary); cursor: pointer;
+  font-size: 12.5px; font-family: var(--font-sans); text-align: left;
+  transition: background 0.15s;
+}
+.ne-insert-item:hover { background: rgba(123,127,178,0.1); }
+.ne-insert-item svg { flex-shrink: 0; color: var(--text-secondary); }
 </style>
 
 <!-- 编辑器内部由 ProseMirror 生成，不能用 scoped。段落/标题/待办/列表/引用 chip 的排版

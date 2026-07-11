@@ -3,10 +3,12 @@
  *
  * **窄口径**（2026-07-10 定版，见 docs/product/思维面板/笔记页UI设计.md）：
  *   正文 / 标题（单级——薄卡片里多级标题没有意义）/ 待办 / 无序列表（平铺不嵌套）/ 对象引用
- * 不做图片块、`/` 菜单（`/` 已预留给呼唤咕咕）、表格、代码块、引用块、有序列表、分割线。
+ * 不做图片块、`/` 菜单（`/` 已预留给呼唤咕咕）、表格、多级标题。
  * **加粗/斜体/删除线/行内代码/链接 2026-07-11 起支持**（行内标记，成本低、TipTap 原生
  * 支持，见「格式扩展」一节）：解析走简化版 Markdown（`**`/`*`/`~~`/`` ` ``/`[text](url)`），
  * 不认 `_..._` 下划线写法——笔记里下划线常见于 snake_case 变量名/文件名，会被误判成斜体。
+ * **代码块/引用块/有序列表/分割线 2026-07-11 起支持**（块级元素，见「格式扩展」一节）：
+ * 走「插入」二级菜单，不走 `/` 菜单（`/` 已预留给呼唤咕咕）。
  * **无 Markdown 输入规则**：行首打 `#`/`-` 不触发格式转换，格式只走工具栏
  * （NoteEditor 里 `enableInputRules: false`）。
  *
@@ -20,11 +22,23 @@
  * UI 触发键是 `@`（原 `[[`，2026-07-10 改），只是触发键，写进存储的仍是 `[[...]]`。
  */
 import { Node, mergeAttributes } from '@tiptap/core'
+import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import ListItem from '@tiptap/extension-list-item'
 import Placeholder from '@tiptap/extension-placeholder'
 import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
 import StarterKit from '@tiptap/starter-kit'
+import { VueNodeViewRenderer } from '@tiptap/vue-3'
+import { all, createLowlight } from 'lowlight'
+import CodeBlockView from '@/views/Mind/components/CodeBlockView.vue'
+
+// 代码块语法高亮：只读预览和编辑态**必须走同一个 lowlight 实例**（同一份语言注册表），
+// 不能预览用完整版 highlight.js、编辑态用 lowlight 的精简集——两边"猜语言"的候选池
+// 不一样，同一段代码会被猜成不同语言、上色对不上（踩过：预览把 print 猜成 stylus 的
+// title token 变粗体，编辑态精简集猜成 bash 就没有）。用 all（跟完整版 highlight.js
+// 注册的语言数一致，192 种）不用 common（只有 37 种）——猜得准一些，笔记/咕咕以后
+// 写的代码块语言不挑食。
+const lowlight = createLowlight(all)
 
 /** 与后端 `app/core/mind.py` 的 REF_PATTERN 保持一致 */
 export const MIND_REF_RE = /\[\[([a-z_]+):(\d+)\|([^\]]*)\]\]/
@@ -76,6 +90,25 @@ export const BulletListItem = ListItem.extend({
       ['span', { class: 'mind-dot' }, '•'],
       ['div', {}, 0],
     ]
+  },
+})
+
+// ── 有序列表项：跟无序列表用不同的节点名（配 OrderedList 的 itemTypeName），不然会共用
+// BulletListItem 的渲染、跳出来的是圆点不是数字。序号不在这里手算——JS 侧不知道自己在
+// 父列表里排第几，交给 CSS counter 在 <ol> 上跑，跟待办 checkbox/无序圆点同一套固定宽度
+// 对齐（见 mind-content.css），数字比圆点宽（两位数）时靠 min-width 不强行锁死。 ──
+export const OrderedListItem = ListItem.extend({
+  name: 'orderedListItem',
+  renderHTML({ HTMLAttributes }) {
+    return ['li', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes), ['div', {}, 0]]
+  },
+})
+
+// ── 代码块：换成 Vue NodeView（CodeBlockView.vue），在语法高亮之外加一行语言名标签——
+// 光靠颜色猜不出自动识别到底生没生效，得有个文字提示（跟只读预览的 .np-code-lang 对应）。 ──
+const MindCodeBlock = CodeBlockLowlight.extend({
+  addNodeView() {
+    return VueNodeViewRenderer(CodeBlockView)
   },
 })
 
@@ -174,6 +207,24 @@ export function docToMarkdown(doc: MindDocNode | null | undefined): string {
       blockStr = (b.content ?? []).map(item =>
         `- ${inlineToMd(item.content?.[0]?.content)}`
       ).join('\n')
+    } else if (b.type === 'orderedList') {
+      // 序号不存进 markdown 的"意义"里，只是显示——重新读回来时永远从 1 从头编号，
+      // 这里导出也按数组顺序重新算，不读 TipTap 的 start 属性（没做自定义起始序号的 UI）
+      blockStr = (b.content ?? []).map((item, i) =>
+        `${i + 1}. ${inlineToMd(item.content?.[0]?.content)}`
+      ).join('\n')
+    } else if (b.type === 'blockquote') {
+      // 引用块内允许多段（连续几行都用 >），每段各自一行，中间不留空行——
+      // 跟待办/列表"一项一行"是同一个模型，多段落之间没有"松/紧"区分（简化，不是完整 CommonMark）
+      blockStr = (b.content ?? []).map(p => '> ' + inlineToMd(p.content)).join('\n')
+    } else if (b.type === 'codeBlock') {
+      // 代码块内容是纯文本（marks:''，TipTap 本身就禁止代码块内再套加粗斜体这些），
+      // 原样吐出来，不走 inlineToMd/mindRef 解析——代码里的 [[ ]] 应该保持原样，不被认成引用
+      const code = (b.content ?? []).map(n => n.text ?? '').join('')
+      const lang = b.attrs?.language ?? ''
+      blockStr = '```' + lang + '\n' + code + '\n```'
+    } else if (b.type === 'horizontalRule') {
+      blockStr = '---'
     } else {
       blockStr = inlineToMd(b.content)
     }
@@ -224,13 +275,28 @@ export function markdownToDoc(md: string | null | undefined): MindDocNode {
   const content: MindDocNode[] = []
   let tasks: MindDocNode[] = []
   let bullets: MindDocNode[] = []
+  let orders: MindDocNode[] = []
+  let quotes: MindDocNode[] = []
   let blankRun = 0
+  // 代码块围栏状态机：``` 之间一切原样照抄，空行/`#`/`-`/`>` 这些在代码里没有特殊含义，
+  // 必须在「是不是空行」判断之前先检查，不然代码里的空行会被误当成分段信号。
+  let inCode = false
+  let codeLang = ''
+  let codeLines: string[] = []
+
   const flushTasks = () => {
     if (tasks.length) { content.push({ type: 'taskList', content: tasks }); tasks = [] }
   }
   const flushBullets = () => {
     if (bullets.length) { content.push({ type: 'bulletList', content: bullets }); bullets = [] }
   }
+  const flushOrders = () => {
+    if (orders.length) { content.push({ type: 'orderedList', content: orders }); orders = [] }
+  }
+  const flushQuotes = () => {
+    if (quotes.length) { content.push({ type: 'blockquote', content: quotes }); quotes = [] }
+  }
+  const flushGroups = () => { flushTasks(); flushBullets(); flushOrders(); flushQuotes() }
   // 连续 N 条空行：第 1 条只是常规的块间分隔（默认就有，不用真的存一个空段落），从第 2 条
   // 起，每多一条空行，多存一个空段落——对应 docToMarkdown 里追加 '\n' 那半边，两边对称
   // 才能来回不丢。文档开头的空行前面没有块可"隔开"，不生成空段落（guard: content.length）。
@@ -238,28 +304,66 @@ export function markdownToDoc(md: string | null | undefined): MindDocNode {
     if (content.length) for (let i = 1; i < blankRun; i++) content.push({ type: 'paragraph' })
     blankRun = 0
   }
+  const pushCodeBlock = () => {
+    const node: MindDocNode = { type: 'codeBlock' }
+    if (codeLang) node.attrs = { language: codeLang }
+    // 空代码块（比如插入后什么都没打）：codeLines 可能是 ['']（一条空行），join 出来是
+    // 空字符串——检查的是数组长度不是字符串长度，之前这里漏了这一步，塞进去一个
+    // { type:'text', text:'' } 的空文本节点。ProseMirror 的 schema 不允许零长度文本节点，
+    // 编辑器拿到这份 JSON 会直接 setContent 失败，卡片进编辑态后什么都渲染不出来。
+    const code = codeLines.join('\n')
+    if (code) node.content = [{ type: 'text', text: code }]
+    content.push(node)
+    codeLines = []
+  }
 
   for (const raw of (md ?? '').split('\n')) {
+    if (inCode) {
+      if (/^\s*```\s*$/.test(raw)) { flushGroups(); flushBlankRun(); pushCodeBlock(); inCode = false; continue }
+      codeLines.push(raw)
+      continue
+    }
+
     const line = raw.replace(/\s+$/, '')
-    if (!line.trim()) { flushTasks(); flushBullets(); blankRun++; continue }
+    if (!line.trim()) { flushGroups(); blankRun++; continue }
     flushBlankRun()
+
+    const fence = /^\s*```(\S*)\s*$/.exec(line)
+    if (fence) { flushGroups(); inCode = true; codeLang = fence[1] || ''; continue }
 
     // 顺序敏感：`- [ ] x` 必须先于 `- x` 匹配，否则待办会被吃成普通列表
     const task = /^\s*-\s\[([ xX])\]\s?(.*)$/.exec(line)
     if (task) {
-      flushBullets()
+      flushBullets(); flushOrders(); flushQuotes()
       const para = block('paragraph', task[2])
       tasks.push({ type: 'taskItem', attrs: { checked: task[1].toLowerCase() === 'x' }, content: [para] })
       continue
     }
     const bullet = /^\s*-\s+(.*)$/.exec(line)
     if (bullet) {
-      flushTasks()
+      flushTasks(); flushOrders(); flushQuotes()
       bullets.push({ type: 'listItem', content: [block('paragraph', bullet[1])] })
       continue
     }
-    flushTasks()
-    flushBullets()
+    const ordered = /^\s*\d+\.\s+(.*)$/.exec(line)
+    if (ordered) {
+      flushTasks(); flushBullets(); flushQuotes()
+      orders.push({ type: 'orderedListItem', content: [block('paragraph', ordered[1])] })
+      continue
+    }
+    // 引用块：连续几行都可以用 `>`，累进同一个块（跟待办/列表一项一行是同一个模型），
+    // 不支持"松/紧"两种段落间距的区分（简化，不是完整 CommonMark）
+    const quote = /^>\s?(.*)$/.exec(line)
+    if (quote) {
+      flushTasks(); flushBullets(); flushOrders()
+      quotes.push(block('paragraph', quote[1]))
+      continue
+    }
+    flushGroups()
+
+    // 分割线：三个以上同一种字符（连续无空格，不认 CommonMark 那种"- - -"带空格写法，
+    // 那样会先被上面的无序列表正则吃掉）
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { content.push({ type: 'horizontalRule' }); continue }
 
     // 标题：不依赖 TipTap 对越界 level 的默认降级行为，解析时显式 clamp 成单级
     const h = /^(#{1,6})\s+(.*)$/.exec(line)
@@ -267,8 +371,8 @@ export function markdownToDoc(md: string | null | undefined): MindDocNode {
 
     content.push(block('paragraph', line))
   }
-  flushTasks()
-  flushBullets()
+  if (inCode) pushCodeBlock()   // 文档以未闭合的代码围栏结尾，也把已攒的内容存下来，不能悄悄丢掉
+  flushGroups()
   flushBlankRun()   // 文档以空行结尾（结尾多打了几个回车）也要算数，不能只处理中间的
 
   if (!content.length) content.push({ type: 'paragraph' })
@@ -279,6 +383,36 @@ export function markdownToDoc(md: string | null | undefined): MindDocNode {
 
 const _ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }
 const esc = (s: string) => s.replace(/[&<>"]/g, c => _ESC[c])
+
+/** lowlight 返回的是 hast 语法树（root/element/text 节点），不是现成的 HTML 字符串——
+ *  这里手写一个最小转换，只处理 highlight.js 语法高亮实际会产出的两种节点类型，不是
+ *  通用 hast→HTML（省得为这一个用途多引一个 hast-util-to-html 依赖）。 */
+function hastToHtml(node: any): string {
+  if (node.type === 'text') return esc(node.value ?? '')
+  const inner = (node.children ?? []).map(hastToHtml).join('')
+  if (node.type === 'element') {
+    const cls = (node.properties?.className ?? []).join(' ')
+    return cls ? `<span class="${cls}">${inner}</span>` : inner
+  }
+  return inner   // root 或其它没见过的节点类型：只透传子节点
+}
+
+/** 代码块统一走这一个函数算语法树 + 最终显示的语言名，只读预览（pushCodeBlock）和编辑态
+ *  的语言标签（CodeBlockView.vue）共用，不用各自重复调一遍 lowlight——没写语言时两边都
+ *  要显示 highlightAuto 猜出来的语言名，不然自动识别猜没猜中、猜没猜都没法确认。
+ *  .registered() 而不是 listLanguages().includes()：后者只列出规范名，"js"/"ts" 这类
+ *  别名会被判成"不认识"、错着退化去 highlightAuto 瞎猜（真出过这个问题）。 */
+function highlightCode(explicit: string | null | undefined, code: string): { tree: any; language: string } {
+  const known = explicit && lowlight.registered(explicit)
+  const tree = known ? lowlight.highlight(explicit, code) : lowlight.highlightAuto(code)
+  const language = known ? explicit : ((tree.data as any)?.language ?? 'plaintext')
+  return { tree, language }
+}
+
+/** 只要显示用的语言名（编辑态语言标签用，见 CodeBlockView.vue），不需要高亮出来的语法树。 */
+export function resolveCodeLanguage(explicit: string | null | undefined, code: string): string {
+  return highlightCode(explicit, code).language
+}
 
 /** 链接 href 白名单：只放行 http(s)/mailto/相对路径，挡掉 `javascript:` 等注入手段——
  *  便签内容将来可能来自咕咕/粘贴，不是 100% 可信输入，渲染层要有兜底。 */
@@ -330,15 +464,30 @@ export function mdToPreviewHtml(md: string | null | undefined): string {
   const out: string[] = []
   let tasks: string[] = []
   let bullets: string[] = []
+  let orders: string[] = []
+  let quotes: string[] = []
   let taskIdx = 0
   let lineUnit = 0
   let blankRun = 0
+  let inCode = false
+  let codeLang = ''
+  let codeLines: string[] = []
+
   const flushTasks = () => {
     if (tasks.length) { out.push(`<ul class="np-tasks">${tasks.join('')}</ul>`); tasks = [] }
   }
   const flushBullets = () => {
     if (bullets.length) { out.push(`<ul class="np-list">${bullets.join('')}</ul>`); bullets = [] }
   }
+  const flushOrders = () => {
+    if (orders.length) { out.push(`<ol class="np-ordered">${orders.join('')}</ol>`); orders = [] }
+  }
+  // 引用块每段各自一个 data-line-unit（跟 markdownToDoc 的多段落 blockquote 对应，
+  // 点多行引用里的某一行能精确定位到那一行，不是整块只有一个可点目标）
+  const flushQuotes = () => {
+    if (quotes.length) { out.push(`<blockquote class="np-quote">${quotes.join('')}</blockquote>`); quotes = [] }
+  }
+  const flushGroups = () => { flushTasks(); flushBullets(); flushOrders(); flushQuotes() }
   // 跟 markdownToDoc 的 flushBlankRun 对称：连续 N 条空行，从第 2 条起每多一条渲染一个空段落
   // 占位，data-line-unit 照样递增——保持跟编辑态「点哪行进编辑态就定位到哪行」的计数一致。
   // 塞一个 &nbsp;（不是空 <p></p>）：编辑态里空段落是 TipTap 塞的 <br>，同样撑出一整行的
@@ -347,15 +496,40 @@ export function mdToPreviewHtml(md: string | null | undefined): string {
     if (out.length) for (let i = 1; i < blankRun; i++) out.push(`<p class="np-blank" data-line-unit="${lineUnit++}">&nbsp;</p>`)
     blankRun = 0
   }
+  // 代码块整块只占一个 data-line-unit（内容是一整块纯文本，不按行拆开可点定位），
+  // 跟 NoteEditor.vue focusAtLineUnit 的 LEAF_TYPES 把 codeBlock 当一个不下钻的叶子对应。
+  // 语言标签头：没写语言时也要显示 highlightAuto 猜出来的语言名，不然用户不知道自动识别
+  // 到底生没生效（见 highlightCode() 顶部注释）。
+  const pushCodeBlock = () => {
+    const code = codeLines.join('\n')
+    const { tree, language } = highlightCode(codeLang, code)
+    const highlighted = (tree.children ?? []).map(hastToHtml).join('')
+    out.push(
+      `<div class="np-code-block" data-line-unit="${lineUnit++}">` +
+      `<div class="np-code-lang">${esc(language)}</div>` +
+      `<pre class="np-code"><code class="hljs language-${esc(language)}">${highlighted}</code></pre>` +
+      `</div>`,
+    )
+    codeLines = []
+  }
 
   for (const raw of (md ?? '').split('\n')) {
+    if (inCode) {
+      if (/^\s*```\s*$/.test(raw)) { flushGroups(); flushBlankRun(); pushCodeBlock(); inCode = false; continue }
+      codeLines.push(raw)
+      continue
+    }
+
     const line = raw.replace(/\s+$/, '')
-    if (!line.trim()) { flushTasks(); flushBullets(); blankRun++; continue }
+    if (!line.trim()) { flushGroups(); blankRun++; continue }
     flushBlankRun()
+
+    const fence = /^\s*```(\S*)\s*$/.exec(line)
+    if (fence) { flushGroups(); inCode = true; codeLang = fence[1] || ''; continue }
 
     const task = /^\s*-\s\[([ xX])\]\s?(.*)$/.exec(line)
     if (task) {
-      flushBullets()
+      flushBullets(); flushOrders(); flushQuotes()
       const done = task[1].toLowerCase() === 'x'
       tasks.push(
         `<li class="${done ? 'done' : ''}" data-line-unit="${lineUnit++}">` +
@@ -366,22 +540,36 @@ export function mdToPreviewHtml(md: string | null | undefined): string {
     }
     const bullet = /^\s*-\s+(.*)$/.exec(line)
     if (bullet) {
-      flushTasks()
+      flushTasks(); flushOrders(); flushQuotes()
       // 跟待办同一套 flex+固定宽度标记结构（.mind-dot），文字起点才能跟 checkbox 后的文字对齐——
       // 原生 list-style 圆点宽度不可控，没法跟 checkbox 的宽度精确对上
       bullets.push(`<li data-line-unit="${lineUnit++}"><span class="mind-dot">•</span><span>${inlineToHtml(bullet[1])}</span></li>`)
       continue
     }
-    flushTasks()
-    flushBullets()
+    const ordered = /^\s*\d+\.\s+(.*)$/.exec(line)
+    if (ordered) {
+      flushTasks(); flushBullets(); flushQuotes()
+      // 数字不在这里手算，交给 CSS counter（见 mind-content.css），JS 侧不用关心当前排第几
+      orders.push(`<li data-line-unit="${lineUnit++}"><span>${inlineToHtml(ordered[1])}</span></li>`)
+      continue
+    }
+    const quote = /^>\s?(.*)$/.exec(line)
+    if (quote) {
+      flushTasks(); flushBullets(); flushOrders()
+      quotes.push(`<p data-line-unit="${lineUnit++}">${inlineToHtml(quote[1])}</p>`)
+      continue
+    }
+    flushGroups()
+
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { out.push('<hr class="np-hr">'); continue }
 
     const h = /^(#{1,6})\s+(.*)$/.exec(line)
     if (h) { out.push(`<h1 data-line-unit="${lineUnit++}">${inlineToHtml(h[2])}</h1>`); continue }
 
     out.push(`<p data-line-unit="${lineUnit++}">${inlineToHtml(line)}</p>`)
   }
-  flushTasks()
-  flushBullets()
+  if (inCode) pushCodeBlock()
+  flushGroups()
   flushBlankRun()   // 结尾多打的空行也要渲染出来，不能只处理中间的
   return out.join('')
 }
@@ -408,15 +596,20 @@ export function toggleTaskInMd(md: string, idx: number): string {
 export function mindExtensions(placeholder = '写点什么…') {
   return [
     StarterKit.configure({
-      // 窄口径：块级/结构类格式不开（列表 2026-07-10 起开无序、平铺）。加粗/斜体/删除线/
-      // 行内代码/链接 2026-07-11 起开——都是行内标记，风险低、TipTap 原生支持。
-      codeBlock: false, blockquote: false, orderedList: false,
-      horizontalRule: false, underline: false,
+      // 窄口径：多级标题/表格/图片仍不开。加粗/斜体/删除线/行内代码/链接 2026-07-11 起开
+      // （行内标记）；引用块/有序列表/分割线 2026-07-11 起开（块级元素，走「插入」二级
+      // 菜单，见 NoteEditor.vue）。代码块单独关掉，用下面的 MindCodeBlock 换掉（要语法
+      // 高亮 + 语言名标签，见 mind-content.css 和 CodeBlockView.vue）。
+      codeBlock: false,
+      underline: false,
       link: { openOnClick: false, autolink: false, defaultProtocol: 'https' },
       heading: { levels: [1] },
-      listItem: false,   // 用下面 BulletListItem 的自定义渲染（手绘圆点，对齐待办缩进）
+      listItem: false,        // 用下面 BulletListItem 的自定义渲染（手绘圆点，对齐待办缩进）
+      orderedList: { itemTypeName: 'orderedListItem' },   // 数字跟圆点不能共用一个节点渲染
     }),
+    MindCodeBlock.configure({ lowlight }),
     BulletListItem,
+    OrderedListItem,
     TaskList,
     TaskItem.configure({ nested: false }),
     MindRef,

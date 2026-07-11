@@ -114,13 +114,13 @@ function scheduleSave() {
 watch([draftTitle, draftBody], () => { if (props.editing) scheduleSave() })
 
 /** 点卡片外面：先补一次保存，再退出编辑态（不再是「取消」，没有可丢弃的东西）。
- *  NoteEditor 的「样式」二级菜单 Teleport 到 body，不再是卡片的 DOM 后代，得单独放行——
- *  同 CaptureBar.vue 对 DatePicker 的 .dp-popup 那套，点菜单里的按钮不算"点外面"。 */
+ *  NoteEditor 的「样式」「插入」两个二级菜单都 Teleport 到 body，不再是卡片的 DOM 后代，
+ *  得单独放行——同 CaptureBar.vue 对 DatePicker 的 .dp-popup 那套，点菜单里的按钮不算"点外面"。 */
 function onDocDown(e: MouseEvent) {
   if (!props.editing) return
   const t = e.target as HTMLElement
   if (cardRef.value?.contains(t)) return
-  if (t.closest?.('.ne-style-menu')) return
+  if (t.closest?.('.ne-style-menu') || t.closest?.('.ne-insert-menu')) return
   finishEditing()
 }
 // finishEditing 已经同步 flush 过一次；emit('close') 会让 editing 变 false 反过来触发下面

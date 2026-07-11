@@ -93,14 +93,14 @@ function measureExpandedHeight() {
   expandedHeight.value = Math.max(50, bodyRef.value?.scrollHeight ?? 50)
 }
 
-/** 点条外任意处收起。DatePicker 的日历、NoteEditor 的「样式」二级菜单都 Teleport 到
- *  body，得单独放行——选个日期/点个格式按钮不算"点外面"。 */
+/** 点条外任意处收起。DatePicker 的日历、NoteEditor 的「样式」「插入」二级菜单都 Teleport
+ *  到 body，得单独放行——选个日期/点个格式或插入按钮不算"点外面"。 */
 function onDocDown(e: MouseEvent) {
   if (!expanded.value) return
   const t = e.target as HTMLElement
   if (barRef.value?.contains(t)) return
   if (t.closest?.('.dp-popup')) return
-  if (t.closest?.('.ne-style-menu')) return
+  if (t.closest?.('.ne-style-menu') || t.closest?.('.ne-insert-menu')) return
   collapse()
 }
 onMounted(() => {

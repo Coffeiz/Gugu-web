@@ -80,13 +80,27 @@ const rendered = computed(() =>
 .md-view :deep(.md-code-lang) { font-size: 10px; font-weight: 600; color: var(--color-primary); opacity: 0.85; text-transform: lowercase; letter-spacing: 0.04em; }
 .md-view :deep(.md-copy-btn) { font-size: 10px; font-weight: 600; color: var(--color-primary); background: none; border: none; cursor: pointer; padding: 0; opacity: 0.7; transition: opacity 0.15s; }
 .md-view :deep(.md-copy-btn:hover) { opacity: 1; }
-.md-view :deep(.hljs-keyword) { color: #7b5cf0; }
-.md-view :deep(.hljs-string) { color: #2d7a4f; }
-.md-view :deep(.hljs-comment) { color: #9a9a9a; font-style: italic; }
-.md-view :deep(.hljs-number) { color: #b07858; }
-.md-view :deep(.hljs-function) { color: #4a7fb5; }
-.md-view :deep(.hljs-title) { color: #4a7fb5; font-weight: 600; }
-.md-view :deep(.hljs-attr) { color: #b07858; }
-.md-view :deep(.hljs-built_in) { color: #5a9e88; }
-.md-view :deep(.hljs-variable) { color: #1e2028; }
+/* token 配色：跟思维面板笔记（useMindEditor.ts + mind-content.css）用同一套，全站代码块
+   颜色统一。这里不需要 mind-content.css 里那套"重复 class 提高优先级"的技巧——那是
+   为了应付 @tiptap/extension-code-block-lowlight 用 ProseMirror decoration 画高亮、
+   把嵌套 token 拍扁成一个 class 列表的问题；GuguChat 是 hljs.highlight() 直接出的
+   真实嵌套 <span>，浏览器天然只认最内层，不会有那个问题。 */
+.md-view :deep(.hljs-keyword), .md-view :deep(.hljs-literal),
+.md-view :deep(.hljs-selector-tag), .md-view :deep(.hljs-tag) { color: #7b5cf0; }
+.md-view :deep(.hljs-string), .md-view :deep(.hljs-regexp),
+.md-view :deep(.hljs-symbol), .md-view :deep(.hljs-bullet),
+.md-view :deep(.hljs-addition) { color: #2d7a4f; }
+.md-view :deep(.hljs-comment), .md-view :deep(.hljs-quote),
+.md-view :deep(.hljs-meta) { color: #9a9a9a; font-style: italic; }
+.md-view :deep(.hljs-number), .md-view :deep(.hljs-attr),
+.md-view :deep(.hljs-attribute), .md-view :deep(.hljs-deletion) { color: #b07858; }
+.md-view :deep(.hljs-function), .md-view :deep(.hljs-name),
+.md-view :deep(.hljs-type), .md-view :deep(.hljs-params) { color: #4a7fb5; }
+.md-view :deep(.hljs-title), .md-view :deep(.hljs-section),
+.md-view :deep(.hljs-selector-id), .md-view :deep(.hljs-selector-class) { color: #4a7fb5; font-weight: 600; }
+.md-view :deep(.hljs-built_in), .md-view :deep(.hljs-builtin-name),
+.md-view :deep(.hljs-link) { color: #5a9e88; }
+.md-view :deep(.hljs-variable), .md-view :deep(.hljs-template-variable) { color: #1e2028; }
+.md-view :deep(.hljs-emphasis) { font-style: italic; }
+.md-view :deep(.hljs-strong) { font-weight: 700; }
 </style>

@@ -9,7 +9,7 @@
     </div>
 
     <!-- 横置便签流：左侧是过往、右侧是后来的日期；列内竖滚翻当天 -->
-    <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel" @scroll="onScroll">
+    <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel" @scroll="onScroll" @scrollend="onScrollEnd">
       <div v-if="store.loading && !store.loaded" class="rec-loading">加载中…</div>
       <NoteTimeline
         v-else
@@ -21,6 +21,7 @@
         @save="onSave"
         @delete="onDelete"
         @toggle-task="onToggleTask"
+        @edit-request="onEditRequest"
       />
     </div>
 
@@ -200,6 +201,37 @@ function jumpTo(date: string, animate = true) {
     })
   }
 }
+
+// ── 编辑态强制绑定居中日期：点两侧列的便签先把那天滚到正中，稳定后才真正进编辑态；
+// 点的正好是居中列就直接进。「居中日期变了就退出编辑」统一交给下面 watch(activeDate)
+// 处理，这里不用重复关一次。──
+const pendingEditNote = ref<MindNote | null>(null)
+function onEditRequest(n: MindNote) {
+  const noteDate = n.capturedAt.slice(0, 10)
+  if (noteDate === activeDate.value) {
+    timelineRef.value?.confirmEdit(n)
+    return
+  }
+  const root = scrollRef.value
+  const col = root?.querySelector<HTMLElement>(`.tl-col[data-date="${noteDate}"]`)
+  if (!root || !col) return
+  pendingEditNote.value = n
+  // 用 followCardsTo（滑杆拖动松手吸附的那套阻尼弹簧），不用 jumpTo 的浏览器原生
+  // smooth scroll——原生那个太快、跟切换日期时的手感对不上，统一成同一种"阻尼速度"。
+  followCardsTo(col.offsetLeft + col.offsetWidth / 2 - contentCenter(root))
+}
+/** 滚动稳定（含阻尼动画播完）才可能触发进编辑态；期间用户又滚去了别处
+ *  （activeDate 跟目标日期对不上）就当这次编辑请求作废，不静默把人拽回去。 */
+function onScrollEnd() {
+  const n = pendingEditNote.value
+  if (!n) return
+  pendingEditNote.value = null
+  if (n.capturedAt.slice(0, 10) === activeDate.value) timelineRef.value?.confirmEdit(n)
+}
+// 居中日期一变（滑杆拖动/滚轮/跳转…任何原因），正在编辑的便签就不再是"居中列"了，退出编辑态
+watch(activeDate, (cur, prev) => {
+  if (cur !== prev) timelineRef.value?.stopEditing()
+})
 
 // ── 快速定位：日历弹层选任意日期（弹层自带"今天"快捷按钮，选中即是同一条路径）。
 // 没便签的日期不出列（#见 NoteTimeline 注释），选中的目标日不存在时退化到最近的

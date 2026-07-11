@@ -54,16 +54,25 @@ const emit = defineEmits<{
   (e: 'save', note: MindNote, md: string): void
   (e: 'delete', note: MindNote): void
   (e: 'toggleTask', note: MindNote, idx: number): void
+  (e: 'editRequest', note: MindNote): void
 }>()
 
 const editingId = ref<number | null>(null)
 const conflict  = ref(false)
 
+// 编辑态强制绑定"当前居中的日期"：点哪张卡不直接进编辑，先把请求交给 NotesView.vue——
+// 那张卡所在的日期正好居中就立刻走 confirmEdit；不居中就先把那天滚到正中，稳定之后
+// NotesView 再回调 confirmEdit（见 NotesView.vue 的 onEditRequest/onScrollEnd）。
 function startEdit(n: MindNote) {
+  emit('editRequest', n)
+}
+/** 真正进入编辑态，只有确认目标日期已经居中才会被调用（见上面 startEdit 的说明）。 */
+function confirmEdit(n: MindNote) {
   editingId.value = n.id
   conflict.value = false
 }
-/** 点卡外面/切到别的便签才退出编辑态；自动保存本身不退出——写着写着还在存，不能把人踢出去 */
+/** 点卡外面/切到别的便签/居中日期变了都退出编辑态；自动保存本身不退出——写着写着还在存，
+ *  不能把人踢出去。 */
 function stopEditing() { editingId.value = null; conflict.value = false }
 function autosave(n: MindNote, md: string) {
   emit('save', n, md)
@@ -119,7 +128,7 @@ function monthLabel(iso: string) {
 }
 function weekdayOf(iso: string) { return '周' + WEEK[new Date(iso + 'T00:00:00').getDay()] }
 
-defineExpose({ flagConflict: () => { conflict.value = true } })
+defineExpose({ flagConflict: () => { conflict.value = true }, confirmEdit, stopEditing })
 </script>
 
 <style scoped>
