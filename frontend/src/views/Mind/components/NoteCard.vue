@@ -1,11 +1,15 @@
 <template>
   <div ref="cardRef" class="note-card"
-       :class="{ editing, highlight, 'nc-edit-pending': editing && !editReady, ['tint-' + (note.color || '')]: !!note.color }"
+       :class="{ editing: showEditingBlock, highlight, 'nc-edit-pending': editing && !editReady,
+                 'nc-toolbar-leaving': toolbarLeaving, ['tint-' + (note.color || '')]: !!note.color }"
        :style="{ height: cardHeight }">
     <!-- 编辑态：跟只读态一样按区域分标题区/正文区（不是靠"标题"文字样式段落类型），
          就地展开（跨两列由父级 grid-column 控制）；自动保存，没有取消/保存按钮——
-         停顿一下自己存，点卡外面就算编完（先补一次保存再退出）。 -->
-    <template v-if="editing">
+         停顿一下自己存，点卡外面就算编完（先补一次保存再退出）。
+         v-if 绑的是 showEditingBlock 不是 editing 本身——退出编辑态时要先让工具栏模糊
+         淡出（见 script 里的 toolbarLeaving），播完这段动画才真正把内容切回预览分支，
+         不然 DOM 一被摘掉就没法再播这段淡出了。 -->
+    <template v-if="showEditingBlock">
       <input
         ref="titleInputRef"
         v-model="draftTitle" class="nc-title-input" placeholder="标题（可选）"
@@ -92,6 +96,11 @@ const editReady = ref(false)
 // 不然预览态里后续「展开/收起」长内容、编辑态里继续打字撑高，都会被钉死在这个旧的 px 值上。
 const cardHeight = ref<string>('auto')
 const HEIGHT_ANIM_MS = 300
+// 退出编辑态时工具栏先模糊淡出，播完这段（TOOLBAR_FADE_MS）才真正把 v-if 切回预览分支——
+// showEditingBlock 才是模板 v-if 绑的那个值，不直接绑 props.editing（见下面的 watch）。
+const showEditingBlock = ref(props.editing)
+const toolbarLeaving = ref(false)
+const TOOLBAR_FADE_MS = 180
 const titleInputRef = ref<HTMLInputElement | null>(null)
 // 点哪进编辑态光标就落在哪：'title' 落标题框，数字落正文对应行（跟 mdToPreviewHtml 的
 // data-line-unit 对应），null 就随 NoteEditor 自己的 autofocus:'end'（默认落文档末尾）。
@@ -143,19 +152,35 @@ function finishEditing() {
 // 比如便签被删除强制退出编辑）才需要这里兜底补一次保存。编辑期间才挂全局点击监听，
 // 避免每张卡常驻一个 document 监听器。
 let heightResetTimer: ReturnType<typeof setTimeout> | null = null
+let leaveTimer: ReturnType<typeof setTimeout> | null = null
+let leaveResolve: (() => void) | null = null
+function clearPendingLeave() {
+  if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = null }
+  if (leaveResolve) { leaveResolve(); leaveResolve = null }   // 唤醒还卡在等待里的旧一轮 watch，让它自己因 token 对不上而提前退出
+}
+// watch 本身是 async 函数，同一个 watch 源可能在上一轮还没走完 await 时又触发新一轮
+// （比如淡出等待期间用户又点回编辑）——用一个自增 token 标记"当前是不是最新这一轮"，
+// 每次 await 之后都要重新检查，不是最新的就地放弃，不然新旧两轮谁先谁后地改
+// showEditingBlock/cardHeight 会乱套。
+let watchToken = 0
 watch(() => props.editing, async (v, prev) => {
+  const token = ++watchToken
   // watch 默认 flush:'pre'，这一刻卡片还是切换前的内容（v-if 还没跑），先量出旧高度当动画起点。
   if (heightResetTimer) { clearTimeout(heightResetTimer); heightResetTimer = null }
+  clearPendingLeave()
   const el = cardRef.value
   const startH = el?.getBoundingClientRect().height ?? null
 
   if (v) {
+    toolbarLeaving.value = false
+    showEditingBlock.value = true   // 立刻进入编辑态，展开动画照旧不受下面淡出逻辑影响
     closedByFinish = false
     editReady.value = false
     draftTitle.value = _split.value.titleRaw
     draftBody.value = _split.value.body
     document.addEventListener('mousedown', onDocDown, true)
     await nextTick()   // 等 NoteEditor 挂载、自己的 autofocus:'end' 先跑完，这里再改写光标位置
+    if (token !== watchToken) return
     if (pendingFocus.value === 'title') titleInputRef.value?.focus()
     else if (typeof pendingFocus.value === 'number') bodyEditorRef.value?.focusAtLineUnit(pendingFocus.value)
     pendingFocus.value = null
@@ -165,7 +190,20 @@ watch(() => props.editing, async (v, prev) => {
     if (prev && !closedByFinish) flushSave()
     closedByFinish = false
     editReady.value = false
+    // 工具栏先模糊淡出（NoteEditor 还原样挂着，v-if 还没切），播完这段再真正切回预览分支——
+    // 直接把 showEditingBlock 摘掉的话 DOM 一移除就没法再播这段淡出动画了。
+    toolbarLeaving.value = true
+    await new Promise<void>(resolve => {
+      leaveResolve = resolve
+      leaveTimer = setTimeout(resolve, TOOLBAR_FADE_MS)
+    })
+    leaveTimer = null
+    leaveResolve = null
+    if (token !== watchToken) return   // 等待期间又切回了编辑态，交给新一轮 watch 处理，这轮就此打住
+    toolbarLeaving.value = false
+    showEditingBlock.value = false
     await nextTick()   // 等预览态内容渲染出来，才能量到真实目标高度
+    if (token !== watchToken) return
   }
 
   // 展开/收回动画：编辑态是 flex:1 撑满父级，卡片高度被钉住的话编辑器只会乖乖填满这个
@@ -181,11 +219,14 @@ watch(() => props.editing, async (v, prev) => {
   if (el && startH != null) {
     cardHeight.value = 'auto'
     await nextTick()
+    if (token !== watchToken) return
     const endH = el.getBoundingClientRect().height
     cardHeight.value = startH + 'px'
     await nextTick()
+    if (token !== watchToken) return
     void el.offsetHeight
     requestAnimationFrame(() => {
+      if (token !== watchToken) return
       cardHeight.value = endH + 'px'
       heightResetTimer = setTimeout(() => { cardHeight.value = 'auto'; heightResetTimer = null }, HEIGHT_ANIM_MS)
     })
@@ -196,6 +237,7 @@ watch(() => props.editing, async (v, prev) => {
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocDown, true)
   if (heightResetTimer) clearTimeout(heightResetTimer)
+  clearPendingLeave()
 })
 
 /** 标题只在首行真是 `#` 标题格式时才从正文摘出来单独展示；纯正文/待办/列表开头的便签
@@ -294,6 +336,24 @@ function onBodyClick(e: MouseEvent) {
 }
 .note-card.editing :deep(.note-editor) {
   flex: 1; display: flex; flex-direction: column; min-height: 0;
+}
+/* 工具栏模糊淡入：卡片本身通过 nc-edit-pending 这层 opacity 整卡显形是瞬间的（光标定位
+   落定就直接显示），工具栏在此基础上单独再叠一层从模糊到清晰的过渡，让"进入编辑态"这个
+   动作里工具栏看起来是单独浮出来的，不是跟标题/正文一起硬切出现。 */
+.note-card.editing :deep(.ne-toolbar) {
+  opacity: 0; filter: blur(6px);
+  transition: opacity 0.22s ease-in-out, filter 0.22s ease-in-out;
+}
+.note-card.editing:not(.nc-edit-pending) :deep(.ne-toolbar) {
+  opacity: 1; filter: blur(0);
+}
+/* 工具栏模糊淡出：退出编辑态时 script 里的 toolbarLeaving 先亮一小段时间（TOOLBAR_FADE_MS），
+   NoteEditor 还原样挂着没被摘掉，这里让工具栏播完淡出再让 showEditingBlock 真正切换分支。
+   三个类选择器（editing+nc-toolbar-leaving）specificity 跟上面「淡入完成」那条打平，靠
+   写在后面赢过它，覆盖回 opacity:0/blur——不这么写工具栏会一直卡在展开完成的清晰状态，
+   直到 DOM 被摘掉，收不出淡出效果。 */
+.note-card.editing.nc-toolbar-leaving :deep(.ne-toolbar) {
+  opacity: 0; filter: blur(6px);
 }
 .note-card.editing :deep(.ne-body) {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
