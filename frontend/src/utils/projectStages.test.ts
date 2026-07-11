@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   autoCompleteTodos, restoreTodos, toggleTodoDone,
-  nextStatus, stageProgressByIndex, normalizeStages, firstIncompleteStageIdx,
+  nextStatus, stageProgressByIndex, normalizeStages, firstIncompleteStageIdx, allTodosDone,
 } from './projectStages'
 import type { ProjectTodo } from '@/types/project'
 
@@ -138,5 +138,18 @@ describe('firstIncompleteStageIdx — 当前应处于的阶段 = 第一个未完
   })
   it('单阶段未完成 → 0', () => {
     expect(firstIncompleteStageIdx([stage([{ done: false }])])).toBe(0)
+  })
+})
+
+describe('allTodosDone — 进入已完成的闸门', () => {
+  const stage = (todos: Partial<ProjectTodo>[]) => ({ key: 'k', label: 'L', todos: todos.map((t, i) => td({ id: 'i' + i, ...t })) })
+  it('全部打勾 → true', () => {
+    expect(allTodosDone([stage([{ done: true }]), stage([{ done: true }])])).toBe(true)
+  })
+  it('任一未打勾 → false（即便在最后阶段之外）', () => {
+    expect(allTodosDone([stage([{ done: false }]), stage([{ done: true }])])).toBe(false)
+  })
+  it('空阶段 / 全无待办 → true（位置型项目仍可完成）', () => {
+    expect(allTodosDone([stage([]), stage([])])).toBe(true)
   })
 })

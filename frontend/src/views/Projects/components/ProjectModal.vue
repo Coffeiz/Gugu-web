@@ -696,7 +696,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
-import { autoCompleteTodos, restoreTodos, firstIncompleteStageIdx } from '@/utils/projectStages'
+import { autoCompleteTodos, restoreTodos, firstIncompleteStageIdx, allTodosDone } from '@/utils/projectStages'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/services/api'
 import { thumbLoadedIds, clearThumbCache } from '@/composables/useThumbCache'
@@ -1636,8 +1636,7 @@ function saveTodos() {
   const lastKey = localStages.value[localStages.value.length - 1]?.key
   // 真正「完成」= 在最后阶段 + **所有阶段的全部待办都已勾选**（真正 100%）。
   // 只看当前阶段进度（calcProgress）会漏掉「取消了前面阶段某条待办」→ 当前阶段仍满、项目却赖在已完成。
-  const allTodosDone = localStages.value.every(s => (s.todos ?? []).every(t => t.done))
-  const fullyComplete = localCurrentStage.value === lastKey && newProgress === 100 && allTodosDone
+  const fullyComplete = localCurrentStage.value === lastKey && newProgress === 100 && allTodosDone(localStages.value)
   const snapshot = () => JSON.parse(JSON.stringify(localStages.value))
   if (fullyComplete && props.project.status !== 'done') {
     // 到最后阶段且全部待办勾完 → 自动完成

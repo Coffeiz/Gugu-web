@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { projectsApi, eventsApi } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import type { Project, ProjectStage, ProjectStatus } from '@/types/project'
-import { autoCompleteTodos, restoreTodos, stageProgressByIndex } from '@/utils/projectStages'
+import { autoCompleteTodos, restoreTodos, stageProgressByIndex, allTodosDone } from '@/utils/projectStages'
 import type { components } from '@/types/api'
 
 type EventResponse = components['schemas']['EventResponse']
@@ -194,6 +194,9 @@ export const useProjectStore = defineStore('projects', () => {
     if (!p) return
 
     const originalStageKey = p.currentStage  // 记录修改前的阶段，用于 _stageBeforeDone
+    // 「真正完成」快照：取自动完成之前的当下状态——只有所有待办都已勾选才允许进已完成。
+    // 位置进度（progress===100）会把「点到最后阶段」当作满，前面阶段仍有没勾的待办也会误判完成。
+    const genuinelyDone = allTodosDone(p.stages)
     const oldIdx = p.stages.findIndex(s => s.key === p.currentStage)
     const newIdx = p.stages.findIndex(s => s.key === stageKey)
 
@@ -213,7 +216,7 @@ export const useProjectStore = defineStore('projects', () => {
     p.currentStage = stageKey
     p.progress = progress ?? 0
 
-    const isLastFull = newIdx === p.stages.length - 1 && p.progress === 100
+    const isLastFull = newIdx === p.stages.length - 1 && p.progress === 100 && genuinelyDone
 
     if (isLastFull && p.status !== 'done') {
       // 最后阶段 + 进度满 → 立即乐观更新 status/doneAt，一次 API 全部写入

@@ -55,6 +55,15 @@ export function firstIncompleteStageIdx(stages: ProjectStage[]): number {
   return i === -1 ? stages.length - 1 : i
 }
 
+/**
+ * 所有阶段的所有待办是否都已打勾（空阶段 / 无待办视为完成）。
+ * 用作「进入已完成」的闸门：只有真正勾完全部待办才允许项目落到已完成区，
+ * 而非靠「点到最后一个阶段」的位置进度（位置进度把前面阶段默认当 100%，会误判完成）。
+ */
+export function allTodosDone(stages: ProjectStage[]): boolean {
+  return stages.every(s => (s.todos ?? []).every(t => t.done))
+}
+
 /** 按阶段位置算进度：(当前阶段序号 + 1) / 阶段数 * 100；越界或空阶段返回 0。 */
 export function stageProgressByIndex(idx: number, total: number): number {
   if (idx < 0 || total <= 0) return 0
