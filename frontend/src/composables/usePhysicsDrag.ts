@@ -154,9 +154,10 @@ function _animateScroll(el: HTMLElement, dy: number, dur = 300) {
 // 窗口，会引出另一个新坑：松手时指针原地不动（这正是文件拖完不动手最常见的情形）——窗口期内
 // 浏览器正确判定「摘了命中测试=没有 hover」，窗口结束后指针没挪动、没有新 mousemove 触发重新
 // 判定，:hover 就永远卡在「没悬停」，实际指针明明正压在卡片上。
-// pointer 模式下 :hover 判定本身全程是准的（见上面的注释），但揭示这一刻鼠标可能恰好压在
-// 卡片刚落地的位置。要解决的是揭示瞬间的两处「陈旧 hover 态回弹」：卡片飞行期间是 opacity:0
-// （命中测试仍在、:hover 已为真），CSS 的 hover 早把整张卡推到了 hover 终态——只是看不见：
+// pointer 模式下 :hover 判定本身全程是准的（见上面的注释），但目标本体在克隆飞行期间已是
+// opacity:0（仍参与命中测试、:hover 已为真）。因此必须在**隐藏本体的那一刻**就开始压制 hover，
+// 不能等克隆落地、揭示本体时才补：那会先把已激活的 hover 拉回静止态，再重新进入 hover，形成闪动。
+// 被压住的目标在飞行中不会积累 hover 终态；克隆到位后再揭示它，下一帧才允许正常 hover：
 //   ① 卡片本体 transform 已在 -2px；② 悬停操作按钮（重命名/下载/删除）opacity 已在 1。
 // 若揭示时只恢复 opacity、各自的过渡又都是激活的，卡片会从 -2px 动画回落到压制态 0（下沉）、
 // 按钮会从 1 淡出到 0，随后又双双反向动回来——就是「先下沉再上浮」+「按钮闪好几次」。
@@ -182,6 +183,12 @@ function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettl
     el.style.pointerEvents = ''
     onSettled?.()
   }, 160)
+}
+
+// 克隆开始落地时，目标本体已在鼠标下也不能激活 hover；这层状态一直保留到
+// _revealWithoutStaleHover 在克隆动画结束后解除。与“揭示时才加”的旧做法相比，避免中途积累陈旧 hover。
+function _holdHoverUntilReveal(el: HTMLElement) {
+  el.classList.add('phys-just-revealed')
 }
 
 // 到位缓动：强 ease-out（快进慢收，非线性），不过冲、不回弹
@@ -564,7 +571,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         closedR = _rects(sibs)
         el.style.display = ''
       }
-      el.style.opacity = '0'              // 落定前隐藏，克隆体落到位再露出
+      _holdHoverUntilReveal(el)
+      el.style.opacity = '0'              // 落定前隐藏且压住 hover，克隆体落到位再露出
       _invertPlay(sibs, closedR, openR)   // 从合拢 → 展开
       return el.getBoundingClientRect()
     }
@@ -618,10 +626,13 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         return c
       }
 
-      // 2) 卡片落到新位置（换列/重排）
+      // 2) 卡片落到新位置（换列/重排）。Vue 的 keyed v-for 跨列时会复用 sourceEl 本身，
+      // 只把它挪到新父容器；不能仅凭 el !== sourceEl 判定“是不是新落点”。否则项目卡跨阶段会
+      // 错走旧列归位路径，源卡在克隆飞到新列前提前揭示，鼠标下出现一次陈旧 hover 回弹。
       if (sel) {
         const el = document.querySelector<HTMLElement>(sel)
-        if (el && el.isConnected && el !== sourceEl) {
+        const movedToAnotherContainer = el?.parentElement !== container
+        if (el && el.isConnected && (el !== sourceEl || movedToAnotherContainer)) {
           if (el.offsetWidth > 0) {   // 落点可见 → 占位 FLIP 展开；双克隆同轨迹飞行 + 样式渐变
             animateOpen(el.parentElement!, el)   // 它为量 FLIP 会瞬间 display:none 落点卡，故滚动放其后
             // 落点在可滚动列里若滚出视口 → 快速滚进可视区，box 取滚动后的最终落点
@@ -653,6 +664,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       } else {
         // 收合还没来得及发生（极快的拖放）→ 直接归位即可
         sourceEl.style.display = ''
+        _holdHoverUntilReveal(sourceEl)
         sourceEl.style.opacity = '0'
         const sc = _scrollParent(sourceEl)
         const box = revealInScroller(sc, sourceEl.getBoundingClientRect())
