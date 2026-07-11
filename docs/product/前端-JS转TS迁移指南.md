@@ -176,7 +176,7 @@ npm run typecheck:strict   # vue-tsc -p tsconfig.strict.json（严格档白名�
 - [x] 轻量 store/composable 尾批（2026-07-11）：admin/clipboard/audio/config/preferences + useSorting/useLiveRefresh/useHolidays/useStageTemplates/useThumbCache（10 文件、51 错）
 - [x] 文件簇 ③-a（2026-07-11）：filesCache/preview/useUploadQueue/useBoxSelection。定义 `FileMeta`（=OpenAPI `FileResponse` + 客户端增补字段交集）、`FolderMeta`（=`FolderResponse`）领域类型；preview 承载聊天附件故用 `Partial<FileMeta>`
 - [x] 文件簇 ③-b（2026-07-11）：usePhysicsDrag（959 行/67 错→0，拖拽引擎）+ useFileDragDrop。加 `Box`/`ActiveDrag` 类型、DOM 参数标注、`event: PointerEvent\|DragEvent` 联合就地 cast、`pointerId!`/`_active!` 断言——纯类型标注零逻辑改动。**棘轮累计 30 源文件；stores/composables/services/utils/types 底座已全 strict-clean**
-- [x] 底座补齐 + 组件层 ⑤（2026-07-11）：补 auth/useLazyThumb 两个漏网基座；入档 **13 个 common 组件**（NavItem/PdfViewer/FeedbackModal/FileInfoPopup/DatePicker/DateSpanPicker/ImageViewer/VideoViewer/AppSidebar/GlobalSearch/GlassBg/UploadConflictDialog/AvatarCropper）。**棘轮累计 45 源文件，底座 100% strict-clean**
+- [x] 底座补齐 + 组件层 ⑤（2026-07-11）：补 auth/useLazyThumb 两个漏网基座；入档 **13 个 common 组件**（NavItem/PdfViewer/FeedbackModal/FileInfoPopup/DatePicker/DateSpanPicker/ImageViewer/VideoViewer/AppSidebar/GlobalSearch/GlassBg/UploadConflictDialog/AvatarCropper/SegBar/NotificationBubble）。**棘轮累计 47 源文件（15 common 组件），底座 100% strict-clean**
 - [ ] 接力：继续 common（SegBar/NotificationBubble/TextViewer/FilePreviewModal…）+ 各视图组件逐个入档（GuguChat 228 错、巨型视图是大头，随功能推进）；④ Calendar `CalendarEvent`、Mind `NoteEditor` TipTap any（Mind 待并发思维面板重构稳定后再碰）
 - [ ] CI / 部署流程加 `npm run typecheck` + `typecheck:strict` 门禁（红则挡）
 - [ ] 存量 `.js` 清零后，`tsconfig` 关 `allowJs`（**核实：`.js` 已清零，此项条件已满足，可评估执行**）

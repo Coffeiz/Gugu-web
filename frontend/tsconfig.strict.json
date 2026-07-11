@@ -53,6 +53,8 @@
     "src/components/common/GlobalSearch.vue",
     "src/components/common/GlassBg.vue",
     "src/components/common/UploadConflictDialog.vue",
-    "src/components/common/AvatarCropper.vue"
+    "src/components/common/AvatarCropper.vue",
+    "src/components/common/SegBar.vue",
+    "src/components/common/NotificationBubble.vue"
   ]
 }

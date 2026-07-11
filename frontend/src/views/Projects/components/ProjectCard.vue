@@ -164,7 +164,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, onUnmounted } from 'vue'
+import { computed, ref, nextTick, onUnmounted, type PropType } from 'vue'
+import type { Project } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
@@ -173,7 +174,7 @@ import { PhCheck, PhX } from '@phosphor-icons/vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
 
-const props = defineProps({ project: { type: Object, required: true } })
+const props = defineProps({ project: { type: Object as PropType<Project>, required: true } })
 const emit = defineEmits(['click'])
 
 const projectStore = useProjectStore()
@@ -456,7 +457,7 @@ async function onFileDrop(e) {
       } else {
         const form = new FormData()
         form.append('file', f); form.append('space', 'project')
-        form.append('project_id', props.project.id)
+        form.append('project_id', String(props.project.id))
         uploaded = await uploadWithProgress('/files', form, onPct)
       }
       if (uploaded) cacheStore.addFile(uploaded)
