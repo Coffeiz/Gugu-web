@@ -138,19 +138,11 @@ defineExpose({ flagConflict: () => { conflict.value = true }, confirmEdit, stopE
 .timeline-cols {
   display: flex; gap: 14px; align-items: stretch;
   height: 100%; min-width: max-content;
-  /* 两端留白让首末列也能停在「内容区中线」（不是视口中线——滚动容器铺满视口宽但要跟
-     上方胶囊/滑杆的居中对齐）。内容区中线 = (侧栏宽 + 视口)/2 = 侧栏宽/2 + 50vw；
-     半列宽 220（= .tl-col 440px 的一半）。左 padding = 中线 - 半列；右 padding = 视口 - 中线 - 半列。
-     这条 vw 公式只是估算——JS 里 contentCenter() 是拿 .rec-layout/.rec-hscroll 的
-     getBoundingClientRect() 实测算出来的真实中线，两者天然会差个几十 px（fullBleed 内
-     边距、滚动条等这条 calc 公式没算进去）。列多的时候总宽本来就比视口宽出一大截
-     （每多一列 +454px），这点误差被吞掉从没露过；只有一列时左右 padding 加起来卡死等于
-     "视口宽 - 列宽"，可滚动范围是 0，JS 算出来的目标 scrollLeft 差多少都滚不过去，
-     列只能停在滚不动的地方、看着偏左。右 padding 多留一大截缓冲（侧栏宽 + 300px 冗余），
-     不再依赖精确算出"刚好够用"的滚动范围，不管几列都留够，居中永远够滚过去。 */
+  /* 两端留白和 NotesView.contentCenter() 共享实测坐标。CSS 的 vw/sidebar 公式只作首帧
+     fallback；挂载后由 JS 写入同一坐标系的像素值，单列也不再受估算误差影响。 */
   padding-top: 2px;
-  padding-left: calc(var(--sidebar-width) / 2 + 50vw - 220px);
-  padding-right: calc(var(--sidebar-width) + 50vw - 220px + 300px);
+  padding-left: var(--timeline-left-gutter, calc(var(--sidebar-width) / 2 + 50vw - 220px));
+  padding-right: var(--timeline-right-gutter, calc(var(--sidebar-width) + 50vw - 220px + 300px));
 }
 
 /* 一天一块玻璃底板：轻玻璃（同定时任务面板 --glass-bg 0.25），hover 不提亮（底板不是交互件） */

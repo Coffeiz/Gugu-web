@@ -99,6 +99,18 @@ function contentCenter(root: HTMLElement) {
   const layoutRect = layout.getBoundingClientRect()
   return layoutRect.left - rootRect.left + layoutRect.width / 2
 }
+
+/**
+ * 时间流两端的留白必须和 contentCenter() 使用同一套实测坐标。此前 CSS 用 vw/sidebar
+ * 估算、JS 用实际 rect 定位，多列时可滚动余量会掩盖两者误差，单列却会直接停在偏移处。
+ */
+function syncTimelineGutters(root: HTMLElement) {
+  const halfColumn = 220 // .tl-col 宽 440px 的一半，改列宽时一并更新
+  const center = contentCenter(root)
+  root.style.setProperty('--timeline-left-gutter', `${Math.max(0, center - halfColumn)}px`)
+  // 右侧额外留出缓冲，保证首末列都能被滚到实测中线。
+  root.style.setProperty('--timeline-right-gutter', `${Math.max(0, root.clientWidth - center - halfColumn) + 300}px`)
+}
 // 列的 DOM 节点列表缓存：日期列表结构没变时（绝大多数滚动/拖动帧）不用每帧重新
 // querySelectorAll，只在 timelineGroups 变化、DOM 实际增删列之后才重查一次。
 let colEls: HTMLElement[] = []
@@ -294,6 +306,9 @@ watch(() => store.jumpTarget, (date) => {
 // resize：内容区中线变了，把当前列瞬时重新居中（不飞入）
 function onResize() {
   stopCardFollow()
+  const root = scrollRef.value
+  if (!root) return
+  syncTimelineGutters(root)
   if (activeDate.value) jumpTo(activeDate.value, false)
 }
 onMounted(() => window.addEventListener('resize', onResize))
@@ -317,6 +332,8 @@ watch(timelineGroups, async (groups) => {
     // watcher 默认在 DOM 提交前运行，先预补偿一个日期列宽，避免旧卡先被顶开一帧。
     root.scrollLeft += 306
   }
+  await nextTick()
+  if (root) syncTimelineGutters(root)
   await nextTick()
   refreshColEls()   // 日期列增删后 DOM 已提交，这里是唯一需要重查节点的地方
   if (!centeredOnce && groups.length) {
