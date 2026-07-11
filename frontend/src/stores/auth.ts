@@ -2,34 +2,37 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAudioStore } from './audio'
 import { authApi } from '@/services/api'
+import type { components } from '@/types/api'
+
+type UserResponse = components['schemas']['UserResponse']
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const TOKEN_KEY = 'user_token'
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem(TOKEN_KEY) ?? '')
-  const user  = ref(null)
+  const user  = ref<UserResponse | null>(null)
 
   const isLoggedIn = computed(() => !!token.value)
 
-  function _saveToken(t) {
+  function _saveToken(t: string) {
     token.value = t
     localStorage.setItem(TOKEN_KEY, t)
   }
 
-  function _setUser(u) {
+  function _setUser(u: UserResponse | null) {
     user.value = u
   }
 
-  function _extractDetail(body, fallback) {
+  function _extractDetail(body: { detail?: unknown } | null | undefined, fallback: string) {
     const d = body?.detail
     if (!d) return fallback
     if (typeof d === 'string') return d
-    if (Array.isArray(d)) return d.map(e => e.msg ?? e).join('；')
+    if (Array.isArray(d)) return d.map((e: any) => e.msg ?? e).join('；')
     return fallback
   }
 
-  async function register(username, email, password, inviteCode) {
+  async function register(username: string, email: string, password: string, inviteCode: string) {
     const res = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -41,7 +44,7 @@ export const useAuthStore = defineStore('auth', () => {
     _setUser(body.user)
   }
 
-  async function login(username, password) {
+  async function login(username: string, password: string) {
     const res = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -77,13 +80,13 @@ export const useAuthStore = defineStore('auth', () => {
     updateProfile({ timezone: tz }).catch(() => {})   // fire-and-forget，失败不影响主流程
   }
 
-  async function updateProfile(fields) {
+  async function updateProfile(fields: Record<string, unknown>) {
     const updated = await authApi.updateProfile(fields)
     user.value = updated
     return updated
   }
 
-  async function uploadAvatar(file) {
+  async function uploadAvatar(file: File) {
     const updated = await authApi.uploadAvatar(file)
     user.value = updated
     return updated

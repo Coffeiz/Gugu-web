@@ -112,8 +112,8 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const open       = ref(false)
-const wrapRef    = ref(null)
-const popupRef   = ref(null)
+const wrapRef    = ref<HTMLElement | null>(null)
+const popupRef   = ref<HTMLElement | null>(null)
 const popupStyle = ref({})
 const yearMode   = ref(false)
 
@@ -129,7 +129,7 @@ const cursor = ref(
 
 const yearStart = ref(Math.floor(cursor.value.getFullYear() / 12) * 12)
 
-function toIso(d) {
+function toIso(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
@@ -179,7 +179,7 @@ function enterYearMode() {
   yearMode.value = true
 }
 
-function selectYear(y) {
+function selectYear(y: number) {
   const d = new Date(cursor.value)
   d.setFullYear(y)
   cursor.value = d
@@ -187,14 +187,14 @@ function selectYear(y) {
 }
 
 const allowedSet = computed(() => props.allowedDates ? new Set(props.allowedDates) : null)
-function isDisabled(iso) {
+function isDisabled(iso: string) {
   if (props.min && iso < props.min) return true
   if (props.max && iso > props.max) return true
   if (allowedSet.value && !allowedSet.value.has(iso)) return true
   return false
 }
 
-function select(iso) {
+function select(iso: string) {
   if (isDisabled(iso)) return
   emit('update:modelValue', iso)
   open.value = false
@@ -237,10 +237,10 @@ function toggle() {
   open.value = true
 }
 
-function onClickOutside(e) {
+function onClickOutside(e: MouseEvent) {
   if (!open.value) return
-  if (wrapRef.value?.contains(e.target)) return
-  if (popupRef.value?.contains(e.target)) return
+  if (wrapRef.value?.contains(e.target as Node)) return
+  if (popupRef.value?.contains(e.target as Node)) return
   open.value = false
   yearMode.value = false
 }

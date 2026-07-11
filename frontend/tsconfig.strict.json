@@ -38,6 +38,14 @@
     "src/composables/useStageTemplates.ts",
     "src/composables/useThumbCache.ts",
     "src/composables/usePhysicsDrag.ts",
-    "src/composables/useFileDragDrop.ts"
+    "src/composables/useFileDragDrop.ts",
+    "src/stores/auth.ts",
+    "src/composables/useLazyThumb.ts",
+    "src/components/common/NavItem.vue",
+    "src/components/common/viewers/PdfViewer.vue",
+    "src/components/common/FeedbackModal.vue",
+    "src/components/common/FileInfoPopup.vue",
+    "src/components/common/DatePicker.vue",
+    "src/components/common/viewers/ImageViewer.vue"
   ]
 }

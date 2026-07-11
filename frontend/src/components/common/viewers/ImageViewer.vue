@@ -45,15 +45,15 @@ const props = defineProps({
   blobUrl: { type: String, default: null },
 })
 
-const wrapRef = ref(null)
-const imgRef  = ref(null)
+const wrapRef = ref<HTMLElement | null>(null)
+const imgRef  = ref<HTMLImageElement | null>(null)
 const scale   = ref(1)
 const tx      = ref(0)
 const ty      = ref(0)
 const dragging = ref(false)
 const error    = ref(false)
 
-let dragStart = null
+let dragStart: { x: number; y: number } | null = null
 
 const imgStyle = computed(() => ({
   transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
@@ -77,12 +77,12 @@ function clamp() {
 
 const pct = computed(() => Math.round(scale.value * 100))
 
-function applyZoom(newScale) {
+function applyZoom(newScale: number) {
   scale.value = Math.min(8, Math.max(0.05, newScale))
   clamp()
 }
 
-function onWheel(e) {
+function onWheel(e: WheelEvent) {
   const delta = e.deltaY > 0 ? -0.1 : 0.1
   applyZoom(scale.value + delta * scale.value)
 }
@@ -90,7 +90,7 @@ function onWheel(e) {
 function zoomIn()  { applyZoom(scale.value * 1.25) }
 function zoomOut() { applyZoom(scale.value / 1.25) }
 
-function onMouseDown(e) {
+function onMouseDown(e: MouseEvent) {
   if (e.button !== 0) return
   dragging.value = true
   dragStart = { x: e.clientX - tx.value, y: e.clientY - ty.value }
@@ -98,8 +98,8 @@ function onMouseDown(e) {
   window.addEventListener('mouseup', onMouseUp)
 }
 
-function onMouseMove(e) {
-  if (!dragging.value) return
+function onMouseMove(e: MouseEvent) {
+  if (!dragging.value || !dragStart) return
   tx.value = e.clientX - dragStart.x
   ty.value = e.clientY - dragStart.y
   clamp()
