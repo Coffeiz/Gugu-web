@@ -644,14 +644,14 @@ async function onDelete(note: MindNote) {
   display: flex; flex-direction: column; gap: 18px; min-height: 0;   /* 滑杆↔列的安全距离 */
 }
 
-/* #3：列的横向滚动区铺满整个视口宽——向左顶开（侧栏宽 + fullBleed 左内边距 20），
+/* #3：列的横向滚动区铺满整个视口宽——向左顶开侧栏宽，
    宽度取 100vw，最左的列滚到侧栏底下（侧栏 z 更高、玻璃磨砂，自然把它们糊住）。
    列在容器内仍按「内容区中心」居中（见 timeline-cols 两端 padding + JS contentCenter），
    所以活动列和上方胶囊/滑杆对齐，只是溢出的历史列能钻到侧栏后面。 */
 .rec-hscroll {
   flex: 1; min-height: 0;
   width: 100vw;
-  margin-left: calc(-1 * (var(--sidebar-width) + 24px));   /* 顶到视口左：侧栏宽 + fullBleed 左内边距 24 */
+  margin-left: calc(-1 * var(--sidebar-width));   /* 顶到视口左：工作台内容盒从侧栏右缘开始 */
   /* ⚠️ position:relative 必须有：让 .tl-col 的 offsetParent = 本容器，offsetLeft 才和本容器的
      scrollLeft 同一套原点（都从视口左 x=0 算）。否则 offsetParent 落到 rec-layout（在侧栏右侧），
      offsetLeft 从 x=244 起算、却拿去和从 x=0 起算的 scrollLeft 相减 → 列整体偏出一个侧栏宽（#1）。*/

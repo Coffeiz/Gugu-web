@@ -294,17 +294,15 @@ const todayStr = computed(() => {
    笔记页横向列滚动区要钻到侧栏底下就不能被这里截。外层 .layout overflow:hidden 仍兜住
    视口边界，不会真溢出浏览器。 */
 .layout-main.full-bleed { overflow: visible; }
-/* 顶/底 28px 等距：胶囊顶 28（padding-top），捕捉条 bottom:28（padding-bottom 0）。
-   overflow 放开（不裁左侧）：让笔记页的横向列滚动区能钻到侧栏底下（#3，侧栏 z 更高、
-   磨砂玻璃把钻进去的历史列糊住）。纵向仍靠内部各区自己不溢出。 */
+/* 工作台的内容盒必须从导航栏右缘、视口顶端开始，不能再残留普通页面的内边距；否则笔记流
+   要靠负 margin 抵左、右侧却没有对称补偿，最终各区域会落进不同坐标系。顶部胶囊等视觉
+   留白由 Mind/index.vue 自己承担，画布固定层也不再受此处影响。 */
 .layout-main.full-bleed .page-content {
   overflow: visible;
-  /* 左右**对称** 24：内容盒中心 = (侧栏 + 视口)/2 = 列的 contentCenter，胶囊/滑杆 playhead
-     和居中的日期列才真正竖直对齐（左右不等会整体偏移半个差值，日期块就偏左/右了，#4） */
-  padding: 28px 24px 0 24px;
+  padding: 0;
 }
 
-/* 空间画布是唯一允许覆盖整个浏览器的工作面：侧栏仍有更高 z-index，会像一块固定玻璃
-   盖住被拖到左侧的节点；画布本身则不会在 layout-main 的左边缘被裁掉。 */
-.layout-main.canvas-workspace .page-content { position: static; padding: 0; }
+/* 画布视图自己是 position:fixed;inset:0（见 CanvasView.vue），不受 page-content padding
+   约束、天然铺满整个浏览器；顶部"笔记/画布"胶囊的边距由 Mind/index.vue 维护，和笔记页
+   使用同一坐标系。 */
 </style>

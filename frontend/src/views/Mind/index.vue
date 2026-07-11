@@ -64,9 +64,9 @@ const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不
   display: grid; grid-template-columns: 1fr auto 1fr;
   align-items: center; gap: 12px;
   position: relative; z-index: 12;
-  flex-shrink: 0; padding: 0 2px;
+  flex-shrink: 0; margin: 28px 24px 0;
 }
-.mind-body { position: relative; z-index: 1; }
+.mind-body { position: relative; z-index: 1; flex: 1; min-height: 0; }
 .mind-bar-side { display: flex; align-items: center; }
 .mind-bar-side.right { justify-content: flex-end; gap: 10px; }
 
