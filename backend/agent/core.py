@@ -8,12 +8,17 @@ OpenAI 路：非流式探测工具 → 无工具时分块输出已生成文本�
 """
 import asyncio
 import json
+import logging
 import random
 import re as _re_mod
 from typing import AsyncGenerator
 
 from agent import genstream
 from agent.tools import registry
+from app.core.errors import RetryableError
+from app.core.redaction import diag_log
+
+_log = logging.getLogger("agent.core")
 
 # ⑦ 慢尾兜底：LLM 瞬时错误（限流 429 / 超时 / 网络 / 5xx）退避重试——贴着并发上限跑时
 # 把偶发 429 吸收成短延迟、不丢消息。只在「本轮还没吐 token 前」重试（已吐过再重试会重复输出）。
@@ -21,8 +26,15 @@ _RETRY_BACKOFF = [1, 2, 4]   # 退避秒数；最多重试 3 次
 
 
 async def _stream_round(client, kwargs):
-    """跑一轮 Anthropic 流式，遇瞬时错误在出 token 前退避重试。
-    yield ('token', delta) 逐字；结束 yield ('final', message)。重试用尽 / 不可重试 → 抛出。"""
+    """跑一轮 Anthropic 流式，遇瞬时错误在出 token 前退避重试（P2-b §4-A 标杆模板）。
+    yield ('token', delta) 逐字；结束 yield ('final', message)。
+
+    两种「抛出」语义不同，调用方（主循环边界）据此区分：
+    - **已吐过 token 中途出错**：不能重试（会重复输出），原样把底层异常抛出去——这不是
+      「重试用尽」，是「已产生副作用不敢重试」，按未知/中断处理，不伪装成 RetryableError。
+    - **重试用尽、一个 token 都没吐过**：包成 `RetryableError`（真正符合可重试语义：
+      幂等——还没输出任何东西，从头重试不会重复）。
+    """
     import anthropic
     transient = (anthropic.RateLimitError, anthropic.APITimeoutError,
                  anthropic.APIConnectionError, anthropic.InternalServerError,
@@ -41,9 +53,14 @@ async def _stream_round(client, kwargs):
                 return
         except transient as e:
             last = e
-            if emitted or i >= len(_RETRY_BACKOFF):
-                raise              # 已吐 token（重试会重复）或重试用尽 → 抛给上层降级
-            print(f"[core] LLM 瞬时错误 {type(e).__name__}，{_RETRY_BACKOFF[i]}s 后重试({i+1})", flush=True)
+            if emitted:
+                raise   # 已吐 token，重试会重复输出——原样抛给上层当未知/中断处理
+            if i >= len(_RETRY_BACKOFF):
+                diag_log("agent.core.stream_round", e)   # 原始 → 受限诊断出口
+                _log.warning("LLM 流式调用重试 %d 次后仍失败：%s", i, type(e).__name__)
+                raise RetryableError("llm.stream_exhausted", "LLM 调用重试后仍失败",
+                                      cause=e, attempt=i) from e
+            _log.info("LLM 瞬时错误 %s，%ss 后重试(%d)", type(e).__name__, _RETRY_BACKOFF[i], i + 1)
             await asyncio.sleep(_RETRY_BACKOFF[i])
     if last:
         raise last
@@ -373,11 +390,20 @@ class LLMRunner:
                     if _tok % _CANCEL_CHECK_EVERY == 0 and await _im_cancelled():
                         yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                         return
-            except Exception as e:
+            except RetryableError as e:
+                # _stream_round 已经把原始异常记进受限诊断出口、也记过 WARNING 了，这里不重复记；
+                # 只根据 cause 类型挑一句降级文案给用户。
                 import anthropic
-                busy = isinstance(e, getattr(anthropic, "RateLimitError", ()))
+                busy = isinstance(e.cause, getattr(anthropic, "RateLimitError", ()))
                 detail = "咕咕这会儿有点忙（接口繁忙），过几秒再发一次试试 🙏" if busy else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                print(f"[core] LLM 调用失败（已重试）: {type(e).__name__}: {str(e)[:120]}", flush=True)
+                yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
+                return
+            except Exception as e:
+                # 已吐过 token 中途出错（_stream_round 里"emitted 就原样抛"那条路径）或其他未预期
+                # 异常——按未知处理：原始进受限诊断出口，可见日志只留类型名，不带原始 str(e)。
+                diag_log("agent.core.main_loop", e)
+                _log.error("LLM 调用中途出错：%s", type(e).__name__)
+                detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
                 yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
                 return
 

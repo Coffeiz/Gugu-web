@@ -109,16 +109,16 @@
                   @click.stop="openProject(bar)"
                   @mousedown.stop="startBarDrag(bar, $event)"
                   :style="{
-                    left:  bar.startsHere ? `calc(${bar.colStart / 7 * 100}% + 6px)` : (bar.colStart / 7 * 100) + '%',
-                    right: bar.endsHere   ? `calc(${(7 - bar.colEnd - 1) / 7 * 100}% + 6px)` : ((7 - bar.colEnd - 1) / 7 * 100) + '%',
-                    top:   (HEADER_H + bar.row * BAR_H) + 'px',
+                    left:  bar.startsHere ? `calc(${(bar.colStart ?? 0) / 7 * 100}% + 6px)` : ((bar.colStart ?? 0) / 7 * 100) + '%',
+                    right: bar.endsHere   ? `calc(${(7 - (bar.colEnd ?? 0) - 1) / 7 * 100}% + 6px)` : ((7 - (bar.colEnd ?? 0) - 1) / 7 * 100) + '%',
+                    top:   (HEADER_H + (bar.row ?? 0) * BAR_H) + 'px',
                     background: [deadlineWarnLayer(bar), `linear-gradient(to right, ${bar.accent}50 0%, ${bar.accent}50 ${barSegFill(bar)}%, ${bar.accent}1a ${barSegFill(bar)}%, ${bar.accent}1a 100%)`].filter(Boolean).join(', '),
                     borderColor: bar.accent + '70',
                     color:       darkenHex(bar.accent),
                   }"
                 >
                   <div v-if="bar.startsHere" class="bar-rh bar-rh-left" @mousedown.stop.prevent="startBarResize(bar, 'start', $event)"></div>
-                  <template v-if="bar.startsHere || bar.colStart === 0">
+                  <template v-if="bar.startsHere || (bar.colStart ?? 0) === 0">
                     <span class="bar-proj-tag">项目</span>
                     <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>
                     <span class="bar-label">{{ bar.name }}</span>
@@ -277,7 +277,7 @@
             <span class="cap-tag" :class="ev.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">{{ ev.isProject ? '项目' : '活动' }}</span>
             <span v-if="ev.isProject" class="cap-sdot" :class="'cap-s-' + ev.status"></span>
             <span class="cap-name" :style="{ color: darkenHex(ev.accent) }">{{ ev.name }}<span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span></span>
-            <span v-if="ev.status !== 'done'" class="cap-days" :class="{ urgent: ev.daysLeft <= 3 }">{{ ev.daysLabel }}</span>
+            <span v-if="ev.status !== 'done'" class="cap-days" :class="{ urgent: (ev.daysLeft ?? 0) <= 3 }">{{ ev.daysLabel }}</span>
           </div>
         </div>
       </div>
@@ -480,6 +480,103 @@ import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
 import { projectProgress } from '@/utils/projectProgress'
 import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack, PhBell, PhPaperPlaneTilt } from '@phosphor-icons/vue'
+import type { components } from '@/types/api'
+
+type EventResponse = components['schemas']['EventResponse']
+
+// ── 本文件统一的"日历条目"形状 ──────────────────────────────────────────────
+// 月视图 chip、周视图条目、侧栏、"更多"弹窗、拖拽 item 都在「用户活动」与「项目时间线」
+// 之间自由 spread/mix（同一数组里既有 isProject 也有 isUserEvent 的对象），故用一个
+// 涵盖两者所有字段的联合形状而非两个互斥接口——贴合运行时实际结构，而非臆造新形状。
+interface CalItem {
+  id: string | number
+  _uid?: string
+  name: string
+  date?: string
+  time?: string
+  endTime?: string
+  client?: string | null
+  type?: string
+  accent: string
+  isUserEvent?: boolean
+  isProject?: boolean
+  description?: string
+  version?: number
+  status?: string
+  startDate?: string | null
+  endDate?: string | null
+  currentStage?: string | null
+  priority?: string | null
+  createdAt?: string
+  progress?: number
+  // weekBars() 贪心分行后回填的字段
+  colStart?: number
+  colEnd?: number
+  startsHere?: boolean
+  endsHere?: boolean
+  segStartIso?: string
+  segEndIso?: string
+  row?: number
+  // upcomingList 里附加的到期天数标签
+  daysLeft?: number
+  daysLabel?: string
+}
+
+interface DateRange { start: string; end: string }
+
+interface NewEventForm {
+  name: string
+  date: string
+  time: string
+  endTime: string
+  description: string
+  allDay: boolean
+}
+
+interface EditingEvent {
+  _uid?: string
+  id: string | number
+  name: string
+  date: string
+  time: string
+  endTime: string
+  description: string
+  allDay: boolean
+  version?: number
+}
+
+interface Reminder { id?: number | null; leadMin: number }
+
+interface CellCtxState {
+  show: boolean
+  x: number
+  y: number
+  iso: string | null
+  range: DateRange | null
+  kind: 'month' | 'week' | 'timed' | 'allday'
+  time: string
+  endTime: string
+}
+
+interface MonthDayCell {
+  key: string
+  date: number
+  iso: string
+  other: boolean
+  isToday: boolean
+  dow: number
+}
+
+interface WeekViewDay {
+  iso: string
+  dateNum: number
+  cn: string
+  md: string
+  isToday: boolean
+  isWeekend: boolean
+}
+
+interface WvSelectedSlot { iso: string; h0: number; h1: number }
 
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
@@ -488,7 +585,7 @@ const authStore = useAuthStore()
 const prefsStore = usePreferencesStore()
 const todayIso = ref(toIso(new Date()))
 
-let _midnightTimer = null
+let _midnightTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleMidnightTick() {
   const now = new Date()
   const msUntilMidnight = +new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) - +now
@@ -499,10 +596,10 @@ function scheduleMidnightTick() {
 }
 
 const cursor       = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 1))
-const selectedDate = ref(todayIso.value)
+const selectedDate = ref<string | null>(todayIso.value)
 
 const { fetchYear, getHolidayType } = useHolidays()
-const hdayCache = ref({})
+const hdayCache = ref<Record<number, Record<string, { holiday?: boolean }>>>({})
 
 async function loadHolidays() {
   const y = cursor.value.getFullYear()
@@ -516,25 +613,26 @@ async function loadHolidays() {
   }
 }
 
-function hdayType(isoDate) {
+function hdayType(isoDate: string | null | undefined) {
   if (!isoDate) return null
   const yr = +isoDate.slice(0, 4)
   return getHolidayType(hdayCache.value[yr], isoDate)
 }
 const showAddForm  = ref(false)
-const addInputRef  = ref(null)
+const addInputRef  = ref<HTMLInputElement | null>(null)
 // 打开新建表单时聚焦输入框，但 preventScroll——原来用 <input autofocus> 会让浏览器滚动去露出
 // position:fixed 的表单（点底部时尤其明显）→ 布局跳动、顶栏闪白块。preventScroll 聚焦不触发滚动。
 watch(showAddForm, (v) => { if (v) nextTick(() => addInputRef.value?.focus?.({ preventScroll: true })) })
 // 边打边格式化：取数字（最多4位），第2位后自动插冒号。1200 → 12:00、120 → 12:0
-function onTimeInput(e, obj, key) {
-  const d = e.target.value.replace(/\D/g, '').slice(0, 4)
+function onTimeInput(e: Event, obj: NewEventForm | EditingEvent, key: 'time' | 'endTime') {
+  const target = e.target as HTMLInputElement
+  const d = target.value.replace(/\D/g, '').slice(0, 4)
   const out = d.length > 2 ? d.slice(0, 2) + ':' + d.slice(2) : d
   obj[key] = out
-  e.target.value = out
+  target.value = out
 }
 // 时间直接输入：失焦时规整成 HH:MM（容忍「2330」「9:5」「23：00」等）；空/非法 → 空串
-function normTime(v) {
+function normTime(v: string | null | undefined) {
   if (!v) return ''
   let s = String(v).replace(/[：]/g, ':').replace(/[^\d:]/g, '')
   if (/^\d{3,4}$/.test(s)) s = s.slice(0, -2) + ':' + s.slice(-2)   // 2330 → 23:30
@@ -545,49 +643,50 @@ function normTime(v) {
   return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
 }
 // 结束时间早于开始时间 → 视为次日（跨午夜）。HH:MM 已零填充，直接字符串比较即可
-function isNextDay(start, end) { return !!start && !!end && end < start }
+function isNextDay(start: string | null | undefined, end: string | null | undefined) { return !!start && !!end && end < start }
 // 过去的日期（早于今天）不能加提醒——@once 到点早已过、worker 会判过期清掉，加了也白加
-function isPastDate(d) { return !!d && d < todayIso.value }
+function isPastDate(d: string | null | undefined) { return !!d && d < todayIso.value }
 // 默认时间段：下一个整点 → 再过一小时。如现在 22:50 → 23:00–00:00（次日）
 function defaultTimeRange() {
   const now = new Date()
-  const p = n => String(n).padStart(2, '0')
+  const p = (n: number) => String(n).padStart(2, '0')
   const sh = (now.getHours() + 1) % 24
   return { time: `${p(sh)}:00`, endTime: `${p((sh + 1) % 24)}:00` }
 }
 // 取消勾选「全天」时，若时间还是空的（比如从全天区新建 / 编辑一个原本全天的活动），补一个默认时间段
-function onToggleAllDay(obj) {
+function onToggleAllDay(obj: NewEventForm | EditingEvent) {
   if (!obj.allDay && !obj.time) Object.assign(obj, defaultTimeRange())
 }
-const newEvent     = ref({ name: '', date: todayIso.value, ...defaultTimeRange(), description: '', allDay: false })
-const addBtnRef    = ref(null)
-const addFormRef   = ref(null)
-const addFormStyle = ref({})
+const newEvent     = ref<NewEventForm>({ name: '', date: todayIso.value, ...defaultTimeRange(), description: '', allDay: false })
+const addBtnRef    = ref<HTMLElement | null>(null)
+const addFormRef   = ref<HTMLElement | null>(null)
+const addFormStyle = ref<Record<string, string | number>>({})
 
 const showEditForm  = ref(false)
-const editingEvent  = ref(null)
+const editingEvent  = ref<EditingEvent | null>(null)
 // 当前打开的活动表单的日期（编辑优先）——提醒区共享，用它判断能否加提醒
 const activeFormDate = computed(() => showEditForm.value ? editingEvent.value?.date : newEvent.value?.date)
-const editFormRef   = ref(null)
-const editFormStyle = ref({})
-const calSidebarRef = ref(null)
+const editFormRef   = ref<HTMLElement | null>(null)
+const editFormStyle = ref<Record<string, string | number>>({})
+const calSidebarRef = ref<HTMLElement | null>(null)
 
 // ── 拖拽状态 ─────────────────────────────────────────────────────────────────
-const drag = reactive({
+type DragType = 'event' | 'proj-chip' | 'proj-bar' | 'proj-resize-start' | 'proj-resize-end'
+const drag = reactive<{ active: boolean; type: DragType | null; item: CalItem | null; offsetDays: number }>({
   active:     false,
   type:       null,   // 'event' | 'proj-chip' | 'proj-bar' | 'proj-resize-start' | 'proj-resize-end'
   item:       null,
   offsetDays: 0,      // proj-bar: days from startDate to where drag started
 })
-const hoveredBarId  = ref(null)
-const hoveredDateIso = ref(null)
+const hoveredBarId  = ref<string | number | null>(null)
+const hoveredDateIso = ref<string | null>(null)
 
 // ── 日期范围框选 ──────────────────────────────────────────────────────────────
-const rangeSelect  = reactive({ active: false, anchor: null })
-const hoverRangeEnd = ref(null)
-const selRange     = ref(null)   // { start, end } committed after mouseup
+const rangeSelect  = reactive<{ active: boolean; anchor: string | null }>({ active: false, anchor: null })
+const hoverRangeEnd = ref<string | null>(null)
+const selRange     = ref<DateRange | null>(null)   // { start, end } committed after mouseup
 
-const activeRange = computed(() => {
+const activeRange = computed<DateRange | null>(() => {
   if (rangeSelect.active && rangeSelect.anchor && hoverRangeEnd.value) {
     const [a, b] = [rangeSelect.anchor, hoverRangeEnd.value].sort()
     if (a === b) return null   // 未跨天时不视为 range
@@ -596,15 +695,15 @@ const activeRange = computed(() => {
   return selRange.value
 })
 
-function isInActiveRange(iso) {
+function isInActiveRange(iso: string) {
   const r = activeRange.value
   return r ? iso >= r.start && iso <= r.end : false
 }
 
-function onCellMouseDown(d, e) {
+function onCellMouseDown(d: MonthDayCell, e: MouseEvent) {
   if (e.button !== 0) return
   if (drag.active) return
-  if (e.target.closest('.event-chip,.chip-more-btn,.project-bar,.bar-rh')) return
+  if ((e.target as HTMLElement).closest('.event-chip,.chip-more-btn,.project-bar,.bar-rh')) return
   e.preventDefault()
 
   const startIso = d.iso
@@ -612,7 +711,7 @@ function onCellMouseDown(d, e) {
   // mousedown 不清 selRange、不进 range 态：否则单击时 activeRange 瞬间变 null，会露出旧 selectedDate（跳一下）。
   // 只有真拖到别的天才进 range；单击在 mouseup 直接切到 selectedDate。
   let dragging = false
-  const mm = (ev) => {
+  const mm = (ev: MouseEvent) => {
     const iso = isoFromPoint(ev.clientX, ev.clientY)
     if (!iso) return
     if (!dragging && iso !== startIso) {
@@ -622,7 +721,7 @@ function onCellMouseDown(d, e) {
     }
     if (dragging) hoverRangeEnd.value = iso
   }
-  const mu = (ev) => {
+  const mu = (ev: MouseEvent) => {
     document.removeEventListener('mousemove', mm)
     document.removeEventListener('mouseup', mu)
     const endIso = isoFromPoint(ev.clientX, ev.clientY) || startIso
@@ -642,11 +741,11 @@ function onCellMouseDown(d, e) {
 }
 
 // ── 右键菜单 ─────────────────────────────────────────────────────────────────
-const cellCtx = reactive({ show: false, x: 0, y: 0, iso: null, range: null, kind: 'month', time: '', endTime: '' })
-const cellCtxRef = ref(null)
+const cellCtx = reactive<CellCtxState>({ show: false, x: 0, y: 0, iso: null, range: null, kind: 'month', time: '', endTime: '' })
+const cellCtxRef = ref<HTMLElement | null>(null)
 
-function onWeekContextMenu(e, week) {
-  if (e.target.closest('.event-chip,.chip-more-btn,.project-bar')) return
+function onWeekContextMenu(e: MouseEvent, week: MonthDayCell[]) {
+  if ((e.target as HTMLElement).closest('.event-chip,.chip-more-btn,.project-bar')) return
   const iso = isoFromPoint(e.clientX, e.clientY)
   if (!iso) return
   cellCtx.kind  = 'month'
@@ -660,7 +759,7 @@ function onWeekContextMenu(e, week) {
 
 function ctxAddEvent() {
   cellCtx.show = false
-  const iso = cellCtx.range?.start ?? cellCtx.iso
+  const iso = cellCtx.range?.start ?? cellCtx.iso ?? (selectedDate.value || todayIso.value)
   const tr = cellCtx.kind === 'timed'  ? { time: cellCtx.time, endTime: cellCtx.endTime }
            : cellCtx.kind === 'allday' ? { time: '', endTime: '' }       // 全天区 → 无时间活动
            : defaultTimeRange()
@@ -684,13 +783,13 @@ function ctxAddProject() {
   cellCtx.show = false
   uiStore.newProjectRange = cellCtx.range
     ?? activeRange.value
-    ?? { start: cellCtx.iso || selectedDate.value, end: cellCtx.iso || selectedDate.value }
+    ?? { start: cellCtx.iso || selectedDate.value || todayIso.value, end: cellCtx.iso || selectedDate.value || todayIso.value }
   uiStore.openNewProject = true
 }
 
 // ── 周视图·全天区：横向多日框选（复用 rangeSelect/selRange/activeRange）+ 右键新建项目 ──
-const wvAllDayGridRef = ref(null)
-function _isoFromAllDayX(clientX) {
+const wvAllDayGridRef = ref<HTMLElement | null>(null)
+function _isoFromAllDayX(clientX: number) {
   const grid = wvAllDayGridRef.value
   if (!grid) return null
   const r = grid.getBoundingClientRect()
@@ -706,22 +805,22 @@ const wvSelCols = computed(() => {
 })
 // 「日选择」判定：只看 activeRange（顶部日期格 + 全天区共用）。单选也走 selRange={iso,iso}，
 // 故与「时段选择」(wvSelectedSlot) 互不干扰、互斥（见 onAllDayDown / onColDown）。
-function wvDaySelected(iso) {
+function wvDaySelected(iso: string) {
   const r = activeRange.value
   return r ? (iso >= r.start && iso <= r.end) : false
 }
 // 全天区悬停列（与小时格 hover 同理：opacity 叠层、可叠加在选区上）
 const wvAdHover = ref(-1)
-function onAllDayHover(e) {
+function onAllDayHover(e: MouseEvent) {
   const grid = wvAllDayGridRef.value
   if (!grid) return
   const r = grid.getBoundingClientRect()
   wvAdHover.value = Math.max(0, Math.min(6, Math.floor((e.clientX - r.left) / r.width * 7)))
 }
 function onAllDayLeave() { wvAdHover.value = -1 }
-function onAllDayDown(e) {
+function onAllDayDown(e: MouseEvent) {
   if (e.button !== 0) return
-  if (e.target.closest('.wv-pbar,.wv-allday-ev,.wv-more')) return   // 点在已有条/活动上 → 不框选
+  if ((e.target as HTMLElement).closest('.wv-pbar,.wv-allday-ev,.wv-more')) return   // 点在已有条/活动上 → 不框选
   const startIso = _isoFromAllDayX(e.clientX)
   if (!startIso) return
   e.preventDefault()
@@ -729,7 +828,7 @@ function onAllDayDown(e) {
   // 关键：mousedown 不清空 selRange、不进 range 态，否则单击时选中层会先淡出(变淡)再淡入。
   // 只有真拖到「别的天」才进入 range 选择；单击在 mouseup 直接切到被选中态（旧选区一直在，无变淡反馈）。
   let dragging = false
-  const mm = (ev) => {
+  const mm = (ev: MouseEvent) => {
     const iso = _isoFromAllDayX(ev.clientX)
     if (!iso) return
     if (!dragging && iso !== startIso) {
@@ -740,7 +839,7 @@ function onAllDayDown(e) {
     }
     if (dragging) hoverRangeEnd.value = iso
   }
-  const mu = (ev) => {
+  const mu = (ev: MouseEvent) => {
     document.removeEventListener('mousemove', mm)
     document.removeEventListener('mouseup', mu)
     const endIso = _isoFromAllDayX(ev.clientX) || startIso
@@ -759,8 +858,8 @@ function onAllDayDown(e) {
   document.addEventListener('mousemove', mm)
   document.addEventListener('mouseup', mu)
 }
-function onAllDayContextMenu(e) {
-  if (e.target.closest('.wv-pbar,.wv-allday-ev,.wv-more')) return
+function onAllDayContextMenu(e: MouseEvent) {
+  if ((e.target as HTMLElement).closest('.wv-pbar,.wv-allday-ev,.wv-more')) return
   const iso = _isoFromAllDayX(e.clientX)
   if (!iso) return
   cellCtx.kind  = 'allday'
@@ -770,16 +869,16 @@ function onAllDayContextMenu(e) {
   cellCtx.x = e.clientX; cellCtx.y = e.clientY; cellCtx.show = true
 }
 // ── 周视图·小时区：右键在该天该时刻新建活动（有暗色选区则用选区时间段）──
-function onColContextMenu(e, d) {
-  if (e.target.closest('.wv-ev')) return
-  const p = n => String(n).padStart(2, '0')
-  let time, endTime
+function onColContextMenu(e: MouseEvent, d: WeekViewDay) {
+  if ((e.target as HTMLElement).closest('.wv-ev')) return
+  const p = (n: number) => String(n).padStart(2, '0')
+  let time: string, endTime: string
   const sel = wvSelectedSlot.value
   if (sel && sel.iso === d.iso) {        // 复用左键拖出的选区时间段
     const a = Math.min(sel.h0, sel.h1), b = Math.max(sel.h0, sel.h1) + 1
     time = `${p(a)}:00`; endTime = b >= 24 ? '00:00' : `${p(b)}:00`
   } else {                               // 单选：右键点击处的整点 → 1 小时
-    const h = _hourAt(e.clientY, e.currentTarget.getBoundingClientRect())
+    const h = _hourAt(e.clientY, (e.currentTarget as HTMLElement).getBoundingClientRect())
     time = `${p(h)}:00`; endTime = h + 1 >= 24 ? '00:00' : `${p(h + 1)}:00`
   }
   cellCtx.kind = 'timed'
@@ -789,42 +888,43 @@ function onColContextMenu(e, d) {
   cellCtx.x = e.clientX; cellCtx.y = e.clientY; cellCtx.show = true
 }
 
-function onWeekMouseMove(e, week) {
-  const rect = e.currentTarget.getBoundingClientRect()
+function onWeekMouseMove(e: MouseEvent, week: MonthDayCell[]) {
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const col  = Math.floor((e.clientX - rect.left) / rect.width * 7)
   hoveredDateIso.value = week[Math.max(0, Math.min(6, col))]?.iso ?? null
 }
 
-const dragOverIso = ref(null)
+const dragOverIso = ref<string | null>(null)
 
-const dragOverRange = computed(() => {
-  if (!drag.active || !dragOverIso.value) return null
+const dragOverRange = computed<DateRange | null>(() => {
+  if (!drag.active || !dragOverIso.value || !drag.item) return null
   const iso = dragOverIso.value
   if (drag.type === 'event') return { start: iso, end: iso }
   if (drag.type === 'proj-chip') return { start: iso, end: iso }
   if (drag.type === 'proj-bar') {
+    if (!drag.item.startDate || !drag.item.endDate) return null
     const newStart = addDays(iso, -drag.offsetDays)
     const dur      = daysBetween(drag.item.startDate, drag.item.endDate)
     return { start: newStart, end: addDays(newStart, dur) }
   }
   if (drag.type === 'proj-resize-start') {
-    if (iso > drag.item.endDate) return null
+    if (!drag.item.endDate || iso > drag.item.endDate) return null
     return { start: iso, end: drag.item.endDate }
   }
   if (drag.type === 'proj-resize-end') {
-    if (iso < drag.item.startDate) return null
+    if (!drag.item.startDate || iso < drag.item.startDate) return null
     return { start: drag.item.startDate, end: iso }
   }
   return null
 })
 
-function addDays(iso, n) {
+function addDays(iso: string, n: number) {
   const d = new Date(iso + 'T00:00:00')
   d.setDate(d.getDate() + n)
   return toIso(d)
 }
-function barSegFill(bar) {
-  if (!bar.progress) return 0
+function barSegFill(bar: CalItem) {
+  if (!bar.progress || !bar.startDate || !bar.endDate || !bar.segStartIso || !bar.segEndIso) return 0
   // total 含端点（+1）：与下面 segEndOff 的「含端点 +1」口径一致。
   // 否则 progressDays 最大只到 end-start，永远 < 末段 segEndOff(=total+1)，100% 的项目长条只填到 ~90%。
   const total = daysBetween(bar.startDate, bar.endDate) + 1
@@ -842,8 +942,8 @@ const DEADLINE_WARN_DAYS = 3   // 临近截止日的标红范围（天）：跟 
 // 项目条最后几天渐变标红，提示临近截止日：只在真正落到 bar.endDate 那一段（跨周项目其余段不提前标红，
 // 同 barSegFill 一样按「段内」而非全局天数近似计算）计算；已完成的项目没有「临近」这回事，跳过。
 // 返回一层可叠加的 CSS 背景（前景层，盖在原有进度填充渐变之上），没有警示时返回 null。
-function deadlineWarnLayer(bar) {
-  if (!bar.endsHere || bar.status === 'done') return null
+function deadlineWarnLayer(bar: CalItem) {
+  if (!bar.endsHere || bar.status === 'done' || !bar.segStartIso || !bar.segEndIso) return null
   const segTotal = daysBetween(bar.segStartIso, bar.segEndIso) + 1
   if (segTotal <= 0) return null
   const warnDays = Math.min(DEADLINE_WARN_DAYS, segTotal)
@@ -851,10 +951,10 @@ function deadlineWarnLayer(bar) {
   return `linear-gradient(to right, transparent 0%, transparent ${warnStartPct}%, rgba(200,70,70,0.3) 100%)`
 }
 
-function daysBetween(isoA, isoB) {
+function daysBetween(isoA: string, isoB: string) {
   return Math.round((+new Date(isoB + 'T00:00:00') - +new Date(isoA + 'T00:00:00')) / 86400000)
 }
-function isoFromPoint(x, y) {
+function isoFromPoint(x: number, y: number): string | null {
   // elementsFromPoint won't reach month-cell behind bars-layer; use grid bounds instead
   for (let wi = 0; wi < monthWeeks.value.length; wi++) {
     const el = weekRowElMap[wi]
@@ -867,17 +967,17 @@ function isoFromPoint(x, y) {
   }
   return null
 }
-function isInDragRange(iso) {
+function isInDragRange(iso: string) {
   const r = dragOverRange.value
   return r ? iso >= r.start && iso <= r.end : false
 }
 
-function startDrag(type, item, e, offsetDays = 0, onActivate = null) {
+function startDrag(type: DragType, item: CalItem, e: MouseEvent, offsetDays = 0, onActivate: (() => void) | null = null) {
   const startX = e.clientX
   const startY = e.clientY
   let activated = false
 
-  const mm = (ev) => {
+  const mm = (ev: MouseEvent) => {
     if (!activated) {
       const dx = ev.clientX - startX
       const dy = ev.clientY - startY
@@ -894,7 +994,7 @@ function startDrag(type, item, e, offsetDays = 0, onActivate = null) {
     dragOverIso.value = isoFromPoint(ev.clientX, ev.clientY)
   }
 
-  const mu = (ev) => {
+  const mu = (ev: MouseEvent) => {
     document.removeEventListener('mousemove', mm)
     document.removeEventListener('mouseup', mu)
     if (activated) {
@@ -917,29 +1017,30 @@ function startDrag(type, item, e, offsetDays = 0, onActivate = null) {
   document.addEventListener('mouseup', mu)
 }
 
-function startEventDrag(ev, e)              { startDrag('event', ev, e) }
-function startProjChipDrag(bar, e)          { startDrag('proj-chip', bar, e) }
-function startMoreItemDrag(item, e) {
+function startEventDrag(ev: CalItem, e: MouseEvent)              { startDrag('event', ev, e) }
+function startProjChipDrag(bar: CalItem, e: MouseEvent)          { startDrag('proj-chip', bar, e) }
+function startMoreItemDrag(item: CalItem, e: MouseEvent) {
   const closePopup = () => { morePopup.value.open = false }
   if (item.isProject) startDrag('proj-chip', item, e, 0, closePopup)
   else if (item.isUserEvent) startDrag('event', item, e, 0, closePopup)
 }
-function startBarDrag(bar, e) {
+function startBarDrag(bar: CalItem, e: MouseEvent) {
   const anchorIso = isoFromPoint(e.clientX, e.clientY) ?? bar.startDate
+  if (!bar.startDate || !anchorIso) return
   startDrag('proj-bar', bar, e, daysBetween(bar.startDate, anchorIso))
 }
-function startBarResize(bar, edge, e) {
+function startBarResize(bar: CalItem, edge: 'start' | 'end', e: MouseEvent) {
   startDrag(edge === 'start' ? 'proj-resize-start' : 'proj-resize-end', bar, e)
 }
 
 async function commitDrag() {
   const range = dragOverRange.value
-  if (!range) return
+  if (!range || !drag.item) return
 
   if (drag.type === 'event') {
     const ev = drag.item
     if (ev.date === range.start) return
-    const patch = (list) => {
+    const patch = (list: CalItem[]) => {
       const idx = list.findIndex(e => e.id === ev.id)
       if (idx !== -1) list[idx] = { ...list[idx], date: range.start }
     }
@@ -949,13 +1050,13 @@ async function commitDrag() {
     buildUpcomingList()
     eventsCache[`${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`] = [...extraEvents.value]
     try {
-      const updated = await eventsApi.update(ev.id, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version })
-      const applyVer = (list) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
+      const updated = await eventsApi.update(ev.id as unknown as number, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version })
+      const applyVer = (list: CalItem[]) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
       applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
-    } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
+    } catch (e: any) { if (e?.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
   }
 
-  if (['proj-chip', 'proj-bar', 'proj-resize-start', 'proj-resize-end'].includes(drag.type)) {
+  if (drag.type && ['proj-chip', 'proj-bar', 'proj-resize-start', 'proj-resize-end'].includes(drag.type)) {
     const projId = Number(String(drag.item.id).replace(/^p/, ''))
     const proj   = projectStore.projects.find(p => p.id === projId)
     if (!proj) return
@@ -967,12 +1068,12 @@ async function commitDrag() {
 // ── 年月选择器 ──
 const pickerOpen      = ref(false)
 const pickerYear      = ref(new Date().getFullYear())
-const pickerAnchorRef = ref(null)
-const pickerRef       = ref(null)
-const pickerStyle     = ref({})
+const pickerAnchorRef = ref<HTMLElement | null>(null)
+const pickerRef       = ref<HTMLElement | null>(null)
+const pickerStyle     = ref<Record<string, string | number>>({})
 
-const morePopup    = ref({ open: false, items: [], dateLabel: '', style: {} })
-const morePopupRef = ref(null)
+const morePopup    = ref<{ open: boolean; items: CalItem[]; dateLabel: string; style: Record<string, string | number | undefined> }>({ open: false, items: [], dateLabel: '', style: {} })
+const morePopupRef = ref<HTMLElement | null>(null)
 
 // ── 动态行高测量 ──
 const BAR_H    = 20  // 每条 bar / chip 的行高（slot 高，含间距）
@@ -980,32 +1081,33 @@ const HEADER_H = 32  // bars-layer 第一条 bar 的 top：cell-num 底部(31) +
 const CELL_TOP = 31  // cell-chips 起点：cell padding-top(7) + cell-num(24)
 const BOTTOM_PAD = 8 // 底部安全留白（px）：cell padding-bottom(4) + 4px 视觉安全区
 
-const weekHeights = ref({})   // { [weekIndex]: heightInPx }
-const weekRowElMap = {}       // 原生 el 引用，不需要响应式
+const weekHeights = ref<Record<number, number>>({})   // { [weekIndex]: heightInPx }
+const weekRowElMap: Record<number, HTMLElement> = {}       // 原生 el 引用，不需要响应式
 
-function setWeekRef(el, wi) {
-  if (el) weekRowElMap[wi] = el
+function setWeekRef(el: Element | { $el?: Element } | null, wi: number) {
+  const domEl = el as HTMLElement | null
+  if (domEl) weekRowElMap[wi] = domEl
   else    delete weekRowElMap[wi]
 }
 
-let ro = null
+let ro: ResizeObserver | null = null
 function setupRO() {
   if (ro) ro.disconnect()
   ro = new ResizeObserver(entries => {
     const next = { ...weekHeights.value }
     entries.forEach(e => {
-      const wi = parseInt((e.target as HTMLElement).dataset.wi)
+      const wi = parseInt((e.target as HTMLElement).dataset.wi || '')
       if (!isNaN(wi)) next[wi] = e.contentRect.height
     })
     weekHeights.value = next
   })
   Object.entries(weekRowElMap).forEach(([wi, el]) => {
-    if (el) ro.observe(el)
+    if (el) ro!.observe(el)
   })
 }
 
 // 某一行最多能放几个条目（项目条 + 更多按钮 + chip 共用这个池）
-function maxSlots(wi) {
+function maxSlots(wi: number) {
   const h = weekHeights.value[wi] ?? 90
   return Math.max(1, Math.floor((h - HEADER_H - BOTTOM_PAD) / BAR_H))
 }
@@ -1013,19 +1115,19 @@ function maxSlots(wi) {
 // ── 核心布局计算 ──
 
 // weekBars 结果按周缓存，避免贪心算法在同一渲染周期内重复执行
-const _weekBarsCache = new Map()
-function weekBarsCached(week) {
+const _weekBarsCache = new Map<string, CalItem[]>()
+function weekBarsCached(week: { iso: string }[]) {
   const key = week[0].iso
   if (!_weekBarsCache.has(key)) _weekBarsCache.set(key, weekBars(week))
-  return _weekBarsCache.get(key)
+  return _weekBarsCache.get(key)!
 }
 // projectTimelines 变化时清缓存（watch 在 script setup 末尾注册）
 
-function weekBarsCapped(week, wi) {
+function weekBarsCapped(week: { iso: string }[], wi: number) {
   const all = weekBarsCached(week)
   const max = maxSlots(wi)
   return {
-    bars: all.filter(b => b.row < max),
+    bars: all.filter(b => (b.row ?? 0) < max),
     all,
   }
 }
@@ -1034,13 +1136,13 @@ function weekBarsCapped(week, wi) {
  * 统一的格子布局：一次调用完成所有计算，返回 paddingTop、可见 chips、更多信息。
  * 消除模板中 dayLayout + nextAvailableRow 的重复 weekBars 调用。
  */
-function dayLayout(iso, week, wi) {
+function dayLayout(iso: string, week: { iso: string }[], wi: number) {
   const { bars: cappedBars, all } = weekBarsCapped(week, wi)
 
   // chip 起始行 = 覆盖该天的可见 bar 中最大 row + 1
   let maxBarRow = -1
   cappedBars.forEach(b => {
-    if (b.startDate <= iso && b.endDate >= iso) maxBarRow = Math.max(maxBarRow, b.row)
+    if ((b.startDate ?? '') <= iso && (b.endDate ?? '') >= iso) maxBarRow = Math.max(maxBarRow, b.row ?? 0)
   })
   const nextRow  = maxBarRow + 1
   const paddingTop = Math.max(0, nextRow * BAR_H + HEADER_H - CELL_TOP)
@@ -1048,16 +1150,16 @@ function dayLayout(iso, week, wi) {
 
   // 当天被隐藏的项目（row >= max）
   const cappedIds = new Set(cappedBars.map(b => b.id))
-  const hiddenProjects = all
-    .filter(b => b.startDate <= iso && b.endDate >= iso && !cappedIds.has(b.id))
+  const hiddenProjects: CalItem[] = all
+    .filter(b => (b.startDate ?? '') <= iso && (b.endDate ?? '') >= iso && !cappedIds.has(b.id))
     .map(b => ({ ...b, isProject: true }))
 
   // 单日项目（startDate === endDate）不进 bars-layer，在此当 chip 显示
-  const singleDayProjects = effectiveProjectTimelines.value
+  const singleDayProjects: CalItem[] = effectiveProjectTimelines.value
     .filter(p => p.startDate === p.endDate && p.startDate === iso)
     .map(p => ({ ...p, isProject: true }))
-  const allChips = [...singleDayProjects, ...effectiveExtraEvents.value.filter(e => e.date === iso)]
-  const _chipPrio = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
+  const allChips: CalItem[] = [...singleDayProjects, ...effectiveExtraEvents.value.filter(e => e.date === iso)]
+  const _chipPrio = (p: CalItem) => ({ high: 3, medium: 2, low: 1 } as Record<string, number>)[p.priority ?? ''] ?? 0
   allChips.sort((a, b) => {
     const da = a.status === 'done' ? 1 : 0
     const db = b.status === 'done' ? 1 : 0
@@ -1075,7 +1177,7 @@ function dayLayout(iso, week, wi) {
   const hasMore  = hiddenProjects.length > 0 || allChips.length > slots
 
   if (!hasMore) {
-    return { paddingTop, visibleChips: allChips, moreCount: 0, moreItems: [] }
+    return { paddingTop, visibleChips: allChips, moreCount: 0, moreItems: [] as CalItem[] }
   }
   const chipLimit    = Math.max(0, slots - 1)
   const visibleChips = allChips.slice(0, chipLimit)
@@ -1085,11 +1187,11 @@ function dayLayout(iso, week, wi) {
 }
 
 // ── 统一"更多"弹窗 ──
-function showMore(e, iso, items) {
+function showMore(e: MouseEvent, iso: string, items: CalItem[]) {
   const d     = new Date(iso + 'T00:00:00')
   const label = `${d.getMonth()+1}月${d.getDate()}日`
   const w     = 230
-  const rect  = e.currentTarget.getBoundingClientRect()
+  const rect  = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const estH  = 48 + items.length * 30   // 估算弹窗高度
   const gap   = 6
   const left  = Math.max(8, Math.min(rect.left + rect.width / 2 - w / 2, window.innerWidth - w - 8))
@@ -1118,44 +1220,44 @@ function togglePicker() {
   })
 }
 
-function selectYearMonth(y, m) {
+function selectYearMonth(y: number, m: number) {
   cursor.value = new Date(y, m, 1)
   pickerOpen.value = false
 }
 
 const weekdays = ['一', '二', '三', '四', '五', '六', '日']
 
-function toIso(d) {
+function toIso(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
-function extractAccent(colorStr) {
+function extractAccent(colorStr: string | null | undefined) {
   const m = colorStr?.match(/#[0-9a-fA-F]{6}/)
   return m ? m[0] : '#7b7fb2'
 }
-function capBg(hex, progress) {
+function capBg(hex: string, progress: number | undefined) {
   const base = hexAlpha(hex, 0.1)
   if (!progress) return base
   const fill = hexAlpha(hex, 0.32)
   return `linear-gradient(to right, ${fill} 0%, ${fill} ${progress}%, ${base} ${progress}%, ${base} 100%)`
 }
 
-function hexAlpha(hex, a) {
+function hexAlpha(hex: string, a: number) {
   const r = parseInt(hex.slice(1,3),16)
   const g = parseInt(hex.slice(3,5),16)
   const b = parseInt(hex.slice(5,7),16)
   return `rgba(${r},${g},${b},${a})`
 }
-function darkenHex(hex, amount = 0.60) {
+function darkenHex(hex: string, amount = 0.60) {
   const r = Math.round(parseInt(hex.slice(1,3),16) * amount)
   const g = Math.round(parseInt(hex.slice(3,5),16) * amount)
   const b = Math.round(parseInt(hex.slice(5,7),16) * amount)
   return `rgb(${r},${g},${b})`
 }
-function typeLabel(t) {
-  return { deadline: '截止日', meeting: '会议', review: '审核', milestone: '节点', project: '进行中' }[t] ?? '活动'
+function typeLabel(t: string | undefined) {
+  return ({ deadline: '截止日', meeting: '会议', review: '审核', milestone: '节点', project: '进行中' } as Record<string, string>)[t ?? ''] ?? '活动'
 }
 
-const TYPE_ACCENT = {
+const TYPE_ACCENT: Record<string, string> = {
   meeting:   '#7b7fb2',
   review:    '#7ab8c8',
   milestone: '#c4afc8',
@@ -1163,9 +1265,9 @@ const TYPE_ACCENT = {
   event:     '#8a8fa8',
 }
 
-function normalizeEvent(e) {
+function normalizeEvent(e: EventResponse): CalItem {
   return {
-    _uid:        e._uid ?? ('e' + e.id),   // 稳定客户端标识：本地增删改按它匹配，不受临时→真 id 替换影响
+    _uid:        (e as EventResponse & { _uid?: string })._uid ?? ('e' + e.id),   // 稳定客户端标识：本地增删改按它匹配，不受临时→真 id 替换影响
     id:          e.id,
     date:        e.date,
     time:        e.time ?? '',
@@ -1180,8 +1282,8 @@ function normalizeEvent(e) {
   }
 }
 
-const extraEvents     = ref([])
-const nextMonthEvents = ref([])
+const extraEvents     = ref<CalItem[]>([])
+const nextMonthEvents = ref<CalItem[]>([])
 
 async function fetchNextMonthEvents() {
   const now = new Date()
@@ -1213,19 +1315,19 @@ async function fetchEvents() {
 
 // 网格首/末行会溢出到上/下月（首行最多 6 天上月、末行最多 6 天下月），这些「其他月」格子上的
 // 单日活动也要显示。按 cursor 取上、下月活动（与 nextMonthEvents 区分：那个按真实今天算、给「即将到来」侧栏用）。
-const spilloverEvents = ref([])
+const spilloverEvents = ref<CalItem[]>([])
 async function fetchSpilloverEvents() {
   const y = cursor.value.getFullYear()
   const m = cursor.value.getMonth()
-  const fetchMonth = async (date) => {
+  const fetchMonth = async (date: Date) => {
     const yy = date.getFullYear(), mm = date.getMonth() + 1
     const key = `${yy}-${mm}`
-    if (eventsCache[key]) return eventsCache[key]
+    if (eventsCache[key]) return eventsCache[key] as CalItem[]
     try {
       const norm = (await eventsApi.list(yy, mm)).map(normalizeEvent)
       eventsCache[key] = norm
       return norm
-    } catch { return [] }
+    } catch { return [] as CalItem[] }
   }
   const [prev, next] = await Promise.all([
     fetchMonth(new Date(y, m - 1, 1)),
@@ -1242,27 +1344,27 @@ watch(calendarSignal, () => {
 })
 
 // 当前月 + 溢出月（按 id 去重）——渲染溢出格、选中日详情都用它，保证跨月活动可见
-const visibleEvents = computed(() => {
+const visibleEvents = computed<CalItem[]>(() => {
   const ids = new Set(extraEvents.value.map(e => e.id))
   return [...extraEvents.value, ...spilloverEvents.value.filter(e => !ids.has(e.id))]
 })
 
-function singleEvents(iso) { return visibleEvents.value.filter(e => e.date === iso) }
+function singleEvents(iso: string) { return visibleEvents.value.filter(e => e.date === iso) }
 
-function openProject(bar) {
-  const pid = Number(bar.id.replace(/^p/, ''))
+function openProject(bar: CalItem) {
+  const pid = Number(String(bar.id).replace(/^p/, ''))
   const proj = projectStore.projects.find(p => p.id === pid)
   if (proj) projectStore.openModal(proj)
 }
 
-const projectTimelines = computed(() =>
+const projectTimelines = computed<CalItem[]>(() =>
   projectStore.projects
     .filter(p => p.startDate && p.deadline)
-    .map(p => ({
+    .map((p): CalItem => ({
       id:           `p${p.id}`,
       name:         p.name,
       client:       p.client,
-      startDate:    (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt && toIso(new Date(p.doneAt)) < p.startDate)
+      startDate:    (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt && p.startDate && toIso(new Date(p.doneAt)) < p.startDate)
                       ? toIso(new Date(p.doneAt)) : p.startDate,
       endDate:      (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt)
                       ? toIso(new Date(p.doneAt)) : p.deadline,
@@ -1277,17 +1379,17 @@ const projectTimelines = computed(() =>
     }))
 )
 
-const effectiveProjectTimelines = computed(() => {
+const effectiveProjectTimelines = computed<CalItem[]>(() => {
   const range = dragOverRange.value
   if (!drag.active || !range || !drag.item) return projectTimelines.value
-  if (!['proj-bar', 'proj-resize-start', 'proj-resize-end', 'proj-chip'].includes(drag.type)) return projectTimelines.value
+  if (!drag.type || !['proj-bar', 'proj-resize-start', 'proj-resize-end', 'proj-chip'].includes(drag.type)) return projectTimelines.value
   const dragId = drag.item.id
   return projectTimelines.value.map(p =>
     p.id === dragId ? { ...p, startDate: range.start, endDate: range.end } : p
   )
 })
 
-const effectiveExtraEvents = computed(() => {
+const effectiveExtraEvents = computed<CalItem[]>(() => {
   const base = visibleEvents.value
   const range = dragOverRange.value
   if (!drag.active || drag.type !== 'event' || !range || !drag.item) return base
@@ -1297,13 +1399,13 @@ const effectiveExtraEvents = computed(() => {
   )
 })
 
-const monthDays = computed(() => {
+const monthDays = computed<MonthDayCell[]>(() => {
   const y = cursor.value.getFullYear()
   const m = cursor.value.getMonth()
   const first    = new Date(y, m, 1)
   const last     = new Date(y, m + 1, 0)
   const startDow = (first.getDay() + 6) % 7
-  const days     = []
+  const days: MonthDayCell[]     = []
   for (let i = startDow - 1; i >= 0; i--) {
     const d = new Date(y, m, -i)
     days.push({ key: `p${i}`, date: d.getDate(), iso: toIso(d), other: true, isToday: false, dow: (d.getDay()+6)%7 })
@@ -1322,28 +1424,28 @@ const monthDays = computed(() => {
 })
 
 const monthWeeks = computed(() => {
-  const w = []
+  const w: MonthDayCell[][] = []
   for (let i = 0; i < monthDays.value.length; i += 7) w.push(monthDays.value.slice(i, i+7))
   return w
 })
 
-function weekBars(week) {
+function weekBars(week: { iso: string }[]): CalItem[] {
   const ws = week[0].iso
   const we = week[6].iso
-  const bars = effectiveProjectTimelines.value
-    .filter(p => p.endDate >= ws && p.startDate <= we && p.startDate !== p.endDate)
+  const bars: CalItem[] = effectiveProjectTimelines.value
+    .filter(p => (p.endDate ?? '') >= ws && (p.startDate ?? '') <= we && p.startDate !== p.endDate)
     .map(p => {
-      const colStart = p.startDate <= ws ? 0 : week.findIndex(d => d.iso >= p.startDate)
+      const colStart = (p.startDate ?? '') <= ws ? 0 : week.findIndex(d => d.iso >= (p.startDate ?? ''))
       let colEnd = 6
-      for (let i = 6; i >= 0; i--) { if (week[i].iso <= p.endDate) { colEnd = i; break } }
+      for (let i = 6; i >= 0; i--) { if (week[i].iso <= (p.endDate ?? '')) { colEnd = i; break } }
       const cs = Math.max(0, colStart)
       const ce = Math.min(6, colEnd)
       return {
         ...p,
         colStart: cs,
         colEnd:   ce,
-        startsHere:   p.startDate >= ws && p.startDate <= we,
-        endsHere:     p.endDate   >= ws && p.endDate   <= we,
+        startsHere:   (p.startDate ?? '') >= ws && (p.startDate ?? '') <= we,
+        endsHere:     (p.endDate ?? '')   >= ws && (p.endDate ?? '')   <= we,
         segStartIso:  week[cs].iso,
         segEndIso:    week[ce].iso,
         row:          0,   // 占位，下方贪心分行回填（让 TS 认得 .row）
@@ -1351,23 +1453,23 @@ function weekBars(week) {
     })
 
   // 贪心区间着色：已完成排末尾；其次截止日早的优先；再次开始日；最后创建时间兜底
-  const _prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
+  const _prioVal = (p: CalItem) => ({ high: 3, medium: 2, low: 1 } as Record<string, number>)[p.priority ?? ''] ?? 0
   bars.sort((a, b) => {
     const da = a.status === 'done' ? 1 : 0
     const db = b.status === 'done' ? 1 : 0
     if (da !== db) return da - db
     const pd = _prioVal(b) - _prioVal(a)
     if (pd !== 0) return pd
-    if (a.startDate !== b.startDate) return a.startDate.localeCompare(b.startDate)
-    if (a.endDate !== b.endDate) return a.endDate.localeCompare(b.endDate)
+    if (a.startDate !== b.startDate) return (a.startDate ?? '').localeCompare(b.startDate ?? '')
+    if (a.endDate !== b.endDate) return (a.endDate ?? '').localeCompare(b.endDate ?? '')
     return (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
   })
-  const rowEnds = []  // rowEnds[r] = 该行最后一条 bar 的 colEnd
+  const rowEnds: number[] = []  // rowEnds[r] = 该行最后一条 bar 的 colEnd
   bars.forEach(bar => {
     let r = 0
-    while (rowEnds[r] !== undefined && rowEnds[r] >= bar.colStart) r++
+    while (rowEnds[r] !== undefined && rowEnds[r] >= (bar.colStart ?? 0)) r++
     bar.row = r
-    rowEnds[r] = bar.colEnd
+    rowEnds[r] = bar.colEnd ?? 0
   })
 
   return bars
@@ -1377,17 +1479,17 @@ function weekBars(week) {
 const viewMode  = ref('month')        // 'month' | 'week'
 const weekRef   = ref(new Date())     // 可视周内任一日期
 const HOUR_H    = 48                   // 每小时像素高
-const wvBodyRef = ref(null)
+const wvBodyRef = ref<HTMLElement | null>(null)
 const _CN_DOW   = ['日','一','二','三','四','五','六']
 
-function _mondayOf(d) {
+function _mondayOf(d: Date) {
   const x = new Date(d.getFullYear(), d.getMonth(), d.getDate())
   x.setDate(x.getDate() - ((x.getDay() + 6) % 7))   // 回到本周一
   return x
 }
-const weekDays = computed(() => {
+const weekDays = computed<WeekViewDay[]>(() => {
   const mon = _mondayOf(weekRef.value)
-  const out = []
+  const out: WeekViewDay[] = []
   for (let i = 0; i < 7; i++) {
     const d = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + i)
     const iso = toIso(d)
@@ -1399,11 +1501,13 @@ const weekDays = computed(() => {
   return out
 })
 
-function _parseMin(t) { const [h, m] = (t || '').split(':').map(Number); return (h || 0) * 60 + (m || 0) }
+function _parseMin(t: string | undefined) { const [h, m] = (t || '').split(':').map(Number); return (h || 0) * 60 + (m || 0) }
+
+interface TimedItem { ev: CalItem; s: number; e: number; _col?: number; _n?: number }
 
 // 某天「有时间」的活动 → 计算位置 + 重叠分栏（聚簇贪心分列）
-function timedLayoutFor(iso) {
-  const items = visibleEvents.value
+function timedLayoutFor(iso: string) {
+  const items: TimedItem[] = visibleEvents.value
     .filter(e => e.date === iso && e.time)
     .map(e => {
       const s = _parseMin(e.time)
@@ -1412,10 +1516,10 @@ function timedLayoutFor(iso) {
       return { ev: e, s, e: Math.min(1440, en) }
     })
     .sort((a, b) => a.s - b.s || a.e - b.e)
-  const res = []
-  let cluster = [], cEnd = -1
+  const res: TimedItem[] = []
+  let cluster: TimedItem[] = [], cEnd = -1
   const flush = () => {
-    const colEnds = []
+    const colEnds: number[] = []
     cluster.forEach(it => {
       let c = 0
       while (c < colEnds.length && colEnds[c] > it.s) c++
@@ -1434,23 +1538,23 @@ function timedLayoutFor(iso) {
     ev: it.ev,
     top: it.s / 60 * HOUR_H,
     height: Math.max(15, (it.e - it.s) / 60 * HOUR_H - 2),
-    leftPct: it._col / it._n * 100,
-    widthPct: 100 / it._n,
+    leftPct: (it._col ?? 0) / (it._n ?? 1) * 100,
+    widthPct: 100 / (it._n ?? 1),
   }))
 }
 
 // 某天「无时间」的活动 → 全天行
-function allDayEventsFor(iso) { return visibleEvents.value.filter(e => e.date === iso && !e.time) }
+function allDayEventsFor(iso: string) { return visibleEvents.value.filter(e => e.date === iso && !e.time) }
 // 单日项目（startDate===endDate）：weekBars 只收跨天条，这类在全天行当单天条目显示（同月视图把它当 chip）
-function singleDayProjectsFor(iso) {
+function singleDayProjectsFor(iso: string): CalItem[] {
   return effectiveProjectTimelines.value
     .filter(p => p.startDate === p.endDate && p.startDate === iso)
     .map(p => ({ ...p, isProject: true }))
 }
 // 某天全天行的单天条目 = 单日项目 + 无时间活动，按月视图 chip 排序（done 末尾→优先级→开始/日期→创建）
-function allDayItemsFor(iso) {
-  const items = [...singleDayProjectsFor(iso), ...allDayEventsFor(iso).map(e => ({ ...e, isProject: false }))]
-  const prio = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
+function allDayItemsFor(iso: string): CalItem[] {
+  const items: CalItem[] = [...singleDayProjectsFor(iso), ...allDayEventsFor(iso).map(e => ({ ...e, isProject: false }))]
+  const prio = (p: CalItem) => ({ high: 3, medium: 2, low: 1 } as Record<string, number>)[p.priority ?? ''] ?? 0
   return items.sort((a, b) => {
     const da = a.status === 'done' ? 1 : 0, db = b.status === 'done' ? 1 : 0
     if (da !== db) return da - db
@@ -1466,15 +1570,15 @@ const weekAllDayBars  = computed(() => weekBars(weekDays.value))
 const _WEEK_MAX_PROJ  = 10   // 全天行最多显示的项目数，超出收入「更多」（同月视图：封顶 + 更多）
 const weekAllDayShown = computed(() => weekAllDayBars.value.slice(0, _WEEK_MAX_PROJ))
 const weekAllDayMore  = computed(() => weekAllDayBars.value.slice(_WEEK_MAX_PROJ).map(b => ({ ...b, isProject: true })))
-const wvShownRows     = computed(() => weekAllDayShown.value.reduce((m, b) => Math.max(m, b.row + 1), 0))
+const wvShownRows     = computed(() => weekAllDayShown.value.reduce((m, b) => Math.max(m, (b.row ?? 0) + 1), 0))
 // 第 ci 列被隐藏（超出 10）的跨天项目 = 覆盖该天的隐藏条；每天列各自「更多」，按实际位置显示（同月视图）
-function weekMoreFor(ci) { return weekAllDayMore.value.filter(b => b.colStart <= ci && b.colEnd >= ci) }
-function pbarStyle(bar) {
+function weekMoreFor(ci: number) { return weekAllDayMore.value.filter(b => (b.colStart ?? 0) <= ci && (b.colEnd ?? 0) >= ci) }
+function pbarStyle(bar: CalItem) {
   // left/right 同月视图 .project-bar：真正 start/end 的那一端留 6px 安全间距（对齐日格 padding），
   // 跨周中间段（不 start 也不 end）不留，贴到格边表示还在连续
-  return { left:  bar.startsHere ? `calc(${bar.colStart / 7 * 100}% + 6px)` : (bar.colStart / 7 * 100) + '%',
-           right: bar.endsHere   ? `calc(${(7 - bar.colEnd - 1) / 7 * 100}% + 6px)` : ((7 - bar.colEnd - 1) / 7 * 100) + '%',
-           top: bar.row * 20 + 'px',
+  return { left:  bar.startsHere ? `calc(${(bar.colStart ?? 0) / 7 * 100}% + 6px)` : ((bar.colStart ?? 0) / 7 * 100) + '%',
+           right: bar.endsHere   ? `calc(${(7 - (bar.colEnd ?? 0) - 1) / 7 * 100}% + 6px)` : ((7 - (bar.colEnd ?? 0) - 1) / 7 * 100) + '%',
+           top: (bar.row ?? 0) * 20 + 'px',
            background: [deadlineWarnLayer(bar), capBg(bar.accent, bar.progress)].filter(Boolean).join(', '),   // 进度填充：与月视图/侧栏胶囊一致；deadlineWarnLayer 叠加临近截止日的标红
            borderColor: bar.accent + '70', color: darkenHex(bar.accent) }
 }
@@ -1492,11 +1596,11 @@ const wvAllDayH = computed(() => {
 // 当前时间红线（每分钟更新）
 const nowMinutes = ref(new Date().getHours() * 60 + new Date().getMinutes())
 const nowTop = computed(() => nowMinutes.value / 60 * HOUR_H)
-let _nowTimer = null
+let _nowTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => { _nowTimer = setInterval(() => { nowMinutes.value = new Date().getHours() * 60 + new Date().getMinutes() }, 60000) })
-onUnmounted(() => clearInterval(_nowTimer))
+onUnmounted(() => { if (_nowTimer) clearInterval(_nowTimer) })
 
-function setView(m) {
+function setView(m: 'month' | 'week') {
   if (m === viewMode.value) return
   if (m === 'week') weekRef.value = new Date((selectedDate.value || todayIso.value) + 'T00:00:00')
   else cursor.value = new Date(weekRef.value.getFullYear(), weekRef.value.getMonth(), 1)
@@ -1509,25 +1613,25 @@ watch(weekRef, v => {
 })
 
 // 周视图：悬停高亮小时格 + 按下拖拽选时段建活动
-const wvHover = ref(null)   // { iso, h } 悬停的小时格
+const wvHover = ref<{ iso: string; h: number } | null>(null)   // { iso, h } 悬停的小时格
 const wvDragging = ref(false)      // 是否正在小时格拖选（仅用于门控 hover，不再有单独的 selbox）
-const wvSelectedSlot = ref(null)   // { iso, h0, h1 } 选中格（点击/拖拽直接驱动它 = 被选中深色，无中间反馈）
-let _wvColRect = null
+const wvSelectedSlot = ref<WvSelectedSlot | null>(null)   // { iso, h0, h1 } 选中格（点击/拖拽直接驱动它 = 被选中深色，无中间反馈）
+let _wvColRect: DOMRect | null = null
 let _wvFormOpening = false   // mouseup 打开表单后屏蔽紧随的 click → handleClickOutside 误关
-let _prevSelectedSlot = null // 记录 mousedown 前的选中格，用于判断是否二次点击同格
-function _hourAt(clientY, rect) { return Math.max(0, Math.min(23, Math.floor((clientY - rect.top) / HOUR_H))) }
+let _prevSelectedSlot: WvSelectedSlot | null = null // 记录 mousedown 前的选中格，用于判断是否二次点击同格
+function _hourAt(clientY: number, rect: DOMRect) { return Math.max(0, Math.min(23, Math.floor((clientY - rect.top) / HOUR_H))) }
 
-function onColMove(e, d) {
+function onColMove(e: MouseEvent, d: WeekViewDay) {
   if (wvDragging.value || _evDrag) return                     // 选区/活动拖拽中：不高亮小时格
-  if (e.target.closest('.wv-ev')) { wvHover.value = null; return }   // 鼠标在活动上：不高亮下方格（替代原 .stop，避免挡住 document 拖拽监听）
-  wvHover.value = { iso: d.iso, h: _hourAt(e.clientY, e.currentTarget.getBoundingClientRect()) }
+  if ((e.target as HTMLElement).closest('.wv-ev')) { wvHover.value = null; return }   // 鼠标在活动上：不高亮下方格（替代原 .stop，避免挡住 document 拖拽监听）
+  wvHover.value = { iso: d.iso, h: _hourAt(e.clientY, (e.currentTarget as HTMLElement).getBoundingClientRect()) }
 }
 function onColLeave() { if (!wvDragging.value) wvHover.value = null }
 // 悬停的小时格是否落在当前选中区内 → 是则不显示 hover 浅色（避免和选中深色叠加，同月视图单元格背景互斥）
-function onColDown(e, d) {
+function onColDown(e: MouseEvent, d: WeekViewDay) {
   if (e.button !== 0) return
   selRange.value = null   // 选时段 → 清掉日期选择（两者用途不同，互斥）
-  _wvColRect = e.currentTarget.getBoundingClientRect()
+  _wvColRect = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const h = _hourAt(e.clientY, _wvColRect)
   _prevSelectedSlot = wvSelectedSlot.value ? { ...wvSelectedSlot.value } : null
   wvDragging.value = true
@@ -1537,19 +1641,19 @@ function onColDown(e, d) {
   document.addEventListener('mouseup', _wvUp)
   e.preventDefault()
 }
-function _wvDrag(e) {
+function _wvDrag(e: MouseEvent) {
   if (!wvDragging.value || !_wvColRect || !wvSelectedSlot.value) return
   e.preventDefault()   // 拖拽期间彻底禁掉文本/元素选中（防整片染暗）
   wvSelectedSlot.value = { ...wvSelectedSlot.value, h1: _hourAt(e.clientY, _wvColRect) }
 }
-function _wvUp(e) {
+function _wvUp(e: MouseEvent) {
   document.removeEventListener('mousemove', _wvDrag)
   document.removeEventListener('mouseup', _wvUp)
   wvDragging.value = false
   const sel = wvSelectedSlot.value
   if (!sel) return
   const a = Math.min(sel.h0, sel.h1), b = Math.max(sel.h0, sel.h1)
-  const p = n => String(n).padStart(2, '0')
+  const p = (n: number) => String(n).padStart(2, '0')
   const endV = b + 1   // 拖到 B 点 → 覆盖到 (B+1):00；点一下不拖 → 1 小时
   wvSelectedSlot.value = { iso: sel.iso, h0: a, h1: b }   // 点击后格子保持暗色
   selectedDate.value = sel.iso
@@ -1571,48 +1675,72 @@ function _wvUp(e) {
 
 // ── 周视图：拖活动边缘改起止时间 / 拖活动体改日期 ──
 const _SNAP = 30   // 分钟吸附
-let _evDrag = null
-function _toMin(t) { const [h, m] = (t || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0) }
-function _fromMin(min) { const p = n => String(n).padStart(2, '0'); min = ((Math.round(min) % 1440) + 1440) % 1440; return `${p(Math.floor(min / 60))}:${p(min % 60)}` }
-function _snapMin(min) { return Math.max(0, Math.min(1440, Math.round(min / _SNAP) * _SNAP)) }
+interface EvDragState {
+  kind: 'resize' | 'move'
+  edge?: 'start' | 'end' | null
+  colRect?: DOMRect
+  moved: boolean
+  id: string | number
+  _uid?: string
+  name: string
+  description?: string
+  version?: number
+  date: string
+  time: string
+  endTime: string
+  startMin?: number
+  endMin?: number
+  x0?: number
+  y0?: number
+  startMin0?: number
+  dur?: number
+  cols?: { left: number; right: number; iso?: string }[]
+}
+let _evDrag: EvDragState | null = null
+function _toMin(t: string | undefined) { const [h, m] = (t || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0) }
+function _fromMin(min: number) { const p = (n: number) => String(n).padStart(2, '0'); min = ((Math.round(min) % 1440) + 1440) % 1440; return `${p(Math.floor(min / 60))}:${p(min % 60)}` }
+function _snapMin(min: number) { return Math.max(0, Math.min(1440, Math.round(min / _SNAP) * _SNAP)) }
 
-function _setEventLocal(id, fields) {
-  const apply = (list) => { const i = list.findIndex(e => e.id === id); if (i !== -1) list[i] = { ...list[i], ...fields } }
+function _setEventLocal(id: string | number, fields: Partial<CalItem>) {
+  const apply = (list: CalItem[]) => { const i = list.findIndex(e => e.id === id); if (i !== -1) list[i] = { ...list[i], ...fields } }
   apply(extraEvents.value); apply(nextMonthEvents.value); apply(spilloverEvents.value)
 }
-async function _persistEvent(s) {
+async function _persistEvent(s: EvDragState) {
   buildUpcomingList()
   eventsCache[`${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`] = [...extraEvents.value]
   try {
-    const updated = await eventsApi.update(s.id, { title: s.name, date: s.date, time: s.time || null, endTime: s.endTime || null, description: s.description || undefined, version: s.version })
+    const updated = await eventsApi.update(s.id as unknown as number, { title: s.name, date: s.date, time: s.time || null, endTime: s.endTime || null, description: s.description || undefined, version: s.version })
     if (updated?.version) _setEventLocal(s.id, { version: updated.version })
-  } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
+  } catch (e: any) { if (e?.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
 }
 
-function onEvResize(ev, edge, e) {   // 拖边缘改起止时间
-  const colEl = e.currentTarget.closest('.wv-col')
+function onEvResize(ev: CalItem, edge: 'start' | 'end' | null, e: MouseEvent) {   // 拖边缘改起止时间
+  const colEl = (e.currentTarget as HTMLElement).closest('.wv-col')
+  if (!colEl) return
+  const startMin = _toMin(ev.time || '09:00')
+  let endMin = ev.endTime ? _toMin(ev.endTime) : _toMin(ev.time || '09:00') + 60
+  if (endMin <= startMin) endMin = 1440
   _evDrag = { kind: 'resize', edge, colRect: colEl.getBoundingClientRect(), moved: false,
-              id: ev.id, _uid: ev._uid, name: ev.name, description: ev.description, version: ev.version, date: ev.date, time: ev.time, endTime: ev.endTime,
-              startMin: _toMin(ev.time || '09:00'), endMin: ev.endTime ? _toMin(ev.endTime) : _toMin(ev.time || '09:00') + 60 }
-  if (_evDrag.endMin <= _evDrag.startMin) _evDrag.endMin = 1440
+              id: ev.id, _uid: ev._uid, name: ev.name, description: ev.description, version: ev.version, date: ev.date ?? '', time: ev.time ?? '', endTime: ev.endTime ?? '',
+              startMin, endMin }
   document.body.style.userSelect = 'none'
   document.addEventListener('mousemove', _evDragMove)
   document.addEventListener('mouseup', _evDragUp)
   e.preventDefault()
 }
-function _evEdge(e) {   // 按下/悬停位置离上下边缘的判定：'start'(上) / 'end'(下) / null(中间)
-  const rect = e.currentTarget.getBoundingClientRect()
+function _evEdge(e: MouseEvent): 'start' | 'end' | null {   // 按下/悬停位置离上下边缘的判定：'start'(上) / 'end'(下) / null(中间)
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const off = e.clientY - rect.top
   const EDGE = Math.min(7, rect.height / 2)   // 短块时减半，免上下交叠
   if (off <= EDGE) return 'start'
   if (off >= rect.height - EDGE) return 'end'
   return null
 }
-function onEvHover(e) {   // 悬停活动：清掉小时格悬停 + 按位置切换光标（边缘=ns-resize、中间=grab）
+function onEvHover(e: MouseEvent) {   // 悬停活动：清掉小时格悬停 + 按位置切换光标（边缘=ns-resize、中间=grab）
   wvHover.value = null
-  e.currentTarget.style.cursor = _evEdge(e) ? 'ns-resize' : 'grab'
+  ;(e.currentTarget as HTMLElement).style.cursor = _evEdge(e) ? 'ns-resize' : 'grab'
 }
-function onEvDown(ev, e) {   // 按下活动体：近边缘=缩放起止，中间=自由移动，未拖=编辑
+function onEvDown(ev: CalItem, e: MouseEvent) {   // 按下活动体：近边缘=缩放起止，中间=自由移动，未拖=编辑
   if (e.button !== 0) return
   const edge = _evEdge(e)
   if (edge) return onEvResize(ev, edge, e)
@@ -1621,16 +1749,17 @@ function onEvDown(ev, e) {   // 按下活动体：近边缘=缩放起止，中�
   if (eM <= sM) eM = sM + 60
   _evDrag = { kind: 'move', x0: e.clientX, y0: e.clientY, moved: false,
               id: ev.id, _uid: ev._uid, name: ev.name, description: ev.description, version: ev.version,
-              date: ev.date, time: ev.time, endTime: ev.endTime,
+              date: ev.date ?? '', time: ev.time ?? '', endTime: ev.endTime ?? '',
               startMin0: sM, dur: eM - sM,
               cols: [...document.querySelectorAll('.week-view .wv-col')].map((el, i) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, iso: weekDays.value[i]?.iso } }) }
   document.body.style.userSelect = 'none'
   document.addEventListener('mousemove', _evDragMove)
   document.addEventListener('mouseup', _evDragUp)
 }
-function _evDragMove(e) {
+function _evDragMove(e: MouseEvent) {
   if (!_evDrag) return
   if (_evDrag.kind === 'resize') {
+    if (!_evDrag.colRect || _evDrag.startMin === undefined || _evDrag.endMin === undefined) return
     _evDrag.moved = true
     const min = _snapMin((e.clientY - _evDrag.colRect.top) / HOUR_H * 60)
     if (_evDrag.edge === 'start') _evDrag.startMin = Math.min(min, _evDrag.endMin - _SNAP)
@@ -1640,6 +1769,7 @@ function _evDragMove(e) {
     _setEventLocal(_evDrag.id, { time: _evDrag.time, endTime: _evDrag.endTime })
     return
   }
+  if (_evDrag.x0 === undefined || _evDrag.y0 === undefined || _evDrag.startMin0 === undefined || _evDrag.dur === undefined) return
   if (!_evDrag.moved && Math.abs(e.clientX - _evDrag.x0) + Math.abs(e.clientY - _evDrag.y0) < 5) return
   _evDrag.moved = true
   wvHover.value = null
@@ -1650,14 +1780,14 @@ function _evDragMove(e) {
   const ne = ns + _evDrag.dur
   const newEnd = ne >= 1440 ? '00:00' : _fromMin(ne)
   // 横向：落在哪一列就是哪天
-  const col = _evDrag.cols.find(c => e.clientX >= c.left && e.clientX < c.right)
+  const col = _evDrag.cols?.find(c => e.clientX >= c.left && e.clientX < c.right)
   const newDate = (col && col.iso) ? col.iso : _evDrag.date
   if (newDate !== _evDrag.date || newTime !== _evDrag.time || newEnd !== _evDrag.endTime) {
     _evDrag.date = newDate; _evDrag.time = newTime; _evDrag.endTime = newEnd
     _setEventLocal(_evDrag.id, { date: newDate, time: newTime, endTime: newEnd })
   }
 }
-function _evDragUp(e) {
+function _evDragUp(e: MouseEvent) {
   document.removeEventListener('mousemove', _evDragMove)
   document.removeEventListener('mouseup', _evDragUp)
   document.body.style.userSelect = ''
@@ -1705,12 +1835,12 @@ const selectedDateLabel = computed(() => {
   return (d.getMonth()+1) + '月' + d.getDate() + '日 · 周' + cn[d.getDay()]
 })
 
-const selectedEvents = computed(() => {
-  const sel = selectedDate.value
+const selectedEvents = computed<CalItem[]>(() => {
+  const sel = selectedDate.value ?? ''
   const chips = singleEvents(sel)
-  const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
-  const activeProjects = projectTimelines.value
-    .filter(p => p.startDate <= sel && p.endDate >= sel)
+  const prioVal = (p: CalItem) => ({ high: 3, medium: 2, low: 1 } as Record<string, number>)[p.priority ?? ''] ?? 0
+  const activeProjects: CalItem[] = projectTimelines.value
+    .filter(p => (p.startDate ?? '') <= sel && (p.endDate ?? '') >= sel)
     .map(p => ({ ...p, type: p.endDate === sel ? 'deadline' : 'project' }))
     .sort((a, b) => {
       const aDone = a.status === 'done' ? 1 : 0
@@ -1724,7 +1854,7 @@ const selectedEvents = computed(() => {
   return [...activeProjects, ...chips]
 })
 
-const upcomingList = ref([])
+const upcomingList = ref<CalItem[]>([])
 
 function buildUpcomingList() {
   const now         = new Date()
@@ -1732,16 +1862,16 @@ function buildUpcomingList() {
   const cutoff      = toIso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 15))
   const midnight    = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
-  function label(iso) {
-    const d = Math.round((+new Date(iso + 'T00:00:00') - +midnight) / 86400000)
+  function label(iso: string | null | undefined) {
+    const d = Math.round((+new Date((iso ?? '') + 'T00:00:00') - +midnight) / 86400000)
     return { daysLeft: d, daysLabel: d === 0 ? '今天' : d === 1 ? '明天' : d + '天后' }
   }
 
-  const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
+  const prioVal = (p: CalItem) => ({ high: 3, medium: 2, low: 1 } as Record<string, number>)[p.priority ?? ''] ?? 0
 
   // 项目截止（15天内），已完成项目排最后
-  const projects = projectTimelines.value
-    .filter(p => p.endDate >= todayStr && p.endDate <= cutoff)
+  const projects: CalItem[] = projectTimelines.value
+    .filter(p => (p.endDate ?? '') >= todayStr && (p.endDate ?? '') <= cutoff)
     .sort((a, b) => {
       const doneDiff = (a.status === 'done' ? 1 : 0) - (b.status === 'done' ? 1 : 0)
       if (doneDiff) return doneDiff
@@ -1751,17 +1881,17 @@ function buildUpcomingList() {
         || (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
     })
     .slice(0, 4)
-    .map(p => ({ ...p, date: p.endDate, ...label(p.endDate) }))
+    .map(p => ({ ...p, date: p.endDate ?? undefined, ...label(p.endDate) }))
 
   // 日历事件（当月 + 下月，15天内）
   const seen = new Set()
-  const events = [...extraEvents.value, ...nextMonthEvents.value]
+  const events: CalItem[] = [...extraEvents.value, ...nextMonthEvents.value]
     .filter(ev => {
       if (seen.has(ev.id)) return false
       seen.add(ev.id)
-      return ev.date >= todayStr && ev.date <= cutoff
+      return (ev.date ?? '') >= todayStr && (ev.date ?? '') <= cutoff
     })
-    .sort((a, b) => a.date.localeCompare(b.date))
+    .sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''))
     .slice(0, 4)
     .map(ev => ({ ...ev, ...label(ev.date) }))
 
@@ -1780,7 +1910,7 @@ watch(() => uiStore.pendingCalendarEvent, async (target) => {
   uiStore.pendingCalendarEvent = null
   const d = new Date(target.date + 'T00:00:00')
   cursor.value = new Date(d.getFullYear(), d.getMonth(), 1)
-  selectedDate.value = target.date
+  selectedDate.value = target.date ?? null
   await nextTick()
   _flashCalendarEvent(target.id)
 }, { immediate: true })
@@ -1797,7 +1927,7 @@ watch(() => uiStore.pendingCalendarDate, (date) => {
 // 从别的页面搜索跳转时，日历页刚挂载、fetchEvents() 还在飞网络请求，侧栏这时可能还没渲染出
 // 目标活动的 data-event-id——固定延时 150ms 一次性查大概率扑空（只跳对了月份/日期，没有高亮闪一下）。
 // 改成轮询，等数据到位、DOM 出现再闪，最多等 2s（10 次 × 200ms）。
-function _flashCalendarEvent(id, tries = 10) {
+function _flashCalendarEvent(id: string | number, tries = 10) {
   setTimeout(() => {
     const el = document.querySelector(`[data-event-id="${id}"]`)
     if (!el) { if (tries > 0) _flashCalendarEvent(id, tries - 1); return }
@@ -1810,11 +1940,11 @@ function _flashCalendarEvent(id, tries = 10) {
 // 弹窗加提醒后会变高，可能顶出屏幕底部、保存按钮被切掉。
 // 量实际高度，把 top 往上抬到「底部留 SAFE_GAP 安全距离」；超高就靠 CSS max-height 内部滚动。
 const SAFE_GAP = 12
-function clampPopupIntoView(elRef, styleRef) {
+function clampPopupIntoView(elRef: { value: HTMLElement | null }, styleRef: { value: Record<string, string | number | undefined> }) {
   const el = elRef.value
   if (!el) return
   const h = el.offsetHeight
-  const cur = parseFloat(styleRef.value.top) || 0
+  const cur = parseFloat(String(styleRef.value.top ?? '')) || 0
   const maxTop = window.innerHeight - h - SAFE_GAP
   const top = Math.max(SAFE_GAP, Math.min(cur, maxTop))
   if (Math.abs(top - cur) > 0.5) styleRef.value = { ...styleRef.value, top: top + 'px' }
@@ -1824,7 +1954,7 @@ function _addDefaults() {
   if (viewMode.value === 'week' && wvSelectedSlot.value) {
     const s = wvSelectedSlot.value
     const a = Math.min(s.h0, s.h1), b = Math.max(s.h0, s.h1)
-    const p = n => String(n).padStart(2, '0')
+    const p = (n: number) => String(n).padStart(2, '0')
     const endV = b + 1
     return { date: s.iso, time: `${p(a)}:00`, endTime: endV >= 24 ? '00:00' : `${p(endV)}:00` }
   }
@@ -1860,20 +1990,20 @@ function openAddForm() {
   nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
 }
 
-function openEditForm(ev, nativeEv, useMousePos = false) {
+function openEditForm(ev: Pick<CalItem, 'id' | 'name' | 'date' | 'time' | 'endTime' | 'description' | 'version' | '_uid'>, nativeEv: MouseEvent, useMousePos = false) {
   showAddForm.value = false
-  editingEvent.value = { _uid: ev._uid, id: ev.id, name: ev.name, date: ev.date, time: ev.time || '', endTime: ev.endTime || '', description: ev.description || '', allDay: !ev.time }
+  editingEvent.value = { _uid: ev._uid, id: ev.id, name: ev.name, date: ev.date ?? '', time: ev.time || '', endTime: ev.endTime || '', description: ev.description || '', allDay: !ev.time }
   loadReminders(ev)
   const w = 240
   const EDIT_H = 300
-  let left, top
+  let left: number, top: number
   if (useMousePos) {
     left = Math.max(8, Math.min(nativeEv.clientX - w / 2, window.innerWidth - w - 8))
     top  = (window.innerHeight - nativeEv.clientY - 8 >= EDIT_H)
       ? nativeEv.clientY + 8
       : nativeEv.clientY - EDIT_H - 8
   } else {
-    const el    = nativeEv.currentTarget ?? nativeEv.target
+    const el    = (nativeEv.currentTarget ?? nativeEv.target) as HTMLElement
     const rect  = el.getBoundingClientRect()
     const sbEl  = el.closest('.cal-sidebar') ?? calSidebarRef.value
     const sbRect = sbEl?.getBoundingClientRect()
@@ -1900,11 +2030,11 @@ const LEAD_OPTIONS = [
   { label: '提前 1 天',   min: 1440 },
   { label: '提前 2 天',   min: 2880 },
 ]
-const CHAN_LABEL = { web: 'web', feishu: '飞书', qq: 'QQ', wechat: '微信' }
+const CHAN_LABEL: Record<string, string> = { web: 'web', feishu: '飞书', qq: 'QQ', wechat: '微信' }
 const imChannels = computed(() => authStore.user?.imChannels ?? [])   // 用户已绑的 IM 平台
-const reminders          = ref([])         // [{ id?, leadMin }]，可多个
-const reminderChannels   = ref(['web'])    // 渠道（web + 已绑 IM），该活动的提醒共用
-const removedReminderIds = ref([])         // 编辑里删掉的已存在提醒 id，保存时真删
+const reminders          = ref<Reminder[]>([])         // [{ id?, leadMin }]，可多个
+const reminderChannels   = ref<string[]>(['web'])    // 渠道（web + 已绑 IM），该活动的提醒共用
+const removedReminderIds = ref<number[]>([])         // 编辑里删掉的已存在提醒 id，保存时真删
 
 // 提醒条数 / 渠道变化（弹窗变高）后重新夹住当前打开的弹窗，避免保存按钮顶出屏幕底部
 watch([() => reminders.value.length, reminderChannels], () => {
@@ -1914,8 +2044,8 @@ watch([() => reminders.value.length, reminderChannels], () => {
   })
 })
 
-function leadLabelOf(min) { return LEAD_OPTIONS.find(o => o.min === min)?.label || `提前 ${min} 分钟` }
-function toggleReminderChannel(ch) {
+function leadLabelOf(min: number) { return LEAD_OPTIONS.find(o => o.min === min)?.label || `提前 ${min} 分钟` }
+function toggleReminderChannel(ch: string) {
   const set = new Set(reminderChannels.value)
   set.has(ch) ? set.delete(ch) : set.add(ch)
   if (set.size === 0) set.add(ch)   // 至少留一个
@@ -1926,10 +2056,10 @@ function addReminder() {
   reminders.value.push({ leadMin: 30 })
 }
 const toastMsg = ref('')
-let toastTimer = null
-function showToast(msg) {
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+function showToast(msg: string) {
   toastMsg.value = msg
-  clearTimeout(toastTimer)
+  if (toastTimer) clearTimeout(toastTimer)
   toastTimer = setTimeout(() => { toastMsg.value = '' }, 3200)
 }
 // 测试提醒渠道：往当前选的渠道发一条测试消息（不建任务，新建/编辑活动都能测）
@@ -1940,7 +2070,7 @@ async function testReminderChannels() {
     showToast(res?.msg || '已发送测试消息')
   } catch { showToast('测试失败，请稍后重试') }
 }
-function removeReminderAt(i) {
+function removeReminderAt(i: number) {
   const r = reminders.value[i]
   if (r?.id) removedReminderIds.value.push(r.id)
   reminders.value.splice(i, 1)
@@ -1951,22 +2081,22 @@ function resetReminder() {
   removedReminderIds.value = []
 }
 
-function _pad2(n) { return String(n).padStart(2, '0') }
-function _reminderAtIso(date, time, leadMin) {
+function _pad2(n: number) { return String(n).padStart(2, '0') }
+function _reminderAtIso(date: string, time: string | undefined, leadMin: number) {
   const [h, mm] = (time || '09:00').split(':').map(Number)
   const d = new Date(`${date}T00:00:00`)
   d.setHours(h, mm - leadMin, 0, 0)   // 负分钟/跨天由 Date 自动回退
   return `${d.getFullYear()}-${_pad2(d.getMonth()+1)}-${_pad2(d.getDate())}T${_pad2(d.getHours())}:${_pad2(d.getMinutes())}`
 }
 
-async function loadReminders(ev) {
+async function loadReminders(ev: Pick<CalItem, 'id' | 'date' | 'time'>) {
   resetReminder()
   if (typeof ev.id !== 'number') return   // 临时事件（还没存）：保持 reset 态
   try {
     const tasks = (await scheduledTasksApi.listForEvent(ev.id))?.tasks || []
     if (!tasks.length) return
     reminderChannels.value = (tasks[0].channels && tasks[0].channels.length) ? tasks[0].channels : ['web']
-    reminders.value = tasks.map(t => {
+    reminders.value = tasks.map((t: any) => {
       let leadMin = 0
       if ((t.cron || '').startsWith('@once:')) {
         const raw = Math.round((+new Date(`${ev.date}T${ev.time || '09:00'}`) - +new Date(t.cron.slice(6))) / 60000)
@@ -1978,7 +2108,7 @@ async function loadReminders(ev) {
 }
 
 // 保存活动后调用：对账该活动的提醒——删掉移除的、改已存在的渠道/时刻、建新增的
-async function applyReminders(eventId, name, date, time) {
+async function applyReminders(eventId: number, name: string, date: string, time: string | undefined) {
   try {
     for (const id of removedReminderIds.value) await scheduledTasksApi.delete(id)
     removedReminderIds.value = []
@@ -1999,7 +2129,7 @@ async function saveEditEvent() {
   showEditForm.value = false
 
   // 更新本地列表
-  const update = (list) => {
+  const update = (list: CalItem[]) => {
     const idx = list.findIndex(e => e.id === ev.id)
     if (idx !== -1) {
       list[idx] = { ...list[idx], name: ev.name, date: ev.date, time: ev.time || '', endTime: ev.endTime || '', description: ev.description }
@@ -2013,36 +2143,37 @@ async function saveEditEvent() {
   eventsCache[cacheKey] = [...extraEvents.value]
 
   try {
-    const updated = await eventsApi.update(ev.id, { title: ev.name, date: ev.date, time: ev.time || null, endTime: ev.endTime || null, description: ev.description || undefined, version: ev.version })
-    const applyVer = (list) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
+    const updated = await eventsApi.update(ev.id as unknown as number, { title: ev.name, date: ev.date, time: ev.time || null, endTime: ev.endTime || null, description: ev.description || undefined, version: ev.version })
+    const applyVer = (list: CalItem[]) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
     applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
-    await applyReminders(ev.id, ev.name, ev.date, ev.time)   // 按提前量/渠道落地提醒
-  } catch (e) { if (e.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
+    await applyReminders(ev.id as unknown as number, ev.name, ev.date, ev.time)   // 按提前量/渠道落地提醒
+  } catch (e: any) { if (e?.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
 }
 
-function handleClickOutside(e) {
-  if (e.target.closest('.dp-popup')) return
+function handleClickOutside(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (target.closest('.dp-popup')) return
   // mouseup 打开表单（周视图选时段新建 / 单击活动编辑）后，浏览器紧接着补发的 click 会冒泡到这里，
   // 此时表单刚打开、target 显然不在表单内——不拦会被当成"点了外面"瞬间关掉。屏蔽这一次即可。
   if (_wvFormOpening) { _wvFormOpening = false; return }
   if (showAddForm.value) {
-    if (!addBtnRef.value?.contains(e.target) && !addFormRef.value?.contains(e.target))
+    if (!addBtnRef.value?.contains(target) && !addFormRef.value?.contains(target))
       showAddForm.value = false
   }
   if (showEditForm.value) {
-    if (!editFormRef.value?.contains(e.target) && !morePopupRef.value?.contains(e.target))
+    if (!editFormRef.value?.contains(target) && !morePopupRef.value?.contains(target))
       showEditForm.value = false
   }
   if (pickerOpen.value) {
-    if (!pickerAnchorRef.value?.contains(e.target) && !pickerRef.value?.contains(e.target))
+    if (!pickerAnchorRef.value?.contains(target) && !pickerRef.value?.contains(target))
       pickerOpen.value = false
   }
   if (morePopup.value.open) {
-    if (!morePopupRef.value?.contains(e.target) && !editFormRef.value?.contains(e.target))
+    if (!morePopupRef.value?.contains(target) && !editFormRef.value?.contains(target))
       morePopup.value.open = false
   }
   if (cellCtx.show) {
-    if (!cellCtxRef.value?.contains(e.target)) cellCtx.show = false
+    if (!cellCtxRef.value?.contains(target)) cellCtx.show = false
   }
 }
 
@@ -2059,7 +2190,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside, true)
   ro?.disconnect()
-  clearTimeout(_midnightTimer)
+  if (_midnightTimer) clearTimeout(_midnightTimer)
 })
 
 // 实时：咕咕/IM 改了日历 → 重新拉当前+下月活动
@@ -2068,10 +2199,10 @@ watch(cursor, () => { fetchEvents(); fetchSpilloverEvents(); loadHolidays() })
 watch(monthWeeks, () => nextTick(setupRO))
 watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 
-async function deleteEvent(ev) {
+async function deleteEvent(ev: { id: string | number; _uid?: string }) {
   // ① 按稳定 _uid 匹配（旧数据/无 _uid 时退回宽松 id 比较）——临时→真 id 替换后也能删对那份，
   //    杜绝「服务器删成功了、视图里那份却因 id 形态对不上而没删掉」。
-  const match = (e) => (ev._uid != null ? e._uid === ev._uid : String(e.id) === String(ev.id))
+  const match = (e: CalItem) => (ev._uid != null ? e._uid === ev._uid : String(e.id) === String(ev.id))
   extraEvents.value     = extraEvents.value.filter(e => !match(e))
   nextMonthEvents.value = nextMonthEvents.value.filter(e => !match(e))
   spilloverEvents.value = spilloverEvents.value.filter(e => !match(e))
@@ -2079,7 +2210,7 @@ async function deleteEvent(ev) {
   const key = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   eventsCache[key] = extraEvents.value
   try {
-    await eventsApi.delete(ev.id)
+    await eventsApi.delete(ev.id as unknown as number)
   } catch { /* 已删/网络等 → 下面对账兜底，不再静默留下脏状态 */ }
   finally {
     // ③ 与服务器对账：不管成功/404 都按最新刷一次，杜绝「删了还在 / 删了又回来 / 再删报错」
@@ -2097,9 +2228,9 @@ async function deleteEventFromEdit() {
 async function saveEvent() {
   if (!newEvent.value.name) return
   if (newEvent.value.allDay) { newEvent.value.time = ''; newEvent.value.endTime = '' }
-  const date = newEvent.value.date || selectedDate.value
+  const date = newEvent.value.date || selectedDate.value || todayIso.value
   const uid = 'u' + Date.now()
-  const localItem = {
+  const localItem: CalItem = {
     _uid:        uid,
     id:          uid,                    // 临时 id；create 回来换成真数字 id，但 _uid 不变
     date,

@@ -448,7 +448,7 @@
                     <div class="fc-name" :title="g.name">{{ g.name }}</div>
                     <div class="fc-meta fc-ghost-meta">
                       <template v-if="g.isFolder">
-                        <template v-if="g.error">{{ g.done - g.failed }}/{{ g.total }}（{{ g.failed }} 个失败）</template>
+                        <template v-if="g.error">{{ (g.done ?? 0) - (g.failed ?? 0) }}/{{ g.total }}（{{ g.failed }} 个失败）</template>
                         <template v-else>{{ g.done }}/{{ g.total }}</template>
                       </template>
                       <template v-else-if="g.error">上传失败</template>
@@ -683,7 +683,7 @@
   <!-- 文件详细信息弹窗 -->
   <FileInfoPopup
     :show="pmInfoPopup.show"
-    :file="pmInfoPopup.file"
+    :file="pmInfoPopup.file ?? undefined"
     :x="pmInfoPopup.x"
     :y="pmInfoPopup.y"
     @close="pmInfoPopup.show = false"
@@ -694,10 +694,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, type PropType } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { autoCompleteTodos, restoreTodos, firstIncompleteStageIdx, allTodosDone } from '@/utils/projectStages'
-import { useFilesCacheStore } from '@/stores/filesCache'
+import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
+import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/services/api'
 import { thumbLoadedIds, clearThumbCache } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
@@ -712,7 +713,8 @@ import { fireHint } from '@/composables/useOnboarding'
 import DatePicker from '@/components/common/DatePicker.vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
-import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
+import UploadConflictDialog, { type ConflictItem, type ConflictDecision } from '@/components/common/UploadConflictDialog.vue'
+import type { UploadItem } from '@/composables/useFileUpload'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import {
   PhFolder, PhArrowLeft, PhArrowRight, PhCaretLeft, PhCaretRight, PhCaretDown, PhSortAscending, PhSquaresFour, PhList,
@@ -726,18 +728,36 @@ import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
 
-const props = defineProps({ project: { type: Object, default: null } })
+const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
 function onModalClose() { emit('close'); pmSortMenuOpen.value = false }
+
+// e.message 兜底：console.error 里统一格式化未知类型的异常，跟 stores/projects.ts 的 errMsg 同一约定。
+const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 const projectStore     = useProjectStore()
 const fileCacheStore   = useFilesCacheStore()
 const liveStore        = useLiveStore()
 const prefsStore       = usePreferencesStore()
-const editingStage     = ref(null)
-const stageInputRef    = ref(null)
-const stageFlowRef     = ref(null)
-const stageDrag = reactive({
+const editingStage     = ref<string | null>(null)
+const stageInputRef    = ref<HTMLInputElement[] | null>(null)
+const stageFlowRef     = ref<HTMLElement | null>(null)
+interface StageDragState {
+  active: boolean
+  fromIdx: number
+  overIdx: number
+  ghostX: number
+  ghostY: number
+  ghostLabel: string
+  ghostNum: number
+  ghostIsActive: boolean
+  ghostIsDone: boolean
+  ghostWidth: number
+  grabOffsetX: number
+  grabOffsetY: number
+  ghostTodos: ProjectTodo[]
+}
+const stageDrag = reactive<StageDragState>({
   active: false, fromIdx: -1, overIdx: -1,
   ghostX: 0, ghostY: 0, ghostLabel: '',
   ghostNum: 1, ghostIsActive: false, ghostIsDone: false,
@@ -746,14 +766,15 @@ const stageDrag = reactive({
 const dragging         = ref(false)
 const pmDragCounter    = ref(0)
 const pmIsDragging     = computed(() => pmDragCounter.value > 0)
-const startPickerRef    = ref(null)
-const deadlinePickerRef = ref(null)
+// 未在模板中实际挂到 DatePicker 实例上（当前用的是 DateSpanPicker），保留原有形状仅补类型。
+const startPickerRef    = ref<{ openPicker: () => void; closePicker: () => void } | null>(null)
+const deadlinePickerRef = ref<{ openPicker: () => void; closePicker: () => void } | null>(null)
 const editingName      = ref(false)
 const localName        = ref('')
-const nameInputRef     = ref(null)
+const nameInputRef     = ref<HTMLInputElement | null>(null)
 
-const localStages      = ref([])
-const expandedStages   = ref(new Set())
+const localStages      = ref<ProjectStage[]>([])
+const expandedStages   = ref(new Set<string>())
 let _syncingFromStore  = false   // 防止 store→localStages 同步触发 saveTodos
 const localStartDate = ref('')
 const localDeadline  = ref('')
@@ -761,12 +782,12 @@ const localClient    = ref('')
 const localColor        = ref('')
 const localCurrentStage = ref('')
 const localStatus       = ref('')
-const fileViewMode   = ref('grid')
+const fileViewMode   = ref<'grid' | 'list'>('grid')
 // Tier 3：文件/文件夹数据统一由全局 filesCache store 提供（currentFiles/currentFolders 从它派生），
 // 不再自持 projectFiles/projectFolders/folderFilesMap/subFolderMap 本地缓存。
-const openFolders    = ref(new Set())
-const folderStack    = ref([])   // 导航路径栈，根目录 = 空数组
-const pmNavStack     = ref([[]])  // history: array of folderStack snapshots
+const openFolders    = ref(new Set<number>())
+const folderStack    = ref<FolderMeta[]>([])   // 导航路径栈，根目录 = 空数组
+const pmNavStack     = ref<FolderMeta[][]>([[]])  // history: array of folderStack snapshots
 const pmNavCursor    = ref(0)
 let _isPmHistoryNav  = false
 
@@ -799,21 +820,21 @@ function pmGoForward() {
 // projectFiles/folderFilesMap/subFolderMap/projectFolders 本地缓存）。任何页面/SSE 改了 store，
 // 这里自动更新，也不会再有「两套缓存不一致」的 stale。根目录用项目根 getter，子目录用文件夹 getter。
 const currentFolders = computed(() => {
-  const pid = props.project?.id
+  const pid = props.project?.id ?? -1
   if (!folderStack.value.length) return fileCacheStore.getProjectRootFolders(pid)
   const parentId = folderStack.value[folderStack.value.length - 1].id
   return fileCacheStore.getSubFolders(parentId)
 })
 
 const currentFiles = computed(() => {
-  const pid = props.project?.id
+  const pid = props.project?.id ?? -1
   if (!folderStack.value.length) return fileCacheStore.getProjectRootFiles(pid)
   const folderId = folderStack.value[folderStack.value.length - 1].id
   return fileCacheStore.getFolderFiles(folderId)
 })
 
 // 文件夹卡片计数徽标：从 store 现算直属文件数（永远准，不用手工增减 fileCount）
-function pmFolderCount(folderId) {
+function pmFolderCount(folderId: number) {
   return fileCacheStore.getFolderFiles(folderId).length
 }
 // tiny 已由 v-lazy-src 视口门控，不再全量预热
@@ -850,7 +871,7 @@ function togglePmStages() {
 // 项目文件总数：根文件 + 本项目所有文件夹（含嵌套）里的文件。按文件夹归属数，不依赖 file.projectId
 // （历史文件的 project_id 可能为 null，只靠 folder_id 关联），从 store 现算。
 const totalFileCount = computed(() => {
-  const pid = props.project?.id
+  const pid = props.project?.id ?? -1
   let n = fileCacheStore.getProjectRootFiles(pid).length
   for (const f of fileCacheStore.allFolders) {
     if (f.projectId === pid) n += fileCacheStore.getFolderFiles(f.id).length
@@ -897,7 +918,7 @@ const pmFlatSelectableItems = computed(() => [
   ...sortedCurrentFiles.value.map(f => ({ type: 'file',   id: f.id })),
 ])
 
-function _pmShiftSelect(type, id) {
+function _pmShiftSelect(type: 'folder' | 'file', id: number) {
   const flat = pmFlatSelectableItems.value
   const idx = flat.findIndex(i => i.type === type && i.id === id)
   if (idx < 0 || pmLastAnchorIndex.value < 0) return false
@@ -916,13 +937,13 @@ function clearPmSelection() {
   pmLastAnchorIndex.value     = -1
 }
 
-function toggleFolderSelectPm(folder) { _toggleFolderSelPm(folder.id) }
+function toggleFolderSelectPm(folder: FolderMeta) { _toggleFolderSelPm(folder.id) }
 
 function togglePmSelectionMode() {
   if (pmInSelectionMode.value) clearPmSelection()
   else pmSelectionModeForced.value = true
 }
-function pmHandleFileClick(file, e) {
+function pmHandleFileClick(file: FileMeta, e: MouseEvent) {
   if (e.shiftKey || e.ctrlKey || e.metaKey || pmInSelectionMode.value) {
     onPmFileClick(file, e)
   } else if (isPreviewable(file.ext)) {
@@ -932,7 +953,7 @@ function pmHandleFileClick(file, e) {
   }
 }
 
-function onPmFileClick(file, e) {
+function onPmFileClick(file: FileMeta, e: MouseEvent) {
   if (e.shiftKey) {
     if (!_pmShiftSelect('file', file.id)) {
       pmSelectedFileIds.value = new Set([file.id])
@@ -952,7 +973,7 @@ function onPmFileClick(file, e) {
   pmLastAnchorIndex.value = pmFlatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
 }
 
-function onPmFolderClick(folder, e) {
+function onPmFolderClick(folder: FolderMeta, e: MouseEvent) {
   if (e.shiftKey) {
     if (!_pmShiftSelect('folder', folder.id)) {
       pmSelectedFolderIds.value = new Set([folder.id])
@@ -998,7 +1019,7 @@ async function downloadSelectedPm() {
     const dirName = currentFolder.value?.name ?? props.project?.name ?? '文件'
     await filesApi.batchDownload(ids, folderIds, `${dirName}.zip`)
   } catch (e) {
-    console.error('[ProjectModal] 批量下载失败:', e.message)
+    console.error('[ProjectModal] 批量下载失败:', errMsg(e))
   } finally {
     pmDownloadingZip.value = false
   }
@@ -1021,28 +1042,32 @@ async function deleteSelectedPm() {
     ])
     fileCacheStore.removeFiles(fids)
     dids.forEach(id => { fileCacheStore.removeFolder(id); prunePmHistoryForFolder(id) })   // removeFolder 级联删子文件夹及其文件
-  } catch (err) { console.error('[ProjectModal] 批量删除失败:', err.message) }
+  } catch (err) { console.error('[ProjectModal] 批量删除失败:', errMsg(err)) }
 }
 
 // ── 拖动移动 ──────────────────────────────────────────────────────────────────
 // pointer 模式，编排逻辑跟 Files/index.vue 共用同一份 useFileDragDrop——ProjectModal 特有规则：
 // 文件夹卡片/行选择器、面包屑可接收文件与文件夹。落地更新 store 即可（视图自动派生）。
-async function movePmFoldersInto(folderIds, targetFolderId) {
+// 参数类型跟随 useFileDragDrop 的 FileDragDropConfig.moveFolders/moveFiles（Id = number | string），
+// 实际项目场景下 id 永远是 number，但函数类型赋值是逆变检查，形参必须宽于（或等于）Id 才能结构兼容。
+async function movePmFoldersInto(folderIds: (number | string)[], targetFolderId: number | string | null) {
   try {
-    await Promise.all(folderIds.map(id => foldersApi.move(id, targetFolderId)))
-    folderIds.forEach(id => fileCacheStore.updateFolder(id, { parentId: targetFolderId }))
-  } catch (err) { console.error('[ProjectModal] 移动文件夹失败:', err.message) }
+    await Promise.all(folderIds.map(id => foldersApi.move(Number(id), targetFolderId == null ? null : Number(targetFolderId))))
+    folderIds.forEach(id => fileCacheStore.updateFolder(Number(id), { parentId: targetFolderId == null ? null : Number(targetFolderId) }))
+  } catch (err) { console.error('[ProjectModal] 移动文件夹失败:', errMsg(err)) }
   // 不再重置导航——store 单源，移走的文件夹自动从当前视图消失，用户停在原地即可（老代码重置到根是
   // 全量重拉的副作用，非有意行为）。
 }
-async function movePmFilesInto(fileIds, targetFolderId, { droppedOn }) {
+async function movePmFilesInto(fileIds: (number | string)[], targetFolderId: number | string | null, { droppedOn }: { droppedOn: 'folder' | 'breadcrumb' }) {
   // 必须显式带上 projectId：后端 update_file 未传 project_id 时保留原值，而项目文件夹内文件的
   // project_id 可能为 null（只靠 folder_id 关联）；拖到根不带 projectId 会落到个人库根、项目根查不到。
+  void droppedOn
   const projectId = props.project?.id
+  const folderId = targetFolderId == null ? null : Number(targetFolderId)
   try {
-    await Promise.all(fileIds.map(id => filesApi.update(id, { folderId: targetFolderId, projectId })))
-    fileIds.forEach(id => fileCacheStore.updateFile(id, { folderId: targetFolderId, projectId }))
-  } catch (err) { console.error('[ProjectModal] 移动失败:', err.message) }
+    await Promise.all(fileIds.map(id => filesApi.update(Number(id), { folderId, projectId })))
+    fileIds.forEach(id => fileCacheStore.updateFile(Number(id), { folderId, projectId }))
+  } catch (err) { console.error('[ProjectModal] 移动失败:', errMsg(err)) }
   // 视图/计数都从 store 现算，移走的文件自动消失、目标层自动出现，无需刷新或重置导航（停在原地）。
 }
 
@@ -1068,7 +1093,7 @@ const {
   moveFiles: movePmFilesInto,
 })
 
-function onPmFolderPointerDown(folder, e) {
+function onPmFolderPointerDown(folder: FolderMeta, e: PointerEvent) {
   _onPmFolderPointerDown(e, {
     itemId: folder.id,
     isSelected: pmSelectedFolderIds.value.has(folder.id),
@@ -1077,7 +1102,7 @@ function onPmFolderPointerDown(folder, e) {
     extraOpts: stagesExpanded.value ? { cloneClass: 'pm-clone-expanded' } : {},
   })
 }
-function onPmFilePointerDown(file, e) {
+function onPmFilePointerDown(file: FileMeta, e: PointerEvent) {
   _onPmFilePointerDown(e, {
     itemId: file.id,
     isSelected: pmSelectedFileIds.value.has(file.id),
@@ -1129,7 +1154,7 @@ const sortedCurrentFiles = computed(() => {
 const showNewFolder  = ref(false)
 const newFolderName  = ref('')
 const folderLoading  = ref(false)
-const folderInputRef = ref(null)
+const folderInputRef = ref<HTMLInputElement | null>(null)
 
 watch(showNewFolder, v => { if (v) nextTick(() => folderInputRef.value?.focus()) })
 
@@ -1145,30 +1170,30 @@ async function createFolder() {
     newFolderName.value = ''
     showNewFolder.value = false
   } catch (e) {
-    console.error('[ProjectModal] 新建文件夹失败:', e.message)
+    console.error('[ProjectModal] 新建文件夹失败:', errMsg(e))
   } finally {
     folderLoading.value = false
   }
 }
 
-async function enterFolder(folder) {
+async function enterFolder(folder: FolderMeta) {
   folderStack.value = [...folderStack.value, folder]
   _pushPmHistory()
   // Tier 3：该层文件/子文件夹已在全局 store 里（一次性全量），进入即由 currentFiles/currentFolders
   // 现算，无需懒加载/缓存。
 }
 
-function navigateTo(idx) {
+function navigateTo(idx: number) {
   folderStack.value = idx < 0 ? [] : folderStack.value.slice(0, idx + 1)
   _pushPmHistory()
 }
 
 // ── 重命名 ────────────────────────────────────────────────────────────────────
 
-const renamingFileId = ref(null)
+const renamingFileId = ref<number | null>(null)
 const renameText     = ref('')
 
-function startRename(file) {
+function startRename(file: FileMeta) {
   renamingFileId.value = file.id
   renameText.value     = file.displayName
   nextTick(() => {
@@ -1189,30 +1214,30 @@ async function commitRename() {
     await filesApi.update(id, { displayName: name })
     fileCacheStore.updateFile(id, { displayName: name })
   } catch (e) {
-    console.error('[ProjectModal] 重命名失败:', e.message)
+    console.error('[ProjectModal] 重命名失败:', errMsg(e))
   }
 }
 
 // ── 删除 ─────────────────────────────────────────────────────────────────────
 
-async function deleteFile(file) {
+async function deleteFile(file: FileMeta) {
   try {
     await filesApi.delete(file.id)
     fileCacheStore.removeFile(file.id)
   } catch (e) {
-    console.error('[ProjectModal] 删除失败:', e.message)
+    console.error('[ProjectModal] 删除失败:', errMsg(e))
   }
 }
 
 // ── 下载 ─────────────────────────────────────────────────────────────────────
 
-function downloadFile(file) {
+function downloadFile(file: FileMeta) {
   filesApi.download(file.id, file.displayName + '.' + file.ext.toLowerCase())
 }
 
 // ── 预览 ──
 const previewStore = usePreviewStore()
-const openPreview = (f) => previewStore.open(f, sortedCurrentFiles.value)
+const openPreview = (f: FileMeta) => previewStore.open(f, sortedCurrentFiles.value)
 
 // ── 文件类型辅助 ──────────────────────────────────────────────────────────────
 
@@ -1222,10 +1247,10 @@ const openPreview = (f) => previewStore.open(f, sortedCurrentFiles.value)
 
 // ── 文件夹操作 ────────────────────────────────────────────────────────────────
 
-const renamingFolderId  = ref(null)
+const renamingFolderId  = ref<number | null>(null)
 const folderRenameText  = ref('')
 
-function startRenameFolder(folder) {
+function startRenameFolder(folder: FolderMeta) {
   renamingFolderId.value = folder.id
   folderRenameText.value = folder.name
   nextTick(() => {
@@ -1246,19 +1271,19 @@ async function commitFolderRename() {
     await foldersApi.rename(id, name)
     fileCacheStore.updateFolder(id, { name })
   } catch (e) {
-    console.error('[ProjectModal] 文件夹重命名失败:', e.message)
+    console.error('[ProjectModal] 文件夹重命名失败:', errMsg(e))
   }
 }
 
-function downloadFolderZip(folder) {
+function downloadFolderZip(folder: FolderMeta) {
   foldersApi.download(folder.id, folder.name)
 }
 
-function prunePmHistoryForFolder(folderId) {
-  const hasDeleted = snap => snap.some(f => f.id === folderId)
+function prunePmHistoryForFolder(folderId: number) {
+  const hasDeleted = (snap: FolderMeta[]) => snap.some(f => f.id === folderId)
   const curIdx = pmNavCursor.value
   let newCursor = 0
-  const kept = []
+  const kept: FolderMeta[][] = []
   pmNavStack.value.forEach((snap, i) => {
     if (!hasDeleted(snap)) {
       if (i <= curIdx) newCursor = kept.length
@@ -1270,14 +1295,14 @@ function prunePmHistoryForFolder(folderId) {
   pmNavCursor.value = Math.min(newCursor, kept.length - 1)
 }
 
-async function deleteFolderCard(folder) {
+async function deleteFolderCard(folder: FolderMeta) {
   if (!confirm(`删除文件夹「${folder.name}」？其中的文件将一并移入回收站。`)) return
   prunePmHistoryForFolder(folder.id)
   try {
     await foldersApi.delete(folder.id)
     fileCacheStore.removeFolder(folder.id)   // 级联删该文件夹的子文件夹及其文件；视图自动更新
   } catch (e) {
-    console.error('[ProjectModal] 删除文件夹失败:', e.message)
+    console.error('[ProjectModal] 删除文件夹失败:', errMsg(e))
   }
 }
 
@@ -1364,7 +1389,7 @@ watch(localStartDate, v => {
   projectStore.updateProject(id, { startDate: v || null })
 })
 
-function onStartDatePicked(v) {
+function onStartDatePicked(v: unknown) {
   startPickerRef.value?.closePicker()
   if (v) setTimeout(() => deadlinePickerRef.value?.openPicker(), 80)
 }
@@ -1384,7 +1409,7 @@ const currentStageIndex = computed(() =>
 
 // 被锁定的阶段下标集合：前面阶段 todo 全部手动完成时，该阶段及之前不可退回
 const lockedStageIndices = computed(() => {
-  const locked = new Set()
+  const locked = new Set<number>()
   const stages = localStages.value
   const cur = activeStageIdx.value
   for (let target = 0; target < cur; target++) {
@@ -1412,7 +1437,7 @@ const draggedStageKey = computed(() =>
 const displayCurrentStageIndex = computed(() =>
   displayStages.value.findIndex(s => s.key === localCurrentStage.value)
 )
-function calcProgress(stages, currentStageKey) {
+function calcProgress(stages: ProjectStage[], currentStageKey: string) {
   if (!stages.length) return 0
   const idx = stages.findIndex(s => s.key === currentStageKey)
   if (idx < 0) return 0
@@ -1445,7 +1470,7 @@ function recalcStageState() {
   stageProgress.value = calcProgress(stages, localCurrentStage.value)
 }
 
-function extractAccent(colorStr) {
+function extractAccent(colorStr: string | undefined) {
   const m = colorStr?.match(/#[0-9a-fA-F]{6}/)
   return m ? m[0] : '#7b7fb2'
 }
@@ -1454,7 +1479,7 @@ const accentColorBg = computed(() => {
   const c = accentColor.value
   return c ? c.replace(/^#/, '') .match(/.{2}/g)
     ?.map(x => parseInt(x, 16))
-    .reduce((_, __, ___, a) => `rgba(${a[0]},${a[1]},${a[2]},0.12)`, 'rgba(123,127,178,0.12)')
+    .reduce((_: string, __: number, ___: number, a: number[]) => `rgba(${a[0]},${a[1]},${a[2]},0.12)`, 'rgba(123,127,178,0.12)')
     ?? 'rgba(123,127,178,0.12)' : 'rgba(123,127,178,0.12)'
 })
 
@@ -1474,6 +1499,7 @@ function startEditName() {
   nextTick(() => nameInputRef.value?.select())
 }
 function saveName() {
+  if (!props.project) return
   const n = localName.value.trim()
   if (!n) {
     localName.value = props.project.name
@@ -1484,13 +1510,13 @@ function saveName() {
   editingName.value = false
 }
 function cancelName() {
-  localName.value = props.project.name   // esc 还原，blur 时 saveName 视为无改动
+  if (props.project) localName.value = props.project.name   // esc 还原，blur 时 saveName 视为无改动
   nameInputRef.value?.blur()
 }
 
-function setColor(c) {
+function setColor(c: string) {
   localColor.value = c
-  projectStore.updateProject(props.project.id, { color: c })
+  if (props.project) projectStore.updateProject(props.project.id, { color: c })
 }
 
 // 状态球：点一下循环 待开始 → 进行中 → 已完成（替代原看板列）
@@ -1502,7 +1528,7 @@ function cycleStatus() {
   if (props.project?.id) projectStore.moveProject(props.project.id, next)
 }
 
-function setStage(key, idx) {
+function setStage(key: string, idx: number) {
   const oldIdx = localStages.value.findIndex(s => s.key === localCurrentStage.value)
   const newIdx = idx
 
@@ -1534,7 +1560,7 @@ function setStage(key, idx) {
 
   const newProgress = calcProgress(localStages.value, key)
   stageProgress.value = newProgress
-  projectStore.setStage(props.project.id, key, newProgress)
+  if (props.project) projectStore.setStage(props.project.id, key, newProgress)
 }
 
 async function handleDelete() {
@@ -1560,28 +1586,28 @@ async function handleArchive() {
   emit('close')
 }
 
-function startEdit(key) {
+function startEdit(key: string) {
   editingStage.value = key
   nextTick(() => stageInputRef.value?.[0]?.focus())
 }
 function saveStages() {
   editingStage.value = null
-  projectStore.updateStages(props.project.id, localStages.value)
+  if (props.project) projectStore.updateStages(props.project.id, localStages.value)
 }
 
 // 待办拖拽：拖名字行重排，可跨阶段移动；编辑态(span→input)不可拖。
 // 实时同步——dragenter 即把拖中项 splice 到目标位（其他待办由 TransitionGroup 动画让位），
 // 拖完(dragend / drop)才 saveStages 落库。
-const todoDrag = ref(null)       // { stageKey, index } 拖动中实时更新（指向被拖项当前所在位）
-const editingTodo = ref(null)    // 正在编辑文字的待办 id
-function startEditTodo(id) {
+const todoDrag = ref<{ stageKey: string; index: number } | null>(null)       // 拖动中实时更新（指向被拖项当前所在位）
+const editingTodo = ref<string | null>(null)    // 正在编辑文字的待办 id
+function startEditTodo(id: string) {
   editingTodo.value = id
   nextTick(() => document.querySelector<HTMLElement>(`[data-tid="${id}"]`)?.focus())
 }
-function todoDragStart(stage, ti) {
+function todoDragStart(stage: ProjectStage, ti: number) {
   todoDrag.value = { stageKey: stage.key, index: ti }
 }
-function _moveTodo(d, targetStage, to) {
+function _moveTodo(d: { stageKey: string; index: number }, targetStage: ProjectStage, to: number) {
   const src = localStages.value.find(s => s.key === d.stageKey)
   if (!src?.todos) return
   let idx = to
@@ -1597,14 +1623,14 @@ function _moveTodo(d, targetStage, to) {
   todoDrag.value = { stageKey: targetStage.key, index: idx }
 }
 // dragover + 中线判断：指针越过目标待办中线才换位，避免来回横跳
-function todoDragOver(stage, ti, e) {
+function todoDragOver(stage: ProjectStage, ti: number, e: DragEvent) {
   const d = todoDrag.value
   if (!d) return
-  const r = e.currentTarget.getBoundingClientRect()
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const after = (e.clientY - r.top) > r.height / 2
   _moveTodo(d, stage, after ? ti + 1 : ti)
 }
-function todoListDragOver(stage) {   // 空阶段：拖到空白区移入末尾
+function todoListDragOver(stage: ProjectStage) {   // 空阶段：拖到空白区移入末尾
   const d = todoDrag.value
   if (d && (stage.todos?.length ?? 0) === 0) _moveTodo(d, stage, 0)
 }
@@ -1613,18 +1639,18 @@ function todoDragEnd() {
 }
 function addStage() {
   const key = `stage_${Date.now()}`
-  localStages.value.push({ key, label: '新阶段' })
+  localStages.value.push({ key, label: '新阶段', todos: [] })
   saveStages()
   nextTick(() => startEdit(key))
 }
-function removeStage(key) {
+function removeStage(key: string) {
   if (localStages.value.length <= 1) return
   localStages.value = localStages.value.filter(s => s.key !== key)
   expandedStages.value.delete(key)
   saveStages()
 }
 
-function toggleExpand(key) {
+function toggleExpand(key: string) {
   const s = expandedStages.value
   s.has(key) ? s.delete(key) : s.add(key)
   expandedStages.value = new Set(s)
@@ -1650,7 +1676,7 @@ function saveTodos() {
     projectStore.updateProject(props.project.id, { stages: snapshot(), progress: newProgress })
   }
 }
-function addTodo(stage) {
+function addTodo(stage: ProjectStage) {
   if (!stage.todos) stage.todos = []
   stage.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
   saveTodos()
@@ -1659,11 +1685,11 @@ function addTodo(stage) {
     inputs[inputs.length - 1]?.focus()
   })
 }
-function removeTodo(stage, id) {
+function removeTodo(stage: ProjectStage, id: string) {
   stage.todos = (stage.todos ?? []).filter(t => t.id !== id)
   saveTodos()
 }
-function toggleTodo(todo) {
+function toggleTodo(todo: ProjectTodo) {
   todo.done = !todo.done
   todo.autoCompleted = false  // 手动操作后清除自动标记，后退时不再还原
   saveTodos()
@@ -1677,7 +1703,7 @@ function toggleTodo(todo) {
   }
 }
 
-function stageIdxFromY(y) {
+function stageIdxFromY(y: number) {
   if (!stageFlowRef.value) return stageDrag.overIdx
   const nodes = stageFlowRef.value.querySelectorAll('.stage-node')
   let cur = stageDrag.overIdx
@@ -1695,15 +1721,15 @@ function stageIdxFromY(y) {
   return cur
 }
 
-function startStageDrag(fromIdx, e) {
+function startStageDrag(fromIdx: number, e: MouseEvent) {
   const startX = e.clientX, startY = e.clientY
-  const el = e.currentTarget
+  const el = e.currentTarget as HTMLElement
   const rect = el.getBoundingClientRect()
   const grabOffsetX = e.clientX - rect.left
   const grabOffsetY = e.clientY - rect.top
   let activated = false
 
-  const mm = (ev) => {
+  const mm = (ev: MouseEvent) => {
     if (!activated) {
       const dx = ev.clientX - startX, dy = ev.clientY - startY
       if (Math.sqrt(dx * dx + dy * dy) < 4) return
@@ -1762,9 +1788,9 @@ const { uploadingItems, createGhost, updateGhostProgress, removeGhost, failGhost
 
 // items: UploadItem[]（{file, relativePath}）——relativePath 带 "/" 时来自拖入的文件夹，
 // 由 uploadFilesWithFolders 按路径建好子文件夹再落到各自正确的 folder_id。
-const conflictDialogRef = ref(null)
+const conflictDialogRef = ref<{ show: (list: ConflictItem[]) => Promise<Map<string, ConflictDecision>> } | null>(null)
 
-async function uploadFiles(items) {
+async function uploadFiles(items: UploadItem[]) {
   if (!items.length || !props.project) return
   const folder = currentFolder.value
   const baseFolderId = folder?.id ?? null
@@ -1772,16 +1798,16 @@ async function uploadFiles(items) {
   // 上传前探测同名冲突（只查直接落在这个文件夹的顶层文件）；有冲突才弹列表式确认，
   // 选「跳过」的文件从这批里剔除，不会真的发上传请求。
   const conflicts = await checkUploadConflicts(items, { space: 'project', projectId: props.project.id, folderId: baseFolderId })
-  let decisions = new Map()
+  let decisions = new Map<string, ConflictDecision>()
   if (conflicts.length) {
-    decisions = await conflictDialogRef.value.show(conflicts)
+    decisions = (await conflictDialogRef.value?.show(conflicts)) ?? new Map()
     items = items.filter(it => decisions.get(it.relativePath)?.action !== 'skip')
     if (!items.length) return
   }
 
   // 按顶层文件夹分组：relativePath 带 "/" 的文件汇总进「文件夹名 · 完成数/总数」一张卡，
   // 不用每个文件各出一张（大部分还落在当前看不见的子文件夹里）
-  const folderGhosts = new Map()
+  const folderGhosts = new Map<string, ReturnType<typeof createFolderGhost> | null>()
   for (const { relativePath } of items) {
     const idx = relativePath.indexOf('/')
     if (idx === -1) continue
@@ -1795,7 +1821,7 @@ async function uploadFiles(items) {
   // 顶层文件夹（正被 ghost 追踪进度的那几个）先别实时插进可见列表——插了会跟它的 ghost 卡
   // 同时出现，看起来像「两个文件夹」。攒着，等这组文件全传完（ghost 即将消失那一刻）再插入，
   // 从「上传中」无缝换成「已完成」。更深层的子文件夹本来就不在当前视图里，直接插不会重复。
-  const pendingTopFolders = new Map()
+  const pendingTopFolders = new Map<string, FolderMeta>()
 
   await uploadFilesWithFolders(items, {
     projectId: props.project.id, baseFolderId,
@@ -1803,7 +1829,7 @@ async function uploadFiles(items) {
       // 顶层被 ghost 追踪的文件夹（正在当前层显示上传进度）：先攒着，等 ghost 完成再加进 store，
       // 避免卡片跟 ghost 同屏像「两个文件夹」。其余（更深层，当前层看不到）直接加进 store。
       if (folderGhosts.has(created.name) && (created.parentId ?? null) === baseFolderId) {
-        pendingTopFolders.set(created.name, created)
+        pendingTopFolders.set(created.name, created as FolderMeta)
         return
       }
       fileCacheStore.addFolder(created)
@@ -1815,11 +1841,11 @@ async function uploadFiles(items) {
       const ghost = folderGhost ? null : createGhost(ghostBase, ghostExt.toUpperCase())
       // 这组文件全处理完（不管成功失败）就把攒着的真实文件夹插进可见列表——成功/失败两条
       // 路径都要走，否则「文件夹最后一个文件恰好失败」时永远插不进去
-      const settleFolder = (failed) => {
+      const settleFolder = (failed: boolean) => {
         if (!folderGhost) return
         bumpFolderGhost(folderGhost, failed)
-        if (folderGhost.done >= folderGhost.total && pendingTopFolders.has(top)) {
-          fileCacheStore.addFolder(pendingTopFolders.get(top))   // ghost 完成，真实文件夹加进 store 换上卡片
+        if ((folderGhost.done ?? 0) >= (folderGhost.total ?? 0) && top != null && pendingTopFolders.has(top)) {
+          fileCacheStore.addFolder(pendingTopFolders.get(top)!)   // ghost 完成，真实文件夹加进 store 换上卡片
           pendingTopFolders.delete(top)
         }
       }
@@ -1827,7 +1853,7 @@ async function uploadFiles(items) {
         const form = new FormData()
         form.append('file', file)
         form.append('space', 'project')
-        form.append('project_id', props.project.id)
+        form.append('project_id', String(props.project!.id))
         if (resolvedFolderId) form.append('folder_id', String(resolvedFolderId))
         const decision = decisions.get(relativePath)
         const overwriteId = decision?.action === 'overwrite' ? decision.existingFileId : null
@@ -1847,7 +1873,7 @@ async function uploadFiles(items) {
           if (created) fileCacheStore.addFile(created)   // 视图（currentFiles）与文件夹计数自动更新
         }
       } catch (e) {
-        console.error('[ProjectModal] 上传失败:', e.message)
+        console.error('[ProjectModal] 上传失败:', errMsg(e))
         if (ghost) failGhost(ghost)
         else settleFolder(true)
       }
@@ -1856,25 +1882,28 @@ async function uploadFiles(items) {
   // Tier 3：文件/文件夹都已随上传逐个进 store，视图与计数自动准确，无需再整层重拉校准。
 }
 
-async function handleFileInput(e) {
-  await uploadFiles(filesToItems(e.target.files))
-  e.target.value = ''
+async function handleFileInput(e: Event) {
+  const target = e.target as HTMLInputElement
+  await uploadFiles(filesToItems(target.files ?? []))
+  target.value = ''
 }
 
-async function handleFileDrop(e) {
+async function handleFileDrop(e: DragEvent) {
   dragging.value = false
+  if (!e.dataTransfer) return
   const items = await readDroppedEntries(e.dataTransfer)
   await uploadFiles(items)
 }
 
-function onPmDragEnter(e) {
+function onPmDragEnter(e: DragEvent) {
   if (e.dataTransfer?.types?.includes('Files')) pmDragCounter.value++
 }
 function onPmDragLeave() {
   pmDragCounter.value = Math.max(0, pmDragCounter.value - 1)
 }
-async function onPmDrop(e) {
+async function onPmDrop(e: DragEvent) {
   pmDragCounter.value = 0
+  if (!e.dataTransfer) return
   const items = await readDroppedEntries(e.dataTransfer)
   if (items.length) await uploadFiles(items)
 }
@@ -1892,16 +1921,19 @@ function pmSelCopy() {
   pmCbStore.copy([...pmSelectedFileIds.value], [])
   clearPmSelection()
 }
-const pmCtx = ref({ visible: false, x: 0, y: 0, type: null, target: null })
-const pmInfoPopup = ref({ show: false, file: null, x: 0, y: 0 })
+type PmCtxTarget = FileMeta | FolderMeta
+type PmCtxType = 'file' | 'multi-file' | 'folder' | 'empty' | null
+const pmCtx = ref<{ visible: boolean; x: number; y: number; type: PmCtxType; target: PmCtxTarget | null }>({ visible: false, x: 0, y: 0, type: null, target: null })
+const pmInfoPopup = ref<{ show: boolean; file: FileMeta | null; x: number; y: number }>({ show: false, file: null, x: 0, y: 0 })
 
-function openPmCtx(type, target, e) {
+function openPmCtx(type: 'file' | 'folder' | 'empty', target: PmCtxTarget | null, e: MouseEvent) {
+  let resolvedType: PmCtxType = type
   if (type === 'file' && target &&
       (pmSelectedFileIds.value.has(target.id) || pmSelectedFolderIds.value.size > 0) &&
       (pmSelectedFileIds.value.size + pmSelectedFolderIds.value.size) > 1) {
-    type = 'multi-file'
+    resolvedType = 'multi-file'
   }
-  pmCtx.value = { visible: true, x: e.clientX, y: e.clientY, type, target }
+  pmCtx.value = { visible: true, x: e.clientX, y: e.clientY, type: resolvedType, target }
 }
 
 function pmCurrentFolderId() {
@@ -1909,18 +1941,18 @@ function pmCurrentFolderId() {
 }
 
 function pmCtxInfo() {
-  const f = pmCtx.value.target
+  const f = pmCtx.value.target as FileMeta | null
   pmCtx.value.visible = false
   if (f) pmInfoPopup.value = { show: true, file: f, x: pmCtx.value.x, y: pmCtx.value.y }
 }
 
 async function pmCtxDownload() {
   pmCtx.value.visible = false
+  const target = pmCtx.value.target as FileMeta | null
   const ids = pmCtx.value.type === 'multi-file'
-    ? [...pmSelectedFileIds.value] : [pmCtx.value.target.id]
-  if (ids.length === 1) {
-    const f = pmCtx.value.target
-    await filesApi.download(f.id, `${f.displayName}.${f.ext}`)
+    ? [...pmSelectedFileIds.value] : (target ? [target.id] : [])
+  if (ids.length === 1 && target) {
+    await filesApi.download(target.id, `${target.displayName}.${target.ext}`)
   } else {
     const fids = [...pmSelectedFolderIds.value]
     const dirName = folderStack.value.length
@@ -1930,19 +1962,22 @@ async function pmCtxDownload() {
   }
 }
 function pmCtxRename() {
-  const f = pmCtx.value.target; pmCtx.value.visible = false
-  startRename(f)
+  const f = pmCtx.value.target as FileMeta | null; pmCtx.value.visible = false
+  if (f) startRename(f)
 }
 function pmCtxCut() {
-  const ids = pmCtx.value.type === 'multi-file' ? [...pmSelectedFileIds.value] : [pmCtx.value.target.id]
+  const target = pmCtx.value.target
+  const ids = pmCtx.value.type === 'multi-file' ? [...pmSelectedFileIds.value] : (target ? [target.id] : [])
   pmCbStore.cut(ids, []); pmCtx.value.visible = false
 }
 function pmCtxCopy() {
-  const ids = pmCtx.value.type === 'multi-file' ? [...pmSelectedFileIds.value] : [pmCtx.value.target.id]
+  const target = pmCtx.value.target
+  const ids = pmCtx.value.type === 'multi-file' ? [...pmSelectedFileIds.value] : (target ? [target.id] : [])
   pmCbStore.copy(ids, []); pmCtx.value.visible = false
 }
 async function pmCtxDelete() {
-  const ids = pmCtx.value.type === 'multi-file' ? [...pmSelectedFileIds.value] : [pmCtx.value.target.id]
+  const target = pmCtx.value.target
+  const ids = pmCtx.value.type === 'multi-file' ? [...pmSelectedFileIds.value] : (target ? [target.id] : [])
   pmCtx.value.visible = false
   await Promise.all(ids.map(id => filesApi.delete(id)))
   fileCacheStore.removeFiles(ids)   // 视图与文件夹计数自动更新
@@ -1950,19 +1985,20 @@ async function pmCtxDelete() {
 }
 
 function pmCtxDownloadFolder() {
-  const f = pmCtx.value.target; pmCtx.value.visible = false
-  downloadFolderZip(f)
+  const f = pmCtx.value.target as FolderMeta | null; pmCtx.value.visible = false
+  if (f) downloadFolderZip(f)
 }
 function pmCtxRenameFolder() {
-  const f = pmCtx.value.target; pmCtx.value.visible = false
-  startRenameFolder(f)
+  const f = pmCtx.value.target as FolderMeta | null; pmCtx.value.visible = false
+  if (f) startRenameFolder(f)
 }
 function pmCtxCutFolder() {
-  pmCbStore.cut([], [pmCtx.value.target.id]); pmCtx.value.visible = false
+  const target = pmCtx.value.target
+  pmCbStore.cut([], target ? [target.id] : []); pmCtx.value.visible = false
 }
 async function pmCtxDeleteFolder() {
-  const f = pmCtx.value.target; pmCtx.value.visible = false
-  await deleteFolderCard(f)
+  const f = pmCtx.value.target as FolderMeta | null; pmCtx.value.visible = false
+  if (f) await deleteFolderCard(f)
 }
 
 async function pmCtxPaste() {
@@ -1987,8 +2023,9 @@ async function pmCtxPaste() {
   } catch (e) { console.error('[PM] 粘贴失败:', e) }
 }
 
-function onPmKeyDown(e) {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+function onPmKeyDown(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return
   const ctrl = e.ctrlKey || e.metaKey
   if (ctrl && e.key === 'x') {
     const fids = [...pmSelectedFileIds.value]; const dids = [...pmSelectedFolderIds.value]

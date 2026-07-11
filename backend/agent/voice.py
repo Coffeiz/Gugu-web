@@ -17,7 +17,14 @@ import os
 import tempfile
 from types import SimpleNamespace
 
+from app.core.redaction import diag_log, redact
+
 logger = logging.getLogger("agent.voice")
+
+# P2-b §4-A 标杆模板：ASR 是读操作（转写既有音频，不产生外部副作用）——天然幂等，
+# 瞬时故障（超时/连接错/5xx）安全重试；4xx（鉴权失败/模型不存在/请求参数错）是永久
+# 失败，不在白名单内，直接原样上抛让调用方兜底成「没听清」。
+_ASR_RETRY_BACKOFF = [1, 2]   # ASR 单次调用本身较慢，退避拉满会拖累语音消息响应，缩到 2 次
 
 # mimo-v2.5-asr 等 ASR 模型只收这几种容器；浏览器录音多是 audio/mp4(Safari)/audio/webm(Chrome)，
 # QQ/微信语音也常是 amr/silk → 一律用 ffmpeg 转 wav 再送。
@@ -96,21 +103,47 @@ async def transcribe(media: list, settings) -> str | None:
         logger.info("转写跳过：media 里没有 audio 块（types=%s）", [m.get("type") for m in (media or [])])
         return ""   # 没有可转写的音频（如纯视频）→ 调用方兜底为「没听清」
     from agent.llm_select import openai_default_headers
-    try:
-        import httpx
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(
-            api_key=getattr(vm, "api_key", "") or "dummy", base_url=getattr(vm, "base_url", ""),
-            timeout=httpx.Timeout(60.0), default_headers=openai_default_headers(vm))
-        # ASR 模型（mimo-v2.5-asr / qwen3-asr-flash）干净调用即可——**不传 thinking**（那是聊天模型的，
-        # ASR 模型会拒）；语言等用默认自动识别（如需指定可加 extra_body={"asr_options": {"language": "zh"}}）。
-        resp = await client.chat.completions.create(
-            model=vm.model, messages=[{"role": "user", "content": parts}])
-        out = (resp.choices[0].message.content or "").strip()
-        logger.info("语音转写成功 model=%s → %d 字: %s", vm.model, len(out), out[:80])
-        return out
-    except Exception as e:
-        # 失败回空串（调用方兜底为「没听清」），但**打日志**——别再静默吞错（model 名错/端点错/鉴权都靠它排查）
-        logger.warning("语音转写失败 model=%s base_url=%s → %s: %s",
-                       getattr(vm, "model", "?"), getattr(vm, "base_url", "?"), type(e).__name__, str(e)[:300])
-        return ""
+    import httpx
+    import openai as _openai
+    from openai import AsyncOpenAI
+    # 窄白名单：只有连接级/超时/5xx/429 算瞬时，安全重试（读操作，天然幂等）；
+    # 鉴权失败/参数错/模型不存在等 4xx（openai.APIStatusError 但非 5xx/429）不在白名单内，
+    # 会落进下面的 except Exception 分支直接回空串——不重试。
+    transient = (_openai.APITimeoutError, _openai.APIConnectionError,
+                 _openai.InternalServerError, _openai.RateLimitError)
+    client = AsyncOpenAI(
+        api_key=getattr(vm, "api_key", "") or "dummy", base_url=getattr(vm, "base_url", ""),
+        timeout=httpx.Timeout(60.0), default_headers=openai_default_headers(vm))
+    for i in range(len(_ASR_RETRY_BACKOFF) + 1):
+        try:
+            # ASR 模型（mimo-v2.5-asr / qwen3-asr-flash）干净调用即可——**不传 thinking**（那是聊天
+            # 模型的，ASR 模型会拒）；语言等用默认自动识别（如需指定可加
+            # extra_body={"asr_options": {"language": "zh"}}）。
+            resp = await client.chat.completions.create(
+                model=vm.model, messages=[{"role": "user", "content": parts}])
+            out = (resp.choices[0].message.content or "").strip()
+            logger.info("语音转写成功 model=%s → %d 字: %s", vm.model, len(out), out[:80])
+            return out
+        except transient as e:
+            if i >= len(_ASR_RETRY_BACKOFF):
+                diag_log("agent.voice.transcribe", e)   # 原始 → 受限诊断出口
+                logger.warning("语音转写重试 %d 次后仍失败 model=%s：%s", i, vm.model, type(e).__name__)
+                # 不上抛 RetryableError：transcribe() 的既有契约是「非 None 即成功（可能空串），
+                # 从不抛异常」（见模块 docstring），三处调用方（agent/runner.py、
+                # agent/adapters/web.py）都只判断 None/空串，没有 except RetryableError。
+                # ASR 是辅助能力，重试用尽后降级成「没听清」优于打断整轮对话——用 diag_log +
+                # WARNING 留痕迹（P2-b §1 可重试用尽的处理方式之一是「降级」），不强行改变
+                # 这个函数「不抛异常」的调用约定。
+                return ""
+            logger.info("语音转写瞬时错误 %s，%ss 后重试(%d)", type(e).__name__, _ASR_RETRY_BACKOFF[i], i + 1)
+            await asyncio.sleep(_ASR_RETRY_BACKOFF[i])
+        except Exception as e:
+            # 非瞬时（4xx 鉴权/参数错等）或未知错误：失败回空串（调用方兜底为「没听清」），
+            # 但打日志——别再静默吞错（model 名错/端点错/鉴权都靠它排查）。原始异常（可能含
+            # base_url/请求细节）只进受限诊断出口，可见日志只留脱敏摘要（P2-b §3/§5）。
+            diag_log("agent.voice.transcribe.permanent", e)
+            logger.warning("语音转写失败 model=%s base_url=%s → %s",
+                           getattr(vm, "model", "?"), getattr(vm, "base_url", "?"),
+                           redact(f"{type(e).__name__}: {e}"))
+            return ""
+    return ""   # 理论不可达（循环内每条路径都 return），留作类型兜底

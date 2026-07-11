@@ -15,17 +15,32 @@
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
+import logging
 import socket
 from urllib.parse import urlparse
 
 import httpx
 
 from agent.tools.base import BaseSkill, Tool
+from app.core.redaction import diag_log, redact
+
+_log = logging.getLogger("agent.tools.web")
 
 _MAX_BODY = 4000
 _ALLOW_HOSTS: set[str] = set()   # 非空时只放行这些主机；空 = 放行所有公网
 _MIN_EXTRACTED = 100    # trafilatura 提取结果短于此视为「没读到正文」（空页/错误页/纯 JS 渲染）
+
+# P2-b §4-A 标杆模板：GET 天然幂等，瞬时故障（超时/连接错/5xx）安全重试；4xx（如 404/403，
+# 服务端明确拒绝）不在白名单内，不重试、直接失败——doc §1 明确「外部依赖返回的 4xx = 可预期
+# 或永久，不是可重试」。httpx 对 4xx/5xx 默认不抛异常（要 raise_for_status() 才抛），这里只有
+# 网络层错误（超时/连接失败等）才会走到 except，天然已经排除了 4xx。
+_HTTP_GET_RETRY_BACKOFF = [1, 2]
+# httpx.NetworkError 覆盖 ConnectError 等连接层错误，httpx.TimeoutException 覆盖各类超时，
+# RemoteProtocolError 覆盖「连接中途被对端断开/协议错乱」——都是「请求没跑完」的瞬时故障；
+# 不含 HTTPStatusError（4xx/5xx 状态码），因为本函数默认不对状态码抛异常（见下方调用处）。
+_TRANSIENT_HTTPX = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
 
 
 def _host_allowed(host: str) -> bool:
@@ -62,11 +77,23 @@ async def _http_get(db, user_id, args: dict):
         return {"error": "非法 url"}
     if not _host_allowed(p.hostname):
         return {"error": "该地址不允许访问（仅放行公网地址）"}
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0), follow_redirects=False) as c:
-            r = await c.get(url, headers={"User-Agent": "curl/8"})
-    except Exception as e:
-        return {"error": f"请求失败：{type(e).__name__}"}
+    r = None
+    for i in range(len(_HTTP_GET_RETRY_BACKOFF) + 1):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0), follow_redirects=False) as c:
+                r = await c.get(url, headers={"User-Agent": "curl/8"})
+            break
+        except _TRANSIENT_HTTPX as e:
+            if i >= len(_HTTP_GET_RETRY_BACKOFF):
+                diag_log("agent.tools.web.http_get", e)   # 原始 → 受限诊断出口
+                _log.warning("http_get 重试 %d 次后仍失败：%s", i, type(e).__name__)
+                return {"error": f"请求失败：{type(e).__name__}（已重试仍超时/连接失败）"}
+            await asyncio.sleep(_HTTP_GET_RETRY_BACKOFF[i])
+        except Exception as e:
+            # 非瞬时/未知错误（如 URL 解析异常等）：不重试，直接失败。类型名不含上游响应体，
+            # 无需 redact（P2-b §5：不能拼进异常消息的是「上游原始响应体」，type(e).__name__
+            # 是我们自己代码里的异常类型名，不是外部内容）。
+            return {"error": f"请求失败：{type(e).__name__}"}
 
     content_type = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
 
@@ -75,7 +102,10 @@ async def _http_get(db, user_id, args: dict):
         try:
             text = await doctext.extract_text(r.content, "pdf")
         except Exception as e:
-            return {"error": f"PDF 提取失败：{e}"}
+            # P2-b §5：不能把上游/内部异常原文直接拼进外发文案。原始进受限诊断出口，
+            # 外发只给脱敏摘要（类型名 + redact 过的消息）。
+            diag_log("agent.tools.web.http_get.pdf_extract", e)
+            return {"error": redact(f"PDF 提取失败：{type(e).__name__}: {e}")}
         return {"status": r.status_code, "url": url, "content_type": content_type,
                 "body": text[:_MAX_BODY], "truncated": len(text) > _MAX_BODY}
 

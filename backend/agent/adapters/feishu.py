@@ -28,6 +28,7 @@ import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 
 from app.core import redis as R
+from app.core.redaction import diag_log, diag_log_raw, redact
 
 STREAM = R.IM_INBOUND_STREAM
 
@@ -55,7 +56,8 @@ def _download_and_stage(client, message_id: str, owner: str, key: str, rtype: st
         resp = client.im.v1.message_resource.get(req)
         data = resp.file.read() if (resp.success() and resp.file) else b""
     except Exception as e:
-        print(f"[feishu] 下载资源出错: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.download_resource", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] 下载资源出错: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         data = b""
     if not data:
         return (f"[用户发来文件《{fname}》，但下载失败]", "")
@@ -77,7 +79,8 @@ def _download_and_stage(client, message_id: str, owner: str, key: str, rtype: st
         else:
             aid = chat_attach.stage_sync(owner, name, ext, None, data, platform="feishu").get("attach_id", "")
     except Exception as e:
-        print(f"[feishu] 暂存失败: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.stage_media", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] 暂存失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         aid = ""
     if aid:
         return ("", aid)   # 文件卡/语音条/视频条内容由 resolve_for_message 据 attach_id 注入
@@ -98,7 +101,7 @@ def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
     mt = msg.message_type
     try:
         c = json.loads(msg.content) if msg.content else {}
-    except Exception:
+    except (json.JSONDecodeError, TypeError):   # 只吞「内容不是合法 JSON」这类预期失败，不裸吞未知异常（P2-b §6）
         c = {}
     if mt == "image":
         key, rtype, fname = c.get("image_key", ""), "image", "图片.jpg"
@@ -120,7 +123,7 @@ def _ingest_post(client, msg, owner: str) -> tuple[str, list]:
     """富文本图文消息（post）：拼接各段落文字，内嵌图片/视频按普通附件下载暂存。"""
     try:
         c = json.loads(msg.content) if msg.content else {}
-    except Exception:
+    except (json.JSONDecodeError, TypeError):   # 只吞「内容不是合法 JSON」这类预期失败，不裸吞未知异常（P2-b §6）
         c = {}
     title = (c.get("title") or "").strip()
     rows = c.get("content") or []
@@ -189,7 +192,7 @@ def _ingest_interactive(msg) -> str:
     """用户转发一张卡片消息过来：只提取可读文字，不下载卡片内嵌图片（组件结构太杂，暂不处理媒体）。"""
     try:
         c = json.loads(msg.content) if msg.content else {}
-    except Exception:
+    except (json.JSONDecodeError, TypeError):   # 只吞「内容不是合法 JSON」这类预期失败，不裸吞未知异常（P2-b §6）
         return "[卡片消息，解析失败]"
     return _extract_card_text(c) or "[卡片消息]"
 
@@ -212,7 +215,7 @@ def _fetch_quoted_text(client, parent_id: str) -> str | None:
         if m.msg_type == "text":
             try:
                 c = json.loads(m.body.content) if (m.body and m.body.content) else {}
-            except Exception:
+            except (json.JSONDecodeError, TypeError):   # 只吞「内容不是合法 JSON」这类预期失败，不裸吞未知异常（P2-b §6）
                 return "[解析失败]"
             return (c.get("text") or "").strip() or "[空消息]"
         if m.msg_type == "interactive":
@@ -222,14 +225,15 @@ def _fetch_quoted_text(client, parent_id: str) -> str | None:
             # 所以要递归拍平找 markdown 节点，不能只查一层；字段名也被归一化成 {"tag":"text","text":...}。
             try:
                 c = json.loads(m.body.content) if (m.body and m.body.content) else {}
-            except Exception:
+            except (json.JSONDecodeError, TypeError):   # 只吞「内容不是合法 JSON」这类预期失败，不裸吞未知异常（P2-b §6）
                 return "[解析失败]"
             return _extract_card_text(c) or "[空消息]"
         if m.msg_type == "post":
             return "[图文消息]"
         return {"image": "[图片消息]", "file": "[文件消息]", "audio": "[语音消息]", "media": "[视频消息]"}.get(m.msg_type, "[非文字消息]")
     except Exception as e:
-        print(f"[feishu] 查引用原消息失败: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.fetch_quoted_text", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] 查引用原消息失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return None
 
 
@@ -296,7 +300,8 @@ def _do_react(client, message_id: str, emoji_type: str) -> bool:
             return False
         return True
     except Exception as e:
-        print(f"[feishu] reaction 出错: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.reaction", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] reaction 出错: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
 
 
@@ -363,7 +368,7 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
         if mt == "text":
             try:
                 text = ((json.loads(msg.content) if msg.content else {}) or {}).get("text", "").strip()
-            except Exception:
+            except (json.JSONDecodeError, TypeError):   # 只吞「内容不是合法 JSON」这类预期失败，不裸吞未知异常（P2-b §6）
                 text = ""
         elif mt in ("image", "file", "audio", "media"):
             text, attachments = _ingest_media(api_client, msg, owner)
@@ -419,7 +424,8 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
                 try:
                     _do_send(api_client, msg.chat_id, dec["reply"])
                 except Exception as e:
-                    print(f"[feishu] 短路回复失败: {type(e).__name__}: {e}", flush=True)
+                    diag_log("agent.adapters.feishu.short_circuit_reply", e)   # 原始 → 受限诊断出口
+                    print(f"[feishu] 短路回复失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
                 return
 
         # 秒回表情：赶在入队/生成之前，用关键词快速判一个即时点上（完整回复随后由 worker 发）
@@ -428,7 +434,8 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
         try:
             R.produce_sync(STREAM, payload)
         except Exception as e:
-            print(f"[feishu] 入队失败: {type(e).__name__}: {e}", flush=True)
+            diag_log("agent.adapters.feishu.enqueue", e)   # 原始 → 受限诊断出口
+            print(f"[feishu] 入队失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
     return _on_message
 
 
@@ -653,7 +660,8 @@ def _do_send_file(client, chat_id: str, data: bytes, name: str, ext: str) -> boo
             return False
         return True
     except Exception as e:
-        print(f"[feishu] 发文件出错: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.send_file", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] 发文件出错: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
 
 
@@ -739,7 +747,10 @@ async def _get_tenant_token(app_id: str, app_secret: str) -> str:
         data = resp.json()
     token = data.get("tenant_access_token", "")
     if not token or data.get("code", -1) != 0:
-        raise RuntimeError(f"飞书 tenant_access_token 获取失败: {data}")
+        # 上游响应体可能回显请求里的 app_id/app_secret 片段，绝不能拼进异常消息（P2-b §5）；
+        # 原始体只进受限诊断出口，异常消息只给通用文案。
+        diag_log_raw("agent.adapters.feishu._get_tenant_token", f"data={data}")
+        raise RuntimeError("飞书 tenant_access_token 获取失败（响应缺 token 字段或 code 非 0）")
     expire = int(data.get("expire", 7200))
     _tenant_token_cache[app_id] = (token, now + expire)
     return token
@@ -760,7 +771,8 @@ async def _do_create_card(app_id: str, app_secret: str, text: str) -> str | None
     try:
         token = await _get_tenant_token(app_id, app_secret)
     except Exception as e:
-        print(f"[feishu] tenant_token 拿失败: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.tenant_token", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] tenant_token 拿失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return None
     body = {"type": "card_json", "data": _make_card_payload(text)}
     try:
@@ -773,7 +785,8 @@ async def _do_create_card(app_id: str, app_secret: str, text: str) -> str | None
             )
         data = resp.json()
     except Exception as e:
-        print(f"[feishu] create_card 异常: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.create_card", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] create_card 异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return None
     if data.get("code") != 0:
         print(f"[feishu] create_card 失败: code={data.get('code')} msg={data.get('msg')}", flush=True)
@@ -799,7 +812,8 @@ async def _do_send_card_message(app_id: str, app_secret: str, receive_id: str,
     try:
         token = await _get_tenant_token(app_id, app_secret)
     except Exception as e:
-        print(f"[feishu] tenant_token 拿失败: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.tenant_token", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] tenant_token 拿失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     rid_type = "open_id" if str(receive_id).startswith("ou_") else "chat_id"
     body = {
@@ -817,7 +831,8 @@ async def _do_send_card_message(app_id: str, app_secret: str, receive_id: str,
             )
         data = resp.json()
     except Exception as e:
-        print(f"[feishu] send_card_message 异常: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.send_card_message", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] send_card_message 异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     if data.get("code") != 0:
         print(f"[feishu] send_card_message 失败: code={data.get('code')} msg={data.get('msg')}", flush=True)
@@ -843,7 +858,8 @@ async def _do_streaming_update_text(app_id: str, app_secret: str, card_id: str,
     try:
         token = await _get_tenant_token(app_id, app_secret)
     except Exception as e:
-        print(f"[feishu] tenant_token 拿失败: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.tenant_token", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] tenant_token 拿失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     body = {"content": content, "sequence": sequence, "uuid": uuid}
     try:
@@ -857,7 +873,8 @@ async def _do_streaming_update_text(app_id: str, app_secret: str, card_id: str,
             )
         data = resp.json()
     except Exception as e:
-        print(f"[feishu] streaming_update_text 异常: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.streaming_update_text", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] streaming_update_text 异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     if data.get("code") != 0:
         print(f"[feishu] streaming_update_text 失败: code={data.get('code')} msg={data.get('msg')}", flush=True)
@@ -874,7 +891,8 @@ async def _do_finalize_streaming_card(app_id: str, app_secret: str, card_id: str
     try:
         token = await _get_tenant_token(app_id, app_secret)
     except Exception as e:
-        print(f"[feishu] tenant_token 拿失败: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.tenant_token", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] tenant_token 拿失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     preview = (summary_text or "").strip()
     if len(preview) > 80:
@@ -903,7 +921,8 @@ async def _do_finalize_streaming_card(app_id: str, app_secret: str, card_id: str
             )
         data = resp.json()
     except Exception as e:
-        print(f"[feishu] finalize_streaming_card 异常: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.finalize_streaming_card", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] finalize_streaming_card 异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     if data.get("code") != 0:
         print(f"[feishu] finalize_streaming_card 失败: code={data.get('code')} msg={data.get('msg')}", flush=True)
@@ -929,7 +948,8 @@ async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str,
     try:
         token = await _get_tenant_token(app_id, app_secret)
     except Exception as e:
-        print(f"[feishu] tenant_token 拿失败: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.tenant_token", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] tenant_token 拿失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     body = {
         "card": {
@@ -949,7 +969,8 @@ async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str,
             )
         data = resp.json()
     except Exception as e:
-        print(f"[feishu] update_card 异常: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.update_card", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] update_card 异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     if data.get("code") != 0:
         print(f"[feishu] update_card 失败: code={data.get('code')} msg={data.get('msg')}", flush=True)
@@ -1045,7 +1066,8 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                                                    sequence=_card_seq[_stream_seq_key],
                                                    uuid=uuid.uuid4().hex)
         except Exception as e:
-            print(f"[feishu] streaming_update_text 异常: {type(e).__name__}: {e}", flush=True)
+            diag_log("agent.adapters.feishu.streaming_update_text", e)   # 原始 → 受限诊断出口
+            print(f"[feishu] streaming_update_text 异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
             return False
 
     # 4) 流式消费 token + 节流 patch（element 级接口，服务端自动增量渲染）
@@ -1077,7 +1099,8 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                 pending_final_text = _stream_fallback_text(payload.text or accumulated, bool(payload.files))
                 break
     except Exception as e:
-        print(f"[feishu] 流式消费异常: {type(e).__name__}: {e}", flush=True)
+        diag_log("agent.adapters.feishu.stream_consume", e)   # 原始 → 受限诊断出口
+        print(f"[feishu] 流式消费异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
 
     # 5) 收尾：把最终版（final.text 优先；如果 final 没拿到就用 accumulated）patch 进卡片
     final_text = pending_final_text or accumulated

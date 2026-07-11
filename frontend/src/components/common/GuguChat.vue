@@ -44,9 +44,9 @@
 
   <audio
     ref="audioEl"
-    :src="audioStore.blobUrl"
-    @timeupdate="audioCurrent = audioEl.currentTime"
-    @durationchange="audioDuration = audioEl.duration || 0"
+    :src="audioStore.blobUrl ?? undefined"
+    @timeupdate="audioCurrent = audioEl?.currentTime ?? 0"
+    @durationchange="audioDuration = audioEl?.duration || 0"
     @play="audioPlaying = true"
     @pause="onAudioPause"
     @ended="onAudioEnded"
@@ -300,11 +300,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useRouter } from 'vue-router'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import QRCode from 'qrcode'
-import { marked } from 'marked'
+import { marked, type Tokens } from 'marked'
 import hljs from 'highlight.js'
 import { useAudioStore } from '@/stores/audio'
 import { nextZ } from '@/composables/windowz'
@@ -335,13 +335,54 @@ interface ChatMessage {
   role: string
   text: string
   html?: string | null
-  files?: any[]
+  files?: ChatFile[]
   quotedText?: string
   time: string
   streaming?: boolean
   _greeting?: boolean
   _greetAnimated?: boolean
   _greetFull?: string
+}
+
+// 聊天附件（暂存上传 attach_id / 已落库 file_id 两种来源共用的松散形状，字段来自不同
+// 代码路径按需附加，参见 ChatMessage 顶部注释同理）
+interface ChatFile {
+  file_id?: number
+  attach_id?: string
+  name?: string
+  ext?: string
+  size?: number
+  size_bytes?: number
+  kind?: string
+  duration?: number
+  upload?: boolean
+  _thumbUrl?: string
+  img_width?: number
+  img_height?: number
+}
+
+interface ChatSession {
+  id: number
+  title: string
+  source?: string
+}
+
+interface Bot {
+  id?: number
+  platform: string
+  enabled: boolean
+}
+
+interface QuotaInfo {
+  limit_6h?: number | null
+  used_6h?: number
+  limit_weekly?: number | null
+  used_weekly?: number
+}
+
+interface ImConnectState {
+  platform: string
+  id: string | number
 }
 
 const SMALL_W   = 360
@@ -358,14 +399,14 @@ const router        = useRouter()
 watch(() => uiStore.pendingChatSession, async (id) => {
   if (!id) return
   open.value = true
-  await loadSession(id)
+  await loadSession(id as number)
   const msgId = uiStore.pendingChatMessageId
   uiStore.pendingChatSession = null
   uiStore.pendingChatMessageId = null
   if (msgId) { await _revealMessage(msgId); _flashChatMessage(msgId) }
 })
 
-function _flashChatMessage(dbId) {
+function _flashChatMessage(dbId: number) {
   setTimeout(() => {
     const el = messagesEl.value?.querySelector(`[data-db-id="${dbId}"]`)
     if (!el) return
@@ -386,10 +427,10 @@ watch(() => liveStore.sessionEvent, async (e) => {
     const isAi = m.role === 'assistant'
     messages.value.push({
       id: mkid(),
-      role: isAi ? 'ai' : m.role,
+      role: isAi ? 'ai' : (m.role || 'user'),
       text: m.text || '',
       html: isAi ? renderMd(m.text || '') : null,
-      files: (m.files && m.files.length) ? m.files : undefined,
+      files: (m.files && m.files.length) ? m.files as ChatFile[] : undefined,
       quotedText: m.quoted_text || undefined,
       time: now(),
     })
@@ -403,9 +444,9 @@ const _PROJECT_TOOLS = new Set(['create_project','update_project','delete_projec
 const _CALENDAR_TOOLS = new Set(['create_event','update_event','delete_event'])
 const _FILE_TOOLS = new Set(['edit_file','create_document','rename_file','move_items','copy_file','create_folder','delete_file','rename_folder','delete_folder','save_uploaded_file','restore_file','permanent_delete'])
 
-async function refreshAfterTools(usedTools) {
+async function refreshAfterTools(usedTools: Set<string>) {
   if (!usedTools.size) return
-  const has = (set) => [...usedTools].some(t => set.has(t))
+  const has = (set: Set<string>) => [...usedTools].some(t => set.has(t))
   try {
     if (has(_PROJECT_TOOLS)) await projectStore.fetchProjects()
     if (has(_CALENDAR_TOOLS)) { calendarSignal.value++; projectStore.fetchUpcomingCalEvents?.() }
@@ -414,7 +455,7 @@ async function refreshAfterTools(usedTools) {
     if (has(_FILE_TOOLS)) { uploadSignal.value++; liveStore.bump('files') }
   } catch (e) { /* 刷新失败不影响对话 */ }
 }
-const audioEl       = ref(null)
+const audioEl       = ref<HTMLAudioElement | null>(null)
 const audioPlaying  = ref(false)
 const audioCurrent  = ref(0)
 const audioDuration = ref(0)
@@ -424,7 +465,7 @@ function saveProgress() {
   const key = progKey()
   if (!key || !audioEl.value?.duration) return
   const t = audioEl.value.currentTime, d = audioEl.value.duration
-  if (t < d - 3) localStorage.setItem(key, t)
+  if (t < d - 3) localStorage.setItem(key, String(t))
   else localStorage.removeItem(key)
 }
 function restoreProgress() {
@@ -442,34 +483,35 @@ const audioSeekPct = computed(() =>
   audioDuration.value ? (audioCurrent.value / audioDuration.value) * 100 : 0
 )
 
-const fabSvgRef    = ref(null)
+const fabSvgRef    = ref<SVGSVGElement | null>(null)
 const rippleActive = ref(false)
-const barsRef      = ref(null)
+const barsRef      = ref<HTMLElement | null>(null)
 const barsPlaying  = ref(false)
 
 watch(audioPlaying, (playing) => {
   if (playing) {
-    barsRef.value?.querySelectorAll('i').forEach(b => { b.style.cssText = '' })
+    barsRef.value?.querySelectorAll('i').forEach((b) => { (b as HTMLElement).style.cssText = '' })
     barsPlaying.value = true
   } else {
     const bars = barsRef.value?.querySelectorAll('i') ?? []
-    bars.forEach(b => { b.style.height = getComputedStyle(b).height; b.style.transition = 'none' })
+    bars.forEach((b) => { (b as HTMLElement).style.height = getComputedStyle(b).height; (b as HTMLElement).style.transition = 'none' })
     barsPlaying.value = false
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      bars.forEach(b => { b.style.transition = 'height 0.45s ease-out'; b.style.height = '4px' })
+      bars.forEach((b) => { (b as HTMLElement).style.transition = 'height 0.45s ease-out'; (b as HTMLElement).style.height = '4px' })
     }))
-    setTimeout(() => bars.forEach(b => { b.style.cssText = '' }), 500)
+    setTimeout(() => bars.forEach((b) => { (b as HTMLElement).style.cssText = '' }), 500)
   }
 })
 
 const spinningBack = ref(false)
-let rippleTimeout = null
+let rippleTimeout: ReturnType<typeof setTimeout> | null = null
 watch(audioPlaying, (playing) => {
-  if (playing) { clearTimeout(rippleTimeout); rippleActive.value = true }
+  if (playing) { if (rippleTimeout) clearTimeout(rippleTimeout); rippleActive.value = true }
   else { rippleTimeout = setTimeout(() => { rippleActive.value = false }, 3600) }
 })
 
 function onCanPlay() {
+  if (!audioEl.value) return
   audioEl.value.volume = audioVolume.value
   if (needsRestore.value) { needsRestore.value = false; restoreProgress() }
   audioEl.value.play()
@@ -506,8 +548,8 @@ function audioStop() {
 const VOL_KEY    = 'gugu_audio_volume'
 const audioVolume = ref(+(localStorage.getItem(VOL_KEY) ?? 0.5))
 const audioMuted  = ref(false)
-function audioSetVolume(e) {
-  audioVolume.value = +e.target.value
+function audioSetVolume(e: Event) {
+  audioVolume.value = +(e.target as HTMLInputElement).value
   localStorage.setItem(VOL_KEY, String(audioVolume.value))
   if (audioEl.value) { audioEl.value.volume = audioVolume.value; audioEl.value.muted = false }
   audioMuted.value = false
@@ -516,18 +558,18 @@ function audioToggleMute() {
   audioMuted.value = !audioMuted.value
   if (audioEl.value) audioEl.value.muted = audioMuted.value
 }
-function audioSeek(e) {
+function audioSeek(e: MouseEvent) {
   if (!audioEl.value || !audioDuration.value) return
-  const rect = e.currentTarget.getBoundingClientRect()
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
   audioEl.value.currentTime = ((e.clientX - rect.left) / rect.width) * audioDuration.value
 }
-function audioStartDrag(e) {
+function audioStartDrag(e: MouseEvent) {
   audioSeek(e)
-  const move = ev => audioSeek(ev)
+  const move = (ev: MouseEvent) => audioSeek(ev)
   const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
   window.addEventListener('mousemove', move); window.addEventListener('mouseup', up)
 }
-function fmtTime(s) {
+function fmtTime(s: number) {
   if (!s || isNaN(s)) return '0:00'
   return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`
 }
@@ -538,8 +580,8 @@ marked.use({
     const r = new marked.Renderer()
     // 关掉删除线渲染：口语里 ~ 很常见（好的~、稍等~），~~ 叠出来会被 GFM 当删除线；
     // 伙伴语气几乎不需要真删除线，把 ~~x~~ 直接渲染成纯文本 x（保留表格等其它 GFM 能力）。
-    r.del = (t) => (t && t.text) || ''
-    r.code = ({ text, lang }) => {
+    r.del = (t: Tokens.Del) => (t && t.text) || ''
+    r.code = ({ text, lang }: Tokens.Code) => {
       const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
       const highlighted = hljs.highlight(text, { language }).value
       const label = lang || 'code'
@@ -551,19 +593,19 @@ marked.use({
 })
 // 兜底：模型有时把加粗小标题写成 `** 标题**`（** 后带空格 = 无效 md，不渲染加粗）。
 // 在代码块/行内代码之外，把成对 ** 内侧紧邻的空格去掉，让它正常加粗（不碰代码里的 `x ** 2`）。
-function fixLooseBold(text) {
+function fixLooseBold(text: string) {
   return text.split(/(```[\s\S]*?```|`[^`\n]*`)/g).map((seg, i) =>
     i % 2 ? seg
       : seg.replace(/\*\*[ \t]+([^*\n]+?)\*\*/g, '**$1**')
            .replace(/\*\*([^*\n]+?)[ \t]+\*\*/g, '**$1**')
   ).join('')
 }
-function renderMd(text) { return text ? marked.parse(fixLooseBold(text)) as string : '' }
+function renderMd(text: string) { return text ? marked.parse(fixLooseBold(text)) as string : '' }
 
 // 流式渲染专用：补全未闭合的代码围栏，避免 marked 把半段代码块解析成残缺 HTML
 // 单条缓存：同一帧内 text 未变则直接返回上次结果，避免重复解析
-let _mdStreamCache = null
-function renderMdStream(text) {
+let _mdStreamCache: { text: string; html: string } | null = null
+function renderMdStream(text: string) {
   if (!text) return ''
   if (_mdStreamCache?.text === text) return _mdStreamCache.html
   const fences = (text.match(/^```/gm) || []).length
@@ -579,8 +621,8 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const open       = ref(false)
 const expanded   = ref(false)
 const resizing   = ref(false)   // 展开/缩小动画期间：关 backdrop-filter、停跟随，降卡顿
-let _resizeTimer = null
-let _onResizeTransitionEnd = null
+let _resizeTimer: ReturnType<typeof setTimeout> | null = null
+let _onResizeTransitionEnd: ((e: TransitionEvent) => void) | null = null
 function _markResizing() {
   resizing.value = true
   if (_resizeTimer) clearTimeout(_resizeTimer)
@@ -592,7 +634,7 @@ function _markResizing() {
   // 的视觉完成时间会被拖慢，定时器却按固定墙钟时间准点触发，导致 backdrop-filter/跟随在过渡
   // 还没走完时就被重新打开，看起来「闪一下」。定时器保留作兜底（万一没有属性真正变化、不会
   // 触发 transitionend），加了缓冲、不再和过渡时长完全对齐。
-  _onResizeTransitionEnd = (e) => {
+  _onResizeTransitionEnd = (e: TransitionEvent) => {
     if (e.target !== windowRef.value) return   // 只认窗口自己的位移过渡，冒泡上来的子元素过渡不算
     if (!['top', 'left', 'right', 'bottom'].includes(e.propertyName)) return
     resizing.value = false
@@ -608,11 +650,11 @@ watch(miniPinned, v => localStorage.setItem('gugu_mini_pinned', String(v)))
 // 写 localStorage『gugu_reopen_resume』；这里 onMounted 时读一次决定要不要接续。
 const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') === '1')
 
-const fabRef      = ref(null)
-const windowRef   = ref(null)
-const playerRef   = ref(null)
-const expInputEl  = ref(null)
-const messagesEl  = ref(null)
+const fabRef      = ref<HTMLElement | null>(null)
+const windowRef   = ref<HTMLElement | null>(null)
+const playerRef   = ref<HTMLElement | null>(null)
+const expInputEl  = ref<HTMLTextAreaElement | null>(null)
+const messagesEl  = ref<HTMLElement | null>(null)
 
 // 视口尺寸，用于计算小窗绝对坐标
 const vw = ref(window.innerWidth)
@@ -748,7 +790,7 @@ onUnmounted(() => {
 
 // ── 对话状态 ────────────────────────────────────────────
 const inputText      = ref('')
-const thinkingLabels = ref([])   // 「思考中」候选文案（后台「状态命名」_thinking，可多个 | 分隔；空=三个点）
+const thinkingLabels = ref<string[]>([])   // 「思考中」候选文案（后台「状态命名」_thinking，可多个 | 分隔；空=三个点）
 const streaming      = ref(false)
 // 状态指示走「动画队列」：SSE 事件入队、逐个播放（文字打字机入场），切换太快也排队、不抢拍、不闪。
 const statusKind     = ref('')   // '' | 'text'（工具/自定义思考，打字机）| 'dots'（默认思考三点）
@@ -764,11 +806,12 @@ watch(isTypingText, v => {
 const STATUS_TYPE_MS = 26    // 打字机每字间隔
 const STATUS_HOLD_MS = 160   // 打完后的最短驻留，避免一闪而过
 const STATUS_DOTS_MS = 420   // 三点状态的最短驻留
-let _statusQ = []
+interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
+let _statusQ: StatusItem[] = []
 let _statusBusy = false
-let _typeTimer = null
+let _typeTimer: ReturnType<typeof setInterval> | null = null
 
-function _thinkingItem() {
+function _thinkingItem(): StatusItem {
   // 「思考中」：设了自定义文案就随机取一条走打字机；否则三个点
   const c = thinkingLabels.value
   return c.length ? { kind: 'text', label: c[Math.floor(Math.random() * c.length)] } : { kind: 'dots' }
@@ -781,7 +824,7 @@ function clearStatus() {       // 立即清空并打断队列（回复开始/结
   statusKind.value = ''; statusTyped.value = ''
 }
 
-function enqueueStatus(item) { // item: {kind:'text'|'dots'|'hide', label?}
+function enqueueStatus(item: StatusItem) { // item: {kind:'text'|'dots'|'hide', label?}
   _statusQ.push(item)
   _pumpStatus()
 }
@@ -794,7 +837,7 @@ function _pumpStatus() {
   _playStatus(next).then(() => { _statusBusy = false; _pumpStatus() })
 }
 
-function _playStatus(item) {
+function _playStatus(item: StatusItem) {
   return new Promise<void>(resolve => {
     if (item.kind === 'hide') { statusKind.value = ''; statusTyped.value = ''; resolve(); return }
     statusSeq.value++          // 触发入场动画重放（:key 变化 → 气泡重建）
@@ -808,63 +851,64 @@ function _playStatus(item) {
     if (_typeTimer) clearInterval(_typeTimer)
     _typeTimer = setInterval(() => {
       statusTyped.value = full.slice(0, ++i)
-      if (i >= full.length) { clearInterval(_typeTimer); _typeTimer = null; setTimeout(resolve, STATUS_HOLD_MS) }
+      if (i >= full.length) { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = null; setTimeout(resolve, STATUS_HOLD_MS) }
     }, STATUS_TYPE_MS)
   })
 }
-const sessionId      = ref(null)
-const abortCtrl      = ref(null)
-const pendingQueue   = ref([])   // 生成中发的消息，排队等流式结束后接着发
-const pendingAtt   = ref([])     // 待发送的聊天附件（已上传暂存）
+const sessionId      = ref<number | null>(null)
+const abortCtrl      = ref<AbortController | null>(null)
+const pendingQueue   = ref<string[]>([])   // 生成中发的消息，排队等流式结束后接着发
+const pendingAtt   = ref<ChatFile[]>([])     // 待发送的聊天附件（已上传暂存）
 const attUploading = ref(false)
-const fileInput    = ref(null)
+const fileInput    = ref<HTMLInputElement | null>(null)
 function pickFile() { fileInput.value && fileInput.value.click() }
-async function uploadAttachFiles(files, opts: { voice?: boolean } = {}) {
+async function uploadAttachFiles(files: File[], opts: { voice?: boolean } = {}) {
   if (!files.length) return
   attUploading.value = true
   try {
     for (const file of files) {
       try {
-        const meta = await agentApi.uploadAttachment(file, opts.voice)
+        const meta: ChatFile = await agentApi.uploadAttachment(file, opts.voice)
         // 图片附件：本地 objectURL 立即出预览（暂存附件无 file_id，取不到服务端缩略图）
         if (_IMG_EXTS.has((meta.ext || '').toLowerCase())) meta._thumbUrl = URL.createObjectURL(file)
         pendingAtt.value.push(meta)
-      } catch (err) {
+      } catch (err: any) {
         messages.value.push({ id: mkid(), role: 'ai', text: '附件上传失败 😵 ' + (err && err.message || ''), time: now() })
       }
     }
   } finally { attUploading.value = false }
 }
-async function onFilePicked(e) {
-  const files = [...(e.target.files || [])]
-  e.target.value = ''
+async function onFilePicked(e: Event) {
+  const target = e.target as HTMLInputElement
+  const files = [...(target.files || [])]
+  target.value = ''
   await uploadAttachFiles(files)
 }
 
 // ── 拖入文件添加附件（大小窗都支持）──
 const chatDrag = ref(0)
 const isChatDragging = computed(() => chatDrag.value > 0)
-function _dragHasFiles(e) { return [...(e.dataTransfer?.types || [])].includes('Files') }
-function onChatDragEnter(e) { if (_dragHasFiles(e)) { e.preventDefault(); chatDrag.value++ } }
-function onChatDragOver(e)  { if (_dragHasFiles(e)) e.preventDefault() }
+function _dragHasFiles(e: DragEvent) { return [...(e.dataTransfer?.types || [])].includes('Files') }
+function onChatDragEnter(e: DragEvent) { if (_dragHasFiles(e)) { e.preventDefault(); chatDrag.value++ } }
+function onChatDragOver(e: DragEvent)  { if (_dragHasFiles(e)) e.preventDefault() }
 function onChatDragLeave()  { if (chatDrag.value > 0) chatDrag.value-- }
-function onChatDrop(e) {
+function onChatDrop(e: DragEvent) {
   if (!_dragHasFiles(e)) return
   e.preventDefault()
   chatDrag.value = 0
   uploadAttachFiles([...(e.dataTransfer?.files || [])])
 }
 // ── 粘贴文件/图片添加附件（截图直接 Ctrl+V，纯文本粘贴不受影响）──
-function onPaste(e) {
+function onPaste(e: ClipboardEvent) {
   const files = [...(e.clipboardData?.items || [])]
     .filter(it => it.kind === 'file')
     .map(it => it.getAsFile())
-    .filter(Boolean)
+    .filter((f): f is File => !!f)
   if (!files.length) return
   e.preventDefault()
   uploadAttachFiles(files)
 }
-function removeAtt(a) {
+function removeAtt(a: ChatFile) {
   if (a._thumbUrl) URL.revokeObjectURL(a._thumbUrl)   // 未发送即移除，回收 objectURL
   pendingAtt.value = pendingAtt.value.filter(x => x.attach_id !== a.attach_id)
 }
@@ -873,20 +917,25 @@ function removeAtt(a) {
 // 浏览器多录成 webm/opus（mimo 不收）→ 后端 /agent/upload 转 mp3；Safari m4a/Firefox ogg 原生免转。
 const recording  = ref(false)
 const recordSecs = ref(0)
-let _recorder = null, _recChunks = [], _recStream = null, _recTimer = null, _recMime = '', _recCancelled = false
+let _recorder: MediaRecorder | null = null
+let _recChunks: Blob[] = []
+let _recStream: MediaStream | null = null
+let _recTimer: ReturnType<typeof setInterval> | null = null
+let _recMime = ''
+let _recCancelled = false
 function _pickRecMime() {
   const cands = ['audio/mp4', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/webm']  // 优先 mimo 原生(m4a/ogg)
   if (window.MediaRecorder)
     for (const m of cands) { try { if (MediaRecorder.isTypeSupported(m)) return m } catch {} }
   return ''
 }
-function _recExt(m) {
+function _recExt(m: string) {
   if (m.includes('mp4')) return 'm4a'
   if (m.includes('ogg')) return 'ogg'
   if (m.includes('wav')) return 'wav'
   return 'webm'
 }
-function _chatTip(text) { messages.value.push({ id: mkid(), role: 'ai', text, time: now() }) }
+function _chatTip(text: string) { messages.value.push({ id: mkid(), role: 'ai', text, time: now() }) }
 async function startRecord() {
   if (recording.value) return
   // getUserMedia 只在安全环境（HTTPS / localhost）可用——http 访问时 navigator.mediaDevices 直接是 undefined、连权限都不弹
@@ -905,7 +954,7 @@ async function startRecord() {
     _recorder.start()
     recording.value = true; recordSecs.value = 0
     _recTimer = setInterval(() => { recordSecs.value++; if (recordSecs.value >= 60) stopRecord() }, 1000)
-  } catch (e) {
+  } catch (e: any) {
     _recStream?.getTracks().forEach(t => t.stop()); _recStream = null
     messages.value.push({ id: mkid(), role: 'ai',
       text: '没法录音 🎤 ' + (e?.name === 'NotAllowedError' ? '麦克风权限被拒了，去浏览器设置允许一下' : (e?.message || '')), time: now() })
@@ -927,17 +976,17 @@ async function _onRecStop() {
   if (pendingAtt.value.length) send()   // 录完即发（含可能已输入的文字）
 }
 // ── 语音条播放：点击拉鉴权 blob（download 端点带 Bearer），单实例播放，再点暂停 ──
-const voicePlayingId = ref(null)
-let _voiceAudio = null
-const _voiceUrls = {}            // attach_id → objectURL 缓存（同条重播不重拉）
+const voicePlayingId = ref<string | null>(null)
+let _voiceAudio: HTMLAudioElement | null = null
+const _voiceUrls: Record<string, string> = {}            // attach_id → objectURL 缓存（同条重播不重拉）
 const _WAVE = [50, 80, 38, 95, 60, 72, 44, 88, 56, 68, 42, 84, 52]   // 装饰性波形高度
-function voiceBar(n) { return _WAVE[(n - 1) % _WAVE.length] + '%' }
-function fmtDur(sec) {
+function voiceBar(n: number) { return _WAVE[(n - 1) % _WAVE.length] + '%' }
+function fmtDur(sec?: number) {
   const s = Math.round(sec || 0)
   if (!s) return '语音'
   return s < 60 ? s + '″' : Math.floor(s / 60) + "'" + String(s % 60).padStart(2, '0')
 }
-async function toggleVoice(f) {
+async function toggleVoice(f: ChatFile) {
   const id = f.attach_id
   if (!id) return
   if (voicePlayingId.value === id && _voiceAudio) { _voiceAudio.pause(); return }  // 再点＝暂停
@@ -975,8 +1024,8 @@ function stopStreaming() {
   abortCtrl.value?.abort()
 }
 
-const copiedId = ref(null)
-function fmtSize(b) {
+const copiedId = ref<number | null>(null)
+function fmtSize(b?: number) {
   if (!b) return ''
   if (b < 1024) return b + ' B'
   if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'
@@ -987,15 +1036,16 @@ function fmtSize(b) {
 const _IMG_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
 // 缩略图来源优先级：本地 _thumbUrl（刚发的，即时）> file_id（已落库，服务端图）
 // > attach_id（刷新后历史里的暂存图，走 /agent/attachment 端点，6h 内有效）；都没有则 ext 角标
-function isImageFile(f) {
+function isImageFile(f: ChatFile) {
   if (f._thumbUrl) return true
   const isImg = _IMG_EXTS.has((f.ext || '').toLowerCase())
   return isImg && (!!f.file_id || !!f.attach_id)
 }
 // IntersectionObserver 懒加载指令：进视口附近才取 card 尺寸缩略图。
 // 值为数字 file_id → 文件库缩略图；为字符串 attach_id → 暂存附件缩略图端点。
+interface ThumbEl extends HTMLImageElement { _thumbObs?: IntersectionObserver | null }
 const vLazyThumb = {
-  mounted(el, { value: id }) {
+  mounted(el: ThumbEl, { value: id }: { value: number | string | undefined | null }) {
     if (!id) return
     const isAttach = typeof id === 'string'
     const key  = isAttach ? `att:${id}_card` : `${id}_card`
@@ -1007,15 +1057,15 @@ const vLazyThumb = {
     const obs = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting) return
       obs.disconnect(); el._thumbObs = null
-      fetchThumb().then(url => { if (url) el.src = url })
+      fetchThumb().then((url: string | null) => { if (url) el.src = url })
     }, { rootMargin: '200px' })
     obs.observe(el)
     el._thumbObs = obs
   },
-  unmounted(el) { el._thumbObs?.disconnect(); el._thumbObs = null },
+  unmounted(el: ThumbEl) { el._thumbObs?.disconnect(); el._thumbObs = null },
 }
 
-async function downloadFile(f) {
+async function downloadFile(f: ChatFile) {
   if (f.attach_id) {
     // 聊天上传的暂存附件：走 /agent/attachment/{id}/download
     const token = localStorage.getItem('user_token') ?? ''
@@ -1030,18 +1080,19 @@ async function downloadFile(f) {
     setTimeout(() => { URL.revokeObjectURL(url); a.remove() }, 1000)
     return
   }
+  if (f.file_id == null) return
   try { await filesApi.download(f.file_id, `${f.name}.${f.ext}`) }
   catch (e) { console.error('下载失败', e) }
 }
 
 const previewStore = usePreviewStore()
-function canPreview(f) {
+function canPreview(f: ChatFile) {
   return (!!f.file_id || !!f.attach_id) && isPreviewable(f.ext)
 }
-function openFileFromChat(f) {
+function openFileFromChat(f: ChatFile) {
   if (canPreview(f)) {
     previewStore.open({
-      id: f.file_id ?? null,
+      id: f.file_id ?? undefined,
       attach_id: f.attach_id ?? null,
       ext: (f.ext || '').toUpperCase(),
       displayName: f.name,
@@ -1055,7 +1106,7 @@ function openFileFromChat(f) {
   downloadFile(f)
 }
 
-function copyMsg(msg) {
+function copyMsg(msg: ChatMessage) {
   // AI 消息取渲染后的纯文本，用户消息直接取原文
   let text = msg.text
   if (msg.role === 'ai' && msg.text) {
@@ -1113,7 +1164,7 @@ const virtualTotalSize = computed(() => virtualizer.value.getTotalSize() + msgsP
 // v-for 需要同时拿到虚拟行的定位信息（row）和它对应的消息（msg），zip 成一个数组，
 // 这样消息行内部的模板完全不用改，照样按 msg.xxx 取值。
 const rowsWithMsg = computed(() => virtualRows.value.map(row => ({ row, msg: messages.value[row.index] })))
-function measureRow(el) { if (el) virtualizer.value.measureElement(el) }
+function measureRow(el: Element | ComponentPublicInstance | null) { if (el) virtualizer.value.measureElement(el as Element) }
 
 // 只有真正挂进视口 ± overscan 的消息才需要解析 markdown——不在 loadSession 时就把
 // 整个历史一次性跑一遍 marked.parse，等消息第一次进虚拟窗口再补，减轻长会话打开时的
@@ -1128,7 +1179,7 @@ watch(virtualRows, (rows) => {
 // 会话内定位到某条历史消息（全局搜索跳转用）：先按 dbId 找到下标，用虚拟列表的
 // scrollToIndex 滚过去（数据本来就在 messages 里，不用管它当前有没有挂 DOM），
 // 等它挂载出来再交给 _flashChatMessage 做高亮。
-async function _revealMessage(dbId) {
+async function _revealMessage(dbId: number) {
   const idx = messages.value.findIndex(m => m.dbId === dbId)
   if (idx === -1) return
   stick.value = false   // 跳去的多半是历史消息，不该被当成「回到底部」处理
@@ -1137,7 +1188,7 @@ async function _revealMessage(dbId) {
 }
 
 // 打开对话框时让默认问候像回复一样「打字机」冒出来（生成版 / 兜底都走这套）。每条问候只播一次。
-let _greetTimer = null
+let _greetTimer: ReturnType<typeof setInterval> | null = null
 function animateGreeting() {
   const m = messages.value
   if (!(m.length === 1 && m[0]._greeting)) return   // 已有真实对话 → 不动
@@ -1151,14 +1202,14 @@ function animateGreeting() {
   if (_greetTimer) clearInterval(_greetTimer)
   _greetTimer = setInterval(() => {
     msg.text = full.slice(0, ++i)
-    if (i >= full.length) { clearInterval(_greetTimer); _greetTimer = null; msg.streaming = false; msg.html = renderMd(full) }
+    if (i >= full.length) { if (_greetTimer) clearInterval(_greetTimer); _greetTimer = null; msg.streaming = false; msg.html = renderMd(full) }
   }, 22)
 }
 // 任何打开路径（FAB / 通知点开 / 展开）都触发一次
 watch(open, (v) => { if (v) { animateGreeting(); loadBots(); loadQuota(); pickOfflineLabel() } })
 
 // ── 展开/收起 ────────────────────────────────────────────
-const sessions = ref([])
+const sessions = ref<ChatSession[]>([])
 const webSessions = computed(() => sessions.value.filter(s => !s.source || s.source === 'web'))
 const imSessions  = computed(() => sessions.value.filter(s => s.source && s.source !== 'web'))
 const currentSessionTitle = computed(() =>
@@ -1170,23 +1221,26 @@ async function fetchSessions() {
 }
 
 // ── 侧栏 IM 接入（飞书 / QQ / 微信）：未接入显示扫码连接抽屉，接入后变成该平台会话抽屉 ──
-const IM_PLATFORMS = [
+type ImPlatformKey = 'feishu' | 'qqbot' | 'wechat'
+interface ImPlatformApi { start: () => Promise<any>; poll: (id: any) => Promise<any> }
+interface ImPlatform { key: ImPlatformKey; label: string; api: ImPlatformApi }
+const IM_PLATFORMS: ImPlatform[] = [
   { key: 'feishu',  label: '飞书', api: feishuConnectApi },
   { key: 'qqbot',   label: 'QQ',   api: qqConnectApi },
   { key: 'wechat',  label: '微信', api: wechatConnectApi },
 ]
-const bots   = ref([])
-const imOpen = reactive({ feishu: false, qqbot: false, wechat: false })
+const bots   = ref<Bot[]>([])
+const imOpen = reactive<Record<ImPlatformKey, boolean>>({ feishu: false, qqbot: false, wechat: false })
 const imOnline    = computed(() => bots.value.some(b => b.enabled))   // 有「启用中」的 IM bot 才算在线（停用/残留不算）
 
 // ── 顶部状态：休息中（精力耗尽）> 在线（任意 IM 启用）> 随机离线 ──
-const quota = ref(null)
+const quota = ref<QuotaInfo | null>(null)
 async function loadQuota() { try { quota.value = await authApi.getQuota() } catch {} }
 const energyExhausted = computed(() => {
   const q = quota.value
   if (!q) return false
-  return (q.limit_6h != null && q.used_6h >= q.limit_6h) ||
-         (q.limit_weekly != null && q.used_weekly >= q.limit_weekly)
+  return (q.limit_6h != null && (q.used_6h ?? 0) >= q.limit_6h) ||
+         (q.limit_weekly != null && (q.used_weekly ?? 0) >= q.limit_weekly)
 })
 // 离线时随机显示「QQ/微信/飞书 离线」之一（每次打开换一个，暗示这些渠道还没接上）
 const _OFFLINE_LABELS = ['QQ 离线', '微信离线', '飞书离线']
@@ -1199,14 +1253,14 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
                                    : presenceKind.value === 'online'  ? '咕咕在线'
                                    : '咕咕还没接到你的微信 / QQ / 飞书——点一下接上，随时随地找它')
 const imHighlight = ref(false)
-const imGroupEl   = ref(null)
-const botsOf = (platform) => bots.value.filter(b => b.platform === platform)
-const imSessionsOf = (platform) => imSessions.value.filter(s => s.source === platform)
+const imGroupEl   = ref<HTMLElement | null>(null)
+const botsOf = (platform: ImPlatformKey) => bots.value.filter(b => b.platform === platform)
+const imSessionsOf = (platform: ImPlatformKey) => imSessions.value.filter(s => s.source === platform)
 
 async function loadBots() {
   try { const r = await userBotsApi.list(); bots.value = r.items || [] } catch {}
 }
-function toggleImPlatform(key) { imOpen[key] = !imOpen[key] }
+function toggleImPlatform(key: ImPlatformKey) { imOpen[key] = !imOpen[key] }
 
 // 离线状态被点击：展开大窗 → 摊开各 IM 抽屉露出「扫码连接」→ 高亮 IM 区一下（暗示式引导，不强推）
 async function promptConnectIM() {
@@ -1223,15 +1277,16 @@ async function promptConnectIM() {
 
 // 通用扫码连接（建任务 → 渲染二维码 → 轮询 → 自动写 user_bot，与 ProfileModal 同一套 API）
 const connecting    = ref('')        // 正在生成二维码的平台 key
-const connect       = ref(null)      // { platform, id } 连接进行中
+const connect       = ref<ImConnectState | null>(null)      // { platform, id } 连接进行中
 const connectHint   = ref('')
 const connectErr    = ref('')
-const connectCanvas = ref(null)
-let   connectPoll   = null
-function setConnectCanvas(el) { if (el) connectCanvas.value = el }   // v-for 内函数 ref，避免数组 ref
+const connectCanvas = ref<HTMLCanvasElement | null>(null)
+let   connectPoll: ReturnType<typeof setInterval> | null = null
+function setConnectCanvas(el: Element | ComponentPublicInstance | null) { if (el) connectCanvas.value = el as HTMLCanvasElement }   // v-for 内函数 ref，避免数组 ref
 
-async function startImConnect(platform) {
+async function startImConnect(platform: ImPlatformKey) {
   const p = IM_PLATFORMS.find(x => x.key === platform)
+  if (!p) return
   connecting.value = platform; connectErr.value = ''
   try {
     const r = await p.api.start()
@@ -1244,18 +1299,18 @@ async function startImConnect(platform) {
     await nextTick()
     await QRCode.toCanvas(connectCanvas.value, r.scan_url, { width: 160, margin: 1 })
     _startImPoll(p)
-  } catch (e) {
-    connectErr.value = e.message || '生成二维码失败'
+  } catch (e: any) {
+    connectErr.value = e?.message || '生成二维码失败'
     connect.value = null
   } finally { connecting.value = '' }
 }
-function _startImPoll(p) {
+function _startImPoll(p: ImPlatform) {
   _stopImPoll()
   let tries = 0
   connectPoll = setInterval(async () => {
     tries++
     try {
-      const r = await p.api.poll(connect.value.id)
+      const r = await p.api.poll(connect.value?.id)
       if (r.status === 'success') { cancelImConnect(); await loadBots(); await fetchSessions() }
       else if (r.status === 'expired') { connectErr.value = '二维码已过期，请重新扫码'; cancelImConnect() }
       else if (r.status === 'fail') { connectErr.value = '连接失败：' + (r.reason || '未知'); cancelImConnect() }
@@ -1268,16 +1323,19 @@ function cancelImConnect() { _stopImPoll(); connect.value = null }
 
 // ── 聊天内「扫码绑定 IM」：咕咕回复里输出 [文案](gugu://bind-im/<platform>) 当按钮，
 //    点击 → 这里弹小窗扫码（复用 IM_PLATFORMS 的 start/poll，与侧栏同一套后端，互不干扰）──
-const chatBind = reactive({ open: false, platform: '', label: '', hint: '', err: '', id: null })
-const chatBindCanvas = ref(null)
-let chatBindPoll = null
+const chatBind = reactive<{ open: boolean; platform: string; label: string; hint: string; err: string; id: string | number | null }>(
+  { open: false, platform: '', label: '', hint: '', err: '', id: null }
+)
+const chatBindCanvas = ref<HTMLCanvasElement | null>(null)
+let chatBindPoll: ReturnType<typeof setInterval> | null = null
 
-function onChatActionClick(e) {
+function onChatActionClick(e: MouseEvent) {
   // 代码块「复制」按钮：渲染时不写内联 onclick（DOMPurify 会剥掉 on*），这里事件委托兜住
-  const btn = e.target.closest?.('.md-copy-btn')
+  const target = e.target as HTMLElement
+  const btn = target.closest?.('.md-copy-btn') as HTMLElement | null
   if (btn) {
     e.preventDefault()
-    const text = btn.closest('.md-code-block')?.querySelector('code')?.innerText ?? ''
+    const text = (btn.closest('.md-code-block')?.querySelector('code') as HTMLElement | null)?.innerText ?? ''
     const done = () => { btn.textContent = '已复制 ✓'; setTimeout(() => { btn.textContent = '复制' }, 1200) }
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(text).then(done).catch(done)
@@ -1290,7 +1348,7 @@ function onChatActionClick(e) {
     }
     return
   }
-  const a = e.target.closest?.('a[href^="gugu://"]')
+  const a = target.closest?.('a[href^="gugu://"]') as HTMLAnchorElement | null
   if (!a) return
   e.preventDefault()
   const href = a.getAttribute('href') || ''
@@ -1303,7 +1361,7 @@ function onChatActionClick(e) {
   }
 }
 
-async function openChatImBind(platform) {
+async function openChatImBind(platform: string) {
   const p = IM_PLATFORMS.find(x => x.key === platform)
   if (!p) return
   _stopChatBindPoll()
@@ -1321,11 +1379,11 @@ async function openChatImBind(platform) {
     await nextTick()
     await QRCode.toCanvas(chatBindCanvas.value, r.scan_url, { width: 168, margin: 1 })
     _startChatBindPoll(p)
-  } catch (e) {
-    chatBind.err = e.message || '生成二维码失败'
+  } catch (e: any) {
+    chatBind.err = e?.message || '生成二维码失败'
   }
 }
-function _startChatBindPoll(p) {
+function _startChatBindPoll(p: ImPlatform) {
   _stopChatBindPoll()
   let tries = 0
   chatBindPoll = setInterval(async () => {
@@ -1387,17 +1445,26 @@ async function exitExpanded() {
   }, 450)
 }
 
-async function loadSession(id) {
+interface RawSessionMessage {
+  id: number
+  role: string
+  content: string
+  files?: ChatFile[]
+  quotedText?: string
+  createdAt: string
+}
+
+async function loadSession(id: number) {
   if (id === sessionId.value) return
   abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
   streaming.value = false
   try {
-    const data = await agentApi.getMessages(id)
+    const data = await agentApi.getMessages(String(id))
     sessionId.value = id
     clearStatus()   // 切会话先清掉上个会话残留的状态指示（active 会话下面 resumeStream 会重置）
     // html 先留空、不在这一步就把整个历史都跑一遍 marked.parse——只有真正挂进虚拟列表
     // 视口的那些消息才会被 watch(virtualRows, ...) 补上，减轻长会话打开时的一次性 CPU 尖峰。
-    messages.value = data.messages.map(m => ({
+    messages.value = data.messages.map((m: RawSessionMessage) => ({
       id: mkid(),
       dbId: m.id,
       role: m.role === 'assistant' ? 'ai' : m.role,
@@ -1423,15 +1490,15 @@ async function newSession() {
   expInputEl.value?.focus()
 }
 
-async function deleteSession(id) {
+async function deleteSession(id: number) {
   try {
-    await agentApi.deleteSession(id)
+    await agentApi.deleteSession(String(id))
     sessions.value = sessions.value.filter(s => s.id !== id)
     if (sessionId.value === id) await newSession()
   } catch {}
 }
 
-function textareaWidthForMode(isExpanded) {
+function textareaWidthForMode(isExpanded: boolean) {
   if (!isExpanded) {
     // 小窗：左右内边距 13px、两个 16px 附件按钮、28px 发送按钮和三段 8px 间距。
     return SMALL_W - 26 - 16 - 16 - 28 - 24
@@ -1481,8 +1548,8 @@ function fitTextarea(isExpanded = expanded.value) {
   sizer.remove()
   el.style.height = `${height}px`
 }
-function autoResize(e) {
-  const el = e.target; el.style.height = 'auto'
+function autoResize(e: Event) {
+  const el = e.target as HTMLTextAreaElement; el.style.height = 'auto'
   el.style.height = Math.min(el.scrollHeight, 120) + 'px'
 }
 
@@ -1536,12 +1603,12 @@ onUnmounted(() => {
 
 // 消费一条 SSE 流，把事件渲染进消息列表。send（POST /chat）和续看（GET .../stream）共用。
 // 返回 { aiIdx, usedTools }，供调用方做收尾（首条空回复兜底、刷新视图）。
-async function consumeStream(reader, ownerSid) {
+async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ownerSid: number | null) {
   const decoder = new TextDecoder()
   let buf = '', aiIdx = -1, aborted = false
   let sid = ownerSid           // 本流归属的会话（新对话在 session_id 事件前为 null）
   let detached = false         // 一旦用户切到别的会话，本流永久脱离、不再污染当前视图
-  const usedTools = new Set()
+  const usedTools = new Set<string>()
   // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
   const live = () => {
     if (detached) return false
@@ -1552,11 +1619,11 @@ async function consumeStream(reader, ownerSid) {
     while (true) {
       let chunk
       try { chunk = await reader.read() }
-      catch (e) { if (e.name === 'AbortError') { aborted = true; break; } throw e }   // 切会话会 abort：优雅收尾，别当网络错
+      catch (e: any) { if (e?.name === 'AbortError') { aborted = true; break; } throw e }   // 切会话会 abort：优雅收尾，别当网络错
       const { done, value } = chunk
       if (done) break
       buf += decoder.decode(value, { stream: true })
-      const lines = buf.split('\n'); buf = lines.pop()
+      const lines = buf.split('\n'); buf = lines.pop() ?? ''
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue
         const raw = line.slice(6).trim(); if (!raw) continue
@@ -1628,7 +1695,7 @@ async function consumeStream(reader, ownerSid) {
 }
 
 // 续看：打开会话时若它正在生成（messages 接口返回 active），重连看后端跑完。
-async function resumeStream(id) {
+async function resumeStream(id: number) {
   if (streaming.value) return            // 本地正在发/看，不重复连
   const token = localStorage.getItem('user_token') ?? ''
   abortCtrl.value = new AbortController()   // 让下次切会话能 abort 掉这条续看
@@ -1640,6 +1707,7 @@ async function resumeStream(id) {
     })
     if (!res.ok) return
     if (sessionId.value !== id) return   // 期间又切走了，丢弃
+    if (!res.body) return
     const r = await consumeStream(res.body.getReader(), id)
     refreshAfterTools(r.usedTools)
   } catch { /* 续看失败/被切走中断都不打扰 */ }
@@ -1649,10 +1717,10 @@ async function resumeStream(id) {
   }
 }
 
-async function send(forcedText?) {
+async function send(forcedText?: string) {
   // forcedText 来自"排队接力"（队首消息）：此时用户气泡已在入队时显示过，不重复推
   const fromInput = forcedText === undefined
-  const text = (fromInput ? inputText.value : forcedText).trim()
+  const text = (fromInput ? inputText.value : (forcedText ?? '')).trim()
   const atts = fromInput ? pendingAtt.value.slice() : []   // 本次随消息发的附件
   if (!text && !atts.length) return
   if (fromInput) {
@@ -1675,7 +1743,7 @@ async function send(forcedText?) {
   const ownerSid = sessionId.value   // 本次发送归属的会话（新对话为 null，流里拿到 id 后回填）
   let resolvedSid = ownerSid         // 流里 session_id 事件后回填成真实 id
   let aiIdx = -1
-  const usedTools = new Set()
+  const usedTools = new Set<string>()
 
   // 新会话且当前显示着默认问候 → 把问候随首条消息带给后端，落为本会话首条 assistant 消息，
   // 这样咕咕回复时能看到「自己已经打过招呼」，不会把用户对问候的回复当成对话刚开始。
@@ -1691,6 +1759,7 @@ async function send(forcedText?) {
       signal: abortCtrl.value.signal,
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.body) throw new Error('empty response body')
 
     const r = await consumeStream(res.body.getReader(), ownerSid)
     resolvedSid = r.sid
@@ -1701,8 +1770,8 @@ async function send(forcedText?) {
       messages.value.push({ id: mkid(), role: 'ai', text: '收到，但没有收到回复，请稍后再试。', time: now() })
       await scrollBottom()
     }
-  } catch (e) {
-    if (e.name !== 'AbortError' && sessionId.value === resolvedSid) {
+  } catch (e: any) {
+    if (e?.name !== 'AbortError' && sessionId.value === resolvedSid) {
       // fetch 抛错=连不上咕咕后端，基本都是网络问题（仅在仍停在本会话时报）
       clearStatus()
       messages.value.push({ id: mkid(), role: 'ai', text: '咕咕网络不太好 📡 可以再发一遍吗？', time: now() })

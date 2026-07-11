@@ -24,10 +24,14 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 import asyncio
 import json
+import logging
 import os
 import time
 
 from app.core import redis as R
+from app.core.redaction import redact, diag_log, diag_log_raw
+
+_log = logging.getLogger("agent.adapters.qq")
 
 STREAM = R.IM_INBOUND_STREAM
 _ACK_COOLDOWN = 10.0   # 同一用户「文件收到啦」秒回的冷却秒数：连发多图/文件只 ack 一次，不刷屏
@@ -269,7 +273,10 @@ async def _ingest_qq_media(message: Any, owner: str) -> list:
                     meta = await chat_attach.stage(owner, name, ext, mime, data, platform="qq")
                 out.append(meta["attach_id"])
             except Exception as e:
-                print(f"[qq] 暂存附件出错: {type(e).__name__}: {e}", flush=True)
+                # best-effort：单个附件下载/转码/暂存失败（网络抖动、ffmpeg 缺失、解码错…原因很杂）
+                # 不该拖垮其余附件的处理，跳过继续；但仍要留痕（受限出口拿原始，可见日志只留脱敏摘要）。
+                diag_log("agent.adapters.qq._ingest_qq_media", e)
+                _log.warning("[qq] 暂存附件出错: %s", redact(f"{type(e).__name__}: {e}"))
     return out
 
 
@@ -288,7 +295,10 @@ async def _qq_access_token(app_id: str, secret: str) -> str:
             data = await resp.json()
     token = data.get("access_token", "")
     if not token:
-        raise RuntimeError(f"QQ access_token 获取失败: {data}")
+        # 上游响应体可能回显请求里的 appId/secret 片段，绝不能拼进异常消息（P2-b §5）；
+        # 原始体只进受限诊断出口，异常消息只给通用文案。
+        diag_log_raw("agent.adapters.qq._qq_access_token", f"data={data}")
+        raise RuntimeError("QQ access_token 获取失败（响应缺 access_token 字段）")
     return token
 
 
@@ -303,7 +313,8 @@ async def _qq_access_token_with_ttl(app_id: str, secret: str) -> tuple[str, int]
             data = await resp.json()
     token = data.get("access_token", "")
     if not token:
-        raise RuntimeError(f"QQ access_token 获取失败: {data}")
+        diag_log_raw("agent.adapters.qq._qq_access_token_with_ttl", f"data={data}")
+        raise RuntimeError("QQ access_token 获取失败（响应缺 access_token 字段）")
     return token, int(data.get("expires_in") or 0)
 
 
@@ -317,7 +328,8 @@ async def _qq_gateway_url(token: str, sandbox: bool) -> str:
             data = await resp.json()
     url = data.get("url", "")
     if not url:
-        raise RuntimeError(f"QQ gateway 获取失败: {data}")
+        diag_log_raw("agent.adapters.qq._qq_gateway_url", f"data={data}")
+        raise RuntimeError("QQ gateway 获取失败（响应缺 url 字段）")
     return url
 
 
@@ -328,7 +340,10 @@ async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, ms
         else:
             await _post(channel_id, target_id, text, msg_id)
     except Exception as e:
-        print(f"[qq] 即时回复失败: {type(e).__name__}: {e}", flush=True)
+        # best-effort：这只是"收到啦"的秒回提示，失败不影响正式回复走 worker 那条主链路，
+        # 可以广吞，但仍要留痕方便排查。
+        diag_log("agent.adapters.qq._qq_ack", e)
+        _log.warning("[qq] 即时回复失败: %s", redact(f"{type(e).__name__}: {e}"))
 
 
 async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
@@ -411,7 +426,11 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     try:
         await R.produce(STREAM, payload)
     except Exception as e:
-        print(f"[qq] 入队失败: {type(e).__name__}: {e}", flush=True)
+        # 入队失败＝这条用户消息会被丢——不是无关紧要的 best-effort，值得响亮记录（受限出口留原始，
+        # 可见日志留脱敏摘要），但不重试：Redis 层面的问题重试一次大概率还是失败，且这里已经是
+        # 网关事件回调里，没有把整条 WS 消息回放重放的机制，重试意义不大，交给运维看诊断日志处理。
+        diag_log("agent.adapters.qq._handle_raw_qq_message.enqueue", e)
+        _log.error("[qq] 入队失败: %s", redact(f"{type(e).__name__}: {e}"))
 
 
 async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, owner: str) -> None:
@@ -478,7 +497,12 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
                     if heartbeat_task:
                         heartbeat_task.cancel()
         except Exception as e:
-            print(f"[qq:{channel_id}] raw WebSocket 异常: {type(e).__name__}: {e}", flush=True)
+            # 网关连接的最外层兜底：token/gateway 获取、WS 握手、消息处理里任何没被内层捕获的异常
+            # 都汇聚到这——包括编程错误（不新增分类，交给下面统一记录）。协议本身要求"断了就重连"，
+            # 所以这里不改变"无条件重连"的行为，只把原始异常和可见日志的出口按 P2-b §3 分开：
+            # 原始 traceback 只进受限诊断出口，gugu.log/Debug 面板只看到脱敏摘要 + 异常类型名。
+            diag_log(f"agent.adapters.qq._run_raw_ws.{channel_id}", e)
+            _log.error("[qq:%s] raw WebSocket 异常: %s", channel_id, redact(f"{type(e).__name__}: {e}"))
         delay = _RECONNECT_DELAYS[min(reconnect_attempt, len(_RECONNECT_DELAYS) - 1)]
         reconnect_attempt += 1
         await asyncio.sleep(delay)
@@ -559,9 +583,38 @@ async def _send_token(channel_id: str) -> tuple[str, str]:
     return token, base
 
 
+class QQAPIError(Exception):
+    """QQ Bot API 返回非 2xx。status 是 HTTP 状态码，供上层判定瞬时/永久（P2-b §1/§6）；
+    body 是原始响应体，只用于内部判定（如 markdown 权限被拒的错误码）和受限诊断出口，
+    **绝不**直接拼进 str(exc)——上游响应体可能回显请求内容，不能原样进可见日志/外发文案（§5）。"""
+
+    def __init__(self, method: str, path: str, status: int, body: Any):
+        self.method = method
+        self.path = path
+        self.status = status
+        self.body = body
+        super().__init__(f"QQ API {method} {path} 失败 status={status}")
+
+
+def _qq_is_transient(exc: BaseException) -> bool:
+    """判定失败是否值得重试：真正瞬时的（超时/连接错/5xx/429）才重试；401 也算——
+    换新 token 重发是既有的、安全的做法（旧 token 从未被 QQ 处理成功，重发不会重复），
+    `_qq_request` 内部已对 401 做一次透明重试，这里放行是给外层（token 缓存已失效、
+    换个全新请求）再兜一次。其余 4xx（参数错/内容被拒等）是永久错误，重试不会变成功，
+    只会白白重复发送（§1/§6）。"""
+    if isinstance(exc, (asyncio.TimeoutError, aiohttp.ClientConnectionError, aiohttp.ServerTimeoutError)):
+        return True
+    if isinstance(exc, QQAPIError):
+        return exc.status >= 500 or exc.status in (401, 429)
+    # 兼容非 QQAPIError 的 401 语义（如更底层就失败、还没走到 _qq_request 状态码分支）
+    s = str(exc)
+    return "status=401" in s or "code: 401" in s
+
+
 async def _qq_request(channel_id: str, method: str, path: str, *,
                       json_body: dict | None = None, retry_on_401: bool = True):
-    """raw HTTP 调 QQ Bot API；401 时清缓存重取 token 重试一次。"""
+    """raw HTTP 调 QQ Bot API；401 时清缓存重取 token 重试一次（幂等：读token+重发同一请求，
+    未产生额外副作用，安全）。其余非 2xx 抛 QQAPIError，由调用方按 _qq_is_transient 判定是否重试。"""
     token, base = await _send_token(channel_id)
     async with aiohttp.ClientSession() as sess:
         async with sess.request(
@@ -573,18 +626,30 @@ async def _qq_request(channel_id: str, method: str, path: str, *,
             try:
                 data = await resp.json(content_type=None)
             except Exception:
+                # 响应体不是合法 JSON（QQ 偶尔回纯文本错误页）：退化取文本，不影响 status 判定，
+                # 广吞合理——这里只是"尽量拿到点诊断信息"，拿不到也不影响后面的状态码分支。
                 data = await resp.text()
     if status in (200, 201, 204):
         return data
     if status == 401 and retry_on_401:
         _send_tokens.pop(channel_id, None)
         return await _qq_request(channel_id, method, path, json_body=json_body, retry_on_401=False)
-    raise RuntimeError(f"QQ API {method} {path} 失败 status={status} data={data}")
+    diag_log_raw("agent.adapters.qq._qq_request",
+                  f"{method} {path} status={status} body={data}")
+    raise QQAPIError(method, path, status, data)
 
 
 def _markdown_blocked(exc: Exception) -> bool:
-    """该 bot 没开通原生 markdown 权限的报错（回退纯文本）。"""
-    s = str(exc)
+    """该 bot 没开通原生 markdown 权限的报错（回退纯文本）。优先从结构化 body 判定；
+    非 QQAPIError（如连接层异常）没有 body，退回旧的字符串启发式兼容。"""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        code = body.get("code")
+        msg = str(body.get("message") or "")
+        if code in (50056, 40034012) or "不允许发送原生 markdown" in msg:
+            return True
+        return False
+    s = str(body) if body is not None else str(exc)
     return ("50056" in s or "40034012" in s or "不允许发送原生 markdown" in s)
 
 
@@ -625,27 +690,38 @@ async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str
 
 async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                    channel_id: str | None = None) -> bool:
-    """给指定用户发 C2C 被动回复（带原 msg_id）。发送失败重试一次。"""
+    """给指定用户发 C2C 被动回复（带原 msg_id）。只在失败判定为瞬时（超时/连接错/5xx/429）
+    时重试一次；4xx 等永久错误直接失败——发消息不是幂等操作，重试会造成重复推送，
+    对不会成功的永久错误重试只有坏处没有好处（P2-b §1/§4-A 幂等前提）。"""
     for attempt in (1, 2):
         try:
             await _post(channel_id, openid, text, msg_id)
             return True
         except Exception as e:
-            print(f"[qq] 发送失败(第{attempt}次): {type(e).__name__}: {e}", flush=True)
+            diag_log("agent.adapters.qq.send_c2c", e)
+            _log.warning("[qq] 发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)   # 丢弃缓存，下次重新取 token
+            if attempt == 2 or not _qq_is_transient(e):
+                return False
+            await asyncio.sleep(0.5)
     return False
 
 
 async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                      channel_id: str | None = None) -> bool:
-    """给指定群发被动回复（带原 msg_id）。发送失败重试一次。"""
+    """给指定群发被动回复（带原 msg_id）。只在失败判定为瞬时时重试一次；
+    4xx 等永久错误直接失败（同 send_c2c，发消息非幂等，不对永久错误盲重试）。"""
     for attempt in (1, 2):
         try:
             await _post_group(channel_id, group_openid, text, msg_id)
             return True
         except Exception as e:
-            print(f"[qq] 群发送失败(第{attempt}次): {type(e).__name__}: {e}", flush=True)
+            diag_log("agent.adapters.qq.send_group", e)
+            _log.warning("[qq] 群发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)
+            if attempt == 2 or not _qq_is_transient(e):
+                return False
+            await asyncio.sleep(0.5)
     return False
 
 
@@ -690,13 +766,19 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
             await _qq_request(channel_id, "POST", f"/v2/users/{openid}/messages", json_body=msg_body)
             return True
         except Exception as e:
-            s = str(e)
-            print(f"[qq] 发文件失败(第{attempt}次): {type(e).__name__}: {e}", flush=True)
+            diag_log("agent.adapters.qq.send_file", e)
+            _log.warning("[qq] 发文件失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             # token 失效才重建缓存；inner proxy 等抖动直接重试
-            if "token" in s.lower() or "code: 401" in s or "status=401" in s:
+            if isinstance(e, QQAPIError) and e.status == 401:
                 _send_tokens.pop(channel_id, None)
-            if attempt < 4:
+            elif "token" in str(e).lower():
+                _send_tokens.pop(channel_id, None)
+            # 上传/发送都不是幂等操作（重复上传浪费、重复发送会造成重复文件消息）；
+            # 只对判定为瞬时的失败继续重试，4xx 等永久错误立即放弃（P2-b §1/§4-A）。
+            if attempt < 4 and _qq_is_transient(e):
                 await asyncio.sleep(0.6 * attempt)
+            else:
+                return False
     return False
 
 

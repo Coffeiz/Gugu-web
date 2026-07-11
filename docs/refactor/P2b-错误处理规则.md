@@ -4,6 +4,13 @@
 > 供后续按链路逐个收债时对照。**先立规则、再改代码**——本文档不含代码改动。
 > 原则底线（沿用计划）：**不搞「所有 except 必须写日志」**（噪声）；按类别决定日志/重试/可见性。
 > 关联：[[gugu-tool-error-redaction]]、[[gugu-p2-refactor-plan]] 步骤 5；脱敏机制见 docs/security/安全-工具错误信息脱敏.md。
+>
+> **落地状态（2026-07-11）**：§7 收债顺序 6 步全部完成——`app/core/errors.py`/`app/core/redaction.py`
+> 地基已建；dispatch（`agent/tools/base.py`）与 `agent/core.py` 主循环边界已改双出口；
+> storage/voice/web 三处外部 I/O 已套模板 A；qq/wechat/feishu 三个 IM 适配器已按 §5/§6 修完
+> 响应体脱敏、过宽 except 收窄、盲重试分类。不是「287 处 except 全部逐个处理完」（§8 明确不做），
+> 是按本文档定的规则和收债顺序，把最高风险的链路（工具边界、LLM 主循环、外部 I/O、三个 IM
+> 适配器）过了一遍；其余零散 except 仍按本规则的三分类口径，后续增量收敛。
 
 ## 0. 现状一句话
 
