@@ -89,6 +89,8 @@
     "src/views/Dashboard/components/CalendarPanel.vue",
     "src/views/Dashboard/components/FilePanel.vue",
     "src/views/Dashboard/components/ProjectList.vue",
-    "src/views/Files/UploadModal.vue"
+    "src/views/Files/UploadModal.vue",
+    "src/views/Admin/Login.vue",
+    "src/views/DevOnboarding.vue"
   ]
 }
