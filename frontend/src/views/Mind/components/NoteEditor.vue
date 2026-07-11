@@ -86,18 +86,29 @@
       <span class="ne-toolbar-actions"><slot name="foot-actions" /></span>
     </div>
 
-    <!-- `@` 引用补全下拉：跟随光标定位 -->
-    <div v-if="picker.open" class="ne-picker" :style="{ left: picker.x + 'px', top: picker.y + 'px' }">
-      <div v-if="loading" class="ne-pick-empty">搜索中…</div>
-      <div v-else-if="!items.length" class="ne-pick-empty">没找到「{{ picker.query }}」</div>
-      <button v-for="(it, i) in items" :key="it.type + it.id"
-              class="ne-pick-item" :class="{ on: i === active }"
-              @mousedown.prevent="choose(it)">
-        <span class="ne-pick-type">{{ TYPE_LABEL[it.type] }}</span>
-        <span class="ne-pick-label">{{ it.label }}</span>
-        <span v-if="it.subtitle" class="ne-pick-sub">{{ it.subtitle }}</span>
-      </button>
-    </div>
+    <!-- `@` 引用补全下拉：跟随光标定位。Teleport 到 body + fixed 定位——便签卡是
+         overflow:hidden 的容器，下拉贴着卡片底部时会被提前裁掉一截，脱出去按视口坐标
+         定位就不受卡片裁切影响了。样式跟顶栏 GlobalSearch.vue 的结果面板同一套语言
+         （图标+文字、按类型分组），不同类型分开一段，一眼能看出是项目/文件/活动/对话。 -->
+    <Teleport to="body">
+      <div v-if="picker.open" class="ne-picker" :style="{ left: picker.x + 'px', top: picker.y + 'px' }">
+        <div v-if="loading" class="ne-pick-empty">搜索中…</div>
+        <div v-else-if="!items.length" class="ne-pick-empty">没找到「{{ picker.query }}」</div>
+        <template v-for="g in groupedItems" :key="g.type">
+          <div class="ne-pick-group-label">
+            <component :is="TYPE_ICON[g.type]" :size="11" weight="bold" />
+            {{ TYPE_LABEL[g.type] }}
+          </div>
+          <button v-for="e in g.entries" :key="g.type + e.it.id"
+                  class="ne-pick-item" :class="{ on: e.idx === active }"
+                  @mousedown.prevent="choose(e.it)">
+            <component :is="TYPE_ICON[g.type]" class="ne-pick-icon" :size="14" weight="bold" />
+            <span class="ne-pick-label">{{ e.it.label }}</span>
+            <span v-if="e.it.subtitle" class="ne-pick-sub">{{ e.it.subtitle }}</span>
+          </button>
+        </template>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -107,6 +118,7 @@ import { EditorContent, useEditor } from '@tiptap/vue-3'
 import {
   PhCheckSquare, PhCode, PhCodeBlock, PhLink, PhListBullets, PhListNumbers,
   PhMinus, PhPlus, PhQuotes, PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
+  PhStack, PhFile, PhCalendarBlank, PhChatCircle,
 } from '@phosphor-icons/vue'
 import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/useMindEditor'
 import { useMindObjectPicker } from '@/composables/useMindObjectPicker'
@@ -127,10 +139,27 @@ const emit = defineEmits<{
   (e: 'submit'): void
 }>()
 
-const TYPE_LABEL: Record<string, string> = { project: '项目', file: '文件', event: '活动' }
+const TYPE_LABEL: Record<string, string> = { project: '项目', file: '文件', event: '活动', conversation: '对话' }
+// 跟顶栏 GlobalSearch.vue 的 TYPE_ICON 同一套图标（项目=PhStack、文件=PhFile、
+// 活动=PhCalendarBlank、对话=PhChatCircle），下拉长得像同一个系统里的东西。
+const TYPE_ICON: Record<MindRefSuggestItem['type'], typeof PhStack> = { project: PhStack, file: PhFile, event: PhCalendarBlank, conversation: PhChatCircle }
 
 const { items, loading, active, search, reset, move } = useMindObjectPicker()
 const picker = reactive({ open: false, query: '', from: 0, to: 0, x: 0, y: 0 })
+
+// 按类型分组展示（不同类型分开一段，跟 GlobalSearch 的结果面板一样）；items 本身已经是
+// 后端按 project→file→event→conversation 顺序拼好的，同类型天然连续，这里只是分段渲染，
+// entries 里带上 flat 下标 idx，方便跟 active（键盘上下选中）对上号。
+const groupedItems = computed(() => {
+  const groups: { type: MindRefSuggestItem['type']; entries: { it: MindRefSuggestItem; idx: number }[] }[] = []
+  const byType = new Map<string, (typeof groups)[number]>()
+  items.value.forEach((it, idx) => {
+    let g = byType.get(it.type)
+    if (!g) { g = { type: it.type, entries: [] }; byType.set(it.type, g); groups.push(g) }
+    g.entries.push({ it, idx })
+  })
+  return groups
+})
 
 /** 光标前找 `@关键词`。防误触两条：`@` 前必须是行首或空白（挡住邮箱地址）；
  *  关键词不含空白/再一个 @（对象名带空格的场景靠前缀就能搜到，比误触发划算）。 */
@@ -158,10 +187,11 @@ function syncPicker(ed: any) {
   picker.query = t.query
   picker.from = t.from
   picker.to = t.to
-  // 把下拉挂到光标底下（coordsAtPos 给的是视口坐标，减去容器偏移）
-  const box = ed.view.dom.closest('.note-editor')?.getBoundingClientRect()
+  // 下拉 Teleport 到了 body（脱出便签卡的 overflow:hidden 裁切），直接用 coordsAtPos
+  // 给的视口坐标定位，不用再减容器偏移。
   const caret = ed.view.coordsAtPos(t.from)
-  if (box) { picker.x = caret.left - box.left; picker.y = caret.bottom - box.top + 4 }
+  picker.x = caret.left
+  picker.y = caret.bottom + 4
   search(t.query)
 }
 
@@ -363,6 +393,11 @@ function focusAtLineUnit(unitIdx: number) {
     return false
   })
   ed.commands.focus(target ?? 'end')
+  // 从只读态点进编辑态这一刻，卡片高度动画（NoteCard.vue）还没跑完，编辑器这时候量到的
+  // coordsAtPos 可能是旧布局下的坐标（比如卡片还锁着收起前的高度）——如果光标落点后面
+  // 恰好跟着字面 `@xxx`（没真正选过、不是引用节点）会顺带触发下拉，位置就可能算错，
+  // 飘到页面左上角。等浏览器画完这一帧布局稳定了，再照当前光标位置强制重新算一次。
+  requestAnimationFrame(() => { if (editor.value) syncPicker(editor.value) })
 }
 
 defineExpose({
@@ -406,7 +441,7 @@ onBeforeUnmount(() => {
 
 /* `@` 补全下拉 */
 .ne-picker {
-  position: absolute; z-index: 30; min-width: 220px; max-width: 320px;
+  position: fixed; z-index: 3000; min-width: 220px; max-width: 320px;
   padding: 4px; border-radius: 10px;
   background: rgba(255,255,255,0.96);
   border: 1px solid rgba(255,255,255,0.9);
@@ -414,6 +449,12 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(10px);
 }
 .ne-pick-empty { padding: 8px 10px; font-size: 12px; color: var(--text-secondary); }
+/* 分组标题 + 图标行，跟顶栏 GlobalSearch.vue 的 .gs-group-label/.gs-item 同一套视觉语言 */
+.ne-pick-group-label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600; color: var(--text-secondary);
+  padding: 7px 8px 4px;
+}
 .ne-pick-item {
   display: flex; align-items: center; gap: 7px; width: 100%;
   padding: 6px 8px; border: none; border-radius: 7px;
@@ -421,11 +462,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-sans);
 }
 .ne-pick-item:hover, .ne-pick-item.on { background: rgba(123,127,178,0.12); }
-.ne-pick-type {
-  flex-shrink: 0; font-size: 9px; font-weight: 700; line-height: 15px;
-  padding: 0 4px; border-radius: 4px;
-  background: rgba(123,127,178,0.16); color: var(--color-primary);
-}
+.ne-pick-icon { flex-shrink: 0; color: var(--color-primary); }
 .ne-pick-label { font-size: 12.5px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ne-pick-sub { margin-left: auto; font-size: 10.5px; color: var(--text-secondary); opacity: 0.7; white-space: nowrap; }
 

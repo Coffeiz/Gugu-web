@@ -127,11 +127,15 @@ watch([draftTitle, draftBody], () => { if (props.editing) scheduleSave() })
 
 /** 点卡片外面：先补一次保存，再退出编辑态（不再是「取消」，没有可丢弃的东西）。
  *  NoteEditor 的「样式」「插入」抽屉现在是原地展开、卡片的真实 DOM 后代（不再 Teleport
- *  到 body 了），点里面的按钮天然会被 cardRef.contains() 认成"没点外面"，不用再单独放行。 */
+ *  到 body 了），点里面的按钮天然会被 cardRef.contains() 认成"没点外面"，不用再单独放行。
+ *  `@` 引用补全下拉是例外——它 Teleport 到了 body（挂在便签卡的 overflow:hidden 之外，
+ *  避免被卡片边界裁掉），点它天然不在 cardRef 内，得单独放行，不然点下拉选项那一刻会先
+ *  被这里判成"点外面"触发 finishEditing/editor 卸载，choose() 再执行时 editor.value 已经
+ *  是 null（踩过：TypeError: Cannot read properties of null (reading 'chain')）。 */
 function onDocDown(e: MouseEvent) {
   if (!props.editing) return
   const t = e.target as HTMLElement
-  if (cardRef.value?.contains(t)) return
+  if (cardRef.value?.contains(t) || t.closest('.ne-picker')) return
   finishEditing()
 }
 // finishEditing 已经同步 flush 过一次；emit('close') 会让 editing 变 false 反过来触发下面

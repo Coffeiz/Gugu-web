@@ -224,9 +224,5 @@
   transition: background 0.12s;
 }
 .mind-ref:hover { background: rgba(123,127,178,0.26); }
-/* 类型徽标：跟 NoteEditor.vue 补全下拉的 .ne-pick-type 同一套视觉语言 */
-.mind-ref-type {
-  flex-shrink: 0; font-size: 9px; font-weight: 700; line-height: 15px;
-  padding: 0 4px; border-radius: 4px;
-  background: rgba(123,127,178,0.16); color: var(--color-primary);
-}
+/* 类型图标：不用文字徽标了，跟 GlobalSearch.vue/NoteEditor.vue 下拉的图标同一套颜色语言 */
+.mind-ref-icon { flex-shrink: 0; color: var(--color-primary); }

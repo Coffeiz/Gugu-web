@@ -7,7 +7,7 @@
 共用——路由给下拉框用小 per_type，工具给模型用更大的 per_type，避免各写一套。
 """
 from fastapi import APIRouter, Depends
-from sqlalchemy import or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -42,6 +42,16 @@ def _snippet(text: str, q: str) -> str:
     return ("…" if start > 0 else "") + seg + ("…" if end < len(text) else "")
 
 
+def _primary_rank(column, q: str):
+    """名称精确/前缀命中优先于纯子串命中；只用标准 SQL，SQLite 测试也保持一致。"""
+    normalized = q.lower()
+    return case(
+        (func.lower(column) == normalized, 0),
+        (func.lower(column).like(f"{normalized}%"), 1),
+        else_=2,
+    )
+
+
 async def run_global_search(db: AsyncSession, user_id, q: str, *,
                             per_type: int = PER_TYPE, types: list[str] | None = None) -> dict:
     """跨类型子串搜索核心逻辑。`types` 不传则搜全部，传了只搜指定类型
@@ -62,7 +72,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 Project.user_id == uid,
                 or_(Project.name.ilike(like), Project.client.ilike(like),
                     Project.current_stage.ilike(like)),
-            ).order_by(Project.updated_at.desc()).limit(per_type)
+            ).order_by(_primary_rank(Project.name, q), Project.updated_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {p.id for p in rows}
@@ -90,7 +100,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
             select(File).where(
                 File.user_id == uid, File.deleted_at.is_(None),
                 or_(File.display_name.ilike(like), File.ext.ilike(like)),
-            ).order_by(File.updated_at.desc()).limit(per_type)
+            ).order_by(_primary_rank(File.display_name, q), File.updated_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {f.id for f in rows}
@@ -115,7 +125,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
     if wanted is None or "folder" in wanted:
         rows = list((await db.execute(
             select(Folder).where(Folder.user_id == uid, Folder.name.ilike(like))
-            .order_by(Folder.created_at.desc()).limit(per_type)
+            .order_by(_primary_rank(Folder.name, q), Folder.created_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {fo.id for fo in rows}
@@ -140,7 +150,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 CalendarEvent.user_id == uid,
                 or_(CalendarEvent.title.ilike(like), CalendarEvent.description.ilike(like),
                     CalendarEvent.client.ilike(like)),
-            ).order_by(CalendarEvent.date.desc()).limit(per_type)
+            ).order_by(_primary_rank(CalendarEvent.title, q), CalendarEvent.date.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {e.id for e in rows}
@@ -170,7 +180,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 or_(Client.name.ilike(like), Client.contact.ilike(like),
                     Client.email.ilike(like), Client.phone.ilike(like),
                     Client.notes.ilike(like)),
-            ).order_by(Client.created_at.desc()).limit(per_type)
+            ).order_by(_primary_rank(Client.name, q), Client.created_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {c.id for c in rows}
@@ -202,7 +212,15 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 MindNode.kind == "note",
                 MindNode.deleted_at.is_(None),
                 or_(MindNode.title.ilike(like), MindNode.content_plain.ilike(like)),
-            ).order_by(MindNode.captured_at.desc()).limit(per_type)
+            ).order_by(
+                case(
+                    (func.lower(MindNode.title) == q.lower(), 0),
+                    (func.lower(MindNode.title).like(f"{q.lower()}%"), 1),
+                    (MindNode.title.ilike(like), 2),
+                    else_=3,  # 只在正文命中：保留，但排在标题命中之后
+                ),
+                MindNode.captured_at.desc(),
+            ).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {n.id for n in rows}
@@ -232,7 +250,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
         title_rows = (await db.execute(
             select(ConversationSession).where(
                 ConversationSession.user_id == uid, ConversationSession.title.ilike(like),
-            ).order_by(ConversationSession.updated_at.desc()).limit(per_type)
+            ).order_by(_primary_rank(ConversationSession.title, q), ConversationSession.updated_at.desc()).limit(per_type)
         )).scalars().all()
         for s in title_rows:
             conv[s.id] = {"id": s.id, "title": s.title, "subtitle": "对话"}

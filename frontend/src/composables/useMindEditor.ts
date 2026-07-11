@@ -44,8 +44,21 @@ const lowlight = createLowlight(all)
 /** 与后端 `app/core/mind.py` 的 REF_PATTERN 保持一致 */
 export const MIND_REF_RE = /\[\[([a-z_]+):(\d+)\|([^\]]*)\]\]/
 
-/** 引用 chip 的类型徽标文案，跟 NoteEditor.vue 补全下拉的 TYPE_LABEL 是同一套 */
-export const MIND_REF_TYPE_LABEL: Record<string, string> = { project: '项目', file: '文件', event: '活动' }
+/** 引用 chip 的类型文案（无障碍 title/下拉分组标题用），跟 NoteEditor.vue 补全下拉的
+ *  TYPE_LABEL、顶栏 GlobalSearch.vue 的分组标题是同一套。 */
+export const MIND_REF_TYPE_LABEL: Record<string, string> = { project: '项目', file: '文件', event: '活动', conversation: '对话' }
+
+/** chip 上的类型图标用纯 SVG path（跟 GlobalSearch.vue／NoteEditor.vue 下拉用的
+ *  @phosphor-icons/vue 图标是同一批：PhStack/PhFile/PhCalendarBlank/PhChatCircle，bold
+ *  权重），因为 chip 要同时给 TipTap 的 renderHTML（DOMOutputSpec）和只读预览的纯字符串
+ *  HTML（inlineToHtml）用，这两处都拿不到 Vue 组件，只能画原始 SVG。 */
+export const MIND_REF_TYPE_ICON_PATH: Record<string, string> = {
+  project: 'M234.36,170A12,12,0,0,1,230,186.37l-96,56a12,12,0,0,1-12.1,0l-96-56a12,12,0,0,1,12.09-20.74l90,52.48L218,165.63A12,12,0,0,1,234.36,170ZM218,117.63,128,170.11,38.05,117.63A12,12,0,0,0,26,138.37l96,56a12,12,0,0,0,12.1,0l96-56A12,12,0,0,0,218,117.63ZM20,80a12,12,0,0,1,6-10.37l96-56a12.06,12.06,0,0,1,12.1,0l96,56a12,12,0,0,1,0,20.74l-96,56a12,12,0,0,1-12.1,0l-96-56A12,12,0,0,1,20,80Zm35.82,0L128,122.11,200.18,80,128,37.89Z',
+  file: 'M216.49,79.52l-56-56A12,12,0,0,0,152,20H56A20,20,0,0,0,36,40V216a20,20,0,0,0,20,20H200a20,20,0,0,0,20-20V88A12,12,0,0,0,216.49,79.52ZM160,57l23,23H160ZM60,212V44h76V92a12,12,0,0,0,12,12h48V212Z',
+  event: 'M208,28H188V24a12,12,0,0,0-24,0v4H92V24a12,12,0,0,0-24,0v4H48A20,20,0,0,0,28,48V208a20,20,0,0,0,20,20H208a20,20,0,0,0,20-20V48A20,20,0,0,0,208,28ZM68,52a12,12,0,0,0,24,0h72a12,12,0,0,0,24,0h16V76H52V52ZM52,204V100H204V204Z',
+  conversation: 'M128,20A108,108,0,0,0,31.85,177.23L21,209.66A20,20,0,0,0,46.34,235l32.43-10.81A108,108,0,1,0,128,20Zm0,192a84,84,0,0,1-42.06-11.27,12,12,0,0,0-6-1.62,12.1,12.1,0,0,0-3.8.62l-29.79,9.93,9.93-29.79a12,12,0,0,0-1-9.81A84,84,0,1,1,128,212Z',
+}
+const SVG_NS = 'http://www.w3.org/2000/svg'
 
 /** TipTap 的 JSON 文档节点（只用到我们支持的这几种，不引 tiptap 的类型免得耦合） */
 export interface MindDocNode {
@@ -76,12 +89,20 @@ export const MindRef = Node.create({
   },
 
   renderHTML({ HTMLAttributes, node }) {
+    const t = node.attrs.refType
+    // 命名空间前缀 "svg 标签名"：ProseMirror 的 DOMOutputSpec 靠这个格式识别要用
+    // createElementNS 建 SVG 元素，不然普通 createElement 建出来的 <svg>/<path> 不会渲染。
     return ['span', mergeAttributes(HTMLAttributes, {
       'data-mind-ref': '',
-      'data-ref-type': node.attrs.refType,
+      'data-ref-type': t,
       'data-ref-id': String(node.attrs.refId),
       class: 'mind-ref',
-    }), ['span', { class: 'mind-ref-type' }, MIND_REF_TYPE_LABEL[node.attrs.refType] ?? node.attrs.refType], node.attrs.label]
+      title: MIND_REF_TYPE_LABEL[t] ?? t,
+    }),
+      [`${SVG_NS} svg`, { viewBox: '0 0 256 256', width: '12', height: '12', fill: 'currentColor', class: 'mind-ref-icon' },
+        [`${SVG_NS} path`, { d: MIND_REF_TYPE_ICON_PATH[t] ?? '' }]],
+      node.attrs.label,
+    ]
   },
 })
 
@@ -459,7 +480,11 @@ function inlineToHtml(text: string): string {
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) out.push(marksToHtml(text.slice(last, m.index)))
-    out.push(`<span class="mind-ref" data-ref-type="${m[1]}" data-ref-id="${m[2]}"><span class="mind-ref-type">${esc(MIND_REF_TYPE_LABEL[m[1]] ?? m[1])}</span>${esc(m[3])}</span>`)
+    out.push(
+      `<span class="mind-ref" data-ref-type="${m[1]}" data-ref-id="${m[2]}" title="${esc(MIND_REF_TYPE_LABEL[m[1]] ?? m[1])}">` +
+      `<svg viewBox="0 0 256 256" width="12" height="12" fill="currentColor" class="mind-ref-icon"><path d="${MIND_REF_TYPE_ICON_PATH[m[1]] ?? ''}"/></svg>` +
+      `${esc(m[3])}</span>`,
+    )
     last = m.index + m[0].length
   }
   if (last < text.length) out.push(marksToHtml(text.slice(last)))

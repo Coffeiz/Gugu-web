@@ -9,7 +9,7 @@
         :style="tickSlotStyle(tick.index)"
       >
         <span class="dsb-bar" :style="tickBarStyle(tick.index)"></span>
-        <span class="dsb-tip" :style="tickTipStyle(tick.index)">{{ fmtLabel(tick.group.date) }}</span>
+        <span class="dsb-tip" :class="{ 'no-transition': dragging }" :style="tickTipStyle(tick.index)">{{ fmtLabel(tick.group.date) }}</span>
       </button>
     </div>
   </div>
@@ -129,11 +129,26 @@ function tickFocus(i: number) {
   const d = Math.abs(i - currentFrac.value)
   const base = Math.exp(-d * d * 1.7)
   if (hoverActive.value && i === hoverIdx.value) return 1
-  // 拖到边缘之外的橡皮筋区域时，边界日期的长条/文字保持常显，不随拖动距离继续衰减。
+  // 拖到边缘之外的橡皮筋区域时，边界日期先按"常显"打底，长条/文字再各自叠加橡皮筋衰减
+  // （见 overshootPull + tickBarStyle/tickTipStyle），不随拖动距离继续按中心距离公式衰减。
   const last = props.groups.length - 1
   if (currentFrac.value < 0 && i === 0) return 1
   if (currentFrac.value > last && i === last) return 1
   return base
+}
+/** 拖进边缘外橡皮筋区域的"拉出程度"（0~1），只有边界那一格非零。 */
+function overshootPull(i: number): number {
+  const last = props.groups.length - 1
+  const overshoot = currentFrac.value < 0 && i === 0 ? -currentFrac.value
+    : currentFrac.value > last && i === last ? currentFrac.value - last
+    : 0
+  return overshoot > 0 ? Math.min(1, overshoot / 0.75) : 0
+}
+/** 橡皮筋区域里长条/文字统一按这个衰减：拉得越远越淡越短，幅度不大（floor 0.55），
+ *  文字用同一个值才能让文字视觉上"跟着"长条一起变淡变短，不是各算各的。 */
+function rubberFocus(i: number, base: number): number {
+  const pull = overshootPull(i)
+  return pull > 0 ? Math.max(0.55, base - pull * 0.35) : base
 }
 /** 悬停到别的日期时，原选中日的长条继续保留，只隐藏它的文字，避免离得近时两个日期文字重叠。 */
 function tipHiddenByHover(i: number) {
@@ -176,7 +191,8 @@ function onLeave() {
   hoverActive.value = false
 }
 function tickBarStyle(i: number) {
-  const focus = tickFocus(i)
+  // 拖进边缘外的橡皮筋区域：长条随拉出距离变短变半透明（物理阻力感），拉得越远越明显。
+  const focus = rubberFocus(i, tickFocus(i))
   return {
     height: `${10 + focus * 12}px`,
     width: `${3 + focus * 1.5}px`,
@@ -184,12 +200,20 @@ function tickBarStyle(i: number) {
   }
 }
 function tickTipStyle(i: number) {
-  const focus = tickFocus(i)
+  // 橡皮筋区域里文字跟长条用同一个 focus，视觉上一起变淡；長條变短多少，文字也跟着往上贴多少
+  // （12 是长条高度的最大伸缩量 10~22px），不再脱节地悬在原地。
+  const focus = rubberFocus(i, tickFocus(i))
+  const pull = overshootPull(i)
   // 真的在切换到不同日期时，弹簧回中过程中先不露文字，等落定了再显示；
   // 如果回弹的目标本来就是已选中的日期（比如在边缘橡皮筋松手），文字不该跟着隐藏又淡入。
-  const opacity = (animating.value && switchingAnim.value) || tipHiddenByHover(i) ? 0 : Math.max(0, (focus - 0.38) / 0.62)
+  // 橡皮筋区域里文字透明度跟长条背景用同一套公式（0.25+focus*0.75），观感才是同一个东西在变淡，
+  // 不是原来那套"离中心越远掉得越快"的归一化公式（那套在橡皮筋区间会把文字压得比长条淡太多）。
+  const opacity = (animating.value && switchingAnim.value) || tipHiddenByHover(i) ? 0
+    : pull > 0 ? 0.25 + focus * 0.75
+    : Math.max(0, (focus - 0.38) / 0.62)
   return {
     opacity: `${opacity}`,
+    top: pull > 0 ? `calc(100% - ${(1 - focus) * 12}px)` : '',
     color: focus > 0.82 ? '#5a5e86' : 'var(--text-secondary)',
     fontWeight: focus > 0.82 ? '600' : '400',
   }
@@ -357,4 +381,8 @@ function fmtLabel(iso: string) {
   color: var(--text-secondary); opacity: 0; pointer-events: none;
   transition: opacity 0.15s ease;
 }
+/* 拖动中（含橡皮筋区域）透明度已经由 JS 逐帧算出、跟手指位置同步变化——这层 CSS 过渡
+   只会在这之上叠一段延迟，让文字看起来"滞后于长条"、跟位置脱节。悬停淡入淡出/切换
+   动画的隐藏再淡入这些是离散的状态跳变，才需要这条过渡，拖动时关掉它。 */
+.dsb-tip.no-transition { transition: none; }
 </style>

@@ -81,7 +81,9 @@ const viewportRef = ref<HTMLElement | null>(null)
 const selectedItemId = ref<number | null>(null)
 const pickerOpen = ref(false)
 const refQuery = ref('')
-const refResults = ref<MindRefSuggestItem[]>([])
+// 画布图层节点目前只接项目/文件/活动（不含对话，见下面 refQuery 的 watch）
+type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
+const refResults = ref<CanvasRefItem[]>([])
 const connectingNodeId = ref<number | null>(null)
 const camera = reactive({ x: 0, y: 0, scale: 1 })
 const activeCanvasId = computed(() => store.activeCanvasId)
@@ -113,7 +115,11 @@ watch(() => route.params.id, async () => {
 })
 watch(refQuery, async (query) => {
   const value = query.trim()
-  refResults.value = value ? await mindApi.refSuggest(value) : []
+  // ref-suggest 现在也搜对话（笔记 @ 引用用），画布这边的图层节点还不支持接对话，先按
+  // 项目/文件/活动过滤掉，不然会出现选了却建不出节点的选项。
+  refResults.value = value
+    ? (await mindApi.refSuggest(value)).filter((it): it is CanvasRefItem => it.type !== 'conversation')
+    : []
 })
 
 async function ensureCanvas() {
@@ -181,7 +187,7 @@ async function createCanvasNote() {
   const item = await store.createCanvasNote(activeCanvasId.value, { x, y, title: '新便签' })
   selectedItemId.value = item.id
 }
-async function addRef(refItem: MindRefSuggestItem) {
+async function addRef(refItem: CanvasRefItem) {
   const viewport = viewportRef.value
   if (!viewport || activeCanvasId.value == null) return
   const x = (viewport.clientWidth / 2 - camera.x) / camera.scale - 122
@@ -191,7 +197,7 @@ async function addRef(refItem: MindRefSuggestItem) {
   pickerOpen.value = false
   refQuery.value = ''
 }
-function refTypeLabel(type: MindRefSuggestItem['type']) {
+function refTypeLabel(type: CanvasRefItem['type']) {
   return ({ project: '项目', file: '文件', event: '活动' }[type])
 }
 async function saveCanvasNote(fields: { title: string; contentMd: string }) {

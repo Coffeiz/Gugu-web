@@ -10,6 +10,8 @@
         placeholder="搜索项目、文件、日程、客户…"
         @focus="onFocus"
         @input="onInput"
+        @compositionstart="composing = true"
+        @compositionend="onCompositionEnd"
         @keydown.esc="close"
       />
       <button v-if="q" class="gs-clear" @click="clear" title="清除">
@@ -100,15 +102,24 @@ function updatePanelPos() {
 
 let timer: ReturnType<typeof setTimeout> | null = null
 let reqSeq = 0   // 防抖 + 防乱序：只认最后一次请求的结果
+let composing = false
+const SEARCH_DEBOUNCE_MS = 120
 
 function onInput() {
+  // 中文输入法组合拼音时，input 也会连续触发；等候选字确认后再搜，避免无意义请求。
+  if (composing) return
   open.value = true
   updatePanelPos()
   clearTimeout(timer ?? undefined)
   const text = q.value.trim()
   if (!text) { groups.value = []; total.value = 0; loading.value = false; return }
   loading.value = true
-  timer = setTimeout(() => runSearch(text), 250)
+  timer = setTimeout(() => runSearch(text), SEARCH_DEBOUNCE_MS)
+}
+
+function onCompositionEnd() {
+  composing = false
+  onInput()
 }
 
 async function runSearch(text: string) {

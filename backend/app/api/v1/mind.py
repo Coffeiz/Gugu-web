@@ -32,8 +32,8 @@ from app.schemas import (
 
 router = APIRouter(prefix="/mind", tags=["mind"])
 
-# `[[` 补全只在这三类里找：项目 / 文件 / 日历活动（客户、对话不作为便签引用对象）
-_REF_TYPES = ["project", "file", "event"]
+# `[[` 补全在这四类里找：项目 / 文件 / 日历活动 / 对话（客户不作为便签引用对象）
+_REF_TYPES = ["project", "file", "event", "conversation"]
 
 
 def _to_resp(n: MindNode) -> MindNodeResponse:
