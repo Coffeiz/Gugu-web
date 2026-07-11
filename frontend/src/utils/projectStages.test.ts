@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   autoCompleteTodos, restoreTodos, toggleTodoDone,
-  nextStatus, stageProgressByIndex, normalizeStages, canAutoAdvance,
+  nextStatus, stageProgressByIndex, normalizeStages, firstIncompleteStageIdx,
 } from './projectStages'
 import type { ProjectTodo } from '@/types/project'
 
@@ -118,31 +118,25 @@ describe('normalizeStages — 规范化', () => {
   })
 })
 
-
-describe('canAutoAdvance — 推进需前置阶段全完成', () => {
+describe('firstIncompleteStageIdx — 当前应处于的阶段 = 第一个未完成阶段', () => {
   const stage = (todos: Partial<ProjectTodo>[]) => ({ key: 'k', label: 'L', todos: todos.map((t, i) => td({ id: 'i' + i, ...t })) })
-  it('当前阶段完成 + 前面阶段也完成 → 可推进', () => {
+  it('阶段1、2完成，阶段3未完成 → 落在阶段3（跳过已完成的中间阶段）', () => {
     const stages = [stage([{ done: true }]), stage([{ done: true }]), stage([{ done: false }])]
-    expect(canAutoAdvance(stages, 1)).toBe(true)
+    expect(firstIncompleteStageIdx(stages)).toBe(2)
   })
-  it('当前阶段完成但**前面阶段有未完成** → 不推进（本次修复的核心）', () => {
-    const stages = [stage([{ done: false }]), stage([{ done: true }]), stage([{ done: false }])]
-    expect(canAutoAdvance(stages, 1)).toBe(false)
+  it('阶段1未完成、阶段2完成 → 落在阶段1（第一个未完成，在前面）', () => {
+    const stages = [stage([{ done: false }]), stage([{ done: true }])]
+    expect(firstIncompleteStageIdx(stages)).toBe(0)
   })
-  it('当前阶段未全完成 → 不推进', () => {
-    const stages = [stage([{ done: true }]), stage([{ done: true }, { done: false }])]
-    expect(canAutoAdvance(stages, 1)).toBe(false)
-  })
-  it('当前是最后一个阶段 → 不推进', () => {
+  it('全部完成 → 落在最后一个阶段', () => {
     const stages = [stage([{ done: true }]), stage([{ done: true }])]
-    expect(canAutoAdvance(stages, 1)).toBe(false)
+    expect(firstIncompleteStageIdx(stages)).toBe(1)
   })
-  it('当前阶段无待办 → 不推进（无「最后一个待办」触发点）', () => {
-    const stages = [stage([]), stage([{ done: true }])]
-    expect(canAutoAdvance(stages, 0)).toBe(false)
+  it('空阶段（无待办）视为完成、被跳过', () => {
+    const stages = [stage([{ done: true }]), stage([]), stage([{ done: false }])]
+    expect(firstIncompleteStageIdx(stages)).toBe(2)
   })
-  it('前面的空阶段不阻挡', () => {
-    const stages = [stage([]), stage([{ done: true }]), stage([{ done: false }])]
-    expect(canAutoAdvance(stages, 1)).toBe(true)
+  it('单阶段未完成 → 0', () => {
+    expect(firstIncompleteStageIdx([stage([{ done: false }])])).toBe(0)
   })
 })

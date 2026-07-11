@@ -173,7 +173,7 @@ import { fireHint } from '@/composables/useOnboarding'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
-import { canAutoAdvance } from '@/utils/projectStages'
+import { firstIncompleteStageIdx } from '@/utils/projectStages'
 
 const props = defineProps({ project: { type: Object as PropType<Project>, required: true } })
 const emit = defineEmits(['click'])
@@ -318,8 +318,10 @@ function toggleTodo(t: ProjectTodo) {
   // 勾完当前阶段最后一个待办 → 自动进入下一阶段（与项目编辑卡一致；空阶段 / 最后阶段不动）
   const stages = props.project.stages
   const idx = stages.findIndex(s => s.key === props.project.currentStage)
-  if (t.done && canAutoAdvance(stages, idx)) {
-    projectStore.setStage(props.project.id, stages[idx + 1].key, stageProgress.value)   // setStage 一并保存 stages + 推进
+  // 勾完后当前阶段推进到「第一个未完成阶段」（只前进）：跳过中间已完成的阶段，前置未完成时不动
+  const target = t.done ? firstIncompleteStageIdx(stages) : -1
+  if (target > idx) {
+    projectStore.setStage(props.project.id, stages[target].key, stageProgress.value)   // setStage 一并保存 stages + 推进
     fireHint('stage_switch')   // 新手引导：第一次推进阶段
   } else {
     persistTodos()

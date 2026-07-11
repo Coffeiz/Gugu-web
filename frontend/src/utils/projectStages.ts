@@ -44,16 +44,15 @@ export function nextStatus(status: ProjectStatus): ProjectStatus | null {
 }
 
 /**
- * 勾完当前阶段最后一个待办后，能否自动推进到下一阶段。要求：
- *   ① 不是最后一个阶段；② 当前阶段有待办且全部完成；
- *   ③ **前面所有阶段也全部完成**（空阶段视为完成）——避免跳过前面未完成的阶段直接前进。
- * 修复：此前 ProjectCard / ProjectModal 各自只判「当前阶段完成」，会在前置阶段未完成时误推进。
+ * 「当前应处于的阶段」= 第一个仍有未完成待办的阶段；全部完成则落在最后一个阶段。
+ * 空阶段（无待办）视为已完成、会被跳过。勾完待办后据此推进当前阶段：
+ * 调用方仅在返回值 > 现阶段时才前进（只前进、不回退），于是自然得到：
+ *   - 前面阶段还没完成时不会误推进（第一个未完成阶段在当前之前 → 不动）；
+ *   - 中间已完成的阶段会被跳过（如阶段2先完成、再补完阶段1，直接跳到阶段3）。
  */
-export function canAutoAdvance(stages: ProjectStage[], currIdx: number): boolean {
-  if (currIdx < 0 || currIdx >= stages.length - 1) return false
-  const cur = stages[currIdx]?.todos ?? []
-  if (cur.length === 0 || !cur.every(t => t.done)) return false
-  return stages.slice(0, currIdx).every(s => (s.todos ?? []).every(t => t.done))
+export function firstIncompleteStageIdx(stages: ProjectStage[]): number {
+  const i = stages.findIndex(s => (s.todos ?? []).some(t => !t.done))
+  return i === -1 ? stages.length - 1 : i
 }
 
 /** 按阶段位置算进度：(当前阶段序号 + 1) / 阶段数 * 100；越界或空阶段返回 0。 */
