@@ -54,6 +54,10 @@ const highlightId = ref<number | null>(null)
 let highlightTimer: ReturnType<typeof setTimeout> | null = null
 
 onMounted(() => { if (!store.loaded) store.fetchNotes() })
+// 进面板默认展开底部捕捉条，光标直接待输入——降低"想到就记"的操作成本，不用先点一下才能打字。
+// 复用 captureRef.expand()（跟 jumpTarget=今天且当天没记录时那条路径同一个方法），内部本来
+// 就会在展开后 focus 编辑器。
+onMounted(() => captureRef.value?.expand())
 
 // 咕咕/多端改了便签 → 重新拉（P3 后端才开始推 mind 资源，这里先接好）
 watch(() => liveStore.rev.mind, () => store.fetchNotes())
