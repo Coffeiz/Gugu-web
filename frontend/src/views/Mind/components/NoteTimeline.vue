@@ -143,6 +143,9 @@ defineExpose({ flagConflict: () => { conflict.value = true }, confirmEdit, stopE
   padding-top: 2px;
   padding-left: var(--timeline-left-gutter, calc(var(--sidebar-width) / 2 + 50vw - 220px));
   padding-right: var(--timeline-right-gutter, calc(var(--sidebar-width) + 50vw - 220px + 300px));
+  /* 拖到第一天/最后一天之外的橡皮筋超出量画在这个 transform 上（见 NotesView.vue 的
+     onColumnsPointerMove/onColumnsPointerUp）：拖动中 JS 直接赋值跟手，不走这条过渡；
+     松手后的回弹由 NotesView 的同一套阻尼弹簧逐帧驱动，不能在这里再叠一层 CSS 缓动。 */
 }
 
 /* 一天一块玻璃底板：轻玻璃（同定时任务面板 --glass-bg 0.25），hover 不提亮（底板不是交互件） */

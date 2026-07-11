@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   clampScrubberPosition, detentPosition, pitchAt, positionForIndex,
-  rubberBandPosition, slotOpacity, tickVisual,
+  elasticPosition, rubberBandPosition, slotOpacity, tickVisual,
 } from '@/views/Mind/utils/dateScrubberMath'
 
 describe('dateScrubberMath', () => {
@@ -10,6 +10,13 @@ describe('dateScrubberMath', () => {
     expect(clampScrubberPosition(8, 5)).toBe(4)
     expect(rubberBandPosition(-100, 5)).toBeGreaterThan(-0.7)
     expect(rubberBandPosition(100, 5)).toBeLessThan(4.7)
+  })
+
+  it('无边界橡皮筋持续移动，但越往外增量越小', () => {
+    const near = elasticPosition(-1, 5)
+    const far = elasticPosition(-10, 5)
+    expect(far).toBeLessThan(near)
+    expect(Math.abs(far - near)).toBeLessThan(9)
   })
 
   it('中心间距大于两侧，且位置随连续焦点连续变化', () => {

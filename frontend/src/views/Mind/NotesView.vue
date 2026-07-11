@@ -8,14 +8,17 @@
       <DateIndex :groups="indexGroups" :center-frac="centerFrac" @scrub="onScrub" @snap="onSnap" />
     </div>
 
-    <!-- 横置便签流：左侧是过往、右侧是后来的日期；列内竖滚翻当天 -->
-    <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel" @scroll="onScroll">
+    <!-- 横置便签流：左侧是过往、右侧是后来的日期；列内竖滚翻当天。
+         便签以外的玻璃卡空白区域可以直接左右拖动切日期，跟顶部日期滑杆手感一致
+         （见 onColumnsPointerDown 及以下三个函数）——原生 overflow-x:auto 只吃触控板横扫/
+         滚动条，鼠标点了拖并不会自己动，这段手感需要自己接。 -->
+    <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel" @scroll="onScroll" @pointerdown="onColumnsPointerDown">
       <div v-if="store.loading && !store.loaded" class="rec-loading">加载中…</div>
       <NoteTimeline
         v-else
         ref="timelineRef"
         :groups="timelineGroups"
-        :center-frac="centerFrac"
+        :center-frac="cardVisualCenterFrac"
         :highlight-id="highlightId"
         :filtered="!!store.filterQ.trim()"
         @save="onSave"
@@ -39,6 +42,7 @@ import { MindConflictError, useMindStore } from '@/stores/mind'
 import { toggleTaskInMd } from '@/composables/useMindEditor'
 import type { MindNote } from '@/services/api'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
+import { elasticPosition } from './utils/dateScrubberMath'
 import CaptureBar from './components/CaptureBar.vue'
 import DateIndex from './components/DateIndex.vue'
 import NoteTimeline from './components/NoteTimeline.vue'
@@ -74,6 +78,206 @@ function onWheel(e: WheelEvent) {
   e.preventDefault()
 }
 
+// ── 便签以外的玻璃卡空白区域拖动切日期：只接鼠标（触屏本来就有原生横滚手势，不用管）；
+// 点在便签本体上（.note-card，含它自己的标题/编辑/删除/勾选交互）一律放行，不抢它的点击。
+// 手感跟顶部日期滑杆一致：拖动期间 1:1 跟手，松手按速度带一点惯性再吸附到最近的日期列中心，
+// 复用同一套 followCardsTo 阻尼弹簧，不用另起一套缓动。
+let colDragging = false
+let colDragStartX = 0
+let colDragStartScrollLeft = 0
+let colDragVelocity = 0   // px/ms 指数滑动平均
+let colDragLastX = 0
+let colDragLastTime = 0
+let cardVisualReturnRaf = 0
+let cardRubberShift = 0
+let cardRubberReturning = false
+
+function onColumnsPointerDown(e: PointerEvent) {
+  if (e.pointerType !== 'mouse') return
+  if ((e.target as HTMLElement).closest('.note-card')) return
+  const root = scrollRef.value
+  if (!root) return
+  // 注意：这里不能 preventDefault()——pointerdown 阻止默认行为会连带抑制浏览器合成的
+  // mousedown 事件，NoteCard.vue 的 onDocDown（document 上的 mousedown 监听，判断"点了
+  // 卡外面就退出编辑"）就收不到这次点击了，编辑态点玻璃卡空白处会失效。文字选区改靠下面
+  // 的 user-select:none 挡，不需要 preventDefault 这把大锤子。
+  stopCardFollow()
+  if (cardVisualReturnRaf) cancelAnimationFrame(cardVisualReturnRaf)
+  cardVisualReturnRaf = 0
+  cardRubberReturning = false
+  cardRubberShift = 0
+  cardVisualCenterFrac.value = centerFrac.value
+  colDragging = true
+  colDragStartX = e.clientX
+  colDragStartScrollLeft = root.scrollLeft
+  colDragVelocity = 0
+  colDragLastX = e.clientX
+  colDragLastTime = performance.now()
+  root.setPointerCapture(e.pointerId)
+  // 拖动过程中橡皮筋 transform 逐帧手动赋值、要立即跟手；CSS 的回弹过渡只在松手那一下要，
+  // 拖着的时候关掉，不然每帧的新 transform 都会被那 0.2s 过渡追着跑，手感变粘滞。
+  const cols0 = timelineColsEl()
+  if (cols0) cols0.style.transition = 'none'
+  // 拖动期间禁掉整页的文字选取——单单挡住 pointerdown 的默认行为不够，鼠标按下不动之后
+  // 再小幅移动，部分浏览器仍会把它判成拖选文字（尤其经过便签正文这类可选文本时）。
+  document.body.style.userSelect = 'none'
+  window.addEventListener('pointermove', onColumnsPointerMove)
+  window.addEventListener('pointerup', onColumnsPointerUp)
+}
+/** 拖过第一天/最后一天后的橡皮筋：scrollLeft 会被浏览器夹在 [0,max]，因此将越界距离
+ * 映射为无硬边界的对数位移和虚拟中心。虚拟中心只继续驱动原有的左右景深曲线，并不另加
+ * 一套橡皮筋缩放规则。 */
+const CARD_DRAG_RATIO = 0.45 // 与 DateIndex.vue 完全一致：鼠标移动不会 1:1 推动日期位置
+const CARD_RUBBER_RESPONSE = 0.45 // 对数曲线初段响应：更早变重，越往外增量越小
+const CARD_COLUMN_PITCH = 454 // .tl-col 440px + 间距 14px；单卡没有相邻列时仍要有拖动单位
+function timelineColsEl(): HTMLElement | null {
+  return scrollRef.value?.querySelector<HTMLElement>('.timeline-cols') ?? null
+}
+function onColumnsPointerMove(e: PointerEvent) {
+  if (!colDragging) return
+  const root = scrollRef.value
+  if (!root) return
+  const raw = colDragStartScrollLeft - (e.clientX - colDragStartX)
+  const centers = colCenters()
+  if (!centers.length) return
+  // 逻辑边界是首/末日期“居中”的位置，不是滚动容器的物理尽头：两侧 gutter 是为了让
+  // 首末列能居中而留下的空白，若拿 scrollWidth 当边界，最后一天还得先拖过整段空白才能
+  // 触发橡皮筋（截图里的 150px 延迟正是它）。
+  const physicalMax = root.scrollWidth - root.clientWidth
+  const logicalMin = Math.max(0, centers[0].c - contentCenter(root))
+  const logicalMax = Math.max(logicalMin, Math.min(physicalMax, centers[centers.length - 1].c - contentCenter(root)))
+  const clamped = Math.max(logicalMin, Math.min(logicalMax, raw))
+  root.scrollLeft = clamped
+  const over = raw - clamped   // 超出边界之外、原生滚动吃不下的那一截
+  const cols = timelineColsEl()
+  if (over) {
+    // 边缘外没有真实列：从 over=0 开始就有阻力；对数曲线没有硬上限，拖得再远仍会移动，
+    // 但每多拖一段的增量持续变小。
+    const last = centers.length - 1
+    const pitch = over < 0
+      ? centers.length > 1 ? centers[1].c - centers[0].c : CARD_COLUMN_PITCH
+      : centers.length > 1 ? centers[last].c - centers[last - 1].c : CARD_COLUMN_PITCH
+    if (pitch > 0) {
+      const boundary = over < 0 ? 0 : last
+      const rawCenter = boundary + (over / pitch) * CARD_DRAG_RATIO
+      const virtualCenter = elasticPosition(rawCenter, centers.length, CARD_RUBBER_RESPONSE)
+      const overshootDays = virtualCenter - boundary
+      const visualShift = -overshootDays * pitch
+      if (cols) cols.style.transform = `translateX(${visualShift}px)`
+      cardRubberShift = visualShift
+      cardVisualCenterFrac.value = virtualCenter
+    }
+  } else if (cols) {
+    cols.style.transform = ''
+    cardRubberShift = 0
+    cardVisualCenterFrac.value = centerFrac.value
+  }
+  const now = performance.now()
+  const dt = Math.max(now - colDragLastTime, 4)
+  const instant = (e.clientX - colDragLastX) / dt
+  colDragVelocity = colDragVelocity * 0.6 + instant * 0.4   // 指数平滑，松手瞬间的抖动不会整个吃进去
+  colDragLastX = e.clientX
+  colDragLastTime = now
+}
+function onColumnsPointerUp() {
+  window.removeEventListener('pointermove', onColumnsPointerMove)
+  window.removeEventListener('pointerup', onColumnsPointerUp)
+  document.body.style.userSelect = ''
+  if (!colDragging) return
+  colDragging = false
+  const cols = timelineColsEl()
+  if (cols) cols.style.transition = 'none'
+  returnCardRubber()
+  const root = scrollRef.value
+  const colCenterList = colCenters()
+  if (!root || !colCenterList.length) return
+  // 惯性：按松手瞬间的速度多滑一点再吸附最近列，封顶避免用力过猛直接跳好几天
+  const extraPx = Math.max(-260, Math.min(260, -colDragVelocity * 180))
+  const cx = root.scrollLeft + extraPx + contentCenter(root)
+  let nearest = colCenterList[0]
+  let bestDist = Infinity
+  for (const c of colCenterList) {
+    const dist = Math.abs(c.c - cx)
+    if (dist < bestDist) { bestDist = dist; nearest = c }
+  }
+  followCardsTo(nearest.c - contentCenter(root))
+}
+
+/** 外层橡皮筋回弹：位移与虚拟中心走同一套物理弹簧，避免 CSS 缓动和景深各自回正。 */
+function returnCardRubber() {
+  if (cardVisualReturnRaf) cancelAnimationFrame(cardVisualReturnRaf)
+  const cols = timelineColsEl()
+  if (!cols) return
+  let shift = cardRubberShift
+  let shiftVelocity = 0
+  let visualCenter = cardVisualCenterFrac.value
+  let centerVelocity = 0
+  let last = performance.now()
+  cardRubberReturning = true
+  const frame = (now: number) => {
+    const dt = Math.min(1 / 30, Math.max(1 / 240, (now - last) / 1000))
+    last = now
+    // 接近临界阻尼：先有明确回弹加速度，靠近终点自然减速，不靠线性计时缓动硬拉回去。
+    const spring = 260
+    const damping = 32 // 与 DateIndex 的近临界阻尼一致：回弹自然缓出、不额外摆动
+    shiftVelocity += (-spring * shift - damping * shiftVelocity) * dt
+    shift += shiftVelocity * dt
+    const centerDelta = centerFrac.value - visualCenter
+    centerVelocity += (spring * centerDelta - damping * centerVelocity) * dt
+    visualCenter += centerVelocity * dt
+    cols.style.transform = `translateX(${shift}px)`
+    cardVisualCenterFrac.value = visualCenter
+    if (Math.abs(shift) > 0.2 || Math.abs(shiftVelocity) > 2 || Math.abs(centerDelta) > .002 || Math.abs(centerVelocity) > .02) {
+      cardVisualReturnRaf = requestAnimationFrame(frame)
+      return
+    }
+    cols.style.transform = ''
+    cardRubberShift = 0
+    cardVisualCenterFrac.value = centerFrac.value
+    cardRubberReturning = false
+    cardVisualReturnRaf = 0
+  }
+  cardVisualReturnRaf = requestAnimationFrame(frame)
+}
+
+// ── 拖选文字只能选中"这一张便签"内的内容，点便签外面直接清掉已有选区 ──
+// CSS 的 user-select:none（.rec-hscroll 的玻璃卡背景）只能挡住"从空白处开始"的选区，挡不住
+// "从便签内部拖出去、经过背景、又拖进另一张便签"这种一路蔓延的情况——浏览器的原生选区不
+// 关心容器边界，得自己用 Selection API 在选区变化时把它夹回起手的那张便签里。
+let selectionOriginNote: HTMLElement | null = null
+function onGlobalMouseDown(e: MouseEvent) {
+  const noteEl = (e.target as HTMLElement).closest<HTMLElement>('.note-card')
+  selectionOriginNote = noteEl
+  if (!noteEl) window.getSelection()?.removeAllRanges()   // 点便签外面：清掉之前选中的文字
+}
+function onSelectionChange() {
+  const note = selectionOriginNote
+  if (!note) return
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return
+  const range = sel.getRangeAt(0)
+  const bounds = document.createRange()
+  bounds.selectNodeContents(note)
+  let changed = false
+  if (range.compareBoundaryPoints(Range.START_TO_START, bounds) < 0) {
+    range.setStart(bounds.startContainer, bounds.startOffset)
+    changed = true
+  }
+  if (range.compareBoundaryPoints(Range.END_TO_END, bounds) > 0) {
+    range.setEnd(bounds.endContainer, bounds.endOffset)
+    changed = true
+  }
+  if (changed) { sel.removeAllRanges(); sel.addRange(range) }
+}
+onMounted(() => {
+  document.addEventListener('mousedown', onGlobalMouseDown, true)
+  document.addEventListener('selectionchange', onSelectionChange)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onGlobalMouseDown, true)
+  document.removeEventListener('selectionchange', onSelectionChange)
+})
+
 // ── 滑杆语义：聚焦哪天、那天的列停在「内容区正中」（= 滑杆 playhead 那条竖线所在）──
 // 列的滚动条铺满整个视口宽（#3：可被侧栏遮住），但对齐中心不是视口中心、而是内容区
 // 中心（侧栏右侧那块的正中），才能和上方胶囊/滑杆的居中对齐。
@@ -88,6 +292,8 @@ const activeDate  = ref('')
 // 深度效果共用同一个值，不再单独滞后平滑——卡片尺寸必须严格绑定「谁现在正在屏幕中间」，
 // 不管这一刻的当前日/选中日是谁，物理居中的那张才该是最大的。
 const centerFrac  = ref(0)
+// 卡片景深默认跟真实中心；越界时临时使用对数橡皮筋推导出的虚拟中心，仍走同一条景深曲线。
+const cardVisualCenterFrac = ref(0)
 const todayIso    = computed(() => _today())
 let scrollRaf = 0
 
@@ -140,6 +346,7 @@ function updateActive() {
     }
   }
   centerFrac.value = frac
+  if (!colDragging && !cardRubberReturning) cardVisualCenterFrac.value = frac
   activeDate.value = cols[Math.round(frac)].date
 }
 
@@ -188,8 +395,8 @@ function followCardsTo(left: number, onSettled?: () => void) {
     if (!current) { stopCardFollow(); return }
     const dt = Math.min(1 / 30, Math.max(1 / 240, (now - cardFollowLast) / 1000))
     cardFollowLast = now
-    const spring = 210
-    const damping = 28
+    const spring = 260
+    const damping = 32 // 与顶部日期滑条同一套近临界阻尼参数
     cardFollowVelocity += (spring * (cardTargetLeft - pos) - damping * cardFollowVelocity) * dt
     pos += cardFollowVelocity * dt
     current.scrollLeft = pos
@@ -306,6 +513,12 @@ watch(() => store.jumpTarget, (date) => {
 // resize：内容区中线变了，把当前列瞬时重新居中（不飞入）
 function onResize() {
   stopCardFollow()
+  if (cardVisualReturnRaf) cancelAnimationFrame(cardVisualReturnRaf)
+  cardVisualReturnRaf = 0
+  cardRubberReturning = false
+  cardRubberShift = 0
+  const cols = timelineColsEl()
+  if (cols) cols.style.transform = ''
   const root = scrollRef.value
   if (!root) return
   syncTimelineGutters(root)
@@ -314,8 +527,12 @@ function onResize() {
 onMounted(() => window.addEventListener('resize', onResize))
 onBeforeUnmount(() => {
   if (scrollRaf) cancelAnimationFrame(scrollRaf)
+  if (cardVisualReturnRaf) cancelAnimationFrame(cardVisualReturnRaf)
+  cardRubberReturning = false
   stopCardFollow()
   window.removeEventListener('resize', onResize)
+  window.removeEventListener('pointermove', onColumnsPointerMove)
+  window.removeEventListener('pointerup', onColumnsPointerUp)
 })
 
 // 首次数据就绪：今天（最右一列）直接定在正中，不播滚动动画
@@ -444,8 +661,16 @@ async function onDelete(note: MindNote) {
   scroll-snap-type: none;
   scrollbar-width: none;
   padding-bottom: 96px;   /* 给底部停靠的捕捉条让空间，最下的卡不被盖住 */
+  cursor: grab;
+  /* 玻璃卡空白区域（日期头、卡间空隙…）不可选中：user-select 会被子孙继承，便签内容要
+     选回来见下面的 :deep(.note-card) 覆盖。这样从空白处拖到便签上不会顺手选中背景文字，
+     从便签里拖出空白区域时选区也会在边界卡住，不会一路蔓延选到旁边别的便签。 */
+  user-select: none;
 }
+.rec-hscroll:active { cursor: grabbing; }
 .rec-hscroll::-webkit-scrollbar { display: none; }
+/* 便签本体不该显得能拖（它自己有点击进编辑等交互），光标退回默认；文字选取也要选回来 */
+.rec-hscroll :deep(.note-card) { cursor: default; user-select: text; }
 
 .rec-loading { padding: 40px 24px; font-size: 12.5px; color: var(--text-secondary); }
 

@@ -57,6 +57,15 @@ export function rubberBandPosition(raw: number, count: number): number {
   return raw < 0 ? -resisted : last + resisted
 }
 
+/** 无硬边界的对数橡皮筋：越拖越难拉，但仍持续响应鼠标位移。 */
+export function elasticPosition(raw: number, count: number, response = 0.7): number {
+  const last = count - 1
+  if (raw >= 0 && raw <= last) return raw
+  const distance = raw < 0 ? -raw : raw - last
+  const resisted = Math.log1p(distance) * response
+  return raw < 0 ? -resisted : last + resisted
+}
+
 /** 每个日期中心是一处凹槽，拖动靠近中心时自然放慢，松手仍由状态机负责真正吸附。 */
 export function detentPosition(raw: number, count: number): number {
   const banded = rubberBandPosition(raw, count)
