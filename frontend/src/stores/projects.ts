@@ -36,6 +36,7 @@ export const useProjectStore = defineStore('projects', () => {
 
   const archivedProjects = ref<Project[]>([])
   const archivedLoading  = ref(false)
+  const archivedLoaded   = ref(false)
 
   const activeCount = computed(() =>
     projects.value.filter(p => p.status === 'active').length
@@ -105,9 +106,14 @@ export const useProjectStore = defineStore('projects', () => {
   }
 
   async function fetchArchivedProjects() {
+    if (archivedLoading.value) return
+    // 已加载过就静默后台刷新（内容仍展示旧数据，不切「加载中」）——只有真·首次（archivedLoaded
+    // 还是 false）才让弹层显示加载态。配合页面挂载即预取，用户点开归档按钮时数据大概率已经在，
+    // 不会再看到那下加载闪烁（见 views/Projects/index.vue onMounted）。
     archivedLoading.value = true
     try {
       archivedProjects.value = await projectsApi.list(true) as unknown as Project[]
+      archivedLoaded.value = true
     } catch (e) {
       error.value = errMsg(e)
     } finally {
@@ -286,6 +292,6 @@ export const useProjectStore = defineStore('projects', () => {
     setStage, updateStages, updateProject,
     modalProject, openModal, closeModal,
     upcomingCalEvents, fetchUpcomingCalEvents,
-    archivedProjects, archivedLoading, fetchArchivedProjects, unarchiveProject,
+    archivedProjects, archivedLoading, archivedLoaded, fetchArchivedProjects, unarchiveProject,
   }
 })

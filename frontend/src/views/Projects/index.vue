@@ -36,10 +36,14 @@ const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
 
 const showArchived = ref(false)
+// 打开弹层仍兜底调一次（比如首次预取失败），但已加载过的话 fetchArchivedProjects 内部会直接
+// 短路跳过，不会再触发那下「加载中」闪烁——数据早在页面挂载时后台预取好了（见下）。
 watch(showArchived, v => { if (v) projectStore.fetchArchivedProjects() })
 
 onMounted(() => {
   if (!cacheStore.loaded && !cacheStore.loading) cacheStore.load()
+  // 归档列表页面一进来就后台预取，避免用户点开归档按钮那一下要等网络往返、闪一下「加载中」
+  if (!projectStore.archivedLoaded && !projectStore.archivedLoading) projectStore.fetchArchivedProjects()
 })
 
 // 全局搜索点击项目 → 跳转本页后高亮对应项目卡（不打开编辑弹窗）

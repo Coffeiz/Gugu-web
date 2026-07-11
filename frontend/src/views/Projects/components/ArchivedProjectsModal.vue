@@ -9,7 +9,8 @@
       </div>
 
       <div class="ap-body">
-        <div v-if="projectStore.archivedLoading" class="ap-empty">加载中…</div>
+        <!-- 只有真·首次（还没任何缓存数据）才显示加载态；已有数据后台静默刷新不再闪这个 -->
+        <div v-if="projectStore.archivedLoading && !projectStore.archivedLoaded" class="ap-empty">加载中…</div>
         <div v-else-if="!projectStore.archivedProjects.length" class="ap-empty">暂无已归档项目</div>
 
         <template v-else>
