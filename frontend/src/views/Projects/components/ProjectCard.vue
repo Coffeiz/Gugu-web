@@ -193,7 +193,7 @@ function dispatchDrop({ x, y }: { x: number; y: number }) {
 // 内部控件（星级 / 阶段 / 进度条）自己处理点击，不在这里起拖。
 function onPointerDown(e: PointerEvent) {
   if (e.pointerType === 'mouse' && e.button !== 0) return
-  if ((e.target as HTMLElement).closest('.stars, .proj-stage, .seg-bar-wrap')) return
+  if ((e.target as HTMLElement).closest('.stars, .proj-stage, .seg-bar-wrap, .card-advance')) return
   const card = e.currentTarget as HTMLElement
   const sx = e.clientX, sy = e.clientY
   let started = false
