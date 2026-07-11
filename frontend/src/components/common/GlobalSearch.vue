@@ -72,13 +72,16 @@ const router       = useRouter()
 const projectStore = useProjectStore()
 const uiStore      = useUiStore()
 
-const wrapEl  = ref(null)
-const inputEl = ref(null)
-const panelEl = ref(null)
+interface SearchItem { id: number; title: string; subtitle?: string; date?: string; message_id?: number }
+interface SearchGroup { type: 'project' | 'file' | 'folder' | 'event' | 'client' | 'conversation'; label: string; items: SearchItem[] }
+
+const wrapEl  = ref<HTMLElement | null>(null)
+const inputEl = ref<HTMLInputElement | null>(null)
+const panelEl = ref<HTMLElement | null>(null)
 const q       = ref('')
 const open    = ref(false)
 const loading = ref(false)
-const groups  = ref([])
+const groups  = ref<SearchGroup[]>([])
 const total   = ref(0)
 
 // 面板 Teleport 到 body（脱离顶栏的 backdrop-filter，blur 才生效），用 fixed 跟随搜索框定位
@@ -95,20 +98,20 @@ function updatePanelPos() {
   }
 }
 
-let timer = null
+let timer: ReturnType<typeof setTimeout> | null = null
 let reqSeq = 0   // 防抖 + 防乱序：只认最后一次请求的结果
 
 function onInput() {
   open.value = true
   updatePanelPos()
-  clearTimeout(timer)
+  clearTimeout(timer ?? undefined)
   const text = q.value.trim()
   if (!text) { groups.value = []; total.value = 0; loading.value = false; return }
   loading.value = true
   timer = setTimeout(() => runSearch(text), 250)
 }
 
-async function runSearch(text) {
+async function runSearch(text: string) {
   const seq = ++reqSeq
   try {
     const r = await searchApi.query(text)
@@ -123,7 +126,7 @@ async function runSearch(text) {
   }
 }
 
-function go(type, it) {
+function go(type: string, it: SearchItem) {
   close()
   if (type === 'project') {
     uiStore.pendingProjectHighlight = it.id   // 跳转后高亮项目卡，不打开编辑弹窗
@@ -154,10 +157,10 @@ function onFocus() {
 
 function close() { open.value = false }
 
-function onDocClick(e) {
+function onDocClick(e: MouseEvent) {
   // 面板已 Teleport 到 body，点击命中输入框或面板都不关
-  const inWrap  = wrapEl.value?.contains(e.target)
-  const inPanel = panelEl.value?.contains(e.target)
+  const inWrap  = wrapEl.value?.contains(e.target as Node)
+  const inPanel = panelEl.value?.contains(e.target as Node)
   if (!inWrap && !inPanel) close()
 }
 
@@ -174,7 +177,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', onDocClick)
   window.removeEventListener('resize', onReposition)
   window.removeEventListener('scroll', onReposition, true)
-  clearTimeout(timer)
+  clearTimeout(timer ?? undefined)
 })
 </script>
 

@@ -46,6 +46,13 @@
     "src/components/common/FeedbackModal.vue",
     "src/components/common/FileInfoPopup.vue",
     "src/components/common/DatePicker.vue",
-    "src/components/common/viewers/ImageViewer.vue"
+    "src/components/common/viewers/ImageViewer.vue",
+    "src/components/common/viewers/VideoViewer.vue",
+    "src/components/common/AppSidebar.vue",
+    "src/components/common/DateSpanPicker.vue",
+    "src/components/common/GlobalSearch.vue",
+    "src/components/common/GlassBg.vue",
+    "src/components/common/UploadConflictDialog.vue",
+    "src/components/common/AvatarCropper.vue"
   ]
 }

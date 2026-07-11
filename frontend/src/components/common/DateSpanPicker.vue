@@ -113,12 +113,12 @@ const props = defineProps({
 const emit = defineEmits(['update:startDate', 'update:endDate'])
 
 const open      = ref(false)
-const wrapRef   = ref(null)
-const popupRef  = ref(null)
+const wrapRef   = ref<HTMLElement | null>(null)
+const popupRef  = ref<HTMLElement | null>(null)
 const popupStyle = ref({})
 const yearMode  = ref(false)
 const phase     = ref('start')   // 'start' | 'end'
-const hovered   = ref(null)
+const hovered   = ref<string | null>(null)
 
 const today     = new Date()
 const todayIso  = toIso(today)
@@ -131,11 +131,11 @@ const cursor = ref(
 )
 const yearStart = ref(Math.floor(cursor.value.getFullYear() / 12) * 12)
 
-function toIso(d) {
+function toIso(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
-function fmt(iso) {
+function fmt(iso: string) {
   if (!iso) return ''
   const d = new Date(iso + 'T00:00:00')
   const base = `${d.getMonth()+1}/${d.getDate()}`
@@ -169,13 +169,13 @@ const effectiveEnd = computed(() =>
   phase.value === 'end' ? (hovered.value || props.endDate) : props.endDate
 )
 
-function shiftDay(iso, delta) {
+function shiftDay(iso: string, delta: number) {
   const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + delta); return toIso(d)
 }
-function nextDay(iso) { return shiftDay(iso, 1) }
-function prevDay(iso) { return shiftDay(iso, -1) }
+function nextDay(iso: string) { return shiftDay(iso, 1) }
+function prevDay(iso: string) { return shiftDay(iso, -1) }
 
-function isInRange(iso) {
+function isInRange(iso: string) {
   const s = props.startDate
   const e = effectiveEnd.value
   if (!s || !e) return false
@@ -183,13 +183,13 @@ function isInRange(iso) {
   return iso > lo && iso < hi
 }
 
-function onGridMove(e) {
+function onGridMove(e: MouseEvent) {
   if (phase.value !== 'end') return
-  const btn = e.target.closest('[data-iso]')
-  hovered.value = btn ? btn.dataset.iso : null
+  const btn = (e.target as HTMLElement).closest('[data-iso]') as HTMLElement | null
+  hovered.value = btn ? (btn.dataset.iso ?? null) : null
 }
 
-function pickDay(iso) {
+function pickDay(iso: string) {
   if (phase.value === 'start') {
     emit('update:startDate', iso)
     emit('update:endDate', '')
@@ -219,7 +219,7 @@ function enterYearMode() {
   yearStart.value = Math.floor(cursor.value.getFullYear() / 12) * 12
   yearMode.value = true
 }
-function selectYear(y) {
+function selectYear(y: number) {
   const d = new Date(cursor.value); d.setFullYear(y); cursor.value = d
   yearMode.value = false
 }
@@ -247,10 +247,10 @@ function clear() {
   open.value = false
 }
 
-function onClickOutside(e) {
+function onClickOutside(e: MouseEvent) {
   if (!open.value) return
-  if (wrapRef.value?.contains(e.target)) return
-  if (popupRef.value?.contains(e.target)) return
+  if (wrapRef.value?.contains(e.target as Node)) return
+  if (popupRef.value?.contains(e.target as Node)) return
   open.value = false
   yearMode.value = false
 }

@@ -39,10 +39,10 @@ export const useUiStore = defineStore('ui', () => {
   const newProjectRange = ref(null)
   const calendarActiveRange = ref(null)
   const openProfile = ref(false)
-  const pendingChatSession   = ref(null)
-  const pendingFileTarget    = ref(null)
-  const pendingChatMessageId = ref(null)   // 对话搜索命中消息时，跳转后滚到该消息
-  const pendingCalendarEvent = ref(null)   // { id, date } 日程搜索跳转
+  const pendingChatSession   = ref<unknown>(null)
+  const pendingFileTarget    = ref<{ kind: string; id: number } | null>(null)
+  const pendingChatMessageId = ref<number | null>(null)   // 对话搜索命中消息时，跳转后滚到该消息
+  const pendingCalendarEvent = ref<{ id: number; date?: string } | null>(null)   // { id, date } 日程搜索跳转
   const pendingProjectHighlight = ref<number | null>(null)   // 项目搜索跳转后高亮项目卡（不打开编辑弹窗）
   const pendingProjectHighlightMs = ref<number | null>(null) // 高亮时长(ms)：缺省 1800；新手引导用 5000（设 id 前先设它）
   const pendingProjectHighlightBreath = ref(false) // true=用「呼吸」动画（新手引导），缺省搜索 flash
