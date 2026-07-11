@@ -174,10 +174,14 @@ watch(() => props.editing, async (v, prev) => {
   // offsetHeight 强制回流，让浏览器先"确认"这个旧高度，下一帧再改成目标值才会真的触发
   // 过渡（不这么做，同一帧内连续两次赋值可能被合并、直接跳到终值不播动画）。动画播完
   // 恢复 auto，不然后续内容变化（继续打字撑高、预览态点"展开"）会被钉死在这个旧 px 值上。
+  // 目标高度必须跟起点用同一套量法——踩过 scrollHeight（不含 border）配 getBoundingClientRect
+  // （含 border）的坑：.note-card 有 1px 描边，两种量法差着这 2px，动画播完切回 auto 时
+  // 高度会跟着再跳一下（展开是终点忽然长高一截，收起是刚缩完又弹回来一点）。统一用
+  // getBoundingClientRect 才能让动画终值跟 auto 真正算出来的高度严丝合缝。
   if (el && startH != null) {
     cardHeight.value = 'auto'
     await nextTick()
-    const endH = el.scrollHeight
+    const endH = el.getBoundingClientRect().height
     cardHeight.value = startH + 'px'
     await nextTick()
     void el.offsetHeight
