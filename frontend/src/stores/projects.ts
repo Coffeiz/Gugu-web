@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { projectsApi, eventsApi } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import type { Project, ProjectStage, ProjectStatus } from '@/types/project'
-import { autoCompleteTodos, restoreTodos, stageProgressByIndex, allTodosDone } from '@/utils/projectStages'
+import { autoCompleteTodos, restoreTodos, stageProgressByIndex, allTodosDone, normalizeStages } from '@/utils/projectStages'
 import type { components } from '@/types/api'
 
 type EventResponse = components['schemas']['EventResponse']
@@ -78,7 +78,8 @@ export const useProjectStore = defineStore('projects', () => {
       name:         fields.name,
       client:       fields.client || null,
       status:       fields.status || 'pending',
-      stages:       fields.stages.map((s, i) => ({ key: `s${i}`, label: typeof s === 'string' ? s : s.label, todos: typeof s === 'string' ? [] : (s.todos ?? []) })),
+      // normalizeStages 产出具名 ProjectStage[]，create 的 wire 类型要松散索引签名数组，边界收口
+      stages:       normalizeStages(fields.stages) as unknown as Record<string, unknown>[],
       currentStage: fields.stages[0] ? `s${fields.currentStageIdx ?? 0}` : null,
       progress:     0,
       startDate:    fields.startDate || null,
