@@ -1,7 +1,6 @@
 <template>
   <div ref="cardRef" class="note-card"
-       :class="{ editing, highlight, 'nc-edit-pending': editing && !editReady, ['tint-' + (note.color || '')]: !!note.color }"
-       :style="{ height: cardHeight }">
+       :class="{ editing, highlight, 'nc-edit-pending': editing && !editReady, ['tint-' + (note.color || '')]: !!note.color }">
     <!-- 编辑态：跟只读态一样按区域分标题区/正文区（不是靠"标题"文字样式段落类型），
          就地展开（跨两列由父级 grid-column 控制）；自动保存，没有取消/保存按钮——
          停顿一下自己存，点卡外面就算编完（先补一次保存再退出）。 -->
@@ -87,11 +86,6 @@ const bodyEditorRef = ref<InstanceType<typeof NoteEditor> | null>(null)
 // 可能先落在文档默认位置（比如正文开头是待办，就会先亮一下待办的样式）再跳到正确位置。
 // 定位真正落定前先把整张卡藏起来（保留布局占位，不闪跳），避免这个过渡态被看见。
 const editReady = ref(false)
-// 编辑/预览切换的展开收回动画：v-if 直接换整块内容，高度没法从/到 auto 做过渡（CSS 不
-// 支持），所以手动量出切换前后两个真实高度，冻结成具体 px 值再过渡，动画播完再放回 auto——
-// 不然预览态里后续「展开/收起」长内容、编辑态里继续打字撑高，都会被钉死在这个旧的 px 值上。
-const cardHeight = ref<string>('auto')
-const HEIGHT_ANIM_MS = 300
 const titleInputRef = ref<HTMLInputElement | null>(null)
 // 点哪进编辑态光标就落在哪：'title' 落标题框，数字落正文对应行（跟 mdToPreviewHtml 的
 // data-line-unit 对应），null 就随 NoteEditor 自己的 autofocus:'end'（默认落文档末尾）。
@@ -142,13 +136,7 @@ function finishEditing() {
 // 进入编辑时灌当前内容为草稿；退出时（点外面/切换到别的便签走 finishEditing 之外的路径，
 // 比如便签被删除强制退出编辑）才需要这里兜底补一次保存。编辑期间才挂全局点击监听，
 // 避免每张卡常驻一个 document 监听器。
-let heightResetTimer: ReturnType<typeof setTimeout> | null = null
 watch(() => props.editing, async (v, prev) => {
-  // watch 默认 flush:'pre'，这一刻卡片还是切换前的内容（v-if 还没跑），先量出旧高度当动画起点。
-  if (heightResetTimer) { clearTimeout(heightResetTimer); heightResetTimer = null }
-  const el = cardRef.value
-  const startH = el?.getBoundingClientRect().height ?? null
-
   if (v) {
     closedByFinish = false
     editReady.value = false
@@ -165,34 +153,9 @@ watch(() => props.editing, async (v, prev) => {
     if (prev && !closedByFinish) flushSave()
     closedByFinish = false
     editReady.value = false
-    await nextTick()   // 等预览态内容渲染出来，才能量到真实目标高度
-  }
-
-  // 展开/收回动画：编辑态是 flex:1 撑满父级，卡片高度被钉住的话编辑器只会乖乖填满这个
-  // 旧高度、量不出真正想要的高度，所以先切回 auto 量一次目标高度，再原地扣回旧高度——这
-  // 几步都在 nextTick 的微任务边界内完成，浏览器还没画那一帧 auto 的样子，不会闪一下；
-  // offsetHeight 强制回流，让浏览器先"确认"这个旧高度，下一帧再改成目标值才会真的触发
-  // 过渡（不这么做，同一帧内连续两次赋值可能被合并、直接跳到终值不播动画）。动画播完
-  // 恢复 auto，不然后续内容变化（继续打字撑高、预览态点"展开"）会被钉死在这个旧 px 值上。
-  if (el && startH != null) {
-    cardHeight.value = 'auto'
-    await nextTick()
-    const endH = el.scrollHeight
-    cardHeight.value = startH + 'px'
-    await nextTick()
-    void el.offsetHeight
-    requestAnimationFrame(() => {
-      cardHeight.value = endH + 'px'
-      heightResetTimer = setTimeout(() => { cardHeight.value = 'auto'; heightResetTimer = null }, HEIGHT_ANIM_MS)
-    })
-  } else {
-    cardHeight.value = 'auto'
   }
 })
-onBeforeUnmount(() => {
-  document.removeEventListener('mousedown', onDocDown, true)
-  if (heightResetTimer) clearTimeout(heightResetTimer)
-})
+onBeforeUnmount(() => document.removeEventListener('mousedown', onDocDown, true))
 
 /** 标题只在首行真是 `#` 标题格式时才从正文摘出来单独展示；纯正文/待办/列表开头的便签
  *  不摘任何东西——整段原样进 body 渲染，不会凭空多出一条"标题"把第一行跟其余内容分割开。
@@ -259,9 +222,7 @@ function onBodyClick(e: MouseEvent) {
   border: 1px solid rgba(255,255,255,0.72);
   box-shadow: 0 2px 8px rgba(80,90,110,0.07);
   min-width: 0; overflow: hidden;
-  /* height 过渡是编辑/预览切换的展开收回动画（见 script 里的 cardHeight/HEIGHT_ANIM_MS），
-     缓动跟 NoteEditor 抽屉动画同一条缓入缓出曲线，不是线性、也不带回弹。 */
-  transition: box-shadow 0.3s ease, background 0.25s ease-out, height 0.3s cubic-bezier(0.65,0,0.35,1);
+  transition: box-shadow 0.3s ease, background 0.25s ease-out;
 }
 /* 顶部高光层（task-card 同款）：hover 时整层提亮 */
 .note-card::after {
