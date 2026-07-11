@@ -285,7 +285,7 @@ const adminStore  = useAdminStore()
 const configStore = useConfigStore()
 
 // ── 全局配额 ──────────────────────────────────────────────────────────────────
-const globalDraft  = reactive({ token6h: null, tokenWeek: null, storageGB: null, searchDaily: null })
+const globalDraft  = reactive<{ token6h: number|null; tokenWeek: number|null; storageGB: number|null; searchDaily: number|null }>({ token6h: null, tokenWeek: null, storageGB: null, searchDaily: null })
 const globalSaving = ref(false)
 const globalSaved  = ref(false)
 
@@ -318,7 +318,7 @@ async function saveGlobal() {
 }
 
 // ── 用户列表 ──────────────────────────────────────────────────────────────────
-const allItems   = ref([])
+const allItems   = ref<any[]>([])
 const loading    = ref(false)
 const refreshing = ref(false)
 const search     = ref('')
@@ -351,19 +351,19 @@ async function loadUsers(manual = false) {
   }
 }
 
-let searchTimer = null
+let searchTimer: ReturnType<typeof setTimeout> | null = null
 function onSearch() {
-  clearTimeout(searchTimer)
+  clearTimeout(searchTimer ?? undefined)
   searchTimer = setTimeout(() => {}, 0)
 }
 
 // ── 编辑弹窗 ─────────────────────────────────────────────────────────────────
-const editTarget = ref(null)
+const editTarget = ref<any | null>(null)
 const editSaving = ref(false)
 const maskMousedownSelf = ref(false)
-const editForm   = reactive({ token6h: null, tokenWeek: null, storageGB: null, searchDaily: null })
+const editForm   = reactive<{ token6h: number|null; tokenWeek: number|null; storageGB: number|null; searchDaily: number|null }>({ token6h: null, tokenWeek: null, storageGB: null, searchDaily: null })
 
-function openEdit(u) {
+function openEdit(u: any) {
   editTarget.value = u
   editForm.token6h     = u.token_limit_6h    ?? null
   editForm.tokenWeek   = u.token_limit_weekly ?? null
@@ -398,7 +398,7 @@ async function saveEdit() {
   }
 }
 
-async function clearQuota(u) {
+async function clearQuota(u: any) {
   await adminStore.authFetch(`/api/v1/admin/users/${u.id}/quota`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -415,30 +415,30 @@ const AVATAR_COLORS = [
   ['#5a6b9e', '#8490c4'], ['#5a8e7e', '#7cbfad'],
   ['#8e6a5a', '#c49078'], ['#6a5a8e', '#9878c4'], ['#5a7e8e', '#78b0bf'],
 ]
-function avatarChar(u) { return (u.display_name || u.username || '?').charAt(0).toUpperCase() }
-function avatarStyle(u) {
+function avatarChar(u: any) { return (u.display_name || u.username || '?').charAt(0).toUpperCase() }
+function avatarStyle(u: any) {
   const [c1, c2] = AVATAR_COLORS[u.username.charCodeAt(0) % AVATAR_COLORS.length]
   return { background: `linear-gradient(135deg, ${c1}, ${c2})` }
 }
-function fmtTokens(n) {
+function fmtTokens(n: number) {
   if (n == null) return '—'
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
   if (n >= 1000)    return (n / 1000).toFixed(1) + 'K'
   return String(n)
 }
-function fmtBytes(n) {
+function fmtBytes(n: number) {
   if (!n) return '—'
   if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB'
   if (n >= 1048576)    return (n / 1048576).toFixed(1) + ' MB'
   if (n >= 1024)       return (n / 1024).toFixed(0) + ' KB'
   return n + ' B'
 }
-function tokenBarStyle(u) {
+function tokenBarStyle(u: any) {
   const pct = u.token_limit_weekly ? Math.min(100, (u.tokens_week / u.token_limit_weekly) * 100) : 0
   const color = pct >= 90 ? 'rgba(220,80,80,0.85)' : pct >= 70 ? 'rgba(220,160,60,0.85)' : 'rgba(80,160,200,0.75)'
   return { width: pct + '%', background: color }
 }
-function storageBarStyle(u) {
+function storageBarStyle(u: any) {
   const pct = u.storage_limit_bytes ? Math.min(100, (u.storage_used / u.storage_limit_bytes) * 100) : 0
   const color = pct >= 90 ? 'rgba(220,80,80,0.85)' : pct >= 70 ? 'rgba(220,160,60,0.85)' : 'rgba(80,200,140,0.75)'
   return { width: pct + '%', background: color }

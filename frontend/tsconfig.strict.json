@@ -16,6 +16,7 @@
   "include": [
     "src/vite-env.d.ts",
     "src/directives.d.ts",
+    "auto-imports.d.ts",
     "src/types/**/*.ts",
     "src/utils/**/*.ts",
     "src/services/**/*.ts",
@@ -72,6 +73,8 @@
     "src/views/Admin/InviteCodes/index.vue",
     "src/views/Admin/AuditLog/index.vue",
     "src/views/Admin/Debug/index.vue",
-    "src/views/Admin/Config/index.vue"
+    "src/views/Admin/Config/index.vue",
+    "src/views/Admin/Quota/index.vue",
+    "src/views/Schedules/index.vue"
   ]
 }
