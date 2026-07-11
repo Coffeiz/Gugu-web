@@ -692,6 +692,7 @@ import { resolveFolderIds } from '@/utils/folderKeys'
 import { doneYear, doneMonth, splitName } from '@/utils/fileParse'
 import { optimisticMutation } from '@/utils/optimisticMutation'
 import type { FileMeta } from '@/stores/filesCache'
+import { navPathFor, type NavSeg, type FolderCard } from '@/utils/filesNav'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
@@ -738,18 +739,6 @@ const isDragging  = computed(() => dragCounter.value > 0)
 const mainRef     = ref(null)
 
 // ── 导航 ──
-interface NavSeg {
-  type: string
-  name: string
-  color?: string | null
-  id?: number | null
-  status?: string | null
-  year?: string | number | null
-  month?: string | number | null
-  folderId?: number | null
-  projectId?: number | null
-  space?: string
-}
 const navPath = ref<NavSeg[]>([])
 const navHistoryStack  = ref([])
 const navHistoryCursor = ref(-1)
@@ -801,69 +790,7 @@ function saveNav() {
 
 function enterFolder(folder) {
   clearSelection()
-  if (folder.type === 'personal') {
-    navPath.value = [{ type: 'personal', name: '个人文件', color: null }]
-  } else if (folder.type === 'projects') {
-    navPath.value = [{ type: 'projects', name: '项目文件', color: null }]
-  } else if (folder.type === 'trash') {
-    navPath.value = [{ type: 'trash', name: '回收站', color: null }]
-  } else if (folder.type === 'status') {
-    navPath.value = [
-      { type: 'projects', name: '项目文件', color: null },
-      { type: 'status', status: folder.status, name: folder.displayName, color: null },
-    ]
-  } else if (folder.type === 'year') {
-    navPath.value = [
-      { type: 'projects', name: '项目文件', color: null },
-      { type: 'status', status: 'done', name: '已完成', color: null },
-      { type: 'year', name: folder.year + ' 年', year: folder.year, color: null },
-    ]
-  } else if (folder.type === 'month') {
-    const yearSeg = navPath.value.find(s => s.type === 'year')
-    navPath.value = [
-      { type: 'projects', name: '项目文件', color: null },
-      { type: 'status', status: 'done', name: '已完成', color: null },
-      { type: 'year',  name: yearSeg.year + ' 年', year: yearSeg.year, color: null },
-      { type: 'month', name: parseInt(folder.month) + ' 月', year: folder.year, month: folder.month, color: null },
-    ]
-  } else if (folder.type === 'project') {
-    // 保留 状态 + 年月 上下文
-    const path: NavSeg[] = [{ type: 'projects', name: '项目文件', color: null }]
-    const statusSeg = navPath.value.find(s => s.type === 'status')
-    const yearSeg  = navPath.value.find(s => s.type === 'year')
-    const monthSeg = navPath.value.find(s => s.type === 'month')
-    if (statusSeg) path.push({ ...statusSeg })
-    if (yearSeg)  path.push({ ...yearSeg })
-    if (monthSeg) path.push({ ...monthSeg })
-    path.push({ type: 'project', id: folder.projectId, name: folder.displayName, color: folder.color })
-    navPath.value = path
-  } else if (folder.type === 'folder') {
-    const seg = currentSeg.value
-    if (seg?.type === 'personal') {
-      navPath.value = [
-        { type: 'personal', name: '个人文件', color: null },
-        { type: 'folder', folderId: folder.folderId, name: folder.displayName, color: null, space: 'personal' },
-      ]
-    } else if (seg?.type === 'folder') {
-      // 已在某个文件夹内，直接追加子文件夹
-      navPath.value = [
-        ...navPath.value,
-        { type: 'folder', folderId: folder.folderId, name: folder.displayName,
-          projectId: folder.projectId ?? seg.projectId, color: folder.color ?? seg.color },
-      ]
-    } else {
-      // 保留到 project 层，追加 folder
-      const projIdx = navPath.value.findIndex(s => s.type === 'project')
-      const basePath = projIdx >= 0
-        ? navPath.value.slice(0, projIdx + 1)
-        : [{ type: 'projects', name: '项目文件', color: null },
-           { type: 'project', id: folder.projectId, name: projectSeg.value?.name ?? '', color: folder.color }]
-      navPath.value = [
-        ...basePath,
-        { type: 'folder', folderId: folder.folderId, name: folder.displayName, projectId: folder.projectId, color: folder.color },
-      ]
-    }
-  }
+  navPath.value = navPathFor(folder, navPath.value)
   saveNav()
   loadContents()
 }
@@ -1004,21 +931,6 @@ const sortedContents = computed(() => {
 })
 
 // ── 内容 ──
-// 文件夹「卡片视图模型」——loadContents 投影出的 6 种卡（personal/projects/trash/folder/
-// status/year/month/project）的并集：公共字段必填，各变体字段可选。非 FolderMeta（那是库存原型）。
-interface FolderCard {
-  id: string
-  type: string
-  displayName: string
-  count: number | null
-  folderId?: number
-  color?: string | null
-  space?: string
-  projectId?: number | null
-  status?: string
-  year?: string | number
-  month?: string
-}
 const contents = ref<{ folders: FolderCard[]; files: FileMeta[] }>({ folders: [], files: [] })
 // tiny 已由 v-lazy-src 视口门控（更大 rootMargin 先于 card），不再全量预热——避免屏幕外缩略图挤占并发队列
 
