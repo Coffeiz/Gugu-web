@@ -1,6 +1,6 @@
 <template>
   <!-- 日期刻度滑杆：逻辑日期坐标同时驱动刻度、命中区和内容列，不依赖会变动的 DOM 宽度。 -->
-  <div ref="stripRef" class="date-scrub" @pointerdown="onDown">
+  <div ref="stripRef" class="date-scrub" @pointerdown="onDown" @pointermove="onHover" @pointerleave="onLeave">
     <div class="ds-track" :style="trackStyle()">
       <button
         v-for="tick in visibleTicks" :key="tick.group.date"
@@ -34,6 +34,8 @@ const currentFrac = ref(0)
 const dragging = ref(false)
 const animating = ref(false)
 const lockedIndex = ref<number | null>(null)
+const hoverActive = ref(false)
+const hoverIdx = ref(0)
 let lockTimer: ReturnType<typeof setTimeout> | null = null
 
 // 日期条只保留选中日期前后各 10 个刻度；定位仍基于完整日期序列，窗口切换不改变拖动比例。
@@ -63,7 +65,7 @@ function pitchAt(interval: number, focus: number) {
 }
 
 /** 第 p 个日期在刻度轨道中的逻辑 x；允许边界外的小幅橡皮筋。 */
-function positionForFrac(p: number, focus = currentFrac.value) {
+function positionForFrac(p: number, focus = currentFrac.value): number {
   const n = props.groups.length
   if (!n) return 0
   if (p < 0) return p * pitchAt(0, focus)
@@ -124,7 +126,49 @@ onMounted(() => {
 
 function tickFocus(i: number) {
   const d = Math.abs(i - currentFrac.value)
-  return Math.exp(-d * d * 1.7)
+  const base = Math.exp(-d * d * 1.7)
+  if (hoverActive.value && i === hoverIdx.value) return 1
+  return base
+}
+/** 悬停到别的日期时，原选中日的长条继续保留，只隐藏它的文字，避免离得近时两个日期文字重叠。 */
+function tipHiddenByHover(i: number) {
+  return hoverActive.value && i === Math.round(currentFrac.value) && i !== hoverIdx.value
+}
+
+/** 在可见刻度里找出离指针 x 最近的一个，用于精确点击命中。 */
+function indexNearClientX(clientX: number): number {
+  const frac = fracNearClientX(clientX)
+  return frac === null ? -1 : Math.round(frac)
+}
+
+/** 指针 x 对应的连续逻辑坐标（不取整），用于插值出更精确的最近刻度。 */
+function fracNearClientX(clientX: number): number | null {
+  if (!stripRef.value) return null
+  const rect = stripRef.value.getBoundingClientRect()
+  const trackX = clientX - rect.left - stripCenter() + positionForFrac(currentFrac.value)
+  const ticks = visibleTicks.value
+  if (!ticks.length) return null
+  if (trackX <= positionForFrac(ticks[0].index)) return ticks[0].index
+  for (let k = 0; k < ticks.length - 1; k++) {
+    const a = ticks[k].index
+    const b = ticks[k + 1].index
+    const xa = positionForFrac(a)
+    const xb = positionForFrac(b)
+    if (trackX <= xb) return a + (trackX - xa) / (xb - xa) * (b - a)
+  }
+  return ticks[ticks.length - 1].index
+}
+
+function onHover(e: PointerEvent) {
+  // 点击后弹簧回中动画还没走完时，先不响应悬停，避免和"选中"的位移/文字动画打架。
+  if (dragging.value || animating.value || e.pointerType !== 'mouse') return
+  const frac = fracNearClientX(e.clientX)
+  if (frac === null) return
+  hoverIdx.value = Math.round(clampFrac(frac))
+  hoverActive.value = true
+}
+function onLeave() {
+  hoverActive.value = false
 }
 function tickBarStyle(i: number) {
   const focus = tickFocus(i)
@@ -136,8 +180,10 @@ function tickBarStyle(i: number) {
 }
 function tickTipStyle(i: number) {
   const focus = tickFocus(i)
+  // 选中动画（弹簧回中）过程中先不露文字，等它真正落定到中间了再显示。
+  const opacity = animating.value || tipHiddenByHover(i) ? 0 : Math.max(0, (focus - 0.38) / 0.62)
   return {
-    opacity: `${Math.max(0, (focus - 0.38) / 0.62)}`,
+    opacity: `${opacity}`,
     color: focus > 0.82 ? '#5a5e86' : 'var(--text-secondary)',
     fontWeight: focus > 0.82 ? '600' : '400',
   }
@@ -170,8 +216,8 @@ function onDown(e: PointerEvent) {
   moved = false
   velocityFrac = 0
   lastMoveTime = 0
-  const el = (e.target as HTMLElement).closest<HTMLElement>('.dsb-tick')
-  downIdx = el ? Number(el.dataset.idx) : -1
+  downIdx = indexNearClientX(e.clientX)
+  onLeave()
   dragging.value = true
   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   window.addEventListener('pointermove', onMove)
@@ -299,5 +345,6 @@ function fmtLabel(iso: string) {
   position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
   margin-top: 4px; font-size: 10px; white-space: nowrap;
   color: var(--text-secondary); opacity: 0; pointer-events: none;
+  transition: opacity 0.15s ease;
 }
 </style>
