@@ -28,7 +28,7 @@
             v-else
             class="pm-nav-item"
             :class="{ active: activeNav === item.key }"
-            @click="activeNav = item.key"
+            @click="item.key && (activeNav = item.key)"
           >
             <component :is="item.icon" :size="14" weight="bold" />
             {{ item.label }}
@@ -444,7 +444,7 @@ const currentNavLabel = computed(() => navItems.find(n => !n.divider && n.key ==
 
 // 重开浏览器是否接续上次对话：存 localStorage『gugu_reopen_resume』，GuguChat onMounted 读它决定接续/新对话
 const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') === '1')
-function setReopenResume(v) {
+function setReopenResume(v: boolean) {
   reopenResume.value = v
   localStorage.setItem('gugu_reopen_resume', v ? '1' : '0')
 }
@@ -480,7 +480,7 @@ async function saveInfo() {
     infoMsg.value     = '保存成功'
     infoMsgType.value = 'ok'
   } catch (e) {
-    infoMsg.value     = e.message ?? '保存失败'
+    infoMsg.value     = (e instanceof Error ? e.message : '') || '保存失败'
     infoMsgType.value = 'err'
   } finally {
     infoSaving.value = false
@@ -506,7 +506,7 @@ async function savePwd() {
     pwdMsgType.value = 'ok'
     currentPwd.value = newPwd.value = confirmPwd.value = ''
   } catch (e) {
-    pwdMsg.value     = e.message ?? '修改失败'
+    pwdMsg.value     = (e instanceof Error ? e.message : '') || '修改失败'
     pwdMsgType.value = 'err'
   } finally {
     pwdSaving.value = false
@@ -576,7 +576,7 @@ async function clearMemory() {
     memoryMsg.value    = '记忆已清除'
     memoryMsgType.value = 'ok'
   } catch (e) {
-    memoryMsg.value    = e.message ?? '删除失败'
+    memoryMsg.value    = (e instanceof Error ? e.message : '') || '删除失败'
     memoryMsgType.value = 'err'
   } finally {
     memoryClearing.value = false
@@ -597,7 +597,7 @@ async function clearAttachments() {
     attachMsg.value    = r.deleted > 0 ? `已删除 ${r.deleted} 个临时文件` : '没有可删除的临时文件'
     attachMsgType.value = 'ok'
   } catch (e) {
-    attachMsg.value    = e.message ?? '删除失败'
+    attachMsg.value    = (e instanceof Error ? e.message : '') || '删除失败'
     attachMsgType.value = 'err'
   } finally {
     attachClearing.value = false
@@ -623,23 +623,25 @@ const IM_PLATFORMS = [
     hint: '手机微信扫码 → 授权个人微信机器人（官方 iLink、无需企业资质），私聊它直接管项目/文件/日程' },
 ]
 
-const bots = ref([])
-const botsOf = (platform) => bots.value.filter(b => b.platform === platform)
+interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean }
+const bots = ref<Bot[]>([])
+const botsOf = (platform: string) => bots.value.filter(b => b.platform === platform)
 async function loadBots() {
   try { const r = await userBotsApi.list(); bots.value = r.items || [] } catch {}
 }
 
 // 通用扫码连接（建任务 → 渲染二维码 → 轮询 → 自动写 user_bot）
 const connecting = ref('')          // 正在生成二维码的平台 key
-const connect = ref(null)           // { platform, id } 连接进行中
+const connect = ref<{ platform: string; id: string } | null>(null)           // { platform, id } 连接进行中
 const connectHint = ref('')
 const connectErr = ref('')
-const connectCanvas = ref(null)
-const pmBodyRef = ref(null)
-let connectPoll = null
+const connectCanvas = ref<HTMLCanvasElement | null>(null)
+const pmBodyRef = ref<HTMLElement | null>(null)
+let connectPoll: ReturnType<typeof setInterval> | null = null
 
-async function startConnect(platform) {
+async function startConnect(platform: string) {
   const p = IM_PLATFORMS.find(x => x.key === platform)
+  if (!p) return
   connecting.value = platform; connectErr.value = ''
   try {
     const r = await p.api.start()
@@ -652,22 +654,23 @@ async function startConnect(platform) {
       : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
     await nextTick()
     await QRCode.toCanvas(connectCanvas.value, r.scan_url, { width: 180, margin: 1 })
-    pmBodyRef.value?.scrollTo({ top: pmBodyRef.value.scrollHeight, behavior: 'smooth' })
+    pmBodyRef.value?.scrollTo({ top: pmBodyRef.value?.scrollHeight ?? 0, behavior: 'smooth' })
     _startConnectPoll(p)
   } catch (e) {
-    connectErr.value = e.message || '生成二维码失败'
+    connectErr.value = (e instanceof Error ? e.message : '') || '生成二维码失败'
     connect.value = null
   } finally {
     connecting.value = ''
   }
 }
 
-function _startConnectPoll(p) {
+function _startConnectPoll(p: (typeof IM_PLATFORMS)[number]) {
   _stopConnectPoll()
   let tries = 0
   connectPoll = setInterval(async () => {
     tries++
     try {
+      if (!connect.value) return
       const r = await p.api.poll(connect.value.id)
       if (r.status === 'success') { cancelConnect(); await loadBots(); fireHint('im_bind') }   // 新手引导：第一次绑定 IM
       else if (r.status === 'expired') { connectErr.value = '二维码已过期，请重新扫码连接'; cancelConnect() }
@@ -683,15 +686,15 @@ function cancelConnect() {
   connect.value = null
 }
 
-async function toggleBot(b) {
+async function toggleBot(b: Bot) {
   try { await userBotsApi.update(b.id, { enabled: !b.enabled }); await loadBots() }
-  catch (e) { connectErr.value = e.message }
+  catch (e) { connectErr.value = e instanceof Error ? e.message : '连接失败' }
 }
 
-async function removeBot(b) {
+async function removeBot(b: Bot) {
   if (!confirm(`删除「${b.name}」？删除后这个机器人不再连咕咕。`)) return
   try { await userBotsApi.remove(b.id); await loadBots() }
-  catch (e) { connectErr.value = e.message }
+  catch (e) { connectErr.value = e instanceof Error ? e.message : '连接失败' }
 }
 
 onUnmounted(() => {
@@ -710,7 +713,7 @@ const recoverLabel = computed(() => {
   return `${timeStr}后恢复精力`
 })
 
-function quotaBarStyle(used, limit) {
+function quotaBarStyle(used: number, limit: number | null) {
   if (!limit) return { width: '8%', background: 'rgba(123,127,178,0.3)' }
   const pct = Math.min(100, (used / limit) * 100)
   const color = pct >= 90 ? 'rgba(200,80,80,0.7)'
@@ -719,7 +722,7 @@ function quotaBarStyle(used, limit) {
   return { width: pct + '%', background: color }
 }
 
-function quotaPctClass(used, limit) {
+function quotaPctClass(used: number, limit: number | null) {
   if (!limit) return ''
   const pct = (used / limit) * 100
   return pct >= 90 ? 'pct-danger' : pct >= 70 ? 'pct-warn' : ''
@@ -760,7 +763,7 @@ async function doDeleteAccount() {
     router.push('/login')
     emit('close')
   } catch (e) {
-    deleteErr.value = e.message ?? '注销失败'
+    deleteErr.value = (e instanceof Error ? e.message : '') || '注销失败'
   } finally {
     deleting.value = false
   }

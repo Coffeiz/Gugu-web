@@ -58,6 +58,8 @@
     "src/components/common/NotificationBubble.vue",
     "src/components/common/viewers/TextViewer.vue",
     "src/components/common/FilePreviewModal.vue",
-    "src/components/common/FloatPreviewWindow.vue"
+    "src/components/common/FloatPreviewWindow.vue",
+    "src/components/common/ProfileModal.vue",
+    "src/components/common/BaseModal.vue"
   ]
 }
