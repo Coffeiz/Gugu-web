@@ -1,11 +1,13 @@
 /**
- * 项目「阶段 + 待办」纯领域函数（单一来源）。
+ * 项目「阶段 + 待办」纯领域函数——**仅前端**：统一 UI / Store 的状态变换。
  *
- * 这套逻辑此前散在 stores/projects.ts（moveProject / setStage）、NewProjectModal、ProjectModal、
- * Agent 工具里各写一遍。这里先抽成**纯函数**（输入→输出、无 Vue 响应式、无副作用、无网络），
- * 便于单测与三处共用；真正需要响应式编排时再在外面包一层薄 composable。
+ * 这套逻辑此前散在 stores/projects.ts（moveProject / setStage）、ProjectModal 等前端各处各写一遍，
+ * 这里抽成**纯函数**（输入→输出、无 Vue 响应式、无副作用、无网络），便于单测与前端各处共用；
+ * 真正需要响应式编排时再在外面包一层薄 composable。
  *
- * ⚠️ 行为约定必须与 stores/projects.ts 现有实现逐字一致（迁移调用点时才不会引入回归）：
+ * ⚠️ 不是「前后端单一代码源」：后端 Agent（Python）import 不了这份 TS，保持它**自己的领域实现**，
+ *    靠 **API 契约 + 对称测试**保证与前端语义一致，别伪装成同一份代码。
+ * ⚠️ 行为约定必须与 stores/projects.ts 现有实现逐字一致（迁移前端调用点时才不会引入回归）：
  *   - _savedDone / autoCompleted 是纯前端瞬态（见 types/project.ts）；
  *   - 「自动完成」= 阶段前进/项目收尾时把未完成待办勾上并快照原状态，拖回时按快照还原。
  */
