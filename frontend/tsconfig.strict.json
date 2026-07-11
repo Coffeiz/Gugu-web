@@ -91,6 +91,7 @@
     "src/views/Dashboard/components/ProjectList.vue",
     "src/views/Files/UploadModal.vue",
     "src/views/Admin/Login.vue",
-    "src/views/DevOnboarding.vue"
+    "src/views/DevOnboarding.vue",
+    "src/views/Admin/Agent/index.vue"
   ]
 }
