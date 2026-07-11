@@ -12,7 +12,8 @@ from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
 from app.core import events
 from app.services.storage import get_storage
-from app.api.v1.files import _to_resp, _color, _delete_thumb_cache, _build_key, _resolve_conflict
+from app.api.v1.files import _to_resp, _color, _delete_thumb_cache
+from app.services.storage.keys import _build_key, _resolve_conflict
 
 router = APIRouter(prefix="/trash", tags=["trash"])
 

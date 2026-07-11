@@ -18,8 +18,9 @@ from app.models import File, Folder, Project
 from app.core.ownership import get_owned
 from app.services.storage import get_storage
 from app.api.v1.files import (
-    _build_key, _resolve_conflict, _fmt_size, _move_to_trash, _color,
+    _fmt_size, _move_to_trash, _color,
 )
+from app.services.storage.keys import _build_key, _resolve_conflict
 from agent.tools.base import BaseSkill, Tool
 
 # 可读/可改的文本类扩展名
