@@ -692,7 +692,8 @@ import { resolveFolderIds } from '@/utils/folderKeys'
 import { doneYear, doneMonth, splitName } from '@/utils/fileParse'
 import { optimisticMutation } from '@/utils/optimisticMutation'
 import type { FileMeta } from '@/stores/filesCache'
-import { navPathFor, type NavSeg, type FolderCard } from '@/utils/filesNav'
+import { type NavSeg, type FolderCard } from '@/utils/filesNav'
+import { useFilesNav } from '@/composables/useFilesNav'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
@@ -739,82 +740,11 @@ const isDragging  = computed(() => dragCounter.value > 0)
 const mainRef     = ref(null)
 
 // ── 导航 ──
-const navPath = ref<NavSeg[]>([])
-const navHistoryStack  = ref([])
-const navHistoryCursor = ref(-1)
-let _isHistoryNav = false
-
-const canGoBack    = computed(() => navHistoryCursor.value > 0)
-const canGoForward = computed(() => navHistoryCursor.value < navHistoryStack.value.length - 1)
-
-watch(navPath, (newVal) => {
-  if (_isHistoryNav) return
-  const snap = JSON.parse(JSON.stringify(newVal))
-  navHistoryStack.value = navHistoryStack.value.slice(0, navHistoryCursor.value + 1)
-  navHistoryStack.value.push(snap)
-  navHistoryCursor.value = navHistoryStack.value.length - 1
-}, { deep: true })
-
-function goBack() {
-  if (!canGoBack.value) return
-  _isHistoryNav = true
-  navHistoryCursor.value--
-  navPath.value = JSON.parse(JSON.stringify(navHistoryStack.value[navHistoryCursor.value]))
-  loadContents()
-  nextTick(() => { _isHistoryNav = false })
-}
-
-function goForward() {
-  if (!canGoForward.value) return
-  _isHistoryNav = true
-  navHistoryCursor.value++
-  navPath.value = JSON.parse(JSON.stringify(navHistoryStack.value[navHistoryCursor.value]))
-  loadContents()
-  nextTick(() => { _isHistoryNav = false })
-}
-
-const currentType = computed(() => {
-  if (navPath.value.length === 0) return 'root'
-  return navPath.value[navPath.value.length - 1].type
-})
-
-const currentSeg  = computed(() => navPath.value[navPath.value.length - 1] ?? null)
-const projectSeg  = computed(() => navPath.value.find(s => s.type === 'project') ?? null)
-const canUpload   = computed(() => ['personal', 'project', 'folder'].includes(currentType.value))
-
-const NAV_KEY = 'files_nav_path'
-
-function saveNav() {
-  sessionStorage.setItem(NAV_KEY, JSON.stringify(navPath.value))
-}
-
-function enterFolder(folder) {
-  clearSelection()
-  navPath.value = navPathFor(folder, navPath.value)
-  saveNav()
-  loadContents()
-}
-
-function navigateTo(idx) {
-  clearSelection()
-  if (idx === -1) {
-    navPath.value = []
-  } else {
-    navPath.value = navPath.value.slice(0, idx + 1)
-  }
-  saveNav()
-  loadContents()
-}
-
-function restoreNav() {
-  try {
-    const saved = sessionStorage.getItem(NAV_KEY)
-    if (!saved) return
-    navPath.value = JSON.parse(saved)
-  } catch {
-    navPath.value = []
-  }
-}
+const {
+  navPath, canGoBack, canGoForward, goBack, goForward,
+  currentType, currentSeg, projectSeg, canUpload,
+  saveNav, enterFolder, navigateTo, restoreNav, pruneHistoryForFolders,
+} = useFilesNav({ loadContents, clearSelection })
 
 // ── 顶栏全局搜索：定位到某个文件/文件夹所在目录 ──
 function _folderChain(folderId) {
@@ -1739,22 +1669,6 @@ function onFilePointerDown(f, e) {
     selectedFileIds: selectedIds.value,
     selectedFolderIds: _selectedFolderIdNums(),
   })
-}
-
-function pruneHistoryForFolders(folderIds) {
-  const idSet = new Set(folderIds)
-  const hasDeleted = snap => snap.some(seg => seg.type === 'folder' && idSet.has(seg.folderId))
-  const curIdx = navHistoryCursor.value
-  let newCursor = 0
-  const kept = []
-  navHistoryStack.value.forEach((snap, i) => {
-    if (!hasDeleted(snap)) {
-      if (i <= curIdx) newCursor = kept.length
-      kept.push(snap)
-    }
-  })
-  navHistoryStack.value = kept
-  navHistoryCursor.value = Math.min(newCursor, Math.max(0, kept.length - 1))
 }
 
 async function deleteFolder(f) {
