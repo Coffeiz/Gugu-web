@@ -702,6 +702,7 @@ import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/service
 import { thumbLoadedIds, clearThumbCache } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt as isPmImageExt, fileExtCategory, fileIconColor } from '@/utils/fileTypes'
+import { splitName } from '@/utils/fileParse'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
 import { readDroppedEntries, filesToItems, uploadFilesWithFolders, checkUploadConflicts } from '@/composables/useFileUpload'
@@ -1810,10 +1811,8 @@ async function uploadFiles(items) {
     uploadOne: async (file, resolvedFolderId, relativePath) => {
       const top = relativePath.includes('/') ? relativePath.slice(0, relativePath.indexOf('/')) : null
       const folderGhost = top ? folderGhosts.get(top) : null
-      const ghost = folderGhost ? null : createGhost(
-        (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(0, i) : file.name })(),
-        (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(i + 1).toUpperCase() : '' })(),
-      )
+      const { base: ghostBase, ext: ghostExt } = splitName(file.name)
+      const ghost = folderGhost ? null : createGhost(ghostBase, ghostExt.toUpperCase())
       // 这组文件全处理完（不管成功失败）就把攒着的真实文件夹插进可见列表——成功/失败两条
       // 路径都要走，否则「文件夹最后一个文件恰好失败」时永远插不进去
       const settleFolder = (failed) => {

@@ -689,6 +689,7 @@ import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt, fileExtCategory, fileIconColor, fileListIcon } from '@/utils/fileTypes'
 import { fmtBytes } from '@/utils/fileSize'
 import { resolveFolderIds } from '@/utils/folderKeys'
+import { doneYear, doneMonth, splitName } from '@/utils/fileParse'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
@@ -1011,8 +1012,6 @@ function extractColor(colorStr) {
 }
 
 // 已完成项目按「完成日期」doneAt 归档（与项目面板一致），fallback startDate/createdAt
-function doneYear(p)  { return (p.doneAt || p.startDate || p.createdAt || '').slice(0, 4) || '未归类' }
-function doneMonth(p) { return (p.doneAt || p.startDate || p.createdAt || '').slice(5, 7) || '00' }
 
 // 状态文件夹的色 / 图标（待开始灰 / 进行中蓝 / 已完成绿）
 const STATUS_COLOR = { pending: '#8a8fa8', active: '#5080c8', done: '#4a9a72' }
@@ -1588,10 +1587,8 @@ async function uploadFiles(items) {
     uploadOne: async (file, resolvedFolderId, relativePath) => {
       const top = relativePath.includes('/') ? relativePath.slice(0, relativePath.indexOf('/')) : null
       const folderGhost = top ? folderGhosts.get(top) : null
-      const ghost = folderGhost ? null : createGhost(
-        (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(0, i) : file.name })(),
-        (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(i + 1).toUpperCase() : '' })(),
-      )
+      const { base: ghostBase, ext: ghostExt } = splitName(file.name)
+      const ghost = folderGhost ? null : createGhost(ghostBase, ghostExt.toUpperCase())
       // 这组文件全处理完（不管成功失败）就把攒着的真实文件夹插进可见列表——跟成功/失败两条
       // 路径都要走，否则「文件夹最后一个文件恰好失败」时永远插不进去
       const settleFolder = (failed) => {
