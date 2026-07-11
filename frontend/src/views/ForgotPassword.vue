@@ -85,7 +85,7 @@ async function handleSubmit() {
     message.value = body.message || '若该邮箱已注册，重置链接已发送，请查收邮箱。'
     sent.value = true
   } catch (e) {
-    error.value = e.message
+    error.value = e instanceof Error ? e.message : '操作失败'
   } finally {
     loading.value = false
   }

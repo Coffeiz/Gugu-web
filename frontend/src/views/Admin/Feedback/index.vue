@@ -55,7 +55,7 @@ const categoryOptions = [
   { value: 'other',      icon: PhChatCircle, label: '其他' },
 ]
 
-const items    = ref([])
+const items    = ref<any[]>([])
 const total    = ref(0)
 const page     = ref(1)
 const pageSize = 30
@@ -63,7 +63,7 @@ const filter   = ref('')
 const loading  = ref(false)
 const refreshing = ref(false)
 
-function categoryLabel(cat) {
+function categoryLabel(cat: string) {
   return { bug: 'Bug', suggestion: '建议', other: '其他' }[cat] ?? cat
 }
 

@@ -75,6 +75,12 @@
     "src/views/Admin/Debug/index.vue",
     "src/views/Admin/Config/index.vue",
     "src/views/Admin/Quota/index.vue",
-    "src/views/Schedules/index.vue"
+    "src/views/Admin/Feedback/index.vue",
+    "src/views/Schedules/index.vue",
+    "src/components/ContextMenu.vue",
+    "src/views/Login.vue",
+    "src/views/Register.vue",
+    "src/views/ForgotPassword.vue",
+    "src/views/ResetPassword.vue"
   ]
 }

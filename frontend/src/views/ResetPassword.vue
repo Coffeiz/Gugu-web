@@ -96,7 +96,7 @@ async function handleSubmit() {
     if (!res.ok) throw new Error(body?.detail || '重置失败，请重试')
     done.value = true
   } catch (e) {
-    error.value = e.message
+    error.value = e instanceof Error ? e.message : '操作失败'
   } finally {
     loading.value = false
   }
