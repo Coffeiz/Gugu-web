@@ -690,6 +690,7 @@ import { isImageExt, fileExtCategory, fileIconColor, fileListIcon } from '@/util
 import { fmtBytes } from '@/utils/fileSize'
 import { resolveFolderIds } from '@/utils/folderKeys'
 import { doneYear, doneMonth, splitName } from '@/utils/fileParse'
+import { optimisticMutation } from '@/utils/optimisticMutation'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
@@ -1344,17 +1345,17 @@ function onPageClick() {
 // ── 删除 ──
 async function deleteSingleFile(f) {
   const backup = cacheStore.getFile(f.id)
-  cacheStore.removeFile(f.id)
-  selectedIds.value = new Set([...selectedIds.value].filter(id => id !== f.id))
-  loadContents()
-  try {
-    await filesApi.delete(f.id)
-    fetchStorage()
-  } catch (e) {
-    if (backup) cacheStore.addFile(backup)
-    loadContents()
-    console.error('[Files] 删除失败:', e.message)
-  }
+  await optimisticMutation({
+    apply: () => {
+      cacheStore.removeFile(f.id)
+      selectedIds.value = new Set([...selectedIds.value].filter(id => id !== f.id))
+    },
+    afterMutate: loadContents,
+    work: () => filesApi.delete(f.id),
+    onCommit: fetchStorage,
+    rollback: () => { if (backup) cacheStore.addFile(backup) },
+    onError: e => console.error('[Files] 删除失败:', (e as Error).message),
+  })
 }
 
 async function downloadSelected() {
@@ -1744,27 +1745,23 @@ function isBcDroppable(seg) {
 
 async function moveFoldersInto(folderIds, targetFolderId) {
   const backups = folderIds.map(id => cacheStore.getFolder(id)).filter(Boolean)
-  folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: targetFolderId }))
-  loadContents()
-  try {
-    await Promise.all(folderIds.map(id => foldersApi.move(id, targetFolderId)))
-  } catch (err) {
-    backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId }))
-    loadContents()
-    console.error('[Files] 移动文件夹失败:', err.message)
-  }
+  await optimisticMutation({
+    apply: () => folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: targetFolderId })),
+    afterMutate: loadContents,
+    work: () => Promise.all(folderIds.map(id => foldersApi.move(id, targetFolderId))),
+    rollback: () => backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId })),
+    onError: err => console.error('[Files] 移动文件夹失败:', (err as Error).message),
+  })
 }
 async function moveFilesInto(fileIds, targetFolderId) {
   const backups = fileIds.map(id => cacheStore.getFile(id)).filter(Boolean)
-  fileIds.forEach(id => cacheStore.updateFile(id, { folderId: targetFolderId }))
-  loadContents()
-  try {
-    await Promise.all(fileIds.map(id => filesApi.update(id, { folderId: targetFolderId })))
-  } catch (err) {
-    backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId }))
-    loadContents()
-    console.error('[Files] 移动失败:', err.message)
-  }
+  await optimisticMutation({
+    apply: () => fileIds.forEach(id => cacheStore.updateFile(id, { folderId: targetFolderId })),
+    afterMutate: loadContents,
+    work: () => Promise.all(fileIds.map(id => filesApi.update(id, { folderId: targetFolderId }))),
+    rollback: () => backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId })),
+    onError: err => console.error('[Files] 移动失败:', (err as Error).message),
+  })
 }
 
 const {
@@ -1963,17 +1960,17 @@ async function ctxDelete() {
   // 乐观：先从缓存移除再 loadContents。loadContents 是从缓存同步重建的，若不先 removeFiles，
   // 被删文件仍在缓存 → 视图原地不动，要等 SSE/刷新才消失（跟 deleteSingleFile 对齐，之前这条右键路径漏了）。
   const backups = ids.map(id => cacheStore.getFile(id)).filter(Boolean)
-  cacheStore.removeFiles(ids)
-  selectedIds.value = new Set()
-  loadContents()
-  try {
-    await Promise.all(ids.map(id => filesApi.delete(id)))
-    fetchStorage()
-  } catch (e) {
-    backups.forEach(f => cacheStore.addFile(f))   // 回滚
-    loadContents()
-    console.error('[Files] 删除失败:', e.message)
-  }
+  await optimisticMutation({
+    apply: () => {
+      cacheStore.removeFiles(ids)
+      selectedIds.value = new Set()
+    },
+    afterMutate: loadContents,
+    work: () => Promise.all(ids.map(id => filesApi.delete(id))),
+    onCommit: fetchStorage,
+    rollback: () => backups.forEach(f => cacheStore.addFile(f)),
+    onError: e => console.error('[Files] 删除失败:', (e as Error).message),
+  })
 }
 
 // ── 文件夹操作 ──
@@ -2002,16 +1999,16 @@ async function ctxPaste() {
   try {
     if (cbStore.type === 'cut') {
       const backups = cbStore.fileIds.map(id => cacheStore.getFile(id)).filter(Boolean)
-      cbStore.fileIds.forEach(id => cacheStore.updateFile(id, { folderId, projectId }))
-      cbStore.clear()
-      loadContents()
-      try {
-        await Promise.all(backups.map(f => filesApi.update(f.id, { folderId, projectId })))
-      } catch (e) {
-        backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId, projectId: f.projectId }))
-        loadContents()
-        console.error('[Files] 粘贴失败:', e)
-      }
+      await optimisticMutation({
+        apply: () => {
+          cbStore.fileIds.forEach(id => cacheStore.updateFile(id, { folderId, projectId }))
+          cbStore.clear()
+        },
+        afterMutate: loadContents,
+        work: () => Promise.all(backups.map(f => filesApi.update(f.id, { folderId, projectId }))),
+        rollback: () => backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId, projectId: f.projectId })),
+        onError: e => console.error('[Files] 粘贴失败:', e),
+      })
     } else if (cbStore.type === 'copy') {
       const created = await Promise.all(cbStore.fileIds.map(id =>
         filesApi.copy(id, { folderId, projectId })
