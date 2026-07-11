@@ -140,10 +140,16 @@ defineExpose({ flagConflict: () => { conflict.value = true }, confirmEdit, stopE
   height: 100%; min-width: max-content;
   /* 两端留白让首末列也能停在「内容区中线」（不是视口中线——滚动容器铺满视口宽但要跟
      上方胶囊/滑杆的居中对齐）。内容区中线 = (侧栏宽 + 视口)/2 = 侧栏宽/2 + 50vw；
-     半列宽 220（= .tl-col 440px 的一半）。左 padding = 中线 - 半列；右 padding = 视口 - 中线 - 半列。 */
+     半列宽 220（= .tl-col 440px 的一半）。左 padding = 中线 - 半列；右 padding = 视口 - 中线 - 半列。
+     右 padding 多留一份 var(--sidebar-width)——按这条公式，左右 padding 加一起正好等于
+     100vw - 列宽，只有一列时内容总宽恰好等于视口宽，scrollWidth == clientWidth，滚动
+     范围直接是 0，JS 那边算出来该往右滚一点（补偿侧栏偏移）也滚不动，列只能停在没补偿
+     的位置、看着往左偏了（只有单列会踩到这个退化情况——两列起总宽本来就比视口宽出一大截，
+     滚动范围够用，从没暴露过）。多留这份 sidebar-width 保证不管几列，滚动范围至少有
+     侧栏宽这么多，居中永远够滚过去。 */
   padding-top: 2px;
   padding-left: calc(var(--sidebar-width) / 2 + 50vw - 220px);
-  padding-right: calc(50vw - var(--sidebar-width) / 2 - 220px);
+  padding-right: calc(var(--sidebar-width) / 2 + 50vw - 220px);
 }
 
 /* 一天一块玻璃底板：轻玻璃（同定时任务面板 --glass-bg 0.25），hover 不提亮（底板不是交互件） */
