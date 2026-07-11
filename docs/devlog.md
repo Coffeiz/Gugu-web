@@ -48,6 +48,18 @@
 
 ---
 
+## 2026-07-11 · 思维面板单日玻璃卡偏左：同一个“中线”被 CSS 和 JS 各算了一遍
+
+记录面板的时间流在有多日记录时正常，只有一天记录时玻璃卡会偏左。前两次修复都把注意力放在“单列内容宽度不足，`scrollLeft` 被钳到 0”上：先补对称 padding，再在右侧加了 300px 缓冲。它们确实扩大了可滚动范围，却没有消掉根因，所以在某些窗口尺寸下仍能复现。
+
+真正的问题是**两套坐标系不一致**。`NoteTimeline.vue` 用 `50vw + sidebar-width` 的 CSS 公式推算首列应停的位置；`NotesView.vue` 的 `contentCenter()` 则用 `.rec-layout` 和 `.rec-hscroll` 的 `getBoundingClientRect()` 实测内容区中线。fullBleed 内边距、滚动条等细节会让两者相差十几到几十像素。多列时横向可滚动余量很大，这点差会被滚动范围吞掉；单列时首卡正好处在边界，误差就直接成为肉眼可见的左偏。
+
+修复不再继续调 CSS 常数：由 `NotesView.vue::syncTimelineGutters()` 在首屏数据提交后和窗口 resize 时，用同一个 `contentCenter()` 结果写入 `--timeline-left-gutter` / `--timeline-right-gutter`。`NoteTimeline.vue` 只消费这两个变量，原有 CSS 公式仅作为 JS 尚未挂载前的一帧 fallback。于是“卡片如何留白”和“卡片滚到哪里算居中”终于共用同一份几何事实，单日与多日也走同一条路径。
+
+**教训：布局里只要同时出现 CSS 推导坐标和 JS 实测坐标，就不能假定它们天然等价。** 多元素场景往往有足够余量掩盖误差，单元素/边界场景才会把它暴露出来；这种问题继续加缓冲只是缓解，应该让两端直接复用同一个测量来源。
+
+---
+
 ## 2026-07-09 · 飞书 CardKit 流式回复接入：type=template、SDK 同步路径丢 body、sequence 严格递增，三个坑一个比一个隐蔽
 
 目标很朴素：飞书 IM 收到消息后，agent 生成期间实时 patch 同一张卡片内容，模拟 SSE 体感（飞书客户端不支持真流式推送，patch 是唯一可行方案）。最终落地的链路是 `agent.runner.run_stream` 异步生成器逐字 yield → `feishu.send_text_stream` 边累积边 PUT element content，typewriter 效果由飞书服务端在 `streaming_mode=true` 下自动渲染。一路撞上三个坑，**第一个最容易被再撞上**（文档把两条路线写一起，不仔细看就混），后两个属于 SDK/服务端细节但同样会让排错时间翻倍。
