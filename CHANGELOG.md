@@ -22,6 +22,7 @@
 - **时区迁移后前端时间显示「Invalid Date」**（`app/core/tz.py`、`app/api/v1/{agent,auth}.py`）：Phase 2 时区迁移把 `created_at` 等列改成 aware `UtcDateTime` 后，`isoformat()` 已自带 `+00:00` 偏移，但会话/消息时间、精力重置时刻这几处还在老代码路径拼 `+"Z"`，产出 `2026-07-11T08:17:00+00:00Z` 这种同时带偏移量和 `Z` 的非法 ISO 串，`new Date()` 解析失败、网页上直接显示「Invalid Date」。新增 `tz.iso_utc()` 统一出口（aware 归一到 UTC 去偏移换单个 `Z`、naive 补 `Z`），替换咕咕聊天消息时间、会话列表时间、精力重置时刻共 4 处。
 - **Admin 数据总览页 500**（`app/db/types.py`）：同一次时区迁移的另一处遗留——自定义 `UtcDateTime` 类型（`TypeDecorator`）默认不会把「列 + timedelta」这类算术委托给底层 `DateTime` 的比较器去推导类型，`admin_analytics.py` 算留存分桶的 `User.created_at + timedelta(days=n)` 因此先报 `AttributeError`（timedelta 被误当 datetime 处理），修完这层 SQL 类型标注仍是错的（asyncpg 给参数打 `TIMESTAMP WITH TIME ZONE` 而非 `INTERVAL` cast，Postgres 报 `operator does not exist`）。根治在类型层补 `coerce_compared_value` 委托给 impl，「`UtcDateTime` 列 + timedelta」自动按 `Interval` 正确绑定，行为对齐裸 `DateTime` 列，调用方代码不用改；全仓排查确认这是唯一触发点。
 - **项目归档列表点开闪一下「加载中」**（`stores/projects.ts`、`views/Projects/{index.vue,components/ArchivedProjectsModal.vue}`）：原来点开归档弹层才发请求，网络往返期间必然闪一下加载态，影响打开观感。改为项目页挂载时后台静默预取归档列表（新增 `archivedLoaded` 标记防重复请求），弹层打开时数据大概率已在、零延迟展示；只有真·首次（还没任何缓存数据）才会显示加载态，之后的后台刷新不再触发它。
+- **文件库剪切文件夹粘贴无效**（`views/Files/index.vue`）：`ctxPaste` 的 cut 分支只处理了剪贴板里的 `fileIds`，从没碰过 `folderIds`——剪切文件夹时数据正常进了剪贴板，粘贴那一刻却是纯静默空操作，文件库里剪切文件夹一直不生效。项目编辑卡的 `pmCtxPaste` 当时已经补过同样的坑（Phase B 4 处 bug 之一），文件库这边没同步。补上文件夹分支，复用文件库自己拖拽移动 `moveFoldersInto` 同一套模式：`cacheStore.updateFolder({parentId})` 乐观更新 + `foldersApi.move()` 落库 + 失败回滚；右键菜单与 `Ctrl+X`/`Ctrl+V` 快捷键走同一入口，一并修复。
 
 ### 重构
 
