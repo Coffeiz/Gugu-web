@@ -1349,6 +1349,7 @@ async function deleteSingleFile(f) {
   loadContents()
   try {
     await filesApi.delete(f.id)
+    fetchStorage()
   } catch (e) {
     if (backup) cacheStore.addFile(backup)
     loadContents()
@@ -1407,6 +1408,7 @@ async function deleteSelected() {
     if (hasFiles)   tasks.push(filesApi.batchDelete(fileIds))
     if (hasFolders) folderIds.forEach(id => tasks.push(foldersApi.delete(id)))
     await Promise.all(tasks)
+    fetchStorage()
   } catch (e) {
     // 回滚
     fileBackups.forEach(f => cacheStore.addFile(f))
@@ -1421,6 +1423,7 @@ async function restoreFile(f) {
     await trashApi.restore(f.id)
     loadContents()
     cacheStore.refresh()   // 还原的文件回到文件库 → 直接刷新库 store（本页发起，SSE 回声被抑制，得自己刷）
+    fetchStorage()   // 还原使 deleted_at=null，重新计入用量
   } catch (e) {
     console.error('[Files] 恢复失败:', e.message)
   }
@@ -1452,6 +1455,7 @@ async function restoreSelected() {
     clearSelection()
     loadContents()
     cacheStore.refresh()   // 同上：还原的文件回到文件库，直接刷新库 store
+    fetchStorage()   // 还原使 deleted_at=null，重新计入用量
   } catch (e) {
     console.error('[Files] 批量恢复失败:', e.message)
   }
@@ -1833,6 +1837,7 @@ async function deleteFolder(f) {
   loadContents()
   try {
     await foldersApi.delete(f.folderId)
+    fetchStorage()
   } catch (e) {
     // 无法回滚（不知道子结构），静默刷新
     cacheStore.refresh().then(() => loadContents())
@@ -2013,6 +2018,7 @@ async function ctxPaste() {
       ))
       created.forEach(f => cacheStore.addFile(f))
       loadContents()
+      fetchStorage()   // 复制新增文件，计入用量
     }
   } catch (e) { console.error('[Files] 粘贴失败:', e) }
 }
