@@ -56,6 +56,8 @@
     "src/components/common/AvatarCropper.vue",
     "src/components/common/SegBar.vue",
     "src/components/common/NotificationBubble.vue",
-    "src/components/common/viewers/TextViewer.vue"
+    "src/components/common/viewers/TextViewer.vue",
+    "src/components/common/FilePreviewModal.vue",
+    "src/components/common/FloatPreviewWindow.vue"
   ]
 }

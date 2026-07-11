@@ -34,10 +34,10 @@
               <span>{{ error }}</span>
             </div>
             <template v-else-if="blobUrl || videoSrc">
-              <PdfViewer   v-if="isPdf || isOffice" :blobUrl="blobUrl" />
-              <ImageViewer v-else-if="isImage"      :blobUrl="blobUrl" />
-              <TextViewer  v-else-if="isText"       :blobUrl="blobUrl" :ext="file?.ext" :fileKey="file?.id ?? file?.attach_id" />
-              <VideoViewer v-else-if="isVideo"      :src="videoSrc" />
+              <PdfViewer   v-if="isPdf || isOffice" :blobUrl="blobUrl ?? undefined" />
+              <ImageViewer v-else-if="isImage"      :blobUrl="blobUrl ?? undefined" />
+              <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.id ?? file?.attach_id ?? undefined" />
+              <VideoViewer v-else-if="isVideo"      :src="videoSrc ?? undefined" />
 
             </template>
           </div>
@@ -47,7 +47,7 @@
 
     <!-- 文件信息弹窗 -->
     <Transition name="info-pop">
-      <div v-if="showInfo" class="fp-info-win"
+      <div v-if="showInfo && file" class="fp-info-win"
         :style="{ left: infoX+'px', top: infoY+'px', zIndex: myZ + 1 }"
         @mousedown.stop
       >
@@ -97,7 +97,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
+import { ref, watch, computed, onUnmounted, nextTick, type PropType } from 'vue'
+import type { FileMeta } from '@/stores/filesCache'
 import { PhInfo, PhDownloadSimple, PhX, PhWarningCircle } from '@phosphor-icons/vue'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
@@ -111,15 +112,15 @@ import { nextZ, registerEsc } from '@/composables/windowz'
 
 const props = defineProps({
   show: Boolean,
-  file: Object,   // { id, displayName, ext, mimeType }
+  file: { type: Object as PropType<Partial<FileMeta>>, default: undefined },
 })
 const emit = defineEmits(['close'])
 
-const blobUrl    = ref(null)
-const videoSrc   = ref(null)
+const blobUrl    = ref<string | null>(null)
+const videoSrc   = ref<string | null>(null)
 const loading    = ref(false)
 const converting = ref(false)
-const error      = ref(null)
+const error      = ref<string | null>(null)
 
 const isImage  = computed(() => isImageExt(props.file?.ext))
 const isText   = computed(() => isTextExt(props.file?.ext))
@@ -128,7 +129,7 @@ const isPdf    = computed(() => props.file?.ext?.toUpperCase() === 'PDF')
 const isOffice = computed(() => isOfficeExt(props.file?.ext))
 const isAudio  = computed(() => isAudioExt(props.file?.ext))
 
-const EXT_COLORS = {
+const EXT_COLORS: Record<string, string> = {
   PDF: '#e05555',
   DOC: '#2b7cd3', DOCX: '#2b7cd3',
   XLS: '#1d6f42', XLSX: '#1d6f42',
@@ -146,26 +147,26 @@ function revoke() {
   videoSrc.value = null
 }
 
-async function load(file, refresh = false) {
+async function load(file: Partial<FileMeta>, refresh = false) {
   revoke()
   loading.value    = true
   converting.value = false
   error.value      = null
-  extColor.value   = EXT_COLORS[file.ext?.toUpperCase()] ?? '#7b7fb2'
+  extColor.value   = EXT_COLORS[(file.ext ?? '').toUpperCase()] ?? '#7b7fb2'
 
   const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
   const token    = localStorage.getItem('user_token') ?? ''
-  const headers  = token ? { Authorization: `Bearer ${token}` } : {}
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
 
   try {
     if (isVideoExt(file.ext)) {
-      const { url } = await filesApi.getStreamUrl(file.id)
+      const { url } = await filesApi.getStreamUrl(file.id!)
       videoSrc.value = url
     } else if (isOfficeExt(file.ext)) {
       converting.value = true
       const officeUrl = file.attach_id
         ? `${BASE_URL}/agent/attachment/${file.attach_id}/preview-pdf`
-        : `${BASE_URL}/files/${file.id}/preview-pdf`
+        : `${BASE_URL}/files/${file.id!}/preview-pdf`
       const res = await fetch(officeUrl, { headers })
       converting.value = false
       if (!res.ok) throw new Error(`转换失败 (${res.status})`)
@@ -177,7 +178,7 @@ async function load(file, refresh = false) {
       const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
       const dlUrl = (file.attach_id
         ? `${BASE_URL}/agent/attachment/${file.attach_id}/download`
-        : `${BASE_URL}/files/${file.id}/download`) + bust
+        : `${BASE_URL}/files/${file.id!}/download`) + bust
       const res = await fetch(dlUrl, { headers })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       let blob = await res.blob()
@@ -188,14 +189,14 @@ async function load(file, refresh = false) {
       blobUrl.value = URL.createObjectURL(blob)
     }
   } catch (e) {
-    error.value = '无法加载文件：' + e.message
+    error.value = '无法加载文件：' + (e instanceof Error ? e.message : e)
   } finally {
     loading.value    = false
     converting.value = false
   }
 }
 
-watch(() => [props.show, props.file], ([show, file]) => {
+watch(() => [props.show, props.file] as [boolean, Partial<FileMeta> | undefined], ([show, file]) => {
   if (show && file) load(file)
   else revoke()
 }, { immediate: true })
@@ -208,7 +209,7 @@ watch(() => liveStore.rev.files, () => {
 // 窗口层级:打开领新 z、点击置顶;ESC 统一走 windowz(只关最顶层)
 const myZ = ref(0)
 function raise() { myZ.value = nextZ() }
-let _unregEsc = null
+let _unregEsc: (() => void) | null = null
 watch(() => props.show, v => {
   if (v) {
     raise()
@@ -221,9 +222,9 @@ watch(() => props.show, v => {
 async function handleDownload() {
   if (!props.file) return
   try {
-    await filesApi.download(props.file.id, `${props.file.displayName}.${props.file.ext.toLowerCase()}`)
+    await filesApi.download(props.file.id!, `${props.file.displayName}.${props.file.ext?.toLowerCase()}`)
   } catch (e) {
-    console.error('[Preview] 下载失败:', e.message)
+    console.error('[Preview] 下载失败:', e)
   }
 }
 
@@ -238,7 +239,7 @@ onUnmounted(() => {
 const showInfo   = ref(false)
 const infoX      = ref(0)
 const infoY      = ref(0)
-const infoBtnRef = ref(null)
+const infoBtnRef = ref<HTMLElement | null>(null)
 
 async function openInfo() {
   if (!showInfo.value && infoBtnRef.value) {
@@ -250,14 +251,14 @@ async function openInfo() {
   showInfo.value = !showInfo.value
 }
 
-let infoDragOrig = null
-function startInfoDrag(e) {
+let infoDragOrig: { mx: number; my: number; x: number; y: number } | null = null
+function startInfoDrag(e: MouseEvent) {
   if (e.button !== 0) return
   infoDragOrig = { mx: e.clientX, my: e.clientY, x: infoX.value, y: infoY.value }
   window.addEventListener('mousemove', onInfoDragMove)
   window.addEventListener('mouseup',   onInfoDragUp)
 }
-function onInfoDragMove(e) {
+function onInfoDragMove(e: MouseEvent) {
   if (!infoDragOrig) return
   infoX.value = Math.max(0, infoDragOrig.x + e.clientX - infoDragOrig.mx)
   infoY.value = Math.max(0, infoDragOrig.y + e.clientY - infoDragOrig.my)
