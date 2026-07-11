@@ -87,26 +87,39 @@ def strip_disallowed_emoji(text: str) -> str:
     return _EMOJI_RE.sub(lambda m: m.group(0) if m.group(1) in _KEEP_EMOJI else "", text)
 
 
-# ── 【临时诊断】疑似 MiniMax tool-call token 泄漏尾巴探针 ──────────────────────
-# 现象：咕咕回复偶发以 `[e~[` 之类符号残片结尾——StreamSanitizer 只登记了 `]<]minimax` 一种
-# 泄漏标记，这是同源的另一变体/被截断的残片，漏网透传到了正文末尾。此探针把可疑尾巴的 repr+hex
-# 打进 gugu.log（后台 Debug 面板可见），供确认确切字节形态后登记进 TRUNCATE_MARKERS。
-# 触发条件（`[e~[` 的两个强特征，尽量避开合法收尾）：① 回复以「挂着的」开方括号结尾；② 尾部出现
-# `~[`（波浪号紧跟开方括号）。避开 `~`/`）`/表格 `|`/代码围栏 ``` /颜文字 `>_<` 这些常见合法收尾。
-# 只记尾部 ~48 字符、不含用户输入/正文主体。★确认形态后连同调用点一起删除。
-_LEAK_TAIL_RE = re.compile(r"\[\s*$")   # 结尾挂着开方括号
-_LEAK_MID_RE = re.compile(r"~\[")        # 波浪号紧跟开方括号（[e~[ 的特征）
+# ── 【临时诊断】回复尾部异常字符探针 ─────────────────────────────────────────
+# 现象：咕咕回复末尾在 Debug 面板/聊天里显示成 `[e~[`，但「以 `[` 结尾」的探针从不命中
+# → 真身不是字面 `[e~[`，而是某个**不可见/控制/非常规空白字符**被渲染/转义成了 `[e~[`
+# （咕咕自己也把它当「空格」）。这版改为：末尾若出现任何 Unicode 控制/格式/私用/未分配类别
+# （Cc/Cf/Co/Cn/Cs）或非 U+0020 的空白（Zs/Zl/Zp），就把尾部 repr + hex + 末几字符的 Unicode
+# 类别打进 gugu.log，抓到真身字节。保留原 `[`/`~[` 匹配作兜底。只记尾部 ~40 字符。★确认后删除。
+_LEAK_TAIL_RE = re.compile(r"\[\s*$")
+_LEAK_MID_RE = re.compile(r"~\[")
+
+
+def _has_weird_tail(text: str) -> bool:
+    import unicodedata
+    for c in text[-12:]:
+        if c in " \n\t":
+            continue
+        cat = unicodedata.category(c)
+        if cat[0] == "C" or cat in ("Zs", "Zl", "Zp"):   # 控制/格式/私用/未分配/非常规空白
+            return True
+    return False
 
 
 def probe_leak_tail(text: str, where: str) -> None:
     if not text:
         return
-    if not (_LEAK_TAIL_RE.search(text) or _LEAK_MID_RE.search(text[-16:])):
+    if not (_has_weird_tail(text) or _LEAK_TAIL_RE.search(text) or _LEAK_MID_RE.search(text[-16:])):
         return
     import logging
-    seg = text[-48:]
+    import unicodedata
+    seg = text[-40:]
+    cats = [f"{c!r}:{unicodedata.category(c)}:U+{ord(c):04X}" for c in seg[-6:]]
     logging.getLogger("agent.runner").warning(
-        "[leak-probe] where=%s tail=%r hex=%s", where, seg, seg.encode("utf-8").hex())
+        "[leak-probe] where=%s tail=%r hex=%s lastchars=%s",
+        where, seg, seg.encode("utf-8", "surrogatepass").hex(), cats)
 
 
 # ── 历史消息清洗（Anthropic / MiniMax）──────────────────────────────────────
