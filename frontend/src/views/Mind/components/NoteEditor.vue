@@ -277,10 +277,6 @@ function toggleInsertMenu() {
   }
 }
 
-// CaptureBar 的「输入 @ 引用…」提示挪到了外层 cb-foot 里（贴着收起按钮），但抽屉展开时
-// 仍要让位——这里把状态暴露出去，给 CaptureBar 自己控制提示的显隐。
-const anyDrawerOpen = computed(() => stylesOpen.value || insertOpen.value)
-
 // 代码块不给手动选语言，统一交给 highlightAuto 自动识别（见 useMindEditor.ts）——
 // 跟下面两个插入动作一样，点了就直接生效，不弹二次确认。
 function insertCodeBlock() { editor.value?.chain().focus().toggleCodeBlock().run(); insertOpen.value = false }
@@ -363,7 +359,6 @@ defineExpose({
   focus: () => editor.value?.commands.focus('end'),
   focusAtLineUnit,
   clear: () => editor.value?.commands.setContent(markdownToDoc('') as any, { emitUpdate: false }),
-  anyDrawerOpen,
 })
 
 onBeforeUnmount(() => {

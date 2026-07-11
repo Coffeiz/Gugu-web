@@ -27,7 +27,7 @@
             </label>
             <DatePicker v-if="backfill" class="cb-date" v-model="date" :max="todayIso" :show-clear="false" placeholder="选择日期" />
             <div class="cb-right">
-              <span class="cb-hint" v-show="!editorRef?.anyDrawerOpen">输入 <code>@</code> 引用项目/文件/活动</span>
+              <span class="cb-hint">输入 <code>@</code> 引用项目/文件/活动</span>
               <button class="cb-min" title="收起（内容保留）" @click="collapse">
                 <PhCaretDown :size="13" weight="bold" />
               </button>
@@ -227,7 +227,8 @@ async function save() {
 .cb-date :deep(.dp-input) { padding: 6px 10px; box-sizing: border-box; font-size: 12px; }
 
 /* 提示文字 + 收起 + 记录三个一组贴右边——提示挪到这（原来在 NoteEditor 自己的工具栏里，
-   现在紧挨着收起按钮），抽屉展开时 v-show 让位（NoteEditor 暴露的 anyDrawerOpen）。 */
+   现在紧挨着收起按钮）。这一行跟编辑器的「样式」「插入」抽屉不在同一行，抽屉展开也不用
+   让位，常驻显示。 */
 .cb-right { margin-left: auto; flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
 .cb-hint { font-size: 11px; color: var(--text-secondary); opacity: 0.65; white-space: nowrap; }
 .cb-hint code {
