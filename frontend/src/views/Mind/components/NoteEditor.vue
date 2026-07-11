@@ -206,9 +206,12 @@ const hasAnyMark = computed(() => {
 })
 
 // 「样式」「插入」互斥：只留一个展开（两个抽屉都拉开，卡片宽度装不下）。切换到另一个
-// 抽屉时不能两个同时动——先让当前这个收起动画走完（DRAWER_CLOSE_MS，跟 CSS 的
-// max-width 收起时长对齐），再开另一个，不然两条抽屉一伸一缩挤在一起会看着很乱。
-const DRAWER_CLOSE_MS = 240
+// 抽屉时不能两个同时动——先让当前这个收起动画走完（DRAWER_CLOSE_MS）再开另一个，不然
+// 两条抽屉一伸一缩挤在一起会看着很乱。收起动画不是单纯的宽度过渡了：图标要从右到左依次
+// 抹掉（见 CSS .ne-style-item 的 --stagger-delay），最右边图标先淡出、最左边最后淡出，
+// 总时长 = 最大 stagger（4 个间隔 × 30ms）+ 单个图标自己的淡出时长 150ms = 270ms，
+// 这个常量必须跟 CSS 里的这两个数字保持一致。
+const DRAWER_CLOSE_MS = 270
 let drawerSwitchTimer: ReturnType<typeof setTimeout> | null = null
 function clearDrawerSwitchTimer() {
   if (drawerSwitchTimer) { clearTimeout(drawerSwitchTimer); drawerSwitchTimer = null }
@@ -431,28 +434,50 @@ onBeforeUnmount(() => {
    动画时长按这个上限走，多出来的空间不影响观感。
    缓动统一用 cubic-bezier(0.65,0,0.35,1)——标准的缓入缓出（开头/结尾都慢，中段快），
    不是之前那条 1.2 振幅的回弹曲线（会有一点"冲过头再弹回来"的感觉，跟"抽屉平滑拉开"
-   的直觉不太搭）；这个时长（240ms）也是 toggleStylesMenu/toggleInsertMenu 切换抽屉时
-   等待收起动画播完的 DRAWER_CLOSE_MS，两边得对上。 */
-.ne-drawer { display: inline-flex; align-items: center; gap: 0; transition: gap 0.24s cubic-bezier(0.65,0,0.35,1); }
+   的直觉不太搭）。
+   图标本身的淡入淡出挪到每个 .ne-style-item 自己身上（不再是 .ne-drawer-items 整体一起
+   淡），配合 --stagger-delay 做逐个先后：展开时从左到右依次冒出来（nth-child 数第几个，
+   跟视觉顺序一致），收起时从右到左依次抹掉（nth-last-child 数倒数第几个，最右边的先淡
+   出）。--stagger-delay 只挂在 opacity/filter 这两个 transition 分量上，不影响 hover 的
+   background/color——那两个得保持即时反馈，不能被这层延迟拖慢。
+   宽度动画时长（.ne-drawer-items 默认态，收起时用这条）要盖住"最慢那个图标"的淡出总时长
+   （4 个间隔 × 30ms + 图标自身 150ms = 270ms）——容器缩太快会在图标还没淡完的时候把它
+   硬裁掉，看起来是硬切而不是淡出。这个 270ms 也是 script 里 DRAWER_CLOSE_MS 的来源，
+   两边必须对上。 */
+.ne-drawer { display: inline-flex; align-items: center; gap: 0; transition: gap 0.27s cubic-bezier(0.65,0,0.35,1); }
 .ne-drawer.open { gap: 4px; }
 .ne-drawer-items {
   display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap;
-  max-width: 0; opacity: 0; filter: blur(4px);
-  transition: max-width 0.24s cubic-bezier(0.65,0,0.35,1), opacity 0.16s ease-in-out 0s, filter 0.16s ease-in-out 0s;
+  max-width: 0;
+  transition: max-width 0.27s cubic-bezier(0.65,0,0.35,1);
 }
-.ne-drawer.open .ne-drawer-items {
-  max-width: 220px; opacity: 1; filter: blur(0);
-  transition: max-width 0.24s cubic-bezier(0.65,0,0.35,1), opacity 0.18s ease-in-out 0.07s, filter 0.18s ease-in-out 0.07s;
-}
+.ne-drawer.open .ne-drawer-items { max-width: 220px; }
 .ne-style-item {
   display: inline-flex; align-items: center; justify-content: center;
   flex-shrink: 0; width: 26px; height: 24px;
   border: 1px solid transparent; border-radius: 6px;
   background: transparent; color: var(--text-secondary); cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  --stagger-delay: 0s;
+  opacity: 0; filter: blur(3px);
+  transition: opacity 0.15s ease-in-out var(--stagger-delay),
+              filter 0.15s ease-in-out var(--stagger-delay),
+              background 0.15s, color 0.15s;
 }
+.ne-drawer.open .ne-style-item { opacity: 1; filter: blur(0); }
 .ne-style-item:hover { background: rgba(123,127,178,0.1); color: var(--color-primary); }
 .ne-style-item.on { background: rgba(123,127,178,0.16); color: var(--color-primary); }
+/* 展开：从左到右依次出现（nth-child 数正数第几个）*/
+.ne-drawer.open .ne-style-item:nth-child(1) { --stagger-delay: 0s; }
+.ne-drawer.open .ne-style-item:nth-child(2) { --stagger-delay: 0.03s; }
+.ne-drawer.open .ne-style-item:nth-child(3) { --stagger-delay: 0.06s; }
+.ne-drawer.open .ne-style-item:nth-child(4) { --stagger-delay: 0.09s; }
+.ne-drawer.open .ne-style-item:nth-child(5) { --stagger-delay: 0.12s; }
+/* 收起：从右到左依次消失（nth-last-child 数倒数第几个，最右边=倒数第 1 先淡出）*/
+.ne-style-item:nth-last-child(1) { --stagger-delay: 0s; }
+.ne-style-item:nth-last-child(2) { --stagger-delay: 0.03s; }
+.ne-style-item:nth-last-child(3) { --stagger-delay: 0.06s; }
+.ne-style-item:nth-last-child(4) { --stagger-delay: 0.09s; }
+.ne-style-item:nth-last-child(5) { --stagger-delay: 0.12s; }
 .ne-link-input { display: flex; align-items: center; gap: 4px; }
 .ne-link-input input {
   width: 160px; height: 24px; padding: 0 8px; box-sizing: border-box;
