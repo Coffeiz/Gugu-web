@@ -1998,15 +1998,28 @@ async function ctxPaste() {
   const projectId = seg?.type === 'project' ? seg.id : (seg?.projectId ?? null)
   try {
     if (cbStore.type === 'cut') {
-      const backups = cbStore.fileIds.map(id => cacheStore.getFile(id)).filter(Boolean)
+      // 剪切板同时可能带文件和文件夹（selCut/ctxCutFolder 都会填 folderIds）；此前这里只处理了
+      // fileIds，粘贴文件夹是纯静默空操作——文件库剪切文件夹一直没生效，就是漏了这个分支
+      // （项目编辑卡那边 pmCtxPaste 当时已经补过，这里没同步）。
+      const fileIds   = [...cbStore.fileIds]
+      const folderIds = [...cbStore.folderIds]
+      const fileBackups   = fileIds.map(id => cacheStore.getFile(id)).filter(Boolean)
+      const folderBackups = folderIds.map(id => cacheStore.getFolder(id)).filter(Boolean)
       await optimisticMutation({
         apply: () => {
-          cbStore.fileIds.forEach(id => cacheStore.updateFile(id, { folderId, projectId }))
+          fileIds.forEach(id => cacheStore.updateFile(id, { folderId, projectId }))
+          folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: folderId }))
           cbStore.clear()
         },
         afterMutate: loadContents,
-        work: () => Promise.all(backups.map(f => filesApi.update(f.id, { folderId, projectId }))),
-        rollback: () => backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId, projectId: f.projectId })),
+        work: () => Promise.all([
+          ...fileBackups.map(f => filesApi.update(f.id, { folderId, projectId })),
+          ...folderIds.map(id => foldersApi.move(id, folderId)),
+        ]),
+        rollback: () => {
+          fileBackups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId, projectId: f.projectId }))
+          folderBackups.forEach(f => cacheStore.updateFolder(f.id, { parentId: f.parentId }))
+        },
         onError: e => console.error('[Files] 粘贴失败:', e),
       })
     } else if (cbStore.type === 'copy') {
