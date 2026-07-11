@@ -16,9 +16,9 @@
         <span class="fc-ext-badge">{{ f.ext }}</span>
 
         <div v-if="isImageExt(f.ext)" class="fc-thumb-area">
-          <img class="fc-thumb fc-thumb-tiny" :src="thumbMap[f.id]?.tiny" decoding="async" draggable="false" alt="" />
+          <img class="fc-thumb fc-thumb-tiny" :src="thumbMap[f.id]?.tiny ?? undefined" decoding="async" draggable="false" alt="" />
           <img class="fc-thumb fc-thumb-full"
-            :src="thumbMap[f.id]?.card"
+            :src="thumbMap[f.id]?.card ?? undefined"
             :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }"
             decoding="async" draggable="false" alt=""
             @load="cardBlobReadyIds.add(f.id)"
@@ -106,7 +106,7 @@ import {
   PhPencilSimple, PhCheck, PhDownloadSimple, PhTrash,
 } from '@phosphor-icons/vue'
 
-const panelRef      = ref(null)
+const panelRef      = ref<HTMLElement | null>(null)
 const colCount      = ref(4) // ResizeObserver 更新后覆盖
 const displayCount  = computed(() => Math.max(1, colCount.value - 1)) // 1 行，上传按钮占 1 格
 const cardVisible   = ref(false) // 面板是否已进入视口（触发过 card 加载）
@@ -118,15 +118,15 @@ const uploadOpen    = ref(false)
 const store         = useFilesCacheStore()
 const rawFiles      = computed(() => [...store.allFiles].sort((a, b) => b.id - a.id))
 const thumbMap      = shallowRef<Record<number, { tiny?: string | null; card?: string | null }>>({}) // id → { tiny, card }，shallowRef 批量更新减少 trigger 次数
-const renamingId    = ref(null)
+const renamingId    = ref<number | string | null>(null)
 const renameText    = ref('')
-const renameInputRef = ref(null)
+const renameInputRef = ref<any>(null)
 const projectStore  = useProjectStore()
 const previewStore  = usePreviewStore()
 const projects      = computed(() => projectStore.projects)
 
 // 只加载 tiny，card 延迟到面板进入视口后再加载
-function loadThumbs(list) {
+function loadThumbs(list: any[]) {
   const imgFiles = list.filter(f => isImageExt(f.ext))
   const snap = { ...thumbMap.value }
   imgFiles.forEach(f => {
@@ -135,14 +135,14 @@ function loadThumbs(list) {
   thumbMap.value = snap
   imgFiles.forEach(f => {
     if (snap[f.id]?.tiny) return
-    getThumb(f.id, 'tiny').then(url => {
+    getThumb(f.id, 'tiny').then((url: any) => {
       if (url) thumbMap.value = { ...thumbMap.value, [f.id]: { ...thumbMap.value[f.id], tiny: url } }
     })
   })
 }
 
 // 面板进入视口后调用，加载 card 缩略图
-function loadCards(list) {
+function loadCards(list: any[]) {
   const imgFiles = list.filter(f => isImageExt(f.ext))
   const snap = { ...thumbMap.value }
   let hasNew = false
@@ -157,7 +157,7 @@ function loadCards(list) {
 
   const uncached = imgFiles.filter(f => !snap[f.id]?.card)
   if (uncached.length) {
-    Promise.all(uncached.map(f => getThumb(f.id, 'card').then(url => ({ id: f.id, url }))))
+    Promise.all(uncached.map(f => getThumb(f.id, 'card').then((url: any) => ({ id: f.id, url }))))
       .then(results => {
         const m = { ...thumbMap.value }
         for (const { id, url } of results) if (url) m[id] = { ...m[id], card: url }
@@ -178,12 +178,12 @@ function preDecodeBlobs(map: Record<number, { tiny?: string | null; card?: strin
 // 文件类型助手统一收口到 @/utils/fileTypes（isImageExt / fileIconColor / fileListIcon），见顶部 import。
 
 function openUpload() { uploadOpen.value = true }
-function openFile(f) {
+function openFile(f: any) {
   if (renamingId.value === f.id) return
   if (isPreviewable(f.ext)) previewStore.open(f._raw)
 }
 
-async function startRename(f) {
+async function startRename(f: any) {
   renamingId.value = f.id
   renameText.value = f.name
   await nextTick()
@@ -191,7 +191,7 @@ async function startRename(f) {
   el?.focus(); el?.select()
 }
 
-async function commitRename(f) {
+async function commitRename(f: any) {
   const name = renameText.value.trim()
   renamingId.value = null
   if (!name || name === f.name) return
@@ -201,11 +201,11 @@ async function commitRename(f) {
   } catch { /* ignore */ }
 }
 
-async function downloadFile(f) {
+async function downloadFile(f: any) {
   await filesApi.download(f.id, `${f.name}.${f.ext}`)
 }
 
-async function deleteFile(f) {
+async function deleteFile(f: any) {
   try {
     await filesApi.delete(f.id)
     clearThumbCache(f.id)
@@ -220,7 +220,7 @@ async function onUploaded() {
 }
 
 // minmax(130px, 1fr) + gap:8px + padding:20px*2 → cols = floor((w - 40 + 8) / 138)
-function calcCols(width) { return Math.max(1, Math.floor((width - 32) / 138)) }
+function calcCols(width: number) { return Math.max(1, Math.floor((width - 32) / 138)) }
 
 // rawFiles 是从 store 派生的 computed；变化时（首帧、store 刷新、SSE、别处增删改）加载缩略图。
 // store 的 SSE 订阅 + visibilitychange 兜底都在 store 内部，FilePanel 不再自持刷新逻辑。
@@ -240,8 +240,8 @@ watch(displayCount, (newCount, oldCount) => {
   if (cardVisible.value) loadCards(list.slice(oldCount, newCount))
 })
 
-let _panelObs = null
-let _resizeObs = null
+let _panelObs: ResizeObserver | null = null
+let _resizeObs: ResizeObserver | null = null
 onMounted(() => {
   // 确保全局 store 已加载（不经文件库页也能有数据）；已加载/加载中则不重复拉。首帧缩略图由上面
   // 的 watch(rawFiles, {immediate:true}) 处理，store 数据到位后自动触发。
@@ -258,7 +258,7 @@ onMounted(() => {
   // card 等面板接近视口时再加载，避免屏幕外批量解码
   _panelObs = new IntersectionObserver(([entry]) => {
     if (!entry.isIntersecting) return
-    _panelObs.disconnect(); _panelObs = null
+    _panelObs?.disconnect(); _panelObs = null
     cardVisible.value = true
     const cur = rawFiles.value
     if (cur?.length) loadCards(cur.slice(0, displayCount.value))

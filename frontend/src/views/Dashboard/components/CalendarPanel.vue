@@ -42,7 +42,7 @@
       <div v-if="visibleEvents.length === 0" class="upcoming-empty">未来 15 天暂无节点</div>
       <div class="event-row cap-row" :class="{ 'ev-proj-row': e.isProject, 'ev-act-row': !e.isProject }" v-for="e in visibleEvents" :key="e.id">
         <div class="cap-capsule"
-             :style="{ '--cap-bg': capBg(e.color, e.progress), borderColor: hexAlpha(e.color, 0.3), cursor: 'pointer' }"
+             :style="{ '--cap-bg': capBg(e.color, e.progress ?? 0), borderColor: hexAlpha(e.color, 0.3), cursor: 'pointer' }"
              @click="e.isProject ? openProject(e) : openEditForm(e, $event)">
           <span class="cap-tag" :class="e.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="e.isProject ? { color: darkenHex(e.color) } : {}">{{ e.isProject ? '项目' : '活动' }}</span>
           <span v-if="e.isProject" class="cap-sdot" :class="'cap-s-' + e.status"></span>
@@ -120,7 +120,7 @@ const weekdays = ['一', '二', '三', '四', '五', '六', '日']
 const { fetchYear, getHolidayType } = useHolidays()
 
 // 模块级节假日缓存，跨导航不重置
-const _hdayStore = {}
+const _hdayStore: Record<number, any> = {}
 const hdayCache  = ref(_hdayStore)
 
 async function loadHolidays() {
@@ -137,7 +137,7 @@ async function loadHolidays() {
   if (changed) hdayCache.value = { ..._hdayStore }
 }
 
-function hdayType(isoDate) {
+function hdayType(isoDate: string) {
   if (!isoDate) return null
   const yr = +isoDate.slice(0, 4)
   return getHolidayType(hdayCache.value[yr], isoDate)
@@ -145,8 +145,8 @@ function hdayType(isoDate) {
 
 const pickerOpen      = ref(false)
 const pickerYear      = ref(today.getFullYear())
-const pickerAnchorRef = ref(null)
-const pickerRef       = ref(null)
+const pickerAnchorRef = ref<HTMLElement | null>(null)
+const pickerRef       = ref<HTMLElement | null>(null)
 const pickerStyle     = ref({})
 
 function updatePickerPos() {
@@ -171,7 +171,7 @@ function togglePicker() {
   }
 }
 
-function selectYearMonth(y, m) {
+function selectYearMonth(y: number, m: number) {
   year.value  = y
   month.value = m
   pickerOpen.value = false
@@ -179,13 +179,13 @@ function selectYearMonth(y, m) {
 
 // ── 编辑活动弹窗 ──────────────────────────────────────────────────────────────
 const showEditForm  = ref(false)
-const editingEvent  = ref(null)
-const editFormRef   = ref(null)
+const editingEvent  = ref<any | null>(null)
+const editFormRef   = ref<HTMLElement | null>(null)
 const editFormStyle = ref({})
 
-function openEditForm(ev, nativeEv) {
-  if (nativeEv?.target?.closest('.dp-popup')) return
-  const el   = nativeEv.currentTarget
+function openEditForm(ev: any, nativeEv: MouseEvent) {
+  if ((nativeEv?.target as HTMLElement | null)?.closest('.dp-popup')) return
+  const el   = nativeEv.currentTarget as HTMLElement
   const rect = el.getBoundingClientRect()
   const w    = 240
   const left = Math.max(8, Math.min(rect.left + rect.width / 2 - w / 2, window.innerWidth - w - 8))
@@ -210,15 +210,15 @@ async function saveEditForm() {
   try { await eventsApi.update(ev.id, { title: ev.name, date: ev.date, description: ev.description || undefined }) } catch {}
 }
 
-function handleClickOutside(e) {
-  if (e.target.closest?.('.dp-popup')) return
+function handleClickOutside(e: MouseEvent) {
+  if ((e.target as HTMLElement | null)?.closest?.('.dp-popup')) return
   if (showEditForm.value) {
-    if (!editFormRef.value?.contains(e.target))
+    if (!editFormRef.value?.contains(e.target as Node))
       showEditForm.value = false
   }
   if (!pickerOpen.value) return
-  if (pickerAnchorRef.value?.contains(e.target)) return
-  if (pickerRef.value?.contains(e.target)) return
+  if (pickerAnchorRef.value?.contains(e.target as Node)) return
+  if (pickerRef.value?.contains(e.target as Node)) return
   pickerOpen.value = false
 }
 
@@ -231,7 +231,7 @@ const TYPE_COLOR = { deadline: '#b07858', milestone: '#7b7fb2', meeting: '#7ab8c
 const _eventsCache = new Map()
 
 // 当前显示月份的事件（用于日历格子打点）
-const events = ref([])
+const events = ref<any[]>([])
 async function loadEvents() {
   const key = `${year.value}-${month.value}`
   if (_eventsCache.has(key)) {
@@ -271,26 +271,30 @@ const calDays = computed(() => {
   const first    = new Date(year.value, month.value, 1)
   const last     = new Date(year.value, month.value + 1, 0)
   const startDow = (first.getDay() + 6) % 7
-  const days     = []
+  const days: Array<{ key: string; date: number; other: boolean; iso: string; isToday?: boolean; hasEvent?: boolean; isDeadline?: boolean }> = []
 
   for (let i = startDow - 1; i >= 0; i--) {
     const d = new Date(year.value, month.value, -i)
-    days.push({ key: `p${i}`, date: d.getDate(), other: true })
+    days.push({ key: `p${i}`, date: d.getDate(), other: true, iso: localIso(d) })
   }
   for (let i = 1; i <= last.getDate(); i++) {
     const iso        = `${year.value}-${String(month.value + 1).padStart(2,'0')}-${String(i).padStart(2,'0')}`
     const isToday    = year.value === today.getFullYear() && month.value === today.getMonth() && i === today.getDate()
     const hasCalEvent = events.value.some(e => e.date === iso)
     const hasDeadline = deadlineDates.value.has(iso)
-    days.push({ key: iso, date: i, other: false, isToday, hasEvent: hasCalEvent, isDeadline: hasDeadline })
+    days.push({ key: iso, date: i, other: false, iso, isToday, hasEvent: hasCalEvent, isDeadline: hasDeadline })
   }
   let next = 1
-  while (days.length < numWeeks.value * 7) days.push({ key: `n${next}`, date: next++, other: true })
+  while (days.length < numWeeks.value * 7) {
+    const nd = new Date(year.value, month.value + 1, next)
+    days.push({ key: `n${next}`, date: next, other: true, iso: localIso(nd) })
+    next++
+  }
   return days
 })
 
 
-function localIso(d) {
+function localIso(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
@@ -309,7 +313,7 @@ const visibleEvents = computed(() => {
         id:          'ev-' + e.id,
         rawId:       e.id,
         name:        e.title,
-        color:       TYPE_COLOR[e.type] ?? '#9590c4',
+        color:       TYPE_COLOR[e.type as keyof typeof TYPE_COLOR] ?? '#9590c4',
         iso:         e.date,
         description: e.description ?? '',
         daysLeft:    dl,
@@ -347,33 +351,33 @@ function nextMonth() {
   if (month.value === 11) { month.value = 0; year.value++ } else month.value++
 }
 // 点某天 → 跳完整日历视图并定位到该日（含相邻月的灰格：跳到它所属的月份）
-function selectDay(d) {
+function selectDay(d: any) {
   if (!d?.iso) return
   uiStore.pendingCalendarDate = d.iso
   router.push('/calendar')
 }
 
-function openProject(e) {
+function openProject(e: any) {
   const pid = Number(String(e.id).replace(/^pr-/, ''))
   const proj = projectStore.projects.find(p => p.id === pid)
   if (proj) projectStore.openModal(proj)
 }
 
-function capBg(hex, progress) {
+function capBg(hex: string, progress = 0) {
   const base = hexAlpha(hex, 0.1)
   if (!progress) return base
   const fill = hexAlpha(hex, 0.32)
   return `linear-gradient(to right, ${fill} 0%, ${fill} ${progress}%, ${base} ${progress}%, ${base} 100%)`
 }
 
-function hexAlpha(hex, a) {
+function hexAlpha(hex: string, a: number) {
   const r = parseInt(hex.slice(1,3),16)
   const g = parseInt(hex.slice(3,5),16)
   const b = parseInt(hex.slice(5,7),16)
   return `rgba(${r},${g},${b},${a})`
 }
 
-function darkenHex(hex, amount = 0.60) {
+function darkenHex(hex: string, amount = 0.60) {
   const r = Math.round(parseInt(hex.slice(1,3),16) * amount)
   const g = Math.round(parseInt(hex.slice(3,5),16) * amount)
   const b = Math.round(parseInt(hex.slice(5,7),16) * amount)

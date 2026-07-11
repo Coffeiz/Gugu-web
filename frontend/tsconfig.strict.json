@@ -85,6 +85,10 @@
     "src/views/Projects/components/ProjectCard.vue",
     "src/views/Projects/components/NewProjectModal.vue",
     "src/views/Projects/components/DoneColumn.vue",
-    "src/views/Projects/components/KanbanColumn.vue"
+    "src/views/Projects/components/KanbanColumn.vue",
+    "src/views/Dashboard/components/CalendarPanel.vue",
+    "src/views/Dashboard/components/FilePanel.vue",
+    "src/views/Dashboard/components/ProjectList.vue",
+    "src/views/Files/UploadModal.vue"
   ]
 }

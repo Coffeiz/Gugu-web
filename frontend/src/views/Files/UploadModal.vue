@@ -23,7 +23,7 @@
             @dragover.prevent
             @dragleave.prevent="dragCounter--; if (dragCounter === 0) isDragging = false"
             @drop.prevent="dragCounter = 0; isDragging = false; handleDrop($event)"
-            @click="pendingFiles.length === 0 && fileInputRef.click()"
+            @click="pendingFiles.length === 0 && fileInputRef?.click()"
           >
             <input type="file" ref="fileInputRef" multiple hidden @change="handleFileInput" />
 
@@ -35,7 +35,7 @@
               </svg>
               <span class="dz-title">
                 拖入文件，或
-                <span class="dz-link" @click.stop="fileInputRef.click()">点击选择</span>
+                <span class="dz-link" @click.stop="fileInputRef?.click()">点击选择</span>
               </span>
               <span class="dz-sub">支持 PSD · PDF · ZIP · PNG 等任意格式</span>
             </template>
@@ -54,7 +54,7 @@
                   </button>
                 </div>
               </div>
-              <button class="add-more-btn" @click.stop="fileInputRef.click()">
+              <button class="add-more-btn" @click.stop="fileInputRef?.click()">
                 <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                   <path d="M6 1v10M1 6h10"/>
                 </svg>
@@ -272,14 +272,14 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'uploaded'])
 
-const fileInputRef    = ref(null)
-const pendingFiles    = ref([])
-const pendingPaths    = ref([])   // 与 pendingFiles 同下标对齐：文件相对路径（拖文件夹进来时带 "/"，否则=文件名）
-const selectedId      = ref(null)
-const selectedFolderId = ref(null)
+const fileInputRef    = ref<HTMLInputElement | null>(null)
+const pendingFiles    = ref<any[]>([])
+const pendingPaths    = ref<any[]>([])   // 与 pendingFiles 同下标对齐：文件相对路径（拖文件夹进来时带 "/"，否则=文件名）
+const selectedId      = ref<number | string | null>(null)
+const selectedFolderId = ref<number | string | null>(null)
 const selectedStage   = ref('')
 const isDragging      = ref(false)
-const fileProgresses  = ref([])
+const fileProgresses  = ref<any[]>([])
 let   dragCounter     = 0
 const uploading       = ref(false)
 const uploadedCount   = ref(0)
@@ -288,7 +288,7 @@ const openYears       = ref(new Set())
 const openMonths      = ref(new Set())
 
 // 文件夹列表（从 API 加载）
-const projectFolders  = ref([])
+const projectFolders  = ref<any[]>([])
 
 const effectiveProjectId = computed(() => props.lockedProjectId ?? selectedId.value)
 
@@ -303,11 +303,11 @@ const currentProjectStages = computed(() => {
 function stageDefault(pid = effectiveProjectId.value) {
   if (!pid) return ''
   const proj = props.projects.find(p => p.id === pid)
-  const cur = proj?.stages?.find(s => s.key === proj.currentStage)
+  const cur = proj?.stages?.find((s: any) => s.key === proj.currentStage)
   return cur?.label ?? ''
 }
 
-async function loadFolders(pid) {
+async function loadFolders(pid: any) {
   if (!pid) { projectFolders.value = []; return }
   try {
     projectFolders.value = await foldersApi.list(pid)
@@ -349,7 +349,7 @@ const pendingProjects = computed(() => props.projects.filter(p => p.status === '
 const activeProjects  = computed(() => props.projects.filter(p => p.status === 'active'))
 const doneProjects    = computed(() => props.projects.filter(p => p.status === 'done'))
 
-function dateOf(p) {
+function dateOf(p: any) {
   const src = p.startDate || p.deadline || p.doneAt || null
   if (!src) return null
   return new Date(src.length === 10 ? src + 'T00:00:00' : src)
@@ -378,39 +378,40 @@ const groupedDone = computed(() => {
     }))
 })
 
-function toggleYear(y) {
+function toggleYear(y: string) {
   const next = new Set(openYears.value)
   next.has(y) ? next.delete(y) : next.add(y)
   openYears.value = next
 }
-function toggleMonth(key) {
+function toggleMonth(key: string) {
   const next = new Set(openMonths.value)
   next.has(key) ? next.delete(key) : next.add(key)
   openMonths.value = next
 }
 
-function fmtSize(bytes) {
+function fmtSize(bytes: number) {
   if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB'
   return Math.round(bytes / 1024) + ' KB'
 }
 
-function extractColor(colorStr) {
+function extractColor(colorStr: string) {
   const m = colorStr?.match(/#[0-9a-fA-F]{3,6}/)
   return m ? m[0] : '#8a8fa8'
 }
 
-function handleFileInput(e) {
-  addFiles(filesToItems(e.target.files))
-  e.target.value = ''
+function handleFileInput(e: Event) {
+  const inp = e.target as HTMLInputElement
+  if (inp.files) addFiles(filesToItems(inp.files))
+  inp.value = ''
 }
 
-async function handleDrop(e) {
-  addFiles(await readDroppedEntries(e.dataTransfer))
+async function handleDrop(e: DragEvent) {
+  if (e.dataTransfer) addFiles(await readDroppedEntries(e.dataTransfer))
 }
 
 // items: UploadItem[]（{file, relativePath}）——去重键带上 relativePath，避免把「不同文件夹
 // 下同名同大小的文件」误判成重复（纯文件名+size 在有文件夹结构时不够唯一）。
-function addFiles(items) {
+function addFiles(items: any) {
   const existing = new Set(pendingPaths.value.map((p, i) => p + ':' + pendingFiles.value[i].size))
   for (const { file, relativePath } of items) {
     const key = relativePath + ':' + file.size
@@ -422,7 +423,7 @@ function addFiles(items) {
   }
 }
 
-function removeFile(i) {
+function removeFile(i: number) {
   pendingFiles.value.splice(i, 1)
   pendingPaths.value.splice(i, 1)
 }
@@ -438,10 +439,10 @@ async function handleUpload() {
   uploadedCount.value  = 0
   fileProgresses.value = pendingFiles.value.map(() => 0)
 
-  const projectId    = effectiveProjectId.value
-  const baseFolderId = props.lockedFolderId !== null ? props.lockedFolderId : selectedFolderId.value
+  const projectId    = effectiveProjectId.value as number
+  const baseFolderId = (props.lockedFolderId !== null ? props.lockedFolderId : selectedFolderId.value) as number | null
   const space        = projectId ? 'project' : 'personal'
-  const uploaded  = []
+  const uploaded: any[]  = []
 
   try {
     // 拖入的是文件夹时，先按相对路径把缺的子文件夹建好（同名复用，不重复建）——文件真正该
@@ -502,7 +503,7 @@ async function handleUpload() {
     emit('uploaded', uploaded)
     setTimeout(() => emit('close'), 500)
   } catch (err) {
-    console.error('[UploadModal] 上传失败:', err.message)
+    console.error('[UploadModal] 上传失败:', err)
     uploading.value = false
   }
 }
