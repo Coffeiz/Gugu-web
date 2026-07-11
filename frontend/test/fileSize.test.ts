@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { fmtBytes } from './fileSize'
+import { fmtBytes } from '@/utils/fileSize'
 
 // 等价护栏：断言与 index.vue 抽出前逐字一致。
 describe('fmtBytes', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { navPathFor, type NavSeg, type FolderCard } from './filesNav'
+import { navPathFor, type NavSeg, type FolderCard } from '@/utils/filesNav'
 
 // 等价护栏：断言与 enterFolder 抽出前逐字一致。只钉「当前合法路径」语义；
 // 异常路径（如 month 卡但当前无 year 段）的防御另开一刀，这里不覆盖。

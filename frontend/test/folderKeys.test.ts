@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveFolderIds } from './folderKeys'
+import { resolveFolderIds } from '@/utils/folderKeys'
 
 const folders = [
   { id: 'f:65', folderId: 65 },

@@ -60,6 +60,6 @@ export default defineConfig({
     // 纯逻辑单测（Vitest）。jsdom 环境：DOMPurify 等依赖 DOM 的工具需要 window。
     // 复用上方 resolve.alias（@ → src）。组件/E2E 后续再加（见 docs/security 报告 P1-a）。
     environment: 'jsdom',
-    include: ['src/**/*.{test,spec}.{js,ts}'],
+    include: ['test/**/*.{test,spec}.{js,ts}', 'src/**/*.{test,spec}.{js,ts}'],
   },
 })

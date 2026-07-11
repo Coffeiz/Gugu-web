@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { doneYear, doneMonth, splitName } from './fileParse'
+import { doneYear, doneMonth, splitName } from '@/utils/fileParse'
 
 describe('doneYear / doneMonth — 完成日期分桶', () => {
   it('优先 doneAt', () => {

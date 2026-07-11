@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { statusFolders, yearFolders, monthFolders } from './projectFolderCards'
+import { statusFolders, yearFolders, monthFolders } from '@/utils/projectFolderCards'
 
 // 等价护栏：断言与 loadContents 抽出前逐字一致。
 const KANBAN = [

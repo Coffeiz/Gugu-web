@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { projectProgress } from './projectProgress'
+import { projectProgress } from '@/utils/projectProgress'
 
 // 全站统一进度口径（看板 / 总览 / 项目卡 / 日历 / Dashboard 都用它）。
 // 主口径：所有阶段待办的 已完成/总数；无任何待办时兜底按当前阶段位置。钉死这两条分支。

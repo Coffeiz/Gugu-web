@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   autoCompleteTodos, restoreTodos, toggleTodoDone,
   nextStatus, stageProgressByIndex, normalizeStages, firstIncompleteStageIdx, allTodosDone,
-} from './projectStages'
+} from '@/utils/projectStages'
 import type { ProjectTodo } from '@/types/project'
 
 // 阶段/待办纯领域函数（P2 第一刀的地基，见 [[gugu-p2-refactor-plan]]）。

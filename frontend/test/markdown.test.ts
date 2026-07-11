@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sanitizeHtml, sanitizeChatHtml, renderMarkdown } from './markdown'
+import { sanitizeHtml, sanitizeChatHtml, renderMarkdown } from '@/utils/markdown'
 
 // P0 XSS 回归（见 docs/security/代码审查-GPT复审核实版-2026-07-10.md）。
 // 全站 Markdown 直出经 sanitizeHtml；这里钉死「危险载荷被中和 + 正常渲染无损」两面，

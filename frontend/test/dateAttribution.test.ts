@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseUtc, localDayKey, isSameLocalDay, isToday, isThisWeek, fmtLocalDateTime } from './dateAttribution'
+import { parseUtc, localDayKey, isSameLocalDay, isToday, isThisWeek, fmtLocalDateTime } from '@/utils/dateAttribution'
 
 // 全程显式传 tz + 注入 now，不依赖测试机时区，保证确定性。
 

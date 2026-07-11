@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { optimisticMutation } from './optimisticMutation'
+import { optimisticMutation } from '@/utils/optimisticMutation'
 
 describe('optimisticMutation — 时序契约', () => {
   it('成功：apply → afterMutate → work → onCommit，不回滚', async () => {
