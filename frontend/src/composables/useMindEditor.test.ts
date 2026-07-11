@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import { Editor } from '@tiptap/core'
 import {
-  docToMarkdown, markdownToDoc, toggleTaskInMd, mdToPreviewHtml, MIND_REF_RE,
+  docToMarkdown, markdownToDoc, mindExtensions, toggleTaskInMd, mdToPreviewHtml, MIND_REF_RE,
 } from './useMindEditor'
 import type { MindDocNode } from './useMindEditor'
 
@@ -250,6 +251,18 @@ describe('Mind md⇄doc 往返：代码块/引用块/有序列表/分割线（20
   it('写了个不存在的语言名不报错，退化成自动猜', () => {
     expect(() => mdToPreviewHtml('```not-a-real-lang\nx\n```')).not.toThrow()
     expect(mdToPreviewHtml('```not-a-real-lang\nx\n```')).toMatch(/class="hljs language-\S+"/)
+  })
+
+  // bug：引用块里塞列表，docToMarkdown 只认段落子节点，会把列表项序列化成空字符串——
+  // 保存后引用块整个变空、再编辑也是空的。改成从 schema 层面（content:'paragraph+'）
+  // 挡掉这类嵌套，而不是等序列化层再兜底：工具栏的列表/待办命令在引用块里应该直接失效。
+  it('引用块内不能再嵌套列表/待办（schema 收窄成 paragraph+，工具栏命令应失效）', () => {
+    const editor = new Editor({ extensions: mindExtensions(), content: '<blockquote><p>hello</p></blockquote>' })
+    editor.commands.setTextSelection(5)
+    expect(editor.can().toggleBulletList()).toBe(false)
+    expect(editor.can().toggleOrderedList()).toBe(false)
+    expect(editor.can().toggleTaskList()).toBe(false)
+    editor.destroy()
   })
 })
 

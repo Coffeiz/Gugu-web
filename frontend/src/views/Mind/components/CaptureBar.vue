@@ -26,12 +26,15 @@
               补录到
             </label>
             <DatePicker v-if="backfill" class="cb-date" v-model="date" :max="todayIso" :show-clear="false" placeholder="选择日期" />
-            <button class="cb-min" title="收起（内容保留）" @click="collapse">
-              <PhCaretDown :size="13" weight="bold" />
-            </button>
-            <button class="cb-save press-fx" :disabled="!canSave || saving" @click="save">
-              {{ saving ? '记录中…' : '记录' }}
-            </button>
+            <div class="cb-right">
+              <span class="cb-hint" v-show="!editorRef?.anyDrawerOpen">输入 <code>@</code> 引用项目/文件/活动</span>
+              <button class="cb-min" title="收起（内容保留）" @click="collapse">
+                <PhCaretDown :size="13" weight="bold" />
+              </button>
+              <button class="cb-save press-fx" :disabled="!canSave || saving" @click="save">
+                {{ saving ? '记录中…' : '记录' }}
+              </button>
+            </div>
           </div>
       </div>
     </div>
@@ -93,14 +96,14 @@ function measureExpandedHeight() {
   expandedHeight.value = Math.max(50, bodyRef.value?.scrollHeight ?? 50)
 }
 
-/** 点条外任意处收起。DatePicker 的日历、NoteEditor 的「样式」「插入」二级菜单都 Teleport
- *  到 body，得单独放行——选个日期/点个格式或插入按钮不算"点外面"。 */
+/** 点条外任意处收起。DatePicker 的日历 Teleport 到 body，得单独放行——选个日期不算
+ *  "点外面"；NoteEditor 的「样式」「插入」抽屉现在原地展开、是条本身的 DOM 后代
+ *  （不再 Teleport 了），点里面的按钮天然会被 barRef.contains() 认出来，不用再单独放行。 */
 function onDocDown(e: MouseEvent) {
   if (!expanded.value) return
   const t = e.target as HTMLElement
   if (barRef.value?.contains(t)) return
   if (t.closest?.('.dp-popup')) return
-  if (t.closest?.('.ne-style-menu') || t.closest?.('.ne-insert-menu')) return
   collapse()
 }
 onMounted(() => {
@@ -223,8 +226,16 @@ async function save() {
    勾上补录后这条 foot 行整体变高，捕捉条展开高度跟着抖一下。缩小到跟这排其它元素齐平。 */
 .cb-date :deep(.dp-input) { padding: 6px 10px; box-sizing: border-box; font-size: 12px; }
 
+/* 提示文字 + 收起 + 记录三个一组贴右边——提示挪到这（原来在 NoteEditor 自己的工具栏里，
+   现在紧挨着收起按钮），抽屉展开时 v-show 让位（NoteEditor 暴露的 anyDrawerOpen）。 */
+.cb-right { margin-left: auto; flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
+.cb-hint { font-size: 11px; color: var(--text-secondary); opacity: 0.65; white-space: nowrap; }
+.cb-hint code {
+  padding: 0 3px; border-radius: 3px;
+  background: rgba(123,127,178,0.12); font-size: 10.5px;
+}
 .cb-min {
-  margin-left: auto; flex-shrink: 0; display: inline-flex; padding: 5px;
+  flex-shrink: 0; display: inline-flex; padding: 5px;
   border: none; border-radius: 6px; background: none;
   color: var(--text-secondary); cursor: pointer;
 }

@@ -23,73 +23,66 @@
               @mousedown.prevent="editor.chain().focus().toggleOrderedList().run()" title="有序列表">
         <PhListNumbers :size="13" weight="bold" />
       </button>
-      <div class="ne-style-wrap">
-        <button ref="styleBtnRef" class="ne-tool" :class="{ on: stylesOpen || (isFocused && hasAnyMark) }"
+      <!-- 「样式」抽屉：加粗/斜体/删除线/行内代码/链接，2026-07-11 加。不是弹层——Aa 按钮
+           自己向右挪，工具从它左边拉出来（DOM 顺序是 items 在前、按钮在后，抽屉展开就是
+           items 从 0 宽长开，把按钮"挤"到右边）；按钮本身就是收起入口，再点一下收回去，
+           不需要额外的收起按钮。「样式」「插入」互斥：开一个收起另一个，且要等对方的收起
+           动画播完才开（见 toggleStylesMenu/DRAWER_CLOSE_MS）。 -->
+      <div class="ne-drawer" :class="{ open: stylesOpen }">
+        <div class="ne-drawer-items">
+          <template v-if="!linkInputOpen">
+            <button class="ne-style-item" :class="{ on: editor.isActive('bold') }"
+                    @mousedown.prevent="editor.chain().focus().toggleBold().run()" title="加粗">
+              <PhTextB :size="13" weight="bold" />
+            </button>
+            <button class="ne-style-item" :class="{ on: editor.isActive('italic') }"
+                    @mousedown.prevent="editor.chain().focus().toggleItalic().run()" title="斜体">
+              <PhTextItalic :size="13" weight="bold" />
+            </button>
+            <button class="ne-style-item" :class="{ on: editor.isActive('strike') }"
+                    @mousedown.prevent="editor.chain().focus().toggleStrike().run()" title="删除线">
+              <PhTextStrikethrough :size="13" weight="bold" />
+            </button>
+            <button class="ne-style-item" :class="{ on: editor.isActive('code') }"
+                    @mousedown.prevent="editor.chain().focus().toggleCode().run()" title="行内代码">
+              <PhCode :size="13" weight="bold" />
+            </button>
+            <button class="ne-style-item" :class="{ on: editor.isActive('link') }"
+                    @mousedown.prevent="onLinkClick" title="链接">
+              <PhLink :size="13" weight="bold" />
+            </button>
+          </template>
+          <div v-else class="ne-link-input" @mousedown.stop>
+            <input ref="linkInputRef" v-model="linkUrl" placeholder="链接地址"
+                   @keydown.enter.prevent="confirmLink" @keydown.escape.prevent="cancelLink" />
+            <button class="ne-link-ok" @mousedown.prevent="confirmLink">确定</button>
+          </div>
+        </div>
+        <button class="ne-tool" :class="{ on: stylesOpen || (isFocused && hasAnyMark) }"
                 @mousedown.prevent="toggleStylesMenu" title="文字样式">
           <PhTextAa :size="13" weight="bold" />
         </button>
-        <!-- 二级菜单：加粗/斜体/删除线/行内代码/链接，2026-07-11 加，成本低的一档先做——
-             跟待办/列表分开放，不占常态工具栏的视觉重量。Teleport 到 body：便签卡自己
-             overflow:hidden（裁长文字/hover 高光层），弹在卡内会被卡的边界切掉，得跳出去。
-             见 mousedown.prevent 挡住失焦——链接输入框例外：它得真的拿到焦点才能打字，
-             所以不挡。 -->
-        <Teleport to="body">
-          <div v-if="stylesOpen" class="ne-style-menu" :style="menuStyle">
-            <template v-if="!linkInputOpen">
-              <button class="ne-style-item" :class="{ on: editor.isActive('bold') }"
-                      @mousedown.prevent="editor.chain().focus().toggleBold().run()" title="加粗">
-                <PhTextB :size="13" weight="bold" />
-              </button>
-              <button class="ne-style-item" :class="{ on: editor.isActive('italic') }"
-                      @mousedown.prevent="editor.chain().focus().toggleItalic().run()" title="斜体">
-                <PhTextItalic :size="13" weight="bold" />
-              </button>
-              <button class="ne-style-item" :class="{ on: editor.isActive('strike') }"
-                      @mousedown.prevent="editor.chain().focus().toggleStrike().run()" title="删除线">
-                <PhTextStrikethrough :size="13" weight="bold" />
-              </button>
-              <button class="ne-style-item" :class="{ on: editor.isActive('code') }"
-                      @mousedown.prevent="editor.chain().focus().toggleCode().run()" title="行内代码">
-                <PhCode :size="13" weight="bold" />
-              </button>
-              <button class="ne-style-item" :class="{ on: editor.isActive('link') }"
-                      @mousedown.prevent="onLinkClick" title="链接">
-                <PhLink :size="13" weight="bold" />
-              </button>
-            </template>
-            <div v-else class="ne-link-input" @mousedown.stop>
-              <input ref="linkInputRef" v-model="linkUrl" placeholder="链接地址"
-                     @keydown.enter.prevent="confirmLink" @keydown.escape.prevent="cancelLink" />
-              <button class="ne-link-ok" @mousedown.prevent="confirmLink">确定</button>
-            </div>
-          </div>
-        </Teleport>
       </div>
-      <div class="ne-insert-wrap">
-        <button ref="insertBtnRef" class="ne-tool" :class="{ on: insertOpen || (isFocused && hasAnyBlock) }"
+      <!-- 「插入」抽屉：代码块/引用块/分割线，2026-07-11 加。有序列表挪到主工具栏跟
+           无序列表放一起了，不算在这里头。都是一次性动作，点了直接生效、抽屉自己收起。
+           代码块不给手动选语言——交给 highlightAuto 自动识别。 -->
+      <div class="ne-drawer" :class="{ open: insertOpen }">
+        <div class="ne-drawer-items">
+          <button class="ne-style-item" @mousedown.prevent="insertCodeBlock" title="代码块">
+            <PhCodeBlock :size="13" weight="bold" />
+          </button>
+          <button class="ne-style-item" @mousedown.prevent="insertBlockquote" title="引用块">
+            <PhQuotes :size="13" weight="bold" />
+          </button>
+          <button class="ne-style-item" @mousedown.prevent="insertHorizontalRule" title="分割线">
+            <PhMinus :size="13" weight="bold" />
+          </button>
+        </div>
+        <button class="ne-tool" :class="{ on: insertOpen || (isFocused && hasAnyBlock) }"
                 @mousedown.prevent="toggleInsertMenu" title="插入">
           <PhPlus :size="13" weight="bold" />
         </button>
-        <!-- 「插入」二级菜单：代码块/引用块/分割线，2026-07-11 加（中等成本那档）。有序
-             列表挪到主工具栏跟无序列表放一起了，不算在这里头。都是一次性动作，选完就
-             收起菜单，不像样式那样需要连续切换。同样 Teleport 到 body（原因同「样式」
-             菜单：卡片 overflow:hidden 会把它裁掉）。代码块不给手动选语言——交给
-             highlightAuto 自动识别，保持跟其它两个一样"点了就直接生效"。 -->
-        <Teleport to="body">
-          <div v-if="insertOpen" class="ne-insert-menu" :style="insertMenuStyle">
-            <button class="ne-insert-item" @mousedown.prevent="insertCodeBlock">
-              <PhCodeBlock :size="14" weight="bold" /><span>代码块</span>
-            </button>
-            <button class="ne-insert-item" @mousedown.prevent="insertBlockquote">
-              <PhQuotes :size="14" weight="bold" /><span>引用块</span>
-            </button>
-            <button class="ne-insert-item" @mousedown.prevent="insertHorizontalRule">
-              <PhMinus :size="14" weight="bold" /><span>分割线</span>
-            </button>
-          </div>
-        </Teleport>
       </div>
-      <span class="ne-hint">输入 <code>@</code> 引用项目/文件/活动</span>
       <span class="ne-toolbar-actions"><slot name="foot-actions" /></span>
     </div>
 
@@ -112,12 +105,11 @@
 import { computed, nextTick, onBeforeUnmount, reactive, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import {
-  PhCheckSquare, PhCode, PhCodeBlock, PhLink, PhListBullets, PhListNumbers, PhMinus, PhPlus, PhQuotes,
-  PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
+  PhCheckSquare, PhCode, PhCodeBlock, PhLink, PhListBullets, PhListNumbers,
+  PhMinus, PhPlus, PhQuotes, PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
 } from '@phosphor-icons/vue'
 import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/useMindEditor'
 import { useMindObjectPicker } from '@/composables/useMindObjectPicker'
-import { nextZ } from '@/composables/windowz'
 import type { MindRefSuggestItem } from '@/services/api'
 
 const props = withDefaults(defineProps<{
@@ -199,15 +191,13 @@ function choose(it: MindRefSuggestItem) {
 // TipTap 自己的回调，在这里手动写一个 ref，不依赖框架封装内部什么时候帮你触发响应式。
 const isFocused = ref(false)
 
-// 「样式」二级菜单：加粗/斜体/删除线/行内代码/链接，2026-07-11 加。菜单里的按钮都是
+// 「样式」抽屉：加粗/斜体/删除线/行内代码/链接，2026-07-11 加。菜单里的按钮都是
 // mousedown.prevent（不失焦，同待办/列表），链接输入框例外——它得真的拿到焦点才能打字，
-// 所以点开输入框那一刻编辑器会失焦，靠 linkInputOpen 挡住 onBlur 里顺手关菜单的逻辑。
+// 所以点开输入框那一刻编辑器会失焦，靠 linkInputOpen 挡住 onBlur 里顺手关抽屉的逻辑。
 const stylesOpen = ref(false)
 const linkInputOpen = ref(false)
 const linkUrl = ref('')
 const linkInputRef = ref<HTMLInputElement | null>(null)
-const styleBtnRef = ref<HTMLElement | null>(null)
-const menuStyle = ref<Record<string, string>>({})
 const hasAnyMark = computed(() => {
   const ed = editor.value
   if (!ed) return false
@@ -215,24 +205,23 @@ const hasAnyMark = computed(() => {
     || ed.isActive('code') || ed.isActive('link')
 })
 
-/** 菜单 Teleport 到 body 后，位置得自己用 fixed 坐标钉在 Aa 按钮下方（同 DatePicker.vue
- *  的 dp-popup 那套：便签卡 overflow:hidden，弹层不跳出去会被卡边界切掉）。 */
-function calcMenuStyle() {
-  const rect = styleBtnRef.value?.getBoundingClientRect()
-  if (!rect) return
-  const MENU_W = 176
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - MENU_W - 8))
-  const base = { position: 'fixed', left: left + 'px', zIndex: String(nextZ()) }
-  const spaceBelow = window.innerHeight - rect.bottom
-  menuStyle.value = spaceBelow < 60 && rect.top > spaceBelow
-    ? { ...base, bottom: (window.innerHeight - rect.top + 4) + 'px' }
-    : { ...base, top: (rect.bottom + 4) + 'px' }
+// 「样式」「插入」互斥：只留一个展开（两个抽屉都拉开，卡片宽度装不下）。切换到另一个
+// 抽屉时不能两个同时动——先让当前这个收起动画走完（DRAWER_CLOSE_MS，跟 CSS 的
+// max-width 收起时长对齐），再开另一个，不然两条抽屉一伸一缩挤在一起会看着很乱。
+const DRAWER_CLOSE_MS = 240
+let drawerSwitchTimer: ReturnType<typeof setTimeout> | null = null
+function clearDrawerSwitchTimer() {
+  if (drawerSwitchTimer) { clearTimeout(drawerSwitchTimer); drawerSwitchTimer = null }
 }
-
 function toggleStylesMenu() {
-  stylesOpen.value = !stylesOpen.value
-  if (stylesOpen.value) calcMenuStyle()
-  else linkInputOpen.value = false
+  clearDrawerSwitchTimer()
+  if (stylesOpen.value) { stylesOpen.value = false; linkInputOpen.value = false; return }
+  if (insertOpen.value) {
+    insertOpen.value = false
+    drawerSwitchTimer = setTimeout(() => { stylesOpen.value = true; drawerSwitchTimer = null }, DRAWER_CLOSE_MS)
+  } else {
+    stylesOpen.value = true
+  }
 }
 
 function onLinkClick() {
@@ -263,24 +252,9 @@ function cancelLink() {
   editor.value?.commands.focus()
 }
 
-// 「插入」二级菜单：代码块/引用块/有序列表/分割线，2026-07-11 加（中等成本那档，块级
-// 元素）。都是一次性动作，选完就收起菜单——不像样式那档可能要连续切换好几个。
+// 「插入」抽屉：代码块/引用块/有序列表/分割线，2026-07-11 加（中等成本那档，块级
+// 元素）。都是一次性动作，选完就自己收起抽屉——不像样式那档可能要连续切换好几个。
 const insertOpen = ref(false)
-const insertBtnRef = ref<HTMLElement | null>(null)
-const insertMenuStyle = ref<Record<string, string>>({})
-
-function calcInsertMenuStyle() {
-  const rect = insertBtnRef.value?.getBoundingClientRect()
-  if (!rect) return
-  const MENU_W = 130
-  const MENU_H = 150
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - MENU_W - 8))
-  const base = { position: 'fixed', left: left + 'px', zIndex: String(nextZ()) }
-  const spaceBelow = window.innerHeight - rect.bottom
-  insertMenuStyle.value = spaceBelow < MENU_H && rect.top > spaceBelow
-    ? { ...base, bottom: (window.innerHeight - rect.top + 4) + 'px' }
-    : { ...base, top: (rect.bottom + 4) + 'px' }
-}
 
 const hasAnyBlock = computed(() => {
   const ed = editor.value
@@ -289,9 +263,20 @@ const hasAnyBlock = computed(() => {
 })
 
 function toggleInsertMenu() {
-  insertOpen.value = !insertOpen.value
-  if (insertOpen.value) calcInsertMenuStyle()
+  clearDrawerSwitchTimer()
+  if (insertOpen.value) { insertOpen.value = false; return }
+  if (stylesOpen.value) {
+    stylesOpen.value = false
+    linkInputOpen.value = false
+    drawerSwitchTimer = setTimeout(() => { insertOpen.value = true; drawerSwitchTimer = null }, DRAWER_CLOSE_MS)
+  } else {
+    insertOpen.value = true
+  }
 }
+
+// CaptureBar 的「输入 @ 引用…」提示挪到了外层 cb-foot 里（贴着收起按钮），但抽屉展开时
+// 仍要让位——这里把状态暴露出去，给 CaptureBar 自己控制提示的显隐。
+const anyDrawerOpen = computed(() => stylesOpen.value || insertOpen.value)
 
 // 代码块不给手动选语言，统一交给 highlightAuto 自动识别（见 useMindEditor.ts）——
 // 跟下面两个插入动作一样，点了就直接生效，不弹二次确认。
@@ -334,6 +319,7 @@ const editor = useEditor({
   onFocus() { isFocused.value = true },
   onBlur() {
     isFocused.value = false
+    clearDrawerSwitchTimer()   // 失焦直接双关，不留一个"马上要开另一个"的挂起计时器
     if (!linkInputOpen.value) stylesOpen.value = false
     insertOpen.value = false
   },
@@ -374,9 +360,13 @@ defineExpose({
   focus: () => editor.value?.commands.focus('end'),
   focusAtLineUnit,
   clear: () => editor.value?.commands.setContent(markdownToDoc('') as any, { emitUpdate: false }),
+  anyDrawerOpen,
 })
 
-onBeforeUnmount(() => editor.value?.destroy())
+onBeforeUnmount(() => {
+  clearDrawerSwitchTimer()
+  editor.value?.destroy()
+})
 </script>
 
 <style scoped>
@@ -397,17 +387,10 @@ onBeforeUnmount(() => editor.value?.destroy())
 }
 .ne-tool:hover { background: rgba(123,127,178,0.1); color: var(--color-primary); }
 .ne-tool.on { background: rgba(123,127,178,0.16); color: var(--color-primary); }
-.ne-hint { margin-left: auto; font-size: 11px; color: var(--text-secondary); opacity: 0.65; }
-/* 消费方（便签卡的取消/保存等）塞进来的按钮，跟格式工具栏同一行；hint 隐藏时
-   （便签卡窄列会隐藏）这里自己兜住 margin-left:auto，不依赖 hint 还在场才能靠右 */
+/* 消费方（便签卡的取消/保存等）塞进来的按钮，跟格式工具栏同一行——原来这里还兜着
+   "输入 @ 引用…" 提示的 margin-left:auto，提示挪到 CaptureBar 自己的 cb-foot 里了 */
 .ne-toolbar-actions { margin-left: auto; flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
 .ne-toolbar-actions:empty { display: none; }
-.ne-hint code {
-  padding: 0 3px; border-radius: 3px;
-  background: rgba(123,127,178,0.12); font-size: 10.5px;
-}
-
-.ne-style-wrap, .ne-insert-wrap { position: relative; }
 
 /* 跟 NoteCard.vue 里只读态用的 .md-preview 同一套字号/行高/间距，编辑和显示才是同一件事 */
 .ne-body { font-size: 13px; line-height: 1.6; color: var(--text-primary); }
@@ -438,20 +421,32 @@ onBeforeUnmount(() => editor.value?.destroy())
 .ne-pick-label { font-size: 12.5px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ne-pick-sub { margin-left: auto; font-size: 10.5px; color: var(--text-secondary); opacity: 0.7; white-space: nowrap; }
 
-/* 「样式」二级菜单：Teleport 到 body 后不再是宿主的 DOM 后代，scoped 样式够不到，
-   跟 DatePicker.vue 的 .dp-popup 同一套处理——位置（position/top/left/z-index）由
-   NoteEditor.vue 里 calcMenuStyle() 算好、内联 style 钉死，这里只管外观。 */
-.ne-style-menu {
-  display: flex; align-items: center; gap: 2px; padding: 4px;
-  border-radius: 9px;
-  background: rgba(255,255,255,0.96);
-  border: 1px solid rgba(255,255,255,0.9);
-  box-shadow: 0 8px 26px rgba(60,70,100,0.18);
-  backdrop-filter: blur(10px);
+/* 「样式」「插入」抽屉：不是弹层——items 在 DOM 里排在 Aa/+ 按钮前面，收起时 0 宽不占
+   位置，按钮就停在原地；展开时 items 从 0 宽长开、天然把按钮"挤"到右边，按钮自己就是
+   收起入口（同一个 toggle 函数），不用额外的收起按钮。items 内部 gap 跟主工具栏的按钮
+   间距（.ne-toolbar 的 4px）保持一致，看着是同一排按钮在长出来，不是两套间距。
+   .ne-drawer 只有展开时才给 4px gap（items／按钮之间）——收起时 items 是 0 宽的空盒子，
+   这条 gap 不加，否则按钮会带着一个看不见的 4px 空隙、平时收起态的位置就跟以前对不上。
+   宽度用 max-width（不能直接转 width:auto）——220px 比实际内容（5 个 26px 图标）留了余量，
+   动画时长按这个上限走，多出来的空间不影响观感。
+   缓动统一用 cubic-bezier(0.65,0,0.35,1)——标准的缓入缓出（开头/结尾都慢，中段快），
+   不是之前那条 1.2 振幅的回弹曲线（会有一点"冲过头再弹回来"的感觉，跟"抽屉平滑拉开"
+   的直觉不太搭）；这个时长（240ms）也是 toggleStylesMenu/toggleInsertMenu 切换抽屉时
+   等待收起动画播完的 DRAWER_CLOSE_MS，两边得对上。 */
+.ne-drawer { display: inline-flex; align-items: center; gap: 0; transition: gap 0.24s cubic-bezier(0.65,0,0.35,1); }
+.ne-drawer.open { gap: 4px; }
+.ne-drawer-items {
+  display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap;
+  max-width: 0; opacity: 0; filter: blur(4px);
+  transition: max-width 0.24s cubic-bezier(0.65,0,0.35,1), opacity 0.16s ease-in-out 0s, filter 0.16s ease-in-out 0s;
+}
+.ne-drawer.open .ne-drawer-items {
+  max-width: 220px; opacity: 1; filter: blur(0);
+  transition: max-width 0.24s cubic-bezier(0.65,0,0.35,1), opacity 0.18s ease-in-out 0.07s, filter 0.18s ease-in-out 0.07s;
 }
 .ne-style-item {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 24px;
+  flex-shrink: 0; width: 26px; height: 24px;
   border: 1px solid transparent; border-radius: 6px;
   background: transparent; color: var(--text-secondary); cursor: pointer;
   transition: background 0.15s, color 0.15s;
@@ -472,26 +467,6 @@ onBeforeUnmount(() => editor.value?.destroy())
   font-size: 11.5px; font-weight: 600; font-family: var(--font-sans);
 }
 .ne-link-ok:hover { background: rgba(123,127,178,0.26); }
-
-/* 「插入」二级菜单：同「样式」菜单，Teleport 到 body 后位置靠内联 style 钉死，
-   这里只管外观；竖排文字菜单（不是横排图标条），跟样式菜单视觉上区分开 */
-.ne-insert-menu {
-  display: flex; flex-direction: column; gap: 1px; padding: 4px; min-width: 116px;
-  border-radius: 9px;
-  background: rgba(255,255,255,0.96);
-  border: 1px solid rgba(255,255,255,0.9);
-  box-shadow: 0 8px 26px rgba(60,70,100,0.18);
-  backdrop-filter: blur(10px);
-}
-.ne-insert-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 8px; border: none; border-radius: 6px;
-  background: transparent; color: var(--text-primary); cursor: pointer;
-  font-size: 12.5px; font-family: var(--font-sans); text-align: left;
-  transition: background 0.15s;
-}
-.ne-insert-item:hover { background: rgba(123,127,178,0.1); }
-.ne-insert-item svg { flex-shrink: 0; color: var(--text-secondary); }
 </style>
 
 <!-- 编辑器内部由 ProseMirror 生成，不能用 scoped。段落/标题/待办/列表/引用 chip 的排版

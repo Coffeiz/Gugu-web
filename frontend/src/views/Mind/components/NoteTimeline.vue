@@ -91,16 +91,19 @@ function columnStyle(index: number) {
   const distance = Math.abs(index - props.centerFrac)
   const capped = Math.min(distance, 5)
   const direction = index === props.centerFrac ? 0 : index < props.centerFrac ? 1 : -1
-  // 列本身的布局步长是 400px 宽 + 14px 间距；视觉中心距按缩放后的卡宽压缩，避免缩小后留白。
-  // 每段步长依次收窄（400→330→240→150），越往边缘挤得越紧，不是匀速压缩。
+  // 列本身的布局步长是 COL_WIDTH 宽 + 14px 间距；视觉中心距按缩放后的卡宽压缩，避免缩小后
+  // 留白。每段步长依次收窄（1x→0.825x→0.6x→0.375x，跟 COL_WIDTH 成比例），越往边缘挤得
+  // 越紧，不是匀速压缩——这组比例是调过的视觉曲线，改 COL_WIDTH（连带改 CSS .tl-col 的
+  // width）时这里跟着等比例缩放，不用重新调。
+  const COL_WIDTH = 440   // 须跟 CSS .tl-col 的 width 保持一致
   const desiredDistance = capped <= 1
-    ? capped * 400
+    ? capped * COL_WIDTH
     : capped <= 2
-      ? 400 + (capped - 1) * 330
+      ? COL_WIDTH + (capped - 1) * COL_WIDTH * 0.825
       : capped <= 3
-        ? 730 + (capped - 2) * 240
-        : 970 + (capped - 3) * 150
-  const compression = capped * 414 - desiredDistance
+        ? COL_WIDTH * 1.825 + (capped - 2) * COL_WIDTH * 0.6
+        : COL_WIDTH * 2.425 + (capped - 3) * COL_WIDTH * 0.375
+  const compression = capped * (COL_WIDTH + 14) - desiredDistance
   // 景深模糊：中间清晰、越靠两侧越糊，跟压缩/缩放同一个 capped 距离驱动，不需要额外状态。
   // 排查过：去掉这层 filter 白块依然在，不是它的锅，恢复回来。
   const depthBlur = capped * 0.35
@@ -137,10 +140,10 @@ defineExpose({ flagConflict: () => { conflict.value = true }, confirmEdit, stopE
   height: 100%; min-width: max-content;
   /* 两端留白让首末列也能停在「内容区中线」（不是视口中线——滚动容器铺满视口宽但要跟
      上方胶囊/滑杆的居中对齐）。内容区中线 = (侧栏宽 + 视口)/2 = 侧栏宽/2 + 50vw；
-     半列宽 200（= .tl-col 400px 的一半）。左 padding = 中线 - 半列；右 padding = 视口 - 中线 - 半列。 */
+     半列宽 220（= .tl-col 440px 的一半）。左 padding = 中线 - 半列；右 padding = 视口 - 中线 - 半列。 */
   padding-top: 2px;
-  padding-left: calc(var(--sidebar-width) / 2 + 50vw - 200px);
-  padding-right: calc(50vw - var(--sidebar-width) / 2 - 200px);
+  padding-left: calc(var(--sidebar-width) / 2 + 50vw - 220px);
+  padding-right: calc(50vw - var(--sidebar-width) / 2 - 220px);
 }
 
 /* 一天一块玻璃底板：轻玻璃（同定时任务面板 --glass-bg 0.25），hover 不提亮（底板不是交互件） */
@@ -153,7 +156,7 @@ defineExpose({ flagConflict: () => { conflict.value = true }, confirmEdit, stopE
   isolation: isolate;
   border-radius: 40px;
   corner-shape: squircle;
-  width: 400px; flex-shrink: 0; box-sizing: border-box;
+  width: 440px; flex-shrink: 0; box-sizing: border-box;
   display: flex; flex-direction: column; min-height: 0; position: relative;
   padding: 14px 12px 10px;
   scroll-snap-align: center;   /* 滚列时磁吸：列中心吸到 scroll-padding 调整后的中线（=contentCenter，#4）*/

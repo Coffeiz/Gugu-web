@@ -22,6 +22,7 @@
  * UI 触发键是 `@`（原 `[[`，2026-07-10 改），只是触发键，写进存储的仍是 `[[...]]`。
  */
 import { Node, mergeAttributes } from '@tiptap/core'
+import { Blockquote } from '@tiptap/extension-blockquote'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import ListItem from '@tiptap/extension-list-item'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -111,6 +112,13 @@ const MindCodeBlock = CodeBlockLowlight.extend({
     return VueNodeViewRenderer(CodeBlockView)
   },
 })
+
+// ── 引用块：默认 schema 是 content:'block+'，工具栏的列表按钮在引用块里也能点、能塞进
+// 列表节点——但 docToMarkdown 的引用块序列化只认段落子节点（多段落=多行 `>`，同待办/
+// 列表「一项一行」模型），塞进列表会让 inlineToMd 拿到的是块级子节点而非行内节点，序列化
+// 成空字符串，保存后引用块整个变空、再编辑也是空的。收窄成 paragraph+ 从 schema 层面
+// 挡掉这类嵌套，而不是等序列化层再兜底。
+const MindBlockquote = Blockquote.extend({ content: 'paragraph+' })
 
 // ── 行内标记：加粗/斜体/删除线/行内代码/链接（2026-07-11 起支持，窄口径里成本最低的一档）──
 // 简化版解析，不是完整 CommonMark：每次找「剩余文本里最早出现的一种标记」整体吃掉，命中
@@ -601,6 +609,7 @@ export function mindExtensions(placeholder = '写点什么…') {
       // 菜单，见 NoteEditor.vue）。代码块单独关掉，用下面的 MindCodeBlock 换掉（要语法
       // 高亮 + 语言名标签，见 mind-content.css 和 CodeBlockView.vue）。
       codeBlock: false,
+      blockquote: false,       // 用下面 MindBlockquote 换掉——收窄 schema，禁止嵌套列表
       underline: false,
       link: { openOnClick: false, autolink: false, defaultProtocol: 'https' },
       heading: { levels: [1] },
@@ -608,6 +617,7 @@ export function mindExtensions(placeholder = '写点什么…') {
       orderedList: { itemTypeName: 'orderedListItem' },   // 数字跟圆点不能共用一个节点渲染
     }),
     MindCodeBlock.configure({ lowlight }),
+    MindBlockquote,
     BulletListItem,
     OrderedListItem,
     TaskList,

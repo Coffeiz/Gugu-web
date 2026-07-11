@@ -114,13 +114,12 @@ function scheduleSave() {
 watch([draftTitle, draftBody], () => { if (props.editing) scheduleSave() })
 
 /** 点卡片外面：先补一次保存，再退出编辑态（不再是「取消」，没有可丢弃的东西）。
- *  NoteEditor 的「样式」「插入」两个二级菜单都 Teleport 到 body，不再是卡片的 DOM 后代，
- *  得单独放行——同 CaptureBar.vue 对 DatePicker 的 .dp-popup 那套，点菜单里的按钮不算"点外面"。 */
+ *  NoteEditor 的「样式」「插入」抽屉现在是原地展开、卡片的真实 DOM 后代（不再 Teleport
+ *  到 body 了），点里面的按钮天然会被 cardRef.contains() 认成"没点外面"，不用再单独放行。 */
 function onDocDown(e: MouseEvent) {
   if (!props.editing) return
   const t = e.target as HTMLElement
   if (cardRef.value?.contains(t)) return
-  if (t.closest?.('.ne-style-menu') || t.closest?.('.ne-insert-menu')) return
   finishEditing()
 }
 // finishEditing 已经同步 flush 过一次；emit('close') 会让 editing 变 false 反过来触发下面
@@ -245,8 +244,6 @@ function onBodyClick(e: MouseEvent) {
    opacity:0 不影响可聚焦性，配 pointer-events:none 防这段时间被点到。布局占位保留，
    不会引起列内卡片抖动。 */
 .note-card.nc-edit-pending { opacity: 0; pointer-events: none; }
-/* 窄列里就地编辑：工具栏放不下「输入 @ 引用…」提示文字，藏掉（捕捉条那份还在） */
-.note-card.editing :deep(.ne-hint) { display: none; }
 /* 编辑态整卡走 flex 列：编辑器吃满剩余高度，取消/保存永远贴在卡片底部，不会因为内容
    短、卡片够着 min-height 的地板价时，按钮悬在半截、下面空一大截。 */
 .note-card.editing {
@@ -317,7 +314,7 @@ function onBodyClick(e: MouseEvent) {
 .nc-icon:hover { background: rgba(123,127,178,0.12); color: var(--color-primary); }
 .nc-icon.danger:hover { background: rgba(176,120,88,0.12); color: #b07858; }
 
-/* min-height 让短便签也有几行留白、卡片偏方形——一行字的扁条卡在 400px 列里太寒酸；
+/* min-height 让短便签也有几行留白、卡片偏方形——一行字的扁条卡在 440px 列里太寒酸；
    overflow-wrap 治连续长串（纯数字/URL）不换行撑破卡片 */
 .nc-body {
   position: relative; z-index: 1; cursor: text;
