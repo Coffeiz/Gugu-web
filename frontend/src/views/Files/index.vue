@@ -690,6 +690,7 @@ import { isImageExt, fileExtCategory, fileIconColor, fileListIcon } from '@/util
 import { fmtBytes } from '@/utils/fileSize'
 import { resolveFolderIds } from '@/utils/folderKeys'
 import { doneYear, doneMonth, splitName } from '@/utils/fileParse'
+import { statusFolders, yearFolders, monthFolders } from '@/utils/projectFolderCards'
 import { optimisticMutation } from '@/utils/optimisticMutation'
 import type { FileMeta } from '@/stores/filesCache'
 import { type NavSeg, type FolderCard } from '@/utils/filesNav'
@@ -929,12 +930,7 @@ function loadContents() {
 
   if (type === 'projects') {
     // 按项目状态分三组（待开始/进行中/已完成），看板顺序；空组不显示
-    const cnt = {}
-    for (const p of projectStore.projects) cnt[p.status] = (cnt[p.status] || 0) + 1
-    const statusFolders = projectStore.kanbanColumns
-      .filter(c => (cnt[c.key] || 0) > 0)
-      .map(c => ({ id: `st:${c.key}`, type: 'status', status: c.key, displayName: c.label, count: cnt[c.key] }))
-    contents.value = { folders: statusFolders, files: [] }
+    contents.value = { folders: statusFolders(projectStore.projects, projectStore.kanbanColumns), files: [] }
     return
   }
 
@@ -942,16 +938,7 @@ function loadContents() {
     const { status } = currentSeg.value
     if (status === 'done') {
       // 已完成 → 按完成日期年份归档
-      const yearMap = {}
-      for (const p of projectStore.projects) {
-        if (p.status !== 'done') continue
-        const y = doneYear(p)
-        yearMap[y] = (yearMap[y] || 0) + 1
-      }
-      const yearFolders = Object.keys(yearMap)
-        .sort((a, b) => b.localeCompare(a))
-        .map(y => ({ id: `y:${y}`, type: 'year', displayName: y + ' 年', year: y, count: yearMap[y] }))
-      contents.value = { folders: yearFolders, files: [] }
+      contents.value = { folders: yearFolders(projectStore.projects), files: [] }
     } else {
       // 待开始/进行中 → 直接列项目（不归档）
       const projs = projectStore.projects.filter(p => p.status === status)
@@ -962,16 +949,7 @@ function loadContents() {
 
   if (type === 'year') {
     const { year } = currentSeg.value
-    const monthMap = {}
-    for (const p of projectStore.projects) {
-      if (p.status !== 'done' || doneYear(p) !== year) continue
-      const m = doneMonth(p)
-      monthMap[m] = (monthMap[m] || 0) + 1
-    }
-    const monthFolders = Object.keys(monthMap)
-      .sort()
-      .map(m => ({ id: `m:${year}-${m}`, type: 'month', displayName: parseInt(m) + ' 月', year, month: m, count: monthMap[m] }))
-    contents.value = { folders: monthFolders, files: [] }
+    contents.value = { folders: monthFolders(projectStore.projects, year), files: [] }
     return
   }
 
