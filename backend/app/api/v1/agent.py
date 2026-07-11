@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import chat_attach
 from app.core.security import get_current_user
 from app.core.ownership import get_owned
+from app.core.tz import iso_utc
 from app.db.session import get_db
 from app.models import ConversationMessage, ConversationSession, User
 
@@ -198,8 +199,8 @@ async def list_sessions(
             "id": s.id,
             "title": s.title,
             "source": s.source,
-            "updatedAt": s.updated_at.isoformat() + "Z",
-            "createdAt": s.created_at.isoformat() + "Z",
+            "updatedAt": iso_utc(s.updated_at),
+            "createdAt": iso_utc(s.created_at),
         }
         for s in sessions
     ]
@@ -258,7 +259,7 @@ async def get_session_messages(
         "messages": [
             {"id": m.id, "role": m.role, "content": m.content, "files": m.files or [],
              "quotedText": m.quoted_text,
-             "createdAt": m.created_at.isoformat() + "Z"}
+             "createdAt": iso_utc(m.created_at)}
             for m in msgs
         ],
     }

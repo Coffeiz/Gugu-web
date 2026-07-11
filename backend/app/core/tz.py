@@ -43,6 +43,19 @@ def local_now() -> datetime:
     return datetime.now(LOCAL_TZ)
 
 
+def iso_utc(dt: datetime) -> str:
+    """输出前端可直接 `new Date()` 解析的 UTC ISO 串（末尾单个 `Z`）。
+
+    aware datetime → 归一到 UTC、去掉 `+00:00` 偏移换成 `Z`；naive → 视作 UTC 直接补 `Z`。
+    修 Phase 2 时区迁移（列改 aware `UtcDateTime`）后遗留的 bug：老代码 `dt.isoformat() + "Z"`
+    对 aware datetime 会产出非法的 `2026-07-11T08:17:00+00:00Z`（同时带 +00:00 和 Z），
+    前端 `new Date()` 解析失败 → 显示「Invalid Date」。
+    """
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.isoformat() + "Z"
+
+
 def local_day_start_utc() -> datetime:
     """本地今日 0 点，转为 UTC（aware），供与数据库 UtcDateTime 字段比较。"""
     now = local_now()

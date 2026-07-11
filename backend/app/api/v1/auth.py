@@ -1,5 +1,5 @@
 import secrets
-from app.core.tz import now_utc
+from app.core.tz import now_utc, iso_utc
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
@@ -304,7 +304,7 @@ async def get_quota(
     return {
         "used_6h":      used_6h,
         "limit_6h":     limit_6h,
-        "reset_6h_at":  reset_6h_at.isoformat() + "Z",   # 下次精力重置时刻
+        "reset_6h_at":  iso_utc(reset_6h_at),   # 下次精力重置时刻
         "used_weekly":  used_weekly,
         "limit_weekly": limit_weekly,
     }
