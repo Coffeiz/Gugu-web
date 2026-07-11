@@ -12,8 +12,8 @@
  */
 export function resolveFolderIds(
   keys: Iterable<string | number>,
-  folders: ReadonlyArray<{ id: string | number; folderId: number }>,
+  folders: ReadonlyArray<{ id: string | number; folderId?: number }>,
 ): number[] {
-  const map = new Map<string | number, number>(folders.map(f => [f.id, f.folderId]))
+  const map = new Map<string | number, number | undefined>(folders.map(f => [f.id, f.folderId]))
   return [...keys].map(k => map.get(k)).filter((v): v is number => v != null)
 }
