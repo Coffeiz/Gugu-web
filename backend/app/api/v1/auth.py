@@ -260,6 +260,10 @@ async def upload_avatar(
     avatar_dir = Path(settings.storage.local_path) / "avatars"
     avatar_dir.mkdir(parents=True, exist_ok=True)
     avatar_path = avatar_dir / f"{current_user.id}.{ext}"
+    # 换后缀上传时清掉该用户旧头像文件（如原来是 .png、这次存 .webp），避免残留占空间
+    for old in avatar_dir.glob(f"{current_user.id}.*"):
+        if old != avatar_path:
+            old.unlink(missing_ok=True)
     avatar_path.write_bytes(data)
 
     current_user.avatar = f"avatars/{current_user.id}.{ext}"

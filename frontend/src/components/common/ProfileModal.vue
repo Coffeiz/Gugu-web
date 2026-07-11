@@ -392,6 +392,9 @@
     </div>
     </Transition>
   </Teleport>
+
+  <!-- 头像裁切：选图后先方形裁切 + 降采样，只上传裁切结果（原图不出浏览器） -->
+  <AvatarCropper :show="cropperShow" :file="cropFile" @close="closeCropper" @crop="onCropped" />
 </template>
 
 <script setup lang="ts">
@@ -401,6 +404,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { usePreferencesStore } from '@/stores/preferences'
 import BaseModal from '@/components/common/BaseModal.vue'
+import AvatarCropper from '@/components/common/AvatarCropper.vue'
 import { authApi, agentApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi } from '@/services/api'
 import { fireHint } from '@/composables/useOnboarding'
 import { TOP_Z } from '@/composables/windowz'
@@ -509,28 +513,41 @@ async function savePwd() {
   }
 }
 
-// 头像上传
-const avatarInput    = ref(null)
+// 头像上传：选图 → 方形裁切/降采样弹窗 → 只上传裁切结果
+const avatarInput    = ref<HTMLInputElement | null>(null)
 const avatarUploading = ref(false)
+const cropperShow = ref(false)
+const cropFile    = ref<File | null>(null)
 function triggerAvatarUpload() {
   if (avatarUploading.value) return
   avatarInput.value?.click()
 }
-async function onAvatarFile(e) {
-  const file = e.target.files?.[0]
+function onAvatarFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''   // 允许连续选同一文件再次触发 change
   if (!file) return
+  cropFile.value = file
+  cropperShow.value = true
+}
+function closeCropper() {
+  cropperShow.value = false
+  cropFile.value = null
+}
+async function onCropped(cropped: File) {
+  cropperShow.value = false
+  cropFile.value = null
   avatarUploading.value = true
   try {
-    await authStore.uploadAvatar(file)
+    await authStore.uploadAvatar(cropped)
     infoMsg.value     = '头像已更新'
     infoMsgType.value = 'ok'
   } catch (err) {
-    infoMsg.value     = err.message || '头像上传失败'
+    infoMsg.value     = (err as Error).message || '头像上传失败'
     infoMsgType.value = 'err'
     activeNav.value   = 'info'
   } finally {
     avatarUploading.value = false
-    e.target.value = ''
   }
 }
 
