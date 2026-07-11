@@ -1668,7 +1668,9 @@ async function downloadFolder(f) {
 // 中找落点高亮 → 松手判定目标并派发移动，这套编排跟 ProjectModal.vue 的文件面板完全一样，抽成
 // 了共享 composable useFileDragDrop，这里只提供 Files 特有的选择器/面包屑规则/落地 API。
 function isBcDroppable(seg) {
-  return seg.type === 'folder' || seg.type === 'personal'
+  // folder/personal/project 段都可作为拖放目标：folder→该文件夹，personal/project→对应根（parentId=null，
+  // resolveBcTarget 里非 folder 段一律映射为 null）。此前漏了 project，导致子目录文件夹拖不回项目根。
+  return seg.type === 'folder' || seg.type === 'personal' || seg.type === 'project'
 }
 
 async function moveFoldersInto(folderIds, targetFolderId) {
