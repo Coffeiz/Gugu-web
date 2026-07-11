@@ -328,6 +328,9 @@ watch(timelineGroups, async (groups) => {
   const newDateIndex = groups.findIndex(group => !renderedDates.includes(group.date))
   const activeIndexBefore = renderedDates.indexOf(activeDate.value)
   const insertedBeforeActive = renderedDates.length > 0 && newDateIndex >= 0 && activeIndexBefore >= newDateIndex
+  // 多列删除到仅剩一天时，旧视野的 scrollLeft 已经没有语义；不能只重算 gutter，必须把
+  // 唯一日期按新布局重新定位，否则它会停在多列时留下的左侧位置。
+  const collapsedToSingle = renderedDates.length > 1 && groups.length === 1
   if (insertedBeforeActive && root) {
     // watcher 默认在 DOM 提交前运行，先预补偿一个日期列宽，避免旧卡先被顶开一帧。
     root.scrollLeft += 306
@@ -339,6 +342,9 @@ watch(timelineGroups, async (groups) => {
   if (!centeredOnce && groups.length) {
     centeredOnce = true
     jumpTo(groups[groups.length - 1].date, false)
+  } else if (collapsedToSingle && root) {
+    root.scrollLeft = 0
+    jumpTo(groups[0].date, false)
   } else if (insertedBeforeActive && root) {
     // 以实测宽度校准预补偿，兼容列宽/间距将来的调整。
     root.scrollLeft = leftBefore + root.scrollWidth - widthBefore
