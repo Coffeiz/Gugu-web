@@ -517,6 +517,18 @@ body {
   backdrop-filter: blur(12px) saturate(1.15);
   -webkit-backdrop-filter: blur(12px) saturate(1.15);
 }
+/* 文件名和元信息比玻璃层次更需要清晰度：透明祖先会把整张卡降进灰阶抗锯齿合成，细字发虚。
+   文件克隆保留 backdrop-filter 与阴影，但不再用 opacity 叠一层。 */
+.phys-drag-clone.fc-card { opacity: 1; }
+/* 画布文件/活动贴纸拖动时优先保证文字与图标清晰。静止态仍是玻璃；仅克隆体改为较实的浅色
+   表面，避免 backdrop-filter 与整体透明度让内容在每帧位移时变软。 */
+.phys-drag-clone.fc-card.canvas-mode,
+.phys-drag-clone.entity-sticker {
+  background: rgba(255, 255, 255, 0.78) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  opacity: 1;
+}
 /* 图片文件卡：缩略图（.fc-thumb-area）是完全不透明的真实图片，铺在 .fc-card 上层，挡住了
    卡片自己 backdrop-filter 模糊到的「背后内容」（拖过其他卡片时应该透出模糊的其他卡片，
    不是把缩略图自己的画面弄模糊）。给 .fc-thumb-area 单独挂一份跟卡片同参数的

@@ -756,7 +756,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 挪到 clone（活动拖拽阶段的克隆内容）和 c2Inner（_cloneLanding 里落地克隆的内容，见
       // 该函数）身上。
       const cloneInner = clone
-      const c2Inner = clone2.firstElementChild as HTMLElement | null
+      // scaleShell 加入后 clone2.firstElementChild 已经不是实际卡片。opacity 必须落在真实卡片上：
+      // 写在缩放壳会成为 backdrop-filter 的半透明祖先，文件/活动卡落地时便会发灰再突然变清晰。
+      const c2Inner = clone2.querySelector<HTMLElement>('.phys-landing-content')
       const trans = `transform 0.55s ${_SETTLE}`
       const fadeTrans = 'opacity 0.42s ease'
       holder.style.transition = trans
@@ -771,7 +773,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 看着就是「先完全透明、克隆一撤本体才突然冒出来」，没有真正淡入的一半。
       clone2.style.opacity = '1'
       cloneInner.style.opacity = '0'
-      if (c2Inner) c2Inner.style.opacity = '0.97'
+      if (c2Inner) c2Inner.style.opacity = '1'
 
       // 飞行途中容器发生 FLIP 重排（另一张卡被抓起/放下）→ 落点跟着挪位，把目标改过去。
       // 直接在飞行中途改 transform 目标，浏览器会当「打断」处理：新一段插值默认按当前速度
@@ -941,6 +943,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         })
         const c = el.cloneNode(true) as HTMLElement
         if (opts.cloneClass) c.classList.add(opts.cloneClass)
+        c.classList.add('phys-landing-content')
         copyInheritedTextStyle(el, c)
         c.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
         const landingScaleShell = document.createElement('div')

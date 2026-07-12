@@ -159,6 +159,8 @@ export function useCardDrag(opts: {
   // usePhysicsDrag.ts 的 contentScale。传取值函数（不是静态数字）：抓着卡片不放的时候
   // 画布还能滚轮继续缩放，物理模块每帧都会重新调用它读「当下」的缩放，不传按 1 处理。
   contentScale?: () => number
+  // 默认轻抬起 3%，便签/项目/活动贴纸保留这份空间感；文件卡传 1，避免非整数缩放让文件名变糊。
+  lift?: number
 }) {
   function onPointerDown(event: PointerEvent) {
     startThresholdDrag(event, {
@@ -166,7 +168,7 @@ export function useCardDrag(opts: {
       exclude: opts.exclude,
       onDragStart: (ev, card) => {
         startPhysicsDrag(ev, card, {
-          pointer: true, skipAbsorb: true, tilt: 0, lift: 1.03,
+          pointer: true, skipAbsorb: true, tilt: 0, lift: opts.lift ?? 1.03,
           // 无限画布没有"卡片顶部附近拈起"这个参照系（那是看板卡沿用的手感），抓哪张贴纸都该是
           // 贴纸中心跟手，不然矮贴纸（活动/文件）看着几乎贴在指针上、高贴纸（便签）又明显吊在
           // 指针下方一截，四种贴纸手感不一致。

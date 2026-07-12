@@ -133,6 +133,7 @@ onBeforeUnmount(() => cardResizeObserver?.disconnect())
 const { onPointerDown } = useCardDrag({
   screenToWorld: props.screenToWorld,
   contentScale: () => props.scale,
+  lift: 1,
   getDragEl: () => cardRef.value,
   onClick: () => { if (!props.item.node.deletedAt) emit('open', props.item) },
   onDragMove: (worldX, worldY) => {
