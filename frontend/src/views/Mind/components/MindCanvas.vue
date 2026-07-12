@@ -48,6 +48,7 @@
  *  全站卡片物理模块（见各贴纸组件里的 useCardDrag.ts），这里只负责相机、建立关联的拖拽手势
  *  编排（贴纸边缘圆点拖到另一张贴纸上，见 onConnectDragStart 一带）。 */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, type PropType } from 'vue'
+import './canvas-card-effects.css'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import EntitySticker from './EntitySticker.vue'

@@ -63,38 +63,7 @@ input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
 }
 /* :active 会同时命中被点的子元素和所有祖先卡片。只在卡片内部没有任何 active 子元素时
    才下沉：编辑、阶段、颜色、待办、删除和之后新增的所有控件都会自然保持 hover 状态，
-   不再靠一份会漏项的子元素白名单逐个撤销。 */
-/* 正在从这张贴纸拖连线出来（.connecting）/ 松手可以落到这张贴纸上（.connection-target）
-   时的虚线描边提示——便签/活动/文件/项目四种贴纸的 root 本来就已经在绑这两个类（各自
-   :class="{ connecting, 'connection-target': !!connectionTargetSide }"，见 MindCanvas.vue
-   传下去的 connectionDrag 状态），这里只统一样式，不用改任何一个组件。
-   ⚠️ 不用 outline：CSS outline 要不要贴合元素的 border-radius 走的是各浏览器自己的实现，
-   不是所有环境都会画成圆角——实测这几张卡片的描边确实一段贴合圆角、一段是直角衔接，
-   跟卡片本体的圆角边框拼在一起，看着像"两层描边，其中一层是方的"。改用 ::before 伪元素
-   叠一层比卡本体大一圈的 border（inset 负值撑大 + border-radius:inherit），border 这个
-   属性圆角渲染是 CSS 规范里最基础、最没有兼容性分歧的行为，稳定贴合任意卡片自己的圆角。
-   ::before 而非 ::after：跟便签 NoteCard.vue 已经占用的 ::after（顶部高光层）不冲突，
-   四种贴纸里只有极少数场景（FileCard.vue 的 .selected 态）用了 ::before，画布场景不会
-   触发那个类，不会撞车。 */
-/* 不用额外补 position:relative 兜底——四种贴纸的 root 自己都已经是 position:absolute
-   （世界坐标定位需要），且各自的声明都在 scoped 样式里（带属性选择器，特异度天然高于这里
-   这条不加 !important 的全局裸类选择器），::before 的 inset 定位基准稳赢，不会被这里
-   意外覆盖成 relative。 */
-:is(.note-card, .entity-sticker, .fr-card, .pr-card, .fr-missing, .pr-missing).connecting::before,
-:is(.note-card, .entity-sticker, .fr-card, .pr-card, .fr-missing, .pr-missing).connection-target::before {
-  content: '';
-  position: absolute; inset: -4px;
-  border-radius: inherit;
-  pointer-events: none;
-}
-:is(.note-card, .entity-sticker, .fr-card, .pr-card, .fr-missing, .pr-missing).connecting::before {
-  border: 2px dashed rgba(123,127,178,0.6);
-}
-/* 目标态也是虚线（跟起点视觉语言一致，只是这一圈紧贴自己是"我可以被落上去"的信号，不需要
-   额外用实/虚区分两种语义——真正落到哪一侧靠的是 CardConnDot.vue 那颗对应圆点的磁吸动画）。 */
-:is(.note-card, .entity-sticker, .fr-card, .pr-card, .fr-missing, .pr-missing).connection-target::before {
-  border: 2px dashed rgba(123,127,178,0.6);
-}
+   不再靠一份会漏项的子元素白名单逐个撤销。画布贴纸的连接提示移至 canvas-card-effects.css。 */
 /* 只要按下反馈、不要悬停抬起：顶栏「上传文件/新建项目」、定时任务「新建任务」按钮、
    咕咕聊天里的文件条都是这一挂——按钮/挤在气泡堆里的文件条，抬起要么跟布局不搭要么显得
    跟旁边气泡割裂，只保留点击下沉这一半效果。 */
@@ -274,14 +243,6 @@ body {
 .fc-card.phys-just-revealed:hover::after, .folder-card.phys-just-revealed:hover::after { opacity: 0 !important; }
 .fc-card.phys-just-revealed:hover .fc-hover-actions,
 .folder-card.phys-just-revealed:hover .fd-hover-actions { opacity: 0 !important; }
-/* 画布文件引用卡（FileRefCard.vue）的移除按钮/连接点是通过插槽塞进 .fc-card 内部的（跟着
-   拖拽克隆一起飞，见其模板注释），是 .fc-card 的真实子孙——上面这组压制只顾了 FileCard.vue
-   自己认得的 .fc-hover-actions（重命名/下载），没顾到画布这边另外塞进来的 .card-actions
-   （CardActions.vue 共用组件）/.conn-dot（CardConnDot.vue），漏了同一个坑：落地揭示那一刻
-   鼠标若正好停在卡片上，移除按钮和连接点会跟着直接跳进 hover 态，不像卡片本体那样有一帧
-   压制期。 */
-.fc-card.phys-just-revealed:hover .card-actions,
-.fc-card.phys-just-revealed:hover .conn-dot { opacity: 0 !important; }
 /* 项目页看板的项目卡（.proj-card，ProjectCard.vue）走同一套 physics 拖拽与揭示，同样加这两个类；
    它的静止态阴影/hover 值跟文件卡不同，单独压一份：抬起(-2px，来自 .hover-card-fx)、hover 阴影
    （0 6px 18px）、::after 高光都压回静止态。box-shadow 的静止值抄自 ProjectCard.vue 的 .proj-card。 */
@@ -290,48 +251,6 @@ body {
   box-shadow: 0 2px 8px rgba(80,90,110,0.07) !important;
 }
 .proj-card.phys-just-revealed:hover::after { opacity: 0 !important; }
-/* 画布项目引用卡（ProjectRefCard.vue）不再嵌 ProjectCard.vue、根节点是 .pr-card 不是
-   .proj-card，同一个坑得单独补一份；它没有 ::after 高光层（拆分时简化掉了），只用压
-   transform/box-shadow 这两项。 */
-.pr-card.phys-just-revealed:hover {
-  transform: none !important;
-  box-shadow: 0 2px 8px rgba(80,90,110,0.07) !important;
-}
-.pr-card.phys-just-revealed:hover .card-actions,
-.pr-card.phys-just-revealed:hover .conn-dot { opacity: 0 !important; }
-/* 活动贴纸（EntitySticker.vue）走同一套 physics 拖拽与揭示，之前漏了这个类——统一走
-   .hover-card-fx 之前它悬浮只有阴影加深、没有 translateY 位移，这层缺失不明显；现在也有
-   位移了，落地揭示时鼠标若正好停在卡片上，没压住的话会直接跳进悬停态（同文件/项目卡那个
-   「先出现一半 hover、再跳一下变全 hover」的坑）。box-shadow 的静止值抄自 EntitySticker.vue
-   的静止态声明。画布便签（NoteSticker.vue）现在直接复用 NoteCard.vue 本体渲染，根节点是
-   .note-card 不是 .note-sticker——它同样会踩这个坑（box-shadow 加深 + 顶部高光层 + 操作
-   按钮淡入，见下方 .note-card.phys-just-revealed 那组规则），只是没有 translateY 位移。 */
-.entity-sticker.phys-just-revealed:hover {
-  transform: none !important;
-  box-shadow: 0 2px 8px rgba(80,90,110,0.07), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55) !important;
-}
-.entity-sticker.phys-just-revealed:hover .card-actions,
-.entity-sticker.phys-just-revealed:hover .conn-dot { opacity: 0 !important; }
-/* 画布便签本体（.note-card，NoteSticker.vue 直接复用 NoteCard.vue）落地揭示时也漏了这份压制——
-   之前注释误判"NoteCard 悬停只有 box-shadow 加深、没有位移，不会踩这个坑"，但画布态的
-   .note-card 现在自己也挂了 .hover-card-fx（补的 hover 上浮动画，跟其它画布卡一致），
-   跟其它卡一样也要在揭示压制期把 transform 一起压回静止态，不能只压 box-shadow。数值原样
-   抄自 NoteCard.vue 各自的静止态声明。 */
-.note-card.phys-just-revealed:hover {
-  transform: none !important;
-  box-shadow: 0 2px 8px rgba(80,90,110,0.07) !important;
-}
-.note-card.phys-just-revealed:hover::after {
-  background: linear-gradient(to top, rgba(255,255,255,0.08), transparent 50%) !important;
-}
-.note-card.phys-just-revealed:hover .nc-actions { opacity: 0 !important; }
-/* 项目/文件引用"对象已删除"的兜底卡片（.pr-missing/.fr-missing）也套了 .hover-card-fx，
-   触发条件更少见（只有引用的项目/文件被删掉时才会渲染），但同一类拖拽揭示场景仍可能撞上，
-   一并压住。 */
-.pr-missing.phys-just-revealed:hover,
-.fr-missing.phys-just-revealed:hover { transform: none !important; box-shadow: 0 2px 8px rgba(80,90,110,0.07) !important; }
-.pr-missing.phys-just-revealed:hover .card-actions, .fr-missing.phys-just-revealed:hover .card-actions,
-.pr-missing.phys-just-revealed:hover .conn-dot, .fr-missing.phys-just-revealed:hover .conn-dot { opacity: 0 !important; }
 /* 揭示当帧：把卡片及其所有子元素的过渡一并关掉，让「压制态」瞬间生效、零动画（卡片不下沉、
    操作按钮不从陈旧的 hover opacity 淡出）。只挂一帧，提交后立即由 JS 摘掉。见 _revealWithoutStaleHover。
    必须连 ::before/::after 一起关：通配符 * 匹配不到伪元素，而 hover 高光遮罩正是 .fc-card::after，
@@ -520,15 +439,6 @@ body {
 /* 文件名和元信息比玻璃层次更需要清晰度：透明祖先会把整张卡降进灰阶抗锯齿合成，细字发虚。
    文件克隆保留 backdrop-filter 与阴影，但不再用 opacity 叠一层。 */
 .phys-drag-clone.fc-card { opacity: 1; }
-/* 画布文件/活动贴纸拖动时优先保证文字与图标清晰。静止态仍是玻璃；仅克隆体改为较实的浅色
-   表面，避免 backdrop-filter 与整体透明度让内容在每帧位移时变软。 */
-.phys-drag-clone.fc-card.canvas-mode,
-.phys-drag-clone.entity-sticker {
-  background: rgba(255, 255, 255, 0.78) !important;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  opacity: 1;
-}
 /* 图片文件卡：缩略图（.fc-thumb-area）是完全不透明的真实图片，铺在 .fc-card 上层，挡住了
    卡片自己 backdrop-filter 模糊到的「背后内容」（拖过其他卡片时应该透出模糊的其他卡片，
    不是把缩略图自己的画面弄模糊）。给 .fc-thumb-area 单独挂一份跟卡片同参数的
@@ -544,25 +454,6 @@ body {
 .phys-drag-clone.fc-card .fc-thumb-full.fc-loaded {
   opacity: 0.75;
 }
-/* 便签（画布便签 NoteSticker.vue 现在直接复用 NoteCard.vue 本体，根节点是 .note-card，
-   笔记页时间流里的便签也是同一个类，但只有画布这边会真的被拖拽）拖拽克隆不要玻璃透明+
-   模糊：便签是不透明的实体小卡片（跟文件卡/项目卡/活动贴纸那种半透明玻璃质感不同），
-   拖起来却套了一份通用的玻璃模糊，质感就丢了。这里退回 NoteCard.vue 画布模式（.canvas-mode）
-   同款的不透明纸色、不叠 blur，数值必须跟 NoteCard.vue 那份保持一致，不然拖起来那一下
-   会跟松手落地后的颜色不一样、有个突兀的跳变。 */
-.phys-drag-clone.note-card.canvas-mode {
-  background: rgba(255, 252, 238, 0.97) !important;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  border-color: rgba(255, 255, 255, 0.85);
-}
-/* 有自定义颜色（NoteCard.vue 的 .tint-*）的便签拖起来不该被上面那条通用覆盖漂白——
-   selector 多一层 tint 类，特异度比上面那条高，!important 打平时按特异度赢，数值原样抄
-   自 NoteCard.vue 画布模式下的 .tint-* 声明（不透明浅染），拖拽全程保留这张便签自己选的颜色。 */
-.phys-drag-clone.note-card.canvas-mode.tint-amber { background: rgb(255,246,231) !important; }
-.phys-drag-clone.note-card.canvas-mode.tint-coral { background: rgb(255,236,233) !important; }
-.phys-drag-clone.note-card.canvas-mode.tint-blue  { background: rgb(224,239,251) !important; }
-.phys-drag-clone.note-card.canvas-mode.tint-teal  { background: rgb(229,248,250) !important; }
 /* 源卡 / 落点卡：隐藏但保留布局占位，让飞动的克隆体看起来就是卡片本体 */
 .phys-drag-source { opacity: 0 !important; }
 

@@ -1,0 +1,60 @@
+/* 画布贴纸的共用效果：连接提示、落地揭示压制与拖拽材质统一在这里。
+   拖拽克隆会 append 到 body，因此选择器必须是全局的，由 MindCanvas.vue 统一加载。 */
+
+/* 连接起点和目标都用贴合圆角的虚线边框；不用 outline，避免不同浏览器的圆角实现差异。 */
+:is(.note-card, .entity-sticker, .fr-card, .pr-card, .fr-missing, .pr-missing).connecting::before,
+:is(.note-card, .entity-sticker, .fr-card, .pr-card, .fr-missing, .pr-missing).connection-target::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 2px dashed rgba(123, 127, 178, 0.6);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+/* 落地揭示的一帧压制：真实鼠标仍在卡片上时，不让操作按钮或连接点抢先跳进 hover。 */
+.fc-card.phys-just-revealed:hover .card-actions,
+.fc-card.phys-just-revealed:hover .conn-dot,
+.pr-card.phys-just-revealed:hover .card-actions,
+.pr-card.phys-just-revealed:hover .conn-dot,
+.entity-sticker.phys-just-revealed:hover .card-actions,
+.entity-sticker.phys-just-revealed:hover .conn-dot,
+.pr-missing.phys-just-revealed:hover .card-actions,
+.fr-missing.phys-just-revealed:hover .card-actions,
+.pr-missing.phys-just-revealed:hover .conn-dot,
+.fr-missing.phys-just-revealed:hover .conn-dot { opacity: 0 !important; }
+
+.pr-card.phys-just-revealed:hover,
+.note-card.phys-just-revealed:hover,
+.pr-missing.phys-just-revealed:hover,
+.fr-missing.phys-just-revealed:hover {
+  transform: none !important;
+  box-shadow: 0 2px 8px rgba(80, 90, 110, 0.07) !important;
+}
+.entity-sticker.phys-just-revealed:hover {
+  transform: none !important;
+  box-shadow: 0 2px 8px rgba(80, 90, 110, 0.07), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55) !important;
+}
+.note-card.phys-just-revealed:hover::after {
+  background: linear-gradient(to top, rgba(255,255,255,0.08), transparent 50%) !important;
+}
+.note-card.phys-just-revealed:hover .nc-actions { opacity: 0 !important; }
+
+/* 画布拖拽的材质：纸条保留不透明纸感；文件与系统对象在移动时优先保证文字清晰度。 */
+.phys-drag-clone.fc-card.canvas-mode,
+.phys-drag-clone.entity-sticker {
+  background: rgba(255, 255, 255, 0.78) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  opacity: 1;
+}
+.phys-drag-clone.note-card.canvas-mode {
+  background: rgba(255, 252, 238, 0.97) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-color: rgba(255, 255, 255, 0.85);
+}
+.phys-drag-clone.note-card.canvas-mode.tint-amber { background: rgb(255,246,231) !important; }
+.phys-drag-clone.note-card.canvas-mode.tint-coral { background: rgb(255,236,233) !important; }
+.phys-drag-clone.note-card.canvas-mode.tint-blue  { background: rgb(224,239,251) !important; }
+.phys-drag-clone.note-card.canvas-mode.tint-teal  { background: rgb(229,248,250) !important; }
