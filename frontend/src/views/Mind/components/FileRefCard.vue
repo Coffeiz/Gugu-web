@@ -11,8 +11,8 @@
     :has-thumb="isImageExt(file.ext)"
     :canvas-mode="true"
     @pointerdown.stop="onPointerDown"
-    @mouseenter="emit('hover', item, true)"
-    @mouseleave="emit('hover', item, false)"
+    @mouseenter="onEnter"
+    @mouseleave="onLeave"
   >
     <template v-if="isImageExt(file.ext)" #thumb>
       <img :src="thumbTiny ?? undefined" class="fc-thumb-tiny" decoding="async" draggable="false" alt="" />
@@ -22,22 +22,26 @@
         @error="($event.target as HTMLElement).style.display = 'none'" />
     </template>
     <template #meta>{{ file.projectName || '未分类' }} · {{ file.size }}</template>
-    <div class="fr-actions">
+    <CardActions :hovering="isHovering">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
-    </div>
-    <button class="conn-dot conn-dot-left" :class="{ 'conn-dot-active': connectionTargetSide === 'left' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
-    <button class="conn-dot conn-dot-right" :class="{ 'conn-dot-active': connectionTargetSide === 'right' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
+    </CardActions>
+    <CardConnDot
+      :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
+      @drag-start="(e, side) => emit('connectDragStart', e, side)"
+    />
   </FileCard>
   <div v-else ref="missingRef" class="fr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" @pointerdown.stop="onPointerDown"
-    @mouseenter="emit('hover', item, true)" @mouseleave="emit('hover', item, false)">
+    @mouseenter="onEnter" @mouseleave="onLeave">
     <span class="fr-kind">文件</span>
     <div class="fr-name">{{ item.node.title || '未命名文件' }}</div>
     <span class="fr-deleted">已删除，仅保留快照</span>
-    <div class="fr-actions">
+    <CardActions :hovering="isHovering">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
-    </div>
-    <button class="conn-dot conn-dot-left" :class="{ 'conn-dot-active': connectionTargetSide === 'left' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
-    <button class="conn-dot conn-dot-right" :class="{ 'conn-dot-active': connectionTargetSide === 'right' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
+    </CardActions>
+    <CardConnDot
+      :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
+      @drag-start="(e, side) => emit('connectDragStart', e, side)"
+    />
   </div>
 </template>
 
@@ -51,6 +55,8 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { getThumb, cardBlobReadyIds } from '@/composables/useThumbCache'
 import { isImageExt } from '@/utils/fileTypes'
 import { itemSize } from '@/composables/useMindCanvas'
+import CardActions from './CardActions.vue'
+import CardConnDot from './CardConnDot.vue'
 
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },
@@ -70,6 +76,12 @@ const emit = defineEmits<{
   (e: 'measured', item: MindCanvasItem, size: { w: number; h: number }): void
   (e: 'hover', item: MindCanvasItem, hovering: boolean): void
 }>()
+
+// CardActions/CardConnDot 用 prop 驱动外观（不是 CSS :hover），两个模板分支（有 file/
+// 已删除墓碑）共用同一份悬停状态。
+const isHovering = ref(false)
+function onEnter() { isHovering.value = true; emit('hover', props.item, true) }
+function onLeave() { isHovering.value = false; emit('hover', props.item, false) }
 
 const filesCache = useFilesCacheStore()
 onMounted(() => { if (!filesCache.loaded) filesCache.load() })
@@ -157,11 +169,11 @@ const { onPointerDown } = useCardDrag({
    等于强迫它填满 .fr-wrap 的 min-height，内容矮于这个值时 .fc-label 的 flex:1 会把空白
    拉伸垫在卡片下方（文件卡显得比其它页面同款卡片长的根因）。 */
 /* .fc-card 全局有 overflow:hidden。连接点走它的插槽后是它的子节点（跟着拖拽克隆一起飞，见
-   上面模板注释），但圆点摆在卡片边缘外侧（.conn-dot 的 left:-6px/right:-6px），会被这份
-   overflow:hidden 整个裁掉一半——看着像"文件节点被裁在容器里"。.fc-thumb-area 自己另有一份
-   overflow:hidden 专门裁缩略图，改这里成 visible 不影响缩略图圆角。 */
+   上面模板注释），但圆点的判定区摆在卡片边缘外侧（见 CardConnDot.vue 的 .conn-dot-left/
+   right），会被这份 overflow:hidden 整个裁掉一半——看着像"文件节点被裁在容器里"。
+   .fc-thumb-area 自己另有一份 overflow:hidden 专门裁缩略图，改这里成 visible 不影响缩略图
+   圆角。"正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明。 */
 :deep(.fc-card.fr-card) { overflow: visible; }
-.fr-card.connecting { border-style: dashed; }
 
 .fr-missing {
   position: relative; box-sizing: border-box; padding: 13px;
@@ -172,28 +184,12 @@ const { onPointerDown } = useCardDrag({
 .fr-name { font-size: 11px; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
 .fr-deleted { font-size: 10.5px; color: var(--text-secondary); opacity: .7; }
 
-.fr-actions { position: absolute; top: 8px; right: 8px; z-index: 3; display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s; }
-.fr-card:hover .fr-actions, .fr-missing:hover .fr-actions { opacity: 1; }
-.fr-actions button { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 0; border-radius: 5px; background: rgba(255,255,255,0.7); color: var(--text-secondary); cursor: pointer; }
-.fr-actions button:hover { background: rgba(123,127,178,.16); color: var(--color-primary); }
+/* 操作按钮（.card-actions）和连接点（.conn-dot）都挪进了共用组件 CardActions.vue/
+   CardConnDot.vue，外观/悬停显形逻辑不再各卡自己抄一份。 */
 
 /* 缩略图两层（模糊占位 tiny + 淡入 full），跟 Dashboard/FilePanel.vue 同款；基础定位/裁剪
    走 FileCard.vue 的 .fc-thumb-area :deep(img)，这里只管两层各自的差异。 */
 .fc-thumb-tiny { filter: blur(10px); }
 .fc-thumb-full { opacity: 0; transition: opacity 0.4s ease; }
 .fc-thumb-full.fc-loaded { opacity: 1; }
-
-.conn-dot {
-  position: absolute; top: 50%; width: 12px; height: 12px; margin-top: -6px;
-  border: 2px solid #fff; border-radius: 50%; padding: 0;
-  background: var(--color-primary); box-shadow: 0 1px 4px rgba(80,90,110,.35);
-  opacity: 0; transition: opacity 0.15s, transform 0.15s; cursor: crosshair; z-index: 6;
-}
-.fr-card:hover .conn-dot, .fr-missing:hover .conn-dot { opacity: 1; }
-.fr-card.connecting .conn-dot, .fr-missing.connecting .conn-dot, .fr-card.connection-target .conn-dot, .fr-missing.connection-target .conn-dot { opacity: .38; }
-.fr-card.connection-target .conn-dot-active, .fr-missing.connection-target .conn-dot-active { opacity: 1; transform: scale(1.28); animation: conn-dot-magnet .44s cubic-bezier(.22, 1.35, .36, 1) infinite alternate; }
-.conn-dot:hover { transform: scale(1.3); }
-.conn-dot-left { left: -6px; }
-.conn-dot-right { right: -6px; }
-@keyframes conn-dot-magnet { from { box-shadow: 0 1px 4px rgba(80,90,110,.35); } to { box-shadow: 0 0 0 5px rgba(123,127,178,.16), 0 2px 8px rgba(80,90,110,.38); } }
 </style>

@@ -126,7 +126,9 @@ export function screenSizeToWorld(
 
 export function useCardDrag(opts: {
   screenToWorld: (clientX: number, clientY: number) => { x: number; y: number }
-  onClick: () => void
+  // 画布便签（NoteSticker.vue）复用 NoteCard.vue 本体，点击进编辑态走 NoteCard 自己的
+  // onBodyClick（见其注释），不需要 useCardDrag 再额外派发一次点击语义——可选。
+  onClick?: () => void
   // 松手时的世界坐标——卡片左上角该落在哪（不是中心）。物理模块给的克隆体真实视觉中心 +
   // 真实视觉尺寸（见 usePhysicsDrag.ts 的 onDrop 的 size 参数）已经在这里换算成左上角，
   // 调用方不用再自己拿存储侧的假定尺寸反推——卡片实际渲染多高（比如项目卡片客户名有没有、

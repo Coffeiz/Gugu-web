@@ -184,7 +184,7 @@ const draftPath = computed(() => {
 <style scoped>
 .relation-layer { position: absolute; left: -5000px; top: -5000px; width: 10000px; height: 10000px; overflow: visible; pointer-events: none; }
 .rel-group { pointer-events: auto; cursor: pointer; }
-.rel-hit { stroke: transparent; stroke-width: 14; }
+.rel-hit { stroke: transparent; stroke-width: 16; }
 /* 实线，不用装饰性的流动虚线动画——"实时运动"是指拖着贴纸走时线会跟手同步移动
    （见 MindCanvas.vue 的 onItemDragging），不是给静止的线本身加动效。 */
 .rel-visible { stroke: rgba(104, 111, 164, .35); stroke-width: 1.6; transition: stroke 0.18s ease, stroke-width 0.18s ease; }

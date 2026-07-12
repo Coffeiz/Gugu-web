@@ -13,8 +13,8 @@
         <NoteSticker
           v-if="item.node.kind === 'canvas_note'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
-          @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone"
-          @moved="onItemMoved" @save="fields => emit('saveNote', item, fields)"
+          @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone" @measured="onItemMeasured"
+          @moved="onItemMoved"
           @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
         <ProjectRefCard
@@ -34,7 +34,7 @@
         <EntitySticker
           v-else
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
-          @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone"
+          @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone" @measured="onItemMeasured"
           @moved="onItemMoved" @open="item => emit('openRef', item)"
           @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
@@ -65,7 +65,6 @@ const emit = defineEmits<{
   (e: 'remove', item: MindCanvasItem): void
   (e: 'removeRelation', id: number): void
   (e: 'linkNodes', srcNodeId: number, dstNodeId: number, sides: RelationAnchorSides): void
-  (e: 'saveNote', item: MindCanvasItem, fields: { title: string; contentMd: string }): void
   (e: 'openRef', item: MindCanvasItem): void
   (e: 'itemMoved', item: MindCanvasItem): void
   (e: 'viewChange', view: { x: number; y: number; scale: number }): void

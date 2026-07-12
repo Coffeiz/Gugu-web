@@ -14,7 +14,7 @@
       </div>
 
       <div class="tl-col-body">
-        <div class="tl-stack">
+        <div class="note-stack">
           <NoteCard
             v-for="n in g.items"
             :key="n.id"
@@ -26,6 +26,7 @@
             @close="stopEditing"
             @save="md => autosave(n, md)"
             @delete="emit('delete', n)"
+            @color="c => emit('color', n, c)"
             @toggle-task="idx => emit('toggleTask', n, idx)"
           />
         </div>
@@ -34,7 +35,7 @@
   </div>
 
   <div v-if="!groups.length" class="tl-empty">
-    {{ filtered ? '没有匹配的便签' : '还没有记录，在下面记一条试试～' }}
+    {{ filtered ? '没有匹配的笔记' : '还没有记录，在下面记一条试试～' }}
   </div>
 </template>
 
@@ -53,6 +54,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'save', note: MindNote, md: string): void
   (e: 'delete', note: MindNote): void
+  (e: 'color', note: MindNote, color: string | null): void
   (e: 'toggleTask', note: MindNote, idx: number): void
   (e: 'editRequest', note: MindNote): void
 }>()
@@ -194,7 +196,7 @@ defineExpose({ flagConflict: () => { conflict.value = true }, confirmEdit, stopE
   scrollbar-width: thin;
   margin: 0 -4px; padding: 2px 4px 4px;
 }
-.tl-stack { display: flex; flex-direction: column; gap: 10px; }
+.note-stack { display: flex; flex-direction: column; gap: 10px; }
 
 .tl-empty {
   align-self: flex-start;

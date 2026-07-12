@@ -1,45 +1,101 @@
 <template>
-  <ProjectCard
+  <!-- 画布项目引用卡不再嵌 ProjectCard.vue 本体——看板项目卡承载了大量看板专属交互（优先级
+       星级、推进阶段按钮、点阶段名弹待办列表、文件拖拽上传），画布这边只需要一份只读展示 +
+       拖拽/建立关联，共享整个交互组件换来的是"看板改需求容易带崩画布、画布改样式容易带崩
+       看板"（这次 squircle 圆角+加宽的误伤就是实例）。这里只共享没有 DOM 的纯展示逻辑
+       （useProjectCardBasics：名字底色、阶段文案、进度、截止日期文案），显示层各写各的。 -->
+  <div
     v-if="project"
-    ref="cardRef"
-    class="pr-card"
+    ref="cardEl"
+    class="pr-card hover-card-fx"
     :class="{ connecting, 'connection-target': !!connectionTargetSide }"
     :style="cardStyle"
     :data-node-id="item.nodeId"
-    :project="project"
-    :drag-enabled="false"
-    :canvas-mode="true"
     @pointerdown.stop="onPointerDown"
-    @mouseenter="emit('hover', item, true)"
-    @mouseleave="emit('hover', item, false)"
+    @mouseenter="onEnter"
+    @mouseleave="onLeave"
   >
-    <div class="pr-actions">
-      <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
+    <div class="card-body">
+      <div class="proj-name" :style="{ color: nameColor }">{{ project.name }}</div>
+      <div class="proj-meta">
+        <span class="proj-client" :class="{ empty: !project.client }">
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <circle cx="8" cy="6" r="2.5"/><path d="M2 14c0-3.3 2.7-5 6-5s6 1.7 6 5"/>
+          </svg>
+          {{ project.client }}
+        </span>
+        <!-- 阶段名只读展示，不像看板卡那样点开待办弹层——画布上不需要这层编辑交互。 -->
+        <span class="proj-stage" :title="currentStageLabel">
+          <span class="ps-label">{{ currentStageLabel || '阶段' }}</span>
+          <span v-if="curTodoTotal" class="ps-count">{{ curDoneCount }}/{{ curTodoTotal }}</span>
+        </span>
+      </div>
+      <div class="card-footer">
+        <div class="date-range">
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <rect x="1.5" y="2.5" width="13" height="12" rx="2"/>
+            <path d="M5 1v3M11 1v3M1.5 6.5h13"/>
+          </svg>
+          <template v-if="project.status === 'done'">
+            <span class="done-label"><PhCheck :size="9" weight="bold" /> 完成</span>
+            <span v-if="project.doneAt" class="deadline">{{ fmtDate(project.doneAt.slice(0, 10)) }}</span>
+          </template>
+          <template v-else>
+            <span v-if="project.startDate" class="date-start">{{ fmtDate(project.startDate) }}</span>
+            <span v-if="project.startDate && project.deadline" class="date-sep">→</span>
+            <span class="deadline" :class="{ urgent: isUrgent }">{{ deadlineLabel }}</span>
+          </template>
+        </div>
+        <div class="footer-right">
+          <span v-if="project.fileCount" class="file-badge">
+            <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 1.5h5l2.5 2.5V10a.5.5 0 01-.5.5h-7A.5.5 0 011.5 10V2a.5.5 0 01.5-.5z"/>
+              <path d="M7 1.5V4H9.5"/>
+            </svg>
+            {{ project.fileCount }}
+          </span>
+          <span class="progress-num">{{ stageProgress }}%</span>
+        </div>
+      </div>
+      <div class="seg-bar-wrap">
+        <SegBar :project="project" />
+      </div>
     </div>
-    <button class="conn-dot conn-dot-left" :class="{ 'conn-dot-active': connectionTargetSide === 'left' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
-    <button class="conn-dot conn-dot-right" :class="{ 'conn-dot-active': connectionTargetSide === 'right' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
-  </ProjectCard>
+
+    <CardActions :hovering="isHovering">
+      <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
+    </CardActions>
+    <CardConnDot
+      :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
+      @drag-start="(e, side) => emit('connectDragStart', e, side)"
+    />
+  </div>
   <div v-else ref="missingRef" class="pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" @pointerdown.stop="onPointerDown"
-    @mouseenter="emit('hover', item, true)" @mouseleave="emit('hover', item, false)">
+    @mouseenter="onEnter" @mouseleave="onLeave">
     <span class="pr-kind">项目</span>
     <div class="pr-name">{{ item.node.title || '未命名项目' }}</div>
     <span class="pr-deleted">已删除，仅保留快照</span>
-    <div class="pr-actions">
+    <CardActions :hovering="isHovering">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
-    </div>
-    <button class="conn-dot conn-dot-left" :class="{ 'conn-dot-active': connectionTargetSide === 'left' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
-    <button class="conn-dot conn-dot-right" :class="{ 'conn-dot-active': connectionTargetSide === 'right' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
+    </CardActions>
+    <CardConnDot
+      :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
+      @drag-start="(e, side) => emit('connectDragStart', e, side)"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
-import { PhTrash } from '@phosphor-icons/vue'
+import { PhCheck, PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvasItem } from '@/services/api'
-import ProjectCard from '@/views/Projects/components/ProjectCard.vue'
+import SegBar from '@/components/common/SegBar.vue'
 import { useCardDrag } from '@/composables/useCardDrag'
 import { itemSize } from '@/composables/useMindCanvas'
 import { useProjectStore } from '@/stores/projects'
+import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
+import CardActions from './CardActions.vue'
+import CardConnDot from './CardConnDot.vue'
 
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },
@@ -60,27 +116,38 @@ const emit = defineEmits<{
   (e: 'hover', item: MindCanvasItem, hovering: boolean): void
 }>()
 
+// CardActions/CardConnDot 用 prop 驱动外观（不是 CSS :hover），两个模板分支（有项目/
+// 已删除墓碑）共用同一份悬停状态。
+const isHovering = ref(false)
+function onEnter() { isHovering.value = true; emit('hover', props.item, true) }
+function onLeave() { isHovering.value = false; emit('hover', props.item, false) }
+
 const projectStore = useProjectStore()
 const project = computed(() => projectStore.projects.find(p => p.id === props.item.node.refId) || null)
+// project 为 null（已删除对象）时走 v-else 的墓碑态，useProjectCardBasics 内部按 project.value
+// 直接取字段，传一个占位对象兜底，反正这份 computed 在 project 为 null 时不会被模板用到。
+const projectForBasics = computed(() => project.value ?? { stages: [], color: null, status: 'pending' } as any)
+const { currentStageLabel, curTodoTotal, curDoneCount, stageProgress, nameColor, isUrgent, fmtDate, deadlineLabel } = useProjectCardBasics(projectForBasics)
+
 const missingStyle = computed(() => {
   const { w, h } = itemSize(props.item)
   return { left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, minHeight: `${h}px`, zIndex: `${props.item.z}` }
 })
 const cardStyle = computed(() => {
   const { w } = itemSize(props.item)
-  return { position: 'absolute', left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, zIndex: `${props.item.z}` }
+  return {
+    left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, zIndex: `${props.item.z}`,
+    background: project.value ? `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.value.color}` : undefined,
+  }
 })
 
 // 项目卡高度随内容自然变化。关系线不再借持久化的 item.h 猜它多高，而是直接消费这张卡
 // 上报的实际世界尺寸，避免视图模型和内层卡体两套高度彼此拉扯。
-const cardRef = ref<InstanceType<typeof ProjectCard> | null>(null)
+const cardEl = ref<HTMLElement | null>(null)
 const missingRef = ref<HTMLElement | null>(null)
 let cardResizeObserver: ResizeObserver | null = null
-function projectCardEl() {
-  return cardRef.value?.rootEl ?? null
-}
 function emitMeasuredSize() {
-  const card = projectCardEl()
+  const card = cardEl.value
   if (!card || !card.isConnected) return
   const rect = card.getBoundingClientRect()
   if (rect.width < 10 || rect.height < 10) return
@@ -89,7 +156,7 @@ function emitMeasuredSize() {
 }
 function observeCard() {
   cardResizeObserver?.disconnect()
-  const card = projectCardEl()
+  const card = cardEl.value
   if (!card) return
   cardResizeObserver = new ResizeObserver(emitMeasuredSize)
   cardResizeObserver.observe(card)
@@ -106,10 +173,8 @@ onBeforeUnmount(() => cardResizeObserver?.disconnect())
 const { onPointerDown } = useCardDrag({
   screenToWorld: props.screenToWorld,
   contentScale: () => props.scale,
-  getDragEl: () => {
-    return projectCardEl() ?? missingRef.value
-  },
-  exclude: target => !!(target as HTMLElement)?.closest?.('.stars, .proj-stage, .seg-bar-wrap, .card-advance, .pr-actions, .conn-dot'),
+  getDragEl: () => cardEl.value ?? missingRef.value,
+  exclude: target => !!(target as HTMLElement)?.closest?.('.seg-bar-wrap, .card-actions, .conn-dot'),
   onClick: onOpen,
   onDragMove: (worldX, worldY) => {
     emit('dragging', props.item, worldX, worldY)
@@ -133,46 +198,85 @@ function onOpen() {
    位置。写成 relative 时 left/top 是"从正常文档流位置再偏移"，而 .canvas-world 宽高都是 0，
    块级元素在正常流里会跟其它同样 position:relative 的兄弟节点垂直堆叠——这份「正常流基准
    位置」会随画布上其它项目卡片的数量/高度变化，item.y 的偏移量就是加在一个不固定的基准上，
-   越往后建的项目卡片、前面项目卡片越多/越高，累积偏差就越大（"检查其他层级"排查出来的
-   真实根因，不是内容高度估算不准这一类问题）。 */
-.pr-card, .pr-missing { position: absolute; box-sizing: border-box; user-select: none; }
-.pr-card.connecting { outline: 2px dashed rgba(123,127,178,0.6); outline-offset: 2px; }
-/* .proj-card 全局有 overflow:hidden（裁掉溢出圆角的杂边）。连接点/移除按钮走它的插槽后
-   变成它的子节点才能跟着拖拽克隆一起飞（见上面模板注释），但圆点摆在卡片边缘外侧
-   （见下方 .conn-dot 的 left:-6px/right:-6px），会被这份 overflow:hidden 整个裁掉一半——
-   看着像"连接点被裁在卡片容器里"。卡片内部会溢出圆角的内容早已各自有自己的
-   border-radius/overflow（::before/::after 用 inset:0+border-radius:inherit 自成一体，
-   缩略图区也有独立的 overflow:hidden），改成 visible 不会露出裁切前要挡住的东西。
-   项目卡保留自然高度，连接线通过上面的 ResizeObserver 同步这份实际高度，不把空白塞进卡片。 */
-:deep(.proj-card.pr-card) { overflow: visible; }
+   越往后建的项目卡片、前面项目卡片越多/越高，累积偏差就越大。
+   圆角只用 border-radius，不叠 corner-shape:squircle——文件卡/便签/活动贴纸这几种画布卡片
+   都是普通圆角，项目卡跟着统一，不再各转各的曲线。overflow:visible 是因为连接点的判定区
+   摆在卡片边缘外侧（见 CardConnDot.vue 的 .conn-dot-left/right），overflow:hidden 会把它们
+   裁掉一半；背景渐变本身不需要 overflow:hidden 也会被自己的 border-radius 裁成圆角（元素
+   自身背景永远贴合自己的盒子形状，overflow 管的是会溢出盒子的子元素/内容，不影响这点）。
+   "正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明。 */
+.pr-card, .pr-missing {
+  position: absolute; box-sizing: border-box; user-select: none; cursor: pointer;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255,255,255,0.72);
+  box-shadow: 0 2px 8px rgba(80,90,110,0.07);
+  overflow: visible;
+}
+/* 悬停抬起/阴影加深走全局 .hover-card-fx（已加在模板类名里），但 scoped 样式编译后会带
+   [data-v-xxx] 属性选择器，跟上面 .pr-card 静止态 box-shadow 那条一样特异度（类+属性选择
+   器），跟全局 .hover-card-fx:hover（类+伪类，同样两级）打平——打平时看两份样式表谁在最终
+   产物里排得靠后，不保真。FileCard.vue/EntitySticker.vue 都各自在 scoped 规则里重申一遍
+   :hover 的阴影值来稳赢（不依赖顺序），这里补上同一份，否则会出现"看着没有 hover 阴影"
+   （静止态那条声明打赢了 hover 态）。 */
+.pr-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
+/* SegBar.vue 自己的 @click.stop/@mousedown.stop 只挡 click/mousedown 这两种事件冒泡，挡不住
+   CSS :active 伪类——按住进度条时鼠标底下的所有祖先（含 .pr-card 自己）都会同时进入 :active
+   态，即使点击不会真的冒泡触发拖拽/翻开项目，卡片还是会跟着抖一下"按下"动画。全局
+   .hover-card-fx:active:has(...) 那份共用名单没收 .seg-bar-wrap（board 侧的 ProjectCard.vue
+   本来就单独有一条这个），这里单独补一份。 */
+.pr-card:active:has(.seg-bar-wrap:active) { transform: none; opacity: 1; }
+
+.card-body { padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.proj-name {
+  font-size: 13px; font-weight: 500; color: var(--text-primary);
+  line-height: 1.35; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.proj-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.proj-client {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; line-height: 1.15; color: var(--text-secondary);
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1;
+}
+.proj-client svg { opacity: 0.85; }
+.proj-client.empty { opacity: 0.75; }
+.proj-stage {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; line-height: 1.15; color: var(--text-secondary);
+  white-space: nowrap; flex-shrink: 0; opacity: 0.75;
+}
+.ps-label { overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
+.ps-count { font-size: 9px; line-height: 1.15; opacity: 0.8; font-variant-numeric: tabular-nums; }
+
+.card-footer { display: flex; align-items: center; justify-content: space-between; }
+.date-range { display: flex; align-items: center; gap: 4px; font-size: 11px; line-height: 1.15; color: var(--text-secondary); min-width: 0; overflow: hidden; }
+.date-start { opacity: 0.65; white-space: nowrap; }
+.date-sep { opacity: 0.35; font-size: 9px; }
+.deadline { white-space: nowrap; }
+.deadline.urgent { color: var(--color-warning); font-weight: 600; }
+.done-label { white-space: nowrap; font-size: 10px; font-weight: 700; color: #3a8870; background: rgba(90,158,136,0.12); box-shadow: inset 0 0 0 1px rgba(90,158,136,0.35); border-radius: 20px; padding: 0 6px; display: inline-flex; align-items: center; gap: 2px; line-height: 1.15; }
+.footer-right { display: flex; align-items: center; gap: 5px; line-height: 1.15; }
+.file-badge { display: flex; align-items: center; gap: 3px; font-size: 10px; line-height: 1.15; font-weight: 600; color: var(--text-secondary); background: rgba(0,0,0,0.06); border-radius: 10px; padding: 1px 6px; }
+.proj-client > svg,
+.date-range > svg,
+.done-label > svg,
+.file-badge > svg {
+  display: block;
+  flex: 0 0 auto;
+  transform: translateY(-0.35px);
+}
+.progress-num { font-size: 10px; line-height: 1.15; color: var(--text-secondary); }
+.seg-bar-wrap { position: relative; }
 
 .pr-missing {
-  position: relative; height: 100%; box-sizing: border-box; padding: 13px 13px 11px;
-  background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.72);
-  border-radius: var(--radius-md); corner-shape: squircle;
-  box-shadow: 0 2px 8px rgba(80,90,110,0.07);
-  display: flex; flex-direction: column; gap: 8px; cursor: grab; touch-action: none;
+  height: 100%; padding: 13px 13px 11px;
+  background: rgba(255,255,255,0.5);
+  display: flex; flex-direction: column; gap: 8px;
 }
 .pr-kind { align-self: flex-start; padding: 1px 6px; border-radius: 4px; background: rgba(123,127,178,.12); color: var(--color-primary); font-size: 10px; font-weight: 700; }
 .pr-name { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
 .pr-deleted { font-size: 10.5px; color: var(--text-secondary); opacity: .7; }
 
-.pr-actions { position: absolute; top: 8px; right: 8px; z-index: 5; display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s; }
-.pr-card:hover .pr-actions, .pr-missing:hover .pr-actions { opacity: 1; }
-.pr-actions button { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 0; border-radius: 5px; background: rgba(255,255,255,0.7); color: var(--text-secondary); cursor: pointer; }
-.pr-actions button:hover { background: rgba(123,127,178,.16); color: var(--color-primary); }
-
-.conn-dot {
-  position: absolute; top: 50%; width: 12px; height: 12px; margin-top: -6px;
-  border: 2px solid #fff; border-radius: 50%; padding: 0;
-  background: var(--color-primary); box-shadow: 0 1px 4px rgba(80,90,110,.35);
-  opacity: 0; transition: opacity 0.15s, transform 0.15s; cursor: crosshair; z-index: 6;
-}
-.pr-card:hover .conn-dot, .pr-missing:hover .conn-dot { opacity: 1; }
-.pr-card.connecting .conn-dot, .pr-missing.connecting .conn-dot, .pr-card.connection-target .conn-dot, .pr-missing.connection-target .conn-dot { opacity: .38; }
-.pr-card.connection-target .conn-dot-active, .pr-missing.connection-target .conn-dot-active { opacity: 1; transform: scale(1.28); animation: conn-dot-magnet .44s cubic-bezier(.22, 1.35, .36, 1) infinite alternate; }
-.conn-dot:hover { transform: scale(1.3); }
-.conn-dot-left { left: -6px; }
-.conn-dot-right { right: -6px; }
-@keyframes conn-dot-magnet { from { box-shadow: 0 1px 4px rgba(80,90,110,.35); } to { box-shadow: 0 0 0 5px rgba(123,127,178,.16), 0 2px 8px rgba(80,90,110,.38); } }
+/* 操作按钮（.card-actions）和连接点（.conn-dot）都挪进了共用组件 CardActions.vue/
+   CardConnDot.vue，外观/悬停显形逻辑不再各卡自己抄一份。 */
 </style>

@@ -1,12 +1,13 @@
 <template>
   <article
+    ref="cardRef"
     class="entity-sticker glass-card hover-card-fx"
     :class="{ connecting, 'connection-target': !!connectionTargetSide, tombstone: !!item.node.deletedAt }"
     :style="stickerStyle"
     :data-node-id="item.nodeId"
     @pointerdown.stop="onPointerDown"
-    @mouseenter="emit('hover', item, true)"
-    @mouseleave="emit('hover', item, false)"
+    @mouseenter="onEnter"
+    @mouseleave="onLeave"
   >
     <div class="es-head">
       <component :is="icon" :size="15" weight="bold" />
@@ -14,21 +15,31 @@
     </div>
     <h3>{{ title }}</h3>
     <span v-if="item.node.deletedAt" class="es-deleted">已删除</span>
-    <span v-else class="es-hint">点击打开原对象</span>
-    <div v-if="!item.node.deletedAt" class="es-actions">
+    <template v-else>
+      <p v-if="event?.description" class="es-desc">{{ event.description }}</p>
+      <span v-if="eventTimeLabel" class="es-time">
+        <PhClock :size="11" weight="bold" />{{ eventTimeLabel }}
+      </span>
+    </template>
+    <CardActions v-if="!item.node.deletedAt" :hovering="isHovering">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
-    </div>
-    <button v-if="!item.node.deletedAt" class="conn-dot conn-dot-left" :class="{ 'conn-dot-active': connectionTargetSide === 'left' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
-    <button v-if="!item.node.deletedAt" class="conn-dot conn-dot-right" :class="{ 'conn-dot-active': connectionTargetSide === 'right' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
+    </CardActions>
+    <CardConnDot
+      v-if="!item.node.deletedAt"
+      :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
+      @drag-start="(e, side) => emit('connectDragStart', e, side)"
+    />
   </article>
 </template>
 
 <script setup lang="ts">
-import { computed, type PropType } from 'vue'
-import { PhCalendarBlank, PhFile, PhStack, PhTrash } from '@phosphor-icons/vue'
-import type { MindCanvasItem } from '@/services/api'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
+import { PhCalendarBlank, PhClock, PhFile, PhStack, PhTrash } from '@phosphor-icons/vue'
+import { eventsApi, type MindCanvasItem } from '@/services/api'
 import { useCardDrag } from '@/composables/useCardDrag'
 import { itemSize } from '@/composables/useMindCanvas'
+import CardActions from './CardActions.vue'
+import CardConnDot from './CardConnDot.vue'
 
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },
@@ -46,6 +57,7 @@ const emit = defineEmits<{
   (e: 'open', item: MindCanvasItem): void
   (e: 'connectDragStart', event: PointerEvent, side: 'left' | 'right'): void
   (e: 'hover', item: MindCanvasItem, hovering: boolean): void
+  (e: 'measured', item: MindCanvasItem, size: { w: number; h: number }): void
 }>()
 
 // 图标/文案与顶栏全局搜索、侧边栏导航保持一致（PhStack=项目、PhFile=文件、PhCalendarBlank=活动）。
@@ -61,9 +73,67 @@ const stickerStyle = computed(() => {
   return { left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, minHeight: `${h}px`, zIndex: `${props.item.z}` }
 })
 
+// 活动没有专门的缓存 store（不像项目/文件那样有 useProjectStore/useFilesCacheStore），
+// 日历页自己也是按月拉取到组件本地状态，没有可复用的按 id 查询——这里直接照 EventEditModal.vue
+// 的 eventsApi.get(id) 单条查询模式，不新起一个全局 store（画布上活动引用卡数量不多，不必要）。
+const event = ref<Awaited<ReturnType<typeof eventsApi.get>> | null>(null)
+async function loadEvent() {
+  const refId = props.item.node.refId
+  if (props.item.node.deletedAt || refType.value !== 'event' || refId == null) { event.value = null; return }
+  try {
+    event.value = await eventsApi.get(refId)
+  } catch {
+    event.value = null   // 原对象可能已被删除，静默失败即可——标题快照仍然显示，不阻断画布使用
+  }
+}
+onMounted(loadEvent)
+watch(() => props.item.node.refId, loadEvent)
+
+// date/time 是 "YYYY-MM-DD"/"HH:MM" 纯字符串（后端 CalendarEvent 模型），不是要按时区解析的
+// ISO 时间戳，日历页自己也是这么就地拼字符串显示（没有现成的导出工具函数可复用）。
+// time 为空＝全天活动。
+const eventTimeLabel = computed(() => {
+  const e = event.value
+  if (!e?.date) return ''
+  const d = new Date(`${e.date}T00:00:00`)
+  const dateStr = `${d.getMonth() + 1}月${d.getDate()}日`
+  if (!e.time) return `${dateStr} 全天`
+  return `${dateStr} ${e.time}${e.endTime ? `–${e.endTime}` : ''}`
+})
+
+// CardActions/CardConnDot 用 prop 驱动外观（不是 CSS :hover），所以这里要自己记一份悬停
+// 状态——反正 mouseenter/mouseleave 本来就要往上报给 MindCanvas.vue（连线抬起效果），
+// 顺手多存一份本地状态不算额外开销。
+const isHovering = ref(false)
+function onEnter() { isHovering.value = true; emit('hover', props.item, true) }
+function onLeave() { isHovering.value = false; emit('hover', props.item, false) }
+
+const cardRef = ref<HTMLElement | null>(null)
+let cardResizeObserver: ResizeObserver | null = null
+function emitMeasuredSize() {
+  const card = cardRef.value
+  if (!card || !card.isConnected) return
+  const rect = card.getBoundingClientRect()
+  if (rect.width < 10 || rect.height < 10) return
+  const scale = props.scale || 1
+  emit('measured', props.item, { w: rect.width / scale, h: rect.height / scale })
+}
+function observeCard() {
+  cardResizeObserver?.disconnect()
+  const card = cardRef.value
+  if (!card) return
+  cardResizeObserver = new ResizeObserver(emitMeasuredSize)
+  cardResizeObserver.observe(card)
+  emitMeasuredSize()
+}
+onMounted(() => nextTick(observeCard))
+watch(() => props.scale, () => nextTick(emitMeasuredSize))
+onBeforeUnmount(() => cardResizeObserver?.disconnect())
+
 const { onPointerDown } = useCardDrag({
   screenToWorld: props.screenToWorld,
   contentScale: () => props.scale,
+  getDragEl: () => cardRef.value,
   onClick: () => { if (!props.item.node.deletedAt) emit('open', props.item) },
   onDragMove: (worldX, worldY) => {
     emit('dragging', props.item, worldX, worldY)
@@ -100,29 +170,26 @@ const { onPointerDown } = useCardDrag({
   box-shadow: 0 2px 8px rgba(80,90,110,0.07), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55);
 }
 .entity-sticker:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
-.entity-sticker.connecting { border-style: dashed; }
+/* "正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明一份。 */
 .entity-sticker.tombstone { opacity: .55; filter: grayscale(.45); }
 .es-head { display: flex; align-items: center; gap: 6px; color: var(--color-primary); }
 .es-kind { font-size: 10px; font-weight: 700; }
 h3 { margin: 0; font-size: 13.5px; line-height: 1.35; font-weight: 700; overflow-wrap: anywhere; color: var(--text-primary); }
-.es-hint, .es-deleted { font-size: 10.5px; color: var(--text-secondary); opacity: .7; }
-
-.es-actions { position: absolute; top: 8px; right: 8px; z-index: 3; display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s; }
-.entity-sticker:hover .es-actions { opacity: 1; }
-.es-actions button { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 0; border-radius: 5px; background: rgba(255,255,255,0.7); color: var(--text-secondary); cursor: pointer; }
-.es-actions button:hover { background: rgba(123,127,178,.16); color: var(--color-primary); }
-
-.conn-dot {
-  position: absolute; top: 50%; width: 12px; height: 12px; margin-top: -6px;
-  border: 2px solid #fff; border-radius: 50%; padding: 0;
-  background: var(--color-primary); box-shadow: 0 1px 4px rgba(80,90,110,.35);
-  opacity: 0; transition: opacity 0.15s, transform 0.15s; cursor: crosshair; z-index: 6;
+.es-deleted { font-size: 10.5px; color: var(--text-secondary); opacity: .7; }
+/* 描述最多留 3 行——活动描述长短不定，画布卡片不该跟着无限撑高，clamp 之后配合下面
+   ResizeObserver 上报的实测尺寸，连线锚点/拖拽落点始终对得上卡片真实渲染大小。
+   margin-top 用负值：父级 flex gap（6px）+ h3 自己 1.35 行高在文字下方留的行间距、
+   加上这里 1.5 行高在文字上方留的行间距，三层叠在一起让标题到正文的视觉间隙比其它
+   贴纸的"标题—正文"间距明显大一截，用负 margin 啃掉一部分行高留白，肉眼对齐其它卡片。 */
+.es-desc {
+  margin: -3px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
 }
-.entity-sticker:hover .conn-dot { opacity: 1; }
-.entity-sticker.connecting .conn-dot, .entity-sticker.connection-target .conn-dot { opacity: .38; }
-.entity-sticker.connection-target .conn-dot-active { opacity: 1; transform: scale(1.28); animation: conn-dot-magnet .44s cubic-bezier(.22, 1.35, .36, 1) infinite alternate; }
-.conn-dot:hover { transform: scale(1.3); }
-.conn-dot-left { left: -6px; }
-.conn-dot-right { right: -6px; }
-@keyframes conn-dot-magnet { from { box-shadow: 0 1px 4px rgba(80,90,110,.35); } to { box-shadow: 0 0 0 5px rgba(123,127,178,.16), 0 2px 8px rgba(80,90,110,.38); } }
+.es-time {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; color: var(--text-secondary); opacity: .85;
+}
+
+/* 操作按钮（.card-actions）和连接点（.conn-dot）都挪进了共用组件 CardActions.vue/
+   CardConnDot.vue，外观/悬停显形逻辑不再各卡自己抄一份。 */
 </style>

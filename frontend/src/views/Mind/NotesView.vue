@@ -23,6 +23,7 @@
         :filtered="!!store.filterQ.trim()"
         @save="onSave"
         @delete="onDelete"
+        @color="onColor"
         @toggle-task="onToggleTask"
         @edit-request="onEditRequest"
       />
@@ -66,16 +67,165 @@ onMounted(() => captureRef.value?.expand())
 // 咕咕/多端改了便签 → 重新拉（P3 后端才开始推 mind 资源，这里先接好）
 watch(() => liveStore.rev.mind, () => store.fetchNotes())
 
-// ── 滚轮：悬在有溢出的列上→列内竖滚（浏览器默认）；否则纵滚轮转横滚（翻历史）──
+// ── 滚轮：悬在有溢出的列上→列内竖滚（浏览器默认）；否则纵滚轮转横滚（翻历史）。
+// 之前这里就是干巴巴的 root.scrollLeft += e.deltaY——没有吸附、没有惯性/阻尼、到边缘也
+// 不会回弹。第一版改成"停手后另起一个 setTimeout，到点再起一段新的衰减 rAF"，结果这段
+// 等待期间画面完全静止，用户反馈"顿一下才出现惯性"——静止 + 突然滑动本身就是一次顿挫，
+// 不是时长的问题，是"另起一段"这个结构本身自带的空档。
+// 这版改成单一个常驻 rAF 循环（wheelLoop）：从第一次 wheel 事件起就转起来，只要还有新的
+// wheel 事件不断进来就什么都不做（转动期间的 1:1 手感由 onWheel 自己直接改 scrollLeft，
+// 循环只是在一旁等着接手）；一旦有一小段时间（WHEEL_IDLE_MS）没有新事件，循环自己在
+// 下一帧原地切换进摩擦力衰减阶段，不需要另外派发一个新的 rAF、也没有中间的静止空档，
+// "转动"和"滑行"是同一条连续的时间线。
+// 另外不同鼠标/系统上报的 deltaY 量级差异很大（有的一格几十，有的一格几百，触控板还是
+// 连续小数值），直接拿原始 deltaY 喂物理会导致"这个鼠标转一下跟另一个鼠标转一下手感差
+// 好几倍"。normalizeWheelDelta 按 deltaMode 换算成统一像素单位，再夹一个单帧最大步长，
+// 把"多快算快"的上限拉到同一条线上，滚动手感/滑行距离在不同设备上更接近。
+const WHEEL_FRICTION = 4         // 摩擦系数：越大衰减越快，滑行距离越短——3.4 时滑得偏远，
+                                 // 6.5 又太急，4 是回退调整后定下的折中值。
+const WHEEL_SETTLE_VEL = 40      // px/s，衰减到这个速度以下就转入吸附阶段
+const WHEEL_IDLE_MS = 70         // 判定"停手"的静默窗口——只是循环内部的状态切换阈值，
+                                 // 不是启动延迟，不会有额外可感知的等待
+const WHEEL_MAX_STEP = 70        // 单次 wheel 事件换算后的最大位移（px），削平设备间的灵敏度差异
+const WHEEL_LINE_PX = 20         // deltaMode=LINE 时，一"行"约等于多少像素
+const WHEEL_MAX_VELOCITY = 1800  // px/s，平滑后的速度再夹一道上限——两次 wheel 事件间隔极短时
+                                 // （同一鼠标事件被拆成好几个 event、或触控板连续小步）算出来的
+                                 // 瞬时速度会不成比例地夸张，不封顶滑行距离会跟着失控。
+
+function normalizeWheelDelta(e: WheelEvent): number {
+  let px = e.deltaY
+  if (e.deltaMode === 1) px *= WHEEL_LINE_PX                                    // DOM_DELTA_LINE
+  else if (e.deltaMode === 2) px *= (scrollRef.value?.clientWidth ?? 800)        // DOM_DELTA_PAGE，几乎遇不到，兜底换算
+  return Math.max(-WHEEL_MAX_STEP, Math.min(WHEEL_MAX_STEP, px))
+}
+
+let wheelVelocity = 0            // px/s，指数滑动平均
+let wheelLastEventTime = 0
+let wheelLoopRaf = 0
+let wheelLoopLast = 0
+let wheelDecaying = false        // 循环是否已经从"跟手"切进"摩擦力衰减"阶段
+let wheelPos = 0                 // 衰减阶段用的浮点逻辑位置（可越界）
+let wheelCenters: { date: string; c: number }[] = []
+let wheelLogicalMin = 0
+let wheelLogicalMax = 0
+
 function onWheel(e: WheelEvent) {
   const root = scrollRef.value
   if (!root) return
   if (e.deltaX || e.shiftKey) return   // 触控板横扫/Shift+滚轮：浏览器自己会横滚
   const colBody = (e.target as HTMLElement).closest<HTMLElement>('.tl-col-body')
   if (colBody && colBody.scrollHeight > colBody.clientHeight + 2) return
-  stopCardFollow()
-  root.scrollLeft += e.deltaY
   e.preventDefault()
+  stopCardFollow()
+  if (cardVisualReturnRaf) cancelAnimationFrame(cardVisualReturnRaf)
+  cardVisualReturnRaf = 0
+  cardRubberReturning = false
+
+  const delta = normalizeWheelDelta(e)
+  root.scrollLeft += delta   // 转动期间保持 1:1 手感，不在这一步做橡皮筋/吸附
+
+  const now = performance.now()
+  const dt = Math.max(now - wheelLastEventTime, 4)
+  const instant = (delta / dt) * 1000   // 换算成 px/s，跟下面惯性衰减用同一套单位
+  wheelVelocity = wheelVelocity * 0.5 + instant * 0.5   // 指数平滑，避免离散步长导致速度抖动
+  wheelVelocity = Math.max(-WHEEL_MAX_VELOCITY, Math.min(WHEEL_MAX_VELOCITY, wheelVelocity))
+  wheelLastEventTime = now
+  wheelDecaying = false   // 又来新输入了，退回"跟手"状态，循环下一帧重新判断要不要切进衰减
+
+  if (!wheelLoopRaf) {
+    wheelLoopLast = now
+    wheelLoopRaf = requestAnimationFrame(wheelLoop)
+  }
+}
+
+/** 常驻循环：跟手阶段什么都不做（只等着判断该不该切换），一旦判定"停手"就地切进摩擦力
+ *  衰减阶段继续跑，同一条 rAF 时间线上无缝过渡，没有另起一段动画的空档。衰减到足够慢
+ *  （或撞了边界）交给 followCardsTo/returnCardRubber 收尾，是同一段收尾代码。 */
+function wheelLoop(now: number) {
+  const root = scrollRef.value
+  if (!root) { wheelLoopRaf = 0; return }
+  const dt = Math.min(1 / 30, Math.max(1 / 240, (now - wheelLoopLast) / 1000))
+  wheelLoopLast = now
+
+  if (!wheelDecaying) {
+    if (now - wheelLastEventTime < WHEEL_IDLE_MS) {
+      wheelLoopRaf = requestAnimationFrame(wheelLoop)
+      return
+    }
+    if (Math.abs(wheelVelocity) < WHEEL_SETTLE_VEL) {
+      wheelLoopRaf = 0
+      snapToNearestColumn()
+      return
+    }
+    // 判定停手、且还有明显速度——进入衰减阶段，把这一路要用的边界/列信息量一次存起来，
+    // 不用每帧重新查 DOM。
+    wheelCenters = colCenters()
+    if (!wheelCenters.length) { wheelLoopRaf = 0; return }
+    const physicalMax = root.scrollWidth - root.clientWidth
+    wheelLogicalMin = Math.max(0, wheelCenters[0].c - contentCenter(root))
+    wheelLogicalMax = Math.max(wheelLogicalMin, Math.min(physicalMax, wheelCenters[wheelCenters.length - 1].c - contentCenter(root)))
+    wheelPos = root.scrollLeft
+    wheelDecaying = true
+  }
+
+  wheelVelocity *= Math.exp(-WHEEL_FRICTION * dt)
+  wheelPos += wheelVelocity * dt
+  const clamped = Math.max(wheelLogicalMin, Math.min(wheelLogicalMax, wheelPos))
+  root.scrollLeft = clamped
+  const over = wheelPos - clamped   // 滑出边界之外、原生滚动吃不下的那一截
+  // 越界期间持续按当下的越界量更新橡皮筋虚拟中心——跟鼠标拖拽时"按住不放、越拖越远、
+  // 橡皮筋跟着实时拉伸"是同一个道理，不是碰到边界就立刻判定"松手"直接进弹簧。上一版一
+  // 检测到 over 就调 returnCardRubber()，只用了撞线那一帧的极小越界量当起点，弹簧要走的
+  // 距离很短，看着像"一碰边界就唰地弹回去"——真正该做的是让虚拟中心跟着还没耗尽的速度
+  // 继续往外走一段（越走阻力越大，靠 elasticPosition 的对数曲线本身天然减速），直到速度
+  // 衰减到位（等同于"松手"）才交给 returnCardRubber 播真正的回弹动画。
+  const cols = timelineColsEl()
+  if (over) {
+    const last = wheelCenters.length - 1
+    const pitch = over < 0
+      ? wheelCenters.length > 1 ? wheelCenters[1].c - wheelCenters[0].c : CARD_COLUMN_PITCH
+      : wheelCenters.length > 1 ? wheelCenters[last].c - wheelCenters[last - 1].c : CARD_COLUMN_PITCH
+    if (pitch > 0) {
+      const boundary = over < 0 ? 0 : last
+      const rawCenter = boundary + (over / pitch) * CARD_DRAG_RATIO
+      const virtualCenter = elasticPosition(rawCenter, wheelCenters.length, CARD_RUBBER_RESPONSE)
+      const overshootDays = virtualCenter - boundary
+      const visualShift = -overshootDays * pitch
+      if (cols) cols.style.transform = `translateX(${visualShift}px)`
+      cardRubberShift = visualShift
+      cardVisualCenterFrac.value = virtualCenter
+    }
+  } else if (cols) {
+    cols.style.transform = ''
+    cardRubberShift = 0
+    cardVisualCenterFrac.value = centerFrac.value
+  }
+
+  if (Math.abs(wheelVelocity) > WHEEL_SETTLE_VEL) {
+    wheelLoopRaf = requestAnimationFrame(wheelLoop)
+    return
+  }
+  // 速度终于衰减到位——这才是"松手"的那一刻：越界就播回弹弹簧，没越界就磁吸最近的日期列。
+  wheelLoopRaf = 0
+  wheelDecaying = false
+  if (over) { returnCardRubber(); return }
+  snapToNearestColumn()
+}
+
+/** 磁吸到当前位置最近的日期列——跟 onColumnsPointerUp 松手吸附走同一段阻尼弹簧。 */
+function snapToNearestColumn() {
+  const root = scrollRef.value
+  if (!root) return
+  const colCenterList = colCenters()
+  if (!colCenterList.length) return
+  const cx = root.scrollLeft + contentCenter(root)
+  let nearest = colCenterList[0]
+  let bestDist = Infinity
+  for (const c of colCenterList) {
+    const dist = Math.abs(c.c - cx)
+    if (dist < bestDist) { bestDist = dist; nearest = c }
+  }
+  followCardsTo(nearest.c - contentCenter(root))
 }
 
 // ── 便签以外的玻璃卡空白区域拖动切日期：只接鼠标（触屏本来就有原生横滚手势，不用管）；
@@ -517,6 +667,8 @@ function onResize() {
   cardVisualReturnRaf = 0
   cardRubberReturning = false
   cardRubberShift = 0
+  if (wheelLoopRaf) { cancelAnimationFrame(wheelLoopRaf); wheelLoopRaf = 0 }
+  wheelDecaying = false
   const cols = timelineColsEl()
   if (cols) cols.style.transform = ''
   const root = scrollRef.value
@@ -529,6 +681,7 @@ onBeforeUnmount(() => {
   if (scrollRaf) cancelAnimationFrame(scrollRaf)
   if (cardVisualReturnRaf) cancelAnimationFrame(cardVisualReturnRaf)
   cardRubberReturning = false
+  if (wheelLoopRaf) cancelAnimationFrame(wheelLoopRaf)
   stopCardFollow()
   window.removeEventListener('resize', onResize)
   window.removeEventListener('pointermove', onColumnsPointerMove)
@@ -627,6 +780,16 @@ async function onSave(note: MindNote, md: string) {
 /** 卡上直接勾待办：翻转第 idx 个任务再走同一条乐观锁保存路径 */
 async function onToggleTask(note: MindNote, idx: number) {
   await onSave(note, toggleTaskInMd(note.contentMd, idx))
+}
+
+/** 点色板选颜色：只改 color 这一个字段，不牵动 contentMd/version 冲突判定那一套——
+ *  颜色纯粹是个人视觉标记，两端都在改同一条内容才需要担心覆盖，颜色不需要。 */
+async function onColor(note: MindNote, color: string | null) {
+  try {
+    await store.updateNote(note.id, { color, version: note.version })
+  } catch {
+    Message.error('颜色保存失败，请重试')
+  }
 }
 
 async function onDelete(note: MindNote) {

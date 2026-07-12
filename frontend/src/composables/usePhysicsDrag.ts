@@ -43,7 +43,8 @@ export interface PhysicsDragOpts {
   onFollow?: (pos: { x: number; y: number }, size: { w: number; h: number }) => void
   // 源卡此刻的渲染受一层祖先缩放影响（画布相机缩放，见 useMindCanvas.ts 的 camera.scale）——
   // getBoundingClientRect 量出来的尺寸已经是缩放后的，克隆体脱离缩放祖先后单靠这份尺寸撑
-  // 外框，内部内容不会跟着等比缩放。传这个值让克隆体退回原始尺寸 + CSS zoom 补回视觉缩放，
+  // 外框，内部内容不会跟着等比缩放。传这个值让克隆体退回原始布局尺寸，再由独立 transform
+  // 缩放壳补回视觉缩放（不触发文字重排），
   // 不传或为 1 时完全不影响现有调用方（看板卡/文件卡没有缩放祖先，CS 恒为 1）。传函数而不是
   // 静态数字：抓着卡片不放的时候画布还能滚轮继续缩放，每帧都要读一次「当下」的相机缩放，
   // 不能只在抓起那一刻定死一个数——那样边抓边缩放画布，卡片大小会纹丝不动跟不上。
@@ -62,6 +63,20 @@ export interface PhysicsDragOpts {
 
 interface Box { left: number; top: number; width: number; height: number }
 interface ActiveDrag { raf: number; end: () => void }
+
+// clone 会被挂到 body，脱离源卡原本的页面/画布容器；若不把继承性字体属性带过去，它会改继承
+// body 的字体栈。不同字体的真实字宽会改变换行，哪怕 font-size/卡片宽度完全相同。
+const INHERITED_TEXT_PROPERTIES = [
+  // 字号、字重、行高等由组件自身 CSS 管；把它们内联到根克隆会覆盖子元素的继承值，反而改变布局。
+  'font-family', 'font-kerning', 'font-feature-settings', 'font-variation-settings',
+  'font-optical-sizing', 'font-synthesis', 'letter-spacing', 'word-spacing', 'text-rendering',
+]
+function copyInheritedTextStyle(source: HTMLElement, clone: HTMLElement) {
+  const style = getComputedStyle(source)
+  for (const property of INHERITED_TEXT_PROPERTIES) {
+    clone.style.setProperty(property, style.getPropertyValue(property))
+  }
+}
 
 let _ghostImg: HTMLCanvasElement | null = null
 function _transparentGhost() {
@@ -203,6 +218,13 @@ function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettl
   el.classList.add('phys-just-revealed')   // 压制：hover 的 transform/阴影/底色/按钮 opacity 全归非 hover 态
   el.classList.add('phys-reveal-snap')     // 快照：本帧关掉卡片+全部子元素的过渡，让上面这步瞬间生效、零动画
   el.style.opacity = ''
+  // 画布贴纸抓起后会暂时 display:none，哪怕鼠标一直停在原位置，也会先收到 mouseleave。
+  // 浏览器在元素重新出现时不保证补发 mouseenter；Vue 维护的连接点 hovering 状态便会比
+  // CSS :hover 晚一帧恢复，刚从落地克隆切回本体时圆点闪一下。真实命中仍在卡上时主动补发
+  // mouseenter，让组件状态在本次 paint 前与浏览器命中状态重新对齐。
+  if (pointerMode && el.matches(':hover')) {
+    el.dispatchEvent(new MouseEvent('mouseenter'))
+  }
   void el.offsetWidth                      // 强制提交：整张卡（含按钮）直接坐在压制态，不下沉、按钮不淡出
   el.classList.remove('phys-reveal-snap')  // 恢复过渡：此刻各属性值未变 → 不触发过渡；只为随后解除压制的上浮/淡入铺路
   // 解除压制的延迟：0=落地即进入 hover-in（无停顿）。下沉/闪烁靠上面的快照消掉、与此延迟无关，
@@ -316,29 +338,17 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   let liveGrabY = opts.centerGrab ? half.y : GRABY
 
   // contentScale 可以传活的取值函数（画布相机缩放会变），也可以传静态数字；不传或恒为 1
-  // （绝大多数非画布调用方）时下面这段是 no-op。cloneW/cloneH 只在抓起这一刻算一次——它是
-  // 卡片「世界坐标系里的固有大小」，不随相机缩放变化，变的只是 zoom 把它投影到屏幕上的比例。
+  // （绝大多数非画布调用方）时下面这段是 no-op。宽高取源卡的计算布局值而非反推屏幕 rect：
+  // 文字换行由这份布局宽度决定，缩放后的浮点尺寸不能拿来重建布局。
   const _resolveCS = () => (typeof opts.contentScale === 'function' ? opts.contentScale() : opts.contentScale) ?? 1
   const CS0 = _resolveCS()
-  const cloneW = CS0 !== 1 ? rect.width / CS0 : rect.width
-  const cloneH = CS0 !== 1 ? rect.height / CS0 : rect.height
+  const sourceStyle = getComputedStyle(sourceEl)
+  const cloneW = parseFloat(sourceStyle.width) || (CS0 !== 1 ? rect.width / CS0 : rect.width)
+  const cloneH = parseFloat(sourceStyle.height) || (CS0 !== 1 ? rect.height / CS0 : rect.height)
   let lastCS = CS0
 
-  // holder + clone 两层：holder 是唯一负责定位/变换（position:fixed + translate3d/rotate/
-  // scale(curLift)）的外层节点，全程保持浏览器默认 zoom:1，translate3d 的像素值就是"就这么
-  // 多像素"，不会被谁的 zoom 二次放大/缩小。clone（保留 data-v scoped 属性 → 外观一致）是
-  // 真正的卡片内容克隆，挂在 holder 里面，只管「自己长什么样」——画布贴纸套在 .canvas-world
-  // 的相机缩放（transform:scale(camera.scale)）祖先底下，getBoundingClientRect 量出来的
-  // rect 已经是缩放后的视觉尺寸，但克隆体脱离了这层缩放祖先，若直接把宽高定死成
-  // rect.width/height，外框大小对了、内部内容（字号/内边距/圆角）却还是按未缩放的原始大小
-  // 渲染。这里让 clone 退回未缩放的原始尺寸（rect / contentScale）+ CSS zoom 把内部渲染
-  // 整体按同一比例缩回去，缩放后的渲染 footprint 正好等于 rect。
-  // 两者不能揉进同一个元素：试过直接在 clone 自己身上叠 zoom + translate3d，结果缩小画布时
-  // 克隆体整体往左上角偏、放大时往右下角偏——CSS zoom 除了缩放渲染大小，还会把同一元素自己
-  // transform 里的像素长度（包括 translate3d 的偏移量）一并按 zoom 系数放大/缩小，定位数学
-  // 全乱了。拆成两层后 holder 的坐标数学完全不受 clone 的 zoom 影响；contentScale 不传时
-  // clone 自身尺寸就等于 rect.width/height、不叠 zoom，跟以前完全一样，这层包装不改变任何
-  // 现有调用方（看板卡/文件卡）的观感。
+  // holder 只负责屏幕坐标和物理变换；scaleShell 只复现画布相机缩放。克隆保留未缩放的布局宽高，
+  // 因而外框、文字、内边距和圆角同步缩放，同时物理 translate3d 的像素坐标不受缩放影响。
   const holder = document.createElement('div')
   Object.assign(holder.style, {
     position: 'fixed', left: '0', top: '0', margin: '0',
@@ -349,9 +359,29 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 抓着走」这段也统一到同一原则，不再无脑扣 99999。
     zIndex: String(opts.dragZIndex ?? 99999), pointerEvents: 'none', willChange: 'transform', transition: 'none',
   })
+  // holder 只负责屏幕坐标/物理运动；缩放壳只做 transform 缩放，内容本身保持本体的布局。
+  // 这种缩放不参与文本行盒计算，因此拖动时不会临界换行。
+  const scaleShell = document.createElement('div')
+  Object.assign(scaleShell.style, {
+    position: 'absolute', left: '0', top: '0', width: cloneW + 'px', height: cloneH + 'px',
+    transformOrigin: '0 0', transform: `scale(${CS0})`, pointerEvents: 'none',
+  })
+  holder.appendChild(scaleShell)
   const clone = sourceEl.cloneNode(true) as HTMLElement
   clone.classList.add('phys-drag-clone')
+  copyInheritedTextStyle(sourceEl, clone)
   if (opts.cloneClass) clone.classList.add(opts.cloneClass)   // 调用方补回脱离上下文后丢失的版式（如 mode2）
+  // 连接点由各贴纸组件的响应式 hovering 状态控制；cloneNode 之后它不再接收组件更新。
+  // 用抓起当下真实的命中状态补一次，避免文件/项目/活动卡恰好在组件状态还没刷新时把一份
+  // "没有圆点" 的 DOM 克隆出去。便签自身的状态本来就及时，这里也不会改变它的结果。
+  if (sourceEl.matches(':hover')) {
+    clone.querySelectorAll<HTMLElement>('.card-conn-dots').forEach(dot => dot.classList.add('hovering'))
+  }
+  // 连接点不能跟随两张卡片内容克隆交叉淡变：后创建的落地克隆会短暂盖住前一张，圆点便会
+  // 在卡片前后切换。把它抽成 holder 内唯一的一层覆盖物；holder 自己全程沿同一条物理轨迹移动，
+  // 因而拖拽、落地和回归本体之间没有第二颗点可切换。
+  const connectionDotOverlay = clone.querySelector<HTMLElement>('.card-conn-dots')?.cloneNode(true) as HTMLElement | undefined
+  clone.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
   // 清空 left/top/right/bottom（不动 position 本身）：cloneNode(true) 原样带走了源卡的内联
   // 样式——画布贴纸（便签/活动）源卡自己就是 position:absolute + 内联 left/top（世界坐标，
   // 见 stickerStyle），clone 挂进 holder（它自己是 position:fixed，天然是新的定位上下文）后，
@@ -365,10 +395,15 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   // 把这些子元素的基准偏移到 holder 身上去。
   Object.assign(clone.style, {
     left: '', top: '', right: '', bottom: '',
-    width: cloneW + 'px', height: cloneH + 'px', margin: '0', boxSizing: 'border-box',
+    // 文件/项目/活动贴纸的真实根节点带 item.z 内联层级；克隆进 holder 后它只是一张内容卡，
+    // 这个旧 z 会在 holder 内反过来压住唯一的连接点覆盖层（便签的 z 在外壳上，故只后三类
+    // 会踩）。层级应由 holder/覆盖层统一管理，清掉源卡遗留值。
+    zIndex: '', width: cloneW + 'px',
   })
-  if (CS0 !== 1) clone.style.setProperty('zoom', String(CS0))
-  holder.appendChild(clone)
+  scaleShell.appendChild(clone)
+  if (connectionDotOverlay) {
+    scaleShell.appendChild(connectionDotOverlay)
+  }
   // 克隆体初始按源卡原始大小(scale 1)摆到源卡位置——避免首帧停在左上角(0,0)闪一下，也避免跟
   // 同一帧刚隐藏的源卡尺寸对不上（source opacity:0 换成 clone 那一刻若已经是 LIFT 放大，观感就是
   // 「抓起来卡片瞬间变大一圈」）。抬起放大改由 frame() 每帧用纯数值渐入（见下面 liftT），不用
@@ -448,13 +483,13 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
 
     // contentScale 是活的取值函数时，每帧重新读一次当下的画布相机缩放——抓着卡片不放的
     // 时候滚轮还能继续缩放画布，克隆体的视觉大小得跟着变（cloneW/cloneH 这份「世界坐标系
-    // 固有尺寸」本身不变，变的是 zoom 把它投影到屏幕的比例）。half 跟着重算，否则克隆体
+    // 固有尺寸」本身不变，变的是 scaleShell 把它投影到屏幕的比例）。half 跟着重算，否则克隆体
     // 大小变了、但定位仍按旧的半宽半高摆，会偏出指针中心。数值没变时跳过，省一次样式写入。
     if (typeof opts.contentScale === 'function') {
       const liveCS = _resolveCS()
       if (liveCS !== lastCS) {
         lastCS = liveCS
-        clone.style.setProperty('zoom', String(liveCS))
+        scaleShell.style.transform = `scale(${liveCS})`
         half = { x: (cloneW * liveCS) / 2, y: (cloneH * liveCS) / 2 }
         // holder 自己的盒子尺寸不跟着改——它没有背景/边框，"盒子比 clone 实际渲染大小大或
         // 小"不会露出任何视觉破绽（holder 纯粹是定位壳，clone 在里面用 translate3d/half
@@ -576,7 +611,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     const sel = idAttr ? `[${idAttr[0]}="${idAttr[1]}"]` : null
 
     let done = false; let onEnd: (e: TransitionEvent) => void = () => {}
-    const SLOT = (box: Box) => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(1)`
+    const SLOT = (box: Box) => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) scale(1)`
 
     // 单克隆：只用于吸入(shrink)——缩小淡出进文件夹/面包屑，没有「露出真卡」这一步，
     // 不存在克隆→真卡外观不一致的问题。归位/落到新位置一律走下面的 flyMorph（双克隆交叉淡变）。
@@ -586,7 +621,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         const cx = box.left + box.width / 2, cy = box.top + box.height / 2
         holder.style.opacity = '0'
         holder.style.transform =
-          `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(0.32)`
+          `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0) scale(0.32)`
       } else {
         holder.style.transform = SLOT(box)
       }
@@ -611,6 +646,23 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // box 用 let：飞行途中可能被 _retargetLandings 改指到新位置（见其注释），finish() 收尾时
       // 要读的是「最新」这份，不是刚进来那一刻的静态快照。
       let box = initialBox
+      // 唯一的连接点覆盖层是静态 DOM，动画期间根据真实鼠标命中更新可见性。
+      // 落地内容克隆没有连接点，因此不会再发生两张卡片各画一颗点、彼此遮住的问题。
+      const syncConnectionOverlayHover = (hovering: boolean) => {
+        connectionDotOverlay?.classList.toggle('hovering', hovering)
+      }
+      const onLandingPointerMove = (event: PointerEvent) => {
+        const underPointer = document.elementFromPoint(event.clientX, event.clientY)
+        syncConnectionOverlayHover(!!underPointer && (underPointer === revealEl || revealEl.contains(underPointer)))
+      }
+      // 不能只等下一次 pointermove：用户可能已经在卡外松手，随后完全不再动鼠标。
+      // target 记录的是最近一次真实指针坐标（不是带弹簧延迟的 cloneCenter），正好可用于
+      // 落地第一帧的命中判断。
+      const underPointer = document.elementFromPoint(target.x, target.y)
+      syncConnectionOverlayHover(!!underPointer && (underPointer === revealEl || revealEl.contains(underPointer)))
+      if (pointer) document.addEventListener('pointermove', onLandingPointerMove)
+      // overlay 挂在 holder 里；让 holder 比落地内容克隆高一层，圆点始终压在纸面/玻璃面之上。
+      if (connectionDotOverlay) holder.style.zIndex = String((Number(holder.style.zIndex) || 0) + 1)
       // 克隆体是按源卡(旧)尺寸渲染的；缩放到落点卡尺寸，并让缩放后中心对齐落点中心。
       // 抽成纯函数：给任意一个「目标框」算出对应 transform 字符串——retarget 冻结当前位置时也复用
       // 它（用同一套函数式表示，见下），避免跟 getComputedStyle 的 matrix3d 混用导致跨表示插值。
@@ -618,8 +670,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         const sx = (b.width  / dropW).toFixed(4)
         const sy = (b.height / dropH).toFixed(4)
         const cx = b.left + b.width / 2, cy = b.top + b.height / 2
-        return `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0)` +
-               ` perspective(760px) rotateX(0deg) rotateZ(0deg) scale(${sx}, ${sy})`
+        return `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0) scale(${sx}, ${sy})`
       }
       const applyTransform = () => {
         const tf = tfFor(box)
@@ -642,9 +693,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 量本体现在的真实框，两者一比就是画布纯粹的位移量+缩放比例，transform-origin 钉在
       // camOrigin 上使 scale 的缩放中心正好对上，瞬时套到 camGlue 身上——画布怎么动克隆就怎么
       // 跟，跟本体自己的观感一致，同时飞行动画本身的缓出曲线完全不受干扰。
-      // 副作用：clone/clone2 的内容缩放（CSS zoom，用来补偿克隆体脱离画布缩放祖先后的渲染差）
-      // 不再需要在这里跟着实时更新了——它俩现在都是 camGlue 的子孙，camGlue 的 scale 已经统一
-      // 把整个飞行画面（含内容）缩放到位，落地时设的那个固定 zoom 基准仍然有效、不用动。
+      // clone/clone2 都在 camGlue 的子孙树中，camGlue 的 scale 已统一带动内容；各自的
+      // scaleShell 只需保留落地时的缩放基准，不必每帧重复更新。
       // ⚠️ 这层容器必须在下面「提交初始态→改 transform 触发过渡」这套 FLIP 手法之前就接好线：
       // 把 holder/clone2 挪进一个新祖先，等它们已经带着待生效的过渡在途中再挪，实测浏览器会
       // 把这次 DOM 挪动当成一次全新布局上下文，直接判定这趟过渡不成立、瞬间跳到终值（松手瞬间
@@ -691,31 +741,37 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       }
 
       clone2.getBoundingClientRect()   // 提交初始态（与 holder 重叠、opacity 0），下面才会从此处动画
-      const trans = `transform 0.55s ${_SETTLE}, opacity 0.42s ease`
+      // 交叉淡变的 opacity 不能打在 holder/clone2 这层外壳上，得打在它们各自里面真正的内容
+      // 元素（clone / c2Inner）上——玻璃质感的贴纸（活动贴纸 EntitySticker.vue 的 .glass-card，
+      // 项目/文件卡的毛玻璃拖拽态）自带 backdrop-filter，而 CSS 规范里「半透明的祖先」会让
+      // 后代的 backdrop-filter 形成一个隔离的合成组，只能采样组内的东西，采不到真实页面背景——
+      // 这段淡变期间模糊看着发闷发灰、跟静止态清晰的玻璃质感不一样，一等克隆被摘掉、本体
+      // （opacity 全程是 1，不受影响）露出来就"猛地"变清晰，正是用户反馈的「先半透明一下，
+      // 再突然变成本体」。这正是 BaseModal 玻璃进场动画踩过、后来改成「全程不碰 opacity，只
+      // 动 backdrop-filter 本身」绕开的同一类坑（见 global.css 的 .bm-enter-active 那段注释）——
+      // 这里没法照抄那套（我们要的恰恰是内容层面的交叉淡变，不是模糊半径渐变），但道理相通：
+      // 只要让 opacity 和 backdrop-filter 落在同一个元素上（而不是隔着一层不透明的祖先），
+      // backdrop-filter 采样的仍是它自己在页面里的真实位置背景，不会被祖先的半透明状态污染。
+      // holder/clone2 外壳永远保持 opacity:1，只负责 transform 那部分缓出；真正的淡入淡出
+      // 挪到 clone（活动拖拽阶段的克隆内容）和 c2Inner（_cloneLanding 里落地克隆的内容，见
+      // 该函数）身上。
+      const cloneInner = clone
+      const c2Inner = clone2.firstElementChild as HTMLElement | null
+      const trans = `transform 0.55s ${_SETTLE}`
+      const fadeTrans = 'opacity 0.42s ease'
       holder.style.transition = trans
       clone2.style.transition = trans
+      cloneInner.style.transition = fadeTrans
+      if (c2Inner) c2Inner.style.transition = fadeTrans
       applyTransform()
-      holder.style.opacity = '0'
-      clone2.style.opacity = '0.97'
-      if (typeof opts.contentScale === 'function') {
-        console.warn('[phys-fade] start', {
-          holderOpacityInline: holder.style.opacity, clone2OpacityInline: clone2.style.opacity,
-          holderComputed: getComputedStyle(holder).opacity, clone2Computed: getComputedStyle(clone2).opacity,
-          holderInCamGlue: !!camGlue && holder.parentElement === camGlue,
-          clone2InCamGlue: !!camGlue && clone2.parentElement === camGlue,
-        })
-        let sampleN = 0
-        const sample = () => {
-          if (done || sampleN > 40) return
-          sampleN++
-          console.warn('[phys-fade] sample', sampleN, {
-            holderComputed: getComputedStyle(holder).opacity, clone2Computed: getComputedStyle(clone2).opacity,
-            camGlueComputed: camGlue ? getComputedStyle(camGlue).opacity : null,
-          })
-          requestAnimationFrame(sample)
-        }
-        requestAnimationFrame(sample)
-      }
+      // clone2（_cloneLanding 里的 holder2）创建时是按「先不可见、被自己的 opacity 淡入」的
+      // 老设计写的 inline opacity:'0'——现在淡入淡出已经挪到内容层（c2Inner），这层外壳必须
+      // 显式扳回 1，否则它自己还停在创建时那份 0，不管 c2Inner 淡到多亮，乘出来的可见度
+      // 永远是 0（外壳 0 × 内容任意值 = 0）——落地全程只看得到 holder 那份在变透明消失，
+      // 看着就是「先完全透明、克隆一撤本体才突然冒出来」，没有真正淡入的一半。
+      clone2.style.opacity = '1'
+      cloneInner.style.opacity = '0'
+      if (c2Inner) c2Inner.style.opacity = '0.97'
 
       // 飞行途中容器发生 FLIP 重排（另一张卡被抓起/放下）→ 落点跟着挪位，把目标改过去。
       // 直接在飞行中途改 transform 目标，浏览器会当「打断」处理：新一段插值默认按当前速度
@@ -764,14 +820,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       const finish = () => {
         if (done) return
         done = true
-        if (typeof opts.contentScale === 'function') {
-          console.warn('[phys-fade] finish() called', {
-            viaFallbackTimer: finishTimer == null,
-            holderComputed: getComputedStyle(holder).opacity, clone2Computed: getComputedStyle(clone2).opacity,
-            revealElComputed: getComputedStyle(revealEl).opacity, revealElInlineOpacity: revealEl.style.opacity,
-          })
-        }
         if (finishTimer) clearTimeout(finishTimer)
+        if (pointer) document.removeEventListener('pointermove', onLandingPointerMove)
         unregister()
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
@@ -787,17 +837,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         clone2.style.height = box.height + 'px'
         clone2.style.transform = `translate(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px)`
         requestAnimationFrame(() => {
-          if (typeof opts.contentScale === 'function') {
-            console.warn('[phys-fade] right before remove+reveal', {
-              holderComputed: getComputedStyle(holder).opacity, clone2Computed: getComputedStyle(clone2).opacity,
-              revealElComputedBefore: getComputedStyle(revealEl).opacity,
-            })
-          }
           holder.remove(); clone2.remove(); camGlue?.remove()
           _revealWithoutStaleHover(revealEl, pointer)
-          if (typeof opts.contentScale === 'function') {
-            console.warn('[phys-fade] right after reveal', { revealElComputedAfter: getComputedStyle(revealEl).opacity })
-          }
         })
       }
       // 被同一张卡的新拖拽强制打断时用（按 revealEl 记账，见 _registerCleanup——只有再次抓的
@@ -808,6 +849,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         if (done) return
         done = true
         if (finishTimer) clearTimeout(finishTimer)
+        if (pointer) document.removeEventListener('pointermove', onLandingPointerMove)
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
         holder.remove(); clone2.remove(); camGlue?.remove()
@@ -881,15 +923,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // clone2 不再套 .phys-drag-clone/光晕——直接是目标元素此刻真实 DOM 的克隆，从交叉淡变
       // 一开始就长得跟真卡一样（背景/描边/阴影/文件夹颜色渲染全部原样带过来，不用手动猜数值）。
       // flyMorph 结尾把 revealEl 揭示出来时，clone2 早已跟它像素级一致，不会再有「跳一下」的硬切换。
-      // 跟抓起时的 clone 同一个理由，clone2 也要拆成 holder2（定位/变换，zoom 恒 1）+ c（内容，
-      // 退回原始尺寸 + zoom 补视觉缩放）两层——直接把 zoom 叠在会被 transform:scale(sx,sy) 做
-      // 尺寸变形动画的同一个元素上，会重演"缩小画布克隆整体偏左上、放大偏右下"那个坑（这次是
-      // 落地那 0.55s 飞行动画期间），返回的 holder2 就是 flyMorph 接下来会拿去做 transform/
-      // opacity/transition 那个 clone2，内部结构对调用方不可见。
+      // 落地克隆同样拆为 holder2（定位/变换）和 scaleShell（画布缩放）。这样尺寸形变动画不会
+      // 改写内容布局，也不会影响屏幕坐标；返回的 holder2 是 flyMorph 接下来操作的 clone2。
       // holder2 用 dropW/dropH（松手那一刻的真实视觉尺寸）不用 rect.width/height（抓起那一刻
       // 的旧尺寸）——contentScale 是活的时两者可能已经不相等（拖拽途中画布被缩放过），tfFor
       // 算缩放比例时也是拿 dropW/dropH 当"1.0 倍"基准，两边必须用同一份，否则落地飞行的尺寸
-      // 会算错。c 的 zoom 同理换成 lastCS（此刻的实时缩放，不是抓起时的 CS0）——cloneW/cloneH
+      // 会算错。scaleShell 同理使用 lastCS（此刻的实时缩放，不是抓起时的 CS0）——cloneW/cloneH
       // 这份"原始尺寸"本身不随缩放变化，仍然沿用抓起时算好的那份。
       const _cloneLanding = (el: HTMLElement) => {
         const holder2 = document.createElement('div')
@@ -902,6 +941,13 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         })
         const c = el.cloneNode(true) as HTMLElement
         if (opts.cloneClass) c.classList.add(opts.cloneClass)
+        copyInheritedTextStyle(el, c)
+        c.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
+        const landingScaleShell = document.createElement('div')
+        Object.assign(landingScaleShell.style, {
+          position: 'absolute', left: '0', top: '0', width: cloneW + 'px', height: cloneH + 'px',
+          transformOrigin: '0 0', transform: `scale(${lastCS})`, pointerEvents: 'none',
+        })
         // opacity 也要清：调用这里的几处分支都会先把 el/sourceEl 自己的 opacity 摁成 0 压住
         // 陈旧 hover（见 animateOpen/末尾归位分支），cloneNode(true) 原样带走了这份内联
         // opacity:0——c 是给 holder2 当内容用的，若不清掉，holder2 自己的 opacity 动画
@@ -909,10 +955,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // 消失了"。跟 left/top 一样，clone2 的可见性该完全交给外层 holder2 决定。
         Object.assign(c.style, {
           left: '', top: '', right: '', bottom: '', opacity: '',
-          width: cloneW + 'px', height: cloneH + 'px', margin: '0', boxSizing: 'border-box',
+          zIndex: '', width: cloneW + 'px',
         })
-        if (lastCS !== 1) c.style.setProperty('zoom', String(lastCS))
-        holder2.appendChild(c)
+        landingScaleShell.appendChild(c)
+        holder2.appendChild(landingScaleShell)
         document.body.appendChild(holder2)
         return holder2
       }
@@ -1018,6 +1064,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
   const GRABY  = opts.grabY   ?? 28
 
   const rect = sourceEl.getBoundingClientRect()
+  const sourceLayout = getComputedStyle(sourceEl)
   const half = { x: rect.width / 2, y: rect.height / 2 }
   const container = sourceEl.parentElement
 
@@ -1036,13 +1083,14 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     const initTf =
       `translate3d(${(rect.left + cfg.spread.dx).toFixed(2)}px,` +
       `${(rect.top + half.y - GRABY + cfg.spread.dy).toFixed(2)}px, 0)` +
-      ` perspective(760px) rotateX(${(TILT * 0.6).toFixed(2)}deg)` +
       ` rotateZ(${cfg.spread.rz.toFixed(2)}deg) scale(${(LIFT * cfg.spread.sc).toFixed(4)})`
 
     let el: HTMLElement
+    const shadowLayout = extraEl ? getComputedStyle(extraEl) : sourceLayout
     if (extraEl) {
       // 克隆真实文件卡内容
       el = extraEl.cloneNode(true) as HTMLElement
+      copyInheritedTextStyle(extraEl, el)
       // 去掉拖拽状态类；保留 .selected 以保持选中边框和 ::before 覆盖层
       el.classList.remove('pre-selected', 'dragging', 'cut')
       if (opts.cloneClass) el.classList.add(opts.cloneClass)
@@ -1055,8 +1103,10 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     el.classList.add('phys-drag-clone')
     Object.assign(el.style, {
       position: 'fixed', left: '0', top: '0',
-      width: rect.width + 'px', height: rect.height + 'px',
-      margin: '0', boxSizing: 'border-box', overflow: 'hidden',
+      // 多选影子也保留原卡的布局宽度/盒模型；不能拿屏幕 rect + border-box 重建，
+      // 否则长文件名会在影子卡里提前换行，和主卡/本体不是同一份排版。
+      width: shadowLayout.width, height: shadowLayout.height,
+      margin: '0', boxSizing: shadowLayout.boxSizing, overflow: 'visible',
       borderRadius: cardRadius,
       // 底色/毛玻璃统一由 global.css 的 .phys-drag-clone 定义（全站拖拽克隆一处控）。不再额外
       // 叠 opacity 做「影子卡更透」——那会跟卡片自己的白底透明度相乘，稀释掉白底，跟单文件拖拽
@@ -1080,6 +1130,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
   // 主克隆（zIndex 最高，带数量徽章）
   const clone = sourceEl.cloneNode(true) as HTMLElement
   clone.classList.add('phys-drag-clone')
+  copyInheritedTextStyle(sourceEl, clone)
   // 移除拖拽/剪切态，保留 .selected 以显示选中边框和覆盖层
   clone.classList.remove('dragging', 'cut')
   clone.querySelectorAll('.sel-checkbox, .fc-hover-actions, .fd-hover-actions').forEach(n => n.remove())
@@ -1087,8 +1138,8 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
   if (opts.cloneClass) clone.classList.add(opts.cloneClass)
   Object.assign(clone.style, {
     position: 'fixed', left: '0', top: '0',
-    width: rect.width + 'px', height: rect.height + 'px',
-    margin: '0', boxSizing: 'border-box', overflow: 'visible',
+    width: sourceLayout.width, height: sourceLayout.height,
+    margin: '0', boxSizing: sourceLayout.boxSizing, overflow: 'visible',
     borderRadius: cardRadius,
     // 不再叠额外 opacity——底色/毛玻璃由 .phys-drag-clone 全局定义，主克隆跟单文件拖拽走
     // 同一份（CSS 的 opacity:0.97），不用内联值覆盖掉、稀释白底
@@ -1206,7 +1257,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     if (opts.onDrop) { try { opts.onDrop(cloneCenter, { x: vel.x, y: vel.y, turn: 0 }, { w: rect.width, h: rect.height }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
 
     const dropX = cloneCenter.x, dropY = cloneCenter.y
-    const SLOT = (box: Box) => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(1)`
+    const SLOT = (box: Box) => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) scale(1)`
 
     let done = false; let onEnd: (e: TransitionEvent) => void = () => {}
     const flyTo = (box: Box, shrink: boolean) => {
@@ -1215,7 +1266,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
         const cx = box.left + box.width / 2, cy = box.top + box.height / 2
         clone.style.opacity = '0'
         clone.style.transform =
-          `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(0.32)`
+          `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0) scale(0.32)`
       } else {
         // 归位：飞回源卡并淡出（源卡始终可见，克隆体直接消失）
         clone.style.transform = SLOT(box)

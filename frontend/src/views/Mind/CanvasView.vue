@@ -8,13 +8,12 @@
       @remove="removeItem"
       @remove-relation="removeRelation"
       @link-nodes="linkNodes"
-      @save-note="saveCanvasNote"
       @open-ref="openRef"
       @item-moved="onItemMoved"
       @view-change="onViewChange"
     />
 
-    <CanvasSidebar :canvases="store.canvases" :active-id="activeCanvasId" @create="createCanvas" @open="openCanvas" @delete="deleteCanvas" />
+    <CanvasSidebar :canvases="store.canvases" :active-id="activeCanvasId" @create="createCanvas" @open="openCanvas" @delete="deleteCanvas" @rename="renameCanvas" />
 
     <CanvasToolbar
       :scale="canvasRef?.camera.scale ?? 1"
@@ -136,6 +135,10 @@ async function deleteCanvas(id: number) {
   await router.push({ name: 'MindCanvas', params: { id: next.id } })
 }
 
+async function renameCanvas(id: number, title: string) {
+  await store.renameCanvas(id, title)
+}
+
 async function removeItem(item: MindCanvasItem) {
   await store.removeCanvasItem(item.id)
 }
@@ -168,15 +171,14 @@ function centerOfViewport() {
 async function createCanvasNote() {
   if (activeCanvasId.value == null) return
   const { x, y } = centerOfViewport()
-  await store.createCanvasNote(activeCanvasId.value, { x, y, title: '新便签' })
+  // 画布便签不再有"无色"这个选项（见 ColorSwatches.vue 的 allowNone），新建时就得落一个
+  // 默认色，不能留 null 等用户自己再点——按用户要求，默认色是橙（'amber'）。
+  await store.createCanvasNote(activeCanvasId.value, { x, y, title: '新便签', color: 'amber' })
 }
 async function addRef(refItem: CanvasRefItem) {
   if (activeCanvasId.value == null) return
   const { x, y } = centerOfViewport()
   await store.addRefToCanvas(activeCanvasId.value, refItem.type, refItem.id, x, y)
-}
-async function saveCanvasNote(item: MindCanvasItem, fields: { title: string; contentMd: string }) {
-  await store.updateCanvasNote(item.nodeId, fields)
 }
 async function onItemMoved(item: MindCanvasItem) {
   await store.updateCanvasItem(item.id, { x: item.x, y: item.y, z: store.nextCanvasZ() })

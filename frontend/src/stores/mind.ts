@@ -178,7 +178,15 @@ export const useMindStore = defineStore('mind', () => {
   async function updateCanvasNote(nodeId: number, fields: { title?: string; contentMd?: string; color?: string | null }) {
     const item = canvasItems.value.find(current => current.nodeId === nodeId)
     if (!item) return
-    const updated = await mindApi.updateCanvasNote(nodeId, { ...fields, version: item.node.version })
+    let updated: MindNote
+    try {
+      updated = await mindApi.updateCanvasNote(nodeId, { ...fields, version: item.node.version })
+    } catch (e: any) {
+      // 跟 updateNote 同一套乐观锁 409 处理（见其注释）——画布便签也是同一份 MindNode，
+      // 理论上一样可能撞并发编辑。
+      if (e?.status === 409) throw new MindConflictError()
+      throw e
+    }
     item.node = updated
     return updated
   }

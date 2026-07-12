@@ -27,7 +27,7 @@
           />
           <div class="mind-filter">
             <PhMagnifyingGlass :size="13" weight="bold" class="mf-icon" />
-            <input v-model="store.filterQ" type="text" placeholder="筛选便签…" />
+            <input v-model="store.filterQ" type="text" placeholder="筛选笔记…" />
             <button v-if="store.filterQ" class="mf-clear" title="清除" @click="store.filterQ = ''">
               <PhX :size="11" weight="bold" />
             </button>

@@ -1,9 +1,9 @@
 <template>
-  <div ref="rootEl" v-bind="attrs"
+  <div v-bind="attrs"
     class="proj-card hover-card-fx"
     :data-project-id="project.id"
     :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
-    :class="{ 'file-drag-over': fileDragOver, 'canvas-mode': canvasMode }"
+    :class="{ 'file-drag-over': fileDragOver }"
     @pointerdown="onPointerDown"
     @dragenter.prevent="onFileDragEnter"
     @dragover.prevent="onFileDragOver"
@@ -120,12 +120,6 @@
         <polyline points="9 18 15 12 9 6"/>
       </svg>
     </button>
-
-    <!-- 画布引用贴纸（ProjectRefCard.vue）的连接/移除按钮走这个插槽，不是外面另包一层——
-         必须是 .proj-card 的子节点才会跟着 startPhysicsDrag 的克隆一起飞，摆在外面拖动时
-         只有卡片本体飞走、按钮原地不动（见 usePhysicsDrag.ts 的 cloneNode(true) 只克隆
-         sourceEl 自己的子树）。Projects 看板页不传这个插槽，不影响原有外观。 -->
-    <slot></slot>
   </div>
 
   <!-- 当前阶段待办弹层（点击阶段名弹出） -->
@@ -174,34 +168,29 @@ import { computed, ref, nextTick, onUnmounted, useAttrs, type PropType } from 'v
 import type { Project, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { startPhysicsDrag, startThresholdDrag, type PhysicsDragOpts } from '@/composables/usePhysicsDrag'
+import { startPhysicsDrag, startThresholdDrag } from '@/composables/usePhysicsDrag'
 import { fireHint } from '@/composables/useOnboarding'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
 import { firstIncompleteStageIdx } from '@/utils/projectStages'
+import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 
 defineOptions({ inheritAttrs: false })
 
 const attrs = useAttrs()
 const props = defineProps({
   project: { type: Object as PropType<Project>, required: true },
-  dragEnabled: { type: Boolean, default: true },
-  canvasMode: { type: Boolean, default: false },
-  // 松手时的落点处理，不传走默认的看板列换状态（dispatchDrop）。画布引用贴纸（ProjectRefCard.vue）
-  // 直接嵌这张卡片、把这里换成画布定位落库——同一张卡在不同宿主里"拖了之后要干什么"不一样，
-  // 但"按住阈值起拖"这套物理和手感完全一样，不用为画布另起一个拖拽入口（如小抓手）。
-  onDropOverride: { type: [Function, null] as PropType<((pos: { x: number; y: number }, velocity: { x: number; y: number; turn: number }, size: { w: number; h: number }) => void) | null>, default: null },
-  // 拖拽物理的额外覆盖项，跟 onDropOverride 同一个用途——画布引用贴纸要跟便签/文件/活动
-  // 贴纸用同一套手感（tilt:0 关掉 3D 后仰、lift:1.03 轻抬起），看板页不传就用默认的
-  // 看板手感（tilt:5、sway:0.25、lift:1）。
-  dragOpts: { type: Object as PropType<Partial<PhysicsDragOpts>>, default: () => ({}) },
 })
-const rootEl = ref<HTMLElement | null>(null)
-defineExpose({ rootEl })
 const emit = defineEmits(['click'])
 
 const projectStore = useProjectStore()
+const projectRef = computed(() => props.project)
+const { currentStageLabel, curTodoTotal, curDoneCount, stageProgress, nameColor, isUrgent, fmtDate, deadlineLabel } = useProjectCardBasics(projectRef)
+
+function isCardControl(target: EventTarget | null) {
+  return !!(target as HTMLElement | null)?.closest('.stars, .proj-stage, .seg-bar-wrap, .card-advance, button, input, textarea, select, a')
+}
 
 // 拖到哪一列就移到哪个状态：松手时据落点找列的 data-col-status（源卡此刻 display:none、克隆体 pointer-events:none，
 // elementFromPoint 命中的就是底下真实的列）。同列不动 → 不触发 moveProject 的 API。
@@ -217,22 +206,13 @@ function dispatchDrop({ x, y }: { x: number; y: number }) {
 // 内部控件（星级 / 阶段 / 进度条）自己处理点击，不在这里起拖。阈值判定本身收在
 // usePhysicsDrag.ts 的 startThresholdDrag（跟 useFileDragDrop.ts 共用同一份，不再各写一遍）。
 function onPointerDown(e: PointerEvent) {
-  if (!props.dragEnabled) return
   startThresholdDrag(e, {
-    exclude: t => !!(t as HTMLElement)?.closest?.('.stars, .proj-stage, .seg-bar-wrap, .card-advance'),
-    onDragStart: (ev, card) => startPhysicsDrag(ev, card, { pointer: true, skipAbsorb: true, onDrop: props.onDropOverride ?? dispatchDrop, ...props.dragOpts }),
+    exclude: isCardControl,
+    onDragStart: (ev, card) => startPhysicsDrag(ev, card, { pointer: true, skipAbsorb: true, onDrop: dispatchDrop }),
     onClick: () => emit('click'),   // 没拖动 = 点击 → 开项目
   })
 }
 const cacheStore   = useFilesCacheStore()
-
-const nameColor = computed(() => {
-  const hex = props.project.color?.match(/#[0-9a-fA-F]{6}/)?.[0] ?? '#7b7fb2'
-  const r = Math.round(parseInt(hex.slice(1,3),16) * 0.40)
-  const g = Math.round(parseInt(hex.slice(3,5),16) * 0.40)
-  const b = Math.round(parseInt(hex.slice(5,7),16) * 0.40)
-  return `rgb(${r},${g},${b})`
-})
 
 const _colorRgb = computed(() => {
   const hex = props.project.color?.match(/#[0-9a-fA-F]{6}/)?.[0] ?? '#7b7fb2'
@@ -244,18 +224,16 @@ const _colorRgb = computed(() => {
 const overlayHintBg  = computed(() => `rgba(${_colorRgb.value},0.12)`)
 const uploadFillBg   = computed(() => `rgba(${_colorRgb.value},0.32)`)
 
+// ── 当前阶段待办弹层（点击右侧阶段名弹出）────────────────────────
+// currentStageLabel/curTodoTotal/curDoneCount 走上面的 useProjectCardBasics（纯展示口径，
+// 画布卡也要用）；这里单独留一份 currentStage/currentTodos 是因为待办弹层要在原数组上
+// 增删/拖拽重排（s.todos.push/splice），composable 里的版本不适合拿来做原地修改——弹层
+// 本身是看板专属交互，不需要下沉进共享 composable。
 const currentStageIndex = computed(() =>
   props.project.stages.findIndex(s => s.key === props.project.currentStage)
 )
-const currentStageLabel = computed(() =>
-  props.project.stages[currentStageIndex.value]?.label ?? ''
-)
-
-// ── 当前阶段待办弹层（点击右侧阶段名弹出）────────────────────────
 const currentStage = computed(() => props.project.stages[currentStageIndex.value] ?? null)
 const currentTodos = computed(() => currentStage.value?.todos ?? [])
-const curTodoTotal = computed(() => currentTodos.value.length)
-const curDoneCount = computed(() => currentTodos.value.filter(t => t.done).length)
 
 const stagePopOpen  = ref(false)
 const stagePopStyle = ref({})
@@ -354,48 +332,6 @@ function removeTodo(id: string) {
 }
 
 onUnmounted(closeStagePop)
-const stageProgress = computed(() => {
-  // 总完成度 = 所有阶段待办里已完成 / 总数（与总览页、项目编辑卡头部口径一致）；无待办则退回阶段位置
-  const stages = props.project.stages
-  if (!stages.length) return 0
-  let done = 0, total = 0
-  for (const s of stages) {
-    const todos = s.todos ?? []
-    done += todos.filter(t => t.done).length
-    total += todos.length
-  }
-  if (total > 0) return Math.round(done / total * 100)
-  const idx = currentStageIndex.value
-  return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
-})
-
-const daysLeft  = computed(() => {
-  if (!props.project.deadline) return null
-  const today = new Date(); today.setHours(0, 0, 0, 0)
-  const dl    = new Date(props.project.deadline + 'T00:00:00')
-  return Math.ceil((dl.getTime() - today.getTime()) / 86400000)
-})
-const isUrgent = computed(() => props.project.status !== 'done' && (daysLeft.value ?? Infinity) <= 3)
-const thisYear = new Date().getFullYear()
-function fmtDate(iso: string) {
-  if (!iso) return ''
-  const d = new Date(iso + 'T00:00:00')
-  const mm = `${d.getMonth()+1}/${d.getDate()}`
-  return d.getFullYear() !== thisYear ? `${d.getFullYear()}/${mm}` : mm
-}
-const deadlineLabel = computed(() => {
-  if (!props.project.deadline) return '—'
-  const d = daysLeft.value
-  if (d == null) return '—'
-  if (d < 0) {
-    if (props.project.status !== 'done') return `逾期 ${-d} 天`
-    return fmtDate(props.project.deadline)
-  }
-  if (d === 0) return '今天截止'
-  if (d === 1) return '明天'
-  if (d <= 7)  return `${d}天后`
-  return fmtDate(props.project.deadline)
-})
 
 // ── 推进状态列 ────────────────────────────────────────────
 const STATUS_NEXT: Record<string, string>  = { pending: 'active', active: 'done' }
@@ -507,7 +443,6 @@ async function setPriority(n: number) {
               box-shadow 0.25s ease, background 0.25s ease-out;
   user-select: none;
 }
-.proj-card.canvas-mode { overflow: visible; }
 .proj-card.file-drag-over {
   box-shadow: 0 0 0 2px rgba(123,127,178,0.6), 0 6px 18px rgba(80,90,110,0.13);
   transform: translateY(-2px);
@@ -549,11 +484,11 @@ async function setPriority(n: number) {
   transition: opacity 0.25s ease;
   pointer-events: none;
 }
-/* 抬起(:hover)/按下(:active)本体效果来自全局 .hover-card-fx（模板里已加这个类）；
-   这里补文件卡同款阴影和项目卡专属的 hover 高光，以及按下时排除嵌套可交互子元素（评分/进度条/阶段点）。 */
+/* 抬起/按下本体效果来自全局 .hover-card-fx（模板里已加这个类）；
+   这里补文件卡同款阴影和项目卡专属的 hover 高光。内部控件按住时不能覆盖根卡的
+   hover transform，否则卡片会从 translateY(-2px) 突然回到 0，看起来像被按下。 */
 .proj-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
 .proj-card:hover::after { opacity: 1; }
-.proj-card:active:has(.stars:active, .seg-bar-wrap:active, .proj-stage:active) { transform: none; opacity: 1; }
 
 .card-body { flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card-top { display: flex; align-items: flex-start; gap: 6px; }
@@ -568,24 +503,24 @@ async function setPriority(n: number) {
 }
 .proj-client {
   display: flex; align-items: center; gap: 4px;
-  font-size: 11px; color: var(--text-secondary);
+  font-size: 11px; line-height: 1.15; color: var(--text-secondary);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1;
   padding-bottom: 2px; margin-bottom: -2px;
 }
-.proj-client svg { flex-shrink: 0; opacity: 0.85; }
+.proj-client svg { opacity: 0.85; }
 .proj-client.empty { opacity: 0.75; }
 .proj-stage {
   display: inline-flex; align-items: center; gap: 4px;
-  font-size: 10px; color: var(--text-secondary);
+  font-size: 10px; line-height: 1.15; color: var(--text-secondary);
   white-space: nowrap; flex-shrink: 0; opacity: 0.75;
   padding: 2px 5px; margin: -2px -4px; border-radius: 6px;
   cursor: pointer; transition: background 0.12s, opacity 0.12s;
 }
 .proj-stage:hover, .proj-stage.open { background: rgba(0,0,0,0.06); opacity: 1; }
 .ps-label { overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
-.ps-count { font-size: 9px; opacity: 0.8; font-variant-numeric: tabular-nums; }
+.ps-count { font-size: 9px; line-height: 1.15; opacity: 0.8; font-variant-numeric: tabular-nums; }
 .ps-caret { opacity: 0.5; flex-shrink: 0; transition: transform 0.16s; }
-.proj-stage.open .ps-caret { transform: rotate(180deg); }
+.proj-stage.open .ps-caret { transform: translateY(-0.35px) rotate(180deg); }
 
 /* 当前阶段待办弹层（Teleport 到 body，通用弹窗风格） */
 .todo-pop {
@@ -634,26 +569,34 @@ async function setPriority(n: number) {
 .tp-add:hover { background: rgba(123,127,178,0.08); color: var(--color-primary); border-color: rgba(123,127,178,0.4); }
 
 .card-footer { display: flex; align-items: center; justify-content: space-between; }
-.footer-right { display: flex; align-items: center; gap: 5px; }
+.footer-right { display: flex; align-items: center; gap: 5px; line-height: 1.15; }
 
 .date-range {
   display: flex; align-items: center; gap: 4px;
-  font-size: 11px; color: var(--text-secondary); min-width: 0; overflow: hidden;
+  font-size: 11px; line-height: 1.15; color: var(--text-secondary); min-width: 0; overflow: hidden;
 }
-.date-range svg { flex-shrink: 0; }
 .date-start { opacity: 0.65; white-space: nowrap; }
 .date-sep { opacity: 0.35; font-size: 9px; }
 .deadline { white-space: nowrap; }
 /* 用 inset 阴影代替 border、去掉纵向 padding，使胶囊不比正文行高更高 → 不把进度条挤下移 */
-.done-label { white-space: nowrap; font-size: 10px; font-weight: 700; color: #3a8870; background: rgba(90,158,136,0.12); box-shadow: inset 0 0 0 1px rgba(90,158,136,0.35); border-radius: 20px; padding: 0 6px; display: inline-flex; align-items: center; gap: 2px; line-height: 1.4; }
+.done-label { white-space: nowrap; font-size: 10px; font-weight: 700; color: #3a8870; background: rgba(90,158,136,0.12); box-shadow: inset 0 0 0 1px rgba(90,158,136,0.35); border-radius: 20px; padding: 0 6px; display: inline-flex; align-items: center; gap: 2px; line-height: 1.15; }
 .deadline.urgent { color: var(--color-warning); font-weight: 600; }
 
 .file-badge {
   display: flex; align-items: center; gap: 3px;
-  font-size: 10px; font-weight: 600; color: var(--text-secondary);
+  font-size: 10px; line-height: 1.15; font-weight: 600; color: var(--text-secondary);
   background: rgba(0,0,0,0.06); border-radius: 10px; padding: 1px 6px;
 }
-.progress-num { font-size: 10px; color: var(--text-secondary); }
+.proj-client > svg,
+.proj-stage > svg,
+.date-range > svg,
+.done-label > svg,
+.file-badge > svg {
+  display: block;
+  flex: 0 0 auto;
+  transform: translateY(-0.35px);
+}
+.progress-num { font-size: 10px; line-height: 1.15; color: var(--text-secondary); }
 .seg-bar-wrap { position: relative; }
 
 /* ── 星级 ── */
