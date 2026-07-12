@@ -11,13 +11,14 @@ from app.core.tz import now_utc, set_ctx_tz
 import asyncio
 import json
 import logging
-from typing import AsyncGenerator, AsyncIterator
+from typing import AsyncGenerator, AsyncIterator, List, Tuple
 
 logger = logging.getLogger(__name__)
 
 from sqlalchemy import func, select
 
 from app.core.config import get_settings
+from app.core.redaction import redact
 from agent import sanitize, quota
 from agent.context import builder, loaders, tokens
 from agent.core import LLMRunner
@@ -590,7 +591,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                 cancelled = True
                 break
             elif t == "error":
-                errored_text = evt.get("message") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
+                errored_text = evt.get("message") or evt.get("detail") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
                 errored = True
                 break
     finally:
@@ -669,7 +670,9 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                                   tokens_out=tout, files=files, cancelled=False))
 
 
-async def _collect(gen: AsyncGenerator[str, None], minimax: bool = False) -> tuple[str, int, int, bool, list]:
+async def _collect(
+    gen: AsyncGenerator[str, None], minimax: bool = False,
+) -> Tuple[str, int, int, bool, List, bool]:
     """消费 LLMRunner 的 SSE 流：清洗后攒文本 + 取用量 + 收集咕咕要发的文件。
     返回 (文本, in, out, errored, files)；errored=True 时文本是错误文案（不入历史/不反思）。
 
@@ -708,7 +711,8 @@ async def _collect(gen: AsyncGenerator[str, None], minimax: bool = False) -> tup
             cancelled = True   # 用户中途「算了」：停止收集，网关已回「先不继续」，worker 不再补发
             break
         elif t == "error":
-            return (evt.get("message") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？", tin, tout, True, files, False)
+            detail = evt.get("message") or evt.get("detail") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
+            return (detail, tin, tout, True, files, False)
     cur += san.flush()
     rounds.append(cur)
 
@@ -797,6 +801,6 @@ async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: di
         # 定时任务排障日志：_collect 判定失败时会把 text 换成错误详情，但调用方（scheduled_tasks.py）
         # 只看得到这里返回的 ""，兜成通用「没有产出内容」——真实原因此前完全没留痕（2026-07-11
         # 排查「科技新闻」任务空产出时，日志里既无 LLM 报错、也无工具调用记录，无从判断）。
-        logger.warning("[定时任务] run_ephemeral 生成失败，丢弃前的详情: %r", text)
-        return ""
+        logger.warning("[定时任务] run_ephemeral 生成失败: %s", redact(text))
+        return sanitize.strip_disallowed_emoji(text)
     return sanitize.strip_disallowed_emoji(text)

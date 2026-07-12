@@ -14,6 +14,7 @@ def test_safe_name_replaces_invalid_chars():
 def test_build_key_personal():
     assert _build_key(7, 'personal', 'doc', 'TXT') == '7/个人文件/doc.txt'
     assert _build_key(7, 'personal', 'doc', 'TXT', folder_name='子/夹') == '7/个人文件/子_夹/doc.txt'
+    assert _build_key(7, 'personal', 'doc', 'TXT', folder_path='资料/会议纪要') == '7/个人文件/资料/会议纪要/doc.txt'
 
 
 def test_build_key_project():
@@ -23,6 +24,8 @@ def test_build_key_project():
     assert _build_key(7, 'project', 'doc', 'md', project_name='P', project_id=3) == '7/项目文件/P #3/doc.md'
     # 带文件夹
     assert _build_key(7, 'project', 'doc', 'md', project_name='P', project_id=3, folder_name='f') == '7/项目文件/P #3/f/doc.md'
+    assert _build_key(7, 'project', 'doc', 'md', project_name='P', project_id=3,
+                      folder_path='设计/评审') == '7/项目文件/P #3/设计/评审/doc.md'
 
 
 def test_build_key_mind_and_asset():

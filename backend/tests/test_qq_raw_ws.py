@@ -1,6 +1,11 @@
 from agent.adapters import qq
 
 
+def test_qq_heartbeat_ack_timeout_after_two_and_a_half_intervals():
+    assert not qq._heartbeat_ack_expired(last_ack_at=100.0, interval=45.0, now=212.4)
+    assert qq._heartbeat_ack_expired(last_ack_at=100.0, interval=45.0, now=212.5)
+
+
 def _raw_c2c_event(**overrides):
     data = {
         "id": "msg-1",

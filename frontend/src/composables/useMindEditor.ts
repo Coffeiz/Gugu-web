@@ -101,7 +101,7 @@ export const MindRef = Node.create({
     }),
       [`${SVG_NS} svg`, { viewBox: '0 0 256 256', width: '12', height: '12', fill: 'currentColor', class: 'mind-ref-icon' },
         [`${SVG_NS} path`, { d: MIND_REF_TYPE_ICON_PATH[t] ?? '' }]],
-      node.attrs.label,
+      ['span', { class: 'mind-ref-label' }, node.attrs.label],
     ]
   },
 })
@@ -483,7 +483,7 @@ function inlineToHtml(text: string): string {
     out.push(
       `<span class="mind-ref" data-ref-type="${m[1]}" data-ref-id="${m[2]}" title="${esc(MIND_REF_TYPE_LABEL[m[1]] ?? m[1])}">` +
       `<svg viewBox="0 0 256 256" width="12" height="12" fill="currentColor" class="mind-ref-icon"><path d="${MIND_REF_TYPE_ICON_PATH[m[1]] ?? ''}"/></svg>` +
-      `${esc(m[3])}</span>`,
+      `<span class="mind-ref-label">${esc(m[3])}</span></span>`,
     )
     last = m.index + m[0].length
   }

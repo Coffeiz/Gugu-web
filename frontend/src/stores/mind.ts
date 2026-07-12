@@ -204,10 +204,24 @@ export const useMindStore = defineStore('mind', () => {
     return relation
   }
 
+  async function removeCanvasRelation(id: number) {
+    await mindApi.deleteRelation(id)
+    canvasRelations.value = canvasRelations.value.filter(relation => relation.id !== id)
+  }
+
+  /** 记住这张画布上次的平移/缩放（`mind_maps.data_json`，本就是为它留的字段），
+   *  下次打开时回到用户离开时的视角，而不是每次都回到画布几何原点。 */
+  async function saveCanvasView(id: number, view: { x: number; y: number; scale: number }) {
+    const updated = await mindApi.updateCanvas(id, { data: view })
+    const index = canvases.value.findIndex(canvas => canvas.id === id)
+    if (index !== -1) canvases.value[index] = updated
+  }
+
   return {
     notes, loading, loaded, filterQ, jumpTarget, timeline, fetchNotes, createNote, updateNote, deleteNote,
     canvases, canvasesLoaded, canvasLoading, activeCanvasId, canvasItems, canvasRelations,
     fetchCanvases, createCanvas, renameCanvas, loadCanvas, addNoteToCanvas, updateCanvasItem,
-    addRefToCanvas, createCanvasNote, updateCanvasNote, removeCanvasItem, createCanvasRelation, nextCanvasZ,
+    addRefToCanvas, createCanvasNote, updateCanvasNote, removeCanvasItem, createCanvasRelation, removeCanvasRelation, nextCanvasZ,
+    saveCanvasView,
   }
 })

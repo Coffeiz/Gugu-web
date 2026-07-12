@@ -12,6 +12,7 @@ from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
 from app.core import events
 from app.services.storage import get_storage
+from app.services.storage.folders import resolve_folder_path
 from app.api.v1.files import _to_resp, _color, _delete_thumb_cache
 from app.services.storage.keys import _build_key, _resolve_conflict
 
@@ -47,7 +48,7 @@ async def _restore_file_storage(f: File, db: AsyncSession) -> None:
 
     # 获取所属项目/文件夹/思维导图信息，重建原始路径（f 已归属校验；其所属对象按不变量应同属 f 的主人，
     # 用 f.user_id 走归属强制——万一数据串了宁可当"不存在"回根目录，也不读到别人的名字）
-    project_name = project_year = project_month = folder_name = mind_map_title = ""
+    project_name = project_year = project_month = folder_path = mind_map_title = ""
     if f.project_id:
         p = await get_owned(db, Project, f.project_id, f.user_id)
         if p:
@@ -55,9 +56,9 @@ async def _restore_file_storage(f: File, db: AsyncSession) -> None:
             date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
             project_year, project_month = date_str[:4], date_str[5:7]
     if f.folder_id:
-        fo = await get_owned(db, Folder, f.folder_id, f.user_id)
-        if fo:
-            folder_name = fo.name
+        resolved = await resolve_folder_path(db, f.user_id, f.folder_id, f.project_id)
+        if resolved:
+            _, folder_path = resolved
     if f.mind_map_id:
         mm = await get_owned(db, MindMap, f.mind_map_id, f.user_id)
         if mm:
@@ -68,7 +69,7 @@ async def _restore_file_storage(f: File, db: AsyncSession) -> None:
         display_name=f.display_name, ext=f.ext,
         project_name=project_name, project_id=f.project_id or 0,
         project_year=project_year, project_month=project_month,
-        folder_name=folder_name,
+        folder_path=folder_path,
         mind_map_title=mind_map_title, mind_map_id=f.mind_map_id or 0,
     )
     final_key, final_name = await _resolve_conflict(storage, base_key, f.display_name, f.ext)

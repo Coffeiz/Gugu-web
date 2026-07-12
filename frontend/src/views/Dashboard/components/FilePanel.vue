@@ -5,51 +5,40 @@
     </div>
 
     <div class="file-grid">
-      <div
+      <FileCard
         v-for="f in files"
         :key="f.id"
-        class="fc-card"
-        :class="{ 'fc-has-thumb': isImageExt(f.ext) }"
-        :style="{ '--fc-color': fileIconColor(f.ext) }"
+        :ext="f.ext" :display-name="f.name" :has-thumb="isImageExt(f.ext)"
+        :icon-size="80" :icon-lift="18" :area-height="80" :lift="false"
         @click="openFile(f)"
       >
-        <span class="fc-ext-badge">{{ f.ext }}</span>
-
-        <div v-if="isImageExt(f.ext)" class="fc-thumb-area">
-          <img class="fc-thumb fc-thumb-tiny" :src="thumbMap[f.id]?.tiny ?? undefined" decoding="async" draggable="false" alt="" />
-          <img class="fc-thumb fc-thumb-full"
-            :src="thumbMap[f.id]?.card ?? undefined"
+        <template #thumb>
+          <img :src="thumbMap[f.id]?.tiny ?? undefined" class="fc-thumb-tiny" decoding="async" draggable="false" alt="" />
+          <img :src="thumbMap[f.id]?.card ?? undefined" class="fc-thumb-full"
             :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }"
             decoding="async" draggable="false" alt=""
             @load="cardBlobReadyIds.add(f.id)"
             @error="($event.target as HTMLElement).style.display='none'" />
-          <div class="fc-thumb-fade"></div>
-        </div>
-        <div v-else class="fc-icon-area">
-          <component :is="fileListIcon(f.ext)" class="fc-big-icon" :size="86" weight="bold" />
-        </div>
-
-        <div class="fc-label">
-          <div class="fc-name" :title="f.name">
-            <span v-if="renamingId === f.id" class="rename-sizer" @click.stop>
-              <span class="rename-ghost">{{ renameText || ' ' }}</span>
-              <input
-                ref="renameInputRef"
-                class="rename-input-inline"
-                v-model="renameText"
-                v-enter.prevent="() => commitRename(f)"
-                @keydown.esc="renamingId = null"
-                @blur="commitRename(f)"
-                @focus="($event.target as HTMLInputElement).select()"
-              />
-            </span>
-            <template v-else>{{ f.name }}</template>
-          </div>
-          <div class="fc-meta">
-            <span class="fc-proj-dot" :style="{ background: f.projectColor }"></span>
-            {{ f.project }} · {{ f.size }}
-          </div>
-        </div>
+        </template>
+        <template #name>
+          <span v-if="renamingId === f.id" class="rename-sizer" @click.stop>
+            <span class="rename-ghost">{{ renameText || ' ' }}</span>
+            <input
+              ref="renameInputRef"
+              class="rename-input-inline"
+              v-model="renameText"
+              v-enter.prevent="() => commitRename(f)"
+              @keydown.esc="renamingId = null"
+              @blur="commitRename(f)"
+              @focus="($event.target as HTMLInputElement).select()"
+            />
+          </span>
+          <template v-else>{{ f.name }}</template>
+        </template>
+        <template #meta>
+          <span class="fc-proj-dot" :style="{ background: f.projectColor }"></span>
+          {{ f.project }} · {{ f.size }}
+        </template>
 
         <div class="fc-hover-actions">
           <button class="file-card-btn" :title="renamingId === f.id ? '确认' : '重命名'"
@@ -64,7 +53,7 @@
             <PhTrash :size="11" weight="bold" />
           </button>
         </div>
-      </div>
+      </FileCard>
 
       <!-- 上传区 -->
       <label
@@ -100,7 +89,8 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache, cardBlobReadyIds } from '@/composables/useThumbCache'
-import { isImageExt, fileIconColor, fileListIcon } from '@/utils/fileTypes'
+import { isImageExt } from '@/utils/fileTypes'
+import FileCard from '@/components/common/FileCard.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
 import {
   PhPencilSimple, PhCheck, PhDownloadSimple, PhTrash,
@@ -175,7 +165,8 @@ function preDecodeBlobs(map: Record<number, { tiny?: string | null; card?: strin
   }
 }
 
-// 文件类型助手统一收口到 @/utils/fileTypes（isImageExt / fileIconColor / fileListIcon），见顶部 import。
+// 文件类型判断统一收口到 @/utils/fileTypes（isImageExt，见顶部 import）；图标/主色现在由
+// components/common/FileCard.vue 内部处理，这里不用再重复调 fileIconColor/fileListIcon。
 
 function openUpload() { uploadOpen.value = true }
 function openFile(f: any) {
@@ -294,64 +285,17 @@ const files = computed(() =>
   align-content: start;
 }
 
-.fc-card {
-  background: rgba(255,255,255,0.72);
-  border: 1px solid rgba(255,255,255,0.9);
-  border-radius: 14px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(0,0,0,0.06);
-  min-height: 110px;
-  transition: box-shadow 0.25s ease;
-}
-.fc-card:hover { transform: none; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 4px 12px rgba(0,0,0,0.10); }
-
-.fc-ext-badge {
-  position: absolute; top: 9px; left: 9px; z-index: 2;
-  font-size: 8px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
-  color: var(--fc-color, var(--color-primary));
-  background: rgba(0,0,0,0.04);
-  border-radius: 4px; padding: 2px 5px; line-height: 1.5;
-}
-
-.fc-icon-area {
-  height: 80px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  overflow: visible;
-}
-.fc-big-icon {
-  width: 80px; height: 80px;
-  color: var(--fc-color, var(--color-primary));
-  opacity: 0.55;
-  transform: translateY(18px);
-  mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
-  flex-shrink: 0;
-}
-
-.fc-thumb-area {
-  position: relative; height: 80px; flex-shrink: 0; overflow: hidden;
-  border-radius: 14px 14px 0 0; background: rgba(0,0,0,0.05);
-  mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
-}
-.fc-thumb {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  object-fit: cover; object-position: center top; display: block;
-}
+/* .fc-card 基础视觉（底色/边框/角标/图标区/缩略图区/标题元信息）已挪进
+   components/common/FileCard.vue；这里只留缩略图两层（插槽内容）、meta 里的项目色点、
+   悬浮操作这几处本面板专属的部分。 */
 .fc-thumb-tiny { filter: blur(10px); }
 .fc-thumb-full { opacity: 0; transition: opacity 0.4s ease; }
 .fc-thumb-full.fc-loaded { opacity: 1; }
-.fc-has-thumb .fc-ext-badge { background: rgba(0,0,0,0.32); color: rgba(255,255,255,0.92); }
 
-.fc-label { padding: 0 11px 11px; position: relative; z-index: 2; }
-.fc-name {
-  font-size: 11px; font-weight: 600; color: var(--text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
-}
-.fc-meta {
+/* .fc-meta 是 FileCard.vue 自己模板里包 #meta 插槽的容器 div，不是本组件插的槽内容本身
+   （slot 内容才带本组件 scope），要用 :deep() 才能扎进子组件根节点以外的这层。 */
+:deep(.fc-meta) {
   display: flex; align-items: center; gap: 4px;
-  font-size: 9px; color: var(--text-secondary); opacity: 0.55; margin-top: 3px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .fc-proj-dot {

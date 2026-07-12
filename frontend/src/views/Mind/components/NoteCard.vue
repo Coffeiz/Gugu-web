@@ -291,6 +291,10 @@ function onBodyClick(e: MouseEvent) {
     return
   }
   if (t.closest('a')) return
+  // 刚才是拖选文字（松手时还留着一段非空选区），不是想点进编辑——click 在鼠标抬起时
+  // 还是会照常触发，不额外拦住的话选完文字会立刻被拽进编辑态，选区也跟着没了。
+  const sel = window.getSelection()
+  if (sel && !sel.isCollapsed && sel.toString().length > 0) return
   const lineEl = t.closest<HTMLElement>('[data-line-unit]')
   startEditAt(lineEl ? Number(lineEl.dataset.lineUnit) : null)
 }

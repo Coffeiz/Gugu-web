@@ -9,7 +9,7 @@
  */
 
 // 拖拽物理可选项（startPhysicsDrag / startMultiPhysicsDrag 共用）
-interface PhysicsDragOpts {
+export interface PhysicsDragOpts {
   pointer?: boolean
   spring?: number
   damping?: number
@@ -17,9 +17,41 @@ interface PhysicsDragOpts {
   sway?: number
   tilt?: number
   grabY?: number
+  // true 时忽略 grabY，让克隆体的竖直中心（不是"顶部往下固定 28px 那一点"）跟着指针走——
+  // 看板卡沿用"像从卡片顶部附近拈起一张纸"的手感（grabY 默认 28），无限画布上没有"顶部"这个
+  // 参照系，抓哪张卡都应该是卡片中心跟手，不然矮卡片（离 28px 近）看着几乎贴指针、高卡片
+  // 又明显吊在指针下方，各类型贴纸手感不一致，见画布贴纸（useCardDrag.ts/ProjectRefCard.vue）
+  // 的用法。
+  centerGrab?: boolean
   cloneClass?: string
-  onDrop?: (pos: { x: number; y: number }) => void
+  // velocity 是松手瞬间弹簧积分出来的速度（px/s，屏幕坐标系）+ turn（最近一小段时间速度方向
+  // 转过的角度，弧度，见 startPhysicsDrag 里的 velHistory），给需要"甩出去带一点惯性、还想
+  // 带上手腕转弯弧度"的调用方用（如画布贴纸，见 useCardDrag.ts）；看板卡/文件拖放这类离散
+  // 目标判定用不上，不传第二个参数也完全兼容。
+  // size 是克隆体此刻真实的视觉宽高（屏幕像素，来自 rect/half，不是调用方自己存的那份可能
+  // 过时的「假定尺寸」）——画布贴纸的落点居中计算依赖它，见 useCardDrag.ts：卡片实际渲染
+  // 多高（客户名有没有、是否完成态换了行）跟存储侧记的默认/上次测量值经常对不上，落点算出
+  // 来的"卡片中心"就会跟指针实际抓的地方有落差（用户反馈"连线点比卡片中心低""落点偏高"）。
+  // 直接把物理模块自己量好的这份精确尺寸传出去，调用方不用再猜。
+  onDrop?: (pos: { x: number; y: number }, velocity: { x: number; y: number; turn: number }, size: { w: number; h: number }) => void
   onDragOver?: (pos: { x: number; y: number }) => void   // pointer 模式：每帧回调当前指针位置，供调用方自己 elementFromPoint 判定/高亮落点
+  // 每帧回调克隆体此刻真实的视觉中心（下方 frame() 弹簧积分出来的结果，带阻尼延迟——不是
+  // 瞬时跟手的指针位置）+ 此刻真实的视觉宽高（理由同 onDrop 的 size）。给「要跟着克隆体本体
+  // 一起走」的视觉用（如画布连线跟着被拖的卡）：若用 onDragOver 的瞬时指针位置，会跑得比带
+  // 阻力的克隆体更快更靠前，线跟卡片对不上，也没有克隆体那种「甩不动、有点阻力」的手感——
+  // onFollow 直接给同一份弹簧积分结果，天然一致。
+  onFollow?: (pos: { x: number; y: number }, size: { w: number; h: number }) => void
+  // 源卡此刻的渲染受一层祖先缩放影响（画布相机缩放，见 useMindCanvas.ts 的 camera.scale）——
+  // getBoundingClientRect 量出来的尺寸已经是缩放后的，克隆体脱离缩放祖先后单靠这份尺寸撑
+  // 外框，内部内容不会跟着等比缩放。传这个值让克隆体退回原始尺寸 + CSS zoom 补回视觉缩放，
+  // 不传或为 1 时完全不影响现有调用方（看板卡/文件卡没有缩放祖先，CS 恒为 1）。传函数而不是
+  // 静态数字：抓着卡片不放的时候画布还能滚轮继续缩放，每帧都要读一次「当下」的相机缩放，
+  // 不能只在抓起那一刻定死一个数——那样边抓边缩放画布，卡片大小会纹丝不动跟不上。
+  contentScale?: number | (() => number)
+  // 拖拽期间克隆体的层级，不传按站内其它拖拽场景的默认值 99999（压过几乎所有内容）。
+  // 画布贴纸想让克隆体飞过侧栏时老实压在侧栏底下（不遮住导航），传一个比侧栏 z-index 低
+  // 的值。
+  dragZIndex?: number
   skipAbsorb?: boolean
   // 「吸入文件夹/面包屑」缩小消失动画的目标判定：不传则退回默认的 .folder-card,.bc-item 类名匹配
   // （历史行为）。传了就由调用方决定 under 是否算有效吸入目标、返回该元素（给动画取
@@ -269,29 +301,84 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   const GRABY = opts.grabY     ?? 28     // 抓取点到卡片顶部的距离：挂在指针下方
 
   const rect = sourceEl.getBoundingClientRect()
-  const half = { x: rect.width / 2, y: rect.height / 2 }
+  // half 用 let：contentScale 是活的（画布相机缩放，抓着卡片不放的时候还能滚轮继续缩放
+  // 画布），每帧都可能变，克隆体的实际渲染半宽/半高得跟着重算，见 frame() 里的 _applyCS。
+  let half = { x: rect.width / 2, y: rect.height / 2 }
   const container = sourceEl.parentElement
 
-  // 克隆体（保留 data-v scoped 属性 → 外观一致），它就是飞动的「本体」
+  // centerGrab 时抓取点就是 half.y 本身（卡片竖直中心，X 方向本来就已经是 half.x 居中，
+  // Y 方向照此对齐），不用 GRABY 那个"顶部往下固定 28px"的量；否则沿用 GRABY——抓起那一刻，
+  // 它是这个像素值在当时那个渲染大小下的量，contentScale 是活的时，卡片渲染大小之后可能整体
+  // 变了（画布相机缩放），这个绝对像素量不该原封不动继续用：卡片缩小到比它还矮时，抓取点会
+  // 被钉在卡片外面，克隆体位置看着就是错的、中心点对不上（"缩放的时候克隆的位置不对"）。
+  // liveGrabY 跟着 cloneH 的缩放比例（或 centerGrab 时跟着 half.y 本身）同步变化，保持抓取点
+  // 在卡片里"同一个相对位置"，只在 frame() 里 contentScale 变化时才重算。
+  let liveGrabY = opts.centerGrab ? half.y : GRABY
+
+  // contentScale 可以传活的取值函数（画布相机缩放会变），也可以传静态数字；不传或恒为 1
+  // （绝大多数非画布调用方）时下面这段是 no-op。cloneW/cloneH 只在抓起这一刻算一次——它是
+  // 卡片「世界坐标系里的固有大小」，不随相机缩放变化，变的只是 zoom 把它投影到屏幕上的比例。
+  const _resolveCS = () => (typeof opts.contentScale === 'function' ? opts.contentScale() : opts.contentScale) ?? 1
+  const CS0 = _resolveCS()
+  const cloneW = CS0 !== 1 ? rect.width / CS0 : rect.width
+  const cloneH = CS0 !== 1 ? rect.height / CS0 : rect.height
+  let lastCS = CS0
+
+  // holder + clone 两层：holder 是唯一负责定位/变换（position:fixed + translate3d/rotate/
+  // scale(curLift)）的外层节点，全程保持浏览器默认 zoom:1，translate3d 的像素值就是"就这么
+  // 多像素"，不会被谁的 zoom 二次放大/缩小。clone（保留 data-v scoped 属性 → 外观一致）是
+  // 真正的卡片内容克隆，挂在 holder 里面，只管「自己长什么样」——画布贴纸套在 .canvas-world
+  // 的相机缩放（transform:scale(camera.scale)）祖先底下，getBoundingClientRect 量出来的
+  // rect 已经是缩放后的视觉尺寸，但克隆体脱离了这层缩放祖先，若直接把宽高定死成
+  // rect.width/height，外框大小对了、内部内容（字号/内边距/圆角）却还是按未缩放的原始大小
+  // 渲染。这里让 clone 退回未缩放的原始尺寸（rect / contentScale）+ CSS zoom 把内部渲染
+  // 整体按同一比例缩回去，缩放后的渲染 footprint 正好等于 rect。
+  // 两者不能揉进同一个元素：试过直接在 clone 自己身上叠 zoom + translate3d，结果缩小画布时
+  // 克隆体整体往左上角偏、放大时往右下角偏——CSS zoom 除了缩放渲染大小，还会把同一元素自己
+  // transform 里的像素长度（包括 translate3d 的偏移量）一并按 zoom 系数放大/缩小，定位数学
+  // 全乱了。拆成两层后 holder 的坐标数学完全不受 clone 的 zoom 影响；contentScale 不传时
+  // clone 自身尺寸就等于 rect.width/height、不叠 zoom，跟以前完全一样，这层包装不改变任何
+  // 现有调用方（看板卡/文件卡）的观感。
+  const holder = document.createElement('div')
+  Object.assign(holder.style, {
+    position: 'fixed', left: '0', top: '0', margin: '0',
+    width: rect.width + 'px', height: rect.height + 'px',   // 视觉尺寸，跟 half 假定的一致
+    // 拖拽期间的层级默认压过全站几乎所有内容（99999）；画布贴纸单独传低一点的值，让克隆体
+    // 飞过侧栏（AppSidebar，z-index:20）那段区域时老实压在侧栏底下，不遮住导航——落地那段
+    // 飞行动画（见 end() 的 _landingZIndex）本来就是按上下文动态算的，这里只是把「正在被
+    // 抓着走」这段也统一到同一原则，不再无脑扣 99999。
+    zIndex: String(opts.dragZIndex ?? 99999), pointerEvents: 'none', willChange: 'transform', transition: 'none',
+  })
   const clone = sourceEl.cloneNode(true) as HTMLElement
   clone.classList.add('phys-drag-clone')
   if (opts.cloneClass) clone.classList.add(opts.cloneClass)   // 调用方补回脱离上下文后丢失的版式（如 mode2）
+  // 清空 left/top/right/bottom（不动 position 本身）：cloneNode(true) 原样带走了源卡的内联
+  // 样式——画布贴纸（便签/活动）源卡自己就是 position:absolute + 内联 left/top（世界坐标，
+  // 见 stickerStyle），clone 挂进 holder（它自己是 position:fixed，天然是新的定位上下文）后，
+  // 若还留着那份世界坐标内联值，就会去 holder 盒子里"世界坐标那个位置"摆自己，而不是老老实实
+  // 占满 holder——世界坐标动辄几百上千 px，摆出去早飘到 holder 那个几十几百 px 的小盒子外面，
+  // 看着就是"卡片拖起来直接不见了"。项目卡/文件卡不踩这个坑是因为拖的是 .fc-card/.proj-card
+  // 本体（position:relative 且没有内联偏移），不是带世界坐标的外层 wrapper。这里只清掉惹祸的
+  // 偏移量，position 本身不改——便签/活动贴纸的根节点仍是 position:absolute（class 里定义的，
+  // 不是内联），清空 left/top 后 auto 兜底成"正常流位置"（即 holder 里的原点），同时继续
+  // 充当自己内部圆点/悬浮按钮等 position:absolute 子元素的定位上下文，不会因为强改成 static
+  // 把这些子元素的基准偏移到 holder 身上去。
   Object.assign(clone.style, {
-    position: 'fixed', left: '0', top: '0',
-    width: rect.width + 'px', height: rect.height + 'px',
-    margin: '0', boxSizing: 'border-box',
-    zIndex: '99999', pointerEvents: 'none', willChange: 'transform', transition: 'none',
+    left: '', top: '', right: '', bottom: '',
+    width: cloneW + 'px', height: cloneH + 'px', margin: '0', boxSizing: 'border-box',
   })
+  if (CS0 !== 1) clone.style.setProperty('zoom', String(CS0))
+  holder.appendChild(clone)
   // 克隆体初始按源卡原始大小(scale 1)摆到源卡位置——避免首帧停在左上角(0,0)闪一下，也避免跟
   // 同一帧刚隐藏的源卡尺寸对不上（source opacity:0 换成 clone 那一刻若已经是 LIFT 放大，观感就是
   // 「抓起来卡片瞬间变大一圈」）。抬起放大改由 frame() 每帧用纯数值渐入（见下面 liftT），不用
   // CSS transition——克隆体从下一帧起全靠 frame() 直接写 transform 保持跟手，留一份 transition
   // 在身上会让每帧的写入都被浏览器重新插值，反而拖慢跟手，且松手瞬间若跟这份 transition 撞车还
   // 会把落地动画写坏（曾经这样实现过，松手时「先放大字体、再突然切回本体」就是这个撞车导致的）。
-  clone.style.transform =
-    `translate3d(${rect.left.toFixed(2)}px, ${(rect.top + half.y - GRABY).toFixed(2)}px, 0)` +
+  holder.style.transform =
+    `translate3d(${rect.left.toFixed(2)}px, ${(rect.top + half.y - liveGrabY).toFixed(2)}px, 0)` +
     ` perspective(760px) rotateX(${TILT}deg) scale(1)`
-  document.body.appendChild(clone)
+  document.body.appendChild(holder)
 
   // 拖拽期间给浏览器减负（性能：trace 显示 CPU 几乎全在浏览器渲染，非物理 JS）：
   //   - 关掉顶栏/侧栏 backdrop-filter：内容一动玻璃就重模糊整条 → 整屏 Paint，拖拽这一两秒不模糊几乎无感；
@@ -330,6 +417,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   if (pointer && (event.clientX || event.clientY)) { target.x = event.clientX; target.y = event.clientY }
   const vel    = { x: 0, y: 0 }   // 卡片速度 px/秒——二阶弹簧的动量来源
   let vxs = 0, vys = 0            // 平滑后的速度，用于旋转
+  // 最近一小段时间的速度采样（各带时间戳），松手时用来判断"甩出去那一刻手腕在不在转弯"——
+  // 只看最后一帧的瞬时速度只能给出一个直线方向，抛物线/弧线甩法（手腕带一点转弯）常见，
+  // 直接顺着最后瞬时方向甩出去的落点会跟直觉不符。见 end() 里的用法。
+  const velHistory: { x: number; y: number; t: number }[] = []
+  const VEL_HISTORY_MS = 120
 
   const DAMP = 2 * ZETA * Math.sqrt(SPRING)   // 阻尼系数（临界=2√k）
   const KV   = -Math.log(1 - 0.12) * 60       // 旋转速度低通（每秒）
@@ -354,6 +446,29 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     lastT = now
     if (dt > 1 / 20) dt = 1 / 20
 
+    // contentScale 是活的取值函数时，每帧重新读一次当下的画布相机缩放——抓着卡片不放的
+    // 时候滚轮还能继续缩放画布，克隆体的视觉大小得跟着变（cloneW/cloneH 这份「世界坐标系
+    // 固有尺寸」本身不变，变的是 zoom 把它投影到屏幕的比例）。half 跟着重算，否则克隆体
+    // 大小变了、但定位仍按旧的半宽半高摆，会偏出指针中心。数值没变时跳过，省一次样式写入。
+    if (typeof opts.contentScale === 'function') {
+      const liveCS = _resolveCS()
+      if (liveCS !== lastCS) {
+        lastCS = liveCS
+        clone.style.setProperty('zoom', String(liveCS))
+        half = { x: (cloneW * liveCS) / 2, y: (cloneH * liveCS) / 2 }
+        // holder 自己的盒子尺寸不跟着改——它没有背景/边框，"盒子比 clone 实际渲染大小大或
+        // 小"不会露出任何视觉破绽（holder 纯粹是定位壳，clone 在里面用 translate3d/half
+        // 精确摆好就行，见下面注释）。真正要它保持稳定：end() 里 flyMorph 的落地缩放公式
+        // （tfFor）拿 holder 此刻的盒子尺寸当"1.0 倍"基准算 scale 比例——如果这里跟着每帧改，
+        // 松手那一刻基准值就是"改到哪算哪"的一个跟画布缩放耦合的数，落地动画的缩放比例会算
+        // 错，卡片飞过去时大小/位置都不对。真正"当前应该多大"这份信息由 end() 自己另外从
+        // half 重新推一遍（见那边的 dropW/dropH），不依赖 holder 的盒子尺寸。
+        // 抓取点也要跟着同一个比例缩放，见 liveGrabY 的定义；centerGrab 时它本来就该恒等于
+        // half.y（卡片竖直中心），half 刚更新完，直接跟过去就是，不用再乘缩放比例。
+        liveGrabY = opts.centerGrab ? half.y : GRABY * (liveCS / CS0)
+      }
+    }
+
     // 子步积分（≤1/120s/步）：显式欧拉在大 dt 下会发散，子步保证弹簧稳定，且与帧率解耦
     let rem = dt
     while (rem > 1e-4) {
@@ -365,6 +480,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       pos.x += vel.x * h; pos.y += vel.y * h
     }
 
+    // 记一帧速度采样，只留最近 VEL_HISTORY_MS 这一小段（时间戳用 now，跟 requestAnimationFrame
+    // 的时间基准一致）；开头存的是最老的，取 [0] 就是这段窗口起点的速度，跟当前 vel 一比就知道
+    // 这段时间转了多少角度。
+    velHistory.push({ x: vel.x, y: vel.y, t: now })
+    while (velHistory.length > 1 && now - velHistory[0].t > VEL_HISTORY_MS) velHistory.shift()
+
     const av = 1 - Math.exp(-KV * dt)
     vxs += (vel.x - vxs) * av; vys += (vel.y - vys) * av
     // 旋转按 px/秒 → 1/60 归一，任何刷新率下后仰/摆动幅度与原先一致
@@ -375,9 +496,13 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     liftT = Math.min(1, liftT + dt * 1000 / GROW_MS)
     const liftEase = 1 - Math.pow(1 - liftT, 3)
     const curLift = 1 + (LIFT - 1) * liftEase
-    clone.style.transform =
-      `translate3d(${(pos.x - half.x).toFixed(2)}px, ${(pos.y - GRABY).toFixed(2)}px, 0)` +
+    holder.style.transform =
+      `translate3d(${(pos.x - half.x).toFixed(2)}px, ${(pos.y - liveGrabY).toFixed(2)}px, 0)` +
       ` perspective(760px) rotateX(${rotX.toFixed(2)}deg) rotateZ(${rotZ.toFixed(2)}deg) scale(${curLift})`
+    // 视觉中心跟 end() 里落点用的是同一条公式（pos 本身不是中心，克隆体渲染顶边挂在
+    // pos.y - liveGrabY，见 liveGrabY 定义）——onFollow 吐出的必须跟克隆体肉眼所在位置对上，
+    // 不能拿 pos 直接充数，否则「线跟着走」会跟卡片实际画面对不齐。
+    if (opts.onFollow) opts.onFollow({ x: pos.x, y: pos.y - liveGrabY + half.y }, { w: half.x * 2, h: half.y * 2 })
     _active!.raf = requestAnimationFrame(frame)
   }
 
@@ -398,11 +523,49 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       sourceEl.removeEventListener('dragend', end)
     }
 
-    // pointer 模式：落点的业务移动由调用方在此执行（原生模式靠各列 @drop 已落定）。
-    // 必须先于下面的落点 FLIP——它要等业务移动触发的 Vue 重渲染把卡片排到新槽位后，再据新 DOM 飞过去。
-    if (opts.onDrop) { try { opts.onDrop({ x: target.x, y: target.y }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
+    // 落点用克隆体此刻真实的视觉中心，不用 target（原始指针位置）——弹簧有阻尼延迟，快速
+    // 一甩再松手时克隆体还没追上指针，target 会比画面上克隆体的位置更靠前，两者对不上。
+    // 注意 pos 本身不是视觉中心：frame() 里克隆体的渲染顶边是 pos.y - liveGrabY（挂在指针
+    // 下方 liveGrabY px，contentScale 变化时会跟着按比例缩放，见其定义），不是 pos.y - half.y，
+    // 所以真正的视觉中心 y 是 pos.y - liveGrabY + half.y，不能直接拿 pos.y 当中心（拿错会
+    // 导致松手位置整体偏移，偏移量正好是 half.y - liveGrabY——卡片越高偏得越多，表现为
+    // "松手后卡片往上跳"）。
+    const cloneCenter = { x: pos.x, y: pos.y - liveGrabY + half.y }
+    // 克隆体此刻真实的视觉尺寸（不是 rect.width/height 那份抓起时刻的旧尺寸）——contentScale
+    // 是活的时，抓着卡片不放期间画布缩放可能已经变了好几次，half 由 frame() 全程跟着实时
+    // 更新（见那边的注释），到这一刻就是最新、最准的。落地飞行动画（flyMorph 的 tfFor）拿它
+    // 当"1.0 倍"的缩放基准，不能再用 rect.width/height——用旧值算出来的缩放比例是"从抓起
+    // 时刻的大小缩放到落点"，而克隆体这时候实际已经不是那个大小了，飞过去的动画会跳到错误
+    // 的尺寸/位置上。
+    const dropW = half.x * 2, dropH = half.y * 2
+    // turn：最近 VEL_HISTORY_MS 这段时间里速度方向转过的角度（弧度，带符号）——甩出去的手腕
+    // 不是每次都走直线，这个角度供调用方把惯性延伸的路径也带一点弧度（见 useCardDrag.ts 的
+    // coastOffset）。样本太短（刚起手还没攒够历史）或本来就没怎么动时不强算，给 0。
+    // 只拿窗口最早/最新各一帧原始采样去比角度会被单帧噪声带偏——尤其是松手前手指几乎停住的
+    // 瞬间，瞬时速度方向本来就没什么意义，随手一抖就可能得出一个夸张的转弯角，落点跟着跑偏
+    // ("运动方向防抖")。改成拿窗口前半段、后半段各自的平均速度向量再比角度，单帧的抖动会被
+    // 同一半段里其它样本平均掉，只有真正持续了一段时间的转向才会被算进 turn 里。
+    let turn = 0
+    const speed = Math.hypot(vel.x, vel.y)
+    if (velHistory.length > 3 && speed > 30) {
+      const mid = velHistory.length >> 1
+      const avg = (samples: typeof velHistory) => {
+        let sx = 0, sy = 0
+        for (const s of samples) { sx += s.x; sy += s.y }
+        return { x: sx / samples.length, y: sy / samples.length }
+      }
+      const early = avg(velHistory.slice(0, mid))
+      const late = avg(velHistory.slice(mid))
+      const earlySpeed = Math.hypot(early.x, early.y)
+      const lateSpeed = Math.hypot(late.x, late.y)
+      if (earlySpeed > 30 && lateSpeed > 30) {
+        const a1 = Math.atan2(early.y, early.x), a2 = Math.atan2(late.y, late.x)
+        turn = Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1))
+      }
+    }
+    if (opts.onDrop) { try { opts.onDrop(cloneCenter, { x: vel.x, y: vel.y, turn }, { w: dropW, h: dropH }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
 
-    const dropX = target.x, dropY = target.y
+    const dropX = cloneCenter.x, dropY = cloneCenter.y
     const idAttr = sourceEl.getAttribute('data-file-id')    ? ['data-file-id',    sourceEl.getAttribute('data-file-id')]
                  : sourceEl.getAttribute('data-folder-key') ? ['data-folder-key', sourceEl.getAttribute('data-folder-key')]
                  : sourceEl.getAttribute('data-project-id') ? ['data-project-id', sourceEl.getAttribute('data-project-id')]
@@ -415,26 +578,26 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 单克隆：只用于吸入(shrink)——缩小淡出进文件夹/面包屑，没有「露出真卡」这一步，
     // 不存在克隆→真卡外观不一致的问题。归位/落到新位置一律走下面的 flyMorph（双克隆交叉淡变）。
     const flyTo = (box: Box, shrink: boolean) => {
-      clone.style.transition = `transform 0.55s ${_SETTLE}, opacity 0.4s ease`
+      holder.style.transition = `transform 0.55s ${_SETTLE}, opacity 0.4s ease`
       if (shrink) {
         const cx = box.left + box.width / 2, cy = box.top + box.height / 2
-        clone.style.opacity = '0'
-        clone.style.transform =
+        holder.style.opacity = '0'
+        holder.style.transform =
           `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(0.32)`
       } else {
-        clone.style.transform = SLOT(box)
+        holder.style.transform = SLOT(box)
       }
       let unregister = () => {}
       const finish = () => {
         if (done) return
         done = true
         unregister()
-        clone.removeEventListener('transitionend', onEnd)
-        clone.remove()
+        holder.removeEventListener('transitionend', onEnd)
+        holder.remove()
       }
       unregister = _registerCleanup(sourceEl, finish)
       onEnd = finish
-      clone.addEventListener('transitionend', onEnd)
+      holder.addEventListener('transitionend', onEnd)
       setTimeout(finish, 680)
     }
 
@@ -449,23 +612,23 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 抽成纯函数：给任意一个「目标框」算出对应 transform 字符串——retarget 冻结当前位置时也复用
       // 它（用同一套函数式表示，见下），避免跟 getComputedStyle 的 matrix3d 混用导致跨表示插值。
       const tfFor = (b: { left: number; top: number; width: number; height: number }) => {
-        const sx = (b.width  / rect.width ).toFixed(4)
-        const sy = (b.height / rect.height).toFixed(4)
+        const sx = (b.width  / dropW).toFixed(4)
+        const sy = (b.height / dropH).toFixed(4)
         const cx = b.left + b.width / 2, cy = b.top + b.height / 2
         return `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0)` +
                ` perspective(760px) rotateX(0deg) rotateZ(0deg) scale(${sx}, ${sy})`
       }
       const applyTransform = () => {
         const tf = tfFor(box)
-        clone.style.transform = tf
+        holder.style.transform = tf
         clone2.style.transform = tf
       }
-      clone2.getBoundingClientRect()   // 提交初始态（与 clone 重叠、opacity 0），下面才会从此处动画
+      clone2.getBoundingClientRect()   // 提交初始态（与 holder 重叠、opacity 0），下面才会从此处动画
       const trans = `transform 0.55s ${_SETTLE}, opacity 0.42s ease`
-      clone.style.transition = trans
+      holder.style.transition = trans
       clone2.style.transition = trans
       applyTransform()
-      clone.style.opacity = '0'
+      holder.style.opacity = '0'
       clone2.style.opacity = '0.97'
 
       // 飞行途中容器发生 FLIP 重排（另一张卡被抓起/放下）→ 落点跟着挪位，把目标改过去。
@@ -486,9 +649,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         box = newBox
         // 冻结当前位置：关过渡 + 同款函数式表示（tfFor，不用 getComputedStyle 的 matrix3d，避免跨表示插值）。
         const frozen = tfFor({ left: r.left, top: r.top, width: r.width, height: r.height })
-        clone.style.transition = 'none'
+        holder.style.transition = 'none'
         clone2.style.transition = 'none'
-        clone.style.transform = frozen
+        holder.style.transform = frozen
         clone2.style.transform = frozen
         // 关键：下一帧再恢复过渡 + 指向新目标，跟 _invertPlay 的 FLIP 完全同一套跨帧触发方式。
         // 之前用同步 `void offsetWidth` 提交冻结态、同一 tick 里就恢复过渡+改目标——某些情况下浏览器
@@ -496,7 +659,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // rAF 跨过一个真实帧边界，保证冻结态先画出来、成为过渡起点，随后到目标是一段完整缓出。
         requestAnimationFrame(() => {
           if (done) return
-          clone.style.transition = trans
+          holder.style.transition = trans
           clone2.style.transition = trans
           applyTransform()
           armFinishTimer()
@@ -531,7 +694,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         clone2.style.height = box.height + 'px'
         clone2.style.transform = `translate(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px)`
         requestAnimationFrame(() => {
-          clone.remove(); clone2.remove()
+          holder.remove(); clone2.remove()
           _revealWithoutStaleHover(revealEl, pointer)
         })
       }
@@ -545,7 +708,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         if (finishTimer) clearTimeout(finishTimer)
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
-        clone.remove(); clone2.remove()
+        holder.remove(); clone2.remove()
         _revealWithoutStaleHover(revealEl, pointer)
       }
       unregister = _registerCleanup(revealEl, forceCleanup)
@@ -595,7 +758,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 时会整个盖住窗口，动画结束克隆体一 remove 又突然消失——观感是「窗口被糊一下又露出来」。
     // 松手这一刻起改用低 z：默认只需盖过页面里同层的兄弟卡片（自然堆叠序≈0）；卡片若活在
     // 浮窗/弹层里（如项目编辑卡）则动态探测那个浮窗自己的 z，见 _landingZIndex 注释。
-    clone.style.zIndex = String(_landingZIndex(sourceEl))
+    // opts.dragZIndex 传了就直接用它，不走这套按祖先动态探测的启发式——画布贴纸自己紧挨着
+    // 摆着一份内联 z-index（item.z，随建卡数量单调递增，见 stickerStyle），探测很容易先摸到
+    // 它而不是 .mind-canvas 本身，item.z 一旦长到超过侧栏的 20 又会飞回「压住导航」的老问题；
+    // 直接钉死一个数，抓起和落地这两段飞行也不会因为走了两套不同算法而在交接时跳一下层级。
+    holder.style.zIndex = String(opts.dragZIndex ?? _landingZIndex(sourceEl))
     // 业务 drop + Vue 重渲染在微任务里已落定；本 rAF 在 paint 前做落点 FLIP，避免闪一下
     requestAnimationFrame(() => {
       // 1) 释放点压着文件夹/面包屑 → 吸入（不依赖异步重渲染）
@@ -612,18 +779,40 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // clone2 不再套 .phys-drag-clone/光晕——直接是目标元素此刻真实 DOM 的克隆，从交叉淡变
       // 一开始就长得跟真卡一样（背景/描边/阴影/文件夹颜色渲染全部原样带过来，不用手动猜数值）。
       // flyMorph 结尾把 revealEl 揭示出来时，clone2 早已跟它像素级一致，不会再有「跳一下」的硬切换。
+      // 跟抓起时的 clone 同一个理由，clone2 也要拆成 holder2（定位/变换，zoom 恒 1）+ c（内容，
+      // 退回原始尺寸 + zoom 补视觉缩放）两层——直接把 zoom 叠在会被 transform:scale(sx,sy) 做
+      // 尺寸变形动画的同一个元素上，会重演"缩小画布克隆整体偏左上、放大偏右下"那个坑（这次是
+      // 落地那 0.55s 飞行动画期间），返回的 holder2 就是 flyMorph 接下来会拿去做 transform/
+      // opacity/transition 那个 clone2，内部结构对调用方不可见。
+      // holder2 用 dropW/dropH（松手那一刻的真实视觉尺寸）不用 rect.width/height（抓起那一刻
+      // 的旧尺寸）——contentScale 是活的时两者可能已经不相等（拖拽途中画布被缩放过），tfFor
+      // 算缩放比例时也是拿 dropW/dropH 当"1.0 倍"基准，两边必须用同一份，否则落地飞行的尺寸
+      // 会算错。c 的 zoom 同理换成 lastCS（此刻的实时缩放，不是抓起时的 CS0）——cloneW/cloneH
+      // 这份"原始尺寸"本身不随缩放变化，仍然沿用抓起时算好的那份。
       const _cloneLanding = (el: HTMLElement) => {
+        const holder2 = document.createElement('div')
+        Object.assign(holder2.style, {
+          position: 'fixed', left: '0', top: '0',
+          width: dropW + 'px', height: dropH + 'px',
+          margin: '0', boxSizing: 'border-box', zIndex: holder.style.zIndex, pointerEvents: 'none',
+          willChange: 'transform', transition: 'none', opacity: '0',
+          transform: holder.style.transform,   // 起点与旧克隆重叠
+        })
         const c = el.cloneNode(true) as HTMLElement
         if (opts.cloneClass) c.classList.add(opts.cloneClass)
+        // opacity 也要清：调用这里的几处分支都会先把 el/sourceEl 自己的 opacity 摁成 0 压住
+        // 陈旧 hover（见 animateOpen/末尾归位分支），cloneNode(true) 原样带走了这份内联
+        // opacity:0——c 是给 holder2 当内容用的，若不清掉，holder2 自己的 opacity 动画
+        // （0→0.97）跟 c 身上焊死的 0 相乘，怎么淡入都还是 0，看着就是"松手那一下克隆整个
+        // 消失了"。跟 left/top 一样，clone2 的可见性该完全交给外层 holder2 决定。
         Object.assign(c.style, {
-          position: 'fixed', left: '0', top: '0',
-          width: clone.style.width, height: clone.style.height,
-          margin: '0', boxSizing: 'border-box', zIndex: clone.style.zIndex, pointerEvents: 'none',
-          willChange: 'transform', transition: 'none', opacity: '0',
-          transform: clone.style.transform,   // 起点与旧克隆重叠
+          left: '', top: '', right: '', bottom: '', opacity: '',
+          width: cloneW + 'px', height: cloneH + 'px', margin: '0', boxSizing: 'border-box',
         })
-        document.body.appendChild(c)
-        return c
+        if (lastCS !== 1) c.style.setProperty('zoom', String(lastCS))
+        holder2.appendChild(c)
+        document.body.appendChild(holder2)
+        return holder2
       }
 
       // 2) 卡片落到新位置（换列/重排）。Vue 的 keyed v-for 跨列时会复用 sourceEl 本身，
@@ -908,10 +1097,13 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
       setTimeout(removeShadow, 220)
     }
 
-    // pointer 模式：落点的业务移动（多选批量移动）由调用方在此执行（原生模式靠各列 @drop 落定）
-    if (opts.onDrop) { try { opts.onDrop({ x: target.x, y: target.y }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
+    // 落点用克隆体此刻真实的视觉中心，不用 target/pos——理由同单选版 end()，pos.y 也要修正
+    // GRABY 偏移才是视觉中心，见那边的注释。
+    const cloneCenter = { x: pos.x, y: pos.y - GRABY + half.y }
+    // 多选拖拽（看板/文件库）目前没有消费方需要 turn，固定给 0，不为它另起一套 velHistory。
+    if (opts.onDrop) { try { opts.onDrop(cloneCenter, { x: vel.x, y: vel.y, turn: 0 }, { w: rect.width, h: rect.height }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
 
-    const dropX = target.x, dropY = target.y
+    const dropX = cloneCenter.x, dropY = cloneCenter.y
     const SLOT = (box: Box) => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) perspective(760px) rotateX(0deg) rotateZ(0deg) scale(1)`
 
     let done = false; let onEnd: (e: TransitionEvent) => void = () => {}
@@ -971,4 +1163,51 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     sourceEl.addEventListener('dragend', end)
   }
   _active!.raf = requestAnimationFrame(frame)
+}
+
+/**
+ * pointer 模式下「按住不放越过阈值才算真的开拖，否则算一次点击」的判定，抽成通用函数
+ * 前——ProjectCard.vue（看板卡）、useFileDragDrop.ts（文件/文件夹卡，单选/多选两种）、
+ * useCardDrag.ts（画布贴纸）三处各自手写过一份几乎一样的「攒位移 → 判阈值 → 起
+ * startPhysicsDrag/startMultiPhysicsDrag，否则当点击」，连 window 监听器的挂卸都是抄的。
+ * 这里只收敛这段公共的「阈值判定 + 生命周期」外壳，真正“越过阈值后要怎么起拖”（选单选
+ * 还是多选、传哪些 opts）仍然是各调用方自己的业务，通过 onDragStart 回调交还给它们，
+ * 不强行假设只有一种起拖方式。
+ */
+export interface ThresholdDragOpts {
+  threshold?: number   // 判定阈值(px)，默认 5——三处原来的写法都是这个数
+  // 判断这次按下是否应该整体忽略（不追踪、不拦截），如内部按钮/输入框/重命名框；
+  // 不传则不排除任何目标。
+  exclude?: (target: EventTarget | null) => boolean
+  // 默认用 event.currentTarget 作为被拖动的元素；拖拽发起点跟"要飞起来的那张卡"不是
+  // 同一个元素时（如画布项目卡的小抓手）用这个另外指定。
+  getCard?: (event: PointerEvent) => HTMLElement | null
+  onBeforeDragStart?: () => void   // 越过阈值、真正起拖前的收尾（如 cancelBoxDrag()）
+  onDragStart: (event: PointerEvent, card: HTMLElement) => void   // 越过阈值那一刻调用，自己决定单选/多选、传什么 opts
+  onClick?: () => void   // 松手时全程没越过阈值 → 当作一次点击
+}
+export function startThresholdDrag(event: PointerEvent, opts: ThresholdDragOpts) {
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  if (opts.exclude?.(event.target)) return
+  const card = opts.getCard ? opts.getCard(event) : (event.currentTarget as HTMLElement)
+  if (!card) return
+  const sx = event.clientX, sy = event.clientY
+  const threshold = opts.threshold ?? 5
+  let started = false
+  const onMove = (ev: PointerEvent) => {
+    if (started || Math.hypot(ev.clientX - sx, ev.clientY - sy) < threshold) return
+    started = true
+    teardown()
+    opts.onBeforeDragStart?.()
+    opts.onDragStart(ev, card)
+  }
+  const onUp = () => { teardown(); if (!started) opts.onClick?.() }
+  const teardown = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onUp)
+  }
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onUp)
 }

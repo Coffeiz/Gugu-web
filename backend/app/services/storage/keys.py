@@ -17,13 +17,21 @@ def _safe_name(name: str) -> str:
 def _build_key(uid: int, space: str, display_name: str, ext: str,
                project_name: str = "", project_id: int = 0,
                project_year: str = "", project_month: str = "",
-               folder_name: str = "", mind_map_title: str = "", mind_map_id: int = 0) -> str:
+               folder_name: str = "", folder_path: str = "",
+               mind_map_title: str = "", mind_map_id: int = 0) -> str:
+    """构造存储 key。folder_path 是根到叶的目录链，folder_name 仅为旧调用兼容。"""
     fname = f"{_safe_name(display_name)}.{ext.lower()}"
+    # 旧 folder_name 的斜杠一直按非法文件名替换，不能因为新增层级能力悄悄变成真实目录；
+    # 只有显式传入的 folder_path 才按 / 拆为父子目录。
+    safe_folder_path = (
+        "/".join(_safe_name(part) for part in folder_path.split("/") if part)
+        if folder_path else _safe_name(folder_name)
+    )
     if space == "project":
         proj_dir = f"{_safe_name(project_name)} #{project_id}"
         date_path = f"{project_year}/{project_month}/" if project_year and project_month else ""
-        if folder_name:
-            return f"{uid}/项目文件/{date_path}{proj_dir}/{_safe_name(folder_name)}/{fname}"
+        if safe_folder_path:
+            return f"{uid}/项目文件/{date_path}{proj_dir}/{safe_folder_path}/{fname}"
         return f"{uid}/项目文件/{date_path}{proj_dir}/{fname}"
     if space == "mind":
         map_dir = f"{_safe_name(mind_map_title)} #{mind_map_id}"
@@ -31,8 +39,8 @@ def _build_key(uid: int, space: str, display_name: str, ext: str,
     if space == "asset":
         return f"{uid}/素材板/{fname}"
     # personal — 有文件夹时放进子目录
-    if folder_name:
-        return f"{uid}/个人文件/{_safe_name(folder_name)}/{fname}"
+    if safe_folder_path:
+        return f"{uid}/个人文件/{safe_folder_path}/{fname}"
     return f"{uid}/个人文件/{fname}"
 
 

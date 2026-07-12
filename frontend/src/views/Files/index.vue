@@ -282,45 +282,43 @@
               </div>
             </div>
 
-            <!-- 文件卡片 -->
-            <div
+            <!-- 文件卡片：共用视觉抽到 components/common/FileCard.vue，这里只管文件库自己的
+                 选择模式/拖拽/右键菜单等交互态（走 props 传给它统一画选中态），缩略图/重命名
+                 输入框/悬浮操作这些本页专属内容走具名插槽。 -->
+            <FileCard
               v-for="f in sortedContents.files"
               :key="f.id"
-              class="fc-card hover-card-fx"
-              :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id), dragging: draggingFileIds.has(f.id), cut: cbStore.type === 'cut' && cbStore.fileIds.includes(f.id), 'fc-has-thumb': isImageExt(f.ext) }"
+              class="hover-card-fx"
+              :ext="f.ext" :display-name="f.displayName" :has-thumb="isImageExt(f.ext)"
+              :selected="selectedIds.has(f.id)" :pre-selected="previewFileIds.has(f.id)"
+              :dragging="draggingFileIds.has(f.id)" :cut="cbStore.type === 'cut' && cbStore.fileIds.includes(f.id)"
               :data-file-id="f.id"
-              :style="{ '--fc-color': fileIconColor(f.ext) }"
               @contextmenu.prevent.stop="openCtx('file', f, $event)"
               @click.stop="handleFileClick(f, $event)"
               @pointerdown="onFilePointerDown(f, $event)"
             >
-              <span class="fc-ext-badge">{{ f.ext }}</span>
-              <div v-if="isImageExt(f.ext)" class="fc-thumb-area">
+              <template #thumb>
                 <!-- 模糊占位层：20×20 tiny，懒加载至视口附近再触发 -->
-                <img class="fc-thumb fc-thumb-tiny" v-lazy-src="{ id: f.id, size: 'tiny' }"
+                <img class="fc-thumb-tiny" v-lazy-src="{ id: f.id, size: 'tiny' }"
                   decoding="async" draggable="false" alt="" />
                 <!-- 全尺寸层：首次加载淡入，已加载过直接显示 -->
-                <img class="fc-thumb fc-thumb-full" v-lazy-src="{ id: f.id, size: 'card' }"
+                <img class="fc-thumb-full" v-lazy-src="{ id: f.id, size: 'card' }"
                   :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }"
                   decoding="async" draggable="false" alt=""
                   @load="cardBlobReadyIds.add(f.id)"
                   @error="($event.target as HTMLElement).style.display='none'" />
                 <div class="fc-thumb-fade"></div>
-              </div>
-              <div v-else class="fc-icon-area">
-                <component :is="fileListIcon(f.ext)" class="fc-big-icon" :size="86" weight="bold" />
-              </div>
-              <div class="fc-label">
-                <div class="fc-name" :title="f.displayName">
-                  <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
-                    <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                    <input class="rename-input-inline" v-model="renameText"
-                      v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
-                  </span>
-                  <template v-else>{{ f.displayName }}</template>
-                </div>
-                <div class="fc-meta">{{ f.size }} · {{ f.createdAt }}</div>
-              </div>
+              </template>
+              <template #name>
+                <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
+                  <span class="rename-ghost">{{ renameText || ' ' }}</span>
+                  <input class="rename-input-inline" v-model="renameText"
+                    v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
+                </span>
+                <template v-else>{{ f.displayName }}</template>
+              </template>
+              <template #meta>{{ f.size }} · {{ f.createdAt }}</template>
+
               <Transition name="sel-cb">
                 <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedIds.has(f.id) }">
                   <svg v-if="selectedIds.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -341,7 +339,7 @@
                   <PhTrash :size="11" weight="bold" />
                 </button>
               </div>
-            </div>
+            </FileCard>
 
             <!-- 幽灵上传卡：单文件 / 文件夹（拖入文件夹时汇总一张，不给里面每个文件各出一张） -->
             <div v-for="g in uploadingItems" :key="g.uid"
@@ -676,6 +674,7 @@
 import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { filesApi, foldersApi, trashApi, uploadWithProgress } from '@/services/api'
 import ContextMenu   from '@/components/ContextMenu.vue'
+import FileCard       from '@/components/common/FileCard.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'
@@ -2209,41 +2208,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 .folder-card:hover .fd-hover-actions { opacity: 1; }
 
-/* ── 文件卡片 ── */
-/* 抬起(:hover 的 transform)/按下(:active)动效来自全局 .hover-card-fx（模板里已加）；
-   box-shadow 在这里自己覆盖一份——要保留文件卡自带的内高光(inset)层，跟 .hover-card-fx
-   单纯的外阴影不一样，不能直接吃它那份，数值仍照抄项目卡的抬起阴影，保证手感一致。 */
-.fc-card {
-  background: rgba(255,255,255,0.72);
-  border: 1px solid rgba(255,255,255,0.9);
-  border-radius: 14px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
-  min-height: 122px;
-}
-.fc-card:hover {
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 18px rgba(80,90,110,0.13);
-  background: rgba(255,255,255,0.86);
-}
-.fc-card.selected {
-  border-color: rgba(123,127,178,0.55);
-  background: rgba(255,255,255,0.92);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 0 0 2px rgba(123,127,178,0.28);
-}
-/* 选中覆盖层：::before 覆盖整张卡（含图片卡白色标签区），::after 在缩略图上额外叠加 */
-.fc-card.selected::before {
-  content: ''; position: absolute; inset: 0; z-index: 2;
-  pointer-events: none; border-radius: inherit;
-  background: rgba(123,127,178,0.14);
-}
-.fc-card.selected .fc-thumb-area::after,
-.fc-card.pre-selected .fc-thumb-area::after {
-  content: ''; position: absolute; inset: 0; z-index: 2;
-  pointer-events: none;
-}
-.fc-card.selected .fc-thumb-area::after    { background: rgba(123,127,178,0.28); }
-.fc-card.pre-selected .fc-thumb-area::after { background: rgba(123,127,178,0.16); }
-
-/* ext 角标 */
+/* ── 文件卡片 ──
+   底色/边框/hover/选中态/缩略图区/大图标/标题元信息这些基础视觉已抽到
+   components/common/FileCard.vue（含 :hover 的 box-shadow/background，跟全局
+   .hover-card-fx 的位移动效分工一致），这里只留本页专属的选择框/悬浮操作等交互态样式。 */
 .sel-checkbox {
   position: absolute; top: 8px; right: 8px; z-index: 3;
   width: 18px; height: 18px; border-radius: 5px;
@@ -2299,25 +2267,9 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   flex-shrink: 0;
 }
 
-/* 图片缩略图 */
-.fc-thumb-area {
-  position: relative;
-  height: 90px;
-  flex-shrink: 0;
-  overflow: hidden;
-  border-radius: 14px 14px 0 0;
-  background: rgba(0,0,0,0.05);
-  transform: translateZ(0);   /* 去掉常驻 will-change：大量卡片常驻 will-change 会让合成器层预算耗尽、滚动时偶发闪屏（ProjectModal 同款已改） */
-  mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
-}
-.fc-thumb {
-  position: absolute;
-  inset: 0;
-  width: 100%; height: 100%;
-  object-fit: cover; object-position: center top;
-  display: block;
-}
+/* .fc-thumb-area 基础布局（含选中态叠加）+ img 的 position/object-fit 已挪进
+   FileCard.vue（`.fc-thumb-area :deep(img)`）；这里只留缩略图两层（模糊占位 tiny + 淡入
+   full）本页专属的图层差异，它们是 #thumb 插槽里的内容。 */
 /* tiny：模糊放大填满，作为永久底层 */
 .fc-thumb-tiny {
   filter: blur(10px);
@@ -2331,15 +2283,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   transition: opacity 0.4s ease;
 }
 .fc-thumb-full.fc-loaded { opacity: 1; }
-.fc-has-thumb .fc-label {
-  position: relative; z-index: 1;
-}
-.fc-has-thumb .fc-ext-badge {
-  background: rgba(0,0,0,0.32);
-  color: rgba(255,255,255,0.92);
-}
 
-/* 底部标签 */
+/* 底部标签（幽灵上传卡专属——真实文件卡的标签视觉已挪进 FileCard.vue） */
 .fc-label { padding: 0 13px 13px; }
 .fc-name {
   font-size: 11.5px; font-weight: 600; color: var(--text-primary);
@@ -2356,8 +2301,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 
 /* .rename-sizer / .rename-ghost / .rename-input-inline 已提到 global.css（全站重命名输入框共用） */
 
-/* ── 拖动状态 ── */
-.fc-card.dragging, .list-row.dragging { opacity: 0.35; cursor: grabbing; }
+/* ── 拖动状态（.fc-card.dragging 已挪进 FileCard.vue，这里只留列表行） ── */
+.list-row.dragging { opacity: 0.35; cursor: grabbing; }
 .folder-card.drag-over {
   background: color-mix(in srgb, var(--fd-color, var(--color-primary)) 12%, rgba(255,255,255,0.9));
   border-color: color-mix(in srgb, var(--fd-color, var(--color-primary)) 55%, rgba(255,255,255,0.6));
@@ -2520,8 +2465,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .sel-download-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-/* ── 右键菜单 ── */
-.fc-card.cut, .list-row.cut { opacity: 0.45; }
+/* ── 右键菜单（.fc-card.cut 已挪进 FileCard.vue，这里只留列表行） ── */
+.list-row.cut { opacity: 0.45; }
 .sel-delete-btn {
   display: flex; align-items: center; gap: 5px;
   padding: 6px 12px; border-radius: 8px; border: none;

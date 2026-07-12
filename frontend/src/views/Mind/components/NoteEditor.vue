@@ -63,6 +63,9 @@
           <PhTextAa :size="13" weight="bold" />
         </button>
       </div>
+      <button class="ne-tool" @mousedown.prevent="openReferencePicker" title="引用项目、文件或活动">
+        <PhAt :size="13" weight="bold" />
+      </button>
       <!-- 「插入」抽屉：代码块/引用块/分割线，2026-07-11 加。有序列表挪到主工具栏跟
            无序列表放一起了，不算在这里头。都是一次性动作，点了直接生效、抽屉自己收起。
            代码块不给手动选语言——交给 highlightAuto 自动识别。 -->
@@ -116,7 +119,7 @@
 import { computed, nextTick, onBeforeUnmount, reactive, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import {
-  PhCheckSquare, PhCode, PhCodeBlock, PhLink, PhListBullets, PhListNumbers,
+  PhAt, PhCheckSquare, PhCode, PhCodeBlock, PhLink, PhListBullets, PhListNumbers,
   PhMinus, PhPlus, PhQuotes, PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
   PhStack, PhFile, PhCalendarBlank, PhChatCircle,
 } from '@phosphor-icons/vue'
@@ -215,6 +218,16 @@ function choose(it: MindRefSuggestItem) {
     .insertContent(' ')
     .run()
   closePicker()
+}
+
+/** 工具栏入口与键入 @ 共用同一补全器；光标紧贴文字时先补空格，避免触发器把它当邮箱/单词。 */
+function openReferencePicker() {
+  const ed = editor.value
+  if (!ed) return
+  const { from } = ed.state.selection
+  const before = from > 1 ? ed.state.doc.textBetween(from - 1, from, '\n', '￼') : ''
+  ed.chain().focus().insertContent(before && !/\s/.test(before) ? ' @' : '@').run()
+  nextTick(() => { if (editor.value) syncPicker(editor.value) })
 }
 
 // 工具栏「on」态要靠这个判断编辑器是不是真的有焦点（见下方 ne-tool 的用法），不直接读
@@ -441,7 +454,9 @@ onBeforeUnmount(() => {
 
 /* `@` 补全下拉 */
 .ne-picker {
-  position: fixed; z-index: 3000; min-width: 220px; max-width: 320px;
+  /* 固定宽度而不是 min/max-width：内容自适应宽度会让"搜索中…"这行短文字跟结果列表撑出
+     的宽度不一样，切换态时弹窗宽度跟着跳一下。固定死就没有这个问题。 */
+  position: fixed; z-index: 3000; width: 280px;
   padding: 4px; border-radius: 10px;
   background: rgba(255,255,255,0.96);
   border: 1px solid rgba(255,255,255,0.9);
@@ -463,8 +478,12 @@ onBeforeUnmount(() => {
 }
 .ne-pick-item:hover, .ne-pick-item.on { background: rgba(123,127,178,0.12); }
 .ne-pick-icon { flex-shrink: 0; color: var(--color-primary); }
-.ne-pick-label { font-size: 12.5px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ne-pick-sub { margin-left: auto; font-size: 10.5px; color: var(--text-secondary); opacity: 0.7; white-space: nowrap; }
+/* label 先按最多 56% 宽度截断（flex-shrink:0 不给挤没），剩下空间才轮到 sub——sub 没设
+   min-width:0 的话，flex 子项默认 min-width:auto（不小于内容本身宽度），overflow/ellipsis
+   根本没机会生效，长小字就会把弹窗顶出去。跟顶栏 GlobalSearch.vue 的 .gs-item-title/
+   .gs-item-sub 是同一个道理。 */
+.ne-pick-label { flex-shrink: 0; max-width: 56%; font-size: 12.5px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ne-pick-sub { min-width: 0; margin-left: auto; font-size: 10.5px; color: var(--text-secondary); opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 「样式」「插入」抽屉：不是弹层——items 在 DOM 里排在 Aa/+ 按钮前面，收起时 0 宽不占
    位置，按钮就停在原地；展开时 items 从 0 宽长开、天然把按钮"挤"到右边，按钮自己就是

@@ -220,9 +220,15 @@
   padding: 0 6px; margin: 0 1px; border-radius: 5px;
   background: rgba(123,127,178,0.14);
   color: #5b5f8c; font-size: 12.5px; font-weight: 500;
-  white-space: nowrap; cursor: pointer;
+  cursor: pointer; max-width: 100%; box-sizing: border-box;
   transition: background 0.12s;
 }
 .mind-ref:hover { background: rgba(123,127,178,0.26); }
 /* 类型图标：不用文字徽标了，跟 GlobalSearch.vue/NoteEditor.vue 下拉的图标同一套颜色语言 */
 .mind-ref-icon { flex-shrink: 0; color: var(--color-primary); }
+/* label 单独包一层：对话引用的 label 是消息片段，可能很长又没有空格（中文/连续字符）可断——
+   .mind-ref 本来是 white-space:nowrap 整体不可断，短的项目名/文件名没问题，但长片段会把
+   chip 撑得比卡片还宽、右边直接溢出。只读预览容器本身有 overflow-wrap:anywhere（治连续
+   长串），但那条规则救不到这里——nowrap 的优先级比 overflow-wrap 高，继承下来也没用，
+   得在 label 自己身上显式允许换行。 */
+.mind-ref-label { min-width: 0; overflow-wrap: anywhere; white-space: normal; }

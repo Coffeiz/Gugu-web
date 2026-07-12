@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 
 from app.core.tz import resolve_tz, today_str
 from app.models import CalendarEvent, File, Folder, Project, User
+from app.services.storage.folders import resolve_folder_path
 
 
 async def load_projects(db, user_id) -> list:
@@ -62,13 +63,24 @@ async def load_files_overview(db, user_id, recent: int = 25) -> dict:
         select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
         .order_by(File.updated_at.desc()).limit(recent)
     )).scalars().all()
-    # 文件夹 id→name，便于标注文件所属
-    fmap = {fo.id: fo.name for fo in folders}
+    # 文件夹 id→完整路径：给 Agent 看目录树时不能只给叶子名，否则二级目录无法判断归属。
+    fmap = {}
+    folder_rows = []
+    for folder in folders:
+        resolved = await resolve_folder_path(db, user_id, folder.id, folder.project_id)
+        if not resolved:
+            continue
+        _, path = resolved
+        fmap[folder.id] = path
+        folder_rows.append({
+            "id": folder.id, "name": folder.name, "path": path,
+            "project_id": folder.project_id, "parent_id": folder.parent_id,
+        })
     return {
         "total": total,
         "by_space": by_space,
         "trash": trash,
-        "folders": [{"id": fo.id, "name": fo.name, "project_id": fo.project_id} for fo in folders],
+        "folders": folder_rows,
         "files": [
             {"id": f.id, "name": f"{f.display_name}.{f.ext}", "space": f.space,
              "folder": fmap.get(f.folder_id), "project_id": f.project_id}

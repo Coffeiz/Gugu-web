@@ -2,7 +2,7 @@
      跟 Calendar/index.vue 自己那个跟随点击位置的浮层共用 EventEditFields + useEventEditForm，
      字段/提醒逻辑只有一份，这里只是换了个居中弹窗的外壳。 -->
 <template>
-  <BaseModal :show="show" width="360px" background="rgba(255,255,255,0.9)" @close="close">
+  <BaseModal :show="show" width="300px" background="rgba(255,255,255,0.9)" @close="close">
     <div class="eem-body" v-if="event">
       <div class="popup-header">
         <span class="popup-title">编辑活动</span>

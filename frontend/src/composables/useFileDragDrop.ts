@@ -18,7 +18,7 @@
  * 见 moveFolders/moveFiles 的 dropInfo 参数）。
  */
 import { ref, type Ref } from 'vue'
-import { startPhysicsDrag, startMultiPhysicsDrag } from './usePhysicsDrag'
+import { startMultiPhysicsDrag, startPhysicsDrag, startThresholdDrag } from './usePhysicsDrag'
 
 type Id = number | string
 
@@ -161,55 +161,41 @@ export function useFileDragDrop(config: FileDragDropConfig) {
 
   // pointerdown 起，越过 5px 阈值才真正开拖（否则当普通点击，交给原有 @click 处理）；内部操作
   // 按钮/重命名输入框先排除——原生 draggable 版本靠子元素 @mousedown.prevent 挡掉 dragstart，
-  // pointerdown 没有等价的天然阻挡，这里手动排除。
+  // pointerdown 没有等价的天然阻挡，这里手动排除。阈值判定本身收在 usePhysicsDrag.ts 的
+  // startThresholdDrag（跟 ProjectCard.vue 共用同一份，不再各写一遍）。
   function _startCardDrag(e: PointerEvent, ctx: CardDragCtx) {
-    if (e.pointerType === 'mouse' && e.button !== 0) return
-    if ((e.target as Element)?.closest?.('button, input, .rename-sizer')) return
-    const card = e.currentTarget as HTMLElement
-    const sx = e.clientX, sy = e.clientY
-    let started = false
-    const onMove = (ev: PointerEvent) => {
-      if (started || Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return
-      started = true
-      teardown()
-      config.cancelBoxDrag()
+    startThresholdDrag(e, {
+      exclude: t => !!(t as Element)?.closest?.('button, input, .rename-sizer'),
+      onBeforeDragStart: () => config.cancelBoxDrag(),
+      onDragStart: (ev, card) => {
+        const isMulti = ctx.isSelected && (ctx.isFolder ? ctx.selectedFolderIds.size > 0 : ctx.selectedFileIds.size > 0)
+        let folderIds: Id[], fileIds: Id[]
+        if (ctx.isFolder) {
+          folderIds = isMulti ? [...ctx.selectedFolderIds] : [ctx.itemId]
+          fileIds   = isMulti ? [...ctx.selectedFileIds] : []
+        } else {
+          fileIds   = isMulti ? [...ctx.selectedFileIds] : [ctx.itemId]
+          folderIds = isMulti ? [...ctx.selectedFolderIds] : []
+        }
 
-      const isMulti = ctx.isSelected && (ctx.isFolder ? ctx.selectedFolderIds.size > 0 : ctx.selectedFileIds.size > 0)
-      let folderIds: Id[], fileIds: Id[]
-      if (ctx.isFolder) {
-        folderIds = isMulti ? [...ctx.selectedFolderIds] : [ctx.itemId]
-        fileIds   = isMulti ? [...ctx.selectedFileIds] : []
-      } else {
-        fileIds   = isMulti ? [...ctx.selectedFileIds] : [ctx.itemId]
-        folderIds = isMulti ? [...ctx.selectedFolderIds] : []
-      }
+        draggingFolderIds.value = new Set(folderIds)
+        draggingFileIds.value   = new Set(fileIds)
+        _dragSnapshot = { fileIds: new Set(fileIds), folderIds: new Set(folderIds) }
 
-      draggingFolderIds.value = new Set(folderIds)
-      draggingFileIds.value   = new Set(fileIds)
-      _dragSnapshot = { fileIds: new Set(fileIds), folderIds: new Set(folderIds) }
-
-      const opts = { pointer: true, onDrop: dispatchDrop, onDragOver: updateDragOverHighlight, resolveAbsorbTarget, ...(ctx.extraOpts || {}) }
-      const total = folderIds.length + fileIds.length
-      if (total > 1) {
-        const extraFolderEls = folderIds.filter(id => id !== (ctx.isFolder ? ctx.itemId : undefined))
-          .map(item => document.querySelector(`[${config.folderDataAttr}="${item}"]`)).filter(Boolean) as HTMLElement[]
-        const extraFileEls = fileIds.filter(id => id !== (!ctx.isFolder ? ctx.itemId : undefined))
-          .map(id => document.querySelector(`[${config.fileDataAttr}="${id}"]`)).filter(Boolean) as HTMLElement[]
-        const extras = ctx.isFolder ? [...extraFolderEls, ...extraFileEls].slice(0, 2) : [...extraFileEls, ...extraFolderEls].slice(0, 2)
-        startMultiPhysicsDrag(ev, card, total, extras, opts)
-      } else {
-        startPhysicsDrag(ev, card, opts)
-      }
-    }
-    const onUp = () => teardown()
-    const teardown = () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
+        const opts = { pointer: true, onDrop: dispatchDrop, onDragOver: updateDragOverHighlight, resolveAbsorbTarget, ...(ctx.extraOpts || {}) }
+        const total = folderIds.length + fileIds.length
+        if (total > 1) {
+          const extraFolderEls = folderIds.filter(id => id !== (ctx.isFolder ? ctx.itemId : undefined))
+            .map(item => document.querySelector(`[${config.folderDataAttr}="${item}"]`)).filter(Boolean) as HTMLElement[]
+          const extraFileEls = fileIds.filter(id => id !== (!ctx.isFolder ? ctx.itemId : undefined))
+            .map(id => document.querySelector(`[${config.fileDataAttr}="${id}"]`)).filter(Boolean) as HTMLElement[]
+          const extras = ctx.isFolder ? [...extraFolderEls, ...extraFileEls].slice(0, 2) : [...extraFileEls, ...extraFolderEls].slice(0, 2)
+          startMultiPhysicsDrag(ev, card, total, extras, opts)
+        } else {
+          startPhysicsDrag(ev, card, opts)
+        }
+      },
+    })
   }
 
   return {

@@ -40,11 +40,12 @@
     </div>
 
     <div class="cb-head">
-      <button class="cb-collapsed" tabindex="-1" @click="expand">
+      <div class="cb-collapsed" role="button" tabindex="0" @click="expand" @keydown.enter.prevent="expand" @keydown.space.prevent="expand">
         <PhPencilSimple :size="13" weight="bold" class="cb-pencil" />
-        <span class="cb-placeholder">{{ (title.trim() || md.trim()) ? plainPreview : '记点什么…' }}</span>
+        <div v-if="title.trim() || md.trim()" class="cb-placeholder md-preview" v-html="collapsedPreview"></div>
+        <div v-else class="cb-placeholder">记点什么…</div>
         <span class="cb-kbd">随手记</span>
-      </button>
+      </div>
     </div>
   </div>
 </template>
@@ -53,7 +54,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { PhCaretDown, PhPencilSimple } from '@phosphor-icons/vue'
 import DatePicker from '@/components/common/DatePicker.vue'
-import { combineTitleBody } from '@/composables/useMindEditor'
+import { combineTitleBody, mdToPreviewHtml } from '@/composables/useMindEditor'
 import NoteEditor from './NoteEditor.vue'
 
 const emit = defineEmits<{ (e: 'created', md: string, capturedAt?: string): void }>()
@@ -76,11 +77,11 @@ const expandedHeight = ref(50)
 let resizeObserver: ResizeObserver | null = null
 
 const canSave = computed(() => title.value.trim().length > 0 || md.value.trim().length > 0)
-/** 收起时草稿没丢：单行里露一眼开头（标题优先），提醒"这里还有没记完的" */
-const plainPreview = computed(() => {
+/** 收起时只取第一条有效 Markdown：药丸仍是一行，但粗体/待办/引用等行内样式不丢。 */
+const collapsedPreview = computed(() => {
   const t = title.value.trim()
-  if (t) return t.slice(0, 40)
-  return md.value.replace(/\[\[[a-z_]+:\d+\|([^\]]*)\]\]/g, '$1').replace(/^#+\s*|-\s\[[ xX]\]\s?|-\s+/gm, '').split('\n')[0].slice(0, 40)
+  const firstLine = md.value.split('\n').find(line => line.trim())?.trim() || ''
+  return mdToPreviewHtml(t ? `# ${t}` : firstLine)
 })
 
 async function expand() {
@@ -97,13 +98,14 @@ function measureExpandedHeight() {
 }
 
 /** 点条外任意处收起。DatePicker 的日历 Teleport 到 body，得单独放行——选个日期不算
- *  "点外面"；NoteEditor 的「样式」「插入」抽屉现在原地展开、是条本身的 DOM 后代
- *  （不再 Teleport 了），点里面的按钮天然会被 barRef.contains() 认出来，不用再单独放行。 */
+ *  "点外面"；`@` 对象补全同样 Teleport 到 body，选中条目也不能让草稿条收起。NoteEditor
+ *  的「样式」「插入」抽屉则原地展开，是条本身的 DOM 后代。 */
 function onDocDown(e: MouseEvent) {
   if (!expanded.value) return
   const t = e.target as HTMLElement
   if (barRef.value?.contains(t)) return
   if (t.closest?.('.dp-popup')) return
+  if (t.closest?.('.ne-picker')) return
   collapse()
 }
 onMounted(() => {
@@ -162,8 +164,9 @@ async function save() {
               backdrop-filter var(--cb-dur) ease, -webkit-backdrop-filter var(--cb-dur) ease;
 }
 .capture-bar.expanded {
-  background: rgba(255,255,255,0.72);
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  /* 与 .note-card.editing 保持同一底色，同时保留捕捉条悬浮于时间流上方的毛玻璃层次。 */
+  background: rgba(255,255,255,0.9);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
 }
 
 /* 两个内容层都固定在条底。外框改变高度时，内部不会跟着上下位移。 */
@@ -188,6 +191,14 @@ async function save() {
   flex: 1; min-width: 0; font-size: 13px; color: var(--text-secondary); opacity: 0.75;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.cb-placeholder :deep(> *) { display: inline; margin: 0; padding: 0; }
+.cb-placeholder :deep(> * ~ *) { display: none; }
+.cb-placeholder :deep(.np-tasks li),
+.cb-placeholder :deep(.np-list li),
+.cb-placeholder :deep(.np-ordered li) { display: inline; }
+.cb-placeholder :deep(input) { display: none; }
+.cb-placeholder :deep(.mind-dot) { margin-right: 3px; }
+.cb-placeholder :deep(.np-quote) { padding-left: 6px; border-left-width: 2px; }
 .cb-kbd {
   flex-shrink: 0; font-size: 10px; color: var(--text-secondary); opacity: 0.55;
   padding: 2px 7px; border-radius: 5px; border: 1px solid rgba(0,0,0,0.08);

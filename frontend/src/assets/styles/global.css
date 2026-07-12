@@ -396,12 +396,18 @@ body {
 /* 克隆体：跟着指针弹簧跟随的卡片，抬起阴影 + 毛玻璃强化「拎起来」的感觉。
    全站唯一定义（文件库/项目编辑卡/看板项目卡的拖拽克隆共用）——别在组件里各自定义。
    background 带 !important：盖过 cloneNode 保留的源卡 scoped 白底与历史内联底色。 */
+/* box-shadow 也要 !important：便签/文件卡/项目卡各自的静止态阴影都是 scoped 样式（编译后带
+   data-v 属性选择器），特异度比这里的纯类选择器高，不加 !important 会被各自的静止阴影盖掉——
+   活动贴纸（EntitySticker.vue）走的是全局 .glass-card（同特异度、按源码顺序竞争，这里刚好
+   排在后面赢了）侥幸吃到这份"拎起来"的阴影，其它类型全部被自己的静止阴影盖掉、拖起来跟不
+   拖时几乎一样重，看着"各种卡片的拖动悬浮阴影不一样"。全站拖拽克隆的抬起阴影只应该有一份、
+   不该被谁的静止态阴影个别覆盖，这里强制赢。 */
 .phys-drag-clone {
   background: rgba(255, 255, 255, 0.42) !important;
   backdrop-filter: blur(12px) saturate(1.15);
   -webkit-backdrop-filter: blur(12px) saturate(1.15);
   border: 1px solid rgba(255, 255, 255, 0.72);
-  box-shadow: 0 22px 50px rgba(30, 35, 60, 0.30);
+  box-shadow: 0 22px 50px rgba(30, 35, 60, 0.30) !important;
   cursor: grabbing;
   opacity: 0.97;
 }
@@ -434,6 +440,16 @@ body {
 .phys-drag-clone.fc-card .fc-thumb-tiny,
 .phys-drag-clone.fc-card .fc-thumb-full.fc-loaded {
   opacity: 0.75;
+}
+/* 便签（NoteSticker.vue 的 .note-sticker）拖拽克隆不要玻璃透明+模糊：便签本来就是纸质感
+   的实体小卡片（不透明纸色 rgba(255,252,238,0.92)），跟文件卡/项目卡/活动贴纸那种半透明
+   玻璃质感刻意不同（见 NoteSticker.vue 顶部注释「跟系统对象贴纸刻意区分开」），拖起来却
+   套了一份通用的玻璃模糊，纸感质感就丢了。这里退回它自己接近不透明的纸色、不叠 blur。 */
+.phys-drag-clone.note-sticker {
+  background: rgba(255, 252, 238, 0.98) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-color: rgba(255, 255, 255, 0.85);
 }
 /* 源卡 / 落点卡：隐藏但保留布局占位，让飞动的克隆体看起来就是卡片本体 */
 .phys-drag-source { opacity: 0 !important; }

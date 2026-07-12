@@ -395,7 +395,10 @@ const liveStore     = useLiveStore()
 const uiStore       = useUiStore()
 const router        = useRouter()
 
-// 顶栏全局搜索点「对话」结果：打开聊天面板并切到该会话
+// 顶栏全局搜索点「对话」结果 / 笔记里点「@对话」引用卡片：打开聊天面板并切到该会话。
+// 不强制展开大窗——默认保持小窗，用户已经开着大窗才维持大窗；对话引用现在锚定的是
+// 具体一条消息（见 useMindRefActions.ts），靠 _flashChatMessage 在消息列表里定位闪烁，
+// 小窗一样看得见，不需要靠「大窗侧边栏 .active 高亮」这条路。
 watch(() => uiStore.pendingChatSession, async (id) => {
   if (!id) return
   open.value = true

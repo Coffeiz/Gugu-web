@@ -51,7 +51,7 @@ def _files_block(fo: dict | None, proj_names: dict | None = None) -> str:
     folders = fo.get("folders") or []
     if folders:
         lines.append("文件夹：" + "、".join(
-            f"{x['name']}" + (f"({_proj(x['project_id'])})" if x.get("project_id") else "")
+            f"{x.get('path', x['name'])}" + (f"({_proj(x['project_id'])})" if x.get("project_id") else "")
             for x in folders
         ))
     files = fo.get("files") or []

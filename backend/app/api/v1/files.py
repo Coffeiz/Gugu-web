@@ -18,6 +18,7 @@ from app.core.ownership import get_owned
 from app.core.config import get_settings
 from app.core import events
 from app.services.storage import get_storage
+from app.services.storage.folders import resolve_folder_path
 from app.services.storage.keys import _build_key, _resolve_conflict
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -384,7 +385,7 @@ async def upload_file(
     project_color = None
     project_year = ""
     project_month = ""
-    folder_name = ""
+    folder_name = folder_path = ""
     if space == "project" and project_id:
         p = await get_owned(db, Project, project_id, current_user.id)
         if not p:
@@ -397,9 +398,10 @@ async def upload_file(
         raise HTTPException(400, "project 空间需要提供 project_id")
 
     if folder_id is not None:
-        fo = await get_owned(db, Folder, folder_id, current_user.id)
-        if not fo:
-            raise HTTPException(400, "文件夹不存在")
+        resolved = await resolve_folder_path(db, current_user.id, folder_id, project_id)
+        if not resolved:
+            raise HTTPException(400, "文件夹不存在，或不属于指定的项目/个人空间")
+        fo, folder_path = resolved
         folder_name = fo.name
 
     data = await file.read()
@@ -462,7 +464,7 @@ async def upload_file(
         project_id=project_id or 0,
         project_year=project_year,
         project_month=project_month,
-        folder_name=folder_name,
+        folder_path=folder_path,
     )
     final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
 
@@ -539,7 +541,7 @@ async def presign_upload(
     project_color = None
     project_year = ""
     project_month = ""
-    folder_name = ""
+    folder_name = folder_path = ""
 
     if body.space == "project" and body.project_id:
         p = await get_owned(db, Project, body.project_id, current_user.id)
@@ -553,9 +555,10 @@ async def presign_upload(
         raise HTTPException(400, "project 空间需要提供 project_id")
 
     if body.folder_id is not None:
-        fo = await get_owned(db, Folder, body.folder_id, current_user.id)
-        if not fo:
-            raise HTTPException(400, "文件夹不存在")
+        resolved = await resolve_folder_path(db, current_user.id, body.folder_id, body.project_id)
+        if not resolved:
+            raise HTTPException(400, "文件夹不存在，或不属于指定的项目/个人空间")
+        fo, folder_path = resolved
         folder_name = fo.name
 
     storage = get_storage()
@@ -585,7 +588,7 @@ async def presign_upload(
             project_id=body.project_id or 0,
             project_year=project_year,
             project_month=project_month,
-            folder_name=folder_name,
+            folder_path=folder_path,
         )
         final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
 
@@ -652,7 +655,7 @@ async def confirm_upload(
 
     project_name = ""
     project_color = None
-    folder_name = ""
+    folder_name = folder_path = ""
 
     if body.space == "project" and body.project_id:
         p = await get_owned(db, Project, body.project_id, current_user.id)
@@ -731,7 +734,7 @@ async def update_file(
     project_color = None
     project_year = ""
     project_month = ""
-    folder_name = ""
+    folder_name = folder_path = ""
     if new_space == "project" and new_pid:
         p = await get_owned(db, Project, new_pid, current_user.id)
         if not p:
@@ -741,9 +744,10 @@ async def update_file(
         date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
         project_year, project_month = date_str[:4], date_str[5:7]
     if new_fid:
-        fo = await get_owned(db, Folder, new_fid, current_user.id)
-        if not fo:
-            raise HTTPException(400, "目标文件夹不存在")
+        resolved = await resolve_folder_path(db, current_user.id, new_fid, new_pid)
+        if not resolved:
+            raise HTTPException(400, "目标文件夹不存在，或不属于目标项目/个人空间")
+        fo, folder_path = resolved
         folder_name = fo.name
 
     new_key = _build_key(
@@ -755,7 +759,7 @@ async def update_file(
         project_id=new_pid or 0,
         project_year=project_year,
         project_month=project_month,
-        folder_name=folder_name,
+        folder_path=folder_path,
     )
 
     if new_key != f.storage_key:
@@ -839,17 +843,18 @@ async def copy_file(
         date_str      = p.start_date or p.created_at.strftime("%Y-%m-%d")
         project_year, project_month = date_str[:4], date_str[5:7]
 
-    folder_name = ""
+    folder_name = folder_path = ""
     if new_folder_id:
-        fo = await get_owned(db, Folder, new_folder_id, current_user.id)
-        if not fo:
-            raise HTTPException(400, "目标文件夹不存在")
+        resolved = await resolve_folder_path(db, current_user.id, new_folder_id, new_project_id)
+        if not resolved:
+            raise HTTPException(400, "目标文件夹不存在，或不属于目标项目/个人空间")
+        fo, folder_path = resolved
         folder_name = fo.name
 
     base_key = _build_key(
         uid=current_user.id, space=new_space, display_name=f.display_name,
         ext=f.ext, project_name=project_name, project_id=new_project_id or 0,
-        project_year=project_year, project_month=project_month, folder_name=folder_name,
+        project_year=project_year, project_month=project_month, folder_path=folder_path,
     )
     storage = get_storage()
     new_key, new_display = await _resolve_conflict(storage, base_key, f.display_name, f.ext)

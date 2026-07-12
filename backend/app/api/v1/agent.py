@@ -265,6 +265,26 @@ async def get_session_messages(
     }
 
 
+@router.get("/messages/{message_id}")
+async def get_message_location(
+    message_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """按消息 id 反查它所在的会话——笔记里的「@对话」引用锚定的是具体一条消息（不是整个
+    会话），点开时得先知道这条消息属于哪个会话才能 loadSession + 定位滚动。
+    ConversationMessage 本身没有 user_id，要通过 session 判归属。"""
+    row = (await db.execute(
+        select(ConversationMessage, ConversationSession.user_id)
+        .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
+        .where(ConversationMessage.id == message_id)
+    )).first()
+    if not row or row[1] != current_user.id:
+        raise HTTPException(404, "消息不存在")
+    m = row[0]
+    return {"id": m.id, "sessionId": m.session_id}
+
+
 @router.delete("/attachments", status_code=200)
 async def clear_attachments(current_user: User = Depends(get_current_user)):
     """清除当前用户所有未过期的聊天暂存附件（字节 + Redis 元数据）。"""

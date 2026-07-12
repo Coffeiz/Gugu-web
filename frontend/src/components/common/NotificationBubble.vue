@@ -51,7 +51,7 @@ const SLOW_MS  = 400         // [[slow]]…[[/slow]] 段内逐字慢速冒出的
 // 新手引导气泡（item.gugu）打完字后自动消失，其余通知气泡仍手动关（见下方大注释——那次撤回
 // 自动消失是针对「普通通知」总被没看完就顶掉的问题；引导气泡文案短、节奏快，走完一套引导流程
 // 后旧提示继续占屏反而挡地方，单独给它恢复自动消失，不影响普通通知）。
-const GUGU_AUTO_DISMISS_MS = 8000
+const GUGU_AUTO_DISMISS_MS = 5000
 const _dismissTimers = new Map<number, ReturnType<typeof setTimeout>>()   // item.id → 自动关闭计时器
 
 // 气泡 = 纯「实时到达」的瞬态弹层，**只监听 uiStore.liveNotification**（SSE 实时置位）——

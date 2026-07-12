@@ -90,10 +90,17 @@ const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不
   background: rgb(238,240,246) !important;
 }
 
-/* 椭圆胶囊：颜色/透明度/尺寸对齐日历页的月/周切换（.view-toggle），只把圆角换成全圆 */
+/* 椭圆胶囊：尺寸对齐日历页的月/周切换（.view-toggle），只把圆角换成全圆；底色改毛玻璃
+   （跟画布自己那套 CanvasToolbar/CanvasSidebar 的 .glass-card 语言统一），浮在内容上方的
+   观感靠这份 blur + 阴影，不用额外挪动布局位置。 */
 .mind-tabs {
   display: inline-flex; gap: 2px; padding: 2px;
-  border-radius: 999px; background: rgba(123,127,178,0.1);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
 }
 .mind-tab {
   display: inline-flex; align-items: center; gap: 6px;

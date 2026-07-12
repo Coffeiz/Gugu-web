@@ -120,6 +120,12 @@
         <polyline points="9 18 15 12 9 6"/>
       </svg>
     </button>
+
+    <!-- 画布引用贴纸（ProjectRefCard.vue）的连接/移除按钮走这个插槽，不是外面另包一层——
+         必须是 .proj-card 的子节点才会跟着 startPhysicsDrag 的克隆一起飞，摆在外面拖动时
+         只有卡片本体飞走、按钮原地不动（见 usePhysicsDrag.ts 的 cloneNode(true) 只克隆
+         sourceEl 自己的子树）。Projects 看板页不传这个插槽，不影响原有外观。 -->
+    <slot></slot>
   </div>
 
   <!-- 当前阶段待办弹层（点击阶段名弹出） -->
@@ -168,14 +174,24 @@ import { computed, ref, nextTick, onUnmounted, type PropType } from 'vue'
 import type { Project, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
+import { startPhysicsDrag, startThresholdDrag, type PhysicsDragOpts } from '@/composables/usePhysicsDrag'
 import { fireHint } from '@/composables/useOnboarding'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
 import { firstIncompleteStageIdx } from '@/utils/projectStages'
 
-const props = defineProps({ project: { type: Object as PropType<Project>, required: true } })
+const props = defineProps({
+  project: { type: Object as PropType<Project>, required: true },
+  // 松手时的落点处理，不传走默认的看板列换状态（dispatchDrop）。画布引用贴纸（ProjectRefCard.vue）
+  // 直接嵌这张卡片、把这里换成画布定位落库——同一张卡在不同宿主里"拖了之后要干什么"不一样，
+  // 但"按住阈值起拖"这套物理和手感完全一样，不用为画布另起一个拖拽入口（如小抓手）。
+  onDropOverride: { type: [Function, null] as PropType<((pos: { x: number; y: number }, velocity: { x: number; y: number; turn: number }) => void) | null>, default: null },
+  // 拖拽物理的额外覆盖项，跟 onDropOverride 同一个用途——画布引用贴纸要跟便签/文件/活动
+  // 贴纸用同一套手感（tilt:0 关掉 3D 后仰、lift:1.03 轻抬起），看板页不传就用默认的
+  // 看板手感（tilt:5、sway:0.25、lift:1）。
+  dragOpts: { type: Object as PropType<Partial<PhysicsDragOpts>>, default: () => ({}) },
+})
 const emit = defineEmits(['click'])
 
 const projectStore = useProjectStore()
@@ -191,28 +207,14 @@ function dispatchDrop({ x, y }: { x: number; y: number }) {
 }
 
 // pointer 驱动拖拽（替代原生 HTML5 drag）：先攒位移，越过阈值才真正开拖——否则当成点击开项目。
-// 内部控件（星级 / 阶段 / 进度条）自己处理点击，不在这里起拖。
+// 内部控件（星级 / 阶段 / 进度条）自己处理点击，不在这里起拖。阈值判定本身收在
+// usePhysicsDrag.ts 的 startThresholdDrag（跟 useFileDragDrop.ts 共用同一份，不再各写一遍）。
 function onPointerDown(e: PointerEvent) {
-  if (e.pointerType === 'mouse' && e.button !== 0) return
-  if ((e.target as HTMLElement).closest('.stars, .proj-stage, .seg-bar-wrap, .card-advance')) return
-  const card = e.currentTarget as HTMLElement
-  const sx = e.clientX, sy = e.clientY
-  let started = false
-  const onMove = (ev: PointerEvent) => {
-    if (started || Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return
-    started = true
-    teardown()
-    startPhysicsDrag(ev, card, { pointer: true, skipAbsorb: true, onDrop: dispatchDrop })
-  }
-  const onUp = () => { teardown(); if (!started) emit('click') }   // 没拖动 = 点击 → 开项目
-  const teardown = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-    window.removeEventListener('pointercancel', onUp)
-  }
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
-  window.addEventListener('pointercancel', onUp)
+  startThresholdDrag(e, {
+    exclude: t => !!(t as HTMLElement)?.closest?.('.stars, .proj-stage, .seg-bar-wrap, .card-advance'),
+    onDragStart: (ev, card) => startPhysicsDrag(ev, card, { pointer: true, skipAbsorb: true, onDrop: props.onDropOverride ?? dispatchDrop, ...props.dragOpts }),
+    onClick: () => emit('click'),   // 没拖动 = 点击 → 开项目
+  })
 }
 const cacheStore   = useFilesCacheStore()
 

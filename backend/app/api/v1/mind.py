@@ -16,13 +16,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.search import run_global_search
+from app.api.v1.search import run_global_search, _snippet
 from app.core.mind import content_hash, to_plain_text, update_node_atomic, upsert_relation
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
 from app.core.tz import now_utc
 from app.db.session import get_db
-from app.models import CalendarEvent, File, MindCanvasItem, MindMap, MindNode, MindRelation, Project, User
+from app.models import (
+    CalendarEvent, ConversationMessage, ConversationSession, File, MindCanvasItem,
+    MindMap, MindNode, MindRelation, Project, User,
+)
 from app.schemas import (
     MindCanvasCreate, MindCanvasItemCreate, MindCanvasItemResponse, MindCanvasItemUpdate,
     MindCanvasNoteCreate, MindCanvasNoteUpdate,
@@ -32,8 +35,11 @@ from app.schemas import (
 
 router = APIRouter(prefix="/mind", tags=["mind"])
 
-# `[[` 补全在这四类里找：项目 / 文件 / 日历活动 / 对话（客户不作为便签引用对象）
-_REF_TYPES = ["project", "file", "event", "conversation"]
+# `[[` 补全在这几类里找：项目 / 文件 / 日历活动 走公共站内搜索（run_global_search）；
+# 对话（客户不作为便签引用对象）单独查——@ 一段对话锚定的是具体某条消息（"准确的聊天
+# 位置"），不是整个会话，run_global_search 那边按 session 去重的逻辑在这里不适用，
+# 得自己按消息为粒度查，见 ref_suggest 下半段。
+_REF_TYPES = ["project", "file", "event"]
 
 
 def _to_resp(n: MindNode) -> MindNodeResponse:
@@ -149,9 +155,13 @@ async def ref_suggest(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """便签里输入 `[[` 时的补全候选：复用站内搜索，只取项目/文件/活动三类。
+    """便签里输入 `@` 时的补全候选：项目/文件/活动复用站内搜索；对话单独按消息查
+    （见下方），锚定的是"准确的聊天位置"而不是整个会话。
 
     前端把选中项写成 `[[project:7|某项目]]`——type+id 是稳定锚点，改名/重名都不会指错。
+    对话引用的 id 是消息 id（不是会话 id）：点开时先按消息 id 反查所属会话
+    （GET /agent/messages/{id}），再 loadSession + 定位滚动到这条消息，跟顶栏全局搜索
+    命中消息时的跳转体验一致。
     """
     q = (q or "").strip()
     if not q:
@@ -163,7 +173,23 @@ async def ref_suggest(
             items.append(MindRefSuggestItem(
                 type=g["type"], id=it["id"], label=it["title"], subtitle=it.get("subtitle"),
             ))
-    return items[: limit * len(_REF_TYPES)]
+
+    # 对话：不复用 run_global_search 按 session 去重那套——同一会话里命中的好几条消息
+    # 各自都是候选，不合并成一条，好让用户精确选中"这一条"而不是"这个会话"。
+    like = f"%{q}%"
+    msg_rows = (await db.execute(
+        select(ConversationMessage, ConversationSession.title)
+        .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
+        .where(ConversationSession.user_id == current_user.id, ConversationMessage.content.ilike(like))
+        .order_by(ConversationMessage.created_at.desc())
+        .limit(limit)
+    )).all()
+    for m, stitle in msg_rows:
+        items.append(MindRefSuggestItem(
+            type="conversation", id=m.id, label=_snippet(m.content, q), subtitle=stitle,
+        ))
+
+    return items[: limit * (len(_REF_TYPES) + 1)]
 
 
 # ── P2：画布（节点全局，画布只保存展示状态）──────────────────────────────────
