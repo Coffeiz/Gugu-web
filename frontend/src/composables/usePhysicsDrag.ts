@@ -753,19 +753,24 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 最终本体的隐形位置再抓，违背直接操作。飞行阶段让 holder 临时吃 pointerdown；仍然沿用
       // 普通卡片的 5px 阈值，点击不会误开一次新拖拽。真正起拖前先取消调用方附属的落地动画，
       // 再让 startPhysicsDrag 自己 flush 掉这一趟克隆，从 holder 当前屏幕矩形无缝续上。
+      let cancelLandingRegrab: (() => void) | null = null
       const onLandingPointerDown = (event: PointerEvent) => {
-        if (event.button !== 0) return
+        if (event.button !== 0 || cancelLandingRegrab) return
         event.preventDefault()
         event.stopPropagation()
-        startThresholdDrag(event, {
+        cancelLandingRegrab = startThresholdDrag(event, {
           getCard: () => revealEl,
           onDragStart: (moveEvent) => {
+            cancelLandingRegrab = null
+            // 阈值还没跨过时落地动画可能已经自然结束，holder 被移除后 rect 会变成 0,0；
+            // 这份手势本该由收尾时取消，双保险在这里再拦一次，绝不能从左上角续接。
+            if (done || !holder.isConnected) return
             // 阈值内卡片仍在继续飞，起点要在真正接力这一刻再量，不能沿用按下那一帧的旧框。
             const visualRect = holder.getBoundingClientRect()
             opts.onRegrabStart?.()
             startPhysicsDrag(moveEvent, revealEl, { ...opts, initialRect: visualRect, initialHover: true })
           },
-        })
+        }) ?? null
       }
       if (pointer) {
         holder.style.pointerEvents = 'auto'
@@ -940,6 +945,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         done = true
         if (finishTimer) clearTimeout(finishTimer)
         if (pointer) document.removeEventListener('pointermove', onLandingPointerMove)
+        cancelLandingRegrab?.()
+        cancelLandingRegrab = null
         holder.removeEventListener('pointerdown', onLandingPointerDown)
         unregister()
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
@@ -969,6 +976,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         done = true
         if (finishTimer) clearTimeout(finishTimer)
         if (pointer) document.removeEventListener('pointermove', onLandingPointerMove)
+        cancelLandingRegrab?.()
+        cancelLandingRegrab = null
         holder.removeEventListener('pointerdown', onLandingPointerDown)
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
@@ -1463,11 +1472,11 @@ export interface ThresholdDragOpts {
   onDragStart: (event: PointerEvent, card: HTMLElement) => void   // 越过阈值那一刻调用，自己决定单选/多选、传什么 opts
   onClick?: () => void   // 松手时全程没越过阈值 → 当作一次点击
 }
-export function startThresholdDrag(event: PointerEvent, opts: ThresholdDragOpts) {
-  if (event.pointerType === 'mouse' && event.button !== 0) return
-  if (opts.exclude?.(event.target)) return
+export function startThresholdDrag(event: PointerEvent, opts: ThresholdDragOpts): (() => void) | undefined {
+  if (event.pointerType === 'mouse' && event.button !== 0) return undefined
+  if (opts.exclude?.(event.target)) return undefined
   const card = opts.getCard ? opts.getCard(event) : (event.currentTarget as HTMLElement)
-  if (!card) return
+  if (!card) return undefined
   const sx = event.clientX, sy = event.clientY
   const threshold = opts.threshold ?? 5
   let started = false
@@ -1487,4 +1496,5 @@ export function startThresholdDrag(event: PointerEvent, opts: ThresholdDragOpts)
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
   window.addEventListener('pointercancel', onUp)
+  return teardown
 }
