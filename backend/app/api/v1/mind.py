@@ -13,7 +13,7 @@ from typing import Optional
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.search import run_global_search, _snippet
@@ -279,6 +279,24 @@ async def update_canvas(
     await db.commit()
     await db.refresh(canvas)
     return _canvas_resp(canvas)
+
+
+@router.delete("/canvases/{cid}", status_code=204)
+async def delete_canvas(
+    cid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    canvas = await _get_canvas(db, cid, current_user.id)
+    # mind_canvas_items 的 canvas_id 外键虽然声明了 ON DELETE CASCADE（生产用的 Postgres
+    # 会遵守），但这里显式先删一遍——不依赖某个具体数据库后端是否真的启用了外键级联（比如
+    # 测试用的内存 SQLite 默认不强制外键），行为不该随后端换了哪种数据库而变。节点
+    # （MindNode）、关系（MindRelation）都是全局层，不因为画布被删而消失——同一节点/关系
+    # 理论上可以出现在别的画布上，画布只是"摆哪儿"的视图状态（同 remove_canvas_item 的
+    # 取舍："只删视图项，不删 MindNode 原文"）。
+    await db.execute(sa_delete(MindCanvasItem).where(MindCanvasItem.canvas_id == cid))
+    await db.delete(canvas)
+    await db.commit()
 
 
 @router.get("/canvases/{cid}/items", response_model=list[MindCanvasItemResponse])

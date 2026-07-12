@@ -1,10 +1,12 @@
 <template>
   <article
-    class="note-sticker"
-    :class="{ connecting, tombstone: !!item.node.deletedAt }"
+    class="note-sticker hover-card-fx"
+    :class="{ connecting, 'connection-target': !!connectionTargetSide, tombstone: !!item.node.deletedAt }"
     :style="stickerStyle"
     :data-node-id="item.nodeId"
     @pointerdown.stop="onPointerDown"
+    @mouseenter="emit('hover', item, true)"
+    @mouseleave="emit('hover', item, false)"
   >
     <template v-if="editing">
       <input
@@ -37,8 +39,8 @@
           <PhTrash :size="12" weight="bold" />
         </button>
       </div>
-      <button v-if="!item.node.deletedAt" class="conn-dot conn-dot-left" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
-      <button v-if="!item.node.deletedAt" class="conn-dot conn-dot-right" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
+      <button v-if="!item.node.deletedAt" class="conn-dot conn-dot-left" :class="{ 'conn-dot-active': connectionTargetSide === 'left' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
+      <button v-if="!item.node.deletedAt" class="conn-dot conn-dot-right" :class="{ 'conn-dot-active': connectionTargetSide === 'right' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
     </template>
   </article>
 </template>
@@ -54,6 +56,7 @@ import { mdToPreviewHtml, splitMindTitleBody } from '@/composables/useMindEditor
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },
   connecting: { type: Boolean, default: false },
+  connectionTargetSide: { type: String as PropType<'left' | 'right' | null>, default: null },
   screenToWorld: { type: Function as PropType<(clientX: number, clientY: number) => { x: number; y: number }>, required: true },
   // 画布相机当前缩放（MindCanvas.vue 的 camera.scale）——拖拽克隆脱离 .canvas-world 的
   // transform:scale 祖先后要自己补回视觉缩放，见 usePhysicsDrag.ts 的 contentScale。
@@ -67,6 +70,7 @@ const emit = defineEmits<{
   (e: 'moved', item: MindCanvasItem, x: number, y: number): void
   (e: 'save', fields: { title: string; contentMd: string }): void
   (e: 'connectDragStart', event: PointerEvent, side: 'left' | 'right'): void
+  (e: 'hover', item: MindCanvasItem, hovering: boolean): void
 }>()
 
 const split = computed(() => splitMindTitleBody(props.item.node.contentMd))
@@ -131,11 +135,22 @@ const { onPointerDown } = useCardDrag({
   position: absolute; box-sizing: border-box; padding: 16px 17px 14px;
   border: 1px solid rgba(255,255,255,0.78); border-radius: 10px;
   background: rgba(255,252,238,0.92);
-  box-shadow: 0 4px 10px rgba(65,70,90,0.12), inset 0 1px 0 rgba(255,255,255,0.9);
+  /* 静止态阴影本体跟文件/项目卡统一（0 2px 8px rgba(80,90,110,.07)，见 .proj-card），
+     只叠加纸条自己的内高光——之前这里各写各的深浅/色相，四种贴纸摆一起静止时阴影就
+     看着不像同一套材质语言。 */
+  box-shadow: 0 2px 8px rgba(80,90,110,0.07), inset 0 1px 0 rgba(255,255,255,0.9);
   color: var(--text-primary); cursor: pointer; user-select: none; touch-action: none;
-  transition: box-shadow 0.18s ease, border-color 0.18s ease;
 }
-.note-sticker:hover { box-shadow: 0 6px 14px rgba(65,70,90,0.16), inset 0 1px 0 rgba(255,255,255,0.95); }
+/* 悬浮抬起动效跟文件卡/项目卡统一走 .hover-card-fx（见 global.css），不再各写一份——
+   之前这里只有 box-shadow 加深、没有 translateY 位移，四种贴纸手感不一致。这里也不能像
+   之前那样自带一份 transition：scoped 属性选择器会让它盖过 .hover-card-fx 的 transition，
+   把 transform 部分覆盖掉，悬浮抬起会瞬间跳变、不是平滑过渡。
+   悬停阴影单独覆盖一份（不留给 .hover-card-fx 的默认值）：跟 .fc-card:hover 同款做法——
+   共享阴影本体（0 6px 18px .13，同一个"抬起后浮空"的量），叠加纸条自己的内高光
+   （inset 0 1px 0），不然悬停时会丢掉静止态就有的那圈纸张高光，阴影质感和文件卡对不上。
+   这条规则的 specificity 天然高于全局 .hover-card-fx（带 data-v 属性选择器），只覆盖
+   box-shadow 这一个值，transition 本身仍由 .hover-card-fx 统一提供。 */
+.note-sticker:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13), inset 0 1px 0 rgba(255,255,255,0.95); }
 .note-sticker.connecting { border-style: dashed; }
 .note-sticker.tombstone { opacity: .55; filter: grayscale(.45); }
 h3 { margin: 0 0 8px; font-size: 14px; line-height: 1.35; font-weight: 700; overflow-wrap: anywhere; }
@@ -174,7 +189,10 @@ h3 { margin: 0 0 8px; font-size: 14px; line-height: 1.35; font-weight: 700; over
   opacity: 0; transition: opacity 0.15s, transform 0.15s; cursor: crosshair; z-index: 6;
 }
 .note-sticker:hover .conn-dot { opacity: 1; }
+.note-sticker.connecting .conn-dot, .note-sticker.connection-target .conn-dot { opacity: .38; }
+.note-sticker.connection-target .conn-dot-active { opacity: 1; transform: scale(1.28); animation: conn-dot-magnet .44s cubic-bezier(.22, 1.35, .36, 1) infinite alternate; }
 .conn-dot:hover { transform: scale(1.3); }
 .conn-dot-left { left: -6px; }
 .conn-dot-right { right: -6px; }
+@keyframes conn-dot-magnet { from { box-shadow: 0 1px 4px rgba(80,90,110,.35); } to { box-shadow: 0 0 0 5px rgba(123,127,178,.16), 0 2px 8px rgba(80,90,110,.38); } }
 </style>

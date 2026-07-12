@@ -312,6 +312,7 @@ export const mindApi = {
     post<MindCanvas>('/mind/canvases', data),
   updateCanvas: (id: number, data: { title?: string; data?: Record<string, unknown> }) =>
     patch<MindCanvas>(`/mind/canvases/${id}`, data),
+  deleteCanvas: (id: number) => del(`/mind/canvases/${id}`),
   listCanvasItems: (id: number) => get<MindCanvasItem[]>(`/mind/canvases/${id}/items`),
   addCanvasItem: (id: number, data: { nodeId: number; x?: number; y?: number; w?: number | null; h?: number | null; z?: number; collapsed?: boolean; data?: Record<string, unknown> }) =>
     post<MindCanvasItem>(`/mind/canvases/${id}/items`, data),

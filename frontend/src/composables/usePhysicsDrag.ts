@@ -668,12 +668,23 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         camGlue.appendChild(clone2)
         const camOrigin = initialBox
         camGlue.style.transformOrigin = `${camOrigin.left}px ${camOrigin.top}px`
+        // 没有缩放/平移发生时 revealEl 的真实框不会变——之前不管有没有变化每帧都强制读一次
+        // getBoundingClientRect()（会强制同步布局）、每帧都重写一次 transform，绝大多数落地
+        // 动画其实全程画布纹丝不动，这份每帧开销纯属浪费，还可能在克隆↔本体交叉淡变这半秒
+        // 里挤掉渲染预算，掉一两帧就会看到那半秒该丝滑的透明度过渡卡一下、露出瞬间的"半透明
+        // 一闪"（用户反馈"松手时会半透明一下，没有丝滑渐变到本体"）。量出来的框没变就跳过
+        // 这次写入，真发生画布变化时才动。
+        let lastRectKey = ''
         const trackCamera = () => {
           if (done) return
           const r = revealEl.getBoundingClientRect()
-          const scaleRatio = camOrigin.width > 0.01 ? r.width / camOrigin.width : 1
-          camGlue!.style.transform =
-            `translate3d(${(r.left - camOrigin.left).toFixed(2)}px, ${(r.top - camOrigin.top).toFixed(2)}px, 0) scale(${scaleRatio.toFixed(4)})`
+          const rectKey = `${r.left.toFixed(2)}|${r.top.toFixed(2)}|${r.width.toFixed(2)}`
+          if (rectKey !== lastRectKey) {
+            lastRectKey = rectKey
+            const scaleRatio = camOrigin.width > 0.01 ? r.width / camOrigin.width : 1
+            camGlue!.style.transform =
+              `translate3d(${(r.left - camOrigin.left).toFixed(2)}px, ${(r.top - camOrigin.top).toFixed(2)}px, 0) scale(${scaleRatio.toFixed(4)})`
+          }
           requestAnimationFrame(trackCamera)
         }
         requestAnimationFrame(trackCamera)
@@ -686,6 +697,25 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       applyTransform()
       holder.style.opacity = '0'
       clone2.style.opacity = '0.97'
+      if (typeof opts.contentScale === 'function') {
+        console.warn('[phys-fade] start', {
+          holderOpacityInline: holder.style.opacity, clone2OpacityInline: clone2.style.opacity,
+          holderComputed: getComputedStyle(holder).opacity, clone2Computed: getComputedStyle(clone2).opacity,
+          holderInCamGlue: !!camGlue && holder.parentElement === camGlue,
+          clone2InCamGlue: !!camGlue && clone2.parentElement === camGlue,
+        })
+        let sampleN = 0
+        const sample = () => {
+          if (done || sampleN > 40) return
+          sampleN++
+          console.warn('[phys-fade] sample', sampleN, {
+            holderComputed: getComputedStyle(holder).opacity, clone2Computed: getComputedStyle(clone2).opacity,
+            camGlueComputed: camGlue ? getComputedStyle(camGlue).opacity : null,
+          })
+          requestAnimationFrame(sample)
+        }
+        requestAnimationFrame(sample)
+      }
 
       // 飞行途中容器发生 FLIP 重排（另一张卡被抓起/放下）→ 落点跟着挪位，把目标改过去。
       // 直接在飞行中途改 transform 目标，浏览器会当「打断」处理：新一段插值默认按当前速度
@@ -734,6 +764,13 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       const finish = () => {
         if (done) return
         done = true
+        if (typeof opts.contentScale === 'function') {
+          console.warn('[phys-fade] finish() called', {
+            viaFallbackTimer: finishTimer == null,
+            holderComputed: getComputedStyle(holder).opacity, clone2Computed: getComputedStyle(clone2).opacity,
+            revealElComputed: getComputedStyle(revealEl).opacity, revealElInlineOpacity: revealEl.style.opacity,
+          })
+        }
         if (finishTimer) clearTimeout(finishTimer)
         unregister()
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
@@ -750,8 +787,17 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         clone2.style.height = box.height + 'px'
         clone2.style.transform = `translate(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px)`
         requestAnimationFrame(() => {
+          if (typeof opts.contentScale === 'function') {
+            console.warn('[phys-fade] right before remove+reveal', {
+              holderComputed: getComputedStyle(holder).opacity, clone2Computed: getComputedStyle(clone2).opacity,
+              revealElComputedBefore: getComputedStyle(revealEl).opacity,
+            })
+          }
           holder.remove(); clone2.remove(); camGlue?.remove()
           _revealWithoutStaleHover(revealEl, pointer)
+          if (typeof opts.contentScale === 'function') {
+            console.warn('[phys-fade] right after reveal', { revealElComputedAfter: getComputedStyle(revealEl).opacity })
+          }
         })
       }
       // 被同一张卡的新拖拽强制打断时用（按 revealEl 记账，见 _registerCleanup——只有再次抓的

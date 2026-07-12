@@ -3,7 +3,7 @@
     v-if="file"
     ref="fileCardRef"
     class="fr-card"
-    :class="{ connecting }"
+    :class="{ connecting, 'connection-target': !!connectionTargetSide }"
     :style="cardStyle"
     :data-node-id="item.nodeId"
     :ext="file.ext"
@@ -11,6 +11,8 @@
     :has-thumb="isImageExt(file.ext)"
     :canvas-mode="true"
     @pointerdown.stop="onPointerDown"
+    @mouseenter="emit('hover', item, true)"
+    @mouseleave="emit('hover', item, false)"
   >
     <template v-if="isImageExt(file.ext)" #thumb>
       <img :src="thumbTiny ?? undefined" class="fc-thumb-tiny" decoding="async" draggable="false" alt="" />
@@ -23,18 +25,19 @@
     <div class="fr-actions">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </div>
-    <button class="conn-dot conn-dot-left" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
-    <button class="conn-dot conn-dot-right" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
+    <button class="conn-dot conn-dot-left" :class="{ 'conn-dot-active': connectionTargetSide === 'left' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
+    <button class="conn-dot conn-dot-right" :class="{ 'conn-dot-active': connectionTargetSide === 'right' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
   </FileCard>
-  <div v-else ref="missingRef" class="fr-missing" :class="{ connecting }" :style="missingStyle" :data-node-id="item.nodeId" @pointerdown.stop="onPointerDown">
+  <div v-else ref="missingRef" class="fr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" @pointerdown.stop="onPointerDown"
+    @mouseenter="emit('hover', item, true)" @mouseleave="emit('hover', item, false)">
     <span class="fr-kind">文件</span>
     <div class="fr-name">{{ item.node.title || '未命名文件' }}</div>
     <span class="fr-deleted">已删除，仅保留快照</span>
     <div class="fr-actions">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </div>
-    <button class="conn-dot conn-dot-left" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
-    <button class="conn-dot conn-dot-right" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
+    <button class="conn-dot conn-dot-left" :class="{ 'conn-dot-active': connectionTargetSide === 'left' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
+    <button class="conn-dot conn-dot-right" :class="{ 'conn-dot-active': connectionTargetSide === 'right' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
   </div>
 </template>
 
@@ -52,6 +55,7 @@ import { itemSize } from '@/composables/useMindCanvas'
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },
   connecting: { type: Boolean, default: false },
+  connectionTargetSide: { type: String as PropType<'left' | 'right' | null>, default: null },
   screenToWorld: { type: Function as PropType<(clientX: number, clientY: number) => { x: number; y: number }>, required: true },
   scale: { type: Number, default: 1 },
 })
@@ -64,6 +68,7 @@ const emit = defineEmits<{
   (e: 'open', item: MindCanvasItem): void
   (e: 'connectDragStart', event: PointerEvent, side: 'left' | 'right'): void
   (e: 'measured', item: MindCanvasItem, size: { w: number; h: number }): void
+  (e: 'hover', item: MindCanvasItem, hovering: boolean): void
 }>()
 
 const filesCache = useFilesCacheStore()
@@ -185,7 +190,10 @@ const { onPointerDown } = useCardDrag({
   opacity: 0; transition: opacity 0.15s, transform 0.15s; cursor: crosshair; z-index: 6;
 }
 .fr-card:hover .conn-dot, .fr-missing:hover .conn-dot { opacity: 1; }
+.fr-card.connecting .conn-dot, .fr-missing.connecting .conn-dot, .fr-card.connection-target .conn-dot, .fr-missing.connection-target .conn-dot { opacity: .38; }
+.fr-card.connection-target .conn-dot-active, .fr-missing.connection-target .conn-dot-active { opacity: 1; transform: scale(1.28); animation: conn-dot-magnet .44s cubic-bezier(.22, 1.35, .36, 1) infinite alternate; }
 .conn-dot:hover { transform: scale(1.3); }
 .conn-dot-left { left: -6px; }
 .conn-dot-right { right: -6px; }
+@keyframes conn-dot-magnet { from { box-shadow: 0 1px 4px rgba(80,90,110,.35); } to { box-shadow: 0 0 0 5px rgba(123,127,178,.16), 0 2px 8px rgba(80,90,110,.38); } }
 </style>

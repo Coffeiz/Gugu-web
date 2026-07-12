@@ -499,9 +499,12 @@ async function setPriority(n: number) {
   box-shadow: 0 2px 8px rgba(80,90,110,0.07);
   overflow: hidden; cursor: pointer;
   /* transition 是覆盖式属性，不会跟全局 .hover-card-fx 的 transition 叠加（只有其中一份生效）——
-     这里仍自带完整的一份（含 background），确保不管层叠顺序谁赢，效果都一致，不丢 background 过渡 */
-  transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1),
-              box-shadow 0.3s ease, background 0.25s ease-out;
+     这里仍自带完整的一份（含 background），确保不管层叠顺序谁赢，效果都一致，不丢 background 过渡。
+     transform/box-shadow 的时长要跟 .hover-card-fx 保持同一个数（见 global.css），不然这份
+     本地声明会赢过全局那份、悄悄用着自己的时长——画布上项目卡跟便签/活动贴纸并排悬停时
+     能看出抬起速度不一样，就是这里曾经各写各的 0.3s/0.25s 导致的。 */
+  transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
+              box-shadow 0.25s ease, background 0.25s ease-out;
   user-select: none;
 }
 .proj-card.canvas-mode { overflow: visible; }

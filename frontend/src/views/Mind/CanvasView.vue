@@ -14,7 +14,7 @@
       @view-change="onViewChange"
     />
 
-    <CanvasSidebar :canvases="store.canvases" :active-id="activeCanvasId" @create="createCanvas" @open="openCanvas" />
+    <CanvasSidebar :canvases="store.canvases" :active-id="activeCanvasId" @create="createCanvas" @open="openCanvas" @delete="deleteCanvas" />
 
     <CanvasToolbar
       :scale="canvasRef?.camera.scale ?? 1"
@@ -123,6 +123,17 @@ async function createCanvas() {
 }
 async function openCanvas(id: number) {
   if (id !== activeCanvasId.value) await router.push({ name: 'MindCanvas', params: { id } })
+}
+/** 删的若不是当前正看着的画布，store.deleteCanvas 已经把它从 store.canvases 摘掉，
+ *  CanvasSidebar 的列表跟着响应式更新，这里什么都不用做。删的正是当前画布才需要处理：
+ *  路由的 id 还停在已删除的那个，不会自己变，得显式导去别的画布——优先跳列表里剩下的
+ *  第一张，一张都不剩就照 ensureCanvas() 空画布兜底那一套新建一张。 */
+async function deleteCanvas(id: number) {
+  const wasActive = id === activeCanvasId.value
+  await store.deleteCanvas(id)
+  if (!wasActive) return
+  const next = store.canvases[0] ?? await store.createCanvas()
+  await router.push({ name: 'MindCanvas', params: { id: next.id } })
 }
 
 async function removeItem(item: MindCanvasItem) {

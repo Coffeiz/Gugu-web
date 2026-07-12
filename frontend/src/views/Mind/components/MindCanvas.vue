@@ -3,39 +3,40 @@
     <div class="canvas-world" :style="worldStyle">
       <RelationLayer
         :items="items" :relations="relations" :highlight-node-id="connectionDrag.originNodeId"
-        :draft="connectionDrag.active ? { from: connectionDrag.from, to: connectionDrag.to } : null"
+        :draft="connectionDrag.active ? { from: connectionDrag.from, to: connectionDrag.to, fromSide: connectionDrag.originSide, toSide: connectionDrag.targetSide } : null"
         :landing-positions="landingPositions" :measured-sizes="measuredSizes" :relation-anchors="relationAnchors"
+        :hovered-node-id="hoveredNodeId" :scale="camera.scale"
         @remove="id => emit('removeRelation', id)"
       />
 
       <template v-for="item in items" :key="item.id">
         <NoteSticker
           v-if="item.node.kind === 'canvas_note'"
-          :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :screen-to-world="screenToWorld" :scale="camera.scale"
+          :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
           @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone"
           @moved="onItemMoved" @save="fields => emit('saveNote', item, fields)"
-          @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)"
+          @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
         <ProjectRefCard
           v-else-if="item.node.refType === 'project'"
-          :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :screen-to-world="screenToWorld" :scale="camera.scale"
+          :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
           @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone" @measured="onItemMeasured"
           @moved="onItemMoved" @open="item => emit('openRef', item)"
-          @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)"
+          @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
         <FileRefCard
           v-else-if="item.node.refType === 'file'"
-          :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :screen-to-world="screenToWorld" :scale="camera.scale"
+          :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
           @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone" @measured="onItemMeasured"
           @moved="onItemMoved" @open="item => emit('openRef', item)"
-          @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)"
+          @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
         <EntitySticker
           v-else
-          :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :screen-to-world="screenToWorld" :scale="camera.scale"
+          :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
           @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone"
           @moved="onItemMoved" @open="item => emit('openRef', item)"
-          @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)"
+          @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
       </template>
     </div>
@@ -48,7 +49,7 @@
  *  编排（贴纸边缘圆点拖到另一张贴纸上，见 onConnectDragStart 一带）。 */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
-import { itemSize, pickAnchorSide, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
+import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import EntitySticker from './EntitySticker.vue'
 import FileRefCard from './FileRefCard.vue'
 import NoteSticker from './NoteSticker.vue'
@@ -113,6 +114,16 @@ function onItemMeasured(item: MindCanvasItem, size: { w: number; h: number }) {
   measuredSizes.set(item.nodeId, size)
 }
 
+// 悬浮抬起（见各贴纸组件的 .hover-card-fx）用纯 CSS transform，SVG 连线不知道 DOM 层面的
+// :hover 状态，得靠贴纸自己上报——不然抬起来的卡片和还锚在旧位置的连线会错位一截。只记
+// 「当前悬浮的是哪一张」（同一时间只有一张会真的抬起，鼠标只会停在一张卡片上），RelationLayer
+// 收到 nodeId 后按同一个像素量自己算偏移量（见其 hoverLift）。
+const hoveredNodeId = ref<number | null>(null)
+function onItemHover(item: MindCanvasItem, hovering: boolean) {
+  if (hovering) hoveredNodeId.value = item.nodeId
+  else if (hoveredNodeId.value === item.nodeId) hoveredNodeId.value = null
+}
+
 /** 松手后惯性落地动画期间（见 useCardDrag.ts 的 onLanding）每帧调用一次——跟 onItemDragging
  *  的关键区别：这里*不*写 item.x/y。onItemMoved 在落地动画开始前就已经把 item.x/y 同步改成
  *  了最终落点（物理模块紧接着要读它算克隆体飞行目标，不能等），如果这里再往 item.x/y 里写
@@ -137,6 +148,8 @@ const connectionDrag = reactive({
   active: false,
   originNodeId: null as number | null,
   originSide: 'left' as 'left' | 'right',
+  targetNodeId: null as number | null,
+  targetSide: null as ('left' | 'right' | null),
   from: { x: 0, y: 0 },
   to: { x: 0, y: 0 },   // 弹簧跟随后的渲染位置（画出来的线用这个，带一点弹性的"给"）
 })
@@ -170,12 +183,36 @@ function connectionAnchor(item: MindCanvasItem, side: 'left' | 'right') {
   const { w, h } = measuredSizes.get(item.nodeId) ?? itemSize(item)
   return { x: item.x + (side === 'right' ? w : 0), y: item.y + h / 2 }
 }
+function connectionTargetSide(nodeId: number) {
+  return connectionDrag.targetNodeId === nodeId ? connectionDrag.targetSide : null
+}
+function targetAt(event: PointerEvent, originNodeId: number) {
+  const element = (document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-node-id]')
+  const nodeId = element ? Number(element.dataset.nodeId) : NaN
+  if (!Number.isFinite(nodeId) || nodeId === originNodeId) return null
+  const item = props.items.find(current => current.nodeId === nodeId)
+  if (!item) return null
+  const pointer = screenToWorld(event.clientX, event.clientY)
+  const { w } = measuredSizes.get(nodeId) ?? itemSize(item)
+  return { item, side: pointer.x < item.x + w / 2 ? 'left' as const : 'right' as const }
+}
+function updateConnectionTarget(event: PointerEvent) {
+  const originNodeId = connectionDrag.originNodeId
+  if (originNodeId == null) return
+  const target = targetAt(event, originNodeId)
+  connectionDrag.targetNodeId = target?.item.nodeId ?? null
+  connectionDrag.targetSide = target?.side ?? null
+  // 命中目标卡后，视觉线端弹簧吸到该侧连接点；命中/左右判定仍按原始鼠标位置。
+  connSpringTarget = target ? connectionAnchor(target.item, target.side) : screenToWorld(event.clientX, event.clientY)
+}
 function onConnectDragStart(event: PointerEvent, nodeId: number, side: 'left' | 'right') {
   const origin = props.items.find(current => current.nodeId === nodeId)
   if (!origin) return
   connectionDrag.active = true
   connectionDrag.originNodeId = nodeId
   connectionDrag.originSide = side
+  connectionDrag.targetNodeId = null
+  connectionDrag.targetSide = null
   connSpringTarget = screenToWorld(event.clientX, event.clientY)
   connectionDrag.to = { ...connSpringTarget }
   connSpringVel = { x: 0, y: 0 }
@@ -187,31 +224,26 @@ function onConnectDragStart(event: PointerEvent, nodeId: number, side: 'left' | 
   connSpringRaf = requestAnimationFrame(connSpringFrame)
 }
 function onConnectionDragMove(event: PointerEvent) {
-  connSpringTarget = screenToWorld(event.clientX, event.clientY)
+  updateConnectionTarget(event)
 }
 function onConnectionDragEnd(event: PointerEvent) {
   window.removeEventListener('pointermove', onConnectionDragMove)
   window.removeEventListener('pointerup', onConnectionDragEnd)
   cancelAnimationFrame(connSpringRaf)
   const originNodeId = connectionDrag.originNodeId
+  const target = originNodeId == null ? null : targetAt(event, originNodeId)
   connectionDrag.active = false
   connectionDrag.originNodeId = null
-  if (originNodeId == null) return
+  connectionDrag.targetNodeId = null
+  connectionDrag.targetSide = null
+  if (originNodeId == null || !target) return
   // 落点判定用真实指针位置（event.clientX/Y），不用还在弹簧里追赶的渲染位置——手感上的
   // "弹性"只体现在线怎么画，砸没砸中目标贴纸得看指针实际在哪，不能让视觉延迟改变判定。
-  const targetEl = (document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-node-id]')
-  const targetNodeId = targetEl ? Number(targetEl.dataset.nodeId) : NaN
-  if (!Number.isFinite(targetNodeId) || targetNodeId === originNodeId) return
   const source = props.items.find(item => item.nodeId === originNodeId)
-  const target = props.items.find(item => item.nodeId === targetNodeId)
-  if (!source || !target) return
-  const sourceSize = measuredSizes.get(source.nodeId) ?? itemSize(source)
-  const targetSize = measuredSizes.get(target.nodeId) ?? itemSize(target)
-  const sourceCenter = { x: source.x + sourceSize.w / 2, y: source.y + sourceSize.h / 2 }
-  const targetCenter = { x: target.x + targetSize.w / 2, y: target.y + targetSize.h / 2 }
-  emit('linkNodes', originNodeId, targetNodeId, {
+  if (!source) return
+  emit('linkNodes', originNodeId, target.item.nodeId, {
     srcSide: connectionDrag.originSide,
-    dstSide: pickAnchorSide(targetCenter, sourceCenter),
+    dstSide: target.side,
   })
 }
 

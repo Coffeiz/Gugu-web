@@ -12,13 +12,14 @@ from sqlalchemy import func, select
 
 from app.api.v1.mind import (
     add_canvas_item, create_canvas, create_note, create_ref_node, create_relation,
-    create_canvas_note, delete_note, list_canvas_items, list_canvas_relations, list_notes,
+    create_canvas_note, delete_canvas, delete_note, list_canvas_items, list_canvas_relations,
+    list_canvases, list_notes,
     ref_suggest, remove_canvas_item, update_canvas_item, update_canvas_note, update_note,
 )
 from app.api.v1.search import run_global_search
 from app.core.mind import content_hash, to_plain_text
 from app.core.tz import now_utc
-from app.models import CalendarEvent, Client, File, MindCanvasItem, MindNode, Project
+from app.models import CalendarEvent, Client, File, MindCanvasItem, MindMap, MindNode, Project
 from app.schemas import (
     MindCanvasCreate, MindCanvasItemCreate, MindCanvasItemUpdate, MindCanvasNoteCreate,
     MindCanvasNoteUpdate, MindNoteCreate, MindNoteUpdate, MindRefNodeCreate, MindRelationCreate,
@@ -308,6 +309,34 @@ async def test_canvas_rejects_other_users_node_and_keeps_canvas_private(db, user
     with pytest.raises(HTTPException) as e:
         await list_canvas_items(canvas.id, current_user=user_b, db=db)
     assert e.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_canvas_cascades_items_but_keeps_nodes(db, user_a):
+    canvas = await create_canvas(MindCanvasCreate(title="要删的画布"), current_user=user_a, db=db)
+    note = await _new_note(db, user_a, content="节点应该留下")
+    await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=note.id, x=10, y=20), current_user=user_a, db=db)
+    assert await db.scalar(select(func.count()).select_from(MindCanvasItem)) == 1
+
+    await delete_canvas(canvas.id, current_user=user_a, db=db)
+
+    assert await db.scalar(select(func.count()).select_from(MindCanvasItem)) == 0   # 视图项级联删掉
+    assert await _row(db, note.id) is not None                                      # 节点原文不受影响
+    remaining = await list_canvases(project_id=None, current_user=user_a, db=db)
+    assert canvas.id not in {c.id for c in remaining}
+
+    with pytest.raises(HTTPException) as e:
+        await delete_canvas(canvas.id, current_user=user_a, db=db)   # 已删的画布再删一次 → 404
+    assert e.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_canvas_rejects_other_users_canvas(db, user_a, user_b):
+    canvas = await create_canvas(MindCanvasCreate(title="别人的画布"), current_user=user_a, db=db)
+    with pytest.raises(HTTPException) as e:
+        await delete_canvas(canvas.id, current_user=user_b, db=db)
+    assert e.value.status_code == 404
+    assert await db.scalar(select(func.count()).select_from(MindMap)) == 1   # 没被误删
 
 
 @pytest.mark.asyncio

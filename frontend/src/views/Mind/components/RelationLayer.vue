@@ -6,7 +6,7 @@
       <path class="rel-visible" :class="{ highlighted: rel.highlighted }" :d="rel.d" fill="none" />
     </g>
     <!-- 正在从贴纸边缘的连接点拖一条新关系出来时的跟手预览线，不吃点击、不参与已有关系列表 -->
-    <path v-if="draft" class="rel-draft" :d="curvePath(draft.from, draft.to)" fill="none" />
+    <path v-if="draft" class="rel-draft" :d="draftPath" fill="none" />
   </svg>
 </template>
 
@@ -18,7 +18,7 @@
  * 点连线可以取消这条关系——建立关联走贴纸边缘的连接点拖拽（见 MindCanvas.vue），
  * 没有别的撤销入口，总得有个地方能删。
  */
-import { computed, type PropType } from 'vue'
+import { computed, onBeforeUnmount, reactive, watch, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { itemSize, pickAnchorSide, type AnchorSide, type RelationAnchorSides } from '@/composables/useMindCanvas'
 
@@ -26,7 +26,13 @@ const props = defineProps({
   items: { type: Array as PropType<MindCanvasItem[]>, required: true },
   relations: { type: Array as PropType<MindRelation[]>, required: true },
   highlightNodeId: { type: Number as PropType<number | null>, default: null },
-  draft: { type: Object as PropType<{ from: { x: number; y: number }; to: { x: number; y: number } } | null>, default: null },
+  // fromSide 是按住的那颗连接点本来就知道的（拖出连线前用户点的哪一侧，不会中途换）；
+  // toSide 只有指针已经吸附到某张目标卡时才有值（见 MindCanvas.vue 的 connectionDrag.targetSide，
+  // 磁吸动效用的同一份判定）——还没吸附到任何卡时为 null，draftPath 会退而求其次估一个。
+  draft: {
+    type: Object as PropType<{ from: { x: number; y: number }; to: { x: number; y: number }; fromSide: AnchorSide; toSide: AnchorSide | null } | null>,
+    default: null,
+  },
   // 卡片松手惯性落地动画期间（见 MindCanvas.vue 的 onItemLanding），按 nodeId 覆盖掉下面
   // itemAnchorSide/itemCenter 该读的坐标——item.x/y 这时已经同步跳到最终落点了（物理模块
   // 需要这份真实位置去算克隆体飞行目标，不能等），线不能跟着瞬间跳过去，得靠这份还没到
@@ -37,18 +43,15 @@ const props = defineProps({
   measuredSizes: { type: Object as PropType<Map<number, { w: number; h: number }>>, default: () => new Map() },
   // 左右锚点是画布视图状态：卡片之后可以自由换位，已建立的关系也不该悄悄换到另一侧。
   relationAnchors: { type: Object as PropType<Record<string, RelationAnchorSides>>, default: () => ({}) },
+  // 当前鼠标悬浮的贴纸 nodeId（见 MindCanvas.vue 的 onItemHover）——四种贴纸悬浮时都会用
+  // CSS transform 抬起 2px（.hover-card-fx），这是纯视觉层面的位移，SVG 连线不会自动知道，
+  // 得靠这个 prop 手动补偿对应端点，否则抬起来的卡片和还锚在旧位置的连线端点会错位一截。
+  hoveredNodeId: { type: Number as PropType<number | null>, default: null },
+  // 抬起量是屏幕像素（CSS translateY(-2px)），换算成世界坐标要除以画布当前缩放——.canvas-world
+  // 套了 scale(camera.scale)，1 个世界单位在屏幕上就是 camera.scale 个像素。
+  scale: { type: Number, default: 1 },
 })
 const emit = defineEmits<{ (e: 'remove', id: number): void }>()
-
-/** 三次贝塞尔：控制点水平外扩，横向距离越远弧度越缓，近距离也留够弧度不显得像折线。
- *  给还没定下具体出边方向的场景用（画拖拽中的预览线，起点是已知的左右连接点，终点只是
- *  跟手的指针位置，见 MindCanvas.vue）。 */
-function curvePath(from: { x: number; y: number }, to: { x: number; y: number }) {
-  const dx = Math.max(Math.abs(to.x - from.x) * 0.5, 50)
-  const sign = to.x >= from.x ? 1 : -1
-  const c1x = from.x + dx * sign, c2x = to.x - dx * sign
-  return `M ${from.x} ${from.y} C ${c1x} ${from.y}, ${c2x} ${to.y}, ${to.x} ${to.y}`
-}
 
 // 探出去的距离夹在 [40, 140] 之间——下限保证近距离也有够看的弧度、不显得像折线；上限是这次
 // 新加的：两张贴纸隔得很远时，探出距离若继续跟总距离等比例涨，弧线会越拉越夸张（一大截几乎
@@ -87,14 +90,57 @@ const anchorSideCache = new Map<number, { srcSide: AnchorSide; dstSide: AnchorSi
 function geometry(item: MindCanvasItem) {
   return props.measuredSizes.get(item.nodeId) ?? itemSize(item)
 }
+// .hover-card-fx 抬起量固定 2px（见 global.css），世界坐标里的偏移量随缩放变化——缩得越小，
+// 同样 2 个屏幕像素对应的世界距离越大，除以 scale 才能让连线端点跟卡片实际抬起的像素量对上。
+const HOVER_LIFT_PX = 2
+// 卡片那 2px 是靠 CSS transition 缓出的（.hover-card-fx，0.25s cubic-bezier）,连线端点如果
+// 直接按 hoveredNodeId 是否等于自己两级跳（0 或 -2px），会在卡片还在慢慢抬升的那 0.25s 里
+// 瞬间跳到终点——用户反馈"hover 的时候线条没有动画跟随，而是瞬间变成了悬浮位置"。SVG 的
+// path d 属性本身没有能跟 CSS transition 对齐的插值机制，这里用一个轻量 rAF 循环把每个
+// nodeId 的抬起量自己缓出到目标值（不追求跟卡片那条 cubic-bezier 曲线数学上完全一致，
+// 一个 2px 的小幅度位移，观感"平滑跟随"就够了），命中目标或掉出悬浮状态就把它从表里摘掉、
+// 循环自动停，不会有画布一直闲置也在空转的 rAF。
+const liftAnim = reactive(new Map<number, number>())
+let liftRaf = 0
+let liftLastT: number | null = null
+function liftTargetFor(nodeId: number) {
+  return nodeId === props.hoveredNodeId ? -HOVER_LIFT_PX : 0
+}
+function liftFrame(now: number) {
+  const dt = liftLastT === null ? 1 / 60 : Math.min((now - liftLastT) / 1000, 1 / 20)
+  liftLastT = now
+  const rate = 1 - Math.exp(-dt / 0.06)   // 时间常数跟 .hover-card-fx 的 0.25s 大致对得上
+  let active = false
+  for (const [nodeId, cur] of [...liftAnim]) {
+    const target = liftTargetFor(nodeId)
+    if (Math.abs(target - cur) < 0.02) {
+      if (target === 0) liftAnim.delete(nodeId)
+      else liftAnim.set(nodeId, target)
+      continue
+    }
+    liftAnim.set(nodeId, cur + (target - cur) * rate)
+    active = true
+  }
+  liftRaf = active ? requestAnimationFrame(liftFrame) : 0
+  if (!active) liftLastT = null
+}
+watch(() => props.hoveredNodeId, (id) => {
+  if (id != null && !liftAnim.has(id)) liftAnim.set(id, 0)
+  if (!liftRaf) liftRaf = requestAnimationFrame(liftFrame)
+})
+onBeforeUnmount(() => { if (liftRaf) cancelAnimationFrame(liftRaf) })
+function hoverLift(item: MindCanvasItem) {
+  const px = liftAnim.get(item.nodeId) ?? (item.nodeId === props.hoveredNodeId ? 0 : 0)
+  return px / (props.scale || 1)
+}
 function centerFor(item: MindCanvasItem) {
   const { w, h } = geometry(item)
-  return { x: item.x + w / 2, y: item.y + h / 2 }
+  return { x: item.x + w / 2, y: item.y + h / 2 + hoverLift(item) }
 }
 function anchorFor(item: MindCanvasItem, side: AnchorSide, pos?: { x: number; y: number }) {
   const { w, h } = geometry(item)
   const x = pos?.x ?? item.x
-  const y = pos?.y ?? item.y
+  const y = (pos?.y ?? item.y) + hoverLift(item)
   if (side === 'left') return { x, y: y + h / 2 }
   if (side === 'right') return { x: x + w, y: y + h / 2 }
   if (side === 'top') return { x: x + w / 2, y }
@@ -121,6 +167,18 @@ const visibleRelations = computed(() => props.relations.flatMap((relation) => {
     && (relation.srcNodeId === props.highlightNodeId || relation.dstNodeId === props.highlightNodeId)
   return [{ id: relation.id, d: sidePath(from, sides.srcSide, to, sides.dstSide), highlighted }]
 }))
+
+// 拖出连线时的预览线跟建好之后的实线走同一个 sidePath——之前预览线单独用一套"横向鼓包"的
+// 贝塞尔（curvePath，已删），跟落定的关系线（sidePath，端点顺着卡片边的法线方向探出再拐弯）
+// 长得不一样，松手前后曲线形状会跳一下（用户反馈"虚线的样式和连接后的实线不太一样"）。
+// toSide 只有指针吸附到目标卡时才有（见 MindCanvas.vue），还没吸附上任何卡的自由拖拽阶段，
+// 借 pickAnchorSide 估一个「如果这里现在有张卡，它朝原点这侧会是哪边」，形状先跟最终效果
+// 长得一样，等真吸附上目标后再换成目标实际的边，全程视觉连续、不会在吸附前后跳变。
+const draftPath = computed(() => {
+  if (!props.draft) return ''
+  const { from, to, fromSide, toSide } = props.draft
+  return sidePath(from, fromSide, to, toSide ?? pickAnchorSide(to, from))
+})
 </script>
 
 <style scoped>

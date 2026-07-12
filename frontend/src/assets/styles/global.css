@@ -47,8 +47,11 @@ input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
 /* 悬停抬起 + 按下下沉的通用反馈：文件卡/项目卡统一用这一套手感（真正的“卡片”才抬起）。
    各自静止态的背景/边框/圆角/圆角阴影不用动，加这个类就有抬起+按下的动效；
    数值抄项目卡（原来只有项目卡自己有这套效果）。 */
+/* 0.25s 跟 .fc-card（文件卡）的悬停过渡时长对齐——.hover-card-fx 原来是 0.3s，两套手感
+   在同一块画布上并排出现（贴纸 vs 文件/项目引用卡）时，0.05s 的差距肉眼可辨，抬起速度
+   看着不一致。 */
 .hover-card-fx {
-  transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.3s ease;
+  transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.25s ease;
 }
 .hover-card-fx:hover {
   transform: translateY(-2px);

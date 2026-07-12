@@ -128,6 +128,19 @@ export const useMindStore = defineStore('mind', () => {
     return updated
   }
 
+  async function deleteCanvas(id: number) {
+    await mindApi.deleteCanvas(id)
+    canvases.value = canvases.value.filter(canvas => canvas.id !== id)
+    // 删的正好是当前打开这张——清空本地视图状态，CanvasView.vue 的 ensureCanvas() 会在
+    // 路由跳到别的画布 id 后自然重新 loadCanvas；这里不主动切换，留给调用方决定切去哪张
+    // （比如优先切到列表里剩下的第一张，没有了就新建一张）。
+    if (activeCanvasId.value === id) {
+      activeCanvasId.value = null
+      canvasItems.value = []
+      canvasRelations.value = []
+    }
+  }
+
   async function loadCanvas(id: number) {
     activeCanvasId.value = id
     const [items, relations] = await Promise.all([
@@ -250,7 +263,7 @@ export const useMindStore = defineStore('mind', () => {
   return {
     notes, loading, loaded, filterQ, jumpTarget, timeline, fetchNotes, createNote, updateNote, deleteNote,
     canvases, canvasesLoaded, canvasLoading, activeCanvasId, canvasItems, canvasRelations,
-    fetchCanvases, createCanvas, renameCanvas, loadCanvas, addNoteToCanvas, updateCanvasItem,
+    fetchCanvases, createCanvas, renameCanvas, deleteCanvas, loadCanvas, addNoteToCanvas, updateCanvasItem,
     addRefToCanvas, createCanvasNote, updateCanvasNote, removeCanvasItem, createCanvasRelation, removeCanvasRelation, nextCanvasZ,
     saveCanvasView, saveCanvasRelationAnchors,
   }

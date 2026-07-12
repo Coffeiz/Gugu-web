@@ -60,15 +60,25 @@ const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不
 <style scoped>
 .mind-page { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; }
 
+/* pointer-events:none 是关键：grid 的 1fr 1fr 两侧列即便没有任何可见内容（画布页整段
+   right 列都是空的，left 列本来就一直是空的），作为真实的 <div> 默认仍然会吃掉点击——
+   这层容器横跨了几乎整个页面宽度、z-index 又比画布自己浮层面板（CanvasSidebar/
+   CanvasToolbar，见 CanvasView.vue，都是 z-index:8）更高，实际盖住了画布左上角面板按钮
+   的下半部分（用户反馈"只有按钮顶部能点，中间点不了"）——画布的 .canvas-page 是
+   position:fixed;inset:0，跟这条 bar 同属 .mind-page 的兄弟节点，画布浮层再怎么调自己
+   内部的 z-index 也逃不出 .mind-bar 这个外层容器的手掌心。跟 RelationLayer.vue 的
+   .relation-layer 同一个套路：容器本身不吃点击，只在真正有交互内容的子元素上单独开
+   pointer-events:auto（.mind-tabs 胶囊、右侧筛选/日期选择器），可见即可点，空白区域
+   点击穿透到下层。 */
 .mind-bar {
   display: grid; grid-template-columns: 1fr auto 1fr;
   align-items: center; gap: 12px;
-  position: relative; z-index: 12;
+  position: relative; z-index: 12; pointer-events: none;
   flex-shrink: 0; margin: 28px 24px 0;
 }
 .mind-body { position: relative; z-index: 1; flex: 1; min-height: 0; }
 .mind-bar-side { display: flex; align-items: center; }
-.mind-bar-side.right { justify-content: flex-end; gap: 10px; }
+.mind-bar-side.right { justify-content: flex-end; gap: 10px; pointer-events: auto; }
 
 :deep(.mind-cal-picker) { width: auto !important; }
 :deep(.mind-cal-picker .dp-input) {
@@ -101,6 +111,7 @@ const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不
   box-shadow: var(--glass-shadow);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
+  pointer-events: auto;
 }
 .mind-tab {
   display: inline-flex; align-items: center; gap: 6px;
