@@ -23,6 +23,9 @@
               @mousedown.prevent="editor.chain().focus().toggleOrderedList().run()" title="有序列表">
         <PhListNumbers :size="13" weight="bold" />
       </button>
+      <button class="ne-tool" @mousedown.prevent="openReferencePicker" title="引用项目、文件或活动">
+        <PhAt :size="13" weight="bold" />
+      </button>
       <!-- 「样式」抽屉：加粗/斜体/删除线/行内代码/链接，2026-07-11 加。不是弹层——Aa 按钮
            自己向右挪，工具从它左边拉出来（DOM 顺序是 items 在前、按钮在后，抽屉展开就是
            items 从 0 宽长开，把按钮"挤"到右边）；按钮本身就是收起入口，再点一下收回去，
@@ -63,9 +66,6 @@
           <PhTextAa :size="13" weight="bold" />
         </button>
       </div>
-      <button class="ne-tool" @mousedown.prevent="openReferencePicker" title="引用项目、文件或活动">
-        <PhAt :size="13" weight="bold" />
-      </button>
       <!-- 「插入」抽屉：代码块/引用块/分割线，2026-07-11 加。有序列表挪到主工具栏跟
            无序列表放一起了，不算在这里头。都是一次性动作，点了直接生效、抽屉自己收起。
            代码块不给手动选语言——交给 highlightAuto 自动识别。 -->
