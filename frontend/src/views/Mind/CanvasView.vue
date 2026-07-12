@@ -4,6 +4,7 @@
       ref="canvasRef"
       :items="store.canvasItems"
       :relations="store.canvasRelations"
+      :relation-anchors="relationAnchors"
       @remove="removeItem"
       @remove-relation="removeRelation"
       @link-nodes="linkNodes"
@@ -30,6 +31,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { MindCanvasItem, MindRefSuggestItem } from '@/services/api'
 import { useMindRefActions } from '@/composables/useMindRefActions'
+import type { RelationAnchorSides } from '@/composables/useMindCanvas'
 import { useMindStore } from '@/stores/mind'
 import CanvasSidebar from './components/CanvasSidebar.vue'
 import CanvasToolbar from './components/CanvasToolbar.vue'
@@ -44,6 +46,20 @@ const { openMindRef } = useMindRefActions()
 
 const canvasRef = ref<InstanceType<typeof MindCanvas> | null>(null)
 const activeCanvasId = computed(() => store.activeCanvasId)
+const relationAnchors = computed<Record<string, RelationAnchorSides>>(() => {
+  const data = store.canvases.find(canvas => canvas.id === activeCanvasId.value)?.data
+  const value = data?.relationAnchors
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const result: Record<string, RelationAnchorSides> = {}
+  for (const [id, sides] of Object.entries(value)) {
+    if (!sides || typeof sides !== 'object') continue
+    const { srcSide, dstSide } = sides as Partial<RelationAnchorSides>
+    if ((srcSide === 'left' || srcSide === 'right') && (dstSide === 'left' || dstSide === 'right')) {
+      result[id] = { srcSide, dstSide }
+    }
+  }
+  return result
+})
 
 onMounted(async () => {
   if (!store.loaded) await store.fetchNotes()
@@ -116,8 +132,15 @@ async function removeRelation(id: number) {
   await store.removeCanvasRelation(id)
 }
 /** 贴纸边缘圆点拖到另一张贴纸上松手时触发，见 MindCanvas.vue 的 onConnectDragStart。 */
-async function linkNodes(srcNodeId: number, dstNodeId: number) {
-  await store.createCanvasRelation(srcNodeId, dstNodeId)
+async function linkNodes(srcNodeId: number, dstNodeId: number, sides: RelationAnchorSides) {
+  const relation = await store.createCanvasRelation(srcNodeId, dstNodeId)
+  const canvasId = activeCanvasId.value
+  if (canvasId == null || relationAnchors.value[String(relation.id)]) return
+  // related 是无向关系，后端会按 node id 归一 src/dst；随之交换锚点，保证存的是响应中那条边的方向。
+  const normalized = relation.srcNodeId === srcNodeId
+    ? sides
+    : { srcSide: sides.dstSide, dstSide: sides.srcSide }
+  await store.saveCanvasRelationAnchors(canvasId, { ...relationAnchors.value, [relation.id]: normalized })
 }
 function openRef(item: MindCanvasItem) {
   if (item.node.kind !== 'ref' || !item.node.refType || item.node.refId == null) return

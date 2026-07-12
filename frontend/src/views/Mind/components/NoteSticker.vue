@@ -112,17 +112,14 @@ const { onPointerDown } = useCardDrag({
   // 的 onItemDragging）；松手时卡片中心落在鼠标下，不延续抓取时的偏移——从任意一角抓起，
   // 松手都一样，两处用同一套居中公式。
   onDragMove: (worldX, worldY) => {
-    const { w, h } = itemSize(props.item)
-    emit('dragging', props.item, worldX - w / 2, worldY - h / 2)
+    emit('dragging', props.item, worldX, worldY)
   },
   onLanding: (worldX, worldY) => {
-    const { w, h } = itemSize(props.item)
-    emit('landing', props.item, worldX - w / 2, worldY - h / 2)
+    emit('landing', props.item, worldX, worldY)
   },
   onLandingDone: () => emit('landingDone', props.item),
   onDropAt: (worldX, worldY) => {
-    const { w, h } = itemSize(props.item)
-    emit('moved', props.item, worldX - w / 2, worldY - h / 2)
+    emit('moved', props.item, worldX, worldY)
   },
 })
 </script>

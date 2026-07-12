@@ -1,9 +1,9 @@
 <template>
-  <div
+  <div ref="rootEl" v-bind="attrs"
     class="proj-card hover-card-fx"
     :data-project-id="project.id"
     :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
-    :class="{ 'file-drag-over': fileDragOver }"
+    :class="{ 'file-drag-over': fileDragOver, 'canvas-mode': canvasMode }"
     @pointerdown="onPointerDown"
     @dragenter.prevent="onFileDragEnter"
     @dragover.prevent="onFileDragOver"
@@ -170,7 +170,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, onUnmounted, type PropType } from 'vue'
+import { computed, ref, nextTick, onUnmounted, useAttrs, type PropType } from 'vue'
 import type { Project, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
@@ -181,17 +181,24 @@ import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/servic
 import SegBar from '@/components/common/SegBar.vue'
 import { firstIncompleteStageIdx } from '@/utils/projectStages'
 
+defineOptions({ inheritAttrs: false })
+
+const attrs = useAttrs()
 const props = defineProps({
   project: { type: Object as PropType<Project>, required: true },
+  dragEnabled: { type: Boolean, default: true },
+  canvasMode: { type: Boolean, default: false },
   // 松手时的落点处理，不传走默认的看板列换状态（dispatchDrop）。画布引用贴纸（ProjectRefCard.vue）
   // 直接嵌这张卡片、把这里换成画布定位落库——同一张卡在不同宿主里"拖了之后要干什么"不一样，
   // 但"按住阈值起拖"这套物理和手感完全一样，不用为画布另起一个拖拽入口（如小抓手）。
-  onDropOverride: { type: [Function, null] as PropType<((pos: { x: number; y: number }, velocity: { x: number; y: number; turn: number }) => void) | null>, default: null },
+  onDropOverride: { type: [Function, null] as PropType<((pos: { x: number; y: number }, velocity: { x: number; y: number; turn: number }, size: { w: number; h: number }) => void) | null>, default: null },
   // 拖拽物理的额外覆盖项，跟 onDropOverride 同一个用途——画布引用贴纸要跟便签/文件/活动
   // 贴纸用同一套手感（tilt:0 关掉 3D 后仰、lift:1.03 轻抬起），看板页不传就用默认的
   // 看板手感（tilt:5、sway:0.25、lift:1）。
   dragOpts: { type: Object as PropType<Partial<PhysicsDragOpts>>, default: () => ({}) },
 })
+const rootEl = ref<HTMLElement | null>(null)
+defineExpose({ rootEl })
 const emit = defineEmits(['click'])
 
 const projectStore = useProjectStore()
@@ -210,6 +217,7 @@ function dispatchDrop({ x, y }: { x: number; y: number }) {
 // 内部控件（星级 / 阶段 / 进度条）自己处理点击，不在这里起拖。阈值判定本身收在
 // usePhysicsDrag.ts 的 startThresholdDrag（跟 useFileDragDrop.ts 共用同一份，不再各写一遍）。
 function onPointerDown(e: PointerEvent) {
+  if (!props.dragEnabled) return
   startThresholdDrag(e, {
     exclude: t => !!(t as HTMLElement)?.closest?.('.stars, .proj-stage, .seg-bar-wrap, .card-advance'),
     onDragStart: (ev, card) => startPhysicsDrag(ev, card, { pointer: true, skipAbsorb: true, onDrop: props.onDropOverride ?? dispatchDrop, ...props.dragOpts }),
@@ -496,6 +504,7 @@ async function setPriority(n: number) {
               box-shadow 0.3s ease, background 0.25s ease-out;
   user-select: none;
 }
+.proj-card.canvas-mode { overflow: visible; }
 .proj-card.file-drag-over {
   box-shadow: 0 0 0 2px rgba(123,127,178,0.6), 0 6px 18px rgba(80,90,110,0.13);
   transform: translateY(-2px);

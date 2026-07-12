@@ -14,6 +14,7 @@ import {
   type MindNoteUpdate, type MindRelation,
 } from '@/services/api'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
+import type { RelationAnchorSides } from '@/composables/useMindCanvas'
 
 export class MindConflictError extends Error {
   constructor() { super('便签已被其他端修改') }
@@ -42,6 +43,7 @@ export const useMindStore = defineStore('mind', () => {
   const activeCanvasId = ref<number | null>(null)
   const canvasItems = ref<MindCanvasItem[]>([])
   const canvasRelations = ref<MindRelation[]>([])
+  const canvasDataSaves = new Map<number, Promise<void>>()
 
   /** 时间流：按 capturedAt 分组成「一天一组」，供 NoteTimeline 渲染；筛选词命中正文才留 */
   const timeline = computed(() => {
@@ -209,12 +211,40 @@ export const useMindStore = defineStore('mind', () => {
     canvasRelations.value = canvasRelations.value.filter(relation => relation.id !== id)
   }
 
-  /** 记住这张画布上次的平移/缩放（`mind_maps.data_json`，本就是为它留的字段），
-   *  下次打开时回到用户离开时的视角，而不是每次都回到画布几何原点。 */
-  async function saveCanvasView(id: number, view: { x: number; y: number; scale: number }) {
-    const updated = await mindApi.updateCanvas(id, { data: view })
+  /** 画布的视图状态共用 data_json：每次只合并自己负责的键，不能让延迟保存的相机位置覆盖
+   *  已冻结的关系锚点。 */
+  async function updateCanvasData(id: number, patch: Record<string, unknown>) {
     const index = canvases.value.findIndex(canvas => canvas.id === id)
-    if (index !== -1) canvases.value[index] = updated
+    if (index === -1) return
+    const current = canvases.value[index]
+    // 先写本地，连续的视角/关系保存都会基于最新快照合并，不会彼此丢字段。
+    canvases.value[index] = { ...current, data: { ...current.data, ...patch } }
+    const previous = canvasDataSaves.get(id) ?? Promise.resolve()
+    const save = previous.catch(() => {}).then(async () => {
+      const latestIndex = canvases.value.findIndex(canvas => canvas.id === id)
+      if (latestIndex === -1) return
+      // 取队列执行时的完整快照：延迟的相机保存和刚建关系的锚点无论谁先发起，最后写出的
+      // 都含有两者，不会出现旧请求后到而把 relationAnchors 冲掉。
+      const latest = canvases.value[latestIndex]
+      const updated = await mindApi.updateCanvas(id, { data: latest.data })
+      const currentIndex = canvases.value.findIndex(canvas => canvas.id === id)
+      if (currentIndex !== -1) canvases.value[currentIndex] = { ...updated, data: canvases.value[currentIndex].data }
+    })
+    canvasDataSaves.set(id, save)
+    try {
+      await save
+    } finally {
+      if (canvasDataSaves.get(id) === save) canvasDataSaves.delete(id)
+    }
+  }
+
+  /** 记住这张画布上次的平移/缩放，下次打开时回到用户离开时的视角。 */
+  async function saveCanvasView(id: number, view: { x: number; y: number; scale: number }) {
+    await updateCanvasData(id, view)
+  }
+
+  async function saveCanvasRelationAnchors(id: number, anchors: Record<string, RelationAnchorSides>) {
+    await updateCanvasData(id, { relationAnchors: anchors })
   }
 
   return {
@@ -222,6 +252,6 @@ export const useMindStore = defineStore('mind', () => {
     canvases, canvasesLoaded, canvasLoading, activeCanvasId, canvasItems, canvasRelations,
     fetchCanvases, createCanvas, renameCanvas, loadCanvas, addNoteToCanvas, updateCanvasItem,
     addRefToCanvas, createCanvasNote, updateCanvasNote, removeCanvasItem, createCanvasRelation, removeCanvasRelation, nextCanvasZ,
-    saveCanvasView,
+    saveCanvasView, saveCanvasRelationAnchors,
   }
 })

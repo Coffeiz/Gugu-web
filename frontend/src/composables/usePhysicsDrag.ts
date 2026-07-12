@@ -278,7 +278,7 @@ function _invertPlay(kids: HTMLElement[], fromRects: DOMRect[], toRects: DOMRect
  *   onDrop({x,y}): pointer 模式下松手时回调，由调用方据落点执行业务移动（原生模式靠各列 @drop 落定）。
  */
 export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTMLElement, opts: PhysicsDragOpts = {}) {
-  if (!sourceEl || _active) return
+  if (!(sourceEl instanceof HTMLElement) || _active) return
   _flushPendingCleanup(sourceEl)   // 只打断「同一张卡」上一趟还没飞完的落地动画，避免重叠成「两张卡」
   // 上一次拖拽的落地动画要等 transitionend（~420~580ms）才把这张卡复位显示；这段窗口期内
   // 若重新抓同一张卡，getBoundingClientRect 会在它还是 display:none 时量出 0×0——克隆体宽高
@@ -537,7 +537,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 当"1.0 倍"的缩放基准，不能再用 rect.width/height——用旧值算出来的缩放比例是"从抓起
     // 时刻的大小缩放到落点"，而克隆体这时候实际已经不是那个大小了，飞过去的动画会跳到错误
     // 的尺寸/位置上。
-    const dropW = half.x * 2, dropH = half.y * 2
+    // 用 let：落地飞行这 0.55s 期间如果画布还在被缩放（滚轮跟松手同时发生），这两个值也要
+    // 跟着实时更新，见 flyMorph 里的 _trackLandingZoom——不然落地动画全程只认松手那一刻的
+    // 画布缩放，飞完之后卡片大小跟当下的画布比例对不上。
+    let dropW = half.x * 2, dropH = half.y * 2
     // turn：最近 VEL_HISTORY_MS 这段时间里速度方向转过的角度（弧度，带符号）——甩出去的手腕
     // 不是每次都走直线，这个角度供调用方把惯性延伸的路径也带一点弧度（见 useCardDrag.ts 的
     // coastOffset）。样本太短（刚起手还没攒够历史）或本来就没怎么动时不强算，给 0。
@@ -623,6 +626,59 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         holder.style.transform = tf
         clone2.style.transform = tf
       }
+
+      // 落地飞行这 0.55s 期间画布相机（缩放和/或平移）可能还在变——滚轮缩放跟松手同时发生，
+      // 或者松手那一刻正拖着画布平移。画布的变化和这段飞行动画本该是两件独立的事：飞行是一段
+      // 固定的、跟画布无关的位移+形变（从抓起时的位置飞到落点该有的位置/形状），画布这段时间
+      // 内继续变，不该去重新定这段飞行的目标——试过"每帧重新量本体真实位置、改 CSS transition
+      // 的目标"，画布连续平移时每一帧都在从当前插值位置重新起跑一段完整的 0.55s 缓出曲线，
+      // 跑不完就被下一帧打断，连续打断叠加起来就是"追着走、像带了惯性/阻力"（用户反馈"绝对
+      // 位置移动好像有惯性，不是完全跟随画布"）——本体（revealEl）自己是零延迟跟着相机变换走
+      // 的，克隆不该比它多一层弹性。
+      // 解法：加一层不带 transition 的外层容器 camGlue，专门瞬时承接"画布相对落地那一刻挪动/
+      // 缩放了多少"；holder/holder2 挂在它里面（position:fixed 元素若祖先带 transform 会改用
+      // 该祖先的盒子当定位基准，这是标准 CSS 行为），自己那段飞行的 transform 完全不用管画布，
+      // 仍按抓起→落点这段固定的位移/形变缓出。camOrigin 是本体落地那一刻的真实框；每帧重新
+      // 量本体现在的真实框，两者一比就是画布纯粹的位移量+缩放比例，transform-origin 钉在
+      // camOrigin 上使 scale 的缩放中心正好对上，瞬时套到 camGlue 身上——画布怎么动克隆就怎么
+      // 跟，跟本体自己的观感一致，同时飞行动画本身的缓出曲线完全不受干扰。
+      // 副作用：clone/clone2 的内容缩放（CSS zoom，用来补偿克隆体脱离画布缩放祖先后的渲染差）
+      // 不再需要在这里跟着实时更新了——它俩现在都是 camGlue 的子孙，camGlue 的 scale 已经统一
+      // 把整个飞行画面（含内容）缩放到位，落地时设的那个固定 zoom 基准仍然有效、不用动。
+      // ⚠️ 这层容器必须在下面「提交初始态→改 transform 触发过渡」这套 FLIP 手法之前就接好线：
+      // 把 holder/clone2 挪进一个新祖先，等它们已经带着待生效的过渡在途中再挪，实测浏览器会
+      // 把这次 DOM 挪动当成一次全新布局上下文，直接判定这趟过渡不成立、瞬间跳到终值（松手瞬间
+      // 的弹出动画整个消失，变成"直接瞬移到落点"）。先接好 camGlue 这层壳，再走 FLIP 那一套，
+      // 两件事互不干扰。
+      let camGlue: HTMLElement | null = null
+      if (typeof opts.contentScale === 'function') {
+        camGlue = document.createElement('div')
+        Object.assign(camGlue.style, {
+          position: 'fixed', left: '0', top: '0', right: '0', bottom: '0',
+          transition: 'none', transform: 'translate3d(0,0,0)', pointerEvents: 'none',
+          // camGlue 自己带 transform，会建立新的层叠上下文——holder 原来的 z-index（拿来跟
+          // 侧栏之类的页面元素比高低）从此只在 camGlue 内部有效，camGlue 本身对外是 z-index:
+          // auto，会直接落到任何带显式 z-index 的页面元素后面，之前"克隆压在侧栏下面"那套
+          // 设定就失效了。这里把 holder 算好的 z-index 原样搬到 camGlue 身上，让它对外的层叠
+          // 位置跟没加这层容器之前一致。
+          zIndex: holder.style.zIndex,
+        })
+        document.body.appendChild(camGlue)
+        camGlue.appendChild(holder)
+        camGlue.appendChild(clone2)
+        const camOrigin = initialBox
+        camGlue.style.transformOrigin = `${camOrigin.left}px ${camOrigin.top}px`
+        const trackCamera = () => {
+          if (done) return
+          const r = revealEl.getBoundingClientRect()
+          const scaleRatio = camOrigin.width > 0.01 ? r.width / camOrigin.width : 1
+          camGlue!.style.transform =
+            `translate3d(${(r.left - camOrigin.left).toFixed(2)}px, ${(r.top - camOrigin.top).toFixed(2)}px, 0) scale(${scaleRatio.toFixed(4)})`
+          requestAnimationFrame(trackCamera)
+        }
+        requestAnimationFrame(trackCamera)
+      }
+
       clone2.getBoundingClientRect()   // 提交初始态（与 holder 重叠、opacity 0），下面才会从此处动画
       const trans = `transform 0.55s ${_SETTLE}, opacity 0.42s ease`
       holder.style.transition = trans
@@ -694,7 +750,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         clone2.style.height = box.height + 'px'
         clone2.style.transform = `translate(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px)`
         requestAnimationFrame(() => {
-          holder.remove(); clone2.remove()
+          holder.remove(); clone2.remove(); camGlue?.remove()
           _revealWithoutStaleHover(revealEl, pointer)
         })
       }
@@ -708,7 +764,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         if (finishTimer) clearTimeout(finishTimer)
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
-        holder.remove(); clone2.remove()
+        holder.remove(); clone2.remove(); camGlue?.remove()
         _revealWithoutStaleHover(revealEl, pointer)
       }
       unregister = _registerCleanup(revealEl, forceCleanup)

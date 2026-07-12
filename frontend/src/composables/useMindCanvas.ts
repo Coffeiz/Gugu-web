@@ -77,6 +77,13 @@ export function itemAnchor(item: MindCanvasItem, towardX: number) {
 
 export type AnchorSide = 'left' | 'right' | 'top' | 'bottom'
 
+/** 关系在一张画布上的端点方向。关系本身是全局语义，左右从哪一侧出线则属于画布视图状态，
+ *  存在 MindMap.data_json 的 relationAnchors 里。 */
+export interface RelationAnchorSides {
+  srcSide: AnchorSide
+  dstSide: AnchorSide
+}
+
 /** 已建立关系的出边侧，只在关系第一次画出来那一刻判一次（配合 RelationLayer.vue 的
  *  anchorSideCache 冻结）——只在左右两侧里选：连接点本身（conn-dot）只长在贴纸左右边，
  *  没有上/下的圆点可拖，画出来的线若从上/下边出，会跟"关系是从边缘圆点拖出来的"这个交互

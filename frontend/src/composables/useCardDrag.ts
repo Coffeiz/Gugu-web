@@ -115,7 +115,7 @@ export function animateLanding(
  *  不能直接拿 size.w/size.h 除以某个"缩放值"——screenToWorld 是个坐标变换函数（含相机
  *  平移+缩放），调用方手里通常没有单独拆出来的缩放系数。取两个点（原点、size 对角点）
  *  各自变换后相减，相机平移量在减法里天然抵消，只留下缩放这一项，不用额外接口。 */
-function worldSize(
+export function screenSizeToWorld(
   screenToWorld: (clientX: number, clientY: number) => { x: number; y: number },
   size: { w: number; h: number },
 ) {
@@ -151,6 +151,7 @@ export function useCardDrag(opts: {
   // 拖拽发起点（如小抓手）跟「要飞起来的那张卡」不是同一个元素时用这个指定要拖的元素，
   // 不传则退回 event.currentTarget（发起点自己就是整张卡的常见情形）。
   getDragEl?: () => HTMLElement | null
+  exclude?: (target: EventTarget | null) => boolean
   // 画布相机当前缩放（MindCanvas.vue 的 camera.scale）——卡片套在 .canvas-world 的
   // transform:scale 祖先底下，克隆体脱离这层祖先后要靠这个值自己补回视觉缩放，见
   // usePhysicsDrag.ts 的 contentScale。传取值函数（不是静态数字）：抓着卡片不放的时候
@@ -160,6 +161,7 @@ export function useCardDrag(opts: {
   function onPointerDown(event: PointerEvent) {
     startThresholdDrag(event, {
       getCard: opts.getDragEl ? () => opts.getDragEl!() : undefined,
+      exclude: opts.exclude,
       onDragStart: (ev, card) => {
         startPhysicsDrag(ev, card, {
           pointer: true, skipAbsorb: true, tilt: 0, lift: 1.03,
@@ -177,7 +179,7 @@ export function useCardDrag(opts: {
           onFollow: opts.onDragMove
             ? ({ x, y }, size) => {
                 const world = opts.screenToWorld(x, y)
-                const { w, h } = worldSize(opts.screenToWorld, size)
+                const { w, h } = screenSizeToWorld(opts.screenToWorld, size)
                 opts.onDragMove!(world.x - w / 2, world.y - h / 2)
               }
             : undefined,
@@ -185,7 +187,7 @@ export function useCardDrag(opts: {
             const coast = coastOffset(velocity)
             const dropCenter = opts.screenToWorld(x, y)
             const landCenter = opts.screenToWorld(x + coast.x, y + coast.y)
-            const { w, h } = worldSize(opts.screenToWorld, size)
+            const { w, h } = screenSizeToWorld(opts.screenToWorld, size)
             const dropTopLeft = { x: dropCenter.x - w / 2, y: dropCenter.y - h / 2 }
             const landTopLeft = { x: landCenter.x - w / 2, y: landCenter.y - h / 2 }
             // 落库坐标必须同步给出：usePhysicsDrag.ts 的 end() 紧接着在同一个宏任务里读

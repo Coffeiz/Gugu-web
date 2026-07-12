@@ -62,17 +62,14 @@ const { onPointerDown } = useCardDrag({
   contentScale: () => props.scale,
   onClick: () => { if (!props.item.node.deletedAt) emit('open', props.item) },
   onDragMove: (worldX, worldY) => {
-    const { w, h } = itemSize(props.item)
-    emit('dragging', props.item, worldX - w / 2, worldY - h / 2)
+    emit('dragging', props.item, worldX, worldY)
   },
   onLanding: (worldX, worldY) => {
-    const { w, h } = itemSize(props.item)
-    emit('landing', props.item, worldX - w / 2, worldY - h / 2)
+    emit('landing', props.item, worldX, worldY)
   },
   onLandingDone: () => emit('landingDone', props.item),
   onDropAt: (worldX, worldY) => {
-    const { w, h } = itemSize(props.item)
-    emit('moved', props.item, worldX - w / 2, worldY - h / 2)
+    emit('moved', props.item, worldX, worldY)
   },
 })
 </script>

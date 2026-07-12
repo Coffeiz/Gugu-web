@@ -4,7 +4,7 @@
       <RelationLayer
         :items="items" :relations="relations" :highlight-node-id="connectionDrag.originNodeId"
         :draft="connectionDrag.active ? { from: connectionDrag.from, to: connectionDrag.to } : null"
-        :landing-positions="landingPositions"
+        :landing-positions="landingPositions" :measured-sizes="measuredSizes" :relation-anchors="relationAnchors"
         @remove="id => emit('removeRelation', id)"
       />
 
@@ -19,14 +19,14 @@
         <ProjectRefCard
           v-else-if="item.node.refType === 'project'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :screen-to-world="screenToWorld" :scale="camera.scale"
-          @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone"
+          @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone" @measured="onItemMeasured"
           @moved="onItemMoved" @open="item => emit('openRef', item)"
           @connect-drag-start="e => onConnectDragStart(e, item.nodeId)"
         />
         <FileRefCard
           v-else-if="item.node.refType === 'file'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :screen-to-world="screenToWorld" :scale="camera.scale"
-          @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone"
+          @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone" @measured="onItemMeasured"
           @moved="onItemMoved" @open="item => emit('openRef', item)"
           @connect-drag-start="e => onConnectDragStart(e, item.nodeId)"
         />
@@ -48,7 +48,7 @@
  *  编排（贴纸边缘圆点拖到另一张贴纸上，见 onConnectDragStart 一带）。 */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
-import { itemAnchor, useMindCanvas } from '@/composables/useMindCanvas'
+import { itemAnchor, itemSize, pickAnchorSide, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import EntitySticker from './EntitySticker.vue'
 import FileRefCard from './FileRefCard.vue'
 import NoteSticker from './NoteSticker.vue'
@@ -58,11 +58,12 @@ import RelationLayer from './RelationLayer.vue'
 const props = defineProps({
   items: { type: Array as PropType<MindCanvasItem[]>, required: true },
   relations: { type: Array as PropType<MindRelation[]>, required: true },
+  relationAnchors: { type: Object as PropType<Record<string, RelationAnchorSides>>, default: () => ({}) },
 })
 const emit = defineEmits<{
   (e: 'remove', item: MindCanvasItem): void
   (e: 'removeRelation', id: number): void
-  (e: 'linkNodes', srcNodeId: number, dstNodeId: number): void
+  (e: 'linkNodes', srcNodeId: number, dstNodeId: number, sides: RelationAnchorSides): void
   (e: 'saveNote', item: MindCanvasItem, fields: { title: string; contentMd: string }): void
   (e: 'openRef', item: MindCanvasItem): void
   (e: 'itemMoved', item: MindCanvasItem): void
@@ -70,6 +71,7 @@ const emit = defineEmits<{
 }>()
 
 const viewportRef = ref<HTMLElement | null>(null)
+const measuredSizes = reactive(new Map<number, { w: number; h: number }>())
 const {
   camera, centerView, screenToWorld, zoomAt, zoomAtCenter, onWheel,
   startPan, panMove, panEnd,
@@ -106,6 +108,9 @@ function onItemMoved(item: MindCanvasItem, x: number, y: number) {
 function onItemDragging(item: MindCanvasItem, x: number, y: number) {
   item.x = x
   item.y = y
+}
+function onItemMeasured(item: MindCanvasItem, size: { w: number; h: number }) {
+  measuredSizes.set(item.nodeId, size)
 }
 
 /** 松手后惯性落地动画期间（见 useCardDrag.ts 的 onLanding）每帧调用一次——跟 onItemDragging
@@ -192,7 +197,18 @@ function onConnectionDragEnd(event: PointerEvent) {
   // "弹性"只体现在线怎么画，砸没砸中目标贴纸得看指针实际在哪，不能让视觉延迟改变判定。
   const targetEl = (document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-node-id]')
   const targetNodeId = targetEl ? Number(targetEl.dataset.nodeId) : NaN
-  if (Number.isFinite(targetNodeId) && targetNodeId !== originNodeId) emit('linkNodes', originNodeId, targetNodeId)
+  if (!Number.isFinite(targetNodeId) || targetNodeId === originNodeId) return
+  const source = props.items.find(item => item.nodeId === originNodeId)
+  const target = props.items.find(item => item.nodeId === targetNodeId)
+  if (!source || !target) return
+  const sourceSize = measuredSizes.get(source.nodeId) ?? itemSize(source)
+  const targetSize = measuredSizes.get(target.nodeId) ?? itemSize(target)
+  const sourceCenter = { x: source.x + sourceSize.w / 2, y: source.y + sourceSize.h / 2 }
+  const targetCenter = { x: target.x + targetSize.w / 2, y: target.y + targetSize.h / 2 }
+  emit('linkNodes', originNodeId, targetNodeId, {
+    srcSide: pickAnchorSide(sourceCenter, targetCenter),
+    dstSide: pickAnchorSide(targetCenter, sourceCenter),
+  })
 }
 
 function onPointerMove(event: PointerEvent) {

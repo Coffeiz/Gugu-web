@@ -1,7 +1,7 @@
 <template>
-  <div
+  <div ref="rootEl"
     class="fc-card"
-    :class="{ selected, 'pre-selected': preSelected, dragging, cut, 'fc-has-thumb': hasThumb, 'no-lift': !lift }"
+    :class="{ selected, 'pre-selected': preSelected, dragging, cut, 'fc-has-thumb': hasThumb, 'no-lift': !lift, 'canvas-mode': canvasMode }"
     :style="{ '--fc-color': fileIconColor(ext), '--fc-area-h': `${areaHeight}px`, '--fc-icon-lift': `${iconLift}px` }"
   >
     <span class="fc-ext-badge">{{ ext }}</span>
@@ -36,8 +36,11 @@
  * `:deep()` 才能扎进子组件根节点以外的后代（scoped CSS 对子组件模板内部的后代选择器
  * 本来就够不到，选中态叠加在缩略图上的 ::after 尤其如此）。
  */
-import { type PropType } from 'vue'
+import { ref, type PropType } from 'vue'
 import { fileIconColor, fileListIcon } from '@/utils/fileTypes'
+
+const rootEl = ref<HTMLElement | null>(null)
+defineExpose({ rootEl })
 
 defineProps({
   ext: { type: String, required: true },
@@ -51,6 +54,7 @@ defineProps({
   dragging: { type: Boolean, default: false },
   cut: { type: Boolean, default: false },
   lift: { type: Boolean, default: true },   // 悬停是否上浮 2px；Dashboard 最近文件面板不要这个位移，走 no-lift
+  canvasMode: { type: Boolean, default: false },
 })
 </script>
 
@@ -72,6 +76,7 @@ defineProps({
   min-height: 122px;
   display: flex; flex-direction: column;
 }
+.fc-card.canvas-mode { overflow: visible; }
 .fc-card:hover {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 18px rgba(80,90,110,0.13);
   background: rgba(255,255,255,0.86);

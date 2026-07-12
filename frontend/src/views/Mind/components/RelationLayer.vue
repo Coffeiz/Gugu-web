@@ -20,7 +20,7 @@
  */
 import { computed, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
-import { itemAnchorAt, itemCenter, pickAnchorSide, type AnchorSide } from '@/composables/useMindCanvas'
+import { itemSize, pickAnchorSide, type AnchorSide, type RelationAnchorSides } from '@/composables/useMindCanvas'
 
 const props = defineProps({
   items: { type: Array as PropType<MindCanvasItem[]>, required: true },
@@ -32,6 +32,11 @@ const props = defineProps({
   // 需要这份真实位置去算克隆体飞行目标，不能等），线不能跟着瞬间跳过去，得靠这份还没到
   // 终点的插值坐标画出"跟着飞"的效果，动画播完这张卡的 key 就会从表里被删掉。
   landingPositions: { type: Object as PropType<Map<number, { x: number; y: number }>>, default: () => new Map() },
+  // 项目/文件卡的实际高度可能和持久化视图尺寸不同；嵌套卡体在自身 ResizeObserver 中上报，
+  // 连线只用这份临时几何值定位端点，不把渲染细节反写进画布数据。
+  measuredSizes: { type: Object as PropType<Map<number, { w: number; h: number }>>, default: () => new Map() },
+  // 左右锚点是画布视图状态：卡片之后可以自由换位，已建立的关系也不该悄悄换到另一侧。
+  relationAnchors: { type: Object as PropType<Record<string, RelationAnchorSides>>, default: () => ({}) },
 })
 const emit = defineEmits<{ (e: 'remove', id: number): void }>()
 
@@ -45,13 +50,21 @@ function curvePath(from: { x: number; y: number }, to: { x: number; y: number })
   return `M ${from.x} ${from.y} C ${c1x} ${from.y}, ${c2x} ${to.y}, ${to.x} ${to.y}`
 }
 
+// 探出去的距离夹在 [40, 140] 之间——下限保证近距离也有够看的弧度、不显得像折线；上限是这次
+// 新加的：两张贴纸隔得很远时，探出距离若继续跟总距离等比例涨，弧线会越拉越夸张（一大截几乎
+// 平行于端点连线的弯曲），看着不像"稳定的连接线该有的样子"。曲率不该随距离无限跟着变大，
+// 封顶后线在任意距离下鼓包的"手感"是统一的，只是端点之间那段直线部分变长了而已。
+const MIN_EXTEND = 40
+const MAX_EXTEND = 140
+
 /** 端点顺着各自卡片边的法线方向先探出去一段再拐向对方，像流程图连线那样——不是不管两张
  *  贴纸实际怎么摆都硬挤一条水平方向的弧线。之前 curvePath 只会往左右鼓包，遇到两张贴纸
  *  主要是上下错开、左右只差一点点的排布（比如一张压另一张正上方），控制点照样按左右鼓包，
  *  线会绕一大圈才接上（用户反馈的红笔示意图画的就是这种情形该有的走线）。四个方向各自往
- *  外探的距离按两点间总距离算，越远探得越多、弧度越缓，跟原来的手感是一致的。 */
+ *  外探的距离按两点间总距离算，越远探得越多、弧度越缓，跟原来的手感是一致的——但探出距离
+ *  本身封了顶（见 MAX_EXTEND），不会无限跟着总距离涨。 */
 function sidePath(from: { x: number; y: number }, fromSide: AnchorSide, to: { x: number; y: number }, toSide: AnchorSide) {
-  const dist = Math.max(Math.hypot(to.x - from.x, to.y - from.y) * 0.5, 40)
+  const dist = Math.min(Math.max(Math.hypot(to.x - from.x, to.y - from.y) * 0.5, MIN_EXTEND), MAX_EXTEND)
   const c1 = extend(from, fromSide, dist)
   const c2 = extend(to, toSide, dist)
   return `M ${from.x} ${from.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${to.x} ${to.y}`
@@ -71,10 +84,26 @@ const itemByNodeId = computed(() => new Map(props.items.map(item => [item.nodeId
 // 其次：用户拖连线那一刻两张贴纸所在的相对位置，就是这条关系出边侧最初、也是唯一应该被
 // 采纳的判据。
 const anchorSideCache = new Map<number, { srcSide: AnchorSide; dstSide: AnchorSide }>()
+function geometry(item: MindCanvasItem) {
+  return props.measuredSizes.get(item.nodeId) ?? itemSize(item)
+}
+function centerFor(item: MindCanvasItem) {
+  const { w, h } = geometry(item)
+  return { x: item.x + w / 2, y: item.y + h / 2 }
+}
+function anchorFor(item: MindCanvasItem, side: AnchorSide, pos?: { x: number; y: number }) {
+  const { w, h } = geometry(item)
+  const x = pos?.x ?? item.x
+  const y = pos?.y ?? item.y
+  if (side === 'left') return { x, y: y + h / 2 }
+  if (side === 'right') return { x: x + w, y: y + h / 2 }
+  if (side === 'top') return { x: x + w / 2, y }
+  return { x: x + w / 2, y: y + h }
+}
 function resolveSides(relation: MindRelation, src: MindCanvasItem, dst: MindCanvasItem) {
-  let sides = anchorSideCache.get(relation.id)
+  let sides = props.relationAnchors[String(relation.id)] ?? anchorSideCache.get(relation.id)
   if (!sides) {
-    const srcCenter = itemCenter(src), dstCenter = itemCenter(dst)
+    const srcCenter = centerFor(src), dstCenter = centerFor(dst)
     sides = { srcSide: pickAnchorSide(srcCenter, dstCenter), dstSide: pickAnchorSide(dstCenter, srcCenter) }
     anchorSideCache.set(relation.id, sides)
   }
@@ -86,8 +115,8 @@ const visibleRelations = computed(() => props.relations.flatMap((relation) => {
   const dst = itemByNodeId.value.get(relation.dstNodeId)
   if (!src || !dst) return []
   const sides = resolveSides(relation, src, dst)
-  const from = itemAnchorAt(src, sides.srcSide, props.landingPositions.get(src.nodeId))
-  const to = itemAnchorAt(dst, sides.dstSide, props.landingPositions.get(dst.nodeId))
+  const from = anchorFor(src, sides.srcSide, props.landingPositions.get(src.nodeId))
+  const to = anchorFor(dst, sides.dstSide, props.landingPositions.get(dst.nodeId))
   const highlighted = props.highlightNodeId != null
     && (relation.srcNodeId === props.highlightNodeId || relation.dstNodeId === props.highlightNodeId)
   return [{ id: relation.id, d: sidePath(from, sides.srcSide, to, sides.dstSide), highlighted }]
