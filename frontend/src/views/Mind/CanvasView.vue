@@ -147,13 +147,28 @@ async function removeRelation(id: number) {
 }
 /** 贴纸边缘圆点拖到另一张贴纸上松手时触发，见 MindCanvas.vue 的 onConnectDragStart。 */
 async function linkNodes(srcNodeId: number, dstNodeId: number, sides: RelationAnchorSides) {
-  const relation = await store.createCanvasRelation(srcNodeId, dstNodeId)
   const canvasId = activeCanvasId.value
-  if (canvasId == null || relationAnchors.value[String(relation.id)]) return
+  if (canvasId == null) return
+  // related 在语义上仍是无向关系；画布视图则允许同一节点对用不同端点各连一条，形成 loop。
+  // 先把用户这次拖出的端点换成后端归一后的方向，再和已有边逐一比较：同端点组合直接复用，
+  // 另一组端点才明确请求平行边，避免手滑重复拖出一堆完全重合的线。
+  const normalizeSides = (relationSrcId: number): RelationAnchorSides =>
+    relationSrcId === srcNodeId
+      ? sides
+      : { srcSide: sides.dstSide, dstSide: sides.srcSide }
+  const samePair = store.canvasRelations.filter(relation =>
+    (relation.srcNodeId === srcNodeId && relation.dstNodeId === dstNodeId) ||
+    (relation.srcNodeId === dstNodeId && relation.dstNodeId === srcNodeId),
+  )
+  for (const current of samePair) {
+    const existingSides = relationAnchors.value[String(current.id)]
+    const normalized = normalizeSides(current.srcNodeId)
+    if (existingSides?.srcSide === normalized.srcSide && existingSides.dstSide === normalized.dstSide) return
+  }
+  const relation = await store.createCanvasRelation(srcNodeId, dstNodeId, samePair.length > 0)
+  if (relationAnchors.value[String(relation.id)]) return
   // related 是无向关系，后端会按 node id 归一 src/dst；随之交换锚点，保证存的是响应中那条边的方向。
-  const normalized = relation.srcNodeId === srcNodeId
-    ? sides
-    : { srcSide: sides.dstSide, dstSide: sides.srcSide }
+  const normalized = normalizeSides(relation.srcNodeId)
   await store.saveCanvasRelationAnchors(canvasId, { ...relationAnchors.value, [relation.id]: normalized })
 }
 function openRef(item: MindCanvasItem) {

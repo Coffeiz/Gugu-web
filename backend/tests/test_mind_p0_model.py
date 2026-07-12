@@ -229,6 +229,23 @@ async def test_upsert_relation_is_idempotent(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_upsert_relation_allows_explicit_parallel_edge(db, user_a):
+    """画布 loop 可为同一节点对创建第二条边，默认边的幂等 key 不受影响。"""
+    a = await _mk_note(db, user_a, "A")
+    b = await _mk_note(db, user_a, "B")
+
+    first = await upsert_relation(db, user_a.id, a.id, b.id)
+    parallel = await upsert_relation(db, user_a.id, a.id, b.id, allow_parallel=True)
+    again = await upsert_relation(db, user_a.id, b.id, a.id)
+
+    assert first.id != parallel.id
+    assert first.edge_key == ""
+    assert len(parallel.edge_key) == 32
+    assert again.id == first.id
+    assert await _count(db, MindRelation) == 2
+
+
+@pytest.mark.asyncio
 async def test_upsert_relation_survives_concurrent_insert_race(db, user_a, monkeypatch):
     """并发下的真正保护：预检查时对方还没提交（查不到），插入时唯一约束已经撞上。
 

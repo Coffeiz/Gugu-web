@@ -4,11 +4,10 @@ Files 四空间结构 + 项目内用户文件夹（Folder）。
 重建表：DROP SCHEMA public CASCADE; CREATE SCHEMA public; 然后重启后端。
 """
 
-import json
-from app.core.tz import now_utc
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
+import json
 
 from sqlalchemy import (
     String, Integer, Float, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON,
@@ -17,6 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
+from app.core.tz import now_utc
 from app.core.crypto import EncryptedString
 from app.db.types import UtcDateTime
 from app.db.base import Base
@@ -286,8 +286,9 @@ class MindRelation(Base):
     """全局关系层：节点↔节点的有向边。
 
     P1/P2 只写默认的 `related`；P4 才开放 supports / derived_from / verifies 等少量高价值类型。
-    `related` 是无向的，服务层按 id 归一（src < dst）后配合唯一约束达成幂等——
-    重复连线、咕咕重复建议都命中同一行，不堆重复边。见 core.mind.upsert_relation。
+    `related` 是无向的，服务层按 id 归一。默认创建仍按节点对幂等，避免重复连线、咕咕重复
+    建议堆边；画布明确请求平行边时允许同一节点对存多条，以表达从两端分别绕出的 loop。
+    端点属于画布视图状态，仍存 data_json，不落进这张全局语义表。见 core.mind.upsert_relation。
     """
     __tablename__ = "mind_relations"
 
@@ -297,6 +298,8 @@ class MindRelation(Base):
     dst_node_id: Mapped[int]  = mapped_column(ForeignKey("mind_nodes.id", ondelete="CASCADE"), index=True)
 
     rel_type: Mapped[str]           = mapped_column(String(20), default="related")
+    # 默认边固定为空，平行边用随机 key 区分；端点仍是画布视图 data_json，不是全局语义字段。
+    edge_key: Mapped[str]           = mapped_column(String(32), default="")
     origin:   Mapped[str]           = mapped_column(String(10), default="user")        # user | gugu
     status:   Mapped[str]           = mapped_column(String(10), default="confirmed")   # confirmed | suggested
     note:     Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -307,8 +310,8 @@ class MindRelation(Base):
     owner: Mapped["User"] = relationship(back_populates="mind_relations")
 
     __table_args__ = (
-        # 幂等 + 并发保护：一对节点在同一 rel_type 下只存一条边
-        UniqueConstraint("user_id", "src_node_id", "dst_node_id", "rel_type", name="uq_mind_relation"),
+        # 默认边（edge_key=''）保留幂等/并发保护；平行边各自带独立 key。
+        UniqueConstraint("user_id", "src_node_id", "dst_node_id", "rel_type", "edge_key", name="uq_mind_relation"),
         CheckConstraint("src_node_id <> dst_node_id", name="ck_mind_relation_no_self"),
     )
 

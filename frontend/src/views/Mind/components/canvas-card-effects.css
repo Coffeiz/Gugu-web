@@ -24,7 +24,8 @@
 .pr-card.phys-just-revealed:hover .conn-dot::before,
 .entity-sticker.phys-just-revealed:hover .conn-dot::before,
 .pr-missing.phys-just-revealed:hover .conn-dot::before,
-.fr-missing.phys-just-revealed:hover .conn-dot::before { opacity: 1 !important; }
+.fr-missing.phys-just-revealed:hover .conn-dot::before,
+.note-card.phys-just-revealed:hover .conn-dot::before { opacity: 1 !important; }
 
 .pr-card.phys-just-revealed:hover,
 .note-card.phys-just-revealed:hover,
@@ -41,6 +42,21 @@
   background: linear-gradient(to top, rgba(255,255,255,0.08), transparent 50%) !important;
 }
 .note-card.phys-just-revealed:hover .nc-actions { opacity: 1 !important; }
+
+/* 落地 holder 还在鼠标下时，物理层会把确认过的 hover 显式交接给本体两帧。不要依赖
+   Vue 的 hovering prop 或浏览器重算 :hover 恰好在同一帧完成，否则 dot/操作区会短暂闪空。 */
+.fc-card.phys-reveal-controls .card-actions,
+.pr-card.phys-reveal-controls .card-actions,
+.entity-sticker.phys-reveal-controls .card-actions,
+.pr-missing.phys-reveal-controls .card-actions,
+.fr-missing.phys-reveal-controls .card-actions,
+.note-card.phys-reveal-controls .nc-actions { opacity: 1 !important; }
+.fc-card.phys-reveal-controls .conn-dot::before,
+.pr-card.phys-reveal-controls .conn-dot::before,
+.entity-sticker.phys-reveal-controls .conn-dot::before,
+.pr-missing.phys-reveal-controls .conn-dot::before,
+.fr-missing.phys-reveal-controls .conn-dot::before,
+.note-card.phys-reveal-controls .conn-dot::before { opacity: 1 !important; }
 
 /* 画布拖拽的材质：纸条保留不透明纸感；文件与系统对象在移动时优先保证文字清晰度。 */
 .phys-drag-clone.fc-card.canvas-mode,

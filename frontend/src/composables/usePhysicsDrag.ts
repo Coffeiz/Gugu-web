@@ -65,6 +65,9 @@ export interface PhysicsDragOpts {
   // 落地克隆被重新抓起、真正越过拖拽阈值时通知调用方取消自己的附属动画（画布关系线的
   // landingPositions 属于这类附属状态）；不传时只处理物理克隆本身。
   onRegrabStart?: () => void
+  // 飞行 holder 上重新抓取时，本体不在真实命中位置；把 holder 已确认的 hover 显式交给新
+  // 克隆，避免它按隐藏本体的 :hover=false 误把控制层做成不可见。
+  initialHover?: boolean
 }
 
 interface Box { left: number; top: number; width: number; height: number }
@@ -220,15 +223,16 @@ function _animateScroll(el: HTMLElement, dy: number, dur = 300) {
 // 未变、不会触发任何过渡）。下一帧摘掉压制类时，卡片上浮 + 按钮淡入 + 阴影渐显作为一次
 // 干净的 hover-in 平滑发生。全程不摘 pointer-events、不碰命中测试，:hover 一直实时准确
 // （不会有「指针不动就再也不触发」的坑）。CSS 见 global.css .phys-just-revealed / .phys-reveal-snap。
-function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettled?: () => void) {
+function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettled?: () => void, keepControls = false) {
   el.classList.add('phys-just-revealed')   // 压制：hover 的 transform/阴影/底色/按钮 opacity 全归非 hover 态
   el.classList.add('phys-reveal-snap')     // 快照：本帧关掉卡片+全部子元素的过渡，让上面这步瞬间生效、零动画
+  if (keepControls) el.classList.add('phys-reveal-controls')
   el.style.opacity = ''
   // 画布贴纸抓起后会暂时 display:none，哪怕鼠标一直停在原位置，也会先收到 mouseleave。
   // 浏览器在元素重新出现时不保证补发 mouseenter；Vue 维护的连接点 hovering 状态便会比
   // CSS :hover 晚一帧恢复，刚从落地克隆切回本体时圆点闪一下。真实命中仍在卡上时主动补发
   // mouseenter，让组件状态在本次 paint 前与浏览器命中状态重新对齐。
-  if (pointerMode && el.matches(':hover')) {
+  if (pointerMode && (keepControls || el.matches(':hover'))) {
     el.dispatchEvent(new MouseEvent('mouseenter'))
   }
   void el.offsetWidth                      // 强制提交：整张卡（含按钮）直接坐在压制态，不下沉、按钮不淡出
@@ -236,7 +240,12 @@ function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettl
   // 解除压制的延迟：0=落地即进入 hover-in（无停顿）。下沉/闪烁靠上面的快照消掉、与此延迟无关，
   // 故 0ms 下依然不闪，只是没有「保持一会儿再 hover」的停顿，落地即平滑上浮。用 rAF 保证压制态
   // 那一帧先真的画出来，再解除——否则同一 task 内一加一撤，浏览器可能合帧、跳过压制态直接到 hover。
-  requestAnimationFrame(() => el.classList.remove('phys-just-revealed'))
+  requestAnimationFrame(() => {
+    el.classList.remove('phys-just-revealed')
+    // Vue 的 hover prop 在上面的 synthetic mouseenter 后要过一个微任务才会写回；多留一帧
+    // 控制层强制可见，确保覆盖层撤掉与本体接手之间没有空档。
+    if (keepControls) requestAnimationFrame(() => el.classList.remove('phys-reveal-controls'))
+  })
   if (pointerMode) { onSettled?.(); return }
   el.style.pointerEvents = 'none'
   setTimeout(() => {
@@ -392,7 +401,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   // 连接点由各贴纸组件的响应式 hovering 状态控制；cloneNode 之后它不再接收组件更新。
   // 用抓起当下真实的命中状态补一次，避免文件/项目/活动卡恰好在组件状态还没刷新时把一份
   // "没有圆点" 的 DOM 克隆出去。便签自身的状态本来就及时，这里也不会改变它的结果。
-  if (sourceEl.matches(':hover')) {
+  const startsHovered = opts.initialHover || sourceEl.matches(':hover')
+  clone.classList.remove('phys-reveal-controls')
+  if (startsHovered) {
     clone.querySelectorAll<HTMLElement>('.card-conn-dots').forEach(dot => dot.classList.add('hovering'))
   }
   // 连接点不能跟随两张卡片内容克隆交叉淡变：后创建的落地克隆会短暂盖住前一张，圆点便会
@@ -427,7 +438,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       right: 'auto', bottom: 'auto', margin: '0',
       width: `${actionRect.width / CS0}px`,
       height: `${actionRect.height / CS0}px`,
-      opacity: actionStyle.opacity,
+      opacity: startsHovered ? '1' : actionStyle.opacity,
       pointerEvents: 'none',
     })
   }
@@ -462,8 +473,14 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   // 在身上会让每帧的写入都被浏览器重新插值，反而拖慢跟手，且松手瞬间若跟这份 transition 撞车还
   // 会把落地动画写坏（曾经这样实现过，松手时「先放大字体、再突然切回本体」就是这个撞车导致的）。
   const initialCenter = { x: initialRect.left + initialRect.width / 2, y: initialRect.top + initialRect.height / 2 }
+  // 普通看板卡沿用 grabY（默认距顶部 28px），pos.y 代表这个抓取点而不是视觉中心；只有
+  // centerGrab 才两者相同。飞行中续接若把视觉中心直接塞给 pos.y，下一帧会多出半高-grabY
+  // 的偏移，表现为从最终本体位置突然被拉过来。画布中心抓取不显著，项目卡最容易踩到。
+  const initialPos = opts.initialRect
+    ? { x: initialCenter.x, y: initialCenter.y + liveGrabY - half.y }
+    : { x: initialCenter.x, y: initialCenter.y }
   holder.style.transform =
-    `translate3d(${(initialCenter.x - half.x).toFixed(2)}px, ${(initialCenter.y - liveGrabY).toFixed(2)}px, 0)` +
+    `translate3d(${(initialPos.x - half.x).toFixed(2)}px, ${(initialPos.y - liveGrabY).toFixed(2)}px, 0)` +
     ` perspective(760px) rotateX(${TILT}deg) scale(${regrabScale.x.toFixed(4)}, ${regrabScale.y.toFixed(4)})`
   document.body.appendChild(holder)
 
@@ -498,7 +515,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     })
   }
 
-  const pos    = { x: initialCenter.x, y: initialCenter.y }
+  const pos    = { x: initialPos.x, y: initialPos.y }
   const target = { x: pos.x, y: pos.y }
   // pointer 模式起点就是当前指针位置（原生模式靠首个 dragover 校正）
   if (pointer && (event.clientX || event.clientY)) { target.x = event.clientX; target.y = event.clientY }
@@ -716,13 +733,21 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       let box = initialBox
       // 唯一的连接点覆盖层是静态 DOM，动画期间根据真实鼠标命中更新可见性。
       // 落地内容克隆没有连接点，因此不会再发生两张卡片各画一颗点、彼此遮住的问题。
+      let landingHovered = false
       const syncConnectionOverlayHover = (hovering: boolean) => {
+        landingHovered = hovering
         connectionDotOverlay?.classList.toggle('hovering', hovering)
         if (cardActionOverlay) cardActionOverlay.style.opacity = hovering ? '1' : '0'
       }
+      // holder 为支持“飞行中直接再抓”而在落地阶段开启了 pointer-events；因此命中它不再会
+      // 穿透到底下的 revealEl。两者都是同一张视觉卡，hover 覆盖层必须一视同仁，否则松手
+      // 一刻会误判离开、先把连接点/操作区淡掉，等本体揭示后才又出现。
+      const isOverLandingCard = (x: number, y: number) => {
+        const r = holder.getBoundingClientRect()
+        return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+      }
       const onLandingPointerMove = (event: PointerEvent) => {
-        const underPointer = document.elementFromPoint(event.clientX, event.clientY)
-        syncConnectionOverlayHover(!!underPointer && (underPointer === revealEl || revealEl.contains(underPointer)))
+        syncConnectionOverlayHover(isOverLandingCard(event.clientX, event.clientY))
       }
       // 落地飞行里的 holder 原先永远 pointer-events:none：用户眼前明明有一张卡，却只能去
       // 最终本体的隐形位置再抓，违背直接操作。飞行阶段让 holder 临时吃 pointerdown；仍然沿用
@@ -738,20 +763,20 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             // 阈值内卡片仍在继续飞，起点要在真正接力这一刻再量，不能沿用按下那一帧的旧框。
             const visualRect = holder.getBoundingClientRect()
             opts.onRegrabStart?.()
-            startPhysicsDrag(moveEvent, revealEl, { ...opts, initialRect: visualRect })
+            startPhysicsDrag(moveEvent, revealEl, { ...opts, initialRect: visualRect, initialHover: true })
           },
         })
       }
-      // 不能只等下一次 pointermove：用户可能已经在卡外松手，随后完全不再动鼠标。
-      // target 记录的是最近一次真实指针坐标（不是带弹簧延迟的 cloneCenter），正好可用于
-      // 落地第一帧的命中判断。
-      const underPointer = document.elementFromPoint(target.x, target.y)
-      syncConnectionOverlayHover(!!underPointer && (underPointer === revealEl || revealEl.contains(underPointer)))
-      if (pointer) document.addEventListener('pointermove', onLandingPointerMove)
       if (pointer) {
         holder.style.pointerEvents = 'auto'
         holder.addEventListener('pointerdown', onLandingPointerDown)
       }
+      // 先让 holder 参与命中再做首帧判定：若仍是 pointer-events:none，elementFromPoint 会
+      // 穿透飞行卡片，原地松手又没有新的 pointermove 时覆盖层就会一直维持误判的淡出状态。
+      // target 记录的是最近一次真实指针坐标（不是带弹簧延迟的 cloneCenter），正好可用于
+      // 落地第一帧的命中判断。
+      syncConnectionOverlayHover(isOverLandingCard(target.x, target.y))
+      if (pointer) document.addEventListener('pointermove', onLandingPointerMove)
       // overlay 挂在 holder 里；让 holder 比落地内容克隆高一层，圆点始终压在纸面/玻璃面之上。
       if (connectionDotOverlay) holder.style.zIndex = String((Number(holder.style.zIndex) || 0) + 1)
       // 克隆体是按源卡(旧)尺寸渲染的；缩放到落点卡尺寸，并让缩放后中心对齐落点中心。
@@ -932,7 +957,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         clone2.style.transform = `translate(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px)`
         requestAnimationFrame(() => {
           holder.remove(); clone2.remove(); camGlue?.remove()
-          _revealWithoutStaleHover(revealEl, pointer)
+          _revealWithoutStaleHover(revealEl, pointer, undefined, landingHovered)
         })
       }
       // 被同一张卡的新拖拽强制打断时用（按 revealEl 记账，见 _registerCleanup——只有再次抓的
@@ -948,7 +973,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
         holder.remove(); clone2.remove(); camGlue?.remove()
-        _revealWithoutStaleHover(revealEl, pointer)
+        _revealWithoutStaleHover(revealEl, pointer, undefined, landingHovered)
       }
       unregister = _registerCleanup(revealEl, forceCleanup)
       // clone2 的 opacity 只用来交叉淡变，420ms 就会结束；不能把它当落地完成，
@@ -1037,6 +1062,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         const c = el.cloneNode(true) as HTMLElement
         if (opts.cloneClass) c.classList.add(opts.cloneClass)
         c.classList.add('phys-landing-content')
+        c.classList.remove('phys-reveal-controls')
         copyInheritedTextStyle(el, c)
         c.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
         // 操作区由 holder 内唯一的 cardActionOverlay 承担可见性；这里留隐藏副本维持标题行布局。

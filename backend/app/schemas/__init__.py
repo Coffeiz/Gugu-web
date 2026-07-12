@@ -399,6 +399,7 @@ class MindCanvasItemResponse(CamelModel):
 class MindRelationCreate(CamelModel):
     src_node_id: int
     dst_node_id: int
+    allow_parallel: bool = False
 
 
 class MindRelationResponse(CamelModel):

@@ -192,10 +192,23 @@ function isCardControl(target: EventTarget | null) {
   return !!(target as HTMLElement | null)?.closest('.stars, .proj-stage, .seg-bar-wrap, .card-advance, button, input, textarea, select, a')
 }
 
-// 拖到哪一列就移到哪个状态：松手时据落点找列的 data-col-status（源卡此刻 display:none、克隆体 pointer-events:none，
-// elementFromPoint 命中的就是底下真实的列）。同列不动 → 不触发 moveProject 的 API。
-function dispatchDrop({ x, y }: { x: number; y: number }) {
-  const el = document.elementFromPoint(x, y)
+// 项目卡的抛出不是只看松手那一瞬间的鼠标：按 iOS 式短预测窗把水平速度外推一小段，快速向
+// 右甩时即使鼠标还停在「待开始」，落点也可自然进「进行中」。物理模块随后读取 moveProject
+// 同步更新后的真实卡槽，flyMorph 会自动飞向这个预测出的列，而不是先落回鼠标列再跳过去。
+const PROJECT_THROW_S = 0.18
+const PROJECT_THROW_MAX_PX = 280
+function projectDropPoint({ x, y }: { x: number; y: number }, velocity: { x: number; y: number }) {
+  const coastX = Math.max(-PROJECT_THROW_MAX_PX, Math.min(PROJECT_THROW_MAX_PX, velocity.x * PROJECT_THROW_S))
+  return {
+    x: Math.max(1, Math.min(window.innerWidth - 1, x + coastX)),
+    y: Math.max(1, Math.min(window.innerHeight - 1, y)),
+  }
+}
+// 拖到哪一列就移到哪个状态：命中点采用预测落点（源卡此刻 display:none、飞行 holder 也不会
+// 阻挡列命中），同列不动 → 不触发 moveProject 的 API。
+function dispatchDrop({ x, y }: { x: number; y: number }, velocity: { x: number; y: number }) {
+  const point = projectDropPoint({ x, y }, velocity)
+  const el = document.elementFromPoint(point.x, point.y)
   const col = el && el.closest && el.closest('[data-col-status]')
   if (!col) return
   const status = col.getAttribute('data-col-status')

@@ -16,16 +16,15 @@
 这条也做进 `update_node_atomic`，调用方无从忘记。
 """
 from __future__ import annotations
-from app.core.tz import now_utc
-
+from datetime import datetime
+from uuid import UUID, uuid4
 import hashlib
 import re
-from datetime import datetime
-from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
+from app.core.tz import now_utc
 from app.models import MindNode, MindRelation
 
 # 无向关系：存之前按 id 归一（src < dst）。有向类型（supports/causes/…）方向有意义，不归一。
@@ -125,6 +124,7 @@ async def _find_relation(db, user_id: UUID, src: int, dst: int, rel_type: str) -
             MindRelation.src_node_id == src,
             MindRelation.dst_node_id == dst,
             MindRelation.rel_type == rel_type,
+            MindRelation.edge_key == "",
         )
     )
 
@@ -139,12 +139,13 @@ async def upsert_relation(
     origin: str = "user",
     status: str = "confirmed",
     note: str | None = None,
+    allow_parallel: bool = False,
 ) -> MindRelation:
-    """建一条关系，幂等：已存在就直接返回已有那条，不新建、不报错。
+    """建一条关系；默认幂等，画布可明确请求平行边。
 
     无向类型（related）先按 id 归一，于是 (A,B) 与 (B,A) 落同一行。
-    并发下两个请求同时插入时，唯一约束会让其中一方 IntegrityError——
-    捕获后回查返回已有行（用 SAVEPOINT 包住 flush，冲突不会带崩外层事务）。
+    默认模式下已有边直接返回，保留咕咕建议/重复操作的幂等语义；allow_parallel 只由画布在
+    两端点组合不同的情况下传入，创建另一条独立边供 loop 使用。
 
     节点连向自己在 DB 层也有 CheckConstraint 挡着，这里提前拦掉给个明确错误。
     """
@@ -156,21 +157,25 @@ async def upsert_relation(
     if rel_type in _SYMMETRIC_RELATIONS and src > dst:
         src, dst = dst, src
 
-    found = await _find_relation(db, uid, src, dst, rel_type)
-    if found is not None:
-        return found
+    if not allow_parallel:
+        found = await _find_relation(db, uid, src, dst, rel_type)
+        if found is not None:
+            return found
 
     rel = MindRelation(
         user_id=uid, src_node_id=src, dst_node_id=dst,
-        rel_type=rel_type, origin=origin, status=status, note=note,
+        rel_type=rel_type, edge_key=uuid4().hex if allow_parallel else "",
+        origin=origin, status=status, note=note,
     )
     try:
         async with db.begin_nested():          # SAVEPOINT：冲突只回滚这一小段，不带崩外层事务
             db.add(rel)
             await db.flush()
     except IntegrityError:
-        # SAVEPOINT 回滚时 SQLAlchemy 已经把这个 pending 实例踢出 session 了，
-        # 这里不能再 expunge（会抛 InvalidRequestError），直接回查即可。
+        # 平行边必须让错误完整暴露，不能静默退回旧边，否则前端会以为 loop 已创建却只拿到
+        # 同一条线；默认幂等模式才回查旧边兼容迁移前的唯一约束并发保护。
+        if allow_parallel:
+            raise
         found = await _find_relation(db, uid, src, dst, rel_type)
         if found is None:
             raise                              # 不是唯一约束撞车（比如外键不存在），照实抛

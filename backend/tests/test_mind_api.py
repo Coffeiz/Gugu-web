@@ -350,11 +350,15 @@ async def test_canvas_relations_only_list_visible_nodes_and_are_idempotent(db, u
 
     one = await create_relation(MindRelationCreate(src_node_id=a.id, dst_node_id=b.id), current_user=user_a, db=db)
     same = await create_relation(MindRelationCreate(src_node_id=b.id, dst_node_id=a.id), current_user=user_a, db=db)
+    parallel = await create_relation(
+        MindRelationCreate(src_node_id=a.id, dst_node_id=b.id, allow_parallel=True),
+        current_user=user_a, db=db,
+    )
     await create_relation(MindRelationCreate(src_node_id=a.id, dst_node_id=outside.id), current_user=user_a, db=db)
     assert one.id == same.id
 
     relations = await list_canvas_relations(canvas.id, current_user=user_a, db=db)
-    assert [relation.id for relation in relations] == [one.id]
+    assert [relation.id for relation in relations] == [one.id, parallel.id]
 
 
 @pytest.mark.asyncio

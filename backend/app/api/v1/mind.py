@@ -467,7 +467,10 @@ async def create_relation(
         if await get_owned(db, MindNode, nid, current_user.id) is None:
             raise HTTPException(404, "节点不存在")
     try:
-        relation = await upsert_relation(db, current_user.id, body.src_node_id, body.dst_node_id)
+        relation = await upsert_relation(
+            db, current_user.id, body.src_node_id, body.dst_node_id,
+            allow_parallel=body.allow_parallel,
+        )
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     await db.commit()

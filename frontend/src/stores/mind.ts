@@ -221,8 +221,8 @@ export const useMindStore = defineStore('mind', () => {
     canvasRelations.value = canvasRelations.value.filter(rel => nodeIds.has(rel.srcNodeId) && nodeIds.has(rel.dstNodeId))
   }
 
-  async function createCanvasRelation(srcNodeId: number, dstNodeId: number) {
-    const relation = await mindApi.createRelation(srcNodeId, dstNodeId)
+  async function createCanvasRelation(srcNodeId: number, dstNodeId: number, allowParallel = false) {
+    const relation = await mindApi.createRelation(srcNodeId, dstNodeId, allowParallel)
     if (!canvasRelations.value.some(current => current.id === relation.id)) canvasRelations.value.push(relation)
     return relation
   }

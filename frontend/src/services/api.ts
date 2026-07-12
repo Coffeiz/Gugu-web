@@ -324,8 +324,8 @@ export const mindApi = {
     patch<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}`, data),
   removeCanvasItem: (canvasId: number, itemId: number) => del(`/mind/canvases/${canvasId}/items/${itemId}`),
   listCanvasRelations: (id: number) => get<MindRelation[]>(`/mind/canvases/${id}/relations`),
-  createRelation: (srcNodeId: number, dstNodeId: number) =>
-    post<MindRelation>('/mind/relations', { srcNodeId, dstNodeId }),
+  createRelation: (srcNodeId: number, dstNodeId: number, allowParallel = false) =>
+    post<MindRelation>('/mind/relations', { srcNodeId, dstNodeId, allowParallel }),
   deleteRelation: (id: number) => del(`/mind/relations/${id}`),
   createRefNode: (refType: 'project' | 'file' | 'event', refId: number) =>
     post<MindNote>('/mind/nodes/ref', { refType, refId }),
