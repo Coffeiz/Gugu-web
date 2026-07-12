@@ -14,28 +14,28 @@
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :screen-to-world="screenToWorld" :scale="camera.scale"
           @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone"
           @moved="onItemMoved" @save="fields => emit('saveNote', item, fields)"
-          @connect-drag-start="e => onConnectDragStart(e, item.nodeId)"
+          @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)"
         />
         <ProjectRefCard
           v-else-if="item.node.refType === 'project'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :screen-to-world="screenToWorld" :scale="camera.scale"
           @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone" @measured="onItemMeasured"
           @moved="onItemMoved" @open="item => emit('openRef', item)"
-          @connect-drag-start="e => onConnectDragStart(e, item.nodeId)"
+          @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)"
         />
         <FileRefCard
           v-else-if="item.node.refType === 'file'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :screen-to-world="screenToWorld" :scale="camera.scale"
           @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone" @measured="onItemMeasured"
           @moved="onItemMoved" @open="item => emit('openRef', item)"
-          @connect-drag-start="e => onConnectDragStart(e, item.nodeId)"
+          @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)"
         />
         <EntitySticker
           v-else
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :screen-to-world="screenToWorld" :scale="camera.scale"
           @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone"
           @moved="onItemMoved" @open="item => emit('openRef', item)"
-          @connect-drag-start="e => onConnectDragStart(e, item.nodeId)"
+          @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)"
         />
       </template>
     </div>
@@ -48,7 +48,7 @@
  *  编排（贴纸边缘圆点拖到另一张贴纸上，见 onConnectDragStart 一带）。 */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
-import { itemAnchor, itemSize, pickAnchorSide, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
+import { itemSize, pickAnchorSide, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import EntitySticker from './EntitySticker.vue'
 import FileRefCard from './FileRefCard.vue'
 import NoteSticker from './NoteSticker.vue'
@@ -136,6 +136,7 @@ function onItemLandingDone(item: MindCanvasItem) {
 const connectionDrag = reactive({
   active: false,
   originNodeId: null as number | null,
+  originSide: 'left' as 'left' | 'right',
   from: { x: 0, y: 0 },
   to: { x: 0, y: 0 },   // 弹簧跟随后的渲染位置（画出来的线用这个，带一点弹性的"给"）
 })
@@ -162,22 +163,25 @@ function connSpringFrame(now: number) {
     connectionDrag.to = { x: connectionDrag.to.x + connSpringVel.x * h, y: connectionDrag.to.y + connSpringVel.y * h }
   }
   const origin = props.items.find(current => current.nodeId === connectionDrag.originNodeId)
-  if (origin) connectionDrag.from = itemAnchor(origin, connectionDrag.to.x)
+  if (origin) connectionDrag.from = connectionAnchor(origin, connectionDrag.originSide)
   if (connectionDrag.active) connSpringRaf = requestAnimationFrame(connSpringFrame)
 }
-function onConnectDragStart(event: PointerEvent, nodeId: number) {
+function connectionAnchor(item: MindCanvasItem, side: 'left' | 'right') {
+  const { w, h } = measuredSizes.get(item.nodeId) ?? itemSize(item)
+  return { x: item.x + (side === 'right' ? w : 0), y: item.y + h / 2 }
+}
+function onConnectDragStart(event: PointerEvent, nodeId: number, side: 'left' | 'right') {
   const origin = props.items.find(current => current.nodeId === nodeId)
   if (!origin) return
   connectionDrag.active = true
   connectionDrag.originNodeId = nodeId
+  connectionDrag.originSide = side
   connSpringTarget = screenToWorld(event.clientX, event.clientY)
   connectionDrag.to = { ...connSpringTarget }
   connSpringVel = { x: 0, y: 0 }
   connSpringLastT = null
-  // 起点用边缘锚点（跟已建立关系的连线同一套 itemAnchor），朝向随当前指针实时更新——
-  // 往哪边拖就从哪一侧的边出线，跟两条圆点各自固定死一侧比，不会出现"明明该走右边的点
-  // 却从左边绕一大圈"的丑连线。
-  connectionDrag.from = itemAnchor(origin, connSpringTarget.x)
+  // 用户按下哪一个圆点，预览线就固定从那一侧出发；不能因为鼠标划过卡片中线而悄悄换边。
+  connectionDrag.from = connectionAnchor(origin, side)
   window.addEventListener('pointermove', onConnectionDragMove)
   window.addEventListener('pointerup', onConnectionDragEnd)
   connSpringRaf = requestAnimationFrame(connSpringFrame)
@@ -206,7 +210,7 @@ function onConnectionDragEnd(event: PointerEvent) {
   const sourceCenter = { x: source.x + sourceSize.w / 2, y: source.y + sourceSize.h / 2 }
   const targetCenter = { x: target.x + targetSize.w / 2, y: target.y + targetSize.h / 2 }
   emit('linkNodes', originNodeId, targetNodeId, {
-    srcSide: pickAnchorSide(sourceCenter, targetCenter),
+    srcSide: connectionDrag.originSide,
     dstSide: pickAnchorSide(targetCenter, sourceCenter),
   })
 }

@@ -16,8 +16,8 @@
     <div v-if="!item.node.deletedAt" class="es-actions">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </div>
-    <button v-if="!item.node.deletedAt" class="conn-dot conn-dot-left" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e)"></button>
-    <button v-if="!item.node.deletedAt" class="conn-dot conn-dot-right" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e)"></button>
+    <button v-if="!item.node.deletedAt" class="conn-dot conn-dot-left" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
+    <button v-if="!item.node.deletedAt" class="conn-dot conn-dot-right" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
   </article>
 </template>
 
@@ -41,7 +41,7 @@ const emit = defineEmits<{
   (e: 'landingDone', item: MindCanvasItem): void
   (e: 'moved', item: MindCanvasItem, x: number, y: number): void
   (e: 'open', item: MindCanvasItem): void
-  (e: 'connectDragStart', event: PointerEvent): void
+  (e: 'connectDragStart', event: PointerEvent, side: 'left' | 'right'): void
 }>()
 
 // 图标/文案与顶栏全局搜索、侧边栏导航保持一致（PhStack=项目、PhFile=文件、PhCalendarBlank=活动）。

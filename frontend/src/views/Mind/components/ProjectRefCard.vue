@@ -14,8 +14,8 @@
     <div class="pr-actions">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </div>
-    <button class="conn-dot conn-dot-left" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e)"></button>
-    <button class="conn-dot conn-dot-right" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e)"></button>
+    <button class="conn-dot conn-dot-left" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
+    <button class="conn-dot conn-dot-right" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
   </ProjectCard>
   <div v-else ref="missingRef" class="pr-missing" :class="{ connecting }" :style="missingStyle" :data-node-id="item.nodeId" @pointerdown.stop="onPointerDown">
     <span class="pr-kind">项目</span>
@@ -24,8 +24,8 @@
     <div class="pr-actions">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </div>
-    <button class="conn-dot conn-dot-left" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e)"></button>
-    <button class="conn-dot conn-dot-right" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e)"></button>
+    <button class="conn-dot conn-dot-left" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'left')"></button>
+    <button class="conn-dot conn-dot-right" title="拖出连线建立关联" @pointerdown.stop="e => emit('connectDragStart', e, 'right')"></button>
   </div>
 </template>
 
@@ -51,7 +51,7 @@ const emit = defineEmits<{
   (e: 'landingDone', item: MindCanvasItem): void
   (e: 'moved', item: MindCanvasItem, x: number, y: number): void
   (e: 'open', item: MindCanvasItem): void
-  (e: 'connectDragStart', event: PointerEvent): void
+  (e: 'connectDragStart', event: PointerEvent, side: 'left' | 'right'): void
   (e: 'measured', item: MindCanvasItem, size: { w: number; h: number }): void
 }>()
 
