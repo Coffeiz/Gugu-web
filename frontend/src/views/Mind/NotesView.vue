@@ -69,116 +69,74 @@ watch(() => liveStore.rev.mind, () => store.fetchNotes())
 
 // ── 滚轮：悬在有溢出的列上→列内竖滚（浏览器默认）；否则纵滚轮转横滚（翻历史）。
 // 之前这里就是干巴巴的 root.scrollLeft += e.deltaY——没有吸附、没有惯性/阻尼、到边缘也
-// 不会回弹。第一版改成"停手后另起一个 setTimeout，到点再起一段新的衰减 rAF"，结果这段
-// 等待期间画面完全静止，用户反馈"顿一下才出现惯性"——静止 + 突然滑动本身就是一次顿挫，
-// 不是时长的问题，是"另起一段"这个结构本身自带的空档。
-// 这版改成单一个常驻 rAF 循环（wheelLoop）：从第一次 wheel 事件起就转起来，只要还有新的
-// wheel 事件不断进来就什么都不做（转动期间的 1:1 手感由 onWheel 自己直接改 scrollLeft，
-// 循环只是在一旁等着接手）；一旦有一小段时间（WHEEL_IDLE_MS）没有新事件，循环自己在
-// 下一帧原地切换进摩擦力衰减阶段，不需要另外派发一个新的 rAF、也没有中间的静止空档，
-// "转动"和"滑行"是同一条连续的时间线。
+// 不会回弹。中间几版分别踩过："停手后另起一个 setTimeout 再起新 rAF" 会有静止空档，改成
+// 单一常驻 rAF 循环解决；"一检测到越界就立刻调 returnCardRubber()" 只用撞线那一帧的极小
+// 越界量当弹簧起点，看着像一碰边缘就唰地弹回，改成越界期间持续用 elasticPosition 更新虚拟
+// 中心解决。最后剩的一个问题：wheelDecaying 是"循环内部的阶段标记"，onWheel 每次新事件都
+// 把它清成 false，包括正在越界衰减、用户又多滚一格的情况——循环下一帧重新判定"是不是该转
+// 衰减阶段"，用的是这一次新事件的瞬时速度（可能很小），一旦低于阈值就直接判定"停手了"
+// 调 snapToNearestColumn()，无视了画面其实还停在越界位置（cardRubberShift != 0），表现
+// 正是"边缘再滚一格，卡片突然弹回中心"。
+// 根治办法是照抄拖拽那一套已经没这个问题的模型：onColumnsPointerMove 里全程只有一个
+// 贯穿整个手势的位置累加器 raw，每一帧都基于它重新算一遍越界量，从不区分"跟手"和"衰减"
+// 两个阶段、也从不在中途重置状态。这里同理：wheelPos 是贯穿"从第一次 wheel 到最终彻底静止"
+// 整段会话的唯一位置累加器，不管这一帧的位移是来自用户正在转的滚轮（onWheel 直接加）还是
+// 摩擦力衰减（wheelLoop 逐帧加），都是同一个累加器上的同一种加法，越界量每帧都用它重新算，
+// 因此在边缘多滚一格只会让越界量继续往外长一点（elasticPosition 的对数曲线自己会越走越沉），
+// 不会被"看似停手"的中间态打断。真正的松手判定改成"距上次事件超过 WHEEL_IDLE_MS 且速度已
+// 衰减到位"两个条件同时成立，只在 wheelLoop 的衰减分支里检查，onWheel 不再直接清空/触发它。
 // 另外不同鼠标/系统上报的 deltaY 量级差异很大（有的一格几十，有的一格几百，触控板还是
 // 连续小数值），直接拿原始 deltaY 喂物理会导致"这个鼠标转一下跟另一个鼠标转一下手感差
 // 好几倍"。normalizeWheelDelta 按 deltaMode 换算成统一像素单位，再夹一个单帧最大步长，
 // 把"多快算快"的上限拉到同一条线上，滚动手感/滑行距离在不同设备上更接近。
 const WHEEL_FRICTION = 4         // 摩擦系数：越大衰减越快，滑行距离越短——3.4 时滑得偏远，
                                  // 6.5 又太急，4 是回退调整后定下的折中值。
+const WHEEL_OVERSHOOT_FRICTION_MULT = 3.5  // 越界（撞进弹簧区）期间额外叠乘的摩擦倍数——
+                                 // 撞边界本该像撞上有阻力的东西，速度要掉得比在空地上滑行快
+                                 // 得多；不加这个倍数时衰减到位仍按 WHEEL_FRICTION=4 那档慢
+                                 // 速率走，停手后要再等小半秒速度才降到 WHEEL_SETTLE_VEL 触发
+                                 // 回弹，表现就是"停手了要愣一下才弹回去"。
 const WHEEL_SETTLE_VEL = 40      // px/s，衰减到这个速度以下就转入吸附阶段
 const WHEEL_IDLE_MS = 70         // 判定"停手"的静默窗口——只是循环内部的状态切换阈值，
                                  // 不是启动延迟，不会有额外可感知的等待
 const WHEEL_MAX_STEP = 70        // 单次 wheel 事件换算后的最大位移（px），削平设备间的灵敏度差异
 const WHEEL_LINE_PX = 20         // deltaMode=LINE 时，一"行"约等于多少像素
-const WHEEL_MAX_VELOCITY = 1800  // px/s，平滑后的速度再夹一道上限——两次 wheel 事件间隔极短时
+const WHEEL_MAX_VELOCITY = 2600  // px/s，平滑后的速度再夹一道上限——两次 wheel 事件间隔极短时
                                  // （同一鼠标事件被拆成好几个 event、或触控板连续小步）算出来的
                                  // 瞬时速度会不成比例地夸张，不封顶滑行距离会跟着失控。
 
-function normalizeWheelDelta(e: WheelEvent): number {
+/** 换算成统一像素单位，拆成两份返回：pos 是夹过单帧步长上限的值，直接拿去加 wheelPos——
+ *  避免猛转一下单帧跳出老远；raw 是没夹过的原始值，只用来估算这一下转得有多快（见
+ *  onWheel 里 instant 的计算）。之前两者共用同一个夹过的值，等于把"转得快不快"的信息在
+ *  夹步长这一步就削平了——轻转一下跟重转一下算出来的瞬时速度几乎一样（都顶到 WHEEL_MAX_STEP
+ *  这个天花板），滑行距离/回弹力度自然也跟着分不出轻重，就是"惯性和转的快慢对不上"的根因。 */
+function normalizeWheelDelta(e: WheelEvent): { pos: number; raw: number } {
   let px = e.deltaY
   if (e.deltaMode === 1) px *= WHEEL_LINE_PX                                    // DOM_DELTA_LINE
   else if (e.deltaMode === 2) px *= (scrollRef.value?.clientWidth ?? 800)        // DOM_DELTA_PAGE，几乎遇不到，兜底换算
-  return Math.max(-WHEEL_MAX_STEP, Math.min(WHEEL_MAX_STEP, px))
+  return { pos: Math.max(-WHEEL_MAX_STEP, Math.min(WHEEL_MAX_STEP, px)), raw: px }
 }
 
 let wheelVelocity = 0            // px/s，指数滑动平均
 let wheelLastEventTime = 0
 let wheelLoopRaf = 0
 let wheelLoopLast = 0
-let wheelDecaying = false        // 循环是否已经从"跟手"切进"摩擦力衰减"阶段
-let wheelPos = 0                 // 衰减阶段用的浮点逻辑位置（可越界）
+let wheelSessionActive = false   // 是否处在"从第一次 wheel 到彻底静止"的整段会话中——贯穿
+                                 // 跟手/衰减两个阶段，中途新事件不会把它打断重置
+let wheelPos = 0                 // 贯穿整段会话的浮点逻辑位置累加器（可越界），跟拖拽的 raw
+                                 // 是同一种模型：不区分阶段，每帧都在同一个数上累加/重新算
 let wheelCenters: { date: string; c: number }[] = []
 let wheelLogicalMin = 0
 let wheelLogicalMax = 0
 
-function onWheel(e: WheelEvent) {
+/** 把 wheelPos 换算成实际 scrollLeft + 越界橡皮筋视觉效果，onWheel（跟手）和 wheelLoop
+ *  （衰减）两个调用点共用同一份计算，不会出现"跟手时一套逻辑、衰减时另一套逻辑"的接缝。 */
+function applyWheelPos() {
   const root = scrollRef.value
   if (!root) return
-  if (e.deltaX || e.shiftKey) return   // 触控板横扫/Shift+滚轮：浏览器自己会横滚
-  const colBody = (e.target as HTMLElement).closest<HTMLElement>('.tl-col-body')
-  if (colBody && colBody.scrollHeight > colBody.clientHeight + 2) return
-  e.preventDefault()
-  stopCardFollow()
-  if (cardVisualReturnRaf) cancelAnimationFrame(cardVisualReturnRaf)
-  cardVisualReturnRaf = 0
-  cardRubberReturning = false
-
-  const delta = normalizeWheelDelta(e)
-  root.scrollLeft += delta   // 转动期间保持 1:1 手感，不在这一步做橡皮筋/吸附
-
-  const now = performance.now()
-  const dt = Math.max(now - wheelLastEventTime, 4)
-  const instant = (delta / dt) * 1000   // 换算成 px/s，跟下面惯性衰减用同一套单位
-  wheelVelocity = wheelVelocity * 0.5 + instant * 0.5   // 指数平滑，避免离散步长导致速度抖动
-  wheelVelocity = Math.max(-WHEEL_MAX_VELOCITY, Math.min(WHEEL_MAX_VELOCITY, wheelVelocity))
-  wheelLastEventTime = now
-  wheelDecaying = false   // 又来新输入了，退回"跟手"状态，循环下一帧重新判断要不要切进衰减
-
-  if (!wheelLoopRaf) {
-    wheelLoopLast = now
-    wheelLoopRaf = requestAnimationFrame(wheelLoop)
-  }
-}
-
-/** 常驻循环：跟手阶段什么都不做（只等着判断该不该切换），一旦判定"停手"就地切进摩擦力
- *  衰减阶段继续跑，同一条 rAF 时间线上无缝过渡，没有另起一段动画的空档。衰减到足够慢
- *  （或撞了边界）交给 followCardsTo/returnCardRubber 收尾，是同一段收尾代码。 */
-function wheelLoop(now: number) {
-  const root = scrollRef.value
-  if (!root) { wheelLoopRaf = 0; return }
-  const dt = Math.min(1 / 30, Math.max(1 / 240, (now - wheelLoopLast) / 1000))
-  wheelLoopLast = now
-
-  if (!wheelDecaying) {
-    if (now - wheelLastEventTime < WHEEL_IDLE_MS) {
-      wheelLoopRaf = requestAnimationFrame(wheelLoop)
-      return
-    }
-    if (Math.abs(wheelVelocity) < WHEEL_SETTLE_VEL) {
-      wheelLoopRaf = 0
-      snapToNearestColumn()
-      return
-    }
-    // 判定停手、且还有明显速度——进入衰减阶段，把这一路要用的边界/列信息量一次存起来，
-    // 不用每帧重新查 DOM。
-    wheelCenters = colCenters()
-    if (!wheelCenters.length) { wheelLoopRaf = 0; return }
-    const physicalMax = root.scrollWidth - root.clientWidth
-    wheelLogicalMin = Math.max(0, wheelCenters[0].c - contentCenter(root))
-    wheelLogicalMax = Math.max(wheelLogicalMin, Math.min(physicalMax, wheelCenters[wheelCenters.length - 1].c - contentCenter(root)))
-    wheelPos = root.scrollLeft
-    wheelDecaying = true
-  }
-
-  wheelVelocity *= Math.exp(-WHEEL_FRICTION * dt)
-  wheelPos += wheelVelocity * dt
   const clamped = Math.max(wheelLogicalMin, Math.min(wheelLogicalMax, wheelPos))
   root.scrollLeft = clamped
   const over = wheelPos - clamped   // 滑出边界之外、原生滚动吃不下的那一截
-  // 越界期间持续按当下的越界量更新橡皮筋虚拟中心——跟鼠标拖拽时"按住不放、越拖越远、
-  // 橡皮筋跟着实时拉伸"是同一个道理，不是碰到边界就立刻判定"松手"直接进弹簧。上一版一
-  // 检测到 over 就调 returnCardRubber()，只用了撞线那一帧的极小越界量当起点，弹簧要走的
-  // 距离很短，看着像"一碰边界就唰地弹回去"——真正该做的是让虚拟中心跟着还没耗尽的速度
-  // 继续往外走一段（越走阻力越大，靠 elasticPosition 的对数曲线本身天然减速），直到速度
-  // 衰减到位（等同于"松手"）才交给 returnCardRubber 播真正的回弹动画。
   const cols = timelineColsEl()
   if (over) {
     const last = wheelCenters.length - 1
@@ -200,6 +158,87 @@ function wheelLoop(now: number) {
     cardRubberShift = 0
     cardVisualCenterFrac.value = centerFrac.value
   }
+  return over
+}
+
+function onWheel(e: WheelEvent) {
+  const root = scrollRef.value
+  if (!root) return
+  if (e.deltaX || e.shiftKey) return   // 触控板横扫/Shift+滚轮：浏览器自己会横滚
+  const colBody = (e.target as HTMLElement).closest<HTMLElement>('.tl-col-body')
+  if (colBody && colBody.scrollHeight > colBody.clientHeight + 2) return
+  e.preventDefault()
+  stopCardFollow()
+  if (cardVisualReturnRaf) cancelAnimationFrame(cardVisualReturnRaf)
+  cardVisualReturnRaf = 0
+  cardRubberReturning = false
+
+  const { pos: delta, raw } = normalizeWheelDelta(e)
+
+  if (!wheelSessionActive) {
+    // 新一段会话的起点——把边界/列信息量一次算好存起来，wheelPos 从当前真实位置（减去
+    // 还没归零的橡皮筋视觉偏移，避免衔接处跳一下）续上，不是每次都归零重来。
+    wheelCenters = colCenters()
+    if (!wheelCenters.length) { root.scrollLeft += delta; return }
+    const physicalMax = root.scrollWidth - root.clientWidth
+    wheelLogicalMin = Math.max(0, wheelCenters[0].c - contentCenter(root))
+    wheelLogicalMax = Math.max(wheelLogicalMin, Math.min(physicalMax, wheelCenters[wheelCenters.length - 1].c - contentCenter(root)))
+    wheelPos = root.scrollLeft - cardRubberShift
+    wheelVelocity = 0
+    wheelSessionActive = true
+  }
+
+  wheelPos += delta
+  applyWheelPos()
+
+  const now = performance.now()
+  const dt = Math.max(now - wheelLastEventTime, 4)
+  const instant = (raw / dt) * 1000   // 换算成 px/s，用未夹步长的原始位移，真实反映"转得多快"
+  wheelVelocity = wheelVelocity * 0.5 + instant * 0.5   // 指数平滑，避免离散步长导致速度抖动
+  wheelVelocity = Math.max(-WHEEL_MAX_VELOCITY, Math.min(WHEEL_MAX_VELOCITY, wheelVelocity))
+  wheelLastEventTime = now
+  // 注意：这里不再清空/重置任何"阶段"标记——wheelSessionActive 只在整段会话彻底静止时
+  // 才会被 wheelLoop 自己收尾时置回 false，中途多来几次新事件不会打断正在进行的越界衰减。
+
+  if (!wheelLoopRaf) {
+    wheelLoopLast = now
+    wheelLoopRaf = requestAnimationFrame(wheelLoop)
+  }
+}
+
+/** 常驻循环：新事件到达后的 WHEEL_IDLE_MS 静默窗口内什么都不做（位置已经在 onWheel 里
+ *  同步更新过了），一旦真正判定"停手"（静默窗口过 + 速度已衰减到位）才收尾——越界就播
+ *  回弹弹簧，没越界就磁吸最近的日期列。判定停手前的每一帧都基于同一个 wheelPos 累加器
+ *  继续走摩擦力衰减，不会被中途到达的新 wheel 事件重置或打断。 */
+function wheelLoop(now: number) {
+  if (!scrollRef.value) { wheelLoopRaf = 0; return }
+  const dt = Math.min(1 / 30, Math.max(1 / 240, (now - wheelLoopLast) / 1000))
+  wheelLoopLast = now
+
+  if (now - wheelLastEventTime < WHEEL_IDLE_MS) {
+    // 还在静默窗口内，可能下一刻就有新事件——不做衰减，只等
+    wheelLoopRaf = requestAnimationFrame(wheelLoop)
+    return
+  }
+
+  if (Math.abs(wheelVelocity) < WHEEL_SETTLE_VEL) {
+    wheelLoopRaf = 0
+    wheelSessionActive = false
+    const over = wheelPos - Math.max(wheelLogicalMin, Math.min(wheelLogicalMax, wheelPos))
+    if (over) { returnCardRubber(); return }
+    snapToNearestColumn()
+    return
+  }
+
+  // 已确认停手、还有明显速度——继续摩擦力衰减，越界量每帧基于同一个 wheelPos 重新算，
+  // 边缘多滚一下只是让 wheelPos 继续往外走一点，不会中途被打断成"看似停手"。
+  // 已经撞进弹簧区（wheelPos 越界）时叠加额外摩擦——撞边界该像撞上带阻力的东西，加速把
+  // 速度磨到 WHEEL_SETTLE_VEL 以下好尽快转交给 returnCardRubber，不是照常速滑到没力气。
+  const overshootBefore = wheelPos < wheelLogicalMin || wheelPos > wheelLogicalMax
+  const friction = overshootBefore ? WHEEL_FRICTION * WHEEL_OVERSHOOT_FRICTION_MULT : WHEEL_FRICTION
+  wheelVelocity *= Math.exp(-friction * dt)
+  wheelPos += wheelVelocity * dt
+  const over = applyWheelPos()
 
   if (Math.abs(wheelVelocity) > WHEEL_SETTLE_VEL) {
     wheelLoopRaf = requestAnimationFrame(wheelLoop)
@@ -207,7 +246,7 @@ function wheelLoop(now: number) {
   }
   // 速度终于衰减到位——这才是"松手"的那一刻：越界就播回弹弹簧，没越界就磁吸最近的日期列。
   wheelLoopRaf = 0
-  wheelDecaying = false
+  wheelSessionActive = false
   if (over) { returnCardRubber(); return }
   snapToNearestColumn()
 }
@@ -668,7 +707,7 @@ function onResize() {
   cardRubberReturning = false
   cardRubberShift = 0
   if (wheelLoopRaf) { cancelAnimationFrame(wheelLoopRaf); wheelLoopRaf = 0 }
-  wheelDecaying = false
+  wheelSessionActive = false
   const cols = timelineColsEl()
   if (cols) cols.style.transform = ''
   const root = scrollRef.value

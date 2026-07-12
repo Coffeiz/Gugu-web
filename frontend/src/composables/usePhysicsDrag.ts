@@ -59,6 +59,12 @@ export interface PhysicsDragOpts {
   // getBoundingClientRect）或 null——避免组件自己另一套判定和调用方 onDrop 里的判定不一致，
   // 出现"数据没移动、动画却演了吸入消失"的画面和实际状态对不上。
   resolveAbsorbTarget?: (under: Element) => Element | null
+  // 落地飞行尚未结束时又从可见克隆抓起，会从这份当前屏幕矩形继续下一段物理拖拽。仅由
+  // startPhysicsDrag 内部递归使用，普通调用方不需要传。
+  initialRect?: { left: number; top: number; width: number; height: number }
+  // 落地克隆被重新抓起、真正越过拖拽阈值时通知调用方取消自己的附属动画（画布关系线的
+  // landingPositions 属于这类附属状态）；不传时只处理物理克隆本身。
+  onRegrabStart?: () => void
 }
 
 interface Box { left: number; top: number; width: number; height: number }
@@ -322,7 +328,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   const TILT  = opts.tilt      ?? 5      // 后仰角(deg)：上小下大，像被拎起
   const GRABY = opts.grabY     ?? 28     // 抓取点到卡片顶部的距离：挂在指针下方
 
-  const rect = sourceEl.getBoundingClientRect()
+  const sourceRect = sourceEl.getBoundingClientRect()
+  // 落地中再次抓取时，源本体已经在最终布局坐标，肉眼看到的却是 holder 内仍在飞的克隆。
+  // 布局/文字尺寸仍以 sourceRect 为准，只有初始屏幕位置取 initialRect；两者混用会把动作
+  // 按钮、连接点等相对坐标也错误地减去飞行中的屏幕偏移。
+  const initialRect = opts.initialRect ?? sourceRect
+  const rect = sourceRect
   // half 用 let：contentScale 是活的（画布相机缩放，抓着卡片不放的时候还能滚轮继续缩放
   // 画布），每帧都可能变，克隆体的实际渲染半宽/半高得跟着重算，见 frame() 里的 _applyCS。
   let half = { x: rect.width / 2, y: rect.height / 2 }
@@ -343,9 +354,16 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   const _resolveCS = () => (typeof opts.contentScale === 'function' ? opts.contentScale() : opts.contentScale) ?? 1
   const CS0 = _resolveCS()
   const sourceStyle = getComputedStyle(sourceEl)
-  const cloneW = parseFloat(sourceStyle.width) || (CS0 !== 1 ? rect.width / CS0 : rect.width)
-  const cloneH = parseFloat(sourceStyle.height) || (CS0 !== 1 ? rect.height / CS0 : rect.height)
+  const cloneW = parseFloat(sourceStyle.width) || (CS0 !== 1 ? sourceRect.width / CS0 : sourceRect.width)
+  const cloneH = parseFloat(sourceStyle.height) || (CS0 !== 1 ? sourceRect.height / CS0 : sourceRect.height)
   let lastCS = CS0
+  // holder 飞行途中可能正被落地 morph 拉伸；再次抓起时先按那一刻的视觉比例画新克隆，再在
+  // 抬起的 160ms 内自然收回到本体尺寸，避免中途抓取先突然变大/变小一跳。
+  const regrabScale = {
+    x: sourceRect.width > 0 ? initialRect.width / sourceRect.width : 1,
+    y: sourceRect.height > 0 ? initialRect.height / sourceRect.height : 1,
+  }
+  let visualScale = { ...regrabScale }
 
   // holder 只负责屏幕坐标和物理变换；scaleShell 只复现画布相机缩放。克隆保留未缩放的布局宽高，
   // 因而外框、文字、内边距和圆角同步缩放，同时物理 translate3d 的像素坐标不受缩放影响。
@@ -443,9 +461,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   // CSS transition——克隆体从下一帧起全靠 frame() 直接写 transform 保持跟手，留一份 transition
   // 在身上会让每帧的写入都被浏览器重新插值，反而拖慢跟手，且松手瞬间若跟这份 transition 撞车还
   // 会把落地动画写坏（曾经这样实现过，松手时「先放大字体、再突然切回本体」就是这个撞车导致的）。
+  const initialCenter = { x: initialRect.left + initialRect.width / 2, y: initialRect.top + initialRect.height / 2 }
   holder.style.transform =
-    `translate3d(${rect.left.toFixed(2)}px, ${(rect.top + half.y - liveGrabY).toFixed(2)}px, 0)` +
-    ` perspective(760px) rotateX(${TILT}deg) scale(1)`
+    `translate3d(${(initialCenter.x - half.x).toFixed(2)}px, ${(initialCenter.y - liveGrabY).toFixed(2)}px, 0)` +
+    ` perspective(760px) rotateX(${TILT}deg) scale(${regrabScale.x.toFixed(4)}, ${regrabScale.y.toFixed(4)})`
   document.body.appendChild(holder)
 
   // 拖拽期间给浏览器减负（性能：trace 显示 CPU 几乎全在浏览器渲染，非物理 JS）：
@@ -479,7 +498,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     })
   }
 
-  const pos    = { x: rect.left + half.x, y: rect.top + half.y }
+  const pos    = { x: initialCenter.x, y: initialCenter.y }
   const target = { x: pos.x, y: pos.y }
   // pointer 模式起点就是当前指针位置（原生模式靠首个 dragover 校正）
   if (pointer && (event.clientX || event.clientY)) { target.x = event.clientX; target.y = event.clientY }
@@ -563,14 +582,22 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // （transition 会跟这里每帧的直接写入打架，且松手瞬间容易跟落地动画的 transition 撞车）
     liftT = Math.min(1, liftT + dt * 1000 / GROW_MS)
     const liftEase = 1 - Math.pow(1 - liftT, 3)
+    visualScale = {
+      x: 1 + (regrabScale.x - 1) * (1 - liftEase),
+      y: 1 + (regrabScale.y - 1) * (1 - liftEase),
+    }
     const curLift = 1 + (LIFT - 1) * liftEase
     holder.style.transform =
       `translate3d(${(pos.x - half.x).toFixed(2)}px, ${(pos.y - liveGrabY).toFixed(2)}px, 0)` +
-      ` perspective(760px) rotateX(${rotX.toFixed(2)}deg) rotateZ(${rotZ.toFixed(2)}deg) scale(${curLift})`
+      ` perspective(760px) rotateX(${rotX.toFixed(2)}deg) rotateZ(${rotZ.toFixed(2)}deg) ` +
+      `scale(${(curLift * visualScale.x).toFixed(4)}, ${(curLift * visualScale.y).toFixed(4)})`
     // 视觉中心跟 end() 里落点用的是同一条公式（pos 本身不是中心，克隆体渲染顶边挂在
     // pos.y - liveGrabY，见 liveGrabY 定义）——onFollow 吐出的必须跟克隆体肉眼所在位置对上，
     // 不能拿 pos 直接充数，否则「线跟着走」会跟卡片实际画面对不齐。
-    if (opts.onFollow) opts.onFollow({ x: pos.x, y: pos.y - liveGrabY + half.y }, { w: half.x * 2, h: half.y * 2 })
+    if (opts.onFollow) opts.onFollow(
+      { x: pos.x, y: pos.y - liveGrabY + half.y },
+      { w: half.x * 2 * visualScale.x, h: half.y * 2 * visualScale.y },
+    )
     _active!.raf = requestAnimationFrame(frame)
   }
 
@@ -608,7 +635,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 用 let：落地飞行这 0.55s 期间如果画布还在被缩放（滚轮跟松手同时发生），这两个值也要
     // 跟着实时更新，见 flyMorph 里的 _trackLandingZoom——不然落地动画全程只认松手那一刻的
     // 画布缩放，飞完之后卡片大小跟当下的画布比例对不上。
-    let dropW = half.x * 2, dropH = half.y * 2
+    let dropW = half.x * 2 * visualScale.x, dropH = half.y * 2 * visualScale.y
     // turn：最近 VEL_HISTORY_MS 这段时间里速度方向转过的角度（弧度，带符号）——甩出去的手腕
     // 不是每次都走直线，这个角度供调用方把惯性延伸的路径也带一点弧度（见 useCardDrag.ts 的
     // coastOffset）。样本太短（刚起手还没攒够历史）或本来就没怎么动时不强算，给 0。
@@ -617,6 +644,13 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // ("运动方向防抖")。改成拿窗口前半段、后半段各自的平均速度向量再比角度，单帧的抖动会被
     // 同一半段里其它样本平均掉，只有真正持续了一段时间的转向才会被算进 turn 里。
     let turn = 0
+    // releaseVel：抛出速度默认退回瞬时 vel（历史样本不够、或本来就没怎么动时，没必要
+    // 折腾窗口平均）。够条件时改用窗口后半段（约 VEL_HISTORY_MS/2、~60ms）的平均速度——
+    // 不止转弯角度会被松手前一帧的抖动带偏，抛出的方向/力度本身同样会：只看松手那一瞬间
+    // 单帧的 vel，手指抬起前哪怕就那一帧因为鼠标抖了一下偏出原本的运动方向，抛出去的卡片
+    // 就会跟着径直飞向那个被抖出来的错误方向——跟"转弯角度要防抖"是同一个问题，只是这里
+    // 影响的是初始方向而不是过程中的转弯量。
+    let releaseVel = { x: vel.x, y: vel.y }
     const speed = Math.hypot(vel.x, vel.y)
     if (velHistory.length > 3 && speed > 30) {
       const mid = velHistory.length >> 1
@@ -629,12 +663,13 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       const late = avg(velHistory.slice(mid))
       const earlySpeed = Math.hypot(early.x, early.y)
       const lateSpeed = Math.hypot(late.x, late.y)
+      if (lateSpeed > 30) releaseVel = late
       if (earlySpeed > 30 && lateSpeed > 30) {
         const a1 = Math.atan2(early.y, early.x), a2 = Math.atan2(late.y, late.x)
         turn = Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1))
       }
     }
-    if (opts.onDrop) { try { opts.onDrop(cloneCenter, { x: vel.x, y: vel.y, turn }, { w: dropW, h: dropH }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
+    if (opts.onDrop) { try { opts.onDrop(cloneCenter, { x: releaseVel.x, y: releaseVel.y, turn }, { w: dropW, h: dropH }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
 
     const dropX = cloneCenter.x, dropY = cloneCenter.y
     const idAttr = sourceEl.getAttribute('data-file-id')    ? ['data-file-id',    sourceEl.getAttribute('data-file-id')]
@@ -689,12 +724,34 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         const underPointer = document.elementFromPoint(event.clientX, event.clientY)
         syncConnectionOverlayHover(!!underPointer && (underPointer === revealEl || revealEl.contains(underPointer)))
       }
+      // 落地飞行里的 holder 原先永远 pointer-events:none：用户眼前明明有一张卡，却只能去
+      // 最终本体的隐形位置再抓，违背直接操作。飞行阶段让 holder 临时吃 pointerdown；仍然沿用
+      // 普通卡片的 5px 阈值，点击不会误开一次新拖拽。真正起拖前先取消调用方附属的落地动画，
+      // 再让 startPhysicsDrag 自己 flush 掉这一趟克隆，从 holder 当前屏幕矩形无缝续上。
+      const onLandingPointerDown = (event: PointerEvent) => {
+        if (event.button !== 0) return
+        event.preventDefault()
+        event.stopPropagation()
+        startThresholdDrag(event, {
+          getCard: () => revealEl,
+          onDragStart: (moveEvent) => {
+            // 阈值内卡片仍在继续飞，起点要在真正接力这一刻再量，不能沿用按下那一帧的旧框。
+            const visualRect = holder.getBoundingClientRect()
+            opts.onRegrabStart?.()
+            startPhysicsDrag(moveEvent, revealEl, { ...opts, initialRect: visualRect })
+          },
+        })
+      }
       // 不能只等下一次 pointermove：用户可能已经在卡外松手，随后完全不再动鼠标。
       // target 记录的是最近一次真实指针坐标（不是带弹簧延迟的 cloneCenter），正好可用于
       // 落地第一帧的命中判断。
       const underPointer = document.elementFromPoint(target.x, target.y)
       syncConnectionOverlayHover(!!underPointer && (underPointer === revealEl || revealEl.contains(underPointer)))
       if (pointer) document.addEventListener('pointermove', onLandingPointerMove)
+      if (pointer) {
+        holder.style.pointerEvents = 'auto'
+        holder.addEventListener('pointerdown', onLandingPointerDown)
+      }
       // overlay 挂在 holder 里；让 holder 比落地内容克隆高一层，圆点始终压在纸面/玻璃面之上。
       if (connectionDotOverlay) holder.style.zIndex = String((Number(holder.style.zIndex) || 0) + 1)
       // 克隆体是按源卡(旧)尺寸渲染的；缩放到落点卡尺寸，并让缩放后中心对齐落点中心。
@@ -858,6 +915,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         done = true
         if (finishTimer) clearTimeout(finishTimer)
         if (pointer) document.removeEventListener('pointermove', onLandingPointerMove)
+        holder.removeEventListener('pointerdown', onLandingPointerDown)
         unregister()
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
@@ -886,6 +944,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         done = true
         if (finishTimer) clearTimeout(finishTimer)
         if (pointer) document.removeEventListener('pointermove', onLandingPointerMove)
+        holder.removeEventListener('pointerdown', onLandingPointerDown)
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
         holder.remove(); clone2.remove(); camGlue?.remove()

@@ -191,6 +191,9 @@ export function useCardDrag(opts: {
         cancelActiveLanding()
         startPhysicsDrag(ev, card, {
           pointer: true, skipAbsorb: true, tilt: 0, lift: opts.lift ?? 1.03,
+          // 飞行中的 holder 被再次抓起时，物理模块会递归启动下一段拖拽；先停掉上一段只供
+          // RelationLayer 使用的落地插值，避免旧 landingPositions 继续覆盖新克隆的位置。
+          onRegrabStart: cancelActiveLanding,
           // 无限画布没有"卡片顶部附近拈起"这个参照系（那是看板卡沿用的手感），抓哪张贴纸都该是
           // 贴纸中心跟手，不然矮贴纸（活动/文件）看着几乎贴在指针上、高贴纸（便签）又明显吊在
           // 指针下方一截，四种贴纸手感不一致。
