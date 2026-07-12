@@ -62,8 +62,8 @@ const emit = defineEmits<{ (e: 'dragStart', event: PointerEvent, side: 'left' | 
   animation: conn-dot-magnet .44s cubic-bezier(.22, 1.35, .36, 1) infinite alternate;
 }
 .conn-dot:hover::before { transform: scale(1.3); }
-.conn-dot-left { left: -8px; }
-.conn-dot-right { right: -8px; }
+.conn-dot-left { left: -9px; }
+.conn-dot-right { right: -9px; }
 @keyframes conn-dot-magnet {
   from { box-shadow: 0 1px 4px rgba(80,90,110,.35); }
   to { box-shadow: 0 0 0 5px rgba(123,127,178,.16), 0 2px 8px rgba(80,90,110,.38); }

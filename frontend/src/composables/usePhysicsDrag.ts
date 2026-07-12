@@ -382,6 +382,38 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   // 因而拖拽、落地和回归本体之间没有第二颗点可切换。
   const connectionDotOverlay = clone.querySelector<HTMLElement>('.card-conn-dots')?.cloneNode(true) as HTMLElement | undefined
   clone.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
+  if (connectionDotOverlay) {
+    // 本体里的绝对定位圆点以卡片 padding box 为包含块，会自然避开边框宽度；覆盖层被抽到
+    // 没有边框的 scaleShell 后若还用 inset:0，左右圆点会各向外偏一个 border。按源卡真实
+    // 边框内缩，克隆与本体的连接点中心落在完全相同的坐标上。
+    connectionDotOverlay.style.inset = [
+      sourceStyle.borderTopWidth,
+      sourceStyle.borderRightWidth,
+      sourceStyle.borderBottomWidth,
+      sourceStyle.borderLeftWidth,
+    ].join(' ')
+  }
+  // 右上操作区也不能跟两张内容克隆交叉淡变：落地 clone2 会在半程盖住旧 clone，按钮随它
+  // 淡出后再由本体补出来，就会像「突然跳出」一样。跟连接点同理，整段拖放只保留这一份
+  // 覆盖层；原卡/落地卡里仅隐藏原位副本，保住便签标题行原有的排版宽度。
+  const sourceAction = sourceEl.querySelector<HTMLElement>('.card-actions, .nc-actions')
+  const cardActionOverlay = sourceAction?.cloneNode(true) as HTMLElement | undefined
+  if (sourceAction && cardActionOverlay) {
+    const actionRect = sourceAction.getBoundingClientRect()
+    const actionStyle = getComputedStyle(sourceAction)
+    cardActionOverlay.classList.add('phys-card-actions-overlay')
+    Object.assign(cardActionOverlay.style, {
+      position: 'absolute',
+      left: `${(actionRect.left - rect.left) / CS0}px`,
+      top: `${(actionRect.top - rect.top) / CS0}px`,
+      right: 'auto', bottom: 'auto', margin: '0',
+      width: `${actionRect.width / CS0}px`,
+      height: `${actionRect.height / CS0}px`,
+      opacity: actionStyle.opacity,
+      pointerEvents: 'none',
+    })
+  }
+  clone.querySelectorAll<HTMLElement>('.card-actions, .nc-actions').forEach(action => { action.style.visibility = 'hidden' })
   // 清空 left/top/right/bottom（不动 position 本身）：cloneNode(true) 原样带走了源卡的内联
   // 样式——画布贴纸（便签/活动）源卡自己就是 position:absolute + 内联 left/top（世界坐标，
   // 见 stickerStyle），clone 挂进 holder（它自己是 position:fixed，天然是新的定位上下文）后，
@@ -404,6 +436,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   if (connectionDotOverlay) {
     scaleShell.appendChild(connectionDotOverlay)
   }
+  if (cardActionOverlay) scaleShell.appendChild(cardActionOverlay)
   // 克隆体初始按源卡原始大小(scale 1)摆到源卡位置——避免首帧停在左上角(0,0)闪一下，也避免跟
   // 同一帧刚隐藏的源卡尺寸对不上（source opacity:0 换成 clone 那一刻若已经是 LIFT 放大，观感就是
   // 「抓起来卡片瞬间变大一圈」）。抬起放大改由 frame() 每帧用纯数值渐入（见下面 liftT），不用
@@ -650,6 +683,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 落地内容克隆没有连接点，因此不会再发生两张卡片各画一颗点、彼此遮住的问题。
       const syncConnectionOverlayHover = (hovering: boolean) => {
         connectionDotOverlay?.classList.toggle('hovering', hovering)
+        if (cardActionOverlay) cardActionOverlay.style.opacity = hovering ? '1' : '0'
       }
       const onLandingPointerMove = (event: PointerEvent) => {
         const underPointer = document.elementFromPoint(event.clientX, event.clientY)
@@ -946,6 +980,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         c.classList.add('phys-landing-content')
         copyInheritedTextStyle(el, c)
         c.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
+        // 操作区由 holder 内唯一的 cardActionOverlay 承担可见性；这里留隐藏副本维持标题行布局。
+        c.querySelectorAll<HTMLElement>('.card-actions, .nc-actions').forEach(action => { action.style.visibility = 'hidden' })
         const landingScaleShell = document.createElement('div')
         Object.assign(landingScaleShell.style, {
           position: 'absolute', left: '0', top: '0', width: cloneW + 'px', height: cloneH + 'px',

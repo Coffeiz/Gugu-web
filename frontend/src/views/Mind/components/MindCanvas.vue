@@ -120,6 +120,10 @@ function onItemMeasured(item: MindCanvasItem, size: { w: number; h: number }) {
 // 收到 nodeId 后按同一个像素量自己算偏移量（见其 hoverLift）。
 const hoveredNodeId = ref<number | null>(null)
 function onItemHover(item: MindCanvasItem, hovering: boolean) {
+  // 本体在落地阶段已经提前写到最终坐标、但视觉仍由克隆接管。此时浏览器可能对透明本体
+  // 继续派发 hover；不能让 RelationLayer 又把端点抬回去，等落地完成后的真实 mouseenter
+  // 再恢复即可。
+  if (landingNodeIds.has(item.nodeId)) return
   if (hovering) hoveredNodeId.value = item.nodeId
   else if (hoveredNodeId.value === item.nodeId) hoveredNodeId.value = null
 }
@@ -131,13 +135,25 @@ function onItemHover(item: MindCanvasItem, hovering: boolean) {
  *  改用一份独立的 landingPositions 表只覆盖 RelationLayer 的取点，不影响贴纸自己的真实位置
  *  （贴纸这时还隐藏着，item.x/y 提前到位对它没有视觉影响）。 */
 const landingPositions = reactive(new Map<number, { x: number; y: number }>())
+// 有键就代表这张卡还在克隆落地阶段：透明本体已经在最终坐标，但视觉卡片尚未落下，连线拖拽
+// 不能把它提前识别成可吸附目标。
+const landingNodeIds = reactive(new Set<number>())
 function onItemLanding(item: MindCanvasItem, x: number, y: number) {
+  landingNodeIds.add(item.nodeId)
+  if (hoveredNodeId.value === item.nodeId) hoveredNodeId.value = null
   landingPositions.set(item.nodeId, { x, y })
 }
 /** 落地插值播完（正好停在 item.x/y 的真实落库值上）——摘掉覆盖，RelationLayer 改读 item.x/y
  *  不会有任何跳变。 */
 function onItemLandingDone(item: MindCanvasItem) {
   landingPositions.delete(item.nodeId)
+  landingNodeIds.delete(item.nodeId)
+  // _revealWithoutStaleHover 会在本体重新出现时主动补 mouseenter，但那一刻这张卡仍在
+  // landingNodeIds 里，会被 onItemHover 正确忽略。若鼠标原地未动，浏览器不会再发第二次
+  // enter；门禁解除后主动按真实命中状态补一次，关系线才能和本体一起恢复 hover。
+  const hovered = [...document.querySelectorAll<HTMLElement>(`[data-node-id="${item.nodeId}"]`)]
+    .some(el => el.matches(':hover'))
+  if (hovered) hoveredNodeId.value = item.nodeId
 }
 
 // ── 建立关联：从贴纸边缘的圆点按住拖出一条线，松手落在另一张贴纸上就建立关系 ──────────
@@ -189,7 +205,7 @@ function connectionTargetSide(nodeId: number) {
 function targetAt(event: PointerEvent, originNodeId: number) {
   const element = (document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-node-id]')
   const nodeId = element ? Number(element.dataset.nodeId) : NaN
-  if (!Number.isFinite(nodeId) || nodeId === originNodeId) return null
+  if (!Number.isFinite(nodeId) || nodeId === originNodeId || landingNodeIds.has(nodeId)) return null
   const item = props.items.find(current => current.nodeId === nodeId)
   if (!item) return null
   const pointer = screenToWorld(event.clientX, event.clientY)

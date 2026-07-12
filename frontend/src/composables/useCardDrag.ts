@@ -90,7 +90,7 @@ export function animateLanding(
   to: { x: number; y: number },
   onUpdate: (x: number, y: number) => void,
   onDone?: () => void,
-) {
+): () => void {
   // 多等一帧再开始：usePhysicsDrag.ts 的 end() 在 onDrop 回调返回后，紧接着（同一个同步调用栈）
   // 自己也排了一个 requestAnimationFrame，用来读贴纸此刻的真实 DOM 位置算克隆体飞行目标——
   // 那份"真实位置"正是上面 onDropAt 刚同步落库的最终坐标（Vue 的响应式更新在这之前已经生效）。
@@ -98,17 +98,27 @@ export function animateLanding(
   // 读位置的 rAF 排进同一帧、又恰好排在它前面，物理模块就会读到被拉回的旧位置——卡片自己的
   // 落地飞行就飞错方向、飞不出该有的距离。多包一层 rAF，保证我们真正开始改覆盖位置是在物理
   // 模块那次读取"之后"的下一帧，两边不会撞在同一帧里抢跑。
-  requestAnimationFrame(() => {
+  let cancelled = false
+  let outerRaf = 0
+  let frameRaf = 0
+  outerRaf = requestAnimationFrame(() => {
+    if (cancelled) return
     const start = performance.now()
     function step(now: number) {
+      if (cancelled) return
       const t = Math.min(1, (now - start) / LANDING_MS)
       const e = _landingEase(t)
       onUpdate(from.x + (to.x - from.x) * e, from.y + (to.y - from.y) * e)
-      if (t < 1) requestAnimationFrame(step)
+      if (t < 1) frameRaf = requestAnimationFrame(step)
       else onDone?.()
     }
-    requestAnimationFrame(step)
+    frameRaf = requestAnimationFrame(step)
   })
+  return () => {
+    cancelled = true
+    cancelAnimationFrame(outerRaf)
+    cancelAnimationFrame(frameRaf)
+  }
 }
 
 /** 把物理模块给的屏幕像素尺寸（克隆体此刻真实的视觉宽高）换算成世界坐标系下的宽高。
@@ -147,7 +157,8 @@ export function useCardDrag(opts: {
   // 这个不落到 item.x/y 上（贴纸这时已经同步跳到最终落点了，见 onDropAt 调用处的注释），
   // 只用来单独喂连线一份还没到终点的「过渡位置」，配合 onLandingDone 在动画播完时清掉这份
   // 覆盖——不然 item.x/y 提前到位会让连线先闪一下终点、再跳回起点重新播这段惯性动画，见
-  // MindCanvas.vue 的 landingPositions。没有惯性偏移（原地放下）时不会触发，也就不需要传。
+  // MindCanvas.vue 的 landingPositions。即使没有惯性偏移也会走一轮：除了让关系线和卡片
+  // 同步，它还是画布连线命中的"落地中"门禁，飞行结束前不能把隐藏本体当作可吸附目标。
   onLanding?: (worldX: number, worldY: number) => void
   onLandingDone?: () => void
   // 拖拽发起点（如小抓手）跟「要飞起来的那张卡」不是同一个元素时用这个指定要拖的元素，
@@ -162,11 +173,22 @@ export function useCardDrag(opts: {
   // 默认轻抬起 3%，便签/项目/活动贴纸保留这份空间感；文件卡传 1，避免非整数缩放让文件名变糊。
   lift?: number
 }) {
+  // 同一张卡尚在落地飞行时又被抓起，旧的关系线插值绝不能继续写 landingPositions；否则
+  // RelationLayer 会优先读旧覆盖位置，视觉线脱离新抓住的克隆。取消后也要立即通知调用方
+  // 清掉覆盖表，不能等下一帧。
+  let cancelLanding: (() => void) | null = null
+  function cancelActiveLanding() {
+    if (!cancelLanding) return
+    cancelLanding()
+    cancelLanding = null
+    opts.onLandingDone?.()
+  }
   function onPointerDown(event: PointerEvent) {
     startThresholdDrag(event, {
       getCard: opts.getDragEl ? () => opts.getDragEl!() : undefined,
       exclude: opts.exclude,
       onDragStart: (ev, card) => {
+        cancelActiveLanding()
         startPhysicsDrag(ev, card, {
           pointer: true, skipAbsorb: true, tilt: 0, lift: opts.lift ?? 1.03,
           // 无限画布没有"卡片顶部附近拈起"这个参照系（那是看板卡沿用的手感），抓哪张贴纸都该是
@@ -200,8 +222,15 @@ export function useCardDrag(opts: {
             // 不依赖也不推迟这次落库；插值不写回 item.x/y（会闪一下终点，见 onLanding 的
             // 注释），只喂 onLanding。
             opts.onDropAt(landTopLeft.x, landTopLeft.y)
-            if (opts.onLanding && (coast.x || coast.y)) {
-              animateLanding(dropTopLeft, landTopLeft, opts.onLanding, opts.onLandingDone)
+            if (opts.onLanding) {
+              // 先同步写一次起点：目标卡的真实 item.x/y 已经跳到终点，本体虽不可见仍能被
+              // elementFromPoint 命中。MindCanvas 用这次回调立刻把它标记为"落地中"，避免
+              // 连线拖拽提前吸到仍在飞的卡片；后续逐帧插值只负责关系线视觉位置。
+              opts.onLanding(dropTopLeft.x, dropTopLeft.y)
+              cancelLanding = animateLanding(dropTopLeft, landTopLeft, opts.onLanding, () => {
+                cancelLanding = null
+                opts.onLandingDone?.()
+              })
             }
           },
         })

@@ -12,17 +12,19 @@
   pointer-events: none;
 }
 
-/* 落地揭示的一帧压制：真实鼠标仍在卡片上时，不让操作按钮或连接点抢先跳进 hover。 */
+/* 落地揭示的一帧压制：连接点和操作区的覆盖层会在同一帧撤掉，Vue 的 hovering 响应式状态却要
+   到微任务才补上。这里直接按原生 :hover 接住两者，避免本体切换时闪空；鼠标已经离开则不命中，
+   不会误显。 */
 .fc-card.phys-just-revealed:hover .card-actions,
-.fc-card.phys-just-revealed:hover .conn-dot,
 .pr-card.phys-just-revealed:hover .card-actions,
-.pr-card.phys-just-revealed:hover .conn-dot,
 .entity-sticker.phys-just-revealed:hover .card-actions,
-.entity-sticker.phys-just-revealed:hover .conn-dot,
 .pr-missing.phys-just-revealed:hover .card-actions,
-.fr-missing.phys-just-revealed:hover .card-actions,
-.pr-missing.phys-just-revealed:hover .conn-dot,
-.fr-missing.phys-just-revealed:hover .conn-dot { opacity: 0 !important; }
+.fr-missing.phys-just-revealed:hover .card-actions { opacity: 1 !important; }
+.fc-card.phys-just-revealed:hover .conn-dot::before,
+.pr-card.phys-just-revealed:hover .conn-dot::before,
+.entity-sticker.phys-just-revealed:hover .conn-dot::before,
+.pr-missing.phys-just-revealed:hover .conn-dot::before,
+.fr-missing.phys-just-revealed:hover .conn-dot::before { opacity: 1 !important; }
 
 .pr-card.phys-just-revealed:hover,
 .note-card.phys-just-revealed:hover,
@@ -38,7 +40,7 @@
 .note-card.phys-just-revealed:hover::after {
   background: linear-gradient(to top, rgba(255,255,255,0.08), transparent 50%) !important;
 }
-.note-card.phys-just-revealed:hover .nc-actions { opacity: 0 !important; }
+.note-card.phys-just-revealed:hover .nc-actions { opacity: 1 !important; }
 
 /* 画布拖拽的材质：纸条保留不透明纸感；文件与系统对象在移动时优先保证文字清晰度。 */
 .phys-drag-clone.fc-card.canvas-mode,
