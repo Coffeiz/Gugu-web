@@ -66,13 +66,15 @@ async def _descendant_folder_ids(
     user_id,
     root_id: int,
 ) -> List[int]:
-    """返回根文件夹及全部子孙；移动/改名后所有层级的物理 key 都依赖它。"""
+    """返回根文件夹及全部**存活**子孙；移动/改名后所有层级的物理 key 都依赖它。
+    只认存活（deleted_at IS NULL）——已软删的子孙不该被一次「改名/移动」relocate 误搬。"""
     ids = [root_id]
     frontier = [root_id]
     while frontier:
         children = (await db.execute(
             select(Folder.id).where(
                 Folder.user_id == user_id,
+                Folder.deleted_at.is_(None),
                 Folder.parent_id.in_(frontier),
             )
         )).scalars().all()

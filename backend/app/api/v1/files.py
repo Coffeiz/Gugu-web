@@ -22,6 +22,7 @@ from app.services.storage.folders import resolve_folder_path
 from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
 from app.services.storage.file_service.files import _fmt_size
+from app.services.storage.trash import move_file_to_trash
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -471,7 +472,7 @@ async def presign_upload(
 
     if body.folder_id is not None:
         resolved = await resolve_folder_path(db, current_user.id, body.folder_id, body.project_id)
-        if not resolved:
+        if not resolved or resolved[0].deleted_at is not None:   # 不能传进已软删的文件夹（P2）
             raise HTTPException(400, "文件夹不存在，或不属于指定的项目/个人空间")
         fo, folder_path = resolved
         folder_name = fo.name
@@ -707,24 +708,6 @@ async def copy_file(
 
 # ── DELETE /files/{fid} （软删除→回收站）────────────────────────────────────
 
-def _to_trash_key(user_id, fid: int, storage_key: str) -> str:
-    """生成回收站路径，保留原文件名方便识别。"""
-    return f"{user_id}/trash/{fid}/{storage_key.rsplit('/', 1)[-1]}"
-
-
-async def _move_to_trash(storage, f: File) -> None:
-    """把物理文件移入回收站目录，更新 storage_key；失败时静默忽略。"""
-    if f.storage_key.startswith("_trash_/"):
-        return  # 已在回收站
-    trash_key = _to_trash_key(f.user_id, f.id, f.storage_key)
-    try:
-        await storage.rename_file(f.storage_key, trash_key)
-        f.storage_key = trash_key
-        # 不清旧祖先：文件所属文件夹仍存活，空目录须持久（P1.2）；孤儿由对账工具兜底
-    except Exception:
-        pass
-
-
 @router.delete("/{fid}", status_code=204)
 async def delete_file(
     fid: int,
@@ -735,7 +718,7 @@ async def delete_file(
     f = await get_owned(db, File, fid, current_user.id)
     if not f or f.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
-    await _move_to_trash(get_storage(), f)
+    await move_file_to_trash(get_storage(), f)
     f.deleted_at = now_utc()
     await db.commit()
     await events.publish(current_user.id, "files", origin=origin,
@@ -762,7 +745,7 @@ async def batch_delete_files(
     storage = get_storage()
     now = now_utc()
     for f in files:
-        await _move_to_trash(storage, f)
+        await move_file_to_trash(storage, f)
         f.deleted_at = now
     await db.commit()
     await events.publish(current_user.id, "files", origin=origin,

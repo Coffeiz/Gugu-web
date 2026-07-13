@@ -2,8 +2,9 @@
 
 只搬「与授权、删除无关」的 key 构建 + 冲突改名：_safe_name / _build_key / _resolve_conflict。
 files.py、trash.py、agent/tools/files.py 三处共享（各改 import 指向这里），行为逐字不变。
-授权(get_owned)、删除/回收站路径(_to_trash_key/_move_to_trash)、_find_conflict(DB 查询)
-均不在此、保持原位。
+授权(get_owned)、_find_conflict(DB 查询) 均不在此、保持原位；回收站路径
+(to_trash_key/move_file_to_trash/restore_file_storage) 已进一步搬到
+app/services/storage/trash.py（P2），files.py/trash.py/agent 三处共用一份。
 """
 import re
 

@@ -1,7 +1,7 @@
 """回收站技能：list_trash / restore_file / permanent_delete。
 
-复用后端 `trash.py` 的 `_restore_file_storage`（重建原路径移回）与 `files.py`
-的 `_delete_thumb_cache`。永久删除不可逆，走 confirm.gate 二次确认。
+复用 `app.services.storage.trash` 的 `restore_file_storage`（重建原路径移回）与
+`files.py` 的 `_delete_thumb_cache`。永久删除不可逆，走 confirm.gate 二次确认。
 """
 import json
 
@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.models import File
 from app.core.ownership import get_owned
 from app.services.storage import get_storage
-from app.api.v1.trash import _restore_file_storage
+from app.services.storage.trash import restore_file_storage
 from app.api.v1.files import _delete_thumb_cache
 from agent import confirm
 from agent.tools.base import BaseSkill, Tool
@@ -37,7 +37,7 @@ async def _restore_file(db, user_id, args: dict):
     f = await get_owned(db, File, args["file_id"], user_id)
     if not f or f.deleted_at is None:
         return json.dumps({"error": "文件不在回收站"})
-    await _restore_file_storage(f, db)
+    await restore_file_storage(f, get_storage(), db)
     f.deleted_at = None
     await db.commit()
     return {"success": True, "file_id": f.id, "name": f"{f.display_name}.{f.ext}"}

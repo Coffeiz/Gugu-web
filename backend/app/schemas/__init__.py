@@ -317,6 +317,7 @@ class FolderCreate(CamelModel):
 
 class FolderRename(CamelModel):
     name: str
+    version: int   # 乐观锁：必传，服务端走原子 UPDATE（WHERE version=…），版本对不上 409（P2.6）
 
     @field_validator("name")
     @classmethod
@@ -326,6 +327,7 @@ class FolderRename(CamelModel):
 
 class FolderMove(CamelModel):
     parent_id: Optional[int] = None
+    version: int   # 乐观锁：必传，同 FolderRename（P2.6）
 
 
 class FolderResponse(CamelModel):
@@ -334,6 +336,12 @@ class FolderResponse(CamelModel):
     parent_id:  Optional[int] = None
     name: str
     file_count: int = 0
+    version: int = 1
+
+
+class TrashFolderResponse(FolderResponse):
+    """回收站里的顶层已删文件夹（P2.3）：deleted_at 供前端显示删除时间/30 天过期倒计时。"""
+    deleted_at: str
 
 
 # ── File Tree ─────────────────────────────────────────────────────────────────

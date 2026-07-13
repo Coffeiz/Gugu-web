@@ -136,6 +136,9 @@ class File(Base):
     stage_name:   Mapped[str]           = mapped_column(String(100), default="")
     mind_map_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("mind_maps.id", ondelete="SET NULL"), nullable=True)
     storage_key:  Mapped[str]           = mapped_column(String(500))
+    # 现在恒为 'local'；给「需求突增直接切 OSS」留好快速通道（P4），加列 ≠ 建系统。
+    storage_backend: Mapped[str]        = mapped_column(String(20), default="local")
+    version:      Mapped[int]           = mapped_column(Integer,     default=1)   # 乐观锁位，供未来文件级并发编辑用
     size:         Mapped[str]           = mapped_column(String(50),  default="")
     size_bytes:   Mapped[int]           = mapped_column(BigInteger,  default=0)
     mime_type:    Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
@@ -162,10 +165,15 @@ class Folder(Base):
     parent_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="CASCADE"), nullable=True, index=True)
     name:       Mapped[str]           = mapped_column(String(200))
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+    version:    Mapped[int]           = mapped_column(Integer, default=1)    # 乐观锁位（P2.6，同 Project 的 409 并发模式）
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)  # 软删（P2.2）
 
     owner:    Mapped["User"]              = relationship(back_populates="folders")
     project:  Mapped[Optional["Project"]] = relationship(back_populates="folders")
     files:    Mapped[list["File"]]        = relationship(back_populates="folder")
+    # 软删后不再靠 DB 级联清子文件夹（那是硬删）——子树由 FolderTree 显式递归软删/恢复；
+    # cascade 只在整个 Folder 行被硬删时（如所属 Project 被删）才触发，属既有行为，P2 不动。
     children: Mapped[list["Folder"]]      = relationship(back_populates="parent", cascade="all, delete-orphan")
     parent:   Mapped[Optional["Folder"]]  = relationship(back_populates="children", remote_side="Folder.id")
 

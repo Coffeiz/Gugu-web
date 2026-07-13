@@ -1,8 +1,8 @@
 """文件领域技能：查 / 读 / 改 / 整理 / 生成。
 
 复用 `app.api.v1.files` 的现成 helper（`_build_key`/`_resolve_conflict`/
-`_fmt_size`/`_move_to_trash`/`_color`）与存储层 `get_storage()`，整理类工具
-复刻 `update_file` 的 key 重建逻辑，不自己拼路径。
+`_fmt_size`/`_color`）、`app.services.storage.trash`（`move_file_to_trash`）与
+存储层 `get_storage()`，整理类工具复刻 `update_file` 的 key 重建逻辑，不自己拼路径。
 
 读/改仅限文本类（白名单 ext）且 ≤256KB，避免把二进制当文本、撑爆上下文。
 生成（create_document）：文本格式直写；docx/pdf 由 HTML、xlsx 由 CSV 经 LibreOffice
@@ -19,8 +19,9 @@ from app.core.ownership import get_owned
 from app.services.storage import get_storage
 from app.services.storage.folders import relocate_folder_tree_files, resolve_folder_path
 from app.api.v1.files import (
-    _fmt_size, _move_to_trash, _color,
+    _fmt_size, _color,
 )
+from app.services.storage.trash import move_file_to_trash
 from app.services.storage.keys import _build_key, _resolve_conflict
 from agent.tools.base import BaseSkill, Tool
 
@@ -816,7 +817,7 @@ async def _delete_file(db, user_id, args: dict):
     if _err:
         return _err
     fid = f.id; fname = f"{f.display_name}.{f.ext}"
-    await _move_to_trash(get_storage(), f)
+    await move_file_to_trash(get_storage(), f)
     f.deleted_at = now_utc()
     await db.commit()
     return {"success": True, "file_id": fid, "name": fname,

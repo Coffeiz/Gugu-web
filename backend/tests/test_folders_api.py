@@ -45,30 +45,45 @@ async def test_create_project_not_found(db, user_a):
 
 async def test_rename_endpoint(db, user_a):
     r = await _create(db, user_a, "old")
-    r2 = await folders_api.rename_folder(r.id, FolderRename(name="new"),
+    r2 = await folders_api.rename_folder(r.id, FolderRename(name="new", version=r.version),
                                          current_user=user_a, origin=None, db=db)
-    assert r2.name == "new"
+    assert r2.name == "new" and r2.version == r.version + 1
 
 
 async def test_rename_not_found(db, user_a):
     with pytest.raises(NotFound):
-        await folders_api.rename_folder(999, FolderRename(name="x"),
+        await folders_api.rename_folder(999, FolderRename(name="x", version=1),
+                                        current_user=user_a, origin=None, db=db)
+
+
+async def test_rename_version_conflict(db, user_a):
+    r = await _create(db, user_a, "old")
+    with pytest.raises(Conflict):
+        await folders_api.rename_folder(r.id, FolderRename(name="new", version=999),
                                         current_user=user_a, origin=None, db=db)
 
 
 async def test_move_endpoint_and_cycle(db, user_a):
     a = await _create(db, user_a, "a")
     b = await _create(db, user_a, "b")
-    moved = await folders_api.move_folder(a.id, FolderMove(parent_id=b.id),
+    moved = await folders_api.move_folder(a.id, FolderMove(parent_id=b.id, version=a.version),
                                           current_user=user_a, origin=None, db=db)
     assert moved.parent_id == b.id
     with pytest.raises(Invalid):     # b 移进其子孙 a → 循环
-        await folders_api.move_folder(b.id, FolderMove(parent_id=a.id),
+        await folders_api.move_folder(b.id, FolderMove(parent_id=a.id, version=b.version),
                                       current_user=user_a, origin=None, db=db)
 
 
 async def test_move_target_not_found(db, user_a):
     a = await _create(db, user_a, "a")
     with pytest.raises(NotFound):
-        await folders_api.move_folder(a.id, FolderMove(parent_id=999),
+        await folders_api.move_folder(a.id, FolderMove(parent_id=999, version=a.version),
+                                      current_user=user_a, origin=None, db=db)
+
+
+async def test_move_version_conflict(db, user_a):
+    a = await _create(db, user_a, "a")
+    b = await _create(db, user_a, "b")
+    with pytest.raises(Conflict):
+        await folders_api.move_folder(a.id, FolderMove(parent_id=b.id, version=999),
                                       current_user=user_a, origin=None, db=db)

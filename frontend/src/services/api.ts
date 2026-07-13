@@ -266,6 +266,8 @@ export interface MindCanvas {
 }
 export interface MindCanvasItem {
   id: number
+  // 仅前端使用：乐观插入画布时保持 Vue key 和目标 DOM 稳定，服务端不会返回或持久化该字段。
+  clientKey?: string
   canvasId: number
   nodeId: number
   x: number
@@ -346,8 +348,12 @@ export const foldersApi = {
     ...(parentId  != null ? { parentId  } : {}),
     name,
   }),
-  rename: (id: number, name: string)     => patch<Schemas['FolderResponse']>(`/folders/${id}`, { name }),
-  move:   (id: number, parentId: number | null) => patch<Schemas['FolderResponse']>(`/folders/${id}/parent`, { parentId }),
+  // version：乐观锁，必传当前文件夹的 version（改名/移动即失效，见 stores/filesCache 的更新逻辑）；
+  // 版本对不上后端给 409，同 projectsApi.update 的并发保护模式。
+  rename: (id: number, name: string, version: number) =>
+    patch<Schemas['FolderResponse']>(`/folders/${id}`, { name, version }),
+  move:   (id: number, parentId: number | null, version: number) =>
+    patch<Schemas['FolderResponse']>(`/folders/${id}/parent`, { parentId, version }),
   delete: (id: number)           => del(`/folders/${id}`),
   download: async (id: number, name: string) => {
     const token = getToken()

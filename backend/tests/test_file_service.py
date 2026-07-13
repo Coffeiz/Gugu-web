@@ -9,6 +9,7 @@ import pytest
 
 import app.services.storage.file_service.folders as folders_mod
 from app.core.errors import Conflict, Invalid, NotFound
+from app.core.tz import now_utc
 from app.models import Project
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
@@ -69,7 +70,7 @@ async def test_rename_folder_pathmirror_relocates(db, user_a, tmp_path, monkeypa
     svc = _svc(db, tmp_path)   # 默认 PathMirrorStrategy → move_semantics=relocate
     f = await svc.create_folder(user_a.id, name="old", parent_id=None, project_id=None)
     await db.commit()
-    r = await svc.rename_folder(user_a.id, f.id, "new")
+    r = await svc.rename_folder(user_a.id, f.id, "new", client_version=1)
     await db.commit()
     assert r.name == "new"
     assert calls == [f.id]      # path-mirror → relocate 被调
@@ -87,7 +88,7 @@ async def test_move_folder_pathmirror_relocates(db, user_a, tmp_path, monkeypatc
     await db.flush()
     b = await svc.create_folder(user_a.id, name="b", parent_id=None, project_id=None)
     await db.commit()
-    moved = await svc.move_folder(user_a.id, a.id, b.id)
+    moved = await svc.move_folder(user_a.id, a.id, b.id, client_version=1)
     await db.commit()
     assert moved.parent_id == b.id
     assert calls == [a.id]
@@ -103,7 +104,7 @@ async def test_opaque_skips_relocate(db, user_a, monkeypatch):
     svc = FileService(db, key_strategy=_OpaqueStub())
     f = await svc.create_folder(user_a.id, name="x", parent_id=None, project_id=None)
     await db.commit()
-    await svc.rename_folder(user_a.id, f.id, "y")
+    await svc.rename_folder(user_a.id, f.id, "y", client_version=1)
     await db.commit()
     assert calls == []          # opaque（db-only）→ relocate 不调
 
@@ -242,7 +243,7 @@ async def test_rename_folder_moves_dir_and_cleans_orphan(db, user_a, tmp_path, m
     await db.commit()
     root = svc.storage.root
     assert (root / f"{user_a.id}/个人文件/adr/note.md").is_file()
-    await svc.rename_folder(user_a.id, folder.id, "adr2")
+    await svc.rename_folder(user_a.id, folder.id, "adr2", client_version=1)
     await db.commit()
     await db.refresh(r.file)
     assert "/个人文件/adr2/" in r.file.storage_key
@@ -257,7 +258,7 @@ async def test_rename_empty_folder_moves_dir(db, user_a, tmp_path, monkeypatch):
     await db.commit()
     root = svc.storage.root
     assert (root / f"{user_a.id}/个人文件/空").is_dir()
-    await svc.rename_folder(user_a.id, folder.id, "空2")
+    await svc.rename_folder(user_a.id, folder.id, "空2", client_version=1)
     await db.commit()
     assert (root / f"{user_a.id}/个人文件/空2").is_dir()          # 空夹改名也搬目录
     assert not (root / f"{user_a.id}/个人文件/空").exists()
@@ -271,7 +272,7 @@ async def test_move_folder_out_keeps_live_parent_dir(db, user_a, tmp_path, monke
     await db.commit()
     root = svc.storage.root
     assert (root / f"{user_a.id}/个人文件/parent/child").is_dir()
-    await svc.move_folder(user_a.id, child.id, None)             # child 移到根
+    await svc.move_folder(user_a.id, child.id, None, client_version=1)             # child 移到根
     await db.commit()
     assert (root / f"{user_a.id}/个人文件/child").is_dir()          # 新位置
     assert not (root / f"{user_a.id}/个人文件/parent/child").exists()  # 旧位置清掉
@@ -293,3 +294,127 @@ async def test_file_move_keeps_source_folder_dir(db, user_a, tmp_path, monkeypat
     assert "/个人文件/dst/" in r.file.storage_key
     assert await svc.storage.exists(r.file.storage_key)
     assert (root / f"{user_a.id}/个人文件/src").is_dir()            # 源文件夹仍活着 → 目录保留
+
+
+# ── P2.2/P2.4 文件夹软删 + 恢复（物理落地）───────────────────────────────────
+
+async def test_delete_folder_trashes_files_and_removes_empty_dir(db, user_a, tmp_path):
+    svc = _svc(db, tmp_path)
+    folder = await svc.create_folder(user_a.id, name="资料", parent_id=None, project_id=None)
+    await db.commit()
+    r = await _create(svc, user_a.id, "note", "MD", data=b"x", folder_id=folder.id)
+    await db.commit()
+    root = svc.storage.root
+    live_key = r.file.storage_key
+    assert await svc.storage.exists(live_key)
+
+    deleted = await svc.delete_folder(user_a.id, folder.id)
+    await db.commit()
+    await db.refresh(r.file)
+
+    assert deleted.deleted_at is not None
+    assert r.file.deleted_at == deleted.deleted_at            # 同批时间戳
+    assert not await svc.storage.exists(live_key)              # 原位置已搬空
+    trash_key = f"{user_a.id}/trash/{r.file.id}/note.md"
+    assert await svc.storage.exists(trash_key)
+    assert r.file.storage_key == trash_key
+    assert not (root / f"{user_a.id}/个人文件/资料").exists()   # 搬空后的目录骨架已清
+
+
+async def test_delete_folder_hides_from_list_and_get(db, user_a, tmp_path):
+    svc = _svc(db, tmp_path)
+    folder = await svc.create_folder(user_a.id, name="x", parent_id=None, project_id=None)
+    await db.commit()
+    await svc.delete_folder(user_a.id, folder.id)
+    await db.commit()
+    assert await svc.folder_tree.get(user_a.id, folder.id) is None
+
+
+async def test_delete_folder_not_found(db, user_a, tmp_path):
+    svc = _svc(db, tmp_path)
+    with pytest.raises(NotFound):
+        await svc.delete_folder(user_a.id, 999)
+
+
+async def test_restore_folder_round_trip(db, user_a, tmp_path):
+    svc = _svc(db, tmp_path)
+    folder = await svc.create_folder(user_a.id, name="资料", parent_id=None, project_id=None)
+    await db.commit()
+    r = await _create(svc, user_a.id, "note", "MD", data=b"body", folder_id=folder.id)
+    await db.commit()
+    original_key = r.file.storage_key
+
+    await svc.delete_folder(user_a.id, folder.id)
+    await db.commit()
+    restored = await svc.restore_folder(user_a.id, folder.id)
+    await db.commit()
+    await db.refresh(r.file)
+
+    assert restored.deleted_at is None
+    assert r.file.deleted_at is None
+    assert r.file.storage_key == original_key                  # 搬回原位
+    assert await svc.storage.get(original_key) == b"body"
+    assert (svc.storage.root / f"{user_a.id}/个人文件/资料").is_dir()   # 目录骨架补回
+
+
+async def test_restore_folder_conflict_renames(db, user_a, tmp_path):
+    svc = _svc(db, tmp_path)
+    folder = await svc.create_folder(user_a.id, name="资料", parent_id=None, project_id=None)
+    await db.commit()
+    r = await _create(svc, user_a.id, "note", "MD", data=b"old", folder_id=folder.id)
+    await db.commit()
+    await svc.delete_folder(user_a.id, folder.id)
+    await db.commit()
+    # 删除期间又建了一个同名新文件夹（软删后允许重名）+ 传了同名文件——物理目录路径撞车
+    # （不能再复用被删的 folder.id 本身：P2 已拦下「传进已软删文件夹」，见 FileOps._resolve_target）
+    folder2 = await svc.create_folder(user_a.id, name="资料", parent_id=None, project_id=None)
+    await db.commit()
+    r2 = await _create(svc, user_a.id, "note", "MD", data=b"new", folder_id=folder2.id)
+    await db.commit()
+
+    await svc.restore_folder(user_a.id, folder.id)
+    await db.commit()
+    await db.refresh(r.file)
+    assert r.file.display_name == "note(1)"                     # 冲突改名，不覆盖 r2
+    assert await svc.storage.get(r2.file.storage_key) == b"new"
+
+
+async def test_delete_folder_keeps_already_trashed_file_untouched(db, user_a, tmp_path):
+    """文件夹里已有一个更早独立被删的文件；再删文件夹不该动它（它已经是它自己的独立回收站条目）。"""
+    svc = _svc(db, tmp_path)
+    folder = await svc.create_folder(user_a.id, name="资料", parent_id=None, project_id=None)
+    await db.commit()
+    r = await _create(svc, user_a.id, "old", "TXT", data=b"1", folder_id=folder.id)
+    await db.commit()
+    r.file.deleted_at = now_utc()
+    prior_trash_key = r.file.storage_key
+    await db.commit()
+
+    deleted = await svc.delete_folder(user_a.id, folder.id)
+    await db.commit()
+    await db.refresh(r.file)
+    assert r.file.deleted_at != deleted.deleted_at              # 时间戳不同——不是这一批
+    assert r.file.storage_key == prior_trash_key                # 完全未被触碰
+
+
+async def test_create_file_rejects_deleted_folder_target(db, user_a, tmp_path):
+    svc = _svc(db, tmp_path)
+    folder = await svc.create_folder(user_a.id, name="资料", parent_id=None, project_id=None)
+    await db.commit()
+    await svc.delete_folder(user_a.id, folder.id)
+    await db.commit()
+    with pytest.raises(Invalid):
+        await _create(svc, user_a.id, "x", "TXT", data=b"1", folder_id=folder.id)
+
+
+async def test_update_file_rejects_moving_into_deleted_folder(db, user_a, tmp_path):
+    svc = _svc(db, tmp_path)
+    folder = await svc.create_folder(user_a.id, name="资料", parent_id=None, project_id=None)
+    await db.commit()
+    await svc.delete_folder(user_a.id, folder.id)
+    await db.commit()
+    r = await _create(svc, user_a.id, "loose", "TXT", data=b"1")
+    await db.commit()
+    with pytest.raises(Invalid):
+        await svc.update_file(user_a.id, r.file.id, display_name=None, stage_name=None,
+                              folder_id=folder.id, project_id=None, folder_set=True, project_set=False)

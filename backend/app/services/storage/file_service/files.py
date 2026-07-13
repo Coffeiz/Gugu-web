@@ -72,7 +72,9 @@ class FileOps:
             raise Invalid("project.id_required", "project 空间需要提供 project_id")
         if folder_id is not None:
             resolved = await resolve_folder_path(self.db, user_id, folder_id, project_id)
-            if not resolved:
+            # resolve_folder_path 本身不认 deleted_at（folder_dir_key 等内部用途需要在软删后
+            # 仍能解析），新内容的落点这里额外拦一道：不能把文件传进已经软删的文件夹（P2）。
+            if not resolved or resolved[0].deleted_at is not None:
                 raise Invalid("folder.not_found", folder_msg)
             fo, folder_path = resolved
             folder_name = fo.name
@@ -171,7 +173,7 @@ class FileOps:
             project_year, project_month = date_str[:4], date_str[5:7]
         if new_fid:
             resolved = await resolve_folder_path(self.db, user_id, new_fid, new_pid)
-            if not resolved:
+            if not resolved or resolved[0].deleted_at is not None:   # 不能移进已软删的文件夹（P2）
                 raise Invalid("folder.not_found", "目标文件夹不存在，或不属于目标项目/个人空间")
             fo, folder_path = resolved
             folder_name = fo.name

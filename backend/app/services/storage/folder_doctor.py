@@ -73,8 +73,13 @@ class DoctorReport:
 
 
 async def _expected_and_containers(db: AsyncSession, user_id) -> tuple[set[str], set[str], int]:
-    """返回 (expected 目录集, 合法父容器集, 扫描的文件夹数)。"""
-    fstmt = select(Folder)
+    """返回 (expected 目录集, 合法父容器集, 扫描的文件夹数)。
+
+    只认存活文件夹（deleted_at IS NULL）——软删的文件夹（P2）不再是「应该存在」的目录，
+    它的物理目录留给回收站流程处理（搬 trash / 30 天后 remove_folder 清），不归本对账工具管；
+    对账工具此后看到它会当成普通孤儿空目录（若已被搬空）报告，符合软删语义。
+    """
+    fstmt = select(Folder).where(Folder.deleted_at.is_(None))
     pstmt = select(Project)
     if user_id is not None:
         fstmt = fstmt.where(Folder.user_id == user_id)

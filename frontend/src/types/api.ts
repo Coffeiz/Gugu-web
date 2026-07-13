@@ -2821,11 +2821,15 @@ export interface components {
         FolderMove: {
             /** Parentid */
             parentId?: number | null;
+            /** Version */
+            version: number;
         };
         /** FolderRename */
         FolderRename: {
             /** Name */
             name: string;
+            /** Version */
+            version: number;
         };
         /** FolderResponse */
         FolderResponse: {
@@ -2842,6 +2846,34 @@ export interface components {
              * @default 0
              */
             fileCount: number;
+            /**
+             * Version
+             * @default 1
+             */
+            version: number;
+        };
+        /** TrashFolderResponse */
+        TrashFolderResponse: {
+            /** Id */
+            id: number;
+            /** Projectid */
+            projectId: number | null;
+            /** Parentid */
+            parentId?: number | null;
+            /** Name */
+            name: string;
+            /**
+             * Filecount
+             * @default 0
+             */
+            fileCount: number;
+            /**
+             * Version
+             * @default 1
+             */
+            version: number;
+            /** Deletedat */
+            deletedAt: string;
         };
         /** ForgotPassword */
         ForgotPassword: {

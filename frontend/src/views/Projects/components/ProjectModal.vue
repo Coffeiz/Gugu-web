@@ -1051,9 +1051,11 @@ async function deleteSelectedPm() {
 // 参数类型跟随 useFileDragDrop 的 FileDragDropConfig.moveFolders/moveFiles（Id = number | string），
 // 实际项目场景下 id 永远是 number，但函数类型赋值是逆变检查，形参必须宽于（或等于）Id 才能结构兼容。
 async function movePmFoldersInto(folderIds: (number | string)[], targetFolderId: number | string | null) {
+  const nTarget = targetFolderId == null ? null : Number(targetFolderId)
   try {
-    await Promise.all(folderIds.map(id => foldersApi.move(Number(id), targetFolderId == null ? null : Number(targetFolderId))))
-    folderIds.forEach(id => fileCacheStore.updateFolder(Number(id), { parentId: targetFolderId == null ? null : Number(targetFolderId) }))
+    const results = await Promise.all(folderIds.map(id =>
+      foldersApi.move(Number(id), nTarget, fileCacheStore.getFolder(Number(id))?.version ?? 1)))
+    results.forEach(f => fileCacheStore.updateFolder(f.id, { parentId: nTarget, version: f.version }))
   } catch (err) { console.error('[ProjectModal] 移动文件夹失败:', errMsg(err)) }
   // 不再重置导航——store 单源，移走的文件夹自动从当前视图消失，用户停在原地即可（老代码重置到根是
   // 全量重拉的副作用，非有意行为）。
@@ -1268,8 +1270,9 @@ async function commitFolderRename() {
   renamingFolderId.value = null
   if (!id || !name) return
   try {
-    await foldersApi.rename(id, name)
-    fileCacheStore.updateFolder(id, { name })
+    const version = fileCacheStore.getFolder(id)?.version ?? 1
+    const updated = await foldersApi.rename(id, name, version)
+    fileCacheStore.updateFolder(id, { name, version: updated.version })
   } catch (e) {
     console.error('[ProjectModal] 文件夹重命名失败:', errMsg(e))
   }
@@ -1985,12 +1988,13 @@ async function pmCtxPaste() {
     if (pmCbStore.type === 'cut') {
       // 剪切：文件改 folderId+projectId、文件夹改 parent 到当前层。更新 store 后，源层/目标层视图
       // 与文件夹计数都自动跟随（源层文件消失、目标层出现），不再需要逐层剔除/刷新。
-      await Promise.all([
-        ...pmCbStore.fileIds.map(id => filesApi.update(id, { folderId, projectId })),
-        ...pmCbStore.folderIds.map(id => foldersApi.move(id, folderId)),
+      const [, movedFolders] = await Promise.all([
+        Promise.all(pmCbStore.fileIds.map(id => filesApi.update(id, { folderId, projectId }))),
+        Promise.all(pmCbStore.folderIds.map(id =>
+          foldersApi.move(id, folderId, fileCacheStore.getFolder(id)?.version ?? 1))),
       ])
       pmCbStore.fileIds.forEach(id => fileCacheStore.updateFile(id, { folderId, projectId }))
-      pmCbStore.folderIds.forEach(id => fileCacheStore.updateFolder(id, { parentId: folderId }))
+      movedFolders.forEach(f => fileCacheStore.updateFolder(f.id, { parentId: folderId, version: f.version }))
       pmCbStore.clear()
     } else if (pmCbStore.type === 'copy') {
       const created = await Promise.all(pmCbStore.fileIds.map(id => filesApi.copy(id, { folderId, projectId })))

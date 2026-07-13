@@ -1561,12 +1561,16 @@ async function commitRename() {
     })
   } else {
     if (folderId == null) return
-    const oldName = cacheStore.getFolder(folderId)?.name
+    const oldFolder = cacheStore.getFolder(folderId)
+    const oldName = oldFolder?.name
+    const version = oldFolder?.version ?? 1
     cacheStore.updateFolder(folderId, { name })
     loadContents()
-    foldersApi.rename(folderId, name).catch(e => {
+    foldersApi.rename(folderId, name, version).then(updated => {
+      cacheStore.updateFolder(folderId, { version: updated.version })
+    }).catch(e => {
       if (oldName != null) cacheStore.updateFolder(folderId, { name: oldName })
-      loadContents()
+      loadContents()   // 409（版本冲突）时顺带把最新状态/version 拉回来
       console.error('[Files] 重命名失败:', (e as Error).message)
     })
   }
@@ -1597,11 +1601,18 @@ async function moveFoldersInto(folderIds: Array<number | string>, targetFolderId
   const nFolderIds = folderIds as number[]
   const nTarget = targetFolderId as number | null
   const backups = nFolderIds.map(id => cacheStore.getFolder(id)).filter(Boolean) as FolderMeta[]
+  let results: FolderMeta[] = []
   await optimisticMutation({
     apply: () => nFolderIds.forEach(id => cacheStore.updateFolder(id, { parentId: nTarget })),
     afterMutate: loadContents,
-    work: () => Promise.all(nFolderIds.map(id => foldersApi.move(id, nTarget))),
+    // version 在 apply() 之后、work() 之前读——apply 只改 parentId，此时缓存里的 version 仍是
+    // 服务端当前值；对不上（并发改动）后端给 409，走 rollback + loadContents 拉回真实状态。
+    work: async () => {
+      results = await Promise.all(nFolderIds.map(id =>
+        foldersApi.move(id, nTarget, cacheStore.getFolder(id)?.version ?? 1)))
+    },
     rollback: () => backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId })),
+    onCommit: () => results.forEach(r => cacheStore.updateFolder(r.id, { version: r.version })),
     onError: err => console.error('[Files] 移动文件夹失败:', (err as Error).message),
   })
 }
@@ -1853,6 +1864,7 @@ async function ctxPaste() {
       const folderIds = [...cbStore.folderIds]
       const fileBackups   = fileIds.map(id => cacheStore.getFile(id)).filter((f): f is FileMeta => f != null)
       const folderBackups = folderIds.map(id => cacheStore.getFolder(id)).filter((f): f is FolderMeta => f != null)
+      let movedFolders: FolderMeta[] = []
       await optimisticMutation({
         apply: () => {
           fileIds.forEach(id => cacheStore.updateFile(id, { folderId, projectId }))
@@ -1860,14 +1872,19 @@ async function ctxPaste() {
           cbStore.clear()
         },
         afterMutate: loadContents,
-        work: () => Promise.all([
-          ...fileBackups.map(f => filesApi.update(f.id, { folderId, projectId })),
-          ...folderIds.map(id => foldersApi.move(id, folderId)),
-        ]),
+        work: async () => {
+          await Promise.all([
+            Promise.all(fileBackups.map(f => filesApi.update(f.id, { folderId, projectId }))),
+            Promise.all(folderIds.map(id =>
+              foldersApi.move(id, folderId, folderBackups.find(b => b.id === id)?.version ?? 1)
+            )).then(r => { movedFolders = r }),
+          ])
+        },
         rollback: () => {
           fileBackups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId, projectId: f.projectId }))
           folderBackups.forEach(f => cacheStore.updateFolder(f.id, { parentId: f.parentId }))
         },
+        onCommit: () => movedFolders.forEach(f => cacheStore.updateFolder(f.id, { version: f.version })),
         onError: e => console.error('[Files] 粘贴失败:', e),
       })
     } else if (cbStore.type === 'copy') {

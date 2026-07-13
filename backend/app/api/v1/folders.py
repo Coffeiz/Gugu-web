@@ -1,7 +1,5 @@
 import io
-from app.core.tz import now_utc
 import zipfile
-from datetime import datetime
 from typing import Optional
 from urllib.parse import quote
 
@@ -39,7 +37,7 @@ async def list_all_folders(
 ):
     folders = (await db.execute(
         select(Folder)
-        .where(Folder.user_id == current_user.id)
+        .where(Folder.user_id == current_user.id, Folder.deleted_at.is_(None))
         .order_by(Folder.created_at)
     )).scalars().all()
 
@@ -63,6 +61,7 @@ async def list_all_folders(
             parent_id=f.parent_id,
             name=f.name,
             file_count=count_map.get(f.id, 0),
+            version=f.version,
         )
         for f in folders
     ]
@@ -84,7 +83,7 @@ async def list_folders(
 
     stmt = (
         select(Folder)
-        .where(Folder.user_id == current_user.id)
+        .where(Folder.user_id == current_user.id, Folder.deleted_at.is_(None))
         .order_by(Folder.created_at)
     )
     if project_id is not None:
@@ -111,7 +110,7 @@ async def list_folders(
 
     return [
         FolderResponse(id=f.id, project_id=f.project_id, parent_id=f.parent_id,
-                       name=f.name, file_count=count_map.get(f.id, 0))
+                       name=f.name, file_count=count_map.get(f.id, 0), version=f.version)
         for f in folders
     ]
 
@@ -132,7 +131,8 @@ async def create_folder(
     await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin)   # 广播给该用户所有端/标签页；发起页靠 origin 回声抑制
     return FolderResponse(id=folder.id, project_id=folder.project_id,
-                          parent_id=folder.parent_id, name=folder.name, file_count=0)
+                          parent_id=folder.parent_id, name=folder.name, file_count=0,
+                          version=folder.version)
 
 
 # ── GET /folders/{fid}/download ──────────────────────────────────────────────
@@ -144,7 +144,7 @@ async def download_folder(
     db: AsyncSession = Depends(get_db),
 ):
     folder = await get_owned(db, Folder, fid, current_user.id)
-    if not folder:
+    if not folder or folder.deleted_at is not None:
         raise HTTPException(404, "文件夹不存在")
 
     storage = get_storage()
@@ -171,6 +171,7 @@ async def download_folder(
                 select(Folder).where(
                     Folder.parent_id == current_id,
                     Folder.user_id == current_user.id,
+                    Folder.deleted_at.is_(None),
                 )
             )).scalars().all()
             for sub in subfolders:
@@ -195,12 +196,14 @@ async def rename_folder(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    folder = await FileService(db).rename_folder(current_user.id, fid, body.name)
+    folder = await FileService(db).rename_folder(current_user.id, fid, body.name,
+                                                  client_version=body.version)
     await db.commit()
     await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin)
     cnt = await _file_count(folder.id, db)
-    return FolderResponse(id=folder.id, project_id=folder.project_id, name=folder.name, file_count=cnt)
+    return FolderResponse(id=folder.id, project_id=folder.project_id, name=folder.name,
+                          file_count=cnt, version=folder.version)
 
 
 # ── PATCH /folders/{fid}/parent ──────────────────────────────────────────────
@@ -213,14 +216,16 @@ async def move_folder(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    folder = await FileService(db).move_folder(current_user.id, fid, body.parent_id)
+    folder = await FileService(db).move_folder(current_user.id, fid, body.parent_id,
+                                               client_version=body.version)
     # 归属/循环/跨空间校验在 FolderTree、物理归位在 FileService（relocate），失败抛领域异常
     await db.commit()
     await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin)
     cnt = await _file_count(folder.id, db)
     return FolderResponse(id=folder.id, project_id=folder.project_id,
-                          parent_id=folder.parent_id, name=folder.name, file_count=cnt)
+                          parent_id=folder.parent_id, name=folder.name, file_count=cnt,
+                          version=folder.version)
 
 
 # ── DELETE /folders/{fid} ─────────────────────────────────────────────────────
@@ -232,38 +237,10 @@ async def delete_folder(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    folder = await get_owned(db, Folder, fid, current_user.id)
-    if not folder:
-        raise HTTPException(404, "文件夹不存在")
-
-    now = now_utc()
-
-    # 递归收集所有子文件夹 id
-    all_fids = [fid]
-    queue = [fid]
-    while queue:
-        parent = queue.pop()
-        sub_res = await db.execute(
-            select(Folder.id).where(Folder.parent_id == parent, Folder.user_id == current_user.id)
-        )
-        for sub_id in sub_res.scalars().all():
-            all_fids.append(sub_id)
-            queue.append(sub_id)
-
-    # 软删除所有层级的文件
-    for folder_id in all_fids:
-        files_res = await db.execute(
-            select(File).where(File.folder_id == folder_id, File.user_id == current_user.id, File.deleted_at.is_(None))
-        )
-        for f in files_res.scalars().all():
-            f.deleted_at = now
-
-    # 删除所有子文件夹（从最深层开始，避免外键约束）；子树 id 虽已按 user_id 收集，删除前仍走归属强制
-    for folder_id in reversed(all_fids):
-        f = await get_owned(db, Folder, folder_id, current_user.id)
-        if f:
-            await db.delete(f)
-
+    # P2.2：软删（不再硬删）——DB 行仍在、deleted_at 非空、子树内当时存活的文件同批软删并
+    # 搬物理 trash，30 天内可整体恢复（FileService.restore_folder）。校验失败抛领域异常
+    # （NotFound → 全局 handler 映射 404），与旧行为一致。
+    await FileService(db).delete_folder(current_user.id, fid)
     await db.commit()
     # 前端 removeFolder(id) 会本地级联剔除子树文件夹与其中文件，只需给根 folder id
     await events.publish(current_user.id, "files", origin=origin,
