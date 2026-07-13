@@ -1375,17 +1375,13 @@ watch(localClient, v => {
   if (initializing) return
   const id = props.project?.id
   if (!id) return
-  const p = projectStore.projects.find(p => p.id === id)
-  if (p) p.client = v || null
-  projectStore.updateProject(id, { client: v || null })
+  projectStore.updateProjectDebounced(id, { client: v || null })
 })
 
 watch(localStartDate, v => {
   if (initializing) return
   const id = props.project?.id
   if (!id) return
-  const p = projectStore.projects.find(p => p.id === id)
-  if (p) p.startDate = v
   projectStore.updateProject(id, { startDate: v || null })
 })
 
@@ -1397,8 +1393,6 @@ watch(localDeadline, v => {
   if (initializing) return
   const id = props.project?.id
   if (!id) return
-  const p = projectStore.projects.find(p => p.id === id)
-  if (p) p.deadline = v
   projectStore.updateProject(id, { deadline: v || null })
 })
 

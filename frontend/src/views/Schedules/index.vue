@@ -108,16 +108,13 @@
         </div>
       </div>
     </BaseModal>
-
-    <Transition name="toast">
-      <div v-if="toastMsg" class="toast">{{ toastMsg }}</div>
-    </Transition>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed, nextTick } from 'vue'
 import { scheduledTasksApi } from '@/services/api'
+import { errorMessage, showAppError, showAppNotice } from '@/composables/useAppToast'
 import { fireHint } from '@/composables/useOnboarding'
 import { useLiveRefresh } from '@/composables/useLiveRefresh'
 import BaseModal from '@/components/common/BaseModal.vue'
@@ -135,13 +132,6 @@ const showModal = ref(false)
 const editing = ref<any | null>(null)
 const formErr = ref('')
 const nameRef = ref<HTMLInputElement | null>(null)
-const toastMsg = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-function showToast(msg: string) {
-  toastMsg.value = msg
-  clearTimeout(toastTimer ?? undefined)
-  toastTimer = setTimeout(() => { toastMsg.value = '' }, 2800)
-}
 const REPEAT_OPTS = [
   { v: 'daily',   label: '每日' },
   { v: 'weekday', label: '工作日' },
@@ -266,17 +256,18 @@ async function submit() {
 }
 async function toggle(t: any) {
   try { await scheduledTasksApi.update(t.id, { enabled: !t.enabled }); await load() }
-  catch {}
+  catch (e) { showAppError(`更新任务失败：${errorMessage(e)}`) }
 }
 async function runNow(t: any) {
   busy.value = true
-  try { const r = await scheduledTasksApi.run(t.id); showToast(r.msg || '已执行一次'); await load() }
-  catch (e) { showToast('执行失败：' + (e instanceof Error ? e.message : '')) }
+  try { const r = await scheduledTasksApi.run(t.id); showAppNotice(r.msg || '已执行一次'); await load() }
+  catch (e) { showAppError(`执行失败：${errorMessage(e)}`) }
   finally { busy.value = false }
 }
 async function removeTask(t: any) {
   if (!confirm(`删除「${t.name}」？`)) return
-  try { await scheduledTasksApi.delete(t.id); await load() } catch {}
+  try { await scheduledTasksApi.delete(t.id); await load() }
+  catch (e) { showAppError(`删除任务失败：${errorMessage(e)}`) }
 }
 </script>
 
@@ -412,15 +403,4 @@ async function removeTask(t: any) {
 .form-err { color: #d05a5a; font-size: 12px; margin-bottom: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 6px; }
 
-.toast {
-  position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
-  background: rgba(30,32,40,0.92); backdrop-filter: blur(16px);
-  border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
-  padding: 10px 20px; font-size: 13px; color: rgba(255,255,255,0.82);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-  pointer-events: none; white-space: nowrap; z-index: 100000;
-}
-.toast-enter-active, .toast-leave-active { transition: opacity 0.2s, transform 0.2s; }
-.toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-.toast-leave-to   { opacity: 0; transform: translateX(-50%) translateY(8px); }
 </style>

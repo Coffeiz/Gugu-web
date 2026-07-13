@@ -13,7 +13,19 @@
       @view-change="onViewChange"
     />
 
-    <CanvasSidebar :canvases="store.canvases" :active-id="activeCanvasId" @create="createCanvas" @open="openCanvas" @delete="deleteCanvas" @rename="renameCanvas" />
+    <CanvasSidebar
+      :canvases="store.canvases"
+      :active-id="activeCanvasId"
+      :projects="projectStore.projects"
+      :canvas-project-ids="canvasProjectIds"
+      :projects-loading="projectStore.loading"
+      :add-project-to-canvas="addProjectAtScreen"
+      @create="createCanvas"
+      @open="openCanvas"
+      @delete="deleteCanvas"
+      @rename="renameCanvas"
+      @add-project="addProjectAtCenter"
+    />
 
     <CanvasToolbar
       :scale="canvasRef?.camera.scale ?? 1"
@@ -32,6 +44,7 @@ import type { MindCanvasItem, MindRefSuggestItem } from '@/services/api'
 import { useMindRefActions } from '@/composables/useMindRefActions'
 import type { RelationAnchorSides } from '@/composables/useMindCanvas'
 import { useMindStore } from '@/stores/mind'
+import { useProjectStore } from '@/stores/projects'
 import CanvasSidebar from './components/CanvasSidebar.vue'
 import CanvasToolbar from './components/CanvasToolbar.vue'
 import MindCanvas from './components/MindCanvas.vue'
@@ -39,12 +52,20 @@ import MindCanvas from './components/MindCanvas.vue'
 type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
 
 const store = useMindStore()
+const projectStore = useProjectStore()
 const route = useRoute()
 const router = useRouter()
 const { openMindRef } = useMindRefActions()
 
 const canvasRef = ref<InstanceType<typeof MindCanvas> | null>(null)
 const activeCanvasId = computed(() => store.activeCanvasId)
+// 数据库约束 uq_canvas_node 已保证同一项目在同一画布只会有一个展示项；抽屉只展示尚未摆入
+// 当前画布的项目，拖入成功后由 canvasItems 的响应式更新自动移出，无需另维护一份临时状态。
+const canvasProjectIds = computed(() => new Set(
+  store.canvasItems
+    .filter(item => item.node.kind === 'ref' && item.node.refType === 'project' && item.node.refId != null)
+    .map(item => item.node.refId as number),
+))
 const relationAnchors = computed<Record<string, RelationAnchorSides>>(() => {
   const data = store.canvases.find(canvas => canvas.id === activeCanvasId.value)?.data
   const value = data?.relationAnchors
@@ -61,8 +82,13 @@ const relationAnchors = computed<Record<string, RelationAnchorSides>>(() => {
 })
 
 onMounted(async () => {
-  if (!store.loaded) await store.fetchNotes()
-  if (!store.canvasesLoaded) await store.fetchCanvases()
+  // 项目抽屉会在首屏就被打开，项目数据不能等笔记/画布请求串行完成后才开始拉；否则抽屉
+  // 先按空内容横向展开、请求回来才突然长高。三份独立数据并行加载，抽屉首次展开就有稳定高度。
+  await Promise.all([
+    !store.loaded ? store.fetchNotes() : Promise.resolve(),
+    !store.canvasesLoaded ? store.fetchCanvases() : Promise.resolve(),
+    !projectStore.projectsLoaded && !projectStore.loading ? projectStore.fetchProjects() : Promise.resolve(),
+  ])
   await ensureCanvas()
 })
 watch(() => route.params.id, async () => {
@@ -211,6 +237,22 @@ async function addRef(refItem: CanvasRefItem) {
   if (activeCanvasId.value == null) return
   const { x, y } = centerOfViewport()
   await store.addRefToCanvas(activeCanvasId.value, refItem.type, refItem.id, x, y)
+}
+async function addProjectAtCenter(projectId: number) {
+  if (activeCanvasId.value == null) return
+  const { x, y } = centerOfViewport()
+  await store.addRefToCanvas(activeCanvasId.value, 'project', projectId, x, y)
+}
+/** 项目抽屉的拖拽落点：物理模块给的是屏幕坐标，画布项存的是世界坐标。先落库并等真实
+ * ProjectRefCard 挂载，再把它的 DOM 交回 usePhysicsDrag 做原有的 morph 落地动画。 */
+async function addProjectAtScreen(projectId: number, center: { x: number; y: number }, _size: { w: number; h: number }) {
+  const canvas = canvasRef.value
+  const canvasId = activeCanvasId.value
+  if (!canvas || canvasId == null) return null
+  const world = canvas.screenToWorld(center.x, center.y)
+  const item = await store.addRefToCanvas(canvasId, 'project', projectId, world.x - 120, world.y - 60)
+  await nextTick()
+  return document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
 }
 async function onItemMoved(item: MindCanvasItem) {
   await store.updateCanvasItem(item.id, { x: item.x, y: item.y, z: store.nextCanvasZ() })

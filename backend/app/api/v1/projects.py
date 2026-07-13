@@ -1,12 +1,13 @@
 from datetime import datetime
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import events
 from app.core.ownership import get_owned
-from app.core.projects import update_project_atomic
+from app.core.projects import build_project, normalize_project_stages_for_read, update_project_atomic
 from app.core.security import get_current_user
 from app.core.tz import now_utc
 from app.db.session import get_db
@@ -33,7 +34,7 @@ def _to_resp(p: Project, file_count: int = 0) -> ProjectResponse:
         deadline=p.deadline,
         color=p.color,
         progress=p.progress,
-        stages=p.stages,
+        stages=normalize_project_stages_for_read(p.stages),
         current_stage=p.current_stage,
         archived=p.archived,
         priority=p.priority,
@@ -73,25 +74,19 @@ async def list_projects(
 
 @router.post("", response_model=ProjectResponse, status_code=201)
 async def create_project(
+    request: Request,
     body: ProjectCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    p = Project(
-        user_id=current_user.id,
-        name=body.name,
-        client=body.client,
-        status=body.status,
-        start_date=body.start_date,
-        deadline=body.deadline,
-        color=body.color,
-        progress=body.progress,
-        current_stage=body.current_stage,
-    )
-    p.stages = body.stages
+    try:
+        p = build_project(current_user.id, body.model_dump(by_alias=False))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     db.add(p)
     await db.commit()
     await db.refresh(p)
+    await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"))
     return _to_resp(p, 0)
 
 
@@ -117,6 +112,7 @@ async def get_project(
 @router.patch("/{pid}", response_model=ProjectResponse)
 async def update_project(
     pid: int,
+    request: Request,
     body: ProjectUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -153,7 +149,7 @@ async def update_project(
                 f.storage_key = new_prefix + f.storage_key[len(old_prefix):]
 
     try:
-        updated = await update_project_atomic(db, pid, current_user.id, client_version, data)
+        updated = await update_project_atomic(db, pid, current_user.id, client_version, data, p)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     if not updated:
@@ -161,6 +157,7 @@ async def update_project(
         raise HTTPException(409, "数据已被其他用户修改，请刷新后重试")
     await db.commit()
     await db.refresh(p)
+    await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"))
 
     fc_res = await db.execute(
         select(func.count(File.id)).where(File.project_id == pid, File.user_id == current_user.id, File.deleted_at.is_(None))
@@ -171,6 +168,7 @@ async def update_project(
 @router.delete("/{pid}", status_code=204)
 async def delete_project(
     pid: int,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -188,3 +186,4 @@ async def delete_project(
     )
     await db.delete(p)
     await db.commit()
+    await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"))

@@ -98,10 +98,6 @@
         </div>
       </div>
     </div>
-
-    <Transition name="toast">
-      <div v-if="toastMsg" class="toast">{{ toastMsg }}</div>
-    </Transition>
   </div>
 </template>
 
@@ -109,6 +105,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { PhArrowClockwise } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
+import { showAppNotice } from '@/composables/useAppToast'
 import { renderMarkdown } from '@/utils/markdown'
 
 const admin = useAdminStore()
@@ -131,14 +128,6 @@ const err = ref('')
 const history = ref<any[]>([])
 const loadingHistory = ref(false)
 const refreshingHistory = ref(false)
-const toastMsg = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-
-function showToast(msg: string) {
-  toastMsg.value = msg
-  clearTimeout(toastTimer ?? undefined)
-  toastTimer = setTimeout(() => { toastMsg.value = '' }, 2800)
-}
 
 async function send() {
   if (!form.title.trim() && !form.content.trim()) return
@@ -156,7 +145,7 @@ async function send() {
       }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    showToast('通知已发送')
+    showAppNotice('通知已发送')
     form.title = ''
     form.content = ''
     await loadHistory()
@@ -350,15 +339,4 @@ onMounted(loadHistory)
 @keyframes spin { to { transform: rotate(360deg); } }
 .spinning-inf { animation: spin 0.8s linear infinite; }   /* 发送中持续转；刷新按钮用全局 .icon-btn.spinning（转一圈） */
 
-/* Toast */
-.toast {
-  position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
-  background: rgba(30,32,40,0.92); backdrop-filter: blur(16px);
-  border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
-  padding: 10px 20px; font-size: 13px; color: rgba(255,255,255,0.82);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.3); pointer-events: none; white-space: nowrap; z-index: 9999;
-}
-.toast-enter-active, .toast-leave-active { transition: opacity 0.2s, transform 0.2s; }
-.toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-.toast-leave-to   { opacity: 0; transform: translateX(-50%) translateY(8px); }
 </style>

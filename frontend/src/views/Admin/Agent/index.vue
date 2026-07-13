@@ -1084,6 +1084,7 @@ import { PhBrain, PhEye } from '@phosphor-icons/vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
+import { showAppError } from '@/composables/useAppToast'
 import ConfigField from '../Config/components/ConfigField.vue'
 
 const configStore = useConfigStore()
@@ -1155,7 +1156,7 @@ async function saveStateLabels() {
     setTimeout(() => { labelsSaved.value = false }, 2000)
   } catch (e) {
     console.error('保存状态命名失败', e)
-    alert('保存失败，请重试')
+    showAppError('保存失败，请重试')
   } finally {
     labelsSaving.value = false
   }

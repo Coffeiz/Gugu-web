@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { projectsApi, eventsApi } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
-import type { Project, ProjectStage, ProjectStatus } from '@/types/project'
+import { mapProjectResponse, type Project, type ProjectStage, type ProjectStatus } from '@/types/project'
 import {
   normalizeStages, transitionProjectStage, transitionProjectStatus, transitionProjectTodos,
 } from '@/utils/projectStages'
@@ -35,6 +35,7 @@ export const useProjectStore = defineStore('projects', () => {
   const projects = ref<Project[]>([])
   const loading  = ref(false)
   const error    = ref<string | null>(null)
+  const projectsLoaded = ref(false)
 
   const archivedProjects = ref<Project[]>([])
   const archivedLoading  = ref(false)
@@ -43,6 +44,10 @@ export const useProjectStore = defineStore('projects', () => {
   // 所有请求都带着同一个旧 version。confirmed 是服务端最后确认的快照，失败就从这里回滚。
   const confirmedProjects = new Map<number, Project>()
   const projectWrites = new Map<number, Promise<void>>()
+  const delayedProjectUpdates = new Map<number, {
+    fields: Partial<Project>
+    timer: ReturnType<typeof setTimeout> | null
+  }>()
 
   function cloneProject(project: Project): Project {
     return JSON.parse(JSON.stringify(project)) as Project
@@ -85,9 +90,9 @@ export const useProjectStore = defineStore('projects', () => {
     loading.value = true
     error.value   = null
     try {
-      // api 边界收紧：ProjectResponse（status:string / stages 未结构化）→ Project（见 types/project.ts）
-      projects.value = await projectsApi.list() as unknown as Project[]
+      projects.value = (await projectsApi.list()).map(mapProjectResponse)
       projects.value.forEach(rememberConfirmed)
+      projectsLoaded.value = true
     } catch (e) {
       error.value = errMsg(e)
     } finally {
@@ -108,7 +113,7 @@ export const useProjectStore = defineStore('projects', () => {
       deadline:     fields.deadline  || null,
       color:        fields.color || 'linear-gradient(135deg,#7b7fb2,#c4afc8)',
     }
-    const created = await projectsApi.create(payload) as unknown as Project
+    const created = mapProjectResponse(await projectsApi.create(payload))
     projects.value.unshift(created)
     rememberConfirmed(created)
     // 新手引导：手动新建第一个项目后弹一句（claim-once 保证只第一次）
@@ -134,7 +139,7 @@ export const useProjectStore = defineStore('projects', () => {
     // 不会再看到那下加载闪烁（见 views/Projects/index.vue onMounted）。
     archivedLoading.value = true
     try {
-      archivedProjects.value = await projectsApi.list(true) as unknown as Project[]
+      archivedProjects.value = (await projectsApi.list(true)).map(mapProjectResponse)
       archivedLoaded.value = true
     } catch (e) {
       error.value = errMsg(e)
@@ -160,8 +165,7 @@ export const useProjectStore = defineStore('projects', () => {
         // payload 用紧类型 Partial<Project>（stages 结构化），wire 的 ProjectUpdate 是松类型，边界处一次性收
         const updated = await projectsApi.update(id, { ...payload, version } as unknown as components['schemas']['ProjectUpdate'])
         if (!updated) return
-        const nextConfirmed = { ...(confirmed ?? project), ...payload, ...updated } as unknown as Project
-        rememberConfirmed(nextConfirmed)
+        rememberConfirmed(mapProjectResponse(updated))
         const current = projects.value.find(item => item.id === id)
         if (current) {
           current.version = updated.version
@@ -171,9 +175,10 @@ export const useProjectStore = defineStore('projects', () => {
         restoreConfirmed(id)
         if ((e as { status?: number }).status === 409) {
           await fetchProjects()
-          throw new Error('数据已被其他用户修改，已自动刷新')
+          error.value = '项目已被其他端修改，已刷新到最新内容'
+          return
         }
-        throw e
+        error.value = `项目保存失败：${errMsg(e)}`
       }
     })
     projectWrites.set(id, write)
@@ -262,6 +267,27 @@ export const useProjectStore = defineStore('projects', () => {
     await _patchProject(id, fields)
   }
 
+  function updateProjectDebounced(id: number, fields: Partial<Project>, delay = 400) {
+    const p = projects.value.find(project => project.id === id)
+    if (p) Object.assign(p, fields)
+    const pending = delayedProjectUpdates.get(id)
+    if (pending) {
+      Object.assign(pending.fields, fields)
+      if (pending.timer) clearTimeout(pending.timer)
+      pending.timer = setTimeout(() => {
+        delayedProjectUpdates.delete(id)
+        void _patchProject(id, pending.fields)
+      }, delay)
+      return
+    }
+    const next = { fields: { ...fields }, timer: null as ReturnType<typeof setTimeout> | null }
+    next.timer = setTimeout(() => {
+      delayedProjectUpdates.delete(id)
+      void _patchProject(id, next.fields)
+    }, delay)
+    delayedProjectUpdates.set(id, next)
+  }
+
   const modalProjectId = ref<number | null>(null)
   // computed 保证 fetchProjects 刷新后 modal 始终指向最新对象，不持有旧引用
   const modalProject = computed(() =>
@@ -285,16 +311,16 @@ export const useProjectStore = defineStore('projects', () => {
     } catch { /* ignore */ }
   }
 
-  // 实时：咕咕/IM 改了项目或日历事件 → 自动重新拉取（只刷已加载过的数据）
+  // 实时：咕咕/IM 改了项目或日历事件 → 只要主列表加载过，即使为空也刷新。
   const live = useLiveStore()
-  watch(() => live.rev.projects, () => { if (projects.value.length || loading.value) fetchProjects() })
+  watch(() => live.rev.projects, () => { if (projectsLoaded.value) fetchProjects() })
   watch(() => live.rev.calendar, () => fetchUpcomingCalEvents())
 
   return {
-    kanbanColumns, projects, loading, error,
+    kanbanColumns, projects, loading, error, projectsLoaded,
     activeCount, totalCount, upcomingCount, urgentProjects,
     fetchProjects, addProject, deleteProject, archiveProject, moveProject,
-    setStage, updateStages, saveTodos, updateProject,
+    setStage, updateStages, saveTodos, updateProject, updateProjectDebounced,
     modalProject, openModal, closeModal,
     upcomingCalEvents, fetchUpcomingCalEvents,
     archivedProjects, archivedLoading, archivedLoaded, fetchArchivedProjects, unarchiveProject,

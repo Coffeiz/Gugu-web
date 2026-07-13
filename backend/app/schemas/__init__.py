@@ -3,13 +3,13 @@ Pydantic v2 schemas — alias_generator=to_camel 让 API 返回 camelCase
 """
 
 from __future__ import annotations
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal, Optional
 from uuid import UUID
 
 import re
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
 _INVALID_NAME_RE = re.compile(r'[\\/:*?"<>|]')
@@ -122,6 +122,52 @@ def _validate_name(v: str) -> str:
     return v
 
 
+def _validate_project_date(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return v
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+        raise ValueError("日期必须是 YYYY-MM-DD 格式")
+    try:
+        date.fromisoformat(v)
+    except ValueError as exc:
+        raise ValueError("日期必须是有效日期") from exc
+    return v
+
+
+def _validate_project_stages(stages: Optional[list[dict]]) -> Optional[list[dict]]:
+    if stages is None:
+        return stages
+    keys = set()
+    todo_ids = set()
+    for stage in stages:
+        key = stage.get("key")
+        label = stage.get("label")
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("阶段 key 不能为空")
+        if key in keys:
+            raise ValueError("阶段 key 不能重复")
+        keys.add(key)
+        if not isinstance(label, str) or not label.strip():
+            raise ValueError("阶段名称不能为空")
+        todos = stage.get("todos", [])
+        if not isinstance(todos, list):
+            raise ValueError("阶段 todos 必须是列表")
+        for todo in todos:
+            if not isinstance(todo, dict):
+                raise ValueError("待办必须是对象")
+            todo_id = todo.get("id")
+            if not isinstance(todo_id, str) or not todo_id.strip():
+                raise ValueError("待办 id 不能为空")
+            if todo_id in todo_ids:
+                raise ValueError("待办 id 不能重复")
+            todo_ids.add(todo_id)
+            if not isinstance(todo.get("text", ""), str):
+                raise ValueError("待办内容必须是文本")
+            if "done" in todo and not isinstance(todo["done"], bool):
+                raise ValueError("待办完成状态必须是布尔值")
+    return stages
+
+
 class ProjectCreate(CamelModel):
     name: str
     client: Optional[str] = None
@@ -137,6 +183,19 @@ class ProjectCreate(CamelModel):
     @classmethod
     def name_valid(cls, v: str) -> str:
         return _validate_name(v)
+
+    _start_date_valid = field_validator("start_date")(_validate_project_date)
+    _deadline_valid = field_validator("deadline")(_validate_project_date)
+    _stages_valid = field_validator("stages")(_validate_project_stages)
+
+    @model_validator(mode="after")
+    def fields_consistent(self):
+        if self.start_date and self.deadline and self.start_date > self.deadline:
+            raise ValueError("开始日期不能晚于截止日期")
+        stage_keys = {stage["key"] for stage in self.stages}
+        if self.current_stage is not None and self.current_stage not in stage_keys:
+            raise ValueError("当前阶段必须属于阶段列表")
+        return self
 
 
 class ProjectUpdate(CamelModel):
@@ -159,6 +218,19 @@ class ProjectUpdate(CamelModel):
         if v is None:
             return v
         return _validate_name(v)
+
+    _start_date_valid = field_validator("start_date")(_validate_project_date)
+    _deadline_valid = field_validator("deadline")(_validate_project_date)
+    _stages_valid = field_validator("stages")(_validate_project_stages)
+
+    @model_validator(mode="after")
+    def fields_consistent(self):
+        if self.start_date and self.deadline and self.start_date > self.deadline:
+            raise ValueError("开始日期不能晚于截止日期")
+        if self.stages is not None and self.current_stage is not None:
+            if self.current_stage not in {stage["key"] for stage in self.stages}:
+                raise ValueError("当前阶段必须属于阶段列表")
+        return self
 
 
 class ProjectResponse(CamelModel):

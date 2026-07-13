@@ -16,7 +16,6 @@
         <button class="popup-save" @click="onSave" :disabled="!event.name">保存</button>
         <button class="popup-delete" @click="onDelete">删除</button>
       </div>
-      <div v-if="toastMsg" class="eem-toast">{{ toastMsg }}</div>
     </div>
   </BaseModal>
 </template>
@@ -28,6 +27,7 @@ import BaseModal from '@/components/common/BaseModal.vue'
 import { eventsApi } from '@/services/api'
 import { useEventModalStore } from '@/stores/eventModal'
 import { useEventEditForm, type EditingEvent } from '@/composables/useEventEditForm'
+import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import EventEditFields from './EventEditFields.vue'
 
 const eventModalStore = useEventModalStore()
@@ -74,7 +74,7 @@ async function onSave() {
     await form.saveEvent(event.value)
     close()
   } catch (e: any) {
-    if (e?.status === 409) alert('活动已被其他用户修改，请刷新页面')
+    if (e?.status === 409) showAppError('活动已被其他用户修改，已刷新页面')
   }
 }
 async function onDelete() {
@@ -83,17 +83,13 @@ async function onDelete() {
   close()
 }
 
-const toastMsg = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
 async function onTestReminder() {
   try {
     const res = await form.testReminderChannels(event.value?.name || '活动提醒')
-    toastMsg.value = res?.msg || '已发送测试消息'
+    showAppNotice(res?.msg || '已发送测试消息')
   } catch {
-    toastMsg.value = '测试失败，请稍后重试'
+    showAppError('测试失败，请稍后重试')
   }
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { toastMsg.value = '' }, 3200)
 }
 </script>
 
@@ -109,5 +105,4 @@ async function onTestReminder() {
 .popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
 .popup-save:disabled { opacity: 0.38; cursor: default; }
 .popup-save:not(:disabled):hover { opacity: 0.88; }
-.eem-toast { text-align: center; font-size: 11.5px; color: var(--text-secondary); }
 </style>

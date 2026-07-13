@@ -32,3 +32,36 @@ export interface Project extends Omit<ProjectWire, 'status' | 'stages'> {
   /** 拖入「已完成」前的当前阶段，拖回进行中时还原（纯前端瞬态） */
   _stageBeforeDone?: string | null
 }
+
+function isProjectStatus(value: unknown): value is ProjectStatus {
+  return value === 'pending' || value === 'active' || value === 'done'
+}
+
+function mapTodo(value: unknown): ProjectTodo {
+  if (!value || typeof value !== 'object') throw new Error('项目待办数据格式异常')
+  const todo = value as Record<string, unknown>
+  if (typeof todo.id !== 'string' || typeof todo.text !== 'string' || typeof todo.done !== 'boolean') {
+    throw new Error('项目待办数据格式异常')
+  }
+  const mapped: ProjectTodo = { id: todo.id, text: todo.text, done: todo.done }
+  if (typeof todo.autoCompleted === 'boolean') mapped.autoCompleted = todo.autoCompleted
+  if (typeof todo._savedDone === 'boolean') mapped._savedDone = todo._savedDone
+  return mapped
+}
+
+function mapStage(value: unknown): ProjectStage {
+  if (!value || typeof value !== 'object') throw new Error('项目阶段数据格式异常')
+  const stage = value as Record<string, unknown>
+  if (typeof stage.key !== 'string' || typeof stage.label !== 'string' || !Array.isArray(stage.todos)) {
+    throw new Error('项目阶段数据格式异常')
+  }
+  return { key: stage.key, label: stage.label, todos: stage.todos.map(mapTodo) }
+}
+
+/** API 响应进入前端领域层的唯一入口，拒绝宽松 JSON 静默流入项目交互代码。 */
+export function mapProjectResponse(wire: ProjectWire): Project {
+  if (!isProjectStatus(wire.status) || !Array.isArray(wire.stages)) {
+    throw new Error('项目数据格式异常')
+  }
+  return { ...wire, status: wire.status, stages: wire.stages.map(mapStage) }
+}

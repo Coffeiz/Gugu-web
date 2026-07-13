@@ -423,11 +423,6 @@
     </Transition>
   </Teleport>
 
-  <Teleport to="body">
-    <Transition name="cal-toast">
-      <div v-if="toastMsg" class="cal-toast">{{ toastMsg }}</div>
-    </Transition>
-  </Teleport>
 </template>
 
 <script lang="ts">
@@ -448,6 +443,7 @@ import DatePicker from '@/components/common/DatePicker.vue'
 import GlassBg from '@/components/common/GlassBg.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
+import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import { projectProgress } from '@/utils/projectProgress'
 import EventEditFields from './components/EventEditFields.vue'
 import {
@@ -982,7 +978,7 @@ async function commitDrag() {
       const updated = await eventsApi.update(ev.id as unknown as number, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version })
       const applyVer = (list: CalItem[]) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
       applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
-    } catch (e: any) { if (e?.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
+    } catch (e: any) { if (e?.status === 409) { showAppError('活动已被其他用户修改，已刷新页面'); await fetchEvents() } }
   }
 
   if (drag.type && ['proj-chip', 'proj-bar', 'proj-resize-start', 'proj-resize-end'].includes(drag.type)) {
@@ -1640,7 +1636,7 @@ async function _persistEvent(s: EvDragState) {
   try {
     const updated = await eventsApi.update(s.id as unknown as number, { title: s.name, date: s.date, time: s.time || null, endTime: s.endTime || null, description: s.description || undefined, version: s.version })
     if (updated?.version) _setEventLocal(s.id, { version: updated.version })
-  } catch (e: any) { if (e?.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
+  } catch (e: any) { if (e?.status === 409) { showAppError('活动已被其他用户修改，已刷新页面'); await fetchEvents() } }
 }
 
 function onEvResize(ev: CalItem, edge: 'start' | 'end' | null, e: MouseEvent) {   // 拖边缘改起止时间
@@ -1961,19 +1957,12 @@ watch([() => reminders.value.length, reminderChannels], () => {
   })
 })
 
-const toastMsg = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-function showToast(msg: string) {
-  toastMsg.value = msg
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { toastMsg.value = '' }, 3200)
-}
 // 测试提醒渠道：往当前选的渠道发一条测试消息（不建任务，新建/编辑活动都能测）
 async function testReminderChannels(name?: string) {
   try {
     const res = await eventForm.testReminderChannels(name || '活动提醒')
-    showToast(res?.msg || '已发送测试消息')
-  } catch { showToast('测试失败，请稍后重试') }
+    showAppNotice(res?.msg || '已发送测试消息')
+  } catch { showAppError('测试失败，请稍后重试') }
 }
 
 async function saveEditEvent() {
@@ -2001,7 +1990,7 @@ async function saveEditEvent() {
     const applyVer = (list: CalItem[]) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
     applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
     await applyReminders(ev.id as unknown as number, ev.name, ev.date, ev.time)   // 按提前量/渠道落地提醒
-  } catch (e: any) { if (e?.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
+  } catch (e: any) { if (e?.status === 409) { showAppError('活动已被其他用户修改，已刷新页面'); await fetchEvents() } }
 }
 
 function handleClickOutside(e: MouseEvent) {
@@ -2548,16 +2537,4 @@ async function saveEvent() {
 .wv-ev-t { font-size: 9.5px; font-weight: 600; opacity: 0.85; white-space: nowrap; }
 .wv-ev-n { font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.cal-toast {
-  position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
-  background: rgba(30,32,40,0.92); backdrop-filter: blur(16px);
-  border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
-  padding: 11px 20px; font-size: 13px; line-height: 1.5; color: rgba(255,255,255,0.85);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-  pointer-events: none; white-space: pre-line; max-width: 360px; z-index: 100000;
-  font-family: 'PingFang SC','Segoe UI',sans-serif;
-}
-.cal-toast-enter-active, .cal-toast-leave-active { transition: opacity 0.2s, transform 0.2s; }
-.cal-toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-.cal-toast-leave-to   { opacity: 0; transform: translateX(-50%) translateY(8px); }
 </style>

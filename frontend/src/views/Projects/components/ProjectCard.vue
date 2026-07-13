@@ -130,7 +130,7 @@
         <span v-if="draftTodoTotal" class="tp-count">{{ draftDoneCount }}/{{ draftTodoTotal }}</span>
         <button class="popup-close-btn" @click="closeStagePop" title="关闭"><PhX :size="11" weight="bold" /></button>
       </div>
-      <TransitionGroup v-if="curTodoTotal" tag="div" name="tp-flip" class="tp-list">
+      <TransitionGroup v-if="draftTodoTotal" tag="div" name="tp-flip" class="tp-list">
         <div v-for="(t, i) in currentTodos" :key="t.id" class="tp-item"
              :class="{ 'tp-ghost': tpDrag === i }"
              :draggable="editingTp !== t.id"
@@ -170,6 +170,7 @@ import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { startPhysicsDrag, startThresholdDrag, type PhysicsDropContext } from '@/composables/usePhysicsDrag'
 import { fireHint } from '@/composables/useOnboarding'
+import { errorMessage, showAppError } from '@/composables/useAppToast'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
@@ -443,7 +444,7 @@ async function onFileDrop(e: DragEvent) {
     setTimeout(() => { fileUploading.value = false; fileUploadDone.value = false }, 1200)
   } catch (err) {
     fileUploading.value = false
-    alert('上传失败：' + (err instanceof Error ? err.message : ''))
+    showAppError(`上传失败：${errorMessage(err)}`)
   }
 }
 

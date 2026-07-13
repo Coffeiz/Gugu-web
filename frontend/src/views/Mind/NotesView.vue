@@ -37,7 +37,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Message } from '@arco-design/web-vue'
+import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import { useLiveStore } from '@/stores/live'
 import { MindConflictError, useMindStore } from '@/stores/mind'
 import { toggleTaskInMd } from '@/composables/useMindEditor'
@@ -690,12 +690,12 @@ watch(() => store.jumpTarget, (date) => {
   const nearest = nearestExistingDate(date)
   if (nearest) jumpTo(nearest)
   if (date === todayIso.value) {
-    Message.info('今天还没有记录，写一条试试～')
+    showAppNotice('今天还没有记录，写一条试试～')
     captureRef.value?.expand()
   } else if (nearest) {
-    Message.info(`${fmtMD(date)}没有记录，已定位到最近的 ${fmtMD(nearest)}`)
+    showAppNotice(`${fmtMD(date)}没有记录，已定位到最近的 ${fmtMD(nearest)}`)
   } else {
-    Message.info('还没有任何记录')
+    showAppNotice('还没有任何记录')
   }
 })
 
@@ -787,13 +787,13 @@ async function onCreated(md: string, capturedAt?: string) {
   try {
     created = await store.createNote({ contentMd: md, capturedAt })
   } catch {
-    Message.error('记录失败，请重试')
+    showAppError('记录失败，请重试')
     return
   }
   if (capturedAt && localDayKey(parseUtc(capturedAt)) !== _today()) {
     // 补录落进左边较远的日期列，眼前不会有任何动静——不给反馈用户会以为没保存
     const [, m, d] = localDayKey(parseUtc(capturedAt)).split('-')
-    Message.success(`已记到 ${+m} 月 ${+d} 日`)
+    showAppNotice(`已记到 ${+m} 月 ${+d} 日`)
     return
   }
   highlightId.value = created.id
@@ -809,9 +809,9 @@ async function onSave(note: MindNote, md: string) {
       // 乐观锁撞车：别覆盖别人的改动，拉最新回来让用户重看
       timelineRef.value?.flagConflict()
       await store.fetchNotes()
-      Message.warning('这条便签已被其他端修改，已刷新为最新内容')
+      showAppNotice('这条便签已被其他端修改，已刷新为最新内容')
     } else {
-      Message.error('保存失败，请重试')
+      showAppError('保存失败，请重试')
     }
   }
 }
@@ -827,7 +827,7 @@ async function onColor(note: MindNote, color: string | null) {
   try {
     await store.updateNote(note.id, { color, version: note.version })
   } catch {
-    Message.error('颜色保存失败，请重试')
+    showAppError('颜色保存失败，请重试')
   }
 }
 
@@ -835,7 +835,7 @@ async function onDelete(note: MindNote) {
   try {
     await store.deleteNote(note.id)
   } catch {
-    Message.error('删除失败，请重试')
+    showAppError('删除失败，请重试')
   }
 }
 </script>

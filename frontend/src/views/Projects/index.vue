@@ -24,6 +24,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { showAppError } from '@/composables/useAppToast'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
@@ -36,6 +37,11 @@ const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
 
 const showArchived = ref(false)
+
+watch(() => projectStore.error, (message) => {
+  if (!message) return
+  showAppError(message)
+})
 // 打开弹层仍兜底调一次（比如首次预取失败），但已加载过的话 fetchArchivedProjects 内部会直接
 // 短路跳过，不会再触发那下「加载中」闪烁——数据早在页面挂载时后台预取好了（见下）。
 watch(showArchived, v => { if (v) projectStore.fetchArchivedProjects() })

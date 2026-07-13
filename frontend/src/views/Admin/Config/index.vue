@@ -59,55 +59,7 @@
               </svg>
               {{ initing ? '初始化中…' : '初始化数据库' }}
             </button>
-            <button class="btn-test" :class="{ loading: reconciling }" :disabled="reconciling" @click="runReconcile" title="扫描存储 ↔ DB 一致性（只读，不改数据）：幽灵记录 + 孤儿文件">
-              <svg v-if="reconciling" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
-                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
-              </svg>
-              {{ reconciling ? '对账中…' : '存储对账' }}
-            </button>
           </div>
-        </div>
-
-        <!-- 存储 ↔ DB 对账报告（只读） -->
-        <div v-if="reconReport" class="recon-report">
-          <div v-if="reconReport.error" class="recon-err">对账失败：{{ reconReport.error }}</div>
-          <template v-else>
-            <div class="recon-summary">
-              存储 <b>{{ reconReport.backend }}</b>（{{ reconReport.location }}） ·
-              DB 文件 <b>{{ reconReport.db_file_rows }}</b> · 存储对象 <b>{{ reconReport.storage_objects }}</b> ·
-              对得上 <b style="color:#5ab899">{{ reconReport.matched }}</b> ·
-              幽灵 <b :style="{ color: reconReport.ghost_count ? '#e07676' : 'inherit' }">{{ reconReport.ghost_count }}</b> ·
-              孤儿 <b :style="{ color: reconReport.orphan_count ? '#e0a96a' : 'inherit' }">{{ reconReport.orphan_count }}</b>
-            </div>
-            <div v-if="!reconReport.ghost_count && !reconReport.orphan_count" class="recon-ok">
-              ✅ DB 与存储一一对应，无幽灵、无孤儿。
-            </div>
-            <div v-if="reconReport.ghost_count" class="recon-block">
-              <div class="recon-block-title">幽灵记录（DB 有行但物理文件缺失，点开会 404）</div>
-              <div v-for="g in reconReport.ghosts" :key="g.id" class="recon-row">
-                <span class="recon-name">{{ g.name }}</span>
-                <span class="recon-meta">{{ g.space }}{{ g.project ? ' · ' + g.project : '' }}{{ g.deleted ? ' · 回收站' : '' }} · {{ g.storage_key }}</span>
-              </div>
-            </div>
-            <div v-if="reconReport.orphan_count" class="recon-block">
-              <div class="recon-block-title">
-                孤儿文件（物理文件存在但 DB 无记录，app 里看不见）
-                <span class="recon-bulk">
-                  <button class="recon-act" :disabled="repairing" @click="repairOrphans(reconReport.orphans, 'import')">全部导入</button>
-                  <button class="recon-act recon-act-del" :disabled="repairing" @click="repairOrphans(reconReport.orphans, 'delete')">全部删除</button>
-                </span>
-              </div>
-              <div v-for="o in reconReport.orphans" :key="o" class="recon-row">
-                <span class="recon-meta">{{ o }}</span>
-                <span class="recon-row-acts">
-                  <button class="recon-act" :disabled="repairing" @click="repairOrphans([o], 'import')" title="按路径重建 DB 记录，让它在 app 里现身">导入</button>
-                  <button class="recon-act recon-act-del" :disabled="repairing" @click="repairOrphans([o], 'delete')" title="删除物理文件（不可恢复）">删除</button>
-                </span>
-              </div>
-            </div>
-            <div v-if="reconReport.truncated" class="recon-meta">（结果较多，列表仅显示前 300 条）</div>
-          </template>
         </div>
       </section>
 
@@ -352,51 +304,6 @@ async function initDb() {
   }
 }
 
-// 存储 ↔ DB 对账（只读）：扫存储和 File 表，报告幽灵记录 + 孤儿文件
-const reconciling = ref(false)
-const reconReport = ref<any | null>(null)
-async function runReconcile() {
-  if (reconciling.value) return
-  reconciling.value = true
-  try {
-    const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage')
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '对账失败')
-    reconReport.value = data
-  } catch (e) {
-    reconReport.value = { error: (e instanceof Error ? e.message : String(e)) }
-  } finally {
-    reconciling.value = false
-  }
-}
-
-// 修复孤儿：action=delete 删物理文件 / import 重建 DB 记录
-const repairing = ref(false)
-async function repairOrphans(keys: any, action: string) {
-  if (repairing.value || !keys.length) return
-  if (action === 'delete' && !window.confirm(`确认删除 ${keys.length} 个孤儿物理文件？此操作不可恢复。`)) return
-  repairing.value = true
-  try {
-    const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage/repair', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, keys }),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '修复失败')
-    const doneSet = new Set(data.done_keys || [])
-    if (reconReport.value?.orphans) {
-      reconReport.value.orphans = reconReport.value.orphans.filter((k: any) => !doneSet.has(k))
-      reconReport.value.orphan_count = reconReport.value.orphans.length
-    }
-    if (data.failed?.length) window.alert(`${data.done} 个成功，${data.failed.length} 个失败：\n` + data.failed.map((f: any) => `${f.key}: ${f.error}`).join('\n'))
-  } catch (e) {
-    window.alert('修复失败：' + (e instanceof Error ? e.message : String(e)))
-  } finally {
-    repairing.value = false
-  }
-}
-
 async function testRedis() {
   testLoading.redis = true
   testStatus.redis  = null
@@ -520,26 +427,6 @@ async function testSmtp() {
 
 <style scoped>
 .config-page { min-height: 100%; display: flex; flex-direction: column; }
-
-/* ── 存储对账报告（暗色主题，亮色文字）── */
-.recon-report { margin-top: 12px; padding: 12px 14px; border-radius: 10px;
-  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); font-size: 12px; }
-.recon-summary { line-height: 1.7; color: rgba(255,255,255,0.88); }
-.recon-summary b { font-weight: 700; }
-.recon-ok { margin-top: 8px; color: #5ab899; font-weight: 600; }
-.recon-err { color: #e07676; font-weight: 600; }
-.recon-block { margin-top: 10px; }
-.recon-block-title { font-weight: 600; margin-bottom: 4px; color: rgba(255,255,255,0.85); }
-.recon-row { padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.08); display: flex; gap: 8px; align-items: center; }
-.recon-name { font-weight: 600; color: rgba(255,255,255,0.88); }
-.recon-meta { color: rgba(255,255,255,0.45); word-break: break-all; flex: 1; min-width: 0; }
-.recon-row-acts, .recon-bulk { display: inline-flex; gap: 6px; flex-shrink: 0; margin-left: 8px; }
-.recon-act { padding: 2px 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
-  border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.78); }
-.recon-act:hover:not(:disabled) { background: rgba(255,255,255,0.12); color: #fff; }
-.recon-act:disabled { opacity: 0.5; cursor: default; }
-.recon-act-del { border-color: rgba(224,118,118,0.4); color: #e08a8a; }
-.recon-act-del:hover:not(:disabled) { background: rgba(224,118,118,0.18); color: #fff; }
 
 /* ── 页面标题 ── */
 .page-header {
