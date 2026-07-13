@@ -74,7 +74,12 @@
     @mouseenter="onEnter" @mouseleave="onLeave">
     <span class="pr-kind">项目</span>
     <div class="pr-name">{{ item.node.title || '未命名项目' }}</div>
-    <span class="pr-deleted">已删除，仅保留快照</span>
+    <!-- projectStore 还在拉取（DefaultLayout.vue 进 app 就发起，画布常是直接落地/刷新页面
+         进来的入口，这次请求这时多半还没回来）跟"项目真的被删了"是两回事，但两者都会让
+         project 算出来是 null、都会落进这条 v-else 分支——之前不分这两种情况，一律显示
+         "已删除，仅保留快照"，缓存刚加载完那一下会先说谎再改口。跟 FileRefCard.vue 同一个
+         坑（见其注释），这里只是文字层面的表现，不像文件卡那样有缩略图区带来的跳动。 -->
+    <span class="pr-deleted">{{ projectStore.loading ? '加载中…' : '已删除，仅保留快照' }}</span>
     <CardActions :hovering="isHovering">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </CardActions>

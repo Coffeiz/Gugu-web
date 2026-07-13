@@ -1,5 +1,5 @@
 <template>
-  <div class="note-editor" :class="{ compact }">
+  <div class="note-editor" ref="rootRef" :class="{ compact }">
     <EditorContent class="ne-body" :editor="editor" />
 
     <!-- 窄口径工具栏：待办/列表/样式，没有 / 菜单（/ 预留给咕咕）、没有正文/标题文字样式
@@ -9,85 +9,98 @@
          <input>）之后依然停在原地，光靠 isActive() 会让工具栏显示一个跟当前实际操作对不上
          的「待办/列表已激活」状态——加这层判断，编辑器没焦点就不亮。用手写的 isFocused ref
          （见 onFocus/onBlur），不用 editor.isFocused，避免响应式更新时机跟不上。 -->
-    <div class="ne-toolbar" v-if="editor">
-      <button class="ne-tool" :class="{ on: isFocused && editor.isActive('taskList') }"
-              @mousedown.prevent="editor.chain().focus().toggleTaskList().run()" title="待办">
-        <PhCheckSquare :size="13" weight="bold" />
-      </button>
-      <button class="ne-tool" :class="{ on: isFocused && editor.isActive('bulletList') }"
-              @mousedown.prevent="editor.chain().focus().toggleBulletList().run()" title="列表">
-        <PhListBullets :size="13" weight="bold" />
-      </button>
-      <!-- 有序列表跟无序列表放一起，都是"列表"，不该埋进「插入」的二级菜单里 -->
-      <button class="ne-tool" :class="{ on: isFocused && editor.isActive('orderedList') }"
-              @mousedown.prevent="editor.chain().focus().toggleOrderedList().run()" title="有序列表">
-        <PhListNumbers :size="13" weight="bold" />
-      </button>
-      <button class="ne-tool" @mousedown.prevent="openReferencePicker" title="引用项目、文件或活动">
-        <PhAt :size="13" weight="bold" />
-      </button>
-      <!-- 「样式」抽屉：加粗/斜体/删除线/行内代码/链接，2026-07-11 加。不是弹层——Aa 按钮
-           自己向右挪，工具从它左边拉出来（DOM 顺序是 items 在前、按钮在后，抽屉展开就是
-           items 从 0 宽长开，把按钮"挤"到右边）；按钮本身就是收起入口，再点一下收回去，
-           不需要额外的收起按钮。「样式」「插入」互斥：开一个收起另一个，且要等对方的收起
-           动画播完才开（见 toggleStylesMenu/DRAWER_CLOSE_MS）。 -->
-      <div class="ne-drawer" :class="{ open: stylesOpen }">
-        <div class="ne-drawer-items">
-          <template v-if="!linkInputOpen">
-            <button class="ne-style-item" :class="{ on: editor.isActive('bold') }"
-                    @mousedown.prevent="editor.chain().focus().toggleBold().run()" title="加粗">
-              <PhTextB :size="13" weight="bold" />
-            </button>
-            <button class="ne-style-item" :class="{ on: editor.isActive('italic') }"
-                    @mousedown.prevent="editor.chain().focus().toggleItalic().run()" title="斜体">
-              <PhTextItalic :size="13" weight="bold" />
-            </button>
-            <button class="ne-style-item" :class="{ on: editor.isActive('strike') }"
-                    @mousedown.prevent="editor.chain().focus().toggleStrike().run()" title="删除线">
-              <PhTextStrikethrough :size="13" weight="bold" />
-            </button>
-            <button class="ne-style-item" :class="{ on: editor.isActive('code') }"
-                    @mousedown.prevent="editor.chain().focus().toggleCode().run()" title="行内代码">
-              <PhCode :size="13" weight="bold" />
-            </button>
-            <button class="ne-style-item" :class="{ on: editor.isActive('link') }"
-                    @mousedown.prevent="onLinkClick" title="链接">
-              <PhLink :size="13" weight="bold" />
-            </button>
-          </template>
-          <div v-else class="ne-link-input" @mousedown.stop>
-            <input ref="linkInputRef" v-model="linkUrl" placeholder="链接地址"
-                   @keydown.enter.prevent="confirmLink" @keydown.escape.prevent="cancelLink" />
-            <button class="ne-link-ok" @mousedown.prevent="confirmLink">确定</button>
+    <!-- floatToolbar（画布便签用）：工具栏脱出卡片、Teleport 到 body 悬在卡片下方——画布
+         便签默认宽度只有 244px，6 个工具图标（待办/列表/有序列表/@/样式/插入）横排最窄
+         也要 180px+，再挤上"完成"按钮和窄卡自身的内边距，工具栏必然比卡片本身宽，硬塞
+         在卡片内只会溢出。比起把便签整体加宽（会让画布上的密度/比例变掉）或让工具栏在
+         卡片内换行（编辑态卡片高度又要跟着抖一截），脱出去悬浮不占卡片宽度更彻底、也不
+         用管卡片多窄。Teleport 的 :disabled 由 floatToolbar 控制——非画布场景（笔记页
+         时间流/CaptureBar）维持原来"就地渲染"的行为，不引入任何变化。位置靠 rAF 常驻
+         循环逐帧读卡片的真实屏幕位置换算（见 updateFloatToolbarPos），不依赖画布相机
+         状态——不管画布怎么平移/缩放，工具栏跟着卡片走这件事只取决于卡片此刻真实在
+         屏幕哪，跟"谁移动了它"无关，不用另外去接相机变化的事件。 -->
+    <Teleport to="body" :disabled="!floatToolbar">
+      <div class="ne-toolbar" ref="toolbarRef" v-if="editor"
+           :class="{ 'ne-toolbar-floating': floatToolbar, pending: floatToolbar && !editReady }">
+        <button class="ne-tool" :class="{ on: isFocused && editor.isActive('taskList') }"
+                @mousedown.prevent="editor.chain().focus().toggleTaskList().run()" title="待办">
+          <PhCheckSquare :size="13" weight="bold" />
+        </button>
+        <button class="ne-tool" :class="{ on: isFocused && editor.isActive('bulletList') }"
+                @mousedown.prevent="editor.chain().focus().toggleBulletList().run()" title="列表">
+          <PhListBullets :size="13" weight="bold" />
+        </button>
+        <!-- 有序列表跟无序列表放一起，都是"列表"，不该埋进「插入」的二级菜单里 -->
+        <button class="ne-tool" :class="{ on: isFocused && editor.isActive('orderedList') }"
+                @mousedown.prevent="editor.chain().focus().toggleOrderedList().run()" title="有序列表">
+          <PhListNumbers :size="13" weight="bold" />
+        </button>
+        <button class="ne-tool" @mousedown.prevent="openReferencePicker" title="引用项目、文件或活动">
+          <PhAt :size="13" weight="bold" />
+        </button>
+        <!-- 「样式」抽屉：加粗/斜体/删除线/行内代码/链接，2026-07-11 加。不是弹层——Aa 按钮
+             自己向右挪，工具从它左边拉出来（DOM 顺序是 items 在前、按钮在后，抽屉展开就是
+             items 从 0 宽长开，把按钮"挤"到右边）；按钮本身就是收起入口，再点一下收回去，
+             不需要额外的收起按钮。「样式」「插入」互斥：开一个收起另一个，且要等对方的收起
+             动画播完才开（见 toggleStylesMenu/DRAWER_CLOSE_MS）。 -->
+        <div class="ne-drawer" :class="{ open: stylesOpen }">
+          <div class="ne-drawer-items">
+            <template v-if="!linkInputOpen">
+              <button class="ne-style-item" :class="{ on: editor.isActive('bold') }"
+                      @mousedown.prevent="editor.chain().focus().toggleBold().run()" title="加粗">
+                <PhTextB :size="13" weight="bold" />
+              </button>
+              <button class="ne-style-item" :class="{ on: editor.isActive('italic') }"
+                      @mousedown.prevent="editor.chain().focus().toggleItalic().run()" title="斜体">
+                <PhTextItalic :size="13" weight="bold" />
+              </button>
+              <button class="ne-style-item" :class="{ on: editor.isActive('strike') }"
+                      @mousedown.prevent="editor.chain().focus().toggleStrike().run()" title="删除线">
+                <PhTextStrikethrough :size="13" weight="bold" />
+              </button>
+              <button class="ne-style-item" :class="{ on: editor.isActive('code') }"
+                      @mousedown.prevent="editor.chain().focus().toggleCode().run()" title="行内代码">
+                <PhCode :size="13" weight="bold" />
+              </button>
+              <button class="ne-style-item" :class="{ on: editor.isActive('link') }"
+                      @mousedown.prevent="onLinkClick" title="链接">
+                <PhLink :size="13" weight="bold" />
+              </button>
+            </template>
+            <div v-else class="ne-link-input" @mousedown.stop>
+              <input ref="linkInputRef" v-model="linkUrl" placeholder="链接地址"
+                     @keydown.enter.prevent="confirmLink" @keydown.escape.prevent="cancelLink" />
+              <button class="ne-link-ok" @mousedown.prevent="confirmLink">确定</button>
+            </div>
           </div>
-        </div>
-        <button class="ne-tool" :class="{ on: stylesOpen || (isFocused && hasAnyMark) }"
-                @mousedown.prevent="toggleStylesMenu" title="文字样式">
-          <PhTextAa :size="13" weight="bold" />
-        </button>
-      </div>
-      <!-- 「插入」抽屉：代码块/引用块/分割线，2026-07-11 加。有序列表挪到主工具栏跟
-           无序列表放一起了，不算在这里头。都是一次性动作，点了直接生效、抽屉自己收起。
-           代码块不给手动选语言——交给 highlightAuto 自动识别。 -->
-      <div class="ne-drawer" :class="{ open: insertOpen }">
-        <div class="ne-drawer-items">
-          <button class="ne-style-item" @mousedown.prevent="insertCodeBlock" title="代码块">
-            <PhCodeBlock :size="13" weight="bold" />
-          </button>
-          <button class="ne-style-item" @mousedown.prevent="insertBlockquote" title="引用块">
-            <PhQuotes :size="13" weight="bold" />
-          </button>
-          <button class="ne-style-item" @mousedown.prevent="insertHorizontalRule" title="分割线">
-            <PhMinus :size="13" weight="bold" />
+          <button class="ne-tool" :class="{ on: stylesOpen || (isFocused && hasAnyMark) }"
+                  @mousedown.prevent="toggleStylesMenu" title="文字样式">
+            <PhTextAa :size="13" weight="bold" />
           </button>
         </div>
-        <button class="ne-tool" :class="{ on: insertOpen || (isFocused && hasAnyBlock) }"
-                @mousedown.prevent="toggleInsertMenu" title="插入">
-          <PhPlus :size="13" weight="bold" />
-        </button>
+        <!-- 「插入」抽屉：代码块/引用块/分割线，2026-07-11 加。有序列表挪到主工具栏跟
+             无序列表放一起了，不算在这里头。都是一次性动作，点了直接生效、抽屉自己收起。
+             代码块不给手动选语言——交给 highlightAuto 自动识别。 -->
+        <div class="ne-drawer" :class="{ open: insertOpen }">
+          <div class="ne-drawer-items">
+            <button class="ne-style-item" @mousedown.prevent="insertCodeBlock" title="代码块">
+              <PhCodeBlock :size="13" weight="bold" />
+            </button>
+            <button class="ne-style-item" @mousedown.prevent="insertBlockquote" title="引用块">
+              <PhQuotes :size="13" weight="bold" />
+            </button>
+            <button class="ne-style-item" @mousedown.prevent="insertHorizontalRule" title="分割线">
+              <PhMinus :size="13" weight="bold" />
+            </button>
+          </div>
+          <button class="ne-tool" :class="{ on: insertOpen || (isFocused && hasAnyBlock) }"
+                  @mousedown.prevent="toggleInsertMenu" title="插入">
+            <PhPlus :size="13" weight="bold" />
+          </button>
+        </div>
+        <span class="ne-toolbar-actions"><slot name="foot-actions" /></span>
       </div>
-      <span class="ne-toolbar-actions"><slot name="foot-actions" /></span>
-    </div>
+    </Teleport>
 
     <!-- `@` 引用补全下拉：跟随光标定位。Teleport 到 body + fixed 定位——便签卡是
          overflow:hidden 的容器，下拉贴着卡片底部时会被提前裁掉一截，脱出去按视口坐标
@@ -116,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, reactive, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import {
   PhAt, PhCheckSquare, PhCode, PhCodeBlock, PhLink, PhListBullets, PhListNumbers,
@@ -135,12 +148,54 @@ const props = withDefaults(defineProps<{
   placeholder?: string
   compact?: boolean
   autofocus?: boolean
-}>(), { placeholder: '写点什么…', compact: false, autofocus: false })
+  // 工具栏脱出卡片、悬浮在下方——只有画布便签（卡片窄、工具栏横排装不下）传 true，
+  // 笔记页时间流/CaptureBar 都够宽，维持原来"就地渲染"的默认行为。
+  floatToolbar?: boolean
+  // 呼应 NoteCard.vue 的 nc-edit-pending：光标还没真正落定前，浮动工具栏也要跟着卡片
+  // 一起藏起来，见下面 .ne-toolbar-floating.pending 的说明。非浮动模式下这个 prop
+  // 不起作用（原有的 :deep(.ne-toolbar) 淡入规则仍然生效）。
+  editReady?: boolean
+}>(), { placeholder: '写点什么…', compact: false, autofocus: false, floatToolbar: false, editReady: true })
 
 const emit = defineEmits<{
   (e: 'update:modelValue', md: string): void
   (e: 'submit'): void
 }>()
+
+const rootRef = ref<HTMLElement | null>(null)
+const toolbarRef = ref<HTMLElement | null>(null)
+
+// 浮动工具栏定位：贴着卡片（不是编辑器自己的文字区域，两者高度不一样，画布便签的卡片
+// 还有自己的内边距）下方居中悬浮。逐帧用 getBoundingClientRect 重新量卡片此刻的真实
+// 屏幕位置——画布相机怎么平移/缩放、便签列表怎么滚动都不用单独处理，工具栏只关心
+// "卡片现在到底在屏幕哪"这一件事，跟"是谁移动了它"无关，比反过来订阅相机状态更简单
+// 也更不容易漏情况。直接写 DOM style（不经 Vue 响应式），这段循环每帧都跑，绕开每帧
+// 一次组件重渲染的开销。
+const FLOAT_GAP = 8
+let floatRaf = 0
+function updateFloatToolbarPos() {
+  floatRaf = requestAnimationFrame(updateFloatToolbarPos)
+  const root = rootRef.value
+  const bar = toolbarRef.value
+  if (!root || !bar) return
+  // 锚定整张卡片（不是 .note-editor 自己）——.note-editor 只包住文字区域，卡片自己
+  // 还有一圈内边距，锚在编辑器上会让工具栏贴得太近，跟卡片本身的视觉呼吸感对不上。
+  const anchor = (root.closest('.note-card') as HTMLElement | null) ?? root
+  const rect = anchor.getBoundingClientRect()
+  const barW = bar.offsetWidth
+  const barH = bar.offsetHeight
+  // 卡片贴着视口底部时，往下挂会把工具栏推出屏幕——翻到卡片上方去，跟下拉菜单/
+  // tooltip 常见的"翻转"处理是同一个道理。
+  const flipped = window.innerHeight - rect.bottom < barH + FLOAT_GAP + 4
+  const centerX = rect.left + rect.width / 2
+  const left = Math.max(barW / 2 + 6, Math.min(window.innerWidth - barW / 2 - 6, centerX))
+  const top = flipped ? rect.top - FLOAT_GAP - barH : rect.bottom + FLOAT_GAP
+  bar.style.left = `${left}px`
+  bar.style.top = `${top}px`
+  bar.classList.toggle('flipped', flipped)
+}
+onMounted(() => { if (props.floatToolbar) updateFloatToolbarPos() })
+onBeforeUnmount(() => { if (floatRaf) cancelAnimationFrame(floatRaf) })
 
 const TYPE_LABEL: Record<string, string> = { project: '项目', file: '文件', event: '活动', conversation: '对话' }
 // 跟顶栏 GlobalSearch.vue 的 TYPE_ICON 同一套图标（项目=PhStack、文件=PhFile、
@@ -417,6 +472,10 @@ defineExpose({
   focus: () => editor.value?.commands.focus('end'),
   focusAtLineUnit,
   clear: () => editor.value?.commands.setContent(markdownToDoc('') as any, { emitUpdate: false }),
+  // NoteCard.vue 的退出编辑收起动画要克隆一份工具栏做淡出快照（spawnToolbarGhost）——
+  // floatToolbar 开着时真实工具栏 Teleport 到了 body，不再是卡片的 DOM 后代，
+  // `cardEl.querySelector('.ne-toolbar')` 找不到它，得从这里直接把引用递出去。
+  getToolbarEl: () => toolbarRef.value,
 })
 
 onBeforeUnmount(() => {
@@ -432,6 +491,30 @@ onBeforeUnmount(() => {
   display: flex; align-items: center; gap: 4px;
   padding: 6px 2px 4px;   /* 挪到正文下方了：上边距隔开文字，下边距接到后面的操作行 */
 }
+/* 浮动态（画布便签）：脱出卡片本身悬在下方（或翻到上方，见 .flipped），不再是卡片纸面
+   的一部分，得自己长一副独立的浮层皮——跟 .ne-picker（`@` 补全下拉）同一套玻璃质感语言，
+   两者本来就经常同时出现在屏幕上（点了 @ 工具栏按钮，下拉紧跟着弹出来），视觉上得是
+   "同一家子"的东西。left/top 由 updateFloatToolbarPos 逐帧直接写 DOM style（不经这份
+   scoped CSS 的任何声明），这里只兜 position:fixed 的定位模式和横向居中用的 transform——
+   变换基准点 left 已经在脚本里做过视口边界夹逼，这条 translateX(-50%) 对夹逼后的 left
+   值同样适用，不需要因为 .flipped 另外换一条 transform（垂直方向的翻转已经在算 top 的
+   时候处理完了，不需要 transform 参与）。用两个类选择器（.ne-toolbar.ne-toolbar-floating）
+   而不是单独一个新类名，靠特异度稳赢上面 .ne-toolbar 的 padding，不用操心样式表里两条
+   规则谁写在后面。 */
+.ne-toolbar.ne-toolbar-floating {
+  position: fixed; z-index: 2000; transform: translateX(-50%);
+  padding: 5px 6px; border-radius: 10px;
+  background: rgba(255,255,255,0.96);
+  border: 1px solid rgba(255,255,255,0.9);
+  box-shadow: 0 8px 26px rgba(60,70,100,0.18);
+  backdrop-filter: blur(10px);
+  transition: opacity 0.14s ease-in-out, filter 0.14s ease-in-out;
+}
+/* 呼应 NoteCard.vue 的 .note-card.nc-edit-pending：光标还没真正落定前先藏起来，避免
+   "待办/列表已激活"这类过渡态被看见一瞬。非浮动模式这份状态由父级 :deep(.ne-toolbar)
+   接管（工具栏还是卡片的 DOM 后代）；浮动模式下工具栏已经 Teleport 出卡片子树，
+   :deep() 的后代选择器够不着它，只能自己接一份等效的。 */
+.ne-toolbar-floating.pending { opacity: 0; filter: blur(6px); pointer-events: none; }
 .ne-tool {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 26px; height: 24px; padding: 0 7px;

@@ -33,7 +33,12 @@ export interface PhysicsDragOpts {
   // 多高（客户名有没有、是否完成态换了行）跟存储侧记的默认/上次测量值经常对不上，落点算出
   // 来的"卡片中心"就会跟指针实际抓的地方有落差（用户反馈"连线点比卡片中心低""落点偏高"）。
   // 直接把物理模块自己量好的这份精确尺寸传出去，调用方不用再猜。
-  onDrop?: (pos: { x: number; y: number }, velocity: { x: number; y: number; turn: number }, size: { w: number; h: number }) => void
+  onDrop?: (
+    pos: { x: number; y: number },
+    velocity: { x: number; y: number; turn: number },
+    size: { w: number; h: number },
+    context?: PhysicsDropContext,
+  ) => void
   onDragOver?: (pos: { x: number; y: number }) => void   // pointer 模式：每帧回调当前指针位置，供调用方自己 elementFromPoint 判定/高亮落点
   // 每帧回调克隆体此刻真实的视觉中心（下方 frame() 弹簧积分出来的结果，带阻尼延迟——不是
   // 瞬时跟手的指针位置）+ 此刻真实的视觉宽高（理由同 onDrop 的 size）。给「要跟着克隆体本体
@@ -65,9 +70,17 @@ export interface PhysicsDragOpts {
   // 落地克隆被重新抓起、真正越过拖拽阈值时通知调用方取消自己的附属动画（画布关系线的
   // landingPositions 属于这类附属状态）；不传时只处理物理克隆本身。
   onRegrabStart?: () => void
+  // 由落地 holder 接力发起的下一段拖拽。它的状态判定不能继承前一段落地动画的速度。
+  isLandingRegrab?: boolean
   // 飞行 holder 上重新抓取时，本体不在真实命中位置；把 holder 已确认的 hover 显式交给新
   // 克隆，避免它按隐藏本体的 :hover=false 误把控制层做成不可见。
   initialHover?: boolean
+}
+
+export interface PhysicsDropContext {
+  pointer: { x: number; y: number }
+  pointerVelocity: { x: number; y: number }
+  isLandingRegrab: boolean
 }
 
 interface Box { left: number; top: number; width: number; height: number }
@@ -519,6 +532,27 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   const target = { x: pos.x, y: pos.y }
   // pointer 模式起点就是当前指针位置（原生模式靠首个 dragover 校正）
   if (pointer && (event.clientX || event.clientY)) { target.x = event.clientX; target.y = event.clientY }
+  // 状态列属于指针意图，而不是视觉克隆的弹簧位置。单独留一份原始指针轨迹，松手时取最近
+  // 90ms 的真实速度；视觉速度仍继续只服务卡片的摆动和落地动画，两者不能混用。
+  const pointerHistory: { x: number; y: number; t: number }[] = []
+  const rememberPointer = (x: number, y: number) => {
+    const now = performance.now()
+    pointerHistory.push({ x, y, t: now })
+    while (pointerHistory.length > 1 && now - pointerHistory[0].t > 140) pointerHistory.shift()
+  }
+  const recentPointerVelocity = () => {
+    if (pointerHistory.length < 2) return { x: 0, y: 0 }
+    const last = pointerHistory[pointerHistory.length - 1]
+    const startIndex = Math.max(0, pointerHistory.findIndex((sample) => last.t - sample.t <= 90))
+    const first = pointerHistory[startIndex]
+    const seconds = (last.t - first.t) / 1000
+    if (seconds <= 0.003) return { x: 0, y: 0 }
+    return {
+      x: Math.max(-2400, Math.min(2400, (last.x - first.x) / seconds)),
+      y: Math.max(-2400, Math.min(2400, (last.y - first.y) / seconds)),
+    }
+  }
+  if (pointer) rememberPointer(target.x, target.y)
   const vel    = { x: 0, y: 0 }   // 卡片速度 px/秒——二阶弹簧的动量来源
   let vxs = 0, vys = 0            // 平滑后的速度，用于旋转
   // 最近一小段时间的速度采样（各带时间戳），松手时用来判断"甩出去那一刻手腕在不在转弯"——
@@ -540,6 +574,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     { const _dt = (e as DragEvent).dataTransfer; if (_dt) _dt.dropEffect = 'move' }
     if (e.clientX || e.clientY) {
       target.x = e.clientX; target.y = e.clientY
+      if (pointer) rememberPointer(e.clientX, e.clientY)
       opts.onDragOver?.({ x: e.clientX, y: e.clientY })
     }
   }
@@ -686,7 +721,16 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         turn = Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1))
       }
     }
-    if (opts.onDrop) { try { opts.onDrop(cloneCenter, { x: releaseVel.x, y: releaseVel.y, turn }, { w: dropW, h: dropH }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
+    if (pointer) rememberPointer(target.x, target.y)
+    if (opts.onDrop) {
+      try {
+        opts.onDrop(cloneCenter, { x: releaseVel.x, y: releaseVel.y, turn }, { w: dropW, h: dropH }, {
+          pointer: { x: target.x, y: target.y },
+          pointerVelocity: pointer ? recentPointerVelocity() : { x: 0, y: 0 },
+          isLandingRegrab: opts.isLandingRegrab === true,
+        })
+      } catch (err) { console.error('[physicsDrag] onDrop failed', err) }
+    }
 
     const dropX = cloneCenter.x, dropY = cloneCenter.y
     const idAttr = sourceEl.getAttribute('data-file-id')    ? ['data-file-id',    sourceEl.getAttribute('data-file-id')]
@@ -768,7 +812,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             // 阈值内卡片仍在继续飞，起点要在真正接力这一刻再量，不能沿用按下那一帧的旧框。
             const visualRect = holder.getBoundingClientRect()
             opts.onRegrabStart?.()
-            startPhysicsDrag(moveEvent, revealEl, { ...opts, initialRect: visualRect, initialHover: true })
+            startPhysicsDrag(moveEvent, revealEl, {
+              ...opts,
+              initialRect: visualRect,
+              initialHover: true,
+              isLandingRegrab: true,
+            })
           },
         }) ?? null
       }
@@ -882,11 +931,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       const c2Inner = clone2.querySelector<HTMLElement>('.phys-landing-content')
       const trans = `transform 0.55s ${_SETTLE}`
       const fadeTrans = 'opacity 0.42s ease'
-      holder.style.transition = trans
-      clone2.style.transition = trans
       cloneInner.style.transition = fadeTrans
       if (c2Inner) c2Inner.style.transition = fadeTrans
-      applyTransform()
       // clone2（_cloneLanding 里的 holder2）创建时是按「先不可见、被自己的 opacity 淡入」的
       // 老设计写的 inline opacity:'0'——现在淡入淡出已经挪到内容层（c2Inner），这层外壳必须
       // 显式扳回 1，否则它自己还停在创建时那份 0，不管 c2Inner 淡到多亮，乘出来的可见度
@@ -940,6 +986,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // 否则前一次落地的计时会在新一段动画半路把克隆撤掉，真实卡直接露在终点而瞬移。
         finishTimer = setTimeout(finish, 700)
       }
+      const startSettle = () => {
+        if (done) return
+        holder.style.transition = trans
+        clone2.style.transition = trans
+        applyTransform()
+      }
       const finish = () => {
         if (done) return
         done = true
@@ -989,6 +1041,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 否则目标中途被重定时 transform 还没走完就会提前揭示真实卡。
       onEnd = (e) => { if (e.target === clone2 && e.propertyName === 'transform') finish() }
       clone2.addEventListener('transitionend', onEnd)
+      startSettle()
       armFinishTimer()
     }
 

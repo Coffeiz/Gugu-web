@@ -30,6 +30,43 @@
       @drag-start="(e, side) => emit('connectDragStart', e, side)"
     />
   </FileCard>
+  <!-- filesCache 还没加载完（画布常常是用户没先逛过文件库/Dashboard 就直接进来的入口，
+       全局缓存这时是空的）跟"文件真的被删了"是两回事，但两者都会让 file 算出来是
+       undefined。之前统一走下面 .fr-missing 那套扁平墓碑布局，摆过一次手算的灰色骨架去
+       占位模仿缩略图区的高度，但手算怎么都跟真卡片对不上（试过固定高度、试过 flex:1 吃
+       剩余空间，兜来兜去总有几像素差，卡片时高时低）——根源是想拿"照抄的近似值"硬凑"真实
+       组件量出来的自然高度"，两者永远不可能精确相等。真正稳妥的做法是干脆直接用同一个
+       FileCard 组件渲染这段过渡态：ext 传空、hasThumb 恒为 false（图标区兜底），文件名用
+       节点快照——缩略图区和图标区共用同一个 --fc-area-h，加载完 hasThumb 一旦翻成 true，
+       只是图标区换成缩略图区的内容，两者本来就同高，总高度天然分毫不差，不需要再猜一个
+       数字出来跟它对齐。 -->
+  <FileCard
+    v-else-if="!filesCache.loaded"
+    ref="fileCardRef"
+    class="fr-card"
+    :class="{ connecting, 'connection-target': !!connectionTargetSide }"
+    :style="cardStyle"
+    :data-node-id="item.nodeId"
+    ext=""
+    :display-name="item.node.title || '未命名文件'"
+    :has-thumb="false"
+    :canvas-mode="true"
+    @pointerdown.stop="onPointerDown"
+    @mouseenter="onEnter"
+    @mouseleave="onLeave"
+  >
+    <template #meta>加载中…</template>
+    <CardActions :hovering="isHovering">
+      <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
+    </CardActions>
+    <CardConnDot
+      :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
+      @drag-start="(e, side) => emit('connectDragStart', e, side)"
+    />
+  </FileCard>
+  <!-- 缓存已经加载完、确实找不到这个文件——这才是真的"已删除"，跟上面"还在等缓存"是两种
+       性质完全不同的状态，继续走独立的扁平墓碑布局（没有缩略图/图标区，本来也不会再变身
+       成真卡片，不需要跟 FileCard 的高度对齐）。 -->
   <div v-else ref="missingRef" class="fr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" @pointerdown.stop="onPointerDown"
     @mouseenter="onEnter" @mouseleave="onLeave">
     <span class="fr-kind">文件</span>
@@ -115,7 +152,9 @@ watch(file, (f) => {
 // 一个 auto 高度的父盒子，两层各算各的，撑出来的实际高度会跟 .fc-card 自己的盒模型对不
 // 上），拖起来会看到方角边框、卡片被拉长。改成拖 .fc-card 本体后，克隆体的圆角/尺寸/
 // 拖拽专属的玻璃模糊样式（global.css 的 .phys-drag-clone.fc-card）才是同一份。
-// 文件已删除的缺失态没有 FileCard 可拖，退回 .fr-wrap 本身（它自己的圆角/尺寸就是对的）。
+// 确认已删除的墓碑态（.fr-missing）没有 FileCard 可拖，退回 .fr-wrap 本身（它自己的圆角/
+// 尺寸就是对的）；缓存还在加载的过渡态也是一张真 FileCard（ext 空、hasThumb 恒 false），
+// fileCardRef 同样能拿到，走跟真文件卡完全一样的拖拽路径。
 const fileCardRef = ref<InstanceType<typeof FileCard> | null>(null)
 const missingRef = ref<HTMLElement | null>(null)
 let cardResizeObserver: ResizeObserver | null = null

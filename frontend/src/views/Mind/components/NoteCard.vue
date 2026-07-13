@@ -19,7 +19,9 @@
            @pointerdown.stop：画布贴纸场景下这张卡的根节点是可拖拽的（见 NoteSticker.vue），
            在编辑器里点字/选字/点工具栏不该被外层拖拽阈值判定拦截——列表页没有拖拽，加这个
            不影响原有行为。 -->
-      <NoteEditor ref="bodyEditorRef" v-model="draftBody" :autofocus="pendingFocus === null" @submit="finishEditing" @pointerdown.stop>
+      <NoteEditor ref="bodyEditorRef" v-model="draftBody" :autofocus="pendingFocus === null"
+                  :float-toolbar="canvasMode" :edit-ready="editReady"
+                  @submit="finishEditing" @pointerdown.stop>
         <template #foot-actions>
           <span v-if="conflict" class="nc-conflict">改动冲突，已刷新</span>
           <button class="nc-done-btn" @pointerdown.stop @click.stop="finishEditing" title="完成编辑">
@@ -166,16 +168,18 @@ function scheduleSave() {
 watch([draftTitle, draftBody], () => { if (props.editing) scheduleSave() })
 
 /** 点卡片外面：先补一次保存，再退出编辑态（不再是「取消」，没有可丢弃的东西）。
- *  NoteEditor 的「样式」「插入」抽屉现在是原地展开、卡片的真实 DOM 后代（不再 Teleport
- *  到 body 了），点里面的按钮天然会被 cardRef.contains() 认成"没点外面"，不用再单独放行。
- *  `@` 引用补全下拉是例外——它 Teleport 到了 body（挂在便签卡的 overflow:hidden 之外，
- *  避免被卡片边界裁掉），点它天然不在 cardRef 内，得单独放行，不然点下拉选项那一刻会先
- *  被这里判成"点外面"触发 finishEditing/editor 卸载，choose() 再执行时 editor.value 已经
- *  是 null（踩过：TypeError: Cannot read properties of null (reading 'chain')）。 */
+ *  NoteEditor 的「样式」「插入」抽屉是原地展开、卡片的真实 DOM 后代，点里面的按钮天然
+ *  会被 cardRef.contains() 认成"没点外面"，不用再单独放行。
+ *  `@` 引用补全下拉和画布便签的浮动工具栏（floatToolbar，见 NoteEditor.vue）都是例外——
+ *  两者都 Teleport 到了 body（前者躲避卡片 overflow:hidden 的裁切，后者躲避画布便签
+ *  太窄装不下横排图标），点它们天然不在 cardRef 内，得单独放行，不然点下拉选项/工具栏
+ *  按钮那一刻会先被这里判成"点外面"触发 finishEditing/editor 卸载，choose() 或工具栏的
+ *  点击处理再执行时 editor.value 已经是 null（`@` 下拉那边踩过：TypeError: Cannot read
+ *  properties of null (reading 'chain')）。 */
 function onDocDown(e: MouseEvent) {
   if (!props.editing) return
   const t = e.target as HTMLElement
-  if (cardRef.value?.contains(t) || t.closest('.ne-picker')) return
+  if (cardRef.value?.contains(t) || t.closest('.ne-picker') || t.closest('.ne-toolbar-floating')) return
   finishEditing()
 }
 // finishEditing 已经同步 flush 过一次；emit('close') 会让 editing 变 false 反过来触发下面
@@ -194,33 +198,59 @@ function finishEditing() {
  *  false 那一刻触发，互不等待），播完自己从 DOM 里清掉。卡片本身还在同步缩小，克隆节点
  *  的定位是固定像素值，缩到比它矮时会被 .note-card 的 overflow:hidden 提前裁掉一截，
  *  这是几何上跑不掉的（收起动画目标高度本来就比编辑态矮），可以接受。
- *  ⚠️ ghost 挂在 cardEl 内部（画布场景下 cardEl 本身活在 .canvas-world 的 transform:
- *  scale(camera.scale) 祖先下），它的 left/top/width 是"局部/世界坐标"单位，会被这层
- *  祖先缩放再画到屏幕上；但 getBoundingClientRect 量出来的 cardRect/toolbarRect 已经是
- *  缩放后的屏幕坐标。两者之间直接相减/取值再原样赋给 ghost 的 CSS，画布缩放不是 100% 时
- *  会被这层祖先缩放二次叠加（相当于用了 屏幕差值×scale 的位移/宽度），偏移量随 scale
- *  偏离 1 的程度二次放大或缩小——表现正是"画布缩放不是 100% 时，工具栏收起动画朝左上
- *  （缩小画布）或右下（放大画布）飘走"。除以 scale 换回世界坐标单位，才能让 ghost 在
- *  画布缩放后仍准确贴在真实工具栏原来的位置上。 */
+ *  ⚠️ 两种工具栏要接两套完全不同的坐标系，不能共用一份定位公式：
+ *  - 非浮动（列表/时间流）：真实 .ne-toolbar 本来就是卡片的 DOM 后代，活在 cardEl 的
+ *    局部坐标系下；画布场景里 cardEl 自己还套着 .canvas-world 的 transform:
+ *    scale(camera.scale) 祖先。ghost 挂回 cardEl 内部延续同一套局部坐标，但
+ *    getBoundingClientRect 量出来的 cardRect/toolbarRect 已经是缩放后的屏幕坐标，
+ *    直接拿屏幕差值原样赋给 ghost 的 CSS 会被这层祖先缩放二次叠加，除以 scale 换回
+ *    局部单位才能让 ghost 准确贴在原位置（缩放 100% 之外会飘走）。
+ *  - 浮动（画布便签，floatToolbar）：真实工具栏 Teleport 到了 body，活在 .canvas-world
+ *    缩放祖先之外——不管画布怎么缩放，它的图标/文字都是恒定的屏幕像素大小，只有位置
+ *    跟着卡片走（见 NoteEditor.vue 的 updateFloatToolbarPos）。ghost 要延续同一套"屏幕
+ *    像素、不随画布缩放"的坐标系，因此也要挂在 body 上、直接用 toolbarRect 的屏幕坐标，
+ *    不能套用非浮动那份除以 scale 的公式——那是给"活在缩放祖先里的元素"补偿用的，套在
+ *    一个根本不在缩放祖先里的元素上会把缩放系数二次带进来，画布缩放不是 100% 时
+ *    ghost 的视觉大小就会跟着莫名其妙放大/缩小（局部宽度被除以/乘以 scale 撑大或压小，
+ *    子元素图标却还是原始像素尺寸不跟着变，两者对不上；这份局部宽度又要再经过缩放祖先
+ *    的 transform 二次缩放一遍，误差就是这么来的）。 */
 function spawnToolbarGhost() {
   const cardEl = cardRef.value
-  const toolbarEl = cardEl?.querySelector<HTMLElement>('.ne-toolbar')
+  // 浮动工具栏（画布便签）Teleport 到了 body，不再是 cardEl 的 DOM 后代，querySelector
+  // 找不到它，得从 NoteEditor 自己手上要（见其 defineExpose 的 getToolbarEl）；非浮动
+  // 场景仍退回原来的 querySelector，两边都要兜住。cardEl.contains() 顺带用来判断此刻
+  // 到底是哪种坐标系——不猜 canvasMode，直接问真实 DOM 关系最可靠。
+  const toolbarEl = bodyEditorRef.value?.getToolbarEl() ?? cardEl?.querySelector<HTMLElement>('.ne-toolbar')
   if (!cardEl || !toolbarEl) return
-  const scale = props.scale || 1
-  const cardRect = cardEl.getBoundingClientRect()
+  const floating = !cardEl.contains(toolbarEl)
   const toolbarRect = toolbarEl.getBoundingClientRect()
   const ghost = toolbarEl.cloneNode(true) as HTMLElement
-  ghost.style.position = 'absolute'
-  ghost.style.left = (toolbarRect.left - cardRect.left) / scale + 'px'
-  ghost.style.top = (toolbarRect.top - cardRect.top) / scale + 'px'
-  ghost.style.width = toolbarRect.width / scale + 'px'
   ghost.style.margin = '0'
   ghost.style.pointerEvents = 'none'
-  ghost.style.zIndex = '2'
   ghost.style.opacity = '1'
   ghost.style.filter = 'blur(0)'
   ghost.style.transition = `opacity ${TOOLBAR_FADE_MS}ms ease-in-out, filter ${TOOLBAR_FADE_MS}ms ease-in-out`
-  cardEl.appendChild(ghost)
+  if (floating) {
+    // 直接原样搬到 body 上，用真实屏幕坐标——跟真工具栏此刻的定位方式完全一致，不涉及
+    // 任何缩放换算。cloneNode 连 .ne-toolbar-floating 的 transform:translateX(-50%) 也
+    // 一起拷贝过来了，但 toolbarRect.left 已经是套完那份变换之后的最终屏幕左边缘，
+    // 清空 transform 才是真正的最终位置，不需要再居中一次。
+    ghost.style.position = 'fixed'
+    ghost.style.zIndex = '2000'
+    ghost.style.left = `${toolbarRect.left}px`
+    ghost.style.top = `${toolbarRect.top}px`
+    ghost.style.transform = 'none'
+    document.body.appendChild(ghost)
+  } else {
+    const scale = props.scale || 1
+    const cardRect = cardEl.getBoundingClientRect()
+    ghost.style.position = 'absolute'
+    ghost.style.zIndex = '2'
+    ghost.style.left = `${(toolbarRect.left - cardRect.left) / scale}px`
+    ghost.style.top = `${(toolbarRect.top - cardRect.top) / scale}px`
+    ghost.style.width = `${toolbarRect.width / scale}px`
+    cardEl.appendChild(ghost)
+  }
   requestAnimationFrame(() => {
     ghost.style.opacity = '0'
     ghost.style.filter = 'blur(6px)'

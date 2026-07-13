@@ -14,9 +14,18 @@
     </div>
     <!-- grid-template-rows: 0fr → 1fr 是给"高度可以从 0 平滑动画到内容实际高度（不确定
          具体像素值）"这件事的标准解法——直接 transition height 在目标是 auto 时没法生效，
-         这一层只负责这段展开/收起过渡，不用再靠外层容器写死高度/百分比去凑。 -->
-    <div class="cd-collapse">
-      <div class="cd-list">
+         这一层只负责这段展开/收起过渡，不用再靠外层容器写死高度/百分比去凑。
+         max-height 目标值改成逐帧量出来的真实内容高度（collapseMaxHeightPx），不再是固定
+         写死的 55vh——55vh 通常比实际画布列表内容高得多，CSS transition 是照"目标值"的差量
+         算进度的，画布数量一般用不满这截高度，max-height 还没插值到 55vh，box 的可视高度
+         就已经被内容自身的高度顶到头、提前"到位"不再变化了，而横向宽度的过渡是从 36 到
+         190 这两个跟内容无关的定值，会完整播满 0.28s——纵向看着"唰"一下先停了，横向还在
+         继续张开，两个方向不是同时收尾，就是用户反馈的"纵向横向运动不是同时的"。改成量出
+         真实内容高度（超出 55vh 那部分交给 .cd-list 自己的 overflow-y 滚动，这里封顶夹住，
+         不让极端多画布时 max-height 目标值本身就超没边），横向纵向的过渡终点都是"这次动画
+         真正会走到的那个值"，播满同一个 0.28s 才会看着是同一个动作。 -->
+    <div class="cd-collapse" :style="{ maxHeight: expanded ? `${collapseMaxHeightPx}px` : '0px' }">
+      <div class="cd-list" ref="cdListRef">
         <div v-for="canvas in canvases" :key="canvas.id" class="canvas-item" :class="{ active: canvas.id === activeId }" @click="onOpen(canvas.id)">
           <span v-if="renamingId === canvas.id" class="rename-sizer" @click.stop>
             <span class="rename-ghost">{{ renameText || ' ' }}</span>
@@ -44,7 +53,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch, type PropType } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { PhCheck, PhPencilSimple, PhPlus, PhSquaresFour, PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvas } from '@/services/api'
 
@@ -63,6 +72,33 @@ const emit = defineEmits<{
 // 当前画布上干活，不需要一直看着切换列表；改成贴边抽屉，需要切换/新建/删/改名画布才点开。
 const expanded = ref(false)
 const rootRef = ref<HTMLElement | null>(null)
+
+// .cd-collapse 的展开目标高度：量 .cd-list 的真实内容高度（scrollHeight），封顶跟 CSS 里
+// .cd-list 自己的 55vh 上限保持一致（超出部分交给它自己的 overflow-y 滚动，不让极端多画布
+// 时这里算出的目标值本身失控）。ResizeObserver 盯 .cd-list 内容尺寸变化（建/删/改名画布都
+// 会改变它），窗口 resize 单独听（55vh 这个上限本身是视口相对值，视口变了这个上限也要
+// 跟着变，不属于 .cd-list 自身内容变化，ResizeObserver 感知不到）。
+const cdListRef = ref<HTMLElement | null>(null)
+const collapseMaxHeightPx = ref(0)
+let cdListResizeObserver: ResizeObserver | null = null
+function measureCollapseHeight() {
+  const el = cdListRef.value
+  if (!el) return
+  collapseMaxHeightPx.value = Math.min(el.scrollHeight, window.innerHeight * 0.55)
+}
+onMounted(() => {
+  const el = cdListRef.value
+  if (el) {
+    cdListResizeObserver = new ResizeObserver(measureCollapseHeight)
+    cdListResizeObserver.observe(el)
+  }
+  measureCollapseHeight()
+  window.addEventListener('resize', measureCollapseHeight)
+})
+onBeforeUnmount(() => {
+  cdListResizeObserver?.disconnect()
+  window.removeEventListener('resize', measureCollapseHeight)
+})
 
 function onOutsidePointerDown(event: PointerEvent) {
   if (!expanded.value) return
@@ -165,12 +201,13 @@ function commitRename(id: number) {
    没有确定高度的祖先里退化成按内容的 max-content 走，0fr 压不到真正的 0——收起态因此
    一直露着一截（用户反馈"看到 cd-collapse、变成竖着的长方形"）。改回更朴素但可靠的
    max-height 过渡：不追求跟内容高度分毫不差，但 0 就是真的 0，不依赖任何需要确定高度
-   才成立的前提。 */
+   才成立的前提。展开态的目标值不再由这里的类选择器写死（曾经是 55vh），改成脚本里量出来
+   的真实内容高度，见模板上的内联 :style 和 collapseMaxHeightPx 的注释——固定写死一个远
+   超实际内容的值，会让这段过渡看着比横向宽度那条提前"到位"，两个方向不同步。 */
 .cd-collapse {
   max-height: 0; overflow: hidden;
   transition: max-height 0.28s cubic-bezier(0.34,1.2,0.64,1);
 }
-.canvas-drawer.open .cd-collapse { max-height: 55vh; }
 .cd-list { box-sizing: border-box; max-height: 55vh; overflow-y: auto; padding: 0 9px 9px; }
 
 .canvas-item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; height: 32px; padding: 0 4px 0 8px; border-radius: 6px; background: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; }

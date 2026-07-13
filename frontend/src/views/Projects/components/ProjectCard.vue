@@ -168,12 +168,13 @@ import { computed, ref, nextTick, onUnmounted, useAttrs, type PropType } from 'v
 import type { Project, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { startPhysicsDrag, startThresholdDrag } from '@/composables/usePhysicsDrag'
+import { startPhysicsDrag, startThresholdDrag, type PhysicsDropContext } from '@/composables/usePhysicsDrag'
 import { fireHint } from '@/composables/useOnboarding'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
 import { firstIncompleteStageIdx } from '@/utils/projectStages'
+import { resolveProjectDropStatus } from '@/utils/projectDrop'
 import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 
 defineOptions({ inheritAttrs: false })
@@ -192,27 +193,28 @@ function isCardControl(target: EventTarget | null) {
   return !!(target as HTMLElement | null)?.closest('.stars, .proj-stage, .seg-bar-wrap, .card-advance, button, input, textarea, select, a')
 }
 
-// 项目卡的抛出不是只看松手那一瞬间的鼠标：按 iOS 式短预测窗把水平速度外推一小段，快速向
-// 右甩时即使鼠标还停在「待开始」，落点也可自然进「进行中」。物理模块随后读取 moveProject
-// 同步更新后的真实卡槽，flyMorph 会自动飞向这个预测出的列，而不是先落回鼠标列再跳过去。
-const PROJECT_THROW_S = 0.18
-const PROJECT_THROW_MAX_PX = 280
-function projectDropPoint({ x, y }: { x: number; y: number }, velocity: { x: number; y: number }) {
-  const coastX = Math.max(-PROJECT_THROW_MAX_PX, Math.min(PROJECT_THROW_MAX_PX, velocity.x * PROJECT_THROW_S))
-  return {
-    x: Math.max(1, Math.min(window.innerWidth - 1, x + coastX)),
-    y: Math.max(1, Math.min(window.innerHeight - 1, y)),
-  }
-}
-// 拖到哪一列就移到哪个状态：命中点采用预测落点（源卡此刻 display:none、飞行 holder 也不会
-// 阻挡列命中），同列不动 → 不触发 moveProject 的 API。
-function dispatchDrop({ x, y }: { x: number; y: number }, velocity: { x: number; y: number }) {
-  const point = projectDropPoint({ x, y }, velocity)
-  const el = document.elementFromPoint(point.x, point.y)
-  const col = el && el.closest && el.closest('[data-col-status]')
-  if (!col) return
-  const status = col.getAttribute('data-col-status')
-  if (status && status !== props.project.status) projectStore.moveProject(props.project.id, status)
+function dispatchDrop(
+  _cloneCenter: { x: number; y: number },
+  _cloneVelocity: { x: number; y: number },
+  _cloneSize: { w: number; h: number },
+  context?: PhysicsDropContext,
+) {
+  if (!context) return
+  // 状态落列不再依赖克隆命中位置：飞行克隆会滞后，落地中重抓时也不对应本次手势。
+  // DOM 这里只把当前看板列投影成横向区间，真正判定收在可测试的纯函数里。
+  const columns = Array.from(document.querySelectorAll<HTMLElement>('[data-col-status]')).map((column) => {
+    const rect = column.getBoundingClientRect()
+    return { status: column.getAttribute('data-col-status') ?? '', left: rect.left, right: rect.right }
+  }).filter((column) => column.status)
+  const status = resolveProjectDropStatus(columns, {
+    pointerX: context.pointer.x,
+    pointerVelocityX: context.pointerVelocity.x,
+    isLandingRegrab: context.isLandingRegrab,
+  })
+  // 落地中重抓的回调来自首次抓起的物理 holder；项目跨列后那个 Vue 实例的 props 是旧快照
+  // （看板为排序/文件数投影会创建项目副本），不能用 props.project.status 判断是否同列。
+  const currentStatus = projectStore.projects.find((project) => project.id === props.project.id)?.status
+  if (status && status !== currentStatus) projectStore.moveProject(props.project.id, status)
 }
 
 // pointer 驱动拖拽（替代原生 HTML5 drag）：先攒位移，越过阈值才真正开拖——否则当成点击开项目。
@@ -221,7 +223,12 @@ function dispatchDrop({ x, y }: { x: number; y: number }, velocity: { x: number;
 function onPointerDown(e: PointerEvent) {
   startThresholdDrag(e, {
     exclude: isCardControl,
-    onDragStart: (ev, card) => startPhysicsDrag(ev, card, { pointer: true, skipAbsorb: true, onDrop: dispatchDrop }),
+    // 落地飞行动画不再单独定制——跟画布卡片（Mind canvas 的 useCardDrag.ts）用同一套默认
+    // 缓出曲线，之前试过给项目卡单独做一版"甩出去带惯性"的落地动画（先后试了 Hermite 曲线、
+    // 弹簧模型），来回调了几轮手感始终不理想，弃用退回默认。
+    onDragStart: (ev, card) => startPhysicsDrag(ev, card, {
+      pointer: true, skipAbsorb: true, onDrop: dispatchDrop,
+    }),
     onClick: () => emit('click'),   // 没拖动 = 点击 → 开项目
   })
 }
