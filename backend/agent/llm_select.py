@@ -33,6 +33,18 @@ def is_minimax(ai) -> bool:
     return (getattr(ai, "provider", "") or "").lower() == "minimax"
 
 
+def supports_anthropic_active_cache(ai) -> bool:
+    """当前模型是否支持 Anthropic `cache_control` 主动缓存。
+
+    MiniMax-M3 只支持被动前缀缓存，不应发送 `cache_control`；官方主动缓存文档目前仅列
+    MiniMax-M2.x。其它既有 Anthropic 路径保持历史行为，MiMo 仍明确不支持该参数。
+    """
+    if is_minimax(ai):
+        model = (getattr(ai, "model", "") or "").lower()
+        return model.startswith("minimax-m2")
+    return not _is_mimo(ai)
+
+
 def supports_thinking_toggle(ai) -> bool:
     """该模型(OpenAI 通道)是否支持 `{"thinking":{"type":...}}` 思考开关：mimo 与 deepseek 都用同一参数。
     其它 openai 兼容厂商(qwen/openai)没这参数，传了可能报错，故只对这两家发。"""

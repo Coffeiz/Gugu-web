@@ -309,8 +309,9 @@ class LLMRunner:
         ai = ai if ai is not None else settings.ai
         tools = registry.anthropic_schemas(self.tool_names)
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
-        from agent.llm_select import anthropic_default_headers, _is_mimo
+        from agent.llm_select import anthropic_default_headers, supports_anthropic_active_cache, _is_mimo
         is_mimo = _is_mimo(ai)
+        supports_active_cache = supports_anthropic_active_cache(ai)
         client = AsyncAnthropic(
             api_key=ai.api_key or "dummy",
             base_url=ai.base_url,
@@ -332,18 +333,19 @@ class LLMRunner:
         # （记忆/分钟级时间/项目日历文件，每轮变）」，断点（CACHE_BREAK）在边界。缓存块只含稳定前缀 →
         # 命中读取便宜 ~90%；动态后缀不缓存，避免整块每分钟失效。两块顺序拼接与单段逐字一致。
         # Anthropic 顺序 tools→system→messages，故缓存块实含 tools+稳定前缀。
-        # 例外：mimo 的 anthropic 端点不支持 prompt caching，不发 cache_control（strip 掉标记即可）。
+        # MiniMax-M3 走被动前缀缓存，MiMo 不支持 Anthropic 主动缓存；两者都不能发送
+        # cache_control，仍保持 tools → system → messages 的稳定顺序以便被动缓存命中。
         from agent.context import builder as _builder
         if system_text:
             stable, dynamic = _builder.split_for_cache(system_text)
-            if dynamic and not is_mimo:
+            if dynamic and supports_active_cache:
                 system_param = [
                     {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
                     {"type": "text", "text": dynamic},
                 ]
             else:
                 _sys_blk = {"type": "text", "text": _builder.strip_cache_marker(system_text)}
-                if not is_mimo:
+                if supports_active_cache:
                     _sys_blk["cache_control"] = {"type": "ephemeral"}
                 system_param = [_sys_blk]
         else:
@@ -366,8 +368,8 @@ class LLMRunner:
             # 经 _stream_round 包一层瞬时错误退避重试（⑦）；流式途中仍协作检查取消。
             # ② 给发出去的 messages 打一个滚动缓存断点（最后一条 message 的最后一个块）：多轮工具循环里
             #    历史越滚越长，缓存住已发生的几轮、每轮只重算新增。用副本、不改原 messages（原列表要持久化，
-            #    绝不能混入 cache_control）。mimo 不支持 cache_control → 原样发。
-            _msgs = messages if is_mimo else _with_history_cache(messages)
+            #    绝不能混入 cache_control）。MiniMax-M3 / MiMo 不支持主动缓存 → 原样发。
+            _msgs = _with_history_cache(messages) if supports_active_cache else messages
             _kwargs = dict(
                 model=ai.model, system=system_param, messages=_msgs,
                 tools=tools, max_tokens=max_tokens, temperature=temperature, **thinking_param,
