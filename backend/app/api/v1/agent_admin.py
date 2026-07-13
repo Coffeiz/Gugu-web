@@ -519,7 +519,8 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="") ->
     返回 (supported, status, detail)：True=支持 / False=纯文本 / None=测不准。"""
     import httpx
     from types import SimpleNamespace
-    from agent.llm_select import use_anthropic_for, anthropic_default_headers, openai_default_headers
+    from agent import providers
+    from agent.llm_select import use_anthropic_for
     b64 = _probe_png_b64()
     q = "这张图是什么颜色？用一个词回答。"
     _ns = SimpleNamespace(provider=provider, base_url=base_url, api_key=api_key, api_format=api_format)
@@ -528,18 +529,13 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="") ->
     timeout = httpx.Timeout(connect=10.0, read=25.0, write=10.0, pool=5.0)
     try:
         if is_anthropic:
-            from anthropic import AsyncAnthropic
-            client = AsyncAnthropic(api_key=api_key or "dummy", base_url=base_url,
-                                    http_client=httpx.AsyncClient(timeout=timeout),
-                                    default_headers=anthropic_default_headers(_ns))
+            client = providers.build_anthropic_client(_ns, timeout)
             await client.messages.create(model=model, max_tokens=16, messages=[{"role": "user", "content": [
                 {"type": "text", "text": q},
                 {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}},
             ]}])
         else:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=api_key or "dummy", base_url=base_url, timeout=timeout,
-                                 default_headers=openai_default_headers(_ns))
+            client = providers.build_openai_client(_ns, timeout)
             await client.chat.completions.create(model=model, max_tokens=16, messages=[{"role": "user", "content": [
                 {"type": "text", "text": q},
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},

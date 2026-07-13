@@ -38,19 +38,13 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
         "只输出标题本身，不要任何解释。\n"
         f"用户：{user_msg[:150]}\n咕咕：{ai_reply[:300]}"
     )
+    from agent import providers
     from agent.llm_select import _is_mimo
     is_mimo = _is_mimo(settings.ai)
     try:
         if use_anthropic:
             import httpx
-            from anthropic import AsyncAnthropic
-            from agent.llm_select import anthropic_default_headers
-            client = AsyncAnthropic(
-                api_key=settings.ai.api_key or "dummy",
-                base_url=settings.ai.base_url,
-                http_client=httpx.AsyncClient(timeout=httpx.Timeout(10.0)),
-                default_headers=anthropic_default_headers(settings.ai),
-            )
+            client = providers.build_anthropic_client(settings.ai, httpx.Timeout(10.0))
             # mimo 默认开思考，30 token 会被思考块吃光、content[0] 是 thinking 块取不到 .text → 标题空。
             # 显式关思考（与正文同口径），并从 content 里挑真正的 text 块，别按下标取。
             extra = {"thinking": {"type": "disabled"}} if is_mimo else {}
@@ -64,14 +58,7 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
             return (text.strip()[:30]) or user_msg[:20]
         else:
             import httpx
-            from openai import AsyncOpenAI
-            from agent.llm_select import openai_default_headers
-            client = AsyncOpenAI(
-                api_key=settings.ai.api_key or "dummy",
-                base_url=settings.ai.base_url,
-                timeout=httpx.Timeout(10.0),
-                default_headers=openai_default_headers(settings.ai),
-            )
+            client = providers.build_openai_client(settings.ai, httpx.Timeout(10.0))
             extra = {"extra_body": {"thinking": {"type": "disabled"}}} if is_mimo else {}
             resp = await client.chat.completions.create(
                 model=settings.ai.model,
@@ -92,17 +79,13 @@ async def _generate_summary(convo: str, settings, use_anthropic: bool) -> str:
         "供日后检索和接着聊时一眼认出。只输出那句话，不要引号、不要解释。\n\n"
         f"{convo[:1500]}"
     )
+    from agent import providers
     from agent.llm_select import _is_mimo
     is_mimo = _is_mimo(settings.ai)
     try:
         if use_anthropic:
             import httpx
-            from anthropic import AsyncAnthropic
-            from agent.llm_select import anthropic_default_headers
-            client = AsyncAnthropic(
-                api_key=settings.ai.api_key or "dummy", base_url=settings.ai.base_url,
-                http_client=httpx.AsyncClient(timeout=httpx.Timeout(10.0)),
-                default_headers=anthropic_default_headers(settings.ai))
+            client = providers.build_anthropic_client(settings.ai, httpx.Timeout(10.0))
             extra = {"thinking": {"type": "disabled"}} if is_mimo else {}
             resp = await client.messages.create(
                 model=settings.ai.model, max_tokens=80,
@@ -111,11 +94,7 @@ async def _generate_summary(convo: str, settings, use_anthropic: bool) -> str:
             return text.strip().strip('"「」')[:120]
         else:
             import httpx
-            from openai import AsyncOpenAI
-            from agent.llm_select import openai_default_headers
-            client = AsyncOpenAI(
-                api_key=settings.ai.api_key or "dummy", base_url=settings.ai.base_url,
-                timeout=httpx.Timeout(10.0), default_headers=openai_default_headers(settings.ai))
+            client = providers.build_openai_client(settings.ai, httpx.Timeout(10.0))
             extra = {"extra_body": {"thinking": {"type": "disabled"}}} if is_mimo else {}
             resp = await client.chat.completions.create(
                 model=settings.ai.model, max_tokens=80,

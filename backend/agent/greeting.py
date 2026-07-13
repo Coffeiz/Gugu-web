@@ -153,28 +153,21 @@ async def generate(db: AsyncSession, user_id, settings) -> str:
     """生成一句问候；失败 / 空 → ''（前端兜底）。"""
     try:
         prompt = _PROMPT.format(ctx=await _recent_context(db, user_id))
+        from agent import providers
         from agent.llm_select import use_anthropic_for, _is_mimo
         ai = settings.ai
         is_mimo = _is_mimo(ai)
         import httpx
+        _timeout = httpx.Timeout(12.0)
         if use_anthropic_for(ai):
-            from anthropic import AsyncAnthropic
-            from agent.llm_select import anthropic_default_headers
-            client = AsyncAnthropic(
-                api_key=ai.api_key or "dummy", base_url=ai.base_url,
-                http_client=httpx.AsyncClient(timeout=httpx.Timeout(12.0)),
-                default_headers=anthropic_default_headers(ai))
+            client = providers.build_anthropic_client(ai, _timeout)
             extra = {"thinking": {"type": "disabled"}} if is_mimo else {}
             resp = await client.messages.create(
                 model=ai.model, max_tokens=180,
                 messages=[{"role": "user", "content": prompt}], **extra)
             text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
         else:
-            from openai import AsyncOpenAI
-            from agent.llm_select import openai_default_headers
-            client = AsyncOpenAI(
-                api_key=ai.api_key or "dummy", base_url=ai.base_url,
-                timeout=httpx.Timeout(12.0), default_headers=openai_default_headers(ai))
+            client = providers.build_openai_client(ai, _timeout)
             extra = {"extra_body": {"thinking": {"type": "disabled"}}} if is_mimo else {}
             resp = await client.chat.completions.create(
                 model=ai.model, max_tokens=180,

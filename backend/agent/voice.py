@@ -102,18 +102,15 @@ async def transcribe(media: list, settings) -> str | None:
     if not parts:
         logger.info("转写跳过：media 里没有 audio 块（types=%s）", [m.get("type") for m in (media or [])])
         return ""   # 没有可转写的音频（如纯视频）→ 调用方兜底为「没听清」
-    from agent.llm_select import openai_default_headers
+    from agent import providers
     import httpx
     import openai as _openai
-    from openai import AsyncOpenAI
     # 窄白名单：只有连接级/超时/5xx/429 算瞬时，安全重试（读操作，天然幂等）；
     # 鉴权失败/参数错/模型不存在等 4xx（openai.APIStatusError 但非 5xx/429）不在白名单内，
     # 会落进下面的 except Exception 分支直接回空串——不重试。
     transient = (_openai.APITimeoutError, _openai.APIConnectionError,
                  _openai.InternalServerError, _openai.RateLimitError)
-    client = AsyncOpenAI(
-        api_key=getattr(vm, "api_key", "") or "dummy", base_url=getattr(vm, "base_url", ""),
-        timeout=httpx.Timeout(60.0), default_headers=openai_default_headers(vm))
+    client = providers.build_openai_client(vm, httpx.Timeout(60.0))
     for i in range(len(_ASR_RETRY_BACKOFF) + 1):
         try:
             # ASR 模型（mimo-v2.5-asr / qwen3-asr-flash）干净调用即可——**不传 thinking**（那是聊天

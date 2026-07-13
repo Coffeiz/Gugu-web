@@ -40,15 +40,10 @@ async def complete_json(sys: str, user: str, settings, max_tokens: int = 1500, t
 
 async def _anthropic(sys: str, user: str, settings, max_tokens: int, temperature: float = 0.3) -> str:
     import httpx
-    from anthropic import AsyncAnthropic
+    from agent import providers
 
-    from agent.llm_select import anthropic_default_headers
-    client = AsyncAnthropic(
-        api_key=settings.ai.api_key or "dummy",
-        base_url=settings.ai.base_url,
-        http_client=httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0)),
-        default_headers=anthropic_default_headers(settings.ai),
-    )
+    client = providers.build_anthropic_client(
+        settings.ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0))
     resp = await client.messages.create(
         model=settings.ai.model,
         system=sys,
@@ -61,15 +56,11 @@ async def _anthropic(sys: str, user: str, settings, max_tokens: int, temperature
 
 async def _openai(sys: str, user: str, settings, max_tokens: int, temperature: float = 0.3, json_mode: bool = False) -> str:
     import httpx
-    from openai import AsyncOpenAI
-    from agent.llm_select import openai_default_headers, supports_thinking_toggle
+    from agent import providers
+    from agent.llm_select import supports_thinking_toggle
 
-    client = AsyncOpenAI(
-        api_key=settings.ai.api_key or "dummy",
-        base_url=settings.ai.base_url,
-        timeout=httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0),
-        default_headers=openai_default_headers(settings.ai),
-    )
+    client = providers.build_openai_client(
+        settings.ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0))
     kwargs = dict(
         model=settings.ai.model,
         messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],

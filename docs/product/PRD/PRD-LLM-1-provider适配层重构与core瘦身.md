@@ -1,6 +1,6 @@
 # LLM Provider 适配层重构与 core 瘦身 PRD
 
-> 状态：Phase 1 ✅ / Phase 2 ✅ 已完成（Phase 3 待评估，明确延后）
+> 状态：Phase 1 ✅ / Phase 2 ✅ / Phase 3 ✅ 全部已完成
 > 创建：2026-07-14
 > 最近更新：2026-07-14
 > 关联模块：`backend/agent/core.py`、`backend/agent/loop_drivers.py`、`backend/agent/llm_select.py`、`backend/agent/runner.py`、`backend/agent/sanitize.py`、`backend/agent/adapters/web.py`、`backend/agent/greeting.py`、`backend/agent/voice.py`、`backend/agent/memory/_llm.py`、`app/core/chat_attach.py`、`app/api/v1/agent_admin.py`
@@ -17,7 +17,7 @@
 | 现状规模摸底 | ✅ 已完成 | provider 专属判断散落在 8 个文件；`agent/core.py`（752 行）里 `_run_anthropic`/`_run_openai` 两条主循环重复约 90% 工具调用/核实轮控制流，另有约 200 行跟 provider 无关的叙事/拒绝/意图守卫正则混在同一文件。详见第 4 节。 |
 | Phase 1：Provider 适配层 + core 瘦身 | ✅ 已完成 | 新增 `agent/providers.py`（`ProviderAdapter`+`adapter_for`）、`agent/core_guards.py`（叙事/决策/意图守卫搬迁）；`llm_select.py` 8 个函数改薄包装，导入路径零改动；`core.py` 从 752 行降到 667 行（比预估的 550 行以内保守——搬走的守卫代码比预期紧凑，`_pick_label`/`_user_text`/循环常量按计划留在原地未搬，瘦身幅度仍有效但没到最初估的量级）。`_stream_round` 接入 `adapter.transient_exceptions`，MiniMax 新增 `AttributeError` 容错。新增 13 条测试（`test_providers.py`+`test_stream_round_retry.py`）+ 既有回归测试 34 条 + 全量 285 条**全部通过**。 |
 | Phase 2：主循环合并 | ✅ 已完成 | 新增 `agent/loop_drivers.py`：`RoundResult`/`NormalizedToolCall` 归一化数据结构 + `AnthropicDriver`/`OpenAIDriver` 两个驱动，各自封装"怎么跟这个格式打交道"（流式事件形状/工具参数解析/历史消息格式/缓存记账）。`agent/core.py` 的 `_run_anthropic`/`_run_openai` 改成薄包装，转发给新增的共享 `LLMRunner._run_loop`（工具调用/核实阶段状态机/三条防幻觉守卫/空回复兜底/轮次上限只写一份），外部方法名/签名零改动。`core.py` 从 667 行降到 378 行；`loop_drivers.py` 392 行。**顺带修了一处真实不一致**：合并前 `_run_openai` 整段没有 try/except 包裹流式调用（SDK 异常会直接炸穿），`_run_anthropic` 一直有 RetryableError/通用异常两层兜底——合并后两边自然共用同一层，OpenAI 路从"异常直接炸穿"变成"优雅降级成'咕咕开小差了'"，是合并的自然结果，不是意外引入。特征测试（`test_core_loop_characterization.py` 11 条）在两个驱动下全部原样通过，全量 296 条测试零回归。 |
-| Phase 3：客户端构造样板迁移（6 文件） | 🔲 待评估（明确延后） | 见第 5 节非目标，不单独排期，顺手迁移。 |
+| Phase 3：客户端构造样板迁移 | ✅ 已完成 | `agent/providers.py` 新增 `build_anthropic_client(ai, timeout)`/`build_openai_client(ai, timeout)`——只收拢"怎么拼这个 SDK 客户端对象"（`api_key`/`base_url`/`http_client-or-timeout`/`default_headers`），**不统一各调用点的 timeout 取值**（那是各场景自己权衡过的：admin 探测用短超时 25s、语音转写用长超时 60s…），`timeout` 仍是必填参数。`ai` 只要求 duck type（`getattr` 兜底），真实 `settings.ai`、语音模型配置对象、admin 探测用的临时 `SimpleNamespace` 都能传。迁移了 6 处实际有客户端构造的调用点：`agent/loop_drivers.py`（两个驱动的 `prepare()`）、`agent/greeting.py`、`agent/voice.py`、`agent/memory/_llm.py`、`agent/adapters/web.py`（`_generate_title`/`_generate_summary` 各一对 anthropic/openai，共 4 处）、`app/api/v1/agent_admin.py`（`_do_vision_probe`）。`app/core/chat_attach.py` 探查后确认不构造任何客户端（只做 `use_anthropic_for`/`_is_mimo` 的布尔判断），不在此次迁移范围内。全量 332 条测试零回归。 |
 
 ---
 

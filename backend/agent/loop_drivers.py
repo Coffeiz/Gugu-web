@@ -117,10 +117,9 @@ class AnthropicDriver:
 
     def prepare(self, tool_names, ai, messages, system_text):
         import httpx
-        from anthropic import AsyncAnthropic
         from agent import providers
         from agent.context import builder as _builder
-        from agent.llm_select import anthropic_default_headers, supports_anthropic_active_cache, _is_mimo
+        from agent.llm_select import supports_anthropic_active_cache, _is_mimo
         from agent.tools import registry
 
         tools = registry.anthropic_schemas(tool_names)
@@ -128,12 +127,7 @@ class AnthropicDriver:
         is_mimo = _is_mimo(ai)
         supports_active_cache = supports_anthropic_active_cache(ai)
         adapter = providers.adapter_for(ai)
-        client = AsyncAnthropic(
-            api_key=ai.api_key or "dummy",
-            base_url=ai.base_url,
-            http_client=httpx.AsyncClient(timeout=_timeout),
-            default_headers=anthropic_default_headers(ai),
-        )
+        client = providers.build_anthropic_client(ai, _timeout)
 
         thinking_val = getattr(ai, "thinking", "disabled")
         if is_mimo:
@@ -250,9 +244,9 @@ class OpenAIDriver:
 
     def prepare(self, tool_names, ai, messages, system_text):
         import httpx
-        from openai import AsyncOpenAI
+        from agent import providers
         from agent.context import builder as _builder
-        from agent.llm_select import openai_default_headers, supports_thinking_toggle, _is_deepseek
+        from agent.llm_select import supports_thinking_toggle, _is_deepseek
         from agent.tools import registry
 
         # system 里可能带 builder 的缓存断点标记（CACHE_BREAK）——openai 通道不支持 anthropic 式
@@ -265,12 +259,7 @@ class OpenAIDriver:
 
         tools = registry.openai_schemas(tool_names)
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
-        client = AsyncOpenAI(
-            api_key=ai.api_key or "dummy",
-            base_url=ai.base_url,
-            timeout=_timeout,
-            default_headers=openai_default_headers(ai),
-        )
+        client = providers.build_openai_client(ai, _timeout)
 
         # 思考开关：mimo 与 deepseek 都用同一 OpenAI 参数 `{"thinking":{"type":...}}`（见各自官方文档）。
         # 思考关时显式传 disabled——mimo 从源头避免「正文全进 reasoning_content、content 空」的空气泡，
