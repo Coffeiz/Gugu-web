@@ -66,17 +66,20 @@
           <PhStack :size="14" />
           配额管理
         </div>
+
+        <div class="sidebar-rule" style="margin:14px 4px" />
+        <div class="nav-group-label">运维</div>
         <div class="nav-item" :class="{ active: isActive('/services') }" role="link" tabindex="0" @click="go('/services')">
           <PhPulse :size="14" />
           服务状态
         </div>
-        <div class="nav-item" :class="{ active: isActive('/folder-doctor') }" role="link" tabindex="0" @click="go('/folder-doctor')">
-          <PhFolderSimpleDashed :size="14" />
-          目录对账
-        </div>
         <div class="nav-item" :class="{ active: isActive('/ops') }" role="link" tabindex="0" @click="go('/ops')">
           <PhGauge :size="14" />
           运维监控
+        </div>
+        <div class="nav-item" :class="{ active: isActive('/storage-audit') }" role="link" tabindex="0" @click="go('/storage-audit')">
+          <PhFolderSimpleDashed :size="14" />
+          存储对账
         </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
@@ -215,6 +218,9 @@ function handleLogout() {
 .sidebar-nav::-webkit-scrollbar { width: 4px; }
 .sidebar-nav::-webkit-scrollbar-track { background: transparent; }
 .sidebar-nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 99px; }
+/* 出现滚动条时，flex column 会把 1px 高的分割线（及其它子项）压缩至 0 使其消失——
+   固定不收缩，让溢出交给滚动而非挤压内容。 */
+.sidebar-nav > * { flex-shrink: 0; }
 .nav-group-label {
   font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
   color: rgba(255,255,255,0.2); text-transform: uppercase;
