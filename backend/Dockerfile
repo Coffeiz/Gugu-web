@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 ## 咕咕后端镜像 —— 本地/本机开发用的快速启动方式，不是生产部署方式。
 ## 生产环境用的是裸机 systemd 三服务（gugu-backend / gugu-worker / gugu-supervisor，
 ## 见 start.sh install），原因是 IM 网关（飞书/QQ/微信）常驻长连接 + 语音/文档转码要调
@@ -5,18 +6,40 @@
 ## web（uvicorn）和 worker（IM 队列消费）两个进程，够本地跑通全栈、验证功能。
 FROM python:3.12-slim
 
-# poppler-utils → pdftotext（文件预览正文提取）；ffmpeg → IM 语音消息转码；
-# curl → HEALTHCHECK 用。libreoffice（doc/docx/ppt 转 PDF 预览）体积很大（500MB+），
-# 默认不装——需要这项功能就在这个镜像基础上自己叠一层 `apt-get install libreoffice`。
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        poppler-utils ffmpeg curl \
-    && rm -rf /var/lib/apt/lists/*
+# poppler-utils → pdftotext（文件预览正文提取）；ffmpeg → IM 语音消息转码；curl → HEALTHCHECK
+# 用；build-essential → pilk（SILK 语音编解码）在 PyPI 只发布了 Windows 预编译 wheel，Linux 下
+# 装它一定要从源码编译内嵌的 C 语言 SILK 编解码库，slim 镜像默认没有编译工具链
+# （2026-07-14 排查：先只装 gcc 报 `command 'gcc' failed: No such file or directory`；
+# 补上 gcc 后又报 `fatal error: stdint.h: No such file or directory`——gcc 本身有了，但
+# libc6-dev 这个提供标准库头文件的包没装，gcc 找不到 stdint.h 之类基础头。改用
+# build-essential 一次性带全 gcc/g++/make/libc6-dev/dpkg-dev，避免这类工具链缺件继续
+# 一个一个探）。libreoffice（doc/docx/ppt 转 PDF 预览）体积很大（500MB+），默认不装——
+# 需要这项功能就在这个镜像基础上自己叠一层 `apt-get install libreoffice`。
+# --mount=type=cache 让 apt 下载缓存跨构建持久化（不进最终镜像层，只是构建时的缓存卷）——
+# ffmpeg 在 Debian trixie 下会拉一整条音视频编解码库依赖链（100+ 包），每次 Dockerfile 这行
+# 之前有改动都要重新全量下载，缓存后只需下一次。
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        poppler-utils ffmpeg curl build-essential
 
 WORKDIR /app
 
 # 依赖单独一层：requirements.txt 没变时，改代码不用重装依赖，重建镜像快得多。
+# pip 缓存改用 BuildKit 缓存挂载（而非 --no-cache-dir）：--no-cache-dir 会让 pip 每次都无视
+# 本地缓存、从 PyPI 重新下载+编译全部依赖，缓存挂载把已下载/编译好的 wheel 持久化在构建缓存卷里
+# （不进最终镜像层，体积不受影响），requirements.txt 没变时下次构建这层直接跳过、变了也只需
+# 下载/编译真正变化的包。
+#
+# 真正的大头是网络：这台机器直连 PyPI 官方源（files.pythonhosted.org）实测只有 ~10KB/s，
+# 装 langchain 这种依赖树巨大的包能拖到 25+ 分钟甚至读超时失败（2026-07-14 排查：worker 服务
+# `pip install` 单层 1544s；重现时直连卡在下载 sqlalchemy 途中 ReadTimeoutError）。换清华 TUNA
+# 镜像后同一个包 <1s 跑满带宽——这才是「每次都巨慢」的真正瓶颈，缓存挂载只优化重复构建，
+# 解决不了首次冷装/装新包这个大头。镜像地址写死不做成 build-arg：本项目部署环境固定，没有
+# 「有的机器在国内有的不在」的需求，加一层可配置只会增加没人用的复杂度。
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 COPY . .
 RUN mkdir -p uploads logs
