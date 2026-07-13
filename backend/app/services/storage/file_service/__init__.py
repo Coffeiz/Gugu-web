@@ -14,6 +14,7 @@ from app.services.storage import get_storage
 from app.services.storage.folder_tree import SqlAlchemyFolderTree
 from app.services.storage.key_strategy import PathMirrorStrategy
 from app.services.storage.file_service.folders import FolderOps
+from app.services.storage.file_service.files import FileOps
 
 
 class FileService:
@@ -23,6 +24,7 @@ class FileService:
         self.storage = storage or get_storage()
         self.key_strategy = key_strategy or PathMirrorStrategy()
         self._folders = FolderOps(self.db, self.folder_tree, self.storage, self.key_strategy)
+        self._files = FileOps(self.db, self.folder_tree, self.storage, self.key_strategy)
 
     # ── 文件夹（薄门面 → _folders）─────────────────────────────────────────────
     async def create_folder(self, user_id, *, name, parent_id, project_id):
@@ -33,3 +35,13 @@ class FileService:
 
     async def move_folder(self, user_id, folder_id, new_parent_id):
         return await self._folders.move(user_id, folder_id, new_parent_id)
+
+    # ── 文件写操作（薄门面 → _files）───────────────────────────────────────────
+    async def create_file(self, user_id, **kw):
+        return await self._files.create_file(user_id, **kw)
+
+    async def update_file(self, user_id, fid, **kw):
+        return await self._files.update_file(user_id, fid, **kw)
+
+    async def copy_file(self, user_id, fid, **kw):
+        return await self._files.copy_file(user_id, fid, **kw)

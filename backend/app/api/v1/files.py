@@ -20,6 +20,8 @@ from app.core import events
 from app.services.storage import get_storage
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.keys import _build_key, _resolve_conflict
+from app.services.storage.file_service import FileService
+from app.services.storage.file_service.files import _fmt_size
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -101,12 +103,6 @@ def _delete_thumb_cache(fid: int) -> None:
                     p.unlink()
             except Exception:
                 pass
-
-
-def _fmt_size(size_bytes: int) -> str:
-    if size_bytes >= 1_000_000:
-        return f"{size_bytes / 1_000_000:.1f} MB"
-    return f"{size_bytes / 1024:.0f} KB"
 
 
 async def _find_conflict(db: AsyncSession, user_id, space: str, project_id: Optional[int],
@@ -381,41 +377,17 @@ async def upload_file(
     ext = parts[1].upper()[:10] if len(parts) > 1 else "FILE"
     mime_type = file.content_type
 
-    project_name = ""
-    project_color = None
-    project_year = ""
-    project_month = ""
-    folder_name = folder_path = ""
-    if space == "project" and project_id:
-        p = await get_owned(db, Project, project_id, current_user.id)
-        if not p:
-            raise HTTPException(400, "项目不存在")
-        project_name = p.name
-        project_color = _color(p.color)
-        date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
-        project_year, project_month = date_str[:4], date_str[5:7]
-    elif space == "project":
-        raise HTTPException(400, "project 空间需要提供 project_id")
-
-    if folder_id is not None:
-        resolved = await resolve_folder_path(db, current_user.id, folder_id, project_id)
-        if not resolved:
-            raise HTTPException(400, "文件夹不存在，或不属于指定的项目/个人空间")
-        fo, folder_path = resolved
-        folder_name = fo.name
-
     data = await file.read()
     size_bytes = len(data)
 
     # 单文件硬上限：整个请求体一次性进内存，配额可能为 None（无限），需独立的字节闸防内存打爆。
+    # 属请求体传输约束（413），留在端点；语义校验（项目/文件夹/配额/覆盖）在 FileService。
     if size_bytes > _MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=f"文件过大（单文件上限 {_MAX_UPLOAD_BYTES // 1048576}MB）")
 
-    storage = get_storage()
-    _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
-
+    _is_img = bool(mime_type) and mime_type.lower() in _IMAGE_MIMES and mime_type.lower() != "image/svg+xml"
     img_width, img_height = None, None
-    if mime_type and mime_type.lower() in _IMAGE_MIMES and mime_type.lower() != "image/svg+xml":
+    if _is_img:
         try:
             from PIL import Image as _PILImage
             import io as _io
@@ -425,88 +397,31 @@ async def upload_file(
         except Exception:
             pass
 
-    # ── 覆盖已有同名文件：原地替换内容，保留同一个 file id（聊天里 gugu://open-file 这类
-    # 链接、历史对话里提过的文件引用不会因为覆盖而失效）；旧缩略图缓存必须清掉，否则显示的
-    # 还是覆盖前的图。配额按「新旧文件大小差值」算，不能整份新文件都计成新增。──
-    if on_conflict == "overwrite" and overwrite_file_id is not None:
-        existing = await get_owned(db, File, overwrite_file_id, current_user.id)
-        if not existing:
-            raise HTTPException(400, "要覆盖的文件不存在")
-        if _storage_limit is not None:
-            used_res = await db.execute(select(func.sum(File.size_bytes)).where(File.user_id == current_user.id))
-            used = used_res.scalar() or 0
-            if used - existing.size_bytes + size_bytes > _storage_limit:
-                raise HTTPException(status_code=400, detail="存储空间已满，无法上传")
+    _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
 
-        await storage.put(existing.storage_key, data, mime_type)
-        _delete_thumb_cache(existing.id)
-
-        existing.size = _fmt_size(size_bytes)
-        existing.size_bytes = size_bytes
-        existing.mime_type = mime_type
-        existing.img_width = img_width
-        existing.img_height = img_height
-        await db.commit()
-        await db.refresh(existing)
-
-        resp = _to_resp(existing, project_name or None, project_color, folder_name or None)
-        if mime_type and mime_type.lower() in _IMAGE_MIMES and mime_type.lower() != "image/svg+xml":
-            background_tasks.add_task(_pregen_thumb, existing.storage_key, existing.id)
-        return resp
-
-    # ── 常规上传（保留两者：同名自动加后缀）──
-    base_key = _build_key(
-        uid=current_user.id,
-        space=space,
-        display_name=display_name,
-        ext=ext,
-        project_name=project_name,
-        project_id=project_id or 0,
-        project_year=project_year,
-        project_month=project_month,
-        folder_path=folder_path,
+    # 语义核心（key/配额/覆盖/落库）交 FileService；端点保留传输面：图片尺寸解出、缩略图调度、
+    # 缓存清理、响应 shape、事务与事件。覆盖不发 files 事件（复刻原行为）。
+    result = await FileService(db).create_file(
+        current_user.id, space=space, project_id=project_id, folder_id=folder_id,
+        stage_name=stage_name, mind_map_id=mind_map_id, display_name=display_name, ext=ext,
+        mime_type=mime_type, data=data, img_width=img_width, img_height=img_height,
+        on_conflict=on_conflict, overwrite_file_id=overwrite_file_id,
+        storage_limit_bytes=_storage_limit,
     )
-    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
+    f = result.file
+    if result.was_overwrite:
+        _delete_thumb_cache(f.id)   # 旧缩略图必须清，否则还显示覆盖前的图
 
-    # 检查存储配额（优先个人配额，fallback 全局默认）
-    if _storage_limit is not None:
-        used_res = await db.execute(
-            select(func.sum(File.size_bytes)).where(File.user_id == current_user.id)
-        )
-        used = used_res.scalar() or 0
-        if used + size_bytes > _storage_limit:
-            raise HTTPException(status_code=400, detail="存储空间已满，无法上传")
-
-    await storage.put(final_key, data, mime_type)
-
-    db_file = File(
-        user_id=current_user.id,
-        display_name=final_name,
-        ext=ext,
-        space=space,
-        project_id=project_id if space == "project" else None,
-        folder_id=folder_id,
-        stage_name=stage_name,
-        mind_map_id=mind_map_id if space == "mind" else None,
-        storage_key=final_key,
-        size=_fmt_size(size_bytes),
-        size_bytes=size_bytes,
-        mime_type=mime_type,
-        img_width=img_width,
-        img_height=img_height,
-    )
-    db.add(db_file)
     await db.commit()
-    await db.refresh(db_file)
-    await events.publish(current_user.id, "files", origin=origin)
+    await db.refresh(f)
+    if not result.was_overwrite:
+        await events.publish(current_user.id, "files", origin=origin)
 
-    resp = _to_resp(db_file, project_name or None, project_color, folder_name or None)
-
-    # 图片文件：后台预生成缩略图缓存
-    if mime_type and mime_type.lower() in _IMAGE_MIMES \
-            and mime_type.lower() != "image/svg+xml":
-        background_tasks.add_task(_pregen_thumb, final_key, db_file.id)
-
+    project_name = result.project.name if result.project else None
+    project_color = _color(result.project.color) if result.project else None
+    resp = _to_resp(f, project_name, project_color, result.folder_name)
+    if _is_img:
+        background_tasks.add_task(_pregen_thumb, f.storage_key, f.id)
     return resp
 
 
@@ -716,69 +631,22 @@ async def update_file(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await get_owned(db, File, fid, current_user.id)
-    if not f:
-        raise HTTPException(404, "文件不存在")
-
-    new_display = body.display_name if body.display_name is not None else f.display_name
-    new_stage   = body.stage_name   if body.stage_name   is not None else f.stage_name
-    # folder_id/project_id 显式出现在请求体时（含 null）才更新，否则保持原值——纯改名等局部
-    # patch 不会带这两个字段，不能被当成「移到个人空间」误处理。project_id 显式传了才切空间，
-    # 不从源文件继承（同 copy_file 的教训：继承会导致「项目文件剪切到个人文件库」跨空间移动
-    # 静默失败，文件还留在原项目里）。
-    new_fid = body.folder_id  if 'folder_id'  in body.model_fields_set else f.folder_id
-    new_pid = body.project_id if 'project_id' in body.model_fields_set else f.project_id
-    new_space = "project" if new_pid else "personal"
-
-    project_name = ""
-    project_color = None
-    project_year = ""
-    project_month = ""
-    folder_name = folder_path = ""
-    if new_space == "project" and new_pid:
-        p = await get_owned(db, Project, new_pid, current_user.id)
-        if not p:
-            raise HTTPException(400, "目标项目不存在")
-        project_name = p.name
-        project_color = _color(p.color)
-        date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
-        project_year, project_month = date_str[:4], date_str[5:7]
-    if new_fid:
-        resolved = await resolve_folder_path(db, current_user.id, new_fid, new_pid)
-        if not resolved:
-            raise HTTPException(400, "目标文件夹不存在，或不属于目标项目/个人空间")
-        fo, folder_path = resolved
-        folder_name = fo.name
-
-    new_key = _build_key(
-        uid=current_user.id,
-        space=new_space,
-        display_name=new_display,
-        ext=f.ext,
-        project_name=project_name,
-        project_id=new_pid or 0,
-        project_year=project_year,
-        project_month=project_month,
-        folder_path=folder_path,
+    # folder_id/project_id 只在显式出现（含 null）时才更新——纯改名 patch 不带这两字段，
+    # 不能被当成「移到个人空间」。key 重算/物理搬迁/落库交 FileService。
+    result = await FileService(db).update_file(
+        current_user.id, fid,
+        display_name=body.display_name, stage_name=body.stage_name,
+        folder_id=body.folder_id, project_id=body.project_id,
+        folder_set='folder_id' in body.model_fields_set,
+        project_set='project_id' in body.model_fields_set,
     )
-
-    if new_key != f.storage_key:
-        storage = get_storage()
-        new_key, new_display = await _resolve_conflict(storage, new_key, new_display, f.ext)
-        await storage.rename_file(f.storage_key, new_key)
-        f.storage_key = new_key
-
-    f.display_name = new_display
-    f.stage_name   = new_stage
-    f.folder_id    = new_fid
-    f.project_id   = new_pid
-    f.space        = new_space
-    f.updated_at   = now_utc()
     await db.commit()
-    await db.refresh(f)
+    await db.refresh(result.file)
     await events.publish(current_user.id, "files", origin=origin)
 
-    return _to_resp(f, project_name or None, project_color, folder_name or None)
+    project_name = result.project.name if result.project else None
+    project_color = _color(result.project.color) if result.project else None
+    return _to_resp(result.file, project_name, project_color, result.folder_name)
 
 
 class _FileContentBody(_BaseModel):
@@ -823,56 +691,18 @@ async def copy_file(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await get_owned(db, File, fid, current_user.id)
-    if not f or f.deleted_at:
-        raise HTTPException(404, "文件不存在")
-
     # 目标空间由调用方明确指定的 project_id 决定，不从源文件继承——否则「项目文件复制到个人
     # 文件库」这类跨空间粘贴会静默失败，复制出的文件还留在原项目里（两处前端调用都会显式带上
-    # 目标 project_id，个人空间传 null）
-    new_folder_id  = body.folder_id
-    new_project_id = body.project_id
-    new_space      = "project" if new_project_id else "personal"
-
-    project_name = ""; project_color = None; project_year = ""; project_month = ""
-    if new_space == "project" and new_project_id:
-        p = await get_owned(db, Project, new_project_id, current_user.id)
-        if not p:
-            raise HTTPException(400, "目标项目不存在")
-        project_name  = p.name; project_color = _color(p.color)
-        date_str      = p.start_date or p.created_at.strftime("%Y-%m-%d")
-        project_year, project_month = date_str[:4], date_str[5:7]
-
-    folder_name = folder_path = ""
-    if new_folder_id:
-        resolved = await resolve_folder_path(db, current_user.id, new_folder_id, new_project_id)
-        if not resolved:
-            raise HTTPException(400, "目标文件夹不存在，或不属于目标项目/个人空间")
-        fo, folder_path = resolved
-        folder_name = fo.name
-
-    base_key = _build_key(
-        uid=current_user.id, space=new_space, display_name=f.display_name,
-        ext=f.ext, project_name=project_name, project_id=new_project_id or 0,
-        project_year=project_year, project_month=project_month, folder_path=folder_path,
-    )
-    storage = get_storage()
-    new_key, new_display = await _resolve_conflict(storage, base_key, f.display_name, f.ext)
-
-    data = await storage.get(f.storage_key)
-    await storage.put(new_key, data, f.mime_type)
-
-    new_file = File(
-        user_id=current_user.id, display_name=new_display, ext=f.ext,
-        storage_key=new_key, size=f.size, mime_type=f.mime_type, space=new_space,
-        project_id=new_project_id, folder_id=new_folder_id,
-        stage_name=f.stage_name,
-    )
-    db.add(new_file)
+    # 目标 project_id，个人空间传 null）。物理拷贝 + key + 落库交 FileService。
+    result = await FileService(db).copy_file(
+        current_user.id, fid, folder_id=body.folder_id, project_id=body.project_id)
     await db.commit()
-    await db.refresh(new_file)
+    await db.refresh(result.file)
     await events.publish(current_user.id, "files", origin=origin)
-    return _to_resp(new_file, project_name or None, project_color, folder_name or None)
+
+    project_name = result.project.name if result.project else None
+    project_color = _color(result.project.color) if result.project else None
+    return _to_resp(result.file, project_name, project_color, result.folder_name)
 
 
 # ── DELETE /files/{fid} （软删除→回收站）────────────────────────────────────
