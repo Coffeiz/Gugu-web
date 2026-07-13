@@ -1,12 +1,21 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
 
 _log = logging.getLogger("app.services.storage")
+
+
+@dataclass
+class StorageObjectInfo:
+    """对象元信息（P1.1；对账/迁移校验用）。"""
+    size: int
+    mtime: float | None = None      # epoch 秒；对象存储可能无 → None
+    checksum: str | None = None     # etag/md5，Local 暂不算
 
 # P2-b §4-A 标杆模板：OSS 瞬时故障退避重试。只用于**幂等**调用点（读，或同 key 覆盖写/
 # 删除这种「重复执行结果不变」的写）——put_object 同 key 覆盖是幂等的（后写覆盖前写，
@@ -102,6 +111,38 @@ class StorageBackend(ABC):
         前缀必须非空（如 f"{user_id}/"）——空/根前缀直接抛 ValueError，防止把整个存储清了。
         """
 
+    # ── 复制 / 元信息（P1.1；迁移与对账基元，有默认实现）─────────────────────────
+    async def copy(self, src_key: str, dst_key: str) -> None:
+        """复制单个对象。默认 get+put；有原生 copy 的后端（OSS）可覆盖优化。"""
+        data = await self.get(src_key)
+        await self.put(dst_key, data)
+
+    async def stat(self, key: str) -> "StorageObjectInfo | None":
+        """对象元信息（size/mtime/checksum）；不存在→None。默认 exists+get（低效，迁移校验用；
+        Local/OSS 各自覆盖成高效实现）。"""
+        if not await self.exists(key):
+            return None
+        return StorageObjectInfo(size=len(await self.get(key)))
+
+    # ── 文件夹生命周期钩子（P1.1）──────────────────────────────────────────────
+    # Local 真 mkdir/mv/rm/清祖先；**对象存储无「空目录」概念、目录由 key 隐含 → 默认 no-op**，
+    # 因此 FileService 直接调这些钩子、不写 `if isinstance(storage, Local)`（物理动作由 backend 自决）。
+    async def ensure_folder(self, path: str) -> None:
+        """物化一个（可能为空的）文件夹目录（root 相对，含 uid 前缀）。默认 no-op。"""
+        return None
+
+    async def move_folder(self, old_path: str, new_path: str) -> None:
+        """移动/改名一个文件夹目录骨架。默认 no-op（对象存储随文件 key 搬）。"""
+        return None
+
+    async def remove_folder(self, path: str) -> None:
+        """移除一个文件夹目录（其下文件应已被调用方搬走/删除）。默认 no-op。"""
+        return None
+
+    async def remove_empty_ancestors(self, key: str) -> None:
+        """删除/移动某 key 后，自底向上清理因此变空的父目录（治孤儿空目录）。默认 no-op。"""
+        return None
+
 
 class LocalStorageBackend(StorageBackend):
 
@@ -172,6 +213,67 @@ class LocalStorageBackend(StorageBackend):
             shutil.rmtree(target, ignore_errors=True)
             return n
         return await asyncio.to_thread(_rm)
+
+    # ── P1.1 文件夹生命周期钩子 + stat/copy（真实文件系统实现）───────────────────
+    async def copy(self, src_key: str, dst_key: str) -> None:
+        import shutil
+
+        def _cp():
+            dst = self.root / dst_key
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(self.root / src_key, dst)
+        await asyncio.to_thread(_cp)
+
+    async def stat(self, key: str) -> StorageObjectInfo | None:
+        def _st():
+            p = self.root / key
+            if not p.is_file():
+                return None
+            s = p.stat()
+            return StorageObjectInfo(size=s.st_size, mtime=s.st_mtime)
+        return await asyncio.to_thread(_st)
+
+    async def ensure_folder(self, path: str) -> None:
+        def _mk():
+            (self.root / path).mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(_mk)
+
+    async def move_folder(self, old_path: str, new_path: str) -> None:
+        def _mv():
+            old = self.root / old_path
+            new = self.root / new_path
+            if old.is_dir():
+                new.parent.mkdir(parents=True, exist_ok=True)
+                old.rename(new)
+        await asyncio.to_thread(_mv)
+
+    async def remove_folder(self, path: str) -> None:
+        """仅当子树内无文件时移除**该目录本身**（文件应已被搬走）——防误删数据。
+        **不清祖先**：父目录可能是仍存活的空文件夹（P1.2 物化的空夹须持久），清了会造成
+        DB 有夹、盘上没夹（重现 123）。孤儿祖先由文件夹级 remove_folder / 对账工具处理。"""
+        import shutil
+
+        def _rm():
+            d = self.root / path
+            if not d.is_dir():
+                return
+            if any(p.is_file() for p in d.rglob("*")):
+                return              # 还有文件残留，保守不删
+            shutil.rmtree(d, ignore_errors=True)
+        await asyncio.to_thread(_rm)
+
+    async def remove_empty_ancestors(self, key: str) -> None:
+        def _prune():
+            p = (self.root / key).parent
+            while p != self.root and self.root in p.parents:
+                if p.is_dir():
+                    try:
+                        p.rmdir()      # 仅空目录成功；非空 → 停止上溯
+                    except OSError:
+                        break
+                # 目录已不存在（可能被 delete 先清过一层）→ 继续向上，不中断
+                p = p.parent
+        await asyncio.to_thread(_prune)
 
 
 class OSSStorageBackend(StorageBackend):

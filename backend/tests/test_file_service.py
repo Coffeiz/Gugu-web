@@ -18,6 +18,15 @@ def _svc(db, tmp_path):
     return FileService(db, storage=LocalStorageBackend(Path(tmp_path)))
 
 
+def _svc_wired(db, tmp_path, monkeypatch):
+    """真实 relocate 集成用：relocate_folder_tree_files 内部自取 get_storage()，须与
+    FileService 用同一后端，故两处 get_storage 都指向同一 tmp 本地后端。"""
+    storage = LocalStorageBackend(Path(tmp_path))
+    monkeypatch.setattr("app.services.storage.file_service.get_storage", lambda: storage)
+    monkeypatch.setattr("app.services.storage.folders.get_storage", lambda: storage)
+    return FileService(db)
+
+
 async def _create(svc, uid, name, ext, data=b"x", **kw):
     kw.setdefault("space", "personal")
     kw.setdefault("project_id", None)
@@ -34,29 +43,30 @@ class _OpaqueStub:
         return "db-only"
 
 
-async def test_create_folder_delegates(db, user_a):
-    svc = FileService(db)
+async def test_create_folder_delegates(db, user_a, tmp_path):
+    svc = _svc(db, tmp_path)
     f = await svc.create_folder(user_a.id, name="资料", parent_id=None, project_id=None)
     await db.commit()
     assert f.id and f.name == "资料"
+    assert (svc.storage.root / f"{user_a.id}/个人文件/资料").is_dir()   # P1.2：空夹上盘
 
 
-async def test_create_folder_duplicate_raises(db, user_a):
-    svc = FileService(db)
+async def test_create_folder_duplicate_raises(db, user_a, tmp_path):
+    svc = _svc(db, tmp_path)
     await svc.create_folder(user_a.id, name="dup", parent_id=None, project_id=None)
     await db.commit()
     with pytest.raises(Conflict):
         await svc.create_folder(user_a.id, name="dup", parent_id=None, project_id=None)
 
 
-async def test_rename_folder_pathmirror_relocates(db, user_a, monkeypatch):
+async def test_rename_folder_pathmirror_relocates(db, user_a, tmp_path, monkeypatch):
     calls = []
 
     async def spy(db_, uid, root_id):
         calls.append(root_id)
 
     monkeypatch.setattr(folders_mod, "relocate_folder_tree_files", spy)
-    svc = FileService(db)   # 默认 PathMirrorStrategy → move_semantics=relocate
+    svc = _svc(db, tmp_path)   # 默认 PathMirrorStrategy → move_semantics=relocate
     f = await svc.create_folder(user_a.id, name="old", parent_id=None, project_id=None)
     await db.commit()
     r = await svc.rename_folder(user_a.id, f.id, "new")
@@ -65,14 +75,14 @@ async def test_rename_folder_pathmirror_relocates(db, user_a, monkeypatch):
     assert calls == [f.id]      # path-mirror → relocate 被调
 
 
-async def test_move_folder_pathmirror_relocates(db, user_a, monkeypatch):
+async def test_move_folder_pathmirror_relocates(db, user_a, tmp_path, monkeypatch):
     calls = []
 
     async def spy(db_, uid, root_id):
         calls.append(root_id)
 
     monkeypatch.setattr(folders_mod, "relocate_folder_tree_files", spy)
-    svc = FileService(db)
+    svc = _svc(db, tmp_path)
     a = await svc.create_folder(user_a.id, name="a", parent_id=None, project_id=None)
     await db.flush()
     b = await svc.create_folder(user_a.id, name="b", parent_id=None, project_id=None)
@@ -220,3 +230,66 @@ async def test_copy_file_not_found(db, user_a, tmp_path):
     svc = _svc(db, tmp_path)
     with pytest.raises(NotFound):
         await svc.copy_file(user_a.id, 999, folder_id=None, project_id=None)
+
+
+# ── P1 目录一致性（真实 relocate + 目录对账，验证 adr/123 修复且不误删活夹）──────
+
+async def test_rename_folder_moves_dir_and_cleans_orphan(db, user_a, tmp_path, monkeypatch):
+    svc = _svc_wired(db, tmp_path, monkeypatch)
+    folder = await svc.create_folder(user_a.id, name="adr", parent_id=None, project_id=None)
+    await db.commit()
+    r = await _create(svc, user_a.id, "note", "MD", data=b"x", folder_id=folder.id)
+    await db.commit()
+    root = svc.storage.root
+    assert (root / f"{user_a.id}/个人文件/adr/note.md").is_file()
+    await svc.rename_folder(user_a.id, folder.id, "adr2")
+    await db.commit()
+    await db.refresh(r.file)
+    assert "/个人文件/adr2/" in r.file.storage_key
+    assert await svc.storage.exists(r.file.storage_key)
+    assert not (root / f"{user_a.id}/个人文件/adr").exists()      # 幽灵目录清掉（治 adr）
+    assert (root / f"{user_a.id}/个人文件/adr2").is_dir()
+
+
+async def test_rename_empty_folder_moves_dir(db, user_a, tmp_path, monkeypatch):
+    svc = _svc_wired(db, tmp_path, monkeypatch)
+    folder = await svc.create_folder(user_a.id, name="空", parent_id=None, project_id=None)
+    await db.commit()
+    root = svc.storage.root
+    assert (root / f"{user_a.id}/个人文件/空").is_dir()
+    await svc.rename_folder(user_a.id, folder.id, "空2")
+    await db.commit()
+    assert (root / f"{user_a.id}/个人文件/空2").is_dir()          # 空夹改名也搬目录
+    assert not (root / f"{user_a.id}/个人文件/空").exists()
+
+
+async def test_move_folder_out_keeps_live_parent_dir(db, user_a, tmp_path, monkeypatch):
+    svc = _svc_wired(db, tmp_path, monkeypatch)
+    parent = await svc.create_folder(user_a.id, name="parent", parent_id=None, project_id=None)
+    await db.commit()
+    child = await svc.create_folder(user_a.id, name="child", parent_id=parent.id, project_id=None)
+    await db.commit()
+    root = svc.storage.root
+    assert (root / f"{user_a.id}/个人文件/parent/child").is_dir()
+    await svc.move_folder(user_a.id, child.id, None)             # child 移到根
+    await db.commit()
+    assert (root / f"{user_a.id}/个人文件/child").is_dir()          # 新位置
+    assert not (root / f"{user_a.id}/个人文件/parent/child").exists()  # 旧位置清掉
+    assert (root / f"{user_a.id}/个人文件/parent").is_dir()          # 活着的空父夹保留（不误删，治反向 123）
+
+
+async def test_file_move_keeps_source_folder_dir(db, user_a, tmp_path, monkeypatch):
+    svc = _svc_wired(db, tmp_path, monkeypatch)
+    src = await svc.create_folder(user_a.id, name="src", parent_id=None, project_id=None)
+    dst = await svc.create_folder(user_a.id, name="dst", parent_id=None, project_id=None)
+    await db.commit()
+    r = await _create(svc, user_a.id, "f", "TXT", data=b"1", folder_id=src.id)
+    await db.commit()
+    root = svc.storage.root
+    await svc.update_file(user_a.id, r.file.id, display_name=None, stage_name=None,
+                          folder_id=dst.id, project_id=None, folder_set=True, project_set=False)
+    await db.commit()
+    await db.refresh(r.file)
+    assert "/个人文件/dst/" in r.file.storage_key
+    assert await svc.storage.exists(r.file.storage_key)
+    assert (root / f"{user_a.id}/个人文件/src").is_dir()            # 源文件夹仍活着 → 目录保留

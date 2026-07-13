@@ -720,6 +720,7 @@ async def _move_to_trash(storage, f: File) -> None:
     try:
         await storage.rename_file(f.storage_key, trash_key)
         f.storage_key = trash_key
+        # 不清旧祖先：文件所属文件夹仍存活，空目录须持久（P1.2）；孤儿由对账工具兜底
     except Exception:
         pass
 

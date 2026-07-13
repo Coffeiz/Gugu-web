@@ -185,6 +185,7 @@ class FileOps:
             new_key, new_display = resolved.key, resolved.name
             await self.storage.rename_file(f.storage_key, new_key)
             f.storage_key = new_key
+            # 不清旧祖先：源文件夹仍存活，其空目录须持久（P1.2）；孤儿由文件夹级清理 + 对账工具兜底
 
         f.display_name = new_display
         f.stage_name = new_stage

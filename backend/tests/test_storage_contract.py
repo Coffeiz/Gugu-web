@@ -60,3 +60,50 @@ async def test_delete_prefix_scoped(storage):
 async def test_delete_prefix_rejects_root(storage):
     with pytest.raises(ValueError):
         await storage.delete_prefix("")     # 防误清整个存储
+
+
+# ── P1.1 copy / stat（共享契约：Local 与未来 OSS 都要过）───────────────────────
+
+async def test_copy(storage):
+    await storage.put("u/a/src.txt", b"payload")
+    await storage.copy("u/a/src.txt", "u/b/dst.txt")
+    assert await storage.get("u/a/src.txt") == b"payload"   # 源仍在
+    assert await storage.get("u/b/dst.txt") == b"payload"
+
+
+async def test_stat(storage):
+    assert await storage.stat("u/a/missing.txt") is None
+    await storage.put("u/a/x.txt", b"12345")
+    info = await storage.stat("u/a/x.txt")
+    assert info is not None and info.size == 5
+
+
+# ── P1.1 文件夹生命周期钩子（Local 真实目录语义；OSS 侧 no-op，无可断言）──────────
+
+async def test_ensure_folder_materializes_empty_dir(storage):
+    await storage.ensure_folder("u/个人文件/空夹")
+    assert (storage.root / "u/个人文件/空夹").is_dir()   # 空文件夹上盘（治 123）
+
+
+async def test_remove_empty_ancestors_prunes(storage):
+    await storage.put("u/个人文件/深/更深/f.txt", b"1")
+    await storage.delete("u/个人文件/深/更深/f.txt")
+    await storage.remove_empty_ancestors("u/个人文件/深/更深/f.txt")
+    assert not (storage.root / "u/个人文件/深").exists()   # 变空的祖先被清
+
+
+async def test_remove_folder_empty_only(storage):
+    await storage.ensure_folder("u/个人文件/orphan/sub")
+    await storage.remove_folder("u/个人文件/orphan")
+    assert not (storage.root / "u/个人文件/orphan").exists()   # 无文件 → 清掉（治 adr）
+    # 有文件时保守不删
+    await storage.put("u/个人文件/keep/f.txt", b"1")
+    await storage.remove_folder("u/个人文件/keep")
+    assert (storage.root / "u/个人文件/keep/f.txt").is_file()
+
+
+async def test_move_folder(storage):
+    await storage.ensure_folder("u/个人文件/旧名")
+    await storage.move_folder("u/个人文件/旧名", "u/个人文件/新名")
+    assert (storage.root / "u/个人文件/新名").is_dir()
+    assert not (storage.root / "u/个人文件/旧名").exists()

@@ -2,18 +2,24 @@
 
 同 test_mind_api：直接调路由函数（current_user/db/origin 显式传），不起 TestClient。
 """
+from pathlib import Path
+
 import pytest
 
 from app.api.v1 import folders as folders_api
 from app.core.errors import Conflict, Invalid, NotFound
 from app.schemas import FolderCreate, FolderMove, FolderRename
+from app.services.storage import LocalStorageBackend
 
 
 @pytest.fixture(autouse=True)
-def _no_events(monkeypatch):
+def _no_events(tmp_path, monkeypatch):
     async def _noop(*a, **k):
         pass
     monkeypatch.setattr(folders_api.events, "publish", _noop)
+    # 端点内部 FileService(db) 走 get_storage()，指向临时本地后端（P1 建夹/改名会真 mkdir/mv）
+    storage = LocalStorageBackend(Path(tmp_path))
+    monkeypatch.setattr("app.services.storage.file_service.get_storage", lambda: storage)
 
 
 async def _create(db, user, name, **kw):
