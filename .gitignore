@@ -8,6 +8,8 @@ backend/venv/
 backend/.venv/
 backend/env/
 backend/.env
+# 误将 venv 示例路径作为真实目录创建时产生的本地虚拟环境
+backend/path/
 /node_modules/
 *.sqlite
 *.db
