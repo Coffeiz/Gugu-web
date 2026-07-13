@@ -1,9 +1,9 @@
 # LLM Provider 适配层重构与 core 瘦身 PRD
 
-> 状态：Phase 1 ✅ 已完成（Phase 2/3 待评估，明确延后）
+> 状态：Phase 1 ✅ / Phase 2 ✅ 已完成（Phase 3 待评估，明确延后）
 > 创建：2026-07-14
 > 最近更新：2026-07-14
-> 关联模块：`backend/agent/core.py`、`backend/agent/llm_select.py`、`backend/agent/runner.py`、`backend/agent/sanitize.py`、`backend/agent/adapters/web.py`、`backend/agent/greeting.py`、`backend/agent/voice.py`、`backend/agent/memory/_llm.py`、`app/core/chat_attach.py`、`app/api/v1/agent_admin.py`
+> 关联模块：`backend/agent/core.py`、`backend/agent/loop_drivers.py`、`backend/agent/llm_select.py`、`backend/agent/runner.py`、`backend/agent/sanitize.py`、`backend/agent/adapters/web.py`、`backend/agent/greeting.py`、`backend/agent/voice.py`、`backend/agent/memory/_llm.py`、`app/core/chat_attach.py`、`app/api/v1/agent_admin.py`
 > 背景参考：本次排查触发点——QQ 会话请求「重写 PRD README/INDEX」时收到「咕咕开小差了」兜底回复，`logs/gugu-diag.log` 2026-07-14 00:11:37 定位到根因
 
 ---
@@ -16,7 +16,7 @@
 | 触发链路确认 | ✅ 已完成 | `agent/llm_select.py:use_anthropic_for()` 对 MiniMax 无条件返回 `True`（`is_minimax(ai) or ...`），MiniMax 请求固定走 Anthropic 块格式代码路径，与真·Anthropic 原生模型共用同一段 SDK 流式消费代码——`_stream_round` 已有先例把 MiniMax 的 `IndexError`/`KeyError` 列入重试白名单（同款「流式响应跟 SDK 期望 schema 对不上」问题），这次是同一类问题换了个异常类型没接住。 |
 | 现状规模摸底 | ✅ 已完成 | provider 专属判断散落在 8 个文件；`agent/core.py`（752 行）里 `_run_anthropic`/`_run_openai` 两条主循环重复约 90% 工具调用/核实轮控制流，另有约 200 行跟 provider 无关的叙事/拒绝/意图守卫正则混在同一文件。详见第 4 节。 |
 | Phase 1：Provider 适配层 + core 瘦身 | ✅ 已完成 | 新增 `agent/providers.py`（`ProviderAdapter`+`adapter_for`）、`agent/core_guards.py`（叙事/决策/意图守卫搬迁）；`llm_select.py` 8 个函数改薄包装，导入路径零改动；`core.py` 从 752 行降到 667 行（比预估的 550 行以内保守——搬走的守卫代码比预期紧凑，`_pick_label`/`_user_text`/循环常量按计划留在原地未搬，瘦身幅度仍有效但没到最初估的量级）。`_stream_round` 接入 `adapter.transient_exceptions`，MiniMax 新增 `AttributeError` 容错。新增 13 条测试（`test_providers.py`+`test_stream_round_retry.py`）+ 既有回归测试 34 条 + 全量 285 条**全部通过**。 |
-| Phase 2：主循环合并 | 🚧 前置条件已完成，合并本身仍待评估 | 特征测试已补齐——新增 `tests/test_core_loop_characterization.py`（11 条，覆盖核实阶段状态机/叙事/意图播报/决策拒绝三条守卫/空回复兜底/轮次上限），其中 5 条移植自原 `scripts/smoke_self_verify.py`（手动冒烟脚本，场景已完整迁入后删除，避免两份资产分叉）。`_run_anthropic`/`_run_openai` 本身尚未合并，见第 5 节非目标——这份测试是「动手前先钉死现状」的安全网，不是合并本身。 |
+| Phase 2：主循环合并 | ✅ 已完成 | 新增 `agent/loop_drivers.py`：`RoundResult`/`NormalizedToolCall` 归一化数据结构 + `AnthropicDriver`/`OpenAIDriver` 两个驱动，各自封装"怎么跟这个格式打交道"（流式事件形状/工具参数解析/历史消息格式/缓存记账）。`agent/core.py` 的 `_run_anthropic`/`_run_openai` 改成薄包装，转发给新增的共享 `LLMRunner._run_loop`（工具调用/核实阶段状态机/三条防幻觉守卫/空回复兜底/轮次上限只写一份），外部方法名/签名零改动。`core.py` 从 667 行降到 378 行；`loop_drivers.py` 392 行。**顺带修了一处真实不一致**：合并前 `_run_openai` 整段没有 try/except 包裹流式调用（SDK 异常会直接炸穿），`_run_anthropic` 一直有 RetryableError/通用异常两层兜底——合并后两边自然共用同一层，OpenAI 路从"异常直接炸穿"变成"优雅降级成'咕咕开小差了'"，是合并的自然结果，不是意外引入。特征测试（`test_core_loop_characterization.py` 11 条）在两个驱动下全部原样通过，全量 296 条测试零回归。 |
 | Phase 3：客户端构造样板迁移（6 文件） | 🔲 待评估（明确延后） | 见第 5 节非目标，不单独排期，顺手迁移。 |
 
 ---
@@ -37,7 +37,7 @@ Gugu 后端接入了 Anthropic 原生模型和多家 Anthropic/OpenAI 兼容第�
 - 把「这个 provider 该怎么打交道」的知识收拢到一个统一的适配器模块，调用方改成「问适配器」而不是「自己判断 + 硬编码」。
 - 直接修复这次 `AttributeError` 崩溃，且修复方式精确限定在 MiniMax（不放宽其它 provider 的异常容忍度，避免掩盖无关 bug）。
 - 把 `agent/core.py` 里跟 provider 无关的守卫逻辑搬出去，实质性瘦身。
-- 不在本次动 `_run_anthropic`/`_run_openai` 主循环的合并（现状无端到端测试覆盖，风险与本次 bug 修复不对等，见第 5 节）。
+- Phase 1（这次修 bug）不动 `_run_anthropic`/`_run_openai` 主循环的合并——当时现状无端到端测试覆盖，风险与修一个 bug 不对等。合并本身放到 Phase 2，等先补齐特征测试（`tests/test_core_loop_characterization.py`）钉死现状再动手，两个阶段都已完成，见第 0 节。
 
 ---
 
@@ -107,6 +107,7 @@ Gugu 后端接入了 Anthropic 原生模型和多家 Anthropic/OpenAI 兼容第�
 |---|---|---|
 | `AttributeError` 白名单扩大后，MiniMax 请求里真正无关的 bug（不是 SDK 流式解析问题）也会被吞进重试 3 次再放弃 | 中——可能让 MiniMax 专属的其它潜在 bug 变得更难发现（多等 3 次退避才报错，而不是立刻暴露） | 严格限定在 `providers.py` 里 MiniMax 一个 provider 的白名单，不做全局放宽；`diag_log` 仍然记录完整 traceback，真出现新问题还是能从 `gugu-diag.log` 查到 |
 | `llm_select.py` 委托改造后，`adapter_for()` 的 base_url 兜底判定顺序如果跟原函数体不完全一致，可能悄悄改变某些边界 provider 的识别结果 | 低——只影响未显式设置 `provider` 字段、靠 `base_url` 关键字兜底识别的历史配置 | FR-LLM-2 验收标准明确要求「行为字节级不变」，实现时逐字对照原函数体迁移判定顺序，不凭记忆重写 |
+| Phase 2 合并主循环后，OpenAI 路从"流式调用异常直接冒泡"变成"跟 Anthropic 路一样被 try/except 兜底成'咕咕开小差了'"——这是合并共享 try/except 后的自然结果，不是刻意改的，但确实是一处行为变化 | 低——方向是变得更安全（不再无兜底崩穿），不是变得更危险；唯一风险是如果上游调用方（`runner.py`）原本依赖"异常会冒泡"这个行为做特殊处理，现在收不到了 | 检查过 `runner.py`/`agent/adapters/web.py` 消费 `LLMRunner.run()` 生成器的地方，没有依赖异常冒泡的特殊逻辑（都是当普通 async generator 顺序消费）；全量 296 条测试（含新特征测试）在改动后零回归 |
 
 **待确认问题**：
 
@@ -134,6 +135,11 @@ Gugu 后端接入了 Anthropic 原生模型和多家 Anthropic/OpenAI 兼容第�
 - [x] `tests/test_stream_round_retry.py::test_default_adapter_attribute_error_not_retried` —— 用 default（非 minimax）适配器跑同样的假 `AttributeError` client，**不会**被当成瞬时错误重试——钉死「精确限定在 MiniMax」这条设计红线。
 - [x] `tests/test_stream_round_retry.py::test_no_adapter_attribute_error_not_retried` —— `adapter=None`（未传）时行为等价 default，同样不重试。
 
+**Phase 2（主循环合并）**：新增 `tests/test_core_loop_characterization.py`（11 条，见
+Context 里的说明），合并前后各跑了一遍——合并前是"钉死现状"的基线，合并后**原样重跑
+全部通过、一处断言都没改**，是这次合并"行为字节级不变（除已披露的 OpenAI 异常兜底
+那处改善）"的直接证据，不是靠人工审查代码自认为没改坏。
+
 ### 既有测试回归（预期零改动通过）
 
 - [x] `tests/test_llm_cache_capability.py`
@@ -142,7 +148,7 @@ Gugu 后端接入了 Anthropic 原生模型和多家 Anthropic/OpenAI 兼容第�
 - [x] `tests/test_runner_collect.py`
 - [x] `tests/test_confirm_gate.py`
 - [x] `tests/test_p2b_io_retry.py`
-- [x] 全量 `cd backend && PYTHONPATH=. .venv/bin/pytest`——**285 passed**，零失败。（本地 `.venv` 是独立 python3.14 环境，跟 devserver 的 python3.12 venv 不共享；未设 `pythonpath` 配置项，需要显式 `PYTHONPATH=.` 才能 import 到 `app`/`agent` 顶层包，留给下次跑测试的人省得重新踩这个坑。）
+- [x] 全量 `cd backend && PYTHONPATH=. .venv/bin/pytest`——Phase 1 完成时 285 passed，加上 Phase 2 的特征测试后 **296 passed**，Phase 2 合并主循环后原样重跑仍 **296 passed**，零失败。（本地 `.venv` 是独立 python3.14 环境，跟 devserver 的 python3.12 venv 不共享；未设 `pythonpath` 配置项，需要显式 `PYTHONPATH=.` 才能 import 到 `app`/`agent` 顶层包，留给下次跑测试的人省得重新踩这个坑。）
 
 ### 代码层面自检（非自动化测试，人工核对）
 

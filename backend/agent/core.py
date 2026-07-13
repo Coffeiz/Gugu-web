@@ -1,10 +1,13 @@
 """LLM 主循环（迁自原 agent.py 的 _loop_anthropic / _loop_openai）。
 
-Anthropic 路：单次流式调用（带 tools）—— 实时流式输出文本的同时，结束后从
-get_final_message 取 tool_use；有工具则执行（走 skills.registry）回填后继续，
-无工具则收尾。一次调用兼顾流式与工具检测，既保留真流式、又无"双调用敷衍"。
-OpenAI 路：非流式探测工具 → 无工具时分块输出已生成文本。工具 schema 由 profile
-启用的工具名从 registry 派生，消除手写双格式。temperature 已加到调用上保证离散度生效。
+`LLMRunner._run_loop`（PRD-LLM-1 Phase 2）：工具调用/核实阶段状态机/三条防幻觉守卫/
+空回复兜底/轮次上限——这套控制流对 Anthropic 块格式和 OpenAI 格式完全一样，原来是
+两条逐字复制的循环（`_run_anthropic`/`_run_openai`），现在收成一条共享循环，"怎么跟
+这个 provider 打交道"（流式事件形状/工具参数解析/历史消息格式/缓存记账）收进
+`agent/loop_drivers.py` 的 `AnthropicDriver`/`OpenAIDriver`。`_run_anthropic`/
+`_run_openai` 两个方法名和外部签名原样保留（`runner.py`/`adapters/web.py` 等调用点、
+以及 `tests/test_core_loop_characterization.py` 都按名字直接调用它们），内部只是转发
+给 `_run_loop`。
 """
 import asyncio
 import json
@@ -13,7 +16,7 @@ import random
 import re as _re_mod
 from typing import AsyncGenerator
 
-from agent import genstream
+from agent import genstream, loop_drivers
 from agent.tools import registry
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
@@ -150,22 +153,6 @@ def _mutating_tools(tool_names) -> set:
     return by_name | set(RESOURCE_BY_TOOL)
 
 
-def _with_history_cache(messages: list) -> list:
-    """给「发给 API 的 messages」打一个滚动 prompt 缓存断点：在最后一条 message 的最后一个内容块上加
-    cache_control。多轮工具循环里历史越滚越长，这样能缓存住已发生的几轮、下一轮只重算新增的块。
-    返回浅拷贝、**不改原 messages**（原列表要持久化，绝不能混入 cache_control，否则下次加载历史会带着
-    旧断点、累积超过 4 个上限）。只在最后一块是 list[dict]（assistant 块 / tool_result 块）时打；
-    首轮 user 的纯字符串 content 跳过（那轮的静态部分已由 system 缓存覆盖）。"""
-    if not messages:
-        return messages
-    last = messages[-1]
-    c = last.get("content")
-    if not isinstance(c, list) or not c or not isinstance(c[-1], dict) or not c[-1].get("type"):
-        return messages
-    new_block = {**c[-1], "cache_control": {"type": "ephemeral"}}
-    return [*messages[:-1], {**last, "content": [*c[:-1], new_block]}]
-
-
 async def _im_cancelled() -> bool:
     """IM 路：用户中途发「算了」→ 网关置了取消标志。web 路无 imctx，恒 False。"""
     from agent import imctx
@@ -215,56 +202,34 @@ class LLMRunner:
     # ── Anthropic（MiniMax / Anthropic）─────────────────────────────────────
     async def _run_anthropic(self, user_id, system_text: str,
                              messages: list, ai=None) -> AsyncGenerator[str, None]:
-        import httpx
-        from anthropic import AsyncAnthropic
-
         settings = self.settings
         ai = ai if ai is not None else settings.ai
-        tools = registry.anthropic_schemas(self.tool_names)
-        _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
-        from agent import providers
-        from agent.llm_select import anthropic_default_headers, supports_anthropic_active_cache, _is_mimo
-        is_mimo = _is_mimo(ai)
-        supports_active_cache = supports_anthropic_active_cache(ai)
-        adapter = providers.adapter_for(ai)   # 传给 _stream_round，提供 provider 专属的重试容错
-        client = AsyncAnthropic(
-            api_key=ai.api_key or "dummy",
-            base_url=ai.base_url,
-            http_client=httpx.AsyncClient(timeout=_timeout),
-            default_headers=anthropic_default_headers(ai),
-        )
+        async for line in self._run_loop(loop_drivers.AnthropicDriver(), user_id, messages, ai,
+                                          system_text=system_text):
+            yield line
 
-        total_in = total_out = total_cache_read = 0
-        max_tokens  = ai.max_tokens
-        temperature = ai.temperature
-        thinking_val = getattr(ai, "thinking", "disabled")
-        if is_mimo:
-            # mimo 的 thinking 取值用文档确认的 disabled；想开就不传、用其默认（避免猜它的 enable 取值）
-            thinking_param = {"thinking": {"type": "disabled"}} if thinking_val != "adaptive" else {}
-        else:
-            thinking_param = {"thinking": {"type": thinking_val}} if thinking_val == "adaptive" else {}
+    # ── OpenAI ──────────────────────────────────────────────────────────────
+    async def _run_openai(self, user_id, messages: list, ai=None) -> AsyncGenerator[str, None]:
+        settings = self.settings
+        ai = ai if ai is not None else settings.ai
+        async for line in self._run_loop(loop_drivers.OpenAIDriver(), user_id, messages, ai,
+                                          system_text=None):
+            yield line
 
-        # prompt 缓存：system 由 builder 拆成「稳定前缀（人格/政策/技能索引，session 内不变）┃ 动态后缀
-        # （记忆/分钟级时间/项目日历文件，每轮变）」，断点（CACHE_BREAK）在边界。缓存块只含稳定前缀 →
-        # 命中读取便宜 ~90%；动态后缀不缓存，避免整块每分钟失效。两块顺序拼接与单段逐字一致。
-        # Anthropic 顺序 tools→system→messages，故缓存块实含 tools+稳定前缀。
-        # MiniMax-M3 走被动前缀缓存，MiMo 不支持 Anthropic 主动缓存；两者都不能发送
-        # cache_control，仍保持 tools → system → messages 的稳定顺序以便被动缓存命中。
-        from agent.context import builder as _builder
-        if system_text:
-            stable, dynamic = _builder.split_for_cache(system_text)
-            if dynamic and supports_active_cache:
-                system_param = [
-                    {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
-                    {"type": "text", "text": dynamic},
-                ]
-            else:
-                _sys_blk = {"type": "text", "text": _builder.strip_cache_marker(system_text)}
-                if supports_active_cache:
-                    _sys_blk["cache_control"] = {"type": "ephemeral"}
-                system_param = [_sys_blk]
-        else:
-            system_param = system_text
+    # ── 共享主循环（PRD-LLM-1 Phase 2）────────────────────────────────────────
+    async def _run_loop(self, driver, user_id, messages: list, ai,
+                         system_text: str | None) -> AsyncGenerator[str, None]:
+        """工具调用/核实阶段状态机/三条防幻觉守卫/空回复兜底/轮次上限——Anthropic 和
+        OpenAI 两条格式共用同一份控制流，只在"怎么跑一轮/怎么把这轮结果写回历史"这几处
+        调用 `driver`（`agent/loop_drivers.py` 的 `AnthropicDriver`/`OpenAIDriver`）。
+
+        合并后有一处行为变化，如实记在这里、不是本次改动的目标而是自然结果：原来
+        `_run_openai` 整段没有 try/except 包裹流式调用，一旦 SDK 抛异常会原样往外炸；
+        `_run_anthropic` 一直有（靠 RetryableError/通用 Exception 两层兜底）。合并成
+        一条共享循环后两边自然共用同一层兜底——OpenAI 路因此从"异常直接炸穿"变成
+        "跟 Anthropic 路一样优雅降级成'咕咕开小差了'"，是明确的行为改善，不是意外。
+        """
+        client, ctx = driver.prepare(self.tool_names, ai, messages, system_text)
 
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; round_i = 0; empty_retry = 0
@@ -273,29 +238,22 @@ class LLMRunner:
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
         verify_mode = False; verify_fixed = False; verify_queried = False
+        total_in = total_out = total_cache = 0
+
         while round_i < MAX_ROUNDS + MAX_VERIFY * 2:   # 核实轮额外预算，不挤占任务的 MAX_ROUNDS
             round_i += 1
             # 用户中途「算了」→ 轮间协作中断（单次 LLM 流式调用本身切不了，故粒度是轮与轮之间）
             if await _im_cancelled():
                 yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                 return
-            # 单次流式调用：既实时流式输出文本，又能拿到 tool_use（无双调用、无敷衍）
-            # 经 _stream_round 包一层瞬时错误退避重试（⑦）；流式途中仍协作检查取消。
-            # ② 给发出去的 messages 打一个滚动缓存断点（最后一条 message 的最后一个块）：多轮工具循环里
-            #    历史越滚越长，缓存住已发生的几轮、每轮只重算新增。用副本、不改原 messages（原列表要持久化，
-            #    绝不能混入 cache_control）。MiniMax-M3 / MiMo 不支持主动缓存 → 原样发。
-            _msgs = _with_history_cache(messages) if supports_active_cache else messages
-            _kwargs = dict(
-                model=ai.model, system=system_param, messages=_msgs,
-                tools=tools, max_tokens=max_tokens, temperature=temperature, **thinking_param,
-            )
+
             _tok = 0
-            final = None
+            result = None
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
             try:
-                async for _kind, _val in _stream_round(client, _kwargs, adapter):
-                    if _kind == "final":
-                        final = _val
+                async for _kind, _val in driver.run_round(client, ctx, messages):
+                    if _kind == "done":
+                        result = _val
                         break
                     if verify_mode:
                         _verify_buf.append(_val)   # 核实阶段文字不实时发，先缓冲
@@ -316,56 +274,51 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
-                # 已吐过 token 中途出错（_stream_round 里"emitted 就原样抛"那条路径）或其他未预期
-                # 异常——按未知处理：原始进受限诊断出口，可见日志只留类型名，不带原始 str(e)。
+                # 已吐过 token 中途出错（emitted 就原样抛的路径）或其他未预期异常——按未知处理：
+                # 原始进受限诊断出口，可见日志只留类型名，不带原始 str(e)。
                 diag_log("agent.core.main_loop", e)
                 _log.error("LLM 调用中途出错：%s", type(e).__name__)
                 detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
                 yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
                 return
 
-            total_in  += final.usage.input_tokens
-            total_out += final.usage.output_tokens
-            total_cache_read += getattr(final.usage, "cache_read_input_tokens", 0) or 0
+            total_in  += result.usage_in
+            total_out += result.usage_out
+            total_cache += result.cache_tokens
 
-            tool_blocks = [b for b in final.content if b.type == "tool_use"]
-            if tool_blocks:
+            if result.tool_calls:
                 any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
-                if verify_mode and not verify_fixed and _verify_buf and any(b.name in _mutset for b in tool_blocks):
+                if verify_mode and not verify_fixed and _verify_buf and any(tc.name in _mutset for tc in result.tool_calls):
                     async for _line in genstream.typed_stream(''.join(_verify_buf)):   # 逐字流式，与正常回复一致
                         yield _line
-                tool_results = []
-                for block in tool_blocks:
-                    label = self._label(block.name)
+                dispatched = []
+                for tc in result.tool_calls:
+                    label = self._label(tc.name)
                     if verify_mode:   # 复查前缀后端拼接（可在「状态命名」面板改 _verify_prefix；支持多候选随机）
                         label = self._label("_verify_prefix", "复查 · ") + label
-                    await _im_set_tool_state(block.name)
+                    if tc.parse_error:
+                        # OpenAI 路专属：工具参数 JSON 被截断解析失败——别拿空参跑，改回一条错误
+                        # tool_result 让模型精简参数后重发；不真 dispatch、不置 did_mutate。
+                        yield f"data: {json.dumps({'type': 'tool_call', 'name': tc.name, 'label': label, 'input': {{}}, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                        yield f"data: {json.dumps({'type': 'tool_done', 'name': tc.name, 'label': label, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                        dispatched.append((tc, loop_drivers.TOOL_ARGS_TRUNCATED_ERROR))
+                        continue
+                    await _im_set_tool_state(tc.name)
                     # 自检轮工具照常显示，但打 verify 标记：前端凭 verify 收尾不冒「生成中」点点（否则回复完还在转、像卡住）
-                    yield f"data: {json.dumps({'type': 'tool_call', 'name': block.name, 'label': label, 'input': block.input, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
-                    result, artifact = await registry.dispatch(user_id, block.name, block.input)
-                    if block.name in _mutset:
+                    yield f"data: {json.dumps({'type': 'tool_call', 'name': tc.name, 'label': label, 'input': tc.input, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                    res, artifact = await registry.dispatch(user_id, tc.name, tc.input)
+                    if tc.name in _mutset:
                         did_mutate = True   # 本次做过增删改 → 收尾时强制自我核实
                         if verify_mode:
                             verify_fixed = True   # 核实阶段里补了东西 → 确有遗漏
-                    elif verify_mode and block.name.startswith(_READ_PREFIXES):
+                    elif verify_mode and tc.name.startswith(_READ_PREFIXES):
                         verify_queried = True   # 核实阶段真的用查询工具查证了（不是嘴上确认）
-                    yield f"data: {json.dumps({'type': 'tool_done', 'name': block.name, 'label': label, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'tool_done', 'name': tc.name, 'label': label, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
                     if artifact:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    })
-                # 序列化为 dict：让 messages 列表 JSON 可序列化（便于持久化），
-                # 同时保留 thinking blocks（MiniMax / Anthropic 多轮时原样回传）
-                content_dicts = [
-                    b.model_dump() if hasattr(b, "model_dump") else dict(b)
-                    for b in final.content
-                ]
-                messages.append({"role": "assistant", "content": content_dicts})
-                messages.append({"role": "user", "content": tool_results})
+                    dispatched.append((tc, res))
+                driver.append_tool_round(messages, result, dispatched)
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
 
@@ -378,290 +331,48 @@ class LLMRunner:
                 verify_count += 1
                 did_mutate = False
                 verify_mode = True   # 进入/保持核实阶段 → 之后文字先缓冲
-                content_dicts = [
-                    b.model_dump() if hasattr(b, "model_dump") else dict(b)
-                    for b in final.content
-                ]
-                messages.append({"role": "assistant", "content": content_dicts})
-                messages.append({"role": "user", "content": _VERIFY_FORCE_PROMPT if _need_force else _VERIFY_PROMPT})
+                driver.append_followup(messages, result, _VERIFY_FORCE_PROMPT if _need_force else _VERIFY_PROMPT)
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
-            _final_text = "".join(b.text for b in final.content if b.type == "text")
-            # 空回复兜底（与 OpenAI 路对齐；此前仅 OpenAI 路有 → Anthropic 端点的 mimo 思考吞正文/精力降级
-            # 不说话时会裸露成空气泡）：整轮无正文、没动工具、不在核实阶段 → 先追一轮要正文，仍空给句得体兜底。
+
+            _final_text = result.text
+            # 空回复兜底：整轮无正文、没动工具、不在核实阶段 → 先追一轮要正文，仍空给句得体兜底。
             if not _final_text.strip() and not did_mutate and not verify_mode:
                 if empty_retry < 1:
                     empty_retry += 1
-                    # 占位保证 user/assistant 交替合法（真·空 content 会被 Anthropic 拒）；这条守卫消息不入历史（tool_rounds_only 过滤）
-                    content_dicts = [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in final.content] or [{"type": "text", "text": "（…）"}]
-                    messages.append({"role": "assistant", "content": content_dicts})
-                    messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})
+                    driver.append_empty_retry(messages, result)
                     yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                     continue
                 fb = "嗯…我这下没太接住，你再说一遍、或者换个说法，我马上跟上～"
-                async for _line in genstream.typed_stream(fb):   # 空回复兜底也走逐字流式，与 OpenAI 路一致
+                async for _line in genstream.typed_stream(fb):   # 空回复兜底也走逐字流式
                     yield _line
                 _final_text = fb
             # narration 兜底：整段生成一个工具都没真调，但文字在"假装"读/改文件 → 追一轮逼它真调。
-            # 只追一次；核实阶段不算（那是另一套）。content 在 verify_mode 下被缓冲，故取 _verify_buf 兜底。
+            # 只追一次；核实阶段不算（那是另一套）。
             if (not any_tool_called and not verify_mode and narration_retry < 1
                     and _looks_like_narration(_final_text)):
                 narration_retry += 1
-                content_dicts = [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in final.content]
-                messages.append({"role": "assistant", "content": content_dicts})
-                messages.append({"role": "user", "content": _NARRATION_NUDGE})
+                driver.append_followup(messages, result, _NARRATION_NUDGE)
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
             # 意图守卫（B）：宣告「我这就去查/建/改…」却本轮零工具 → 逼它当场做（_announces_intent 已排除问句/征询）。只追一次。
             if (not any_tool_called and not verify_mode and intent_retry < 1
                     and _announces_intent(_final_text)):
                 intent_retry += 1
-                content_dicts = [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in final.content]
-                messages.append({"role": "assistant", "content": content_dicts})
-                messages.append({"role": "user", "content": _INTENT_NUDGE})
+                driver.append_followup(messages, result, _INTENT_NUDGE)
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
             # P3 决策守卫：用户明确要改、模型零工具却用「不用改/已合理」驳回 → 逼它执行或问清，别擅自不做。
             if (not any_tool_called and not verify_mode and decision_retry < 1
                     and _is_decision_dodge(_user_req, _final_text)):
                 decision_retry += 1
-                content_dicts = [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in final.content]
-                messages.append({"role": "assistant", "content": content_dicts})
-                messages.append({"role": "user", "content": _DECISION_NUDGE})
+                driver.append_followup(messages, result, _DECISION_NUDGE)
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
             # 收尾：干净核实阶段的确认文字（_verify_buf）直接丢弃，用户看不到重复确认
             # （若补做过，说明已在补做那轮发过；这里不再补发）
 
-            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out, 'cache_read': total_cache_read})}\n\n"
-            return
-
-        yield f"data: {json.dumps({'type': 'error', 'detail': '这步操作有点多，咕咕没在一口气里全做完 😅 前面几步已经生效了，要我接着把剩下的做完吗？'}, ensure_ascii=False)}\n\n"
-
-    # ── OpenAI ──────────────────────────────────────────────────────────────
-    async def _run_openai(self, user_id, messages: list, ai=None) -> AsyncGenerator[str, None]:
-        import httpx
-        from openai import AsyncOpenAI
-
-        settings = self.settings
-        ai = ai if ai is not None else settings.ai
-        # mimo（小米）是推理模型：会把思考放 reasoning_content、正文放 content，偶尔整轮正文为空 →
-        # 空回复/空气泡。据此单独适配（下方空 content 兜底）。
-        is_mimo = (ai.provider or "").lower() == "mimo" or "xiaomimimo" in (ai.base_url or "").lower()
-        tools = registry.openai_schemas(self.tool_names)
-        # system 里可能带 builder 的缓存断点标记（CACHE_BREAK）——openai 通道不支持 anthropic 式 cache_control，
-        # 去掉它还原成普通 system 串（标记仅出现在 system 消息里，每轮重建、改它无副作用）。
-        from agent.context import builder as _builder
-        for _m in messages:
-            if _m.get("role") == "system" and isinstance(_m.get("content"), str) and _builder.CACHE_BREAK in _m["content"]:
-                _m["content"] = _builder.strip_cache_marker(_m["content"])
-        _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
-        from agent.llm_select import openai_default_headers, supports_thinking_toggle, _is_deepseek
-        client = AsyncOpenAI(
-            api_key=ai.api_key or "dummy",
-            base_url=ai.base_url,
-            timeout=_timeout,
-            default_headers=openai_default_headers(ai),
-        )
-
-        max_tokens  = ai.max_tokens
-        temperature = ai.temperature
-        # 思考开关：mimo 与 deepseek 都用同一 OpenAI 参数 `{"thinking":{"type":...}}`（见各自官方文档）。
-        # 思考关时显式传 disabled——mimo 从源头避免「正文全进 reasoning_content、content 空」的空气泡，
-        # deepseek 则省下推理 token/延迟。思考开（adaptive）则不传、用厂商默认（两家默认都是开），靠下方空回复兜底。
-        # 仅对支持该参数的厂商发（qwen/openai 没这参数，传了可能报错）。reasoning_content 的多轮回传已统一处理。
-        # 思考开（adaptive）时，DeepSeek 还可带「思考强度」reasoning_effort（high/max；思考模式下 temperature 失效，
-        # effort 是唯一质量/成本旋钮）。mimo 文档无此参数，故只对 deepseek 发。
-        _think_extra = {}
-        if supports_thinking_toggle(ai):
-            if getattr(ai, "thinking", "disabled") != "adaptive":
-                _think_extra["thinking"] = {"type": "disabled"}
-            elif _is_deepseek(ai) and getattr(ai, "reasoning_effort", ""):
-                _think_extra["reasoning_effort"] = ai.reasoning_effort
-        total_in = total_out = total_cache_hit = 0   # cache_hit：DeepSeek 自动上下文缓存命中 token（观测命中率用）
-        _mutset = _mutating_tools(self.tool_names)
-        did_mutate = False; verify_count = 0; round_i = 0; empty_retry = 0
-        any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0   # 真实性守卫状态
-        _user_req = _user_text(messages[-1]["content"]) if messages and messages[-1].get("role") == "user" else ""
-        # 自我核实阶段：进入后持续到收尾，期间文字先缓冲——干净通过整段丢弃、补做了才发一次说明（同 Anthropic 路）
-        verify_mode = False; verify_fixed = False; verify_queried = False
-        while round_i < MAX_ROUNDS + MAX_VERIFY * 2:   # 核实轮额外预算
-            round_i += 1
-            if await _im_cancelled():
-                yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
-                return
-            stream = await client.chat.completions.create(
-                model=ai.model,
-                messages=messages,
-                tools=tools,
-                tool_choice="auto",
-                max_tokens=max_tokens,
-                temperature=temperature,
-                stream=True,
-                stream_options={"include_usage": True},
-                extra_body=_think_extra,
-            )
-            content = ""
-            reasoning = ""                   # mimo 深度思考产出（reasoning_content）：多轮+工具调用必须原样回传，否则 400
-            tool_buf: dict[int, dict] = {}   # index → {id, name, args}，流式分片累积
-            announced = False                # 工具参数流式期间先亮个指示，免得前端空窗以为卡死
-            _tok = 0
-            def _asst(text, tool_calls=None):
-                # 统一构造 assistant 历史消息：mimo 开思考时把本轮 reasoning_content 一并带回（文档硬性要求，
-                # 多轮 Function Call 缺它 → 400）。思考关时 reasoning 恒空、不加该字段，行为与原先逐字一致。
-                m = {"role": "assistant", "content": text}
-                if tool_calls is not None:
-                    m["tool_calls"] = tool_calls
-                if reasoning:
-                    m["reasoning_content"] = reasoning
-                return m
-            async for chunk in stream:
-                if getattr(chunk, "usage", None):
-                    total_in  += chunk.usage.prompt_tokens or 0
-                    total_out += chunk.usage.completion_tokens or 0
-                    # DeepSeek 自动上下文缓存命中（prompt_cache_hit_tokens）；非 DeepSeek 厂商无此字段 → 0
-                    total_cache_hit += getattr(chunk.usage, "prompt_cache_hit_tokens", 0) or 0
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                _rc = getattr(delta, "reasoning_content", None)
-                if _rc:
-                    reasoning += _rc   # 思考分片（流式里先于 content 到）；只入历史回传，不流式发给用户
-                if delta.content:
-                    content += delta.content
-                    if not verify_mode:   # 核实阶段不实时发，攒到 content 里待回合末定夺
-                        yield f"data: {json.dumps({'type': 'token', 'content': delta.content})}\n\n"
-                    # 流式途中协作检查取消（同 Anthropic 路：单轮长回答只能在这里掐断）
-                    _tok += 1
-                    if _tok % _CANCEL_CHECK_EVERY == 0 and await _im_cancelled():
-                        try:
-                            await stream.close()
-                        except Exception:
-                            pass
-                        yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
-                        return
-                if delta.tool_calls and not announced:
-                    # 工具调用开始（此后在流式输出工具参数，可能很长，无 token、tool_call 也要等参数收完才发）
-                    announced = True
-                    if not verify_mode:   # 自检轮静默：连「正在整理」预告也不冒泡
-                        _prep = self._label("_preparing", "咕咕正在整理…")
-                        yield f"data: {json.dumps({'type': 'tool_call', 'name': '_preparing', 'label': _prep}, ensure_ascii=False)}\n\n"
-                for tc in (delta.tool_calls or []):
-                    b = tool_buf.setdefault(tc.index, {"id": "", "name": "", "args": ""})
-                    if tc.id:
-                        b["id"] = tc.id
-                    if tc.function and tc.function.name:
-                        b["name"] = tc.function.name
-                    if tc.function and tc.function.arguments:
-                        b["args"] += tc.function.arguments
-
-            if tool_buf:
-                any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
-                ordered = [tool_buf[i] for i in sorted(tool_buf)]
-                # 核实阶段首次补做（本轮有增删改）→ 发一次"发现漏了X，补一下"说明；之后核对文字仍静默
-                if verify_mode and not verify_fixed and content and any(b["name"] in _mutset for b in ordered):
-                    async for _line in genstream.typed_stream(content):   # 逐字流式，与正常回复一致
-                        yield _line
-                messages.append(_asst(
-                    content or None,
-                    tool_calls=[
-                        {"id": b["id"], "type": "function",
-                         "function": {"name": b["name"], "arguments": b["args"]}}
-                        for b in ordered
-                    ],
-                ))
-                for b in ordered:
-                    label = self._label(b["name"])
-                    if verify_mode:   # 复查前缀后端拼接（可在「状态命名」面板改 _verify_prefix；支持多候选随机）
-                        label = self._label("_verify_prefix", "复查 · ") + label
-                    try:
-                        args = json.loads(b["args"])
-                    except Exception:
-                        # 参数 JSON 解析失败（多为长内容被 max_tokens 截断）→ 别拿空参跑：增删改工具吃到 {} 会
-                        # 误伤数据或报错，还会白置 did_mutate 触发一整轮核实。改回一条错误 tool_result 让模型把这次
-                        # 调用参数精简后重发；本轮不 dispatch、不置 did_mutate。tool_call 已在上面 append，这里补齐配对的 result。
-                        print(f"[core] 工具 {b['name']} 参数解析失败(疑似 max_tokens 截断), "
-                              f"len={len(b['args'])} 尾部={b['args'][-120:]!r}", flush=True)
-                        yield f"data: {json.dumps({'type': 'tool_call', 'name': b['name'], 'label': label, 'input': {}, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
-                        yield f"data: {json.dumps({'type': 'tool_done', 'name': b['name'], 'label': label, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": b["id"],
-                            "content": json.dumps({"error": "参数不完整（内容可能过长被截断），请精简这次调用的参数后重试"}, ensure_ascii=False),
-                        })
-                        continue
-                    await _im_set_tool_state(b["name"])
-                    # 自检轮工具照常显示，但打 verify 标记：前端标注「复查·」且收尾不冒「生成中」点点（否则回复完还在转、像卡住）
-                    yield f"data: {json.dumps({'type': 'tool_call', 'name': b['name'], 'label': label, 'input': args, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
-                    result, artifact = await registry.dispatch(user_id, b["name"], args)
-                    if b["name"] in _mutset:
-                        did_mutate = True   # 做过增删改 → 收尾时强制自我核实
-                        if verify_mode:
-                            verify_fixed = True   # 核实阶段里补了东西 → 确有遗漏
-                    elif verify_mode and b["name"].startswith(_READ_PREFIXES):
-                        verify_queried = True   # 核实阶段真的用查询工具查证了（不是嘴上确认）
-                    yield f"data: {json.dumps({'type': 'tool_done', 'name': b['name'], 'label': label, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
-                    if artifact:
-                        yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": b["id"],
-                        "content": result,
-                    })
-                continue
-
-            # 无工具调用：正文已逐 token 流式输出完毕
-            # 空回复兜底：模型整轮没产出正文 → 用户看到空气泡。常见于 ① 推理模型把话全放进
-            # reasoning_content；② 精力降级进轻量模式后「没重活可干」干脆不说话。不限 mimo——
-            # 任何模型空正文都要兜（此前只 gate 在 is_mimo，导致非 mimo 模型精力用尽时裸露成空气泡）。
-            # 本轮没动工具、也不在核实阶段时：先追一轮要它直接给正文；仍空则给句得体兜底。
-            if not content.strip() and not did_mutate and not verify_mode:
-                if empty_retry < 1:
-                    empty_retry += 1
-                    messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})
-                    yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
-                    continue
-                fb = "嗯…我这下没太接住，你再说一遍、或者换个说法，我马上跟上～"
-                async for _line in genstream.typed_stream(fb):   # 空回复兜底也走逐字流式
-                    yield _line
-                content = fb
-            # narration 兜底：整段生成一个工具都没真调，但文字在"假装"读/改文件 → 追一轮逼它真调（只一次）。
-            if (not any_tool_called and not verify_mode and narration_retry < 1
-                    and _looks_like_narration(content)):
-                narration_retry += 1
-                messages.append(_asst(content or "（…）"))
-                messages.append({"role": "user", "content": _NARRATION_NUDGE})
-                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
-                continue
-            # 意图守卫（B）：宣告要做却本轮零工具 → 逼它当场做（_announces_intent 已排除问句）。只追一次。
-            if (not any_tool_called and not verify_mode and intent_retry < 1
-                    and _announces_intent(content)):
-                intent_retry += 1
-                messages.append(_asst(content or "（…）"))
-                messages.append({"role": "user", "content": _INTENT_NUDGE})
-                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
-                continue
-            # P3 决策守卫：用户明确要改、模型零工具却用「不用改/已合理」驳回 → 逼它执行或问清。
-            if (not any_tool_called and not verify_mode and decision_retry < 1
-                    and _is_decision_dodge(_user_req, content)):
-                decision_retry += 1
-                messages.append(_asst(content or "（…）"))
-                messages.append({"role": "user", "content": _DECISION_NUDGE})
-                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
-                continue
-            # 自我核实：① 做过增删改 → 核实查证/补做；② 已进核实阶段却只嘴上确认、没真调查询工具 → 强制再追一轮真查
-            _need_verify = did_mutate and verify_count < MAX_VERIFY
-            _need_force  = verify_mode and not verify_queried and not did_mutate and verify_count < MAX_VERIFY
-            if _need_verify or _need_force:
-                verify_count += 1
-                did_mutate = False
-                verify_mode = True   # 进入/保持核实阶段 → 之后文字先缓冲
-                messages.append(_asst(content or ""))
-                messages.append({"role": "user", "content": _VERIFY_FORCE_PROMPT if _need_force else _VERIFY_PROMPT})
-                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
-                continue
-            # 收尾：干净核实阶段的确认文字（content，未实时发）直接丢弃，用户看不到重复确认
-            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out, 'cache_read': total_cache_hit})}\n\n"
+            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out, 'cache_read': total_cache})}\n\n"
             return
 
         yield f"data: {json.dumps({'type': 'error', 'detail': '这步操作有点多，咕咕没在一口气里全做完 😅 前面几步已经生效了，要我接着把剩下的做完吗？'}, ensure_ascii=False)}\n\n"
