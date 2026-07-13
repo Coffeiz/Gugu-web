@@ -111,7 +111,7 @@ Gugu 后端接入了 Anthropic 原生模型和多家 Anthropic/OpenAI 兼容第�
 
 **待确认问题**：
 
-- 🔲 这次故障是否 100% 由 MiniMax 触发，还是也可能是其它走 Anthropic 兼容端点的 provider？—— 静态代码分析（`use_anthropic_for` 对 MiniMax 无条件返回 `True`，且代码里已有 MiniMax 专属流式异常处理先例）高度支持是 MiniMax，但没有拿到这次崩溃对应会话的 model 配置做 100% 实锤（受限诊断日志本身没记录 provider 字段）。不影响本次修复方案——即便实际触发方不是 MiniMax，`ProviderAdapter` 架构本身也支持把 `AttributeError` 加进对应 provider 的白名单，只是需要先确认是哪一个。
+- ✅ 这次故障是否 100% 由 MiniMax 触发？—— 这次没能实锤（`gugu-diag.log` 没记 provider 字段，只能靠静态代码分析高度支持是 MiniMax，不是 100% 确定），用户明确表示"只要能 log 追踪就行"——不追溯这次，改成让下次不用再猜：`agent/core.py` 的两处 `diag_log` 调用（`_stream_round`/`_run_loop`）都在 `where` 参数里加上了 `provider=.../format=...`，下次同类问题直接从日志就能看出是哪个 provider，不用再重新做一遍静态分析。
 
 ---
 
