@@ -65,7 +65,11 @@ async def _stream_round(client, kwargs, adapter=None):
             if emitted:
                 raise   # 已吐 token，重试会重复输出——原样抛给上层当未知/中断处理
             if i >= len(_RETRY_BACKOFF):
-                diag_log("agent.core.stream_round", e)   # 原始 → 受限诊断出口
+                # where 里带上 provider——上次这里崩溃排查时 diag_log 没记 provider，只能靠
+                # 静态代码分析猜是哪家（PRD-LLM-1「待确认问题」），这次直接把它写进日志，
+                # 下次同类问题不用再猜。
+                _provider = adapter.name if adapter is not None else "unknown"
+                diag_log(f"agent.core.stream_round provider={_provider}", e)   # 原始 → 受限诊断出口
                 _log.warning("LLM 流式调用重试 %d 次后仍失败：%s", i, type(e).__name__)
                 raise RetryableError("llm.stream_exhausted", "LLM 调用重试后仍失败",
                                       cause=e, attempt=i) from e
@@ -276,7 +280,11 @@ class LLMRunner:
             except Exception as e:
                 # 已吐过 token 中途出错（emitted 就原样抛的路径）或其他未预期异常——按未知处理：
                 # 原始进受限诊断出口，可见日志只留类型名，不带原始 str(e)。
-                diag_log("agent.core.main_loop", e)
+                # where 里带上 provider + api_format——2026-07-14 那次 MiniMax AttributeError
+                # 故障排查时，diag_log 没记 provider，只能靠静态代码分析猜是哪家（PRD-LLM-1
+                # 「待确认问题」），这次直接把它写进日志，下次同类问题一眼就能看出是哪个 provider。
+                diag_log(f"agent.core.main_loop provider={getattr(ai, 'provider', '') or 'unknown'} "
+                         f"format={driver.api_format}", e)
                 _log.error("LLM 调用中途出错：%s", type(e).__name__)
                 detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
                 yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
