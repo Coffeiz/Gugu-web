@@ -1,0 +1,13 @@
+# 构建上下文排除——跟 backend/.gitignore 的运行时产物那部分保持一致，
+# 另外多排一份 .git（后端目录不该单独含 .git，防御性写一条）。
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+logs/
+uploads/
+.env
+config.override.json
+.gugu.pid
+.git/

@@ -1,41 +1,105 @@
-version: "3.9"
+# 本地/开发一键起全栈用的 compose 文件——不是生产部署方式，生产用裸机 systemd 三服务
+# （见 backend/start.sh install），原因见 backend/Dockerfile 顶部注释。
+#
+# 用法：
+#   cp .env.example backend/.env   # 按需填 SECRET_KEY / AI__* 等，DB__*/REDIS__* 已由本文件覆盖
+#   docker compose up -d
+#   前端 → http://localhost:9595   后端 → http://localhost:8000/docs
 
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: pm
-      POSTGRES_PASSWORD: pm123
-      POSTGRES_DB: pm_studio
+      POSTGRES_USER: gugu
+      POSTGRES_PASSWORD: gugu_docker_pw
+      POSTGRES_DB: gugu
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gugu -d gugu"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   backend:
     build: ./backend
     ports:
       - "8000:8000"
-    env_file: .env
+    env_file:
+      # backend/.env 是应用自己按 app/core/config.py 的 env_file=".env" 约定去找的路径
+      # （从 backend/ 目录启动时相对路径解析），跟下面 environment: 覆盖的 DB__*/REDIS__*
+      # 不冲突——environment 优先级更高，专门覆盖成 compose 网络里的服务名。
+      - ./backend/.env
+    environment:
+      DB__HOST: postgres
+      DB__PORT: 5432
+      DB__NAME: gugu
+      DB__USER: gugu
+      DB__PASSWORD: gugu_docker_pw
+      REDIS__HOST: redis
+      REDIS__PORT: 6379
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./backend:/app
+      - backend_uploads:/app/uploads
+
+  # IM 队列消费者（飞书/QQ/微信消息 → 跑 agent 回复）——跟 backend 是同一个镜像，
+  # 只是 command 换成 worker 入口；没配 IM 频道凭据也能起，只是收不到消息，不影响
+  # web API 本身。
+  worker:
+    build: ./backend
+    command: ["python", "-m", "worker"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DB__HOST: postgres
+      DB__PORT: 5432
+      DB__NAME: gugu
+      DB__USER: gugu
+      DB__PASSWORD: gugu_docker_pw
+      REDIS__HOST: redis
+      REDIS__PORT: 6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - backend_uploads:/app/uploads
 
   frontend:
     build: ./frontend
     ports:
-      - "5173:5173"
+      - "9595:5173"   # 宿主机 9595 → 容器内 vite dev server 仍然是 5173，容器内部端口不用改
+    environment:
+      # 见 vite.config.js 的 proxy 注释：容器网络里 "localhost" 指前端容器自己，
+      # 用 compose 服务名 backend 才能连到后端容器。
+      VITE_API_PROXY_TARGET: http://backend:8000
     volumes:
       - ./frontend:/app
+      # 匿名卷盖住容器内的 node_modules，不被上面那条源码挂载覆盖掉——否则宿主机若没有
+      # （或平台不同的）node_modules，容器启动即报模块缺失。
+      - /app/node_modules
     depends_on:
       - backend
 
 volumes:
   pgdata:
+  backend_uploads:
