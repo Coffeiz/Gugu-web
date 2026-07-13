@@ -1,8 +1,7 @@
-import secrets
-from app.core.tz import now_utc, iso_utc
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import Response
@@ -10,13 +9,14 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from app.db.session import get_db
-from app.models import User, InviteCode, AgentUsage
-from app.core.security import hash_password, verify_password, create_user_token, get_current_user
-from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount
 from app.core.config import get_settings
-from app.core.redis import get_redis
 from app.core.ratelimit import rate_limit
+from app.core.redis import get_redis
+from app.core.security import hash_password, verify_password, create_user_token, get_current_user
+from app.core.tz import now_utc, iso_utc
+from app.db.session import get_db
+from app.models import User, InviteCode, AgentUsage, FrontendEvent
+from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount
 from app.services import email as email_svc
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -87,6 +87,12 @@ async def login(body: UserLogin, request: Request, db: AsyncSession = Depends(ge
         raise HTTPException(401, "用户名或密码错误")
     if not user.is_active:
         raise HTTPException(403, "账号已停用，请联系管理员")
+
+    # 登录既是网页端一次明确的活跃行为，也要留下可按天回溯的事件。last_active_at 供滚动
+    # 窗口统计兜底，FrontendEvent 则让历史 DAU 不会因同一用户后来再次活跃而丢掉旧日期。
+    user.last_active_at = now_utc()
+    db.add(FrontendEvent(user_id=user.id, event="web_login"))
+    await db.commit()
 
     return TokenResponse(
         access_token=create_user_token(user.id),

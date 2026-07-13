@@ -1,15 +1,17 @@
 from datetime import datetime, timedelta, timezone
-from app.core.tz import now_utc
+from typing import Set
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, distinct, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.tz import LOCAL_TZ, local_day_start_utc, now_utc, utc_to_local_date_expr
 from app.db.session import get_db
 from app.models import (
     User, Project, ConversationSession, AgentUsage, UserBot, FrontendEvent,
     CalendarEvent, File, ScheduledTask,
 )
-from app.core.tz import LOCAL_TZ, local_day_start_utc, utc_to_local_date_expr
 from onboarding.models import OnboardingState
 
 router = APIRouter(prefix="/admin/analytics", tags=["admin"])
@@ -53,21 +55,25 @@ async def get_summary(exclude_dev: bool = Query(False), db: AsyncSession = Depen
     new_30d = (await db.execute(
         _users_stmt().where(User.created_at >= d30)
     )).scalar() or 0
-    active_30d = (await db.execute(_xd(
-        select(func.count(distinct(AgentUsage.user_id)))
-        .where(AgentUsage.created_at >= d30), AgentUsage.user_id, xd)
-    )).scalar() or 0
-    # WAU：过去 7 天活跃用户 = 对话过（AgentUsage，覆盖网页 + IM）∪ 登录过网页（last_active_at），按 user_id 去重。
-    # IM 走 worker 不更新 last_active_at，靠 AgentUsage 纳入；网页 + IM 都用的同一用户只算一次。
-    _chat_ids = set((await db.execute(_xd(
-        select(distinct(AgentUsage.user_id)).where(AgentUsage.created_at >= d7),
-        AgentUsage.user_id, xd)
-    )).scalars().all())
-    _web_stmt = select(User.id).where(User.last_active_at >= d7)
-    if xd:
-        _web_stmt = _web_stmt.where(User.is_developer == False)
-    _web_ids = set((await db.execute(_web_stmt)).scalars().all())
-    wau = len(_chat_ids | _web_ids)
+    async def _active_user_ids(since: datetime) -> Set[UUID]:
+        """统一活跃口径：网页事件（含登录）∪ 网页活跃时间 ∪ AgentUsage（网页和 IM）。"""
+        chat_ids = set((await db.execute(_xd(
+            select(distinct(AgentUsage.user_id)).where(AgentUsage.created_at >= since),
+            AgentUsage.user_id, xd)
+        )).scalars().all())
+        event_ids = set((await db.execute(_xd(
+            select(distinct(FrontendEvent.user_id)).where(FrontendEvent.created_at >= since),
+            FrontendEvent.user_id, xd)
+        )).scalars().all())
+        web_stmt = select(User.id).where(User.last_active_at >= since)
+        if xd:
+            web_stmt = web_stmt.where(User.is_developer == False)
+        web_ids = set((await db.execute(web_stmt)).scalars().all())
+        # set 并集天然按 user_id 去重；IM 没有网页 last_active_at，仍会经 AgentUsage 计入。
+        return chat_ids | event_ids | web_ids
+
+    active_30d = len(await _active_user_ids(d30))
+    wau = len(await _active_user_ids(d7))
 
     # ── 项目（排除归档 + 排除引导教程项目）───────────────────────────────────────
     def _proj_stmt(*where):
@@ -275,8 +281,9 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
     """), {"start": start_utc})).all()
     proj_new_map = {r.d: r.cnt for r in proj_new_rows}
 
-    # 活跃用户曲线（wishlist：整体活跃趋势，不按维度拆）
-    # 口径：当日有对话（agent_usage）或有前端行为（frontend_events）的去重用户。
+    # 活跃用户曲线：当日对话（网页 + IM）∪ 前端事件（含 web_login）∪ 网页活跃时间，按 user_id 去重。
+    # last_active_at 只能保存最新一次网页活跃，历史日期主要依赖 web_login/其它前端事件；它在这里
+    # 作为兼容旧数据和“已登录后仅浏览”的补充来源。
     active_rows = (await db.execute(text(f"""
         SELECT d, COUNT(DISTINCT uid)::int AS cnt FROM (
             SELECT DATE(created_at AT TIME ZONE {tz_expr}) AS d, user_id AS uid
@@ -284,6 +291,9 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
             UNION
             SELECT DATE(created_at AT TIME ZONE {tz_expr}) AS d, user_id AS uid
             FROM frontend_events WHERE created_at >= :start {nd}
+            UNION
+            SELECT DATE(last_active_at AT TIME ZONE {tz_expr}) AS d, id AS uid
+            FROM users WHERE last_active_at >= :start {_u_dev}
         ) t GROUP BY d
     """), {"start": start_utc})).all()
     active_map = {r.d: r.cnt for r in active_rows}
