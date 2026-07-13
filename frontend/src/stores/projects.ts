@@ -3,7 +3,9 @@ import { ref, computed, watch } from 'vue'
 import { projectsApi, eventsApi } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import type { Project, ProjectStage, ProjectStatus } from '@/types/project'
-import { autoCompleteTodos, restoreTodos, stageProgressByIndex, allTodosDone, normalizeStages } from '@/utils/projectStages'
+import {
+  normalizeStages, transitionProjectStage, transitionProjectStatus, transitionProjectTodos,
+} from '@/utils/projectStages'
 import type { components } from '@/types/api'
 
 type EventResponse = components['schemas']['EventResponse']
@@ -37,6 +39,24 @@ export const useProjectStore = defineStore('projects', () => {
   const archivedProjects = ref<Project[]>([])
   const archivedLoading  = ref(false)
   const archivedLoaded   = ref(false)
+  // 每个项目只允许一个在途写入：后续操作在拿到前一次的新版本后再发送，避免快速点击时
+  // 所有请求都带着同一个旧 version。confirmed 是服务端最后确认的快照，失败就从这里回滚。
+  const confirmedProjects = new Map<number, Project>()
+  const projectWrites = new Map<number, Promise<void>>()
+
+  function cloneProject(project: Project): Project {
+    return JSON.parse(JSON.stringify(project)) as Project
+  }
+
+  function rememberConfirmed(project: Project) {
+    confirmedProjects.set(project.id, cloneProject(project))
+  }
+
+  function restoreConfirmed(id: number) {
+    const confirmed = confirmedProjects.get(id)
+    const index = projects.value.findIndex(project => project.id === id)
+    if (confirmed && index >= 0) projects.value.splice(index, 1, cloneProject(confirmed))
+  }
 
   const activeCount = computed(() =>
     projects.value.filter(p => p.status === 'active').length
@@ -67,6 +87,7 @@ export const useProjectStore = defineStore('projects', () => {
     try {
       // api 边界收紧：ProjectResponse（status:string / stages 未结构化）→ Project（见 types/project.ts）
       projects.value = await projectsApi.list() as unknown as Project[]
+      projects.value.forEach(rememberConfirmed)
     } catch (e) {
       error.value = errMsg(e)
     } finally {
@@ -89,6 +110,7 @@ export const useProjectStore = defineStore('projects', () => {
     }
     const created = await projectsApi.create(payload) as unknown as Project
     projects.value.unshift(created)
+    rememberConfirmed(created)
     // 新手引导：手动新建第一个项目后弹一句（claim-once 保证只第一次）
     import('@/composables/useOnboarding').then(m => m.fireHint('todo_newproj')).catch(() => {})
     return created
@@ -129,20 +151,36 @@ export const useProjectStore = defineStore('projects', () => {
   }
 
   async function _patchProject(id: number, payload: Partial<Project>) {
-    const p = projects.value.find(p => p.id === id)
+    const previous = projectWrites.get(id) ?? Promise.resolve()
+    const write = previous.catch(() => undefined).then(async () => {
+      const project = projects.value.find(item => item.id === id)
+      const confirmed = confirmedProjects.get(id)
+      const version = project?.version ?? confirmed?.version
+      try {
+        // payload 用紧类型 Partial<Project>（stages 结构化），wire 的 ProjectUpdate 是松类型，边界处一次性收
+        const updated = await projectsApi.update(id, { ...payload, version } as unknown as components['schemas']['ProjectUpdate'])
+        if (!updated) return
+        const nextConfirmed = { ...(confirmed ?? project), ...payload, ...updated } as unknown as Project
+        rememberConfirmed(nextConfirmed)
+        const current = projects.value.find(item => item.id === id)
+        if (current) {
+          current.version = updated.version
+          current.doneAt = updated.doneAt
+        }
+      } catch (e) {
+        restoreConfirmed(id)
+        if ((e as { status?: number }).status === 409) {
+          await fetchProjects()
+          throw new Error('数据已被其他用户修改，已自动刷新')
+        }
+        throw e
+      }
+    })
+    projectWrites.set(id, write)
     try {
-      // payload 用紧类型 Partial<Project>（stages 结构化），wire 的 ProjectUpdate 是松类型，边界处一次性收
-      const updated = await projectsApi.update(id, { ...payload, version: p?.version } as unknown as components['schemas']['ProjectUpdate'])
-      if (p && updated) {
-        if (updated.version) p.version = updated.version
-        if ('doneAt' in updated) p.doneAt = updated.doneAt
-      }
-    } catch (e) {
-      if ((e as { status?: number }).status === 409) {
-        await fetchProjects()
-        throw new Error('数据已被其他用户修改，已自动刷新')
-      }
-      throw e
+      await write
+    } finally {
+      if (projectWrites.get(id) === write) projectWrites.delete(id)
     }
   }
 
@@ -152,93 +190,42 @@ export const useProjectStore = defineStore('projects', () => {
     const p = projects.value.find(p => p.id === id)
     if (!p) return
     const oldStatus = p.status
-    p.status = newStatus
+    const transition = transitionProjectStatus(p, newStatus)
+    Object.assign(p, transition)
+    p._stageBeforeDone = transition.stageBeforeDone
 
-    if (newStatus === 'done' && oldStatus !== 'done') {
+    if (transition.status === 'done' && oldStatus !== 'done') {
       p.doneAt = new Date().toISOString()
       // 新手引导回头看(08)：完成第 5 个项目时弹一句（claim-once 只一次）
       if (projects.value.filter(x => x.status === 'done').length >= 5) {
         import('@/composables/useOnboarding').then(m => m.fireLookback()).catch(() => {})
       }
-    } else if (oldStatus === 'done' && newStatus !== 'done') {
+    } else if (oldStatus === 'done' && transition.status !== 'done') {
       p.doneAt = null
     }
-
-    if (newStatus === 'done' && oldStatus !== 'done' && p.stages?.length) {
-      if (!p._stageBeforeDone) p._stageBeforeDone = p.currentStage  // 若 setStage 已提前存好则不覆盖
-      const lastKey = p.stages[p.stages.length - 1].key
-      p.currentStage = lastKey
-      p.progress = 100
-      // 拖到「已完成」= 全项目收尾：自动勾选所有阶段里未完成的待办（快照原状态 +
-      // autoCompleted 标记，拖回进行中时按此还原）。与 setStage 前进时同一套约定。
-      const stages = JSON.parse(JSON.stringify(p.stages))
-      for (const stage of stages) stage.todos = autoCompleteTodos(stage.todos ?? [])
-      p.stages = stages
-      await _patchProject(id, { status: newStatus, currentStage: lastKey, progress: 100, doneAt: p.doneAt, stages })
-      return
-    }
-
-    if (oldStatus === 'done' && newStatus !== 'done' && p.stages?.length) {
-      const restored = p._stageBeforeDone ?? p.stages[0].key
-      p._stageBeforeDone = undefined
-      p.currentStage = restored
-      const idx = p.stages.findIndex(s => s.key === restored)
-      const progress = stageProgressByIndex(idx, p.stages.length)
-      p.progress = progress
-      // 还原所有 autoCompleted 的 todo 到快照状态
-      const stages = JSON.parse(JSON.stringify(p.stages))
-      for (const stage of stages) stage.todos = restoreTodos(stage.todos ?? [])
-      p.stages = stages
-      await _patchProject(id, { status: newStatus, currentStage: restored, progress, stages })
-      return
-    }
-
-    await _patchProject(id, { status: newStatus })
+    await _patchProject(id, {
+      status: transition.status, currentStage: transition.currentStage,
+      progress: transition.progress, stages: transition.stages,
+    })
   }
 
   async function setStage(id: number, stageKey: string, progress?: number) {
     const p = projects.value.find(p => p.id === id)
     if (!p) return
 
-    const originalStageKey = p.currentStage  // 记录修改前的阶段，用于 _stageBeforeDone
-    // 「真正完成」快照：取自动完成之前的当下状态——只有所有待办都已勾选才允许进已完成。
-    // 位置进度（progress===100）会把「点到最后阶段」当作满，前面阶段仍有没勾的待办也会误判完成。
-    const genuinelyDone = allTodosDone(p.stages)
-    const oldIdx = p.stages.findIndex(s => s.key === p.currentStage)
-    const newIdx = p.stages.findIndex(s => s.key === stageKey)
-
-    let stages = p.stages
-    if (oldIdx !== newIdx && oldIdx >= 0 && newIdx >= 0) {
-      stages = JSON.parse(JSON.stringify(p.stages))
-      if (newIdx > oldIdx) {
-        // 前进：对经过的阶段（不含新当前阶段）快照并自动打勾
-        for (let i = oldIdx; i < newIdx; i++) stages[i].todos = autoCompleteTodos(stages[i].todos ?? [])
-      } else {
-        // 后退：从目标阶段开始（含目标阶段自身）还原 autoCompleted 到快照状态
-        for (let i = newIdx; i < stages.length; i++) stages[i].todos = restoreTodos(stages[i].todos ?? [])
-      }
-      p.stages = stages
-    }
-
-    p.currentStage = stageKey
-    p.progress = progress ?? 0
-
-    const isLastFull = newIdx === p.stages.length - 1 && p.progress === 100 && genuinelyDone
-
-    if (isLastFull && p.status !== 'done') {
-      // 最后阶段 + 进度满 → 立即乐观更新 status/doneAt，一次 API 全部写入
-      p._stageBeforeDone = originalStageKey
-      p.status = 'done'
+    const transition = transitionProjectStage(p, stageKey, progress ?? 0)
+    const oldStatus = p.status
+    Object.assign(p, transition)
+    p._stageBeforeDone = transition.stageBeforeDone
+    if (transition.status === 'done' && oldStatus !== 'done') {
       p.doneAt = new Date().toISOString()
-      await _patchProject(id, { currentStage: stageKey, progress: p.progress, stages, status: 'done' })
-    } else if (!isLastFull && p.status === 'done') {
-      // 退出最后阶段或进度不满 → 从已完成回退到进行中
-      p.status = 'active'
+    } else if (transition.status !== 'done' && oldStatus === 'done') {
       p.doneAt = null
-      await _patchProject(id, { currentStage: stageKey, progress: p.progress, stages, status: 'active', doneAt: null })
-    } else {
-      await _patchProject(id, { currentStage: stageKey, progress: p.progress, stages })
     }
+    await _patchProject(id, {
+      currentStage: transition.currentStage, progress: transition.progress,
+      stages: transition.stages, status: transition.status,
+    })
   }
 
   async function updateStages(id: number, newStages: ProjectStage[]) {
@@ -249,6 +236,24 @@ export const useProjectStore = defineStore('projects', () => {
       p.currentStage = newStages[0]?.key ?? ''
     }
     await _patchProject(id, { stages: newStages, currentStage: p.currentStage })
+  }
+
+  async function saveTodos(id: number, newStages: ProjectStage[], progress: number, advanceTo?: string) {
+    const p = projects.value.find(project => project.id === id)
+    if (!p) return
+    const state = { ...p, stages: newStages }
+    const transition = advanceTo
+      ? transitionProjectStage(state, advanceTo, progress)
+      : transitionProjectTodos(state, newStages, progress)
+    const oldStatus = p.status
+    Object.assign(p, transition)
+    p._stageBeforeDone = transition.stageBeforeDone
+    if (transition.status === 'done' && oldStatus !== 'done') p.doneAt = new Date().toISOString()
+    if (transition.status !== 'done' && oldStatus === 'done') p.doneAt = null
+    await _patchProject(id, {
+      stages: transition.stages, currentStage: transition.currentStage,
+      progress: transition.progress, status: transition.status,
+    })
   }
 
   async function updateProject(id: number, fields: Partial<Project>) {
@@ -289,7 +294,7 @@ export const useProjectStore = defineStore('projects', () => {
     kanbanColumns, projects, loading, error,
     activeCount, totalCount, upcomingCount, urgentProjects,
     fetchProjects, addProject, deleteProject, archiveProject, moveProject,
-    setStage, updateStages, updateProject,
+    setStage, updateStages, saveTodos, updateProject,
     modalProject, openModal, closeModal,
     upcomingCalEvents, fetchUpcomingCalEvents,
     archivedProjects, archivedLoading, archivedLoaded, fetchArchivedProjects, unarchiveProject,

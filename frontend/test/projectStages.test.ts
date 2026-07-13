@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   autoCompleteTodos, restoreTodos, toggleTodoDone,
-  nextStatus, stageProgressByIndex, normalizeStages, firstIncompleteStageIdx, allTodosDone,
+  nextStatus, stageProgressByIndex, projectTodoProgress, normalizeStages, firstIncompleteStageIdx, allTodosDone,
+  transitionProjectStage, transitionProjectStatus, transitionProjectTodos,
 } from '@/utils/projectStages'
-import type { ProjectTodo } from '@/types/project'
+import type { ProjectStage, ProjectTodo } from '@/types/project'
 
 // 阶段/待办纯领域函数（P2 第一刀的地基，见 [[gugu-p2-refactor-plan]]）。
 // 行为必须与 stores/projects.ts 现有实现逐字一致——这些断言就是「迁移调用点后行为不变」的护栏。
@@ -93,6 +94,20 @@ describe('stageProgressByIndex — 按阶段位置算进度', () => {
   })
 })
 
+describe('projectTodoProgress — 项目待办进度', () => {
+  it('有待办时按全部待办的完成比例计算', () => {
+    const stages = [
+      { key: 's0', label: '计划', todos: [td({ done: true }), td({ done: false })] },
+      { key: 's1', label: '交付', todos: [td({ done: true })] },
+    ]
+    expect(projectTodoProgress(stages, 's0')).toBe(67)
+  })
+  it('无待办时按当前阶段位置计算', () => {
+    const stages = [{ key: 's0', label: '计划', todos: [] }, { key: 's1', label: '交付', todos: [] }]
+    expect(projectTodoProgress(stages, 's1')).toBe(100)
+  })
+})
+
 describe('normalizeStages — 规范化', () => {
   it('字符串阶段 → {key:s{i}, label, todos:[]}', () => {
     expect(normalizeStages(['计划', '交付'])).toEqual([
@@ -151,5 +166,48 @@ describe('allTodosDone — 进入已完成的闸门', () => {
   })
   it('空阶段 / 全无待办 → true（位置型项目仍可完成）', () => {
     expect(allTodosDone([stage([]), stage([])])).toBe(true)
+  })
+})
+
+describe('项目状态转换', () => {
+  const stages = (): ProjectStage[] => [
+    { key: 's0', label: '计划', todos: [td({ id: 'a', done: false })] },
+    { key: 's1', label: '交付', todos: [td({ id: 'b', done: false })] },
+  ]
+
+  it('移入已完成：收尾待办、定位末阶段并保留回退锚点', () => {
+    const result = transitionProjectStatus(
+      { stages: stages(), currentStage: 's0', progress: 20, status: 'active' }, 'done',
+    )
+    expect(result).toMatchObject({ status: 'done', currentStage: 's1', progress: 100, stageBeforeDone: 's0' })
+    expect(result.stages.flatMap(stage => stage.todos).every(todo => todo.done)).toBe(true)
+  })
+
+  it('从已完成回退：只还原自动勾选的待办', () => {
+    const completed = transitionProjectStatus(
+      { stages: stages(), currentStage: 's0', progress: 20, status: 'active' }, 'done',
+    )
+    const result = transitionProjectStatus({
+      ...completed, _stageBeforeDone: completed.stageBeforeDone,
+    }, 'active')
+    expect(result).toMatchObject({ status: 'active', currentStage: 's0', progress: 50 })
+    expect(result.stages.flatMap(stage => stage.todos).every(todo => !todo.done)).toBe(true)
+  })
+
+  it('前进阶段：自动完成经过的阶段，且不直接进入完成区', () => {
+    const result = transitionProjectStage(
+      { stages: stages(), currentStage: 's0', progress: 20, status: 'active' }, 's1', 100,
+    )
+    expect(result.status).toBe('active')
+    expect(result.stages[0].todos[0]).toMatchObject({ done: true, autoCompleted: true })
+  })
+
+  it('最后阶段的全部待办完成后进入已完成', () => {
+    const doneStages = stages()
+    doneStages.forEach(stage => stage.todos.forEach(todo => { todo.done = true }))
+    const result = transitionProjectTodos(
+      { stages: doneStages, currentStage: 's1', progress: 50, status: 'active' }, doneStages, 100,
+    )
+    expect(result.status).toBe('done')
   })
 })

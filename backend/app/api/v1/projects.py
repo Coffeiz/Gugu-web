@@ -1,16 +1,17 @@
-import json
-from app.core.tz import now_utc
-import re
 from datetime import datetime
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.ownership import get_owned
+from app.core.projects import update_project_atomic
+from app.core.security import get_current_user
+from app.core.tz import now_utc
 from app.db.session import get_db
 from app.models import File, Project, User
-from app.schemas import ProjectCreate, ProjectUpdate, ProjectResponse
-from app.core.security import get_current_user
-from app.core.ownership import get_owned
+from app.schemas import ProjectCreate, ProjectResponse, ProjectUpdate
 from app.services.storage import get_storage
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -127,8 +128,10 @@ async def update_project(
     data = body.model_dump(exclude_unset=True, by_alias=False)
 
     client_version = data.pop("version", None)
-    if client_version is not None and p.version != client_version:
-        raise HTTPException(409, "数据已被其他用户修改，请刷新后重试")
+    if client_version is None:
+        raise HTTPException(422, "更新项目必须提供 version")
+    if not data:
+        return _to_resp(p)
 
     # 项目改名时同步重命名存储目录
     old_name = p.name
@@ -149,18 +152,13 @@ async def update_project(
             if f.storage_key.startswith(old_prefix):
                 f.storage_key = new_prefix + f.storage_key[len(old_prefix):]
 
-    for k, v in data.items():
-        if k == "stages":
-            p.stages = v
-        else:
-            setattr(p, k, v)
-    # 仅在 done_at 为空时才记录完成时间，避免拖回已完成列重置时间
-    if data.get("status") == "done" and p.done_at is None:
-        p.done_at = now_utc()
-    elif "status" in data and data["status"] != "done":
-        p.done_at = None
-
-    p.version = (p.version or 1) + 1
+    try:
+        updated = await update_project_atomic(db, pid, current_user.id, client_version, data)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    if not updated:
+        await db.rollback()
+        raise HTTPException(409, "数据已被其他用户修改，请刷新后重试")
     await db.commit()
     await db.refresh(p)
 

@@ -17,7 +17,7 @@ from sqlalchemy import select
 from app.models import File, Folder, Project
 from app.core.ownership import get_owned
 from app.services.storage import get_storage
-from app.services.storage.folders import resolve_folder_path
+from app.services.storage.folders import relocate_folder_tree_files, resolve_folder_path
 from app.api.v1.files import (
     _fmt_size, _move_to_trash, _color,
 )
@@ -716,8 +716,7 @@ async def _resolve_target(db, user_id, target: dict):
 
 
 async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id) -> dict:
-    """把 folder 整个搬到目标。同项目内只改 parent_id（便宜，不动文件）；跨项目/空间则
-    级联改所有子孙文件夹的 project_id、并把子孙文件物理重搬 + 改 space/project（贵）。"""
+    """把文件夹树搬到目标，并同步重建所有后代文件的物理路径。"""
     name = folder.name
     sub_ids = await _descendant_folder_ids(db, user_id, folder.id)
     # 防自移入自身或子孙
@@ -727,38 +726,19 @@ async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id) -> dict
     folder.parent_id = t_parent_id
     folder.project_id = t_pid
     moved_files = 0
-    failed = []
     if not same_project:
         # 子孙文件夹的 project_id 跟着改
         for sid in sub_ids[1:]:
             sf = await get_owned(db, Folder, sid, user_id)
             if sf:
                 sf.project_id = t_pid
-        # 子孙文件：物理 key 重搬 + 改 space/project（folder_id 不变，仍在各自文件夹里）
-        files = (await db.execute(
-            select(File).where(File.user_id == user_id,
-                               File.folder_id.in_(sub_ids), File.deleted_at.is_(None))
-        )).scalars().all()
-        storage = get_storage()
-        for f in files:
-            try:
-                new_key = await _resolve_key(db, user_id, t_space, f.display_name, f.ext,
-                                             project_id=t_pid, folder_id=f.folder_id)
-                if new_key != f.storage_key:
-                    new_key, new_disp = await _resolve_conflict(storage, new_key, f.display_name, f.ext)
-                    await storage.rename_file(f.storage_key, new_key)
-                    f.storage_key = new_key
-                    f.display_name = new_disp
-                f.space = t_space
-                f.project_id = t_pid
-                f.updated_at = now_utc()
-                moved_files += 1
-            except Exception as e:
-                failed.append({"file": f"{f.display_name}.{f.ext}", "error": str(e)[:80]})
+    # 即便同一空间内只是改 parent_id，storage_key 也含完整文件夹路径，必须同步重搬。
+    await db.flush()
+    moved_files = await relocate_folder_tree_files(db, user_id, folder.id)
     await db.commit()
     return {"success": True, "type": "folder", "folder": name,
             "subfolders": len(sub_ids) - 1, "moved_files": moved_files,
-            **({"file_failures": failed} if failed else {})}
+            "space": t_space, "project_id": t_pid}
 
 
 async def _move_items(db, user_id, args: dict):

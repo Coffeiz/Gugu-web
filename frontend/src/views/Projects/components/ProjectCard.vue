@@ -127,7 +127,7 @@
     <div v-if="stagePopOpen" class="todo-pop" :style="stagePopStyle" ref="stagePopRef" @click.stop @mousedown.stop>
       <div class="tp-header">
         <span class="tp-title">{{ currentStageLabel || '当前阶段' }}</span>
-        <span v-if="curTodoTotal" class="tp-count">{{ curDoneCount }}/{{ curTodoTotal }}</span>
+        <span v-if="draftTodoTotal" class="tp-count">{{ draftDoneCount }}/{{ draftTodoTotal }}</span>
         <button class="popup-close-btn" @click="closeStagePop" title="关闭"><PhX :size="11" weight="bold" /></button>
       </div>
       <TransitionGroup v-if="curTodoTotal" tag="div" name="tp-flip" class="tp-list">
@@ -165,7 +165,7 @@
 
 <script setup lang="ts">
 import { computed, ref, nextTick, onUnmounted, useAttrs, type PropType } from 'vue'
-import type { Project, ProjectTodo } from '@/types/project'
+import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { startPhysicsDrag, startThresholdDrag, type PhysicsDropContext } from '@/composables/usePhysicsDrag'
@@ -173,7 +173,7 @@ import { fireHint } from '@/composables/useOnboarding'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
-import { firstIncompleteStageIdx } from '@/utils/projectStages'
+import { cloneProjectStages, firstIncompleteStageIdx, projectTodoProgress } from '@/utils/projectStages'
 import { resolveProjectDropStatus } from '@/utils/projectDrop'
 import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 
@@ -245,15 +245,14 @@ const overlayHintBg  = computed(() => `rgba(${_colorRgb.value},0.12)`)
 const uploadFillBg   = computed(() => `rgba(${_colorRgb.value},0.32)`)
 
 // ── 当前阶段待办弹层（点击右侧阶段名弹出）────────────────────────
-// currentStageLabel/curTodoTotal/curDoneCount 走上面的 useProjectCardBasics（纯展示口径，
-// 画布卡也要用）；这里单独留一份 currentStage/currentTodos 是因为待办弹层要在原数组上
-// 增删/拖拽重排（s.todos.push/splice），composable 里的版本不适合拿来做原地修改——弹层
-// 本身是看板专属交互，不需要下沉进共享 composable。
-const currentStageIndex = computed(() =>
-  props.project.stages.findIndex(s => s.key === props.project.currentStage)
+// 弹层编辑的是独立草稿：拖拽、输入和勾选不直接改 props，网络失败时 Store 可完整回滚。
+const todoDraftStages = ref<ProjectStage[]>([])
+const draftCurrentStage = computed(() =>
+  todoDraftStages.value.find(stage => stage.key === props.project.currentStage) ?? null,
 )
-const currentStage = computed(() => props.project.stages[currentStageIndex.value] ?? null)
-const currentTodos = computed(() => currentStage.value?.todos ?? [])
+const currentTodos = computed(() => draftCurrentStage.value?.todos ?? [])
+const draftTodoTotal = computed(() => currentTodos.value.length)
+const draftDoneCount = computed(() => currentTodos.value.filter(todo => todo.done).length)
 
 const stagePopOpen  = ref(false)
 const stagePopStyle = ref({})
@@ -264,6 +263,7 @@ function openStagePop() {
   if (stagePopOpen.value) { closeStagePop(); return }
   const rect = stageRef.value?.getBoundingClientRect()
   if (!rect) return
+  todoDraftStages.value = cloneProjectStages(props.project.stages)
   stagePopOpen.value = true
   nextTick(() => {
     const popW = 224
@@ -282,6 +282,7 @@ function openStagePop() {
 function closeStagePop() {
   if (!stagePopOpen.value) return
   stagePopOpen.value = false
+  todoDraftStages.value = []
   document.removeEventListener('mousedown', onDocDown)
   document.removeEventListener('keydown', onKey)
   window.removeEventListener('scroll', closeStagePop, true)
@@ -292,7 +293,14 @@ function onDocDown(e: MouseEvent) {
 }
 function onKey(e: KeyboardEvent) { if (e.key === 'Escape') closeStagePop() }
 
-function persistTodos() { projectStore.updateStages(props.project.id, props.project.stages) }
+function persistTodos(advanceTo?: string) {
+  projectStore.saveTodos(
+    props.project.id,
+    cloneProjectStages(todoDraftStages.value),
+    projectTodoProgress(todoDraftStages.value, props.project.currentStage),
+    advanceTo,
+  )
+}
 
 // 待办拖拽：拖名字行重排（当前阶段内）；编辑态不可拖。dragenter 实时 splice + TransitionGroup 让位，dragend 落库
 const tpDrag = ref<number | null>(null)         // 拖动中实时 index
@@ -306,7 +314,7 @@ function tpDragStart(i: number) { tpDrag.value = i }
 function tpDragOver(i: number, e: MouseEvent) {
   const from = tpDrag.value
   if (from == null) return
-  const arr = currentStage.value?.todos
+  const arr = draftCurrentStage.value?.todos
   if (!arr) return
   const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const after = (e.clientY - r.top) > r.height / 2
@@ -324,19 +332,19 @@ function tpDragEnd() {
 function toggleTodo(t: ProjectTodo) {
   t.done = !t.done; t.autoCompleted = false
   // 勾完当前阶段最后一个待办 → 自动进入下一阶段（与项目编辑卡一致；空阶段 / 最后阶段不动）
-  const stages = props.project.stages
+  const stages = todoDraftStages.value
   const idx = stages.findIndex(s => s.key === props.project.currentStage)
   // 勾完后当前阶段推进到「第一个未完成阶段」（只前进）：跳过中间已完成的阶段，前置未完成时不动
   const target = t.done ? firstIncompleteStageIdx(stages) : -1
   if (target > idx) {
-    projectStore.setStage(props.project.id, stages[target].key, stageProgress.value)   // setStage 一并保存 stages + 推进
+    persistTodos(stages[target].key)
     fireHint('stage_switch')   // 新手引导：第一次推进阶段
   } else {
     persistTodos()
   }
 }
 function addTodo() {
-  const s = currentStage.value; if (!s) return
+  const s = draftCurrentStage.value; if (!s) return
   if (!s.todos) s.todos = []
   s.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
   persistTodos()
@@ -346,7 +354,7 @@ function addTodo() {
   })
 }
 function removeTodo(id: string) {
-  const s = currentStage.value; if (!s) return
+  const s = draftCurrentStage.value; if (!s) return
   s.todos = (s.todos ?? []).filter(t => t.id !== id)
   persistTodos()
 }

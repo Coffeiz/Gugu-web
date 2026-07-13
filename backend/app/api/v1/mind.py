@@ -7,7 +7,6 @@
 - 更新便签用 `update_node_atomic`（原子 UPDATE + rowcount），不是「先读再比再写」；
 - 正文一变就得重算 `content_plain` / 清 `indexed_at`，这层由 `update_node_atomic` 兜底。
 """
-from datetime import datetime
 from typing import Optional
 
 import json
@@ -17,7 +16,10 @@ from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.search import run_global_search, _snippet
-from app.core.mind import content_hash, to_plain_text, update_node_atomic, upsert_relation
+from app.core.mind import (
+    content_hash, create_mind_note, soft_delete_mind_note, to_plain_text, update_mind_note,
+    update_node_atomic, upsert_relation,
+)
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
 from app.core.tz import now_utc
@@ -86,23 +88,13 @@ async def create_note(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    captured_at = body.captured_at or now_utc()
-    # 记录描述的是已经发生的想法；补录可以回填过去，但不能把记录写到未来日期。
-    if captured_at.date() > datetime.now().date():
-        raise HTTPException(422, "不能创建未来日期的记录")
-    plain = to_plain_text(body.content_md)
-    n = MindNode(
-        user_id=current_user.id,
-        kind="note",
-        title=body.title,
-        color=body.color,
-        content_md=body.content_md or "",
-        content_plain=plain,
-        indexed_hash=content_hash(plain),
-        indexed_at=None,                       # null = 待索引
-        captured_at=captured_at,
-    )
-    db.add(n)
+    try:
+        n = await create_mind_note(
+            db, current_user.id, content_md=body.content_md or "", title=body.title,
+            color=body.color, captured_at=body.captured_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     await db.commit()
     await db.refresh(n)
     return _to_resp(n)
@@ -119,14 +111,14 @@ async def update_note(
 
     data = body.model_dump(exclude_unset=True, by_alias=False)
     client_version = data.pop("version")
-    if "content_md" in data:
-        # content_plain 由服务端从正文推导，不接受客户端直接传，免得两者对不上
-        data["content_plain"] = to_plain_text(data["content_md"])
     if not data:
         return _to_resp(n)
 
     # 原子 UPDATE：比较写在 WHERE 里，并发下不会互相覆盖；顺带清 indexed_at / 刷 indexed_hash
-    ok = await update_node_atomic(db, nid, current_user.id, client_version, data)
+    try:
+        ok = await update_mind_note(db, nid, current_user.id, client_version, data)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     if not ok:
         await db.rollback()
         raise HTTPException(409, "便签已被其他端修改，请刷新后重试")
@@ -144,7 +136,9 @@ async def delete_note(
     """软删=墓碑：只写 deleted_at。节点行、它的画布项和关系全留着，图谱不静默断裂。
     真正清掉要等用户明确「清理」（那时才 DELETE 行，靠 CASCADE 连带清）。"""
     n = await _get_live_note(db, nid, current_user.id)
-    n.deleted_at = now_utc()
+    if not await soft_delete_mind_note(db, nid, current_user.id, n.version):
+        await db.rollback()
+        raise HTTPException(409, "便签已被其他端修改，请刷新后重试")
     await db.commit()
 
 

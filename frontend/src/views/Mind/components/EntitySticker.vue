@@ -2,7 +2,7 @@
   <article
     ref="cardRef"
     class="entity-sticker glass-card hover-card-fx"
-    :class="{ connecting, 'connection-target': !!connectionTargetSide, tombstone: !!item.node.deletedAt }"
+    :class="{ connecting, 'connection-target': !!connectionTargetSide, tombstone: isTombstone }"
     :style="stickerStyle"
     :data-node-id="item.nodeId"
     @pointerdown.stop="onPointerDown"
@@ -14,18 +14,18 @@
       <span class="es-kind">{{ label }}</span>
     </div>
     <h3>{{ title }}</h3>
-    <span v-if="item.node.deletedAt" class="es-deleted">已删除</span>
+    <span v-if="isTombstone" class="es-deleted">已删除，仅保留快照</span>
     <template v-else>
       <p v-if="event?.description" class="es-desc">{{ event.description }}</p>
       <span v-if="eventTimeLabel" class="es-time">
         <PhClock :size="11" weight="bold" />{{ eventTimeLabel }}
       </span>
     </template>
-    <CardActions v-if="!item.node.deletedAt" :hovering="isHovering">
+    <CardActions v-if="!isTombstone" :hovering="isHovering">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </CardActions>
     <CardConnDot
-      v-if="!item.node.deletedAt"
+      v-if="!isTombstone"
       :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
       @drag-start="(e, side) => emit('connectDragStart', e, side)"
     />
@@ -77,13 +77,17 @@ const stickerStyle = computed(() => {
 // 日历页自己也是按月拉取到组件本地状态，没有可复用的按 id 查询——这里直接照 EventEditModal.vue
 // 的 eventsApi.get(id) 单条查询模式，不新起一个全局 store（画布上活动引用卡数量不多，不必要）。
 const event = ref<Awaited<ReturnType<typeof eventsApi.get>> | null>(null)
+const missingEvent = ref(false)
+const isTombstone = computed(() => !!props.item.node.deletedAt || missingEvent.value)
 async function loadEvent() {
   const refId = props.item.node.refId
+  missingEvent.value = false
   if (props.item.node.deletedAt || refType.value !== 'event' || refId == null) { event.value = null; return }
   try {
     event.value = await eventsApi.get(refId)
-  } catch {
+  } catch (error) {
     event.value = null   // 原对象可能已被删除，静默失败即可——标题快照仍然显示，不阻断画布使用
+    missingEvent.value = (error as { status?: number }).status === 404
   }
 }
 onMounted(loadEvent)
@@ -135,7 +139,7 @@ const { onPointerDown } = useCardDrag({
   contentScale: () => props.scale,
   lift: 1,
   getDragEl: () => cardRef.value,
-  onClick: () => { if (!props.item.node.deletedAt) emit('open', props.item) },
+  onClick: () => { if (!isTombstone.value) emit('open', props.item) },
   onDragMove: (worldX, worldY) => {
     emit('dragging', props.item, worldX, worldY)
   },

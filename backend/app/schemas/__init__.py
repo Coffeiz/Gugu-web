@@ -3,10 +3,12 @@ Pydantic v2 schemas — alias_generator=to_camel 让 API 返回 camelCase
 """
 
 from __future__ import annotations
-import re
 from datetime import datetime
-from typing import Optional, Any
+from typing import Any, Literal, Optional
 from uuid import UUID
+
+import re
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
@@ -123,13 +125,13 @@ def _validate_name(v: str) -> str:
 class ProjectCreate(CamelModel):
     name: str
     client: Optional[str] = None
-    status: str = "pending"
+    status: Literal["pending", "active", "done"] = "pending"
     start_date: Optional[str] = None
     deadline: Optional[str] = None
     color: str = "linear-gradient(135deg,#7b7fb2,#c4afc8)"
     stages: list[dict] = []
     current_stage: Optional[str] = None
-    progress: int = 0
+    progress: int = Field(0, ge=0, le=100)
 
     @field_validator("name")
     @classmethod
@@ -140,16 +142,16 @@ class ProjectCreate(CamelModel):
 class ProjectUpdate(CamelModel):
     name: Optional[str] = None
     client: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[Literal["pending", "active", "done"]] = None
     start_date: Optional[str] = None
     deadline: Optional[str] = None
     color: Optional[str] = None
-    progress: Optional[int] = None
+    progress: Optional[int] = Field(None, ge=0, le=100)
     stages: Optional[list[dict]] = None
     current_stage: Optional[str] = None
     archived: Optional[bool] = None
-    priority: Optional[str] = None
-    version: Optional[int] = None
+    priority: Optional[Literal["high", "medium", "low"]] = None
+    version: Optional[int] = Field(None, ge=1)
 
     @field_validator("name")
     @classmethod

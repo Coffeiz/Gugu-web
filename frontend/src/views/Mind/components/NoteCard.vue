@@ -83,7 +83,7 @@ import CardConnDot from './CardConnDot.vue'
 import ColorSwatches from './ColorSwatches.vue'
 import NoteEditor from './NoteEditor.vue'
 
-const { openMindRef } = useMindRefActions()
+const { openMindRef, resolveMindRef } = useMindRefActions()
 
 const props = defineProps<{
   note: MindNote
@@ -358,8 +358,18 @@ async function measureClamp() {
   if (expanded.value) return   // 展开着就保持"可收起"，不重判
   clamped.value = el.scrollHeight > el.clientHeight + 2
 }
-onMounted(measureClamp)
-watch(() => props.note.contentMd, () => { expanded.value = false; measureClamp() })
+/** 预览由 v-html 生成，引用的缺失状态在渲染后补到对应 chip 上。 */
+async function refreshReferenceStates() {
+  await nextTick()
+  const refs = bodyRef.value?.querySelectorAll<HTMLElement>('.mind-ref[data-ref-type][data-ref-id]') ?? []
+  await Promise.all([...refs].map(async refEl => {
+    const state = await resolveMindRef(refEl.dataset.refType!, Number(refEl.dataset.refId))
+    refEl.classList.toggle('mind-ref-missing', state === 'missing')
+    if (state === 'missing') refEl.title = '关联对象已删除，仅保留快照'
+  }))
+}
+onMounted(() => { measureClamp(); refreshReferenceStates() })
+watch(() => props.note.contentMd, () => { expanded.value = false; measureClamp(); refreshReferenceStates() })
 
 /** 卡上直接勾待办：点击落在预览里的 checkbox 时翻转对应任务，不进编辑态 */
 function onBodyClick(e: MouseEvent) {
@@ -374,6 +384,7 @@ function onBodyClick(e: MouseEvent) {
   // 点链接就正常跳转，也不进编辑；点其他区域进编辑，光标定到点的那一行后面
   const refEl = t.closest<HTMLElement>('.mind-ref')
   if (refEl) {
+    if (refEl.classList.contains('mind-ref-missing')) return
     const refType = refEl.dataset.refType
     const refId = Number(refEl.dataset.refId)
     if (refType && Number.isFinite(refId)) openMindRef(refType, refId)

@@ -224,6 +224,14 @@
   transition: background 0.12s;
 }
 .mind-ref:hover { background: rgba(123,127,178,0.26); }
+.mind-ref.mind-ref-missing {
+  background: rgba(120,124,142,0.1); color: var(--text-secondary);
+  cursor: default; text-decoration: line-through; opacity: 0.72;
+}
+.mind-ref.mind-ref-missing:hover { background: rgba(120,124,142,0.1); }
+.mind-ref.mind-ref-missing::after {
+  content: '已删除'; font-size: 10px; text-decoration: none; opacity: 0.8;
+}
 /* 类型图标：不用文字徽标了，跟 GlobalSearch.vue/NoteEditor.vue 下拉的图标同一套颜色语言 */
 .mind-ref-icon { flex-shrink: 0; color: var(--color-primary); }
 /* label 单独包一层：对话引用的 label 是消息片段，可能很长又没有空格（中文/连续字符）可断——

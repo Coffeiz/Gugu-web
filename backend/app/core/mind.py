@@ -16,7 +16,7 @@
 这条也做进 `update_node_atomic`，调用方无从忘记。
 """
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 import hashlib
 import re
@@ -26,6 +26,10 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.tz import now_utc
 from app.models import MindNode, MindRelation
+
+# 时间流便签共五种状态：null=默认纸色，另外四种是 UI 色板。画布专属便签仍由画布 API
+# 维持「必须选自定义色」的既有约定，不能据此把默认纸色塞进画布。
+MIND_NOTE_COLORS = frozenset({"amber", "coral", "blue", "teal"})
 
 # 无向关系：存之前按 id 归一（src < dst）。有向类型（supports/causes/…）方向有意义，不归一。
 _SYMMETRIC_RELATIONS = {"related"}
@@ -71,6 +75,108 @@ def content_hash(text: str | None) -> str:
     但 content_plain 没变，哈希一致就不必重算向量。
     """
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+
+
+def validate_note_color(color: str | None) -> str | None:
+    """笔记卡只允许默认纸色或 UI 已提供的四种色板，不能透传任意 CSS。"""
+    if color is not None and color not in MIND_NOTE_COLORS:
+        raise ValueError("便签颜色必须是现有色板中的值")
+    return color
+
+
+def validate_note_title(title: str | None) -> str | None:
+    """标题既要能清空，也要在工具直调服务层时守住数据库列边界。"""
+    if title is None:
+        return None
+    if not isinstance(title, str):
+        raise ValueError("便签标题必须是文本")
+    if len(title) > 300:
+        raise ValueError("便签标题不能超过 300 个字符")
+    return title
+
+
+def validate_captured_at(captured_at: datetime) -> datetime:
+    """记录可补录过去，但不能写进未来。"""
+    if captured_at.tzinfo is None:
+        captured_at = captured_at.replace(tzinfo=timezone.utc)
+    if captured_at > now_utc():
+        raise ValueError("不能创建未来日期的记录")
+    return captured_at
+
+
+async def create_mind_note(
+    db,
+    user_id,
+    *,
+    content_md: str,
+    title: str | None = None,
+    color: str | None = None,
+    captured_at: datetime | None = None,
+    origin: str = "user",
+) -> MindNode:
+    """网页 API 与咕咕共用的 note 写入入口；调用方负责 commit。"""
+    when = validate_captured_at(captured_at or now_utc())
+    color = validate_note_color(color)
+    title = validate_note_title(title)
+    plain = to_plain_text(content_md)
+    node = MindNode(
+        user_id=_as_uuid(user_id), kind="note", title=title, color=color,
+        content_md=content_md, content_plain=plain, indexed_hash=content_hash(plain),
+        indexed_at=None, captured_at=when, origin=origin,
+    )
+    db.add(node)
+    await db.flush()
+    return node
+
+
+async def update_mind_note(
+    db,
+    node_id: int,
+    user_id,
+    client_version: int,
+    fields: dict,
+) -> bool:
+    """校验 note 可写字段后走原子更新；调用方根据 False 返回版本冲突。"""
+    if "color" in fields:
+        fields["color"] = validate_note_color(fields["color"])
+    if "title" in fields:
+        fields["title"] = validate_note_title(fields["title"])
+    if "captured_at" in fields:
+        fields["captured_at"] = validate_captured_at(fields["captured_at"])
+    if "content_md" in fields:
+        fields["content_plain"] = to_plain_text(fields["content_md"])
+    return await update_node_atomic(db, node_id, user_id, client_version, fields)
+
+
+async def soft_delete_mind_note(db, node_id: int, user_id, client_version: int) -> bool:
+    """原子软删一条 live note，避免删到刚被其他端改过的版本。"""
+    res = await db.execute(
+        update(MindNode)
+        .where(
+            MindNode.id == node_id,
+            MindNode.user_id == _as_uuid(user_id),
+            MindNode.kind == "note",
+            MindNode.version == client_version,
+            MindNode.deleted_at.is_(None),
+        )
+        .values(deleted_at=now_utc(), updated_at=now_utc(), version=MindNode.version + 1)
+    )
+    return res.rowcount == 1
+
+
+async def restore_mind_note(db, node_id: int, user_id) -> bool:
+    """恢复软删 note；恢复本身不覆盖正文，版本递增以通知其他端刷新。"""
+    res = await db.execute(
+        update(MindNode)
+        .where(
+            MindNode.id == node_id,
+            MindNode.user_id == _as_uuid(user_id),
+            MindNode.kind == "note",
+            MindNode.deleted_at.is_not(None),
+        )
+        .values(deleted_at=None, updated_at=now_utc(), version=MindNode.version + 1)
+    )
+    return res.rowcount == 1
 
 
 def _as_uuid(user_id) -> UUID:

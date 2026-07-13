@@ -696,7 +696,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, type PropType } from 'vue'
 import { useProjectStore } from '@/stores/projects'
-import { autoCompleteTodos, restoreTodos, firstIncompleteStageIdx, allTodosDone } from '@/utils/projectStages'
+import { cloneProjectStages, firstIncompleteStageIdx, transitionProjectStage } from '@/utils/projectStages'
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/services/api'
@@ -1541,25 +1541,21 @@ function setStage(key: string, idx: number) {
     }
   }
 
-  localCurrentStage.value = key
-  activeStageIdx.value = idx
-  if (oldIdx !== newIdx) fireHint('stage_switch')   // 新手引导：第一次切换阶段
-
-  // 直接在本地同步计算，不依赖 store 异步回写
-  if (oldIdx !== newIdx && oldIdx >= 0 && newIdx >= 0) {
-    const stages = JSON.parse(JSON.stringify(localStages.value))
-    if (newIdx > oldIdx) {
-      for (let i = oldIdx; i < newIdx; i++) stages[i].todos = autoCompleteTodos(stages[i].todos ?? [])
-    } else {
-      for (let i = newIdx; i < stages.length; i++) stages[i].todos = restoreTodos(stages[i].todos ?? [])
-    }
-    _syncingFromStore = true
-    localStages.value = stages
-    nextTick(() => { _syncingFromStore = false })
-  }
-
   const newProgress = calcProgress(localStages.value, key)
-  stageProgress.value = newProgress
+  const transition = transitionProjectStage({
+    stages: localStages.value,
+    currentStage: localCurrentStage.value || null,
+    progress: stageProgress.value,
+    status: localStatus.value as Project['status'],
+  }, key, newProgress)
+  _syncingFromStore = true
+  localStages.value = transition.stages
+  localCurrentStage.value = transition.currentStage ?? ''
+  localStatus.value = transition.status
+  activeStageIdx.value = idx
+  stageProgress.value = transition.progress
+  nextTick(() => { _syncingFromStore = false })
+  if (oldIdx !== newIdx) fireHint('stage_switch')   // 新手引导：第一次切换阶段
   if (props.project) projectStore.setStage(props.project.id, key, newProgress)
 }
 
@@ -1660,21 +1656,7 @@ function saveTodos() {
   if (_syncingFromStore) return
   const newProgress = calcProgress(localStages.value, localCurrentStage.value)
   stageProgress.value = newProgress
-  const lastKey = localStages.value[localStages.value.length - 1]?.key
-  // 真正「完成」= 在最后阶段 + **所有阶段的全部待办都已勾选**（真正 100%）。
-  // 只看当前阶段进度（calcProgress）会漏掉「取消了前面阶段某条待办」→ 当前阶段仍满、项目却赖在已完成。
-  const fullyComplete = localCurrentStage.value === lastKey && newProgress === 100 && allTodosDone(localStages.value)
-  const snapshot = () => JSON.parse(JSON.stringify(localStages.value))
-  if (fullyComplete && props.project.status !== 'done') {
-    // 到最后阶段且全部待办勾完 → 自动完成
-    projectStore.updateProject(props.project.id, { stages: snapshot(), progress: newProgress })
-    projectStore.moveProject(props.project.id, 'done')
-  } else if (!fullyComplete && props.project.status === 'done') {
-    // 取消了任意阶段的待办、不再 100% → 退出已完成、退回进行中（禁止非满项目留在已完成）
-    projectStore.updateProject(props.project.id, { stages: snapshot(), progress: newProgress, status: 'active', doneAt: null })
-  } else {
-    projectStore.updateProject(props.project.id, { stages: snapshot(), progress: newProgress })
-  }
+  projectStore.saveTodos(props.project.id, cloneProjectStages(localStages.value), newProgress)
 }
 function addTodo(stage: ProjectStage) {
   if (!stage.todos) stage.todos = []

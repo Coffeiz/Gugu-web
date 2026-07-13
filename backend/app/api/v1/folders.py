@@ -17,6 +17,7 @@ from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
 from app.core import events
 from app.services.storage import get_storage
+from app.services.storage.folders import relocate_folder_tree_files
 
 router = APIRouter(prefix="/folders", tags=["folders"])
 
@@ -218,6 +219,8 @@ async def rename_folder(
     if not folder:
         raise HTTPException(404, "文件夹不存在")
     folder.name = body.name
+    await db.flush()
+    await relocate_folder_tree_files(db, current_user.id, folder.id)
     await db.commit()
     await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin)
@@ -245,6 +248,8 @@ async def move_folder(
         target = await get_owned(db, Folder, new_parent_id, current_user.id)
         if not target:
             raise HTTPException(404, "目标文件夹不存在")
+        if target.project_id != folder.project_id:
+            raise HTTPException(400, "不能跨个人文件与项目文件移动文件夹")
         # Walk up from target to detect circular dependency
         cur = new_parent_id
         visited: set[int] = set()
@@ -260,6 +265,8 @@ async def move_folder(
             cur = f.parent_id
 
     folder.parent_id = new_parent_id
+    await db.flush()
+    await relocate_folder_tree_files(db, current_user.id, folder.id)
     await db.commit()
     await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin)

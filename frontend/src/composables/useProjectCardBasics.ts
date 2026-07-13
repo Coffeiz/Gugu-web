@@ -7,6 +7,7 @@
  */
 import { computed, type Ref } from 'vue'
 import type { Project } from '@/types/project'
+import { projectTodoProgress } from '@/utils/projectStages'
 
 export function useProjectCardBasics(project: Ref<Project>) {
   const currentStageIndex = computed(() =>
@@ -19,19 +20,7 @@ export function useProjectCardBasics(project: Ref<Project>) {
   const curDoneCount = computed(() => currentTodos.value.filter(t => t.done).length)
 
   // 总完成度 = 所有阶段待办里已完成 / 总数（与总览页、项目编辑卡头部口径一致）；无待办则退回阶段位置
-  const stageProgress = computed(() => {
-    const stages = project.value.stages
-    if (!stages.length) return 0
-    let done = 0, total = 0
-    for (const s of stages) {
-      const todos = s.todos ?? []
-      done += todos.filter(t => t.done).length
-      total += todos.length
-    }
-    if (total > 0) return Math.round(done / total * 100)
-    const idx = currentStageIndex.value
-    return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
-  })
+  const stageProgress = computed(() => projectTodoProgress(project.value.stages, project.value.currentStage))
 
   const nameColor = computed(() => {
     const hex = project.value.color?.match(/#[0-9a-fA-F]{6}/)?.[0] ?? '#7b7fb2'
