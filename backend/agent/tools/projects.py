@@ -247,7 +247,7 @@ async def _delete_project(db, user_id, args: dict):
         )
     )).scalar() or 0
     summary = f"将永久删除项目「{p.name}」" + (f"及其 {file_cnt} 个文件" if file_cnt else "") + "，此操作不可恢复"
-    blocked = confirm.needs_confirmation(args, summary)
+    blocked = confirm.needs_confirmation(args, summary, user_id)
     if blocked is not None:
         return blocked
 
@@ -681,6 +681,7 @@ class ProjectsSkill(BaseSkill):
                     "project_id": {"type": "integer", "description": "项目 ID（可选，已知时用）"},
                     "project": {"type": "string", "description": "项目名称（推荐：直接用名字，无需 id）"},
                     "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
+                    "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
                 },
                 "required": [],
             },

@@ -137,7 +137,7 @@ async def _delete_event(db, user_id, args: dict):
     # 事件无回收站 → 不可逆 → 删除二次确认保底
     _r = f"及其 {len(reminders)} 条提醒" if reminders else ""
     summary = f"将删除日历事件「{etitle}」（{e.date}）{_r}，事件无回收站，删除后不可恢复"
-    blocked = confirm.needs_confirmation(args, summary)
+    blocked = confirm.needs_confirmation(args, summary, user_id)
     if blocked is not None:
         return blocked
 
@@ -345,6 +345,7 @@ class CalendarSkill(BaseSkill):
                     "event": {"type": "string", "description": "事件标题（推荐：直接用标题定位）"},
                     "on_date": {"type": "string", "description": "同名事件时用日期 YYYY-MM-DD 区分"},
                     "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
+                    "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
                 },
                 "required": [],
             },

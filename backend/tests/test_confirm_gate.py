@@ -2,7 +2,7 @@
 
 三层验证（商用就绪评审 P0-3）：
 1. 全部 5 个 destructive 工具：不带 confirm 调用 → 返回 needs_confirm 拦截、资源原封不动；
-2. 带 confirm=true → 真正执行（抽验一个，防确认门写得过严变成永远删不掉）；
+2. 单带 confirm=true 仍须拒绝；仅携带上一轮凭证时才真正执行；
 3. dispatch 层绊线：假造一个漏接确认门的 destructive 工具，无 confirm 的调用返回了
    "成功执行" → 必须触发 confirm-gate.bypassed CRITICAL 日志（运行时兜底的行为契约）。
 4. 静态守卫 scripts/check_confirm_gate.py 对当前代码库必须全绿（AST 校验回归）。
@@ -23,6 +23,11 @@ from agent.tools.trash import _permanent_delete
 def _blocked(res) -> bool:
     from agent import confirm
     return confirm.is_block(res)
+
+
+def _confirm_token(res) -> str:
+    payload = json.loads(res) if isinstance(res, str) else res
+    return payload["confirm_token"]
 
 
 async def _mk(db, obj):
@@ -71,11 +76,23 @@ async def test_permanent_delete_requires_confirm(db, user_a):
     assert await db.get(File, f.id) is not None
 
 
-# ── 2. 带 confirm=true 放行（抽验，防确认门过严变成永远删不掉）────────────────
+# ── 2. confirm 必须带上一轮凭证，防模型自行补 confirm=true ───────────────────
 
-async def test_delete_client_with_confirm_executes(db, user_a):
+async def test_delete_client_rejects_confirm_without_prior_token(db, user_a):
     c = await _mk(db, Client(user_id=user_a.id, name="确认后删"))
     res = await _delete_client(db, user_a.id, {"client_id": c.id, "confirm": True})
+    assert _blocked(res)
+    assert await db.get(Client, c.id) is not None
+
+
+async def test_delete_client_with_prior_token_executes(db, user_a):
+    c = await _mk(db, Client(user_id=user_a.id, name="确认后删"))
+    blocked = await _delete_client(db, user_a.id, {"client_id": c.id})
+    res = await _delete_client(db, user_a.id, {
+        "client_id": c.id,
+        "confirm": True,
+        "confirm_token": _confirm_token(blocked),
+    })
     assert isinstance(res, dict) and res.get("success")
     assert await db.get(Client, c.id) is None
 
@@ -126,7 +143,7 @@ async def test_dispatch_tripwire_silent_when_gated(user_a, monkeypatch, caplog):
     monkeypatch.setattr(sess_mod, "_SessionLocal", lambda: _FakeSession())
 
     async def _good_handler(db, user_id, args):
-        blocked = confirm.needs_confirmation(args, "将删除测试资源")
+        blocked = confirm.needs_confirmation(args, "将删除测试资源", user_id)
         if blocked is not None:
             return blocked
         return {"success": True}

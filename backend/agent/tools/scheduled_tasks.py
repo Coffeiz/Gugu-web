@@ -175,7 +175,7 @@ async def _delete_scheduled_task(db, user_id, args: dict):
     t, err = await _resolve_task(db, user_id, args)
     if err:
         return err
-    blocked = confirm.needs_confirmation(args, f"将删除定时任务「{t.name}」（{_humanize_cron(t.cron)}）")
+    blocked = confirm.needs_confirmation(args, f"将删除定时任务「{t.name}」（{_humanize_cron(t.cron)}）", user_id)
     if blocked is not None:
         return blocked
     tid, name = t.id, t.name
@@ -252,6 +252,7 @@ class ScheduledTasksSkill(BaseSkill):
                     "task_id": {"type": "integer", "description": "任务 ID（可选）"},
                     "task":    {"type": "string", "description": "任务名（推荐：直接用名字）"},
                     "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
+                    "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
                 },
                 "required": [],
             },
