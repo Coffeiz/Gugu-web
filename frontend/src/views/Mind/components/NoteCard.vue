@@ -123,6 +123,11 @@ const isHovering = ref(false)
 // 存的时候再拼回 `# 标题\n正文` 这套跟只读态解析约定一致的单串 markdown。
 const draftTitle   = ref('')
 const draftBody    = ref('')
+// 退出编辑时，store 的异步回写还没来得及更新 props.note。预览若立刻读旧正文，卡片高度会
+// 先按旧内容收起、等回写后再突然变一次。暂存刚退出时的草稿，让预览和目标高度在同一帧就以
+// 新内容计算；外部回写（或冲突后的刷新）抵达后再交还给 props.note。
+const pendingPreviewMd = ref<string | null>(null)
+const displayContentMd = computed(() => pendingPreviewMd.value ?? props.note.contentMd ?? '')
 const expanded     = ref(false)
 const clamped      = ref(false)
 const bodyRef      = ref<HTMLElement | null>(null)
@@ -166,6 +171,9 @@ function scheduleSave() {
   saveTimer = setTimeout(flushSave, AUTOSAVE_MS)
 }
 watch([draftTitle, draftBody], () => { if (props.editing) scheduleSave() })
+watch(() => props.note.contentMd, () => {
+  if (!props.editing) pendingPreviewMd.value = null
+})
 
 /** 点卡片外面：先补一次保存，再退出编辑态（不再是「取消」，没有可丢弃的东西）。
  *  NoteEditor 的「样式」「插入」抽屉是原地展开、卡片的真实 DOM 后代，点里面的按钮天然
@@ -287,6 +295,8 @@ watch(() => props.editing, async (v, prev) => {
     spawnToolbarGhost()   // 摘掉编辑内容之前先截一份工具栏快照，让它跟下面的收起动画同时淡出
     document.removeEventListener('mousedown', onDocDown, true)
     if (prev && !closedByFinish) flushSave()
+    // 预览先接住本地草稿，不等异步 PATCH 回写；下面 nextTick 测到的就是最终预览高度。
+    pendingPreviewMd.value = serializeDraft()
     closedByFinish = false
     editReady.value = false
     await nextTick()   // 等预览态内容渲染出来，才能量到真实目标高度
@@ -323,7 +333,7 @@ onBeforeUnmount(() => {
  *  titleRaw 是没套占位文案的原始值，给编辑态的标题草稿做种（title 那个"（空便签）"/
  *  "（无标题）"是只读态才该出现的占位显示，塞进输入框会变成假装用户写了这几个字）。 */
 const _split = computed(() => {
-  const md = props.note.contentMd || ''
+  const md = displayContentMd.value
   const lines = md.split('\n')
   const ti = lines.findIndex(l => l.trim())
   if (ti < 0) return { title: '（空笔记）', titleRaw: '', body: '', isHeading: true }
