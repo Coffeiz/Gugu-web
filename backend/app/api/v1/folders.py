@@ -17,7 +17,7 @@ from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
 from app.core import events
 from app.services.storage import get_storage
-from app.services.storage.folders import relocate_folder_tree_files
+from app.services.storage.file_service import FileService
 
 router = APIRouter(prefix="/folders", tags=["folders"])
 
@@ -125,29 +125,9 @@ async def create_folder(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    if body.project_id is not None:
-        proj = await get_owned(db, Project, body.project_id, current_user.id)
-        if not proj:
-            raise HTTPException(404, "项目不存在")
-
-    existing = (await db.execute(
-        select(Folder).where(
-            Folder.user_id == current_user.id,
-            Folder.project_id == body.project_id,
-            Folder.parent_id == body.parent_id,
-            Folder.name == body.name,
-        )
-    )).scalar_one_or_none()
-    if existing:
-        raise HTTPException(409, "同名文件夹已存在")
-
-    folder = Folder(
-        user_id=current_user.id,
-        project_id=body.project_id,
-        parent_id=body.parent_id,
-        name=body.name,
-    )
-    db.add(folder)
+    folder = await FileService(db).create_folder(
+        current_user.id, name=body.name, parent_id=body.parent_id, project_id=body.project_id,
+    )   # 校验（项目归属/同名）在 FolderTree，失败抛领域异常 → 全局 handler 映射 404/409
     await db.commit()
     await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin)   # 广播给该用户所有端/标签页；发起页靠 origin 回声抑制
@@ -215,12 +195,7 @@ async def rename_folder(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    folder = await get_owned(db, Folder, fid, current_user.id)
-    if not folder:
-        raise HTTPException(404, "文件夹不存在")
-    folder.name = body.name
-    await db.flush()
-    await relocate_folder_tree_files(db, current_user.id, folder.id)
+    folder = await FileService(db).rename_folder(current_user.id, fid, body.name)
     await db.commit()
     await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin)
@@ -238,35 +213,8 @@ async def move_folder(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    folder = await get_owned(db, Folder, fid, current_user.id)
-    if not folder:
-        raise HTTPException(404, "文件夹不存在")
-
-    new_parent_id = body.parent_id
-
-    if new_parent_id is not None:
-        target = await get_owned(db, Folder, new_parent_id, current_user.id)
-        if not target:
-            raise HTTPException(404, "目标文件夹不存在")
-        if target.project_id != folder.project_id:
-            raise HTTPException(400, "不能跨个人文件与项目文件移动文件夹")
-        # Walk up from target to detect circular dependency
-        cur = new_parent_id
-        visited: set[int] = set()
-        while cur is not None:
-            if cur == fid:
-                raise HTTPException(400, "不能将文件夹移动到自身或其子文件夹中")
-            if cur in visited:
-                break
-            visited.add(cur)
-            f = await get_owned(db, Folder, cur, current_user.id)   # 祖先链应全属本人，异常即视为断链
-            if f is None:
-                break
-            cur = f.parent_id
-
-    folder.parent_id = new_parent_id
-    await db.flush()
-    await relocate_folder_tree_files(db, current_user.id, folder.id)
+    folder = await FileService(db).move_folder(current_user.id, fid, body.parent_id)
+    # 归属/循环/跨空间校验在 FolderTree、物理归位在 FileService（relocate），失败抛领域异常
     await db.commit()
     await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin)

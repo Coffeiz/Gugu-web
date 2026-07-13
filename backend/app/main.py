@@ -310,6 +310,17 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
     return JSONResponse(status_code=422, content={"detail": msg})
 
 
+from app.core.errors import AppError
+
+
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError):
+    # 领域异常（FileService/FolderTree 等抛）→ 与 HTTPException 同形状：{"detail": 文案}。
+    # public_message 是已知可外发的静态业务文案，直接返回。
+    return JSONResponse(status_code=getattr(exc, "status_hint", 400),
+                        content={"detail": exc.public_message})
+
+
 @app.exception_handler(Exception)
 async def unhandled_error_handler(request: Request, exc: Exception):
     logger.exception("%s %s → %s", request.method, request.url.path, exc)
