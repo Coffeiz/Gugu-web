@@ -64,7 +64,7 @@ async function handleLogin() {
     await adminStore.login(form.username, form.password)
     router.push('/config')
   } catch (e) {
-    error.value = e.message
+    error.value = e instanceof Error ? e.message : '登录失败'
   } finally {
     loading.value = false
   }

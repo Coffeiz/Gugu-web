@@ -54,7 +54,7 @@ async def _permanent_delete(db, user_id, args: dict):
         if not rows:
             return {"success": True, "deleted_count": 0, "note": "回收站本来就是空的"}
         # 不可逆 → 二次确认保底（按数量提示）
-        blocked = confirm.needs_confirmation(args, f"将永久删除回收站里全部 {len(rows)} 个文件，删除后无法恢复")
+        blocked = confirm.needs_confirmation(args, f"将永久删除回收站里全部 {len(rows)} 个文件，删除后无法恢复", user_id)
         if blocked is not None:
             return blocked
         fids = [f.id for f in rows]
@@ -78,7 +78,7 @@ async def _permanent_delete(db, user_id, args: dict):
         return json.dumps({"error": "文件不在回收站（只能永久删除回收站里的文件）"})
 
     # 不可逆 → 二次确认保底
-    blocked = confirm.needs_confirmation(args, f"将永久删除「{f.display_name}.{f.ext}」，删除后无法恢复")
+    blocked = confirm.needs_confirmation(args, f"将永久删除「{f.display_name}.{f.ext}」，删除后无法恢复", user_id)
     if blocked is not None:
         return blocked
 
@@ -120,6 +120,7 @@ class TrashSkill(BaseSkill):
                     "file_id": {"type": "integer", "description": "要永久删除的单个文件 id"},
                     "all": {"type": "boolean", "description": "true=清空回收站全部文件（一次清，不用逐个删）"},
                     "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
+                    "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
                 },
                 "required": [],
             },

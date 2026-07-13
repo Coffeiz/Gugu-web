@@ -16,10 +16,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted, type PropType } from 'vue'
 import { useProjectStore } from '@/stores/projects'
+import type { Project } from '@/types/project'
 
-const props = defineProps({ project: { type: Object, required: true } })
+const props = defineProps({ project: { type: Object as PropType<Project>, required: true } })
 const projectStore = useProjectStore()
 
 const curIdx = computed(() =>
@@ -39,23 +40,23 @@ const fallbackProgress = computed(() => {
   return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
 })
 
-function segFill(i) {
+function segFill(i: number) {
   const todos = props.project.stages[i].todos ?? []
   if (todos.length) return Math.round(todos.filter(t => t.done).length / todos.length * 100)
   return i <= curIdx.value ? 100 : 0
 }
 
-function segFillStyle(i) {
+function segFillStyle(i: number) {
   const n = props.project.stages.length
   const w = animFills.value ? animFills.value[i] : segFill(i)
   const pos = n <= 1 ? '0%' : `${(i / (n - 1)) * 100}%`
   return { width: w + '%', background: props.project.color, backgroundSize: `${n * 100}% 100%`, backgroundPosition: `${pos} 0%` }
 }
 
-const animFills = ref(null)
-let _rafId = null
+const animFills = ref<number[] | null>(null)
+let _rafId: number | null = null
 
-function _animateStages(fromFills, toFills, isForward) {
+function _animateStages(fromFills: number[], toFills: number[], isForward: boolean) {
   const slots = fromFills
     .map((f, j) => ({ j, from: f, to: toFills[j] }))
     .filter(x => Math.abs(x.to - x.from) > 0.5)
@@ -65,7 +66,7 @@ function _animateStages(fromFills, toFills, isForward) {
   if (_rafId) cancelAnimationFrame(_rafId)
   const dur = Math.min(900, Math.max(200, nc * 220))
   const start = performance.now()
-  function tick(now) {
+  function tick(now: number) {
     const raw = Math.min(1, (now - start) / dur)
     const t = 1 - (1 - raw) * (1 - raw)
     const fills = [...fromFills]
@@ -81,7 +82,7 @@ function _animateStages(fromFills, toFills, isForward) {
 
 onUnmounted(() => { if (_rafId) cancelAnimationFrame(_rafId) })
 
-async function clickStage(i) {
+async function clickStage(i: number) {
   const stages = props.project.stages
   const stage  = stages[i]
   const n      = stages.length

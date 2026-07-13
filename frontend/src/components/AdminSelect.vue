@@ -32,7 +32,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const show      = ref(false)
-const wrapRef   = ref(null)
+const wrapRef   = ref<HTMLElement | null>(null)
 const popupStyle = ref({})
 
 const selectedLabel = computed(() =>
@@ -76,13 +76,14 @@ function position() {
   popupStyle.value = style
 }
 
-function select(value) {
+function select(value: any) {
   emit('update:modelValue', value)
   show.value = false
 }
 
-function onClickOutside(e) {
-  if (!wrapRef.value?.contains(e.target) && !e.target.closest('.asel-popup'))
+function onClickOutside(e: MouseEvent) {
+  const t = e.target as HTMLElement | null
+  if (!wrapRef.value?.contains(t) && !t?.closest('.asel-popup'))
     show.value = false
 }
 onMounted(() => document.addEventListener('mousedown', onClickOutside))

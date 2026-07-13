@@ -30,11 +30,7 @@
         </NavItem>
         <NavItem to="/calendar" :icon="PhCalendarBlank">日历</NavItem>
         <NavItem to="/schedules" :icon="PhAlarm">定时任务</NavItem>
-        <div class="nav-item soon-item">
-          <PhGraph class="nav-icon" :size="15" />
-          <span class="nav-label-text">思维</span>
-          <span class="soon-badge">咕了</span>
-        </div>
+        <NavItem to="/mind" :icon="PhGraph">思维</NavItem>
       </div>
 
       <div class="nav-divider"></div>
@@ -124,10 +120,10 @@
         <div class="notif-list">
           <div
             v-for="n in notifications"
-            :key="n.id"
+            :key="n.id ?? ''"
             class="notif-item"
             :class="{ unread: n.unread }"
-            @click="uiStore.markRead(n.id)"
+            @click="n.id != null && uiStore.markRead(n.id)"
           >
             <span class="notif-dot" :style="{ background: n.color }"></span>
             <div class="notif-body">
@@ -184,8 +180,8 @@ function handleLogout() {
 
 const settingsOpen  = ref(false)
 const notifOpen     = ref(false)
-const notifBtnRef   = ref(null)
-const notifPopupRef = ref(null)
+const notifBtnRef   = ref<HTMLElement | null>(null)
+const notifPopupRef = ref<HTMLElement | null>(null)
 const notifStyle    = ref({})
 
 const notifications = computed(() => uiStore.notifications)
@@ -218,12 +214,12 @@ function markAllRead() {
   uiStore.markAllRead()
 }
 
-function closeAll(e) {
+function closeAll(e: MouseEvent) {
   // 通知气泡（Teleport 到 body）是独立组件，点它内部（含关闭 ✕）属于气泡自身交互，
   // 不能当成「点击外部」而连带把侧边栏的通知/设置弹窗一起关掉。
-  if (e?.target?.closest?.('.nb-stack')) return
+  if ((e?.target as HTMLElement | null)?.closest?.('.nb-stack')) return
   settingsOpen.value = false
-  if (notifPopupRef.value && !notifPopupRef.value.contains(e?.target) && !notifBtnRef.value?.contains(e?.target)) {
+  if (notifPopupRef.value && !notifPopupRef.value.contains(e?.target as Node) && !notifBtnRef.value?.contains(e?.target as Node)) {
     notifOpen.value = false
   }
 }
@@ -242,6 +238,9 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
   box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
   display: flex; flex-direction: column;
   padding: 24px 14px; gap: 0;
+  /* 浮到主区之上：笔记页横向列滚动区铺满视口宽、会钻到侧栏底下（#3），侧栏得盖在其上
+     用自身磨砂玻璃把钻进来的历史列糊住（而不是被列盖住） */
+  position: relative; z-index: 20;
 }
 
 .logo {

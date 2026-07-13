@@ -9,7 +9,8 @@
       </div>
 
       <div class="ap-body">
-        <div v-if="projectStore.archivedLoading" class="ap-empty">加载中…</div>
+        <!-- 只有真·首次（还没任何缓存数据）才显示加载态；已有数据后台静默刷新不再闪这个 -->
+        <div v-if="projectStore.archivedLoading && !projectStore.archivedLoaded" class="ap-empty">加载中…</div>
         <div v-else-if="!projectStore.archivedProjects.length" class="ap-empty">暂无已归档项目</div>
 
         <template v-else>
@@ -69,6 +70,7 @@ import { ref, computed } from 'vue'
 import { PhX, PhFolder, PhFolderOpen } from '@phosphor-icons/vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { useProjectStore } from '@/stores/projects'
+import type { Project } from '@/types/project'
 
 defineProps({ show: { type: Boolean, default: false } })
 const emit = defineEmits(['close'])
@@ -84,7 +86,7 @@ const openYears  = ref(new Set<string>())
 const openMonths = ref(new Set<string>())
 
 const groupedByYear = computed(() => {
-  const yearMap = new Map<string, Map<string, any[]>>()
+  const yearMap = new Map<string, Map<string, Project[]>>()
   for (const p of projectStore.archivedProjects) {
     const src = p.updatedAt || p.createdAt
     const d = src ? new Date(src) : new Date()

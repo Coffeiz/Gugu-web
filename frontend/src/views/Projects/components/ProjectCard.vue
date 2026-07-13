@@ -1,5 +1,5 @@
 <template>
-  <div
+  <div v-bind="attrs"
     class="proj-card hover-card-fx"
     :data-project-id="project.id"
     :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
@@ -92,7 +92,7 @@
     <!-- 文件拖放 overlay -->
     <Transition name="drop-overlay">
       <div v-if="fileDragOver || fileUploading" class="drop-overlay"
-           :style="{ background: fileUploading ? null : overlayHintBg }">
+           :style="{ background: fileUploading ? undefined : overlayHintBg }">
         <div v-if="fileUploading" class="upload-progress-bg"
              :style="{ width: (fileUploadDone ? 100 : fileUploadPct) + '%', background: uploadFillBg }"></div>
         <div class="drop-content" :style="{ color: nameColor }">
@@ -164,63 +164,75 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, onUnmounted } from 'vue'
+import { computed, ref, nextTick, onUnmounted, useAttrs, type PropType } from 'vue'
+import type { Project, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { startPhysicsDrag } from '@/composables/usePhysicsDrag'
+import { startPhysicsDrag, startThresholdDrag, type PhysicsDropContext } from '@/composables/usePhysicsDrag'
 import { fireHint } from '@/composables/useOnboarding'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
+import { firstIncompleteStageIdx } from '@/utils/projectStages'
+import { resolveProjectDropStatus } from '@/utils/projectDrop'
+import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 
-const props = defineProps({ project: { type: Object, required: true } })
+defineOptions({ inheritAttrs: false })
+
+const attrs = useAttrs()
+const props = defineProps({
+  project: { type: Object as PropType<Project>, required: true },
+})
 const emit = defineEmits(['click'])
 
 const projectStore = useProjectStore()
+const projectRef = computed(() => props.project)
+const { currentStageLabel, curTodoTotal, curDoneCount, stageProgress, nameColor, isUrgent, fmtDate, deadlineLabel } = useProjectCardBasics(projectRef)
 
-// 拖到哪一列就移到哪个状态：松手时据落点找列的 data-col-status（源卡此刻 display:none、克隆体 pointer-events:none，
-// elementFromPoint 命中的就是底下真实的列）。同列不动 → 不触发 moveProject 的 API。
-function dispatchDrop({ x, y }) {
-  const el = document.elementFromPoint(x, y)
-  const col = el && el.closest && el.closest('[data-col-status]')
-  if (!col) return
-  const status = col.getAttribute('data-col-status')
-  if (status && status !== props.project.status) projectStore.moveProject(props.project.id, status)
+function isCardControl(target: EventTarget | null) {
+  return !!(target as HTMLElement | null)?.closest('.stars, .proj-stage, .seg-bar-wrap, .card-advance, button, input, textarea, select, a')
+}
+
+function dispatchDrop(
+  _cloneCenter: { x: number; y: number },
+  _cloneVelocity: { x: number; y: number },
+  _cloneSize: { w: number; h: number },
+  context?: PhysicsDropContext,
+) {
+  if (!context) return
+  // 状态落列不再依赖克隆命中位置：飞行克隆会滞后，落地中重抓时也不对应本次手势。
+  // DOM 这里只把当前看板列投影成横向区间，真正判定收在可测试的纯函数里。
+  const columns = Array.from(document.querySelectorAll<HTMLElement>('[data-col-status]')).map((column) => {
+    const rect = column.getBoundingClientRect()
+    return { status: column.getAttribute('data-col-status') ?? '', left: rect.left, right: rect.right }
+  }).filter((column) => column.status)
+  const status = resolveProjectDropStatus(columns, {
+    pointerX: context.pointer.x,
+    pointerVelocityX: context.pointerVelocity.x,
+    isLandingRegrab: context.isLandingRegrab,
+  })
+  // 落地中重抓的回调来自首次抓起的物理 holder；项目跨列后那个 Vue 实例的 props 是旧快照
+  // （看板为排序/文件数投影会创建项目副本），不能用 props.project.status 判断是否同列。
+  const currentStatus = projectStore.projects.find((project) => project.id === props.project.id)?.status
+  if (status && status !== currentStatus) projectStore.moveProject(props.project.id, status)
 }
 
 // pointer 驱动拖拽（替代原生 HTML5 drag）：先攒位移，越过阈值才真正开拖——否则当成点击开项目。
-// 内部控件（星级 / 阶段 / 进度条）自己处理点击，不在这里起拖。
-function onPointerDown(e) {
-  if (e.pointerType === 'mouse' && e.button !== 0) return
-  if (e.target.closest('.stars, .proj-stage, .seg-bar-wrap')) return
-  const card = e.currentTarget
-  const sx = e.clientX, sy = e.clientY
-  let started = false
-  const onMove = (ev) => {
-    if (started || Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return
-    started = true
-    teardown()
-    startPhysicsDrag(ev, card, { pointer: true, skipAbsorb: true, onDrop: dispatchDrop })
-  }
-  const onUp = () => { teardown(); if (!started) emit('click') }   // 没拖动 = 点击 → 开项目
-  const teardown = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-    window.removeEventListener('pointercancel', onUp)
-  }
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
-  window.addEventListener('pointercancel', onUp)
+// 内部控件（星级 / 阶段 / 进度条）自己处理点击，不在这里起拖。阈值判定本身收在
+// usePhysicsDrag.ts 的 startThresholdDrag（跟 useFileDragDrop.ts 共用同一份，不再各写一遍）。
+function onPointerDown(e: PointerEvent) {
+  startThresholdDrag(e, {
+    exclude: isCardControl,
+    // 落地飞行动画不再单独定制——跟画布卡片（Mind canvas 的 useCardDrag.ts）用同一套默认
+    // 缓出曲线，之前试过给项目卡单独做一版"甩出去带惯性"的落地动画（先后试了 Hermite 曲线、
+    // 弹簧模型），来回调了几轮手感始终不理想，弃用退回默认。
+    onDragStart: (ev, card) => startPhysicsDrag(ev, card, {
+      pointer: true, skipAbsorb: true, onDrop: dispatchDrop,
+    }),
+    onClick: () => emit('click'),   // 没拖动 = 点击 → 开项目
+  })
 }
 const cacheStore   = useFilesCacheStore()
-
-const nameColor = computed(() => {
-  const hex = props.project.color?.match(/#[0-9a-fA-F]{6}/)?.[0] ?? '#7b7fb2'
-  const r = Math.round(parseInt(hex.slice(1,3),16) * 0.40)
-  const g = Math.round(parseInt(hex.slice(3,5),16) * 0.40)
-  const b = Math.round(parseInt(hex.slice(5,7),16) * 0.40)
-  return `rgb(${r},${g},${b})`
-})
 
 const _colorRgb = computed(() => {
   const hex = props.project.color?.match(/#[0-9a-fA-F]{6}/)?.[0] ?? '#7b7fb2'
@@ -232,23 +244,21 @@ const _colorRgb = computed(() => {
 const overlayHintBg  = computed(() => `rgba(${_colorRgb.value},0.12)`)
 const uploadFillBg   = computed(() => `rgba(${_colorRgb.value},0.32)`)
 
+// ── 当前阶段待办弹层（点击右侧阶段名弹出）────────────────────────
+// currentStageLabel/curTodoTotal/curDoneCount 走上面的 useProjectCardBasics（纯展示口径，
+// 画布卡也要用）；这里单独留一份 currentStage/currentTodos 是因为待办弹层要在原数组上
+// 增删/拖拽重排（s.todos.push/splice），composable 里的版本不适合拿来做原地修改——弹层
+// 本身是看板专属交互，不需要下沉进共享 composable。
 const currentStageIndex = computed(() =>
   props.project.stages.findIndex(s => s.key === props.project.currentStage)
 )
-const currentStageLabel = computed(() =>
-  props.project.stages[currentStageIndex.value]?.label ?? ''
-)
-
-// ── 当前阶段待办弹层（点击右侧阶段名弹出）────────────────────────
 const currentStage = computed(() => props.project.stages[currentStageIndex.value] ?? null)
 const currentTodos = computed(() => currentStage.value?.todos ?? [])
-const curTodoTotal = computed(() => currentTodos.value.length)
-const curDoneCount = computed(() => currentTodos.value.filter(t => t.done).length)
 
 const stagePopOpen  = ref(false)
 const stagePopStyle = ref({})
-const stagePopRef   = ref(null)
-const stageRef      = ref(null)
+const stagePopRef   = ref<HTMLElement | null>(null)
+const stageRef      = ref<HTMLElement | null>(null)
 
 function openStagePop() {
   if (stagePopOpen.value) { closeStagePop(); return }
@@ -276,29 +286,29 @@ function closeStagePop() {
   document.removeEventListener('keydown', onKey)
   window.removeEventListener('scroll', closeStagePop, true)
 }
-function onDocDown(e) {
-  if (stagePopRef.value && !stagePopRef.value.contains(e.target) &&
-      stageRef.value && !stageRef.value.contains(e.target)) closeStagePop()
+function onDocDown(e: MouseEvent) {
+  if (stagePopRef.value && !stagePopRef.value.contains(e.target as Node) &&
+      stageRef.value && !stageRef.value.contains(e.target as Node)) closeStagePop()
 }
-function onKey(e) { if (e.key === 'Escape') closeStagePop() }
+function onKey(e: KeyboardEvent) { if (e.key === 'Escape') closeStagePop() }
 
 function persistTodos() { projectStore.updateStages(props.project.id, props.project.stages) }
 
 // 待办拖拽：拖名字行重排（当前阶段内）；编辑态不可拖。dragenter 实时 splice + TransitionGroup 让位，dragend 落库
-const tpDrag = ref(null)         // 拖动中实时 index
-const editingTp = ref(null)
-function startEditTp(id) {
+const tpDrag = ref<number | null>(null)         // 拖动中实时 index
+const editingTp = ref<string | null>(null)
+function startEditTp(id: string) {
   editingTp.value = id
   nextTick(() => document.querySelector<HTMLElement>(`[data-tpid="${id}"]`)?.focus())
 }
-function tpDragStart(i) { tpDrag.value = i }
+function tpDragStart(i: number) { tpDrag.value = i }
 // dragover + 中线判断：指针越过目标待办中线才换位，避免来回横跳
-function tpDragOver(i, e) {
+function tpDragOver(i: number, e: MouseEvent) {
   const from = tpDrag.value
   if (from == null) return
   const arr = currentStage.value?.todos
   if (!arr) return
-  const r = e.currentTarget.getBoundingClientRect()
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const after = (e.clientY - r.top) > r.height / 2
   let idx = after ? i + 1 : i
   if (from < idx) idx--
@@ -311,14 +321,15 @@ function tpDragOver(i, e) {
 function tpDragEnd() {
   if (tpDrag.value != null) { tpDrag.value = null; persistTodos() }
 }
-function toggleTodo(t) {
+function toggleTodo(t: ProjectTodo) {
   t.done = !t.done; t.autoCompleted = false
   // 勾完当前阶段最后一个待办 → 自动进入下一阶段（与项目编辑卡一致；空阶段 / 最后阶段不动）
   const stages = props.project.stages
   const idx = stages.findIndex(s => s.key === props.project.currentStage)
-  const todos = idx >= 0 ? (stages[idx].todos ?? []) : []
-  if (t.done && idx >= 0 && idx < stages.length - 1 && todos.length > 0 && todos.every(x => x.done)) {
-    projectStore.setStage(props.project.id, stages[idx + 1].key, stageProgress.value)   // setStage 一并保存 stages + 推进
+  // 勾完后当前阶段推进到「第一个未完成阶段」（只前进）：跳过中间已完成的阶段，前置未完成时不动
+  const target = t.done ? firstIncompleteStageIdx(stages) : -1
+  if (target > idx) {
+    projectStore.setStage(props.project.id, stages[target].key, stageProgress.value)   // setStage 一并保存 stages + 推进
     fireHint('stage_switch')   // 新手引导：第一次推进阶段
   } else {
     persistTodos()
@@ -330,62 +341,21 @@ function addTodo() {
   s.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
   persistTodos()
   nextTick(() => {
-    const inputs = stagePopRef.value?.querySelectorAll('.tp-input')
+    const inputs = stagePopRef.value?.querySelectorAll<HTMLElement>('.tp-input')
     inputs?.[inputs.length - 1]?.focus()
   })
 }
-function removeTodo(id) {
+function removeTodo(id: string) {
   const s = currentStage.value; if (!s) return
   s.todos = (s.todos ?? []).filter(t => t.id !== id)
   persistTodos()
 }
 
 onUnmounted(closeStagePop)
-const stageProgress = computed(() => {
-  // 总完成度 = 所有阶段待办里已完成 / 总数（与总览页、项目编辑卡头部口径一致）；无待办则退回阶段位置
-  const stages = props.project.stages
-  if (!stages.length) return 0
-  let done = 0, total = 0
-  for (const s of stages) {
-    const todos = s.todos ?? []
-    done += todos.filter(t => t.done).length
-    total += todos.length
-  }
-  if (total > 0) return Math.round(done / total * 100)
-  const idx = currentStageIndex.value
-  return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
-})
-
-const daysLeft  = computed(() => {
-  if (!props.project.deadline) return null
-  const today = new Date(); today.setHours(0, 0, 0, 0)
-  const dl    = new Date(props.project.deadline + 'T00:00:00')
-  return Math.ceil((dl.getTime() - today.getTime()) / 86400000)
-})
-const isUrgent = computed(() => props.project.status !== 'done' && daysLeft.value <= 3)
-const thisYear = new Date().getFullYear()
-function fmtDate(iso) {
-  if (!iso) return ''
-  const d = new Date(iso + 'T00:00:00')
-  const mm = `${d.getMonth()+1}/${d.getDate()}`
-  return d.getFullYear() !== thisYear ? `${d.getFullYear()}/${mm}` : mm
-}
-const deadlineLabel = computed(() => {
-  if (!props.project.deadline) return '—'
-  const d = daysLeft.value
-  if (d < 0) {
-    if (props.project.status !== 'done') return `逾期 ${-d} 天`
-    return fmtDate(props.project.deadline)
-  }
-  if (d === 0) return '今天截止'
-  if (d === 1) return '明天'
-  if (d <= 7)  return `${d}天后`
-  return fmtDate(props.project.deadline)
-})
 
 // ── 推进状态列 ────────────────────────────────────────────
-const STATUS_NEXT  = { pending: 'active', active: 'done' }
-const STATUS_LABEL = { pending: '移至进行中', active: '标记完成' }
+const STATUS_NEXT: Record<string, string>  = { pending: 'active', active: 'done' }
+const STATUS_LABEL: Record<string, string> = { pending: '移至进行中', active: '标记完成' }
 const advanceLabel = computed(() => STATUS_LABEL[props.project.status] ?? '')
 
 async function advance() {
@@ -395,11 +365,11 @@ async function advance() {
 
 // ── 星级优先级 ────────────────────────────────────────────
 // 1=低, 2=中, 3=高；null=无
-const PRIO_MAP    = { low: 1, medium: 2, high: 3 }
-const PRIO_LABELS = { 1: '低优先级', 2: '中优先级', 3: '高优先级' }
+const PRIO_MAP: Record<string, number>    = { low: 1, medium: 2, high: 3 }
+const PRIO_LABELS: Record<number, string> = { 1: '低优先级', 2: '中优先级', 3: '高优先级' }
 const PRIO_KEYS   = [null, 'low', 'medium', 'high']
 
-const prioValue = computed(() => PRIO_MAP[props.project.priority] ?? 0)
+const prioValue = computed(() => props.project.priority ? (PRIO_MAP[props.project.priority] ?? 0) : 0)
 
 const starColor = computed(() => {
   if (prioValue.value === 3) return '#c45050'
@@ -414,23 +384,23 @@ const fileUploadPct  = ref(0)
 const fileUploadDone = ref(false)
 let _dragEnterCount  = 0   // 处理子元素 dragleave 抖动
 
-function _isFileDrag(e) { return e.dataTransfer?.types?.includes('Files') }
+function _isFileDrag(e: DragEvent) { return e.dataTransfer?.types?.includes('Files') }
 
-function onFileDragEnter(e) {
+function onFileDragEnter(e: DragEvent) {
   if (!_isFileDrag(e)) return
   _dragEnterCount++
   fileDragOver.value = true
 }
-function onFileDragOver(e) {
+function onFileDragOver(e: DragEvent) {
   if (!_isFileDrag(e)) return
-  e.dataTransfer.dropEffect = 'copy'
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
 }
-function onFileDragLeave(e) {
+function onFileDragLeave(e: DragEvent) {
   if (!_isFileDrag(e)) return
   _dragEnterCount--
   if (_dragEnterCount <= 0) { _dragEnterCount = 0; fileDragOver.value = false }
 }
-async function onFileDrop(e) {
+async function onFileDrop(e: DragEvent) {
   _dragEnterCount = 0; fileDragOver.value = false
   const files = [...(e.dataTransfer?.files ?? [])]
   if (!files.length) return
@@ -443,7 +413,7 @@ async function onFileDrop(e) {
         mime_type: f.type || 'application/octet-stream',
         space: 'project', project_id: props.project.id, folder_id: null, stage_name: '',
       })
-      const onPct = (pct) => { fileUploadPct.value = Math.round(((i + pct) / files.length) * 100) }
+      const onPct = (pct: number) => { fileUploadPct.value = Math.round(((i + pct) / files.length) * 100) }
       let uploaded
       if (presign.mode === 'oss') {
         await uploadDirectWithProgress(presign.upload_url, f, onPct)
@@ -456,7 +426,7 @@ async function onFileDrop(e) {
       } else {
         const form = new FormData()
         form.append('file', f); form.append('space', 'project')
-        form.append('project_id', props.project.id)
+        form.append('project_id', String(props.project.id))
         uploaded = await uploadWithProgress('/files', form, onPct)
       }
       if (uploaded) cacheStore.addFile(uploaded)
@@ -465,11 +435,11 @@ async function onFileDrop(e) {
     setTimeout(() => { fileUploading.value = false; fileUploadDone.value = false }, 1200)
   } catch (err) {
     fileUploading.value = false
-    alert('上传失败：' + (err?.message ?? ''))
+    alert('上传失败：' + (err instanceof Error ? err.message : ''))
   }
 }
 
-async function setPriority(n) {
+async function setPriority(n: number) {
   // 再次点击同一级别则取消
   const next = prioValue.value === n ? null : PRIO_KEYS[n]
   await projectStore.updateProject(props.project.id, { priority: next })
@@ -485,9 +455,12 @@ async function setPriority(n) {
   box-shadow: 0 2px 8px rgba(80,90,110,0.07);
   overflow: hidden; cursor: pointer;
   /* transition 是覆盖式属性，不会跟全局 .hover-card-fx 的 transition 叠加（只有其中一份生效）——
-     这里仍自带完整的一份（含 background），确保不管层叠顺序谁赢，效果都一致，不丢 background 过渡 */
-  transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1),
-              box-shadow 0.3s ease, background 0.25s ease-out;
+     这里仍自带完整的一份（含 background），确保不管层叠顺序谁赢，效果都一致，不丢 background 过渡。
+     transform/box-shadow 的时长要跟 .hover-card-fx 保持同一个数（见 global.css），不然这份
+     本地声明会赢过全局那份、悄悄用着自己的时长——画布上项目卡跟便签/活动贴纸并排悬停时
+     能看出抬起速度不一样，就是这里曾经各写各的 0.3s/0.25s 导致的。 */
+  transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
+              box-shadow 0.25s ease, background 0.25s ease-out;
   user-select: none;
 }
 .proj-card.file-drag-over {
@@ -531,11 +504,11 @@ async function setPriority(n) {
   transition: opacity 0.25s ease;
   pointer-events: none;
 }
-/* 抬起(:hover)/按下(:active)本体效果来自全局 .hover-card-fx（模板里已加这个类）；
-   这里补文件卡同款阴影和项目卡专属的 hover 高光，以及按下时排除嵌套可交互子元素（评分/进度条/阶段点）。 */
+/* 抬起/按下本体效果来自全局 .hover-card-fx（模板里已加这个类）；
+   这里补文件卡同款阴影和项目卡专属的 hover 高光。内部控件按住时不能覆盖根卡的
+   hover transform，否则卡片会从 translateY(-2px) 突然回到 0，看起来像被按下。 */
 .proj-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
 .proj-card:hover::after { opacity: 1; }
-.proj-card:active:has(.stars:active, .seg-bar-wrap:active, .proj-stage:active) { transform: none; opacity: 1; }
 
 .card-body { flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card-top { display: flex; align-items: flex-start; gap: 6px; }
@@ -550,24 +523,24 @@ async function setPriority(n) {
 }
 .proj-client {
   display: flex; align-items: center; gap: 4px;
-  font-size: 11px; color: var(--text-secondary);
+  font-size: 11px; line-height: 1.15; color: var(--text-secondary);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1;
   padding-bottom: 2px; margin-bottom: -2px;
 }
-.proj-client svg { flex-shrink: 0; opacity: 0.85; }
+.proj-client svg { opacity: 0.85; }
 .proj-client.empty { opacity: 0.75; }
 .proj-stage {
   display: inline-flex; align-items: center; gap: 4px;
-  font-size: 10px; color: var(--text-secondary);
+  font-size: 10px; line-height: 1.15; color: var(--text-secondary);
   white-space: nowrap; flex-shrink: 0; opacity: 0.75;
   padding: 2px 5px; margin: -2px -4px; border-radius: 6px;
   cursor: pointer; transition: background 0.12s, opacity 0.12s;
 }
 .proj-stage:hover, .proj-stage.open { background: rgba(0,0,0,0.06); opacity: 1; }
 .ps-label { overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
-.ps-count { font-size: 9px; opacity: 0.8; font-variant-numeric: tabular-nums; }
+.ps-count { font-size: 9px; line-height: 1.15; opacity: 0.8; font-variant-numeric: tabular-nums; }
 .ps-caret { opacity: 0.5; flex-shrink: 0; transition: transform 0.16s; }
-.proj-stage.open .ps-caret { transform: rotate(180deg); }
+.proj-stage.open .ps-caret { transform: translateY(-0.35px) rotate(180deg); }
 
 /* 当前阶段待办弹层（Teleport 到 body，通用弹窗风格） */
 .todo-pop {
@@ -616,26 +589,34 @@ async function setPriority(n) {
 .tp-add:hover { background: rgba(123,127,178,0.08); color: var(--color-primary); border-color: rgba(123,127,178,0.4); }
 
 .card-footer { display: flex; align-items: center; justify-content: space-between; }
-.footer-right { display: flex; align-items: center; gap: 5px; }
+.footer-right { display: flex; align-items: center; gap: 5px; line-height: 1.15; }
 
 .date-range {
   display: flex; align-items: center; gap: 4px;
-  font-size: 11px; color: var(--text-secondary); min-width: 0; overflow: hidden;
+  font-size: 11px; line-height: 1.15; color: var(--text-secondary); min-width: 0; overflow: hidden;
 }
-.date-range svg { flex-shrink: 0; }
 .date-start { opacity: 0.65; white-space: nowrap; }
 .date-sep { opacity: 0.35; font-size: 9px; }
 .deadline { white-space: nowrap; }
 /* 用 inset 阴影代替 border、去掉纵向 padding，使胶囊不比正文行高更高 → 不把进度条挤下移 */
-.done-label { white-space: nowrap; font-size: 10px; font-weight: 700; color: #3a8870; background: rgba(90,158,136,0.12); box-shadow: inset 0 0 0 1px rgba(90,158,136,0.35); border-radius: 20px; padding: 0 6px; display: inline-flex; align-items: center; gap: 2px; line-height: 1.4; }
+.done-label { white-space: nowrap; font-size: 10px; font-weight: 700; color: #3a8870; background: rgba(90,158,136,0.12); box-shadow: inset 0 0 0 1px rgba(90,158,136,0.35); border-radius: 20px; padding: 0 6px; display: inline-flex; align-items: center; gap: 2px; line-height: 1.15; }
 .deadline.urgent { color: var(--color-warning); font-weight: 600; }
 
 .file-badge {
   display: flex; align-items: center; gap: 3px;
-  font-size: 10px; font-weight: 600; color: var(--text-secondary);
+  font-size: 10px; line-height: 1.15; font-weight: 600; color: var(--text-secondary);
   background: rgba(0,0,0,0.06); border-radius: 10px; padding: 1px 6px;
 }
-.progress-num { font-size: 10px; color: var(--text-secondary); }
+.proj-client > svg,
+.proj-stage > svg,
+.date-range > svg,
+.done-label > svg,
+.file-badge > svg {
+  display: block;
+  flex: 0 0 auto;
+  transform: translateY(-0.35px);
+}
+.progress-num { font-size: 10px; line-height: 1.15; color: var(--text-secondary); }
 .seg-bar-wrap { position: relative; }
 
 /* ── 星级 ── */

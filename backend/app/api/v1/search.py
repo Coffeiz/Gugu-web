@@ -7,14 +7,14 @@
 共用——路由给下拉框用小 per_type，工具给模型用更大的 per_type，避免各写一套。
 """
 from fastapi import APIRouter, Depends
-from sqlalchemy import or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.core.security import get_current_user
 from app.models import (
     User, Project, File, Folder, CalendarEvent, Client,
-    ConversationSession, ConversationMessage,
+    ConversationSession, ConversationMessage, MindNode,
 )
 from app.utils.romaji import is_romaji_query, romaji_match
 
@@ -25,7 +25,7 @@ MSG_PER_TYPE = 8      # 对话消息扫描条数（合并去重后仍受 per_typ
 SNIPPET_PAD = 24      # 消息片段命中词前后各取多少字
 ROMAJI_SCAN = 200     # 拼音/罗马音搜索时每类最多扫描条数
 
-ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation"]
+ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation", "note"]
 
 
 def _snippet(text: str, q: str) -> str:
@@ -40,6 +40,16 @@ def _snippet(text: str, q: str) -> str:
     end = min(len(text), i + len(q) + SNIPPET_PAD)
     seg = text[start:end].strip().replace("\n", " ")
     return ("…" if start > 0 else "") + seg + ("…" if end < len(text) else "")
+
+
+def _primary_rank(column, q: str):
+    """名称精确/前缀命中优先于纯子串命中；只用标准 SQL，SQLite 测试也保持一致。"""
+    normalized = q.lower()
+    return case(
+        (func.lower(column) == normalized, 0),
+        (func.lower(column).like(f"{normalized}%"), 1),
+        else_=2,
+    )
 
 
 async def run_global_search(db: AsyncSession, user_id, q: str, *,
@@ -62,7 +72,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 Project.user_id == uid,
                 or_(Project.name.ilike(like), Project.client.ilike(like),
                     Project.current_stage.ilike(like)),
-            ).order_by(Project.updated_at.desc()).limit(per_type)
+            ).order_by(_primary_rank(Project.name, q), Project.updated_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {p.id for p in rows}
@@ -90,7 +100,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
             select(File).where(
                 File.user_id == uid, File.deleted_at.is_(None),
                 or_(File.display_name.ilike(like), File.ext.ilike(like)),
-            ).order_by(File.updated_at.desc()).limit(per_type)
+            ).order_by(_primary_rank(File.display_name, q), File.updated_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {f.id for f in rows}
@@ -115,7 +125,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
     if wanted is None or "folder" in wanted:
         rows = list((await db.execute(
             select(Folder).where(Folder.user_id == uid, Folder.name.ilike(like))
-            .order_by(Folder.created_at.desc()).limit(per_type)
+            .order_by(_primary_rank(Folder.name, q), Folder.created_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {fo.id for fo in rows}
@@ -140,7 +150,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 CalendarEvent.user_id == uid,
                 or_(CalendarEvent.title.ilike(like), CalendarEvent.description.ilike(like),
                     CalendarEvent.client.ilike(like)),
-            ).order_by(CalendarEvent.date.desc()).limit(per_type)
+            ).order_by(_primary_rank(CalendarEvent.title, q), CalendarEvent.date.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {e.id for e in rows}
@@ -170,7 +180,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 or_(Client.name.ilike(like), Client.contact.ilike(like),
                     Client.email.ilike(like), Client.phone.ilike(like),
                     Client.notes.ilike(like)),
-            ).order_by(Client.created_at.desc()).limit(per_type)
+            ).order_by(_primary_rank(Client.name, q), Client.created_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {c.id for c in rows}
@@ -192,13 +202,55 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 for c in rows
             ]})
 
+    # ── 思维便签：标题 + 正文（便签短，正文可以直接搜，不像文件那样只能搜名）──
+    #    只搜 kind='note'：ref 节点只是业务对象的引用代理，真身已经在上面各类里搜过了，
+    #    再出一遍就是重复；软删的墓碑也不该出现在搜索里。
+    if wanted is None or "note" in wanted:
+        rows = list((await db.execute(
+            select(MindNode).where(
+                MindNode.user_id == uid,
+                MindNode.kind == "note",
+                MindNode.deleted_at.is_(None),
+                or_(MindNode.title.ilike(like), MindNode.content_plain.ilike(like)),
+            ).order_by(
+                case(
+                    (func.lower(MindNode.title) == q.lower(), 0),
+                    (func.lower(MindNode.title).like(f"{q.lower()}%"), 1),
+                    (MindNode.title.ilike(like), 2),
+                    else_=3,  # 只在正文命中：保留，但排在标题命中之后
+                ),
+                MindNode.captured_at.desc(),
+            ).limit(per_type)
+        )).scalars().all())
+        if use_romaji and len(rows) < per_type:
+            seen = {n.id for n in rows}
+            scan = (await db.execute(
+                select(MindNode).where(
+                    MindNode.user_id == uid, MindNode.kind == "note",
+                    MindNode.deleted_at.is_(None),
+                ).order_by(MindNode.captured_at.desc()).limit(ROMAJI_SCAN)
+            )).scalars().all()
+            for n in scan:
+                # 罗马音只匹标题：正文可能很长，逐字转拼音代价不划算
+                if n.id not in seen and romaji_match(n.title or "", q):
+                    rows.append(n); seen.add(n.id)
+                    if len(rows) >= per_type:
+                        break
+        if rows:
+            groups.append({"type": "note", "label": "便签", "items": [
+                {"id": n.id,
+                 "title": n.title or _snippet(n.content_plain, q) or "无标题便签",
+                 "subtitle": _snippet(n.content_plain, q)}
+                for n in rows
+            ]})
+
     # ── 对话：会话标题 + 消息正文（合并去重，正文命中给片段）──
     if wanted is None or "conversation" in wanted:
         conv: dict = {}   # session_id → {id, title, subtitle}
         title_rows = (await db.execute(
             select(ConversationSession).where(
                 ConversationSession.user_id == uid, ConversationSession.title.ilike(like),
-            ).order_by(ConversationSession.updated_at.desc()).limit(per_type)
+            ).order_by(_primary_rank(ConversationSession.title, q), ConversationSession.updated_at.desc()).limit(per_type)
         )).scalars().all()
         for s in title_rows:
             conv[s.id] = {"id": s.id, "title": s.title, "subtitle": "对话"}

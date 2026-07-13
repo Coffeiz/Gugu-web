@@ -35,21 +35,22 @@
 <script setup lang="ts">
 import { ref, type PropType } from 'vue'
 import ProjectCard from './ProjectCard.vue'
+import type { Project } from '@/types/project'
 
 const props = defineProps({
   column:   { type: Object, required: true },
-  projects: { type: Array as PropType<any[]>, default: () => [] },
+  projects: { type: Array as PropType<Project[]>, default: () => [] },
 })
 const emit = defineEmits(['card-click', 'drop-project', 'add-project'])
 
 const isDragOver = ref(false)
 
-const colColors = { pending: '#d46b6b', active: '#c9943a' }
+const colColors: Record<string, string> = { pending: '#d46b6b', active: '#c9943a' }
 const colColor  = colColors[props.column.key] ?? '#9e9fc4'
 
-function onDrop(e) {
+function onDrop(e: DragEvent) {
   isDragOver.value = false
-  const projectId = Number(e.dataTransfer.getData('projectId'))
+  const projectId = Number(e.dataTransfer?.getData('projectId'))
   if (projectId) emit('drop-project', { projectId, targetStatus: props.column.key })
 }
 </script>

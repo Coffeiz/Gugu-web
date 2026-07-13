@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta
+from app.core.tz import now_utc
 from uuid import UUID
 
 import bcrypt as _bcrypt
-from fastapi import Depends, HTTPException
+from fastapi import Depends, Header, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +24,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_stream_token(file_id: int, user_id: UUID, expires_minutes: int = 10) -> str:
     settings = get_settings()
-    expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
+    expire = now_utc() + timedelta(minutes=expires_minutes)
     return jwt.encode(
         {"sub": str(user_id), "fid": file_id, "role": "stream", "exp": expire},
         settings.secret_key,
@@ -45,12 +46,18 @@ def verify_stream_token(token: str) -> tuple[int, UUID]:
 
 def create_user_token(user_id: UUID) -> str:
     settings = get_settings()
-    expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
+    expire = now_utc() + timedelta(minutes=settings.access_token_expire_minutes)
     return jwt.encode(
         {"sub": str(user_id), "role": "user", "exp": expire},
         settings.secret_key,
         algorithm="HS256",
     )
+
+
+def get_client_id(x_client_id: str | None = Header(default=None)) -> str | None:
+    """发起请求的浏览器标签页 client-id（前端 api.ts 每次写操作带的 X-Client-Id 头）。
+    透传给 events.publish 的 origin，用于回声抑制。缺省 None（如咕咕/IM 侧、老前端）。"""
+    return x_client_id
 
 
 async def get_current_user_id(

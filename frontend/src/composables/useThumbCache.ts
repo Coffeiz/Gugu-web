@@ -14,13 +14,13 @@ export const thumbLoadedIds   = reactive(new Set())
 // 二次访问同一文件时 fc-loaded 直接就绪，跳过渐进动画直接显示
 export const cardBlobReadyIds = reactive(new Set())
 
-export function getCachedThumb(id, size = 'card') {
+export function getCachedThumb(id: number | string, size = 'card') {
   const url = cache.get(`${id}_${size}`)
   if (url && size === 'card') thumbLoadedIds.add(id)
   return url ?? null
 }
 
-export function getThumb(id, size = 'card') {
+export function getThumb(id: number | string, size = 'card') {
   const key = `${id}_${size}`
   if (cache.has(key)) {
     if (size === 'card') thumbLoadedIds.add(id)
@@ -57,11 +57,11 @@ export function getThumb(id, size = 'card') {
 }
 
 // 通用：按任意 URL 取缩略图并以自定义 key 缓存（聊天暂存附件缩略图等，走 file id 之外的端点）
-export function getCachedThumbUrl(key) {
+export function getCachedThumbUrl(key: string) {
   return cache.get(key) ?? null
 }
 
-export function getThumbUrl(key, url) {
+export function getThumbUrl(key: string, url: string) {
   if (cache.has(key)) return Promise.resolve(cache.get(key))
   if (pending.has(key)) return pending.get(key)
 
@@ -91,7 +91,7 @@ export function getThumbUrl(key, url) {
 
 const _IMG_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','heic','heif','svg'])
 
-export function preloadTinyThumbs(files) {
+export function preloadTinyThumbs(files: Array<{ id: number | string; ext?: string | null }>) {
   for (const f of files) {
     if (_IMG_EXTS.has((f.ext || '').toLowerCase()) && !cache.has(`${f.id}_tiny`)) {
       getThumb(f.id, 'tiny').catch(() => {})
@@ -99,7 +99,7 @@ export function preloadTinyThumbs(files) {
   }
 }
 
-export function clearThumbCache(id) {
+export function clearThumbCache(id: number | string) {
   for (const size of ['tiny', 'card', 'full']) {
     const key = `${id}_${size}`
     const url = cache.get(key)

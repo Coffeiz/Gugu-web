@@ -9,6 +9,7 @@
 转换（系统已装，零新依赖）。
 """
 import json
+from app.core.tz import now_utc
 from datetime import datetime
 
 from sqlalchemy import select
@@ -16,9 +17,11 @@ from sqlalchemy import select
 from app.models import File, Folder, Project
 from app.core.ownership import get_owned
 from app.services.storage import get_storage
+from app.services.storage.folders import resolve_folder_path
 from app.api.v1.files import (
-    _build_key, _resolve_conflict, _fmt_size, _move_to_trash, _color,
+    _fmt_size, _move_to_trash, _color,
 )
+from app.services.storage.keys import _build_key, _resolve_conflict
 from agent.tools.base import BaseSkill, Tool
 
 # 可读/可改的文本类扩展名
@@ -88,7 +91,7 @@ async def _libreoffice_convert(data: bytes, src_ext: str, target_ext: str) -> by
 # ── 内部：按目标解析 storage_key（复刻 update_file/copy_file）──
 async def _resolve_key(db, user_id, space, display_name, ext,
                        project_id=None, folder_id=None):
-    project_name = project_year = project_month = folder_name = ""
+    project_name = project_year = project_month = folder_path = ""
     if space == "project" and project_id:
         p = await get_owned(db, Project, project_id, user_id)
         if not p:
@@ -97,17 +100,41 @@ async def _resolve_key(db, user_id, space, display_name, ext,
         date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
         project_year, project_month = date_str[:4], date_str[5:7]
     if folder_id:
-        fo = await get_owned(db, Folder, folder_id, user_id)
-        if not fo:
-            raise ValueError("目标文件夹不存在")
-        folder_name = fo.name
+        resolved = await resolve_folder_path(
+            db, user_id, folder_id, project_id if space == "project" else None,
+        )
+        if not resolved:
+            raise ValueError("目标文件夹不存在，或不属于指定的项目/个人空间")
+        _, folder_path = resolved
     key = _build_key(
         uid=user_id, space=space, display_name=display_name, ext=ext,
         project_name=project_name, project_id=project_id or 0,
         project_year=project_year, project_month=project_month,
-        folder_name=folder_name,
+        folder_path=folder_path,
     )
     return key
+
+
+async def _location_receipt(db, user_id, space, project_id, folder_id):
+    """保存/创建后的真实落点，完整路径供模型照回执转告，不再猜目录。"""
+    project_name = None
+    if space == "project" and project_id:
+        project = await get_owned(db, Project, project_id, user_id)
+        project_name = project.name if project else None
+    folder_path = "（根目录）"
+    if folder_id:
+        resolved = await resolve_folder_path(
+            db, user_id, folder_id, project_id if space == "project" else None,
+        )
+        if resolved:
+            _, folder_path = resolved
+    return {
+        "space": space,
+        "project_id": project_id if space == "project" else None,
+        "project_name": project_name,
+        "folder_id": folder_id,
+        "folder_path": folder_path,
+    }
 
 
 def _strip_ext(name: str, ext: str) -> str:
@@ -190,12 +217,22 @@ async def _list_files(db, user_id, args: dict):
         stmt = stmt.where(File.display_name.ilike(f"%{args['q']}%"))
     stmt = stmt.order_by(File.updated_at.desc()).limit(args.get("limit", 30))
     rows = (await db.execute(stmt)).scalars().all()
-    return [
-        {"id": f.id, "name": f"{f.display_name}.{f.ext}", "ext": f.ext,
-         "space": f.space, "size": f.size, "project_id": f.project_id,
-         "folder_id": f.folder_id}
-        for f in rows
-    ]
+    out = []
+    for file in rows:
+        folder_path = "（根目录）"
+        if file.folder_id:
+            resolved = await resolve_folder_path(
+                db, user_id, file.folder_id,
+                file.project_id if file.space == "project" else None,
+            )
+            if resolved:
+                _, folder_path = resolved
+        out.append({
+            "id": file.id, "name": f"{file.display_name}.{file.ext}", "ext": file.ext,
+            "space": file.space, "size": file.size, "project_id": file.project_id,
+            "folder_id": file.folder_id, "folder_path": folder_path,
+        })
+    return out
 
 
 async def _read_file(db, user_id, args: dict):
@@ -277,7 +314,7 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
     await storage.put(f.storage_key, data, f.mime_type)
     f.size_bytes = len(data)
     f.size = _fmt_size(len(data))
-    f.updated_at = datetime.utcnow()
+    f.updated_at = now_utc()
     await db.commit()
     result = {"success": True, "file_id": f.id, "name": nm, "new_size": f.size, "change": change}
     # P2c · 内容骤降告警：replace_all 最容易把整段覆盖丢。改后显著变短时确定性提示模型核对，
@@ -327,6 +364,11 @@ async def _create_document(db, user_id, args: dict):
         return json.dumps({"error": "缺少必填参数 name（文件名）；请带上 name 再调用本工具"}, ensure_ascii=False)
     display_name = _strip_ext(name, fmt)
     space = args.get("space", "personal")
+    space, project_id, folder_id, loc_err = _coerce_loc(
+        space, args.get("project_id"), args.get("folder_id"),
+    )
+    if loc_err:
+        return loc_err
     content = args.get("content", "")
 
     # 生成二进制内容
@@ -344,7 +386,7 @@ async def _create_document(db, user_id, args: dict):
     try:
         base_key = await _resolve_key(
             db, user_id, space, display_name, fmt,
-            project_id=args.get("project_id"), folder_id=args.get("folder_id"),
+            project_id=project_id, folder_id=folder_id,
         )
     except ValueError as e:
         return json.dumps({"error": str(e)})
@@ -353,8 +395,8 @@ async def _create_document(db, user_id, args: dict):
 
     db_file = File(
         user_id=user_id, display_name=final_name, ext=fmt, space=space,
-        project_id=args.get("project_id") if space == "project" else None,
-        folder_id=args.get("folder_id"), stage_name="",
+        project_id=project_id if space == "project" else None,
+        folder_id=folder_id, stage_name="",
         storage_key=final_key, size=_fmt_size(len(data)), size_bytes=len(data),
         mime_type=_DOC_MIME[fmt],
     )
@@ -362,7 +404,8 @@ async def _create_document(db, user_id, args: dict):
     await db.commit()
     await db.refresh(db_file)
     return {"success": True, "file_id": db_file.id,
-            "name": f"{final_name}.{fmt}", "size": db_file.size}
+            "name": f"{final_name}.{fmt}", "size": db_file.size,
+            **(await _location_receipt(db, user_id, space, project_id, folder_id))}
 
 
 async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder_id):
@@ -392,7 +435,8 @@ async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder
     await db.commit()
     await db.refresh(db_file)
     return True, {"file_id": db_file.id, "name": f"{final_name}.{ext}",
-                  "space": space, "project_id": db_file.project_id, "size": db_file.size}
+                  "size": db_file.size,
+                  **(await _location_receipt(db, user_id, space, project_id, folder_id))}
 
 
 async def _save_uploaded_file(db, user_id, args: dict):
@@ -455,7 +499,7 @@ async def _rename_one(db, user_id, f, new_name: str) -> dict:
         f.storage_key = new_key
     old = f.display_name
     f.display_name = new_display
-    f.updated_at = datetime.utcnow()
+    f.updated_at = now_utc()
     await db.commit()
     return {"success": True, "file_id": f.id, "old_name": f"{old}.{f.ext}", "name": f"{new_display}.{f.ext}"}
 
@@ -601,7 +645,7 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
     f.folder_id = folder_id
     if "stage_name" in target:
         f.stage_name = target["stage_name"]
-    f.updated_at = datetime.utcnow()
+    f.updated_at = now_utc()
     await db.commit()
 
     folder_name = "（根目录）"
@@ -707,7 +751,7 @@ async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id) -> dict
                     f.display_name = new_disp
                 f.space = t_space
                 f.project_id = t_pid
-                f.updated_at = datetime.utcnow()
+                f.updated_at = now_utc()
                 moved_files += 1
             except Exception as e:
                 failed.append({"file": f"{f.display_name}.{f.ext}", "error": str(e)[:80]})
@@ -793,10 +837,11 @@ async def _delete_file(db, user_id, args: dict):
         return _err
     fid = f.id; fname = f"{f.display_name}.{f.ext}"
     await _move_to_trash(get_storage(), f)
-    f.deleted_at = datetime.utcnow()
+    f.deleted_at = now_utc()
     await db.commit()
     return {"success": True, "file_id": fid, "name": fname,
-            "note": "已移入回收站，30 天内可还原"}
+            "note": "已移入回收站，30 天内可还原",
+            "_file_op": {"op": "remove", "kind": "file", "id": fid}}
 
 
 async def _list_folders(db, user_id, args: dict):
@@ -806,10 +851,18 @@ async def _list_folders(db, user_id, args: dict):
     if args.get("parent_id") is not None:
         stmt = stmt.where(Folder.parent_id == args["parent_id"])
     rows = (await db.execute(stmt)).scalars().all()
-    return [
-        {"id": f.id, "name": f.name, "project_id": f.project_id, "parent_id": f.parent_id}
-        for f in rows
-    ]
+    out = []
+    for folder in rows:
+        resolved = await resolve_folder_path(db, user_id, folder.id, folder.project_id)
+        if not resolved:
+            continue
+        _, path = resolved
+        out.append({
+            "id": folder.id, "name": folder.name, "path": path,
+            "project_id": folder.project_id, "parent_id": folder.parent_id,
+            "depth": path.count("/"),
+        })
+    return sorted(out, key=lambda item: (item["depth"], item["path"]))
 
 
 async def _find_folder(db, user_id, args: dict):
@@ -851,20 +904,39 @@ async def _delete_folder(db, user_id, args: dict):
     fo = await _find_folder(db, user_id, args)
     if isinstance(fo, str):
         return fo
-    # 与后端一致：内部文件移到根（folder_id=None，文件不删），再删文件夹记录
-    files = (await db.execute(
-        select(File).where(File.folder_id == fo.id, File.user_id == user_id)
-    )).scalars().all()
-    moved = len(files)
     fid = fo.id
     fname = fo.name
-    for f in files:
-        f.folder_id = None
-    await db.delete(fo)
+    # 与网页删文件夹一致：整棵子树的文件一并软删进回收站，子文件夹连同本文件夹一起删。
+    # （旧实现把直属文件移到根目录、不删，还漏了嵌套子文件夹——跟 UI / REST delete_folder 不一致，
+    #   表现为「咕咕删文件夹后里面的文件跑到上层目录」，这里修正为跟后端 REST 完全一致。）
+    all_fids = [fo.id]
+    queue = [fo.id]
+    while queue:
+        parent = queue.pop()
+        sub_ids = (await db.execute(
+            select(Folder.id).where(Folder.parent_id == parent, Folder.user_id == user_id)
+        )).scalars().all()
+        for sid in sub_ids:
+            all_fids.append(sid)
+            queue.append(sid)
+    now = now_utc()
+    trashed = 0
+    for folder_id in all_fids:
+        files = (await db.execute(
+            select(File).where(File.folder_id == folder_id, File.user_id == user_id, File.deleted_at.is_(None))
+        )).scalars().all()
+        for f in files:
+            f.deleted_at = now
+            trashed += 1
+    for folder_id in reversed(all_fids):   # 从最深层往上删，避免外键约束
+        sub = await get_owned(db, Folder, folder_id, user_id)
+        if sub:
+            await db.delete(sub)
     await db.commit()
-    note = (f"文件夹「{fname}」已删除；原有 {moved} 个文件已移至根目录（未删除、仍在文件库根目录，不进回收站）"
-            if moved else f"空文件夹「{fname}」已删除")
-    return {"success": True, "deleted_folder_id": fid, "note": note}
+    note = (f"文件夹「{fname}」已删除，其中 {trashed} 个文件已移入回收站（30 天内可恢复）"
+            if trashed else f"空文件夹「{fname}」已删除")
+    return {"success": True, "deleted_folder_id": fid, "note": note,
+            "_file_op": {"op": "remove", "kind": "folder", "id": fid}}
 
 
 async def _copy_file(db, user_id, args: dict):
@@ -1092,7 +1164,7 @@ class FilesSkill(BaseSkill):
         Tool(
             name="list_files", label="查询文件",
             description="查询文件，可按空间(project/mind/asset/personal)、项目、扩展名、名称关键词筛选。"
-                        "结果回给用户时按列表呈现（每个文件一行，多文件夹/项目时分组），别写成一段话堆文件名。",
+                        "结果含 folder_path（完整文件夹路径）；回给用户时按列表呈现（每个文件一行，多文件夹/项目时分组），别写成一段话堆文件名。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1157,6 +1229,8 @@ class FilesSkill(BaseSkill):
                 "新建一个文件。format 为 md/txt/json/csv 时 content 为对应纯文本直接写入；"
                 "format=docx 或 pdf 时 content 请提供 HTML（将转换为 Word/PDF）；"
                 "format=xlsx 时 content 请提供 CSV（将转换为 Excel）。默认放在个人文件空间。"
+                "**未指定 folder_id 且目标空间已有文件夹时，先调用 list_folders 审视一级目录；"
+                "命中唯一相关目录后再审视它的子目录，确认无更合适目录才允许保存到根目录。**"
             ),
             input_schema={
                 "type": "object",
@@ -1277,7 +1351,8 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="list_folders", label="查询文件夹",
-            description="列出文件夹，可按项目或父文件夹筛选（不传 project_id 看个人空间文件夹）。",
+            description="列出文件夹，可按项目或父文件夹筛选（不传 project_id 看个人空间文件夹）。"
+                        "返回 path（根到叶的完整路径）与 depth，决定新文件落点时据此审视一级和相关二级目录。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1355,7 +1430,9 @@ class FilesSkill(BaseSkill):
                         "单个附件用 attach_id。attach_id(s) 来自上下文「用户上传了文件…(attach_id=X)」的提示——"
                         "抄不准也没关系，系统会尽量容错匹配；但当前暂存区里同时有多种不同类型附件（比如图+语音）"
                         "时无法安全瞎猜，会报错列出候选，需要照着给准。"
-                        "要存进某个项目就带上 project_id（不传则进 personal）。",
+                        "要存进某个项目就带上 project_id（不传则进 personal）。"
+                        "**未指定 folder_id 且目标空间已有文件夹时，先调用 list_folders 审视一级目录；"
+                        "命中唯一相关目录后再审视它的子目录，确认无更合适目录才允许保存到根目录。**",
             input_schema={
                 "type": "object",
                 "properties": {

@@ -306,7 +306,7 @@ const redisConnString = computed(() => {
 })
 
 // ── 连接测试 ──────────────────────────────────────────────────────────────
-const testStatus  = reactive({ db: null, redis: null, oss: null, smtp: null })
+const testStatus  = reactive<Record<string, any>>({ db: null, redis: null, oss: null, smtp: null })
 const testLoading = reactive({ db: false, redis: false, oss: false })
 const initing     = ref(false)        // 「初始化数据库」按钮状态
 
@@ -329,7 +329,7 @@ async function testDb() {
     })
     testStatus.db = await res.json()
   } catch (e) {
-    testStatus.db = { ok: false, message: e.message }
+    testStatus.db = { ok: false, message: (e instanceof Error ? e.message : String(e)) }
   } finally {
     testLoading.db = false
   }
@@ -346,7 +346,7 @@ async function initDb() {
     const data = await res.json()
     testStatus.db = data
   } catch (e) {
-    testStatus.db = { ok: false, message: e.message }
+    testStatus.db = { ok: false, message: (e instanceof Error ? e.message : String(e)) }
   } finally {
     initing.value = false
   }
@@ -354,7 +354,7 @@ async function initDb() {
 
 // 存储 ↔ DB 对账（只读）：扫存储和 File 表，报告幽灵记录 + 孤儿文件
 const reconciling = ref(false)
-const reconReport = ref(null)
+const reconReport = ref<any | null>(null)
 async function runReconcile() {
   if (reconciling.value) return
   reconciling.value = true
@@ -364,7 +364,7 @@ async function runReconcile() {
     if (!res.ok) throw new Error(data.detail || '对账失败')
     reconReport.value = data
   } catch (e) {
-    reconReport.value = { error: e.message }
+    reconReport.value = { error: (e instanceof Error ? e.message : String(e)) }
   } finally {
     reconciling.value = false
   }
@@ -372,7 +372,7 @@ async function runReconcile() {
 
 // 修复孤儿：action=delete 删物理文件 / import 重建 DB 记录
 const repairing = ref(false)
-async function repairOrphans(keys, action) {
+async function repairOrphans(keys: any, action: string) {
   if (repairing.value || !keys.length) return
   if (action === 'delete' && !window.confirm(`确认删除 ${keys.length} 个孤儿物理文件？此操作不可恢复。`)) return
   repairing.value = true
@@ -386,12 +386,12 @@ async function repairOrphans(keys, action) {
     if (!res.ok) throw new Error(data.detail || '修复失败')
     const doneSet = new Set(data.done_keys || [])
     if (reconReport.value?.orphans) {
-      reconReport.value.orphans = reconReport.value.orphans.filter(k => !doneSet.has(k))
+      reconReport.value.orphans = reconReport.value.orphans.filter((k: any) => !doneSet.has(k))
       reconReport.value.orphan_count = reconReport.value.orphans.length
     }
-    if (data.failed?.length) window.alert(`${data.done} 个成功，${data.failed.length} 个失败：\n` + data.failed.map(f => `${f.key}: ${f.error}`).join('\n'))
+    if (data.failed?.length) window.alert(`${data.done} 个成功，${data.failed.length} 个失败：\n` + data.failed.map((f: any) => `${f.key}: ${f.error}`).join('\n'))
   } catch (e) {
-    window.alert('修复失败：' + e.message)
+    window.alert('修复失败：' + (e instanceof Error ? e.message : String(e)))
   } finally {
     repairing.value = false
   }
@@ -414,7 +414,7 @@ async function testRedis() {
     })
     testStatus.redis = await res.json()
   } catch (e) {
-    testStatus.redis = { ok: false, message: e.message }
+    testStatus.redis = { ok: false, message: (e instanceof Error ? e.message : String(e)) }
   } finally {
     testLoading.redis = false
   }
@@ -439,7 +439,7 @@ async function testOss() {
     })
     testStatus.oss = await res.json()
   } catch (e) {
-    testStatus.oss = { ok: false, message: e.message }
+    testStatus.oss = { ok: false, message: (e instanceof Error ? e.message : String(e)) }
   } finally {
     testLoading.oss = false
   }
@@ -511,7 +511,7 @@ async function testSmtp() {
     })
     testStatus.smtp = await res.json()
   } catch (e) {
-    testStatus.smtp = { ok: false, message: e.message }
+    testStatus.smtp = { ok: false, message: (e instanceof Error ? e.message : String(e)) }
   } finally {
     testSmtpLoading.value = false
   }

@@ -18,6 +18,7 @@ from sqlalchemy import select, func, and_
 
 from app.core.config import get_settings
 from app.core import chat_attach
+from app.core.tz import set_ctx_tz
 from app.models import (
     AgentUsage, CalendarEvent, ConversationMessage, ConversationSession,
     Project, User,
@@ -25,6 +26,7 @@ from app.models import (
 from agent import sanitize, genstream, quota
 from agent.context import builder, loaders, tokens
 from agent.core import LLMRunner
+from agent.llm_select import is_minimax
 from agent.models import AgentRequest
 from agent.profiles import DefaultProfile
 
@@ -150,7 +152,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
 
         # ── 上下文：项目 + 事件 + 文件概览（每轮注入，保证咕咕看到最新状态）──
         projects = await loaders.load_projects(db, user_id)
-        events = await loaders.load_events(db, user_id)
+        user_tz = await loaders.load_user_tz(db, user_id)   # 「今天」按用户时区算（Phase 3）
+        events = await loaders.load_events(db, user_id, tz=user_tz)
         files_overview = await loaders.load_files_overview(db, user_id)
         style_prefs = await loaders.load_style_prefs(db, user_id)
 
@@ -248,7 +251,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     if not await genstream.is_active(session_id):
         task = asyncio.create_task(_generate(
             req, session_id, projects, events, files_overview, history, is_new_session, aug_text, aug_images,
-            style_prefs=style_prefs, user_media=aug_media,
+            style_prefs=style_prefs, user_media=aug_media, user_tz=user_tz,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -281,7 +284,7 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
 
 
 async def _generate(req, session_id, projects, events, files_overview, history, is_new_session,
-                    user_content=None, user_images=None, style_prefs=None, user_media=None) -> None:
+                    user_content=None, user_images=None, style_prefs=None, user_media=None, user_tz=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -289,6 +292,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
     持久化/反思仍用 req.message 原文）。
     """
     user_id = req.user_id
+    set_ctx_tz(user_tz)   # 本任务内（含 build 与 tool dispatch）「今天」按用户时区算（Phase 3）
     user_content = user_content if user_content is not None else req.message
     user_images = user_images or []
     user_media = user_media or []
@@ -306,6 +310,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
         skills=profile.skills, style_prefs=style_prefs,
         source="web", im_channels=im_channels,
         user_msg=req.message,   # 行为模块软点亮（emotion-first 等）
+        user_tz=user_tz,
     )
 
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
@@ -388,7 +393,8 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                 full_reply += out
                 await genstream.publish(session_id, {"type": "token", "content": out})
 
-        san = sanitize.StreamSanitizer()
+        minimax_stream = is_minimax(settings.ai)
+        san = sanitize.StreamSanitizer(minimax=minimax_stream)
         async for evt_str in gen:
             try:
                 evt = json.loads(evt_str[6:])
@@ -399,7 +405,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                 last_round = round_buf            # 上一轮完整文本
                 round_buf  = ""
                 dedup      = bool(last_round)     # 有上一轮才需去重
-                san = sanitize.StreamSanitizer()  # 新一轮重置，防止上轮 _cut 污染
+                san = sanitize.StreamSanitizer(minimax=minimax_stream)  # 新一轮重置，防止上轮 _cut 污染
                 await genstream.publish(session_id, {"type": "_new_round"})
                 continue
             if etype == "_usage":
@@ -435,7 +441,8 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
             async with _sess._SessionLocal() as db2:
                 sess_alive = await db2.get(ConversationSession, session_id) is not None
                 if sess_alive:
-                    for tm in anthr_messages[anthr_initial_len:]:
+                    # 只落真工具往返；守卫注入的合成 prompt / 核实内心戏是控制信令，不进历史（否则每轮重灌污染上下文）
+                    for tm in sanitize.tool_rounds_only(anthr_messages[anthr_initial_len:]):
                         db2.add(ConversationMessage(
                             session_id=session_id, role=tm["role"], content="",
                             content_json=chat_attach.strip_vision_for_history(tm["content"]),

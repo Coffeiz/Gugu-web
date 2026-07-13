@@ -50,24 +50,20 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useProjectStore } from '@/stores/projects'
-import { filesApi } from '@/services/api'
-import { filesCache, filesCacheVersion } from '@/services/cache'
+import { useFilesCacheStore } from '@/stores/filesCache'
 import StatCard    from './components/StatCard.vue'
 import ProjectList from './components/ProjectList.vue'
 import CalendarPanel from './components/CalendarPanel.vue'
 import FilePanel   from './components/FilePanel.vue'
 
 const projectStore = useProjectStore()
-const fileCount = computed(() => filesCache.ref.value?.length ?? '—')
+// 统一到全局 filesCache store（原来 Dashboard 单独走 services/cache 的第三套缓存）。store 自带
+// 版本门控加载 + SSE + visibilitychange，FilePanel 与这里的文件总数都从它派生，单一数据源。
+const store = useFilesCacheStore()
+const fileCount = computed(() => store.loaded ? store.allFiles.length : '—')
 
-onMounted(async () => {
-  try {
-    const { version: ver } = await filesApi.version()
-    if (ver && ver === filesCacheVersion.get() && filesCache.data) return  // 数据未变，跳过全量拉取
-    const fresh = await filesApi.list()
-    filesCache.set(fresh)
-    if (ver) filesCacheVersion.set(ver)
-  } catch { /* ignore */ }
+onMounted(() => {
+  if (!store.loaded && !store.loading) store.load()
 })
 </script>
 

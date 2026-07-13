@@ -44,16 +44,26 @@ def _channel(user_id) -> str:
     return f"events:{user_id}"
 
 
-async def publish(user_id, *resources: str, **extra) -> None:
+async def publish(user_id, *resources: str, origin: str | None = None,
+                  file_op: dict | None = None, **extra) -> None:
     """通知某用户：若干资源已变化（best-effort，失败不影响主流程）。
 
-    extra 里可带细粒度信息，如 session_id + appended（新消息增量），
-    供前端把消息直接追加进当前打开的会话（消息级实时，不必整列表 refetch）。
+    - origin：发起这次改动的浏览器标签页 client-id（来自请求头 X-Client-Id）。前端收到
+      自己发起的回声事件时据此**跳过**重拉（它已经乐观更新过了）。咕咕/IM 侧改动没有
+      client-id，origin=None → 所有端都刷新（正确）。
+    - file_op：文件库细粒度增量提示 {op, kind, id}，如 {"op":"remove","kind":"file","id":12}。
+      前端对 remove 直接本地剔除（零网络），其余（add/update/移动/批量）回退到合并刷新。
+    - extra 里可带别的细粒度信息，如 session_id + appended（新消息增量），供前端把消息
+      直接追加进当前打开的会话（消息级实时，不必整列表 refetch）。
     """
     payload: dict = {}
     res = [r for r in resources if r]
     if res:
         payload["resources"] = res
+    if origin:
+        payload["origin"] = origin
+    if file_op:
+        payload["fileOp"] = file_op
     for k, v in extra.items():
         if v is not None:
             payload[k] = v

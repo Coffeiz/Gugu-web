@@ -28,7 +28,7 @@
 
       <!-- ── 活跃用户曲线（北极星）── -->
       <template v-if="vis">
-        <div class="section-label">活跃用户（近 {{ rangeDays }} 天）</div>
+        <div class="section-label">活跃用户（近 {{ rangeDays }} 天，网页登录/前端操作/网页与 IM 对话）</div>
         <div class="charts-grid one">
           <div class="chart-card">
             <div class="chart-header">

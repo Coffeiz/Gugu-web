@@ -21,6 +21,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 import { marked } from 'marked'
+import { sanitizeHtml } from '@/utils/markdown'
 
 
 const md = `# 隐私政策
@@ -180,7 +181,7 @@ const md = `# 隐私政策
 
 我们会在 **14 天内**回复你的隐私相关请求。`
 
-const html = marked(md)
+const html = sanitizeHtml(marked(md) as string)
 </script>
 
 <style scoped>

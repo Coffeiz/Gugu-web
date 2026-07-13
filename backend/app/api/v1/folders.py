@@ -1,4 +1,5 @@
 import io
+from app.core.tz import now_utc
 import zipfile
 from datetime import datetime
 from typing import Optional
@@ -12,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models import File, Folder, Project, User
 from app.schemas import FolderCreate, FolderMove, FolderRename, FolderResponse
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
+from app.core import events
 from app.services.storage import get_storage
 
 router = APIRouter(prefix="/folders", tags=["folders"])
@@ -119,6 +121,7 @@ async def list_folders(
 async def create_folder(
     body: FolderCreate,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     if body.project_id is not None:
@@ -146,6 +149,7 @@ async def create_folder(
     db.add(folder)
     await db.commit()
     await db.refresh(folder)
+    await events.publish(current_user.id, "files", origin=origin)   # 广播给该用户所有端/标签页；发起页靠 origin 回声抑制
     return FolderResponse(id=folder.id, project_id=folder.project_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=0)
 
@@ -207,6 +211,7 @@ async def rename_folder(
     fid: int,
     body: FolderRename,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     folder = await get_owned(db, Folder, fid, current_user.id)
@@ -215,6 +220,7 @@ async def rename_folder(
     folder.name = body.name
     await db.commit()
     await db.refresh(folder)
+    await events.publish(current_user.id, "files", origin=origin)
     cnt = await _file_count(folder.id, db)
     return FolderResponse(id=folder.id, project_id=folder.project_id, name=folder.name, file_count=cnt)
 
@@ -226,6 +232,7 @@ async def move_folder(
     fid: int,
     body: FolderMove,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     folder = await get_owned(db, Folder, fid, current_user.id)
@@ -255,6 +262,7 @@ async def move_folder(
     folder.parent_id = new_parent_id
     await db.commit()
     await db.refresh(folder)
+    await events.publish(current_user.id, "files", origin=origin)
     cnt = await _file_count(folder.id, db)
     return FolderResponse(id=folder.id, project_id=folder.project_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=cnt)
@@ -266,13 +274,14 @@ async def move_folder(
 async def delete_folder(
     fid: int,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     folder = await get_owned(db, Folder, fid, current_user.id)
     if not folder:
         raise HTTPException(404, "文件夹不存在")
 
-    now = datetime.utcnow()
+    now = now_utc()
 
     # 递归收集所有子文件夹 id
     all_fids = [fid]
@@ -301,3 +310,6 @@ async def delete_folder(
             await db.delete(f)
 
     await db.commit()
+    # 前端 removeFolder(id) 会本地级联剔除子树文件夹与其中文件，只需给根 folder id
+    await events.publish(current_user.id, "files", origin=origin,
+                         file_op={"op": "remove", "kind": "folder", "id": fid})

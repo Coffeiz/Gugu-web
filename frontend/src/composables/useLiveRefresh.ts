@@ -1,4 +1,4 @@
-import { watch } from 'vue'
+import { watch, type WatchOptions } from 'vue'
 import { useLiveStore } from '@/stores/live'
 
 /**
@@ -17,7 +17,7 @@ import { useLiveStore } from '@/stores/live'
  *   useLiveRefresh('scheduled_tasks', load)           // 单资源
  *   useLiveRefresh(['projects', 'calendar'], refetch) // 多资源
  */
-export function useLiveRefresh(resources, fn, opts = {}) {
+export function useLiveRefresh(resources: string | string[], fn: (resource: string) => void, opts: WatchOptions = {}) {
   const live = useLiveStore()
   const list = Array.isArray(resources) ? resources : [resources]
   const stops = list.map(r => watch(() => live.rev[r], () => fn(r), opts))

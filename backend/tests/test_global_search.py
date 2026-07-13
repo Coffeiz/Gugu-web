@@ -1,5 +1,5 @@
 from app.api.v1.search import run_global_search
-from app.models import File, Project
+from app.models import File, MindNode, Project
 from agent.tools.global_search import _global_search
 
 
@@ -50,6 +50,34 @@ async def test_run_global_search_per_type_limit_applies(db, user_a):
     result = await run_global_search(db, user_a.id, "report", per_type=3)
 
     assert len(result["groups"][0]["items"]) == 3
+
+
+async def test_global_search_ranks_exact_and_prefix_names_before_substrings(db, user_a):
+    await _mk(db, File(user_id=user_a.id, display_name="我的发布清单", ext="md",
+                       storage_key="a", size=10))
+    await _mk(db, File(user_id=user_a.id, display_name="发布", ext="md",
+                       storage_key="b", size=10))
+    await _mk(db, File(user_id=user_a.id, display_name="发布说明", ext="md",
+                       storage_key="c", size=10))
+
+    result = await run_global_search(db, user_a.id, "发布", types=["file"])
+
+    assert [item["title"] for item in result["groups"][0]["items"]] == [
+        "发布.md", "发布说明.md", "我的发布清单.md",
+    ]
+
+
+async def test_global_search_ranks_note_title_before_body_only_hit(db, user_a):
+    await _mk(db, MindNode(
+        user_id=user_a.id, kind="note", title="随手想法", content_md="", content_plain="发布复盘",
+    ))
+    await _mk(db, MindNode(
+        user_id=user_a.id, kind="note", title="发布", content_md="", content_plain="标题命中",
+    ))
+
+    result = await run_global_search(db, user_a.id, "发布", types=["note"])
+
+    assert result["groups"][0]["items"][0]["title"] == "发布"
 
 
 async def test_global_search_tool_requires_query(db, user_a):

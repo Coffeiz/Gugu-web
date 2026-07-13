@@ -9,6 +9,7 @@
 计算触发:reflect() 末尾、现存 temp 超 24h 旧才重算（温度是周维度量,变化慢）。
 """
 from __future__ import annotations
+from app.core.tz import now_utc
 
 import json
 import time
@@ -65,7 +66,7 @@ async def _chat_stats(user_id, db) -> dict:
     try:
         from datetime import datetime, timedelta
         from sqlalchemy import text
-        since = datetime.utcnow() - timedelta(days=WINDOW_DAYS)
+        since = now_utc() - timedelta(days=WINDOW_DAYS)
         row = (await db.execute(text("""
             SELECT COUNT(DISTINCT DATE(m.created_at))::int AS days,
                    COALESCE(AVG(t.turns), 0)::float AS depth

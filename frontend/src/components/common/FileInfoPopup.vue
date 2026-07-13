@@ -63,7 +63,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['close'])
 
-const el   = ref(null)
+const el   = ref<HTMLElement | null>(null)
 const posX = ref(0)
 const posY = ref(0)
 const myZ  = ref(0)   // 每次弹出领新 z,盖当前最顶窗口
@@ -84,14 +84,14 @@ watch(() => [props.show, props.x, props.y], async ([v]) => {
 }, { immediate: false })
 
 // ── 拖动 ──────────────────────────────────────────────
-let dragOrig = null
-function startDrag(e) {
+let dragOrig: { mx: number; my: number; x: number; y: number } | null = null
+function startDrag(e: MouseEvent) {
   if (e.button !== 0) return
   dragOrig = { mx: e.clientX, my: e.clientY, x: posX.value, y: posY.value }
   window.addEventListener('mousemove', onDragMove)
   window.addEventListener('mouseup',   onDragUp)
 }
-function onDragMove(e) {
+function onDragMove(e: MouseEvent) {
   if (!dragOrig) return
   posX.value = Math.max(0, dragOrig.x + e.clientX - dragOrig.mx)
   posY.value = Math.max(0, dragOrig.y + e.clientY - dragOrig.my)

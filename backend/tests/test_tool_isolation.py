@@ -10,13 +10,14 @@ _resolve_* / 带归属校验的 handler。几乎所有按 id 操作的工具都�
 P0-2 的 CI 红线，scripts/check_ownership.py 静态守卫 + 本文件动态验证成对出现）。
 """
 import json
+from app.core.tz import now_utc
 
 from app.models import (
     CalendarEvent, Client, ConversationSession, ConversationMessage,
     File, Folder, Project, ScheduledTask,
 )
 
-from agent.tools.files import _resolve_file, _resolve_key, _resolve_target
+from agent.tools.files import _list_files, _resolve_file, _resolve_key, _resolve_target
 from agent.tools.projects import _resolve_project
 from agent.tools.calendar import _resolve_event, _remove_event_reminder
 from agent.tools.clients import _resolve_client
@@ -63,6 +64,40 @@ async def test_resolve_key_cross_user_project(db, user_a, user_b):
     import pytest
     with pytest.raises(ValueError):
         await _resolve_key(db, user_a.id, "project", "doc", "md", project_id=p.id)
+
+
+async def test_resolve_key_uses_nested_folder_path(db, user_a):
+    project = await _mk(db, Project(user_id=user_a.id, name="资料项目"))
+    root = await _mk(db, Folder(user_id=user_a.id, project_id=project.id, name="资料"))
+    child = await _mk(db, Folder(user_id=user_a.id, project_id=project.id, parent_id=root.id, name="会议纪要"))
+    key = await _resolve_key(
+        db, user_a.id, "project", "doc", "md",
+        project_id=project.id, folder_id=child.id,
+    )
+    assert key.endswith("/资料/会议纪要/doc.md")
+
+
+async def test_resolve_key_rejects_folder_from_other_space(db, user_a):
+    project = await _mk(db, Project(user_id=user_a.id, name="项目 A"))
+    personal_folder = await _mk(db, Folder(user_id=user_a.id, name="个人资料"))
+    import pytest
+    with pytest.raises(ValueError):
+        await _resolve_key(
+            db, user_a.id, "project", "doc", "md",
+            project_id=project.id, folder_id=personal_folder.id,
+        )
+
+
+async def test_list_files_returns_full_folder_path(db, user_a):
+    root = await _mk(db, Folder(user_id=user_a.id, name="咕咕开发"))
+    child = await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="方案"))
+    file = await _mk(db, File(
+        user_id=user_a.id, display_name="ReAct 对比", ext="md",
+        folder_id=child.id, storage_key="k",
+    ))
+    rows = await _list_files(db, user_a.id, {"q": "ReAct"})
+    result = next(item for item in rows if item["id"] == file.id)
+    assert result["folder_path"] == "咕咕开发/方案"
 
 
 async def test_resolve_target_cross_user_folder(db, user_a, user_b):
@@ -156,7 +191,7 @@ async def test_read_conversation_owner_ok(db, user_b):
 async def test_restore_cross_user(db, user_a, user_b):
     from datetime import datetime
     f = await _mk(db, File(user_id=user_b.id, display_name="del", ext="md",
-                           storage_key="k", deleted_at=datetime.utcnow()))
+                           storage_key="k", deleted_at=now_utc()))
     res = await _restore_file(db, user_a.id, {"file_id": f.id})
     assert _is_err(res)
     await db.refresh(f)
@@ -166,7 +201,7 @@ async def test_restore_cross_user(db, user_a, user_b):
 async def test_permanent_delete_cross_user(db, user_a, user_b):
     from datetime import datetime
     f = await _mk(db, File(user_id=user_b.id, display_name="del", ext="md",
-                           storage_key="k", deleted_at=datetime.utcnow()))
+                           storage_key="k", deleted_at=now_utc()))
     res = await _permanent_delete(db, user_a.id, {"file_id": f.id, "confirm": True})
     assert _is_err(res)
     assert await db.get(File, f.id) is not None   # 即便带了 confirm 也删不掉别人的

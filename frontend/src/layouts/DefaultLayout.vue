@@ -1,9 +1,9 @@
 <template>
   <div class="layout">
     <AppSidebar />
-    <main class="layout-main">
-      <!-- 顶栏 -->
-      <header class="topbar glass-card">
+    <main class="layout-main" :class="{ 'full-bleed': fullBleed, 'canvas-workspace': isCanvasWorkspace }">
+      <!-- 顶栏（fullBleed 页隐藏：思维面板等「工作台」视图自己管头部，见 router meta） -->
+      <header v-if="!fullBleed" class="topbar glass-card">
         <GlassBg />
         <div class="topbar-title">
           <h1>{{ currentTitle }}</h1>
@@ -40,6 +40,9 @@
       :project="projectStore.modalProject"
       @close="projectStore.closeModal()"
     />
+
+    <!-- 全局活动编辑 Modal（笔记页的活动引用卡片点开） -->
+    <EventEditModal />
 
     <!-- 上传文件 Modal（顶栏按钮触发） -->
     <UploadModal
@@ -83,6 +86,7 @@ import GlobalSearch from '@/components/common/GlobalSearch.vue'
 import GlassBg from '@/components/common/GlassBg.vue'
 import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'
 import ProjectModal    from '@/views/Projects/components/ProjectModal.vue'
+import EventEditModal  from '@/views/Calendar/components/EventEditModal.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
 import FilePreviewModal    from '@/components/common/FilePreviewModal.vue'
 import ProfileModal        from '@/components/common/ProfileModal.vue'
@@ -148,6 +152,8 @@ onMounted(async () => {
 onBeforeUnmount(() => liveStore.disconnect())
 
 const currentTitle = computed(() => route.meta.title || '总览')
+const fullBleed    = computed(() => !!route.meta.fullBleed)
+const isCanvasWorkspace = computed(() => route.path.startsWith('/mind/canvases'))
 
 const todayStr = computed(() => {
   const d = new Date()
@@ -279,4 +285,27 @@ const todayStr = computed(() => {
   padding: 128px 34px 24px 30px;
   box-sizing: border-box;
 }
+
+/* ── fullBleed（思维面板等工作台视图）──
+   没有 topbar：顶部渐变遮罩（为"内容溶进 topbar"设计）一并去掉；padding-top 从 128px
+   收到 18px；滚动交给页面自己管（笔记页要在内部做便签流滚动 + 底部停靠捕捉条）。 */
+.layout-main.full-bleed::after { display: none; }
+/* fullBleed 放开左裁：默认 layout-main overflow:hidden 会在侧栏右缘(x=侧栏宽)截断，
+   笔记页横向列滚动区要钻到侧栏底下就不能被这里截。外层 .layout overflow:hidden 仍兜住
+   视口边界，不会真溢出浏览器。 */
+.layout-main.full-bleed { overflow: visible; }
+/* 工作台的内容盒必须从导航栏右缘、视口顶端开始，不能再残留普通页面的内边距；否则笔记流
+   要靠负 margin 抵左、右侧却没有对称补偿，最终各区域会落进不同坐标系。顶部胶囊等视觉
+   留白由 Mind/index.vue 自己承担，画布固定层也不再受此处影响。 */
+.layout-main.full-bleed .page-content {
+  overflow: visible;
+  padding: 0;
+}
+
+/* 画布视图自己是 position:fixed;inset:0（见 CanvasView.vue），不受 page-content padding
+   约束、天然铺满整个浏览器（含侧栏背后那一段——无限画布的点阵/世界坐标不该在那儿截断，
+   只是被侧栏更高的 z-index 盖住看不见）；画布自己浮层的 UI（切换面板/底部工具条）z-index
+   比侧栏低，各自在定位里加了侧栏宽度的偏移量避免落进侧栏底下，不靠收窄画布整体范围解决，
+   见 CanvasSidebar.vue / CanvasToolbar.vue。顶部"笔记/画布"胶囊的边距由 Mind/index.vue
+   自己维护，和笔记页使用同一坐标系。 */
 </style>

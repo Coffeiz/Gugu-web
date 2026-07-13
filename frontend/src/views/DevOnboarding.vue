@@ -47,7 +47,7 @@ async function reseed() {
   const r = await onboardingApi.devReseed()
   state.value = r.state; msg.value = '已重新播种引导项目（去项目面板看看）'
 }
-async function fire(key) {
+async function fire(key: string) {
   const { text } = await onboardingApi.devFire(key)
   if (text) { ui.pushNotification({ title: '', content: text, bubble: true, persist: false, gugu: true }); msg.value = `已弹：${key}` }
   else msg.value = `${key} 无文案`

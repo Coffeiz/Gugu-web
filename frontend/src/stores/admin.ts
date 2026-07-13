@@ -3,11 +3,11 @@ import { ref, computed } from 'vue'
 
 export const useAdminStore = defineStore('admin', () => {
   const token = ref(localStorage.getItem('admin_token') || '')
-  const adminUser = ref(null)
+  const adminUser = ref<{ username?: string; [k: string]: any } | null>(null)
 
   const isLoggedIn = computed(() => !!token.value)
 
-  async function login(username, password) {
+  async function login(username: string, password: string) {
     const res = await fetch('/api/v1/admin/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

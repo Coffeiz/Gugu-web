@@ -12,7 +12,7 @@ class Event:
 
 @dataclass
 class MemoryUpdated(Event):
-    """用户长期记忆（facts）发生增删。source: reflection / remember / forget。"""
+    """用户长期记忆（profile/pattern）发生增删。source: reflection / remember / forget。"""
     user_id: object = None
     added: int = 0
     removed: int = 0

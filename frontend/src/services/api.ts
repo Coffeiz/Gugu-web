@@ -13,11 +13,19 @@ export function getToken(): string {
   return localStorage.getItem('user_token') ?? ''
 }
 
+// 本标签页的 client-id：每次写操作作为 X-Client-Id 头发给后端，后端把它塞进 SSE 事件的 origin。
+// 前端收到「origin === 自己」的回声时跳过重拉（本页已乐观更新过），只让别的标签页/端刷新。
+// 每标签页独立（内存级、不持久化）——刷新页面换一个新 id 也无妨，回声抑制只是优化不影响正确性。
+export const CLIENT_ID: string =
+  (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+
 // 泛型默认 any：未显式标注返回类型的调用方拿到 any（不给存量代码添堵）；
 // 标注了 <T> 的端点拿到精确类型。逐步把更多端点标上类型即可收紧。
 async function request<T = any>(method: string, path: string, body: any = null, isForm = false): Promise<T> {
   const token = getToken()
-  const headers: Record<string, string> = {}
+  const headers: Record<string, string> = { 'X-Client-Id': CLIENT_ID }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   const opts: RequestInit = { method, headers }
@@ -67,6 +75,7 @@ export function uploadWithProgress(path: string, form: FormData, onProgress: (p:
     xhr.open('POST', `${BASE_URL}${path}`)
     const token = getToken()
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    xhr.setRequestHeader('X-Client-Id', CLIENT_ID)   // 上传也带 client-id，供后端回声抑制
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded / e.total)
     }
@@ -203,9 +212,123 @@ export const filesApi = {
 // ── Events ────────────────────────────────────────────────────────────────────
 export const eventsApi = {
   list:   (year: number, month: number) => get<Schemas['EventResponse'][]>(`/events?year=${year}&month=${month}`),
+  get:    (id: number) => get<Schemas['EventResponse']>(`/events/${id}`),
   create: (data: Schemas['EventCreate']) => post<Schemas['EventResponse']>('/events', data),
   update: (id: number, data: Schemas['EventUpdate']) => patch<Schemas['EventResponse']>(`/events/${id}`, data),
   delete: (id: number)          => del(`/events/${id}`),
+}
+
+// ── Mind（思维面板 · 记录）─────────────────────────────────────────────────────
+// 类型手写而非取自 Schemas：生成的 src/types/api.ts 要跑起后端才能刷新（npm run gen:types），
+// 等下次刷新后可以换成 Schemas['MindNodeResponse'] 等。
+export interface MindNote {
+  id: number
+  kind: string
+  title: string | null
+  contentMd: string
+  color: string | null
+  capturedAt: string      // 面向用户的「发生/记录时间」，时间流按它排（不是 createdAt）
+  version: number         // 乐观锁：改的时候必须回传，版本对不上后端给 409
+  createdAt: string
+  updatedAt: string
+  deletedAt?: string | null
+  refType?: 'project' | 'file' | 'event' | null
+  refId?: number | null
+}
+export interface MindNoteCreate {
+  contentMd?: string
+  title?: string | null
+  color?: string | null
+  capturedAt?: string     // 不传取当前；补录旧想法时可写成过去
+}
+export interface MindNoteUpdate {
+  contentMd?: string
+  title?: string | null
+  color?: string | null
+  capturedAt?: string
+  version: number
+}
+/** `[[` 补全候选：type+id 是写进正文的稳定锚点，label 只作展示 */
+export interface MindRefSuggestItem {
+  type: 'project' | 'file' | 'event' | 'conversation'
+  id: number
+  label: string
+  subtitle?: string | null
+}
+
+export interface MindCanvas {
+  id: number
+  title: string
+  projectId: number | null
+  data: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+export interface MindCanvasItem {
+  id: number
+  canvasId: number
+  nodeId: number
+  x: number
+  y: number
+  w: number | null
+  h: number | null
+  z: number
+  collapsed: boolean
+  data: Record<string, unknown>
+  node: MindNote
+  createdAt: string
+  updatedAt: string
+}
+export interface MindRelation {
+  id: number
+  srcNodeId: number
+  dstNodeId: number
+  relType: 'related'
+  origin: 'user' | 'gugu'
+  status: 'confirmed' | 'suggested'
+  createdAt: string
+  updatedAt: string
+}
+export interface MindCanvasNoteCreate {
+  title?: string
+  contentMd?: string
+  color?: string | null
+  x?: number
+  y?: number
+  w?: number | null
+  h?: number | null
+  z?: number
+}
+
+export const mindApi = {
+  listNotes:  (limit = 50, offset = 0) => get<MindNote[]>(`/mind/notes?limit=${limit}&offset=${offset}`),
+  createNote: (data: MindNoteCreate)             => post<MindNote>('/mind/notes', data),
+  updateNote: (id: number, data: MindNoteUpdate) => patch<MindNote>(`/mind/notes/${id}`, data),
+  deleteNote: (id: number)                       => del(`/mind/notes/${id}`),
+  refSuggest: (q: string, limit = 6) =>
+    get<MindRefSuggestItem[]>(`/mind/ref-suggest?q=${encodeURIComponent(q)}&limit=${limit}`),
+  listCanvases: () => get<MindCanvas[]>('/mind/canvases'),
+  createCanvas: (data: { title?: string; projectId?: number | null } = {}) =>
+    post<MindCanvas>('/mind/canvases', data),
+  updateCanvas: (id: number, data: { title?: string; data?: Record<string, unknown> }) =>
+    patch<MindCanvas>(`/mind/canvases/${id}`, data),
+  deleteCanvas: (id: number) => del(`/mind/canvases/${id}`),
+  listCanvasItems: (id: number) => get<MindCanvasItem[]>(`/mind/canvases/${id}/items`),
+  addCanvasItem: (id: number, data: { nodeId: number; x?: number; y?: number; w?: number | null; h?: number | null; z?: number; collapsed?: boolean; data?: Record<string, unknown> }) =>
+    post<MindCanvasItem>(`/mind/canvases/${id}/items`, data),
+  createCanvasNote: (id: number, data: MindCanvasNoteCreate) =>
+    post<MindCanvasItem>(`/mind/canvases/${id}/notes`, data),
+  updateCanvasNote: (id: number, data: { title?: string; contentMd?: string; color?: string | null; version: number }) =>
+    patch<MindNote>(`/mind/nodes/${id}`, data),
+  updateCanvasItem: (canvasId: number, itemId: number, data: Partial<Pick<MindCanvasItem, 'x' | 'y' | 'w' | 'h' | 'z' | 'collapsed' | 'data'>>) =>
+    patch<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}`, data),
+  removeCanvasItem: (canvasId: number, itemId: number) => del(`/mind/canvases/${canvasId}/items/${itemId}`),
+  listCanvasRelations: (id: number) => get<MindRelation[]>(`/mind/canvases/${id}/relations`),
+  createRelation: (srcNodeId: number, dstNodeId: number, allowParallel = false) =>
+    post<MindRelation>('/mind/relations', { srcNodeId, dstNodeId, allowParallel }),
+  deleteRelation: (id: number) => del(`/mind/relations/${id}`),
+  createRefNode: (refType: 'project' | 'file' | 'event', refId: number) =>
+    post<MindNote>('/mind/nodes/ref', { refType, refId }),
 }
 
 // ── Folders ───────────────────────────────────────────────────────────────────
@@ -273,6 +396,9 @@ export const agentApi = {
   getUiLabels:     ()                  => get('/agent/ui-labels'),   // 状态显示名（目前用「思考中」文字）
   greeting:        ()                  => get('/agent/greeting'),    // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
+  // 按消息 id 反查它所在的会话——笔记里的「@对话」引用锚定的是具体一条消息，点开时得先
+  // 知道属于哪个会话才能 loadSession + 定位滚动
+  getMessageLocation: (messageId: number) => get<{ id: number; sessionId: number }>(`/agent/messages/${messageId}`),
   deleteSession:   (sessionId: string) => del(`/agent/sessions/${sessionId}`),
   clearMemory:       ()         => del('/agent/memory'),
   clearAttachments:  ()         => del('/agent/attachments'),

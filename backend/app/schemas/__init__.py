@@ -4,9 +4,10 @@ Pydantic v2 schemas — alias_generator=to_camel 让 API 返回 camelCase
 
 from __future__ import annotations
 import re
+from datetime import datetime
 from typing import Optional, Any
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 _INVALID_NAME_RE = re.compile(r'[\\/:*?"<>|]')
@@ -52,6 +53,7 @@ class UserResponse(CamelModel):
     avatar_url: Optional[str] = None
     created_at: str = ""
     im_channels: list[str] = []
+    timezone: Optional[str] = None   # IANA 时区；前端据此判断是否需要探测并回写
 
     @field_validator('created_at', mode='before')
     @classmethod
@@ -85,6 +87,7 @@ class UserResponse(CamelModel):
             "created_at": user.created_at,
             "avatar_url": avatar_url,
             "im_channels": getattr(user, "_im_channels", []),
+            "timezone": getattr(user, "timezone", None),
         }
         return cls.model_validate(data)
 
@@ -93,6 +96,7 @@ class UpdateProfile(CamelModel):
     display_name: Optional[str] = None
     current_password: Optional[str] = None
     new_password: Optional[str] = None
+    timezone: Optional[str] = None   # IANA 时区（前端首登探测 Intl…timeZone 回写）；"" 清空
 
 
 class DeleteAccount(CamelModel):
@@ -273,6 +277,146 @@ class FileTreeResponse(CamelModel):
 
 
 # ── CalendarEvent ─────────────────────────────────────────────────────────────
+
+# ── 思维面板（P1：记录/便签）──────────────────────────────────────────────────
+
+class MindNoteCreate(CamelModel):
+    content_md: str = ""
+    title: Optional[str] = None
+    color: Optional[str] = None
+    # 面向用户的「发生/记录时间」，可回填过去（补录昨天的想法 / 导入旧内容）；不传取当前
+    captured_at: Optional[datetime] = None
+
+
+class MindNoteUpdate(CamelModel):
+    content_md: Optional[str] = None
+    title: Optional[str] = None
+    color: Optional[str] = None
+    captured_at: Optional[datetime] = None
+    # 乐观锁：必传。服务端走原子 UPDATE（WHERE version=…），版本对不上直接 409
+    version: int
+
+
+class MindNodeResponse(CamelModel):
+    id: int
+    kind: str
+    title: Optional[str] = None
+    content_md: str = ""
+    color: Optional[str] = None
+    captured_at: datetime
+    version: int
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: Optional[datetime] = None
+    ref_type: Optional[str] = None
+    ref_id: Optional[int] = None
+
+
+class MindRefSuggestItem(CamelModel):
+    """`[[` 补全的候选：type+id 是写进正文的稳定锚点，label 只作展示。"""
+    type: str
+    id: int
+    label: str
+    subtitle: Optional[str] = None
+
+
+# ── 思维面板（P2：画布）──────────────────────────────────────────────────────
+
+class MindCanvasCreate(CamelModel):
+    title: str = "未命名画布"
+    project_id: Optional[int] = None
+
+
+class MindCanvasUpdate(CamelModel):
+    title: Optional[str] = None
+    data: Optional[dict] = None
+
+
+class MindCanvasResponse(CamelModel):
+    id: int
+    title: str
+    project_id: Optional[int] = None
+    data: dict = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class MindCanvasItemCreate(CamelModel):
+    node_id: int
+    x: float = 0
+    y: float = 0
+    w: Optional[float] = None
+    h: Optional[float] = None
+    z: int = 0
+    collapsed: bool = False
+    data: dict = Field(default_factory=dict)
+
+
+class MindCanvasNoteCreate(CamelModel):
+    title: str = "新便签"
+    content_md: str = ""
+    color: Optional[str] = None
+    x: float = 0
+    y: float = 0
+    w: Optional[float] = None
+    h: Optional[float] = None
+    z: int = 0
+
+
+class MindCanvasNoteUpdate(CamelModel):
+    title: Optional[str] = None
+    content_md: Optional[str] = None
+    color: Optional[str] = None
+    version: int
+
+
+class MindCanvasItemUpdate(CamelModel):
+    x: Optional[float] = None
+    y: Optional[float] = None
+    w: Optional[float] = None
+    h: Optional[float] = None
+    z: Optional[int] = None
+    collapsed: Optional[bool] = None
+    data: Optional[dict] = None
+
+
+class MindCanvasItemResponse(CamelModel):
+    id: int
+    canvas_id: int
+    node_id: int
+    x: float
+    y: float
+    w: Optional[float] = None
+    h: Optional[float] = None
+    z: int
+    collapsed: bool
+    data: dict = Field(default_factory=dict)
+    node: MindNodeResponse
+    created_at: datetime
+    updated_at: datetime
+
+
+class MindRelationCreate(CamelModel):
+    src_node_id: int
+    dst_node_id: int
+    allow_parallel: bool = False
+
+
+class MindRelationResponse(CamelModel):
+    id: int
+    src_node_id: int
+    dst_node_id: int
+    rel_type: str
+    origin: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class MindRefNodeCreate(CamelModel):
+    ref_type: str
+    ref_id: int
+
 
 class EventCreate(CamelModel):
     title: str

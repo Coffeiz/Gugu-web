@@ -47,17 +47,23 @@ input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
 /* 悬停抬起 + 按下下沉的通用反馈：文件卡/项目卡统一用这一套手感（真正的“卡片”才抬起）。
    各自静止态的背景/边框/圆角/圆角阴影不用动，加这个类就有抬起+按下的动效；
    数值抄项目卡（原来只有项目卡自己有这套效果）。 */
+/* 0.25s 跟 .fc-card（文件卡）的悬停过渡时长对齐——.hover-card-fx 原来是 0.3s，两套手感
+   在同一块画布上并排出现（贴纸 vs 文件/项目引用卡）时，0.05s 的差距肉眼可辨，抬起速度
+   看着不一致。 */
 .hover-card-fx {
-  transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.3s ease;
+  transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.25s ease;
 }
 .hover-card-fx:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 18px rgba(80,90,110,0.13);
 }
-.hover-card-fx:active {
+.hover-card-fx:active:not(:has(:active)) {
   transform: translateY(1px);
   opacity: 0.93;
 }
+/* :active 会同时命中被点的子元素和所有祖先卡片。只在卡片内部没有任何 active 子元素时
+   才下沉：编辑、阶段、颜色、待办、删除和之后新增的所有控件都会自然保持 hover 状态，
+   不再靠一份会漏项的子元素白名单逐个撤销。画布贴纸的连接提示移至 canvas-card-effects.css。 */
 /* 只要按下反馈、不要悬停抬起：顶栏「上传文件/新建项目」、定时任务「新建任务」按钮、
    咕咕聊天里的文件条都是这一挂——按钮/挤在气泡堆里的文件条，抬起要么跟布局不搭要么显得
    跟旁边气泡割裂，只保留点击下沉这一半效果。 */
@@ -217,8 +223,46 @@ body {
 }
 .fc-card:hover::after, .folder-card:hover::after { opacity: 1; }
 .fc-card:hover, .folder-card:hover { transform: translateY(-2px); }
-.fc-card:active:not(:has(.fc-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }
-.folder-card:active:not(:has(.fd-hover-actions:active)) { transform: translateY(1px); opacity: 0.93; }
+/* 拖拽落地揭示后短暂压住全部 hover 效果，见 usePhysicsDrag.ts 的 _revealWithoutStaleHover——
+   :hover 判定没被拦（一直照真实指针位置实时判定），只是这段时间内不让视觉效果显形。
+   之前只压了 transform，文件库/项目编辑卡两处 scoped 样式里的 box-shadow/background/
+   操作按钮渐显没压住：位移之外的 hover 效果瞬间就到位，200ms 后位移才补上，看着像
+   「先出现一半 hover 效果、再跳一下变全 hover」。这里把每一项都摘掉，200ms 内看起来是
+   完整的非 hover 态，200ms 后（还压着的话）一次性正常呈现完整 hover，不再分两截。
+   background/box-shadow 用 !important——scoped 样式编译后带 data-v 属性选择器，跟这里的
+   类选择器特异度可能刚好打平，谁赢要看两份样式表的实际注入顺序，不保真，直接 !important
+   免得赌。 */
+.fc-card.phys-just-revealed:hover, .folder-card.phys-just-revealed:hover {
+  transform: none !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06) !important;
+}
+.fc-card.phys-just-revealed:hover { background: rgba(255,255,255,0.72) !important; }
+.folder-card.phys-just-revealed:hover {
+  background: color-mix(in srgb, var(--fd-color, #8888a0) 6%, rgba(255,255,255,0.82)) !important;
+}
+.fc-card.phys-just-revealed:hover::after, .folder-card.phys-just-revealed:hover::after { opacity: 0 !important; }
+.fc-card.phys-just-revealed:hover .fc-hover-actions,
+.folder-card.phys-just-revealed:hover .fd-hover-actions { opacity: 0 !important; }
+/* 项目页看板的项目卡（.proj-card，ProjectCard.vue）走同一套 physics 拖拽与揭示，同样加这两个类；
+   它的静止态阴影/hover 值跟文件卡不同，单独压一份：抬起(-2px，来自 .hover-card-fx)、hover 阴影
+   （0 6px 18px）、::after 高光都压回静止态。box-shadow 的静止值抄自 ProjectCard.vue 的 .proj-card。 */
+.proj-card.phys-just-revealed:hover {
+  transform: none !important;
+  box-shadow: 0 2px 8px rgba(80,90,110,0.07) !important;
+}
+.proj-card.phys-just-revealed:hover::after { opacity: 0 !important; }
+/* 揭示当帧：把卡片及其所有子元素的过渡一并关掉，让「压制态」瞬间生效、零动画（卡片不下沉、
+   操作按钮不从陈旧的 hover opacity 淡出）。只挂一帧，提交后立即由 JS 摘掉。见 _revealWithoutStaleHover。
+   必须连 ::before/::after 一起关：通配符 * 匹配不到伪元素，而 hover 高光遮罩正是 .fc-card::after，
+   漏了它高光就仍会从陈旧的 hover opacity 淡出、200ms 后再淡入（表现为「高光闪一下」）。 */
+.phys-reveal-snap, .phys-reveal-snap *,
+.phys-reveal-snap::before, .phys-reveal-snap::after,
+.phys-reveal-snap *::before, .phys-reveal-snap *::after { transition: none !important; }
+/* .card-actions/.conn-dot 是 FileRefCard.vue（画布文件引用卡）通过插槽塞进 .fc-card 内部的
+   按钮，不是 FileCard.vue 自己认得的 .fc-hover-actions——按下移除/连线圆点时同样不该带着
+   整张卡一起按下去，在同一条排除名单里一并列上。 */
+.fc-card:active:not(:has(:active)) { transform: translateY(1px); opacity: 0.93; }
+.folder-card:active:not(:has(:active)) { transform: translateY(1px); opacity: 0.93; }
 
 /* 重命名输入框（宽度随文字自适应，Dashboard FilePanel、文件库、ProjectModal 文件卡/文件夹/
    项目模板改名共用）：.rename-ghost 隐形渲染同样的文字撑开 .rename-sizer 的宽度（display:
@@ -361,12 +405,18 @@ body {
 /* 克隆体：跟着指针弹簧跟随的卡片，抬起阴影 + 毛玻璃强化「拎起来」的感觉。
    全站唯一定义（文件库/项目编辑卡/看板项目卡的拖拽克隆共用）——别在组件里各自定义。
    background 带 !important：盖过 cloneNode 保留的源卡 scoped 白底与历史内联底色。 */
+/* box-shadow 也要 !important：便签/文件卡/项目卡各自的静止态阴影都是 scoped 样式（编译后带
+   data-v 属性选择器），特异度比这里的纯类选择器高，不加 !important 会被各自的静止阴影盖掉——
+   活动贴纸（EntitySticker.vue）走的是全局 .glass-card（同特异度、按源码顺序竞争，这里刚好
+   排在后面赢了）侥幸吃到这份"拎起来"的阴影，其它类型全部被自己的静止阴影盖掉、拖起来跟不
+   拖时几乎一样重，看着"各种卡片的拖动悬浮阴影不一样"。全站拖拽克隆的抬起阴影只应该有一份、
+   不该被谁的静止态阴影个别覆盖，这里强制赢。 */
 .phys-drag-clone {
   background: rgba(255, 255, 255, 0.42) !important;
   backdrop-filter: blur(12px) saturate(1.15);
   -webkit-backdrop-filter: blur(12px) saturate(1.15);
   border: 1px solid rgba(255, 255, 255, 0.72);
-  box-shadow: 0 22px 50px rgba(30, 35, 60, 0.30);
+  box-shadow: 0 22px 50px rgba(30, 35, 60, 0.30) !important;
   cursor: grabbing;
   opacity: 0.97;
 }
@@ -380,11 +430,15 @@ body {
    带 .pm-clone-expanded，仍会命中 .fc-card/.folder-card，不用单独再写一条。 */
 .phys-drag-clone.fc-card,
 .phys-drag-clone.folder-card,
-.phys-drag-clone.proj-card {
+.phys-drag-clone.proj-card,
+.phys-drag-clone.pr-card {
   background: rgba(255, 255, 255, 0.5) !important;
   backdrop-filter: blur(12px) saturate(1.15);
   -webkit-backdrop-filter: blur(12px) saturate(1.15);
 }
+/* 文件名和元信息比玻璃层次更需要清晰度：透明祖先会把整张卡降进灰阶抗锯齿合成，细字发虚。
+   文件克隆保留 backdrop-filter 与阴影，但不再用 opacity 叠一层。 */
+.phys-drag-clone.fc-card { opacity: 1; }
 /* 图片文件卡：缩略图（.fc-thumb-area）是完全不透明的真实图片，铺在 .fc-card 上层，挡住了
    卡片自己 backdrop-filter 模糊到的「背后内容」（拖过其他卡片时应该透出模糊的其他卡片，
    不是把缩略图自己的画面弄模糊）。给 .fc-thumb-area 单独挂一份跟卡片同参数的
@@ -403,14 +457,11 @@ body {
 /* 源卡 / 落点卡：隐藏但保留布局占位，让飞动的克隆体看起来就是卡片本体 */
 .phys-drag-source { opacity: 0 !important; }
 
-/* 拖拽期间给浏览器减负（perf trace 显示 CPU 几乎全在浏览器渲染，非物理 JS）：
-   顶栏/侧栏的 backdrop-filter 在内容变动时会重新模糊整条 → 整屏 Paint（trace 里单次 ~29ms 的整屏重绘）。
-   拖拽这一两秒关掉模糊几乎无感，却能消掉这笔最大的 Paint 开销。body.phys-dragging 由 usePhysicsDrag 开/关。 */
-body.phys-dragging .topbar,
-body.phys-dragging .sidebar {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
+/* 曾经拖拽期间关掉顶栏/侧栏 backdrop-filter 减负（perf trace 显示单次整屏重绘 ~29ms）——
+   但代价是拖拽这一两秒导航栏毛玻璃质感整个消失、松手后再突然变回来，用户体验上一直觉得
+   是个别扭的跳变（"一直有的问题"）。撤掉这份优化，把手感放在性能之前；如果之后在低端设备
+   上又测出明显的拖拽卡顿，再回来考虑更精细的方案（比如只在克隆体真的经过顶栏/侧栏那片
+   区域时才临时关闭，而不是整段拖拽期间全程关闭）。 */
 /* pointer 驱动拖拽没有原生 drag 光标，整页给个抓取态补回手感 */
 body.phys-dragging, body.phys-dragging * { cursor: grabbing !important; }
 

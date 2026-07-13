@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import chat_attach
 from app.core.security import get_current_user
 from app.core.ownership import get_owned
+from app.core.tz import iso_utc
 from app.db.session import get_db
 from app.models import ConversationMessage, ConversationSession, User
 
@@ -198,8 +199,8 @@ async def list_sessions(
             "id": s.id,
             "title": s.title,
             "source": s.source,
-            "updatedAt": s.updated_at.isoformat() + "Z",
-            "createdAt": s.created_at.isoformat() + "Z",
+            "updatedAt": iso_utc(s.updated_at),
+            "createdAt": iso_utc(s.created_at),
         }
         for s in sessions
     ]
@@ -258,10 +259,30 @@ async def get_session_messages(
         "messages": [
             {"id": m.id, "role": m.role, "content": m.content, "files": m.files or [],
              "quotedText": m.quoted_text,
-             "createdAt": m.created_at.isoformat() + "Z"}
+             "createdAt": iso_utc(m.created_at)}
             for m in msgs
         ],
     }
+
+
+@router.get("/messages/{message_id}")
+async def get_message_location(
+    message_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """按消息 id 反查它所在的会话——笔记里的「@对话」引用锚定的是具体一条消息（不是整个
+    会话），点开时得先知道这条消息属于哪个会话才能 loadSession + 定位滚动。
+    ConversationMessage 本身没有 user_id，要通过 session 判归属。"""
+    row = (await db.execute(
+        select(ConversationMessage, ConversationSession.user_id)
+        .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
+        .where(ConversationMessage.id == message_id)
+    )).first()
+    if not row or row[1] != current_user.id:
+        raise HTTPException(404, "消息不存在")
+    m = row[0]
+    return {"id": m.id, "sessionId": m.session_id}
 
 
 @router.delete("/attachments", status_code=200)

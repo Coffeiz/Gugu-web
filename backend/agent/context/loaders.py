@@ -1,13 +1,15 @@
 """数据读取层：从 DB 取项目 / 事件，从用户 .agent/ 取记忆。
 
 Phase 1：记忆文件尚未实装，`load_memory` 返回全空占位，保证 builder 中
-`{summary}{facts}{preferences}{memory}{weekly}{daily}` 仍填空串、行为不变。
+`{summary}{profile}{pattern}{preferences}{memory}{weekly}{daily}` 仍填空串、行为不变。
 """
 from datetime import datetime
 
 from sqlalchemy import func, select
 
-from app.models import CalendarEvent, File, Folder, Project
+from app.core.tz import resolve_tz, today_str
+from app.models import CalendarEvent, File, Folder, Project, User
+from app.services.storage.folders import resolve_folder_path
 
 
 async def load_projects(db, user_id) -> list:
@@ -20,9 +22,16 @@ async def load_projects(db, user_id) -> list:
     return result.scalars().all()
 
 
-async def load_events(db, user_id, limit: int = 10) -> list:
-    """今天起的近期日历事件（迁自原 _stream）。"""
-    today = datetime.now().strftime("%Y-%m-%d")
+async def load_user_tz(db, user_id):
+    """当前用户的时区（tzinfo）：User.timezone 有值就用，否则回退服务器 LOCAL_TZ。
+    供 builder / load_events 把「今天」按用户本地日算（见 docs/backend/时区与时钟迁移方案.md Phase 3）。"""
+    name = await db.scalar(select(User.timezone).where(User.id == user_id))
+    return resolve_tz(name)
+
+
+async def load_events(db, user_id, limit: int = 10, tz=None) -> list:
+    """今天起的近期日历事件（迁自原 _stream）。「今天」按 tz 的本地日算（tz=None 回退服务器 tz）。"""
+    today = today_str(tz)
     result = await db.execute(
         select(CalendarEvent)
         .where(CalendarEvent.user_id == user_id, CalendarEvent.date >= today)
@@ -54,13 +63,24 @@ async def load_files_overview(db, user_id, recent: int = 25) -> dict:
         select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
         .order_by(File.updated_at.desc()).limit(recent)
     )).scalars().all()
-    # 文件夹 id→name，便于标注文件所属
-    fmap = {fo.id: fo.name for fo in folders}
+    # 文件夹 id→完整路径：给 Agent 看目录树时不能只给叶子名，否则二级目录无法判断归属。
+    fmap = {}
+    folder_rows = []
+    for folder in folders:
+        resolved = await resolve_folder_path(db, user_id, folder.id, folder.project_id)
+        if not resolved:
+            continue
+        _, path = resolved
+        fmap[folder.id] = path
+        folder_rows.append({
+            "id": folder.id, "name": folder.name, "path": path,
+            "project_id": folder.project_id, "parent_id": folder.parent_id,
+        })
     return {
         "total": total,
         "by_space": by_space,
         "trash": trash,
-        "folders": [{"id": fo.id, "name": fo.name, "project_id": fo.project_id} for fo in folders],
+        "folders": folder_rows,
         "files": [
             {"id": f.id, "name": f"{f.display_name}.{f.ext}", "space": f.space,
              "folder": fmap.get(f.folder_id), "project_id": f.project_id}
@@ -70,8 +90,8 @@ async def load_files_overview(db, user_id, recent: int = 25) -> dict:
 
 
 async def load_memory(user_id, query: str = "") -> dict:
-    """读取用户 .agent/ 记忆，返回 {facts, daily, memory, summary}（缺失为空串）。
-    query = 当前用户消息（可选）：传入则 facts 超上限时按相关性优先挑（见 store.render_facts）。"""
+    """读取用户 .agent/ 记忆，返回 profile/pattern/daily/memory/summary（缺失为空串）。
+    query = 当前用户消息（可选）：传入则 pattern 超上限时按相关性优先挑（见 store.render_pattern）。"""
     from agent.memory import store
     return await store.read_memory(user_id, query)
 

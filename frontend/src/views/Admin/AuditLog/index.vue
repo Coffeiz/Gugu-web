@@ -125,7 +125,7 @@ const token = localStorage.getItem('admin_token')
 
 const loading   = ref(false)
 const refreshing = ref(false)
-const rows     = ref([])
+const rows     = ref<any[]>([])
 const page     = ref(1)
 const pageSize = ref(20)
 const filter   = ref({ action: '', keyword: '', dateFrom: '', dateTo: '' })
@@ -197,16 +197,16 @@ function exportCsv() {
   URL.revokeObjectURL(url)
 }
 
-function formatTime(ts) {
+function formatTime(ts: any) {
   if (!ts) return '—'
   const d   = new Date(ts)
-  const pad = n => String(n).padStart(2, '0')
+  const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
-function actionLabel(action) {
+function actionLabel(action: string) {
   const map = { login: '登录', config: '配置', invite: '邀请码', agent: 'Agent', prompt: '提示词', user: '用户管理' }
-  return map[action] ?? action
+  return map[action as keyof typeof map] ?? action
 }
 
 onMounted(load)

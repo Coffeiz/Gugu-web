@@ -46,20 +46,20 @@ const props = defineProps({
   src: { type: String, default: null },
 })
 
-const videoRef = ref(null)
+const videoRef = ref<HTMLVideoElement | null>(null)
 const error    = ref(false)
 const playing  = ref(false)
 const visible  = ref(false)
 const onLight  = ref(false)
 
-let hideTimer   = null
-let sampleTimer = null
+let hideTimer: ReturnType<typeof setTimeout> | null = null
+let sampleTimer: ReturnType<typeof setInterval> | null = null
 
 // ── 亮度采样 ──────────────────────────────────────────
 const sampleCanvas = document.createElement('canvas')
 sampleCanvas.width  = 32
 sampleCanvas.height = 32
-const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true })
+const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true })!
 
 function sampleLuminance() {
   const v = videoRef.value
@@ -83,7 +83,7 @@ function sampleLuminance() {
 // ── 显示 / 隐藏 ───────────────────────────────────────
 function showBtn() {
   visible.value = true
-  clearTimeout(hideTimer)
+  clearTimeout(hideTimer ?? undefined)
   hideTimer = setTimeout(() => { visible.value = false }, 1000)
   if (!sampleTimer) {
     sampleLuminance()
@@ -92,8 +92,8 @@ function showBtn() {
 }
 
 function onMouseLeave() {
-  clearTimeout(hideTimer)
-  clearInterval(sampleTimer)
+  clearTimeout(hideTimer ?? undefined)
+  clearInterval(sampleTimer ?? undefined)
   sampleTimer = null
   visible.value = false
 }
@@ -115,8 +115,8 @@ function togglePlay() {
 }
 
 onUnmounted(() => {
-  clearTimeout(hideTimer)
-  clearInterval(sampleTimer)
+  clearTimeout(hideTimer ?? undefined)
+  clearInterval(sampleTimer ?? undefined)
 })
 </script>
 

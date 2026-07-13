@@ -1,7 +1,7 @@
-import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import Response
@@ -9,13 +9,14 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from app.db.session import get_db
-from app.models import User, InviteCode, AgentUsage
-from app.core.security import hash_password, verify_password, create_user_token, get_current_user
-from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount
 from app.core.config import get_settings
-from app.core.redis import get_redis
 from app.core.ratelimit import rate_limit
+from app.core.redis import get_redis
+from app.core.security import hash_password, verify_password, create_user_token, get_current_user
+from app.core.tz import now_utc, iso_utc
+from app.db.session import get_db
+from app.models import User, InviteCode, AgentUsage, FrontendEvent
+from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount
 from app.services import email as email_svc
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -55,7 +56,7 @@ async def register(body: UserRegister, request: Request, db: AsyncSession = Depe
     claimed = await db.execute(
         InviteCode.__table__.update()
         .where(and_(InviteCode.id == invite.id, InviteCode.used_at.is_(None)))
-        .values(used_at=datetime.utcnow(), used_by=user.id)
+        .values(used_at=now_utc(), used_by=user.id)
     )
     if claimed.rowcount != 1:
         await db.rollback()
@@ -86,6 +87,12 @@ async def login(body: UserLogin, request: Request, db: AsyncSession = Depends(ge
         raise HTTPException(401, "用户名或密码错误")
     if not user.is_active:
         raise HTTPException(403, "账号已停用，请联系管理员")
+
+    # 登录既是网页端一次明确的活跃行为，也要留下可按天回溯的事件。last_active_at 供滚动
+    # 窗口统计兜底，FrontendEvent 则让历史 DAU 不会因同一用户后来再次活跃而丢掉旧日期。
+    user.last_active_at = now_utc()
+    db.add(FrontendEvent(user_id=user.id, event="web_login"))
+    await db.commit()
 
     return TokenResponse(
         access_token=create_user_token(user.id),
@@ -161,7 +168,7 @@ async def reset_password(body: ResetPassword, db: AsyncSession = Depends(get_db)
 
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    now = datetime.utcnow()
+    now = now_utc()
     if current_user.last_active_at is None or (now - current_user.last_active_at) >= timedelta(hours=1):
         current_user.last_active_at = now
         await db.commit()
@@ -194,6 +201,18 @@ async def update_profile(
 ):
     if body.display_name is not None:
         current_user.display_name = body.display_name.strip() or None
+
+    if body.timezone is not None:
+        tz = body.timezone.strip()
+        if not tz:
+            current_user.timezone = None
+        else:
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+            try:
+                ZoneInfo(tz)   # 只接受合法 IANA 名，非法直接拒（别静默存脏值）
+            except (ZoneInfoNotFoundError, ValueError):
+                raise HTTPException(400, "无效的时区")
+            current_user.timezone = tz
 
     if body.new_password:
         if not body.current_password:
@@ -247,6 +266,10 @@ async def upload_avatar(
     avatar_dir = Path(settings.storage.local_path) / "avatars"
     avatar_dir.mkdir(parents=True, exist_ok=True)
     avatar_path = avatar_dir / f"{current_user.id}.{ext}"
+    # 换后缀上传时清掉该用户旧头像文件（如原来是 .png、这次存 .webp），避免残留占空间
+    for old in avatar_dir.glob(f"{current_user.id}.*"):
+        if old != avatar_path:
+            old.unlink(missing_ok=True)
     avatar_path.write_bytes(data)
 
     current_user.avatar = f"avatars/{current_user.id}.{ext}"
@@ -262,7 +285,7 @@ async def get_quota(
     db: AsyncSession = Depends(get_db),
 ):
     settings = get_settings()
-    now = datetime.utcnow()
+    now = now_utc()
 
     async def _used(since: datetime) -> int:
         r = await db.execute(
@@ -287,7 +310,7 @@ async def get_quota(
     return {
         "used_6h":      used_6h,
         "limit_6h":     limit_6h,
-        "reset_6h_at":  reset_6h_at.isoformat() + "Z",   # 下次精力重置时刻
+        "reset_6h_at":  iso_utc(reset_6h_at),   # 下次精力重置时刻
         "used_weekly":  used_weekly,
         "limit_weekly": limit_weekly,
     }

@@ -8,12 +8,17 @@ OpenAI 路：非流式探测工具 → 无工具时分块输出已生成文本�
 """
 import asyncio
 import json
+import logging
 import random
 import re as _re_mod
 from typing import AsyncGenerator
 
 from agent import genstream
 from agent.tools import registry
+from app.core.errors import RetryableError
+from app.core.redaction import diag_log
+
+_log = logging.getLogger("agent.core")
 
 # ⑦ 慢尾兜底：LLM 瞬时错误（限流 429 / 超时 / 网络 / 5xx）退避重试——贴着并发上限跑时
 # 把偶发 429 吸收成短延迟、不丢消息。只在「本轮还没吐 token 前」重试（已吐过再重试会重复输出）。
@@ -21,8 +26,15 @@ _RETRY_BACKOFF = [1, 2, 4]   # 退避秒数；最多重试 3 次
 
 
 async def _stream_round(client, kwargs):
-    """跑一轮 Anthropic 流式，遇瞬时错误在出 token 前退避重试。
-    yield ('token', delta) 逐字；结束 yield ('final', message)。重试用尽 / 不可重试 → 抛出。"""
+    """跑一轮 Anthropic 流式，遇瞬时错误在出 token 前退避重试（P2-b §4-A 标杆模板）。
+    yield ('token', delta) 逐字；结束 yield ('final', message)。
+
+    两种「抛出」语义不同，调用方（主循环边界）据此区分：
+    - **已吐过 token 中途出错**：不能重试（会重复输出），原样把底层异常抛出去——这不是
+      「重试用尽」，是「已产生副作用不敢重试」，按未知/中断处理，不伪装成 RetryableError。
+    - **重试用尽、一个 token 都没吐过**：包成 `RetryableError`（真正符合可重试语义：
+      幂等——还没输出任何东西，从头重试不会重复）。
+    """
     import anthropic
     transient = (anthropic.RateLimitError, anthropic.APITimeoutError,
                  anthropic.APIConnectionError, anthropic.InternalServerError,
@@ -41,9 +53,14 @@ async def _stream_round(client, kwargs):
                 return
         except transient as e:
             last = e
-            if emitted or i >= len(_RETRY_BACKOFF):
-                raise              # 已吐 token（重试会重复）或重试用尽 → 抛给上层降级
-            print(f"[core] LLM 瞬时错误 {type(e).__name__}，{_RETRY_BACKOFF[i]}s 后重试({i+1})", flush=True)
+            if emitted:
+                raise   # 已吐 token，重试会重复输出——原样抛给上层当未知/中断处理
+            if i >= len(_RETRY_BACKOFF):
+                diag_log("agent.core.stream_round", e)   # 原始 → 受限诊断出口
+                _log.warning("LLM 流式调用重试 %d 次后仍失败：%s", i, type(e).__name__)
+                raise RetryableError("llm.stream_exhausted", "LLM 调用重试后仍失败",
+                                      cause=e, attempt=i) from e
+            _log.info("LLM 瞬时错误 %s，%ss 后重试(%d)", type(e).__name__, _RETRY_BACKOFF[i], i + 1)
             await asyncio.sleep(_RETRY_BACKOFF[i])
     if last:
         raise last
@@ -292,8 +309,9 @@ class LLMRunner:
         ai = ai if ai is not None else settings.ai
         tools = registry.anthropic_schemas(self.tool_names)
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
-        from agent.llm_select import anthropic_default_headers, _is_mimo
+        from agent.llm_select import anthropic_default_headers, supports_anthropic_active_cache, _is_mimo
         is_mimo = _is_mimo(ai)
+        supports_active_cache = supports_anthropic_active_cache(ai)
         client = AsyncAnthropic(
             api_key=ai.api_key or "dummy",
             base_url=ai.base_url,
@@ -315,25 +333,26 @@ class LLMRunner:
         # （记忆/分钟级时间/项目日历文件，每轮变）」，断点（CACHE_BREAK）在边界。缓存块只含稳定前缀 →
         # 命中读取便宜 ~90%；动态后缀不缓存，避免整块每分钟失效。两块顺序拼接与单段逐字一致。
         # Anthropic 顺序 tools→system→messages，故缓存块实含 tools+稳定前缀。
-        # 例外：mimo 的 anthropic 端点不支持 prompt caching，不发 cache_control（strip 掉标记即可）。
+        # MiniMax-M3 走被动前缀缓存，MiMo 不支持 Anthropic 主动缓存；两者都不能发送
+        # cache_control，仍保持 tools → system → messages 的稳定顺序以便被动缓存命中。
         from agent.context import builder as _builder
         if system_text:
             stable, dynamic = _builder.split_for_cache(system_text)
-            if dynamic and not is_mimo:
+            if dynamic and supports_active_cache:
                 system_param = [
                     {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
                     {"type": "text", "text": dynamic},
                 ]
             else:
                 _sys_blk = {"type": "text", "text": _builder.strip_cache_marker(system_text)}
-                if not is_mimo:
+                if supports_active_cache:
                     _sys_blk["cache_control"] = {"type": "ephemeral"}
                 system_param = [_sys_blk]
         else:
             system_param = system_text
 
         _mutset = _mutating_tools(self.tool_names)
-        did_mutate = False; verify_count = 0; round_i = 0
+        did_mutate = False; verify_count = 0; round_i = 0; empty_retry = 0
         any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0   # 真实性守卫状态
         _user_req = _user_text(messages[-1]["content"]) if messages and messages[-1].get("role") == "user" else ""
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
@@ -349,8 +368,8 @@ class LLMRunner:
             # 经 _stream_round 包一层瞬时错误退避重试（⑦）；流式途中仍协作检查取消。
             # ② 给发出去的 messages 打一个滚动缓存断点（最后一条 message 的最后一个块）：多轮工具循环里
             #    历史越滚越长，缓存住已发生的几轮、每轮只重算新增。用副本、不改原 messages（原列表要持久化，
-            #    绝不能混入 cache_control）。mimo 不支持 cache_control → 原样发。
-            _msgs = messages if is_mimo else _with_history_cache(messages)
+            #    绝不能混入 cache_control）。MiniMax-M3 / MiMo 不支持主动缓存 → 原样发。
+            _msgs = _with_history_cache(messages) if supports_active_cache else messages
             _kwargs = dict(
                 model=ai.model, system=system_param, messages=_msgs,
                 tools=tools, max_tokens=max_tokens, temperature=temperature, **thinking_param,
@@ -373,11 +392,20 @@ class LLMRunner:
                     if _tok % _CANCEL_CHECK_EVERY == 0 and await _im_cancelled():
                         yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                         return
-            except Exception as e:
+            except RetryableError as e:
+                # _stream_round 已经把原始异常记进受限诊断出口、也记过 WARNING 了，这里不重复记；
+                # 只根据 cause 类型挑一句降级文案给用户。
                 import anthropic
-                busy = isinstance(e, getattr(anthropic, "RateLimitError", ()))
+                busy = isinstance(e.cause, getattr(anthropic, "RateLimitError", ()))
                 detail = "咕咕这会儿有点忙（接口繁忙），过几秒再发一次试试 🙏" if busy else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                print(f"[core] LLM 调用失败（已重试）: {type(e).__name__}: {str(e)[:120]}", flush=True)
+                yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
+                return
+            except Exception as e:
+                # 已吐过 token 中途出错（_stream_round 里"emitted 就原样抛"那条路径）或其他未预期
+                # 异常——按未知处理：原始进受限诊断出口，可见日志只留类型名，不带原始 str(e)。
+                diag_log("agent.core.main_loop", e)
+                _log.error("LLM 调用中途出错：%s", type(e).__name__)
+                detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
                 yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
                 return
 
@@ -443,9 +471,24 @@ class LLMRunner:
                 messages.append({"role": "user", "content": _VERIFY_FORCE_PROMPT if _need_force else _VERIFY_PROMPT})
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
+            _final_text = "".join(b.text for b in final.content if b.type == "text")
+            # 空回复兜底（与 OpenAI 路对齐；此前仅 OpenAI 路有 → Anthropic 端点的 mimo 思考吞正文/精力降级
+            # 不说话时会裸露成空气泡）：整轮无正文、没动工具、不在核实阶段 → 先追一轮要正文，仍空给句得体兜底。
+            if not _final_text.strip() and not did_mutate and not verify_mode:
+                if empty_retry < 1:
+                    empty_retry += 1
+                    # 占位保证 user/assistant 交替合法（真·空 content 会被 Anthropic 拒）；这条守卫消息不入历史（tool_rounds_only 过滤）
+                    content_dicts = [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in final.content] or [{"type": "text", "text": "（…）"}]
+                    messages.append({"role": "assistant", "content": content_dicts})
+                    messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})
+                    yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                    continue
+                fb = "嗯…我这下没太接住，你再说一遍、或者换个说法，我马上跟上～"
+                async for _line in genstream.typed_stream(fb):   # 空回复兜底也走逐字流式，与 OpenAI 路一致
+                    yield _line
+                _final_text = fb
             # narration 兜底：整段生成一个工具都没真调，但文字在"假装"读/改文件 → 追一轮逼它真调。
             # 只追一次；核实阶段不算（那是另一套）。content 在 verify_mode 下被缓冲，故取 _verify_buf 兜底。
-            _final_text = "".join(b.text for b in final.content if b.type == "text")
             if (not any_tool_called and not verify_mode and narration_retry < 1
                     and _looks_like_narration(_final_text)):
                 narration_retry += 1
@@ -619,10 +662,19 @@ class LLMRunner:
                     try:
                         args = json.loads(b["args"])
                     except Exception:
-                        # 参数 JSON 解析失败（常见于长内容被 max_tokens 截断）→ 记下原文便于排查
+                        # 参数 JSON 解析失败（多为长内容被 max_tokens 截断）→ 别拿空参跑：增删改工具吃到 {} 会
+                        # 误伤数据或报错，还会白置 did_mutate 触发一整轮核实。改回一条错误 tool_result 让模型把这次
+                        # 调用参数精简后重发；本轮不 dispatch、不置 did_mutate。tool_call 已在上面 append，这里补齐配对的 result。
                         print(f"[core] 工具 {b['name']} 参数解析失败(疑似 max_tokens 截断), "
                               f"len={len(b['args'])} 尾部={b['args'][-120:]!r}", flush=True)
-                        args = {}
+                        yield f"data: {json.dumps({'type': 'tool_call', 'name': b['name'], 'label': label, 'input': {}, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                        yield f"data: {json.dumps({'type': 'tool_done', 'name': b['name'], 'label': label, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": b["id"],
+                            "content": json.dumps({"error": "参数不完整（内容可能过长被截断），请精简这次调用的参数后重试"}, ensure_ascii=False),
+                        })
+                        continue
                     await _im_set_tool_state(b["name"])
                     # 自检轮工具照常显示，但打 verify 标记：前端标注「复查·」且收尾不冒「生成中」点点（否则回复完还在转、像卡住）
                     yield f"data: {json.dumps({'type': 'tool_call', 'name': b['name'], 'label': label, 'input': args, 'verify': verify_mode}, ensure_ascii=False)}\n\n"

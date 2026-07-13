@@ -74,16 +74,16 @@ import { PhArrowClockwise } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 
 const adminStore = useAdminStore()
-const services = ref([])
+const services = ref<any[]>([])
 const deps = ref({ redis: false, db: false })
 const queue = ref<{ length?: number; lag?: number; pending?: number }>({})
 const loading = ref(false)
 const refreshing = ref(false)
 const err = ref('')
 const restarting = ref('')
-const msg = reactive({})
-const msgOk = reactive({})
-let timer = null
+const msg: Record<string, string> = reactive({})
+const msgOk: Record<string, boolean> = reactive({})
+let timer: ReturnType<typeof setTimeout> | null = null
 
 async function load(manual = false) {
   if (manual) {
@@ -99,10 +99,10 @@ async function load(manual = false) {
     deps.value = data.deps || { redis: false, db: false }
     queue.value = data.queue || {}
     err.value = ''
-  } catch (e) { err.value = e.message } finally { loading.value = false }
+  } catch (e) { err.value = (e instanceof Error ? e.message : String(e)) } finally { loading.value = false }
 }
 
-async function restart(s) {
+async function restart(s: any) {
   if (!confirm(`重启「${s.label}」？将向进程发送 SIGTERM，由 systemd 自动拉起（开发环境无 systemd 不会自愈）。`)) return
   restarting.value = s.name
   try {
@@ -110,15 +110,15 @@ async function restart(s) {
     const data = await res.json().catch(() => ({}))
     msg[s.name] = data.msg || (res.ok ? '已发送' : `失败 (${res.status})`)
     msgOk[s.name] = !!data.ok
-  } catch (e) { msg[s.name] = e.message; msgOk[s.name] = false }
+  } catch (e) { msg[s.name] = (e instanceof Error ? e.message : String(e)); msgOk[s.name] = false }
   finally {
     restarting.value = ''
     setTimeout(() => load(), 2500)   // 给 systemd 拉起的时间，再刷新
   }
 }
 
-function statusText(st) { return st === 'online' ? '在线' : st === 'stale' ? '僵死' : '掉线' }
-function fmtDur(s) {
+function statusText(st: string) { return st === 'online' ? '在线' : st === 'stale' ? '僵死' : '掉线' }
+function fmtDur(s: number) {
   if (s == null) return '—'
   if (s < 60) return `${s}s`
   if (s < 3600) return `${Math.floor(s / 60)}m`

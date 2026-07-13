@@ -81,8 +81,8 @@ const POPUP_W = 248
 
 const show           = ref(false)
 const showYearPicker = ref(false)
-const wrapRef        = ref(null)
-const ymBtnRef       = ref(null)
+const wrapRef        = ref<HTMLElement | null>(null)
+const ymBtnRef       = ref<HTMLElement | null>(null)
 const popupStyle     = ref({})
 const yearPopupStyle = ref({})
 
@@ -167,22 +167,23 @@ function nextMonth() {
   else cur.value.month++
 }
 
-function selectYear(y) {
+function selectYear(y: number) {
   cur.value.year = y
   yearBase.value = Math.floor(y / 12) * 12
   showYearPicker.value = false
 }
 
-function selectDay(cell) {
+function selectDay(cell: any) {
   const iso = `${cur.value.year}-${String(cur.value.month+1).padStart(2,'0')}-${String(cell.day).padStart(2,'0')}`
   emit('update:modelValue', iso)
   show.value = false
   showYearPicker.value = false
 }
 
-function onClickOutside(e) {
-  const inWrap  = wrapRef.value?.contains(e.target)
-  const inPopup = e.target.closest('.adp-popup') || e.target.closest('.adp-year-popup')
+function onClickOutside(e: MouseEvent) {
+  const t = e.target as HTMLElement | null
+  const inWrap  = wrapRef.value?.contains(t)
+  const inPopup = t?.closest('.adp-popup') || t?.closest('.adp-year-popup')
   if (!inWrap && !inPopup) { show.value = false; showYearPicker.value = false }
 }
 onMounted(() => document.addEventListener('mousedown', onClickOutside))

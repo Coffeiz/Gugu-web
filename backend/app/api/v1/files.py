@@ -1,4 +1,5 @@
 import asyncio
+from app.core.tz import now_utc
 import os
 import re
 from datetime import datetime
@@ -12,14 +13,16 @@ from app.db.session import get_db
 from app.models import File, Folder, Project, User
 from app.schemas import FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry, BatchDeleteBody, FileCopyBody, BatchDownloadBody
 from jose import jwt, JWTError
-from app.core.security import get_current_user, create_stream_token, verify_stream_token
+from app.core.security import get_current_user, get_client_id, create_stream_token, verify_stream_token
 from app.core.ownership import get_owned
 from app.core.config import get_settings
+from app.core import events
 from app.services.storage import get_storage
+from app.services.storage.folders import resolve_folder_path
+from app.services.storage.keys import _build_key, _resolve_conflict
 
 router = APIRouter(prefix="/files", tags=["files"])
 
-_INVALID_RE  = re.compile(r'[\\/:*?"<>|]')
 _OFFICE_EXTS = frozenset({'DOC', 'DOCX', 'XLS', 'XLSX', 'PPT', 'PPTX'})
 _pdf_cache: dict[str, bytes] = {}   # key: "{fid}:{updated_at_iso}"
 
@@ -104,49 +107,6 @@ def _fmt_size(size_bytes: int) -> str:
     if size_bytes >= 1_000_000:
         return f"{size_bytes / 1_000_000:.1f} MB"
     return f"{size_bytes / 1024:.0f} KB"
-
-
-def _safe_name(name: str) -> str:
-    return _INVALID_RE.sub("_", name)
-
-
-def _build_key(uid: int, space: str, display_name: str, ext: str,
-               project_name: str = "", project_id: int = 0,
-               project_year: str = "", project_month: str = "",
-               folder_name: str = "", mind_map_title: str = "", mind_map_id: int = 0) -> str:
-    fname = f"{_safe_name(display_name)}.{ext.lower()}"
-    if space == "project":
-        proj_dir = f"{_safe_name(project_name)} #{project_id}"
-        date_path = f"{project_year}/{project_month}/" if project_year and project_month else ""
-        if folder_name:
-            return f"{uid}/项目文件/{date_path}{proj_dir}/{_safe_name(folder_name)}/{fname}"
-        return f"{uid}/项目文件/{date_path}{proj_dir}/{fname}"
-    if space == "mind":
-        map_dir = f"{_safe_name(mind_map_title)} #{mind_map_id}"
-        return f"{uid}/思维/{map_dir}/{fname}"
-    if space == "asset":
-        return f"{uid}/素材板/{fname}"
-    # personal — 有文件夹时放进子目录
-    if folder_name:
-        return f"{uid}/个人文件/{_safe_name(folder_name)}/{fname}"
-    return f"{uid}/个人文件/{fname}"
-
-
-async def _resolve_conflict(storage, base_key: str, display_name: str, ext: str) -> tuple[str, str]:
-    key = base_key
-    name = display_name
-    n = 0
-    from app.services.storage import LocalStorageBackend
-    if not isinstance(storage, LocalStorageBackend):
-        return key, name
-    from pathlib import Path
-    root = storage.root
-    while (root / key).exists():
-        n += 1
-        name = f"{display_name}({n})"
-        prefix = base_key.rsplit("/", 1)[0]
-        key = f"{prefix}/{_safe_name(name)}.{ext.lower()}"
-    return key, name
 
 
 async def _find_conflict(db: AsyncSession, user_id, space: str, project_id: Optional[int],
@@ -256,7 +216,7 @@ async def list_all_files(
     storage = get_storage()
     from app.services.storage import LocalStorageBackend
     if isinstance(storage, LocalStorageBackend):
-        now = datetime.utcnow()
+        now = now_utc()
         valid_rows = []
         for row in rows:
             f, pname, pcolor, fname = row
@@ -412,6 +372,7 @@ async def upload_file(
     on_conflict: str = Form("keep_both"),          # keep_both（默认，同名自动加后缀）| overwrite
     overwrite_file_id: Optional[int] = Form(None),  # on_conflict=overwrite 时，目标文件 id
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     original_name = file.filename or "file"
@@ -424,7 +385,7 @@ async def upload_file(
     project_color = None
     project_year = ""
     project_month = ""
-    folder_name = ""
+    folder_name = folder_path = ""
     if space == "project" and project_id:
         p = await get_owned(db, Project, project_id, current_user.id)
         if not p:
@@ -437,9 +398,10 @@ async def upload_file(
         raise HTTPException(400, "project 空间需要提供 project_id")
 
     if folder_id is not None:
-        fo = await get_owned(db, Folder, folder_id, current_user.id)
-        if not fo:
-            raise HTTPException(400, "文件夹不存在")
+        resolved = await resolve_folder_path(db, current_user.id, folder_id, project_id)
+        if not resolved:
+            raise HTTPException(400, "文件夹不存在，或不属于指定的项目/个人空间")
+        fo, folder_path = resolved
         folder_name = fo.name
 
     data = await file.read()
@@ -502,7 +464,7 @@ async def upload_file(
         project_id=project_id or 0,
         project_year=project_year,
         project_month=project_month,
-        folder_name=folder_name,
+        folder_path=folder_path,
     )
     final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
 
@@ -536,6 +498,7 @@ async def upload_file(
     db.add(db_file)
     await db.commit()
     await db.refresh(db_file)
+    await events.publish(current_user.id, "files", origin=origin)
 
     resp = _to_resp(db_file, project_name or None, project_color, folder_name or None)
 
@@ -578,7 +541,7 @@ async def presign_upload(
     project_color = None
     project_year = ""
     project_month = ""
-    folder_name = ""
+    folder_name = folder_path = ""
 
     if body.space == "project" and body.project_id:
         p = await get_owned(db, Project, body.project_id, current_user.id)
@@ -592,9 +555,10 @@ async def presign_upload(
         raise HTTPException(400, "project 空间需要提供 project_id")
 
     if body.folder_id is not None:
-        fo = await get_owned(db, Folder, body.folder_id, current_user.id)
-        if not fo:
-            raise HTTPException(400, "文件夹不存在")
+        resolved = await resolve_folder_path(db, current_user.id, body.folder_id, body.project_id)
+        if not resolved:
+            raise HTTPException(400, "文件夹不存在，或不属于指定的项目/个人空间")
+        fo, folder_path = resolved
         folder_name = fo.name
 
     storage = get_storage()
@@ -624,7 +588,7 @@ async def presign_upload(
             project_id=body.project_id or 0,
             project_year=project_year,
             project_month=project_month,
-            folder_name=folder_name,
+            folder_path=folder_path,
         )
         final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
 
@@ -673,6 +637,7 @@ class ConfirmRequest(_BaseModel):
 async def confirm_upload(
     body: ConfirmRequest,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     """OSS 直传完成后，注册 DB 记录（或覆盖已有文件时，原地更新那条记录）。"""
@@ -690,7 +655,7 @@ async def confirm_upload(
 
     project_name = ""
     project_color = None
-    folder_name = ""
+    folder_name = folder_path = ""
 
     if body.space == "project" and body.project_id:
         p = await get_owned(db, Project, body.project_id, current_user.id)
@@ -717,6 +682,7 @@ async def confirm_upload(
         existing.mime_type = body.mime_type
         await db.commit()
         await db.refresh(existing)
+        await events.publish(current_user.id, "files", origin=origin)
         return _to_resp(existing, project_name or None, project_color, folder_name or None)
 
     db_file = File(
@@ -735,6 +701,7 @@ async def confirm_upload(
     db.add(db_file)
     await db.commit()
     await db.refresh(db_file)
+    await events.publish(current_user.id, "files", origin=origin)
 
     return _to_resp(db_file, project_name or None, project_color, folder_name or None)
 
@@ -746,6 +713,7 @@ async def update_file(
     fid: int,
     body: FileUpdate,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     f = await get_owned(db, File, fid, current_user.id)
@@ -766,7 +734,7 @@ async def update_file(
     project_color = None
     project_year = ""
     project_month = ""
-    folder_name = ""
+    folder_name = folder_path = ""
     if new_space == "project" and new_pid:
         p = await get_owned(db, Project, new_pid, current_user.id)
         if not p:
@@ -776,9 +744,10 @@ async def update_file(
         date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
         project_year, project_month = date_str[:4], date_str[5:7]
     if new_fid:
-        fo = await get_owned(db, Folder, new_fid, current_user.id)
-        if not fo:
-            raise HTTPException(400, "目标文件夹不存在")
+        resolved = await resolve_folder_path(db, current_user.id, new_fid, new_pid)
+        if not resolved:
+            raise HTTPException(400, "目标文件夹不存在，或不属于目标项目/个人空间")
+        fo, folder_path = resolved
         folder_name = fo.name
 
     new_key = _build_key(
@@ -790,7 +759,7 @@ async def update_file(
         project_id=new_pid or 0,
         project_year=project_year,
         project_month=project_month,
-        folder_name=folder_name,
+        folder_path=folder_path,
     )
 
     if new_key != f.storage_key:
@@ -804,9 +773,10 @@ async def update_file(
     f.folder_id    = new_fid
     f.project_id   = new_pid
     f.space        = new_space
-    f.updated_at   = datetime.utcnow()
+    f.updated_at   = now_utc()
     await db.commit()
     await db.refresh(f)
+    await events.publish(current_user.id, "files", origin=origin)
 
     return _to_resp(f, project_name or None, project_color, folder_name or None)
 
@@ -820,6 +790,7 @@ async def update_file_content(
     fid: int,
     body: _FileContentBody,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     """改文本文件正文（md 预览里点任务勾选框等场景，前端直接存）。仅文本类、限 1MB。"""
@@ -835,9 +806,10 @@ async def update_file_content(
     await get_storage().put(f.storage_key, data, f.mime_type or "text/markdown")
     f.size_bytes = len(data)
     f.size = _fmt_size(len(data))
-    f.updated_at = datetime.utcnow()
+    f.updated_at = now_utc()
     await db.commit()
     await db.refresh(f)
+    await events.publish(current_user.id, "files", origin=origin)
     return _to_resp(f)
 
 
@@ -848,6 +820,7 @@ async def copy_file(
     fid: int,
     body: FileCopyBody,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     f = await get_owned(db, File, fid, current_user.id)
@@ -870,17 +843,18 @@ async def copy_file(
         date_str      = p.start_date or p.created_at.strftime("%Y-%m-%d")
         project_year, project_month = date_str[:4], date_str[5:7]
 
-    folder_name = ""
+    folder_name = folder_path = ""
     if new_folder_id:
-        fo = await get_owned(db, Folder, new_folder_id, current_user.id)
-        if not fo:
-            raise HTTPException(400, "目标文件夹不存在")
+        resolved = await resolve_folder_path(db, current_user.id, new_folder_id, new_project_id)
+        if not resolved:
+            raise HTTPException(400, "目标文件夹不存在，或不属于目标项目/个人空间")
+        fo, folder_path = resolved
         folder_name = fo.name
 
     base_key = _build_key(
         uid=current_user.id, space=new_space, display_name=f.display_name,
         ext=f.ext, project_name=project_name, project_id=new_project_id or 0,
-        project_year=project_year, project_month=project_month, folder_name=folder_name,
+        project_year=project_year, project_month=project_month, folder_path=folder_path,
     )
     storage = get_storage()
     new_key, new_display = await _resolve_conflict(storage, base_key, f.display_name, f.ext)
@@ -897,6 +871,7 @@ async def copy_file(
     db.add(new_file)
     await db.commit()
     await db.refresh(new_file)
+    await events.publish(current_user.id, "files", origin=origin)
     return _to_resp(new_file, project_name or None, project_color, folder_name or None)
 
 
@@ -923,14 +898,17 @@ async def _move_to_trash(storage, f: File) -> None:
 async def delete_file(
     fid: int,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     f = await get_owned(db, File, fid, current_user.id)
     if not f or f.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
     await _move_to_trash(get_storage(), f)
-    f.deleted_at = datetime.utcnow()
+    f.deleted_at = now_utc()
     await db.commit()
+    await events.publish(current_user.id, "files", origin=origin,
+                         file_op={"op": "remove", "kind": "file", "id": fid})
 
 
 # ── POST /files/batch-delete ──────────────────────────────────────────────────
@@ -939,6 +917,7 @@ async def delete_file(
 async def batch_delete_files(
     body: BatchDeleteBody,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     if not body.ids:
@@ -950,11 +929,13 @@ async def batch_delete_files(
     )
     files = (await db.execute(stmt)).scalars().all()
     storage = get_storage()
-    now = datetime.utcnow()
+    now = now_utc()
     for f in files:
         await _move_to_trash(storage, f)
         f.deleted_at = now
     await db.commit()
+    await events.publish(current_user.id, "files", origin=origin,
+                         file_op={"op": "remove", "kind": "file", "ids": [f.id for f in files]})
 
 
 # ── POST /files/batch-download ───────────────────────────────────────────────

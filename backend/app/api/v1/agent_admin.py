@@ -13,6 +13,7 @@ POST   /api/v1/admin/agent/llm-presets/{id}/test     → 连通性测试
 """
 
 import json
+from app.core.tz import now_utc
 import uuid as _uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -77,7 +78,8 @@ PROFILES = ["default"]   # qqbot/mini 是早期占位、从未接线（运行时
 PLACEHOLDERS = [
     {"key": "{today}",       "desc": "今天日期"},
     {"key": "{summary}",     "desc": "当前状态快照（summary.md）"},
-    {"key": "{facts}",       "desc": "咕咕对用户的画像+行为模式（profile.json + pattern.json 导出）"},
+    {"key": "{pattern}",     "desc": "咕咕对用户的行为模式（pattern.json 导出）"},
+    {"key": "{profile}",     "desc": "咕咕对用户的稳定画像（profile.json 导出）"},
     {"key": "{preferences}", "desc": "咕咕对用户偏好的理解（preferences.md）"},
     {"key": "{memory}",      "desc": "长期认知积累（memory.md）"},
     {"key": "{weekly}",      "desc": "本周记忆摘要"},
@@ -184,7 +186,7 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
     total_calls, total_in, total_out = total_row.one()
 
     # 今日
-    today = datetime.utcnow().date()
+    today = now_utc().date()
     today_start = datetime(today.year, today.month, today.day)
     today_row = await db.execute(
         select(

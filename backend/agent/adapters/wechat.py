@@ -24,6 +24,8 @@ import time
 import uuid
 
 from app.core import redis as R
+from app.core.errors import RetryableError
+from app.core.redaction import diag_log, diag_log_raw, redact
 from agent.adapters.wechat_client import ILinkClient, DEFAULT_BASE_URL
 from agent.adapters.wechat_config_cache import WeixinConfigManager
 from agent.adapters.wechat_typing import TypingIndicator
@@ -126,7 +128,11 @@ async def _ingest_wechat_media(items: list, owner: str) -> list:
                 meta = await chat_attach.stage(owner, "微信图片", ext, mime, data, kind="image", platform="wechat")
                 out.append(meta["attach_id"])
             except Exception as e:
-                print(f"[wechat] 图片下载/解密失败: {type(e).__name__}: {e}", flush=True)
+                # best-effort：一批消息可能带多张图，单张下载/解密失败（网络抖动/坏数据）不该
+                # 拖垮整批——跳过这一项、继续处理其余项（P2-b §8）。原始异常走受限诊断出口，
+                # 可见日志只留脱敏摘要。
+                diag_log("agent.adapters.wechat.ingest_media", e)
+                print(f"[wechat] 图片下载/解密失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
     return out
 
 
@@ -257,7 +263,9 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
         try:
             await client.send_text(from_user, "收到啦，让我看看哈~", context_token)
         except Exception as e:
-            print(f"[wechat] 即时反馈失败: {type(e).__name__}: {e}", flush=True)
+            # best-effort：即时 ack 只是体验优化，真实回复由 worker 兜底发出，失败不重试、不挡入队。
+            diag_log("agent.adapters.wechat.instant_ack", e)
+            print(f"[wechat] 即时反馈失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
 
     # 下载+解密+暂存媒体：当前消息附件 + 引用里的图片附件一并入队。
     media_items = non_text + quoted_items
@@ -280,9 +288,12 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
             timeout=0.5,
         )
         typing_ticket = cfg.get("typing_ticket", "") or ""
-    except (asyncio.TimeoutError, Exception) as e:
-        print(f"[wechat] typing_ticket 获取超时/失败（不影响主流程）: {type(e).__name__}: {e}",
-              flush=True)
+    except Exception as e:
+        # `asyncio.TimeoutError` 就是内建 `TimeoutError`，已被 `Exception` 覆盖，原元组冗余
+        # （P2-b §6 反模式）。best-effort：拿不到 ticket 退化成不发 typing，不挡入队主流程。
+        diag_log("agent.adapters.wechat.typing_ticket", e)
+        print(f"[wechat] typing_ticket 获取超时/失败（不影响主流程）: "
+              f"{redact(f'{type(e).__name__}: {e}')}", flush=True)
 
     payload = {
         "platform": "wechat",
@@ -303,7 +314,11 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
     try:
         await R.produce(STREAM, payload)
     except Exception as e:
-        print(f"[wechat] 入队失败: {type(e).__name__}: {e}", flush=True)
+        # 不重试：Redis stream XADD 没有幂等键，重推同一 payload 会造成 worker 端重复处理这条
+        # 消息（非幂等写，P2-b §4-A 幂等前提）。丢这一条比重复处理更安全，原始异常留受限出口
+        # 供排查，可见日志只留脱敏摘要。
+        diag_log("agent.adapters.wechat.enqueue", e)
+        print(f"[wechat] 入队失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
 
 
 async def _serve_async(channel_id: str, owner: str, bot_token: str, base_url: str) -> None:
@@ -321,7 +336,12 @@ async def _serve_async(channel_id: str, owner: str, bot_token: str, base_url: st
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                print(f"[wechat:{channel_id}] long-poll 异常: {type(e).__name__}: {e}，3s 后重试", flush=True)
+                # getupdates 是幂等读（long-poll 拉取，游标没推进就不会丢/重消息），无界重试是
+                # 安全的——不区分 4xx/5xx：哪怕是永久性错误（如 token 失效），网关也应该继续
+                # 挂着重试而不是退出进程（同 openclaw 网关退化策略），只是每次都留诊断记录。
+                diag_log("agent.adapters.wechat.long_poll", e)
+                print(f"[wechat:{channel_id}] long-poll 异常: "
+                      f"{redact(f'{type(e).__name__}: {e}')}，3s 后重试", flush=True)
                 await asyncio.sleep(3)
     finally:
         await client.stop()
@@ -357,8 +377,10 @@ def serve() -> None:
                     await cli.stop()
                 print(f"[wechat:{channel_id}] notifystop 已发", flush=True)
             except Exception as e:
-                print(f"[wechat:{channel_id}] notifystop 失败（忽略）: {type(e).__name__}: {e}",
-                      flush=True)
+                # best-effort：进程反正要退出了，通知上游失败也不影响本进程收尾。
+                diag_log("agent.adapters.wechat.notify_stop", e)
+                print(f"[wechat:{channel_id}] notifystop 失败（忽略）: "
+                      f"{redact(f'{type(e).__name__}: {e}')}", flush=True)
 
         try:
             asyncio.run_coroutine_threadsafe(_notify(), loop)
@@ -382,12 +404,16 @@ async def _serve_async_with_start_notify(channel_id: str, owner: str, bot_token:
             await cli.notify_start()
             print(f"[wechat:{channel_id}] notifystart 已发", flush=True)
         except Exception as e:
-            print(f"[wechat:{channel_id}] notifystart 失败（不影响主流程）: {type(e).__name__}: {e}",
-                  flush=True)
+            # best-effort：notifystart 只是告知上游，失败不该挡后面 long-poll 主循环启动。
+            diag_log("agent.adapters.wechat.notify_start", e)
+            print(f"[wechat:{channel_id}] notifystart 失败（不影响主流程）: "
+                  f"{redact(f'{type(e).__name__}: {e}')}", flush=True)
         finally:
             await cli.stop()
     except Exception as e:
-        print(f"[wechat:{channel_id}] 启动通知阶段异常: {type(e).__name__}: {e}", flush=True)
+        # best-effort：整个启动通知阶段失败也不该阻止网关进主循环收消息。
+        diag_log("agent.adapters.wechat.start_notify_phase", e)
+        print(f"[wechat:{channel_id}] 启动通知阶段异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
 
     await _serve_async(channel_id, owner, bot_token, base_url)
 
@@ -423,10 +449,18 @@ async def _client_for(channel_id: str) -> ILinkClient:
 async def send_text(to_user_id: str, text: str, channel_id: str | None = None,
                     context_token: str = "") -> bool:
     """给微信用户发文本回复。iLink 必需 `context_token`（worker 从入站 payload 透传）。
-    失败时丢弃缓存的 client、重建一次再试。"""
+
+    **非幂等，不盲重试**（P2-b §4-A 幂等前提）：`ILinkClient.send_text` 每次调用都现生成
+    新 `client_id`（见 wechat_client.py），重试之间没有共享的幂等键——如果请求其实已经送达
+    服务器（只是响应超时/断连没读到），重试会让用户收到两条一样的消息。只在**连接建立阶段
+    就失败**（`ConnectError`/`ConnectTimeout`，请求肯定还没发出去，不可能已产生副作用）时
+    换个 client 重试一次；其余失败（HTTP 状态错误、读超时等，请求可能已被处理）一律不重试，
+    直接失败返回。"""
+    import httpx
     if not context_token:
         print("[wechat] 发送缺 context_token，无法回复（iLink 端到端会话凭证）", flush=True)
         return False
+    connect_transient = (httpx.ConnectError, httpx.ConnectTimeout)   # 窄白名单：只信"没发出去"这类
     for attempt in (1, 2):
         try:
             client = await _client_for(channel_id)
@@ -437,14 +471,28 @@ async def send_text(to_user_id: str, text: str, channel_id: str | None = None,
                 keys = sorted(resp.keys()) if isinstance(resp, dict) else type(resp).__name__
                 print(f"[wechat] sendmessage ret={ret}（消息可能未投递）resp_keys={keys}", flush=True)
             return True
-        except Exception as e:
-            print(f"[wechat] 发送失败(第{attempt}次): {type(e).__name__}: {e}", flush=True)
+        except connect_transient as e:
+            diag_log("agent.adapters.wechat.send_text", e)
+            print(f"[wechat] 发送失败(连接建立阶段, 第{attempt}次): "
+                  f"{redact(f'{type(e).__name__}: {e}')}", flush=True)
             c = _clients.pop(channel_id, None)
             if c:
                 try:
                     await c.stop()
                 except Exception:
                     pass
+        except Exception as e:
+            # 请求可能已送达服务器：非幂等操作不敢盲重试（见上方 docstring），直接失败退出。
+            diag_log("agent.adapters.wechat.send_text", e)
+            print(f"[wechat] 发送失败（不重试，非连接阶段错误）: "
+                  f"{redact(f'{type(e).__name__}: {e}')}", flush=True)
+            c = _clients.pop(channel_id, None)
+            if c:
+                try:
+                    await c.stop()
+                except Exception:
+                    pass
+            return False
     return False
 
 
@@ -510,10 +558,19 @@ from agent.adapters.wechat_client import (
 )
 
 
+class _CdnPermanentError(RuntimeError):
+    """CDN 返回明确的 4xx 客户端错误——判定为永久失败，重试不会变好，不进重试循环。"""
+
+
 async def _upload_to_cdn(client: ILinkClient, plaintext: bytes, media_type: int,
                          to_user_id: str) -> dict:
     """通用 CDN 上传：本地 AES-128-ECB 加密 → getuploadurl → POST ciphertext → 返回
-    {download_param, aeskey_b64, filekey, padded_size, raw_size}。"""
+    {download_param, aeskey_b64, filekey, padded_size, raw_size}。
+
+    幂等前提：`filekey`/`ciphertext` 在本次调用内固定不变，同一份密文重发到同一个预签名
+    URL 是安全的（P2-b §4-A），所以这里的重试循环可以放心重试非 4xx 失败。
+    上游响应体/CDN 响应头可能回显签名参数，不能原样拼进异常消息外发/打日志（P2-b §5）——
+    失败时原始响应只走受限诊断出口，异常消息只留静态文案 + 状态码。"""
     aeskey = _media.gen_aes_key()
     ciphertext = _media.encrypt_aes_ecb(plaintext, aeskey)
     filekey = _media.gen_filekey_hex()
@@ -534,7 +591,8 @@ async def _upload_to_cdn(client: ILinkClient, plaintext: bytes, media_type: int,
     upload_full_url = (upload_resp.get("upload_full_url") or "").strip() or None
     upload_param = upload_resp.get("upload_param")
     if not upload_full_url and not upload_param:
-        raise RuntimeError(f"getuploadurl 没返回 upload URL: {upload_resp}")
+        diag_log_raw("agent.adapters.wechat.upload_to_cdn", f"getuploadurl 响应缺 URL: {upload_resp!r}")
+        raise RuntimeError("getuploadurl 没返回可用的 upload URL")
 
     # 拼 CDN URL（参考 OpenClaw cdn/cdn-url.ts buildCdnUploadUrl）
     if upload_full_url:
@@ -545,7 +603,7 @@ async def _upload_to_cdn(client: ILinkClient, plaintext: bytes, media_type: int,
                    f"&filekey={_urlparse.quote(filekey)}")
 
     download_param = None
-    last_err = None
+    last_err: BaseException | None = None
     for attempt in range(1, _media.UPLOAD_MAX_RETRIES + 1):
         try:
             async with _httpx.AsyncClient(timeout=30.0) as cli:
@@ -554,21 +612,28 @@ async def _upload_to_cdn(client: ILinkClient, plaintext: bytes, media_type: int,
                     content=ciphertext,
                     headers={"Content-Type": "application/octet-stream"},
                 )
-            # 4xx 客户端错误立即抛（不重试）；5xx/网络错误重试
+            # 4xx 客户端错误立即抛（不重试）；5xx/网络错误重试——本文件里判 4xx 不重试的
+            # 既有做法，P2-b 把它当标杆抄到其余重试点。
             if 400 <= r.status_code < 500:
-                raise RuntimeError(f"CDN 上传客户端错误 status={r.status_code} body={r.text[:200]}")
+                diag_log_raw("agent.adapters.wechat.upload_to_cdn",
+                              f"CDN 4xx status={r.status_code} body={r.text[:500]}")
+                raise _CdnPermanentError(f"CDN 上传客户端错误 status={r.status_code}")
             r.raise_for_status()
             download_param = r.headers.get("x-encrypted-param")
             if not download_param:
-                raise RuntimeError(f"CDN 上传响应缺 x-encrypted-param 头: headers={dict(r.headers)}")
+                diag_log_raw("agent.adapters.wechat.upload_to_cdn",
+                              f"CDN 响应缺 x-encrypted-param，headers={dict(r.headers)!r}")
+                raise RuntimeError("CDN 上传响应缺 x-encrypted-param 头")
             break
+        except _CdnPermanentError:
+            raise   # 4xx：不重试，直接冒泡给调用方
         except Exception as e:
             last_err = e
-            if "客户端错误" in str(e):
-                raise
-            print(f"[wechat] CDN 上传第 {attempt} 次失败: {type(e).__name__}: {e}", flush=True)
+            diag_log("agent.adapters.wechat.upload_to_cdn", e)
+            print(f"[wechat] CDN 上传第 {attempt} 次失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
     if not download_param:
-        raise RuntimeError(f"CDN 上传 {_media.UPLOAD_MAX_RETRIES} 次后仍失败: {last_err}")
+        raise RetryableError("wechat.cdn_upload_exhausted", "CDN 上传重试后仍失败",
+                              cause=last_err, attempt=_media.UPLOAD_MAX_RETRIES)
 
     return {
         "download_param": download_param,

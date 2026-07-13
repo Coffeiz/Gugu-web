@@ -14,7 +14,6 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.tz import fmt_local
 from app.db.session import get_db
 from app.models import InviteCode
 
@@ -91,7 +90,7 @@ def _fmt(inv: InviteCode) -> dict:
         "code":      inv.code,
         "note":      inv.note or "",
         "used":      inv.used_at is not None,
-        "used_at":   fmt_local(inv.used_at) if inv.used_at else None,
+        "used_at":   inv.used_at.isoformat() if inv.used_at else None,   # 原始 UTC ISO，前端按浏览器 tz 显示
         "used_by":   str(inv.used_by) if inv.used_by else None,
-        "created_at": fmt_local(inv.created_at),
+        "created_at": inv.created_at.isoformat(),
     }

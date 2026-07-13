@@ -36,9 +36,9 @@
     <!-- 内容区 -->
     <div class="fpw-body">
       <!-- 真实内容（在下层） -->
-      <ImageViewer v-if="isImg" :blobUrl="blobUrl" @loaded="onImageLoaded" />
-      <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc" />
-      <TextViewer  v-else-if="isText && blobUrl" :blobUrl="blobUrl" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id" />
+      <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" @loaded="onImageLoaded" />
+      <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
+      <TextViewer  v-else-if="isText && blobUrl" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
         <div class="fpw-spinner"></div>
         <span>加载中…</span>
@@ -56,7 +56,7 @@
         >
           <img
             class="fpw-placeholder-img"
-            :src="placeholderSrc"
+            :src="placeholderSrc ?? undefined"
             @load="onPlaceholderLoad"
             alt=""
           />
@@ -139,7 +139,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue'
+import type { PreviewWindow } from '@/stores/preview'
+import type { FileMeta } from '@/stores/filesCache'
+import { ref, computed, watch, onUnmounted , type PropType} from 'vue'
 import { PhInfo, PhDownloadSimple, PhCornersOut, PhCornersIn, PhX, PhWarningCircle, PhMinus, PhPlus, PhCaretLeft, PhCaretRight } from '@phosphor-icons/vue'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
@@ -150,7 +152,8 @@ import { getCachedThumb, getThumb } from '@/composables/useThumbCache'
 import { useLiveStore } from '@/stores/live'
 import { registerEsc, registerArrowNav } from '@/composables/windowz'
 
-const props = defineProps({ win: { type: Object, required: true } })
+// 类型见下
+const props = defineProps({ win: { type: Object as PropType<PreviewWindow>, required: true } })
 const previewStore = usePreviewStore()
 
 // ESC 只关最顶层窗口（统一走 windowz：谁 z 最大关谁）
@@ -185,7 +188,7 @@ const _unregArrowNav = registerArrowNav({
 
 const textFontSize = ref(13)
 
-const EXT_COLORS = {
+const EXT_COLORS: Record<string, string> = {
   JPG: '#4caf7d', JPEG: '#4caf7d', PNG: '#4caf7d', WEBP: '#4caf7d',
   GIF: '#9c6fdb', SVG: '#f0a500', BMP: '#8888a8',
   MP4: '#5a8cd8', WEBM: '#5a8cd8', MOV: '#5a8cd8', M4V: '#5a8cd8',
@@ -193,18 +196,18 @@ const EXT_COLORS = {
   JS: '#f0c000', TS: '#3178c6', PY: '#4b8bbe', CSS: '#a855f7',
   HTML: '#e34c26', YAML: '#cb171e', XML: '#f16529', SH: '#3d9970',
 }
-const extColor = computed(() => EXT_COLORS[props.win.file.ext?.toUpperCase()] ?? '#7b7fb2')
+const extColor = computed(() => EXT_COLORS[(props.win.file.ext ?? '').toUpperCase()] ?? '#7b7fb2')
 
 // ── 内容加载 ─────────────────────────────────────────────────────────────────
-const blobUrl         = ref(null)
-const videoSrc        = ref(null)
+const blobUrl         = ref<string | null>(null)
+const videoSrc        = ref<string | null>(null)
 const loading         = ref(false)
-const error           = ref(null)
+const error           = ref<string | null>(null)
 const placeholderReady = ref(false)
 const imageReady       = ref(false)
 
 const _SVG_EXTS    = new Set(['SVG'])
-const placeholderSrc = ref(null)   // 从 blob Map 取，避免与全图下载竞速
+const placeholderSrc = ref<string | null>(null)   // 从 blob Map 取，避免与全图下载竞速
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const TITLE_H  = 40
@@ -217,7 +220,7 @@ const CARD_THUMB_CAP = 192
 const ready        = ref(false)
 const maximized    = ref(false)
 const animating    = ref(false)
-let   savedPos     = null
+let   savedPos: { x: number; y: number; w: number; h: number } | null = null
 
 function toggleMaximize() {
   if (!maximized.value) {
@@ -234,7 +237,7 @@ function toggleMaximize() {
 
 const showInfo     = ref(false)
 const contentSize  = ref('')
-const infoBtnRef   = ref(null)
+const infoBtnRef   = ref<HTMLElement | null>(null)
 // 弹窗相对于预览窗口左上角的偏移，随窗口拖拽自动跟随
 const infoOffsetX  = ref(0)
 const infoOffsetY  = ref(0)
@@ -252,14 +255,14 @@ function openInfo() {
   showInfo.value = !showInfo.value
 }
 
-let infoDragOrig = null
-function startInfoDrag(e) {
+let infoDragOrig: { mx: number; my: number; ox: number; oy: number } | null = null
+function startInfoDrag(e: MouseEvent) {
   if (e.button !== 0) return
   infoDragOrig = { mx: e.clientX, my: e.clientY, ox: infoOffsetX.value, oy: infoOffsetY.value }
   window.addEventListener('mousemove', onInfoDragMove)
   window.addEventListener('mouseup',   onInfoDragUp)
 }
-function onInfoDragMove(e) {
+function onInfoDragMove(e: MouseEvent) {
   if (!infoDragOrig) return
   infoOffsetX.value = infoDragOrig.ox + e.clientX - infoDragOrig.mx
   infoOffsetY.value = infoDragOrig.oy + e.clientY - infoDragOrig.my
@@ -271,7 +274,7 @@ function onInfoDragUp() {
 }
 
 // 按内容自然尺寸适配窗口，居中+错位
-function fitWindow(contentW, contentH) {
+function fitWindow(contentW: number, contentH: number) {
   const maxW = window.innerWidth  - PAD * 2
   const maxH = window.innerHeight - PAD * 2 - TITLE_H
   let fw = contentW, fh = contentH
@@ -296,9 +299,9 @@ function onImageLoaded() {
   requestAnimationFrame(() => requestAnimationFrame(() => { imageReady.value = true }))
 }
 
-function onPlaceholderLoad(e) {
+function onPlaceholderLoad(e: Event) {
   if (blobUrl.value) return  // 快速下载：全图已到，不显示占位图
-  const { naturalWidth: nw, naturalHeight: nh } = e.target
+  const { naturalWidth: nw, naturalHeight: nh } = e.target as HTMLImageElement
   // 缩略图长边没到 card 上限 → 没被 Pillow 缩过，就是原图真实尺寸，直接按它定窗口。
   // 顶到上限则原图真实尺寸未知（可能是刚好 192 附近的低分辨率图，也可能是被压缩过的大图，
   // 无法区分）——不再瞎猜（之前套 4K 估算，遇到实际是低分辨率图时会把窗口猜得比真实大得多，
@@ -310,7 +313,7 @@ function onPlaceholderLoad(e) {
   placeholderReady.value = true
 }
 
-async function load(f, refresh = false) {
+async function load(f: Partial<FileMeta>, refresh = false) {
   if (blobUrl.value) { URL.revokeObjectURL(blobUrl.value); blobUrl.value = null }
   videoSrc.value       = null
   loading.value        = true
@@ -320,21 +323,21 @@ async function load(f, refresh = false) {
   placeholderSrc.value   = null
 
   // 占位图：优先从 blob Map 同步命中，未缓存则后台 fetch（与全图下载并行）
-  if (isImg.value && !_SVG_EXTS.has(f.ext?.toUpperCase())) {
+  if (isImg.value && !_SVG_EXTS.has((f.ext ?? '').toUpperCase())) {
     if (f.attach_id) {
       // 聊天附件：占位图走附件缩略图端点
       const token = localStorage.getItem('user_token') ?? ''
-      const h = token ? { Authorization: `Bearer ${token}` } : {}
+      const h: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
       fetch(`${BASE_URL}/agent/attachment/${f.attach_id}/thumb?size=card`, { headers: h })
         .then(r => r.ok ? r.blob() : null).then(b => {
           if (b && !imageReady.value) placeholderSrc.value = URL.createObjectURL(b)
         }).catch(() => {})
     } else {
-      const cached = getCachedThumb(f.id, 'card')
+      const cached = getCachedThumb(f.id!, 'card')
       if (cached) {
         placeholderSrc.value = cached
       } else {
-        getThumb(f.id, 'card').then(url => {
+        getThumb(f.id!, 'card').then((url: string | null | undefined) => {
           if (url && !imageReady.value) placeholderSrc.value = url
         })
       }
@@ -347,7 +350,7 @@ async function load(f, refresh = false) {
     if (animating.value) setTimeout(() => { animating.value = false }, 220)
   }
   const token   = localStorage.getItem('user_token') ?? ''
-  const headers = token ? { Authorization: `Bearer ${token}` } : {}
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
 
   try {
     if (isVideoExt(f.ext)) {
@@ -358,7 +361,7 @@ async function load(f, refresh = false) {
         url = URL.createObjectURL(await res.blob())
         videoSrc.value = url
       } else {
-        const stream = await filesApi.getStreamUrl(f.id)
+        const stream = await filesApi.getStreamUrl(f.id!)
         url = stream.url
         videoSrc.value = url
       }
@@ -415,7 +418,7 @@ async function load(f, refresh = false) {
       img.src = url
     }
   } catch (e) {
-    error.value = '加载失败：' + e.message
+    error.value = '加载失败：' + (e instanceof Error ? e.message : e)
     if (!refresh || !ready.value) fitWindow(480, 300)
   } finally {
     loading.value = false
@@ -431,21 +434,21 @@ watch(() => liveStore.rev.files, () => {
 
 async function handleDownload() {
   try {
-    await filesApi.download(props.win.file.id, `${props.win.file.displayName}.${props.win.file.ext.toLowerCase()}`)
+    await filesApi.download(props.win.file.id!, `${props.win.file.displayName}.${props.win.file.ext?.toLowerCase()}`)
   } catch (e) { console.error('[FloatPreview] 下载失败:', e) }
 }
 
 // ── 拖拽标题栏移动 ───────────────────────────────────────────────────────────
-let dragOrig = null
+let dragOrig: { mx: number; my: number; x: number; y: number } | null = null
 
-function startDrag(e) {
+function startDrag(e: MouseEvent) {
   if (e.button !== 0) return
   dragOrig = { mx: e.clientX, my: e.clientY, x: x.value, y: y.value }
   window.addEventListener('mousemove', onDragMove)
   window.addEventListener('mouseup',   onDragUp)
 }
 
-function onDragMove(e) {
+function onDragMove(e: MouseEvent) {
   if (!dragOrig) return
   x.value = Math.max(0, dragOrig.x + e.clientX - dragOrig.mx)
   y.value = Math.max(0, dragOrig.y + e.clientY - dragOrig.my)
@@ -458,17 +461,17 @@ function onDragUp() {
 }
 
 // ── 四角 resize（可见手柄只留右下角，其余三角只是能拖、没有图标）────────────────
-let resizeOrig = null
+let resizeOrig: { mx: number; my: number; w: number; h: number; x: number; y: number; dir: string } | null = null
 const MIN_W = 320, MIN_H = 240
 
-function startResize(dir, e) {
+function startResize(dir: string, e: MouseEvent) {
   if (e.button !== 0) return
   resizeOrig = { mx: e.clientX, my: e.clientY, w: w.value, h: h.value, x: x.value, y: y.value, dir }
   window.addEventListener('mousemove', onResizeMove)
   window.addEventListener('mouseup',   onResizeUp)
 }
 
-function onResizeMove(e) {
+function onResizeMove(e: MouseEvent) {
   if (!resizeOrig) return
   const { mx, my, w: ow, h: oh, x: ox, y: oy, dir } = resizeOrig
   const dx = e.clientX - mx

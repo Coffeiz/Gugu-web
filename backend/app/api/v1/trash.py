@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from app.core.tz import now_utc
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -7,10 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models import File, MindMap, Project, Folder, User
 from app.schemas import FileResponse, BatchDeleteBody
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
+from app.core import events
 from app.services.storage import get_storage
-from app.api.v1.files import _to_resp, _color, _delete_thumb_cache, _build_key, _resolve_conflict
+from app.services.storage.folders import resolve_folder_path
+from app.api.v1.files import _to_resp, _color, _delete_thumb_cache
+from app.services.storage.keys import _build_key, _resolve_conflict
 
 router = APIRouter(prefix="/trash", tags=["trash"])
 
@@ -44,7 +48,7 @@ async def _restore_file_storage(f: File, db: AsyncSession) -> None:
 
     # 获取所属项目/文件夹/思维导图信息，重建原始路径（f 已归属校验；其所属对象按不变量应同属 f 的主人，
     # 用 f.user_id 走归属强制——万一数据串了宁可当"不存在"回根目录，也不读到别人的名字）
-    project_name = project_year = project_month = folder_name = mind_map_title = ""
+    project_name = project_year = project_month = folder_path = mind_map_title = ""
     if f.project_id:
         p = await get_owned(db, Project, f.project_id, f.user_id)
         if p:
@@ -52,9 +56,9 @@ async def _restore_file_storage(f: File, db: AsyncSession) -> None:
             date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
             project_year, project_month = date_str[:4], date_str[5:7]
     if f.folder_id:
-        fo = await get_owned(db, Folder, f.folder_id, f.user_id)
-        if fo:
-            folder_name = fo.name
+        resolved = await resolve_folder_path(db, f.user_id, f.folder_id, f.project_id)
+        if resolved:
+            _, folder_path = resolved
     if f.mind_map_id:
         mm = await get_owned(db, MindMap, f.mind_map_id, f.user_id)
         if mm:
@@ -65,7 +69,7 @@ async def _restore_file_storage(f: File, db: AsyncSession) -> None:
         display_name=f.display_name, ext=f.ext,
         project_name=project_name, project_id=f.project_id or 0,
         project_year=project_year, project_month=project_month,
-        folder_name=folder_name,
+        folder_path=folder_path,
         mind_map_title=mind_map_title, mind_map_id=f.mind_map_id or 0,
     )
     final_key, final_name = await _resolve_conflict(storage, base_key, f.display_name, f.ext)
@@ -87,6 +91,7 @@ async def _restore_file_storage(f: File, db: AsyncSession) -> None:
 async def restore_file(
     fid: int,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     f = await get_owned(db, File, fid, current_user.id)
@@ -95,6 +100,7 @@ async def restore_file(
     await _restore_file_storage(f, db)
     f.deleted_at = None
     await db.commit()
+    await events.publish(current_user.id, "files", origin=origin)
 
 
 # ── POST /trash/batch-restore ─────────────────────────────────────────────────
@@ -103,6 +109,7 @@ async def restore_file(
 async def batch_restore(
     body: BatchDeleteBody,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     if not body.ids:
@@ -117,6 +124,7 @@ async def batch_restore(
         await _restore_file_storage(f, db)
         f.deleted_at = None
     await db.commit()
+    await events.publish(current_user.id, "files", origin=origin)
 
 
 # ── DELETE /trash/{fid} （永久删除单文件）────────────────────────────────────
@@ -125,6 +133,7 @@ async def batch_restore(
 async def hard_delete_file(
     fid: int,
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     f = await get_owned(db, File, fid, current_user.id)
@@ -138,6 +147,7 @@ async def hard_delete_file(
     await db.delete(f)
     await db.commit()
     _delete_thumb_cache(fid)
+    await events.publish(current_user.id, "files", origin=origin)
 
 
 # ── DELETE /trash （清空回收站）──────────────────────────────────────────────
@@ -145,6 +155,7 @@ async def hard_delete_file(
 @router.delete("", status_code=204)
 async def empty_trash(
     current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(File).where(File.user_id == current_user.id, File.deleted_at.isnot(None))
@@ -160,13 +171,14 @@ async def empty_trash(
     await db.commit()
     for fid in fids:
         _delete_thumb_cache(fid)
+    await events.publish(current_user.id, "files", origin=origin)
 
 
 # ── 自动清理过期文件（由 main.py 在启动时调用）────────────────────────────────
 
 async def cleanup_expired(db: AsyncSession) -> int:
     # 系统级任务，遍历所有用户的过期回收站文件，设计上是全局执行，无需 user_id 过滤
-    cutoff = datetime.utcnow() - timedelta(days=TRASH_DAYS)
+    cutoff = now_utc() - timedelta(days=TRASH_DAYS)
     stmt = select(File).where(File.deleted_at.isnot(None), File.deleted_at <= cutoff)
     files = (await db.execute(stmt)).scalars().all()
     if not files:

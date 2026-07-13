@@ -128,18 +128,18 @@ const authStore = useAuthStore()
 const imChannels = computed(() => authStore.user?.imChannels ?? [])
 
 const weekdays = ['日', '一', '二', '三', '四', '五', '六']
-const tasks = ref([])
+const tasks = ref<any[]>([])
 const loading = ref(true)
 const busy = ref(false)
 const showModal = ref(false)
-const editing = ref(null)
+const editing = ref<any | null>(null)
 const formErr = ref('')
-const nameRef = ref(null)
+const nameRef = ref<HTMLInputElement | null>(null)
 const toastMsg = ref('')
-let toastTimer = null
-function showToast(msg) {
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+function showToast(msg: string) {
   toastMsg.value = msg
-  clearTimeout(toastTimer)
+  clearTimeout(toastTimer ?? undefined)
   toastTimer = setTimeout(() => { toastMsg.value = '' }, 2800)
 }
 const REPEAT_OPTS = [
@@ -152,13 +152,13 @@ const repeatMode      = ref('daily')   // 'daily' | 'weekday' | 'weekend' | 'cus
 const customStartDate = ref('')        // YYYY-MM-DD
 const form = reactive({ name: '', payload: '', time: '09:00', channels: ['web'] })
 
-function pad(n) { return String(n).padStart(2, '0') }
+function pad(n: number) { return String(n).padStart(2, '0') }
 function todayIso() {
   const d = new Date()
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-watch(repeatMode, (mode) => {
+watch(repeatMode, (mode: string) => {
   if (mode === 'custom' && !customStartDate.value) {
     customStartDate.value = todayIso()
   }
@@ -185,12 +185,12 @@ function openCreate() {
   showModal.value = true
   nextTick(() => nameRef.value?.focus())
 }
-function filterChannels(chans) {
+function filterChannels(chans: any) {
   const allowed = ['web', ...imChannels.value]
-  const filtered = chans.filter(c => allowed.includes(c))
+  const filtered = chans.filter((c: any) => allowed.includes(c))
   return filtered.length ? filtered : ['web']
 }
-function openEdit(t) {
+function openEdit(t: any) {
   editing.value = t
   const parsed = parseCron(t.cron)
   repeatMode.value      = parsed.mode
@@ -215,9 +215,9 @@ function buildCron() {
     return `@once:${date}T${pad(h)}:${pad(m)}`
   }
   const DOW = { daily: '*', weekday: '1-5', weekend: '0,6' }
-  return `${m} ${h} * * ${DOW[repeatMode.value] ?? '*'}`
+  return `${m} ${h} * * ${DOW[repeatMode.value as keyof typeof DOW] ?? '*'}`
 }
-function parseCron(cron) {
+function parseCron(cron: string) {
   cron = cron || ''
   if (cron.startsWith('@once:')) {
     const iso = cron.slice(6)
@@ -234,19 +234,19 @@ function parseCron(cron) {
              : 'daily'
   return { mode, time, startDate: '' }
 }
-function cronLabel(cron) {
+function cronLabel(cron: string) {
   const p = parseCron(cron)
   if (p.mode === 'custom') {
     return `${p.startDate} ${p.time}`
   }
   const labels = { daily: '每天', weekday: '工作日', weekend: '周末' }
-  return `${labels[p.mode] ?? '每天'} ${p.time}`
+  return `${labels[p.mode as keyof typeof labels] ?? '每天'} ${p.time}`
 }
-function channelLabel(chs) {
+function channelLabel(chs: any) {
   const map = { web: '通知', chat: '通知', feishu: '飞书', qq: 'QQ', wechat: '微信', im: '飞书/QQ/微信' }
-  return (chs || []).map(c => map[c] || c).join(' + ') || '—'
+  return (chs || []).map((c: string) => map[c as keyof typeof map] || c).join(' + ') || '—'
 }
-function fmtTime(iso) {
+function fmtTime(iso: string) {
   try { const d = new Date(iso); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` }
   catch { return '' }
 }
@@ -261,20 +261,20 @@ async function submit() {
     else await scheduledTasksApi.create(data)
     showModal.value = false
     await load()
-  } catch (e) { formErr.value = e?.message || '保存失败' }
+  } catch (e) { formErr.value = (e instanceof Error ? e.message : '') || '保存失败' }
   finally { busy.value = false }
 }
-async function toggle(t) {
+async function toggle(t: any) {
   try { await scheduledTasksApi.update(t.id, { enabled: !t.enabled }); await load() }
   catch {}
 }
-async function runNow(t) {
+async function runNow(t: any) {
   busy.value = true
   try { const r = await scheduledTasksApi.run(t.id); showToast(r.msg || '已执行一次'); await load() }
-  catch (e) { showToast('执行失败：' + (e?.message || '')) }
+  catch (e) { showToast('执行失败：' + (e instanceof Error ? e.message : '')) }
   finally { busy.value = false }
 }
-async function removeTask(t) {
+async function removeTask(t: any) {
   if (!confirm(`删除「${t.name}」？`)) return
   try { await scheduledTasksApi.delete(t.id); await load() } catch {}
 }

@@ -83,7 +83,7 @@ async def _delete_client(db, user_id, args: dict):
     if _err:
         return _err
     summary = f"将删除客户「{c.name}」，此操作不可恢复"
-    blocked = confirm.needs_confirmation(args, summary)
+    blocked = confirm.needs_confirmation(args, summary, user_id)
     if blocked is not None:
         return blocked
     cid, cname = c.id, c.name
@@ -144,6 +144,7 @@ class ClientsSkill(BaseSkill):
                     "client_id": {"type": "integer", "description": "客户 id（可选）"},
                     "client": {"type": "string", "description": "客户名称（推荐：直接用名字）"},
                     "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
+                    "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
                 },
                 "required": [],
             },

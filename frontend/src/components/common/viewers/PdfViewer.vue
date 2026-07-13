@@ -27,7 +27,7 @@ const props = defineProps({
 })
 
 // #view=FitH：默认按页面宽度适配（更适合阅读文档）
-const pdfSrc = computed(() => (props.blobUrl ? props.blobUrl + '#view=FitH' : null))
+const pdfSrc = computed(() => (props.blobUrl ? props.blobUrl + '#view=FitH' : undefined))
 </script>
 
 <style scoped>

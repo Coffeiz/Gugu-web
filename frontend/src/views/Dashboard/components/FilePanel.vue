@@ -5,51 +5,40 @@
     </div>
 
     <div class="file-grid">
-      <div
+      <FileCard
         v-for="f in files"
         :key="f.id"
-        class="fc-card"
-        :class="{ 'fc-has-thumb': isImageExt(f.ext) }"
-        :style="{ '--fc-color': fileIconColor(f.ext) }"
+        :ext="f.ext" :display-name="f.name" :has-thumb="isImageExt(f.ext)"
+        :icon-size="80" :icon-lift="18" :area-height="80" :lift="false"
         @click="openFile(f)"
       >
-        <span class="fc-ext-badge">{{ f.ext }}</span>
-
-        <div v-if="isImageExt(f.ext)" class="fc-thumb-area">
-          <img class="fc-thumb fc-thumb-tiny" :src="thumbMap[f.id]?.tiny" decoding="async" draggable="false" alt="" />
-          <img class="fc-thumb fc-thumb-full"
-            :src="thumbMap[f.id]?.card"
+        <template #thumb>
+          <img :src="thumbMap[f.id]?.tiny ?? undefined" class="fc-thumb-tiny" decoding="async" draggable="false" alt="" />
+          <img :src="thumbMap[f.id]?.card ?? undefined" class="fc-thumb-full"
             :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }"
             decoding="async" draggable="false" alt=""
             @load="cardBlobReadyIds.add(f.id)"
             @error="($event.target as HTMLElement).style.display='none'" />
-          <div class="fc-thumb-fade"></div>
-        </div>
-        <div v-else class="fc-icon-area">
-          <component :is="fileListIcon(f.ext)" class="fc-big-icon" :size="86" weight="bold" />
-        </div>
-
-        <div class="fc-label">
-          <div class="fc-name" :title="f.name">
-            <span v-if="renamingId === f.id" class="rename-sizer" @click.stop>
-              <span class="rename-ghost">{{ renameText || ' ' }}</span>
-              <input
-                ref="renameInputRef"
-                class="rename-input-inline"
-                v-model="renameText"
-                v-enter.prevent="() => commitRename(f)"
-                @keydown.esc="renamingId = null"
-                @blur="commitRename(f)"
-                @focus="($event.target as HTMLInputElement).select()"
-              />
-            </span>
-            <template v-else>{{ f.name }}</template>
-          </div>
-          <div class="fc-meta">
-            <span class="fc-proj-dot" :style="{ background: f.projectColor }"></span>
-            {{ f.project }} · {{ f.size }}
-          </div>
-        </div>
+        </template>
+        <template #name>
+          <span v-if="renamingId === f.id" class="rename-sizer" @click.stop>
+            <span class="rename-ghost">{{ renameText || ' ' }}</span>
+            <input
+              ref="renameInputRef"
+              class="rename-input-inline"
+              v-model="renameText"
+              v-enter.prevent="() => commitRename(f)"
+              @keydown.esc="renamingId = null"
+              @blur="commitRename(f)"
+              @focus="($event.target as HTMLInputElement).select()"
+            />
+          </span>
+          <template v-else>{{ f.name }}</template>
+        </template>
+        <template #meta>
+          <span class="fc-proj-dot" :style="{ background: f.projectColor }"></span>
+          {{ f.project }} · {{ f.size }}
+        </template>
 
         <div class="fc-hover-actions">
           <button class="file-card-btn" :title="renamingId === f.id ? '确认' : '重命名'"
@@ -64,7 +53,7 @@
             <PhTrash :size="11" weight="bold" />
           </button>
         </div>
-      </div>
+      </FileCard>
 
       <!-- 上传区 -->
       <label
@@ -96,34 +85,38 @@
 <script setup lang="ts">
 import { ref, computed, shallowRef, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { filesApi } from '@/services/api'
-import { filesCache } from '@/services/cache'
+import { useFilesCacheStore } from '@/stores/filesCache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache, cardBlobReadyIds } from '@/composables/useThumbCache'
-import { isImageExt, fileIconColor, fileListIcon } from '@/utils/fileTypes'
+import { isImageExt } from '@/utils/fileTypes'
+import FileCard from '@/components/common/FileCard.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
 import {
   PhPencilSimple, PhCheck, PhDownloadSimple, PhTrash,
 } from '@phosphor-icons/vue'
 
-const panelRef      = ref(null)
+const panelRef      = ref<HTMLElement | null>(null)
 const colCount      = ref(4) // ResizeObserver 更新后覆盖
 const displayCount  = computed(() => Math.max(1, colCount.value - 1)) // 1 行，上传按钮占 1 格
 const cardVisible   = ref(false) // 面板是否已进入视口（触发过 card 加载）
 // 使用模块级 cardBlobReadyIds：首次 @load 后写入，session 内二次访问直接显示跳过动画
 const dragging      = ref(false)
 const uploadOpen    = ref(false)
-const rawFiles      = ref(filesCache.data ?? [])
+// 统一到全局 filesCache store（原来是 services/cache 那第三套独立缓存）。「最近文件」= 全部文件按
+// id 倒序（新文件 id 更大）取前几个。增删改走 store 增量 API，任何页面/SSE 改了 store，这里自动更新。
+const store         = useFilesCacheStore()
+const rawFiles      = computed(() => [...store.allFiles].sort((a, b) => b.id - a.id))
 const thumbMap      = shallowRef<Record<number, { tiny?: string | null; card?: string | null }>>({}) // id → { tiny, card }，shallowRef 批量更新减少 trigger 次数
-const renamingId    = ref(null)
+const renamingId    = ref<number | string | null>(null)
 const renameText    = ref('')
-const renameInputRef = ref(null)
+const renameInputRef = ref<any>(null)
 const projectStore  = useProjectStore()
 const previewStore  = usePreviewStore()
 const projects      = computed(() => projectStore.projects)
 
 // 只加载 tiny，card 延迟到面板进入视口后再加载
-function loadThumbs(list) {
+function loadThumbs(list: any[]) {
   const imgFiles = list.filter(f => isImageExt(f.ext))
   const snap = { ...thumbMap.value }
   imgFiles.forEach(f => {
@@ -132,14 +125,14 @@ function loadThumbs(list) {
   thumbMap.value = snap
   imgFiles.forEach(f => {
     if (snap[f.id]?.tiny) return
-    getThumb(f.id, 'tiny').then(url => {
+    getThumb(f.id, 'tiny').then((url: any) => {
       if (url) thumbMap.value = { ...thumbMap.value, [f.id]: { ...thumbMap.value[f.id], tiny: url } }
     })
   })
 }
 
 // 面板进入视口后调用，加载 card 缩略图
-function loadCards(list) {
+function loadCards(list: any[]) {
   const imgFiles = list.filter(f => isImageExt(f.ext))
   const snap = { ...thumbMap.value }
   let hasNew = false
@@ -154,7 +147,7 @@ function loadCards(list) {
 
   const uncached = imgFiles.filter(f => !snap[f.id]?.card)
   if (uncached.length) {
-    Promise.all(uncached.map(f => getThumb(f.id, 'card').then(url => ({ id: f.id, url }))))
+    Promise.all(uncached.map(f => getThumb(f.id, 'card').then((url: any) => ({ id: f.id, url }))))
       .then(results => {
         const m = { ...thumbMap.value }
         for (const { id, url } of results) if (url) m[id] = { ...m[id], card: url }
@@ -172,15 +165,16 @@ function preDecodeBlobs(map: Record<number, { tiny?: string | null; card?: strin
   }
 }
 
-// 文件类型助手统一收口到 @/utils/fileTypes（isImageExt / fileIconColor / fileListIcon），见顶部 import。
+// 文件类型判断统一收口到 @/utils/fileTypes（isImageExt，见顶部 import）；图标/主色现在由
+// components/common/FileCard.vue 内部处理，这里不用再重复调 fileIconColor/fileListIcon。
 
 function openUpload() { uploadOpen.value = true }
-function openFile(f) {
+function openFile(f: any) {
   if (renamingId.value === f.id) return
   if (isPreviewable(f.ext)) previewStore.open(f._raw)
 }
 
-async function startRename(f) {
+async function startRename(f: any) {
   renamingId.value = f.id
   renameText.value = f.name
   await nextTick()
@@ -188,50 +182,45 @@ async function startRename(f) {
   el?.focus(); el?.select()
 }
 
-async function commitRename(f) {
+async function commitRename(f: any) {
   const name = renameText.value.trim()
   renamingId.value = null
   if (!name || name === f.name) return
   try {
     await filesApi.update(f.id, { displayName: name })
-    const idx = rawFiles.value.findIndex(r => r.id === f.id)
-    if (idx !== -1) rawFiles.value[idx] = { ...rawFiles.value[idx], displayName: name }
-    filesCache.set([...rawFiles.value])
+    store.updateFile(f.id, { displayName: name })
   } catch { /* ignore */ }
 }
 
-async function downloadFile(f) {
+async function downloadFile(f: any) {
   await filesApi.download(f.id, `${f.name}.${f.ext}`)
 }
 
-async function deleteFile(f) {
+async function deleteFile(f: any) {
   try {
     await filesApi.delete(f.id)
     clearThumbCache(f.id)
-    rawFiles.value = rawFiles.value.filter(r => r.id !== f.id)
-    filesCache.set([...rawFiles.value])
+    store.removeFile(f.id)
   } catch { /* ignore */ }
 }
 
 async function onUploaded() {
   uploadOpen.value = false
-  try {
-    const fresh = await filesApi.list()
-    filesCache.set(fresh) // 触发 watch，rawFiles / thumbs 自动更新
-  } catch { /* ignore */ }
+  // 上传走 store 全量刷新拿到新文件（也会被后端 SSE 兜一次）；store 是全局单源，别处也随之更新
+  store.refresh()
 }
 
-// 响应 index.vue 拉取或上传后写入的新数据
 // minmax(130px, 1fr) + gap:8px + padding:20px*2 → cols = floor((w - 40 + 8) / 138)
-function calcCols(width) { return Math.max(1, Math.floor((width - 32) / 138)) }
+function calcCols(width: number) { return Math.max(1, Math.floor((width - 32) / 138)) }
 
-watch(filesCache.ref, (list) => {
+// rawFiles 是从 store 派生的 computed；变化时（首帧、store 刷新、SSE、别处增删改）加载缩略图。
+// store 的 SSE 订阅 + visibilitychange 兜底都在 store 内部，FilePanel 不再自持刷新逻辑。
+watch(rawFiles, (list) => {
   if (!list?.length) return
-  rawFiles.value = list
   preloadTinyThumbs(list)
   loadThumbs(list.slice(0, displayCount.value))
   if (cardVisible.value) loadCards(list.slice(0, displayCount.value))
-})
+}, { immediate: true })
 
 // 面板变宽时 displayCount 增大，补加载新出现文件的缩略图
 watch(displayCount, (newCount, oldCount) => {
@@ -242,9 +231,13 @@ watch(displayCount, (newCount, oldCount) => {
   if (cardVisible.value) loadCards(list.slice(oldCount, newCount))
 })
 
-let _panelObs = null
-let _resizeObs = null
+let _panelObs: ResizeObserver | null = null
+let _resizeObs: ResizeObserver | null = null
 onMounted(() => {
+  // 确保全局 store 已加载（不经文件库页也能有数据）；已加载/加载中则不重复拉。首帧缩略图由上面
+  // 的 watch(rawFiles, {immediate:true}) 处理，store 数据到位后自动触发。
+  if (!store.loaded && !store.loading) store.load()
+
   if (panelRef.value) {
     colCount.value = calcCols(panelRef.value.offsetWidth)
     _resizeObs = new ResizeObserver(([entry]) => {
@@ -253,18 +246,12 @@ onMounted(() => {
     _resizeObs.observe(panelRef.value)
   }
 
-  const list = filesCache.data
-  if (list?.length) {
-    preloadTinyThumbs(list)
-    loadThumbs(list.slice(0, displayCount.value))
-  }
-
   // card 等面板接近视口时再加载，避免屏幕外批量解码
   _panelObs = new IntersectionObserver(([entry]) => {
     if (!entry.isIntersecting) return
-    _panelObs.disconnect(); _panelObs = null
+    _panelObs?.disconnect(); _panelObs = null
     cardVisible.value = true
-    const cur = filesCache.data
+    const cur = rawFiles.value
     if (cur?.length) loadCards(cur.slice(0, displayCount.value))
   }, { rootMargin: '300px' })
   if (panelRef.value) _panelObs.observe(panelRef.value)
@@ -298,64 +285,17 @@ const files = computed(() =>
   align-content: start;
 }
 
-.fc-card {
-  background: rgba(255,255,255,0.72);
-  border: 1px solid rgba(255,255,255,0.9);
-  border-radius: 14px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(0,0,0,0.06);
-  min-height: 110px;
-  transition: box-shadow 0.25s ease;
-}
-.fc-card:hover { transform: none; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 4px 12px rgba(0,0,0,0.10); }
-
-.fc-ext-badge {
-  position: absolute; top: 9px; left: 9px; z-index: 2;
-  font-size: 8px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
-  color: var(--fc-color, var(--color-primary));
-  background: rgba(0,0,0,0.04);
-  border-radius: 4px; padding: 2px 5px; line-height: 1.5;
-}
-
-.fc-icon-area {
-  height: 80px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  overflow: visible;
-}
-.fc-big-icon {
-  width: 80px; height: 80px;
-  color: var(--fc-color, var(--color-primary));
-  opacity: 0.55;
-  transform: translateY(18px);
-  mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
-  flex-shrink: 0;
-}
-
-.fc-thumb-area {
-  position: relative; height: 80px; flex-shrink: 0; overflow: hidden;
-  border-radius: 14px 14px 0 0; background: rgba(0,0,0,0.05);
-  mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
-}
-.fc-thumb {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  object-fit: cover; object-position: center top; display: block;
-}
+/* .fc-card 基础视觉（底色/边框/角标/图标区/缩略图区/标题元信息）已挪进
+   components/common/FileCard.vue；这里只留缩略图两层（插槽内容）、meta 里的项目色点、
+   悬浮操作这几处本面板专属的部分。 */
 .fc-thumb-tiny { filter: blur(10px); }
 .fc-thumb-full { opacity: 0; transition: opacity 0.4s ease; }
 .fc-thumb-full.fc-loaded { opacity: 1; }
-.fc-has-thumb .fc-ext-badge { background: rgba(0,0,0,0.32); color: rgba(255,255,255,0.92); }
 
-.fc-label { padding: 0 11px 11px; position: relative; z-index: 2; }
-.fc-name {
-  font-size: 11px; font-weight: 600; color: var(--text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
-}
-.fc-meta {
+/* .fc-meta 是 FileCard.vue 自己模板里包 #meta 插槽的容器 div，不是本组件插的槽内容本身
+   （slot 内容才带本组件 scope），要用 :deep() 才能扎进子组件根节点以外的这层。 */
+:deep(.fc-meta) {
   display: flex; align-items: center; gap: 4px;
-  font-size: 9px; color: var(--text-secondary); opacity: 0.55; margin-top: 3px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .fc-proj-dot {

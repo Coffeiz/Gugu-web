@@ -125,19 +125,56 @@ export async function resolveFolderTree(
 }
 
 // ── 同名冲突探测（上传前调用）──────────────────────────────────────────────────
-// 只检查「直接落在目标文件夹」的顶层文件（relativePath 不含 '/'）——被拖入的子文件夹本身
-// 是新建的，里面的文件不可能跟已有文件冲突，不用查。返回的每一项对应一个真冲突，宿主拿去
-// 喂 UploadConflictDialog；没有冲突时返回空数组，宿主直接按 keep_both 走原来的流程即可。
+// 检查每个文件在其「目标文件夹」里是否已有同名文件。目标文件夹按 relativePath 的目录部分解析到
+// **已存在**的文件夹（同名文件夹是复用的，里面的文件会跟已有文件冲突）；若路径上有任一段是要新建
+// 的文件夹，则该文件落进新文件夹、不可能冲突，跳过。返回每一项对应一个真冲突（filename=完整
+// relativePath，供宿主按 relativePath 记决策），喂 UploadConflictDialog；无冲突返回空数组。
 export async function checkUploadConflicts(
   items: UploadItem[],
   opts: { space: string; projectId?: number | null; folderId?: number | null },
 ): Promise<{ filename: string; existingFile: any }[]> {
-  const topLevel = items.filter(it => !it.relativePath.includes('/'))
-  if (!topLevel.length) return []
-  const res = await filesApi.checkConflicts(topLevel.map(it => ({
-    filename: it.relativePath, space: opts.space, projectId: opts.projectId, folderId: opts.folderId,
-  })))
-  return res.filter(r => r.conflict).map(r => ({ filename: r.filename, existingFile: r.existing_file }))
+  const baseFolderId = opts.folderId ?? null
+  const projectId = opts.projectId ?? null
+
+  // 目录路径 → 已存在文件夹 id（不创建）。null=落点本身/根；undefined=路径上有新建段（目标是新文件夹）。
+  let resolveDir: (path: string) => number | null | undefined = () => baseFolderId
+  if (items.some(it => it.relativePath.includes('/'))) {
+    const all = await foldersApi.all()
+    const byParentName = new Map<string, number>()
+    for (const f of all) {
+      if ((f.projectId ?? null) !== projectId) continue
+      byParentName.set(`${f.parentId ?? 'root'}:${f.name}`, f.id)
+    }
+    const cache = new Map<string, number | null | undefined>([['', baseFolderId]])
+    resolveDir = (path) => {
+      if (cache.has(path)) return cache.get(path)
+      const i = path.lastIndexOf('/')
+      const parentId = resolveDir(i > -1 ? path.slice(0, i) : '')
+      let id: number | null | undefined
+      if (parentId === undefined) id = undefined   // 父层要新建 → 整条都不存在
+      else id = byParentName.get(`${parentId ?? 'root'}:${i > -1 ? path.slice(i + 1) : path}`)
+      cache.set(path, id)
+      return id
+    }
+  }
+
+  // 只查目标文件夹已存在（落点/根/复用的已有文件夹）的文件
+  const reqs: { relativePath: string; check: { filename: string; space: string; projectId?: number | null; folderId?: number | null } }[] = []
+  for (const it of items) {
+    const i = it.relativePath.lastIndexOf('/')
+    const dir  = i > -1 ? it.relativePath.slice(0, i) : ''
+    const base = i > -1 ? it.relativePath.slice(i + 1) : it.relativePath
+    const targetFolderId = resolveDir(dir)
+    if (targetFolderId === undefined) continue   // 目标是新文件夹，里面不会有冲突
+    reqs.push({ relativePath: it.relativePath, check: { filename: base, space: opts.space, projectId, folderId: targetFolderId } })
+  }
+  if (!reqs.length) return []
+  const res = await filesApi.checkConflicts(reqs.map(r => r.check))   // 按输入顺序返回，按 index 映射回 relativePath
+  const out: { filename: string; existingFile: any }[] = []
+  res.forEach((r: any, idx: number) => {
+    if (r.conflict) out.push({ filename: reqs[idx].relativePath, existingFile: r.existing_file })
+  })
+  return out
 }
 
 /**

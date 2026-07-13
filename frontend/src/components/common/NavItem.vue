@@ -27,7 +27,7 @@ const isActive = computed(
   () => route.path === props.to || route.path.startsWith(props.to + '/'),
 )
 function go() {
-  if (route.path !== props.to) router.push(props.to)
+  if (props.to && route.path !== props.to) router.push(props.to)
 }
 </script>
 

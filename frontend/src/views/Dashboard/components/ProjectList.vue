@@ -73,18 +73,18 @@ import SegBar from '@/components/common/SegBar.vue'
 
 const projectStore = useProjectStore()
 
-function openProject(p) { projectStore.openModal(p) }
+function openProject(p: any) { projectStore.openModal(p) }
 
-const statusLabels = { pending: '待开始', active: '进行中', done: '已完成' }
-function statusLabel(s) { return statusLabels[s] ?? s }
+const statusLabels: Record<string, string> = { pending: '待开始', active: '进行中', done: '已完成' }
+function statusLabel(s: string) { return statusLabels[s] ?? s }
 
 // ── 排序：进行中 > 待开始 > 已完成，组内按优先级↓→开始日↑→截止日↑→创建日↑ ──
 const STATUS_ORDER = { active: 0, pending: 1, done: 2 }
-const PRIO_MAP     = { high: 3, medium: 2, low: 1 }
-const PRIO_LABELS  = { 1: '低优先级', 2: '中优先级', 3: '高优先级' }
+const PRIO_MAP: Record<string, number>     = { high: 3, medium: 2, low: 1 }
+const PRIO_LABELS: Record<number, string>  = { 1: '低优先级', 2: '中优先级', 3: '高优先级' }
 const PRIO_KEYS    = [null, 'low', 'medium', 'high']
 
-function prioVal(p) { return PRIO_MAP[p.priority] ?? 0 }
+function prioVal(p: any) { return p.priority ? (PRIO_MAP[p.priority] ?? 0) : 0 }
 
 const visibleProjects = computed(() => {
   const active  = sort(projectStore.projects.filter(p => p.status === 'active'))
@@ -93,7 +93,7 @@ const visibleProjects = computed(() => {
   return [...active, ...pending, ...done]
 })
 
-function sort(list) {
+function sort(list: any[]) {
   return [...list].sort((a, b) => {
     const pd = prioVal(b) - prioVal(a)
     if (pd !== 0) return pd
@@ -106,47 +106,47 @@ function sort(list) {
 }
 
 // ── 优先级 ────────────────────────────────────────────────
-function starColor(p) {
+function starColor(p: any) {
   const v = prioVal(p)
   if (v === 3) return '#c45050'
   if (v === 2) return '#c49020'
   return '#8899cc'
 }
 
-async function setPriority(p, n) {
+async function setPriority(p: any, n: number) {
   const next = prioVal(p) === n ? null : PRIO_KEYS[n]
   await projectStore.updateProject(p.id, { priority: next })
 }
 
 // ── 前进状态（仅前进） ─────────────────────────────────────
-const STATUS_NEXT = { pending: 'active', active: 'done' }
+const STATUS_NEXT: Record<string, string> = { pending: 'active', active: 'done' }
 
-async function advance(p) {
-  const next = STATUS_NEXT[p.status]
+async function advance(p: any) {
+  const next = STATUS_NEXT[p.status] as string | undefined
   if (next) await projectStore.moveProject(p.id, next)
 }
 
 // ── 辅助 ─────────────────────────────────────────────────
-function currentStageLabel(p) {
-  return p.stages.find(s => s.key === p.currentStage)?.label ?? ''
+function currentStageLabel(p: any) {
+  return p.stages.find((s: any) => s.key === p.currentStage)?.label ?? ''
 }
 
-function stageProgress(p) {
+function stageProgress(p: any) {
   // 总完成度 = 所有阶段待办里已完成 / 总数（不按阶段位置）；无待办则退回按当前阶段位置
   const stages = p.stages
   if (!stages.length) return 0
   let done = 0, total = 0
   for (const s of stages) {
-    const todos = s.todos ?? []
-    done += todos.filter(t => t.done).length
+    const todos = (s as any).todos ?? []
+    done += todos.filter((t: any) => t.done).length
     total += todos.length
   }
   if (total > 0) return Math.round(done / total * 100)
-  const idx = stages.findIndex(s => s.key === p.currentStage)
+  const idx = stages.findIndex((s: any) => s.key === p.currentStage)
   return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
 }
 
-function darkenHex(hex, amount) {
+function darkenHex(hex: string, amount: number) {
   const h = hex?.match(/#[0-9a-fA-F]{6}/)?.[0] ?? '#7b7fb2'
   const r = Math.round(parseInt(h.slice(1,3),16) * amount)
   const g = Math.round(parseInt(h.slice(3,5),16) * amount)
@@ -154,10 +154,10 @@ function darkenHex(hex, amount) {
   return `rgb(${r},${g},${b})`
 }
 
-function accentColor(p) { return darkenHex(p.color, 0.60) }
-function nameColor(p)   { return darkenHex(p.color, 0.40) }
+function accentColor(p: any) { return darkenHex(p.color, 0.60) }
+function nameColor(p: any)   { return darkenHex(p.color, 0.40) }
 
-function isUrgent(p) {
+function isUrgent(p: any) {
   if (p.status === 'done' || !p.deadline) return false
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const dl    = new Date(p.deadline + 'T00:00:00')
@@ -165,7 +165,7 @@ function isUrgent(p) {
 }
 
 const thisYear = new Date().getFullYear()
-function formatDate(str) {
+function formatDate(str: string) {
   const d = new Date(str + 'T00:00:00')
   const base = `${d.getMonth() + 1}月${d.getDate()}日`
   return d.getFullYear() !== thisYear ? `${d.getFullYear()}年${base}` : base

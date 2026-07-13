@@ -1,5 +1,6 @@
 """Debug 面板：实时 tail 三个日志文件。"""
 from __future__ import annotations
+from app.core.tz import now_utc
 
 import asyncio
 import json
@@ -62,7 +63,7 @@ def _line_dt(line: str, carried: "_dt.datetime") -> "_dt.datetime":
     if m:
         mo, d, h, mi, s = map(int, m.groups())
         try:
-            return _dt.datetime(_dt.datetime.utcnow().year, mo, d, h, mi, s)
+            return _dt.datetime(now_utc().year, mo, d, h, mi, s)
         except ValueError:
             return carried
     return carried

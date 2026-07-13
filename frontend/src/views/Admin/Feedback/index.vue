@@ -29,7 +29,7 @@
         <div class="item-meta">
           <span class="cat-badge" :class="item.category">{{ categoryLabel(item.category) }}</span>
           <span class="item-user">{{ item.username }}</span>
-          <span class="item-time">{{ item.createdAt }}</span>
+          <span class="item-time">{{ fmtLocalDateTime(item.createdAt) }}</span>
         </div>
         <div class="item-content">{{ item.content }}</div>
       </div>
@@ -45,6 +45,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { fmtLocalDateTime } from '@/utils/dateAttribution'
 import { PhArrowClockwise, PhList, PhWarningOctagon, PhLightbulb, PhChatCircle } from '@phosphor-icons/vue'
 
 const categoryOptions = [
@@ -54,7 +55,7 @@ const categoryOptions = [
   { value: 'other',      icon: PhChatCircle, label: '其他' },
 ]
 
-const items    = ref([])
+const items    = ref<any[]>([])
 const total    = ref(0)
 const page     = ref(1)
 const pageSize = 30
@@ -62,7 +63,7 @@ const filter   = ref('')
 const loading  = ref(false)
 const refreshing = ref(false)
 
-function categoryLabel(cat) {
+function categoryLabel(cat: string) {
   return { bug: 'Bug', suggestion: '建议', other: '其他' }[cat] ?? cat
 }
 

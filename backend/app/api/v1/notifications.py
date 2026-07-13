@@ -5,6 +5,7 @@
 - 实时推送（SSE 气泡）仍走 events 广播；这里是「持久态」——关浏览器重开还在。
 """
 from __future__ import annotations
+from app.core.tz import now_utc
 
 from datetime import datetime
 
@@ -63,7 +64,7 @@ async def latest_bubble(
     """上线补弹：返回最近一条「该弹气泡、且未过期」的通知（只一条）。
     前端用 localStorage 记已弹过的 id，比它新才弹一次——所以这里只管"最新且有效"，"只一次"在前端。"""
     uid = current_user.id
-    now = datetime.utcnow()
+    now = now_utc()
     row = (await db.execute(
         select(SiteNotification)
         .where(

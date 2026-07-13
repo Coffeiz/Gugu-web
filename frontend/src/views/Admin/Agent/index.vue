@@ -265,7 +265,7 @@
               :class="{ active: activeProfile === p.profile }"
               :data-label="p.profile"
               @click="switchProfile(p.profile)"
-            >{{ ({persona:'人格', skills:'工具准则', policy:'内容政策', reflection:'记忆反思', compress:'记忆压缩'})[p.profile] || p.profile }}</button>
+            >{{ (({persona:'人格', skills:'工具准则', policy:'内容政策', reflection:'记忆反思', compress:'记忆压缩'}) as Record<string,string>)[p.profile] || p.profile }}</button>
           </div>
         </div>
 
@@ -1008,7 +1008,7 @@
             </div>
           </div>
 
-          <div v-if="!usage.by_model.length && !usage.daily.some(d => d.calls > 0)" class="usage-empty">
+          <div v-if="!usage.by_model.length && !usage.daily.some((d: any) => d.calls > 0)" class="usage-empty">
             暂无数据，发起对话后将开始记录
           </div>
 
@@ -1052,7 +1052,7 @@
                 <template v-else-if="step.kind === 'ai'">
                   <div class="tstep-role ai">咕咕</div>
                   <div class="tstep-text">{{ step.text }}</div>
-                  <div v-if="step.files && step.files.length" class="tstep-files">📎 {{ step.files.map(f => f.name + '.' + f.ext).join('，') }}</div>
+                  <div v-if="step.files && step.files.length" class="tstep-files">📎 {{ step.files.map((f: any) => f.name + '.' + f.ext).join('，') }}</div>
                 </template>
                 <template v-else-if="step.kind === 'tool_call'">
                   <div class="tstep-tool">
@@ -1099,7 +1099,7 @@ const tabs = [
 ]
 const activeTab = ref('llm')
 
-function switchTab(key) {
+function switchTab(key: string) {
   activeTab.value = key
   if (key === 'llm'     && presets.value.length === 0) fetchPresets()
   if (key === 'prompts' && profiles.value.length === 0) fetchProfiles()
@@ -1109,7 +1109,7 @@ function switchTab(key) {
 }
 
 // ── 状态命名（对话里状态指示的显示名）──────────────────────────────────────────
-const stateLabels  = reactive({ special: [], tools: [] })
+const stateLabels  = reactive<{ special: any[]; tools: any[] }>({ special: [], tools: [] })
 const labelsLoading = ref(false)
 const labelsSaving  = ref(false)
 const labelsFilter  = ref('')
@@ -1127,8 +1127,8 @@ async function fetchStateLabels() {
   try {
     const res = await adminStore.authFetch('/api/v1/admin/agent/state-labels')
     const data = await res.json()
-    stateLabels.special = (data.special || []).map(r => ({ ...r }))
-    stateLabels.tools   = (data.tools   || []).map(r => ({ ...r }))
+    stateLabels.special = (data.special || []).map((r: any) => ({ ...r }))
+    stateLabels.tools   = (data.tools   || []).map((r: any) => ({ ...r }))
   } catch (e) {
     console.error('加载状态命名失败', e)
   } finally {
@@ -1140,7 +1140,7 @@ async function saveStateLabels() {
   labelsSaving.value = true
   labelsSaved.value = false
   try {
-    const overrides = {}
+    const overrides: Record<string, any> = {}
     for (const r of [...stateLabels.special, ...stateLabels.tools]) {
       const v = (r.custom || '').trim()
       if (v && v !== r.default) overrides[r.key] = v   // 只提交「改过且非空」的，空/同默认走回退
@@ -1161,19 +1161,19 @@ async function saveStateLabels() {
   }
 }
 
-function resetStateLabel(row) { row.custom = '' }
+function resetStateLabel(row: any) { row.custom = '' }
 
 // ── 决策轨迹（只读调试）──────────────────────────────────────────────────────
-const traceSessions      = ref([])
+const traceSessions      = ref<any[]>([])
 const traceLoading       = ref(false)
-const traceSel           = ref(null)
-const traceData          = ref(null)
-const traceSteps         = ref([])
+const traceSel           = ref<any | null>(null)
+const traceData          = ref<any | null>(null)
+const traceSteps         = ref<any[]>([])
 const traceDetailLoading = ref(false)
 const traceSearch        = ref('')
 const traceUser          = ref('')
 
-function fmtTraceTime(iso) {
+function fmtTraceTime(iso: string) {
   if (!iso) return ''
   const d = new Date(iso)
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -1182,8 +1182,8 @@ function fmtTraceTime(iso) {
 const traceTokens = computed(() => {
   const u = traceData.value?.usage ?? []
   return {
-    in:  u.reduce((a, x) => a + (x.tokensIn  || 0), 0),
-    out: u.reduce((a, x) => a + (x.tokensOut || 0), 0),
+    in:  u.reduce((a: number, x: any) => a + (x.tokensIn  || 0), 0),
+    out: u.reduce((a: number, x: any) => a + (x.tokensOut || 0), 0),
   }
 })
 
@@ -1201,7 +1201,7 @@ async function fetchTraceSessions() {
 }
 
 // content_json 块 → 可读结果文本（content 可能是字符串或块数组）
-function _extractResult(content) {
+function _extractResult(content: any) {
   if (content == null) return ''
   if (typeof content === 'string') return content
   if (Array.isArray(content)) return content.map(c => typeof c === 'string' ? c : (c?.text ?? JSON.stringify(c))).join('\n')
@@ -1209,7 +1209,7 @@ function _extractResult(content) {
 }
 
 // 把消息序列拍平成时间线步骤（含被 getMessages 过滤的 tool_use/tool_result）
-function _buildSteps(messages) {
+function _buildSteps(messages: any[]) {
   const steps = []
   for (const m of messages) {
     const cj = m.contentJson
@@ -1232,7 +1232,7 @@ function _buildSteps(messages) {
   return steps
 }
 
-async function openTrace(id) {
+async function openTrace(id: any) {
   traceSel.value = id
   traceDetailLoading.value = true
   traceData.value = null
@@ -1265,25 +1265,25 @@ const API_FORMATS = [
   { key: 'anthropic', label: 'Anthropic 格式' },
 ]
 
-const presets        = ref([])
+const presets        = ref<any[]>([])
 const activePresetId = ref('')
 const strategy       = ref('active')   // active 单一激活 | pool 多 key 分流 | router 智能路由
 const poolMode       = ref('random')   // pool 分流方式：random | round_robin | least_loaded
 const presetsLoading = ref(false)
 const llmMsg         = ref('')
 const llmMsgError    = ref(false)
-const testingId      = ref(null)
-const activatingId   = ref(null)
-const probingId      = ref(null)
+const testingId      = ref<any | null>(null)
+const activatingId   = ref<any | null>(null)
+const probingId      = ref<any | null>(null)
 
 // edit modal
-const editTarget   = ref(null)
+const editTarget   = ref<any | null>(null)
 const editIsNew    = ref(false)
 const editSaving   = ref(false)
 const editError    = ref('')
 const editMaskDown = ref(false)
 
-function showMsg(msg, isError = false) {
+function showMsg(msg: string, isError = false) {
   llmMsg.value      = msg
   llmMsgError.value = isError
   setTimeout(() => { llmMsg.value = '' }, isError ? 5000 : 3000)
@@ -1299,13 +1299,13 @@ async function fetchPresets() {
     strategy.value       = data.strategy || 'active'
     poolMode.value       = data.pool_mode || 'random'
   } catch (e) {
-    showMsg('加载失败：' + e.message, true)
+    showMsg('加载失败：' + (e instanceof Error ? e.message : String(e)), true)
   } finally {
     presetsLoading.value = false
   }
 }
 
-async function setStrategy(s) {
+async function setStrategy(s: any) {
   const prev = strategy.value
   strategy.value = s
   try {
@@ -1317,11 +1317,11 @@ async function setStrategy(s) {
     showMsg(s === 'pool' ? '已切到多 key 分流（勾选要参与分流的预设）' : s === 'router' ? '已切到智能路由（待 Router 接入，暂等同单一激活）' : '已切到单一激活')
   } catch (e) {
     strategy.value = prev
-    showMsg('切换策略失败：' + e.message, true)
+    showMsg('切换策略失败：' + (e instanceof Error ? e.message : String(e)), true)
   }
 }
 
-async function setPoolMode(m) {
+async function setPoolMode(m: any) {
   const prev = poolMode.value
   poolMode.value = m
   try {
@@ -1330,10 +1330,10 @@ async function setPoolMode(m) {
       body: JSON.stringify({ pool_mode: m }),
     })
     if (!res.ok) throw new Error('设置失败')
-    showMsg({ random: '分流方式：随机', round_robin: '分流方式：轮询', least_loaded: '分流方式：最少在途（自动避开慢 key）' }[m])
+    showMsg(({ random: '分流方式：随机', round_robin: '分流方式：轮询', least_loaded: '分流方式：最少在途（自动避开慢 key）' } as Record<string,string>)[m])
   } catch (e) {
     poolMode.value = prev
-    showMsg('设置分流方式失败：' + e.message, true)
+    showMsg('设置分流方式失败：' + (e instanceof Error ? e.message : String(e)), true)
   }
 }
 
@@ -1344,11 +1344,11 @@ async function saveConcurrency() {
     await configStore.saveConfig({ agent: { ...agentDraft } })
     showMsg(`并发量已设为 ${n}（worker ≤30s 热生效）`)
   } catch (e) {
-    showMsg('保存并发量失败：' + e.message, true)
+    showMsg('保存并发量失败：' + (e instanceof Error ? e.message : String(e)), true)
   }
 }
 
-async function togglePool(p) {
+async function togglePool(p: any) {
   const next = !p.in_pool
   try {
     const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${p.id}`, {
@@ -1358,7 +1358,7 @@ async function togglePool(p) {
     if (!res.ok) throw new Error('更新失败')
     p.in_pool = next
   } catch (e) {
-    showMsg('更新分流失败：' + e.message, true)
+    showMsg('更新分流失败：' + (e instanceof Error ? e.message : String(e)), true)
   }
 }
 
@@ -1368,13 +1368,13 @@ function openNewPreset() {
   editError.value  = ''
 }
 
-function openEditPreset(p) {
+function openEditPreset(p: any) {
   editIsNew.value  = false
   editTarget.value = { ...p, api_key: '' }
   editError.value  = ''
 }
 
-function setEditProvider(key) {
+function setEditProvider(key: string) {
   const pv = PROVIDERS.find(p => p.key === key)
   if (!pv) return
   editTarget.value.provider = key
@@ -1385,7 +1385,7 @@ function setEditProvider(key) {
 }
 
 // 选 API 格式时，同步切换 mimo 端点后缀（host 保留，只改 /v1 ↔ /anthropic）
-function pickApiFormat(fmt) {
+function pickApiFormat(fmt: string) {
   editTarget.value.api_format = fmt
   const bu = (editTarget.value.base_url || '').replace(/\/(v1|anthropic)\/?$/, '')
   if (bu.includes('xiaomimimo')) {
@@ -1420,13 +1420,13 @@ async function savePreset() {
     await fetchPresets()
     showMsg('已保存')
   } catch (e) {
-    editError.value = e.message
+    editError.value = (e instanceof Error ? e.message : String(e))
   } finally {
     editSaving.value = false
   }
 }
 
-async function activatePreset(id) {
+async function activatePreset(id: any) {
   activatingId.value = id
   try {
     const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/activate`, { method: 'POST' })
@@ -1434,13 +1434,13 @@ async function activatePreset(id) {
     activePresetId.value = id
     showMsg('已切换，即时生效')
   } catch (e) {
-    showMsg(e.message, true)
+    showMsg((e instanceof Error ? e.message : String(e)), true)
   } finally {
     activatingId.value = null
   }
 }
 
-async function deletePreset(id) {
+async function deletePreset(id: any) {
   if (!confirm('确定删除该预设？')) return
   try {
     const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}`, { method: 'DELETE' })
@@ -1450,25 +1450,25 @@ async function deletePreset(id) {
     }
     await fetchPresets()
   } catch (e) {
-    showMsg(e.message, true)
+    showMsg((e instanceof Error ? e.message : String(e)), true)
   }
 }
 
-async function testPreset(id) {
+async function testPreset(id: any) {
   testingId.value = id
   try {
     const res  = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/test`, { method: 'POST' })
     const data = await res.json()
     showMsg(data.ok ? `连通正常（${data.status}）` : `连接失败（${data.status}）：${data.detail}`, !data.ok)
   } catch (e) {
-    showMsg('测试失败：' + e.message, true)
+    showMsg('测试失败：' + (e instanceof Error ? e.message : String(e)), true)
   } finally {
     testingId.value = null
   }
 }
 
 // 多模态探测：发一张极小图给该预设模型，按响应判定是否支持看图，结论自动写回 vision
-async function probeVision(id) {
+async function probeVision(id: any) {
   probingId.value = id
   try {
     const res  = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/probe-vision`, { method: 'POST' })
@@ -1478,7 +1478,7 @@ async function probeVision(id) {
     else                               showMsg(`测不准：${data.detail}`, true)
     await fetchPresets()   // 刷新「👁 多模态」徽章
   } catch (e) {
-    showMsg('检测失败：' + e.message, true)
+    showMsg('检测失败：' + (e instanceof Error ? e.message : String(e)), true)
   } finally {
     probingId.value = null
   }
@@ -1486,13 +1486,13 @@ async function probeVision(id) {
 
 // ── 系统提示词 ────────────────────────────────────────────────────────────
 const activeProfile  = ref('default')
-const profiles       = ref([])
-const placeholders   = ref([])
+const profiles       = ref<any[]>([])
+const placeholders   = ref<any[]>([])
 const promptContent  = ref('')
 const promptSaving   = ref(false)
 const promptSaved    = ref(false)
 const promptError    = ref('')
-const promptCache    = {}
+const promptCache: Record<string, any>    = {}
 
 async function fetchProfiles() {
   try {
@@ -1502,11 +1502,11 @@ async function fetchProfiles() {
     placeholders.value = data.placeholders
     await loadPrompt('default')
   } catch (e) {
-    promptError.value = '加载失败：' + e.message
+    promptError.value = '加载失败：' + (e instanceof Error ? e.message : String(e))
   }
 }
 
-async function loadPrompt(profile) {
+async function loadPrompt(profile: any) {
   if (promptCache[profile] !== undefined) {
     promptContent.value = promptCache[profile]
     return
@@ -1517,17 +1517,17 @@ async function loadPrompt(profile) {
     promptCache[profile] = data.content
     promptContent.value  = data.content
   } catch (e) {
-    promptError.value = '加载失败：' + e.message
+    promptError.value = '加载失败：' + (e instanceof Error ? e.message : String(e))
   }
 }
 
-async function switchProfile(profile) {
+async function switchProfile(profile: any) {
   promptCache[activeProfile.value] = promptContent.value
   activeProfile.value = profile
   await loadPrompt(profile)
 }
 
-function insertPlaceholder(key) {
+function insertPlaceholder(key: string) {
   const ta = document.querySelector<HTMLTextAreaElement>('.prompt-textarea')
   if (!ta) return
   const start = ta.selectionStart ?? 0
@@ -1551,7 +1551,7 @@ async function savePrompt() {
     promptSaved.value = true
     setTimeout(() => { promptSaved.value = false }, 3000)
   } catch (e) {
-    promptError.value = e.message
+    promptError.value = (e instanceof Error ? e.message : String(e))
     setTimeout(() => { promptError.value = '' }, 5000)
   } finally {
     promptSaving.value = false
@@ -1577,7 +1577,7 @@ async function saveBehavior() {
     behaviorSaved.value = true
     setTimeout(() => { behaviorSaved.value = false }, 3000)
   } catch (e) {
-    behaviorError.value = e.message
+    behaviorError.value = (e instanceof Error ? e.message : String(e))
     setTimeout(() => { behaviorError.value = '' }, 5000)
   } finally {
     behaviorSaving.value = false
@@ -1604,7 +1604,7 @@ const VOICE_PROVIDERS = [
   { label: 'MiMo',  provider: 'mimo', model: 'mimo-v2.5-asr',   base_url: 'https://api.xiaomimimo.com/v1' },
   { label: 'Qwen',  provider: 'qwen', model: 'qwen3-asr-flash', base_url: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1' },
 ]
-function pickVoiceProvider(vp) {
+function pickVoiceProvider(vp: any) {
   voiceDraft.provider = vp.provider
   if (!(voiceDraft.model || '').trim())    voiceDraft.model    = vp.model      // 只在空时填模板，
   if (!(voiceDraft.base_url || '').trim()) voiceDraft.base_url = vp.base_url    // 不覆盖你已填的（如套餐端点）
@@ -1617,7 +1617,7 @@ async function saveVoice() {
     Object.assign(voiceDraft, configStore.cfg.voice)   // key 存后回 ****，同步回「不修改」态
     setTimeout(() => { voiceSaved.value = false }, 3000)
   } catch (e) {
-    voiceError.value = e.message || '保存失败'
+    voiceError.value = (e instanceof Error ? e.message : String(e)) || '保存失败'
   } finally {
     voiceSaving.value = false
   }
@@ -1638,7 +1638,7 @@ async function saveEmbedding() {
     Object.assign(embeddingDraft, configStore.cfg.embedding)   // key 存后回 ****，同步回「不修改」态
     setTimeout(() => { embeddingSaved.value = false }, 3000)
   } catch (e) {
-    embeddingError.value = e.message || '保存失败'
+    embeddingError.value = (e instanceof Error ? e.message : String(e)) || '保存失败'
   } finally {
     embeddingSaving.value = false
   }
@@ -1660,7 +1660,7 @@ async function testEmbedding() {
     embTest.msg = data.message || (data.ok ? 'OK' : '失败')
   } catch (e) {
     embTest.ok = false
-    embTest.msg = '请求失败：' + e.message
+    embTest.msg = '请求失败：' + (e instanceof Error ? e.message : String(e))
   } finally {
     embTest.loading = false
   }
@@ -1703,7 +1703,7 @@ async function startRebuild() {
     }
     pollRebuild()   // 拉一次进度；若在跑会自启轮询
   } catch (e) {
-    rebuild.error = true; rebuild.msg = '请求失败：' + e.message
+    rebuild.error = true; rebuild.msg = '请求失败：' + (e instanceof Error ? e.message : String(e))
   }
 }
 
@@ -1767,7 +1767,7 @@ async function startMemCleanupPreview() {
     }
     pollMemCleanup()
   } catch (e) {
-    memCleanup.error = true; memCleanup.msg = '请求失败：' + e.message
+    memCleanup.error = true; memCleanup.msg = '请求失败：' + (e instanceof Error ? e.message : String(e))
   }
 }
 async function applyMemCleanup() {
@@ -1783,7 +1783,7 @@ async function applyMemCleanup() {
       memCleanup.applyError = true; memCleanup.applyMsg = d.detail || d.message || '执行失败'
     }
   } catch (e) {
-    memCleanup.applyError = true; memCleanup.applyMsg = '请求失败：' + e.message
+    memCleanup.applyError = true; memCleanup.applyMsg = '请求失败：' + (e instanceof Error ? e.message : String(e))
   } finally {
     memCleanup.applying = false
   }
@@ -1813,7 +1813,7 @@ async function testSearch(target: 'searxng' | 'searxng_images' | 'tavily') {
     t.msg = data.message || (data.ok ? 'OK' : '失败')
   } catch (e) {
     t.ok = false
-    t.msg = '请求失败：' + e.message
+    t.msg = '请求失败：' + (e instanceof Error ? e.message : String(e))
   } finally {
     t.loading = false
   }
@@ -1830,7 +1830,7 @@ async function saveSearch() {
     Object.assign(searchDraft, configStore.cfg.search)
     setTimeout(() => { searchSaved.value = false }, 3000)
   } catch (e) {
-    searchError.value = e.message
+    searchError.value = (e instanceof Error ? e.message : String(e))
     setTimeout(() => { searchError.value = '' }, 5000)
   } finally {
     searchSaving.value = false
@@ -1838,12 +1838,12 @@ async function saveSearch() {
 }
 
 // ── 用量统计 ──────────────────────────────────────────────────────────────
-const usage        = ref(null)
+const usage        = ref<any | null>(null)
 const usageLoading = ref(false)
 
-const activeModel = ref(null)
+const activeModel = ref<any | null>(null)
 
-async function fetchUsage(month = undefined, model = activeModel.value) {
+async function fetchUsage(month: any = undefined, model: any = activeModel.value) {
   usageLoading.value = true
   try {
     const params = new URLSearchParams()
@@ -1858,12 +1858,12 @@ async function fetchUsage(month = undefined, model = activeModel.value) {
   }
 }
 
-function toggleModel(model) {
+function toggleModel(model: any) {
   activeModel.value = activeModel.value === model ? null : model
   fetchUsage(usage.value?.month, activeModel.value)
 }
 
-function fmtNum(n) {
+function fmtNum(n: number) {
   if (n == null) return '0'
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
   if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K'
@@ -1880,7 +1880,7 @@ const PAD_B   = 28
 const CHART_W    = ref(600)
 const activeMetric = ref('calls')
 const hoverIdx     = ref(-1)
-const chartWrap    = ref(null)
+const chartWrap    = ref<HTMLElement | null>(null)
 
 onMounted(() => {
   const ro = new ResizeObserver(entries => {
@@ -1900,7 +1900,7 @@ const monthIndex = computed(() => {
   return usage.value.months.indexOf(usage.value.month)
 })
 
-async function switchMonth(dir) {
+async function switchMonth(dir: number) {
   if (!usage.value?.months) return
   const idx = monthIndex.value + dir
   if (idx < 0 || idx >= usage.value.months.length) return
@@ -1910,18 +1910,18 @@ async function switchMonth(dir) {
 const chartPoints = computed(() => {
   if (!usage.value?.daily) return []
   const data = usage.value.daily
-  const vals = data.map(d => d[activeMetric.value] ?? 0)
+  const vals = data.map((d: any) => d[activeMetric.value] ?? 0)
   const maxV = Math.max(...vals, 1)
   const n    = data.length
   const w    = CHART_W.value
   const xStep = (w - PAD_L - PAD_R) / Math.max(n - 1, 1)
-  return vals.map((v, i) => ({
+  return vals.map((v: any, i: number) => ({
     x: PAD_L + i * xStep,
     y: PAD_T + (1 - v / maxV) * (CHART_H - PAD_T - PAD_B),
   }))
 })
 
-function smoothPath(pts) {
+function smoothPath(pts: any[]) {
   if (pts.length < 2) return ''
   let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`
   for (let i = 1; i < pts.length; i++) {
@@ -1949,7 +1949,7 @@ const gridYs = computed(() => {
 
 const gridValues = computed(() => {
   if (!usage.value?.daily) return []
-  const vals = usage.value.daily.map(d => d[activeMetric.value] ?? 0)
+  const vals = usage.value.daily.map((d: any) => d[activeMetric.value] ?? 0)
   const maxV = Math.max(...vals, 1)
   const steps = 4
   return Array.from({ length: steps + 1 }, (_, i) =>
@@ -1963,8 +1963,8 @@ const xLabels = computed(() => {
   if (!pts.length) return []
   const step = Math.ceil(pts.length / 7)
   return pts
-    .map((pt, i) => ({ x: pt.x, label: data[i]?.date?.slice(8) ?? '' }))
-    .filter((_, i) => i % step === 0 || i === pts.length - 1)
+    .map((pt: any, i: number) => ({ x: pt.x, label: data[i]?.date?.slice(8) ?? '' }))
+    .filter((_: any, i: number) => i % step === 0 || i === pts.length - 1)
 })
 
 const chartRight = computed(() => CHART_W.value - PAD_R)

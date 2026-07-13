@@ -3,10 +3,11 @@ import { ref } from 'vue'
 import { preferencesApi } from '@/services/api'
 
 export const usePreferencesStore = defineStore('preferences', () => {
-  const lastStages       = ref([])
-  const stageTemplates   = ref([])
-  const replyTone        = ref(null)   // natural(null) / formal / lively
-  const replyLength      = ref(null)   // medium(null) / short / detailed
+  // 偏好里的松结构数组（阶段/模板元素类型待后端入 OpenAPI 后 gen:types 收紧），暂 any[]
+  const lastStages       = ref<any[]>([])
+  const stageTemplates   = ref<any[]>([])
+  const replyTone        = ref<string | null>(null)   // natural(null) / formal / lively
+  const replyLength      = ref<string | null>(null)   // medium(null) / short / detailed
   const pmStagesExpanded  = ref(false)  // 项目编辑卡阶段区展开版面记忆
   const calendarDoneMode  = ref('done') // 'done' = 已完成项目显示到完成日；'deadline' = 显示到截止日
   const loaded            = ref(false)
@@ -24,22 +25,22 @@ export const usePreferencesStore = defineStore('preferences', () => {
     } catch {}
   }
 
-  async function savePmStagesExpanded(v) {
+  async function savePmStagesExpanded(v: boolean) {
     pmStagesExpanded.value = v
     try { await preferencesApi.update({ pmStagesExpanded: v }) } catch {}
   }
 
-  async function saveCalendarDoneMode(v) {
+  async function saveCalendarDoneMode(v: string) {
     calendarDoneMode.value = v
     try { await preferencesApi.update({ calendarDoneMode: v } as any) } catch {}
   }
 
-  async function saveLastStages(stages) {
+  async function saveLastStages(stages: any[]) {
     lastStages.value = stages
     try { await preferencesApi.update({ lastStages: stages }) } catch {}
   }
 
-  async function saveTemplates(templates) {
+  async function saveTemplates(templates: any[]) {
     stageTemplates.value = templates
     try { await preferencesApi.update({ stageTemplates: templates }) } catch {}
   }

@@ -13,12 +13,12 @@ import {
 // 能出缩略图的图片类型（决定文件卡是否渲染 thumb 区）；与后端 thumb 生成支持的格式对齐
 const IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
 
-export function isImageExt(ext) {
+export function isImageExt(ext: string | null | undefined): boolean {
   return IMAGE_EXTS.has((ext || '').toLowerCase())
 }
 
 /** ext → 大类，用于选图标 / 模板分支。未知归 'doc'。 */
-export function fileExtCategory(ext) {
+export function fileExtCategory(ext: string | null | undefined): string {
   const e = (ext || '').toLowerCase()
   if (['jpg','jpeg','png','gif','webp','svg','ico','bmp','avif','heic','heif','tif','tiff'].includes(e)) return 'image'
   if (['mp4','mov','avi','mkv','webm','wmv','flv','m4v'].includes(e))   return 'video'
@@ -32,7 +32,7 @@ export function fileExtCategory(ext) {
 }
 
 /** ext → 图标主题色（文件卡 --fc-color / 列表图标）。pdf、doc 等单列以便区分。 */
-export function fileIconColor(ext) {
+export function fileIconColor(ext: string | null | undefined): string {
   const e = (ext || '').toLowerCase()
   if (['jpg','jpeg','png','gif','webp','svg','ico','bmp','avif','heic','heif'].includes(e)) return '#b07858'
   if (['mp4','mov','avi','mkv','webm','wmv'].includes(e)) return '#8868a0'
@@ -48,7 +48,7 @@ export function fileIconColor(ext) {
 }
 
 /** ext → 列表/大图标组件（Phosphor）。 */
-export function fileListIcon(ext) {
+export function fileListIcon(ext: string | null | undefined) {
   const cat = fileExtCategory(ext)
   if (cat === 'image')   return PhImage
   if (cat === 'video')   return PhFilmStrip

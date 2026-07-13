@@ -63,7 +63,7 @@ defineEmits(['close'])
 const myZ = ref(0)
 watch(() => props.show, v => { if (v) myZ.value = nextZ() })
 
-async function apiFeedback(category, content) {
+async function apiFeedback(category: string, content: string) {
   const token = localStorage.getItem('user_token')
   const res = await fetch('/api/v1/feedback', {
     method: 'POST',
@@ -108,7 +108,7 @@ async function submit() {
     await apiFeedback(category.value, content.value.trim())
     done.value = true
   } catch (e) {
-    error.value = e.message || '提交失败，请稍后再试'
+    error.value = (e instanceof Error ? e.message : '') || '提交失败，请稍后再试'
   } finally {
     submitting.value = false
   }

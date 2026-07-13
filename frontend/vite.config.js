@@ -50,10 +50,19 @@ export default defineConfig({
     // 通过自定义域名/内网穿透访问 dev server 时，需把域名加入白名单，否则 Vite 拦截 Host 头
     allowedHosts: ['myhome.coffeiz.space'],
     proxy: {
+      // 本地非容器开发默认代理到 localhost:8000；docker compose 里前后端是两个独立容器，
+      // "localhost" 指向前端容器自己，不是后端，因此 docker-compose.yml 给 frontend 服务
+      // 传了 VITE_API_PROXY_TARGET=http://backend:8000（Docker 内网 DNS 按服务名解析）。
       '/api': {
-        target: 'http://localhost:8000',
+        target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000',
         changeOrigin: true,
       },
     },
+  },
+  test: {
+    // 纯逻辑单测（Vitest）。jsdom 环境：DOMPurify 等依赖 DOM 的工具需要 window。
+    // 复用上方 resolve.alias（@ → src）。组件/E2E 后续再加（见 docs/security 报告 P1-a）。
+    environment: 'jsdom',
+    include: ['test/**/*.{test,spec}.{js,ts}', 'src/**/*.{test,spec}.{js,ts}'],
   },
 })

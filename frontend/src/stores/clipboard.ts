@@ -2,14 +2,14 @@ import { ref } from 'vue'
 import { defineStore } from 'pinia'
 
 export const useClipboardStore = defineStore('clipboard', () => {
-  const type    = ref(null)  // 'cut' | 'copy'
-  const fileIds = ref([])
-  const folderIds = ref([])
+  const type    = ref<'cut' | 'copy' | null>(null)
+  const fileIds = ref<number[]>([])
+  const folderIds = ref<number[]>([])
 
-  function cut(fids = [], dids = []) {
+  function cut(fids: number[] = [], dids: number[] = []) {
     type.value = 'cut'; fileIds.value = fids; folderIds.value = dids
   }
-  function copy(fids = [], dids = []) {
+  function copy(fids: number[] = [], dids: number[] = []) {
     type.value = 'copy'; fileIds.value = fids; folderIds.value = dids
   }
   function clear() {

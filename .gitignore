@@ -8,6 +8,9 @@ backend/venv/
 backend/.venv/
 backend/env/
 backend/.env
+# 误将 venv 示例路径作为真实目录创建时产生的本地虚拟环境
+backend/path/
+/node_modules/
 *.sqlite
 *.db
 .pytest_cache/
@@ -45,7 +48,10 @@ Thumbs.db
 # ===== IDE =====
 .idea/
 .vscode/
-.claude/   # Claude Code 本地 IDE 配置（launch.json / 进程锁等），不入仓
+# Claude Code 本地 IDE 配置（launch.json / 进程锁等），不入仓
+.claude/
+# 其他 agent 工具的本地目录，与本项目无关，不入仓
+.aionrs/
 *.iml
 *.iws
 *.ipr

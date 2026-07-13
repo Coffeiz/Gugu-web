@@ -134,11 +134,11 @@ const adminStore = useAdminStore()
 const initial = computed(() => (adminStore.adminUser?.username?.[0] ?? 'A').toUpperCase())
 
 // 导航：编程式跳转，不渲染 <a href>，悬停时状态栏不暴露 URL
-const isActive = (to) => route.path === to || route.path.startsWith(to + '/')
-function go(to) {
+const isActive = (to: string) => route.path === to || route.path.startsWith(to + '/')
+function go(to: string) {
   if (route.path !== to) router.push(to)
 }
-function goHash(to, hash) {
+function goHash(to: string, hash: string) {
   if (route.path !== to) {
     router.push({ path: to, hash })
   } else {

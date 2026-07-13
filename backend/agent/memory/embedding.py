@@ -1,12 +1,12 @@
-"""向量 embedding 原语——一层**共享基建**，不只给 facts 检索用（相处镜片的记忆引用、未来检索排序都会接）。
+"""向量 embedding 原语——一层**共享基建**，不只给 pattern 检索用（相处镜片的记忆引用、未来检索排序都会接）。
 
 设计（见 docs/agent/参考/咕咕改进方案-MaiBot借鉴.md 改进一「落地」节）：
 - **模型单独 pin、与聊天解耦**：读 `settings.embedding`（独立配置段），不走 pick_model 路由。
 - **未配置/未启用 → `embed()` 返回 None**：所有消费方据此**退回词法相关性**（bigram），零副作用。
   这也是"模型待定、先搭框架"阶段的默认状态——地基就位，填一个模型即通。
 - **走 OpenAI 兼容 `/embeddings`**：绝大多数厂商（dashscope/openai/minimax…）都提供这个接口。
-- **规模**：per-user 几十~几百条 facts，相似度纯 Python 暴力点积即可，**不需要向量数据库**。
-- **换模型语义**：向量带 `model_tag()` 版本戳；换 embedding 模型 → 旧戳失配 = 需重建（facts 存文本，向量是可重建缓存）。
+- **规模**：per-user 几十~几百条 pattern，相似度纯 Python 暴力点积即可，**不需要向量数据库**。
+- **换模型语义**：向量带 `model_tag()` 版本戳；换 embedding 模型 → 旧戳失配 = 需重建（pattern 存文本，向量是可重建缓存）。
 """
 from __future__ import annotations
 

@@ -282,45 +282,43 @@
               </div>
             </div>
 
-            <!-- 文件卡片 -->
-            <div
+            <!-- 文件卡片：共用视觉抽到 components/common/FileCard.vue，这里只管文件库自己的
+                 选择模式/拖拽/右键菜单等交互态（走 props 传给它统一画选中态），缩略图/重命名
+                 输入框/悬浮操作这些本页专属内容走具名插槽。 -->
+            <FileCard
               v-for="f in sortedContents.files"
               :key="f.id"
-              class="fc-card hover-card-fx"
-              :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id), dragging: draggingFileIds.has(f.id), cut: cbStore.type === 'cut' && cbStore.fileIds.includes(f.id), 'fc-has-thumb': isImageExt(f.ext) }"
+              class="hover-card-fx"
+              :ext="f.ext" :display-name="f.displayName" :has-thumb="isImageExt(f.ext)"
+              :selected="selectedIds.has(f.id)" :pre-selected="previewFileIds.has(f.id)"
+              :dragging="draggingFileIds.has(f.id)" :cut="cbStore.type === 'cut' && cbStore.fileIds.includes(f.id)"
               :data-file-id="f.id"
-              :style="{ '--fc-color': fileIconColor(f.ext) }"
               @contextmenu.prevent.stop="openCtx('file', f, $event)"
               @click.stop="handleFileClick(f, $event)"
               @pointerdown="onFilePointerDown(f, $event)"
             >
-              <span class="fc-ext-badge">{{ f.ext }}</span>
-              <div v-if="isImageExt(f.ext)" class="fc-thumb-area">
+              <template #thumb>
                 <!-- 模糊占位层：20×20 tiny，懒加载至视口附近再触发 -->
-                <img class="fc-thumb fc-thumb-tiny" v-lazy-src="{ id: f.id, size: 'tiny' }"
+                <img class="fc-thumb-tiny" v-lazy-src="{ id: f.id, size: 'tiny' }"
                   decoding="async" draggable="false" alt="" />
                 <!-- 全尺寸层：首次加载淡入，已加载过直接显示 -->
-                <img class="fc-thumb fc-thumb-full" v-lazy-src="{ id: f.id, size: 'card' }"
+                <img class="fc-thumb-full" v-lazy-src="{ id: f.id, size: 'card' }"
                   :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }"
                   decoding="async" draggable="false" alt=""
                   @load="cardBlobReadyIds.add(f.id)"
                   @error="($event.target as HTMLElement).style.display='none'" />
                 <div class="fc-thumb-fade"></div>
-              </div>
-              <div v-else class="fc-icon-area">
-                <component :is="fileListIcon(f.ext)" class="fc-big-icon" :size="86" weight="bold" />
-              </div>
-              <div class="fc-label">
-                <div class="fc-name" :title="f.displayName">
-                  <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
-                    <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                    <input class="rename-input-inline" v-model="renameText"
-                      v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
-                  </span>
-                  <template v-else>{{ f.displayName }}</template>
-                </div>
-                <div class="fc-meta">{{ f.size }} · {{ f.createdAt }}</div>
-              </div>
+              </template>
+              <template #name>
+                <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
+                  <span class="rename-ghost">{{ renameText || ' ' }}</span>
+                  <input class="rename-input-inline" v-model="renameText"
+                    v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
+                </span>
+                <template v-else>{{ f.displayName }}</template>
+              </template>
+              <template #meta>{{ f.size }} · {{ f.createdAt }}</template>
+
               <Transition name="sel-cb">
                 <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedIds.has(f.id) }">
                   <svg v-if="selectedIds.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -341,7 +339,7 @@
                   <PhTrash :size="11" weight="bold" />
                 </button>
               </div>
-            </div>
+            </FileCard>
 
             <!-- 幽灵上传卡：单文件 / 文件夹（拖入文件夹时汇总一张，不给里面每个文件各出一张） -->
             <div v-for="g in uploadingItems" :key="g.uid"
@@ -357,7 +355,7 @@
                 <div class="fc-name" :title="g.name">{{ g.name }}</div>
                 <div class="fc-meta fc-ghost-meta">
                   <template v-if="g.isFolder">
-                    <template v-if="g.error">{{ g.done - g.failed }}/{{ g.total }}（{{ g.failed }} 个失败）</template>
+                    <template v-if="g.error">{{ (g.done ?? 0) - (g.failed ?? 0) }}/{{ g.total }}（{{ g.failed }} 个失败）</template>
                     <template v-else>{{ g.done }}/{{ g.total }}</template>
                   </template>
                   <template v-else-if="g.error">上传失败</template>
@@ -676,6 +674,7 @@
 import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { filesApi, foldersApi, trashApi, uploadWithProgress } from '@/services/api'
 import ContextMenu   from '@/components/ContextMenu.vue'
+import FileCard       from '@/components/common/FileCard.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'
@@ -683,17 +682,25 @@ import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable, isAudioExt } from '@/stores/preview'
 import { fireHint } from '@/composables/useOnboarding'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { cardBlobReadyIds, clearThumbCache } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt, fileExtCategory, fileIconColor, fileListIcon } from '@/utils/fileTypes'
+import { fmtBytes } from '@/utils/fileSize'
+import { resolveFolderIds } from '@/utils/folderKeys'
+import { doneYear, doneMonth, splitName } from '@/utils/fileParse'
+import { statusFolders, yearFolders, monthFolders } from '@/utils/projectFolderCards'
+import { optimisticMutation } from '@/utils/optimisticMutation'
+import type { FileMeta, FolderMeta } from '@/stores/filesCache'
+import type { Project } from '@/types/project'
+import { type NavSeg, type FolderCard } from '@/utils/filesNav'
+import { useFilesNav } from '@/composables/useFilesNav'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
-import { readDroppedEntries, filesToItems, uploadFilesWithFolders, checkUploadConflicts } from '@/composables/useFileUpload'
+import { readDroppedEntries, filesToItems, uploadFilesWithFolders, checkUploadConflicts, type UploadItem } from '@/composables/useFileUpload'
 import { useBoxSelection } from '@/composables/useBoxSelection'
-import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
+import UploadConflictDialog, { type ConflictDecision } from '@/components/common/UploadConflictDialog.vue'
 import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
   PhClock, PhPlayCircle, PhCheckCircle,
@@ -706,7 +713,6 @@ import {
 
 const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
-const liveStore    = useLiveStore()
 const uiStore      = useUiStore()
 
 // ── 存储用量 ──
@@ -718,13 +724,6 @@ async function fetchStorage() {
     storageInfo.limit  = data.limit_bytes ?? null
     storageInfo.loaded = true
   } catch {}
-}
-function fmtBytes(n) {
-  if (!n) return '0 B'
-  if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB'
-  if (n >= 1048576)    return (n / 1048576).toFixed(1) + ' MB'
-  if (n >= 1024)       return (n / 1024).toFixed(0) + ' KB'
-  return n + ' B'
 }
 const storageFillStyle = computed(() => {
   if (!storageInfo.limit) return { width: '0%' }
@@ -739,165 +738,20 @@ const viewMode    = ref('grid')
 const loading     = ref(false)
 const dragCounter = ref(0)
 const isDragging  = computed(() => dragCounter.value > 0)
-const mainRef     = ref(null)
+const mainRef     = ref<HTMLElement | null>(null)
 
 // ── 导航 ──
-interface NavSeg {
-  type: string
-  name: string
-  color?: string | null
-  id?: number | null
-  status?: string | null
-  year?: string | number | null
-  month?: string | number | null
-  folderId?: number | null
-  projectId?: number | null
-  space?: string
-}
-const navPath = ref<NavSeg[]>([])
-const navHistoryStack  = ref([])
-const navHistoryCursor = ref(-1)
-let _isHistoryNav = false
-
-const canGoBack    = computed(() => navHistoryCursor.value > 0)
-const canGoForward = computed(() => navHistoryCursor.value < navHistoryStack.value.length - 1)
-
-watch(navPath, (newVal) => {
-  if (_isHistoryNav) return
-  const snap = JSON.parse(JSON.stringify(newVal))
-  navHistoryStack.value = navHistoryStack.value.slice(0, navHistoryCursor.value + 1)
-  navHistoryStack.value.push(snap)
-  navHistoryCursor.value = navHistoryStack.value.length - 1
-}, { deep: true })
-
-function goBack() {
-  if (!canGoBack.value) return
-  _isHistoryNav = true
-  navHistoryCursor.value--
-  navPath.value = JSON.parse(JSON.stringify(navHistoryStack.value[navHistoryCursor.value]))
-  loadContents()
-  nextTick(() => { _isHistoryNav = false })
-}
-
-function goForward() {
-  if (!canGoForward.value) return
-  _isHistoryNav = true
-  navHistoryCursor.value++
-  navPath.value = JSON.parse(JSON.stringify(navHistoryStack.value[navHistoryCursor.value]))
-  loadContents()
-  nextTick(() => { _isHistoryNav = false })
-}
-
-const currentType = computed(() => {
-  if (navPath.value.length === 0) return 'root'
-  return navPath.value[navPath.value.length - 1].type
-})
-
-const currentSeg  = computed(() => navPath.value[navPath.value.length - 1] ?? null)
-const projectSeg  = computed(() => navPath.value.find(s => s.type === 'project') ?? null)
-const canUpload   = computed(() => ['personal', 'project', 'folder'].includes(currentType.value))
-
-const NAV_KEY = 'files_nav_path'
-
-function saveNav() {
-  sessionStorage.setItem(NAV_KEY, JSON.stringify(navPath.value))
-}
-
-function enterFolder(folder) {
-  clearSelection()
-  if (folder.type === 'personal') {
-    navPath.value = [{ type: 'personal', name: '个人文件', color: null }]
-  } else if (folder.type === 'projects') {
-    navPath.value = [{ type: 'projects', name: '项目文件', color: null }]
-  } else if (folder.type === 'trash') {
-    navPath.value = [{ type: 'trash', name: '回收站', color: null }]
-  } else if (folder.type === 'status') {
-    navPath.value = [
-      { type: 'projects', name: '项目文件', color: null },
-      { type: 'status', status: folder.status, name: folder.displayName, color: null },
-    ]
-  } else if (folder.type === 'year') {
-    navPath.value = [
-      { type: 'projects', name: '项目文件', color: null },
-      { type: 'status', status: 'done', name: '已完成', color: null },
-      { type: 'year', name: folder.year + ' 年', year: folder.year, color: null },
-    ]
-  } else if (folder.type === 'month') {
-    const yearSeg = navPath.value.find(s => s.type === 'year')
-    navPath.value = [
-      { type: 'projects', name: '项目文件', color: null },
-      { type: 'status', status: 'done', name: '已完成', color: null },
-      { type: 'year',  name: yearSeg.year + ' 年', year: yearSeg.year, color: null },
-      { type: 'month', name: parseInt(folder.month) + ' 月', year: folder.year, month: folder.month, color: null },
-    ]
-  } else if (folder.type === 'project') {
-    // 保留 状态 + 年月 上下文
-    const path: NavSeg[] = [{ type: 'projects', name: '项目文件', color: null }]
-    const statusSeg = navPath.value.find(s => s.type === 'status')
-    const yearSeg  = navPath.value.find(s => s.type === 'year')
-    const monthSeg = navPath.value.find(s => s.type === 'month')
-    if (statusSeg) path.push({ ...statusSeg })
-    if (yearSeg)  path.push({ ...yearSeg })
-    if (monthSeg) path.push({ ...monthSeg })
-    path.push({ type: 'project', id: folder.projectId, name: folder.displayName, color: folder.color })
-    navPath.value = path
-  } else if (folder.type === 'folder') {
-    const seg = currentSeg.value
-    if (seg?.type === 'personal') {
-      navPath.value = [
-        { type: 'personal', name: '个人文件', color: null },
-        { type: 'folder', folderId: folder.folderId, name: folder.displayName, color: null, space: 'personal' },
-      ]
-    } else if (seg?.type === 'folder') {
-      // 已在某个文件夹内，直接追加子文件夹
-      navPath.value = [
-        ...navPath.value,
-        { type: 'folder', folderId: folder.folderId, name: folder.displayName,
-          projectId: folder.projectId ?? seg.projectId, color: folder.color ?? seg.color },
-      ]
-    } else {
-      // 保留到 project 层，追加 folder
-      const projIdx = navPath.value.findIndex(s => s.type === 'project')
-      const basePath = projIdx >= 0
-        ? navPath.value.slice(0, projIdx + 1)
-        : [{ type: 'projects', name: '项目文件', color: null },
-           { type: 'project', id: folder.projectId, name: projectSeg.value?.name ?? '', color: folder.color }]
-      navPath.value = [
-        ...basePath,
-        { type: 'folder', folderId: folder.folderId, name: folder.displayName, projectId: folder.projectId, color: folder.color },
-      ]
-    }
-  }
-  saveNav()
-  loadContents()
-}
-
-function navigateTo(idx) {
-  clearSelection()
-  if (idx === -1) {
-    navPath.value = []
-  } else {
-    navPath.value = navPath.value.slice(0, idx + 1)
-  }
-  saveNav()
-  loadContents()
-}
-
-function restoreNav() {
-  try {
-    const saved = sessionStorage.getItem(NAV_KEY)
-    if (!saved) return
-    navPath.value = JSON.parse(saved)
-  } catch {
-    navPath.value = []
-  }
-}
+const {
+  navPath, canGoBack, canGoForward, goBack, goForward,
+  currentType, currentSeg, projectSeg, canUpload,
+  saveNav, enterFolder, navigateTo, restoreNav, pruneHistoryForFolders,
+} = useFilesNav({ loadContents, clearSelection })
 
 // ── 顶栏全局搜索：定位到某个文件/文件夹所在目录 ──
-function _folderChain(folderId) {
+function _folderChain(folderId: number): FolderMeta[] {
   // 从根到目标，沿 parentId 上溯，返回文件夹对象数组
-  const chain = []
-  const seen = new Set()
+  const chain: FolderMeta[] = []
+  const seen = new Set<number>()
   let cur = cacheStore.getFolder(folderId)
   while (cur && !seen.has(cur.id)) {
     seen.add(cur.id)
@@ -907,7 +761,7 @@ function _folderChain(folderId) {
   return chain
 }
 
-function _basePath(projectId) {
+function _basePath(projectId: number | null): NavSeg[] {
   if (projectId != null) {
     const p = projectStore.projects.find(p => p.id === projectId)
     const base: NavSeg[] = [{ type: 'projects', name: '项目文件', color: null }]
@@ -926,12 +780,14 @@ function _basePath(projectId) {
   return [{ type: 'personal', name: '个人文件', color: null }]
 }
 
-function _folderSeg(f) {
-  return { type: 'folder', folderId: f.id, name: f.name ?? f.displayName,
-           projectId: f.projectId ?? null, color: f.color ?? null }
+function _folderSeg(f: FolderMeta): NavSeg {
+  // FolderMeta（库存原型）只有 name，没有 displayName——这里不改行为，只是给类型检查一个
+  // 总能命中的取值（name 是必填字段，?? 分支原本就走不到）。
+  return { type: 'folder', folderId: f.id, name: f.name,
+           projectId: f.projectId ?? null, color: null }
 }
 
-async function jumpToTarget(target) {
+async function jumpToTarget(target: { kind: string; id: number } | null) {
   if (!target) return
   if (!cacheStore.loaded) await cacheStore.load()
   clearSelection()
@@ -954,7 +810,7 @@ async function jumpToTarget(target) {
   }
 }
 
-function _flashFile(id) {
+function _flashFile(id: number) {
   // 等内容渲染 + 缩略图布局稳定后，滚到目标并高亮一下
   setTimeout(() => {
     const el = mainRef.value?.querySelector(`[data-file-id="${id}"]`)
@@ -1008,25 +864,23 @@ const sortedContents = computed(() => {
 })
 
 // ── 内容 ──
-const contents = ref({ folders: [], files: [] })
+const contents = ref<{ folders: FolderCard[]; files: FileMeta[] }>({ folders: [], files: [] })
 // tiny 已由 v-lazy-src 视口门控（更大 rootMargin 先于 card），不再全量预热——避免屏幕外缩略图挤占并发队列
 
-function extractColor(colorStr) {
+function extractColor(colorStr: string | null | undefined): string | null {
   if (!colorStr) return null
   const m = colorStr.match(/#[0-9a-fA-F]{3,6}/)
   return m ? m[0] : colorStr
 }
 
 // 已完成项目按「完成日期」doneAt 归档（与项目面板一致），fallback startDate/createdAt
-function doneYear(p)  { return (p.doneAt || p.startDate || p.createdAt || '').slice(0, 4) || '未归类' }
-function doneMonth(p) { return (p.doneAt || p.startDate || p.createdAt || '').slice(5, 7) || '00' }
 
 // 状态文件夹的色 / 图标（待开始灰 / 进行中蓝 / 已完成绿）
-const STATUS_COLOR = { pending: '#8a8fa8', active: '#5080c8', done: '#4a9a72' }
-const STATUS_ICON  = { pending: PhClock,   active: PhPlayCircle, done: PhCheckCircle }
+const STATUS_COLOR: Record<string, string> = { pending: '#8a8fa8', active: '#5080c8', done: '#4a9a72' }
+const STATUS_ICON: Record<string, typeof PhClock> = { pending: PhClock, active: PhPlayCircle, done: PhCheckCircle }
 
 // 项目 → 文件夹卡
-function projFolder(p) {
+function projFolder(p: Project): FolderCard {
   return {
     id: `p:${p.id}`, type: 'project', displayName: p.name,
     color: extractColor(p.color), projectId: p.id,
@@ -1061,7 +915,7 @@ function loadContents() {
     loading.value = true
     trashApi.list()
       .then(files => { contents.value = { folders: [], files } })
-      .catch(e => console.error('[Files]', e.message))
+      .catch(e => console.error('[Files]', (e as Error).message))
       .finally(() => { loading.value = false })
     return
   }
@@ -1078,12 +932,7 @@ function loadContents() {
 
   if (type === 'projects') {
     // 按项目状态分三组（待开始/进行中/已完成），看板顺序；空组不显示
-    const cnt = {}
-    for (const p of projectStore.projects) cnt[p.status] = (cnt[p.status] || 0) + 1
-    const statusFolders = projectStore.kanbanColumns
-      .filter(c => (cnt[c.key] || 0) > 0)
-      .map(c => ({ id: `st:${c.key}`, type: 'status', status: c.key, displayName: c.label, count: cnt[c.key] }))
-    contents.value = { folders: statusFolders, files: [] }
+    contents.value = { folders: statusFolders(projectStore.projects, projectStore.kanbanColumns), files: [] }
     return
   }
 
@@ -1091,16 +940,7 @@ function loadContents() {
     const { status } = currentSeg.value
     if (status === 'done') {
       // 已完成 → 按完成日期年份归档
-      const yearMap = {}
-      for (const p of projectStore.projects) {
-        if (p.status !== 'done') continue
-        const y = doneYear(p)
-        yearMap[y] = (yearMap[y] || 0) + 1
-      }
-      const yearFolders = Object.keys(yearMap)
-        .sort((a, b) => b.localeCompare(a))
-        .map(y => ({ id: `y:${y}`, type: 'year', displayName: y + ' 年', year: y, count: yearMap[y] }))
-      contents.value = { folders: yearFolders, files: [] }
+      contents.value = { folders: yearFolders(projectStore.projects), files: [] }
     } else {
       // 待开始/进行中 → 直接列项目（不归档）
       const projs = projectStore.projects.filter(p => p.status === status)
@@ -1111,16 +951,7 @@ function loadContents() {
 
   if (type === 'year') {
     const { year } = currentSeg.value
-    const monthMap = {}
-    for (const p of projectStore.projects) {
-      if (p.status !== 'done' || doneYear(p) !== year) continue
-      const m = doneMonth(p)
-      monthMap[m] = (monthMap[m] || 0) + 1
-    }
-    const monthFolders = Object.keys(monthMap)
-      .sort()
-      .map(m => ({ id: `m:${year}-${m}`, type: 'month', displayName: parseInt(m) + ' 月', year, month: m, count: monthMap[m] }))
-    contents.value = { folders: monthFolders, files: [] }
+    contents.value = { folders: monthFolders(projectStore.projects, year ?? '未归类'), files: [] }
     return
   }
 
@@ -1133,23 +964,27 @@ function loadContents() {
 
   if (type === 'project') {
     const seg = currentSeg.value
-    const folderItems = cacheStore.getProjectRootFolders(seg.id).map(f => ({
+    if (seg.id == null) return
+    const projectId = seg.id
+    const folderItems = cacheStore.getProjectRootFolders(projectId).map(f => ({
       id: `f:${f.id}`, type: 'folder', folderId: f.id,
-      displayName: f.name, color: seg.color, projectId: seg.id,
+      displayName: f.name, color: seg.color, projectId,
       count: cacheStore.getFolderFiles(f.id).length,
     }))
-    contents.value = { folders: folderItems, files: cacheStore.getProjectRootFiles(seg.id) }
+    contents.value = { folders: folderItems, files: cacheStore.getProjectRootFiles(projectId) }
     return
   }
 
   if (type === 'folder') {
     const seg = currentSeg.value
-    const folderItems = cacheStore.getSubFolders(seg.folderId).map(f => ({
+    if (seg.folderId == null) return
+    const folderId = seg.folderId
+    const folderItems = cacheStore.getSubFolders(folderId).map(f => ({
       id: `f:${f.id}`, type: 'folder', folderId: f.id,
       displayName: f.name, color: seg.color, projectId: seg.projectId ?? null,
       count: cacheStore.getFolderFiles(f.id).length,
     }))
-    contents.value = { folders: folderItems, files: cacheStore.getFolderFiles(seg.folderId) }
+    contents.value = { folders: folderItems, files: cacheStore.getFolderFiles(folderId) }
     return
   }
 }
@@ -1185,9 +1020,12 @@ watch(uploadSignal, () => {
   fetchStorage()
 })
 
-// 咕咕通过工具改了文件库（如保存上传附件 / 建文档 / 删除）→ 实时刷新当前视图
-watch(() => liveStore.rev.files, () => {
-  cacheStore.refresh().then(() => loadContents())
+// 文件库数据变了（本页乐观更新 / 咕咕·IM·其它标签页经 filesCache 刷新或 remove 快路径）→ 重新投影当前视图。
+// contents 是 loadContents 从 store getter 手动投影的本地快照，不是 computed，故 store 数据一变就得重投。
+// 刷新/patch 的决策与「回声抑制」全在 filesCache 里统一做（见 filesCache.ts fileEvent 消费）；本页不再自己
+// 订阅 rev.files 重拉，避免与 filesCache 重复全量拉、并让回声抑制对本页同样生效（本页发起的改动不会再多刷一次）。
+watch([() => cacheStore.allFiles, () => cacheStore.allFolders], () => {
+  loadContents()
   fetchStorage()
 })
 
@@ -1237,18 +1075,18 @@ function clearSelection() {
   lastAnchorIndex.value  = -1
 }
 
-function onMainMouseDown(e) {
+function onMainMouseDown(e: MouseEvent) {
   if (currentType.value === 'root' || currentType.value === 'projects') return
   _boxMouseDown(e)
 }
 
 // ── Shift 多选 ──
 const flatSelectableItems = computed(() => [
-  ...sortedContents.value.folders.map(f => ({ type: 'folder', id: f.id })),
-  ...sortedContents.value.files.map(f => ({ type: 'file', id: f.id })),
+  ...sortedContents.value.folders.map(f => ({ type: 'folder' as const, id: f.id })),
+  ...sortedContents.value.files.map(f => ({ type: 'file' as const, id: f.id })),
 ])
 
-function _shiftSelect(type, id) {
+function _shiftSelect(type: 'file' | 'folder', id: number | string) {
   const idx = flatSelectableItems.value.findIndex(i => i.type === type && i.id === id)
   if (idx < 0) return false
   const anchor = lastAnchorIndex.value
@@ -1265,7 +1103,7 @@ function _shiftSelect(type, id) {
   return true
 }
 
-function handleFolderClick(folder, event) {
+function handleFolderClick(folder: FolderCard, event: MouseEvent) {
   if (event.shiftKey) {
     if (!_shiftSelect('folder', folder.id)) {
       // 没有锚点时 shift+click 当作普通选中，设置锚点，不导航
@@ -1282,7 +1120,7 @@ function handleFolderClick(folder, event) {
   }
 }
 
-function handleFileClick(file, event) {
+function handleFileClick(file: FileMeta, event: MouseEvent) {
   if (event.shiftKey) {
     if (!_shiftSelect('file', file.id)) {
       // 没有锚点时 shift+click 当作普通选中，设置锚点
@@ -1329,7 +1167,7 @@ function toggleSelectAllTrash() {
   }
 }
 
-function toggleFileSelect(fileId, e) {
+function toggleFileSelect(fileId: number, e: MouseEvent) {
   const ids = new Set(selectedIds.value)
   if (e.ctrlKey || e.metaKey) {
     if (ids.has(fileId)) ids.delete(fileId)
@@ -1347,25 +1185,26 @@ function onPageClick() {
 }
 
 // ── 删除 ──
-async function deleteSingleFile(f) {
+async function deleteSingleFile(f: FileMeta) {
   const backup = cacheStore.getFile(f.id)
-  cacheStore.removeFile(f.id)
-  selectedIds.value = new Set([...selectedIds.value].filter(id => id !== f.id))
-  loadContents()
-  try {
-    await filesApi.delete(f.id)
-  } catch (e) {
-    if (backup) cacheStore.addFile(backup)
-    loadContents()
-    console.error('[Files] 删除失败:', e.message)
-  }
+  await optimisticMutation({
+    apply: () => {
+      cacheStore.removeFile(f.id)
+      selectedIds.value = new Set([...selectedIds.value].filter(id => id !== f.id))
+    },
+    afterMutate: loadContents,
+    work: () => filesApi.delete(f.id),
+    onCommit: fetchStorage,
+    rollback: () => { if (backup) cacheStore.addFile(backup) },
+    onError: e => console.error('[Files] 删除失败:', (e as Error).message),
+  })
 }
 
 async function downloadSelected() {
   if (downloadingZip.value) return
   const ids = [...selectedIds.value]
-  const folderObjs = contents.value.folders.filter(f => selectedFolderKeys.value.has(f.id))
-  const folderIds = folderObjs.map(f => f.folderId)
+  const folderObjs = contents.value.folders.filter(f => selectedFolderKeys.value.has(f.id) && f.folderId != null)
+  const folderIds = folderObjs.map(f => f.folderId as number)
   if (!ids.length && !folderIds.length) return
 
   downloadingZip.value = true
@@ -1385,7 +1224,7 @@ async function downloadSelected() {
     const dirName = currentSeg.value?.name ?? '文件'
     await filesApi.batchDownload(ids, folderIds, `${dirName}.zip`)
   } catch (e) {
-    console.error('[Files] 批量下载失败:', e.message)
+    console.error('[Files] 批量下载失败:', (e as Error).message)
   } finally {
     downloadingZip.value = false
   }
@@ -1397,9 +1236,8 @@ async function deleteSelected() {
   if (!hasFiles && !hasFolders) return
 
   const fileIds     = [...selectedIds.value]
-  const folderMap   = new Map(contents.value.folders.map(f => [f.id, f.folderId]))
-  const folderIds   = [...selectedFolderKeys.value].map(k => folderMap.get(k)).filter(Boolean)
-  const fileBackups = fileIds.map(id => cacheStore.getFile(id)).filter(Boolean)
+  const folderIds   = resolveFolderIds(selectedFolderKeys.value, contents.value.folders)
+  const fileBackups = fileIds.map(id => cacheStore.getFile(id)).filter((f): f is FileMeta => f != null)
 
   // 乐观更新
   if (hasFiles)   cacheStore.removeFiles(fileIds)
@@ -1413,37 +1251,39 @@ async function deleteSelected() {
     if (hasFiles)   tasks.push(filesApi.batchDelete(fileIds))
     if (hasFolders) folderIds.forEach(id => tasks.push(foldersApi.delete(id)))
     await Promise.all(tasks)
+    fetchStorage()
   } catch (e) {
     // 回滚
     fileBackups.forEach(f => cacheStore.addFile(f))
     loadContents()
-    console.error('[Files] 批量删除失败:', e.message)
+    console.error('[Files] 批量删除失败:', (e as Error).message)
   }
 }
 
 // ── 回收站操作 ──
-async function restoreFile(f) {
+async function restoreFile(f: FileMeta) {
   try {
     await trashApi.restore(f.id)
     loadContents()
-    liveStore.bump('files')
+    cacheStore.refresh()   // 还原的文件回到文件库 → 直接刷新库 store（本页发起，SSE 回声被抑制，得自己刷）
+    fetchStorage()   // 还原使 deleted_at=null，重新计入用量
   } catch (e) {
-    console.error('[Files] 恢复失败:', e.message)
+    console.error('[Files] 恢复失败:', (e as Error).message)
   }
 }
 
-async function hardDeleteFile(f) {
+async function hardDeleteFile(f: FileMeta) {
   if (!confirm(`永久删除「${f.displayName}.${f.ext.toLowerCase()}」？此操作不可撤销。`)) return
   try {
     await trashApi.hardDelete(f.id)
     loadContents()
   } catch (e) {
-    console.error('[Files] 永久删除失败:', e.message)
+    console.error('[Files] 永久删除失败:', (e as Error).message)
   }
 }
 
-function handleTrashFileClick(f, event) {
-  if (event.target.closest('button')) return
+function handleTrashFileClick(f: FileMeta, event: MouseEvent) {
+  if ((event.target as HTMLElement).closest('button')) return
   const ids = new Set(selectedIds.value)
   if (ids.has(f.id)) ids.delete(f.id)
   else ids.add(f.id)
@@ -1457,9 +1297,10 @@ async function restoreSelected() {
     await Promise.all(ids.map(id => trashApi.restore(id)))
     clearSelection()
     loadContents()
-    liveStore.bump('files')
+    cacheStore.refresh()   // 同上：还原的文件回到文件库，直接刷新库 store
+    fetchStorage()   // 还原使 deleted_at=null，重新计入用量
   } catch (e) {
-    console.error('[Files] 批量恢复失败:', e.message)
+    console.error('[Files] 批量恢复失败:', (e as Error).message)
   }
 }
 
@@ -1472,7 +1313,7 @@ async function hardDeleteSelected() {
     clearSelection()
     loadContents()
   } catch (e) {
-    console.error('[Files] 批量永久删除失败:', e.message)
+    console.error('[Files] 批量永久删除失败:', (e as Error).message)
   }
 }
 
@@ -1482,18 +1323,18 @@ async function confirmEmptyTrash() {
     await trashApi.empty()
     loadContents()
   } catch (e) {
-    console.error('[Files] 清空回收站失败:', e.message)
+    console.error('[Files] 清空回收站失败:', (e as Error).message)
   }
 }
 
 // ── 回收站工具函数 ──
-function daysLeft(deletedAt) {
+function daysLeft(deletedAt: string | null | undefined) {
   if (!deletedAt) return 30
   const gone = Math.floor((Date.now() - new Date(deletedAt).getTime()) / 86400000)
   return Math.max(0, 30 - gone)
 }
 
-function formatDate(iso) {
+function formatDate(iso: string | null | undefined) {
   return iso ? iso.slice(0, 10) : '—'
 }
 
@@ -1528,7 +1369,7 @@ async function createFolder() {
   } catch (e) {
     cacheStore.removeFolder(tempId)
     loadContents()
-    console.error('[Files] 新建文件夹失败:', e.message)
+    console.error('[Files] 新建文件夹失败:', (e as Error).message)
   } finally {
     newFolderLoading.value = false
   }
@@ -1538,25 +1379,26 @@ async function createFolder() {
 // 由 uploadFilesWithFolders 按路径建好子文件夹再落到各自正确的 folder_id。
 // items: UploadItem[]（{file, relativePath}）——relativePath 带 "/" 时来自拖入的文件夹，
 // 由 uploadFilesWithFolders 按路径建好子文件夹再落到各自正确的 folder_id。
-const conflictDialogRef = ref(null)
+const conflictDialogRef = ref<InstanceType<typeof UploadConflictDialog> | null>(null)
 
-async function uploadFiles(items) {
+async function uploadFiles(items: UploadItem[]) {
   if (!items.length) return
   const type = currentType.value
   const seg  = currentSeg.value
-  let space = 'personal', projectId = null, folderId = null
+  let space = 'personal', projectId: number | null = null, folderId: number | null = null
   if (type === 'project' && seg) {
-    space = 'project'; projectId = seg.id
+    space = 'project'; projectId = seg.id ?? null
   } else if (type === 'folder' && seg) {
-    folderId = seg.folderId
+    folderId = seg.folderId ?? null
     if (seg.projectId) { space = 'project'; projectId = seg.projectId }
   }
 
   // 上传前探测同名冲突（只查直接落在这个文件夹的顶层文件，子文件夹本身是新建的不会冲突）；
   // 有冲突才弹列表式确认，选「跳过」的文件直接从这批里剔除，不会真的发上传请求。
   const conflicts = await checkUploadConflicts(items, { space, projectId, folderId })
-  let decisions = new Map()
+  let decisions = new Map<string, ConflictDecision>()
   if (conflicts.length) {
+    if (!conflictDialogRef.value) return
     decisions = await conflictDialogRef.value.show(conflicts)
     items = items.filter(it => decisions.get(it.relativePath)?.action !== 'skip')
     if (!items.length) return
@@ -1565,7 +1407,7 @@ async function uploadFiles(items) {
   // 按顶层文件夹分组：relativePath 带 "/" 的文件汇总进「文件夹名 · 完成数/总数」一张卡，
   // 不用每个文件各出一张（大部分还落在当前看不见的子文件夹里，刷屏也看不出意义）；
   // 没有 "/" 的（本来就是单文件，或文件夹里就直接是文件不算——理论上不会有这种）仍各自一张卡。
-  const folderGhosts = new Map()
+  const folderGhosts = new Map<string, ReturnType<typeof createFolderGhost> | null>()
   for (const { relativePath } of items) {
     const idx = relativePath.indexOf('/')
     if (idx === -1) continue
@@ -1579,7 +1421,7 @@ async function uploadFiles(items) {
   // 顶层文件夹（正被 ghost 追踪进度的那几个）先别实时插进可见列表——插了会跟它的 ghost 卡
   // 同时出现，看起来像「两个文件夹」。攒着，等这组文件全传完（ghost 即将消失那一刻）再插入，
   // 从「上传中」无缝换成「已完成」。更深层的子文件夹本来就不在当前视图里，直接插不会重复。
-  const pendingTopFolders = new Map()
+  const pendingTopFolders = new Map<string, { id: number; projectId?: number | null; parentId?: number | null; name: string }>()
 
   await uploadFilesWithFolders(items, {
     projectId, baseFolderId: folderId,
@@ -1593,17 +1435,16 @@ async function uploadFiles(items) {
     uploadOne: async (file, resolvedFolderId, relativePath) => {
       const top = relativePath.includes('/') ? relativePath.slice(0, relativePath.indexOf('/')) : null
       const folderGhost = top ? folderGhosts.get(top) : null
-      const ghost = folderGhost ? null : createGhost(
-        (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(0, i) : file.name })(),
-        (() => { const i = file.name.lastIndexOf('.'); return i > -1 ? file.name.slice(i + 1).toUpperCase() : '' })(),
-      )
+      const { base: ghostBase, ext: ghostExt } = splitName(file.name)
+      const ghost = folderGhost ? null : createGhost(ghostBase, ghostExt.toUpperCase())
       // 这组文件全处理完（不管成功失败）就把攒着的真实文件夹插进可见列表——跟成功/失败两条
       // 路径都要走，否则「文件夹最后一个文件恰好失败」时永远插不进去
-      const settleFolder = (failed) => {
-        if (!folderGhost) return
+      const settleFolder = (failed: boolean) => {
+        if (!folderGhost || !top) return
         bumpFolderGhost(folderGhost, failed)
-        if (folderGhost.done >= folderGhost.total && pendingTopFolders.has(top)) {
-          cacheStore.addFolder(pendingTopFolders.get(top))
+        const pendingFolder = pendingTopFolders.get(top)
+        if ((folderGhost.done ?? 0) >= (folderGhost.total ?? 0) && pendingFolder) {
+          cacheStore.addFolder(pendingFolder)
           pendingTopFolders.delete(top)
         }
       }
@@ -1632,7 +1473,7 @@ async function uploadFiles(items) {
         loadContents()
         fetchStorage()
       } catch (e) {
-        console.error('[Files] 上传失败:', e.message)
+        console.error('[Files] 上传失败:', (e as Error).message)
         if (ghost) failGhost(ghost)
         else settleFolder(true)
       }
@@ -1640,56 +1481,58 @@ async function uploadFiles(items) {
   })
 }
 
-async function handleFileInput(e) {
-  await uploadFiles(filesToItems(e.target.files))
-  e.target.value = ''
+async function handleFileInput(e: Event) {
+  const target = e.target as HTMLInputElement
+  await uploadFiles(filesToItems(target.files ?? []))
+  target.value = ''
 }
 
 // ── 拖拽上传 ──
-function onDragEnter(e) {
+function onDragEnter(e: DragEvent) {
   if (canUpload.value && e.dataTransfer?.types?.includes('Files')) dragCounter.value++
 }
 function onDragLeave() {
   dragCounter.value = Math.max(0, dragCounter.value - 1)
 }
-async function handleDrop(e) {
+async function handleDrop(e: DragEvent) {
   dragCounter.value = 0
   if (!canUpload.value) return
+  if (!e.dataTransfer) return
   const items = await readDroppedEntries(e.dataTransfer)
   if (items.length) uploadFiles(items)
 }
 
 // ── 预览 ──
 const previewStore = usePreviewStore()
-const openPreview = (f) => {
+const openPreview = (f: FileMeta) => {
   if (isAudioExt(f.ext)) fireHint('music')   // 新手引导：第一次打开音乐文件（🎵😌 彩蛋）
   previewStore.open(f, sortedContents.value.files)
 }
 
 // ── 下载 ──
-async function downloadFile(f) {
+async function downloadFile(f: FileMeta) {
   try {
     await filesApi.download(f.id, `${f.displayName}.${f.ext.toLowerCase()}`)
   } catch (e) {
-    console.error('[Files] 下载失败:', e.message)
+    console.error('[Files] 下载失败:', (e as Error).message)
   }
 }
 
 // ── 重命名 ──
-const renamingFileId    = ref(null)
-const renamingFolderKey = ref(null)
+const renamingFileId    = ref<number | null>(null)
+const renamingFolderKey = ref<number | null>(null)
 const renameText        = ref('')
 
-function startRenameFile(f) {
+function startRenameFile(f: FileMeta) {
   renamingFolderKey.value = null
   renamingFileId.value    = f.id
   renameText.value        = f.displayName
   nextTick(() => document.querySelector<HTMLInputElement>('.rename-input-inline')?.select())
 }
 
-function startRenameFolder(f) {
+function startRenameFolder(f: FolderCard) {
   renamingFileId.value    = null
-  renamingFolderKey.value = f.folderId
+  renamingFolderKey.value = f.folderId ?? null
   renameText.value        = f.displayName
   nextTick(() => document.querySelector<HTMLInputElement>('.rename-input-inline')?.select())
 }
@@ -1714,25 +1557,27 @@ async function commitRename() {
     filesApi.update(fileId, { displayName: name }).catch(e => {
       if (oldName != null) cacheStore.updateFile(fileId, { displayName: oldName })
       loadContents()
-      console.error('[Files] 重命名失败:', e.message)
+      console.error('[Files] 重命名失败:', (e as Error).message)
     })
   } else {
+    if (folderId == null) return
     const oldName = cacheStore.getFolder(folderId)?.name
     cacheStore.updateFolder(folderId, { name })
     loadContents()
     foldersApi.rename(folderId, name).catch(e => {
       if (oldName != null) cacheStore.updateFolder(folderId, { name: oldName })
       loadContents()
-      console.error('[Files] 重命名失败:', e.message)
+      console.error('[Files] 重命名失败:', (e as Error).message)
     })
   }
 }
 
-async function downloadFolder(f) {
+async function downloadFolder(f: FolderCard) {
+  if (f.folderId == null) return
   try {
     await foldersApi.download(f.folderId, f.displayName)
   } catch (e) {
-    console.error('[Files] 下载文件夹失败:', e.message)
+    console.error('[Files] 下载文件夹失败:', (e as Error).message)
   }
 }
 
@@ -1742,33 +1587,35 @@ async function downloadFolder(f) {
 // perf trace 实测证实）。抓取判断单选/多选 → 起 startPhysicsDrag/startMultiPhysicsDrag → 拖拽
 // 中找落点高亮 → 松手判定目标并派发移动，这套编排跟 ProjectModal.vue 的文件面板完全一样，抽成
 // 了共享 composable useFileDragDrop，这里只提供 Files 特有的选择器/面包屑规则/落地 API。
-function isBcDroppable(seg) {
-  return seg.type === 'folder' || seg.type === 'personal'
+function isBcDroppable(seg: NavSeg) {
+  // folder/personal/project 段都可作为拖放目标：folder→该文件夹，personal/project→对应根（parentId=null，
+  // resolveBcTarget 里非 folder 段一律映射为 null）。此前漏了 project，导致子目录文件夹拖不回项目根。
+  return seg.type === 'folder' || seg.type === 'personal' || seg.type === 'project'
 }
 
-async function moveFoldersInto(folderIds, targetFolderId) {
-  const backups = folderIds.map(id => cacheStore.getFolder(id)).filter(Boolean)
-  folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: targetFolderId }))
-  loadContents()
-  try {
-    await Promise.all(folderIds.map(id => foldersApi.move(id, targetFolderId)))
-  } catch (err) {
-    backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId }))
-    loadContents()
-    console.error('[Files] 移动文件夹失败:', err.message)
-  }
+async function moveFoldersInto(folderIds: Array<number | string>, targetFolderId: number | string | null) {
+  const nFolderIds = folderIds as number[]
+  const nTarget = targetFolderId as number | null
+  const backups = nFolderIds.map(id => cacheStore.getFolder(id)).filter(Boolean) as FolderMeta[]
+  await optimisticMutation({
+    apply: () => nFolderIds.forEach(id => cacheStore.updateFolder(id, { parentId: nTarget })),
+    afterMutate: loadContents,
+    work: () => Promise.all(nFolderIds.map(id => foldersApi.move(id, nTarget))),
+    rollback: () => backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId })),
+    onError: err => console.error('[Files] 移动文件夹失败:', (err as Error).message),
+  })
 }
-async function moveFilesInto(fileIds, targetFolderId) {
-  const backups = fileIds.map(id => cacheStore.getFile(id)).filter(Boolean)
-  fileIds.forEach(id => cacheStore.updateFile(id, { folderId: targetFolderId }))
-  loadContents()
-  try {
-    await Promise.all(fileIds.map(id => filesApi.update(id, { folderId: targetFolderId })))
-  } catch (err) {
-    backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId }))
-    loadContents()
-    console.error('[Files] 移动失败:', err.message)
-  }
+async function moveFilesInto(fileIds: Array<number | string>, targetFolderId: number | string | null) {
+  const nFileIds = fileIds as number[]
+  const nTarget = targetFolderId as number | null
+  const backups = nFileIds.map(id => cacheStore.getFile(id)).filter(Boolean) as FileMeta[]
+  await optimisticMutation({
+    apply: () => nFileIds.forEach(id => cacheStore.updateFile(id, { folderId: nTarget })),
+    afterMutate: loadContents,
+    work: () => Promise.all(nFileIds.map(id => filesApi.update(id, { folderId: nTarget }))),
+    rollback: () => backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId })),
+    onError: err => console.error('[Files] 移动失败:', (err as Error).message),
+  })
 }
 
 const {
@@ -1784,7 +1631,7 @@ const {
   resolveBcTarget(idx) {
     const seg = navPath.value[idx]
     if (!seg || !isBcDroppable(seg)) return null
-    return { targetFolderId: seg.type === 'folder' ? seg.folderId : null, acceptsFiles: true, acceptsFolders: true }
+    return { targetFolderId: seg.type === 'folder' ? (seg.folderId ?? null) : null, acceptsFiles: true, acceptsFolders: true }
   },
   cancelBoxDrag: () => _cancelBoxDrag(),
   clearSelection() { selectedFolderKeys.value = new Set(); selectedIds.value = new Set() },
@@ -1794,15 +1641,14 @@ const {
 
 // selectedFolderKeys 里放的是 f.id（"f:65"），拖拽需要真实数字 folderId——查当前层文件夹列表换算
 function _selectedFolderIdNums() {
-  const folderMap = new Map(sortedContents.value.folders.map(f => [f.id, f.folderId]))
-  return new Set([...selectedFolderKeys.value].map(k => folderMap.get(k)).filter(v => v != null))
+  return new Set(resolveFolderIds(selectedFolderKeys.value, sortedContents.value.folders))
 }
 
-function onFolderPointerDown(f, e) {
+function onFolderPointerDown(f: FolderCard, e: PointerEvent) {
   // 全部文件根目录下"个人文件/项目文件/回收站"是伪文件夹卡片（type 不是 'folder'，没有真实
   // folderId），不能拖拽——之前没挡，f.folderId 是 undefined，落点判定/吸入动画照样能触发
   // （只是数据层最终 API 调用会因 id 无效而静默失败），表现为"能拖进别的卡片，但只有动画有效果"。
-  if (f.type !== 'folder') return
+  if (f.type !== 'folder' || f.folderId == null) return
   _onFolderPointerDown(e, {
     itemId: f.folderId,
     isSelected: selectedFolderKeys.value.has(f.id),
@@ -1810,7 +1656,7 @@ function onFolderPointerDown(f, e) {
     selectedFolderIds: _selectedFolderIdNums(),
   })
 }
-function onFilePointerDown(f, e) {
+function onFilePointerDown(f: FileMeta, e: PointerEvent) {
   _onFilePointerDown(e, {
     itemId: f.id,
     isSelected: selectedIds.value.has(f.id),
@@ -1819,42 +1665,28 @@ function onFilePointerDown(f, e) {
   })
 }
 
-function pruneHistoryForFolders(folderIds) {
-  const idSet = new Set(folderIds)
-  const hasDeleted = snap => snap.some(seg => seg.type === 'folder' && idSet.has(seg.folderId))
-  const curIdx = navHistoryCursor.value
-  let newCursor = 0
-  const kept = []
-  navHistoryStack.value.forEach((snap, i) => {
-    if (!hasDeleted(snap)) {
-      if (i <= curIdx) newCursor = kept.length
-      kept.push(snap)
-    }
-  })
-  navHistoryStack.value = kept
-  navHistoryCursor.value = Math.min(newCursor, Math.max(0, kept.length - 1))
-}
-
-async function deleteFolder(f) {
+async function deleteFolder(f: FolderCard) {
+  if (f.folderId == null) return
   if (!confirm(`删除文件夹"${f.displayName}"？文件夹内所有内容将被删除。`)) return
   pruneHistoryForFolders([f.folderId])
   cacheStore.removeFolder(f.folderId)
   loadContents()
   try {
     await foldersApi.delete(f.folderId)
+    fetchStorage()
   } catch (e) {
     // 无法回滚（不知道子结构），静默刷新
     cacheStore.refresh().then(() => loadContents())
-    console.error('[Files] 删除文件夹失败:', e.message)
+    console.error('[Files] 删除文件夹失败:', (e as Error).message)
   }
 }
 
 // ── 样式工具 ──
-function folderIconStyle(folder) {
+function folderIconStyle(folder: FolderCard) {
   if (folder.type === 'personal') return { background: 'rgba(180,148,80,0.14)',  color: '#b49450' }
   if (folder.type === 'projects') return { background: 'rgba(123,127,178,0.13)', color: '#7b7fb2' }
   if (folder.type === 'trash')    return { background: 'rgba(220,80,80,0.1)',    color: '#c85a5a' }
-  if (folder.type === 'status')   { const c = STATUS_COLOR[folder.status] || '#7b7fb2'; return { background: c + '1f', color: c } }
+  if (folder.type === 'status')   { const c = STATUS_COLOR[folder.status ?? ''] || '#7b7fb2'; return { background: c + '1f', color: c } }
   if (folder.type === 'year')     return { background: 'rgba(80,160,120,0.12)',  color: '#4a9a72' }
   if (folder.type === 'month')    return { background: 'rgba(80,130,200,0.11)',  color: '#5080c8' }
   if (folder.color) {
@@ -1867,29 +1699,29 @@ function folderIconStyle(folder) {
 // 文件类型助手（isImageExt / fileExtCategory / fileIconColor / fileListIcon）与缩略图懒加载指令
 // vLazySrc 已统一收口到 @/utils/fileTypes 和 @/composables/useLazyThumb，见顶部 import。
 
-function folderListIcon(folder) {
+function folderListIcon(folder: FolderCard) {
   if (folder.type === 'personal') return PhUser
   if (folder.type === 'projects') return PhStack
   if (folder.type === 'trash')    return PhTrash
-  if (folder.type === 'status')   return STATUS_ICON[folder.status] || PhStack
+  if (folder.type === 'status')   return STATUS_ICON[folder.status ?? ''] || PhStack
   if (folder.type === 'year')     return PhCalendarBlank
   if (folder.type === 'month')    return PhCalendarDot
   if (folder.type === 'project')  return PhBrowser
   return PhFolder
 }
 
-function folderAccentColor(folder) {
+function folderAccentColor(folder: FolderCard) {
   if (folder.type === 'personal') return '#967858'
   if (folder.type === 'projects') return '#6878a8'
   if (folder.type === 'trash')    return '#987070'
-  if (folder.type === 'status')   return STATUS_COLOR[folder.status] || '#8888a8'
+  if (folder.type === 'status')   return STATUS_COLOR[folder.status ?? ''] || '#8888a8'
   if (folder.type === 'year')     return '#508878'
   if (folder.type === 'month')    return '#5878a8'
   if (folder.color) return folder.color
   return '#8888a8'
 }
 
-const folderInputRef = ref(null)
+const folderInputRef = ref<HTMLInputElement | null>(null)
 watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.focus()) })
 
 // ── 剪贴板 & 右键菜单 ────────────────────────────────────────────────────────
@@ -1897,12 +1729,16 @@ const isMac = navigator.platform.toUpperCase().includes('MAC') || navigator.user
 const modKey = isMac ? '⌘' : 'Ctrl'
 const cbStore = useClipboardStore()
 
-const ctx = ref({ visible: false, x: 0, y: 0, type: null, target: null })
-const infoPopup = ref({ show: false, file: null, x: 0, y: 0 })
+type CtxType = 'file' | 'multi-file' | 'folder' | 'empty' | null
+// target 在 'folder' 菜单里读 .type 区分真实文件夹卡（f.type === 'folder'）与伪文件夹卡；
+// FileMeta 本身没有 type 字段，补一个可选的，让联合类型上都能访问 .type（不影响运行时形状）。
+type CtxTarget = (FileMeta & { type?: string }) | FolderCard | null
+const ctx = ref<{ visible: boolean; x: number; y: number; type: CtxType; target: CtxTarget }>({ visible: false, x: 0, y: 0, type: null, target: null })
+const infoPopup = ref<{ show: boolean; file: FileMeta | undefined; x: number; y: number }>({ show: false, file: undefined, x: 0, y: 0 })
 
 function selCut() {
   const fids = [...selectedIds.value]
-  const dids = [...selectedFolderKeys.value].map(k => contents.value.folders.find(f => f.id === k)?.folderId).filter(Boolean)
+  const dids = resolveFolderIds(selectedFolderKeys.value, contents.value.folders)
   cbStore.cut(fids, dids)
   clearSelection()
 }
@@ -1911,9 +1747,9 @@ function selCopy() {
   clearSelection()
 }
 
-function openCtx(type, target, e) {
+function openCtx(type: Exclude<CtxType, null>, target: CtxTarget, e: MouseEvent) {
   // 如果右键点到已选中的文件，切换为多选菜单
-  if (type === 'file' && (selectedIds.value.has(target.id) || selectedFolderKeys.value.size > 0) &&
+  if (type === 'file' && target && (selectedIds.value.has((target as FileMeta).id) || selectedFolderKeys.value.size > 0) &&
       (selectedIds.value.size + selectedFolderKeys.value.size) > 1) {
     type = 'multi-file'
   }
@@ -1921,23 +1757,24 @@ function openCtx(type, target, e) {
 }
 
 // 当前目录的 folder_id（null = 根目录）
-function currentFolderId() {
+function currentFolderId(): number | null {
   const seg = currentSeg.value
-  return seg?.type === 'folder' ? seg.folderId : null
+  return seg?.type === 'folder' ? (seg.folderId ?? null) : null
 }
 
 // ── 文件操作 ──
 function ctxInfo() {
   const f = ctx.value.target
   ctx.value.visible = false
-  if (f) infoPopup.value = { show: true, file: f, x: ctx.value.x, y: ctx.value.y }
+  if (f) infoPopup.value = { show: true, file: f as FileMeta, x: ctx.value.x, y: ctx.value.y }
 }
 
 async function ctxDownload() {
   ctx.value.visible = false
+  if (ctx.value.type !== 'multi-file' && !ctx.value.target) return
   const ids = ctx.value.type === 'multi-file'
     ? [...selectedIds.value]
-    : [ctx.value.target.id]
+    : [(ctx.value.target as FileMeta).id]
   if (ids.length === 1) {
     const f = sortedContents.value.files.find(f => f.id === ids[0])
     if (f) await filesApi.download(f.id, `${f.displayName}.${f.ext}`)
@@ -1948,44 +1785,57 @@ async function ctxDownload() {
 }
 function ctxRename() {
   const f = ctx.value.target; ctx.value.visible = false
-  startRenameFile(f)
+  if (f) startRenameFile(f as FileMeta)
 }
 function ctxCut() {
+  if (ctx.value.type !== 'multi-file' && !ctx.value.target) return
   const ids = ctx.value.type === 'multi-file'
-    ? [...selectedIds.value] : [ctx.value.target.id]
+    ? [...selectedIds.value] : [(ctx.value.target as FileMeta).id]
   cbStore.cut(ids, []); ctx.value.visible = false
 }
 function ctxCopy() {
+  if (ctx.value.type !== 'multi-file' && !ctx.value.target) return
   const ids = ctx.value.type === 'multi-file'
-    ? [...selectedIds.value] : [ctx.value.target.id]
+    ? [...selectedIds.value] : [(ctx.value.target as FileMeta).id]
   cbStore.copy(ids, []); ctx.value.visible = false
 }
 async function ctxDelete() {
   ctx.value.visible = false
+  if (ctx.value.type !== 'multi-file' && !ctx.value.target) return
   const ids = ctx.value.type === 'multi-file'
-    ? [...selectedIds.value] : [ctx.value.target.id]
-  try {
-    await Promise.all(ids.map(id => filesApi.delete(id)))
-    selectedIds.value = new Set()
-    loadContents()
-  } catch (e) { console.error(e) }
+    ? [...selectedIds.value] : [(ctx.value.target as FileMeta).id]
+  // 乐观：先从缓存移除再 loadContents。loadContents 是从缓存同步重建的，若不先 removeFiles，
+  // 被删文件仍在缓存 → 视图原地不动，要等 SSE/刷新才消失（跟 deleteSingleFile 对齐，之前这条右键路径漏了）。
+  const backups = ids.map(id => cacheStore.getFile(id)).filter((f): f is FileMeta => f != null)
+  await optimisticMutation({
+    apply: () => {
+      cacheStore.removeFiles(ids)
+      selectedIds.value = new Set()
+    },
+    afterMutate: loadContents,
+    work: () => Promise.all(ids.map(id => filesApi.delete(id))),
+    onCommit: fetchStorage,
+    rollback: () => backups.forEach(f => cacheStore.addFile(f)),
+    onError: e => console.error('[Files] 删除失败:', (e as Error).message),
+  })
 }
 
 // ── 文件夹操作 ──
 function ctxDownloadFolder() {
   const f = ctx.value.target; ctx.value.visible = false
-  downloadFolder(f)
+  if (f) downloadFolder(f as FolderCard)
 }
 function ctxRenameFolder() {
   const f = ctx.value.target; ctx.value.visible = false
-  startRenameFolder(f)
+  if (f) startRenameFolder(f as FolderCard)
 }
 function ctxCutFolder() {
-  cbStore.cut([], [ctx.value.target.folderId]); ctx.value.visible = false
+  if (!ctx.value.target) return
+  cbStore.cut([], [(ctx.value.target as FolderCard).folderId as number]); ctx.value.visible = false
 }
 async function ctxDeleteFolder() {
   const f = ctx.value.target; ctx.value.visible = false
-  await deleteFolder(f)
+  if (f) await deleteFolder(f as FolderCard)
 }
 
 // ── 粘贴 ──
@@ -1996,33 +1846,50 @@ async function ctxPaste() {
   const projectId = seg?.type === 'project' ? seg.id : (seg?.projectId ?? null)
   try {
     if (cbStore.type === 'cut') {
-      const backups = cbStore.fileIds.map(id => cacheStore.getFile(id)).filter(Boolean)
-      cbStore.fileIds.forEach(id => cacheStore.updateFile(id, { folderId, projectId }))
-      cbStore.clear()
-      loadContents()
-      try {
-        await Promise.all(backups.map(f => filesApi.update(f.id, { folderId, projectId })))
-      } catch (e) {
-        backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId, projectId: f.projectId }))
-        loadContents()
-        console.error('[Files] 粘贴失败:', e)
-      }
+      // 剪切板同时可能带文件和文件夹（selCut/ctxCutFolder 都会填 folderIds）；此前这里只处理了
+      // fileIds，粘贴文件夹是纯静默空操作——文件库剪切文件夹一直没生效，就是漏了这个分支
+      // （项目编辑卡那边 pmCtxPaste 当时已经补过，这里没同步）。
+      const fileIds   = [...cbStore.fileIds]
+      const folderIds = [...cbStore.folderIds]
+      const fileBackups   = fileIds.map(id => cacheStore.getFile(id)).filter((f): f is FileMeta => f != null)
+      const folderBackups = folderIds.map(id => cacheStore.getFolder(id)).filter((f): f is FolderMeta => f != null)
+      await optimisticMutation({
+        apply: () => {
+          fileIds.forEach(id => cacheStore.updateFile(id, { folderId, projectId }))
+          folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: folderId }))
+          cbStore.clear()
+        },
+        afterMutate: loadContents,
+        work: () => Promise.all([
+          ...fileBackups.map(f => filesApi.update(f.id, { folderId, projectId })),
+          ...folderIds.map(id => foldersApi.move(id, folderId)),
+        ]),
+        rollback: () => {
+          fileBackups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId, projectId: f.projectId }))
+          folderBackups.forEach(f => cacheStore.updateFolder(f.id, { parentId: f.parentId }))
+        },
+        onError: e => console.error('[Files] 粘贴失败:', e),
+      })
     } else if (cbStore.type === 'copy') {
       const created = await Promise.all(cbStore.fileIds.map(id =>
         filesApi.copy(id, { folderId, projectId })
       ))
       created.forEach(f => cacheStore.addFile(f))
       loadContents()
+      fetchStorage()   // 复制新增文件，计入用量
     }
   } catch (e) { console.error('[Files] 粘贴失败:', e) }
 }
 
 // ── 键盘快捷键 ──
-function onKeyDown(e) {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+function onKeyDown(e: KeyboardEvent) {
+  if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return
   const ctrl = e.ctrlKey || e.metaKey
   if (ctrl && e.key === 'x') {
-    const fids = [...selectedIds.value]; const dids = [...selectedFolderKeys.value].map(k => contents.value.folders.find(f => f.id === k)?.folderId).filter(Boolean)
+    const fids = [...selectedIds.value]
+    const dids = [...selectedFolderKeys.value]
+      .map(k => contents.value.folders.find(f => f.id === k)?.folderId)
+      .filter((id): id is number => id != null)
     if (fids.length || dids.length) { cbStore.cut(fids, dids); e.preventDefault() }
   } else if (ctrl && e.key === 'c') {
     const fids = [...selectedIds.value]
@@ -2341,41 +2208,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 .folder-card:hover .fd-hover-actions { opacity: 1; }
 
-/* ── 文件卡片 ── */
-/* 抬起(:hover 的 transform)/按下(:active)动效来自全局 .hover-card-fx（模板里已加）；
-   box-shadow 在这里自己覆盖一份——要保留文件卡自带的内高光(inset)层，跟 .hover-card-fx
-   单纯的外阴影不一样，不能直接吃它那份，数值仍照抄项目卡的抬起阴影，保证手感一致。 */
-.fc-card {
-  background: rgba(255,255,255,0.72);
-  border: 1px solid rgba(255,255,255,0.9);
-  border-radius: 14px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
-  min-height: 122px;
-}
-.fc-card:hover {
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 18px rgba(80,90,110,0.13);
-  background: rgba(255,255,255,0.86);
-}
-.fc-card.selected {
-  border-color: rgba(123,127,178,0.55);
-  background: rgba(255,255,255,0.92);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 0 0 2px rgba(123,127,178,0.28);
-}
-/* 选中覆盖层：::before 覆盖整张卡（含图片卡白色标签区），::after 在缩略图上额外叠加 */
-.fc-card.selected::before {
-  content: ''; position: absolute; inset: 0; z-index: 2;
-  pointer-events: none; border-radius: inherit;
-  background: rgba(123,127,178,0.14);
-}
-.fc-card.selected .fc-thumb-area::after,
-.fc-card.pre-selected .fc-thumb-area::after {
-  content: ''; position: absolute; inset: 0; z-index: 2;
-  pointer-events: none;
-}
-.fc-card.selected .fc-thumb-area::after    { background: rgba(123,127,178,0.28); }
-.fc-card.pre-selected .fc-thumb-area::after { background: rgba(123,127,178,0.16); }
-
-/* ext 角标 */
+/* ── 文件卡片 ──
+   底色/边框/hover/选中态/缩略图区/大图标/标题元信息这些基础视觉已抽到
+   components/common/FileCard.vue（含 :hover 的 box-shadow/background，跟全局
+   .hover-card-fx 的位移动效分工一致），这里只留本页专属的选择框/悬浮操作等交互态样式。 */
 .sel-checkbox {
   position: absolute; top: 8px; right: 8px; z-index: 3;
   width: 18px; height: 18px; border-radius: 5px;
@@ -2431,25 +2267,9 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   flex-shrink: 0;
 }
 
-/* 图片缩略图 */
-.fc-thumb-area {
-  position: relative;
-  height: 90px;
-  flex-shrink: 0;
-  overflow: hidden;
-  border-radius: 14px 14px 0 0;
-  background: rgba(0,0,0,0.05);
-  transform: translateZ(0);   /* 去掉常驻 will-change：大量卡片常驻 will-change 会让合成器层预算耗尽、滚动时偶发闪屏（ProjectModal 同款已改） */
-  mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
-}
-.fc-thumb {
-  position: absolute;
-  inset: 0;
-  width: 100%; height: 100%;
-  object-fit: cover; object-position: center top;
-  display: block;
-}
+/* .fc-thumb-area 基础布局（含选中态叠加）+ img 的 position/object-fit 已挪进
+   FileCard.vue（`.fc-thumb-area :deep(img)`）；这里只留缩略图两层（模糊占位 tiny + 淡入
+   full）本页专属的图层差异，它们是 #thumb 插槽里的内容。 */
 /* tiny：模糊放大填满，作为永久底层 */
 .fc-thumb-tiny {
   filter: blur(10px);
@@ -2463,15 +2283,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   transition: opacity 0.4s ease;
 }
 .fc-thumb-full.fc-loaded { opacity: 1; }
-.fc-has-thumb .fc-label {
-  position: relative; z-index: 1;
-}
-.fc-has-thumb .fc-ext-badge {
-  background: rgba(0,0,0,0.32);
-  color: rgba(255,255,255,0.92);
-}
 
-/* 底部标签 */
+/* 底部标签（幽灵上传卡专属——真实文件卡的标签视觉已挪进 FileCard.vue） */
 .fc-label { padding: 0 13px 13px; }
 .fc-name {
   font-size: 11.5px; font-weight: 600; color: var(--text-primary);
@@ -2488,8 +2301,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 
 /* .rename-sizer / .rename-ghost / .rename-input-inline 已提到 global.css（全站重命名输入框共用） */
 
-/* ── 拖动状态 ── */
-.fc-card.dragging, .list-row.dragging { opacity: 0.35; cursor: grabbing; }
+/* ── 拖动状态（.fc-card.dragging 已挪进 FileCard.vue，这里只留列表行） ── */
+.list-row.dragging { opacity: 0.35; cursor: grabbing; }
 .folder-card.drag-over {
   background: color-mix(in srgb, var(--fd-color, var(--color-primary)) 12%, rgba(255,255,255,0.9));
   border-color: color-mix(in srgb, var(--fd-color, var(--color-primary)) 55%, rgba(255,255,255,0.6));
@@ -2652,8 +2465,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .sel-download-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-/* ── 右键菜单 ── */
-.fc-card.cut, .list-row.cut { opacity: 0.45; }
+/* ── 右键菜单（.fc-card.cut 已挪进 FileCard.vue，这里只留列表行） ── */
+.list-row.cut { opacity: 0.45; }
 .sel-delete-btn {
   display: flex; align-items: center; gap: 5px;
   padding: 6px 12px; border-radius: 8px; border: none;

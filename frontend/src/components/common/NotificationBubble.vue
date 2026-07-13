@@ -29,25 +29,37 @@ import { PhX } from '@phosphor-icons/vue'
 import { useUiStore } from '@/stores/ui'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 
+interface BubbleItem {
+  id: number; notifId: number | null; title: string; content: string; gugu: boolean
+  tTitle: string; tContent: string; phase: string; typing: boolean
+}
+
 const uiStore = useUiStore()
-const visible = ref([])
+const visible = ref<BubbleItem[]>([])
 let _vk = 0                 // 气泡本地 key（与后端 id 解耦）
 
 // 状态气泡那套「类 SSE 逐字流式」搬到通知上：新通知不直接出全文，而是标题先逐字冒出、
 // 再正文逐字流式（正文渲染「已打出的子串」，与咕咕回复的流式 markdown 同源）。
-let _typeTimer = null      // 全局单计时器：同一时刻只让最新那条打字
-let _typingId  = null      // 正在打字的 item id（手动关掉它时要停表）
+let _typeTimer: ReturnType<typeof setTimeout> | null = null      // 全局单计时器：同一时刻只让最新那条打字
+let _typingId: number | null = null      // 正在打字的 item id（手动关掉它时要停表）
 const TITLE_MS = 30        // 标题每字间隔
 const BODY_MS  = 15        // 正文每字间隔（比标题快，长文不拖沓）
 const PAUSE_TOKEN = '[[p]]'  // 文案里的停顿标记（不显示）
 const PAUSE_MS = 1000        // 打到停顿标记时暂停时长
 const SLOW_MS  = 400         // [[slow]]…[[/slow]] 段内逐字慢速冒出的每字间隔
 
+// 新手引导气泡（item.gugu）打完字后自动消失，其余通知气泡仍手动关（见下方大注释——那次撤回
+// 自动消失是针对「普通通知」总被没看完就顶掉的问题；引导气泡文案短、节奏快，走完一套引导流程
+// 后旧提示继续占屏反而挡地方，单独给它恢复自动消失，不影响普通通知）。
+const GUGU_AUTO_DISMISS_MS = 5000
+const _dismissTimers = new Map<number, ReturnType<typeof setTimeout>>()   // item.id → 自动关闭计时器
+
 // 气泡 = 纯「实时到达」的瞬态弹层，**只监听 uiStore.liveNotification**（SSE 实时置位）——
 // 关浏览器重开拉回来的历史通知**不弹气泡**（那是导航栏通知中心的事）。气泡与导航栏彻底分开：
 // 气泡关闭只动本组件 visible，不影响 uiStore.notifications，也不改已读态（气泡不算已读）。
-// 不自动消失，只能靠用户点 ✕ 关（是否显示过只弹一次由 uiStore._markBubbleSeen 独立保证，
-// 与关闭方式无关）——新气泡到来时旧气泡照常堆叠在上方，都留着等用户处理。
+// 普通通知不自动消失，只能靠用户点 ✕ 关（是否显示过只弹一次由 uiStore._markBubbleSeen 独立
+// 保证，与关闭方式无关）——新气泡到来时旧气泡照常堆叠在上方，都留着等用户处理。引导气泡
+// （item.gugu，见 useOnboarding.ts）例外：打完字后 GUGU_AUTO_DISMISS_MS 自动关，见 stop()。
 watch(() => uiStore.liveNotification, (n) => {
   if (!n) return
   // 新气泡插到队首（视觉上在底部、贴近球），把旧的顶上去；reactive 让打字机改属性能驱动视图
@@ -61,7 +73,7 @@ watch(() => uiStore.liveNotification, (n) => {
 
 // 标题逐字 → 正文逐字。正文较长时一拍多推几字，避免长通知打太久。
 // 文案标记（不显示）：[[p]]=停顿 PAUSE_MS；[[slow]]…[[/slow]]=段内每字 SLOW_MS 慢速冒出。
-function startTyping(item) {
+function startTyping(item: BubbleItem) {
   if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }
   const raw = item.content || ''
   const hasMarkers = raw.includes('[[')
@@ -72,11 +84,17 @@ function startTyping(item) {
   _typingId = item.id
   item.phase = fullTitle ? 'title' : 'body'
   let ti = 0
-  const run = (ms, tick) => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = setInterval(tick, ms) }
-  // 打完字后停在原地，不自动消失（只能点 ✕ 关，见上方 watch 的说明）
-  const stop = () => { if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }; item.typing = false; if (_typingId === item.id) _typingId = null }
+  const run = (ms: number, tick: () => void) => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = setInterval(tick, ms) }
+  // 打完字后停在原地，不自动消失，只能点 ✕ 关（见上方 watch 的说明）——除了引导气泡（item.gugu），
+  // 那类单独定时自动关（见 GUGU_AUTO_DISMISS_MS）。
+  const stop = () => {
+    if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }
+    item.typing = false
+    if (_typingId === item.id) _typingId = null
+    if (item.gugu) _dismissTimers.set(item.id, setTimeout(() => dismiss(item.id), GUGU_AUTO_DISMISS_MS))
+  }
 
-  let typeBody
+  let typeBody: () => void
   if (!hasMarkers) {
     // 快路径：无标记，按 slice 推进（长文一拍多推几字）
     const bodyStep = fullBody.length > 150 ? 3 : 1
@@ -88,7 +106,7 @@ function startTyping(item) {
     })
   } else {
     // 标记路径：解析成 ops（普通字 / 慢字 / 纯停顿），逐 op 用 setTimeout 推进，速度可变
-    const ops = []
+    const ops: { ch: string; ms: number }[] = []
     let i = 0, slow = false
     while (i < raw.length) {
       // [[p]] 或 [[p:1500]]：纯停顿，时长可指定（缺省 PAUSE_MS）
@@ -120,9 +138,12 @@ function startTyping(item) {
   } else { typeBody() }
 }
 
-function dismiss(id) {
+function dismiss(id: number) {
   // 关掉的正是当前在打字的那条 → 停表，别让计时器空转
   if (_typingId === id && _typeTimer) { clearInterval(_typeTimer); _typeTimer = null; _typingId = null }
+  // 手动关闭 / 自动消失计时器触发都走这里 → 清掉待触发的自动关闭计时器，避免手动关完再被计时器空调一次
+  const t = _dismissTimers.get(id)
+  if (t) { clearTimeout(t); _dismissTimers.delete(id) }
   const item = visible.value.find(n => n.id === id)
   if (item?.notifId != null) uiStore.markRead(item.notifId)
   visible.value = visible.value.filter(n => n.id !== id)

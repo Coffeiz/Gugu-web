@@ -1,8 +1,8 @@
-"""流式文本清洗：过滤 MiniMax 漏进 token 流的 tool-call 标记。
+"""流式文本清洗：过滤上游模型漏进 token 流的内部尾标记。
 
 MiniMax-M3 经 Anthropic 兼容端点流式输出时，偶发把内部 tool-call 序列化
 （以 `]<]minimax...` 为分隔标记）当作正文吐出。一旦出现该标记，其后全是
-泄漏垃圾，正文在标记之前。
+泄漏垃圾，正文在标记之前。另有已确认的 `[e~[` 尾标记，会紧跟代码围栏泄漏。
 
 改为前缀感知匹配：只在 buffer 末尾确实是标记前缀时才保留最少字节，
 正常文本（不含标记前缀）立即透传，避免因保留 9 字节缓冲导致输出卡顿。
@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import re
 
-TRUNCATE_MARKERS = ["]<]minimax"]
+# `[e~[` 已由生产流日志的 hex 确认是字面泄漏（常见形态为 "```[e~["），不是前端渲染问题。
+# 它对用户没有语义，后续内容也属于同一段泄漏，和 MiniMax tool-call 标记一样从此处截断。
+_MINIMAX_TRUNCATE_MARKERS = ["]<]minimax", "[e~["]
 
 
 def _longest_suffix_prefix(s: str, marker: str) -> int:
@@ -24,7 +26,10 @@ def _longest_suffix_prefix(s: str, marker: str) -> int:
 
 
 class StreamSanitizer:
-    def __init__(self):
+    def __init__(self, minimax: bool = False):
+        # `[e~[` 和 `]<]minimax` 都只在 MiniMax 流中实测过。非 MiniMax 不保留这些前缀，
+        # 避免把其它模型正常提及的文本误当内部标记而延迟或截断。
+        self._markers = _MINIMAX_TRUNCATE_MARKERS if minimax else []
         self._buf = ""
         self._cut = False
 
@@ -35,7 +40,7 @@ class StreamSanitizer:
         self._buf += delta
 
         # 检查是否出现完整标记
-        for marker in TRUNCATE_MARKERS:
+        for marker in self._markers:
             idx = self._buf.find(marker)
             if idx != -1:
                 out = self._buf[:idx]
@@ -46,7 +51,7 @@ class StreamSanitizer:
         # 未出现完整标记：检查末尾是否是某个标记的前缀
         # 只保留最长前缀匹配部分，其余立即透传
         hold = 0
-        for marker in TRUNCATE_MARKERS:
+        for marker in self._markers:
             hold = max(hold, _longest_suffix_prefix(self._buf, marker))
 
         if hold > 0:
@@ -201,3 +206,25 @@ def sanitize_messages(messages: list) -> list:
         else:
             merged.append({"role": m["role"], "content": m["content"]})
     return merged
+
+
+def tool_rounds_only(messages: list) -> list:
+    """从「工具循环 delta」里只留真正的工具往返（assistant 的 tool_use / user 的 tool_result），
+    丢弃 core 里守卫注入的合成控制消息和核实轮被 UI 隐藏的内心戏——它们是控制信令、不是对话：
+
+    - `_VERIFY_PROMPT` / `_VERIFY_FORCE_PROMPT` / `_NARRATION_NUDGE` / `_INTENT_NUDGE` /
+      `_DECISION_NUDGE` 这些合成 user 消息（纯字符串 content，无工具块）；
+    - 核实/narration/intent/decision 守卫那几轮的 assistant 文字（纯文本、无 tool_use，UI 已丢弃）。
+
+    这些若落进 ConversationMessage.content_json，下一轮会从 content_json 重建进 LLM 上下文、
+    还被压缩/反思吃进去——每轮重复灌「【系统自检】…」白烧 token 且污染行为。最终回复另存为
+    assistant text，不在此 delta 里，所以「只留带工具块的消息」不会漏掉真答复。
+    判据基于工具块存在性（tool_use / tool_result），故对 anthropic 与 openai 两种 content 形态都成立。"""
+    out = []
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, list) and any(
+            isinstance(b, dict) and b.get("type") in ("tool_use", "tool_result") for b in c
+        ):
+            out.append(m)
+    return out

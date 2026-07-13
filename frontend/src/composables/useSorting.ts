@@ -12,7 +12,7 @@ export function useSorting() {
   const sortKey      = ref('name')
   const sortDir      = ref('asc')
   const sortMenuOpen = ref(false)
-  const sortBtnRef   = ref(null)
+  const sortBtnRef   = ref<HTMLElement | null>(null)
   const sortMenuPos  = reactive({ x: 0, y: 0 })
 
   function openSortMenu() {
@@ -22,7 +22,7 @@ export function useSorting() {
     sortMenuOpen.value = true
   }
 
-  function onSortSelect(key) {
+  function onSortSelect(key: string) {
     if (sortKey.value === key) {
       sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
     } else {

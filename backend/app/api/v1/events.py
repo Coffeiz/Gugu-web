@@ -46,6 +46,18 @@ async def list_events(
     return [_to_resp(e) for e in result.scalars().all()]
 
 
+@router.get("/{eid}", response_model=EventResponse)
+async def get_event(
+    eid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    e = await get_owned(db, CalendarEvent, eid, current_user.id)
+    if not e:
+        raise HTTPException(404, "事件不存在")
+    return _to_resp(e)
+
+
 @router.post("", response_model=EventResponse, status_code=201)
 async def create_event(
     body: EventCreate,
