@@ -7,7 +7,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.ownership import get_owned
 from app.models import File, Folder, Project
 from app.services.storage import get_storage
-from app.services.storage.keys import _build_key, _resolve_conflict
+from app.services.storage.keys import _build_key, _resolve_conflict, compose_logical_path
+
+
+async def folder_dir_key(db: AsyncSession, user_id, folder: Folder) -> Optional[str]:
+    """文件夹的物理目录 key（root 相对、含 uid）：`{uid}/{compose_logical_path(...)}`。
+    与该文件夹下文件 key 的目录部分同构。坏链/越权/项目缺失 → None。
+    FolderOps（建夹物化 / 改名移动对账）与 folder_doctor（对账）共用一处路径真源。"""
+    project_id = folder.project_id
+    space = "project" if project_id is not None else "personal"
+    project_name = project_year = project_month = ""
+    if project_id is not None:
+        proj = await get_owned(db, Project, project_id, user_id)
+        if not proj:
+            return None
+        project_name = proj.name
+        date_str = proj.start_date or proj.created_at.strftime("%Y-%m-%d")
+        project_year, project_month = date_str[:4], date_str[5:7]
+    resolved = await resolve_folder_path(db, user_id, folder.id, project_id)
+    if not resolved:
+        return None
+    _, folder_path = resolved
+    logical = compose_logical_path(
+        space, project_name=project_name, project_id=project_id or 0,
+        project_year=project_year, project_month=project_month, folder_path=folder_path)
+    return f"{user_id}/{logical}"
 
 
 async def resolve_folder_path(

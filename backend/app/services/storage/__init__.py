@@ -196,6 +196,23 @@ class LocalStorageBackend(StorageBackend):
                     for p in self.root.rglob("*") if p.is_file()]
         return await asyncio.to_thread(_walk)
 
+    async def list_dirs(self, prefix: str = "") -> list[str]:
+        """列出 prefix 下所有子目录 key（root 相对，posix；不含 prefix 自身）。folder_doctor 对账用。"""
+        def _walk():
+            base = self.root / prefix if prefix else self.root
+            if not base.is_dir():
+                return []
+            return [p.relative_to(self.root).as_posix()
+                    for p in base.rglob("*") if p.is_dir()]
+        return await asyncio.to_thread(_walk)
+
+    async def dir_has_files(self, path: str) -> bool:
+        """该目录子树内是否有文件（对账判断孤儿空目录用）。"""
+        def _chk():
+            d = self.root / path
+            return d.is_dir() and any(p.is_file() for p in d.rglob("*"))
+        return await asyncio.to_thread(_chk)
+
     async def delete_prefix(self, prefix: str) -> int:
         import asyncio
         import shutil

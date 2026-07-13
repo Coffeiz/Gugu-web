@@ -9,10 +9,7 @@ P1：物理**目录骨架**也要一致（治 today 的 123 空夹缺失 / adr �
 """
 from __future__ import annotations
 
-from app.core.ownership import get_owned
-from app.models import Project
-from app.services.storage.folders import relocate_folder_tree_files, resolve_folder_path
-from app.services.storage.keys import compose_logical_path
+from app.services.storage.folders import folder_dir_key, relocate_folder_tree_files
 
 
 class FolderOps:
@@ -27,26 +24,7 @@ class FolderOps:
         return self.key_strategy.move_semantics == "relocate"
 
     async def _dir_key(self, user_id, folder) -> str | None:
-        """该文件夹的物理目录 key（root 相对、含 uid 前缀）：`{uid}/{compose_logical_path(...)}`。
-        与文件 key 的目录部分同构，故空夹目录 = 该文件夹下文件 key 的公共前缀。坏链/越权 → None。"""
-        project_id = folder.project_id
-        space = "project" if project_id is not None else "personal"
-        project_name = project_year = project_month = ""
-        if project_id is not None:
-            proj = await get_owned(self.db, Project, project_id, user_id)
-            if not proj:
-                return None
-            project_name = proj.name
-            date_str = proj.start_date or proj.created_at.strftime("%Y-%m-%d")
-            project_year, project_month = date_str[:4], date_str[5:7]
-        resolved = await resolve_folder_path(self.db, user_id, folder.id, project_id)
-        if not resolved:
-            return None
-        _, folder_path = resolved
-        logical = compose_logical_path(
-            space, project_name=project_name, project_id=project_id or 0,
-            project_year=project_year, project_month=project_month, folder_path=folder_path)
-        return f"{user_id}/{logical}"
+        return await folder_dir_key(self.db, user_id, folder)
 
     async def _materialize_subtree(self, user_id, root_folder_id) -> None:
         """物化以 root 为根的整棵文件夹子树目录（含无文件的空夹）——供建夹/移动后补齐空目录。"""
