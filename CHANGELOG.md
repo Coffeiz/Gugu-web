@@ -9,6 +9,14 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **文件夹回收站 + 目录一致性对账**（`app/services/storage/`）：文件存储抽象升级——删除文件夹改为软删（30 天内可整体恢复，不再直接抹掉数据库记录），配套顶层回收站列表、整体恢复、过期自动清理；文件夹改名/移动接入乐观并发锁（版本冲突时明确提示"已被修改，请刷新重试"，不再静默覆盖）。后台新增「存储对账」面板，一键扫描并修复空文件夹丢失、幽灵目录、文件物理位置漂移等历史遗留的数据不一致问题。
+
+### 改进
+
+- **咕咕写入后的复查响应更快**（`agent/core.py`）：成功写操作直接进入读回核实，省去一次无信息的模型收尾往返；失败写入不再触发复查，思维笔记读回也不会被误判为未核实。
+
 ### 修复
 
 - **本地 Docker 部署构建失败 + 龟速（25+ 分钟甚至超时）**（`backend/Dockerfile`、`docker-compose.yml`）：`pip install -r requirements.txt` 报 `exit code: 1`，实机复现定位两层问题：① `pilk`（SILK 语音编解码）PyPI 只发 Windows 预编译包，Linux 下必须从源码编译内嵌的 C 语言编解码库，`python:3.12-slim` 默认没有编译工具链——补 `build-essential`（含 gcc/libc6-dev/make）解决；② 部分网络环境直连 PyPI 官方源（`files.pythonhosted.org`）极慢（实测 ~10KB/s，装 langchain 这类依赖树巨大的包能拖到 25+ 分钟甚至读超时失败）。pip/apt 缓存改用 BuildKit 缓存挂载（`RUN --mount=type=cache`）跨构建持久化，requirements.txt 不变时重建从分钟级降到 2 秒内；PyPI 源做成 `ARG PIP_INDEX_URL`（默认官方源，不影响网络正常的用户），网络不佳时构建前设置同名环境变量即可切换镜像源（`docker compose build`/`docker build --build-arg` 均支持，见两文件内注释），不用碰文件本身。
