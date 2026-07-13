@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **本地 Docker 部署构建失败 + 龟速（25+ 分钟甚至超时）**（`backend/Dockerfile`、`docker-compose.yml`）：`pip install -r requirements.txt` 报 `exit code: 1`，实机复现定位两层问题：① `pilk`（SILK 语音编解码）PyPI 只发 Windows 预编译包，Linux 下必须从源码编译内嵌的 C 语言编解码库，`python:3.12-slim` 默认没有编译工具链——补 `build-essential`（含 gcc/libc6-dev/make）解决；② 部分网络环境直连 PyPI 官方源（`files.pythonhosted.org`）极慢（实测 ~10KB/s，装 langchain 这类依赖树巨大的包能拖到 25+ 分钟甚至读超时失败）。pip/apt 缓存改用 BuildKit 缓存挂载（`RUN --mount=type=cache`）跨构建持久化，requirements.txt 不变时重建从分钟级降到 2 秒内；PyPI 源做成 `ARG PIP_INDEX_URL`（默认官方源，不影响网络正常的用户），网络不佳时构建前设置同名环境变量即可切换镜像源（`docker compose build`/`docker build --build-arg` 均支持，见两文件内注释），不用碰文件本身。
+
 ## [0.18.0] - 2026-07-13 · 思维画布、笔记工作台与可靠性收尾
 
 ### 新增
