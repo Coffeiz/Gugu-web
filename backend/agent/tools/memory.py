@@ -12,15 +12,15 @@ from agent.tools.base import BaseSkill, Tool
 
 
 async def _remember(db, user_id, args: dict):
-    fact = (args.get("fact") or "").strip()
-    if not fact:
-        return json.dumps({"error": "需要提供要记住的内容 fact"})
+    text = (args.get("text") or "").strip()
+    if not text:
+        return json.dumps({"error": "需要提供要记住的内容 text"})
     profile = await store.read_profile_list(user_id)
-    profile = store.apply_profile_ops(profile, [fact], [])
+    profile = store.apply_profile_ops(profile, [text], [])
     await store.write_profile_list(user_id, profile)
     from agent import events
     events.publish(events.types.MemoryUpdated(user_id=user_id, added=1, removed=0, source="remember"))
-    return {"success": True, "remembered": fact}
+    return {"success": True, "remembered": text}
 
 
 class MemorySkill(BaseSkill):
@@ -36,9 +36,9 @@ class MemorySkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "fact": {"type": "string", "description": "要记住的一句话事实"},
+                    "text": {"type": "string", "description": "要记住的一句话稳定画像或偏好"},
                 },
-                "required": ["fact"],
+                "required": ["text"],
             },
             handler=_remember,
         ),

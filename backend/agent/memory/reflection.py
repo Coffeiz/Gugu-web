@@ -1,8 +1,8 @@
-"""对话后反思：提炼值得长期记住的信息，增量写入 facts/daily。
+"""对话后反思：提炼画像、行为模式与近期记忆的增量。
 
 复用 settings.ai 的 provider 做一次廉价非流式调用，产出 JSON：
-  {"facts": [...], "daily": "...", "summary": "...", "perception": {intent/ambiguity/emotion/emo_strength}}
-facts=稳定事实、daily=本次流水、summary=「用户当下在忙什么」快照（增量演进）。
+  {"profile_add": [...], "pattern_add": [...], "daily": "...", "summary": "..."}
+profile=稳定身份/偏好，pattern=可复用行为习惯，daily=本次流水，summary=当下状态快照。
 perception=本轮观察（感知遥测，只打点 `agent.perc` 日志，不写记忆、不影响回复）。
 由 web/IM 在对话结束后 fire-and-forget 调用，不阻塞、失败不影响主流程。
 """
@@ -27,10 +27,11 @@ _perc_log = logging.getLogger("agent.perc")
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 # 文件缺失时的兜底（正常走 prompts/reflection.md，可热编辑 / Admin 在线改）
 _SYS_FALLBACK = (
-    "你在帮咕咕维护对用户的长期记忆。只记关于用户本人的稳定信息（身份/偏好/习惯），"
-    "不记推测、世界常识、一时状态，不评判用户，宁少勿多。**只报本轮的增删**：新值得长期记的"
-    "进 facts_add（每条对象 {text, kind: observed=亲述/inferred=推断, importance: 1-5}）；"
-    "被推翻/过时/被替换的旧条进 facts_remove（字符串、尽量照抄原文）；没变动就都给空数组、别重列旧事实。"
+    "你在帮咕咕维护对用户的长期记忆。稳定身份/喜好进 profile_add（字符串数组），"
+    "可复用的行为/决策习惯进 pattern_add（每条对象 {text, kind: observed=亲述/inferred=推断, importance: 1-5}）。"
+    "阶段性事件不进两者，应写 daily 或 summary；不记世界常识、不评判用户，宁少勿多。"
+    "被推翻/过时/被替换的旧条分别进 profile_remove 或 pattern_remove（字符串、尽量照抄原文）；"
+    "没变动就都给空数组、别重列旧内容。"
     "summary 是一句「用户当下在忙什么/近期重心」的快照，基于原快照演进、没变就原样返回；"
     "涉及具体时间点一律换算成绝对日期（如「7/6 晚」而非「今晚」），照 user 消息开头给的当前日期换算。"
     "perception 是本轮观察（intent/ambiguity/emotion/emo_strength），照实判、只打点。"
@@ -41,7 +42,8 @@ _SYS_FALLBACK = (
     "lens_hint：仅当本轮**确实暴露了一条「怎么读懂这个用户」的可复用规则**才写、绝大多数轮留空字符串"
     "（一次性误会、具体事实都不算）。固定格式『「触发语」→ 真实含义/应对』，触发语放「」里写关键几字"
     "（如『「随便」→ 其实有偏好要追问』），便于复现识别。"
-    '严格只输出 JSON：{"facts_add": [{"text": "...", "kind": "observed", "importance": 4}], "facts_remove": ["..."], '
+    '严格只输出 JSON：{"profile_add": ["..."], "profile_remove": ["..."], '
+    '"pattern_add": [{"text": "...", "kind": "observed", "importance": 4}], "pattern_remove": ["..."], '
     '"daily": "一句话总结(没有就空字符串)", "summary": "当前状态快照(没有就空字符串)", "lens_hint": "", '
     '"correction": {"is_correction": false, "kind": ""}, '
     '"perception": {"intent": "情绪/查询/执行/...", "ambiguity": 0, "emotion": "无", "emo_strength": 0}}'
@@ -280,7 +282,7 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         await _emit_perc(_misperc_llm(user_id, out.get("correction")))
     else:
         await _emit_perc(_misperc_regex(user_id, user_msg))
-        return  # extract 没结果，facts/summary 无从写
+        return  # extract 没结果，记忆增量/summary 无从写
 
     try:
         # 感知遥测:把本轮 perception 打日志 + 推 Redis（不写记忆）
@@ -306,16 +308,16 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
                     user_id=user_id, added=len(p_add), removed=len(p_rem or []), source="reflection"))
 
         # pattern 更新（2b 结构化）：反思只吐增删 pattern_add(带 kind/importance)/pattern_remove，
-        # apply_facts_ops 应用到 pattern.json（命中相似条→印证升 conf，否则新增）。输出不随 pattern 增长。
+        # apply_pattern_ops 应用到 pattern.json（命中相似条→印证升 conf，否则新增）。输出不随 pattern 增长。
         f_add, f_rem = out.get("pattern_add"), out.get("pattern_remove")
         legacy = out.get("facts")   # 旧 prompt 回显整份 facts（灰度兼容）→ 当 inferred 增量并入
         if f_add is not None or f_rem is not None or legacy:
-            cur = await store.read_facts_list(user_id)
+            cur = await store.read_pattern_list(user_id)
             adds = f_add if f_add is not None else (legacy or [])
-            new = store.apply_facts_ops(cur, adds, f_rem or [])
+            new = store.apply_pattern_ops(cur, adds, f_rem or [])
             if new != cur:
-                await store.write_facts_list(user_id, new)
-                await store.sync_fact_vecs(user_id, new)   # 增量补向量缓存（embedding 未启用=no-op）
+                await store.write_pattern_list(user_id, new)
+                await store.sync_pattern_vecs(user_id, new)   # 增量补向量缓存（embedding 未启用=no-op）
                 from agent import events
                 events.publish(events.types.MemoryUpdated(
                     user_id=user_id, added=len(adds or []), removed=len(f_rem or []), source="reflection"))
@@ -362,7 +364,7 @@ async def _extract(user_name, user_msg, assistant_reply, existing_profile, exist
         f"+ feedback（用户这句相对【上一轮】的反馈,枚举选一,没给上一轮就 无信号）。"
     )
     # 2b：反思只吐 profile/pattern 的增删（delta）+ daily/summary/perception，输出体量**不再随存量增长**，
-    # 根治了「facts 一多 → 回显整份超 max_tokens → 截断 → JSON 解析失败 → 静默返回 {}」的老坑。
+    # 根治了「pattern 一多 → 回显整份超 max_tokens → 截断 → JSON 解析失败 → 静默返回 {}」的老坑。
     # 故 max_tokens 给个稳妥固定值即可（不必再跟存量走）；仍按模型上限兜底。
     _cap = getattr(getattr(settings, "ai", None), "max_tokens", 0) or 4096
     return await complete_json(_load_sys(), user, settings, max_tokens=min(_cap, 900))

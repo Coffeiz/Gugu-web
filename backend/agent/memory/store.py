@@ -34,15 +34,15 @@ DAILY_HARD_CAP    = 95   # 压缩失败时的硬安全上限
 PROFILE_FILE = "profile.json"
 
 # ── 结构化 pattern（2b）参数 ──
-FACTS_FILE                = "pattern.json"   # 文件名沿用 2026-07-08 前的 facts.json 概念，现存的是「行为模式」
-FACTS_INFERRED_HALF_LIFE  = 45.0   # 推断类 pattern 置信半衰期(天)；observed 不衰减
-FACT_RETIRE_EFF           = 0.2    # effective 置信低于此 → 不注入（退休淡出）
-FACTS_INJECT_MAX          = 100    # 注入上限；超了优先按相关性挑（向量/词法）、重要度保底+补齐（见 render_facts）
-FACTS_FLOOR_K             = 6      # 重要度保底：facts 超上限时，最重要的前 K 条无论是否相关都注入（核心档案不被相关性挤掉）
-FACTS_REL_CONF_BONUS      = 0.1    # 相关性排序里给置信度的小加成系数（同等相关时更可信的在前）
-_FACT_DEFAULT_CONF        = {"observed": 0.9, "inferred": 0.6}
-_FACT_CONFIRM_STEP        = 0.1
-_FACT_MAX_CONF            = 0.97
+PATTERN_FILE                = "pattern.json"
+PATTERN_INFERRED_HALF_LIFE  = 45.0   # 推断类 pattern 置信半衰期(天)；observed 不衰减
+PATTERN_RETIRE_EFF          = 0.2    # effective 置信低于此 → 不注入（退休淡出）
+PATTERN_INJECT_MAX          = 100    # 注入上限；超了优先按相关性挑（向量/词法）、重要度保底+补齐（见 render_pattern）
+PATTERN_FLOOR_K             = 6      # 重要度保底：pattern 超上限时，最重要的前 K 条无论是否相关都注入（核心习惯不被相关性挤掉）
+PATTERN_REL_CONF_BONUS      = 0.1    # 相关性排序里给置信度的小加成系数（同等相关时更可信的在前）
+_PATTERN_DEFAULT_CONF      = {"observed": 0.9, "inferred": 0.6}
+_PATTERN_CONFIRM_STEP      = 0.1
+_PATTERN_MAX_CONF          = 0.97
 
 # ── memory.md 长期记忆向量检索参数 ──
 MEMORY_INJECT_CHARS = 1500   # memory.md 超此字数才走向量挑相关块，否则整块注入（小的没必要检索）
@@ -71,33 +71,33 @@ async def read_memory(user_id, query: str = "") -> dict:
     stance = 上轮反思判的相处姿态（= perception.intent），stance_ts 给新鲜度闸用（见 behaviors.select）。
     summary_ts = summary 上次更新的 epoch（给时间衰减用，见 agent/decay.py）。
     lens = 渲染好的「解读镜片」注入块（per-user 解读先验，见 agent/memory/lens.py），无则空串。
-    query = 当前用户消息（可选）：pattern 超注入上限时用它做相关性优先挑选，见 render_facts。
+    query = 当前用户消息（可选）：pattern 超注入上限时用它做相关性优先挑选，见 render_pattern。
     first_ts = 最早一条 pattern 的 epoch（≈「开始了解 TA」的时间锚点，给注入侧时长计算用——
     时长由系统算好喂模型、禁模型自估，见 proposals/反馈信号系统-设计.md §4.3）。"""
     raw_profile = await read_profile_list(user_id)
-    raw_facts = await read_facts_list(user_id)
+    raw_patterns = await read_pattern_list(user_id)
     memory_doc = (await _read(_key(user_id, "memory.md"))).strip()
     # 向量语义检索：pattern 超上限 / memory 超预算 时才动向量。query **只 embed 一次**、两边共用（热路径省调用）。
     # 只认与当前模型 tag 匹配的向量（换过模型的旧向量忽略 → pattern 退回词法、memory 退回整篇，直到重建）。
-    facts_over = len(raw_facts) > FACTS_INJECT_MAX
+    pattern_over = len(raw_patterns) > PATTERN_INJECT_MAX
     mem_over   = len(memory_doc) > MEMORY_INJECT_CHARS
-    query_vec, fact_vec_map, mem_vec_map = None, None, None
-    if query and (facts_over or mem_over):
+    query_vec, pattern_vec_map, mem_vec_map = None, None, None
+    if query and (pattern_over or mem_over):
         from agent.memory import embedding as _emb
         if _emb.is_enabled():
             query_vec = await _emb.embed(query)
             if query_vec:
                 tag = _emb.model_tag()
-                if facts_over:
-                    fv = await read_fact_vecs(user_id)
-                    fact_vec_map = {k: v.get("v") for k, v in fv.items() if v.get("t") == tag}
+                if pattern_over:
+                    fv = await read_pattern_vecs(user_id)
+                    pattern_vec_map = {k: v.get("v") for k, v in fv.items() if v.get("t") == tag}
                 if mem_over:
                     mv = await read_memory_vecs(user_id)
                     mem_vec_map = {k: v.get("v") for k, v in mv.items() if v.get("t") == tag}
     profile = render_profile(raw_profile)   # 无上限，全量注入
-    pattern = render_facts(raw_facts, query, query_vec if facts_over else None, fact_vec_map)  # 有向量走 cosine，无则词法
+    pattern = render_pattern(raw_patterns, query, query_vec if pattern_over else None, pattern_vec_map)  # 有向量走 cosine，无则词法
     memory  = retrieve_memory_block(memory_doc, query_vec if mem_over else None, mem_vec_map)  # 超预算挑相关段，无向量则整篇
-    first_ts = min((f.get("ts") for f in raw_facts if f.get("ts")), default=None)
+    first_ts = min((item.get("ts") for item in raw_patterns if item.get("ts")), default=None)
     daily   = (await _read(_key(user_id, "daily.md"))).strip()
     summary = (await _read(_key(user_id, "summary.md"))).strip()
     summary_ts = await read_summary_ts(user_id)
@@ -118,27 +118,26 @@ async def read_summary_ts(user_id) -> float | None:
         return None
 
 
-# ── 结构化 facts（2b）：facts.json，每条 {id,text,kind,conf,imp,ts} ──
-def _fact_id() -> str:
+# ── 结构化 pattern：每条 {id,text,kind,conf,imp,ts} ──
+def _pattern_id() -> str:
     return secrets.token_hex(3)
 
 
-def _fact_norm(s) -> str:
+def _pattern_norm(s) -> str:
     return "".join(ch for ch in str(s).strip().lstrip("-").strip().lower() if ch.isalnum())
 
 
-def _fact_bigrams(s) -> set:
-    n = _fact_norm(s)
+def _pattern_bigrams(s) -> set:
+    n = _pattern_norm(s)
     if len(n) < 2:
         return {n} if n else set()
     return {n[i:i + 2] for i in range(len(n) - 1)}
 
 
-def _fact_similar(a, b) -> bool:
-    """两条 facts 是否算「同一条」：归一相等 / 较短(≥6)是较长子串 / bigram Jaccard≥0.7。
-    阈值取高(0.7)是刻意保守——短中文事实里「喜欢猫」「喜欢狗」bigram≈0.6，低阈值会把不同事实
-    误并成一条丢信息；宁可留近似重复（render 顶多多一行、reflection 可后续 remove），绝不误并。"""
-    na, nb = _fact_norm(a), _fact_norm(b)
+def _pattern_similar(a, b) -> bool:
+    """两条行为模式是否相同：归一相等 / 较短(≥6)是较长子串 / bigram Jaccard≥0.7。
+    阈值取高(0.7)是刻意保守，宁可留近似重复，也不要误并两条不同的行为模式。"""
+    na, nb = _pattern_norm(a), _pattern_norm(b)
     if not na or not nb:
         return False
     if na == nb:
@@ -146,59 +145,59 @@ def _fact_similar(a, b) -> bool:
     short, long = (na, nb) if len(na) <= len(nb) else (nb, na)
     if len(short) >= 6 and short in long:
         return True
-    ba, bb = _fact_bigrams(a), _fact_bigrams(b)
+    ba, bb = _pattern_bigrams(a), _pattern_bigrams(b)
     u = len(ba | bb)
     return u > 0 and len(ba & bb) / u >= 0.7
 
 
-def _fact_eff(f: dict) -> float:
+def _pattern_eff(f: dict) -> float:
     """effective 置信 = conf ×（observed 不衰减 / inferred 按半衰期衰减）。"""
     conf = float(f.get("conf", 0.6) or 0.6)
     if f.get("kind") == "inferred":
         from agent import decay
-        conf *= decay.weight(f.get("ts"), FACTS_INFERRED_HALF_LIFE)
+        conf *= decay.weight(f.get("ts"), PATTERN_INFERRED_HALF_LIFE)
     return conf
 
 
 def _migrate_md(md: str) -> list[dict]:
-    """旧 facts.md 各行 → 结构化（无从判 kind，一律当 observed/中置信，避免被衰减淘汰）。"""
+    """旧 facts.md 各行迁为结构化 pattern（无从判 kind，一律当 observed/中置信）。"""
     now = time.time()
     out = []
     for line in md.splitlines():
         t = line.strip().lstrip("-").strip()
         if t:
-            out.append({"id": _fact_id(), "text": t, "kind": "observed",
+            out.append({"id": _pattern_id(), "text": t, "kind": "observed",
                         "conf": 0.75, "imp": 3, "ts": now})
     return out
 
 
-async def read_facts_list(user_id) -> list[dict]:
+async def read_pattern_list(user_id) -> list[dict]:
     """读结构化 pattern。pattern.json 不存在 → 依次找旧 facts.json(2026-07-08 前的名字)、
     再旧的 facts.md，找到就迁移并写回 pattern.json(一次性)；旧文件保留不删，但不再写。"""
-    raw = await _read(_key(user_id, FACTS_FILE))
+    raw = await _read(_key(user_id, PATTERN_FILE))
     if not raw.strip():
         raw = await _read(_key(user_id, "facts.json"))   # 拆分前的旧名字，一次性兼容
     if raw.strip():
         try:
             data = json.loads(raw)
             if isinstance(data, list):
-                facts = [f for f in data if isinstance(f, dict) and (f.get("text") or "").strip()]
-                if facts:
-                    await write_facts_list(user_id, facts)   # 落到新文件名，下次直接命中
-                return facts
+                patterns = [item for item in data if isinstance(item, dict) and (item.get("text") or "").strip()]
+                if patterns:
+                    await write_pattern_list(user_id, patterns)   # 落到新文件名，下次直接命中
+                return patterns
         except Exception:
             pass
     md = (await _read(_key(user_id, "facts.md"))).strip()
     if md:
-        facts = _migrate_md(md)
-        if facts:
-            await write_facts_list(user_id, facts)
-        return facts
+        patterns = _migrate_md(md)
+        if patterns:
+            await write_pattern_list(user_id, patterns)
+        return patterns
     return []
 
 
-async def write_facts_list(user_id, facts: list[dict]) -> None:
-    await _write(_key(user_id, FACTS_FILE), json.dumps(facts, ensure_ascii=False, indent=2))
+async def write_pattern_list(user_id, patterns: list[dict]) -> None:
+    await _write(_key(user_id, PATTERN_FILE), json.dumps(patterns, ensure_ascii=False, indent=2))
 
 
 # ── 用户画像（profile.json）：{id,text,ts}，不带 kind/conf，不衰减 ──
@@ -227,37 +226,37 @@ def render_profile(profile: list[dict]) -> str:
 
 
 def apply_profile_ops(profile: list[dict], add, remove) -> list[dict]:
-    """对用户画像应用一轮增删。比 apply_facts_ops 简单得多：命中相似条只刷新 ts、采更具体文本，
+    """对用户画像应用一轮增删。比 apply_pattern_ops 简单得多：命中相似条只刷新 ts、采更具体文本，
     不涉及 conf/kind。add 是字符串数组，remove 同理（按相似匹配删除）。返回新列表，不就地改入参。"""
     out = [dict(p) for p in (profile or [])]
     now = time.time()
     rem = [r for r in (remove or []) if str(r).strip()]
     if rem:
-        out = [p for p in out if not any(_fact_similar(p.get("text", ""), r) for r in rem)]
+        out = [p for p in out if not any(_pattern_similar(p.get("text", ""), r) for r in rem)]
     for a in (add or []):
         text = str(a).strip()
         if not text:
             continue
-        hit = next((p for p in out if _fact_similar(p.get("text", ""), text)), None)
+        hit = next((p for p in out if _pattern_similar(p.get("text", ""), text)), None)
         if hit:
             hit["ts"] = now
             if len(text) > len(hit.get("text", "")):
                 hit["text"] = text
         else:
-            out.append({"id": _fact_id(), "text": text, "ts": now})
+            out.append({"id": _pattern_id(), "text": text, "ts": now})
     return out
 
 
-# ── pattern 向量缓存（.agent/pattern_vec.json，key=fact_id → {"v": [...], "t": model_tag}）──
+# ── pattern 向量缓存（.agent/pattern_vec.json，key=pattern_id → {"v": [...], "t": model_tag}）──
 # 与 pattern.json 分开存：向量体积大、pattern 是热读文件，不该被向量撑肿。文本才是主数据，
 # 向量是可重建缓存——换 embedding 模型时 tag 失配即视为过期、可整体重算（见 embedding.py）。
 # 改名自 facts_vec.json：纯缓存，没有旧数据也没关系，缺失时按「没缓存」自然重嵌，不用迁移。
-FACTS_VEC_FILE = "pattern_vec.json"
+PATTERN_VEC_FILE = "pattern_vec.json"
 
 
-async def read_fact_vecs(user_id) -> dict:
-    """读向量缓存 {fact_id: {"v": [...], "t": tag}}。不存在/坏 → {}。"""
-    raw = await _read(_key(user_id, FACTS_VEC_FILE))
+async def read_pattern_vecs(user_id) -> dict:
+    """读向量缓存 {pattern_id: {"v": [...], "t": tag}}。不存在/坏 → {}。"""
+    raw = await _read(_key(user_id, PATTERN_VEC_FILE))
     if not raw:
         return {}
     try:
@@ -267,52 +266,52 @@ async def read_fact_vecs(user_id) -> dict:
         return {}
 
 
-async def write_fact_vecs(user_id, vecs: dict) -> None:
-    await _write(_key(user_id, FACTS_VEC_FILE), json.dumps(vecs, ensure_ascii=False))
+async def write_pattern_vecs(user_id, vecs: dict) -> None:
+    await _write(_key(user_id, PATTERN_VEC_FILE), json.dumps(vecs, ensure_ascii=False))
 
 
-async def sync_fact_vecs(user_id, facts: list[dict], force: bool = False) -> None:
-    """给 facts 增量补向量缓存：只 embed **新 fact / 换过模型(tag 失配)** 的，已删 fact 的向量顺带清掉。
+async def sync_pattern_vecs(user_id, patterns: list[dict], force: bool = False) -> None:
+    """给 pattern 增量补向量缓存：只 embed 新模式或换模型后的模式，已删模式顺带清掉。
     `force=True`（重建 job 用）→ 无视 tag 全部重算。
     embedding 未启用 → `embed()` 返回 None → 整体 no-op。best-effort，永不抛（反思路径不能被它拖垮）。"""
     from agent.memory import embedding as _emb
     if not _emb.is_enabled():
         return
     try:
-        vecs = await read_fact_vecs(user_id)
+        vecs = await read_pattern_vecs(user_id)
         before = len(vecs)
         tag = _emb.model_tag()
-        alive = {f.get("id") for f in facts if f.get("id")}
-        vecs = {k: v for k, v in vecs.items() if k in alive}   # GC 已删 fact 的向量
+        alive = {item.get("id") for item in patterns if item.get("id")}
+        vecs = {k: v for k, v in vecs.items() if k in alive}   # GC 已删 pattern 的向量
         changed = len(vecs) != before
-        for f in facts:
-            fid, text = f.get("id"), (f.get("text") or "").strip()
-            if not fid or not text:
+        for item in patterns:
+            pattern_id, text = item.get("id"), (item.get("text") or "").strip()
+            if not pattern_id or not text:
                 continue
-            c = vecs.get(fid)
+            c = vecs.get(pattern_id)
             if not force and c and c.get("t") == tag:
                 continue   # 已有当前模型的向量，跳过（force 时不跳、全部重算）
             v = await _emb.embed(text)
             if v:
-                vecs[fid] = {"v": v, "t": tag}
+                vecs[pattern_id] = {"v": v, "t": tag}
                 changed = True
         if changed:
-            await write_fact_vecs(user_id, vecs)
+            await write_pattern_vecs(user_id, vecs)
     except Exception:
         pass
 
 
 async def rebuild_all_vecs(user_ids, on_progress=None) -> dict:
-    """给一批用户 force 重算**facts + 长期记忆(memory.md)** 的向量（换 embedding 模型后调）。
-    复用 `sync_fact_vecs`/`sync_memory_vecs`（均 force=True）。每个用户独立 try（一个失败不拖垮整批）。
-    返回 {done, total, with_facts}（with_facts=有 facts 的用户数；memory 一并重算，不单独计数）。"""
-    total, done, with_facts = len(user_ids), 0, 0
+    """给一批用户 force 重算**pattern + 长期记忆(memory.md)** 的向量（换 embedding 模型后调）。
+    复用 `sync_pattern_vecs`/`sync_memory_vecs`（均 force=True）。每个用户独立 try（一个失败不拖垮整批）。
+    返回 {done, total, with_patterns}（with_patterns=有 pattern 的用户数；memory 一并重算，不单独计数）。"""
+    total, done, with_patterns = len(user_ids), 0, 0
     for uid in user_ids:
         try:
-            facts = await read_facts_list(uid)
-            if facts:
-                await sync_fact_vecs(uid, facts, force=True)
-                with_facts += 1
+            patterns = await read_pattern_list(uid)
+            if patterns:
+                await sync_pattern_vecs(uid, patterns, force=True)
+                with_patterns += 1
             mem = await read_memory_doc(uid)   # 长期记忆的块向量也一并重建
             if mem:
                 await sync_memory_vecs(uid, mem, force=True)
@@ -324,11 +323,11 @@ async def rebuild_all_vecs(user_ids, on_progress=None) -> dict:
                 await on_progress(done, total)
             except Exception:
                 pass
-    return {"done": done, "total": total, "with_facts": with_facts}
+    return {"done": done, "total": total, "with_patterns": with_patterns}
 
 
 # ── memory.md（长期记忆）向量检索：切块 + 逐块缓存 + 语义挑相关段 ──
-# facts 天生离散，memory.md 是 compress 融合的一整篇叙述——先切块再 embed；且 compress 每次
+# pattern 天生离散，memory.md 是 compress 融合的一整篇叙述——先切块再 embed；且 compress 每次
 # **重写全文**，块文本随之变，用「块文本哈希」当 key：一压，旧哈希 GC、新块补嵌（= 自动重嵌）。
 MEMORY_VEC_FILE = "memory_vec.json"
 
@@ -437,44 +436,44 @@ def _jaccard(a: set, b: set) -> float:
     return len(a & b) / len(a | b)
 
 
-def render_facts(facts: list[dict], query: str = "",
+def render_pattern(patterns: list[dict], query: str = "",
                  query_vec: list[float] | None = None, vec_map: dict | None = None) -> str:
-    """结构化 facts → 注入用 markdown。退休低 effective、低置信推断标「不太确定」。
+    """结构化 pattern → 注入用 markdown。退休低 effective、低置信推断标「不太确定」。
 
-    选取策略（供 builder 注入，read_memory['facts']）：
-    - facts 未超 `FACTS_INJECT_MAX` 或没传 query → 全部按 effective×importance 排序注入（旧行为）。
-    - 超上限且有当前消息 query → **相关性优先**挑：① 重要度保底（前 `FACTS_FLOOR_K`，核心档案不被挤掉）
+    选取策略：
+    - pattern 未超 `PATTERN_INJECT_MAX` 或没传 query → 全部按 effective×importance 排序注入。
+    - 超上限且有当前消息 query → **相关性优先**挑：① 重要度保底（前 `PATTERN_FLOOR_K`，核心习惯不被挤掉）
       → ② 按对 query 的相关性（置信小加成）填充 → ③ 仍没满用重要度补齐（不浪费预算）。
       relevance > importance，但 importance 兜底。
     - **相关性打分**：给了 `query_vec` + `vec_map`（read_memory 在 embedding 启用且超上限时算好）→ 用**向量 cosine**
-      （语义）；否则退回**字 bigram 词法**（v1 默认、embedding 未启用时）。没缓存到向量的 fact → cosine 记 0，
+      （语义）；否则退回**字 bigram 词法**（v1 默认、embedding 未启用时）。没缓存到向量的 pattern → cosine 记 0，
       靠重要度保底/补齐兜住（下轮反思会补上它的向量）。"""
-    scored = [(f, _fact_eff(f)) for f in (facts or [])]
-    scored = [(f, e) for f, e in scored if e >= FACT_RETIRE_EFF and (f.get("text") or "").strip()]
+    scored = [(item, _pattern_eff(item)) for item in (patterns or [])]
+    scored = [(f, e) for f, e in scored if e >= PATTERN_RETIRE_EFF and (f.get("text") or "").strip()]
     by_imp = sorted(scored, key=lambda x: -(x[1] * (x[0].get("imp", 3) or 3)))
 
     q = (query or "").strip()
-    if not q or len(scored) <= FACTS_INJECT_MAX:
-        chosen = by_imp[:FACTS_INJECT_MAX]
+    if not q or len(scored) <= PATTERN_INJECT_MAX:
+        chosen = by_imp[:PATTERN_INJECT_MAX]
     else:
         use_vec = query_vec is not None and vec_map is not None
         if use_vec:
             from agent.memory.embedding import cosine
             rel = {id(f): cosine(query_vec, vec_map.get(f.get("id")) or []) for f, _ in scored}
         else:
-            qb = _fact_bigrams(q)
-            rel = {id(f): _jaccard(qb, _fact_bigrams(f.get("text", ""))) for f, _ in scored}
+            qb = _pattern_bigrams(q)
+            rel = {id(f): _jaccard(qb, _pattern_bigrams(f.get("text", ""))) for f, _ in scored}
         chosen, picked = [], set()
-        for f, e in by_imp[:FACTS_FLOOR_K]:                      # ① 重要度保底
+        for f, e in by_imp[:PATTERN_FLOOR_K]:                      # ① 重要度保底
             chosen.append((f, e)); picked.add(id(f))
         rest = [(f, e) for f, e in scored if id(f) not in picked and rel[id(f)] > 0]
-        rest.sort(key=lambda x: -(rel[id(x[0])] + FACTS_REL_CONF_BONUS * x[1]))
+        rest.sort(key=lambda x: -(rel[id(x[0])] + PATTERN_REL_CONF_BONUS * x[1]))
         for f, e in rest:                                        # ② 相关性填充
-            if len(chosen) >= FACTS_INJECT_MAX:
+            if len(chosen) >= PATTERN_INJECT_MAX:
                 break
             chosen.append((f, e)); picked.add(id(f))
         for f, e in by_imp:                                      # ③ 重要度补齐（不浪费预算）
-            if len(chosen) >= FACTS_INJECT_MAX:
+            if len(chosen) >= PATTERN_INJECT_MAX:
                 break
             if id(f) not in picked:
                 chosen.append((f, e)); picked.add(id(f))
@@ -489,15 +488,15 @@ def render_facts(facts: list[dict], query: str = "",
     return "\n".join(lines)
 
 
-def apply_facts_ops(facts: list[dict], add, remove) -> list[dict]:
-    """对结构化 facts 应用一轮增删改。add 可为 str(旧式→inferred) 或 dict{text,kind,importance}：
+def apply_pattern_ops(patterns: list[dict], add, remove) -> list[dict]:
+    """对结构化 pattern 应用一轮增删改。add 可为 str（旧式兼容）或 dict{text,kind,importance}：
     命中已有相似条 → **印证**（升 conf、刷新 ts、user 亲述可升级 observed、采更具体文本）；否则新增。
     remove 按相似匹配删除。返回新列表（不就地改入参）。"""
-    out = [dict(f) for f in (facts or [])]
+    out = [dict(item) for item in (patterns or [])]
     now = time.time()
     rem = [r for r in (remove or []) if str(r).strip()]
     if rem:
-        out = [f for f in out if not any(_fact_similar(f.get("text", ""), r) for r in rem)]
+        out = [f for f in out if not any(_pattern_similar(f.get("text", ""), r) for r in rem)]
     for a in (add or []):
         if isinstance(a, dict):
             text = (a.get("text") or "").strip()
@@ -508,9 +507,9 @@ def apply_facts_ops(facts: list[dict], add, remove) -> list[dict]:
         if not text:
             continue
         kind = kind if kind in ("observed", "inferred") else "inferred"
-        hit = next((f for f in out if _fact_similar(f.get("text", ""), text)), None)
+        hit = next((f for f in out if _pattern_similar(f.get("text", ""), text)), None)
         if hit:
-            hit["conf"] = min(_FACT_MAX_CONF, float(hit.get("conf", 0.6) or 0.6) + _FACT_CONFIRM_STEP)
+            hit["conf"] = min(_PATTERN_MAX_CONF, float(hit.get("conf", 0.6) or 0.6) + _PATTERN_CONFIRM_STEP)
             hit["ts"] = now
             if kind == "observed":           # 用户亲述 > 推断
                 hit["kind"] = "observed"
@@ -519,8 +518,8 @@ def apply_facts_ops(facts: list[dict], add, remove) -> list[dict]:
             if imp:
                 hit["imp"] = int(imp)
         else:
-            out.append({"id": _fact_id(), "text": text, "kind": kind,
-                        "conf": _FACT_DEFAULT_CONF[kind], "imp": int(imp) if imp else 3, "ts": now})
+            out.append({"id": _pattern_id(), "text": text, "kind": kind,
+                        "conf": _PATTERN_DEFAULT_CONF[kind], "imp": int(imp) if imp else 3, "ts": now})
     return out
 
 

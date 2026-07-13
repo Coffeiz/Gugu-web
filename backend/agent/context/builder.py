@@ -273,7 +273,7 @@ def _memory_block(memory: dict) -> str:
     在空白处脑补共同经历（伪个性化）；不再返回空串。顺序：稳定事实 → 长期记忆 → 最近。"""
     summary = (memory.get("summary") or "").strip()
     profile = (memory.get("profile") or "").strip()
-    facts   = (memory.get("pattern") or "").strip()
+    pattern = (memory.get("pattern") or "").strip()
     longterm = (memory.get("memory") or "").strip()
     daily   = (memory.get("daily") or "").strip()
     parts = []
@@ -290,8 +290,8 @@ def _memory_block(memory: dict) -> str:
             parts.append(f"## TA 较早前的状态（约 {int(ad)} 天前，多半过时——别当成现在、别据此主动提具体事）\n\n" + summary)
     if profile:
         parts.append("## 用户画像\n\n" + profile)
-    if facts:
-        parts.append("## TA 的行为/决策习惯\n\n" + facts)
+    if pattern:
+        parts.append("## TA 的行为/决策习惯\n\n" + pattern)
     if longterm:
         parts.append("## 长期记忆\n\n" + longterm)
     if daily:

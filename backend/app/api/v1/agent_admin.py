@@ -78,7 +78,8 @@ PROFILES = ["default"]   # qqbot/mini 是早期占位、从未接线（运行时
 PLACEHOLDERS = [
     {"key": "{today}",       "desc": "今天日期"},
     {"key": "{summary}",     "desc": "当前状态快照（summary.md）"},
-    {"key": "{facts}",       "desc": "咕咕对用户的画像+行为模式（profile.json + pattern.json 导出）"},
+    {"key": "{pattern}",     "desc": "咕咕对用户的行为模式（pattern.json 导出）"},
+    {"key": "{profile}",     "desc": "咕咕对用户的稳定画像（profile.json 导出）"},
     {"key": "{preferences}", "desc": "咕咕对用户偏好的理解（preferences.md）"},
     {"key": "{memory}",      "desc": "长期认知积累（memory.md）"},
     {"key": "{weekly}",      "desc": "本周记忆摘要"},

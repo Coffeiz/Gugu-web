@@ -4,7 +4,7 @@
 compress.py 之类的算法，照着 OPS 里的样子加一个新函数、注册进去就行，不用动其它已有的操作。
 
 现有操作：
-- facts：拿现有 pattern.json（行为/决策模式，2026-07-08 从 facts.json 更名，见
+- patterns：拿现有 pattern.json（行为/决策模式，2026-07-08 从 facts.json 更名，见
   docs/agent/11-记忆系统.md §3）整份，对照 reflection.md 现行「抽象测试」标准复核，删掉不该在
   这的（常见于旧版 facts.md/facts.json 迁移批次——那批没经过现在这套更细的筛选标准，见 devlog）。
   ⚠️ 同一份输入模型判断可能不稳定（同一 prompt 两次调用删除比例差过一倍，包括该保护的条目
@@ -21,9 +21,10 @@ compress.py 之类的算法，照着 OPS 里的样子加一个新函数、注册
   画像层，而应迁去 memory.md；这个操作负责一次性把这批条目从 profile 挪到长期叙事层。
 
 跑法：
-    cd backend && .venv/bin/python scripts/refresh_memory.py --facts            # 真的写（默认 3 次投票）
-    cd backend && .venv/bin/python scripts/refresh_memory.py --facts --dry-run  # 只看会删什么，不写
-    cd backend && .venv/bin/python scripts/refresh_memory.py --facts --user <uuid> --trials 5  # 调试/调参
+    cd backend && .venv/bin/python scripts/refresh_memory.py --patterns            # 真的写（默认 3 次投票）
+    cd backend && .venv/bin/python scripts/refresh_memory.py --patterns --dry-run  # 只看会删什么，不写
+    cd backend && .venv/bin/python scripts/refresh_memory.py --patterns --user <uuid> --trials 5  # 调试/调参
+    兼容性：`--facts` 是旧命令别名，仍可用，但新脚本请使用 `--patterns`。
     cd backend && .venv/bin/python scripts/refresh_memory.py --cleanup-legacy --dry-run
     cd backend && .venv/bin/python scripts/refresh_memory.py --split-profile --dry-run
     cd backend && .venv/bin/python scripts/refresh_memory.py --migrate-daily --dry-run
@@ -60,59 +61,59 @@ _REVIEW_SYS_PROMPT = (
 )
 
 
-async def _review_once(facts: list[dict], settings, temperature: float) -> set[int] | None:
+async def _review_once(patterns: list[dict], settings, temperature: float) -> set[int] | None:
     """单次调用，返回本次判定要删的下标集合；解析失败返回 None（不计入投票）。"""
     from agent.memory._llm import complete_json
 
-    lines = "\n".join(f"[{i}] ({f.get('kind')}) {f.get('text', '')}" for i, f in enumerate(facts))
+    lines = "\n".join(f"[{i}] ({f.get('kind')}) {f.get('text', '')}" for i, f in enumerate(patterns))
     result = await complete_json(_REVIEW_SYS_PROMPT, lines, settings, max_tokens=800, temperature=temperature)
     idxs = result.get("remove")
     if not isinstance(idxs, list):
         return None
-    return {i for i in idxs if isinstance(i, int) and 0 <= i < len(facts)}
+    return {i for i in idxs if isinstance(i, int) and 0 <= i < len(patterns)}
 
 
-async def _review_facts(user_id: str, settings, dry_run: bool,
+async def _review_patterns(user_id: str, settings, dry_run: bool,
                          trials: int = 3, temperature: float = 0.1) -> dict:
-    """复核一个用户的 facts.json，挑出不符合现行「只记什么」标准的条目并删除。
+    """复核一个用户的 pattern.json，挑出不符合现行「只记什么」标准的条目并删除。
 
     同一份输入、同一份 prompt，模型两次调用的判断可能差很多（踩过：87%→94% 的删除比例大幅波动，
-    包括本该保护的条目被反复误删）——不能信单次调用的结果。这里对同一批 facts 跑 `trials` 次
+    包括本该保护的条目被反复误删）——不能信单次调用的结果。这里对同一批 pattern 跑 `trials` 次
     独立判断，只删「多数次都判定该删」的条目（过半才算数），单次的分歧判断视为不确定、保留。
     """
     from agent.memory import store
 
-    facts = await store.read_facts_list(user_id)
-    if not facts:
+    patterns = await store.read_pattern_list(user_id)
+    if not patterns:
         return {"total": 0, "removed": 0}
 
     votes: dict[int, int] = {}
     ok_trials = 0
     for _ in range(trials):
-        r = await _review_once(facts, settings, temperature)
+        r = await _review_once(patterns, settings, temperature)
         if r is None:
             continue
         ok_trials += 1
         for i in r:
             votes[i] = votes.get(i, 0) + 1
     if ok_trials == 0:
-        return {"total": len(facts), "removed": 0, "error": "所有轮次模型输出都解析失败，本用户跳过"}
+        return {"total": len(patterns), "removed": 0, "error": "所有轮次模型输出都解析失败，本用户跳过"}
 
     majority = ok_trials / 2
     valid = sorted(i for i, v in votes.items() if v > majority)
     if not valid:
-        return {"total": len(facts), "removed": 0, "trials_ok": ok_trials,
+        return {"total": len(patterns), "removed": 0, "trials_ok": ok_trials,
                 "unstable": {i: v for i, v in votes.items() if v <= majority}}
 
-    removed_texts = [facts[i]["text"] for i in valid]
-    removed_ids = [facts[i]["id"] for i in valid]
+    removed_texts = [patterns[i]["text"] for i in valid]
+    removed_ids = [patterns[i]["id"] for i in valid]
     if not dry_run:
         remove_set = set(removed_ids)
-        new_facts = [f for f in facts if f["id"] not in remove_set]
-        await store.write_facts_list(user_id, new_facts)
-        await store.sync_fact_vecs(user_id, new_facts)
+        new_patterns = [pattern for pattern in patterns if pattern["id"] not in remove_set]
+        await store.write_pattern_list(user_id, new_patterns)
+        await store.sync_pattern_vecs(user_id, new_patterns)
     return {
-        "total": len(facts), "removed": len(valid),
+        "total": len(patterns), "removed": len(valid),
         "removed_texts": removed_texts, "removed_ids": removed_ids,
         "trials_ok": ok_trials,
         "unstable": {i: v for i, v in votes.items() if v <= majority and v > 0},
@@ -121,14 +122,14 @@ async def _review_facts(user_id: str, settings, dry_run: bool,
 
 async def _cleanup_legacy(user_id: str, settings, dry_run: bool, **_ignored) -> dict:
     """pattern.json 已存在（该用户已迁移过）时，删掉不再被读写的旧 facts.json / facts.md /
-    facts_vec.json（向量缓存改名前的旧文件，自身可重建，删了没损失，next sync_fact_vecs 会
+    facts_vec.json（向量缓存改名前的旧文件，自身可重建，删了没损失，next sync_pattern_vecs 会
     在 pattern_vec.json 下自动重嵌）。"""
     from agent.memory import store
     from agent.memory.store import _key
     from app.services.storage import get_storage
 
     storage = get_storage()
-    pattern_key = _key(user_id, store.FACTS_FILE)   # 现在的真实文件名，如 "pattern.json"
+    pattern_key = _key(user_id, store.PATTERN_FILE)   # 现在的真实文件名，如 "pattern.json"
     if not await storage.exists(pattern_key):
         return {"removed": 0}
     removed = []
@@ -153,57 +154,57 @@ _SPLIT_SYS_PROMPT = (
 )
 
 
-async def _split_once(facts: list[dict], settings, temperature: float) -> set[int] | None:
+async def _split_once(patterns: list[dict], settings, temperature: float) -> set[int] | None:
     from agent.memory._llm import complete_json
 
-    lines = "\n".join(f"[{i}] ({f.get('kind')}) {f.get('text', '')}" for i, f in enumerate(facts))
+    lines = "\n".join(f"[{i}] ({f.get('kind')}) {f.get('text', '')}" for i, f in enumerate(patterns))
     result = await complete_json(_SPLIT_SYS_PROMPT, lines, settings, max_tokens=800, temperature=temperature)
     idxs = result.get("move")
     if not isinstance(idxs, list):
         return None
-    return {i for i in idxs if isinstance(i, int) and 0 <= i < len(facts)}
+    return {i for i in idxs if isinstance(i, int) and 0 <= i < len(patterns)}
 
 
 async def _split_profile(user_id: str, settings, dry_run: bool,
                           trials: int = 3, temperature: float = 0.1, **_ignored) -> dict:
     """把 pattern.json 里其实该属于 profile 的条目搬过去——2026-07-08 拆分时 profile.json
     是全新文件，没有旧数据可迁移，这批「身份类」内容当时跟着整份 facts.json 进了 pattern.json，
-    一直没被区分出来。同样用多数票机制（理由跟 _review_facts 一样：单次调用不可信）。"""
+    一直没被区分出来。同样用多数票机制（理由跟 _review_patterns 一样：单次调用不可信）。"""
     from agent.memory import store
 
-    facts = await store.read_facts_list(user_id)
-    if not facts:
+    patterns = await store.read_pattern_list(user_id)
+    if not patterns:
         return {"total": 0, "moved": 0}
 
     votes: dict[int, int] = {}
     ok_trials = 0
     for _ in range(trials):
-        r = await _split_once(facts, settings, temperature)
+        r = await _split_once(patterns, settings, temperature)
         if r is None:
             continue
         ok_trials += 1
         for i in r:
             votes[i] = votes.get(i, 0) + 1
     if ok_trials == 0:
-        return {"total": len(facts), "moved": 0, "error": "所有轮次模型输出都解析失败，本用户跳过"}
+        return {"total": len(patterns), "moved": 0, "error": "所有轮次模型输出都解析失败，本用户跳过"}
 
     majority = ok_trials / 2
     valid = sorted(i for i, v in votes.items() if v > majority)
     if not valid:
-        return {"total": len(facts), "moved": 0, "trials_ok": ok_trials,
+        return {"total": len(patterns), "moved": 0, "trials_ok": ok_trials,
                 "unstable": {i: v for i, v in votes.items() if v <= majority}}
 
-    moved_texts = [facts[i]["text"] for i in valid]
-    moved_ids = {facts[i]["id"] for i in valid}
+    moved_texts = [patterns[i]["text"] for i in valid]
+    moved_ids = {patterns[i]["id"] for i in valid}
     if not dry_run:
         profile = await store.read_profile_list(user_id)
         profile = store.apply_profile_ops(profile, moved_texts, [])
         await store.write_profile_list(user_id, profile)
-        new_facts = [f for f in facts if f["id"] not in moved_ids]
-        await store.write_facts_list(user_id, new_facts)
-        await store.sync_fact_vecs(user_id, new_facts)
+        new_patterns = [pattern for pattern in patterns if pattern["id"] not in moved_ids]
+        await store.write_pattern_list(user_id, new_patterns)
+        await store.sync_pattern_vecs(user_id, new_patterns)
     return {
-        "total": len(facts), "moved": len(valid),
+        "total": len(patterns), "moved": len(valid),
         "moved_texts": moved_texts, "moved_ids": sorted(moved_ids),
         "trials_ok": ok_trials,
         "unstable": {i: v for i, v in votes.items() if v <= majority and v > 0},
@@ -263,7 +264,7 @@ async def _migrate_profile_events(user_id: str, settings, dry_run: bool, **_igno
 
 
 OPS = {
-    "facts": _review_facts,
+    "patterns": _review_patterns,
     "cleanup-legacy": _cleanup_legacy,
     "migrate-daily": _migrate_daily,
     "migrate-profile-events": _migrate_profile_events,
@@ -288,9 +289,13 @@ async def main() -> None:
         ap.add_argument(f"--{name}", action="store_true", help=f"跑「{name}」刷新操作")
     ap.add_argument("--dry-run", action="store_true", help="只打印会改什么，不实际写")
     ap.add_argument("--user", help="只跑这一个 user_id（调试用），不给则跑全部用户")
-    ap.add_argument("--trials", type=int, default=3, help="facts 复核每个用户独立调用几次、多数票才删（默认 3）")
-    ap.add_argument("--temperature", type=float, default=0.1, help="facts 复核调用的 temperature（默认 0.1，越低越稳定）")
+    ap.add_argument("--facts", action="store_true", help="旧别名：等同 --patterns")
+    ap.add_argument("--trials", type=int, default=3, help="pattern 复核每个用户独立调用几次、多数票才删（默认 3）")
+    ap.add_argument("--temperature", type=float, default=0.1, help="pattern 复核调用的 temperature（默认 0.1，越低越稳定）")
     args = ap.parse_args()
+
+    if args.facts:
+        args.patterns = True
 
     ops = [name for name in OPS if getattr(args, name.replace("-", "_"))]
     if not ops:

@@ -1,7 +1,7 @@
 """数据读取层：从 DB 取项目 / 事件，从用户 .agent/ 取记忆。
 
 Phase 1：记忆文件尚未实装，`load_memory` 返回全空占位，保证 builder 中
-`{summary}{facts}{preferences}{memory}{weekly}{daily}` 仍填空串、行为不变。
+`{summary}{profile}{pattern}{preferences}{memory}{weekly}{daily}` 仍填空串、行为不变。
 """
 from datetime import datetime
 
@@ -90,8 +90,8 @@ async def load_files_overview(db, user_id, recent: int = 25) -> dict:
 
 
 async def load_memory(user_id, query: str = "") -> dict:
-    """读取用户 .agent/ 记忆，返回 {facts, daily, memory, summary}（缺失为空串）。
-    query = 当前用户消息（可选）：传入则 facts 超上限时按相关性优先挑（见 store.render_facts）。"""
+    """读取用户 .agent/ 记忆，返回 profile/pattern/daily/memory/summary（缺失为空串）。
+    query = 当前用户消息（可选）：传入则 pattern 超上限时按相关性优先挑（见 store.render_pattern）。"""
     from agent.memory import store
     return await store.read_memory(user_id, query)
 

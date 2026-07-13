@@ -65,14 +65,16 @@ async def _last_seen_part(db: AsyncSession, user_id) -> str:
 async def _recent_context(db: AsyncSession, user_id) -> str:
     # 上次互动时间（定问候口吻：刚聊过别说「好久不见」）
     seen = await _last_seen_part(db, user_id)
-    # 记忆：当前状态快照 + 长期 fact + 近 7 天 daily（先取出，下面按优先级排）
-    summary = facts = daily = ""
+    # 记忆：当前状态快照 + 长期画像/行为模式 + 近 7 天 daily（先取出，下面按优先级排）
+    summary = long_term_memory = daily = ""
     summary_ts = None
     try:
         mem = await mem_store.read_memory(user_id)
         summary = (mem.get("summary") or "").strip()[:400]
         summary_ts = mem.get("summary_ts")
-        facts = "\n".join(x for x in [(mem.get("profile") or "").strip(), (mem.get("pattern") or "").strip()] if x)[:800]
+        long_term_memory = "\n".join(
+            x for x in [(mem.get("profile") or "").strip(), (mem.get("pattern") or "").strip()] if x
+        )[:800]
         cutoff = (now_ctx().date() - timedelta(days=7)).isoformat()
         daily_entries = mem_store.extract_daily_entries(mem.get("daily") or "")
         daily_lines = [f"- {date} {note}" for date, note in daily_entries if date >= cutoff]
@@ -119,8 +121,8 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
             ev_part = "\n".join(f"- {e.date} {e.title}" for e in evs)
     except Exception:
         pass
-    # 优先级：最近在推进的（项目 > 当下重心 > 日程）排前、最显眼；长期 facts 垫底并明确
-    # 标成「背景」——别让陈年事实（如早就聊过的旧项目名）被当成「最近在忙」拿出来。
+    # 优先级：最近在推进的（项目 > 当下重心 > 日程）排前、最显眼；长期画像/模式垫底并明确
+    # 标成「背景」——别让陈年信息（如早就聊过的旧项目名）被当成「最近在忙」拿出来。
     parts: list[str] = []
     if seen:
         parts.append(seen)
@@ -142,8 +144,8 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
         parts.append("【近期日程 / 提醒】\n" + ev_part)
     if daily:
         parts.append("【近 7 天记忆】\n" + daily)
-    if facts:
-        parts.append("【长期背景（陈年事实，**别当成「最近在忙」随口提**，仅帮你把握 TA 是谁）】\n" + facts)
+    if long_term_memory:
+        parts.append("【长期背景（陈年信息，**别当成「最近在忙」随口提**，仅帮你把握 TA 是谁）】\n" + long_term_memory)
     return ("\n近期上下文（仅供你自然带一句，别照念）：\n" + "\n\n".join(parts) + "\n\n") if parts else "\n"
 
 

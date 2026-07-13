@@ -43,13 +43,13 @@ async def compact(user_id, settings) -> bool:
 
         existing_memory = await store.read_memory_doc(user_id)
         profile = await store.read_profile_list(user_id)
-        pattern = await store.read_facts_list(user_id)
+        pattern = await store.read_pattern_list(user_id)
         user = (
             f"已有的长期记忆：\n{existing_memory or '（暂无）'}\n\n"
             f"已结构化的用户画像（这些是稳定结论，别在长期记忆里原句复写）：\n"
             f"{store.render_profile(profile) or '（暂无）'}\n\n"
             f"已结构化的行为模式（这些是可复用规律，别在长期记忆里原句复写）：\n"
-            f"{store.render_facts(pattern) or '（暂无）'}\n\n"
+            f"{store.render_pattern(pattern) or '（暂无）'}\n\n"
             f"要沉淀进来的近期记录（旧→可丢琐碎）：\n" + "\n".join(overflow) + "\n\n"
             f"请输出融合后的长期记忆全文。"
         )

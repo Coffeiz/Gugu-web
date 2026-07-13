@@ -1,6 +1,6 @@
 """per-user 解读先验（lens）—— 第 4 类「记忆」：怎么读懂这个用户的预判。
 
-和 facts(陈述)/summary(状态)/daily(流水) 不同：lens 是「如何解读 TA」的偏置规则，
+和 profile/pattern（长期信息）/summary（状态）/daily（流水）不同：lens 是「如何解读 TA」的偏置规则，
 例「这人说『随便』其实有偏好、要追问」「TA 说『还行』通常是『不太行』」。
 自然语言规则 + 会动的 confidence —— 带「为什么」、可审计、LLM 直接当镜片用。
 

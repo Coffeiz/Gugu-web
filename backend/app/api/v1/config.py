@@ -417,7 +417,7 @@ async def test_embedding(body: EmbeddingTestRequest):
     return {"ok": True, "message": f"OK — 连通，向量维度 {len(vec)}"}
 
 
-# ── Embedding 向量重建（换模型后批量重算所有用户的 facts 向量）────────────────────
+# ── Embedding 向量重建（换模型后批量重算所有用户的 pattern 向量）──────────────────
 _REBUILD_KEY = "emb:rebuild"
 
 
@@ -444,7 +444,7 @@ async def _rebuild_worker(user_ids: list[str]) -> None:
 
 @router.post("/embedding-rebuild")
 async def embedding_rebuild(db: AsyncSession = Depends(get_db)):
-    """换 embedding 模型后，批量给所有用户的 facts 重算向量（force）。后台跑、立即返回。
+    """换 embedding 模型后，批量给所有用户的 pattern 重算向量（force）。后台跑、立即返回。
     未启用/已在跑 → 拒绝。进度用 GET /embedding-rebuild/status 轮询。"""
     from agent.memory import embedding
     from app.core.redis import get_redis
@@ -491,8 +491,8 @@ _MEM_CLEANUP_KEY = "mem_cleanup:plan"
 
 
 async def _mem_cleanup_worker(user_ids: list[str]) -> None:
-    from scripts.refresh_memory import _migrate_daily, _migrate_profile_events, _review_facts, _split_profile
-    from agent.memory.store import _key, FACTS_FILE
+    from scripts.refresh_memory import _migrate_daily, _migrate_profile_events, _review_patterns, _split_profile
+    from agent.memory.store import _key, PATTERN_FILE
     from app.services.storage import get_storage
     from app.core.redis import get_redis
     r = get_redis()
@@ -502,12 +502,12 @@ async def _mem_cleanup_worker(user_ids: list[str]) -> None:
     done = 0
     for uid in user_ids:
         try:
-            review = await _review_facts(uid, settings, dry_run=True, trials=3, temperature=0.1)
+            review = await _review_patterns(uid, settings, dry_run=True, trials=3, temperature=0.1)
             split = await _split_profile(uid, settings, dry_run=True, trials=3, temperature=0.1)
             profile_events = await _migrate_profile_events(uid, settings, dry_run=True)
             daily = await _migrate_daily(uid, settings, dry_run=True)
             legacy_files = []
-            if await storage.exists(_key(uid, FACTS_FILE)):
+            if await storage.exists(_key(uid, PATTERN_FILE)):
                 for legacy_name in ("facts.json", "facts.md", "facts_vec.json"):
                     if await storage.exists(_key(uid, legacy_name)):
                         legacy_files.append(legacy_name)
@@ -596,12 +596,12 @@ async def memory_cleanup_apply():
         touched = False
 
         if remove_ids or move_ids:
-            facts = await store.read_facts_list(uid)
+            patterns = await store.read_pattern_list(uid)
             drop_ids = remove_ids | move_ids
-            new_facts = [f for f in facts if f["id"] not in drop_ids]
-            if len(new_facts) != len(facts):
-                await store.write_facts_list(uid, new_facts)
-                await store.sync_fact_vecs(uid, new_facts)
+            new_patterns = [pattern for pattern in patterns if pattern["id"] not in drop_ids]
+            if len(new_patterns) != len(patterns):
+                await store.write_pattern_list(uid, new_patterns)
+                await store.sync_pattern_vecs(uid, new_patterns)
                 applied_total += len(remove_ids)
                 touched = True
 
