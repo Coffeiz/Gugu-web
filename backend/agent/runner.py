@@ -741,6 +741,69 @@ def _resolve_ephemeral_tool_names(tool_groups: list[str] | None, profile_tool_na
     return registry.tools_of(list(set(tool_groups) | {"meta"}))
 
 
+# 定时任务失败后延迟重试的等待时长（秒）。排查记录（2026-07-12/13 连续两天「科技新闻」
+# 任务撞上 MiniMax `input new_sensitive` 内容审核拒绝）：同一次执行内部几秒间隔的 3 次
+# 自动重试全部同样失败，但用户手动隔几分钟再触发一次相同任务总能成功——不是审核系统本身
+# 随机，而是这条路径每次都会带着当下最新的动态上下文（当前时间、项目/日历/记忆快照，见
+# _run_ephemeral_once 里的 loaders 调用）重新拼一次系统提示词，隔几分钟后这份上下文本来
+# 就已经不一样了，构成一次真正意义上不同的请求，不是对同一次审核判定的重放。所以这里选了
+# 一个"足够让上下文有机会变化"的分钟级延迟，不是随手挑的秒数；短于这个值意义不大（跟当次
+# 执行内部那 3 次秒级重试没区别，验证过全部同样失败）。
+_EPHEMERAL_RETRY_DELAY_S = 90
+
+
+async def _run_ephemeral_once(user_id, user_name: str, prompt: str, profile, settings,
+                              context_config: dict | None) -> tuple[str, bool]:
+    """单次真正执行一趟 run_ephemeral（加载上下文→拼提示词→跑 LLM→收集结果），
+    被 run_ephemeral 调用一到两次（首次 + 失败后的延迟重试）。返回 (文本, 是否出错)。"""
+    model_cfg = pick_model(settings, None)   # 解析层：active/pool/router 选一个模型配置
+    try:
+        cfg = context_config or {}
+        inc_projects = bool(cfg.get("projects")) if context_config else True
+        inc_calendar = bool(cfg.get("calendar")) if context_config else True
+        inc_files    = bool(cfg.get("files"))    if context_config else True
+        inc_memory   = bool(cfg.get("memory"))   if context_config else True
+
+        import app.db.session as _sess
+        if _sess._engine is None:
+            _sess._build_engine()
+
+        async with _sess._SessionLocal() as db:
+            projects = await loaders.load_projects(db, user_id) if inc_projects else []
+            user_tz = await loaders.load_user_tz(db, user_id)   # 「今天」按用户时区算（Phase 3）
+            set_ctx_tz(user_tz)                                 # tool dispatch 深处（overview 等）也能读到
+            events = await loaders.load_events(db, user_id, tz=user_tz) if inc_calendar else []
+            files_overview = await loaders.load_files_overview(db, user_id) if inc_files else None
+
+        memory = await loaders.load_memory(user_id) if (profile.memory_enabled and inc_memory) else {}
+        im_channels = await loaders.load_im_channels(user_id)
+        prompt_name = profile.prompt_file.removesuffix(".md")
+        system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview,
+                                      skills=profile.skills, im_channels=im_channels, non_streaming=True,
+                                      include_projects=inc_projects, include_calendar=inc_calendar,
+                                      include_files=inc_files, include_memory=inc_memory,
+                                      user_tz=user_tz)
+
+        from agent.llm_select import use_anthropic_for
+        use_anthropic = use_anthropic_for(model_cfg)
+        tool_groups = context_config.get("tool_groups") if context_config else None
+        tool_names = _resolve_ephemeral_tool_names(tool_groups, profile.tool_names)
+        runner = LLMRunner(tool_names, settings)
+
+        from app.core.chat_attach import build_user_content
+        if use_anthropic:
+            messages = [{"role": "user", "content": build_user_content(prompt, [], True)}]
+            gen = runner.run(user_id, system_prompt, messages, use_anthropic=True, model_cfg=model_cfg)
+        else:
+            messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+            gen = runner.run(user_id, None, messages, use_anthropic=False, model_cfg=model_cfg)
+
+        text, _, _, errored, _, _ = await _collect(gen, minimax=is_minimax(model_cfg))
+        return text, errored
+    finally:
+        _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
+
+
 async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: dict | None = None) -> str:
     """定时任务专用：跑 agent 拿结果，不建 session、不存 DB、不推 SSE。
 
@@ -748,59 +811,23 @@ async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: di
     精简：只加载/注入这个任务真正用得上的工具组和项目/日历/文件/记忆——这条路径不建 session、
     没有 prompt 缓存，每次触发都是全价，省下来的是真金白银。None（没判断出结果的旧任务/默认值）
     就走全量，安全优先。
+
+    失败会自动重试一次（延迟 _EPHEMERAL_RETRY_DELAY_S 秒），不是简单重放同一份请求——
+    _run_ephemeral_once 每次都重新从 DB 加载上下文、重新拼系统提示词，重试时用户看到的是
+    一次带着最新上下文的独立请求。定时任务是异步推送结果的后台流程，没有人盯着转圈等，
+    多等一两分钟换来自动挽回一次性误判/供应商侧瞬时状态，比让用户自己发现失败再手动重试划算。
     """
     profile = DefaultProfile()
     settings = get_settings()
-    model_cfg = pick_model(settings, None)   # 解析层：active/pool/router 选一个模型配置
 
-    cfg = context_config or {}
-    inc_projects = bool(cfg.get("projects")) if context_config else True
-    inc_calendar = bool(cfg.get("calendar")) if context_config else True
-    inc_files    = bool(cfg.get("files"))    if context_config else True
-    inc_memory   = bool(cfg.get("memory"))   if context_config else True
-
-    import app.db.session as _sess
-    if _sess._engine is None:
-        _sess._build_engine()
-
-    async with _sess._SessionLocal() as db:
-        projects = await loaders.load_projects(db, user_id) if inc_projects else []
-        user_tz = await loaders.load_user_tz(db, user_id)   # 「今天」按用户时区算（Phase 3）
-        set_ctx_tz(user_tz)                                 # tool dispatch 深处（overview 等）也能读到
-        events = await loaders.load_events(db, user_id, tz=user_tz) if inc_calendar else []
-        files_overview = await loaders.load_files_overview(db, user_id) if inc_files else None
-
-    memory = await loaders.load_memory(user_id) if (profile.memory_enabled and inc_memory) else {}
-    im_channels = await loaders.load_im_channels(user_id)
-    prompt_name = profile.prompt_file.removesuffix(".md")
-    system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview,
-                                  skills=profile.skills, im_channels=im_channels, non_streaming=True,
-                                  include_projects=inc_projects, include_calendar=inc_calendar,
-                                  include_files=inc_files, include_memory=inc_memory,
-                                  user_tz=user_tz)
-
-    from agent.llm_select import use_anthropic_for
-    use_anthropic = use_anthropic_for(model_cfg)
-    tool_groups = context_config.get("tool_groups") if context_config else None
-    tool_names = _resolve_ephemeral_tool_names(tool_groups, profile.tool_names)
-    runner = LLMRunner(tool_names, settings)
-
-    from app.core.chat_attach import build_user_content
-    if use_anthropic:
-        messages = [{"role": "user", "content": build_user_content(prompt, [], True)}]
-        gen = runner.run(user_id, system_prompt, messages, use_anthropic=True, model_cfg=model_cfg)
-    else:
-        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
-        gen = runner.run(user_id, None, messages, use_anthropic=False, model_cfg=model_cfg)
-
-    try:
-        text, _, _, errored, _, _ = await _collect(gen, minimax=is_minimax(model_cfg))
-    finally:
-        _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
+    text, errored = await _run_ephemeral_once(user_id, user_name, prompt, profile, settings, context_config)
     if errored:
         # 定时任务排障日志：_collect 判定失败时会把 text 换成错误详情，但调用方（scheduled_tasks.py）
-        # 只看得到这里返回的 ""，兜成通用「没有产出内容」——真实原因此前完全没留痕（2026-07-11
+        # 只看得到这里返回的文本，兜成通用「没有产出内容」——真实原因此前完全没留痕（2026-07-11
         # 排查「科技新闻」任务空产出时，日志里既无 LLM 报错、也无工具调用记录，无从判断）。
-        logger.warning("[定时任务] run_ephemeral 生成失败: %s", redact(text))
-        return sanitize.strip_disallowed_emoji(text)
+        logger.warning("[定时任务] run_ephemeral 首次失败，%s 秒后重试一次: %s", _EPHEMERAL_RETRY_DELAY_S, redact(text))
+        await asyncio.sleep(_EPHEMERAL_RETRY_DELAY_S)
+        text, errored = await _run_ephemeral_once(user_id, user_name, prompt, profile, settings, context_config)
+        if errored:
+            logger.warning("[定时任务] run_ephemeral 重试后仍失败: %s", redact(text))
     return sanitize.strip_disallowed_emoji(text)
