@@ -83,12 +83,14 @@
         <div class="fd-banner" :class="dirReport.healthy ? 'ok' : 'alert'">
           <PhCheckCircle v-if="dirReport.healthy" :size="18" weight="fill" />
           <PhWarningCircle v-else :size="18" weight="fill" />
-          <span v-if="dirReport.healthy">目录一致，无缺失、无孤儿。</span>
+          <span v-if="dirReport.healthy">目录一致，无缺失、无孤儿、无位置漂移。</span>
           <span v-else>
             发现
             <b v-if="dirReport.missing_dirs.length">{{ dirReport.missing_dirs.length }} 个缺失目录</b>
-            <span v-if="dirReport.missing_dirs.length && dirReport.orphan_dirs.length">、</span>
-            <b v-if="dirReport.orphan_dirs.length">{{ dirReport.orphan_dirs.length }} 个孤儿空目录</b>。
+            <span v-if="dirReport.missing_dirs.length && (dirReport.orphan_dirs.length || dirReport.misplaced_files.length)">、</span>
+            <b v-if="dirReport.orphan_dirs.length">{{ dirReport.orphan_dirs.length }} 个孤儿空目录</b>
+            <span v-if="dirReport.orphan_dirs.length && dirReport.misplaced_files.length">、</span>
+            <b v-if="dirReport.misplaced_files.length">{{ dirReport.misplaced_files.length }} 个位置不一致文件</b>。
           </span>
         </div>
 
@@ -107,11 +109,17 @@
             <div class="fc-value">{{ dirReport.orphan_dirs.length }}</div>
             <div class="fc-hint">盘上有、无对应文件夹且为空 · 需确认清理</div>
           </div>
+          <div class="fd-card" :class="{ warnOrphan: dirReport.misplaced_files.length }">
+            <div class="fc-label">位置不一致文件</div>
+            <div class="fc-value">{{ dirReport.misplaced_files.length }}</div>
+            <div class="fc-hint">DB 归属已变、物理字节还在旧位置 · 需确认搬迁</div>
+          </div>
         </div>
 
         <div v-if="dirLastFix" class="fd-fix-result">
           <PhCheckCircle :size="15" weight="fill" />
-          上次修复：补齐 <b>{{ dirLastFix.created }}</b> 个缺失目录，清理 <b>{{ dirLastFix.removed }}</b> 个孤儿目录。
+          上次修复：补齐 <b>{{ dirLastFix.created }}</b> 个缺失目录，清理 <b>{{ dirLastFix.removed }}</b> 个孤儿目录，
+          搬迁 <b>{{ dirLastFix.relocated }}</b> 个位置不一致文件。
         </div>
 
         <div v-if="dirReport.missing_dirs.length" class="fd-section">
@@ -132,12 +140,26 @@
           </label>
         </div>
 
+        <div v-if="dirReport.misplaced_files.length" class="fd-section">
+          <div class="sec-title orphan">位置不一致文件（DB 归属正常，物理字节还在旧位置 · 不含 mind 空间）</div>
+          <ul class="dir-list">
+            <li v-for="m in dirReport.misplaced_files" :key="m.file_id" class="dir-item misplaced-item">
+              <div class="misplaced-name">{{ m.display_name }}（#{{ m.file_id }}）</div>
+              <div class="misplaced-path"><span class="from">{{ m.current_key }}</span> → <span class="to">{{ m.expected_key }}</span></div>
+            </li>
+          </ul>
+          <label class="fd-confirm">
+            <input type="checkbox" v-model="relocateFiles" />
+            我确认把上述文件搬到当前归属应在的位置（重命名冲突自动加后缀，不覆盖已有文件）
+          </label>
+        </div>
+
         <div v-if="!dirReport.healthy" class="fd-actions">
           <button class="sa-btn primary" :disabled="dirFixing" @click="repairDirs()">
             <PhWrench :size="15" weight="bold" />
             {{ dirFixBtnLabel }}
           </button>
-          <span class="fd-actions-note">修复在服务端重新扫描后执行——补缺失总是安全；孤儿仅在勾选确认后才清。</span>
+          <span class="fd-actions-note">修复在服务端重新扫描后执行——补缺失总是安全；孤儿/位置搬迁仅在勾选确认后才动。</span>
         </div>
       </template>
     </section>
@@ -207,20 +229,29 @@ async function repairOrphans(keys: string[], action: 'import' | 'delete') {
   }
 }
 
-// ── 目录对账（文件夹树 ↔ 磁盘目录）──────────────────────────────────────────
+// ── 目录对账（文件夹树 ↔ 磁盘目录 + 文件物理位置）────────────────────────────
+interface MisplacedFile {
+  file_id: number
+  display_name: string
+  current_key: string
+  expected_key: string
+}
 interface DoctorReport {
   missing_dirs: string[]
   orphan_dirs: string[]
+  misplaced_files: MisplacedFile[]
   scanned_folders: number
   created: number
   removed: number
+  relocated: number
   healthy: boolean
 }
 
 const userId = ref('')
 const dirReport = ref<DoctorReport | null>(null)
-const dirLastFix = ref<{ created: number; removed: number } | null>(null)
+const dirLastFix = ref<{ created: number; removed: number; relocated: number } | null>(null)
 const removeOrphans = ref(false)
+const relocateFiles = ref(false)
 const dirScanning = ref(false)
 const dirFixing = ref(false)
 const dirErr = ref('')
@@ -229,6 +260,7 @@ const dirFixBtnLabel = computed(() => {
   const parts: string[] = []
   if (dirReport.value?.missing_dirs.length) parts.push('补齐缺失')
   if (removeOrphans.value && dirReport.value?.orphan_dirs.length) parts.push('清理孤儿')
+  if (relocateFiles.value && dirReport.value?.misplaced_files.length) parts.push('搬迁文件')
   return parts.length ? `执行修复（${parts.join(' + ')}）` : '执行修复'
 })
 
@@ -241,6 +273,7 @@ async function scanDirs() {
   dirErr.value = ''
   dirLastFix.value = null
   removeOrphans.value = false
+  relocateFiles.value = false
   try {
     const res = await adminStore.authFetch(`/api/v1/admin/folder-doctor/scan${dirQs()}`)
     if (!res.ok) throw new Error(`扫描失败 (${res.status})`)
@@ -259,13 +292,18 @@ async function repairDirs() {
   try {
     const res = await adminStore.authFetch('/api/v1/admin/folder-doctor/repair', {
       method: 'POST',
-      body: JSON.stringify({ user_id: userId.value || null, remove_orphans: removeOrphans.value }),
+      body: JSON.stringify({
+        user_id: userId.value || null,
+        remove_orphans: removeOrphans.value,
+        relocate_files: relocateFiles.value,
+      }),
     })
     if (!res.ok) throw new Error(`修复失败 (${res.status})`)
     const fresh: DoctorReport = await res.json()
-    dirLastFix.value = { created: fresh.created, removed: fresh.removed }
+    dirLastFix.value = { created: fresh.created, removed: fresh.removed, relocated: fresh.relocated }
     dirReport.value = fresh
     removeOrphans.value = false
+    relocateFiles.value = false
   } catch (e: any) {
     dirErr.value = e.message
   } finally {
@@ -360,6 +398,11 @@ async function repairDirs() {
 .dir-item { font-family: var(--font-mono, monospace); font-size: 12px; color: rgba(255,255,255,0.75);
   padding: 4px 8px; border-radius: 6px; word-break: break-all; }
 .dir-item:hover { background: rgba(255,255,255,0.04); }
+.misplaced-item { padding: 6px 8px; }
+.misplaced-name { font-family: var(--font-sans, inherit); font-weight: 600; color: rgba(255,255,255,0.85); margin-bottom: 2px; }
+.misplaced-path { font-size: 11px; }
+.misplaced-path .from { color: #e0a96a; }
+.misplaced-path .to { color: #7fc99a; }
 
 .fd-confirm { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px;
   color: rgba(255,255,255,0.6); cursor: pointer; user-select: none; }
