@@ -70,6 +70,10 @@
           <PhPulse :size="14" />
           服务状态
         </div>
+        <div class="nav-item" :class="{ active: isActive('/folder-doctor') }" role="link" tabindex="0" @click="go('/folder-doctor')">
+          <PhFolderSimpleDashed :size="14" />
+          目录对账
+        </div>
         <div class="nav-item" :class="{ active: isActive('/ops') }" role="link" tabindex="0" @click="go('/ops')">
           <PhGauge :size="14" />
           运维监控
@@ -126,6 +130,7 @@ import { useAdminStore } from '@/stores/admin'
 import {
   PhGear, PhRobot, PhChartLine, PhChartBar, PhFlag, PhTicket, PhUsers,
   PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging, PhBrain, PhGauge,
+  PhFolderSimpleDashed,
 } from '@phosphor-icons/vue'
 
 const route = useRoute()

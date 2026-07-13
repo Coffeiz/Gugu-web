@@ -87,6 +87,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '服务状态' },
       },
       {
+        path: 'folder-doctor',
+        name: 'AdminFolderDoctor',
+        component: () => import('@/views/Admin/FolderDoctor/index.vue'),
+        meta: { title: '目录对账' },
+      },
+      {
         path: 'ops',
         name: 'AdminOps',
         component: () => import('@/views/Admin/Ops/index.vue'),
