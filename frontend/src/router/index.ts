@@ -74,7 +74,17 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Mind/index.vue'),
         meta: { title: '思维', fullBleed: true },
         children: [
-          { path: '', redirect: '/mind/notes' },
+          {
+            path: '',
+            // 侧栏入口始终是 /mind：恢复用户上次停留的子视图；失效的画布 id 由 CanvasView 回退。
+            redirect: () => {
+              const lastMode = localStorage.getItem('mind-last-mode')
+              const lastCanvasId = localStorage.getItem('mind-last-canvas-id')
+              return lastMode === 'canvas'
+                ? `/mind/canvases${lastCanvasId ? `/${lastCanvasId}` : ''}`
+                : '/mind/notes'
+            },
+          },
           {
             path: 'notes',
             name: 'MindNotes',

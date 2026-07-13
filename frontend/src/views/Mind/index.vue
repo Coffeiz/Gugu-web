@@ -43,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { PhGraph, PhMagnifyingGlass, PhNotePencil, PhX } from '@phosphor-icons/vue'
 import { useMindStore } from '@/stores/mind'
@@ -55,6 +55,12 @@ const store = useMindStore()
 const isNotes = computed(() => route.path.startsWith('/mind/notes'))
 const isCanvas = computed(() => route.path.startsWith('/mind/canvases'))
 const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不是 UTC）
+
+// /mind 是侧栏唯一入口；把当前子视图记下来，下一次从侧栏回来时由路由重定向恢复它。
+watch(() => route.path, (path) => {
+  if (path.startsWith('/mind/notes')) localStorage.setItem('mind-last-mode', 'notes')
+  else if (path.startsWith('/mind/canvases')) localStorage.setItem('mind-last-mode', 'canvas')
+}, { immediate: true })
 </script>
 
 <style scoped>

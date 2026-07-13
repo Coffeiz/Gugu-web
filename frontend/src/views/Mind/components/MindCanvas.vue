@@ -2,14 +2,14 @@
   <div ref="viewportRef" class="mind-canvas" :style="bgStyle" @pointerdown="onViewportPointerDown" @wheel.prevent="onWheelZoom">
     <div class="canvas-world" :style="worldStyle">
       <RelationLayer
-        :items="items" :relations="relations" :highlight-node-id="connectionDrag.originNodeId"
+        :items="relationItems" :relations="visibleRelations" :highlight-node-id="connectionDrag.originNodeId"
         :draft="connectionDrag.active ? { from: connectionDrag.from, to: connectionDrag.to, fromSide: connectionDrag.originSide, toSide: connectionDrag.targetSide } : null"
         :landing-positions="landingPositions" :measured-sizes="measuredSizes" :relation-anchors="relationAnchors"
         :hovered-node-id="hoveredNodeId" :scale="camera.scale"
         @remove="id => emit('removeRelation', id)"
       />
 
-      <template v-for="item in items" :key="item.id">
+      <template v-for="item in visibleItems" :key="item.id">
         <NoteSticker
           v-if="item.node.kind === 'canvas_note'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
@@ -51,6 +51,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, type PropType } fr
 import './canvas-card-effects.css'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
+import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
 import EntitySticker from './EntitySticker.vue'
 import FileRefCard from './FileRefCard.vue'
 import NoteSticker from './NoteSticker.vue'
@@ -73,13 +74,41 @@ const emit = defineEmits<{
 
 const viewportRef = ref<HTMLElement | null>(null)
 const measuredSizes = reactive(new Map<number, { w: number; h: number }>())
+const viewportSize = reactive({ width: 0, height: 0 })
 const {
   camera, centerView, screenToWorld, zoomAt, zoomAtCenter, onWheel,
   startPan, panMove, panEnd,
-  onResize,
 } = useMindCanvas(viewportRef)
 
 const worldStyle = computed(() => ({ transform: `translate3d(${camera.x}px, ${camera.y}px, 0) scale(${camera.scale})` }))
+// 贴纸和连线只渲染在视口附近。420px 缓冲给边缘拖拽、连线和快速平移留出余量；缓冲按
+// 屏幕像素定义，缩放时换算成世界坐标，因此不会在不同倍率下改变可见范围的体感。
+const WINDOW_BUFFER_PX = 420
+const visibleItems = computed(() => {
+  // 首次挂载前还没有 DOM 尺寸，先保守地完整渲染一帧，不能把画布误判为空。
+  if (!viewportSize.width || !viewportSize.height) return props.items
+  const viewport = worldViewport({ ...camera, ...viewportSize }, WINDOW_BUFFER_PX)
+  return props.items.filter(item => {
+    const { w, h } = measuredSizes.get(item.nodeId) ?? itemSize(item)
+    return overlapsWorldRect({ x: item.x, y: item.y, w, h }, viewport)
+  })
+})
+const visibleRelations = computed(() => {
+  const visibleNodeIds = new Set(visibleItems.value.map(item => item.nodeId))
+  // 只要一端还在窗口里，线就必须保留并延伸向远处节点；否则用户会看到可见卡片的关联
+  // 突然消失。两端都在窗口外的线才不画。远端卡片本身仍不挂载，只把它的几何数据交给 SVG。
+  return props.relations.filter(relation =>
+    visibleNodeIds.has(relation.srcNodeId) || visibleNodeIds.has(relation.dstNodeId),
+  )
+})
+const relationItems = computed(() => {
+  const neededNodeIds = new Set(visibleItems.value.map(item => item.nodeId))
+  for (const relation of visibleRelations.value) {
+    neededNodeIds.add(relation.srcNodeId)
+    neededNodeIds.add(relation.dstNodeId)
+  }
+  return props.items.filter(item => neededNodeIds.has(item.nodeId))
+})
 // 点阵背景要跟着世界一起平移/缩放，才能看出"画布真的在动"（而不是贴纸飘在一张静止的纸上）；
 // 点阵本身画在 viewport 层（没有 canvas-world 的 scale 会拉伸成椭圆），故背景尺寸也要乘 scale 才能对齐。
 const bgStyle = computed(() => {
@@ -112,6 +141,14 @@ function onItemDragging(item: MindCanvasItem, x: number, y: number) {
 }
 function onItemMeasured(item: MindCanvasItem, size: { w: number; h: number }) {
   measuredSizes.set(item.nodeId, size)
+}
+
+let viewportResizeObserver: ResizeObserver | null = null
+function updateViewportSize() {
+  const viewport = viewportRef.value
+  if (!viewport) return
+  viewportSize.width = viewport.clientWidth
+  viewportSize.height = viewport.clientHeight
 }
 
 // 悬浮抬起（见各贴纸组件的 .hover-card-fx）用纯 CSS transform，SVG 连线不知道 DOM 层面的
@@ -280,12 +317,17 @@ function zoomAtCenterAndEmit(delta: number) {
   zoomAtCenter(delta)
   emitViewChange()
 }
+function centerViewAndEmit() {
+  centerView()
+  emitViewChange()
+}
 function centerOn(worldX: number, worldY: number) {
   const viewport = viewportRef.value
   if (!viewport) return
   camera.scale = 1
   camera.x = viewport.clientWidth / 2 - worldX
   camera.y = viewport.clientHeight / 2 - worldY
+  emitViewChange()
 }
 // 画布现在贴着侧栏/顶部胶囊摆放，不再铺满整个浏览器窗口（见 .mind-canvas 定位注释）——
 // "视口正中心"不能再拿 window.innerWidth/innerHeight 算，得读画布自己的实际可见区域。
@@ -295,17 +337,19 @@ function viewportCenter() {
   return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : { x: 0, y: 0 }
 }
 
-defineExpose({ camera, centerView, centerOn, screenToWorld, zoomAt, zoomAtCenter: zoomAtCenterAndEmit, viewportCenter })
+defineExpose({ camera, centerView: centerViewAndEmit, centerOn, screenToWorld, zoomAt, zoomAtCenter: zoomAtCenterAndEmit, viewportCenter })
 
 onMounted(() => {
+  updateViewportSize()
+  viewportResizeObserver = new ResizeObserver(updateViewportSize)
+  if (viewportRef.value) viewportResizeObserver.observe(viewportRef.value)
   window.addEventListener('pointermove', onPointerMove)
   window.addEventListener('pointerup', onPointerUp)
-  window.addEventListener('resize', onResize)
 })
 onBeforeUnmount(() => {
+  viewportResizeObserver?.disconnect()
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', onPointerUp)
-  window.removeEventListener('resize', onResize)
   window.removeEventListener('pointermove', onConnectionDragMove)
   window.removeEventListener('pointerup', onConnectionDragEnd)
   cancelAnimationFrame(connSpringRaf)

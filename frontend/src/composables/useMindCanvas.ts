@@ -111,7 +111,6 @@ const MAX_SCALE = 1.7
 
 export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
   const camera = reactive<CanvasCamera>({ x: 0, y: 0, scale: 1 })
-  let viewInitialized = false
 
   function centerView() {
     const viewport = viewportRef.value
@@ -119,7 +118,6 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
     camera.x = viewport.clientWidth / 2
     camera.y = viewport.clientHeight / 2
     camera.scale = 1
-    viewInitialized = true
   }
 
   // clientX/clientY 是浏览器给的视口坐标，跟 .mind-canvas 自己在视口里具体贴在哪儿无关；
@@ -174,14 +172,8 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
     return true
   }
 
-  function onResize() {
-    if (!viewInitialized) return
-    centerView()
-  }
-
   return {
     camera, centerView, screenToWorld, zoomAt, zoomAtCenter, onWheel,
     startPan, panMove, panEnd,
-    onResize,
   }
 }

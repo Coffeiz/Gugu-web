@@ -20,13 +20,13 @@
       @create-note="createCanvasNote"
       @add-ref="addRef"
       @zoom="delta => canvasRef?.zoomAtCenter(delta)"
-      @reset-view="() => canvasRef?.centerView()"
+      @reset-view="resetView"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { MindCanvasItem, MindRefSuggestItem } from '@/services/api'
 import { useMindRefActions } from '@/composables/useMindRefActions'
@@ -65,7 +65,10 @@ onMounted(async () => {
   if (!store.canvasesLoaded) await store.fetchCanvases()
   await ensureCanvas()
 })
-watch(() => route.params.id, async () => { await ensureCanvas() })
+watch(() => route.params.id, async () => {
+  flushViewSave()
+  await ensureCanvas()
+})
 
 async function ensureCanvas() {
   let id = Number(route.params.id)
@@ -75,11 +78,12 @@ async function ensureCanvas() {
     await router.replace({ name: 'MindCanvas', params: { id } })
     return
   }
-  if (store.activeCanvasId !== id) {
-    await store.loadCanvas(id)
-    await nextTick()
-    restoreView(id)
-  }
+  // store 会跨路由保留 activeCanvasId，但 MindCanvas 在离开再回来后是一个全新的组件，
+  // 它的 camera 又从 scale=1 开始。只跳过网络加载，不能连 restoreView 一起跳过。
+  if (store.activeCanvasId !== id) await store.loadCanvas(id)
+  localStorage.setItem('mind-last-canvas-id', String(id))
+  await nextTick()
+  restoreView(id)
 }
 
 /** 打开画布时优先回到用户上次离开时的视角（存在 mind_maps.data_json 里）；
@@ -109,12 +113,25 @@ function restoreView(id: number) {
 }
 
 let viewSaveTimer: ReturnType<typeof setTimeout> | null = null
+let pendingViewSave: { id: number; view: { x: number; y: number; scale: number } } | null = null
 function onViewChange(view: { x: number; y: number; scale: number }) {
   const id = activeCanvasId.value
   if (id == null) return
+  pendingViewSave = { id, view }
   if (viewSaveTimer) clearTimeout(viewSaveTimer)
-  viewSaveTimer = setTimeout(() => { store.saveCanvasView(id, view).catch(() => {}) }, 500)
+  viewSaveTimer = setTimeout(flushViewSave, 500)
 }
+function flushViewSave() {
+  if (viewSaveTimer) clearTimeout(viewSaveTimer)
+  viewSaveTimer = null
+  const pending = pendingViewSave
+  pendingViewSave = null
+  if (pending) store.saveCanvasView(pending.id, pending.view).catch(() => {})
+}
+function resetView() {
+  canvasRef.value?.centerView()
+}
+onBeforeUnmount(flushViewSave)
 
 async function createCanvas() {
   const canvas = await store.createCanvas()
