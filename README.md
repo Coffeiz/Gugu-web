@@ -98,6 +98,10 @@ cp .env.example backend/.env
 # 3. 一键启动（首次启动会自动跑 alembic 迁移）
 docker compose up -d
 
+# 直连 PyPI 官方源在部分网络环境下会很慢甚至构建失败？换源不用改文件，构建前设个
+# 环境变量即可（后端镜像默认走官方源，不影响网络正常的用户）：
+# PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker compose up -d --build
+
 # 4. 浏览器访问
 # 前端  → http://localhost:9595
 # 后端  → http://localhost:8000/docs
