@@ -31,15 +31,17 @@ WORKDIR /app
 # （不进最终镜像层，体积不受影响），requirements.txt 没变时下次构建这层直接跳过、变了也只需
 # 下载/编译真正变化的包。
 #
-# 真正的大头是网络：这台机器直连 PyPI 官方源（files.pythonhosted.org）实测只有 ~10KB/s，
-# 装 langchain 这种依赖树巨大的包能拖到 25+ 分钟甚至读超时失败（2026-07-14 排查：worker 服务
-# `pip install` 单层 1544s；重现时直连卡在下载 sqlalchemy 途中 ReadTimeoutError）。换清华 TUNA
-# 镜像后同一个包 <1s 跑满带宽——这才是「每次都巨慢」的真正瓶颈，缓存挂载只优化重复构建，
-# 解决不了首次冷装/装新包这个大头。镜像地址写死不做成 build-arg：本项目部署环境固定，没有
-# 「有的机器在国内有的不在」的需求，加一层可配置只会增加没人用的复杂度。
+# PIP_INDEX_URL 可换源：本仓库要发 GitHub 给各地的人自己 `docker build` 部署，直连 PyPI 官方源
+# 在有的网络环境下会很慢甚至读超时（2026-07-14 实测某国内网络 ~10KB/s，装 langchain 这种依赖树
+# 巨大的包能拖到 25+ 分钟甚至失败；换清华 TUNA 镜像后同一个包 <1s 跑满带宽）——但这是网络环境
+# 差异，不是所有部署者都会遇到，写死镜像源对官方源本就够快的用户反而更慢/不必要地依赖第三方源。
+# 默认走官方源，网络不佳时按需覆盖：
+#   docker build --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple ./backend
+# 或用 docker-compose.yml 里同名 build arg（读同名环境变量，见其注释）。
+ARG PIP_INDEX_URL=https://pypi.org/simple
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
+    pip install -i "${PIP_INDEX_URL}" -r requirements.txt
 
 COPY . .
 RUN mkdir -p uploads logs
