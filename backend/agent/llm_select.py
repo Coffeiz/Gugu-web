@@ -13,24 +13,30 @@ from __future__ import annotations
 
 import random
 
+from agent import providers
+
 # 未来 Router 注册口：set_router(fn)，fn(settings, ctx) -> 预设对象 | None
 _router = None
 
 _rr_counter = 0                  # round_robin 轮询游标
 _inflight: dict[str, int] = {}   # least_loaded 每 key 在途计数（pick 时 +1，release 时 -1）
 
+# 下面这几个判断函数（PRD-LLM-1 FR-LLM-2）改成委托 agent/providers.py 的
+# adapter_for()——provider 差异知识收拢到那一个文件，这里只是保留现有签名/
+# 导入路径的薄包装，外部调用点一行不用改。行为跟改动前逐条对齐，见各函数注释。
+
 
 def _is_mimo(ai) -> bool:
-    return (getattr(ai, "provider", "") or "").lower() == "mimo" or "xiaomimimo" in (getattr(ai, "base_url", "") or "").lower()
+    return providers.adapter_for(ai).name == "mimo"
 
 
 def _is_deepseek(ai) -> bool:
-    return (getattr(ai, "provider", "") or "").lower() == "deepseek" or "deepseek" in (getattr(ai, "base_url", "") or "").lower()
+    return providers.adapter_for(ai).name == "deepseek"
 
 
 def is_minimax(ai) -> bool:
     """MiniMax 专属流式泄漏清洗的统一判定口。"""
-    return (getattr(ai, "provider", "") or "").lower() == "minimax"
+    return providers.adapter_for(ai).name == "minimax"
 
 
 def supports_anthropic_active_cache(ai) -> bool:
@@ -39,21 +45,24 @@ def supports_anthropic_active_cache(ai) -> bool:
     MiniMax-M3 只支持被动前缀缓存，不应发送 `cache_control`；官方主动缓存文档目前仅列
     MiniMax-M2.x。其它既有 Anthropic 路径保持历史行为，MiMo 仍明确不支持该参数。
     """
-    if is_minimax(ai):
-        model = (getattr(ai, "model", "") or "").lower()
-        return model.startswith("minimax-m2")
-    return not _is_mimo(ai)
+    return providers.adapter_for(ai).supports_active_cache(getattr(ai, "model", "") or "")
 
 
 def supports_thinking_toggle(ai) -> bool:
     """该模型(OpenAI 通道)是否支持 `{"thinking":{"type":...}}` 思考开关：mimo 与 deepseek 都用同一参数。
     其它 openai 兼容厂商(qwen/openai)没这参数，传了可能报错，故只对这两家发。"""
-    return _is_mimo(ai) or _is_deepseek(ai)
+    return providers.adapter_for(ai).supports_thinking_toggle
 
 
 def use_anthropic_for(ai) -> bool:
     """该模型走 anthropic 块格式还是 openai 格式 —— 全后端唯一判定口（聊天/记忆/IM 共用，避免各处不一致）。
-    优先显式 `api_format`（mimo 等同时提供两套 API 的厂商可选）；否则按 provider/base_url 自动判。"""
+    优先显式 `api_format`（mimo 等同时提供两套 API 的厂商可选）；否则按 provider/base_url 自动判。
+
+    这条不能简单委托给 `adapter_for(ai).api_format`——unmatched provider（比如 qwen 等其它
+    openai 兼容厂商）在适配器里落到 `_DEFAULT`，但这里的历史默认是「不认识就当 openai 格式，
+    除非 base_url 里带 anthropic 字样」，跟 `_DEFAULT` 代表的「真正的 anthropic 原生」语义不是
+    一回事，硬delegate 会让不认识的第三方厂商被误判成走 anthropic 格式。所以这条只复用
+    `is_minimax`（已经是委托版本），其余判定逻辑原样保留。"""
     fmt = (getattr(ai, "api_format", "") or "").lower()
     if fmt == "anthropic":
         return True
@@ -65,17 +74,13 @@ def use_anthropic_for(ai) -> bool:
 def openai_default_headers(ai) -> dict:
     """OpenAI 兼容通道里，部分厂商鉴权头非标准。给它们补对应头，其余空（用 SDK 默认 Authorization: Bearer）。
     - 小米 MiMo：用 `api-key: <KEY>` 头，不是 Bearer。按 provider==mimo / base_url 含 xiaomimimo 识别。"""
-    if _is_mimo(ai):
-        return {"api-key": getattr(ai, "api_key", "") or ""}
-    return {}
+    return providers.adapter_for(ai).auth_headers(ai)
 
 
 def anthropic_default_headers(ai) -> dict:
     """Anthropic 兼容通道的非标准鉴权头。Anthropic SDK 默认发 `x-api-key`；mimo 的 anthropic 端点
     可能要它自己的 `api-key` 头，一并补上（多发一个无害），让 mimo 走 anthropic 格式也能鉴权。"""
-    if _is_mimo(ai):
-        return {"api-key": getattr(ai, "api_key", "") or ""}
-    return {}
+    return providers.adapter_for(ai).auth_headers(ai)
 
 
 def _pick_pool(pool, mode):

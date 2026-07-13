@@ -70,7 +70,7 @@ async def drain(gen):
 
 def patch_anthropic(script):
     q = collections.deque(script)
-    async def fake_stream_round(client, kwargs):
+    async def fake_stream_round(client, kwargs, adapter=None):
         m = q.popleft()
         txt = "".join(b.text for b in m.content if b.type == "text") or ""
         if txt:
