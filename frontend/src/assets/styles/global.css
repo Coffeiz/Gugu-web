@@ -469,6 +469,16 @@ body {
 ::view-transition-new(phys-drag-vt) {
   animation-duration: 0.4s;
 }
+/* View Transitions 默认还会把「没单独命名」的整页内容打包成一个 root 分组，截图新旧两帧
+   做交叉淡变——落点让位的邻居卡走的是 _invertPlay 手写的 transform FLIP（活的 CSS
+   transition，位置连续滑动），不是"内容变了"，被 root 这层默认淡变糊在上面，活的滑动看
+   不见，只剩下 root 快照本身那层不上不下的淡出/淡入，观感是"奇怪地淡一下"而不是跟着滑过去。
+   root 关掉默认动画：不参与命名分组的内容直接按最终布局出现，不再叠一层多余的淡变。 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
 
 /* 曾经拖拽期间关掉顶栏/侧栏 backdrop-filter 减负（perf trace 显示单次整屏重绘 ~29ms）——
    但代价是拖拽这一两秒导航栏毛玻璃质感整个消失、松手后再突然变回来，用户体验上一直觉得
