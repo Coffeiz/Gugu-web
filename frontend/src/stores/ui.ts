@@ -43,6 +43,7 @@ export const useUiStore = defineStore('ui', () => {
   const pendingFileTarget    = ref<{ kind: string; id: number } | null>(null)
   const pendingChatMessageId = ref<number | null>(null)   // 对话搜索命中消息时，跳转后滚到该消息
   const pendingCalendarEvent = ref<{ id: number; date?: string } | null>(null)   // { id, date } 日程搜索跳转
+  const pendingNoteId = ref<number | null>(null)   // 思维笔记搜索跳转后打开对应便签的编辑态
   const pendingCalendarDate  = ref<string | null>(null)   // 仪表盘小日历点某天 → 跳日历定位到该日（不高亮具体活动）
   const pendingProjectHighlight = ref<number | null>(null)   // 项目搜索跳转后高亮项目卡（不打开编辑弹窗）
   const pendingProjectHighlightMs = ref<number | null>(null) // 高亮时长(ms)：缺省 1800；新手引导用 5000（设 id 前先设它）
@@ -138,6 +139,6 @@ export const useUiStore = defineStore('ui', () => {
     openNewProject, newProjectInitStatus, openProfile, sidebarCollapsed, newProjectRange,
     calendarActiveRange, pendingChatSession, pendingFileTarget, chatNotifyAnchor, chatNotifyOrigin,
     pendingChatMessageId, pendingCalendarEvent, pendingCalendarDate, pendingProjectHighlight, pendingProjectHighlightMs,
-    pendingProjectHighlightBreath,
+    pendingProjectHighlightBreath, pendingNoteId,
   }
 })

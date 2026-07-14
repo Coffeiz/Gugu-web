@@ -49,7 +49,7 @@ import { useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import {
   PhCircleNotch,
-  PhStack, PhFile, PhFolder, PhCalendarBlank, PhAddressBook, PhChatCircle,
+  PhStack, PhFile, PhFolder, PhCalendarBlank, PhAddressBook, PhChatCircle, PhNote,
 } from '@phosphor-icons/vue'
 import SearchInput from './SearchInput.vue'
 import { searchApi } from '@/services/api'
@@ -64,6 +64,7 @@ const TYPE_ICON = {
   event: PhCalendarBlank,
   client: PhAddressBook,
   conversation: PhChatCircle,
+  note: PhNote,
 }
 
 const router       = useRouter()
@@ -71,7 +72,7 @@ const projectStore = useProjectStore()
 const uiStore      = useUiStore()
 
 interface SearchItem { id: number; title: string; subtitle?: string; date?: string; message_id?: number }
-interface SearchGroup { type: 'project' | 'file' | 'folder' | 'event' | 'client' | 'conversation'; label: string; items: SearchItem[] }
+interface SearchGroup { type: 'project' | 'file' | 'folder' | 'event' | 'client' | 'conversation' | 'note'; label: string; items: SearchItem[] }
 
 const wrapEl  = ref<HTMLElement | null>(null)
 const inputEl = ref<InstanceType<typeof SearchInput> | null>(null)
@@ -149,6 +150,9 @@ function go(type: string, it: SearchItem) {
     uiStore.pendingChatSession = it.id   // GuguChat 监听后打开、切到会话、滚到匹配消息
   } else if (type === 'client') {
     Message.info('客户页面还在开发中，先在项目里看吧～')
+  } else if (type === 'note') {
+    uiStore.pendingNoteId = it.id   // NotesView 监听后定位到对应日期并打开编辑态
+    router.push('/mind/notes')
   }
 }
 

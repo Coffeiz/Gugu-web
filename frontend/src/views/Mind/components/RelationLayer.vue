@@ -124,11 +124,20 @@ function centerFor(item: MindCanvasItem) {
 function measuredAnchor(item: MindCanvasItem, side: AnchorSide): { x: number; y: number } | null {
   if (side !== 'left' && side !== 'right') return null
   if (!props.screenToWorld) return null
-  // 先找拖拽/落地飞行专用的那份连接点覆盖层；没有（没在拖）就退而找卡片本体真实渲染的
-  // 连接点——静止态、悬停抬起态都在这条分支，本体的 DOM 位置本来就跟着宿主卡片的 CSS
-  // transform（含 .hover-card-fx 的 2px 抬起）走，直接量，不用另外算抬起量。
-  const dot = document.querySelector<HTMLElement>(`.phys-conn-dot-overlay[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
-    ?? document.querySelector<HTMLElement>(`.card-conn-dots[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
+  // 先找拖拽/落地飞行专用的那份连接点覆盖层——这个查询无条件放行：覆盖层只在真的有物理
+  // 模块在拖这张卡时才存在，静止的卡查不到，成本可以忽略。
+  let dot = document.querySelector<HTMLElement>(`.phys-conn-dot-overlay[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
+  // 卡片本体真实渲染的连接点这条回退分支，只在「当前悬浮的这张卡」才查——它是为 0.25s 悬停
+  // 抬起过渡（.hover-card-fx 2px）准备的，配合上面 pumpHoverFrames 心跳逐帧读真实位置。
+  // 不加这层限制的话，画布纯平移时 visibleRelations 会被虚拟化窗口（MindCanvas.vue 的
+  // visibleItems 依赖 camera）拉着每帧重算，此前对**所有**静止卡都无条件做这次 DOM 读取
+  // +screenToWorld 换算——量测发生的时机和 .canvas-world 的 transform 提交之间没有强制
+  // 排序，读到上一帧的屏幕坐标就会让连线看起来"慢半拍"，这正是画布平移时连线肉眼可见滞后
+  // 的根因（devlog 2026-07-14）。静止卡片直接退到下面按 item.x/y 算的几何兜底——纯世界坐标，
+  // 平移画布时天然跟手，不需要量真实 DOM。
+  if (!dot && item.nodeId === props.hoveredNodeId) {
+    dot = document.querySelector<HTMLElement>(`.card-conn-dots[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
+  }
   if (!dot) return null
   const rect = dot.getBoundingClientRect()
   if (rect.width < 1 || rect.height < 1) return null

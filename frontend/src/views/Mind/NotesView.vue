@@ -39,6 +39,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import { useLiveStore } from '@/stores/live'
+import { useUiStore } from '@/stores/ui'
 import { MindConflictError, useMindStore } from '@/stores/mind'
 import { toggleTaskInMd } from '@/composables/useMindEditor'
 import type { MindNote } from '@/services/api'
@@ -50,6 +51,7 @@ import NoteTimeline from './components/NoteTimeline.vue'
 
 const store     = useMindStore()
 const liveStore = useLiveStore()
+const uiStore   = useUiStore()
 const timelineRef = ref<InstanceType<typeof NoteTimeline> | null>(null)
 const captureRef  = ref<InstanceType<typeof CaptureBar> | null>(null)
 const scrollRef   = ref<HTMLElement | null>(null)
@@ -698,6 +700,20 @@ watch(() => store.jumpTarget, (date) => {
     showAppNotice('还没有任何记录')
   }
 })
+
+// 全局搜索跳转到某条便签：定位到它所在的那天并复用「刚创建」那套 flash 高亮，
+// 跟项目搜索跳转"高亮不打开编辑弹窗"是同一种克制——不强行弹进编辑态打断用户。
+watch(() => uiStore.pendingNoteId, async (id) => {
+  if (id == null) return
+  uiStore.pendingNoteId = null
+  if (!store.loaded) await store.fetchNotes()
+  const note = store.notes.find(n => n.id === id)
+  if (!note) { showAppNotice('没找到这条便签，可能已被删除'); return }
+  store.jumpTarget = note.capturedAt.slice(0, 10)
+  highlightId.value = id
+  if (highlightTimer) clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => { highlightId.value = null }, 1800)
+}, { immediate: true })
 
 // resize：内容区中线变了，把当前列瞬时重新居中（不飞入）
 function onResize() {

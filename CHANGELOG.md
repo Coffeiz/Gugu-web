@@ -25,13 +25,14 @@
 - **思维笔记 blocks 参数彻底可用**（`agent/tools/mind.py`、`app/core/mind_content.py`）：`create_note`/`update_note` 的 `blocks` 字段此前只声明了 `type: array`、没有嵌套结构，导致咕咕的结构化参数生成在缺少形状提示时系统性退化（数组被包成 `{"item":...}`、无 schema 的对象整段被字符串化塞进 `{"$text":...}`），实测下几乎每次带样式/引用/列表的笔记都写不进去。补齐完整的两层 JSON Schema（行内内容 + 8 种块类型），并把 `bullet_list`/`ordered_list`/`blockquote` 的入参协议从"数组的数组"改成跟 `task_list` 同构的"一层数组 + 对象包 content"（两层裸嵌套数组同样会触发模型生成退化，任何一层用 `anyOf` 挑分支也会导致模型直接吐空对象）。现已验证 8 种块类型、6 种行内样式、3 种引用类型完整可用。
 - **记忆存储：summary 合并为单文件**（`agent/memory/store.py`）：`summary.md`（正文）+ `summary.ts`（更新时间戳）两个文件合并成一个 `summary.json`，跟 `profile`/`pattern` 统一走 JSON；旧文件不删、首次读取时自动一次性迁移。
 - **笔记时间流滚动条与删除后定位**（`NoteTimeline.vue`、`NotesView.vue`）：日期列内滚动条改为无底色、贴边、`scrollbar-gutter: stable` 不挤压内容（跟侧边栏导航同款）；修复删掉当前激活日期最后一条笔记后视图卡住、不自动滚到新的最后一天的问题。
-- **画布连接线改为强制绑定真实位置**（`views/Mind/components/RelationLayer.vue`、`CardConnDot.vue`、`composables/usePhysicsDrag.ts`）：卡片拖拽/落地飞行时带一点摆动动画，此前连接线端点是按不含旋转的几何公式估算，摆动幅度大时线会跟连接点视觉位置脱节；改为直接测量连接点的真实屏幕位置（拖拽中优先量物理模块的克隆覆盖层，静止/悬停态量卡片本体），拖拽、落地、静止、悬停全状态统一，顺带删除了原来专门为悬停抬起单独手写的一套 rAF 补间动画。连接点与连接线的鼠标判定范围从贴着可见图形扩大到 10px；连接点命中态的辉光效果从一直来回跳动的关键帧动画改成一次性展开/收起的过渡。
+- **画布连接线改为强制绑定真实位置**（`views/Mind/components/RelationLayer.vue`、`CardConnDot.vue`、`composables/usePhysicsDrag.ts`）：卡片拖拽/落地飞行时带一点摆动动画，此前连接线端点是按不含旋转的几何公式估算，摆动幅度大时线会跟连接点视觉位置脱节；改为直接测量连接点的真实屏幕位置（拖拽中优先量物理模块的克隆覆盖层，静止/悬停态量卡片本体），拖拽、落地、静止、悬停全状态统一，顺带删除了原来专门为悬停抬起单独手写的一套 rAF 补间动画。连接点与连接线的鼠标判定范围从贴着可见图形扩大到 10px；连接点命中态的辉光效果从一直来回跳动的关键帧动画改成一次性展开/收起的过渡。后续发现平移整个画布时连接线会有肉眼可见的滞后感——虚拟化窗口让静止卡片也被拉进这套"每帧真实测量"的路径，测量时机和画布 transform 提交之间没有强制排序，读到的是上一帧的屏幕坐标；改为只有正在拖拽或当前悬浮的卡片才做真实测量，其余静止卡片直接用世界坐标算，画布平移时天然跟手。
 - **抽屉展开圆角与顶部布局统一**（`views/Mind/components/CanvasSidebar.vue`）：收起态与展开态圆角统一为 25px，不再有收展过程中"大圆滚成矩形"的形变感；顶部标题与返回按钮的边缘间距对齐圆角半径，与画布抽屉整体的圆角视觉呼应。
 
 ### 修复
 
 - **本地 Docker 部署构建失败 + 龟速（25+ 分钟甚至超时）**（`backend/Dockerfile`、`docker-compose.yml`）：`pip install -r requirements.txt` 报 `exit code: 1`，实机复现定位两层问题：① `pilk`（SILK 语音编解码）PyPI 只发 Windows 预编译包，Linux 下必须从源码编译内嵌的 C 语言编解码库，`python:3.12-slim` 默认没有编译工具链——补 `build-essential`（含 gcc/libc6-dev/make）解决；② 部分网络环境直连 PyPI 官方源（`files.pythonhosted.org`）极慢（实测 ~10KB/s，装 langchain 这类依赖树巨大的包能拖到 25+ 分钟甚至读超时失败）。pip/apt 缓存改用 BuildKit 缓存挂载（`RUN --mount=type=cache`）跨构建持久化，requirements.txt 不变时重建从分钟级降到 2 秒内；PyPI 源做成 `ARG PIP_INDEX_URL`（默认官方源，不影响网络正常的用户），网络不佳时构建前设置同名环境变量即可切换镜像源（`docker compose build`/`docker build --build-arg` 均支持，见两文件内注释），不用碰文件本身。
 - **抽屉项目卡拖拽落地交接的一连串问题**（`composables/usePhysicsDrag.ts`、`views/Mind/components/ProjectDrawerCard.vue`）：① 拖出抽屉后松手顿一下——先本地乐观插入占位卡再等接口回填，不用等两次串行请求。② 落地动画途中重新抓取有时会瞬移或跳到鼠标下——重抓起点改为优先读可见的落地克隆而不是隐形的物理 holder；乐观创建的画布项目回填服务端字段时保留仅前端使用的 `clientKey`，避免 Vue 的 key 从临时身份切到真实 id 导致正在播放的落地动画被重新挂载切断。③ 卡片从抽屉拖出后又中途放回，如果在飞回抽屉的途中再次抓取，本体会彻底消失——转手到画布卡片的机制原本对着"飞回自己原位"这种没有监听者的情形也会尝试转手，静默失败后错误地把占位状态强制关闭，导致后续测量落到 `display:none` 的元素上量出全 0；现在只在落点确实是另一张真实卡片时才转手，飞回原位保留原有占位语义。④ 占位态揭示顺序不对导致鼠标停留时卡片瞬间弹起、或描边先闪一下再复位——统一为先切换占位样式、再执行悬停压制与揭示。
+- **全局搜索点思维笔记结果没反应、也没图标**（`GlobalSearch.vue`、`stores/ui.ts`、`NotesView.vue`）：笔记类型从一开始就没接入搜索结果的图标映射和点击跳转分支（其它类型都有，唯独漏了 note），点了没任何反应。补上图标，点击后跳转到笔记时间流、定位到对应日期并做一次高亮闪烁（跟项目搜索跳转"高亮不弹编辑弹窗"的克制一致）。
 
 ### 重构
 
