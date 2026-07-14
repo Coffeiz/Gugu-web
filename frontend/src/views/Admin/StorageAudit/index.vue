@@ -163,6 +163,53 @@
         </div>
       </template>
     </section>
+
+    <!-- ══ 记忆旧文件清理：迁移遗留的旧格式文件（summary.md/.ts、facts.md/.json 等） ══ -->
+    <section class="sa-card">
+      <div class="sa-card-head">
+        <div>
+          <h3 class="sa-card-title">记忆旧文件清理</h3>
+          <p class="sa-card-sub">咕咕记忆存储格式升级（如 summary.md+summary.ts → summary.json）不会自动删旧文件，只有新文件已确认写过才判定可清；避免误删还没迁移的原始数据。</p>
+        </div>
+        <button class="sa-btn" :disabled="memScanning" @click="scanLegacyMemory">
+          <PhMagnifyingGlass :size="15" weight="bold" />
+          {{ memScanning ? '扫描中…' : '扫描' }}
+        </button>
+      </div>
+
+      <div v-if="memMsg" class="sa-inline-msg" :class="memMsgKind">{{ memMsg }}</div>
+
+      <template v-if="memReport">
+        <div v-if="!memReport.files.length" class="recon-ok">✅ 没有发现旧记忆文件。</div>
+        <template v-else>
+          <div class="recon-summary">
+            共 <b>{{ memReport.files.length }}</b> 个旧文件，其中 <b style="color:#7fc99a">{{ memReport.safeCount }}</b> 个已确认迁移、可安全清理。
+          </div>
+          <div class="recon-block">
+            <div class="recon-block-title">
+              旧文件列表
+              <span class="recon-bulk">
+                <button class="recon-act recon-act-del" :disabled="memCleaning || !memReport.safeCount"
+                        @click="cleanupLegacy(memReport.files.filter(f => f.safeToDelete).map(f => f.key))">
+                  全部清理可安全项（{{ memReport.safeCount }}）
+                </button>
+              </span>
+            </div>
+            <div v-for="f in memReport.files" :key="f.key" class="recon-row">
+              <span class="recon-name">{{ f.legacyFile }}</span>
+              <span class="recon-meta">
+                {{ f.key }} · 已被 {{ f.replacedBy }} 取代
+                <template v-if="!f.safeToDelete"> · <span style="color:#d9a94e">新文件不存在，暂不判定可删</span></template>
+              </span>
+              <span class="recon-row-acts">
+                <button class="recon-act recon-act-del" :disabled="memCleaning || !f.safeToDelete"
+                        @click="cleanupLegacy([f.key])" title="删除这个旧文件（不可恢复）">删除</button>
+              </span>
+            </div>
+          </div>
+        </template>
+      </template>
+    </section>
   </div>
 </template>
 
@@ -308,6 +355,72 @@ async function repairDirs() {
     dirErr.value = e.message
   } finally {
     dirFixing.value = false
+  }
+}
+
+// ── 记忆旧文件清理 ────────────────────────────────────────────────────────
+interface LegacyMemoryFile {
+  key: string
+  legacyFile: string
+  replacedBy: string
+  safeToDelete: boolean
+  size: number | null
+}
+interface LegacyMemoryReport {
+  files: LegacyMemoryFile[]
+  safeCount: number
+}
+
+const memScanning = ref(false)
+const memCleaning = ref(false)
+const memReport = ref<LegacyMemoryReport | null>(null)
+const memMsg = ref('')
+const memMsgKind = ref<'ok' | 'err'>('ok')
+
+async function scanLegacyMemory() {
+  if (memScanning.value) return
+  memScanning.value = true
+  memMsg.value = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/legacy-files')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '扫描失败')
+    memReport.value = data
+  } catch (e) {
+    memMsgKind.value = 'err'
+    memMsg.value = `扫描失败：${e instanceof Error ? e.message : String(e)}`
+    memReport.value = null
+  } finally {
+    memScanning.value = false
+  }
+}
+
+async function cleanupLegacy(keys: string[]) {
+  if (memCleaning.value || !keys.length) return
+  if (!window.confirm(`确认删除 ${keys.length} 个旧记忆文件？此操作不可恢复。`)) return
+  memCleaning.value = true
+  memMsg.value = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/legacy-files/cleanup', {
+      method: 'POST',
+      body: JSON.stringify({ keys }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '清理失败')
+    const doneSet = new Set<string>(data.deleted || [])
+    if (memReport.value) {
+      memReport.value.files = memReport.value.files.filter(f => !doneSet.has(f.key))
+      memReport.value.safeCount = memReport.value.files.filter(f => f.safeToDelete).length
+    }
+    memMsgKind.value = data.skipped?.length ? 'err' : 'ok'
+    memMsg.value = data.skipped?.length
+      ? `已删除 ${data.deleted.length} 个，跳过 ${data.skipped.length} 个（重新核实时发现不可安全删除）`
+      : `已删除 ${data.deleted.length} 个旧记忆文件`
+  } catch (e) {
+    memMsgKind.value = 'err'
+    memMsg.value = `清理失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    memCleaning.value = false
   }
 }
 </script>

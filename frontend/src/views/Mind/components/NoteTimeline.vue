@@ -193,8 +193,11 @@ defineExpose({ flagConflict: () => { conflict.value = true }, confirmEdit, stopE
   /* 横向视口外的便签堆不参与绘制；列框与宽度仍保留，日期滑杆的定位几何不会改变。 */
   content-visibility: auto;
   contain-intrinsic-size: auto 560px;
-  scrollbar-width: thin;
-  margin: 0 -4px; padding: 2px 4px 4px;
+  /* 滚动条贴列右边缘、无底色，跟 AppSidebar.vue .nav 同一套技巧：右侧额外让出的 margin
+     跟 padding 等值抵消，scrollbar-gutter:stable 让这段空间常驻预留——出不出滚动条，
+     .note-stack 都不会跟着左右移动。左侧维持原来的 -4px/4px（横向视口裁切用，跟滚动条无关）。 */
+  margin: 0 -14px 0 -4px; padding: 2px 14px 4px 4px;
+  scrollbar-gutter: stable;
 }
 .note-stack { display: flex; flex-direction: column; gap: 10px; }
 

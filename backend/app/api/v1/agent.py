@@ -6,7 +6,7 @@ adapters）。本文件只负责：接收请求 → 构造 AgentRequest → 调 
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File as FastAPIFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc, select
@@ -147,6 +147,7 @@ async def attachment_preview_pdf(
 @router.post("/chat")
 async def chat(
     body: ChatRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
 ):
     req = AgentRequest(
@@ -157,6 +158,7 @@ async def chat(
         source="web",
         attachments=body.attachments or [],
         greeting=body.greeting,
+        origin=request.headers.get("X-Client-Id"),
     )
     return StreamingResponse(
         web_adapter.stream(req),

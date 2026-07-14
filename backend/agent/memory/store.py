@@ -33,6 +33,9 @@ DAILY_HARD_CAP    = 95   # 压缩失败时的硬安全上限
 # ── 用户画像（profile.json，无需衰减）──
 PROFILE_FILE = "profile.json"
 
+# ── 当前状态快照（summary.json：{text,ts} 一个文件，取代旧的 summary.md + summary.ts 两文件）──
+SUMMARY_FILE = "summary.json"
+
 # ── 结构化 pattern（2b）参数 ──
 PATTERN_FILE                = "pattern.json"
 PATTERN_INFERRED_HALF_LIFE  = 45.0   # 推断类 pattern 置信半衰期(天)；observed 不衰减
@@ -99,8 +102,8 @@ async def read_memory(user_id, query: str = "") -> dict:
     memory  = retrieve_memory_block(memory_doc, query_vec if mem_over else None, mem_vec_map)  # 超预算挑相关段，无向量则整篇
     first_ts = min((item.get("ts") for item in raw_patterns if item.get("ts")), default=None)
     daily   = (await _read(_key(user_id, "daily.md"))).strip()
-    summary = (await _read(_key(user_id, "summary.md"))).strip()
-    summary_ts = await read_summary_ts(user_id)
+    _sum_doc = await _read_summary_doc(user_id)
+    summary, summary_ts = _sum_doc["text"], _sum_doc["ts"]
     stance, stance_ts = await read_stance(user_id)
     from agent.memory import lens as _lens   # 局部导入避免包内循环
     lens_block = await _lens.read_block(user_id)
@@ -111,11 +114,7 @@ async def read_memory(user_id, query: str = "") -> dict:
 
 async def read_summary_ts(user_id) -> float | None:
     """summary 上次更新时间（epoch）；无/解析失败返回 None（衰减件按"新鲜"处理）。"""
-    raw = (await _read(_key(user_id, "summary.ts"))).strip()
-    try:
-        return float(raw) if raw else None
-    except Exception:
-        return None
+    return (await _read_summary_doc(user_id))["ts"]
 
 
 # ── 结构化 pattern：每条 {id,text,kind,conf,imp,ts} ──
@@ -523,15 +522,38 @@ def apply_pattern_ops(patterns: list[dict], add, remove) -> list[dict]:
     return out
 
 
-# ── summary.md（当前状态快照「用户现在在做什么」，反思写）──
+# ── summary.json（当前状态快照「用户现在在做什么」，反思写）：{text, ts} 一个文件，
+# 取代旧的 summary.md（正文）+ summary.ts（更新时间戳）两文件——跟 profile/pattern 一样统一
+# 走 JSON，读写只用一次 IO；旧文件不删、只在 summary.json 还没写过时读一次做迁移。
+async def _read_summary_doc(user_id) -> dict:
+    raw = (await _read(_key(user_id, SUMMARY_FILE))).strip()
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                return {"text": (data.get("text") or "").strip(), "ts": data.get("ts")}
+        except Exception:
+            pass
+    # 旧文件迁移（一次性，找到就顺手写回新文件名，下次直接命中）
+    text = (await _read(_key(user_id, "summary.md"))).strip()
+    ts_raw = (await _read(_key(user_id, "summary.ts"))).strip()
+    try:
+        ts = float(ts_raw) if ts_raw else None
+    except Exception:
+        ts = None
+    if text:
+        await _write(_key(user_id, SUMMARY_FILE), json.dumps({"text": text, "ts": ts}, ensure_ascii=False))
+    return {"text": text, "ts": ts}
+
+
 async def read_summary(user_id) -> str:
-    return (await _read(_key(user_id, "summary.md"))).strip()
+    return (await _read_summary_doc(user_id))["text"]
 
 
 async def write_summary(user_id, text: str) -> None:
-    await _write(_key(user_id, "summary.md"), text.strip() + "\n")
     import time
-    await _write(_key(user_id, "summary.ts"), str(time.time()))   # 盖更新时间戳（时间衰减用）
+    await _write(_key(user_id, SUMMARY_FILE),
+                 json.dumps({"text": text.strip(), "ts": time.time()}, ensure_ascii=False))
 
 
 # ── temp.json（关系温度：滑动窗口聚合的当下互动质量，memory/temperature.py 算，只喂语气校准）──

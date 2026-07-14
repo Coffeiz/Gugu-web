@@ -94,14 +94,23 @@ def _serialize_inline(content: Any) -> Tuple[str, Set[Tuple[str, int]]]:
     return "".join(output), refs
 
 
-def _serialize_items(items: Any, prefix: str) -> Tuple[List[str], Set[Tuple[str, int]]]:
+def _serialize_wrapped_items(items: Any, field: str, prefix_fn) -> Tuple[List[str], Set[Tuple[str, int]]]:
+    """列表/引用块的每一项都是 {"content": [行内...]} 对象，不是行内数组本身。
+
+    这层包装不是随意选择：`items`/`paragraphs` 若直接是"数组的数组"（两层裸嵌套数组），
+    实测咕咕这边的结构化输出没法可靠生成——不管 JSON Schema 写多完整都会退化成
+    `{"item": 值}` 兜底包装（devlog 2026-07-14）。用对象包一层（跟 task_list 已经在用的
+    `{"checked":...,"content":[...]}` 同构）把嵌套深度压回一层，模型才能稳定生成。
+    """
     if not isinstance(items, list):
-        raise MindContentError("列表 items 必须是数组")
+        raise MindContentError(f"{field} 必须是数组")
     lines: List[str] = []
     refs: Set[Tuple[str, int]] = set()
-    for item in items:
-        inline, item_refs = _serialize_inline(item)
-        lines.append(prefix + inline)
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise MindContentError(f"{field} 的每一项必须是 {{\"content\":[...]}} 对象")
+        inline, item_refs = _serialize_inline(item.get("content", []))
+        lines.append(prefix_fn(index) + inline)
         refs.update(item_refs)
     return lines, refs
 
@@ -126,18 +135,11 @@ def serialize_mind_blocks(blocks: Any) -> Tuple[str, Set[Tuple[str, int]]]:
             text, block_refs = _serialize_inline(block.get("content", []))
             rendered.append(f"# {text}")
         elif kind == "bullet_list":
-            lines, block_refs = _serialize_items(block.get("items"), "- ")
+            lines, block_refs = _serialize_wrapped_items(block.get("items"), "列表 items", lambda i: "- ")
             rendered.append("\n".join(lines))
         elif kind == "ordered_list":
-            items = block.get("items")
-            if not isinstance(items, list):
-                raise MindContentError("有序列表 items 必须是数组")
-            lines = []
-            block_refs = set()
-            for index, item in enumerate(items, start=1):
-                text, item_refs = _serialize_inline(item)
-                lines.append(f"{index}. {text}")
-                block_refs.update(item_refs)
+            lines, block_refs = _serialize_wrapped_items(
+                block.get("items"), "有序列表 items", lambda i: f"{i + 1}. ")
             rendered.append("\n".join(lines))
         elif kind == "task_list":
             items = block.get("items")
@@ -153,15 +155,8 @@ def serialize_mind_blocks(blocks: Any) -> Tuple[str, Set[Tuple[str, int]]]:
                 block_refs.update(item_refs)
             rendered.append("\n".join(lines))
         elif kind == "blockquote":
-            paragraphs = block.get("paragraphs")
-            if not isinstance(paragraphs, list):
-                raise MindContentError("引用块 paragraphs 必须是数组")
-            lines = []
-            block_refs = set()
-            for paragraph in paragraphs:
-                text, item_refs = _serialize_inline(paragraph)
-                lines.append(f"> {text}")
-                block_refs.update(item_refs)
+            lines, block_refs = _serialize_wrapped_items(
+                block.get("paragraphs"), "引用块 paragraphs", lambda i: "> ")
             rendered.append("\n".join(lines))
         elif kind == "code_block":
             code = _require_text(block.get("code"), "代码块内容")

@@ -122,7 +122,7 @@ async def test_update_note_appends_and_uses_version(db, user_a):
     note = created["note"]
     updated = await _update_note(db, user_a.id, {
         "node_id": note["node_id"], "version": note["version"], "color": "amber",
-        "append_blocks": [{"type": "bullet_list", "items": [[{"type": "text", "text": "第二项"}]]}],
+        "append_blocks": [{"type": "bullet_list", "items": [{"content": [{"type": "text", "text": "第二项"}]}]}],
     })
     assert updated["note"]["version"] == note["version"] + 1
     assert updated["note"]["color"] == "amber"

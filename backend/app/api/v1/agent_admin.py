@@ -10,6 +10,9 @@ PUT    /api/v1/admin/agent/llm-presets/{id}      → 编辑预设（api_key 留�
 DELETE /api/v1/admin/agent/llm-presets/{id}      → 删除预设
 POST   /api/v1/admin/agent/llm-presets/{id}/activate → 设为当前（同步写入 ai 段）
 POST   /api/v1/admin/agent/llm-presets/{id}/test     → 连通性测试
+
+GET    /api/v1/admin/agent/memory/legacy-files          → 扫描已被新文件取代的旧记忆文件（迁移遗留）
+POST   /api/v1/admin/agent/memory/legacy-files/cleanup  → 删除指定的旧记忆文件
 """
 
 import json
@@ -77,7 +80,7 @@ PROFILES = ["default"]   # qqbot/mini 是早期占位、从未接线（运行时
 
 PLACEHOLDERS = [
     {"key": "{today}",       "desc": "今天日期"},
-    {"key": "{summary}",     "desc": "当前状态快照（summary.md）"},
+    {"key": "{summary}",     "desc": "当前状态快照（summary.json）"},
     {"key": "{pattern}",     "desc": "咕咕对用户的行为模式（pattern.json 导出）"},
     {"key": "{profile}",     "desc": "咕咕对用户的稳定画像（profile.json 导出）"},
     {"key": "{preferences}", "desc": "咕咕对用户偏好的理解（preferences.md）"},
@@ -749,3 +752,69 @@ async def update_state_labels(body: StateLabelsUpdate):
     override["state_labels"] = {"overrides": clean}
     _write_override(override)
     return {"ok": True, "count": len(clean)}
+
+
+# ── 记忆旧文件清理：迁移类改动（facts.md/facts.json→pattern.json、summary.md+summary.ts→
+# summary.json）为了不影响读旧数据的用户，旧文件从不自动删，长期堆在存储里。这里给个 admin
+# 入口手动扫描+清（跟 StorageAudit 的孤儿文件对账同一套「先扫、勾选、再删」交互）。────────
+
+# 旧文件名 → 取代它的新文件名；只有新文件已存在（=已经迁移过、旧文件确认不再被读）才判定可删，
+# 防止误删还没被迁移读过一次的原始数据。
+_LEGACY_MEMORY_FILES = {
+    "summary.md": "summary.json",
+    "summary.ts": "summary.json",
+    "facts.md": "pattern.json",
+    "facts.json": "pattern.json",
+}
+
+
+@router.get("/memory/legacy-files")
+async def scan_legacy_memory_files():
+    """扫描所有用户的 .agent/ 目录，列出已被新文件取代、可安全清理的旧记忆文件。"""
+    from app.services.storage import get_storage
+    storage = get_storage()
+    all_keys = await storage.list_keys()
+    found = []
+    for key in all_keys:
+        parts = key.split("/")
+        if len(parts) < 3 or parts[-2] != ".agent":
+            continue
+        name = parts[-1]
+        new_name = _LEGACY_MEMORY_FILES.get(name)
+        if not new_name:
+            continue
+        new_key = "/".join(parts[:-1] + [new_name])
+        safe = await storage.exists(new_key)
+        info = await storage.stat(key)
+        found.append({
+            "key": key, "legacyFile": name, "replacedBy": new_name,
+            "safeToDelete": safe, "size": info.size if info else None,
+        })
+    found.sort(key=lambda x: (not x["safeToDelete"], x["key"]))
+    return {"files": found, "safeCount": sum(1 for f in found if f["safeToDelete"])}
+
+
+class LegacyFilesCleanup(BaseModel):
+    keys: list[str]
+
+
+@router.post("/memory/legacy-files/cleanup")
+async def cleanup_legacy_memory_files(body: LegacyFilesCleanup):
+    """删除指定的旧记忆文件 key。逐个重新核实「新文件已存在」才删——防止扫描和点击清理之间
+    数据发生变化（比如恰好这时候又读到旧文件触发了一次新的迁移写入）导致误删。"""
+    from app.services.storage import get_storage
+    storage = get_storage()
+    deleted, skipped = [], []
+    for key in body.keys or []:
+        parts = key.split("/")
+        if len(parts) < 3 or parts[-2] != ".agent":
+            skipped.append(key)
+            continue
+        new_name = _LEGACY_MEMORY_FILES.get(parts[-1])
+        new_key = "/".join(parts[:-1] + [new_name]) if new_name else None
+        if not new_key or not await storage.exists(new_key):
+            skipped.append(key)
+            continue
+        await storage.delete(key)
+        deleted.append(key)
+    return {"deleted": deleted, "skipped": skipped}

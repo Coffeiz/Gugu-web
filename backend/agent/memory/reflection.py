@@ -23,6 +23,7 @@ _bg_tasks: set = set()
 
 # 感知遥测/误判 日志（与 agent.traj 同套：靠 logging 配置落 gugu.log / Debug 面板；脱敏，不写用户原文）
 _perc_log = logging.getLogger("agent.perc")
+_memdiff_log = logging.getLogger("agent.memdiff")
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 # 文件缺失时的兜底（正常走 prompts/reflection.md，可热编辑 / Admin 在线改）
@@ -321,8 +322,17 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
                 from agent import events
                 events.publish(events.types.MemoryUpdated(
                     user_id=user_id, added=len(adds or []), removed=len(f_rem or []), source="reflection"))
-        # summary 同理：非空才覆盖、变了才写（防把已有快照清空/瞎改）
+        # summary 同理：非空才覆盖、变了才写（防把已有快照清空/瞎改）。覆盖式更新没有版本历史，
+        # 一旦某次反思判断错（该保留的重心被误判"变了"而冲掉），线上完全看不出来、只会表现成
+        # "咕咕好像突然不记得之前的事了"这种模糊症状——记一行 旧→新 的 diff，出问题时至少能回放
+        # 定位是哪一轮反思写坏的（devlog 2026-07-14，跟当晚 blocks schema 那轮"别猜、要看真实
+        # 数据"的教训同源）。best-effort，记日志失败不影响主流程。
         if summary and summary != existing_summary.strip():
+            try:
+                _memdiff_log.info("summary user=%s old=%r new=%r",
+                                   str(user_id)[:8], existing_summary.strip(), summary)
+            except Exception:
+                pass
             await store.write_summary(user_id, summary)
         if daily_note:
             await store.append_daily(user_id, datetime.now().strftime("%Y-%m-%d"), daily_note)

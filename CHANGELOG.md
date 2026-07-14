@@ -9,6 +9,19 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **思维笔记变更实时推送**（`app/core/events.py`、`stores/mind.ts`）：`create_note`/`update_note`/`delete_note`/`restore_note`/`undo_last_gugu_note` 接入 SSE 通知，笔记时间流与画布不再需要手动刷新页面才能看到咕咕新写的内容。
+- **网页聊天分段消息不再重复气泡**（`GuguChat.vue`、`runner.py`）：聊天消息 SSE 广播带上发起标签页的 `origin`，本标签页收到自己已经流式渲染过的回声消息时跳过，不再出现同一内容两个气泡（跨标签页/多端同步不受影响）。
+- **反思写 summary 的变更留痕**（`agent/memory/reflection.py`）：每次 summary 被覆盖式更新时记一行"旧→新"diff 日志（`agent.memdiff`），万一某次反思误判导致状态快照被错误改写，可以回放定位是哪一轮写坏的。
+- **后台「记忆旧文件清理」**（`app/api/v1/agent_admin.py`、`Admin/StorageAudit/index.vue`）：扫描并清理记忆存储格式升级后遗留的旧文件（如 `summary.md`+`summary.ts`），只有确认已被新文件取代才判定可安全删除。
+
+### 改进
+
+- **思维笔记 blocks 参数彻底可用**（`agent/tools/mind.py`、`app/core/mind_content.py`）：`create_note`/`update_note` 的 `blocks` 字段此前只声明了 `type: array`、没有嵌套结构，导致咕咕的结构化参数生成在缺少形状提示时系统性退化（数组被包成 `{"item":...}`、无 schema 的对象整段被字符串化塞进 `{"$text":...}`），实测下几乎每次带样式/引用/列表的笔记都写不进去。补齐完整的两层 JSON Schema（行内内容 + 8 种块类型），并把 `bullet_list`/`ordered_list`/`blockquote` 的入参协议从"数组的数组"改成跟 `task_list` 同构的"一层数组 + 对象包 content"（两层裸嵌套数组同样会触发模型生成退化，任何一层用 `anyOf` 挑分支也会导致模型直接吐空对象）。现已验证 8 种块类型、6 种行内样式、3 种引用类型完整可用。
+- **记忆存储：summary 合并为单文件**（`agent/memory/store.py`）：`summary.md`（正文）+ `summary.ts`（更新时间戳）两个文件合并成一个 `summary.json`，跟 `profile`/`pattern` 统一走 JSON；旧文件不删、首次读取时自动一次性迁移。
+- **笔记时间流滚动条与删除后定位**（`NoteTimeline.vue`、`NotesView.vue`）：日期列内滚动条改为无底色、贴边、`scrollbar-gutter: stable` 不挤压内容（跟侧边栏导航同款）；修复删掉当前激活日期最后一条笔记后视图卡住、不自动滚到新的最后一天的问题。
+
 ## [0.19.0] - 2026-07-14 · 思维画布收尾、连接线体验统一与存储/LLM 架构重构
 
 ### 新增

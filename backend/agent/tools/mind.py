@@ -14,21 +14,86 @@ from agent.tools.base import BaseSkill, Tool
 _MAX_RESULTS = 10
 _PREVIEW_LENGTH = 240
 
-# blocks 字段的 JSON Schema 只声明了 type:array，没有嵌套结构（8 种块类型 + 行内内容两层
-# 各自的字段名/形状用 JSON Schema 表达要么写成很深的 oneOf、要么根本表达不出"数组的数组"
-# 这种形状，性价比不高）——模型唯一能拿到结构信息的地方就是这段 description 文字，之前
-# 只写了一句"受限内容块数组"，没有任何字段名/例子，咕咕只能瞎猜，几乎每次都传错（比如直接
-# 塞纯文本字符串数组，而不是 {"type":"paragraph","content":[...]} 这种对象），见
-# serialize_mind_blocks 报的"每个内容块必须是对象"。这里把 app/core/mind_content.py 实际
-# 校验的完整形状搬进 description，给足字段名和一个可直接照抄结构的例子。
+# 之前 blocks 字段的 JSON Schema 只声明了 type:array，没有 items 子模式（嵌套结构全靠下面
+# description 文字描述）——实测证明这是错的：模型的结构化参数生成一旦遇到"没有形状提示的
+# 数组/对象"，会自己套一层通用包装兜底（数组包成 {"item": 值}，无 schema 的对象直接整个
+# JSON.stringify 塞进 {"$text": "..."}），跟 description 写没写例子无关，是 schema 层缺失
+# 导致的系统性问题（devlog 2026-07-14，日志证据见 gugu.log 的 [DEBUG_BLOCKS] 记录）。
+# 下面用真正的 JSON Schema（INLINE_ITEM_SCHEMA + _BLOCK_ITEM_SCHEMA）把两层结构都声明出来；
+# _BLOCKS_SCHEMA_HELP 的文字说明保留，两者互补（schema 管形状、description 管语义/示例）。
+_INLINE_ITEM_SCHEMA = {
+    "type": "object",
+    "description": "行内内容：文本或引用",
+    "properties": {
+        "type": {"type": "string", "enum": ["text", "reference"]},
+        "text": {"type": "string", "description": "type=text 时必填"},
+        "marks": {
+            "type": "array",
+            "description": "type=text 时可选的文字样式",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "enum": ["bold", "italic", "strike", "code", "link"]},
+                    "href": {"type": "string", "description": "type=link 时必填，http/https/mailto"},
+                },
+                "required": ["type"],
+            },
+        },
+        "ref_type": {"type": "string", "enum": ["project", "file", "event"], "description": "type=reference 时必填"},
+        "ref_id": {"type": "integer", "description": "type=reference 时必填"},
+        "label": {"type": "string", "description": "type=reference 时必填，引用的显示名"},
+    },
+    "required": ["type"],
+}
+# bullet_list/ordered_list/task_list 每项、blockquote 每段共用同一个扁平形状（不用 anyOf 挑
+# "带 checked 的 task 项" 还是 "纯 content 项"）——实测证明 anyOf 是另一种坑：模型面对两个
+# object 分支的选择歧义时，会连哪个分支都不选，直接吐个空对象 {}（跟之前"没形状提示时瞎包装"
+# 是两种独立的退化模式，都在这条 blocks 协议上踩过）。checked 设为可选字段、服务端校验层
+# （mind_content.py）继续按 block 类型强制 task_list 必须带 checked，两边分工不冲突。
+_CONTENT_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "checked": {"type": "boolean", "description": "仅 task_list 用；bullet_list/ordered_list/blockquote 不要传这个字段"},
+        "content": {"type": "array", "items": _INLINE_ITEM_SCHEMA},
+    },
+    "required": ["content"],
+}
+_BLOCK_ITEM_SCHEMA = {
+    "type": "object",
+    "description": "受限内容块，具体必填字段按 type 各不相同，见 description 里的示例",
+    "properties": {
+        "type": {"type": "string", "enum": [
+            "paragraph", "heading", "bullet_list", "ordered_list",
+            "task_list", "blockquote", "code_block", "horizontal_rule",
+        ]},
+        "content": {"type": "array", "description": "paragraph/heading 用", "items": _INLINE_ITEM_SCHEMA},
+        "items": {
+            "type": "array",
+            "description": "bullet_list/ordered_list 用时每项是 {content} 对象（不要带 checked）；task_list 用时每项是 {checked,content} 对象（checked 必填）",
+            "items": _CONTENT_ITEM_SCHEMA,
+        },
+        "paragraphs": {
+            "type": "array", "description": "blockquote 用，每段是 {content} 对象",
+            "items": _CONTENT_ITEM_SCHEMA,
+        },
+        "code": {"type": "string", "description": "code_block 用"},
+        "language": {"type": "string", "description": "code_block 可选"},
+    },
+    "required": ["type"],
+}
+
+# bullet_list/ordered_list/blockquote 的每一项都用 {"content":[行内...]} 对象包一层，不是行内
+# 数组本身——两层裸嵌套数组（`items:[[...],[...]]`）实测模型生成不稳定，几乎每次都退化成
+# `{"item":值}` 兜底包装；包一层对象把嵌套深度压回一层（跟 task_list 已有的
+# `{"checked":...,"content":[...]}` 同构），模型才能稳定生成（devlog 2026-07-14）。
 _BLOCKS_SCHEMA_HELP = (
     "blocks 是对象数组，每个对象的 type 字段只能是以下 8 种之一（其余字段按 type 各不相同）：\n"
     '- {"type":"paragraph","content":[行内...]}\n'
     '- {"type":"heading","content":[行内...]}（渲染成标题）\n'
-    '- {"type":"bullet_list","items":[[行内...],[行内...]]}（items 是"每一项一组行内数组"的数组，不是行内数组本身）\n'
-    '- {"type":"ordered_list","items":[[行内...],[行内...]]}（结构同 bullet_list，渲染成数字序号）\n'
+    '- {"type":"bullet_list","items":[{"content":[行内...]},{"content":[行内...]}]}（每项是 {content} 对象，不是行内数组本身）\n'
+    '- {"type":"ordered_list","items":[{"content":[行内...]},{"content":[行内...]}]}（结构同 bullet_list，渲染成数字序号）\n'
     '- {"type":"task_list","items":[{"checked":false,"content":[行内...]}]}（每项必须带 checked 布尔值）\n'
-    '- {"type":"blockquote","paragraphs":[[行内...],[行内...]]}（paragraphs 是"每段一组行内数组"的数组）\n'
+    '- {"type":"blockquote","paragraphs":[{"content":[行内...]},{"content":[行内...]}]}（每段是 {content} 对象）\n'
     '- {"type":"code_block","code":"...","language":"python"}（language 可省略，普通字符串，不能含反引号）\n'
     '- {"type":"horizontal_rule"}（没有其它字段）\n'
     "「行内」是数组，每个元素是：\n"
@@ -343,7 +408,7 @@ class MindSkill(BaseSkill):
                 "properties": {
                     "title": {"type": "string", "description": "可选标题"},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None], "description": "可选；null 为默认纸色，其余值必须选现有色板"},
-                    "blocks": {"type": "array", "description": f"受限内容块数组；不得传任意 Markdown 或 HTML。{_BLOCKS_SCHEMA_HELP}"},
+                    "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": f"受限内容块数组；不得传任意 Markdown 或 HTML。{_BLOCKS_SCHEMA_HELP}"},
                     "captured_at": {"type": "string", "description": "可选，带时区的 ISO 8601 时间；只能是现在或过去"},
                 },
                 "required": ["blocks"],
@@ -361,8 +426,8 @@ class MindSkill(BaseSkill):
                     "version": {"type": "integer", "description": "来自读取结果的当前版本"},
                     "title": {"type": ["string", "null"], "description": "标题；null 清空标题"},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None], "description": "五种卡片颜色之一；null 恢复默认纸色"},
-                    "blocks": {"type": "array", "description": f"整篇替换的受限内容块；不能与 append_blocks 同时传。{_BLOCKS_SCHEMA_HELP}"},
-                    "append_blocks": {"type": "array", "description": f"追加到笔记末尾的受限内容块；不能与 blocks 同时传。结构同 blocks，见其说明。{_BLOCKS_SCHEMA_HELP}"},
+                    "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": f"整篇替换的受限内容块；不能与 append_blocks 同时传。{_BLOCKS_SCHEMA_HELP}"},
+                    "append_blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": f"追加到笔记末尾的受限内容块；不能与 blocks 同时传。结构同 blocks，见其说明。{_BLOCKS_SCHEMA_HELP}"},
                     "captured_at": {"type": "string", "description": "带时区的 ISO 8601 时间；只能是现在或过去"},
                 },
                 "required": ["node_id", "version"],

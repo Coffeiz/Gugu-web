@@ -312,7 +312,7 @@ import { useProjectStore } from '@/stores/projects'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
-import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi, authApi } from '@/services/api'
+import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi, authApi, CLIENT_ID } from '@/services/api'
 import { getGreeting, greeting, prefetchGreeting } from '@/composables/useGreeting'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/useThumbCache'
@@ -424,8 +424,11 @@ watch(() => liveStore.rev.sessions, () => fetchSessions())
 
 // 消息级实时：若这条 IM 消息属于当前打开的会话，直接把「这一来一回」追加进气泡，
 // 不必整列表/整会话 refetch（只传增量）。非当前会话则上面刷新列表即可。
+// origin === 本标签页时是自己发起这轮对话的回声：token 流已经把气泡画出来了，这里跳过，
+// 只让别的标签页/端补上（同一 client-id 每个标签页独立生成，见 services/api.ts）。
 watch(() => liveStore.sessionEvent, async (e) => {
   if (!e || !e.appended?.length || e.session_id !== sessionId.value) return
+  if (e.origin && e.origin === CLIENT_ID) return
   for (const m of e.appended) {
     const isAi = m.role === 'assistant'
     messages.value.push({
@@ -1768,7 +1771,7 @@ async function send(forcedText?: string) {
   try {
     const res = await fetch(`${BASE_URL}/agent/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ message: text, session_id: ownerSid, attachments: atts.map(a => a.attach_id),
                              ...(greetingForSession ? { greeting: greetingForSession } : {}) }),
       signal: abortCtrl.value.signal,

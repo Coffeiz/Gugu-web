@@ -16,6 +16,7 @@ import { useUiStore } from '@/stores/ui'
 interface SessionEvent {
   session_id: number | string
   appended: Array<{ role?: string; text?: string; files?: unknown[]; quoted_text?: string }>
+  origin?: string | null
   _t: number
 }
 
@@ -113,7 +114,7 @@ export const useLiveStore = defineStore('live', () => {
                   : { op: 'refresh', origin: evt.origin ?? null, _t: ++_seq }
               }
               if (evt.session_id != null) {
-                sessionEvent.value = { session_id: evt.session_id, appended: evt.appended || [], _t: ++_seq }
+                sessionEvent.value = { session_id: evt.session_id, appended: evt.appended || [], origin: evt.origin ?? null, _t: ++_seq }
               }
               if (evt.notification) {
                 uiStore.pushNotification(evt.notification)

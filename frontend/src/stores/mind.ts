@@ -8,13 +8,14 @@
  * `MindConflictError`，调用方（编辑器）据此提示「已被其他端修改」并重新拉取。
  */
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   mindApi, type MindCanvas, type MindCanvasItem, type MindCanvasNoteCreate, type MindNote, type MindNoteCreate,
   type MindNoteUpdate, type MindRelation,
 } from '@/services/api'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import type { RelationAnchorSides } from '@/composables/useMindCanvas'
+import { useLiveStore } from '@/stores/live'
 
 export class MindConflictError extends Error {
   constructor() { super('便签已被其他端修改') }
@@ -343,6 +344,14 @@ export const useMindStore = defineStore('mind', () => {
   async function saveCanvasRelationAnchors(id: number, anchors: Record<string, RelationAnchorSides>) {
     await updateCanvasData(id, { relationAnchors: anchors })
   }
+
+  // 实时：咕咕/IM 改了便签 → 时间流列表刷新；当前打开的画布也重拉，卡片上的笔记正文才能跟着更新
+  // （画布卡片渲染的是 loadCanvas 拉回来的快照，不是 notes 数组本身，两处都要刷）。
+  const live = useLiveStore()
+  watch(() => live.rev.mind, () => {
+    if (loaded.value) fetchNotes()
+    if (activeCanvasId.value != null) loadCanvas(activeCanvasId.value)
+  })
 
   return {
     notes, loading, loaded, filterQ, jumpTarget, timeline, fetchNotes, createNote, updateNote, deleteNote,

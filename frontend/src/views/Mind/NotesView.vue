@@ -740,6 +740,11 @@ watch(timelineGroups, async (groups) => {
   // 多列删除到仅剩一天时，旧视野的 scrollLeft 已经没有语义；不能只重算 gutter，必须把
   // 唯一日期按新布局重新定位，否则它会停在多列时留下的左侧位置。
   const collapsedToSingle = renderedDates.length > 1 && groups.length === 1
+  // 删掉当前激活日期（通常是最右侧那天）的最后一条笔记，那一整列就从 groups 里消失了，
+  // 但剩余天数仍 >1，三个既有分支都不触发——只重算了 gutter/节点，scrollLeft 却原封不动
+  // 停在旧位置，画面「卡住」。这里单独补一支：激活日期整列消失时，滚去新的最后一天。
+  const activeDateRemoved = !collapsedToSingle && groups.length > 0
+    && renderedDates.includes(activeDate.value) && !groups.some(group => group.date === activeDate.value)
   if (insertedBeforeActive && root) {
     // watcher 默认在 DOM 提交前运行，先预补偿一个日期列宽，避免旧卡先被顶开一帧。
     root.scrollLeft += 306
@@ -754,6 +759,8 @@ watch(timelineGroups, async (groups) => {
   } else if (collapsedToSingle && root) {
     root.scrollLeft = 0
     jumpTo(groups[0].date, false)
+  } else if (activeDateRemoved) {
+    jumpTo(groups[groups.length - 1].date, true)
   } else if (insertedBeforeActive && root) {
     // 以实测宽度校准预补偿，兼容列宽/间距将来的调整。
     root.scrollLeft = leftBefore + root.scrollWidth - widthBefore
