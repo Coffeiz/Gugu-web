@@ -6,6 +6,7 @@
       :relations="store.canvasRelations"
       :relation-anchors="relationAnchors"
       @remove="removeItem"
+      @return-to-drawer="returnProjectToDrawer"
       @remove-relation="removeRelation"
       @link-nodes="linkNodes"
       @open-ref="openRef"
@@ -19,6 +20,7 @@
       :projects="projectStore.projects"
       :canvas-project-ids="canvasProjectIds"
       :projects-loading="projectStore.loading"
+      :canvas-scale="canvasRef?.camera.scale ?? 1"
       :add-project-to-canvas="addProjectAtScreen"
       @create="createCanvas"
       @open="openCanvas"
@@ -185,6 +187,9 @@ async function renameCanvas(id: number, title: string) {
 
 async function removeItem(item: MindCanvasItem) {
   await store.removeCanvasItem(item.id)
+}
+function returnProjectToDrawer(item: MindCanvasItem) {
+  void store.returnCanvasItemToDrawer(item.id).catch(() => showAppError('项目移回抽屉失败，已恢复到画布'))
 }
 async function removeRelation(id: number) {
   await store.removeCanvasRelation(id)

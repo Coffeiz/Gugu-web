@@ -172,6 +172,14 @@ export function useCardDrag(opts: {
   contentScale?: () => number
   // 默认轻抬起 3%，便签/项目/活动贴纸保留这份空间感；文件卡传 1，避免非整数缩放让文件名变糊。
   lift?: number
+  // 画布项目卡拖回已打开的项目抽屉时，命中该区域就不再计算画布落点，而是缩小吸入抽屉。
+  resolveAbsorbTarget?: (pointer: { x: number; y: number }) => HTMLElement | null
+  // 吸入后列表会因响应式数据更新重新插入对应的项目卡。下一帧物理动画应以那张卡为终点，
+  // 而不是只飞向命中的整个抽屉容器。
+  resolveAbsorbLandingTarget?: () => HTMLElement | null
+  // 项目回抽屉保留整张卡飞入目标位；文件夹等传统吸收交互仍可走默认的缩小吸入。
+  absorbShrink?: boolean
+  onAbsorb?: () => void
 }) {
   // 同一张卡尚在落地飞行时又被抓起，旧的关系线插值绝不能继续写 landingPositions；否则
   // RelationLayer 会优先读旧覆盖位置，视觉线脱离新抓住的克隆。取消后也要立即通知调用方
@@ -183,63 +191,98 @@ export function useCardDrag(opts: {
     cancelLanding = null
     opts.onLandingDone?.()
   }
+  function startDrag(
+    event: PointerEvent,
+    card: HTMLElement,
+    initialRect?: { left: number; top: number; width: number; height: number },
+    initialHover = false,
+    isLandingRegrab = false,
+  ) {
+    cancelActiveLanding()
+    let absorbTarget: HTMLElement | null = null
+    startPhysicsDrag(event, card, {
+      pointer: true, skipAbsorb: !opts.resolveAbsorbTarget, tilt: 0, lift: opts.lift ?? 1.03,
+      resolveAbsorbTarget: opts.resolveAbsorbTarget ? () => absorbTarget : undefined,
+      resolveAbsorbLandingTarget: opts.resolveAbsorbLandingTarget,
+      absorbShrink: opts.absorbShrink,
+      // 飞行中的 holder 被再次抓起时，物理模块会递归启动下一段拖拽；先停掉上一段只供
+      // RelationLayer 使用的落地插值，避免旧 landingPositions 继续覆盖新克隆的位置。
+      onRegrabStart: cancelActiveLanding,
+      // 无限画布没有"卡片顶部附近拈起"这个参照系（那是看板卡沿用的手感），抓哪张贴纸都该是
+      // 贴纸中心跟手，不然矮贴纸（活动/文件）看着几乎贴在指针上、高贴纸（便签）又明显吊在
+      // 指针下方一截，四种贴纸手感不一致。
+      centerGrab: true,
+      contentScale: opts.contentScale,
+      // 画布贴纸铺满整个浏览器（含侧栏背后那一段，见 MindCanvas.vue），拖拽克隆若还用
+      // 全站默认的 99999 会飞过侧栏时整个盖住导航；压到比侧栏 z-index（20）低。这里传了
+      // dragZIndex 后，usePhysicsDrag.ts 的抓起/落地两段飞行都会直接用这个数，不会各走
+      // 一套算法（落地那段默认按祖先动态探测，容易先摸到贴纸自己内联的 item.z，那个值
+      // 随建卡数量单调递增，迟早会长到超过侧栏的 20），两段交接时层级也不会跳一下。
+      dragZIndex: 10,
+      initialRect,
+      initialHover,
+      isLandingRegrab,
+      onFollow: opts.onDragMove
+        ? ({ x, y }, size) => {
+            const world = opts.screenToWorld(x, y)
+            const { w, h } = screenSizeToWorld(opts.screenToWorld, size)
+            opts.onDragMove!(world.x - w / 2, world.y - h / 2)
+          }
+        : undefined,
+      onDrop: ({ x, y }, velocity, size, context) => {
+        absorbTarget = opts.resolveAbsorbTarget?.(context?.pointer ?? { x, y }) ?? null
+        if (absorbTarget) {
+          opts.onAbsorb?.()
+          return
+        }
+        const coast = coastOffset(velocity)
+        const dropCenter = opts.screenToWorld(x, y)
+        const landCenter = opts.screenToWorld(x + coast.x, y + coast.y)
+        const { w, h } = screenSizeToWorld(opts.screenToWorld, size)
+        const dropTopLeft = { x: dropCenter.x - w / 2, y: dropCenter.y - h / 2 }
+        const landTopLeft = { x: landCenter.x - w / 2, y: landCenter.y - h / 2 }
+        // 落库坐标必须同步给出：usePhysicsDrag.ts 的 end() 紧接着在同一个宏任务里读
+        // 贴纸最新的 DOM 位置来算克隆体飞行目标，晚一步（比如等下面这段插值播完再落库）
+        // 会让它读到旧位置、飞错地方。落地动画期间连线要跟着走，靠下面单独一段插值补，
+        // 不依赖也不推迟这次落库；插值不写回 item.x/y（会闪一下终点，见 onLanding 的
+        // 注释），只喂 onLanding。
+        opts.onDropAt(landTopLeft.x, landTopLeft.y)
+        if (opts.onLanding) {
+          // 先同步写一次起点：目标卡的真实 item.x/y 已经跳到终点，本体虽不可见仍能被
+          // elementFromPoint 命中。MindCanvas 用这次回调立刻把它标记为"落地中"，避免
+          // 连线拖拽提前吸到仍在飞的卡片；后续逐帧插值只负责关系线视觉位置。
+          opts.onLanding(dropTopLeft.x, dropTopLeft.y)
+          cancelLanding = animateLanding(dropTopLeft, landTopLeft, opts.onLanding, () => {
+            cancelLanding = null
+            opts.onLandingDone?.()
+          })
+        }
+      },
+    })
+  }
   function onPointerDown(event: PointerEvent) {
     startThresholdDrag(event, {
       getCard: opts.getDragEl ? () => opts.getDragEl!() : undefined,
       exclude: opts.exclude,
       onDragStart: (ev, card) => {
-        cancelActiveLanding()
-        startPhysicsDrag(ev, card, {
-          pointer: true, skipAbsorb: true, tilt: 0, lift: opts.lift ?? 1.03,
-          // 飞行中的 holder 被再次抓起时，物理模块会递归启动下一段拖拽；先停掉上一段只供
-          // RelationLayer 使用的落地插值，避免旧 landingPositions 继续覆盖新克隆的位置。
-          onRegrabStart: cancelActiveLanding,
-          // 无限画布没有"卡片顶部附近拈起"这个参照系（那是看板卡沿用的手感），抓哪张贴纸都该是
-          // 贴纸中心跟手，不然矮贴纸（活动/文件）看着几乎贴在指针上、高贴纸（便签）又明显吊在
-          // 指针下方一截，四种贴纸手感不一致。
-          centerGrab: true,
-          contentScale: opts.contentScale,
-          // 画布贴纸铺满整个浏览器（含侧栏背后那一段，见 MindCanvas.vue），拖拽克隆若还用
-          // 全站默认的 99999 会飞过侧栏时整个盖住导航；压到比侧栏 z-index（20）低。这里传了
-          // dragZIndex 后，usePhysicsDrag.ts 的抓起/落地两段飞行都会直接用这个数，不会各走
-          // 一套算法（落地那段默认按祖先动态探测，容易先摸到贴纸自己内联的 item.z，那个值
-          // 随建卡数量单调递增，迟早会长到超过侧栏的 20），两段交接时层级也不会跳一下。
-          dragZIndex: 10,
-          onFollow: opts.onDragMove
-            ? ({ x, y }, size) => {
-                const world = opts.screenToWorld(x, y)
-                const { w, h } = screenSizeToWorld(opts.screenToWorld, size)
-                opts.onDragMove!(world.x - w / 2, world.y - h / 2)
-              }
-            : undefined,
-          onDrop: ({ x, y }, velocity, size) => {
-            const coast = coastOffset(velocity)
-            const dropCenter = opts.screenToWorld(x, y)
-            const landCenter = opts.screenToWorld(x + coast.x, y + coast.y)
-            const { w, h } = screenSizeToWorld(opts.screenToWorld, size)
-            const dropTopLeft = { x: dropCenter.x - w / 2, y: dropCenter.y - h / 2 }
-            const landTopLeft = { x: landCenter.x - w / 2, y: landCenter.y - h / 2 }
-            // 落库坐标必须同步给出：usePhysicsDrag.ts 的 end() 紧接着在同一个宏任务里读
-            // 贴纸最新的 DOM 位置来算克隆体飞行目标，晚一步（比如等下面这段插值播完再落库）
-            // 会让它读到旧位置、飞错地方。落地动画期间连线要跟着走，靠下面单独一段插值补，
-            // 不依赖也不推迟这次落库；插值不写回 item.x/y（会闪一下终点，见 onLanding 的
-            // 注释），只喂 onLanding。
-            opts.onDropAt(landTopLeft.x, landTopLeft.y)
-            if (opts.onLanding) {
-              // 先同步写一次起点：目标卡的真实 item.x/y 已经跳到终点，本体虽不可见仍能被
-              // elementFromPoint 命中。MindCanvas 用这次回调立刻把它标记为"落地中"，避免
-              // 连线拖拽提前吸到仍在飞的卡片；后续逐帧插值只负责关系线视觉位置。
-              opts.onLanding(dropTopLeft.x, dropTopLeft.y)
-              cancelLanding = animateLanding(dropTopLeft, landTopLeft, opts.onLanding, () => {
-                cancelLanding = null
-                opts.onLandingDone?.()
-              })
-            }
-          },
-        })
+        startDrag(ev, card)
       },
       onClick: opts.onClick,
     })
   }
-  return { onPointerDown }
+  // 落地克隆仍在飞行时的接力入口。初始位置量自 holder 的实时视觉矩形，而不是已经写入
+  // 最终坐标的本体，保证用户抓到眼前 clone2 后不会瞬移回落点再开始拖。
+  function startLandingRegrab(event: PointerEvent, initialRect: { left: number; top: number; width: number; height: number }) {
+    const card = opts.getDragEl?.()
+    if (!card) return
+    startDrag(event, card, initialRect, true, true)
+  }
+  /** 外部素材越过阈值后由刚挂载的画布卡直接启动普通拖拽。这里刻意不传 initialRect：
+   * 初始矩形是“落地飞行再抓取”的专用补偿，首次入画布若带上它会绕开标准 clone2 路径。 */
+  function startImmediateDrag(event: PointerEvent) {
+    const card = opts.getDragEl?.()
+    if (!card) return
+    startDrag(event, card)
+  }
+  return { onPointerDown, startImmediateDrag, startLandingRegrab }
 }

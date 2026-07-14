@@ -64,6 +64,11 @@ export interface PhysicsDragOpts {
   // getBoundingClientRect）或 null——避免组件自己另一套判定和调用方 onDrop 里的判定不一致，
   // 出现"数据没移动、动画却演了吸入消失"的画面和实际状态对不上。
   resolveAbsorbTarget?: (under: Element) => Element | null
+  /** 吸入目标是否收缩。项目退回抽屉时保留整张卡飞入对应素材位，避免像删掉一样缩没。 */
+  absorbShrink?: boolean
+  // 吸入抽屉时，业务状态更新会先让画布卡消失、下一帧才把对应素材卡插回列表。这里延迟
+  // 解析那张具体卡，不能拿整个抽屉容器当 morph 终点，否则会飞到容器左上角。
+  resolveAbsorbLandingTarget?: () => HTMLElement | null
   // 外部来源（例如画布右侧素材抽屉）在松手后才异步创建真正的目标卡片时，用这份 getter
   // 把物理克隆交接给目标 DOM。拿到目标前克隆停在释放位置，拿到后复用原有 flyMorph，
   // 不会出现"源卡飞回去、目标卡另冒出来"的两段式动画。
@@ -88,6 +93,9 @@ export interface PhysicsDragOpts {
   // 飞行 holder 上重新抓取时，本体不在真实命中位置；把 holder 已确认的 hover 显式交给新
   // 克隆，避免它按隐藏本体的 :hover=false 误把控制层做成不可见。
   initialHover?: boolean
+  // 外部素材拖入画布后，飞行终点是刚创建的画布卡。若落地前再次抓取，应把手势交给那张
+  // 画布卡自己的拖拽逻辑（保留 item 移动/连线更新），不能继续调用外部素材的“新建节点”逻辑。
+  delegateLandingRegrab?: boolean
 }
 
 export interface PhysicsDropContext {
@@ -393,6 +401,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   const cloneW = parseFloat(sourceStyle.width) || (CS0 !== 1 ? sourceRect.width / CS0 : sourceRect.width)
   const cloneH = parseFloat(sourceStyle.height) || (CS0 !== 1 ? sourceRect.height / CS0 : sourceRect.height)
   let lastCS = CS0
+  half = { x: (cloneW * CS0) / 2, y: (cloneH * CS0) / 2 }
+  liveGrabY = opts.centerGrab ? half.y : GRABY
   // holder 飞行途中可能正被落地 morph 拉伸；再次抓起时先按那一刻的视觉比例画新克隆，再在
   // 抬起的 160ms 内自然收回到本体尺寸，避免中途抓取先突然变大/变小一跳。
   const regrabScale = {
@@ -607,7 +617,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 时候滚轮还能继续缩放画布，克隆体的视觉大小得跟着变（cloneW/cloneH 这份「世界坐标系
     // 固有尺寸」本身不变，变的是 scaleShell 把它投影到屏幕的比例）。half 跟着重算，否则克隆体
     // 大小变了、但定位仍按旧的半宽半高摆，会偏出指针中心。数值没变时跳过，省一次样式写入。
-    if (typeof opts.contentScale === 'function') {
+    if (opts.contentScale != null) {
       const liveCS = _resolveCS()
       if (liveCS !== lastCS) {
         lastCS = liveCS
@@ -758,7 +768,6 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     const sel = idAttr ? `[${idAttr[0]}="${idAttr[1]}"]` : null
 
     let done = false; let onEnd: (e: TransitionEvent) => void = () => {}
-    const SLOT = (box: Box) => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) scale(1)`
     const restoreSourcePlaceholder = () => {
       if (!opts.keepSourcePlaceholder) return
       sourceEl.classList.remove('phys-drag-source-placeholder')
@@ -766,9 +775,14 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       sourceEl.style.opacity = ''
     }
 
-    // 单克隆：只用于吸入(shrink)——缩小淡出进文件夹/面包屑，没有「露出真卡」这一步，
-    // 不存在克隆→真卡外观不一致的问题。归位/落到新位置一律走下面的 flyMorph（双克隆交叉淡变）。
-    const flyTo = (box: Box, shrink: boolean) => {
+    // 单克隆用于传统的“缩小吸入”、无目标归位，以及外部抽屉卡回到自己的源位。
+    // 后一种源/目标是同一个 DOM、外观也完全相同；再建 clone2 会把源占位与落地克隆并行，
+    // 在某些缩放比例下多出一条飞往左上角的残影。
+    const flyTo = (box: Box, shrink: boolean, revealEl?: HTMLElement) => {
+      if (revealEl) {
+        _holdHoverUntilReveal(revealEl)
+        revealEl.style.opacity = '0'
+      }
       holder.style.transition = `transform 0.55s ${_SETTLE}, opacity 0.4s ease`
       if (shrink) {
         const cx = box.left + box.width / 2, cy = box.top + box.height / 2
@@ -776,7 +790,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         holder.style.transform =
           `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0) scale(0.32)`
       } else {
-        holder.style.transform = SLOT(box)
+        const sx = (box.width / dropW).toFixed(4)
+        const sy = (box.height / dropH).toFixed(4)
+        const cx = box.left + box.width / 2, cy = box.top + box.height / 2
+        holder.style.transform = `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0) scale(${sx}, ${sy})`
       }
       let unregister = () => {}
       const finish = () => {
@@ -785,6 +802,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         unregister()
         holder.removeEventListener('transitionend', onEnd)
         holder.remove()
+        if (revealEl) _revealWithoutStaleHover(revealEl, pointer)
         restoreSourcePlaceholder()
       }
       unregister = _registerCleanup(sourceEl, finish)
@@ -796,7 +814,14 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 双克隆样式渐变：clone(旧样式) 与 clone2(新样式) 同起点、同轨迹飞向落点，飞行途中：
     //  ① 用 scale 把卡片实际拉伸/缩短到落点卡的尺寸（长短按需变化，而非靠淡变蒙混）；
     //  ② 交叉淡变完成内容（旧→新样式）。看到的是飞动的卡片自己变形+变样式并落位。
-    const flyMorph = (initialBox: Box, revealEl: HTMLElement, clone2: HTMLElement, onReveal?: () => void) => {
+    const flyMorph = (
+      initialBox: Box,
+      revealEl: HTMLElement,
+      clone2: HTMLElement,
+      onReveal?: () => void,
+      trackCanvasCamera = true,
+      hidePrimaryVisual = false,
+    ) => {
       // box 用 let：飞行途中可能被 _retargetLandings 改指到新位置（见其注释），finish() 收尾时
       // 要读的是「最新」这份，不是刚进来那一刻的静态快照。
       let box = initialBox
@@ -835,8 +860,26 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             // 这份手势本该由收尾时取消，双保险在这里再拦一次，绝不能从左上角续接。
             if (done || !holder.isConnected) return
             // 阈值内卡片仍在继续飞，起点要在真正接力这一刻再量，不能沿用按下那一帧的旧框。
-            const visualRect = holder.getBoundingClientRect()
+            // 落地画面实际由 clone2 绘制；holder 仍保留的是抓起来源的几何。普通画布卡两者
+            // 往往恰好等大，抽屉项目却会经历“抽屉实体尺寸 → 画布缩放尺寸”，取 holder 会把
+            // 下一段拖拽从另一张卡的位置起算，抓起瞬间便跳到鼠标。优先量可见 clone2，异常
+            // 情况才退回 holder，保证所有落地交接都从用户眼前这张卡续上。
+            const clone2Rect = clone2.getBoundingClientRect()
+            const visualRect = clone2Rect.width > 0 && clone2Rect.height > 0
+              ? clone2Rect
+              : holder.getBoundingClientRect()
             opts.onRegrabStart?.()
+            if (opts.delegateLandingRegrab) {
+              const handoff = new CustomEvent('physics-landing-regrab', {
+                bubbles: false,
+                cancelable: true,
+                detail: { event: moveEvent, initialRect: visualRect },
+              })
+              revealEl.dispatchEvent(handoff)
+              // 画布卡已接过同一份物理手势；旧 holder 的落地收尾会在新拖拽里被清理，
+              // 不能再走下面的默认递归，否则同一次移动会起两张克隆。
+              if (handoff.defaultPrevented) return
+            }
             startPhysicsDrag(moveEvent, revealEl, {
               ...opts,
               // 外部素材源才需要保留占位；落地卡已经是画布/看板里的真实本体，接力抓起时
@@ -899,7 +942,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 的弹出动画整个消失，变成"直接瞬移到落点"）。先接好 camGlue 这层壳，再走 FLIP 那一套，
       // 两件事互不干扰。
       let camGlue: HTMLElement | null = null
-      if (typeof opts.contentScale === 'function') {
+      if (trackCanvasCamera && typeof opts.contentScale === 'function') {
         camGlue = document.createElement('div')
         Object.assign(camGlue.style, {
           position: 'fixed', left: '0', top: '0', right: '0', bottom: '0',
@@ -926,6 +969,14 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         const trackCamera = () => {
           if (done) return
           const r = revealEl.getBoundingClientRect()
+          // 乐观临时卡在服务端真实 id 回写的一瞬间，Vue 可能经历一帧内部重排；此时旧落点
+          // 节点会短暂量成 0×0。它不是画布真的缩放到了 0，若照常参与比例计算会把 camGlue
+          // 整层写成 scale(0)，飞行克隆中途消失、只剩真实卡像是瞬移到位。无效几何只跳过
+          // 本帧，保留上一帧相机变换，等真实节点恢复有效尺寸后自然继续跟随。
+          if (!revealEl.isConnected || r.width < 1 || r.height < 1) {
+            requestAnimationFrame(trackCamera)
+            return
+          }
           const rectKey = `${r.left.toFixed(2)}|${r.top.toFixed(2)}|${r.width.toFixed(2)}`
           if (rectKey !== lastRectKey) {
             lastRectKey = rectKey
@@ -959,6 +1010,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       const c2Inner = clone2.querySelector<HTMLElement>('.phys-landing-content')
       const trans = `transform 0.55s ${_SETTLE}`
       const fadeTrans = 'opacity 0.42s ease'
+      // 回到抽屉时主克隆会隐藏，只剩落地副本承担画面。把抓取态的强阴影先交给它，
+      // 再和位移同步收进抽屉静止态，不能直接从主克隆切成普通卡阴影。
+      const dragShadow = hidePrimaryVisual ? getComputedStyle(cloneInner).boxShadow : ''
+      const landingShadow = hidePrimaryVisual && c2Inner ? getComputedStyle(c2Inner).boxShadow : ''
       cloneInner.style.transition = fadeTrans
       if (c2Inner) c2Inner.style.transition = fadeTrans
       // clone2（_cloneLanding 里的 holder2）创建时是按「先不可见、被自己的 opacity 淡入」的
@@ -969,6 +1024,18 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       clone2.style.opacity = '1'
       cloneInner.style.opacity = '0'
       if (c2Inner) c2Inner.style.opacity = '1'
+      // 抽屉来源直接回到自身时，落地副本 clone2 已经是完全相同的正确外观；抓取副本
+      // holder 的坐标仍带着画布缩放期间的壳，若同时可见会留下从抽屉左上角掠过的半透明残影。
+      // 它仍保留为透明命中层，确保飞行中可重新抓取，只是不再承担任何可见内容。
+      if (hidePrimaryVisual) {
+        holder.style.opacity = '0'
+        if (c2Inner) {
+          c2Inner.style.transition = 'none'
+          c2Inner.style.boxShadow = dragShadow
+        }
+        // 提交强阴影作为下一帧过渡的起点；否则浏览器会把两次写入合并，仍然直接跳到静止阴影。
+        void clone2.offsetWidth
+      }
 
       // 飞行途中容器发生 FLIP 重排（另一张卡被抓起/放下）→ 落点跟着挪位，把目标改过去。
       // 直接在飞行中途改 transform 目标，浏览器会当「打断」处理：新一段插值默认按当前速度
@@ -1018,6 +1085,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         if (done) return
         holder.style.transition = trans
         clone2.style.transition = trans
+        if (hidePrimaryVisual && c2Inner) {
+          c2Inner.style.transition = `box-shadow 0.55s ${_SETTLE}`
+          c2Inner.style.boxShadow = landingShadow
+        }
         applyTransform()
       }
       const finish = () => {
@@ -1071,8 +1142,15 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 否则目标中途被重定时 transform 还没走完就会提前揭示真实卡。
       onEnd = (e) => { if (e.target === clone2 && e.propertyName === 'transform') finish() }
       clone2.addEventListener('transitionend', onEnd)
-      startSettle()
-      armFinishTimer()
+      // clone2 是刚插入 DOM 的新节点。仅靠同步的 getBoundingClientRect() 提交起点，在抽屉
+      // 临时卡这类「挂载后立即落点」的路径上仍可能被浏览器合并为终态，视觉上就像瞬移。
+      // 留出一个真实绘制帧：第一帧只画两张克隆重叠的起点，第二帧才开启 transform 过渡。
+      // 这样所有走双克隆落地的卡片都使用同一份可靠的 FLIP 时序。
+      requestAnimationFrame(() => {
+        if (done) return
+        startSettle()
+        armFinishTimer()
+      })
     }
 
     // 占位重新展开：FLIP 邻居从「合拢」动到「展开」。el 当前可能已收合(home)或已展开(落点新卡)，
@@ -1124,12 +1202,19 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 1) 释放点压着文件夹/面包屑 → 吸入（不依赖异步重渲染）
       //    skipAbsorb（看板）跳过：看板永不吸入文件夹，而此处 elementFromPoint 在 moveProject 把布局改脏后
       //    会强制一次整页重排（trace 里 elementFromPoint 161ms 的大头）——白白吃掉松手那帧。
+      let absorbTarget: HTMLElement | null = null
       if (!opts.skipAbsorb) {
-        const under = document.elementFromPoint(dropX, dropY)
+        // 命中判定用「原始指针位置」（target.x/y），不用 cloneCenter（dropX/dropY）——
+        // 拖拽过程中 onDragOver 的悬停高亮走的就是原始指针（见其定义处注释），如果这里改用
+        // 卡片视觉中心去判定，两者点位不一致：卡片抓取点通常偏卡片上部、卡片本身又比面包屑
+        // 这类细长目标高得多，视觉中心会比指针低出「半卡高 - GRABY」那么多，导致「悬停时
+        // 面包屑明明亮着、一松手却判定未命中」（面包屑窄条恰好被这段偏移跨过去）。落地动画
+        // 仍用 dropX/dropY（卡片视觉中心）摆放，只有这里的命中判定换成指针位置。
+        const under = document.elementFromPoint(target.x, target.y)
         const absorb = opts.resolveAbsorbTarget
           ? (under && opts.resolveAbsorbTarget(under))
           : (under && under.closest && under.closest('.folder-card, .bc-item'))
-        if (absorb) { flyTo(absorb.getBoundingClientRect(), true); return }
+        absorbTarget = absorb as HTMLElement | null
       }
 
       // clone2 不再套 .phys-drag-clone/光晕——直接是目标元素此刻真实 DOM 的克隆，从交叉淡变
@@ -1154,7 +1239,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         const c = el.cloneNode(true) as HTMLElement
         if (opts.cloneClass) c.classList.add(opts.cloneClass)
         c.classList.add('phys-landing-content')
-        c.classList.remove('phys-reveal-controls')
+        // el 已作为真实落点被 .phys-drag-source 隐藏；cloneNode 会把这个类一并带来，
+        // 其 opacity:0 !important 会让克隆 2 整段飞行不可见，收尾时真实卡才突然出现。
+        c.classList.remove('phys-drag-source', 'phys-reveal-controls')
         copyInheritedTextStyle(el, c)
         c.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
         // 操作区由 holder 内唯一的 cardActionOverlay 承担可见性；这里留隐藏副本维持标题行布局。
@@ -1177,6 +1264,46 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         holder2.appendChild(landingScaleShell)
         document.body.appendChild(holder2)
         return holder2
+      }
+
+      if (absorbTarget) {
+        if (opts.absorbShrink ?? true) {
+          // 文件/文件夹拖进普通文件夹或面包屑仍是原有的单克隆缩小吸入；目标只是一个
+          // 容器入口，不是会被克隆交接的卡片，不能先把它隐藏成 opacity:0。
+          flyTo(absorbTarget.getBoundingClientRect(), true)
+        } else {
+          const deadline = performance.now() + 300
+          const landOnAbsorbTarget = () => {
+            const resolved = opts.resolveAbsorbLandingTarget?.()
+            if (!resolved && opts.resolveAbsorbLandingTarget && performance.now() < deadline) {
+              requestAnimationFrame(landOnAbsorbTarget)
+              return
+            }
+            const targetEl = resolved ?? absorbTarget!
+            // 外部抽屉卡“放回原位”时，目标就是源占位本身。先在不可见状态摘掉占位样式，
+            // clone2 才会带着完整内容飞回；否则会复制到那份透明的占位壳，收尾才突然出现。
+            if (targetEl === sourceEl && opts.keepSourcePlaceholder) {
+              targetEl.style.opacity = '0'
+              targetEl.classList.remove('phys-drag-source-placeholder')
+            }
+            const box = revealInScroller(_scrollParent(targetEl), targetEl.getBoundingClientRect())
+            // 抽屉来源回到自身时也复用双克隆，完成从画布缩放尺寸回到抽屉实体尺寸的交接。
+            // 但落点不在画布内，不能把 fixed 克隆塞进画布相机跟随层；那层会改变其定位基准，
+            // 造成额外的左上角残影。
+            _holdHoverUntilReveal(targetEl)
+            targetEl.style.opacity = '0'
+            flyMorph(
+              box,
+              targetEl,
+              _cloneLanding(targetEl),
+              restoreSourcePlaceholder,
+              targetEl !== sourceEl,
+              targetEl === sourceEl,
+            )
+          }
+          landOnAbsorbTarget()
+        }
+        return
       }
 
       const landHome = () => {
@@ -1205,7 +1332,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       }
 
       // 外部素材抽屉的卡片在拖拽开始时还不是画布节点；松手后由调用方创建真实卡片，
-      // 这里等它挂到 DOM 再交给同一条 morph 管线。失败/超时则完整归位，不能留下隐形源卡。
+      // 这里等它挂到 DOM 再交给同一条 morph 管线。惯性已经体现在新节点的最终坐标上，
+      // 所以直接 flyMorph 一次即可；不能再先改一段 holder transform，否则两段动画会抢
+      // 同一个起点，出现“原地落下”或中途顿一下。失败/超时则完整归位，不能留下隐形源卡。
       if (opts.resolveLandingTarget) {
         const deadline = performance.now() + (opts.landingTargetWaitMs ?? 0)
         const landOnExternalTarget = () => {
@@ -1499,7 +1628,10 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     // GRABY 偏移才是视觉中心，见那边的注释。
     const cloneCenter = { x: pos.x, y: pos.y - GRABY + half.y }
     // 多选拖拽（看板/文件库）目前没有消费方需要 turn，固定给 0，不为它另起一套 velHistory。
-    if (opts.onDrop) { try { opts.onDrop(cloneCenter, { x: vel.x, y: vel.y, turn: 0 }, { w: rect.width, h: rect.height }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
+    // context.pointer 带上原始指针位置——理由同单选版：调用方（dispatchDrop）自己的命中判定
+    // 要跟这里下面「吸入文件夹/面包屑」的动画判定用同一个基准点，否则又会出现「动画演了吸入、
+    // 数据其实没动」（cloneCenter 是卡片视觉中心，跟指针位置在细长目标上判定结果可能不一致）。
+    if (opts.onDrop) { try { opts.onDrop(cloneCenter, { x: vel.x, y: vel.y, turn: 0 }, { w: rect.width, h: rect.height }, { pointer: { x: target.x, y: target.y }, pointerVelocity: { x: 0, y: 0 }, isLandingRegrab: false }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
 
     const dropX = cloneCenter.x, dropY = cloneCenter.y
     const SLOT = (box: Box) => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) scale(1)`
@@ -1535,8 +1667,9 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     // 改按卡片所在的层叠上下文动态取值，避免飞行路径盖住悬浮窗口、也避免被卡片自己所在的浮窗盖住
     clone.style.zIndex = String(_landingZIndex(sourceEl))
     requestAnimationFrame(() => {
-      // 吸入文件夹/面包屑
-      const under = document.elementFromPoint(dropX, dropY)
+      // 吸入文件夹/面包屑：命中判定用原始指针位置（target.x/y），不用 dropX/dropY（克隆体视觉
+      // 中心）——理由同单选版 end()，两者点位不一致会导致「悬停高亮了、一松手却没吸入」。
+      const under = document.elementFromPoint(target.x, target.y)
       const absorb = opts.resolveAbsorbTarget
         ? (under && opts.resolveAbsorbTarget(under))
         : under?.closest?.('.folder-card, .bc-item')

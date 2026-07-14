@@ -1,20 +1,24 @@
 <template>
   <div
-    ref="rootRef"
     class="canvas-drawer glass-card"
-    :class="{ open: expanded, 'project-panel': panel === 'projects' }"
+    :class="{ open: expanded, closing, 'project-panel': panel === 'projects' }"
     :style="{ '--cd-target-width': panel === 'projects' ? '284px' : '190px' }"
+    :data-project-drawer-dropzone="expanded && panel === 'projects' ? '' : undefined"
     @pointerdown.stop
   >
     <div class="cd-head">
-      <button class="cd-toggle" :class="{ active: panel === 'canvases' }" title="画布列表" @click="togglePanel('canvases')">
-        <PhSquaresFour :size="16" weight="bold" />
-      </button>
-      <button class="cd-toggle" :class="{ active: panel === 'projects' }" title="项目素材" @click="togglePanel('projects')">
-        <PhBriefcase :size="16" weight="bold" />
-      </button>
-      <span class="cd-title">{{ panel === 'canvases' ? '画布' : '项目' }}</span>
-      <button v-if="panel === 'canvases'" title="新建画布" class="cd-add" @click="emit('create')"><PhPlus :size="15" weight="bold" /></button>
+      <Transition name="cd-expanded">
+        <div v-if="expanded && headerVisible" class="cd-expanded-nav">
+          <span class="cd-title">{{ panel === 'canvases' ? '画布' : '项目' }}</span>
+          <button class="cd-toggle cd-return" title="收起" @click="togglePanel(panel)"><PhArrowRight :size="18" weight="bold" /></button>
+        </div>
+      </Transition>
+      <Transition name="cd-compact">
+        <div v-if="!expanded && compactReady" class="cd-compact-nav">
+        <button class="cd-toggle" title="画布列表" @click="togglePanel('canvases')"><PhSquaresFour :size="16" weight="bold" /></button>
+        <button class="cd-toggle" title="项目素材" @click="togglePanel('projects')"><PhBriefcase :size="16" weight="bold" /></button>
+        </div>
+      </Transition>
     </div>
 
     <!-- 两个面板始终挂载、各自在固定宽度下量高度。开关时只换目标尺寸与可见内容，
@@ -45,6 +49,7 @@
                 <button title="删除画布" class="ci-btn ci-delete" @click.stop="onDelete(canvas)"><PhTrash :size="11" weight="bold" /></button>
               </div>
             </div>
+            <button class="canvas-create-card" @click="emit('create')"><PhPlus :size="14" weight="bold" />新建画布</button>
           </div>
         </section>
 
@@ -55,16 +60,21 @@
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
             </div>
             <template v-else>
-              <section v-for="group in projectGroups" :key="group.status" v-show="group.items.length" class="project-group">
-                <div class="project-group-title"><span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span></div>
-                <ProjectDrawerCard
-                  v-for="project in group.items"
-                  :key="project.id"
-                  :project="project"
-                  :add-to-canvas="addProjectToCanvas"
-                  @add="emit('addProject', project.id)"
-                />
-              </section>
+              <TransitionGroup name="drawer-project-groups" tag="div" class="project-groups">
+                <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group">
+                  <div class="project-group-title"><span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span></div>
+                  <TransitionGroup name="drawer-project-cards" tag="div" class="project-group-cards">
+                    <ProjectDrawerCard
+                      v-for="project in group.items"
+                      :key="project.id"
+                      :project="project"
+                      :canvas-scale="canvasScale"
+                      :add-to-canvas="addProjectToCanvas"
+                      @add="emit('addProject', project.id)"
+                    />
+                  </TransitionGroup>
+                </section>
+              </TransitionGroup>
               <div v-if="!projectsLoading && !filteredProjects.length" class="project-empty">没有匹配的项目</div>
             </template>
           </div>
@@ -75,8 +85,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
-import { PhBriefcase, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour, PhTrash } from '@phosphor-icons/vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, type PropType } from 'vue'
+import { PhArrowRight, PhBriefcase, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour, PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
 import ProjectDrawerCard from './ProjectDrawerCard.vue'
@@ -87,6 +97,9 @@ const props = defineProps({
   projects: { type: Array as PropType<Project[]>, required: true },
   canvasProjectIds: { type: Object as PropType<Set<number>>, required: true },
   projectsLoading: { type: Boolean, default: false },
+  // 抽屉卡抓起后会脱离抽屉、落进按相机缩放渲染的画布；把当前比例交给物理克隆，
+  // 让 clone1 从第一帧起就是画布尺寸，不能等 clone2 交接时才突然缩小。
+  canvasScale: { type: Number, default: 1 },
   addProjectToCanvas: {
     type: Function as PropType<(projectId: number, center: { x: number; y: number }, size: { w: number; h: number }) => Promise<HTMLElement | null>>,
     required: true,
@@ -102,10 +115,12 @@ const emit = defineEmits<{
 
 type Panel = 'canvases' | 'projects'
 const expanded = ref(false)
+const closing = ref(false)
+const compactReady = ref(true)
 const panel = ref<Panel>('canvases')
 const visiblePanel = ref<Panel>('canvases')
 const contentVisible = ref(false)
-const rootRef = ref<HTMLElement | null>(null)
+const headerVisible = ref(false)
 const canvasListRef = ref<HTMLElement | null>(null)
 const projectListRef = ref<HTMLElement | null>(null)
 const panelHeights = ref<Record<Panel, number>>({ canvases: 0, projects: 0 })
@@ -113,6 +128,7 @@ const targetHeight = computed(() => panelHeights.value[panel.value])
 let canvasListObserver: ResizeObserver | null = null
 let projectListObserver: ResizeObserver | null = null
 let contentTimer: ReturnType<typeof setTimeout> | null = null
+let compactTimer: ReturnType<typeof setTimeout> | null = null
 
 const projectQuery = ref('')
 const filteredProjects = computed(() => {
@@ -125,6 +141,7 @@ const projectGroups = computed(() => [
   { status: 'pending', label: '待开始', items: filteredProjects.value.filter(project => project.status === 'pending') },
   { status: 'done', label: '已完成', items: filteredProjects.value.filter(project => project.status === 'done') },
 ])
+const visibleProjectGroups = computed(() => projectGroups.value.filter(group => group.items.length > 0))
 
 function measurePanel(panelName: Panel) {
   const list = panelName === 'canvases' ? canvasListRef.value : projectListRef.value
@@ -142,34 +159,49 @@ function clearContentTimer() {
   if (contentTimer) clearTimeout(contentTimer)
   contentTimer = null
 }
+function clearCompactTimer() {
+  if (compactTimer) clearTimeout(compactTimer)
+  compactTimer = null
+}
 function revealContent(delay: number) {
   clearContentTimer()
-  contentTimer = setTimeout(() => { contentVisible.value = true }, delay)
+  contentTimer = setTimeout(() => {
+    // 先让外壳的展开尺寸提交一帧，再揭示内容；否则某些浏览器会把两次状态写入合帧，
+    // 直接跳到清晰终态，看不见本应有的 blur/opacity 淡入。
+    requestAnimationFrame(() => {
+      headerVisible.value = true
+      contentVisible.value = true
+    })
+  }, delay)
 }
 async function togglePanel(nextPanel: Panel) {
   if (expanded.value && panel.value === nextPanel) {
+    closing.value = true
     contentVisible.value = false
     clearContentTimer()
-    contentTimer = setTimeout(() => { expanded.value = false }, 120)
+    clearCompactTimer()
+    // 内容、紧凑入口和外壳在同一段时间内切换，不能先淡完内容才缩抽屉。
+    expanded.value = false
+    compactTimer = setTimeout(() => {
+      compactReady.value = true
+      closing.value = false
+    }, 32)
     return
   }
+  clearCompactTimer()
+  compactReady.value = false
+  closing.value = false
+  headerVisible.value = false
   contentVisible.value = false
   panel.value = nextPanel
   visiblePanel.value = nextPanel
   await nextTick()
   measurePanels()
   expanded.value = true
-  revealContent(90)
+  // 内容面板一开始就按最终尺寸定位，只由外壳 overflow 裁切展开；下一帧立即淡入，
+  // 让它与宽高变化并行，而非等抽屉完全展开后才出现。
+  revealContent(0)
 }
-
-function onOutsidePointerDown(event: PointerEvent) {
-  const root = rootRef.value
-  if (expanded.value && root && !root.contains(event.target as Node)) togglePanel(panel.value)
-}
-watch(expanded, (open) => {
-  if (open) window.addEventListener('pointerdown', onOutsidePointerDown)
-  else window.removeEventListener('pointerdown', onOutsidePointerDown)
-})
 
 const renamingId = ref<number | null>(null)
 const renameText = ref('')
@@ -211,10 +243,10 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   clearContentTimer()
+  clearCompactTimer()
   canvasListObserver?.disconnect()
   projectListObserver?.disconnect()
   window.removeEventListener('resize', measurePanels)
-  window.removeEventListener('pointerdown', onOutsidePointerDown)
 })
 </script>
 
@@ -222,24 +254,41 @@ onBeforeUnmount(() => {
 .canvas-drawer {
   position: absolute; top: 50%; right: 12px; z-index: 8; transform: translateY(-50%);
   box-sizing: border-box; width: 36px; overflow: hidden;
-  transition: width 0.28s cubic-bezier(0.34,1.2,0.64,1);
+  transition: width 0.38s cubic-bezier(.22,1,.36,1),
+              background 0.25s ease, box-shadow 0.25s ease;
 }
 .canvas-drawer.open { width: 190px; }
 .canvas-drawer.open.project-panel { width: 284px; }
-.cd-head { display: flex; align-items: center; height: 34px; flex-shrink: 0; }
-.cd-toggle { flex-shrink: 0; width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border: 0; background: none; color: var(--text-secondary); cursor: pointer; }
+.cd-head {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  flex-shrink: 0;
+  /* 收起时内容区从一行列表缩到 0、目录头从 34px 变两枚入口的 68px；高度必须同样
+     插值，不能让头部先瞬跳 34px 再等内容区收合。 */
+  transition: height .38s cubic-bezier(.22,1,.36,1);
+}
+.cd-expanded-nav { display: flex; align-items: center; width: 100%; box-sizing: border-box; padding-left: 9px; }
+.cd-compact-nav { display: flex; flex-direction: column; align-items: center; }
+.cd-toggle { flex-shrink: 0; width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border: 0; background: none; color: var(--text-secondary); cursor: pointer; }
 .cd-toggle:hover, .cd-toggle.active { color: var(--color-primary); }
-.canvas-drawer:not(.open) .cd-head { height: 68px; flex-direction: column; }
-.canvas-drawer:not(.open) .cd-title, .canvas-drawer:not(.open) .cd-add { display: none; }
-.cd-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--text-secondary); font-size: 12px; font-weight: 700; opacity: 0; transition: opacity .15s ease; }
+.canvas-drawer:not(.open) .cd-head { height: 80px; flex-direction: column; }
+.canvas-drawer:not(.open) .cd-title { display: none; }
+.cd-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--text-secondary); font-size: 13px; font-weight: 700; opacity: 0; transition: opacity .15s ease; }
 .canvas-drawer.open .cd-title { opacity: 1; transition-delay: .08s; }
-.cd-add { flex-shrink: 0; width: 25px; height: 25px; margin-right: 7px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: none; color: var(--text-secondary); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
-.canvas-drawer.open .cd-add { opacity: 1; pointer-events: auto; transition-delay: .08s; }
-.cd-add:hover { color: var(--color-primary); background: rgba(123,127,178,.11); }
+.cd-return { margin-left: auto; }
+.canvas-drawer.closing .cd-expanded-nav { opacity: 0; filter: blur(3px); transition: opacity .14s ease-in, filter .14s ease-in; }
+.cd-expanded-enter-active { animation: cd-expanded-in .26s cubic-bezier(.22,1,.36,1) both; }
+@keyframes cd-expanded-in {
+  from { opacity: 0; filter: blur(3px); }
+  to { opacity: 1; filter: blur(0); }
+}
+.cd-compact-enter-active { transition: opacity .22s ease-out, filter .22s ease-out; }
+.cd-compact-enter-from { opacity: 0; filter: blur(3px); }
 
-.cd-collapse { position: relative; width: var(--cd-target-width); overflow: hidden; transition: height .28s cubic-bezier(0.34,1.2,0.64,1); }
+.cd-collapse { position: relative; width: var(--cd-target-width); overflow: hidden; transition: height .38s cubic-bezier(.22,1,.36,1); }
 .cd-stage { position: relative; width: 100%; height: 100%; }
-.cd-content-panel { position: absolute; top: 0; left: 0; opacity: 0; filter: blur(4px); pointer-events: none; transition: opacity .14s ease-in-out, filter .14s ease-in-out; }
+.cd-content-panel { position: absolute; top: 0; left: 0; opacity: 0; filter: blur(6px); pointer-events: none; transition: opacity .26s cubic-bezier(.22,1,.36,1), filter .26s cubic-bezier(.22,1,.36,1); }
 .cd-content-panel.visible { opacity: 1; filter: blur(0); pointer-events: auto; }
 .canvas-panel { width: 190px; }
 .projects-panel { width: 284px; }
@@ -248,6 +297,8 @@ onBeforeUnmount(() => {
 .project-list { display: flex; flex-direction: column; gap: 9px; width: 284px; min-height: 312px; }
 
 .canvas-item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; height: 32px; padding: 0 4px 0 8px; border-radius: 6px; background: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
+.canvas-create-card { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 32px; margin-top: 5px; box-sizing: border-box; border: 1.5px dashed rgba(0,0,0,.12); border-radius: 6px; background: rgba(255,255,255,.16); color: var(--text-secondary); font: 600 12px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
+.canvas-create-card:hover { background: rgba(123,127,178,.07); border-color: rgba(123,127,178,.4); color: var(--color-primary); }
 .ci-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-item:hover { background: rgba(255,255,255,.55); }
 .canvas-item.active { background: rgba(255,255,255,.86); color: var(--color-primary); font-weight: 700; box-shadow: 0 1px 3px rgba(60,70,100,.08); }
@@ -258,9 +309,23 @@ onBeforeUnmount(() => {
 .ci-btn:hover { background: rgba(123,127,178,.16); color: var(--color-primary); }
 .ci-delete:hover { background: rgba(200,90,90,.14); color: #c85a5a; }
 
-.project-search { width: 100%; height: 30px; box-sizing: border-box; padding: 0 9px; border: 1px solid rgba(123,127,178,.15); border-radius: 6px; outline: 0; background: rgba(255,255,255,.56); color: var(--text-primary); font: inherit; font-size: 11.5px; }
+.project-search { width: 100%; height: 38px; box-sizing: border-box; padding: 0 11px; border: 1px solid rgba(123,127,178,.15); border-radius: 6px; outline: 0; background: rgba(255,255,255,.56); color: var(--text-primary); font: 500 13px var(--font-sans); line-height: normal; }
+.project-search::placeholder { font-family: inherit; font-size: inherit; font-weight: inherit; line-height: normal; color: var(--text-secondary); opacity: .75; }
 .project-search:focus { border-color: rgba(123,127,178,.45); background: rgba(255,255,255,.8); }
+.project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }
+.project-groups { gap: 9px; }
 .project-group { display: flex; flex-direction: column; gap: 6px; }
+/* Vue TransitionGroup 先按新布局摆放兄弟，再把它们反向平移回旧位置；只需给 transform
+   同项目页一致的快进慢收曲线，拖出的项目离场后其它卡便会自然让位而非瞬移。 */
+.drawer-project-cards-move, .drawer-project-groups-move {
+  transition: transform .42s cubic-bezier(.22,1,.36,1);
+}
+.drawer-project-cards-leave-active {
+  position: absolute;
+  width: 240px;
+  transition: opacity .16s ease;
+}
+.drawer-project-cards-leave-to { opacity: 0; }
 .project-group-title { display: flex; align-items: center; gap: 5px; padding: 3px 3px 0; color: var(--text-secondary); font-size: 10px; font-weight: 700; }
 .project-group-title > span:last-child { margin-left: auto; font-variant-numeric: tabular-nums; opacity: .6; }
 .project-status-dot { width: 6px; height: 6px; border-radius: 50%; }

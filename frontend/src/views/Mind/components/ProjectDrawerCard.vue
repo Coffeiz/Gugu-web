@@ -16,8 +16,11 @@ import { startPhysicsDrag, startThresholdDrag } from '@/composables/usePhysicsDr
 import type { Project } from '@/types/project'
 import ProjectCardBody from './ProjectCardBody.vue'
 
+const DRAWER_SCALE_MS = 160
+
 const props = defineProps({
   project: { type: Object as PropType<Project>, required: true },
+  canvasScale: { type: Number, default: 1 },
   addToCanvas: {
     type: Function as PropType<(projectId: number, center: { x: number; y: number }, size: { w: number; h: number }) => Promise<HTMLElement | null>>,
     required: true,
@@ -30,17 +33,47 @@ function onPointerDown(event: PointerEvent) {
     exclude: target => !!(target as HTMLElement | null)?.closest('.seg-bar-wrap, button, input, textarea, select, a'),
     onDragStart: (moveEvent, card) => {
       let landingTarget: HTMLElement | null = null
+      let returnTarget: HTMLElement | null = null
+      let scaleStartedAt: number | null = null
+      const canvasContentScale = () => {
+        if (scaleStartedAt == null) return 1
+        const progress = Math.min(1, (performance.now() - scaleStartedAt) / DRAWER_SCALE_MS)
+        // 与抓起抬高同一段缓出：第一克隆从抽屉实体尺寸自然收进当前画布比例，之后才
+        // 直接跟随实时相机缩放。用 transform 缩放，不触发文字重排。
+        const eased = 1 - (1 - progress) ** 3
+        return 1 + (props.canvasScale - 1) * eased
+      }
       startPhysicsDrag(moveEvent, card, {
         pointer: true,
-        skipAbsorb: true,
+        skipAbsorb: false,
         centerGrab: true,
+        contentScale: canvasContentScale,
         lift: 1.03,
         dragZIndex: 10,
         cloneClass: 'pr-card',
         keepSourcePlaceholder: true,
         removeSourceOnExternalDrop: true,
-        onDrop: (center, velocity, size) => {
-          const coast = coastOffset(velocity)
+        delegateLandingRegrab: true,
+        // 放回抽屉时也以整张卡为落点交接：和画布内卡片归位相同，不能缩成一个点再露出源卡。
+        absorbShrink: false,
+        // 抽屉仍是这次外部拖拽的有效回收目标。命中时不创建画布节点，让物理模块走
+        // 原有“吸入源占位并恢复”的归位路径。
+        resolveAbsorbTarget: () => returnTarget,
+        onDrop: (center, velocity, size, context) => {
+          const pointer = context?.pointer ?? center
+          const drawer = document.querySelector<HTMLElement>('[data-project-drawer-dropzone]')
+          const drawerRect = drawer?.getBoundingClientRect()
+          if (drawer && drawerRect && pointer.x >= drawerRect.left && pointer.x <= drawerRect.right && pointer.y >= drawerRect.top && pointer.y <= drawerRect.bottom) {
+            returnTarget = card
+            return
+          }
+          // 抽屉来源的克隆有跟手弹簧，快速松手时它自己的速度可能已被阻尼压低；优先取
+          // 连续采样的指针释放速度，才能和画布内卡片一样保留明确的抛出方向与惯性。
+          const pointerVelocity = context?.pointerVelocity
+          const launchVelocity = pointerVelocity && Math.hypot(pointerVelocity.x, pointerVelocity.y) > 80
+            ? { ...pointerVelocity, turn: velocity.turn }
+            : velocity
+          const coast = coastOffset(launchVelocity)
           props.addToCanvas(props.project.id, { x: center.x + coast.x, y: center.y + coast.y }, size)
             .then(target => { landingTarget = target })
             .catch(() => { landingTarget = null })
@@ -48,6 +81,9 @@ function onPointerDown(event: PointerEvent) {
         resolveLandingTarget: () => landingTarget,
         landingTargetWaitMs: 1400,
       })
+      // 先提交抽屉本体大小这一帧，再让下一轮物理积分开始向画布比例收拢；不能在同一帧
+      // 直接传 canvasScale，否则浏览器只会看到一张已经缩小的克隆。
+      requestAnimationFrame(() => { scaleStartedAt = performance.now() })
     },
     onClick: () => emit('add'),
   })
@@ -56,16 +92,36 @@ function onPointerDown(event: PointerEvent) {
 
 <style scoped>
 .drawer-project-card {
+  position: relative;
   box-sizing: border-box;
-  width: 100%;
+  align-self: center;
+  width: 240px;
   border: 1px solid rgba(255,255,255,.72);
   border-radius: var(--radius-md);
+  corner-shape: squircle;
   box-shadow: 0 2px 8px rgba(80,90,110,.07);
+  overflow: hidden;
   cursor: grab;
   user-select: none;
-  transition: opacity .18s ease, background .18s ease, border-color .18s ease, box-shadow .18s ease;
+  font-family: var(--font-sans);
+  /* 与项目页 .proj-card 保持同一条悬停曲线。这里必须包含 transform；否则本地 transition
+     会覆盖全局 hover-card-fx，却让 -2px 抬起没有过渡、看起来像瞬间跳起。 */
+  transition: transform .25s cubic-bezier(.34,1.2,.64,1),
+              box-shadow .25s ease, background .25s ease-out;
+}
+.drawer-project-card::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; corner-shape: squircle;
+  background: linear-gradient(to bottom, rgba(255,255,255,.12) 0%, transparent 50%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9); pointer-events: none;
+}
+.drawer-project-card::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; corner-shape: squircle;
+  background: linear-gradient(to bottom, rgba(255,255,255,.55) 0%, rgba(255,255,255,.08) 45%, transparent 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,1); opacity: 0;
+  transition: opacity .25s ease; pointer-events: none;
 }
 .drawer-project-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,.13); }
+.drawer-project-card:hover::after { opacity: 1; }
 .drawer-project-card:active { cursor: grabbing; }
 
 /* 抽屉素材拖往画布时保留原尺寸的空位，不让列表在拖拽期间重排。 */

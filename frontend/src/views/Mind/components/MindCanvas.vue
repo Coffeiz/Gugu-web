@@ -21,7 +21,7 @@
           v-else-if="item.node.refType === 'project'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
           @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone" @measured="onItemMeasured"
-          @moved="onItemMoved" @open="item => emit('openRef', item)"
+          @moved="onItemMoved" @open="item => emit('openRef', item)" @return-to-drawer="item => emit('returnToDrawer', item)"
           @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
         <FileRefCard
@@ -65,6 +65,7 @@ const props = defineProps({
 })
 const emit = defineEmits<{
   (e: 'remove', item: MindCanvasItem): void
+  (e: 'returnToDrawer', item: MindCanvasItem): void
   (e: 'removeRelation', id: number): void
   (e: 'linkNodes', srcNodeId: number, dstNodeId: number, sides: RelationAnchorSides): void
   (e: 'openRef', item: MindCanvasItem): void

@@ -252,7 +252,15 @@ export const useMindStore = defineStore('mind', () => {
     try {
       const updated = await mindApi.updateCanvasItem(canvasId, itemId, fields)
       const currentIndex = canvasItems.value.findIndex(item => item.id === itemId)
-      if (currentIndex !== -1) canvasItems.value[currentIndex] = updated
+      if (currentIndex !== -1) {
+        // 抽屉来源的乐观节点以 clientKey 作为 Vue 的稳定身份。首次落库后若把服务端响应
+        // 直接整体替换，会丢掉这个仅前端存在的字段，key 从 clientKey 突然切到真实 id，
+        // 正在播的第二次拖拽落地动画便会重挂载、瞬移到最终本体位置。
+        canvasItems.value[currentIndex] = {
+          ...updated,
+          clientKey: canvasItems.value[currentIndex].clientKey,
+        }
+      }
     } catch (error) {
       const currentIndex = canvasItems.value.findIndex(item => item.id === itemId)
       if (currentIndex !== -1) canvasItems.value[currentIndex] = before
@@ -267,6 +275,26 @@ export const useMindStore = defineStore('mind', () => {
     canvasItems.value = canvasItems.value.filter(item => item.id !== itemId)
     const nodeIds = new Set(canvasItems.value.map(item => item.nodeId))
     canvasRelations.value = canvasRelations.value.filter(rel => nodeIds.has(rel.srcNodeId) && nodeIds.has(rel.dstNodeId))
+  }
+
+  /** 从画布拖回抽屉：先摘本地展示项让物理克隆能吸入抽屉，删除失败再把原项和关系原样放回。 */
+  function returnCanvasItemToDrawer(itemId: number) {
+    const canvasId = activeCanvasId.value
+    const index = canvasItems.value.findIndex(item => item.id === itemId)
+    if (canvasId == null || index === -1) return Promise.resolve()
+    const item = canvasItems.value[index]
+    const relations = canvasRelations.value
+    canvasItems.value.splice(index, 1)
+    const nodeIds = new Set(canvasItems.value.map(current => current.nodeId))
+    canvasRelations.value = canvasRelations.value.filter(rel => nodeIds.has(rel.srcNodeId) && nodeIds.has(rel.dstNodeId))
+    return mindApi.removeCanvasItem(canvasId, itemId).catch(error => {
+      window.setTimeout(() => {
+        if (activeCanvasId.value !== canvasId || canvasItems.value.some(current => current.id === item.id)) return
+        canvasItems.value.splice(Math.min(index, canvasItems.value.length), 0, item)
+        canvasRelations.value = relations
+      }, 700)
+      throw error
+    })
   }
 
   async function createCanvasRelation(srcNodeId: number, dstNodeId: number, allowParallel = false) {
@@ -320,7 +348,7 @@ export const useMindStore = defineStore('mind', () => {
     notes, loading, loaded, filterQ, jumpTarget, timeline, fetchNotes, createNote, updateNote, deleteNote,
     canvases, canvasesLoaded, canvasLoading, activeCanvasId, canvasItems, canvasRelations,
     fetchCanvases, createCanvas, renameCanvas, deleteCanvas, loadCanvas, addNoteToCanvas, updateCanvasItem,
-    addRefToCanvas, addProjectRefOptimistic, createCanvasNote, updateCanvasNote, removeCanvasItem, createCanvasRelation, removeCanvasRelation, nextCanvasZ,
+    addRefToCanvas, addProjectRefOptimistic, createCanvasNote, updateCanvasNote, removeCanvasItem, returnCanvasItemToDrawer, createCanvasRelation, removeCanvasRelation, nextCanvasZ,
     saveCanvasView, saveCanvasRelationAnchors,
   }
 })

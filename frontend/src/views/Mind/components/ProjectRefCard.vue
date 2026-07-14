@@ -13,6 +13,7 @@
     :data-node-id="item.nodeId"
     :data-canvas-item-id="item.id"
     @pointerdown.stop="onPointerDown"
+    @physics-landing-regrab="onLandingRegrab"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
@@ -27,6 +28,7 @@
     />
   </div>
   <div v-else ref="missingRef" class="pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" :data-canvas-item-id="item.id" @pointerdown.stop="onPointerDown"
+    @physics-landing-regrab="onLandingRegrab"
     @mouseenter="onEnter" @mouseleave="onLeave">
     <span class="pr-kind">项目</span>
     <div class="pr-name">{{ item.node.title || '未命名项目' }}</div>
@@ -66,6 +68,7 @@ const props = defineProps({
 })
 const emit = defineEmits<{
   (e: 'remove', item: MindCanvasItem): void
+  (e: 'returnToDrawer', item: MindCanvasItem): void
   (e: 'dragging', item: MindCanvasItem, x: number, y: number): void
   (e: 'landing', item: MindCanvasItem, x: number, y: number): void
   (e: 'landingDone', item: MindCanvasItem): void
@@ -113,21 +116,25 @@ function emitMeasuredSize() {
 }
 function observeCard() {
   cardResizeObserver?.disconnect()
-  const card = cardEl.value
+  const card = cardEl.value ?? missingRef.value
   if (!card) return
   cardResizeObserver = new ResizeObserver(emitMeasuredSize)
   cardResizeObserver.observe(card)
   emitMeasuredSize()
 }
 onMounted(() => {
-  nextTick(observeCard)
+  // 父层在同一轮更新后就会向这张临时卡移交拖拽；这里不能再多包一层 nextTick，
+  // 否则父层已经能查到 DOM、但启动器尚未注册，首次从抽屉拖出会被误判为“未加载”。
+  observeCard()
 })
 watch(project, () => nextTick(observeCard))
 watch(() => props.scale, () => nextTick(emitMeasuredSize))
-onBeforeUnmount(() => cardResizeObserver?.disconnect())
+onBeforeUnmount(() => {
+  cardResizeObserver?.disconnect()
+})
 
 // 项目和文件贴纸共用同一套物理入口、真实根节点和坐标回调。
-const { onPointerDown } = useCardDrag({
+const { onPointerDown, startLandingRegrab } = useCardDrag({
   screenToWorld: props.screenToWorld,
   contentScale: () => props.scale,
   getDragEl: () => cardEl.value ?? missingRef.value,
@@ -143,7 +150,30 @@ const { onPointerDown } = useCardDrag({
   onDropAt: (worldX, worldY) => {
     emit('moved', props.item, worldX, worldY)
   },
+  resolveAbsorbTarget: pointer => {
+    // 物理克隆与画布分属不同层叠上下文，elementFromPoint 在抽屉上方时可能命中画布层，
+    // 即使指针几何位置已经在抽屉内。抽屉本身是唯一有效投放区，按它的可见矩形判定更稳定。
+    const drawer = document.querySelector<HTMLElement>('[data-project-drawer-dropzone]')
+    if (!drawer) return null
+    const rect = drawer.getBoundingClientRect()
+    return pointer.x >= rect.left && pointer.x <= rect.right && pointer.y >= rect.top && pointer.y <= rect.bottom
+      ? drawer
+      : null
+  },
+  resolveAbsorbLandingTarget: () => {
+    const projectId = props.item.node.refId
+    return projectId == null
+      ? null
+      : document.querySelector<HTMLElement>(`.drawer-project-card[data-project-id="${projectId}"]`)
+  },
+  absorbShrink: false,
+  onAbsorb: () => emit('returnToDrawer', props.item),
 })
+function onLandingRegrab(event: Event) {
+  const handoff = event as CustomEvent<{ event: PointerEvent; initialRect: DOMRect }>
+  startLandingRegrab(handoff.detail.event, handoff.detail.initialRect)
+  event.preventDefault()
+}
 function onOpen() {
   emit('open', props.item)
 }
@@ -164,6 +194,7 @@ function onOpen() {
    "正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明。 */
 .pr-card, .pr-missing {
   position: absolute; box-sizing: border-box; user-select: none; cursor: pointer;
+  font-family: var(--font-sans);
   border-radius: var(--radius-md);
   border: 1px solid rgba(255,255,255,0.72);
   box-shadow: 0 2px 8px rgba(80,90,110,0.07);
