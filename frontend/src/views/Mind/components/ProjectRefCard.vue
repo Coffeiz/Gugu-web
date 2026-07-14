@@ -31,7 +31,16 @@
     @physics-landing-regrab="onLandingRegrab"
     @mouseenter="onEnter" @mouseleave="onLeave">
     <span class="pr-kind">项目</span>
-    <div class="pr-name">{{ item.node.title || '未命名项目' }}</div>
+    <div class="pr-name" :style="{ color: snapshotNameColor }">{{ item.node.title || '未命名项目' }}</div>
+    <!-- 客户/日期跟真实项目卡（ProjectCardBody 的 .proj-meta/.card-footer）同款字号/间距，
+         数据来自创建引用时缓存的 ref_snapshot——项目被删只丢阶段/文件数这类高频变化的信息，
+         客户和日期这种"当时是什么样"的快照还留着。没缓存到的字段各自不渲染，不留空行。 -->
+    <div v-if="snapshot?.client" class="pr-client">{{ snapshot.client }}</div>
+    <div v-if="snapshot?.startDate || snapshot?.deadline" class="pr-dates">
+      <span v-if="snapshot.startDate" class="pr-date-start">{{ fmtDate(snapshot.startDate) }}</span>
+      <span v-if="snapshot.startDate && snapshot.deadline" class="pr-date-sep">→</span>
+      <span v-if="snapshot.deadline" class="pr-deadline" :class="{ urgent: snapshotIsUrgent }">{{ snapshotDeadlineLabel }}</span>
+    </div>
     <!-- projectStore 还在拉取（DefaultLayout.vue 进 app 就发起，画布常是直接落地/刷新页面
          进来的入口，这次请求这时多半还没回来）跟"项目真的被删了"是两回事，但两者都会让
          project 算出来是 null、都会落进这条 v-else 分支——之前不分这两种情况，一律显示
@@ -52,8 +61,10 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvasItem } from '@/services/api'
+import type { Project } from '@/types/project'
 import { useCardDrag } from '@/composables/useCardDrag'
 import { itemSize } from '@/composables/useMindCanvas'
+import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 import { useProjectStore } from '@/stores/projects'
 import CardActions from './CardActions.vue'
 import CardConnDot from './CardConnDot.vue'
@@ -91,7 +102,14 @@ const project = computed(() => projectStore.projects.find(p => p.id === props.it
 // 直接取字段，传一个占位对象兜底，反正这份 computed 在 project 为 null 时不会被模板用到。
 const missingStyle = computed(() => {
   const { w, h } = itemSize(props.item)
-  return { left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, minHeight: `${h}px`, zIndex: `${props.item.z}` }
+  // 项目被删后拿不到活的 Project 记录，靠创建引用时缓存在 node.color 上的快照保留原本配色
+  // （旧引用没有这份缓存时 color 是 null，回退到 .pr-missing 自己的默认底色）——跟正常态
+  // cardStyle 用的是同一条渐变公式，快照要看起来"项目还在"，配色算法不能各写一套。
+  const color = props.item.node.color
+  return {
+    left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, minHeight: `${h}px`, zIndex: `${props.item.z}`,
+    background: color ? `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${color}` : undefined,
+  }
 })
 const cardStyle = computed(() => {
   const { w } = itemSize(props.item)
@@ -100,6 +118,19 @@ const cardStyle = computed(() => {
     background: project.value ? `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.value.color}` : undefined,
   }
 })
+
+// 已删除快照的客户/日期展示：复用 useProjectCardBasics 里跟真实项目卡完全相同的取色/
+// 日期文案逻辑（nameColor/deadlineLabel/isUrgent 只依赖 color/deadline/status 三个字段，
+// 不碰 stages），不在这里另抄一份格式化规则，避免两边日后各自改出不一致的日期文案。
+// 只是喂给它一个用快照拼出来的假 Project（其余字段用不到，随手填安全默认值即可）。
+const snapshot = computed(() => props.item.node.refSnapshot)
+const snapshotProject = computed(() => ({
+  color: props.item.node.color || '',
+  deadline: snapshot.value?.deadline || null,
+  status: snapshot.value?.status || 'active',
+  stages: [], currentStage: null,
+} as unknown as Project))
+const { nameColor: snapshotNameColor, isUrgent: snapshotIsUrgent, fmtDate, deadlineLabel: snapshotDeadlineLabel } = useProjectCardBasics(snapshotProject)
 
 // 项目卡高度随内容自然变化。关系线不再借持久化的 item.h 猜它多高，而是直接消费这张卡
 // 上报的实际世界尺寸，避免视图模型和内层卡体两套高度彼此拉扯。
@@ -167,6 +198,11 @@ const { onPointerDown, startLandingRegrab } = useCardDrag({
       : document.querySelector<HTMLElement>(`.drawer-project-card[data-project-id="${projectId}"]`)
   },
   absorbShrink: false,
+  // returnCanvasItemToDrawer 是接口请求，真实网络延迟经常超过 usePhysicsDrag.ts 默认的
+  // 300ms 轮询上限——超时就找不到刚挂载的那张具体抽屉卡，只能退化用命中的抽屉容器当
+  // 落点，飞行/揭示都对不上真实卡片位置。放宽到 1500ms，与抽屉→画布方向
+  // landingTargetWaitMs 的量级保持一致。
+  absorbLandingWaitMs: 1500,
   onAbsorb: () => emit('returnToDrawer', props.item),
 })
 function onLandingRegrab(event: Event) {
@@ -216,11 +252,20 @@ function onOpen() {
 
 .pr-missing {
   height: 100%; padding: 13px 13px 11px;
-  background: rgba(255,255,255,0.5);
+  background: rgba(255,255,255,0.5);   /* 没有缓存颜色的旧引用兜底；有颜色时被行内 style 盖掉 */
   display: flex; flex-direction: column; gap: 8px;
+  /* 不透明度/尺寸都跟 .pr-card 正常态一致——快照要看起来"项目还在"，不额外做变灰/变淡
+     处理，"已删除"单靠 .pr-deleted 那行文字说明就够了。 */
 }
 .pr-kind { align-self: flex-start; padding: 1px 6px; border-radius: 4px; background: rgba(123,127,178,.12); color: var(--color-primary); font-size: 10px; font-weight: 700; }
-.pr-name { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+/* 名称/客户/日期三行字号、行高跟 ProjectCardBody 的 .proj-name/.proj-client/.date-range
+   逐条对齐（含颜色变量），不是照抄数值——真实卡片改这几个样式时这里要记得跟着改。 */
+.pr-name { font-size: 13px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
+.pr-client { font-size: 11px; line-height: 1.15; color: var(--text-secondary); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pr-dates { display: flex; align-items: center; gap: 4px; font-size: 11px; line-height: 1.15; color: var(--text-secondary); }
+.pr-date-start { opacity: 0.65; white-space: nowrap; }
+.pr-date-sep { opacity: 0.35; font-size: 9px; }
+.pr-deadline.urgent { color: var(--color-warning); font-weight: 600; }
 .pr-deleted { font-size: 10.5px; color: var(--text-secondary); opacity: .7; }
 
 /* 操作按钮（.card-actions）和连接点（.conn-dot）都挪进了共用组件 CardActions.vue/

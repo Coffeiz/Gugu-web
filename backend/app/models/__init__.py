@@ -229,11 +229,21 @@ class MindNode(Base):
     title:         Mapped[Optional[str]] = mapped_column(String(300), nullable=True)   # 便签标题 / ref 快照名 / 墓碑显示名
     content_md:    Mapped[str]           = mapped_column(Text, default="")             # 块编辑器序列化出的 Markdown 源
     content_plain: Mapped[str]           = mapped_column(Text, default="")             # 去格式纯文本：global_search 匹配 + 将来 embedding
-    color:         Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    # 300：不只装便签的 amber/coral/blue/teal 短枚举值，项目引用会缓存 Project.color 的完整
+    # CSS 渐变字符串（如 "linear-gradient(135deg,#7b7fb2,#c4afc8)"，默认值就有 38 字符）
+    # 进来——之前是 String(30)，渐变色的项目第一次建 ref 节点时插入直接超长报错
+    # （StringDataRightTruncationError），已有 ref 节点因为走复用分支不会再 INSERT，
+    # 表现为"没拖过画布的项目卡添加失败、拖过的正常"（devlog 2026-07-15）。跟
+    # Project.color 本身的 String(300) 对齐，不再单独设更小的上限。
+    color:         Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
 
     # ref 节点指向的业务对象
     ref_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)   # project | file | event | client | folder
     ref_id:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True)      # 业务对象主键（这些表都是 int PK）
+    # 项目引用创建时缓存的极简快照（{client, status, startDate, deadline, doneAt}）：跟 title/
+    # color 同一套「快照降级」思路，只在创建那一刻拍照，之后原对象改这些字段不会回填。
+    # 只给 project 类型填，其它 ref_type 为 None。
+    ref_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     # 咕咕相关
     origin:       Mapped[str]                = mapped_column(String(10), default="user")   # user | gugu

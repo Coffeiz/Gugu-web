@@ -63,7 +63,7 @@
               <TransitionGroup name="drawer-project-groups" tag="div" class="project-groups">
                 <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group">
                   <div class="project-group-title"><span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span></div>
-                  <TransitionGroup name="drawer-project-cards" tag="div" class="project-group-cards">
+                  <TransitionGroup name="drawer-project-cards" tag="div" class="project-group-cards" @before-leave="captureCardLeavePosition">
                     <ProjectDrawerCard
                       v-for="project in group.items"
                       :key="project.id"
@@ -129,6 +129,7 @@ let canvasListObserver: ResizeObserver | null = null
 let projectListObserver: ResizeObserver | null = null
 let contentTimer: ReturnType<typeof setTimeout> | null = null
 let compactTimer: ReturnType<typeof setTimeout> | null = null
+let projectResizeTimer: ReturnType<typeof setTimeout> | null = null
 
 const projectQuery = ref('')
 const filteredProjects = computed(() => {
@@ -143,6 +144,24 @@ const projectGroups = computed(() => [
 ])
 const visibleProjectGroups = computed(() => projectGroups.value.filter(group => group.items.length > 0))
 
+// leave-active 把离场卡切成 position:absolute 时不给 top/left，指望浏览器按它离场前的
+// 「静态位置」自动摆放——用 DevTools 性能录制实测抓到过这个自动定位算错：离场卡被摆到了
+// 所在 .project-group-cards 容器的最顶端（跟第一张卡重叠），不是它离场前所在的那个位置。
+// 这层容器是可滚动 .cd-list 的后代、又套了两层 TransitionGroup，浏览器的「静态位置」推算
+// 在这种嵌套场景下不可靠。不再依赖浏览器猜，改成在真正离场前用 getBoundingClientRect()
+// 量出它此刻相对 .project-group-cards（offsetParent，见其 position:relative）的像素坐标，
+// 直接写成明确的 top/left——浏览器不用再猜，也就没有猜错的余地。
+function captureCardLeavePosition(el: Element) {
+  const node = el as HTMLElement
+  const parent = node.offsetParent as HTMLElement | null
+  if (!parent) return
+  const rect = node.getBoundingClientRect()
+  const parentRect = parent.getBoundingClientRect()
+  node.style.position = 'absolute'
+  node.style.left = `${rect.left - parentRect.left}px`
+  node.style.top = `${rect.top - parentRect.top}px`
+  node.style.width = `${rect.width}px`
+}
 function measurePanel(panelName: Panel) {
   const list = panelName === 'canvases' ? canvasListRef.value : projectListRef.value
   if (!list) return
@@ -234,7 +253,16 @@ function commitRename(id: number) {
 
 onMounted(() => {
   canvasListObserver = new ResizeObserver(() => measurePanel('canvases'))
-  projectListObserver = new ResizeObserver(() => measurePanel('projects'))
+  // 项目卡拖去画布时源卡先是原位占位（keepSourcePlaceholder），要等新画布卡接手落地
+  // 动画后才会被真的从数据里摘掉；一摘掉，Vue 给它套 leave-active（position:absolute，
+  // 脱离文档流），.project-list 的 scrollHeight 当帧就变小，ResizeObserver 同步触发
+  // measurePanel 收缩 .cd-collapse 的高度——这时那张卡自己的 .16s 淡出还没播完，容器
+  // 却已经在收，视觉上就是"虚线框跟着挤了一下"。防抖到比这张卡的离场过渡（.16s 淡出 +
+  // 那一下 -move FLIP 落定）略长，让容器收缩等卡片真正淡完、兄弟卡落定后再一次到位。
+  projectListObserver = new ResizeObserver(() => {
+    if (projectResizeTimer) clearTimeout(projectResizeTimer)
+    projectResizeTimer = setTimeout(() => measurePanel('projects'), 220)
+  })
   if (canvasListRef.value) canvasListObserver.observe(canvasListRef.value)
   if (projectListRef.value) projectListObserver.observe(projectListRef.value)
   measurePanels()
@@ -243,6 +271,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearContentTimer()
   clearCompactTimer()
+  if (projectResizeTimer) clearTimeout(projectResizeTimer)
   canvasListObserver?.disconnect()
   projectListObserver?.disconnect()
   window.removeEventListener('resize', measurePanels)
@@ -319,6 +348,15 @@ onBeforeUnmount(() => {
 .project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }
 .project-groups { gap: 9px; }
 .project-group { display: flex; flex-direction: column; gap: 6px; }
+/* leave-active 把离场卡切成 position:absolute（见下方 .drawer-project-cards-leave-active）
+   時没有 top/left，浏览器按它离场前的「静态位置」摆放——但这个静态位置是相对**最近的
+   已定位祖先**算的，而不是它离场前视觉所在的这个 flex 容器。.project-group-cards 本身
+   不带 position，最近定位祖先一路上翻到 .cd-content-panel（projects-panel），中间隔着
+   一层可滚动的 .cd-list（overflow-y:auto，有独立 padding/scrollTop）；离场卡因此会按
+   .cd-content-panel 的坐标系重新摆放，跟它离场前在 .cd-list 里滚动之后的真实视觉位置对
+   不上，看着就是"虚线框动了一下"。补一个 position:relative 把定位祖先钉在它离场前的
+   直接父容器上，静态位置的坐标系跟视觉位置保持一致，不再跳。 */
+.project-group-cards { position: relative; }
 /* Vue TransitionGroup 先按新布局摆放兄弟，再把它们反向平移回旧位置；只需给 transform
    同项目页一致的快进慢收曲线，拖出的项目离场后其它卡便会自然让位而非瞬移。 */
 .drawer-project-cards-move, .drawer-project-groups-move {
@@ -328,6 +366,13 @@ onBeforeUnmount(() => {
   position: absolute;
   width: 240px;
   transition: opacity .16s ease;
+  /* 用 DevTools 性能录制实测抓到过：离场这张卡会同时被扣上 -move 类——Vue 同一次 patch
+     里，除了把它标成 leave（见上面 position:absolute 的原地淡出），还会把它当成"位置变了
+     的兄弟元素"一起塞进 FLIP 反推，用内联 style 直接写一段 transform 位移量，交给 -move
+     的 transition 慢慢归零。这段内联 transform 跟这里的原地占位叠在一起，就是"虚线框先被
+     推移一下才淡出"。用 !important 压掉 Vue 写进来的内联 transform——离场卡不需要参与那次
+     位移，只要原地淡出。 */
+  transform: none !important;
 }
 .drawer-project-cards-leave-to { opacity: 0; }
 .project-group-title { display: flex; align-items: center; gap: 5px; padding: 3px 3px 0; color: var(--text-secondary); font-size: 10px; font-weight: 700; }

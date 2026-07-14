@@ -69,6 +69,12 @@ export interface PhysicsDragOpts {
   // 吸入抽屉时，业务状态更新会先让画布卡消失、下一帧才把对应素材卡插回列表。这里延迟
   // 解析那张具体卡，不能拿整个抽屉容器当 morph 终点，否则会飞到容器左上角。
   resolveAbsorbLandingTarget?: () => HTMLElement | null
+  // resolveAbsorbLandingTarget 的轮询上限；不传退回历史值 300ms。画布卡拖回项目抽屉时，
+  // 这张目标卡要等 returnCanvasItemToDrawer 的接口请求真正回来、store 响应式更新后才会
+  // 挂载——300ms 只够本地网络，接口稍慢（或后端有排队）时轮询会先超时，退化成用命中的
+  // 整个抽屉容器当 morph 终点，白白丢失"精确飞向那张卡"的效果。调用方明确知道自己的接口
+  // 延迟量级时应传一个更宽松的值。
+  absorbLandingWaitMs?: number
   // 外部来源（例如画布右侧素材抽屉）在松手后才异步创建真正的目标卡片时，用这份 getter
   // 把物理克隆交接给目标 DOM。拿到目标前克隆停在释放位置，拿到后复用原有 flyMorph，
   // 不会出现"源卡飞回去、目标卡另冒出来"的两段式动画。
@@ -906,6 +912,14 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
               // 画布卡已接过同一份物理手势；旧 holder 的落地收尾会在新拖拽里被清理，
               // 不能再走下面的默认递归，否则同一次移动会起两张克隆。
               if (handoff.defaultPrevented) return
+              // 转手没人接（listener 没挂上/别的边界情况）——下面的默认分支会用这次闭包里
+              // 捕获的 opts（抽屉卡那次拖拽的 resolveAbsorbTarget/resolveLandingTarget/
+              // removeSourceOnExternalDrop 等）去驱动 revealEl（画布卡）的新一段拖拽，两者
+              // 语义完全对不上：revealEl 早已是画布上的真实节点，该用它自己的 useCardDrag
+              // 配置才对。误用旧配置会导致克隆体从一个跟当前手势无关的坐标起飞，表现为
+              // "卡片从视口左上角/上方飞入"。转手失败不如什么都不做，让这次落地动画自然播完，
+              // 用户落地后再拖一次即可（那条路径本来就正常）。
+              return
             }
             startPhysicsDrag(moveEvent, revealEl, {
               ...opts,
@@ -1311,11 +1325,22 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           // 容器入口，不是会被克隆交接的卡片，不能先把它隐藏成 opacity:0。
           flyTo(absorbTarget.getBoundingClientRect(), true)
         } else {
-          const deadline = performance.now() + 300
+          const deadline = performance.now() + (opts.absorbLandingWaitMs ?? 300)
           const landOnAbsorbTarget = () => {
             const resolved = opts.resolveAbsorbLandingTarget?.()
             if (!resolved && opts.resolveAbsorbLandingTarget && performance.now() < deadline) {
               requestAnimationFrame(landOnAbsorbTarget)
+              return
+            }
+            // 没传 resolveAbsorbLandingTarget（比如抽屉卡片拖回自己原位，见 ProjectDrawerCard.vue
+            // 的 resolveAbsorbTarget 直接返回卡片自身）时，absorbTarget 本身就是精确目标，不存在
+            // "轮询等 Vue 挂载新节点"这回事，应该照常走完整的 flyMorph 落地——不能跟"传了但轮询
+            // 超时真没找到"混为一谈，否则会把这条本来稳定的路径也退化成缩小动画。只有真正传了
+            // resolveAbsorbLandingTarget 却始终没等到时，才需要下面这个安全兜底：不能拿命中判定
+            // 用的整个抽屉容器顶替成"假想的落点卡"——那样会把 targetEl.style.opacity 直接摁到 0，
+            // 摁的是整个容器，表现就是"抽屉瞬间隐身"（用户会当成"卡片突然变透明"），不是某张卡。
+            if (!resolved && opts.resolveAbsorbLandingTarget) {
+              flyTo(absorbTarget!.getBoundingClientRect(), true)
               return
             }
             const targetEl = resolved ?? absorbTarget!
@@ -1332,14 +1357,28 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             // 抽屉来源回到自身时也复用双克隆，完成从画布缩放尺寸回到抽屉实体尺寸的交接。
             // 但落点不在画布内，不能把 fixed 克隆塞进画布相机跟随层；那层会改变其定位基准，
             // 造成额外的左上角残影。
+            // trackCanvasCamera 必须恒为 false：这条分支的落点（targetEl）不管是不是同一个
+            // DOM，都活在抽屉/侧栏的固定定位坐标系里，从来不在画布相机的世界坐标系内。之前
+            // 这里传的是 targetEl !== sourceEl——凡是落到"新挂载的那张具体抽屉卡"（最常见的
+            // 那条路径）这个条件就是 true，会给 clone2 套上画布相机跟随层（camGlue，按画布
+            // 缩放/平移套一层 transform）。可这层克隆内容根本不在画布世界坐标系里，套错变换
+            // 之后经常被挪到看不见的地方或缩没——表现就是"卡片消失几秒钟才突然出现"，长期以来
+            // 都是这个恒等式在犯错，不是揭示时机的问题。
             _holdHoverUntilReveal(targetEl)
+            // 直接改 targetEl.style.opacity 会被它自身的 CSS transition（.25s）接住，变成
+            // 一次可见的淡出——这段时间跟刚起飞的 clone2 叠在一起，就是"本体闪一下才淡出"。
+            // 这一刻要的是瞬间藏起来（真正的淡出效果交给 clone2 的交叉淡变来演），借用
+            // .phys-reveal-snap（揭示时同款技巧）临时关掉过渡、素质提交这一帧，再摘掉快照类。
+            targetEl.classList.add('phys-reveal-snap')
             targetEl.style.opacity = '0'
+            void targetEl.offsetWidth
+            targetEl.classList.remove('phys-reveal-snap')
             flyMorph(
               box,
               targetEl,
               _cloneLanding(targetEl),
               restoreSourcePlaceholderStyle,
-              targetEl !== sourceEl,
+              false,
               targetEl === sourceEl,
             )
           }
@@ -1384,6 +1423,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           if (el?.isConnected && el.offsetWidth > 0) {
             // 素材抽屉的源卡不是落点本体：在新画布卡接手飞行动画时就恢复原位占位，
             // 让它以自身 CSS 的短淡入回到完整素材，而不是长期被 display:none 留空。
+            // removeSourceOnExternalDrop=true（比如项目卡拖去画布）时源卡随后会被调用方
+            // 从数据里整个移除，交给 Vue 的 TransitionGroup 播放离场——这里不要先复原成
+            // 本体样式再等它离场：试过会在抽屉里先闪一下完整卡片本体，才被移除，观感比
+            // "虚线占位直接淡出"更突兀。保留跳过复原，占位态本身的 opacity/border-color
+            // 过渡（.phys-drag-source-placeholder）已经够呈现一次淡出，不需要在这里先切换
+            // 回本体样式。
             if (!opts.removeSourceOnExternalDrop) restoreSourcePlaceholder()
             _holdHoverUntilReveal(el)
             el.style.opacity = '0'

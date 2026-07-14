@@ -234,6 +234,14 @@ export interface MindNote {
   deletedAt?: string | null
   refType?: 'project' | 'file' | 'event' | null
   refId?: number | null
+  /** 引用对象创建时缓存的极简快照，被引用对象删除后仍能显示这些字段；只在创建那一刻
+   *  拍照，之后原对象改这些字段不会回填。字段按 refType 各不相同：
+   *  project → client/status/startDate/deadline/doneAt；file → ext；event → date/time/endTime。 */
+  refSnapshot?: {
+    client?: string | null; status?: string | null; startDate?: string | null; deadline?: string | null; doneAt?: string | null
+    ext?: string | null
+    date?: string | null; time?: string | null; endTime?: string | null; description?: string | null
+  } | null
 }
 export interface MindNoteCreate {
   contentMd?: string

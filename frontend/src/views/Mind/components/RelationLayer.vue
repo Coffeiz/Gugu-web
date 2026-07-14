@@ -100,12 +100,24 @@ function geometry(item: MindCanvasItem) {
 const renderTick = ref(0)
 let hoverRaf = 0
 let hoverRafUntil = 0
+// 悬停结算期内允许真实测量的节点集合：不能只认「当前悬浮的那张」——鼠标移出的瞬间
+// hoveredNodeId 立刻变成别的值/null，但刚失焦的卡片自己的 0.25s 收回过渡才刚开始，这段
+// 时间里连接线仍需要跟着它的真实 DOM 位置走，不能一移出就直接跳到静止态终点。所以窗口期
+// 内同时放行"新悬浮的"和"刚失焦的"两张卡；窗口一过清空，静止卡片不再为了这两张卡常年
+// 多付一次 DOM 测量成本（回到"只有真在拖/真在悬浮才测量"的开销模型）。
+const hoverSettleIds = ref<Set<number>>(new Set())
 function pumpHoverFrames() {
   renderTick.value++
-  hoverRaf = performance.now() < hoverRafUntil ? requestAnimationFrame(pumpHoverFrames) : 0
+  if (performance.now() < hoverRafUntil) {
+    hoverRaf = requestAnimationFrame(pumpHoverFrames)
+  } else {
+    hoverRaf = 0
+    hoverSettleIds.value = new Set()
+  }
 }
-watch(() => props.hoveredNodeId, () => {
+watch(() => props.hoveredNodeId, (next, prev) => {
   hoverRafUntil = performance.now() + 300   // 略盖过 0.25s 的过渡时长
+  hoverSettleIds.value = new Set([next, prev].filter((id): id is number => id != null))
   if (!hoverRaf) hoverRaf = requestAnimationFrame(pumpHoverFrames)
 })
 onBeforeUnmount(() => { if (hoverRaf) cancelAnimationFrame(hoverRaf) })
@@ -127,15 +139,18 @@ function measuredAnchor(item: MindCanvasItem, side: AnchorSide): { x: number; y:
   // 先找拖拽/落地飞行专用的那份连接点覆盖层——这个查询无条件放行：覆盖层只在真的有物理
   // 模块在拖这张卡时才存在，静止的卡查不到，成本可以忽略。
   let dot = document.querySelector<HTMLElement>(`.phys-conn-dot-overlay[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
-  // 卡片本体真实渲染的连接点这条回退分支，只在「当前悬浮的这张卡」才查——它是为 0.25s 悬停
-  // 抬起过渡（.hover-card-fx 2px）准备的，配合上面 pumpHoverFrames 心跳逐帧读真实位置。
-  // 不加这层限制的话，画布纯平移时 visibleRelations 会被虚拟化窗口（MindCanvas.vue 的
-  // visibleItems 依赖 camera）拉着每帧重算，此前对**所有**静止卡都无条件做这次 DOM 读取
-  // +screenToWorld 换算——量测发生的时机和 .canvas-world 的 transform 提交之间没有强制
-  // 排序，读到上一帧的屏幕坐标就会让连线看起来"慢半拍"，这正是画布平移时连线肉眼可见滞后
-  // 的根因（devlog 2026-07-14）。静止卡片直接退到下面按 item.x/y 算的几何兜底——纯世界坐标，
-  // 平移画布时天然跟手，不需要量真实 DOM。
-  if (!dot && item.nodeId === props.hoveredNodeId) {
+  // 卡片本体真实渲染的连接点这条回退分支，两种情况才查：①「当前正在悬浮的」——持续条件，
+  // 不设时限，鼠标停留多久就测多久，抬起态是 :hover 的稳态而不是一次性动画，只测 300ms
+  // 会在悬停时长超过这个窗口后把还在抬着的卡误判成"已经落地"，线跟着瞬间掉回静止公式，
+  // 卡片本体却还真的抬着；②「结算窗口内刚失焦的」（见 hoverSettleIds）——鼠标移出瞬间
+  // hoveredNodeId 立刻变了，但刚失焦那张卡自己的 0.25s 收回过渡才刚开始，线也不能跟着立刻
+  // 跳到终点。两者缺一都会导致某个阶段线跟卡片对不上。
+  // 不加限制、对所有静止卡都测的话，画布纯平移时 visibleRelations 会被虚拟化窗口
+  // （MindCanvas.vue 的 visibleItems 依赖 camera）拉着每帧重算，测量时机和 .canvas-world
+  // 的 transform 提交之间没有强制排序，读到上一帧的屏幕坐标就会让连线看起来"慢半拍"，这是
+  // 画布平移时连线肉眼可见滞后的根因（devlog 2026-07-14）。两种情况都不占的静止卡片直接
+  // 退到下面按 item.x/y 算的几何兜底——纯世界坐标，平移画布时天然跟手，不需要量真实 DOM。
+  if (!dot && (item.nodeId === props.hoveredNodeId || hoverSettleIds.value.has(item.nodeId))) {
     dot = document.querySelector<HTMLElement>(`.card-conn-dots[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
   }
   if (!dot) return null

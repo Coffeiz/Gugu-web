@@ -177,6 +177,9 @@ export function useCardDrag(opts: {
   // 吸入后列表会因响应式数据更新重新插入对应的项目卡。下一帧物理动画应以那张卡为终点，
   // 而不是只飞向命中的整个抽屉容器。
   resolveAbsorbLandingTarget?: () => HTMLElement | null
+  // 见 usePhysicsDrag.ts 同名选项：resolveAbsorbLandingTarget 轮询目标卡的等待上限，
+  // 覆盖住调用方自己那次吸入请求的网络延迟，不传退回其历史默认值 300ms。
+  absorbLandingWaitMs?: number
   // 项目回抽屉保留整张卡飞入目标位；文件夹等传统吸收交互仍可走默认的缩小吸入。
   absorbShrink?: boolean
   onAbsorb?: () => void
@@ -204,6 +207,7 @@ export function useCardDrag(opts: {
       pointer: true, skipAbsorb: !opts.resolveAbsorbTarget, tilt: 0, lift: opts.lift ?? 1.03,
       resolveAbsorbTarget: opts.resolveAbsorbTarget ? () => absorbTarget : undefined,
       resolveAbsorbLandingTarget: opts.resolveAbsorbLandingTarget,
+      absorbLandingWaitMs: opts.absorbLandingWaitMs,
       absorbShrink: opts.absorbShrink,
       // 飞行中的 holder 被再次抓起时，物理模块会递归启动下一段拖拽；先停掉上一段只供
       // RelationLayer 使用的落地插值，避免旧 landingPositions 继续覆盖新克隆的位置。

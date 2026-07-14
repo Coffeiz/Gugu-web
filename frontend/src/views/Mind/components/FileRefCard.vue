@@ -65,13 +65,26 @@
     />
   </FileCard>
   <!-- 缓存已经加载完、确实找不到这个文件——这才是真的"已删除"，跟上面"还在等缓存"是两种
-       性质完全不同的状态，继续走独立的扁平墓碑布局（没有缩略图/图标区，本来也不会再变身
-       成真卡片，不需要跟 FileCard 的高度对齐）。 -->
-  <div v-else ref="missingRef" class="fr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" @pointerdown.stop="onPointerDown"
-    @mouseenter="onEnter" @mouseleave="onLeave">
-    <span class="fr-kind">文件</span>
-    <div class="fr-name">{{ item.node.title || '未命名文件' }}</div>
-    <span class="fr-deleted">已删除，仅保留快照</span>
+       性质完全不同的状态，但同样用 FileCard 渲染（不再是独立的扁平墓碑布局）：ext 用创建
+       引用时缓存的 node.refSnapshot.ext（没有就退化成跟"加载中"分支一样的空角标），
+       hasThumb 恒 false（缩略图数据没缓存，也不需要跟真卡片的缩略图高度对齐——图标区
+       本来就和缩略图区同高）。跟真实文件卡视觉/尺寸完全一致，只有 meta 那行文字不同。 -->
+  <FileCard
+    v-else
+    ref="fileCardRef"
+    class="fr-card"
+    :class="{ connecting, 'connection-target': !!connectionTargetSide }"
+    :style="cardStyle"
+    :data-node-id="item.nodeId"
+    :ext="item.node.refSnapshot?.ext ?? ''"
+    :display-name="item.node.title || '未命名文件'"
+    :has-thumb="false"
+    :canvas-mode="true"
+    @pointerdown.stop="onPointerDown"
+    @mouseenter="onEnter"
+    @mouseleave="onLeave"
+  >
+    <template #meta>已删除，仅保留快照</template>
     <CardActions :hovering="isHovering">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </CardActions>
@@ -79,7 +92,7 @@
       :node-id="props.item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
       @drag-start="(e, side) => emit('connectDragStart', e, side)"
     />
-  </div>
+  </FileCard>
 </template>
 
 <script setup lang="ts">
@@ -123,13 +136,6 @@ function onLeave() { isHovering.value = false; emit('hover', props.item, false) 
 const filesCache = useFilesCacheStore()
 onMounted(() => { if (!filesCache.loaded) filesCache.load() })
 const file = computed(() => filesCache.getFile(props.item.node.refId ?? -1))
-const missingStyle = computed(() => {
-  const { w, h } = itemSize(props.item)
-  // min-height 不是 height：FileCard.vue 按自己内容自然定高（图标区 + 两行文字），撑出来
-  // 通常就贴合这份默认值；写死 height 会在内容比默认值矮时，被 .fc-label 的 flex:1
-  // 拉伸垫出一截空白（卡片看着变长、底部空一大块，就是这个坑）。
-  return { left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, minHeight: `${h}px`, zIndex: `${props.item.z}` }
-})
 const cardStyle = computed(() => {
   const { w } = itemSize(props.item)
   return { position: 'absolute', left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, zIndex: `${props.item.z}` }
@@ -147,16 +153,10 @@ watch(file, (f) => {
   getThumb(f.id, 'card').then(url => { if (url) thumbCard.value = url })
 }, { immediate: true })
 
-// 拖飞的是 FileCard.vue 自己的根节点（.fc-card），不是这层 .fr-wrap 外壳——否则克隆体的
-// 圆角/尺寸是 .fr-wrap 说了算（它自己没有 border-radius、也没有固定高度只有 100% 高度撑
-// 一个 auto 高度的父盒子，两层各算各的，撑出来的实际高度会跟 .fc-card 自己的盒模型对不
-// 上），拖起来会看到方角边框、卡片被拉长。改成拖 .fc-card 本体后，克隆体的圆角/尺寸/
-// 拖拽专属的玻璃模糊样式（global.css 的 .phys-drag-clone.fc-card）才是同一份。
-// 确认已删除的墓碑态（.fr-missing）没有 FileCard 可拖，退回 .fr-wrap 本身（它自己的圆角/
-// 尺寸就是对的）；缓存还在加载的过渡态也是一张真 FileCard（ext 空、hasThumb 恒 false），
-// fileCardRef 同样能拿到，走跟真文件卡完全一样的拖拽路径。
+// 拖飞的是 FileCard.vue 自己的根节点（.fc-card）——三个模板分支（真文件/缓存加载中/确认
+// 已删除）现在都是同一个 FileCard，拖拽/尺寸测量/克隆体圆角走的是同一条路径，不用再区分
+// "有真卡片可拖"和"退回外壳自己"两种情形。
 const fileCardRef = ref<InstanceType<typeof FileCard> | null>(null)
-const missingRef = ref<HTMLElement | null>(null)
 let cardResizeObserver: ResizeObserver | null = null
 function emitMeasuredSize() {
   const card = fileCardRef.value?.rootEl
@@ -180,7 +180,7 @@ onBeforeUnmount(() => cardResizeObserver?.disconnect())
 const { onPointerDown } = useCardDrag({
   screenToWorld: props.screenToWorld,
   contentScale: () => props.scale,
-  getDragEl: () => fileCardRef.value?.rootEl ?? missingRef.value,
+  getDragEl: () => fileCardRef.value?.rootEl ?? null,
   onClick: () => { if (file.value) emit('open', props.item) },
   onDragMove: (worldX, worldY) => {
     emit('dragging', props.item, worldX, worldY)
@@ -196,13 +196,10 @@ const { onPointerDown } = useCardDrag({
 </script>
 
 <style scoped>
-/* border-radius 平时不可见（FileCard.vue 自己 100% 铺满、圆角以它为准），只在缺失态没有
-   FileCard 可拖、退回克隆 .fr-wrap 本身时兜底——克隆体的方角边框跟里面 14px 圆角的
-   .fr-missing 对不上，就是文件卡"圆角没和卡片匹配"的同一类问题，这里先垫一份同值。
-   position 必须是 absolute（世界坐标 left/top 靠它定位）——写成 relative 会留在文档流里，
+/* position 必须是 absolute（世界坐标 left/top 靠它定位）——写成 relative 会留在文档流里，
    left/top 变成相对正常流位置的偏移量，贴纸本体、连接点跟着一起偏出真实世界坐标，画出来
    的关系线（用的是数据里的 x/y，不受这个 bug 影响）就会跟贴纸实际渲染的位置对不上。 */
-.fr-card, .fr-missing { position: absolute; box-sizing: border-box; cursor: pointer; user-select: none; touch-action: none; border-radius: 14px; }
+.fr-card { position: absolute; box-sizing: border-box; cursor: pointer; user-select: none; touch-action: none; border-radius: 14px; }
 /* 只锁宽度，不锁高度——FileCard.vue 自己按内容自然定高（.fc-card 的 min-height:122px +
    图标区/文字），撑出来的高度基本贴合 defaultItemSize 给文件类型定的默认值；锁 height:100%
    等于强迫它填满 .fr-wrap 的 min-height，内容矮于这个值时 .fc-label 的 flex:1 会把空白
@@ -213,15 +210,6 @@ const { onPointerDown } = useCardDrag({
    .fc-thumb-area 自己另有一份 overflow:hidden 专门裁缩略图，改这里成 visible 不影响缩略图
    圆角。"正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明。 */
 :deep(.fc-card.fr-card) { overflow: visible; }
-
-.fr-missing {
-  position: relative; box-sizing: border-box; padding: 13px;
-  background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.9); border-radius: 14px;
-  display: flex; flex-direction: column; gap: 6px;
-}
-.fr-kind { align-self: flex-start; padding: 1px 6px; border-radius: 4px; background: rgba(123,127,178,.12); color: var(--color-primary); font-size: 10px; font-weight: 700; }
-.fr-name { font-size: 11px; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
-.fr-deleted { font-size: 10.5px; color: var(--text-secondary); opacity: .7; }
 
 /* 操作按钮（.card-actions）和连接点（.conn-dot）都挪进了共用组件 CardActions.vue/
    CardConnDot.vue，外观/悬停显形逻辑不再各卡自己抄一份。 */

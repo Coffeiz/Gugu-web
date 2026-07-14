@@ -15,12 +15,13 @@
     </div>
     <h3>{{ title }}</h3>
     <span v-if="isTombstone" class="es-deleted">已删除，仅保留快照</span>
-    <template v-else>
-      <p v-if="eventDisplay?.description" class="es-desc">{{ eventDisplay.description }}</p>
-      <span v-if="eventTimeLabel" class="es-time">
-        <PhClock :size="11" weight="bold" />{{ eventTimeLabel }}
-      </span>
-    </template>
+    <!-- 日期不再随 isTombstone 一起隐藏——活动被删后 eventDisplay 回退到创建引用时缓存的
+         node.refSnapshot（date/time/endTime），跟活着时同一套 eventTimeLabel 格式化逻辑，
+         快照要看起来"活动还在"，只是没有描述（快照没缓存这个字段，本来也不需要）。 -->
+    <p v-if="eventDisplay?.description" class="es-desc">{{ eventDisplay.description }}</p>
+    <span v-if="eventTimeLabel" class="es-time">
+      <PhClock :size="11" weight="bold" />{{ eventTimeLabel }}
+    </span>
     <CardActions v-if="!isTombstone" :hovering="isHovering">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </CardActions>
@@ -78,7 +79,9 @@ const stickerStyle = computed(() => {
 const event = ref<Awaited<ReturnType<typeof eventsApi.get>> | null>(null)
 const missingEvent = ref(false)
 const isTombstone = computed(() => !!props.item.node.deletedAt || missingEvent.value)
-const eventDisplay = computed(() => event.value ?? props.item.refData ?? null)
+// 活动被删后 event/refData 都拿不到，回退到创建引用时缓存的 node.refSnapshot（date/time/
+// endTime，跟 refData 字段同名），日期显示才不会跟着"已删除"一起消失。
+const eventDisplay = computed(() => event.value ?? props.item.refData ?? props.item.node.refSnapshot ?? null)
 async function loadEvent() {
   const refId = props.item.node.refId
   missingEvent.value = false
@@ -179,8 +182,9 @@ const { onPointerDown } = useCardDrag({
   box-shadow: 0 2px 8px rgba(80,90,110,0.07), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55);
 }
 .entity-sticker:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
-/* "正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明一份。 */
-.entity-sticker.tombstone { opacity: .55; filter: grayscale(.45); }
+/* "正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明一份。
+   tombstone 不再叠 opacity/grayscale——快照要看起来"活动还在"，跟项目卡/文件卡统一，
+   "已删除"单靠 .es-deleted 那行文字说明就够了，不用整卡变灰变暗。 */
 .es-head { display: flex; align-items: center; gap: 6px; color: var(--color-primary); }
 .es-kind { font-size: 10px; font-weight: 700; }
 h3 { margin: 0; font-size: 13.5px; line-height: 1.35; font-weight: 700; overflow-wrap: anywhere; color: var(--text-primary); }
