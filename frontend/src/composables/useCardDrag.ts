@@ -205,11 +205,6 @@ export function useCardDrag(opts: {
           // 一套算法（落地那段默认按祖先动态探测，容易先摸到贴纸自己内联的 item.z，那个值
           // 随建卡数量单调递增，迟早会长到超过侧栏的 20），两段交接时层级也不会跳一下。
           dragZIndex: 10,
-          // 试水：画布贴纸（项目/文件/便签/活动）落地动画也换成 View Transitions，跟项目看板卡
-          // 同一套（见 usePhysicsDrag.ts 的 landViaViewTransition）。已知取舍：换掉后飞行途中若
-          // 继续缩放/平移画布，克隆体不会再像 flyMorph 的 camGlue 那样实时贴着相机走（见
-          // commit 1135de4 的说明）——用户已确认接受这个风险，先实测效果。
-          useViewTransition: true,
           onFollow: opts.onDragMove
             ? ({ x, y }, size) => {
                 const world = opts.screenToWorld(x, y)

@@ -1196,7 +1196,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // 滚动后的落点交给 flyMorph；VT 分支不需要算好的 box（浏览器自己量），只要这次滚动生效。
         const box = revealInScroller(_scrollParent(el), el.getBoundingClientRect())
         const startVT = (document as any).startViewTransition?.bind(document)
-        if (!startVT) { flyMorph(box, el, _cloneLanding(el), restoreSourcePlaceholder); return }
+        if (!startVT) { flyMorph(box, el, _cloneLanding(el)); return }
         const VT_NAME = 'phys-drag-vt'
         holder.style.transition = 'none'   // 交给浏览器截图这一刻的样子，不需要再由 CSS transition 继续动
         ;(holder.style as any).viewTransitionName = VT_NAME
@@ -1224,7 +1224,6 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           sourceEl.style.display = ''
           _holdHoverUntilReveal(sourceEl)
           sourceEl.style.opacity = '0'
-          if (opts.useViewTransition) { landViaViewTransition(sourceEl); return }
           const sc = _scrollParent(sourceEl)
           const box = revealInScroller(sc, sourceEl.getBoundingClientRect())
           flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholder)
@@ -1234,9 +1233,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         const box0 = animateOpen(container, sourceEl)
         const sc = _scrollParent(sourceEl)
         // 锁列期间源卡收合，浏览器可能把 scrollTop 夹小了；展开后还原到拖动前，revealInScroller 再据此滚到原位
-        if (sc && _savedScrollTop.has(sc)) sc.scrollTop = _savedScrollTop.get(sc)
-        if (opts.useViewTransition) { landViaViewTransition(sourceEl); return }
         if (sc && _savedScrollTop.has(sc)) {
+          sc.scrollTop = _savedScrollTop.get(sc)
           const box = revealInScroller(sc, sourceEl.getBoundingClientRect())
           flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholder)
         } else {
