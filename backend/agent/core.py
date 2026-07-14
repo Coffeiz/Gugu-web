@@ -325,7 +325,7 @@ class LLMRunner:
                     if tc.parse_error:
                         # OpenAI 路专属：工具参数 JSON 被截断解析失败——别拿空参跑，改回一条错误
                         # tool_result 让模型精简参数后重发；不真 dispatch、不置 did_mutate。
-                        yield f"data: {json.dumps({'type': 'tool_call', 'name': tc.name, 'label': label, 'input': {{}}, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                        yield f"data: {json.dumps({'type': 'tool_call', 'name': tc.name, 'label': label, 'input': {}, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
                         yield f"data: {json.dumps({'type': 'tool_done', 'name': tc.name, 'label': label, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
                         dispatched.append((tc, loop_drivers.TOOL_ARGS_TRUNCATED_ERROR))
                         continue
