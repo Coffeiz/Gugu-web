@@ -18,6 +18,7 @@
 - **网页聊天分段消息不再重复气泡**（`GuguChat.vue`、`runner.py`）：聊天消息 SSE 广播带上发起标签页的 `origin`，本标签页收到自己已经流式渲染过的回声消息时跳过，不再出现同一内容两个气泡（跨标签页/多端同步不受影响）。
 - **反思写 summary 的变更留痕**（`agent/memory/reflection.py`）：每次 summary 被覆盖式更新时记一行"旧→新"diff 日志（`agent.memdiff`），万一某次反思误判导致状态快照被错误改写，可以回放定位是哪一轮写坏的。
 - **后台「记忆旧文件清理」**（`app/api/v1/agent_admin.py`、`Admin/StorageAudit/index.vue`）：扫描并清理记忆存储格式升级后遗留的旧文件（如 `summary.md`+`summary.ts`），只有确认已被新文件取代才判定可安全删除。
+- **新增「思维笔记」skill**（`agent/skills/note-writing.md`）：`blocks` 参数没有真正的语法约束，工具描述里的 schema 更多是"帮模型看懂形状"而非硬性保证，实测下模型仍容易写错结构。新 skill 给出 8 种块类型的正确示范、今晚验证过的三个易错点（列表/引用块别写成嵌套数组、`task_list` 别漏 `checked`、`reference` 别漏 `ref_id`）、长内容分批写的策略；接入 `DefaultProfile.skills` 并在 `skills.md`（每轮强制注入的工具使用准则）里加了主动指针。
 
 ### 改进
 
