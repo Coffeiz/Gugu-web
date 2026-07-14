@@ -59,7 +59,7 @@ class AISettings(BaseModel):
         description="API Base URL",
     )
     model: str = Field("qwen-max", description="使用模型")
-    max_tokens: int = Field(2000, description="最大输出 token 数")
+    max_tokens: int = Field(8000, description="最大输出 token 数")
     temperature: float = Field(0.7, description="发散度 0~2")
     context_tokens: int = Field(3000, description="历史上下文 token 预算")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
@@ -85,7 +85,7 @@ class AIPresetItem(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
-    max_tokens: int = 2000
+    max_tokens: int = 8000
     temperature: float = 0.7
     context_tokens: int = 3000
     thinking: str = "disabled"
