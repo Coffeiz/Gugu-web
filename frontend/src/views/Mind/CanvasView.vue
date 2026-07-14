@@ -42,6 +42,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { MindCanvasItem, MindRefSuggestItem } from '@/services/api'
 import { useMindRefActions } from '@/composables/useMindRefActions'
+import { showAppError } from '@/composables/useAppToast'
 import type { RelationAnchorSides } from '@/composables/useMindCanvas'
 import { useMindStore } from '@/stores/mind'
 import { useProjectStore } from '@/stores/projects'
@@ -243,14 +244,16 @@ async function addProjectAtCenter(projectId: number) {
   const { x, y } = centerOfViewport()
   await store.addRefToCanvas(activeCanvasId.value, 'project', projectId, x, y)
 }
-/** 项目抽屉的拖拽落点：物理模块给的是屏幕坐标，画布项存的是世界坐标。先落库并等真实
- * ProjectRefCard 挂载，再把它的 DOM 交回 usePhysicsDrag 做原有的 morph 落地动画。 */
+/** 抽屉项目松手后先本地乐观插入一张画布卡，立刻交给抽屉克隆做落地动画——不等
+ * createRefNode/addCanvasItem 这两次串行请求（真实环境轻松上百毫秒），克隆体才不会
+ * 在空中冻住顿一下。接口在背后跑，成功后原地换真实数据，失败则原地摘除并提示。 */
 async function addProjectAtScreen(projectId: number, center: { x: number; y: number }, _size: { w: number; h: number }) {
   const canvas = canvasRef.value
   const canvasId = activeCanvasId.value
   if (!canvas || canvasId == null) return null
   const world = canvas.screenToWorld(center.x, center.y)
-  const item = await store.addRefToCanvas(canvasId, 'project', projectId, world.x - 120, world.y - 60)
+  const { item, ready } = store.addProjectRefOptimistic(canvasId, projectId, world.x - 120, world.y - 60)
+  ready.catch(() => showAppError('添加到画布失败，请重试'))
   await nextTick()
   return document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
 }

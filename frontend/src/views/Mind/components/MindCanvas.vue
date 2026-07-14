@@ -9,7 +9,7 @@
         @remove="id => emit('removeRelation', id)"
       />
 
-      <template v-for="item in visibleItems" :key="item.id">
+      <template v-for="item in visibleItems" :key="item.clientKey ?? item.id">
         <NoteSticker
           v-if="item.node.kind === 'canvas_note'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"

@@ -31,6 +31,8 @@ function plainOf(md: string): string {
   return md.replace(/\[\[[a-z_]+:\d+\|([^\]]*)\]\]/g, '$1')
 }
 
+let optimisticSeq = 0
+
 export const useMindStore = defineStore('mind', () => {
   const notes   = ref<MindNote[]>([])
   const loading = ref(false)
@@ -169,6 +171,52 @@ export const useMindStore = defineStore('mind', () => {
     return item
   }
 
+  /** 抽屉拖项目进画布专用：先本地插入一张占位卡，换取拖拽落地动画立刻有真实 DOM 可交接
+   * （不用等 createRefNode + addCanvasItem 两次串行请求，克隆体才不会在空中顿住）。接口
+   * 成功后原地换成真实数据，失败则原地摘除并把错误抛给调用方。clientKey 全程不变，配合
+   * MindCanvas.vue 的 `:key="item.clientKey ?? item.id"`，换真实数据这一步不会触发 Vue
+   * 重新挂载、把正在播的落地动画/过渡状态炸掉。 */
+  function addProjectRefOptimistic(canvasId: number, projectId: number, x: number, y: number) {
+    const tempId = --optimisticSeq
+    const clientKey = `optimistic-${tempId}`
+    const now = new Date().toISOString()
+    const z = nextCanvasZ()
+    const placeholder: MindCanvasItem = {
+      id: tempId,
+      clientKey,
+      canvasId,
+      nodeId: tempId,
+      x, y, w: null, h: null, z,
+      collapsed: false,
+      data: {},
+      node: {
+        id: tempId, kind: 'ref', title: null, contentMd: '', color: null,
+        capturedAt: now, version: 0, createdAt: now, updatedAt: now,
+        refType: 'project', refId: projectId,
+      },
+      createdAt: now, updatedAt: now,
+    }
+    canvasItems.value.push(placeholder)
+
+    const ready = (async () => {
+      try {
+        const node = await mindApi.createRefNode('project', projectId)
+        const item = await mindApi.addCanvasItem(canvasId, { nodeId: node.id, x, y, z })
+        const resolved = { ...item, clientKey }
+        const index = canvasItems.value.findIndex(current => current.clientKey === clientKey)
+        if (index === -1) canvasItems.value.push(resolved)
+        else canvasItems.value[index] = resolved
+        return resolved
+      } catch (error) {
+        const index = canvasItems.value.findIndex(current => current.clientKey === clientKey)
+        if (index !== -1) canvasItems.value.splice(index, 1)
+        throw error
+      }
+    })()
+
+    return { item: placeholder, ready }
+  }
+
   async function createCanvasNote(canvasId: number, data: MindCanvasNoteCreate) {
     const item = await mindApi.createCanvasNote(canvasId, { ...data, z: nextCanvasZ() })
     canvasItems.value.push(item)
@@ -272,7 +320,7 @@ export const useMindStore = defineStore('mind', () => {
     notes, loading, loaded, filterQ, jumpTarget, timeline, fetchNotes, createNote, updateNote, deleteNote,
     canvases, canvasesLoaded, canvasLoading, activeCanvasId, canvasItems, canvasRelations,
     fetchCanvases, createCanvas, renameCanvas, deleteCanvas, loadCanvas, addNoteToCanvas, updateCanvasItem,
-    addRefToCanvas, createCanvasNote, updateCanvasNote, removeCanvasItem, createCanvasRelation, removeCanvasRelation, nextCanvasZ,
+    addRefToCanvas, addProjectRefOptimistic, createCanvasNote, updateCanvasNote, removeCanvasItem, createCanvasRelation, removeCanvasRelation, nextCanvasZ,
     saveCanvasView, saveCanvasRelationAnchors,
   }
 })
