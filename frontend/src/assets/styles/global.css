@@ -469,16 +469,6 @@ body {
 ::view-transition-new(phys-drag-vt) {
   animation-duration: 0.4s;
 }
-/* 画布相机跟随（试水第二版）：group 自己的 transform 被浏览器生成的位置/尺寸插值动画占用，
-   写不进去；子级 image-pair 没有默认动画抢占 transform，借它叠一层等价于 flyMorph 的
-   camGlue 的实时相机跟随。变量由 usePhysicsDrag.ts 的 landViaViewTransition 每帧写入
-   （只有画布场景——传了 contentScale——才会写；看板卡没有相机，变量恒为默认值 none）。
-   transform-origin 钉在 0 0：image-pair 的盒子跟 group 完全重合（0,0 到同一份宽高），
-   camOrigin 用的也是同一套「相对左上角」算法，两边基准一致，缩放不会偏移中心。 */
-::view-transition-image-pair(phys-drag-vt) {
-  transform: var(--phys-drag-vt-cam, none);
-  transform-origin: 0 0;
-}
 /* View Transitions 默认还会把「没单独命名」的整页内容打包成一个 root 分组，截图新旧两帧
    做交叉淡变——落点让位的邻居卡走的是 _invertPlay 手写的 transform FLIP（活的 CSS
    transition，位置连续滑动），不是"内容变了"，被 root 这层默认淡变糊在上面，活的滑动看

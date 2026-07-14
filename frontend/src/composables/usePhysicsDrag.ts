@@ -1201,17 +1201,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         holder.style.transition = 'none'   // 交给浏览器截图这一刻的样子，不需要再由 CSS transition 继续动
         ;(holder.style as any).viewTransitionName = VT_NAME
         let doneVT = false
-        let camRaf = 0
-        const stopCameraTrack = () => {
-          if (camRaf) cancelAnimationFrame(camRaf)
-          camRaf = 0
-          document.documentElement.style.removeProperty('--phys-drag-vt-cam')
-        }
         const finish = () => {
           if (doneVT) return
           doneVT = true
           unregister()
-          stopCameraTrack()
           ;(el.style as any).viewTransitionName = ''
           _revealWithoutStaleHover(el, pointer)
         }
@@ -1222,31 +1215,6 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           el.style.opacity = ''
           restoreSourcePlaceholder()
         })
-        // 画布相机在这 0.4~0.55s 飞行途中可能还在缩放/平移（同 flyMorph 的 camGlue 要解决的
-        // 问题，见其定义处注释）——View Transitions 只在动画开始那一刻截图算一次轨迹，没有
-        // 内建的"跟着目标继续挪"能力，且 ::view-transition-group(phys-drag-vt) 自己的
-        // transform 已经被浏览器生成的位置/尺寸插值动画占用，写不进去。这里借它的子级
-        // ::view-transition-image-pair(phys-drag-vt)（没有默认动画占 transform）叠一层等价
-        // 机制：每帧比较 el 此刻真实位置/尺寸相对「落地结算那一刻」挪了多少，把这份纯相机
-        // 位移/缩放量通过 CSS 变量喂给它（拿不到伪元素的 style 对象，只能靠变量转达，见
-        // global.css 里 ::view-transition-image-pair(phys-drag-vt) 那条规则）。只在传了
-        // contentScale（画布场景的标志）时启用，看板卡没有相机，不需要这层。
-        if (typeof opts.contentScale === 'function') {
-          const camOrigin = el.getBoundingClientRect()
-          const trackCam = () => {
-            if (doneVT) return
-            const r = el.getBoundingClientRect()
-            if (!el.isConnected || r.width < 1 || r.height < 1) { camRaf = requestAnimationFrame(trackCam); return }
-            const dx = r.left - camOrigin.left, dy = r.top - camOrigin.top
-            const s = camOrigin.width > 0.01 ? r.width / camOrigin.width : 1
-            document.documentElement.style.setProperty(
-              '--phys-drag-vt-cam',
-              `translate(${dx.toFixed(2)}px, ${dy.toFixed(2)}px) scale(${s.toFixed(4)})`,
-            )
-            camRaf = requestAnimationFrame(trackCam)
-          }
-          camRaf = requestAnimationFrame(trackCam)
-        }
         transition.finished.catch(() => {}).then(finish)
       }
 
