@@ -255,7 +255,14 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 }
 .logo-text { font-size: 16px; font-weight: 700; }
 
-.nav { flex: 1; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+/* margin-right 负值抵消 .sidebar 自己的右内边距，让滚动条能长到侧栏真正的右边缘贴边；
+   同时用等量的 padding-right 补回来，nav 项本身的视觉位置不受影响。scrollbar-gutter:stable
+   固定预留这份空间，滚动条本身出现/消失（内容变多变少）时也不会再把 nav 内容挤得左右跳。
+   跟 AdminLayout.vue 的 .sidebar-nav 同一套手法（那边写法见其注释）。 */
+.nav {
+  flex: 1; display: flex; flex-direction: column; gap: 2px; overflow-y: auto;
+  margin-right: -14px; padding-right: 14px; scrollbar-gutter: stable;
+}
 .nav-section { display: flex; flex-direction: column; gap: 2px; }
 .nav-divider {
   height: 1px;

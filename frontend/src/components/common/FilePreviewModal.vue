@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <Transition name="fp" :duration="{ enter: 420, leave: 280 }">
+    <Transition name="fp" :duration="{ enter: 240, leave: 180 }">
       <div v-if="show && !!file" class="fp-root" :style="{ zIndex: myZ }" @mousedown.capture="raise">
         <div class="fp-overlay" @click="$emit('close')" />
         <div class="fp-panel">
@@ -388,24 +388,24 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
 
 /* ── 动画 ── */
 .fp-enter-active .fp-overlay {
-  transition: opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: opacity var(--modal-enter-duration) var(--modal-enter-easing);
 }
 .fp-leave-active .fp-overlay {
-  transition: opacity 0.22s cubic-bezier(0.4, 0, 1, 1);
+  transition: opacity var(--modal-leave-duration) var(--modal-leave-easing);
 }
 .fp-enter-from .fp-overlay,
 .fp-leave-to   .fp-overlay { opacity: 0; }
 
 /* 入场：先快后慢，带轻微弹性感 */
 .fp-enter-active .fp-panel {
-  transition: transform 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity var(--modal-enter-duration) var(--modal-enter-easing);
 }
 /* 退场：先慢后快，加速收回 */
 .fp-leave-active .fp-panel {
-  transition: transform 0.26s cubic-bezier(0.4, 0, 0.8, 0.6);
+  transition: opacity var(--modal-leave-duration) var(--modal-leave-easing);
 }
 .fp-enter-from .fp-panel,
-.fp-leave-to   .fp-panel { transform: translateX(100%); }
+.fp-leave-to   .fp-panel { opacity: 0; }
 
 /* ── info 按钮激活态 ── */
 .fp-action-btn.active { background: rgba(123,127,178,0.15); color: var(--color-primary, #7b7fb2); }

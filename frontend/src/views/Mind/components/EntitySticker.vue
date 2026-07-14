@@ -16,7 +16,7 @@
     <h3>{{ title }}</h3>
     <span v-if="isTombstone" class="es-deleted">已删除，仅保留快照</span>
     <template v-else>
-      <p v-if="event?.description" class="es-desc">{{ event.description }}</p>
+      <p v-if="eventDisplay?.description" class="es-desc">{{ eventDisplay.description }}</p>
       <span v-if="eventTimeLabel" class="es-time">
         <PhClock :size="11" weight="bold" />{{ eventTimeLabel }}
       </span>
@@ -73,16 +73,17 @@ const stickerStyle = computed(() => {
   return { left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, minHeight: `${h}px`, zIndex: `${props.item.z}` }
 })
 
-// 活动没有专门的缓存 store（不像项目/文件那样有 useProjectStore/useFilesCacheStore），
-// 日历页自己也是按月拉取到组件本地状态，没有可复用的按 id 查询——这里直接照 EventEditModal.vue
-// 的 eventsApi.get(id) 单条查询模式，不新起一个全局 store（画布上活动引用卡数量不多，不必要）。
+// 画布 items 响应已携带活动首屏快照，刷新时直接用它渲染，避免每张活动卡挂载后再单条请求、
+// 先按标题量一次高度又因描述/日期回来二次撑高。旧服务响应或缺少快照时才回退详情请求。
 const event = ref<Awaited<ReturnType<typeof eventsApi.get>> | null>(null)
 const missingEvent = ref(false)
 const isTombstone = computed(() => !!props.item.node.deletedAt || missingEvent.value)
+const eventDisplay = computed(() => event.value ?? props.item.refData ?? null)
 async function loadEvent() {
   const refId = props.item.node.refId
   missingEvent.value = false
   if (props.item.node.deletedAt || refType.value !== 'event' || refId == null) { event.value = null; return }
+  if (props.item.refData?.date) { event.value = null; return }
   try {
     event.value = await eventsApi.get(refId)
   } catch (error) {
@@ -97,7 +98,7 @@ watch(() => props.item.node.refId, loadEvent)
 // ISO 时间戳，日历页自己也是这么就地拼字符串显示（没有现成的导出工具函数可复用）。
 // time 为空＝全天活动。
 const eventTimeLabel = computed(() => {
-  const e = event.value
+  const e = eventDisplay.value
   if (!e?.date) return ''
   const d = new Date(`${e.date}T00:00:00`)
   const dateStr = `${d.getMonth() + 1}月${d.getDate()}日`
@@ -137,7 +138,6 @@ onBeforeUnmount(() => cardResizeObserver?.disconnect())
 const { onPointerDown } = useCardDrag({
   screenToWorld: props.screenToWorld,
   contentScale: () => props.scale,
-  lift: 1,
   getDragEl: () => cardRef.value,
   onClick: () => { if (!isTombstone.value) emit('open', props.item) },
   onDragMove: (worldX, worldY) => {
@@ -160,6 +160,10 @@ const { onPointerDown } = useCardDrag({
   position: absolute; box-sizing: border-box; padding: 14px 16px;
   display: flex; flex-direction: column; gap: 6px;
   cursor: pointer; user-select: none; touch-action: none;
+  /* 活动贴纸和项目/文件贴纸属于同一层画布卡片，统一普通 14px 圆角；不继承 glass-card
+     给大面板使用的 18px squircle，避免同一画布出现三种曲率。 */
+  border-radius: var(--radius-md);
+  corner-shape: initial;
   /* 悬浮抬起动效走 .hover-card-fx（见 global.css，跟文件/项目卡同一套时长/缓动），但这里
      还套了 .glass-card——它自己也声明了一份 transition（background/box-shadow），跟
      .hover-card-fx 的 transition 特异度相同，最终生效的是样式表里排在后面那条，会整个

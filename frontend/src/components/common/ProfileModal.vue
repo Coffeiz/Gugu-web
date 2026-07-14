@@ -877,17 +877,17 @@ async function doDeleteAccount() {
    这里不用像 BaseModal 那样借 global.css——overlay 和 card 都在本组件同一个 scope 里，
    scoped 的后代选择器直接够得到，不用全局规则。 */
 .pm-confirm-enter-active {
-  transition: background-color 0.2s cubic-bezier(0.4,0,0.2,1),
-              backdrop-filter 0.2s cubic-bezier(0.4,0,0.2,1),
-              -webkit-backdrop-filter 0.2s cubic-bezier(0.4,0,0.2,1);
+  transition: background-color var(--modal-enter-duration) var(--modal-enter-easing),
+              backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing),
+              -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing);
 }
 .pm-confirm-enter-from { background-color: rgba(20,22,30,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
 .pm-confirm-enter-active .pm-confirm-box {
-  transition: backdrop-filter 0.2s cubic-bezier(0.4,0,0.2,1),
-              -webkit-backdrop-filter 0.2s cubic-bezier(0.4,0,0.2,1);
+  transition: backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing),
+              -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing);
 }
 .pm-confirm-enter-from .pm-confirm-box { backdrop-filter: blur(0px) !important; -webkit-backdrop-filter: blur(0px) !important; }
-.pm-confirm-leave-active { transition: opacity 0.2s cubic-bezier(0.4,0,1,1); }
+.pm-confirm-leave-active { transition: opacity var(--modal-leave-duration) var(--modal-leave-easing); }
 .pm-confirm-leave-to { opacity: 0; }
 
 .pm-confirm-title { font-size: 15px; font-weight: 700; color: var(--text-primary); margin: 0; }

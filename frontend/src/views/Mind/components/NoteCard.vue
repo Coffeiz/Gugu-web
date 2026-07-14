@@ -67,7 +67,7 @@
          跟文件/活动/项目引用卡三种画布卡片同样的路数（见 NoteSticker.vue 的说明）。 -->
     <CardConnDot
       v-if="canvasMode"
-      :hovering="isHovering" :connecting="connecting ?? false" :target-side="connectionTargetSide ?? null"
+      :hovering="isHovering && !editing" :connecting="connecting ?? false" :target-side="connectionTargetSide ?? null"
       @drag-start="(e, side) => emit('connect-drag-start', e, side)"
     />
   </div>

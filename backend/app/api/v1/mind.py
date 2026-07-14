@@ -7,7 +7,7 @@
 - 更新便签用 `update_node_atomic`（原子 UPDATE + rowcount），不是「先读再比再写」；
 - 正文一变就得重算 `content_plain` / 清 `indexed_at`，这层由 `update_node_atomic` 兜底。
 """
-from typing import Optional
+from typing import Dict, List, Optional
 
 import json
 
@@ -212,11 +212,44 @@ def _relation_resp(rel: MindRelation) -> MindRelationResponse:
     )
 
 
-def _item_resp(item: MindCanvasItem, node: MindNode) -> MindCanvasItemResponse:
+def _event_ref_data(event: CalendarEvent) -> dict:
+    """画布活动卡首屏所需的只读字段，避免前端逐卡再请求一次活动详情。"""
+    return {
+        "date": event.date,
+        "time": event.time,
+        "endTime": event.end_time,
+        "description": event.description,
+    }
+
+
+async def _ref_data_by_node_id(
+    db: AsyncSession, nodes: List[MindNode], user_id,
+) -> Dict[int, dict]:
+    """批量补充引用节点的展示快照；当前只有活动卡有首屏额外字段。"""
+    event_ids = [node.ref_id for node in nodes if node.ref_type == "event" and node.ref_id is not None]
+    if not event_ids:
+        return {}
+    events = (await db.execute(
+        select(CalendarEvent).where(
+            CalendarEvent.user_id == user_id,
+            CalendarEvent.id.in_(event_ids),
+        )
+    )).scalars().all()
+    data_by_event_id = {event.id: _event_ref_data(event) for event in events}
+    return {
+        node.id: data_by_event_id[node.ref_id]
+        for node in nodes
+        if node.ref_type == "event" and node.ref_id in data_by_event_id
+    }
+
+
+def _item_resp(
+    item: MindCanvasItem, node: MindNode, ref_data: Optional[dict] = None,
+) -> MindCanvasItemResponse:
     return MindCanvasItemResponse(
         id=item.id, canvas_id=item.canvas_id, node_id=item.node_id,
         x=item.x, y=item.y, w=item.w, h=item.h, z=item.z, collapsed=item.collapsed,
-        data=_load_data(item.data_json), node=_to_resp(node),
+        data=_load_data(item.data_json), node=_to_resp(node), ref_data=ref_data,
         created_at=item.created_at, updated_at=item.updated_at,
     )
 
@@ -306,7 +339,8 @@ async def list_canvas_items(
         .where(MindCanvasItem.canvas_id == cid, MindCanvasItem.user_id == current_user.id)
         .order_by(MindCanvasItem.z, MindCanvasItem.id)
     )).all()
-    return [_item_resp(item, node) for item, node in rows]
+    ref_data_by_node_id = await _ref_data_by_node_id(db, [node for _, node in rows], current_user.id)
+    return [_item_resp(item, node, ref_data_by_node_id.get(node.id)) for item, node in rows]
 
 
 @router.post("/canvases/{cid}/items", response_model=MindCanvasItemResponse, status_code=201)
@@ -325,7 +359,8 @@ async def add_canvas_item(
         MindCanvasItem.canvas_id == cid, MindCanvasItem.node_id == node.id,
     ))
     if existing is not None:
-        return _item_resp(existing, node)
+        ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
+        return _item_resp(existing, node, ref_data)
 
     item = MindCanvasItem(
         user_id=current_user.id, canvas_id=cid, node_id=node.id,
@@ -335,7 +370,8 @@ async def add_canvas_item(
     db.add(item)
     await db.commit()
     await db.refresh(item)
-    return _item_resp(item, node)
+    ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
+    return _item_resp(item, node, ref_data)
 
 
 @router.post("/canvases/{cid}/notes", response_model=MindCanvasItemResponse, status_code=201)
@@ -413,7 +449,8 @@ async def update_canvas_item(
         setattr(item, key, value)
     await db.commit()
     await db.refresh(item)
-    return _item_resp(item, node)
+    ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
+    return _item_resp(item, node, ref_data)
 
 
 @router.delete("/canvases/{cid}/items/{iid}", status_code=204)

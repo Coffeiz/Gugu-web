@@ -98,7 +98,6 @@ function onPointerDown(event: PointerEvent) {
   width: 240px;
   border: 1px solid rgba(255,255,255,.72);
   border-radius: var(--radius-md);
-  corner-shape: squircle;
   box-shadow: 0 2px 8px rgba(80,90,110,.07);
   overflow: hidden;
   cursor: grab;
@@ -110,12 +109,12 @@ function onPointerDown(event: PointerEvent) {
               box-shadow .25s ease, background .25s ease-out;
 }
 .drawer-project-card::before {
-  content: ''; position: absolute; inset: 0; border-radius: inherit; corner-shape: squircle;
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
   background: linear-gradient(to bottom, rgba(255,255,255,.12) 0%, transparent 50%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.9); pointer-events: none;
 }
 .drawer-project-card::after {
-  content: ''; position: absolute; inset: 0; border-radius: inherit; corner-shape: squircle;
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
   background: linear-gradient(to bottom, rgba(255,255,255,.55) 0%, rgba(255,255,255,.08) 45%, transparent 100%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,1); opacity: 0;
   transition: opacity .25s ease; pointer-events: none;

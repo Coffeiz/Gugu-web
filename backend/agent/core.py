@@ -84,7 +84,7 @@ async def _stream_round(client, kwargs, adapter=None):
 MAX_ROUNDS = 6
 _CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取消（单轮长回答只能在这里掐断）
 
-# ── 自我核实：做了增删改后，模型说"完成"时强制再跑一轮核实（用查询工具查证真生效/完整），
+# ── 自我核实：成功做了增删改后，立刻跑一轮核实（用查询工具查证真生效/完整），
 # 没做成/不完整就补做；最多 MAX_VERIFY 轮（每次对话回合计，非整 session）。防"嘴上说建好了、实际没建全"。
 MAX_VERIFY = 5
 _VERIFY_PROMPT = (
@@ -102,8 +102,11 @@ _VERIFY_FORCE_PROMPT = (
     "对照确认：真生效、内容完整、**没把别的内容覆盖丢**（尤其 `edit_file` replace_all 容易冲掉其它段落）。查完再回报。"
 )
 
-# 查询工具命名前缀：核实轮必须真调这类工具，不许凭印象说"确认了"
+# 查询工具命名前缀：核实轮必须真调这类工具，不许凭印象说"确认了"。
+# 思维笔记保留了 mind_get/mind_search 的历史命名，必须显式纳入，避免明明读回了
+# 数据却被误判成没有观察，白白多跑复查回合。
 _READ_PREFIXES = ("read_", "list_", "get_", "find_", "search_")
+_READ_TOOL_NAMES = {"mind_get", "mind_search"}
 
 # 特殊状态显示名默认值（非工具，无法从 registry 派生）。后台「状态命名」面板可覆盖：
 #   _preparing      openai 流式收参数阶段的占位
@@ -155,6 +158,20 @@ def _mutating_tools(tool_names) -> set:
     from app.core.events import RESOURCE_BY_TOOL
     by_name = {n for n in tool_names if n.startswith(_WRITE_PREFIXES)}
     return by_name | set(RESOURCE_BY_TOOL)
+
+
+def _is_successful_tool_result(result: str) -> bool:
+    """失败的写调用没有状态可复查，不能为它额外等待一轮模型响应。"""
+    try:
+        payload = json.loads(result)
+    except (TypeError, json.JSONDecodeError):
+        return True
+    return not isinstance(payload, dict) or not payload.get("error")
+
+
+def _is_read_tool(name: str) -> bool:
+    """返回该工具能否作为一次有效的状态观察。"""
+    return name.startswith(_READ_PREFIXES) or name in _READ_TOOL_NAMES
 
 
 async def _im_cancelled() -> bool:
@@ -316,22 +333,30 @@ class LLMRunner:
                     # 自检轮工具照常显示，但打 verify 标记：前端凭 verify 收尾不冒「生成中」点点（否则回复完还在转、像卡住）
                     yield f"data: {json.dumps({'type': 'tool_call', 'name': tc.name, 'label': label, 'input': tc.input, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
                     res, artifact = await registry.dispatch(user_id, tc.name, tc.input)
-                    if tc.name in _mutset:
-                        did_mutate = True   # 本次做过增删改 → 收尾时强制自我核实
+                    if tc.name in _mutset and _is_successful_tool_result(res):
+                        did_mutate = True   # 本次成功做过增删改 → 立刻强制自我核实
                         if verify_mode:
                             verify_fixed = True   # 核实阶段里补了东西 → 确有遗漏
-                    elif verify_mode and tc.name.startswith(_READ_PREFIXES):
+                    elif verify_mode and _is_read_tool(tc.name):
                         verify_queried = True   # 核实阶段真的用查询工具查证了（不是嘴上确认）
                     yield f"data: {json.dumps({'type': 'tool_done', 'name': tc.name, 'label': label, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
                     if artifact:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
                     dispatched.append((tc, res))
                 driver.append_tool_round(messages, result, dispatched)
+                # 工具结果已经入历史，直接接复查 prompt。旧流程会先多请求一次模型来生成
+                # "已完成"，随后才开始复查；这轮没有新信息，只会徒增一次等待。
+                if did_mutate and verify_count < MAX_VERIFY:
+                    verify_count += 1
+                    did_mutate = False
+                    verify_mode = True
+                    verify_queried = False
+                    messages.append({"role": "user", "content": _VERIFY_PROMPT})
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
 
-            # 自我核实：① 做过增删改 → 注入核实 prompt 让用查询工具查证、没做全就补做；
-            # ② 已进核实阶段却只嘴上确认、没真调过查询工具（verify_queried=False）→ 强制再追一轮真查。
+            # 自我核实：① 理论上工具结果后会立即注入核实 prompt；这里保留为轮次封顶等
+            # 边界状态的兜底；② 已进核实阶段却只嘴上确认、没真调过查询工具（verify_queried=False）→ 强制再追一轮真查。
             # 都受 MAX_VERIFY 封顶防死循环。补做会再置 did_mutate → 触发下一轮核实。
             _need_verify = did_mutate and verify_count < MAX_VERIFY
             _need_force  = verify_mode and not verify_queried and not did_mutate and verify_count < MAX_VERIFY
@@ -377,8 +402,11 @@ class LLMRunner:
                 driver.append_followup(messages, result, _DECISION_NUDGE)
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
-            # 收尾：干净核实阶段的确认文字（_verify_buf）直接丢弃，用户看不到重复确认
-            # （若补做过，说明已在补做那轮发过；这里不再补发）
+            # 即时复查时，前面还没有生成过最终说明；保留读回后的确认给用户，
+            # 复查过程中的文字仍然一直缓冲、不显示。
+            if verify_mode and verify_queried and _final_text.strip():
+                async for _line in genstream.typed_stream(_final_text):
+                    yield _line
 
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out, 'cache_read': total_cache})}\n\n"
             return

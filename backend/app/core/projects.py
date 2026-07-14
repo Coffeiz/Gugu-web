@@ -141,7 +141,8 @@ def normalize_project_stages_for_read(raw: Any) -> List[Dict[str, Any]]:
                 if not isinstance(todo, dict):
                     continue
                 text = todo.get("text")
-                if not isinstance(text, str) or not text.strip():
+                # 新建待办先以空文本进入编辑态；它是合法的待办草稿，不能在读响应时丢掉。
+                if not isinstance(text, str):
                     continue
                 todo_id = todo.get("id")
                 if not isinstance(todo_id, str) or not todo_id.strip() or todo_id in todo_ids:

@@ -277,6 +277,8 @@ export interface MindCanvasItem {
   z: number
   collapsed: boolean
   data: Record<string, unknown>
+  /** 引用对象的首屏展示快照；当前活动卡包含日期、时间和描述。 */
+  refData?: { date?: string; time?: string | null; endTime?: string | null; description?: string | null } | null
   node: MindNote
   createdAt: string
   updatedAt: string

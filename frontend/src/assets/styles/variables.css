@@ -6,6 +6,11 @@
   --glass-border: rgba(255, 255, 255, 0.76);
   --glass-blur: blur(20px);
   --popup-blur: blur(12px);   /* 小弹窗统一模糊(右键/排序/日期/活动表单/通知等)——改这里全站生效 */
+  /* 大型模态框的遮罩、玻璃面与卡片位移动画共用同一节奏，避免各层到位时间不一致。 */
+  --modal-enter-duration: 0.24s;
+  --modal-leave-duration: 0.18s;
+  --modal-enter-easing: cubic-bezier(0.4, 0, 0.2, 1);
+  --modal-leave-easing: cubic-bezier(0.4, 0, 1, 1);
   --glass-shadow: 0 4px 16px rgba(80,90,110,0.08), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55);
   --glass-shadow-lg: 0 8px 28px rgba(80,90,110,0.11), inset 0 1px 0 rgba(255,255,255,0.98), inset 1px 0 0 rgba(255,255,255,0.65);
   --panel-bg: rgba(238,240,246,0.9);

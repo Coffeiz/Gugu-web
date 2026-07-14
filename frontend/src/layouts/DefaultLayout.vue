@@ -123,9 +123,19 @@ function openNewProject() {
   uiStore.openNewProject = true
 }
 
-function openUpload() {
+async function openUpload() {
+  // 弹窗内的项目分组会直接影响内容高度。先准备好数据再挂载，避免先按空列表打开、
+  // 请求回包后再把整个窗口撑到最终尺寸。
+  if (projectStore.projectsLoaded) {
+    uploadProjects.value = projectStore.projects
+  } else {
+    try {
+      uploadProjects.value = await projectsApi.list()
+    } catch {
+      uploadProjects.value = []
+    }
+  }
   uploadDialogOpen.value = true
-  projectsApi.list().then(ps => { uploadProjects.value = ps }).catch(() => {})
 }
 
 function onGlobalUploaded() {
@@ -193,6 +203,7 @@ const todayStr = computed(() => {
 }
 
 .topbar {
+  --gb-tint: var(--glass-bg);
   position: absolute;
   top: 20px;
   left: 20px;
@@ -211,6 +222,11 @@ const todayStr = computed(() => {
   overflow: visible;  /* GlassBg 自己继承圆角裁切；宿主放开，按钮外发阴影才能露出来 */
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+.topbar:hover {
+  --gb-tint: var(--glass-bg-hover);
+  background: transparent;
+  box-shadow: var(--glass-shadow-lg);
 }
 
 .topbar-title h1 {

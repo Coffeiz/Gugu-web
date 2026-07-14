@@ -164,17 +164,15 @@ def patch_openai(monkeypatch, rounds):
 # ══════════════════════════════════════════════════════════════════════════
 
 async def test_verify_clean_pass(monkeypatch, dispatched):
-    """干净通过 → 核实阶段的确认文字被抑制，不重复刷屏给用户（自我核实闭环的核心诉求）。"""
+    """成功写入后立即复查，跳过旧流程里无信息的“先收尾、再复查”模型回合。"""
     patch_anthropic(monkeypatch, [
         msg([TX("好的"), TU("create_project", "1", {})]),          # R1 建（带字）
-        msg([TX("建好了项目X，3阶段5待办 ✅")]),                    # R2 收尾确认 → 触发核实
-        msg([TX("我来核实一下"), TU("get_project", "2", {})]),     # R3 核实：查（只读）
-        msg([TX("已核实，项目X的3阶段5待办都在 ✅")]),             # R4 核实确认（干净）→ 应被抑制
+        msg([TX("我来核实一下"), TU("get_project", "2", {})]),     # R2 核实：查（只读）
+        msg([TX("建好了项目X，3阶段5待办都在 ✅")]),                 # R3 读回后的最终确认
     ])
     messages = [{"role": "user", "content": "建个项目X"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
     assert "建好了项目X" in text
-    assert "已核实" not in text, f"核实确认文字没被抑制：{text!r}"
     assert "我来核实一下" not in text, "核实过程文字没被抑制"
     assert "get_project" in dispatched
     assert n_verify(messages) == 1
@@ -185,21 +183,17 @@ async def test_verify_fix_then_reverify(monkeypatch, dispatched):
     """核实阶段发现漏项 → 只发一次「发现漏了X」说明，其余核对文字仍静默，补做后再触发一轮核实。"""
     patch_anthropic(monkeypatch, [
         msg([TX("好的"), TU("create_project", "1", {})]),          # R1 建
-        msg([TX("建好了 ✅")]),                                     # R2 收尾 → 核实
-        msg([TU("get_project", "2", {})]),                         # R3 核实：查（只读，无字）
-        msg([TX("发现漏了一个待办，补一下"), TU("add_todo", "3", {})]),  # R4 发现+补 → 说明应发出
-        msg([TU("get_project", "4", {})]),                         # R5 复查（只读）
-        msg([TX("好了，补全了")]),                                 # R6 → 因补做过会再触发一轮核实
-        msg([TU("get_project", "5", {})]),                         # R7 复查
-        msg([TX("都核实过了")]),                                   # R8 干净确认 → 抑制
+        msg([TU("get_project", "2", {})]),                         # R2 核实：查（只读，无字）
+        msg([TX("发现漏了一个待办，补一下"), TU("add_todo", "3", {})]),  # R3 发现+补 → 说明应发出
+        msg([TU("get_project", "4", {})]),                         # R4 补做后立即复查
+        msg([TX("都核实过了")]),                                    # R5 读回后的最终确认
     ])
     messages = [{"role": "user", "content": "建个项目"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    assert "建好了" in text
+    assert "好的" in text
     assert "发现漏了一个待办" in text, f"补做说明没发出来：{text!r}"
     assert "add_todo" in dispatched
-    assert "好了，补全了" not in text
-    assert "都核实过了" not in text
+    assert "都核实过了" in text
     assert n_verify(messages) == 2, f"应注入 2 次系统自检（补做触发再核实），实际 {n_verify(messages)}"
     assert ev["_usage"] == 1 and ev["error"] == 0
 
@@ -217,15 +211,45 @@ async def test_readonly_no_verify_triggered(monkeypatch, dispatched):
     assert ev["_usage"] == 1
 
 
+async def test_mind_get_counts_as_verify_observation(monkeypatch, dispatched):
+    """思维笔记的历史命名不应导致读回后还被重复要求复查。"""
+    patch_anthropic(monkeypatch, [
+        msg([TU("create_note", "1", {})]),
+        msg([TU("mind_get", "2", {})]),
+        msg([TX("笔记已记录")]),
+    ])
+    messages = [{"role": "user", "content": "记一条笔记"}]
+    runner = LLMRunner(tool_names=["create_note", "mind_get"], settings=SimpleNamespace(ai=AI))
+    _ev, text, _errors = await drain(runner._run_anthropic("u", "sys", messages, AI))
+    assert "mind_get" in dispatched
+    assert "笔记已记录" in text
+    assert n_verify(messages) == 1
+
+
+async def test_failed_write_does_not_trigger_verify(monkeypatch, dispatched):
+    """工具明确失败时不应浪费一次复查模型调用。"""
+    async def failed_dispatch(_uid, _name, _input):
+        return ('{"error":"写入失败"}', None)
+
+    monkeypatch.setattr(registry, "dispatch", failed_dispatch)
+    patch_anthropic(monkeypatch, [
+        msg([TU("create_project", "1", {})]),
+        msg([TX("创建失败，请稍后重试")]),
+    ])
+    messages = [{"role": "user", "content": "建项目"}]
+    _ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
+    assert "创建失败" in text
+    assert n_verify(messages) == 0
+
+
 async def test_verify_capped_at_max_verify(monkeypatch, dispatched):
     """反复补做 → 核实注入封顶 MAX_VERIFY 次，不会死循环、也不报错。"""
     script = [
         msg([TU("create_project", "0", {})]),   # R1 建（tool）→ did_mutate
-        msg([TX("建好了")]),                      # R2 文字收尾 → 注入核实①
     ]
     for i in range(5):   # 每轮核实都"又补一刀"，应被封顶在 MAX_VERIFY
         script.append(msg([TU("update_todo", f"u{i}", {})]))
-        script.append(msg([TX(f"补了{i}")]))
+    script.append(msg([TX("已完成")]))
     patch_anthropic(monkeypatch, script)
     messages = [{"role": "user", "content": "建项目并补全"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
@@ -237,14 +261,12 @@ async def test_openai_clean_pass_matches_anthropic(monkeypatch, dispatched):
     """Anthropic / OpenAI 两路同构：同样的"干净核实通过"场景，OpenAI 路行为一致。"""
     patch_openai(monkeypatch, [
         _tool_chunks("create_project", "好的"),   # R1 建
-        _text_chunks("建好啦项目X ✅"),            # R2 收尾 → 核实
-        _tool_chunks("get_project", "核对中"),     # R3 核实查（只读）
-        _text_chunks("已核实，都建好了"),          # R4 干净确认 → 抑制
+        _tool_chunks("get_project", "核对中"),     # R2 核实查（只读）
+        _text_chunks("建好啦项目X ✅"),             # R3 读回后的最终确认
     ])
     messages = [{"role": "user", "content": "建个项目X"}]
     ev, text, _errors = await drain(make_runner()._run_openai("u", messages, AI))
     assert "建好啦项目X" in text
-    assert "已核实" not in text, f"核实确认没被抑制：{text!r}"
     assert "核对中" not in text
     assert "get_project" in dispatched
     assert ev["_usage"] == 1 and ev["error"] == 0

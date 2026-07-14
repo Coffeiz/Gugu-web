@@ -473,6 +473,8 @@ class MindCanvasItemResponse(CamelModel):
     z: int
     collapsed: bool
     data: dict = Field(default_factory=dict)
+    # 引用对象的首屏展示快照；活动卡用它避免刷新后逐项请求详情导致二次撑高。
+    ref_data: Optional[dict] = None
     node: MindNodeResponse
     created_at: datetime
     updated_at: datetime

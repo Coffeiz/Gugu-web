@@ -9,7 +9,7 @@
        :duration 定时收尾——进场根节点自身没有任何过渡属性（见下方过渡注释），
        不给固定时长的话 Vue 监听不到 transitionend、会立刻摘掉 enter-active，
        玻璃 ramp 就跑不完。 -->
-  <Transition name="bm" :duration="200">
+  <Transition name="bm" :duration="{ enter: MODAL_ENTER_MS, leave: MODAL_LEAVE_MS }">
     <div v-if="show" class="bm-center" :style="{ zIndex: myZ }">
       <div class="bm-card" :style="cardStyle" @mousedown.capture="raise">
         <slot />
@@ -37,6 +37,9 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close'])
+
+const MODAL_ENTER_MS = 240
+const MODAL_LEAVE_MS = 180
 
 const cardStyle = computed(() => ({
   maxWidth: props.width,
@@ -110,11 +113,11 @@ onBeforeUnmount(() => unregEsc?.())
    global.css（scoped 样式够不到 slot 里的玻璃面板）。
    离场保留 opacity 淡出：关闭瞬间模糊失效会被同步的淡出盖住，肉眼基本不可察。 */
 .bm-ov-enter-active {
-  transition: background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-              backdrop-filter 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-              -webkit-backdrop-filter 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background-color var(--modal-enter-duration) var(--modal-enter-easing),
+              backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing),
+              -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing);
 }
-.bm-ov-leave-active { transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1); }
+.bm-ov-leave-active { transition: opacity var(--modal-leave-duration) var(--modal-leave-easing); }
 .bm-ov-enter-from {
   background-color: rgba(20, 22, 30, 0);
   backdrop-filter: blur(0px);
@@ -122,6 +125,18 @@ onBeforeUnmount(() => unregEsc?.())
 }
 .bm-ov-leave-to { opacity: 0; }
 
-.bm-leave-active { transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1); }
+/* 不能直接淡化 .bm-card：opacity 会让它成为 backdrop root，子面板在动画期间采不到
+   外部背景。改由卡片内部遮罩淡出，视觉上原地渐显，同时保留完整的毛玻璃采样。 */
+.bm-card::after {
+  content: '';
+  position: absolute; inset: 0; z-index: 999;
+  background: var(--panel-bg);
+  opacity: 0; pointer-events: none;
+}
+.bm-enter-active .bm-card::after {
+  transition: opacity var(--modal-enter-duration) var(--modal-enter-easing);
+}
+.bm-enter-from .bm-card::after { opacity: 1; }
+.bm-leave-active { transition: opacity var(--modal-leave-duration) var(--modal-leave-easing); }
 .bm-leave-to { opacity: 0; }
 </style>

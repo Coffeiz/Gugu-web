@@ -173,10 +173,10 @@ async function save() {
 .cb-body, .cb-head {
   position: absolute; left: 0; right: 0; bottom: 0;
 }
-.cb-body { opacity: 0; pointer-events: none; transition: opacity 0.1s ease-out; }
-.cb-head { height: 50px; opacity: 1; transition: opacity 0.12s ease-out 0.1s; }
-.capture-bar.expanded .cb-body { opacity: 1; pointer-events: auto; transition: opacity 0.14s ease-out 0.1s; }
-.capture-bar.expanded .cb-head { opacity: 0; pointer-events: none; transition: opacity 0.1s ease-out; }
+.cb-body { opacity: 0; pointer-events: none; transition: opacity 0.16s ease-out; }
+.cb-head { height: 50px; opacity: 1; transition: opacity 0.16s ease-out; }
+.capture-bar.expanded .cb-body { opacity: 1; pointer-events: auto; transition: opacity 0.16s ease-out; }
+.capture-bar.expanded .cb-head { opacity: 0; pointer-events: none; transition: opacity 0.16s ease-out; }
 
 /* 内容在各自固定位置只做交叉淡变：展开先收起、后露编辑器；收起反过来。 */
 .cb-collapsed {

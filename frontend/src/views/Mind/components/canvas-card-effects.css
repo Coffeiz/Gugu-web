@@ -58,21 +58,46 @@
 .fr-missing.phys-reveal-controls .conn-dot::before,
 .note-card.phys-reveal-controls .conn-dot::before { opacity: 1 !important; }
 
-/* 画布拖拽的材质：纸条保留不透明纸感；文件与系统对象在移动时优先保证文字清晰度。 */
+/* 画布卡片抓起后统一仍是「有材质的玻璃」：此前为了规避文字发虚，这里把文件、活动和便签的
+   backdrop-filter 直接关掉，结果只有项目引用卡保留毛玻璃，四种卡片的抓取反馈分裂。文字清晰度
+   应由物理克隆的布局/合成策略解决，不能牺牲材质本身。便签继续保留各自的纸色，只把颜色改为
+   半透明，让背后的画布与节点能透过同一层模糊显出来。 */
 .phys-drag-clone.fc-card.canvas-mode,
 .phys-drag-clone.entity-sticker {
-  background: rgba(255, 255, 255, 0.78) !important;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  background: rgba(255, 255, 255, 0.5) !important;
+  backdrop-filter: blur(12px) saturate(1.15);
+  -webkit-backdrop-filter: blur(12px) saturate(1.15);
   opacity: 1;
 }
 .phys-drag-clone.note-card.canvas-mode {
-  background: rgba(255, 252, 238, 0.97) !important;
+  /* NoteCard 本身有纸色底 + ::after 高光两层。抓取态改为三层：::before 同时承载半透明
+     纸色与 backdrop 采样，::after 只保留高光，正文仍在 z-index:1。backdrop-filter 放在
+     全透明元素上不会留下可见合成结果，因此纸色必须与它处于同一层。 */
+  --note-drag-surface: rgba(255, 252, 238, .68);
+  background: transparent !important;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  /* 通用 .phys-drag-clone 的 .97 opacity 会建立隔离合成组，子层的 backdrop-filter
+     只能在组内采样而看不到画布；文件/活动已显式覆盖为 1，便签也必须一致。 */
+  opacity: 1;
   border-color: rgba(255, 255, 255, 0.85);
 }
-.phys-drag-clone.note-card.canvas-mode.tint-amber { background: rgb(255,246,231) !important; }
-.phys-drag-clone.note-card.canvas-mode.tint-coral { background: rgb(255,236,233) !important; }
-.phys-drag-clone.note-card.canvas-mode.tint-blue  { background: rgb(224,239,251) !important; }
-.phys-drag-clone.note-card.canvas-mode.tint-teal  { background: rgb(229,248,250) !important; }
+.phys-drag-clone.note-card.canvas-mode::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: var(--note-drag-surface);
+  backdrop-filter: blur(12px) saturate(1.15);
+  -webkit-backdrop-filter: blur(12px) saturate(1.15);
+  pointer-events: none;
+}
+.phys-drag-clone.note-card.canvas-mode::after {
+  z-index: 0;
+  background: linear-gradient(to top, rgba(255,255,255,.08), transparent 50%) !important;
+}
+.phys-drag-clone.note-card.canvas-mode.tint-amber { --note-drag-surface: rgba(255,246,231,.72); }
+.phys-drag-clone.note-card.canvas-mode.tint-coral { --note-drag-surface: rgba(255,236,233,.72); }
+.phys-drag-clone.note-card.canvas-mode.tint-blue  { --note-drag-surface: rgba(224,239,251,.72); }
+.phys-drag-clone.note-card.canvas-mode.tint-teal  { --note-drag-surface: rgba(229,248,250,.72); }

@@ -1,14 +1,14 @@
 <template>
   <div
     class="canvas-drawer glass-card"
-    :class="{ open: expanded, closing, 'project-panel': panel === 'projects' }"
+    :class="{ open: expanded, 'project-panel': panel === 'projects' }"
     :style="{ '--cd-target-width': panel === 'projects' ? '284px' : '190px' }"
     :data-project-drawer-dropzone="expanded && panel === 'projects' ? '' : undefined"
     @pointerdown.stop
   >
     <div class="cd-head">
       <Transition name="cd-expanded">
-        <div v-if="expanded && headerVisible" class="cd-expanded-nav">
+        <div v-if="headerVisible" class="cd-expanded-nav">
           <span class="cd-title">{{ panel === 'canvases' ? '画布' : '项目' }}</span>
           <button class="cd-toggle cd-return" title="收起" @click="togglePanel(panel)"><PhArrowRight :size="18" weight="bold" /></button>
         </div>
@@ -55,7 +55,7 @@
 
         <section class="cd-content-panel projects-panel" :class="{ visible: visiblePanel === 'projects' && contentVisible }" :aria-hidden="visiblePanel !== 'projects'">
           <div ref="projectListRef" class="cd-list project-list">
-            <input v-model="projectQuery" class="project-search" placeholder="筛选项目" @pointerdown.stop />
+            <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" @pointerdown.stop />
             <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
             </div>
@@ -90,6 +90,7 @@ import { PhArrowRight, PhBriefcase, PhCheck, PhPencilSimple, PhPlus, PhSquaresFo
 import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
 import ProjectDrawerCard from './ProjectDrawerCard.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },
@@ -115,7 +116,6 @@ const emit = defineEmits<{
 
 type Panel = 'canvases' | 'projects'
 const expanded = ref(false)
-const closing = ref(false)
 const compactReady = ref(true)
 const panel = ref<Panel>('canvases')
 const visiblePanel = ref<Panel>('canvases')
@@ -176,21 +176,20 @@ function revealContent(delay: number) {
 }
 async function togglePanel(nextPanel: Panel) {
   if (expanded.value && panel.value === nextPanel) {
-    closing.value = true
     contentVisible.value = false
+    headerVisible.value = false
     clearContentTimer()
     clearCompactTimer()
-    // 内容、紧凑入口和外壳在同一段时间内切换，不能先淡完内容才缩抽屉。
+    // 内容和外壳立即开始收起；展开头部保留在 DOM 中完成 leave 动画，不能随着 expanded
+    // 同一帧卸载，否则右侧返回图标会直接消失而不是淡出。
     expanded.value = false
     compactTimer = setTimeout(() => {
       compactReady.value = true
-      closing.value = false
-    }, 32)
+    }, 180)
     return
   }
   clearCompactTimer()
   compactReady.value = false
-  closing.value = false
   headerVisible.value = false
   contentVisible.value = false
   panel.value = nextPanel
@@ -254,6 +253,10 @@ onBeforeUnmount(() => {
 .canvas-drawer {
   position: absolute; top: 50%; right: 12px; z-index: 8; transform: translateY(-50%);
   box-sizing: border-box; width: 36px; overflow: hidden;
+  /* 右侧抽屉是画布里的工具容器，和内部项目卡、活动贴纸共用普通 14px 圆角；
+     覆盖 glass-card 默认的 18px squircle，避免展开后外壳曲率突兀。 */
+  border-radius: var(--radius-md);
+  corner-shape: initial;
   transition: width 0.38s cubic-bezier(.22,1,.36,1),
               background 0.25s ease, box-shadow 0.25s ease;
 }
@@ -277,12 +280,10 @@ onBeforeUnmount(() => {
 .cd-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--text-secondary); font-size: 13px; font-weight: 700; opacity: 0; transition: opacity .15s ease; }
 .canvas-drawer.open .cd-title { opacity: 1; transition-delay: .08s; }
 .cd-return { margin-left: auto; }
-.canvas-drawer.closing .cd-expanded-nav { opacity: 0; filter: blur(3px); transition: opacity .14s ease-in, filter .14s ease-in; }
-.cd-expanded-enter-active { animation: cd-expanded-in .26s cubic-bezier(.22,1,.36,1) both; }
-@keyframes cd-expanded-in {
-  from { opacity: 0; filter: blur(3px); }
-  to { opacity: 1; filter: blur(0); }
+.cd-expanded-enter-active, .cd-expanded-leave-active {
+  transition: opacity .18s cubic-bezier(.22,1,.36,1), filter .18s cubic-bezier(.22,1,.36,1);
 }
+.cd-expanded-enter-from, .cd-expanded-leave-to { opacity: 0; filter: blur(3px); }
 .cd-compact-enter-active { transition: opacity .22s ease-out, filter .22s ease-out; }
 .cd-compact-enter-from { opacity: 0; filter: blur(3px); }
 
@@ -309,9 +310,7 @@ onBeforeUnmount(() => {
 .ci-btn:hover { background: rgba(123,127,178,.16); color: var(--color-primary); }
 .ci-delete:hover { background: rgba(200,90,90,.14); color: #c85a5a; }
 
-.project-search { width: 100%; height: 38px; box-sizing: border-box; padding: 0 11px; border: 1px solid rgba(123,127,178,.15); border-radius: 6px; outline: 0; background: rgba(255,255,255,.56); color: var(--text-primary); font: 500 13px var(--font-sans); line-height: normal; }
-.project-search::placeholder { font-family: inherit; font-size: inherit; font-weight: inherit; line-height: normal; color: var(--text-secondary); opacity: .75; }
-.project-search:focus { border-color: rgba(123,127,178,.45); background: rgba(255,255,255,.8); }
+.project-search { flex: 0 0 38px; }
 .project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }
 .project-groups { gap: 9px; }
 .project-group { display: flex; flex-direction: column; gap: 6px; }

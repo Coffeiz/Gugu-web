@@ -76,7 +76,14 @@ defineProps({
   min-height: 122px;
   display: flex; flex-direction: column;
 }
-.fc-card.canvas-mode { overflow: visible; }
+/* 画布文件引用与活动/项目引用共用系统对象的玻璃基线；文件库卡片仍保留原本更实的白底。 */
+.fc-card.canvas-mode {
+  overflow: visible;
+  background: var(--glass-bg);
+  border-color: var(--glass-border);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
 .fc-card:hover {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 18px rgba(80,90,110,0.13);
   background: rgba(255,255,255,0.86);
@@ -134,7 +141,8 @@ defineProps({
   position: relative; height: var(--fc-area-h, 90px); flex-shrink: 0; overflow: hidden;
   border-radius: 14px 14px 0 0;
   background: rgba(0,0,0,0.05);
-  transform: translateZ(0);   /* 去掉常驻 will-change：大量卡片常驻会让合成器层预算耗尽、滚动时偶发闪屏 */
+  /* 不常驻提升为 GPU 图层：画布缩放时，独立图层可能沿用抓取时的低分辨率纹理，
+     直到 hover/合成器空闲才重栅格化，表现为图片卡先糊后清。拖拽时物理层会按需建层。 */
   mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
 }

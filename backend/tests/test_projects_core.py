@@ -126,12 +126,18 @@ def test_normalize_project_stages_builds_stable_stage_and_todo_ids():
 def test_normalize_project_stages_for_read_fills_legacy_missing_todos_without_mutating_stage_identity():
     stages = normalize_project_stages_for_read([
         {"key": "s0", "label": "计划"},
-        {"key": "s1", "label": "执行", "todos": [{"id": "t1", "text": "开发", "done": True}]},
+        {"key": "s1", "label": "执行", "todos": [
+            {"id": "t1", "text": "开发", "done": True},
+            {"id": "t2", "text": "", "done": False},
+        ]},
     ])
 
     assert stages == [
         {"key": "s0", "label": "计划", "todos": []},
-        {"key": "s1", "label": "执行", "todos": [{"id": "t1", "text": "开发", "done": True}]},
+        {"key": "s1", "label": "执行", "todos": [
+            {"id": "t1", "text": "开发", "done": True},
+            {"id": "t2", "text": "", "done": False},
+        ]},
     ]
 
 

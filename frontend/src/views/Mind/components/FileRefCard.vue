@@ -180,7 +180,6 @@ onBeforeUnmount(() => cardResizeObserver?.disconnect())
 const { onPointerDown } = useCardDrag({
   screenToWorld: props.screenToWorld,
   contentScale: () => props.scale,
-  lift: 1,
   getDragEl: () => fileCardRef.value?.rootEl ?? missingRef.value,
   onClick: () => { if (file.value) emit('open', props.item) },
   onDragMove: (worldX, worldY) => {

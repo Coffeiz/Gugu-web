@@ -846,26 +846,25 @@ const currentFolder = computed(() =>
 const currentFolderFiles = computed(() => currentFiles.value)
 
 // ── 侧栏两模式：false=文件区宽（现状）；true=左右各 50%、信息区 2 列 ──
-// 内部内容先淡出，外框在不可见时完成宽度/网格切换，最后在新锚点淡入；不让用户看到内容回流。
+// 外框与内容并行切换：内容全程保持可见，只让列宽与信息区版面同步变化。
 // 初值取自后端记忆（preferences）；若 preferences 晚于本组件加载完成，loaded 变 true 时再同步一次
 const stagesExpanded = ref(prefsStore.pmStagesExpanded)   // 列宽/版面预设
 const infoExpanded = ref(prefsStore.pmStagesExpanded)     // 信息区 1列/2列版面预设
-const pmSwitching = ref(false)      // 内容淡隐中（true 时 opacity:0）
+const pmSwitching = ref(false)      // 布局切换锁（同时关闭嵌套 backdrop-filter）
 watch(() => prefsStore.loaded, (v) => {
   if (v) { stagesExpanded.value = prefsStore.pmStagesExpanded; infoExpanded.value = prefsStore.pmStagesExpanded }
 })
 function togglePmStages() {
   if (pmSwitching.value) return
-  const FADE_MS = 180   // 与 .proj-header 等的 opacity 过渡时长一致（0.18s）；改一处两处一起改
   const LAYOUT_MS = 360   // 与 .modal-left 的 width 过渡时长一致（0.36s）；改一处两处一起改
-  const SETTLE_MS = 40
-  pmSwitching.value = true                          // ① 内部内容快速淡出
-  setTimeout(() => {
-    stagesExpanded.value = !stagesExpanded.value    // ② 内容隐藏时切换列宽和信息区版面
+  pmSwitching.value = true
+  // 留一帧提交当前布局，再启动列宽与信息区版面变化，内容全程不淡隐。
+  requestAnimationFrame(() => {
+    stagesExpanded.value = !stagesExpanded.value
     infoExpanded.value = stagesExpanded.value
-    prefsStore.savePmStagesExpanded(stagesExpanded.value)   // 记住版面选择（存后端，跨设备）
-  }, FADE_MS)
-  setTimeout(() => { pmSwitching.value = false }, FADE_MS + LAYOUT_MS + SETTLE_MS)  // ③ 新锚点真正落稳后淡入
+    prefsStore.savePmStagesExpanded(stagesExpanded.value)
+    setTimeout(() => { pmSwitching.value = false }, LAYOUT_MS)
+  })
 }
 
 // 项目文件总数：根文件 + 本项目所有文件夹（含嵌套）里的文件。按文件夹归属数，不依赖 file.projectId
@@ -2056,14 +2055,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* 列宽由 stages-expanded 驱动 */
 .modal.stages-expanded .modal-left { width: 50%; }
 
-/* 捕捉条同款原则：内部只交叉淡变，外框单独做几何动画。淡变时长与 togglePmStages 的 FADE_MS 联动，改一处两处一起改。 */
-.proj-header, .left-content, .file-content, .right-header { transition: opacity 0.18s ease-in-out; }
-.modal.pm-switching .proj-header,
-.modal.pm-switching .left-content,
-.modal.pm-switching .file-content,
-.modal.pm-switching .right-header { opacity: 0; pointer-events: none; }
-
-/* 信息区版面由 info-expanded 驱动（与列宽解耦，在淡隐时才换，不被看见）。
+/* 信息区版面由 info-expanded 驱动，与列宽同时切换。
    版面1：竖排，每行之间横向分割线（沿用 .col-divider）。
    版面2：2×2 网格，十字分割线——客户|周期、看板|颜色 竖线，上下两行之间横线（用 section 的 border 画）*/
 .info-block { display: flex; flex-direction: column; }

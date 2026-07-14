@@ -8,8 +8,8 @@
     :style="stickerStyle"
     :data-node-id="item.nodeId"
     @pointerdown.stop="onPointerDown"
-    @mouseenter="emit('hover', item, true)"
-    @mouseleave="emit('hover', item, false)"
+    @mouseenter="onPointerEnter"
+    @mouseleave="onPointerLeave"
   >
     <!-- 连接点现在渲染在 NoteCard.vue 内部（canvasMode 才有），不是这层壳的兄弟节点——
          拖拽克隆走的是 cloneNode(true)，只会拷贝 NoteCard 自己的子树；连接点若留在壳上
@@ -90,6 +90,16 @@ const stickerStyle = computed(() => {
 
 const editing = ref(false)
 const conflict = ref(false)
+// 关系线与连接点不能只看浏览器的 :hover：编辑态会主动撤掉卡片的 hover-card-fx，鼠标却仍
+// 在卡片内。把「视觉上允许 hover」收成同一状态源，进入编辑立即熄灭，退出时若鼠标未移开则
+// 自然恢复，连线端点、圆点和卡片抬起不会再各走各的。
+const pointerHover = ref(false)
+const interactionHover = computed(() =>
+  pointerHover.value && !editing.value && !props.item.node.deletedAt,
+)
+function onPointerEnter() { pointerHover.value = true }
+function onPointerLeave() { pointerHover.value = false }
+watch(interactionHover, hovering => emit('hover', props.item, hovering), { immediate: true })
 
 const cardRef = ref<InstanceType<typeof NoteCard> | null>(null)
 function noteCardEl() {
@@ -121,7 +131,10 @@ onMounted(() => nextTick(observeCard))
 // NoteCard 编辑/预览切换、展开/收起、字数变化都会改高度，同一个 ResizeObserver 全部接住，
 // 不用像宽度那样另外挂 watch。
 watch(() => props.scale, () => nextTick(emitMeasuredSize))
-onBeforeUnmount(() => cardResizeObserver?.disconnect())
+onBeforeUnmount(() => {
+  cardResizeObserver?.disconnect()
+  emit('hover', props.item, false)
+})
 
 async function onSaveMd(md: string) {
   try {

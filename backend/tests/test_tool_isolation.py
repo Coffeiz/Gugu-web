@@ -18,7 +18,7 @@ from app.models import (
 )
 
 from agent.tools.files import _list_files, _resolve_file, _resolve_key, _resolve_target
-from agent.tools.projects import _resolve_project
+from agent.tools.projects import _resolve_project, _update_project
 from agent.tools.calendar import _resolve_event, _remove_event_reminder
 from agent.tools.clients import _resolve_client
 from agent.tools.scheduled_tasks import _resolve_task
@@ -118,6 +118,16 @@ async def test_project_resolve_owner_ok(db, user_b):
     p = await _mk(db, Project(user_id=user_b.id, name="我的项目"))
     got, err = await _resolve_project(db, user_b.id, {"project_id": p.id})
     assert err is None and got.id == p.id
+
+
+async def test_project_update_tool_persists_name(db, user_a):
+    project = await _mk(db, Project(user_id=user_a.id, name="原项目", stages_json="[]"))
+
+    result = await _update_project(db, user_a.id, {"project_id": project.id, "name": "新项目"})
+
+    assert result["success"] is True
+    await db.refresh(project)
+    assert project.name == "新项目"
 
 
 # ── calendar ──────────────────────────────────────────────────────────────────
