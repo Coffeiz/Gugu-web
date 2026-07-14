@@ -60,10 +60,13 @@
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
             </div>
             <template v-else>
+              <!-- 三个状态分组的 key 恒定（进行中/待开始/已完成常驻），这层 TransitionGroup
+                   永远不会真正触发 leave/enter，只用它的 -move FLIP 机制：某个分组因为增减
+                   卡片变高变矮时，其它分组跟着平滑挪位，而不是瞬间跳到新位置。 -->
               <TransitionGroup name="drawer-project-groups" tag="div" class="project-groups">
                 <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group">
                   <div class="project-group-title"><span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span></div>
-                  <TransitionGroup name="drawer-project-cards" tag="div" class="project-group-cards" @before-leave="captureCardLeavePosition">
+                  <TransitionGroup name="drawer-project-cards" tag="div" class="project-group-cards" @before-leave="captureLeavePosition">
                     <ProjectDrawerCard
                       v-for="project in group.items"
                       :key="project.id"
@@ -142,7 +145,10 @@ const projectGroups = computed(() => [
   { status: 'pending', label: '待开始', items: filteredProjects.value.filter(project => project.status === 'pending') },
   { status: 'done', label: '已完成', items: filteredProjects.value.filter(project => project.status === 'done') },
 ])
-const visibleProjectGroups = computed(() => projectGroups.value.filter(group => group.items.length > 0))
+// 三个状态分组标题常驻显示，不因为某个状态一时没有项目就整块消失/出现——这块 UI 结构本身
+// 稳定下来后，也顺带绕开了"分组从无到有/从有到无"这种结构性增删的过渡时机问题（比如卡片
+// 挂载和分组自己的入场动画谁先谁后，会露出一帧还没被物理模块接管的本体，见 devlog）。
+const visibleProjectGroups = computed(() => projectGroups.value)
 
 // leave-active 把离场卡切成 position:absolute 时不给 top/left，指望浏览器按它离场前的
 // 「静态位置」自动摆放——用 DevTools 性能录制实测抓到过这个自动定位算错：离场卡被摆到了
@@ -151,7 +157,7 @@ const visibleProjectGroups = computed(() => projectGroups.value.filter(group => 
 // 在这种嵌套场景下不可靠。不再依赖浏览器猜，改成在真正离场前用 getBoundingClientRect()
 // 量出它此刻相对 .project-group-cards（offsetParent，见其 position:relative）的像素坐标，
 // 直接写成明确的 top/left——浏览器不用再猜，也就没有猜错的余地。
-function captureCardLeavePosition(el: Element) {
+function captureLeavePosition(el: Element) {
   const node = el as HTMLElement
   const parent = node.offsetParent as HTMLElement | null
   if (!parent) return
