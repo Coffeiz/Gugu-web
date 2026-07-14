@@ -457,19 +457,6 @@ body {
 /* 源卡 / 落点卡：隐藏但保留布局占位，让飞动的克隆体看起来就是卡片本体 */
 .phys-drag-source { opacity: 0 !important; }
 
-/* 试水原型：项目看板卡落地阶段改用浏览器原生 View Transitions 代替手写双克隆
-   （见 usePhysicsDrag.ts 的 landViaViewTransition）。位置/尺寸插值的时长曲线跟全站
-   其它落地飞行对齐（0.55s cubic-bezier(0.22,1,0.36,1)，即 _SETTLE），不用浏览器默认
-   的 0.25s ease，避免这一条落地路径手感跟其它路径不一致。 */
-::view-transition-group(phys-drag-vt) {
-  animation-duration: 0.55s;
-  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-}
-::view-transition-old(phys-drag-vt),
-::view-transition-new(phys-drag-vt) {
-  animation-duration: 0.4s;
-}
-
 /* 曾经拖拽期间关掉顶栏/侧栏 backdrop-filter 减负（perf trace 显示单次整屏重绘 ~29ms）——
    但代价是拖拽这一两秒导航栏毛玻璃质感整个消失、松手后再突然变回来，用户体验上一直觉得
    是个别扭的跳变（"一直有的问题"）。撤掉这份优化，把手感放在性能之前；如果之后在低端设备

@@ -88,12 +88,6 @@ export interface PhysicsDragOpts {
   // 飞行 holder 上重新抓取时，本体不在真实命中位置；把 holder 已确认的 hover 显式交给新
   // 克隆，避免它按隐藏本体的 :hover=false 误把控制层做成不可见。
   initialHover?: boolean
-  // 试水原型：「卡片落到新位置且可见」这一条落地路径改用浏览器原生 View Transitions API
-  // （document.startViewTransition）代替手写双克隆 crossfade——浏览器自己截图旧/新两态并
-  // 插值，不用再维护 _cloneLanding 那套逐属性搬样式的克隆逻辑。仅当前浏览器支持该 API 时
-  // 生效，不支持则原样退回 flyMorph（见 end() 内判断），其它落地路径（归位/吸入/外部落点）
-  // 不受影响。目前只在项目看板卡（ProjectCard.vue）启用。
-  useViewTransition?: boolean
 }
 
 export interface PhysicsDropContext {
@@ -1185,39 +1179,6 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         return holder2
       }
 
-      // 试水原型：落地阶段改用浏览器原生 View Transitions API，代替 flyMorph 的手写双克隆
-      // crossfade。调用前 el 应已经历过 animateOpen（已 opacity:0 + hover 压制），这里只管
-      // 「把它重新变回可见」这一步。旧态用的是此刻 holder（拖拽克隆）的屏幕外观——给它临时
-      // 挂上同一个 view-transition-name，浏览器会在下一步 DOM 变化前截图它当前的样子当「旧」，
-      // 变化后 el 的静止态当「新」，自动生成位置/尺寸/样式的插值，不用再手写 _cloneLanding。
-      // 不支持该 API 的浏览器直接退回调用方原有的 flyMorph。
-      const landViaViewTransition = (el: HTMLElement) => {
-        // 落点在可滚动列里若滚出视口 → 快速滚进可视区，两条路径都要——不支持 VT 的分支直接把
-        // 滚动后的落点交给 flyMorph；VT 分支不需要算好的 box（浏览器自己量），只要这次滚动生效。
-        const box = revealInScroller(_scrollParent(el), el.getBoundingClientRect())
-        const startVT = (document as any).startViewTransition?.bind(document)
-        if (!startVT) { flyMorph(box, el, _cloneLanding(el)); return }
-        const VT_NAME = 'phys-drag-vt'
-        holder.style.transition = 'none'   // 交给浏览器截图这一刻的样子，不需要再由 CSS transition 继续动
-        ;(holder.style as any).viewTransitionName = VT_NAME
-        let doneVT = false
-        const finish = () => {
-          if (doneVT) return
-          doneVT = true
-          unregister()
-          ;(el.style as any).viewTransitionName = ''
-          _revealWithoutStaleHover(el, pointer)
-        }
-        const unregister = _registerCleanup(el, finish)
-        const transition = startVT(() => {
-          holder.remove()
-          ;(el.style as any).viewTransitionName = VT_NAME
-          el.style.opacity = ''
-          restoreSourcePlaceholder()
-        })
-        transition.finished.catch(() => {}).then(finish)
-      }
-
       const landHome = () => {
         // 收合还没来得及发生（极快的拖放）→ 直接归位即可
         if (!container || sourceEl.style.display !== 'none') {
@@ -1278,14 +1239,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         if (el && el.isConnected && (el !== sourceEl || movedToAnotherContainer)) {
           if (el.offsetWidth > 0) {   // 落点可见 → 占位 FLIP 展开；双克隆同轨迹飞行 + 样式渐变
             animateOpen(el.parentElement!, el)   // 它为量 FLIP 会瞬间 display:none 落点卡，故滚动放其后
-            if (opts.useViewTransition) {
-              landViaViewTransition(el)   // 试水原型，见其定义处注释
-            } else {
-              // 落点在可滚动列里若滚出视口 → 快速滚进可视区，box 取滚动后的最终落点
-              const sc = _scrollParent(el)
-              const box = revealInScroller(sc, el.getBoundingClientRect())
-              flyMorph(box, el, _cloneLanding(el))
-            }
+            // 落点在可滚动列里若滚出视口 → 快速滚进可视区，box 取滚动后的最终落点
+            const sc = _scrollParent(el)
+            const box = revealInScroller(sc, el.getBoundingClientRect())
+            flyMorph(box, el, _cloneLanding(el))
           } else {                    // 落点在折叠分组里不可见（如已完成列折叠的月份）→ 就地缩小淡出
             flyTo({ left: dropX - half.x, top: dropY - half.y, width: rect.width, height: rect.height }, true)
           }

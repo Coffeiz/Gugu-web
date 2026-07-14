@@ -229,10 +229,6 @@ function onPointerDown(e: PointerEvent) {
     // 弹簧模型），来回调了几轮手感始终不理想，弃用退回默认。
     onDragStart: (ev, card) => startPhysicsDrag(ev, card, {
       pointer: true, skipAbsorb: true, onDrop: dispatchDrop,
-      // 试水原型：换列落地改用浏览器原生 View Transitions 代替手写双克隆 crossfade，见
-      // usePhysicsDrag.ts 的 landViaViewTransition。只在这里（项目看板卡）打开，不影响
-      // 其它卡片类型；浏览器不支持时物理模块自己会退回原有 flyMorph，这里不用判断兼容性。
-      useViewTransition: true,
     }),
     onClick: () => emit('click'),   // 没拖动 = 点击 → 开项目
   })
