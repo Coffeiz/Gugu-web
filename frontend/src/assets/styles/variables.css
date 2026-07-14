@@ -28,5 +28,8 @@
   --radius-md: 14px;
   --radius-lg: 18px;
   --sidebar-width: 220px;
+  /* 工作台浮动控件统一的视口安全边距与画布工具栏厚度。 */
+  --floating-edge: 28px;
+  --canvas-toolbar-height: 50px;
   --font-sans: 'PingFang SC', 'Segoe UI', 'Helvetica Neue', sans-serif;
 }

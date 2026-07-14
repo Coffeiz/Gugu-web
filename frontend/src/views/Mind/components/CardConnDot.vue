@@ -7,7 +7,7 @@
        完全封在这个组件自己身上，宿主贴纸不需要为了"看到子组件里的 .conn-dot"写
        :deep() 选择器，components 边界更干净。宿主只需要把自己已有的 mouseenter/mouseleave
        状态和 connecting/connectionTargetSide 这两个已有 prop 原样传进来。 -->
-  <span class="card-conn-dots" :class="{ hovering, connecting, 'connection-target': !!targetSide }">
+  <span class="card-conn-dots" :data-node-id="nodeId" :class="{ hovering, connecting, 'connection-target': !!targetSide }">
     <button class="conn-dot conn-dot-left" :class="{ 'conn-dot-active': targetSide === 'left' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('dragStart', e, 'left')"></button>
     <button class="conn-dot conn-dot-right" :class="{ 'conn-dot-active': targetSide === 'right' }" title="拖出连线建立关联" @pointerdown.stop="e => emit('dragStart', e, 'right')"></button>
   </span>
@@ -15,6 +15,10 @@
 
 <script setup lang="ts">
 defineProps<{
+  // 拖拽/落地飞行途中，RelationLayer.vue 靠这个属性去 DOM 里精确定位当前正在飘着的那颗
+  // 连接点覆盖层（usePhysicsDrag.ts 的 connectionDotOverlay，跟这里是同一份内容 cloneNode
+  // 出去的），不必再假装卡片没有旋转、自己算一份可能跟摆动动画对不上的锚点坐标。
+  nodeId: number
   hovering: boolean
   connecting: boolean
   targetSide: 'left' | 'right' | null
@@ -35,37 +39,38 @@ const emit = defineEmits<{ (e: 'dragStart', event: PointerEvent, side: 'left' | 
    表现正是"连接点跑去了左上角"。四种贴纸只有便签会踩这个坑（另外三种没有类似的
    `.xxx > *` 通用规则），但这里直接把 position 钉死更稳，不用逐个排查宿主有没有这类规则。 */
 .card-conn-dots { position: absolute !important; inset: 0; pointer-events: none; z-index: 20 !important; }
-/* 鼠标判定区比看着的圆点大一圈（+2px 半径）——12px 的圆点本身很小，直接点很难点中，这里
-   按钮自己的盒子开到 16px 兜住更宽松的判定范围，画出来的圆点挪到 ::before 上按视觉尺寸
+/* 鼠标判定区比看着的圆点大一圈（+10px 半径）——12px 的圆点本身很小，直接点很难点中，这里
+   按钮自己的盒子开到 32px 兜住更宽松的判定范围，画出来的圆点挪到 ::before 上按视觉尺寸
    居中摆放，肉眼看着还是原来那个小圆点，只是好点了。 */
 .conn-dot {
-  position: absolute; top: 50%; width: 16px; height: 16px; margin-top: -8px;
+  position: absolute; top: 50%; width: 32px; height: 32px; margin-top: -16px;
   border: none; background: none; padding: 0;
   cursor: crosshair; z-index: 6;
   pointer-events: auto;
 }
 .conn-dot::before {
   content: '';
-  position: absolute; inset: 2px;
+  position: absolute; inset: 10px;
   border: 2px solid #fff; border-radius: 50%;
   background: var(--color-primary); box-shadow: 0 1px 4px rgba(80,90,110,.35);
-  opacity: 0; transition: opacity 0.15s, transform 0.15s;
+  opacity: 0; transition: opacity 0.15s, transform 0.15s, box-shadow 0.2s ease;
 }
 .card-conn-dots.hovering .conn-dot::before { opacity: 1; }
 /* 正在从别的贴纸拖连线出来时，全部可落点的贴纸都先显出一点存在感（.38），不依赖悬停；
-   拖到这张贴纸判定命中的具体那一侧再跳到 1 + 放大 + 磁吸动画，靠 .conn-dot-active 这个
-   更具体的类名天然赢过上面这条（不用管两条规则谁在样式表里写得靠前）。 */
+   拖到这张贴纸判定命中的具体那一侧再跳到 1 + 放大 + 磁吸辉光，靠 .conn-dot-active 这个
+   更具体的类名天然赢过上面这条（不用管两条规则谁在样式表里写得靠前）。辉光原来是一份
+   infinite alternate 的关键帧动画（来回一直跳），现在改成纯 transition：class 加上去
+   time 就过渡到展开的辉光并停在那儿，class 摘掉（比如挪到另一侧/连接判定丢失）时再
+   平滑收回基础态，不再有"贴上去还在反复横跳"的效果。 */
 .card-conn-dots.connecting .conn-dot::before,
 .card-conn-dots.connection-target .conn-dot::before { opacity: .38; }
 .card-conn-dots.connection-target .conn-dot-active::before {
   opacity: 1; transform: scale(1.28);
-  animation: conn-dot-magnet .44s cubic-bezier(.22, 1.35, .36, 1) infinite alternate;
+  box-shadow: 0 0 0 5px rgba(123,127,178,.16), 0 2px 8px rgba(80,90,110,.38);
 }
 .conn-dot:hover::before { transform: scale(1.3); }
-.conn-dot-left { left: -9px; }
-.conn-dot-right { right: -9px; }
-@keyframes conn-dot-magnet {
-  from { box-shadow: 0 1px 4px rgba(80,90,110,.35); }
-  to { box-shadow: 0 0 0 5px rgba(123,127,178,.16), 0 2px 8px rgba(80,90,110,.38); }
-}
+/* 判定盒比可见圆点大了一圈（16→32px），左右偏移量按同样的量往外挪，让可见圆点的中心
+   落在跟原来完全一样的位置（贴着卡片边缘），只是判定范围变宽，不改变肉眼看到的位置。 */
+.conn-dot-left { left: -17px; }
+.conn-dot-right { right: -17px; }
 </style>

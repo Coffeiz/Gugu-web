@@ -5,7 +5,7 @@
         :items="relationItems" :relations="visibleRelations" :highlight-node-id="connectionDrag.originNodeId"
         :draft="connectionDrag.active ? { from: connectionDrag.from, to: connectionDrag.to, fromSide: connectionDrag.originSide, toSide: connectionDrag.targetSide } : null"
         :landing-positions="landingPositions" :measured-sizes="measuredSizes" :relation-anchors="relationAnchors"
-        :hovered-node-id="hoveredNodeId" :scale="camera.scale"
+        :hovered-node-id="hoveredNodeId" :screen-to-world="screenToWorld"
         @remove="id => emit('removeRelation', id)"
       />
 
@@ -77,7 +77,7 @@ const viewportRef = ref<HTMLElement | null>(null)
 const measuredSizes = reactive(new Map<number, { w: number; h: number }>())
 const viewportSize = reactive({ width: 0, height: 0 })
 const {
-  camera, centerView, screenToWorld, zoomAt, zoomAtCenter, onWheel,
+  camera, centerView, screenToWorld, zoomAt, zoomAtCenter, workspaceCenter, onWheel,
   startPan, panMove, panEnd,
 } = useMindCanvas(viewportRef)
 
@@ -318,6 +318,12 @@ function zoomAtCenterAndEmit(delta: number) {
   zoomAtCenter(delta)
   emitViewChange()
 }
+function resetScaleAtCenterAndEmit() {
+  const center = workspaceCenter()
+  // 只把倍率回到 1x：通过可见工作区中心缩放，那里对应的世界坐标不会移动。
+  zoomAt(center.x, center.y, 1)
+  emitViewChange()
+}
 function centerViewAndEmit() {
   centerView()
   emitViewChange()
@@ -338,7 +344,7 @@ function viewportCenter() {
   return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : { x: 0, y: 0 }
 }
 
-defineExpose({ camera, centerView: centerViewAndEmit, centerOn, screenToWorld, zoomAt, zoomAtCenter: zoomAtCenterAndEmit, viewportCenter })
+defineExpose({ camera, centerView: centerViewAndEmit, centerOn, screenToWorld, zoomAt, zoomAtCenter: zoomAtCenterAndEmit, resetScaleAtCenter: resetScaleAtCenterAndEmit, viewportCenter })
 
 onMounted(() => {
   updateViewportSize()

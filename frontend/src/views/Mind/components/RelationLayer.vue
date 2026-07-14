@@ -18,7 +18,7 @@
  * 点连线可以取消这条关系——建立关联走贴纸边缘的连接点拖拽（见 MindCanvas.vue），
  * 没有别的撤销入口，总得有个地方能删。
  */
-import { computed, onBeforeUnmount, reactive, watch, type PropType } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { itemSize, pickAnchorSide, type AnchorSide, type RelationAnchorSides } from '@/composables/useMindCanvas'
 
@@ -44,12 +44,12 @@ const props = defineProps({
   // 左右锚点是画布视图状态：卡片之后可以自由换位，已建立的关系也不该悄悄换到另一侧。
   relationAnchors: { type: Object as PropType<Record<string, RelationAnchorSides>>, default: () => ({}) },
   // 当前鼠标悬浮的贴纸 nodeId（见 MindCanvas.vue 的 onItemHover）——四种贴纸悬浮时都会用
-  // CSS transform 抬起 2px（.hover-card-fx），这是纯视觉层面的位移，SVG 连线不会自动知道，
-  // 得靠这个 prop 手动补偿对应端点，否则抬起来的卡片和还锚在旧位置的连线端点会错位一截。
+  // CSS transform 抬起 2px（.hover-card-fx）。这个变化本身不需要用来算端点位置（measuredAnchor
+  // 直接量真实 DOM，抬起多少不用关心），只用来知道"什么时候该在这 0.25s 过渡窗口里持续
+  // 重新量一遍"，见下面 pumpHoverFrames。
   hoveredNodeId: { type: Number as PropType<number | null>, default: null },
-  // 抬起量是屏幕像素（CSS translateY(-2px)），换算成世界坐标要除以画布当前缩放——.canvas-world
-  // 套了 scale(camera.scale)，1 个世界单位在屏幕上就是 camera.scale 个像素。
-  scale: { type: Number, default: 1 },
+  // 拖拽/落地飞行期间用来把「强制绑定」量出的真实屏幕坐标换算回世界坐标（见 anchorFor）。
+  screenToWorld: { type: Function as PropType<(clientX: number, clientY: number) => { x: number; y: number }>, default: null },
 })
 const emit = defineEmits<{ (e: 'remove', id: number): void }>()
 
@@ -90,57 +90,60 @@ const anchorSideCache = new Map<number, { srcSide: AnchorSide; dstSide: AnchorSi
 function geometry(item: MindCanvasItem) {
   return props.measuredSizes.get(item.nodeId) ?? itemSize(item)
 }
-// .hover-card-fx 抬起量固定 2px（见 global.css），世界坐标里的偏移量随缩放变化——缩得越小，
-// 同样 2 个屏幕像素对应的世界距离越大，除以 scale 才能让连线端点跟卡片实际抬起的像素量对上。
-const HOVER_LIFT_PX = 2
-// 卡片那 2px 是靠 CSS transition 缓出的（.hover-card-fx，0.25s cubic-bezier）,连线端点如果
-// 直接按 hoveredNodeId 是否等于自己两级跳（0 或 -2px），会在卡片还在慢慢抬升的那 0.25s 里
-// 瞬间跳到终点——用户反馈"hover 的时候线条没有动画跟随，而是瞬间变成了悬浮位置"。SVG 的
-// path d 属性本身没有能跟 CSS transition 对齐的插值机制，这里用一个轻量 rAF 循环把每个
-// nodeId 的抬起量自己缓出到目标值（不追求跟卡片那条 cubic-bezier 曲线数学上完全一致，
-// 一个 2px 的小幅度位移，观感"平滑跟随"就够了），命中目标或掉出悬浮状态就把它从表里摘掉、
-// 循环自动停，不会有画布一直闲置也在空转的 rAF。
-const liftAnim = reactive(new Map<number, number>())
-let liftRaf = 0
-let liftLastT: number | null = null
-function liftTargetFor(nodeId: number) {
-  return nodeId === props.hoveredNodeId ? -HOVER_LIFT_PX : 0
+// 悬停抬起（.hover-card-fx，2px CSS transition，0.25s）曾经靠一份手写 rAF 缓出（liftAnim/
+// liftFrame）去模拟同一条曲线、算出端点该在哪——measuredAnchor 现在直接量真实 DOM 位置，
+// 不用再算了。但 Vue 的 computed 只在响应式依赖变化时才重算，抬起这段 CSS 过渡期间
+// item.x/y 等数据本身并没有变化，没人告诉 visibleRelations "该重新量一次了"——所以还留一个
+// 轻量 rAF 心跳：hoveredNodeId 变化后的一小段时间内，每帧碰一下 renderTick 强制重新计算，
+// 让 measuredAnchor 能在这段窗口里逐帧读到 CSS 过渡途中的真实位置；窗口过了心跳自动停，
+// 不会有画布一直闲置也在空转的 rAF。
+const renderTick = ref(0)
+let hoverRaf = 0
+let hoverRafUntil = 0
+function pumpHoverFrames() {
+  renderTick.value++
+  hoverRaf = performance.now() < hoverRafUntil ? requestAnimationFrame(pumpHoverFrames) : 0
 }
-function liftFrame(now: number) {
-  const dt = liftLastT === null ? 1 / 60 : Math.min((now - liftLastT) / 1000, 1 / 20)
-  liftLastT = now
-  const rate = 1 - Math.exp(-dt / 0.06)   // 时间常数跟 .hover-card-fx 的 0.25s 大致对得上
-  let active = false
-  for (const [nodeId, cur] of [...liftAnim]) {
-    const target = liftTargetFor(nodeId)
-    if (Math.abs(target - cur) < 0.02) {
-      if (target === 0) liftAnim.delete(nodeId)
-      else liftAnim.set(nodeId, target)
-      continue
-    }
-    liftAnim.set(nodeId, cur + (target - cur) * rate)
-    active = true
-  }
-  liftRaf = active ? requestAnimationFrame(liftFrame) : 0
-  if (!active) liftLastT = null
-}
-watch(() => props.hoveredNodeId, (id) => {
-  if (id != null && !liftAnim.has(id)) liftAnim.set(id, 0)
-  if (!liftRaf) liftRaf = requestAnimationFrame(liftFrame)
+watch(() => props.hoveredNodeId, () => {
+  hoverRafUntil = performance.now() + 300   // 略盖过 0.25s 的过渡时长
+  if (!hoverRaf) hoverRaf = requestAnimationFrame(pumpHoverFrames)
 })
-onBeforeUnmount(() => { if (liftRaf) cancelAnimationFrame(liftRaf) })
-function hoverLift(item: MindCanvasItem) {
-  const px = liftAnim.get(item.nodeId) ?? (item.nodeId === props.hoveredNodeId ? 0 : 0)
-  return px / (props.scale || 1)
-}
+onBeforeUnmount(() => { if (hoverRaf) cancelAnimationFrame(hoverRaf) })
 function centerFor(item: MindCanvasItem) {
   const { w, h } = geometry(item)
-  return { x: item.x + w / 2, y: item.y + h / 2 + hoverLift(item) }
+  return { x: item.x + w / 2, y: item.y + h / 2 }
+}
+// 强制绑定：卡片拖拽/落地飞行途中会带一点 rotateZ 摆动（见 usePhysicsDrag.ts 的 frame()），
+// 但 onFollow 吐出来的只是不含旋转的纯几何中心，下面按轴对齐算出来的锚点在摆动瞬间会跟连接点
+// 实际渲染的位置错开（卡片越大、摆动角度越大，错得越明显）。宁可每帧多测一次量，也不去重建
+// 一份旋转矩阵——直接量 usePhysicsDrag.ts 唯一的那份连接点覆盖层（.phys-conn-dot-overlay，
+// 全程跟着克隆体走同一条物理轨迹，摆动也套在它身上）的真实屏幕位置，命中就是绝对准的。
+// 不能拿 landingPositions 的 pos 判断"是否在拖"——那份表只在松手后的惯性插值阶段才有条目，
+// 主动拖拽期间全程是 undefined（见 anchorFor 调用处注释），所以这里无条件尝试测量，量不到
+// （没有连接点覆盖层，即这张卡当下确实没有物理模块在拖它）才退回按轴对齐估算的旧算法。
+function measuredAnchor(item: MindCanvasItem, side: AnchorSide): { x: number; y: number } | null {
+  if (side !== 'left' && side !== 'right') return null
+  if (!props.screenToWorld) return null
+  // 先找拖拽/落地飞行专用的那份连接点覆盖层；没有（没在拖）就退而找卡片本体真实渲染的
+  // 连接点——静止态、悬停抬起态都在这条分支，本体的 DOM 位置本来就跟着宿主卡片的 CSS
+  // transform（含 .hover-card-fx 的 2px 抬起）走，直接量，不用另外算抬起量。
+  const dot = document.querySelector<HTMLElement>(`.phys-conn-dot-overlay[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
+    ?? document.querySelector<HTMLElement>(`.card-conn-dots[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
+  if (!dot) return null
+  const rect = dot.getBoundingClientRect()
+  if (rect.width < 1 || rect.height < 1) return null
+  return props.screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2)
 }
 function anchorFor(item: MindCanvasItem, side: AnchorSide, pos?: { x: number; y: number }) {
+  // 不能拿 pos（landingPositions）判断"是不是在拖"——那份表只在松手后的惯性插值阶段才有
+  // 这张卡的条目，主动拖拽期间卡片走的是直接改 item.x/y 的路径，pos 全程是 undefined。
+  // measuredAnchor 内部自己会判断查不查得到对应的连接点 DOM，这里无条件先试，测不到
+  // （没挂载/还没进 DOM 之类的边界情况）才落回按轴对齐估算的兜底公式。
+  const measured = measuredAnchor(item, side)
+  if (measured) return measured
   const { w, h } = geometry(item)
   const x = pos?.x ?? item.x
-  const y = (pos?.y ?? item.y) + hoverLift(item)
+  const y = pos?.y ?? item.y
   if (side === 'left') return { x, y: y + h / 2 }
   if (side === 'right') return { x: x + w, y: y + h / 2 }
   if (side === 'top') return { x: x + w / 2, y }
@@ -156,17 +159,20 @@ function resolveSides(relation: MindRelation, src: MindCanvasItem, dst: MindCanv
   return sides
 }
 
-const visibleRelations = computed(() => props.relations.flatMap((relation) => {
-  const src = itemByNodeId.value.get(relation.srcNodeId)
-  const dst = itemByNodeId.value.get(relation.dstNodeId)
-  if (!src || !dst) return []
-  const sides = resolveSides(relation, src, dst)
-  const from = anchorFor(src, sides.srcSide, props.landingPositions.get(src.nodeId))
-  const to = anchorFor(dst, sides.dstSide, props.landingPositions.get(dst.nodeId))
-  const highlighted = props.highlightNodeId != null
-    && (relation.srcNodeId === props.highlightNodeId || relation.dstNodeId === props.highlightNodeId)
-  return [{ id: relation.id, d: sidePath(from, sides.srcSide, to, sides.dstSide), highlighted }]
-}))
+const visibleRelations = computed(() => {
+  void renderTick.value   // 悬停抬起过渡期间的心跳依赖，见 pumpHoverFrames
+  return props.relations.flatMap((relation) => {
+    const src = itemByNodeId.value.get(relation.srcNodeId)
+    const dst = itemByNodeId.value.get(relation.dstNodeId)
+    if (!src || !dst) return []
+    const sides = resolveSides(relation, src, dst)
+    const from = anchorFor(src, sides.srcSide, props.landingPositions.get(src.nodeId))
+    const to = anchorFor(dst, sides.dstSide, props.landingPositions.get(dst.nodeId))
+    const highlighted = props.highlightNodeId != null
+      && (relation.srcNodeId === props.highlightNodeId || relation.dstNodeId === props.highlightNodeId)
+    return [{ id: relation.id, d: sidePath(from, sides.srcSide, to, sides.dstSide), highlighted }]
+  })
+})
 
 // 拖出连线时的预览线跟建好之后的实线走同一个 sidePath——之前预览线单独用一套"横向鼓包"的
 // 贝塞尔（curvePath，已删），跟落定的关系线（sidePath，端点顺着卡片边的法线方向探出再拐弯）
@@ -184,7 +190,8 @@ const draftPath = computed(() => {
 <style scoped>
 .relation-layer { position: absolute; left: -5000px; top: -5000px; width: 10000px; height: 10000px; overflow: visible; pointer-events: none; }
 .rel-group { pointer-events: auto; cursor: pointer; }
-.rel-hit { stroke: transparent; stroke-width: 16; }
+/* 判定扩展 10px：可见线 1.6px + 两侧各 10px = 21.6px。 */
+.rel-hit { stroke: transparent; stroke-width: 21.6; }
 /* 实线，不用装饰性的流动虚线动画——"实时运动"是指拖着贴纸走时线会跟手同步移动
    （见 MindCanvas.vue 的 onItemDragging），不是给静止的线本身加动效。 */
 .rel-visible { stroke: rgba(104, 111, 164, .35); stroke-width: 1.6; transition: stroke 0.18s ease, stroke-width 0.18s ease; }

@@ -703,8 +703,8 @@ const windowStyle = computed(() => {
   }
   return {
     top:    `${vh.value - 88 - smallH.value}px`,
-    left:   `${vw.value - 28 - SMALL_W}px`,
-    right:  '28px',
+    left:   `${vw.value - parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--floating-edge')) - SMALL_W}px`,
+    right:  'var(--floating-edge)',
     bottom: '88px',
     zIndex: chatZ.value,
   }
@@ -1815,7 +1815,7 @@ async function send(forcedText?: string) {
 <style scoped>
 /* ── 悬浮球 ── */
 .ai-fab {
-  position: fixed; bottom: 28px; right: 28px;
+  position: fixed; bottom: var(--floating-edge); right: var(--floating-edge);
   isolation: isolate; width: 50px; height: 50px; border-radius: 50%;
   background: linear-gradient(135deg, #7b7fb2, #9590c4); border: none;
   cursor: pointer;   /* z-index 由 :style 动态(fabZ)：默认在窗口带之上，大窗口展开时压到其下，见 script */

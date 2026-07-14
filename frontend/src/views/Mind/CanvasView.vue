@@ -158,7 +158,7 @@ function flushViewSave() {
   if (pending) store.saveCanvasView(pending.id, pending.view).catch(() => {})
 }
 function resetView() {
-  canvasRef.value?.centerView()
+  canvasRef.value?.resetScaleAtCenter()
 }
 onBeforeUnmount(flushViewSave)
 

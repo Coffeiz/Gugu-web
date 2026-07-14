@@ -251,31 +251,36 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .canvas-drawer {
-  position: absolute; top: 50%; right: 12px; z-index: 8; transform: translateY(-50%);
-  box-sizing: border-box; width: 36px; overflow: hidden;
-  /* 右侧抽屉是画布里的工具容器，和内部项目卡、活动贴纸共用普通 14px 圆角；
-     覆盖 glass-card 默认的 18px squircle，避免展开后外壳曲率突兀。 */
-  border-radius: var(--radius-md);
-  corner-shape: initial;
+  position: absolute; top: 50%; right: var(--floating-edge); z-index: 8; transform: translateY(-50%);
+  box-sizing: border-box; width: var(--canvas-toolbar-height); overflow: hidden;
+  /* 跟展开态用同一个 25px，收展全程圆角数值不变，只有宽度在动——不然收起态原来的
+     999px（窄边被强制箍成满圆）展开时会先经历一段「大圆滚成矩形」的形变感。 */
+  border-radius: 25px;
+  corner-shape: round;
   transition: width 0.38s cubic-bezier(.22,1,.36,1),
+              border-radius 0.38s cubic-bezier(.22,1,.36,1),
               background 0.25s ease, box-shadow 0.25s ease;
 }
-.canvas-drawer.open { width: 190px; }
+.canvas-drawer.open { width: 190px; border-radius: 25px; }
 .canvas-drawer.open.project-panel { width: 284px; }
 .cd-head {
   display: flex;
   align-items: center;
-  height: 40px;
+  height: var(--canvas-toolbar-height);
   flex-shrink: 0;
-  /* 收起时内容区从一行列表缩到 0、目录头从 34px 变两枚入口的 68px；高度必须同样
-     插值，不能让头部先瞬跳 34px 再等内容区收合。 */
+  /* 收起时内容区从一行列表缩到 0、目录头从单枚入口变两枚入口；高度必须同样
+     插值，不能让头部先瞬跳再等内容区收合。 */
   transition: height .38s cubic-bezier(.22,1,.36,1);
 }
-.cd-expanded-nav { display: flex; align-items: center; width: 100%; box-sizing: border-box; padding-left: 9px; }
-.cd-compact-nav { display: flex; flex-direction: column; align-items: center; }
-.cd-toggle { flex-shrink: 0; width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border: 0; background: none; color: var(--text-secondary); cursor: pointer; }
-.cd-toggle:hover, .cd-toggle.active { color: var(--color-primary); }
-.canvas-drawer:not(.open) .cd-head { height: 80px; flex-direction: column; }
+/* 顶栏行高固定 50px（--canvas-toolbar-height），flex 竖直居中天然让内容的几何中心落在
+   距顶 25px——跟圆角半径（.canvas-drawer.open 的 25px）相同，横向也照这个数走：标题
+   左边距、返回按钮的几何中心（padding-right 7px + 自身宽 36px 的一半 18px = 25px）
+   都钉在离边缘 25px，三边统一对齐同一个「圆角中心」，不再各自取不同的数。 */
+.cd-expanded-nav { display: flex; align-items: center; width: 100%; box-sizing: border-box; padding: 0 7px 0 25px; }
+.cd-compact-nav { display: flex; flex-direction: column; align-items: center; justify-content: space-evenly; width: 100%; height: 100%; }
+.cd-toggle { flex-shrink: 0; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; background: none; color: var(--text-secondary); cursor: pointer; transition: background .18s ease, color .18s ease; }
+.cd-toggle:hover, .cd-toggle.active { background: rgba(123,127,178,.11); color: var(--color-primary); }
+.canvas-drawer:not(.open) .cd-head { height: calc(var(--canvas-toolbar-height) * 2); flex-direction: column; }
 .canvas-drawer:not(.open) .cd-title { display: none; }
 .cd-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--text-secondary); font-size: 13px; font-weight: 700; opacity: 0; transition: opacity .15s ease; }
 .canvas-drawer.open .cd-title { opacity: 1; transition-delay: .08s; }

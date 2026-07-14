@@ -26,7 +26,7 @@
     </CardActions>
     <CardConnDot
       v-if="!isTombstone"
-      :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
+      :node-id="item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
       @drag-start="(e, side) => emit('connectDragStart', e, side)"
     />
   </article>

@@ -458,6 +458,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       sourceStyle.borderBottomWidth,
       sourceStyle.borderLeftWidth,
     ].join(' ')
+    // 标记类：全程唯一的连接点覆盖层，套着跟 holder 一致的 rotateZ 摆动。RelationLayer.vue
+    // 拖拽/落地飞行期间靠 .phys-conn-dot-overlay[data-node-id] 精确量出它的真实屏幕位置
+    // （见其 measuredAnchor），不用另建一份旋转矩阵去猜锚点该在哪。
+    connectionDotOverlay.classList.add('phys-conn-dot-overlay')
   }
   // 右上操作区也不能跟两张内容克隆交叉淡变：落地 clone2 会在半程盖住旧 clone，按钮随它
   // 淡出后再由本体补出来，就会像「突然跳出」一样。跟连接点同理，整段拖放只保留这一份
@@ -768,10 +772,24 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     const sel = idAttr ? `[${idAttr[0]}="${idAttr[1]}"]` : null
 
     let done = false; let onEnd: (e: TransitionEvent) => void = () => {}
-    const restoreSourcePlaceholder = () => {
+    // 只摘占位样式（class + display），不碰 opacity——配合 flyMorph/flyTo 里紧跟着执行的
+    // _revealWithoutStaleHover 用：那个函数自己会在"先压住 hover 判定、再放开 opacity"
+    // 这个正确顺序里把 opacity 复位。如果这里也顺手把 opacity 一起复位了，opacity 会在
+    // 压制类还没加上之前就变化，且现在这个属性又挂了 CSS transition（渐变淡出那次改的），
+    // 于是这段揭示会在没有压制的窗口期里播一段"正常揭示"过渡——鼠标压在原地时 hover 判定
+    // 没被按住，卡片会立刻弹起来，等于绕开了 _revealWithoutStaleHover 本该挡住的那层保护。
+    const restoreSourcePlaceholderStyle = () => {
       if (!opts.keepSourcePlaceholder) return
       sourceEl.classList.remove('phys-drag-source-placeholder')
       sourceEl.style.display = ''
+    }
+    // 完整版：摘样式 + 复位 opacity，给没有配套 _revealWithoutStaleHover（同一个元素）的
+    // 调用点用——目前只有"外部落点成功、抽屉源卡不是落点本体"那条分支（见 resolveLandingTarget
+    // 里的用法），那里就是要让抽屉卡直接用自己的 CSS 短淡入复原，不需要也没有额外的
+    // hover 压制流程。
+    const restoreSourcePlaceholder = () => {
+      restoreSourcePlaceholderStyle()
+      if (!opts.keepSourcePlaceholder) return
       sourceEl.style.opacity = ''
     }
 
@@ -802,8 +820,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         unregister()
         holder.removeEventListener('transitionend', onEnd)
         holder.remove()
-        if (revealEl) _revealWithoutStaleHover(revealEl, pointer)
+        // 先摘占位 class 再揭示：同 flyMorph 里 finish()/forceCleanup 的道理，避免揭示瞬间
+        // 先闪一下虚线描边、再过渡回实线的中间态被看见。
         restoreSourcePlaceholder()
+        if (revealEl) _revealWithoutStaleHover(revealEl, pointer)
       }
       unregister = _registerCleanup(sourceEl, finish)
       onEnd = finish
@@ -869,7 +889,14 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
               ? clone2Rect
               : holder.getBoundingClientRect()
             opts.onRegrabStart?.()
-            if (opts.delegateLandingRegrab) {
+            // 转手只在落点是「另一个真实本体」（比如画布上刚接手的 ProjectRefCard，自己
+            // 挂了 physics-landing-regrab 监听）时才有意义；revealEl === sourceEl 说明这趟
+            // 飞行是"飞回自己原位"（比如抽屉卡往回放），根本没有别的组件会接这个事件——
+            // dispatchEvent 会静默扔进没人接的地方，defaultPrevented 恒为 false，代码会误判
+            // "转手失败"落进下面的默认分支，把 keepSourcePlaceholder 强制摁成 false（那段
+            // 注释的前提"落地卡已经是真实本体"在这里不成立，目标其实还是同一张抽屉卡自己），
+            // 复现的就是 display:none 元素测量全 0、卡片消失那个坑。干脆不发这次转手事件。
+            if (opts.delegateLandingRegrab && revealEl !== sourceEl) {
               const handoff = new CustomEvent('physics-landing-regrab', {
                 bubbles: false,
                 cancelable: true,
@@ -883,8 +910,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             startPhysicsDrag(moveEvent, revealEl, {
               ...opts,
               // 外部素材源才需要保留占位；落地卡已经是画布/看板里的真实本体，接力抓起时
-              // 必须回到正常的隐藏 + FLIP 语义，不能在画布上留下第二张半透明卡。
-              keepSourcePlaceholder: false,
+              // 必须回到正常的隐藏 + FLIP 语义，不能在画布上留下第二张半透明卡。但
+              // revealEl === sourceEl（飞回自己原位被重新抓起）时目标还是原来那张源卡，
+              // 该按 opts 原本的 keepSourcePlaceholder 继续，不能一刀切摁成 false。
+              keepSourcePlaceholder: revealEl === sourceEl ? opts.keepSourcePlaceholder : false,
               initialRect: visualRect,
               initialHover: true,
               isLandingRegrab: true,
@@ -1115,8 +1144,13 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         clone2.style.transform = `translate(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px)`
         requestAnimationFrame(() => {
           holder.remove(); clone2.remove(); camGlue?.remove()
-          _revealWithoutStaleHover(revealEl, pointer, undefined, landingHovered)
+          // onReveal（比如 restoreSourcePlaceholder）要先于揭示执行：它会摘掉占位态的
+          // class（虚线描边），如果等 _revealWithoutStaleHover 先把本体变回可见，摘 class
+          // 那一刻本体已经看得见，class 一摘、border-color 的过渡就会从「可见的虚线」平滑
+          // 转场到「实线」，观感是刚落地那一下先闪一次虚线描边再变回正常。先摘 class 再揭示，
+          // 揭示出来的就已经是最终样子，不会有这个中间态被看见。
           onReveal?.()
+          _revealWithoutStaleHover(revealEl, pointer, undefined, landingHovered)
         })
       }
       // 被同一张卡的新拖拽强制打断时用（按 revealEl 记账，见 _registerCleanup——只有再次抓的
@@ -1134,8 +1168,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
         holder.remove(); clone2.remove(); camGlue?.remove()
-        _revealWithoutStaleHover(revealEl, pointer, undefined, landingHovered)
+        // 顺序同上面 finish() 里的说明：先摘占位 class 再揭示，避免刚落地那一下先闪出
+        // 虚线描边、再过渡回实线的中间态被看见。
         onReveal?.()
+        _revealWithoutStaleHover(revealEl, pointer, undefined, landingHovered)
       }
       unregister = _registerCleanup(revealEl, forceCleanup)
       // clone2 的 opacity 只用来交叉淡变，420ms 就会结束；不能把它当落地完成，
@@ -1241,7 +1277,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         c.classList.add('phys-landing-content')
         // el 已作为真实落点被 .phys-drag-source 隐藏；cloneNode 会把这个类一并带来，
         // 其 opacity:0 !important 会让克隆 2 整段飞行不可见，收尾时真实卡才突然出现。
-        c.classList.remove('phys-drag-source', 'phys-reveal-controls')
+        // phys-drag-source-placeholder 同理要摘：el 自己这份占位 class 故意留到揭示那一刻
+        // 才摘掉（虚线描边全程不提前变样，见 landOnAbsorbTarget 的注释），但克隆 2 飞行时
+        // 展示的应该始终是"真实卡片长什么样"，不能继承这份占位态，否则飞进来的是个空框。
+        c.classList.remove('phys-drag-source', 'phys-reveal-controls', 'phys-drag-source-placeholder')
         copyInheritedTextStyle(el, c)
         c.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
         // 操作区由 holder 内唯一的 cardActionOverlay 承担可见性；这里留隐藏副本维持标题行布局。
@@ -1280,11 +1319,14 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
               return
             }
             const targetEl = resolved ?? absorbTarget!
-            // 外部抽屉卡“放回原位”时，目标就是源占位本身。先在不可见状态摘掉占位样式，
-            // clone2 才会带着完整内容飞回；否则会复制到那份透明的占位壳，收尾才突然出现。
+            // 外部抽屉卡"放回原位"时，目标就是源占位本身，先压住 opacity 不让它在这一刻
+            // 露出来。占位样式（虚线描边）故意留到最后才摘——不在这里提前 classList.remove：
+            // 摘早了 _cloneLanding(targetEl) 会把"已经变回本体"的样子克隆进 clone2，飞行
+            // 全程看到的就是虚线卡淡出的同时又在变回实卡，两个变化叠在一起很别扭。占位
+            // 样式统一交给 restoreSourcePlaceholder（收尾揭示那一刻才调用）来摘，虚线描边
+            // 从头到尾保持原样，只在最后揭示本体的瞬间才切换过去。
             if (targetEl === sourceEl && opts.keepSourcePlaceholder) {
               targetEl.style.opacity = '0'
-              targetEl.classList.remove('phys-drag-source-placeholder')
             }
             const box = revealInScroller(_scrollParent(targetEl), targetEl.getBoundingClientRect())
             // 抽屉来源回到自身时也复用双克隆，完成从画布缩放尺寸回到抽屉实体尺寸的交接。
@@ -1296,7 +1338,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
               box,
               targetEl,
               _cloneLanding(targetEl),
-              restoreSourcePlaceholder,
+              restoreSourcePlaceholderStyle,
               targetEl !== sourceEl,
               targetEl === sourceEl,
             )
@@ -1314,7 +1356,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           sourceEl.style.opacity = '0'
           const sc = _scrollParent(sourceEl)
           const box = revealInScroller(sc, sourceEl.getBoundingClientRect())
-          flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholder)
+          flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
           return
         }
         // 已收合 → 先占位 FLIP 重新展开源卡（列恢复溢出），再算滚动容器，否则收合时列不溢出 → 取不到 sc
@@ -1324,10 +1366,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         if (sc && _savedScrollTop.has(sc)) {
           sc.scrollTop = _savedScrollTop.get(sc)
           const box = revealInScroller(sc, sourceEl.getBoundingClientRect())
-          flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholder)
+          flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
         } else {
           const box = revealInScroller(sc, box0)
-          flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholder)
+          flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
         }
       }
 

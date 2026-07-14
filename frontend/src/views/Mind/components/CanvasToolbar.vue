@@ -71,13 +71,13 @@ function refTypeLabel(type: CanvasRefItem['type']) {
    不是整个浏览器视口的中点——跟笔记页捕捉条（活在侧栏右侧的正常文档流里，天然只在
    可见区域居中）对齐到同一条竖直线上。bottom:28px 与笔记页捕捉条 .rec-capture 一致。 */
 .canvas-toolbar-wrap {
-  position: absolute; left: calc(50% + var(--sidebar-width) / 2); bottom: 28px; z-index: 8;
+  position: absolute; left: calc(50% + var(--sidebar-width) / 2); bottom: var(--floating-edge); z-index: 8;
   transform: translateX(-50%);
 }
 /* 真正的药丸：corner-shape 显式覆盖成 round——.glass-card 全局默认是 squircle（连续曲率），
    在这种高度矮、圆角占满整条边的胶囊上，squircle 的数学反而把两端"挤"成圆角矩形，不是纯圆头。 */
-.canvas-toolbar { position: relative; display: flex; align-items: center; height: 42px; padding: 0 7px; border-radius: 999px; corner-shape: round; }
-.canvas-toolbar button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 0; border-radius: 999px; background: none; color: var(--text-secondary); cursor: pointer; }
+.canvas-toolbar { position: relative; display: flex; align-items: center; height: var(--canvas-toolbar-height); padding: 0 7px; border-radius: 999px; corner-shape: round; }
+.canvas-toolbar button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 0; border-radius: 999px; background: none; color: var(--text-secondary); cursor: pointer; }
 .canvas-toolbar button:hover { color: var(--color-primary); background: rgba(123,127,178,.11); }
 .canvas-toolbar button.active { background: rgba(123,127,178,.15); color: var(--color-primary); }
 .canvas-toolbar .zoom-label { width: 45px; font-size: 11px; font-weight: 700; }

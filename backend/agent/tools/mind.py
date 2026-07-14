@@ -14,6 +14,31 @@ from agent.tools.base import BaseSkill, Tool
 _MAX_RESULTS = 10
 _PREVIEW_LENGTH = 240
 
+# blocks 字段的 JSON Schema 只声明了 type:array，没有嵌套结构（8 种块类型 + 行内内容两层
+# 各自的字段名/形状用 JSON Schema 表达要么写成很深的 oneOf、要么根本表达不出"数组的数组"
+# 这种形状，性价比不高）——模型唯一能拿到结构信息的地方就是这段 description 文字，之前
+# 只写了一句"受限内容块数组"，没有任何字段名/例子，咕咕只能瞎猜，几乎每次都传错（比如直接
+# 塞纯文本字符串数组，而不是 {"type":"paragraph","content":[...]} 这种对象），见
+# serialize_mind_blocks 报的"每个内容块必须是对象"。这里把 app/core/mind_content.py 实际
+# 校验的完整形状搬进 description，给足字段名和一个可直接照抄结构的例子。
+_BLOCKS_SCHEMA_HELP = (
+    "blocks 是对象数组，每个对象的 type 字段只能是以下 8 种之一（其余字段按 type 各不相同）：\n"
+    '- {"type":"paragraph","content":[行内...]}\n'
+    '- {"type":"heading","content":[行内...]}（渲染成标题）\n'
+    '- {"type":"bullet_list","items":[[行内...],[行内...]]}（items 是"每一项一组行内数组"的数组，不是行内数组本身）\n'
+    '- {"type":"ordered_list","items":[[行内...],[行内...]]}（结构同 bullet_list，渲染成数字序号）\n'
+    '- {"type":"task_list","items":[{"checked":false,"content":[行内...]}]}（每项必须带 checked 布尔值）\n'
+    '- {"type":"blockquote","paragraphs":[[行内...],[行内...]]}（paragraphs 是"每段一组行内数组"的数组）\n'
+    '- {"type":"code_block","code":"...","language":"python"}（language 可省略，普通字符串，不能含反引号）\n'
+    '- {"type":"horizontal_rule"}（没有其它字段）\n'
+    "「行内」是数组，每个元素是：\n"
+    '- 文本：{"type":"text","text":"...","marks":[{"type":"bold"}]}（marks 可省略；可选 bold/italic/strike/code/link，link 要带 {"type":"link","href":"https://..."}）\n'
+    '- 引用：{"type":"reference","ref_type":"project"|"file"|"event","ref_id":123,"label":"显示名"}\n'
+    "示例（一段话 + 一条待办）：\n"
+    '[{"type":"paragraph","content":[{"type":"text","text":"今天开会讨论了预算"}]},'
+    '{"type":"task_list","items":[{"checked":false,"content":[{"type":"text","text":"周五前提交方案"}]}]}]'
+)
+
 
 def _node_summary(node: MindNode) -> dict:
     """返回适合列表召回的节点摘要，不把整篇笔记塞进搜索结果。"""
@@ -318,7 +343,7 @@ class MindSkill(BaseSkill):
                 "properties": {
                     "title": {"type": "string", "description": "可选标题"},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None], "description": "可选；null 为默认纸色，其余值必须选现有色板"},
-                    "blocks": {"type": "array", "description": "受限内容块数组；不得传任意 Markdown 或 HTML"},
+                    "blocks": {"type": "array", "description": f"受限内容块数组；不得传任意 Markdown 或 HTML。{_BLOCKS_SCHEMA_HELP}"},
                     "captured_at": {"type": "string", "description": "可选，带时区的 ISO 8601 时间；只能是现在或过去"},
                 },
                 "required": ["blocks"],
@@ -336,8 +361,8 @@ class MindSkill(BaseSkill):
                     "version": {"type": "integer", "description": "来自读取结果的当前版本"},
                     "title": {"type": ["string", "null"], "description": "标题；null 清空标题"},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None], "description": "五种卡片颜色之一；null 恢复默认纸色"},
-                    "blocks": {"type": "array", "description": "整篇替换的受限内容块；不能与 append_blocks 同时传"},
-                    "append_blocks": {"type": "array", "description": "追加到笔记末尾的受限内容块；不能与 blocks 同时传"},
+                    "blocks": {"type": "array", "description": f"整篇替换的受限内容块；不能与 append_blocks 同时传。{_BLOCKS_SCHEMA_HELP}"},
+                    "append_blocks": {"type": "array", "description": f"追加到笔记末尾的受限内容块；不能与 blocks 同时传。结构同 blocks，见其说明。{_BLOCKS_SCHEMA_HELP}"},
                     "captured_at": {"type": "string", "description": "带时区的 ISO 8601 时间；只能是现在或过去"},
                 },
                 "required": ["node_id", "version"],

@@ -26,7 +26,7 @@
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </CardActions>
     <CardConnDot
-      :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
+      :node-id="props.item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
       @drag-start="(e, side) => emit('connectDragStart', e, side)"
     />
   </FileCard>
@@ -60,7 +60,7 @@
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </CardActions>
     <CardConnDot
-      :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
+      :node-id="props.item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
       @drag-start="(e, side) => emit('connectDragStart', e, side)"
     />
   </FileCard>
@@ -76,7 +76,7 @@
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </CardActions>
     <CardConnDot
-      :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
+      :node-id="props.item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
       @drag-start="(e, side) => emit('connectDragStart', e, side)"
     />
   </div>

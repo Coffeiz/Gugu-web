@@ -883,7 +883,7 @@ async function onDelete(note: MindNote) {
 /* 捕捉条：停靠底部、在内容区水平居中（与胶囊/滑杆对齐）。
    bottom:28 与胶囊顶 28（fullBleed padding-top）等距，跟咕咕悬浮球 bottom:28 齐平 */
 .rec-capture {
-  position: absolute; bottom: 28px; left: 0; right: 0;
+  position: absolute; bottom: var(--floating-edge); left: 0; right: 0;
   margin: 0 auto;
   width: min(100% - 24px, 680px);
   /* 深度效果给居中列写的 zIndex 最高到 100（NoteTimeline columnStyle），捕捉条必须盖过它 */
