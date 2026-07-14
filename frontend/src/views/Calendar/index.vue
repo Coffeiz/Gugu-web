@@ -17,10 +17,11 @@
         </button>
       </div>
       <div class="toolbar-right">
-        <div class="view-toggle">
+        <SegmentedControl class="view-toggle" :active-index="viewMode === 'month' ? 0 : 1"
+                          style="--pill-radius: 7px">
           <button :class="{ on: viewMode === 'month' }" @click="setView('month')">月</button>
           <button :class="{ on: viewMode === 'week' }" @click="setView('week')">周</button>
-        </div>
+        </SegmentedControl>
         <button class="today-btn" @click="goToday">今天</button>
       </div>
     </div>
@@ -441,6 +442,7 @@ import { eventsApi, scheduledTasksApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
 import GlassBg from '@/components/common/GlassBg.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
 import { showAppError, showAppNotice } from '@/composables/useAppToast'
@@ -2446,9 +2448,9 @@ async function saveEvent() {
 }
 /* ───────── 周视图（时间轴）───────── */
 .toolbar-right { display: flex; align-items: center; gap: 8px; }
-.view-toggle { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: rgba(123,127,178,0.1); }
-.view-toggle button { border: none; background: none; padding: 4px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.15s; }
-.view-toggle button.on { background: #fff; color: #5a5e86; box-shadow: 0 1px 4px rgba(60,70,100,0.12); }
+.view-toggle { gap: 2px; padding: 2px; border-radius: 9px; background: rgba(123,127,178,0.1); }
+.view-toggle button { border: none; background: none; padding: 4px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: color 0.15s; }
+.view-toggle button.on { color: #5a5e86; }
 
 .week-view { display: flex; flex-direction: column; flex: 1; min-height: 0; user-select: none; -webkit-user-select: none; }
 .wv-gutter { width: 46px; flex: none; }

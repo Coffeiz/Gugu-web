@@ -4,7 +4,7 @@
          topbar 在本页被隐藏，全局搜索由筛选框补位——在思维面板里想找的是自己的便签。 -->
     <div class="mind-bar">
       <div class="mind-bar-side"></div>
-      <div class="mind-tabs">
+      <SegmentedControl class="mind-tabs" :active-index="isCanvas ? 1 : 0" style="--pill-radius: 999px">
         <RouterLink to="/mind/notes" class="mind-tab" :class="{ on: isNotes }">
           <PhNotePencil :size="16" weight="bold" />
           笔记
@@ -13,7 +13,7 @@
           <PhGraph :size="16" weight="bold" />
           画布
         </RouterLink>
-      </div>
+      </SegmentedControl>
       <div class="mind-bar-side right">
         <template v-if="isNotes">
           <DatePicker
@@ -49,6 +49,7 @@ import { PhGraph, PhMagnifyingGlass, PhNotePencil, PhX } from '@phosphor-icons/v
 import { useMindStore } from '@/stores/mind'
 import { localDayKey } from '@/utils/dateAttribution'
 import DatePicker from '@/components/common/DatePicker.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 
 const route = useRoute()
 const store = useMindStore()
@@ -110,7 +111,7 @@ watch(() => route.path, (path) => {
    （跟画布自己那套 CanvasToolbar/CanvasSidebar 的 .glass-card 语言统一），浮在内容上方的
    观感靠这份 blur + 阴影，不用额外挪动布局位置。 */
 .mind-tabs {
-  display: inline-flex; gap: 2px; padding: 2px;
+  gap: 2px; padding: 2px;
   border-radius: 999px;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
@@ -124,10 +125,10 @@ watch(() => route.path, (path) => {
   height: 36px; box-sizing: border-box; padding: 0 17px; border-radius: 999px;
   font-size: 13.5px; font-weight: 600; color: var(--text-secondary);
   text-decoration: none; cursor: pointer;
-  transition: all 0.15s;
+  transition: color 0.15s;
 }
 .mind-tab:hover { color: var(--color-primary); }
-.mind-tab.on { background: #fff; color: #5a5e86; box-shadow: 0 1px 4px rgba(60,70,100,0.12); }
+.mind-tab.on { color: #5a5e86; }
 
 .mind-filter {
   display: flex; align-items: center; gap: 6px;

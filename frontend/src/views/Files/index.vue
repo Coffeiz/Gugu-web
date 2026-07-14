@@ -65,14 +65,15 @@
         </button>
 
         <!-- 网格/列表切换 -->
-        <div v-if="currentType !== 'trash'" class="view-toggle">
+        <SegmentedControl v-if="currentType !== 'trash'" class="view-toggle" :active-index="viewMode === 'grid' ? 0 : 1"
+                          style="--pill-bg: rgba(255,255,255,0.85); --pill-radius: 6px">
           <button :class="{ on: viewMode === 'grid' }" @click="viewMode = 'grid'" title="网格视图">
             <PhSquaresFour :size="13" weight="bold" />
           </button>
           <button :class="{ on: viewMode === 'list' }" @click="viewMode = 'list'" title="列表视图">
             <PhList :size="13" weight="bold" />
           </button>
-        </div>
+        </SegmentedControl>
 
         <!-- 新建文件夹（个人层、项目层、文件夹层） -->
         <template v-if="currentType === 'personal' || currentType === 'project' || currentType === 'folder'">
@@ -676,6 +677,7 @@ import { filesApi, foldersApi, trashApi, uploadWithProgress } from '@/services/a
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileCard       from '@/components/common/FileCard.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
@@ -2028,7 +2030,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .paste-btn svg { display: block; }
 
 .view-toggle {
-  display: flex; background: rgba(0,0,0,0.05);
+  background: rgba(0,0,0,0.05);
   border-radius: 8px; padding: 2px; gap: 2px;
   flex-shrink: 0;   /* 工具栏拥挤时不被挤压，否则按钮/带 viewBox 的 SVG 会缩成 2~3px（首屏/久置后布局最紧时最明显）*/
 }
@@ -2036,14 +2038,11 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   width: 28px; height: 28px; border-radius: 6px; border: none;
   background: none; cursor: pointer; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+  transition: color 0.15s;
   flex-shrink: 0;
 }
 .view-toggle button svg { flex-shrink: 0; }
-.view-toggle button.on {
-  background: rgba(255,255,255,0.85); color: var(--color-primary);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
+.view-toggle button.on { color: var(--color-primary); }
 
 /* 新建文件夹 */
 .new-folder-btn {
