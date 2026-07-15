@@ -692,10 +692,9 @@ import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/service
 import { thumbLoadedIds, clearThumbCache } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt as isPmImageExt, fileExtCategory, fileIconColor } from '@/utils/fileTypes'
-import { splitName } from '@/utils/fileParse'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
-import { readDroppedEntries, filesToItems, uploadFilesWithFolders } from '@/composables/useFileUpload'
+import { readDroppedEntries, filesToItems } from '@/composables/useFileUpload'
 import { useBoxSelection } from '@/composables/useBoxSelection'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { fireHint } from '@/composables/useOnboarding'
@@ -729,7 +728,7 @@ import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileContextMenu } from '@/composables/files/useFileContextMenu'
-import { prepareUploadBatch } from '@/composables/files/useFileUploadController'
+import { executeUploadLifecycle, prepareUploadBatch } from '@/composables/files/useFileUploadController'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
@@ -1712,7 +1711,7 @@ function commitStageDrag() {
 const { uploadingItems, createGhost, updateGhostProgress, removeGhost, failGhost, createFolderGhost, bumpFolderGhost } = useUploadQueue()
 
 // items: UploadItem[]（{file, relativePath}）——relativePath 带 "/" 时来自拖入的文件夹，
-// 由 uploadFilesWithFolders 按路径建好子文件夹再落到各自正确的 folder_id。
+// 由通用上传生命周期按路径建好子文件夹再落到各自正确的 folder_id。
 const conflictDialogRef = ref<{ show: (list: ConflictItem[]) => Promise<Map<string, ConflictDecision>> } | null>(null)
 
 async function uploadFiles(items: UploadItem[]) {
@@ -1731,72 +1730,49 @@ async function uploadFiles(items: UploadItem[]) {
   const decisions = prepared.decisions
   if (!items.length) return
 
-  // 按顶层文件夹分组：relativePath 带 "/" 的文件汇总进「文件夹名 · 完成数/总数」一张卡，
-  // 不用每个文件各出一张（大部分还落在当前看不见的子文件夹里）
-  const folderGhosts = new Map<string, ReturnType<typeof createFolderGhost> | null>()
-  for (const group of prepared.folderGroups) {
-    folderGhosts.set(group.name, createFolderGhost(group.name, group.total))
-  }
-  // 顶层文件夹（正被 ghost 追踪进度的那几个）先别实时插进可见列表——插了会跟它的 ghost 卡
-  // 同时出现，看起来像「两个文件夹」。攒着，等这组文件全传完（ghost 即将消失那一刻）再插入，
-  // 从「上传中」无缝换成「已完成」。更深层的子文件夹本来就不在当前视图里，直接插不会重复。
   const pendingTopFolders = new Map<string, FolderMeta>()
-
-  await uploadFilesWithFolders(items, {
-    projectId: props.project.id, baseFolderId,
-    onFolderCreated: (created) => {
-      // 顶层被 ghost 追踪的文件夹（正在当前层显示上传进度）：先攒着，等 ghost 完成再加进 store，
-      // 避免卡片跟 ghost 同屏像「两个文件夹」。其余（更深层，当前层看不到）直接加进 store。
-      if (folderGhosts.has(created.name) && (created.parentId ?? null) === baseFolderId) {
-        pendingTopFolders.set(created.name, created as FolderMeta)
-        return
-      }
-      fileCacheStore.addFolder(created)
+  await executeUploadLifecycle(items, {
+    projectId: props.project.id,
+    baseFolderId,
+    folderGroups: prepared.folderGroups,
+    decisions,
+    createGhost,
+    updateGhostProgress,
+    removeGhost,
+    failGhost,
+    createFolderGhost,
+    bumpFolderGhost,
+    onFolderCreated: (created, isTopLevel) => {
+      if (isTopLevel) pendingTopFolders.set(created.name, created as FolderMeta)
+      else fileCacheStore.addFolder(created)
     },
-    uploadOne: async (file, resolvedFolderId, relativePath) => {
-      const top = relativePath.includes('/') ? relativePath.slice(0, relativePath.indexOf('/')) : null
-      const folderGhost = top ? folderGhosts.get(top) : null
-      const { base: ghostBase, ext: ghostExt } = splitName(file.name)
-      const ghost = folderGhost ? null : createGhost(ghostBase, ghostExt.toUpperCase())
-      // 这组文件全处理完（不管成功失败）就把攒着的真实文件夹插进可见列表——成功/失败两条
-      // 路径都要走，否则「文件夹最后一个文件恰好失败」时永远插不进去
-      const settleFolder = (failed: boolean) => {
-        if (!folderGhost) return
-        bumpFolderGhost(folderGhost, failed)
-        if ((folderGhost.done ?? 0) >= (folderGhost.total ?? 0) && top != null && pendingTopFolders.has(top)) {
-          fileCacheStore.addFolder(pendingTopFolders.get(top)!)   // ghost 完成，真实文件夹加进 store 换上卡片
-          pendingTopFolders.delete(top)
-        }
-      }
-      try {
-        const form = new FormData()
-        form.append('file', file)
-        form.append('space', 'project')
-        form.append('project_id', String(props.project!.id))
-        if (resolvedFolderId) form.append('folder_id', String(resolvedFolderId))
-        const decision = decisions.get(relativePath)
-        const overwriteId = decision?.action === 'overwrite' ? decision.existingFileId : null
-        if (overwriteId) {
-          form.append('on_conflict', 'overwrite')
-          form.append('overwrite_file_id', String(overwriteId))
-        }
-        const created = await uploadWithProgress('/files', form, p => { if (ghost) updateGhostProgress(ghost, p) })
-        if (ghost) removeGhost(ghost)
-        else settleFolder(false)
-
-        if (overwriteId) {
-          // 覆盖：同一个文件 id 换了内容，更新 store 里已有那条，不再插新的；旧缩略图缓存清掉。
-          if (created) fileCacheStore.updateFile(overwriteId, created)
-          clearThumbCache(overwriteId)
-        } else {
-          if (created) fileCacheStore.addFile(created)   // 视图（currentFiles）与文件夹计数自动更新
-        }
-      } catch (e) {
-        console.error('[ProjectModal] 上传失败:', errMsg(e))
-        if (ghost) failGhost(ghost)
-        else settleFolder(true)
+    onTopFolderReady: name => {
+      const folder = pendingTopFolders.get(name)
+      if (folder) {
+        fileCacheStore.addFolder(folder)
+        pendingTopFolders.delete(name)
       }
     },
+    uploadOne: async (file, resolvedFolderId, relativePath, decision, onProgress) => {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('space', 'project')
+      form.append('project_id', String(props.project!.id))
+      if (resolvedFolderId) form.append('folder_id', String(resolvedFolderId))
+      const overwriteId = decision?.action === 'overwrite' ? decision.existingFileId : null
+      if (overwriteId) {
+        form.append('on_conflict', 'overwrite')
+        form.append('overwrite_file_id', String(overwriteId))
+      }
+      const created = await uploadWithProgress('/files', form, onProgress)
+      if (overwriteId) {
+        if (created) fileCacheStore.updateFile(overwriteId, created)
+        clearThumbCache(overwriteId)
+      } else if (created) {
+        fileCacheStore.addFile(created)
+      }
+    },
+    onUploadError: e => console.error('[ProjectModal] 上传失败:', errMsg(e)),
   })
   // Tier 3：文件/文件夹都已随上传逐个进 store，视图与计数自动准确，无需再整层重拉校准。
 }
