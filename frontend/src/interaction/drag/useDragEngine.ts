@@ -14,6 +14,7 @@ import { integrateSpring } from './core/physics'
 import { dispatchDragHandoff } from './interaction/handoff'
 import { startThresholdDrag, ThresholdDragOpts } from './interaction/threshold'
 import { cloneForDrag } from './visual/clone'
+import { resolveLandingZIndex } from './visual/layer'
 
 // 拖拽物理可选项（startPhysicsDrag / startMultiPhysicsDrag 共用）
 export interface PhysicsDragOpts {
@@ -305,19 +306,6 @@ const _SETTLE = 'cubic-bezier(0.22, 1, 0.36, 1)'
 // static 且 z-index 是数字，如 BaseModal 的 .bm-center），落地 z 就取它的 z-index+10（+10
 // 留出余量，避免同一浮窗里同时有多张卡片在飞、彼此相互覆盖判定不稳）；找不到就说明卡片
 // 本来就在普通页面里，退回原来的 2。
-function _landingZIndex(el: HTMLElement | null): number {
-  let node = el
-  while (node && node !== document.body) {
-    const cs = getComputedStyle(node)
-    if (cs.position !== 'static' && cs.zIndex !== 'auto') {
-      const z = parseInt(cs.zIndex, 10)
-      if (!Number.isNaN(z)) return z + 10
-    }
-    node = node.parentElement
-  }
-  return 2
-}
-
 // FLIP：布局已经变到「现状(toRects)」后，让 kids 先回到 fromRects 再动画到现状
 function _invertPlay(kids: HTMLElement[], fromRects: DOMRect[], toRects: DOMRect[], dur = 340) {
   _retargetLandings(kids)   // 自行量干净落点，不吃这里可能被残留 transform 污染的 toRects
@@ -1257,7 +1245,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 摆着一份内联 z-index（item.z，随建卡数量单调递增，见 stickerStyle），探测很容易先摸到
     // 它而不是 .mind-canvas 本身，item.z 一旦长到超过侧栏的 20 又会飞回「压住导航」的老问题；
     // 直接钉死一个数，抓起和落地这两段飞行也不会因为走了两套不同算法而在交接时跳一下层级。
-    holder.style.zIndex = String(opts.dragZIndex ?? _landingZIndex(sourceEl))
+    holder.style.zIndex = String(opts.dragZIndex ?? resolveLandingZIndex(sourceEl))
     // 业务 drop + Vue 重渲染在微任务里已落定；本 rAF 在 paint 前做落点 FLIP，避免闪一下
     requestAnimationFrame(() => {
       if (!session.isCurrent()) return
@@ -1779,7 +1767,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
 
     // 松手即进入归位/落位飞行（见单选 end() 里同名注释 + _landingZIndex）：不再顶着压顶 z，
     // 改按卡片所在的层叠上下文动态取值，避免飞行路径盖住悬浮窗口、也避免被卡片自己所在的浮窗盖住
-    clone.style.zIndex = String(_landingZIndex(sourceEl))
+    clone.style.zIndex = String(resolveLandingZIndex(sourceEl))
     requestAnimationFrame(() => {
       // 吸入文件夹/面包屑：命中判定用原始指针位置（target.x/y），不用 dropX/dropY（克隆体视觉
       // 中心）——理由同单选版 end()，两者点位不一致会导致「悬停高亮了、一松手却没吸入」。
