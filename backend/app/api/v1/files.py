@@ -26,7 +26,7 @@ from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.trash import move_file_to_trash
 from app.services.files.response import color_value, to_file_response
 from app.services.files.browser import all_files_query, file_listing_query, storage_usage_query
-from app.services.files.upload import parse_upload_filename
+from app.services.files.upload import find_conflict, parse_upload_filename
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -128,18 +128,6 @@ def _delete_thumb_cache(fid: int) -> None:
                     p.unlink()
             except Exception:
                 pass
-
-
-async def _find_conflict(db: AsyncSession, user_id, space: str, project_id: Optional[int],
-                          folder_id: Optional[int], display_name: str, ext: str) -> Optional[File]:
-    """同一空间/项目/文件夹下，是否已经存在「同名 + 同扩展名」的未删除文件。"""
-    stmt = select(File).where(
-        File.user_id == user_id, File.deleted_at.is_(None),
-        File.space == space, File.display_name == display_name, File.ext == ext.upper(),
-    )
-    stmt = stmt.where(File.project_id == project_id) if project_id is not None else stmt.where(File.project_id.is_(None))
-    stmt = stmt.where(File.folder_id == folder_id) if folder_id is not None else stmt.where(File.folder_id.is_(None))
-    return (await db.execute(stmt)).scalars().first()
 
 
 # ── GET /files ────────────────────────────────────────────────────────────────
@@ -301,7 +289,7 @@ async def check_conflicts(
     out = []
     for item in body.items:
         display_name, ext = parse_upload_filename(item.filename)
-        existing = await _find_conflict(db, current_user.id, item.space, item.project_id, item.folder_id, display_name, ext)
+        existing = await find_conflict(db, current_user.id, item.space, item.project_id, item.folder_id, display_name, ext)
         out.append({
             "filename": item.filename,
             "conflict": existing is not None,
