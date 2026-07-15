@@ -946,17 +946,14 @@ function onPmFileClick(file: FileMeta, e: MouseEvent) {
     }
     return
   }
-  const ids = new Set(pmSelectedFileIds.value)
   if (e.ctrlKey || e.metaKey || pmInSelectionMode.value) {
     // 选中模式或 Ctrl/Cmd：toggle
     pmFileSelection.toggleFile(file.id)
     pmLastAnchorIndex.value = pmFlatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
     return
   } else {
-    if (ids.size === 1 && ids.has(file.id) && pmSelectedFolderIds.value.size === 0) ids.clear()
-    else { ids.clear(); pmSelectedFolderIds.value = new Set(); ids.add(file.id) }
+    pmFileSelection.toggleExclusiveFile(file.id)
   }
-  pmSelectedFileIds.value = ids
   pmLastAnchorIndex.value = pmFlatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
 }
 
@@ -969,9 +966,7 @@ function onPmFolderClick(folder: FolderMeta, e: MouseEvent) {
     return
   }
   if (e.ctrlKey || e.metaKey) {
-    const ids = new Set(pmSelectedFolderIds.value)
-    if (ids.has(folder.id)) ids.delete(folder.id); else ids.add(folder.id)
-    pmSelectedFolderIds.value = ids
+    pmFileSelection.toggleFolder(folder.id)
     pmLastAnchorIndex.value = pmFlatSelectableItems.value.findIndex(i => i.type === 'folder' && i.id === folder.id)
     return
   }

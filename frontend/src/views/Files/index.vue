@@ -1195,15 +1195,11 @@ function toggleSelectAllTrash() {
 }
 
 function toggleFileSelect(fileId: number, e: MouseEvent) {
-  const ids = new Set(selectedIds.value)
   if (e.ctrlKey || e.metaKey) {
-    if (ids.has(fileId)) ids.delete(fileId)
-    else ids.add(fileId)
+    fileSelection.toggleFile(fileId)
   } else {
-    if (ids.size === 1 && ids.has(fileId)) ids.clear()
-    else { ids.clear(); ids.add(fileId) }
+    fileSelection.toggleExclusiveFile(fileId)
   }
-  selectedIds.value = ids
 }
 
 function onPageClick() {
