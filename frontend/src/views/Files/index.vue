@@ -1642,7 +1642,7 @@ async function commitRename() {
     const oldName = cacheStore.getFile(fileId)?.displayName
     cacheStore.updateFile(fileId, { displayName: name })
     loadContents()
-    filesApi.update(fileId, { displayName: name }).catch(e => {
+    fileActions.renameFile(fileId, name).catch(e => {
       if (oldName != null) cacheStore.updateFile(fileId, { displayName: oldName })
       loadContents()
       console.error('[Files] 重命名失败:', (e as Error).message)
@@ -1654,7 +1654,7 @@ async function commitRename() {
     const version = oldFolder?.version ?? 1
     cacheStore.updateFolder(folderId, { name })
     loadContents()
-    foldersApi.rename(folderId, name, version).then(updated => {
+    fileActions.renameFolder(folderId, name, version).then(updated => {
       cacheStore.updateFolder(folderId, { version: updated.version })
     }).catch(e => {
       if (oldName != null) cacheStore.updateFolder(folderId, { name: oldName })
@@ -1700,7 +1700,7 @@ async function moveFoldersInto(folderIds: Array<number | string>, targetFolderId
     // 服务端当前值；对不上（并发改动）后端给 409，走 rollback + loadContents 拉回真实状态。
     work: async () => {
       results = await Promise.all(nFolderIds.map(id =>
-        foldersApi.move(id, nTarget, cacheStore.getFolder(id)?.version ?? 1, targetProjectId)))
+        fileActions.moveFolder(id, nTarget, cacheStore.getFolder(id)?.version ?? 1, targetProjectId)))
     },
     rollback: () => backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId })),
     onCommit: () => results.forEach(r => cacheStore.updateFolder(r.id, { version: r.version })),
@@ -1714,7 +1714,7 @@ async function moveFilesInto(fileIds: Array<number | string>, targetFolderId: nu
   await optimisticMutation({
     apply: () => nFileIds.forEach(id => cacheStore.updateFile(id, { folderId: nTarget })),
     afterMutate: loadContents,
-    work: () => Promise.all(nFileIds.map(id => filesApi.update(id, { folderId: nTarget }))),
+    work: () => Promise.all(nFileIds.map(id => fileActions.moveFile(id, nTarget))),
     rollback: () => backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId })),
     onError: err => console.error('[Files] 移动失败:', (err as Error).message),
   })
@@ -1773,7 +1773,7 @@ async function deleteFolder(f: FolderCard) {
   cacheStore.removeFolder(f.folderId)
   loadContents()
   try {
-    await foldersApi.delete(f.folderId)
+    await fileActions.deleteFolder(f.folderId)
     fetchStorage()
   } catch (e) {
     // 无法回滚（不知道子结构），静默刷新
@@ -1915,7 +1915,7 @@ async function ctxDelete() {
       selectedIds.value = new Set()
     },
     afterMutate: loadContents,
-    work: () => Promise.all(ids.map(id => filesApi.delete(id))),
+    work: () => Promise.all(ids.map(id => fileActions.deleteFile(id))),
     onCommit: fetchStorage,
     rollback: () => backups.forEach(f => cacheStore.addFile(f)),
     onError: e => console.error('[Files] 删除失败:', (e as Error).message),
@@ -1969,9 +1969,9 @@ async function ctxPaste() {
         afterMutate: loadContents,
         work: async () => {
           await Promise.all([
-            Promise.all(fileBackups.map(f => filesApi.update(f.id, { folderId, projectId }))),
+            Promise.all(fileBackups.map(f => fileActions.moveFile(f.id, folderId, projectId))),
             Promise.all(folderIds.map(id =>
-              foldersApi.move(id, folderId, folderBackups.find(b => b.id === id)?.version ?? 1, projectId)
+              fileActions.moveFolder(id, folderId, folderBackups.find(b => b.id === id)?.version ?? 1, projectId)
             )).then(r => { movedFolders = r }),
           ])
         },
@@ -1984,11 +1984,11 @@ async function ctxPaste() {
       })
     } else if (cbStore.type === 'copy') {
       const created = await Promise.all(cbStore.fileIds.map(id =>
-        filesApi.copy(id, { folderId, projectId })
+        fileActions.copyFile(id, folderId, projectId)
       ))
       created.forEach(f => cacheStore.addFile(f))
       const copiedFolders = await Promise.all(cbStore.folderIds.map(id =>
-        foldersApi.copy(id, folderId ?? null, projectId ?? null)
+        fileActions.copyFolder(id, folderId ?? null, projectId ?? null)
       ))
       copiedFolders.forEach(folder => cacheStore.addFolder({
         id: folder.id,

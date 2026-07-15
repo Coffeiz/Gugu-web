@@ -16,5 +16,48 @@ export function useFileActions() {
     return foldersApi.download(id, name)
   }
 
-  return { downloadFile, downloadFolder }
+  function renameFile(id: number, displayName: string) {
+    return filesApi.update(id, { displayName })
+  }
+
+  function renameFolder(id: number, name: string, version: number) {
+    return foldersApi.rename(id, name, version)
+  }
+
+  function deleteFile(id: number) {
+    return filesApi.delete(id)
+  }
+
+  function deleteFolder(id: number) {
+    return foldersApi.delete(id)
+  }
+
+  function moveFile(id: number, folderId: number | null, projectId: number | null = null) {
+    return filesApi.update(id, { folderId, projectId })
+  }
+
+  function moveFolder(id: number, parentId: number | null, version: number, projectId: number | null = null) {
+    return foldersApi.move(id, parentId, version, projectId)
+  }
+
+  function copyFile(id: number, folderId: number | null, projectId: number | null = null) {
+    return filesApi.copy(id, { folderId, projectId })
+  }
+
+  function copyFolder(id: number, parentId: number | null, projectId: number | null = null) {
+    return foldersApi.copy(id, parentId, projectId)
+  }
+
+  return {
+    downloadFile,
+    downloadFolder,
+    renameFile,
+    renameFolder,
+    deleteFile,
+    deleteFolder,
+    moveFile,
+    moveFolder,
+    copyFile,
+    copyFolder,
+  }
 }
