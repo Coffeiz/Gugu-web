@@ -168,7 +168,8 @@ import { computed, ref, nextTick, onUnmounted, useAttrs, type PropType } from 'v
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { startPhysicsDrag, startThresholdDrag, type PhysicsDropContext } from '@/composables/usePhysicsDrag'
+import type { PhysicsDropContext } from '@/composables/usePhysicsDrag'
+import { startProjectDrag } from '@/interaction/drag/adapters/projectDrag'
 import { fireHint } from '@/composables/useOnboarding'
 import { errorMessage, showAppError } from '@/composables/useAppToast'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
@@ -222,15 +223,10 @@ function dispatchDrop(
 // 内部控件（星级 / 阶段 / 进度条）自己处理点击，不在这里起拖。阈值判定本身收在
 // usePhysicsDrag.ts 的 startThresholdDrag（跟 useFileDragDrop.ts 共用同一份，不再各写一遍）。
 function onPointerDown(e: PointerEvent) {
-  startThresholdDrag(e, {
-    exclude: isCardControl,
-    // 落地飞行动画不再单独定制——跟画布卡片（Mind canvas 的 useCardDrag.ts）用同一套默认
-    // 缓出曲线，之前试过给项目卡单独做一版"甩出去带惯性"的落地动画（先后试了 Hermite 曲线、
-    // 弹簧模型），来回调了几轮手感始终不理想，弃用退回默认。
-    onDragStart: (ev, card) => startPhysicsDrag(ev, card, {
-      pointer: true, skipAbsorb: true, onDrop: dispatchDrop,
-    }),
-    onClick: () => emit('click'),   // 没拖动 = 点击 → 开项目
+  startProjectDrag(e, {
+    isCardControl,
+    onDrop: dispatchDrop,
+    onClick: () => emit('click'),
   })
 }
 const cacheStore   = useFilesCacheStore()
