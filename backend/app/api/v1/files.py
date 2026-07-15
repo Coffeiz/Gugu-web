@@ -25,6 +25,7 @@ from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.trash import move_file_to_trash
 from app.services.files.response import color_value, to_file_response
 from app.services.files.browser import all_files_query, file_listing_query
+from app.services.files.upload import parse_upload_filename
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -280,9 +281,7 @@ async def check_conflicts(
 ):
     out = []
     for item in body.items:
-        parts = item.filename.rsplit(".", 1)
-        display_name = parts[0]
-        ext = parts[1].upper()[:10] if len(parts) > 1 else "FILE"
+        display_name, ext = parse_upload_filename(item.filename)
         existing = await _find_conflict(db, current_user.id, item.space, item.project_id, item.folder_id, display_name, ext)
         out.append({
             "filename": item.filename,
@@ -321,9 +320,7 @@ async def upload_file(
     db: AsyncSession = Depends(get_db),
 ):
     original_name = file.filename or "file"
-    parts = original_name.rsplit(".", 1)
-    display_name = parts[0]
-    ext = parts[1].upper()[:10] if len(parts) > 1 else "FILE"
+    display_name, ext = parse_upload_filename(original_name)
     mime_type = file.content_type
 
     data = await file.read()
@@ -397,9 +394,7 @@ async def presign_upload(
     """检查存储后端：OSS 时签发 presigned PUT URL；本地时返回 {mode:'proxy'}。"""
     from app.services.storage import get_storage, OSSStorageBackend
 
-    parts = body.filename.rsplit(".", 1)
-    display_name = parts[0]
-    ext = parts[1].upper()[:10] if len(parts) > 1 else "FILE"
+    display_name, ext = parse_upload_filename(body.filename)
 
     project_name = ""
     project_color = None
