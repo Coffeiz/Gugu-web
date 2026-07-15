@@ -721,10 +721,10 @@ import { useFileSelection } from '@/composables/files/useFileSelection'
 import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileContextMenu } from '@/composables/files/useFileContextMenu'
-import { prepareUploadBatch } from '@/composables/files/useFileUploadController'
+import { executeUploadLifecycle, prepareUploadBatch } from '@/composables/files/useFileUploadController'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
-import { readDroppedEntries, filesToItems, uploadFilesWithFolders, type UploadItem } from '@/composables/useFileUpload'
+import { readDroppedEntries, filesToItems, type UploadItem } from '@/composables/useFileUpload'
 import { useBoxSelection } from '@/composables/useBoxSelection'
 import UploadConflictDialog, { type ConflictDecision } from '@/components/common/UploadConflictDialog.vue'
 import {
@@ -1470,9 +1470,9 @@ async function createFolder() {
 }
 
 // items: UploadItem[]（{file, relativePath}）——relativePath 带 "/" 时来自拖入的文件夹，
-// 由 uploadFilesWithFolders 按路径建好子文件夹再落到各自正确的 folder_id。
+// 由通用上传生命周期按路径建好子文件夹再落到各自正确的 folder_id。
 // items: UploadItem[]（{file, relativePath}）——relativePath 带 "/" 时来自拖入的文件夹，
-// 由 uploadFilesWithFolders 按路径建好子文件夹再落到各自正确的 folder_id。
+// 由通用上传生命周期按路径建好子文件夹再落到各自正确的 folder_id。
 const conflictDialogRef = ref<InstanceType<typeof UploadConflictDialog> | null>(null)
 
 async function uploadFiles(items: UploadItem[]) {
@@ -1498,73 +1498,50 @@ async function uploadFiles(items: UploadItem[]) {
   const decisions = prepared.decisions
   if (!items.length) return
 
-  // 按顶层文件夹分组：relativePath 带 "/" 的文件汇总进「文件夹名 · 完成数/总数」一张卡，
-  // 不用每个文件各出一张（大部分还落在当前看不见的子文件夹里，刷屏也看不出意义）；
-  // 没有 "/" 的（本来就是单文件，或文件夹里就直接是文件不算——理论上不会有这种）仍各自一张卡。
-  const folderGhosts = new Map<string, ReturnType<typeof createFolderGhost> | null>()
-  for (const group of prepared.folderGroups) {
-    folderGhosts.set(group.name, createFolderGhost(group.name, group.total))
-  }
-  // 顶层文件夹（正被 ghost 追踪进度的那几个）先别实时插进可见列表——插了会跟它的 ghost 卡
-  // 同时出现，看起来像「两个文件夹」。攒着，等这组文件全传完（ghost 即将消失那一刻）再插入，
-  // 从「上传中」无缝换成「已完成」。更深层的子文件夹本来就不在当前视图里，直接插不会重复。
   const pendingTopFolders = new Map<string, { id: number; projectId?: number | null; parentId?: number | null; name: string }>()
-
-  await uploadFilesWithFolders(items, {
-    projectId, baseFolderId: folderId,
-    onFolderCreated: (created) => {
-      if (folderGhosts.has(created.name) && (created.parentId ?? null) === folderId) {
-        pendingTopFolders.set(created.name, created)
+  await executeUploadLifecycle(items, {
+    projectId,
+    baseFolderId: folderId,
+    folderGroups: prepared.folderGroups,
+    decisions,
+    createGhost,
+    updateGhostProgress,
+    removeGhost,
+    failGhost,
+    createFolderGhost,
+    bumpFolderGhost,
+    onFolderCreated: (created, isTopLevel) => {
+      if (isTopLevel) pendingTopFolders.set(created.name, created)
+      else cacheStore.addFolder(created)
+    },
+    onTopFolderReady: name => {
+      const folder = pendingTopFolders.get(name)
+      if (folder) {
+        cacheStore.addFolder(folder)
+        pendingTopFolders.delete(name)
+      }
+    },
+    uploadOne: async (file, resolvedFolderId, relativePath, decision, onProgress) => {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('space', space)
+      if (projectId)        form.append('project_id', String(projectId))
+      if (resolvedFolderId) form.append('folder_id', String(resolvedFolderId))
+      if (decision?.action === 'overwrite' && decision.existingFileId) {
+        form.append('on_conflict', 'overwrite')
+        form.append('overwrite_file_id', String(decision.existingFileId))
+      }
+      const created = await uploadWithProgress('/files', form, onProgress)
+      if (decision?.action === 'overwrite' && decision.existingFileId) {
+        cacheStore.updateFile(decision.existingFileId, created)
+        clearThumbCache(decision.existingFileId)
       } else {
-        cacheStore.addFolder(created)
+        cacheStore.addFile(created)
       }
+      loadContents()
+      fetchStorage()
     },
-    uploadOne: async (file, resolvedFolderId, relativePath) => {
-      const top = relativePath.includes('/') ? relativePath.slice(0, relativePath.indexOf('/')) : null
-      const folderGhost = top ? folderGhosts.get(top) : null
-      const { base: ghostBase, ext: ghostExt } = splitName(file.name)
-      const ghost = folderGhost ? null : createGhost(ghostBase, ghostExt.toUpperCase())
-      // 这组文件全处理完（不管成功失败）就把攒着的真实文件夹插进可见列表——跟成功/失败两条
-      // 路径都要走，否则「文件夹最后一个文件恰好失败」时永远插不进去
-      const settleFolder = (failed: boolean) => {
-        if (!folderGhost || !top) return
-        bumpFolderGhost(folderGhost, failed)
-        const pendingFolder = pendingTopFolders.get(top)
-        if ((folderGhost.done ?? 0) >= (folderGhost.total ?? 0) && pendingFolder) {
-          cacheStore.addFolder(pendingFolder)
-          pendingTopFolders.delete(top)
-        }
-      }
-      try {
-        const form = new FormData()
-        form.append('file', file)
-        form.append('space', space)
-        if (projectId)        form.append('project_id', String(projectId))
-        if (resolvedFolderId) form.append('folder_id', String(resolvedFolderId))
-        const decision = decisions.get(relativePath)
-        if (decision?.action === 'overwrite' && decision.existingFileId) {
-          form.append('on_conflict', 'overwrite')
-          form.append('overwrite_file_id', String(decision.existingFileId))
-        }
-        const created = await uploadWithProgress('/files', form, p => { if (ghost) updateGhostProgress(ghost, p) })
-        if (ghost) removeGhost(ghost)
-        else settleFolder(false)
-        if (decision?.action === 'overwrite' && decision.existingFileId) {
-          // 覆盖：同一个文件 id 换了内容，更新缓存里的这条记录而不是插一条新的；旧缩略图
-          // 客户端缓存也要清掉，否则卡片显示的还是覆盖前的图（服务端缓存已经在后端清过）。
-          cacheStore.updateFile(decision.existingFileId, created)
-          clearThumbCache(decision.existingFileId)   // 顺带清 thumbLoadedIds/cardBlobReadyIds
-        } else {
-          cacheStore.addFile(created)
-        }
-        loadContents()
-        fetchStorage()
-      } catch (e) {
-        console.error('[Files] 上传失败:', (e as Error).message)
-        if (ghost) failGhost(ghost)
-        else settleFolder(true)
-      }
-    },
+    onUploadError: e => console.error('[Files] 上传失败:', (e as Error).message),
   })
 }
 
