@@ -23,6 +23,8 @@ from app.services.storage.file_service import FileService
 from app.services.storage.file_service.files import _fmt_size
 from app.services.files.response import color_value, to_file_response
 from app.services.files.browser import (
+    get_file_tree_rows,
+    get_file_version_snapshot,
     get_storage_usage,
     list_all_file_rows,
     list_file_rows,
@@ -171,30 +173,14 @@ async def file_tree(
 ):
     uid = current_user.id
 
-    # 项目文件数汇总
-    proj_rows = await db.execute(
-        select(File.project_id, func.count().label("cnt"))
-        .where(File.user_id == uid, File.space == "project",
-               File.project_id.isnot(None), File.deleted_at.is_(None))
-        .group_by(File.project_id)
-    )
-    count_map = {pid: cnt for pid, cnt in proj_rows.all()}
-
-    projs_res = await db.execute(
-        select(Project).where(Project.user_id == uid).order_by(Project.created_at.desc())
-    )
-    projects = projs_res.scalars().all()
+    project_rows, projects, personal_count = await get_file_tree_rows(db, uid)
+    count_map = {pid: count for pid, count in project_rows}
 
     tree_projects = [
         ProjectTreeEntry(id=p.id, name=p.name, color=color_value(p.color) or p.color,
                          total_count=count_map.get(p.id, 0))
         for p in projects
     ]
-
-    personal_count = (await db.execute(
-        select(func.count()).where(File.user_id == uid, File.space == "personal",
-                                   File.deleted_at.is_(None))
-    )).scalar_one()
 
     return FileTreeResponse(projects=tree_projects, personal_count=personal_count)
 
