@@ -21,6 +21,7 @@ from app.core import events
 from app.services.files.trash import (
     RestoreParentTrashError,
     permanently_delete_file,
+    permanently_delete_folder,
     restore_file_by_id,
     restore_files_by_ids,
 )
@@ -171,23 +172,6 @@ async def restore_folder(
                           version=folder.version)
 
 
-async def _deleted_folder_subtree_ids(folder: Folder, db: AsyncSession) -> list[int]:
-    """返回回收站文件夹的整棵已删子树，供永久删除一次性清理。"""
-    ids = [folder.id]
-    frontier = [folder.id]
-    while frontier:
-        children = (await db.execute(
-            select(Folder.id).where(
-                Folder.user_id == folder.user_id,
-                Folder.parent_id.in_(frontier),
-                Folder.deleted_at.isnot(None),
-            )
-        )).scalars().all()
-        ids.extend(children)
-        frontier = children
-    return ids
-
-
 # ── DELETE /trash/folders/{fid} （永久删除顶层文件夹）──────────────────────────
 
 @router.delete("/folders/{fid}", status_code=204)
@@ -204,30 +188,7 @@ async def hard_delete_folder(
     if not folder:
         raise HTTPException(404, "文件夹不存在")
 
-    folder_ids = await _deleted_folder_subtree_ids(folder, db)
-    files = (await db.execute(
-        select(File).where(
-            File.user_id == current_user.id,
-            File.folder_id.in_(folder_ids),
-            File.deleted_at.isnot(None),
-        )
-    )).scalars().all()
-    storage = get_storage()
-    file_ids = [f.id for f in files]
-    for f in files:
-        try:
-            await storage.delete(f.storage_key)
-        except Exception:
-            pass
-        await db.delete(f)
-
-    dir_key = await folder_dir_key(db, folder.user_id, folder)
-    await db.delete(folder)
-    if dir_key:
-        try:
-            await storage.remove_folder(dir_key)
-        except Exception:
-            pass
+    file_ids = await permanently_delete_folder(db, get_storage(), folder)
     await db.commit()
     for file_id in file_ids:
         _delete_thumb_cache(file_id)
