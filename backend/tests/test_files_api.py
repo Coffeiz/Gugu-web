@@ -55,6 +55,16 @@ async def test_upload_keep_both_conflict(db, user_a):
     assert r2.display_name == "a(1)"
 
 
+async def test_check_conflicts_keeps_batch_response_shape(db, user_a):
+    await _do_upload(db, user_a, b"1", "a.txt")
+    body = files_api.ConflictCheckRequest(items=[
+        files_api.ConflictCheckItem(filename="a.txt"),
+        files_api.ConflictCheckItem(filename="b.txt"),
+    ])
+    result = await files_api.check_conflicts(body, current_user=user_a, db=db)
+    assert [item["conflict"] for item in result] == [True, False]
+
+
 async def test_upload_overwrite(db, user_a):
     r1 = await _do_upload(db, user_a, b"old", "a.txt")
     r2 = await _do_upload(db, user_a, b"newer", "a.txt",
