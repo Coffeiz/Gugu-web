@@ -652,8 +652,8 @@ import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import {
   PhFolder, PhArrowLeft, PhArrowRight, PhCaretLeft, PhCaretRight, PhCaretDown, PhSortAscending, PhSquaresFour, PhList,
   PhCheckSquare, PhFolderPlus, PhUploadSimple, PhPencilSimple,
-  PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX, PhCheck,
-  PhInfo, PhWarningCircle, PhDotsThree, PhTrash, PhArchive,
+  PhDownloadSimple, PhX, PhCheck,
+  PhWarningCircle, PhTrash, PhArchive,
 } from '@phosphor-icons/vue'
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
