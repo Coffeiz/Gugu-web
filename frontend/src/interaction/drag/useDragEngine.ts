@@ -10,6 +10,7 @@
 
 import { LandingState } from './animation/landing'
 import { invertPlay } from './animation/flip'
+import { animateFlyTo } from './animation/flyTo'
 import { dragRegistry } from './core/DragRegistry'
 import { integrateSpring } from './core/physics'
 import { dispatchDragHandoff } from './interaction/handoff'
@@ -776,24 +777,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         _holdHoverUntilReveal(revealEl)
         revealEl.style.opacity = '0'
       }
-      holder.style.transition = `transform 0.55s ${_SETTLE}, opacity 0.4s ease`
-      if (shrink) {
-        const cx = box.left + box.width / 2, cy = box.top + box.height / 2
-        holder.style.opacity = '0'
-        holder.style.transform =
-          `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0) scale(0.32)`
-      } else {
-        const sx = (box.width / dropW).toFixed(4)
-        const sy = (box.height / dropH).toFixed(4)
-        const cx = box.left + box.width / 2, cy = box.top + box.height / 2
-        holder.style.transform = `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0) scale(${sx}, ${sy})`
-      }
       let unregister = () => {}
       const finish = () => {
         if (landing.isDone()) return
         landing.finish()
         unregister()
-        holder.removeEventListener('transitionend', onEnd)
         holder.remove()
         // 先摘占位 class 再揭示：同 flyMorph 里 finish()/forceCleanup 的道理，避免揭示瞬间
         // 先闪一下虚线描边、再过渡回实线的中间态被看见。
@@ -801,10 +789,16 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         if (revealEl) _revealWithoutStaleHover(revealEl, pointer)
         dragRegistry.finish(sourceEl, session)
       }
-      unregister = _registerCleanup(sourceEl, finish)
-      onEnd = finish
-      holder.addEventListener('transitionend', onEnd)
-      setTimeout(finish, 680)
+      const cancel = animateFlyTo({
+        holder,
+        box,
+        half,
+        dropSize: { w: dropW, h: dropH },
+        shrink,
+        easing: _SETTLE,
+        onFinish: finish,
+      })
+      unregister = _registerCleanup(sourceEl, cancel)
     }
 
     // 双克隆样式渐变：clone(旧样式) 与 clone2(新样式) 同起点、同轨迹飞向落点，飞行途中：
@@ -1692,35 +1686,27 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     if (opts.onDrop) { try { opts.onDrop(cloneCenter, { x: vel.x, y: vel.y, turn: 0 }, { w: rect.width, h: rect.height }, { pointer: { x: target.x, y: target.y }, pointerVelocity: { x: 0, y: 0 }, isLandingRegrab: false }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
 
     const dropX = cloneCenter.x, dropY = cloneCenter.y
-    const SLOT = (box: Box) => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) scale(1)`
-
     const landing = new LandingState(); landing.begin()
-    let onEnd: (e: TransitionEvent) => void = () => {}
     const flyTo = (box: Box, shrink: boolean) => {
-      clone.style.transition = `transform 0.55s ${_SETTLE}, opacity 0.4s ease`
-      if (shrink) {
-        const cx = box.left + box.width / 2, cy = box.top + box.height / 2
-        clone.style.opacity = '0'
-        clone.style.transform =
-          `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0) scale(0.32)`
-      } else {
-        // 归位：飞回源卡并淡出（源卡始终可见，克隆体直接消失）
-        clone.style.transform = SLOT(box)
-        clone.style.opacity = '0'
-      }
       let unregister = () => {}
       const finish = () => {
         if (landing.isDone()) return
         landing.finish()
         unregister()
-        clone.removeEventListener('transitionend', onEnd)
         clone.remove()
         dragRegistry.finish(sourceEl, session)
       }
-      unregister = _registerCleanup(sourceEl, finish)
-      onEnd = finish
-      clone.addEventListener('transitionend', onEnd)
-      setTimeout(finish, 680)
+      const cancel = animateFlyTo({
+        holder: clone,
+        box,
+        half,
+        dropSize: { w: rect.width, h: rect.height },
+        shrink,
+        fitToTarget: false,
+        easing: _SETTLE,
+        onFinish: finish,
+      })
+      unregister = _registerCleanup(sourceEl, cancel)
     }
 
     // 松手即进入归位/落位飞行（见单选 end() 里同名注释 + _landingZIndex）：不再顶着压顶 z，
