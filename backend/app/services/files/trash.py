@@ -121,3 +121,32 @@ async def permanently_delete_folder(
         except Exception:
             pass
     return [file.id for file in files]
+
+
+async def empty_trash(
+    db: AsyncSession,
+    storage,
+    user_id: int,
+    root_folders: list[Folder],
+) -> list[int]:
+    """清理当前用户回收站内容，返回待清理缩略图的文件 ID。"""
+    files = (await db.execute(
+        select(File).where(File.user_id == user_id, File.deleted_at.isnot(None))
+    )).scalars().all()
+    file_ids = [file.id for file in files]
+    for file in files:
+        try:
+            await storage.delete(file.storage_key)
+        except Exception:
+            pass
+        await db.delete(file)
+
+    for root in root_folders:
+        dir_key = await folder_dir_key(db, root.user_id, root)
+        await db.delete(root)
+        if dir_key:
+            try:
+                await storage.remove_folder(dir_key)
+            except Exception:
+                pass
+    return file_ids
