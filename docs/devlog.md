@@ -1327,3 +1327,11 @@ Modal 内 `localStatus` 是本地 `ref`，只在 `watch(() => props.project?.id,
 - **圆角**：`--radius-sm: 10px`，`--radius-md: 14px`，`--radius-lg: 18px`
 - **动画**：hover 弹性 `cubic-bezier(0.34,1.2,0.64,1)`，遮罩/阴影 `cubic-bezier(0.4,0,0.2,1)`，Modal 入场 `cubic-bezier(0.34,1.3,0.64,1)`
 - **Z-index 层级**：内容(default) → 渐变遮罩(5) → 顶栏(10) → Modal(200~300) → 对话球(1000) / 聊天(999)
+
+## 2026-07-15 · 文件浏览系统渐进式模块化
+
+本轮重构没有直接替换成一个全能 `FileBrowserPanel`，而是按展示、状态、操作和后端边界逐步抽取。`FileBrowserGrid/List/Breadcrumb/ContextMenu` 只承担展示壳，`useFileSelection`、`useFolderNavigation`、`useFileProjection` 和 `useFileActions` 不直接维护页面缓存或 UI 状态。
+
+文件库和项目文件区继续分别负责乐观更新、版本冲突、回滚、ghost 生命周期、项目范围和回收站差异。后端新增的 `services/files/*` 目前只接收响应组装、查询构造、上传冲突/文件名解析和预览转换等低风险边界；鉴权、事务、存储归属、删除和回收站语义仍保留在原有边界。
+
+这条边界是有意保留的兼容策略：文件卡片 DOM、拖拽克隆、缩略图时序和项目文件归属都曾出现过高风险回归，不能仅凭 typecheck 证明安全。完整 `ProjectModal` 区域拆分和后端写操作 service 化需要 devserver 端到端验收后再继续。
