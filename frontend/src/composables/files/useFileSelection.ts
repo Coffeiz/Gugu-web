@@ -28,8 +28,20 @@ export function selectRange<F>(
   return { fileIds, folderIds }
 }
 
-/** 收口文件浏览页共用的基础集合操作；框选和 Shift 范围仍由页面编排。 */
+/** 收口文件浏览页共用的基础集合操作；框选的 DOM 编排仍由页面负责。 */
 export function useFileSelection<F = number>(state: FileSelectionState<F>) {
+  function replaceSelection(fileIds: Set<number>, folderIds: Set<F>) {
+    state.fileIds.value = fileIds
+    state.folderIds.value = folderIds
+  }
+
+  function selectRangeIn(items: SelectableItem<F>[], anchorIndex: number, targetIndex: number) {
+    const selected = selectRange(items, anchorIndex, targetIndex)
+    if (!selected) return false
+    replaceSelection(selected.fileIds, selected.folderIds)
+    return true
+  }
+
   function clearSelection() {
     state.fileIds.value = new Set()
     state.folderIds.value = new Set()
@@ -77,6 +89,8 @@ export function useFileSelection<F = number>(state: FileSelectionState<F>) {
 
   return {
     clearSelection,
+    replaceSelection,
+    selectRangeIn,
     toggleFile,
     toggleFolder,
     selectOnlyFile,
