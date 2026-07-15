@@ -8,6 +8,8 @@
  *     文件被收进文件夹/面包屑 → 缩小吸入；没变化 → 占位 FLIP 重新展开、克隆体归位。
  */
 
+import { dragRegistry } from '../interaction/drag/core/DragRegistry'
+
 // 拖拽物理可选项（startPhysicsDrag / startMultiPhysicsDrag 共用）
 export interface PhysicsDragOpts {
   pointer?: boolean
@@ -356,6 +358,8 @@ function _invertPlay(kids: HTMLElement[], fromRects: DOMRect[], toRects: DOMRect
  */
 export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTMLElement, opts: PhysicsDragOpts = {}) {
   if (!(sourceEl instanceof HTMLElement) || _active) return
+  const session = dragRegistry.start(sourceEl)
+  session.setPhase('dragging')
   _flushPendingCleanup(sourceEl)   // 只打断「同一张卡」上一趟还没飞完的落地动画，避免重叠成「两张卡」
   // 上一次拖拽的落地动画要等 transitionend（~420~580ms）才把这张卡复位显示；这段窗口期内
   // 若重新抓同一张卡，getBoundingClientRect 会在它还是 display:none 时量出 0×0——克隆体宽高
@@ -566,7 +570,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   }
   if (container && !opts.keepSourcePlaceholder) {
     requestAnimationFrame(() => {
-      if (!_active || !sourceEl.isConnected) return
+      if (!_active || !session.isCurrent() || !sourceEl.isConnected) return
       const kids = _childCards(container, sourceEl)
       const open = _rects(kids)
       sourceEl.style.display = 'none'
@@ -627,6 +631,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   }
 
   function frame(now: number) {
+    if (!session.isCurrent()) return
     // 真实帧间隔（秒）；首帧按 1/60，单帧卡顿/切后台回来则夹住，避免一帧跳一大步
     let dt = lastT === null ? 1 / 60 : (now - lastT) / 1000
     lastT = now
@@ -701,7 +706,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   }
 
   function end() {
-    if (!_active) return
+    if (!_active || !session.isCurrent()) return
+    session.setPhase('landing')
     cancelAnimationFrame(_active.raf)
     _active = null
     document.body.classList.remove('phys-dragging')            // 恢复 backdrop-filter（落点 elementFromPoint 之前）
@@ -839,6 +845,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // 先闪一下虚线描边、再过渡回实线的中间态被看见。
         restoreSourcePlaceholder()
         if (revealEl) _revealWithoutStaleHover(revealEl, pointer)
+        dragRegistry.finish(sourceEl, session)
       }
       unregister = _registerCleanup(sourceEl, finish)
       onEnd = finish
@@ -1180,6 +1187,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           // 揭示出来的就已经是最终样子，不会有这个中间态被看见。
           onReveal?.()
           _revealWithoutStaleHover(revealEl, pointer, undefined, landingHovered)
+          dragRegistry.finish(sourceEl, session)
         })
       }
       // 被同一张卡的新拖拽强制打断时用（按 revealEl 记账，见 _registerCleanup——只有再次抓的
@@ -1211,6 +1219,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         void revealEl.offsetWidth
         revealEl.classList.remove('phys-reveal-snap')
         _revealWithoutStaleHover(revealEl, pointer, undefined, landingHovered)
+        dragRegistry.finish(sourceEl, session)
       }
       unregister = _registerCleanup(revealEl, forceCleanup)
       // clone2 的 opacity 只用来交叉淡变，420ms 就会结束；不能把它当落地完成，
@@ -1547,6 +1556,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
  */
 export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTMLElement, count: number, extras: HTMLElement[] = [], opts: PhysicsDragOpts = {}) {
   if (!sourceEl || _active) return
+  const session = dragRegistry.start(sourceEl)
+  session.setPhase('dragging')
   _flushPendingCleanup(sourceEl)   // 同 startPhysicsDrag：只打断同一张卡上一趟还没飞完的动画
   for (const ex of extras) { if (ex) _flushPendingCleanup(ex) }
   const pointer = opts.pointer === true
@@ -1684,6 +1695,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
   }
 
   function frame(now: number) {
+    if (!session.isCurrent()) return
     let dt = lastT === null ? 1 / 60 : (now - lastT) / 1000
     lastT = now
     if (dt > 1 / 20) dt = 1 / 20
@@ -1729,7 +1741,8 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
   }
 
   function end() {
-    if (!_active) return
+    if (!_active || !session.isCurrent()) return
+    session.setPhase('landing')
     cancelAnimationFrame(_active.raf)
     _active = null
     document.body.classList.remove('phys-dragging')
@@ -1787,6 +1800,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
         unregister()
         clone.removeEventListener('transitionend', onEnd)
         clone.remove()
+        dragRegistry.finish(sourceEl, session)
       }
       unregister = _registerCleanup(sourceEl, finish)
       onEnd = finish
