@@ -1,26 +1,20 @@
-import asyncio
-from app.core.tz import now_utc
-import os
-import re
-from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File as FastAPIFile, Form
+from jose import JWTError, jwt
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import asyncio
+
+from app.core import events
+from app.core.config import get_settings
+from app.core.ownership import get_owned
+from app.core.security import create_stream_token, get_client_id, get_current_user, verify_stream_token
+from app.core.tz import now_utc
 from app.db.session import get_db
 from app.models import File, Folder, Project, User
 from app.schemas import FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry, BatchDeleteBody, FileCopyBody, BatchDownloadBody
-from jose import jwt, JWTError
-from app.core.security import get_current_user, get_client_id, create_stream_token, verify_stream_token
-from app.core.ownership import get_owned
-from app.core.config import get_settings
-from app.core import events
-from app.services.storage import get_storage
-from app.services.storage.file_service import FileService
-from app.services.storage.file_service.files import _fmt_size
-from app.services.files.response import color_value, to_file_response
 from app.services.files.browser import (
     get_file_tree_rows,
     get_file_version_snapshot,
@@ -28,6 +22,7 @@ from app.services.files.browser import (
     list_all_file_rows,
     list_file_rows,
 )
+from app.services.files.response import color_value, to_file_response
 from app.services.files.upload import (
     UploadTargetError,
     check_upload_conflicts,
@@ -37,6 +32,9 @@ from app.services.files.upload import (
     prepare_presign_target,
 )
 from app.services.files.actions import delete_file, delete_files
+from app.services.storage import get_storage
+from app.services.storage.file_service import FileService
+from app.services.storage.file_service.files import _fmt_size
 from app.services.files.selection import build_batch_zip
 from app.services.files.previews import (
     delete_thumb_cache,
