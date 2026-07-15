@@ -197,14 +197,14 @@
               </button>
               <button class="bc-seg" :class="{ 'bc-drop-target': pmBcDragOverIdx === -1 }"
                 data-bc-idx="-1"
-                @click="navigateTo(-1)"
+                @click="pmNavigateTo(-1)"
               >项目文件</button>
               <template v-for="(seg, idx) in folderStack" :key="seg.id">
                 <PhCaretRight :size="10" weight="bold" class="bc-sep" />
                 <button v-if="idx < folderStack.length - 1" class="bc-seg"
                   :class="{ 'bc-drop-target': pmBcDragOverIdx === idx }"
                   :data-bc-idx="idx"
-                  @click="navigateTo(idx)"
+                  @click="pmNavigateTo(idx)"
                 >{{ seg.name }}</button>
                 <span v-else class="bc-seg bc-cur">{{ seg.name }}</span>
               </template>
@@ -724,6 +724,7 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { parseFolderId } from '@/utils/folderKeys'
 import { useFileSelection } from '@/composables/files/useFileSelection'
 import { sortFileProjection } from '@/composables/files/useFileProjection'
+import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
@@ -782,37 +783,18 @@ const localStatus       = ref('')
 const fileViewMode   = ref<'grid' | 'list'>('grid')
 // Tier 3：文件/文件夹数据统一由全局 filesCache store 提供（currentFiles/currentFolders 从它派生），
 // 不再自持 projectFiles/projectFolders/folderFilesMap/subFolderMap 本地缓存。
-const openFolders    = ref(new Set<number>())
-const folderStack    = ref<FolderMeta[]>([])   // 导航路径栈，根目录 = 空数组
-const pmNavStack     = ref<FolderMeta[][]>([[]])  // history: array of folderStack snapshots
-const pmNavCursor    = ref(0)
-let _isPmHistoryNav  = false
-
-const pmCanGoBack    = computed(() => pmNavCursor.value > 0)
-const pmCanGoForward = computed(() => pmNavCursor.value < pmNavStack.value.length - 1)
-
-function _pushPmHistory() {
-  if (_isPmHistoryNav) return
-  pmNavStack.value = pmNavStack.value.slice(0, pmNavCursor.value + 1)
-  pmNavStack.value.push([...folderStack.value])
-  pmNavCursor.value = pmNavStack.value.length - 1
-}
-
-function pmGoBack() {
-  if (!pmCanGoBack.value) return
-  _isPmHistoryNav = true
-  pmNavCursor.value--
-  folderStack.value = [...pmNavStack.value[pmNavCursor.value]]
-  nextTick(() => { _isPmHistoryNav = false })
-}
-
-function pmGoForward() {
-  if (!pmCanGoForward.value) return
-  _isPmHistoryNav = true
-  pmNavCursor.value++
-  folderStack.value = [...pmNavStack.value[pmNavCursor.value]]
-  nextTick(() => { _isPmHistoryNav = false })
-}
+const openFolders = ref(new Set<number>())
+const {
+  folderStack,
+  canGoBack: pmCanGoBack,
+  canGoForward: pmCanGoForward,
+  enterFolder: pmEnterFolder,
+  navigateTo: pmNavigateTo,
+  goBack: pmGoBack,
+  goForward: pmGoForward,
+  pruneHistoryForFolders: prunePmHistoryForFolder,
+  reset: resetPmNavigation,
+} = useFolderNavigation()
 // Tier 3：当前层的文件/文件夹直接从全局 filesCache store 派生（单一数据源，不再自持
 // projectFiles/folderFilesMap/subFolderMap/projectFolders 本地缓存）。任何页面/SSE 改了 store，
 // 这里自动更新，也不会再有「两套缓存不一致」的 stale。根目录用项目根 getter，子目录用文件夹 getter。
@@ -994,7 +976,7 @@ function onPmFolderClick(folder: FolderMeta, e: MouseEvent) {
     toggleFolderSelectPm(folder)
     return
   }
-  enterFolder(folder)
+  pmEnterFolder(folder)
 }
 
 async function downloadSelectedPm() {
@@ -1045,7 +1027,7 @@ async function deleteSelectedPm() {
       ...dids.map(id => foldersApi.delete(id)),
     ])
     fileCacheStore.removeFiles(fids)
-    dids.forEach(id => { fileCacheStore.removeFolder(id); prunePmHistoryForFolder(id) })   // removeFolder 级联删子文件夹及其文件
+    dids.forEach(id => { fileCacheStore.removeFolder(id); prunePmHistoryForFolder([id]) })   // removeFolder 级联删子文件夹及其文件
     await fileCacheStore.refresh()
   } catch (err) { console.error('[ProjectModal] 批量删除失败:', errMsg(err)) }
 }
@@ -1166,18 +1148,6 @@ async function createFolder() {
   }
 }
 
-async function enterFolder(folder: FolderMeta) {
-  folderStack.value = [...folderStack.value, folder]
-  _pushPmHistory()
-  // Tier 3：该层文件/子文件夹已在全局 store 里（一次性全量），进入即由 currentFiles/currentFolders
-  // 现算，无需懒加载/缓存。
-}
-
-function navigateTo(idx: number) {
-  folderStack.value = idx < 0 ? [] : folderStack.value.slice(0, idx + 1)
-  _pushPmHistory()
-}
-
 // ── 重命名 ────────────────────────────────────────────────────────────────────
 
 const renamingFileId = ref<number | null>(null)
@@ -1270,24 +1240,8 @@ function downloadFolderZip(folder: FolderMeta) {
   foldersApi.download(folder.id, folder.name)
 }
 
-function prunePmHistoryForFolder(folderId: number) {
-  const hasDeleted = (snap: FolderMeta[]) => snap.some(f => f.id === folderId)
-  const curIdx = pmNavCursor.value
-  let newCursor = 0
-  const kept: FolderMeta[][] = []
-  pmNavStack.value.forEach((snap, i) => {
-    if (!hasDeleted(snap)) {
-      if (i <= curIdx) newCursor = kept.length
-      kept.push(snap)
-    }
-  })
-  if (!kept.length) kept.push([])
-  pmNavStack.value = kept
-  pmNavCursor.value = Math.min(newCursor, kept.length - 1)
-}
-
 async function deleteFolderCard(folder: FolderMeta) {
-  prunePmHistoryForFolder(folder.id)
+  prunePmHistoryForFolder([folder.id])
   try {
     await foldersApi.delete(folder.id)
     fileCacheStore.removeFolder(folder.id)   // 级联删该文件夹的子文件夹及其文件；视图自动更新
@@ -1319,8 +1273,7 @@ watch(() => props.project?.id, async (id) => {
   editingStage.value   = null
   openFolders.value    = new Set()
   folderStack.value    = []
-  pmNavStack.value     = [[]]
-  pmNavCursor.value    = 0
+  resetPmNavigation()
   showNewFolder.value  = false
   await nextTick()
   initializing = false
