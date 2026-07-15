@@ -7,7 +7,7 @@
 
 ---
 
-## [Unreleased]
+## [0.19.1] - 2026-07-15 · 项目抽屉↔画布拖拽收尾与引用卡快照样式
 
 ### 改进
 
@@ -15,21 +15,15 @@
 - **文件操作工具统一**（`components/common/{FilePasteButton,FileSelectionToolbar}.vue`、`views/{Files,Projects}/`）：文件库和项目编辑卡共用粘贴、多选操作与网格/列表切换控件，统一交互反馈和状态同步。
 - **文件夹跨空间操作完善**（`app/services/storage/`、`api/v1/folders.py`）：文件夹支持在个人文件与项目目录之间可靠剪切、复制和粘贴，明确区分个人空间与项目归属。
 
+- **项目/文件/活动引用卡的"已删除快照"样式对齐本体卡片**（`views/Mind/components/{ProjectRefCard,FileRefCard,EntitySticker}.vue`）：原对象被删除后，画布上留存的引用卡新增 `MindNode.ref_snapshot` 持久化快照数据（项目保留客户/状态/日期，文件保留类型，活动保留日期），样式与本体卡片一致，不再是简化占位样式。
+- **画布连接线跟手悬停**（`views/Mind/components/RelationLayer.vue`）：卡片 hover 完成后连线不再瞬间落下，跟随鼠标动画收尾。
+
 ### 修复
 
 - **浮动预览窗边缘缩放**（`components/common/FloatPreviewWindow.vue`）：补齐四边与四角的透明缩放热区，修复热区被窗口裁剪、遮挡滚动条及圆角处出现方角的问题。
 - **回收站目录与文件状态一致性**（`app/services/storage/`、`views/Files/`）：修复文件夹恢复、跨目录移动、存储占用刷新和多选文件夹操作在刷新后状态回退的问题。
 - **项目编辑卡文件操作**（`views/Projects/components/ProjectModal.vue`）：修复多选删除、复制文件夹、粘贴重复文件、空白区域退出多选及跨页面缓存闪回问题。
 - **画布卡片与连接线显示**（`views/Mind/`、`composables/usePhysicsDrag.ts`）：补齐卡片圆角、连接点层级与拖拽落地状态，修复部分卡片切换时的闪烁和连接线显示异常。
-
-## [0.19.1] - 2026-07-15 · 项目抽屉↔画布拖拽收尾与引用卡快照样式
-
-### 改进
-
-- **项目/文件/活动引用卡的"已删除快照"样式对齐本体卡片**（`views/Mind/components/{ProjectRefCard,FileRefCard,EntitySticker}.vue`）：原对象被删除后，画布上留存的引用卡新增 `MindNode.ref_snapshot` 持久化快照数据（项目保留客户/状态/日期，文件保留类型，活动保留日期），样式与本体卡片一致，不再是简化占位样式。
-- **画布连接线跟手悬停**（`views/Mind/components/RelationLayer.vue`）：卡片 hover 完成后连线不再瞬间落下，跟随鼠标动画收尾。
-
-### 修复
 
 - **项目抽屉与画布之间的拖拽收尾**（`composables/{usePhysicsDrag,useCardDrag}.ts`、`views/Mind/components/{CanvasSidebar,ProjectDrawerCard,ProjectRefCard}.vue`）：修复一系列抽屉↔画布拖拽体验问题——抽屉虚线占位框离场时跳动、画布卡拖回抽屉短暂变透明才淡入、飞行克隆偶发退化成缩小动画、揭示瞬间本体与克隆短暂重叠、某状态最后一张卡拖出/首张卡拖入时整块分组瞬间增删且丢失让位动画、飞行中途重新抓起后无法放回画布。详细排查过程见 [devlog.md](docs/devlog.md) 2026-07-15 条目。
 - **渐变色项目首次拖入画布失败**（`backend/app/models/__init__.py`）：`MindNode.color` 由 `varchar(30)` 加宽到 `varchar(300)`，修复渐变色项目首次创建画布引用节点时 `StringDataRightTruncationError`。
