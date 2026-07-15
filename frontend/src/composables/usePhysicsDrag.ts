@@ -847,6 +847,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       onReveal?: () => void,
       trackCanvasCamera = true,
       hidePrimaryVisual = false,
+      // 连接点覆盖层是从 sourceEl（拖起的源卡）克隆出来的，跟落点是画布卡还是抽屉卡无关——
+      // 落到抽屉（比如项目卡拖回项目抽屉）时目标压根不支持建立连线，这份覆盖层理应全程不
+      // 出现，但 syncConnectionOverlayHover 之前不管落点类型一律照常根据鼠标位置切换
+      // hovering，导致鼠标恰好停在飞行克隆上时连接点一直亮着，直到 finish() 摘掉 holder
+      // 才随之消失，表现为"点一直显示到本体切换才突然消失"。落地目标不支持连线时传 false。
+      revealElConnectable = true,
     ) => {
       // box 用 let：飞行途中可能被 _retargetLandings 改指到新位置（见其注释），finish() 收尾时
       // 要读的是「最新」这份，不是刚进来那一刻的静态快照。
@@ -856,7 +862,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       let landingHovered = false
       const syncConnectionOverlayHover = (hovering: boolean) => {
         landingHovered = hovering
-        connectionDotOverlay?.classList.toggle('hovering', hovering)
+        connectionDotOverlay?.classList.toggle('hovering', revealElConnectable && hovering)
         if (cardActionOverlay) cardActionOverlay.style.opacity = hovering ? '1' : '0'
       }
       // holder 为支持“飞行中直接再抓”而在落地阶段开启了 pointer-events；因此命中它不再会
@@ -1380,6 +1386,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
               restoreSourcePlaceholderStyle,
               false,
               targetEl === sourceEl,
+              // 落点永远是抽屉卡（自己原地放回，或画布卡被吸入抽屉的新卡），抽屉卡不支持
+              // 建立连线，连接点覆盖层不该在这段飞行里出现。
+              false,
             )
           }
           landOnAbsorbTarget()

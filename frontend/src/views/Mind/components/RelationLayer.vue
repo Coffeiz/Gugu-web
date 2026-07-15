@@ -1,10 +1,16 @@
 <template>
   <svg class="relation-layer" viewBox="-5000 -5000 10000 10000" aria-hidden="true">
-    <g v-for="rel in visibleRelations" :key="rel.id" class="rel-group" @pointerdown.stop @click.stop="emit('remove', rel.id)">
-      <!-- 可见曲线（默认弱化）叠一条透明加粗路径专门吃点击——细线本身只有 1.6px，直接点很难点中 -->
-      <path class="rel-hit" :d="rel.d" fill="none" />
-      <path class="rel-visible" :class="{ highlighted: rel.highlighted }" :d="rel.d" fill="none" />
-    </g>
+    <!-- 卡片被拖进抽屉/移出画布时，连着它的关系会从 visibleRelations 里瞬间消失（两端
+         必须都还在画布上才算有效关系，摘掉一端立刻被过滤掉）——没有 TransitionGroup 的
+         v-for 没法接住这次删除的过渡，SVG 没有布局流，也不需要 FLIP 位置捕获那一套，
+         补一层最简单的透明度淡出就够了。 -->
+    <TransitionGroup tag="g" name="rel">
+      <g v-for="rel in visibleRelations" :key="rel.id" class="rel-group" :style="rel.opacity != null ? { opacity: rel.opacity } : undefined" @pointerdown.stop @click.stop="emit('remove', rel.id)">
+        <!-- 可见曲线（默认弱化）叠一条透明加粗路径专门吃点击——细线本身只有 1.6px，直接点很难点中 -->
+        <path class="rel-hit" :d="rel.d" fill="none" />
+        <path class="rel-visible" :class="{ highlighted: rel.highlighted }" :d="rel.d" fill="none" />
+      </g>
+    </TransitionGroup>
     <!-- 正在从贴纸边缘的连接点拖一条新关系出来时的跟手预览线，不吃点击、不参与已有关系列表 -->
     <path v-if="draft" class="rel-draft" :d="draftPath" fill="none" />
   </svg>
@@ -183,9 +189,60 @@ function resolveSides(relation: MindRelation, src: MindCanvasItem, dst: MindCanv
   return sides
 }
 
+// 卡片被吸入抽屉时，store 会在同一刻把这张卡和它牵着的关系一并从 canvasItems/canvasRelations
+// 摘掉（见 stores/mind.ts 的 returnCanvasItemToDrawer）——关系一旦从 props.relations 消失，
+// visibleRelations 就再也没有机会重新算它的端点位置，只能拿"被摘掉前最后一次算出来的坐标"
+// 播 leave 淡出，看着像是"线在原地不跟着卡片飞、径自淡出了"。这张卡这时其实还在物理模块的
+// 落地飞行里（clone2 正飞向抽屉），真实位置全程都能测——只是 items/relations 这两份数据已经
+// 不认这条关系了。这里在关系/卡片真正从数据里消失前一瞬，抓一份快照单独续养一段时间，
+// 沿用同一套 measuredAnchor 逻辑继续跟着飞行克隆量真实位置，直到飞行克隆自己也从 DOM 里
+// 消失（真正落地）才让它退出，播真正的淡出——而不是数据一摘就武断掐断。
+const departingRelations = ref<{ relation: MindRelation; src: MindCanvasItem; dst: MindCanvasItem; since: number }[]>([])
+let departingRaf = 0
+// 松手（卡片从 items/relations 里被摘掉）那一刻就开始淡出，不用等飞行克隆真正落地——
+// 跟随和淡出同时进行，视觉上"松手就往下走"而不是"跟完全程才突然开始淡"。比落地飞行本身
+// （0.55~0.7s）快很多，线在飞行途中就已经淡没了，不会跟着飞完全程。时间到直接移出列表，
+// 不依赖飞行克隆的 DOM 是否还在——用固定时长而不是查 DOM，好处是不管这次飞行走的是哪条
+// 分支（成功落地/超时退化/中途转手），淡出这段体验都一致。
+const DEPARTING_FADE_MS = 320
+function pumpDepartingFrames() {
+  renderTick.value++
+  const now = performance.now()
+  const next = departingRelations.value.filter(({ since }) => now - since < DEPARTING_FADE_MS)
+  if (next.length !== departingRelations.value.length) departingRelations.value = next
+  if (departingRelations.value.length) {
+    departingRaf = requestAnimationFrame(pumpDepartingFrames)
+  } else {
+    departingRaf = 0
+  }
+}
+onBeforeUnmount(() => { if (departingRaf) cancelAnimationFrame(departingRaf) })
+// 两份数据一起看：items 和 relations 在 returnCanvasItemToDrawer 里同一刻被改，分开各注册一个
+// watch 拿到的「上一轮快照」谁先谁后不保真，合并成一个 watch 才能保证 prevItems/prevRelations
+// 是同一时刻的一致快照。
+watch(
+  [() => props.relations, () => props.items],
+  ([nextRelations], [prevRelations, prevItems]) => {
+    const nextIds = new Set(nextRelations.map(relation => relation.id))
+    const removed = prevRelations.filter(relation => !nextIds.has(relation.id))
+    if (!removed.length) return
+    const prevItemByNodeId = new Map(prevItems.map(item => [item.nodeId, item]))
+    const additions = removed
+      .map((relation) => {
+        const src = prevItemByNodeId.get(relation.srcNodeId)
+        const dst = prevItemByNodeId.get(relation.dstNodeId)
+        return src && dst ? { relation, src, dst, since: performance.now() } : null
+      })
+      .filter((v): v is { relation: MindRelation; src: MindCanvasItem; dst: MindCanvasItem; since: number } => v != null)
+    if (!additions.length) return
+    departingRelations.value = [...departingRelations.value, ...additions]
+    if (!departingRaf) departingRaf = requestAnimationFrame(pumpDepartingFrames)
+  },
+)
+
 const visibleRelations = computed(() => {
   void renderTick.value   // 悬停抬起过渡期间的心跳依赖，见 pumpHoverFrames
-  return props.relations.flatMap((relation) => {
+  const live = props.relations.flatMap((relation) => {
     const src = itemByNodeId.value.get(relation.srcNodeId)
     const dst = itemByNodeId.value.get(relation.dstNodeId)
     if (!src || !dst) return []
@@ -194,8 +251,19 @@ const visibleRelations = computed(() => {
     const to = anchorFor(dst, sides.dstSide, props.landingPositions.get(dst.nodeId))
     const highlighted = props.highlightNodeId != null
       && (relation.srcNodeId === props.highlightNodeId || relation.dstNodeId === props.highlightNodeId)
-    return [{ id: relation.id, d: sidePath(from, sides.srcSide, to, sides.dstSide), highlighted }]
+    return [{ id: relation.id, d: sidePath(from, sides.srcSide, to, sides.dstSide), highlighted, opacity: undefined as number | undefined }]
   })
+  const now = performance.now()
+  const departing = departingRelations.value.map(({ relation, src, dst, since }) => {
+    const sides = resolveSides(relation, src, dst)
+    const from = anchorFor(src, sides.srcSide, props.landingPositions.get(src.nodeId))
+    const to = anchorFor(dst, sides.dstSide, props.landingPositions.get(dst.nodeId))
+    // 松手即开始线性淡出，全程跟着 anchorFor 量到的实时位置走，不是先原样展示完飞行
+    // 全程、落地那一刻才突然开始淡。
+    const opacity = Math.max(0, 1 - (now - since) / DEPARTING_FADE_MS)
+    return { id: relation.id, d: sidePath(from, sides.srcSide, to, sides.dstSide), highlighted: false, opacity }
+  })
+  return [...live, ...departing]
 })
 
 // 拖出连线时的预览线跟建好之后的实线走同一个 sidePath——之前预览线单独用一套"横向鼓包"的
@@ -222,4 +290,6 @@ const draftPath = computed(() => {
 .rel-visible.highlighted { stroke: rgba(123, 127, 178, .9); stroke-width: 2.2; }
 .rel-group:hover .rel-visible { stroke: rgba(200, 90, 90, .8); stroke-width: 2.4; }
 .rel-draft { stroke: rgba(123, 127, 178, .85); stroke-width: 2.2; stroke-dasharray: 4 5; }
+.rel-leave-active { transition: opacity .25s ease; }
+.rel-leave-to { opacity: 0; }
 </style>

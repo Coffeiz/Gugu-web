@@ -16,7 +16,7 @@
       <Transition name="cd-compact">
         <div v-if="!expanded && compactReady" class="cd-compact-nav">
         <button class="cd-toggle" title="画布列表" @click="togglePanel('canvases')"><PhSquaresFour :size="16" weight="bold" /></button>
-        <button class="cd-toggle" title="项目素材" @click="togglePanel('projects')"><PhBriefcase :size="16" weight="bold" /></button>
+        <button class="cd-toggle" title="项目素材" @click="togglePanel('projects')"><PhStack :size="16" weight="bold" /></button>
         </div>
       </Transition>
     </div>
@@ -89,7 +89,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, type PropType } from 'vue'
-import { PhArrowRight, PhBriefcase, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour, PhTrash } from '@phosphor-icons/vue'
+import { PhArrowRight, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour, PhStack, PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
 import ProjectDrawerCard from './ProjectDrawerCard.vue'

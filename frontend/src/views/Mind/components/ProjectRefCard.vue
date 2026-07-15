@@ -101,13 +101,17 @@ const project = computed(() => projectStore.projects.find(p => p.id === props.it
 // project 为 null（已删除对象）时走 v-else 的墓碑态，useProjectCardBasics 内部按 project.value
 // 直接取字段，传一个占位对象兜底，反正这份 computed 在 project 为 null 时不会被模板用到。
 const missingStyle = computed(() => {
-  const { w, h } = itemSize(props.item)
+  const { w } = itemSize(props.item)
   // 项目被删后拿不到活的 Project 记录，靠创建引用时缓存在 node.color 上的快照保留原本配色
   // （旧引用没有这份缓存时 color 是 null，回退到 .pr-missing 自己的默认底色）——跟正常态
   // cardStyle 用的是同一条渐变公式，快照要看起来"项目还在"，配色算法不能各写一套。
   const color = props.item.node.color
+  // 高度不再用 item.h（项目还活着时最后一次量到的高度，通常带着 proj-meta/card-footer/
+  // segbar 那些快照没有的内容撑出来的高度）强制 minHeight——快照展示的字段本来就比本体少，
+  // 沿用旧高度会比同样内容量的本体卡片更高，让内容自己撑出高度，跟 cardStyle（本体，同样
+  // 不设高度）保持一致。
   return {
-    left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, minHeight: `${h}px`, zIndex: `${props.item.z}`,
+    left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, zIndex: `${props.item.z}`,
     background: color ? `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${color}` : undefined,
   }
 })
@@ -138,7 +142,12 @@ const cardEl = ref<HTMLElement | null>(null)
 const missingRef = ref<HTMLElement | null>(null)
 let cardResizeObserver: ResizeObserver | null = null
 function emitMeasuredSize() {
-  const card = cardEl.value
+  // observeCard() 观察的是 cardEl.value ?? missingRef.value（项目被删后本体元素不存在，
+  // 观察墓碑态自己），这里量尺寸却一直只读 cardEl.value——墓碑态下 cardEl 恒为 null，
+  // 这个函数全程直接 return，measuredSizes 里这张卡的尺寸从此再没更新过，连线的
+  // anchorFor 兜底公式用的是项目被删前最后一次量到的旧高度（通常带着 stage/segbar
+  // 撑出来的高度），比墓碑态实际矮一截的卡片高，连接点算出来的位置就比真实圆点偏低。
+  const card = cardEl.value ?? missingRef.value
   if (!card || !card.isConnected) return
   const rect = card.getBoundingClientRect()
   if (rect.width < 10 || rect.height < 10) return
@@ -182,6 +191,11 @@ const { onPointerDown, startLandingRegrab } = useCardDrag({
     emit('moved', props.item, worldX, worldY)
   },
   resolveAbsorbTarget: pointer => {
+    // 项目已被删除（墓碑态，project 为 null）时，抽屉里压根没有这个项目对应的卡片可以
+    // 接收——projectStore.projects 里根本没有这一条，resolveAbsorbLandingTarget 永远找
+    // 不到目标，轮询超时后卡在半途（曾经复现过"拖进抽屉卡住"）。这类卡片不允许吸入抽屉，
+    // 落在抽屉区域也当成普通画布移动处理。
+    if (!project.value) return null
     // 物理克隆与画布分属不同层叠上下文，elementFromPoint 在抽屉上方时可能命中画布层，
     // 即使指针几何位置已经在抽屉内。抽屉本身是唯一有效投放区，按它的可见矩形判定更稳定。
     const drawer = document.querySelector<HTMLElement>('[data-project-drawer-dropzone]')
@@ -256,12 +270,19 @@ function onOpen() {
 .pr-card:active:has(.seg-bar-wrap:active) { transform: none; opacity: 1; }
 
 .pr-missing {
-  height: 100%; padding: 13px 13px 11px;
+  padding: 13px 13px 11px;
   background: rgba(255,255,255,0.5);   /* 没有缓存颜色的旧引用兜底；有颜色时被行内 style 盖掉 */
   display: flex; flex-direction: column; gap: 8px;
-  /* 不透明度/尺寸都跟 .pr-card 正常态一致——快照要看起来"项目还在"，不额外做变灰/变淡
+  /* 不设 height：.pr-card（本体）就没有任何高度声明，靠 flex 子内容自然撑开。这里原来
+     有一条 height:100%，父级（画布世界层）给不出一个确定的高度基准，实际处于「有效高度
+     不确定」的悬空状态——一直是靠内联 minHeight（旧引用测量过的高度）兜底撑住才没露馅；
+     minHeight 改成不再强制之后，height:100% 这条本身就有问题的规则直接暴露出来，卡片
+     整个塌成一条窄条。去掉它，交给内容自然撑开，跟 .pr-card 保持同一套高度逻辑。
+     不透明度/尺寸都跟 .pr-card 正常态一致——快照要看起来"项目还在"，不额外做变灰/变淡
      处理，"已删除"单靠 .pr-deleted 那行文字说明就够了。 */
 }
+/* 本体没有这个标签（一眼就能从内容看出是项目卡），但快照态缺了 stage/segbar 这类底部
+   内容，整张卡显得偏空、偏矮，加一个补一点视觉分量，也顺带点出"这原本是个项目"。 */
 .pr-kind { align-self: flex-start; padding: 1px 6px; border-radius: 4px; background: rgba(123,127,178,.12); color: var(--color-primary); font-size: 10px; font-weight: 700; }
 /* 名称/客户/日期三行字号、行高跟 ProjectCardBody 的 .proj-name/.proj-client/.date-range
    逐条对齐（含颜色变量），不是照抄数值——真实卡片改这几个样式时这里要记得跟着改。 */

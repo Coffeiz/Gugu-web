@@ -257,6 +257,15 @@ body {
 .phys-reveal-snap, .phys-reveal-snap *,
 .phys-reveal-snap::before, .phys-reveal-snap::after,
 .phys-reveal-snap *::before, .phys-reveal-snap *::after { transition: none !important; }
+/* 连接点（CardConnDot.vue）是个例外：卡片落地揭示这一帧如果鼠标已经压在上面，_revealWithoutStaleHover
+   会同步派发 synthetic mouseenter，hovering 变 true 的这次 class 切换恰好落在上面这条快照
+   规则生效的同一帧，把连接点本该有的淡入动画也一并压没了，表现为"点瞬间出现"而不是跟手淡入。
+   快照要压的是转手/下沉这类「陈旧 hover 视觉」造成的跳变，连接点首次出现的淡入不属于这类，
+   补一条更具体的选择器把它排除在外，各类选择器的特异度都比上面这条通用规则高，不用管书写
+   顺序谁在前。 */
+.phys-reveal-snap .card-conn-dots .conn-dot::before {
+  transition: opacity 0.15s, transform 0.15s, box-shadow 0.2s ease !important;
+}
 /* .card-actions/.conn-dot 是 FileRefCard.vue（画布文件引用卡）通过插槽塞进 .fc-card 内部的
    按钮，不是 FileCard.vue 自己认得的 .fc-hover-actions——按下移除/连线圆点时同样不该带着
    整张卡一起按下去，在同一条排除名单里一并列上。 */
