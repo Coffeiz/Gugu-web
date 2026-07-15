@@ -87,8 +87,8 @@ async def attachment_thumb(
         return Response(content=raw, media_type="image/svg+xml",
                         headers={"Cache-Control": "private, max-age=3600"})
     # 复用文件库的缩略图生成（JPEG 兜底版，按 size 取最大边）
-    from app.api.v1.files import _generate_thumb_jpeg_fallback
-    jpeg = await asyncio.to_thread(_generate_thumb_jpeg_fallback, raw, size)
+    from app.services.files.previews import generate_thumb_jpeg_fallback
+    jpeg = await asyncio.to_thread(generate_thumb_jpeg_fallback, raw, size)
     if jpeg:
         return Response(content=jpeg, media_type="image/jpeg",
                         headers={"Cache-Control": "private, max-age=3600"})
@@ -127,7 +127,7 @@ async def attachment_preview_pdf(
 ):
     """将聊天暂存附件（Office 格式）转换为 PDF 供前端预览。"""
     from fastapi.responses import Response
-    from app.api.v1.files import _office_to_pdf
+    from app.services.files.previews import office_to_pdf
 
     meta = await chat_attach.get_meta(current_user.id, attach_id)
     if not meta:
@@ -139,7 +139,7 @@ async def attachment_preview_pdf(
         data = await chat_attach.read_bytes(meta)
     except FileNotFoundError:
         raise HTTPException(404, "附件已过期或物理文件丢失")
-    pdf = await _office_to_pdf(data, meta.get("ext", ""))
+    pdf = await office_to_pdf(data, meta.get("ext", ""))
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Cache-Control": "private, max-age=300"})
 

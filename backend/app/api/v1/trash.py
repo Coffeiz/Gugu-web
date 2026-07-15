@@ -26,10 +26,11 @@ from app.services.files.trash import (
     restore_file_by_id,
     restore_files_by_ids,
 )
+from app.services.files.previews import delete_thumb_cache
+from app.services.files.response import color_value, to_file_response
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.storage.folders import folder_dir_key
-from app.api.v1.files import _to_resp, _color, _delete_thumb_cache
 
 router = APIRouter(prefix="/trash", tags=["trash"])
 
@@ -76,7 +77,7 @@ async def list_trash(
         .order_by(File.deleted_at.desc())
     )
     result = await db.execute(stmt)
-    return [_to_resp(f, pname, _color(pcolor), fname) for f, pname, pcolor, fname in result.all()]
+    return [to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in result.all()]
 
 
 # ── GET /trash/folders （P2.3：顶层已删文件夹）───────────────────────────────
@@ -150,7 +151,7 @@ async def list_trash_folder_contents(
             file_count=count_map.get(f.id, 0), version=f.version,
             deleted_at=f.deleted_at.strftime("%Y-%m-%dT%H:%M:%S"),
         ) for f in child_folders],
-        files=[_to_resp(f, pname, _color(pcolor), fname)
+        files=[to_file_response(f, pname, color_value(pcolor), fname)
                for f, pname, pcolor, fname in direct_files],
     )
 
@@ -192,7 +193,7 @@ async def hard_delete_folder(
     file_ids = await permanently_delete_folder(db, get_storage(), folder)
     await db.commit()
     for file_id in file_ids:
-        _delete_thumb_cache(file_id)
+        delete_thumb_cache(file_id)
     await events.publish(current_user.id, "files", origin=origin)
 
 
@@ -249,7 +250,7 @@ async def hard_delete_file(
     if deleted_id is None:
         raise HTTPException(404, "文件不存在")
     await db.commit()
-    _delete_thumb_cache(deleted_id)
+    delete_thumb_cache(deleted_id)
     await events.publish(current_user.id, "files", origin=origin)
 
 
@@ -265,7 +266,7 @@ async def empty_trash(
     fids = await empty_trash_service(db, get_storage(), current_user.id, roots)
     await db.commit()
     for fid in fids:
-        _delete_thumb_cache(fid)
+        delete_thumb_cache(fid)
     await events.publish(current_user.id, "files", origin=origin)
 
 
@@ -289,7 +290,7 @@ async def cleanup_expired(db: AsyncSession) -> int:
     if files:
         await db.commit()
         for fid in fids:
-            _delete_thumb_cache(fid)
+            delete_thumb_cache(fid)
 
     # 过期文件夹（顶层已删、deleted_at 超过 30 天）：硬删 Folder 行——ORM cascade
     # （Folder.children，`all, delete-orphan`）连带删掉整棵子树；子树内文件已由上面那段按

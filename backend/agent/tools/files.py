@@ -1,7 +1,7 @@
 """文件领域技能：查 / 读 / 改 / 整理 / 生成。
 
-复用 `app.api.v1.files` 的现成 helper（`_build_key`/`_resolve_conflict`/
-`_fmt_size`/`_color`）、`app.services.storage.trash`（`move_file_to_trash`）与
+复用文件服务层的现成 helper（`_build_key`/`_resolve_conflict`/
+`_fmt_size`/`color_value`）、`app.services.storage.trash`（`move_file_to_trash`）与
 存储层 `get_storage()`，整理类工具复刻 `update_file` 的 key 重建逻辑，不自己拼路径。
 
 读/改仅限文本类（白名单 ext）且 ≤256KB，避免把二进制当文本、撑爆上下文。
@@ -19,9 +19,8 @@ from app.core.ownership import get_owned
 from app.core.redaction import redact
 from app.services.storage import get_storage
 from app.services.storage.folders import resolve_folder_path
-from app.api.v1.files import (
-    _fmt_size, _color,
-)
+from app.services.files.response import color_value
+from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.trash import move_file_to_trash
 from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
