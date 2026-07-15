@@ -1017,7 +1017,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // 这次写入，真发生画布变化时才动。
         let lastRectKey = ''
         const trackCamera = () => {
-          if (done) return
+          if (done || !session.isCurrent()) return
           const r = revealEl.getBoundingClientRect()
           // 乐观临时卡在服务端真实 id 回写的一瞬间，Vue 可能经历一帧内部重排；此时旧落点
           // 节点会短暂量成 0×0。它不是画布真的缩放到了 0，若照常参与比例计算会把 camGlue
@@ -1114,7 +1114,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // 不把它当成过渡基线，过渡不 fire → 直接瞬移到目标（这就是并发拖拽时 B 回退「瞬移一下」的真凶）。
         // rAF 跨过一个真实帧边界，保证冻结态先画出来、成为过渡起点，随后到目标是一段完整缓出。
         requestAnimationFrame(() => {
-          if (done) return
+          if (done || !session.isCurrent()) return
           holder.style.transition = trans
           clone2.style.transition = trans
           applyTransform()
@@ -1216,7 +1216,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 留出一个真实绘制帧：第一帧只画两张克隆重叠的起点，第二帧才开启 transform 过渡。
       // 这样所有走双克隆落地的卡片都使用同一份可靠的 FLIP 时序。
       requestAnimationFrame(() => {
-        if (done) return
+        if (done || !session.isCurrent()) return
         startSettle()
         armFinishTimer()
       })
@@ -1268,6 +1268,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     holder.style.zIndex = String(opts.dragZIndex ?? _landingZIndex(sourceEl))
     // 业务 drop + Vue 重渲染在微任务里已落定；本 rAF 在 paint 前做落点 FLIP，避免闪一下
     requestAnimationFrame(() => {
+      if (!session.isCurrent()) return
       // 1) 释放点压着文件夹/面包屑 → 吸入（不依赖异步重渲染）
       //    skipAbsorb（看板）跳过：看板永不吸入文件夹，而此处 elementFromPoint 在 moveProject 把布局改脏后
       //    会强制一次整页重排（trace 里 elementFromPoint 161ms 的大头）——白白吃掉松手那帧。
@@ -1350,6 +1351,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         } else {
           const deadline = performance.now() + (opts.absorbLandingWaitMs ?? 300)
           const landOnAbsorbTarget = () => {
+            if (!session.isCurrent()) return
             const resolved = opts.resolveAbsorbLandingTarget?.()
             if (!resolved && opts.resolveAbsorbLandingTarget && performance.now() < deadline) {
               requestAnimationFrame(landOnAbsorbTarget)
@@ -1451,6 +1453,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       if (opts.resolveLandingTarget) {
         const deadline = performance.now() + (opts.landingTargetWaitMs ?? 0)
         const landOnExternalTarget = () => {
+          if (!session.isCurrent()) return
           const el = opts.resolveLandingTarget?.()
           if (el?.isConnected && el.offsetWidth > 0) {
             // 素材抽屉的源卡不是落点本体：在新画布卡接手飞行动画时就恢复原位占位，
