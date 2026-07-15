@@ -602,7 +602,7 @@
   </BaseModal>
 
   <!-- 右键菜单 -->
-  <ContextMenu :show="pmCtx.visible" :x="pmCtx.x" :y="pmCtx.y" @close="pmCtx.visible = false">
+  <FileBrowserContextMenu :show="pmCtx.visible" :x="pmCtx.x" :y="pmCtx.y" @close="pmCtx.visible = false">
     <template v-if="pmCtx.type === 'file' || pmCtx.type === 'multi-file'">
       <button v-if="pmCtx.type === 'file'" class="ctx-item popup-menu-item" @click="pmCtxInfo">
         <PhInfo :size="13" weight="bold" />
@@ -667,7 +667,7 @@
         剪贴板为空
       </button>
     </template>
-  </ContextMenu>
+  </FileBrowserContextMenu>
 
   <!-- 文件详细信息弹窗 -->
   <FileInfoPopup
@@ -718,6 +718,7 @@ import FilePasteButton from '@/components/common/FilePasteButton.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
 import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
+import FileBrowserContextMenu from '@/components/common/FileBrowserContextMenu.vue'
 import FileBrowserList from '@/components/common/FileBrowserList.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
