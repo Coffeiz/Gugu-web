@@ -89,3 +89,42 @@ async def get_storage_usage(db: AsyncSession, user_id: int) -> int:
     """返回当前用户已使用的存储字节数。"""
     result = await db.execute(storage_usage_query(user_id))
     return result.scalar() or 0
+
+
+async def get_file_version_snapshot(db: AsyncSession, user_id: int):
+    """查询文件表状态摘要所需的聚合值。"""
+    result = await db.execute(
+        select(
+            func.count(File.id),
+            func.max(File.updated_at),
+            func.max(File.deleted_at),
+        ).where(File.user_id == user_id)
+    )
+    return result.one()
+
+
+async def get_file_tree_rows(db: AsyncSession, user_id: int):
+    """查询文件库树所需的项目文件计数、项目行和个人文件计数。"""
+    project_file_rows = await db.execute(
+        select(File.project_id, func.count().label("cnt"))
+        .where(
+            File.user_id == user_id,
+            File.space == "project",
+            File.project_id.isnot(None),
+            File.deleted_at.is_(None),
+        )
+        .group_by(File.project_id)
+    )
+    project_rows = await db.execute(
+        select(Project)
+        .where(Project.user_id == user_id)
+        .order_by(Project.created_at.desc())
+    )
+    personal_count = await db.execute(
+        select(func.count()).where(
+            File.user_id == user_id,
+            File.space == "personal",
+            File.deleted_at.is_(None),
+        )
+    )
+    return project_file_rows.all(), project_rows.scalars().all(), personal_count.scalar_one()
