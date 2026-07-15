@@ -291,7 +291,7 @@
             }"></div>
             <!-- ── 网格视图 ── -->
             <template v-if="fileViewMode === 'grid'">
-              <div class="file-grid" @contextmenu.prevent.self="openPmCtx('empty', null, $event)">
+              <FileBrowserGrid @empty-context="openPmCtx('empty', null, $event)">
                 <!-- 文件夹卡片（当前层） -->
                 <div v-for="folder in sortedCurrentFolders" :key="folder.id"
                   class="folder-card" :style="{ '--fd-color': accentColor }"
@@ -467,12 +467,12 @@
                   <span>上传文件</span>
                   <input type="file" hidden multiple @change="handleFileInput" />
                 </label>
-              </div>
+              </FileBrowserGrid>
             </template>
 
             <!-- ── 列表视图 ── -->
             <template v-else>
-              <div class="file-list-view" @contextmenu.prevent.self="openPmCtx('empty', null, $event)">
+              <FileBrowserList class-name="file-list-view" @empty-context="openPmCtx('empty', null, $event)">
                 <div class="list-head">
                   <span class="lh-sortable" :class="{ active: pmSortKey === 'name' }" @click.stop="onPmSortSelect('name')">名称<svg class="lh-arrow" :class="{ desc: pmSortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
                   <span class="lh-sortable" :class="{ active: pmSortKey === 'stage' }" @click.stop="onPmSortSelect('stage')">阶段<svg class="lh-arrow" :class="{ desc: pmSortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
@@ -580,7 +580,7 @@
                   <PhUploadSimple :size="13" weight="bold" />
                   上传文件 <input type="file" hidden multiple @change="handleFileInput" />
                 </label>
-              </div>
+              </FileBrowserList>
             </template>
 
             <!-- 批量操作浮动栏 -->
@@ -716,10 +716,14 @@ import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
 import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
 import FilePasteButton from '@/components/common/FilePasteButton.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
+import FileBrowserList from '@/components/common/FileBrowserList.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
 import { parseFolderId } from '@/utils/folderKeys'
+import { useFileSelection } from '@/composables/files/useFileSelection'
+import { sortFileProjection } from '@/composables/files/useFileProjection'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
@@ -901,6 +905,7 @@ const {
 
 const pmSelectionModeForced = ref(false)
 const pmDownloadingZip      = ref(false)
+const pmFileSelection = useFileSelection({ fileIds: pmSelectedFileIds, folderIds: pmSelectedFolderIds })
 const pmInSelectionMode = computed(() =>
   pmSelectionModeForced.value || pmSelectedFileIds.value.size > 0 || pmSelectedFolderIds.value.size > 0
 )
@@ -924,6 +929,7 @@ function _pmShiftSelect(type: 'folder' | 'file', id: number) {
 }
 
 function clearPmSelection() {
+  pmFileSelection.clearSelection()
   _clearPmSelBase()
   pmSelectionModeForced.value = false
   pmLastAnchorIndex.value     = -1
@@ -1117,36 +1123,19 @@ function onPmFilePointerDown(file: FileMeta, e: PointerEvent) {
 const { SORT_OPTIONS: PM_SORT_OPTIONS, sortKey: pmSortKey, sortDir: pmSortDir, sortMenuOpen: pmSortMenuOpen, sortBtnRef: pmSortBtnRef, sortMenuPos: pmSortMenuPos, openSortMenu: openPmSortMenu, onSortSelect: onPmSortSelect } = useSorting()
 
 const sortedCurrentFolders = computed(() => {
-  const dir = pmSortDir.value === 'asc' ? 1 : -1
-  return [...currentFolders.value].sort((a, b) => {
-    if (pmSortKey.value === 'name' || pmSortKey.value === 'type') {
-      return dir * (a.name ?? '').localeCompare(b.name ?? '', 'zh')
-    }
-    return dir * ((a.id > b.id ? 1 : a.id < b.id ? -1 : 0))
+  return sortFileProjection(currentFolders.value, pmSortKey.value, pmSortDir.value, {
+    name: folder => folder.name, type: folder => folder.name, id: folder => folder.id,
   })
 })
 
 const sortedCurrentFiles = computed(() => {
-  const dir = pmSortDir.value === 'asc' ? 1 : -1
-  return [...currentFiles.value].sort((a, b) => {
-    if (pmSortKey.value === 'name') {
-      return dir * (a.displayName ?? '').localeCompare(b.displayName ?? '', 'zh')
-    }
-    if (pmSortKey.value === 'type') {
-      const ca = fileExtCategory(a.ext), cb = fileExtCategory(b.ext)
-      if (ca !== cb) return dir * ca.localeCompare(cb)
-      return dir * (a.ext ?? '').localeCompare(b.ext ?? '')
-    }
-    if (pmSortKey.value === 'stage') {
-      return dir * (a.stageName ?? '').localeCompare(b.stageName ?? '', 'zh')
-    }
-    if (pmSortKey.value === 'createdAt') {
-      return dir * (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
-    }
-    if (pmSortKey.value === 'size') {
-      return dir * ((a.sizeBytes ?? 0) - (b.sizeBytes ?? 0))
-    }
-    return 0
+  return sortFileProjection(currentFiles.value, pmSortKey.value, pmSortDir.value, {
+    name: file => file.displayName,
+    type: file => `${fileExtCategory(file.ext)}:${file.ext ?? ''}`,
+    stage: file => file.stageName ?? '',
+    createdAt: file => file.createdAt,
+    size: file => file.sizeBytes ?? 0,
+    id: file => file.id,
   })
 })
 
