@@ -725,6 +725,7 @@ import { parseFolderId } from '@/utils/folderKeys'
 import { useFileSelection } from '@/composables/files/useFileSelection'
 import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
+import { useFileActions } from '@/composables/files/useFileActions'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
@@ -734,6 +735,7 @@ function onModalClose() { emit('close'); pmSortMenuOpen.value = false }
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 const projectStore     = useProjectStore()
+const fileActions      = useFileActions()
 const fileCacheStore   = useFilesCacheStore()
 const liveStore        = useLiveStore()
 const prefsStore       = usePreferencesStore()
@@ -1192,7 +1194,7 @@ async function deleteFile(file: FileMeta) {
 // ── 下载 ─────────────────────────────────────────────────────────────────────
 
 function downloadFile(file: FileMeta) {
-  filesApi.download(file.id, file.displayName + '.' + file.ext.toLowerCase())
+  return fileActions.downloadFile(file)
 }
 
 // ── 预览 ──
@@ -1237,7 +1239,7 @@ async function commitFolderRename() {
 }
 
 function downloadFolderZip(folder: FolderMeta) {
-  foldersApi.download(folder.id, folder.name)
+  return fileActions.downloadFolder(folder)
 }
 
 async function deleteFolderCard(folder: FolderMeta) {

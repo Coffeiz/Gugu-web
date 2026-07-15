@@ -715,6 +715,7 @@ import { useFilesNav } from '@/composables/useFilesNav'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useFileSelection } from '@/composables/files/useFileSelection'
 import { sortFileProjection } from '@/composables/files/useFileProjection'
+import { useFileActions } from '@/composables/files/useFileActions'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
 import { readDroppedEntries, filesToItems, uploadFilesWithFolders, checkUploadConflicts, type UploadItem } from '@/composables/useFileUpload'
@@ -1593,6 +1594,7 @@ async function handleDrop(e: DragEvent) {
 
 // ── 预览 ──
 const previewStore = usePreviewStore()
+const fileActions = useFileActions()
 const openPreview = (f: FileMeta) => {
   if (isAudioExt(f.ext)) fireHint('music')   // 新手引导：第一次打开音乐文件（🎵😌 彩蛋）
   previewStore.open(f, sortedContents.value.files)
@@ -1601,7 +1603,7 @@ const openPreview = (f: FileMeta) => {
 // ── 下载 ──
 async function downloadFile(f: FileMeta) {
   try {
-    await filesApi.download(f.id, `${f.displayName}.${f.ext.toLowerCase()}`)
+    await fileActions.downloadFile(f)
   } catch (e) {
     console.error('[Files] 下载失败:', (e as Error).message)
   }
@@ -1668,7 +1670,7 @@ async function commitRename() {
 async function downloadFolder(f: FolderCard) {
   if (f.folderId == null) return
   try {
-    await foldersApi.download(f.folderId, f.displayName)
+    await fileActions.downloadFolder(f)
   } catch (e) {
     console.error('[Files] 下载文件夹失败:', (e as Error).message)
   }
