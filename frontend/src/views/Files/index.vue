@@ -721,10 +721,10 @@ import { useFileSelection } from '@/composables/files/useFileSelection'
 import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileContextMenu } from '@/composables/files/useFileContextMenu'
-import { getTopLevelUploadGroups } from '@/composables/files/useFileUploadController'
+import { getTopLevelUploadGroups, resolveUploadConflicts } from '@/composables/files/useFileUploadController'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
-import { readDroppedEntries, filesToItems, uploadFilesWithFolders, checkUploadConflicts, type UploadItem } from '@/composables/useFileUpload'
+import { readDroppedEntries, filesToItems, uploadFilesWithFolders, type UploadItem } from '@/composables/useFileUpload'
 import { useBoxSelection } from '@/composables/useBoxSelection'
 import UploadConflictDialog, { type ConflictDecision } from '@/components/common/UploadConflictDialog.vue'
 import {
@@ -1491,14 +1491,14 @@ async function uploadFiles(items: UploadItem[]) {
 
   // 上传前探测同名冲突（只查直接落在这个文件夹的顶层文件，子文件夹本身是新建的不会冲突）；
   // 有冲突才弹列表式确认，选「跳过」的文件直接从这批里剔除，不会真的发上传请求。
-  const conflicts = await checkUploadConflicts(items, { space, projectId, folderId })
-  let decisions = new Map<string, ConflictDecision>()
-  if (conflicts.length) {
-    if (!conflictDialogRef.value) return
-    decisions = await conflictDialogRef.value.show(conflicts)
-    items = items.filter(it => decisions.get(it.relativePath)?.action !== 'skip')
-    if (!items.length) return
-  }
+  const resolved = await resolveUploadConflicts(
+    items,
+    { space, projectId, folderId },
+    conflicts => conflictDialogRef.value?.show(conflicts) ?? Promise.resolve(new Map<string, ConflictDecision>()),
+  )
+  items = resolved.items
+  const decisions = resolved.decisions
+  if (!items.length) return
 
   // 按顶层文件夹分组：relativePath 带 "/" 的文件汇总进「文件夹名 · 完成数/总数」一张卡，
   // 不用每个文件各出一张（大部分还落在当前看不见的子文件夹里，刷屏也看不出意义）；
