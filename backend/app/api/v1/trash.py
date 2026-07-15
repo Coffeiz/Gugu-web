@@ -19,6 +19,7 @@ from app.schemas import (
 from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
 from app.core import events
+from app.services.files.trash import permanently_delete_file
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.storage.folders import folder_dir_key
@@ -294,17 +295,12 @@ async def hard_delete_file(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await get_owned(db, File, fid, current_user.id)
-    if not f or f.deleted_at is None:
+    deleted_id = await permanently_delete_file(
+        db, get_storage(), current_user.id, fid)
+    if deleted_id is None:
         raise HTTPException(404, "文件不存在")
-    fid = f.id
-    try:
-        await get_storage().delete(f.storage_key)
-    except Exception:
-        pass
-    await db.delete(f)
     await db.commit()
-    _delete_thumb_cache(fid)
+    _delete_thumb_cache(deleted_id)
     await events.publish(current_user.id, "files", origin=origin)
 
 
