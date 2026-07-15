@@ -24,7 +24,7 @@ from app.services.storage.file_service import FileService
 from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.trash import move_file_to_trash
 from app.services.files.response import color_value, to_file_response
-from app.services.files.browser import all_files_query, file_listing_query
+from app.services.files.browser import all_files_query, file_listing_query, storage_usage_query
 from app.services.files.upload import parse_upload_filename
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -209,9 +209,7 @@ async def files_storage(
 ):
     """返回当前用户的存储用量与上限。"""
     used_res = await db.execute(
-        select(func.sum(File.size_bytes)).where(
-            File.user_id == current_user.id,
-        )
+        storage_usage_query(current_user.id)
     )
     used = used_res.scalar() or 0
     limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
