@@ -5,7 +5,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ownership import get_owned
-from app.models import File, Project
+from app.models import File, Folder, Project
+from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.keys import _build_key, _resolve_conflict
 
@@ -17,6 +18,14 @@ class PresignTarget:
     final_key: str
     final_name: str
     overwrite_file_id: Optional[int] = None
+
+
+@dataclass
+class ConfirmUploadResult:
+    file: File
+    project: Optional[Project]
+    folder_name: Optional[str]
+    overwritten_file_id: Optional[int] = None
 
 
 class UploadTargetError(ValueError):
@@ -124,3 +133,61 @@ async def prepare_presign_target(
         final_name=final_name,
         overwrite_file_id=existing.id if existing else None,
     )
+
+
+async def confirm_oss_upload(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    storage_key: str,
+    display_name: str,
+    ext: str,
+    mime_type: str,
+    size_bytes: int,
+    space: str,
+    project_id: Optional[int],
+    folder_id: Optional[int],
+    stage_name: str,
+    overwrite_file_id: Optional[int],
+) -> ConfirmUploadResult:
+    """登记已完成的 OSS 上传，只 flush，不提交事务和发布事件。"""
+    project = None
+    folder_name = None
+    if space == "project" and project_id:
+        project = await get_owned(db, Project, project_id, user_id)
+        if not project:
+            raise UploadTargetError(400, "项目不存在")
+    if folder_id is not None:
+        folder = await get_owned(db, Folder, folder_id, user_id)
+        if not folder:
+            raise UploadTargetError(400, "文件夹不存在")
+        folder_name = folder.name
+
+    if overwrite_file_id is not None:
+        existing = await get_owned(db, File, overwrite_file_id, user_id)
+        if not existing:
+            raise UploadTargetError(400, "要覆盖的文件不存在")
+        if existing.storage_key != storage_key:
+            raise UploadTargetError(400, "覆盖目标与直传路径不一致")
+        existing.size = _fmt_size(size_bytes)
+        existing.size_bytes = size_bytes
+        existing.mime_type = mime_type
+        await db.flush()
+        return ConfirmUploadResult(existing, project, folder_name, existing.id)
+
+    db_file = File(
+        user_id=user_id,
+        display_name=display_name,
+        ext=ext,
+        space=space,
+        project_id=project_id if space == "project" else None,
+        folder_id=folder_id,
+        stage_name=stage_name,
+        storage_key=storage_key,
+        size=_fmt_size(size_bytes),
+        size_bytes=size_bytes,
+        mime_type=mime_type,
+    )
+    db.add(db_file)
+    await db.flush()
+    return ConfirmUploadResult(db_file, project, folder_name)
