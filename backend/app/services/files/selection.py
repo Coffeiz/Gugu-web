@@ -93,3 +93,19 @@ async def move_files_to_trash(
         await move_file_to_trash(storage, file)
         file.deleted_at = deleted_at
     return [file.id for file in rows]
+
+
+async def move_file_to_trash_by_id(
+    db: AsyncSession,
+    storage,
+    user_id: int,
+    file_id: int,
+    deleted_at,
+) -> bool:
+    """按归属移动单个文件到回收站，返回是否找到可删除文件。"""
+    file = await get_owned(db, File, file_id, user_id)
+    if not file or file.deleted_at is not None:
+        return False
+    await move_file_to_trash(storage, file)
+    file.deleted_at = deleted_at
+    return True
