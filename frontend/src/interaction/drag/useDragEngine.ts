@@ -11,6 +11,7 @@
 import { LandingState } from './animation/landing'
 import { invertPlay } from './animation/flip'
 import { animateFlyTo } from './animation/flyTo'
+import { morphTransform } from './animation/morph'
 import { dragRegistry } from './core/DragRegistry'
 import { integrateSpring } from './core/physics'
 import { dispatchDragHandoff } from './interaction/handoff'
@@ -915,14 +916,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 克隆体是按源卡(旧)尺寸渲染的；缩放到落点卡尺寸，并让缩放后中心对齐落点中心。
       // 抽成纯函数：给任意一个「目标框」算出对应 transform 字符串——retarget 冻结当前位置时也复用
       // 它（用同一套函数式表示，见下），避免跟 getComputedStyle 的 matrix3d 混用导致跨表示插值。
-      const tfFor = (b: { left: number; top: number; width: number; height: number }) => {
-        const sx = (b.width  / dropW).toFixed(4)
-        const sy = (b.height / dropH).toFixed(4)
-        const cx = b.left + b.width / 2, cy = b.top + b.height / 2
-        return `translate3d(${(cx - half.x).toFixed(2)}px, ${(cy - half.y).toFixed(2)}px, 0) scale(${sx}, ${sy})`
-      }
       const applyTransform = () => {
-        const tf = tfFor(box)
+        const tf = morphTransform(box, { w: dropW, h: dropH }, half)
         holder.style.transform = tf
         clone2.style.transform = tf
       }
@@ -1062,7 +1057,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         const r = clone2.getBoundingClientRect()   // 当前真实可见框（含插值中间态；landing 无旋转，rect 即真位置）
         box = newBox
         // 冻结当前位置：关过渡 + 同款函数式表示（tfFor，不用 getComputedStyle 的 matrix3d，避免跨表示插值）。
-        const frozen = tfFor({ left: r.left, top: r.top, width: r.width, height: r.height })
+        const frozen = morphTransform({ left: r.left, top: r.top, width: r.width, height: r.height }, { w: dropW, h: dropH }, half)
         holder.style.transition = 'none'
         clone2.style.transition = 'none'
         holder.style.transform = frozen

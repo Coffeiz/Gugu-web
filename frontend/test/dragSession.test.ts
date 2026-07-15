@@ -4,6 +4,7 @@ import { DragSession } from '../src/interaction/drag/core/DragSession'
 import { cloneForDrag, createLandingClone } from '../src/interaction/drag/visual/clone'
 import { dispatchDragHandoff } from '../src/interaction/drag/interaction/handoff'
 import { integrateSpring } from '../src/interaction/drag/core/physics'
+import { morphTransform } from '../src/interaction/drag/animation/morph'
 
 describe('DragSession', () => {
   it('只管理生命周期并按顺序执行清理', () => {
@@ -117,5 +118,15 @@ describe('integrateSpring', () => {
     expect(state.position.x).toBeGreaterThan(0)
     expect(state.position.y).toBeGreaterThan(0)
     expect(state.velocity.x).toBeGreaterThan(0)
+  })
+})
+
+describe('morphTransform', () => {
+  it('保持落点中心与尺寸缩放计算一致', () => {
+    expect(morphTransform(
+      { left: 10, top: 20, width: 200, height: 100 },
+      { w: 100, h: 50 },
+      { x: 50, y: 25 },
+    )).toBe('translate3d(60.00px, 45.00px, 0) scale(2.0000, 2.0000)')
   })
 })
