@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DragRegistry } from '../src/interaction/drag/core/DragRegistry'
 import { DragSession } from '../src/interaction/drag/core/DragSession'
+import { cloneForDrag } from '../src/interaction/drag/visual/clone'
 
 describe('DragSession', () => {
   it('只管理生命周期并按顺序执行清理', () => {
@@ -50,5 +51,22 @@ describe('DragRegistry', () => {
     expect(second.isCurrent()).toBe(true)
     expect(replacement.isCurrent()).toBe(true)
     expect(registry.current(firstSource)).toBe(replacement)
+  })
+})
+
+describe('cloneForDrag', () => {
+  it('复制内容并只修改拖拽视觉 class', () => {
+    const source = document.createElement('div')
+    source.className = 'source selected'
+    source.innerHTML = '<span>内容</span>'
+
+    const clone = cloneForDrag(source, {
+      addClasses: ['phys-drag-clone'],
+      removeClasses: ['selected'],
+    })
+
+    expect(clone).not.toBe(source)
+    expect(clone.className).toBe('source phys-drag-clone')
+    expect(clone.innerHTML).toBe('<span>内容</span>')
   })
 })

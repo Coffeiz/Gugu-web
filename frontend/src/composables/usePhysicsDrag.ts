@@ -9,6 +9,7 @@
  */
 
 import { dragRegistry } from '../interaction/drag/core/DragRegistry'
+import { cloneForDrag } from '../interaction/drag/visual/clone'
 
 // 拖拽物理可选项（startPhysicsDrag / startMultiPhysicsDrag 共用）
 export interface PhysicsDragOpts {
@@ -114,20 +115,6 @@ export interface PhysicsDropContext {
 
 interface Box { left: number; top: number; width: number; height: number }
 interface ActiveDrag { raf: number; end: () => void }
-
-// clone 会被挂到 body，脱离源卡原本的页面/画布容器；若不把继承性字体属性带过去，它会改继承
-// body 的字体栈。不同字体的真实字宽会改变换行，哪怕 font-size/卡片宽度完全相同。
-const INHERITED_TEXT_PROPERTIES = [
-  // 字号、字重、行高等由组件自身 CSS 管；把它们内联到根克隆会覆盖子元素的继承值，反而改变布局。
-  'font-family', 'font-kerning', 'font-feature-settings', 'font-variation-settings',
-  'font-optical-sizing', 'font-synthesis', 'letter-spacing', 'word-spacing', 'text-rendering',
-]
-function copyInheritedTextStyle(source: HTMLElement, clone: HTMLElement) {
-  const style = getComputedStyle(source)
-  for (const property of INHERITED_TEXT_PROPERTIES) {
-    clone.style.setProperty(property, style.getPropertyValue(property))
-  }
-}
 
 let _ghostImg: HTMLCanvasElement | null = null
 function _transparentGhost() {
@@ -441,9 +428,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     transformOrigin: '0 0', transform: `scale(${CS0})`, pointerEvents: 'none',
   })
   holder.appendChild(scaleShell)
-  const clone = sourceEl.cloneNode(true) as HTMLElement
-  clone.classList.add('phys-drag-clone')
-  copyInheritedTextStyle(sourceEl, clone)
+  const clone = cloneForDrag(sourceEl, { addClasses: ['phys-drag-clone'] })
   if (opts.cloneClass) clone.classList.add(opts.cloneClass)   // 调用方补回脱离上下文后丢失的版式（如 mode2）
   // 连接点由各贴纸组件的响应式 hovering 状态控制；cloneNode 之后它不再接收组件更新。
   // 用抓起当下真实的命中状态补一次，避免文件/项目/活动卡恰好在组件状态还没刷新时把一份
@@ -1320,7 +1305,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           willChange: 'transform', transition: 'none', opacity: '0',
           transform: holder.style.transform,   // 起点与旧克隆重叠
         })
-        const c = el.cloneNode(true) as HTMLElement
+        const c = cloneForDrag(el)
         if (opts.cloneClass) c.classList.add(opts.cloneClass)
         c.classList.add('phys-landing-content')
         // el 已作为真实落点被 .phys-drag-source 隐藏；cloneNode 会把这个类一并带来，
@@ -1329,7 +1314,6 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // 才摘掉（虚线描边全程不提前变样，见 landOnAbsorbTarget 的注释），但克隆 2 飞行时
         // 展示的应该始终是"真实卡片长什么样"，不能继承这份占位态，否则飞进来的是个空框。
         c.classList.remove('phys-drag-source', 'phys-reveal-controls', 'phys-drag-source-placeholder')
-        copyInheritedTextStyle(el, c)
         c.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
         // 操作区由 holder 内唯一的 cardActionOverlay 承担可见性；这里留隐藏副本维持标题行布局。
         c.querySelectorAll<HTMLElement>('.card-actions, .nc-actions').forEach(action => { action.style.visibility = 'hidden' })
@@ -1605,8 +1589,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     const shadowLayout = extraEl ? getComputedStyle(extraEl) : sourceLayout
     if (extraEl) {
       // 克隆真实文件卡内容
-      el = extraEl.cloneNode(true) as HTMLElement
-      copyInheritedTextStyle(extraEl, el)
+      el = cloneForDrag(extraEl)
       // 去掉拖拽状态类；保留 .selected 以保持选中边框和 ::before 覆盖层
       el.classList.remove('pre-selected', 'dragging', 'cut')
       if (opts.cloneClass) el.classList.add(opts.cloneClass)
@@ -1644,9 +1627,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
   })
 
   // 主克隆（zIndex 最高，带数量徽章）
-  const clone = sourceEl.cloneNode(true) as HTMLElement
-  clone.classList.add('phys-drag-clone')
-  copyInheritedTextStyle(sourceEl, clone)
+  const clone = cloneForDrag(sourceEl, { addClasses: ['phys-drag-clone'] })
   // 移除拖拽/剪切态，保留 .selected 以显示选中边框和覆盖层
   clone.classList.remove('dragging', 'cut')
   clone.querySelectorAll('.sel-checkbox, .fc-hover-actions, .fd-hover-actions').forEach(n => n.remove())
