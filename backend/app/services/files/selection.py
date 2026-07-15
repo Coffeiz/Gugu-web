@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ownership import get_owned
 from app.models import File, Folder
+from app.services.storage.trash import move_file_to_trash
 
 
 async def build_batch_zip(
@@ -69,3 +70,26 @@ async def build_batch_zip(
             archive.writestr(archive_path, await storage.get(file.storage_key))
     buffer.seek(0)
     return buffer.read()
+
+
+async def move_files_to_trash(
+    db: AsyncSession,
+    storage,
+    user_id: int,
+    file_ids: list[int],
+    deleted_at,
+) -> list[int]:
+    """批量删除文件的跨资源编排，返回实际进入回收站的文件 ID。"""
+    if not file_ids:
+        return []
+    rows = (await db.execute(
+        select(File).where(
+            File.id.in_(file_ids),
+            File.user_id == user_id,
+            File.deleted_at.is_(None),
+        )
+    )).scalars().all()
+    for file in rows:
+        await move_file_to_trash(storage, file)
+        file.deleted_at = deleted_at
+    return [file.id for file in rows]

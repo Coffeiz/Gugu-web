@@ -27,7 +27,7 @@ from app.services.storage.trash import move_file_to_trash
 from app.services.files.response import color_value, to_file_response
 from app.services.files.browser import all_files_query, file_listing_query, storage_usage_query
 from app.services.files.upload import find_conflict, parse_upload_filename
-from app.services.files.selection import build_batch_zip
+from app.services.files.selection import build_batch_zip, move_files_to_trash
 from app.services.files.previews import (
     delete_thumb_cache,
     office_to_pdf,
@@ -608,20 +608,11 @@ async def batch_delete_files(
 ):
     if not body.ids:
         return
-    stmt = select(File).where(
-        File.id.in_(body.ids),
-        File.user_id == current_user.id,
-        File.deleted_at.is_(None),
-    )
-    files = (await db.execute(stmt)).scalars().all()
-    storage = get_storage()
-    now = now_utc()
-    for f in files:
-        await move_file_to_trash(storage, f)
-        f.deleted_at = now
+    file_ids = await move_files_to_trash(
+        db, get_storage(), current_user.id, body.ids, now_utc())
     await db.commit()
     await events.publish(current_user.id, "files", origin=origin,
-                         file_op={"op": "remove", "kind": "file", "ids": [f.id for f in files]})
+                         file_op={"op": "remove", "kind": "file", "ids": file_ids})
 
 
 # ── POST /files/batch-download ───────────────────────────────────────────────
