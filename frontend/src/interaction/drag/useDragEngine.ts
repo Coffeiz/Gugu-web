@@ -12,6 +12,7 @@ import { LandingState } from './animation/landing'
 import { invertPlay } from './animation/flip'
 import { animateFlyTo } from './animation/flyTo'
 import { morphTransform } from './animation/morph'
+import { trackLandingCamera } from './animation/camera'
 import { dragRegistry } from './core/DragRegistry'
 import { integrateSpring } from './core/physics'
 import { dispatchDragHandoff } from './interaction/handoff'
@@ -968,28 +969,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // 里挤掉渲染预算，掉一两帧就会看到那半秒该丝滑的透明度过渡卡一下、露出瞬间的"半透明
         // 一闪"（用户反馈"松手时会半透明一下，没有丝滑渐变到本体"）。量出来的框没变就跳过
         // 这次写入，真发生画布变化时才动。
-        let lastRectKey = ''
-        const trackCamera = () => {
-          if (landing.isDone() || !session.isCurrent()) return
-          const r = revealEl.getBoundingClientRect()
-          // 乐观临时卡在服务端真实 id 回写的一瞬间，Vue 可能经历一帧内部重排；此时旧落点
-          // 节点会短暂量成 0×0。它不是画布真的缩放到了 0，若照常参与比例计算会把 camGlue
-          // 整层写成 scale(0)，飞行克隆中途消失、只剩真实卡像是瞬移到位。无效几何只跳过
-          // 本帧，保留上一帧相机变换，等真实节点恢复有效尺寸后自然继续跟随。
-          if (!revealEl.isConnected || r.width < 1 || r.height < 1) {
-            requestAnimationFrame(trackCamera)
-            return
-          }
-          const rectKey = `${r.left.toFixed(2)}|${r.top.toFixed(2)}|${r.width.toFixed(2)}`
-          if (rectKey !== lastRectKey) {
-            lastRectKey = rectKey
-            const scaleRatio = camOrigin.width > 0.01 ? r.width / camOrigin.width : 1
-            camGlue!.style.transform =
-              `translate3d(${(r.left - camOrigin.left).toFixed(2)}px, ${(r.top - camOrigin.top).toFixed(2)}px, 0) scale(${scaleRatio.toFixed(4)})`
-          }
-          requestAnimationFrame(trackCamera)
-        }
-        requestAnimationFrame(trackCamera)
+        trackLandingCamera({
+          revealEl,
+          camGlue,
+          origin: camOrigin,
+          isActive: () => landing.isDone() === false && session.isCurrent(),
+        })
       }
 
       clone2.getBoundingClientRect()   // 提交初始态（与 holder 重叠、opacity 0），下面才会从此处动画
