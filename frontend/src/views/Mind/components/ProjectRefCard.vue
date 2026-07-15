@@ -203,6 +203,11 @@ const { onPointerDown, startLandingRegrab } = useCardDrag({
   // 落点，飞行/揭示都对不上真实卡片位置。放宽到 1500ms，与抽屉→画布方向
   // landingTargetWaitMs 的量级保持一致。
   absorbLandingWaitMs: 1500,
+  // 拖回抽屉的落地飞行（clone2）中途被重新抓起时，把手势转手给落点的抽屉卡自己接力，
+  // 而不是拿这次吸入请求的 opts（画布卡视角的 resolveAbsorbTarget/resolveLandingTarget
+  // 等）硬套在抽屉卡身上继续拖——不接的话转手事件落进没人听的地方，抓起来之后就没法
+  // 再放回画布。ProjectDrawerCard.vue 那边接了 physics-landing-regrab 事件才能接力。
+  delegateLandingRegrab: true,
   onAbsorb: () => emit('returnToDrawer', props.item),
 })
 function onLandingRegrab(event: Event) {

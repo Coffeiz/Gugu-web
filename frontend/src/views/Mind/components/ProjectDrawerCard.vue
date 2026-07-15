@@ -4,6 +4,7 @@
     :data-project-id="project.id"
     :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
     @pointerdown.stop="onPointerDown"
+    @physics-landing-regrab="onLandingRegrab"
   >
     <ProjectCardBody :project="project" />
   </article>
@@ -28,65 +29,85 @@ const props = defineProps({
 })
 const emit = defineEmits<{ (e: 'add'): void }>()
 
+// 拖出抽屉这条路径起拖逻辑抽成独立函数，好让「首次抓起」（onPointerDown）和「画布卡拖回
+// 抽屉、飞行中途被重新抓起」（onLandingRegrab，见其注释）复用同一份 startPhysicsDrag 配置，
+// 不必维护两份容易长歪的重复逻辑。
+function startDrag(event: PointerEvent, card: HTMLElement, initialRect?: { left: number; top: number; width: number; height: number }, isLandingRegrab = false) {
+  let landingTarget: HTMLElement | null = null
+  let returnTarget: HTMLElement | null = null
+  let scaleStartedAt: number | null = null
+  const canvasContentScale = () => {
+    if (scaleStartedAt == null) return 1
+    const progress = Math.min(1, (performance.now() - scaleStartedAt) / DRAWER_SCALE_MS)
+    // 与抓起抬高同一段缓出：第一克隆从抽屉实体尺寸自然收进当前画布比例，之后才
+    // 直接跟随实时相机缩放。用 transform 缩放，不触发文字重排。
+    const eased = 1 - (1 - progress) ** 3
+    return 1 + (props.canvasScale - 1) * eased
+  }
+  startPhysicsDrag(event, card, {
+    pointer: true,
+    skipAbsorb: false,
+    centerGrab: true,
+    contentScale: canvasContentScale,
+    lift: 1.03,
+    dragZIndex: 10,
+    cloneClass: 'pr-card',
+    keepSourcePlaceholder: true,
+    removeSourceOnExternalDrop: true,
+    delegateLandingRegrab: true,
+    // 放回抽屉时也以整张卡为落点交接：和画布内卡片归位相同，不能缩成一个点再露出源卡。
+    absorbShrink: false,
+    // 抽屉仍是这次外部拖拽的有效回收目标。命中时不创建画布节点，让物理模块走
+    // 原有“吸入源占位并恢复”的归位路径。
+    resolveAbsorbTarget: () => returnTarget,
+    onDrop: (center, velocity, size, context) => {
+      const pointer = context?.pointer ?? center
+      const drawer = document.querySelector<HTMLElement>('[data-project-drawer-dropzone]')
+      const drawerRect = drawer?.getBoundingClientRect()
+      if (drawer && drawerRect && pointer.x >= drawerRect.left && pointer.x <= drawerRect.right && pointer.y >= drawerRect.top && pointer.y <= drawerRect.bottom) {
+        returnTarget = card
+        return
+      }
+      // 抽屉来源的克隆有跟手弹簧，快速松手时它自己的速度可能已被阻尼压低；优先取
+      // 连续采样的指针释放速度，才能和画布内卡片一样保留明确的抛出方向与惯性。
+      const pointerVelocity = context?.pointerVelocity
+      const launchVelocity = pointerVelocity && Math.hypot(pointerVelocity.x, pointerVelocity.y) > 80
+        ? { ...pointerVelocity, turn: velocity.turn }
+        : velocity
+      const coast = coastOffset(launchVelocity)
+      props.addToCanvas(props.project.id, { x: center.x + coast.x, y: center.y + coast.y }, size)
+        .then(target => { landingTarget = target })
+        .catch(() => { landingTarget = null })
+    },
+    resolveLandingTarget: () => landingTarget,
+    landingTargetWaitMs: 1400,
+    initialRect,
+    initialHover: isLandingRegrab,
+    isLandingRegrab,
+  })
+  // 先提交抽屉本体大小这一帧，再让下一轮物理积分开始向画布比例收拢；不能在同一帧
+  // 直接传 canvasScale，否则浏览器只会看到一张已经缩小的克隆。
+  requestAnimationFrame(() => { scaleStartedAt = performance.now() })
+}
 function onPointerDown(event: PointerEvent) {
   startThresholdDrag(event, {
     exclude: target => !!(target as HTMLElement | null)?.closest('.seg-bar-wrap, button, input, textarea, select, a'),
-    onDragStart: (moveEvent, card) => {
-      let landingTarget: HTMLElement | null = null
-      let returnTarget: HTMLElement | null = null
-      let scaleStartedAt: number | null = null
-      const canvasContentScale = () => {
-        if (scaleStartedAt == null) return 1
-        const progress = Math.min(1, (performance.now() - scaleStartedAt) / DRAWER_SCALE_MS)
-        // 与抓起抬高同一段缓出：第一克隆从抽屉实体尺寸自然收进当前画布比例，之后才
-        // 直接跟随实时相机缩放。用 transform 缩放，不触发文字重排。
-        const eased = 1 - (1 - progress) ** 3
-        return 1 + (props.canvasScale - 1) * eased
-      }
-      startPhysicsDrag(moveEvent, card, {
-        pointer: true,
-        skipAbsorb: false,
-        centerGrab: true,
-        contentScale: canvasContentScale,
-        lift: 1.03,
-        dragZIndex: 10,
-        cloneClass: 'pr-card',
-        keepSourcePlaceholder: true,
-        removeSourceOnExternalDrop: true,
-        delegateLandingRegrab: true,
-        // 放回抽屉时也以整张卡为落点交接：和画布内卡片归位相同，不能缩成一个点再露出源卡。
-        absorbShrink: false,
-        // 抽屉仍是这次外部拖拽的有效回收目标。命中时不创建画布节点，让物理模块走
-        // 原有“吸入源占位并恢复”的归位路径。
-        resolveAbsorbTarget: () => returnTarget,
-        onDrop: (center, velocity, size, context) => {
-          const pointer = context?.pointer ?? center
-          const drawer = document.querySelector<HTMLElement>('[data-project-drawer-dropzone]')
-          const drawerRect = drawer?.getBoundingClientRect()
-          if (drawer && drawerRect && pointer.x >= drawerRect.left && pointer.x <= drawerRect.right && pointer.y >= drawerRect.top && pointer.y <= drawerRect.bottom) {
-            returnTarget = card
-            return
-          }
-          // 抽屉来源的克隆有跟手弹簧，快速松手时它自己的速度可能已被阻尼压低；优先取
-          // 连续采样的指针释放速度，才能和画布内卡片一样保留明确的抛出方向与惯性。
-          const pointerVelocity = context?.pointerVelocity
-          const launchVelocity = pointerVelocity && Math.hypot(pointerVelocity.x, pointerVelocity.y) > 80
-            ? { ...pointerVelocity, turn: velocity.turn }
-            : velocity
-          const coast = coastOffset(launchVelocity)
-          props.addToCanvas(props.project.id, { x: center.x + coast.x, y: center.y + coast.y }, size)
-            .then(target => { landingTarget = target })
-            .catch(() => { landingTarget = null })
-        },
-        resolveLandingTarget: () => landingTarget,
-        landingTargetWaitMs: 1400,
-      })
-      // 先提交抽屉本体大小这一帧，再让下一轮物理积分开始向画布比例收拢；不能在同一帧
-      // 直接传 canvasScale，否则浏览器只会看到一张已经缩小的克隆。
-      requestAnimationFrame(() => { scaleStartedAt = performance.now() })
-    },
+    onDragStart: (moveEvent, card) => startDrag(moveEvent, card),
     onClick: () => emit('add'),
   })
+}
+// 画布项目卡拖回抽屉、落地飞行（clone2）中途被重新抓起时的接力入口。usePhysicsDrag.ts 的
+// delegateLandingRegrab 机制会把这次手势通过 physics-landing-regrab 事件转手给落点本体
+// （ProjectRefCard.vue 那边同款事件转手给画布卡时也是这个模式，见其 onLandingRegrab）——
+// 之前这条方向没接这个事件，转手落进没人接的地方，物理模块只能退化用旧的 opts（画布卡那次
+// 拖拽的 resolveAbsorbTarget/resolveLandingTarget 等）硬套在抽屉卡身上继续拖，语义完全对不
+// 上，表现就是抓起来之后没法再放回画布。接上之后转手改用抽屉卡自己这份 startDrag 配置续接，
+// 跟"从抽屉首次拖出"完全同源，行为自然一致。
+function onLandingRegrab(event: Event) {
+  const handoff = event as CustomEvent<{ event: PointerEvent; initialRect: DOMRect }>
+  const card = event.currentTarget as HTMLElement
+  startDrag(handoff.detail.event, card, handoff.detail.initialRect, true)
+  event.preventDefault()
 }
 </script>
 

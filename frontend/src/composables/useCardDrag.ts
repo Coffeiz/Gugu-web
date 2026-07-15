@@ -183,6 +183,9 @@ export function useCardDrag(opts: {
   // 项目回抽屉保留整张卡飞入目标位；文件夹等传统吸收交互仍可走默认的缩小吸入。
   absorbShrink?: boolean
   onAbsorb?: () => void
+  // 见 usePhysicsDrag.ts 同名选项：落地飞行（clone2）中途被重新抓起时，把这次手势转手
+  // 给落点本体自己的拖拽逻辑接力，而不是拿这次吸入请求的 opts 硬套在落点本体上继续拖。
+  delegateLandingRegrab?: boolean
 }) {
   // 同一张卡尚在落地飞行时又被抓起，旧的关系线插值绝不能继续写 landingPositions；否则
   // RelationLayer 会优先读旧覆盖位置，视觉线脱离新抓住的克隆。取消后也要立即通知调用方
@@ -209,6 +212,7 @@ export function useCardDrag(opts: {
       resolveAbsorbLandingTarget: opts.resolveAbsorbLandingTarget,
       absorbLandingWaitMs: opts.absorbLandingWaitMs,
       absorbShrink: opts.absorbShrink,
+      delegateLandingRegrab: opts.delegateLandingRegrab,
       // 飞行中的 holder 被再次抓起时，物理模块会递归启动下一段拖拽；先停掉上一段只供
       // RelationLayer 使用的落地插值，避免旧 landingPositions 继续覆盖新克隆的位置。
       onRegrabStart: cancelActiveLanding,
