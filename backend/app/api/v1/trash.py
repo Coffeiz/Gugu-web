@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from app.core.tz import now_utc
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,11 +54,26 @@ async def list_trash(
         select(File, Project.name, Project.color, Folder.name)
         .outerjoin(Project, Project.id == File.project_id)
         .outerjoin(Folder, Folder.id == File.folder_id)
-        .where(File.user_id == current_user.id, File.deleted_at.isnot(None))
+        .where(
+            File.user_id == current_user.id,
+            File.deleted_at.isnot(None),
+            # 文件夹作为整体恢复单元时，内部文件不应再以独立条目出现；否则用户可以把
+            # 文件恢复到仍被软删的父目录里，得到数据库指向已删文件夹的“幽灵文件”。
+            or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
+        )
         .order_by(File.deleted_at.desc())
     )
     result = await db.execute(stmt)
     return [_to_resp(f, pname, _color(pcolor), fname) for f, pname, pcolor, fname in result.all()]
+
+
+async def _ensure_file_parent_is_live(f: File, db: AsyncSession) -> None:
+    """拒绝把仍归属回收站文件夹的文件单独恢复。"""
+    if f.folder_id is None:
+        return
+    folder = await get_owned(db, Folder, f.folder_id, f.user_id)
+    if not folder or folder.deleted_at is not None:
+        raise HTTPException(409, "所属文件夹仍在回收站，请先恢复文件夹")
 
 
 # ── GET /trash/folders （P2.3：顶层已删文件夹）───────────────────────────────
@@ -106,6 +121,69 @@ async def restore_folder(
                           version=folder.version)
 
 
+async def _deleted_folder_subtree_ids(folder: Folder, db: AsyncSession) -> list[int]:
+    """返回回收站文件夹的整棵已删子树，供永久删除一次性清理。"""
+    ids = [folder.id]
+    frontier = [folder.id]
+    while frontier:
+        children = (await db.execute(
+            select(Folder.id).where(
+                Folder.user_id == folder.user_id,
+                Folder.parent_id.in_(frontier),
+                Folder.deleted_at.isnot(None),
+            )
+        )).scalars().all()
+        ids.extend(children)
+        frontier = children
+    return ids
+
+
+# ── DELETE /trash/folders/{fid} （永久删除顶层文件夹）──────────────────────────
+
+@router.delete("/folders/{fid}", status_code=204)
+async def hard_delete_folder(
+    fid: int,
+    current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
+    db: AsyncSession = Depends(get_db),
+):
+    # 只允许删除回收站中可见的顶层恢复单元，避免绕开父文件夹删掉子树中的一个节点。
+    folder = (await db.execute(
+        _top_level_deleted_folders_stmt(current_user.id).where(Folder.id == fid)
+    )).scalar_one_or_none()
+    if not folder:
+        raise HTTPException(404, "文件夹不存在")
+
+    folder_ids = await _deleted_folder_subtree_ids(folder, db)
+    files = (await db.execute(
+        select(File).where(
+            File.user_id == current_user.id,
+            File.folder_id.in_(folder_ids),
+            File.deleted_at.isnot(None),
+        )
+    )).scalars().all()
+    storage = get_storage()
+    file_ids = [f.id for f in files]
+    for f in files:
+        try:
+            await storage.delete(f.storage_key)
+        except Exception:
+            pass
+        await db.delete(f)
+
+    dir_key = await folder_dir_key(db, folder.user_id, folder)
+    await db.delete(folder)
+    if dir_key:
+        try:
+            await storage.remove_folder(dir_key)
+        except Exception:
+            pass
+    await db.commit()
+    for file_id in file_ids:
+        _delete_thumb_cache(file_id)
+    await events.publish(current_user.id, "files", origin=origin)
+
+
 # ── POST /trash/{fid}/restore ────────────────────────────────────────────────
 
 @router.post("/{fid}/restore", status_code=204)
@@ -118,6 +196,7 @@ async def restore_file(
     f = await get_owned(db, File, fid, current_user.id)
     if not f or f.deleted_at is None:
         raise HTTPException(404, "文件不存在")
+    await _ensure_file_parent_is_live(f, db)
     await restore_file_storage(f, get_storage(), db)
     f.deleted_at = None
     await db.commit()
@@ -141,6 +220,8 @@ async def batch_restore(
         File.deleted_at.isnot(None),
     )
     files = (await db.execute(stmt)).scalars().all()
+    for f in files:
+        await _ensure_file_parent_is_live(f, db)
     storage = get_storage()
     for f in files:
         await restore_file_storage(f, storage, db)
@@ -190,6 +271,15 @@ async def empty_trash(
         except Exception:
             pass
         await db.delete(f)
+    roots = (await db.execute(_top_level_deleted_folders_stmt(current_user.id))).scalars().all()
+    for root in roots:
+        dir_key = await folder_dir_key(db, root.user_id, root)
+        await db.delete(root)
+        if dir_key:
+            try:
+                await storage.remove_folder(dir_key)
+            except Exception:
+                pass
     await db.commit()
     for fid in fids:
         _delete_thumb_cache(fid)

@@ -130,10 +130,14 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
         await _notify_tasks_changed([uid])   # 一次性任务触发即删 → 定时面板实时刷
     try:
         now_str = local_now().strftime("%Y-%m-%d %H:%M")
+        delivery_targets = _scheduled_delivery_targets(chans)
         prompt = (
             f"[定时任务触发：{name}]\n"
             f"现在是 {now_str}，用户设置了一条定时任务：{payload}\n"
-            f"请以咕咕的身份完成这项任务，并将结果告知用户。"
+            f"本轮消息将由系统投递到：{delivery_targets}。\n"
+            "请以咕咕的身份完成这项任务，只生成要发给用户的正文。"
+            "消息会由定时任务系统自动投递到已配置的渠道，不需要你调用发送工具，"
+            "也不要提及渠道、推送、工具不可用或无法发送。"
         )
         text = await _run_agent(uid, prompt, context_config)
         result = await deliver_to_channels(uid, name, text, chans)
@@ -225,6 +229,19 @@ async def _run_agent(user_id, prompt: str, context_config: dict | None = None) -
 # 渠道 → IM 平台标识（worker 里 QQ 的 platform 是 "qqbot"）
 _CHAN_PLATFORM = {"feishu": "feishu", "qq": "qqbot", "wechat": "wechat"}
 _PLAT_LABEL = {"feishu": "飞书", "qqbot": "QQ", "wechat": "微信"}
+
+
+def _scheduled_delivery_targets(chans: set) -> str:
+    """把任务配置转换成模型可理解的投递范围；只描述配置，不承诺实际触达。"""
+    labels = []
+    if {"web", "chat"} & chans:
+        labels.append("网页通知")
+    for channel, platform in _CHAN_PLATFORM.items():
+        if channel in chans:
+            labels.append(_PLAT_LABEL[platform])
+    if "im" in chans:
+        labels.append("已配置的即时通讯平台")
+    return "、".join(dict.fromkeys(labels)) or "未指定渠道"
 
 
 # ── IM 投递 ──────────────────────────────────────────────────────────────────

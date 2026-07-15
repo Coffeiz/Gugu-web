@@ -382,11 +382,16 @@ export const foldersApi = {
 }
 
 // ── Trash ─────────────────────────────────────────────────────────────────────
+export type TrashFolderMeta = Schemas['TrashFolderResponse']
+
 export const trashApi = {
-  list:         ()           => get('/trash'),
-  restore:      (id: number) => post(`/trash/${id}/restore`, {}),
-  hardDelete:   (id: number) => del(`/trash/${id}`),
-  empty:        ()           => del('/trash'),
+  list:          ()           => get('/trash'),
+  listFolders:   ()           => get<TrashFolderMeta[]>('/trash/folders'),
+  restore:       (id: number) => post(`/trash/${id}/restore`, {}),
+  restoreFolder: (id: number) => post(`/trash/folders/${id}/restore`, {}),
+  hardDeleteFolder: (id: number) => del(`/trash/folders/${id}`),
+  hardDelete:    (id: number) => del(`/trash/${id}`),
+  empty:         ()           => del('/trash'),
 }
 
 // ── Clients ────────────────────────────────────────────────────────────────────

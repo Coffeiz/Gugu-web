@@ -177,7 +177,7 @@
 
         <!-- ── 回收站视图 ── -->
         <template v-if="currentType === 'trash'">
-          <div v-if="contents.files.length > 0" class="file-list trash-list">
+          <div v-if="trashFolders.length > 0 || contents.files.length > 0" class="file-list trash-list">
             <div class="list-head">
               <span class="lh-sortable" :class="{ active: sortKey === 'name' }" @click="onSortSelect('name')">名称<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
               <span>类型</span>
@@ -185,6 +185,27 @@
               <span>剩余</span>
               <span class="lh-sortable" :class="{ active: sortKey === 'size' }" @click="onSortSelect('size')">大小<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
               <span></span>
+            </div>
+            <div v-for="folder in sortedTrashFolders" :key="`trash-folder-${folder.id}`" class="list-row trash-folder-row">
+              <span class="lr-name-cell">
+                <PhFolder class="lr-folder-icon" :size="16" weight="fill" />
+                <span class="lr-filename" :title="folder.name">{{ folder.name }}</span>
+              </span>
+              <span class="lr-type-cell"><span class="lr-type-text">文件夹</span></span>
+              <span class="lr-text">{{ formatDate(folder.deletedAt) }}</span>
+              <span class="lr-text" :class="{ 'days-warn': daysLeft(folder.deletedAt) <= 3 }">{{ daysLeft(folder.deletedAt) }} 天</span>
+              <span class="lr-text">{{ folder.fileCount }} 个文件</span>
+              <span class="lr-actions">
+                <button class="file-list-btn trash-restore-btn" title="恢复文件夹及其内容" @click.stop="restoreTrashFolder(folder)">
+                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/>
+                  </svg>
+                  恢复
+                </button>
+                <button class="file-list-btn del" title="永久删除文件夹及其内容" @click.stop="hardDeleteTrashFolder(folder)">
+                  <PhTrash :size="11" weight="bold" />
+                </button>
+              </span>
             </div>
             <div v-for="f in sortedContents.files" :key="f.id" class="list-row"
               :data-file-id="f.id"
@@ -673,7 +694,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
-import { filesApi, foldersApi, trashApi, uploadWithProgress } from '@/services/api'
+import { filesApi, foldersApi, trashApi, uploadWithProgress, type TrashFolderMeta } from '@/services/api'
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileCard       from '@/components/common/FileCard.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
@@ -867,6 +888,12 @@ const sortedContents = computed(() => {
 
 // ── 内容 ──
 const contents = ref<{ folders: FolderCard[]; files: FileMeta[] }>({ folders: [], files: [] })
+const trashFolders = ref<TrashFolderMeta[]>([])
+const sortedTrashFolders = computed(() => [...trashFolders.value].sort((a, b) => {
+  const dir = sortDir.value === 'asc' ? 1 : -1
+  if (sortKey.value === 'createdAt') return dir * a.deletedAt.localeCompare(b.deletedAt)
+  return dir * a.name.localeCompare(b.name, 'zh')
+}))
 // tiny 已由 v-lazy-src 视口门控（更大 rootMargin 先于 card），不再全量预热——避免屏幕外缩略图挤占并发队列
 
 function extractColor(colorStr: string | null | undefined): string | null {
@@ -892,6 +919,7 @@ function projFolder(p: Project): FolderCard {
 
 function loadContents() {
   const type = currentType.value
+  if (type !== 'trash') trashFolders.value = []
 
   if (type === 'root') {
     // root 仍需知道回收站数量，但可以暗后台拉取（非阻塞）
@@ -906,17 +934,20 @@ function loadContents() {
       ],
       files: [],
     }
-    trashApi.list().then(files => {
+    Promise.all([trashApi.list(), trashApi.listFolders()]).then(([files, folders]) => {
       const trashFolder = contents.value.folders.find(f => f.id === 'trash')
-      if (trashFolder) trashFolder.count = files.length
+      if (trashFolder) trashFolder.count = files.length + folders.length
     }).catch(() => {})
     return
   }
 
   if (type === 'trash') {
     loading.value = true
-    trashApi.list()
-      .then(files => { contents.value = { folders: [], files } })
+    Promise.all([trashApi.list(), trashApi.listFolders()])
+      .then(([files, folders]) => {
+        contents.value = { folders: [], files }
+        trashFolders.value = folders
+      })
       .catch(e => console.error('[Files]', (e as Error).message))
       .finally(() => { loading.value = false })
     return
@@ -1274,6 +1305,17 @@ async function restoreFile(f: FileMeta) {
   }
 }
 
+async function restoreTrashFolder(folder: TrashFolderMeta) {
+  try {
+    await trashApi.restoreFolder(folder.id)
+    loadContents()
+    cacheStore.refresh()
+    fetchStorage()
+  } catch (e) {
+    console.error('[Files] 恢复文件夹失败:', (e as Error).message)
+  }
+}
+
 async function hardDeleteFile(f: FileMeta) {
   if (!confirm(`永久删除「${f.displayName}.${f.ext.toLowerCase()}」？此操作不可撤销。`)) return
   try {
@@ -1281,6 +1323,17 @@ async function hardDeleteFile(f: FileMeta) {
     loadContents()
   } catch (e) {
     console.error('[Files] 永久删除失败:', (e as Error).message)
+  }
+}
+
+async function hardDeleteTrashFolder(folder: TrashFolderMeta) {
+  if (!confirm(`永久删除文件夹「${folder.name}」及其全部内容？此操作不可撤销。`)) return
+  try {
+    await trashApi.hardDeleteFolder(folder.id)
+    loadContents()
+    fetchStorage()
+  } catch (e) {
+    console.error('[Files] 永久删除文件夹失败:', (e as Error).message)
   }
 }
 

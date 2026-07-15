@@ -7,6 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 from app.api.v1 import folders as folders_api
 from app.api.v1 import trash as trash_api
@@ -79,6 +80,48 @@ async def test_list_trash_folders_excludes_live(db, user_a):
     await _mk_folder_with_file(db, user_a, "live")
     out = await trash_api.list_trash_folders(current_user=user_a, db=db)
     assert out == []
+
+
+async def test_folder_deleted_files_are_hidden_and_cannot_restore_individually(db, user_a):
+    folder, f = await _mk_folder_with_file(db, user_a, "资料")
+    await folders_api.delete_folder(folder.id, current_user=user_a, origin=None, db=db)
+
+    # 文件夹是唯一恢复单元：子文件既不应单列，也不能被直接恢复成指向已删父目录的幽灵。
+    assert await trash_api.list_trash(current_user=user_a, db=db) == []
+    with pytest.raises(HTTPException) as exc:
+        await trash_api.restore_file(f.id, current_user=user_a, origin=None, db=db)
+    assert exc.value.status_code == 409
+    await db.refresh(f)
+    assert f.deleted_at is not None
+
+
+async def test_empty_trash_removes_deleted_folder_with_its_files(db, user_a):
+    folder, f = await _mk_folder_with_file(db, user_a, "待清空")
+    await folders_api.delete_folder(folder.id, current_user=user_a, origin=None, db=db)
+
+    await trash_api.empty_trash(current_user=user_a, origin=None, db=db)
+
+    assert await db.get(Folder, folder.id) is None
+    assert await db.get(File, f.id) is None
+
+
+async def test_hard_delete_trash_folder_removes_its_subtree(db, user_a):
+    parent, parent_file = await _mk_folder_with_file(db, user_a, "待永久删除")
+    child = await FileService(db).create_folder(
+        user_a.id, name="子文件夹", parent_id=parent.id, project_id=None)
+    child_file = (await FileService(db).create_file(
+        user_a.id, space="personal", project_id=None, folder_id=child.id, stage_name="",
+        mind_map_id=None, display_name="child", ext="TXT", mime_type="text/plain", data=b"x"
+    )).file
+    await db.commit()
+    await folders_api.delete_folder(parent.id, current_user=user_a, origin=None, db=db)
+
+    await trash_api.hard_delete_folder(parent.id, current_user=user_a, origin=None, db=db)
+
+    assert await db.get(Folder, parent.id) is None
+    assert await db.get(Folder, child.id) is None
+    assert await db.get(File, parent_file.id) is None
+    assert await db.get(File, child_file.id) is None
 
 
 async def test_restore_folder_endpoint_round_trip(db, user_a):

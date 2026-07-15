@@ -211,7 +211,7 @@ def build(profile: str, user_name: str, projects: list, events: list,
     return stable_str + CACHE_BREAK + "\n\n---\n\n" + dynamic_str
 
 
-_SOURCE_NAME = {"qqbot": "QQ", "feishu": "飞书", "web": "网页"}
+_SOURCE_NAME = {"qqbot": "QQ", "feishu": "飞书", "wechat": "微信", "web": "网页"}
 
 
 def _source_block(source: str | None, im_channels: dict | None) -> str:
@@ -221,12 +221,13 @@ def _source_block(source: str | None, im_channels: dict | None) -> str:
     ch = im_channels or {}
     qq_on = bool(ch.get("qq")) or source == "qqbot"
     fs_on = bool(ch.get("feishu")) or source == "feishu"
+    wc_on = source == "wechat"
     lines = []
     if name:
-        lines.append(f"本次对话来自：**{name}**。")
+        lines.append(f"本次对话来自：**{name}**。你当前正在通过{name}与用户实时聊天。")
     lines.append(f"主动通知渠道：站内通知（始终可用）；QQ {'已连 ✅' if qq_on else '未连 ❌'}；"
-                 f"飞书 {'已连 ✅' if fs_on else '未连 ❌'}。")
-    if source in ("qqbot", "feishu"):
+                 f"飞书 {'已连 ✅' if fs_on else '未连 ❌'}；微信 {'已连 ✅' if wc_on else '未连 ❌'}。")
+    if source in ("qqbot", "feishu", "wechat"):
         lines.append(f"- 用户**正用 {name} 跟你说话** → {name} 必然已连接：设提醒/通知走 {name} 渠道时"
                      f"**无需再绑定、绝不让 TA 扫码**（说『没绑』就错了）。")
     lines.append("- 设 qq/feishu 通知渠道前看这里：已连(✅)的直接用；只有未连(❌)才提示用户去「设置 → 连接 IM」绑定。")
