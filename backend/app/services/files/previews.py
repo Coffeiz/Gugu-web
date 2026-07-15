@@ -84,3 +84,28 @@ async def pregenerate_thumb(storage_key: str, file_id: int) -> None:
             await asyncio.to_thread(generate_thumbs_sync, raw, file_id)
     except Exception:
         pass
+
+
+async def render_thumbnail(raw: bytes, file_id: int, size: str, fallback_mime: str) -> tuple[bytes, str]:
+    cache_path = thumb_path(file_id, size)
+    if cache_path.exists():
+        cache_path.touch()
+        return cache_path.read_bytes(), "image/webp"
+
+    try:
+        async with THUMB_SEM:
+            await asyncio.to_thread(generate_thumbs_sync, raw, file_id, (size,))
+        if cache_path.exists():
+            return cache_path.read_bytes(), "image/webp"
+    except Exception as error:
+        import traceback
+        print(f"[缩略图] WebP 生成失败 fid={file_id} size={size}: {error}\n{traceback.format_exc()}")
+
+    try:
+        async with THUMB_SEM:
+            jpeg_bytes = await asyncio.to_thread(generate_thumb_jpeg_fallback, raw, size)
+        if jpeg_bytes:
+            return jpeg_bytes, "image/jpeg"
+    except Exception:
+        pass
+    return raw, fallback_mime
