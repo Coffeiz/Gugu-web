@@ -30,7 +30,8 @@ from app.services.files.upload import (
     parse_upload_filename,
     prepare_presign_target,
 )
-from app.services.files.selection import build_batch_zip, move_file_to_trash_by_id, move_files_to_trash
+from app.services.files.actions import delete_file, delete_files
+from app.services.files.selection import build_batch_zip
 from app.services.files.previews import (
     delete_thumb_cache,
     office_to_pdf,
@@ -501,7 +502,7 @@ async def delete_file(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    moved = await move_file_to_trash_by_id(
+    moved = await delete_file(
         db, get_storage(), current_user.id, fid, now_utc())
     if not moved:
         raise HTTPException(404, "文件不存在")
@@ -521,7 +522,7 @@ async def batch_delete_files(
 ):
     if not body.ids:
         return
-    file_ids = await move_files_to_trash(
+    file_ids = await delete_files(
         db, get_storage(), current_user.id, body.ids, now_utc())
     await db.commit()
     await events.publish(current_user.id, "files", origin=origin,
