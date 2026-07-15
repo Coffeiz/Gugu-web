@@ -204,6 +204,8 @@ body {
   cursor: pointer;
   display: flex; flex-direction: column;
   user-select: none;
+  border-radius: 14px;
+  corner-shape: round;
 }
 .fc-card {
   transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),

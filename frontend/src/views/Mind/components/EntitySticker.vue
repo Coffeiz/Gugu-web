@@ -165,8 +165,8 @@ const { onPointerDown } = useCardDrag({
   cursor: pointer; user-select: none; touch-action: none;
   /* 活动贴纸和项目/文件贴纸属于同一层画布卡片，统一普通 14px 圆角；不继承 glass-card
      给大面板使用的 18px squircle，避免同一画布出现三种曲率。 */
-  border-radius: var(--radius-md);
-  corner-shape: initial;
+  border-radius: 14px;
+  corner-shape: round;
   /* 悬浮抬起动效走 .hover-card-fx（见 global.css，跟文件/项目卡同一套时长/缓动），但这里
      还套了 .glass-card——它自己也声明了一份 transition（background/box-shadow），跟
      .hover-card-fx 的 transition 特异度相同，最终生效的是样式表里排在后面那条，会整个

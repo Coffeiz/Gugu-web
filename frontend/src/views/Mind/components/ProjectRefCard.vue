@@ -250,7 +250,8 @@ function onOpen() {
 .pr-card, .pr-missing {
   position: absolute; box-sizing: border-box; user-select: none; cursor: pointer;
   font-family: var(--font-sans);
-  border-radius: var(--radius-md);
+  border-radius: 14px;
+  corner-shape: round;
   border: 1px solid rgba(255,255,255,0.72);
   box-shadow: 0 2px 8px rgba(80,90,110,0.07);
   overflow: visible;

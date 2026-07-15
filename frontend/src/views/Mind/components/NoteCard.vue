@@ -414,7 +414,8 @@ defineExpose({ rootEl: cardRef })
   padding: 11px 13px;
   min-height: 140px;   /* 卡片本身兜住方形高度，不依赖 .nc-body 是否渲染（纯标题便签也不会变扁） */
   box-sizing: border-box;
-  border-radius: var(--radius-md);
+  border-radius: 14px;
+  corner-shape: round;
   background: rgba(255,255,255,0.56);
   border: 1px solid rgba(255,255,255,0.72);
   box-shadow: 0 2px 8px rgba(80,90,110,0.07);

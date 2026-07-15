@@ -72,6 +72,7 @@ defineProps({
   background: rgba(255,255,255,0.72);
   border: 1px solid rgba(255,255,255,0.9);
   border-radius: 14px;
+  corner-shape: round;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
   min-height: 122px;
   display: flex; flex-direction: column;
