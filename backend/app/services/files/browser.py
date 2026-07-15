@@ -1,6 +1,6 @@
 from typing import Optional
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 
 from app.models import File, Folder, Project
 
@@ -48,3 +48,7 @@ def all_files_query(user_id: int) -> Select:
         .where(File.user_id == user_id, File.deleted_at.is_(None))
         .order_by(File.created_at.desc())
     )
+
+
+def storage_usage_query(user_id: int) -> Select:
+    return select(func.sum(File.size_bytes)).where(File.user_id == user_id)
