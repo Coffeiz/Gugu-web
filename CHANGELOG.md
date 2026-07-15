@@ -9,6 +9,18 @@
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-07-15 · 项目抽屉↔画布拖拽收尾与引用卡快照样式
+
+### 改进
+
+- **项目/文件/活动引用卡的"已删除快照"样式对齐本体卡片**（`views/Mind/components/{ProjectRefCard,FileRefCard,EntitySticker}.vue`）：原对象被删除后，画布上留存的引用卡新增 `MindNode.ref_snapshot` 持久化快照数据（项目保留客户/状态/日期，文件保留类型，活动保留日期），样式与本体卡片一致，不再是简化占位样式。
+- **画布连接线跟手悬停**（`views/Mind/components/RelationLayer.vue`）：卡片 hover 完成后连线不再瞬间落下，跟随鼠标动画收尾。
+
+### 修复
+
+- **项目抽屉与画布之间的拖拽收尾**（`composables/{usePhysicsDrag,useCardDrag}.ts`、`views/Mind/components/{CanvasSidebar,ProjectDrawerCard,ProjectRefCard}.vue`）：修复一系列抽屉↔画布拖拽体验问题——抽屉虚线占位框离场时跳动、画布卡拖回抽屉短暂变透明才淡入、飞行克隆偶发退化成缩小动画、揭示瞬间本体与克隆短暂重叠、某状态最后一张卡拖出/首张卡拖入时整块分组瞬间增删且丢失让位动画、飞行中途重新抓起后无法放回画布。详细排查过程见 [devlog.md](docs/devlog.md) 2026-07-15 条目。
+- **渐变色项目首次拖入画布失败**（`backend/app/models/__init__.py`）：`MindNode.color` 由 `varchar(30)` 加宽到 `varchar(300)`，修复渐变色项目首次创建画布引用节点时 `StringDataRightTruncationError`。
+
 ## [0.19.0] - 2026-07-14 · 思维画布收尾、连接线体验统一与存储/LLM 架构重构
 
 ### 新增
