@@ -83,6 +83,16 @@ class StorageBackend(ABC):
     async def rename_file(self, old_key: str, new_key: str) -> None:
         """移动/重命名单个文件"""
 
+    async def move_to_trash(self, old_key: str, trash_key: str) -> str:
+        """将对象放入回收站，返回删除/恢复流程应继续使用的 key。"""
+        await self.rename_file(old_key, trash_key)
+        return trash_key
+
+    async def restore_from_trash(self, old_key: str, new_key: str) -> str:
+        """从回收站恢复对象，返回恢复后的 key。"""
+        await self.rename_file(old_key, new_key)
+        return new_key
+
     @abstractmethod
     async def rename_dir(self, old_prefix: str, new_prefix: str) -> None:
         """重命名目录前缀（项目改名时用）"""
@@ -325,6 +335,17 @@ class OSSStorageBackend(StorageBackend):
             self.bucket.bucket_name, self.pfx + old_key, self.pfx + new_key,
         )
         await self.delete(old_key)
+
+    async def move_to_trash(self, old_key: str, trash_key: str) -> str:
+        """OSS 没有本地目录搬移：保留原 key，仅由 deleted_at 标记逻辑删除。"""
+        return old_key
+
+    async def restore_from_trash(self, old_key: str, new_key: str) -> str:
+        # 正常 OSS 回收站恢复时 old_key 就是原 key；发生同名冲突时仍需要复制到新 key。
+        if old_key == new_key:
+            return old_key
+        await self.rename_file(old_key, new_key)
+        return new_key
 
     async def rename_dir(self, old_prefix: str, new_prefix: str) -> None:
         import asyncio, oss2

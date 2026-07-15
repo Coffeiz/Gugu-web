@@ -41,6 +41,14 @@ async def test_rename_file(storage):
     assert await storage.get("u/b/new.txt") == b"data"
 
 
+async def test_local_trash_hooks_move_and_restore(storage):
+    await storage.put("u/a/doc.txt", b"data")
+    assert await storage.move_to_trash("u/a/doc.txt", "u/trash/1/doc.txt") == "u/trash/1/doc.txt"
+    assert await storage.exists("u/a/doc.txt") is False
+    assert await storage.restore_from_trash("u/trash/1/doc.txt", "u/a/doc.txt") == "u/a/doc.txt"
+    assert await storage.get("u/a/doc.txt") == b"data"
+
+
 async def test_list_keys(storage):
     await storage.put("u/a/1.txt", b"1")
     await storage.put("u/a/2.txt", b"2")

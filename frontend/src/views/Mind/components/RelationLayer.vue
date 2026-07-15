@@ -5,7 +5,7 @@
          v-for 没法接住这次删除的过渡，SVG 没有布局流，也不需要 FLIP 位置捕获那一套，
          补一层最简单的透明度淡出就够了。 -->
     <TransitionGroup tag="g" name="rel">
-      <g v-for="rel in visibleRelations" :key="rel.id" class="rel-group" :style="rel.opacity != null ? { opacity: rel.opacity } : undefined" @pointerdown.stop @click.stop="emit('remove', rel.id)">
+      <g v-for="rel in visibleRelations" :key="rel.id" class="rel-group" :style="rel.opacity != null ? { opacity: rel.opacity } : undefined" @pointerdown.stop @click.stop="removeByClick(rel.id)">
         <!-- 可见曲线（默认弱化）叠一条透明加粗路径专门吃点击——细线本身只有 1.6px，直接点很难点中 -->
         <path class="rel-hit" :d="rel.d" fill="none" />
         <path class="rel-visible" :class="{ highlighted: rel.highlighted }" :d="rel.d" fill="none" />
@@ -198,6 +198,7 @@ function resolveSides(relation: MindRelation, src: MindCanvasItem, dst: MindCanv
 // 沿用同一套 measuredAnchor 逻辑继续跟着飞行克隆量真实位置，直到飞行克隆自己也从 DOM 里
 // 消失（真正落地）才让它退出，播真正的淡出——而不是数据一摘就武断掐断。
 const departingRelations = ref<{ relation: MindRelation; src: MindCanvasItem; dst: MindCanvasItem; since: number }[]>([])
+const immediateDepartures = new Set<number>()
 let departingRaf = 0
 // 松手（卡片从 items/relations 里被摘掉）那一刻就开始淡出，不用等飞行克隆真正落地——
 // 跟随和淡出同时进行，视觉上"松手就往下走"而不是"跟完全程才突然开始淡"。比落地飞行本身
@@ -217,6 +218,12 @@ function pumpDepartingFrames() {
   }
 }
 onBeforeUnmount(() => { if (departingRaf) cancelAnimationFrame(departingRaf) })
+
+function removeByClick(id: number) {
+  // 点击断开是明确的删除动作，不应被下面“卡片移出画布”的淡出监听接管。
+  immediateDepartures.add(id)
+  emit('remove', id)
+}
 // 两份数据一起看：items 和 relations 在 returnCanvasItemToDrawer 里同一刻被改，分开各注册一个
 // watch 拿到的「上一轮快照」谁先谁后不保真，合并成一个 watch 才能保证 prevItems/prevRelations
 // 是同一时刻的一致快照。
@@ -225,9 +232,13 @@ watch(
   ([nextRelations], [prevRelations, prevItems]) => {
     const nextIds = new Set(nextRelations.map(relation => relation.id))
     const removed = prevRelations.filter(relation => !nextIds.has(relation.id))
-    if (!removed.length) return
+    const departing = removed.filter((relation) => {
+      const immediate = immediateDepartures.delete(relation.id)
+      return !immediate
+    })
+    if (!departing.length) return
     const prevItemByNodeId = new Map(prevItems.map(item => [item.nodeId, item]))
-    const additions = removed
+    const additions = departing
       .map((relation) => {
         const src = prevItemByNodeId.get(relation.srcNodeId)
         const dst = prevItemByNodeId.get(relation.dstNodeId)
@@ -290,6 +301,4 @@ const draftPath = computed(() => {
 .rel-visible.highlighted { stroke: rgba(123, 127, 178, .9); stroke-width: 2.2; }
 .rel-group:hover .rel-visible { stroke: rgba(200, 90, 90, .8); stroke-width: 2.4; }
 .rel-draft { stroke: rgba(123, 127, 178, .85); stroke-width: 2.2; stroke-dasharray: 4 5; }
-.rel-leave-active { transition: opacity .25s ease; }
-.rel-leave-to { opacity: 0; }
 </style>

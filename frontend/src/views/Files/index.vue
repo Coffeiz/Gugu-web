@@ -186,8 +186,12 @@
               <span class="lh-sortable" :class="{ active: sortKey === 'size' }" @click="onSortSelect('size')">大小<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
               <span></span>
             </div>
-            <div v-for="folder in sortedTrashFolders" :key="`trash-folder-${folder.id}`" class="list-row trash-folder-row">
+            <template v-for="folder in sortedTrashFolders" :key="`trash-folder-${folder.id}`">
+            <div class="list-row trash-folder-row" :class="{ expanded: expandedTrashFolders.has(folder.id) }">
               <span class="lr-name-cell">
+                <button class="trash-expand-btn" :title="expandedTrashFolders.has(folder.id) ? '收起内容' : '查看内容'" @click.stop="toggleTrashFolder(folder)">
+                  <span :class="{ rotated: expandedTrashFolders.has(folder.id) }">›</span>
+                </button>
                 <PhFolder class="lr-folder-icon" :size="16" weight="fill" />
                 <span class="lr-filename" :title="folder.name">{{ folder.name }}</span>
               </span>
@@ -207,6 +211,16 @@
                 </button>
               </span>
             </div>
+            <div v-if="expandedTrashFolders.has(folder.id)" class="trash-folder-contents">
+              <div v-if="trashFolderContents[folder.id]?.folders.length === 0 && trashFolderContents[folder.id]?.files.length === 0" class="trash-folder-empty">空文件夹</div>
+              <div v-for="child in trashFolderContents[folder.id]?.folders || []" :key="`trash-child-${child.id}`" class="trash-child-row">
+                <PhFolder :size="14" weight="fill" /> <span>{{ child.name }}</span><small>{{ child.fileCount }} 个文件</small>
+              </div>
+              <div v-for="file in trashFolderContents[folder.id]?.files || []" :key="`trash-child-file-${file.id}`" class="trash-child-row file">
+                <component :is="fileListIcon(file.ext)" :size="14" weight="fill" :style="{ color: fileIconColor(file.ext) }" /> <span>{{ file.displayName }}.{{ file.ext.toLowerCase() }}</span>
+              </div>
+            </div>
+            </template>
             <div v-for="f in sortedContents.files" :key="f.id" class="list-row"
               :data-file-id="f.id"
               :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id) }"
@@ -694,7 +708,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
-import { filesApi, foldersApi, trashApi, uploadWithProgress, type TrashFolderMeta } from '@/services/api'
+import { filesApi, foldersApi, trashApi, uploadWithProgress, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileCard       from '@/components/common/FileCard.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
@@ -889,6 +903,8 @@ const sortedContents = computed(() => {
 // ── 内容 ──
 const contents = ref<{ folders: FolderCard[]; files: FileMeta[] }>({ folders: [], files: [] })
 const trashFolders = ref<TrashFolderMeta[]>([])
+const expandedTrashFolders = ref(new Set<number>())
+const trashFolderContents = ref<Record<number, TrashFolderContents>>({})
 const sortedTrashFolders = computed(() => [...trashFolders.value].sort((a, b) => {
   const dir = sortDir.value === 'asc' ? 1 : -1
   if (sortKey.value === 'createdAt') return dir * a.deletedAt.localeCompare(b.deletedAt)
@@ -919,7 +935,11 @@ function projFolder(p: Project): FolderCard {
 
 function loadContents() {
   const type = currentType.value
-  if (type !== 'trash') trashFolders.value = []
+  if (type !== 'trash') {
+    trashFolders.value = []
+    expandedTrashFolders.value.clear()
+    trashFolderContents.value = {}
+  }
 
   if (type === 'root') {
     // root 仍需知道回收站数量，但可以暗后台拉取（非阻塞）
@@ -1314,6 +1334,28 @@ async function restoreTrashFolder(folder: TrashFolderMeta) {
   } catch (e) {
     console.error('[Files] 恢复文件夹失败:', (e as Error).message)
   }
+}
+
+async function toggleTrashFolder(folder: TrashFolderMeta) {
+  const next = new Set(expandedTrashFolders.value)
+  if (next.has(folder.id)) {
+    next.delete(folder.id)
+    expandedTrashFolders.value = next
+    return
+  }
+  if (!trashFolderContents.value[folder.id]) {
+    try {
+      trashFolderContents.value = {
+        ...trashFolderContents.value,
+        [folder.id]: await trashApi.listFolderContents(folder.id),
+      }
+    } catch (e) {
+      console.error('[Files] 加载回收站文件夹内容失败:', (e as Error).message)
+      return
+    }
+  }
+  next.add(folder.id)
+  expandedTrashFolders.value = next
 }
 
 async function hardDeleteFile(f: FileMeta) {
@@ -2512,6 +2554,18 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   padding: 4px 8px;
 }
 .trash-restore-btn:hover { background: rgba(123,127,178,0.15); }
+.trash-expand-btn {
+  width: 18px; height: 18px; padding: 0; border: 0; background: transparent;
+  color: var(--text-secondary); cursor: pointer; font-size: 18px; line-height: 16px;
+}
+.trash-expand-btn span { display: inline-block; transition: transform .18s ease; }
+.trash-expand-btn .rotated { transform: rotate(90deg); }
+.trash-folder-contents { margin: -3px 0 5px 34px; padding: 4px 0 5px 14px; border-left: 1px solid rgba(130,135,170,.22); }
+.trash-child-row { display: flex; align-items: center; gap: 7px; min-height: 28px; color: var(--text-secondary); font-size: 11px; }
+.trash-child-row svg { color: var(--color-primary); flex: 0 0 auto; }
+.trash-child-row small { margin-left: auto; margin-right: 12px; opacity: .65; }
+.trash-child-row.file svg { color: var(--text-tertiary); }
+.trash-folder-empty { color: var(--text-tertiary); font-size: 11px; padding: 5px 0; }
 
 /* ── 批量操作浮动栏 ── */
 .selection-bar {

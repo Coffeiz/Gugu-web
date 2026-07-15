@@ -82,6 +82,25 @@ async def test_list_trash_folders_excludes_live(db, user_a):
     assert out == []
 
 
+async def test_list_trash_folder_contents_returns_children(db, user_a):
+    parent, parent_file = await _mk_folder_with_file(db, user_a, "可展开")
+    child = await FileService(db).create_folder(
+        user_a.id, name="二级目录", parent_id=parent.id, project_id=None)
+    child_file = (await FileService(db).create_file(
+        user_a.id, space="personal", project_id=None, folder_id=child.id, stage_name="",
+        mind_map_id=None, display_name="子文件", ext="TXT", mime_type="text/plain", data=b"x"
+    )).file
+    await db.commit()
+    await folders_api.delete_folder(parent.id, current_user=user_a, origin=None, db=db)
+
+    out = await trash_api.list_trash_folder_contents(current_user=user_a, fid=parent.id, db=db)
+
+    assert [folder.name for folder in out.folders] == ["二级目录"]
+    assert out.folders[0].file_count == 1
+    assert {file.display_name for file in out.files} == {parent_file.display_name}
+    assert child_file.display_name not in {file.display_name for file in out.files}
+
+
 async def test_folder_deleted_files_are_hidden_and_cannot_restore_individually(db, user_a):
     folder, f = await _mk_folder_with_file(db, user_a, "资料")
     await folders_api.delete_folder(folder.id, current_user=user_a, origin=None, db=db)

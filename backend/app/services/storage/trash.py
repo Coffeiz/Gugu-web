@@ -27,8 +27,7 @@ async def move_file_to_trash(storage, f: File) -> None:
     if f.storage_key == trash_key:
         return  # 已在回收站
     try:
-        await storage.rename_file(f.storage_key, trash_key)
-        f.storage_key = trash_key
+        f.storage_key = await storage.move_to_trash(f.storage_key, trash_key)
         # 不清旧祖先：文件所属文件夹可能仍存活，空目录须持久（P1.2）；孤儿由对账工具兜底
     except Exception:
         pass
@@ -60,12 +59,15 @@ async def restore_file_storage(f: File, storage, db) -> None:
         folder_path=folder_path,
         mind_map_title=mind_map_title, mind_map_id=f.mind_map_id or 0,
     )
-    final_key, final_name = await _resolve_conflict(storage, base_key, f.display_name, f.ext)
-
     old_key = f.storage_key
+    # OSS 回收站只改数据库 deleted_at，对象仍在原 key；不能把它自己当成重名对象。
+    if old_key == base_key:
+        final_key, final_name = base_key, f.display_name
+    else:
+        final_key, final_name = await _resolve_conflict(storage, base_key, f.display_name, f.ext)
+
     try:
-        await storage.rename_file(old_key, final_key)
-        f.storage_key = final_key
+        f.storage_key = await storage.restore_from_trash(old_key, final_key)
         f.display_name = final_name
     except Exception:
         # 物理文件丢失时仍恢复 DB 记录，storage_key 重置为预期路径

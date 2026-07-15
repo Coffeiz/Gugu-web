@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 
 from app.core.redis import get_redis, get_redis_sync
@@ -73,6 +74,21 @@ def _kind(ext: str) -> str:
     if e in doctext.EXTRACTABLE:   # PDF/docx/xlsx/pptx：能提取文本，按可读处理
         return "text"
     return "binary"
+
+
+def _model_attachment_name(meta: dict) -> str:
+    """给模型看的附件名：隐藏平台生成的长随机文件名，保留用户自定义文件名。"""
+    name = str(meta.get("name") or "附件")
+    if re.fullmatch(r"[0-9a-fA-F]{24,}", name):
+        return {
+            "image": "图片",
+            "audio": "音频",
+            "video": "视频",
+            "voice": "语音",
+            "text": "文本文件",
+        }.get(meta.get("kind"), "文件")
+    ext = str(meta.get("ext") or "").lower()
+    return f"{name}.{ext}" if ext else name
 
 
 def _probe_image_size(data: bytes, ext: str) -> tuple[int | None, int | None]:
@@ -276,7 +292,7 @@ async def resolve_attach(user_id, attach_id: str) -> tuple[dict | None, str]:
     kinds = {m.get("kind") for m in pool}
     if len(pool) == 1 or len(kinds) == 1:
         return pool[0], "（没对上 attach_id，用了你最近上传的那个附件）"
-    cands = "、".join(f"{m['name']}.{m['ext']}（{m['kind']}，attach_id={m['attach_id']}）" for m in pool[:8])
+    cands = "、".join(f"{_model_attachment_name(m)}（{m['kind']}，attach_id={m['attach_id']}）" for m in pool[:8])
     return None, f"当前暂存了多个不同类型的附件，无法安全猜测该存哪个，请明确指定 attach_id。候选：{cands}"
 
 
@@ -448,7 +464,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
             "duration": meta.get("duration"),   # 语音条用：前端显示时长 + 渲染成播放条
             "img_width": meta.get("img_width"), "img_height": meta.get("img_height"),
         })
-        fname = f"{meta['name']}.{meta['ext']}" if meta["ext"] else meta["name"]
+        fname = _model_attachment_name(meta)
         tag = f"《{fname}》(attach_id={meta['attach_id']})"
         if meta["kind"] == "text":
             parts.append(f"\n\n📎 用户上传的文件{tag}，内容如下：\n```\n{await read_text(meta)}\n```")

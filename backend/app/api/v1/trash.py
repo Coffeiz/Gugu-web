@@ -9,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models import File, Project, Folder, User
-from app.schemas import FileResponse, FolderResponse, TrashFolderResponse, BatchDeleteBody
+from app.schemas import (
+    BatchDeleteBody,
+    FileResponse,
+    FolderResponse,
+    TrashFolderContentsResponse,
+    TrashFolderResponse,
+)
 from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
 from app.core import events
@@ -101,6 +107,55 @@ async def list_trash_folders(
         )
         for f in folders
     ]
+
+
+@router.get("/folders/{fid}/contents", response_model=TrashFolderContentsResponse)
+async def list_trash_folder_contents(
+    fid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """读取顶层回收站文件夹的直属内容，内部文件不作为独立恢复单元。"""
+    folder = (await db.execute(
+        _top_level_deleted_folders_stmt(current_user.id).where(Folder.id == fid)
+    )).scalar_one_or_none()
+    if not folder:
+        raise HTTPException(404, "文件夹不存在")
+    child_folders = (await db.execute(
+        select(Folder).where(
+            Folder.user_id == current_user.id,
+            Folder.parent_id == folder.id,
+            Folder.deleted_at.isnot(None),
+        ).order_by(Folder.deleted_at.desc())
+    )).scalars().all()
+    direct_files = (await db.execute(
+        select(File, Project.name, Project.color, Folder.name)
+        .outerjoin(Project, Project.id == File.project_id)
+        .outerjoin(Folder, Folder.id == File.folder_id)
+        .where(
+            File.user_id == current_user.id,
+            File.folder_id == folder.id,
+            File.deleted_at.isnot(None),
+        ).order_by(File.deleted_at.desc())
+    )).all()
+    if child_folders:
+        counts_res = await db.execute(
+            select(File.folder_id, func.count().label("cnt"))
+            .where(File.folder_id.in_([f.id for f in child_folders]), File.deleted_at.isnot(None))
+            .group_by(File.folder_id)
+        )
+        count_map = {row.folder_id: row.cnt for row in counts_res}
+    else:
+        count_map = {}
+    return TrashFolderContentsResponse(
+        folders=[TrashFolderResponse(
+            id=f.id, project_id=f.project_id, parent_id=f.parent_id, name=f.name,
+            file_count=count_map.get(f.id, 0), version=f.version,
+            deleted_at=f.deleted_at.strftime("%Y-%m-%dT%H:%M:%S"),
+        ) for f in child_folders],
+        files=[_to_resp(f, pname, _color(pcolor), fname)
+               for f, pname, pcolor, fname in direct_files],
+    )
 
 
 # ── POST /trash/folders/{fid}/restore （P2.4）────────────────────────────────

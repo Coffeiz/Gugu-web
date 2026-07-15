@@ -379,6 +379,8 @@ async def test_restore_folder_conflict_renames(db, user_a, tmp_path):
     assert await svc.storage.get(r2.file.storage_key) == b"new"
 
 
+
+
 async def test_delete_folder_keeps_already_trashed_file_untouched(db, user_a, tmp_path):
     """文件夹里已有一个更早独立被删的文件；再删文件夹不该动它（它已经是它自己的独立回收站条目）。"""
     svc = _svc(db, tmp_path)
