@@ -669,7 +669,7 @@ import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
 import { parseFolderId } from '@/utils/folderKeys'
-import { selectRange, useFileSelection } from '@/composables/files/useFileSelection'
+import { useFileSelection } from '@/composables/files/useFileSelection'
 import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 import { useFileActions } from '@/composables/files/useFileActions'
@@ -850,11 +850,7 @@ function _pmShiftSelect(type: 'folder' | 'file', id: number) {
   const flat = pmFlatSelectableItems.value
   const idx = flat.findIndex(i => i.type === type && i.id === id)
   if (idx < 0) return false
-  const selected = selectRange(flat, pmLastAnchorIndex.value, idx)
-  if (!selected) return false
-  pmSelectedFileIds.value = selected.fileIds
-  pmSelectedFolderIds.value = selected.folderIds
-  return true
+  return pmFileSelection.selectRangeIn(flat, pmLastAnchorIndex.value, idx)
 }
 
 function clearPmSelection() {

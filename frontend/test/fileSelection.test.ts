@@ -43,4 +43,18 @@ describe('selectRange', () => {
     expect(fileIds.value).toEqual(new Set())
     expect(folderIds.value).toEqual(new Set(['f:1']))
   })
+
+  it('替换混合文件和文件夹的范围选择', () => {
+    const fileIds = ref(new Set<number>())
+    const folderIds = ref(new Set<number>())
+    const selection = useFileSelection({ fileIds, folderIds })
+
+    expect(selection.selectRangeIn([
+      { type: 'folder', id: 8 },
+      { type: 'file', id: 3 },
+      { type: 'folder', id: 9 },
+    ], 0, 2)).toBe(true)
+    expect(fileIds.value).toEqual(new Set([3]))
+    expect(folderIds.value).toEqual(new Set([8, 9]))
+  })
 })
