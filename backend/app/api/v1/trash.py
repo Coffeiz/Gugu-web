@@ -19,7 +19,11 @@ from app.schemas import (
 from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
 from app.core import events
-from app.services.files.trash import permanently_delete_file
+from app.services.files.trash import (
+    RestoreParentTrashError,
+    permanently_delete_file,
+    restore_file_by_id,
+)
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.storage.folders import folder_dir_key
@@ -249,12 +253,13 @@ async def restore_file(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await get_owned(db, File, fid, current_user.id)
-    if not f or f.deleted_at is None:
+    try:
+        restored = await restore_file_by_id(
+            db, get_storage(), current_user.id, fid)
+    except RestoreParentTrashError:
+        raise HTTPException(409, "所属文件夹仍在回收站，请先恢复文件夹")
+    if not restored:
         raise HTTPException(404, "文件不存在")
-    await _ensure_file_parent_is_live(f, db)
-    await restore_file_storage(f, get_storage(), db)
-    f.deleted_at = None
     await db.commit()
     await events.publish(current_user.id, "files", origin=origin)
 
