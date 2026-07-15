@@ -13,6 +13,7 @@ import { invertPlay } from './animation/flip'
 import { animateFlyTo } from './animation/flyTo'
 import { morphTransform } from './animation/morph'
 import { trackLandingCamera } from './animation/camera'
+import { startMorphLifecycle } from './animation/morphLifecycle'
 import { dragRegistry } from './core/DragRegistry'
 import { integrateSpring } from './core/physics'
 import { dispatchDragHandoff, installLandingHandoff } from './interaction/handoff'
@@ -795,6 +796,48 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 才随之消失，表现为"点一直显示到本体切换才突然消失"。落地目标不支持连线时传 false。
       revealElConnectable = true,
     ) => {
+      startMorphLifecycle({
+        initialBox,
+        holder,
+        clone,
+        clone2,
+        revealEl,
+        sourceEl,
+        connectionDotOverlay,
+        cardActionOverlay,
+        pointer,
+        pointerPosition: target,
+        dropSize: { w: dropW, h: dropH },
+        half,
+        easing: _SETTLE,
+        trackCanvasCamera,
+        contentScale: typeof opts.contentScale === 'function' ? opts.contentScale : undefined,
+        hidePrimaryVisual,
+        revealElConnectable,
+        session,
+        registerCleanup: _registerCleanup,
+        setRetarget: (targetEl, retarget) => _pendingRetargets.set(targetEl, retarget),
+        clearRetarget: (targetEl, retarget) => {
+          if (_pendingRetargets.get(targetEl) === retarget) _pendingRetargets.delete(targetEl)
+        },
+        onRegrab: (moveEvent, visualRect) => {
+          opts.onRegrabStart?.()
+          if (opts.delegateLandingRegrab && revealEl !== sourceEl) {
+            if (dispatchDragHandoff(revealEl, moveEvent, visualRect)) return
+            return
+          }
+          startPhysicsDrag(moveEvent, revealEl, {
+            ...opts,
+            keepSourcePlaceholder: revealEl === sourceEl ? opts.keepSourcePlaceholder : false,
+            initialRect: visualRect,
+            initialHover: true,
+            isLandingRegrab: true,
+          })
+        },
+        onReveal,
+        finishSession: () => dragRegistry.finish(sourceEl, session),
+      })
+      return
       // box 用 let：飞行途中可能被 _retargetLandings 改指到新位置（见其注释），finish() 收尾时
       // 要读的是「最新」这份，不是刚进来那一刻的静态快照。
       let box = initialBox
