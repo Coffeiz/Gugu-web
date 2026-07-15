@@ -28,6 +28,7 @@ from app.services.files.browser import all_files_query, file_listing_query, stor
 from app.services.files.upload import find_conflict, parse_upload_filename
 from app.services.files.previews import (
     delete_thumb_cache,
+    office_to_pdf,
     pregenerate_thumb,
     render_thumbnail,
 )
@@ -766,41 +767,6 @@ async def download_file(
 
 # ── GET /files/{fid}/preview-pdf ─────────────────────────────────────────────
 
-async def _office_to_pdf(data: bytes, ext: str) -> bytes:
-    import asyncio, shutil, tempfile
-    from pathlib import Path as _Path
-
-    tmpdir = _Path(tempfile.mkdtemp())
-    try:
-        src = tmpdir / f"input.{ext.lower()}"
-        src.write_bytes(data)
-        # -env:UserInstallation 把 LibreOffice 的用户配置目录指到本次专属的临时目录：
-        # systemd 服务开了 ProtectSystem=strict，$HOME/.config 对进程是只读的，LibreOffice
-        # 默认要在那建 profile，建不了直接 returncode=1（stderr 只有条不相关的 javaldx 警告，
-        # 真实原因被吞掉）。指到 tmpdir 下（PrivateTmp=true 保证可写），每次调用互不干扰。
-        proc = await asyncio.create_subprocess_exec(
-            "libreoffice", "--headless",
-            f"-env:UserInstallation=file://{tmpdir}/loprofile",
-            "--convert-to", "pdf",
-            "--outdir", str(tmpdir), str(src),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise HTTPException(422, "文档转换超时")
-        if proc.returncode != 0:
-            raise HTTPException(422, "文档转换失败：" + (stderr.decode(errors="replace")[:200]))
-        pdf = tmpdir / "input.pdf"
-        if not pdf.exists():
-            raise HTTPException(422, "转换结果为空")
-        return pdf.read_bytes()
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
 @router.get("/{fid}/preview-pdf")
 async def preview_pdf(
     fid: int,
@@ -820,7 +786,12 @@ async def preview_pdf(
         if len(_pdf_cache) > 50:
             _pdf_cache.clear()
         raw = await get_storage().get(f.storage_key)
-        _pdf_cache[cache_key] = await _office_to_pdf(raw, f.ext)
+        try:
+            _pdf_cache[cache_key] = await office_to_pdf(raw, f.ext)
+        except asyncio.TimeoutError:
+            raise HTTPException(422, "文档转换超时")
+        except RuntimeError as error:
+            raise HTTPException(422, str(error))
 
     return Response(
         content=_pdf_cache[cache_key],

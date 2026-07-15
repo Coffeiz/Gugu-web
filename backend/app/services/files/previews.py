@@ -1,5 +1,7 @@
 import asyncio
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 from app.core.config import get_settings
@@ -109,3 +111,32 @@ async def render_thumbnail(raw: bytes, file_id: int, size: str, fallback_mime: s
     except Exception:
         pass
     return raw, fallback_mime
+
+
+async def office_to_pdf(data: bytes, extension: str) -> bytes:
+    tmpdir = Path(tempfile.mkdtemp())
+    try:
+        source = tmpdir / f"input.{extension.lower()}"
+        source.write_bytes(data)
+        # 将 LibreOffice 用户配置放进本次临时目录，兼容 systemd 的只读 HOME，并隔离并发转换。
+        process = await asyncio.create_subprocess_exec(
+            "libreoffice", "--headless",
+            f"-env:UserInstallation=file://{tmpdir}/loprofile",
+            "--convert-to", "pdf",
+            "--outdir", str(tmpdir), str(source),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            process.kill()
+            raise
+        if process.returncode != 0:
+            raise RuntimeError(f"转换失败：{stderr.decode(errors='replace')[:200]}")
+        pdf = tmpdir / "input.pdf"
+        if not pdf.exists():
+            raise RuntimeError("转换结果为空")
+        return pdf.read_bytes()
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
