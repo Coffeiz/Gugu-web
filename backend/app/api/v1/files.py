@@ -28,10 +28,8 @@ from app.services.files.browser import all_files_query, file_listing_query, stor
 from app.services.files.upload import find_conflict, parse_upload_filename
 from app.services.files.previews import (
     delete_thumb_cache,
-    generate_thumb_jpeg_fallback,
-    generate_thumbs_sync,
     pregenerate_thumb,
-    thumb_path,
+    render_thumbnail,
 )
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -733,41 +731,13 @@ async def get_thumb(
         return FastAPIResponse(content=data, media_type=mime,
                                headers={"Cache-Control": "private, max-age=86400"})
 
-    # 命中磁盘缓存：touch mtime 供 TTL 驱逐参考
-    cache_path = thumb_path(fid, size)
-    if cache_path.exists():
-        cache_path.touch()
-        return FastAPIResponse(content=cache_path.read_bytes(), media_type="image/webp",
-                               headers={"Cache-Control": "private, max-age=86400"})
-
     # 缓存 miss：读原图，按需生成请求的尺寸（card 不在上传时预生成）
     try:
         raw = await get_storage().get(f.storage_key)
     except FileNotFoundError:
         raise HTTPException(404, "物理文件丢失")
-    try:
-        async with _THUMB_SEM:
-            await asyncio.to_thread(generate_thumbs_sync, raw, fid, (size,))
-        cache_path = thumb_path(fid, size)
-        if cache_path.exists():
-            return FastAPIResponse(content=cache_path.read_bytes(), media_type="image/webp",
-                                   headers={"Cache-Control": "private, max-age=86400"})
-    except Exception as e:
-        import traceback
-        print(f"[缩略图] WebP 生成失败 fid={fid} size={size}: {e}\n{traceback.format_exc()}")
-
-    # 降级：WebP 失败时返回缩小的 JPEG，保证不返回原始大图
-    try:
-        async with _THUMB_SEM:
-            jpeg_bytes = await asyncio.to_thread(generate_thumb_jpeg_fallback, raw, size)
-        if jpeg_bytes:
-            return FastAPIResponse(content=jpeg_bytes, media_type="image/jpeg",
-                                   headers={"Cache-Control": "private, max-age=86400"})
-    except Exception:
-        pass
-
-    # 最后兜底：返回原图
-    return FastAPIResponse(content=raw, media_type=mime,
+    content, media_type = await render_thumbnail(raw, fid, size, mime)
+    return FastAPIResponse(content=content, media_type=media_type,
                            headers={"Cache-Control": "private, max-age=86400"})
 
 
