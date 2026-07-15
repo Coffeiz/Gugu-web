@@ -25,6 +25,7 @@ from app.services.storage.file_service import FileService
 from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.trash import move_file_to_trash
 from app.services.files.response import color_value, to_file_response
+from app.services.files.browser import all_files_query, file_listing_query
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -153,31 +154,15 @@ async def list_files(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = (
-        select(File, Project.name, Project.color, Folder.name)
-        .outerjoin(Project, Project.id == File.project_id)
-        .outerjoin(Folder, Folder.id == File.folder_id)
-        .where(File.user_id == current_user.id, File.deleted_at.is_(None))
-        .order_by(File.created_at.desc())
+    stmt = file_listing_query(
+        current_user.id,
+        space=space,
+        project_id=project_id,
+        folder_id=folder_id,
+        mind_map_id=mind_map_id,
+        ext=ext,
+        query=q,
     )
-    if space:
-        stmt = stmt.where(File.space == space)
-    if project_id is not None:
-        stmt = stmt.where(File.project_id == project_id)
-    if folder_id is not None:
-        stmt = stmt.where(File.folder_id == folder_id)
-    elif folder_id is None and project_id is not None and space == "project":
-        # 只查项目根文件（未归入任何文件夹）
-        stmt = stmt.where(File.folder_id.is_(None))
-    elif folder_id is None and project_id is None and space == "personal":
-        # 只查个人根文件（未归入任何文件夹）
-        stmt = stmt.where(File.folder_id.is_(None))
-    if mind_map_id is not None:
-        stmt = stmt.where(File.mind_map_id == mind_map_id)
-    if ext:
-        stmt = stmt.where(File.ext == ext.upper())
-    if q:
-        stmt = stmt.where(File.display_name.ilike(f"%{q}%"))
 
     result = await db.execute(stmt)
     return [to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in result.all()]
@@ -190,13 +175,7 @@ async def list_all_files(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = (
-        select(File, Project.name, Project.color, Folder.name)
-        .outerjoin(Project, Project.id == File.project_id)
-        .outerjoin(Folder, Folder.id == File.folder_id)
-        .where(File.user_id == current_user.id, File.deleted_at.is_(None))
-        .order_by(File.created_at.desc())
-    )
+    stmt = all_files_query(current_user.id)
     result = await db.execute(stmt)
     rows = result.all()
 
