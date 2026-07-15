@@ -18,14 +18,17 @@ from app.core.ownership import get_owned
 from app.core.config import get_settings
 from app.core import events
 from app.services.storage import get_storage
-from app.services.storage.folders import resolve_folder_path
-from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
 from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.trash import move_file_to_trash
 from app.services.files.response import color_value, to_file_response
 from app.services.files.browser import all_files_query, file_listing_query, storage_usage_query
-from app.services.files.upload import find_conflict, parse_upload_filename
+from app.services.files.upload import (
+    UploadTargetError,
+    find_conflict,
+    parse_upload_filename,
+    prepare_presign_target,
+)
 from app.services.files.selection import build_batch_zip, move_files_to_trash
 from app.services.files.previews import (
     delete_thumb_cache,
@@ -302,84 +305,36 @@ async def presign_upload(
     """检查存储后端：OSS 时签发 presigned PUT URL；本地时返回 {mode:'proxy'}。"""
     from app.services.storage import get_storage, OSSStorageBackend
 
-    display_name, ext = parse_upload_filename(body.filename)
-
-    project_name = ""
-    project_color = None
-    project_year = ""
-    project_month = ""
-    folder_name = folder_path = ""
-
-    if body.space == "project" and body.project_id:
-        p = await get_owned(db, Project, body.project_id, current_user.id)
-        if not p:
-            raise HTTPException(400, "项目不存在")
-        project_name = p.name
-        project_color = color_value(p.color)
-        date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
-        project_year, project_month = date_str[:4], date_str[5:7]
-    elif body.space == "project":
-        raise HTTPException(400, "project 空间需要提供 project_id")
-
-    if body.folder_id is not None:
-        resolved = await resolve_folder_path(db, current_user.id, body.folder_id, body.project_id)
-        if not resolved or resolved[0].deleted_at is not None:   # 不能传进已软删的文件夹（P2）
-            raise HTTPException(400, "文件夹不存在，或不属于指定的项目/个人空间")
-        fo, folder_path = resolved
-        folder_name = fo.name
-
     storage = get_storage()
-
-    # 覆盖已有同名文件：直接对已有文件的 storage_key 签 URL，不再走 _resolve_conflict 改名；
-    # 配额按新旧大小差值算。
-    existing = None
-    if body.on_conflict == "overwrite" and body.overwrite_file_id is not None:
-        existing = await get_owned(db, File, body.overwrite_file_id, current_user.id)
-        if not existing:
-            raise HTTPException(400, "要覆盖的文件不存在")
-        final_key, final_name = existing.storage_key, existing.display_name
-
-        _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
-        if _storage_limit is not None:
-            used_res = await db.execute(select(func.sum(File.size_bytes)).where(File.user_id == current_user.id))
-            used = used_res.scalar() or 0
-            if used - existing.size_bytes + body.size_bytes > _storage_limit:
-                raise HTTPException(status_code=400, detail="存储空间已满，无法上传")
-    else:
-        base_key = _build_key(
-            uid=current_user.id,
-            space=body.space,
-            display_name=display_name,
-            ext=ext,
-            project_name=project_name,
-            project_id=body.project_id or 0,
-            project_year=project_year,
-            project_month=project_month,
-            folder_path=folder_path,
+    try:
+        target = await prepare_presign_target(
+            db,
+            storage,
+            current_user.id,
+            body.filename,
+            body.size_bytes,
+            body.space,
+            body.project_id,
+            body.folder_id,
+            body.on_conflict,
+            body.overwrite_file_id,
+            current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes,
         )
-        final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
-
-        _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
-        if _storage_limit is not None:
-            used_res = await db.execute(
-                select(func.sum(File.size_bytes)).where(File.user_id == current_user.id)
-            )
-            used = used_res.scalar() or 0
-            if used + body.size_bytes > _storage_limit:
-                raise HTTPException(status_code=400, detail="存储空间已满，无法上传")
+    except UploadTargetError as error:
+        raise HTTPException(error.status_code, error.detail) from error
 
     if isinstance(storage, OSSStorageBackend):
         import asyncio as _asyncio
         upload_url = await _asyncio.to_thread(
-            storage.presign_put, final_key, body.mime_type, 600
+            storage.presign_put, target.final_key, body.mime_type, 600
         )
         return {
             "mode": "oss",
             "upload_url": upload_url,
-            "storage_key": final_key,
-            "final_name": final_name,
-            "ext": ext,
-            "overwrite_file_id": existing.id if existing else None,
+            "storage_key": target.final_key,
+            "final_name": target.final_name,
+            "ext": target.ext,
+            "overwrite_file_id": target.overwrite_file_id,
         }
 
     return {"mode": "proxy"}
