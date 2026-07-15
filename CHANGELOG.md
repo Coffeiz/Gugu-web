@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### 改进
+
+- **GuguChat 代码块样式统一**（`components/common/MarkdownView.vue`）：代码块改为与 Markdown 预览器一致的普通边框样式，顶部显示代码类型并保留复制入口。
+
 ### 修复
 
 - **浮动预览窗边缘缩放**（`components/common/FloatPreviewWindow.vue`）：补齐四边与四角的透明缩放热区，修复热区被窗口裁剪、遮挡滚动条及圆角处出现方角的问题。
