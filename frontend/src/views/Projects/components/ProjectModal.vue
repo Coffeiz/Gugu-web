@@ -188,7 +188,7 @@
 
           <div class="right-header">
             <!-- 面包屑路径 -->
-            <nav class="file-breadcrumb">
+            <FileBrowserBreadcrumb tag="nav" class-name="file-breadcrumb">
               <button class="pm-nav-hist-btn" :disabled="!pmCanGoBack" @click="pmGoBack" title="后退">
                 <PhArrowLeft :size="13" weight="bold" />
               </button>
@@ -208,7 +208,7 @@
                 >{{ seg.name }}</button>
                 <span v-else class="bc-seg bc-cur">{{ seg.name }}</span>
               </template>
-            </nav>
+            </FileBrowserBreadcrumb>
             <!-- 粘贴（剪切/复制后出现）—— 放在所有按钮最左 -->
             <FilePasteButton
               v-if="pmCbStore.hasContent()"
@@ -717,6 +717,7 @@ import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
 import FilePasteButton from '@/components/common/FilePasteButton.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
+import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
 import FileBrowserList from '@/components/common/FileBrowserList.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'

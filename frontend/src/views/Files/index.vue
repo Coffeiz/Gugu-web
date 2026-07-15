@@ -5,7 +5,7 @@
     <div class="files-toolbar glass-card" @click.stop>
 
       <!-- 面包屑导航 -->
-      <div class="breadcrumb">
+      <FileBrowserBreadcrumb>
         <button class="nav-hist-btn" :disabled="!canGoBack" @click="goBack" title="后退">
           <PhArrowLeft :size="14" weight="bold" />
         </button>
@@ -28,7 +28,7 @@
             {{ seg.name }}
           </button>
         </template>
-      </div>
+      </FileBrowserBreadcrumb>
 
       <div class="toolbar-right">
         <!-- 粘贴（剪切/复制后出现，回收站除外）—— 放在所有按钮最左 -->
@@ -688,6 +688,7 @@ import { filesApi, foldersApi, trashApi, uploadWithProgress, type TrashFolderCon
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileCard       from '@/components/common/FileCard.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
+import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
 import FileBrowserList from '@/components/common/FileBrowserList.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
 import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
