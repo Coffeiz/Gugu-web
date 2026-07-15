@@ -729,7 +729,7 @@ import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileContextMenu } from '@/composables/files/useFileContextMenu'
-import { getTopLevelUploadGroups, resolveUploadConflicts } from '@/composables/files/useFileUploadController'
+import { prepareUploadBatch } from '@/composables/files/useFileUploadController'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
@@ -1722,19 +1722,19 @@ async function uploadFiles(items: UploadItem[]) {
 
   // 上传前探测同名冲突（只查直接落在这个文件夹的顶层文件）；有冲突才弹列表式确认，
   // 选「跳过」的文件从这批里剔除，不会真的发上传请求。
-  const resolved = await resolveUploadConflicts(
+  const prepared = await prepareUploadBatch(
     items,
     { space: 'project', projectId: props.project.id, folderId: baseFolderId },
     conflicts => conflictDialogRef.value?.show(conflicts) ?? Promise.resolve(new Map<string, ConflictDecision>()),
   )
-  items = resolved.items
-  const decisions = resolved.decisions
+  items = prepared.items
+  const decisions = prepared.decisions
   if (!items.length) return
 
   // 按顶层文件夹分组：relativePath 带 "/" 的文件汇总进「文件夹名 · 完成数/总数」一张卡，
   // 不用每个文件各出一张（大部分还落在当前看不见的子文件夹里）
   const folderGhosts = new Map<string, ReturnType<typeof createFolderGhost> | null>()
-  for (const group of getTopLevelUploadGroups(items)) {
+  for (const group of prepared.folderGroups) {
     folderGhosts.set(group.name, createFolderGhost(group.name, group.total))
   }
   // 顶层文件夹（正被 ghost 追踪进度的那几个）先别实时插进可见列表——插了会跟它的 ghost 卡
