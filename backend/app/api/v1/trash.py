@@ -22,6 +22,7 @@ from app.services.files.trash import (
     RestoreParentTrashError,
     permanently_delete_file,
     permanently_delete_folder,
+    empty_trash as empty_trash_service,
     restore_file_by_id,
     restore_files_by_ids,
 )
@@ -260,25 +261,8 @@ async def empty_trash(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(File).where(File.user_id == current_user.id, File.deleted_at.isnot(None))
-    files = (await db.execute(stmt)).scalars().all()
-    storage = get_storage()
-    fids = [f.id for f in files]
-    for f in files:
-        try:
-            await storage.delete(f.storage_key)
-        except Exception:
-            pass
-        await db.delete(f)
     roots = (await db.execute(_top_level_deleted_folders_stmt(current_user.id))).scalars().all()
-    for root in roots:
-        dir_key = await folder_dir_key(db, root.user_id, root)
-        await db.delete(root)
-        if dir_key:
-            try:
-                await storage.remove_folder(dir_key)
-            except Exception:
-                pass
+    fids = await empty_trash_service(db, get_storage(), current_user.id, roots)
     await db.commit()
     for fid in fids:
         _delete_thumb_cache(fid)
