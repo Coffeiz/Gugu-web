@@ -17,18 +17,17 @@ from app.schemas import (
     TrashFolderResponse,
 )
 from app.core.security import get_current_user, get_client_id
-from app.core.ownership import get_owned
 from app.core import events
 from app.services.files.trash import (
     RestoreParentTrashError,
     permanently_delete_file,
     restore_file_by_id,
+    restore_files_by_ids,
 )
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.storage.folders import folder_dir_key
 from app.api.v1.files import _to_resp, _color, _delete_thumb_cache
-from app.services.storage.trash import restore_file_storage
 
 router = APIRouter(prefix="/trash", tags=["trash"])
 
@@ -76,15 +75,6 @@ async def list_trash(
     )
     result = await db.execute(stmt)
     return [_to_resp(f, pname, _color(pcolor), fname) for f, pname, pcolor, fname in result.all()]
-
-
-async def _ensure_file_parent_is_live(f: File, db: AsyncSession) -> None:
-    """拒绝把仍归属回收站文件夹的文件单独恢复。"""
-    if f.folder_id is None:
-        return
-    folder = await get_owned(db, Folder, f.folder_id, f.user_id)
-    if not folder or folder.deleted_at is not None:
-        raise HTTPException(409, "所属文件夹仍在回收站，请先恢复文件夹")
 
 
 # ── GET /trash/folders （P2.3：顶层已删文件夹）───────────────────────────────
@@ -275,18 +265,10 @@ async def batch_restore(
 ):
     if not body.ids:
         return
-    stmt = select(File).where(
-        File.id.in_(body.ids),
-        File.user_id == current_user.id,
-        File.deleted_at.isnot(None),
-    )
-    files = (await db.execute(stmt)).scalars().all()
-    for f in files:
-        await _ensure_file_parent_is_live(f, db)
-    storage = get_storage()
-    for f in files:
-        await restore_file_storage(f, storage, db)
-        f.deleted_at = None
+    try:
+        await restore_files_by_ids(db, get_storage(), current_user.id, body.ids)
+    except RestoreParentTrashError:
+        raise HTTPException(409, "所属文件夹仍在回收站，请先恢复文件夹")
     await db.commit()
     await events.publish(current_user.id, "files", origin=origin)
 

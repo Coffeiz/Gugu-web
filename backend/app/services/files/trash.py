@@ -1,3 +1,4 @@
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ownership import get_owned
@@ -48,3 +49,31 @@ async def restore_file_by_id(
     await restore_file_storage(file, storage, db)
     file.deleted_at = None
     return True
+
+
+async def restore_files_by_ids(
+    db: AsyncSession,
+    storage,
+    user_id: int,
+    file_ids: list[int],
+) -> list[int]:
+    """批量恢复文件；先完成全部父目录校验，再执行物理恢复。"""
+    if not file_ids:
+        return []
+    files = (await db.execute(
+        select(File).where(
+            File.id.in_(file_ids),
+            File.user_id == user_id,
+            File.deleted_at.isnot(None),
+        )
+    )).scalars().all()
+    for file in files:
+        if file.folder_id is None:
+            continue
+        folder = await get_owned(db, Folder, file.folder_id, user_id)
+        if not folder or folder.deleted_at is not None:
+            raise RestoreParentTrashError
+    for file in files:
+        await restore_file_storage(file, storage, db)
+        file.deleted_at = None
+    return [file.id for file in files]
