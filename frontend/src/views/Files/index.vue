@@ -660,8 +660,8 @@ import {
   PhBrowser,
   PhArrowLeft, PhArrowRight, PhSortAscending, PhSquaresFour, PhList,
   PhCheckSquare, PhCheck, PhFolderPlus, PhUploadSimple, PhPencilSimple,
-  PhDownloadSimple, PhScissors, PhCopy, PhClipboardText, PhX,
-  PhInfo, PhWarningCircle, PhDotsThree,
+  PhDownloadSimple, PhX,
+  PhWarningCircle,
 } from '@phosphor-icons/vue'
 
 const projectStore = useProjectStore()
