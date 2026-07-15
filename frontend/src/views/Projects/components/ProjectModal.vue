@@ -877,8 +877,6 @@ const {
   onContainerMouseDown: onPmGridMouseDown,
   cancelDrag: _cancelPmBoxDrag,
   clearSelection: _clearPmSelBase,
-  toggleFileSelect: toggleFileSelectPm,
-  toggleFolderSelect: _toggleFolderSelPm,
 } = useBoxSelection(pmGridRef, {
   fileAttr: 'data-pm-file-id',
   folderAttr: 'data-pm-folder-id',
@@ -927,7 +925,7 @@ function onPmContentClick() {
   if (pmInSelectionMode.value) clearPmSelection()
 }
 
-function toggleFolderSelectPm(folder: FolderMeta) { _toggleFolderSelPm(folder.id) }
+function toggleFolderSelectPm(folder: FolderMeta) { pmFileSelection.toggleFolder(folder.id) }
 
 function togglePmSelectionMode() {
   if (pmInSelectionMode.value) clearPmSelection()
@@ -954,7 +952,9 @@ function onPmFileClick(file: FileMeta, e: MouseEvent) {
   const ids = new Set(pmSelectedFileIds.value)
   if (e.ctrlKey || e.metaKey || pmInSelectionMode.value) {
     // 选中模式或 Ctrl/Cmd：toggle
-    if (ids.has(file.id)) ids.delete(file.id); else ids.add(file.id)
+    pmFileSelection.toggleFile(file.id)
+    pmLastAnchorIndex.value = pmFlatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
+    return
   } else {
     if (ids.size === 1 && ids.has(file.id) && pmSelectedFolderIds.value.size === 0) ids.clear()
     else { ids.clear(); pmSelectedFolderIds.value = new Set(); ids.add(file.id) }
