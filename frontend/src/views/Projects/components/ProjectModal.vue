@@ -603,70 +603,15 @@
 
   <!-- 右键菜单 -->
   <FileBrowserContextMenu :show="pmCtx.visible" :x="pmCtx.x" :y="pmCtx.y" @close="pmCtx.visible = false">
-    <template v-if="pmCtx.type === 'file' || pmCtx.type === 'multi-file'">
-      <button v-if="pmCtx.type === 'file'" class="ctx-item popup-menu-item" @click="pmCtxInfo">
-        <PhInfo :size="13" weight="bold" />
-        详细信息
-      </button>
-      <button class="ctx-item popup-menu-item" @click="pmCtxDownload">
-        <PhDownloadSimple :size="13" weight="bold" />
-        下载
-      </button>
-      <button v-if="pmCtx.type === 'file'" class="ctx-item popup-menu-item" @click="pmCtxRename">
-        <PhPencilSimple :size="13" weight="bold" />
-        重命名
-      </button>
-      <div class="popup-menu-sep"></div>
-      <button class="ctx-item popup-menu-item" @click="pmCtxCut">
-        <PhScissors :size="13" weight="bold" />
-        剪切 <span class="popup-menu-shortcut">{{ modKey }}+X</span>
-      </button>
-      <button class="ctx-item popup-menu-item" @click="pmCtxCopy">
-        <PhCopy :size="13" weight="bold" />
-        复制 <span class="popup-menu-shortcut">{{ modKey }}+C</span>
-      </button>
-      <div class="popup-menu-sep"></div>
-      <button class="ctx-item popup-menu-item danger" @click="pmCtxDelete">
-        <PhTrash :size="13" weight="bold" />
-        移到回收站
-      </button>
-    </template>
-
-    <template v-else-if="pmCtx.type === 'folder'">
-      <button class="ctx-item popup-menu-item" @click="pmCtxDownloadFolder">
-        <PhDownloadSimple :size="13" weight="bold" />
-        下载为 ZIP
-      </button>
-      <button class="ctx-item popup-menu-item" @click="pmCtxRenameFolder">
-        <PhPencilSimple :size="13" weight="bold" />
-        重命名
-      </button>
-      <button class="ctx-item popup-menu-item" @click="pmCtxCutFolder">
-        <PhScissors :size="13" weight="bold" />
-        剪切 <span class="popup-menu-shortcut">{{ modKey }}+X</span>
-      </button>
-      <div class="popup-menu-sep"></div>
-      <button class="ctx-item popup-menu-item danger" @click="pmCtxDeleteFolder">
-        <PhTrash :size="13" weight="bold" />
-        删除
-      </button>
-    </template>
-
-    <template v-else-if="pmCtx.type === 'empty'">
-      <button class="ctx-item popup-menu-item" @click="pmCtx.visible = false; showNewFolder = true">
-        <PhFolderPlus :size="13" weight="bold" />
-        新建文件夹
-      </button>
-      <div class="popup-menu-sep"></div>
-      <button v-if="pmCbStore.hasContent()" class="ctx-item popup-menu-item" @click="pmCtxPaste">
-        <PhClipboardText :size="13" weight="bold" />
-        粘贴 <span class="popup-menu-shortcut">{{ modKey }}+V</span>
-      </button>
-      <button v-else class="ctx-item popup-menu-item" disabled style="opacity:.4;cursor:default">
-        <PhClipboardText :size="13" weight="bold" />
-        剪贴板为空
-      </button>
-    </template>
+    <FileBrowserContextMenuContent
+      :type="pmCtx.type"
+      :mod-key="modKey"
+      :folder-target-valid="true"
+      :can-copy-folder="false"
+      :delete-separator="true"
+      :can-paste="pmCbStore.hasContent()"
+      @action="handlePmCtxMenuAction"
+    />
   </FileBrowserContextMenu>
 
   <!-- 文件详细信息弹窗 -->
@@ -718,6 +663,7 @@ import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
 import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
 import FileBrowserContextMenu from '@/components/common/FileBrowserContextMenu.vue'
+import FileBrowserContextMenuContent from '@/components/common/FileBrowserContextMenuContent.vue'
 import FileBrowserList from '@/components/common/FileBrowserList.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
@@ -1833,6 +1779,24 @@ function openPmCtx(type: 'file' | 'folder' | 'empty', target: PmCtxTarget | null
     resolvedType = 'multi-file'
   }
   openProjectContextMenu(resolvedType, target, e)
+}
+
+function handlePmCtxMenuAction(action: string) {
+  const actions: Record<string, () => unknown> = {
+    info: pmCtxInfo,
+    download: pmCtxDownload,
+    rename: pmCtxRename,
+    cut: pmCtxCut,
+    copy: pmCtxCopy,
+    delete: pmCtxDelete,
+    'download-folder': pmCtxDownloadFolder,
+    'rename-folder': pmCtxRenameFolder,
+    'cut-folder': pmCtxCutFolder,
+    'delete-folder': pmCtxDeleteFolder,
+    'create-folder': () => { pmCtx.value.visible = false; showNewFolder.value = true },
+    paste: pmCtxPaste,
+  }
+  actions[action]?.()
 }
 
 function pmCurrentFolderId() {

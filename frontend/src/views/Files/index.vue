@@ -589,85 +589,13 @@
 
   <!-- 右键菜单 -->
   <FileBrowserContextMenu :show="ctx.visible" :x="ctx.x" :y="ctx.y" @close="ctx.visible = false">
-    <!-- 文件菜单 -->
-    <template v-if="ctx.type === 'file' || ctx.type === 'multi-file'">
-      <button v-if="ctx.type === 'file'" class="ctx-item popup-menu-item" @click="ctxInfo">
-        <PhInfo :size="13" weight="bold" />
-        详细信息
-      </button>
-      <button class="ctx-item popup-menu-item" @click="ctxDownload">
-        <PhDownloadSimple :size="13" weight="bold" />
-        下载
-      </button>
-      <button v-if="ctx.type === 'file'" class="ctx-item popup-menu-item" @click="ctxRename">
-        <PhPencilSimple :size="13" weight="bold" />
-        重命名
-      </button>
-      <div class="popup-menu-sep"></div>
-      <button class="ctx-item popup-menu-item" @click="ctxCut">
-        <PhScissors :size="13" weight="bold" />
-        剪切
-        <span class="popup-menu-shortcut">{{ modKey }}+X</span>
-      </button>
-      <button class="ctx-item popup-menu-item" @click="ctxCopy">
-        <PhCopy :size="13" weight="bold" />
-        复制
-        <span class="popup-menu-shortcut">{{ modKey }}+C</span>
-      </button>
-      <div class="popup-menu-sep"></div>
-      <button class="ctx-item popup-menu-item danger" @click="ctxDelete">
-        <PhTrash :size="13" weight="bold" />
-        移到回收站
-      </button>
-    </template>
-
-    <!-- 文件夹菜单 -->
-    <template v-else-if="ctx.type === 'folder'">
-      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item" @click="ctxDownloadFolder">
-        <PhDownloadSimple :size="13" weight="bold" />
-        下载为 ZIP
-      </button>
-      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item" @click="ctxRenameFolder">
-        <PhPencilSimple :size="13" weight="bold" />
-        重命名
-      </button>
-      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item" @click="ctxCutFolder">
-        <PhScissors :size="13" weight="bold" />
-        剪切
-        <span class="popup-menu-shortcut">{{ modKey }}+X</span>
-      </button>
-      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item" @click="ctxCopyFolder">
-        <PhCopy :size="13" weight="bold" />
-        复制
-        <span class="popup-menu-shortcut">{{ modKey }}+C</span>
-      </button>
-      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item danger" @click="ctxDeleteFolder">
-        <PhTrash :size="13" weight="bold" />
-        删除
-      </button>
-      <button v-if="ctx.target?.type !== 'folder'" class="ctx-item popup-menu-item" disabled style="opacity:.4;cursor:default">
-        <PhDotsThree :size="13" weight="bold" />
-        此位置不可操作
-      </button>
-    </template>
-
-    <!-- 空白区菜单 -->
-    <template v-else-if="ctx.type === 'empty'">
-      <button class="ctx-item popup-menu-item" @click="ctx.visible = false; showNewFolderInput = true">
-        <PhFolderPlus :size="13" weight="bold" />
-        新建文件夹
-      </button>
-      <div class="popup-menu-sep"></div>
-      <button v-if="cbStore.hasContent()" class="ctx-item popup-menu-item" @click="ctxPaste">
-        <PhClipboardText :size="13" weight="bold" />
-        粘贴
-        <span class="popup-menu-shortcut">{{ modKey }}+V</span>
-      </button>
-      <button v-else class="ctx-item popup-menu-item" disabled style="opacity:.4;cursor:default">
-        <PhClipboardText :size="13" weight="bold" />
-        剪贴板为空
-      </button>
-    </template>
+    <FileBrowserContextMenuContent
+      :type="ctx.type"
+      :mod-key="modKey"
+      :folder-target-valid="ctx.target?.type === 'folder'"
+      :can-paste="cbStore.hasContent()"
+      @action="handleCtxMenuAction"
+    />
   </FileBrowserContextMenu>
 
   <!-- 文件详细信息弹窗 -->
@@ -692,6 +620,7 @@ import FileCard       from '@/components/common/FileCard.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
 import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
 import FileBrowserContextMenu from '@/components/common/FileBrowserContextMenu.vue'
+import FileBrowserContextMenuContent from '@/components/common/FileBrowserContextMenuContent.vue'
 import FileBrowserList from '@/components/common/FileBrowserList.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
 import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
@@ -1822,6 +1751,25 @@ function openCtx(type: Exclude<CtxType, null>, target: CtxTarget, e: MouseEvent)
     type = 'multi-file'
   }
   openFileContextMenu(type, target, e)
+}
+
+function handleCtxMenuAction(action: string) {
+  const actions: Record<string, () => unknown> = {
+    info: ctxInfo,
+    download: ctxDownload,
+    rename: ctxRename,
+    cut: ctxCut,
+    copy: ctxCopy,
+    delete: ctxDelete,
+    'download-folder': ctxDownloadFolder,
+    'rename-folder': ctxRenameFolder,
+    'cut-folder': ctxCutFolder,
+    'copy-folder': ctxCopyFolder,
+    'delete-folder': ctxDeleteFolder,
+    'create-folder': () => { ctx.value.visible = false; showNewFolderInput.value = true },
+    paste: ctxPaste,
+  }
+  actions[action]?.()
 }
 
 // 当前目录的 folder_id（null = 根目录）
