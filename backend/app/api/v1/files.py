@@ -20,7 +20,6 @@ from app.core import events
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.storage.file_service.files import _fmt_size
-from app.services.storage.trash import move_file_to_trash
 from app.services.files.response import color_value, to_file_response
 from app.services.files.browser import all_files_query, file_listing_query, storage_usage_query
 from app.services.files.upload import (
@@ -30,7 +29,7 @@ from app.services.files.upload import (
     parse_upload_filename,
     prepare_presign_target,
 )
-from app.services.files.selection import build_batch_zip, move_files_to_trash
+from app.services.files.selection import build_batch_zip, move_file_to_trash_by_id, move_files_to_trash
 from app.services.files.previews import (
     delete_thumb_cache,
     office_to_pdf,
@@ -498,11 +497,10 @@ async def delete_file(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await get_owned(db, File, fid, current_user.id)
-    if not f or f.deleted_at is not None:
+    moved = await move_file_to_trash_by_id(
+        db, get_storage(), current_user.id, fid, now_utc())
+    if not moved:
         raise HTTPException(404, "文件不存在")
-    await move_file_to_trash(get_storage(), f)
-    f.deleted_at = now_utc()
     await db.commit()
     await events.publish(current_user.id, "files", origin=origin,
                          file_op={"op": "remove", "kind": "file", "id": fid})
