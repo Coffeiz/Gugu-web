@@ -19,6 +19,7 @@ import { dispatchDragHandoff, installLandingHandoff } from './interaction/handof
 import { startThresholdDrag, ThresholdDragOpts } from './interaction/threshold'
 import { cloneForDrag, createLandingClone } from './visual/clone'
 import { resolveLandingZIndex } from './visual/layer'
+import { holdHoverUntilReveal, revealWithoutStaleHover } from './visual/reveal'
 
 // 拖拽物理可选项（startPhysicsDrag / startMultiPhysicsDrag 共用）
 export interface PhysicsDragOpts {
@@ -262,40 +263,13 @@ function _animateScroll(el: HTMLElement, dy: number, dur = 300) {
 // 干净的 hover-in 平滑发生。全程不摘 pointer-events、不碰命中测试，:hover 一直实时准确
 // （不会有「指针不动就再也不触发」的坑）。CSS 见 global.css .phys-just-revealed / .phys-reveal-snap。
 function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettled?: () => void, keepControls = false) {
-  el.classList.add('phys-just-revealed')   // 压制：hover 的 transform/阴影/底色/按钮 opacity 全归非 hover 态
-  el.classList.add('phys-reveal-snap')     // 快照：本帧关掉卡片+全部子元素的过渡，让上面这步瞬间生效、零动画
-  if (keepControls) el.classList.add('phys-reveal-controls')
-  el.style.opacity = ''
-  // 画布贴纸抓起后会暂时 display:none，哪怕鼠标一直停在原位置，也会先收到 mouseleave。
-  // 浏览器在元素重新出现时不保证补发 mouseenter；Vue 维护的连接点 hovering 状态便会比
-  // CSS :hover 晚一帧恢复，刚从落地克隆切回本体时圆点闪一下。真实命中仍在卡上时主动补发
-  // mouseenter，让组件状态在本次 paint 前与浏览器命中状态重新对齐。
-  if (pointerMode && (keepControls || el.matches(':hover'))) {
-    el.dispatchEvent(new MouseEvent('mouseenter'))
-  }
-  void el.offsetWidth                      // 强制提交：整张卡（含按钮）直接坐在压制态，不下沉、按钮不淡出
-  el.classList.remove('phys-reveal-snap')  // 恢复过渡：此刻各属性值未变 → 不触发过渡；只为随后解除压制的上浮/淡入铺路
-  // 解除压制的延迟：0=落地即进入 hover-in（无停顿）。下沉/闪烁靠上面的快照消掉、与此延迟无关，
-  // 故 0ms 下依然不闪，只是没有「保持一会儿再 hover」的停顿，落地即平滑上浮。用 rAF 保证压制态
-  // 那一帧先真的画出来，再解除——否则同一 task 内一加一撤，浏览器可能合帧、跳过压制态直接到 hover。
-  requestAnimationFrame(() => {
-    el.classList.remove('phys-just-revealed')
-    // Vue 的 hover prop 在上面的 synthetic mouseenter 后要过一个微任务才会写回；多留一帧
-    // 控制层强制可见，确保覆盖层撤掉与本体接手之间没有空档。
-    if (keepControls) requestAnimationFrame(() => el.classList.remove('phys-reveal-controls'))
-  })
-  if (pointerMode) { onSettled?.(); return }
-  el.style.pointerEvents = 'none'
-  setTimeout(() => {
-    el.style.pointerEvents = ''
-    onSettled?.()
-  }, 160)
+  revealWithoutStaleHover(el, pointerMode, onSettled, keepControls)
 }
 
 // 克隆开始落地时，目标本体已在鼠标下也不能激活 hover；这层状态一直保留到
 // _revealWithoutStaleHover 在克隆动画结束后解除。与“揭示时才加”的旧做法相比，避免中途积累陈旧 hover。
 function _holdHoverUntilReveal(el: HTMLElement) {
-  el.classList.add('phys-just-revealed')
+  holdHoverUntilReveal(el)
 }
 
 // 到位缓动：强 ease-out（快进慢收，非线性），不过冲、不回弹
