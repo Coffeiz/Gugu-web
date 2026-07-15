@@ -221,11 +221,12 @@ function _scrollParent(node: Element | null): HTMLElement | null {
 
 // 自己用 rAF 做滚动补间——scrollBy({behavior:'smooth'}) 在某些情况下(reduce-motion / drop 上下文)会退化成瞬间；
 // 自实现保证一定有动画，且时长可控（默认 300ms 的快速 ease-out）
-function _animateScroll(el: HTMLElement, dy: number, dur = 300) {
+function _animateScroll(el: HTMLElement, dy: number, dur = 300, isActive: () => boolean = () => true) {
   const from = el.scrollTop
   const ease = (t: number) => 1 - Math.pow(1 - t, 3)
   let start: number | null = null
   const tick = (now: number) => {
+    if (!isActive()) return
     if (start === null) start = now
     const t = Math.min(1, (now - start) / dur)
     el.scrollTop = from + dy * ease(t)
@@ -1125,7 +1126,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       const maxDown = sc.scrollHeight - sc.clientHeight - sc.scrollTop
       dy = dy > 0 ? Math.min(dy, maxDown) : Math.max(dy, -sc.scrollTop)
       if (Math.abs(dy) <= 1) return box
-      _animateScroll(sc, dy, 300)
+      _animateScroll(sc, dy, 300, () => session.isCurrent())
       return { left: box.left, top: box.top - dy, width: box.width, height: box.height }
     }
 
