@@ -686,7 +686,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
-import { filesApi, foldersApi, trashApi, uploadWithProgress, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
+import { filesApi, trashApi, uploadWithProgress, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileCard       from '@/components/common/FileCard.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
@@ -1449,7 +1449,7 @@ async function createFolder() {
   showNewFolderInput.value = false
   loadContents()
   try {
-    const real = await foldersApi.create(projectId, name, parentId)
+    const real = await fileActions.createFolder(projectId, name, parentId)
     cacheStore.removeFolder(tempId)
     cacheStore.addFolder({ id: real.id, name: real.name, projectId: real.projectId ?? null, parentId: real.parentId ?? null, fileCount: 0 })
     loadContents()

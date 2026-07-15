@@ -688,7 +688,7 @@ import { useProjectStore } from '@/stores/projects'
 import { cloneProjectStages, firstIncompleteStageIdx, transitionProjectStage } from '@/utils/projectStages'
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
-import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/services/api'
+import { projectsApi, uploadWithProgress } from '@/services/api'
 import { thumbLoadedIds, clearThumbCache } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt as isPmImageExt, fileExtCategory, fileIconColor } from '@/utils/fileTypes'
@@ -1140,7 +1140,7 @@ async function createFolder() {
   const parentId = stack.length ? stack[stack.length - 1].id : null
   folderLoading.value = true
   try {
-    const created = await foldersApi.create(props.project.id, name, parentId)
+    const created = await fileActions.createFolder(props.project.id, name, parentId)
     fileCacheStore.addFolder(created)   // 视图（currentFolders）自动出现该文件夹
     newFolderName.value = ''
     showNewFolder.value = false
