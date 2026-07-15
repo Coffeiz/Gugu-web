@@ -11,6 +11,9 @@
  * 世界坐标交给调用方持久化，不借它的兄弟卡 FLIP/文件夹吸入语义（皆不适用，见 onDrop）。
  */
 import { startPhysicsDrag, startThresholdDrag } from './usePhysicsDrag'
+import { screenSizeToWorld } from '../interaction/drag/core/coordinates'
+
+export { screenSizeToWorld }
 
 // 甩出去的惯性：把松手瞬间的速度（px/s，屏幕坐标）折算成一段"再飞一下"的距离，卡片抛得
 // 越快落点越远，不是甩到哪就精确停在指针下——纯粹跟手反而没有"抛"的手感。COAST 是这段惯性
@@ -119,19 +122,6 @@ export function animateLanding(
     cancelAnimationFrame(outerRaf)
     cancelAnimationFrame(frameRaf)
   }
-}
-
-/** 把物理模块给的屏幕像素尺寸（克隆体此刻真实的视觉宽高）换算成世界坐标系下的宽高。
- *  不能直接拿 size.w/size.h 除以某个"缩放值"——screenToWorld 是个坐标变换函数（含相机
- *  平移+缩放），调用方手里通常没有单独拆出来的缩放系数。取两个点（原点、size 对角点）
- *  各自变换后相减，相机平移量在减法里天然抵消，只留下缩放这一项，不用额外接口。 */
-export function screenSizeToWorld(
-  screenToWorld: (clientX: number, clientY: number) => { x: number; y: number },
-  size: { w: number; h: number },
-) {
-  const origin = screenToWorld(0, 0)
-  const corner = screenToWorld(size.w, size.h)
-  return { w: corner.x - origin.x, h: corner.y - origin.y }
 }
 
 export function useCardDrag(opts: {
