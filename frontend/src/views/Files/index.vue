@@ -1986,7 +1986,7 @@ async function ctxPaste() {
       ))
       created.forEach(f => cacheStore.addFile(f))
       const copiedFolders = await Promise.all(cbStore.folderIds.map(id =>
-        foldersApi.copy(id, folderId, projectId)
+        foldersApi.copy(id, folderId ?? null, projectId ?? null)
       ))
       copiedFolders.forEach(folder => cacheStore.addFolder({
         id: folder.id,
