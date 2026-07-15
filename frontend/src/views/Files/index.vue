@@ -588,7 +588,7 @@
   </div>
 
   <!-- 右键菜单 -->
-  <ContextMenu :show="ctx.visible" :x="ctx.x" :y="ctx.y" @close="ctx.visible = false">
+  <FileBrowserContextMenu :show="ctx.visible" :x="ctx.x" :y="ctx.y" @close="ctx.visible = false">
     <!-- 文件菜单 -->
     <template v-if="ctx.type === 'file' || ctx.type === 'multi-file'">
       <button v-if="ctx.type === 'file'" class="ctx-item popup-menu-item" @click="ctxInfo">
@@ -668,7 +668,7 @@
         剪贴板为空
       </button>
     </template>
-  </ContextMenu>
+  </FileBrowserContextMenu>
 
   <!-- 文件详细信息弹窗 -->
   <FileInfoPopup
@@ -691,6 +691,7 @@ import ContextMenu   from '@/components/ContextMenu.vue'
 import FileCard       from '@/components/common/FileCard.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
 import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
+import FileBrowserContextMenu from '@/components/common/FileBrowserContextMenu.vue'
 import FileBrowserList from '@/components/common/FileBrowserList.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
 import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
