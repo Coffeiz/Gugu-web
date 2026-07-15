@@ -1229,7 +1229,7 @@ async function deleteSingleFile(f: FileMeta) {
       selectedIds.value = new Set([...selectedIds.value].filter(id => id !== f.id))
     },
     afterMutate: loadContents,
-    work: () => filesApi.delete(f.id),
+    work: () => fileActions.deleteFile(f.id),
     onCommit: fetchStorage,
     rollback: () => { if (backup) cacheStore.addFile(backup) },
     onError: e => console.error('[Files] 删除失败:', (e as Error).message),
@@ -1248,17 +1248,17 @@ async function downloadSelected() {
     // 单个文件 → 直接下载
     if (ids.length === 1 && folderIds.length === 0) {
       const f = sortedContents.value.files?.find(f => f.id === ids[0])
-      if (f) await filesApi.download(f.id, `${f.displayName}.${f.ext}`)
+      if (f) await fileActions.downloadFile(f)
       return
     }
     // 单个文件夹 → 以文件夹名打包
     if (folderIds.length === 1 && ids.length === 0) {
-      await foldersApi.download(folderIds[0], folderObjs[0].displayName)
+      await fileActions.downloadFolder(folderObjs[0])
       return
     }
     // 多选 → 以当前目录名打包
     const dirName = currentSeg.value?.name ?? '文件'
-    await filesApi.batchDownload(ids, folderIds, `${dirName}.zip`)
+    await fileActions.batchDownload(ids, folderIds, `${dirName}.zip`)
   } catch (e) {
     console.error('[Files] 批量下载失败:', (e as Error).message)
   } finally {
@@ -1284,8 +1284,8 @@ async function deleteSelected() {
 
   try {
     const tasks = []
-    if (hasFiles)   tasks.push(filesApi.batchDelete(fileIds))
-    if (hasFolders) folderIds.forEach(id => tasks.push(foldersApi.delete(id)))
+    if (hasFiles)   tasks.push(fileActions.batchDelete(fileIds))
+    if (hasFolders) folderIds.forEach(id => tasks.push(fileActions.deleteFolder(id)))
     await Promise.all(tasks)
     fetchStorage()
   } catch (e) {
@@ -1881,10 +1881,10 @@ async function ctxDownload() {
     : [(ctx.value.target as FileMeta).id]
   if (ids.length === 1) {
     const f = sortedContents.value.files.find(f => f.id === ids[0])
-    if (f) await filesApi.download(f.id, `${f.displayName}.${f.ext}`)
+    if (f) await fileActions.downloadFile(f)
   } else {
     const dirName = currentSeg.value?.name ?? '文件'
-    await filesApi.batchDownload(ids, [], `${dirName}.zip`)
+    await fileActions.batchDownload(ids, [], `${dirName}.zip`)
   }
 }
 function ctxRename() {

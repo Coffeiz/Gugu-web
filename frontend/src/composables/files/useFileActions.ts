@@ -48,6 +48,14 @@ export function useFileActions() {
     return foldersApi.copy(id, parentId, projectId)
   }
 
+  function batchDownload(fileIds: number[], folderIds: number[], filename?: string) {
+    return filesApi.batchDownload(fileIds, folderIds, filename)
+  }
+
+  function batchDelete(fileIds: number[]) {
+    return filesApi.batchDelete(fileIds)
+  }
+
   return {
     downloadFile,
     downloadFolder,
@@ -59,5 +67,7 @@ export function useFileActions() {
     moveFolder,
     copyFile,
     copyFolder,
+    batchDownload,
+    batchDelete,
   }
 }
