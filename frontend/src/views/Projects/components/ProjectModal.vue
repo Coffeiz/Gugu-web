@@ -996,18 +996,18 @@ async function downloadSelectedPm() {
     // 单个文件 → 直接下载
     if (ids.length === 1 && folderIds.length === 0) {
       const f = sortedCurrentFiles.value.find(f => f.id === ids[0])
-      if (f) await filesApi.download(f.id, `${f.displayName}.${f.ext}`)
+      if (f) await fileActions.downloadFile(f)
       return
     }
     // 单个文件夹 → 以文件夹名打包
     if (folderIds.length === 1 && ids.length === 0) {
       const folder = sortedCurrentFolders.value.find(f => f.id === folderIds[0])
-      if (folder) await foldersApi.download(folderIds[0], folder.name)
+      if (folder) await fileActions.downloadFolder(folder)
       return
     }
     // 多选 → 以当前目录名打包
     const dirName = currentFolder.value?.name ?? props.project?.name ?? '文件'
-    await filesApi.batchDownload(ids, folderIds, `${dirName}.zip`)
+    await fileActions.batchDownload(ids, folderIds, `${dirName}.zip`)
   } catch (e) {
     console.error('[ProjectModal] 批量下载失败:', errMsg(e))
   } finally {
@@ -1882,13 +1882,13 @@ async function pmCtxDownload() {
   const ids = pmCtx.value.type === 'multi-file'
     ? [...pmSelectedFileIds.value] : (target ? [target.id] : [])
   if (ids.length === 1 && target) {
-    await filesApi.download(target.id, `${target.displayName}.${target.ext}`)
+    await fileActions.downloadFile(target)
   } else {
     const fids = [...pmSelectedFolderIds.value]
     const dirName = folderStack.value.length
       ? folderStack.value[folderStack.value.length - 1].name
       : (props.project?.name ?? '文件')
-    await filesApi.batchDownload(ids, fids, `${dirName}.zip`)
+    await fileActions.batchDownload(ids, fids, `${dirName}.zip`)
   }
 }
 function pmCtxRename() {
