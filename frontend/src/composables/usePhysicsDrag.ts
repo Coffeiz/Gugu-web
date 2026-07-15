@@ -551,7 +551,16 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   // 外部素材抽屉保留同尺寸的低透明占位，列表不跳动；普通卡片仍按原逻辑收合让位。
   // 同步 display:none 会让浏览器取消原生拖拽 → 必须下一帧再真正移出布局并做 FLIP。
   if (opts.keepSourcePlaceholder) {
+    // 这张卡刚才如果还在飞行中途被抓（比如落地进抽屉的途中重新抓起），上面的
+    // _flushPendingCleanup(sourceEl) 会先跑上一趟飞行的 forceCleanup，那里面调用
+    // _revealWithoutStaleHover 会把本体的 opacity 强制复位成可见——而这里摘掉占位态、
+    // 隐藏内容用的 .project-card-body { opacity:0 } 挂着 .16s 的过渡，不是瞬间生效，
+    // 会有一段「本体先亮出来、再淡回占位态」的可见闪烁。用跟揭示时同款的
+    // .phys-reveal-snap 技巧，把这次切换钉成瞬间生效，不留这段过渡窗口。
+    sourceEl.classList.add('phys-reveal-snap')
     sourceEl.classList.add('phys-drag-source-placeholder')
+    void sourceEl.offsetWidth
+    sourceEl.classList.remove('phys-reveal-snap')
   } else {
     sourceEl.style.opacity = '0'
   }
@@ -1190,7 +1199,17 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         holder.remove(); clone2.remove(); camGlue?.remove()
         // 顺序同上面 finish() 里的说明：先摘占位 class 再揭示，避免刚落地那一下先闪出
         // 虚线描边、再过渡回实线的中间态被看见。
+        // onReveal（比如 restoreSourcePlaceholderStyle）会摘掉 phys-drag-source-placeholder，
+        // 这一步本身没有过渡保护——.drawer-project-card 的 border-color 挂着 .25s 过渡，
+        // 摘除瞬间会往「实线」方向起播一小段，如果这次 forceCleanup 是因为同一张卡被立刻
+        // 重新抓起（见 startPhysicsDrag 顶部那次 snap 处理），新一段拖拽会把这个 class
+        // 马上加回来，两次切换中间那一下没被保护住的过渡就会被看见，表现为"虚线描边闪一下
+        // 消失"。用 phys-reveal-snap 把 onReveal 摘 class 和 _revealWithoutStaleHover 复位
+        // opacity 这两步一起框进同一个瞬时窗口，不留过渡缝隙。
+        revealEl.classList.add('phys-reveal-snap')
         onReveal?.()
+        void revealEl.offsetWidth
+        revealEl.classList.remove('phys-reveal-snap')
         _revealWithoutStaleHover(revealEl, pointer, undefined, landingHovered)
       }
       unregister = _registerCleanup(revealEl, forceCleanup)

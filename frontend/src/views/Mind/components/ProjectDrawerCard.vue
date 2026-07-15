@@ -66,6 +66,12 @@ function startDrag(event: PointerEvent, card: HTMLElement, initialRect?: { left:
       const drawerRect = drawer?.getBoundingClientRect()
       if (drawer && drawerRect && pointer.x >= drawerRect.left && pointer.x <= drawerRect.right && pointer.y >= drawerRect.top && pointer.y <= drawerRect.bottom) {
         returnTarget = card
+        // 落地前中途被重新抓起（isLandingRegrab）会复用同一份 startDrag 闭包续拖，不会
+        // 重新跑外层函数体、landingTarget/returnTarget 不会被重置成初始值 null——如果这次
+        // 抓起之前曾经落过画布（landingTarget 被设过非 null），这里不清掉的话，物理模块
+        // 稍后 resolveLandingTarget() 仍会读到上一段拖拽遗留的旧值，一併触发飞向画布的
+        // 落地。必须清空，让这次判定只认"回到抽屉"这一个结果。
+        landingTarget = null
         return
       }
       // 抽屉来源的克隆有跟手弹簧，快速松手时它自己的速度可能已被阻尼压低；优先取
@@ -75,6 +81,12 @@ function startDrag(event: PointerEvent, card: HTMLElement, initialRect?: { left:
         ? { ...pointerVelocity, turn: velocity.turn }
         : velocity
       const coast = coastOffset(launchVelocity)
+      // 同理清空 returnTarget：resolveAbsorbTarget() 是个无参闭包，不会根据这次落点重新
+      // 判断，只会原样吐出这里最后一次赋的值——上一段拖拽（同一条 startDrag 闭包内，
+      // 可能是落地前被重新抓起）如果曾经落进过抽屉，returnTarget 会一直停留在那次赋的
+      // card 引用上。这次明明落在画布，物理模块却会因为这份陈旧值仍然非空，把这次也当成
+      // "命中抽屉"一并吸收——实测复现就是"一张卡真的落进画布，另一张假卡凭空飞进抽屉"。
+      returnTarget = null
       props.addToCanvas(props.project.id, { x: center.x + coast.x, y: center.y + coast.y }, size)
         .then(target => { landingTarget = target })
         .catch(() => { landingTarget = null })
