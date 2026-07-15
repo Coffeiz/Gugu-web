@@ -1061,8 +1061,6 @@ const {
   onContainerMouseDown: _boxMouseDown,
   cancelDrag: _cancelBoxDrag,
   clearSelection: _clearSelBase,
-  toggleFileSelect: toggleFileSelectSimple,
-  toggleFolderSelect,
 } = useBoxSelection(mainRef, {
   fileAttr: 'data-file-id',
   folderAttr: 'data-folder-key',
@@ -1138,13 +1136,13 @@ function handleFolderClick(folder: FolderCard, event: MouseEvent) {
   if (event.shiftKey) {
     if (!_shiftSelect('folder', folder.id)) {
       // 没有锚点时 shift+click 当作普通选中，设置锚点，不导航
-      toggleFolderSelect(folder.id)
+      fileSelection.toggleFolder(folder.id)
       lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'folder' && i.id === folder.id)
     }
     return
   }
   if (inSelectionMode.value) {
-    toggleFolderSelect(folder.id)
+    fileSelection.toggleFolder(folder.id)
     lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'folder' && i.id === folder.id)
   } else {
     enterFolder(folder)
@@ -1155,13 +1153,13 @@ function handleFileClick(file: FileMeta, event: MouseEvent) {
   if (event.shiftKey) {
     if (!_shiftSelect('file', file.id)) {
       // 没有锚点时 shift+click 当作普通选中，设置锚点
-      toggleFileSelectSimple(file.id)
+      fileSelection.toggleFile(file.id)
       lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
     }
     return
   }
   if (inSelectionMode.value) {
-    toggleFileSelectSimple(file.id)
+    fileSelection.toggleFile(file.id)
     lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
   } else if (isPreviewable(file.ext)) {
     openPreview(file)
