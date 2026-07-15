@@ -10,6 +10,7 @@
 
 import { LandingState } from './animation/landing'
 import { dragRegistry } from './core/DragRegistry'
+import { integrateSpring } from './core/physics'
 import { dispatchDragHandoff } from './interaction/handoff'
 import { cloneForDrag } from './visual/clone'
 
@@ -648,15 +649,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     }
 
     // 子步积分（≤1/120s/步）：显式欧拉在大 dt 下会发散，子步保证弹簧稳定，且与帧率解耦
-    let rem = dt
-    while (rem > 1e-4) {
-      const h = Math.min(rem, 1 / 120)
-      rem -= h
-      const ax = SPRING * (target.x - pos.x) - DAMP * vel.x
-      const ay = SPRING * (target.y - pos.y) - DAMP * vel.y
-      vel.x += ax * h; vel.y += ay * h
-      pos.x += vel.x * h; pos.y += vel.y * h
-    }
+    integrateSpring({ position: pos, velocity: vel }, target, SPRING, DAMP, dt)
 
     // 记一帧速度采样，只留最近 VEL_HISTORY_MS 这一小段（时间戳用 now，跟 requestAnimationFrame
     // 的时间基准一致）；开头存的是最老的，取 [0] 就是这段窗口起点的速度，跟当前 vel 一比就知道
@@ -1687,15 +1680,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     const fold = 1 - Math.pow(1 - foldT, 2)
 
     // 弹簧积分
-    let rem = dt
-    while (rem > 1e-4) {
-      const h = Math.min(rem, 1 / 120)
-      rem -= h
-      const ax = SPRING * (target.x - pos.x) - DAMP * vel.x
-      const ay = SPRING * (target.y - pos.y) - DAMP * vel.y
-      vel.x += ax * h; vel.y += ay * h
-      pos.x += vel.x * h; pos.y += vel.y * h
-    }
+    integrateSpring({ position: pos, velocity: vel }, target, SPRING, DAMP, dt)
 
     const av = 1 - Math.exp(-KV * dt)
     vxs += (vel.x - vxs) * av; vys += (vel.y - vys) * av

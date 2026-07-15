@@ -3,6 +3,7 @@ import { DragRegistry } from '../src/interaction/drag/core/DragRegistry'
 import { DragSession } from '../src/interaction/drag/core/DragSession'
 import { cloneForDrag } from '../src/interaction/drag/visual/clone'
 import { dispatchDragHandoff } from '../src/interaction/drag/interaction/handoff'
+import { integrateSpring } from '../src/interaction/drag/core/physics'
 
 describe('DragSession', () => {
   it('只管理生命周期并按顺序执行清理', () => {
@@ -82,5 +83,17 @@ describe('dispatchDragHandoff', () => {
 
     expect(dispatchDragHandoff(target, event, initialRect)).toBe(true)
     expect(listener).toHaveBeenCalledOnce()
+  })
+})
+
+describe('integrateSpring', () => {
+  it('使用固定子步积分位置和速度', () => {
+    const state = { position: { x: 0, y: 0 }, velocity: { x: 0, y: 0 } }
+
+    integrateSpring(state, { x: 100, y: 50 }, 360, 0.85, 1 / 60)
+
+    expect(state.position.x).toBeGreaterThan(0)
+    expect(state.position.y).toBeGreaterThan(0)
+    expect(state.velocity.x).toBeGreaterThan(0)
   })
 })
