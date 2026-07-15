@@ -26,6 +26,7 @@ from app.services.storage.trash import move_file_to_trash
 from app.services.files.response import color_value, to_file_response
 from app.services.files.browser import all_files_query, file_listing_query, storage_usage_query
 from app.services.files.upload import find_conflict, parse_upload_filename
+from app.services.files.selection import build_batch_zip
 from app.services.files.previews import (
     delete_thumb_cache,
     office_to_pdf,
@@ -610,75 +611,16 @@ async def batch_download_files(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    import io, zipfile
     from fastapi.responses import Response
 
-    if not body.ids and not body.folder_ids:
-        raise HTTPException(400, "未选择文件")
-
-    storage = get_storage()
-    buf = io.BytesIO()
-
-    # (arc_path, file_obj) 列表
-    entries: list[tuple[str, File]] = []
-
-    # 1. 散装文件
-    if body.ids:
-        rows = (await db.execute(
-            select(File).where(
-                File.id.in_(body.ids),
-                File.user_id == current_user.id,
-                File.deleted_at.is_(None),
-            )
-        )).scalars().all()
-        for f in rows:
-            entries.append((f"{f.display_name}.{f.ext.lower()}", f))
-
-    # 2. 文件夹（递归）
-    async def collect_folder(folder_id: int, prefix: str):
-        folder = await get_owned(db, Folder, folder_id, current_user.id)
-        if not folder:
-            return
-        folder_prefix = f"{prefix}{folder.name}/"
-        # 该文件夹内的文件
-        files = (await db.execute(
-            select(File).where(
-                File.folder_id == folder_id,
-                File.user_id == current_user.id,
-                File.deleted_at.is_(None),
-            )
-        )).scalars().all()
-        for f in files:
-            entries.append((f"{folder_prefix}{f.display_name}.{f.ext.lower()}", f))
-        # 子文件夹
-        children = (await db.execute(
-            select(Folder).where(Folder.parent_id == folder_id, Folder.user_id == current_user.id)
-        )).scalars().all()
-        for child in children:
-            await collect_folder(child.id, folder_prefix)
-
-    for fid in body.folder_ids:
-        await collect_folder(fid, "")
-
-    if not entries:
-        raise HTTPException(404, "未找到可下载的文件")
-
-    # 去重 arc_path
-    seen: dict[str, int] = {}
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for arc_path, f in entries:
-            if arc_path in seen:
-                seen[arc_path] += 1
-                stem, ext = arc_path.rsplit(".", 1) if "." in arc_path else (arc_path, "")
-                arc_path = f"{stem}_{seen[arc_path]}.{ext}" if ext else f"{stem}_{seen[arc_path]}"
-            else:
-                seen[arc_path] = 0
-            data = await storage.get(f.storage_key)
-            zf.writestr(arc_path, data)
-
-    buf.seek(0)
+    try:
+        data = await build_batch_zip(db, get_storage(), current_user.id, body.ids, body.folder_ids)
+    except ValueError as error:
+        raise HTTPException(400, str(error))
+    except FileNotFoundError as error:
+        raise HTTPException(404, str(error))
     return Response(
-        content=buf.read(),
+        content=data,
         media_type="application/zip",
         headers={"Content-Disposition": "attachment; filename*=UTF-8''files.zip"},
     )
