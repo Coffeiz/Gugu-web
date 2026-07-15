@@ -1957,7 +1957,7 @@ async function pmCtxPaste() {
     } else if (pmCbStore.type === 'copy') {
       const created = await Promise.all(fileIds.map(id => filesApi.copy(id, { folderId, projectId })))
       created.forEach(c => { if (c) fileCacheStore.addFile(c) })
-      const copiedFolders = await Promise.all(folderIds.map(id => foldersApi.copy(id, folderId, projectId)))
+      const copiedFolders = await Promise.all(folderIds.map(id => foldersApi.copy(id, folderId ?? null, projectId ?? null)))
       copiedFolders.forEach(c => fileCacheStore.addFolder(c))
       await fileCacheStore.refresh()
     }
