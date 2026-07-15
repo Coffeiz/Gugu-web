@@ -9,6 +9,7 @@
  */
 
 import { LandingState } from './animation/landing'
+import { invertPlay } from './animation/flip'
 import { dragRegistry } from './core/DragRegistry'
 import { integrateSpring } from './core/physics'
 import { dispatchDragHandoff } from './interaction/handoff'
@@ -307,27 +308,6 @@ const _SETTLE = 'cubic-bezier(0.22, 1, 0.36, 1)'
 // 留出余量，避免同一浮窗里同时有多张卡片在飞、彼此相互覆盖判定不稳）；找不到就说明卡片
 // 本来就在普通页面里，退回原来的 2。
 // FLIP：布局已经变到「现状(toRects)」后，让 kids 先回到 fromRects 再动画到现状
-function _invertPlay(kids: HTMLElement[], fromRects: DOMRect[], toRects: DOMRect[], dur = 340) {
-  _retargetLandings(kids)   // 自行量干净落点，不吃这里可能被残留 transform 污染的 toRects
-  kids.forEach((c: HTMLElement, i: number) => {
-    const dx = fromRects[i].left - toRects[i].left
-    const dy = fromRects[i].top  - toRects[i].top
-    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return
-    c.style.transition = 'none'
-    c.style.transform = `translate(${dx.toFixed(2)}px, ${dy.toFixed(2)}px)`
-  })
-  requestAnimationFrame(() => {
-    for (const c of kids) {
-      if (!c.style.transform) continue
-      c.style.transition = `transform ${dur}ms ${_SETTLE}`
-      c.style.transform = ''
-      const clr = () => { c.style.transition = ''; c.removeEventListener('transitionend', clr) }
-      c.addEventListener('transitionend', clr)
-      setTimeout(clr, dur + 80)
-    }
-  })
-}
-
 /**
  * @param {DragEvent|PointerEvent} event  原生 dragstart 事件，或 pointer 模式下越过阈值的 pointermove
  * @param {HTMLElement} sourceEl  被拖的卡片（一般传 event.currentTarget）
@@ -552,7 +532,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       const open = _rects(kids)
       sourceEl.style.display = 'none'
       const closed = _rects(kids)
-      _invertPlay(kids, open, closed)
+      invertPlay(kids, open, closed, {
+        easing: _SETTLE,
+        onBeforePlay: () => _retargetLandings(kids),
+        isActive: () => session.isCurrent(),
+      })
     })
   }
 
@@ -1219,7 +1203,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       }
       _holdHoverUntilReveal(el)
       el.style.opacity = '0'              // 落定前隐藏且压住 hover，克隆体落到位再露出
-      _invertPlay(sibs, closedR, openR)   // 从合拢 → 展开
+      invertPlay(sibs, closedR, openR, {
+        easing: _SETTLE,
+        onBeforePlay: () => _retargetLandings(sibs),
+        isActive: () => session.isCurrent(),
+      })   // 从合拢 → 展开
       return el.getBoundingClientRect()
     }
 
