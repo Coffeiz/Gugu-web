@@ -717,7 +717,7 @@ import type { Project } from '@/types/project'
 import { type NavSeg, type FolderCard } from '@/utils/filesNav'
 import { useFilesNav } from '@/composables/useFilesNav'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
-import { useFileSelection } from '@/composables/files/useFileSelection'
+import { selectRange, useFileSelection } from '@/composables/files/useFileSelection'
 import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileContextMenu } from '@/composables/files/useFileContextMenu'
@@ -1120,17 +1120,10 @@ const flatSelectableItems = computed(() => [
 function _shiftSelect(type: 'file' | 'folder', id: number | string) {
   const idx = flatSelectableItems.value.findIndex(i => i.type === type && i.id === id)
   if (idx < 0) return false
-  const anchor = lastAnchorIndex.value
-  if (anchor < 0) return false
-  const [a, b] = anchor <= idx ? [anchor, idx] : [idx, anchor]
-  const ids  = new Set<number>()
-  const keys = new Set<number | string>()
-  flatSelectableItems.value.slice(a, b + 1).forEach(item => {
-    if (item.type === 'file') ids.add(item.id)
-    else keys.add(item.id)
-  })
-  selectedIds.value        = ids
-  selectedFolderKeys.value = keys
+  const selected = selectRange(flatSelectableItems.value, lastAnchorIndex.value, idx)
+  if (!selected) return false
+  selectedIds.value = selected.fileIds
+  selectedFolderKeys.value = selected.folderIds
   return true
 }
 

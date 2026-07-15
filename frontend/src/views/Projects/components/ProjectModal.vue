@@ -723,7 +723,7 @@ import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
 import { parseFolderId } from '@/utils/folderKeys'
-import { useFileSelection } from '@/composables/files/useFileSelection'
+import { selectRange, useFileSelection } from '@/composables/files/useFileSelection'
 import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 import { useFileActions } from '@/composables/files/useFileActions'
@@ -896,20 +896,18 @@ const pmInSelectionMode = computed(() =>
 )
 
 const pmFlatSelectableItems = computed(() => [
-  ...sortedCurrentFolders.value.map(f => ({ type: 'folder', id: f.id })),
-  ...sortedCurrentFiles.value.map(f => ({ type: 'file',   id: f.id })),
+  ...sortedCurrentFolders.value.map(f => ({ type: 'folder' as const, id: f.id })),
+  ...sortedCurrentFiles.value.map(f => ({ type: 'file' as const, id: f.id })),
 ])
 
 function _pmShiftSelect(type: 'folder' | 'file', id: number) {
   const flat = pmFlatSelectableItems.value
   const idx = flat.findIndex(i => i.type === type && i.id === id)
-  if (idx < 0 || pmLastAnchorIndex.value < 0) return false
-  const [a, b] = pmLastAnchorIndex.value <= idx
-    ? [pmLastAnchorIndex.value, idx]
-    : [idx, pmLastAnchorIndex.value]
-  const range = flat.slice(a, b + 1)
-  pmSelectedFileIds.value   = new Set(range.filter(i => i.type === 'file').map(i => i.id))
-  pmSelectedFolderIds.value = new Set(range.filter(i => i.type === 'folder').map(i => i.id))
+  if (idx < 0) return false
+  const selected = selectRange(flat, pmLastAnchorIndex.value, idx)
+  if (!selected) return false
+  pmSelectedFileIds.value = selected.fileIds
+  pmSelectedFolderIds.value = selected.folderIds
   return true
 }
 
