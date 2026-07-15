@@ -268,7 +268,7 @@
 
         <!-- ── 网格视图 ── -->
         <template v-else-if="viewMode === 'grid'">
-          <div class="file-grid" @contextmenu.prevent.self="openCtx('empty', null, $event)">
+          <FileBrowserGrid @empty-context="openCtx('empty', null, $event)">
 
             <!-- 文件夹卡片 -->
             <div
@@ -408,7 +408,7 @@
               <span class="fc-upload-text">上传文件</span>
               <input type="file" hidden multiple @change="handleFileInput" />
             </label>
-          </div>
+          </FileBrowserGrid>
 
           <div v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading && !canUpload" class="grid-empty">
             <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.3">
@@ -420,7 +420,7 @@
 
         <!-- ── 列表视图 ── -->
         <template v-else>
-          <div class="file-list" @contextmenu.prevent.self="openCtx('empty', null, $event)">
+          <FileBrowserList @empty-context="openCtx('empty', null, $event)">
             <div class="list-head">
               <span class="lh-sortable" :class="{ active: sortKey === 'name' }" @click="onSortSelect('name')">名称<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
               <span class="lh-sortable" :class="{ active: sortKey === 'type' }" @click="onSortSelect('type')">类型<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
@@ -562,7 +562,7 @@
               </svg>
               暂无文件
             </div>
-          </div>
+          </FileBrowserList>
         </template>
 
         </div>
@@ -689,6 +689,8 @@ import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from
 import { filesApi, foldersApi, trashApi, uploadWithProgress, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileCard       from '@/components/common/FileCard.vue'
+import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
+import FileBrowserList from '@/components/common/FileBrowserList.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
 import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
 import FilePasteButton from '@/components/common/FilePasteButton.vue'
@@ -713,6 +715,8 @@ import type { Project } from '@/types/project'
 import { type NavSeg, type FolderCard } from '@/utils/filesNav'
 import { useFilesNav } from '@/composables/useFilesNav'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
+import { useFileSelection } from '@/composables/files/useFileSelection'
+import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
 import { readDroppedEntries, filesToItems, uploadFilesWithFolders, checkUploadConflicts, type UploadItem } from '@/composables/useFileUpload'
@@ -845,36 +849,16 @@ const sortedContents = computed(() => {
   const { folders, files } = contents.value
   // projects 层是「状态文件夹」，保持看板顺序（待开始→进行中→已完成），不参与排序
   if (currentType.value === 'root' || currentType.value === 'projects') return { folders, files }
-  const dir = sortDir.value === 'asc' ? 1 : -1
-
-  const sortedFolders = [...folders].sort((a, b) => {
-    if (sortKey.value === 'name' || sortKey.value === 'type') {
-      return dir * (a.displayName ?? '').localeCompare(b.displayName ?? '', 'zh')
-    }
-    return dir * ((a.id > b.id ? 1 : a.id < b.id ? -1 : 0))
+  const sortedFolders = sortFileProjection(folders, sortKey.value, sortDir.value, {
+    name: f => f.displayName, type: f => f.displayName, id: f => f.id,
   })
-
-  const sortedFiles = [...files].sort((a, b) => {
-    if (sortKey.value === 'name') {
-      return dir * (a.displayName ?? '').localeCompare(b.displayName ?? '', 'zh')
-    }
-    if (sortKey.value === 'type') {
-      const ca = fileExtCategory(a.ext), cb = fileExtCategory(b.ext)
-      if (ca !== cb) return dir * ca.localeCompare(cb)
-      return dir * (a.ext ?? '').localeCompare(b.ext ?? '')
-    }
-    if (sortKey.value === 'stage') {
-      const sa = a.projectName || a.stageName || ''
-      const sb = b.projectName || b.stageName || ''
-      return dir * sa.localeCompare(sb, 'zh')
-    }
-    if (sortKey.value === 'createdAt') {
-      return dir * (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
-    }
-    if (sortKey.value === 'size') {
-      return dir * ((a.sizeBytes ?? 0) - (b.sizeBytes ?? 0))
-    }
-    return 0
+  const sortedFiles = sortFileProjection(files, sortKey.value, sortDir.value, {
+    name: f => f.displayName,
+    type: f => `${fileExtCategory(f.ext)}:${f.ext ?? ''}`,
+    stage: f => f.projectName || f.stageName || '',
+    createdAt: f => f.createdAt,
+    size: f => f.sizeBytes ?? 0,
+    id: f => f.id,
   })
 
   return { folders: sortedFolders, files: sortedFiles }
@@ -1109,8 +1093,10 @@ const {
   },
 })
 const selectedTrashFolderIds = ref<Set<number>>(new Set())
+const fileSelection = useFileSelection({ fileIds: selectedIds, folderIds: selectedFolderKeys })
 
 function clearSelection() {
+  fileSelection.clearSelection()
   _clearSelBase()
   selectedTrashFolderIds.value = new Set()
   selectModeForced.value = false
