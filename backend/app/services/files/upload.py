@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,22 @@ class ConfirmUploadResult:
     project: Optional[Project]
     folder_name: Optional[str]
     overwritten_file_id: Optional[int] = None
+
+
+async def check_upload_conflicts(
+    db: AsyncSession,
+    user_id: int,
+    items: Iterable[tuple[str, str, Optional[int], Optional[int]]],
+) -> list[tuple[str, Optional[File]]]:
+    """批量查询上传冲突；只读，不落库、不改变配额或存储。"""
+    conflicts = []
+    for filename, space, project_id, folder_id in items:
+        display_name, ext = parse_upload_filename(filename)
+        existing = await find_conflict(
+            db, user_id, space, project_id, folder_id, display_name, ext,
+        )
+        conflicts.append((filename, existing))
+    return conflicts
 
 
 class UploadTargetError(ValueError):

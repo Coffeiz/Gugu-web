@@ -1732,3 +1732,5 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 把响应组装、缩略图和预览逻辑下沉后，隔离运行当前分支的后端全量测试时发现旧调用方仍从 `app.api.v1.files` 导入已删除的 `_to_resp`、`_color`、`_delete_thumb_cache`、`_thumb_dir` 等符号，导致测试收集阶段失败。问题不在业务逻辑，而是迁移边界没有完成调用方收口。
 
 现已将回收站、Agent 文件/回收站工具、账户注销、应用启动清理和 Agent 预览接口统一改为依赖 `services/files/{response,previews}.py`；同时修正 `FileService.move_folder` 直接传入 `target_project_id` 时未识别为显式目标项目的问题。当前分支在 devserver 临时隔离副本中后端全量测试通过，原 devserver 工作树未被覆盖。
+
+同一轮继续把批量上传冲突检查从 `files.py` 下沉到 `services/files/upload.py`；路由仍负责 Pydantic 请求解析和响应投影，上传协议、冲突判断和返回结构保持不变。

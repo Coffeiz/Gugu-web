@@ -25,6 +25,7 @@ from app.services.files.response import color_value, to_file_response
 from app.services.files.browser import all_files_query, file_listing_query, storage_usage_query
 from app.services.files.upload import (
     UploadTargetError,
+    check_upload_conflicts,
     confirm_oss_upload,
     find_conflict,
     parse_upload_filename,
@@ -223,11 +224,14 @@ async def check_conflicts(
     db: AsyncSession = Depends(get_db),
 ):
     out = []
-    for item in body.items:
-        display_name, ext = parse_upload_filename(item.filename)
-        existing = await find_conflict(db, current_user.id, item.space, item.project_id, item.folder_id, display_name, ext)
+    conflicts = await check_upload_conflicts(
+        db,
+        current_user.id,
+        ((item.filename, item.space, item.project_id, item.folder_id) for item in body.items),
+    )
+    for filename, existing in conflicts:
         out.append({
-            "filename": item.filename,
+            "filename": filename,
             "conflict": existing is not None,
             "existing_file": to_file_response(existing).model_dump() if existing else None,
         })
