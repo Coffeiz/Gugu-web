@@ -27,25 +27,12 @@ from app.services.storage.trash import move_file_to_trash
 from app.services.files.response import color_value, to_file_response
 from app.services.files.browser import all_files_query, file_listing_query, storage_usage_query
 from app.services.files.upload import find_conflict, parse_upload_filename
+from app.services.files.previews import delete_thumb_cache, thumb_dir, thumb_path, THUMB_SIZE_MAP
 
 router = APIRouter(prefix="/files", tags=["files"])
 
 _OFFICE_EXTS = frozenset({'DOC', 'DOCX', 'XLS', 'XLSX', 'PPT', 'PPTX'})
 _pdf_cache: dict[str, bytes] = {}   # key: "{fid}:{updated_at_iso}"
-
-# ── 缩略图磁盘缓存 ─────────────────────────────────────────────────────────────
-
-from pathlib import Path as _Path
-
-def _thumb_dir() -> _Path:
-    p = _Path(get_settings().storage.local_path) / ".thumbs"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
-
-def _thumb_path(fid: int, size: str) -> _Path:
-    return _thumb_dir() / f"{fid}_{size}.webp"
-
-_THUMB_SIZE_MAP = {"tiny": (20, 75), "card": (192, 82)}
 
 # 单文件上传硬上限（字节）——独立于存储配额，防一次性 read 进内存打爆。
 _MAX_UPLOAD_BYTES = 200 * 1024 * 1024
@@ -78,11 +65,11 @@ def _generate_thumbs_sync(raw: bytes, fid: int, sizes: tuple = ("tiny",)) -> Non
     """生成指定尺寸的 WebP 缩略图并写入磁盘缓存。在线程中运行。"""
     from PIL import Image
     import io as _io
-    td = _thumb_dir()
+    td = thumb_dir()
     img = Image.open(_io.BytesIO(raw))
     # 大图快速降采样解码：JPEG 按目标尺寸 draft 出 1/2~1/8 分辨率，省掉解全分辨率的大头开销（非 JPEG 无效，安全）
     try:
-        _biggest = max(_THUMB_SIZE_MAP[s][0] for s in sizes)
+        _biggest = max(THUMB_SIZE_MAP[s][0] for s in sizes)
         img.draft(None, (_biggest, _biggest))
     except Exception:
         pass
@@ -90,7 +77,7 @@ def _generate_thumbs_sync(raw: bytes, fid: int, sizes: tuple = ("tiny",)) -> Non
     if img.mode not in ("RGB", "RGBA"):
         img = img.convert("RGBA") if "transparency" in img.info else img.convert("RGB")
     for size_name in sizes:
-        max_px, quality = _THUMB_SIZE_MAP[size_name]
+        max_px, quality = THUMB_SIZE_MAP[size_name]
         out = img.copy()
         out.thumbnail((max_px, max_px), Image.LANCZOS)
         buf = _io.BytesIO()
@@ -103,7 +90,7 @@ def _generate_thumb_jpeg_fallback(raw: bytes, size: str) -> bytes | None:
     import io as _io
     try:
         img = Image.open(_io.BytesIO(raw))
-        max_px, _ = _THUMB_SIZE_MAP.get(size, (192, 82))
+        max_px, _ = THUMB_SIZE_MAP.get(size, (192, 82))
         try:
             img.draft(None, (max_px, max_px))   # JPEG 大图快速降采样解码
         except Exception:
@@ -118,17 +105,6 @@ def _generate_thumb_jpeg_fallback(raw: bytes, size: str) -> bytes | None:
         return buf.getvalue()
     except Exception:
         return None
-
-def _delete_thumb_cache(fid: int) -> None:
-    for size in ("tiny", "card"):
-        for ext in (".webp", ".jpg"):
-            p = _thumb_dir() / f"{fid}_{size}{ext}"
-            try:
-                if p.exists():
-                    p.unlink()
-            except Exception:
-                pass
-
 
 # ── GET /files ────────────────────────────────────────────────────────────────
 
@@ -363,7 +339,7 @@ async def upload_file(
     )
     f = result.file
     if result.was_overwrite:
-        _delete_thumb_cache(f.id)   # 旧缩略图必须清，否则还显示覆盖前的图
+        delete_thumb_cache(f.id)   # 旧缩略图必须清，否则还显示覆盖前的图
 
     await db.commit()
     await db.refresh(f)
@@ -542,7 +518,7 @@ async def confirm_upload(
             raise HTTPException(400, "要覆盖的文件不存在")
         if existing.storage_key != body.storage_key:
             raise HTTPException(400, "覆盖目标与直传路径不一致")
-        _delete_thumb_cache(existing.id)
+        delete_thumb_cache(existing.id)
         existing.size = _fmt_size(body.size_bytes)
         existing.size_bytes = body.size_bytes
         existing.mime_type = body.mime_type
@@ -833,7 +809,7 @@ async def get_thumb(
                                headers={"Cache-Control": "private, max-age=86400"})
 
     # 命中磁盘缓存：touch mtime 供 TTL 驱逐参考
-    cache_path = _thumb_path(fid, size)
+    cache_path = thumb_path(fid, size)
     if cache_path.exists():
         cache_path.touch()
         return FastAPIResponse(content=cache_path.read_bytes(), media_type="image/webp",
@@ -847,7 +823,7 @@ async def get_thumb(
     try:
         async with _THUMB_SEM:
             await asyncio.to_thread(_generate_thumbs_sync, raw, fid, (size,))
-        cache_path = _thumb_path(fid, size)
+        cache_path = thumb_path(fid, size)
         if cache_path.exists():
             return FastAPIResponse(content=cache_path.read_bytes(), media_type="image/webp",
                                    headers={"Cache-Control": "private, max-age=86400"})
