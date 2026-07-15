@@ -47,6 +47,7 @@ export const useMindStore = defineStore('mind', () => {
   const canvasItems = ref<MindCanvasItem[]>([])
   const canvasRelations = ref<MindRelation[]>([])
   const canvasDataSaves = new Map<number, Promise<void>>()
+  const canvasZSaves = new Map<number, Promise<void>>()
 
   /** 时间流：按 capturedAt 分组成「一天一组」，供 NoteTimeline 渲染；筛选词命中正文才留 */
   const timeline = computed(() => {
@@ -151,7 +152,7 @@ export const useMindStore = defineStore('mind', () => {
       mindApi.listCanvasRelations(id),
     ])
     if (activeCanvasId.value !== id) return
-    canvasItems.value = items
+    canvasItems.value = normalizeCanvasZ(items).map(({ item, z }) => ({ ...item, z }))
     canvasRelations.value = relations
   }
 
@@ -240,8 +241,55 @@ export const useMindStore = defineStore('mind', () => {
     return updated
   }
 
+  function normalizeCanvasZ(items: MindCanvasItem[]) {
+    return items.map((item, index) => ({ item, z: (index + 1) * 1000 }))
+  }
+
   function nextCanvasZ() {
-    return canvasItems.value.reduce((top, item) => Math.max(top, item.z), 0) + 1
+    return (canvasItems.value.length + 1) * 1000
+  }
+
+  async function bringCanvasItemToFront(itemId: number, x: number, y: number) {
+    const canvasId = activeCanvasId.value
+    if (canvasId == null) return
+    const before = canvasItems.value
+    const ordered = normalizeCanvasZ(before)
+    const target = ordered.find(entry => entry.item.id === itemId)
+    if (!target) return
+    const reordered = ordered
+      .filter(entry => entry.item.id !== itemId)
+      .concat({ item: target.item, z: ordered.length })
+    canvasItems.value = reordered.map(({ item, z }) => ({
+      ...item,
+      x: item.id === itemId ? x : item.x,
+      y: item.id === itemId ? y : item.y,
+      z,
+    }))
+    const previous = canvasZSaves.get(canvasId) ?? Promise.resolve()
+    const save = previous.catch(() => undefined).then(async () => {
+      try {
+        const updated = await mindApi.bringCanvasItemToFront(canvasId, itemId, { x, y })
+        const currentIndex = canvasItems.value.findIndex(item => item.id === itemId)
+        if (currentIndex !== -1) {
+          canvasItems.value = normalizeCanvasZ(canvasItems.value)
+            .map(({ item, z }) => ({
+              ...item,
+              z,
+              ...(item.id === itemId ? { ...updated, clientKey: item.clientKey } : {}),
+            }))
+        }
+      } catch (error) {
+        // 后续拖拽可能已经产生了更新，不能用旧快照覆盖更新后的本地状态。
+        if (canvasZSaves.get(canvasId) === save) canvasItems.value = before
+        throw error
+      }
+    })
+    canvasZSaves.set(canvasId, save)
+    try {
+      await save
+    } finally {
+      if (canvasZSaves.get(canvasId) === save) canvasZSaves.delete(canvasId)
+    }
   }
 
   async function updateCanvasItem(itemId: number, fields: Partial<Pick<MindCanvasItem, 'x' | 'y' | 'w' | 'h' | 'z' | 'collapsed' | 'data'>>) {
@@ -357,7 +405,7 @@ export const useMindStore = defineStore('mind', () => {
     notes, loading, loaded, filterQ, jumpTarget, timeline, fetchNotes, createNote, updateNote, deleteNote,
     canvases, canvasesLoaded, canvasLoading, activeCanvasId, canvasItems, canvasRelations,
     fetchCanvases, createCanvas, renameCanvas, deleteCanvas, loadCanvas, addNoteToCanvas, updateCanvasItem,
-    addRefToCanvas, addProjectRefOptimistic, createCanvasNote, updateCanvasNote, removeCanvasItem, returnCanvasItemToDrawer, createCanvasRelation, removeCanvasRelation, nextCanvasZ,
+    addRefToCanvas, addProjectRefOptimistic, createCanvasNote, updateCanvasNote, removeCanvasItem, returnCanvasItemToDrawer, createCanvasRelation, removeCanvasRelation, nextCanvasZ, bringCanvasItemToFront,
     saveCanvasView, saveCanvasRelationAnchors,
   }
 })

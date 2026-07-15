@@ -14,28 +14,31 @@
       @view-change="onViewChange"
     />
 
-    <CanvasSidebar
-      :canvases="store.canvases"
-      :active-id="activeCanvasId"
-      :projects="projectStore.projects"
-      :canvas-project-ids="canvasProjectIds"
-      :projects-loading="projectStore.loading"
-      :canvas-scale="canvasRef?.camera.scale ?? 1"
-      :add-project-to-canvas="addProjectAtScreen"
-      @create="createCanvas"
-      @open="openCanvas"
-      @delete="deleteCanvas"
-      @rename="renameCanvas"
-      @add-project="addProjectAtCenter"
-    />
+    <!-- UI 与顶部胶囊一样放到 body 顶层，避免被 body 上的拖拽 clone/camGlue 层叠上下文压住。 -->
+    <Teleport to="body">
+      <CanvasSidebar
+        :canvases="store.canvases"
+        :active-id="activeCanvasId"
+        :projects="projectStore.projects"
+        :canvas-project-ids="canvasProjectIds"
+        :projects-loading="projectStore.loading"
+        :canvas-scale="canvasRef?.camera.scale ?? 1"
+        :add-project-to-canvas="addProjectAtScreen"
+        @create="createCanvas"
+        @open="openCanvas"
+        @delete="deleteCanvas"
+        @rename="renameCanvas"
+        @add-project="addProjectAtCenter"
+      />
 
-    <CanvasToolbar
-      :scale="canvasRef?.camera.scale ?? 1"
-      @create-note="createCanvasNote"
-      @add-ref="addRef"
-      @zoom="delta => canvasRef?.zoomAtCenter(delta)"
-      @reset-view="resetView"
-    />
+      <CanvasToolbar
+        :scale="canvasRef?.camera.scale ?? 1"
+        @create-note="createCanvasNote"
+        @add-ref="addRef"
+        @zoom="delta => canvasRef?.zoomAtCenter(delta)"
+        @reset-view="resetView"
+      />
+    </Teleport>
   </div>
 </template>
 
@@ -263,10 +266,10 @@ async function addProjectAtScreen(projectId: number, center: { x: number; y: num
   return document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
 }
 async function onItemMoved(item: MindCanvasItem) {
-  await store.updateCanvasItem(item.id, { x: item.x, y: item.y, z: store.nextCanvasZ() })
+  await store.bringCanvasItemToFront(item.id, item.x, item.y)
 }
 </script>
 
 <style scoped>
-.canvas-page { position: fixed; inset: 0; }
+.canvas-page { position: fixed; inset: 0; z-index: 8; }
 </style>

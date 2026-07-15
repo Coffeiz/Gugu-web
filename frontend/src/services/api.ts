@@ -334,6 +334,8 @@ export const mindApi = {
     patch<MindNote>(`/mind/nodes/${id}`, data),
   updateCanvasItem: (canvasId: number, itemId: number, data: Partial<Pick<MindCanvasItem, 'x' | 'y' | 'w' | 'h' | 'z' | 'collapsed' | 'data'>>) =>
     patch<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}`, data),
+  bringCanvasItemToFront: (canvasId: number, itemId: number, data: { x: number; y: number }) =>
+    post<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}/bring-to-front`, data),
   removeCanvasItem: (canvasId: number, itemId: number) => del(`/mind/canvases/${canvasId}/items/${itemId}`),
   listCanvasRelations: (id: number) => get<MindRelation[]>(`/mind/canvases/${id}/relations`),
   createRelation: (srcNodeId: number, dstNodeId: number, allowParallel = false) =>

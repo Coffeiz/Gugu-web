@@ -50,7 +50,8 @@ function startDrag(event: PointerEvent, card: HTMLElement, initialRect?: { left:
     centerGrab: true,
     contentScale: canvasContentScale,
     lift: 1.03,
-    dragZIndex: 10,
+    // 抓起后先高于抽屉，松手未命中抽屉时由物理模块把落地克隆降到抽屉下方。
+    dragZIndex: 31,
     cloneClass: 'pr-card',
     keepSourcePlaceholder: true,
     removeSourceOnExternalDrop: true,

@@ -29,7 +29,8 @@ from app.models import (
     MindMap, MindNode, MindRelation, Project, User,
 )
 from app.schemas import (
-    MindCanvasCreate, MindCanvasItemCreate, MindCanvasItemResponse, MindCanvasItemUpdate,
+    MindCanvasCreate, MindCanvasItemBringToFront, MindCanvasItemCreate, MindCanvasItemResponse,
+    MindCanvasItemUpdate,
     MindCanvasNoteCreate, MindCanvasNoteUpdate,
     MindCanvasResponse, MindCanvasUpdate, MindNodeResponse, MindNoteCreate, MindNoteUpdate,
     MindRefNodeCreate, MindRefSuggestItem, MindRelationCreate, MindRelationResponse,
@@ -425,6 +426,39 @@ async def update_canvas_note(
     await db.commit()
     await db.refresh(node)
     return _to_resp(node)
+
+
+@router.post("/canvases/{cid}/items/{iid}/bring-to-front", response_model=MindCanvasItemResponse)
+async def bring_canvas_item_to_front(
+    cid: int,
+    iid: int,
+    body: MindCanvasItemBringToFront,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """在一个事务内置顶卡片，避免前端逐张更新 z 导致层级顺序被并发请求打乱。"""
+    await _get_canvas(db, cid, current_user.id)
+    rows = (await db.execute(
+        select(MindCanvasItem, MindNode)
+        .join(MindNode, MindNode.id == MindCanvasItem.node_id)
+        .where(MindCanvasItem.canvas_id == cid, MindCanvasItem.user_id == current_user.id)
+        .order_by(MindCanvasItem.z, MindCanvasItem.id)
+    )).all()
+    target = next(((item, node) for item, node in rows if item.id == iid), None)
+    if target is None:
+        raise HTTPException(404, "画布贴纸不存在")
+
+    ordered = [(item, node) for item, node in rows if item.id != iid]
+    ordered.append(target)
+    for index, (item, _) in enumerate(ordered, start=1):
+        item.z = index * 1000
+    target_item, target_node = target
+    target_item.x = body.x
+    target_item.y = body.y
+    await db.commit()
+    await db.refresh(target_item)
+    ref_data = (await _ref_data_by_node_id(db, [target_node], current_user.id)).get(target_node.id)
+    return _item_resp(target_item, target_node, ref_data)
 
 
 @router.patch("/canvases/{cid}/items/{iid}", response_model=MindCanvasItemResponse)

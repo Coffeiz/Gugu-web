@@ -70,7 +70,7 @@ watch(() => route.path, (path) => {
 /* pointer-events:none 是关键：grid 的 1fr 1fr 两侧列即便没有任何可见内容（画布页整段
    right 列都是空的，left 列本来就一直是空的），作为真实的 <div> 默认仍然会吃掉点击——
    这层容器横跨了几乎整个页面宽度、z-index 又比画布自己浮层面板（CanvasSidebar/
-   CanvasToolbar，见 CanvasView.vue，都是 z-index:8）更高，实际盖住了画布左上角面板按钮
+   CanvasToolbar，见 CanvasSidebar.vue / CanvasToolbar.vue，都是 UI 层 z-index:40）更高，实际盖住了画布左上角面板按钮
    的下半部分（用户反馈"只有按钮顶部能点，中间点不了"）——画布的 .canvas-page 是
    position:fixed;inset:0，跟这条 bar 同属 .mind-page 的兄弟节点，画布浮层再怎么调自己
    内部的 z-index 也逃不出 .mind-bar 这个外层容器的手掌心。跟 RelationLayer.vue 的
@@ -80,7 +80,7 @@ watch(() => route.path, (path) => {
 .mind-bar {
   display: grid; grid-template-columns: 1fr auto 1fr;
   align-items: center; gap: 12px;
-  position: relative; z-index: 12; pointer-events: none;
+  position: relative; z-index: 40; pointer-events: none;
   flex-shrink: 0; margin: 28px 24px 0;
 }
 .mind-body { position: relative; z-index: 1; flex: 1; min-height: 0; }

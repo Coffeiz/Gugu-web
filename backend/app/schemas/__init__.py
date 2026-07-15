@@ -472,6 +472,11 @@ class MindCanvasItemUpdate(CamelModel):
     data: Optional[dict] = None
 
 
+class MindCanvasItemBringToFront(CamelModel):
+    x: float
+    y: float
+
+
 class MindCanvasItemResponse(CamelModel):
     id: int
     canvas_id: int
@@ -575,6 +580,7 @@ class PreferencesResponse(CamelModel):
     replyTone:         Optional[str] = None   # natural / formal / lively
     replyLength:       Optional[str] = None   # medium / short / detailed
     pmStagesExpanded:  bool = False            # 项目编辑卡：阶段区展开(50/50) 版面记忆
+    defaultView:       str = "projects"       # 应用打开时的默认入口
 
 class PreferencesUpdate(CamelModel):
     lastStages:        Optional[list[str]]  = None
@@ -582,3 +588,4 @@ class PreferencesUpdate(CamelModel):
     replyTone:         Optional[str] = None
     replyLength:       Optional[str] = None
     pmStagesExpanded:  Optional[bool] = None
+    defaultView:       Optional[str] = None

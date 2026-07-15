@@ -1345,6 +1345,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       }
 
       if (absorbTarget) {
+        // 画布卡默认在工具栏/抽屉下方；确认命中抽屉后才抬到其上方，交给 clone2
+        // 播放完整的飞入动画。未命中时保持默认层级，卡片自然落在抽屉层下面。
+        if (sourceEl.closest('.mind-canvas') || absorbTarget.closest('[data-project-drawer-dropzone]')) {
+          holder.style.zIndex = '31'
+        }
         if (opts.absorbShrink ?? true) {
           // 文件/文件夹拖进普通文件夹或面包屑仍是原有的单克隆缩小吸入；目标只是一个
           // 容器入口，不是会被克隆交接的卡片，不能先把它隐藏成 opacity:0。
@@ -1415,6 +1420,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         return
       }
 
+      // 拖拽期间需要高于抽屉；松手未命中抽屉后，落地动画改到 UI 下方，避免 clone2
+      // 继续遮住抽屉或底部工具栏。命中分支已提前 return，因此不会影响飞入抽屉。
+      if (sourceEl.closest('.mind-canvas') || sourceEl.closest('[data-project-drawer-dropzone]')) {
+        holder.style.zIndex = '7'
+      }
+
       const landHome = () => {
         // 收合还没来得及发生（极快的拖放）→ 直接归位即可
         if (!container || sourceEl.style.display !== 'none') {
@@ -1460,6 +1471,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             if (!opts.removeSourceOnExternalDrop) restoreSourcePlaceholder()
             _holdHoverUntilReveal(el)
             el.style.opacity = '0'
+            // 抽屉来源卡未命中抽屉时，生成的画布卡应落在抽屉层下方，避免飞行克隆
+            // 覆盖抽屉内容。命中抽屉的路径会在上面的 absorb 分支中保留原有层级，正常飞入。
+            if (sourceEl.closest('[data-project-drawer-dropzone]')) {
+              holder.style.zIndex = '7'
+            }
             const box = revealInScroller(_scrollParent(el), el.getBoundingClientRect())
             flyMorph(box, el, _cloneLanding(el))
             return

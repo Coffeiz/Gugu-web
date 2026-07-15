@@ -221,12 +221,12 @@ export function useCardDrag(opts: {
       // 指针下方一截，四种贴纸手感不一致。
       centerGrab: true,
       contentScale: opts.contentScale,
-      // 画布贴纸铺满整个浏览器（含侧栏背后那一段，见 MindCanvas.vue），拖拽克隆若还用
-      // 全站默认的 99999 会飞过侧栏时整个盖住导航；压到比侧栏 z-index（20）低。这里传了
-      // dragZIndex 后，usePhysicsDrag.ts 的抓起/落地两段飞行都会直接用这个数，不会各走
+      // 画布贴纸铺满整个浏览器（含侧栏背后那一段，见 MindCanvas.vue），拖拽克隆默认压在
+      // 拖拽期间克隆先高于抽屉，方便把卡片拖到抽屉区域；松手确认未命中后，物理模块会把
+      // 落地克隆降到抽屉下面。这里传了 dragZIndex 后，两段飞行都会直接用这个数，不会各走
       // 一套算法（落地那段默认按祖先动态探测，容易先摸到贴纸自己内联的 item.z，那个值
       // 随建卡数量单调递增，迟早会长到超过侧栏的 20），两段交接时层级也不会跳一下。
-      dragZIndex: 10,
+      dragZIndex: 31,
       initialRect,
       initialHover,
       isLandingRegrab,

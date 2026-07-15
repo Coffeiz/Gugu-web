@@ -199,7 +199,7 @@ const todayStr = computed(() => {
     rgba(0, 0, 0, 0.0) 100%
   );
   pointer-events: none;
-  z-index: 5; /* 低于顶栏(10)，高于内容 */
+  z-index: 5; /* 低于顶栏(40)，高于内容 */
 }
 
 .topbar {
@@ -208,7 +208,7 @@ const todayStr = computed(() => {
   top: 20px;
   left: 20px;
   right: 24px;
-  z-index: 10;
+  z-index: 40;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -321,7 +321,7 @@ const todayStr = computed(() => {
 /* 画布视图自己是 position:fixed;inset:0（见 CanvasView.vue），不受 page-content padding
    约束、天然铺满整个浏览器（含侧栏背后那一段——无限画布的点阵/世界坐标不该在那儿截断，
    只是被侧栏更高的 z-index 盖住看不见）；画布自己浮层的 UI（切换面板/底部工具条）z-index
-   比侧栏低，各自在定位里加了侧栏宽度的偏移量避免落进侧栏底下，不靠收窄画布整体范围解决，
+   与侧栏同属 UI 层，高于拖拽克隆，各自在定位里加了侧栏宽度的偏移量避免落进侧栏底下，不靠收窄画布整体范围解决，
    见 CanvasSidebar.vue / CanvasToolbar.vue。顶部"笔记/画布"胶囊的边距由 Mind/index.vue
    自己维护，和笔记页使用同一坐标系。 */
 </style>

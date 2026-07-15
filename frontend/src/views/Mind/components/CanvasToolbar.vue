@@ -71,7 +71,7 @@ function refTypeLabel(type: CanvasRefItem['type']) {
    不是整个浏览器视口的中点——跟笔记页捕捉条（活在侧栏右侧的正常文档流里，天然只在
    可见区域居中）对齐到同一条竖直线上。bottom:28px 与笔记页捕捉条 .rec-capture 一致。 */
 .canvas-toolbar-wrap {
-  position: absolute; left: calc(50% + var(--sidebar-width) / 2); bottom: var(--floating-edge); z-index: 8;
+  position: absolute; left: calc(50% + var(--sidebar-width) / 2); bottom: var(--floating-edge); z-index: 40;
   transform: translateX(-50%);
 }
 /* 真正的药丸：corner-shape 显式覆盖成 round——.glass-card 全局默认是 squircle（连续曲率），

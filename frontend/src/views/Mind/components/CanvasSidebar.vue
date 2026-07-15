@@ -286,7 +286,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .canvas-drawer {
-  position: absolute; top: 50%; right: var(--floating-edge); z-index: 8; transform: translateY(-50%);
+  position: absolute; top: 50%; right: var(--floating-edge); z-index: 30; transform: translateY(-50%);
   box-sizing: border-box; width: var(--canvas-toolbar-height); overflow: hidden;
   /* 跟展开态用同一个 25px，收展全程圆角数值不变，只有宽度在动——不然收起态原来的
      999px（窄边被强制箍成满圆）展开时会先经历一段「大圆滚成矩形」的形变感。 */
