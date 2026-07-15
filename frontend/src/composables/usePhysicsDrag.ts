@@ -9,6 +9,7 @@
  */
 
 import { dragRegistry } from '../interaction/drag/core/DragRegistry'
+import { dispatchDragHandoff } from '../interaction/drag/interaction/handoff'
 import { cloneForDrag } from '../interaction/drag/visual/clone'
 
 // 拖拽物理可选项（startPhysicsDrag / startMultiPhysicsDrag 共用）
@@ -910,15 +911,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             // 注释的前提"落地卡已经是真实本体"在这里不成立，目标其实还是同一张抽屉卡自己），
             // 复现的就是 display:none 元素测量全 0、卡片消失那个坑。干脆不发这次转手事件。
             if (opts.delegateLandingRegrab && revealEl !== sourceEl) {
-              const handoff = new CustomEvent('physics-landing-regrab', {
-                bubbles: false,
-                cancelable: true,
-                detail: { event: moveEvent, initialRect: visualRect },
-              })
-              revealEl.dispatchEvent(handoff)
+              const handedOff = dispatchDragHandoff(revealEl, moveEvent, visualRect)
               // 画布卡已接过同一份物理手势；旧 holder 的落地收尾会在新拖拽里被清理，
               // 不能再走下面的默认递归，否则同一次移动会起两张克隆。
-              if (handoff.defaultPrevented) return
+              if (handedOff) return
               // 转手没人接（listener 没挂上/别的边界情况）——下面的默认分支会用这次闭包里
               // 捕获的 opts（抽屉卡那次拖拽的 resolveAbsorbTarget/resolveLandingTarget/
               // removeSourceOnExternalDrop 等）去驱动 revealEl（画布卡）的新一段拖拽，两者

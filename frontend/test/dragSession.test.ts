@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { DragRegistry } from '../src/interaction/drag/core/DragRegistry'
 import { DragSession } from '../src/interaction/drag/core/DragSession'
 import { cloneForDrag } from '../src/interaction/drag/visual/clone'
+import { dispatchDragHandoff } from '../src/interaction/drag/interaction/handoff'
 
 describe('DragSession', () => {
   it('只管理生命周期并按顺序执行清理', () => {
@@ -68,5 +69,18 @@ describe('cloneForDrag', () => {
     expect(clone).not.toBe(source)
     expect(clone.className).toBe('source phys-drag-clone')
     expect(clone.innerHTML).toBe('<span>内容</span>')
+  })
+})
+
+describe('dispatchDragHandoff', () => {
+  it('只通过统一事件协议通知目标是否接手', () => {
+    const target = document.createElement('div')
+    const event = new PointerEvent('pointermove')
+    const initialRect = target.getBoundingClientRect()
+    const listener = vi.fn((handoff: Event) => handoff.preventDefault())
+    target.addEventListener('physics-landing-regrab', listener)
+
+    expect(dispatchDragHandoff(target, event, initialRect)).toBe(true)
+    expect(listener).toHaveBeenCalledOnce()
   })
 })
