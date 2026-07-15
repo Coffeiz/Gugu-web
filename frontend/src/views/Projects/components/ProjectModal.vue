@@ -727,6 +727,7 @@ import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileContextMenu } from '@/composables/files/useFileContextMenu'
+import { getTopLevelUploadGroups } from '@/composables/files/useFileUploadController'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
@@ -1730,15 +1731,8 @@ async function uploadFiles(items: UploadItem[]) {
   // 按顶层文件夹分组：relativePath 带 "/" 的文件汇总进「文件夹名 · 完成数/总数」一张卡，
   // 不用每个文件各出一张（大部分还落在当前看不见的子文件夹里）
   const folderGhosts = new Map<string, ReturnType<typeof createFolderGhost> | null>()
-  for (const { relativePath } of items) {
-    const idx = relativePath.indexOf('/')
-    if (idx === -1) continue
-    const top = relativePath.slice(0, idx)
-    if (!folderGhosts.has(top)) folderGhosts.set(top, null)
-  }
-  for (const top of folderGhosts.keys()) {
-    const total = items.filter(it => it.relativePath.startsWith(top + '/')).length
-    folderGhosts.set(top, createFolderGhost(top, total))
+  for (const group of getTopLevelUploadGroups(items)) {
+    folderGhosts.set(group.name, createFolderGhost(group.name, group.total))
   }
   // 顶层文件夹（正被 ghost 追踪进度的那几个）先别实时插进可见列表——插了会跟它的 ghost 卡
   // 同时出现，看起来像「两个文件夹」。攒着，等这组文件全传完（ghost 即将消失那一刻）再插入，

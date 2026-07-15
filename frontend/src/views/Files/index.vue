@@ -719,6 +719,7 @@ import { useFileSelection } from '@/composables/files/useFileSelection'
 import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileContextMenu } from '@/composables/files/useFileContextMenu'
+import { getTopLevelUploadGroups } from '@/composables/files/useFileUploadController'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
 import { readDroppedEntries, filesToItems, uploadFilesWithFolders, checkUploadConflicts, type UploadItem } from '@/composables/useFileUpload'
@@ -1501,15 +1502,8 @@ async function uploadFiles(items: UploadItem[]) {
   // 不用每个文件各出一张（大部分还落在当前看不见的子文件夹里，刷屏也看不出意义）；
   // 没有 "/" 的（本来就是单文件，或文件夹里就直接是文件不算——理论上不会有这种）仍各自一张卡。
   const folderGhosts = new Map<string, ReturnType<typeof createFolderGhost> | null>()
-  for (const { relativePath } of items) {
-    const idx = relativePath.indexOf('/')
-    if (idx === -1) continue
-    const top = relativePath.slice(0, idx)
-    if (!folderGhosts.has(top)) folderGhosts.set(top, null)
-  }
-  for (const top of folderGhosts.keys()) {
-    const total = items.filter(it => it.relativePath.startsWith(top + '/')).length
-    folderGhosts.set(top, createFolderGhost(top, total))
+  for (const group of getTopLevelUploadGroups(items)) {
+    folderGhosts.set(group.name, createFolderGhost(group.name, group.total))
   }
   // 顶层文件夹（正被 ghost 追踪进度的那几个）先别实时插进可见列表——插了会跟它的 ghost 卡
   // 同时出现，看起来像「两个文件夹」。攒着，等这组文件全传完（ghost 即将消失那一刻）再插入，
