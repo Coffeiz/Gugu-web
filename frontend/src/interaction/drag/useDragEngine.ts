@@ -15,7 +15,7 @@ import { morphTransform } from './animation/morph'
 import { trackLandingCamera } from './animation/camera'
 import { dragRegistry } from './core/DragRegistry'
 import { integrateSpring } from './core/physics'
-import { dispatchDragHandoff } from './interaction/handoff'
+import { dispatchDragHandoff, installLandingHandoff } from './interaction/handoff'
 import { startThresholdDrag, ThresholdDragOpts } from './interaction/threshold'
 import { cloneForDrag, createLandingClone } from './visual/clone'
 import { resolveLandingZIndex } from './visual/layer'
@@ -845,67 +845,28 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 最终本体的隐形位置再抓，违背直接操作。飞行阶段让 holder 临时吃 pointerdown；仍然沿用
       // 普通卡片的 5px 阈值，点击不会误开一次新拖拽。真正起拖前先取消调用方附属的落地动画，
       // 再让 startPhysicsDrag 自己 flush 掉这一趟克隆，从 holder 当前屏幕矩形无缝续上。
-      let cancelLandingRegrab: (() => void) | null = null
-      const onLandingPointerDown = (event: PointerEvent) => {
-        if (event.button !== 0 || cancelLandingRegrab) return
-        event.preventDefault()
-        event.stopPropagation()
-        cancelLandingRegrab = startThresholdDrag(event, {
-          getCard: () => revealEl,
-          onDragStart: (moveEvent) => {
-            cancelLandingRegrab = null
-            // 阈值还没跨过时落地动画可能已经自然结束，holder 被移除后 rect 会变成 0,0；
-            // 这份手势本该由收尾时取消，双保险在这里再拦一次，绝不能从左上角续接。
-            if (landing.isDone() || !holder.isConnected) return
-            // 阈值内卡片仍在继续飞，起点要在真正接力这一刻再量，不能沿用按下那一帧的旧框。
-            // 落地画面实际由 clone2 绘制；holder 仍保留的是抓起来源的几何。普通画布卡两者
-            // 往往恰好等大，抽屉项目却会经历“抽屉实体尺寸 → 画布缩放尺寸”，取 holder 会把
-            // 下一段拖拽从另一张卡的位置起算，抓起瞬间便跳到鼠标。优先量可见 clone2，异常
-            // 情况才退回 holder，保证所有落地交接都从用户眼前这张卡续上。
-            const clone2Rect = clone2.getBoundingClientRect()
-            const visualRect = clone2Rect.width > 0 && clone2Rect.height > 0
-              ? clone2Rect
-              : holder.getBoundingClientRect()
-            opts.onRegrabStart?.()
-            // 转手只在落点是「另一个真实本体」（比如画布上刚接手的 ProjectRefCard，自己
-            // 挂了 physics-landing-regrab 监听）时才有意义；revealEl === sourceEl 说明这趟
-            // 飞行是"飞回自己原位"（比如抽屉卡往回放），根本没有别的组件会接这个事件——
-            // dispatchEvent 会静默扔进没人接的地方，defaultPrevented 恒为 false，代码会误判
-            // "转手失败"落进下面的默认分支，把 keepSourcePlaceholder 强制摁成 false（那段
-            // 注释的前提"落地卡已经是真实本体"在这里不成立，目标其实还是同一张抽屉卡自己），
-            // 复现的就是 display:none 元素测量全 0、卡片消失那个坑。干脆不发这次转手事件。
-            if (opts.delegateLandingRegrab && revealEl !== sourceEl) {
-              const handedOff = dispatchDragHandoff(revealEl, moveEvent, visualRect)
-              // 画布卡已接过同一份物理手势；旧 holder 的落地收尾会在新拖拽里被清理，
-              // 不能再走下面的默认递归，否则同一次移动会起两张克隆。
-              if (handedOff) return
-              // 转手没人接（listener 没挂上/别的边界情况）——下面的默认分支会用这次闭包里
-              // 捕获的 opts（抽屉卡那次拖拽的 resolveAbsorbTarget/resolveLandingTarget/
-              // removeSourceOnExternalDrop 等）去驱动 revealEl（画布卡）的新一段拖拽，两者
-              // 语义完全对不上：revealEl 早已是画布上的真实节点，该用它自己的 useCardDrag
-              // 配置才对。误用旧配置会导致克隆体从一个跟当前手势无关的坐标起飞，表现为
-              // "卡片从视口左上角/上方飞入"。转手失败不如什么都不做，让这次落地动画自然播完，
-              // 用户落地后再拖一次即可（那条路径本来就正常）。
-              return
-            }
-            startPhysicsDrag(moveEvent, revealEl, {
-              ...opts,
-              // 外部素材源才需要保留占位；落地卡已经是画布/看板里的真实本体，接力抓起时
-              // 必须回到正常的隐藏 + FLIP 语义，不能在画布上留下第二张半透明卡。但
-              // revealEl === sourceEl（飞回自己原位被重新抓起）时目标还是原来那张源卡，
-              // 该按 opts 原本的 keepSourcePlaceholder 继续，不能一刀切摁成 false。
-              keepSourcePlaceholder: revealEl === sourceEl ? opts.keepSourcePlaceholder : false,
-              initialRect: visualRect,
-              initialHover: true,
-              isLandingRegrab: true,
-            })
-          },
-        }) ?? null
-      }
-      if (pointer) {
-        holder.style.pointerEvents = 'auto'
-        holder.addEventListener('pointerdown', onLandingPointerDown)
-      }
+      const cleanupLandingHandoff = installLandingHandoff({
+        enabled: pointer,
+        holder,
+        clone: clone2,
+        target: revealEl,
+        isActive: () => !landing.isDone() && session.isCurrent(),
+        startThreshold: startThresholdDrag,
+        onRegrab: (moveEvent, visualRect) => {
+          opts.onRegrabStart?.()
+          if (opts.delegateLandingRegrab && revealEl !== sourceEl) {
+            if (dispatchDragHandoff(revealEl, moveEvent, visualRect)) return
+            return
+          }
+          startPhysicsDrag(moveEvent, revealEl, {
+            ...opts,
+            keepSourcePlaceholder: revealEl === sourceEl ? opts.keepSourcePlaceholder : false,
+            initialRect: visualRect,
+            initialHover: true,
+            isLandingRegrab: true,
+          })
+        },
+      })
       // 先让 holder 参与命中再做首帧判定：若仍是 pointer-events:none，elementFromPoint 会
       // 穿透飞行卡片，原地松手又没有新的 pointermove 时覆盖层就会一直维持误判的淡出状态。
       // target 记录的是最近一次真实指针坐标（不是带弹簧延迟的 cloneCenter），正好可用于
@@ -1084,9 +1045,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         landing.finish()
         if (finishTimer) clearTimeout(finishTimer)
         if (pointer) document.removeEventListener('pointermove', onLandingPointerMove)
-        cancelLandingRegrab?.()
-        cancelLandingRegrab = null
-        holder.removeEventListener('pointerdown', onLandingPointerDown)
+        cleanupLandingHandoff()
         unregister()
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
@@ -1122,9 +1081,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         landing.cancel()
         if (finishTimer) clearTimeout(finishTimer)
         if (pointer) document.removeEventListener('pointermove', onLandingPointerMove)
-        cancelLandingRegrab?.()
-        cancelLandingRegrab = null
-        holder.removeEventListener('pointerdown', onLandingPointerDown)
+        cleanupLandingHandoff()
         if (_pendingRetargets.get(revealEl) === retarget) _pendingRetargets.delete(revealEl)
         clone2.removeEventListener('transitionend', onEnd)
         holder.remove(); clone2.remove(); camGlue?.remove()
