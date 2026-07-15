@@ -25,6 +25,7 @@ from app.services.files.response import color_value, to_file_response
 from app.services.files.browser import all_files_query, file_listing_query, storage_usage_query
 from app.services.files.upload import (
     UploadTargetError,
+    confirm_oss_upload,
     find_conflict,
     parse_upload_filename,
     prepare_presign_target,
@@ -375,57 +376,33 @@ async def confirm_upload(
     if not await storage.exists(body.storage_key):
         raise HTTPException(400, "文件尚未上传到 OSS，请先完成直传")
 
-    project_name = ""
-    project_color = None
-    folder_name = folder_path = ""
+    try:
+        result = await confirm_oss_upload(
+            db,
+            current_user.id,
+            storage_key=body.storage_key,
+            display_name=body.display_name,
+            ext=body.ext,
+            mime_type=body.mime_type,
+            size_bytes=body.size_bytes,
+            space=body.space,
+            project_id=body.project_id,
+            folder_id=body.folder_id,
+            stage_name=body.stage_name,
+            overwrite_file_id=body.overwrite_file_id,
+        )
+    except UploadTargetError as error:
+        raise HTTPException(error.status_code, error.detail) from error
 
-    if body.space == "project" and body.project_id:
-        p = await get_owned(db, Project, body.project_id, current_user.id)
-        if not p:
-            raise HTTPException(400, "项目不存在")
-        project_name = p.name
-        project_color = color_value(p.color)
-
-    if body.folder_id is not None:
-        fo = await get_owned(db, Folder, body.folder_id, current_user.id)
-        if not fo:
-            raise HTTPException(400, "文件夹不存在")
-        folder_name = fo.name
-
-    if body.overwrite_file_id is not None:
-        existing = await get_owned(db, File, body.overwrite_file_id, current_user.id)
-        if not existing:
-            raise HTTPException(400, "要覆盖的文件不存在")
-        if existing.storage_key != body.storage_key:
-            raise HTTPException(400, "覆盖目标与直传路径不一致")
-        delete_thumb_cache(existing.id)
-        existing.size = _fmt_size(body.size_bytes)
-        existing.size_bytes = body.size_bytes
-        existing.mime_type = body.mime_type
-        await db.commit()
-        await db.refresh(existing)
-        await events.publish(current_user.id, "files", origin=origin)
-        return to_file_response(existing, project_name or None, project_color, folder_name or None)
-
-    db_file = File(
-        user_id=current_user.id,
-        display_name=body.display_name,
-        ext=body.ext,
-        space=body.space,
-        project_id=body.project_id if body.space == "project" else None,
-        folder_id=body.folder_id,
-        stage_name=body.stage_name,
-        storage_key=body.storage_key,
-        size=_fmt_size(body.size_bytes),
-        size_bytes=body.size_bytes,
-        mime_type=body.mime_type,
-    )
-    db.add(db_file)
+    if result.overwritten_file_id is not None:
+        delete_thumb_cache(result.overwritten_file_id)
     await db.commit()
-    await db.refresh(db_file)
+    await db.refresh(result.file)
     await events.publish(current_user.id, "files", origin=origin)
 
-    return to_file_response(db_file, project_name or None, project_color, folder_name or None)
+    project_color = color_value(result.project.color) if result.project else None
+    return to_file_response(result.file, result.project.name if result.project else None,
+                            project_color, result.folder_name)
 
 
 # ── PATCH /files/{fid} ───────────────────────────────────────────────────────
