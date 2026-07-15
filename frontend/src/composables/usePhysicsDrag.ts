@@ -9,6 +9,7 @@
  */
 
 import { dragRegistry } from '../interaction/drag/core/DragRegistry'
+import { LandingState } from '../interaction/drag/animation/landing'
 import { dispatchDragHandoff } from '../interaction/drag/interaction/handoff'
 import { cloneForDrag } from '../interaction/drag/visual/clone'
 
@@ -778,7 +779,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
                  : null
     const sel = idAttr ? `[${idAttr[0]}="${idAttr[1]}"]` : null
 
-    let done = false; let onEnd: (e: TransitionEvent) => void = () => {}
+    const landing = new LandingState(); landing.begin()
+    let onEnd: (e: TransitionEvent) => void = () => {}
     // 只摘占位样式（class + display），不碰 opacity——配合 flyMorph/flyTo 里紧跟着执行的
     // _revealWithoutStaleHover 用：那个函数自己会在"先压住 hover 判定、再放开 opacity"
     // 这个正确顺序里把 opacity 复位。如果这里也顺手把 opacity 一起复位了，opacity 会在
@@ -822,8 +824,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       }
       let unregister = () => {}
       const finish = () => {
-        if (done) return
-        done = true
+        if (landing.isDone()) return
+        landing.finish()
         unregister()
         holder.removeEventListener('transitionend', onEnd)
         holder.remove()
@@ -892,7 +894,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             cancelLandingRegrab = null
             // 阈值还没跨过时落地动画可能已经自然结束，holder 被移除后 rect 会变成 0,0；
             // 这份手势本该由收尾时取消，双保险在这里再拦一次，绝不能从左上角续接。
-            if (done || !holder.isConnected) return
+            if (landing.isDone() || !holder.isConnected) return
             // 阈值内卡片仍在继续飞，起点要在真正接力这一刻再量，不能沿用按下那一帧的旧框。
             // 落地画面实际由 clone2 绘制；holder 仍保留的是抓起来源的几何。普通画布卡两者
             // 往往恰好等大，抽屉项目却会经历“抽屉实体尺寸 → 画布缩放尺寸”，取 holder 会把
@@ -1013,7 +1015,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // 这次写入，真发生画布变化时才动。
         let lastRectKey = ''
         const trackCamera = () => {
-          if (done || !session.isCurrent()) return
+          if (landing.isDone() || !session.isCurrent()) return
           const r = revealEl.getBoundingClientRect()
           // 乐观临时卡在服务端真实 id 回写的一瞬间，Vue 可能经历一帧内部重排；此时旧落点
           // 节点会短暂量成 0×0。它不是画布真的缩放到了 0，若照常参与比例计算会把 camGlue
@@ -1096,7 +1098,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 会瞬移/曲线不一致。改用 getBoundingClientRect 拿当前真实框、再用 tfFor 重建同款函数式
       // 表示，freeze 与 target 同构，插值干净，跟普通 FLIP 让位一致。
       const retarget = (newBox: Box) => {
-        if (done) return
+        if (landing.isDone()) return
         const r = clone2.getBoundingClientRect()   // 当前真实可见框（含插值中间态；landing 无旋转，rect 即真位置）
         box = newBox
         // 冻结当前位置：关过渡 + 同款函数式表示（tfFor，不用 getComputedStyle 的 matrix3d，避免跨表示插值）。
@@ -1110,7 +1112,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // 不把它当成过渡基线，过渡不 fire → 直接瞬移到目标（这就是并发拖拽时 B 回退「瞬移一下」的真凶）。
         // rAF 跨过一个真实帧边界，保证冻结态先画出来、成为过渡起点，随后到目标是一段完整缓出。
         requestAnimationFrame(() => {
-          if (done || !session.isCurrent()) return
+          if (landing.isDone() || !session.isCurrent()) return
           holder.style.transition = trans
           clone2.style.transition = trans
           applyTransform()
@@ -1128,7 +1130,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         finishTimer = setTimeout(finish, 700)
       }
       const startSettle = () => {
-        if (done) return
+        if (landing.isDone()) return
         holder.style.transition = trans
         clone2.style.transition = trans
         if (hidePrimaryVisual && c2Inner) {
@@ -1138,8 +1140,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         applyTransform()
       }
       const finish = () => {
-        if (done) return
-        done = true
+        if (landing.isDone()) return
+        landing.finish()
         if (finishTimer) clearTimeout(finishTimer)
         if (pointer) document.removeEventListener('pointermove', onLandingPointerMove)
         cancelLandingRegrab?.()
@@ -1176,8 +1178,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 自己的隐藏覆盖掉，全程同步无绘制帧插入，不会闪一下。不做 finish() 里那套「钉死」精修——
       // 反正马上就要整个移除，没必要为一个不会被看到的最终帧计算像素级样式。
       const forceCleanup = () => {
-        if (done) return
-        done = true
+        if (landing.isDone()) return
+        landing.cancel()
         if (finishTimer) clearTimeout(finishTimer)
         if (pointer) document.removeEventListener('pointermove', onLandingPointerMove)
         cancelLandingRegrab?.()
@@ -1212,7 +1214,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 留出一个真实绘制帧：第一帧只画两张克隆重叠的起点，第二帧才开启 transform 过渡。
       // 这样所有走双克隆落地的卡片都使用同一份可靠的 FLIP 时序。
       requestAnimationFrame(() => {
-        if (done || !session.isCurrent()) return
+        if (landing.isDone() || !session.isCurrent()) return
         startSettle()
         armFinishTimer()
       })
@@ -1760,7 +1762,8 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     const dropX = cloneCenter.x, dropY = cloneCenter.y
     const SLOT = (box: Box) => `translate3d(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px, 0) scale(1)`
 
-    let done = false; let onEnd: (e: TransitionEvent) => void = () => {}
+    const landing = new LandingState(); landing.begin()
+    let onEnd: (e: TransitionEvent) => void = () => {}
     const flyTo = (box: Box, shrink: boolean) => {
       clone.style.transition = `transform 0.55s ${_SETTLE}, opacity 0.4s ease`
       if (shrink) {
@@ -1775,8 +1778,8 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
       }
       let unregister = () => {}
       const finish = () => {
-        if (done) return
-        done = true
+        if (landing.isDone()) return
+        landing.finish()
         unregister()
         clone.removeEventListener('transitionend', onEnd)
         clone.remove()
