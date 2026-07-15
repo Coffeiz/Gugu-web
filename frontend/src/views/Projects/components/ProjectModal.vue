@@ -1060,7 +1060,7 @@ async function movePmFilesInto(fileIds: (number | string)[], targetFolderId: num
   const projectId = props.project?.id
   const folderId = targetFolderId == null ? null : Number(targetFolderId)
   try {
-    await Promise.all(fileIds.map(id => filesApi.update(Number(id), { folderId, projectId })))
+    await Promise.all(fileIds.map(id => fileActions.moveFile(Number(id), folderId, projectId)))
     fileIds.forEach(id => fileCacheStore.updateFile(Number(id), { folderId, projectId }))
   } catch (err) { console.error('[ProjectModal] 移动失败:', errMsg(err)) }
   // 视图/计数都从 store 现算，移走的文件自动消失、目标层自动出现，无需刷新或重置导航（停在原地）。
