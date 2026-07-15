@@ -12,6 +12,7 @@ import { LandingState } from './animation/landing'
 import { dragRegistry } from './core/DragRegistry'
 import { integrateSpring } from './core/physics'
 import { dispatchDragHandoff } from './interaction/handoff'
+import { startThresholdDrag, ThresholdDragOpts } from './interaction/threshold'
 import { cloneForDrag } from './visual/clone'
 
 // 拖拽物理可选项（startPhysicsDrag / startMultiPhysicsDrag 共用）
@@ -1818,41 +1819,5 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
  * 还是多选、传哪些 opts）仍然是各调用方自己的业务，通过 onDragStart 回调交还给它们，
  * 不强行假设只有一种起拖方式。
  */
-export interface ThresholdDragOpts {
-  threshold?: number   // 判定阈值(px)，默认 5——三处原来的写法都是这个数
-  // 判断这次按下是否应该整体忽略（不追踪、不拦截），如内部按钮/输入框/重命名框；
-  // 不传则不排除任何目标。
-  exclude?: (target: EventTarget | null) => boolean
-  // 默认用 event.currentTarget 作为被拖动的元素；拖拽发起点跟"要飞起来的那张卡"不是
-  // 同一个元素时（如画布项目卡的小抓手）用这个另外指定。
-  getCard?: (event: PointerEvent) => HTMLElement | null
-  onBeforeDragStart?: () => void   // 越过阈值、真正起拖前的收尾（如 cancelBoxDrag()）
-  onDragStart: (event: PointerEvent, card: HTMLElement) => void   // 越过阈值那一刻调用，自己决定单选/多选、传什么 opts
-  onClick?: () => void   // 松手时全程没越过阈值 → 当作一次点击
-}
-export function startThresholdDrag(event: PointerEvent, opts: ThresholdDragOpts): (() => void) | undefined {
-  if (event.pointerType === 'mouse' && event.button !== 0) return undefined
-  if (opts.exclude?.(event.target)) return undefined
-  const card = opts.getCard ? opts.getCard(event) : (event.currentTarget as HTMLElement)
-  if (!card) return undefined
-  const sx = event.clientX, sy = event.clientY
-  const threshold = opts.threshold ?? 5
-  let started = false
-  const onMove = (ev: PointerEvent) => {
-    if (started || Math.hypot(ev.clientX - sx, ev.clientY - sy) < threshold) return
-    started = true
-    teardown()
-    opts.onBeforeDragStart?.()
-    opts.onDragStart(ev, card)
-  }
-  const onUp = () => { teardown(); if (!started) opts.onClick?.() }
-  const teardown = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-    window.removeEventListener('pointercancel', onUp)
-  }
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
-  window.addEventListener('pointercancel', onUp)
-  return teardown
-}
+export { startThresholdDrag }
+export type { ThresholdDragOpts }
