@@ -49,5 +49,39 @@ export function useFileSelection<F = number>(state: FileSelectionState<F>) {
     state.folderIds.value = next
   }
 
-  return { clearSelection, toggleFile, toggleFolder }
+  function selectOnlyFile(id: number) {
+    state.fileIds.value = new Set([id])
+    state.folderIds.value = new Set()
+  }
+
+  function selectOnlyFolder(id: F) {
+    state.fileIds.value = new Set()
+    state.folderIds.value = new Set([id])
+  }
+
+  function toggleExclusiveFile(id: number) {
+    if (state.fileIds.value.size === 1 && state.fileIds.value.has(id) && state.folderIds.value.size === 0) {
+      clearSelection()
+      return
+    }
+    selectOnlyFile(id)
+  }
+
+  function toggleExclusiveFolder(id: F) {
+    if (state.folderIds.value.size === 1 && state.folderIds.value.has(id) && state.fileIds.value.size === 0) {
+      clearSelection()
+      return
+    }
+    selectOnlyFolder(id)
+  }
+
+  return {
+    clearSelection,
+    toggleFile,
+    toggleFolder,
+    selectOnlyFile,
+    selectOnlyFolder,
+    toggleExclusiveFile,
+    toggleExclusiveFolder,
+  }
 }
