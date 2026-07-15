@@ -262,8 +262,8 @@ function _animateScroll(el: HTMLElement, dy: number, dur = 300) {
 // 未变、不会触发任何过渡）。下一帧摘掉压制类时，卡片上浮 + 按钮淡入 + 阴影渐显作为一次
 // 干净的 hover-in 平滑发生。全程不摘 pointer-events、不碰命中测试，:hover 一直实时准确
 // （不会有「指针不动就再也不触发」的坑）。CSS 见 global.css .phys-just-revealed / .phys-reveal-snap。
-function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettled?: () => void, keepControls = false) {
-  revealWithoutStaleHover(el, pointerMode, onSettled, keepControls)
+function _revealWithoutStaleHover(el: HTMLElement, pointerMode: boolean, onSettled?: () => void, keepControls = false, isActive = () => true) {
+  revealWithoutStaleHover(el, pointerMode, onSettled, keepControls, isActive)
 }
 
 // 克隆开始落地时，目标本体已在鼠标下也不能激活 hover；这层状态一直保留到
@@ -762,7 +762,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // 先摘占位 class 再揭示：同 flyMorph 里 finish()/forceCleanup 的道理，避免揭示瞬间
         // 先闪一下虚线描边、再过渡回实线的中间态被看见。
         restoreSourcePlaceholder()
-        if (revealEl) _revealWithoutStaleHover(revealEl, pointer)
+        if (revealEl) _revealWithoutStaleHover(revealEl, pointer, undefined, false, () => session.isCurrent())
         dragRegistry.finish(sourceEl, session)
       }
       const cancel = animateFlyTo({
@@ -1042,7 +1042,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           // 转场到「实线」，观感是刚落地那一下先闪一次虚线描边再变回正常。先摘 class 再揭示，
           // 揭示出来的就已经是最终样子，不会有这个中间态被看见。
           onReveal?.()
-          _revealWithoutStaleHover(revealEl, pointer, undefined, landingHovered)
+          _revealWithoutStaleHover(revealEl, pointer, undefined, landingHovered, () => session.isCurrent())
           dragRegistry.finish(sourceEl, session)
         })
       }
@@ -1072,7 +1072,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         onReveal?.()
         void revealEl.offsetWidth
         revealEl.classList.remove('phys-reveal-snap')
-        _revealWithoutStaleHover(revealEl, pointer, undefined, landingHovered)
+        _revealWithoutStaleHover(revealEl, pointer, undefined, landingHovered, () => session.isCurrent())
         dragRegistry.finish(sourceEl, session)
       }
       unregister = _registerCleanup(revealEl, forceCleanup)

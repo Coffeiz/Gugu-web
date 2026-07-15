@@ -3,6 +3,7 @@ export function revealWithoutStaleHover(
   pointerMode: boolean,
   onSettled?: () => void,
   keepControls = false,
+  isActive: () => boolean = () => true,
 ): void {
   el.classList.add('phys-just-revealed')
   el.classList.add('phys-reveal-snap')
@@ -14,8 +15,11 @@ export function revealWithoutStaleHover(
   void el.offsetWidth
   el.classList.remove('phys-reveal-snap')
   requestAnimationFrame(() => {
+    if (!isActive()) return
     el.classList.remove('phys-just-revealed')
-    if (keepControls) requestAnimationFrame(() => el.classList.remove('phys-reveal-controls'))
+    if (keepControls) requestAnimationFrame(() => {
+      if (isActive()) el.classList.remove('phys-reveal-controls')
+    })
   })
   if (pointerMode) {
     onSettled?.()
@@ -23,6 +27,7 @@ export function revealWithoutStaleHover(
   }
   el.style.pointerEvents = 'none'
   setTimeout(() => {
+    if (!isActive()) return
     el.style.pointerEvents = ''
     onSettled?.()
   }, 160)
