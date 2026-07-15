@@ -726,6 +726,7 @@ import { useFileSelection } from '@/composables/files/useFileSelection'
 import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 import { useFileActions } from '@/composables/files/useFileActions'
+import { useFileContextMenu } from '@/composables/files/useFileContextMenu'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
@@ -1855,7 +1856,7 @@ function pmSelCopy() {
 }
 type PmCtxTarget = FileMeta | FolderMeta
 type PmCtxType = 'file' | 'multi-file' | 'folder' | 'empty' | null
-const pmCtx = ref<{ visible: boolean; x: number; y: number; type: PmCtxType; target: PmCtxTarget | null }>({ visible: false, x: 0, y: 0, type: null, target: null })
+const { state: pmCtx, open: openProjectContextMenu } = useFileContextMenu<Exclude<PmCtxType, null>, PmCtxTarget>()
 const pmInfoPopup = ref<{ show: boolean; file: FileMeta | null; x: number; y: number }>({ show: false, file: null, x: 0, y: 0 })
 
 function openPmCtx(type: 'file' | 'folder' | 'empty', target: PmCtxTarget | null, e: MouseEvent) {
@@ -1865,7 +1866,7 @@ function openPmCtx(type: 'file' | 'folder' | 'empty', target: PmCtxTarget | null
       (pmSelectedFileIds.value.size + pmSelectedFolderIds.value.size) > 1) {
     resolvedType = 'multi-file'
   }
-  pmCtx.value = { visible: true, x: e.clientX, y: e.clientY, type: resolvedType, target }
+  openProjectContextMenu(resolvedType, target, e)
 }
 
 function pmCurrentFolderId() {

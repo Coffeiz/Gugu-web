@@ -718,6 +718,7 @@ import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useFileSelection } from '@/composables/files/useFileSelection'
 import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useFileActions } from '@/composables/files/useFileActions'
+import { useFileContextMenu } from '@/composables/files/useFileContextMenu'
 import { useSorting } from '@/composables/useSorting'
 import { useUploadQueue } from '@/composables/useUploadQueue'
 import { readDroppedEntries, filesToItems, uploadFilesWithFolders, checkUploadConflicts, type UploadItem } from '@/composables/useFileUpload'
@@ -1839,7 +1840,7 @@ type CtxType = 'file' | 'multi-file' | 'folder' | 'empty' | null
 // target 在 'folder' 菜单里读 .type 区分真实文件夹卡（f.type === 'folder'）与伪文件夹卡；
 // FileMeta 本身没有 type 字段，补一个可选的，让联合类型上都能访问 .type（不影响运行时形状）。
 type CtxTarget = (FileMeta & { type?: string }) | FolderCard | null
-const ctx = ref<{ visible: boolean; x: number; y: number; type: CtxType; target: CtxTarget }>({ visible: false, x: 0, y: 0, type: null, target: null })
+const { state: ctx, open: openFileContextMenu } = useFileContextMenu<Exclude<CtxType, null>, CtxTarget>()
 const infoPopup = ref<{ show: boolean; file: FileMeta | undefined; x: number; y: number }>({ show: false, file: undefined, x: 0, y: 0 })
 
 function selCut() {
@@ -1860,7 +1861,7 @@ function openCtx(type: Exclude<CtxType, null>, target: CtxTarget, e: MouseEvent)
       (selectedIds.value.size + selectedFolderKeys.value.size) > 1) {
     type = 'multi-file'
   }
-  ctx.value = { visible: true, x: e.clientX, y: e.clientY, type, target }
+  openFileContextMenu(type, target, e)
 }
 
 // 当前目录的 folder_id（null = 根目录）
