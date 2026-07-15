@@ -13,7 +13,7 @@ import { dragRegistry } from './core/DragRegistry'
 import { integrateSpring } from './core/physics'
 import { dispatchDragHandoff } from './interaction/handoff'
 import { startThresholdDrag, ThresholdDragOpts } from './interaction/threshold'
-import { cloneForDrag } from './visual/clone'
+import { cloneForDrag, createLandingClone } from './visual/clone'
 import { resolveLandingZIndex } from './visual/layer'
 
 // 拖拽物理可选项（startPhysicsDrag / startMultiPhysicsDrag 共用）
@@ -1277,46 +1277,16 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 算缩放比例时也是拿 dropW/dropH 当"1.0 倍"基准，两边必须用同一份，否则落地飞行的尺寸
       // 会算错。scaleShell 同理使用 lastCS（此刻的实时缩放，不是抓起时的 CS0）——cloneW/cloneH
       // 这份"原始尺寸"本身不随缩放变化，仍然沿用抓起时算好的那份。
-      const _cloneLanding = (el: HTMLElement) => {
-        const holder2 = document.createElement('div')
-        Object.assign(holder2.style, {
-          position: 'fixed', left: '0', top: '0',
-          width: dropW + 'px', height: dropH + 'px',
-          margin: '0', boxSizing: 'border-box', zIndex: holder.style.zIndex, pointerEvents: 'none',
-          willChange: 'transform', transition: 'none', opacity: '0',
-          transform: holder.style.transform,   // 起点与旧克隆重叠
-        })
-        const c = cloneForDrag(el)
-        if (opts.cloneClass) c.classList.add(opts.cloneClass)
-        c.classList.add('phys-landing-content')
-        // el 已作为真实落点被 .phys-drag-source 隐藏；cloneNode 会把这个类一并带来，
-        // 其 opacity:0 !important 会让克隆 2 整段飞行不可见，收尾时真实卡才突然出现。
-        // phys-drag-source-placeholder 同理要摘：el 自己这份占位 class 故意留到揭示那一刻
-        // 才摘掉（虚线描边全程不提前变样，见 landOnAbsorbTarget 的注释），但克隆 2 飞行时
-        // 展示的应该始终是"真实卡片长什么样"，不能继承这份占位态，否则飞进来的是个空框。
-        c.classList.remove('phys-drag-source', 'phys-reveal-controls', 'phys-drag-source-placeholder')
-        c.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
-        // 操作区由 holder 内唯一的 cardActionOverlay 承担可见性；这里留隐藏副本维持标题行布局。
-        c.querySelectorAll<HTMLElement>('.card-actions, .nc-actions').forEach(action => { action.style.visibility = 'hidden' })
-        const landingScaleShell = document.createElement('div')
-        Object.assign(landingScaleShell.style, {
-          position: 'absolute', left: '0', top: '0', width: cloneW + 'px', height: cloneH + 'px',
-          transformOrigin: '0 0', transform: `scale(${lastCS})`, pointerEvents: 'none',
-        })
-        // opacity 也要清：调用这里的几处分支都会先把 el/sourceEl 自己的 opacity 摁成 0 压住
-        // 陈旧 hover（见 animateOpen/末尾归位分支），cloneNode(true) 原样带走了这份内联
-        // opacity:0——c 是给 holder2 当内容用的，若不清掉，holder2 自己的 opacity 动画
-        // （0→0.97）跟 c 身上焊死的 0 相乘，怎么淡入都还是 0，看着就是"松手那一下克隆整个
-        // 消失了"。跟 left/top 一样，clone2 的可见性该完全交给外层 holder2 决定。
-        Object.assign(c.style, {
-          left: '', top: '', right: '', bottom: '', opacity: '',
-          zIndex: '', width: cloneW + 'px',
-        })
-        landingScaleShell.appendChild(c)
-        holder2.appendChild(landingScaleShell)
-        document.body.appendChild(holder2)
-        return holder2
-      }
+      const _cloneLanding = (el: HTMLElement) => createLandingClone(el, {
+        width: dropW,
+        height: dropH,
+        layoutWidth: cloneW,
+        layoutHeight: cloneH,
+        zIndex: holder.style.zIndex,
+        transform: holder.style.transform,
+        contentScale: lastCS,
+        cloneClass: opts.cloneClass,
+      })
 
       if (absorbTarget) {
         // 画布卡默认在工具栏/抽屉下方；确认命中抽屉后才抬到其上方，交给 clone2
