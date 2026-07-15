@@ -261,7 +261,6 @@ async def files_storage(
     used_res = await db.execute(
         select(func.sum(File.size_bytes)).where(
             File.user_id == current_user.id,
-            File.deleted_at.is_(None),
         )
     )
     used = used_res.scalar() or 0

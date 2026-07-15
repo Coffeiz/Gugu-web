@@ -6,11 +6,12 @@ P0.3b：文件写操作（create/update/copy）走 KeyStrategy 抽象，逐字�
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 
 import app.services.storage.file_service.folders as folders_mod
 from app.core.errors import Conflict, Invalid, NotFound
 from app.core.tz import now_utc
-from app.models import Project
+from app.models import File, Folder, Project
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
 
@@ -60,6 +61,33 @@ async def test_create_folder_duplicate_raises(db, user_a, tmp_path):
         await svc.create_folder(user_a.id, name="dup", parent_id=None, project_id=None)
 
 
+async def test_copy_folder_copies_subtree_files_and_targets_project(db, user_a, tmp_path):
+    svc = _svc(db, tmp_path)
+    source = await svc.create_folder(user_a.id, name="资料", parent_id=None, project_id=None)
+    child = await svc.create_folder(user_a.id, name="子目录", parent_id=source.id, project_id=None)
+    await _create(svc, user_a.id, "根文件", "TXT", data=b"root", folder_id=source.id)
+    await _create(svc, user_a.id, "子文件", "TXT", data=b"child", folder_id=child.id)
+    project = Project(user_id=user_a.id, name="目标项目", start_date="2026-07-15")
+    db.add(project)
+    await db.commit()
+
+    copied = await svc.copy_folder(user_a.id, source.id, parent_id=None, project_id=project.id)
+    await db.commit()
+
+    assert copied.id != source.id
+    assert copied.name == "资料"
+    assert copied.project_id == project.id
+    copied_children = (await db.execute(
+        select(Folder).where(Folder.parent_id == copied.id, Folder.deleted_at.is_(None))
+    )).scalars().all()
+    assert [folder.name for folder in copied_children] == ["子目录"]
+    root_files = (await db.execute(
+        select(File).where(File.folder_id == copied.id, File.deleted_at.is_(None))
+    )).scalars().all()
+    assert [file.display_name for file in root_files] == ["根文件"]
+    assert await svc.storage.get(root_files[0].storage_key) == b"root"
+
+
 async def test_rename_folder_pathmirror_relocates(db, user_a, tmp_path, monkeypatch):
     calls = []
 
@@ -92,6 +120,41 @@ async def test_move_folder_pathmirror_relocates(db, user_a, tmp_path, monkeypatc
     await db.commit()
     assert moved.parent_id == b.id
     assert calls == [a.id]
+
+
+async def test_move_folder_across_projects_relocates_subtree(db, user_a, tmp_path, monkeypatch):
+    svc = _svc_wired(db, tmp_path, monkeypatch)
+    p1 = Project(user_id=user_a.id, name="来源", start_date="2026-03-15")
+    p2 = Project(user_id=user_a.id, name="目标", start_date="2026-04-15")
+    db.add_all([p1, p2])
+    await db.commit()
+    await db.refresh(p1)
+    await db.refresh(p2)
+    root = await svc.create_folder(user_a.id, name="方案", parent_id=None, project_id=p1.id)
+    child = await svc.create_folder(user_a.id, name="附件", parent_id=root.id, project_id=p1.id)
+    await db.commit()
+    created = await _create(
+        svc, user_a.id, "说明", "MD", data=b"body", space="project",
+        project_id=p1.id, folder_id=child.id,
+    )
+    await db.commit()
+    old_key = created.file.storage_key
+
+    moved = await svc.move_folder(
+        user_a.id, root.id, None, client_version=root.version,
+        target_project_id=p2.id,
+    )
+    await db.commit()
+    await db.refresh(child)
+    await db.refresh(created.file)
+
+    assert moved.project_id == p2.id
+    assert child.project_id == p2.id
+    assert created.file.project_id == p2.id
+    assert created.file.storage_key.endswith(f"/目标 #{p2.id}/方案/附件/说明.md")
+    assert await svc.storage.exists(created.file.storage_key)
+    assert not await svc.storage.exists(old_key)
+    assert (svc.storage.root / f"{user_a.id}/项目文件/2026/04/目标 #{p2.id}/方案/附件").is_dir()
 
 
 async def test_opaque_skips_relocate(db, user_a, monkeypatch):
@@ -315,7 +378,7 @@ async def test_delete_folder_trashes_files_and_removes_empty_dir(db, user_a, tmp
     assert deleted.deleted_at is not None
     assert r.file.deleted_at == deleted.deleted_at            # 同批时间戳
     assert not await svc.storage.exists(live_key)              # 原位置已搬空
-    trash_key = f"{user_a.id}/trash/{r.file.id}/note.md"
+    trash_key = f"{user_a.id}/trash/资料/note.md"
     assert await svc.storage.exists(trash_key)
     assert r.file.storage_key == trash_key
     assert not (root / f"{user_a.id}/个人文件/资料").exists()   # 搬空后的目录骨架已清

@@ -315,6 +315,7 @@ import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi, authApi, CLIENT_ID } from '@/services/api'
 import { getGreeting, greeting, prefetchGreeting } from '@/composables/useGreeting'
 import { uploadSignal, calendarSignal } from '@/services/cache'
+import { playGuguSfx } from '@/services/sfx'
 import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/useThumbCache'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 
@@ -629,6 +630,10 @@ const expanded   = ref(false)
 const resizing   = ref(false)   // 展开/缩小动画期间：关 backdrop-filter、停跟随，降卡顿
 let _resizeTimer: ReturnType<typeof setTimeout> | null = null
 let _onResizeTransitionEnd: ((e: TransitionEvent) => void) | null = null
+function playIncomingMessageSfx() {
+  // 聊天窗正在被用户看着时不打断；切到别的标签页或收起聊天窗才提示。
+  if (!open.value || document.hidden) playGuguSfx('message')
+}
 function _markResizing() {
   resizing.value = true
   if (_resizeTimer) clearTimeout(_resizeTimer)
@@ -1674,6 +1679,7 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
         } else if (evt.type === 'token') {
           if (live()) {
             clearStatus()   // 真回复开始 → 打断状态队列、收起指示，让位给流式正文
+            if (aiIdx === -1) playIncomingMessageSfx()
             if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
             messages.value[aiIdx].text += evt.content
             await scrollBottom()
@@ -1681,6 +1687,7 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
         } else if (evt.type === 'file') {
           if (live()) {
             clearStatus()
+            if (aiIdx === -1) playIncomingMessageSfx()
             if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
             const m = messages.value[aiIdx]
             if (!m.files) m.files = []
@@ -1692,6 +1699,7 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
         } else if (evt.type === 'error') {
           if (live()) {
             clearStatus()
+            playGuguSfx('error')
             messages.value.push({ id: mkid(), role: 'ai', text: evt.message || evt.detail || '咕咕开小差了 😵‍💫 麻烦再说一遍好吗？', time: now() })
             aiIdx = messages.value.length - 1
             await scrollBottom()

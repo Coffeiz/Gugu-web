@@ -12,10 +12,15 @@
 ### 改进
 
 - **GuguChat 代码块样式统一**（`components/common/MarkdownView.vue`）：代码块改为与 Markdown 预览器一致的普通边框样式，顶部显示代码类型并保留复制入口。
+- **文件操作工具统一**（`components/common/{FilePasteButton,FileSelectionToolbar}.vue`、`views/{Files,Projects}/`）：文件库和项目编辑卡共用粘贴、多选操作与网格/列表切换控件，统一交互反馈和状态同步。
+- **文件夹跨空间操作完善**（`app/services/storage/`、`api/v1/folders.py`）：文件夹支持在个人文件与项目目录之间可靠剪切、复制和粘贴，明确区分个人空间与项目归属。
 
 ### 修复
 
 - **浮动预览窗边缘缩放**（`components/common/FloatPreviewWindow.vue`）：补齐四边与四角的透明缩放热区，修复热区被窗口裁剪、遮挡滚动条及圆角处出现方角的问题。
+- **回收站目录与文件状态一致性**（`app/services/storage/`、`views/Files/`）：修复文件夹恢复、跨目录移动、存储占用刷新和多选文件夹操作在刷新后状态回退的问题。
+- **项目编辑卡文件操作**（`views/Projects/components/ProjectModal.vue`）：修复多选删除、复制文件夹、粘贴重复文件、空白区域退出多选及跨页面缓存闪回问题。
+- **画布卡片与连接线显示**（`views/Mind/`、`composables/usePhysicsDrag.ts`）：补齐卡片圆角、连接点层级与拖拽落地状态，修复部分卡片切换时的闪烁和连接线显示异常。
 
 ## [0.19.1] - 2026-07-15 · 项目抽屉↔画布拖拽收尾与引用卡快照样式
 

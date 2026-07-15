@@ -192,6 +192,63 @@ class RepairRequest(BaseModel):
     keys: list[str]
 
 
+class TrashMigrationRequest(BaseModel):
+    file_ids: list[int]
+
+
+@router.get("/migrate-trash")
+async def scan_legacy_trash(db: AsyncSession = Depends(get_db)):
+    """扫描旧版按 file_id 分目录的本地回收站对象，只读。"""
+    from app.models import File
+    from app.services.storage import LocalStorageBackend, get_storage
+    from app.services.storage.keys import _resolve_conflict
+    from app.services.storage.trash import is_legacy_trash_key, original_storage_key, to_trash_key
+
+    storage = get_storage()
+    if not isinstance(storage, LocalStorageBackend):
+        return {"backend": "oss", "items": [], "note": "当前不是本地存储，无需迁移。"}
+    rows = (await db.execute(select(File).where(File.deleted_at.isnot(None)))).scalars().all()
+    items = []
+    for f in rows:
+        if not is_legacy_trash_key(f) or not await storage.exists(f.storage_key):
+            continue
+        original = await original_storage_key(f, db)
+        target, _ = await _resolve_conflict(storage, to_trash_key(f.user_id, original, f.display_name, f.ext), f.display_name, f.ext)
+        items.append({"file_id": f.id, "name": f.display_name, "ext": f.ext,
+                      "source_key": f.storage_key, "target_key": target,
+                      "conflict": await storage.exists(target)})
+    return {"backend": "local", "items": items, "count": len(items)}
+
+
+@router.post("/migrate-trash")
+async def migrate_legacy_trash(body: TrashMigrationRequest, db: AsyncSession = Depends(get_db)):
+    """迁移指定旧回收站对象；只处理扫描结果对应的已删除文件，不覆盖目标文件。"""
+    from app.models import File
+    from app.services.storage import LocalStorageBackend, get_storage
+    from app.services.storage.keys import _resolve_conflict
+    from app.services.storage.trash import is_legacy_trash_key, original_storage_key, to_trash_key
+
+    storage = get_storage()
+    if not isinstance(storage, LocalStorageBackend):
+        raise HTTPException(status_code=409, detail="当前不是本地存储，无需迁移")
+    rows = (await db.execute(select(File).where(File.id.in_(body.file_ids), File.deleted_at.isnot(None)))).scalars().all()
+    done, skipped = [], []
+    for f in rows:
+        if not is_legacy_trash_key(f) or not await storage.exists(f.storage_key):
+            skipped.append({"file_id": f.id, "reason": "不是可迁移的旧回收站对象"})
+            continue
+        original = await original_storage_key(f, db)
+        target, _ = await _resolve_conflict(storage, to_trash_key(f.user_id, original, f.display_name, f.ext), f.display_name, f.ext)
+        if await storage.exists(target):
+            skipped.append({"file_id": f.id, "reason": "目标已存在，未覆盖"})
+            continue
+        await storage.rename_file(f.storage_key, target)
+        f.storage_key = target
+        done.append(f.id)
+    await db.commit()
+    return {"done": done, "skipped": skipped}
+
+
 @router.post("/reconcile-storage/repair")
 async def reconcile_repair(body: RepairRequest, db: AsyncSession = Depends(get_db)):
     """对账修复（**会改数据**）：delete 删孤儿物理文件；import 把孤儿重建成 DB 记录。"""

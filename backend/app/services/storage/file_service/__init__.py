@@ -11,7 +11,10 @@ P2.6：rename_folder/move_folder 现在必传 client_version（乐观并发，�
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
+from app.core.errors import Conflict, Invalid, NotFound
+from app.models import File, Folder
 from app.services.storage import get_storage
 from app.services.storage.folder_tree import SqlAlchemyFolderTree
 from app.services.storage.key_strategy import PathMirrorStrategy
@@ -35,14 +38,65 @@ class FileService:
     async def rename_folder(self, user_id, folder_id, new_name, *, client_version):
         return await self._folders.rename(user_id, folder_id, new_name, client_version=client_version)
 
-    async def move_folder(self, user_id, folder_id, new_parent_id, *, client_version):
-        return await self._folders.move(user_id, folder_id, new_parent_id, client_version=client_version)
+    async def move_folder(self, user_id, folder_id, new_parent_id, *, client_version,
+                          target_project_id=None, target_project_set=False):
+        return await self._folders.move(
+            user_id, folder_id, new_parent_id, client_version=client_version,
+            target_project_id=target_project_id,
+            target_project_set=target_project_set,
+        )
 
     async def delete_folder(self, user_id, folder_id):
         return await self._folders.delete(user_id, folder_id)
 
     async def restore_folder(self, user_id, folder_id):
         return await self._folders.restore(user_id, folder_id)
+
+    async def copy_folder(self, user_id, folder_id, *, parent_id=None, project_id=None):
+        """复制存活文件夹子树及其文件，目标冲突时给根文件夹自动加序号。"""
+        source = await self.folder_tree.get(user_id, folder_id)
+        if source is None:
+            raise NotFound("folder.not_found", "文件夹不存在")
+        target_project_id = source.project_id if project_id is None else project_id
+        if parent_id is not None:
+            parent = await self.folder_tree.get(user_id, parent_id)
+            if parent is None:
+                raise NotFound("folder.target_not_found", "目标文件夹不存在")
+            if parent.project_id != target_project_id:
+                raise Invalid("folder.cross_space", "目标文件夹不属于目标空间")
+        source_ids = await self.folder_tree.descendants(user_id, source.id)
+        if parent_id in source_ids:
+            raise Invalid("folder.cycle", "不能复制到自身或其子文件夹中")
+
+        copied: dict[int, Folder] = {}
+        for source_id in source_ids:
+            current = await self.folder_tree.get(user_id, source_id)
+            if current is None:
+                continue
+            target_parent_id = parent_id if current.id == source.id else copied[current.parent_id].id
+            base_name = current.name
+            copy_name = base_name
+            suffix = 1
+            while True:
+                try:
+                    copied[current.id] = await self._folders.create(
+                        user_id, name=copy_name, parent_id=target_parent_id,
+                        project_id=target_project_id,
+                    )
+                    break
+                except Conflict:
+                    copy_name = f"{base_name}({suffix})"
+                    suffix += 1
+
+            files = (await self.db.execute(
+                select(File).where(File.folder_id == current.id, File.deleted_at.is_(None))
+            )).scalars().all()
+            for file in files:
+                await self._files.copy_file(
+                    user_id, file.id, folder_id=copied[current.id].id,
+                    project_id=target_project_id,
+                )
+        return copied[source.id]
 
     # ── 文件写操作（薄门面 → _files）───────────────────────────────────────────
     async def create_file(self, user_id, **kw):

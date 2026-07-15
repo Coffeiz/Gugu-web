@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.models import File
 from app.core.ownership import get_owned
 from app.services.storage import get_storage
+from app.services.storage.file_service import FileService
 from app.services.storage.trash import restore_file_storage
 from app.api.v1.files import _delete_thumb_cache
 from agent import confirm
@@ -41,6 +42,12 @@ async def _restore_file(db, user_id, args: dict):
     f.deleted_at = None
     await db.commit()
     return {"success": True, "file_id": f.id, "name": f"{f.display_name}.{f.ext}"}
+
+
+async def _restore_folder(db, user_id, args: dict):
+    folder = await FileService(db).restore_folder(user_id, args["folder_id"])
+    await db.commit()
+    return {"success": True, "folder_id": folder.id, "name": folder.name}
 
 
 async def _permanent_delete(db, user_id, args: dict):
@@ -110,6 +117,16 @@ class TrashSkill(BaseSkill):
                 "required": ["file_id"],
             },
             handler=_restore_file,
+        ),
+        Tool(
+            name="restore_folder", label="还原文件夹",
+            description="把回收站里的文件夹及其子文件、子文件夹还原回原位置。",
+            input_schema={
+                "type": "object",
+                "properties": {"folder_id": {"type": "integer"}},
+                "required": ["folder_id"],
+            },
+            handler=_restore_folder,
         ),
         Tool(
             name="permanent_delete", label="永久删除",

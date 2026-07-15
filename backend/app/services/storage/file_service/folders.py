@@ -16,7 +16,8 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from app.models import File, Folder
+from app.core.ownership import get_owned
+from app.models import File, Folder, Project
 from app.services.storage.folders import folder_dir_key, relocate_folder_tree_files
 from app.services.storage.trash import move_file_to_trash, restore_file_storage
 
@@ -66,14 +67,43 @@ class FolderOps:
             await self._reconcile_dirs(user_id, folder, old_dir)               # P1.4：目录对账
         return folder
 
-    async def move(self, user_id, folder_id, new_parent_id, *, client_version):
+    async def move(self, user_id, folder_id, new_parent_id, *, client_version,
+                   target_project_id=None, target_project_set=False):
         old_dir = None
+        current = await self.folder_tree.get(user_id, folder_id)
+        if current is None:
+            # 让 FolderTree 统一抛出标准 NotFound，避免这里制造另一套错误。
+            return await self.folder_tree.move(user_id, folder_id, new_parent_id,
+                                               client_version=client_version,
+                                               target_project_id=target_project_id,
+                                               target_project_set=target_project_set)
+        source_project_id = current.project_id
+        if not target_project_set:
+            target_project_id = source_project_id
+        if target_project_set and target_project_id is not None and target_project_id != source_project_id:
+            project = await get_owned(self.db, Project, target_project_id, user_id)
+            if project is None:
+                raise ValueError("目标项目不存在")
         if self._relocates:
-            cur = await self.folder_tree.get(user_id, folder_id)
-            if cur is not None:
-                old_dir = await self._dir_key(user_id, cur)   # 移动前的目录
+            old_dir = await self._dir_key(user_id, current)   # 移动前的目录
         folder = await self.folder_tree.move(user_id, folder_id, new_parent_id,
-                                             client_version=client_version)  # 改 parent + flush
+                                             client_version=client_version,
+                                             target_project_id=target_project_id,
+                                             target_project_set=target_project_set)  # 改 parent/project + flush
+        if target_project_set and target_project_id != source_project_id:
+            subtree_ids = await self.folder_tree.descendants(user_id, folder.id)
+            for sid in subtree_ids:
+                if sid == folder.id:
+                    continue
+                sub = await self.folder_tree.get(user_id, sid)
+                if sub is not None:
+                    sub.project_id = target_project_id
+            await self.db.flush()
+            # 重新加载整棵子树，确保路径解析不会继续使用跨项目移动前的 identity 缓存。
+            for sid in subtree_ids:
+                sub = await self.folder_tree.get(user_id, sid)
+                if sub is not None:
+                    await self.db.refresh(sub)
         if self._relocates:
             await relocate_folder_tree_files(self.db, user_id, folder.id)
             await self._reconcile_dirs(user_id, folder, old_dir)

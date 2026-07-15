@@ -311,7 +311,12 @@
                   <span class="pm-field-name">默认视图</span>
                   <span class="pm-field-hint">打开应用时首先显示的页面</span>
                 </div>
-                <div class="pm-coming">咕了</div>
+                <div class="pm-style-group">
+                  <button class="pm-style-chip" :class="{ active: prefsStore.defaultView === 'projects' }" @click="prefsStore.saveDefaultView('projects')">项目</button>
+                  <button class="pm-style-chip" :class="{ active: prefsStore.defaultView === 'calendar' }" @click="prefsStore.saveDefaultView('calendar')">日历</button>
+                  <button class="pm-style-chip" :class="{ active: prefsStore.defaultView === 'files' }" @click="prefsStore.saveDefaultView('files')">文件库</button>
+                  <button class="pm-style-chip" :class="{ active: prefsStore.defaultView === 'mind' }" @click="prefsStore.saveDefaultView('mind')">思维</button>
+                </div>
               </div>
               <div class="pm-field-row">
                 <div class="pm-field-desc">

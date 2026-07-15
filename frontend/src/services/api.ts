@@ -364,8 +364,10 @@ export const foldersApi = {
   // 版本对不上后端给 409，同 projectsApi.update 的并发保护模式。
   rename: (id: number, name: string, version: number) =>
     patch<Schemas['FolderResponse']>(`/folders/${id}`, { name, version }),
-  move:   (id: number, parentId: number | null, version: number) =>
-    patch<Schemas['FolderResponse']>(`/folders/${id}/parent`, { parentId, version }),
+  move:   (id: number, parentId: number | null, version: number, projectId: number | null = null) =>
+    patch<Schemas['FolderResponse']>(`/folders/${id}/parent`, { parentId, version, projectId }),
+  copy:   (id: number, parentId: number | null, projectId: number | null) =>
+    post<Schemas['FolderResponse']>(`/folders/${id}/copy`, { parentId, projectId }),
   delete: (id: number)           => del(`/folders/${id}`),
   download: async (id: number, name: string) => {
     const token = getToken()

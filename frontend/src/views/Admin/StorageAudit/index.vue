@@ -5,6 +5,24 @@
       <p class="sa-sub">存储 ↔ DB 一致性核查：<b>文件层</b>（存储对象 ↔ File 记录）与<b>目录层</b>（文件夹树 ↔ 磁盘目录）。扫描只读、不改数据；修复需显式操作。</p>
     </div>
 
+    <section class="sa-card">
+      <div class="sa-card-head">
+        <div>
+          <h3 class="sa-card-title">旧回收站目录迁移</h3>
+          <p class="sa-card-sub">把旧版 trash/{file_id}/ 文件迁移到保留原目录的新结构；扫描只读，迁移不会覆盖目标文件。</p>
+        </div>
+        <div class="sa-card-head-right">
+          <button class="sa-btn" :disabled="trashMigrating" @click="scanTrashMigration">扫描旧目录</button>
+          <button v-if="trashMigration?.items?.length" class="sa-btn primary" :disabled="trashMigrating" @click="runTrashMigration">迁移 {{ trashMigration.items.length }} 项</button>
+        </div>
+      </div>
+      <div v-if="trashMigrationMsg" class="sa-inline-msg" :class="trashMigrationKind">{{ trashMigrationMsg }}</div>
+      <div v-if="trashMigration" class="recon-summary">
+        <template v-if="trashMigration.note">{{ trashMigration.note }}</template>
+        <template v-else>发现 <b>{{ trashMigration.count }}</b> 个旧目录对象</template>
+      </div>
+    </section>
+
     <!-- ══ 文件对账：存储对象 ↔ File 记录 ══ -->
     <section class="sa-card">
       <div class="sa-card-head">
@@ -219,6 +237,45 @@ import { PhMagnifyingGlass, PhCheckCircle, PhWarningCircle, PhWrench } from '@ph
 import { useAdminStore } from '@/stores/admin'
 
 const adminStore = useAdminStore()
+
+interface TrashMigrationReport { backend: string; count: number; items: Array<{ file_id: number; name: string; source_key: string; target_key: string }>; note?: string }
+const trashMigrating = ref(false)
+const trashMigration = ref<TrashMigrationReport | null>(null)
+const trashMigrationMsg = ref('')
+const trashMigrationKind = ref<'ok' | 'err'>('ok')
+
+async function scanTrashMigration() {
+  trashMigrating.value = true
+  trashMigrationMsg.value = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/migrate-trash')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '扫描失败')
+    trashMigration.value = data
+  } catch (e) {
+    trashMigrationKind.value = 'err'
+    trashMigrationMsg.value = e instanceof Error ? e.message : String(e)
+  } finally { trashMigrating.value = false }
+}
+
+async function runTrashMigration() {
+  const ids = trashMigration.value?.items.map(item => item.file_id) || []
+  if (!ids.length || !window.confirm(`确认迁移 ${ids.length} 个旧回收站文件？`)) return
+  trashMigrating.value = true
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/migrate-trash', {
+      method: 'POST', body: JSON.stringify({ file_ids: ids }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '迁移失败')
+    trashMigrationKind.value = data.skipped?.length ? 'err' : 'ok'
+    trashMigrationMsg.value = `已迁移 ${data.done.length} 项${data.skipped?.length ? `，跳过 ${data.skipped.length} 项` : ''}`
+    await scanTrashMigration()
+  } catch (e) {
+    trashMigrationKind.value = 'err'
+    trashMigrationMsg.value = e instanceof Error ? e.message : String(e)
+  } finally { trashMigrating.value = false }
+}
 
 // ── 文件对账（存储对象 ↔ File 记录）──────────────────────────────────────────
 const fileScanning = ref(false)

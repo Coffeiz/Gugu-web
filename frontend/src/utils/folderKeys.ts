@@ -17,3 +17,10 @@ export function resolveFolderIds(
   const map = new Map<string | number, number | undefined>(folders.map(f => [f.id, f.folderId]))
   return [...keys].map(k => map.get(k)).filter((v): v is number => v != null)
 }
+
+/** 将剪贴板/拖拽链路里的文件夹 key 还原成 API 所需的数字 id。 */
+export function parseFolderId(value: number | string): number | null {
+  const raw = typeof value === 'string' && value.startsWith('f:') ? value.slice(2) : value
+  const id = Number(raw)
+  return Number.isInteger(id) && id > 0 ? id : null
+}

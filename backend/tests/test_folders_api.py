@@ -8,7 +8,8 @@ import pytest
 
 from app.api.v1 import folders as folders_api
 from app.core.errors import Conflict, Invalid, NotFound
-from app.schemas import FolderCreate, FolderMove, FolderRename
+from app.models import Project
+from app.schemas import FolderCopy, FolderCreate, FolderMove, FolderRename
 from app.services.storage import LocalStorageBackend
 
 
@@ -79,6 +80,26 @@ async def test_move_target_not_found(db, user_a):
     with pytest.raises(NotFound):
         await folders_api.move_folder(a.id, FolderMove(parent_id=999, version=a.version),
                                       current_user=user_a, origin=None, db=db)
+
+
+async def test_move_and_copy_folder_across_project_endpoint(db, user_a):
+    source = await _create(db, user_a, "来源")
+    project = Project(user_id=user_a.id, name="目标项目", start_date="2026-07-15")
+    db.add(project)
+    await db.commit()
+
+    moved = await folders_api.move_folder(
+        source.id, FolderMove(parent_id=None, project_id=project.id, version=source.version),
+        current_user=user_a, origin=None, db=db,
+    )
+    assert moved.project_id == project.id
+
+    copied = await folders_api.copy_folder(
+        source.id, FolderCopy(parent_id=None, project_id=None),
+        current_user=user_a, origin=None, db=db,
+    )
+    assert copied.id != source.id
+    assert copied.project_id == project.id
 
 
 async def test_move_version_conflict(db, user_a):

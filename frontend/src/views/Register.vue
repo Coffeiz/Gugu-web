@@ -97,7 +97,7 @@ async function handleRegister() {
   loading.value = true; error.value = ''
   try {
     await auth.register(form.username, form.email, form.password, form.inviteCode)
-    router.push('/projects')
+    router.push('/')
   } catch (e) {
     error.value = e instanceof Error ? e.message : '操作失败'
   } finally {

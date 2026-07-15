@@ -327,7 +327,13 @@ class FolderRename(CamelModel):
 
 class FolderMove(CamelModel):
     parent_id: Optional[int] = None
+    project_id: Optional[int] = None
     version: int   # 乐观锁：必传，同 FolderRename（P2.6）
+
+
+class FolderCopy(CamelModel):
+    parent_id: Optional[int] = None
+    project_id: Optional[int] = None
 
 
 class FolderResponse(CamelModel):

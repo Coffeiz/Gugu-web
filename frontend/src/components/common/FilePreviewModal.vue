@@ -106,7 +106,7 @@ import { useLiveStore } from '@/stores/live'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
 
-import { filesApi } from '@/services/api'
+import { CLIENT_ID, filesApi } from '@/services/api'
 import { isImageExt, isTextExt, isVideoExt, isOfficeExt, isAudioExt } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/windowz'
 
@@ -202,7 +202,8 @@ watch(() => [props.show, props.file] as [boolean, Partial<FileMeta> | undefined]
 }, { immediate: true })
 
 const liveStore = useLiveStore()
-watch(() => liveStore.rev.files, () => {
+watch(() => liveStore.fileEvent, (event) => {
+  if (event?.origin === CLIENT_ID) return
   if (props.show && props.file && isText.value) load(props.file, true)
 })
 

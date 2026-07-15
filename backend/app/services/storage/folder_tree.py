@@ -37,7 +37,9 @@ class FolderTree(Protocol):
     async def descendants(self, user_id, folder_id: int) -> list[int]: ...
     async def create(self, user_id, *, name: str, parent_id: Optional[int], project_id: Optional[int]) -> Folder: ...
     async def rename(self, user_id, folder_id: int, new_name: str, *, client_version: int) -> Folder: ...
-    async def move(self, user_id, folder_id: int, new_parent_id: Optional[int], *, client_version: int) -> Folder: ...
+    async def move(self, user_id, folder_id: int, new_parent_id: Optional[int], *, client_version: int,
+                   target_project_id: Optional[int] = None,
+                   target_project_set: bool = False) -> Folder: ...
     async def soft_delete(self, user_id, folder_id: int) -> tuple[Folder, list[int]]: ...
     async def restore(self, user_id, folder_id: int) -> tuple[Folder, list[int], datetime]: ...
 
@@ -132,7 +134,9 @@ class SqlAlchemyFolderTree:
         await self.db.refresh(folder)
         return folder
 
-    async def move(self, user_id, folder_id: int, new_parent_id: Optional[int], *, client_version: int) -> Folder:
+    async def move(self, user_id, folder_id: int, new_parent_id: Optional[int], *, client_version: int,
+                   target_project_id: Optional[int] = None,
+                   target_project_set: bool = False) -> Folder:
         folder = await self.get(user_id, folder_id)
         if not folder:
             raise NotFound("folder.not_found", "文件夹不存在")
@@ -140,7 +144,8 @@ class SqlAlchemyFolderTree:
             target = await self.get(user_id, new_parent_id)
             if not target:
                 raise NotFound("folder.target_not_found", "目标文件夹不存在")
-            if target.project_id != folder.project_id:
+            expected_project = target_project_id if target_project_set else folder.project_id
+            if target.project_id != expected_project:
                 raise Invalid("folder.cross_space", "不能跨个人文件与项目文件移动文件夹")
             cur = new_parent_id                       # 向上走检测循环
             seen: set[int] = set()
@@ -154,11 +159,14 @@ class SqlAlchemyFolderTree:
                 if f is None:
                     break
                 cur = f.parent_id
+        values = {"parent_id": new_parent_id, "version": Folder.version + 1, "updated_at": now_utc()}
+        if target_project_set:
+            values["project_id"] = target_project_id
         result = await self.db.execute(
             update(Folder)
             .where(Folder.id == folder_id, Folder.user_id == user_id,
                    Folder.deleted_at.is_(None), Folder.version == client_version)
-            .values(parent_id=new_parent_id, version=Folder.version + 1, updated_at=now_utc())
+            .values(**values)
         )
         if result.rowcount != 1:
             raise Conflict("folder.version_mismatch", "文件夹已被修改，请刷新后重试")

@@ -16,13 +16,15 @@ from sqlalchemy import select
 
 from app.models import File, Folder, Project
 from app.core.ownership import get_owned
+from app.core.redaction import redact
 from app.services.storage import get_storage
-from app.services.storage.folders import relocate_folder_tree_files, resolve_folder_path
+from app.services.storage.folders import resolve_folder_path
 from app.api.v1.files import (
     _fmt_size, _color,
 )
 from app.services.storage.trash import move_file_to_trash
 from app.services.storage.keys import _build_key, _resolve_conflict
+from app.services.storage.file_service import FileService
 from agent.tools.base import BaseSkill, Tool
 
 # 可读/可改的文本类扩展名
@@ -390,7 +392,7 @@ async def _create_document(db, user_id, args: dict):
             project_id=project_id, folder_id=folder_id,
         )
     except ValueError as e:
-        return json.dumps({"error": str(e)})
+        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     final_key, final_name = await _resolve_conflict(storage, base_key, display_name, fmt)
     await storage.put(final_key, data, _DOC_MIME[fmt])
 
@@ -630,7 +632,7 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
             project_id=project_id, folder_id=folder_id,
         )
     except ValueError as e:
-        return json.dumps({"error": str(e)})
+        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     storage = get_storage()
     new_display = f.display_name
     if new_key != f.storage_key:
@@ -717,28 +719,19 @@ async def _resolve_target(db, user_id, target: dict):
 
 
 async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id) -> dict:
-    """把文件夹树搬到目标，并同步重建所有后代文件的物理路径。"""
+    """委托 FileService 搬文件夹树，并同步重建所有后代文件的物理路径。"""
     name = folder.name
     sub_ids = await _descendant_folder_ids(db, user_id, folder.id)
-    # 防自移入自身或子孙
-    if t_parent_id in sub_ids:
-        return {"error": f"不能把文件夹「{name}」移动到它自己或它的子文件夹里"}
-    same_project = (t_pid == folder.project_id)   # personal 时两边都是 None
-    folder.parent_id = t_parent_id
-    folder.project_id = t_pid
-    moved_files = 0
-    if not same_project:
-        # 子孙文件夹的 project_id 跟着改
-        for sid in sub_ids[1:]:
-            sf = await get_owned(db, Folder, sid, user_id)
-            if sf:
-                sf.project_id = t_pid
-    # 即便同一空间内只是改 parent_id，storage_key 也含完整文件夹路径，必须同步重搬。
-    await db.flush()
-    moved_files = await relocate_folder_tree_files(db, user_id, folder.id)
-    await db.commit()
+    try:
+        await FileService(db).move_folder(
+            user_id, folder.id, t_parent_id, client_version=folder.version,
+            target_project_id=t_pid,
+        )
+        await db.commit()
+    except Exception as e:
+        return {"error": redact(f"{type(e).__name__}: {e}")}
     return {"success": True, "type": "folder", "folder": name,
-            "subfolders": len(sub_ids) - 1, "moved_files": moved_files,
+            "subfolders": len(sub_ids) - 1,
             "space": t_space, "project_id": t_pid}
 
 
@@ -793,19 +786,13 @@ async def _move_items(db, user_id, args: dict):
 
 
 async def _create_folder(db, user_id, args: dict):
-    if args.get("project_id"):
-        p = await get_owned(db, Project, args["project_id"], user_id)
-        if not p:
-            return json.dumps({"error": "项目不存在"})
-    if args.get("parent_id"):
-        par = await get_owned(db, Folder, args["parent_id"], user_id)
-        if not par:
-            return json.dumps({"error": "父文件夹不存在"})
-    fo = Folder(
-        user_id=user_id, name=args["name"],
-        project_id=args.get("project_id"), parent_id=args.get("parent_id"),
-    )
-    db.add(fo)
+    try:
+        fo = await FileService(db).create_folder(
+            user_id, name=args["name"], parent_id=args.get("parent_id"),
+            project_id=args.get("project_id"),
+        )
+    except Exception as e:
+        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     await db.commit()
     await db.refresh(fo)
     return {"success": True, "folder_id": fo.id, "name": fo.name}
@@ -876,8 +863,13 @@ async def _rename_folder(db, user_id, args: dict):
     fo = await _find_folder(db, user_id, args)
     if isinstance(fo, str):
         return fo
-    fo.name = args["new_name"]
-    await db.commit()
+    try:
+        fo = await FileService(db).rename_folder(
+            user_id, fo.id, args["new_name"], client_version=fo.version,
+        )
+        await db.commit()
+    except Exception as e:
+        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     return {"success": True, "folder_id": fo.id, "name": fo.name}
 
 
@@ -887,35 +879,12 @@ async def _delete_folder(db, user_id, args: dict):
         return fo
     fid = fo.id
     fname = fo.name
-    # 与网页删文件夹一致：整棵子树的文件一并软删进回收站，子文件夹连同本文件夹一起删。
-    # （旧实现把直属文件移到根目录、不删，还漏了嵌套子文件夹——跟 UI / REST delete_folder 不一致，
-    #   表现为「咕咕删文件夹后里面的文件跑到上层目录」，这里修正为跟后端 REST 完全一致。）
-    all_fids = [fo.id]
-    queue = [fo.id]
-    while queue:
-        parent = queue.pop()
-        sub_ids = (await db.execute(
-            select(Folder.id).where(Folder.parent_id == parent, Folder.user_id == user_id)
-        )).scalars().all()
-        for sid in sub_ids:
-            all_fids.append(sid)
-            queue.append(sid)
-    now = now_utc()
-    trashed = 0
-    for folder_id in all_fids:
-        files = (await db.execute(
-            select(File).where(File.folder_id == folder_id, File.user_id == user_id, File.deleted_at.is_(None))
-        )).scalars().all()
-        for f in files:
-            f.deleted_at = now
-            trashed += 1
-    for folder_id in reversed(all_fids):   # 从最深层往上删，避免外键约束
-        sub = await get_owned(db, Folder, folder_id, user_id)
-        if sub:
-            await db.delete(sub)
-    await db.commit()
-    note = (f"文件夹「{fname}」已删除，其中 {trashed} 个文件已移入回收站（30 天内可恢复）"
-            if trashed else f"空文件夹「{fname}」已删除")
+    try:
+        await FileService(db).delete_folder(user_id, fo.id)
+        await db.commit()
+    except Exception as e:
+        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
+    note = f"文件夹「{fname}」已删除，其中的文件已移入回收站（30 天内可恢复）"
     return {"success": True, "deleted_folder_id": fid, "note": note,
             "_file_op": {"op": "remove", "kind": "folder", "id": fid}}
 
@@ -1360,7 +1329,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="delete_folder", label="删除文件夹",
-            description="删除文件夹。用 name 指定文件夹名（或 folder_id）。注意：夹内文件不会被删除，会移动到根目录（仍在文件库，不进回收站）——请如实告知用户，别说成文件被删/可还原。同名文件夹存在于多个项目时必须传 project_id。",
+            description="删除文件夹。用 name 指定文件夹名（或 folder_id）。文件夹及其内容会整体移入回收站，30 天内可恢复。同名文件夹存在于多个项目时必须传 project_id。",
             input_schema={
                 "type": "object",
                 "properties": {

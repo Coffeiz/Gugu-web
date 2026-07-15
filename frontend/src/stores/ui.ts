@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { playGuguSfx } from '@/services/sfx'
 
 // 导航栏通知中心的持久条目（time 在前端归一成 Date）
 interface NotifItem {
@@ -98,6 +99,7 @@ export const useUiStore = defineStore('ui', () => {
     if (bubble) {
       // gugu=true：用咕咕聊天文字的大小/颜色（新手引导气泡），见 NotificationBubble .nb-gugu
       liveNotification.value = { seq: ++_liveSeq, id: n.id ?? null, title: n.title, content: n.content, gugu: n.gugu }
+      playGuguSfx(n.gugu ? 'message' : 'notification')
       _markBubbleSeen(n.id)   // 实时弹过的，下次上线别再补弹
     }
   }
@@ -111,6 +113,7 @@ export const useUiStore = defineStore('ui', () => {
       const last = Number(localStorage.getItem(_BUBBLE_SEEN_KEY) || 0)
       if (bubble.id > last) {
         liveNotification.value = { seq: ++_liveSeq, title: bubble.title, content: bubble.content }
+        playGuguSfx('notification')
         _markBubbleSeen(bubble.id)
       }
     } catch { /* 静默 */ }

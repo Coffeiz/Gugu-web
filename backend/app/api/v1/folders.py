@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models import File, Folder, Project, User
-from app.schemas import FolderCreate, FolderMove, FolderRename, FolderResponse
+from app.schemas import FolderCopy, FolderCreate, FolderMove, FolderRename, FolderResponse
 from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
 from app.core import events
@@ -217,8 +217,30 @@ async def move_folder(
     db: AsyncSession = Depends(get_db),
 ):
     folder = await FileService(db).move_folder(current_user.id, fid, body.parent_id,
-                                               client_version=body.version)
+                                               client_version=body.version,
+                                               target_project_id=body.project_id,
+                                               target_project_set='project_id' in body.model_fields_set)
     # 归属/循环/跨空间校验在 FolderTree、物理归位在 FileService（relocate），失败抛领域异常
+    await db.commit()
+    await db.refresh(folder)
+    await events.publish(current_user.id, "files", origin=origin)
+    cnt = await _file_count(folder.id, db)
+    return FolderResponse(id=folder.id, project_id=folder.project_id,
+                          parent_id=folder.parent_id, name=folder.name, file_count=cnt,
+                          version=folder.version)
+
+
+@router.post("/{fid}/copy", response_model=FolderResponse)
+async def copy_folder(
+    fid: int,
+    body: FolderCopy,
+    current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
+    db: AsyncSession = Depends(get_db),
+):
+    folder = await FileService(db).copy_folder(
+        current_user.id, fid, parent_id=body.parent_id, project_id=body.project_id,
+    )
     await db.commit()
     await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin)

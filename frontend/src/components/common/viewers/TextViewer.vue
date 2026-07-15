@@ -19,7 +19,22 @@
         />
       </div>
     </template>
-    <!-- md/txt：保留原来的「预览 + 编辑」切换，本来就不大，没必要换 CodeMirror -->
+    <!-- Markdown 编辑复用 CodeMirror 的语法高亮；txt 继续使用轻量 textarea。 -->
+    <template v-else-if="editing && isMarkdownFile">
+      <div class="tv-edit-cm-wrap tv-edit-md-wrap">
+        <Codemirror
+          v-if="mdEditorReady"
+          v-model="editText" :extensions="cmExtensions" :disabled="!isRealFile"
+          @ready="onCmReady"
+        />
+        <div v-else class="tv-editor-loading">准备 Markdown 语法高亮…</div>
+      </div>
+      <div class="tv-edit-bar">
+        <span v-if="saveError" class="tv-edit-error">{{ saveError }}</span>
+        <button class="tv-edit-btn" :disabled="saving" @click="cancelEdit">取消</button>
+        <button class="tv-edit-btn tv-edit-save" :disabled="saving" @click="saveEdit">{{ saving ? '保存中…' : '保存' }}</button>
+      </div>
+    </template>
     <template v-else-if="editing">
       <textarea
         ref="editArea" v-model="editText" class="tv-edit-textarea"
@@ -90,19 +105,6 @@ function onScroll() {
   })
 }
 
-// 扩展名 → highlight.js 语言名
-const LANG_MAP = {
-  JS: 'javascript', JSX: 'javascript',
-  TS: 'typescript', TSX: 'typescript',
-  CSS: 'css', SCSS: 'scss',
-  HTML: 'xml', VUE: 'xml',
-  PY: 'python',
-  YAML: 'yaml', YML: 'yaml',
-  XML: 'xml',
-  SH: 'bash', BASH: 'bash',
-  JSON: 'json',
-}
-
 // highlight.js 按需注册的语言
 const LANG_LOADERS: Record<string, () => Promise<any>> = {
   javascript: () => import('highlight.js/lib/languages/javascript'),
@@ -124,12 +126,12 @@ const EDITABLE_EXTS = new Set([
   'sql', 'xml', 'toml', 'ini', 'conf', 'env', 'tex',
 ])
 
-// 扩展名 → CodeMirror 语言扩展的按需 loader（编辑用，跟上面 hljs 的 LANG_MAP 是两套独立映射：
-// CM6 按语言拆成独立小包，命名和覆盖范围跟 hljs 不是一一对应，且 CM6 官方包覆盖了 hljs 这边
+// 扩展名 → CodeMirror 语言扩展的按需 loader（编辑用，跟 highlight.js 的语言加载器是两套独立映射：
+// CM6 按语言拆成独立小包，命名和覆盖范围跟 highlight.js 不是一一对应，且 CM6 官方包覆盖了 hljs 这边
 // 没接的 java/go/rust/cpp/sql，编辑时能比只读预览多几种语言的高亮）。没在这张表里的扩展名
 // （csv/log/toml/ini/conf/env/tex）用 CodeMirror 编辑但不高亮，比之前退回纯 textarea 依然要好
 // （撤销栈、多光标、大文件不卡这些能力还在，只是没有配色）。
-const CM_LANG_LOADERS: Record<string, () => Promise<any>> = {
+const CM_LANG_LOADERS: Record<string, (source?: string) => Promise<any>> = {
   JS:   () => import('@codemirror/lang-javascript').then(m => m.javascript()),
   JSX:  () => import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true })),
   TS:   () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true })),
@@ -153,6 +155,31 @@ const CM_LANG_LOADERS: Record<string, () => Promise<any>> = {
   HPP:  () => import('@codemirror/lang-cpp').then(m => m.cpp()),
   SH:   () => Promise.all([import('@codemirror/legacy-modes/mode/shell'), import('@codemirror/language')])
                 .then(([{ shell }, { StreamLanguage }]) => StreamLanguage.define(shell)),
+  MD:   async (source = '') => {
+    const [{ markdown }, { LanguageDescription, LanguageSupport, StreamLanguage }] = await Promise.all([
+      import('@codemirror/lang-markdown'),
+      import('@codemirror/language'),
+    ])
+    const language = (name: string, alias: string[], load: () => Promise<any>) =>
+      LanguageDescription.of({ name, alias, load })
+    const codeLanguages = [
+      language('javascript', ['js', 'jsx'], () => import('@codemirror/lang-javascript').then(m => m.javascript())),
+      language('typescript', ['ts', 'tsx'], () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true }))),
+      language('python', ['py'], () => import('@codemirror/lang-python').then(m => m.python())),
+      language('json', [], () => import('@codemirror/lang-json').then(m => m.json())),
+      language('css', [], () => import('@codemirror/lang-css').then(m => m.css())),
+      language('html', ['xml'], () => import('@codemirror/lang-html').then(m => m.html())),
+      language('yaml', ['yml'], () => import('@codemirror/lang-yaml').then(m => m.yaml())),
+      language('sql', [], () => import('@codemirror/lang-sql').then(m => m.sql())),
+      language('shell', ['bash', 'sh'], () => import('@codemirror/legacy-modes/mode/shell')
+        .then(({ shell }) => new LanguageSupport(StreamLanguage.define(shell)))),
+    ]
+    const fencedNames = [...source.matchAll(/```\s*([\w+#-]+)/g)].map(match => match[1].toLowerCase())
+    await Promise.all(codeLanguages
+      .filter(description => fencedNames.some(name => description.alias.includes(name) || description.name === name))
+      .map(description => description.load()))
+    return markdown({ codeLanguages })
+  },
 }
 
 const lines       = ref<string[]>([])
@@ -179,41 +206,54 @@ const truncated   = ref(false)
 
 // ── 编辑模式：md/txt 的「预览+编辑」切换态，见 editable；代码类扩展名见 isCodeExt（没有切换态） ──
 const editing   = ref(false)
+const mdEditorReady = ref(false)
 const editText  = ref('')
-const editArea  = ref<HTMLTextAreaElement | null>(null)   // md/txt 用的纯文本 textarea
+const editArea  = ref<HTMLTextAreaElement | null>(null)   // txt 用的纯文本 textarea
 const saving    = ref(false)
 const saveError = ref('')
 
 const cmView       = ref<any>(null)   // 当前 CodeMirror 的 EditorView 实例（@ready 拿到；EditorView 动态导入，标 any）
 const cmExtensions = ref<any[]>([])     // 基础扩展 + 按需加载的语言扩展（CM6 扩展类型复杂，标 any）
+let cmLoadSeq = 0
 
 // vue-codemirror 的 <Codemirror> 组件内部本来就默认带了一份 basicSetup（含行号+代码折叠两个
 // gutter），跟组件本身无关、不受 :extensions 传参影响；不要自己再传 basicSetup（或任何行号类
 // 扩展），只在 :extensions 里加主题和语法高亮配色，行号/折叠/撤销栈交给组件内置的那份就够。
 async function ensureCm() {
   if (!CM) {
-    const [{ EditorView }, { defaultHighlightStyle, syntaxHighlighting }] = await Promise.all([
+    const [{ EditorView, keymap }, { syntaxHighlighting }, { classHighlighter }] = await Promise.all([
       import('@codemirror/view'),
       import('@codemirror/language'),
+      import('@lezer/highlight'),
     ])
-    CM = { EditorView, highlighting: syntaxHighlighting(defaultHighlightStyle, { fallback: true }) }
+    // 不能设为 fallback：vue-codemirror 的 basicSetup 自带默认高亮，fallback 会让它压过 tok-* 配色。
+    CM = { EditorView, keymap, highlighting: syntaxHighlighting(classHighlighter) }
   }
   return CM
 }
 
-async function loadCmExtensions(ext: string) {
+async function loadCmExtensions(ext: string, source = '') {
   const cm = await ensureCm()
+  const { acceptCompletion } = await import('@codemirror/autocomplete')
+  const isMarkdown = (ext || '').toUpperCase() === 'MD'
   const theme = cm.EditorView.theme({
     '&': { height: '100%', fontSize: 'var(--tv-font-size, 13px)' },
     '&.cm-focused': { outline: 'none' },
-    '.cm-content': { fontFamily: "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,monospace" },
+    '.cm-content': {
+      fontFamily: "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,monospace",
+      textDecoration: 'none', whiteSpace: 'pre-wrap',
+    },
+    '.cm-line, .cm-line *': { textDecoration: 'none !important', whiteSpace: 'pre-wrap' },
     '.cm-scroller': { overflow: 'auto' },
     // 组件内置的 basicSetup 除了行号还带一个代码折叠 gutter，用不上，隐藏掉不留预留空白
     '.cm-foldGutter': { display: 'none' },
   })
   const loader = CM_LANG_LOADERS[(ext || '').toUpperCase()]
-  const langExt = loader ? await loader() : null
-  cmExtensions.value = [theme, cm.highlighting, ...(langExt ? [langExt] : [])]
+  const langExt = loader ? await loader(source) : null
+  cmExtensions.value = [theme, cm.EditorView.lineWrapping, cm.highlighting, ...(langExt ? [langExt] : []),
+    // 补全菜单打开时 Tab 接受当前项；没有补全时由 CodeMirror 默认缩进处理。
+    cm.keymap.of([{ key: 'Tab', run: acceptCompletion }]),
+  ]
 }
 function onCmReady({ view }: { view: any }) {
   cmView.value = view
@@ -278,13 +318,27 @@ async function startEdit() {
   captureScroll(tvScroll.value)
   editText.value = rawText.value
   saveError.value = ''
+  cmView.value = null
+  mdEditorReady.value = false
+  const loadSeq = ++cmLoadSeq
   editing.value = true
+  if (isMarkdownFile.value) {
+    await loadCmExtensions('MD', editText.value)
+    if (loadSeq !== cmLoadSeq || !editing.value) return
+    mdEditorReady.value = true
+  }
   await nextTick()
-  editArea.value?.focus()
-  applyScroll(editArea.value)
+  if (isMarkdownFile.value) cmView.value?.focus()
+  else {
+    editArea.value?.focus()
+    applyScroll(editArea.value)
+  }
 }
 function cancelEdit() {
   captureScroll(editArea.value)
+  cmLoadSeq++
+  cmView.value = null
+  mdEditorReady.value = false
   editing.value = false
   nextTick(() => applyScroll(tvScroll.value))
 }
@@ -295,6 +349,9 @@ async function saveEdit() {
     captureScroll(editArea.value)
     await filesApi.saveContent(Number(props.fileKey), editText.value)
     await processText(editText.value, props.ext)
+    cmLoadSeq++
+    mdEditorReady.value = false
+    cmView.value = null
     editing.value = false
     await nextTick()
     applyScroll(tvScroll.value)
@@ -306,17 +363,6 @@ async function saveEdit() {
 }
 
 let hljs: any = null   // highlight.js 句柄，动态导入
-
-async function ensureHljs(lang: string) {
-  if (!hljs) {
-    const mod = await import('highlight.js/lib/core')
-    hljs = mod.default
-  }
-  if (!hljs.getLanguage(lang) && LANG_LOADERS[lang]) {
-    const mod = await LANG_LOADERS[lang]()
-    hljs.registerLanguage(lang, mod.default)
-  }
-}
 
 // ── HTML 转义 ────────────────────────────────────────
 function escHtml(s: string) {
@@ -441,6 +487,8 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
   error.value     = null
   truncated.value = false
   editing.value   = false   // 切换文件/重新加载时退出编辑态，别把上一份文件的编辑框留着
+  cmLoadSeq++
+  mdEditorReady.value = false
   cmView.value    = null
   saveError.value = ''
 
@@ -542,6 +590,47 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
 /* ── 代码文件编辑：CodeMirror（字体/字号走 theme 里的 --tv-font-size，容器负责撑满高度） ── */
 .tv-edit-cm-wrap { flex: 1; overflow: hidden; }
 .tv-edit-cm-wrap :deep(.cm-editor) { height: 100%; }
+.tv-editor-loading {
+  height: 100%; display: flex; align-items: center; justify-content: center;
+  color: var(--text-secondary); font-size: 12px; background: #fff;
+}
+.tv-edit-md-wrap :deep(.cm-content) {
+  padding: 20px 24px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  line-height: 1.7;
+}
+.tv-edit-md-wrap :deep(.cm-gutters) {
+  background: #f2f3f8;
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+}
+/* CodeMirror 的 classHighlighter 使用稳定的 tok-* 类名，颜色贴近 VS Code Light。 */
+.tv-edit-cm-wrap :deep(.tok-heading),
+.tv-edit-cm-wrap :deep(.tok-heading1),
+.tv-edit-cm-wrap :deep(.tok-heading2),
+.tv-edit-cm-wrap :deep(.tok-heading3),
+.tv-edit-cm-wrap :deep(.tok-heading4),
+.tv-edit-cm-wrap :deep(.tok-heading5),
+.tv-edit-cm-wrap :deep(.tok-heading6) { color: #6f62c4; font-weight: 700; }
+.tv-edit-cm-wrap :deep(.tok-strong) { color: #8b5fc7; font-weight: 700; }
+.tv-edit-cm-wrap :deep(.tok-emphasis) { color: #a56bb3; font-style: italic; }
+/* 代码 token 与 GuguChat / MarkdownView 共用同一套配色。 */
+.tv-edit-cm-wrap :deep(.tok-keyword),
+.tv-edit-cm-wrap :deep(.tok-atom) { color: #7b5cf0; font-weight: 600; }
+.tv-edit-cm-wrap :deep(.tok-string),
+.tv-edit-cm-wrap :deep(.tok-string2) { color: #2d7a4f; }
+.tv-edit-cm-wrap :deep(.tok-comment),
+.tv-edit-cm-wrap :deep(.tok-quote),
+.tv-edit-cm-wrap :deep(.tok-meta) { color: #9a9a9a; font-style: italic; }
+.tv-edit-cm-wrap :deep(.tok-number),
+.tv-edit-cm-wrap :deep(.tok-labelName),
+.tv-edit-cm-wrap :deep(.tok-propertyName) { color: #b07858; }
+.tv-edit-cm-wrap :deep(.tok-function),
+.tv-edit-cm-wrap :deep(.tok-name),
+.tv-edit-cm-wrap :deep(.tok-typeName),
+.tv-edit-cm-wrap :deep(.tok-className) { color: #4a7fb5; font-weight: 600; }
+.tv-edit-cm-wrap :deep(.tok-variableName),
+.tv-edit-cm-wrap :deep(.tok-link),
+.tv-edit-cm-wrap :deep(.tok-url) { color: #5a9e88; }
 
 .tv-table {
   width: 100%;

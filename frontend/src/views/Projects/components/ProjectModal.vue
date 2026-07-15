@@ -210,23 +210,26 @@
               </template>
             </nav>
             <!-- 粘贴（剪切/复制后出现）—— 放在所有按钮最左 -->
-            <button v-if="pmCbStore.hasContent()" class="paste-btn" @click.stop="pmCtxPaste" title="粘贴到当前位置">
-              <PhClipboardText :size="13" weight="bold" />
-              粘贴{{ (pmCbStore.fileIds.length + pmCbStore.folderIds.length) > 1 ? ` (${pmCbStore.fileIds.length + pmCbStore.folderIds.length})` : '' }}
-            </button>
+            <FilePasteButton
+              v-if="pmCbStore.hasContent()"
+              compact
+              :count="pmCbStore.fileIds.length + pmCbStore.folderIds.length"
+              @paste="pmCtxPaste"
+            />
             <!-- 多选模式 -->
             <button class="sel-mode-btn" :class="{ on: pmInSelectionMode }" @click.stop="togglePmSelectionMode" title="多选模式">
               <PhCheckSquare :size="13" weight="bold" />
             </button>
             <!-- 视图切换 -->
-            <div class="view-toggle">
+            <SegmentedControl class="view-toggle" :active-index="fileViewMode === 'grid' ? 0 : 1"
+              style="--pill-bg: rgba(255,255,255,0.85); --pill-radius: 6px">
               <button :class="{ on: fileViewMode === 'grid' }" @click="fileViewMode = 'grid'" title="网格视图">
                 <PhSquaresFour :size="13" weight="bold" />
               </button>
               <button :class="{ on: fileViewMode === 'list' }" @click="fileViewMode = 'list'" title="列表视图">
                 <PhList :size="13" weight="bold" />
               </button>
-            </div>
+            </SegmentedControl>
             <!-- 新建文件夹（每层都可用） -->
             <button v-if="!showNewFolder" class="new-folder-btn" @click.stop="showNewFolder = true">
               <PhFolderPlus :size="13" weight="bold" />
@@ -266,6 +269,7 @@
           </div>
 
           <div class="file-content" ref="pmGridRef" style="position:relative" @mousedown="onPmGridMouseDown"
+            @click="onPmContentClick"
             @contextmenu.prevent.self="openPmCtx('empty', null, $event)"
             @dragenter.prevent="onPmDragEnter"
             @dragover.prevent
@@ -580,33 +584,18 @@
             </template>
 
             <!-- 批量操作浮动栏 -->
-            <Transition name="pm-action-bar">
-              <div v-if="pmInSelectionMode" class="pm-selection-bar" @click.stop>
-                <span class="pm-sel-count">已选 {{ pmSelectedFileIds.size + pmSelectedFolderIds.size }} 项</span>
-                <button class="pm-sel-download-btn" @click="downloadSelectedPm" :disabled="(pmSelectedFileIds.size === 0 && pmSelectedFolderIds.size === 0) || pmDownloadingZip">
-                  <PhDownloadSimple v-if="!pmDownloadingZip" :size="11" weight="bold" />
-                  <svg v-else class="spin" width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                    <path d="M7 1a6 6 0 1 1-4.24 1.76"/>
-                  </svg>
-                  {{ pmDownloadingZip ? '下载中…' : '下载' }}
-                </button>
-                <div class="sel-divider"></div>
-                <button class="pm-sel-action-btn" @click="pmSelCut" title="剪切">
-                  <PhScissors :size="11" weight="bold" />
-                  剪切
-                </button>
-                <button class="pm-sel-action-btn" @click="pmSelCopy" title="复制">
-                  <PhCopy :size="11" weight="bold" />
-                  复制
-                </button>
-                <div class="sel-divider"></div>
-                <button class="pm-sel-delete-btn" @click="deleteSelectedPm">
-                  <PhTrash :size="11" weight="bold" />
-                  删除
-                </button>
-                <button class="pm-sel-cancel-btn" @click="clearPmSelection">取消</button>
-              </div>
-            </Transition>
+            <FileSelectionToolbar
+              v-if="pmInSelectionMode"
+              compact
+              :file-count="pmSelectedFileIds.size"
+              :folder-count="pmSelectedFolderIds.size"
+              :downloading="pmDownloadingZip"
+              @download="downloadSelectedPm"
+              @cut="pmSelCut"
+              @copy="pmSelCopy"
+              @delete="deleteSelectedPm"
+              @cancel="clearPmSelection"
+            />
           </div>
         </div>
       </div>
@@ -724,9 +713,13 @@ import {
 } from '@phosphor-icons/vue'
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
+import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
+import FilePasteButton from '@/components/common/FilePasteButton.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
+import { parseFolderId } from '@/utils/folderKeys'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
@@ -936,6 +929,10 @@ function clearPmSelection() {
   pmLastAnchorIndex.value     = -1
 }
 
+function onPmContentClick() {
+  if (pmInSelectionMode.value) clearPmSelection()
+}
+
 function toggleFolderSelectPm(folder: FolderMeta) { _toggleFolderSelPm(folder.id) }
 
 function togglePmSelectionMode() {
@@ -1030,8 +1027,10 @@ async function downloadSelectedPm() {
 // 消失、导航路径不含它们，无需重置导航（仅清理指向已删文件夹的历史快照）。
 
 async function deleteSelectedPm() {
-  const fids = [...pmSelectedFileIds.value]
-  const dids = [...pmSelectedFolderIds.value]
+  const visibleFileIds = new Set(sortedCurrentFiles.value.map(file => file.id))
+  const visibleFolderIds = new Set(sortedCurrentFolders.value.map(folder => folder.id))
+  const fids = [...pmSelectedFileIds.value].filter(id => visibleFileIds.has(id))
+  const dids = [...pmSelectedFolderIds.value].filter(id => visibleFolderIds.has(id))
   if (!fids.length && !dids.length) return
   clearPmSelection()
   try {
@@ -1041,6 +1040,7 @@ async function deleteSelectedPm() {
     ])
     fileCacheStore.removeFiles(fids)
     dids.forEach(id => { fileCacheStore.removeFolder(id); prunePmHistoryForFolder(id) })   // removeFolder 级联删子文件夹及其文件
+    await fileCacheStore.refresh()
   } catch (err) { console.error('[ProjectModal] 批量删除失败:', errMsg(err)) }
 }
 
@@ -1053,8 +1053,8 @@ async function movePmFoldersInto(folderIds: (number | string)[], targetFolderId:
   const nTarget = targetFolderId == null ? null : Number(targetFolderId)
   try {
     const results = await Promise.all(folderIds.map(id =>
-      foldersApi.move(Number(id), nTarget, fileCacheStore.getFolder(Number(id))?.version ?? 1)))
-    results.forEach(f => fileCacheStore.updateFolder(f.id, { parentId: nTarget, version: f.version }))
+      foldersApi.move(Number(id), nTarget, fileCacheStore.getFolder(Number(id))?.version ?? 1, props.project?.id ?? null)))
+    results.forEach(f => fileCacheStore.updateFolder(f.id, { parentId: nTarget, projectId: props.project?.id ?? null, version: f.version }))
   } catch (err) { console.error('[ProjectModal] 移动文件夹失败:', errMsg(err)) }
   // 不再重置导航——store 单源，移走的文件夹自动从当前视图消失，用户停在原地即可（老代码重置到根是
   // 全量重拉的副作用，非有意行为）。
@@ -1298,7 +1298,6 @@ function prunePmHistoryForFolder(folderId: number) {
 }
 
 async function deleteFolderCard(folder: FolderMeta) {
-  if (!confirm(`删除文件夹「${folder.name}」？其中的文件将一并移入回收站。`)) return
   prunePmHistoryForFolder(folder.id)
   try {
     await foldersApi.delete(folder.id)
@@ -1890,13 +1889,24 @@ async function onPmDrop(e: DragEvent) {
 const isMac = navigator.platform.toUpperCase().includes('MAC') || navigator.userAgent.includes('Mac')
 const modKey = isMac ? '⌘' : 'Ctrl'
 const pmCbStore = useClipboardStore()
+const pmPasteBusy = ref(false)
 
 function pmSelCut() {
-  pmCbStore.cut([...pmSelectedFileIds.value], [...pmSelectedFolderIds.value])
+  const fileIds = new Set(sortedCurrentFiles.value.map(file => file.id))
+  const folderIds = new Set(sortedCurrentFolders.value.map(folder => folder.id))
+  pmCbStore.cut(
+    [...pmSelectedFileIds.value].filter(id => fileIds.has(id)),
+    [...pmSelectedFolderIds.value].filter(id => folderIds.has(id)),
+  )
   clearPmSelection()
 }
 function pmSelCopy() {
-  pmCbStore.copy([...pmSelectedFileIds.value], [])
+  const fileIds = new Set(sortedCurrentFiles.value.map(file => file.id))
+  const folderIds = new Set(sortedCurrentFolders.value.map(folder => folder.id))
+  pmCbStore.copy(
+    [...new Set(pmSelectedFileIds.value)].filter(id => fileIds.has(id)),
+    [...new Set(pmSelectedFolderIds.value)].filter(id => folderIds.has(id)),
+  )
   clearPmSelection()
 }
 type PmCtxTarget = FileMeta | FolderMeta
@@ -1950,8 +1960,11 @@ function pmCtxCut() {
 }
 function pmCtxCopy() {
   const target = pmCtx.value.target
-  const ids = pmCtx.value.type === 'multi-file' ? [...pmSelectedFileIds.value] : (target ? [target.id] : [])
-  pmCbStore.copy(ids, []); pmCtx.value.visible = false
+  const fileIds = pmCtx.value.type === 'multi-file'
+    ? [...new Set(pmSelectedFileIds.value)]
+    : (target && pmCtx.value.type === 'file' ? [target.id] : [])
+  const folderIds = target && pmCtx.value.type === 'folder' ? [target.id] : []
+  pmCbStore.copy(fileIds, folderIds); pmCtx.value.visible = false
 }
 async function pmCtxDelete() {
   const target = pmCtx.value.target
@@ -1980,26 +1993,37 @@ async function pmCtxDeleteFolder() {
 }
 
 async function pmCtxPaste() {
+  if (pmPasteBusy.value) return
+  pmPasteBusy.value = true
   pmCtx.value.visible = false
   const folderId  = pmCurrentFolderId()   // 当前所在文件夹 id；根目录为 null
   const projectId = props.project?.id
   try {
+    const fileIds = [...new Set(pmCbStore.fileIds)]
+    const folderIds = [...new Set(pmCbStore.folderIds
+      .map(id => parseFolderId(id))
+      .filter((id): id is number => id != null))]
     if (pmCbStore.type === 'cut') {
       // 剪切：文件改 folderId+projectId、文件夹改 parent 到当前层。更新 store 后，源层/目标层视图
       // 与文件夹计数都自动跟随（源层文件消失、目标层出现），不再需要逐层剔除/刷新。
       const [, movedFolders] = await Promise.all([
-        Promise.all(pmCbStore.fileIds.map(id => filesApi.update(id, { folderId, projectId }))),
-        Promise.all(pmCbStore.folderIds.map(id =>
-          foldersApi.move(id, folderId, fileCacheStore.getFolder(id)?.version ?? 1))),
+        Promise.all(fileIds.map(id => filesApi.update(id, { folderId, projectId }))),
+        Promise.all(folderIds.map(id =>
+          foldersApi.move(id, folderId, fileCacheStore.getFolder(id)?.version ?? 1, projectId))),
       ])
-      pmCbStore.fileIds.forEach(id => fileCacheStore.updateFile(id, { folderId, projectId }))
-      movedFolders.forEach(f => fileCacheStore.updateFolder(f.id, { parentId: folderId, version: f.version }))
+      fileIds.forEach(id => fileCacheStore.updateFile(id, { folderId, projectId }))
+      movedFolders.forEach(f => fileCacheStore.updateFolder(f.id, { parentId: folderId, projectId, version: f.version }))
       pmCbStore.clear()
+      await fileCacheStore.refresh()
     } else if (pmCbStore.type === 'copy') {
-      const created = await Promise.all(pmCbStore.fileIds.map(id => filesApi.copy(id, { folderId, projectId })))
+      const created = await Promise.all(fileIds.map(id => filesApi.copy(id, { folderId, projectId })))
       created.forEach(c => { if (c) fileCacheStore.addFile(c) })
+      const copiedFolders = await Promise.all(folderIds.map(id => foldersApi.copy(id, folderId, projectId)))
+      copiedFolders.forEach(c => fileCacheStore.addFolder(c))
+      await fileCacheStore.refresh()
     }
   } catch (e) { console.error('[PM] 粘贴失败:', e) }
+  finally { pmPasteBusy.value = false }
 }
 
 function onPmKeyDown(e: KeyboardEvent) {
@@ -2546,7 +2570,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .sort-check.desc { transform: rotate(180deg); }
 
 .view-toggle {
-  display: flex; background: rgba(0,0,0,0.05);
+  background: rgba(0,0,0,0.05);
   border-radius: 8px; padding: 2px; gap: 2px;
   flex-shrink: 0;   /* 工具栏拥挤时不被挤压，否则按钮/带 viewBox 的 SVG 会缩成 2~3px（首屏/久置后布局最紧时最明显）*/
 }
@@ -2557,10 +2581,8 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   flex-shrink: 0;
 }
 .view-toggle button svg { flex-shrink: 0; }
-.view-toggle button.on {
-  background: rgba(255,255,255,0.85); color: var(--color-primary);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
+.view-toggle button.on { color: var(--color-primary); }
+.view-toggle button:hover { color: var(--color-primary); }
 .new-folder-btn {
   display: flex; align-items: center; gap: 5px;
   height: 28px; padding: 0 11px; border-radius: 8px;

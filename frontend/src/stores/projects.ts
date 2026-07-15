@@ -196,10 +196,11 @@ export const useProjectStore = defineStore('projects', () => {
     if (!p) return
     const oldStatus = p.status
     const transition = transitionProjectStatus(p, newStatus)
+    const becameDone = oldStatus !== 'done' && transition.status === 'done'
     Object.assign(p, transition)
     p._stageBeforeDone = transition.stageBeforeDone
 
-    if (transition.status === 'done' && oldStatus !== 'done') {
+    if (becameDone) {
       p.doneAt = new Date().toISOString()
     } else if (oldStatus === 'done' && transition.status !== 'done') {
       p.doneAt = null
@@ -216,9 +217,10 @@ export const useProjectStore = defineStore('projects', () => {
 
     const transition = transitionProjectStage(p, stageKey, progress ?? 0)
     const oldStatus = p.status
+    const becameDone = oldStatus !== 'done' && transition.status === 'done'
     Object.assign(p, transition)
     p._stageBeforeDone = transition.stageBeforeDone
-    if (transition.status === 'done' && oldStatus !== 'done') {
+    if (becameDone) {
       p.doneAt = new Date().toISOString()
     } else if (transition.status !== 'done' && oldStatus === 'done') {
       p.doneAt = null
@@ -247,9 +249,12 @@ export const useProjectStore = defineStore('projects', () => {
       ? transitionProjectStage(state, advanceTo, progress)
       : transitionProjectTodos(state, newStages, progress)
     const oldStatus = p.status
+    const becameDone = oldStatus !== 'done' && transition.status === 'done'
     Object.assign(p, transition)
     p._stageBeforeDone = transition.stageBeforeDone
-    if (transition.status === 'done' && oldStatus !== 'done') p.doneAt = new Date().toISOString()
+    if (becameDone) {
+      p.doneAt = new Date().toISOString()
+    }
     if (transition.status !== 'done' && oldStatus === 'done') p.doneAt = null
     await _patchProject(id, {
       stages: transition.stages, currentStage: transition.currentStage,
@@ -259,13 +264,19 @@ export const useProjectStore = defineStore('projects', () => {
 
   async function updateProject(id: number, fields: Partial<Project>) {
     const p = projects.value.find(p => p.id === id)
-    if (p) Object.assign(p, fields)
+    if (p) {
+      const becameDone = p.status !== 'done' && fields.status === 'done'
+      Object.assign(p, fields)
+    }
     await _patchProject(id, fields)
   }
 
   function updateProjectDebounced(id: number, fields: Partial<Project>, delay = 400) {
     const p = projects.value.find(project => project.id === id)
-    if (p) Object.assign(p, fields)
+    if (p) {
+      const becameDone = p.status !== 'done' && fields.status === 'done'
+      Object.assign(p, fields)
+    }
     const pending = delayedProjectUpdates.get(id)
     if (pending) {
       Object.assign(pending.fields, fields)

@@ -162,36 +162,36 @@
    code-block-lowlight 是拿 ProseMirror decoration 画高亮的，decoration 画不出真实嵌套
    的 <span>，遇到「string 嵌在 params 里、params 嵌在 function 里」这种情况，会把三层
    class 拍扁成一个 "hljs-function hljs-params hljs-string" 全挂在同一段文字上（源码见
-   parseNodes()）。这仨类选择器优先级一样时 CSS 按「后来居上」，若不管顺序，字符串/关键字
-   这些"内层、更具体"的判断会被 function/params 这类"外层、结构性"的判断盖掉——真出过这个
-   问题：print("Hello, World!") 里的字符串，预览（真嵌套 <span>，天然只认最内层）显示成
-   正确的绿色，编辑器（拍扁成一个 class 列表）却被 function/params 的蓝色盖掉了。
-   预览走真嵌套不受影响，但编辑器这边必须显式让"更具体"的赢：给内容类 token（字符串/
-   关键字/数字/注释/内置名/变量）的选择器重复一遍 class 提高优先级（.hljs-string.hljs-string
-   比单层 .hljs-params 优先级更高，不管两条规则谁写在前面），结构性 wrapper 类
-   （function/name/type/params/title/section/selector-id/selector-class）留单层优先级、
-   自然垫底。 */
-.md-preview .np-code .hljs-keyword, .ne-body .ProseMirror pre .hljs-keyword.hljs-keyword,
-.md-preview .np-code .hljs-literal, .ne-body .ProseMirror pre .hljs-literal.hljs-literal,
-.md-preview .np-code .hljs-selector-tag, .ne-body .ProseMirror pre .hljs-selector-tag.hljs-selector-tag,
-.md-preview .np-code .hljs-tag, .ne-body .ProseMirror pre .hljs-tag.hljs-tag { color: #7b5cf0; }
-.md-preview .np-code .hljs-string, .ne-body .ProseMirror pre .hljs-string.hljs-string,
-.md-preview .np-code .hljs-regexp, .ne-body .ProseMirror pre .hljs-regexp.hljs-regexp,
-.md-preview .np-code .hljs-symbol, .ne-body .ProseMirror pre .hljs-symbol.hljs-symbol,
-.md-preview .np-code .hljs-bullet, .ne-body .ProseMirror pre .hljs-bullet.hljs-bullet,
-.md-preview .np-code .hljs-addition, .ne-body .ProseMirror pre .hljs-addition.hljs-addition { color: #2d7a4f; }
-.md-preview .np-code .hljs-comment, .ne-body .ProseMirror pre .hljs-comment.hljs-comment,
-.md-preview .np-code .hljs-quote, .ne-body .ProseMirror pre .hljs-quote.hljs-quote,
-.md-preview .np-code .hljs-meta, .ne-body .ProseMirror pre .hljs-meta.hljs-meta { color: #9a9a9a; font-style: italic; }
-.md-preview .np-code .hljs-number, .ne-body .ProseMirror pre .hljs-number.hljs-number,
-.md-preview .np-code .hljs-attr, .ne-body .ProseMirror pre .hljs-attr.hljs-attr,
-.md-preview .np-code .hljs-attribute, .ne-body .ProseMirror pre .hljs-attribute.hljs-attribute,
-.md-preview .np-code .hljs-deletion, .ne-body .ProseMirror pre .hljs-deletion.hljs-deletion { color: #b07858; }
-.md-preview .np-code .hljs-built_in, .ne-body .ProseMirror pre .hljs-built_in.hljs-built_in,
-.md-preview .np-code .hljs-builtin-name, .ne-body .ProseMirror pre .hljs-builtin-name.hljs-builtin-name,
-.md-preview .np-code .hljs-link, .ne-body .ProseMirror pre .hljs-link.hljs-link { color: #5a9e88; }
-.md-preview .np-code .hljs-variable, .ne-body .ProseMirror pre .hljs-variable.hljs-variable,
-.md-preview .np-code .hljs-template-variable, .ne-body .ProseMirror pre .hljs-template-variable.hljs-template-variable { color: #1e2028; }
+   parseNodes()）。这套 CSS 已经按"内容类 token 在前、wrapper 类在后"排序——同一文件
+   里规则按位置「后来居上」决定优先级，顺序本身就是优先级机制，不需要再用 .X.X 双 class
+   写法（那只会把选择器从「匹配单 class」变成「要求 class 字符串里出现两次同一个名」，
+   实际 DOM 里没人这样写，等于零匹配）。结构性 wrapper 类（function/name/type/params/
+   title/section/selector-id/selector-class）留单层、写在内容类之后、自然垫底。
+   注意：之前 (2026-07-11) 注释里说"重复 class 提高优先级"是 CSS 误解，specificity 0,2,0
+   是高没错但匹配条件是「元素 class 字符串里同时含两次这个名」——prose decoration 输出
+   是单 class <span class="hljs-keyword">，全都不匹配，等于整个编辑态语法高亮是死的。
+   2026-07-15 修：把所有 .hljs-X.hljs-X 改回 .hljs-X。 */
+.md-preview .np-code .hljs-keyword, .ne-body .ProseMirror pre .hljs-keyword,
+.md-preview .np-code .hljs-literal, .ne-body .ProseMirror pre .hljs-literal,
+.md-preview .np-code .hljs-selector-tag, .ne-body .ProseMirror pre .hljs-selector-tag,
+.md-preview .np-code .hljs-tag, .ne-body .ProseMirror pre .hljs-tag { color: #7b5cf0; }
+.md-preview .np-code .hljs-string, .ne-body .ProseMirror pre .hljs-string,
+.md-preview .np-code .hljs-regexp, .ne-body .ProseMirror pre .hljs-regexp,
+.md-preview .np-code .hljs-symbol, .ne-body .ProseMirror pre .hljs-symbol,
+.md-preview .np-code .hljs-bullet, .ne-body .ProseMirror pre .hljs-bullet,
+.md-preview .np-code .hljs-addition, .ne-body .ProseMirror pre .hljs-addition { color: #2d7a4f; }
+.md-preview .np-code .hljs-comment, .ne-body .ProseMirror pre .hljs-comment,
+.md-preview .np-code .hljs-quote, .ne-body .ProseMirror pre .hljs-quote,
+.md-preview .np-code .hljs-meta, .ne-body .ProseMirror pre .hljs-meta { color: #9a9a9a; font-style: italic; }
+.md-preview .np-code .hljs-number, .ne-body .ProseMirror pre .hljs-number,
+.md-preview .np-code .hljs-attr, .ne-body .ProseMirror pre .hljs-attr,
+.md-preview .np-code .hljs-attribute, .ne-body .ProseMirror pre .hljs-attribute,
+.md-preview .np-code .hljs-deletion, .ne-body .ProseMirror pre .hljs-deletion { color: #b07858; }
+.md-preview .np-code .hljs-built_in, .ne-body .ProseMirror pre .hljs-built_in,
+.md-preview .np-code .hljs-builtin-name, .ne-body .ProseMirror pre .hljs-builtin-name,
+.md-preview .np-code .hljs-link, .ne-body .ProseMirror pre .hljs-link { color: #5a9e88; }
+.md-preview .np-code .hljs-variable, .ne-body .ProseMirror pre .hljs-variable,
+.md-preview .np-code .hljs-template-variable, .ne-body .ProseMirror pre .hljs-template-variable { color: #1e2028; }
 /* 下面这两组是结构性 wrapper（外层容器），优先级故意留低——单层 class 选择器，
    不跟上面几组的"重复 class 提权"手法比 */
 .md-preview .np-code .hljs-function, .ne-body .ProseMirror pre .hljs-function,

@@ -7,6 +7,7 @@ copy/stat/文件夹钩子在 P1 加入后扩这里。
 import pytest
 
 from app.services.storage import LocalStorageBackend
+from app.services.storage.trash import to_trash_key
 
 
 @pytest.fixture
@@ -47,6 +48,13 @@ async def test_local_trash_hooks_move_and_restore(storage):
     assert await storage.exists("u/a/doc.txt") is False
     assert await storage.restore_from_trash("u/trash/1/doc.txt", "u/a/doc.txt") == "u/a/doc.txt"
     assert await storage.get("u/a/doc.txt") == b"data"
+
+
+def test_trash_key_uses_display_name():
+    assert (
+        to_trash_key(7, "7/个人文件/测试/原文件.bin", "会议/方案", "MD")
+        == "7/trash/测试/会议_方案.md"
+    )
 
 
 async def test_list_keys(storage):

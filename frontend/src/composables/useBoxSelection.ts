@@ -6,6 +6,7 @@ interface Pt { x: number; y: number }
 export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement | null>, {
   fileAttr        = 'data-file-id',
   folderAttr      = 'data-folder-key',
+  extraFolderAttrs = [],
   excludeSelector = 'button, .fc-card, .folder-card, .fc-upload, .list-row',
   parseFileId     = Number,
   parseFolderId   = ((v: string) => v as F),
@@ -13,6 +14,7 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
 }: {
   fileAttr?: string
   folderAttr?: string
+  extraFolderAttrs?: string[]
   excludeSelector?: string
   parseFileId?: (v: string) => number
   parseFolderId?: (v: string) => F
@@ -61,14 +63,17 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
     const st        = containerRef.value.scrollTop
     const fileIds   = new Set<number>()
     const folderIds = new Set<F>()
-    containerRef.value.querySelectorAll(`[${fileAttr}], [${folderAttr}]`).forEach(el => {
+    const folderSelectors = [folderAttr, ...extraFolderAttrs].map(attr => `[${attr}]`).join(', ')
+    containerRef.value.querySelectorAll(`[${fileAttr}], ${folderSelectors}`).forEach(el => {
       const er = el.getBoundingClientRect()
       const l  = er.left - cRect.left
       const t  = er.top  - cRect.top + st
       if (l < rect.left + rect.width && l + er.width > rect.left &&
           t < rect.top  + rect.height && t + er.height > rect.top) {
         const fv = el.getAttribute(fileAttr)
-        const dv = el.getAttribute(folderAttr)
+        const dv = [folderAttr, ...extraFolderAttrs]
+          .map(attr => el.getAttribute(attr))
+          .find((value): value is string => value !== null)
         if (fv !== null) fileIds.add(parseFileId(fv))
         if (dv !== null) folderIds.add(parseFolderId(dv))
       }

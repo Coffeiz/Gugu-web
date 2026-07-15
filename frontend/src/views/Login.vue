@@ -74,7 +74,7 @@ async function handleLogin() {
   loading.value = true; error.value = ''
   try {
     await auth.login(form.username, form.password)
-    router.push((router.currentRoute.value.query.redirect as string) ?? '/projects')
+    router.push((router.currentRoute.value.query.redirect as string) ?? '/')
   } catch (e) {
     error.value = e instanceof Error ? e.message : '操作失败'
   } finally {
