@@ -27,7 +27,13 @@ from app.services.storage.trash import move_file_to_trash
 from app.services.files.response import color_value, to_file_response
 from app.services.files.browser import all_files_query, file_listing_query, storage_usage_query
 from app.services.files.upload import find_conflict, parse_upload_filename
-from app.services.files.previews import delete_thumb_cache, thumb_dir, thumb_path, THUMB_SIZE_MAP
+from app.services.files.previews import (
+    delete_thumb_cache,
+    generate_thumb_jpeg_fallback,
+    generate_thumbs_sync,
+    pregenerate_thumb,
+    thumb_path,
+)
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -56,55 +62,6 @@ async def _execute_version_query(db: AsyncSession, stmt):
                 raise
             await db.rollback()
             await asyncio.sleep(_VERSION_RETRY_BACKOFF[attempt])
-
-# 缩略图生成是 CPU 密集（解码/缩放/编码）；小核机器上多个并发跑会占满 CPU、卡住其他请求。
-# 闸门：最多 (核数-1) 个并发，至少留一个核给事件循环（2 核 → 1）。
-_THUMB_SEM = asyncio.Semaphore(max(1, (os.cpu_count() or 2) - 1))
-
-def _generate_thumbs_sync(raw: bytes, fid: int, sizes: tuple = ("tiny",)) -> None:
-    """生成指定尺寸的 WebP 缩略图并写入磁盘缓存。在线程中运行。"""
-    from PIL import Image
-    import io as _io
-    td = thumb_dir()
-    img = Image.open(_io.BytesIO(raw))
-    # 大图快速降采样解码：JPEG 按目标尺寸 draft 出 1/2~1/8 分辨率，省掉解全分辨率的大头开销（非 JPEG 无效，安全）
-    try:
-        _biggest = max(THUMB_SIZE_MAP[s][0] for s in sizes)
-        img.draft(None, (_biggest, _biggest))
-    except Exception:
-        pass
-    # 保留 RGBA（PNG 透明通道），其余统一转 RGB
-    if img.mode not in ("RGB", "RGBA"):
-        img = img.convert("RGBA") if "transparency" in img.info else img.convert("RGB")
-    for size_name in sizes:
-        max_px, quality = THUMB_SIZE_MAP[size_name]
-        out = img.copy()
-        out.thumbnail((max_px, max_px), Image.LANCZOS)
-        buf = _io.BytesIO()
-        out.save(buf, format="WEBP", quality=quality)
-        (td / f"{fid}_{size_name}.webp").write_bytes(buf.getvalue())
-
-def _generate_thumb_jpeg_fallback(raw: bytes, size: str) -> bytes | None:
-    """WebP 生成失败时的降级：强制 RGB，输出缩小的 JPEG，避免返回原始大图。"""
-    from PIL import Image
-    import io as _io
-    try:
-        img = Image.open(_io.BytesIO(raw))
-        max_px, _ = THUMB_SIZE_MAP.get(size, (192, 82))
-        try:
-            img.draft(None, (max_px, max_px))   # JPEG 大图快速降采样解码
-        except Exception:
-            pass
-        # 取动图第一帧，强制转 RGB
-        if hasattr(img, "n_frames") and img.n_frames > 1:
-            img.seek(0)
-        img = img.convert("RGB")
-        img.thumbnail((max_px, max_px), Image.LANCZOS)
-        buf = _io.BytesIO()
-        img.save(buf, format="JPEG", quality=80)
-        return buf.getvalue()
-    except Exception:
-        return None
 
 # ── GET /files ────────────────────────────────────────────────────────────────
 
@@ -276,17 +233,6 @@ async def check_conflicts(
 
 # ── POST /files ───────────────────────────────────────────────────────────────
 
-async def _pregen_thumb(storage_key: str, fid: int) -> None:
-    """上传完成后在后台预生成缩略图，避免首次访问时等待。"""
-    import asyncio
-    try:
-        raw = await get_storage().get(storage_key)
-        async with _THUMB_SEM:
-            await asyncio.to_thread(_generate_thumbs_sync, raw, fid)
-    except Exception:
-        pass
-
-
 @router.post("", response_model=FileResponse, status_code=201)
 async def upload_file(
     background_tasks: BackgroundTasks,
@@ -350,7 +296,7 @@ async def upload_file(
     project_color = color_value(result.project.color) if result.project else None
     resp = to_file_response(f, project_name, project_color, result.folder_name)
     if _is_img:
-        background_tasks.add_task(_pregen_thumb, f.storage_key, f.id)
+        background_tasks.add_task(pregenerate_thumb, f.storage_key, f.id)
     return resp
 
 
@@ -822,7 +768,7 @@ async def get_thumb(
         raise HTTPException(404, "物理文件丢失")
     try:
         async with _THUMB_SEM:
-            await asyncio.to_thread(_generate_thumbs_sync, raw, fid, (size,))
+            await asyncio.to_thread(generate_thumbs_sync, raw, fid, (size,))
         cache_path = thumb_path(fid, size)
         if cache_path.exists():
             return FastAPIResponse(content=cache_path.read_bytes(), media_type="image/webp",
@@ -834,7 +780,7 @@ async def get_thumb(
     # 降级：WebP 失败时返回缩小的 JPEG，保证不返回原始大图
     try:
         async with _THUMB_SEM:
-            jpeg_bytes = await asyncio.to_thread(_generate_thumb_jpeg_fallback, raw, size)
+            jpeg_bytes = await asyncio.to_thread(generate_thumb_jpeg_fallback, raw, size)
         if jpeg_bytes:
             return FastAPIResponse(content=jpeg_bytes, media_type="image/jpeg",
                                    headers={"Cache-Control": "private, max-age=86400"})
