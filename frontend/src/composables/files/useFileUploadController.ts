@@ -13,6 +13,12 @@ export interface UploadConflictContext {
   folderId: number | null
 }
 
+export interface PreparedUploadBatch {
+  items: UploadItem[]
+  decisions: Map<string, ConflictDecision>
+  folderGroups: UploadGroup[]
+}
+
 export async function resolveUploadConflicts(
   items: UploadItem[],
   context: UploadConflictContext,
@@ -24,6 +30,19 @@ export async function resolveUploadConflicts(
   return {
     items: items.filter(item => decisions.get(item.relativePath)?.action !== 'skip'),
     decisions,
+  }
+}
+
+/** 统一上传前的冲突决策和顶层文件夹进度分组，不承接上传副作用。 */
+export async function prepareUploadBatch(
+  items: UploadItem[],
+  context: UploadConflictContext,
+  showDialog: (conflicts: ConflictItem[]) => Promise<Map<string, ConflictDecision>>,
+): Promise<PreparedUploadBatch> {
+  const resolved = await resolveUploadConflicts(items, context, showDialog)
+  return {
+    ...resolved,
+    folderGroups: getTopLevelUploadGroups(resolved.items),
   }
 }
 
