@@ -22,7 +22,11 @@ from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.storage.file_service.files import _fmt_size
 from app.services.files.response import color_value, to_file_response
-from app.services.files.browser import all_files_query, file_listing_query, storage_usage_query
+from app.services.files.browser import (
+    get_storage_usage,
+    list_all_file_rows,
+    list_file_rows,
+)
 from app.services.files.upload import (
     UploadTargetError,
     check_upload_conflicts,
@@ -81,7 +85,8 @@ async def list_files(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = file_listing_query(
+    rows = await list_file_rows(
+        db,
         current_user.id,
         space=space,
         project_id=project_id,
@@ -91,8 +96,7 @@ async def list_files(
         query=q,
     )
 
-    result = await db.execute(stmt)
-    return [to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in result.all()]
+    return [to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in rows]
 
 
 # ── GET /files/all ────────────────────────────────────────────────────────────
@@ -102,9 +106,7 @@ async def list_all_files(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = all_files_query(current_user.id)
-    result = await db.execute(stmt)
-    rows = result.all()
+    rows = await list_all_file_rows(db, current_user.id)
 
     # 本地存储时过滤掉实体文件已被手动删除的记录，并同步软删除数据库条目
     storage = get_storage()
@@ -155,10 +157,7 @@ async def files_storage(
     db: AsyncSession = Depends(get_db),
 ):
     """返回当前用户的存储用量与上限。"""
-    used_res = await db.execute(
-        storage_usage_query(current_user.id)
-    )
-    used = used_res.scalar() or 0
+    used = await get_storage_usage(db, current_user.id)
     limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
     return {"used_bytes": used, "limit_bytes": limit}
 

@@ -1,6 +1,7 @@
 from typing import Optional
 
 from sqlalchemy import Select, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import File, Folder, Project
 
@@ -52,3 +53,39 @@ def all_files_query(user_id: int) -> Select:
 
 def storage_usage_query(user_id: int) -> Select:
     return select(func.sum(File.size_bytes)).where(File.user_id == user_id)
+
+
+async def list_file_rows(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    space: Optional[str] = None,
+    project_id: Optional[int] = None,
+    folder_id: Optional[int] = None,
+    mind_map_id: Optional[int] = None,
+    ext: Optional[str] = None,
+    query: Optional[str] = None,
+):
+    """查询当前目录文件行；响应模型组装由 API 边界负责。"""
+    result = await db.execute(file_listing_query(
+        user_id,
+        space=space,
+        project_id=project_id,
+        folder_id=folder_id,
+        mind_map_id=mind_map_id,
+        ext=ext,
+        query=query,
+    ))
+    return result.all()
+
+
+async def list_all_file_rows(db: AsyncSession, user_id: int):
+    """查询当前用户全部存活文件行。"""
+    result = await db.execute(all_files_query(user_id))
+    return result.all()
+
+
+async def get_storage_usage(db: AsyncSession, user_id: int) -> int:
+    """返回当前用户已使用的存储字节数。"""
+    result = await db.execute(storage_usage_query(user_id))
+    return result.scalar() or 0
