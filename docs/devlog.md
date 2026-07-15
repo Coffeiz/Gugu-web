@@ -1369,3 +1369,9 @@ Modal 内 `localStatus` 是本地 `ref`，只在 `watch(() => props.project?.id,
 文件库与项目文件区原本都各自完成 Shift 范围计算，再把文件和文件夹集合写回响应式状态。本次将“范围解析 + 混合选中集合替换”收进 `useFileSelection`，两个页面只保留可见项目列表、框选 DOM 和锚点生命周期编排；没有改变选择模式、快捷键或框选行为。
 
 框选暂不继续抽象：它依赖页面容器、数据属性和回收站特殊前缀，继续下沉会把页面 DOM 约定带进通用 composable，反而扩大边界。前端测试现为 18 个文件、200 个用例全部通过，typecheck 通过。
+
+## 2026-07-16 · 文件服务迁移后的旧 helper 引用
+
+把响应组装、缩略图和预览逻辑下沉后，隔离运行当前分支的后端全量测试时发现旧调用方仍从 `app.api.v1.files` 导入已删除的 `_to_resp`、`_color`、`_delete_thumb_cache`、`_thumb_dir` 等符号，导致测试收集阶段失败。问题不在业务逻辑，而是迁移边界没有完成调用方收口。
+
+现已将回收站、Agent 文件/回收站工具、账户注销、应用启动清理和 Agent 预览接口统一改为依赖 `services/files/{response,previews}.py`；同时修正 `FileService.move_folder` 直接传入 `target_project_id` 时未识别为显式目标项目的问题。当前分支在 devserver 临时隔离副本中后端全量测试通过，原 devserver 工作树未被覆盖。

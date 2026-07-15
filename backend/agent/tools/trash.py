@@ -1,7 +1,7 @@
 """回收站技能：list_trash / restore_file / permanent_delete。
 
 复用 `app.services.storage.trash` 的 `restore_file_storage`（重建原路径移回）与
-`files.py` 的 `_delete_thumb_cache`。永久删除不可逆，走 confirm.gate 二次确认。
+`app.services.files.previews` 的 `delete_thumb_cache`。永久删除不可逆，走 confirm.gate 二次确认。
 """
 import json
 
@@ -12,7 +12,7 @@ from app.core.ownership import get_owned
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.storage.trash import restore_file_storage
-from app.api.v1.files import _delete_thumb_cache
+from app.services.files.previews import delete_thumb_cache
 from agent import confirm
 from agent.tools.base import BaseSkill, Tool
 
@@ -73,7 +73,7 @@ async def _permanent_delete(db, user_id, args: dict):
             await db.delete(f)
         await db.commit()
         for fid in fids:
-            _delete_thumb_cache(fid)
+            delete_thumb_cache(fid)
         return {"success": True, "deleted_count": len(fids), "note": "回收站已清空"}
 
     # 单个永久删除
@@ -93,7 +93,7 @@ async def _permanent_delete(db, user_id, args: dict):
         await storage.delete(f.storage_key)
     except Exception:
         pass
-    _delete_thumb_cache(f.id)
+    delete_thumb_cache(f.id)
     await db.delete(f)
     await db.commit()
     return {"success": True, "deleted_file_id": fid}
