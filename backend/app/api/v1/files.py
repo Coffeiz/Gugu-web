@@ -23,6 +23,7 @@ from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
 from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.trash import move_file_to_trash
+from app.services.files.response import color_value, to_file_response
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -118,37 +119,6 @@ async def _find_conflict(db: AsyncSession, user_id, space: str, project_id: Opti
     return (await db.execute(stmt)).scalars().first()
 
 
-def _color(raw: str | None) -> str | None:
-    if not raw:
-        return None
-    m = re.search(r'#[0-9a-fA-F]{3,6}', raw)
-    return m.group(0) if m else raw
-
-
-def _to_resp(f: File, project_name: str | None = None, project_color: str | None = None,
-             folder_name: str | None = None) -> FileResponse:
-    return FileResponse(
-        id=f.id,
-        display_name=f.display_name,
-        ext=f.ext,
-        space=f.space,
-        project_id=f.project_id,
-        project_name=project_name,
-        project_color=project_color,
-        stage_name=f.stage_name,
-        folder_id=f.folder_id,
-        folder_name=folder_name,
-        mind_map_id=f.mind_map_id,
-        size=f.size,
-        size_bytes=f.size_bytes,
-        mime_type=f.mime_type,
-        created_at=f.created_at.strftime("%Y-%m-%d"),
-        deleted_at=f.deleted_at.strftime("%Y-%m-%dT%H:%M:%S") if f.deleted_at else None,
-        img_width=f.img_width,
-        img_height=f.img_height,
-    )
-
-
 # ── GET /files ────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=list[FileResponse])
@@ -189,7 +159,7 @@ async def list_files(
         stmt = stmt.where(File.display_name.ilike(f"%{q}%"))
 
     result = await db.execute(stmt)
-    return [_to_resp(f, pname, _color(pcolor), fname) for f, pname, pcolor, fname in result.all()]
+    return [to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in result.all()]
 
 
 # ── GET /files/all ────────────────────────────────────────────────────────────
@@ -225,7 +195,7 @@ async def list_all_files(
             await db.commit()
         rows = valid_rows
 
-    return [_to_resp(f, pname, _color(pcolor), fname) for f, pname, pcolor, fname in rows]
+    return [to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in rows]
 
 
 # ── GET /files/version ────────────────────────────────────────────────────────
@@ -292,7 +262,7 @@ async def file_tree(
     projects = projs_res.scalars().all()
 
     tree_projects = [
-        ProjectTreeEntry(id=p.id, name=p.name, color=_color(p.color) or p.color,
+        ProjectTreeEntry(id=p.id, name=p.name, color=color_value(p.color) or p.color,
                          total_count=count_map.get(p.id, 0))
         for p in projects
     ]
@@ -338,7 +308,7 @@ async def check_conflicts(
         out.append({
             "filename": item.filename,
             "conflict": existing is not None,
-            "existing_file": _to_resp(existing).model_dump() if existing else None,
+            "existing_file": to_file_response(existing).model_dump() if existing else None,
         })
     return out
 
@@ -418,8 +388,8 @@ async def upload_file(
         await events.publish(current_user.id, "files", origin=origin)
 
     project_name = result.project.name if result.project else None
-    project_color = _color(result.project.color) if result.project else None
-    resp = _to_resp(f, project_name, project_color, result.folder_name)
+    project_color = color_value(result.project.color) if result.project else None
+    resp = to_file_response(f, project_name, project_color, result.folder_name)
     if _is_img:
         background_tasks.add_task(_pregen_thumb, f.storage_key, f.id)
     return resp
@@ -463,7 +433,7 @@ async def presign_upload(
         if not p:
             raise HTTPException(400, "项目不存在")
         project_name = p.name
-        project_color = _color(p.color)
+        project_color = color_value(p.color)
         date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
         project_year, project_month = date_str[:4], date_str[5:7]
     elif body.space == "project":
@@ -577,7 +547,7 @@ async def confirm_upload(
         if not p:
             raise HTTPException(400, "项目不存在")
         project_name = p.name
-        project_color = _color(p.color)
+        project_color = color_value(p.color)
 
     if body.folder_id is not None:
         fo = await get_owned(db, Folder, body.folder_id, current_user.id)
@@ -598,7 +568,7 @@ async def confirm_upload(
         await db.commit()
         await db.refresh(existing)
         await events.publish(current_user.id, "files", origin=origin)
-        return _to_resp(existing, project_name or None, project_color, folder_name or None)
+        return to_file_response(existing, project_name or None, project_color, folder_name or None)
 
     db_file = File(
         user_id=current_user.id,
@@ -618,7 +588,7 @@ async def confirm_upload(
     await db.refresh(db_file)
     await events.publish(current_user.id, "files", origin=origin)
 
-    return _to_resp(db_file, project_name or None, project_color, folder_name or None)
+    return to_file_response(db_file, project_name or None, project_color, folder_name or None)
 
 
 # ── PATCH /files/{fid} ───────────────────────────────────────────────────────
@@ -645,8 +615,8 @@ async def update_file(
     await events.publish(current_user.id, "files", origin=origin)
 
     project_name = result.project.name if result.project else None
-    project_color = _color(result.project.color) if result.project else None
-    return _to_resp(result.file, project_name, project_color, result.folder_name)
+    project_color = color_value(result.project.color) if result.project else None
+    return to_file_response(result.file, project_name, project_color, result.folder_name)
 
 
 class _FileContentBody(_BaseModel):
@@ -678,7 +648,7 @@ async def update_file_content(
     await db.commit()
     await db.refresh(f)
     await events.publish(current_user.id, "files", origin=origin)
-    return _to_resp(f)
+    return to_file_response(f)
 
 
 # ── POST /files/{fid}/copy ────────────────────────────────────────────────────
@@ -701,8 +671,8 @@ async def copy_file(
     await events.publish(current_user.id, "files", origin=origin)
 
     project_name = result.project.name if result.project else None
-    project_color = _color(result.project.color) if result.project else None
-    return _to_resp(result.file, project_name, project_color, result.folder_name)
+    project_color = color_value(result.project.color) if result.project else None
+    return to_file_response(result.file, project_name, project_color, result.folder_name)
 
 
 # ── DELETE /files/{fid} （软删除→回收站）────────────────────────────────────
