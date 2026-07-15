@@ -357,12 +357,21 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 }
 /* 用户弹窗条目沿用之前的外观（仅作用于 .settings-popup，不影响其它菜单） */
 .settings-popup .popup-menu-item {
+  position: relative; z-index: 0;
   padding: 9px 12px; border-radius: 0;
   font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028;
 }
+.settings-popup .popup-menu-item::before {
+  content: ''; position: absolute; z-index: -1;
+  inset: -3px 0;
+  background: rgba(255,255,255,0.55);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.15s ease;
+}
 .settings-popup .popup-menu-item.danger { color: #c84a4a; }
-.settings-popup .popup-menu-item:hover:not(:disabled) { background: rgba(255,255,255,0.55); }
-.settings-popup .popup-menu-item.danger:hover:not(:disabled) { background: rgba(200,90,90,0.1); }
+.settings-popup .popup-menu-item:hover:not(:disabled) { background: transparent; }
+.settings-popup .popup-menu-item:hover:not(:disabled)::before { opacity: 1; }
+.settings-popup .popup-menu-item.danger:hover:not(:disabled)::before { background: rgba(200,90,90,0.1); }
 .settings-popup .popup-menu-sep { background: rgba(0,0,0,0.06); margin: 3px 0; }
 
 .notif-popup {
