@@ -23,7 +23,7 @@
           :project="project"
           @click="$emit('card-click', project)"
         />
-        <button :key="`add-${column.key}`" class="add-card" @click="$emit('add-project', column.key)">
+        <button :key="`add-${column.key}`" class="add-card" data-flip-target @click="$emit('add-project', column.key)">
           <svg width="14" height="14" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="opacity:0.5;flex-shrink:0">
             <line x1="11" y1="4" x2="11" y2="18"/><line x1="4" y1="11" x2="18" y2="11"/>
           </svg>
