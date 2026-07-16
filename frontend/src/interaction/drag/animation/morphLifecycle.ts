@@ -105,10 +105,18 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   const clone2Inner = options.clone2.querySelector<HTMLElement>('.phys-landing-content')
   const transition = `transform 0.55s ${options.easing}`
   const fadeTransition = 'opacity 0.42s ease'
-  const dragShadow = getComputedStyle(cloneInner).boxShadow
-  const landingShadow = clone2Inner ? getComputedStyle(clone2Inner).boxShadow : getComputedStyle(options.revealEl).boxShadow
+  const dragShadow = options.hidePrimaryVisual ? getComputedStyle(cloneInner).boxShadow : ''
+  const landingShadow = options.hidePrimaryVisual && clone2Inner ? getComputedStyle(clone2Inner).boxShadow : ''
   cloneInner.style.transition = fadeTransition
   if (clone2Inner) clone2Inner.style.transition = fadeTransition
+  // 提交 clone2 的初始布局（opacity:0，与 holder 重叠），确保浏览器在 opacity 变为
+  // 1 之前先渲染出初始态——否则浏览器可能把创建和 opacity 设置合并到同一帧，导致
+  // clone2 从未以透明状态出现过，落地克隆瞬间取代拖拽克隆，阴影切换没有过渡感。
+  // 和 main 分支（usePhysicsDrag.ts:1050）一致。
+  options.clone2.getBoundingClientRect()
+  // clone2（holder2）创建时 opacity:0，必须同步设为 1——否则 clone2Inner 即使
+  // opacity:1 也会因父元素 opacity:0 而不可见，导致松手瞬间两张克隆都透明。
+  // 此时 transition 还是创建时的 'none'，所以 opacity 0→1 是瞬间的，和 main 分支一致。
   options.clone2.style.opacity = '1'
   cloneInner.style.opacity = '0'
   if (clone2Inner) clone2Inner.style.opacity = '1'
@@ -120,7 +128,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     }
     void options.clone2.offsetWidth
   }
-  if (clone2Inner && dragShadow !== landingShadow) {
+  if (options.hidePrimaryVisual && clone2Inner && dragShadow !== landingShadow) {
     // 落地克隆开始飞行前先继承拖拽强阴影，避免松手瞬间「强阴影→弱阴影」的突变
     const savedTrans = clone2Inner.style.transition
     clone2Inner.style.transition = 'none'
@@ -202,7 +210,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     if (landing.isDone() || !options.session.isCurrent()) return
     options.holder.style.transition = transition
     options.clone2.style.transition = transition
-    if (clone2Inner && dragShadow !== landingShadow) {
+    if (options.hidePrimaryVisual && clone2Inner && dragShadow !== landingShadow) {
       clone2Inner.style.transition = `box-shadow 0.55s ${options.easing}`
       clone2Inner.style.boxShadow = landingShadow
     }

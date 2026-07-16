@@ -253,9 +253,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   // 落点时已无可滚（dy≈0），我们的受控平滑滚动跑不起来，看着就是「瞬间到底部」。列用的是 3px overlay
   // 滚动条，overflow:hidden 不会引起布局位移。结束时在 end() 还原。
  const _lockedScrollers = [...document.querySelectorAll<HTMLElement>('.col-body')]
- _lockedScrollers.push(...document.querySelectorAll<HTMLElement>('.cd-list'))
- const _savedScrollTop = new Map()
- for (const s of _lockedScrollers) { _savedScrollTop.set(s, s.scrollTop); s.style.overflowY = 'hidden' }
+ _lockedScrollers.push(...document.querySelectorAll<HTMLElement>('.project-list-scroll'))
+ const _savedScrollState = new Map<HTMLElement, { scrollTop: number; overflowY: string }>()
+ for (const s of _lockedScrollers) { _savedScrollState.set(s, { scrollTop: s.scrollTop, overflowY: s.style.overflowY || getComputedStyle(s).overflowY }); s.style.overflowY = 'hidden' }
 
   // 外部素材抽屉保留同尺寸的低透明占位，列表不跳动；普通卡片仍按原逻辑收合让位。
   // 同步 display:none 会让浏览器取消原生拖拽 → 必须下一帧再真正移出布局并做 FLIP。
@@ -412,7 +412,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     cancelAnimationFrame(deps.active.current.raf)
     deps.active.current = null
     document.body.classList.remove('phys-dragging')            // 恢复 backdrop-filter（落点 elementFromPoint 之前）
-    for (const s of _lockedScrollers) s.style.overflowY = ''   // 解锁列滚动，下面才能受控平滑滚到落点
+    for (const s of _lockedScrollers) {                         // 解锁列滚动，下面才能受控平滑滚到落点
+      const saved = _savedScrollState.get(s)
+      s.style.overflowY = saved?.overflowY ?? ''
+    }
     removeListeners()
 
     // 落点用克隆体此刻真实的视觉中心，不用 target（原始指针位置）——弹簧有阻尼延迟，快速
@@ -796,8 +799,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         const box0 = animateOpen(container, sourceEl)
         const sc = deps.scrollParent(sourceEl)
         // 锁列期间源卡收合，浏览器可能把 scrollTop 夹小了；展开后还原到拖动前，revealInScroller 再据此滚到原位
-        if (sc && _savedScrollTop.has(sc)) {
-          sc.scrollTop = _savedScrollTop.get(sc)
+        if (sc && _savedScrollState.has(sc)) {
+          sc.scrollTop = _savedScrollState.get(sc)!.scrollTop
           const box = revealInScroller(sc, sourceEl.getBoundingClientRect())
           flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
         } else {

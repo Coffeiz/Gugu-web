@@ -53,10 +53,11 @@
           </div>
         </section>
 
-        <section class="cd-content-panel projects-panel" :class="{ visible: visiblePanel === 'projects' && contentVisible }" :aria-hidden="visiblePanel !== 'projects'">
-          <div ref="projectListRef" class="cd-list project-list">
-            <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" @pointerdown.stop />
-            <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
+       <section class="cd-content-panel projects-panel" :class="{ visible: visiblePanel === 'projects' && contentVisible }" :aria-hidden="visiblePanel !== 'projects'">
+         <div ref="projectListRef" class="cd-list project-list">
+           <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" @pointerdown.stop />
+            <div class="project-list-scroll">
+           <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
             </div>
             <template v-else>
@@ -79,9 +80,10 @@
                 </section>
               </TransitionGroup>
               <div v-if="!projectsLoading && !filteredProjects.length" class="project-empty">没有匹配的项目</div>
-            </template>
-          </div>
-        </section>
+           </template>
+            </div>
+         </div>
+       </section>
       </div>
     </div>
   </div>
@@ -333,9 +335,20 @@ onBeforeUnmount(() => {
 .cd-content-panel.visible { opacity: 1; filter: blur(0); pointer-events: auto; }
 .canvas-panel { width: 190px; }
 .projects-panel { width: 284px; }
-.cd-list { box-sizing: border-box; max-height: 55vh; overflow-y: auto; padding: 0 9px 9px; }
+.cd-list { box-sizing: border-box; max-height: 55vh; overflow-y: auto; padding: 0 9px 9px; scrollbar-gutter: stable; }
 .canvas-list { width: 190px; }
-.project-list { display: flex; flex-direction: column; gap: 9px; width: 284px; min-height: 312px; }
+.project-list { display: flex; flex-direction: column; width: 284px; min-height: 312px; gap: 0; }
+.project-list-scroll { flex: 1; overflow-y: auto; min-height: 0; padding-bottom: 9px; scrollbar-gutter: stable; }
+
+/* 抽屉滚动条：细、半透明、不占布局宽度——跟项目编辑卡 stage 区域（ProjectModal.vue
+   的 .left-content）同款样式。scrollbar-gutter: stable 已在上方固定预留空间，滚动条
+   出现/消失时内容不会左右跳动。 */
+.cd-list::-webkit-scrollbar,
+.project-list-scroll::-webkit-scrollbar { width: 3px; }
+.cd-list::-webkit-scrollbar-track,
+.project-list-scroll::-webkit-scrollbar-track { background: transparent; }
+.cd-list::-webkit-scrollbar-thumb,
+.project-list-scroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
 
 .canvas-item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; height: 32px; padding: 0 4px 0 8px; border-radius: 6px; background: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
 .canvas-create-card { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 32px; margin-top: 5px; box-sizing: border-box; border: 1.5px dashed rgba(0,0,0,.12); border-radius: 6px; background: rgba(255,255,255,.16); color: var(--text-secondary); font: 600 12px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
