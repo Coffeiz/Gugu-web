@@ -194,6 +194,10 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     options.holder.remove()
     options.clone2.remove()
     camGlue?.remove()
+    // 重抓接力时新 session 会立即接管本体和视觉状态。旧 session 只清理自己的
+    // 飞行副本，不要同步揭示本体或触发 mouseenter；否则 forceCleanup 与新拖拽
+    // 的测量/建克隆会在同一帧串行触发布局，造成可见顿挫。
+    if (options.session.isHandoffRequested()) return
     options.revealEl.classList.add('phys-reveal-snap')
     options.onReveal?.()
     void options.revealEl.offsetWidth

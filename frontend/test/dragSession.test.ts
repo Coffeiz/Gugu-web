@@ -76,6 +76,16 @@ describe('DragRegistry', () => {
     expect(applied).toBe(0)
   })
 
+  it('重抓交接标记只在终结前可设置', () => {
+    const session = new DragSession('handoff')
+    expect(session.isHandoffRequested()).toBe(false)
+    session.prepareHandoff()
+    expect(session.isHandoffRequested()).toBe(true)
+    session.cancel()
+    session.prepareHandoff()
+    expect(session.isHandoffRequested()).toBe(true)
+  })
+
   it('同一稳定卡片身份换了 DOM 后也会取消旧 session', () => {
     const registry = new DragRegistry()
     const oldSource = document.createElement('div')

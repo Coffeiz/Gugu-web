@@ -10,6 +10,7 @@ export class DragSession {
   readonly id: string
   readonly startedAt: number
   private _phase: DragPhase
+  private handoffRequested = false
   private readonly cleanups = new Set<DragCleanup>()
   private currentChecker: () => boolean = () => false
 
@@ -34,6 +35,14 @@ export class DragSession {
 
   isCurrent(): boolean {
     return !this.isTerminal() && this.currentChecker()
+  }
+
+  prepareHandoff(): void {
+    if (!this.isTerminal()) this.handoffRequested = true
+  }
+
+  isHandoffRequested(): boolean {
+    return this.handoffRequested
   }
 
   addCleanup(cleanup: DragCleanup): () => void {

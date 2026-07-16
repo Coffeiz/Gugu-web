@@ -26,6 +26,11 @@
 新 session 若在这之前 clone，本体状态会被 `cloneNode` 一并带走。开始新拖拽时现在会先清除这些仅用于
 揭示收尾的临时类，再创建新 clone，避免同列归还继承上一段动画状态。
 
+trace 进一步确认，主要顿挫发生在 `threshold.onMove → DragRegistry.start → DragSession.cancel →
+morphLifecycle.forceCleanup`：旧 session 的取消同步执行完整 reveal，并触发一次合成的
+`mouseenter` 和布局更新。新增 handoff 标记后，重抓交接只清除旧 holder/clone，不再揭示本体；新
+session 接管后自行建立视觉状态，普通取消仍走完整 reveal 收尾。
+
 ---
 
 ## 2026-07-16 · 已完成列拖拽动画：年月行 FLIP 缺口与月份文件夹嵌套
