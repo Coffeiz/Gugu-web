@@ -53,7 +53,7 @@ export function layoutBoxInScroller(scroller: HTMLElement, target: HTMLElement) 
  * 回原进度恢复播放。整个过程在同一个 JS 任务里完成，中间没有绘制，肉眼不可见；对没有
  * 动画在跑的场景，行为等同于直接调 layoutBoxInScroller。
  */
-export function layoutBoxAtTransitionsEnd(scroller: HTMLElement, target: HTMLElement) {
+export function layoutBoxAtTransitionsEnd(scroller: HTMLElement | null, target: HTMLElement) {
   const seeked: Array<{ animation: Animation; time: CSSNumberish | null }> = []
   let current: HTMLElement | null = target
   while (current && current !== document.body) {
@@ -70,7 +70,12 @@ export function layoutBoxAtTransitionsEnd(scroller: HTMLElement, target: HTMLEle
     }
     current = current.parentElement
   }
-  const box = layoutBoxInScroller(scroller, target)
+  const box = scroller
+    ? layoutBoxInScroller(scroller, target)
+    : (() => {
+        const rect = target.getBoundingClientRect()
+        return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+      })()
   for (const { animation, time } of seeked) {
     animation.currentTime = time
     animation.play()

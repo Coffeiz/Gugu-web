@@ -197,6 +197,16 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
       }, 80)
       return
     }
+    if (options.trackTargetLayout) {
+      // 抽屉展开时的首次改向不能先用 morphTransform 冻结当前矩形：该字符串只包含
+      // 位移/缩放，不包含拖拽中的 rotateZ 摆动，会把 clone2 的左右摆动瞬间清零。
+      // 直接从当前视觉 transform 过渡到新目标，保留旋转、阴影和尺寸的连续性。
+      options.holder.style.transition = transition
+      options.clone2.style.transition = transition
+      applyTransform()
+      armFinishTimer()
+      return
+    }
     redirectToBox(false)
   }
   options.setRetarget(options.revealEl, retarget)

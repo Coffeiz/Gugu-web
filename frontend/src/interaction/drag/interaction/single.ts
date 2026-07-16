@@ -89,7 +89,7 @@ export interface SingleDragDeps {
   rects: (elements: Element[]) => DOMRect[]
   scrollParent: (node: Element | null) => HTMLElement | null
   layoutBoxInScroller: (scroller: HTMLElement, target: HTMLElement) => Box
-  layoutBoxAtTransitionsEnd: (scroller: HTMLElement, target: HTMLElement) => Box
+  layoutBoxAtTransitionsEnd: (scroller: HTMLElement | null, target: HTMLElement) => Box
   animateScroll: (el: HTMLElement, dy: number, dur?: number, isActive?: () => boolean) => void
   holdHoverUntilReveal: (el: HTMLElement) => void
   revealWithoutStaleHover: (el: HTMLElement, pointerMode: boolean, onSettled?: () => void, keepControls?: boolean, isActive?: () => boolean) => void
@@ -820,7 +820,6 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             // transform，读到的是让位过程中的视觉坐标。改用 offset 链推导最终布局坐标：初始
             // 滚动与 clone2 从第一帧就认同同一个终点，不再等 FLIP 播完后补滚动/反复改向。
             const sc = deps.scrollParent(targetEl)
-            const box = revealInScroller(sc, sc ? deps.layoutBoxInScroller(sc, targetEl) : targetEl.getBoundingClientRect())
             // 抽屉来源回到自身时也复用双克隆，完成从画布缩放尺寸回到抽屉实体尺寸的交接。
             // 但落点不在画布内，不能把 fixed 克隆塞进画布相机跟随层；那层会改变其定位基准，
             // 造成额外的左上角残影。
@@ -853,8 +852,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             // 高度变化触发的 retarget 就直接拿到最终位置，克隆一次平滑改向直达终点，后续
             // 回调因目标不再变化全部被 epsilon 过滤。没有动画在跑时行为等同 layoutBoxInScroller。
             const measureTargetLayout = () => {
-              return sc ? deps.layoutBoxAtTransitionsEnd(sc, targetEl) : targetEl.getBoundingClientRect()
+              return deps.layoutBoxAtTransitionsEnd(sc, targetEl)
             }
+            // 抽屉可能正在展开；首帧就使用展开结束后的目标，避免先按中间盒子创建飞行，
+            // 紧接着被 ResizeObserver 改向而重置 clone2 的尺寸和视觉状态。
+            const box = revealInScroller(sc, measureTargetLayout())
             flyMorph(
               box,
               targetEl,
