@@ -93,6 +93,7 @@ export function animateLanding(
   to: { x: number; y: number },
   onUpdate: (x: number, y: number) => void,
   onDone?: () => void,
+  isActive: () => boolean = () => true,
 ): () => void {
   // 多等一帧再开始：usePhysicsDrag.ts 的 end() 在 onDrop 回调返回后，紧接着（同一个同步调用栈）
   // 自己也排了一个 requestAnimationFrame，用来读贴纸此刻的真实 DOM 位置算克隆体飞行目标——
@@ -105,10 +106,10 @@ export function animateLanding(
   let outerRaf = 0
   let frameRaf = 0
   outerRaf = requestAnimationFrame(() => {
-    if (cancelled) return
+    if (cancelled || !isActive()) return
     const start = performance.now()
     function step(now: number) {
-      if (cancelled) return
+      if (cancelled || !isActive()) return
       const t = Math.min(1, (now - start) / LANDING_MS)
       const e = _landingEase(t)
       onUpdate(from.x + (to.x - from.x) * e, from.y + (to.y - from.y) * e)
@@ -181,6 +182,7 @@ export function useCardDrag(opts: {
   // RelationLayer 会优先读旧覆盖位置，视觉线脱离新抓住的克隆。取消后也要立即通知调用方
   // 清掉覆盖表，不能等下一帧。
   let cancelLanding: (() => void) | null = null
+  let activeSession: (() => boolean) | null = null
   function cancelActiveLanding() {
     if (!cancelLanding) return
     cancelLanding()
@@ -197,6 +199,9 @@ export function useCardDrag(opts: {
     cancelActiveLanding()
     let absorbTarget: HTMLElement | null = null
     startPhysicsDrag(event, card, {
+      onSessionStart: session => {
+        activeSession = () => session.isCurrent()
+      },
       pointer: true, skipAbsorb: !opts.resolveAbsorbTarget, tilt: 0, lift: opts.lift ?? 1.03,
       resolveAbsorbTarget: opts.resolveAbsorbTarget ? () => absorbTarget : undefined,
       resolveAbsorbLandingTarget: opts.resolveAbsorbLandingTarget,
@@ -253,7 +258,7 @@ export function useCardDrag(opts: {
           cancelLanding = animateLanding(dropTopLeft, landTopLeft, opts.onLanding, () => {
             cancelLanding = null
             opts.onLandingDone?.()
-          })
+          }, activeSession ?? undefined)
         }
       },
     })

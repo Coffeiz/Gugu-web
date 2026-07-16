@@ -17,17 +17,21 @@ export function invertPlay(
     const dx = fromRects[index].left - toRects[index].left
     const dy = fromRects[index].top - toRects[index].top
     if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return
-    element.style.transition = 'none'
+    element.style.setProperty('transition', 'none', 'important')
     element.style.transform = `translate(${dx.toFixed(2)}px, ${dy.toFixed(2)}px)`
   })
   requestAnimationFrame(() => {
     if (options.isActive && !options.isActive()) return
     for (const element of elements) {
       if (!element.style.transform) continue
-      element.style.transition = `transform ${options.duration ?? 340}ms ${options.easing}`
+      element.style.setProperty('transition', `transform ${options.duration ?? 340}ms ${options.easing}`, 'important')
       element.style.transform = ''
       const clear = () => {
-        element.style.transition = ''
+        if (options.isActive && !options.isActive()) {
+          element.removeEventListener('transitionend', clear)
+          return
+        }
+        element.style.setProperty('transition', '', 'important')
         element.removeEventListener('transitionend', clear)
       }
       element.addEventListener('transitionend', clear)

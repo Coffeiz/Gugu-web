@@ -44,6 +44,8 @@ describe('DragRegistry', () => {
     const secondSource = document.createElement('div')
     const first = registry.start(firstSource)
     const second = registry.start(secondSource)
+    const cleanup = vi.fn()
+    first.addCleanup(cleanup)
 
     expect(first.isCurrent()).toBe(true)
     expect(second.isCurrent()).toBe(true)
@@ -51,9 +53,27 @@ describe('DragRegistry', () => {
     const replacement = registry.start(firstSource)
 
     expect(first.phase).toBe('cancelled')
+    expect(cleanup).toHaveBeenCalledOnce()
     expect(second.isCurrent()).toBe(true)
     expect(replacement.isCurrent()).toBe(true)
     expect(registry.current(firstSource)).toBe(replacement)
+  })
+
+  it('旧 session 的异步回调门禁会失效', () => {
+    const registry = new DragRegistry()
+    const source = document.createElement('div')
+    const first = registry.start(source)
+    let applied = 0
+    const firstCallback = vi.fn(() => {
+      if (first.isCurrent()) applied++
+    })
+
+    registry.start(source)
+    firstCallback()
+
+    expect(first.isCurrent()).toBe(false)
+    expect(firstCallback).toHaveBeenCalledOnce()
+    expect(applied).toBe(0)
   })
 })
 

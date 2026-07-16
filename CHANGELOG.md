@@ -7,9 +7,24 @@
 
 ---
 
+## [0.19.2] - 2026-07-16 · 已完成列年月行 FLIP 与月份文件夹视觉嵌套
+
+### 修复
+
+- **已完成列拖入卡片后年月组瞬间移动**（`frontend/src/views/Projects/components/DoneColumn.vue`）：`recentDone` 变化时手动测量年/月行位置，requestAnimationFrame 内补偿 translate 过渡，补上 Vue TransitionGroup 窗口过后的 FLIP 缺口。
+- **已完成列拖出卡片时年月标题瞬间移动**（`frontend/src/interaction/drag/animation/flip.ts`、`useDragEngine.ts`）：`data-flip-target` 查询覆盖到 .year-row/.month-row，`invertPlay` 改用 `setProperty('important')` 压过 CSS 默认过渡冲突。
+- **已完成列月份展开后卡片不在月份文件夹内**（`DoneColumn.vue`）：month-row 与对应的 month-cards 改为在同一组 `<template v-for>` 中连续渲染，卡片紧跟在月份行下方，`month-cards` 增加左缩进和右边线，视觉正确嵌套于月份文件夹内。
+
+### 改进
+
+- **已完成列卡片退出最近完成的退出动画**（`DoneColumn.vue`）：`recent-card-list .done-card-list-leave-active` 暂设 `display: none` 避免布局冲突，确保让位动画优先稳定；后续可调优为渐隐退出动画。
+- **morphLifecycle 探针清理**（`frontend/src/interaction/drag/animation/morphLifecycle.ts`）：移除排查过程中的临时日志。
+
 ## [0.19.1] - 2026-07-15 · 项目抽屉↔画布拖拽收尾与引用卡快照样式
 
 ### 改进
+
+- **拖拽系统模块化重构**（`frontend/src/interaction/drag/`）：将单卡、多卡、物理、落地动画、clone 生命周期、接力、DOM 工具和 listener 拆为独立模块，保留原有 composable 入口与业务调用方式。
 
 - **GuguChat 代码块样式统一**（`components/common/MarkdownView.vue`）：代码块改为与 Markdown 预览器一致的普通边框样式，顶部显示代码类型并保留复制入口。
 - **文件操作工具统一**（`components/common/{FilePasteButton,FileSelectionToolbar}.vue`、`views/{Files,Projects}/`）：文件库和项目编辑卡共用粘贴、多选操作与网格/列表切换控件，统一交互反馈和状态同步。
@@ -26,6 +41,7 @@
 - **画布卡片与连接线显示**（`views/Mind/`、`composables/usePhysicsDrag.ts`）：补齐卡片圆角、连接点层级与拖拽落地状态，修复部分卡片切换时的闪烁和连接线显示异常。
 
 - **项目抽屉与画布之间的拖拽收尾**（`composables/{usePhysicsDrag,useCardDrag}.ts`、`views/Mind/components/{CanvasSidebar,ProjectDrawerCard,ProjectRefCard}.vue`）：修复一系列抽屉↔画布拖拽体验问题——抽屉虚线占位框离场时跳动、画布卡拖回抽屉短暂变透明才淡入、飞行克隆偶发退化成缩小动画、揭示瞬间本体与克隆短暂重叠、某状态最后一张卡拖出/首张卡拖入时整块分组瞬间增删且丢失让位动画、飞行中途重新抓起后无法放回画布。详细排查过程见 [devlog.md](docs/devlog.md) 2026-07-15 条目。
+- **项目分组标题与年/月目录按钮的让位动画**（`views/Mind/components/CanvasSidebar.vue`、`views/Projects/components/DoneColumn.vue`）：让 `project-group-title`、`year-row`、`month-row` 和未设置日期按钮都作为 TransitionGroup 的直接子项参与 FLIP 平移过渡，组内卡片增减时不再因 flex 重排瞬间跳位。详细排查过程见 [devlog.md](docs/devlog.md) 2026-07-16 条目。
 - **渐变色项目首次拖入画布失败**（`backend/app/models/__init__.py`）：`MindNode.color` 由 `varchar(30)` 加宽到 `varchar(300)`，修复渐变色项目首次创建画布引用节点时 `StringDataRightTruncationError`。
 
 ## [0.19.0] - 2026-07-14 · 思维画布收尾、连接线体验统一与存储/LLM 架构重构

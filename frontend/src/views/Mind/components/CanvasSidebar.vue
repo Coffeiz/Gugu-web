@@ -65,8 +65,8 @@
                    卡片变高变矮时，其它分组跟着平滑挪位，而不是瞬间跳到新位置。 -->
               <TransitionGroup name="drawer-project-groups" tag="div" class="project-groups">
                 <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group">
-                  <div class="project-group-title"><span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span></div>
                   <TransitionGroup name="drawer-project-cards" tag="div" class="project-group-cards" @before-leave="captureLeavePosition">
+                    <div :key="`title-${group.status}`" class="project-group-title"><span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span></div>
                     <ProjectDrawerCard
                       v-for="project in group.items"
                       :key="project.id"

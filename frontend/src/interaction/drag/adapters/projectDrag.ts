@@ -17,6 +17,9 @@ export function startProjectDrag(event: PointerEvent, options: ProjectDragOption
     onDragStart: (moveEvent, card) => startPhysicsDrag(moveEvent, card, {
       pointer: true,
       skipAbsorb: true,
+      flipContainer: card.closest<HTMLElement>('.col-body') ?? undefined,
+      flipAllDescendants: true,
+      landingVisibilityWaitMs: 300,
       onDrop: options.onDrop,
     }),
     onClick: options.onClick,

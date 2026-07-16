@@ -6,6 +6,7 @@ export interface FlyToOptions {
   shrink: boolean
   fitToTarget?: boolean
   easing: string
+  isActive?: () => boolean
   onFinish: () => void
 }
 
@@ -18,7 +19,8 @@ export function animateFlyTo(options: FlyToOptions): () => void {
     if (finished) return
     finished = true
     holder.removeEventListener('transitionend', onEnd)
-    options.onFinish()
+    if (options.isActive?.() ?? true) options.onFinish()
+    else holder.remove()
   }
   const centerX = box.left + box.width / 2
   const centerY = box.top + box.height / 2

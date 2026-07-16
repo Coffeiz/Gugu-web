@@ -120,6 +120,7 @@
         <polyline points="9 18 15 12 9 6"/>
       </svg>
     </button>
+    <span v-else class="card-advance card-advance-placeholder" aria-hidden="true"></span>
   </div>
 
   <!-- 当前阶段待办弹层（点击阶段名弹出） -->
@@ -651,6 +652,14 @@ async function setPriority(n: number) {
   color: var(--text-primary);
 }
 .card-advance:active { background: rgba(0,0,0,0.1); }
+.card-advance-placeholder {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  border-left-color: transparent;
+  pointer-events: none;
+}
 
 /* 全局搜索命中 → 跳转本页后高亮闪一下定位（class 由 Projects 面板 JS 动态加） */
 .proj-card.search-flash { animation: proj-search-flash 1.8s ease forwards; }

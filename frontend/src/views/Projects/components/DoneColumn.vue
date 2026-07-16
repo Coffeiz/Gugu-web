@@ -25,97 +25,128 @@
       <div v-if="projects.length === 0" class="col-empty">拖拽项目到此</div>
 
       <template v-else>
+        <TransitionGroup tag="div" name="done-group-list" class="done-section-list">
         <!-- 最近完成（置顶 3 个，直接可见，无需展开文件夹）-->
-        <div v-if="recentDone.length" class="recent-done">
+        <div v-if="recentDone.length" key="recent-done" class="recent-done">
           <div class="recent-done-label">
             <PhCheckCircle :size="12" weight="fill" style="color:#5a9e88" />
             最近完成
           </div>
-          <div class="month-cards">
-            <ProjectCard
-              v-for="p in recentDone"
-              :key="'recent-' + p.id"
-              :project="p"
-              @click="$emit('card-click', p)"
-            />
-          </div>
+          <TransitionGroup
+            tag="div"
+            name="done-card-list"
+            class="month-cards recent-card-list"
+          >
+            <div v-for="p in recentDone" :key="p.id" class="done-card-item">
+              <ProjectCard :project="p" @click="$emit('card-click', p)" />
+            </div>
+          </TransitionGroup>
         </div>
 
-        <!-- 年目录 -->
-        <div v-for="yg in groupedByYear" :key="yg.year" class="year-group">
-          <button class="year-row" @click="toggleYear(yg.year)">
-            <svg
-              class="year-chev" :class="{ open: openYears.has(yg.year) }"
-              width="9" height="9" viewBox="0 0 10 10" fill="none"
-              stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        <!-- 年目录：拆成 4 个独立 v-for——所有年份的 row、展开年份的 body、
+             展开年内所有月份的 row、双层展开的 month-cards。
+             Vue 3 编译器禁止在 <template v-for> 子元素上放 :key，且 v-for/v-if 同元素时
+             v-if 拿不到 v-for 变量——所以把「过滤」挪到 computed 里，v-for 拿到的就是
+             已经过滤好的列表。未展开的月份/卡片完全不渲染，保留原版「按需挂载」性能。
+             4 个 v-for 各自作为 done-section-list / done-month-list 的直接子项，让
+             Vue 给每个 sibling 注入稳定 key，触发 .done-group-list-move / .done-card-list-move 的 FLIP。 -->
+        <button
+          v-for="yg in groupedByYear"
+          :key="`year-row-${yg.year}`"
+          class="year-row"
+          data-flip-target
+          @click="toggleYear(yg.year)"
+        >
+          <svg
+            class="year-chev" :class="{ open: openYears.has(yg.year) }"
+            width="9" height="9" viewBox="0 0 10 10" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          >
+            <path d="M2 3.5l3 3 3-3"/>
+          </svg>
+          <span class="year-label">{{ yg.year }}</span>
+          <span class="year-cnt">{{ yg.total }}</span>
+        </button>
+
+        <TransitionGroup
+          v-for="yg in openYearsList"
+          :key="`year-body-${yg.year}`"
+          tag="div"
+          name="done-group-list"
+          class="done-month-list"
+        >
+          <template v-for="mg in yg.months" :key="`month-group-${yg.year + mg.month}`">
+            <button
+              class="month-row"
+              data-flip-target
+              @click="toggleMonth(yg.year + mg.month)"
             >
-              <path d="M2 3.5l3 3 3-3"/>
-            </svg>
-            <span class="year-label">{{ yg.year }}</span>
-            <span class="year-cnt">{{ yg.total }}</span>
-          </button>
+              <PhFolderOpen v-if="openMonths.has(yg.year + mg.month)" :size="13" weight="fill" style="color:#5a9e88; opacity:0.85; flex-shrink:0" />
+              <PhFolder v-else :size="13" weight="regular" style="flex-shrink:0; opacity:0.6" />
+              <span class="month-name">{{ mg.month }}</span>
+              <span class="month-cnt">{{ mg.items.length }}</span>
+              <svg
+                class="month-chev" :class="{ open: openMonths.has(yg.year + mg.month) }"
+                width="8" height="8" viewBox="0 0 10 10" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              >
+                <path d="M2 3.5l3 3 3-3"/>
+              </svg>
+            </button>
 
-          <!-- v-if（非 v-show）：折叠的年份完全不渲染其下卡片，避免已完成项目累积后全量挂载拖慢初次渲染 -->
-          <div v-if="openYears.has(yg.year)" class="year-body">
-            <!-- 月目录 -->
-            <div v-for="mg in yg.months" :key="mg.month" class="month-group">
-              <button class="month-row" @click="toggleMonth(yg.year + mg.month)">
-                <PhFolderOpen v-if="openMonths.has(yg.year + mg.month)" :size="13" weight="fill" style="color:#5a9e88; opacity:0.85; flex-shrink:0" />
-                <PhFolder v-else :size="13" weight="regular" style="flex-shrink:0; opacity:0.6" />
-                <span class="month-name">{{ mg.month }}</span>
-                <span class="month-cnt">{{ mg.items.length }}</span>
-                <svg
-                  class="month-chev" :class="{ open: openMonths.has(yg.year + mg.month) }"
-                  width="8" height="8" viewBox="0 0 10 10" fill="none"
-                  stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                >
-                  <path d="M2 3.5l3 3 3-3"/>
-                </svg>
-              </button>
-
-              <div v-if="openMonths.has(yg.year + mg.month)" class="month-cards">
-                <ProjectCard
-                  v-for="p in mg.items"
-                  :key="p.id"
-                  :project="p"
-                  @click="$emit('card-click', p)"
-                />
+            <TransitionGroup
+              v-if="openMonths.has(yg.year + mg.month)"
+              :key="`month-cards-${yg.year + mg.month}`"
+              tag="div"
+              name="done-card-list"
+              class="month-cards"
+            >
+              <div v-for="p in mg.items" :key="p.id" class="done-card-item">
+                <ProjectCard :project="p" @click="$emit('card-click', p)" />
               </div>
-            </div>
-          </div>
-        </div>
+            </TransitionGroup>
+          </template>
+        </TransitionGroup>
 
-        <!-- 未设置日期 -->
-        <div v-if="undatedProjects.length" class="year-group">
-          <button class="year-row" @click="toggleYear('__undated')">
-            <svg
-              class="year-chev" :class="{ open: openYears.has('__undated') }"
-              width="9" height="9" viewBox="0 0 10 10" fill="none"
-              stroke="currentColor" stroke-width="2" stroke-linecap="round"
-            >
-              <path d="M2 3.5l3 3 3-3"/>
-            </svg>
-            <span class="year-label undated">未设置日期</span>
-            <span class="year-cnt">{{ undatedProjects.length }}</span>
-          </button>
-          <div v-if="openYears.has('__undated')" class="year-body">
-            <div class="month-cards" style="padding-left: 8px">
-              <ProjectCard
-                v-for="p in undatedProjects"
-                :key="p.id"
-                :project="p"
-                @click="$emit('card-click', p)"
-              />
-            </div>
+        <!-- 未设置日期：跟年/月同款拆法——year-row 始终渲染（让折叠按钮跟其他年份
+             一起做 FLIP），卡片组只在展开时挂载。同理避免在同一个元素上 v-for + v-if
+             访问不到 v-for 变量的问题。 -->
+        <button
+          v-if="undatedProjects.length"
+          :key="`year-row-undated`"
+          class="year-row"
+          @click="toggleYear('__undated')"
+        >
+          <svg
+            class="year-chev" :class="{ open: openYears.has('__undated') }"
+            width="9" height="9" viewBox="0 0 10 10" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          >
+            <path d="M2 3.5l3 3 3-3"/>
+          </svg>
+          <span class="year-label undated">未设置日期</span>
+          <span class="year-cnt">{{ undatedProjects.length }}</span>
+        </button>
+
+        <TransitionGroup
+          v-if="undatedProjects.length && openYears.has('__undated')"
+          :key="`year-body-undated`"
+          tag="div"
+          name="done-card-list"
+          class="month-cards"
+        >
+          <div v-for="p in undatedProjects" :key="p.id" class="done-card-item">
+            <ProjectCard :project="p" @click="$emit('card-click', p)" />
           </div>
-        </div>
+        </TransitionGroup>
+        </TransitionGroup>
       </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, type PropType } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, type PropType } from 'vue'
 import ProjectCard from './ProjectCard.vue'
 import { PhFolder, PhFolderOpen, PhCheckCircle, PhArchive } from '@phosphor-icons/vue'
 import type { Project } from '@/types/project'
@@ -147,6 +178,29 @@ const recentDone = computed(() =>
 )
 const recentIds = computed(() => new Set(recentDone.value.map(p => p.id)))
 
+// recentDone 变化时手动 FLIP 年/月行位置——卡片从「最近完成」退出进入年月文件夹时，
+// Vue TransitionGroup 的 FLIP 窗口已过（leave 动画结束后才触发位移），需要手动补偿。
+watch(recentDone, async () => {
+  // 记录变化前的位置（此时 DOM 还未更新）
+  const rows = document.querySelectorAll<HTMLElement>('.year-row, .month-row')
+  const beforeRects = Array.from(rows).map(el => el.getBoundingClientRect())
+  // 等待 Vue 更新 DOM
+  await nextTick()
+  const afterRects = Array.from(rows).map(el => el.getBoundingClientRect())
+  rows.forEach((el, i) => {
+    const dx = beforeRects[i].left - afterRects[i].left
+    const dy = beforeRects[i].top - afterRects[i].top
+    if (dx || dy) {
+      el.style.transform = `translate(${dx}px, ${dy}px)`
+      el.style.transition = 'none'
+      requestAnimationFrame(() => {
+        el.style.transition = 'transform 0.34s cubic-bezier(0.34, 1.2, 0.64, 1)'
+        el.style.transform = ''
+      })
+    }
+  })
+})
+
 const undatedProjects = computed(() =>
   props.projects.filter(p => !dateOf(p) && !recentIds.value.has(p.id))
 )
@@ -174,6 +228,16 @@ const groupedByYear = computed(() => {
         .map(([month, items]) => ({ month, items })),
     }))
 })
+
+// 派生：「展开的年份」列表——给 v-for 用，避免在外层 v-for 上加 v-if 触发
+// 「同元素 v-if 拿不到 v-for 变量」的 Vue 3 编译器规则。year-row 始终渲染（按年渲染），
+// year-body TransitionGroup 只渲染展开的年份。openYearsList 的引用稳定时 Vue 不重新
+// 重建 TransitionGroup，FLIP 移动照常跑。
+const openYearsList = computed(() =>
+  groupedByYear.value.filter(yg => openYears.value.has(yg.year))
+)
+
+
 
 onMounted(() => {
   const now = new Date()
@@ -204,6 +268,7 @@ function onDrop(e: DragEvent) {
 <style scoped>
 /* 最近完成置顶区 */
 .recent-done { margin-bottom: 10px; }
+.recent-done .month-cards { position: relative; }
 .recent-done-label {
   display: flex; align-items: center; gap: 5px;
   font-size: 11px; font-weight: 600; color: #5a9e88;
@@ -284,7 +349,34 @@ function onDrop(e: DragEvent) {
 }
 
 /* ── 年目录 ── */
-.year-group { margin-bottom: 4px; }
+/* 间距改挂到 year-row / month-row 自己身上——以前的 .year-group / .month-group 包装层
+   已经被拆掉让 year-row 直接进 done-section-list 参与 FLIP，group 上的 margin-bottom
+   自然失效；这里把同等视觉间距补回 row 上，避免拆完包装之后年 / 月之间挤成一团。 */
+.year-row:not(:last-child) { margin-bottom: 4px; }
+.done-section-list,
+.done-year-list,
+.done-month-list {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+.done-group-list-enter-active,
+.done-group-list-leave-active {
+  transition: opacity 0.22s ease, transform 0.34s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+.done-group-list-enter-from,
+.done-group-list-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+.done-group-list-move {
+  transition: transform 0.34s cubic-bezier(0.34, 1.2, 0.64, 1) !important;
+}
+.done-group-list-leave-active {
+  position: absolute;
+  width: 100%;
+  pointer-events: none;
+}
 
 .year-row {
   display: flex; align-items: center; gap: 6px;
@@ -292,7 +384,7 @@ function onDrop(e: DragEvent) {
   border: none; background: none;
   border-radius: 6px; cursor: pointer;
   font-family: var(--font-sans); text-align: left;
-  transition: background 0.12s;
+  transition: background 0.12s, transform 0.34s cubic-bezier(0.34, 1.2, 0.64, 1);
 }
 .year-row:hover { background: rgba(0,0,0,0.04); }
 
@@ -322,14 +414,14 @@ function onDrop(e: DragEvent) {
 }
 
 /* ── 月目录 ── */
-.month-group { margin-bottom: 1px; }
+.month-row:not(:last-child) { margin-bottom: 1px; }
 
 .month-row {
   display: flex; align-items: center; gap: 6px;
   width: 100%; padding: 4px 8px; border-radius: 7px;
   border: none; background: none; cursor: pointer;
   font-family: var(--font-sans); text-align: left;
-  transition: background 0.12s;
+  transition: background 0.12s, transform 0.34s cubic-bezier(0.34, 1.2, 0.64, 1);
 }
 .month-row:hover { background: rgba(0,0,0,0.04); }
 
@@ -349,6 +441,41 @@ function onDrop(e: DragEvent) {
 /* ── 项目卡片 ── */
 .month-cards {
   display: flex; flex-direction: column; gap: 6px;
-  padding: 4px 4px 4px 4px;
+  padding: 4px 0 4px 14px;
+  border-left: 1px solid rgba(0,0,0,0.06);
+  margin-left: 12px;
 }
+.done-card-item {
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+/* 最近完成区与年/月列表的成员变化动画。拖拽中的物理克隆不在这些列表里，拖拽 FLIP
+   仍由 interaction/drag 负责；卡片只处理自身进出，组内整体位移统一交给 year/month group。 */
+.done-card-list-enter-active,
+.done-card-list-leave-active {
+  transition: opacity 0.22s ease, transform 0.34s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+.done-card-list-enter-from,
+.done-card-list-leave-to {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+}
+.done-card-list-move {
+  /* 不和 month-group 的整体 FLIP 叠加位移，避免文件夹 icon 与卡片各走一套时间轴。 */
+  transition: none;
+}
+.done-card-list-leave-active {
+  position: absolute;
+  width: 100%;
+  pointer-events: none;
+}
+.recent-card-list .done-card-list-leave-active {
+  /* 卡片直接消失，不占空间，不触发 leave 动画 */
+  display: none !important;
+}
+.recent-card-list .done-card-list-leave-to {
+  /* 不会被用到，因为 display:none 直接跳过 */
+}
+
 </style>

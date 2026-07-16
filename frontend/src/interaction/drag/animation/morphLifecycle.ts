@@ -41,7 +41,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   let landingHovered = false
   let camGlue: HTMLElement | null = null
   let finishTimer: ReturnType<typeof setTimeout> | null = null
-  let unregister = () => undefined
+  let unregister: () => void = () => undefined
   let onEnd: (event: TransitionEvent) => void = () => undefined
 
   const syncHover = (hovering: boolean) => {

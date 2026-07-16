@@ -1,7 +1,43 @@
 # 咕咕 · 早期开发记录
 
-> 更新：2026-07-15
+> 更新：2026-07-16
 > 状态：早期阶段记录，当前进度见 `product/overview.md`
+
+---
+
+## 2026-07-16 · 已完成列拖拽动画：年月行 FLIP 缺口与月份文件夹嵌套
+
+### 问题
+
+1. **拖出卡片时年月标题瞬间移动**：从已完成列拖出卡片，year-row / month-row 没有让位动画，直接跳到新位置。
+2. **拖入卡片时年月组瞬间移动**：其他列的卡片拖入已完成列后，最近完成的第 3 张卡被挤出 `recentDone` 进入年月文件夹，此时年月行向上跳，没有过渡动画。
+3. **月份展开后卡片不在文件夹内**：展开月份文件夹时，卡片出现在所有月份行的最底部，而不是在对应月份行下方。
+
+### 根因
+
+**问题 1 & 2**：Vue TransitionGroup 的 FLIP（`done-group-list-move`）依赖在 `nextTick` 窗口内捕获新旧位置。但拖拽场景中：
+- 拖出时：`invertPlay`（drag 系统的 FLIP）查询子元素时没有覆盖 `.year-row` / `.month-row`（它们不是 `.project-card`），所以这些行不在 FLIP 补偿范围内。
+- 拖入时：卡片从 `recentDone` 退出进入年月文件夹，触发 `done-card-list-leave` 动画。leave 动画结束后 Vue 才更新布局，此时 TransitionGroup 的 FLIP 窗口早已关闭，`move` class 永远不会被添加到年月行上。
+
+探针验证：在 `afterCancel` / `afterFinish` 等时机读取 `[data-flip-target]` 元素的 class 和 computed style，发现 `move=false`、`transition=background 0.12s`——确认 Vue 从未给这些元素加 `move` class。
+
+**问题 3**：模板中 month-row 和 month-cards 分两个 `v-for` 渲染——先遍历 `yg.months` 渲染所有月份行，再遍历 `openMonthList(yg)` 渲染展开的卡片容器。DOM 顺序导致所有卡片排在所有月份行之后。
+
+### 修复
+
+1. **拖出 FLIP**：在 `useDragEngine.ts` 的 `_childCards` 查询中加入 `[data-flip-target]`，让 drag 系统的 `invertPlay` 覆盖年月行；`flip.ts` 改用 `el.style.setProperty('transition', ..., 'important')` 压过 CSS `!important` 冲突。
+
+2. **拖入 FLIP**：在 `DoneColumn.vue` 添加 `watch(recentDone, ...)` 手动 FLIP——在 `recentDone` 变化时记录年月行旧位置，`nextTick` 后记录新位置，差值用 `transform: translate()` 补偿，再 `requestAnimationFrame` 内过渡回零。这是对 Vue TransitionGroup FLIP 窗口过期后的手动补偿。
+
+3. **月份嵌套**：把 month-row 和对应的 month-cards 放在同一个 `<template v-for="mg in yg.months">` 中连续渲染，卡片紧跟在月份行下方；`month-cards` 增加 `padding-left: 14px`、`margin-left: 12px`、`border-left` 实现视觉缩进嵌套。删除不再需要的 `openMonthList()` 辅助函数。
+
+4. **退出动画妥协**：`recent-card-list .done-card-list-leave-active` 暂设 `display: none !important`，让卡片从最近完成退出时瞬间消失而非渐隐。原因是 leave 动画期间卡片仍占位，与手动 FLIP 的时序冲突会导致年月行跳动。后续可尝试用 `opacity` 渐隐 + `position: absolute` 脱流来兼顾两者。
+
+### 教训
+
+- Vue TransitionGroup 的 FLIP 只在 `nextTick` 窗口内生效，跨 TransitionGroup 的元素迁移（从一个 TG 的 leave 到另一个 TG 的 enter）必然超出这个窗口，需要手动补偿。
+- CSS `!important` 会覆盖 Vue TransitionGroup 内联设置的 `transition`，需要用 `setProperty('important')` 反压。
+- 探针（读取元素 class / computed style）比反复读代码猜时序有效得多——连续 2-3 轮猜不中就该换实测手段。
 
 ---
 
@@ -1327,3 +1363,77 @@ Modal 内 `localStatus` 是本地 `ref`，只在 `watch(() => props.project?.id,
 - **圆角**：`--radius-sm: 10px`，`--radius-md: 14px`，`--radius-lg: 18px`
 - **动画**：hover 弹性 `cubic-bezier(0.34,1.2,0.64,1)`，遮罩/阴影 `cubic-bezier(0.4,0,0.2,1)`，Modal 入场 `cubic-bezier(0.34,1.3,0.64,1)`
 - **Z-index 层级**：内容(default) → 渐变遮罩(5) → 顶栏(10) → Modal(200~300) → 对话球(1000) / 聊天(999)
+
+## 2026-07-16 · 拖拽系统模块化重构收口
+
+### 结构调整
+
+- `DragSession` / `DragRegistry` 只负责生命周期与 cleanup；physics、clone、落地动画和业务数据留在各自模块。
+- 单卡、多卡运行时迁移到 `interaction/single.ts`、`interaction/multi.ts`，`useDragEngine.ts` 只负责兼容入口和依赖组装。
+- 落地动画拆为 `animation/`，DOM 滚动工具与全局拖拽 listener 分别集中到 `interaction/dom.ts`、`interaction/listeners.ts`。
+- 文件、画布、项目、抽屉拖拽通过 adapter 接入，原有 `usePhysicsDrag.ts`、`useCardDrag.ts`、`useFileDragDrop.ts` 入口保留兼容转发。
+
+### 时序与状态
+
+- `requestAnimationFrame`、timeout、transitionend 和落地回调统一检查当前 session；同源新拖拽会通过 Registry 取消旧 session 并执行旧 cleanup。
+- 删除主入口的 `_pendingCleanups` Map，落地 cleanup 改由 `DragSession.addCleanup()` 管理。
+- 当前仍保留 `_active` 作为单套物理 listener 的调度锁；它不是 session 状态，现阶段不支持两套物理拖拽并行。
+
+### 验证
+
+- `npm run typecheck` 通过。
+- `npm run test:run` 通过：16 个测试文件、201 个测试。
+- `npm run typecheck:strict` 确认本次拖拽模块无新增错误；仓库已有 3 个错误仍位于 `useBoxSelection.ts`、`Files/index.vue`、`ProjectModal.vue`。
+- 文件库、项目页、画布和抽屉的实际拖拽行为仍需按架构方案的最终验收清单进行桌面端手测。
+
+## 2026-07-16 · 项目分组标题与年/月按钮的让位动画 (P0)
+
+### 问题
+
+0.19.1 那条「抽屉与画布之间的拖拽收尾」把拖拽飞行/落地/收尾链路修通了（详见 [devlog.md](docs/devlog.md) 2026-07-15 条目），但还有几个 P0 残留没补：当同组卡片增减时，分组标题、年/月折叠按钮会因 flex 重排瞬间跳到新位置，没有 FLIP 平移过渡。
+
+- `CanvasSidebar.project-group-title` 不在 `drawer-project-cards` TransitionGroup 内，是 TransitionGroup 外面的兄弟 div。
+- `DoneColumn.year-row` / `month-row` 被 `.year-group` / `.month-group` 包装层套住，按钮跟下方的卡片列表捆成一个 group 一起做 flex 重排。
+- `DoneColumn`「未设置日期」区也是同款 `.year-group` 包装。
+
+### 修复策略
+
+把所有「想让位但被外层 wrapper 套住」的元素都提到 TransitionGroup 的直接子项上，各自带稳定 key，让 Vue 的 `.*-move` 类能正确被注入做 FLIP。
+
+### 踩坑：Vue 3 `<template v-for>` 子元素禁止 `:key`
+
+第一版用 `<template v-for="yg in groupedByYear" :key="yg.year">` 包 button + TransitionGroup 两个兄弟（key 分别挂在 `button :key="`year-row-${yg.year}`"` 和 `<TransitionGroup :key="`year-body-${yg.year}`"` 上）。devserver 报 500，Vite 直接编译失败：
+
+```
+[vite:vue] <template v-for> key should be placed on the <template> tag.
+```
+
+Vue 3 编译器明确禁止在 `<template v-for>` 的子元素上放 `:key`——key 必须挂在 `<template>` 标签上。但要让外层 TransitionGroup 区分开 button 和 TransitionGroup 做 FLIP，就得让它们都是 TransitionGroup 的直接子项、各自带稳定 key，`<template v-for>` 这种结构天然冲突。
+
+另一个绕路是「同元素 v-for + v-if 过滤」，但 v-for 优先级低于 v-if，v-if 拿不到 v-for 变量，模板里写不出来。
+
+**最终方案**：拆成 4 个独立 v-for，每个 v-for 的源数据是已过滤的 computed——把「过滤」挪到 computed 里，模板里 v-for 拿到的就是已经过滤好的列表。
+
+| v-for 源 | 渲染什么 | key 模板 |
+|---|---|---|
+| `groupedByYear` | 所有年份的 year-row button | `year-row-${yg.year}` |
+| `openYearsList`（按 `openYears` 过滤） | 已展开年份的 year-body TransitionGroup | `year-body-${yg.year}` |
+| `yg.months`（在 openYearsList 内层） | 展开年内所有月份的 month-row button | `month-row-${yg.year+mg.month}` |
+| `openMonthList(yg)`（按 `openMonths` 过滤） | 双层展开的 month-cards TransitionGroup | `month-cards-${yg.year+mg.month}` |
+
+未展开的 year-body 完全不挂载，未展开月份的 month-cards 完全不挂载，保留原版「按需挂载」性能——`openYearsList` / `openMonthList` 是 computed，`openYears` / `openMonths` 变化时自动重算，Vue 拿到的是稳定引用。
+
+「未设置日期」区按同款思路拆：year-row 始终渲染（`v-if="undatedProjects.length"` 控制可见性），卡片组用 `v-if="undatedProjects.length && openYears.has('__undated')"` 控制挂载。
+
+### CSS 跟着改
+
+`.year-group` / `.month-group` 包装层没了，原本挂在它们身上的 `margin-bottom` 失效（这俩选择器现在匹配不到任何东西）。间距挪到 `.year-row:not(:last-child) { margin-bottom: 4px }` 和 `.month-row:not(:last-child) { margin-bottom: 1px }` 上，等价于原 wrapper 提供的视觉间距。
+
+### 教训
+
+**先实测再改模板结构**：Vue 3 对 `<template v-for>` 的 `:key` 位置、v-for / v-if 优先级、TransitionGroup 子元素要求都有硬约束，肉眼「看着对」不代表编译器放过。下次改 Vue 模板结构前先在 devserver / `vite build` 上过一遍编译，比反复改模板试错快得多。
+
+### 验证
+
+- `npx vite build` 通过（编译报错是先发现再修的，不是产品问题）。
+- HMR 行为待用户桌面端手测：①抽屉项目卡拖入/拖出时分组标题是否平滑让位；②已完成列年内/年内月间卡片增减时折叠按钮是否平滑让位；③跨年/跨月让位时整组（按钮 + 卡片）是否同步平移。
