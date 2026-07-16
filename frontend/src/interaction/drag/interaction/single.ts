@@ -1,5 +1,6 @@
 import { animateFlyTo } from '../animation/flyTo'
-import { invertPlay } from '../animation/flip'
+import type { FlipOptions } from '../animation/flip'
+import type { FlipTransaction } from '../animation/flipCoordinator'
 import { LandingState } from '../animation/landing'
 import { startMorphLifecycle } from '../animation/morphLifecycle'
 import { dragRegistry } from '../core/DragRegistry'
@@ -30,6 +31,26 @@ function suppressListLandingTransition(el: HTMLElement): () => void {
   }
 }
 
+const flipElementIds = new WeakMap<HTMLElement, number>()
+let nextFlipElementId = 1
+
+function flipItems(elements: HTMLElement[]) {
+  return elements.map(element => ({
+    key: element.dataset.projectId
+      ?? element.dataset.fileId
+      ?? element.dataset.folderKey
+      ?? (() => {
+        let id = flipElementIds.get(element)
+        if (!id) {
+          id = nextFlipElementId++
+          flipElementIds.set(element, id)
+        }
+        return id
+      })(),
+    element,
+  }))
+}
+
 function findVisibleProjectTarget(selector: string, sourceEl: HTMLElement): HTMLElement | null {
   const candidates = Array.from(document.querySelectorAll<HTMLElement>(selector))
   return candidates.find(el => {
@@ -58,6 +79,7 @@ function blockScrollDuringLanding(scroller: HTMLElement | null): () => void {
 export interface SingleDragDeps {
   active: { current: ActiveDrag | null }
   easing: string
+  createFlipTransaction: (options: FlipOptions) => FlipTransaction
   transparentGhost: () => HTMLCanvasElement
   registerCleanup: (session: DragSession, fn: () => void) => () => void
   setRetarget: (target: HTMLElement, retarget: (box: any) => void) => void
@@ -286,11 +308,16 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       const open = deps.rects(kids)
       sourceEl.style.display = 'none'
       const closed = deps.rects(kids)
-      invertPlay(kids, open, closed, {
+      const flip = deps.createFlipTransaction({
         easing: deps.easing,
         onBeforePlay: () => deps.retargetLandings(kids),
         isActive: () => session.isCurrent(),
       })
+      const items = flipItems(kids)
+      flip.capture(items, open)
+      flip.measure(items, closed)
+      const unregisterFlipCleanup = deps.registerCleanup(session, () => flip.cancel())
+      void flip.play().finally(unregisterFlipCleanup)
     })
   }
 
@@ -623,11 +650,16 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       }
       deps.holdHoverUntilReveal(el)
       el.style.opacity = '0'              // 落定前隐藏且压住 hover，克隆体落到位再露出
-      invertPlay(sibs, closedR, openR, {
+      const flip = deps.createFlipTransaction({
         easing: deps.easing,
         onBeforePlay: () => deps.retargetLandings(sibs),
         isActive: () => session.isCurrent(),
-      })   // 从合拢 → 展开
+      })
+      const items = flipItems(sibs)
+      flip.capture(items, closedR)
+      flip.measure(items, openR)
+      const unregisterFlipCleanup = deps.registerCleanup(session, () => flip.cancel())
+      void flip.play().finally(unregisterFlipCleanup)   // 从合拢 → 展开
       return el.getBoundingClientRect()
     }
 

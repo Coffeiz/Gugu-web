@@ -9,7 +9,7 @@
  */
 
 import { LandingState } from './animation/landing'
-import { invertPlay } from './animation/flip'
+import { createFlipTransaction } from './animation/flipCoordinator'
 import { animateFlyTo } from './animation/flyTo'
 import { startMorphLifecycle } from './animation/morphLifecycle'
 import type { DragSession } from './core/DragSession'
@@ -264,6 +264,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   startPhysicsDragRuntime(event, sourceEl, opts, {
     active: _activeState,
     easing: _SETTLE,
+    createFlipTransaction,
     transparentGhost: _transparentGhost,
     registerCleanup: (session, cleanup) => session.addCleanup(cleanup),
     setRetarget: (target, retarget) => _pendingRetargets.set(target, retarget),
