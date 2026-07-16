@@ -66,7 +66,7 @@
                    卡片变高变矮时，其它分组跟着平滑挪位，而不是瞬间跳到新位置。 -->
               <TransitionGroup name="drawer-project-groups" tag="div" class="project-groups">
                 <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group">
-                  <TransitionGroup name="drawer-project-cards" tag="div" class="project-group-cards" @before-leave="captureLeavePosition">
+                  <TransitionGroup name="drawer-project-cards" tag="div" class="project-group-cards" @before-leave="captureLeavePosition" @after-leave="releaseLeaveSpace">
                     <div :key="`title-${group.status}`" class="project-group-title"><span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span></div>
                     <ProjectDrawerCard
                       v-for="project in group.items"
@@ -134,7 +134,6 @@ let canvasListObserver: ResizeObserver | null = null
 let projectListObserver: ResizeObserver | null = null
 let contentTimer: ReturnType<typeof setTimeout> | null = null
 let compactTimer: ReturnType<typeof setTimeout> | null = null
-let projectResizeTimer: ReturnType<typeof setTimeout> | null = null
 
 const projectQuery = ref('')
 const filteredProjects = computed(() => {
@@ -151,6 +150,8 @@ const projectGroups = computed(() => [
 // 稳定下来后，也顺带绕开了"分组从无到有/从有到无"这种结构性增删的过渡时机问题（比如卡片
 // 挂载和分组自己的入场动画谁先谁后，会露出一帧还没被物理模块接管的本体，见 devlog）。
 const visibleProjectGroups = computed(() => projectGroups.value)
+const leaveSpace = new WeakMap<HTMLElement, { previous: string; count: number }>()
+const leaveParents = new WeakMap<HTMLElement, HTMLElement>()
 
 // leave-active 把离场卡切成 position:absolute 时不给 top/left，指望浏览器按它离场前的
 // 「静态位置」自动摆放——用 DevTools 性能录制实测抓到过这个自动定位算错：离场卡被摆到了
@@ -165,10 +166,31 @@ function captureLeavePosition(el: Element) {
   if (!parent) return
   const rect = node.getBoundingClientRect()
   const parentRect = parent.getBoundingClientRect()
+  const existing = leaveSpace.get(parent)
+  if (existing) {
+    existing.count += 1
+  } else {
+    leaveSpace.set(parent, { previous: parent.style.minHeight, count: 1 })
+    parent.style.minHeight = `${parentRect.height}px`
+  }
+  leaveParents.set(node, parent)
   node.style.position = 'absolute'
   node.style.left = `${rect.left - parentRect.left}px`
   node.style.top = `${rect.top - parentRect.top}px`
   node.style.width = `${rect.width}px`
+}
+function releaseLeaveSpace(el: Element) {
+  const node = el as HTMLElement
+  const parent = leaveParents.get(node)
+  leaveParents.delete(node)
+  if (!parent) return
+  const state = leaveSpace.get(parent)
+  if (!state) return
+  state.count -= 1
+  if (state.count <= 0) {
+    parent.style.minHeight = state.previous
+    leaveSpace.delete(parent)
+  }
 }
 function measurePanel(panelName: Panel) {
   const list = panelName === 'canvases' ? canvasListRef.value : projectListRef.value
@@ -261,35 +283,7 @@ function commitRename(id: number) {
 
 onMounted(() => {
   canvasListObserver = new ResizeObserver(() => measurePanel('canvases'))
-  // 项目卡拖去画布时源卡先是原位占位（keepSourcePlaceholder），要等新画布卡接手落地
-  // 动画后才会被真的从数据里摘掉；一摘掉，Vue 给它套 leave-active（position:absolute，
-  // 脱离文档流），.project-list 的 scrollHeight 当帧就变小，ResizeObserver 同步触发
-  // measurePanel 收缩 .cd-collapse 的高度——这时那张卡自己的 .16s 淡出还没播完，容器
-  // 却已经在收，视觉上就是"虚线框跟着挤了一下"。防抖到比这张卡的离场过渡（.16s 淡出）
-  // 和兄弟卡 -move FLIP（.42s）都略长，让容器收缩等卡片真正淡完、兄弟卡落定后再一次到位。
-  // 这个防抖只对"收缩"成立——新卡进入是立即挂载、立即开始让位 FLIP 的，容器展开没有
-  // "等谁淡出"这层顾虑；展开还套用同一份延迟，会让抽屉高度变化明显晚于兄弟卡的 FLIP
-  // 开始（拖拽落地动画因此追着一个还没到位的目标飞了一路）。按新旧 scrollHeight 判断
-  // 方向：展开立即测量，收缩才走防抖。
-  let lastProjectListHeight = projectListRef.value?.scrollHeight ?? 0
-  projectListObserver = new ResizeObserver(() => {
-    const height = projectListRef.value?.scrollHeight ?? 0
-    const shrinking = height < lastProjectListHeight
-    lastProjectListHeight = height
-    if (!shrinking) {
-      // 离场卡触发的 -move FLIP 期间，transform 会让 scrollHeight 在相邻帧短暂回升。
-      // 这不是新的展开；不能因此取消正在等待的收缩，否则 cd-collapse 会在兄弟卡尚未
-      // 让位完成时提前变小，直接裁掉底部卡片。
-      if (projectResizeTimer) return
-      measurePanel('projects')
-      return
-    }
-    if (projectResizeTimer) clearTimeout(projectResizeTimer)
-    projectResizeTimer = setTimeout(() => {
-      projectResizeTimer = null
-      measurePanel('projects')
-    }, 460)
-  })
+  projectListObserver = new ResizeObserver(() => measurePanel('projects'))
   if (canvasListRef.value) canvasListObserver.observe(canvasListRef.value)
   if (projectListRef.value) projectListObserver.observe(projectListRef.value)
   measurePanels()
@@ -298,7 +292,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearContentTimer()
   clearCompactTimer()
-  if (projectResizeTimer) clearTimeout(projectResizeTimer)
   canvasListObserver?.disconnect()
   projectListObserver?.disconnect()
   window.removeEventListener('resize', measurePanels)
@@ -348,7 +341,7 @@ onBeforeUnmount(() => {
 .cd-compact-enter-active { transition: opacity .22s ease-out, filter .22s ease-out; }
 .cd-compact-enter-from { opacity: 0; filter: blur(3px); }
 
-.cd-collapse { position: relative; width: var(--cd-target-width); overflow: hidden; transition: height .38s cubic-bezier(.22,1,.36,1); }
+.cd-collapse { position: relative; width: var(--cd-target-width); overflow: hidden; transition: height .2s cubic-bezier(.22,1,.36,1); }
 .cd-stage { position: relative; width: 100%; height: 100%; }
 .cd-content-panel { position: absolute; top: 0; left: 0; opacity: 0; filter: blur(6px); pointer-events: none; transition: opacity .26s cubic-bezier(.22,1,.36,1), filter .26s cubic-bezier(.22,1,.36,1); }
 .cd-content-panel.visible { opacity: 1; filter: blur(0); pointer-events: auto; }
