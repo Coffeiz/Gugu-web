@@ -853,6 +853,9 @@ async function movePmFilesInto(fileIds: (number | string)[], targetFolderId: num
   // 视图/计数都从 store 现算，移走的文件自动消失、目标层自动出现，无需刷新或重置导航（停在原地）。
 }
 
+const pmDragCounter = ref(0)
+const pmIsDragging = computed(() => pmDragCounter.value > 0)
+const dragging = ref(false)
 const {
   draggingFileIds: pmDraggingFileIds, draggingFolderIds: pmDraggingFolderIds,
   dragOverFolderId: pmDragOverFolderId, bcDragOverIdx: pmBcDragOverIdx,
