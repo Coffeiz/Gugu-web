@@ -343,9 +343,14 @@ function handleToggleTodo(todo: ProjectTodo) {
     const currentIndex = localStages.value.findIndex(stage => stage.key === props.currentStage)
     const targetIndex = firstIncompleteStageIdx(localStages.value)
     if (targetIndex > currentIndex) {
+      // 阶段推进会自己整体保存一次（setStage → transitionProjectStage 里已经带上了
+      // 刚勾完的这份 todos），不能再额外调 handleSaveTodos 保存一次——同一 tick 内
+      // localStages 被整体替换两次是递归更新的根因，见 useProjectStages.ts 的注释。
       handleSetStage(localStages.value[targetIndex].key, targetIndex)
+      return
     }
   }
+  handleSaveTodos()
 }
 </script>
 

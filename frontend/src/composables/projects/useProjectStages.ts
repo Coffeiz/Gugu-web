@@ -39,10 +39,13 @@ export function useProjectStages(options: ProjectStagesOptions) {
     saveTodos()
   }
 
+  // 不在这里自动 saveTodos——调用方（ProjectStagesPanel.handleToggleTodo）勾完待办后
+  // 可能紧接着触发阶段自动推进（setStage），那条路径自己会保存一次完整状态；这里如果也
+  // 保存一次，同一个点击事件里 localStages 会被整体替换两次，触发 TransitionGroup 递归
+  // 更新（2026-07-17 手动验收环境复现：Maximum recursive updates exceeded in <BaseTransition>）。
   function toggleTodo(todo: ProjectTodo) {
     todo.done = !todo.done
     todo.autoCompleted = false
-    saveTodos()
   }
 
   return { addStage, removeStage, addTodo, removeTodo, toggleTodo }
