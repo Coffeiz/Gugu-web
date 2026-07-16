@@ -51,100 +51,14 @@
 
             <hr class="col-divider" />
 
-            <!-- 阶段 -->
-            <div class="section stages-section">
-              <div class="stages-header">
-                <label class="section-label">项目阶段 <span class="label-hint">拖拽排序</span></label>
-                <button class="add-stage-btn" @click="addStage">＋ 添加</button>
-              </div>
-            <div class="stage-flow" ref="stageFlowRef">
-              <TransitionGroup name="stage-flip">
-              <div
-                v-for="(stage, i) in displayStages" :key="stage.key"
-                class="stage-node"
-                :class="{
-                  active: i === activeStageIdx && stage.key !== draggedStageKey,
-                  done: i < activeStageIdx && stage.key !== draggedStageKey,
-                  locked: lockedStageIndices.has(localStages.findIndex(s => s.key === stage.key)),
-                  'stage-dragging': stageDrag.active && stage.key === draggedStageKey,
-                  expanded: expandedStages.has(stage.key),
-                }"
-              >
-                <!-- 节点行 -->
-                <div class="node-row" @mousedown="editingStage !== stage.key && startStageDrag(i, $event)">
-                  <div class="node-circle"
-                    :style="i === activeStageIdx && stage.key !== draggedStageKey ? { background: localColor } : {}"
-                    @click.stop="!stageDrag.active && setStage(stage.key, i)"
-                  >
-                    <PhCheck v-if="i < activeStageIdx && stage.key !== draggedStageKey" :size="10" weight="bold" style="color:white" />
-                    <span v-else class="node-num">{{ i + 1 }}</span>
-                  </div>
-                  <div class="node-body">
-                    <input
-                      v-if="editingStage === stage.key"
-                      v-model="stage.label"
-                      class="stage-input"
-                      @blur="saveStages" v-enter="saveStages" @keydown.esc="editingStage = null" @click.stop
-                      ref="stageInputRef"
-                    />
-                    <span v-else class="node-label" @click.stop="startEdit(stage.key)">{{ stage.label }}</span>
-                    <span class="todo-count" v-if="stage.todos?.length">{{ stage.todos.filter(t=>t.done).length }}/{{ stage.todos.length }}</span>
-                  </div>
-                  <button class="del-stage" @click.stop="removeStage(stage.key)">
-                    <PhX :size="9" weight="bold" />
-                  </button>
-                </div>
-                <!-- 待办列表 -->
-                <TransitionGroup tag="div" name="todo-flip" class="todo-list"
-                     @dragover.prevent="todoListDragOver(stage)"
-                     @drop="todoDragEnd">
-                  <div v-for="(todo, ti) in (stage.todos ?? [])" :key="todo.id" class="todo-item"
-                       :class="{ 'todo-ghost': todoDrag && todoDrag.stageKey === stage.key && todoDrag.index === ti }"
-                       :draggable="editingTodo !== todo.id"
-                       @dragstart="todoDragStart(stage, ti)"
-                       @dragend="todoDragEnd"
-                       @dragover.prevent.stop="todoDragOver(stage, ti, $event)">
-                    <button class="todo-check" :class="{ checked: todo.done }" @click.stop="toggleTodo(todo)">
-                      <PhCheck v-if="todo.done" :size="9" weight="bold" />
-                    </button>
-                    <input
-                      v-if="editingTodo === todo.id"
-                      :class="['todo-input', `todo-input-${stage.key}`]"
-                      :data-tid="todo.id"
-                      v-model="todo.text"
-                      :title="todo.text"
-                      :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
-                      placeholder="待办事项"
-                      @blur="editingTodo = null; saveStages()"
-                      v-enter.prevent="() => (editingTodo = null, saveStages())"
-                      @keydown.esc="editingTodo = null"
-                      @keydown.backspace="!todo.text && removeTodo(stage, todo.id)"
-                    />
-                    <span
-                      v-else class="todo-name"
-                      :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
-                      @click.stop="startEditTodo(todo.id)"
-                    >{{ todo.text || '待办事项' }}</span>
-                    <button class="todo-del" @click.stop="removeTodo(stage, todo.id)"><PhX :size="8" weight="bold" /></button>
-                  </div>
-                  <button key="todo-add" class="todo-add-btn" @click.stop="addTodo(stage)">＋ 添加待办</button>
-                </TransitionGroup>
-                <div v-if="i < displayStages.length - 1" class="node-line"></div>
-              </div>
-              </TransitionGroup>
-            </div>
-
-            <!-- 拖拽虚影（圆圈 + 文字） -->
-            <Teleport to="body">
-              <div v-if="stageDrag.active" class="stage-drag-ghost-full"
-                :style="{ left: stageDrag.ghostX + 'px', top: stageDrag.ghostY + 'px', width: stageDrag.ghostWidth + 'px' }">
-                <span class="node-label">{{ stageDrag.ghostLabel }}</span>
-                <div v-if="stageDrag.ghostTodos.length" class="ghost-todos">
-                  <div v-for="t in stageDrag.ghostTodos" :key="t.id" class="ghost-todo" :class="{ done: t.done }">{{ t.text || '待办事项' }}</div>
-                </div>
-              </div>
-            </Teleport>
-          </div>
+            <ProjectStagesPanel
+              v-model:stages="localStages"
+              v-model:current-stage="localCurrentStage"
+              :stage-color="localColor"
+              :on-save-stages="saveStages"
+              :on-save-todos="saveTodos"
+              :on-set-stage="setStage"
+            />
 
           </div><!-- /left-content -->
         </div>
@@ -602,7 +516,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, type PropType } from 'vue'
 import { useProjectStore } from '@/stores/projects'
-import { cloneProjectStages, transitionProjectStage } from '@/utils/projectStages'
+import { transitionProjectStage } from '@/utils/projectStages'
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { projectsApi, uploadWithProgress } from '@/services/api'
@@ -636,6 +550,7 @@ import FileBrowserContextMenu from '@/components/common/FileBrowserContextMenu.v
 import FileBrowserContextMenuContent from '@/components/common/FileBrowserContextMenuContent.vue'
 import FileBrowserList from '@/components/common/FileBrowserList.vue'
 import ProjectInfoPanel from '@/views/Projects/components/ProjectInfoPanel.vue'
+import ProjectStagesPanel from '@/views/Projects/components/ProjectStagesPanel.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
@@ -647,7 +562,6 @@ import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileContextMenu } from '@/composables/files/useFileContextMenu'
 import { executeUploadLifecycle, prepareUploadBatch } from '@/composables/files/useFileUploadController'
 import { useProjectDraft } from '@/composables/projects/useProjectDraft'
-import { useProjectStages } from '@/composables/projects/useProjectStages'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
@@ -661,33 +575,6 @@ const fileActions      = useFileActions()
 const fileCacheStore   = useFilesCacheStore()
 const liveStore        = useLiveStore()
 const prefsStore       = usePreferencesStore()
-const editingStage     = ref<string | null>(null)
-const stageInputRef    = ref<HTMLInputElement[] | null>(null)
-const stageFlowRef     = ref<HTMLElement | null>(null)
-interface StageDragState {
-  active: boolean
-  fromIdx: number
-  overIdx: number
-  ghostX: number
-  ghostY: number
-  ghostLabel: string
-  ghostNum: number
-  ghostIsActive: boolean
-  ghostIsDone: boolean
-  ghostWidth: number
-  grabOffsetX: number
-  grabOffsetY: number
-  ghostTodos: ProjectTodo[]
-}
-const stageDrag = reactive<StageDragState>({
-  active: false, fromIdx: -1, overIdx: -1,
-  ghostX: 0, ghostY: 0, ghostLabel: '',
-  ghostNum: 1, ghostIsActive: false, ghostIsDone: false,
-  ghostWidth: 200, grabOffsetX: 0, grabOffsetY: 0, ghostTodos: [],
-})
-const dragging         = ref(false)
-const pmDragCounter    = ref(0)
-const pmIsDragging     = computed(() => pmDragCounter.value > 0)
 const {
   localName,
   localStages,
@@ -699,8 +586,6 @@ const {
   localStatus,
   reset: resetProjectDraft,
 } = useProjectDraft()
-const expandedStages   = ref(new Set<string>())
-let _syncingFromStore  = false   // 防止 store→localStages 同步触发 saveTodos
 const fileViewMode   = ref<'grid' | 'list'>('grid')
 // Tier 3：文件/文件夹数据统一由全局 filesCache store 提供（currentFiles/currentFolders 从它派生），
 // 不再自持 projectFiles/projectFolders/folderFilesMap/subFolderMap 本地缓存。
@@ -741,8 +626,7 @@ function pmFolderCount(folderId: number) {
 
 // 兼容旧模板引用（进入文件夹后的文件）
 const currentFolder = computed(() =>
-  folderStack.value.length ? folderStack.value[folderStack.value.length - 1] : null
-)
+  folderStack.value.length ? folderStack.value[folderStack.value.length - 1] : null)
 const currentFolderFiles = computed(() => currentFiles.value)
 
 // ── 侧栏两模式：false=文件区宽（现状）；true=左右各 50%、信息区 2 列 ──
@@ -808,8 +692,7 @@ const pmSelectionModeForced = ref(false)
 const pmDownloadingZip      = ref(false)
 const pmFileSelection = useFileSelection({ fileIds: pmSelectedFileIds, folderIds: pmSelectedFolderIds })
 const pmInSelectionMode = computed(() =>
-  pmSelectionModeForced.value || pmSelectedFileIds.value.size > 0 || pmSelectedFolderIds.value.size > 0
-)
+  pmSelectionModeForced.value || pmSelectedFileIds.value.size > 0 || pmSelectedFolderIds.value.size > 0)
 
 const pmFlatSelectableItems = computed(() => [
   ...sortedCurrentFolders.value.map(f => ({ type: 'folder' as const, id: f.id })),
@@ -1161,8 +1044,6 @@ async function deleteFolderCard(folder: FolderMeta) {
 }
 
 let initializing = false
-const activeStageIdx = ref(-1)
-const stageProgress  = ref(0)
 
 
 // 外部（Agent/IM）修改日期时同步本地状态（project?.id 不变，但日期值变了）
@@ -1172,8 +1053,6 @@ watch(() => props.project?.deadline,  (v) => { if (!initializing) localDeadline.
 watch(() => props.project?.id, async (id) => {
   initializing = true
   resetProjectDraft(props.project)
-  recalcStageState()
-  editingStage.value   = null
   openFolders.value    = new Set()
   folderStack.value    = []
   resetPmNavigation()
@@ -1187,33 +1066,7 @@ watch(() => props.project?.id, async (id) => {
   if (!fileCacheStore.loaded && !fileCacheStore.loading) fileCacheStore.load()
 }, { immediate: true })
 
-// 实时同步阶段/待办：咕咕（web 聊天 / IM）用 set_stages/update_todo/add_todo 等改了阶段后，
-// projectStore 会在 rev.projects 上 fetchProjects 刷新；这里监听 store 里本项目 stages 的变化，
-// 同步进可编辑副本 localStages。两道保险：① 正在编辑（改阶段名 / 拖拽 / 敲待办输入框）时跳过，
-// 不冲掉手头改动；② 与本地一致则不动（避开"自己保存→store 更新"的回环）。
-const _storeProject = computed(() => projectStore.projects.find(p => p.id === props.project?.id))
-function _editingStageArea() {
-  if (editingStage.value || stageDrag.active) return true
-  const el = document.activeElement
-  return !!(el && el.classList &&
-            (el.classList.contains('todo-input') || el.classList.contains('stage-input')))
-}
-watch(() => _storeProject.value?.stages, (stages) => {
-  if (!stages || _editingStageArea()) return
-  if (JSON.stringify(stages) === JSON.stringify(localStages.value)) return
-  _syncingFromStore = true
-  localStages.value       = stages.map(s => ({ ...s, todos: (s.todos || []).map(t => ({ ...t })) }))
-  localCurrentStage.value = _storeProject.value?.currentStage ?? localCurrentStage.value
-  recalcStageState()
-  nextTick(() => { _syncingFromStore = false })
-}, { deep: true })
 
-// 跟踪 store 里的 status 变化（如自动完成 / 拖回），实时同步胶囊亮起状态
-watch(() => props.project?.status, (status) => {
-  if (status !== undefined && status !== localStatus.value) {
-    localStatus.value = status
-  }
-})
 
 
 
@@ -1239,40 +1092,12 @@ watch(localDeadline, v => {
 })
 
 const currentStageIndex = computed(() =>
-  localStages.value.findIndex(s => s.key === localCurrentStage.value)
-)
+  localStages.value.findIndex(s => s.key === localCurrentStage.value))
 // 当前阶段所在位置索引（位置固定，拖动重排不改变）
 
 // 被锁定的阶段下标集合：前面阶段 todo 全部手动完成时，该阶段及之前不可退回
-const lockedStageIndices = computed(() => {
-  const locked = new Set<number>()
-  const stages = localStages.value
-  const cur = activeStageIdx.value
-  for (let target = 0; target < cur; target++) {
-    for (let i = target; i < cur; i++) {
-      const todos = stages[i].todos ?? []
-      if (todos.length > 0 && todos.every(t => t.done && !t.autoCompleted)) {
-        locked.add(target); break
-      }
-    }
-  }
-  return locked
-})
 
-const displayStages = computed(() => {
-  if (!stageDrag.active) return localStages.value
-  const stages = [...localStages.value]
-  const [item] = stages.splice(stageDrag.fromIdx, 1)
-  const to = Math.max(0, Math.min(stageDrag.overIdx, stages.length))
-  stages.splice(to, 0, item)
-  return stages
-})
-const draggedStageKey = computed(() =>
-  stageDrag.active ? localStages.value[stageDrag.fromIdx]?.key : null
-)
-const displayCurrentStageIndex = computed(() =>
-  displayStages.value.findIndex(s => s.key === localCurrentStage.value)
-)
+
 function calcProgress(stages: ProjectStage[], currentStageKey: string) {
   if (!stages.length) return 0
   const idx = stages.findIndex(s => s.key === currentStageKey)
@@ -1299,12 +1124,6 @@ const headerProgress = computed(() => {
 })
 
 // 只在明确切换阶段时调用，拖动重排不触发
-function recalcStageState() {
-  const stages = localStages.value
-  const idx = stages.findIndex(s => s.key === localCurrentStage.value)
-  activeStageIdx.value = idx
-  stageProgress.value = calcProgress(stages, localCurrentStage.value)
-}
 
 function extractAccent(colorStr: string | undefined) {
   const m = colorStr?.match(/#[0-9a-fA-F]{6}/)
@@ -1375,16 +1194,12 @@ function setStage(key: string, idx: number) {
   const transition = transitionProjectStage({
     stages: localStages.value,
     currentStage: localCurrentStage.value || null,
-    progress: stageProgress.value,
+    progress: newProgress,
     status: localStatus.value as Project['status'],
   }, key, newProgress)
-  _syncingFromStore = true
   localStages.value = transition.stages
   localCurrentStage.value = transition.currentStage ?? ''
   localStatus.value = transition.status
-  activeStageIdx.value = idx
-  stageProgress.value = transition.progress
-  nextTick(() => { _syncingFromStore = false })
   if (oldIdx !== newIdx) fireHint('stage_switch')   // 新手引导：第一次切换阶段
   if (props.project) projectStore.setStage(props.project.id, key, newProgress)
 }
@@ -1412,178 +1227,14 @@ async function handleArchive() {
   emit('close')
 }
 
-function startEdit(key: string) {
-  editingStage.value = key
-  nextTick(() => stageInputRef.value?.[0]?.focus())
-}
 function saveStages() {
-  editingStage.value = null
   if (props.project) projectStore.updateStages(props.project.id, localStages.value)
 }
 
-// 待办拖拽：拖名字行重排，可跨阶段移动；编辑态(span→input)不可拖。
-// 实时同步——dragenter 即把拖中项 splice 到目标位（其他待办由 TransitionGroup 动画让位），
-// 拖完(dragend / drop)才 saveStages 落库。
-const todoDrag = ref<{ stageKey: string; index: number } | null>(null)       // 拖动中实时更新（指向被拖项当前所在位）
-const editingTodo = ref<string | null>(null)    // 正在编辑文字的待办 id
-function startEditTodo(id: string) {
-  editingTodo.value = id
-  nextTick(() => document.querySelector<HTMLElement>(`[data-tid="${id}"]`)?.focus())
-}
-function todoDragStart(stage: ProjectStage, ti: number) {
-  todoDrag.value = { stageKey: stage.key, index: ti }
-}
-function _moveTodo(d: { stageKey: string; index: number }, targetStage: ProjectStage, to: number) {
-  const src = localStages.value.find(s => s.key === d.stageKey)
-  if (!src?.todos) return
-  let idx = to
-  if (src === targetStage) {
-    if (d.index < to) idx--            // 同列表：移除后目标位前移一格
-    if (idx === d.index) return         // 没越过中线，不动
-  }
-  const [moved] = src.todos.splice(d.index, 1)
-  if (!moved) return
-  if (!targetStage.todos) targetStage.todos = []
-  idx = Math.max(0, Math.min(idx, targetStage.todos.length))
-  targetStage.todos.splice(idx, 0, moved)
-  todoDrag.value = { stageKey: targetStage.key, index: idx }
-}
-// dragover + 中线判断：指针越过目标待办中线才换位，避免来回横跳
-function todoDragOver(stage: ProjectStage, ti: number, e: DragEvent) {
-  const d = todoDrag.value
-  if (!d) return
-  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  const after = (e.clientY - r.top) > r.height / 2
-  _moveTodo(d, stage, after ? ti + 1 : ti)
-}
-function todoListDragOver(stage: ProjectStage) {   // 空阶段：拖到空白区移入末尾
-  const d = todoDrag.value
-  if (d && (stage.todos?.length ?? 0) === 0) _moveTodo(d, stage, 0)
-}
-function todoDragEnd() {
-  if (todoDrag.value) { todoDrag.value = null; saveStages() }
-}
-function addStage() {
-  const key = projectStages.addStage()
-  nextTick(() => startEdit(key))
-}
-function removeStage(key: string) {
-  if (projectStages.removeStage(key)) expandedStages.value.delete(key)
-}
 
-function toggleExpand(key: string) {
-  const s = expandedStages.value
-  s.has(key) ? s.delete(key) : s.add(key)
-  expandedStages.value = new Set(s)
-}
-function saveTodos() {
-  if (!props.project) return
-  if (_syncingFromStore) return
-  const newProgress = calcProgress(localStages.value, localCurrentStage.value)
-  stageProgress.value = newProgress
-  projectStore.saveTodos(props.project.id, cloneProjectStages(localStages.value), newProgress)
-}
-const projectStages = useProjectStages({
-  stages: localStages,
-  currentStage: localCurrentStage,
-  saveStages,
-  saveTodos,
-  setStage,
-})
-function addTodo(stage: ProjectStage) {
-  projectStages.addTodo(stage)
-  nextTick(() => {
-    const inputs = document.querySelectorAll<HTMLElement>(`.todo-input-${stage.key}`)
-    inputs[inputs.length - 1]?.focus()
-  })
-}
-function removeTodo(stage: ProjectStage, id: string) {
-  projectStages.removeTodo(stage, id)
-}
-function toggleTodo(todo: ProjectTodo) {
-  projectStages.toggleTodo(todo)
-}
 
-function stageIdxFromY(y: number) {
-  if (!stageFlowRef.value) return stageDrag.overIdx
-  const nodes = stageFlowRef.value.querySelectorAll('.stage-node')
-  let cur = stageDrag.overIdx
-  if (cur < 0) cur = 0
-  // 增量 + 滞后：overIdx 每次最多移一格，且需指针「明确越过相邻阶段中线」才移——
-  // 避免重排后『指针下的阶段变了』导致 overIdx 反复横跳（闭环抖动）。只读相邻两个 rect，也省 reflow。
-  if (cur > 0) {
-    const prev = nodes[cur - 1]?.getBoundingClientRect()
-    if (prev && y < prev.top + prev.height / 2) return cur - 1
-  }
-  if (cur < nodes.length - 1) {
-    const next = nodes[cur + 1]?.getBoundingClientRect()
-    if (next && y > next.top + next.height / 2) return cur + 1
-  }
-  return cur
-}
 
-function startStageDrag(fromIdx: number, e: MouseEvent) {
-  const startX = e.clientX, startY = e.clientY
-  const el = e.currentTarget as HTMLElement
-  const rect = el.getBoundingClientRect()
-  const grabOffsetX = e.clientX - rect.left
-  const grabOffsetY = e.clientY - rect.top
-  let activated = false
 
-  const mm = (ev: MouseEvent) => {
-    if (!activated) {
-      const dx = ev.clientX - startX, dy = ev.clientY - startY
-      if (Math.sqrt(dx * dx + dy * dy) < 4) return
-      activated = true
-      const stage = localStages.value[fromIdx]
-      stageDrag.active       = true
-      stageDrag.fromIdx      = fromIdx
-      stageDrag.overIdx      = fromIdx
-      stageDrag.ghostLabel   = stage?.label ?? ''
-      stageDrag.ghostTodos   = stage?.todos ?? []   // ghost 带着待办一起悬浮，保持「整个阶段被抓起」的一体感
-      stageDrag.ghostNum     = fromIdx + 1
-      stageDrag.ghostIsActive = fromIdx === activeStageIdx.value
-      stageDrag.ghostIsDone  = fromIdx < activeStageIdx.value
-      stageDrag.ghostWidth   = rect.width
-      stageDrag.grabOffsetX  = grabOffsetX
-      stageDrag.grabOffsetY  = grabOffsetY
-      document.body.style.cursor     = 'grabbing'
-      document.body.style.userSelect = 'none'
-    }
-    stageDrag.ghostX  = ev.clientX - stageDrag.grabOffsetX
-    stageDrag.ghostY  = ev.clientY - stageDrag.grabOffsetY
-    stageDrag.overIdx = stageIdxFromY(ev.clientY)
-  }
-
-  const mu = () => {
-    document.removeEventListener('mousemove', mm)
-    document.removeEventListener('mouseup', mu)
-    if (activated) {
-      commitStageDrag()  // 先提交，再重置索引
-      stageDrag.active = false
-      stageDrag.fromIdx = -1
-      stageDrag.overIdx = -1
-      document.addEventListener('click', ce => ce.stopPropagation(), { capture: true, once: true })
-    }
-    document.body.style.cursor     = ''
-    document.body.style.userSelect = ''
-  }
-
-  document.addEventListener('mousemove', mm)
-  document.addEventListener('mouseup', mu)
-}
-
-function commitStageDrag() {
-  const { fromIdx, overIdx } = stageDrag
-  if (fromIdx < 0 || fromIdx === overIdx) return
-  const stages = JSON.parse(JSON.stringify(localStages.value))
-  // 整个阶段对象（label + todos + key）一起搬，和预览 displayStages 一致。
-  // key 是稳定身份不随位置变；当前阶段按 key 跟随移动后的阶段（updateStages 不重排 key）。
-  const [moved] = stages.splice(fromIdx, 1)
-  stages.splice(Math.max(0, Math.min(overIdx, stages.length)), 0, moved)
-  localStages.value = stages
-  saveStages()
-}
 
 const { uploadingItems, createGhost, updateGhostProgress, removeGhost, failGhost, createFolderGhost, bumpFolderGhost } = useUploadQueue()
 
@@ -2030,110 +1681,6 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .color-chip.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,0.18); }
 
 /* 阶段 */
-.stages-section { flex: 1; min-height: 80px; display: flex; flex-direction: column; gap: 0; padding-bottom: 0; }
-.stages-header {
-  display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;
-}
-.add-stage-btn {
-  background: none; border: none; font-size: 11px; font-weight: 600;
-  color: var(--color-primary); cursor: pointer; font-family: var(--font-sans);
-  padding: 0; text-transform: none; letter-spacing: 0;
-}
-.add-stage-btn:hover { opacity: 0.7; }
-.stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 11px 4px 8px; margin-right: -3px; }
-.stage-flow::-webkit-scrollbar { width: 3px; }
-.stage-flow::-webkit-scrollbar-track { background: transparent; }
-.stage-flow::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
-
-.stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 0 5px; margin-bottom: 2px; }
-.stage-node.stage-dragging { opacity: 0.15; pointer-events: none; transition: none; }   /* 被拖阶段占位瞬间跟随、不参与让位动画；完整保留待办，与跟手 ghost 一致 */
-
-.node-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 0; }
-.node-circle {
-  width: 22px; height: 22px; border-radius: 50%;
-  border: 1.5px solid rgba(90,95,120,0.35); background: rgba(0,0,0,0.08);
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-  cursor: pointer; z-index: 1;
-}
-.stage-node.done .node-circle { background: var(--color-success); border-color: var(--color-success); }
-.stage-node.active .node-circle { border-color: transparent; }
-.stage-node.locked .node-circle { cursor: not-allowed; opacity: 0.7; }
-.stage-node.locked .node-label  { opacity: 0.6; }
-.node-num { font-size: 10px; font-weight: 700; color: #5a5f78; line-height: 1; }
-.stage-node.active .node-num { color: #fff; }
-.node-body { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; }
-.node-label { font-size: 13px; color: var(--text-primary); }
-.stage-node.done .node-label { color: var(--text-secondary); text-decoration: line-through; }
-.stage-node.active .node-label { font-weight: 600; }
-.todo-count { font-size: 10px; color: var(--text-secondary); opacity: 0.7; white-space: nowrap; }
-.node-expand-btn {
-  background: none; border: none; cursor: pointer; color: var(--text-secondary);
-  opacity: 0; transition: opacity 0.15s, transform 0.2s; padding: 2px;
-  display: flex; align-items: center;
-}
-.node-expand-btn.open { transform: rotate(180deg); opacity: 0.5 !important; }
-.stage-node:hover .node-expand-btn { opacity: 0.4; }
-.stage-input {
-  font-size: 13px; font-family: var(--font-sans);
-  border: 1px solid rgba(123,127,178,0.4); border-radius: 6px; padding: 1px 6px;
-  background: rgba(255,255,255,0.5); outline: none; color: var(--text-primary); width: 110px;
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
-  transition: background 0.15s;
-}
-.stage-input:hover, .stage-input:focus { background: rgba(255,255,255,0.75); }
-.del-stage {
-  background: none; border: none; cursor: pointer; color: var(--text-secondary);
-  opacity: 0; transition: opacity 0.15s; padding: 2px;
-  display: flex; align-items: center; flex-shrink: 0;
-}
-.stage-node:hover .del-stage { opacity: 0.5; }
-.del-stage:hover { opacity: 1 !important; color: var(--color-warning); }
-.node-line { display: none; }
-/* 待办列表 */
-.todo-list { padding: 2px 0 8px 30px; display: flex; flex-direction: column; gap: 3px;
-  background-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.06) 20%, rgba(0,0,0,0.06) 80%, transparent 100%);
-  background-size: 100% 1px; background-repeat: no-repeat; background-position: center bottom; }
-.stage-node:last-child .todo-list { background-image: none; }
-.todo-item { display: flex; align-items: flex-start; gap: 6px; min-height: 24px; }
-.todo-item + .todo-item { border-top: 1px solid rgba(0,0,0,0.05); }
-.todo-check, .todo-del { margin-top: 4px; }   /* 文字换行后多行居中不好看，改顶部对齐；单行时用这个偏移凑回原来的视觉居中 */
-.todo-name { flex: 1; min-width: 0; font-size: 12px; line-height: 1.5; color: var(--text-primary); padding: 2px 0; cursor: grab; overflow-wrap: break-word; word-break: break-word; white-space: normal; }
-.todo-item:active .todo-name { cursor: grabbing; }
-.todo-ghost { opacity: 0.35; }   /* 被拖的那条淡化，让位预览更清楚 */
-.todo-check {
-  width: 15px; height: 15px; border-radius: 4px; flex-shrink: 0;
-  border: 1.5px solid rgba(0,0,0,0.18); background: rgba(255,255,255,0.7);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.15s, border-color 0.15s;
-}
-.todo-check.checked { background: var(--color-success); border-color: var(--color-success); color: white; }
-.todo-input {
-  flex: 1; font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
-  border: 1.5px solid transparent; border-radius: 5px;
-  background: transparent; outline: none; min-width: 0;
-  padding: 0 5px; box-sizing: border-box;
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
-}
-.todo-input:focus {
-  background: rgba(255,255,255,0.72);
-  border-color: rgba(123,127,178,0.4);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
-}
-.todo-del {
-  background: none; border: none; cursor: pointer; color: var(--text-secondary);
-  opacity: 0; transition: opacity 0.15s; padding: 2px; display: flex; align-items: center; flex-shrink: 0;
-}
-.todo-item:hover .todo-del { opacity: 0.4; }
-.todo-del:hover { opacity: 1 !important; color: var(--color-warning); }
-.todo-add-btn {
-  display: flex; align-items: center; gap: 4px;
-  height: 24px; padding: 0 10px; border-radius: 7px;
-  border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.62);
-  font-size: 11px; font-weight: 500; color: var(--text-secondary);
-  cursor: pointer; font-family: var(--font-sans); transition: all 0.15s;
-  margin-top: 2px; margin-right: 18px;
-}
-.todo-add-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(255,255,255,0.75); }
 
 
 
@@ -2692,22 +2239,6 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 </style>
 
 <style>
-.stage-drag-ghost-full {
-  position: fixed; z-index: 100000; pointer-events: none;   /* 压顶带:拖拽克隆体不被窗口盖住 */
-  display: flex; flex-direction: column; align-items: stretch;
-  padding: 6px 12px 8px;
-  opacity: 0.85; box-sizing: border-box;   /* 只显示克隆内容，不要底色框/边框/阴影 */
-}
-.stage-drag-ghost-full .node-label {
-  font-size: 13px; color: #1e2028; font-weight: 500;
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.stage-drag-ghost-full .ghost-todos { margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
-.stage-drag-ghost-full .ghost-todo {
-  font-size: 12px; color: var(--text-secondary); line-height: 1.4;
-  padding-left: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.stage-drag-ghost-full .ghost-todo.done { text-decoration: line-through; opacity: 0.5; }
 /* ── 右键菜单 ── */
 .fc-card.cut, .list-row.cut { opacity: 0.75; }
 
