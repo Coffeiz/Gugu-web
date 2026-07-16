@@ -824,6 +824,32 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
                 // 真实位置，此时兄弟卡的让位早已播完、位置绝对稳定，比决策时的快照准得多。
                 correctRevealPosition(sc, targetEl)
                 restoreSourcePlaceholderStyle()
+                // TEMP PROBE：扫描抽屉里所有卡片的 transform，追踪是否有卡片长期卡着非 identity
+                // 的残留值（怀疑某张无关卡片的 FLIP -move transform 没被正确清零，直到后续某次
+                // 强制重排才"跳"到正确位置）。
+                if (sc) {
+                  const t0 = performance.now()
+                  const seen = new Map<string, string>()
+                  const scanTick = () => {
+                    const t = performance.now() - t0
+                    if (t > 1200) return
+                    sc.querySelectorAll<HTMLElement>('.drawer-project-card').forEach(el => {
+                      const pid = el.getAttribute('data-project-id') || el.className
+                      const tf = getComputedStyle(el).transform
+                      const isIdentity = tf === 'none' || tf === 'matrix(1, 0, 0, 1, 0, 0)'
+                      const prev = seen.get(pid)
+                      if (!isIdentity && prev !== tf) {
+                        console.log('[probe] stuck-transform', t.toFixed(0), pid, tf)
+                        seen.set(pid, tf)
+                      } else if (isIdentity && prev && prev !== 'none') {
+                        console.log('[probe] transform-cleared', t.toFixed(0), pid)
+                        seen.set(pid, 'none')
+                      }
+                    })
+                    requestAnimationFrame(scanTick)
+                  }
+                  requestAnimationFrame(scanTick)
+                }
               },
               false,
               targetEl === sourceEl,

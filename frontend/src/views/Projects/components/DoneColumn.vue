@@ -268,7 +268,12 @@ function onDrop(e: DragEvent) {
 <style scoped>
 /* 最近完成置顶区 */
 .recent-done { margin-bottom: 10px; }
-.recent-done .month-cards { position: relative; }
+.recent-done .month-cards {
+  position: relative;
+  padding: 4px 0;
+  border-left: none;
+  margin-left: 0;
+}
 .recent-done-label {
   display: flex; align-items: center; gap: 5px;
   font-size: 11px; font-weight: 600; color: #5a9e88;
@@ -332,16 +337,10 @@ function onDrop(e: DragEvent) {
 .col-body {
   display: flex; flex-direction: column; gap: 2px;
   flex: 1; overflow-y: auto;
-  padding: 2px 0;
-  /* 跟 AppSidebar .nav 同款写法（见其注释）——col 自身 padding-right 10 是滚动条
-     的容纳区，col-body 用 margin-right: -10 推出去抵消它，再用 padding-right: 10
-     补回来保证 col-body 内容右 = col 内右。padding-left 故意设 0，让 col 自身
-     padding-left 10 充当内容左 padding，col-head 跟 col-body 内容左右对齐 10/10
-     （而不是 16/10 这种"col-head 靠外、col-body 内容靠内"的错位）。
-     scrollbar-gutter: stable 固定预留这份空间，macOS overlay 滚动条覆盖在
-     col 自身 padding 内部不挤压内容，Windows classic 滚动条覆盖 col 自身 padding 10
-     + 突出 col 边 7px——两种情况内容位置都不会因滚动条出现/消失而左移。 */
-  margin-right: -10px; padding-right: 10px;
+  min-width: 0; box-sizing: border-box;
+  overflow-x: hidden;
+  padding: 2px 6px;
+  margin-right: 0;
   scrollbar-gutter: stable;
 }
 .col-body::-webkit-scrollbar { width: 3px; }
@@ -452,6 +451,7 @@ function onDrop(e: DragEvent) {
   padding: 4px 0 4px 14px;
   border-left: 1px solid rgba(0,0,0,0.06);
   margin-left: 12px;
+  box-sizing: border-box;
 }
 .done-card-item {
   flex: 0 0 auto;
@@ -469,6 +469,10 @@ function onDrop(e: DragEvent) {
   opacity: 0;
   transform: translateY(-6px) scale(0.98);
 }
+.recent-card-list .done-card-list-enter-from {
+  /* 新进入最近完成区的卡片从列表下方补位，避免和月份列表顶部卡片重叠。 */
+  transform: translateY(6px) scale(0.98);
+}
 .done-card-list-move {
   /* 不和 month-group 的整体 FLIP 叠加位移，避免文件夹 icon 与卡片各走一套时间轴。 */
   transition: none;
@@ -480,6 +484,10 @@ function onDrop(e: DragEvent) {
 }
 .recent-card-list .done-card-list-leave-active {
   /* 卡片直接消失，不占空间，不触发 leave 动画 */
+  display: none !important;
+}
+.done-month-list .done-card-list-leave-active {
+  /* 跨到最近完成区的卡片在原月份中瞬间退出，让其余月份卡片单独完成让位。 */
   display: none !important;
 }
 .recent-card-list .done-card-list-leave-to {

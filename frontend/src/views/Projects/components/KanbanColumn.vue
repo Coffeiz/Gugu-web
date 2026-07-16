@@ -84,8 +84,10 @@ function onDrop(e: DragEvent) {
 .col-body {
   display: flex; flex-direction: column; gap: 8px;
   flex: 1; overflow-y: auto;
-  padding: 2px 6px 2px 6px;
-  margin-right: -8px; padding-right: 14px;
+  min-width: 0; box-sizing: border-box;
+  overflow-x: hidden;
+  padding: 2px 6px;
+  margin-right: 0;
   scrollbar-gutter: stable;
 }
 .col-body::-webkit-scrollbar { width: 3px; }
