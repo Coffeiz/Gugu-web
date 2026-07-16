@@ -265,8 +265,8 @@ onMounted(() => {
   // 动画后才会被真的从数据里摘掉；一摘掉，Vue 给它套 leave-active（position:absolute，
   // 脱离文档流），.project-list 的 scrollHeight 当帧就变小，ResizeObserver 同步触发
   // measurePanel 收缩 .cd-collapse 的高度——这时那张卡自己的 .16s 淡出还没播完，容器
-  // 却已经在收，视觉上就是"虚线框跟着挤了一下"。防抖到比这张卡的离场过渡（.16s 淡出 +
-  // 那一下 -move FLIP 落定）略长，让容器收缩等卡片真正淡完、兄弟卡落定后再一次到位。
+  // 却已经在收，视觉上就是"虚线框跟着挤了一下"。防抖到比这张卡的离场过渡（.16s 淡出）
+  // 和兄弟卡 -move FLIP（.42s）都略长，让容器收缩等卡片真正淡完、兄弟卡落定后再一次到位。
   // 这个防抖只对"收缩"成立——新卡进入是立即挂载、立即开始让位 FLIP 的，容器展开没有
   // "等谁淡出"这层顾虑；展开还套用同一份延迟，会让抽屉高度变化明显晚于兄弟卡的 FLIP
   // 开始（拖拽落地动画因此追着一个还没到位的目标飞了一路）。按新旧 scrollHeight 判断
@@ -277,7 +277,10 @@ onMounted(() => {
     const shrinking = height < lastProjectListHeight
     lastProjectListHeight = height
     if (!shrinking) {
-      if (projectResizeTimer) { clearTimeout(projectResizeTimer); projectResizeTimer = null }
+      // 离场卡触发的 -move FLIP 期间，transform 会让 scrollHeight 在相邻帧短暂回升。
+      // 这不是新的展开；不能因此取消正在等待的收缩，否则 cd-collapse 会在兄弟卡尚未
+      // 让位完成时提前变小，直接裁掉底部卡片。
+      if (projectResizeTimer) return
       measurePanel('projects')
       return
     }
@@ -285,7 +288,7 @@ onMounted(() => {
     projectResizeTimer = setTimeout(() => {
       projectResizeTimer = null
       measurePanel('projects')
-    }, 220)
+    }, 460)
   })
   if (canvasListRef.value) canvasListObserver.observe(canvasListRef.value)
   if (projectListRef.value) projectListObserver.observe(projectListRef.value)
