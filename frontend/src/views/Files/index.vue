@@ -400,14 +400,8 @@
                 </div>
               </div>
             </div>
-            <!-- 上传快捷区 -->
-            <label v-if="canUpload" class="fc-upload">
-              <svg width="20" height="20" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4">
-                <path d="M11 15V5M6 9l5-5 5 5"/><path d="M2 17h18"/>
-              </svg>
-              <span class="fc-upload-text">上传文件</span>
-              <input type="file" hidden multiple @change="handleFileInput" />
-            </label>
+            <!-- 上传快捷区：跟项目文件区同一份共用组件 FileUploadButton.vue -->
+            <FileUploadButton v-if="canUpload" mode="grid" @select="handleFileInput" />
           </FileBrowserGrid>
 
           <div v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading && !canUpload" class="grid-empty">
@@ -562,6 +556,9 @@
               </svg>
               暂无文件
             </div>
+
+            <!-- 上传行：网格视图一直有这个入口，列表视图之前漏画了 -->
+            <FileUploadButton v-if="canUpload" mode="list" @select="handleFileInput" />
           </FileBrowserList>
         </template>
 
@@ -617,6 +614,7 @@ import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from
 import { filesApi, trashApi, uploadWithProgress, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileCard       from '@/components/common/FileCard.vue'
+import FileUploadButton from '@/components/common/FileUploadButton.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
 import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
 import FileBrowserContextMenu from '@/components/common/FileBrowserContextMenu.vue'
@@ -661,7 +659,7 @@ import {
   PhClock, PhPlayCircle, PhCheckCircle,
   PhBrowser,
   PhArrowLeft, PhArrowRight, PhSortAscending, PhSquaresFour, PhList,
-  PhCheckSquare, PhCheck, PhFolderPlus, PhUploadSimple, PhPencilSimple,
+  PhCheckSquare, PhCheck, PhFolderPlus, PhPencilSimple,
   PhDownloadSimple, PhX,
   PhWarningCircle,
 } from '@phosphor-icons/vue'
@@ -996,7 +994,7 @@ const {
   fileAttr: 'data-file-id',
   folderAttr: 'data-folder-key',
   extraFolderAttrs: ['data-trash-folder-id'],
-  excludeSelector: 'button, .fc-card, .folder-card, .fc-upload, .list-row',
+  excludeSelector: 'button, .fc-card, .folder-card, .fub, .list-row',
   onBoxSelect: ({ fileIds, folderIds }, e) => {
     const normalFolderIds = new Set([...folderIds].filter(id => !String(id).startsWith('trash:')))
     const trashFolderIds = new Set([...folderIds]
@@ -2384,16 +2382,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .fc-ghost-row.error { border-color: rgba(200,90,90,0.3) !important; }
 .fc-ghost-row.error .fc-ghost-fill { background: rgba(200,90,90,0.1); width: 100% !important; }
 
-.fc-upload {
-  border: 1.5px dashed rgba(0,0,0,0.09); border-radius: 14px; corner-shape: round;
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 7px;
-  color: var(--text-secondary);
-  cursor: pointer; background: rgba(255,255,255,0.2); transition: all 0.18s;
-  overflow: hidden; min-height: 130px;
-}
-.fc-upload:hover { border-color: rgba(123,127,178,0.45); color: var(--color-primary); background: rgba(123,127,178,0.04); }
-.fc-upload-text { font-size: 10px; font-weight: 600; }
+/* 网格/列表上传按钮外观改由共用组件 FileUploadButton.vue 提供（跟项目文件区同一份）。 */
 
 /* ── 列表视图 ── */
 .file-list { display: flex; flex-direction: column; gap: 2px; }
