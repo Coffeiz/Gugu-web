@@ -8,12 +8,29 @@ let nextSessionId = 0
  */
 export class DragRegistry {
   private readonly sessions = new WeakMap<HTMLElement, DragSession>()
+  private readonly identitySessions = new Map<string, { source: HTMLElement; session: DragSession }>()
+
+  private identity(source: HTMLElement): string | null {
+    for (const attr of ['data-project-id', 'data-file-id', 'data-folder-key']) {
+      const value = source.getAttribute(attr)
+      if (value) return `${attr}:${value}`
+    }
+    return null
+  }
 
   start(source: HTMLElement): DragSession {
     this.cancel(source)
+    const identity = this.identity(source)
+    const previous = identity ? this.identitySessions.get(identity) : undefined
+    if (previous && previous.source !== source) {
+      previous.session.cancel()
+      this.sessions.delete(previous.source)
+      this.identitySessions.delete(identity)
+    }
     const session = new DragSession(`drag-${Date.now()}-${nextSessionId++}`)
     session.bindCurrentChecker(() => this.sessions.get(source) === session)
     this.sessions.set(source, session)
+    if (identity) this.identitySessions.set(identity, { source, session })
     return session
   }
 
@@ -29,6 +46,10 @@ export class DragRegistry {
     if (this.sessions.get(source) !== session) return
     session.finish()
     this.sessions.delete(source)
+    const identity = this.identity(source)
+    if (identity && this.identitySessions.get(identity)?.session === session) {
+      this.identitySessions.delete(identity)
+    }
   }
 
   cancel(source: HTMLElement): void {
@@ -36,6 +57,10 @@ export class DragRegistry {
     if (!session) return
     session.cancel()
     this.sessions.delete(source)
+    const identity = this.identity(source)
+    if (identity && this.identitySessions.get(identity)?.session === session) {
+      this.identitySessions.delete(identity)
+    }
   }
 }
 

@@ -75,6 +75,24 @@ describe('DragRegistry', () => {
     expect(firstCallback).toHaveBeenCalledOnce()
     expect(applied).toBe(0)
   })
+
+  it('同一稳定卡片身份换了 DOM 后也会取消旧 session', () => {
+    const registry = new DragRegistry()
+    const oldSource = document.createElement('div')
+    oldSource.dataset.projectId = '42'
+    const first = registry.start(oldSource)
+    const cleanup = vi.fn()
+    first.addCleanup(cleanup)
+
+    const replacementSource = document.createElement('div')
+    replacementSource.dataset.projectId = '42'
+    const replacement = registry.start(replacementSource)
+
+    expect(first.phase).toBe('cancelled')
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(first.isCurrent()).toBe(false)
+    expect(replacement.isCurrent()).toBe(true)
+  })
 })
 
 describe('cloneForDrag', () => {
