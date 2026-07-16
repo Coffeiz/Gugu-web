@@ -76,7 +76,6 @@
             </div>
             <button key="todo-add" class="todo-add-btn" @click.stop="handleAddTodo(stage)">＋ 添加待办</button>
           </TransitionGroup>
-          <div v-if="i < displayStages.length - 1" class="node-line"></div>
         </div>
       </TransitionGroup>
     </div>
@@ -365,7 +364,6 @@ function toggleExpand(key: string) {
 }
 .stage-node:hover .del-stage { opacity: 0.5; }
 .del-stage:hover { opacity: 1 !important; color: var(--color-warning); }
-.node-line { display: none; }
 /* 待办列表 */
 .todo-list { padding: 2px 0 8px 30px; display: flex; flex-direction: column; gap: 3px;
   background-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.06) 20%, rgba(0,0,0,0.06) 80%, transparent 100%);
