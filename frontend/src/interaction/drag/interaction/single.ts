@@ -46,16 +46,12 @@ function findVisibleProjectTarget(selector: string, sourceEl: HTMLElement): HTML
 
 function blockScrollDuringLanding(scroller: HTMLElement | null): () => void {
   if (!scroller) return () => undefined
-  const blocker = document.createElement('div')
-  const previousPosition = scroller.style.position
-  blocker.style.cssText = 'position:absolute;inset:0;z-index:1;pointer-events:all;border-radius:inherit;background:transparent;'
-  blocker.addEventListener('wheel', event => event.preventDefault(), { passive: false })
-  blocker.addEventListener('touchmove', event => event.preventDefault(), { passive: false })
-  scroller.style.position = 'relative'
-  scroller.appendChild(blocker)
+  const preventScroll = (event: Event) => event.preventDefault()
+  scroller.addEventListener('wheel', preventScroll, { passive: false })
+  scroller.addEventListener('touchmove', preventScroll, { passive: false })
   return () => {
-    blocker.remove()
-    scroller.style.position = previousPosition
+    scroller.removeEventListener('wheel', preventScroll)
+    scroller.removeEventListener('touchmove', preventScroll)
   }
 }
 
@@ -720,18 +716,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // absorbTarget 可能是抽屉容器（画布卡拖入）或源卡自身（抽屉卡放回），
         // .project-list-scroll 在它们内部（不是祖先），不能用 closest 向上查找。
         const drawerScroller = document.querySelector<HTMLElement>('.project-list-scroll')
-        let scrollBlocker: HTMLElement | null = null
-        if (drawerScroller) {
-          scrollBlocker = document.createElement('div')
-          scrollBlocker.style.cssText = 'position:absolute;inset:0;z-index:1;pointer-events:all;border-radius:inherit;background:transparent;'
-          scrollBlocker.addEventListener('wheel', e => e.preventDefault(), { passive: false })
-          scrollBlocker.addEventListener('touchmove', e => e.preventDefault(), { passive: false })
-          drawerScroller.style.position = 'relative'
-          drawerScroller.appendChild(scrollBlocker)
-        }
-        const restoreDrawerScroll = () => {
-          if (scrollBlocker && scrollBlocker.parentNode) scrollBlocker.remove()
-        }
+        const restoreDrawerScroll = blockScrollDuringLanding(drawerScroller)
         // 在 flyTo/flyMorph 启动前注册 cleanup，确保无论动画正常完成还是中途取消
         // 都能恢复抽屉滚动。registerCleanup 在 session terminal 时会同步执行 cleanup。
         deps.registerCleanup(session, restoreDrawerScroll)
