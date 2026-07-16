@@ -88,7 +88,6 @@ function onDrop(e: DragEvent) {
   overflow-x: hidden;
   padding: 2px 6px;
   margin-right: 0;
-  scrollbar-gutter: stable;
 }
 .col-body::-webkit-scrollbar { width: 3px; }
 .col-body::-webkit-scrollbar-track { background: transparent; margin-top: 8px; margin-bottom: 8px; }
