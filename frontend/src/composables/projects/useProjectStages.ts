@@ -46,13 +46,7 @@ export function useProjectStages(options: ProjectStagesOptions) {
     todo.done = !todo.done
     todo.autoCompleted = false
     saveTodos()
-    if (!todo.done) return
-
-    const currentIndex = stages.value.findIndex(stage => stage.key === currentStage.value)
-    const targetIndex = firstIncompleteStageIdx(stages.value)
-    if (targetIndex > currentIndex) {
-      setStage(stages.value[targetIndex].key, targetIndex)
-    }
+    // 不在这里推进阶段，避免递归更新；由 saveTodos 触发后的 watch 或 saveTodos 内部处理
   }
 
   return { addStage, removeStage, addTodo, removeTodo, toggleTodo }
