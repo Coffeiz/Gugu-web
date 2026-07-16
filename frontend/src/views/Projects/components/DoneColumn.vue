@@ -94,19 +94,23 @@
               </svg>
             </button>
 
-            <Transition name="month-folder">
-              <TransitionGroup
+            <Transition :name="animateFolders ? 'month-folder' : undefined">
+              <div
                 v-if="openMonths.has(yg.year + mg.month)"
                 :key="`month-cards-${yg.year + mg.month}`"
-                tag="div"
-                name="done-card-list"
-                class="month-cards"
-                :css="false"
+                class="month-folder"
               >
-                <div v-for="p in mg.items" :key="p.id" class="done-card-item">
-                  <ProjectCard :project="p" @click="$emit('card-click', p)" />
-                </div>
-              </TransitionGroup>
+                <TransitionGroup
+                  tag="div"
+                  name="done-card-list"
+                  class="month-cards"
+                  :css="false"
+                >
+                  <div v-for="p in mg.items" :key="p.id" class="done-card-item">
+                    <ProjectCard :project="p" @click="$emit('card-click', p)" />
+                  </div>
+                </TransitionGroup>
+              </div>
             </Transition>
           </template>
         </TransitionGroup>
@@ -149,7 +153,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, type PropType } from 'vue'
+import { ref, computed, watch, nextTick, type PropType } from 'vue'
 import ProjectCard from './ProjectCard.vue'
 import { PhFolder, PhFolderOpen, PhCheckCircle, PhArchive } from '@phosphor-icons/vue'
 import type { Project } from '@/types/project'
@@ -160,8 +164,12 @@ const props = defineProps({
 const emit = defineEmits(['card-click', 'drop-project', 'open-archived'])
 
 const isDragOver  = ref(false)
-const openYears   = ref(new Set<string>())
-const openMonths  = ref(new Set<string>())
+// 在 setup 阶段就确定默认展开项，避免 onMounted 修改状态触发一次入场动画。
+const initialYear = String(new Date().getFullYear())
+const initialMonth = String(new Date().getMonth() + 1).padStart(2, '0') + '月'
+const openYears   = ref(new Set<string>([initialYear]))
+const openMonths  = ref(new Set<string>([initialYear + initialMonth]))
+const animateFolders = ref(false)
 
 function dateOf(p: Project) {
   const src = p.startDate || p.deadline || p.doneAt || null
@@ -180,6 +188,12 @@ const recentDone = computed(() =>
     .slice(0, 3)
 )
 const recentIds = computed(() => new Set(recentDone.value.map(p => p.id)))
+
+watch(() => props.projects.length, async (count) => {
+  if (!count || animateFolders.value) return
+  await nextTick()
+  requestAnimationFrame(() => { animateFolders.value = true })
+}, { immediate: true })
 
 // recentDone 变化时手动 FLIP 年/月行位置——卡片从「最近完成」退出进入年月文件夹时，
 // Vue TransitionGroup 的 FLIP 窗口已过（leave 动画结束后才触发位移），需要手动补偿。
@@ -241,14 +255,6 @@ const openYearsList = computed(() =>
 )
 
 
-
-onMounted(() => {
-  const now = new Date()
-  const y = String(now.getFullYear())
-  const m = String(now.getMonth() + 1).padStart(2, '0') + '月'
-  openYears.value = new Set([y])
-  openMonths.value = new Set([y + m])
-})
 
 function toggleYear(y: string) {
   const next = new Set(openYears.value)
@@ -383,6 +389,21 @@ function onDrop(e: DragEvent) {
 .done-group-list-move {
   transition: transform 0.34s ease-in-out !important;
 }
+/* 月份内容通过 .month-folder 的实际高度收缩驱动后续月份移动；这里不要再叠加
+   TransitionGroup 的 FLIP 位移，否则收起结束时会多补一次向上移动。 */
+.done-month-list .done-group-list-move {
+  transition: none !important;
+  transform: none !important;
+}
+/* 月份文件夹自身由 month-folder 控制高度离场，不能再套用分组的 absolute/translate
+   离场规则，否则下一个月份会在离场结束时额外上跳一段。 */
+.done-month-list .done-group-list-leave-active {
+  position: static;
+  width: auto;
+}
+.done-month-list .done-group-list-leave-to {
+  transform: none !important;
+}
 .done-group-list-leave-active {
   position: absolute;
   width: 100%;
@@ -457,15 +478,29 @@ function onDrop(e: DragEvent) {
   margin-left: 12px;
   box-sizing: border-box;
 }
+.month-folder {
+  display: grid;
+  grid-template-rows: 1fr;
+  overflow: hidden;
+  transform-origin: top;
+}
+.month-folder > .month-cards {
+  min-height: 0;
+  transition: padding 0.28s cubic-bezier(.22, 1, .36, 1);
+}
 .month-folder-enter-active,
 .month-folder-leave-active {
-  transform-origin: top;
-  transition: opacity 0.18s ease, transform 0.28s cubic-bezier(.22, 1, .36, 1);
+  transition: grid-template-rows 0.28s cubic-bezier(.22, 1, .36, 1), padding 0.28s cubic-bezier(.22, 1, .36, 1), opacity 0.18s ease, transform 0.28s cubic-bezier(.22, 1, .36, 1);
 }
 .month-folder-enter-from,
 .month-folder-leave-to {
+  grid-template-rows: 0fr;
   opacity: 0;
   transform: translateY(-8px) scaleY(.92);
+}
+.month-folder-leave-to > .month-cards {
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .done-card-item {
   flex: 0 0 auto;
