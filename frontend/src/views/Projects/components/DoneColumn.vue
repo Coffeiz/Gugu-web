@@ -387,7 +387,8 @@ function onDrop(e: DragEvent) {
   transform: translateY(-4px);
 }
 .done-group-list-move {
-  transition: transform 0.34s ease-in-out !important;
+  /* 与拖拽物理 FLIP 使用同一缓动，避免卡片已让位而年月组仍滞后移动。 */
+  transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1) !important;
 }
 /* 月份内容通过 .month-folder 的实际高度收缩驱动后续月份移动；这里不要再叠加
    TransitionGroup 的 FLIP 位移，否则收起结束时会多补一次向上移动。 */
