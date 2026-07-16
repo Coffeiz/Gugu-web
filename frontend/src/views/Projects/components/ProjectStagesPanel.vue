@@ -311,3 +311,104 @@ function toggleExpand(key: string) {
   else s.add(key)
 }
 </script>
+
+<style scoped>
+/* 阶段 */
+.stages-section { flex: 1; min-height: 80px; display: flex; flex-direction: column; gap: 0; padding-bottom: 0; }
+.stages-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;
+}
+.add-stage-btn {
+  background: none; border: none; font-size: 11px; font-weight: 600;
+  color: var(--color-primary); cursor: pointer; font-family: var(--font-sans);
+  padding: 0; text-transform: none; letter-spacing: 0;
+}
+.add-stage-btn:hover { opacity: 0.7; }
+.stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 11px 4px 8px; margin-right: -3px; }
+.stage-flow::-webkit-scrollbar { width: 3px; }
+.stage-flow::-webkit-scrollbar-track { background: transparent; }
+.stage-flow::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
+
+.stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 0 5px; margin-bottom: 2px; }
+.stage-node.stage-dragging { opacity: 0.15; pointer-events: none; transition: none; }
+
+.node-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 0; }
+.node-circle {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 1.5px solid rgba(90,95,120,0.35); background: rgba(0,0,0,0.08);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  cursor: pointer; z-index: 1;
+}
+.stage-node.done .node-circle { background: var(--color-success); border-color: var(--color-success); }
+.stage-node.active .node-circle { border-color: transparent; }
+.stage-node.locked .node-circle { cursor: not-allowed; opacity: 0.7; }
+.stage-node.locked .node-label  { opacity: 0.6; }
+.node-num { font-size: 10px; font-weight: 700; color: #5a5f78; line-height: 1; }
+.stage-node.active .node-num { color: #fff; }
+.node-body { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.node-label { font-size: 13px; color: var(--text-primary); }
+.stage-node.done .node-label { color: var(--text-secondary); text-decoration: line-through; }
+.stage-node.active .node-label { font-weight: 600; }
+.todo-count { font-size: 10px; color: var(--text-secondary); opacity: 0.7; white-space: nowrap; }
+.stage-input {
+  font-size: 13px; font-family: var(--font-sans);
+  border: 1px solid rgba(123,127,178,0.4); border-radius: 6px; padding: 1px 6px;
+  background: rgba(255,255,255,0.5); outline: none; color: var(--text-primary); width: 110px;
+  box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
+  transition: background 0.15s;
+}
+.stage-input:hover, .stage-input:focus { background: rgba(255,255,255,0.75); }
+.del-stage {
+  background: none; border: none; cursor: pointer; color: var(--text-secondary);
+  opacity: 0; transition: opacity 0.15s; padding: 2px;
+  display: flex; align-items: center; flex-shrink: 0;
+}
+.stage-node:hover .del-stage { opacity: 0.5; }
+.del-stage:hover { opacity: 1 !important; color: var(--color-warning); }
+.node-line { display: none; }
+/* 待办列表 */
+.todo-list { padding: 2px 0 8px 30px; display: flex; flex-direction: column; gap: 3px;
+  background-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.06) 20%, rgba(0,0,0,0.06) 80%, transparent 100%);
+  background-size: 100% 1px; background-repeat: no-repeat; background-position: center bottom; }
+.stage-node:last-child .todo-list { background-image: none; }
+.todo-item { display: flex; align-items: flex-start; gap: 6px; min-height: 24px; }
+.todo-item + .todo-item { border-top: 1px solid rgba(0,0,0,0.05); }
+.todo-check, .todo-del { margin-top: 4px; }
+.todo-name { flex: 1; min-width: 0; font-size: 12px; line-height: 1.5; color: var(--text-primary); padding: 2px 0; cursor: grab; overflow-wrap: break-word; word-break: break-word; white-space: normal; }
+.todo-item:active .todo-name { cursor: grabbing; }
+.todo-ghost { opacity: 0.35; }
+.todo-check {
+  width: 15px; height: 15px; border-radius: 4px; flex-shrink: 0;
+  border: 1.5px solid rgba(0,0,0,0.18); background: rgba(255,255,255,0.7);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s, border-color 0.15s;
+}
+.todo-check.checked { background: var(--color-success); border-color: var(--color-success); color: white; }
+.todo-input {
+  flex: 1; font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
+  border: 1.5px solid transparent; border-radius: 5px;
+  background: transparent; outline: none; min-width: 0;
+  padding: 0 5px; box-sizing: border-box;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.todo-input:focus {
+  background: rgba(255,255,255,0.72);
+  border-color: rgba(123,127,178,0.4);
+  box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
+}
+.todo-del {
+  background: none; border: none; cursor: pointer; color: var(--text-secondary);
+  opacity: 0; transition: opacity 0.15s; padding: 2px; display: flex; align-items: center; flex-shrink: 0;
+}
+.todo-item:hover .todo-del { opacity: 0.4; }
+.todo-del:hover { opacity: 1 !important; color: var(--color-warning); }
+.todo-add-btn {
+  display: flex; align-items: center; gap: 4px;
+  height: 24px; padding: 0 10px; border-radius: 7px;
+  border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.62);
+  font-size: 11px; font-weight: 500; color: var(--text-secondary);
+  cursor: pointer; font-family: var(--font-sans); transition: all 0.15s;
+  margin-top: 2px; margin-right: 18px;
+}
+.todo-add-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(255,255,255,0.75); }
+</style>
