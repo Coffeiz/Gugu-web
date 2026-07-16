@@ -18,13 +18,12 @@
         <!-- 左栏 -->
         <div class="modal-left panel-left">
 
-          <!-- 标题 -->
+          <!-- 标题保持在固定头部，避免随信息内容滚动 -->
           <div class="proj-header">
             <div class="header-main">
               <button class="status-ball" :class="'sb-' + localStatus" @click.stop="cycleStatus"
                 :title="projectStore.kanbanColumns.find(c => c.key === localStatus)?.label ?? localStatus"></button>
               <input
-                ref="nameInputRef"
                 v-model="localName"
                 class="header-name-input"
                 placeholder="项目名称"
@@ -40,42 +39,15 @@
 
           <!-- 可滚动内容区 -->
           <div class="left-content">
-
-            <div class="info-block">
-            <div class="section">
-              <label class="section-label">客户 / 委托方</label>
-              <input class="field-input" v-model="localClient" placeholder="客户名称（选填）" />
-            </div>
-
-            <hr class="col-divider" />
-
-            <div class="section">
-              <label class="section-label">项目周期</label>
-              <DateSpanPicker
-                v-model:startDate="localStartDate"
-                v-model:endDate="localDeadline"
-                placeholder="选择开始 — 截止日期"
-              />
-            </div>
-
-            <hr class="col-divider" />
-
-            <div class="section">
-              <label class="section-label">项目颜色</label>
-              <div class="color-grid">
-                <button
-                  v-for="c in colorPresets"
-                  :key="c"
-                  class="color-chip"
-                  :class="{ active: localColor === c }"
-                  :style="{ background: c }"
-                  @click="setColor(c)"
-                >
-                  <PhCheck v-if="localColor === c" :size="11" weight="bold" style="color:white" />
-                </button>
-              </div>
-            </div>
-            </div><!-- /info-block -->
+            <ProjectInfoPanel
+              v-model:client="localClient"
+              v-model:start-date="localStartDate"
+              v-model:deadline="localDeadline"
+              :color="localColor"
+              :info-expanded="infoExpanded"
+              :color-presets="colorPresets"
+              @set-color="setColor"
+            />
 
             <hr class="col-divider" />
 
@@ -630,7 +602,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, type PropType } from 'vue'
 import { useProjectStore } from '@/stores/projects'
-import { cloneProjectStages, firstIncompleteStageIdx, transitionProjectStage } from '@/utils/projectStages'
+import { cloneProjectStages, transitionProjectStage } from '@/utils/projectStages'
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { projectsApi, uploadWithProgress } from '@/services/api'
@@ -643,8 +615,6 @@ import { readDroppedEntries, filesToItems } from '@/composables/useFileUpload'
 import { useBoxSelection } from '@/composables/useBoxSelection'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { fireHint } from '@/composables/useOnboarding'
-import DatePicker from '@/components/common/DatePicker.vue'
-import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import UploadConflictDialog, { type ConflictItem, type ConflictDecision } from '@/components/common/UploadConflictDialog.vue'
 import type { UploadItem } from '@/composables/useFileUpload'
@@ -665,6 +635,7 @@ import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue
 import FileBrowserContextMenu from '@/components/common/FileBrowserContextMenu.vue'
 import FileBrowserContextMenuContent from '@/components/common/FileBrowserContextMenuContent.vue'
 import FileBrowserList from '@/components/common/FileBrowserList.vue'
+import ProjectInfoPanel from '@/views/Projects/components/ProjectInfoPanel.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
@@ -675,6 +646,8 @@ import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileContextMenu } from '@/composables/files/useFileContextMenu'
 import { executeUploadLifecycle, prepareUploadBatch } from '@/composables/files/useFileUploadController'
+import { useProjectDraft } from '@/composables/projects/useProjectDraft'
+import { useProjectStages } from '@/composables/projects/useProjectStages'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
@@ -715,22 +688,19 @@ const stageDrag = reactive<StageDragState>({
 const dragging         = ref(false)
 const pmDragCounter    = ref(0)
 const pmIsDragging     = computed(() => pmDragCounter.value > 0)
-// 未在模板中实际挂到 DatePicker 实例上（当前用的是 DateSpanPicker），保留原有形状仅补类型。
-const startPickerRef    = ref<{ openPicker: () => void; closePicker: () => void } | null>(null)
-const deadlinePickerRef = ref<{ openPicker: () => void; closePicker: () => void } | null>(null)
-const editingName      = ref(false)
-const localName        = ref('')
-const nameInputRef     = ref<HTMLInputElement | null>(null)
-
-const localStages      = ref<ProjectStage[]>([])
+const {
+  localName,
+  localStages,
+  localStartDate,
+  localDeadline,
+  localClient,
+  localColor,
+  localCurrentStage,
+  localStatus,
+  reset: resetProjectDraft,
+} = useProjectDraft()
 const expandedStages   = ref(new Set<string>())
 let _syncingFromStore  = false   // 防止 store→localStages 同步触发 saveTodos
-const localStartDate = ref('')
-const localDeadline  = ref('')
-const localClient    = ref('')
-const localColor        = ref('')
-const localCurrentStage = ref('')
-const localStatus       = ref('')
 const fileViewMode   = ref<'grid' | 'list'>('grid')
 // Tier 3：文件/文件夹数据统一由全局 filesCache store 提供（currentFiles/currentFolders 从它派生），
 // 不再自持 projectFiles/projectFolders/folderFilesMap/subFolderMap 本地缓存。
@@ -1201,14 +1171,7 @@ watch(() => props.project?.deadline,  (v) => { if (!initializing) localDeadline.
 
 watch(() => props.project?.id, async (id) => {
   initializing = true
-  localStages.value       = props.project ? props.project.stages.map(s => ({ ...s })) : []
-  localName.value         = props.project?.name         ?? ''
-  localStartDate.value    = props.project?.startDate    ?? ''
-  localDeadline.value     = props.project?.deadline     ?? ''
-  localClient.value       = props.project?.client       ?? ''
-  localColor.value        = props.project?.color        ?? ''
-  localCurrentStage.value = props.project?.currentStage ?? ''
-  localStatus.value       = props.project?.status       ?? ''
+  resetProjectDraft(props.project)
   recalcStageState()
   editingStage.value   = null
   openFolders.value    = new Set()
@@ -1268,10 +1231,6 @@ watch(localStartDate, v => {
   projectStore.updateProject(id, { startDate: v || null })
 })
 
-function onStartDatePicked(v: unknown) {
-  startPickerRef.value?.closePicker()
-  if (v) setTimeout(() => deadlinePickerRef.value?.openPicker(), 80)
-}
 watch(localDeadline, v => {
   if (initializing) return
   const id = props.project?.id
@@ -1371,10 +1330,6 @@ const colorPresets = [
   'linear-gradient(135deg,#be8b8f,#c8aa72)',
 ]
 
-function startEditName() {
-  editingName.value = true
-  nextTick(() => nameInputRef.value?.select())
-}
 function saveName() {
   if (!props.project) return
   const n = localName.value.trim()
@@ -1384,11 +1339,9 @@ function saveName() {
     localName.value = n
     projectStore.updateProject(props.project.id, { name: n })
   }
-  editingName.value = false
 }
 function cancelName() {
   if (props.project) localName.value = props.project.name   // esc 还原，blur 时 saveName 视为无改动
-  nameInputRef.value?.blur()
 }
 
 function setColor(c: string) {
@@ -1511,16 +1464,11 @@ function todoDragEnd() {
   if (todoDrag.value) { todoDrag.value = null; saveStages() }
 }
 function addStage() {
-  const key = `stage_${Date.now()}`
-  localStages.value.push({ key, label: '新阶段', todos: [] })
-  saveStages()
+  const key = projectStages.addStage()
   nextTick(() => startEdit(key))
 }
 function removeStage(key: string) {
-  if (localStages.value.length <= 1) return
-  localStages.value = localStages.value.filter(s => s.key !== key)
-  expandedStages.value.delete(key)
-  saveStages()
+  if (projectStages.removeStage(key)) expandedStages.value.delete(key)
 }
 
 function toggleExpand(key: string) {
@@ -1535,31 +1483,25 @@ function saveTodos() {
   stageProgress.value = newProgress
   projectStore.saveTodos(props.project.id, cloneProjectStages(localStages.value), newProgress)
 }
+const projectStages = useProjectStages({
+  stages: localStages,
+  currentStage: localCurrentStage,
+  saveStages,
+  saveTodos,
+  setStage,
+})
 function addTodo(stage: ProjectStage) {
-  if (!stage.todos) stage.todos = []
-  stage.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
-  saveTodos()
+  projectStages.addTodo(stage)
   nextTick(() => {
     const inputs = document.querySelectorAll<HTMLElement>(`.todo-input-${stage.key}`)
     inputs[inputs.length - 1]?.focus()
   })
 }
 function removeTodo(stage: ProjectStage, id: string) {
-  stage.todos = (stage.todos ?? []).filter(t => t.id !== id)
-  saveTodos()
+  projectStages.removeTodo(stage, id)
 }
 function toggleTodo(todo: ProjectTodo) {
-  todo.done = !todo.done
-  todo.autoCompleted = false  // 手动操作后清除自动标记，后退时不再还原
-  saveTodos()
-  if (todo.done) {
-    const currIdx = localStages.value.findIndex(s => s.key === localCurrentStage.value)
-    // 推进到「第一个未完成阶段」（只前进）：跳过已完成的中间阶段，前置未完成时不动
-    const target = firstIncompleteStageIdx(localStages.value)
-    if (target > currIdx) {
-      setStage(localStages.value[target].key, target)
-    }
-  }
+  projectStages.toggleTodo(todo)
 }
 
 function stageIdxFromY(y: number) {
