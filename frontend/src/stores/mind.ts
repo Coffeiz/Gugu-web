@@ -228,6 +228,13 @@ export const useMindStore = defineStore('mind', () => {
   async function updateCanvasNote(nodeId: number, fields: { title?: string; contentMd?: string; color?: string | null }) {
     const item = canvasItems.value.find(current => current.nodeId === nodeId)
     if (!item) return
+
+    // 乐观更新：先把 fields 合并进 item.node，UI 立刻变。fields 不含 version 字段，
+    // spread 合并天然不会挪 version——等 PATCH 成功再用返回值（含递增 version）整体替换，
+    // 跟 updateNote 同一套策略。这样画布便签改色 / 改正文能秒级响应，不再等 100-300ms
+    // 网络往返才生效（跟纯笔记路径 NotesView 一致）。
+    item.node = { ...item.node, ...fields }
+
     let updated: MindNote
     try {
       updated = await mindApi.updateCanvasNote(nodeId, { ...fields, version: item.node.version })
