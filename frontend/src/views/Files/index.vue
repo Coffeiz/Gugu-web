@@ -1021,6 +1021,9 @@ const {
       }
     }
   },
+  // 点击空白区域清空选择时，回收站文件夹选中态（独立于组合式函数管理的两个 ref）一并清掉，
+  // 否则只清了文件/普通文件夹，回收站文件夹的选中态和批量操作栏会卡住。
+  onClear: () => { selectedTrashFolderIds.value = new Set() },
 })
 const selectedTrashFolderIds = ref<Set<number>>(new Set())
 const fileSelection = useFileSelection({ fileIds: selectedIds, folderIds: selectedFolderKeys })

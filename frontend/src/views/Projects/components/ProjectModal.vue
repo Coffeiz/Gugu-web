@@ -932,17 +932,19 @@ function cancelRename() {
   renamingFileId.value = null
   renameText.value     = ''
 }
-async function commitRename() {
+function commitRename() {
   const id   = renamingFileId.value
   const name = renameText.value.trim()
   renamingFileId.value = null
   if (!id || !name) return
-  try {
-    await fileActions.renameFile(id, name)
-    fileCacheStore.updateFile(id, { displayName: name })
-  } catch (e) {
+  // 乐观更新：先改本地缓存立刻生效，请求在后台跑，失败再回滚——跟 Files/index.vue 的
+  // commitRename 保持一致，改之前这里是等请求回来才更新，输完名字要等一下才看到生效。
+  const oldName = fileCacheStore.getFile(id)?.displayName
+  fileCacheStore.updateFile(id, { displayName: name })
+  fileActions.renameFile(id, name).catch(e => {
+    if (oldName != null) fileCacheStore.updateFile(id, { displayName: oldName })
     console.error('[ProjectModal] 重命名失败:', errMsg(e))
-  }
+  })
 }
 
 // ── 删除 ─────────────────────────────────────────────────────────────────────
@@ -989,18 +991,24 @@ function cancelFolderRename() {
   renamingFolderId.value = null
   folderRenameText.value = ''
 }
-async function commitFolderRename() {
+function commitFolderRename() {
   const id   = renamingFolderId.value
   const name = folderRenameText.value.trim()
   renamingFolderId.value = null
   if (!id || !name) return
-  try {
-    const version = fileCacheStore.getFolder(id)?.version ?? 1
-    const updated = await fileActions.renameFolder(id, name, version)
-    fileCacheStore.updateFolder(id, { name, version: updated.version })
-  } catch (e) {
+  // 乐观更新，跟 commitRename 同样的理由；版本冲突（409）时用 fileCacheStore.refresh()
+  // 把最新状态和 version 拉回来，避免本地卡在过期版本号上，后续再改必冲突。
+  const oldFolder = fileCacheStore.getFolder(id)
+  const oldName   = oldFolder?.name
+  const version   = oldFolder?.version ?? 1
+  fileCacheStore.updateFolder(id, { name })
+  fileActions.renameFolder(id, name, version).then(updated => {
+    fileCacheStore.updateFolder(id, { version: updated.version })
+  }).catch(e => {
+    if (oldName != null) fileCacheStore.updateFolder(id, { name: oldName })
+    fileCacheStore.refresh()
     console.error('[ProjectModal] 文件夹重命名失败:', errMsg(e))
-  }
+  })
 }
 
 function downloadFolderZip(folder: FolderMeta) {
