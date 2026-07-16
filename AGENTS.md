@@ -88,7 +88,10 @@ Gugu-web 不是本地起服务调试——本地编辑代码，通过 Mutagen �
 
 ## 验证门禁
 
-- 前端变更至少跑 `npm run typecheck`；涉及 strict 白名单/类型边界再跑 `npm run typecheck:strict`；有行为或纯函数改动时跑 `npm run test:run`。
+- 开发阶段不要每次修改后都跑完整 typecheck，保持快速反馈。
+- UI、样式、动画、探针、调试类修改：优先通过 dev server 和浏览器验证。
+- 类型、接口、Store、API 等结构变化：需要执行 typecheck；涉及 strict 白名单/类型边界再跑 `npm run typecheck:strict`。
+- 完成功能或提交前执行完整 typecheck；有行为或纯函数改动时跑 `npm run test:run`。
 - 后端变更同步后在 devserver 跑 `PYTHONPATH=. .venv/bin/pytest`。改到用户归属或 destructive 工具时，额外跑 `scripts/check_ownership.py` 与 `scripts/check_confirm_gate.py`。
 - P2-b 相关的外部 I/O/适配器改动，测试至少覆盖瞬时失败重试、4xx 不重试、非幂等写不盲重试，以及外发/可见日志不泄露原始异常。
 
