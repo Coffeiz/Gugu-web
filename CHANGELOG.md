@@ -71,6 +71,19 @@
 - **项目分组标题与年/月目录按钮的让位动画**（`views/Mind/components/CanvasSidebar.vue`、`views/Projects/components/DoneColumn.vue`）：让 `project-group-title`、`year-row`、`month-row` 和未设置日期按钮都作为 TransitionGroup 的直接子项参与 FLIP 平移过渡，组内卡片增减时不再因 flex 重排瞬间跳位。详细排查过程见 [devlog.md](docs/devlog.md) 2026-07-16 条目。
 - **渐变色项目首次拖入画布失败**（`backend/app/models/__init__.py`）：`MindNode.color` 由 `varchar(30)` 加宽到 `varchar(300)`，修复渐变色项目首次创建画布引用节点时 `StringDataRightTruncationError`。
 
+
+## [0.19.2] - 2026-07-16 · 项目编辑面板模块化拆分 & 后端 service 边界收尾
+
+### 改进
+
+- **ProjectModal 面板拆分**（`views/Projects/components/ProjectInfoPanel.vue`、`ProjectStagesPanel.vue`、`composables/projects/useProjectDraft.ts`、`useProjectStages.ts`）：抽取项目基础信息面板和阶段/待办面板为独立组件，新增草稿状态管理和阶段/待办操作编排 composable。`ProjectModal.vue` 从约 2900 行降至 2264 行，收缩为布局协调层。
+- **后端 service 边界收尾**（`services/files/upload.py`）：确认上传进度编排边界已清晰分离，预签名/冲突/确认入口全部下沉到 `upload.py`，路由仅保留 FastAPI 传输、图片解码和缩略图调度。
+
+### 修复
+
+- **阶段/待办 CSS 样式缺失**（`ProjectStagesPanel.vue`）：抽取时样式未随模板和脚本迁移，补回完整的阶段节点、待办列表和拖拽交互样式。
+- **待办保存回调缺失**（`ProjectModal.vue`）：`saveTodos` 函数在抽取过程中被遗漏，导致待办编辑后无法持久化。
+
 ## [0.19.0] - 2026-07-14 · 思维画布收尾、连接线体验统一与存储/LLM 架构重构
 
 ### 新增
