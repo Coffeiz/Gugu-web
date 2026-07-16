@@ -1853,7 +1853,13 @@ async function ctxDeleteFolder() {
 }
 
 // ── 粘贴 ──
+// pasteBusy 防止同一次粘贴被重复触发（键盘长按 v 自动重复、或极快连按两次 Ctrl+V）：
+// 上一次粘贴的网络请求还没返回时再次触发会带着同一份剪贴板内容再复制一遍，实际产生两份
+// 重复文件（ProjectModal.vue 的 pmCtxPaste 已有这层保护，这里之前没有，见 2026-07-17 复现）。
+const pasteBusy = ref(false)
 async function ctxPaste() {
+  if (pasteBusy.value) return
+  pasteBusy.value = true
   ctx.value.visible = false
   const folderId = currentFolderId()
   const seg = currentSeg.value
@@ -1909,6 +1915,7 @@ async function ctxPaste() {
       fetchStorage()   // 复制新增文件，计入用量
     }
   } catch (e) { console.error('[Files] 粘贴失败:', e) }
+  finally { pasteBusy.value = false }
 }
 
 // ── 键盘快捷键 ──
