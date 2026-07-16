@@ -311,5 +311,3 @@ function toggleExpand(key: string) {
   else s.add(key)
 }
 </script>
-</VUEEOF
-echo "ProjectStagesPanel.vue created"
