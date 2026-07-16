@@ -625,6 +625,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           }
           deps.startPhysicsDrag(moveEvent, revealEl, {
             ...opts,
+            // 跨列落地后 Vue 可能已把目标卡挂到另一列；重抓不能沿用首段拖拽
+            // 保存的旧 flipContainer，否则新 session 会在旧列测量，目标列 FLIP
+            // 前后 rect 全相同，表现为让位和归位瞬移。
+            flipContainer: revealEl.closest<HTMLElement>('.kanban-card-list')
+              ?? revealEl.closest<HTMLElement>('.col-body')
+              ?? opts.flipContainer,
             keepSourcePlaceholder: revealEl === sourceEl ? opts.keepSourcePlaceholder : false,
             initialRect: visualRect,
             initialHover: true,
