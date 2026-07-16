@@ -32,7 +32,7 @@ from app.services.files.upload import (
     parse_upload_filename,
     prepare_presign_target,
 )
-from app.services.files.actions import delete_file, delete_files
+from app.services.files.actions import delete_file as delete_file_service, delete_files
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.storage.file_service.files import _fmt_size
@@ -506,7 +506,7 @@ async def delete_file(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    moved = await delete_file(
+    moved = await delete_file_service(
         db, get_storage(), current_user.id, fid, now_utc())
     if not moved:
         raise HTTPException(404, "文件不存在")
