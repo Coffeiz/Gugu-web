@@ -252,9 +252,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   // 拖拽期间锁住看板列的滚动：挡掉浏览器原生拖拽的「边缘自动滚动」——否则列在拖动时就被原生滚到底，
   // 落点时已无可滚（dy≈0），我们的受控平滑滚动跑不起来，看着就是「瞬间到底部」。列用的是 3px overlay
   // 滚动条，overflow:hidden 不会引起布局位移。结束时在 end() 还原。
-  const _lockedScrollers = [...document.querySelectorAll<HTMLElement>('.col-body')]
-  const _savedScrollTop = new Map()
-  for (const s of _lockedScrollers) { _savedScrollTop.set(s, s.scrollTop); s.style.overflowY = 'hidden' }
+ const _lockedScrollers = [...document.querySelectorAll<HTMLElement>('.col-body')]
+ _lockedScrollers.push(...document.querySelectorAll<HTMLElement>('.cd-list'))
+ const _savedScrollTop = new Map()
+ for (const s of _lockedScrollers) { _savedScrollTop.set(s, s.scrollTop); s.style.overflowY = 'hidden' }
 
   // 外部素材抽屉保留同尺寸的低透明占位，列表不跳动；普通卡片仍按原逻辑收合让位。
   // 同步 display:none 会让浏览器取消原生拖拽 → 必须下一帧再真正移出布局并做 FLIP。
