@@ -44,6 +44,21 @@ function findVisibleProjectTarget(selector: string, sourceEl: HTMLElement): HTML
   }) ?? null
 }
 
+function blockScrollDuringLanding(scroller: HTMLElement | null): () => void {
+  if (!scroller) return () => undefined
+  const blocker = document.createElement('div')
+  const previousPosition = scroller.style.position
+  blocker.style.cssText = 'position:absolute;inset:0;z-index:1;pointer-events:all;border-radius:inherit;background:transparent;'
+  blocker.addEventListener('wheel', event => event.preventDefault(), { passive: false })
+  blocker.addEventListener('touchmove', event => event.preventDefault(), { passive: false })
+  scroller.style.position = 'relative'
+  scroller.appendChild(blocker)
+  return () => {
+    blocker.remove()
+    scroller.style.position = previousPosition
+  }
+}
+
 export interface SingleDragDeps {
   active: { current: ActiveDrag | null }
   easing: string
@@ -249,13 +264,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   // pointer 模式：把后续 pointermove 全部捕获到 body（源卡随后会 display:none，捕在它身上会丢捕获）。
   // 捕获后浏览器不再为每次移动做命中测试 —— 这正是原生 dragover 省不掉、吃掉 1.3s 的那笔 HitTest。
 
-  // 拖拽期间锁住看板列的滚动：挡掉浏览器原生拖拽的「边缘自动滚动」——否则列在拖动时就被原生滚到底，
-  // 落点时已无可滚（dy≈0），我们的受控平滑滚动跑不起来，看着就是「瞬间到底部」。列用的是 3px overlay
-  // 滚动条，overflow:hidden 不会引起布局位移。结束时在 end() 还原。
- const _lockedScrollers = [...document.querySelectorAll<HTMLElement>('.col-body')]
- _lockedScrollers.push(...document.querySelectorAll<HTMLElement>('.project-list-scroll'))
- const _savedScrollState = new Map<HTMLElement, { scrollTop: number; overflowY: string }>()
- for (const s of _lockedScrollers) { _savedScrollState.set(s, { scrollTop: s.scrollTop, overflowY: s.style.overflowY || getComputedStyle(s).overflowY }); s.style.overflowY = 'hidden' }
+  // 不修改看板列的 overflow：拖拽期间仍保留滚动条和原生滚动能力，避免列的滚动条消失。
 
   // 外部素材抽屉保留同尺寸的低透明占位，列表不跳动；普通卡片仍按原逻辑收合让位。
   // 同步 display:none 会让浏览器取消原生拖拽 → 必须下一帧再真正移出布局并做 FLIP。
@@ -412,10 +421,6 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     cancelAnimationFrame(deps.active.current.raf)
     deps.active.current = null
     document.body.classList.remove('phys-dragging')            // 恢复 backdrop-filter（落点 elementFromPoint 之前）
-    for (const s of _lockedScrollers) {                         // 解锁列滚动，下面才能受控平滑滚到落点
-      const saved = _savedScrollState.get(s)
-      s.style.overflowY = saved?.overflowY ?? ''
-    }
     removeListeners()
 
     // 落点用克隆体此刻真实的视觉中心，不用 target（原始指针位置）——弹簧有阻尼延迟，快速
@@ -642,6 +647,25 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       return { left: box.left, top: box.top - dy, width: box.width, height: box.height }
     }
 
+    // 落地目标在决策那一刻（刚插入抽屉列表）还顶着 Vue TransitionGroup 的 FLIP 让位动画
+    // （抽屉两层 TransitionGroup 的 -move，过渡时长 .42s）——revealInScroller 那次决策时
+    // 兄弟卡还没让完位，量出来的落点不是最终稳定位置，跟不上后续让位挪出的这一整张卡的距离
+    // （用 Performance trace 实测过：决策后约 400ms 才会开始真正校正，一度用固定 setTimeout
+    // 兜底，结果这段校正滚动和落地揭示前后脚发生、常常撞在一起没播完，看着像"让位卡在揭示
+    // 那一刻才发生"）。改成在 onReveal（揭示前一刻，飞行动画早已跑满 0.55~0.7s，必然晚于
+    // .42s 的 FLIP 时长）里同步复核+校正，不用动画（scrollTop 直接赋值），确保揭示那一帧
+    // 卡片已经站定，不会有校正滚动和揭示互相追赶的观感。
+    const correctRevealPosition = (sc: HTMLElement | null, target: HTMLElement) => {
+      if (!sc || !target.isConnected) return
+      const r = sc.getBoundingClientRect(), box = target.getBoundingClientRect(), pad = 6
+      let dy = box.bottom + pad > r.bottom ? box.bottom + pad - r.bottom
+             : box.top - pad < r.top ? box.top - pad - r.top : 0
+      const maxDown = sc.scrollHeight - sc.clientHeight - sc.scrollTop
+      dy = dy > 0 ? Math.min(dy, maxDown) : Math.max(dy, -sc.scrollTop)
+      if (Math.abs(dy) <= 1) return
+      sc.scrollTop += dy
+    }
+
     // 松手即进入「归位/落位」飞行动画（0.55~0.7s）。飞行途中克隆体仍是 fixed 定位，
     // 若继续顶着抓取时的压顶 z(99999)，飞行路径经过悬浮窗口（文件预览/咕咕聊天，20000+ 那一带）
     // 时会整个盖住窗口，动画结束克隆体一 remove 又突然消失——观感是「窗口被糊一下又露出来」。
@@ -707,13 +731,34 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         if (sourceEl.closest('.mind-canvas') || absorbTarget.closest('[data-project-drawer-dropzone]')) {
           holder.style.zIndex = '31'
         }
+        // 画布卡片拖入抽屉时，落地飞行期间锁住抽屉滚动，防止用户滚动导致落点偏移。
+        // 在滚动容器上盖一层透明遮罩拦截指针事件（滚轮、拖拽滚动条等），
+        // 不修改 overflowY，滚动条保持原样显示。落地后移除。
+        // absorbTarget 可能是抽屉容器（画布卡拖入）或源卡自身（抽屉卡放回），
+        // .project-list-scroll 在它们内部（不是祖先），不能用 closest 向上查找。
+        const drawerScroller = document.querySelector<HTMLElement>('.project-list-scroll')
+        let scrollBlocker: HTMLElement | null = null
+        if (drawerScroller) {
+          scrollBlocker = document.createElement('div')
+          scrollBlocker.style.cssText = 'position:absolute;inset:0;z-index:1;pointer-events:all;border-radius:inherit;background:transparent;'
+          scrollBlocker.addEventListener('wheel', e => e.preventDefault(), { passive: false })
+          scrollBlocker.addEventListener('touchmove', e => e.preventDefault(), { passive: false })
+          drawerScroller.style.position = 'relative'
+          drawerScroller.appendChild(scrollBlocker)
+        }
+        const restoreDrawerScroll = () => {
+          if (scrollBlocker && scrollBlocker.parentNode) scrollBlocker.remove()
+        }
+        // 在 flyTo/flyMorph 启动前注册 cleanup，确保无论动画正常完成还是中途取消
+        // 都能恢复抽屉滚动。registerCleanup 在 session terminal 时会同步执行 cleanup。
+        deps.registerCleanup(session, restoreDrawerScroll)
         if (opts.absorbShrink ?? true) {
           // 文件/文件夹拖进普通文件夹或面包屑仍是原有的单克隆缩小吸入；目标只是一个
           // 容器入口，不是会被克隆交接的卡片，不能先把它隐藏成 opacity:0。
           flyTo(absorbTarget.getBoundingClientRect(), true)
         } else {
           const deadline = performance.now() + (opts.absorbLandingWaitMs ?? 300)
-          const landOnAbsorbTarget = () => {
+          const landOnAbsorbTarget = async () => {
             if (!session.isCurrent()) return
             const resolved = opts.resolveAbsorbLandingTarget?.()
             if (!resolved && opts.resolveAbsorbLandingTarget && performance.now() < deadline) {
@@ -741,7 +786,16 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             if (targetEl === sourceEl && opts.keepSourcePlaceholder) {
               targetEl.style.opacity = '0'
             }
-            const box = revealInScroller(deps.scrollParent(targetEl), targetEl.getBoundingClientRect())
+            // 这一刻抽屉两层 TransitionGroup 的 FLIP 让位动画（.42s）大概率还没播完，这里读到
+            // 的只是一次「大致落点」的早期快照，不追求精确——真正准确的复核校正放在 onReveal
+            // 里（那时飞行动画必然已跑满 0.55~0.7s，晚于 FLIP 时长，位置早已稳定）。这里若
+            // 强行清空/复原祖先容器身上 Vue 正在用 CSS transition 播放的内联 transform，会
+            // 打断 Vue 自己的 FLIP 状态跟踪，实测会在祖先容器上留下錯乱的残留 transform，
+            // 一直到该容器下次真正触发数据变化才被 Vue 重新覆盖——表现为「滚动过一次之后，
+            // 换其它不需要滚动的卡片也复现让位延迟」这种跨拖拽持续存在的诡异现象，因此这里
+            // 不做任何 transform 清空，只读裸的 getBoundingClientRect()。
+            const sc = deps.scrollParent(targetEl)
+            const box = revealInScroller(sc, targetEl.getBoundingClientRect())
             // 抽屉来源回到自身时也复用双克隆，完成从画布缩放尺寸回到抽屉实体尺寸的交接。
             // 但落点不在画布内，不能把 fixed 克隆塞进画布相机跟随层；那层会改变其定位基准，
             // 造成额外的左上角残影。
@@ -765,7 +819,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
               box,
               targetEl,
               _cloneLanding(targetEl),
-              restoreSourcePlaceholderStyle,
+              () => {
+                // 揭示前一刻（飞行动画早已跑满，必晚于抽屉 FLIP 让位的 .42s）复核一次目标卡
+                // 真实位置，此时兄弟卡的让位早已播完、位置绝对稳定，比决策时的快照准得多。
+                correctRevealPosition(sc, targetEl)
+                restoreSourcePlaceholderStyle()
+              },
               false,
               targetEl === sourceEl,
               // 落点永远是抽屉卡（自己原地放回，或画布卡被吸入抽屉的新卡），抽屉卡不支持
@@ -791,22 +850,17 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           deps.holdHoverUntilReveal(sourceEl)
           sourceEl.style.opacity = '0'
           const sc = deps.scrollParent(sourceEl)
+          deps.registerCleanup(session, blockScrollDuringLanding(sc))
           const box = revealInScroller(sc, sourceEl.getBoundingClientRect())
           flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
           return
         }
-        // 已收合 → 先占位 FLIP 重新展开源卡（列恢复溢出），再算滚动容器，否则收合时列不溢出 → 取不到 sc
+        // 已收合 → 先占位 FLIP 重新展开源卡，再计算最终归位位置。
         const box0 = animateOpen(container, sourceEl)
         const sc = deps.scrollParent(sourceEl)
-        // 锁列期间源卡收合，浏览器可能把 scrollTop 夹小了；展开后还原到拖动前，revealInScroller 再据此滚到原位
-        if (sc && _savedScrollState.has(sc)) {
-          sc.scrollTop = _savedScrollState.get(sc)!.scrollTop
-          const box = revealInScroller(sc, sourceEl.getBoundingClientRect())
-          flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
-        } else {
-          const box = revealInScroller(sc, box0)
-          flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
-        }
+        deps.registerCleanup(session, blockScrollDuringLanding(sc))
+        const box = revealInScroller(sc, box0)
+        flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
       }
 
       // 外部素材抽屉的卡片在拖拽开始时还不是画布节点；松手后由调用方创建真实卡片，
@@ -873,6 +927,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             animateOpen(flipTarget, el)   // 它为量 FLIP 会瞬间 display:none 落点卡，故滚动放其后
             // 落点在可滚动列里若滚出视口 → 快速滚进可视区，box 取滚动后的最终落点
             const sc = deps.scrollParent(el)
+            deps.registerCleanup(session, blockScrollDuringLanding(sc))
             const box = revealInScroller(sc, el.getBoundingClientRect())
             flyMorph(box, el, _cloneLanding(el), restoreListTransition)
               return
