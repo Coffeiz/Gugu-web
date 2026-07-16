@@ -662,6 +662,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       //    skipAbsorb（看板）跳过：看板永不吸入文件夹，而此处 elementFromPoint 在 moveProject 把布局改脏后
       //    会强制一次整页重排（trace 里 elementFromPoint 161ms 的大头）——白白吃掉松手那帧。
       let absorbTarget: HTMLElement | null = null
+      let cachedAbsorbLayoutSize: { width: number; height: number } | null = null
       if (!opts.skipAbsorb) {
         // 命中判定用「原始指针位置」（target.x/y），不用 cloneCenter（dropX/dropY）——
         // 拖拽过程中 onDragOver 的悬停高亮走的就是原始指针（见其定义处注释），如果这里改用
@@ -674,6 +675,14 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           ? (under && opts.resolveAbsorbTarget(under))
           : (under && under.closest && under.closest('.folder-card, .bc-item'))
         absorbTarget = absorb as HTMLElement | null
+        if (absorbTarget) {
+          const targetRect = absorbTarget.getBoundingClientRect()
+          const targetStyle = getComputedStyle(absorbTarget)
+          cachedAbsorbLayoutSize = {
+            width: parseFloat(targetStyle.width) || (lastCS !== 1 ? targetRect.width / lastCS : targetRect.width),
+            height: parseFloat(targetStyle.height) || (lastCS !== 1 ? targetRect.height / lastCS : targetRect.height),
+          }
+        }
       }
 
       // clone2 不再套 .phys-drag-clone/光晕——直接是目标元素此刻真实 DOM 的克隆，从交叉淡变
@@ -687,10 +696,17 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 会算错。scaleShell 同理使用 lastCS（此刻的实时缩放，不是抓起时的 CS0）——cloneW/cloneH
       // 这份"原始尺寸"本身不随缩放变化，仍然沿用抓起时算好的那份。
       const _cloneLanding = (el: HTMLElement) => {
-        const targetStyle = getComputedStyle(el)
-        const targetRect = el.getBoundingClientRect()
-        const targetWidth = parseFloat(targetStyle.width) || (lastCS !== 1 ? targetRect.width / lastCS : targetRect.width)
-        const targetHeight = parseFloat(targetStyle.height) || (lastCS !== 1 ? targetRect.height / lastCS : targetRect.height)
+        let targetWidth: number
+        let targetHeight: number
+        if (el === absorbTarget && cachedAbsorbLayoutSize) {
+          targetWidth = cachedAbsorbLayoutSize.width
+          targetHeight = cachedAbsorbLayoutSize.height
+        } else {
+          const targetStyle = getComputedStyle(el)
+          const targetRect = el.getBoundingClientRect()
+          targetWidth = parseFloat(targetStyle.width) || (lastCS !== 1 ? targetRect.width / lastCS : targetRect.width)
+          targetHeight = parseFloat(targetStyle.height) || (lastCS !== 1 ? targetRect.height / lastCS : targetRect.height)
+        }
         const landingClone = createLandingClone(el, {
           width: dropW,
           height: dropH,
