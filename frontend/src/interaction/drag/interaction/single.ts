@@ -581,7 +581,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         onRegrab: (moveEvent, visualRect) => {
           opts.onRegrabStart?.()
           if (opts.delegateLandingRegrab && revealEl !== sourceEl) {
-            if (dispatchDragHandoff(revealEl, moveEvent, visualRect)) return
+            if (dispatchDragHandoff(revealEl, moveEvent, visualRect)) {
+              dragRegistry.finish(sourceEl, session)
+              return
+            }
             return
           }
           deps.startPhysicsDrag(moveEvent, revealEl, {

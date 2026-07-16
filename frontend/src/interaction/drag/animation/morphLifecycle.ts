@@ -64,7 +64,12 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     startThreshold: startThresholdDrag,
     onRegrab: options.onRegrab,
   })
-  syncHover(isOverCard(options.pointerPosition.x, options.pointerPosition.y))
+  // 初始调用：只记录落地时的 hover 状态给后面 revealWithoutStaleHover 用，不动
+  // connectionDotOverlay 的 hovering 类——它在创建时已从 clone 继承正确的初始状态
+  //（startsHovered），这里如果根据 release 瞬间的 isOverCard 重新 toggle，连接点
+  // 会先因 holder 坐标微小偏差被摘掉 hovering 类再恢复，在 0.15s transition 窗口内
+  // 表现为瞬间消失再淡入。
+  landingHovered = options.connectionDotOverlay?.classList.contains('hovering') ?? false
   if (options.pointer) document.addEventListener('pointermove', onPointerMove)
   if (options.connectionDotOverlay) {
     options.holder.style.zIndex = String((Number(options.holder.style.zIndex) || 0) + 1)

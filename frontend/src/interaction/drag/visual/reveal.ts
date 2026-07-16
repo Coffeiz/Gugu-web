@@ -9,6 +9,7 @@ export function revealWithoutStaleHover(
   el.classList.add('phys-reveal-snap')
   if (keepControls) el.classList.add('phys-reveal-controls')
   el.style.opacity = ''
+  el.style.pointerEvents = ''
   if (pointerMode && (keepControls || el.matches(':hover'))) {
     el.dispatchEvent(new MouseEvent('mouseenter'))
   }
@@ -36,4 +37,7 @@ export function revealWithoutStaleHover(
 
 export function holdHoverUntilReveal(el: HTMLElement): void {
   el.classList.add('phys-just-revealed')
+  // 飞行期间落点本体不可见时仍可被 pointer 事件命中，导致用户点击透明位置触发新拖拽。
+  // 关掉 pointer-events，直到揭示时重新打开。
+  el.style.pointerEvents = 'none'
 }
