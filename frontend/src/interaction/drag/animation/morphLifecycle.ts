@@ -100,8 +100,8 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   const clone2Inner = options.clone2.querySelector<HTMLElement>('.phys-landing-content')
   const transition = `transform 0.55s ${options.easing}`
   const fadeTransition = 'opacity 0.42s ease'
-  const dragShadow = options.hidePrimaryVisual ? getComputedStyle(cloneInner).boxShadow : ''
-  const landingShadow = options.hidePrimaryVisual && clone2Inner ? getComputedStyle(clone2Inner).boxShadow : ''
+  const dragShadow = getComputedStyle(cloneInner).boxShadow
+  const landingShadow = clone2Inner ? getComputedStyle(clone2Inner).boxShadow : getComputedStyle(options.revealEl).boxShadow
   cloneInner.style.transition = fadeTransition
   if (clone2Inner) clone2Inner.style.transition = fadeTransition
   options.clone2.style.opacity = '1'
@@ -114,6 +114,14 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
       clone2Inner.style.boxShadow = dragShadow
     }
     void options.clone2.offsetWidth
+  }
+  if (clone2Inner && dragShadow !== landingShadow) {
+    // 落地克隆开始飞行前先继承拖拽强阴影，避免松手瞬间「强阴影→弱阴影」的突变
+    const savedTrans = clone2Inner.style.transition
+    clone2Inner.style.transition = 'none'
+    clone2Inner.style.boxShadow = dragShadow
+    void options.clone2.offsetWidth
+    clone2Inner.style.transition = savedTrans
   }
 
   const retarget = (newBox: MorphBox) => {
@@ -189,7 +197,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     if (landing.isDone() || !options.session.isCurrent()) return
     options.holder.style.transition = transition
     options.clone2.style.transition = transition
-    if (options.hidePrimaryVisual && clone2Inner) {
+    if (clone2Inner && dragShadow !== landingShadow) {
       clone2Inner.style.transition = `box-shadow 0.55s ${options.easing}`
       clone2Inner.style.boxShadow = landingShadow
     }

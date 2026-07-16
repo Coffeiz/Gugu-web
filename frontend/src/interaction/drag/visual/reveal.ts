@@ -19,7 +19,7 @@ export function revealWithoutStaleHover(
     // 因此被 isActive 拦掉，否则 phys-just-revealed 会永久留在卡片上并被下一次克隆继承。
     el.classList.remove('phys-just-revealed')
     if (keepControls) requestAnimationFrame(() => {
-      if (isActive()) el.classList.remove('phys-reveal-controls')
+      el.classList.remove('phys-reveal-controls')
     })
   })
   if (pointerMode) {
