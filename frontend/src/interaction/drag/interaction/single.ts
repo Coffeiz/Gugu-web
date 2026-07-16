@@ -105,7 +105,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   // 从一开始就定死是 0，看起来「卡片凭空消失」（deps.active.current 只挡真正重叠的拖拽，挡不住这个：
   // 前一次拖拽的 end() 早就把 deps.active.current 清空了，落地动画是它结束后才独立跑的）。抓之前先强制
   // 复位，不管源卡此刻处于什么中间态。
-  sourceEl.classList.remove('phys-drag-source-placeholder')
+  // 取消旧落地 session 时，揭示收尾可能在本体上留下一个等待下一帧移除的临时类。
+  // 重抓必须从干净状态克隆，否则 clone 会继承刚揭示的过渡，原位归还时会出现一帧顿挫。
+  sourceEl.classList.remove('phys-drag-source-placeholder', 'phys-just-revealed', 'phys-reveal-snap', 'phys-reveal-controls')
   sourceEl.style.display = ''
   sourceEl.style.opacity = ''
   const pointer = opts.pointer === true
