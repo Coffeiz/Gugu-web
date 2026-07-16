@@ -94,7 +94,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, nextTick, watch, type PropType } from 'vue'
+import { ref, reactive, computed, nextTick, watch, onUnmounted, type PropType } from 'vue'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
 import { firstIncompleteStageIdx } from '@/utils/projectStages'
 import type { ProjectStage, ProjectTodo } from '@/types/project'
@@ -122,13 +122,11 @@ watch(() => props.stages, (v) => {
 watch(localStages, (v) => emit('update:stages', v), { deep: true })
 
 // 通过 useProjectStages 复用阶段/待办操作编排
-const projectStages = useProjectStages({
-  stages: localStages,
-  currentStage: ref(props.currentStage),
-  saveStages: () => handleSaveStages(),
-  saveTodos: () => handleSaveTodos(),
-  setStage: (key: string, index: number) => handleSetStage(key, index),
-})
+  const projectStages = useProjectStages({
+    stages: localStages,
+    saveStages: () => handleSaveStages(),
+    saveTodos: () => handleSaveTodos(),
+  })
 
 const activeStageIdx = computed(() =>
   localStages.value.findIndex(s => s.key === props.currentStage))
@@ -143,9 +141,18 @@ const displayStages = computed(() => {
 })
 
 const lockedStageIndices = computed(() => {
-  const idx = activeStageIdx.value
-  if (idx < 0) return new Set<number>()
-  return new Set(Array.from({ length: idx }, (_, i) => i))
+  const locked = new Set<number>()
+  const current = activeStageIdx.value
+  for (let target = 0; target < current; target++) {
+    for (let i = target; i < current; i++) {
+      const todos = localStages.value[i].todos ?? []
+      if (todos.length > 0 && todos.every(todo => todo.done && !todo.autoCompleted)) {
+        locked.add(target)
+        break
+      }
+    }
+  }
+  return locked
 })
 
 // 编辑态
@@ -174,60 +181,91 @@ const stageDrag = reactive<StageDragState>({
 })
 const draggedStageKey = computed(() =>
   stageDrag.fromIdx >= 0 ? localStages.value[stageDrag.fromIdx]?.key : null)
+let stopStageDrag: (() => void) | null = null
+
+function stageIdxFromY(y: number) {
+  if (!stageFlowRef.value) return stageDrag.toIdx
+  const nodes = stageFlowRef.value.querySelectorAll('.stage-node')
+  let current = stageDrag.toIdx
+  if (current < 0) current = 0
+  if (current > 0) {
+    const previous = nodes[current - 1]?.getBoundingClientRect()
+    if (previous && y < previous.top + previous.height / 2) return current - 1
+  }
+  if (current < nodes.length - 1) {
+    const next = nodes[current + 1]?.getBoundingClientRect()
+    if (next && y > next.top + next.height / 2) return current + 1
+  }
+  return current
+}
 
 function startStageDrag(i: number, e: MouseEvent) {
   if (e.button !== 0) return
   const target = e.currentTarget as HTMLElement | null
   if (!target) return
+  const startX = e.clientX
+  const startY = e.clientY
   const rect = target.getBoundingClientRect()
   const stage = localStages.value[i]
-  stageDrag.active = true
-  stageDrag.fromIdx = i
-  stageDrag.toIdx = i
-  stageDrag.ghostX = rect.left
-  stageDrag.ghostY = rect.top + window.scrollY
-  stageDrag.ghostWidth = rect.width
-  stageDrag.ghostLabel = stage.label
-  stageDrag.ghostTodos = [...(stage.todos ?? [])]
+  if (!stage) return
+  let activated = false
 
   const onMove = (me: MouseEvent) => {
-    stageDrag.ghostX = me.clientX - (e.clientX - rect.left)
-    stageDrag.ghostY = me.clientY - (e.clientY - rect.top) + window.scrollY
+    if (!activated) {
+      const dx = me.clientX - startX
+      const dy = me.clientY - startY
+      if (Math.sqrt(dx * dx + dy * dy) < 4) return
+      activated = true
+      stageDrag.active = true
+      stageDrag.fromIdx = i
+      stageDrag.toIdx = i
+      stageDrag.ghostWidth = rect.width
+      stageDrag.ghostLabel = stage.label
+      stageDrag.ghostTodos = [...(stage.todos ?? [])]
+      document.body.style.cursor = 'grabbing'
+      document.body.style.userSelect = 'none'
+    }
+    stageDrag.ghostX = me.clientX - (startX - rect.left)
+    stageDrag.ghostY = me.clientY - (startY - rect.top)
     if (!stageFlowRef.value) return
-    const nodes = stageFlowRef.value.querySelectorAll('.stage-node')
-    let newIdx = stageDrag.fromIdx
-    nodes.forEach((node, idx) => {
-      if (idx === stageDrag.fromIdx) return
-      const nr = node.getBoundingClientRect()
-      const midY = nr.top + nr.height / 2
-      if (me.clientY > midY && idx > newIdx) newIdx = idx
-      if (me.clientY < midY && idx < newIdx) newIdx = idx
-    })
-    stageDrag.toIdx = newIdx
+    stageDrag.toIdx = stageIdxFromY(me.clientY)
   }
   const onUp = () => {
-    stageDrag.active = false
-    if (stageDrag.toIdx !== stageDrag.fromIdx) {
+    if (activated) {
+      if (stageDrag.toIdx !== stageDrag.fromIdx) {
       const copy = [...localStages.value]
       const [moved] = copy.splice(stageDrag.fromIdx, 1)
       copy.splice(stageDrag.toIdx, 0, moved)
       localStages.value = copy
       emit('update:stages', copy)
       props.onSaveStages()
+      }
+      stageDrag.active = false
+      stageDrag.fromIdx = -1
+      stageDrag.toIdx = -1
     }
     document.removeEventListener('mousemove', onMove)
     document.removeEventListener('mouseup', onUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    stopStageDrag = null
   }
+  stopStageDrag = onUp
   document.addEventListener('mousemove', onMove)
   document.addEventListener('mouseup', onUp)
 }
+
+onUnmounted(() => stopStageDrag?.())
 
 // ── 待办拖拽 ──
 function todoDragStart(stage: ProjectStage, ti: number) {
   todoDrag.value = { stageKey: stage.key, index: ti }
 }
 function todoDragEnd() {
-  todoDrag.value = null
+  if (todoDrag.value) {
+    todoDrag.value = null
+    handleSaveStages()
+  }
 }
 function todoListDragOver(stage: ProjectStage) {
   if (!todoDrag.value || todoDrag.value.stageKey === stage.key) return
@@ -238,25 +276,23 @@ function todoListDragOver(stage: ProjectStage) {
   if (!stage.todos) stage.todos = []
   stage.todos.unshift(todo)
   todoDrag.value = { stageKey: stage.key, index: 0 }
-  props.onSaveTodos()
 }
 function todoDragOver(stage: ProjectStage, ti: number, e: DragEvent) {
   if (!todoDrag.value) return
   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  const midY = rect.top + rect.height / 2
+  const after = e.clientY > rect.top + rect.height / 2
   const targetStage = localStages.value.find(s => s.key === todoDrag.value!.stageKey)
   if (!targetStage) return
   const fromIdx = todoDrag.value.index
-  if (stage.key === targetStage.key && (ti === fromIdx || ti === fromIdx + 1)) return
+  let targetIndex = after ? ti + 1 : ti
+  if (stage.key === targetStage.key && fromIdx < targetIndex) targetIndex -= 1
+  if (stage.key === targetStage.key && targetIndex === fromIdx) return
   const [todo] = targetStage.todos!.splice(fromIdx, 1)
-  if (stage.key === targetStage.key && ti > fromIdx) {
-    stage.todos!.splice(ti - 1, 0, todo)
-    todoDrag.value = { stageKey: stage.key, index: ti - 1 }
-  } else {
-    stage.todos!.splice(ti, 0, todo)
-    todoDrag.value = { stageKey: stage.key, index: ti }
-  }
-  props.onSaveTodos()
+  if (!todo) return
+  if (!stage.todos) stage.todos = []
+  targetIndex = Math.max(0, Math.min(targetIndex, stage.todos.length))
+  stage.todos.splice(targetIndex, 0, todo)
+  todoDrag.value = { stageKey: stage.key, index: targetIndex }
 }
 
 // ── 编辑 ──
@@ -285,9 +321,11 @@ function handleSetStage(key: string, idx: number) {
 }
 function handleSaveStages() {
   editingStage.value = null
+  emit('update:stages', localStages.value)
   props.onSaveStages()
 }
 function handleSaveTodos() {
+  emit('update:stages', localStages.value)
   props.onSaveTodos()
 }
 function handleAddTodo(stage: ProjectStage) {
@@ -302,12 +340,13 @@ function handleRemoveTodo(stage: ProjectStage, id: string) {
 }
 function handleToggleTodo(todo: ProjectTodo) {
   projectStages.toggleTodo(todo)
-}
-
-function toggleExpand(key: string) {
-  const s = expandedStages.value
-  if (s.has(key)) s.delete(key)
-  else s.add(key)
+  if (todo.done) {
+    const currentIndex = localStages.value.findIndex(stage => stage.key === props.currentStage)
+    const targetIndex = firstIncompleteStageIdx(localStages.value)
+    if (targetIndex > currentIndex) {
+      handleSetStage(localStages.value[targetIndex].key, targetIndex)
+    }
+  }
 }
 </script>
 
