@@ -1233,6 +1233,12 @@ function saveStages() {
 
 
 
+function saveTodos() {
+  if (!props.project) return
+  const newProgress = calcProgress(localStages.value, localCurrentStage.value)
+  projectStore.saveTodos(props.project.id, localStages.value, newProgress)
+}
+
 
 
 
