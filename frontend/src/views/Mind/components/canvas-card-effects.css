@@ -58,6 +58,11 @@
 .fr-missing.phys-reveal-controls .conn-dot::before,
 .note-card.phys-reveal-controls .conn-dot::before { opacity: 1 !important; }
 
+/* 连接点本身有 opacity 过渡；落地从飞行覆盖层交接到本体时不能重新播放这段淡入，
+   否则本体已经接管，圆点却还会从 0 慢慢亮起来，形成短暂闪空。 */
+.phys-reveal-controls .conn-dot::before,
+.phys-reveal-snap .conn-dot::before { transition: none !important; }
+
 /* 画布卡片抓起后统一仍是「有材质的玻璃」：此前为了规避文字发虚，这里把文件、活动和便签的
    backdrop-filter 直接关掉，结果只有项目引用卡保留毛玻璃，四种卡片的抓取反馈分裂。文字清晰度
    应由物理克隆的布局/合成策略解决，不能牺牲材质本身。便签继续保留各自的纸色，只把颜色改为

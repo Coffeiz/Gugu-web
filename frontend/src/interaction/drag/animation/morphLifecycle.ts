@@ -48,6 +48,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   let targetResizeObserver: ResizeObserver | null = null
   let hasRetargeted = false
   let redirectTimer: ReturnType<typeof setTimeout> | null = null
+  let latestPointer = { ...options.pointerPosition }
 
   const syncHover = (hovering: boolean) => {
     landingHovered = hovering
@@ -58,7 +59,16 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     const rect = options.holder.getBoundingClientRect()
     return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
   }
+  const isPointerOverReveal = () => {
+    const rect = options.revealEl.getBoundingClientRect()
+    const { x, y } = latestPointer
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+  }
   const onPointerMove = (event: PointerEvent) => syncHover(isOverCard(event.clientX, event.clientY))
+  const trackPointer = (event: PointerEvent) => {
+    latestPointer = { x: event.clientX, y: event.clientY }
+    onPointerMove(event)
+  }
 
   const cleanupHandoff = installLandingHandoff({
     enabled: options.pointer,
@@ -75,7 +85,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   // 会先因 holder 坐标微小偏差被摘掉 hovering 类再恢复，在 0.15s transition 窗口内
   // 表现为瞬间消失再淡入。
   landingHovered = options.connectionDotOverlay?.classList.contains('hovering') ?? false
-  if (options.pointer) document.addEventListener('pointermove', onPointerMove)
+  if (options.pointer) document.addEventListener('pointermove', trackPointer)
   if (options.connectionDotOverlay) {
     options.holder.style.zIndex = String((Number(options.holder.style.zIndex) || 0) + 1)
   }
@@ -236,7 +246,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     cleanupHandoff()
     targetResizeObserver?.disconnect()
     targetResizeObserver = null
-    if (options.pointer) document.removeEventListener('pointermove', onPointerMove)
+    if (options.pointer) document.removeEventListener('pointermove', trackPointer)
     options.clone2.removeEventListener('transitionend', onEnd)
     options.clearRetarget(options.revealEl, retarget)
     unregister()
@@ -251,8 +261,13 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
       options.holder.remove()
       options.clone2.remove()
       camGlue?.remove()
+      // 克隆移除后才是本体真实参与命中测试的时刻；先锁存 :hover，再触发 Vue 更新。
+      // 否则 onReveal 可能让连接点按旧的 hovering 状态短暂收起一帧。
+      const revealHovered = options.pointer
+        ? options.revealEl.matches(':hover') || isPointerOverReveal()
+        : landingHovered
       options.onReveal?.()
-      revealWithoutStaleHover(options.revealEl, options.pointer, undefined, landingHovered, () => options.session.isCurrent())
+      revealWithoutStaleHover(options.revealEl, options.pointer, undefined, revealHovered, () => options.session.isCurrent())
       options.finishSession()
     })
   }
@@ -264,7 +279,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     cleanupHandoff()
     targetResizeObserver?.disconnect()
     targetResizeObserver = null
-    if (options.pointer) document.removeEventListener('pointermove', onPointerMove)
+    if (options.pointer) document.removeEventListener('pointermove', trackPointer)
     options.clone2.removeEventListener('transitionend', onEnd)
     options.clearRetarget(options.revealEl, retarget)
     options.holder.remove()
@@ -275,10 +290,13 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     // 的测量/建克隆会在同一帧串行触发布局，造成可见顿挫。
     if (options.session.isHandoffRequested()) return
     options.revealEl.classList.add('phys-reveal-snap')
+    const revealHovered = options.pointer
+      ? options.revealEl.matches(':hover') || isPointerOverReveal()
+      : landingHovered
     options.onReveal?.()
     void options.revealEl.offsetWidth
     options.revealEl.classList.remove('phys-reveal-snap')
-    revealWithoutStaleHover(options.revealEl, options.pointer, undefined, landingHovered, () => options.session.isCurrent())
+    revealWithoutStaleHover(options.revealEl, options.pointer, undefined, revealHovered, () => options.session.isCurrent())
     options.finishSession()
   }
   unregister = options.registerCleanup(options.revealEl, forceCleanup)
