@@ -1437,3 +1437,30 @@ Vue 3 编译器明确禁止在 `<template v-for>` 的子元素上放 `:key`—�
 
 - `npx vite build` 通过（编译报错是先发现再修的，不是产品问题）。
 - HMR 行为待用户桌面端手测：①抽屉项目卡拖入/拖出时分组标题是否平滑让位；②已完成列年内/年内月间卡片增减时折叠按钮是否平滑让位；③跨年/跨月让位时整组（按钮 + 卡片）是否同步平移。
+
+## 2026-07-16 · 画布项目拖回抽屉时的延迟让位
+
+### 现象
+
+把画布项目拖回已打开的项目抽屉，且目标卡位在当前视野上方、需要向上滚动时，飞入的 clone2 会先与原先第一张可见卡重叠；直到 clone2 收尾，后续卡片才向下让出一张卡的空间。向下滚动不明显。
+
+### 排查结果
+
+probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `filteredProjects` 已完成更新；不是接口或 Vue 响应式更新延迟。
+
+问题在于抽屉的两层 `TransitionGroup` 正在执行 `.42s` FLIP 时，`getBoundingClientRect()` 返回的是带 transform 的视觉中间位置。落地逻辑把它当作滚动和 clone2 的终点，等 FLIP 结束后真实布局与初始快照相差约一张卡高度。
+
+曾尝试在 clone2 揭示前用 `scrollTop` 强制校正；这会让整列内容在收尾瞬间跳动。后续尝试把校正放到飞行中段并每帧 retarget clone2，性能 trace 显示每帧都会重置落地完成计时，飞行被延长，虽然让位改成了动画，仍是事后补偿。
+
+### 修复
+
+在 `interaction/dom.ts` 增加 `layoutBoxInScroller()`：沿目标与滚动容器各自的 `offsetParent` 链累计 `offsetTop` / `offsetLeft`，推导不受 FLIP transform 影响的最终布局盒。抽屉吸入路径从第一帧便用这份布局盒计算滚动终点和 clone2 飞行终点，删除延迟校正与其逐帧 retarget。
+
+### 教训
+
+**动画期间的 `getBoundingClientRect()` 是视觉坐标，不等于布局坐标。** 若终点由 FLIP 中的元素决定，应先拿 transform-free 的布局位置，而不是在动画结束后再让滚动容器补偿；后者会把布局误差转化成用户可见的整列跳动。
+
+### 验证
+
+- `npm run typecheck` 通过。
+- 用户手测确认：目标在当前视野上方、抽屉需要向上滚动的回收路径已恢复正常。

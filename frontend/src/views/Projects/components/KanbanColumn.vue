@@ -16,18 +16,20 @@
     </div>
 
     <div class="col-body">
-      <ProjectCard
-        v-for="project in projects"
-        :key="project.id"
-        :project="project"
-        @click="$emit('card-click', project)"
-      />
-      <button class="add-card" @click="$emit('add-project', column.key)">
-        <svg width="14" height="14" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="opacity:0.5;flex-shrink:0">
-          <line x1="11" y1="4" x2="11" y2="18"/><line x1="4" y1="11" x2="18" y2="11"/>
-        </svg>
-        <span class="add-card-text">新建项目</span>
-      </button>
+      <TransitionGroup tag="div" name="kanban-card-list" class="kanban-card-list" :class="{ 'kanban-card-list--static': !animateCards }">
+        <ProjectCard
+          v-for="project in projects"
+          :key="project.id"
+          :project="project"
+          @click="$emit('card-click', project)"
+        />
+        <button :key="`add-${column.key}`" class="add-card" @click="$emit('add-project', column.key)">
+          <svg width="14" height="14" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="opacity:0.5;flex-shrink:0">
+            <line x1="11" y1="4" x2="11" y2="18"/><line x1="4" y1="11" x2="18" y2="11"/>
+          </svg>
+          <span class="add-card-text">新建项目</span>
+        </button>
+      </TransitionGroup>
     </div>
   </div>
 </template>
@@ -40,6 +42,7 @@ import type { Project } from '@/types/project'
 const props = defineProps({
   column:   { type: Object, required: true },
   projects: { type: Array as PropType<Project[]>, default: () => [] },
+  animateCards: { type: Boolean, default: true },
 })
 const emit = defineEmits(['card-click', 'drop-project', 'add-project'])
 
@@ -86,12 +89,27 @@ function onDrop(e: DragEvent) {
   flex: 1; overflow-y: auto;
   min-width: 0; box-sizing: border-box;
   overflow-x: hidden;
+  /* 固定预留滚动条空间：内容跨过溢出阈值时，卡片宽度不能被动态挤窄。overlay 是
+     非标准属性，系统设为始终显示滚动条时仍会退化成 auto。 */
+  scrollbar-gutter: stable;
   padding: 2px 6px;
   margin-right: 0;
 }
 .col-body::-webkit-scrollbar { width: 3px; }
 .col-body::-webkit-scrollbar-track { background: transparent; margin-top: 8px; margin-bottom: 8px; }
 .col-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 99px; }
+.kanban-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.kanban-card-list-move {
+  transition: transform 0.34s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+.kanban-card-list--static .kanban-card-list-move {
+  transition: none !important;
+}
 /* 跟文件库「上传文件」(.fc-upload) 同款：只换边框/文字/背景色，不带外阴影、不抬起 */
 .add-card {
   display: flex; align-items: center; justify-content: center; gap: 6px;

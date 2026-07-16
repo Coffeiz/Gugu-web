@@ -880,23 +880,28 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 只把它挪到新父容器；不能仅凭 el !== sourceEl 判定“是不是新落点”。否则项目卡跨阶段会
       // 错走旧列归位路径，源卡在克隆飞到新列前提前揭示，鼠标下出现一次陈旧 hover 回弹。
       if (sel) {
+        // 看板普通列现在以 .kanban-card-list 作为 FLIP 容器；归位和跨列判定必须使用
+        // 同一层级。若一边取 list、一边取 col-body，同列返回会被误判为跨列。
+        const projectFlipContainer = (target: HTMLElement) => {
+          if (!opts.flipAllDescendants) return target.parentElement!
+          return target.closest<HTMLElement>('.kanban-card-list')
+            ?? target.closest<HTMLElement>('.col-body')
+            ?? target.parentElement!
+        }
         const landToProjectTarget = (el: HTMLElement | null, deadline: number) => {
           if (!session.isCurrent()) return
           if (!el && opts.landingVisibilityWaitMs && performance.now() < deadline) {
             requestAnimationFrame(() => landToProjectTarget(document.querySelector<HTMLElement>(sel), deadline))
             return
           }
-          // 已完成列的卡片嵌在 year/month/recent 分组中，不能比较直接父节点；比较实际所属
-          // 看板列，才能把“同列归位”与真正跨列区分开。
+          // 已完成列的卡片嵌在 year/month/recent 分组中，不能比较直接父节点。
           const movedToAnotherContainer = el
-            ? (el.closest<HTMLElement>('.col-body') ?? el.parentElement) !== container
+            ? projectFlipContainer(el) !== container
             : false
           if (el && el.isConnected && (el !== sourceEl || movedToAnotherContainer)) {
             const restoreListTransition = suppressListLandingTransition(el)
             if (el.offsetWidth > 0) {   // 落点可见 → 占位 FLIP 展开；双克隆同轨迹飞行 + 样式渐变
-            const flipTarget = opts.flipAllDescendants
-              ? (el.closest<HTMLElement>('.col-body') ?? el.parentElement!)
-              : el.parentElement!
+            const flipTarget = projectFlipContainer(el)
             animateOpen(flipTarget, el)   // 它为量 FLIP 会瞬间 display:none 落点卡，故滚动放其后
             // 落点在可滚动列里若滚出视口 → 快速滚进可视区，box 取滚动后的最终落点
             const sc = deps.scrollParent(el)

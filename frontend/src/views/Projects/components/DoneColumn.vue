@@ -94,17 +94,20 @@
               </svg>
             </button>
 
-            <TransitionGroup
-              v-if="openMonths.has(yg.year + mg.month)"
-              :key="`month-cards-${yg.year + mg.month}`"
-              tag="div"
-              name="done-card-list"
-              class="month-cards"
-            >
-              <div v-for="p in mg.items" :key="p.id" class="done-card-item">
-                <ProjectCard :project="p" @click="$emit('card-click', p)" />
-              </div>
-            </TransitionGroup>
+            <Transition name="month-folder">
+              <TransitionGroup
+                v-if="openMonths.has(yg.year + mg.month)"
+                :key="`month-cards-${yg.year + mg.month}`"
+                tag="div"
+                name="done-card-list"
+                class="month-cards"
+                :css="false"
+              >
+                <div v-for="p in mg.items" :key="p.id" class="done-card-item">
+                  <ProjectCard :project="p" @click="$emit('card-click', p)" />
+                </div>
+              </TransitionGroup>
+            </Transition>
           </template>
         </TransitionGroup>
 
@@ -339,6 +342,8 @@ function onDrop(e: DragEvent) {
   flex: 1; overflow-y: auto;
   min-width: 0; box-sizing: border-box;
   overflow-x: hidden;
+  /* 月份收起后滚动条消失时也保留同宽 gutter，避免整列卡片在一帧内横向挤压。 */
+  scrollbar-gutter: stable;
   padding: 2px 6px;
   margin-right: 0;
 }
@@ -368,7 +373,7 @@ function onDrop(e: DragEvent) {
 }
 .done-group-list-enter-active,
 .done-group-list-leave-active {
-  transition: opacity 0.22s ease, transform 0.34s cubic-bezier(0.34, 1.2, 0.64, 1);
+  transition: opacity 0.22s ease, transform 0.34s ease-in-out;
 }
 .done-group-list-enter-from,
 .done-group-list-leave-to {
@@ -376,7 +381,7 @@ function onDrop(e: DragEvent) {
   transform: translateY(-4px);
 }
 .done-group-list-move {
-  transition: transform 0.34s cubic-bezier(0.34, 1.2, 0.64, 1) !important;
+  transition: transform 0.34s ease-in-out !important;
 }
 .done-group-list-leave-active {
   position: absolute;
@@ -451,6 +456,16 @@ function onDrop(e: DragEvent) {
   border-left: 1px solid rgba(0,0,0,0.06);
   margin-left: 12px;
   box-sizing: border-box;
+}
+.month-folder-enter-active,
+.month-folder-leave-active {
+  transform-origin: top;
+  transition: opacity 0.18s ease, transform 0.28s cubic-bezier(.22, 1, .36, 1);
+}
+.month-folder-enter-from,
+.month-folder-leave-to {
+  opacity: 0;
+  transform: translateY(-8px) scaleY(.92);
 }
 .done-card-item {
   flex: 0 0 auto;

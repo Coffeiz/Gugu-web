@@ -121,8 +121,6 @@
       </svg>
     </button>
     <span v-else class="card-advance card-advance-placeholder" aria-hidden="true"></span>
-  </div>
-
   <!-- 当前阶段待办弹层（点击阶段名弹出） -->
   <Teleport to="body">
     <div v-if="stagePopOpen" class="todo-pop" :style="stagePopStyle" ref="stagePopRef" @click.stop @mousedown.stop>
@@ -162,6 +160,7 @@
       <button class="tp-add" @click="addTodo">＋ 添加待办</button>
     </div>
   </Teleport>
+  </div>
 </template>
 
 <script setup lang="ts">

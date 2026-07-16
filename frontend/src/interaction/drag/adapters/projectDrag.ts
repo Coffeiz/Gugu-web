@@ -17,7 +17,10 @@ export function startProjectDrag(event: PointerEvent, options: ProjectDragOption
     onDragStart: (moveEvent, card) => startPhysicsDrag(moveEvent, card, {
       pointer: true,
       skipAbsorb: true,
-      flipContainer: card.closest<HTMLElement>('.col-body') ?? undefined,
+      // 普通列按卡片列表做 FLIP，完成列的卡片在月份分组内，回退到整列；须与落点分支一致。
+      flipContainer: card.closest<HTMLElement>('.kanban-card-list')
+        ?? card.closest<HTMLElement>('.col-body')
+        ?? undefined,
       flipAllDescendants: true,
       landingVisibilityWaitMs: 300,
       onDrop: options.onDrop,

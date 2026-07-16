@@ -6,6 +6,7 @@
         :key="col.key"
         :column="col"
         :projects="columnProjects(col.key)"
+        :animate-cards="kanbanCardsReady"
         @card-click="projectStore.openModal"
         @drop-project="handleDrop"
         @add-project="openNewWithStatus"
@@ -23,7 +24,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { showAppError } from '@/composables/useAppToast'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
@@ -37,6 +38,15 @@ const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
 
 const showArchived = ref(false)
+// 项目请求回来时，“新建项目”按钮已经作为 TransitionGroup 子项挂在列表顶部；同一轮
+// patch 把项目卡插到它前面，会被 Vue 误判为重排而从顶部 FLIP 下落。首批项目实际绘制
+// 完成一帧后才开放 move 动画，之后的拖拽/增删仍保留正常让位。
+const kanbanCardsReady = ref(false)
+watch(() => projectStore.projectsLoaded, async loaded => {
+  if (!loaded) return
+  await nextTick()
+  requestAnimationFrame(() => { kanbanCardsReady.value = true })
+}, { immediate: true })
 
 watch(() => projectStore.error, (message) => {
   if (!message) return
