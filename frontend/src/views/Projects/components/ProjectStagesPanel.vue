@@ -119,7 +119,6 @@ const localStages = ref<ProjectStage[]>([])
 watch(() => props.stages, (v) => {
   localStages.value = v.map(s => ({ ...s, todos: s.todos?.map(t => ({ ...t })) ?? [] }))
 }, { immediate: true })
-watch(localStages, (v) => emit('update:stages', v), { deep: true })
 
 // 通过 useProjectStages 复用阶段/待办操作编排
   const projectStages = useProjectStages({
