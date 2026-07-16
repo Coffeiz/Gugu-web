@@ -267,9 +267,25 @@ onMounted(() => {
   // measurePanel 收缩 .cd-collapse 的高度——这时那张卡自己的 .16s 淡出还没播完，容器
   // 却已经在收，视觉上就是"虚线框跟着挤了一下"。防抖到比这张卡的离场过渡（.16s 淡出 +
   // 那一下 -move FLIP 落定）略长，让容器收缩等卡片真正淡完、兄弟卡落定后再一次到位。
+  // 这个防抖只对"收缩"成立——新卡进入是立即挂载、立即开始让位 FLIP 的，容器展开没有
+  // "等谁淡出"这层顾虑；展开还套用同一份延迟，会让抽屉高度变化明显晚于兄弟卡的 FLIP
+  // 开始（拖拽落地动画因此追着一个还没到位的目标飞了一路）。按新旧 scrollHeight 判断
+  // 方向：展开立即测量，收缩才走防抖。
+  let lastProjectListHeight = projectListRef.value?.scrollHeight ?? 0
   projectListObserver = new ResizeObserver(() => {
+    const height = projectListRef.value?.scrollHeight ?? 0
+    const shrinking = height < lastProjectListHeight
+    lastProjectListHeight = height
+    if (!shrinking) {
+      if (projectResizeTimer) { clearTimeout(projectResizeTimer); projectResizeTimer = null }
+      measurePanel('projects')
+      return
+    }
     if (projectResizeTimer) clearTimeout(projectResizeTimer)
-    projectResizeTimer = setTimeout(() => measurePanel('projects'), 220)
+    projectResizeTimer = setTimeout(() => {
+      projectResizeTimer = null
+      measurePanel('projects')
+    }, 220)
   })
   if (canvasListRef.value) canvasListObserver.observe(canvasListRef.value)
   if (projectListRef.value) projectListObserver.observe(projectListRef.value)

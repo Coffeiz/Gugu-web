@@ -31,6 +31,8 @@ export interface MorphLifecycleOptions {
   onRegrab: (event: PointerEvent, visualRect: DOMRect) => void
   onReveal?: () => void
   finishSession: () => void
+  trackTargetLayout?: boolean
+  measureTargetLayout?: () => MorphBox
 }
 
 /** 双克隆落地的完整生命周期；业务目标和接力动作通过回调注入。 */
@@ -43,6 +45,9 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   let finishTimer: ReturnType<typeof setTimeout> | null = null
   let unregister: () => void = () => undefined
   let onEnd: (event: TransitionEvent) => void = () => undefined
+  let targetResizeObserver: ResizeObserver | null = null
+  let hasRetargeted = false
+  let redirectTimer: ReturnType<typeof setTimeout> | null = null
 
   const syncHover = (hovering: boolean) => {
     landingHovered = hovering
@@ -137,10 +142,19 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     clone2Inner.style.transition = savedTrans
   }
 
-  const retarget = (newBox: MorphBox) => {
-    if (landing.isDone()) return
+  // 目标框几乎没动就不算一次改向：ResizeObserver.observe() 注册瞬间会对每个被观察元素
+  // 上报一次「初始尺寸」（规范行为，不代表真的发生了 resize），目标卡 + 全祖先链一起注册
+  // 会在飞行启动的同一帧收到一整批这种噪音回调；抽屉高度过渡的多数帧里目标卡自身也并
+  // 没有位移。不过滤的话，初始批次会把 hasRetargeted 白白烧掉（唯一一次平滑改向被噪音
+  // 消耗），后续无位移帧还会反复打断飞行。
+  const sameBox = (a: MorphBox, b: MorphBox) =>
+    Math.abs(a.left - b.left) < 0.5 && Math.abs(a.top - b.top) < 0.5 &&
+    Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5
+
+  // 冻结当前视觉位置 → 下一帧朝 box 重启一段平滑过渡。settle=true 用在连续跟踪收尾的
+  // 那次改向：目标只在附近挪了一小段，用短过渡快速贴上去，不把整段飞行拖太长。
+  const redirectToBox = (settle: boolean) => {
     const rect = options.clone2.getBoundingClientRect()
-    box = newBox
     const frozen = morphTransform({ left: rect.left, top: rect.top, width: rect.width, height: rect.height }, options.dropSize, options.half)
     options.holder.style.transition = 'none'
     options.clone2.style.transition = 'none'
@@ -148,13 +162,57 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     options.clone2.style.transform = frozen
     requestAnimationFrame(() => {
       if (landing.isDone() || !options.session.isCurrent()) return
-      options.holder.style.transition = transition
-      options.clone2.style.transition = transition
+      const t = settle ? `transform 0.25s ${options.easing}` : transition
+      options.holder.style.transition = t
+      options.clone2.style.transition = t
       applyTransform()
       armFinishTimer()
     })
   }
+
+  const retarget = (newBox: MorphBox) => {
+    if (landing.isDone()) return
+    if (sameBox(box, newBox)) return
+    const continuous = options.trackTargetLayout === true && hasRetargeted
+    hasRetargeted = true
+    box = newBox
+    if (continuous) {
+      // 抽屉高度过渡期间目标每帧都在挪：不冻结、不关 transition，直接把新目标写给正在跑的
+      // 过渡——CSS transition 的目标被改写时会从当前插值位置平滑转向新目标，缓动前段斜率
+      // 大，跟得上每帧几像素的小位移，克隆看起来就是一路追着展开中的落点飞（此前试过"只
+      // 记录目标、尾随防抖后再一次改向"：展开期间每帧变化都在重置防抖，settle 直到展开
+      // 彻底结束才触发，克隆全程朝旧目标飞、最后补一次可见的跳跃修正，观感就是"先飞向
+      // 原本的落点"）。这里显式重设 transition：若恰逢上一次冻结-重启的间隙（transition
+      // 还是 none），直接写目标 transform 会变成瞬移。
+      options.holder.style.transition = transition
+      options.clone2.style.transition = transition
+      applyTransform()
+      // 突发结束后仍补一次 0.25s 短过渡精确贴合：连续改写目标的过渡不会自然收敛出
+      // transitionend（每次改写都在重启），靠这次 settle 收尾并重新武装 finish 计时。
+      if (redirectTimer) clearTimeout(redirectTimer)
+      redirectTimer = setTimeout(() => {
+        redirectTimer = null
+        if (landing.isDone() || !options.session.isCurrent()) return
+        redirectToBox(true)
+      }, 80)
+      return
+    }
+    redirectToBox(false)
+  }
   options.setRetarget(options.revealEl, retarget)
+  if (options.trackTargetLayout && typeof ResizeObserver !== 'undefined') {
+    targetResizeObserver = new ResizeObserver(() => {
+      if (landing.isDone() || !options.session.isCurrent()) return
+      const targetRect = options.measureTargetLayout?.() ?? options.revealEl.getBoundingClientRect()
+      retarget(targetRect)
+    })
+    targetResizeObserver.observe(options.revealEl)
+    let ancestor = options.revealEl.parentElement
+    while (ancestor && ancestor !== document.body) {
+      targetResizeObserver.observe(ancestor)
+      ancestor = ancestor.parentElement
+    }
+  }
 
   const armFinishTimer = () => {
     if (finishTimer) clearTimeout(finishTimer)
@@ -164,15 +222,20 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     if (landing.isDone()) return
     landing.finish()
     if (finishTimer) clearTimeout(finishTimer)
+    if (redirectTimer) clearTimeout(redirectTimer)
     cleanupHandoff()
+    targetResizeObserver?.disconnect()
+    targetResizeObserver = null
     if (options.pointer) document.removeEventListener('pointermove', onPointerMove)
     options.clone2.removeEventListener('transitionend', onEnd)
     options.clearRetarget(options.revealEl, retarget)
     unregister()
     options.clone2.style.willChange = 'auto'
-    options.clone2.style.width = box.width + 'px'
-    options.clone2.style.height = box.height + 'px'
-    options.clone2.style.transform = `translate(${box.left.toFixed(2)}px, ${box.top.toFixed(2)}px)`
+    // transformFor(box) 已经包含从 dropSize 到目标尺寸的唯一一次缩放；收尾不能
+    // 再把内容宽高改成目标尺寸，否则会叠加 scale，揭示本体时出现快速尺寸/位置校正。
+    options.clone2.style.width = options.dropSize.w + 'px'
+    options.clone2.style.height = options.dropSize.h + 'px'
+    options.clone2.style.transform = transformFor(box)
     requestAnimationFrame(() => {
       if (!options.session.isCurrent()) return
       options.holder.remove()
@@ -187,7 +250,10 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     if (landing.isDone()) return
     landing.cancel()
     if (finishTimer) clearTimeout(finishTimer)
+    if (redirectTimer) clearTimeout(redirectTimer)
     cleanupHandoff()
+    targetResizeObserver?.disconnect()
+    targetResizeObserver = null
     if (options.pointer) document.removeEventListener('pointermove', onPointerMove)
     options.clone2.removeEventListener('transitionend', onEnd)
     options.clearRetarget(options.revealEl, retarget)

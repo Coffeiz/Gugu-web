@@ -89,6 +89,7 @@ export interface SingleDragDeps {
   rects: (elements: Element[]) => DOMRect[]
   scrollParent: (node: Element | null) => HTMLElement | null
   layoutBoxInScroller: (scroller: HTMLElement, target: HTMLElement) => Box
+  layoutBoxAtTransitionsEnd: (scroller: HTMLElement, target: HTMLElement) => Box
   animateScroll: (el: HTMLElement, dy: number, dur?: number, isActive?: () => boolean) => void
   holdHoverUntilReveal: (el: HTMLElement) => void
   revealWithoutStaleHover: (el: HTMLElement, pointerMode: boolean, onSettled?: () => void, keepControls?: boolean, isActive?: () => boolean) => void
@@ -590,6 +591,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // hovering，导致鼠标恰好停在飞行克隆上时连接点一直亮着，直到 finish() 摘掉 holder
       // 才随之消失，表现为"点一直显示到本体切换才突然消失"。落地目标不支持连线时传 false。
       revealElConnectable = true,
+      trackTargetLayout = false,
+      measureTargetLayout = undefined,
     ) => {
       startMorphLifecycle({
         initialBox,
@@ -639,6 +642,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         },
         onReveal,
         finishSession: () => dragRegistry.finish(sourceEl, session),
+        trackTargetLayout,
+        measureTargetLayout,
       })
       return
     }
@@ -835,6 +840,21 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             targetEl.style.opacity = '0'
             void targetEl.offsetWidth
             targetEl.classList.remove('phys-reveal-snap')
+            // 复用跟 initial box 同一套测量方法（layoutBoxInScroller），不要用
+            // layoutBoxWithoutTransforms——抽屉两层 TransitionGroup 做 FLIP 期间，祖先容器
+            // 带着内联 transform，而 CSS 规范规定「带 transform 的元素会成为后代的新
+            // offsetParent 参照系」；layoutBoxWithoutTransforms 清零祖先 transform 后用
+            // getBoundingClientRect() 读，跟 layoutBoxInScroller 的 offsetParent 链走过的
+            // 层级不一致，两者算出的相对位移对不上（实测过：同一瞬间、滚动状态完全没变，
+            // 两个函数算出的 top 能差出两百多像素），导致克隆体飞到错误位置。
+            // 抽屉高度正在用 CSS transition 展开时，逐帧量布局只能拿到中间态、克隆会被动追帧。
+            // layoutBoxAtTransitionsEnd 会把祖先链上正在播的过渡临时 seek 到终点量出「展开
+            // 结束后」的最终落点再恢复（同一 JS 任务内完成，无绘制、肉眼不可见）——第一次
+            // 高度变化触发的 retarget 就直接拿到最终位置，克隆一次平滑改向直达终点，后续
+            // 回调因目标不再变化全部被 epsilon 过滤。没有动画在跑时行为等同 layoutBoxInScroller。
+            const measureTargetLayout = () => {
+              return sc ? deps.layoutBoxAtTransitionsEnd(sc, targetEl) : targetEl.getBoundingClientRect()
+            }
             flyMorph(
               box,
               targetEl,
@@ -845,6 +865,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
               // 落点永远是抽屉卡（自己原地放回，或画布卡被吸入抽屉的新卡），抽屉卡不支持
               // 建立连线，连接点覆盖层不该在这段飞行里出现。
               false,
+              true,
+              measureTargetLayout,
             )
           }
           landOnAbsorbTarget()
