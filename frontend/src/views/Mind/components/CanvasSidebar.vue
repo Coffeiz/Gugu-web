@@ -393,6 +393,11 @@ onBeforeUnmount(() => {
 .drawer-project-cards-move, .drawer-project-groups-move {
   transition: transform .42s cubic-bezier(.22,1,.36,1);
 }
+/* 协调器声明接管位移时，禁止同一元素再启用 Vue move；未被接管的卡片仍沿用上面的组件 FLIP。 */
+[data-flip-owner="coordinator"].drawer-project-cards-move,
+[data-flip-owner="coordinator"].drawer-project-groups-move {
+  transition: none !important;
+}
 .drawer-project-cards-leave-active {
   position: absolute;
   width: 240px;

@@ -1,6 +1,6 @@
 import { animateFlyTo } from '../animation/flyTo'
 import type { FlipOptions } from '../animation/flip'
-import type { FlipTransaction } from '../animation/flipCoordinator'
+import type { FlipItem, FlipTransaction } from '../animation/flipCoordinator'
 import { LandingState } from '../animation/landing'
 import { startMorphLifecycle } from '../animation/morphLifecycle'
 import { dragRegistry } from '../core/DragRegistry'
@@ -31,26 +31,6 @@ function suppressListLandingTransition(el: HTMLElement): () => void {
   }
 }
 
-const flipElementIds = new WeakMap<HTMLElement, number>()
-let nextFlipElementId = 1
-
-function flipItems(elements: HTMLElement[]) {
-  return elements.map(element => ({
-    key: element.dataset.projectId
-      ?? element.dataset.fileId
-      ?? element.dataset.folderKey
-      ?? (() => {
-        let id = flipElementIds.get(element)
-        if (!id) {
-          id = nextFlipElementId++
-          flipElementIds.set(element, id)
-        }
-        return id
-      })(),
-    element,
-  }))
-}
-
 function findVisibleProjectTarget(selector: string, sourceEl: HTMLElement): HTMLElement | null {
   const candidates = Array.from(document.querySelectorAll<HTMLElement>(selector))
   return candidates.find(el => {
@@ -79,7 +59,8 @@ function blockScrollDuringLanding(scroller: HTMLElement | null): () => void {
 export interface SingleDragDeps {
   active: { current: ActiveDrag | null }
   easing: string
-  createFlipTransaction: (options: FlipOptions) => FlipTransaction
+  createFlipItems: (elements: HTMLElement[]) => FlipItem[]
+  prepareFlipTransaction: (items: { key: string | number; element: HTMLElement }[], before: DOMRect[], after: DOMRect[], options: FlipOptions) => FlipTransaction
   transparentGhost: () => HTMLCanvasElement
   registerCleanup: (session: DragSession, fn: () => void) => () => void
   setRetarget: (target: HTMLElement, retarget: (box: any) => void) => void
@@ -196,8 +177,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     clone.querySelectorAll<HTMLElement>('.card-conn-dots').forEach(dot => dot.classList.add('hovering'))
   }
   // 连接点不能跟随两张卡片内容克隆交叉淡变：后创建的落地克隆会短暂盖住前一张，圆点便会
-  // 在卡片前后切换。把它抽成 holder 内唯一的一层覆盖物；holder 自己全程沿同一条物理轨迹移动，
-  // 因而拖拽、落地和回归本体之间没有第二颗点可切换。
+  // 在卡片前后切换。保留 holder 内唯一的一层覆盖物，避免连接点跟内容克隆一起交叉淡变。
   const connectionDotOverlay = clone.querySelector<HTMLElement>('.card-conn-dots')?.cloneNode(true) as HTMLElement | undefined
   clone.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
   if (connectionDotOverlay) {
@@ -311,14 +291,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       const open = deps.rects(kids)
       sourceEl.style.display = 'none'
       const closed = deps.rects(kids)
-      const flip = deps.createFlipTransaction({
+      const items = deps.createFlipItems(kids)
+      const flip = deps.prepareFlipTransaction(items, open, closed, {
         easing: deps.easing,
         onBeforePlay: () => deps.retargetLandings(kids),
         isActive: () => session.isCurrent(),
       })
-      const items = flipItems(kids)
-      flip.capture(items, open)
-      flip.measure(items, closed)
       const unregisterFlipCleanup = deps.registerCleanup(session, () => flip.cancel())
       void flip.play().finally(unregisterFlipCleanup)
     })
@@ -664,14 +642,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       }
       deps.holdHoverUntilReveal(el)
       el.style.opacity = '0'              // 落定前隐藏且压住 hover，克隆体落到位再露出
-      const flip = deps.createFlipTransaction({
+      const items = deps.createFlipItems(sibs)
+      const flip = deps.prepareFlipTransaction(items, closedR, openR, {
         easing: deps.easing,
         onBeforePlay: () => deps.retargetLandings(sibs),
         isActive: () => session.isCurrent(),
       })
-      const items = flipItems(sibs)
-      flip.capture(items, closedR)
-      flip.measure(items, openR)
       const unregisterFlipCleanup = deps.registerCleanup(session, () => flip.cancel())
       void flip.play().finally(unregisterFlipCleanup)   // 从合拢 → 展开
       return el.getBoundingClientRect()

@@ -9,7 +9,7 @@
  */
 
 import { LandingState } from './animation/landing'
-import { createFlipTransaction } from './animation/flipCoordinator'
+import { createFlipItems, createFlipTransaction, measureWithoutTransform } from './animation/flipCoordinator'
 import { animateFlyTo } from './animation/flyTo'
 import { startMorphLifecycle } from './animation/morphLifecycle'
 import type { DragSession } from './core/DragSession'
@@ -23,6 +23,18 @@ import { startThresholdDrag, ThresholdDragOpts } from './interaction/threshold'
 import { cloneForDrag, createLandingClone } from './visual/clone'
 import { resolveLandingZIndex } from './visual/layer'
 import { holdHoverUntilReveal, revealWithoutStaleHover } from './visual/reveal'
+
+export function prepareFlipTransaction(
+  items: { key: string | number; element: HTMLElement }[],
+  before: DOMRect[],
+  after: DOMRect[],
+  options: Parameters<typeof createFlipTransaction>[0],
+) {
+  const transaction = createFlipTransaction(options)
+  transaction.capture(items, before)
+  transaction.measure(items, after)
+  return transaction
+}
 
 // 拖拽物理可选项（startPhysicsDrag / startMultiPhysicsDrag 共用）
 export interface PhysicsDragOpts {
@@ -182,18 +194,13 @@ function _retargetLandings(kids: HTMLElement[], _rectsIgnored?: any[]) {
   for (const k of kids) {
     const fn = _pendingRetargets.get(k)
     if (!fn) continue
-    const savedTf = k.style.transform
-    const savedTr = k.style.transition
-    k.style.transition = 'none'
-    k.style.transform = 'none'
-    const b = k.getBoundingClientRect()   // 干净布局落点（transform 已归零）
-    k.style.transform = savedTf
-    k.style.transition = savedTr
+    const b = measureWithoutTransform(k)
     fn({ left: b.left, top: b.top, width: b.width, height: b.height })
   }
 }
 
-function _childCards(container: HTMLElement, exclude: Element | null, allDescendants = false) {
+/** 收集参与让位 FLIP 的兄弟元素，排除当前拖拽克隆和源元素。 */
+export function collectFlipChildren(container: HTMLElement, exclude: Element | null, allDescendants = false) {
   const elements = allDescendants
     ? [...container.querySelectorAll<HTMLElement>('[data-project-id], [data-file-id], [data-folder-key], [data-flip-target]')]
     : [...container.children] as HTMLElement[]
@@ -264,7 +271,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   startPhysicsDragRuntime(event, sourceEl, opts, {
     active: _activeState,
     easing: _SETTLE,
-    createFlipTransaction,
+    createFlipItems,
+    prepareFlipTransaction,
     transparentGhost: _transparentGhost,
     registerCleanup: (session, cleanup) => session.addCleanup(cleanup),
     setRetarget: (target, retarget) => _pendingRetargets.set(target, retarget),
@@ -272,7 +280,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       if (_pendingRetargets.get(target) === retarget) _pendingRetargets.delete(target)
     },
     retargetLandings: _retargetLandings,
-    childCards: _childCards,
+    childCards: collectFlipChildren,
     rects: _rects,
     scrollParent: findScrollParent,
     layoutBoxInScroller,
