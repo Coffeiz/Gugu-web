@@ -18,7 +18,7 @@ import { integrateSpring } from './core/physics'
 import { dispatchDragHandoff, installLandingHandoff } from './interaction/handoff'
 import { startPhysicsDrag as startPhysicsDragRuntime } from './interaction/single'
 import { startMultiPhysicsDrag as startMultiPhysicsDragRuntime } from './interaction/multi'
-import { animateScroll, findScrollParent } from './interaction/dom'
+import { animateScroll, findScrollParent, layoutBoxInScroller } from './interaction/dom'
 import { startThresholdDrag, ThresholdDragOpts } from './interaction/threshold'
 import { cloneForDrag, createLandingClone } from './visual/clone'
 import { resolveLandingZIndex } from './visual/layer'
@@ -274,6 +274,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     childCards: _childCards,
     rects: _rects,
     scrollParent: findScrollParent,
+    layoutBoxInScroller,
     animateScroll,
     holdHoverUntilReveal: _holdHoverUntilReveal,
     revealWithoutStaleHover: _revealWithoutStaleHover,

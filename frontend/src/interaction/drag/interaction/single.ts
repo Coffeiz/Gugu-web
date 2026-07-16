@@ -70,6 +70,7 @@ export interface SingleDragDeps {
   childCards: (container: HTMLElement, exclude: Element | null, allDescendants?: boolean) => HTMLElement[]
   rects: (elements: Element[]) => DOMRect[]
   scrollParent: (node: Element | null) => HTMLElement | null
+  layoutBoxInScroller: (scroller: HTMLElement, target: HTMLElement) => Box
   animateScroll: (el: HTMLElement, dy: number, dur?: number, isActive?: () => boolean) => void
   holdHoverUntilReveal: (el: HTMLElement) => void
   revealWithoutStaleHover: (el: HTMLElement, pointerMode: boolean, onSettled?: () => void, keepControls?: boolean, isActive?: () => boolean) => void
@@ -635,35 +636,17 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     }
 
     // 落点若在可滚动列里滚出视口 → 快速滚进可视区，并返回滚动后的最终落点（让克隆体飞到那里）
-    const revealInScroller = (sc: HTMLElement | null, box: DOMRect): Box => {
+    const revealInScroller = (sc: HTMLElement | null, box: Box): Box => {
       if (!sc) return box
       const r = sc.getBoundingClientRect(), pad = 6
-      let dy = box.bottom + pad > r.bottom ? box.bottom + pad - r.bottom
+      const boxBottom = box.top + box.height
+      let dy = boxBottom + pad > r.bottom ? boxBottom + pad - r.bottom
              : box.top - pad < r.top ? box.top - pad - r.top : 0
       const maxDown = sc.scrollHeight - sc.clientHeight - sc.scrollTop
       dy = dy > 0 ? Math.min(dy, maxDown) : Math.max(dy, -sc.scrollTop)
       if (Math.abs(dy) <= 1) return box
       deps.animateScroll(sc, dy, 300, () => session.isCurrent())
       return { left: box.left, top: box.top - dy, width: box.width, height: box.height }
-    }
-
-    // 落地目标在决策那一刻（刚插入抽屉列表）还顶着 Vue TransitionGroup 的 FLIP 让位动画
-    // （抽屉两层 TransitionGroup 的 -move，过渡时长 .42s）——revealInScroller 那次决策时
-    // 兄弟卡还没让完位，量出来的落点不是最终稳定位置，跟不上后续让位挪出的这一整张卡的距离
-    // （用 Performance trace 实测过：决策后约 400ms 才会开始真正校正，一度用固定 setTimeout
-    // 兜底，结果这段校正滚动和落地揭示前后脚发生、常常撞在一起没播完，看着像"让位卡在揭示
-    // 那一刻才发生"）。改成在 onReveal（揭示前一刻，飞行动画早已跑满 0.55~0.7s，必然晚于
-    // .42s 的 FLIP 时长）里同步复核+校正，不用动画（scrollTop 直接赋值），确保揭示那一帧
-    // 卡片已经站定，不会有校正滚动和揭示互相追赶的观感。
-    const correctRevealPosition = (sc: HTMLElement | null, target: HTMLElement) => {
-      if (!sc || !target.isConnected) return
-      const r = sc.getBoundingClientRect(), box = target.getBoundingClientRect(), pad = 6
-      let dy = box.bottom + pad > r.bottom ? box.bottom + pad - r.bottom
-             : box.top - pad < r.top ? box.top - pad - r.top : 0
-      const maxDown = sc.scrollHeight - sc.clientHeight - sc.scrollTop
-      dy = dy > 0 ? Math.min(dy, maxDown) : Math.max(dy, -sc.scrollTop)
-      if (Math.abs(dy) <= 1) return
-      sc.scrollTop += dy
     }
 
     // 松手即进入「归位/落位」飞行动画（0.55~0.7s）。飞行途中克隆体仍是 fixed 定位，
@@ -786,16 +769,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             if (targetEl === sourceEl && opts.keepSourcePlaceholder) {
               targetEl.style.opacity = '0'
             }
-            // 这一刻抽屉两层 TransitionGroup 的 FLIP 让位动画（.42s）大概率还没播完，这里读到
-            // 的只是一次「大致落点」的早期快照，不追求精确——真正准确的复核校正放在 onReveal
-            // 里（那时飞行动画必然已跑满 0.55~0.7s，晚于 FLIP 时长，位置早已稳定）。这里若
-            // 强行清空/复原祖先容器身上 Vue 正在用 CSS transition 播放的内联 transform，会
-            // 打断 Vue 自己的 FLIP 状态跟踪，实测会在祖先容器上留下錯乱的残留 transform，
-            // 一直到该容器下次真正触发数据变化才被 Vue 重新覆盖——表现为「滚动过一次之后，
-            // 换其它不需要滚动的卡片也复现让位延迟」这种跨拖拽持续存在的诡异现象，因此这里
-            // 不做任何 transform 清空，只读裸的 getBoundingClientRect()。
+            // 抽屉的 TransitionGroup 正在播放 FLIP 时，getBoundingClientRect() 会包含它的
+            // transform，读到的是让位过程中的视觉坐标。改用 offset 链推导最终布局坐标：初始
+            // 滚动与 clone2 从第一帧就认同同一个终点，不再等 FLIP 播完后补滚动/反复改向。
             const sc = deps.scrollParent(targetEl)
-            const box = revealInScroller(sc, targetEl.getBoundingClientRect())
+            const box = revealInScroller(sc, sc ? deps.layoutBoxInScroller(sc, targetEl) : targetEl.getBoundingClientRect())
             // 抽屉来源回到自身时也复用双克隆，完成从画布缩放尺寸回到抽屉实体尺寸的交接。
             // 但落点不在画布内，不能把 fixed 克隆塞进画布相机跟随层；那层会改变其定位基准，
             // 造成额外的左上角残影。
@@ -819,38 +797,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
               box,
               targetEl,
               _cloneLanding(targetEl),
-              () => {
-                // 揭示前一刻（飞行动画早已跑满，必晚于抽屉 FLIP 让位的 .42s）复核一次目标卡
-                // 真实位置，此时兄弟卡的让位早已播完、位置绝对稳定，比决策时的快照准得多。
-                correctRevealPosition(sc, targetEl)
-                restoreSourcePlaceholderStyle()
-                // TEMP PROBE：扫描抽屉里所有卡片的 transform，追踪是否有卡片长期卡着非 identity
-                // 的残留值（怀疑某张无关卡片的 FLIP -move transform 没被正确清零，直到后续某次
-                // 强制重排才"跳"到正确位置）。
-                if (sc) {
-                  const t0 = performance.now()
-                  const seen = new Map<string, string>()
-                  const scanTick = () => {
-                    const t = performance.now() - t0
-                    if (t > 1200) return
-                    sc.querySelectorAll<HTMLElement>('.drawer-project-card').forEach(el => {
-                      const pid = el.getAttribute('data-project-id') || el.className
-                      const tf = getComputedStyle(el).transform
-                      const isIdentity = tf === 'none' || tf === 'matrix(1, 0, 0, 1, 0, 0)'
-                      const prev = seen.get(pid)
-                      if (!isIdentity && prev !== tf) {
-                        console.log('[probe] stuck-transform', t.toFixed(0), pid, tf)
-                        seen.set(pid, tf)
-                      } else if (isIdentity && prev && prev !== 'none') {
-                        console.log('[probe] transform-cleared', t.toFixed(0), pid)
-                        seen.set(pid, 'none')
-                      }
-                    })
-                    requestAnimationFrame(scanTick)
-                  }
-                  requestAnimationFrame(scanTick)
-                }
-              },
+              restoreSourcePlaceholderStyle,
               false,
               targetEl === sourceEl,
               // 落点永远是抽屉卡（自己原地放回，或画布卡被吸入抽屉的新卡），抽屉卡不支持
