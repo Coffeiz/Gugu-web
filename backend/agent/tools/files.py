@@ -38,9 +38,19 @@ READ_MAX_BYTES = 256 * 1024
 
 # create_document 支持的格式 → mime
 _DOC_MIME = {
-    "md":   "text/markdown",   "txt":  "text/plain",
+    "md":   "text/markdown",   "markdown": "text/markdown", "txt": "text/plain",
     "json": "application/json", "csv": "text/csv",
     "yaml": "text/yaml",       "yml":  "text/yaml",
+    "text": "text/plain",      "tsv":  "text/tab-separated-values",
+    "xml":  "application/xml", "html": "text/html", "htm": "text/html",
+    "css":  "text/css",        "js":   "text/javascript", "ts": "text/typescript",
+    "jsx":  "text/jsx",        "tsx":  "text/tsx", "py": "text/x-python",
+    "java": "text/x-java-source", "c": "text/x-c", "cpp": "text/x-c++src",
+    "h":    "text/x-c",        "hpp":  "text/x-c++hdr", "go": "text/x-go",
+    "rs":   "text/x-rust",     "rb":   "text/x-ruby", "php": "text/x-php",
+    "sh":   "application/x-sh", "bash": "application/x-sh", "sql": "application/sql",
+    "ini":  "text/plain",     "toml": "text/plain", "conf": "text/plain",
+    "log":  "text/plain",     "vue":  "text/html", "svg": "image/svg+xml",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "pdf":  "application/pdf",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1176,7 +1186,7 @@ class FilesSkill(BaseSkill):
         Tool(
             name="create_document", label="生成文档",
             description=(
-                "新建一个文件。format 为 md/txt/json/csv 时 content 为对应纯文本直接写入；"
+                "新建一个文件。format 为可编辑文本类型时 content 按原文直接写入；"
                 "format=docx 或 pdf 时 content 请提供 HTML（将转换为 Word/PDF）；"
                 "format=xlsx 时 content 请提供 CSV（将转换为 Excel）。默认放在个人文件空间。"
                 "**未指定 folder_id 且目标空间已有文件夹时，先调用 list_folders 审视一级目录；"
@@ -1186,7 +1196,7 @@ class FilesSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "文件名（可不带扩展名）"},
-                    "format": {"type": "string", "enum": ["md", "txt", "json", "csv", "yaml", "docx", "pdf", "xlsx"]},
+                    "format": {"type": "string", "enum": sorted(_DOC_MIME), "description": "可编辑文本、docx、pdf 或 xlsx"},
                     "space": {"type": "string", "enum": ["project", "personal"], "description": "默认 personal"},
                     "project_id": {"type": "integer", "description": "space=project 时必填"},
                     "folder_id": {"type": "integer"},
