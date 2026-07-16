@@ -526,6 +526,7 @@ import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
 import { parseFolderId } from '@/utils/folderKeys'
+import { optimisticMutation } from '@/utils/optimisticMutation'
 import { useFileSelection } from '@/composables/files/useFileSelection'
 import { sortFileProjection } from '@/composables/files/useFileProjection'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
@@ -801,13 +802,28 @@ async function deleteSelectedPm() {
 // 文件夹卡片/行选择器、面包屑可接收文件与文件夹。落地更新 store 即可（视图自动派生）。
 // 参数类型跟随 useFileDragDrop 的 FileDragDropConfig.moveFolders/moveFiles（Id = number | string），
 // 实际项目场景下 id 永远是 number，但函数类型赋值是逆变检查，形参必须宽于（或等于）Id 才能结构兼容。
+// 跟 Files/index.vue 的 moveFoldersInto/moveFilesInto 一样改用 optimisticMutation：之前是
+// 先 await 接口、成功了才改缓存——网络稍慢或响应丢失时，拖拽落地后视图不会跟着变，卡片停在
+// 原地，只有手动刷新页面重新拉取才会「消失」到目标层（2026-07-17 devserver 隔离验收环境
+// 复现，不稳定必现，符合等接口的时序特征）。改成先乐观改缓存（拖拽落地立刻生效），接口在
+// 后台跑，失败再回滚。
 async function movePmFoldersInto(folderIds: (number | string)[], targetFolderId: number | string | null) {
   const nTarget = targetFolderId == null ? null : Number(targetFolderId)
-  try {
-    const results = await Promise.all(folderIds.map(id =>
-      fileActions.moveFolder(Number(id), nTarget, fileCacheStore.getFolder(Number(id))?.version ?? 1, props.project?.id ?? null)))
-    results.forEach(f => fileCacheStore.updateFolder(f.id, { parentId: nTarget, projectId: props.project?.id ?? null, version: f.version }))
-  } catch (err) { console.error('[ProjectModal] 移动文件夹失败:', errMsg(err)) }
+  const nFolderIds = folderIds.map(Number)
+  const projectId = props.project?.id ?? null
+  const backups = nFolderIds.map(id => fileCacheStore.getFolder(id)).filter((f): f is FolderMeta => f != null)
+  let results: FolderMeta[] = []
+  await optimisticMutation({
+    apply: () => nFolderIds.forEach(id => fileCacheStore.updateFolder(id, { parentId: nTarget, projectId })),
+    afterMutate: () => {},
+    // version 在 apply() 之后、work() 之前读——此时缓存里的 version 仍是服务端当前值；对不上
+    // （并发改动）后端给 409，走 rollback。
+    work: () => Promise.all(nFolderIds.map(id =>
+      fileActions.moveFolder(id, nTarget, fileCacheStore.getFolder(id)?.version ?? 1, projectId))).then(r => { results = r }),
+    rollback: () => backups.forEach(b => fileCacheStore.updateFolder(b.id, { parentId: b.parentId, projectId: b.projectId })),
+    onCommit: () => results.forEach(f => fileCacheStore.updateFolder(f.id, { version: f.version })),
+    onError: err => console.error('[ProjectModal] 移动文件夹失败:', errMsg(err)),
+  })
   // 不再重置导航——store 单源，移走的文件夹自动从当前视图消失，用户停在原地即可（老代码重置到根是
   // 全量重拉的副作用，非有意行为）。
 }
@@ -817,10 +833,15 @@ async function movePmFilesInto(fileIds: (number | string)[], targetFolderId: num
   void droppedOn
   const projectId = props.project?.id ?? null
   const folderId = targetFolderId == null ? null : Number(targetFolderId)
-  try {
-    await Promise.all(fileIds.map(id => fileActions.moveFile(Number(id), folderId, projectId)))
-    fileIds.forEach(id => fileCacheStore.updateFile(Number(id), { folderId, projectId }))
-  } catch (err) { console.error('[ProjectModal] 移动失败:', errMsg(err)) }
+  const nFileIds = fileIds.map(Number)
+  const backups = nFileIds.map(id => fileCacheStore.getFile(id)).filter((f): f is FileMeta => f != null)
+  await optimisticMutation({
+    apply: () => nFileIds.forEach(id => fileCacheStore.updateFile(id, { folderId, projectId })),
+    afterMutate: () => {},
+    work: () => Promise.all(nFileIds.map(id => fileActions.moveFile(id, folderId, projectId))),
+    rollback: () => backups.forEach(f => fileCacheStore.updateFile(f.id, { folderId: f.folderId, projectId: f.projectId })),
+    onError: err => console.error('[ProjectModal] 移动失败:', errMsg(err)),
+  })
   // 视图/计数都从 store 现算，移走的文件自动消失、目标层自动出现，无需刷新或重置导航（停在原地）。
 }
 
