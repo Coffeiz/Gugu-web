@@ -267,6 +267,11 @@ function toggleProjectStatus(status: string) {
       window.setTimeout(() => probe('t100'), 100)
       window.setTimeout(() => probe('t200'), 200)
       window.setTimeout(() => probe('after-transition'), 320)
+      // 之前的采样到 320ms 为止全程吻合，没抓到跳动——往后多探几个点，
+      // 确认跳动到底发生在动画结束后多久。
+      window.setTimeout(() => probe('t500'), 500)
+      window.setTimeout(() => probe('t800'), 800)
+      window.setTimeout(() => probe('t1200'), 1200)
     })
   })
 }
