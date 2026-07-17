@@ -71,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, type PropType } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { PhArrowRight, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour, PhStack, PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
@@ -136,6 +136,26 @@ const projectGroups = computed(() => [
 // 挂载和分组自己的入场动画谁先谁后，会露出一帧还没被物理模块接管的本体，见 devlog）。
 const visibleProjectGroups = computed(() => projectGroups.value)
 const openProjectStatuses = ref(new Set<string>(['active', 'pending']))
+let previousDrawerProjectIds = new Set<number>()
+let drawerProjectSnapshotReady = false
+watch(filteredProjects, (projects) => {
+  const currentIds = new Set(projects.map(project => project.id))
+  if (!drawerProjectSnapshotReady) {
+    previousDrawerProjectIds = currentIds
+    drawerProjectSnapshotReady = true
+    return
+  }
+  for (const project of projects) {
+    if (previousDrawerProjectIds.has(project.id)) continue
+    const status = project.status
+    if (!openProjectStatuses.value.has(status)) {
+      const next = new Set(openProjectStatuses.value)
+      next.add(status)
+      openProjectStatuses.value = next
+    }
+  }
+  previousDrawerProjectIds = currentIds
+}, { immediate: true })
 const leaveSpace = new WeakMap<HTMLElement, { previous: string; count: number }>()
 const leaveParents = new WeakMap<HTMLElement, HTMLElement>()
 
@@ -148,6 +168,12 @@ const leaveParents = new WeakMap<HTMLElement, HTMLElement>()
 // 直接写成明确的 top/left——浏览器不用再猜，也就没有猜错的余地。
 function captureLeavePosition(el: Element) {
   const node = el as HTMLElement
+  // 整个状态分组折叠时，.project-group-content 通过 v-if 整体移除，Vue 会连带给组内每张
+  // 卡片各自触发 before-leave/after-leave——这套「锁高度→收缩→补偿兄弟」逻辑是为单独移出
+  // 一张卡设计的，跟外层 .project-group-fold 的 grid-template-rows 折叠动画同时跑会叠加，
+  // 表现为卡片动画结束后其它分组又跳一下（2026-07-17 复现）。整组折叠时外层动画已经完整
+  // 接管视觉效果，这里直接跳过，不重复处理。
+  if (node.closest('.project-group-fold-leave-active')) return
   const parent = node.offsetParent as HTMLElement | null
   if (!parent) return
   const rect = node.getBoundingClientRect()
@@ -203,9 +229,46 @@ function measurePanels() {
   measurePanel('projects')
 }
 function toggleProjectStatus(status: string) {
+  const shell = projectListRef.value?.closest<HTMLElement>('.drawer-shell')
+  const shellRect = shell?.getBoundingClientRect()
+  const shellParent = shell?.offsetParent as HTMLElement | null
+  const parentRect = shellParent?.getBoundingClientRect()
+  if (shell && shellRect && parentRect) {
+    // 折叠期间固定抽屉顶部，避免高度从中心收缩时整个 shell 下移一段。
+    shell.style.transform = 'none'
+    shell.style.top = `${shellRect.top - parentRect.top}px`
+  }
+  const probe = (phase: string) => {
+    const root = projectListRef.value?.querySelector<HTMLElement>('.project-groups')
+    if (!root) return
+    const scroll = projectListRef.value?.querySelector<HTMLElement>('.project-list-scroll')
+    const viewport = projectListRef.value?.closest<HTMLElement>('.drawer-viewport')
+    const shell = projectListRef.value?.closest<HTMLElement>('.drawer-shell')
+    const groups = Array.from(root.querySelectorAll<HTMLElement>(':scope > .project-group')).map((el) => {
+      const rect = el.getBoundingClientRect()
+      const title = el.querySelector<HTMLElement>('.project-group-title')?.getBoundingClientRect()
+      return { top: +rect.top.toFixed(2), height: +rect.height.toFixed(2), titleTop: title ? +title.top.toFixed(2) : null, transform: getComputedStyle(el).transform }
+    })
+    console.log('[drawer-group-move-probe]', JSON.stringify({ status, phase, groups,
+      scroll: scroll ? { top: scroll.scrollTop, height: scroll.scrollHeight, client: scroll.clientHeight } : null,
+      viewport: viewport ? Array.from(viewport.getBoundingClientRect().toJSON ? Object.values(viewport.getBoundingClientRect().toJSON()) : []) : null,
+      shell: shell ? [shell.getBoundingClientRect().top, shell.getBoundingClientRect().height, getComputedStyle(shell).transform] : null,
+      classes: root.className,
+    }))
+  }
+  console.log('[drawer-group-move-probe]', JSON.stringify({ status, phase: 'before', open: [...openProjectStatuses.value] }))
   const next = new Set(openProjectStatuses.value)
   next.has(status) ? next.delete(status) : next.add(status)
   openProjectStatuses.value = next
+  requestAnimationFrame(() => {
+    probe('raf-1')
+    requestAnimationFrame(() => {
+      probe('raf-2')
+      window.setTimeout(() => probe('t100'), 100)
+      window.setTimeout(() => probe('t200'), 200)
+      window.setTimeout(() => probe('after-transition'), 320)
+    })
+  })
 }
 function clearContentTimer() {
   if (contentTimer) clearTimeout(contentTimer)
@@ -370,12 +433,12 @@ onBeforeUnmount(() => {
 .project-search { flex: 0 0 38px; }
 .project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }
 .project-groups { gap: 9px; }
-.project-group { display: flex; flex-direction: column; gap: 6px; content-visibility: auto; contain-intrinsic-size: 0 140px; }
-.project-group-content { display: grid; grid-template-rows: 1fr; overflow: hidden; transform-origin: top; }
+.project-group { display: flex; flex-direction: column; gap: 6px; }
+.project-group-content { display: grid; grid-template-rows: 1fr; min-height: 0; overflow: hidden; transform-origin: top; }
 .project-group-fold-enter-active,
-.project-group-fold-leave-active { transition: grid-template-rows .28s cubic-bezier(.22,1,.36,1), opacity .18s ease, transform .28s cubic-bezier(.22,1,.36,1); }
+.project-group-fold-leave-active { transition: grid-template-rows .28s cubic-bezier(.22,1,.36,1), opacity .18s ease; }
 .project-group-fold-enter-from,
-.project-group-fold-leave-to { grid-template-rows: 0fr; opacity: 0; transform: translateY(-8px) scaleY(.92); }
+.project-group-fold-leave-to { grid-template-rows: 0fr; opacity: 0; }
 .project-group-content > .project-group-cards { min-height: 0; }
 /* leave-active 把离场卡切成 position:absolute（见下方 .drawer-project-cards-leave-active）
    時没有 top/left，浏览器按它离场前的「静态位置」摆放——但这个静态位置是相对**最近的
@@ -385,7 +448,8 @@ onBeforeUnmount(() => {
    .cd-content-panel 的坐标系重新摆放，跟它离场前在 .cd-list 里滚动之后的真实视觉位置对
    不上，看着就是"虚线框动了一下"。补一个 position:relative 把定位祖先钉在它离场前的
    直接父容器上，静态位置的坐标系跟视觉位置保持一致，不再跳。 */
-.project-group-cards { position: relative; content-visibility: auto; contain-intrinsic-size: 0 120px; }
+.project-group-cards { position: relative; min-height: 0; align-self: stretch; }
+.project-group-cards > .drawer-project-card { flex: 0 0 auto; }
 .project-group-cards { transition: height .2s cubic-bezier(.22,1,.36,1); }
 /* Vue TransitionGroup 先按新布局摆放兄弟，再把它们反向平移回旧位置；只需给 transform
    同项目页一致的快进慢收曲线，拖出的项目离场后其它卡便会自然让位而非瞬移。 */
@@ -394,6 +458,12 @@ onBeforeUnmount(() => {
 }
 .drawer-project-groups-move {
   transition: transform .42s cubic-bezier(.22,1,.36,1);
+}
+/* 项目组内容由自身的折叠容器负责高度变化；外层组列表不能再叠加
+   TransitionGroup move，否则会在折叠结束时再次补一段位移。 */
+.project-groups .drawer-project-groups-move {
+  transition: none !important;
+  transform: none !important;
 }
 /* 协调器声明接管位移时，禁止同一元素再启用 Vue move；未被接管的卡片仍沿用上面的组件 FLIP。 */
 [data-flip-owner="coordinator"].drawer-project-cards-move,
