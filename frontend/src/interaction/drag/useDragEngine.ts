@@ -23,6 +23,7 @@ import { startThresholdDrag, ThresholdDragOpts } from './interaction/threshold'
 import { cloneForDrag, createLandingClone } from './visual/clone'
 import { resolveLandingZIndex } from './visual/layer'
 import { holdHoverUntilReveal, revealWithoutStaleHover } from './visual/reveal'
+import { createCardVisualController } from './visual/CardVisualController'
 
 export function prepareFlipTransaction(
   items: { key: string | number; element: HTMLElement }[],
@@ -304,6 +305,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     holdHoverUntilReveal: _holdHoverUntilReveal,
     revealWithoutStaleHover: _revealWithoutStaleHover,
     startPhysicsDrag,
+    visualController: createCardVisualController,
   })
 }
 export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTMLElement, count: number, extras: HTMLElement[] = [], opts: PhysicsDragOpts = {}) {
@@ -312,6 +314,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     easing: _SETTLE,
     transparentGhost: _transparentGhost,
     registerCleanup: (session, cleanup) => session.addCleanup(cleanup),
+    visualController: createCardVisualController,
   })
 }
 /**

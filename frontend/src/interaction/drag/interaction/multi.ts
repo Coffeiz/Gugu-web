@@ -3,8 +3,8 @@ import { LandingState } from '../animation/landing'
 import { dragRegistry } from '../core/DragRegistry'
 import type { DragSession } from '../core/DragSession'
 import { integrateSpring } from '../core/physics'
-import { cloneForDrag } from '../visual/clone'
 import { resolveLandingZIndex } from '../visual/layer'
+import type { CardVisualController } from '../visual/CardVisualController'
 import { installDragListeners } from './listeners'
 import type { PhysicsDragOpts } from '../useDragEngine'
 
@@ -16,11 +16,13 @@ export interface MultiDragDeps {
   easing: string
   transparentGhost: () => HTMLCanvasElement
   registerCleanup: (session: DragSession, fn: () => void) => () => void
+  visualController: (session: DragSession) => CardVisualController
 }
 
 export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTMLElement, count: number, extras: HTMLElement[] = [], opts: PhysicsDragOpts = {}, deps: MultiDragDeps) {
   if (!sourceEl || deps.active.current) return
   const session = dragRegistry.start(sourceEl)
+  const visual = deps.visualController(session)
   session.setPhase('dragging')
   opts.onSessionStart?.(session)
   for (const ex of extras) { if (ex) dragRegistry.cancel(ex) }
@@ -68,7 +70,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     const shadowLayout = extraEl ? getComputedStyle(extraEl) : sourceLayout
     if (extraEl) {
       // 克隆真实文件卡内容
-      el = cloneForDrag(extraEl)
+      el = visual.cloneForDrag(extraEl)
       // 去掉拖拽状态类；保留 .selected 以保持选中边框和 ::before 覆盖层
       el.classList.remove('pre-selected', 'dragging', 'cut')
       if (opts.cloneClass) el.classList.add(opts.cloneClass)
@@ -106,7 +108,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
   })
 
   // 主克隆（zIndex 最高，带数量徽章）
-  const clone = cloneForDrag(sourceEl, { addClasses: ['phys-drag-clone'] })
+  const clone = visual.cloneForDrag(sourceEl, { addClasses: ['phys-drag-clone'] })
   // 移除拖拽/剪切态，保留 .selected 以显示选中边框和覆盖层
   clone.classList.remove('dragging', 'cut')
   clone.querySelectorAll('.sel-checkbox, .fc-hover-actions, .fd-hover-actions').forEach(n => n.remove())
@@ -218,11 +220,14 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     // context.pointer 带上原始指针位置——理由同单选版：调用方（dispatchDrop）自己的命中判定
     // 要跟这里下面「吸入文件夹/面包屑」的动画判定用同一个基准点，否则又会出现「动画演了吸入、
     // 数据其实没动」（cloneCenter 是卡片视觉中心，跟指针位置在细长目标上判定结果可能不一致）。
+    session.setPhase('resolving-target')
     if (opts.onDrop) { try { opts.onDrop(cloneCenter, { x: vel.x, y: vel.y, turn: 0 }, { w: rect.width, h: rect.height }, { pointer: { x: target.x, y: target.y }, pointerVelocity: { x: 0, y: 0 }, isLandingRegrab: false }) } catch (err) { console.error('[physicsDrag] onDrop failed', err) } }
+    session.setPhase('business-committed')
 
     const dropX = cloneCenter.x, dropY = cloneCenter.y
     const landing = new LandingState(); landing.begin()
     const flyTo = (box: Box, shrink: boolean) => {
+      session.setPhase('layout-playing')
       let unregister = () => {}
       const finish = () => {
         if (landing.isDone()) return
@@ -250,6 +255,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
     clone.style.zIndex = String(resolveLandingZIndex(sourceEl))
     requestAnimationFrame(() => {
       if (!session.isCurrent()) return
+      session.setPhase('layout-capturing')
       // 吸入文件夹/面包屑：命中判定用原始指针位置（target.x/y），不用 dropX/dropY（克隆体视觉
       // 中心）——理由同单选版 end()，两者点位不一致会导致「悬停高亮了、一松手却没吸入」。
       const under = document.elementFromPoint(target.x, target.y)

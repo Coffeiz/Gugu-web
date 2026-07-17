@@ -1,6 +1,6 @@
 <template>
   <div ref="listRef" class="cd-list canvas-list">
-    <div v-for="canvas in canvases" :key="canvas.id" class="canvas-item" :class="{ active: canvas.id === activeId }" @click="open(canvas.id)">
+    <div v-for="canvas in canvases" :key="canvas.id" class="canvas-item" :class="{ active: canvas.id === activeId }" :data-layout-key="`canvas-${canvas.id}`" @click="open(canvas.id)">
       <span v-if="editingId === canvas.id" class="rename-sizer" @click.stop>
         <span class="rename-ghost">{{ editingText || ' ' }}</span>
         <input
@@ -21,14 +21,15 @@
         <button title="删除画布" class="ci-btn ci-delete" @click.stop="remove(canvas)"><PhTrash :size="11" weight="bold" /></button>
       </div>
     </div>
-    <button class="canvas-create-card" @click="emit('create')"><PhPlus :size="14" weight="bold" />新建画布</button>
+    <button class="canvas-create-card" data-layout-key="canvas-create" @click="emit('create')"><PhPlus :size="14" weight="bold" />新建画布</button>
   </div>
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, type PropType } from 'vue'
+import { nextTick, onBeforeUpdate, onUpdated, ref, type PropType } from 'vue'
 import { PhCheck, PhPencilSimple, PhPlus, PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvas } from '@/services/api'
+import { createFlipTransaction, createLayoutItems } from '@/interaction/drag/animation/flipCoordinator'
 
 const props = defineProps({ canvases: { type: Array as PropType<MindCanvas[]>, required: true }, activeId: { type: Number as PropType<number | null>, default: null } })
 const emit = defineEmits<{ (e: 'create'): void; (e: 'open', id: number): void; (e: 'delete', canvas: MindCanvas): void; (e: 'rename', id: number, title: string): void }>()
@@ -36,6 +37,26 @@ const listRef = ref<HTMLElement | null>(null)
 const editingId = ref<number | null>(null)
 const editingText = ref('')
 const localTitles = ref(new Map<number, string>())
+let pendingLayout: ReturnType<typeof createFlipTransaction> | null = null
+let pendingLayoutItems: ReturnType<typeof createLayoutItems> = []
+
+onBeforeUpdate(() => {
+  pendingLayout?.cancel()
+  const root = listRef.value
+  if (!root) return
+  const elements = Array.from(root.querySelectorAll<HTMLElement>('.canvas-item, .canvas-create-card'))
+  pendingLayoutItems = createLayoutItems(elements, 'card')
+  if (!pendingLayoutItems.length) return
+  pendingLayout = createFlipTransaction({ duration: 280, easing: 'cubic-bezier(.22,1,.36,1)' })
+  pendingLayout.capture(pendingLayoutItems)
+})
+
+onUpdated(() => {
+  if (!pendingLayout || !pendingLayoutItems.length) return
+  pendingLayout.measure(pendingLayoutItems)
+  void pendingLayout.play()
+  pendingLayout = null
+})
 
 function open(id: number) { emit('open', id) }
 function remove(canvas: MindCanvas) { if (window.confirm(`删除画布「${canvas.title || '未命名画布'}」？`)) emit('delete', canvas) }

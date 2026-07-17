@@ -8,6 +8,117 @@ export interface FlipItem {
   element: HTMLElement
 }
 
+export type LayoutRole = 'shell' | 'viewport' | 'track' | 'group' | 'card'
+
+export interface LayoutItem extends FlipItem {
+  role: LayoutRole
+}
+
+export function createLayoutItems(elements: HTMLElement[], role: LayoutRole): LayoutItem[] {
+  return createFlipItems(elements).map(item => ({ ...item, role }))
+}
+
+export interface GroupLayoutTransaction {
+  play(open: boolean): Promise<FlipResult>
+  cancel(): void
+}
+
+export interface DrawerLayoutTransaction {
+  play(targetHeight: number): Promise<FlipResult>
+  cancel(): void
+}
+
+export function createDrawerLayoutTransaction(element: HTMLElement, duration = 380, easing = 'cubic-bezier(.22,1,.36,1)'): DrawerLayoutTransaction {
+  let cancelled = false
+  let timer: number | null = null
+  let resolvePlay: ((result: FlipResult) => void) | null = null
+  const finish = (result: FlipResult) => {
+    if (!resolvePlay) return
+    const resolve = resolvePlay
+    resolvePlay = null
+    if (timer !== null) window.clearTimeout(timer)
+    element.removeEventListener('transitionend', onEnd)
+    element.style.transition = ''
+    resolve(result)
+  }
+  const onEnd = (event: TransitionEvent) => {
+    if (event.target === element && event.propertyName === 'height') finish(cancelled ? 'cancelled' : 'finished')
+  }
+  return {
+    play(targetHeight) {
+      if (cancelled) return Promise.resolve('cancelled')
+      const current = element.getBoundingClientRect().height
+      element.style.height = `${current}px`
+      void element.offsetHeight
+      element.addEventListener('transitionend', onEnd)
+      requestAnimationFrame(() => {
+        if (cancelled) return
+        element.style.transition = `height ${duration}ms ${easing}`
+        element.style.height = `${Math.max(0, targetHeight)}px`
+      })
+      return new Promise<FlipResult>(resolve => {
+        resolvePlay = resolve
+        timer = window.setTimeout(() => finish(cancelled ? 'cancelled' : 'finished'), duration + 100)
+      })
+    },
+    cancel() {
+      cancelled = true
+      finish('cancelled')
+    },
+  }
+}
+
+/** 负责分组容器的真实像素高度过渡；不触碰 clone、opacity/scale 或业务状态。 */
+export function createGroupLayoutTransaction(element: HTMLElement, duration = 280, easing = 'cubic-bezier(.4,0,.2,1)'): GroupLayoutTransaction {
+  let cancelled = false
+  let timer: number | null = null
+  let resolvePlay: ((result: FlipResult) => void) | null = null
+  const cleanup = () => {
+    if (timer !== null) window.clearTimeout(timer)
+    element.removeEventListener('transitionend', onEnd)
+    element.style.height = ''
+    element.style.opacity = ''
+    element.style.transition = ''
+    element.style.overflow = ''
+  }
+  const finish = (result: FlipResult) => {
+    if (!resolvePlay) return
+    const resolve = resolvePlay
+    resolvePlay = null
+    cleanup()
+    resolve(result)
+  }
+  const onEnd = (event: TransitionEvent) => {
+    if (event.target === element && event.propertyName === 'height') finish(cancelled ? 'cancelled' : 'finished')
+  }
+  return {
+    play(open) {
+      if (cancelled) return Promise.resolve('cancelled')
+      const target = open ? element.scrollHeight : 0
+      const current = open ? 0 : element.getBoundingClientRect().height
+      element.style.height = `${current}px`
+      element.style.overflow = 'hidden'
+      element.style.opacity = open ? '0' : '1'
+      void element.offsetHeight
+      element.addEventListener('transitionend', onEnd)
+      requestAnimationFrame(() => {
+        if (cancelled) return
+        element.style.transition = `height ${duration}ms ${easing}, opacity 180ms ease`
+        element.style.height = `${target}px`
+        element.style.opacity = open ? '1' : '0'
+      })
+      return new Promise<FlipResult>(resolve => {
+        resolvePlay = resolve
+        timer = window.setTimeout(() => finish(cancelled ? 'cancelled' : 'finished'), duration + 100)
+      })
+    },
+    cancel() {
+      cancelled = true
+      finish('cancelled')
+    },
+  }
+}
+
 export interface FlipRetargetBox {
   left: number
   top: number
@@ -27,7 +138,8 @@ let nextElementKey = 1
 /** 为跨分组/重挂载仍存在的元素生成稳定 FLIP key。 */
 export function createFlipItems(elements: HTMLElement[]): FlipItem[] {
   return elements.map(element => {
-    const key = element.dataset.projectId
+    const key = element.dataset.layoutKey
+      ?? element.dataset.projectId
       ?? element.dataset.fileId
       ?? element.dataset.folderKey
       ?? (() => {

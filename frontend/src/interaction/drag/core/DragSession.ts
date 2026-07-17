@@ -1,4 +1,15 @@
-export type DragPhase = 'pressed' | 'dragging' | 'landing' | 'handoff' | 'finished' | 'cancelled'
+export type DragPhase =
+  | 'pressed'
+  | 'dragging'
+  | 'resolving-target'
+  | 'layout-capturing'
+  | 'business-committed'
+  | 'layout-playing'
+  | 'revealing'
+  | 'landing'
+  | 'handoff'
+  | 'finished'
+  | 'cancelled'
 
 export type DragCleanup = () => void
 

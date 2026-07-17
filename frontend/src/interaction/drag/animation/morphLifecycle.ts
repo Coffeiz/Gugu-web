@@ -2,6 +2,7 @@ import { LandingState } from './landing'
 import { morphTransform, type MorphBox } from './morph'
 import { trackLandingCamera } from './camera'
 import { revealWithoutStaleHover } from '../visual/reveal'
+import type { CardVisualController } from '../visual/CardVisualController'
 import { installLandingHandoff } from '../interaction/handoff'
 import { startThresholdDrag } from '../interaction/threshold'
 import type { DragSession } from '../core/DragSession'
@@ -26,6 +27,7 @@ export interface MorphLifecycleOptions {
   hidePrimaryVisual: boolean
   revealElConnectable: boolean
   session: DragSession
+  visualController?: Pick<CardVisualController, 'reveal'>
   registerCleanup: (target: HTMLElement, cleanup: () => void) => () => void
   setRetarget: (target: HTMLElement, retarget: (box: MorphBox) => void) => void
   clearRetarget: (target: HTMLElement, retarget: (box: MorphBox) => void) => void
@@ -275,7 +277,8 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
       options.restoreConnectionDot?.()
       const revealHovered = options.revealEl.matches(':hover') || isPointerOverReveal()
       options.onReveal?.()
-      revealWithoutStaleHover(options.revealEl, options.pointer, undefined, revealHovered, () => options.session.isCurrent())
+      const reveal = options.visualController?.reveal ?? revealWithoutStaleHover
+      reveal(options.revealEl, options.pointer, undefined, revealHovered, () => options.session.isCurrent())
       options.finishSession()
     })
   }
@@ -305,7 +308,8 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     options.onReveal?.()
     void options.revealEl.offsetWidth
     options.revealEl.classList.remove('phys-reveal-snap')
-    revealWithoutStaleHover(options.revealEl, options.pointer, undefined, revealHovered, () => options.session.isCurrent())
+    const reveal = options.visualController?.reveal ?? revealWithoutStaleHover
+    reveal(options.revealEl, options.pointer, undefined, revealHovered, () => options.session.isCurrent())
     options.finishSession()
   }
   unregister = options.registerCleanup(options.revealEl, forceCleanup)

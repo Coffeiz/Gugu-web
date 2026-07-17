@@ -9,7 +9,7 @@ import { integrateSpring } from '../core/physics'
 import { dispatchDragHandoff } from './handoff'
 import { installDragListeners } from './listeners'
 import type { PhysicsDragOpts, PhysicsDropContext } from '../useDragEngine'
-import { cloneForDrag, createLandingClone } from '../visual/clone'
+import type { CardVisualController } from '../visual/CardVisualController'
 import { resolveLandingZIndex } from '../visual/layer'
 import { acquireConnectionDot, releaseConnectionDot } from '../visual/connectionDotManager'
 
@@ -77,11 +77,13 @@ export interface SingleDragDeps {
   holdHoverUntilReveal: (el: HTMLElement) => void
   revealWithoutStaleHover: (el: HTMLElement, pointerMode: boolean, onSettled?: () => void, keepControls?: boolean, isActive?: () => boolean) => void
   startPhysicsDrag: (event: PointerEvent, sourceEl: HTMLElement, opts?: PhysicsDragOpts) => void
+  visualController: (session: DragSession) => CardVisualController
 }
 
 export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTMLElement, opts: PhysicsDragOpts = {}, deps: SingleDragDeps) {
   if (!(sourceEl instanceof HTMLElement) || deps.active.current) return
   const session = dragRegistry.start(sourceEl)
+  const visual = deps.visualController(session)
   session.setPhase('dragging')
   opts.onSessionStart?.(session)
   // 上一次拖拽的落地动画要等 transitionend（~420~580ms）才把这张卡复位显示；这段窗口期内
@@ -166,7 +168,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     transformOrigin: '0 0', transform: `scale(${CS0})`, pointerEvents: 'none',
   })
   holder.appendChild(scaleShell)
-  const clone = cloneForDrag(sourceEl, {
+  const clone = visual.cloneForDrag(sourceEl, {
     addClasses: ['phys-drag-clone'],
   })
   if (opts.cloneClass) clone.classList.add(opts.cloneClass)   // 调用方补回脱离上下文后丢失的版式（如 mode2）
@@ -489,6 +491,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       }
     }
     if (pointer) rememberPointer(target.x, target.y)
+    session.setPhase('resolving-target')
     if (opts.onDrop) {
       try {
         opts.onDrop(cloneCenter, { x: releaseVel.x, y: releaseVel.y, turn }, { w: dropW, h: dropH }, {
@@ -498,6 +501,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         })
       } catch (err) { console.error('[physicsDrag] onDrop failed', err) }
     }
+    session.setPhase('business-committed')
 
     const dropX = cloneCenter.x, dropY = cloneCenter.y
     const idAttr = sourceEl.getAttribute('data-file-id')    ? ['data-file-id',    sourceEl.getAttribute('data-file-id')]
@@ -533,8 +537,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 后一种源/目标是同一个 DOM、外观也完全相同；再建 clone2 会把源占位与落地克隆并行，
     // 在某些缩放比例下多出一条飞往左上角的残影。
     const flyTo = (box: Box, shrink: boolean, revealEl?: HTMLElement) => {
+      session.setPhase('layout-playing')
       if (revealEl) {
-        deps.holdHoverUntilReveal(revealEl)
+        visual.holdHoverUntilReveal(revealEl)
         revealEl.style.opacity = '0'
       }
       let unregister = () => {}
@@ -545,8 +550,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         holder.remove()
         // 先摘占位 class 再揭示：同 flyMorph 里 finish()/forceCleanup 的道理，避免揭示瞬间
         // 先闪一下虚线描边、再过渡回实线的中间态被看见。
+        session.setPhase('revealing')
         restoreSourcePlaceholder()
-        if (revealEl) deps.revealWithoutStaleHover(revealEl, pointer, undefined, false, () => session.isCurrent())
+        if (revealEl) visual.reveal(revealEl, pointer, undefined, false, () => session.isCurrent())
         dragRegistry.finish(sourceEl, session)
       }
       const cancel = animateFlyTo({
@@ -581,6 +587,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       trackTargetLayout = false,
       measureTargetLayout = undefined,
     ) => {
+      session.setPhase('layout-playing')
       startMorphLifecycle({
         initialBox,
         holder,
@@ -601,6 +608,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         hidePrimaryVisual,
         revealElConnectable,
         session,
+        visualController: visual,
         registerCleanup: (_target, cleanup) => deps.registerCleanup(session, cleanup),
         setRetarget: deps.setRetarget,
         clearRetarget: deps.clearRetarget,
@@ -664,7 +672,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         sibs = prepared.kids
         flip = prepared.transaction
       }
-      deps.holdHoverUntilReveal(el)
+      visual.holdHoverUntilReveal(el)
       el.style.opacity = '0'              // 落定前隐藏且压住 hover，克隆体落到位再露出
       const unregisterFlipCleanup = deps.registerCleanup(session, () => flip.cancel())
       void flip.play().finally(unregisterFlipCleanup)   // 从合拢 → 展开
@@ -749,7 +757,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           targetWidth = parseFloat(targetStyle.width) || (lastCS !== 1 ? targetRect.width / lastCS : targetRect.width)
           targetHeight = parseFloat(targetStyle.height) || (lastCS !== 1 ? targetRect.height / lastCS : targetRect.height)
         }
-        const landingClone = createLandingClone(el, {
+        const landingClone = visual.createLandingClone(el, {
           width: dropW,
           height: dropH,
           layoutWidth: targetWidth,
@@ -826,7 +834,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             // 缩放/平移套一层 transform）。可这层克隆内容根本不在画布世界坐标系里，套错变换
             // 之后经常被挪到看不见的地方或缩没——表现就是"卡片消失几秒钟才突然出现"，长期以来
             // 都是这个恒等式在犯错，不是揭示时机的问题。
-            deps.holdHoverUntilReveal(targetEl)
+            visual.holdHoverUntilReveal(targetEl)
             // 直接改 targetEl.style.opacity 会被它自身的 CSS transition（.25s）接住，变成
             // 一次可见的淡出——这段时间跟刚起飞的 clone2 叠在一起，就是"本体闪一下才淡出"。
             // 这一刻要的是瞬间藏起来（真正的淡出效果交给 clone2 的交叉淡变来演），借用
@@ -859,10 +867,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             }
             // 抽屉可能正在展开；首帧就使用展开结束后的目标，避免先按中间盒子创建飞行，
             // 紧接着被 ResizeObserver 改向而重置 clone2 的尺寸和视觉状态。
+            session.setPhase('layout-capturing')
             const box = revealInScroller(sc, measureTargetLayout())
             // 抽屉滚动开始后，ResizeObserver 读到的仍是当前 scrollTop 下的中间布局盒；
             // 这会把已经补偿到滚动终点的 clone2 又 retarget 回滚动前位置。此次落地的最终
             // box 已按目标 scrollTop 计算完成，后续 observer 只应沿用这份稳定终点。
+            session.setPhase('layout-playing')
             flyMorph(
               box,
               targetEl,
@@ -892,7 +902,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         // 收合还没来得及发生（极快的拖放）→ 直接归位即可
         if (!container || sourceEl.style.display !== 'none') {
           sourceEl.style.display = ''
-          deps.holdHoverUntilReveal(sourceEl)
+          visual.holdHoverUntilReveal(sourceEl)
           sourceEl.style.opacity = '0'
           const sc = deps.scrollParent(sourceEl)
           deps.registerCleanup(session, blockScrollDuringLanding(sc))
@@ -927,7 +937,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             // 过渡（.phys-drag-source-placeholder）已经够呈现一次淡出，不需要在这里先切换
             // 回本体样式。
             if (!opts.removeSourceOnExternalDrop) restoreSourcePlaceholder()
-            deps.holdHoverUntilReveal(el)
+            visual.holdHoverUntilReveal(el)
             el.style.opacity = '0'
             // 抽屉来源卡未命中抽屉时，生成的画布卡应落在抽屉层下方，避免飞行克隆
             // 覆盖抽屉内容。命中抽屉的路径会在上面的 absorb 分支中保留原有层级，正常飞入。

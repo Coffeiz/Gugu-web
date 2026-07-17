@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="doneColumnRef"
     class="done-col glass-card"
     data-col-status="done"
     :class="{ 'drag-over': isDragOver }"
@@ -49,12 +50,14 @@
              v-if 拿不到 v-for 变量——所以把「过滤」挪到 computed 里，v-for 拿到的就是
              已经过滤好的列表。未展开的月份/卡片完全不渲染，保留原版「按需挂载」性能。
              4 个 v-for 各自作为 done-section-list / done-month-list 的直接子项，让
-             Vue 给每个 sibling 注入稳定 key，触发 .done-group-list-move / .done-card-list-move 的 FLIP。 -->
+             Vue 给每个 sibling 注入稳定 key，交由布局协调器统一处理位移。 -->
         <button
           v-for="yg in groupedByYear"
           :key="`year-row-${yg.year}`"
           class="year-row"
           data-flip-target
+          data-layout-role="group"
+          :data-layout-key="`year-${yg.year}`"
           @click="toggleYear(yg.year)"
         >
           <svg
@@ -86,6 +89,8 @@
             <button
               class="month-row"
               data-flip-target
+              data-layout-role="group"
+              :data-layout-key="`month-${yg.year}-${mg.month}`"
               @click="toggleMonth(yg.year + mg.month)"
             >
               <PhFolderOpen v-if="openMonths.has(yg.year + mg.month)" :size="13" weight="fill" style="color:#5a9e88; opacity:0.85; flex-shrink:0" />
@@ -101,11 +106,11 @@
               </svg>
             </button>
 
-            <Transition :name="animateFolders ? 'month-folder' : undefined">
+            <Transition :css="false" @enter="onMonthFolderEnter" @leave="onMonthFolderLeave">
               <div
                 v-if="openMonths.has(yg.year + mg.month)"
                 :key="`month-cards-${yg.year + mg.month}`"
-                class="month-folder"
+                class="month-folder" data-layout-role="group" :data-layout-key="`month-${yg.year}-${mg.month}`"
               >
                 <TransitionGroup
                   tag="div"
@@ -160,10 +165,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, type PropType } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUpdate, onUpdated, type PropType } from 'vue'
 import ProjectCard from './ProjectCard.vue'
 import { PhFolder, PhFolderOpen, PhCheckCircle, PhArchive } from '@phosphor-icons/vue'
 import type { Project } from '@/types/project'
+import { createFlipTransaction, createLayoutItems, createGroupLayoutTransaction } from '@/interaction/drag/animation/flipCoordinator'
 
 const props = defineProps({
   projects: { type: Array as PropType<Project[]>, default: () => [] },
@@ -177,6 +183,33 @@ const initialMonth = String(new Date().getMonth() + 1).padStart(2, '0') + '月'
 const openYears   = ref(new Set<string>([initialYear]))
 const openMonths  = ref(new Set<string>([initialYear + initialMonth]))
 const animateFolders = ref(false)
+let pendingLayout: ReturnType<typeof createFlipTransaction> | null = null
+let pendingLayoutItems: ReturnType<typeof createLayoutItems> = []
+const doneColumnRef = ref<HTMLElement | null>(null)
+
+onBeforeUpdate(() => {
+  pendingLayout?.cancel()
+  const root = doneColumnRef.value
+  if (!root) return
+  const elements = Array.from(root.querySelectorAll<HTMLElement>('.done-section-list .year-row, .done-section-list .month-row, .done-section-list .done-card-item'))
+  pendingLayoutItems = createLayoutItems(elements, 'card')
+  if (!pendingLayoutItems.length) return
+  pendingLayout = createFlipTransaction({ duration: 340, easing: 'cubic-bezier(.34,1.2,.64,1)' })
+  pendingLayout.capture(pendingLayoutItems)
+})
+onUpdated(() => {
+  if (!pendingLayout || !pendingLayoutItems.length) return
+  pendingLayout.measure(pendingLayoutItems)
+  void pendingLayout.play()
+  pendingLayout = null
+})
+
+function onMonthFolderEnter(el: Element, done: () => void) {
+  void createGroupLayoutTransaction(el as HTMLElement).play(true).then(() => done())
+}
+function onMonthFolderLeave(el: Element, done: () => void) {
+  void createGroupLayoutTransaction(el as HTMLElement).play(false).then(() => done())
+}
 
 function dateOf(p: Project) {
   const src = p.startDate || p.deadline || p.doneAt || null
@@ -201,29 +234,6 @@ watch(() => props.projects.length, async (count) => {
   await nextTick()
   requestAnimationFrame(() => { animateFolders.value = true })
 }, { immediate: true })
-
-// recentDone 变化时手动 FLIP 年/月行位置——卡片从「最近完成」退出进入年月文件夹时，
-// Vue TransitionGroup 的 FLIP 窗口已过（leave 动画结束后才触发位移），需要手动补偿。
-watch(recentDone, async () => {
-  // 记录变化前的位置（此时 DOM 还未更新）
-  const rows = document.querySelectorAll<HTMLElement>('.year-row, .month-row')
-  const beforeRects = Array.from(rows).map(el => el.getBoundingClientRect())
-  // 等待 Vue 更新 DOM
-  await nextTick()
-  const afterRects = Array.from(rows).map(el => el.getBoundingClientRect())
-  rows.forEach((el, i) => {
-    const dx = beforeRects[i].left - afterRects[i].left
-    const dy = beforeRects[i].top - afterRects[i].top
-    if (dx || dy) {
-      el.style.transform = `translate(${dx}px, ${dy}px)`
-      el.style.transition = 'none'
-      requestAnimationFrame(() => {
-        el.style.transition = 'transform 0.34s cubic-bezier(0.34, 1.2, 0.64, 1)'
-        el.style.transform = ''
-      })
-    }
-  })
-})
 
 const undatedProjects = computed(() =>
   props.projects.filter(p => !dateOf(p) && !recentIds.value.has(p.id))
@@ -313,14 +323,6 @@ function onDrop(e: DragEvent) {
   background: rgba(90,158,136,0.08);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 0 0 2px rgba(90,158,136,0.25);
 }
-/* FLIP 事务期间卡片会暂时越过 col-body 的可视边界；仅在协调器接管卡片时解除两层裁切，
-   事务清理 data-flip-owner 后自动恢复正常滚动和圆角裁切。 */
-.done-col:has([data-flip-owner="coordinator"]) {
-  overflow: visible;
-}
-.done-col:has([data-flip-owner="coordinator"]) .col-body {
-  overflow: visible;
-}
 
 .col-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -404,16 +406,6 @@ function onDrop(e: DragEvent) {
 .done-group-list-leave-to {
   opacity: 0;
   transform: translateY(-4px);
-}
-.done-group-list-move {
-  /* 与拖拽物理 FLIP 使用同一缓动，避免卡片已让位而年月组仍滞后移动。 */
-  transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1) !important;
-}
-/* 月份内容通过 .month-folder 的实际高度收缩驱动后续月份移动；这里不要再叠加
-   TransitionGroup 的 FLIP 位移，否则收起结束时会多补一次向上移动。 */
-.done-month-list .done-group-list-move {
-  transition: none !important;
-  transform: none !important;
 }
 /* 月份文件夹自身由 month-folder 控制高度离场，不能再套用分组的 absolute/translate
    离场规则，否则下一个月份会在离场结束时额外上跳一段。 */
@@ -541,10 +533,6 @@ function onDrop(e: DragEvent) {
 .recent-card-list .done-card-list-enter-from {
   /* 新进入最近完成区的卡片从列表下方补位，避免和月份列表顶部卡片重叠。 */
   transform: translateY(6px) scale(0.98);
-}
-.done-card-list-move {
-  /* 不和 month-group 的整体 FLIP 叠加位移，避免文件夹 icon 与卡片各走一套时间轴。 */
-  transition: none;
 }
 .done-card-list-leave-active {
   position: absolute;

@@ -1,11 +1,13 @@
 <template>
   <div
     class="drawer-shell canvas-drawer glass-card"
+    data-layout-role="shell"
+    data-layout-key="drawer-shell"
     :class="[{ open, 'project-panel': panelClass === 'project-panel' }, panelClass]"
     :style="{ '--drawer-width': width, '--drawer-height': `${targetHeight}px` }"
   >
     <slot name="header" />
-    <div class="drawer-shell-collapse" :style="{ height: open ? `${targetHeight}px` : '0px' }">
+    <div class="drawer-shell-collapse">
       <slot />
     </div>
   </div>
@@ -18,6 +20,7 @@ defineProps({
   targetHeight: { type: Number, default: 0 },
   panelClass: { type: String, default: '' },
 })
+
 </script>
 
 <style scoped>
@@ -34,5 +37,5 @@ defineProps({
   transform: translateY(-50%);
   transition: width .38s cubic-bezier(.22,1,.36,1), border-radius .38s cubic-bezier(.22,1,.36,1), background .25s ease, box-shadow .25s ease;
 }
-.drawer-shell-collapse { position: relative; width: 100%; overflow: hidden; transition: height .38s cubic-bezier(.22,1,.36,1); }
+.drawer-shell-collapse { position: relative; width: 100%; overflow: hidden; }
 </style>
