@@ -79,7 +79,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, onBeforeUpdate, onUpdated, ref, watch, type PropType } from 'vue'
 import { PhArrowRight, PhSquaresFour, PhStack } from '@phosphor-icons/vue'
 import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
@@ -128,6 +128,8 @@ const targetHeight = computed(() => panelHeights.value[panel.value])
 let canvasListObserver: ResizeObserver | null = null
 let projectListObserver: ResizeObserver | null = null
 let compactTimer: ReturnType<typeof setTimeout> | null = null
+let pendingProjectGroups: { transaction: ReturnType<typeof createFlipTransaction>; items: ReturnType<typeof createLayoutItems> } | null = null
+let projectGroupToggleInFlight = false
 
 const projectQuery = ref('')
 const filteredProjects = computed(() => {
@@ -200,6 +202,7 @@ function toggleProjectStatus(status: string) {
   if (layoutItems.length) layout.capture(layoutItems)
   const next = new Set(openProjectStatuses.value)
   next.has(status) ? next.delete(status) : next.add(status)
+  projectGroupToggleInFlight = true
   openProjectStatuses.value = next
   void nextTick().then(() => {
     // 项目滚动区现在位于筛选框下方，外层 viewport 高度固定后不会再因为
@@ -214,6 +217,30 @@ function toggleProjectStatus(status: string) {
     drawerViewportRef.value?.restoreScroll(scrollSnapshot)
   })
 }
+onBeforeUpdate(() => {
+  // 跨抽屉/画布拖拽会直接改变项目数据，状态组本身不会经过 toggleProjectStatus；
+  // 这里补上同一套组位移事务，避免源组收缩后其它状态组瞬移。
+  const root = projectListRef.value?.querySelector<HTMLElement>('.project-groups')
+  if (projectGroupToggleInFlight) {
+    projectGroupToggleInFlight = false
+    return
+  }
+  if (!root) return
+  const elements = Array.from(root.querySelectorAll<HTMLElement>(':scope > .project-group'))
+  const items = createLayoutItems(elements, 'group')
+  if (!items.length) return
+  const transaction = createFlipTransaction({ duration: 280, easing: 'cubic-bezier(.22,1,.36,1)' })
+  transaction.capture(items)
+  pendingProjectGroups?.transaction.cancel()
+  pendingProjectGroups = { transaction, items }
+})
+onUpdated(() => {
+  const pending = pendingProjectGroups
+  if (!pending) return
+  pendingProjectGroups = null
+  pending.transaction.measure(pending.items)
+  void pending.transaction.play()
+})
 function clearCompactTimer() {
   if (compactTimer) clearTimeout(compactTimer)
   compactTimer = null

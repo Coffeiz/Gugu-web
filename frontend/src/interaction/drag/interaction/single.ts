@@ -979,11 +979,15 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 只把它挪到新父容器；不能仅凭 el !== sourceEl 判定“是不是新落点”。否则项目卡跨阶段会
       // 错走旧列归位路径，源卡在克隆飞到新列前提前揭示，鼠标下出现一次陈旧 hover 回弹。
       if (sel) {
-        // 看板普通列现在以 .kanban-card-list 作为 FLIP 容器；归位和跨列判定必须使用
-        // 同一层级。若一边取 list、一边取 col-body，同列返回会被误判为跨列。
+        // 看板普通列现在以 .kanban-card-list 作为 FLIP 容器；已完成列要精确到卡片
+        // 实际落入的 .month-cards（recent-card-list 也带这个类），不能笼统回退到
+        // 整个 .col-body——否则会把其它月份/年月标题行也当成让位兄弟。跟前面拖起时
+        // 的 flipContainer 解析（.kanban-card-list ?? .month-cards ?? .col-body）
+        // 必须保持同一套优先级，否则同列返回会被误判为跨列。
         const projectFlipContainer = (target: HTMLElement) => {
           if (!opts.flipAllDescendants) return target.parentElement!
           return target.closest<HTMLElement>('.kanban-card-list')
+            ?? target.closest<HTMLElement>('.month-cards')
             ?? target.closest<HTMLElement>('.col-body')
             ?? target.parentElement!
         }
