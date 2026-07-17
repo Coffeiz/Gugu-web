@@ -845,12 +845,14 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             // 结束后」的最终落点再恢复（同一 JS 任务内完成，无绘制、肉眼不可见）——第一次
             // 高度变化触发的 retarget 就直接拿到最终位置，克隆一次平滑改向直达终点，后续
             // 回调因目标不再变化全部被 epsilon 过滤。没有动画在跑时行为等同 layoutBoxInScroller。
-            const measureTargetLayout = () => {
-              return deps.layoutBoxAtTransitionsEnd(sc, targetEl)
-            }
+            const measureTargetLayout = () => deps.layoutBoxAtTransitionsEnd(sc, targetEl)
             // 抽屉可能正在展开；首帧就使用展开结束后的目标，避免先按中间盒子创建飞行，
             // 紧接着被 ResizeObserver 改向而重置 clone2 的尺寸和视觉状态。
             const box = revealInScroller(sc, measureTargetLayout())
+            // 抽屉滚动开始后，ResizeObserver 读到的仍是当前 scrollTop 下的中间布局盒；
+            // 这会把已经补偿到滚动终点的 clone2 又 retarget 回滚动前位置。此次落地的最终
+            // box 已按目标 scrollTop 计算完成，后续 observer 只应沿用这份稳定终点。
+            const stableDrawerBox = () => box
             flyMorph(
               box,
               targetEl,
@@ -862,7 +864,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
               // 建立连线，连接点覆盖层不该在这段飞行里出现。
               false,
               true,
-              measureTargetLayout,
+              stableDrawerBox,
             )
           }
           landOnAbsorbTarget()
