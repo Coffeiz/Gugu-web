@@ -152,6 +152,8 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     void options.clone2.offsetWidth
     clone2Inner.style.transition = savedTrans
   }
+  const revealHoveredAtStart = options.revealEl.matches(':hover') || isPointerOverReveal() || landingHovered
+  if (revealHoveredAtStart) clone2Inner?.classList.add('phys-reveal-hover', 'phys-reveal-controls')
 
   // 目标框几乎没动就不算一次改向：ResizeObserver.observe() 注册瞬间会对每个被观察元素
   // 上报一次「初始尺寸」（规范行为，不代表真的发生了 resize），目标卡 + 全祖先链一起注册
@@ -265,9 +267,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
       options.restoreConnectionDot?.()
       // 克隆移除后才是本体真实参与命中测试的时刻；先锁存 :hover，再触发 Vue 更新。
       // 否则 onReveal 可能让连接点按旧的 hovering 状态短暂收起一帧。
-      const revealHovered = options.pointer
-        ? options.revealEl.matches(':hover') || isPointerOverReveal()
-        : landingHovered
+      const revealHovered = options.revealEl.matches(':hover') || isPointerOverReveal() || landingHovered
       options.onReveal?.()
       revealWithoutStaleHover(options.revealEl, options.pointer, undefined, revealHovered, () => options.session.isCurrent())
       options.finishSession()
@@ -295,9 +295,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     }
     options.restoreConnectionDot?.()
     options.revealEl.classList.add('phys-reveal-snap')
-    const revealHovered = options.pointer
-      ? options.revealEl.matches(':hover') || isPointerOverReveal()
-      : landingHovered
+    const revealHovered = options.revealEl.matches(':hover') || isPointerOverReveal() || landingHovered
     options.onReveal?.()
     void options.revealEl.offsetWidth
     options.revealEl.classList.remove('phys-reveal-snap')
