@@ -450,7 +450,13 @@ onBeforeUnmount(() => {
 .project-group { display: flex; flex-direction: column; gap: 6px; }
 .project-group-content { display: grid; grid-template-rows: 1fr; min-height: 0; overflow: hidden; transform-origin: top; }
 .project-group-fold-enter-active,
-.project-group-fold-leave-active { transition: grid-template-rows .28s cubic-bezier(.22,1,.36,1), opacity .18s ease; }
+.project-group-fold-leave-active {
+  /* 原来用 cubic-bezier(.22,1,.36,1) 太「前重」——探针实测折叠时 54% 的时长已经走完
+     96% 的距离，剩下 46% 时间只爬完最后 4%，数学上连续但人眼看着像「唰一下到位、
+     后面还在飘」，被感知成跳动（2026-07-17 drawer-group-move-probe 逐帧对比确认，
+     不是断层，是曲线太激进）。换成更匀速的 ease-out，前后段速度差别小很多。 */
+  transition: grid-template-rows .28s cubic-bezier(0.4, 0, 0.2, 1), opacity .18s ease;
+}
 .project-group-fold-enter-from,
 .project-group-fold-leave-to { grid-template-rows: 0fr; opacity: 0; }
 .project-group-content > .project-group-cards { min-height: 0; }
