@@ -525,6 +525,13 @@ function onDrop(e: DragEvent) {
 .done-card-list-leave-active {
   transition: opacity 0.22s ease, transform 0.34s cubic-bezier(0.34, 1.2, 0.64, 1);
 }
+/* 物理拖拽落地时（interaction/drag）会对同一批卡片自己再做一套手动 FLIP——
+   recentDone/月份分组不是单纯追加列表，拖入会让 Vue 自己重新排序，原生 -move
+   过渡和手动 FLIP 各自独立测量/播放，量坐标时互相污染，表现为卡片重叠。手动
+   FLIP 接管期间会给容器打上 .flip-engine-active，这里临时让出，只保留一套过渡。 */
+.month-cards.flip-engine-active .done-card-list-move {
+  transition: none !important;
+}
 .done-card-list-enter-from,
 .done-card-list-leave-to {
   opacity: 0;

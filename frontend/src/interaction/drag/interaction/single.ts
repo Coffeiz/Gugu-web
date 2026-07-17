@@ -301,6 +301,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   if (container && !opts.keepSourcePlaceholder) {
     requestAnimationFrame(() => {
       if (!deps.active.current || !session.isCurrent() || !sourceEl.isConnected) return
+      // 「已完成」列的 recent-card-list/month-cards 不是单纯追加列表，卡片抓起/落下
+      // 会让 Vue 自己的 TransitionGroup 重新排序（比如 recentDone 重新按日期取前 3）。
+      // 这套手动 FLIP 跟 Vue 原生的 -move 过渡各自独立测量、独立播放，量坐标时如果
+      // Vue 的过渡已经在给同一批卡片加临时位移，量出来的就是被污染的中间态，两边动画
+      // 叠在一起表现为卡片重叠。临时关掉容器自己的 -move 过渡，只让这套手动 FLIP 生效。
+      container.classList.add('flip-engine-active')
       const { kids, transaction: flip } = deps.prepareSiblingFlip(container, sourceEl, Boolean(opts.flipAllDescendants), () => {
         sourceEl.style.display = 'none'
       }, {
@@ -309,7 +315,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         isActive: () => session.isCurrent(),
       })
       const unregisterFlipCleanup = deps.registerCleanup(session, () => flip.cancel())
-      void flip.play().finally(unregisterFlipCleanup)
+      void flip.play().finally(() => {
+        unregisterFlipCleanup()
+        container.classList.remove('flip-engine-active')
+      })
     })
   }
 
@@ -626,8 +635,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             ...opts,
             // 跨列落地后 Vue 可能已把目标卡挂到另一列；重抓不能沿用首段拖拽
             // 保存的旧 flipContainer，否则新 session 会在旧列测量，目标列 FLIP
-            // 前后 rect 全相同，表现为让位和归位瞬移。
+            // 前后 rect 全相同，表现为让位和归位瞬移。完成列要精确到卡片落入的
+            // 那个 .month-cards（不能回退到整个 .col-body，否则会把其它月份/
+            // 年月标题行也当成让位兄弟，落点顶部卡片跟新卡重叠）。
             flipContainer: revealEl.closest<HTMLElement>('.kanban-card-list')
+              ?? revealEl.closest<HTMLElement>('.month-cards')
               ?? revealEl.closest<HTMLElement>('.col-body')
               ?? opts.flipContainer,
             keepSourcePlaceholder: revealEl === sourceEl ? opts.keepSourcePlaceholder : false,
@@ -646,6 +658,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 占位重新展开：FLIP 邻居从「合拢」动到「展开」。el 当前可能已收合(home)或已展开(落点新卡)，
     // 两种都要先拿到 closed 和 open 两套位置
     const animateOpen = (cont: HTMLElement, el: HTMLElement) => {
+      // 同上：临时关掉落点容器自己的 -move 过渡，避免跟这套手动 FLIP 争抢同一批卡片的 transform。
+      cont.classList.add('flip-engine-active')
       let sibs: HTMLElement[], flip: FlipTransaction
       if (el.style.display === 'none') {   // 已收合（home）：量 closed → 展开 → 量 open
         const prepared = deps.prepareSiblingFlip(cont, el, Boolean(opts.flipAllDescendants), () => {
@@ -675,7 +689,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       visual.holdHoverUntilReveal(el)
       el.style.opacity = '0'              // 落定前隐藏且压住 hover，克隆体落到位再露出
       const unregisterFlipCleanup = deps.registerCleanup(session, () => flip.cancel())
-      void flip.play().finally(unregisterFlipCleanup)   // 从合拢 → 展开
+      void flip.play().finally(() => {   // 从合拢 → 展开
+        unregisterFlipCleanup()
+        cont.classList.remove('flip-engine-active')
+      })
       return el.getBoundingClientRect()
     }
 
