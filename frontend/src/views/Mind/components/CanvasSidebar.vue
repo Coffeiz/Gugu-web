@@ -2,7 +2,6 @@
   <DrawerShell
     :open="expanded"
     :width="panel === 'projects' ? '284px' : '190px'"
-    :target-height="targetHeight"
     :panel-class="panel === 'projects' ? 'project-panel' : ''"
     :data-project-drawer-dropzone="expanded && panel === 'projects' ? '' : undefined"
     @pointerdown.stop
@@ -32,7 +31,7 @@
     >
       <div class="cd-stage">
         <section class="cd-content-panel canvas-panel" :class="{ visible: visiblePanel === 'canvases' && contentVisible }" :aria-hidden="visiblePanel !== 'canvases'">
-          <DrawerTrack class="canvas-track">
+          <DrawerTrack class="canvas-track" data-drawer-scroll>
             <CanvasDrawerContent ref="canvasContentRef" :canvases="canvases" :active-id="activeId" @create="emit('create')" @open="onOpen" @delete="onDelete" @rename="(id, title) => emit('rename', id, title)" />
           </DrawerTrack>
         </section>
@@ -40,7 +39,7 @@
        <section class="cd-content-panel projects-panel" :class="{ visible: visiblePanel === 'projects' && contentVisible }" :aria-hidden="visiblePanel !== 'projects'">
          <div ref="projectListRef" class="cd-list project-list">
            <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" @pointerdown.stop />
-           <DrawerTrack class="project-list-scroll">
+           <DrawerTrack class="project-list-scroll" data-drawer-scroll>
            <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
             </div>
@@ -81,7 +80,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
-import { PhArrowRight, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour, PhStack, PhTrash } from '@phosphor-icons/vue'
+import { PhArrowRight, PhSquaresFour, PhStack } from '@phosphor-icons/vue'
 import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
 import ProjectDrawerCard from './ProjectDrawerCard.vue'
@@ -169,13 +168,13 @@ watch(filteredProjects, (projects) => {
 function measurePanel(panelName: Panel) {
   const list = panelName === 'canvases' ? canvasContentRef.value?.listRef : projectListRef.value
   if (!list) return
-  // 内容面板在切换可见性时会短暂处于 height:0；ResizeObserver 此时读到的
-  // scrollHeight 也是 0，不能用这个中间态覆盖已经量好的展开目标，否则高度事务
-  // 会被重置成 0，表现为抽屉先拉成长条再瞬间跳到终态。
-  if (list.scrollHeight <= 0) return
+  const measuredHeight = list.scrollHeight
+  // 内容面板在切换可见性时会短暂处于 height:0；无内容的中间态不能覆盖已经量好的
+  // 展开目标，否则高度事务会被重置成 0。
+  if (measuredHeight <= 0) return
   panelHeights.value = {
     ...panelHeights.value,
-    [panelName]: Math.min(list.scrollHeight, window.innerHeight * 0.55),
+    [panelName]: Math.min(measuredHeight, window.innerHeight * 0.55),
   }
 }
 function measurePanels() {
@@ -203,6 +202,10 @@ function toggleProjectStatus(status: string) {
   next.has(status) ? next.delete(status) : next.add(status)
   openProjectStatuses.value = next
   void nextTick().then(() => {
+    // 项目滚动区现在位于筛选框下方，外层 viewport 高度固定后不会再因为
+    // 内部状态组展开自动触发 ResizeObserver；这里显式刷新目标高度，让抽屉
+    // 先平滑扩展到新的内容高度，再由内部滚动区裁切超出部分。
+    requestAnimationFrame(() => measurePanel('projects'))
     if (flipElements.length) {
       layout.measure(layoutItems)
       void layout.play().finally(() => drawerViewportRef.value?.restoreScroll(scrollSnapshot))
@@ -247,33 +250,11 @@ async function togglePanel(nextPanel: Panel) {
   // 内容已经在测量阶段挂载，宽度和高度事务现在可以与内容一起并行展开。
 }
 
-const renamingId = ref<number | null>(null)
-const renameText = ref('')
-const renameInputRef = ref<HTMLInputElement[] | HTMLInputElement | null>(null)
 function onOpen(id: number) {
-  if (renamingId.value == null) emit('open', id)
+  emit('open', id)
 }
 function onDelete(canvas: MindCanvas) {
   emit('delete', canvas.id)
-}
-function startRename(canvas: MindCanvas) {
-  renamingId.value = canvas.id
-  renameText.value = canvas.title || ''
-  nextTick(() => {
-    const input = Array.isArray(renameInputRef.value) ? renameInputRef.value[0] : renameInputRef.value
-    input?.focus()
-    input?.select()
-  })
-}
-function cancelRename() {
-  renamingId.value = null
-  renameText.value = ''
-}
-function commitRename(id: number) {
-  if (renamingId.value !== id) return
-  const title = renameText.value.trim()
-  renamingId.value = null
-  if (title) emit('rename', id, title)
 }
 
 onMounted(() => {
@@ -293,19 +274,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.canvas-drawer {
-  position: absolute; top: 50%; right: var(--floating-edge); z-index: 30; transform: translateY(-50%);
-  box-sizing: border-box; width: var(--canvas-toolbar-height); overflow: hidden;
-  /* 跟展开态用同一个 25px，收展全程圆角数值不变，只有宽度在动——不然收起态原来的
-     999px（窄边被强制箍成满圆）展开时会先经历一段「大圆滚成矩形」的形变感。 */
-  border-radius: 25px;
-  corner-shape: round;
-  transition: width 0.38s cubic-bezier(.22,1,.36,1),
-              border-radius 0.38s cubic-bezier(.22,1,.36,1),
-              background 0.25s ease, box-shadow 0.25s ease;
-}
-.canvas-drawer.open { width: 190px; border-radius: 25px; }
-.canvas-drawer.open.project-panel { width: 284px; }
 .cd-head {
   display: flex;
   align-items: center;
@@ -343,8 +311,8 @@ onBeforeUnmount(() => {
 .projects-panel { width: 284px; }
 .cd-list { box-sizing: border-box; max-height: none; overflow: visible; padding: 0 9px 9px; }
 .canvas-list { width: 190px; }
-.project-list { display: flex; flex-direction: column; width: 284px; max-height: 55vh; min-height: 0; gap: 0; }
-.project-list-scroll { flex: none; overflow: visible; min-height: 0; padding-bottom: 9px; }
+.project-list { display: flex; flex-direction: column; width: 284px; height: auto; max-height: 55vh; min-height: 0; gap: 0; }
+.project-list-scroll { flex: none; max-height: calc(55vh - 38px); overflow-y: auto; min-height: 0; padding-bottom: 9px; scrollbar-gutter: stable; }
 
 .canvas-item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; height: 32px; padding: 0 4px 0 8px; border-radius: 6px; background: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
 .canvas-create-card { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 32px; margin-top: 5px; box-sizing: border-box; border: 1.5px dashed rgba(0,0,0,.12); border-radius: 6px; background: rgba(255,255,255,.16); color: var(--text-secondary); font: 600 12px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
@@ -359,7 +327,10 @@ onBeforeUnmount(() => {
 .ci-btn:hover { background: rgba(123,127,178,.16); color: var(--color-primary); }
 .ci-delete:hover { background: rgba(200,90,90,.14); color: #c85a5a; }
 
-.project-search { flex: 0 0 38px; }
+.project-search {
+  flex: 0 0 38px;
+}
+.canvas-track[data-drawer-scroll] { height: 100%; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
 .project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }
 .project-groups { gap: 9px; }
 .project-group { display: flex; flex-direction: column; gap: 6px; }

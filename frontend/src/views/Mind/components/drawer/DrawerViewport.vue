@@ -23,13 +23,17 @@ export interface DrawerScrollSnapshot {
 
 const viewportRef = ref<HTMLElement | null>(null)
 let heightTransaction: ReturnType<typeof createDrawerLayoutTransaction> | null = null
+function scrollElement(): HTMLElement | null {
+  return viewportRef.value?.querySelector<HTMLElement>('[data-drawer-scroll]') ?? viewportRef.value
+}
 watch(() => [props.open, props.targetHeight], ([open, target]) => {
   const nextHeight = open ? Number(target) : 0
   if (!viewportRef.value) {
     height.value = nextHeight
     return
   }
-  const preservedScrollTop = viewportRef.value.scrollTop
+  const preservedScrollElement = scrollElement()
+  const preservedScrollTop = preservedScrollElement?.scrollTop ?? 0
   heightTransaction?.cancel()
   const transaction = createDrawerLayoutTransaction(viewportRef.value)
   heightTransaction = transaction
@@ -38,13 +42,13 @@ watch(() => [props.open, props.targetHeight], ([open, target]) => {
       height.value = nextHeight
       // 高度从 0 展开时浏览器可能触发 scroll anchoring，把位置推到最大值；
       // 布局事务只负责高度，不应改变用户原本的滚动位置。
-      viewportRef.value!.scrollTop = preservedScrollTop
+      if (preservedScrollElement) preservedScrollElement.scrollTop = preservedScrollTop
     }
   })
 }, { immediate: true })
 
 function captureScroll(): DrawerScrollSnapshot | null {
-  const element = viewportRef.value
+  const element = scrollElement()
   if (!element) return null
   return {
     scrollTop: element.scrollTop,
@@ -55,7 +59,7 @@ function captureScroll(): DrawerScrollSnapshot | null {
 }
 
 function restoreScroll(snapshot: DrawerScrollSnapshot | null) {
-  const element = viewportRef.value
+  const element = scrollElement()
   if (!element || !snapshot) return
   const delta = element.scrollHeight - snapshot.scrollHeight
   element.scrollTop = snapshot.atBottom ? snapshot.scrollTop + delta : snapshot.scrollTop
@@ -65,9 +69,8 @@ defineExpose({ viewportRef, captureScroll, restoreScroll })
 </script>
 
 <style scoped>
-.drawer-viewport { position: relative; width: 100%; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; overflow-anchor: none; }
-.drawer-viewport.canvas-viewport { overflow-y: auto; }
-.drawer-viewport.project-viewport { overflow-y: auto; scrollbar-gutter: stable; }
+.drawer-viewport { position: relative; width: 100%; overflow: hidden; overflow-anchor: none; }
+.drawer-viewport.canvas-viewport, .drawer-viewport.project-viewport { overflow: hidden; }
 .drawer-viewport::-webkit-scrollbar { width: 3px; }
 .drawer-viewport::-webkit-scrollbar-track { background: transparent; }
 .drawer-viewport::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }

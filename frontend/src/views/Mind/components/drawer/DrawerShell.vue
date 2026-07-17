@@ -4,7 +4,7 @@
     data-layout-role="shell"
     data-layout-key="drawer-shell"
     :class="[{ open, 'project-panel': panelClass === 'project-panel' }, panelClass]"
-    :style="{ '--drawer-width': width, '--drawer-height': `${targetHeight}px` }"
+    :style="{ '--drawer-width': open ? width : 'var(--canvas-toolbar-height)' }"
   >
     <slot name="header" />
     <div class="drawer-shell-collapse">
@@ -17,7 +17,6 @@
 defineProps({
   open: { type: Boolean, default: false },
   width: { type: String, default: '190px' },
-  targetHeight: { type: Number, default: 0 },
   panelClass: { type: String, default: '' },
 })
 
