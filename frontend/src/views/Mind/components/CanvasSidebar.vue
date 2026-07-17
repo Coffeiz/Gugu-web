@@ -247,7 +247,16 @@ function toggleProjectStatus(status: string) {
     const groups = Array.from(root.querySelectorAll<HTMLElement>(':scope > .project-group')).map((el) => {
       const rect = el.getBoundingClientRect()
       const title = el.querySelector<HTMLElement>('.project-group-title')?.getBoundingClientRect()
-      return { top: +rect.top.toFixed(2), height: +rect.height.toFixed(2), titleTop: title ? +title.top.toFixed(2) : null, transform: getComputedStyle(el).transform }
+      const cardsEl = el.querySelector<HTMLElement>('.project-group-cards')
+      const cardsRect = cardsEl?.getBoundingClientRect()
+      const cards = cardsEl ? Array.from(cardsEl.querySelectorAll<HTMLElement>('.drawer-project-card')).map(card => {
+        const r = card.getBoundingClientRect()
+        return { name: card.querySelector('.proj-name')?.textContent?.trim() ?? card.dataset.projectId, top: +r.top.toFixed(2), h: +r.height.toFixed(2), op: getComputedStyle(card).opacity, pos: getComputedStyle(card).position, leaving: card.className.includes('leave') }
+      }) : []
+      return {
+        top: +rect.top.toFixed(2), height: +rect.height.toFixed(2), titleTop: title ? +title.top.toFixed(2) : null, transform: getComputedStyle(el).transform,
+        cardsHeight: cardsRect ? +cardsRect.height.toFixed(2) : null, cardsInlineHeight: cardsEl?.style.height || null, cards,
+      }
     })
     console.log('[drawer-group-move-probe]', JSON.stringify({ status, phase, groups,
       scroll: scroll ? { top: scroll.scrollTop, height: scroll.scrollHeight, client: scroll.clientHeight } : null,
@@ -264,14 +273,14 @@ function toggleProjectStatus(status: string) {
     probe('raf-1')
     requestAnimationFrame(() => {
       probe('raf-2')
-      window.setTimeout(() => probe('t100'), 100)
-      window.setTimeout(() => probe('t200'), 200)
-      window.setTimeout(() => probe('after-transition'), 320)
-      // 之前的采样到 320ms 为止全程吻合，没抓到跳动——往后多探几个点，
-      // 确认跳动到底发生在动画结束后多久。
-      window.setTimeout(() => probe('t500'), 500)
-      window.setTimeout(() => probe('t800'), 800)
-      window.setTimeout(() => probe('t1200'), 1200)
+      // 单卡离场的 opacity 淡出只有 .16s（.drawer-project-cards-leave-active），比外层
+      // 折叠动画的 .28s 短——用户反馈跳动就发生在单卡淡出结束的那一帧，之前 100/200ms
+      // 的采样点正好卡在 160ms 两侧、没对上，这次密集采样 140~190ms，并且同时探针
+      // .project-group-cards 和单张卡自己的位置（不只是外层 .project-group）。
+      for (const t of [140, 150, 155, 160, 165, 170, 180, 190]) {
+        window.setTimeout(() => probe(`t${t}`), t)
+      }
+      window.setTimeout(() => probe('t320'), 320)
     })
   })
 }
