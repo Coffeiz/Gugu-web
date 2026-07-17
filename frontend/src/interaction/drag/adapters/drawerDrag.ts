@@ -5,7 +5,10 @@ const DRAWER_SCALE_MS = 160
 
 export interface DrawerDragOptions {
   projectId: number
-  canvasScale: number
+  // 活的取值函数，不能传静态快照——抓着卡片不放的时候用户还可能滚轮继续缩放画布，
+  // 静态数字在抓起那一刻就冻住了，之后画布怎么缩放克隆都不会跟着变
+  // （2026-07-17 复现：抽屉拖出的项目卡克隆无法跟随摄像机放大缩小）。
+  canvasScale: () => number
   addToCanvas: (projectId: number, center: { x: number; y: number }, size: { w: number; h: number }) => Promise<HTMLElement | null>
   onClick: () => void
 }
@@ -30,7 +33,7 @@ export function startDrawerDrag(
     if (scaleStartedAt == null) return 1
     const progress = Math.min(1, (performance.now() - scaleStartedAt) / DRAWER_SCALE_MS)
     const eased = 1 - (1 - progress) ** 3
-    return 1 + (options.canvasScale - 1) * eased
+    return 1 + (options.canvasScale() - 1) * eased
   }
 
   startPhysicsDrag(event, card, {

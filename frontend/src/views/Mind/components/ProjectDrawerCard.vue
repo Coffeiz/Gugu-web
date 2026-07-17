@@ -32,7 +32,7 @@ const emit = defineEmits<{ (e: 'add'): void }>()
 function onPointerDown(event: PointerEvent) {
   startDrawerPointerDrag(event, {
     projectId: props.project.id,
-    canvasScale: props.canvasScale,
+    canvasScale: () => props.canvasScale,
     addToCanvas: props.addToCanvas,
     onClick: () => emit('add'),
   })
@@ -49,7 +49,7 @@ function onLandingRegrab(event: Event) {
   const card = event.currentTarget as HTMLElement
   startDrawerDrag(handoff.detail.event, card, {
     projectId: props.project.id,
-    canvasScale: props.canvasScale,
+    canvasScale: () => props.canvasScale,
     addToCanvas: props.addToCanvas,
     onClick: () => emit('add'),
   }, { initialRect: handoff.detail.initialRect, isLandingRegrab: true })
