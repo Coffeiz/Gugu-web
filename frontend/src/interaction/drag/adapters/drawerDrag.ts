@@ -53,12 +53,15 @@ export function startDrawerDrag(
       const pointer = context?.pointer ?? center
       const drawer = document.querySelector<HTMLElement>('[data-project-drawer-dropzone]')
       const drawerRect = drawer?.getBoundingClientRect()
+      // 临时探针：先确认落点判定本身有没有走进「放回抽屉」这个分支。
+      console.log('[drawer-return-probe] onDrop', { pointer, hasDrawer: !!drawer, drawerRect, insideDrawer: !!(drawer && drawerRect && pointer.x >= drawerRect.left && pointer.x <= drawerRect.right && pointer.y >= drawerRect.top && pointer.y <= drawerRect.bottom) })
       if (drawer && drawerRect && pointer.x >= drawerRect.left && pointer.x <= drawerRect.right && pointer.y >= drawerRect.top && pointer.y <= drawerRect.bottom) {
         returnTarget = card
         landingTarget = null
-        // 临时探针：定位「放回抽屉时同组卡片方向反了」——记录同一 .project-group-cards 里
+        // 定位「放回抽屉时同组卡片方向反了」——记录同一 .project-group-cards 里
         // 每张卡此刻的位置，几帧后再量一次，看谁动了、动了多少、往哪个方向。排查完删掉。
         const group = card.closest('.project-group-cards')
+        console.log('[drawer-return-probe] group found?', !!group, card)
         if (group) {
           const cards = Array.from(group.querySelectorAll<HTMLElement>('.drawer-project-card'))
           const before = cards.map(el => ({ el, top: el.getBoundingClientRect().top }))
