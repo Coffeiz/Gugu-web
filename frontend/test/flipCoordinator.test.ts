@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createFlipTransaction } from '../src/interaction/drag/animation/flipCoordinator'
+import { createFlipRetargetRegistry, createFlipTransaction } from '../src/interaction/drag/animation/flipCoordinator'
 
 const rect = (left: number, top: number): DOMRect => ({
   left, top, width: 40, height: 20, right: left + 40, bottom: top + 20,
@@ -168,5 +168,36 @@ describe('FLIP 协调器', () => {
     expect(element.style.transform).toBe('')
     expect(element.dataset.flipOwner).toBeUndefined()
     vi.useRealTimers()
+  })
+
+  it('重定目标注册表只保留当前回调并按稳定元素分发', () => {
+    const first = document.createElement('div')
+    const second = document.createElement('div')
+    const registry = createFlipRetargetRegistry()
+    const received: number[] = []
+    const firstCallback = (box: { left: number; top: number; width: number; height: number }) => received.push(box.left)
+    const secondCallback = (box: { left: number; top: number; width: number; height: number }) => received.push(box.left)
+    registry.set(first, firstCallback)
+    registry.set(second, secondCallback)
+    registry.retarget([second, first], element => ({ left: element === first ? 10 : 20, top: 0, width: 1, height: 1 }))
+    expect(received).toEqual([20, 10])
+    registry.clear(first, secondCallback)
+    registry.retarget([first], () => ({ left: 30, top: 0, width: 1, height: 1 }))
+    expect(received).toEqual([20, 10, 30])
+    registry.clear(first, firstCallback)
+    registry.retarget([first], () => ({ left: 40, top: 0, width: 1, height: 1 }))
+    expect(received).toEqual([20, 10, 30])
+  })
+
+  it('重定目标连续更新时只调用同一元素的最新回调', () => {
+    const element = document.createElement('div')
+    const registry = createFlipRetargetRegistry()
+    const received: number[] = []
+    const oldCallback = (box: { left: number; top: number; width: number; height: number }) => received.push(box.left)
+    const latestCallback = (box: { left: number; top: number; width: number; height: number }) => received.push(box.left + 100)
+    registry.set(element, oldCallback)
+    registry.set(element, latestCallback)
+    registry.retarget([element], () => ({ left: 20, top: 0, width: 1, height: 1 }))
+    expect(received).toEqual([120])
   })
 })

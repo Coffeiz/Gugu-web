@@ -9,7 +9,7 @@
  */
 
 import { LandingState } from './animation/landing'
-import { createFlipItems, createFlipTransaction, measureWithoutTransform } from './animation/flipCoordinator'
+import { createFlipItems, createFlipRetargetRegistry, createFlipTransaction, measureWithoutTransform } from './animation/flipCoordinator'
 import { animateFlyTo } from './animation/flyTo'
 import { startMorphLifecycle } from './animation/morphLifecycle'
 import type { DragSession } from './core/DragSession'
@@ -188,15 +188,12 @@ const _activeState = {
 // 位置」，不是真正的布局落点。据它重定目标 → 克隆过度移动再由真卡归位（实测：先拖 B、快抓 A、
 // 松开 A，B 的克隆过度右移然后归位）。这里对每张落地卡临时把 transform 归零（opacity:0，肉眼
 // 无感）量出干净布局落点再还原。CSS transition 天然支持途中改目标：从当前插值位置平滑转向新目标。
-let _pendingRetargets = new Map<HTMLElement, (box: any) => void>()
+const _retargetRegistry = createFlipRetargetRegistry()
 function _retargetLandings(kids: HTMLElement[], _rectsIgnored?: any[]) {
-  if (!_pendingRetargets.size) return
-  for (const k of kids) {
-    const fn = _pendingRetargets.get(k)
-    if (!fn) continue
-    const b = measureWithoutTransform(k)
-    fn({ left: b.left, top: b.top, width: b.width, height: b.height })
-  }
+  _retargetRegistry.retarget(kids, element => {
+    const b = measureWithoutTransform(element)
+    return { left: b.left, top: b.top, width: b.width, height: b.height }
+  })
 }
 
 /** 收集参与让位 FLIP 的兄弟元素，排除当前拖拽克隆和源元素。 */
@@ -206,6 +203,25 @@ export function collectFlipChildren(container: HTMLElement, exclude: Element | n
     : [...container.children] as HTMLElement[]
   return elements.filter(c =>
     c.nodeType === 1 && c !== exclude && !c.classList.contains('phys-drag-clone'))
+}
+
+export function prepareSiblingFlip(
+  container: HTMLElement,
+  exclude: Element | null,
+  allDescendants: boolean,
+  mutate: () => void,
+  options: Parameters<typeof createFlipTransaction>[0],
+  beforeCapture?: () => void,
+  afterMeasure?: () => void,
+) {
+  const kids = collectFlipChildren(container, exclude, allDescendants)
+  beforeCapture?.()
+  const before = _rects(kids)
+  mutate()
+  const after = _rects(kids)
+  afterMeasure?.()
+  const transaction = prepareFlipTransaction(createFlipItems(kids), before, after, options)
+  return { kids, transaction }
 }
 const _rects = (els: Element[]) => els.map(e => e.getBoundingClientRect())
 
@@ -273,12 +289,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     easing: _SETTLE,
     createFlipItems,
     prepareFlipTransaction,
+    prepareSiblingFlip,
     transparentGhost: _transparentGhost,
     registerCleanup: (session, cleanup) => session.addCleanup(cleanup),
-    setRetarget: (target, retarget) => _pendingRetargets.set(target, retarget),
-    clearRetarget: (target, retarget) => {
-      if (_pendingRetargets.get(target) === retarget) _pendingRetargets.delete(target)
-    },
+    setRetarget: _retargetRegistry.set,
+    clearRetarget: _retargetRegistry.clear,
     retargetLandings: _retargetLandings,
     childCards: collectFlipChildren,
     rects: _rects,

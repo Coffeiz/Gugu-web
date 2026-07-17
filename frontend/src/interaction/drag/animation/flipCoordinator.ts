@@ -8,6 +8,19 @@ export interface FlipItem {
   element: HTMLElement
 }
 
+export interface FlipRetargetBox {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+export interface FlipRetargetRegistry {
+  set(element: HTMLElement, callback: (box: FlipRetargetBox) => void): void
+  clear(element: HTMLElement, callback: (box: FlipRetargetBox) => void): void
+  retarget(elements: HTMLElement[], measure: (element: HTMLElement) => FlipRetargetBox): void
+}
+
 const elementKeys = new WeakMap<HTMLElement, number>()
 let nextElementKey = 1
 
@@ -39,6 +52,22 @@ export function measureWithoutTransform(element: HTMLElement): DOMRect {
   element.style.transform = transform
   element.style.transition = transition
   return rect
+}
+
+/** 集中管理落地飞行动画的目标重定向，避免 engine 自己维护另一套全局注册表。 */
+export function createFlipRetargetRegistry(): FlipRetargetRegistry {
+  const callbacks = new Map<HTMLElement, (box: FlipRetargetBox) => void>()
+  return {
+    set(element, callback) {
+      callbacks.set(element, callback)
+    },
+    clear(element, callback) {
+      if (callbacks.get(element) === callback) callbacks.delete(element)
+    },
+    retarget(elements, measure) {
+      elements.forEach(element => callbacks.get(element)?.(measure(element)))
+    },
+  }
 }
 
 export interface FlipTransaction {
