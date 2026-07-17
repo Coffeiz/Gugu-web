@@ -203,10 +203,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       sourceStyle.borderBottomWidth,
       sourceStyle.borderLeftWidth,
     ].join(' ')
-    // 标记类：全程唯一的连接点覆盖层，套着跟 holder 一致的 rotateZ 摆动。RelationLayer.vue
-    // 拖拽/落地飞行期间靠 .phys-conn-dot-overlay[data-node-id] 精确量出它的真实屏幕位置
+    // 标记类：全程唯一的连接点管理节点，套着跟 holder 一致的 rotateZ 摆动。RelationLayer.vue
+    // 拖拽/落地飞行期间靠 .phys-conn-dot-manager[data-node-id] 精确量出它的真实屏幕位置
     // （见其 measuredAnchor），不用另建一份旋转矩阵去猜锚点该在哪。
-    connectionDotOverlay.classList.add('phys-conn-dot-overlay')
   }
   // 右上操作区也不能跟两张内容克隆交叉淡变：落地 clone2 会在半程盖住旧 clone，按钮随它
   // 淡出后再由本体补出来，就会像「突然跳出」一样。跟连接点同理，整段拖放只保留这一份
