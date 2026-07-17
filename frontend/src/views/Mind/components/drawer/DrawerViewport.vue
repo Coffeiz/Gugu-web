@@ -39,6 +39,8 @@ defineExpose({ viewportRef, captureScroll, restoreScroll })
 
 <style scoped>
 .drawer-viewport { position: relative; width: 100%; height: 100%; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+.drawer-viewport.canvas-viewport { overflow-y: auto; }
+.drawer-viewport.project-viewport { overflow: hidden; scrollbar-gutter: auto; }
 .drawer-viewport::-webkit-scrollbar { width: 3px; }
 .drawer-viewport::-webkit-scrollbar-track { background: transparent; }
 .drawer-viewport::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }

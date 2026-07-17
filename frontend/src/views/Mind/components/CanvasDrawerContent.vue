@@ -1,0 +1,90 @@
+<template>
+  <div ref="listRef" class="cd-list canvas-list">
+    <div v-for="canvas in canvases" :key="canvas.id" class="canvas-item" :class="{ active: canvas.id === activeId }" @click="open(canvas.id)">
+      <span v-if="editingId === canvas.id" class="rename-sizer" @click.stop>
+        <span class="rename-ghost">{{ editingText || ' ' }}</span>
+        <input
+          v-model="editingText"
+          class="rename-input-inline"
+          v-enter="() => commitRename(canvas.id)"
+          @keydown.esc="cancelRename"
+          @blur="commitRename(canvas.id)"
+          @focus="($event.target as HTMLInputElement).select()"
+        />
+      </span>
+      <span v-else class="ci-title">{{ (localTitles.get(canvas.id) ?? canvas.title) || '未命名画布' }}</span>
+      <div class="ci-actions">
+        <button :title="editingId === canvas.id ? '确认' : '重命名'" class="ci-btn" @click.stop="editingId === canvas.id ? commitRename(canvas.id) : startRename(canvas)">
+          <PhCheck v-if="editingId === canvas.id" :size="11" weight="bold" />
+          <PhPencilSimple v-else :size="11" weight="bold" />
+        </button>
+        <button title="删除画布" class="ci-btn ci-delete" @click.stop="remove(canvas)"><PhTrash :size="11" weight="bold" /></button>
+      </div>
+    </div>
+    <button class="canvas-create-card" @click="emit('create')"><PhPlus :size="14" weight="bold" />新建画布</button>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { nextTick, ref, type PropType } from 'vue'
+import { PhCheck, PhPencilSimple, PhPlus, PhTrash } from '@phosphor-icons/vue'
+import type { MindCanvas } from '@/services/api'
+
+const props = defineProps({ canvases: { type: Array as PropType<MindCanvas[]>, required: true }, activeId: { type: Number as PropType<number | null>, default: null } })
+const emit = defineEmits<{ (e: 'create'): void; (e: 'open', id: number): void; (e: 'delete', canvas: MindCanvas): void; (e: 'rename', id: number, title: string): void }>()
+const listRef = ref<HTMLElement | null>(null)
+const editingId = ref<number | null>(null)
+const editingText = ref('')
+const localTitles = ref(new Map<number, string>())
+
+function open(id: number) { emit('open', id) }
+function remove(canvas: MindCanvas) { if (window.confirm(`删除画布「${canvas.title || '未命名画布'}」？`)) emit('delete', canvas) }
+function startRename(canvas: MindCanvas) {
+  editingId.value = canvas.id
+  editingText.value = localTitles.value.get(canvas.id) ?? canvas.title ?? ''
+  // 不用模板 ref：这个 input 嵌在 v-for 里，即使 v-if 保证同时只渲染一个，Vue 仍会把
+  // 同名 ref 收集成数组（renameInput.value 变成 [HTMLInputElement]，数组没有 .focus()，
+  // 表现为 TypeError）。改用 querySelector，跟 Files/index.vue 同款重命名输入框的
+  // 现成写法一致，绕开这个 v-for + ref 的坑。
+  nextTick(() => {
+    const input = listRef.value?.querySelector<HTMLInputElement>('.rename-input-inline')
+    input?.focus()
+    input?.select()
+  })
+}
+function cancelRename() { editingId.value = null; editingText.value = '' }
+function commitRename(id: number) {
+  if (editingId.value !== id) return
+  const title = editingText.value.trim()
+  if (!title) return cancelRename()
+  localTitles.value.set(id, title)
+  emit('rename', id, title)
+  cancelRename()
+}
+defineExpose({ listRef })
+</script>
+
+<style scoped>
+/* .rename-sizer/.rename-ghost/.rename-input-inline 用 global.css 全站共用的那份
+   （宽度随文字自适应），这里不再重新定义一套固定宽度的输入框——之前各画各的，
+   跟文件库/项目卡的重命名输入框手感对不上（2026-07-17 复现：画布重命名样式跟别处不一致）。 */
+.cd-list { box-sizing: border-box; padding: 0 9px 9px; }
+.canvas-list { width: 190px; }
+.canvas-item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; height: 32px; padding: 0 4px 0 8px; border-radius: 6px; background: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
+.canvas-item:hover { background: rgba(255,255,255,.55); }
+.canvas-item.active { background: rgba(255,255,255,.86); color: var(--color-primary); font-weight: 700; box-shadow: 0 1px 3px rgba(60,70,100,.08); }
+.ci-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* global.css 里 .rename-sizer 是 inline-block，宽度随文字内容收缩——在这个 flex 行里
+   会导致输入框跟着文字宽度走，右边的操作按钮跟着一起挪动、不再固定在行尾。这里改成
+   flex:1 顶开剩余空间，行为对齐 .ci-title（2026-07-17 复现：进入重命名后图标跟着文字跑）。
+   .rename-input-inline 本身不再本地覆盖，直接用 global.css 那份文件卡同款样式。 */
+.canvas-item .rename-sizer { flex: 1; min-width: 0; }
+.ci-actions { display: flex; flex-shrink: 0; gap: 2px; opacity: 0; transition: opacity .15s; }
+.canvas-item:hover .ci-actions { opacity: 1; }
+.canvas-item:has(.rename-sizer) .ci-actions { opacity: 1; }
+.ci-btn { display: inline-flex; align-items: center; justify-content: center; width: 19px; height: 19px; border: 0; border-radius: 5px; background: none; color: var(--text-secondary); cursor: pointer; }
+.ci-btn:hover { background: rgba(123,127,178,.16); color: var(--color-primary); }
+.ci-delete:hover { background: rgba(200,90,90,.14); color: #c85a5a; }
+.canvas-create-card { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 32px; margin-top: 5px; box-sizing: border-box; border: 1.5px dashed rgba(0,0,0,.12); border-radius: 6px; background: rgba(255,255,255,.16); color: var(--text-secondary); font: 600 12px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
+.canvas-create-card:hover { background: rgba(123,127,178,.07); border-color: rgba(123,127,178,.4); color: var(--color-primary); }
+</style>

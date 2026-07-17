@@ -24,34 +24,10 @@
 
     <!-- 两个面板始终挂载、各自在固定宽度下量高度。开关时只换目标尺寸与可见内容，
          不会再出现旧面板尺寸被新面板借用一帧的横向/纵向两段动画。 -->
-    <DrawerViewport>
+    <DrawerViewport :class="panel === 'canvases' ? 'canvas-viewport' : 'project-viewport'">
       <div class="cd-stage">
         <section class="cd-content-panel canvas-panel" :class="{ visible: visiblePanel === 'canvases' && contentVisible }" :aria-hidden="visiblePanel !== 'canvases'">
-          <div ref="canvasListRef" class="cd-list canvas-list">
-            <div v-for="canvas in canvases" :key="canvas.id" class="canvas-item" :class="{ active: canvas.id === activeId }" @click="onOpen(canvas.id)">
-              <span v-if="renamingId === canvas.id" class="rename-sizer" @click.stop>
-                <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                <input
-                  ref="renameInputRef"
-                  v-model="renameText"
-                  class="rename-input-inline"
-                  v-enter="() => commitRename(canvas.id)"
-                  @keydown.esc="cancelRename"
-                  @blur="commitRename(canvas.id)"
-                  @focus="($event.target as HTMLInputElement).select()"
-                />
-              </span>
-              <span v-else class="ci-title">{{ canvas.title || '未命名画布' }}</span>
-              <div class="ci-actions">
-                <button :title="renamingId === canvas.id ? '确认' : '重命名'" class="ci-btn" @click.stop="renamingId === canvas.id ? commitRename(canvas.id) : startRename(canvas)">
-                  <PhCheck v-if="renamingId === canvas.id" :size="11" weight="bold" />
-                  <PhPencilSimple v-else :size="11" weight="bold" />
-                </button>
-                <button title="删除画布" class="ci-btn ci-delete" @click.stop="onDelete(canvas)"><PhTrash :size="11" weight="bold" /></button>
-              </div>
-            </div>
-            <button class="canvas-create-card" @click="emit('create')"><PhPlus :size="14" weight="bold" />新建画布</button>
-          </div>
+          <CanvasDrawerContent ref="canvasContentRef" :canvases="canvases" :active-id="activeId" @create="emit('create')" @open="onOpen" @delete="onDelete" @rename="(id, title) => emit('rename', id, title)" />
         </section>
 
        <section class="cd-content-panel projects-panel" :class="{ visible: visiblePanel === 'projects' && contentVisible }" :aria-hidden="visiblePanel !== 'projects'">
@@ -100,6 +76,7 @@ import SearchInput from '@/components/common/SearchInput.vue'
 import DrawerShell from './drawer/DrawerShell.vue'
 import DrawerTrack from './drawer/DrawerTrack.vue'
 import DrawerViewport from './drawer/DrawerViewport.vue'
+import CanvasDrawerContent from './CanvasDrawerContent.vue'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },
@@ -130,7 +107,7 @@ const panel = ref<Panel>('canvases')
 const visiblePanel = ref<Panel>('canvases')
 const contentVisible = ref(false)
 const headerVisible = ref(false)
-const canvasListRef = ref<HTMLElement | null>(null)
+const canvasContentRef = ref<InstanceType<typeof CanvasDrawerContent> | null>(null)
 const projectListRef = ref<HTMLElement | null>(null)
 const panelHeights = ref<Record<Panel, number>>({ canvases: 0, projects: 0 })
 const targetHeight = computed(() => panelHeights.value[panel.value])
@@ -209,7 +186,7 @@ function releaseLeaveSpace(el: Element) {
   }
 }
 function measurePanel(panelName: Panel) {
-  const list = panelName === 'canvases' ? canvasListRef.value : projectListRef.value
+  const list = panelName === 'canvases' ? canvasContentRef.value?.listRef : projectListRef.value
   if (!list) return
   panelHeights.value = {
     ...panelHeights.value,
@@ -274,7 +251,6 @@ function onOpen(id: number) {
   if (renamingId.value == null) emit('open', id)
 }
 function onDelete(canvas: MindCanvas) {
-  if (!window.confirm(`删除画布「${canvas.title || '未命名画布'}」？画布上的贴纸摆放将一并清空，此操作不可撤销。`)) return
   emit('delete', canvas.id)
 }
 function startRename(canvas: MindCanvas) {
@@ -300,7 +276,7 @@ function commitRename(id: number) {
 onMounted(() => {
   canvasListObserver = new ResizeObserver(() => measurePanel('canvases'))
   projectListObserver = new ResizeObserver(() => measurePanel('projects'))
-  if (canvasListRef.value) canvasListObserver.observe(canvasListRef.value)
+  if (canvasContentRef.value?.listRef) canvasListObserver.observe(canvasContentRef.value.listRef)
   if (projectListRef.value) projectListObserver.observe(projectListRef.value)
   measurePanels()
   window.addEventListener('resize', measurePanels)
@@ -359,13 +335,14 @@ onBeforeUnmount(() => {
 
 .cd-stage { position: relative; width: 100%; height: 100%; }
 .cd-content-panel { position: absolute; top: 0; left: 0; opacity: 0; filter: blur(6px); pointer-events: none; transition: opacity .26s cubic-bezier(.22,1,.36,1), filter .26s cubic-bezier(.22,1,.36,1); }
+.cd-content-panel:not(.visible) { height: 0; overflow: hidden; }
 .cd-content-panel.visible { opacity: 1; filter: blur(0); pointer-events: auto; }
 .canvas-panel { width: 190px; }
 .projects-panel { width: 284px; }
 .cd-list { box-sizing: border-box; max-height: none; overflow: visible; padding: 0 9px 9px; }
 .canvas-list { width: 190px; }
-.project-list { display: flex; flex-direction: column; width: 284px; min-height: 312px; gap: 0; }
-.project-list-scroll { flex: 1; overflow: visible; min-height: 0; padding-bottom: 9px; }
+.project-list { display: flex; flex-direction: column; width: 284px; max-height: 55vh; min-height: 312px; gap: 0; }
+.project-list-scroll { flex: 1; overflow-y: auto; min-height: 0; padding-bottom: 9px; scrollbar-gutter: stable; }
 
 .canvas-item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; height: 32px; padding: 0 4px 0 8px; border-radius: 6px; background: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
 .canvas-create-card { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 32px; margin-top: 5px; box-sizing: border-box; border: 1.5px dashed rgba(0,0,0,.12); border-radius: 6px; background: rgba(255,255,255,.16); color: var(--text-secondary); font: 600 12px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }

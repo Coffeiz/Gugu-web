@@ -4,9 +4,7 @@
     :class="[{ open, 'project-panel': panelClass === 'project-panel' }, panelClass]"
     :style="{ '--drawer-width': width, '--drawer-height': `${targetHeight}px` }"
   >
-    <div class="drawer-shell-header">
-      <slot name="header" />
-    </div>
+    <slot name="header" />
     <div class="drawer-shell-collapse" :style="{ height: open ? `${targetHeight}px` : '0px' }">
       <slot />
     </div>
@@ -36,7 +34,5 @@ defineProps({
   transform: translateY(-50%);
   transition: width .38s cubic-bezier(.22,1,.36,1), border-radius .38s cubic-bezier(.22,1,.36,1), background .25s ease, box-shadow .25s ease;
 }
-.drawer-shell-collapse { position: relative; width: 100%; overflow: hidden; transition: height .2s cubic-bezier(.22,1,.36,1); }
-.drawer-shell-header { display: flex; align-items: center; height: var(--canvas-toolbar-height); flex-shrink: 0; transition: height .38s cubic-bezier(.22,1,.36,1); }
-.drawer-shell:not(.open) .drawer-shell-header { height: calc(var(--canvas-toolbar-height) * 2); flex-direction: column; }
+.drawer-shell-collapse { position: relative; width: 100%; overflow: hidden; transition: height .38s cubic-bezier(.22,1,.36,1); }
 </style>
