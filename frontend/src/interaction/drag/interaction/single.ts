@@ -181,23 +181,23 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   // 连接点不能跟随两张卡片内容克隆交叉淡变：后创建的落地克隆会短暂盖住前一张，圆点便会
   // 在卡片前后切换。保留 holder 内唯一的一层覆盖物，避免连接点跟内容克隆一起交叉淡变。
   const sourceConnectionDot = sourceEl.querySelector<HTMLElement>('.card-conn-dots')
-  const connectionDotOverlay = sourceConnectionDot ? acquireConnectionDot(sourceConnectionDot) : undefined
+  const connectionDotManager = sourceConnectionDot ? acquireConnectionDot(sourceConnectionDot) : undefined
   clone.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
-  if (connectionDotOverlay) {
-    connectionDotOverlay.classList.toggle('hovering', Boolean(opts.initialHover || sourceEl.matches(':hover')))
+  if (connectionDotManager) {
+    connectionDotManager.classList.toggle('hovering', Boolean(opts.initialHover || sourceEl.matches(':hover')))
   }
   sourceEl.classList.add('phys-dot-source-hidden')
   const restoreManagedConnectionDot = () => {
     if (!session.isCurrent()) return
     sourceEl.classList.remove('phys-dot-source-hidden')
-    releaseConnectionDot(connectionDotOverlay)
+    releaseConnectionDot(connectionDotManager)
   }
   deps.registerCleanup(session, restoreManagedConnectionDot)
-  if (connectionDotOverlay) {
+  if (connectionDotManager) {
     // 本体里的绝对定位圆点以卡片 padding box 为包含块，会自然避开边框宽度；覆盖层被抽到
     // 没有边框的 scaleShell 后若还用 inset:0，左右圆点会各向外偏一个 border。按源卡真实
     // 边框内缩，克隆与本体的连接点中心落在完全相同的坐标上。
-    connectionDotOverlay.style.inset = [
+    connectionDotManager.style.inset = [
       sourceStyle.borderTopWidth,
       sourceStyle.borderRightWidth,
       sourceStyle.borderBottomWidth,
@@ -247,8 +247,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     zIndex: '', width: cloneW + 'px',
   })
   scaleShell.appendChild(clone)
-  if (connectionDotOverlay) {
-    scaleShell.appendChild(connectionDotOverlay)
+  if (connectionDotManager) {
+    scaleShell.appendChild(connectionDotManager)
   }
   if (cardActionOverlay) scaleShell.appendChild(cardActionOverlay)
   // 克隆体初始按源卡原始大小(scale 1)摆到源卡位置——避免首帧停在左上角(0,0)闪一下，也避免跟
@@ -588,7 +588,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         clone2,
         revealEl,
         sourceEl,
-        connectionDotOverlay,
+        connectionDotManager,
         restoreConnectionDot: restoreManagedConnectionDot,
         cardActionOverlay,
         pointer,

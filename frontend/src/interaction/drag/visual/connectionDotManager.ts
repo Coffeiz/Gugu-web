@@ -7,7 +7,6 @@ export function acquireConnectionDot(source: HTMLElement): HTMLElement {
     return activeDot
   }
   activeDot = source.cloneNode(true) as HTMLElement
-  activeDot.classList.remove('phys-conn-dot-overlay')
   activeDot.classList.add('phys-conn-dot-manager')
   return activeDot
 }

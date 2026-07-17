@@ -13,7 +13,7 @@ export interface MorphLifecycleOptions {
   clone2: HTMLElement
   revealEl: HTMLElement
   sourceEl: HTMLElement
-  connectionDotOverlay?: HTMLElement
+  connectionDotManager?: HTMLElement
   restoreConnectionDot?: () => void
   cardActionOverlay?: HTMLElement
   pointer: boolean
@@ -53,7 +53,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
 
   const syncHover = (hovering: boolean) => {
     landingHovered = hovering
-    options.connectionDotOverlay?.classList.toggle('hovering', options.revealElConnectable && hovering)
+    options.connectionDotManager?.classList.toggle('hovering', options.revealElConnectable && hovering)
     if (options.cardActionOverlay) options.cardActionOverlay.style.opacity = hovering ? '1' : '0'
   }
   const isOverCard = (x: number, y: number) => {
@@ -81,13 +81,13 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     onRegrab: options.onRegrab,
   })
   // 初始调用：只记录落地时的 hover 状态给后面 revealWithoutStaleHover 用，不动
-  // connectionDotOverlay 的 hovering 类——它在创建时已从 clone 继承正确的初始状态
+  // connectionDotManager 的 hovering 类——它在创建时已从源卡继承正确的初始状态
   //（startsHovered），这里如果根据 release 瞬间的 isOverCard 重新 toggle，连接点
   // 会先因 holder 坐标微小偏差被摘掉 hovering 类再恢复，在 0.15s transition 窗口内
   // 表现为瞬间消失再淡入。
-  landingHovered = options.connectionDotOverlay?.classList.contains('hovering') ?? false
+  landingHovered = options.connectionDotManager?.classList.contains('hovering') ?? false
   if (options.pointer) document.addEventListener('pointermove', trackPointer)
-  if (options.connectionDotOverlay) {
+  if (options.connectionDotManager) {
     options.holder.style.zIndex = String((Number(options.holder.style.zIndex) || 0) + 1)
   }
 
