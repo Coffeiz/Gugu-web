@@ -1,12 +1,13 @@
 <template>
-  <div
-    class="canvas-drawer glass-card"
-    :class="{ open: expanded, 'project-panel': panel === 'projects' }"
-    :style="{ '--cd-target-width': panel === 'projects' ? '284px' : '190px' }"
+  <DrawerShell
+    :open="expanded"
+    :width="panel === 'projects' ? '284px' : '190px'"
+    :target-height="targetHeight"
+    :panel-class="panel === 'projects' ? 'project-panel' : ''"
     :data-project-drawer-dropzone="expanded && panel === 'projects' ? '' : undefined"
     @pointerdown.stop
   >
-    <div class="cd-head">
+    <template #header><div class="cd-head">
       <Transition name="cd-expanded">
         <div v-if="headerVisible" class="cd-expanded-nav">
           <span class="cd-title">{{ panel === 'canvases' ? '画布' : '项目' }}</span>
@@ -19,11 +20,11 @@
         <button class="cd-toggle" title="项目素材" @click="togglePanel('projects')"><PhStack :size="16" weight="bold" /></button>
         </div>
       </Transition>
-    </div>
+    </div></template>
 
     <!-- 两个面板始终挂载、各自在固定宽度下量高度。开关时只换目标尺寸与可见内容，
          不会再出现旧面板尺寸被新面板借用一帧的横向/纵向两段动画。 -->
-    <div class="cd-collapse" :style="{ height: expanded ? `${targetHeight}px` : '0px' }">
+    <DrawerViewport>
       <div class="cd-stage">
         <section class="cd-content-panel canvas-panel" :class="{ visible: visiblePanel === 'canvases' && contentVisible }" :aria-hidden="visiblePanel !== 'canvases'">
           <div ref="canvasListRef" class="cd-list canvas-list">
@@ -56,7 +57,7 @@
        <section class="cd-content-panel projects-panel" :class="{ visible: visiblePanel === 'projects' && contentVisible }" :aria-hidden="visiblePanel !== 'projects'">
          <div ref="projectListRef" class="cd-list project-list">
            <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" @pointerdown.stop />
-            <div class="project-list-scroll">
+           <DrawerTrack class="project-list-scroll">
            <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
             </div>
@@ -81,12 +82,12 @@
               </TransitionGroup>
               <div v-if="!projectsLoading && !filteredProjects.length" class="project-empty">没有匹配的项目</div>
            </template>
-            </div>
+            </DrawerTrack>
          </div>
        </section>
       </div>
-    </div>
-  </div>
+    </DrawerViewport>
+  </DrawerShell>
 </template>
 
 <script setup lang="ts">
@@ -96,6 +97,9 @@ import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
 import ProjectDrawerCard from './ProjectDrawerCard.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
+import DrawerShell from './drawer/DrawerShell.vue'
+import DrawerTrack from './drawer/DrawerTrack.vue'
+import DrawerViewport from './drawer/DrawerViewport.vue'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },
@@ -156,7 +160,7 @@ const leaveParents = new WeakMap<HTMLElement, HTMLElement>()
 // leave-active 把离场卡切成 position:absolute 时不给 top/left，指望浏览器按它离场前的
 // 「静态位置」自动摆放——用 DevTools 性能录制实测抓到过这个自动定位算错：离场卡被摆到了
 // 所在 .project-group-cards 容器的最顶端（跟第一张卡重叠），不是它离场前所在的那个位置。
-// 这层容器是可滚动 .cd-list 的后代、又套了两层 TransitionGroup，浏览器的「静态位置」推算
+// 这层容器位于抽屉 viewport 的后代、又套了两层 TransitionGroup，浏览器的「静态位置」推算
 // 在这种嵌套场景下不可靠。不再依赖浏览器猜，改成在真正离场前用 getBoundingClientRect()
 // 量出它此刻相对 .project-group-cards（offsetParent，见其 position:relative）的像素坐标，
 // 直接写成明确的 top/left——浏览器不用再猜，也就没有猜错的余地。
@@ -188,61 +192,16 @@ function releaseLeaveSpace(el: Element) {
   if (!state) return
   state.count -= 1
   if (state.count <= 0) {
-    const drawer = parent.closest('.canvas-drawer') as HTMLElement | null
-    const drawerRect = drawer?.getBoundingClientRect()
-    const drawerParent = drawer?.offsetParent as HTMLElement | null
-    const drawerParentRect = drawerParent?.getBoundingClientRect()
-    const leaveRect = node.getBoundingClientRect()
-    const groupsRoot = parent.closest('.project-groups') as HTMLElement | null
-    const sourceGroup = parent.closest('.project-group')
-    const groups = groupsRoot
-      ? Array.from(groupsRoot.querySelectorAll<HTMLElement>(':scope > .project-group'))
-          .filter(element => element !== sourceGroup)
-          .map(element => ({ element, top: element.getBoundingClientRect().top, bottom: element.getBoundingClientRect().bottom }))
-      : []
     const lockedHeight = parent.getBoundingClientRect().height
     parent.style.minHeight = state.previous
     const targetHeight = parent.getBoundingClientRect().height
     if (Math.abs(lockedHeight - targetHeight) > 0.5) {
-      if (drawer && drawerRect && drawerParentRect) {
-        const drawerCenter = drawerRect.top + drawerRect.height / 2
-        const leaveCenter = leaveRect.top + leaveRect.height / 2
-        if (leaveCenter >= drawerCenter) {
-          drawer.style.top = ''
-          drawer.style.bottom = `${drawerParentRect.bottom - drawerRect.bottom}px`
-        } else {
-          drawer.style.bottom = ''
-          drawer.style.top = `${drawerRect.top - drawerParentRect.top}px`
-        }
-        drawer.style.transform = 'none'
-      }
       parent.style.height = `${lockedHeight}px`
       void parent.offsetHeight
       requestAnimationFrame(() => {
         parent.style.height = `${targetHeight}px`
-        void parent.offsetHeight
-        const center = drawerRect ? drawerRect.top + drawerRect.height / 2 : 0
-        const leaveBelow = leaveRect.top + leaveRect.height / 2 >= center
-        for (const { element, top, bottom } of groups) {
-          const groupCenter = (top + bottom) / 2
-          if (leaveBelow ? groupCenter >= center : groupCenter < center) continue
-          const delta = top - element.getBoundingClientRect().top
-          if (Math.abs(delta) > 0.5) {
-            element.style.transform = `translateY(${delta}px)`
-            element.style.transition = 'transform .2s cubic-bezier(.22,1,.36,1)'
-          }
-        }
-        requestAnimationFrame(() => {
-          for (const { element } of groups) element.style.transform = ''
-        })
         window.setTimeout(() => {
           parent.style.height = ''
-          for (const { element } of groups) element.style.transition = ''
-          if (drawer) {
-            drawer.style.top = ''
-            drawer.style.bottom = ''
-            drawer.style.transform = ''
-          }
         }, 220)
       })
     }
@@ -398,26 +357,15 @@ onBeforeUnmount(() => {
 .cd-compact-enter-active { transition: opacity .22s ease-out, filter .22s ease-out; }
 .cd-compact-enter-from { opacity: 0; filter: blur(3px); }
 
-.cd-collapse { position: relative; width: var(--cd-target-width); overflow: hidden; transition: height .2s cubic-bezier(.22,1,.36,1); }
 .cd-stage { position: relative; width: 100%; height: 100%; }
 .cd-content-panel { position: absolute; top: 0; left: 0; opacity: 0; filter: blur(6px); pointer-events: none; transition: opacity .26s cubic-bezier(.22,1,.36,1), filter .26s cubic-bezier(.22,1,.36,1); }
 .cd-content-panel.visible { opacity: 1; filter: blur(0); pointer-events: auto; }
 .canvas-panel { width: 190px; }
 .projects-panel { width: 284px; }
-.cd-list { box-sizing: border-box; max-height: 55vh; overflow-y: auto; padding: 0 9px 9px; scrollbar-gutter: stable; }
+.cd-list { box-sizing: border-box; max-height: none; overflow: visible; padding: 0 9px 9px; }
 .canvas-list { width: 190px; }
 .project-list { display: flex; flex-direction: column; width: 284px; min-height: 312px; gap: 0; }
-.project-list-scroll { flex: 1; overflow-y: auto; min-height: 0; padding-bottom: 9px; scrollbar-gutter: stable; }
-
-/* 抽屉滚动条：细、半透明、不占布局宽度——跟项目编辑卡 stage 区域（ProjectModal.vue
-   的 .left-content）同款样式。scrollbar-gutter: stable 已在上方固定预留空间，滚动条
-   出现/消失时内容不会左右跳动。 */
-.cd-list::-webkit-scrollbar,
-.project-list-scroll::-webkit-scrollbar { width: 3px; }
-.cd-list::-webkit-scrollbar-track,
-.project-list-scroll::-webkit-scrollbar-track { background: transparent; }
-.cd-list::-webkit-scrollbar-thumb,
-.project-list-scroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
+.project-list-scroll { flex: 1; overflow: visible; min-height: 0; padding-bottom: 9px; }
 
 .canvas-item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; height: 32px; padding: 0 4px 0 8px; border-radius: 6px; background: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
 .canvas-create-card { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 32px; margin-top: 5px; box-sizing: border-box; border: 1.5px dashed rgba(0,0,0,.12); border-radius: 6px; background: rgba(255,255,255,.16); color: var(--text-secondary); font: 600 12px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
@@ -452,7 +400,7 @@ onBeforeUnmount(() => {
   transition: transform .42s cubic-bezier(.22,1,.36,1), height .2s cubic-bezier(.22,1,.36,1);
 }
 .drawer-project-groups-move {
-  transition: transform .34s cubic-bezier(.22,1,.36,1);
+  transition: transform .42s cubic-bezier(.22,1,.36,1);
 }
 /* 协调器声明接管位移时，禁止同一元素再启用 Vue move；未被接管的卡片仍沿用上面的组件 FLIP。 */
 [data-flip-owner="coordinator"].drawer-project-cards-move,
