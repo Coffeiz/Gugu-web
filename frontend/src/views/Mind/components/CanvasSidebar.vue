@@ -44,7 +44,11 @@
               <TransitionGroup name="drawer-project-groups" tag="div" class="project-groups">
                 <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group">
                   <button class="project-group-title" :aria-expanded="openProjectStatuses.has(group.status)" @click="toggleProjectStatus(group.status)"><span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span><span class="project-group-chevron" :class="{ open: openProjectStatuses.has(group.status) }">⌄</span></button>
-                  <Transition name="project-group-fold">
+                  <Transition
+                    :css="false"
+                    @enter="onGroupFoldEnter"
+                    @leave="onGroupFoldLeave"
+                  >
                     <div v-if="openProjectStatuses.has(group.status)" class="project-group-content">
                       <TransitionGroup name="drawer-project-cards" tag="div" class="project-group-cards" @before-leave="captureLeavePosition" @after-leave="releaseLeaveSpace">
                         <ProjectDrawerCard
@@ -168,12 +172,10 @@ const leaveParents = new WeakMap<HTMLElement, HTMLElement>()
 // 直接写成明确的 top/left——浏览器不用再猜，也就没有猜错的余地。
 function captureLeavePosition(el: Element) {
   const node = el as HTMLElement
-  // 整个状态分组折叠时，.project-group-content 通过 v-if 整体移除，Vue 会连带给组内每张
-  // 卡片各自触发 before-leave/after-leave——这套「锁高度→收缩→补偿兄弟」逻辑是为单独移出
-  // 一张卡设计的，跟外层 .project-group-fold 的 grid-template-rows 折叠动画同时跑会叠加，
-  // 表现为卡片动画结束后其它分组又跳一下（2026-07-17 复现）。整组折叠时外层动画已经完整
-  // 接管视觉效果，这里直接跳过，不重复处理。
-  if (node.closest('.project-group-fold-leave-active')) return
+  // 整组折叠改走 onGroupFoldEnter/onGroupFoldLeave（JS 实测高度），不再依赖具名 CSS
+  // Transition class 判断；探针实测过整组折叠时 group.items 数组本身没变，只是外层
+  // v-if 摘掉整个 .project-group-content，组内卡片不会触发各自的 before-leave/
+  // after-leave，这里不需要额外判断。
   const parent = node.offsetParent as HTMLElement | null
   if (!parent) return
   const rect = node.getBoundingClientRect()
@@ -228,15 +230,69 @@ function measurePanels() {
   measurePanel('canvases')
   measurePanel('projects')
 }
+const GROUP_FOLD_MS = 280
+const GROUP_FOLD_EASE = 'cubic-bezier(0.4, 0, 0.2, 1)'
+// 状态分组折叠原来用 CSS grid-template-rows: 1fr↔0fr 这个技巧动画，fr 单位插值在浏览器
+// 里对「最后一帧精确到 0」处理不完全一致，跟 Vue <Transition> 等 transitionend 才卸载
+// 元素配合，会在快结束时冒出一帧亚像素级的吸入感（2026-07-17 复现，探针数据显示动画
+// 全程连续、唯独最后一帧有极小的跳变，符合这个技巧的已知局限）。改成跟 .project-group-cards
+// 同一套手法：JS 实测像素高度、显式过渡 height，卸载前用 transitionend 精确同步，不再依赖
+// fr 单位插值的隐式精度。
+function onGroupFoldEnter(el: Element, done: () => void) {
+  const e = el as HTMLElement
+  const target = e.scrollHeight
+  e.style.height = '0px'
+  e.style.opacity = '0'
+  e.style.overflow = 'hidden'
+  void e.offsetHeight
+  requestAnimationFrame(() => {
+    e.style.transition = `height ${GROUP_FOLD_MS}ms ${GROUP_FOLD_EASE}, opacity 180ms ease`
+    e.style.height = `${target}px`
+    e.style.opacity = '1'
+  })
+  const onEnd = (ev: TransitionEvent) => {
+    if (ev.target !== e || ev.propertyName !== 'height') return
+    e.removeEventListener('transitionend', onEnd)
+    e.style.height = ''
+    e.style.opacity = ''
+    e.style.transition = ''
+    e.style.overflow = ''
+    done()
+  }
+  e.addEventListener('transitionend', onEnd)
+}
+function onGroupFoldLeave(el: Element, done: () => void) {
+  const e = el as HTMLElement
+  const current = e.getBoundingClientRect().height
+  e.style.height = `${current}px`
+  e.style.overflow = 'hidden'
+  void e.offsetHeight
+  requestAnimationFrame(() => {
+    e.style.transition = `height ${GROUP_FOLD_MS}ms ${GROUP_FOLD_EASE}, opacity 180ms ease`
+    e.style.height = '0px'
+    e.style.opacity = '0'
+  })
+  const onEnd = (ev: TransitionEvent) => {
+    if (ev.target !== e || ev.propertyName !== 'height') return
+    e.removeEventListener('transitionend', onEnd)
+    done()
+  }
+  e.addEventListener('transitionend', onEnd)
+}
 function toggleProjectStatus(status: string) {
   const shell = projectListRef.value?.closest<HTMLElement>('.drawer-shell')
+  const isClosing = openProjectStatuses.value.has(status)
   const shellRect = shell?.getBoundingClientRect()
   const shellParent = shell?.offsetParent as HTMLElement | null
   const parentRect = shellParent?.getBoundingClientRect()
-  if (shell && shellRect && parentRect) {
+  if (isClosing && shell && shellRect && parentRect) {
     // 折叠期间固定抽屉顶部，避免高度从中心收缩时整个 shell 下移一段。
     shell.style.transform = 'none'
     shell.style.top = `${shellRect.top - parentRect.top}px`
+  } else if (!isClosing && shell) {
+    // 展开分组时恢复中心锚点，避免沿用上一次收起时的顶部锁定位置。
+    shell.style.top = ''
+    shell.style.transform = ''
   }
   const probe = (phase: string) => {
     const root = projectListRef.value?.querySelector<HTMLElement>('.project-groups')
@@ -305,6 +361,11 @@ function revealContent(delay: number) {
 }
 async function togglePanel(nextPanel: Panel) {
   if (expanded.value && panel.value === nextPanel) {
+    const shell = projectListRef.value?.closest<HTMLElement>('.drawer-shell')
+    if (shell) {
+      shell.style.top = ''
+      shell.style.transform = ''
+    }
     contentVisible.value = false
     headerVisible.value = false
     clearContentTimer()
@@ -318,6 +379,11 @@ async function togglePanel(nextPanel: Panel) {
     return
   }
   clearCompactTimer()
+  const shell = projectListRef.value?.closest<HTMLElement>('.drawer-shell')
+  if (shell) {
+    shell.style.top = ''
+    shell.style.transform = ''
+  }
   compactReady.value = false
   headerVisible.value = false
   contentVisible.value = false
@@ -448,17 +514,13 @@ onBeforeUnmount(() => {
 .project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }
 .project-groups { gap: 9px; }
 .project-group { display: flex; flex-direction: column; gap: 6px; }
-.project-group-content { display: grid; grid-template-rows: 1fr; min-height: 0; overflow: hidden; transform-origin: top; }
-.project-group-fold-enter-active,
-.project-group-fold-leave-active {
-  /* 原来用 cubic-bezier(.22,1,.36,1) 太「前重」——探针实测折叠时 54% 的时长已经走完
-     96% 的距离，剩下 46% 时间只爬完最后 4%，数学上连续但人眼看着像「唰一下到位、
-     后面还在飘」，被感知成跳动（2026-07-17 drawer-group-move-probe 逐帧对比确认，
-     不是断层，是曲线太激进）。换成更匀速的 ease-out，前后段速度差别小很多。 */
-  transition: grid-template-rows .28s cubic-bezier(0.4, 0, 0.2, 1), opacity .18s ease;
-}
-.project-group-fold-enter-from,
-.project-group-fold-leave-to { grid-template-rows: 0fr; opacity: 0; }
+/* 折叠动画改走 JS 实测像素高度（见 onGroupFoldEnter/onGroupFoldLeave），不再用
+   grid-template-rows: 1fr/0fr 这个技巧——fr 单位插值在浏览器里对「最后一帧精确到 0」
+   处理不完全一致，跟 <Transition> 等 transitionend 才卸载元素配合，会在快结束时冒出
+   一帧亚像素级的吸入感（2026-07-17 复现，探针数据显示动画全程连续、唯独最后一帧有
+   极小跳变，是这个技巧的已知局限，不是逻辑 bug）。这里只保留 overflow:hidden 兜底，
+   实际高度/transition 由 JS 钩子接管。 */
+.project-group-content { min-height: 0; overflow: hidden; }
 .project-group-content > .project-group-cards { min-height: 0; }
 /* leave-active 把离场卡切成 position:absolute（见下方 .drawer-project-cards-leave-active）
    時没有 top/left，浏览器按它离场前的「静态位置」摆放——但这个静态位置是相对**最近的
