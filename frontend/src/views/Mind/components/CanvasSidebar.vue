@@ -188,7 +188,19 @@ function releaseLeaveSpace(el: Element) {
   if (!state) return
   state.count -= 1
   if (state.count <= 0) {
+    const lockedHeight = parent.getBoundingClientRect().height
     parent.style.minHeight = state.previous
+    const targetHeight = parent.getBoundingClientRect().height
+    if (Math.abs(lockedHeight - targetHeight) > 0.5) {
+      parent.style.height = `${lockedHeight}px`
+      void parent.offsetHeight
+      requestAnimationFrame(() => {
+        parent.style.height = `${targetHeight}px`
+        window.setTimeout(() => {
+          parent.style.height = ''
+        }, 220)
+      })
+    }
     leaveSpace.delete(parent)
   }
 }
@@ -388,10 +400,14 @@ onBeforeUnmount(() => {
    不上，看着就是"虚线框动了一下"。补一个 position:relative 把定位祖先钉在它离场前的
    直接父容器上，静态位置的坐标系跟视觉位置保持一致，不再跳。 */
 .project-group-cards { position: relative; }
+.project-group-cards { transition: height .2s cubic-bezier(.22,1,.36,1); }
 /* Vue TransitionGroup 先按新布局摆放兄弟，再把它们反向平移回旧位置；只需给 transform
    同项目页一致的快进慢收曲线，拖出的项目离场后其它卡便会自然让位而非瞬移。 */
-.drawer-project-cards-move, .drawer-project-groups-move {
+.drawer-project-cards-move {
   transition: transform .42s cubic-bezier(.22,1,.36,1);
+}
+.drawer-project-groups-move {
+  transition: transform .34s cubic-bezier(.22,1,.36,1);
 }
 /* 协调器声明接管位移时，禁止同一元素再启用 Vue move；未被接管的卡片仍沿用上面的组件 FLIP。 */
 [data-flip-owner="coordinator"].drawer-project-cards-move,
