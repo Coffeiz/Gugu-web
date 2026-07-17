@@ -2433,7 +2433,10 @@ async function send(forcedText?: string) {
 .mp-vol-btn:hover { background: rgba(0,0,0,0.07); color: var(--text-primary); }
 .mp-vol-btn svg { display: block; }
 .mp-vol-slider { width: 60px; height: 3px; cursor: pointer; accent-color: rgba(100,110,200,0.75); }
-.mini-player-enter-active { transition: opacity 0.26s, transform 0.32s cubic-bezier(.22,1.12,.36,1); }
-.mini-player-leave-active { transition: opacity 0.18s ease-in, transform 0.22s cubic-bezier(.55,0,1,.7); }
+/* 时长/曲线跟 .chat-open-enter-active/.chat-open-leave-active 严格对齐——播放器跟聊天
+   窗口经常联动出现（比如小窗打开顶起播放器），用不同的时长/曲线会让两者一个先到位、
+   一个还在动，看着不同步（2026-07-17 复现：播放器隐藏后再打开跟 guguchat 动画对不上）。 */
+.mini-player-enter-active { transition: opacity 0.22s ease, transform 0.36s cubic-bezier(0.16, 1, 0.3, 1); }
+.mini-player-leave-active { transition: opacity 0.18s ease-in, transform 0.22s cubic-bezier(0.7, 0, 0.84, 0); }
 .mini-player-enter-from, .mini-player-leave-to { opacity: 0; transform: scale(0.05); }
 </style>

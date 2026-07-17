@@ -43,17 +43,21 @@
                    卡片变高变矮时，其它分组跟着平滑挪位，而不是瞬间跳到新位置。 -->
               <TransitionGroup name="drawer-project-groups" tag="div" class="project-groups">
                 <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group">
-                  <TransitionGroup name="drawer-project-cards" tag="div" class="project-group-cards" @before-leave="captureLeavePosition" @after-leave="releaseLeaveSpace">
-                    <div :key="`title-${group.status}`" class="project-group-title"><span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span></div>
-                    <ProjectDrawerCard
-                      v-for="project in group.items"
-                      :key="project.id"
-                      :project="project"
-                      :canvas-scale="canvasScale"
-                      :add-to-canvas="addProjectToCanvas"
-                      @add="emit('addProject', project.id)"
-                    />
-                  </TransitionGroup>
+                  <button class="project-group-title" :aria-expanded="openProjectStatuses.has(group.status)" @click="toggleProjectStatus(group.status)"><span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span><span class="project-group-chevron" :class="{ open: openProjectStatuses.has(group.status) }">⌄</span></button>
+                  <Transition name="project-group-fold">
+                    <div v-if="openProjectStatuses.has(group.status)" class="project-group-content">
+                      <TransitionGroup name="drawer-project-cards" tag="div" class="project-group-cards" @before-leave="captureLeavePosition" @after-leave="releaseLeaveSpace">
+                        <ProjectDrawerCard
+                          v-for="project in group.items"
+                          :key="project.id"
+                          :project="project"
+                          :canvas-scale="canvasScale"
+                          :add-to-canvas="addProjectToCanvas"
+                          @add="emit('addProject', project.id)"
+                        />
+                      </TransitionGroup>
+                    </div>
+                  </Transition>
                 </section>
               </TransitionGroup>
               <div v-if="!projectsLoading && !filteredProjects.length" class="project-empty">没有匹配的项目</div>
@@ -131,6 +135,7 @@ const projectGroups = computed(() => [
 // 稳定下来后，也顺带绕开了"分组从无到有/从有到无"这种结构性增删的过渡时机问题（比如卡片
 // 挂载和分组自己的入场动画谁先谁后，会露出一帧还没被物理模块接管的本体，见 devlog）。
 const visibleProjectGroups = computed(() => projectGroups.value)
+const openProjectStatuses = ref(new Set<string>(['active', 'pending']))
 const leaveSpace = new WeakMap<HTMLElement, { previous: string; count: number }>()
 const leaveParents = new WeakMap<HTMLElement, HTMLElement>()
 
@@ -196,6 +201,11 @@ function measurePanel(panelName: Panel) {
 function measurePanels() {
   measurePanel('canvases')
   measurePanel('projects')
+}
+function toggleProjectStatus(status: string) {
+  const next = new Set(openProjectStatuses.value)
+  next.has(status) ? next.delete(status) : next.add(status)
+  openProjectStatuses.value = next
 }
 function clearContentTimer() {
   if (contentTimer) clearTimeout(contentTimer)
@@ -360,7 +370,13 @@ onBeforeUnmount(() => {
 .project-search { flex: 0 0 38px; }
 .project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }
 .project-groups { gap: 9px; }
-.project-group { display: flex; flex-direction: column; gap: 6px; }
+.project-group { display: flex; flex-direction: column; gap: 6px; content-visibility: auto; contain-intrinsic-size: 0 140px; }
+.project-group-content { display: grid; grid-template-rows: 1fr; overflow: hidden; transform-origin: top; }
+.project-group-fold-enter-active,
+.project-group-fold-leave-active { transition: grid-template-rows .28s cubic-bezier(.22,1,.36,1), opacity .18s ease, transform .28s cubic-bezier(.22,1,.36,1); }
+.project-group-fold-enter-from,
+.project-group-fold-leave-to { grid-template-rows: 0fr; opacity: 0; transform: translateY(-8px) scaleY(.92); }
+.project-group-content > .project-group-cards { min-height: 0; }
 /* leave-active 把离场卡切成 position:absolute（见下方 .drawer-project-cards-leave-active）
    時没有 top/left，浏览器按它离场前的「静态位置」摆放——但这个静态位置是相对**最近的
    已定位祖先**算的，而不是它离场前视觉所在的这个 flex 容器。.project-group-cards 本身
@@ -369,7 +385,7 @@ onBeforeUnmount(() => {
    .cd-content-panel 的坐标系重新摆放，跟它离场前在 .cd-list 里滚动之后的真实视觉位置对
    不上，看着就是"虚线框动了一下"。补一个 position:relative 把定位祖先钉在它离场前的
    直接父容器上，静态位置的坐标系跟视觉位置保持一致，不再跳。 */
-.project-group-cards { position: relative; }
+.project-group-cards { position: relative; content-visibility: auto; contain-intrinsic-size: 0 120px; }
 .project-group-cards { transition: height .2s cubic-bezier(.22,1,.36,1); }
 /* Vue TransitionGroup 先按新布局摆放兄弟，再把它们反向平移回旧位置；只需给 transform
    同项目页一致的快进慢收曲线，拖出的项目离场后其它卡便会自然让位而非瞬移。 */
@@ -397,8 +413,10 @@ onBeforeUnmount(() => {
   transform: none !important;
 }
 .drawer-project-cards-leave-to { opacity: 0; }
-.project-group-title { display: flex; align-items: center; gap: 5px; padding: 3px 3px 0; color: var(--text-secondary); font-size: 10px; font-weight: 700; }
-.project-group-title > span:last-child { margin-left: auto; font-variant-numeric: tabular-nums; opacity: .6; }
+.project-group-title { display: flex; align-items: center; gap: 5px; width: 100%; padding: 3px 3px 0; border: 0; background: none; color: var(--text-secondary); font: 700 10px var(--font-sans); text-align: left; cursor: pointer; }
+.project-group-title > span:nth-last-child(2) { margin-left: auto; font-variant-numeric: tabular-nums; opacity: .6; }
+.project-group-chevron { margin-left: 3px !important; opacity: .45; transform: rotate(0deg); transition: transform .18s ease; }
+.project-group-chevron.open { transform: rotate(180deg); }
 .project-status-dot { width: 6px; height: 6px; border-radius: 50%; }
 .project-status-dot.is-pending { background: #d46b6b; }
 .project-status-dot.is-active { background: #c9943a; }

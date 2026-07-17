@@ -75,7 +75,14 @@
           name="done-group-list"
           class="done-month-list"
         >
-          <template v-for="mg in yg.months" :key="`month-group-${yg.year + mg.month}`">
+          <!-- TransitionGroup 要求每个直接子项对应单一、稳定 key 的根节点才能正确算 FLIP——
+               之前用 <template v-for> 让每次循环产出两个兄弟根节点（.month-row + .month-folder），
+               只在 template 上标 key，Vue 没法正确区分应该给哪个新增子项分哪个「位置槽」。
+               本来没有月份文件夹（0个），一次性插入多个新月份时，Vue 分错槽位，视觉上就是
+               月份文件夹叠在一起（2026-07-17 复现）。改成套一层 div.month-group 单一根节点，
+               :key 直接放在这层上；display:contents 让它对布局透明，.month-row/.month-folder
+               仍然是 .done-month-list 的实际 flex 子项，视觉不变。 -->
+          <div v-for="mg in yg.months" :key="`month-group-${yg.year + mg.month}`" class="month-group">
             <button
               class="month-row"
               data-flip-target
@@ -112,7 +119,7 @@
                 </TransitionGroup>
               </div>
             </Transition>
-          </template>
+          </div>
         </TransitionGroup>
 
         <!-- 未设置日期：跟年/月同款拆法——year-row 始终渲染（让折叠按钮跟其他年份
@@ -306,6 +313,14 @@ function onDrop(e: DragEvent) {
   background: rgba(90,158,136,0.08);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 0 0 2px rgba(90,158,136,0.25);
 }
+/* FLIP 事务期间卡片会暂时越过 col-body 的可视边界；仅在协调器接管卡片时解除两层裁切，
+   事务清理 data-flip-owner 后自动恢复正常滚动和圆角裁切。 */
+.done-col:has([data-flip-owner="coordinator"]) {
+  overflow: visible;
+}
+.done-col:has([data-flip-owner="coordinator"]) .col-body {
+  overflow: visible;
+}
 
 .col-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -377,6 +392,10 @@ function onDrop(e: DragEvent) {
   flex-direction: column;
   width: 100%;
 }
+/* .month-group 只是为了给 TransitionGroup 一个单一根节点当 key 用（见模板注释），
+   display:contents 让它对 flex 布局透明——.month-row/.month-folder 仍然是
+   .done-month-list 的实际 flex 子项，不会多出一层影响间距/换行的容器。 */
+.month-group { display: contents; }
 .done-group-list-enter-active,
 .done-group-list-leave-active {
   transition: opacity 0.22s ease, transform 0.34s ease-in-out;
