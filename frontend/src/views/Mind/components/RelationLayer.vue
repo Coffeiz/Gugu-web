@@ -134,7 +134,7 @@ function centerFor(item: MindCanvasItem) {
 // 强制绑定：卡片拖拽/落地飞行途中会带一点 rotateZ 摆动（见 usePhysicsDrag.ts 的 frame()），
 // 但 onFollow 吐出来的只是不含旋转的纯几何中心，下面按轴对齐算出来的锚点在摆动瞬间会跟连接点
 // 实际渲染的位置错开（卡片越大、摆动角度越大，错得越明显）。宁可每帧多测一次量，也不去重建
-// 一份旋转矩阵——直接量 usePhysicsDrag.ts 唯一的那份连接点覆盖层（.phys-conn-dot-overlay，
+// 一份旋转矩阵——直接量拖拽系统唯一的连接点管理层（.phys-conn-dot-manager，
 // 全程跟着克隆体走同一条物理轨迹，摆动也套在它身上）的真实屏幕位置，命中就是绝对准的。
 // 不能拿 landingPositions 的 pos 判断"是否在拖"——那份表只在松手后的惯性插值阶段才有条目，
 // 主动拖拽期间全程是 undefined（见 anchorFor 调用处注释），所以这里无条件尝试测量，量不到
@@ -144,7 +144,7 @@ function measuredAnchor(item: MindCanvasItem, side: AnchorSide): { x: number; y:
   if (!props.screenToWorld) return null
   // 先找拖拽/落地飞行专用的那份连接点覆盖层——这个查询无条件放行：覆盖层只在真的有物理
   // 模块在拖这张卡时才存在，静止的卡查不到，成本可以忽略。
-  let dot = document.querySelector<HTMLElement>(`.phys-conn-dot-overlay[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
+  let dot = document.querySelector<HTMLElement>(`.phys-conn-dot-manager[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
   // 卡片本体真实渲染的连接点这条回退分支，两种情况才查：①「当前正在悬浮的」——持续条件，
   // 不设时限，鼠标停留多久就测多久，抬起态是 :hover 的稳态而不是一次性动画，只测 300ms
   // 会在悬停时长超过这个窗口后把还在抬着的卡误判成"已经落地"，线跟着瞬间掉回静止公式，

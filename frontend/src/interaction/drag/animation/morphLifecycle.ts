@@ -14,6 +14,7 @@ export interface MorphLifecycleOptions {
   revealEl: HTMLElement
   sourceEl: HTMLElement
   connectionDotOverlay?: HTMLElement
+  restoreConnectionDot?: () => void
   cardActionOverlay?: HTMLElement
   pointer: boolean
   pointerPosition: { x: number; y: number }
@@ -261,6 +262,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
       options.holder.remove()
       options.clone2.remove()
       camGlue?.remove()
+      options.restoreConnectionDot?.()
       // 克隆移除后才是本体真实参与命中测试的时刻；先锁存 :hover，再触发 Vue 更新。
       // 否则 onReveal 可能让连接点按旧的 hovering 状态短暂收起一帧。
       const revealHovered = options.pointer
@@ -288,7 +290,10 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     // 重抓接力时新 session 会立即接管本体和视觉状态。旧 session 只清理自己的
     // 飞行副本，不要同步揭示本体或触发 mouseenter；否则 forceCleanup 与新拖拽
     // 的测量/建克隆会在同一帧串行触发布局，造成可见顿挫。
-    if (options.session.isHandoffRequested()) return
+    if (options.session.isHandoffRequested()) {
+      return
+    }
+    options.restoreConnectionDot?.()
     options.revealEl.classList.add('phys-reveal-snap')
     const revealHovered = options.pointer
       ? options.revealEl.matches(':hover') || isPointerOverReveal()

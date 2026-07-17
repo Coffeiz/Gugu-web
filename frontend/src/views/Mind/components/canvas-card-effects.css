@@ -12,6 +12,8 @@
   pointer-events: none;
 }
 
+.phys-dot-source-hidden .card-conn-dots { visibility: hidden !important; }
+
 /* 落地揭示的一帧压制：连接点和操作区的覆盖层会在同一帧撤掉，Vue 的 hovering 响应式状态却要
    到微任务才补上。这里直接按原生 :hover 接住两者，避免本体切换时闪空；鼠标已经离开则不命中，
    不会误显。 */

@@ -11,6 +11,7 @@ import { installDragListeners } from './listeners'
 import type { PhysicsDragOpts, PhysicsDropContext } from '../useDragEngine'
 import { cloneForDrag, createLandingClone } from '../visual/clone'
 import { resolveLandingZIndex } from '../visual/layer'
+import { acquireConnectionDot, releaseConnectionDot } from '../visual/connectionDotManager'
 
 interface Box { left: number; top: number; width: number; height: number }
 interface ActiveDrag { raf: number; end: () => void }
@@ -61,6 +62,7 @@ export interface SingleDragDeps {
   easing: string
   createFlipItems: (elements: HTMLElement[]) => FlipItem[]
   prepareFlipTransaction: (items: { key: string | number; element: HTMLElement }[], before: DOMRect[], after: DOMRect[], options: FlipOptions) => FlipTransaction
+  prepareSiblingFlip: (container: HTMLElement, exclude: Element | null, allDescendants: boolean, mutate: () => void, options: FlipOptions, beforeCapture?: () => void, afterMeasure?: () => void) => { kids: HTMLElement[]; transaction: FlipTransaction }
   transparentGhost: () => HTMLCanvasElement
   registerCleanup: (session: DragSession, fn: () => void) => () => void
   setRetarget: (target: HTMLElement, retarget: (box: any) => void) => void
@@ -178,8 +180,19 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   }
   // 连接点不能跟随两张卡片内容克隆交叉淡变：后创建的落地克隆会短暂盖住前一张，圆点便会
   // 在卡片前后切换。保留 holder 内唯一的一层覆盖物，避免连接点跟内容克隆一起交叉淡变。
-  const connectionDotOverlay = clone.querySelector<HTMLElement>('.card-conn-dots')?.cloneNode(true) as HTMLElement | undefined
+  const sourceConnectionDot = sourceEl.querySelector<HTMLElement>('.card-conn-dots')
+  const connectionDotOverlay = sourceConnectionDot ? acquireConnectionDot(sourceConnectionDot) : undefined
   clone.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
+  if (connectionDotOverlay) {
+    connectionDotOverlay.classList.toggle('hovering', Boolean(opts.initialHover || sourceEl.matches(':hover')))
+  }
+  sourceEl.classList.add('phys-dot-source-hidden')
+  const restoreManagedConnectionDot = () => {
+    if (!session.isCurrent()) return
+    sourceEl.classList.remove('phys-dot-source-hidden')
+    releaseConnectionDot(connectionDotOverlay)
+  }
+  deps.registerCleanup(session, restoreManagedConnectionDot)
   if (connectionDotOverlay) {
     // 本体里的绝对定位圆点以卡片 padding box 为包含块，会自然避开边框宽度；覆盖层被抽到
     // 没有边框的 scaleShell 后若还用 inset:0，左右圆点会各向外偏一个 border。按源卡真实
@@ -287,12 +300,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   if (container && !opts.keepSourcePlaceholder) {
     requestAnimationFrame(() => {
       if (!deps.active.current || !session.isCurrent() || !sourceEl.isConnected) return
-      const kids = deps.childCards(container, sourceEl, opts.flipAllDescendants)
-      const open = deps.rects(kids)
-      sourceEl.style.display = 'none'
-      const closed = deps.rects(kids)
-      const items = deps.createFlipItems(kids)
-      const flip = deps.prepareFlipTransaction(items, open, closed, {
+      const { kids, transaction: flip } = deps.prepareSiblingFlip(container, sourceEl, Boolean(opts.flipAllDescendants), () => {
+        sourceEl.style.display = 'none'
+      }, {
         easing: deps.easing,
         onBeforePlay: () => deps.retargetLandings(kids),
         isActive: () => session.isCurrent(),
@@ -580,6 +590,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         revealEl,
         sourceEl,
         connectionDotOverlay,
+        restoreConnectionDot: restoreManagedConnectionDot,
         cardActionOverlay,
         pointer,
         pointerPosition: target,
@@ -628,26 +639,34 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 占位重新展开：FLIP 邻居从「合拢」动到「展开」。el 当前可能已收合(home)或已展开(落点新卡)，
     // 两种都要先拿到 closed 和 open 两套位置
     const animateOpen = (cont: HTMLElement, el: HTMLElement) => {
-      const sibs = deps.childCards(cont, el, opts.flipAllDescendants)
-      let closedR, openR
+      let sibs: HTMLElement[], flip: FlipTransaction
       if (el.style.display === 'none') {   // 已收合（home）：量 closed → 展开 → 量 open
-        closedR = deps.rects(sibs)
-        el.style.display = ''
-        openR = deps.rects(sibs)
+        const prepared = deps.prepareSiblingFlip(cont, el, Boolean(opts.flipAllDescendants), () => {
+          el.style.display = ''
+        }, {
+          easing: deps.easing,
+          onBeforePlay: () => deps.retargetLandings(prepared.kids),
+          isActive: () => session.isCurrent(),
+        })
+        sibs = prepared.kids
+        flip = prepared.transaction
       } else {                              // 已展开（落点新卡已插入）：量 open → 临时收合量 closed → 复原
-        openR = deps.rects(sibs)
-        el.style.display = 'none'
-        closedR = deps.rects(sibs)
-        el.style.display = ''
+        const prepared = deps.prepareSiblingFlip(cont, el, Boolean(opts.flipAllDescendants), () => {
+          el.style.display = ''
+        }, {
+          easing: deps.easing,
+          onBeforePlay: () => deps.retargetLandings(prepared.kids),
+          isActive: () => session.isCurrent(),
+        }, () => {
+          el.style.display = 'none'
+        }, () => {
+          el.style.display = ''
+        })
+        sibs = prepared.kids
+        flip = prepared.transaction
       }
       deps.holdHoverUntilReveal(el)
       el.style.opacity = '0'              // 落定前隐藏且压住 hover，克隆体落到位再露出
-      const items = deps.createFlipItems(sibs)
-      const flip = deps.prepareFlipTransaction(items, closedR, openR, {
-        easing: deps.easing,
-        onBeforePlay: () => deps.retargetLandings(sibs),
-        isActive: () => session.isCurrent(),
-      })
       const unregisterFlipCleanup = deps.registerCleanup(session, () => flip.cancel())
       void flip.play().finally(unregisterFlipCleanup)   // 从合拢 → 展开
       return el.getBoundingClientRect()
