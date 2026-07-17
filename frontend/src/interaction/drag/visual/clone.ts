@@ -77,7 +77,14 @@ export function createLandingClone(source: HTMLElement, options: LandingCloneOpt
     left: '', top: '', right: '', bottom: '', opacity: '', zIndex: '',
     width: options.layoutWidth + 'px',
   })
-  scaleShell.appendChild(content)
+  const hoverShell = document.createElement('div')
+  Object.assign(hoverShell.style, {
+    position: 'absolute', left: '0', top: '0', width: options.layoutWidth + 'px', height: options.layoutHeight + 'px',
+    transform: 'translateY(0)', transformOrigin: '0 0', transition: 'transform 0.25s cubic-bezier(0.34,1.2,0.64,1)',
+  })
+  hoverShell.className = 'phys-landing-hover-shell'
+  hoverShell.appendChild(content)
+  scaleShell.appendChild(hoverShell)
   holder.appendChild(scaleShell)
   document.body.appendChild(holder)
   return holder

@@ -7,7 +7,16 @@ export function revealWithoutStaleHover(
 ): void {
   el.classList.add('phys-just-revealed')
   el.classList.add('phys-reveal-snap')
-  if (keepControls) el.classList.add('phys-reveal-controls')
+  if (keepControls) {
+    el.classList.add('phys-reveal-controls', 'phys-reveal-hover')
+    const clearHover = () => {
+      el.classList.remove('phys-reveal-controls', 'phys-reveal-hover')
+      el.removeEventListener('pointerleave', clearHover)
+      el.removeEventListener('pointercancel', clearHover)
+    }
+    el.addEventListener('pointerleave', clearHover, { once: true })
+    el.addEventListener('pointercancel', clearHover, { once: true })
+  }
   el.style.opacity = ''
   el.style.pointerEvents = ''
   if (pointerMode && (keepControls || el.matches(':hover'))) {

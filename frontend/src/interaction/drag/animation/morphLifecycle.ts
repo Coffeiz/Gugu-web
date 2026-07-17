@@ -48,7 +48,6 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   let onEnd: (event: TransitionEvent) => void = () => undefined
   let targetResizeObserver: ResizeObserver | null = null
   let hasRetargeted = false
-  let redirectTimer: ReturnType<typeof setTimeout> | null = null
   let latestPointer = { ...options.pointerPosition }
 
   const syncHover = (hovering: boolean) => {
@@ -69,6 +68,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   const trackPointer = (event: PointerEvent) => {
     latestPointer = { x: event.clientX, y: event.clientY }
     onPointerMove(event)
+    syncCloneRevealHover(isPointerOverReveal())
   }
 
   const cleanupHandoff = installLandingHandoff({
@@ -86,6 +86,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   // 会先因 holder 坐标微小偏差被摘掉 hovering 类再恢复，在 0.15s transition 窗口内
   // 表现为瞬间消失再淡入。
   landingHovered = options.connectionDotManager?.classList.contains('hovering') ?? false
+  document.addEventListener('mousemove', trackPointer)
   if (options.pointer) document.addEventListener('pointermove', trackPointer)
   if (options.connectionDotManager) {
     options.holder.style.zIndex = String((Number(options.holder.style.zIndex) || 0) + 1)
@@ -119,6 +120,15 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
 
   const cloneInner = options.clone
   const clone2Inner = options.clone2.querySelector<HTMLElement>('.phys-landing-content')
+  const clone2HoverShell = options.clone2.querySelector<HTMLElement>('.phys-landing-hover-shell')
+  const syncCloneRevealHover = (hovering: boolean) => {
+    clone2HoverShell?.classList.toggle('phys-reveal-hover', hovering)
+    clone2Inner?.classList.toggle('phys-reveal-controls', hovering)
+    clone2Inner?.classList.toggle('phys-reveal-shadow', hovering)
+    const offset = hovering ? 'translateY(-2px)' : ''
+    if (options.cardActionOverlay) options.cardActionOverlay.style.transform = offset
+    if (options.connectionDotManager) options.connectionDotManager.style.transform = offset
+  }
   const transition = `transform 0.55s ${options.easing}`
   const fadeTransition = 'opacity 0.42s ease'
   const dragShadow = options.hidePrimaryVisual ? getComputedStyle(cloneInner).boxShadow : ''
@@ -152,8 +162,8 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     void options.clone2.offsetWidth
     clone2Inner.style.transition = savedTrans
   }
-  const revealHoveredAtStart = options.revealEl.matches(':hover') || isPointerOverReveal() || landingHovered
-  if (revealHoveredAtStart) clone2Inner?.classList.add('phys-reveal-hover', 'phys-reveal-controls')
+  const revealHoveredAtStart = options.revealEl.matches(':hover') || isPointerOverReveal()
+  syncCloneRevealHover(revealHoveredAtStart)
 
   // 目标框几乎没动就不算一次改向：ResizeObserver.observe() 注册瞬间会对每个被观察元素
   // 上报一次「初始尺寸」（规范行为，不代表真的发生了 resize），目标卡 + 全祖先链一起注册
@@ -189,6 +199,8 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     const continuous = options.trackTargetLayout === true && hasRetargeted
     hasRetargeted = true
     box = newBox
+    const { x, y } = latestPointer
+    syncCloneRevealHover(x >= newBox.left && x <= newBox.left + newBox.width && y >= newBox.top && y <= newBox.top + newBox.height)
     if (continuous) {
       // 抽屉高度过渡期间目标每帧都在挪：不冻结、不关 transition，直接把新目标写给正在跑的
       // 过渡——CSS transition 的目标被改写时会从当前插值位置平滑转向新目标，缓动前段斜率
@@ -202,12 +214,8 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
       applyTransform()
       // 突发结束后仍补一次 0.25s 短过渡精确贴合：连续改写目标的过渡不会自然收敛出
       // transitionend（每次改写都在重启），靠这次 settle 收尾并重新武装 finish 计时。
-      if (redirectTimer) clearTimeout(redirectTimer)
-      redirectTimer = setTimeout(() => {
-        redirectTimer = null
-        if (landing.isDone() || !options.session.isCurrent()) return
-        redirectToBox(true)
-      }, 80)
+      if (landing.isDone() || !options.session.isCurrent()) return
+      redirectToBox(true)
       return
     }
     if (options.trackTargetLayout) {
@@ -245,10 +253,10 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     if (landing.isDone()) return
     landing.finish()
     if (finishTimer) clearTimeout(finishTimer)
-    if (redirectTimer) clearTimeout(redirectTimer)
     cleanupHandoff()
     targetResizeObserver?.disconnect()
     targetResizeObserver = null
+    document.removeEventListener('mousemove', trackPointer)
     if (options.pointer) document.removeEventListener('pointermove', trackPointer)
     options.clone2.removeEventListener('transitionend', onEnd)
     options.clearRetarget(options.revealEl, retarget)
@@ -265,9 +273,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
       options.clone2.remove()
       camGlue?.remove()
       options.restoreConnectionDot?.()
-      // 克隆移除后才是本体真实参与命中测试的时刻；先锁存 :hover，再触发 Vue 更新。
-      // 否则 onReveal 可能让连接点按旧的 hovering 状态短暂收起一帧。
-      const revealHovered = options.revealEl.matches(':hover') || isPointerOverReveal() || landingHovered
+      const revealHovered = options.revealEl.matches(':hover') || isPointerOverReveal()
       options.onReveal?.()
       revealWithoutStaleHover(options.revealEl, options.pointer, undefined, revealHovered, () => options.session.isCurrent())
       options.finishSession()
@@ -277,10 +283,10 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     if (landing.isDone()) return
     landing.cancel()
     if (finishTimer) clearTimeout(finishTimer)
-    if (redirectTimer) clearTimeout(redirectTimer)
     cleanupHandoff()
     targetResizeObserver?.disconnect()
     targetResizeObserver = null
+    document.removeEventListener('mousemove', trackPointer)
     if (options.pointer) document.removeEventListener('pointermove', trackPointer)
     options.clone2.removeEventListener('transitionend', onEnd)
     options.clearRetarget(options.revealEl, retarget)
@@ -295,7 +301,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     }
     options.restoreConnectionDot?.()
     options.revealEl.classList.add('phys-reveal-snap')
-    const revealHovered = options.revealEl.matches(':hover') || isPointerOverReveal() || landingHovered
+    const revealHovered = options.revealEl.matches(':hover') || isPointerOverReveal()
     options.onReveal?.()
     void options.revealEl.offsetWidth
     options.revealEl.classList.remove('phys-reveal-snap')

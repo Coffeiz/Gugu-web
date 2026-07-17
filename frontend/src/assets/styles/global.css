@@ -57,6 +57,15 @@ input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
   transform: translateY(-2px);
   box-shadow: 0 6px 18px rgba(80,90,110,0.13);
 }
+.phys-landing-hover-shell.phys-reveal-hover { transform: translateY(-2px) !important; }
+.phys-reveal-shadow { box-shadow: 0 6px 18px rgba(80,90,110,0.13) !important; }
+.fc-card.phys-reveal-hover, .folder-card.phys-reveal-hover,
+.proj-card.phys-reveal-hover, .pr-card.phys-reveal-hover,
+.note-card.phys-reveal-hover, .entity-sticker.phys-reveal-hover,
+.pr-missing.phys-reveal-hover, .fr-missing.phys-reveal-hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 18px rgba(80,90,110,0.13) !important;
+}
 .hover-card-fx:active:not(:has(:active)) {
   transform: translateY(1px);
   opacity: 0.93;

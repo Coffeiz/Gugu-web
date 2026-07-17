@@ -188,16 +188,61 @@ function releaseLeaveSpace(el: Element) {
   if (!state) return
   state.count -= 1
   if (state.count <= 0) {
+    const drawer = parent.closest('.canvas-drawer') as HTMLElement | null
+    const drawerRect = drawer?.getBoundingClientRect()
+    const drawerParent = drawer?.offsetParent as HTMLElement | null
+    const drawerParentRect = drawerParent?.getBoundingClientRect()
+    const leaveRect = node.getBoundingClientRect()
+    const groupsRoot = parent.closest('.project-groups') as HTMLElement | null
+    const sourceGroup = parent.closest('.project-group')
+    const groups = groupsRoot
+      ? Array.from(groupsRoot.querySelectorAll<HTMLElement>(':scope > .project-group'))
+          .filter(element => element !== sourceGroup)
+          .map(element => ({ element, top: element.getBoundingClientRect().top, bottom: element.getBoundingClientRect().bottom }))
+      : []
     const lockedHeight = parent.getBoundingClientRect().height
     parent.style.minHeight = state.previous
     const targetHeight = parent.getBoundingClientRect().height
     if (Math.abs(lockedHeight - targetHeight) > 0.5) {
+      if (drawer && drawerRect && drawerParentRect) {
+        const drawerCenter = drawerRect.top + drawerRect.height / 2
+        const leaveCenter = leaveRect.top + leaveRect.height / 2
+        if (leaveCenter >= drawerCenter) {
+          drawer.style.top = ''
+          drawer.style.bottom = `${drawerParentRect.bottom - drawerRect.bottom}px`
+        } else {
+          drawer.style.bottom = ''
+          drawer.style.top = `${drawerRect.top - drawerParentRect.top}px`
+        }
+        drawer.style.transform = 'none'
+      }
       parent.style.height = `${lockedHeight}px`
       void parent.offsetHeight
       requestAnimationFrame(() => {
         parent.style.height = `${targetHeight}px`
+        void parent.offsetHeight
+        const center = drawerRect ? drawerRect.top + drawerRect.height / 2 : 0
+        const leaveBelow = leaveRect.top + leaveRect.height / 2 >= center
+        for (const { element, top, bottom } of groups) {
+          const groupCenter = (top + bottom) / 2
+          if (leaveBelow ? groupCenter >= center : groupCenter < center) continue
+          const delta = top - element.getBoundingClientRect().top
+          if (Math.abs(delta) > 0.5) {
+            element.style.transform = `translateY(${delta}px)`
+            element.style.transition = 'transform .2s cubic-bezier(.22,1,.36,1)'
+          }
+        }
+        requestAnimationFrame(() => {
+          for (const { element } of groups) element.style.transform = ''
+        })
         window.setTimeout(() => {
           parent.style.height = ''
+          for (const { element } of groups) element.style.transition = ''
+          if (drawer) {
+            drawer.style.top = ''
+            drawer.style.bottom = ''
+            drawer.style.transform = ''
+          }
         }, 220)
       })
     }
@@ -404,7 +449,7 @@ onBeforeUnmount(() => {
 /* Vue TransitionGroup 先按新布局摆放兄弟，再把它们反向平移回旧位置；只需给 transform
    同项目页一致的快进慢收曲线，拖出的项目离场后其它卡便会自然让位而非瞬移。 */
 .drawer-project-cards-move {
-  transition: transform .42s cubic-bezier(.22,1,.36,1);
+  transition: transform .42s cubic-bezier(.22,1,.36,1), height .2s cubic-bezier(.22,1,.36,1);
 }
 .drawer-project-groups-move {
   transition: transform .34s cubic-bezier(.22,1,.36,1);

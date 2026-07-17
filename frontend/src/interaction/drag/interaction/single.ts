@@ -683,7 +683,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       dy = dy > 0 ? Math.min(dy, maxDown) : Math.max(dy, -sc.scrollTop)
       if (Math.abs(dy) <= 1) return box
       drawerScrollTargetTop = sc.scrollTop + dy
-      deps.animateScroll(sc, dy, 300, () => session.isCurrent())
+      deps.animateScroll(sc, dy, 340, () => session.isCurrent())
       return { left: box.left, top: box.top - dy, width: box.width, height: box.height }
     }
 
