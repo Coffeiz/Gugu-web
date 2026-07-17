@@ -14,7 +14,7 @@
         </div>
       </Transition>
       <Transition name="cd-compact">
-        <div v-if="!expanded && compactReady" class="cd-compact-nav">
+        <div v-if="!expanded" class="cd-compact-nav">
         <button class="cd-toggle" title="画布列表" @click="togglePanel('canvases')"><PhSquaresFour :size="16" weight="bold" /></button>
         <button class="cd-toggle" title="项目素材" @click="togglePanel('projects')"><PhStack :size="16" weight="bold" /></button>
         </div>
@@ -47,7 +47,12 @@
               <!-- 三个状态分组的 key 恒定；几何位移统一由布局协调器处理。 -->
               <TransitionGroup :css="false" tag="div" class="project-groups">
                 <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group" data-layout-role="group" :data-layout-key="group.status">
-                  <button class="project-group-title" :aria-expanded="openProjectStatuses.has(group.status)" @click="toggleProjectStatus(group.status)"><span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span><span class="project-group-chevron" :class="{ open: openProjectStatuses.has(group.status) }">⌄</span></button>
+                  <button class="project-group-title" :aria-expanded="openProjectStatuses.has(group.status)" @click="toggleProjectStatus(group.status)">
+                    <span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span>
+                    <svg class="project-group-chevron" :class="{ open: openProjectStatuses.has(group.status) }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                      <path d="M2 3.5l3 3 3-3"/>
+                    </svg>
+                  </button>
                   <Transition
                     :css="false"
                     @enter="onGroupFoldEnter"
@@ -115,7 +120,6 @@ const emit = defineEmits<{
 
 type Panel = 'canvases' | 'projects'
 const expanded = ref(false)
-const compactReady = ref(true)
 const panel = ref<Panel>('canvases')
 const visiblePanel = ref<Panel>('canvases')
 const contentVisible = ref(false)
@@ -127,7 +131,6 @@ const panelHeights = ref<Record<Panel, number>>({ canvases: 0, projects: 0 })
 const targetHeight = computed(() => panelHeights.value[panel.value])
 let canvasListObserver: ResizeObserver | null = null
 let projectListObserver: ResizeObserver | null = null
-let compactTimer: ReturnType<typeof setTimeout> | null = null
 let pendingProjectGroups: { transaction: ReturnType<typeof createFlipTransaction>; items: ReturnType<typeof createLayoutItems> } | null = null
 let projectGroupToggleInFlight = false
 
@@ -241,25 +244,15 @@ onUpdated(() => {
   pending.transaction.measure(pending.items)
   void pending.transaction.play()
 })
-function clearCompactTimer() {
-  if (compactTimer) clearTimeout(compactTimer)
-  compactTimer = null
-}
 async function togglePanel(nextPanel: Panel) {
   if (expanded.value && panel.value === nextPanel) {
     contentVisible.value = false
     headerVisible.value = false
-    clearCompactTimer()
     // 内容和外壳立即开始收起；展开头部保留在 DOM 中完成 leave 动画，不能随着 expanded
     // 同一帧卸载，否则右侧返回图标会直接消失而不是淡出。
     expanded.value = false
-    compactTimer = setTimeout(() => {
-      compactReady.value = true
-    }, 180)
     return
   }
-  clearCompactTimer()
-  compactReady.value = false
   headerVisible.value = false
   contentVisible.value = false
   panel.value = nextPanel
@@ -293,7 +286,6 @@ onMounted(() => {
   window.addEventListener('resize', measurePanels)
 })
 onBeforeUnmount(() => {
-  clearCompactTimer()
   canvasListObserver?.disconnect()
   projectListObserver?.disconnect()
   window.removeEventListener('resize', measurePanels)
@@ -379,11 +371,18 @@ onBeforeUnmount(() => {
    直接父容器上，静态位置的坐标系跟视觉位置保持一致，不再跳。 */
 .project-group-cards { position: relative; min-height: 0; align-self: stretch; }
 .project-group-cards > .drawer-project-card { flex: 0 0 auto; }
-.project-group-title { display: flex; align-items: center; gap: 5px; width: 100%; padding: 3px 3px 0; border: 0; background: none; color: var(--text-secondary); font: 700 10px var(--font-sans); text-align: left; cursor: pointer; }
-.project-group-title > span:nth-last-child(2) { margin-left: auto; font-variant-numeric: tabular-nums; opacity: .6; }
-.project-group-chevron { margin-left: 3px !important; opacity: .45; transform: rotate(0deg); transition: transform .18s ease; }
+.project-group-title {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; padding: 4px 6px; border: none; border-radius: 6px;
+  background: none; cursor: pointer;
+  font: 700 12px var(--font-sans); color: rgba(0,0,0,.62); letter-spacing: .03em;
+  text-align: left; transition: background .12s;
+}
+.project-group-title:hover { background: rgba(0,0,0,.04); }
+.project-group-title > span:nth-last-child(2) { margin-left: auto; font-size: 10px; font-weight: 400; color: rgba(0,0,0,.38); font-variant-numeric: tabular-nums; }
+.project-group-chevron { margin-left: 3px !important; flex-shrink: 0; color: rgba(0,0,0,.2); transform: rotate(0deg); transition: transform .2s cubic-bezier(0.34,1.1,0.64,1); }
 .project-group-chevron.open { transform: rotate(180deg); }
-.project-status-dot { width: 6px; height: 6px; border-radius: 50%; }
+.project-status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .project-status-dot.is-pending { background: #d46b6b; }
 .project-status-dot.is-active { background: #c9943a; }
 .project-status-dot.is-done { background: #5a9e88; }

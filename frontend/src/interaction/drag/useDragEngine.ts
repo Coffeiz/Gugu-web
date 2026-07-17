@@ -91,6 +91,8 @@ export interface PhysicsDragOpts {
   dragZIndex?: number
   /** 需要跨分组重排时，使用调用方提供的列容器作为 FLIP 范围。 */
   flipContainer?: HTMLElement
+  /** 由业务 adapter 根据当前卡片所在分组解析 FLIP 范围；用于跨列重抓和落点重排。 */
+  resolveFlipContainer?: (element: HTMLElement) => HTMLElement | null | undefined
   flipAllDescendants?: boolean
   // 看板已完成列的卡片跨年/月分组重挂载时，等待 Vue 完成一帧或多帧布局，再决定是否走
   // 完整 morph；避免把暂时 0×0 的目标误判成折叠目标而播放收缩动画。

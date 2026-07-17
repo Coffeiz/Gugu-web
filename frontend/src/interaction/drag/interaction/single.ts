@@ -118,7 +118,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   // half 用 let：contentScale 是活的（画布相机缩放，抓着卡片不放的时候还能滚轮继续缩放
   // 画布），每帧都可能变，克隆体的实际渲染半宽/半高得跟着重算，见 frame() 里的 _applyCS。
   let half = { x: rect.width / 2, y: rect.height / 2 }
-  const container = opts.flipContainer ?? sourceEl.parentElement
+  const container = opts.flipContainer
+    ?? opts.resolveFlipContainer?.(sourceEl)
+    ?? sourceEl.parentElement
 
   // centerGrab 时抓取点就是 half.y 本身（卡片竖直中心，X 方向本来就已经是 half.x 居中，
   // Y 方向照此对齐），不用 GRABY 那个"顶部往下固定 28px"的量；否则沿用 GRABY——抓起那一刻，
@@ -635,12 +637,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             ...opts,
             // 跨列落地后 Vue 可能已把目标卡挂到另一列；重抓不能沿用首段拖拽
             // 保存的旧 flipContainer，否则新 session 会在旧列测量，目标列 FLIP
-            // 前后 rect 全相同，表现为让位和归位瞬移。完成列要精确到卡片落入的
-            // 那个 .month-cards（不能回退到整个 .col-body，否则会把其它月份/
-            // 年月标题行也当成让位兄弟，落点顶部卡片跟新卡重叠）。
-            flipContainer: revealEl.closest<HTMLElement>('.kanban-card-list')
-              ?? revealEl.closest<HTMLElement>('.month-cards')
-              ?? revealEl.closest<HTMLElement>('.col-body')
+            // 前后 rect 全相同，表现为让位和归位瞬移。具体分组规则由业务 adapter
+            // 重新解析，运行时不直接认识项目列/完成列的 DOM 结构。
+            flipContainer: opts.resolveFlipContainer?.(revealEl)
               ?? opts.flipContainer,
             keepSourcePlaceholder: revealEl === sourceEl ? opts.keepSourcePlaceholder : false,
             initialRect: visualRect,
@@ -979,17 +978,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 只把它挪到新父容器；不能仅凭 el !== sourceEl 判定“是不是新落点”。否则项目卡跨阶段会
       // 错走旧列归位路径，源卡在克隆飞到新列前提前揭示，鼠标下出现一次陈旧 hover 回弹。
       if (sel) {
-        // 看板普通列现在以 .kanban-card-list 作为 FLIP 容器；已完成列要精确到卡片
-        // 实际落入的 .month-cards（recent-card-list 也带这个类），不能笼统回退到
-        // 整个 .col-body——否则会把其它月份/年月标题行也当成让位兄弟。跟前面拖起时
-        // 的 flipContainer 解析（.kanban-card-list ?? .month-cards ?? .col-body）
-        // 必须保持同一套优先级，否则同列返回会被误判为跨列。
+        // 落点容器必须由同一个业务 adapter 解析；否则同列返回和跨分组落点可能使用
+        // 不同范围，导致 FLIP 前后 rect 被误判为相同或把无关分组混入让位。
         const projectFlipContainer = (target: HTMLElement) => {
           if (!opts.flipAllDescendants) return target.parentElement!
-          return target.closest<HTMLElement>('.kanban-card-list')
-            ?? target.closest<HTMLElement>('.month-cards')
-            ?? target.closest<HTMLElement>('.col-body')
-            ?? target.parentElement!
+          return opts.resolveFlipContainer?.(target) ?? target.parentElement!
         }
         const landToProjectTarget = (el: HTMLElement | null, deadline: number) => {
           if (!session.isCurrent()) return
