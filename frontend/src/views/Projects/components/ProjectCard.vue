@@ -178,6 +178,7 @@ import SegBar from '@/components/common/SegBar.vue'
 import { cloneProjectStages, firstIncompleteStageIdx, projectTodoProgress } from '@/utils/projectStages'
 import { resolveProjectDropStatus } from '@/utils/projectDrop'
 import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
+import { useDoneLayoutMutation } from './done/doneLayoutBridge'
 
 defineOptions({ inheritAttrs: false })
 
@@ -188,6 +189,7 @@ const props = defineProps({
 const emit = defineEmits(['click'])
 
 const projectStore = useProjectStore()
+const doneLayoutMutation = useDoneLayoutMutation()
 const projectRef = computed(() => props.project)
 const { currentStageLabel, curTodoTotal, curDoneCount, stageProgress, nameColor, isUrgent, fmtDate, deadlineLabel } = useProjectCardBasics(projectRef)
 
@@ -226,6 +228,7 @@ function onPointerDown(e: PointerEvent) {
   startProjectDrag(e, {
     isCardControl,
     onDrop: dispatchDrop,
+    onPickupFromDoneLayout: hide => (doneLayoutMutation ? doneLayoutMutation(hide) : hide()),
     onClick: () => emit('click'),
   })
 }

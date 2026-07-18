@@ -6,6 +6,8 @@ import type { CardVisualController } from '../visual/CardVisualController'
 import { installLandingHandoff } from '../interaction/handoff'
 import { startThresholdDrag } from '../interaction/threshold'
 import type { DragSession } from '../core/DragSession'
+import { createCardMotionController } from './cardMotionController'
+import { springParamsFromResponse, dragPhysicsTuning } from '../physicsTuning'
 
 export interface MorphLifecycleOptions {
   initialBox: MorphBox
@@ -36,6 +38,9 @@ export interface MorphLifecycleOptions {
   finishSession: () => void
   trackTargetLayout?: boolean
   measureTargetLayout?: () => MorphBox
+  /** legacy clone2 可选的连续物理落地；默认仍走原有 CSS morph。 */
+  useSpringLanding?: boolean
+  initialVelocity?: { x: number; y: number }
 }
 
 /** 双克隆落地的完整生命周期；业务目标和接力动作通过回调注入。 */
@@ -50,7 +55,6 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   let onEnd: (event: TransitionEvent) => void = () => undefined
   let targetResizeObserver: ResizeObserver | null = null
   let hasRetargeted = false
-  let latestPointer = { ...options.pointerPosition }
 
   const syncHover = (hovering: boolean) => {
     landingHovered = hovering
@@ -61,17 +65,11 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     const rect = options.holder.getBoundingClientRect()
     return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
   }
-  const isPointerOverReveal = () => {
-    const rect = options.revealEl.getBoundingClientRect()
-    const { x, y } = latestPointer
-    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
-  }
+  // 跟 main 分支一致：克隆飞行期间只用这一份 landingHovered（按 holder 命中判定），
+  // 不额外给 clone2 自己判一份"是不是压在 revealEl 上"的 hover——本体的 hover
+  // 判定和抬起动画只在 finish()/forceCleanup() 里、克隆动画播完之后才发生一次，
+  // 用的就是这里持续更新的 landingHovered，不是飞行途中现测的瞬时值。
   const onPointerMove = (event: PointerEvent) => syncHover(isOverCard(event.clientX, event.clientY))
-  const trackPointer = (event: PointerEvent) => {
-    latestPointer = { x: event.clientX, y: event.clientY }
-    onPointerMove(event)
-    syncCloneRevealHover(isPointerOverReveal())
-  }
 
   const cleanupHandoff = installLandingHandoff({
     enabled: options.pointer,
@@ -88,8 +86,8 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   // 会先因 holder 坐标微小偏差被摘掉 hovering 类再恢复，在 0.15s transition 窗口内
   // 表现为瞬间消失再淡入。
   landingHovered = options.connectionDotManager?.classList.contains('hovering') ?? false
-  document.addEventListener('mousemove', trackPointer)
-  if (options.pointer) document.addEventListener('pointermove', trackPointer)
+  document.addEventListener('mousemove', onPointerMove)
+  if (options.pointer) document.addEventListener('pointermove', onPointerMove)
   if (options.connectionDotManager) {
     options.holder.style.zIndex = String((Number(options.holder.style.zIndex) || 0) + 1)
   }
@@ -122,15 +120,6 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
 
   const cloneInner = options.clone
   const clone2Inner = options.clone2.querySelector<HTMLElement>('.phys-landing-content')
-  const clone2HoverShell = options.clone2.querySelector<HTMLElement>('.phys-landing-hover-shell')
-  const syncCloneRevealHover = (hovering: boolean) => {
-    clone2HoverShell?.classList.toggle('phys-reveal-hover', hovering)
-    clone2Inner?.classList.toggle('phys-reveal-controls', hovering)
-    clone2Inner?.classList.toggle('phys-reveal-shadow', hovering)
-    const offset = hovering ? 'translateY(-2px)' : ''
-    if (options.cardActionOverlay) options.cardActionOverlay.style.transform = offset
-    if (options.connectionDotManager) options.connectionDotManager.style.transform = offset
-  }
   const transition = `transform 0.55s ${options.easing}`
   const fadeTransition = 'opacity 0.42s ease'
   const dragShadow = options.hidePrimaryVisual ? getComputedStyle(cloneInner).boxShadow : ''
@@ -164,9 +153,6 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     void options.clone2.offsetWidth
     clone2Inner.style.transition = savedTrans
   }
-  const revealHoveredAtStart = options.revealEl.matches(':hover') || isPointerOverReveal()
-  syncCloneRevealHover(revealHoveredAtStart)
-
   // 目标框几乎没动就不算一次改向：ResizeObserver.observe() 注册瞬间会对每个被观察元素
   // 上报一次「初始尺寸」（规范行为，不代表真的发生了 resize），目标卡 + 全祖先链一起注册
   // 会在飞行启动的同一帧收到一整批这种噪音回调；抽屉高度过渡的多数帧里目标卡自身也并
@@ -201,8 +187,6 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     const continuous = options.trackTargetLayout === true && hasRetargeted
     hasRetargeted = true
     box = newBox
-    const { x, y } = latestPointer
-    syncCloneRevealHover(x >= newBox.left && x <= newBox.left + newBox.width && y >= newBox.top && y <= newBox.top + newBox.height)
     if (continuous) {
       // 抽屉高度过渡期间目标每帧都在挪：不冻结、不关 transition，直接把新目标写给正在跑的
       // 过渡——CSS transition 的目标被改写时会从当前插值位置平滑转向新目标，缓动前段斜率
@@ -258,8 +242,8 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     cleanupHandoff()
     targetResizeObserver?.disconnect()
     targetResizeObserver = null
-    document.removeEventListener('mousemove', trackPointer)
-    if (options.pointer) document.removeEventListener('pointermove', trackPointer)
+    document.removeEventListener('mousemove', onPointerMove)
+    if (options.pointer) document.removeEventListener('pointermove', onPointerMove)
     options.clone2.removeEventListener('transitionend', onEnd)
     options.clearRetarget(options.revealEl, retarget)
     unregister()
@@ -275,10 +259,9 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
       options.clone2.remove()
       camGlue?.remove()
       options.restoreConnectionDot?.()
-      const revealHovered = options.revealEl.matches(':hover') || isPointerOverReveal()
       options.onReveal?.()
       const reveal = options.visualController?.reveal ?? revealWithoutStaleHover
-      reveal(options.revealEl, options.pointer, undefined, revealHovered, () => options.session.isCurrent())
+      reveal(options.revealEl, options.pointer, undefined, landingHovered, () => options.session.isCurrent())
       options.finishSession()
     })
   }
@@ -289,8 +272,8 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     cleanupHandoff()
     targetResizeObserver?.disconnect()
     targetResizeObserver = null
-    document.removeEventListener('mousemove', trackPointer)
-    if (options.pointer) document.removeEventListener('pointermove', trackPointer)
+    document.removeEventListener('mousemove', onPointerMove)
+    if (options.pointer) document.removeEventListener('pointermove', onPointerMove)
     options.clone2.removeEventListener('transitionend', onEnd)
     options.clearRetarget(options.revealEl, retarget)
     options.holder.remove()
@@ -304,12 +287,11 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     }
     options.restoreConnectionDot?.()
     options.revealEl.classList.add('phys-reveal-snap')
-    const revealHovered = options.revealEl.matches(':hover') || isPointerOverReveal()
     options.onReveal?.()
     void options.revealEl.offsetWidth
     options.revealEl.classList.remove('phys-reveal-snap')
     const reveal = options.visualController?.reveal ?? revealWithoutStaleHover
-    reveal(options.revealEl, options.pointer, undefined, revealHovered, () => options.session.isCurrent())
+    reveal(options.revealEl, options.pointer, undefined, landingHovered, () => options.session.isCurrent())
     options.finishSession()
   }
   unregister = options.registerCleanup(options.revealEl, forceCleanup)
@@ -319,6 +301,52 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   options.clone2.addEventListener('transitionend', onEnd)
   requestAnimationFrame(() => {
     if (landing.isDone() || !options.session.isCurrent()) return
+    if (options.useSpringLanding) {
+      const current = options.holder.getBoundingClientRect()
+      const params = springParamsFromResponse(dragPhysicsTuning.landing)
+      const controller = createCardMotionController({
+        mode: 'settle',
+        onFrame: frame => {
+          const frameBox: MorphBox = {
+            left: frame.x,
+            top: frame.y,
+            width: options.dropSize.w * frame.scaleX,
+            height: options.dropSize.h * frame.scaleY,
+          }
+          const transform = morphTransform(frameBox, options.dropSize, options.half)
+          options.holder.style.transition = 'none'
+          options.clone2.style.transition = 'none'
+          options.holder.style.transform = transform
+          options.clone2.style.transform = transform
+        },
+        onArrived: finish,
+      })
+      // CardMotionControllerOptions 不再接受构造时的 profile 字段（配置弹簧只能
+      // 通过 setProfile()）——这里原来直接把 { position, scale } 塞进构造选项，
+      // TS 早就该报错但当时接口还有这个字段；接口收紧之后这里变成传了个多余字段，
+      // 运行时静默忽略，实际弹簧一直用的是控制器内部默认的 420/30，调参面板"落地
+      // 阶段"两个滑块因此看起来毫无效果（表现为"改了参数抛出的物理效果还是不对"）。
+      controller.setProfile({ position: params, scale: params })
+      controller.seed({
+        x: current.left,
+        y: current.top,
+        vx: options.initialVelocity?.x ?? 0,
+        vy: options.initialVelocity?.y ?? 0,
+        scaleX: current.width / Math.max(1, options.dropSize.w),
+        scaleY: current.height / Math.max(1, options.dropSize.h),
+        scaleVX: 0,
+        scaleVY: 0,
+      })
+      controller.setTarget({
+        x: box.left,
+        y: box.top,
+        scaleX: box.width / Math.max(1, options.dropSize.w),
+        scaleY: box.height / Math.max(1, options.dropSize.h),
+      })
+      controller.start()
+      unregister = options.registerCleanup(options.revealEl, () => controller.stop())
+      return
+    }
     options.holder.style.transition = transition
     options.clone2.style.transition = transition
     if (options.hidePrimaryVisual && clone2Inner && dragShadow !== landingShadow) {

@@ -12,6 +12,7 @@ import type { PhysicsDragOpts, PhysicsDropContext } from '../useDragEngine'
 import type { CardVisualController } from '../visual/CardVisualController'
 import { resolveLandingZIndex } from '../visual/layer'
 import { acquireConnectionDot, releaseConnectionDot } from '../visual/connectionDotManager'
+import { dragPhysicsTuning, springParamsFromResponse } from '../physicsTuning'
 
 interface Box { left: number; top: number; width: number; height: number }
 interface ActiveDrag { raf: number; end: () => void }
@@ -102,11 +103,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
 
   // 二阶弹簧-阻尼跟随（有惯性/动量，起步被弹簧甩出去而非黏滞渗出）：
   //   SPRING 越大越跟手、越小越拖；ZETA<1 略带动量回弹，=1 临界不过冲。
-  const SPRING = opts.spring   ?? 360    // 弹簧刚度（rad²/s²），≈3.0Hz 固有频率（越大越跟手，190 时约 0.35s 追上光标、偏拖沓，调硬到 ~0.23s）
-  const ZETA   = opts.damping  ?? 0.85   // 阻尼比：略欠阻尼，保留一点「甩出去」的灵动，但收得比 0.82 快
+  const followPhysics = springParamsFromResponse(dragPhysicsTuning.follow)
+  const SPRING = opts.spring   ?? followPhysics.stiffness
+  const ZETA   = opts.damping  ?? dragPhysicsTuning.follow.dampingRatio
   const LIFT  = opts.lift      ?? 1       // 克隆抬起的放大（1=不放大）
-  const SWAY  = opts.sway      ?? 0.25   // 横向摆动幅度
-  const TILT  = opts.tilt      ?? 5      // 后仰角(deg)：上小下大，像被拎起
+  const SWAY  = opts.sway      ?? dragPhysicsTuning.followSway
+  const TILT  = opts.tilt      ?? dragPhysicsTuning.followTilt
   const GRABY = opts.grabY     ?? 28     // 抓取点到卡片顶部的距离：挂在指针下方
 
   const sourceRect = sourceEl.getBoundingClientRect()
@@ -300,7 +302,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   } else {
     sourceEl.style.opacity = '0'
   }
-  if (container && !opts.keepSourcePlaceholder) {
+  if (container && !opts.keepSourcePlaceholder && !container.classList.contains('done-layout-root')) {
     requestAnimationFrame(() => {
       if (!deps.active.current || !session.isCurrent() || !sourceEl.isConnected) return
       // 「已完成」列的 recent-card-list/month-cards 不是单纯追加列表，卡片抓起/落下
@@ -320,6 +322,15 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       void flip.play().finally(() => {
         unregisterFlipCleanup()
         container.classList.remove('flip-engine-active')
+      })
+    })
+  } else if (container?.classList.contains('done-layout-root') && opts.onPickupFromDoneLayout) {
+    requestAnimationFrame(() => {
+      if (!deps.active.current || !session.isCurrent() || !sourceEl.isConnected) return
+      const layoutNode = sourceEl.closest<HTMLElement>('.done-card-item')
+      void opts.onPickupFromDoneLayout(() => {
+        sourceEl.style.display = 'none'
+        if (layoutNode?.isConnected) layoutNode.style.display = 'none'
       })
     })
   }
@@ -501,6 +512,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         turn = Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1))
       }
     }
+    const releaseCap = dragPhysicsTuning.releaseVelocityCap
+    releaseVel = {
+      x: Math.max(-releaseCap, Math.min(releaseCap, releaseVel.x * dragPhysicsTuning.releaseImpulse)),
+      y: Math.max(-releaseCap, Math.min(releaseCap, releaseVel.y * dragPhysicsTuning.releaseImpulse)),
+    }
     if (pointer) rememberPointer(target.x, target.y)
     session.setPhase('resolving-target')
     if (opts.onDrop) {
@@ -651,6 +667,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         finishSession: () => dragRegistry.finish(sourceEl, session),
         trackTargetLayout,
         measureTargetLayout,
+        useSpringLanding: opts.useSpringLanding,
+        initialVelocity: releaseVel,
       })
       return
     }

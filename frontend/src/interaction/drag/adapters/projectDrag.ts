@@ -8,6 +8,7 @@ export interface ProjectDragOptions {
   isCardControl: (target: EventTarget | null) => boolean
   onDrop: PhysicsDragOpts['onDrop']
   onClick: () => void
+  onPickupFromDoneLayout?: PhysicsDragOpts['onPickupFromDoneLayout']
 }
 
 /**
@@ -16,7 +17,8 @@ export interface ProjectDragOptions {
  * 混入同一笔 FLIP。该规则属于业务适配器，不应由拖拽运行时认识具体 DOM 类名。
  */
 export function resolveProjectFlipContainer(element: HTMLElement): HTMLElement | null {
-  return element.closest<HTMLElement>('.kanban-card-list')
+  return element.closest<HTMLElement>('.done-layout-root')
+    ?? element.closest<HTMLElement>('.kanban-card-list')
     ?? element.closest<HTMLElement>('.month-cards')
     ?? element.closest<HTMLElement>('.col-body')
     ?? element.parentElement
@@ -37,8 +39,10 @@ export function startProjectDrag(event: PointerEvent, options: ProjectDragOption
       flipContainer: resolveProjectFlipContainer(card) ?? undefined,
       resolveFlipContainer: resolveProjectFlipContainer,
       flipAllDescendants: true,
+      useSpringLanding: true,
       landingVisibilityWaitMs: 300,
       onDrop: options.onDrop,
+      onPickupFromDoneLayout: options.onPickupFromDoneLayout,
     }),
     onClick: options.onClick,
   })

@@ -27,11 +27,12 @@
       ref="drawerViewportRef"
       :open="expanded"
       :target-height="targetHeight"
+      :scroll-key="panel"
       :class="panel === 'canvases' ? 'canvas-viewport' : 'project-viewport'"
     >
       <div class="cd-stage">
         <section class="cd-content-panel canvas-panel" :class="{ visible: visiblePanel === 'canvases' && contentVisible }" :aria-hidden="visiblePanel !== 'canvases'">
-          <DrawerTrack class="canvas-track" data-drawer-scroll>
+          <DrawerTrack class="canvas-track" data-drawer-scroll="canvases">
             <CanvasDrawerContent ref="canvasContentRef" :canvases="canvases" :active-id="activeId" @create="emit('create')" @open="onOpen" @delete="onDelete" @rename="(id, title) => emit('rename', id, title)" />
           </DrawerTrack>
         </section>
@@ -39,17 +40,17 @@
        <section class="cd-content-panel projects-panel" :class="{ visible: visiblePanel === 'projects' && contentVisible }" :aria-hidden="visiblePanel !== 'projects'">
          <div ref="projectListRef" class="cd-list project-list">
            <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" @pointerdown.stop />
-           <DrawerTrack class="project-list-scroll" data-drawer-scroll>
+           <DrawerTrack class="project-list-scroll" data-drawer-scroll="projects">
            <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
             </div>
-            <template v-else>
+            <template v-else-if="canvasProjectIdsReady">
               <!-- 三个状态分组的 key 恒定；几何位移统一由布局协调器处理。 -->
-              <TransitionGroup :css="false" tag="div" class="project-groups">
+              <TransitionGroup :css="false" tag="div" class="project-groups" move-class="project-groups-vue-move">
                 <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group" data-layout-role="group" :data-layout-key="group.status">
-                  <button class="project-group-title" :aria-expanded="openProjectStatuses.has(group.status)" @click="toggleProjectStatus(group.status)">
+                  <button class="project-group-title" :aria-expanded="group.items.length > 0 && openProjectStatuses.has(group.status)" @click="group.items.length && toggleProjectStatus(group.status)">
                     <span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span>
-                    <svg class="project-group-chevron" :class="{ open: openProjectStatuses.has(group.status) }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <svg class="project-group-chevron" :class="{ open: group.items.length > 0 && openProjectStatuses.has(group.status) }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                       <path d="M2 3.5l3 3 3-3"/>
                     </svg>
                   </button>
@@ -58,7 +59,7 @@
                     @enter="onGroupFoldEnter"
                     @leave="onGroupFoldLeave"
                   >
-                    <div v-if="openProjectStatuses.has(group.status)" class="project-group-content">
+                    <div v-if="group.items.length > 0 && openProjectStatuses.has(group.status)" class="project-group-content">
                       <TransitionGroup :css="false" tag="div" class="project-group-cards">
                         <ProjectDrawerCard
                           v-for="project in group.items"
@@ -73,7 +74,7 @@
                   </Transition>
                 </section>
               </TransitionGroup>
-              <div v-if="!projectsLoading && !filteredProjects.length" class="project-empty">没有匹配的项目</div>
+              <div v-if="!projectsLoading && projectQuery.trim() && !filteredProjects.length" class="project-empty">没有匹配的项目</div>
            </template>
             </DrawerTrack>
          </div>
@@ -94,13 +95,15 @@ import DrawerShell from './drawer/DrawerShell.vue'
 import DrawerTrack from './drawer/DrawerTrack.vue'
 import DrawerViewport from './drawer/DrawerViewport.vue'
 import CanvasDrawerContent from './CanvasDrawerContent.vue'
-import { createLayoutItems, createFlipTransaction, createGroupLayoutTransaction } from '@/interaction/drag/animation/flipCoordinator'
+import { createGroupLayoutTransaction } from '@/interaction/drag/animation/flipCoordinator'
+import { createProjectGroupsLayoutAdapter } from '@/interaction/drag/adapters/projectGroupsLayout'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },
   activeId: { type: Number as PropType<number | null>, default: null },
   projects: { type: Array as PropType<Project[]>, required: true },
   canvasProjectIds: { type: Object as PropType<Set<number>>, required: true },
+  canvasProjectIdsReady: { type: Boolean, default: false },
   projectsLoading: { type: Boolean, default: false },
   // 抽屉卡抓起后会脱离抽屉、落进按相机缩放渲染的画布；把当前比例交给物理克隆，
   // 让 clone1 从第一帧起就是画布尺寸，不能等 clone2 交接时才突然缩小。
@@ -131,9 +134,17 @@ const panelHeights = ref<Record<Panel, number>>({ canvases: 0, projects: 0 })
 const targetHeight = computed(() => panelHeights.value[panel.value])
 let canvasListObserver: ResizeObserver | null = null
 let projectListObserver: ResizeObserver | null = null
-let pendingProjectGroups: { transaction: ReturnType<typeof createFlipTransaction>; items: ReturnType<typeof createLayoutItems> } | null = null
-let projectGroupToggleInFlight = false
-
+let projectGroupAnimationCount = 0
+let projectGroupScrollRaf: number | null = null
+const DRAWER_LAYOUT_DURATION = 340
+const DRAWER_LAYOUT_EASING = 'cubic-bezier(.22,1,.36,1)'
+const projectGroupsLayout = createProjectGroupsLayoutAdapter({
+  getRoot: () => projectListRef.value?.querySelector<HTMLElement>('.project-groups') ?? null,
+  captureScroll: () => drawerViewportRef.value?.captureScroll() ?? null,
+  restoreScroll: snapshot => drawerViewportRef.value?.restoreScroll(snapshot as Parameters<NonNullable<typeof drawerViewportRef.value>['restoreScroll']>[0]),
+  duration: DRAWER_LAYOUT_DURATION,
+  easing: DRAWER_LAYOUT_EASING,
+})
 const projectQuery = ref('')
 const filteredProjects = computed(() => {
   const query = projectQuery.value.trim().toLowerCase()
@@ -159,6 +170,7 @@ watch(filteredProjects, (projects) => {
     drawerProjectSnapshotReady = true
     return
   }
+  const statusesToOpen: string[] = []
   for (const project of projects) {
     if (previousDrawerProjectIds.has(project.id)) continue
     const status = project.status
@@ -166,83 +178,241 @@ watch(filteredProjects, (projects) => {
       const next = new Set(openProjectStatuses.value)
       next.add(status)
       openProjectStatuses.value = next
+      statusesToOpen.push(status)
     }
   }
+  const addedProjectIds = projects.filter(project => !previousDrawerProjectIds.has(project.id)).map(project => project.id)
   previousDrawerProjectIds = currentIds
-}, { immediate: true })
+  console.log('[drawer-height-probe]', JSON.stringify({
+    event: 'projects-change', added: addedProjectIds,
+    autoOpen: statusesToOpen, list: projectListRef.value?.scrollHeight ?? null,
+    t: Math.round(performance.now()),
+  }))
+  // 拖入画布抽屉时，状态组是由数据监听器自动打开的，不会经过点击组标题的入口；
+  // 补上同一笔外层高度事务，让新卡进入、组展开和抽屉高度变化从同一帧开始。
+  if (statusesToOpen.length) {
+    void nextTick(() => statusesToOpen.forEach(status => animateViewportWithGroup(status, true, 0)))
+  }
+  // project-list-scroll 有 max-height，项目变少时外层尺寸可能不变，ResizeObserver
+  // 不会发出通知；DOM 提交后主动量最终的可用项目高度。
+  void nextTick(() => measurePanel('projects'))
+}, { immediate: true, flush: 'post' })
+
+watch(() => props.canvasProjectIdsReady, (ready) => {
+  if (ready) void nextTick(() => measurePanel('projects'))
+}, { flush: 'post' })
 function measurePanel(panelName: Panel) {
+  if (panelName === 'projects' && !props.canvasProjectIdsReady) return
+  if (panelName === 'projects' && projectGroupAnimationCount > 0) return
   const list = panelName === 'canvases' ? canvasContentRef.value?.listRef : projectListRef.value
   if (!list) return
   const measuredHeight = list.scrollHeight
+  if (panelName === 'projects') {
+    console.log('[drawer-height-probe]', JSON.stringify({
+      event: 'measure-panel', measured: measuredHeight,
+      listHeight: +list.getBoundingClientRect().height.toFixed(2),
+      groups: Array.from(list.querySelectorAll<HTMLElement>('.project-group')).map(group => ({
+        key: group.dataset.layoutKey,
+        height: +group.getBoundingClientRect().height.toFixed(2),
+        content: group.querySelector<HTMLElement>('.project-group-content')?.getBoundingClientRect().height ?? null,
+      })),
+      animations: projectGroupAnimationCount,
+      t: Math.round(performance.now()),
+    }))
+  }
   // 内容面板在切换可见性时会短暂处于 height:0；无内容的中间态不能覆盖已经量好的
   // 展开目标，否则高度事务会被重置成 0。
   if (measuredHeight <= 0) return
+  const nextHeight = Math.min(measuredHeight, window.innerHeight * 0.55)
+  if (panelHeights.value[panelName] === nextHeight) return
   panelHeights.value = {
     ...panelHeights.value,
-    [panelName]: Math.min(measuredHeight, window.innerHeight * 0.55),
+    [panelName]: nextHeight,
   }
 }
 function measurePanels() {
   measurePanel('canvases')
   measurePanel('projects')
 }
-function onGroupFoldEnter(el: Element, done: () => void) {
-  const tx = createGroupLayoutTransaction(el as HTMLElement)
-  void tx.play(true).then(() => done())
+function projectGroupTitleScrollTarget(status: string): { scroller: HTMLElement, target: number } | null {
+  const group = projectListRef.value?.querySelector<HTMLElement>(`.project-group[data-layout-key="${CSS.escape(status)}"]`)
+  const title = group?.querySelector<HTMLElement>('.project-group-title')
+  const scroller = projectListRef.value?.querySelector<HTMLElement>('.project-list-scroll')
+  if (!title || !scroller) return null
+  const titleRect = title.getBoundingClientRect()
+  const scrollerRect = scroller.getBoundingClientRect()
+  const target = scroller.scrollTop + titleRect.top - scrollerRect.top
+  return {
+    scroller,
+    target: Math.max(0, Math.min(target, scroller.scrollHeight - scroller.clientHeight)),
+  }
 }
-function onGroupFoldLeave(el: Element, done: () => void) {
-  const tx = createGroupLayoutTransaction(el as HTMLElement)
-  void tx.play(false).then(() => done())
-}
-function toggleProjectStatus(status: string) {
-  const scrollSnapshot = drawerViewportRef.value?.captureScroll() ?? null
-  const groupRoot = projectListRef.value?.querySelector<HTMLElement>('.project-groups')
-  const flipElements = groupRoot
-    ? Array.from(groupRoot.querySelectorAll<HTMLElement>(':scope > .project-group'))
-    : []
-  const layout = createFlipTransaction({ duration: 280, easing: 'cubic-bezier(.22,1,.36,1)' })
-  const layoutItems = createLayoutItems(flipElements, 'group')
-  if (layoutItems.length) layout.capture(layoutItems)
-  const next = new Set(openProjectStatuses.value)
-  next.has(status) ? next.delete(status) : next.add(status)
-  projectGroupToggleInFlight = true
-  openProjectStatuses.value = next
-  void nextTick().then(() => {
-    // 项目滚动区现在位于筛选框下方，外层 viewport 高度固定后不会再因为
-    // 内部状态组展开自动触发 ResizeObserver；这里显式刷新目标高度，让抽屉
-    // 先平滑扩展到新的内容高度，再由内部滚动区裁切超出部分。
-    requestAnimationFrame(() => measurePanel('projects'))
-    if (flipElements.length) {
-      layout.measure(layoutItems)
-      void layout.play().finally(() => drawerViewportRef.value?.restoreScroll(scrollSnapshot))
+function alignProjectGroupTitleDuringExpand(status: string, smooth = true) {
+  if (projectGroupScrollRaf !== null) cancelAnimationFrame(projectGroupScrollRaf)
+  if (!smooth) {
+    const result = projectGroupTitleScrollTarget(status)
+    if (result) result.scroller.scrollTop = result.target
+    return
+  }
+  const deadline = performance.now() + DRAWER_LAYOUT_DURATION + 80
+  const tick = () => {
+    const result = projectGroupTitleScrollTarget(status)
+    if (!result) {
+      projectGroupScrollRaf = null
       return
     }
-    drawerViewportRef.value?.restoreScroll(scrollSnapshot)
+    const distance = result.target - result.scroller.scrollTop
+    if (performance.now() < deadline) {
+      result.scroller.scrollTop += distance * 0.18
+      projectGroupScrollRaf = requestAnimationFrame(tick)
+    } else {
+      result.scroller.scrollTop = result.target
+      projectGroupScrollRaf = null
+    }
+  }
+  tick()
+}
+// 折叠元素自己的高度用真实过渡在变化（createGroupLayoutTransaction 直接 animate
+// element.style.height），它是文档流里的普通块级元素——后面的兄弟 .project-group
+// 会跟着这个高度变化逐帧自动回流、自动挪位，浏览器原生免费提供平滑效果，不需要
+// projectGroupsLayout 那套 FLIP 补间。之前 toggle 路径也接了 FLIP，实测会在「已有
+// 一组展开」时把同一次挪位用 transform 重新播一遍——折叠过渡明明已经带动兄弟组
+// 平滑到位，FLIP 事务又照着 before/after 快照播了一次，看着就是"动画放完了又来一次"。
+// FLIP 只留给 data-update（拖拽改数据，组内卡片数量非连续突变，没有平滑高度过渡
+// 可言）这条路径。
+function onGroupFoldEnter(el: Element, done: () => void) {
+  projectGroupAnimationCount += 1
+  // 组高度事务接管自然回流；旧的标题 FLIP 若继续播放，会把同一批标题
+  // 再写一层 transform，松手瞬间就会出现标题重叠。
+  projectGroupsLayout.cancel()
+  const group = el.parentElement
+  const status = group?.dataset.layoutKey
+  if (status) {
+    // 已完成组通常位于列表底部，拖入时 clone2 正在交接；持续滚动会让落点盒子
+    // 同帧变化，产生一次可见顿挫。该组进入时固定即时对齐，点击展开仍走缓动路径。
+    const landingInProgress = document.body.classList.contains('phys-dragging')
+      || !!el.querySelector('.phys-drag-source-placeholder, .phys-reveal-snap, .phys-just-revealed')
+    alignProjectGroupTitleDuringExpand(status, !landingInProgress)
+  }
+  const title = group?.querySelector<HTMLElement>('.project-group-title')
+  const card = el.querySelector<HTMLElement>('.drawer-project-card')
+  console.log('[drawer-geometry-probe]', JSON.stringify({
+    event: 'group-enter-geometry',
+    group: group?.getBoundingClientRect().toJSON(),
+    title: title?.getBoundingClientRect().toJSON(),
+    content: (el as HTMLElement).getBoundingClientRect().toJSON(),
+    card: card?.getBoundingClientRect().toJSON(),
+    styles: {
+      groupTransform: group ? getComputedStyle(group).transform : null,
+      contentHeight: (el as HTMLElement).style.height,
+      contentMarginTop: (el as HTMLElement).style.marginTop,
+      contentTransform: getComputedStyle(el as HTMLElement).transform,
+      contentOverflow: getComputedStyle(el as HTMLElement).overflow,
+    },
+    t: Math.round(performance.now()),
+  }))
+  console.log('[drawer-height-probe]', JSON.stringify({ event: 'group-enter-start', height: +(el as HTMLElement).getBoundingClientRect().height.toFixed(2), t: Math.round(performance.now()) }))
+  const tx = createGroupLayoutTransaction(el as HTMLElement, DRAWER_LAYOUT_DURATION, DRAWER_LAYOUT_EASING)
+  void tx.play(true).finally(() => {
+    done()
+    projectGroupAnimationCount = Math.max(0, projectGroupAnimationCount - 1)
+    console.log('[drawer-height-probe]', JSON.stringify({ event: 'group-enter-finish', animations: projectGroupAnimationCount, t: Math.round(performance.now()) }))
+    if (projectGroupAnimationCount === 0) requestAnimationFrame(() => measurePanel('projects'))
+  })
+  if (status) animateViewportWithGroup(status, true, 0)
+}
+function onGroupFoldLeave(el: Element, done: () => void) {
+  projectGroupAnimationCount += 1
+  projectGroupsLayout.cancel()
+  const previousHeight = (el as HTMLElement).getBoundingClientRect().height
+  console.log('[drawer-height-probe]', JSON.stringify({ event: 'group-leave-start', height: +previousHeight.toFixed(2), t: Math.round(performance.now()) }))
+  const tx = createGroupLayoutTransaction(el as HTMLElement, DRAWER_LAYOUT_DURATION, DRAWER_LAYOUT_EASING)
+  void tx.play(false).finally(() => {
+    done()
+    projectGroupAnimationCount = Math.max(0, projectGroupAnimationCount - 1)
+    console.log('[drawer-height-probe]', JSON.stringify({ event: 'group-leave-finish', animations: projectGroupAnimationCount, t: Math.round(performance.now()) }))
+    if (projectGroupAnimationCount === 0) {
+      // v-if 的离场节点在 done() 后还要经过 Vue 的卸载调度；下一帧可能仍读到
+      // “标题存在、内容高度已是 0”的中间 DOM。等两帧再校准，避免把这个中间值
+      // 写进 DrawerViewport，导致外层先缩到 0 再恢复最终高度。
+      requestAnimationFrame(() => requestAnimationFrame(() => measurePanel('projects')))
+    }
+  })
+  const status = el.parentElement?.dataset.layoutKey
+  if (status) animateViewportWithGroup(status, false, previousHeight)
+}
+function animateViewportWithGroup(status: string, opening: boolean, previousHeight: number) {
+  const group = projectListRef.value?.querySelector<HTMLElement>(`.project-group[data-layout-key="${CSS.escape(status)}"]`)
+  const content = group?.querySelector<HTMLElement>('.project-group-content')
+  const groupGap = group ? parseFloat(getComputedStyle(group).rowGap) || 0 : 0
+  const contentHeight = content?.scrollHeight ?? 0
+  const maxHeight = window.innerHeight * 0.55
+  const currentHeight = drawerViewportRef.value?.viewportRef?.getBoundingClientRect().height
+    ?? panelHeights.value.projects
+  // 收缩时 viewport 可能已经被 max-height 截断，不能用「当前 viewport - 组高度」
+  // 反推目标，否则滚动区域里的其它组会被一起扣掉，目标会错误变成 0。
+  const naturalListHeight = projectListRef.value?.scrollHeight ?? currentHeight
+  let targetNaturalHeight = naturalListHeight + contentHeight + groupGap
+  if (!opening && content) {
+    // 收起事务已经开始，但 Vue 的离场节点还在 DOM 中。临时把该 wrapper
+    // 设为最终的 0 高度读取外层自然高度，随后恢复事务当前样式；这样能在
+    // 组动画开始时就拿到外层目标，而不必等组动画结束后才测量。
+    const previousInlineHeight = content.style.height
+    const previousInlineMarginTop = content.style.marginTop
+    content.style.height = '0px'
+    content.style.marginTop = `-${groupGap}px`
+    void content.offsetHeight
+    targetNaturalHeight = projectListRef.value?.scrollHeight ?? naturalListHeight
+    content.style.height = previousInlineHeight
+    content.style.marginTop = previousInlineMarginTop
+  }
+  const target = Math.max(0, Math.min(maxHeight, targetNaturalHeight))
+  console.log('[drawer-height-probe]', JSON.stringify({
+    event: 'group-height-target', status, opening,
+    current: +currentHeight.toFixed(2), natural: +targetNaturalHeight.toFixed(2), target: +target.toFixed(2),
+    content: +contentHeight.toFixed(2), previous: +previousHeight.toFixed(2),
+    list: projectListRef.value?.scrollHeight ?? null, t: Math.round(performance.now()),
+  }))
+  // 让 DrawerViewport 的 props watcher 负责启动唯一一笔外层高度事务；直接调用
+  // animateTo 再改 panelHeights 会形成两次相同的高度动画。
+  if (Math.abs(panelHeights.value.projects - target) >= 0.5) {
+    panelHeights.value = { ...panelHeights.value, projects: target }
+  }
+}
+function toggleProjectStatus(status: string) {
+  // 仍要调一次 requestLayout('toggle')：它唯一剩下的作用是置位 skipNextDataUpdate，
+  // 抵消紧跟着 onBeforeUpdate 触发的那次 'data-update' 请求——否则 toggle 引起的
+  // 重渲染会被 data-update 路径当成“数据变了”又捕一次 FLIP，等于换了个入口重新
+  // 引入同一个二次动画问题。
+  projectGroupsLayout.requestLayout('toggle')
+  const group = projectListRef.value?.querySelector<HTMLElement>(`.project-group[data-layout-key="${CSS.escape(status)}"]`)
+  const content = group?.querySelector<HTMLElement>('.project-group-content')
+  const previousHeight = content?.getBoundingClientRect().height ?? 0
+  const opening = !openProjectStatuses.value.has(status)
+  if (opening) alignProjectGroupTitleDuringExpand(status)
+  console.log('[drawer-height-probe]', JSON.stringify({
+    event: 'toggle', status, opening, previousContent: +previousHeight.toFixed(2),
+    viewport: +(drawerViewportRef.value?.viewportRef?.getBoundingClientRect().height ?? 0).toFixed(2),
+    panelTarget: +panelHeights.value.projects.toFixed(2), t: Math.round(performance.now()),
+  }))
+  const next = new Set(openProjectStatuses.value)
+  next.has(status) ? next.delete(status) : next.add(status)
+  openProjectStatuses.value = next
+  void nextTick(() => {
+    animateViewportWithGroup(status, opening, previousHeight)
+    console.log('[drawer-height-probe]', JSON.stringify({ event: 'toggle-next-tick', status, t: Math.round(performance.now()) }))
   })
 }
 onBeforeUpdate(() => {
   // 跨抽屉/画布拖拽会直接改变项目数据，状态组本身不会经过 toggleProjectStatus；
   // 这里补上同一套组位移事务，避免源组收缩后其它状态组瞬移。
-  const root = projectListRef.value?.querySelector<HTMLElement>('.project-groups')
-  if (projectGroupToggleInFlight) {
-    projectGroupToggleInFlight = false
-    return
-  }
-  if (!root) return
-  const elements = Array.from(root.querySelectorAll<HTMLElement>(':scope > .project-group'))
-  const items = createLayoutItems(elements, 'group')
-  if (!items.length) return
-  const transaction = createFlipTransaction({ duration: 280, easing: 'cubic-bezier(.22,1,.36,1)' })
-  transaction.capture(items)
-  pendingProjectGroups?.transaction.cancel()
-  pendingProjectGroups = { transaction, items }
+  // 但组高度事务进行期间，下面的标题应跟随自然回流；此时再捕获一笔
+  // data-update FLIP 会把离场中的中间布局留到动画结束后，造成已完成组迟到重叠。
+  if (projectGroupAnimationCount > 0) return
+  projectGroupsLayout.requestLayout('data-update')
 })
 onUpdated(() => {
-  const pending = pendingProjectGroups
-  if (!pending) return
-  pendingProjectGroups = null
-  pending.transaction.measure(pending.items)
-  void pending.transaction.play()
+  if (projectGroupAnimationCount === 0) void projectGroupsLayout.measureAndPlay()
 })
 async function togglePanel(nextPanel: Panel) {
   if (expanded.value && panel.value === nextPanel) {
@@ -279,7 +449,10 @@ function onDelete(canvas: MindCanvas) {
 
 onMounted(() => {
   canvasListObserver = new ResizeObserver(() => measurePanel('canvases'))
-  projectListObserver = new ResizeObserver(() => measurePanel('projects'))
+  projectListObserver = new ResizeObserver(() => {
+    if (projectGroupAnimationCount > 0) return
+    measurePanel('projects')
+  })
   if (canvasContentRef.value?.listRef) canvasListObserver.observe(canvasContentRef.value.listRef)
   if (projectListRef.value) projectListObserver.observe(projectListRef.value)
   measurePanels()
@@ -294,6 +467,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .cd-head {
+  position: relative;
   display: flex;
   align-items: center;
   height: var(--canvas-toolbar-height);
@@ -307,7 +481,7 @@ onBeforeUnmount(() => {
    左边距、返回按钮的几何中心（padding-right 7px + 自身宽 36px 的一半 18px = 25px）
    都钉在离边缘 25px，三边统一对齐同一个「圆角中心」，不再各自取不同的数。 */
 .cd-expanded-nav { display: flex; align-items: center; width: 100%; box-sizing: border-box; padding: 0 7px 0 25px; }
-.cd-compact-nav { display: flex; flex-direction: column; align-items: center; justify-content: space-evenly; width: 100%; height: 100%; }
+.cd-compact-nav { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: space-evenly; width: 100%; height: calc(var(--canvas-toolbar-height) * 2); pointer-events: auto; }
 .cd-toggle { flex-shrink: 0; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; background: none; color: var(--text-secondary); cursor: pointer; transition: background .18s ease, color .18s ease; }
 .cd-toggle:hover, .cd-toggle.active { background: rgba(123,127,178,.11); color: var(--color-primary); }
 .canvas-drawer:not(.open) .cd-head { height: calc(var(--canvas-toolbar-height) * 2); flex-direction: column; }
@@ -352,6 +526,7 @@ onBeforeUnmount(() => {
 .canvas-track[data-drawer-scroll] { height: 100%; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
 .project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }
 .project-groups { gap: 9px; }
+.project-groups-vue-move { transition: none !important; }
 .project-group { display: flex; flex-direction: column; gap: 6px; }
 /* 折叠动画改走 JS 实测像素高度（见 onGroupFoldEnter/onGroupFoldLeave），不再用
    grid-template-rows: 1fr/0fr 这个技巧——fr 单位插值在浏览器里对「最后一帧精确到 0」
@@ -380,7 +555,7 @@ onBeforeUnmount(() => {
 }
 .project-group-title:hover { background: rgba(0,0,0,.04); }
 .project-group-title > span:nth-last-child(2) { margin-left: auto; font-size: 10px; font-weight: 400; color: rgba(0,0,0,.38); font-variant-numeric: tabular-nums; }
-.project-group-chevron { margin-left: 3px !important; flex-shrink: 0; color: rgba(0,0,0,.2); transform: rotate(0deg); transition: transform .2s cubic-bezier(0.34,1.1,0.64,1); }
+.project-group-chevron { margin-left: 3px !important; flex-shrink: 0; color: rgba(0,0,0,.2); transform: rotate(0deg); transition: transform .2s cubic-bezier(.22,1,.36,1); }
 .project-group-chevron.open { transform: rotate(180deg); }
 .project-status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .project-status-dot.is-pending { background: #d46b6b; }

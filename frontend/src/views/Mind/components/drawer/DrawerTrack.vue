@@ -23,7 +23,8 @@ defineExpose({ trackRef, captureLayout })
 </script>
 
 <style scoped>
-.drawer-track { position: relative; width: 100%; min-height: 0; }
+.drawer-track { position: relative; width: 100%; min-height: 0; overflow-anchor: none; }
+.drawer-track[data-drawer-scroll] { overflow-anchor: none; }
 .drawer-track.project-list-scroll::-webkit-scrollbar { width: 3px; }
 .drawer-track.project-list-scroll::-webkit-scrollbar-track { background: transparent; }
 .drawer-track.project-list-scroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }

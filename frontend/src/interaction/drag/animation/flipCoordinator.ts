@@ -28,7 +28,24 @@ export interface DrawerLayoutTransaction {
   cancel(): void
 }
 
+const layoutOwners = new WeakMap<HTMLElement, symbol>()
+
+interface LayoutStyleSnapshot {
+  height: string
+  opacity: string
+  transition: string
+  overflow: string
+  marginTop?: string
+  writtenHeight: string
+  writtenOpacity: string
+  writtenTransition: string
+  writtenOverflow: string
+  writtenMarginTop?: string
+}
+
 export function createDrawerLayoutTransaction(element: HTMLElement, duration = 380, easing = 'cubic-bezier(.22,1,.36,1)'): DrawerLayoutTransaction {
+  const token = Symbol('drawer-layout-transaction')
+  let snapshot: LayoutStyleSnapshot | null = null
   let cancelled = false
   let timer: number | null = null
   let resolvePlay: ((result: FlipResult) => void) | null = null
@@ -38,7 +55,11 @@ export function createDrawerLayoutTransaction(element: HTMLElement, duration = 3
     resolvePlay = null
     if (timer !== null) window.clearTimeout(timer)
     element.removeEventListener('transitionend', onEnd)
-    element.style.transition = ''
+    if (layoutOwners.get(element) === token && snapshot) {
+      if (element.style.height === snapshot.writtenHeight) element.style.height = snapshot.height
+      if (element.style.transition === snapshot.writtenTransition) element.style.transition = snapshot.transition
+      layoutOwners.delete(element)
+    }
     resolve(result)
   }
   const onEnd = (event: TransitionEvent) => {
@@ -48,13 +69,27 @@ export function createDrawerLayoutTransaction(element: HTMLElement, duration = 3
     play(targetHeight) {
       if (cancelled) return Promise.resolve('cancelled')
       const current = element.getBoundingClientRect().height
+      snapshot = {
+        height: element.style.height,
+        opacity: element.style.opacity,
+        transition: element.style.transition,
+        overflow: element.style.overflow,
+        writtenHeight: `${current}px`,
+        writtenOpacity: element.style.opacity,
+        writtenTransition: element.style.transition,
+        writtenOverflow: element.style.overflow,
+      }
+      layoutOwners.set(element, token)
       element.style.height = `${current}px`
       void element.offsetHeight
       element.addEventListener('transitionend', onEnd)
       requestAnimationFrame(() => {
         if (cancelled) return
         element.style.transition = `height ${duration}ms ${easing}`
-        element.style.height = `${Math.max(0, targetHeight)}px`
+        const target = `${Math.max(0, targetHeight)}px`
+        if (snapshot) snapshot.writtenHeight = target
+        if (snapshot) snapshot.writtenTransition = element.style.transition
+        element.style.height = target
       })
       return new Promise<FlipResult>(resolve => {
         resolvePlay = resolve
@@ -70,16 +105,30 @@ export function createDrawerLayoutTransaction(element: HTMLElement, duration = 3
 
 /** 负责分组容器的真实像素高度过渡；不触碰 clone、opacity/scale 或业务状态。 */
 export function createGroupLayoutTransaction(element: HTMLElement, duration = 280, easing = 'cubic-bezier(.4,0,.2,1)'): GroupLayoutTransaction {
+  const token = Symbol('group-layout-transaction')
+  let snapshot: LayoutStyleSnapshot | null = null
   let cancelled = false
   let timer: number | null = null
   let resolvePlay: ((result: FlipResult) => void) | null = null
+  let isOpening = true
   const cleanup = () => {
     if (timer !== null) window.clearTimeout(timer)
     element.removeEventListener('transitionend', onEnd)
-    element.style.height = ''
-    element.style.opacity = ''
-    element.style.transition = ''
-    element.style.overflow = ''
+    if (layoutOwners.get(element) !== token || !snapshot) return
+    // 收起（!isOpening）时不还原内联样式：元素紧接着就会被 Vue 的 v-if 真正移出 DOM
+    // （done() 在调用方的 .finally() 里，比这里晚一拍才触发），若这里把 height 还原成
+    // 事务开始前的空字符串，会在真正移除之前先撤销 height:0 的约束，元素瞬间弹回自然
+    // 完整高度、又在下一帧被移除——视觉上就是一次几乎被外层 overflow:hidden 裁掉、
+    // 只剩一条缝的"高度闪回"。展开场景不受影响：动画终点本来就是自然高度，还原是
+    // 安全的空操作。
+    if (isOpening) {
+      if (element.style.height === snapshot.writtenHeight) element.style.height = snapshot.height
+      if (element.style.opacity === snapshot.writtenOpacity) element.style.opacity = snapshot.opacity
+      if (element.style.transition === snapshot.writtenTransition) element.style.transition = snapshot.transition
+      if (element.style.overflow === snapshot.writtenOverflow) element.style.overflow = snapshot.overflow
+      if (snapshot.marginTop !== undefined && element.style.marginTop === snapshot.writtenMarginTop) element.style.marginTop = snapshot.marginTop
+    }
+    layoutOwners.delete(element)
   }
   const finish = (result: FlipResult) => {
     if (!resolvePlay) return
@@ -94,18 +143,52 @@ export function createGroupLayoutTransaction(element: HTMLElement, duration = 28
   return {
     play(open) {
       if (cancelled) return Promise.resolve('cancelled')
+      isOpening = open
       const target = open ? element.scrollHeight : 0
       const current = open ? 0 : element.getBoundingClientRect().height
+      // 父容器（.project-group）是 flex column 且带 gap：这个元素只要还挂在 DOM 里、还算一个
+      // flex 子项，gap 就会在它和上一个兄弟（分组标题按钮）之间占位，跟它自己的 height 无关。
+      // height 动画到 0 时视觉上"看起来收完了"，但 gap 那份空间还在，要等 Vue 真正把它从
+      // DOM 移除（v-if 的 leave 完成后）才会消失——多出这一帧才消失的空间就是残留的位移。
+      // 用一段等量的负 margin-top 过渡去抵消这份 gap：跟 height 同一个过渡窗口内一起走完，
+      // 到收起终点时"height:0 的空间 + gap 的空间 + 负 margin 抵消的空间"净值正好是 0，
+      // 之后 DOM 真正移除也不会再有可见变化。展开方向同理反着补一次。
+      const parentGap = element.parentElement ? parseFloat(getComputedStyle(element.parentElement).rowGap) || 0 : 0
+      const targetMarginTop = open ? 0 : -parentGap
+      const currentMarginTop = open ? -parentGap : 0
+      snapshot = {
+        height: element.style.height,
+        opacity: element.style.opacity,
+        transition: element.style.transition,
+        overflow: element.style.overflow,
+        marginTop: element.style.marginTop,
+        writtenHeight: `${current}px`,
+        writtenOpacity: open ? '0' : '1',
+        writtenTransition: element.style.transition,
+        writtenOverflow: 'hidden',
+        writtenMarginTop: `${currentMarginTop}px`,
+      }
+      layoutOwners.set(element, token)
       element.style.height = `${current}px`
       element.style.overflow = 'hidden'
       element.style.opacity = open ? '0' : '1'
+      if (parentGap > 0) element.style.marginTop = `${currentMarginTop}px`
       void element.offsetHeight
       element.addEventListener('transitionend', onEnd)
       requestAnimationFrame(() => {
         if (cancelled) return
-        element.style.transition = `height ${duration}ms ${easing}, opacity 180ms ease`
+        element.style.transition = parentGap > 0
+          ? `height ${duration}ms ${easing}, margin-top ${duration}ms ${easing}, opacity 180ms ease`
+          : `height ${duration}ms ${easing}, opacity 180ms ease`
         element.style.height = `${target}px`
         element.style.opacity = open ? '1' : '0'
+        if (parentGap > 0) element.style.marginTop = `${targetMarginTop}px`
+        if (snapshot) {
+          snapshot.writtenHeight = `${target}px`
+          snapshot.writtenOpacity = open ? '1' : '0'
+          snapshot.writtenTransition = element.style.transition
+          snapshot.writtenMarginTop = `${targetMarginTop}px`
+        }
       })
       return new Promise<FlipResult>(resolve => {
         resolvePlay = resolve
@@ -225,10 +308,11 @@ export function createFlipTransaction(options: FlipOptions): FlipTransaction {
     if (owners.get(element) !== token) return
     const snapshot = snapshots.get(element)
     if (!snapshot) return
-    if (element.style.transform === snapshot.writtenTransform && element.style.transition === snapshot.writtenTransition) {
-      element.style.transform = snapshot.transform
-      element.style.transition = snapshot.transition
-    }
+    // transform 在 transition 结束时会先回到 identity；不能因为它已经不是
+    // inverse 值，就跳过 transition 的清理，否则下一笔 FLIP 会继承上一笔的
+    // transition，看起来像动画重复播放。
+    if (element.style.transform === snapshot.writtenTransform) element.style.transform = snapshot.transform
+    if (element.style.transition === snapshot.writtenTransition) element.style.transition = snapshot.transition
     if (element.getAttribute('data-flip-owner') === 'coordinator') {
       if (snapshot.ownerAttribute === null) element.removeAttribute('data-flip-owner')
       else element.setAttribute('data-flip-owner', snapshot.ownerAttribute)

@@ -7,15 +7,15 @@ export function revealWithoutStaleHover(
 ): void {
   el.classList.add('phys-just-revealed')
   el.classList.add('phys-reveal-snap')
+  // 跟 main 分支一致：这里只加 phys-reveal-controls（控制按钮/连接点 opacity 直接可见，
+  // 跟卡片是否真的 hover 无关，纯粹是"揭示这一刻不要空窗"）。不再额外加 phys-reveal-hover——
+  // 那个类用 !important 直接钉死 transform/box-shadow，绕开了卡片自己 `.hover-card-fx:hover`
+  // 的 CSS transition，在 phys-reveal-snap 窗口内加上就等于"瞬间摆好抬起终态，之后也不再
+  // 触发任何动画"，表现为本体 hover 是瞬间生效、没有平滑上浮的过程。抬起动效交给下面
+  // dispatchEvent(mouseenter) 触发的真实 :hover 状态自己去过渡，不需要额外用一个 !important
+  // 类顶替它。
   if (keepControls) {
-    el.classList.add('phys-reveal-controls', 'phys-reveal-hover')
-    const clearHover = () => {
-      el.classList.remove('phys-reveal-controls', 'phys-reveal-hover')
-      el.removeEventListener('pointerleave', clearHover)
-      el.removeEventListener('pointercancel', clearHover)
-    }
-    el.addEventListener('pointerleave', clearHover, { once: true })
-    el.addEventListener('pointercancel', clearHover, { once: true })
+    el.classList.add('phys-reveal-controls')
   }
   el.style.opacity = ''
   el.style.pointerEvents = ''

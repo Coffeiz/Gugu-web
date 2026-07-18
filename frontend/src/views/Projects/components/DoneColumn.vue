@@ -14,7 +14,7 @@
         <span class="col-count">{{ projects.length }}</span>
       </div>
     </div>
-    <div class="col-body"><DoneLayout :projects="projects" @card-click="$emit('card-click', $event)" /></div>
+    <div class="col-body"><DoneLayout ref="doneLayoutRef" :projects="projects" @card-click="$emit('card-click', $event)" /></div>
   </div>
 </template>
 
@@ -26,11 +26,17 @@ import DoneLayout from './done/DoneLayout.vue'
 const props = defineProps({ projects: { type: Array as PropType<Project[]>, default: () => [] } })
 const emit = defineEmits(['card-click', 'drop-project', 'open-archived'])
 const isDragOver = ref(false)
+const doneLayoutRef = ref<{ runLayoutMutation: (mutate: () => void | Promise<void>) => Promise<unknown> } | null>(null)
 function onDrop(event: DragEvent) {
   isDragOver.value = false
   const projectId = Number(event.dataTransfer?.getData('projectId'))
   if (projectId) emit('drop-project', { projectId, targetStatus: 'done' })
 }
+async function runLayoutMutation(mutate: () => void | Promise<void>) {
+  if (!doneLayoutRef.value) return mutate()
+  return doneLayoutRef.value.runLayoutMutation(mutate)
+}
+defineExpose({ runLayoutMutation })
 </script>
 
 <style>

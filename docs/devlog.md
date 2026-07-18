@@ -5,6 +5,137 @@
 
 ---
 
+## 2026-07-18 · 已完成列动画事务复杂度复核
+
+复核确认，已完成列当前的问题不是单个 CSS 或落地回调，而是多套布局事务同时存在：
+
+- `DoneLayoutCoordinator` 同时维护 group FLIP 和 recent card FLIP。
+- `DoneGroup` 继续独立启动组高度事务。
+- `DoneLayout` 同时通过 `onBeforeUpdate/onUpdated` 和 `runLayoutMutation()` 触发布局事务。
+- 项目拖拽桥还会并行启动 clone2 landing。
+
+这些逻辑分别控制父级 transform、子级 height、卡片显隐和滚动位置，导致二次 FLIP、瞬间收缩、滚动顿挫和落地目标变化反复出现。后续不再继续添加局部补偿，改为在主文档的 `DoneLayoutRuntime` 中统一 capture、最终布局计算、滚动和动画收尾。
+
+本次只更新架构结论，没有修改已完成列运行逻辑。详见 [拖拽系统模块化拆分方案.md](docs/refactor/拖拽系统模块化拆分方案.md) 的「FLIP 基础设施与页面适配」章节。
+
+## 2026-07-18 · 项目抽屉状态组的两个位移 bug：重叠事务、合成层未重绘
+
+### 现象
+
+1. 刚展开一个状态组（组的展开动画还在播），紧接着把这个组里第一张卡拖出到画布——组会莫名再跳一下。
+   只在"展开动画还没播完就立刻拖卡"时出现，展开动画早播完了（比如默认展开的"进行中"）就不会。
+2. 硬刷新页面后，如果某个状态组里恰好有一张卡当前在画布上，组内会莫名留出一张卡的空位，即使角标
+   显示的数量已经是对的；SPA 内切换页面再回来不会有这个问题。只要再触发一次这个组的数据变化
+   （比如把画布上那张卡拖回抽屉），空位就会消失。
+
+### 根因
+
+1. `projectGroupsLayout.ts` 的 `requestLayout()` 只会取消"还没开始播放"的 `pending` 事务；一旦
+   `measureAndPlay()` 已经跑到 `await transaction.play()`，这笔事务就不再被 `pending` 追踪，变成
+   孤儿。这时候如果又有新的 `requestLayout()` 调用（比如拖拽触发的 `data-update`），它会直接
+   `getBoundingClientRect()` 读取各组的 `top`，读到的是上一笔事务还在 transform 插值中的中间态，
+   而不是真实落点。等上一笔事务自己播完、清空 transform 复原到真实 CSS 位置，组就会从"中间态"
+   瞬间跳到真实位置——看起来像莫名又跳了一下。
+
+2. 页面刚加载时，画布数据（`canvasProjectIds`）有时比抽屉的项目列表晚到，`filteredProjects` 因此
+   会先渲染出偏多的卡片，紧接着再收窄一次（排除掉已经在画布上的项目）。这次收窄走的是原生 flex
+   回流（`.project-group-content` 没有触发折叠动画，只是 `v-for` 少渲染了一个子节点），跟
+   `createGroupLayoutTransaction` 的显式折叠不一样，没有做过任何强制同步 reflow/repaint。用
+   `getComputedStyle` 量出来的高度已经是对的（缩小后的高度），但极少数情况下 Chrome 的合成层
+   没有跟着重绘这块区域，画面还停在收窄前的高度——数据层面完全正确，纯粹是画面没刷新。
+
+### 修复
+
+1. `projectGroupsLayout.ts` 增加一个 `playing` 引用记录"当前正在播放"的事务；`requestLayout()`
+   除了取消 `pending`，也会一并取消 `playing`，让它立即清理内联 transform、落回真实位置，新一笔
+   事务的 before 基线才是准的。
+
+2. `CanvasSidebar.vue` 的 `onUpdated()` 里对 `.project-groups` 补一次强制同步 `offsetHeight`
+   reflow，再做一次无位移的 `translateZ(0)` 抖动（改了立刻改回，视觉上不产生位移）强制该层
+   重新合成。
+
+### 教训
+
+- 一个只追踪"待播放事务"的取消机制，管不到"已经在播放中"的事务——事务的生命周期比表面看到的
+  "pending → 播放 → 结束"三段更容易在并发请求下产生孤儿态，取消逻辑要覆盖到"正在播放"这一段，
+  不能只覆盖起点。
+- 布局数据（`getComputedStyle`/`getBoundingClientRect`）正确不等于画面正确；当一个 bug 只在
+  "页面刚加载、某块区域还没被绘制过"这种特定时机出现，且所有 DOM/尺寸探针都显示数据正常时，要
+  怀疑纯粹的合成层重绘问题，而不是继续在布局逻辑里找错。
+
+### 验证
+
+- 场景一：反复"展开一个组 → 立刻拖出组内第一张卡"，组不再跳动；`typecheck` 通过。
+- 场景二：多次硬刷新页面，画布上有卡片对应的抽屉组不再留空位；用户确认修复。
+
+---
+
+## 2026-07-17 · 项目抽屉状态组展开/收起的两次二次动画
+
+### 现象
+
+项目抽屉的状态组（进行中/待开始/已完成）支持展开/收起。两个独立问题：
+
+1. 已有一组展开着的情况下再展开/收起另一组，兄弟组的让位动画会明显playing 两遍——先平滑挪到位，
+   紧接着又用 transform 重新播一次同样的位移，只有单独展开一组（没有其它可见内容需要让位）时才不明显。
+2. 修完第 1 个问题后，收起动画播完仍残留 1 帧、约 1-2px 的额外向上位移，量级很小但每次收起都会出现。
+
+### 根因
+
+**问题 1**：`toggleProjectStatus` 同时接了两套让位机制——`createGroupLayoutTransaction` 直接
+animate 折叠元素自身的 `element.style.height`，这本身就是文档流里的正常块级/flex 子项高度变化，
+后面的兄弟 `.project-group` 会跟着逐帧自动回流、免费拿到平滑让位；而 `toggleProjectStatus` 又额外
+调用了 `projectGroupsLayout`（`createFlipTransaction` 的 before/after 快照 + transform 补间）去做
+同一批兄弟组的位移。折叠过渡已经把兄弟组挪到位之后，这层 FLIP 事务照着快照又用 transform 重播了
+一遍同一段位移——两段动画数值一致、视觉上就是"完成了又来一次"。
+
+**问题 2**：`.project-group` 是 `display:flex; flex-direction:column; gap:6px`。折叠内容元素的
+`height` 过渡到 0 后，只要它还没被 Vue 的 `v-if` 真正移出 DOM（leave 回调里的 `done()` 比
+`cleanup()` 晚一拍才调用），flex `gap` 依然会在它和上一个兄弟（分组标题按钮）之间占位——这份空间
+跟元素自己的 `height` 无关，只跟它还算不算一个 flex 子项有关。等 DOM 真正移除、gap 随之消失，
+父容器和后续兄弟组才会再产生一次可见的位移。用 Performance 级别的多帧探针（`before-cleanup` /
+`after-cleanup` / `mutation-observed` / `frame+1~6`）实测确认：`groupHeight` 在 DOM 真正移除
+（`mutation-observed`）那一刻才从 31 掉到 25，差值正好等于 `gap` 的 6px。
+
+最初怀疑过 `cleanup()` 把内联样式还原回事务开始前状态导致的"高度闪回"（还原成空字符串会撤销
+`height:0` 约束，元素瞬间弹回自然完整高度、又在下一帧被移除），这个猜测本身也是真实存在的坑
+（已经修掉：收起场景 `cleanup()` 不再还原内联样式，反正元素马上要被移除，恢复原状没有意义），
+但不是这次 1-2px 残留的成因——探针数据显示 `before-cleanup`/`after-cleanup` 两帧 `groupHeight`
+完全一致（都是 31→后来 25，两次真正的变化点始终是 DOM 移除那一刻，不是 `cleanup()` 那一刻）。
+
+### 修复
+
+1. `toggleProjectStatus` 不再触发 `projectGroupsLayout` 的 FLIP：只保留一次 `requestLayout('toggle')`
+   调用（唯一作用是置位 `skipNextDataUpdate`，抵消紧跟着 `onBeforeUpdate` 触发的 `'data-update'`
+   请求，避免同一次 toggle 从另一个入口重新引入二次动画）。`onGroupFoldEnter`/`onGroupFoldLeave`
+   收尾也不再调用 `measureAndPlay`，只保留 `measurePanel('projects')` 同步抽屉外层高度。
+   `projectGroupsLayout` 的 FLIP 现在只服务于真正的拖拽改数据场景（`data-update`），那种情况下
+   卡片数量是非连续突变，没有平滑高度过渡可言，才真的需要 FLIP 补偿。
+
+2. `createGroupLayoutTransaction` 收起时给折叠元素叠加一段等量负 `margin-top` 过渡，跟 `height`
+   同一个过渡窗口内一起走完——`height:0` 的空间 + `gap` 占的空间 + 负 margin 抵消的空间，净值在
+   动画终点正好归零，DOM 真正移除时不会再有可见变化。展开方向对称处理（`margin-top` 从 `-gap`
+   过渡回 `0`）。`gap` 值从父容器 `getComputedStyle(parent).rowGap` 现取，不需要写死常量。
+
+### 教训
+
+**FLIP 补偿是有代价的，普通块级/flex 布局能免费提供的平滑效果不需要 FLIP。** 高度用真实过渡
+（而不是瞬间切换）驱动时，同一文档流里的兄弟元素本来就会跟着逐帧自然回流；这时再叠一层
+"快照位移再补间"式的 FLIP，只会重播一次已经发生过的动作。FLIP 该留给真正非连续的布局跳变
+（数据突变、跨容器重挂载），不是默认对所有布局变化都套用的万能工具。
+
+**flex/grid 的 `gap` 不受子项自身尺寸变化的直接约束，只受"是否还是一个子项"约束。** 子项收缩到
+`height:0` 不等于它不再占 `gap` 的份额——只要还在 DOM 里参与 flex/grid 布局，`gap` 就照占不误，
+这类残留要么等 DOM 真正移除、要么显式用等量反向 margin/gap 覆盖抵消。
+
+### 验证
+
+- `npm run typecheck` 通过。
+- 已有一组展开时再展开/收起另一组：兄弟组让位动画不再播放两次；收起动画播完确认无残留位移。
+- 拖拽改数据触发的组收缩（`onBeforeUpdate`/`data-update` 路径）手测确认未受影响。
+
+---
+
 ## 2026-07-17 · 项目跨列重抓残留旧 clone2
 
 项目卡从一列拖到另一列后，落地动画尚未结束时再次抓起，旧落地 `clone2` 可能仍停在目标列的落点，

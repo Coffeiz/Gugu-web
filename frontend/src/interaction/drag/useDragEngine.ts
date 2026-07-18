@@ -47,6 +47,11 @@ export interface PhysicsDragOpts {
   lift?: number
   sway?: number
   tilt?: number
+  // 返回值类型对齐 doneLayoutBridge.ts 的 DoneLayoutMutation（Promise<unknown>）——
+  // 调用方通常直接把 doneLayoutMutation 传进来，它包了一层 FLIP 事务，解出来的值
+  // 本来就用不上，不需要收窄成 Promise<void>。
+  onPickupFromDoneLayout?: (hide: () => void) => void | Promise<unknown>
+  useSpringLanding?: boolean
   grabY?: number
   // true 时忽略 grabY，让克隆体的竖直中心（不是"顶部往下固定 28px 那一点"）跟着指针走——
   // 看板卡沿用"像从卡片顶部附近拈起一张纸"的手感（grabY 默认 28），无限画布上没有"顶部"这个

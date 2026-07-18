@@ -11,6 +11,7 @@ import { createDrawerLayoutTransaction } from '@/interaction/drag/animation/flip
 const props = defineProps({
   open: { type: Boolean, default: false },
   targetHeight: { type: Number, default: 0 },
+  scrollKey: { type: String, default: '' },
 })
 const height = ref(0)
 
@@ -24,11 +25,23 @@ export interface DrawerScrollSnapshot {
 const viewportRef = ref<HTMLElement | null>(null)
 let heightTransaction: ReturnType<typeof createDrawerLayoutTransaction> | null = null
 function scrollElement(): HTMLElement | null {
-  return viewportRef.value?.querySelector<HTMLElement>('[data-drawer-scroll]') ?? viewportRef.value
+  const key = String(props.scrollKey || '').replace(/"/g, '\\"')
+  return viewportRef.value?.querySelector<HTMLElement>(`[data-drawer-scroll="${key}"]`) ?? viewportRef.value
 }
-watch(() => [props.open, props.targetHeight], ([open, target]) => {
-  const nextHeight = open ? Number(target) : 0
+function animateTo(nextHeight: number) {
   if (!viewportRef.value) {
+    height.value = nextHeight
+    return
+  }
+  const currentHeight = viewportRef.value.getBoundingClientRect().height
+  console.log('[drawer-height-probe]', JSON.stringify({
+    event: 'animate-to', current: +currentHeight.toFixed(2), target: +nextHeight.toFixed(2),
+    propTarget: +Number(props.targetHeight).toFixed(2), open: props.open,
+    t: Math.round(performance.now()),
+  }))
+  if (Math.abs(currentHeight - nextHeight) < 0.5) {
+    heightTransaction?.cancel()
+    heightTransaction = null
     height.value = nextHeight
     return
   }
@@ -45,6 +58,9 @@ watch(() => [props.open, props.targetHeight], ([open, target]) => {
       if (preservedScrollElement) preservedScrollElement.scrollTop = preservedScrollTop
     }
   })
+}
+watch(() => [props.open, props.targetHeight], ([open, target]) => {
+  animateTo(open ? Number(target) : 0)
 }, { immediate: true })
 
 function captureScroll(): DrawerScrollSnapshot | null {
@@ -54,7 +70,10 @@ function captureScroll(): DrawerScrollSnapshot | null {
     scrollTop: element.scrollTop,
     scrollHeight: element.scrollHeight,
     clientHeight: element.clientHeight,
-    atBottom: element.scrollTop + element.clientHeight >= element.scrollHeight - 1,
+    // 没有实际溢出时不能算“底部锚点”；否则展开第一组后 scrollHeight 增大，
+    // restoreScroll 会把原本的顶部位置错误换算成新内容的最底部。
+    atBottom: element.scrollHeight > element.clientHeight + 1
+      && element.scrollTop + element.clientHeight >= element.scrollHeight - 1,
   }
 }
 
@@ -62,14 +81,22 @@ function restoreScroll(snapshot: DrawerScrollSnapshot | null) {
   const element = scrollElement()
   if (!element || !snapshot) return
   const delta = element.scrollHeight - snapshot.scrollHeight
-  element.scrollTop = snapshot.atBottom ? snapshot.scrollTop + delta : snapshot.scrollTop
+  const target = snapshot.atBottom ? snapshot.scrollTop + delta : snapshot.scrollTop
+  element.scrollTop = Math.max(0, Math.min(target, element.scrollHeight - element.clientHeight))
+  // 组高度事务和 Vue 的 DOM 提交可能跨两个 frame；再确认一次最终轨道位置，
+  // 防止浏览器在中间布局阶段按旧 scrollHeight 做 scroll anchoring。
+  requestAnimationFrame(() => {
+    if (scrollElement() !== element) return
+    element.scrollTop = Math.max(0, Math.min(target, element.scrollHeight - element.clientHeight))
+  })
 }
 
-defineExpose({ viewportRef, captureScroll, restoreScroll })
+defineExpose({ viewportRef, captureScroll, restoreScroll, animateTo })
 </script>
 
 <style scoped>
 .drawer-viewport { position: relative; width: 100%; overflow: hidden; overflow-anchor: none; }
+.drawer-viewport [data-drawer-scroll] { overflow-anchor: none; }
 .drawer-viewport.canvas-viewport, .drawer-viewport.project-viewport { overflow: hidden; }
 .drawer-viewport::-webkit-scrollbar { width: 3px; }
 .drawer-viewport::-webkit-scrollbar-track { background: transparent; }

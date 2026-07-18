@@ -12,6 +12,7 @@
         @add-project="openNewWithStatus"
       />
       <DoneColumn
+        ref="doneColumnRef"
         :projects="columnProjects('done')"
         @card-click="projectStore.openModal"
         @drop-project="handleDrop"
@@ -24,7 +25,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { showAppError } from '@/composables/useAppToast'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
@@ -32,10 +33,17 @@ import { useUiStore } from '@/stores/ui'
 import KanbanColumn from './components/KanbanColumn.vue'
 import DoneColumn   from './components/DoneColumn.vue'
 import ArchivedProjectsModal from './components/ArchivedProjectsModal.vue'
+import { doneLayoutMutationKey, registerDoneLayoutMutation } from './components/done/doneLayoutBridge'
 
 const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
+const doneColumnRef = ref<InstanceType<typeof DoneColumn> | null>(null)
+const runDoneLayoutMutation = (mutate: () => void | Promise<void>) =>
+  doneColumnRef.value?.runLayoutMutation(mutate) ?? Promise.resolve(mutate())
+provide(doneLayoutMutationKey, runDoneLayoutMutation)
+const unregisterDoneLayoutMutation = registerDoneLayoutMutation(runDoneLayoutMutation)
+onUnmounted(unregisterDoneLayoutMutation)
 
 const showArchived = ref(false)
 // 项目请求回来时，“新建项目”按钮已经作为 TransitionGroup 子项挂在列表顶部；同一轮

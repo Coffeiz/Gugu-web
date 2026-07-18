@@ -118,6 +118,11 @@ const routes: RouteRecordRaw[] = [
         name: 'DevOnboarding',
         component: () => import('@/views/DevOnboarding.vue'),
         meta: { title: '新手引导 Demo' },
+      }, {
+        path: 'dev/drag-physics',
+        name: 'DevDragPhysics',
+        component: () => import('@/views/DevDragPhysics.vue'),
+        meta: { title: '拖拽物理调参' },
       }] : []),
     ],
   },

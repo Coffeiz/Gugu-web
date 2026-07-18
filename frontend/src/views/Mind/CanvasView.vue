@@ -21,6 +21,7 @@
         :active-id="activeCanvasId"
         :projects="projectStore.projects"
         :canvas-project-ids="canvasProjectIds"
+        :canvas-project-ids-ready="canvasProjectIdsReady"
         :projects-loading="projectStore.loading"
         :canvas-scale="canvasRef?.camera.scale ?? 1"
         :add-project-to-canvas="addProjectAtScreen"
@@ -64,6 +65,8 @@ const router = useRouter()
 const { openMindRef } = useMindRefActions()
 
 const canvasRef = ref<InstanceType<typeof MindCanvas> | null>(null)
+// 抽屉只能在当前画布项目加载完后量项目高度，否则首帧会把已放入画布的项目计入缓存。
+const canvasProjectIdsReady = ref(false)
 const activeCanvasId = computed(() => store.activeCanvasId)
 // 数据库约束 uq_canvas_node 已保证同一项目在同一画布只会有一个展示项；抽屉只展示尚未摆入
 // 当前画布的项目，拖入成功后由 canvasItems 的响应式更新自动移出，无需另维护一份临时状态。
@@ -103,6 +106,7 @@ watch(() => route.params.id, async () => {
 })
 
 async function ensureCanvas() {
+  canvasProjectIdsReady.value = false
   let id = Number(route.params.id)
   if (!Number.isFinite(id) || !store.canvases.some(canvas => canvas.id === id)) {
     const canvas = store.canvases[0] || await store.createCanvas()
@@ -113,6 +117,7 @@ async function ensureCanvas() {
   // store 会跨路由保留 activeCanvasId，但 MindCanvas 在离开再回来后是一个全新的组件，
   // 它的 camera 又从 scale=1 开始。只跳过网络加载，不能连 restoreView 一起跳过。
   if (store.activeCanvasId !== id) await store.loadCanvas(id)
+  canvasProjectIdsReady.value = true
   localStorage.setItem('mind-last-canvas-id', String(id))
   await nextTick()
   restoreView(id)

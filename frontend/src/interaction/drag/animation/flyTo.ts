@@ -1,3 +1,6 @@
+import { createCardMotionController } from './cardMotionController'
+import { dragPhysicsTuning, springParamsFromResponse } from '../physicsTuning'
+
 export interface FlyToOptions {
   holder: HTMLElement
   box: { left: number; top: number; width: number; height: number }
@@ -6,6 +9,8 @@ export interface FlyToOptions {
   shrink: boolean
   fitToTarget?: boolean
   easing: string
+  initialVelocity?: { x: number; y: number }
+  useSpring?: boolean
   isActive?: () => boolean
   onFinish: () => void
 }
@@ -22,8 +27,49 @@ export function animateFlyTo(options: FlyToOptions): () => void {
     if (options.isActive?.() ?? true) options.onFinish()
     else holder.remove()
   }
+  // centerX/centerY 原来声明在下面固定 CSS transition 分支的开头（第 69/70 行附近），
+  // 但这个弹簧分支在它们声明之前就引用了——const 声明会被提升进临时死区，运行时会直接
+  // 抛 ReferenceError（不是"物理效果不对"，是这条分支一进来就崩）。提到函数最前面，
+  // 两个分支共用同一份计算。
   const centerX = box.left + box.width / 2
   const centerY = box.top + box.height / 2
+  if (options.useSpring && !options.shrink && options.fitToTarget !== false) {
+    const current = holder.getBoundingClientRect()
+    const targetX = centerX - half.x
+    const targetY = centerY - half.y
+    const landingParams = springParamsFromResponse(dragPhysicsTuning.landing)
+    const controller = createCardMotionController({
+      mode: 'settle',
+      onFrame: frame => {
+        holder.style.transition = 'none'
+        holder.style.transform = `translate3d(${frame.x.toFixed(2)}px, ${frame.y.toFixed(2)}px, 0) scale(${frame.scaleX.toFixed(4)}, ${frame.scaleY.toFixed(4)})`
+      },
+      onArrived: finish,
+    })
+    // 同上——CardMotionControllerOptions 不再接受构造时的 profile 字段。
+    controller.setProfile({ position: landingParams, scale: landingParams })
+    controller.seed({
+      x: current.left,
+      y: current.top,
+      vx: options.initialVelocity?.x ?? 0,
+      vy: options.initialVelocity?.y ?? 0,
+      scaleX: 1,
+      scaleY: 1,
+      scaleVX: 0,
+      scaleVY: 0,
+    })
+    controller.setTarget({
+      x: targetX,
+      y: targetY,
+      scaleX: box.width / Math.max(1, dropSize.w),
+      scaleY: box.height / Math.max(1, dropSize.h),
+    })
+    controller.start()
+    return () => {
+      controller.stop()
+      finish()
+    }
+  }
   holder.style.transition = `transform 0.55s ${options.easing}, opacity 0.4s ease`
   if (options.shrink) {
     holder.style.opacity = '0'
