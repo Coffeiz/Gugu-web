@@ -301,6 +301,15 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   options.clone2.addEventListener('transitionend', onEnd)
   requestAnimationFrame(() => {
     if (landing.isDone() || !options.session.isCurrent()) return
+    // clone2 继承拖拽最后一帧的姿态，但姿态不能冻结到落地结束；单代理路径的
+    // CardMotionController 会在 settle 阶段让 rotateX/rotateZ 衰减到 0，legacy
+    // 路径用同一时长的独立 attitude 层完成等价的恢复。它不参与 morph 的尺寸计算。
+    const landingAttitude = options.clone2.querySelector<HTMLElement>('.phys-landing-attitude')
+    if (landingAttitude && landingAttitude.style.transform !== 'none') {
+      landingAttitude.style.transition = `transform 0.55s ${options.easing}`
+      void landingAttitude.offsetWidth
+      landingAttitude.style.transform = 'none'
+    }
     if (options.useSpringLanding) {
       const current = options.holder.getBoundingClientRect()
       const params = springParamsFromResponse(dragPhysicsTuning.landing)

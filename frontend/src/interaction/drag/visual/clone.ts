@@ -40,6 +40,7 @@ export interface LandingCloneOptions {
   zIndex: string
   transform: string
   contentScale: number
+  attitudeTransform?: string
   cloneClass?: string
 }
 
@@ -84,8 +85,17 @@ export function createLandingClone(source: HTMLElement, options: LandingCloneOpt
   })
   hoverShell.className = 'phys-landing-hover-shell'
   hoverShell.appendChild(content)
+  // 姿态单独分层：保留拖拽最后一帧的旋转，但不让旋转后的包围盒污染 morph 尺寸。
+  const attitude = document.createElement('div')
+  attitude.className = 'phys-landing-attitude'
+  Object.assign(attitude.style, {
+    position: 'absolute', left: '0', top: '0', width: '100%', height: '100%',
+    transformOrigin: '50% 50%', transform: options.attitudeTransform ?? 'none',
+    transition: 'transform 0.55s cubic-bezier(0.22, 1, 0.36, 1)', pointerEvents: 'none',
+  })
+  attitude.appendChild(scaleShell)
   scaleShell.appendChild(hoverShell)
-  holder.appendChild(scaleShell)
+  holder.appendChild(attitude)
   document.body.appendChild(holder)
   return holder
 }

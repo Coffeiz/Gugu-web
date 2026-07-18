@@ -142,6 +142,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   const cloneW = parseFloat(sourceStyle.width) || (CS0 !== 1 ? sourceRect.width / CS0 : sourceRect.width)
   const cloneH = parseFloat(sourceStyle.height) || (CS0 !== 1 ? sourceRect.height / CS0 : sourceRect.height)
   let lastCS = CS0
+  let landingAttitudeTransform = 'none'
   half = { x: (cloneW * CS0) / 2, y: (cloneH * CS0) / 2 }
   liveGrabY = opts.centerGrab ? half.y : GRABY
   // holder 飞行途中可能正被落地 morph 拉伸；再次抓起时先按那一刻的视觉比例画新克隆，再在
@@ -171,7 +172,16 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     position: 'absolute', left: '0', top: '0', width: cloneW + 'px', height: cloneH + 'px',
     transformOrigin: '0 0', transform: `scale(${CS0})`, pointerEvents: 'none',
   })
-  holder.appendChild(scaleShell)
+  // 定位与姿态分层：旋转后的元素包围盒会暂时变高，不能让它参与 holder 的
+  // 落地尺寸/位置计算。holder 只负责平移和尺寸缩放，attitudeLayer 只负责摆动姿态。
+  const attitudeLayer = document.createElement('div')
+  attitudeLayer.className = 'phys-drag-attitude'
+  Object.assign(attitudeLayer.style, {
+    position: 'absolute', left: '0', top: '0', width: '100%', height: '100%',
+    transformOrigin: '50% 50%', transform: 'none', pointerEvents: 'none',
+  })
+  attitudeLayer.appendChild(scaleShell)
+  holder.appendChild(attitudeLayer)
   const clone = visual.cloneForDrag(sourceEl, {
     addClasses: ['phys-drag-clone'],
   })
@@ -272,7 +282,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     : { x: initialCenter.x, y: initialCenter.y }
   holder.style.transform =
     `translate3d(${(initialPos.x - half.x).toFixed(2)}px, ${(initialPos.y - liveGrabY).toFixed(2)}px, 0)` +
-    ` perspective(760px) rotateX(${TILT}deg) scale(${regrabScale.x.toFixed(4)}, ${regrabScale.y.toFixed(4)})`
+    ` scale(${regrabScale.x.toFixed(4)}, ${regrabScale.y.toFixed(4)})`
+  attitudeLayer.style.transform = `perspective(760px) rotateX(${TILT}deg)`
   document.body.appendChild(holder)
 
   // 拖拽期间给浏览器减负（性能：trace 显示 CPU 几乎全在浏览器渲染，非物理 JS）：
@@ -441,8 +452,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     const curLift = 1 + (LIFT - 1) * liftEase
     holder.style.transform =
       `translate3d(${(pos.x - half.x).toFixed(2)}px, ${(pos.y - liveGrabY).toFixed(2)}px, 0)` +
-      ` perspective(760px) rotateX(${rotX.toFixed(2)}deg) rotateZ(${rotZ.toFixed(2)}deg) ` +
       `scale(${(curLift * visualScale.x).toFixed(4)}, ${(curLift * visualScale.y).toFixed(4)})`
+    attitudeLayer.style.transform =
+      `perspective(760px) rotateX(${rotX.toFixed(2)}deg) rotateZ(${rotZ.toFixed(2)}deg)`
     // 视觉中心跟 end() 里落点用的是同一条公式（pos 本身不是中心，克隆体渲染顶边挂在
     // pos.y - liveGrabY，见 liveGrabY 定义）——onFollow 吐出的必须跟克隆体肉眼所在位置对上，
     // 不能拿 pos 直接充数，否则「线跟着走」会跟卡片实际画面对不齐。
@@ -565,6 +577,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 在某些缩放比例下多出一条飞往左上角的残影。
     const flyTo = (box: Box, shrink: boolean, revealEl?: HTMLElement) => {
       session.setPhase('layout-playing')
+      attitudeLayer.style.transform = 'none'
       if (revealEl) {
         visual.holdHoverUntilReveal(revealEl)
         revealEl.style.opacity = '0'
@@ -615,6 +628,43 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       measureTargetLayout = undefined,
     ) => {
       session.setPhase('layout-playing')
+      if (revealEl.closest('.done-layout-root')) {
+        console.log('[done-landing-probe]', JSON.stringify({
+          phase: 'fly-morph-start',
+          key: revealEl.dataset.projectId || revealEl.dataset.layoutKey || null,
+          box: [initialBox.left, initialBox.top, initialBox.width, initialBox.height],
+          revealRect: (() => { const r = revealEl.getBoundingClientRect(); return [r.left, r.top, r.width, r.height] })(),
+          cloneRect: (() => { const r = clone2.getBoundingClientRect(); return [r.left, r.top, r.width, r.height] })(),
+          revealDisplay: getComputedStyle(revealEl).display,
+          revealVisibility: getComputedStyle(revealEl).visibility,
+          revealConnected: revealEl.isConnected,
+          sourceDisplay: getComputedStyle(sourceEl).display,
+          sourceConnected: sourceEl.isConnected,
+          container: revealEl.closest<HTMLElement>('.done-layout-root')?.className || revealEl.parentElement?.className || '',
+          ancestors: (() => {
+            const result: unknown[] = []
+            let node: HTMLElement | null = revealEl.parentElement
+            while (node && result.length < 8) {
+              const r = node.getBoundingClientRect()
+              const style = getComputedStyle(node)
+              result.push({
+                tag: node.tagName,
+                className: node.className,
+                rect: [r.left, r.top, r.width, r.height],
+                display: style.display,
+                height: style.height,
+                overflow: style.overflow,
+                transform: style.transform,
+              })
+              node = node.parentElement
+            }
+            return result
+          })(),
+        }))
+      }
+      // clone2 已在参数求值阶段创建并继承当前姿态；不能在它接管前清掉源 holder，
+      // 否则交叉淡变窗口会出现 clone1 不旋转、clone2 仍旋转的一帧。姿态由
+      // morphLifecycle 在 clone2 接管后统一衰减到 none。
       startMorphLifecycle({
         initialBox,
         holder,
@@ -780,6 +830,9 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 会算错。scaleShell 同理使用 lastCS（此刻的实时缩放，不是抓起时的 CS0）——cloneW/cloneH
       // 这份"原始尺寸"本身不随缩放变化，仍然沿用抓起时算好的那份。
       const _cloneLanding = (el: HTMLElement) => {
+        if (landingAttitudeTransform === 'none') {
+          landingAttitudeTransform = attitudeLayer.style.transform || 'none'
+        }
         let targetWidth: number
         let targetHeight: number
         if (el === absorbTarget && cachedAbsorbLayoutSize) {
@@ -799,6 +852,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           zIndex: holder.style.zIndex,
           transform: holder.style.transform,
           contentScale: lastCS,
+          attitudeTransform: landingAttitudeTransform,
           cloneClass: opts.cloneClass,
         })
         return landingClone
@@ -944,6 +998,21 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
           return
         }
+        // 完成列由 DoneLayout 自己协调 group/recent 布局。归位时不能把整个
+        // done-layout-root 交给通用 animateOpen，否则它会临时隐藏源卡并让
+        // 完成列进入 flip-engine-active，随后 getBoundingClientRect() 读到 0×0，
+        // clone 就会沿着左上角飞走。
+        if (container.classList.contains('done-layout-root')) {
+          sourceEl.style.display = ''
+          sourceEl.closest<HTMLElement>('.done-card-item')?.style.removeProperty('display')
+          visual.holdHoverUntilReveal(sourceEl)
+          sourceEl.style.opacity = '0'
+          const sc = deps.scrollParent(sourceEl)
+          deps.registerCleanup(session, blockScrollDuringLanding(sc))
+          const box = revealInScroller(sc, sourceEl.getBoundingClientRect())
+          flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
+          return
+        }
         // 已收合 → 先占位 FLIP 重新展开源卡，再计算最终归位位置。
         const box0 = animateOpen(container, sourceEl)
         const sc = deps.scrollParent(sourceEl)
@@ -1016,11 +1085,41 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             const restoreListTransition = suppressListLandingTransition(el)
             if (el.offsetWidth > 0) {   // 落点可见 → 占位 FLIP 展开；双克隆同轨迹飞行 + 样式渐变
             const flipTarget = projectFlipContainer(el)
-            animateOpen(flipTarget, el)   // 它为量 FLIP 会瞬间 display:none 落点卡，故滚动放其后
+            // 完成列有独立的 group/recent 布局事务。不能再把整个 done-layout-root
+            // 交给通用 animateOpen，否则 recent 卡片和年/月组会被重复测量，顶部卡片
+            // 可能被压成 0×0 后把错误坐标传给落地动画。
+            if (flipTarget.classList.contains('done-layout-root')) {
+              // 完成列 TransitionGroup 的布局节点是 wrapper；只恢复内部卡片的
+              // display 仍会让 wrapper 保持 display:none，rect 依旧是 0×0。
+              el.closest<HTMLElement>('.done-card-item')?.style.removeProperty('display')
+              visual.holdHoverUntilReveal(el)
+              el.style.opacity = '0'
+              console.log('[done-landing-probe]', JSON.stringify({
+                phase: 'target-before-box',
+                key: el.dataset.projectId || el.dataset.layoutKey || null,
+                targetRect: (() => { const r = el.getBoundingClientRect(); return [r.left, r.top, r.width, r.height] })(),
+                targetDisplay: getComputedStyle(el).display,
+                targetOpacity: getComputedStyle(el).opacity,
+                containerRect: (() => { const r = flipTarget.getBoundingClientRect(); return [r.left, r.top, r.width, r.height] })(),
+                scroll: (() => { const s = deps.scrollParent(el); return s ? [s.scrollTop, s.scrollHeight, s.clientHeight] : null })(),
+              }))
+            } else {
+              animateOpen(flipTarget, el)
+            }
             // 落点在可滚动列里若滚出视口 → 快速滚进可视区，box 取滚动后的最终落点
             const sc = deps.scrollParent(el)
             deps.registerCleanup(session, blockScrollDuringLanding(sc))
             const box = revealInScroller(sc, el.getBoundingClientRect())
+            if (flipTarget.classList.contains('done-layout-root')) {
+              console.log('[done-landing-probe]', JSON.stringify({
+                phase: 'fly-box',
+                key: el.dataset.projectId || el.dataset.layoutKey || null,
+                box: [box.left, box.top, box.width, box.height],
+                targetRect: (() => { const r = el.getBoundingClientRect(); return [r.left, r.top, r.width, r.height] })(),
+                holderTarget: [target.x, target.y],
+                invalid: !Number.isFinite(box.left) || !Number.isFinite(box.top) || box.width <= 0 || box.height <= 0,
+              }))
+            }
             flyMorph(box, el, _cloneLanding(el), restoreListTransition)
               return
             }
