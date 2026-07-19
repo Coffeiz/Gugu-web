@@ -6,8 +6,9 @@ import { startMorphLifecycle } from '../animation/morphLifecycle'
 import { dragRegistry } from '../core/DragRegistry'
 import type { DragSession } from '../core/DragSession'
 import { integrateSpring } from '../core/physics'
-import { dispatchDragHandoff } from './handoff'
+import { dispatchDragHandoff, installLandingHandoff } from './handoff'
 import { installDragListeners } from './listeners'
+import { startThresholdDrag } from './threshold'
 import type { PhysicsDragOpts, PhysicsDropContext } from '../useDragEngine'
 import { _identityOf } from '../useDragEngine'
 import type { CardVisualController } from '../visual/CardVisualController'
@@ -661,10 +662,44 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         visual.holdHoverUntilReveal(revealEl)
         revealEl.style.opacity = '0'
       }
+      // 只有真的落到一张卡（不是缩小消失）时才需要摘掉"跟手中"的玻璃抬起态——
+      // clone 从头到尾都是这同一个节点，不摘的话它会一直顶着 .phys-drag-clone
+      // 的阴影/毛玻璃样式，直到最后 holder.remove()+reveal 才突然消失，中途看
+      // 起来像是"卡片一直保持着被拎起来的样子"。加一段 transition 让它渐变回
+      // 静止态，而不是瞬间跳变。
+      if (!shrink) {
+        clone.style.transition = 'background 0.3s ease, box-shadow 0.3s ease, backdrop-filter 0.3s ease, border-color 0.3s ease, opacity 0.3s ease'
+        clone.classList.remove('phys-drag-clone')
+      }
       let unregister = () => {}
+      // 落地飞行途中允许重新抓起——flyMorph 路径靠 startMorphLifecycle 内部的
+      // installLandingHandoff 做这件事；flyTo 之前只服务"缩小消失"这类不需要
+      // regrab 的场景，没有接这段。现在 flyTo 也用来处理正常落地了，必须补上，
+      // 否则落地这几百毫秒里卡片会变得"点不动"。
+      const cleanupHandoff = (!shrink && revealEl) ? installLandingHandoff({
+        enabled: pointer,
+        holder,
+        clone,
+        target: revealEl,
+        isActive: () => !landing.isDone() && session.isCurrent(),
+        startThreshold: startThresholdDrag,
+        onRegrab: (moveEvent, visualRect) => {
+          opts.onRegrabStart?.()
+          session.prepareHandoff()
+          deps.startPhysicsDrag(moveEvent, revealEl, {
+            ...opts,
+            flipContainer: opts.resolveFlipContainer?.(revealEl) ?? opts.flipContainer,
+            keepSourcePlaceholder: revealEl === sourceEl ? opts.keepSourcePlaceholder : false,
+            initialRect: visualRect,
+            initialHover: true,
+            isLandingRegrab: true,
+          })
+        },
+      }) : () => undefined
       const finish = () => {
         if (landing.isDone()) return
         landing.finish()
+        cleanupHandoff()
         unregister()
         holder.remove()
         // 先摘占位 class 再揭示：同 flyMorph 里 finish()/forceCleanup 的道理，避免揭示瞬间
@@ -681,6 +716,13 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         dropSize: { w: dropW, h: dropH },
         shrink,
         easing: deps.easing,
+        // 阶段 C（子集）：项目卡在"同一个普通列内归位/重排"这个最常见的落点场景，
+        // 源和目标是同一个 DOM、外观完全相同，不需要 flyMorph 那套双克隆样式渐变——
+        // 直接让跟手用的这同一个 holder 飞过去即可，接上跟手阶段延续下来的速度
+        // （松手到落地是一条连续物理轨迹，不是分段拼接）。只在项目卡上启用，
+        // 跨列/跨样式上下文（比如落进"已完成"分组）仍走 flyMorph，不动它。
+        useSpring: useMotionController,
+        initialVelocity: releaseVel,
         isActive: () => session.isCurrent(),
         onFinish: finish,
       })
@@ -1046,7 +1088,10 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           const sc = deps.scrollParent(sourceEl)
           deps.registerCleanup(session, blockScrollDuringLanding(sc))
           const box = revealInScroller(sc, sourceEl.getBoundingClientRect())
-          flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
+          // 阶段 C（子集）：源和落点是同一个 sourceEl，外观完全相同，不需要
+          // flyMorph 双克隆样式渐变——见 flyTo() 定义处的注释。
+          if (useMotionController) flyTo(box, false, sourceEl)
+          else flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
           return
         }
         // 完成列由 DoneLayout 自己协调 group/recent 布局。归位时不能把整个
@@ -1069,7 +1114,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         const sc = deps.scrollParent(sourceEl)
         deps.registerCleanup(session, blockScrollDuringLanding(sc))
         const box = revealInScroller(sc, box0)
-        flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
+        if (useMotionController) flyTo(box, false, sourceEl)
+        else flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
       }
 
       // 外部素材抽屉的卡片在拖拽开始时还不是画布节点；松手后由调用方创建真实卡片，
