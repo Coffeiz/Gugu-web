@@ -111,6 +111,14 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Schedules/index.vue'),
         meta: { title: '定时任务' },
       },
+      // /dev 索引页：列出下面所有 dev 工具的入口，新加工具只需要在 devRegistry.ts
+      // 里加一条，不需要再想"入口放哪"。同样仅 dev 注册。
+      ...(import.meta.env.DEV ? [{
+        path: 'dev',
+        name: 'DevHome',
+        component: () => import('@/views/DevHome.vue'),
+        meta: { title: 'Dev 工具' },
+      }] : []),
       // 新手引导 demo 面板：仅 dev 注册；prod build 时 import.meta.env.DEV=false，
       // 整个三元分支（含 import() 动态导入）被 tree-shake 掉，DevOnboarding.vue 不进生产包。
       ...(import.meta.env.DEV ? [{
