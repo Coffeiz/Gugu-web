@@ -15,6 +15,7 @@ import { resolveLandingZIndex } from '../visual/layer'
 import { acquireConnectionDot, releaseConnectionDot } from '../visual/connectionDotManager'
 import { dragPhysicsTuning, springParamsFromResponse } from '../physicsTuning'
 import { bindProjectCardRuntimeSession } from '../runtime/projectCardRuntimeBridge'
+import { createCardMotionController } from '../animation/cardMotionController'
 
 interface Box { left: number; top: number; width: number; height: number }
 interface ActiveDrag { raf: number; end: () => void }
@@ -87,6 +88,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   if (!(sourceEl instanceof HTMLElement) || deps.active.current) return
   const session = dragRegistry.start(sourceEl)
   bindProjectCardRuntimeSession(session, sourceEl)
+  // 阶段 B：只给项目卡片的跟手物理换成 CardMotionController，画布贴纸/文件卡片这些还没
+  // 排期迁移的场景继续走原来手写的 integrateSpring + 旋转公式，不动它们的手感。
+  // CardMotionController 的位置弹簧同样调 core/physics.ts 的 integrateSpring，旋转公式
+  // 也是照抄这份 frame() 原样搬的（见 cardMotionController.ts 文件头注释）——数值上是
+  // 同一套算法，只是把状态维护和 rAF 循环收进了独立模块，不是行为变更。
+  const useMotionController = Boolean(sourceEl.dataset.projectId)
   const visual = deps.visualController(session)
   session.setPhase('dragging')
   opts.onSessionStart?.(session)
@@ -386,7 +393,71 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   const KV   = -Math.log(1 - 0.12) * 60       // 旋转速度低通（每秒）
   let lastT: number | null = null
   const GROW_MS = 160   // 抓起→抬起(LIFT)的渐入时长，纯时间驱动、跟位置弹簧无关
-  let liftT = 0         // 0→1 抬起放大进度，frame() 里推进
+  let liftT = 0         // 0→1 抬起放大进度，frame()/motionController onFrame 里推进
+
+  // CardMotionController 自己管一份独立的 rAF 循环（'follow' 模式），跟legacy的 frame()
+  // 二选一，不并存——两者都会整串重写 holder.style.transform（位置+缩放），若并行跑，
+  // 谁在这一帧后触发就会覆盖掉另一个的写入，出现抖动。启用时 contentScale 轮询/liftT
+  // 推进/onFollow 回调这些跟"用哪种弹簧算位置"无关的周边逻辑原样照抄进它的 onFrame——
+  // 不是重新发明一遍，是把 frame() 里这几段直接搬过来，数值不变。
+  const motionController = useMotionController ? createCardMotionController({
+    mode: 'follow',
+    followRotation: { tilt: TILT, sway: SWAY },
+    onFrame: (f) => {
+      if (!session.isCurrent()) { motionController?.stop(); return }
+      pos.x = f.x
+      pos.y = f.y
+      const state = motionController!.getState()
+      vel.x = state.vx
+      vel.y = state.vy
+
+      const now = performance.now()
+      let dt = lastT === null ? 1 / 60 : (now - lastT) / 1000
+      lastT = now
+      if (dt > 1 / 20) dt = 1 / 20
+
+      // 同 frame() 里的画布相机缩放补偿——项目卡不传 contentScale，这段恒为 no-op。
+      if (opts.contentScale != null) {
+        const liveCS = _resolveCS()
+        if (liveCS !== lastCS) {
+          lastCS = liveCS
+          scaleShell.style.transform = `scale(${liveCS})`
+          half = { x: (cloneW * liveCS) / 2, y: (cloneH * liveCS) / 2 }
+          liveGrabY = opts.centerGrab ? half.y : GRABY * (liveCS / CS0)
+        }
+      }
+
+      // 同 frame() 里的抬起渐入——项目卡 LIFT 恒为 1（未传 opts.lift），这段恒为 no-op，
+      // 只有画布贴纸这类会传 lift 的场景会用到，但那类场景走的是 legacy 分支不会进这里；
+      // 保留是为了以后这条分支要扩展到其它对象类型时不必重新实现一遍。
+      liftT = Math.min(1, liftT + dt * 1000 / GROW_MS)
+      const liftEase = 1 - Math.pow(1 - liftT, 3)
+      visualScale = {
+        x: 1 + (regrabScale.x - 1) * (1 - liftEase),
+        y: 1 + (regrabScale.y - 1) * (1 - liftEase),
+      }
+      const curLift = 1 + (LIFT - 1) * liftEase
+      holder.style.transform =
+        `translate3d(${(pos.x - half.x).toFixed(2)}px, ${(pos.y - liveGrabY).toFixed(2)}px, 0)` +
+        `scale(${(curLift * visualScale.x).toFixed(4)}, ${(curLift * visualScale.y).toFixed(4)})`
+      attitudeLayer.style.transform =
+        `perspective(760px) rotateX(${f.rotateX.toFixed(2)}deg) rotateZ(${f.rotateZ.toFixed(2)}deg)`
+      if (opts.onFollow) opts.onFollow(
+        { x: pos.x, y: pos.y - liveGrabY + half.y },
+        { w: half.x * 2 * visualScale.x, h: half.y * 2 * visualScale.y },
+      )
+    },
+  }) : null
+  if (motionController) {
+    // scale 弹簧关掉（stiffness/damping=0，目标即初值，永不再动）：缩放交给上面 liftT 那段
+    // 独立处理，不让 CardMotionController 自己的缩放弹簧掺一脚。
+    motionController.setProfile({
+      position: springParamsFromResponse(dragPhysicsTuning.follow),
+      scale: { stiffness: 0, damping: 0 },
+    })
+    motionController.seed({ x: pos.x, y: pos.y, vx: 0, vy: 0 })
+    motionController.setTarget({ x: target.x, y: target.y })
+  }
 
   function onOver(e: PointerEvent | DragEvent) {
     // 让整页都成为有效放置区：在任意处（包括拖出范围）松手都立刻触发 drop，
@@ -395,12 +466,16 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     { const _dt = (e as DragEvent).dataTransfer; if (_dt) _dt.dropEffect = 'move' }
     if (e.clientX || e.clientY) {
       target.x = e.clientX; target.y = e.clientY
+      motionController?.setTarget({ x: e.clientX, y: e.clientY })
       if (pointer) rememberPointer(e.clientX, e.clientY)
       opts.onDragOver?.({ x: e.clientX, y: e.clientY })
     }
   }
 
   function frame(now: number) {
+    // useMotionController 时位置/旋转/holder 写入全由 motionController 的 onFrame 负责，
+    // 这个函数不应该被调度到——保险起见仍挡一下，不让两套写入抢同一个 transform 字符串。
+    if (useMotionController) return
     if (!session.isCurrent()) return
     // 真实帧间隔（秒）；首帧按 1/60，单帧卡顿/切后台回来则夹住，避免一帧跳一大步
     let dt = lastT === null ? 1 / 60 : (now - lastT) / 1000
@@ -472,6 +547,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     if (!deps.active.current || !session.isCurrent()) return
     session.setPhase('landing')
     cancelAnimationFrame(deps.active.current.raf)
+    motionController?.stop()
     deps.active.current = null
     document.body.classList.remove('phys-dragging')            // 恢复 backdrop-filter（落点 elementFromPoint 之前）
     removeListeners()
@@ -1112,7 +1188,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     onMove: onOver,
     onEnd: end,
   })
-  deps.active.current!.raf = requestAnimationFrame(frame)
+  if (motionController) motionController.start()
+  else deps.active.current!.raf = requestAnimationFrame(frame)
 }
 
 /**
