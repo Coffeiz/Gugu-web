@@ -14,6 +14,7 @@ import type { CardVisualController } from '../visual/CardVisualController'
 import { resolveLandingZIndex } from '../visual/layer'
 import { acquireConnectionDot, releaseConnectionDot } from '../visual/connectionDotManager'
 import { dragPhysicsTuning, springParamsFromResponse } from '../physicsTuning'
+import { bindProjectCardRuntimeSession } from '../runtime/projectCardRuntimeBridge'
 
 interface Box { left: number; top: number; width: number; height: number }
 interface ActiveDrag { raf: number; end: () => void }
@@ -85,6 +86,7 @@ export interface SingleDragDeps {
 export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTMLElement, opts: PhysicsDragOpts = {}, deps: SingleDragDeps) {
   if (!(sourceEl instanceof HTMLElement) || deps.active.current) return
   const session = dragRegistry.start(sourceEl)
+  bindProjectCardRuntimeSession(session, sourceEl)
   const visual = deps.visualController(session)
   session.setPhase('dragging')
   opts.onSessionStart?.(session)
