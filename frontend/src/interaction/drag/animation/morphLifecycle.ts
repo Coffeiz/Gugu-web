@@ -182,8 +182,23 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   }
 
   const retarget = (newBox: MorphBox) => {
+    console.log('[retarget-probe]', JSON.stringify({
+      key: options.revealEl.dataset.projectId ?? options.revealEl.dataset.layoutKey ?? null,
+      landingDone: landing.isDone(),
+      currentBox: [box.left, box.top, box.width, box.height],
+      newBox: [newBox.left, newBox.top, newBox.width, newBox.height],
+      newBoxIsDegenerate: newBox.width === 0 || newBox.height === 0,
+      sameBox: sameBox(box, newBox),
+      time: performance.now(),
+    }))
     if (landing.isDone()) return
     if (sameBox(box, newBox)) return
+    // 退化 box（宽或高为 0）说明这次测量测到的是还没揭示的隐藏节点（display:none 时
+    // getBoundingClientRect 恒为零矩形），不是真实落点——多半是另一张卡片的兄弟 FLIP
+    // 顺手重新measure 了本卡片仍处于隐藏状态的真实 DOM 节点。照单全收会把飞行克隆的
+    // 目标瞬间改写成 (0,0,0,0)，视觉上就是克隆猛地缩没/瞬移。丢弃这次改向，等下一次
+    // 带着真实矩形的 retarget 调用来纠正。
+    if (newBox.width === 0 || newBox.height === 0) return
     const continuous = options.trackTargetLayout === true && hasRetargeted
     hasRetargeted = true
     box = newBox
@@ -304,12 +319,20 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     // clone2 继承拖拽最后一帧的姿态，但姿态不能冻结到落地结束；单代理路径的
     // CardMotionController 会在 settle 阶段让 rotateX/rotateZ 衰减到 0，legacy
     // 路径用同一时长的独立 attitude 层完成等价的恢复。它不参与 morph 的尺寸计算。
-    const landingAttitude = options.clone2.querySelector<HTMLElement>('.phys-landing-attitude')
-    if (landingAttitude && landingAttitude.style.transform !== 'none') {
-      landingAttitude.style.transition = `transform 0.55s ${options.easing}`
-      void landingAttitude.offsetWidth
-      landingAttitude.style.transform = 'none'
-    }
+    // 交叉淡变期间 holder（旧拖拽视觉）和 clone2（落地视觉）会同时可见。
+    // 两层必须使用同一份姿态收束，否则旧 holder 仍保留最后一帧旋转，而
+    // clone2 已经回正，松手瞬间会看到两张角度不同的卡片。
+    const attitudeTransition = `transform 0.55s ${options.easing}`
+    const attitudeLayers = [
+      options.holder.querySelector<HTMLElement>('.phys-drag-attitude'),
+      options.clone2.querySelector<HTMLElement>('.phys-landing-attitude'),
+    ]
+    attitudeLayers.forEach(layer => {
+      if (!layer || layer.style.transform === 'none') return
+      layer.style.transition = attitudeTransition
+      void layer.offsetWidth
+      layer.style.transform = 'none'
+    })
     if (options.useSpringLanding) {
       const current = options.holder.getBoundingClientRect()
       const params = springParamsFromResponse(dragPhysicsTuning.landing)

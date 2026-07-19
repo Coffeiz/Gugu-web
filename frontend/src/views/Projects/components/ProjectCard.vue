@@ -164,7 +164,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, onUnmounted, useAttrs, type PropType } from 'vue'
+import { computed, ref, nextTick, onMounted, onUnmounted, useAttrs, type PropType } from 'vue'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
@@ -360,6 +360,12 @@ function removeTodo(id: string) {
 }
 
 onUnmounted(closeStagePop)
+onMounted(() => {
+  console.log('[project-card-lifecycle-probe]', JSON.stringify({ phase: 'mounted', id: props.project.id, time: performance.now() }))
+})
+onUnmounted(() => {
+  console.log('[project-card-lifecycle-probe]', JSON.stringify({ phase: 'unmounted', id: props.project.id, time: performance.now() }))
+})
 
 // ── 推进状态列 ────────────────────────────────────────────
 const STATUS_NEXT: Record<string, string>  = { pending: 'active', active: 'done' }

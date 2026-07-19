@@ -213,28 +213,31 @@ export interface FlipRetargetRegistry {
   set(element: HTMLElement, callback: (box: FlipRetargetBox) => void): void
   clear(element: HTMLElement, callback: (box: FlipRetargetBox) => void): void
   retarget(elements: HTMLElement[], measure: (element: HTMLElement) => FlipRetargetBox): void
+  retargetWithin(container: HTMLElement, measure: (element: HTMLElement) => FlipRetargetBox): void
 }
 
 const elementKeys = new WeakMap<HTMLElement, number>()
 let nextElementKey = 1
 
+/** 优先用业务身份（跨重挂载仍然稳定），没有的元素才退回一个跟这个元素对象绑定的数字 id。 */
+function stableElementKey(element: HTMLElement): string | number {
+  return element.dataset.layoutKey
+    ?? element.dataset.projectId
+    ?? element.dataset.fileId
+    ?? element.dataset.folderKey
+    ?? (() => {
+      let value = elementKeys.get(element)
+      if (!value) {
+        value = nextElementKey++
+        elementKeys.set(element, value)
+      }
+      return value
+    })()
+}
+
 /** 为跨分组/重挂载仍存在的元素生成稳定 FLIP key。 */
 export function createFlipItems(elements: HTMLElement[]): FlipItem[] {
-  return elements.map(element => {
-    const key = element.dataset.layoutKey
-      ?? element.dataset.projectId
-      ?? element.dataset.fileId
-      ?? element.dataset.folderKey
-      ?? (() => {
-        let value = elementKeys.get(element)
-        if (!value) {
-          value = nextElementKey++
-          elementKeys.set(element, value)
-        }
-        return value
-      })()
-    return { key, element }
-  })
+  return elements.map(element => ({ key: stableElementKey(element), element }))
 }
 
 /** 在不改变元素当前视觉状态的前提下读取其布局盒。 */
@@ -249,18 +252,54 @@ export function measureWithoutTransform(element: HTMLElement): DOMRect {
   return rect
 }
 
-/** 集中管理落地飞行动画的目标重定向，避免 engine 自己维护另一套全局注册表。 */
+/**
+ * 集中管理落地飞行动画的目标重定向，避免 engine 自己维护另一套全局注册表。
+ *
+ * 按稳定业务身份（stableElementKey）登记，不是按 DOM 元素引用——注册飞行目标之后，
+ * Vue 完全可能在这段飞行期间把同一张卡的组件实例卸载重挂载一次（实测：紧挨着的两次
+ * 渲染之间，同一个 project.id 对应的组件会有 <2ms 的 mounted→unmounted→再 mounted，
+ * 具体触发条件是父级用普通函数而不是 computed 生成 props 数组、外加异步的文件数缓存
+ * 更新紧跟着触发第二次渲染）。按元素引用登记的话，旧引用一旦失效，`retargetWithin`
+ * 就再也找不到它，飞行中的克隆永远收不到目标已经挪动的通知，表现为落地卡在原地不动、
+ * 直到别的卡片的动画结束才瞬间归位。按业务身份登记后，即使元素被换了，只要新元素
+ * 携带同一个 data-project-id/data-file-id/data-folder-key/data-layout-key，
+ * `retargetWithin` 就能在 container 里重新查到它、继续把新位置通知给回调。
+ * 没有这几个业务属性的元素（没有稳定身份）退回旧行为——只能按当时的元素引用匹配，
+ * 这类元素本来就不会跨渲染重建（比如列表末尾的「新建」按钮），不需要这份健壮性。
+ */
 export function createFlipRetargetRegistry(): FlipRetargetRegistry {
-  const callbacks = new Map<HTMLElement, (box: FlipRetargetBox) => void>()
+  const callbacks = new Map<string | number, { element: HTMLElement; callback: (box: FlipRetargetBox) => void }>()
+
+  const resolveLive = (container: HTMLElement, key: string | number, fallback: HTMLElement): HTMLElement | null => {
+    if (typeof key !== 'string') return fallback.isConnected ? fallback : null
+    // 注册时用 stableElementKey 按优先级选定了具体是哪个属性，这里已经不知道当时
+    // 选的是哪一个——四个属性都查一遍，查到第一个匹配的就是它，没有歧义（同一时刻
+    // 不会有两张卡共用同一个业务 id）。
+    return container.querySelector<HTMLElement>(
+      `[data-layout-key="${key}"], [data-project-id="${key}"], [data-file-id="${key}"], [data-folder-key="${key}"]`,
+    )
+  }
+
   return {
     set(element, callback) {
-      callbacks.set(element, callback)
+      callbacks.set(stableElementKey(element), { element, callback })
     },
     clear(element, callback) {
-      if (callbacks.get(element) === callback) callbacks.delete(element)
+      const key = stableElementKey(element)
+      const entry = callbacks.get(key)
+      if (entry && entry.callback === callback) callbacks.delete(key)
     },
     retarget(elements, measure) {
-      elements.forEach(element => callbacks.get(element)?.(measure(element)))
+      elements.forEach(element => {
+        const entry = callbacks.get(stableElementKey(element))
+        entry?.callback(measure(element))
+      })
+    },
+    retargetWithin(container, measure) {
+      callbacks.forEach(({ element, callback }, key) => {
+        const current = resolveLive(container, key, element)
+        if (current && container.contains(current)) callback(measure(current))
+      })
     },
   }
 }
@@ -370,6 +409,10 @@ export function createFlipTransaction(options: FlipOptions): FlipTransaction {
         const dx = from.left - to.left, dy = from.top - to.top
         if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) moving.push({ element, dx, dy })
       }
+      console.log('[project-flip-probe]', JSON.stringify({
+        phase: 'play-moving',
+        moving: moving.map(({ element, dx, dy }) => ({ key: element.dataset.projectId ?? element.dataset.layoutKey ?? null, dx, dy })),
+      }))
       if (!moving.length) return Promise.resolve('skipped')
       options.onBeforePlay?.()
       if (!active()) return Promise.resolve('stale')

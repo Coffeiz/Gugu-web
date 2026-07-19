@@ -9,6 +9,7 @@ import { integrateSpring } from '../core/physics'
 import { dispatchDragHandoff } from './handoff'
 import { installDragListeners } from './listeners'
 import type { PhysicsDragOpts, PhysicsDropContext } from '../useDragEngine'
+import { _identityOf } from '../useDragEngine'
 import type { CardVisualController } from '../visual/CardVisualController'
 import { resolveLandingZIndex } from '../visual/layer'
 import { acquireConnectionDot, releaseConnectionDot } from '../visual/connectionDotManager'
@@ -68,7 +69,7 @@ export interface SingleDragDeps {
   registerCleanup: (session: DragSession, fn: () => void) => () => void
   setRetarget: (target: HTMLElement, retarget: (box: any) => void) => void
   clearRetarget: (target: HTMLElement, retarget: (box: any) => void) => void
-  retargetLandings: (kids: HTMLElement[], rectsIgnored?: any[]) => void
+  retargetLandings: (kids: HTMLElement[], rectsIgnored?: any[], scope?: HTMLElement) => void
   childCards: (container: HTMLElement, exclude: Element | null, allDescendants?: boolean) => HTMLElement[]
   rects: (elements: Element[]) => DOMRect[]
   scrollParent: (node: Element | null) => HTMLElement | null
@@ -326,7 +327,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
         sourceEl.style.display = 'none'
       }, {
         easing: deps.easing,
-        onBeforePlay: () => deps.retargetLandings(kids),
+        onBeforePlay: () => deps.retargetLandings(kids, undefined, container),
         isActive: () => session.isCurrent(),
       })
       const unregisterFlipCleanup = deps.registerCleanup(session, () => flip.cancel())
@@ -628,40 +629,6 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       measureTargetLayout = undefined,
     ) => {
       session.setPhase('layout-playing')
-      if (revealEl.closest('.done-layout-root')) {
-        console.log('[done-landing-probe]', JSON.stringify({
-          phase: 'fly-morph-start',
-          key: revealEl.dataset.projectId || revealEl.dataset.layoutKey || null,
-          box: [initialBox.left, initialBox.top, initialBox.width, initialBox.height],
-          revealRect: (() => { const r = revealEl.getBoundingClientRect(); return [r.left, r.top, r.width, r.height] })(),
-          cloneRect: (() => { const r = clone2.getBoundingClientRect(); return [r.left, r.top, r.width, r.height] })(),
-          revealDisplay: getComputedStyle(revealEl).display,
-          revealVisibility: getComputedStyle(revealEl).visibility,
-          revealConnected: revealEl.isConnected,
-          sourceDisplay: getComputedStyle(sourceEl).display,
-          sourceConnected: sourceEl.isConnected,
-          container: revealEl.closest<HTMLElement>('.done-layout-root')?.className || revealEl.parentElement?.className || '',
-          ancestors: (() => {
-            const result: unknown[] = []
-            let node: HTMLElement | null = revealEl.parentElement
-            while (node && result.length < 8) {
-              const r = node.getBoundingClientRect()
-              const style = getComputedStyle(node)
-              result.push({
-                tag: node.tagName,
-                className: node.className,
-                rect: [r.left, r.top, r.width, r.height],
-                display: style.display,
-                height: style.height,
-                overflow: style.overflow,
-                transform: style.transform,
-              })
-              node = node.parentElement
-            }
-            return result
-          })(),
-        }))
-      }
       // clone2 已在参数求值阶段创建并继承当前姿态；不能在它接管前清掉源 holder，
       // 否则交叉淡变窗口会出现 clone1 不旋转、clone2 仍旋转的一帧。姿态由
       // morphLifecycle 在 clone2 接管后统一衰减到 none。
@@ -725,6 +692,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 占位重新展开：FLIP 邻居从「合拢」动到「展开」。el 当前可能已收合(home)或已展开(落点新卡)，
     // 两种都要先拿到 closed 和 open 两套位置
     const animateOpen = (cont: HTMLElement, el: HTMLElement) => {
+      console.log('[animate-open-probe]', JSON.stringify({
+        key: el.dataset.projectId ?? el.dataset.layoutKey ?? null,
+        nodeId: _identityOf(el),
+        displayBefore: el.style.display,
+        connected: el.isConnected,
+      }))
       // 同上：临时关掉落点容器自己的 -move 过渡，避免跟这套手动 FLIP 争抢同一批卡片的 transform。
       cont.classList.add('flip-engine-active')
       let sibs: HTMLElement[], flip: FlipTransaction
@@ -733,7 +706,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           el.style.display = ''
         }, {
           easing: deps.easing,
-          onBeforePlay: () => deps.retargetLandings(prepared.kids),
+          onBeforePlay: () => deps.retargetLandings(prepared.kids, undefined, cont),
           isActive: () => session.isCurrent(),
         })
         sibs = prepared.kids
@@ -743,7 +716,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           el.style.display = ''
         }, {
           easing: deps.easing,
-          onBeforePlay: () => deps.retargetLandings(prepared.kids),
+          onBeforePlay: () => deps.retargetLandings(prepared.kids, undefined, cont),
           isActive: () => session.isCurrent(),
         }, () => {
           el.style.display = 'none'
@@ -1094,15 +1067,6 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
               el.closest<HTMLElement>('.done-card-item')?.style.removeProperty('display')
               visual.holdHoverUntilReveal(el)
               el.style.opacity = '0'
-              console.log('[done-landing-probe]', JSON.stringify({
-                phase: 'target-before-box',
-                key: el.dataset.projectId || el.dataset.layoutKey || null,
-                targetRect: (() => { const r = el.getBoundingClientRect(); return [r.left, r.top, r.width, r.height] })(),
-                targetDisplay: getComputedStyle(el).display,
-                targetOpacity: getComputedStyle(el).opacity,
-                containerRect: (() => { const r = flipTarget.getBoundingClientRect(); return [r.left, r.top, r.width, r.height] })(),
-                scroll: (() => { const s = deps.scrollParent(el); return s ? [s.scrollTop, s.scrollHeight, s.clientHeight] : null })(),
-              }))
             } else {
               animateOpen(flipTarget, el)
             }
@@ -1110,16 +1074,6 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             const sc = deps.scrollParent(el)
             deps.registerCleanup(session, blockScrollDuringLanding(sc))
             const box = revealInScroller(sc, el.getBoundingClientRect())
-            if (flipTarget.classList.contains('done-layout-root')) {
-              console.log('[done-landing-probe]', JSON.stringify({
-                phase: 'fly-box',
-                key: el.dataset.projectId || el.dataset.layoutKey || null,
-                box: [box.left, box.top, box.width, box.height],
-                targetRect: (() => { const r = el.getBoundingClientRect(); return [r.left, r.top, r.width, r.height] })(),
-                holderTarget: [target.x, target.y],
-                invalid: !Number.isFinite(box.left) || !Number.isFinite(box.top) || box.width <= 0 || box.height <= 0,
-              }))
-            }
             flyMorph(box, el, _cloneLanding(el), restoreListTransition)
               return
             }

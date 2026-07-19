@@ -110,15 +110,35 @@ const liveFileCounts = computed(() => {
   return m
 })
 
-function columnProjects(statusKey) {
-  const list = projectStore.projects
-    .filter(p => p.status === statusKey)
-    // cache 已加载后以前端计数为准（只计根目录文件），避免回退到服务端含文件夹的数字
-    .map(p => ({ ...p, fileCount: cacheStore.loaded ? (liveFileCounts.value.get(p.id) ?? 0) : p.fileCount }))
+// 按状态分组的项目列表，缓存进 computed——之前是个普通函数，每次父组件重渲染
+// （项目移动、liveFileCounts 异步更新，往往是紧挨着的两次独立渲染）都会重新
+// filter/map/sort 一遍，且 map() 每次都生成全新的 project 对象。这些新对象配合
+// TransitionGroup 的 diff，在某些时机会让 Vue 把同一个 key 的 ProjectCard 实例
+// 整个卸载重挂载，而不只是 patch props（实测：拖拽落地动画中途，卡片的 Vue
+// 组件会在 <2ms 内 mounted→unmounted 一次，飞行中的克隆因此跟丢了目标元素引用，
+// 表现为落地卡在原地不动、直到别的卡片动画结束才瞬间归位）。改成 computed 后，
+// 只要 projects/cacheStore.loaded/liveFileCounts 这几个依赖没变，同一轮渲染
+// 内多次调用 columnProjects() 用的是同一份缓存结果，同一个 project 对象引用，
+// 不会再凭空多出这类相邻渲染间的对象churn。
+const columnProjectsMap = computed(() => {
   const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
-  if (statusKey === 'done')   return list.sort((a, b) => prioVal(b) - prioVal(a) || (b.doneAt ?? '').localeCompare(a.doneAt ?? ''))
-  if (statusKey === 'active') return list.sort((a, b) => prioVal(b) - prioVal(a) || (a.deadline ?? '').localeCompare(b.deadline ?? '') || a.id - b.id)
-  return list.sort((a, b) => prioVal(b) - prioVal(a) || (a.startDate ?? '').localeCompare(b.startDate ?? '') || a.id - b.id)
+  const grouped = new Map()
+  for (const p of projectStore.projects) {
+    const list = grouped.get(p.status) ?? []
+    // cache 已加载后以前端计数为准（只计根目录文件），避免回退到服务端含文件夹的数字
+    list.push({ ...p, fileCount: cacheStore.loaded ? (liveFileCounts.value.get(p.id) ?? 0) : p.fileCount })
+    grouped.set(p.status, list)
+  }
+  for (const [statusKey, list] of grouped) {
+    if (statusKey === 'done') list.sort((a, b) => prioVal(b) - prioVal(a) || (b.doneAt ?? '').localeCompare(a.doneAt ?? ''))
+    else if (statusKey === 'active') list.sort((a, b) => prioVal(b) - prioVal(a) || (a.deadline ?? '').localeCompare(b.deadline ?? '') || a.id - b.id)
+    else list.sort((a, b) => prioVal(b) - prioVal(a) || (a.startDate ?? '').localeCompare(b.startDate ?? '') || a.id - b.id)
+  }
+  return grouped
+})
+
+function columnProjects(statusKey) {
+  return columnProjectsMap.value.get(statusKey) ?? []
 }
 
 function handleDrop({ projectId, targetStatus }) {

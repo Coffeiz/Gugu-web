@@ -11,6 +11,7 @@ describe('拖拽引擎 FLIP 编排', () => {
     const container = document.createElement('div')
     const source = document.createElement('div')
     const sibling = document.createElement('div')
+    sibling.getBoundingClientRect = () => rect(0, 0)
     const clone = document.createElement('div')
     clone.className = 'phys-drag-clone'
     container.append(source, sibling, clone)
@@ -22,8 +23,10 @@ describe('拖拽引擎 FLIP 编排', () => {
     const container = document.createElement('div')
     const project = document.createElement('div')
     project.dataset.projectId = 'project-1'
+    project.getBoundingClientRect = () => rect(0, 0)
     const folder = document.createElement('div')
     folder.dataset.folderKey = 'folder-1'
+    folder.getBoundingClientRect = () => rect(0, 0)
     const unrelated = document.createElement('div')
     container.append(project, folder, unrelated)
 

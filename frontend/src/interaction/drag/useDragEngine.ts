@@ -197,11 +197,25 @@ const _activeState = {
 // 松开 A，B 的克隆过度右移然后归位）。这里对每张落地卡临时把 transform 归零（opacity:0，肉眼
 // 无感）量出干净布局落点再还原。CSS transition 天然支持途中改目标：从当前插值位置平滑转向新目标。
 const _retargetRegistry = createFlipRetargetRegistry()
-function _retargetLandings(kids: HTMLElement[], _rectsIgnored?: any[]) {
-  _retargetRegistry.retarget(kids, element => {
+function _retargetLandings(kids: HTMLElement[], _rectsIgnored?: any[], scope?: HTMLElement) {
+  const measure = (element: HTMLElement) => {
     const b = measureWithoutTransform(element)
+    console.log('[retarget-landings-probe]', JSON.stringify({
+      key: element.dataset.projectId ?? element.dataset.layoutKey ?? null,
+      display: element.style.display,
+      connected: element.isConnected,
+      measured: [b.left, b.top, b.width, b.height],
+    }))
     return { left: b.left, top: b.top, width: b.width, height: b.height }
-  })
+  }
+  // 连续拖入或嵌套项目组时，仍在飞行的落地卡不一定出现在本次
+  // prepareSiblingFlip 返回的直接 kids 中；但只要它属于同一列，就必须
+  // 跟随这次布局变化改写终点，避免第一张卡继续飞向旧位置。
+  if (scope) {
+    _retargetRegistry.retargetWithin(scope, measure)
+  } else {
+    _retargetRegistry.retarget(kids, measure)
+  }
 }
 
 /** 收集参与让位 FLIP 的兄弟元素，排除当前拖拽克隆和源元素。 */
@@ -210,7 +224,35 @@ export function collectFlipChildren(container: HTMLElement, exclude: Element | n
     ? [...container.querySelectorAll<HTMLElement>('[data-project-id], [data-file-id], [data-folder-key], [data-flip-target]')]
     : [...container.children] as HTMLElement[]
   return elements.filter(c =>
-    c.nodeType === 1 && c !== exclude && !c.classList.contains('phys-drag-clone'))
+    c.nodeType === 1 && c !== exclude && !c.classList.contains('phys-drag-clone')
+    // TransitionGroup 在丢弃一个 vnode 实例时会把"正在离场"的元素短暂留在 DOM 里
+    // （即使这张卡自己没写显式离场过渡），这段时间它是零尺寸、display:none 的幽灵节点，
+    // 跟同一个 cardKey 真正在场的那个节点同时存在于文档里——同款坑
+    // useDoneLayoutRuntime.ts 的 collectRecentCards 已经踩过并修过（那边的注释原话：
+    // "TransitionGroup 会短暂保留离场卡；隐藏节点不能再次参与布局事务"），但一直没有
+    // 应用到看板卡片列表这条路径。不过滤的话，这个幽灵节点会被当成"真的兄弟卡片"량进
+    // FLIP 的 before/after 快照，量出 [0,0,0,0]，导致真正的落地目标被排除在这次让位
+    // 动画之外（回归：两张卡先后落进同一列，第二张卡落地时第一张卡不会被正确推开，
+    // 等第一张卡自己的落地流程结束才瞬间跳到最终位置）。
+    // 用 getBoundingClientRect 而非 getClientRects 做零尺寸判定：语义等价（display:none/
+    // 未渲染的幽灵节点两者都会量出零尺寸矩形），但前者才是测试用例里一直在 mock 的接口——
+    // jsdom 没有真实排版引擎，getClientRects 在测试环境里总是返回空列表，会把所有测试夹具
+    // 都误判成幽灵节点。
+    && (() => { const r = c.getBoundingClientRect(); return r.width > 0 || r.height > 0 })())
+}
+
+// 探针专用：给每个真正见过的 DOM 节点分配一个稳定 id，跨多次 FLIP 调用比对
+// 同一个 data-project-id 是不是同一个 DOM 对象——如果不是，说明 Vue 在两次
+// 测量之间把这张卡的节点整个销毁重建了，不是"动画没播"，是"压根不是同一个元素"。
+let _flipIdentitySeq = 0
+const _flipIdentity = new WeakMap<HTMLElement, number>()
+export function _identityOf(el: HTMLElement): number {
+  let id = _flipIdentity.get(el)
+  if (id === undefined) {
+    id = ++_flipIdentitySeq
+    _flipIdentity.set(el, id)
+  }
+  return id
 }
 
 export function prepareSiblingFlip(
@@ -225,13 +267,59 @@ export function prepareSiblingFlip(
   const kids = collectFlipChildren(container, exclude, allDescendants)
   beforeCapture?.()
   const before = _rects(kids)
+  console.log('[project-flip-probe]', JSON.stringify({
+    phase: 'capture-before',
+    container: container.className,
+    exclude: (exclude as HTMLElement | null)?.dataset.projectId ?? null,
+    kids: kids.map(el => {
+      const r = before[kids.indexOf(el)]
+      const zeroSized = r.width === 0 || r.height === 0
+      const duplicateKey = el.dataset.projectId
+      // 怀疑同一个 cardKey 此刻在文档里同时存在不止一个节点（旧的 pickup 隐藏源节点 +
+      // 新的 landing 节点），Vue 的 key 匹配/我们自己的选择器都可能挑错——量到 0 尺寸时
+      // 顺手把全文档里同 key 的所有节点都列出来，直接确认是不是这个情况。
+      const duplicates = zeroSized && duplicateKey
+        ? Array.from(document.querySelectorAll<HTMLElement>(`[data-project-id="${duplicateKey}"]`)).map(dupEl => ({
+          nodeId: _identityOf(dupEl),
+          display: dupEl.style.display,
+          opacity: dupEl.style.opacity,
+          connected: dupEl.isConnected,
+          isSameAsKid: dupEl === el,
+          isClone: dupEl.classList.contains('phys-drag-clone'),
+          rect: (() => { const rr = dupEl.getBoundingClientRect(); return [rr.left, rr.top, rr.width, rr.height] })(),
+        }))
+        : undefined
+      return {
+        key: el.dataset.projectId ?? el.dataset.layoutKey ?? null,
+        nodeId: _identityOf(el),
+        display: el.style.display,
+        connected: el.isConnected,
+        rect: [r.left, r.top, r.width, r.height],
+        duplicatesInDocument: duplicates,
+      }
+    }),
+  }))
   mutate()
   const after = _rects(kids)
+  console.log('[project-flip-probe]', JSON.stringify({
+    phase: 'capture-after',
+    container: container.className,
+    kids: kids.map((el, index) => ({
+      key: el.dataset.projectId ?? el.dataset.layoutKey ?? null,
+      nodeId: _identityOf(el),
+      display: el.style.display,
+      rect: [after[index].left, after[index].top, after[index].width, after[index].height],
+      dy: before[index].top - after[index].top,
+    })),
+  }))
   afterMeasure?.()
   const transaction = prepareFlipTransaction(createFlipItems(kids), before, after, options)
   return { kids, transaction }
 }
-const _rects = (els: Element[]) => els.map(e => e.getBoundingClientRect())
+// 捕获兄弟布局时排除已有的 TransitionGroup/上一笔 FLIP transform。
+// 否则连续拖入时，第一张仍在落地或刚完成的卡片会被用“带残留 transform
+// 的视觉位置”作为 First/Last，最终被误判为没有位移而瞬移到新位置。
+const _rects = (els: Element[]) => els.map(e => measureWithoutTransform(e as HTMLElement))
 
 // 拾起时源卡正被鼠标悬停着（拖拽即从悬停它开始）。perf trace 实测过两层坑：
 // ① 原生拖拽从 dragstart 起整段暂停 mouseover/mouseout 派发——抓起那一刻缓存的 :hover=true
