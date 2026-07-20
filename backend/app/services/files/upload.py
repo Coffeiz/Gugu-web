@@ -113,8 +113,10 @@ async def prepare_presign_target(
     existing = None
     if on_conflict == "overwrite" and overwrite_file_id is not None:
         existing = await get_owned(db, File, overwrite_file_id, user_id)
-        if not existing:
+        if not existing or existing.deleted_at is not None:
             raise UploadTargetError(400, "要覆盖的文件不存在")
+        if (existing.space, existing.project_id, existing.folder_id) != (space, project_id, folder_id):
+            raise UploadTargetError(400, "覆盖目标与上传位置不一致")
         final_key, final_name = existing.storage_key, existing.display_name
         if storage_limit_bytes is not None:
             used = (await db.execute(
@@ -169,27 +171,54 @@ async def confirm_oss_upload(
     """登记已完成的 OSS 上传，只 flush，不提交事务和发布事件。"""
     project = None
     folder_name = None
-    if space == "project" and project_id:
+    project_name = project_year = project_month = folder_path = ""
+    if space not in {"personal", "project"}:
+        raise UploadTargetError(400, "无效的文件空间")
+    if space == "project" and project_id is None:
+        raise UploadTargetError(400, "project 空间需要提供 project_id")
+    if space == "personal" and project_id is not None:
+        raise UploadTargetError(400, "personal 空间不能提供 project_id")
+    if space == "project":
         project = await get_owned(db, Project, project_id, user_id)
         if not project:
             raise UploadTargetError(400, "项目不存在")
+        project_name = project.name
+        date_str = project.start_date or project.created_at.strftime("%Y-%m-%d")
+        project_year, project_month = date_str[:4], date_str[5:7]
     if folder_id is not None:
-        folder = await get_owned(db, Folder, folder_id, user_id)
-        if not folder:
-            raise UploadTargetError(400, "文件夹不存在")
-        folder_name = folder.name
+        resolved = await resolve_folder_path(db, user_id, folder_id, project_id)
+        if not resolved or resolved[0].deleted_at is not None:
+            raise UploadTargetError(400, "文件夹不存在，或不属于指定的项目/个人空间")
+        folder_name = resolved[0].name
+        folder_path = resolved[1]
 
     if overwrite_file_id is not None:
         existing = await get_owned(db, File, overwrite_file_id, user_id)
-        if not existing:
+        if not existing or existing.deleted_at is not None:
             raise UploadTargetError(400, "要覆盖的文件不存在")
         if existing.storage_key != storage_key:
             raise UploadTargetError(400, "覆盖目标与直传路径不一致")
+        if (existing.space, existing.project_id, existing.folder_id) != (space, project_id, folder_id):
+            raise UploadTargetError(400, "覆盖目标与上传位置不一致")
         existing.size = _fmt_size(size_bytes)
         existing.size_bytes = size_bytes
         existing.mime_type = mime_type
         await db.flush()
         return ConfirmUploadResult(existing, project, folder_name, existing.id)
+
+    expected_key = _build_key(
+        uid=user_id,
+        space=space,
+        display_name=display_name,
+        ext=ext,
+        project_name=project_name,
+        project_id=project_id or 0,
+        project_year=project_year,
+        project_month=project_month,
+        folder_path=folder_path,
+    )
+    if storage_key != expected_key:
+        raise UploadTargetError(400, "上传路径与目标位置不一致，请重新上传")
 
     db_file = File(
         user_id=user_id,
