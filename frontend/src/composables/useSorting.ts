@@ -1,6 +1,8 @@
-import { ref, reactive } from 'vue'
+import { ref, reactive, type Ref } from 'vue'
 
-export const SORT_OPTIONS = [
+export type SortDir = 'asc' | 'desc'
+
+export const SORT_OPTIONS: { key: string; label: string }[] = [
   { key: 'name',      label: '名称' },
   { key: 'type',      label: '类型' },
   { key: 'stage',     label: '阶段' },
@@ -10,7 +12,7 @@ export const SORT_OPTIONS = [
 
 export function useSorting() {
   const sortKey      = ref('name')
-  const sortDir      = ref('asc')
+  const sortDir: Ref<SortDir> = ref<SortDir>('asc')
   const sortMenuOpen = ref(false)
   const sortBtnRef   = ref<HTMLElement | null>(null)
   const sortMenuPos  = reactive({ x: 0, y: 0 })

@@ -92,26 +92,13 @@
         </template>
 
         <!-- 排序选择器 -->
-        <div v-if="currentType !== 'root'" class="sort-selector" @click.stop>
-          <button ref="sortBtnRef" class="sort-btn" @click.stop="openSortMenu">
-            <PhSortAscending :size="13" weight="bold" />
-            {{ SORT_OPTIONS.find(o => o.key === sortKey)?.label }}
-            <svg class="sort-dir-icon" :class="{ desc: sortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-              <path d="M5 2v6M2 5l3-3 3 3"/>
-            </svg>
-          </button>
-          <!-- 与右键菜单同源：Teleport 到 body，backdrop-filter 才能正确生效 -->
-          <ContextMenu :show="sortMenuOpen" :x="sortMenuPos.x" :y="sortMenuPos.y" @close="sortMenuOpen = false">
-            <button v-for="opt in SORT_OPTIONS" :key="opt.key"
-              class="ctx-item popup-menu-item sort-menu-item" :class="{ active: sortKey === opt.key }"
-              @click="onSortSelect(opt.key)">
-              {{ opt.label }}
-              <svg v-if="sortKey === opt.key" class="sort-check" :class="{ desc: sortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                <path d="M5 2v6M2 5l3-3 3 3"/>
-              </svg>
-            </button>
-          </ContextMenu>
-        </div>
+        <SortMenu
+          v-if="currentType !== 'root'"
+          :options="SORT_OPTIONS"
+          :sort-key="sortKey"
+          :sort-dir="sortDir"
+          @select="onSortSelect"
+        />
 
         <!-- 清空回收站 -->
         <button v-if="currentType === 'trash'" class="empty-trash-btn" @click.stop="confirmEmptyTrash">
@@ -612,7 +599,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { filesApi, trashApi, uploadWithProgress, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
-import ContextMenu   from '@/components/ContextMenu.vue'
 import FileCard       from '@/components/common/FileCard.vue'
 import FileUploadButton from '@/components/common/FileUploadButton.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
@@ -621,6 +607,7 @@ import FileBrowserContextMenu from '@/components/common/FileBrowserContextMenu.v
 import FileBrowserContextMenuContent from '@/components/common/FileBrowserContextMenuContent.vue'
 import FileBrowserList from '@/components/common/FileBrowserList.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
+import SortMenu from '@/components/common/SortMenu.vue'
 import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
 import FilePasteButton from '@/components/common/FilePasteButton.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -658,7 +645,7 @@ import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
   PhClock, PhPlayCircle, PhCheckCircle,
   PhBrowser,
-  PhArrowLeft, PhArrowRight, PhSortAscending, PhSquaresFour, PhList,
+  PhArrowLeft, PhArrowRight, PhSquaresFour, PhList,
   PhCheckSquare, PhCheck, PhFolderPlus, PhPencilSimple,
   PhDownloadSimple, PhX,
   PhWarningCircle,
@@ -775,7 +762,7 @@ function _flashFile(id: number) {
 }
 
 // ── 排序 ──
-const { SORT_OPTIONS, sortKey, sortDir, sortMenuOpen, sortBtnRef, sortMenuPos, openSortMenu, onSortSelect } = useSorting()
+const { SORT_OPTIONS, sortKey, sortDir, onSortSelect } = useSorting()
 
 const sortedContents = computed(() => {
   const { folders, files } = contents.value
@@ -1130,7 +1117,7 @@ function toggleFileSelect(fileId: number, e: MouseEvent) {
 
 function onPageClick() {
   if (!inSelectionMode.value) clearSelection()
-  sortMenuOpen.value = false
+  // 排序菜单由 SortMenu 内部的 ContextMenu 监听外部 click 自动关闭，这里不用手动处理
 }
 
 // ── 删除 ──
@@ -1998,20 +1985,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .bc-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 
 /* 视图切换 */
-.sort-selector { position: relative; }
-.sort-btn {
-  display: flex; align-items: center; gap: 5px;
-  height: 30px; padding: 0 10px; border-radius: 8px; border: none;
-  background: rgba(255,255,255,0.55); cursor: pointer;
-  font-size: 12px; font-weight: 600; color: var(--color-primary);
-  font-family: var(--font-sans); transition: background 0.15s, color 0.15s;
-}
-.sort-btn:hover { background: rgba(255,255,255,0.82); }
-.sort-dir-icon { transition: transform 0.2s; }
-.sort-dir-icon.desc { transform: rotate(180deg); }
-/* 排序弹窗经 ContextMenu(Teleport 到 body)渲染，外观与右键菜单完全一致 */
-.sort-check { flex-shrink: 0; margin-left: auto; color: var(--color-primary); }
-.sort-check.desc { transform: rotate(180deg); }
 
 .select-mode-btn {
   width: 28px; height: 28px; border-radius: 6px; border: none;

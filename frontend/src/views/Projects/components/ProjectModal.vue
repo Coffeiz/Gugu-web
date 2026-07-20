@@ -129,26 +129,12 @@
               <button class="btn-cancel-sm" @click="showNewFolder = false; newFolderName = ''">✕</button>
             </div>
             <!-- 排序选择器（挪出 新建文件夹 的 v-if/v-else 对，否则 v-else 不相邻报错）-->
-            <div class="sort-selector" @click.stop>
-              <button ref="pmSortBtnRef" class="sort-btn" @click.stop="openPmSortMenu">
-                <PhSortAscending :size="13" weight="bold" />
-                {{ PM_SORT_OPTIONS.find(o => o.key === pmSortKey)?.label }}
-                <svg class="sort-dir-icon" :class="{ desc: pmSortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                  <path d="M5 2v6M2 5l3-3 3 3"/>
-                </svg>
-              </button>
-              <!-- 与右键菜单同源：Teleport 到 body，backdrop-filter 才能正确生效 -->
-              <ContextMenu :show="pmSortMenuOpen" :x="pmSortMenuPos.x" :y="pmSortMenuPos.y" @close="pmSortMenuOpen = false">
-                <button v-for="opt in PM_SORT_OPTIONS" :key="opt.key"
-                  class="ctx-item popup-menu-item sort-menu-item" :class="{ active: pmSortKey === opt.key }"
-                  @click="onPmSortSelect(opt.key)">
-                  {{ opt.label }}
-                  <svg v-if="pmSortKey === opt.key" class="sort-check" :class="{ desc: pmSortDir === 'desc' }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                    <path d="M5 2v6M2 5l3-3 3 3"/>
-                  </svg>
-                </button>
-              </ContextMenu>
-            </div>
+            <SortMenu
+              :options="PM_SORT_OPTIONS"
+              :sort-key="pmSortKey"
+              :sort-dir="pmSortDir"
+              @select="onPmSortSelect"
+            />
             <button class="close-btn" @click="$emit('close')">
               <PhX :size="14" weight="bold" />
             </button>
@@ -503,12 +489,12 @@ import UploadConflictDialog, { type ConflictItem, type ConflictDecision } from '
 import type { UploadItem } from '@/composables/useFileUpload'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import {
-  PhFolder, PhArrowLeft, PhArrowRight, PhCaretLeft, PhCaretRight, PhCaretDown, PhSortAscending, PhSquaresFour, PhList,
+  PhFolder, PhArrowLeft, PhArrowRight, PhCaretLeft, PhCaretRight, PhCaretDown, PhSquaresFour, PhList,
   PhCheckSquare, PhFolderPlus, PhPencilSimple,
   PhDownloadSimple, PhX, PhCheck,
   PhWarningCircle, PhTrash, PhArchive,
 } from '@phosphor-icons/vue'
-import ContextMenu   from '@/components/ContextMenu.vue'
+import SortMenu from '@/components/common/SortMenu.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
 import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
 import FilePasteButton from '@/components/common/FilePasteButton.vue'
@@ -537,7 +523,7 @@ import { useProjectDraft } from '@/composables/projects/useProjectDraft'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
-function onModalClose() { emit('close'); pmSortMenuOpen.value = false }
+function onModalClose() { emit('close') }
 
 // e.message 兜底：console.error 里统一格式化未知类型的异常，跟 stores/projects.ts 的 errMsg 同一约定。
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -890,7 +876,7 @@ function onPmFilePointerDown(file: FileMeta, e: PointerEvent) {
 }
 
 // ── 排序 ──────────────────────────────────────────────────────────────────────
-const { SORT_OPTIONS: PM_SORT_OPTIONS, sortKey: pmSortKey, sortDir: pmSortDir, sortMenuOpen: pmSortMenuOpen, sortBtnRef: pmSortBtnRef, sortMenuPos: pmSortMenuPos, openSortMenu: openPmSortMenu, onSortSelect: onPmSortSelect } = useSorting()
+const { SORT_OPTIONS: PM_SORT_OPTIONS, sortKey: pmSortKey, sortDir: pmSortDir, onSortSelect: onPmSortSelect } = useSorting()
 
 const sortedCurrentFolders = computed(() => {
   return sortFileProjection(currentFolders.value, pmSortKey.value, pmSortDir.value, {
@@ -1891,21 +1877,6 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .fc-thumb-full.fc-loaded { opacity: 1; }
 
 /* 视图切换 & 新建文件夹（header 内） */
-.sort-selector { position: relative; }
-.sort-btn {
-  display: flex; align-items: center; gap: 5px;
-  height: 28px; padding: 0 9px; border-radius: 7px; border: none;
-  background: rgba(255,255,255,0.55); cursor: pointer;
-  font-size: 12px; font-weight: 600; color: var(--color-primary);
-  font-family: var(--font-sans); transition: background 0.15s, color 0.15s;
-}
-.sort-btn:hover { background: rgba(255,255,255,0.82); }
-.sort-dir-icon { transition: transform 0.2s; }
-.sort-dir-icon.desc { transform: rotate(180deg); }
-/* 排序弹窗经 ContextMenu(Teleport 到 body)渲染，外观与右键菜单完全一致 */
-.sort-check { flex-shrink: 0; margin-left: auto; color: var(--color-primary); }
-.sort-check.desc { transform: rotate(180deg); }
-
 .view-toggle {
   background: rgba(0,0,0,0.05);
   border-radius: 8px; padding: 2px; gap: 2px;
