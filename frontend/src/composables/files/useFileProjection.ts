@@ -1,3 +1,5 @@
+import { naturalCompare } from '@/utils/textSort'
+
 export type SortDirection = string
 
 function directionValue(direction: SortDirection) {
@@ -5,7 +7,8 @@ function directionValue(direction: SortDirection) {
 }
 
 function compareText(a: unknown, b: unknown, direction: SortDirection) {
-  return directionValue(direction) * String(a ?? '').localeCompare(String(b ?? ''), 'zh')
+  // 自然数序（"文件 10" > "文件 4"），跨 ASCII 字符串（ISO 时间/ext）行为跟原 .localeCompare() 一致
+  return directionValue(direction) * naturalCompare(String(a ?? ''), String(b ?? ''))
 }
 
 function compareId(a: unknown, b: unknown, direction: SortDirection) {
