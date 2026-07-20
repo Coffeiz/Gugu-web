@@ -95,7 +95,8 @@ cp .env.example backend/.env
 # 编辑 backend/.env，填入 SECRET_KEY / AI__API_KEY 等；DB__*/REDIS__* 已由
 # docker-compose.yml 覆盖成容器网络地址，不用改
 
-# 3. 一键启动（首次启动会自动跑 alembic 迁移）
+# 3. 一键启动（首次启动会自动建表 + 跑 alembic 迁移，全新数据库和已有数据库都能正确处理，
+# 见 backend/docker-entrypoint.sh）
 docker compose up -d
 
 # 直连 PyPI 官方源在部分网络环境下会很慢甚至构建失败？换源不用改文件，构建前设个
@@ -103,8 +104,10 @@ docker compose up -d
 # PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker compose up -d --build
 
 # 4. 浏览器访问
-# 前端  → http://localhost:9595
-# 后端  → http://localhost:8000/docs
+# 前端    → http://localhost:9595
+# 管理后台 → http://localhost:9595/admin/  （独立打包入口，见 frontend/admin/；账号密码见
+#            backend/.env 的 ADMIN_USERNAME/ADMIN_PASSWORD，默认 admin/admin123，生产部署务必改掉）
+# 后端    → http://localhost:8000/docs
 
 # 常用：docker compose logs -f backend worker   查日志
 #      docker compose down                      停止（加 -v 连数据卷一起删）
@@ -121,10 +124,14 @@ pip install -r requirements.txt
 
 # 初始化数据库（需先起 PostgreSQL + Redis）
 cp ../.env.example .env
-alembic upgrade head
+# 全新数据库不用手动跑 alembic：启动时 app.main 的 lifespan 会自动建表
+# （见 app/db/session.py 的 create_all_tables）；alembic upgrade head 只用于
+# 已有数据库套用后续增量迁移，见下方「常用」
 
 # 启动
 ./start.sh dev             # 或：make start
+
+# 常用：alembic upgrade head   在已有数据库上套用新迁移（首次建表不需要这步）
 ```
 
 #### 前端
