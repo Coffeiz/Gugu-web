@@ -1,7 +1,7 @@
 """存储层装配（P0.4）：一处构造 KeyStrategy / FolderTree / FileService。
 
-默认装配 `Local + PathMirror`；OSS backend 已单独抽出但不改变默认路径。OSS 正式接入时，
-再由这里按配置切换 `get_key_strategy` 与 `get_storage`——业务层不改。
+现在只装 `Local + PathMirror` 一条（YAGNI）。OSS 到来时 `get_key_strategy` 按配置返
+`OpaqueStrategy`、`get_storage`（在 __init__）返 OSS backend——业务层只认工厂，不改。
 `get_storage()` 保持在 app.services.storage.__init__，本模块不重复。
 """
 from __future__ import annotations
