@@ -56,6 +56,24 @@ _DOC_MIME = {
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
 
+# format → 落盘后缀（build_key 用 ext 参数）。同族不同写法归一到同一个 ext：
+# md/markdown→md、txt/text→txt、yaml/yml→yaml，否则 name="README.md" + format="markdown"
+# 会拼成 "README.md.markdown"（双后缀），跟「上传/重命名等其他途径创建的 md 都是 .md」
+# 对不上。归一后的 ext 才是真"后缀事实"。
+_DOC_EXT = {
+    "md": "md", "markdown": "md",
+    "txt": "txt", "text": "txt",
+    "json": "json", "csv": "csv", "tsv": "tsv",
+    "yaml": "yaml", "yml": "yaml",
+    "docx": "docx", "pdf": "pdf", "xlsx": "xlsx",
+}
+
+# ext 的所有等价写法（用户手写的后缀、LLM 传的 format 都要归一到一个 ext）。
+# _strip_ext 用这张表判断 name 末尾的后缀是不是 fmt 的等价变体。
+_DOC_EXT_ALIASES: dict[str, set[str]] = {}
+for _fmt, _ext in _DOC_EXT.items():
+    _DOC_EXT_ALIASES.setdefault(_ext, set()).add(_fmt)
+
 
 # ── 内部：LibreOffice 转换（复刻 files.py 的 _office_to_pdf 模式，泛化目标格式）──
 # (src_ext, target_ext) -> (convert-to 参数, 可选 infilter)
@@ -151,10 +169,23 @@ async def _location_receipt(db, user_id, space, project_id, folder_id):
 
 
 def _strip_ext(name: str, ext: str) -> str:
-    low = name.lower()
-    if low.endswith("." + ext.lower()):
-        return name[: -(len(ext) + 1)]
-    return name
+    """把 name 末尾的 ext 等价后缀全部剥到稳定。
+
+    按 _DOC_EXT_ALIASES 整族匹配（md/markdown、txt/text、yaml/yml 互认），谁在末尾都剥。
+    长 alias 优先匹配（".markdown" 4 字符比 ".md" 2 字符先命中，避免 "notes.markdown.md"
+    这种字符串剥错位）。**循环到稳定**——name 已经被拼成 "README.md.markdown" 这种双
+    后缀进来时，单次剥完仍残留一层后缀，再拼 ext 又会回到双后缀。"""
+    aliases = _DOC_EXT_ALIASES.get(ext.lower(), {ext.lower()})
+    sorted_aliases = sorted(aliases, key=len, reverse=True)
+    while True:
+        low = name.lower()
+        for alias in sorted_aliases:
+            suffix = "." + alias
+            if low.endswith(suffix):
+                name = name[: -len(suffix)]
+                break
+        else:
+            return name
 
 
 def _coerce_loc(space, project_id, folder_id):
@@ -372,10 +403,13 @@ async def _create_document(db, user_id, args: dict):
     fmt = (args.get("format") or "md").lower()
     if fmt not in _DOC_MIME:
         return json.dumps({"error": f"不支持的格式: {fmt}", "supported": list(_DOC_MIME)}, ensure_ascii=False)
+    # 落盘 ext 走规范名（md/markdown→md、txt/text→txt、yaml/yml→yaml），跟上传/重命名等其他途径
+    # 创建的 md 一致都是 .md 后缀，避免 markdown 等同族写法落到存储里变成 .markdown（双后缀 bug 根因）。
+    ext = _DOC_EXT.get(fmt, fmt)
     name = (args.get("name") or "").strip()
     if not name:
         return json.dumps({"error": "缺少必填参数 name（文件名）；请带上 name 再调用本工具"}, ensure_ascii=False)
-    display_name = _strip_ext(name, fmt)
+    display_name = _strip_ext(name, ext)
     space = args.get("space", "personal")
     space, project_id, folder_id, loc_err = _coerce_loc(
         space, args.get("project_id"), args.get("folder_id"),
@@ -384,11 +418,13 @@ async def _create_document(db, user_id, args: dict):
         return loc_err
     content = args.get("content", "")
 
-    # 生成二进制内容
+    # 生成二进制内容。LibreOffice 路径走 ext（规范名），跟 mime/storage_key 保持同一份事实——
+    # 别在分支判定里用 fmt 又在落盘/DB 用 ext，alias 化后两边可能不一致（比如以后加
+    # fmt="doc"→ext="docx"，这里再写 fmt in ("docx",) 就会漏过 doc 这条路径）。
     try:
-        if fmt in ("docx", "pdf"):
-            data = await _libreoffice_convert(content.encode("utf-8"), "html", fmt)
-        elif fmt == "xlsx":
+        if ext in ("docx", "pdf"):
+            data = await _libreoffice_convert(content.encode("utf-8"), "html", ext)
+        elif ext == "xlsx":
             data = await _libreoffice_convert(content.encode("utf-8"), "csv", "xlsx")
         else:  # 文本类直写
             data = content.encode("utf-8")
@@ -398,26 +434,26 @@ async def _create_document(db, user_id, args: dict):
     storage = get_storage()
     try:
         base_key = await _resolve_key(
-            db, user_id, space, display_name, fmt,
+            db, user_id, space, display_name, ext,
             project_id=project_id, folder_id=folder_id,
         )
     except ValueError as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
-    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, fmt)
-    await storage.put(final_key, data, _DOC_MIME[fmt])
+    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
+    await storage.put(final_key, data, _DOC_MIME[ext])
 
     db_file = File(
-        user_id=user_id, display_name=final_name, ext=fmt, space=space,
+        user_id=user_id, display_name=final_name, ext=ext, space=space,
         project_id=project_id if space == "project" else None,
         folder_id=folder_id, stage_name="",
         storage_key=final_key, size=_fmt_size(len(data)), size_bytes=len(data),
-        mime_type=_DOC_MIME[fmt],
+        mime_type=_DOC_MIME[ext],
     )
     db.add(db_file)
     await db.commit()
     await db.refresh(db_file)
     return {"success": True, "file_id": db_file.id,
-            "name": f"{final_name}.{fmt}", "size": db_file.size,
+            "name": f"{final_name}.{ext}", "size": db_file.size,
             **(await _location_receipt(db, user_id, space, project_id, folder_id))}
 
 
@@ -492,19 +528,38 @@ async def _save_uploaded_file(db, user_id, args: dict):
     return {**item, **({"note": note} if note else {})}
 
 
-async def _rename_one(db, user_id, f, new_name: str) -> dict:
-    """重命名已解析的 File f，各自 commit。返回结果 dict。供单个与批量 rename 共用。"""
-    new_display = _strip_ext(new_name, f.ext)
+async def _rename_one(db, user_id, f, new_name: str, new_fmt: str | None = None) -> dict:
+    """重命名已解析的 File f，各自 commit。返回结果 dict。供单个与批量 rename 共用。
+
+    new_fmt 为 None 时沿用 f.ext（旧行为，"改名不改格式"）。传了新 fmt 就用规范 ext，
+    用于修双后缀文件：new_name="README" + new_fmt="md" 会把 f.ext="markdown" 的
+    README.md.markdown 改成 README.md。文本类互相转也走这条；非文本类（docx/pdf/xlsx）
+    仅当 new_fmt 等于当前 ext 时允许"改名不改内容"，跨文本/二进制的格式转换请走 edit_file
+    + LibreOffice，而不是 rename。
+    """
+    old_ext = f.ext
+    if new_fmt is not None:
+        fmt = new_fmt.lower()
+        if fmt not in _DOC_MIME:
+            return {"error": f"不支持的格式: {fmt}", "supported": list(_DOC_MIME), "name": f"{f.display_name}.{f.ext}"}
+        new_ext = _DOC_EXT.get(fmt, fmt)
+        # 二进制格式必须显式同 ext 才允许（避免 rename 把 .md 文件"改名"成 .docx 但内容是 markdown）
+        if new_ext != old_ext and (new_ext in ("docx", "pdf", "xlsx") or old_ext in ("docx", "pdf", "xlsx")):
+            return {"error": f"rename 不能跨文本/二进制格式（{old_ext}→{new_ext}），请用 edit_file 走 LibreOffice 转换",
+                    "name": f"{f.display_name}.{f.ext}"}
+    else:
+        new_ext = old_ext
+    new_display = _strip_ext(new_name, new_ext)
     try:
         new_key = await _resolve_key(
-            db, user_id, f.space, new_display, f.ext,
+            db, user_id, f.space, new_display, new_ext,
             project_id=f.project_id, folder_id=f.folder_id,
         )
     except ValueError as e:
         return {"error": str(e), "name": f"{f.display_name}.{f.ext}"}
     storage = get_storage()
     if new_key != f.storage_key:
-        new_key, new_display = await _resolve_conflict(storage, new_key, new_display, f.ext)
+        new_key, new_display = await _resolve_conflict(storage, new_key, new_display, new_ext)
         try:
             await storage.rename_file(f.storage_key, new_key)
         except Exception as e:
@@ -512,14 +567,20 @@ async def _rename_one(db, user_id, f, new_name: str) -> dict:
         f.storage_key = new_key
     old = f.display_name
     f.display_name = new_display
+    if new_ext != old_ext:
+        # 文本类同族转换（md↔txt↔yaml…）是显示层差异，内容不需要重写；mime 跟着规范 ext 走
+        f.ext = new_ext
+        f.mime_type = _DOC_MIME[new_ext]
     f.updated_at = now_utc()
     await db.commit()
-    return {"success": True, "file_id": f.id, "old_name": f"{old}.{f.ext}", "name": f"{new_display}.{f.ext}"}
+    return {"success": True, "file_id": f.id, "old_name": f"{old}.{old_ext}", "name": f"{new_display}.{f.ext}"}
 
 
 async def _rename_file(db, user_id, args: dict):
     """重命名文件。单个：file/file_id + new_name。
-    批量：renames=[{file 或 file_id, new_name}, ...]——适合「按顺序编号」，Agent 自己生成序号、一次调用全改。"""
+    批量：renames=[{file 或 file_id, new_name, format?}, ...]——适合「按顺序编号」，Agent 自己生成序号、一次调用全改。
+    可选 format：传了就改后缀（修 .md.markdown 这种双后缀文件 → format="md"），不传沿用旧 ext。
+    """
     items = args.get("renames")
     if items:
         renamed, failed = [], []
@@ -531,7 +592,7 @@ async def _rename_file(db, user_id, args: dict):
             if _err:
                 failed.append({"item": it.get("file") or it.get("file_id"), "error": "没找到这个文件"})
                 continue
-            r = await _rename_one(db, user_id, f, it["new_name"])
+            r = await _rename_one(db, user_id, f, it["new_name"], it.get("format"))
             (renamed if r.get("success") else failed).append(
                 r if r.get("success") else {"item": it.get("file") or it.get("file_id"), **r})
         return {"success": True, "renamed_count": len(renamed), "failed_count": len(failed),
@@ -542,7 +603,7 @@ async def _rename_file(db, user_id, args: dict):
     f, _err = await _resolve_file(db, user_id, args)
     if _err:
         return _err
-    return await _rename_one(db, user_id, f, args["new_name"])
+    return await _rename_one(db, user_id, f, args["new_name"], args.get("format"))
 
 
 async def _resolve_file(db, user_id, args):
@@ -1209,19 +1270,22 @@ class FilesSkill(BaseSkill):
         Tool(
             name="rename_file", label="重命名文件",
             description="重命名文件（不改位置）。单个：file + new_name。"
-                        "**批量改名用 renames=[{file,new_name},...] 一次调用全改**——比如「按顺序编号」时，你自己排好序号（作品01、作品02…）一次传进来，别一个个改。逐项回报成功/失败。",
+                        "**批量改名用 renames=[{file,new_name},...] 一次调用全改**——比如「按顺序编号」时，你自己排好序号（作品01、作品02…）一次传进来，别一个个改。逐项回报成功/失败。"
+                        "**可选 format**：传了就同时改后缀（修双后缀 bug：format=\"md\" 把 README.md.markdown 改回 README.md），"
+                        "不传沿用原 ext。仅文本类同族（md↔txt↔yaml…）互转允许；二进制约等于当前 ext 才允许。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "renames": {
                         "type": "array",
-                        "description": "批量改名：每项 {file 或 file_id, new_name}。按顺序编号等多文件场景用这个",
+                        "description": "批量改名：每项 {file 或 file_id, new_name, format?}。按顺序编号等多文件场景用这个",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "file": {"type": "string", "description": "文件名"},
                                 "file_id": {"type": "integer", "description": "文件 id"},
                                 "new_name": {"type": "string", "description": "新名（可不带扩展名）"},
+                                "format": {"type": "string", "enum": sorted(_DOC_MIME), "description": "可选：改后缀。文本类同族互转允许；二进制需等于当前 ext。"},
                             },
                             "required": ["new_name"],
                         },
@@ -1229,6 +1293,7 @@ class FilesSkill(BaseSkill):
                     "file_id": {"type": "integer", "description": "单个：文件 id"},
                     "file": {"type": "string", "description": "单个：文件名"},
                     "new_name": {"type": "string", "description": "单个：新文件名（可不带扩展名）"},
+                    "format": {"type": "string", "enum": sorted(_DOC_MIME), "description": "单个：可选，改后缀（同 renames 规则）"},
                 },
             },
             handler=_rename_file,

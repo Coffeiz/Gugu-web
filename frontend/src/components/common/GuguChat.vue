@@ -69,7 +69,10 @@
 
   <!-- 聊天窗口（单一元素，小/大状态通过位置过渡） -->
   <Transition name="chat-open" @after-leave="chatClosing = false">
-    <div v-if="open" class="chat-window" :class="{ 'win-grow': streaming && !expanded }" :style="windowStyle" ref="windowRef"
+    <!-- win-grow 排除 resizing：大/小窗位形切换的瞬间 .chat-window 的 top 还需要 0.42s 缓动做纵向过渡，
+         一旦带上 win-grow 会把 top 的 transition 撤掉，窗口会瞬间从大窗高跳到小窗高（横轴仍走缓动，纵轴跳一下）。
+         resizing 在 _markResizing() / 过渡结束 / 600ms 兜底 时机清掉，回归流式 top 即时跟随。 -->
+    <div v-if="open" class="chat-window" :class="{ 'win-grow': streaming && !expanded && !resizing }" :style="windowStyle" ref="windowRef"
       @mousedown.capture="raiseChat"
       @dragenter="onChatDragEnter" @dragover="onChatDragOver" @dragleave="onChatDragLeave" @drop="onChatDrop">
 
