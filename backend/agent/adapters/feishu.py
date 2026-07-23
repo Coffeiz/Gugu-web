@@ -14,8 +14,6 @@ lark 无 stop()，单连接断不掉 → 一个 bot 一个子进程，由 superv
 """
 from __future__ import annotations
 
-from collections import OrderedDict
-
 import asyncio
 import json
 import os
@@ -32,7 +30,6 @@ from app.core.redaction import diag_log, diag_log_raw, redact
 
 STREAM = R.IM_INBOUND_STREAM
 
-_FEISHU_PROCESSED_IDS_MAX = 1000
 _FEISHU_STALE_MSG_THRESHOLD_MS = 20_000
 
 
@@ -272,19 +269,6 @@ def _drop_stale_event(data, channel_id: str, now_ms: int | None = None) -> bool:
     return False
 
 
-def _seen_message_id(processed: OrderedDict[str, None], message_id: str) -> bool:
-    """message_id 进程内 LRU 去重；返回 True 表示已处理过。"""
-    mid = (message_id or "").strip()
-    if not mid:
-        return False
-    if mid in processed:
-        return True
-    processed[mid] = None
-    while len(processed) > _FEISHU_PROCESSED_IDS_MAX:
-        processed.popitem(last=False)
-    return False
-
-
 def _do_react(client, message_id: str, emoji_type: str) -> bool:
     """给某条消息加表情回应（同步，给 asyncio.to_thread 用）。失败返回 False。"""
     try:
@@ -349,8 +333,6 @@ def _quick_react(text: str, has_media: bool) -> tuple[str, str]:
 
 
 def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: str = ""):
-    processed_message_ids: OrderedDict[str, None] = OrderedDict()
-
     def _on_message(data: P2ImMessageReceiveV1) -> None:
         if _drop_misrouted_event(data, expected_app_id, channel_id):
             return
@@ -359,9 +341,6 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
         ev = data.event
         msg = ev.message
         if not msg:
-            return
-        if _seen_message_id(processed_message_ids, msg.message_id):
-            print(f"[feishu:{channel_id}] 丢弃重复消息 message_id={str(msg.message_id)[-8:]}", flush=True)
             return
         mt = msg.message_type
         attachments: list = []
