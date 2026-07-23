@@ -43,8 +43,14 @@ def test_feishu_keeps_fresh_retry_window():
 
 def test_feishu_gateway_deduplicates_message_id(monkeypatch):
     produced: list[dict] = []
+    _seen: set = set()
 
     def fake_produce_sync(stream, payload):
+        # 模拟 R._dedup_check 的 Redis SETNX 行为：新架构下 feishu 入口不做去重，
+        # 去重统一在 R 层（test_im_dedup.py 单测覆盖）。这里只测 feishu 入口透传 message_id。
+        if payload["message_id"] in _seen:
+            return None
+        _seen.add(payload["message_id"])
         produced.append(payload)
 
     def fake_do_react(client, message_id, emoji_type):
