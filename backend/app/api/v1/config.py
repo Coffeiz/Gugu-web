@@ -211,6 +211,10 @@ class RepairRequest(BaseModel):
     keys: list[str]
 
 
+class PathMigrationRequest(BaseModel):
+    items: list[dict[str, Any]]
+
+
 class TrashMigrationRequest(BaseModel):
     file_ids: list[int]
 
@@ -288,6 +292,88 @@ async def reconcile_repair(body: RepairRequest, db: AsyncSession = Depends(get_d
             failed.append({"key": key, "error": f"{type(e).__name__}: {e}"[:80]})
     await db.commit()
     return {"action": body.action, "done": len(done), "failed": failed, "done_keys": done}
+
+
+@router.get("/reconcile-storage/path-migration")
+async def scan_path_migration(db: AsyncSession = Depends(get_db)):
+    """扫描物理路径已变、但 File 记录仍指向旧路径的文件；只返回唯一安全匹配项。"""
+    import uuid as _uuid
+    from app.models import File
+    from app.services.storage import get_storage
+
+    storage = get_storage()
+    keys = {k for k in await storage.list_keys() if not _is_internal_key(k)}
+    rows = (await db.execute(select(File).where(File.deleted_at.is_(None)))).scalars().all()
+    by_identity: dict[tuple, list] = {}
+    for file in rows:
+        identity = (str(file.user_id), file.display_name, (file.ext or "").lower(), file.size_bytes or 0)
+        by_identity.setdefault(identity, []).append(file)
+    known = {file.storage_key for file in rows}
+    candidates, ambiguous = [], []
+    for key in sorted(keys - known):
+        parts = key.split("/")
+        if len(parts) < 3:
+            continue
+        try:
+            user_id = str(_uuid.UUID(parts[0]))
+        except ValueError:
+            continue
+        name, dot, ext = parts[-1].rpartition(".")
+        if not dot:
+            name, ext = parts[-1], ""
+        info = await storage.stat(key)
+        identity = (user_id, name, ext.lower(), info.size if info else 0)
+        matches = by_identity.get(identity, [])
+        item = {"key": key, "name": parts[-1], "size_bytes": identity[3]}
+        if len(matches) == 1:
+            file = matches[0]
+            item.update({"file_id": file.id, "old_key": file.storage_key, "old_folder_id": file.folder_id})
+            candidates.append(item)
+        elif len(matches) > 1:
+            item["file_ids"] = [file.id for file in matches]
+            ambiguous.append(item)
+    return {"candidates": candidates, "ambiguous": ambiguous,
+            "candidate_count": len(candidates), "ambiguous_count": len(ambiguous)}
+
+
+@router.post("/reconcile-storage/path-migration/repair")
+async def repair_path_migration(body: PathMigrationRequest, db: AsyncSession = Depends(get_db)):
+    """按物理 key 重新计算文件夹归属并更新 File 记录；不搬动物理文件。"""
+    from app.models import File
+    from app.services.storage import get_storage
+
+    storage = get_storage()
+    requested = {int(item["file_id"]): str(item["key"]) for item in body.items}
+    rows = (await db.execute(select(File).where(File.id.in_(requested), File.deleted_at.is_(None)))).scalars().all()
+    done, failed = [], []
+    for file in rows:
+        try:
+            new_key = requested[file.id]
+            if not await storage.exists(new_key):
+                failed.append({"file_id": file.id, "error": "物理文件不存在"})
+                continue
+            parts = new_key.split("/")
+            if len(parts) < 3:
+                failed.append({"file_id": file.id, "error": "路径无法解析"})
+                continue
+            project_id = None
+            folder_parts = parts[2:-1] if parts[1] == "个人文件" else []
+            if parts[1] == "项目文件":
+                import re
+                for index, part in enumerate(parts):
+                    match = re.search(r"#(\d+)$", part)
+                    if match:
+                        project_id = int(match.group(1))
+                        folder_parts = parts[index + 1:-1]
+                        break
+            folder_id = await _resolve_import_folder(db, file.user_id, project_id, folder_parts)
+            file.folder_id = folder_id
+            file.storage_key = "/".join(parts)
+            done.append(file.id)
+        except Exception as exc:
+            failed.append({"file_id": file.id, "error": type(exc).__name__})
+    await db.commit()
+    return {"done": done, "failed": failed}
 
 
 # ── 连接测试 ──────────────────────────────────────────────────────────────

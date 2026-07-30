@@ -79,6 +79,30 @@
       </div>
     </section>
 
+    <section class="sa-card">
+      <div class="sa-card-head">
+        <div>
+          <h3 class="sa-card-title">路径归属修复</h3>
+          <p class="sa-card-sub">匹配物理文件与旧 File 记录，更新 storage_key 和完整文件夹归属；只执行唯一匹配项。</p>
+        </div>
+        <div class="sa-card-head-right">
+          <button class="sa-btn" :disabled="pathScanning" @click="scanPathMigration">扫描路径</button>
+          <button v-if="pathReport?.candidates?.length" class="sa-btn primary" :disabled="pathRepairing" @click="repairPathMigration">
+            修复 {{ pathReport.candidates.length }} 项
+          </button>
+        </div>
+      </div>
+      <div v-if="pathMsg" class="sa-inline-msg" :class="pathMsgKind">{{ pathMsg }}</div>
+      <div v-if="pathReport" class="recon-report">
+        <div class="recon-summary">可安全匹配 <b>{{ pathReport.candidate_count }}</b> 项 · 歧义 <b>{{ pathReport.ambiguous_count }}</b> 项</div>
+        <div v-if="pathReport.ambiguous_count" class="recon-meta">存在同名同大小文件，已跳过，需要人工确认。</div>
+        <div v-for="item in pathReport.candidates" :key="item.file_id" class="recon-row">
+          <span class="recon-name">{{ item.name }}</span>
+          <span class="recon-meta">{{ item.old_key }} → {{ item.key }}</span>
+        </div>
+      </div>
+    </section>
+
     <!-- ══ 目录对账：文件夹树 ↔ 磁盘目录 ══ -->
     <section class="sa-card">
       <div class="sa-card-head">
@@ -283,6 +307,45 @@ const fileRepairing = ref(false)
 const fileReport = ref<any | null>(null)
 const fileMsg = ref('')
 const fileMsgKind = ref<'ok' | 'err'>('ok')
+
+const pathScanning = ref(false)
+const pathRepairing = ref(false)
+const pathReport = ref<any | null>(null)
+const pathMsg = ref('')
+const pathMsgKind = ref<'ok' | 'err'>('ok')
+
+async function scanPathMigration() {
+  pathScanning.value = true
+  pathMsg.value = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage/path-migration')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '路径扫描失败')
+    pathReport.value = data
+  } catch (e) {
+    pathMsgKind.value = 'err'
+    pathMsg.value = e instanceof Error ? e.message : String(e)
+  } finally { pathScanning.value = false }
+}
+
+async function repairPathMigration() {
+  const items = pathReport.value?.candidates || []
+  if (!items.length || !window.confirm(`确认修复 ${items.length} 个文件的路径归属？`)) return
+  pathRepairing.value = true
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage/path-migration/repair', {
+      method: 'POST', body: JSON.stringify({ items }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '路径修复失败')
+    pathMsgKind.value = data.failed?.length ? 'err' : 'ok'
+    pathMsg.value = `已修复 ${data.done.length} 项${data.failed?.length ? `，失败 ${data.failed.length} 项` : ''}`
+    await scanPathMigration()
+  } catch (e) {
+    pathMsgKind.value = 'err'
+    pathMsg.value = e instanceof Error ? e.message : String(e)
+  } finally { pathRepairing.value = false }
+}
 
 async function scanFiles() {
   if (fileScanning.value) return
