@@ -15,11 +15,91 @@ import math
 from app.core.config import get_settings
 
 
+BAILIAN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+BAILIAN_MULTIMODAL_PATH = "/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
+
+
+def _is_bailian(provider: str, base_url: str) -> bool:
+    """识别百炼及其 DashScope 兼容端点。"""
+    provider = (provider or "").strip().lower()
+    base_url = (base_url or "").lower()
+    return provider in {"bailian", "dashscope", "aliyun"} or "aliyuncs.com" in base_url
+
+
+def resolve_base_url(provider: str, base_url: str) -> str:
+    """返回 embedding API 的 base URL，不包含 `/embeddings`。"""
+    if base_url.strip():
+        return base_url.strip().rstrip("/")
+    if _is_bailian(provider, base_url):
+        return BAILIAN_BASE_URL
+    return ""
+
+
+def build_payload(provider: str, base_url: str, model: str, text: str, dimensions: int) -> dict:
+    """构造兼容请求体；百炼明确要求浮点向量格式。"""
+    payload: dict = {"model": model, "input": text}
+    if dimensions:
+        payload["dimensions"] = dimensions
+    if _is_bailian(provider, base_url):
+        payload["encoding_format"] = "float"
+    return payload
+
+
+def _multimodal_url(base_url: str) -> str:
+    """把百炼兼容 Base URL 转为多模态 Embedding 专用端点。"""
+    base_url = base_url.rstrip("/")
+    marker = "/compatible-mode/v1"
+    if marker in base_url:
+        base_url = base_url.split(marker, 1)[0]
+    return base_url + BAILIAN_MULTIMODAL_PATH
+
+
+async def embed_multimodal(contents: list[dict | str], *, enable_fusion: bool = True) -> list[float] | None:
+    """调用百炼多模态 Embedding，返回融合后的单个向量。
+
+    `contents` 的元素使用百炼格式，例如 `{"text": "..."}`、`{"image": "https://..."}`。
+    多模态接口只接受公开 URL 或 Base64；文件归属、大小和 URL 安全校验由调用方负责。
+    """
+    if not contents or not is_enabled():
+        return None
+    e = get_settings().embedding
+    if not e.multimodal:
+        return None
+    base_url = resolve_base_url(e.provider, e.base_url)
+    if not _is_bailian(e.provider, base_url):
+        return None
+    payload: dict = {
+        "model": e.model,
+        "input": {"contents": contents},
+        "parameters": {"output_type": "dense"},
+    }
+    if e.dimensions:
+        payload["parameters"]["dimension"] = e.dimensions
+    if enable_fusion:
+        payload["parameters"]["enable_fusion"] = True
+    try:
+        import httpx
+        headers = {"Authorization": f"Bearer {e.api_key}"} if e.api_key else {}
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.post(_multimodal_url(base_url), json=payload, headers=headers)
+        if response.status_code != 200:
+            print(f"[embedding] 多模态 HTTP {response.status_code}", flush=True)
+            return None
+        embeddings = response.json().get("output", {}).get("embeddings", [])
+        if not embeddings:
+            return None
+        vector = embeddings[0].get("embedding")
+        return vector if isinstance(vector, list) and vector else None
+    except Exception as ex:
+        print(f"[embedding] 多模态失败: {type(ex).__name__}", flush=True)
+        return None
+
+
 def is_enabled() -> bool:
     """向量检索是否可用：enabled 且 model/base_url 配了。**api_key 可空**——自托管 Ollama
     等无需鉴权，强求 key 反而逼用户填假值。否则全链路退回词法。"""
     e = get_settings().embedding
-    return bool(e.enabled and e.model and e.base_url)
+    return bool(e.enabled and e.model and resolve_base_url(e.provider, e.base_url))
 
 
 def model_tag() -> str:
@@ -36,12 +116,11 @@ async def embed(text: str) -> list[float] | None:
     if not text:
         return None
     e = get_settings().embedding
-    payload: dict = {"model": e.model, "input": text}
-    if e.dimensions:
-        payload["dimensions"] = e.dimensions
+    base_url = resolve_base_url(e.provider, e.base_url)
+    payload = build_payload(e.provider, base_url, e.model, text, e.dimensions)
     try:
         import httpx
-        url = e.base_url.rstrip("/") + "/embeddings"
+        url = base_url + "/embeddings"
         # key 为空就不发 Authorization 头（Ollama 无需鉴权；空 key 拼 "Bearer " 是非法 header）
         headers = {"Authorization": f"Bearer {e.api_key}"} if e.api_key else {}
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as c:

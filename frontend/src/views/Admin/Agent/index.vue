@@ -640,7 +640,7 @@
           </div>
           <div class="card-title-block">
             <h3>向量 Embedding 模型</h3>
-            <p>独立于聊天/语音模型，<b>单独 pin 一个</b>——换它会作废所有已存向量、需重建，故意不进模型轮换。用于记忆的语义检索（pattern 超量时按语义挑，而非词法）。<b>关闭 = 退回词法检索</b>，零副作用。<b>走 OpenAI 兼容 <code>/embeddings</code></b>——自托管 Ollama 填 <code>http://NAS:11434/v1</code>、模型 <code>qwen3-embedding:0.6b</code>、Key 随便填。</p>
+            <p>独立于聊天/语音模型，<b>单独 pin 一个</b>——换它会作废所有已存向量、需重建，故意不进模型轮换。用于记忆的语义检索（pattern 超量时按语义挑，而非词法）。<b>关闭 = 退回词法检索</b>，零副作用。支持文本和百炼多模态 Embedding；多模态调用需由业务传入已完成安全校验的图片/视频 URL 或 Base64。</p>
           </div>
         </div>
 
@@ -659,11 +659,25 @@
             </button>
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc">Ollama 填 <code>qwen3-embedding:0.6b</code>；dashscope 填 <code>text-embedding-v3</code></span></div>
+            <div class="behavior-label"><span>多模态 Embedding</span><span class="behavior-desc">百炼填写 <code>qwen3-vl-embedding</code>；开启后供图片/视频向量调用使用，不改变现有文本记忆索引</span></div>
+            <button
+              class="toggle-switch"
+              :class="{ on: embeddingDraft.multimodal }"
+              @click="embeddingDraft.multimodal = !embeddingDraft.multimodal"
+            >
+              <span class="toggle-knob" />
+            </button>
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>提供方 provider</span><span class="behavior-desc">百炼填 <code>bailian</code>；Ollama/OpenAI 可留空</span></div>
+            <input type="text" class="behavior-input" style="width:280px" v-model="embeddingDraft.provider" placeholder="bailian" />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc">百炼填 <code>text-embedding-v4</code>；Ollama 填 <code>qwen3-embedding:0.6b</code></span></div>
             <input type="text" class="behavior-input" style="width:280px" v-model="embeddingDraft.model" placeholder="qwen3-embedding:0.6b" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>Base URL</span><span class="behavior-desc">OpenAI 兼容端点，到 /v1 那层（不含 /embeddings）。Ollama：http://NAS-IP:11434/v1</span></div>
+            <div class="behavior-label"><span>Base URL</span><span class="behavior-desc">百炼可留空；自定义百炼空间或 Ollama 填到 /v1 那层（不含 /embeddings）</span></div>
             <input type="text" class="behavior-input" style="width:280px" v-model="embeddingDraft.base_url" placeholder="http://…:11434/v1" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
@@ -1650,6 +1664,7 @@ async function testEmbedding() {
     const res = await adminStore.authFetch('/api/v1/admin/config/test-embedding', {
       method: 'POST',
       body: JSON.stringify({
+        provider:   embeddingDraft.provider || '',
         base_url:   embeddingDraft.base_url || '',   // 留空=用已存配置
         api_key:    embeddingDraft.api_key || '',
         model:      embeddingDraft.model || '',

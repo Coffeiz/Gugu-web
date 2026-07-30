@@ -437,6 +437,7 @@ async def test_search(body: SearchTestRequest):
 # ── Embedding 模型连通测试 ────────────────────────────────────────────────────
 
 class EmbeddingTestRequest(BaseModel):
+    provider:   str = ""   # bailian/dashscope 可启用百炼专用请求参数
     base_url:   str = ""   # 留空=用已存配置
     api_key:    str = ""   # 留空=用已存配置
     model:      str = ""
@@ -447,15 +448,16 @@ class EmbeddingTestRequest(BaseModel):
 async def test_embedding(body: EmbeddingTestRequest):
     """用当前输入的参数测 embedding 端点是否通，成功返回向量维度。走 OpenAI 兼容 /embeddings。"""
     cfg = get_settings().embedding
-    base_url = (body.base_url or cfg.base_url or "").rstrip("/")
+    from agent.memory.embedding import build_payload, resolve_base_url
+
+    provider = body.provider or cfg.provider
+    base_url = resolve_base_url(provider, body.base_url or cfg.base_url or "")
     api_key  = body.api_key or cfg.api_key
     model    = body.model or cfg.model
     dims     = body.dimensions or cfg.dimensions
     if not base_url or not model:
         return {"ok": False, "message": "缺少 Base URL 或模型名"}
-    payload: dict = {"model": model, "input": "连通性测试"}
-    if dims:
-        payload["dimensions"] = dims
+    payload = build_payload(provider, base_url, model, "连通性测试", dims)
     # key 为空就不发 Authorization 头（Ollama 无需鉴权；空 key 拼 "Bearer " 是非法 header）
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
