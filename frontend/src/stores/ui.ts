@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { playGuguSfx } from '@/services/sfx'
 
 // 导航栏通知中心的持久条目（time 在前端归一成 Date）
 interface NotifItem {
@@ -43,6 +44,7 @@ export const useUiStore = defineStore('ui', () => {
   const pendingFileTarget    = ref<{ kind: string; id: number } | null>(null)
   const pendingChatMessageId = ref<number | null>(null)   // 对话搜索命中消息时，跳转后滚到该消息
   const pendingCalendarEvent = ref<{ id: number; date?: string } | null>(null)   // { id, date } 日程搜索跳转
+  const pendingNoteId = ref<number | null>(null)   // 思维笔记搜索跳转后打开对应便签的编辑态
   const pendingCalendarDate  = ref<string | null>(null)   // 仪表盘小日历点某天 → 跳日历定位到该日（不高亮具体活动）
   const pendingProjectHighlight = ref<number | null>(null)   // 项目搜索跳转后高亮项目卡（不打开编辑弹窗）
   const pendingProjectHighlightMs = ref<number | null>(null) // 高亮时长(ms)：缺省 1800；新手引导用 5000（设 id 前先设它）
@@ -97,6 +99,7 @@ export const useUiStore = defineStore('ui', () => {
     if (bubble) {
       // gugu=true：用咕咕聊天文字的大小/颜色（新手引导气泡），见 NotificationBubble .nb-gugu
       liveNotification.value = { seq: ++_liveSeq, id: n.id ?? null, title: n.title, content: n.content, gugu: n.gugu }
+      playGuguSfx(n.gugu ? 'message' : 'notification')
       _markBubbleSeen(n.id)   // 实时弹过的，下次上线别再补弹
     }
   }
@@ -110,6 +113,7 @@ export const useUiStore = defineStore('ui', () => {
       const last = Number(localStorage.getItem(_BUBBLE_SEEN_KEY) || 0)
       if (bubble.id > last) {
         liveNotification.value = { seq: ++_liveSeq, title: bubble.title, content: bubble.content }
+        playGuguSfx('notification')
         _markBubbleSeen(bubble.id)
       }
     } catch { /* 静默 */ }
@@ -138,6 +142,6 @@ export const useUiStore = defineStore('ui', () => {
     openNewProject, newProjectInitStatus, openProfile, sidebarCollapsed, newProjectRange,
     calendarActiveRange, pendingChatSession, pendingFileTarget, chatNotifyAnchor, chatNotifyOrigin,
     pendingChatMessageId, pendingCalendarEvent, pendingCalendarDate, pendingProjectHighlight, pendingProjectHighlightMs,
-    pendingProjectHighlightBreath,
+    pendingProjectHighlightBreath, pendingNoteId,
   }
 })

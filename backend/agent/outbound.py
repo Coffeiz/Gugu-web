@@ -4,8 +4,9 @@ prompt 是概率性的（模型大概率守规矩但偶尔破）；这里做**�
 - 小泄露（tool_call id / 内部 id 噪声）→ 抹掉
 - 大泄露（系统提示词被复述出来，多为 prompt injection 得手）→ 整条换成安全话术
 
-只管**字面**泄露；语义层（「我是个 agent」这种换说法）仍靠 policy 提示词。仅 IM 路用
-（run_collect，非流式、文字完整好扫）；网页流式另说。
+只管**字面**泄露；语义层（「我是个 agent」这种换说法）仍靠 policy 提示词。IM 路（run_collect）
+和网页流式路（run_stream）都会调用，但网页流式是在整段 token 收完之后、写历史前才清洗——
+用户已经实时看过的原始 token 不受影响，这里防的是「脏内容混进历史，污染下一轮」。
 """
 from __future__ import annotations
 
@@ -19,6 +20,14 @@ _NOISE = re.compile(
     r"\s*[:=]?\s*[\"']?[A-Za-z0-9_\-]*[\"']?",
     re.IGNORECASE,
 )
+
+# 伪工具调用语法泄露：某些模型偶尔不走正常的结构化 tool_calls，而是把 <function=xxx>/
+# <parameter=xxx> 这类（Llama 风格）伪 XML 语法直接当成回复正文吐出来——不只是体验难看，
+# 这段畸形文本会被存进对话历史，下一轮当作历史消息发回去时，MiniMax 的 prefill 解析这段
+# 内容直接 400（devlog 2026-07-14：BadRequestError "prefill failed: unexpected end of
+# data"）。一旦泄露出这个开头，后面到本条消息结尾的内容全部丢弃（不尝试挽救半截 XML），
+# 通常前面已经有一段正常的自然语言回复，只截掉泄露开始之后的部分不影响体验。
+_FUNCTION_LEAK = re.compile(r"<function=.*", re.DOTALL)
 
 # 系统提示词被吐出的锚词：正常陪伴对话绝不会出现这些（多为 prompt injection 套出来）
 _PROMPT_LEAK_ANCHORS = (
@@ -36,6 +45,8 @@ def sanitize_outbound(text: str) -> str:
     # 大泄露：系统提示词/规则被复述 → 整条换掉
     if any(a in text for a in _PROMPT_LEAK_ANCHORS):
         return _DEFLECT
+    # 伪工具调用语法泄露：截掉泄露开始往后的全部内容，前面的正常文字保留
+    text = _FUNCTION_LEAK.sub("", text).rstrip()
     # 小泄露：抹掉 tool_id / 内部 id 噪声
     cleaned = _NOISE.sub("", text)
     if cleaned != text:

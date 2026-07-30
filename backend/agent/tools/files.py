@@ -1,8 +1,8 @@
 """文件领域技能：查 / 读 / 改 / 整理 / 生成。
 
 复用 `app.api.v1.files` 的现成 helper（`_build_key`/`_resolve_conflict`/
-`_fmt_size`/`_move_to_trash`/`_color`）与存储层 `get_storage()`，整理类工具
-复刻 `update_file` 的 key 重建逻辑，不自己拼路径。
+`_fmt_size`/`_color`）、`app.services.storage.trash`（`move_file_to_trash`）与
+存储层 `get_storage()`，整理类工具复刻 `update_file` 的 key 重建逻辑，不自己拼路径。
 
 读/改仅限文本类（白名单 ext）且 ≤256KB，避免把二进制当文本、撑爆上下文。
 生成（create_document）：文本格式直写；docx/pdf 由 HTML、xlsx 由 CSV 经 LibreOffice
@@ -16,12 +16,15 @@ from sqlalchemy import select
 
 from app.models import File, Folder, Project
 from app.core.ownership import get_owned
+from app.core.redaction import redact
 from app.services.storage import get_storage
 from app.services.storage.folders import resolve_folder_path
 from app.api.v1.files import (
-    _fmt_size, _move_to_trash, _color,
+    _fmt_size, _color,
 )
+from app.services.storage.trash import move_file_to_trash
 from app.services.storage.keys import _build_key, _resolve_conflict
+from app.services.storage.file_service import FileService
 from agent.tools.base import BaseSkill, Tool
 
 # 可读/可改的文本类扩展名
@@ -35,13 +38,41 @@ READ_MAX_BYTES = 256 * 1024
 
 # create_document 支持的格式 → mime
 _DOC_MIME = {
-    "md":   "text/markdown",   "txt":  "text/plain",
+    "md":   "text/markdown",   "markdown": "text/markdown", "txt": "text/plain",
     "json": "application/json", "csv": "text/csv",
     "yaml": "text/yaml",       "yml":  "text/yaml",
+    "text": "text/plain",      "tsv":  "text/tab-separated-values",
+    "xml":  "application/xml", "html": "text/html", "htm": "text/html",
+    "css":  "text/css",        "js":   "text/javascript", "ts": "text/typescript",
+    "jsx":  "text/jsx",        "tsx":  "text/tsx", "py": "text/x-python",
+    "java": "text/x-java-source", "c": "text/x-c", "cpp": "text/x-c++src",
+    "h":    "text/x-c",        "hpp":  "text/x-c++hdr", "go": "text/x-go",
+    "rs":   "text/x-rust",     "rb":   "text/x-ruby", "php": "text/x-php",
+    "sh":   "application/x-sh", "bash": "application/x-sh", "sql": "application/sql",
+    "ini":  "text/plain",     "toml": "text/plain", "conf": "text/plain",
+    "log":  "text/plain",     "vue":  "text/html", "svg": "image/svg+xml",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "pdf":  "application/pdf",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
+
+# format → 落盘后缀（build_key 用 ext 参数）。同族不同写法归一到同一个 ext：
+# md/markdown→md、txt/text→txt、yaml/yml→yaml，否则 name="README.md" + format="markdown"
+# 会拼成 "README.md.markdown"（双后缀），跟「上传/重命名等其他途径创建的 md 都是 .md」
+# 对不上。归一后的 ext 才是真"后缀事实"。
+_DOC_EXT = {
+    "md": "md", "markdown": "md",
+    "txt": "txt", "text": "txt",
+    "json": "json", "csv": "csv", "tsv": "tsv",
+    "yaml": "yaml", "yml": "yaml",
+    "docx": "docx", "pdf": "pdf", "xlsx": "xlsx",
+}
+
+# ext 的所有等价写法（用户手写的后缀、LLM 传的 format 都要归一到一个 ext）。
+# _strip_ext 用这张表判断 name 末尾的后缀是不是 fmt 的等价变体。
+_DOC_EXT_ALIASES: dict[str, set[str]] = {}
+for _fmt, _ext in _DOC_EXT.items():
+    _DOC_EXT_ALIASES.setdefault(_ext, set()).add(_fmt)
 
 
 # ── 内部：LibreOffice 转换（复刻 files.py 的 _office_to_pdf 模式，泛化目标格式）──
@@ -138,10 +169,23 @@ async def _location_receipt(db, user_id, space, project_id, folder_id):
 
 
 def _strip_ext(name: str, ext: str) -> str:
-    low = name.lower()
-    if low.endswith("." + ext.lower()):
-        return name[: -(len(ext) + 1)]
-    return name
+    """把 name 末尾的 ext 等价后缀全部剥到稳定。
+
+    按 _DOC_EXT_ALIASES 整族匹配（md/markdown、txt/text、yaml/yml 互认），谁在末尾都剥。
+    长 alias 优先匹配（".markdown" 4 字符比 ".md" 2 字符先命中，避免 "notes.markdown.md"
+    这种字符串剥错位）。**循环到稳定**——name 已经被拼成 "README.md.markdown" 这种双
+    后缀进来时，单次剥完仍残留一层后缀，再拼 ext 又会回到双后缀。"""
+    aliases = _DOC_EXT_ALIASES.get(ext.lower(), {ext.lower()})
+    sorted_aliases = sorted(aliases, key=len, reverse=True)
+    while True:
+        low = name.lower()
+        for alias in sorted_aliases:
+            suffix = "." + alias
+            if low.endswith(suffix):
+                name = name[: -len(suffix)]
+                break
+        else:
+            return name
 
 
 def _coerce_loc(space, project_id, folder_id):
@@ -359,10 +403,13 @@ async def _create_document(db, user_id, args: dict):
     fmt = (args.get("format") or "md").lower()
     if fmt not in _DOC_MIME:
         return json.dumps({"error": f"不支持的格式: {fmt}", "supported": list(_DOC_MIME)}, ensure_ascii=False)
+    # 落盘 ext 走规范名（md/markdown→md、txt/text→txt、yaml/yml→yaml），跟上传/重命名等其他途径
+    # 创建的 md 一致都是 .md 后缀，避免 markdown 等同族写法落到存储里变成 .markdown（双后缀 bug 根因）。
+    ext = _DOC_EXT.get(fmt, fmt)
     name = (args.get("name") or "").strip()
     if not name:
         return json.dumps({"error": "缺少必填参数 name（文件名）；请带上 name 再调用本工具"}, ensure_ascii=False)
-    display_name = _strip_ext(name, fmt)
+    display_name = _strip_ext(name, ext)
     space = args.get("space", "personal")
     space, project_id, folder_id, loc_err = _coerce_loc(
         space, args.get("project_id"), args.get("folder_id"),
@@ -371,11 +418,13 @@ async def _create_document(db, user_id, args: dict):
         return loc_err
     content = args.get("content", "")
 
-    # 生成二进制内容
+    # 生成二进制内容。LibreOffice 路径走 ext（规范名），跟 mime/storage_key 保持同一份事实——
+    # 别在分支判定里用 fmt 又在落盘/DB 用 ext，alias 化后两边可能不一致（比如以后加
+    # fmt="doc"→ext="docx"，这里再写 fmt in ("docx",) 就会漏过 doc 这条路径）。
     try:
-        if fmt in ("docx", "pdf"):
-            data = await _libreoffice_convert(content.encode("utf-8"), "html", fmt)
-        elif fmt == "xlsx":
+        if ext in ("docx", "pdf"):
+            data = await _libreoffice_convert(content.encode("utf-8"), "html", ext)
+        elif ext == "xlsx":
             data = await _libreoffice_convert(content.encode("utf-8"), "csv", "xlsx")
         else:  # 文本类直写
             data = content.encode("utf-8")
@@ -385,26 +434,26 @@ async def _create_document(db, user_id, args: dict):
     storage = get_storage()
     try:
         base_key = await _resolve_key(
-            db, user_id, space, display_name, fmt,
+            db, user_id, space, display_name, ext,
             project_id=project_id, folder_id=folder_id,
         )
     except ValueError as e:
-        return json.dumps({"error": str(e)})
-    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, fmt)
-    await storage.put(final_key, data, _DOC_MIME[fmt])
+        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
+    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
+    await storage.put(final_key, data, _DOC_MIME[ext])
 
     db_file = File(
-        user_id=user_id, display_name=final_name, ext=fmt, space=space,
+        user_id=user_id, display_name=final_name, ext=ext, space=space,
         project_id=project_id if space == "project" else None,
         folder_id=folder_id, stage_name="",
         storage_key=final_key, size=_fmt_size(len(data)), size_bytes=len(data),
-        mime_type=_DOC_MIME[fmt],
+        mime_type=_DOC_MIME[ext],
     )
     db.add(db_file)
     await db.commit()
     await db.refresh(db_file)
     return {"success": True, "file_id": db_file.id,
-            "name": f"{final_name}.{fmt}", "size": db_file.size,
+            "name": f"{final_name}.{ext}", "size": db_file.size,
             **(await _location_receipt(db, user_id, space, project_id, folder_id))}
 
 
@@ -479,19 +528,38 @@ async def _save_uploaded_file(db, user_id, args: dict):
     return {**item, **({"note": note} if note else {})}
 
 
-async def _rename_one(db, user_id, f, new_name: str) -> dict:
-    """重命名已解析的 File f，各自 commit。返回结果 dict。供单个与批量 rename 共用。"""
-    new_display = _strip_ext(new_name, f.ext)
+async def _rename_one(db, user_id, f, new_name: str, new_fmt: str | None = None) -> dict:
+    """重命名已解析的 File f，各自 commit。返回结果 dict。供单个与批量 rename 共用。
+
+    new_fmt 为 None 时沿用 f.ext（旧行为，"改名不改格式"）。传了新 fmt 就用规范 ext，
+    用于修双后缀文件：new_name="README" + new_fmt="md" 会把 f.ext="markdown" 的
+    README.md.markdown 改成 README.md。文本类互相转也走这条；非文本类（docx/pdf/xlsx）
+    仅当 new_fmt 等于当前 ext 时允许"改名不改内容"，跨文本/二进制的格式转换请走 edit_file
+    + LibreOffice，而不是 rename。
+    """
+    old_ext = f.ext
+    if new_fmt is not None:
+        fmt = new_fmt.lower()
+        if fmt not in _DOC_MIME:
+            return {"error": f"不支持的格式: {fmt}", "supported": list(_DOC_MIME), "name": f"{f.display_name}.{f.ext}"}
+        new_ext = _DOC_EXT.get(fmt, fmt)
+        # 二进制格式必须显式同 ext 才允许（避免 rename 把 .md 文件"改名"成 .docx 但内容是 markdown）
+        if new_ext != old_ext and (new_ext in ("docx", "pdf", "xlsx") or old_ext in ("docx", "pdf", "xlsx")):
+            return {"error": f"rename 不能跨文本/二进制格式（{old_ext}→{new_ext}），请用 edit_file 走 LibreOffice 转换",
+                    "name": f"{f.display_name}.{f.ext}"}
+    else:
+        new_ext = old_ext
+    new_display = _strip_ext(new_name, new_ext)
     try:
         new_key = await _resolve_key(
-            db, user_id, f.space, new_display, f.ext,
+            db, user_id, f.space, new_display, new_ext,
             project_id=f.project_id, folder_id=f.folder_id,
         )
     except ValueError as e:
         return {"error": str(e), "name": f"{f.display_name}.{f.ext}"}
     storage = get_storage()
     if new_key != f.storage_key:
-        new_key, new_display = await _resolve_conflict(storage, new_key, new_display, f.ext)
+        new_key, new_display = await _resolve_conflict(storage, new_key, new_display, new_ext)
         try:
             await storage.rename_file(f.storage_key, new_key)
         except Exception as e:
@@ -499,14 +567,20 @@ async def _rename_one(db, user_id, f, new_name: str) -> dict:
         f.storage_key = new_key
     old = f.display_name
     f.display_name = new_display
+    if new_ext != old_ext:
+        # 文本类同族转换（md↔txt↔yaml…）是显示层差异，内容不需要重写；mime 跟着规范 ext 走
+        f.ext = new_ext
+        f.mime_type = _DOC_MIME[new_ext]
     f.updated_at = now_utc()
     await db.commit()
-    return {"success": True, "file_id": f.id, "old_name": f"{old}.{f.ext}", "name": f"{new_display}.{f.ext}"}
+    return {"success": True, "file_id": f.id, "old_name": f"{old}.{old_ext}", "name": f"{new_display}.{f.ext}"}
 
 
 async def _rename_file(db, user_id, args: dict):
     """重命名文件。单个：file/file_id + new_name。
-    批量：renames=[{file 或 file_id, new_name}, ...]——适合「按顺序编号」，Agent 自己生成序号、一次调用全改。"""
+    批量：renames=[{file 或 file_id, new_name, format?}, ...]——适合「按顺序编号」，Agent 自己生成序号、一次调用全改。
+    可选 format：传了就改后缀（修 .md.markdown 这种双后缀文件 → format="md"），不传沿用旧 ext。
+    """
     items = args.get("renames")
     if items:
         renamed, failed = [], []
@@ -518,7 +592,7 @@ async def _rename_file(db, user_id, args: dict):
             if _err:
                 failed.append({"item": it.get("file") or it.get("file_id"), "error": "没找到这个文件"})
                 continue
-            r = await _rename_one(db, user_id, f, it["new_name"])
+            r = await _rename_one(db, user_id, f, it["new_name"], it.get("format"))
             (renamed if r.get("success") else failed).append(
                 r if r.get("success") else {"item": it.get("file") or it.get("file_id"), **r})
         return {"success": True, "renamed_count": len(renamed), "failed_count": len(failed),
@@ -529,7 +603,7 @@ async def _rename_file(db, user_id, args: dict):
     f, _err = await _resolve_file(db, user_id, args)
     if _err:
         return _err
-    return await _rename_one(db, user_id, f, args["new_name"])
+    return await _rename_one(db, user_id, f, args["new_name"], args.get("format"))
 
 
 async def _resolve_file(db, user_id, args):
@@ -629,7 +703,7 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
             project_id=project_id, folder_id=folder_id,
         )
     except ValueError as e:
-        return json.dumps({"error": str(e)})
+        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     storage = get_storage()
     new_display = f.display_name
     if new_key != f.storage_key:
@@ -716,49 +790,20 @@ async def _resolve_target(db, user_id, target: dict):
 
 
 async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id) -> dict:
-    """把 folder 整个搬到目标。同项目内只改 parent_id（便宜，不动文件）；跨项目/空间则
-    级联改所有子孙文件夹的 project_id、并把子孙文件物理重搬 + 改 space/project（贵）。"""
+    """委托 FileService 搬文件夹树，并同步重建所有后代文件的物理路径。"""
     name = folder.name
     sub_ids = await _descendant_folder_ids(db, user_id, folder.id)
-    # 防自移入自身或子孙
-    if t_parent_id in sub_ids:
-        return {"error": f"不能把文件夹「{name}」移动到它自己或它的子文件夹里"}
-    same_project = (t_pid == folder.project_id)   # personal 时两边都是 None
-    folder.parent_id = t_parent_id
-    folder.project_id = t_pid
-    moved_files = 0
-    failed = []
-    if not same_project:
-        # 子孙文件夹的 project_id 跟着改
-        for sid in sub_ids[1:]:
-            sf = await get_owned(db, Folder, sid, user_id)
-            if sf:
-                sf.project_id = t_pid
-        # 子孙文件：物理 key 重搬 + 改 space/project（folder_id 不变，仍在各自文件夹里）
-        files = (await db.execute(
-            select(File).where(File.user_id == user_id,
-                               File.folder_id.in_(sub_ids), File.deleted_at.is_(None))
-        )).scalars().all()
-        storage = get_storage()
-        for f in files:
-            try:
-                new_key = await _resolve_key(db, user_id, t_space, f.display_name, f.ext,
-                                             project_id=t_pid, folder_id=f.folder_id)
-                if new_key != f.storage_key:
-                    new_key, new_disp = await _resolve_conflict(storage, new_key, f.display_name, f.ext)
-                    await storage.rename_file(f.storage_key, new_key)
-                    f.storage_key = new_key
-                    f.display_name = new_disp
-                f.space = t_space
-                f.project_id = t_pid
-                f.updated_at = now_utc()
-                moved_files += 1
-            except Exception as e:
-                failed.append({"file": f"{f.display_name}.{f.ext}", "error": str(e)[:80]})
-    await db.commit()
+    try:
+        await FileService(db).move_folder(
+            user_id, folder.id, t_parent_id, client_version=folder.version,
+            target_project_id=t_pid,
+        )
+        await db.commit()
+    except Exception as e:
+        return {"error": redact(f"{type(e).__name__}: {e}")}
     return {"success": True, "type": "folder", "folder": name,
-            "subfolders": len(sub_ids) - 1, "moved_files": moved_files,
-            **({"file_failures": failed} if failed else {})}
+            "subfolders": len(sub_ids) - 1,
+            "space": t_space, "project_id": t_pid}
 
 
 async def _move_items(db, user_id, args: dict):
@@ -812,19 +857,13 @@ async def _move_items(db, user_id, args: dict):
 
 
 async def _create_folder(db, user_id, args: dict):
-    if args.get("project_id"):
-        p = await get_owned(db, Project, args["project_id"], user_id)
-        if not p:
-            return json.dumps({"error": "项目不存在"})
-    if args.get("parent_id"):
-        par = await get_owned(db, Folder, args["parent_id"], user_id)
-        if not par:
-            return json.dumps({"error": "父文件夹不存在"})
-    fo = Folder(
-        user_id=user_id, name=args["name"],
-        project_id=args.get("project_id"), parent_id=args.get("parent_id"),
-    )
-    db.add(fo)
+    try:
+        fo = await FileService(db).create_folder(
+            user_id, name=args["name"], parent_id=args.get("parent_id"),
+            project_id=args.get("project_id"),
+        )
+    except Exception as e:
+        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     await db.commit()
     await db.refresh(fo)
     return {"success": True, "folder_id": fo.id, "name": fo.name}
@@ -836,7 +875,7 @@ async def _delete_file(db, user_id, args: dict):
     if _err:
         return _err
     fid = f.id; fname = f"{f.display_name}.{f.ext}"
-    await _move_to_trash(get_storage(), f)
+    await move_file_to_trash(get_storage(), f)
     f.deleted_at = now_utc()
     await db.commit()
     return {"success": True, "file_id": fid, "name": fname,
@@ -895,8 +934,13 @@ async def _rename_folder(db, user_id, args: dict):
     fo = await _find_folder(db, user_id, args)
     if isinstance(fo, str):
         return fo
-    fo.name = args["new_name"]
-    await db.commit()
+    try:
+        fo = await FileService(db).rename_folder(
+            user_id, fo.id, args["new_name"], client_version=fo.version,
+        )
+        await db.commit()
+    except Exception as e:
+        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     return {"success": True, "folder_id": fo.id, "name": fo.name}
 
 
@@ -906,35 +950,12 @@ async def _delete_folder(db, user_id, args: dict):
         return fo
     fid = fo.id
     fname = fo.name
-    # 与网页删文件夹一致：整棵子树的文件一并软删进回收站，子文件夹连同本文件夹一起删。
-    # （旧实现把直属文件移到根目录、不删，还漏了嵌套子文件夹——跟 UI / REST delete_folder 不一致，
-    #   表现为「咕咕删文件夹后里面的文件跑到上层目录」，这里修正为跟后端 REST 完全一致。）
-    all_fids = [fo.id]
-    queue = [fo.id]
-    while queue:
-        parent = queue.pop()
-        sub_ids = (await db.execute(
-            select(Folder.id).where(Folder.parent_id == parent, Folder.user_id == user_id)
-        )).scalars().all()
-        for sid in sub_ids:
-            all_fids.append(sid)
-            queue.append(sid)
-    now = now_utc()
-    trashed = 0
-    for folder_id in all_fids:
-        files = (await db.execute(
-            select(File).where(File.folder_id == folder_id, File.user_id == user_id, File.deleted_at.is_(None))
-        )).scalars().all()
-        for f in files:
-            f.deleted_at = now
-            trashed += 1
-    for folder_id in reversed(all_fids):   # 从最深层往上删，避免外键约束
-        sub = await get_owned(db, Folder, folder_id, user_id)
-        if sub:
-            await db.delete(sub)
-    await db.commit()
-    note = (f"文件夹「{fname}」已删除，其中 {trashed} 个文件已移入回收站（30 天内可恢复）"
-            if trashed else f"空文件夹「{fname}」已删除")
+    try:
+        await FileService(db).delete_folder(user_id, fo.id)
+        await db.commit()
+    except Exception as e:
+        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
+    note = f"文件夹「{fname}」已删除，其中的文件已移入回收站（30 天内可恢复）"
     return {"success": True, "deleted_folder_id": fid, "note": note,
             "_file_op": {"op": "remove", "kind": "folder", "id": fid}}
 
@@ -1226,7 +1247,7 @@ class FilesSkill(BaseSkill):
         Tool(
             name="create_document", label="生成文档",
             description=(
-                "新建一个文件。format 为 md/txt/json/csv 时 content 为对应纯文本直接写入；"
+                "新建一个文件。format 为可编辑文本类型时 content 按原文直接写入；"
                 "format=docx 或 pdf 时 content 请提供 HTML（将转换为 Word/PDF）；"
                 "format=xlsx 时 content 请提供 CSV（将转换为 Excel）。默认放在个人文件空间。"
                 "**未指定 folder_id 且目标空间已有文件夹时，先调用 list_folders 审视一级目录；"
@@ -1236,7 +1257,7 @@ class FilesSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "文件名（可不带扩展名）"},
-                    "format": {"type": "string", "enum": ["md", "txt", "json", "csv", "yaml", "docx", "pdf", "xlsx"]},
+                    "format": {"type": "string", "enum": sorted(_DOC_MIME), "description": "可编辑文本、docx、pdf 或 xlsx"},
                     "space": {"type": "string", "enum": ["project", "personal"], "description": "默认 personal"},
                     "project_id": {"type": "integer", "description": "space=project 时必填"},
                     "folder_id": {"type": "integer"},
@@ -1249,19 +1270,22 @@ class FilesSkill(BaseSkill):
         Tool(
             name="rename_file", label="重命名文件",
             description="重命名文件（不改位置）。单个：file + new_name。"
-                        "**批量改名用 renames=[{file,new_name},...] 一次调用全改**——比如「按顺序编号」时，你自己排好序号（作品01、作品02…）一次传进来，别一个个改。逐项回报成功/失败。",
+                        "**批量改名用 renames=[{file,new_name},...] 一次调用全改**——比如「按顺序编号」时，你自己排好序号（作品01、作品02…）一次传进来，别一个个改。逐项回报成功/失败。"
+                        "**可选 format**：传了就同时改后缀（修双后缀 bug：format=\"md\" 把 README.md.markdown 改回 README.md），"
+                        "不传沿用原 ext。仅文本类同族（md↔txt↔yaml…）互转允许；二进制约等于当前 ext 才允许。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "renames": {
                         "type": "array",
-                        "description": "批量改名：每项 {file 或 file_id, new_name}。按顺序编号等多文件场景用这个",
+                        "description": "批量改名：每项 {file 或 file_id, new_name, format?}。按顺序编号等多文件场景用这个",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "file": {"type": "string", "description": "文件名"},
                                 "file_id": {"type": "integer", "description": "文件 id"},
                                 "new_name": {"type": "string", "description": "新名（可不带扩展名）"},
+                                "format": {"type": "string", "enum": sorted(_DOC_MIME), "description": "可选：改后缀。文本类同族互转允许；二进制需等于当前 ext。"},
                             },
                             "required": ["new_name"],
                         },
@@ -1269,6 +1293,7 @@ class FilesSkill(BaseSkill):
                     "file_id": {"type": "integer", "description": "单个：文件 id"},
                     "file": {"type": "string", "description": "单个：文件名"},
                     "new_name": {"type": "string", "description": "单个：新文件名（可不带扩展名）"},
+                    "format": {"type": "string", "enum": sorted(_DOC_MIME), "description": "单个：可选，改后缀（同 renames 规则）"},
                 },
             },
             handler=_rename_file,
@@ -1379,7 +1404,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="delete_folder", label="删除文件夹",
-            description="删除文件夹。用 name 指定文件夹名（或 folder_id）。注意：夹内文件不会被删除，会移动到根目录（仍在文件库，不进回收站）——请如实告知用户，别说成文件被删/可还原。同名文件夹存在于多个项目时必须传 project_id。",
+            description="删除文件夹。用 name 指定文件夹名（或 folder_id）。文件夹及其内容会整体移入回收站，30 天内可恢复。同名文件夹存在于多个项目时必须传 project_id。",
             input_schema={
                 "type": "object",
                 "properties": {

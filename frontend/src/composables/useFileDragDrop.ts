@@ -123,8 +123,14 @@ export function useFileDragDrop(config: FileDragDropConfig) {
     return null
   }
 
-  // 松手落点判定 + 真正执行移动（startPhysicsDrag/startMultiPhysicsDrag 的 onDrop 回调）
-  async function dispatchDrop({ x, y }: { x: number; y: number }) {
+  // 松手落点判定 + 真正执行移动（startPhysicsDrag/startMultiPhysicsDrag 的 onDrop 回调）。
+  // 命中判定必须用 context.pointer（原始指针位置），不能用第一个参数 pos（克隆体视觉中心）——
+  // usePhysicsDrag 内部「吸入文件夹/面包屑」的动画判定已经改成了指针位置（见其 end() 注释：
+  // 卡片抓取点偏卡片上部、卡片本身比面包屑这类细长目标高得多，视觉中心会跟指针差出小半个卡
+  // 高，面包屑这种窄条正好被跨过去）。这里若仍用 pos，会出现「动画演了吸入面包屑、实际这个
+  // 函数里的命中判定却落空」——动画和数据两套判定不一致，看着像吸入了，刷新后其实没动。
+  async function dispatchDrop(pos: { x: number; y: number }, _vel?: unknown, _size?: unknown, context?: { pointer: { x: number; y: number } }) {
+    const { x, y } = context?.pointer ?? pos
     const under = document.elementFromPoint(x, y)
     dragOverFolderId.value = null
     bcDragOverIdx.value = null
@@ -184,7 +190,8 @@ export function useFileDragDrop(config: FileDragDropConfig) {
 
         // 文件名和元信息是高频阅读内容；后仰会把整张卡送进 3D 合成层，让细字变软。
         // 保留弹簧、平面摆动和阴影，只关闭这条不利于文字清晰度的变换。
-        const opts = { pointer: true, tilt: 0, onDrop: dispatchDrop, onDragOver: updateDragOverHighlight, resolveAbsorbTarget, ...(ctx.extraOpts || {}) }
+        // TEMP DEBUG（面包屑拖拽排查用，定位后移除 debugLabel）
+        const opts = { pointer: true, tilt: 0, onDrop: dispatchDrop, onDragOver: updateDragOverHighlight, resolveAbsorbTarget, debugLabel: 'filedrag', ...(ctx.extraOpts || {}) }
         const total = folderIds.length + fileIds.length
         if (total > 1) {
           const extraFolderEls = folderIds.filter(id => id !== (ctx.isFolder ? ctx.itemId : undefined))

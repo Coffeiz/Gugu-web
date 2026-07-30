@@ -210,23 +210,26 @@
               </template>
             </nav>
             <!-- 粘贴（剪切/复制后出现）—— 放在所有按钮最左 -->
-            <button v-if="pmCbStore.hasContent()" class="paste-btn" @click.stop="pmCtxPaste" title="粘贴到当前位置">
-              <PhClipboardText :size="13" weight="bold" />
-              粘贴{{ (pmCbStore.fileIds.length + pmCbStore.folderIds.length) > 1 ? ` (${pmCbStore.fileIds.length + pmCbStore.folderIds.length})` : '' }}
-            </button>
+            <FilePasteButton
+              v-if="pmCbStore.hasContent()"
+              compact
+              :count="pmCbStore.fileIds.length + pmCbStore.folderIds.length"
+              @paste="pmCtxPaste"
+            />
             <!-- 多选模式 -->
             <button class="sel-mode-btn" :class="{ on: pmInSelectionMode }" @click.stop="togglePmSelectionMode" title="多选模式">
               <PhCheckSquare :size="13" weight="bold" />
             </button>
             <!-- 视图切换 -->
-            <div class="view-toggle">
+            <SegmentedControl class="view-toggle" :active-index="fileViewMode === 'grid' ? 0 : 1"
+              style="--pill-bg: rgba(255,255,255,0.85); --pill-radius: 6px">
               <button :class="{ on: fileViewMode === 'grid' }" @click="fileViewMode = 'grid'" title="网格视图">
                 <PhSquaresFour :size="13" weight="bold" />
               </button>
               <button :class="{ on: fileViewMode === 'list' }" @click="fileViewMode = 'list'" title="列表视图">
                 <PhList :size="13" weight="bold" />
               </button>
-            </div>
+            </SegmentedControl>
             <!-- 新建文件夹（每层都可用） -->
             <button v-if="!showNewFolder" class="new-folder-btn" @click.stop="showNewFolder = true">
               <PhFolderPlus :size="13" weight="bold" />
@@ -266,6 +269,7 @@
           </div>
 
           <div class="file-content" ref="pmGridRef" style="position:relative" @mousedown="onPmGridMouseDown"
+            @click="onPmContentClick"
             @contextmenu.prevent.self="openPmCtx('empty', null, $event)"
             @dragenter.prevent="onPmDragEnter"
             @dragover.prevent
@@ -580,33 +584,18 @@
             </template>
 
             <!-- 批量操作浮动栏 -->
-            <Transition name="pm-action-bar">
-              <div v-if="pmInSelectionMode" class="pm-selection-bar" @click.stop>
-                <span class="pm-sel-count">已选 {{ pmSelectedFileIds.size + pmSelectedFolderIds.size }} 项</span>
-                <button class="pm-sel-download-btn" @click="downloadSelectedPm" :disabled="(pmSelectedFileIds.size === 0 && pmSelectedFolderIds.size === 0) || pmDownloadingZip">
-                  <PhDownloadSimple v-if="!pmDownloadingZip" :size="11" weight="bold" />
-                  <svg v-else class="spin" width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                    <path d="M7 1a6 6 0 1 1-4.24 1.76"/>
-                  </svg>
-                  {{ pmDownloadingZip ? '下载中…' : '下载' }}
-                </button>
-                <div class="sel-divider"></div>
-                <button class="pm-sel-action-btn" @click="pmSelCut" title="剪切">
-                  <PhScissors :size="11" weight="bold" />
-                  剪切
-                </button>
-                <button class="pm-sel-action-btn" @click="pmSelCopy" title="复制">
-                  <PhCopy :size="11" weight="bold" />
-                  复制
-                </button>
-                <div class="sel-divider"></div>
-                <button class="pm-sel-delete-btn" @click="deleteSelectedPm">
-                  <PhTrash :size="11" weight="bold" />
-                  删除
-                </button>
-                <button class="pm-sel-cancel-btn" @click="clearPmSelection">取消</button>
-              </div>
-            </Transition>
+            <FileSelectionToolbar
+              v-if="pmInSelectionMode"
+              compact
+              :file-count="pmSelectedFileIds.size"
+              :folder-count="pmSelectedFolderIds.size"
+              :downloading="pmDownloadingZip"
+              @download="downloadSelectedPm"
+              @cut="pmSelCut"
+              @copy="pmSelCopy"
+              @delete="deleteSelectedPm"
+              @cancel="clearPmSelection"
+            />
           </div>
         </div>
       </div>
@@ -696,7 +685,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, type PropType } from 'vue'
 import { useProjectStore } from '@/stores/projects'
-import { autoCompleteTodos, restoreTodos, firstIncompleteStageIdx, allTodosDone } from '@/utils/projectStages'
+import { cloneProjectStages, firstIncompleteStageIdx, transitionProjectStage } from '@/utils/projectStages'
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { filesApi, foldersApi, projectsApi, uploadWithProgress } from '@/services/api'
@@ -724,9 +713,13 @@ import {
 } from '@phosphor-icons/vue'
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
+import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
+import FilePasteButton from '@/components/common/FilePasteButton.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
+import { parseFolderId } from '@/utils/folderKeys'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
@@ -846,26 +839,25 @@ const currentFolder = computed(() =>
 const currentFolderFiles = computed(() => currentFiles.value)
 
 // ── 侧栏两模式：false=文件区宽（现状）；true=左右各 50%、信息区 2 列 ──
-// 内部内容先淡出，外框在不可见时完成宽度/网格切换，最后在新锚点淡入；不让用户看到内容回流。
+// 外框与内容并行切换：内容全程保持可见，只让列宽与信息区版面同步变化。
 // 初值取自后端记忆（preferences）；若 preferences 晚于本组件加载完成，loaded 变 true 时再同步一次
 const stagesExpanded = ref(prefsStore.pmStagesExpanded)   // 列宽/版面预设
 const infoExpanded = ref(prefsStore.pmStagesExpanded)     // 信息区 1列/2列版面预设
-const pmSwitching = ref(false)      // 内容淡隐中（true 时 opacity:0）
+const pmSwitching = ref(false)      // 布局切换锁（同时关闭嵌套 backdrop-filter）
 watch(() => prefsStore.loaded, (v) => {
   if (v) { stagesExpanded.value = prefsStore.pmStagesExpanded; infoExpanded.value = prefsStore.pmStagesExpanded }
 })
 function togglePmStages() {
   if (pmSwitching.value) return
-  const FADE_MS = 180   // 与 .proj-header 等的 opacity 过渡时长一致（0.18s）；改一处两处一起改
   const LAYOUT_MS = 360   // 与 .modal-left 的 width 过渡时长一致（0.36s）；改一处两处一起改
-  const SETTLE_MS = 40
-  pmSwitching.value = true                          // ① 内部内容快速淡出
-  setTimeout(() => {
-    stagesExpanded.value = !stagesExpanded.value    // ② 内容隐藏时切换列宽和信息区版面
+  pmSwitching.value = true
+  // 留一帧提交当前布局，再启动列宽与信息区版面变化，内容全程不淡隐。
+  requestAnimationFrame(() => {
+    stagesExpanded.value = !stagesExpanded.value
     infoExpanded.value = stagesExpanded.value
-    prefsStore.savePmStagesExpanded(stagesExpanded.value)   // 记住版面选择（存后端，跨设备）
-  }, FADE_MS)
-  setTimeout(() => { pmSwitching.value = false }, FADE_MS + LAYOUT_MS + SETTLE_MS)  // ③ 新锚点真正落稳后淡入
+    prefsStore.savePmStagesExpanded(stagesExpanded.value)
+    setTimeout(() => { pmSwitching.value = false }, LAYOUT_MS)
+  })
 }
 
 // 项目文件总数：根文件 + 本项目所有文件夹（含嵌套）里的文件。按文件夹归属数，不依赖 file.projectId
@@ -935,6 +927,10 @@ function clearPmSelection() {
   _clearPmSelBase()
   pmSelectionModeForced.value = false
   pmLastAnchorIndex.value     = -1
+}
+
+function onPmContentClick() {
+  if (pmInSelectionMode.value) clearPmSelection()
 }
 
 function toggleFolderSelectPm(folder: FolderMeta) { _toggleFolderSelPm(folder.id) }
@@ -1031,8 +1027,10 @@ async function downloadSelectedPm() {
 // 消失、导航路径不含它们，无需重置导航（仅清理指向已删文件夹的历史快照）。
 
 async function deleteSelectedPm() {
-  const fids = [...pmSelectedFileIds.value]
-  const dids = [...pmSelectedFolderIds.value]
+  const visibleFileIds = new Set(sortedCurrentFiles.value.map(file => file.id))
+  const visibleFolderIds = new Set(sortedCurrentFolders.value.map(folder => folder.id))
+  const fids = [...pmSelectedFileIds.value].filter(id => visibleFileIds.has(id))
+  const dids = [...pmSelectedFolderIds.value].filter(id => visibleFolderIds.has(id))
   if (!fids.length && !dids.length) return
   clearPmSelection()
   try {
@@ -1042,6 +1040,7 @@ async function deleteSelectedPm() {
     ])
     fileCacheStore.removeFiles(fids)
     dids.forEach(id => { fileCacheStore.removeFolder(id); prunePmHistoryForFolder(id) })   // removeFolder 级联删子文件夹及其文件
+    await fileCacheStore.refresh()
   } catch (err) { console.error('[ProjectModal] 批量删除失败:', errMsg(err)) }
 }
 
@@ -1051,9 +1050,11 @@ async function deleteSelectedPm() {
 // 参数类型跟随 useFileDragDrop 的 FileDragDropConfig.moveFolders/moveFiles（Id = number | string），
 // 实际项目场景下 id 永远是 number，但函数类型赋值是逆变检查，形参必须宽于（或等于）Id 才能结构兼容。
 async function movePmFoldersInto(folderIds: (number | string)[], targetFolderId: number | string | null) {
+  const nTarget = targetFolderId == null ? null : Number(targetFolderId)
   try {
-    await Promise.all(folderIds.map(id => foldersApi.move(Number(id), targetFolderId == null ? null : Number(targetFolderId))))
-    folderIds.forEach(id => fileCacheStore.updateFolder(Number(id), { parentId: targetFolderId == null ? null : Number(targetFolderId) }))
+    const results = await Promise.all(folderIds.map(id =>
+      foldersApi.move(Number(id), nTarget, fileCacheStore.getFolder(Number(id))?.version ?? 1, props.project?.id ?? null)))
+    results.forEach(f => fileCacheStore.updateFolder(f.id, { parentId: nTarget, projectId: props.project?.id ?? null, version: f.version }))
   } catch (err) { console.error('[ProjectModal] 移动文件夹失败:', errMsg(err)) }
   // 不再重置导航——store 单源，移走的文件夹自动从当前视图消失，用户停在原地即可（老代码重置到根是
   // 全量重拉的副作用，非有意行为）。
@@ -1268,8 +1269,9 @@ async function commitFolderRename() {
   renamingFolderId.value = null
   if (!id || !name) return
   try {
-    await foldersApi.rename(id, name)
-    fileCacheStore.updateFolder(id, { name })
+    const version = fileCacheStore.getFolder(id)?.version ?? 1
+    const updated = await foldersApi.rename(id, name, version)
+    fileCacheStore.updateFolder(id, { name, version: updated.version })
   } catch (e) {
     console.error('[ProjectModal] 文件夹重命名失败:', errMsg(e))
   }
@@ -1296,7 +1298,6 @@ function prunePmHistoryForFolder(folderId: number) {
 }
 
 async function deleteFolderCard(folder: FolderMeta) {
-  if (!confirm(`删除文件夹「${folder.name}」？其中的文件将一并移入回收站。`)) return
   prunePmHistoryForFolder(folder.id)
   try {
     await foldersApi.delete(folder.id)
@@ -1375,17 +1376,13 @@ watch(localClient, v => {
   if (initializing) return
   const id = props.project?.id
   if (!id) return
-  const p = projectStore.projects.find(p => p.id === id)
-  if (p) p.client = v || null
-  projectStore.updateProject(id, { client: v || null })
+  projectStore.updateProjectDebounced(id, { client: v || null })
 })
 
 watch(localStartDate, v => {
   if (initializing) return
   const id = props.project?.id
   if (!id) return
-  const p = projectStore.projects.find(p => p.id === id)
-  if (p) p.startDate = v
   projectStore.updateProject(id, { startDate: v || null })
 })
 
@@ -1397,8 +1394,6 @@ watch(localDeadline, v => {
   if (initializing) return
   const id = props.project?.id
   if (!id) return
-  const p = projectStore.projects.find(p => p.id === id)
-  if (p) p.deadline = v
   projectStore.updateProject(id, { deadline: v || null })
 })
 
@@ -1541,25 +1536,21 @@ function setStage(key: string, idx: number) {
     }
   }
 
-  localCurrentStage.value = key
-  activeStageIdx.value = idx
-  if (oldIdx !== newIdx) fireHint('stage_switch')   // 新手引导：第一次切换阶段
-
-  // 直接在本地同步计算，不依赖 store 异步回写
-  if (oldIdx !== newIdx && oldIdx >= 0 && newIdx >= 0) {
-    const stages = JSON.parse(JSON.stringify(localStages.value))
-    if (newIdx > oldIdx) {
-      for (let i = oldIdx; i < newIdx; i++) stages[i].todos = autoCompleteTodos(stages[i].todos ?? [])
-    } else {
-      for (let i = newIdx; i < stages.length; i++) stages[i].todos = restoreTodos(stages[i].todos ?? [])
-    }
-    _syncingFromStore = true
-    localStages.value = stages
-    nextTick(() => { _syncingFromStore = false })
-  }
-
   const newProgress = calcProgress(localStages.value, key)
-  stageProgress.value = newProgress
+  const transition = transitionProjectStage({
+    stages: localStages.value,
+    currentStage: localCurrentStage.value || null,
+    progress: stageProgress.value,
+    status: localStatus.value as Project['status'],
+  }, key, newProgress)
+  _syncingFromStore = true
+  localStages.value = transition.stages
+  localCurrentStage.value = transition.currentStage ?? ''
+  localStatus.value = transition.status
+  activeStageIdx.value = idx
+  stageProgress.value = transition.progress
+  nextTick(() => { _syncingFromStore = false })
+  if (oldIdx !== newIdx) fireHint('stage_switch')   // 新手引导：第一次切换阶段
   if (props.project) projectStore.setStage(props.project.id, key, newProgress)
 }
 
@@ -1660,21 +1651,7 @@ function saveTodos() {
   if (_syncingFromStore) return
   const newProgress = calcProgress(localStages.value, localCurrentStage.value)
   stageProgress.value = newProgress
-  const lastKey = localStages.value[localStages.value.length - 1]?.key
-  // 真正「完成」= 在最后阶段 + **所有阶段的全部待办都已勾选**（真正 100%）。
-  // 只看当前阶段进度（calcProgress）会漏掉「取消了前面阶段某条待办」→ 当前阶段仍满、项目却赖在已完成。
-  const fullyComplete = localCurrentStage.value === lastKey && newProgress === 100 && allTodosDone(localStages.value)
-  const snapshot = () => JSON.parse(JSON.stringify(localStages.value))
-  if (fullyComplete && props.project.status !== 'done') {
-    // 到最后阶段且全部待办勾完 → 自动完成
-    projectStore.updateProject(props.project.id, { stages: snapshot(), progress: newProgress })
-    projectStore.moveProject(props.project.id, 'done')
-  } else if (!fullyComplete && props.project.status === 'done') {
-    // 取消了任意阶段的待办、不再 100% → 退出已完成、退回进行中（禁止非满项目留在已完成）
-    projectStore.updateProject(props.project.id, { stages: snapshot(), progress: newProgress, status: 'active', doneAt: null })
-  } else {
-    projectStore.updateProject(props.project.id, { stages: snapshot(), progress: newProgress })
-  }
+  projectStore.saveTodos(props.project.id, cloneProjectStages(localStages.value), newProgress)
 }
 function addTodo(stage: ProjectStage) {
   if (!stage.todos) stage.todos = []
@@ -1912,13 +1889,24 @@ async function onPmDrop(e: DragEvent) {
 const isMac = navigator.platform.toUpperCase().includes('MAC') || navigator.userAgent.includes('Mac')
 const modKey = isMac ? '⌘' : 'Ctrl'
 const pmCbStore = useClipboardStore()
+const pmPasteBusy = ref(false)
 
 function pmSelCut() {
-  pmCbStore.cut([...pmSelectedFileIds.value], [...pmSelectedFolderIds.value])
+  const fileIds = new Set(sortedCurrentFiles.value.map(file => file.id))
+  const folderIds = new Set(sortedCurrentFolders.value.map(folder => folder.id))
+  pmCbStore.cut(
+    [...pmSelectedFileIds.value].filter(id => fileIds.has(id)),
+    [...pmSelectedFolderIds.value].filter(id => folderIds.has(id)),
+  )
   clearPmSelection()
 }
 function pmSelCopy() {
-  pmCbStore.copy([...pmSelectedFileIds.value], [])
+  const fileIds = new Set(sortedCurrentFiles.value.map(file => file.id))
+  const folderIds = new Set(sortedCurrentFolders.value.map(folder => folder.id))
+  pmCbStore.copy(
+    [...new Set(pmSelectedFileIds.value)].filter(id => fileIds.has(id)),
+    [...new Set(pmSelectedFolderIds.value)].filter(id => folderIds.has(id)),
+  )
   clearPmSelection()
 }
 type PmCtxTarget = FileMeta | FolderMeta
@@ -1972,8 +1960,11 @@ function pmCtxCut() {
 }
 function pmCtxCopy() {
   const target = pmCtx.value.target
-  const ids = pmCtx.value.type === 'multi-file' ? [...pmSelectedFileIds.value] : (target ? [target.id] : [])
-  pmCbStore.copy(ids, []); pmCtx.value.visible = false
+  const fileIds = pmCtx.value.type === 'multi-file'
+    ? [...new Set(pmSelectedFileIds.value)]
+    : (target && pmCtx.value.type === 'file' ? [target.id] : [])
+  const folderIds = target && pmCtx.value.type === 'folder' ? [target.id] : []
+  pmCbStore.copy(fileIds, folderIds); pmCtx.value.visible = false
 }
 async function pmCtxDelete() {
   const target = pmCtx.value.target
@@ -2002,25 +1993,37 @@ async function pmCtxDeleteFolder() {
 }
 
 async function pmCtxPaste() {
+  if (pmPasteBusy.value) return
+  pmPasteBusy.value = true
   pmCtx.value.visible = false
   const folderId  = pmCurrentFolderId()   // 当前所在文件夹 id；根目录为 null
   const projectId = props.project?.id
   try {
+    const fileIds = [...new Set(pmCbStore.fileIds)]
+    const folderIds = [...new Set(pmCbStore.folderIds
+      .map(id => parseFolderId(id))
+      .filter((id): id is number => id != null))]
     if (pmCbStore.type === 'cut') {
       // 剪切：文件改 folderId+projectId、文件夹改 parent 到当前层。更新 store 后，源层/目标层视图
       // 与文件夹计数都自动跟随（源层文件消失、目标层出现），不再需要逐层剔除/刷新。
-      await Promise.all([
-        ...pmCbStore.fileIds.map(id => filesApi.update(id, { folderId, projectId })),
-        ...pmCbStore.folderIds.map(id => foldersApi.move(id, folderId)),
+      const [, movedFolders] = await Promise.all([
+        Promise.all(fileIds.map(id => filesApi.update(id, { folderId, projectId }))),
+        Promise.all(folderIds.map(id =>
+          foldersApi.move(id, folderId, fileCacheStore.getFolder(id)?.version ?? 1, projectId))),
       ])
-      pmCbStore.fileIds.forEach(id => fileCacheStore.updateFile(id, { folderId, projectId }))
-      pmCbStore.folderIds.forEach(id => fileCacheStore.updateFolder(id, { parentId: folderId }))
+      fileIds.forEach(id => fileCacheStore.updateFile(id, { folderId, projectId }))
+      movedFolders.forEach(f => fileCacheStore.updateFolder(f.id, { parentId: folderId, projectId, version: f.version }))
       pmCbStore.clear()
+      await fileCacheStore.refresh()
     } else if (pmCbStore.type === 'copy') {
-      const created = await Promise.all(pmCbStore.fileIds.map(id => filesApi.copy(id, { folderId, projectId })))
+      const created = await Promise.all(fileIds.map(id => filesApi.copy(id, { folderId, projectId })))
       created.forEach(c => { if (c) fileCacheStore.addFile(c) })
+      const copiedFolders = await Promise.all(folderIds.map(id => foldersApi.copy(id, folderId, projectId)))
+      copiedFolders.forEach(c => fileCacheStore.addFolder(c))
+      await fileCacheStore.refresh()
     }
   } catch (e) { console.error('[PM] 粘贴失败:', e) }
+  finally { pmPasteBusy.value = false }
 }
 
 function onPmKeyDown(e: KeyboardEvent) {
@@ -2076,14 +2079,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* 列宽由 stages-expanded 驱动 */
 .modal.stages-expanded .modal-left { width: 50%; }
 
-/* 捕捉条同款原则：内部只交叉淡变，外框单独做几何动画。淡变时长与 togglePmStages 的 FADE_MS 联动，改一处两处一起改。 */
-.proj-header, .left-content, .file-content, .right-header { transition: opacity 0.18s ease-in-out; }
-.modal.pm-switching .proj-header,
-.modal.pm-switching .left-content,
-.modal.pm-switching .file-content,
-.modal.pm-switching .right-header { opacity: 0; pointer-events: none; }
-
-/* 信息区版面由 info-expanded 驱动（与列宽解耦，在淡隐时才换，不被看见）。
+/* 信息区版面由 info-expanded 驱动，与列宽同时切换。
    版面1：竖排，每行之间横向分割线（沿用 .col-divider）。
    版面2：2×2 网格，十字分割线——客户|周期、看板|颜色 竖线，上下两行之间横线（用 section 的 border 画）*/
 .info-block { display: flex; flex-direction: column; }
@@ -2574,7 +2570,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 .sort-check.desc { transform: rotate(180deg); }
 
 .view-toggle {
-  display: flex; background: rgba(0,0,0,0.05);
+  background: rgba(0,0,0,0.05);
   border-radius: 8px; padding: 2px; gap: 2px;
   flex-shrink: 0;   /* 工具栏拥挤时不被挤压，否则按钮/带 viewBox 的 SVG 会缩成 2~3px（首屏/久置后布局最紧时最明显）*/
 }
@@ -2585,10 +2581,8 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   flex-shrink: 0;
 }
 .view-toggle button svg { flex-shrink: 0; }
-.view-toggle button.on {
-  background: rgba(255,255,255,0.85); color: var(--color-primary);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
+.view-toggle button.on { color: var(--color-primary); }
+.view-toggle button:hover { color: var(--color-primary); }
 .new-folder-btn {
   display: flex; align-items: center; gap: 5px;
   height: 28px; padding: 0 11px; border-radius: 8px;

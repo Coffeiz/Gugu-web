@@ -39,7 +39,13 @@ const routes: RouteRecordRaw[] = [
     component: DefaultLayout,
     meta: { requiresAuth: true },
     children: [
-      { path: '', redirect: '/projects' },
+      { path: '', redirect: () => {
+        const view = localStorage.getItem('gugu-default-view')
+        return view === 'calendar' ? '/calendar'
+          : view === 'files' ? '/files'
+          : view === 'mind' ? '/mind'
+          : '/projects'
+      } },
       // 总览面板暂时隐藏（个人用户用处不大，默认进项目）；代码保留，未来作团队功能再开启。
       // 取消注释即可恢复（同时恢复 AppSidebar 的「总览」导航项、Login/Register 的跳转目标）。
       // {
@@ -74,7 +80,17 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Mind/index.vue'),
         meta: { title: '思维', fullBleed: true },
         children: [
-          { path: '', redirect: '/mind/notes' },
+          {
+            path: '',
+            // 侧栏入口始终是 /mind：恢复用户上次停留的子视图；失效的画布 id 由 CanvasView 回退。
+            redirect: () => {
+              const lastMode = localStorage.getItem('mind-last-mode')
+              const lastCanvasId = localStorage.getItem('mind-last-canvas-id')
+              return lastMode === 'canvas'
+                ? `/mind/canvases${lastCanvasId ? `/${lastCanvasId}` : ''}`
+                : '/mind/notes'
+            },
+          },
           {
             path: 'notes',
             name: 'MindNotes',

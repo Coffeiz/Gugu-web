@@ -37,8 +37,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Message } from '@arco-design/web-vue'
+import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import { useLiveStore } from '@/stores/live'
+import { useUiStore } from '@/stores/ui'
 import { MindConflictError, useMindStore } from '@/stores/mind'
 import { toggleTaskInMd } from '@/composables/useMindEditor'
 import type { MindNote } from '@/services/api'
@@ -50,6 +51,7 @@ import NoteTimeline from './components/NoteTimeline.vue'
 
 const store     = useMindStore()
 const liveStore = useLiveStore()
+const uiStore   = useUiStore()
 const timelineRef = ref<InstanceType<typeof NoteTimeline> | null>(null)
 const captureRef  = ref<InstanceType<typeof CaptureBar> | null>(null)
 const scrollRef   = ref<HTMLElement | null>(null)
@@ -690,14 +692,28 @@ watch(() => store.jumpTarget, (date) => {
   const nearest = nearestExistingDate(date)
   if (nearest) jumpTo(nearest)
   if (date === todayIso.value) {
-    Message.info('今天还没有记录，写一条试试～')
+    showAppNotice('今天还没有记录，写一条试试～')
     captureRef.value?.expand()
   } else if (nearest) {
-    Message.info(`${fmtMD(date)}没有记录，已定位到最近的 ${fmtMD(nearest)}`)
+    showAppNotice(`${fmtMD(date)}没有记录，已定位到最近的 ${fmtMD(nearest)}`)
   } else {
-    Message.info('还没有任何记录')
+    showAppNotice('还没有任何记录')
   }
 })
+
+// 全局搜索跳转到某条便签：定位到它所在的那天并复用「刚创建」那套 flash 高亮，
+// 跟项目搜索跳转"高亮不打开编辑弹窗"是同一种克制——不强行弹进编辑态打断用户。
+watch(() => uiStore.pendingNoteId, async (id) => {
+  if (id == null) return
+  uiStore.pendingNoteId = null
+  if (!store.loaded) await store.fetchNotes()
+  const note = store.notes.find(n => n.id === id)
+  if (!note) { showAppNotice('没找到这条便签，可能已被删除'); return }
+  store.jumpTarget = note.capturedAt.slice(0, 10)
+  highlightId.value = id
+  if (highlightTimer) clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => { highlightId.value = null }, 1800)
+}, { immediate: true })
 
 // resize：内容区中线变了，把当前列瞬时重新居中（不飞入）
 function onResize() {
@@ -740,6 +756,11 @@ watch(timelineGroups, async (groups) => {
   // 多列删除到仅剩一天时，旧视野的 scrollLeft 已经没有语义；不能只重算 gutter，必须把
   // 唯一日期按新布局重新定位，否则它会停在多列时留下的左侧位置。
   const collapsedToSingle = renderedDates.length > 1 && groups.length === 1
+  // 删掉当前激活日期（通常是最右侧那天）的最后一条笔记，那一整列就从 groups 里消失了，
+  // 但剩余天数仍 >1，三个既有分支都不触发——只重算了 gutter/节点，scrollLeft 却原封不动
+  // 停在旧位置，画面「卡住」。这里单独补一支：激活日期整列消失时，滚去新的最后一天。
+  const activeDateRemoved = !collapsedToSingle && groups.length > 0
+    && renderedDates.includes(activeDate.value) && !groups.some(group => group.date === activeDate.value)
   if (insertedBeforeActive && root) {
     // watcher 默认在 DOM 提交前运行，先预补偿一个日期列宽，避免旧卡先被顶开一帧。
     root.scrollLeft += 306
@@ -754,6 +775,8 @@ watch(timelineGroups, async (groups) => {
   } else if (collapsedToSingle && root) {
     root.scrollLeft = 0
     jumpTo(groups[0].date, false)
+  } else if (activeDateRemoved) {
+    jumpTo(groups[groups.length - 1].date, true)
   } else if (insertedBeforeActive && root) {
     // 以实测宽度校准预补偿，兼容列宽/间距将来的调整。
     root.scrollLeft = leftBefore + root.scrollWidth - widthBefore
@@ -787,13 +810,13 @@ async function onCreated(md: string, capturedAt?: string) {
   try {
     created = await store.createNote({ contentMd: md, capturedAt })
   } catch {
-    Message.error('记录失败，请重试')
+    showAppError('记录失败，请重试')
     return
   }
   if (capturedAt && localDayKey(parseUtc(capturedAt)) !== _today()) {
     // 补录落进左边较远的日期列，眼前不会有任何动静——不给反馈用户会以为没保存
     const [, m, d] = localDayKey(parseUtc(capturedAt)).split('-')
-    Message.success(`已记到 ${+m} 月 ${+d} 日`)
+    showAppNotice(`已记到 ${+m} 月 ${+d} 日`)
     return
   }
   highlightId.value = created.id
@@ -809,9 +832,9 @@ async function onSave(note: MindNote, md: string) {
       // 乐观锁撞车：别覆盖别人的改动，拉最新回来让用户重看
       timelineRef.value?.flagConflict()
       await store.fetchNotes()
-      Message.warning('这条便签已被其他端修改，已刷新为最新内容')
+      showAppNotice('这条便签已被其他端修改，已刷新为最新内容')
     } else {
-      Message.error('保存失败，请重试')
+      showAppError('保存失败，请重试')
     }
   }
 }
@@ -827,7 +850,7 @@ async function onColor(note: MindNote, color: string | null) {
   try {
     await store.updateNote(note.id, { color, version: note.version })
   } catch {
-    Message.error('颜色保存失败，请重试')
+    showAppError('颜色保存失败，请重试')
   }
 }
 
@@ -835,7 +858,7 @@ async function onDelete(note: MindNote) {
   try {
     await store.deleteNote(note.id)
   } catch {
-    Message.error('删除失败，请重试')
+    showAppError('删除失败，请重试')
   }
 }
 </script>
@@ -883,7 +906,7 @@ async function onDelete(note: MindNote) {
 /* 捕捉条：停靠底部、在内容区水平居中（与胶囊/滑杆对齐）。
    bottom:28 与胶囊顶 28（fullBleed padding-top）等距，跟咕咕悬浮球 bottom:28 齐平 */
 .rec-capture {
-  position: absolute; bottom: 28px; left: 0; right: 0;
+  position: absolute; bottom: var(--floating-edge); left: 0; right: 0;
   margin: 0 auto;
   width: min(100% - 24px, 680px);
   /* 深度效果给居中列写的 zIndex 最高到 100（NoteTimeline columnStyle），捕捉条必须盖过它 */

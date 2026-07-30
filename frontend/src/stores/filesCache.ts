@@ -129,12 +129,13 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   // ── 乐观更新：文件夹 ──────────────────────────────────────────────────────
   // 上传链路新建的文件夹可能不带 fileCount（useFileUpload 的 onFolderCreated 未标该字段）——
   // 新建文件夹本就 0 文件，缺省补 0，保证入库的都是完整 FolderMeta。
-  function addFolder(folder: { id: number; name: string; projectId?: number | null; parentId?: number | null; fileCount?: number }) {
+  function addFolder(folder: { id: number; name: string; projectId?: number | null; parentId?: number | null; fileCount?: number; version?: number }) {
     allFolders.value = [...allFolders.value, {
       id: folder.id, name: folder.name,
       projectId: folder.projectId ?? null,
       parentId:  folder.parentId ?? null,
       fileCount: folder.fileCount ?? 0,
+      version:   folder.version ?? 1,
     }]
   }
 

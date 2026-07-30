@@ -240,7 +240,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
   padding: 24px 14px; gap: 0;
   /* 浮到主区之上：笔记页横向列滚动区铺满视口宽、会钻到侧栏底下（#3），侧栏得盖在其上
      用自身磨砂玻璃把钻进来的历史列糊住（而不是被列盖住） */
-  position: relative; z-index: 20;
+  position: relative; z-index: 40;
 }
 
 .logo {
@@ -255,7 +255,14 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 }
 .logo-text { font-size: 16px; font-weight: 700; }
 
-.nav { flex: 1; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+/* margin-right 负值抵消 .sidebar 自己的右内边距，让滚动条能长到侧栏真正的右边缘贴边；
+   同时用等量的 padding-right 补回来，nav 项本身的视觉位置不受影响。scrollbar-gutter:stable
+   固定预留这份空间，滚动条本身出现/消失（内容变多变少）时也不会再把 nav 内容挤得左右跳。
+   跟 AdminLayout.vue 的 .sidebar-nav 同一套手法（那边写法见其注释）。 */
+.nav {
+  flex: 1; display: flex; flex-direction: column; gap: 2px; overflow-y: auto;
+  margin-right: -14px; padding-right: 14px; scrollbar-gutter: stable;
+}
 .nav-section { display: flex; flex-direction: column; gap: 2px; }
 .nav-divider {
   height: 1px;
@@ -350,12 +357,21 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 }
 /* 用户弹窗条目沿用之前的外观（仅作用于 .settings-popup，不影响其它菜单） */
 .settings-popup .popup-menu-item {
+  position: relative; z-index: 0;
   padding: 9px 12px; border-radius: 0;
   font-family: 'PingFang SC', 'Segoe UI', sans-serif; color: #1e2028;
 }
+.settings-popup .popup-menu-item::before {
+  content: ''; position: absolute; z-index: -1;
+  inset: -3px 0;
+  background: rgba(255,255,255,0.55);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.15s ease;
+}
 .settings-popup .popup-menu-item.danger { color: #c84a4a; }
-.settings-popup .popup-menu-item:hover:not(:disabled) { background: rgba(255,255,255,0.55); }
-.settings-popup .popup-menu-item.danger:hover:not(:disabled) { background: rgba(200,90,90,0.1); }
+.settings-popup .popup-menu-item:hover:not(:disabled) { background: transparent; }
+.settings-popup .popup-menu-item:hover:not(:disabled)::before { opacity: 1; }
+.settings-popup .popup-menu-item.danger:hover:not(:disabled)::before { background: rgba(200,90,90,0.1); }
 .settings-popup .popup-menu-sep { background: rgba(0,0,0,0.06); margin: 3px 0; }
 
 .notif-popup {

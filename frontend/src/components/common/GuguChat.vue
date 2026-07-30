@@ -68,8 +68,11 @@
   </button>
 
   <!-- 聊天窗口（单一元素，小/大状态通过位置过渡） -->
-  <Transition name="chat-open">
-    <div v-if="open" class="chat-window" :class="{ 'win-grow': streaming && !expanded }" :style="windowStyle" ref="windowRef"
+  <Transition name="chat-open" @after-leave="chatClosing = false">
+    <!-- win-grow 排除 resizing：大/小窗位形切换的瞬间 .chat-window 的 top 还需要 0.42s 缓动做纵向过渡，
+         一旦带上 win-grow 会把 top 的 transition 撤掉，窗口会瞬间从大窗高跳到小窗高（横轴仍走缓动，纵轴跳一下）。
+         resizing 在 _markResizing() / 过渡结束 / 600ms 兜底 时机清掉，回归流式 top 即时跟随。 -->
+    <div v-if="open" class="chat-window" :class="{ 'win-grow': streaming && !expanded && !resizing }" :style="windowStyle" ref="windowRef"
       @mousedown.capture="raiseChat"
       @dragenter="onChatDragEnter" @dragover="onChatDragOver" @dragleave="onChatDragLeave" @drop="onChatDrop">
 
@@ -179,7 +182,7 @@
             <button v-if="expanded" class="exp-icon-btn" @click="exitExpanded" title="收起">
               <PhArrowsIn weight="bold" :size="14" />
             </button>
-            <button class="popup-close-btn" @click="open = false; expanded = false">
+            <button class="popup-close-btn" @click="closeChat">
               <PhX weight="bold" :size="13" />
             </button>
           </div>
@@ -242,9 +245,9 @@
               </div>
             </div>
           </div>
-          <!-- 状态指示：动画队列驱动，:key 让每条重建以重放入场动画；文字走打字机、点点为默认思考态 -->
+          <!-- 整个生成期只维持一枚状态气泡：状态切换时替换内容，不让气泡闪退重建。 -->
           <div v-if="statusKind" class="msg ai">
-            <div :key="statusSeq" class="msg-bubble status-pop"
+            <div class="msg-bubble status-pop"
                  :class="statusKind === 'dots' ? 'thinking' : 'tool-bubble'">
               <template v-if="statusKind === 'dots'"><span /><span /><span /></template>
               <template v-else>
@@ -312,9 +315,10 @@ import { useProjectStore } from '@/stores/projects'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
-import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi, authApi } from '@/services/api'
+import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi, authApi, CLIENT_ID } from '@/services/api'
 import { getGreeting, greeting, prefetchGreeting } from '@/composables/useGreeting'
 import { uploadSignal, calendarSignal } from '@/services/cache'
+import { playGuguSfx } from '@/services/sfx'
 import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/useThumbCache'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 
@@ -424,8 +428,11 @@ watch(() => liveStore.rev.sessions, () => fetchSessions())
 
 // 消息级实时：若这条 IM 消息属于当前打开的会话，直接把「这一来一回」追加进气泡，
 // 不必整列表/整会话 refetch（只传增量）。非当前会话则上面刷新列表即可。
+// origin === 本标签页时是自己发起这轮对话的回声：token 流已经把气泡画出来了，这里跳过，
+// 只让别的标签页/端补上（同一 client-id 每个标签页独立生成，见 services/api.ts）。
 watch(() => liveStore.sessionEvent, async (e) => {
   if (!e || !e.appended?.length || e.session_id !== sessionId.value) return
+  if (e.origin && e.origin === CLIENT_ID) return
   for (const m of e.appended) {
     const isAi = m.role === 'assistant'
     messages.value.push({
@@ -626,6 +633,10 @@ const expanded   = ref(false)
 const resizing   = ref(false)   // 展开/缩小动画期间：关 backdrop-filter、停跟随，降卡顿
 let _resizeTimer: ReturnType<typeof setTimeout> | null = null
 let _onResizeTransitionEnd: ((e: TransitionEvent) => void) | null = null
+function playIncomingMessageSfx() {
+  // 聊天窗正在被用户看着时不打断；切到别的标签页或收起聊天窗才提示。
+  if (!open.value || document.hidden) playGuguSfx('message')
+}
 function _markResizing() {
   resizing.value = true
   if (_resizeTimer) clearTimeout(_resizeTimer)
@@ -690,11 +701,10 @@ const chatZ = ref(nextZ())
 function raiseChat() { chatZ.value = nextZ() }
 watch(open, v => { if (v) raiseChat() })
 
-// 悬浮球层级：完全关闭时常驻在窗口带之上（99999，随时可点、可唤起聊天）；
-// 一旦聊天窗打开（不论小窗还是展开大窗口）就压到窗口之下——球固定在右下角，
-// 小窗 bottom:88px 离球顶只有 10px 空隙、大窗口更是直接铺到 bottom:12px 盖住球的位置，
-// 球若仍固定最上层会遮住窗口自己的边角。球永远不高于自己的聊天窗，靠窗口自身的关闭按钮/再点球关。
-const fabZ = computed(() => open.value ? chatZ.value - 1 : 99999)
+// 离场动画尚未结束时窗口仍缩回悬浮球，不能提前把球提到窗口前面。
+// after-leave 后才恢复常驻最高层，避免关闭瞬间球盖住窗口。
+const chatClosing = ref(false)
+const fabZ = computed(() => (open.value || chatClosing.value) ? chatZ.value - 1 : 99999)
 
 const windowStyle = computed(() => {
   if (expanded.value) {
@@ -704,8 +714,8 @@ const windowStyle = computed(() => {
   }
   return {
     top:    `${vh.value - 88 - smallH.value}px`,
-    left:   `${vw.value - 28 - SMALL_W}px`,
-    right:  '28px',
+    left:   `${vw.value - parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--floating-edge')) - SMALL_W}px`,
+    right:  'var(--floating-edge)',
     bottom: '88px',
     zIndex: chatZ.value,
   }
@@ -749,7 +759,11 @@ const notifyOrigin = computed(() => {
 watch(notifyOrigin, v => { uiStore.chatNotifyOrigin = v }, { immediate: true })
 
 async function toggleOpen() {
-  open.value = !open.value
+  if (open.value) {
+    closeChat()
+    return
+  }
+  open.value = true
   if (open.value) {
     if (!expanded.value) contentH.value = SMALL_H
     trackApi.track('chat_open').catch(() => {})
@@ -758,6 +772,12 @@ async function toggleOpen() {
     _baseScrollH = messagesEl.value?.scrollHeight || 0   // 基线 = 打开时的历史内容高度
     scrollToBottom()
   }
+}
+
+function closeChat() {
+  chatClosing.value = true
+  open.value = false
+  expanded.value = false
 }
 
 onMounted(() => {
@@ -795,69 +815,72 @@ onUnmounted(() => {
 const inputText      = ref('')
 const thinkingLabels = ref<string[]>([])   // 「思考中」候选文案（后台「状态命名」_thinking，可多个 | 分隔；空=三个点）
 const streaming      = ref(false)
-// 状态指示走「动画队列」：SSE 事件入队、逐个播放（文字打字机入场），切换太快也排队、不抢拍、不闪。
-const statusKind     = ref('')   // '' | 'text'（工具/自定义思考，打字机）| 'dots'（默认思考三点）
-const statusTyped    = ref('')   // 当前显示的文字（打字机进度；dots 时为空）
-const statusSeq      = ref(0)    // 每播一条 +1，用作 :key 让气泡重建、重放入场动画
+// 状态气泡贯穿整个生成期：工具/复查/思考只替换同一个气泡的内容，直到真实输出或中断。
+const statusKind     = ref('')   // '' | 'text'（工具/自定义思考）| 'dots'（默认思考三点）
+const statusTyped    = ref('')   // 当前显示的文字（dots 时为空）
 const isTypingText   = computed(() => streaming.value && !statusKind.value)
 const fabJumping     = ref(false)
 watch(isTypingText, v => {
   if (v) { fabJumping.value = true; setTimeout(() => { fabJumping.value = false }, 350) }
 })
 
-// ── 状态动画队列 ───────────────────────────────────────────
-const STATUS_TYPE_MS = 26    // 打字机每字间隔
-const STATUS_HOLD_MS = 160   // 打完后的最短驻留，避免一闪而过
-const STATUS_DOTS_MS = 420   // 三点状态的最短驻留
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
-let _statusQ: StatusItem[] = []
-let _statusBusy = false
-let _typeTimer: ReturnType<typeof setInterval> | null = null
+
+const STATUS_ENTER_MS = 300
+let statusShownAt = 0
+let statusSwitchTimer: ReturnType<typeof setTimeout> | null = null
+let pendingStatus: StatusItem | null = null
 
 function _thinkingItem(): StatusItem {
-  // 「思考中」：设了自定义文案就随机取一条走打字机；否则三个点
+  // 「思考中」：设了自定义文案就随机取一条；否则三个点。
   const c = thinkingLabels.value
   return c.length ? { kind: 'text', label: c[Math.floor(Math.random() * c.length)] } : { kind: 'dots' }
 }
 
-function clearStatus() {       // 立即清空并打断队列（回复开始/结束/切会话）
-  _statusQ = []
-  _statusBusy = false
-  if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }
+function cancelPendingStatus() {
+  if (statusSwitchTimer) clearTimeout(statusSwitchTimer)
+  statusSwitchTimer = null
+  pendingStatus = null
+}
+
+function applyStatus(item: StatusItem) {
+  statusKind.value = item.kind
+  statusTyped.value = item.kind === 'text' ? (item.label || '') : ''
+  statusShownAt = performance.now()
+  scrollBottom()
+}
+
+function clearStatus() {       // 仅在回复开始、生成结束或中断时收起
+  cancelPendingStatus()
+  statusShownAt = 0
   statusKind.value = ''; statusTyped.value = ''
 }
 
-function enqueueStatus(item: StatusItem) { // item: {kind:'text'|'dots'|'hide', label?}
-  _statusQ.push(item)
-  _pumpStatus()
+function setStatus(item: StatusItem) {
+  if (item.kind === 'hide') { clearStatus(); return }
+  const label = item.kind === 'text' ? (item.label || '') : ''
+  if (statusKind.value === item.kind && statusTyped.value === label) return
+
+  const remaining = STATUS_ENTER_MS - (performance.now() - statusShownAt)
+  if (!statusKind.value || remaining <= 0) {
+    cancelPendingStatus()
+    applyStatus(item)
+    return
+  }
+
+  // 气泡入场未完成时只保留最新状态，避免工具链里的短状态一闪而过。
+  pendingStatus = item
+  if (!statusSwitchTimer) {
+    statusSwitchTimer = setTimeout(() => {
+      statusSwitchTimer = null
+      const nextStatus = pendingStatus
+      pendingStatus = null
+      if (nextStatus) applyStatus(nextStatus)
+    }, remaining)
+  }
 }
 
-function _pumpStatus() {
-  if (_statusBusy) return
-  const next = _statusQ.shift()
-  if (!next) return
-  _statusBusy = true
-  _playStatus(next).then(() => { _statusBusy = false; _pumpStatus() })
-}
-
-function _playStatus(item: StatusItem) {
-  return new Promise<void>(resolve => {
-    if (item.kind === 'hide') { statusKind.value = ''; statusTyped.value = ''; resolve(); return }
-    statusSeq.value++          // 触发入场动画重放（:key 变化 → 气泡重建）
-    statusKind.value = item.kind
-    statusTyped.value = ''
-    scrollBottom()
-    if (item.kind === 'dots') { setTimeout(resolve, STATUS_DOTS_MS); return }
-    const full = item.label || ''
-    if (!full) { resolve(); return }
-    let i = 0
-    if (_typeTimer) clearInterval(_typeTimer)
-    _typeTimer = setInterval(() => {
-      statusTyped.value = full.slice(0, ++i)
-      if (i >= full.length) { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = null; setTimeout(resolve, STATUS_HOLD_MS) }
-    }, STATUS_TYPE_MS)
-  })
-}
+onUnmounted(cancelPendingStatus)
 const sessionId      = ref<number | null>(null)
 const abortCtrl      = ref<AbortController | null>(null)
 const pendingQueue   = ref<string[]>([])   // 生成中发的消息，排队等流式结束后接着发
@@ -1644,8 +1667,8 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
           // 后端新一轮开始（sanitizer 已重置），前端无需变更视觉状态
         } else if (evt.type === 'tool_call') {
           if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)  // 跳过 _preparing 占位
-          // label 已由后端解析（含「状态命名」覆盖 + 复查前缀）；入队走打字机入场，切换太快也不抢拍
-          if (live()) enqueueStatus({ kind: 'text', label: evt.label || evt.name })
+          // label 已由后端解析（含「状态命名」覆盖 + 复查前缀）；气泡常驻，仅替换文字。
+          if (live()) setStatus({ kind: 'text', label: evt.label || evt.name })
         } else if (evt.type === 'tool_done') {
           // 改动类工具一完成就即时 bump 对应资源（走已连好的对话流，不等回合末、不靠 best-effort
           // 的 events SSE）→ 文件预览 / 项目卡 / 日历当场刷新。视图是全局的，切走也该刷，故不受 live() 限制。
@@ -1654,11 +1677,12 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
             else if (_PROJECT_TOOLS.has(evt.name)) liveStore.bump('projects')
             else if (_CALENDAR_TOOLS.has(evt.name)) liveStore.bump('calendar')
           }
-          // 复查轮结束直接隐藏（回复早已显示完，别回落点点被误读为卡住）；主回复轮回到「思考中」
-          if (live()) enqueueStatus(evt.verify ? { kind: 'hide' } : _thinkingItem())
+          // 任一工具结束都回到思考态；下一轮工具调用会继续替换文字，不能让气泡闪退。
+          if (live()) setStatus(_thinkingItem())
         } else if (evt.type === 'token') {
           if (live()) {
             clearStatus()   // 真回复开始 → 打断状态队列、收起指示，让位给流式正文
+            if (aiIdx === -1) playIncomingMessageSfx()
             if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
             messages.value[aiIdx].text += evt.content
             await scrollBottom()
@@ -1666,6 +1690,7 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
         } else if (evt.type === 'file') {
           if (live()) {
             clearStatus()
+            if (aiIdx === -1) playIncomingMessageSfx()
             if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
             const m = messages.value[aiIdx]
             if (!m.files) m.files = []
@@ -1677,6 +1702,7 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
         } else if (evt.type === 'error') {
           if (live()) {
             clearStatus()
+            playGuguSfx('error')
             messages.value.push({ id: mkid(), role: 'ai', text: evt.message || evt.detail || '咕咕开小差了 😵‍💫 麻烦再说一遍好吗？', time: now() })
             aiIdx = messages.value.length - 1
             await scrollBottom()
@@ -1702,7 +1728,7 @@ async function resumeStream(id: number) {
   if (streaming.value) return            // 本地正在发/看，不重复连
   const token = localStorage.getItem('user_token') ?? ''
   abortCtrl.value = new AbortController()   // 让下次切会话能 abort 掉这条续看
-  streaming.value = true; clearStatus(); enqueueStatus(_thinkingItem())
+  streaming.value = true; clearStatus(); setStatus(_thinkingItem())
   try {
     const res = await fetch(`${BASE_URL}/agent/sessions/${id}/stream`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -1739,7 +1765,7 @@ async function send(forcedText?: string) {
   // 生成中：把这条排队，等当前流式结束后在 finally 里接着发（气泡已显示）
   if (streaming.value) { pendingQueue.value.push(text); return }
 
-  streaming.value = true; clearStatus(); enqueueStatus(_thinkingItem())
+  streaming.value = true; clearStatus(); setStatus(_thinkingItem())
   abortCtrl.value = new AbortController()
   await scrollBottom()
   const token = localStorage.getItem('user_token') ?? ''
@@ -1756,7 +1782,7 @@ async function send(forcedText?: string) {
   try {
     const res = await fetch(`${BASE_URL}/agent/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ message: text, session_id: ownerSid, attachments: atts.map(a => a.attach_id),
                              ...(greetingForSession ? { greeting: greetingForSession } : {}) }),
       signal: abortCtrl.value.signal,
@@ -1803,7 +1829,7 @@ async function send(forcedText?: string) {
 <style scoped>
 /* ── 悬浮球 ── */
 .ai-fab {
-  position: fixed; bottom: 28px; right: 28px;
+  position: fixed; bottom: var(--floating-edge); right: var(--floating-edge);
   isolation: isolate; width: 50px; height: 50px; border-radius: 50%;
   background: linear-gradient(135deg, #7b7fb2, #9590c4); border: none;
   cursor: pointer;   /* z-index 由 :style 动态(fabZ)：默认在窗口带之上，大窗口展开时压到其下，见 script */
@@ -2347,7 +2373,7 @@ async function send(forcedText?: string) {
 .thinking span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
 
-/* 状态气泡入场动画（:key 变化触发重建 → 每个状态都「冒」一下；文字本身再走打字机） */
+/* 状态气泡只在生成开始时入场，后续状态切换只更新文字。 */
 .status-pop { animation: statusPop 0.3s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
 @keyframes statusPop { from { opacity: 0; transform: translateY(7px) scale(0.96); } to { opacity: 1; transform: none; } }
 

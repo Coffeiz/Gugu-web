@@ -83,7 +83,7 @@ def _log_traj(name: str, user_id, args: dict, ok: bool, note: str, t0: float) ->
 # 这些 id 键对应的模型都是 int 主键，LLM 传成字符串会让 asyncpg 抛错。统一在 dispatch 入口转 int。
 # 注意：attach_id 是 hex 串（chat_attach 的 uuid4().hex）、user_id 是 UUID，都不在此列。
 _INT_ID_KEYS = ("project_id", "file_id", "folder_id", "parent_id",
-                "event_id", "client_id", "stage_id", "todo_id", "session_id")
+                "event_id", "client_id", "stage_id", "todo_id", "session_id", "node_id")
 
 
 def _to_int_id(v):

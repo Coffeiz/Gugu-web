@@ -68,6 +68,7 @@ export const useConfigStore = defineStore('config', () => {
     },
     embedding: {
       enabled: false,
+      multimodal: false,
       provider: '',
       api_key: '',
       base_url: '',

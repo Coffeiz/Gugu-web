@@ -8,7 +8,9 @@ import { useEventModalStore } from '@/stores/eventModal'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
-import { filesApi, agentApi } from '@/services/api'
+import { filesApi, agentApi, eventsApi } from '@/services/api'
+
+export type MindRefState = 'available' | 'missing' | 'unknown'
 
 export function useMindRefActions() {
   const projectStore = useProjectStore()
@@ -16,6 +18,42 @@ export function useMindRefActions() {
   const filesCache = useFilesCacheStore()
   const previewStore = usePreviewStore()
   const uiStore = useUiStore()
+
+  function isNotFound(error: unknown) {
+    return (error as { status?: number }).status === 404
+  }
+
+  /** 本体删除后保留标题快照；网络异常不能误标成「已删除」。 */
+  async function resolveMindRef(refType: string, refId: number): Promise<MindRefState> {
+    if (refType === 'project') {
+      if (!projectStore.projects.length && !projectStore.loading) await projectStore.fetchProjects()
+      if (projectStore.loading && !projectStore.projects.length) return 'unknown'
+      if (projectStore.error) return 'unknown'
+      return projectStore.projects.some(project => project.id === refId) ? 'available' : 'missing'
+    }
+    if (refType === 'file') {
+      if (!filesCache.loaded) await filesCache.load()
+      if (!filesCache.loaded) return 'unknown'
+      return filesCache.getFile(refId) ? 'available' : 'missing'
+    }
+    if (refType === 'event') {
+      try {
+        await eventsApi.get(refId)
+        return 'available'
+      } catch (error) {
+        return isNotFound(error) ? 'missing' : 'unknown'
+      }
+    }
+    if (refType === 'conversation') {
+      try {
+        await agentApi.getMessageLocation(refId)
+        return 'available'
+      } catch (error) {
+        return isNotFound(error) ? 'missing' : 'unknown'
+      }
+    }
+    return 'unknown'
+  }
 
   async function openFile(id: number) {
     if (!filesCache.loaded) await filesCache.load()
@@ -36,12 +74,14 @@ export function useMindRefActions() {
     } catch { /* 消息已被删除/不可见：静默忽略，不弹错误打扰阅读 */ }
   }
 
-  function openMindRef(refType: string, refId: number) {
+  async function openMindRef(refType: string, refId: number) {
+    if (await resolveMindRef(refType, refId) !== 'available') return false
     if (refType === 'project') projectStore.openModal({ id: refId })
-    else if (refType === 'file') openFile(refId)
+    else if (refType === 'file') await openFile(refId)
     else if (refType === 'event') eventModalStore.openModal(refId)
-    else if (refType === 'conversation') openConversationMessage(refId)
+    else if (refType === 'conversation') await openConversationMessage(refId)
+    return true
   }
 
-  return { openMindRef }
+  return { openMindRef, resolveMindRef }
 }

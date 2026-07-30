@@ -3,11 +3,13 @@ Pydantic v2 schemas — alias_generator=to_camel 让 API 返回 camelCase
 """
 
 from __future__ import annotations
-import re
-from datetime import datetime
-from typing import Optional, Any
+from datetime import date, datetime
+from typing import Any, Literal, Optional
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
 _INVALID_NAME_RE = re.compile(r'[\\/:*?"<>|]')
@@ -120,36 +122,95 @@ def _validate_name(v: str) -> str:
     return v
 
 
+def _validate_project_date(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return v
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+        raise ValueError("日期必须是 YYYY-MM-DD 格式")
+    try:
+        date.fromisoformat(v)
+    except ValueError as exc:
+        raise ValueError("日期必须是有效日期") from exc
+    return v
+
+
+def _validate_project_stages(stages: Optional[list[dict]]) -> Optional[list[dict]]:
+    if stages is None:
+        return stages
+    keys = set()
+    todo_ids = set()
+    for stage in stages:
+        key = stage.get("key")
+        label = stage.get("label")
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("阶段 key 不能为空")
+        if key in keys:
+            raise ValueError("阶段 key 不能重复")
+        keys.add(key)
+        if not isinstance(label, str) or not label.strip():
+            raise ValueError("阶段名称不能为空")
+        todos = stage.get("todos", [])
+        if not isinstance(todos, list):
+            raise ValueError("阶段 todos 必须是列表")
+        for todo in todos:
+            if not isinstance(todo, dict):
+                raise ValueError("待办必须是对象")
+            todo_id = todo.get("id")
+            if not isinstance(todo_id, str) or not todo_id.strip():
+                raise ValueError("待办 id 不能为空")
+            if todo_id in todo_ids:
+                raise ValueError("待办 id 不能重复")
+            todo_ids.add(todo_id)
+            if not isinstance(todo.get("text", ""), str):
+                raise ValueError("待办内容必须是文本")
+            if "done" in todo and not isinstance(todo["done"], bool):
+                raise ValueError("待办完成状态必须是布尔值")
+    return stages
+
+
 class ProjectCreate(CamelModel):
     name: str
     client: Optional[str] = None
-    status: str = "pending"
+    status: Literal["pending", "active", "done"] = "pending"
     start_date: Optional[str] = None
     deadline: Optional[str] = None
     color: str = "linear-gradient(135deg,#7b7fb2,#c4afc8)"
     stages: list[dict] = []
     current_stage: Optional[str] = None
-    progress: int = 0
+    progress: int = Field(0, ge=0, le=100)
 
     @field_validator("name")
     @classmethod
     def name_valid(cls, v: str) -> str:
         return _validate_name(v)
 
+    _start_date_valid = field_validator("start_date")(_validate_project_date)
+    _deadline_valid = field_validator("deadline")(_validate_project_date)
+    _stages_valid = field_validator("stages")(_validate_project_stages)
+
+    @model_validator(mode="after")
+    def fields_consistent(self):
+        if self.start_date and self.deadline and self.start_date > self.deadline:
+            raise ValueError("开始日期不能晚于截止日期")
+        stage_keys = {stage["key"] for stage in self.stages}
+        if self.current_stage is not None and self.current_stage not in stage_keys:
+            raise ValueError("当前阶段必须属于阶段列表")
+        return self
+
 
 class ProjectUpdate(CamelModel):
     name: Optional[str] = None
     client: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[Literal["pending", "active", "done"]] = None
     start_date: Optional[str] = None
     deadline: Optional[str] = None
     color: Optional[str] = None
-    progress: Optional[int] = None
+    progress: Optional[int] = Field(None, ge=0, le=100)
     stages: Optional[list[dict]] = None
     current_stage: Optional[str] = None
     archived: Optional[bool] = None
-    priority: Optional[str] = None
-    version: Optional[int] = None
+    priority: Optional[Literal["high", "medium", "low"]] = None
+    version: Optional[int] = Field(None, ge=1)
 
     @field_validator("name")
     @classmethod
@@ -157,6 +218,19 @@ class ProjectUpdate(CamelModel):
         if v is None:
             return v
         return _validate_name(v)
+
+    _start_date_valid = field_validator("start_date")(_validate_project_date)
+    _deadline_valid = field_validator("deadline")(_validate_project_date)
+    _stages_valid = field_validator("stages")(_validate_project_stages)
+
+    @model_validator(mode="after")
+    def fields_consistent(self):
+        if self.start_date and self.deadline and self.start_date > self.deadline:
+            raise ValueError("开始日期不能晚于截止日期")
+        if self.stages is not None and self.current_stage is not None:
+            if self.current_stage not in {stage["key"] for stage in self.stages}:
+                raise ValueError("当前阶段必须属于阶段列表")
+        return self
 
 
 class ProjectResponse(CamelModel):
@@ -243,6 +317,7 @@ class FolderCreate(CamelModel):
 
 class FolderRename(CamelModel):
     name: str
+    version: int   # 乐观锁：必传，服务端走原子 UPDATE（WHERE version=…），版本对不上 409（P2.6）
 
     @field_validator("name")
     @classmethod
@@ -252,6 +327,13 @@ class FolderRename(CamelModel):
 
 class FolderMove(CamelModel):
     parent_id: Optional[int] = None
+    project_id: Optional[int] = None
+    version: int   # 乐观锁：必传，同 FolderRename（P2.6）
+
+
+class FolderCopy(CamelModel):
+    parent_id: Optional[int] = None
+    project_id: Optional[int] = None
 
 
 class FolderResponse(CamelModel):
@@ -260,6 +342,18 @@ class FolderResponse(CamelModel):
     parent_id:  Optional[int] = None
     name: str
     file_count: int = 0
+    version: int = 1
+
+
+class TrashFolderResponse(FolderResponse):
+    """回收站里的顶层已删文件夹（P2.3）：deleted_at 供前端显示删除时间/30 天过期倒计时。"""
+    deleted_at: str
+
+
+class TrashFolderContentsResponse(CamelModel):
+    """回收站顶层文件夹的直属内容，只读查看，不改变整体恢复单元语义。"""
+    folders: list[TrashFolderResponse] = Field(default_factory=list)
+    files: list[FileResponse] = Field(default_factory=list)
 
 
 # ── File Tree ─────────────────────────────────────────────────────────────────
@@ -310,6 +404,10 @@ class MindNodeResponse(CamelModel):
     deleted_at: Optional[datetime] = None
     ref_type: Optional[str] = None
     ref_id: Optional[int] = None
+    # 项目引用创建时缓存的极简快照（client/status/startDate/deadline/doneAt）：项目被删后
+    # ProjectRefCard 拿不到活的 Project 记录，靠这份快照仍能显示客户/日期，不止显示名字和颜色。
+    # 只在创建那一刻拍照，之后项目改这些字段不会回填——跟 title/color 快照同一套语义。
+    ref_snapshot: Optional[dict] = None
 
 
 class MindRefSuggestItem(CamelModel):
@@ -380,6 +478,11 @@ class MindCanvasItemUpdate(CamelModel):
     data: Optional[dict] = None
 
 
+class MindCanvasItemBringToFront(CamelModel):
+    x: float
+    y: float
+
+
 class MindCanvasItemResponse(CamelModel):
     id: int
     canvas_id: int
@@ -391,6 +494,8 @@ class MindCanvasItemResponse(CamelModel):
     z: int
     collapsed: bool
     data: dict = Field(default_factory=dict)
+    # 引用对象的首屏展示快照；活动卡用它避免刷新后逐项请求详情导致二次撑高。
+    ref_data: Optional[dict] = None
     node: MindNodeResponse
     created_at: datetime
     updated_at: datetime
@@ -481,6 +586,7 @@ class PreferencesResponse(CamelModel):
     replyTone:         Optional[str] = None   # natural / formal / lively
     replyLength:       Optional[str] = None   # medium / short / detailed
     pmStagesExpanded:  bool = False            # 项目编辑卡：阶段区展开(50/50) 版面记忆
+    defaultView:       str = "projects"       # 应用打开时的默认入口
 
 class PreferencesUpdate(CamelModel):
     lastStages:        Optional[list[str]]  = None
@@ -488,3 +594,4 @@ class PreferencesUpdate(CamelModel):
     replyTone:         Optional[str] = None
     replyLength:       Optional[str] = None
     pmStagesExpanded:  Optional[bool] = None
+    defaultView:       Optional[str] = None

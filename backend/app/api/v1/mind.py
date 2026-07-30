@@ -7,8 +7,7 @@
 - 更新便签用 `update_node_atomic`（原子 UPDATE + rowcount），不是「先读再比再写」；
 - 正文一变就得重算 `content_plain` / 清 `indexed_at`，这层由 `update_node_atomic` 兜底。
 """
-from datetime import datetime
-from typing import Optional
+from typing import Dict, List, Optional
 
 import json
 
@@ -17,7 +16,10 @@ from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.search import run_global_search, _snippet
-from app.core.mind import content_hash, to_plain_text, update_node_atomic, upsert_relation
+from app.core.mind import (
+    content_hash, create_mind_note, soft_delete_mind_note, to_plain_text, update_mind_note,
+    update_node_atomic, upsert_relation,
+)
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
 from app.core.tz import now_utc
@@ -27,7 +29,8 @@ from app.models import (
     MindMap, MindNode, MindRelation, Project, User,
 )
 from app.schemas import (
-    MindCanvasCreate, MindCanvasItemCreate, MindCanvasItemResponse, MindCanvasItemUpdate,
+    MindCanvasCreate, MindCanvasItemBringToFront, MindCanvasItemCreate, MindCanvasItemResponse,
+    MindCanvasItemUpdate,
     MindCanvasNoteCreate, MindCanvasNoteUpdate,
     MindCanvasResponse, MindCanvasUpdate, MindNodeResponse, MindNoteCreate, MindNoteUpdate,
     MindRefNodeCreate, MindRefSuggestItem, MindRelationCreate, MindRelationResponse,
@@ -48,6 +51,7 @@ def _to_resp(n: MindNode) -> MindNodeResponse:
         captured_at=n.captured_at, version=n.version,
         created_at=n.created_at, updated_at=n.updated_at,
         deleted_at=n.deleted_at, ref_type=n.ref_type, ref_id=n.ref_id,
+        ref_snapshot=n.ref_snapshot,
     )
 
 
@@ -86,23 +90,13 @@ async def create_note(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    captured_at = body.captured_at or now_utc()
-    # 记录描述的是已经发生的想法；补录可以回填过去，但不能把记录写到未来日期。
-    if captured_at.date() > datetime.now().date():
-        raise HTTPException(422, "不能创建未来日期的记录")
-    plain = to_plain_text(body.content_md)
-    n = MindNode(
-        user_id=current_user.id,
-        kind="note",
-        title=body.title,
-        color=body.color,
-        content_md=body.content_md or "",
-        content_plain=plain,
-        indexed_hash=content_hash(plain),
-        indexed_at=None,                       # null = 待索引
-        captured_at=captured_at,
-    )
-    db.add(n)
+    try:
+        n = await create_mind_note(
+            db, current_user.id, content_md=body.content_md or "", title=body.title,
+            color=body.color, captured_at=body.captured_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     await db.commit()
     await db.refresh(n)
     return _to_resp(n)
@@ -119,14 +113,14 @@ async def update_note(
 
     data = body.model_dump(exclude_unset=True, by_alias=False)
     client_version = data.pop("version")
-    if "content_md" in data:
-        # content_plain 由服务端从正文推导，不接受客户端直接传，免得两者对不上
-        data["content_plain"] = to_plain_text(data["content_md"])
     if not data:
         return _to_resp(n)
 
     # 原子 UPDATE：比较写在 WHERE 里，并发下不会互相覆盖；顺带清 indexed_at / 刷 indexed_hash
-    ok = await update_node_atomic(db, nid, current_user.id, client_version, data)
+    try:
+        ok = await update_mind_note(db, nid, current_user.id, client_version, data)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     if not ok:
         await db.rollback()
         raise HTTPException(409, "便签已被其他端修改，请刷新后重试")
@@ -144,7 +138,9 @@ async def delete_note(
     """软删=墓碑：只写 deleted_at。节点行、它的画布项和关系全留着，图谱不静默断裂。
     真正清掉要等用户明确「清理」（那时才 DELETE 行，靠 CASCADE 连带清）。"""
     n = await _get_live_note(db, nid, current_user.id)
-    n.deleted_at = now_utc()
+    if not await soft_delete_mind_note(db, nid, current_user.id, n.version):
+        await db.rollback()
+        raise HTTPException(409, "便签已被其他端修改，请刷新后重试")
     await db.commit()
 
 
@@ -218,11 +214,44 @@ def _relation_resp(rel: MindRelation) -> MindRelationResponse:
     )
 
 
-def _item_resp(item: MindCanvasItem, node: MindNode) -> MindCanvasItemResponse:
+def _event_ref_data(event: CalendarEvent) -> dict:
+    """画布活动卡首屏所需的只读字段，避免前端逐卡再请求一次活动详情。"""
+    return {
+        "date": event.date,
+        "time": event.time,
+        "endTime": event.end_time,
+        "description": event.description,
+    }
+
+
+async def _ref_data_by_node_id(
+    db: AsyncSession, nodes: List[MindNode], user_id,
+) -> Dict[int, dict]:
+    """批量补充引用节点的展示快照；当前只有活动卡有首屏额外字段。"""
+    event_ids = [node.ref_id for node in nodes if node.ref_type == "event" and node.ref_id is not None]
+    if not event_ids:
+        return {}
+    events = (await db.execute(
+        select(CalendarEvent).where(
+            CalendarEvent.user_id == user_id,
+            CalendarEvent.id.in_(event_ids),
+        )
+    )).scalars().all()
+    data_by_event_id = {event.id: _event_ref_data(event) for event in events}
+    return {
+        node.id: data_by_event_id[node.ref_id]
+        for node in nodes
+        if node.ref_type == "event" and node.ref_id in data_by_event_id
+    }
+
+
+def _item_resp(
+    item: MindCanvasItem, node: MindNode, ref_data: Optional[dict] = None,
+) -> MindCanvasItemResponse:
     return MindCanvasItemResponse(
         id=item.id, canvas_id=item.canvas_id, node_id=item.node_id,
         x=item.x, y=item.y, w=item.w, h=item.h, z=item.z, collapsed=item.collapsed,
-        data=_load_data(item.data_json), node=_to_resp(node),
+        data=_load_data(item.data_json), node=_to_resp(node), ref_data=ref_data,
         created_at=item.created_at, updated_at=item.updated_at,
     )
 
@@ -312,7 +341,8 @@ async def list_canvas_items(
         .where(MindCanvasItem.canvas_id == cid, MindCanvasItem.user_id == current_user.id)
         .order_by(MindCanvasItem.z, MindCanvasItem.id)
     )).all()
-    return [_item_resp(item, node) for item, node in rows]
+    ref_data_by_node_id = await _ref_data_by_node_id(db, [node for _, node in rows], current_user.id)
+    return [_item_resp(item, node, ref_data_by_node_id.get(node.id)) for item, node in rows]
 
 
 @router.post("/canvases/{cid}/items", response_model=MindCanvasItemResponse, status_code=201)
@@ -331,7 +361,8 @@ async def add_canvas_item(
         MindCanvasItem.canvas_id == cid, MindCanvasItem.node_id == node.id,
     ))
     if existing is not None:
-        return _item_resp(existing, node)
+        ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
+        return _item_resp(existing, node, ref_data)
 
     item = MindCanvasItem(
         user_id=current_user.id, canvas_id=cid, node_id=node.id,
@@ -341,7 +372,8 @@ async def add_canvas_item(
     db.add(item)
     await db.commit()
     await db.refresh(item)
-    return _item_resp(item, node)
+    ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
+    return _item_resp(item, node, ref_data)
 
 
 @router.post("/canvases/{cid}/notes", response_model=MindCanvasItemResponse, status_code=201)
@@ -396,6 +428,39 @@ async def update_canvas_note(
     return _to_resp(node)
 
 
+@router.post("/canvases/{cid}/items/{iid}/bring-to-front", response_model=MindCanvasItemResponse)
+async def bring_canvas_item_to_front(
+    cid: int,
+    iid: int,
+    body: MindCanvasItemBringToFront,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """在一个事务内置顶卡片，避免前端逐张更新 z 导致层级顺序被并发请求打乱。"""
+    await _get_canvas(db, cid, current_user.id)
+    rows = (await db.execute(
+        select(MindCanvasItem, MindNode)
+        .join(MindNode, MindNode.id == MindCanvasItem.node_id)
+        .where(MindCanvasItem.canvas_id == cid, MindCanvasItem.user_id == current_user.id)
+        .order_by(MindCanvasItem.z, MindCanvasItem.id)
+    )).all()
+    target = next(((item, node) for item, node in rows if item.id == iid), None)
+    if target is None:
+        raise HTTPException(404, "画布贴纸不存在")
+
+    ordered = [(item, node) for item, node in rows if item.id != iid]
+    ordered.append(target)
+    for index, (item, _) in enumerate(ordered, start=1):
+        item.z = index * 1000
+    target_item, target_node = target
+    target_item.x = body.x
+    target_item.y = body.y
+    await db.commit()
+    await db.refresh(target_item)
+    ref_data = (await _ref_data_by_node_id(db, [target_node], current_user.id)).get(target_node.id)
+    return _item_resp(target_item, target_node, ref_data)
+
+
 @router.patch("/canvases/{cid}/items/{iid}", response_model=MindCanvasItemResponse)
 async def update_canvas_item(
     cid: int,
@@ -419,7 +484,8 @@ async def update_canvas_item(
         setattr(item, key, value)
     await db.commit()
     await db.refresh(item)
-    return _item_resp(item, node)
+    ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
+    return _item_resp(item, node, ref_data)
 
 
 @router.delete("/canvases/{cid}/items/{iid}", status_code=204)
@@ -518,9 +584,34 @@ async def create_ref_node(
         MindNode.ref_id == body.ref_id,
     ))
     if node is None:
+        # 三种引用各缓存一份「够渲染删除态快照」的极简数据（同一份「title 快照降级墓碑」
+        # 思路，见 MindNode 类注释）——被引用对象删除后，画布卡片拿不到活的记录，没有这份
+        # 缓存就只能显示一张信息全丢光的灰卡。只在创建这一刻拍照，之后原对象改这些字段
+        # 不会回填；对象还活着时，各卡片优先用实时数据（ProjectCardBody 走 projectStore、
+        # 活动卡走 _event_ref_data 实时查表），只有确认对象已删除才回退到这份快照。
+        # - project：client/status/startDate/deadline/doneAt，够画客户行+日期区，不收
+        #   stages/fileCount（数据量大、变化频繁，被删的项目也不需要还原进度条）。
+        # - file：ext，够画文件类型角标/图标（FileCard 的 .fc-ext-badge 只靠这一个字段）。
+        # - event：date/time/endTime，够画日期区（跟 _event_ref_data 缓存的字段一致，
+        #   活动没删时优先用后者的实时查询结果，两边字段对齐方便前端统一取用）。
+        ref_snapshot = None
+        if body.ref_type == "project":
+            ref_snapshot = {
+                "client": entity.client,
+                "status": entity.status,
+                "startDate": entity.start_date,
+                "deadline": entity.deadline,
+                "doneAt": entity.done_at.isoformat() if entity.done_at else None,
+            }
+        elif body.ref_type == "file":
+            ref_snapshot = {"ext": entity.ext}
+        elif body.ref_type == "event":
+            ref_snapshot = {"date": entity.date, "time": entity.time, "endTime": entity.end_time}
         node = MindNode(
             user_id=current_user.id, kind="ref", ref_type=body.ref_type, ref_id=body.ref_id,
             title=getattr(entity, label_attr), content_md="", content_plain="",
+            color=getattr(entity, "color", None) if body.ref_type == "project" else None,
+            ref_snapshot=ref_snapshot,
         )
         db.add(node)
         await db.commit()

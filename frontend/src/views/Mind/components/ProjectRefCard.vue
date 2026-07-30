@@ -11,69 +11,36 @@
     :class="{ connecting, 'connection-target': !!connectionTargetSide }"
     :style="cardStyle"
     :data-node-id="item.nodeId"
+    :data-canvas-item-id="item.id"
     @pointerdown.stop="onPointerDown"
+    @physics-landing-regrab="onLandingRegrab"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
-    <div class="card-body">
-      <div class="proj-name" :style="{ color: nameColor }">{{ project.name }}</div>
-      <div class="proj-meta">
-        <span class="proj-client" :class="{ empty: !project.client }">
-          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-            <circle cx="8" cy="6" r="2.5"/><path d="M2 14c0-3.3 2.7-5 6-5s6 1.7 6 5"/>
-          </svg>
-          {{ project.client }}
-        </span>
-        <!-- 阶段名只读展示，不像看板卡那样点开待办弹层——画布上不需要这层编辑交互。 -->
-        <span class="proj-stage" :title="currentStageLabel">
-          <span class="ps-label">{{ currentStageLabel || '阶段' }}</span>
-          <span v-if="curTodoTotal" class="ps-count">{{ curDoneCount }}/{{ curTodoTotal }}</span>
-        </span>
-      </div>
-      <div class="card-footer">
-        <div class="date-range">
-          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-            <rect x="1.5" y="2.5" width="13" height="12" rx="2"/>
-            <path d="M5 1v3M11 1v3M1.5 6.5h13"/>
-          </svg>
-          <template v-if="project.status === 'done'">
-            <span class="done-label"><PhCheck :size="9" weight="bold" /> 完成</span>
-            <span v-if="project.doneAt" class="deadline">{{ fmtDate(project.doneAt.slice(0, 10)) }}</span>
-          </template>
-          <template v-else>
-            <span v-if="project.startDate" class="date-start">{{ fmtDate(project.startDate) }}</span>
-            <span v-if="project.startDate && project.deadline" class="date-sep">→</span>
-            <span class="deadline" :class="{ urgent: isUrgent }">{{ deadlineLabel }}</span>
-          </template>
-        </div>
-        <div class="footer-right">
-          <span v-if="project.fileCount" class="file-badge">
-            <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M2 1.5h5l2.5 2.5V10a.5.5 0 01-.5.5h-7A.5.5 0 011.5 10V2a.5.5 0 01.5-.5z"/>
-              <path d="M7 1.5V4H9.5"/>
-            </svg>
-            {{ project.fileCount }}
-          </span>
-          <span class="progress-num">{{ stageProgress }}%</span>
-        </div>
-      </div>
-      <div class="seg-bar-wrap">
-        <SegBar :project="project" />
-      </div>
-    </div>
+    <ProjectCardBody :project="project" />
 
     <CardActions :hovering="isHovering">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </CardActions>
     <CardConnDot
-      :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
+      :node-id="props.item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
       @drag-start="(e, side) => emit('connectDragStart', e, side)"
     />
   </div>
-  <div v-else ref="missingRef" class="pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" @pointerdown.stop="onPointerDown"
+  <div v-else ref="missingRef" class="pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" :data-canvas-item-id="item.id" @pointerdown.stop="onPointerDown"
+    @physics-landing-regrab="onLandingRegrab"
     @mouseenter="onEnter" @mouseleave="onLeave">
     <span class="pr-kind">项目</span>
-    <div class="pr-name">{{ item.node.title || '未命名项目' }}</div>
+    <div class="pr-name" :style="{ color: snapshotNameColor }">{{ item.node.title || '未命名项目' }}</div>
+    <!-- 客户/日期跟真实项目卡（ProjectCardBody 的 .proj-meta/.card-footer）同款字号/间距，
+         数据来自创建引用时缓存的 ref_snapshot——项目被删只丢阶段/文件数这类高频变化的信息，
+         客户和日期这种"当时是什么样"的快照还留着。没缓存到的字段各自不渲染，不留空行。 -->
+    <div v-if="snapshot?.client" class="pr-client">{{ snapshot.client }}</div>
+    <div v-if="snapshot?.startDate || snapshot?.deadline" class="pr-dates">
+      <span v-if="snapshot.startDate" class="pr-date-start">{{ fmtDate(snapshot.startDate) }}</span>
+      <span v-if="snapshot.startDate && snapshot.deadline" class="pr-date-sep">→</span>
+      <span v-if="snapshot.deadline" class="pr-deadline" :class="{ urgent: snapshotIsUrgent }">{{ snapshotDeadlineLabel }}</span>
+    </div>
     <!-- projectStore 还在拉取（DefaultLayout.vue 进 app 就发起，画布常是直接落地/刷新页面
          进来的入口，这次请求这时多半还没回来）跟"项目真的被删了"是两回事，但两者都会让
          project 算出来是 null、都会落进这条 v-else 分支——之前不分这两种情况，一律显示
@@ -84,7 +51,7 @@
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </CardActions>
     <CardConnDot
-      :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
+      :node-id="props.item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
       @drag-start="(e, side) => emit('connectDragStart', e, side)"
     />
   </div>
@@ -92,15 +59,16 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
-import { PhCheck, PhTrash } from '@phosphor-icons/vue'
+import { PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvasItem } from '@/services/api'
-import SegBar from '@/components/common/SegBar.vue'
+import type { Project } from '@/types/project'
 import { useCardDrag } from '@/composables/useCardDrag'
 import { itemSize } from '@/composables/useMindCanvas'
-import { useProjectStore } from '@/stores/projects'
 import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
+import { useProjectStore } from '@/stores/projects'
 import CardActions from './CardActions.vue'
 import CardConnDot from './CardConnDot.vue'
+import ProjectCardBody from './ProjectCardBody.vue'
 
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },
@@ -111,6 +79,7 @@ const props = defineProps({
 })
 const emit = defineEmits<{
   (e: 'remove', item: MindCanvasItem): void
+  (e: 'returnToDrawer', item: MindCanvasItem): void
   (e: 'dragging', item: MindCanvasItem, x: number, y: number): void
   (e: 'landing', item: MindCanvasItem, x: number, y: number): void
   (e: 'landingDone', item: MindCanvasItem): void
@@ -131,12 +100,20 @@ const projectStore = useProjectStore()
 const project = computed(() => projectStore.projects.find(p => p.id === props.item.node.refId) || null)
 // project 为 null（已删除对象）时走 v-else 的墓碑态，useProjectCardBasics 内部按 project.value
 // 直接取字段，传一个占位对象兜底，反正这份 computed 在 project 为 null 时不会被模板用到。
-const projectForBasics = computed(() => project.value ?? { stages: [], color: null, status: 'pending' } as any)
-const { currentStageLabel, curTodoTotal, curDoneCount, stageProgress, nameColor, isUrgent, fmtDate, deadlineLabel } = useProjectCardBasics(projectForBasics)
-
 const missingStyle = computed(() => {
-  const { w, h } = itemSize(props.item)
-  return { left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, minHeight: `${h}px`, zIndex: `${props.item.z}` }
+  const { w } = itemSize(props.item)
+  // 项目被删后拿不到活的 Project 记录，靠创建引用时缓存在 node.color 上的快照保留原本配色
+  // （旧引用没有这份缓存时 color 是 null，回退到 .pr-missing 自己的默认底色）——跟正常态
+  // cardStyle 用的是同一条渐变公式，快照要看起来"项目还在"，配色算法不能各写一套。
+  const color = props.item.node.color
+  // 高度不再用 item.h（项目还活着时最后一次量到的高度，通常带着 proj-meta/card-footer/
+  // segbar 那些快照没有的内容撑出来的高度）强制 minHeight——快照展示的字段本来就比本体少，
+  // 沿用旧高度会比同样内容量的本体卡片更高，让内容自己撑出高度，跟 cardStyle（本体，同样
+  // 不设高度）保持一致。
+  return {
+    left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, zIndex: `${props.item.z}`,
+    background: color ? `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${color}` : undefined,
+  }
 })
 const cardStyle = computed(() => {
   const { w } = itemSize(props.item)
@@ -146,13 +123,31 @@ const cardStyle = computed(() => {
   }
 })
 
+// 已删除快照的客户/日期展示：复用 useProjectCardBasics 里跟真实项目卡完全相同的取色/
+// 日期文案逻辑（nameColor/deadlineLabel/isUrgent 只依赖 color/deadline/status 三个字段，
+// 不碰 stages），不在这里另抄一份格式化规则，避免两边日后各自改出不一致的日期文案。
+// 只是喂给它一个用快照拼出来的假 Project（其余字段用不到，随手填安全默认值即可）。
+const snapshot = computed(() => props.item.node.refSnapshot)
+const snapshotProject = computed(() => ({
+  color: props.item.node.color || '',
+  deadline: snapshot.value?.deadline || null,
+  status: snapshot.value?.status || 'active',
+  stages: [], currentStage: null,
+} as unknown as Project))
+const { nameColor: snapshotNameColor, isUrgent: snapshotIsUrgent, fmtDate, deadlineLabel: snapshotDeadlineLabel } = useProjectCardBasics(snapshotProject)
+
 // 项目卡高度随内容自然变化。关系线不再借持久化的 item.h 猜它多高，而是直接消费这张卡
 // 上报的实际世界尺寸，避免视图模型和内层卡体两套高度彼此拉扯。
 const cardEl = ref<HTMLElement | null>(null)
 const missingRef = ref<HTMLElement | null>(null)
 let cardResizeObserver: ResizeObserver | null = null
 function emitMeasuredSize() {
-  const card = cardEl.value
+  // observeCard() 观察的是 cardEl.value ?? missingRef.value（项目被删后本体元素不存在，
+  // 观察墓碑态自己），这里量尺寸却一直只读 cardEl.value——墓碑态下 cardEl 恒为 null，
+  // 这个函数全程直接 return，measuredSizes 里这张卡的尺寸从此再没更新过，连线的
+  // anchorFor 兜底公式用的是项目被删前最后一次量到的旧高度（通常带着 stage/segbar
+  // 撑出来的高度），比墓碑态实际矮一截的卡片高，连接点算出来的位置就比真实圆点偏低。
+  const card = cardEl.value ?? missingRef.value
   if (!card || !card.isConnected) return
   const rect = card.getBoundingClientRect()
   if (rect.width < 10 || rect.height < 10) return
@@ -161,21 +156,25 @@ function emitMeasuredSize() {
 }
 function observeCard() {
   cardResizeObserver?.disconnect()
-  const card = cardEl.value
+  const card = cardEl.value ?? missingRef.value
   if (!card) return
   cardResizeObserver = new ResizeObserver(emitMeasuredSize)
   cardResizeObserver.observe(card)
   emitMeasuredSize()
 }
 onMounted(() => {
-  nextTick(observeCard)
+  // 父层在同一轮更新后就会向这张临时卡移交拖拽；这里不能再多包一层 nextTick，
+  // 否则父层已经能查到 DOM、但启动器尚未注册，首次从抽屉拖出会被误判为“未加载”。
+  observeCard()
 })
 watch(project, () => nextTick(observeCard))
 watch(() => props.scale, () => nextTick(emitMeasuredSize))
-onBeforeUnmount(() => cardResizeObserver?.disconnect())
+onBeforeUnmount(() => {
+  cardResizeObserver?.disconnect()
+})
 
 // 项目和文件贴纸共用同一套物理入口、真实根节点和坐标回调。
-const { onPointerDown } = useCardDrag({
+const { onPointerDown, startLandingRegrab } = useCardDrag({
   screenToWorld: props.screenToWorld,
   contentScale: () => props.scale,
   getDragEl: () => cardEl.value ?? missingRef.value,
@@ -191,7 +190,45 @@ const { onPointerDown } = useCardDrag({
   onDropAt: (worldX, worldY) => {
     emit('moved', props.item, worldX, worldY)
   },
+  resolveAbsorbTarget: pointer => {
+    // 项目已被删除（墓碑态，project 为 null）时，抽屉里压根没有这个项目对应的卡片可以
+    // 接收——projectStore.projects 里根本没有这一条，resolveAbsorbLandingTarget 永远找
+    // 不到目标，轮询超时后卡在半途（曾经复现过"拖进抽屉卡住"）。这类卡片不允许吸入抽屉，
+    // 落在抽屉区域也当成普通画布移动处理。
+    if (!project.value) return null
+    // 物理克隆与画布分属不同层叠上下文，elementFromPoint 在抽屉上方时可能命中画布层，
+    // 即使指针几何位置已经在抽屉内。抽屉本身是唯一有效投放区，按它的可见矩形判定更稳定。
+    const drawer = document.querySelector<HTMLElement>('[data-project-drawer-dropzone]')
+    if (!drawer) return null
+    const rect = drawer.getBoundingClientRect()
+    return pointer.x >= rect.left && pointer.x <= rect.right && pointer.y >= rect.top && pointer.y <= rect.bottom
+      ? drawer
+      : null
+  },
+  resolveAbsorbLandingTarget: () => {
+    const projectId = props.item.node.refId
+    return projectId == null
+      ? null
+      : document.querySelector<HTMLElement>(`.drawer-project-card[data-project-id="${projectId}"]`)
+  },
+  absorbShrink: false,
+  // returnCanvasItemToDrawer 是接口请求，真实网络延迟经常超过 usePhysicsDrag.ts 默认的
+  // 300ms 轮询上限——超时就找不到刚挂载的那张具体抽屉卡，只能退化用命中的抽屉容器当
+  // 落点，飞行/揭示都对不上真实卡片位置。放宽到 1500ms，与抽屉→画布方向
+  // landingTargetWaitMs 的量级保持一致。
+  absorbLandingWaitMs: 1500,
+  // 拖回抽屉的落地飞行（clone2）中途被重新抓起时，把手势转手给落点的抽屉卡自己接力，
+  // 而不是拿这次吸入请求的 opts（画布卡视角的 resolveAbsorbTarget/resolveLandingTarget
+  // 等）硬套在抽屉卡身上继续拖——不接的话转手事件落进没人听的地方，抓起来之后就没法
+  // 再放回画布。ProjectDrawerCard.vue 那边接了 physics-landing-regrab 事件才能接力。
+  delegateLandingRegrab: true,
+  onAbsorb: () => emit('returnToDrawer', props.item),
 })
+function onLandingRegrab(event: Event) {
+  const handoff = event as CustomEvent<{ event: PointerEvent; initialRect: DOMRect }>
+  startLandingRegrab(handoff.detail.event, handoff.detail.initialRect)
+  event.preventDefault()
+}
 function onOpen() {
   emit('open', props.item)
 }
@@ -212,7 +249,9 @@ function onOpen() {
    "正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明。 */
 .pr-card, .pr-missing {
   position: absolute; box-sizing: border-box; user-select: none; cursor: pointer;
-  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  border-radius: 14px;
+  corner-shape: round;
   border: 1px solid rgba(255,255,255,0.72);
   box-shadow: 0 2px 8px rgba(80,90,110,0.07);
   overflow: visible;
@@ -231,55 +270,29 @@ function onOpen() {
    本来就单独有一条这个），这里单独补一份。 */
 .pr-card:active:has(.seg-bar-wrap:active) { transform: none; opacity: 1; }
 
-.card-body { padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.proj-name {
-  font-size: 13px; font-weight: 500; color: var(--text-primary);
-  line-height: 1.35; overflow: hidden;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-}
-.proj-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.proj-client {
-  display: flex; align-items: center; gap: 4px;
-  font-size: 11px; line-height: 1.15; color: var(--text-secondary);
-  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1;
-}
-.proj-client svg { opacity: 0.85; }
-.proj-client.empty { opacity: 0.75; }
-.proj-stage {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 10px; line-height: 1.15; color: var(--text-secondary);
-  white-space: nowrap; flex-shrink: 0; opacity: 0.75;
-}
-.ps-label { overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
-.ps-count { font-size: 9px; line-height: 1.15; opacity: 0.8; font-variant-numeric: tabular-nums; }
-
-.card-footer { display: flex; align-items: center; justify-content: space-between; }
-.date-range { display: flex; align-items: center; gap: 4px; font-size: 11px; line-height: 1.15; color: var(--text-secondary); min-width: 0; overflow: hidden; }
-.date-start { opacity: 0.65; white-space: nowrap; }
-.date-sep { opacity: 0.35; font-size: 9px; }
-.deadline { white-space: nowrap; }
-.deadline.urgent { color: var(--color-warning); font-weight: 600; }
-.done-label { white-space: nowrap; font-size: 10px; font-weight: 700; color: #3a8870; background: rgba(90,158,136,0.12); box-shadow: inset 0 0 0 1px rgba(90,158,136,0.35); border-radius: 20px; padding: 0 6px; display: inline-flex; align-items: center; gap: 2px; line-height: 1.15; }
-.footer-right { display: flex; align-items: center; gap: 5px; line-height: 1.15; }
-.file-badge { display: flex; align-items: center; gap: 3px; font-size: 10px; line-height: 1.15; font-weight: 600; color: var(--text-secondary); background: rgba(0,0,0,0.06); border-radius: 10px; padding: 1px 6px; }
-.proj-client > svg,
-.date-range > svg,
-.done-label > svg,
-.file-badge > svg {
-  display: block;
-  flex: 0 0 auto;
-  transform: translateY(-0.35px);
-}
-.progress-num { font-size: 10px; line-height: 1.15; color: var(--text-secondary); }
-.seg-bar-wrap { position: relative; }
-
 .pr-missing {
-  height: 100%; padding: 13px 13px 11px;
-  background: rgba(255,255,255,0.5);
+  padding: 13px 13px 11px;
+  background: rgba(255,255,255,0.5);   /* 没有缓存颜色的旧引用兜底；有颜色时被行内 style 盖掉 */
   display: flex; flex-direction: column; gap: 8px;
+  /* 不设 height：.pr-card（本体）就没有任何高度声明，靠 flex 子内容自然撑开。这里原来
+     有一条 height:100%，父级（画布世界层）给不出一个确定的高度基准，实际处于「有效高度
+     不确定」的悬空状态——一直是靠内联 minHeight（旧引用测量过的高度）兜底撑住才没露馅；
+     minHeight 改成不再强制之后，height:100% 这条本身就有问题的规则直接暴露出来，卡片
+     整个塌成一条窄条。去掉它，交给内容自然撑开，跟 .pr-card 保持同一套高度逻辑。
+     不透明度/尺寸都跟 .pr-card 正常态一致——快照要看起来"项目还在"，不额外做变灰/变淡
+     处理，"已删除"单靠 .pr-deleted 那行文字说明就够了。 */
 }
+/* 本体没有这个标签（一眼就能从内容看出是项目卡），但快照态缺了 stage/segbar 这类底部
+   内容，整张卡显得偏空、偏矮，加一个补一点视觉分量，也顺带点出"这原本是个项目"。 */
 .pr-kind { align-self: flex-start; padding: 1px 6px; border-radius: 4px; background: rgba(123,127,178,.12); color: var(--color-primary); font-size: 10px; font-weight: 700; }
-.pr-name { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+/* 名称/客户/日期三行字号、行高跟 ProjectCardBody 的 .proj-name/.proj-client/.date-range
+   逐条对齐（含颜色变量），不是照抄数值——真实卡片改这几个样式时这里要记得跟着改。 */
+.pr-name { font-size: 13px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
+.pr-client { font-size: 11px; line-height: 1.15; color: var(--text-secondary); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pr-dates { display: flex; align-items: center; gap: 4px; font-size: 11px; line-height: 1.15; color: var(--text-secondary); }
+.pr-date-start { opacity: 0.65; white-space: nowrap; }
+.pr-date-sep { opacity: 0.35; font-size: 9px; }
+.pr-deadline.urgent { color: var(--color-warning); font-weight: 600; }
 .pr-deleted { font-size: 10.5px; color: var(--text-secondary); opacity: .7; }
 
 /* 操作按钮（.card-actions）和连接点（.conn-dot）都挪进了共用组件 CardActions.vue/

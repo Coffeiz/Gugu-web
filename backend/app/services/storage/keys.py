@@ -2,8 +2,9 @@
 
 只搬「与授权、删除无关」的 key 构建 + 冲突改名：_safe_name / _build_key / _resolve_conflict。
 files.py、trash.py、agent/tools/files.py 三处共享（各改 import 指向这里），行为逐字不变。
-授权(get_owned)、删除/回收站路径(_to_trash_key/_move_to_trash)、_find_conflict(DB 查询)
-均不在此、保持原位。
+授权(get_owned)、_find_conflict(DB 查询) 均不在此、保持原位；回收站路径
+(to_trash_key/move_file_to_trash/restore_file_storage) 已进一步搬到
+app/services/storage/trash.py（P2），files.py/trash.py/agent 三处共用一份。
 """
 import re
 
@@ -42,6 +43,35 @@ def _build_key(uid: int, space: str, display_name: str, ext: str,
     if safe_folder_path:
         return f"{uid}/个人文件/{safe_folder_path}/{fname}"
     return f"{uid}/个人文件/{fname}"
+
+
+def compose_logical_path(
+    space: str, *,
+    project_name: str = "", project_id: int = 0,
+    project_year: str = "", project_month: str = "",
+    folder_name: str = "", folder_path: str = "",
+    mind_map_title: str = "", mind_map_id: int = 0,
+) -> str:
+    """业务命名：把 space/项目/年月/文件夹 组成「可浏览逻辑路径」——**不含 uid 前缀、不含文件名**。
+
+    从 _build_key 拆出的纯函数（P0.1）：PathMirrorStrategy 只吃它的结果 `{uid}/{logical_path}/{name}.{ext}`，
+    存储层因此不必知道 project_year/mind_map_title 等业务字段。等价性由 test_key_strategy 对拍锁定。
+    """
+    safe_folder_path = (
+        "/".join(_safe_name(part) for part in folder_path.split("/") if part)
+        if folder_path else _safe_name(folder_name)
+    )
+    if space == "project":
+        proj_dir = f"{_safe_name(project_name)} #{project_id}"
+        date_path = f"{project_year}/{project_month}/" if project_year and project_month else ""
+        base = f"项目文件/{date_path}{proj_dir}"
+        return f"{base}/{safe_folder_path}" if safe_folder_path else base
+    if space == "mind":
+        return f"思维/{_safe_name(mind_map_title)} #{mind_map_id}"
+    if space == "asset":
+        return "素材板"
+    # personal
+    return f"个人文件/{safe_folder_path}" if safe_folder_path else "个人文件"
 
 
 async def _resolve_conflict(storage, base_key: str, display_name: str, ext: str) -> tuple[str, str]:

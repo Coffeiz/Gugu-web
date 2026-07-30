@@ -9,6 +9,8 @@ from app.core.security import get_current_user
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
+_DEFAULT_VIEWS = {"projects", "calendar", "files", "mind"}
+
 
 async def _get_or_create(user: User, db: AsyncSession) -> UserPreferences:
     result = await db.execute(
@@ -29,6 +31,7 @@ def _to_response(data: dict) -> PreferencesResponse:
         replyTone=data.get("reply_tone"),
         replyLength=data.get("reply_length"),
         pmStagesExpanded=data.get("pm_stages_expanded", False),
+        defaultView=data.get("default_view", "projects") if data.get("default_view", "projects") in _DEFAULT_VIEWS else "projects",
     )
 
 
@@ -66,6 +69,8 @@ async def update_preferences(
             data["reply_length"] = body.replyLength
     if body.pmStagesExpanded is not None:
         data["pm_stages_expanded"] = body.pmStagesExpanded
+    if body.defaultView is not None and body.defaultView in _DEFAULT_VIEWS:
+        data["default_view"] = body.defaultView
     prefs.data = data
     await db.commit()
     return _to_response(data)

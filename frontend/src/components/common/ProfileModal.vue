@@ -311,7 +311,12 @@
                   <span class="pm-field-name">默认视图</span>
                   <span class="pm-field-hint">打开应用时首先显示的页面</span>
                 </div>
-                <div class="pm-coming">咕了</div>
+                <div class="pm-style-group">
+                  <button class="pm-style-chip" :class="{ active: prefsStore.defaultView === 'projects' }" @click="prefsStore.saveDefaultView('projects')">项目</button>
+                  <button class="pm-style-chip" :class="{ active: prefsStore.defaultView === 'calendar' }" @click="prefsStore.saveDefaultView('calendar')">日历</button>
+                  <button class="pm-style-chip" :class="{ active: prefsStore.defaultView === 'files' }" @click="prefsStore.saveDefaultView('files')">文件库</button>
+                  <button class="pm-style-chip" :class="{ active: prefsStore.defaultView === 'mind' }" @click="prefsStore.saveDefaultView('mind')">思维</button>
+                </div>
               </div>
               <div class="pm-field-row">
                 <div class="pm-field-desc">
@@ -877,17 +882,17 @@ async function doDeleteAccount() {
    这里不用像 BaseModal 那样借 global.css——overlay 和 card 都在本组件同一个 scope 里，
    scoped 的后代选择器直接够得到，不用全局规则。 */
 .pm-confirm-enter-active {
-  transition: background-color 0.2s cubic-bezier(0.4,0,0.2,1),
-              backdrop-filter 0.2s cubic-bezier(0.4,0,0.2,1),
-              -webkit-backdrop-filter 0.2s cubic-bezier(0.4,0,0.2,1);
+  transition: background-color var(--modal-enter-duration) var(--modal-enter-easing),
+              backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing),
+              -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing);
 }
 .pm-confirm-enter-from { background-color: rgba(20,22,30,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
 .pm-confirm-enter-active .pm-confirm-box {
-  transition: backdrop-filter 0.2s cubic-bezier(0.4,0,0.2,1),
-              -webkit-backdrop-filter 0.2s cubic-bezier(0.4,0,0.2,1);
+  transition: backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing),
+              -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing);
 }
 .pm-confirm-enter-from .pm-confirm-box { backdrop-filter: blur(0px) !important; -webkit-backdrop-filter: blur(0px) !important; }
-.pm-confirm-leave-active { transition: opacity 0.2s cubic-bezier(0.4,0,1,1); }
+.pm-confirm-leave-active { transition: opacity var(--modal-leave-duration) var(--modal-leave-easing); }
 .pm-confirm-leave-to { opacity: 0; }
 
 .pm-confirm-title { font-size: 15px; font-weight: 700; color: var(--text-primary); margin: 0; }

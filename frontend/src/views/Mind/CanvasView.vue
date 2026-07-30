@@ -6,6 +6,7 @@
       :relations="store.canvasRelations"
       :relation-anchors="relationAnchors"
       @remove="removeItem"
+      @return-to-drawer="returnProjectToDrawer"
       @remove-relation="removeRelation"
       @link-nodes="linkNodes"
       @open-ref="openRef"
@@ -13,25 +14,43 @@
       @view-change="onViewChange"
     />
 
-    <CanvasSidebar :canvases="store.canvases" :active-id="activeCanvasId" @create="createCanvas" @open="openCanvas" @delete="deleteCanvas" @rename="renameCanvas" />
+    <!-- UI 与顶部胶囊一样放到 body 顶层，避免被 body 上的拖拽 clone/camGlue 层叠上下文压住。 -->
+    <Teleport to="body">
+      <CanvasSidebar
+        :canvases="store.canvases"
+        :active-id="activeCanvasId"
+        :projects="projectStore.projects"
+        :canvas-project-ids="canvasProjectIds"
+        :projects-loading="projectStore.loading"
+        :canvas-scale="canvasRef?.camera.scale ?? 1"
+        :add-project-to-canvas="addProjectAtScreen"
+        @create="createCanvas"
+        @open="openCanvas"
+        @delete="deleteCanvas"
+        @rename="renameCanvas"
+        @add-project="addProjectAtCenter"
+      />
 
-    <CanvasToolbar
-      :scale="canvasRef?.camera.scale ?? 1"
-      @create-note="createCanvasNote"
-      @add-ref="addRef"
-      @zoom="delta => canvasRef?.zoomAtCenter(delta)"
-      @reset-view="() => canvasRef?.centerView()"
-    />
+      <CanvasToolbar
+        :scale="canvasRef?.camera.scale ?? 1"
+        @create-note="createCanvasNote"
+        @add-ref="addRef"
+        @zoom="delta => canvasRef?.zoomAtCenter(delta)"
+        @reset-view="resetView"
+      />
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { MindCanvasItem, MindRefSuggestItem } from '@/services/api'
 import { useMindRefActions } from '@/composables/useMindRefActions'
+import { showAppError } from '@/composables/useAppToast'
 import type { RelationAnchorSides } from '@/composables/useMindCanvas'
 import { useMindStore } from '@/stores/mind'
+import { useProjectStore } from '@/stores/projects'
 import CanvasSidebar from './components/CanvasSidebar.vue'
 import CanvasToolbar from './components/CanvasToolbar.vue'
 import MindCanvas from './components/MindCanvas.vue'
@@ -39,12 +58,20 @@ import MindCanvas from './components/MindCanvas.vue'
 type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
 
 const store = useMindStore()
+const projectStore = useProjectStore()
 const route = useRoute()
 const router = useRouter()
 const { openMindRef } = useMindRefActions()
 
 const canvasRef = ref<InstanceType<typeof MindCanvas> | null>(null)
 const activeCanvasId = computed(() => store.activeCanvasId)
+// 数据库约束 uq_canvas_node 已保证同一项目在同一画布只会有一个展示项；抽屉只展示尚未摆入
+// 当前画布的项目，拖入成功后由 canvasItems 的响应式更新自动移出，无需另维护一份临时状态。
+const canvasProjectIds = computed(() => new Set(
+  store.canvasItems
+    .filter(item => item.node.kind === 'ref' && item.node.refType === 'project' && item.node.refId != null)
+    .map(item => item.node.refId as number),
+))
 const relationAnchors = computed<Record<string, RelationAnchorSides>>(() => {
   const data = store.canvases.find(canvas => canvas.id === activeCanvasId.value)?.data
   const value = data?.relationAnchors
@@ -61,11 +88,19 @@ const relationAnchors = computed<Record<string, RelationAnchorSides>>(() => {
 })
 
 onMounted(async () => {
-  if (!store.loaded) await store.fetchNotes()
-  if (!store.canvasesLoaded) await store.fetchCanvases()
+  // 项目抽屉会在首屏就被打开，项目数据不能等笔记/画布请求串行完成后才开始拉；否则抽屉
+  // 先按空内容横向展开、请求回来才突然长高。三份独立数据并行加载，抽屉首次展开就有稳定高度。
+  await Promise.all([
+    !store.loaded ? store.fetchNotes() : Promise.resolve(),
+    !store.canvasesLoaded ? store.fetchCanvases() : Promise.resolve(),
+    !projectStore.projectsLoaded && !projectStore.loading ? projectStore.fetchProjects() : Promise.resolve(),
+  ])
   await ensureCanvas()
 })
-watch(() => route.params.id, async () => { await ensureCanvas() })
+watch(() => route.params.id, async () => {
+  flushViewSave()
+  await ensureCanvas()
+})
 
 async function ensureCanvas() {
   let id = Number(route.params.id)
@@ -75,11 +110,12 @@ async function ensureCanvas() {
     await router.replace({ name: 'MindCanvas', params: { id } })
     return
   }
-  if (store.activeCanvasId !== id) {
-    await store.loadCanvas(id)
-    await nextTick()
-    restoreView(id)
-  }
+  // store 会跨路由保留 activeCanvasId，但 MindCanvas 在离开再回来后是一个全新的组件，
+  // 它的 camera 又从 scale=1 开始。只跳过网络加载，不能连 restoreView 一起跳过。
+  if (store.activeCanvasId !== id) await store.loadCanvas(id)
+  localStorage.setItem('mind-last-canvas-id', String(id))
+  await nextTick()
+  restoreView(id)
 }
 
 /** 打开画布时优先回到用户上次离开时的视角（存在 mind_maps.data_json 里）；
@@ -109,12 +145,25 @@ function restoreView(id: number) {
 }
 
 let viewSaveTimer: ReturnType<typeof setTimeout> | null = null
+let pendingViewSave: { id: number; view: { x: number; y: number; scale: number } } | null = null
 function onViewChange(view: { x: number; y: number; scale: number }) {
   const id = activeCanvasId.value
   if (id == null) return
+  pendingViewSave = { id, view }
   if (viewSaveTimer) clearTimeout(viewSaveTimer)
-  viewSaveTimer = setTimeout(() => { store.saveCanvasView(id, view).catch(() => {}) }, 500)
+  viewSaveTimer = setTimeout(flushViewSave, 500)
 }
+function flushViewSave() {
+  if (viewSaveTimer) clearTimeout(viewSaveTimer)
+  viewSaveTimer = null
+  const pending = pendingViewSave
+  pendingViewSave = null
+  if (pending) store.saveCanvasView(pending.id, pending.view).catch(() => {})
+}
+function resetView() {
+  canvasRef.value?.resetScaleAtCenter()
+}
+onBeforeUnmount(flushViewSave)
 
 async function createCanvas() {
   const canvas = await store.createCanvas()
@@ -141,6 +190,9 @@ async function renameCanvas(id: number, title: string) {
 
 async function removeItem(item: MindCanvasItem) {
   await store.removeCanvasItem(item.id)
+}
+function returnProjectToDrawer(item: MindCanvasItem) {
+  void store.returnCanvasItemToDrawer(item.id).catch(() => showAppError('项目移回抽屉失败，已恢复到画布'))
 }
 async function removeRelation(id: number) {
   await store.removeCanvasRelation(id)
@@ -195,11 +247,29 @@ async function addRef(refItem: CanvasRefItem) {
   const { x, y } = centerOfViewport()
   await store.addRefToCanvas(activeCanvasId.value, refItem.type, refItem.id, x, y)
 }
+async function addProjectAtCenter(projectId: number) {
+  if (activeCanvasId.value == null) return
+  const { x, y } = centerOfViewport()
+  await store.addRefToCanvas(activeCanvasId.value, 'project', projectId, x, y)
+}
+/** 抽屉项目松手后先本地乐观插入一张画布卡，立刻交给抽屉克隆做落地动画——不等
+ * createRefNode/addCanvasItem 这两次串行请求（真实环境轻松上百毫秒），克隆体才不会
+ * 在空中冻住顿一下。接口在背后跑，成功后原地换真实数据，失败则原地摘除并提示。 */
+async function addProjectAtScreen(projectId: number, center: { x: number; y: number }, _size: { w: number; h: number }) {
+  const canvas = canvasRef.value
+  const canvasId = activeCanvasId.value
+  if (!canvas || canvasId == null) return null
+  const world = canvas.screenToWorld(center.x, center.y)
+  const { item, ready } = store.addProjectRefOptimistic(canvasId, projectId, world.x - 120, world.y - 60)
+  ready.catch(() => showAppError('添加到画布失败，请重试'))
+  await nextTick()
+  return document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
+}
 async function onItemMoved(item: MindCanvasItem) {
-  await store.updateCanvasItem(item.id, { x: item.x, y: item.y, z: store.nextCanvasZ() })
+  await store.bringCanvasItemToFront(item.id, item.x, item.y)
 }
 </script>
 
 <style scoped>
-.canvas-page { position: fixed; inset: 0; }
+.canvas-page { position: fixed; inset: 0; z-index: 8; }
 </style>

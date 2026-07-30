@@ -234,6 +234,14 @@ export interface MindNote {
   deletedAt?: string | null
   refType?: 'project' | 'file' | 'event' | null
   refId?: number | null
+  /** 引用对象创建时缓存的极简快照，被引用对象删除后仍能显示这些字段；只在创建那一刻
+   *  拍照，之后原对象改这些字段不会回填。字段按 refType 各不相同：
+   *  project → client/status/startDate/deadline/doneAt；file → ext；event → date/time/endTime。 */
+  refSnapshot?: {
+    client?: string | null; status?: string | null; startDate?: string | null; deadline?: string | null; doneAt?: string | null
+    ext?: string | null
+    date?: string | null; time?: string | null; endTime?: string | null; description?: string | null
+  } | null
 }
 export interface MindNoteCreate {
   contentMd?: string
@@ -266,6 +274,8 @@ export interface MindCanvas {
 }
 export interface MindCanvasItem {
   id: number
+  // 仅前端使用：乐观插入画布时保持 Vue key 和目标 DOM 稳定，服务端不会返回或持久化该字段。
+  clientKey?: string
   canvasId: number
   nodeId: number
   x: number
@@ -275,6 +285,8 @@ export interface MindCanvasItem {
   z: number
   collapsed: boolean
   data: Record<string, unknown>
+  /** 引用对象的首屏展示快照；当前活动卡包含日期、时间和描述。 */
+  refData?: { date?: string; time?: string | null; endTime?: string | null; description?: string | null } | null
   node: MindNote
   createdAt: string
   updatedAt: string
@@ -322,6 +334,8 @@ export const mindApi = {
     patch<MindNote>(`/mind/nodes/${id}`, data),
   updateCanvasItem: (canvasId: number, itemId: number, data: Partial<Pick<MindCanvasItem, 'x' | 'y' | 'w' | 'h' | 'z' | 'collapsed' | 'data'>>) =>
     patch<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}`, data),
+  bringCanvasItemToFront: (canvasId: number, itemId: number, data: { x: number; y: number }) =>
+    post<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}/bring-to-front`, data),
   removeCanvasItem: (canvasId: number, itemId: number) => del(`/mind/canvases/${canvasId}/items/${itemId}`),
   listCanvasRelations: (id: number) => get<MindRelation[]>(`/mind/canvases/${id}/relations`),
   createRelation: (srcNodeId: number, dstNodeId: number, allowParallel = false) =>
@@ -346,8 +360,14 @@ export const foldersApi = {
     ...(parentId  != null ? { parentId  } : {}),
     name,
   }),
-  rename: (id: number, name: string)     => patch<Schemas['FolderResponse']>(`/folders/${id}`, { name }),
-  move:   (id: number, parentId: number | null) => patch<Schemas['FolderResponse']>(`/folders/${id}/parent`, { parentId }),
+  // version：乐观锁，必传当前文件夹的 version（改名/移动即失效，见 stores/filesCache 的更新逻辑）；
+  // 版本对不上后端给 409，同 projectsApi.update 的并发保护模式。
+  rename: (id: number, name: string, version: number) =>
+    patch<Schemas['FolderResponse']>(`/folders/${id}`, { name, version }),
+  move:   (id: number, parentId: number | null, version: number, projectId: number | null = null) =>
+    patch<Schemas['FolderResponse']>(`/folders/${id}/parent`, { parentId, version, projectId }),
+  copy:   (id: number, parentId: number | null, projectId: number | null) =>
+    post<Schemas['FolderResponse']>(`/folders/${id}/copy`, { parentId, projectId }),
   delete: (id: number)           => del(`/folders/${id}`),
   download: async (id: number, name: string) => {
     const token = getToken()
@@ -366,11 +386,21 @@ export const foldersApi = {
 }
 
 // ── Trash ─────────────────────────────────────────────────────────────────────
+export type TrashFolderMeta = Schemas['TrashFolderResponse']
+export interface TrashFolderContents {
+  folders: TrashFolderMeta[]
+  files: Schemas['FileResponse'][]
+}
+
 export const trashApi = {
-  list:         ()           => get('/trash'),
-  restore:      (id: number) => post(`/trash/${id}/restore`, {}),
-  hardDelete:   (id: number) => del(`/trash/${id}`),
-  empty:        ()           => del('/trash'),
+  list:          ()           => get('/trash'),
+  listFolders:   ()           => get<TrashFolderMeta[]>('/trash/folders'),
+  listFolderContents: (id: number) => get<TrashFolderContents>(`/trash/folders/${id}/contents`),
+  restore:       (id: number) => post(`/trash/${id}/restore`, {}),
+  restoreFolder: (id: number) => post(`/trash/folders/${id}/restore`, {}),
+  hardDeleteFolder: (id: number) => del(`/trash/folders/${id}`),
+  hardDelete:    (id: number) => del(`/trash/${id}`),
+  empty:         ()           => del('/trash'),
 }
 
 // ── Clients ────────────────────────────────────────────────────────────────────

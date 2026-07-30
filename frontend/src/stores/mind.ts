@@ -8,13 +8,14 @@
  * `MindConflictError`，调用方（编辑器）据此提示「已被其他端修改」并重新拉取。
  */
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   mindApi, type MindCanvas, type MindCanvasItem, type MindCanvasNoteCreate, type MindNote, type MindNoteCreate,
   type MindNoteUpdate, type MindRelation,
 } from '@/services/api'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import type { RelationAnchorSides } from '@/composables/useMindCanvas'
+import { useLiveStore } from '@/stores/live'
 
 export class MindConflictError extends Error {
   constructor() { super('便签已被其他端修改') }
@@ -31,6 +32,8 @@ function plainOf(md: string): string {
   return md.replace(/\[\[[a-z_]+:\d+\|([^\]]*)\]\]/g, '$1')
 }
 
+let optimisticSeq = 0
+
 export const useMindStore = defineStore('mind', () => {
   const notes   = ref<MindNote[]>([])
   const loading = ref(false)
@@ -44,6 +47,7 @@ export const useMindStore = defineStore('mind', () => {
   const canvasItems = ref<MindCanvasItem[]>([])
   const canvasRelations = ref<MindRelation[]>([])
   const canvasDataSaves = new Map<number, Promise<void>>()
+  const canvasZSaves = new Map<number, Promise<void>>()
 
   /** 时间流：按 capturedAt 分组成「一天一组」，供 NoteTimeline 渲染；筛选词命中正文才留 */
   const timeline = computed(() => {
@@ -148,7 +152,7 @@ export const useMindStore = defineStore('mind', () => {
       mindApi.listCanvasRelations(id),
     ])
     if (activeCanvasId.value !== id) return
-    canvasItems.value = items
+    canvasItems.value = normalizeCanvasZ(items).map(({ item, z }) => ({ ...item, z }))
     canvasRelations.value = relations
   }
 
@@ -167,6 +171,52 @@ export const useMindStore = defineStore('mind', () => {
     if (index === -1) canvasItems.value.push(item)
     else canvasItems.value[index] = item
     return item
+  }
+
+  /** 抽屉拖项目进画布专用：先本地插入一张占位卡，换取拖拽落地动画立刻有真实 DOM 可交接
+   * （不用等 createRefNode + addCanvasItem 两次串行请求，克隆体才不会在空中顿住）。接口
+   * 成功后原地换成真实数据，失败则原地摘除并把错误抛给调用方。clientKey 全程不变，配合
+   * MindCanvas.vue 的 `:key="item.clientKey ?? item.id"`，换真实数据这一步不会触发 Vue
+   * 重新挂载、把正在播的落地动画/过渡状态炸掉。 */
+  function addProjectRefOptimistic(canvasId: number, projectId: number, x: number, y: number) {
+    const tempId = --optimisticSeq
+    const clientKey = `optimistic-${tempId}`
+    const now = new Date().toISOString()
+    const z = nextCanvasZ()
+    const placeholder: MindCanvasItem = {
+      id: tempId,
+      clientKey,
+      canvasId,
+      nodeId: tempId,
+      x, y, w: null, h: null, z,
+      collapsed: false,
+      data: {},
+      node: {
+        id: tempId, kind: 'ref', title: null, contentMd: '', color: null,
+        capturedAt: now, version: 0, createdAt: now, updatedAt: now,
+        refType: 'project', refId: projectId,
+      },
+      createdAt: now, updatedAt: now,
+    }
+    canvasItems.value.push(placeholder)
+
+    const ready = (async () => {
+      try {
+        const node = await mindApi.createRefNode('project', projectId)
+        const item = await mindApi.addCanvasItem(canvasId, { nodeId: node.id, x, y, z })
+        const resolved = { ...item, clientKey }
+        const index = canvasItems.value.findIndex(current => current.clientKey === clientKey)
+        if (index === -1) canvasItems.value.push(resolved)
+        else canvasItems.value[index] = resolved
+        return resolved
+      } catch (error) {
+        const index = canvasItems.value.findIndex(current => current.clientKey === clientKey)
+        if (index !== -1) canvasItems.value.splice(index, 1)
+        throw error
+      }
+    })()
+
+    return { item: placeholder, ready }
   }
 
   async function createCanvasNote(canvasId: number, data: MindCanvasNoteCreate) {
@@ -191,8 +241,55 @@ export const useMindStore = defineStore('mind', () => {
     return updated
   }
 
+  function normalizeCanvasZ(items: MindCanvasItem[]) {
+    return items.map((item, index) => ({ item, z: (index + 1) * 1000 }))
+  }
+
   function nextCanvasZ() {
-    return canvasItems.value.reduce((top, item) => Math.max(top, item.z), 0) + 1
+    return (canvasItems.value.length + 1) * 1000
+  }
+
+  async function bringCanvasItemToFront(itemId: number, x: number, y: number) {
+    const canvasId = activeCanvasId.value
+    if (canvasId == null) return
+    const before = canvasItems.value
+    const ordered = normalizeCanvasZ(before)
+    const target = ordered.find(entry => entry.item.id === itemId)
+    if (!target) return
+    const reordered = ordered
+      .filter(entry => entry.item.id !== itemId)
+      .concat({ item: target.item, z: ordered.length })
+    canvasItems.value = reordered.map(({ item, z }) => ({
+      ...item,
+      x: item.id === itemId ? x : item.x,
+      y: item.id === itemId ? y : item.y,
+      z,
+    }))
+    const previous = canvasZSaves.get(canvasId) ?? Promise.resolve()
+    const save = previous.catch(() => undefined).then(async () => {
+      try {
+        const updated = await mindApi.bringCanvasItemToFront(canvasId, itemId, { x, y })
+        const currentIndex = canvasItems.value.findIndex(item => item.id === itemId)
+        if (currentIndex !== -1) {
+          canvasItems.value = normalizeCanvasZ(canvasItems.value)
+            .map(({ item, z }) => ({
+              ...item,
+              z,
+              ...(item.id === itemId ? { ...updated, clientKey: item.clientKey } : {}),
+            }))
+        }
+      } catch (error) {
+        // 后续拖拽可能已经产生了更新，不能用旧快照覆盖更新后的本地状态。
+        if (canvasZSaves.get(canvasId) === save) canvasItems.value = before
+        throw error
+      }
+    })
+    canvasZSaves.set(canvasId, save)
+    try {
+      await save
+    } finally {
+      if (canvasZSaves.get(canvasId) === save) canvasZSaves.delete(canvasId)
+    }
   }
 
   async function updateCanvasItem(itemId: number, fields: Partial<Pick<MindCanvasItem, 'x' | 'y' | 'w' | 'h' | 'z' | 'collapsed' | 'data'>>) {
@@ -204,7 +301,15 @@ export const useMindStore = defineStore('mind', () => {
     try {
       const updated = await mindApi.updateCanvasItem(canvasId, itemId, fields)
       const currentIndex = canvasItems.value.findIndex(item => item.id === itemId)
-      if (currentIndex !== -1) canvasItems.value[currentIndex] = updated
+      if (currentIndex !== -1) {
+        // 抽屉来源的乐观节点以 clientKey 作为 Vue 的稳定身份。首次落库后若把服务端响应
+        // 直接整体替换，会丢掉这个仅前端存在的字段，key 从 clientKey 突然切到真实 id，
+        // 正在播的第二次拖拽落地动画便会重挂载、瞬移到最终本体位置。
+        canvasItems.value[currentIndex] = {
+          ...updated,
+          clientKey: canvasItems.value[currentIndex].clientKey,
+        }
+      }
     } catch (error) {
       const currentIndex = canvasItems.value.findIndex(item => item.id === itemId)
       if (currentIndex !== -1) canvasItems.value[currentIndex] = before
@@ -219,6 +324,26 @@ export const useMindStore = defineStore('mind', () => {
     canvasItems.value = canvasItems.value.filter(item => item.id !== itemId)
     const nodeIds = new Set(canvasItems.value.map(item => item.nodeId))
     canvasRelations.value = canvasRelations.value.filter(rel => nodeIds.has(rel.srcNodeId) && nodeIds.has(rel.dstNodeId))
+  }
+
+  /** 从画布拖回抽屉：先摘本地展示项让物理克隆能吸入抽屉，删除失败再把原项和关系原样放回。 */
+  function returnCanvasItemToDrawer(itemId: number) {
+    const canvasId = activeCanvasId.value
+    const index = canvasItems.value.findIndex(item => item.id === itemId)
+    if (canvasId == null || index === -1) return Promise.resolve()
+    const item = canvasItems.value[index]
+    const relations = canvasRelations.value
+    canvasItems.value.splice(index, 1)
+    const nodeIds = new Set(canvasItems.value.map(current => current.nodeId))
+    canvasRelations.value = canvasRelations.value.filter(rel => nodeIds.has(rel.srcNodeId) && nodeIds.has(rel.dstNodeId))
+    return mindApi.removeCanvasItem(canvasId, itemId).catch(error => {
+      window.setTimeout(() => {
+        if (activeCanvasId.value !== canvasId || canvasItems.value.some(current => current.id === item.id)) return
+        canvasItems.value.splice(Math.min(index, canvasItems.value.length), 0, item)
+        canvasRelations.value = relations
+      }, 700)
+      throw error
+    })
   }
 
   async function createCanvasRelation(srcNodeId: number, dstNodeId: number, allowParallel = false) {
@@ -268,11 +393,19 @@ export const useMindStore = defineStore('mind', () => {
     await updateCanvasData(id, { relationAnchors: anchors })
   }
 
+  // 实时：咕咕/IM 改了便签 → 时间流列表刷新；当前打开的画布也重拉，卡片上的笔记正文才能跟着更新
+  // （画布卡片渲染的是 loadCanvas 拉回来的快照，不是 notes 数组本身，两处都要刷）。
+  const live = useLiveStore()
+  watch(() => live.rev.mind, () => {
+    if (loaded.value) fetchNotes()
+    if (activeCanvasId.value != null) loadCanvas(activeCanvasId.value)
+  })
+
   return {
     notes, loading, loaded, filterQ, jumpTarget, timeline, fetchNotes, createNote, updateNote, deleteNote,
     canvases, canvasesLoaded, canvasLoading, activeCanvasId, canvasItems, canvasRelations,
     fetchCanvases, createCanvas, renameCanvas, deleteCanvas, loadCanvas, addNoteToCanvas, updateCanvasItem,
-    addRefToCanvas, createCanvasNote, updateCanvasNote, removeCanvasItem, createCanvasRelation, removeCanvasRelation, nextCanvasZ,
+    addRefToCanvas, addProjectRefOptimistic, createCanvasNote, updateCanvasNote, removeCanvasItem, returnCanvasItemToDrawer, createCanvasRelation, removeCanvasRelation, nextCanvasZ, bringCanvasItemToFront,
     saveCanvasView, saveCanvasRelationAnchors,
   }
 })

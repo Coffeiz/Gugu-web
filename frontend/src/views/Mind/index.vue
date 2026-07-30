@@ -4,7 +4,7 @@
          topbar 在本页被隐藏，全局搜索由筛选框补位——在思维面板里想找的是自己的便签。 -->
     <div class="mind-bar">
       <div class="mind-bar-side"></div>
-      <div class="mind-tabs">
+      <SegmentedControl class="mind-tabs" :active-index="isCanvas ? 1 : 0" style="--pill-radius: 999px">
         <RouterLink to="/mind/notes" class="mind-tab" :class="{ on: isNotes }">
           <PhNotePencil :size="16" weight="bold" />
           笔记
@@ -13,7 +13,7 @@
           <PhGraph :size="16" weight="bold" />
           画布
         </RouterLink>
-      </div>
+      </SegmentedControl>
       <div class="mind-bar-side right">
         <template v-if="isNotes">
           <DatePicker
@@ -43,18 +43,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { PhGraph, PhMagnifyingGlass, PhNotePencil, PhX } from '@phosphor-icons/vue'
 import { useMindStore } from '@/stores/mind'
 import { localDayKey } from '@/utils/dateAttribution'
 import DatePicker from '@/components/common/DatePicker.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 
 const route = useRoute()
 const store = useMindStore()
 const isNotes = computed(() => route.path.startsWith('/mind/notes'))
 const isCanvas = computed(() => route.path.startsWith('/mind/canvases'))
 const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不是 UTC）
+
+// /mind 是侧栏唯一入口；把当前子视图记下来，下一次从侧栏回来时由路由重定向恢复它。
+watch(() => route.path, (path) => {
+  if (path.startsWith('/mind/notes')) localStorage.setItem('mind-last-mode', 'notes')
+  else if (path.startsWith('/mind/canvases')) localStorage.setItem('mind-last-mode', 'canvas')
+}, { immediate: true })
 </script>
 
 <style scoped>
@@ -63,7 +70,7 @@ const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不
 /* pointer-events:none 是关键：grid 的 1fr 1fr 两侧列即便没有任何可见内容（画布页整段
    right 列都是空的，left 列本来就一直是空的），作为真实的 <div> 默认仍然会吃掉点击——
    这层容器横跨了几乎整个页面宽度、z-index 又比画布自己浮层面板（CanvasSidebar/
-   CanvasToolbar，见 CanvasView.vue，都是 z-index:8）更高，实际盖住了画布左上角面板按钮
+   CanvasToolbar，见 CanvasSidebar.vue / CanvasToolbar.vue，都是 UI 层 z-index:40）更高，实际盖住了画布左上角面板按钮
    的下半部分（用户反馈"只有按钮顶部能点，中间点不了"）——画布的 .canvas-page 是
    position:fixed;inset:0，跟这条 bar 同属 .mind-page 的兄弟节点，画布浮层再怎么调自己
    内部的 z-index 也逃不出 .mind-bar 这个外层容器的手掌心。跟 RelationLayer.vue 的
@@ -73,7 +80,7 @@ const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不
 .mind-bar {
   display: grid; grid-template-columns: 1fr auto 1fr;
   align-items: center; gap: 12px;
-  position: relative; z-index: 12; pointer-events: none;
+  position: relative; z-index: 40; pointer-events: none;
   flex-shrink: 0; margin: 28px 24px 0;
 }
 .mind-body { position: relative; z-index: 1; flex: 1; min-height: 0; }
@@ -104,7 +111,7 @@ const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不
    （跟画布自己那套 CanvasToolbar/CanvasSidebar 的 .glass-card 语言统一），浮在内容上方的
    观感靠这份 blur + 阴影，不用额外挪动布局位置。 */
 .mind-tabs {
-  display: inline-flex; gap: 2px; padding: 2px;
+  gap: 2px; padding: 2px;
   border-radius: 999px;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
@@ -118,10 +125,10 @@ const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不
   height: 36px; box-sizing: border-box; padding: 0 17px; border-radius: 999px;
   font-size: 13.5px; font-weight: 600; color: var(--text-secondary);
   text-decoration: none; cursor: pointer;
-  transition: all 0.15s;
+  transition: color 0.15s;
 }
 .mind-tab:hover { color: var(--color-primary); }
-.mind-tab.on { background: #fff; color: #5a5e86; box-shadow: 0 1px 4px rgba(60,70,100,0.12); }
+.mind-tab.on { color: #5a5e86; }
 
 .mind-filter {
   display: flex; align-items: center; gap: 6px;

@@ -3,7 +3,7 @@
      字段/提醒逻辑只有一份，这里只是换了个居中弹窗的外壳。 -->
 <template>
   <BaseModal :show="show" width="300px" background="rgba(255,255,255,0.9)" @close="close">
-    <div class="eem-body" v-if="event">
+    <div class="eem-body">
       <div class="popup-header">
         <span class="popup-title">编辑活动</span>
         <button class="popup-close-btn" @click="close" title="关闭">
@@ -16,9 +16,7 @@
         <button class="popup-save" @click="onSave" :disabled="!event.name">保存</button>
         <button class="popup-delete" @click="onDelete">删除</button>
       </div>
-      <div v-if="toastMsg" class="eem-toast">{{ toastMsg }}</div>
     </div>
-    <div class="eem-body" v-else-if="loading">加载中…</div>
   </BaseModal>
 </template>
 
@@ -29,14 +27,15 @@ import BaseModal from '@/components/common/BaseModal.vue'
 import { eventsApi } from '@/services/api'
 import { useEventModalStore } from '@/stores/eventModal'
 import { useEventEditForm, type EditingEvent } from '@/composables/useEventEditForm'
+import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import EventEditFields from './EventEditFields.vue'
 
 const eventModalStore = useEventModalStore()
 const form = useEventEditForm()
 const event = ref<EditingEvent | null>(null)
-const loading = ref(false)
-
-const show = computed(() => eventModalStore.openEventId != null)
+// 不在请求刚开始时先挂一个「加载中」空弹窗：活动引用来自思维面板时，先取齐活动和
+// 提醒数据，再让 BaseModal 入场，避免用户看到空壳闪一下后才替换成编辑表单。
+const show = computed(() => eventModalStore.openEventId != null && event.value != null)
 
 const todayIso = () => {
   const d = new Date()
@@ -44,24 +43,28 @@ const todayIso = () => {
 }
 function isPastDate(d: string | null | undefined) { return !!d && d < todayIso() }
 
+let loadSeq = 0
 async function load(id: number) {
-  loading.value = true
+  const seq = ++loadSeq
   event.value = null
   try {
     const e = await eventsApi.get(id)
-    event.value = {
+    const loadedEvent: EditingEvent = {
       id: e.id, name: e.title, date: e.date ?? '', time: e.time || '', endTime: e.endTime || '',
       description: e.description || '', allDay: !e.time, version: e.version,
     }
-    await form.loadReminders(event.value)
+    await form.loadReminders(loadedEvent)
+    // 快速连点两张活动卡时，较早请求可能后返回；不能让它覆盖最新一次打开目标。
+    if (seq === loadSeq && eventModalStore.openEventId === id) event.value = loadedEvent
   } catch {
-    close()
-  } finally {
-    loading.value = false
+    if (seq === loadSeq && eventModalStore.openEventId === id) close()
   }
 }
 
-watch(() => eventModalStore.openEventId, (id) => { if (id != null) load(id) })
+watch(() => eventModalStore.openEventId, (id) => {
+  if (id != null) load(id)
+  else event.value = null
+})
 
 function close() { eventModalStore.closeModal() }
 
@@ -71,7 +74,7 @@ async function onSave() {
     await form.saveEvent(event.value)
     close()
   } catch (e: any) {
-    if (e?.status === 409) alert('活动已被其他用户修改，请刷新页面')
+    if (e?.status === 409) showAppError('活动已被其他用户修改，已刷新页面')
   }
 }
 async function onDelete() {
@@ -80,17 +83,13 @@ async function onDelete() {
   close()
 }
 
-const toastMsg = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
 async function onTestReminder() {
   try {
     const res = await form.testReminderChannels(event.value?.name || '活动提醒')
-    toastMsg.value = res?.msg || '已发送测试消息'
+    showAppNotice(res?.msg || '已发送测试消息')
   } catch {
-    toastMsg.value = '测试失败，请稍后重试'
+    showAppError('测试失败，请稍后重试')
   }
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { toastMsg.value = '' }, 3200)
 }
 </script>
 
@@ -106,5 +105,4 @@ async function onTestReminder() {
 .popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
 .popup-save:disabled { opacity: 0.38; cursor: default; }
 .popup-save:not(:disabled):hover { opacity: 0.88; }
-.eem-toast { text-align: center; font-size: 11.5px; color: var(--text-secondary); }
 </style>

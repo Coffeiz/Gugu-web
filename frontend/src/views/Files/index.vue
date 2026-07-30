@@ -32,15 +32,11 @@
 
       <div class="toolbar-right">
         <!-- 粘贴（剪切/复制后出现，回收站除外）—— 放在所有按钮最左 -->
-        <button
+        <FilePasteButton
           v-if="cbStore.hasContent() && currentType !== 'trash' && currentType !== 'root'"
-          class="paste-btn"
-          @click="ctxPaste"
-          title="粘贴到当前位置"
-        >
-          <PhClipboardText :size="13" weight="bold" />
-          粘贴{{ (cbStore.fileIds.length + cbStore.folderIds.length) > 1 ? ` (${cbStore.fileIds.length + cbStore.folderIds.length})` : '' }}
-        </button>
+          :count="cbStore.fileIds.length + cbStore.folderIds.length"
+          @paste="ctxPaste"
+        />
 
         <!-- 多选（根目录不需要） -->
         <button
@@ -55,7 +51,7 @@
 
         <!-- 全选（仅回收站，放在多选按钮右侧） -->
         <button
-          v-if="currentType === 'trash' && contents.files.length"
+          v-if="currentType === 'trash' && (contents.files.length || trashFolders.length)"
           class="select-all-btn"
           :class="{ on: allTrashSelected }"
           @click="toggleSelectAllTrash"
@@ -65,14 +61,15 @@
         </button>
 
         <!-- 网格/列表切换 -->
-        <div v-if="currentType !== 'trash'" class="view-toggle">
+        <SegmentedControl v-if="currentType !== 'trash'" class="view-toggle" :active-index="viewMode === 'grid' ? 0 : 1"
+                          style="--pill-bg: rgba(255,255,255,0.85); --pill-radius: 6px">
           <button :class="{ on: viewMode === 'grid' }" @click="viewMode = 'grid'" title="网格视图">
             <PhSquaresFour :size="13" weight="bold" />
           </button>
           <button :class="{ on: viewMode === 'list' }" @click="viewMode = 'list'" title="列表视图">
             <PhList :size="13" weight="bold" />
           </button>
-        </div>
+        </SegmentedControl>
 
         <!-- 新建文件夹（个人层、项目层、文件夹层） -->
         <template v-if="currentType === 'personal' || currentType === 'project' || currentType === 'folder'">
@@ -176,7 +173,7 @@
 
         <!-- ── 回收站视图 ── -->
         <template v-if="currentType === 'trash'">
-          <div v-if="contents.files.length > 0" class="file-list trash-list">
+          <div v-if="trashFolders.length > 0 || contents.files.length > 0" class="file-list trash-list">
             <div class="list-head">
               <span class="lh-sortable" :class="{ active: sortKey === 'name' }" @click="onSortSelect('name')">名称<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
               <span>类型</span>
@@ -185,6 +182,44 @@
               <span class="lh-sortable" :class="{ active: sortKey === 'size' }" @click="onSortSelect('size')">大小<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
               <span></span>
             </div>
+            <template v-for="folder in sortedTrashFolders" :key="`trash-folder-${folder.id}`">
+            <div class="list-row trash-folder-row" :data-trash-folder-id="`trash:${folder.id}`" :class="{ expanded: expandedTrashFolders.has(folder.id), selected: selectedTrashFolderIds.has(folder.id), 'pre-selected': previewFolderKeys.has(`trash:${folder.id}`) }" @click.stop="handleTrashFolderClick(folder, $event)">
+              <span class="lr-name-cell">
+                <button class="trash-expand-btn" :title="expandedTrashFolders.has(folder.id) ? '收起内容' : '查看内容'" @click.stop="toggleTrashFolder(folder)">
+                  <span :class="{ rotated: expandedTrashFolders.has(folder.id) }">›</span>
+                </button>
+                <PhFolder class="lr-folder-icon" :size="16" weight="fill" />
+                <span class="lr-filename" :title="folder.name">{{ folder.name }}</span>
+              </span>
+              <span class="lr-type-cell"><span class="lr-type-text">文件夹</span></span>
+              <span class="lr-text">{{ formatDate(folder.deletedAt) }}</span>
+              <span class="lr-text" :class="{ 'days-warn': daysLeft(folder.deletedAt) <= 3 }">{{ daysLeft(folder.deletedAt) }} 天</span>
+              <span class="lr-text">{{ folder.fileCount }} 个文件</span>
+              <span class="lr-actions">
+                <Transition name="sel-cb"><div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedTrashFolderIds.has(folder.id) }"><svg v-if="selectedTrashFolderIds.has(folder.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg></div></Transition>
+                <template v-if="!inSelectionMode">
+                <button class="file-list-btn trash-restore-btn" title="恢复文件夹及其内容" @click.stop="restoreTrashFolder(folder)">
+                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/>
+                  </svg>
+                  恢复
+                </button>
+                <button class="file-list-btn del" title="永久删除文件夹及其内容" @click.stop="hardDeleteTrashFolder(folder)">
+                  <PhTrash :size="11" weight="bold" />
+                </button>
+                </template>
+              </span>
+            </div>
+            <div v-if="expandedTrashFolders.has(folder.id)" class="trash-folder-contents">
+              <div v-if="trashFolderContents[folder.id]?.folders.length === 0 && trashFolderContents[folder.id]?.files.length === 0" class="trash-folder-empty">空文件夹</div>
+              <div v-for="child in trashFolderContents[folder.id]?.folders || []" :key="`trash-child-${child.id}`" class="trash-child-row">
+                <PhFolder :size="14" weight="fill" /> <span>{{ child.name }}</span><small>{{ child.fileCount }} 个文件</small>
+              </div>
+              <div v-for="file in trashFolderContents[folder.id]?.files || []" :key="`trash-child-file-${file.id}`" class="trash-child-row file">
+                <component :is="fileListIcon(file.ext)" :size="14" weight="fill" :style="{ color: fileIconColor(file.ext) }" /> <span>{{ file.displayName }}.{{ file.ext.toLowerCase() }}</span>
+              </div>
+            </div>
+            </template>
             <div v-for="f in sortedContents.files" :key="f.id" class="list-row"
               :data-file-id="f.id"
               :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id) }"
@@ -534,48 +569,20 @@
     </div>
 
     <!-- 批量操作浮动栏 -->
-    <Transition name="action-bar">
-      <div v-if="selectedIds.size > 0 || selectedFolderKeys.size > 0" class="selection-bar" @click.stop>
-        <span class="sel-count">已选 {{ selectedIds.size + selectedFolderKeys.size }} 项</span>
-        <template v-if="currentType === 'trash'">
-          <button class="sel-download-btn" @click="restoreSelected">
-            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/>
-            </svg>
-            恢复选中
-          </button>
-          <button class="sel-delete-btn" @click="hardDeleteSelected">
-            <PhTrash :size="12" weight="bold" />
-            永久删除
-          </button>
-        </template>
-        <template v-else>
-          <button class="sel-download-btn" @click="downloadSelected" :disabled="(selectedIds.size === 0 && selectedFolderKeys.size === 0) || downloadingZip">
-            <PhDownloadSimple v-if="!downloadingZip" :size="12" weight="bold" />
-            <svg v-else class="spin" width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-              <path d="M7 1a6 6 0 1 1-4.24 1.76"/>
-            </svg>
-            {{ downloadingZip ? '下载中…' : '下载' }}
-          </button>
-          <div class="sel-divider"></div>
-          <button class="sel-action-btn" @click="selCut" title="剪切">
-            <PhScissors :size="12" weight="bold" />
-            剪切
-          </button>
-          <button class="sel-action-btn" @click="selCopy" title="复制">
-            <PhCopy :size="12" weight="bold" />
-            复制
-          </button>
-          <div class="sel-divider"></div>
-          <button class="sel-delete-btn" @click="deleteSelected">
-            <PhTrash :size="12" weight="bold" />
-            移到回收站
-          </button>
-        </template>
-        <button class="sel-cancel-btn" @click="clearSelection">取消</button>
-      </div>
-    </Transition>
-
+    <FileSelectionToolbar
+      v-if="selectedIds.size > 0 || selectedFolderKeys.size > 0 || selectedTrashFolderIds.size > 0"
+      :file-count="selectedIds.size"
+      :folder-count="selectedFolderKeys.size + selectedTrashFolderIds.size"
+      :downloading="downloadingZip"
+      :trash="currentType === 'trash'"
+      @download="downloadSelected"
+      @cut="selCut"
+      @copy="selCopy"
+      @delete="deleteSelected"
+      @restore="restoreSelected"
+      @permanent-delete="hardDeleteSelected"
+      @cancel="clearSelection"
+    />
   </div>
 
   <!-- 右键菜单 -->
@@ -627,6 +634,11 @@
         剪切
         <span class="popup-menu-shortcut">{{ modKey }}+X</span>
       </button>
+      <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item" @click="ctxCopyFolder">
+        <PhCopy :size="13" weight="bold" />
+        复制
+        <span class="popup-menu-shortcut">{{ modKey }}+C</span>
+      </button>
       <button v-if="ctx.target?.type === 'folder'" class="ctx-item popup-menu-item danger" @click="ctxDeleteFolder">
         <PhTrash :size="13" weight="bold" />
         删除
@@ -672,10 +684,13 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
-import { filesApi, foldersApi, trashApi, uploadWithProgress } from '@/services/api'
+import { filesApi, foldersApi, trashApi, uploadWithProgress, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import ContextMenu   from '@/components/ContextMenu.vue'
 import FileCard       from '@/components/common/FileCard.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
+import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
+import FilePasteButton from '@/components/common/FilePasteButton.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
@@ -865,6 +880,14 @@ const sortedContents = computed(() => {
 
 // ── 内容 ──
 const contents = ref<{ folders: FolderCard[]; files: FileMeta[] }>({ folders: [], files: [] })
+const trashFolders = ref<TrashFolderMeta[]>([])
+const expandedTrashFolders = ref(new Set<number>())
+const trashFolderContents = ref<Record<number, TrashFolderContents>>({})
+const sortedTrashFolders = computed(() => [...trashFolders.value].sort((a, b) => {
+  const dir = sortDir.value === 'asc' ? 1 : -1
+  if (sortKey.value === 'createdAt') return dir * a.deletedAt.localeCompare(b.deletedAt)
+  return dir * a.name.localeCompare(b.name, 'zh')
+}))
 // tiny 已由 v-lazy-src 视口门控（更大 rootMargin 先于 card），不再全量预热——避免屏幕外缩略图挤占并发队列
 
 function extractColor(colorStr: string | null | undefined): string | null {
@@ -890,6 +913,11 @@ function projFolder(p: Project): FolderCard {
 
 function loadContents() {
   const type = currentType.value
+  if (type !== 'trash') {
+    trashFolders.value = []
+    expandedTrashFolders.value.clear()
+    trashFolderContents.value = {}
+  }
 
   if (type === 'root') {
     // root 仍需知道回收站数量，但可以暗后台拉取（非阻塞）
@@ -904,17 +932,20 @@ function loadContents() {
       ],
       files: [],
     }
-    trashApi.list().then(files => {
+    Promise.all([trashApi.list(), trashApi.listFolders()]).then(([files, folders]) => {
       const trashFolder = contents.value.folders.find(f => f.id === 'trash')
-      if (trashFolder) trashFolder.count = files.length
+      if (trashFolder) trashFolder.count = files.length + folders.length
     }).catch(() => {})
     return
   }
 
   if (type === 'trash') {
     loading.value = true
-    trashApi.list()
-      .then(files => { contents.value = { folders: [], files } })
+    Promise.all([trashApi.list(), trashApi.listFolders()])
+      .then(([files, folders]) => {
+        contents.value = { folders: [], files }
+        trashFolders.value = folders
+      })
       .catch(e => console.error('[Files]', (e as Error).message))
       .finally(() => { loading.value = false })
     return
@@ -1046,31 +1077,40 @@ const {
 } = useBoxSelection(mainRef, {
   fileAttr: 'data-file-id',
   folderAttr: 'data-folder-key',
+  extraFolderAttrs: ['data-trash-folder-id'],
   excludeSelector: 'button, .fc-card, .folder-card, .fc-upload, .list-row',
   onBoxSelect: ({ fileIds, folderIds }, e) => {
+    const normalFolderIds = new Set([...folderIds].filter(id => !String(id).startsWith('trash:')))
+    const trashFolderIds = new Set([...folderIds]
+      .filter(id => String(id).startsWith('trash:'))
+      .map(id => Number(String(id).slice('trash:'.length))))
     if (e.shiftKey) {
       const ids  = new Set(selectedIds.value)
       const keys = new Set(selectedFolderKeys.value)
       fileIds.forEach(id => ids.add(id)); selectedIds.value = ids
-      folderIds.forEach(k => keys.add(k)); selectedFolderKeys.value = keys
+      normalFolderIds.forEach(k => keys.add(k)); selectedFolderKeys.value = keys
+      selectedTrashFolderIds.value = new Set([...selectedTrashFolderIds.value, ...trashFolderIds])
     } else {
       selectedIds.value        = fileIds
-      selectedFolderKeys.value = folderIds
+      selectedFolderKeys.value = normalFolderIds
+      selectedTrashFolderIds.value = trashFolderIds
     }
     // 把锚点设到框选结果里最末尾的那项，便于后续 shift+click 继续延伸
     const flat = flatSelectableItems.value
     for (let i = flat.length - 1; i >= 0; i--) {
       const item = flat[i]
       if ((item.type === 'file' && fileIds.has(item.id)) ||
-          (item.type === 'folder' && folderIds.has(item.id))) {
+          (item.type === 'folder' && normalFolderIds.has(item.id))) {
         lastAnchorIndex.value = i; break
       }
     }
   },
 })
+const selectedTrashFolderIds = ref<Set<number>>(new Set())
 
 function clearSelection() {
   _clearSelBase()
+  selectedTrashFolderIds.value = new Set()
   selectModeForced.value = false
   lastAnchorIndex.value  = -1
 }
@@ -1141,7 +1181,7 @@ function handleFileClick(file: FileMeta, event: MouseEvent) {
 }
 
 const selectModeForced = ref(false)
-const inSelectionMode  = computed(() => selectModeForced.value || selectedIds.value.size > 0 || selectedFolderKeys.value.size > 0)
+const inSelectionMode  = computed(() => selectModeForced.value || selectedIds.value.size > 0 || selectedFolderKeys.value.size > 0 || selectedTrashFolderIds.value.size > 0)
 const downloadingZip   = ref(false)
 
 function toggleSelectMode() {
@@ -1156,7 +1196,9 @@ function toggleSelectMode() {
 // 回收站全选 / 取消全选
 const allTrashSelected = computed(() => {
   const files = sortedContents.value.files
-  return files.length > 0 && files.every(f => selectedIds.value.has(f.id))
+  return (files.length + trashFolders.value.length) > 0 &&
+    files.every(f => selectedIds.value.has(f.id)) &&
+    trashFolders.value.every(f => selectedTrashFolderIds.value.has(f.id))
 })
 function toggleSelectAllTrash() {
   if (allTrashSelected.value) {
@@ -1164,6 +1206,7 @@ function toggleSelectAllTrash() {
   } else {
     selectModeForced.value = true
     selectedIds.value = new Set(sortedContents.value.files.map(f => f.id))
+    selectedTrashFolderIds.value = new Set(trashFolders.value.map(f => f.id))
   }
 }
 
@@ -1272,13 +1315,56 @@ async function restoreFile(f: FileMeta) {
   }
 }
 
+async function restoreTrashFolder(folder: TrashFolderMeta) {
+  try {
+    await trashApi.restoreFolder(folder.id)
+    loadContents()
+    cacheStore.refresh()
+    fetchStorage()
+  } catch (e) {
+    console.error('[Files] 恢复文件夹失败:', (e as Error).message)
+  }
+}
+
+async function toggleTrashFolder(folder: TrashFolderMeta) {
+  const next = new Set(expandedTrashFolders.value)
+  if (next.has(folder.id)) {
+    next.delete(folder.id)
+    expandedTrashFolders.value = next
+    return
+  }
+  if (!trashFolderContents.value[folder.id]) {
+    try {
+      trashFolderContents.value = {
+        ...trashFolderContents.value,
+        [folder.id]: await trashApi.listFolderContents(folder.id),
+      }
+    } catch (e) {
+      console.error('[Files] 加载回收站文件夹内容失败:', (e as Error).message)
+      return
+    }
+  }
+  next.add(folder.id)
+  expandedTrashFolders.value = next
+}
+
 async function hardDeleteFile(f: FileMeta) {
-  if (!confirm(`永久删除「${f.displayName}.${f.ext.toLowerCase()}」？此操作不可撤销。`)) return
   try {
     await trashApi.hardDelete(f.id)
     loadContents()
+    fetchStorage()
   } catch (e) {
     console.error('[Files] 永久删除失败:', (e as Error).message)
+  }
+}
+
+async function hardDeleteTrashFolder(folder: TrashFolderMeta) {
+  try {
+    await trashApi.hardDeleteFolder(folder.id)
+    loadContents()
+    fetchStorage()
+  } catch (e) {
+    console.error('[Files] 永久删除文件夹失败:', (e as Error).message)
   }
 }
 
@@ -1290,13 +1376,26 @@ function handleTrashFileClick(f: FileMeta, event: MouseEvent) {
   selectedIds.value = ids
 }
 
+function handleTrashFolderClick(folder: TrashFolderMeta, event: MouseEvent) {
+  if ((event.target as HTMLElement).closest('button')) return
+  const ids = new Set(selectedTrashFolderIds.value)
+  if (ids.has(folder.id)) ids.delete(folder.id)
+  else ids.add(folder.id)
+  selectedTrashFolderIds.value = ids
+}
+
 async function restoreSelected() {
   const ids = [...selectedIds.value]
-  if (!ids.length) return
+  const folderIds = [...selectedTrashFolderIds.value]
+  if (!ids.length && !folderIds.length) return
   try {
-    await Promise.all(ids.map(id => trashApi.restore(id)))
+    await Promise.all([
+      ...ids.map(id => trashApi.restore(id)),
+      ...folderIds.map(id => trashApi.restoreFolder(id)),
+    ])
     clearSelection()
     loadContents()
+    fetchStorage()
     cacheStore.refresh()   // 同上：还原的文件回到文件库，直接刷新库 store
     fetchStorage()   // 还原使 deleted_at=null，重新计入用量
   } catch (e) {
@@ -1306,10 +1405,13 @@ async function restoreSelected() {
 
 async function hardDeleteSelected() {
   const ids = [...selectedIds.value]
-  if (!ids.length) return
-  if (!confirm(`永久删除选中的 ${ids.length} 个文件？此操作不可撤销。`)) return
+  const folderIds = [...selectedTrashFolderIds.value]
+  if (!ids.length && !folderIds.length) return
   try {
-    await Promise.all(ids.map(id => trashApi.hardDelete(id)))
+    await Promise.all([
+      ...ids.map(id => trashApi.hardDelete(id)),
+      ...folderIds.map(id => trashApi.hardDeleteFolder(id)),
+    ])
     clearSelection()
     loadContents()
   } catch (e) {
@@ -1322,6 +1424,7 @@ async function confirmEmptyTrash() {
   try {
     await trashApi.empty()
     loadContents()
+    fetchStorage()
   } catch (e) {
     console.error('[Files] 清空回收站失败:', (e as Error).message)
   }
@@ -1561,12 +1664,16 @@ async function commitRename() {
     })
   } else {
     if (folderId == null) return
-    const oldName = cacheStore.getFolder(folderId)?.name
+    const oldFolder = cacheStore.getFolder(folderId)
+    const oldName = oldFolder?.name
+    const version = oldFolder?.version ?? 1
     cacheStore.updateFolder(folderId, { name })
     loadContents()
-    foldersApi.rename(folderId, name).catch(e => {
+    foldersApi.rename(folderId, name, version).then(updated => {
+      cacheStore.updateFolder(folderId, { version: updated.version })
+    }).catch(e => {
       if (oldName != null) cacheStore.updateFolder(folderId, { name: oldName })
-      loadContents()
+      loadContents()   // 409（版本冲突）时顺带把最新状态/version 拉回来
       console.error('[Files] 重命名失败:', (e as Error).message)
     })
   }
@@ -1596,12 +1703,22 @@ function isBcDroppable(seg: NavSeg) {
 async function moveFoldersInto(folderIds: Array<number | string>, targetFolderId: number | string | null) {
   const nFolderIds = folderIds as number[]
   const nTarget = targetFolderId as number | null
+  const targetProjectId = currentSeg.value?.type === 'project'
+    ? currentSeg.value.id
+    : (currentSeg.value?.projectId ?? null)
   const backups = nFolderIds.map(id => cacheStore.getFolder(id)).filter(Boolean) as FolderMeta[]
+  let results: FolderMeta[] = []
   await optimisticMutation({
     apply: () => nFolderIds.forEach(id => cacheStore.updateFolder(id, { parentId: nTarget })),
     afterMutate: loadContents,
-    work: () => Promise.all(nFolderIds.map(id => foldersApi.move(id, nTarget))),
+    // version 在 apply() 之后、work() 之前读——apply 只改 parentId，此时缓存里的 version 仍是
+    // 服务端当前值；对不上（并发改动）后端给 409，走 rollback + loadContents 拉回真实状态。
+    work: async () => {
+      results = await Promise.all(nFolderIds.map(id =>
+        foldersApi.move(id, nTarget, cacheStore.getFolder(id)?.version ?? 1, targetProjectId)))
+    },
     rollback: () => backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId })),
+    onCommit: () => results.forEach(r => cacheStore.updateFolder(r.id, { version: r.version })),
     onError: err => console.error('[Files] 移动文件夹失败:', (err as Error).message),
   })
 }
@@ -1667,7 +1784,6 @@ function onFilePointerDown(f: FileMeta, e: PointerEvent) {
 
 async function deleteFolder(f: FolderCard) {
   if (f.folderId == null) return
-  if (!confirm(`删除文件夹"${f.displayName}"？文件夹内所有内容将被删除。`)) return
   pruneHistoryForFolders([f.folderId])
   cacheStore.removeFolder(f.folderId)
   loadContents()
@@ -1743,7 +1859,8 @@ function selCut() {
   clearSelection()
 }
 function selCopy() {
-  cbStore.copy([...selectedIds.value], [])
+  const dids = resolveFolderIds(selectedFolderKeys.value, contents.value.folders)
+  cbStore.copy([...selectedIds.value], dids)
   clearSelection()
 }
 
@@ -1833,6 +1950,10 @@ function ctxCutFolder() {
   if (!ctx.value.target) return
   cbStore.cut([], [(ctx.value.target as FolderCard).folderId as number]); ctx.value.visible = false
 }
+function ctxCopyFolder() {
+  if (!ctx.value.target) return
+  cbStore.copy([], [(ctx.value.target as FolderCard).folderId as number]); ctx.value.visible = false
+}
 async function ctxDeleteFolder() {
   const f = ctx.value.target; ctx.value.visible = false
   if (f) await deleteFolder(f as FolderCard)
@@ -1853,21 +1974,27 @@ async function ctxPaste() {
       const folderIds = [...cbStore.folderIds]
       const fileBackups   = fileIds.map(id => cacheStore.getFile(id)).filter((f): f is FileMeta => f != null)
       const folderBackups = folderIds.map(id => cacheStore.getFolder(id)).filter((f): f is FolderMeta => f != null)
+      let movedFolders: FolderMeta[] = []
       await optimisticMutation({
         apply: () => {
           fileIds.forEach(id => cacheStore.updateFile(id, { folderId, projectId }))
-          folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: folderId }))
+          folderIds.forEach(id => cacheStore.updateFolder(id, { parentId: folderId, projectId }))
           cbStore.clear()
         },
         afterMutate: loadContents,
-        work: () => Promise.all([
-          ...fileBackups.map(f => filesApi.update(f.id, { folderId, projectId })),
-          ...folderIds.map(id => foldersApi.move(id, folderId)),
-        ]),
+        work: async () => {
+          await Promise.all([
+            Promise.all(fileBackups.map(f => filesApi.update(f.id, { folderId, projectId }))),
+            Promise.all(folderIds.map(id =>
+              foldersApi.move(id, folderId, folderBackups.find(b => b.id === id)?.version ?? 1, projectId)
+            )).then(r => { movedFolders = r }),
+          ])
+        },
         rollback: () => {
           fileBackups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId, projectId: f.projectId }))
-          folderBackups.forEach(f => cacheStore.updateFolder(f.id, { parentId: f.parentId }))
+          folderBackups.forEach(f => cacheStore.updateFolder(f.id, { parentId: f.parentId, projectId: f.projectId }))
         },
+        onCommit: () => movedFolders.forEach(f => cacheStore.updateFolder(f.id, { version: f.version })),
         onError: e => console.error('[Files] 粘贴失败:', e),
       })
     } else if (cbStore.type === 'copy') {
@@ -1875,6 +2002,16 @@ async function ctxPaste() {
         filesApi.copy(id, { folderId, projectId })
       ))
       created.forEach(f => cacheStore.addFile(f))
+      const copiedFolders = await Promise.all(cbStore.folderIds.map(id =>
+        foldersApi.copy(id, folderId, projectId)
+      ))
+      copiedFolders.forEach(folder => cacheStore.addFolder({
+        id: folder.id,
+        projectId: folder.projectId,
+        parentId: folder.parentId,
+        name: folder.name,
+        version: folder.version,
+      }))
       loadContents()
       fetchStorage()   // 复制新增文件，计入用量
     }
@@ -2011,7 +2148,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .paste-btn svg { display: block; }
 
 .view-toggle {
-  display: flex; background: rgba(0,0,0,0.05);
+  background: rgba(0,0,0,0.05);
   border-radius: 8px; padding: 2px; gap: 2px;
   flex-shrink: 0;   /* 工具栏拥挤时不被挤压，否则按钮/带 viewBox 的 SVG 会缩成 2~3px（首屏/久置后布局最紧时最明显）*/
 }
@@ -2019,14 +2156,11 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   width: 28px; height: 28px; border-radius: 6px; border: none;
   background: none; cursor: pointer; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+  transition: color 0.15s;
   flex-shrink: 0;
 }
 .view-toggle button svg { flex-shrink: 0; }
-.view-toggle button.on {
-  background: rgba(255,255,255,0.85); color: var(--color-primary);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
+.view-toggle button.on { color: var(--color-primary); }
 
 /* 新建文件夹 */
 .new-folder-btn {
@@ -2356,7 +2490,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .fc-ghost-row.error .fc-ghost-fill { background: rgba(200,90,90,0.1); width: 100% !important; }
 
 .fc-upload {
-  border: 1.5px dashed rgba(0,0,0,0.09); border-radius: 14px;
+  border: 1.5px dashed rgba(0,0,0,0.09); border-radius: 14px; corner-shape: round;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 7px;
   color: var(--text-secondary);
@@ -2443,6 +2577,18 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   padding: 4px 8px;
 }
 .trash-restore-btn:hover { background: rgba(123,127,178,0.15); }
+.trash-expand-btn {
+  width: 18px; height: 18px; padding: 0; border: 0; background: transparent;
+  color: var(--text-secondary); cursor: pointer; font-size: 18px; line-height: 16px;
+}
+.trash-expand-btn span { display: inline-block; transition: transform .18s ease; }
+.trash-expand-btn .rotated { transform: rotate(90deg); }
+.trash-folder-contents { margin: -3px 0 5px 34px; padding: 4px 0 5px 14px; border-left: 1px solid rgba(130,135,170,.22); }
+.trash-child-row { display: flex; align-items: center; gap: 7px; min-height: 28px; color: var(--text-secondary); font-size: 11px; }
+.trash-child-row svg { color: var(--color-primary); flex: 0 0 auto; }
+.trash-child-row small { margin-left: auto; margin-right: 12px; opacity: .65; }
+.trash-child-row.file svg { color: var(--text-tertiary); }
+.trash-folder-empty { color: var(--text-tertiary); font-size: 11px; padding: 5px 0; }
 
 /* ── 批量操作浮动栏 ── */
 .selection-bar {

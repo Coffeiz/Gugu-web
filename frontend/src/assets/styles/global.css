@@ -203,8 +203,9 @@ body {
   overflow: hidden;
   cursor: pointer;
   display: flex; flex-direction: column;
-  will-change: transform;
   user-select: none;
+  border-radius: 14px;
+  corner-shape: round;
 }
 .fc-card {
   transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
@@ -258,6 +259,15 @@ body {
 .phys-reveal-snap, .phys-reveal-snap *,
 .phys-reveal-snap::before, .phys-reveal-snap::after,
 .phys-reveal-snap *::before, .phys-reveal-snap *::after { transition: none !important; }
+/* 连接点（CardConnDot.vue）是个例外：卡片落地揭示这一帧如果鼠标已经压在上面，_revealWithoutStaleHover
+   会同步派发 synthetic mouseenter，hovering 变 true 的这次 class 切换恰好落在上面这条快照
+   规则生效的同一帧，把连接点本该有的淡入动画也一并压没了，表现为"点瞬间出现"而不是跟手淡入。
+   快照要压的是转手/下沉这类「陈旧 hover 视觉」造成的跳变，连接点首次出现的淡入不属于这类，
+   补一条更具体的选择器把它排除在外，各类选择器的特异度都比上面这条通用规则高，不用管书写
+   顺序谁在前。 */
+.phys-reveal-snap .card-conn-dots .conn-dot::before {
+  transition: opacity 0.15s, transform 0.15s, box-shadow 0.2s ease !important;
+}
 /* .card-actions/.conn-dot 是 FileRefCard.vue（画布文件引用卡）通过插槽塞进 .fc-card 内部的
    按钮，不是 FileCard.vue 自己认得的 .fc-hover-actions——按下移除/连线圆点时同样不该带着
    整张卡一起按下去，在同一条排除名单里一并列上。 */
@@ -292,22 +302,24 @@ body {
   box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
 }
 
-/* 弹窗进场「玻璃 ramp」（机制注释见 BaseModal.vue 的过渡段）：模糊半径本身从 0 过渡
-   到各自满值，全程不碰 opacity——否则半透明祖先形成隔离组，backdrop-filter 采不到
-   弹窗后面的页面/窗口，动画期间模糊是死的。规则放全局是因为 BaseModal 的 scoped
-   样式够不到 slot 里的玻璃面板（slot 内容带的是调用方组件的 scope id）。
+/* 弹窗进场「玻璃 ramp」（机制注释见 BaseModal.vue 的过渡段）：遮罩、玻璃面和卡片位移
+   必须使用同一节奏。模糊半径本身从 0 过渡到各自满值，全程不碰 opacity——否则半透明
+   祖先形成隔离组，backdrop-filter 采不到弹窗后面的页面/窗口。规则放全局是因为
+   BaseModal 的 scoped 样式够不到 slot 里的玻璃面板（slot 内容带的是调用方组件的 scope id）。
    !important 用于压过 BaseModal 通过 blur prop 写到 .bm-card 上的 inline 样式。 */
 .bm-enter-from .bm-card,
 .bm-enter-from .panel-left,
 .bm-enter-from .modal-right {
+  background-color: transparent !important;
   backdrop-filter: blur(0px) !important;
   -webkit-backdrop-filter: blur(0px) !important;
 }
 .bm-enter-active .bm-card,
 .bm-enter-active .panel-left,
 .bm-enter-active .modal-right {
-  transition: backdrop-filter 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-              -webkit-backdrop-filter 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background-color var(--modal-enter-duration) var(--modal-enter-easing),
+              backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing),
+              -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing);
 }
 
 /* ── 弹出面板（右键菜单 / 排序菜单 / 表单弹窗）全局共用 ── */

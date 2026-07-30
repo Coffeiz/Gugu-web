@@ -1,23 +1,18 @@
 <template>
   <div class="gs-wrap" ref="wrapEl">
-    <div class="gs-box" :class="{ active: open }">
-      <PhMagnifyingGlass class="gs-mag" :size="15" weight="bold" />
-      <input
-        ref="inputEl"
-        v-model="q"
-        class="gs-input"
-        type="text"
-        placeholder="搜索项目、文件、日程、客户…"
-        @focus="onFocus"
-        @input="onInput"
-        @compositionstart="composing = true"
-        @compositionend="onCompositionEnd"
-        @keydown.esc="close"
-      />
-      <button v-if="q" class="gs-clear" @click="clear" title="清除">
-        <PhX :size="13" weight="bold" />
-      </button>
-    </div>
+    <SearchInput
+      ref="inputEl"
+      v-model="q"
+      :active="open"
+      clearable
+      placeholder="搜索项目、文件、日程、客户…"
+      @focus="onFocus"
+      @input="onInput"
+      @compositionstart="composing = true"
+      @compositionend="onCompositionEnd"
+      @keydown.esc="close"
+      @clear="clear"
+    />
 
     <Teleport to="body">
       <transition name="gs-pop">
@@ -53,9 +48,10 @@ import { nextZ } from '@/composables/windowz'
 import { useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import {
-  PhMagnifyingGlass, PhX, PhCircleNotch,
-  PhStack, PhFile, PhFolder, PhCalendarBlank, PhAddressBook, PhChatCircle,
+  PhCircleNotch,
+  PhStack, PhFile, PhFolder, PhCalendarBlank, PhAddressBook, PhChatCircle, PhNote,
 } from '@phosphor-icons/vue'
+import SearchInput from './SearchInput.vue'
 import { searchApi } from '@/services/api'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
@@ -68,6 +64,7 @@ const TYPE_ICON = {
   event: PhCalendarBlank,
   client: PhAddressBook,
   conversation: PhChatCircle,
+  note: PhNote,
 }
 
 const router       = useRouter()
@@ -75,10 +72,10 @@ const projectStore = useProjectStore()
 const uiStore      = useUiStore()
 
 interface SearchItem { id: number; title: string; subtitle?: string; date?: string; message_id?: number }
-interface SearchGroup { type: 'project' | 'file' | 'folder' | 'event' | 'client' | 'conversation'; label: string; items: SearchItem[] }
+interface SearchGroup { type: 'project' | 'file' | 'folder' | 'event' | 'client' | 'conversation' | 'note'; label: string; items: SearchItem[] }
 
 const wrapEl  = ref<HTMLElement | null>(null)
-const inputEl = ref<HTMLInputElement | null>(null)
+const inputEl = ref<InstanceType<typeof SearchInput> | null>(null)
 const panelEl = ref<HTMLElement | null>(null)
 const q       = ref('')
 const open    = ref(false)
@@ -153,6 +150,9 @@ function go(type: string, it: SearchItem) {
     uiStore.pendingChatSession = it.id   // GuguChat 监听后打开、切到会话、滚到匹配消息
   } else if (type === 'client') {
     Message.info('客户页面还在开发中，先在项目里看吧～')
+  } else if (type === 'note') {
+    uiStore.pendingNoteId = it.id   // NotesView 监听后定位到对应日期并打开编辑态
+    router.push('/mind/notes')
   }
 }
 
@@ -199,53 +199,6 @@ onBeforeUnmount(() => {
   margin-left: auto;
   position: relative;
 }
-
-/* ── 输入框：玻璃小元素 ── */
-.gs-box {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  padding: 7px 12px;
-  color: var(--text-secondary);
-  transition: background 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
-}
-.gs-box.active {
-  background: var(--glass-bg-hover);
-  border-color: rgba(123, 127, 178, 0.45);
-  box-shadow: 0 4px 16px rgba(80, 90, 110, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.95);
-}
-.gs-mag { color: var(--text-secondary); flex-shrink: 0; }
-.gs-box.active .gs-mag { color: var(--color-primary); }
-
-.gs-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-family: var(--font-sans);
-  font-size: 13px;
-  color: var(--text-primary);
-}
-.gs-input::placeholder { color: var(--text-secondary); }
-
-.gs-clear {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 2px;
-  border-radius: 6px;
-  flex-shrink: 0;
-  transition: background 0.2s ease, color 0.2s ease;
-}
-.gs-clear:hover { background: rgba(123, 127, 178, 0.12); color: var(--text-primary); }
 
 /* ── 结果面板：与「添加/编辑活动」弹窗(.add-event-popup)、右键菜单(.popup-menu)同款白底毛玻璃；
    Teleport 到 body 后用 fixed 定位(position/top/left/width 由内联样式给) ── */

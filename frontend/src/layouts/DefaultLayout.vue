@@ -123,9 +123,19 @@ function openNewProject() {
   uiStore.openNewProject = true
 }
 
-function openUpload() {
+async function openUpload() {
+  // 弹窗内的项目分组会直接影响内容高度。先准备好数据再挂载，避免先按空列表打开、
+  // 请求回包后再把整个窗口撑到最终尺寸。
+  if (projectStore.projectsLoaded) {
+    uploadProjects.value = projectStore.projects
+  } else {
+    try {
+      uploadProjects.value = await projectsApi.list()
+    } catch {
+      uploadProjects.value = []
+    }
+  }
   uploadDialogOpen.value = true
-  projectsApi.list().then(ps => { uploadProjects.value = ps }).catch(() => {})
 }
 
 function onGlobalUploaded() {
@@ -189,15 +199,16 @@ const todayStr = computed(() => {
     rgba(0, 0, 0, 0.0) 100%
   );
   pointer-events: none;
-  z-index: 5; /* 低于顶栏(10)，高于内容 */
+  z-index: 5; /* 低于顶栏(40)，高于内容 */
 }
 
 .topbar {
+  --gb-tint: var(--glass-bg);
   position: absolute;
   top: 20px;
   left: 20px;
   right: 24px;
-  z-index: 10;
+  z-index: 40;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -211,6 +222,11 @@ const todayStr = computed(() => {
   overflow: visible;  /* GlassBg 自己继承圆角裁切；宿主放开，按钮外发阴影才能露出来 */
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+.topbar:hover {
+  --gb-tint: var(--glass-bg-hover);
+  background: transparent;
+  box-shadow: var(--glass-shadow-lg);
 }
 
 .topbar-title h1 {
@@ -305,7 +321,7 @@ const todayStr = computed(() => {
 /* 画布视图自己是 position:fixed;inset:0（见 CanvasView.vue），不受 page-content padding
    约束、天然铺满整个浏览器（含侧栏背后那一段——无限画布的点阵/世界坐标不该在那儿截断，
    只是被侧栏更高的 z-index 盖住看不见）；画布自己浮层的 UI（切换面板/底部工具条）z-index
-   比侧栏低，各自在定位里加了侧栏宽度的偏移量避免落进侧栏底下，不靠收窄画布整体范围解决，
+   与侧栏同属 UI 层，高于拖拽克隆，各自在定位里加了侧栏宽度的偏移量避免落进侧栏底下，不靠收窄画布整体范围解决，
    见 CanvasSidebar.vue / CanvasToolbar.vue。顶部"笔记/画布"胶囊的边距由 Mind/index.vue
    自己维护，和笔记页使用同一坐标系。 */
 </style>

@@ -7,7 +7,61 @@
 
 ---
 
-## [Unreleased]
+## [0.19.1] - 2026-07-15 · 项目抽屉↔画布拖拽收尾与引用卡快照样式
+
+### 改进
+
+- **GuguChat 代码块样式统一**（`components/common/MarkdownView.vue`）：代码块改为与 Markdown 预览器一致的普通边框样式，顶部显示代码类型并保留复制入口。
+- **文件操作工具统一**（`components/common/{FilePasteButton,FileSelectionToolbar}.vue`、`views/{Files,Projects}/`）：文件库和项目编辑卡共用粘贴、多选操作与网格/列表切换控件，统一交互反馈和状态同步。
+- **文件夹跨空间操作完善**（`app/services/storage/`、`api/v1/folders.py`）：文件夹支持在个人文件与项目目录之间可靠剪切、复制和粘贴，明确区分个人空间与项目归属。
+
+- **项目/文件/活动引用卡的"已删除快照"样式对齐本体卡片**（`views/Mind/components/{ProjectRefCard,FileRefCard,EntitySticker}.vue`）：原对象被删除后，画布上留存的引用卡新增 `MindNode.ref_snapshot` 持久化快照数据（项目保留客户/状态/日期，文件保留类型，活动保留日期），样式与本体卡片一致，不再是简化占位样式。
+- **画布连接线跟手悬停**（`views/Mind/components/RelationLayer.vue`）：卡片 hover 完成后连线不再瞬间落下，跟随鼠标动画收尾。
+
+### 修复
+
+- **浮动预览窗边缘缩放**（`components/common/FloatPreviewWindow.vue`）：补齐四边与四角的透明缩放热区，修复热区被窗口裁剪、遮挡滚动条及圆角处出现方角的问题。
+- **回收站目录与文件状态一致性**（`app/services/storage/`、`views/Files/`）：修复文件夹恢复、跨目录移动、存储占用刷新和多选文件夹操作在刷新后状态回退的问题。
+- **项目编辑卡文件操作**（`views/Projects/components/ProjectModal.vue`）：修复多选删除、复制文件夹、粘贴重复文件、空白区域退出多选及跨页面缓存闪回问题。
+- **画布卡片与连接线显示**（`views/Mind/`、`composables/usePhysicsDrag.ts`）：补齐卡片圆角、连接点层级与拖拽落地状态，修复部分卡片切换时的闪烁和连接线显示异常。
+
+- **项目抽屉与画布之间的拖拽收尾**（`composables/{usePhysicsDrag,useCardDrag}.ts`、`views/Mind/components/{CanvasSidebar,ProjectDrawerCard,ProjectRefCard}.vue`）：修复一系列抽屉↔画布拖拽体验问题——抽屉虚线占位框离场时跳动、画布卡拖回抽屉短暂变透明才淡入、飞行克隆偶发退化成缩小动画、揭示瞬间本体与克隆短暂重叠、某状态最后一张卡拖出/首张卡拖入时整块分组瞬间增删且丢失让位动画、飞行中途重新抓起后无法放回画布。详细排查过程见 [devlog.md](docs/devlog.md) 2026-07-15 条目。
+- **渐变色项目首次拖入画布失败**（`backend/app/models/__init__.py`）：`MindNode.color` 由 `varchar(30)` 加宽到 `varchar(300)`，修复渐变色项目首次创建画布引用节点时 `StringDataRightTruncationError`。
+
+## [0.19.0] - 2026-07-14 · 思维画布收尾、连接线体验统一与存储/LLM 架构重构
+
+### 新增
+
+- **文件夹回收站 + 目录一致性对账**（`app/services/storage/`）：文件存储抽象升级——删除文件夹改为软删（30 天内可整体恢复，不再直接抹掉数据库记录），配套顶层回收站列表、整体恢复、过期自动清理；文件夹改名/移动接入乐观并发锁（版本冲突时明确提示"已被修改，请刷新重试"，不再静默覆盖）。后台新增「存储对账」面板，一键扫描并修复空文件夹丢失、幽灵目录、文件物理位置漂移等历史遗留的数据不一致问题。
+- **思维笔记变更实时推送**（`app/core/events.py`、`stores/mind.ts`）：`create_note`/`update_note`/`delete_note`/`restore_note`/`undo_last_gugu_note` 接入 SSE 通知，笔记时间流与画布不再需要手动刷新页面才能看到咕咕新写的内容。
+- **网页聊天分段消息不再重复气泡**（`GuguChat.vue`、`runner.py`）：聊天消息 SSE 广播带上发起标签页的 `origin`，本标签页收到自己已经流式渲染过的回声消息时跳过，不再出现同一内容两个气泡（跨标签页/多端同步不受影响）。
+- **反思写 summary 的变更留痕**（`agent/memory/reflection.py`）：每次 summary 被覆盖式更新时记一行"旧→新"diff 日志（`agent.memdiff`），万一某次反思误判导致状态快照被错误改写，可以回放定位是哪一轮写坏的。
+- **后台「记忆旧文件清理」**（`app/api/v1/agent_admin.py`、`Admin/StorageAudit/index.vue`）：扫描并清理记忆存储格式升级后遗留的旧文件（如 `summary.md`+`summary.ts`），只有确认已被新文件取代才判定可安全删除。
+- **新增「思维笔记」skill**（`agent/skills/note-writing.md`）：`blocks` 参数没有真正的语法约束，工具描述里的 schema 更多是"帮模型看懂形状"而非硬性保证，实测下模型仍容易写错结构。新 skill 给出 8 种块类型的正确示范、今晚验证过的三个易错点（列表/引用块别写成嵌套数组、`task_list` 别漏 `checked`、`reference` 别漏 `ref_id`）、长内容分批写的策略；接入 `DefaultProfile.skills` 并在 `skills.md`（每轮强制注入的工具使用准则）里加了主动指针。
+
+### 改进
+
+- **咕咕写入后的复查响应更快**（`agent/core.py`）：成功写操作直接进入读回核实，省去一次无信息的模型收尾往返；失败写入不再触发复查，思维笔记读回也不会被误判为未核实。
+- **思维笔记 blocks 参数彻底可用**（`agent/tools/mind.py`、`app/core/mind_content.py`）：`create_note`/`update_note` 的 `blocks` 字段此前只声明了 `type: array`、没有嵌套结构，导致咕咕的结构化参数生成在缺少形状提示时系统性退化（数组被包成 `{"item":...}`、无 schema 的对象整段被字符串化塞进 `{"$text":...}`），实测下几乎每次带样式/引用/列表的笔记都写不进去。补齐完整的两层 JSON Schema（行内内容 + 8 种块类型），并把 `bullet_list`/`ordered_list`/`blockquote` 的入参协议从"数组的数组"改成跟 `task_list` 同构的"一层数组 + 对象包 content"（两层裸嵌套数组同样会触发模型生成退化，任何一层用 `anyOf` 挑分支也会导致模型直接吐空对象）。现已验证 8 种块类型、6 种行内样式、3 种引用类型完整可用。
+- **记忆存储：summary 合并为单文件**（`agent/memory/store.py`）：`summary.md`（正文）+ `summary.ts`（更新时间戳）两个文件合并成一个 `summary.json`，跟 `profile`/`pattern` 统一走 JSON；旧文件不删、首次读取时自动一次性迁移。
+- **笔记时间流滚动条与删除后定位**（`NoteTimeline.vue`、`NotesView.vue`）：日期列内滚动条改为无底色、贴边、`scrollbar-gutter: stable` 不挤压内容（跟侧边栏导航同款）；修复删掉当前激活日期最后一条笔记后视图卡住、不自动滚到新的最后一天的问题。
+- **画布连接线改为强制绑定真实位置**（`views/Mind/components/RelationLayer.vue`、`CardConnDot.vue`、`composables/usePhysicsDrag.ts`）：卡片拖拽/落地飞行时带一点摆动动画，此前连接线端点是按不含旋转的几何公式估算，摆动幅度大时线会跟连接点视觉位置脱节；改为直接测量连接点的真实屏幕位置（拖拽中优先量物理模块的克隆覆盖层，静止/悬停态量卡片本体），拖拽、落地、静止、悬停全状态统一，顺带删除了原来专门为悬停抬起单独手写的一套 rAF 补间动画。连接点与连接线的鼠标判定范围从贴着可见图形扩大到 10px；连接点命中态的辉光效果从一直来回跳动的关键帧动画改成一次性展开/收起的过渡。后续发现平移整个画布时连接线会有肉眼可见的滞后感——虚拟化窗口让静止卡片也被拉进这套"每帧真实测量"的路径，测量时机和画布 transform 提交之间没有强制排序，读到的是上一帧的屏幕坐标；改为只有正在拖拽或当前悬浮的卡片才做真实测量，其余静止卡片直接用世界坐标算，画布平移时天然跟手。
+- **抽屉展开圆角与顶部布局统一**（`views/Mind/components/CanvasSidebar.vue`）：收起态与展开态圆角统一为 25px，不再有收展过程中"大圆滚成矩形"的形变感；顶部标题与返回按钮的边缘间距对齐圆角半径，与画布抽屉整体的圆角视觉呼应。
+- **日历月/周、思维笔记/画布、文件库网格/列表三处切换统一成药丸滑动样式**（新增 `components/common/SegmentedControl.vue`）：原来三处各自用"选中按钮自己变背景+阴影"来伪造高亮，圆角/轨道底色也各不一样。新组件不关心选项本身长什么样（文字/图标/RouterLink 都行），用 `getBoundingClientRect()` 量选中项的真实位置和宽高，把一个绝对定位的药丸块用 `transform` 平移过去（横竖两个方向都处理，减掉 `clientLeft`/`clientTop` 避免有边框的轨道重复计入边框厚度导致偏移）；药丸颜色/圆角/阴影走 CSS 变量传入，不吃掉各页面原有的轨道视觉差异。首次挂载先在无过渡状态下连测两帧再开启过渡动画，避免开屏出现"从左上角滑入"的误动画。
+- **模型默认最大输出 token 数 2000→8000**（`app/core/config.py`）：日常闲聊够用，但带结构化参数的工具调用（如笔记 `blocks`）很容易把 2000 token 挤爆触发截断；只影响新建配置/无显式覆盖时的默认值，不动已有配置。
+
+### 修复
+
+- **伪工具调用语法泄露污染历史、下一轮直接 400**（`agent/outbound.py`）：模型偶尔不走正常的结构化 tool_calls，把 `<function=xxx>`/`<parameter=xxx>`（Llama 风格）伪 XML 语法当成回复正文吐出来——不仅当场体验很怪，这段畸形文本存进对话历史后，下一轮当作历史消息发回去时 MiniMax 的 prefill 解析直接 `BadRequestError`（"咕咕开小差了"）。回复出口清洗新增规则：一旦正文出现 `<function=` 开头，从该位置截断到结尾（前面正常文字保留），不让泄露内容进历史，掐断这条崩溃链路。
+- **工具参数被截断时咕咕直接崩溃报"开小差了"**（`agent/core.py`）：工具调用参数因 max_tokens 被截断解析失败时的兜底提示分支，把占位空字典误写成 `{{}}`——在 f-string 表达式里这不是"空字典"，是"装了一个空字典的 set 字面量"，dict 不可哈希直接抛 `TypeError: unhashable type: 'dict'`，SSE 流当场中断。这条分支平时不触发，只有工具参数（如笔记 `blocks`）内容长到被截断时才会走到，改成 `{}` 后按预期回落成"参数被截断，精简后重试"的正常提示，不再整轮报错。
+- **本地 Docker 部署构建失败 + 龟速（25+ 分钟甚至超时）**（`backend/Dockerfile`、`docker-compose.yml`）：`pip install -r requirements.txt` 报 `exit code: 1`，实机复现定位两层问题：① `pilk`（SILK 语音编解码）PyPI 只发 Windows 预编译包，Linux 下必须从源码编译内嵌的 C 语言编解码库，`python:3.12-slim` 默认没有编译工具链——补 `build-essential`（含 gcc/libc6-dev/make）解决；② 部分网络环境直连 PyPI 官方源（`files.pythonhosted.org`）极慢（实测 ~10KB/s，装 langchain 这类依赖树巨大的包能拖到 25+ 分钟甚至读超时失败）。pip/apt 缓存改用 BuildKit 缓存挂载（`RUN --mount=type=cache`）跨构建持久化，requirements.txt 不变时重建从分钟级降到 2 秒内；PyPI 源做成 `ARG PIP_INDEX_URL`（默认官方源，不影响网络正常的用户），网络不佳时构建前设置同名环境变量即可切换镜像源（`docker compose build`/`docker build --build-arg` 均支持，见两文件内注释），不用碰文件本身。
+- **抽屉项目卡拖拽落地交接的一连串问题**（`composables/usePhysicsDrag.ts`、`views/Mind/components/ProjectDrawerCard.vue`）：① 拖出抽屉后松手顿一下——先本地乐观插入占位卡再等接口回填，不用等两次串行请求。② 落地动画途中重新抓取有时会瞬移或跳到鼠标下——重抓起点改为优先读可见的落地克隆而不是隐形的物理 holder；乐观创建的画布项目回填服务端字段时保留仅前端使用的 `clientKey`，避免 Vue 的 key 从临时身份切到真实 id 导致正在播放的落地动画被重新挂载切断。③ 卡片从抽屉拖出后又中途放回，如果在飞回抽屉的途中再次抓取，本体会彻底消失——转手到画布卡片的机制原本对着"飞回自己原位"这种没有监听者的情形也会尝试转手，静默失败后错误地把占位状态强制关闭，导致后续测量落到 `display:none` 的元素上量出全 0；现在只在落点确实是另一张真实卡片时才转手，飞回原位保留原有占位语义。④ 占位态揭示顺序不对导致鼠标停留时卡片瞬间弹起、或描边先闪一下再复位——统一为先切换占位样式、再执行悬停压制与揭示。
+- **全局搜索点思维笔记结果没反应、也没图标**（`GlobalSearch.vue`、`stores/ui.ts`、`NotesView.vue`）：笔记类型从一开始就没接入搜索结果的图标映射和点击跳转分支（其它类型都有，唯独漏了 note），点了没任何反应。补上图标，点击后跳转到笔记时间流、定位到对应日期并做一次高亮闪烁（跟项目搜索跳转"高亮不弹编辑弹窗"的克制一致）。
+
+### 重构
+
+- **文件存储 KeyStrategy/FolderTree/FileService 领域层重构**（`app/services/storage/`、`app/api/v1/folders.py`）：此前文件/文件夹的存储路径拼接、目录树查询、读写逻辑散落在近 1100 行的 `files.py` 和各处调用点里手写，且曾出现过"幽灵目录""空文件夹缺失"等目录不一致问题却缺乏系统性核对手段。收拢为独立领域层——`KeyStrategy`/`PathMirrorStrategy` 统一路径拼接、`FolderTree` 封装目录树查询、`FileService` 薄门面 + `FolderOps`，`folders.py` 的 REST 端点改为委托 `FileService`，对外接口不变；新增 `folder_doctor` 目录一致性对账工具（覆盖幽灵/缺失目录及文件位置误置），Admin 面板加了对应的「目录对账」入口，管理员可以主动发现并修复目录结构漂移。用户侧无感知，开发者侧存储层职责边界更清晰、可测性提升。
+- **LLM provider 适配层重构与 core 主循环瘦身（PRD-LLM-1）**（`agent/providers.py`、`agent/core.py`）：起因是一次线上故障——用户请求收到「咕咕开小差了」兜底回复，定位到 MiniMax 流式响应偶发不符合 SDK 期望的 schema，触发未判空的 `AttributeError` 崩溃（此前已因同类问题吃过 `IndexError`/`KeyError`，这次是同根因新变种）。顺势发现两个结构性问题：provider 差异判断散落在 8 个文件里各自硬编码；`agent/core.py`（752 行）里 Anthropic/OpenAI 两条主循环约 90% 逻辑重复，还混杂约 200 行与 provider 无关的防幻觉守卫代码。三阶段收尾：新增 `agent/providers.py` 统一适配层并精确修复 MiniMax 崩溃（不放宽全局异常容忍度），`core.py` 瘦身至 667 行；补齐特征测试后合并两条主循环为共享执行器，`core.py` 进一步降到 378 行（OpenAI 路径顺带补上了此前缺失的异常兜底）；收拢 6 处客户端构造样板。全量测试从 285 条增至 332 条零回归。
 
 ## [0.18.0] - 2026-07-13 · 思维画布、笔记工作台与可靠性收尾
 

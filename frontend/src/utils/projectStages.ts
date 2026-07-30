@@ -13,6 +13,27 @@
  */
 import type { ProjectStage, ProjectTodo, ProjectStatus } from '@/types/project'
 
+export interface ProjectState {
+  stages: ProjectStage[]
+  currentStage: string | null
+  progress: number
+  status: ProjectStatus
+  _stageBeforeDone?: string | null
+}
+
+export interface ProjectStateTransition {
+  stages: ProjectStage[]
+  currentStage: string | null
+  progress: number
+  status: ProjectStatus
+  stageBeforeDone?: string | null
+}
+
+/** 深拷贝项目阶段，保留待办的自动完成快照字段。 */
+export function cloneProjectStages(stages: ProjectStage[]): ProjectStage[] {
+  return stages.map(stage => ({ ...stage, todos: (stage.todos ?? []).map(todo => ({ ...todo })) }))
+}
+
 /**
  * 自动完成快照：未完成的待办标记为 autoCompleted 并勾上，快照原 done（false）到 _savedDone；
  * 已完成的原样保留（不动其真实状态）。返回新数组，不改原引用。
@@ -68,6 +89,96 @@ export function allTodosDone(stages: ProjectStage[]): boolean {
 export function stageProgressByIndex(idx: number, total: number): number {
   if (idx < 0 || total <= 0) return 0
   return Math.round(((idx + 1) / total) * 100)
+}
+
+/** 所有待办的完成比例；无待办时按当前阶段位置计算。 */
+export function projectTodoProgress(stages: ProjectStage[], currentStage: string | null): number {
+  if (!stages.length) return 0
+  let done = 0
+  let total = 0
+  for (const stage of stages) {
+    const todos = stage.todos ?? []
+    done += todos.filter(todo => todo.done).length
+    total += todos.length
+  }
+  if (total) return Math.round(done / total * 100)
+  return stageProgressByIndex(stages.findIndex(stage => stage.key === currentStage), stages.length)
+}
+
+/**
+ * 处理看板状态切换。完成项目会收尾全部待办，退出完成区时只还原自动勾选过的待办。
+ * 这是 Store、卡片和弹窗共用的唯一状态转换，不包含网络或 Vue 响应式操作。
+ */
+export function transitionProjectStatus(state: ProjectState, targetStatus: ProjectStatus): ProjectStateTransition {
+  const stages = cloneProjectStages(state.stages)
+  if (targetStatus === 'done' && state.status !== 'done' && stages.length) {
+    for (const stage of stages) stage.todos = autoCompleteTodos(stage.todos)
+    return {
+      stages,
+      currentStage: stages[stages.length - 1].key,
+      progress: 100,
+      status: 'done',
+      stageBeforeDone: state._stageBeforeDone ?? state.currentStage,
+    }
+  }
+  if (state.status === 'done' && targetStatus !== 'done' && stages.length) {
+    for (const stage of stages) stage.todos = restoreTodos(stage.todos)
+    const currentStage = state._stageBeforeDone ?? stages[0].key
+    return {
+      stages,
+      currentStage,
+      progress: stageProgressByIndex(stages.findIndex(stage => stage.key === currentStage), stages.length),
+      status: targetStatus,
+      stageBeforeDone: undefined,
+    }
+  }
+  return { stages, currentStage: state.currentStage, progress: state.progress, status: targetStatus }
+}
+
+/** 切换当前阶段，并保持阶段前进/后退时自动完成待办的既有语义。 */
+export function transitionProjectStage(
+  state: ProjectState,
+  targetStage: string,
+  progress: number,
+): ProjectStateTransition {
+  const oldIdx = state.stages.findIndex(stage => stage.key === state.currentStage)
+  const newIdx = state.stages.findIndex(stage => stage.key === targetStage)
+  const stages = cloneProjectStages(state.stages)
+  if (oldIdx !== newIdx && oldIdx >= 0 && newIdx >= 0) {
+    if (newIdx > oldIdx) {
+      for (let index = oldIdx; index < newIdx; index++) stages[index].todos = autoCompleteTodos(stages[index].todos)
+    } else {
+      for (let index = newIdx; index < stages.length; index++) stages[index].todos = restoreTodos(stages[index].todos)
+    }
+  }
+  const isLastFull = newIdx === stages.length - 1 && progress === 100 && allTodosDone(state.stages)
+  if (isLastFull && state.status !== 'done') {
+    return {
+      stages, currentStage: targetStage, progress, status: 'done', stageBeforeDone: state.currentStage,
+    }
+  }
+  if (!isLastFull && state.status === 'done') {
+    return { stages, currentStage: targetStage, progress, status: 'active' }
+  }
+  return { stages, currentStage: targetStage, progress, status: state.status }
+}
+
+/** 待办编辑后的完成态判断：只有最后阶段且所有待办完成才进入已完成。 */
+export function transitionProjectTodos(
+  state: ProjectState,
+  stages: ProjectStage[],
+  progress: number,
+): ProjectStateTransition {
+  const copied = cloneProjectStages(stages)
+  const lastKey = copied[copied.length - 1]?.key
+  const complete = state.currentStage === lastKey && progress === 100 && allTodosDone(copied)
+  if (complete && state.status !== 'done') {
+    return { stages: copied, currentStage: state.currentStage, progress, status: 'done', stageBeforeDone: state.currentStage }
+  }
+  if (!complete && state.status === 'done') {
+    return { stages: copied, currentStage: state.currentStage, progress, status: 'active' }
+  }
+  return { stages: copied, currentStage: state.currentStage, progress, status: state.status }
 }
 
 // 规范化输入：阶段可以是纯字符串（只有名字）或 {key?, label?, todos?} 松对象

@@ -43,6 +43,7 @@ from app.api.v1 import users_admin as users_admin_router
 from app.api.v1 import admin_debug as admin_debug_router
 from app.api.v1 import admin_analytics as admin_analytics_router
 from app.api.v1 import ops_admin as ops_admin_router
+from app.api.v1 import folder_doctor_admin as folder_doctor_admin_router
 from app.api.v1 import notifications_admin as notifications_admin_router
 from app.api.v1 import notifications as notifications_router
 from app.api.v1 import track as track_router
@@ -288,6 +289,11 @@ app.include_router(
     dependencies=[Depends(require_admin)],
 )
 app.include_router(
+    folder_doctor_admin_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
     feedback_router.admin_router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
@@ -308,6 +314,17 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
         for e in errors
     )
     return JSONResponse(status_code=422, content={"detail": msg})
+
+
+from app.core.errors import AppError
+
+
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError):
+    # 领域异常（FileService/FolderTree 等抛）→ 与 HTTPException 同形状：{"detail": 文案}。
+    # public_message 是已知可外发的静态业务文案，直接返回。
+    return JSONResponse(status_code=getattr(exc, "status_hint", 400),
+                        content={"detail": exc.public_message})
 
 
 @app.exception_handler(Exception)

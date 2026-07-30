@@ -26,15 +26,6 @@ export async function fireHint(key: string) {
   } catch { /* 静默 */ }
 }
 
-// 回头看（08，Phase 3）：完成第 5 个项目时调。claim-once 只弹一次；文案 {project_name} 后端回填。
-export async function fireLookback() {
-  await sleep(1000)
-  try {
-    const { text } = await onboardingApi.claim('lookback')
-    bubble(useUiStore(), text)
-  } catch { /* 静默 */ }
-}
-
 // fire-and-forget；任何一步失败都静默（不打扰用户）
 export async function runOnboarding(router: Router) {
   const ui = useUiStore()

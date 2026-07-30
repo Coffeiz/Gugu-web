@@ -74,10 +74,10 @@ const rendered = computed(() =>
    轻量 renderMarkdown 产出的是裸 <pre><code>，由下面的 pre 兜底样式接管。 */
 .md-view :deep(pre) { margin: 7px 0; padding: 9px 12px; overflow-x: auto; background: rgba(20,22,40,0.05); border-radius: 8px; }
 .md-view :deep(pre code) { background: none; color: var(--text-primary); padding: 0; border-radius: 0; font-size: 0.95em; line-height: 1.6; }
-.md-view :deep(.md-code-block) { margin: 8px 0; border-radius: 8px; overflow: hidden; background: rgba(123,127,178,0.04); font-size: 0.9em; }
+.md-view :deep(.md-code-block) { margin: 8px 0; border: 1px solid rgba(123,127,178,0.22); border-radius: 8px; overflow: hidden; background: transparent; font-size: 0.9em; }
 .md-view :deep(.md-code-block pre) { margin: 0; background: none; border-radius: 0; }
-.md-view :deep(.md-code-header) { display: flex; align-items: center; justify-content: space-between; padding: 5px 12px; background: rgba(123,127,178,0.12); border-bottom: 1px solid rgba(123,127,178,0.2); }
-.md-view :deep(.md-code-lang) { font-size: 10px; font-weight: 600; color: var(--color-primary); opacity: 0.85; text-transform: lowercase; letter-spacing: 0.04em; }
+.md-view :deep(.md-code-header) { display: flex; align-items: center; justify-content: space-between; min-height: 28px; box-sizing: border-box; padding: 5px 12px; background: rgba(123,127,178,0.1); border-bottom: 1px solid rgba(123,127,178,0.16); }
+.md-view :deep(.md-code-lang) { margin-right: auto; font-size: 10px; font-weight: 600; color: var(--color-primary); opacity: 0.85; text-transform: lowercase; letter-spacing: 0.04em; }
 .md-view :deep(.md-copy-btn) { font-size: 10px; font-weight: 600; color: var(--color-primary); background: none; border: none; cursor: pointer; padding: 0; opacity: 0.7; transition: opacity 0.15s; }
 .md-view :deep(.md-copy-btn:hover) { opacity: 1; }
 /* token 配色：跟思维面板笔记（useMindEditor.ts + mind-content.css）用同一套，全站代码块
@@ -86,7 +86,7 @@ const rendered = computed(() =>
    把嵌套 token 拍扁成一个 class 列表的问题；GuguChat 是 hljs.highlight() 直接出的
    真实嵌套 <span>，浏览器天然只认最内层，不会有那个问题。 */
 .md-view :deep(.hljs-keyword), .md-view :deep(.hljs-literal),
-.md-view :deep(.hljs-selector-tag), .md-view :deep(.hljs-tag) { color: #7b5cf0; }
+.md-view :deep(.hljs-selector-tag), .md-view :deep(.hljs-tag) { color: #7b5cf0; font-weight: 600; }
 .md-view :deep(.hljs-string), .md-view :deep(.hljs-regexp),
 .md-view :deep(.hljs-symbol), .md-view :deep(.hljs-bullet),
 .md-view :deep(.hljs-addition) { color: #2d7a4f; }
@@ -95,7 +95,7 @@ const rendered = computed(() =>
 .md-view :deep(.hljs-number), .md-view :deep(.hljs-attr),
 .md-view :deep(.hljs-attribute), .md-view :deep(.hljs-deletion) { color: #b07858; }
 .md-view :deep(.hljs-function), .md-view :deep(.hljs-name),
-.md-view :deep(.hljs-type), .md-view :deep(.hljs-params) { color: #4a7fb5; }
+.md-view :deep(.hljs-type), .md-view :deep(.hljs-params) { color: #4a7fb5; font-weight: 600; }
 .md-view :deep(.hljs-title), .md-view :deep(.hljs-section),
 .md-view :deep(.hljs-selector-id), .md-view :deep(.hljs-selector-class) { color: #4a7fb5; font-weight: 600; }
 .md-view :deep(.hljs-built_in), .md-view :deep(.hljs-builtin-name),

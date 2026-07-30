@@ -1,15 +1,18 @@
 """项目领域技能：list_projects / create_project / update_project。
 
-逻辑迁自原 agent.py 的 `_exec_tool`，一字不改（含 user_id 所有权校验、
-done_at 处理）。
+逻辑迁自原 agent.py 的 `_exec_tool`，并统一经项目领域写入入口执行。
 """
+from datetime import timedelta
 import json
-from app.core.tz import now_utc
 import random
-from datetime import datetime, timedelta
 
 from sqlalchemy import func, select, update
 
+from app.core.projects import (
+    build_project, find_project_stage, next_project_stage_key, next_project_todo_number,
+    normalize_project_stages, replace_project_stages, update_project_atomic,
+)
+from app.core.tz import now_utc
 from app.models import File, Project
 
 _COLOR_PRESETS = [
@@ -55,9 +58,9 @@ async def _update_project(db, user_id, args: dict):
     p, _err = await _resolve_project(db, user_id, args)
     if _err:
         return _err
+    fields = {}
     if "status" in args:
         if args["status"] == "done" and p.done_at is None:
-            p.done_at = now_utc()
             # 与前端「手拖到已完成」一致：标完成 = 整项收尾——自动勾选所有阶段的全部待办、
             # 当前阶段推到最后、进度置 100。未完成的待办打 autoCompleted + 快照原状态，
             # 之后从「已完成」退回时前端按此还原（同 GuguChat moveProject 约定）。
@@ -68,19 +71,20 @@ async def _update_project(db, user_id, args: dict):
                     else {**t, "_savedDone": False, "done": True, "autoCompleted": True}
                     for t in (s.get("todos") or [])
                 ]
-            p.stages = stages   # 触发 setter 持久化 stages_json
+            fields["stages"] = stages
             if stages:
-                p.current_stage = stages[-1].get("key")
-            p.progress = 100
-        p.status = args["status"]
+                fields["current_stage"] = stages[-1].get("key")
+            fields["progress"] = 100
+        fields["status"] = args["status"]
     if "priority" in args:
         pr = (args.get("priority") or "").strip().lower()
-        p.priority = pr if pr in ("high", "medium", "low") else None
+        fields["priority"] = pr if pr in ("high", "medium", "low") else None
     for field in ("deadline", "start_date", "client", "name"):
         if field in args:
-            setattr(p, field, args[field])
-    p.updated_at = now_utc()
-    await db.commit()
+            fields[field] = args[field]
+    error = await _commit_project_intent(db, p, user_id, fields)
+    if error:
+        return error
     return {"success": True, "project_id": p.id, "name": p.name, "priority": p.priority}
 
 
@@ -89,33 +93,6 @@ _DEFAULT_STAGES = [
     {"key": "s1", "label": "执行", "todos": []},
     {"key": "s2", "label": "交付", "todos": []},
 ]
-
-
-def _build_stages(raw: list) -> list:
-    """把 ['计划','执行'] 或 [{'label':'开发','todos':['a','b']}] 规范成
-    [{key, label, todos:[{id,text,done}]}]，重排 key(s0..)/todo id(t1..)。"""
-    out, tnum = [], 0
-    for i, item in enumerate(raw or []):
-        if isinstance(item, str):
-            label, todo_src = item, []
-        elif isinstance(item, dict):
-            label = item.get("label") or item.get("name") or ""
-            todo_src = item.get("todos") or []
-        else:
-            continue
-        label = str(label).strip()
-        if not label:
-            continue
-        todos = []
-        for t in todo_src:
-            txt = (t.get("text") if isinstance(t, dict) else t)
-            if not str(txt or "").strip():
-                continue
-            tnum += 1
-            todos.append({"id": f"t{tnum}", "text": str(txt),
-                          "done": bool(t.get("done")) if isinstance(t, dict) else False})
-        out.append({"key": f"s{i}", "label": label, "todos": todos})
-    return out
 
 
 async def _pick_unused_color(db, user_id) -> str:
@@ -131,26 +108,28 @@ async def _pick_unused_color(db, user_id) -> str:
 async def _create_project(db, user_id, args: dict):
     # 自定义阶段：stages 可为 ["计划","执行"] 或 [{"label":..,"todos":[..]}]，不传用默认三段
     raw = args.get("stages")
-    stages = _build_stages(raw) if raw else [dict(s) for s in _DEFAULT_STAGES]
+    stages = normalize_project_stages(raw) if raw else [dict(s) for s in _DEFAULT_STAGES]
     if not stages:
         stages = [dict(s) for s in _DEFAULT_STAGES]
-    # 未指定开始日期默认今天，未指定截止默认一周后（与上下文「今天」同口径用 datetime.now）
-    _now = datetime.now()
+    # 未指定开始日期默认今天，未指定截止默认一周后。
+    _now = now_utc()
     start_date = args.get("start_date") or _now.strftime("%Y-%m-%d")
     deadline = args.get("deadline") or (_now + timedelta(days=7)).strftime("%Y-%m-%d")
     priority = (args.get("priority") or "").strip().lower()
-    p = Project(
-        user_id=user_id,
-        name=args["name"],
-        client=args.get("client"),
-        status=args.get("status", "pending"),
-        deadline=deadline,
-        start_date=start_date,
-        color=args.get("color") or await _pick_unused_color(db, user_id),
-        priority=priority if priority in ("high", "medium", "low") else None,
-        stages_json=json.dumps(stages, ensure_ascii=False),
-        current_stage=stages[0]["key"],
-    )
+    try:
+        p = build_project(user_id, {
+            "name": args["name"],
+            "client": args.get("client"),
+            "status": args.get("status", "pending"),
+            "deadline": deadline,
+            "start_date": start_date,
+            "color": args.get("color") or await _pick_unused_color(db, user_id),
+            "priority": priority if priority in ("high", "medium", "low") else None,
+            "stages": stages,
+            "current_stage": stages[0]["key"],
+        })
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
     db.add(p)
     await db.commit()
     await db.refresh(p)
@@ -176,8 +155,10 @@ async def _update_stage(db, user_id, args: dict):
         if not match:
             return json.dumps({"error": f"阶段不存在: {target}",
                                "available": [s.get("label") for s in stages]})
-        p.current_stage = match["key"]
+        current_stage = match["key"]
         changed = True
+    else:
+        current_stage = p.current_stage
 
     # 勾选/取消某条待办（按所在阶段 + 文本匹配）
     td = args.get("todo")
@@ -199,14 +180,17 @@ async def _update_stage(db, user_id, args: dict):
                 break
         if not hit:
             return json.dumps({"error": f"未找到待办: {td['text']}"})
-        p.stages = stages  # 回写 stages_json
         changed = True
 
     if not changed:
         return json.dumps({"error": "未指定 stage 或 todo，无操作"})
 
-    p.updated_at = now_utc()
-    await db.commit()
+    fields = {"current_stage": current_stage}
+    if td and td.get("text"):
+        fields["stages"] = stages
+    error = await _commit_project_intent(db, p, user_id, fields)
+    if error:
+        return error
     return {"success": True, "project_id": p.id, "current_stage": p.current_stage}
 
 
@@ -217,9 +201,9 @@ async def _set_color(db, user_id, args: dict):
     color = (args.get("color") or "").strip()
     if not color:
         return json.dumps({"error": "未提供颜色（color，如 #A3B1FF）"})
-    p.color = color
-    p.updated_at = now_utc()
-    await db.commit()
+    error = await _commit_project_intent(db, p, user_id, {"color": color})
+    if error:
+        return error
     return {"success": True, "project_id": p.id, "color": p.color}
 
 
@@ -227,9 +211,9 @@ async def _archive_project(db, user_id, args: dict):
     p, _err = await _resolve_project(db, user_id, args)
     if _err:
         return _err
-    p.archived = bool(args.get("archived", True))
-    p.updated_at = now_utc()
-    await db.commit()
+    error = await _commit_project_intent(db, p, user_id, {"archived": bool(args.get("archived", True))})
+    if error:
+        return error
     return {"success": True, "project_id": p.id, "archived": p.archived}
 
 
@@ -264,30 +248,6 @@ async def _delete_project(db, user_id, args: dict):
 
 
 # ── 阶段/待办辅助 ──
-def _find_stage(stages: list, target: str):
-    t = str(target).strip()
-    return next((s for s in stages if s.get("key") == t or s.get("label") == t), None)
-
-
-def _next_key(stages: list, prefix: str = "s") -> str:
-    mx = -1
-    for s in stages:
-        k = str(s.get("key", ""))
-        if k.startswith(prefix) and k[len(prefix):].isdigit():
-            mx = max(mx, int(k[len(prefix):]))
-    return f"{prefix}{mx + 1}"
-
-
-def _max_todo_num(stages: list) -> int:
-    mx = 0
-    for s in stages:
-        for t in s.get("todos", []):
-            tid = str(t.get("id", ""))
-            if tid.startswith("t") and tid[1:].isdigit():
-                mx = max(mx, int(tid[1:]))
-    return mx
-
-
 async def _fetch(db, user_id, project_id):
     r = await db.execute(
         select(Project).where(Project.id == project_id, Project.user_id == user_id)
@@ -328,6 +288,22 @@ async def _resolve_project(db, user_id, args):
     return None, json.dumps({"error": "需提供 project_id 或项目名 project"})
 
 
+async def _commit_project_intent(db, project, user_id, fields: dict):
+    """咕咕按意图修改项目：基于刚读取的版本条件更新，冲突时不覆盖网页的新内容。"""
+    if not fields:
+        return json.dumps({"error": "未提供可更新的项目内容"})
+    try:
+        updated = await update_project_atomic(db, project.id, user_id, project.version, fields, project)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+    if not updated:
+        await db.rollback()
+        return json.dumps({"error": "项目刚被其他端修改，请重试"})
+    await db.commit()
+    await db.refresh(project)
+    return None
+
+
 async def _get_project(db, user_id, args: dict):
     p, _err = await _resolve_project(db, user_id, args)
     if _err:
@@ -350,15 +326,15 @@ async def _add_stage(db, user_id, args: dict):
     if _err:
         return _err
     stages = p.stages
-    new = {"key": _next_key(stages), "label": args["label"], "todos": []}
+    new = {"key": next_project_stage_key(stages), "label": args["label"], "todos": []}
     pos = args.get("position")
     if pos is None or pos >= len(stages):
         stages.append(new)
     else:
         stages.insert(max(0, pos), new)
-    p.stages = stages
-    p.updated_at = now_utc()
-    await db.commit()
+    error = await _commit_project_intent(db, p, user_id, {"stages": stages})
+    if error:
+        return error
     return {"success": True, "project_id": p.id, "stage_key": new["key"], "label": new["label"]}
 
 
@@ -367,17 +343,18 @@ async def _remove_stage(db, user_id, args: dict):
     if _err:
         return _err
     stages = p.stages
-    match = _find_stage(stages, args["stage"])
+    match = find_project_stage(stages, args["stage"])
     if not match:
         return json.dumps({"error": f"阶段不存在: {args['stage']}",
                            "available": [s.get("label") for s in stages]})
     removed_key = match.get("key")
     stages = [s for s in stages if s.get("key") != removed_key]
-    if p.current_stage == removed_key:
-        p.current_stage = stages[0]["key"] if stages else None
-    p.stages = stages
-    p.updated_at = now_utc()
-    await db.commit()
+    current_stage = stages[0]["key"] if p.current_stage == removed_key and stages else p.current_stage
+    error = await _commit_project_intent(
+        db, p, user_id, {"stages": stages, "current_stage": current_stage},
+    )
+    if error:
+        return error
     return {"success": True, "project_id": p.id, "removed": match.get("label"),
             "remaining_stages": [s.get("label") for s in stages]}
 
@@ -387,13 +364,13 @@ async def _rename_stage(db, user_id, args: dict):
     if _err:
         return _err
     stages = p.stages
-    match = _find_stage(stages, args["stage"])
+    match = find_project_stage(stages, args["stage"])
     if not match:
         return json.dumps({"error": f"阶段不存在: {args['stage']}"})
     match["label"] = args["new_label"]
-    p.stages = stages
-    p.updated_at = now_utc()
-    await db.commit()
+    error = await _commit_project_intent(db, p, user_id, {"stages": stages})
+    if error:
+        return error
     return {"success": True, "project_id": p.id, "label": args["new_label"]}
 
 
@@ -402,20 +379,20 @@ async def _add_todo(db, user_id, args: dict):
     if _err:
         return _err
     stages = p.stages
-    match = _find_stage(stages, args["stage"])
+    match = find_project_stage(stages, args["stage"])
     if not match:
         return json.dumps({"error": f"阶段不存在: {args['stage']}",
                            "available": [s.get("label") for s in stages]})
     texts = args.get("texts") or ([args["text"]] if args.get("text") else [])
     if not texts:
         return json.dumps({"error": "未提供待办内容（texts）"})
-    base = _max_todo_num(stages)
+    base = next_project_todo_number(stages)
     match.setdefault("todos", [])
     for i, txt in enumerate(texts):
         match["todos"].append({"id": f"t{base + 1 + i}", "text": txt, "done": False})
-    p.stages = stages
-    p.updated_at = now_utc()
-    await db.commit()
+    error = await _commit_project_intent(db, p, user_id, {"stages": stages})
+    if error:
+        return error
     return {"success": True, "project_id": p.id, "stage": match.get("label"), "added": texts}
 
 
@@ -424,7 +401,7 @@ async def _remove_todo(db, user_id, args: dict):
     if _err:
         return _err
     stages = p.stages
-    match = _find_stage(stages, args["stage"])
+    match = find_project_stage(stages, args["stage"])
     if not match:
         return json.dumps({"error": f"阶段不存在: {args['stage']}"})
     target = str(args["todo"])
@@ -433,9 +410,9 @@ async def _remove_todo(db, user_id, args: dict):
     if len(kept) == len(todos):
         return json.dumps({"error": f"未找到待办: {target}"})
     match["todos"] = kept
-    p.stages = stages
-    p.updated_at = now_utc()
-    await db.commit()
+    error = await _commit_project_intent(db, p, user_id, {"stages": stages})
+    if error:
+        return error
     return {"success": True, "project_id": p.id, "removed": target}
 
 
@@ -445,51 +422,15 @@ async def _set_stages(db, user_id, args: dict):
     p, _err = await _resolve_project(db, user_id, args)
     if _err:
         return _err
-    raw = args.get("stages")
-    if not isinstance(raw, list) or not raw:
-        return json.dumps({"error": '需提供 stages 列表，如 ["需求","开发"] 或 [{"label":"开发","todos":["接口"]}]'})
-
-    old = p.stages
-    old_by_label = {s.get("label"): s for s in old}
-    new_stages, tnum = [], 0
-    for i, item in enumerate(raw):
-        if isinstance(item, str):
-            label, todo_src, gave_todos = item, [], False
-        elif isinstance(item, dict):
-            label = item.get("label") or item.get("name") or ""
-            todo_src = item.get("todos") or []
-            gave_todos = "todos" in item
-        else:
-            continue
-        label = str(label).strip()
-        if not label:
-            continue
-        # todos：本次给了就用本次；没给但旧的同名阶段有，则保留旧的（改名/重排不丢待办）
-        if gave_todos:
-            src = [{"text": (t.get("text") if isinstance(t, dict) else t),
-                    "done": bool(t.get("done")) if isinstance(t, dict) else False} for t in todo_src]
-        elif label in old_by_label:
-            src = [{"text": t.get("text"), "done": t.get("done", False)}
-                   for t in old_by_label[label].get("todos", [])]
-        else:
-            src = []
-        todos = []
-        for t in src:
-            if not str(t.get("text") or "").strip():
-                continue
-            tnum += 1
-            todos.append({"id": f"t{tnum}", "text": str(t["text"]), "done": bool(t.get("done"))})
-        new_stages.append({"key": f"s{i}", "label": label, "todos": todos})
-
-    if not new_stages:
-        return json.dumps({"error": "stages 解析后为空"})
-    # current_stage：保留同名阶段，否则落到第一阶段
-    old_cur = next((s for s in old if s.get("key") == p.current_stage), None)
-    cur_label = old_cur.get("label") if old_cur else None
-    p.current_stage = next((s["key"] for s in new_stages if s["label"] == cur_label), new_stages[0]["key"])
-    p.stages = new_stages
-    p.updated_at = now_utc()
-    await db.commit()
+    try:
+        new_stages, current_stage = replace_project_stages(p.stages, p.current_stage, args.get("stages"))
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+    error = await _commit_project_intent(
+        db, p, user_id, {"stages": new_stages, "current_stage": current_stage},
+    )
+    if error:
+        return error
     return {"success": True, "project_id": p.id, "stages": [s["label"] for s in new_stages]}
 
 
@@ -527,7 +468,7 @@ async def _update_todo(db, user_id, args: dict):
     dest = found_stage
     to = args.get("to_stage")
     if to:
-        dest = _find_stage(stages, to)
+        dest = find_project_stage(stages, to)
         if not dest:
             return json.dumps({"error": f"目标阶段不存在: {to}",
                                "available": [s.get("label") for s in stages]})
@@ -535,9 +476,9 @@ async def _update_todo(db, user_id, args: dict):
             found_stage["todos"] = [t for t in found_stage.get("todos", []) if t is not found]
             dest.setdefault("todos", []).append(found)
 
-    p.stages = stages
-    p.updated_at = now_utc()
-    await db.commit()
+    error = await _commit_project_intent(db, p, user_id, {"stages": stages})
+    if error:
+        return error
     return {"success": True, "project_id": p.id, "todo": found.get("text"),
             "done": found.get("done"), "stage": dest.get("label")}
 

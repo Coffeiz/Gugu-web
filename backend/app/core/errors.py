@@ -40,6 +40,25 @@ class ExpectedError(AppError):
     可以直接展示给用户/模型，不需要再脱敏（前提：调用方没有把动态上游内容塞进来）。"""
 
 
+# ── 通用领域子类（服务层如 FileService/FolderTree 抛，REST 按 status_hint 映射 HTTPException，
+#    Agent 映射 {"error": public_message}）。见 docs/refactor/文件存储架构方案.md 附三。 ──
+class NotFound(ExpectedError):
+    status_hint = 404
+
+
+class NotOwned(ExpectedError):
+    # 归属不符：对外与 NotFound 不可区分（防资源枚举），也映射 404；内部据 code 区分。
+    status_hint = 404
+
+
+class Conflict(ExpectedError):
+    status_hint = 409
+
+
+class Invalid(ExpectedError):
+    status_hint = 400
+
+
 class RetryableError(AppError):
     """可重试：外部依赖的瞬时故障，重试用尽后抛出。携带 attempt 记录已尝试次数，
     供上层降级文案或日志参考（不是重试逻辑本身——重试发生在抛出这个异常之前）。"""

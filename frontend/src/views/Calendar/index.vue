@@ -17,10 +17,11 @@
         </button>
       </div>
       <div class="toolbar-right">
-        <div class="view-toggle">
+        <SegmentedControl class="view-toggle" :active-index="viewMode === 'month' ? 0 : 1"
+                          style="--pill-radius: 7px">
           <button :class="{ on: viewMode === 'month' }" @click="setView('month')">月</button>
           <button :class="{ on: viewMode === 'week' }" @click="setView('week')">周</button>
-        </div>
+        </SegmentedControl>
         <button class="today-btn" @click="goToday">今天</button>
       </div>
     </div>
@@ -423,11 +424,6 @@
     </Transition>
   </Teleport>
 
-  <Teleport to="body">
-    <Transition name="cal-toast">
-      <div v-if="toastMsg" class="cal-toast">{{ toastMsg }}</div>
-    </Transition>
-  </Teleport>
 </template>
 
 <script lang="ts">
@@ -446,8 +442,10 @@ import { eventsApi, scheduledTasksApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
 import GlassBg from '@/components/common/GlassBg.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
+import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import { projectProgress } from '@/utils/projectProgress'
 import EventEditFields from './components/EventEditFields.vue'
 import {
@@ -982,7 +980,7 @@ async function commitDrag() {
       const updated = await eventsApi.update(ev.id as unknown as number, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version })
       const applyVer = (list: CalItem[]) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
       applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
-    } catch (e: any) { if (e?.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
+    } catch (e: any) { if (e?.status === 409) { showAppError('活动已被其他用户修改，已刷新页面'); await fetchEvents() } }
   }
 
   if (drag.type && ['proj-chip', 'proj-bar', 'proj-resize-start', 'proj-resize-end'].includes(drag.type)) {
@@ -1640,7 +1638,7 @@ async function _persistEvent(s: EvDragState) {
   try {
     const updated = await eventsApi.update(s.id as unknown as number, { title: s.name, date: s.date, time: s.time || null, endTime: s.endTime || null, description: s.description || undefined, version: s.version })
     if (updated?.version) _setEventLocal(s.id, { version: updated.version })
-  } catch (e: any) { if (e?.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
+  } catch (e: any) { if (e?.status === 409) { showAppError('活动已被其他用户修改，已刷新页面'); await fetchEvents() } }
 }
 
 function onEvResize(ev: CalItem, edge: 'start' | 'end' | null, e: MouseEvent) {   // 拖边缘改起止时间
@@ -1961,19 +1959,12 @@ watch([() => reminders.value.length, reminderChannels], () => {
   })
 })
 
-const toastMsg = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-function showToast(msg: string) {
-  toastMsg.value = msg
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { toastMsg.value = '' }, 3200)
-}
 // 测试提醒渠道：往当前选的渠道发一条测试消息（不建任务，新建/编辑活动都能测）
 async function testReminderChannels(name?: string) {
   try {
     const res = await eventForm.testReminderChannels(name || '活动提醒')
-    showToast(res?.msg || '已发送测试消息')
-  } catch { showToast('测试失败，请稍后重试') }
+    showAppNotice(res?.msg || '已发送测试消息')
+  } catch { showAppError('测试失败，请稍后重试') }
 }
 
 async function saveEditEvent() {
@@ -2001,7 +1992,7 @@ async function saveEditEvent() {
     const applyVer = (list: CalItem[]) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
     applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
     await applyReminders(ev.id as unknown as number, ev.name, ev.date, ev.time)   // 按提前量/渠道落地提醒
-  } catch (e: any) { if (e?.status === 409) { alert('活动已被其他用户修改，请刷新页面'); await fetchEvents() } }
+  } catch (e: any) { if (e?.status === 409) { showAppError('活动已被其他用户修改，已刷新页面'); await fetchEvents() } }
 }
 
 function handleClickOutside(e: MouseEvent) {
@@ -2122,7 +2113,8 @@ async function saveEvent() {
 .cal-page { display: flex; flex-direction: column; gap: 14px; height: 100%; }
 /* 浮在会动内容之上，用 backdrop-filter 会闪白带 → 改用 <GlassBg> faux 玻璃（同顶栏，见 DefaultLayout 注释）。
    宿主透明 + isolation 建层叠上下文让 GlassBg(z-index:-1) 压在内容下；backdrop-filter 显式关掉。*/
-.cal-toolbar { display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; position: relative; isolation: isolate; background: transparent; overflow: hidden; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.cal-toolbar { --gb-tint: var(--glass-bg); display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; position: relative; isolation: isolate; background: transparent; overflow: hidden; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.cal-toolbar:hover { --gb-tint: var(--glass-bg-hover); background: transparent; box-shadow: var(--glass-shadow-lg); }
 .toolbar-left { display: flex; align-items: center; gap: 4px; }
 .nav-btn { width: 30px; height: 30px; border-radius: 8px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); transition: background 0.15s; }
 .nav-btn:hover { background: rgba(0,0,0,0.06); }
@@ -2140,9 +2132,6 @@ async function saveEvent() {
 
 .cal-layout { display: grid; grid-template-columns: 1fr 260px; gap: 14px; flex: 1; min-height: 0; }
 .cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden; }
-/* 中和 .glass-card:hover 的背景/阴影变化：cal-main 是常驻操作面板，鼠标一直在其上=常态 hover(0.70)，
-   快速点击时 :hover 掉一帧 → 背景朝 0.56 淡回=「暗一下」。hover 保持与基态一致 → 无可闪的变化。 */
-.cal-main:hover { background: var(--glass-bg); box-shadow: var(--glass-shadow); }
 .weekday-row { display: grid; grid-template-columns: repeat(7, 1fr); flex-shrink: 0; margin-bottom: 2px; }
 .weekday-hdr { text-align: center; font-size: 11px; font-weight: 600; color: var(--text-secondary); padding: 3px 0 8px; border-right: 1px solid rgba(123,127,178,0.15); }
 .weekday-hdr:last-child { border-right: none; }
@@ -2459,9 +2448,9 @@ async function saveEvent() {
 }
 /* ───────── 周视图（时间轴）───────── */
 .toolbar-right { display: flex; align-items: center; gap: 8px; }
-.view-toggle { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: rgba(123,127,178,0.1); }
-.view-toggle button { border: none; background: none; padding: 4px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.15s; }
-.view-toggle button.on { background: #fff; color: #5a5e86; box-shadow: 0 1px 4px rgba(60,70,100,0.12); }
+.view-toggle { gap: 2px; padding: 2px; border-radius: 9px; background: rgba(123,127,178,0.1); }
+.view-toggle button { border: none; background: none; padding: 4px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: color 0.15s; }
+.view-toggle button.on { color: #5a5e86; }
 
 .week-view { display: flex; flex-direction: column; flex: 1; min-height: 0; user-select: none; -webkit-user-select: none; }
 .wv-gutter { width: 46px; flex: none; }
@@ -2548,16 +2537,4 @@ async function saveEvent() {
 .wv-ev-t { font-size: 9.5px; font-weight: 600; opacity: 0.85; white-space: nowrap; }
 .wv-ev-n { font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.cal-toast {
-  position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
-  background: rgba(30,32,40,0.92); backdrop-filter: blur(16px);
-  border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
-  padding: 11px 20px; font-size: 13px; line-height: 1.5; color: rgba(255,255,255,0.85);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-  pointer-events: none; white-space: pre-line; max-width: 360px; z-index: 100000;
-  font-family: 'PingFang SC','Segoe UI',sans-serif;
-}
-.cal-toast-enter-active, .cal-toast-leave-active { transition: opacity 0.2s, transform 0.2s; }
-.cal-toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-.cal-toast-leave-to   { opacity: 0; transform: translateX(-50%) translateY(8px); }
 </style>

@@ -76,6 +76,10 @@
     <!-- resize：右下角带图标手柄，其余三角只留可拖拽热区（无图标） -->
     <template v-if="!maximized">
       <div class="fpw-resize" @mousedown.stop.prevent="startResize('se', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-n" @mousedown.stop.prevent="startResize('n', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-e" @mousedown.stop.prevent="startResize('e', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-s" @mousedown.stop.prevent="startResize('s', $event)"></div>
+      <div class="fpw-resize-edge fpw-resize-w" @mousedown.stop.prevent="startResize('w', $event)"></div>
       <div class="fpw-resize-edge fpw-resize-nw" @mousedown.stop.prevent="startResize('nw', $event)"></div>
       <div class="fpw-resize-edge fpw-resize-ne" @mousedown.stop.prevent="startResize('ne', $event)"></div>
       <div class="fpw-resize-edge fpw-resize-sw" @mousedown.stop.prevent="startResize('sw', $event)"></div>
@@ -146,7 +150,7 @@ import { PhInfo, PhDownloadSimple, PhCornersOut, PhCornersIn, PhX, PhWarningCirc
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
-import { filesApi } from '@/services/api'
+import { CLIENT_ID, filesApi } from '@/services/api'
 import { isImageExt, isVideoExt, isTextExt, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/useThumbCache'
 import { useLiveStore } from '@/stores/live'
@@ -428,7 +432,8 @@ async function load(f: Partial<FileMeta>, refresh = false) {
 watch(() => props.win.file, f => load(f), { immediate: true })
 
 const liveStore = useLiveStore()
-watch(() => liveStore.rev.files, () => {
+watch(() => liveStore.fileEvent, (event) => {
+  if (event?.origin === CLIENT_ID) return
   if (isText.value && !props.win.file.attach_id) load(props.win.file, true)
 })
 
@@ -518,7 +523,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
   background: rgba(242, 243, 248, 0.96);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -545,6 +550,7 @@ onUnmounted(() => {
   padding: 9px 10px 9px 12px;
   background: rgba(255, 255, 255, 0.55);
   border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+  border-radius: 12px 12px 0 0;
   cursor: grab;
   flex-shrink: 0;
   min-width: 0;
@@ -602,6 +608,7 @@ onUnmounted(() => {
   position: relative;
   overflow: hidden;
   background: rgba(220, 222, 232, 0.5);
+  border-radius: 0 0 12px 12px;
 }
 .fpw-body:has(.tv-wrap) {
   background: #fff;
@@ -722,22 +729,22 @@ onUnmounted(() => {
 .info-pop-enter-from,
 .info-pop-leave-to     { opacity: 0; transform: scale(0.95); }
 
-/* ── resize 角标 ── */
+/* ── resize 边缘与角标 ── */
 .fpw-resize {
   position: absolute;
-  bottom: 0; right: 0;
-  width: 16px; height: 16px;
+  bottom: -7.5px; right: -7.5px;
+  width: 15px; height: 15px;
   cursor: se-resize;
-  background: linear-gradient(135deg, transparent 50%, rgba(123,127,178,0.25) 50%);
-  border-radius: 0 0 12px 0;
 }
-.fpw-resize:hover {
-  background: linear-gradient(135deg, transparent 50%, rgba(123,127,178,0.5) 50%);
-}
-/* 其余三角：只留可拖拽热区，不放图标——右下角已经有明确的可见手柄提示"这个窗口能拉伸"，
-   其它角再摆一个图标视觉上会太抢/太碎，用鼠标指针（resize 光标）作为唯一提示就够 */
-.fpw-resize-edge { position: absolute; width: 14px; height: 14px; }
-.fpw-resize-nw { top: 0; left: 0; cursor: nwse-resize; }
-.fpw-resize-ne { top: 0; right: 0; cursor: nesw-resize; }
-.fpw-resize-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+/* 只保留透明的可拖拽热区，缩放提示由鼠标指针提供。 */
+.fpw-resize-edge { position: absolute; width: 15px; height: 15px; }
+.fpw-resize-n, .fpw-resize-s { left: 15px; right: 15px; width: auto; height: 15px; cursor: ns-resize; }
+.fpw-resize-n { top: -7.5px; }
+.fpw-resize-s { bottom: -7.5px; }
+.fpw-resize-e, .fpw-resize-w { top: 15px; bottom: 15px; width: 15px; height: auto; cursor: ew-resize; }
+.fpw-resize-e { right: -15px; }
+.fpw-resize-w { left: -7.5px; }
+.fpw-resize-nw { top: -7.5px; left: -7.5px; cursor: nwse-resize; }
+.fpw-resize-ne { top: -7.5px; right: -7.5px; cursor: nesw-resize; }
+.fpw-resize-sw { bottom: -7.5px; left: -7.5px; cursor: nesw-resize; }
 </style>

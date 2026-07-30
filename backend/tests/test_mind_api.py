@@ -279,6 +279,32 @@ async def test_canvas_item_keeps_note_global_and_duplicate_add_is_idempotent(db,
 
 
 @pytest.mark.asyncio
+async def test_event_canvas_item_embeds_display_snapshot(db, user_a):
+    """画布首次加载就必须有活动描述/日期，不能靠前端逐卡补详情后二次撑高。"""
+    event = CalendarEvent(
+        user_id=user_a.id, title="设计评审", date="2026-07-14", time="14:30", end_time="15:30",
+        description="确认画布交互细节", type="event",
+    )
+    db.add(event)
+    await db.commit()
+    await db.refresh(event)
+    node = await create_ref_node(
+        MindRefNodeCreate(ref_type="event", ref_id=event.id), current_user=user_a, db=db,
+    )
+    canvas = await create_canvas(MindCanvasCreate(title="活动快照"), current_user=user_a, db=db)
+
+    added = await add_canvas_item(
+        canvas.id, MindCanvasItemCreate(node_id=node.id), current_user=user_a, db=db,
+    )
+    assert added.ref_data == {
+        "date": "2026-07-14", "time": "14:30", "endTime": "15:30", "description": "确认画布交互细节",
+    }
+
+    listed = await list_canvas_items(canvas.id, current_user=user_a, db=db)
+    assert listed[0].ref_data == added.ref_data
+
+
+@pytest.mark.asyncio
 async def test_canvas_note_is_independent_from_record_timeline(db, user_a):
     canvas = await create_canvas(MindCanvasCreate(title="独立便签"), current_user=user_a, db=db)
     item = await create_canvas_note(

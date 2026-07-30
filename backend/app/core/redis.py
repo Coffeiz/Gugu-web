@@ -64,8 +64,32 @@ async def ensure_group(stream: str, group: str) -> None:
             raise
 
 
-async def produce(stream: str, payload: dict, maxlen: int = 10000) -> str:
-    """入队一条（payload 存为单字段 data=JSON）。approximate maxlen 防流无界增长。"""
+_DEDUP_TTL_SECONDS = 600   # 10 分钟（QQ 协议 resume 窗口 5min，留余量）
+
+
+def _dedup_check(payload: dict) -> bool:
+    """跨进程/跨 channel 去重：基于 Redis SETNX，key=im:seen:{platform}:{message_id}。
+    返回 True=本调用是第一次见到（应当入队），False=已见过（丢弃）。
+    Redis 故障时降级为放行（业务优先，宁可重复也别丢消息），并写 warning。"""
+    channel = (payload.get("platform") or "").strip()
+    msg_id = (payload.get("message_id") or "").strip()
+    if not channel or not msg_id:
+        return True
+    try:
+        return bool(get_redis_sync().set(
+            f"im:seen:{channel}:{msg_id}", "1", ex=_DEDUP_TTL_SECONDS, nx=True,
+        ))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("[produce] dedup check failed, falling through: %s", e)
+        return True
+
+
+async def produce(stream: str, payload: dict, maxlen: int = 10000) -> str | None:
+    """入队一条（payload 存为单字段 data=JSON）。approximate maxlen 防流无界增长。
+    重复 message_id 返回 None 不入队（跨 channel/跨进程全局去重）。"""
+    if not _dedup_check(payload):
+        return None
     return await get_redis().xadd(
         stream, {"data": json.dumps(payload, ensure_ascii=False)},
         maxlen=maxlen, approximate=True,
@@ -114,7 +138,10 @@ def get_redis_sync():
     return _sync_client
 
 
-def produce_sync(stream: str, payload: dict, maxlen: int = 10000) -> str:
+def produce_sync(stream: str, payload: dict, maxlen: int = 10000) -> str | None:
+    """同步版 produce（给同步 handler 用）。重复 message_id 返回 None。"""
+    if not _dedup_check(payload):
+        return None
     return get_redis_sync().xadd(
         stream, {"data": json.dumps(payload, ensure_ascii=False)},
         maxlen=maxlen, approximate=True,

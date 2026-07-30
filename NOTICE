@@ -1,0 +1,43 @@
+Gugu-web
+Copyright (c) 2026 Gugu-web contributors
+
+本产品基于 Apache License, Version 2.0 许可发布。
+完整的许可证文本参见随附的 LICENSE 文件。
+
+------------------------------------------------------------------------
+第三方组件声明 / Third-Party Attributions
+------------------------------------------------------------------------
+
+以下第三方组件的许可要求在此声明：
+
+1. pdfjs-dist (Apache-2.0)
+   - 来源: https://mozilla.github.io/pdf.js/
+   - 版权所有: Mozilla Foundation
+   - 本产品包含了 Mozilla PDF.js 的构建产物。
+   - 该组件内嵌的子组件许可：
+     * Foxit Standard Fonts (BSD-style)
+     * OpenJPEG (2-clause BSD)
+     * JBIG2 decoder (Apache-2.0)
+     * QCMS (MIT-style)
+
+2. highlight.js (BSD-3-Clause)
+   - 来源: https://highlightjs.org/
+   - 版权所有: (c) 2006, Ivan Sagalaev
+   - 保留所有权利 (All rights reserved)
+
+3. dompurify (Apache-2.0)
+   - 来源: https://github.com/cure53/DOMPurify
+   - 版权所有: Cure53 and other contributors
+
+4. TypeScript (Apache-2.0)
+   - 来源: https://github.com/microsoft/TypeScript
+   - 版权所有: (c) Microsoft Corporation
+   - 仅用于开发构建阶段，不随分发物包含。
+
+------------------------------------------------------------------------
+本产品还使用了以下 MIT 许可的组件（代表列表）：
+Vue 3, Pinia, Vue Router, Arco Design Vue, Tiptap (包含 ProseMirror),
+CodeMirror 6, Vue Codemirror, Chart.js, Vue Chart.js, Axios, Day.js,
+marked, lowlight, QRCode, TanStack Vue Virtual, @phosphor-icons/vue,
+Vite, Vitest 等。完整的版权声明请参见各组件随附的 LICENSE 文件。
+------------------------------------------------------------------------

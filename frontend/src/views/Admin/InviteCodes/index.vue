@@ -132,17 +132,13 @@
       </div>
     </div>
 
-    <!-- 复制成功 Toast -->
-    <Transition name="toast">
-      <div v-if="toastMsg" class="toast">{{ toastMsg }}</div>
-    </Transition>
-
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
+import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
 import { PhArrowClockwise } from '@phosphor-icons/vue'
 
@@ -156,7 +152,6 @@ const genCount   = ref(1)
 const genNote    = ref('')
 const freshCodes = ref<any[]>([])
 const filter     = ref('all')
-const toastMsg   = ref('')
 
 const validCount = computed(() => codes.value.filter(c => !c.used).length)
 const usedCount  = computed(() => codes.value.filter(c => c.used).length)
@@ -225,18 +220,15 @@ async function copyText(text: string) {
 
 async function copyCode(code: any) {
   const ok = await copyText(code)
-  showToast(ok ? `已复制 ${code}` : '复制失败，请手动复制')
+  if (ok) showAppNotice(`已复制 ${code}`)
+  else showAppError('复制失败，请手动复制')
 }
 
 async function copyAll() {
   const text = freshCodes.value.map(c => c.code).join('\n')
   const ok = await copyText(text)
-  showToast(ok ? `已复制 ${freshCodes.value.length} 个邀请码` : '复制失败，请手动复制')
-}
-
-function showToast(msg: string) {
-  toastMsg.value = msg
-  setTimeout(() => { toastMsg.value = '' }, 2200)
+  if (ok) showAppNotice(`已复制 ${freshCodes.value.length} 个邀请码`)
+  else showAppError('复制失败，请手动复制')
 }
 
 onMounted(load)
@@ -416,19 +408,6 @@ onMounted(load)
 .copy-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.75); }
 .delete-btn { color: rgba(255,255,255,0.2); }
 .delete-btn:hover { background: rgba(224,120,120,0.12); border-color: rgba(224,120,120,0.2); color: #e07878; }
-
-/* ── Toast ── */
-.toast {
-  position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
-  background: rgba(30,32,40,0.92); backdrop-filter: blur(16px);
-  border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
-  padding: 10px 20px; font-size: 13px; color: rgba(255,255,255,0.82);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-  pointer-events: none; white-space: nowrap; z-index: 9999;
-}
-.toast-enter-active, .toast-leave-active { transition: opacity 0.2s, transform 0.2s; }
-.toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-.toast-leave-to   { opacity: 0; transform: translateX(-50%) translateY(8px); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin-icon { animation: spin 0.8s linear infinite; }

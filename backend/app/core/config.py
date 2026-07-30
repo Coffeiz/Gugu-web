@@ -59,7 +59,7 @@ class AISettings(BaseModel):
         description="API Base URL",
     )
     model: str = Field("qwen-max", description="使用模型")
-    max_tokens: int = Field(2000, description="最大输出 token 数")
+    max_tokens: int = Field(8000, description="最大输出 token 数")
     temperature: float = Field(0.7, description="发散度 0~2")
     context_tokens: int = Field(3000, description="历史上下文 token 预算")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
@@ -85,7 +85,7 @@ class AIPresetItem(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
-    max_tokens: int = 2000
+    max_tokens: int = 8000
     temperature: float = 0.7
     context_tokens: int = 3000
     thinking: str = "disabled"
@@ -152,6 +152,7 @@ class EmbeddingSettings(BaseModel):
     走 OpenAI 兼容的 `/embeddings` 接口。`enabled=False` 或未配 model → `embed()` 返回 None，
     记忆检索自动退回词法相关性（bigram），零副作用——这也是"模型待定先搭框架"阶段的默认状态。"""
     enabled:    bool = Field(False, description="是否启用向量检索（False=embed 全程 no-op，退回词法相关性）")
+    multimodal: bool = Field(False, description="是否使用百炼多模态 Embedding（图片/视频需由调用方传入）")
     provider:   str  = Field("", description="提供方（仅记录用；固定走 OpenAI 兼容 /embeddings）")
     base_url:   str  = Field("", description="Embedding Base URL（到 /v1 那层，不含 /embeddings）")
     api_key:    str  = Field("", description="API Key")

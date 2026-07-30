@@ -2,7 +2,7 @@
   <article
     ref="cardRef"
     class="entity-sticker glass-card hover-card-fx"
-    :class="{ connecting, 'connection-target': !!connectionTargetSide, tombstone: !!item.node.deletedAt }"
+    :class="{ connecting, 'connection-target': !!connectionTargetSide, tombstone: isTombstone }"
     :style="stickerStyle"
     :data-node-id="item.nodeId"
     @pointerdown.stop="onPointerDown"
@@ -14,19 +14,20 @@
       <span class="es-kind">{{ label }}</span>
     </div>
     <h3>{{ title }}</h3>
-    <span v-if="item.node.deletedAt" class="es-deleted">已删除</span>
-    <template v-else>
-      <p v-if="event?.description" class="es-desc">{{ event.description }}</p>
-      <span v-if="eventTimeLabel" class="es-time">
-        <PhClock :size="11" weight="bold" />{{ eventTimeLabel }}
-      </span>
-    </template>
-    <CardActions v-if="!item.node.deletedAt" :hovering="isHovering">
+    <span v-if="isTombstone" class="es-deleted">已删除，仅保留快照</span>
+    <!-- 日期不再随 isTombstone 一起隐藏——活动被删后 eventDisplay 回退到创建引用时缓存的
+         node.refSnapshot（date/time/endTime），跟活着时同一套 eventTimeLabel 格式化逻辑，
+         快照要看起来"活动还在"，只是没有描述（快照没缓存这个字段，本来也不需要）。 -->
+    <p v-if="eventDisplay?.description" class="es-desc">{{ eventDisplay.description }}</p>
+    <span v-if="eventTimeLabel" class="es-time">
+      <PhClock :size="11" weight="bold" />{{ eventTimeLabel }}
+    </span>
+    <CardActions v-if="!isTombstone" :hovering="isHovering">
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
     </CardActions>
     <CardConnDot
-      v-if="!item.node.deletedAt"
-      :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
+      v-if="!isTombstone"
+      :node-id="item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
       @drag-start="(e, side) => emit('connectDragStart', e, side)"
     />
   </article>
@@ -73,17 +74,24 @@ const stickerStyle = computed(() => {
   return { left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, minHeight: `${h}px`, zIndex: `${props.item.z}` }
 })
 
-// 活动没有专门的缓存 store（不像项目/文件那样有 useProjectStore/useFilesCacheStore），
-// 日历页自己也是按月拉取到组件本地状态，没有可复用的按 id 查询——这里直接照 EventEditModal.vue
-// 的 eventsApi.get(id) 单条查询模式，不新起一个全局 store（画布上活动引用卡数量不多，不必要）。
+// 画布 items 响应已携带活动首屏快照，刷新时直接用它渲染，避免每张活动卡挂载后再单条请求、
+// 先按标题量一次高度又因描述/日期回来二次撑高。旧服务响应或缺少快照时才回退详情请求。
 const event = ref<Awaited<ReturnType<typeof eventsApi.get>> | null>(null)
+const missingEvent = ref(false)
+const isTombstone = computed(() => !!props.item.node.deletedAt || missingEvent.value)
+// 活动被删后 event/refData 都拿不到，回退到创建引用时缓存的 node.refSnapshot（date/time/
+// endTime，跟 refData 字段同名），日期显示才不会跟着"已删除"一起消失。
+const eventDisplay = computed(() => event.value ?? props.item.refData ?? props.item.node.refSnapshot ?? null)
 async function loadEvent() {
   const refId = props.item.node.refId
+  missingEvent.value = false
   if (props.item.node.deletedAt || refType.value !== 'event' || refId == null) { event.value = null; return }
+  if (props.item.refData?.date) { event.value = null; return }
   try {
     event.value = await eventsApi.get(refId)
-  } catch {
+  } catch (error) {
     event.value = null   // 原对象可能已被删除，静默失败即可——标题快照仍然显示，不阻断画布使用
+    missingEvent.value = (error as { status?: number }).status === 404
   }
 }
 onMounted(loadEvent)
@@ -93,7 +101,7 @@ watch(() => props.item.node.refId, loadEvent)
 // ISO 时间戳，日历页自己也是这么就地拼字符串显示（没有现成的导出工具函数可复用）。
 // time 为空＝全天活动。
 const eventTimeLabel = computed(() => {
-  const e = event.value
+  const e = eventDisplay.value
   if (!e?.date) return ''
   const d = new Date(`${e.date}T00:00:00`)
   const dateStr = `${d.getMonth() + 1}月${d.getDate()}日`
@@ -133,9 +141,8 @@ onBeforeUnmount(() => cardResizeObserver?.disconnect())
 const { onPointerDown } = useCardDrag({
   screenToWorld: props.screenToWorld,
   contentScale: () => props.scale,
-  lift: 1,
   getDragEl: () => cardRef.value,
-  onClick: () => { if (!props.item.node.deletedAt) emit('open', props.item) },
+  onClick: () => { if (!isTombstone.value) emit('open', props.item) },
   onDragMove: (worldX, worldY) => {
     emit('dragging', props.item, worldX, worldY)
   },
@@ -156,6 +163,10 @@ const { onPointerDown } = useCardDrag({
   position: absolute; box-sizing: border-box; padding: 14px 16px;
   display: flex; flex-direction: column; gap: 6px;
   cursor: pointer; user-select: none; touch-action: none;
+  /* 活动贴纸和项目/文件贴纸属于同一层画布卡片，统一普通 14px 圆角；不继承 glass-card
+     给大面板使用的 18px squircle，避免同一画布出现三种曲率。 */
+  border-radius: 14px;
+  corner-shape: round;
   /* 悬浮抬起动效走 .hover-card-fx（见 global.css，跟文件/项目卡同一套时长/缓动），但这里
      还套了 .glass-card——它自己也声明了一份 transition（background/box-shadow），跟
      .hover-card-fx 的 transition 特异度相同，最终生效的是样式表里排在后面那条，会整个
@@ -171,8 +182,9 @@ const { onPointerDown } = useCardDrag({
   box-shadow: 0 2px 8px rgba(80,90,110,0.07), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55);
 }
 .entity-sticker:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
-/* "正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明一份。 */
-.entity-sticker.tombstone { opacity: .55; filter: grayscale(.45); }
+/* "正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明一份。
+   tombstone 不再叠 opacity/grayscale——快照要看起来"活动还在"，跟项目卡/文件卡统一，
+   "已删除"单靠 .es-deleted 那行文字说明就够了，不用整卡变灰变暗。 */
 .es-head { display: flex; align-items: center; gap: 6px; color: var(--color-primary); }
 .es-kind { font-size: 10px; font-weight: 700; }
 h3 { margin: 0; font-size: 13.5px; line-height: 1.35; font-weight: 700; overflow-wrap: anywhere; color: var(--text-primary); }

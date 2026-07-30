@@ -111,7 +111,6 @@ const MAX_SCALE = 1.7
 
 export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
   const camera = reactive<CanvasCamera>({ x: 0, y: 0, scale: 1 })
-  let viewInitialized = false
 
   function centerView() {
     const viewport = viewportRef.value
@@ -119,7 +118,6 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
     camera.x = viewport.clientWidth / 2
     camera.y = viewport.clientHeight / 2
     camera.scale = 1
-    viewInitialized = true
   }
 
   // clientX/clientY 是浏览器给的视口坐标，跟 .mind-canvas 自己在视口里具体贴在哪儿无关；
@@ -143,10 +141,16 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
     camera.x = screenX - worldX * scale
     camera.y = screenY - worldY * scale
   }
-  function zoomAtCenter(delta: number) {
+  function workspaceCenter() {
     const viewport = viewportRef.value
-    if (!viewport) return
-    zoomAt(viewport.clientWidth / 2, viewport.clientHeight / 2, camera.scale + delta)
+    if (!viewport) return { x: 0, y: 0 }
+    // 画布铺满浏览器，但左侧被导航栏覆盖；缩放操作以可见工作区的中心为锚点。
+    const sidebarWidth = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 220
+    return { x: (viewport.clientWidth + sidebarWidth) / 2, y: viewport.clientHeight / 2 }
+  }
+  function zoomAtCenter(delta: number) {
+    const center = workspaceCenter()
+    zoomAt(center.x, center.y, camera.scale + delta)
   }
   function onWheel(event: WheelEvent) {
     const viewport = viewportRef.value
@@ -174,14 +178,8 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
     return true
   }
 
-  function onResize() {
-    if (!viewInitialized) return
-    centerView()
-  }
-
   return {
-    camera, centerView, screenToWorld, zoomAt, zoomAtCenter, onWheel,
+    camera, centerView, screenToWorld, zoomAt, zoomAtCenter, workspaceCenter, onWheel,
     startPan, panMove, panEnd,
-    onResize,
   }
 }

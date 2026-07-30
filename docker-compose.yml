@@ -5,6 +5,11 @@
 #   cp .env.example backend/.env   # 按需填 SECRET_KEY / AI__* 等，DB__*/REDIS__* 已由本文件覆盖
 #   docker compose up -d
 #   前端 → http://localhost:9595   后端 → http://localhost:8000/docs
+#
+# 直连 PyPI 官方源慢（部分网络环境常见，见 backend/Dockerfile 里 PIP_INDEX_URL 的注释）？
+# 换源不用改文件，构建前设个环境变量即可（下面 backend/worker 的 build.args 会读到）：
+#   PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker compose build
+#   PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker compose up -d --build
 
 services:
   postgres:
@@ -34,7 +39,14 @@ services:
       retries: 10
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      # 裸变量名（不是 `PIP_INDEX_URL: ${PIP_INDEX_URL:-}` 那种带默认值写法）——环境变量没设置
+      # 时 compose 不会传这个 build arg，落到 Dockerfile 里 ARG 的默认值（官方 PyPI 源）；带
+      # `:-` 写法未设置时会解析成空字符串，作为显式空值传给 docker build 反而**覆盖**掉那个默认值，
+      # 变成一个空 index url——2026-07-14 实测过这个坑，两种写法差着能不能装上依赖。
+      args:
+        - PIP_INDEX_URL
     ports:
       - "8000:8000"
     env_file:
@@ -63,7 +75,10 @@ services:
   # 只是 command 换成 worker 入口；没配 IM 频道凭据也能起，只是收不到消息，不影响
   # web API 本身。
   worker:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        - PIP_INDEX_URL   # 跟 backend 同一个镜像/同一个坑，见上面 backend.build.args 的注释
     command: ["python", "-m", "worker"]
     env_file:
       - ./backend/.env

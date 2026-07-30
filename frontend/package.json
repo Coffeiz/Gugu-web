@@ -1,6 +1,6 @@
 {
   "name": "gugu-web",
-  "version": "0.18.0",
+  "version": "0.19.1",
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
@@ -23,6 +23,7 @@
     "@codemirror/lang-java": "^6.0.2",
     "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/lang-python": "^6.2.1",
     "@codemirror/lang-rust": "^6.0.2",
     "@codemirror/lang-sql": "^6.10.0",

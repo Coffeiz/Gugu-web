@@ -488,10 +488,11 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
             except Exception:
                 im_bridge = ""
 
-    # 用户消息先推给网页（跟 run_collect 一致）
+    # 用户消息先推给网页（跟 run_collect 一致）。带上发起标签页的 origin：本标签页已经在
+    # send() 里乐观 push 过这条用户消息，靠它跳过这条广播自己的回声，只让别的标签页/端刷新。
     try:
         from app.core import events as _evmod
-        await _evmod.publish(user_id, "sessions", session_id=session_id,
+        await _evmod.publish(user_id, "sessions", session_id=session_id, origin=getattr(req, "origin", None),
                              appended=[{"role": "user", "text": req.message, "files": attach_cards or None,
                                        "quoted_text": getattr(req, "quoted_text", None)}])
     except Exception:
@@ -650,10 +651,12 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         try:
             from app.core import events as _evmod
             if text or files:
-                await _evmod.publish(user_id, "sessions", session_id=session_id,
+                # 本标签页的流式 token 已经把这段文字画进气泡了，带 origin 让它跳过这条广播，
+                # 只让别的标签页/端补上；分段发送（一轮里多条 assistant 消息）同理靠 origin 抑制。
+                await _evmod.publish(user_id, "sessions", session_id=session_id, origin=getattr(req, "origin", None),
                                      appended=[{"role": "assistant", "text": text, "files": files or None}])
             else:
-                await _evmod.publish(user_id, "sessions", session_id=session_id)
+                await _evmod.publish(user_id, "sessions", session_id=session_id, origin=getattr(req, "origin", None))
         except Exception:
             pass
 
