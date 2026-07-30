@@ -14,6 +14,7 @@ const props = defineProps({
   scrollKey: { type: String, default: '' },
 })
 const height = ref(0)
+const isAnimating = ref(false)
 
 export interface DrawerScrollSnapshot {
   scrollTop: number
@@ -42,6 +43,7 @@ function animateTo(nextHeight: number) {
   if (Math.abs(currentHeight - nextHeight) < 0.5) {
     heightTransaction?.cancel()
     heightTransaction = null
+    isAnimating.value = false
     height.value = nextHeight
     return
   }
@@ -50,9 +52,11 @@ function animateTo(nextHeight: number) {
   heightTransaction?.cancel()
   const transaction = createDrawerLayoutTransaction(viewportRef.value)
   heightTransaction = transaction
+  isAnimating.value = true
   void transaction.play(nextHeight).then(() => {
     if (heightTransaction === transaction) {
       height.value = nextHeight
+      isAnimating.value = false
       // 高度从 0 展开时浏览器可能触发 scroll anchoring，把位置推到最大值；
       // 布局事务只负责高度，不应改变用户原本的滚动位置。
       if (preservedScrollElement) preservedScrollElement.scrollTop = preservedScrollTop
@@ -91,7 +95,7 @@ function restoreScroll(snapshot: DrawerScrollSnapshot | null) {
   })
 }
 
-defineExpose({ viewportRef, captureScroll, restoreScroll, animateTo })
+defineExpose({ viewportRef, captureScroll, restoreScroll, animateTo, isAnimating })
 </script>
 
 <style scoped>

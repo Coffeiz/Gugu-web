@@ -46,10 +46,11 @@
             DB 文件 <b>{{ fileReport.db_file_rows }}</b> · 存储对象 <b>{{ fileReport.storage_objects }}</b> ·
             对得上 <b style="color:#5ab899">{{ fileReport.matched }}</b> ·
             幽灵 <b :style="{ color: fileReport.ghost_count ? '#e07676' : 'inherit' }">{{ fileReport.ghost_count }}</b> ·
-            孤儿 <b :style="{ color: fileReport.orphan_count ? '#e0a96a' : 'inherit' }">{{ fileReport.orphan_count }}</b>
+            孤儿 <b :style="{ color: fileReport.orphan_count ? '#e0a96a' : 'inherit' }">{{ fileReport.orphan_count }}</b> ·
+            位置错位 <b :style="{ color: fileReport.misplaced_count ? '#e0a96a' : 'inherit' }">{{ fileReport.misplaced_count || 0 }}</b>
           </div>
-          <div v-if="!fileReport.ghost_count && !fileReport.orphan_count" class="recon-ok">
-            ✅ DB 与存储一一对应，无幽灵、无孤儿。
+          <div v-if="!fileReport.ghost_count && !fileReport.orphan_count && !fileReport.misplaced_count" class="recon-ok">
+            ✅ DB 与存储一一对应，路径归属也正确。
           </div>
           <div v-if="fileReport.ghost_count" class="recon-block">
             <div class="recon-block-title">幽灵记录（DB 有行但物理文件缺失，点开会 404）</div>
@@ -72,6 +73,18 @@
                 <button class="recon-act" :disabled="fileRepairing" @click="repairOrphans([o], 'import')" title="按路径重建 DB 记录，让它在 app 里现身">导入</button>
                 <button class="recon-act recon-act-del" :disabled="fileRepairing" @click="repairOrphans([o], 'delete')" title="删除物理文件（不可恢复）">删除</button>
               </span>
+            </div>
+          </div>
+          <div v-if="fileReport.misplaced_count" class="recon-block">
+            <div class="recon-block-title">
+              物理位置错位（文件所属目录与当前物理路径不一致）
+              <span class="recon-bulk">
+                <button class="recon-act" :disabled="fileRepairing" @click="repairMisplaced">全部搬回正确目录</button>
+              </span>
+            </div>
+            <div v-for="item in fileReport.misplaced_files" :key="item.file_id" class="recon-row">
+              <span class="recon-name">{{ item.display_name }}</span>
+              <span class="recon-meta">{{ item.current_key }} → {{ item.expected_key }}</span>
             </div>
           </div>
           <div v-if="fileReport.truncated" class="recon-meta">（结果较多，列表仅显示前 300 条）</div>
@@ -394,6 +407,27 @@ async function repairOrphans(keys: string[], action: 'import' | 'delete') {
   } finally {
     fileRepairing.value = false
   }
+}
+
+async function repairMisplaced() {
+  if (fileRepairing.value || !fileReport.value?.misplaced_count) return
+  if (!window.confirm(`确认搬回 ${fileReport.value.misplaced_count} 个文件的正确目录？`)) return
+  fileRepairing.value = true
+  fileMsg.value = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/folder-doctor/repair', {
+      method: 'POST',
+      body: JSON.stringify({ relocate_files: true }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '路径修复失败')
+    fileMsgKind.value = 'ok'
+    fileMsg.value = `已搬回 ${data.relocated || 0} 个文件`
+    await scanFiles()
+  } catch (e) {
+    fileMsgKind.value = 'err'
+    fileMsg.value = e instanceof Error ? e.message : String(e)
+  } finally { fileRepairing.value = false }
 }
 
 // ── 目录对账（文件夹树 ↔ 磁盘目录 + 文件物理位置）────────────────────────────

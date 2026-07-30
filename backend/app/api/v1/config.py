@@ -106,6 +106,11 @@ async def reconcile_storage(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"列出存储失败：{type(e).__name__}: {e}")
     file_keys = {k for k in all_keys if not _is_internal_key(k)}
 
+    # 仅比较 storage_key 会漏掉“DB 和物理文件都指向同一个旧路径、但文件夹归属已变”的历史错位。
+    # 复用目录对账的路径真源，把这类文件一并呈现在文件对账入口。
+    from app.services.storage import folder_doctor
+    doctor_report = await folder_doctor.scan(db, storage)
+
     rows = (await db.execute(select(File))).scalars().all()
     db_key_set = {f.storage_key for f in rows}
     projs = {p.id: p.name for p in (await db.execute(select(Project))).scalars().all()}
@@ -128,6 +133,8 @@ async def reconcile_storage(db: AsyncSession = Depends(get_db)):
         "orphan_count": len(orphans),
         "ghosts": ghosts[:300],
         "orphans": orphans[:300],
+        "misplaced_count": len(doctor_report.misplaced_files),
+        "misplaced_files": doctor_report.misplaced_files[:300],
         "truncated": len(ghosts) > 300 or len(orphans) > 300,
     }
 

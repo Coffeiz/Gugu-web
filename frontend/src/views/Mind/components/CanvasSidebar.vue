@@ -10,13 +10,13 @@
       <Transition name="cd-expanded">
         <div v-if="headerVisible" class="cd-expanded-nav">
           <span class="cd-title">{{ panel === 'canvases' ? '画布' : '项目' }}</span>
-          <button class="cd-toggle cd-return" title="收起" @click="togglePanel(panel)"><PhArrowRight :size="18" weight="bold" /></button>
+          <button class="cd-toggle cd-return" title="收起" :disabled="drawerAnimating" @click="togglePanel(panel)"><PhArrowRight :size="18" weight="bold" /></button>
         </div>
       </Transition>
       <Transition name="cd-compact">
         <div v-if="!expanded" class="cd-compact-nav">
-        <button class="cd-toggle" title="画布列表" @click="togglePanel('canvases')"><PhSquaresFour :size="16" weight="bold" /></button>
-        <button class="cd-toggle" title="项目素材" @click="togglePanel('projects')"><PhStack :size="16" weight="bold" /></button>
+        <button class="cd-toggle" title="画布列表" :disabled="drawerAnimating" @click="togglePanel('canvases')"><PhSquaresFour :size="16" weight="bold" /></button>
+        <button class="cd-toggle" title="项目素材" :disabled="drawerAnimating" @click="togglePanel('projects')"><PhStack :size="16" weight="bold" /></button>
         </div>
       </Transition>
     </div></template>
@@ -33,7 +33,7 @@
       <div class="cd-stage">
         <section class="cd-content-panel canvas-panel" :class="{ visible: visiblePanel === 'canvases' && contentVisible }" :aria-hidden="visiblePanel !== 'canvases'">
           <DrawerTrack class="canvas-track" data-drawer-scroll="canvases">
-            <CanvasDrawerContent ref="canvasContentRef" :canvases="canvases" :active-id="activeId" @create="emit('create')" @open="onOpen" @delete="onDelete" @rename="(id, title) => emit('rename', id, title)" />
+            <CanvasDrawerContent ref="canvasContentRef" :canvases="canvases" :active-id="activeId" @create="emit('create')" @open="onOpen" @delete="onDelete" @rename="(id, title) => emit('rename', id, title)" @layout-finished="measurePanel('canvases')" />
           </DrawerTrack>
         </section>
 
@@ -130,6 +130,7 @@ const headerVisible = ref(false)
 const canvasContentRef = ref<InstanceType<typeof CanvasDrawerContent> | null>(null)
 const projectListRef = ref<HTMLElement | null>(null)
 const drawerViewportRef = ref<InstanceType<typeof DrawerViewport> | null>(null)
+const drawerAnimating = computed(() => drawerViewportRef.value?.isAnimating ?? false)
 const panelHeights = ref<Record<Panel, number>>({ canvases: 0, projects: 0 })
 const targetHeight = computed(() => panelHeights.value[panel.value])
 let canvasListObserver: ResizeObserver | null = null
@@ -201,12 +202,40 @@ watch(filteredProjects, (projects) => {
 watch(() => props.canvasProjectIdsReady, (ready) => {
   if (ready) void nextTick(() => measurePanel('projects'))
 }, { flush: 'post' })
+
+// 画布列表的子项删除会先经过自身 FLIP，ResizeObserver 不一定能捕获到外层最终高度；
+// 数据提交后主动重测，避免删除后抽屉保留旧的底部空白。
+watch(() => props.canvases.length, () => {
+  console.log('[canvas-delete-probe]', JSON.stringify({
+    event: 'canvases-change',
+    count: props.canvases.length,
+    t: Math.round(performance.now()),
+  }))
+  void nextTick(() => measurePanel('canvases'))
+}, { flush: 'post' })
+
 function measurePanel(panelName: Panel) {
   if (panelName === 'projects' && !props.canvasProjectIdsReady) return
   if (panelName === 'projects' && projectGroupAnimationCount > 0) return
   const list = panelName === 'canvases' ? canvasContentRef.value?.listRef : projectListRef.value
   if (!list) return
-  const measuredHeight = list.scrollHeight
+  // 画布列表的子项 FLIP 会把向下位移计入 scrollHeight，删除时会短暂得到一个偏大的目标值，
+  // 让抽屉先收一小段、等 FLIP 结束后再收一次。画布列表自身没有独立滚动高度，使用实际布局
+  // 高度即可让外层收缩和卡片让位从同一刻开始；项目列表仍保留 scrollHeight 语义。
+  const measuredHeight = panelName === 'canvases'
+    ? list.getBoundingClientRect().height
+    : list.scrollHeight
+  if (panelName === 'canvases') {
+    console.log('[canvas-delete-probe]', JSON.stringify({
+      event: 'measure-canvases',
+      count: props.canvases.length,
+      scrollHeight: measuredHeight,
+      rectHeight: +list.getBoundingClientRect().height.toFixed(2),
+      viewportHeight: +(drawerViewportRef.value?.viewportRef?.getBoundingClientRect().height ?? 0).toFixed(2),
+      targetHeight: panelHeights.value.canvases,
+      t: Math.round(performance.now()),
+    }))
+  }
   if (panelName === 'projects') {
     console.log('[drawer-height-probe]', JSON.stringify({
       event: 'measure-panel', measured: measuredHeight,
@@ -415,6 +444,7 @@ onUpdated(() => {
   if (projectGroupAnimationCount === 0) void projectGroupsLayout.measureAndPlay()
 })
 async function togglePanel(nextPanel: Panel) {
+  if (drawerAnimating.value) return
   if (expanded.value && panel.value === nextPanel) {
     contentVisible.value = false
     headerVisible.value = false
@@ -480,7 +510,7 @@ onBeforeUnmount(() => {
    距顶 25px——跟圆角半径（.canvas-drawer.open 的 25px）相同，横向也照这个数走：标题
    左边距、返回按钮的几何中心（padding-right 7px + 自身宽 36px 的一半 18px = 25px）
    都钉在离边缘 25px，三边统一对齐同一个「圆角中心」，不再各自取不同的数。 */
-.cd-expanded-nav { display: flex; align-items: center; width: 100%; box-sizing: border-box; padding: 0 7px 0 25px; }
+.cd-expanded-nav { position: absolute; inset: 0; display: flex; align-items: center; width: 100%; box-sizing: border-box; padding: 0 7px 0 25px; }
 .cd-compact-nav { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: space-evenly; width: 100%; height: calc(var(--canvas-toolbar-height) * 2); pointer-events: auto; }
 .cd-toggle { flex-shrink: 0; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; background: none; color: var(--text-secondary); cursor: pointer; transition: background .18s ease, color .18s ease; }
 .cd-toggle:hover, .cd-toggle.active { background: rgba(123,127,178,.11); color: var(--color-primary); }

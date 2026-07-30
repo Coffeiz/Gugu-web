@@ -85,10 +85,7 @@ const routes: RouteRecordRaw[] = [
             // 侧栏入口始终是 /mind：恢复用户上次停留的子视图；失效的画布 id 由 CanvasView 回退。
             redirect: () => {
               const lastMode = localStorage.getItem('mind-last-mode')
-              const lastCanvasId = localStorage.getItem('mind-last-canvas-id')
-              return lastMode === 'canvas'
-                ? `/mind/canvases${lastCanvasId ? `/${lastCanvasId}` : ''}`
-                : '/mind/notes'
+              return lastMode === 'canvas' ? '/mind/canvases' : '/mind/notes'
             },
           },
           {
@@ -98,7 +95,7 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '思维', fullBleed: true },
           },
           {
-            path: 'canvases/:id?',
+            path: 'canvases',
             name: 'MindCanvas',
             component: () => import('@/views/Mind/CanvasView.vue'),
             meta: { title: '思维', fullBleed: true },

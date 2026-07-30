@@ -32,7 +32,7 @@ import type { MindCanvas } from '@/services/api'
 import { createFlipTransaction, createLayoutItems } from '@/interaction/drag/animation/flipCoordinator'
 
 const props = defineProps({ canvases: { type: Array as PropType<MindCanvas[]>, required: true }, activeId: { type: Number as PropType<number | null>, default: null } })
-const emit = defineEmits<{ (e: 'create'): void; (e: 'open', id: number): void; (e: 'delete', canvas: MindCanvas): void; (e: 'rename', id: number, title: string): void }>()
+const emit = defineEmits<{ (e: 'create'): void; (e: 'open', id: number): void; (e: 'delete', canvas: MindCanvas): void; (e: 'rename', id: number, title: string): void; (e: 'layout-finished'): void }>()
 const listRef = ref<HTMLElement | null>(null)
 const editingId = ref<number | null>(null)
 const editingText = ref('')
@@ -54,7 +54,7 @@ onBeforeUpdate(() => {
 onUpdated(() => {
   if (!pendingLayout || !pendingLayoutItems.length) return
   pendingLayout.measure(pendingLayoutItems)
-  void pendingLayout.play()
+  void pendingLayout.play().then(() => emit('layout-finished'))
   pendingLayout = null
 })
 

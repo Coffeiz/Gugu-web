@@ -2,6 +2,7 @@
   <div class="canvas-page">
     <MindCanvas
       ref="canvasRef"
+      :canvas-key="activeCanvasId"
       :items="store.canvasItems"
       :relations="store.canvasRelations"
       :relation-anchors="relationAnchors"
@@ -101,13 +102,28 @@ onMounted(async () => {
   await ensureCanvas()
 })
 watch(() => route.params.id, async () => {
+  console.log('[canvas-switch-probe]', JSON.stringify({
+    event: 'route-change',
+    routeId: String(route.params.id),
+    activeCanvasId: activeCanvasId.value,
+    t: Math.round(performance.now()),
+  }))
   flushViewSave()
   await ensureCanvas()
 })
 
 async function ensureCanvas() {
   canvasProjectIdsReady.value = false
-  let id = Number(route.params.id)
+  const requestedId = Number(route.params.id)
+  const rememberedId = Number(localStorage.getItem('mind-last-canvas-id'))
+  const fallbackId = Number.isFinite(rememberedId) && store.canvases.some(canvas => canvas.id === rememberedId)
+    ? rememberedId
+    : store.canvases[0]?.id
+  let id = Number.isFinite(requestedId) ? requestedId : fallbackId
+  if (id == null) {
+    const canvas = await store.createCanvas()
+    id = canvas.id
+  }
   if (!Number.isFinite(id) || !store.canvases.some(canvas => canvas.id === id)) {
     const canvas = store.canvases[0] || await store.createCanvas()
     id = canvas.id
@@ -175,7 +191,17 @@ async function createCanvas() {
   await router.push({ name: 'MindCanvas', params: { id: canvas.id } })
 }
 async function openCanvas(id: number) {
-  if (id !== activeCanvasId.value) await router.push({ name: 'MindCanvas', params: { id } })
+  if (id === activeCanvasId.value) return
+  localStorage.setItem('mind-last-canvas-id', String(id))
+  if (route.name === 'MindCanvas' && !route.params.id) {
+    canvasProjectIdsReady.value = false
+    await store.loadCanvas(id)
+    canvasProjectIdsReady.value = true
+    await nextTick()
+    restoreView(id)
+    return
+  }
+  await router.push({ name: 'MindCanvas' })
 }
 /** 删的若不是当前正看着的画布，store.deleteCanvas 已经把它从 store.canvases 摘掉，
  *  CanvasSidebar 的列表跟着响应式更新，这里什么都不用做。删的正是当前画布才需要处理：

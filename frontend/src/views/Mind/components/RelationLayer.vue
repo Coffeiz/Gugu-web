@@ -24,7 +24,7 @@
  * 点连线可以取消这条关系——建立关联走贴纸边缘的连接点拖拽（见 MindCanvas.vue），
  * 没有别的撤销入口，总得有个地方能删。
  */
-import { computed, onBeforeUnmount, ref, watch, type PropType } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { itemSize, pickAnchorSide, type AnchorSide, type RelationAnchorSides } from '@/composables/useMindCanvas'
 
@@ -93,6 +93,12 @@ const itemByNodeId = computed(() => new Map(props.items.map(item => [item.nodeId
 // 其次：用户拖连线那一刻两张贴纸所在的相对位置，就是这条关系出边侧最初、也是唯一应该被
 // 采纳的判据。
 const anchorSideCache = new Map<number, { srcSide: AnchorSide; dstSide: AnchorSide }>()
+onMounted(() => {
+  console.log('[canvas-switch-probe]', JSON.stringify({
+    event: 'relation-layer-mounted',
+    t: Math.round(performance.now()),
+  }))
+})
 function geometry(item: MindCanvasItem) {
   return props.measuredSizes.get(item.nodeId) ?? itemSize(item)
 }
@@ -217,7 +223,14 @@ function pumpDepartingFrames() {
     departingRaf = 0
   }
 }
-onBeforeUnmount(() => { if (departingRaf) cancelAnimationFrame(departingRaf) })
+onBeforeUnmount(() => {
+  if (departingRaf) cancelAnimationFrame(departingRaf)
+  console.log('[canvas-switch-probe]', JSON.stringify({
+    event: 'relation-layer-unmounted',
+    departing: departingRelations.value.map(item => item.relation.id),
+    t: Math.round(performance.now()),
+  }))
+})
 
 function removeByClick(id: number) {
   // 点击断开是明确的删除动作，不应被下面“卡片移出画布”的淡出监听接管。
@@ -230,6 +243,20 @@ function removeByClick(id: number) {
 watch(
   [() => props.relations, () => props.items],
   ([nextRelations], [prevRelations, prevItems]) => {
+    console.log('[canvas-switch-probe]', JSON.stringify({
+      event: 'relation-props-update',
+      nextRelations: nextRelations.map(relation => relation.id),
+      nextItems: props.items.map(item => item.nodeId),
+      departing: departingRelations.value.map(item => item.relation.id),
+      t: Math.round(performance.now()),
+    }))
+    // 画布切换时 store 会先提交空快照，再提交新画布数据。这个中间态不是“关系被删除”，
+    // 不能把旧画布的关系加入 departing，否则新 RelationLayer 仍会把旧线淡出一遍造成残留。
+    if (nextRelations.length === 0 && props.items.length === 0) {
+      departingRelations.value = []
+      immediateDepartures.clear()
+      return
+    }
     const nextIds = new Set(nextRelations.map(relation => relation.id))
     const removed = prevRelations.filter(relation => !nextIds.has(relation.id))
     const departing = removed.filter((relation) => {
