@@ -145,7 +145,7 @@ async def _import_orphan(db, key: str, storage) -> bool:
     路径形如 {uid}/个人文件/[文件夹/]name.ext 或 {uid}/项目文件/yyyy/mm/{项目} #{pid}/[文件夹/]name.ext。
     解析不出归属时仍尽量建在空间根（folder_id=None），让文件至少在 app 里现身。"""
     import uuid as _uuid, re, mimetypes
-    from app.models import File, Folder, User
+    from app.models import File, User
     parts = key.split("/")
     if len(parts) < 3:
         return False
@@ -163,17 +163,17 @@ async def _import_orphan(db, key: str, storage) -> bool:
     seg = parts[1] if len(parts) > 1 else ""
     if seg == "项目文件":
         space = "project"
-        for p in parts:
+        project_segment_index = None
+        for index, p in enumerate(parts):
             mm = re.search(r"#(\d+)$", p)
             if mm:
                 project_id = int(mm.group(1))
+                project_segment_index = index
                 break
-    elif seg == "个人文件" and len(parts) >= 4:
-        fo = (await db.execute(select(Folder).where(
-            Folder.user_id == uid, Folder.name == parts[2], Folder.project_id.is_(None)
-        ))).scalars().first()
-        if fo:
-            folder_id = fo.id
+        folder_parts = parts[project_segment_index + 1:-1] if project_segment_index is not None else []
+        folder_id = await _resolve_import_folder(db, uid, project_id, folder_parts)
+    elif seg == "个人文件":
+        folder_id = await _resolve_import_folder(db, uid, None, parts[2:-1])
     try:
         size_bytes = len(await storage.get(key))
     except Exception:
@@ -185,6 +185,25 @@ async def _import_orphan(db, key: str, storage) -> bool:
         mime_type=mimetypes.guess_type(fname)[0],
     ))
     return True
+
+
+async def _resolve_import_folder(db, user_id, project_id: int | None, folder_parts: list[str]) -> int | None:
+    """按物理路径逐级解析文件夹，避免嵌套文件误挂到第一级目录。"""
+    from app.models import Folder
+
+    parent_id = None
+    for name in folder_parts:
+        folder = (await db.execute(select(Folder).where(
+            Folder.user_id == user_id,
+            Folder.project_id == project_id if project_id is not None else Folder.project_id.is_(None),
+            Folder.parent_id == parent_id if parent_id is not None else Folder.parent_id.is_(None),
+            Folder.name == name,
+            Folder.deleted_at.is_(None),
+        ))).scalars().first()
+        if folder is None:
+            return None
+        parent_id = folder.id
+    return parent_id
 
 
 class RepairRequest(BaseModel):
@@ -438,6 +457,7 @@ async def test_search(body: SearchTestRequest):
 
 class EmbeddingTestRequest(BaseModel):
     provider:   str = ""   # bailian/dashscope 可启用百炼专用请求参数
+    multimodal: bool = False
     base_url:   str = ""   # 留空=用已存配置
     api_key:    str = ""   # 留空=用已存配置
     model:      str = ""
@@ -457,6 +477,37 @@ async def test_embedding(body: EmbeddingTestRequest):
     dims     = body.dimensions or cfg.dimensions
     if not base_url or not model:
         return {"ok": False, "message": "缺少 Base URL 或模型名"}
+    if body.multimodal:
+        from agent.memory.embedding import BAILIAN_MULTIMODAL_PATH
+
+        if provider.lower() not in {"bailian", "dashscope", "aliyun"}:
+            return {"ok": False, "message": "多模态 Embedding 目前仅支持百炼"}
+        multimodal_base = base_url.split("/compatible-mode/v1", 1)[0]
+        payload = {
+            "model": model,
+            "input": {"contents": [{"text": "连通性测试"}]},
+            "parameters": {"output_type": "dense"},
+        }
+        if dims:
+            payload["parameters"]["dimension"] = dims
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+                resp = await client.post(
+                    multimodal_base.rstrip("/") + BAILIAN_MULTIMODAL_PATH,
+                    json=payload,
+                    headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+                )
+        except Exception as e:
+            return {"ok": False, "message": f"连不上：{type(e).__name__}: {str(e)[:80]}"}
+        if resp.status_code != 200:
+            return {"ok": False, "message": f"HTTP {resp.status_code}：{resp.text[:120]}"}
+        try:
+            vec = resp.json()["output"]["embeddings"][0]["embedding"]
+        except Exception:
+            return {"ok": False, "message": "返回格式不对（不是百炼多模态 Embedding 响应）"}
+        if not isinstance(vec, list) or not vec:
+            return {"ok": False, "message": "返回的多模态向量为空"}
+        return {"ok": True, "message": f"OK — 多模态连通，向量维度 {len(vec)}"}
     payload = build_payload(provider, base_url, model, "连通性测试", dims)
     # key 为空就不发 Authorization 头（Ollama 无需鉴权；空 key 拼 "Bearer " 是非法 header）
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
