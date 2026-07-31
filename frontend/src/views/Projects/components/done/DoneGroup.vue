@@ -2,7 +2,7 @@
   <template v-if="group.type === 'recent'">
     <div class="done-group-layout-node recent-done" :data-layout-key="group.key" data-layout-role="group">
       <div class="recent-done-label"><PhCheckCircle :size="12" weight="fill" style="color:#5a9e88" />{{ group.label }}</div>
-      <DoneCardList :projects="group.items" recent instant-leave @card-click="$emit('card-click', $event)" />
+      <DoneCardList :projects="group.items" recent @card-click="$emit('card-click', $event)" />
     </div>
   </template>
   <div v-else-if="group.type === 'year'" class="done-group-layout-node" :data-layout-key="group.key" data-layout-role="group">
@@ -17,9 +17,9 @@
         <PhFolderOpen v-if="group.open" :size="13" weight="fill" style="color:#5a9e88; opacity:0.85; flex-shrink:0" /><PhFolder v-else :size="13" weight="regular" style="flex-shrink:0; opacity:0.6" />
         <span class="month-name">{{ group.label }}</span><span class="month-cnt">{{ group.items.length }}</span><svg class="month-chev" :class="{ open: group.open }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
       </button>
-      <Transition :css="false" @enter="onFolderEnter" @leave="onFolderLeave">
+      <Transition name="month-folder">
         <div v-if="group.open" :key="`${group.key}-cards`" class="month-folder">
-          <DoneCardList :projects="group.items" instant-leave @card-click="$emit('card-click', $event)" />
+          <DoneCardList :projects="group.items" @card-click="$emit('card-click', $event)" />
         </div>
       </Transition>
     </div>
@@ -37,7 +37,6 @@
 <script setup lang="ts">
 import type { PropType } from 'vue'
 import { PhFolder, PhFolderOpen, PhCheckCircle } from '@phosphor-icons/vue'
-import { useDoneGroupHeightTransition } from './doneLayoutBridge'
 import type { DoneGroup } from './doneTypes'
 import DoneCardList from './DoneCardList.vue'
 
@@ -46,13 +45,4 @@ const props = defineProps({
   isUndatedOpen: { type: Boolean, default: false },
 })
 defineEmits(['toggle', 'card-click'])
-const runGroupHeight = useDoneGroupHeightTransition()
-function onFolderEnter(element: Element, done: () => void) {
-  const play = runGroupHeight ? runGroupHeight(element as HTMLElement, true) : Promise.resolve()
-  void play.then(() => done())
-}
-function onFolderLeave(element: Element, done: () => void) {
-  const play = runGroupHeight ? runGroupHeight(element as HTMLElement, false) : Promise.resolve()
-  void play.then(() => done())
-}
 </script>

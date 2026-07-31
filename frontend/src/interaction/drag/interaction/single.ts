@@ -15,7 +15,6 @@ import type { CardVisualController } from '../visual/CardVisualController'
 import { resolveLandingZIndex } from '../visual/layer'
 import { acquireConnectionDot, releaseConnectionDot } from '../visual/connectionDotManager'
 import { dragPhysicsTuning, springParamsFromResponse } from '../physicsTuning'
-import { bindProjectCardRuntimeSession } from '../runtime/projectCardRuntimeBridge'
 import { createCardMotionController } from '../animation/cardMotionController'
 
 interface Box { left: number; top: number; width: number; height: number }
@@ -88,7 +87,6 @@ export interface SingleDragDeps {
 export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTMLElement, opts: PhysicsDragOpts = {}, deps: SingleDragDeps) {
   if (!(sourceEl instanceof HTMLElement) || deps.active.current) return
   const session = dragRegistry.start(sourceEl)
-  bindProjectCardRuntimeSession(session, sourceEl)
   // 阶段 B：只给项目卡片的跟手物理换成 CardMotionController，画布贴纸/文件卡片这些还没
   // 排期迁移的场景继续走原来手写的 integrateSpring + 旋转公式，不动它们的手感。
   // CardMotionController 的位置弹簧同样调 core/physics.ts 的 integrateSpring，旋转公式

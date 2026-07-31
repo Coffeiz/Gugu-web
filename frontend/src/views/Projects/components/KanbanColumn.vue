@@ -1,11 +1,10 @@
 <template>
   <div
+    ref="columnRef"
     class="column glass-card"
     :data-col-status="column.key"
-    :class="{ 'drag-over': isDragOver }"
-    @dragover.prevent="isDragOver = true"
-    @dragleave="isDragOver = false"
-    @drop.prevent="onDrop"
+    :data-column="column.key"
+    data-layout-surface
   >
     <div class="col-header">
       <div class="col-title">
@@ -15,8 +14,8 @@
       <span class="col-count">{{ projects.length }}</span>
     </div>
 
-    <div class="col-body">
-      <TransitionGroup tag="div" name="kanban-card-list" class="kanban-card-list" :class="{ 'kanban-card-list--static': !animateCards }">
+    <div ref="colBodyRef" class="col-body">
+      <TransitionGroup tag="div" name="kanban-card-list" class="kanban-card-list" :css="!controlled">
         <ProjectCard
           v-for="project in projects"
           :key="project.id"
@@ -36,26 +35,27 @@
 
 <script setup lang="ts">
 import { ref, type PropType } from 'vue'
+import { useRuntimeTransition, useSurface } from '@/interaction/runtime'
 import ProjectCard from './ProjectCard.vue'
 import type { Project } from '@/types/project'
 
 const props = defineProps({
   column:   { type: Object, required: true },
   projects: { type: Array as PropType<Project[]>, default: () => [] },
-  animateCards: { type: Boolean, default: true },
 })
-const emit = defineEmits(['card-click', 'drop-project', 'add-project'])
-
-const isDragOver = ref(false)
+defineEmits(['card-click', 'add-project'])
+const { elementRef: columnRef } = useSurface({
+  id: props.column.key,
+  type: 'project-column',
+  accepts: ['project-card'],
+  viewport: () => colBodyRef.value,
+})
+const colBodyRef = ref<HTMLElement | null>(null)
+const { controlled } = useRuntimeTransition(props.column.key)
 
 const colColors: Record<string, string> = { pending: '#d46b6b', active: '#c9943a' }
 const colColor  = colColors[props.column.key] ?? '#9e9fc4'
 
-function onDrop(e: DragEvent) {
-  isDragOver.value = false
-  const projectId = Number(e.dataTransfer?.getData('projectId'))
-  if (projectId) emit('drop-project', { projectId, targetStatus: props.column.key })
-}
 </script>
 
 <style scoped>
@@ -68,10 +68,6 @@ function onDrop(e: DragEvent) {
   display: flex; flex-direction: column;
   padding: 12px 10px; gap: 8px;
   min-width: 0; min-height: 0; overflow: hidden;
-}
-.column.drag-over {
-  background: rgba(123,127,178,0.1);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 0 0 2px rgba(123,127,178,0.3);
 }
 .col-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -106,9 +102,6 @@ function onDrop(e: DragEvent) {
 }
 .kanban-card-list-move {
   transition: transform 0.34s cubic-bezier(0.34, 1.2, 0.64, 1);
-}
-.kanban-card-list--static .kanban-card-list-move {
-  transition: none !important;
 }
 /* 跟文件库「上传文件」(.fc-upload) 同款：只换边框/文字/背景色，不带外阴影、不抬起 */
 .add-card {

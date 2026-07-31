@@ -6,16 +6,12 @@
         :key="col.key"
         :column="col"
         :projects="columnProjects(col.key)"
-        :animate-cards="kanbanCardsReady"
         @card-click="projectStore.openModal"
-        @drop-project="handleDrop"
         @add-project="openNewWithStatus"
       />
       <DoneColumn
-        ref="doneColumnRef"
         :projects="columnProjects('done')"
         @card-click="projectStore.openModal"
-        @drop-project="handleDrop"
         @open-archived="showArchived = true"
       />
     </div>
@@ -25,7 +21,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { runtime, type MoveAction } from '@/interaction/runtime'
 import { showAppError } from '@/composables/useAppToast'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
@@ -33,28 +30,11 @@ import { useUiStore } from '@/stores/ui'
 import KanbanColumn from './components/KanbanColumn.vue'
 import DoneColumn   from './components/DoneColumn.vue'
 import ArchivedProjectsModal from './components/ArchivedProjectsModal.vue'
-import { doneLayoutMutationKey, registerDoneLayoutMutation } from './components/done/doneLayoutBridge'
 
 const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
-const doneColumnRef = ref<InstanceType<typeof DoneColumn> | null>(null)
-const runDoneLayoutMutation = (mutate: () => void | Promise<void>) =>
-  doneColumnRef.value?.runLayoutMutation(mutate) ?? Promise.resolve(mutate())
-provide(doneLayoutMutationKey, runDoneLayoutMutation)
-const unregisterDoneLayoutMutation = registerDoneLayoutMutation(runDoneLayoutMutation)
-onUnmounted(unregisterDoneLayoutMutation)
-
 const showArchived = ref(false)
-// 项目请求回来时，“新建项目”按钮已经作为 TransitionGroup 子项挂在列表顶部；同一轮
-// patch 把项目卡插到它前面，会被 Vue 误判为重排而从顶部 FLIP 下落。首批项目实际绘制
-// 完成一帧后才开放 move 动画，之后的拖拽/增删仍保留正常让位。
-const kanbanCardsReady = ref(false)
-watch(() => projectStore.projectsLoaded, async loaded => {
-  if (!loaded) return
-  await nextTick()
-  requestAnimationFrame(() => { kanbanCardsReady.value = true })
-}, { immediate: true })
 
 watch(() => projectStore.error, (message) => {
   if (!message) return
@@ -69,6 +49,15 @@ onMounted(() => {
   // 归档列表页面一进来就后台预取，避免用户点开归档按钮那一下要等网络往返、闪一下「加载中」
   if (!projectStore.archivedLoaded && !projectStore.archivedLoading) projectStore.fetchArchivedProjects()
 })
+
+const stopRuntimeActions = runtime.onAction(action => {
+  if (action.type !== 'move') return
+  const move = action as MoveAction
+  const projectId = Number(move.objectId)
+  if (!Number.isFinite(projectId) || move.fromSurfaceId === move.toSurfaceId) return
+  projectStore.moveProject(projectId, move.toSurfaceId)
+})
+onUnmounted(stopRuntimeActions)
 
 // 全局搜索点击项目 → 跳转本页后高亮对应项目卡（不打开编辑弹窗）
 watch(() => uiStore.pendingProjectHighlight, (id) => {
@@ -139,10 +128,6 @@ const columnProjectsMap = computed(() => {
 
 function columnProjects(statusKey) {
   return columnProjectsMap.value.get(statusKey) ?? []
-}
-
-function handleDrop({ projectId, targetStatus }) {
-  projectStore.moveProject(projectId, targetStatus)
 }
 
 function openNewWithStatus(status) {

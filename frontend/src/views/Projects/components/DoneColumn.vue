@@ -1,11 +1,10 @@
 <template>
   <div
+    ref="columnRef"
     class="done-col glass-card"
     data-col-status="done"
-    :class="{ 'drag-over': isDragOver }"
-    @dragover.prevent="isDragOver = true"
-    @dragleave="isDragOver = false"
-    @drop.prevent="onDrop"
+    data-column="done"
+    data-layout-surface
   >
     <div class="col-header">
       <div class="col-title"><span class="col-dot"></span>已完成</div>
@@ -14,34 +13,29 @@
         <span class="col-count">{{ projects.length }}</span>
       </div>
     </div>
-    <div class="col-body"><DoneLayout ref="doneLayoutRef" :projects="projects" @card-click="$emit('card-click', $event)" /></div>
+    <div ref="colBodyRef" class="col-body"><DoneLayout ref="doneLayoutRef" :projects="projects" @card-click="$emit('card-click', $event)" /></div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, type PropType } from 'vue'
+import { useSurface } from '@/interaction/runtime'
 import type { Project } from '@/types/project'
 import DoneLayout from './done/DoneLayout.vue'
 
 const props = defineProps({ projects: { type: Array as PropType<Project[]>, default: () => [] } })
-const emit = defineEmits(['card-click', 'drop-project', 'open-archived'])
-const isDragOver = ref(false)
-const doneLayoutRef = ref<{ runLayoutMutation: (mutate: () => void | Promise<void>) => Promise<unknown> } | null>(null)
-function onDrop(event: DragEvent) {
-  isDragOver.value = false
-  const projectId = Number(event.dataTransfer?.getData('projectId'))
-  if (projectId) emit('drop-project', { projectId, targetStatus: 'done' })
-}
-async function runLayoutMutation(mutate: () => void | Promise<void>) {
-  if (!doneLayoutRef.value) return mutate()
-  return doneLayoutRef.value.runLayoutMutation(mutate)
-}
-defineExpose({ runLayoutMutation })
+defineEmits(['card-click', 'open-archived'])
+const { elementRef: columnRef } = useSurface({
+  id: 'done',
+  type: 'project-column',
+  accepts: ['project-card'],
+  viewport: () => colBodyRef.value,
+})
+const colBodyRef = ref<HTMLElement | null>(null)
 </script>
 
 <style>
 .done-col { --glass-bg: rgba(255,255,255,0.25); --glass-bg-hover: rgba(255,255,255,0.25); display:flex; flex-direction:column; padding:12px 10px; gap:8px; min-height:0; overflow:hidden; }
-.done-col.drag-over { background:rgba(90,158,136,.08); box-shadow:inset 0 1px 0 rgba(255,255,255,.7),0 0 0 2px rgba(90,158,136,.25); }
 .col-header { display:flex; align-items:center; justify-content:space-between; padding:0 4px; flex-shrink:0; }
 .col-title { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--text-primary); }
 .col-dot { width:7px; height:7px; border-radius:50%; background:#5a9e88; flex-shrink:0; }
