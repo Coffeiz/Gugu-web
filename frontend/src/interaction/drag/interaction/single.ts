@@ -10,7 +10,6 @@ import { dispatchDragHandoff, installLandingHandoff } from './handoff'
 import { installDragListeners } from './listeners'
 import { startThresholdDrag } from './threshold'
 import type { PhysicsDragOpts, PhysicsDropContext } from '../useDragEngine'
-import { _identityOf } from '../useDragEngine'
 import type { CardVisualController } from '../visual/CardVisualController'
 import { resolveLandingZIndex } from '../visual/layer'
 import { acquireConnectionDot, releaseConnectionDot } from '../visual/connectionDotManager'
@@ -810,12 +809,6 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     // 占位重新展开：FLIP 邻居从「合拢」动到「展开」。el 当前可能已收合(home)或已展开(落点新卡)，
     // 两种都要先拿到 closed 和 open 两套位置
     const animateOpen = (cont: HTMLElement, el: HTMLElement) => {
-      console.log('[animate-open-probe]', JSON.stringify({
-        key: el.dataset.projectId ?? el.dataset.layoutKey ?? null,
-        nodeId: _identityOf(el),
-        displayBefore: el.style.display,
-        connected: el.isConnected,
-      }))
       // 同上：临时关掉落点容器自己的 -move 过渡，避免跟这套手动 FLIP 争抢同一批卡片的 transform。
       cont.classList.add('flip-engine-active')
       let sibs: HTMLElement[], flip: FlipTransaction
