@@ -7,9 +7,22 @@
 
 ## [未发布]
 
+### 新增
+
+- **项目看板 Runtime 接入**（`views/Projects/`、`interaction/runtime/`）：项目卡、Surface、组展开收起和完成列生命周期统一通过 Runtime API 编排，业务页移除旧拖拽事务入口。
+- **可选的抓取视觉配置**（`interaction/runtime/setup.ts`）：支持配置卡片抓取对齐方式和毛玻璃视觉效果，默认行为保持原有样式。
+
 ### 改进
 
+- **完成列动画统一**（`views/Projects/components/done/`）：最近完成、年月分组和新建项目按钮接入统一的 collection presence、容器高度和 FLIP 调度，减少业务侧重复动画逻辑。
+- **项目页对象更新稳定性**（`views/Projects/index.vue`）：保持项目对象引用并处理 Store 原地更新，避免拖拽落地期间卡片不必要地重挂载。
+- **项目页 Owner 更新收口**（`views/Projects/components/`）：将 Runtime 接管状态的响应式更新从页面级收敛到列/列表范围，降低拖拽释放时的 Vue 更新量。
 - **项目看板 Runtime 性能基线**（`views/Projects/`）：保留 7.2 的对象引用稳定、Owner 订阅收口和 Runtime 布局测量优化；经过 4× CPU 降速 trace 对比，pointerup 平均处理时间较优化前减少约 42ms，端到端 EventTiming 平均减少约 31ms。
+
+### 修复
+
+- **完成列年月组展开收起**（`views/Projects/components/done/`）：修复组容器高度、卡片让位和底部内容在 FLIP 过程中被提前裁切的问题。
+- **音视频文件读取提示**（`backend/agent/prompts/`）：补充音视频文件读取能力说明，避免文件处理时遗漏对应工具路径。
 
 ---
 
