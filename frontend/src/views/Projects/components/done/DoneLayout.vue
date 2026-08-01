@@ -17,7 +17,7 @@
 <script setup lang="ts">
 import { nextTick, ref, toRef, type PropType } from 'vue'
 import type { Project } from '@/types/project'
-import { runGroupToggle } from '@/interaction/runtime'
+import { runtime } from '@/interaction/runtime'
 import { useDoneGroups } from './useDoneGroups'
 import DoneGroup from './DoneGroup.vue'
 
@@ -36,7 +36,7 @@ async function onToggle(key: string) {
   )
   const opening = !isGroupOpen(stateKey)
   if (!content || !layoutRoot.value) return
-  await runGroupToggle({
+  await runtime.runGroupToggle({
     root: layoutRoot.value,
     content,
     opening,
