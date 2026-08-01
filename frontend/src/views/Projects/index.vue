@@ -27,6 +27,7 @@ import { showAppError } from '@/composables/useAppToast'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
+import type { Project } from '@/types/project'
 import KanbanColumn from './components/KanbanColumn.vue'
 import DoneColumn   from './components/DoneColumn.vue'
 import ArchivedProjectsModal from './components/ArchivedProjectsModal.vue'
@@ -109,14 +110,28 @@ const liveFileCounts = computed(() => {
 // 只要 projects/cacheStore.loaded/liveFileCounts 这几个依赖没变，同一轮渲染
 // 内多次调用 columnProjects() 用的是同一份缓存结果，同一个 project 对象引用，
 // 不会再凭空多出这类相邻渲染间的对象churn。
+const projectViewCache = new Map<number, { source: Project; fileCount: number; view: Project }>()
 const columnProjectsMap = computed(() => {
   const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
   const grouped = new Map()
+  const liveIds = new Set<number>()
   for (const p of projectStore.projects) {
     const list = grouped.get(p.status) ?? []
+    const fileCount = cacheStore.loaded ? (liveFileCounts.value.get(p.id) ?? 0) : p.fileCount
+    liveIds.add(p.id)
+    const cached = projectViewCache.get(p.id)
+    const view = cached?.source === p && cached.fileCount === fileCount
+      ? cached.view
+      : fileCount === p.fileCount
+        ? p
+        : { ...p, fileCount }
+    projectViewCache.set(p.id, { source: p, fileCount, view })
     // cache 已加载后以前端计数为准（只计根目录文件），避免回退到服务端含文件夹的数字
-    list.push({ ...p, fileCount: cacheStore.loaded ? (liveFileCounts.value.get(p.id) ?? 0) : p.fileCount })
+    list.push(view)
     grouped.set(p.status, list)
+  }
+  for (const id of projectViewCache.keys()) {
+    if (!liveIds.has(id)) projectViewCache.delete(id)
   }
   for (const [statusKey, list] of grouped) {
     if (statusKey === 'done') list.sort((a, b) => prioVal(b) - prioVal(a) || (b.doneAt ?? '').localeCompare(a.doneAt ?? ''))
