@@ -17,7 +17,7 @@
 <script setup lang="ts">
 import { nextTick, ref, toRef, type PropType } from 'vue'
 import type { Project } from '@/types/project'
-import { captureLayoutFlip, playLayoutFlip, transitionGroupHeight, type LayoutFlipSnapshot } from '@/interaction/runtime'
+import { runGroupToggle } from '@/interaction/runtime'
 import { useDoneGroups } from './useDoneGroups'
 import DoneGroup from './DoneGroup.vue'
 
@@ -31,27 +31,22 @@ const { groups, recent, toggleGroup, isGroupOpen } = useDoneGroups(toRef(props, 
 const layoutRoot = ref<HTMLElement | null>(null)
 let toggleToken = 0
 async function onToggle(key: string) {
-  const cards = layoutRoot.value
-    ? Array.from(layoutRoot.value.querySelectorAll<HTMLElement>('.done-card-item')).filter((element) => {
-        const rect = element.getBoundingClientRect()
-        return rect.width > 0 && rect.height > 0
-      })
-    : []
-  const snapshot: LayoutFlipSnapshot | null = layoutRoot.value
-    ? captureLayoutFlip(cards, layoutRoot.value)
-    : null
   const stateKey = key.startsWith('year-') ? key.slice(5) : key
   const content = layoutRoot.value?.querySelector<HTMLElement>(
     `[data-layout-key="${CSS.escape(key)}"].month-folder, [data-layout-key="${CSS.escape(key)}"] .month-folder, [data-layout-key="${CSS.escape(key)}"].year-folder`,
   )
   const opening = !isGroupOpen(stateKey)
-  const current = content?.getBoundingClientRect().height ?? 0
   const token = ++toggleToken
-  toggleGroup(key)
-  if (!content) return
-  await nextTick()
-  if (token !== toggleToken) return
-  transitionGroupHeight(content, opening ? content.scrollHeight : 0, 250, 'cubic-bezier(.22,1,.36,1)', current)
-  if (snapshot) playLayoutFlip(snapshot)
+  if (!content || !layoutRoot.value) return
+  await runGroupToggle({
+    root: layoutRoot.value,
+    content,
+    opening,
+    mutate: () => toggleGroup(key),
+    waitForLayout: nextTick,
+    isCurrent: () => token === toggleToken,
+    duration: 250,
+    easing: 'cubic-bezier(.22,1,.36,1)',
+  })
 }
 </script>
