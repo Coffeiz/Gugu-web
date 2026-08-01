@@ -35,20 +35,6 @@ function suppressListLandingTransition(el: HTMLElement): () => void {
   }
 }
 
-function findVisibleProjectTarget(selector: string, sourceEl: HTMLElement): HTMLElement | null {
-  const candidates = Array.from(document.querySelectorAll<HTMLElement>(selector))
-  return candidates.find(el => {
-    const inProjectList = !!el.closest('.col-body')
-    return el !== sourceEl
-      && inProjectList
-      && !el.classList.contains('phys-drag-clone')
-      && !el.classList.contains('phys-landing-content')
-      && el.isConnected
-      && el.offsetWidth > 0
-      && el.offsetHeight > 0
-  }) ?? null
-}
-
 function blockScrollDuringLanding(scroller: HTMLElement | null): () => void {
   if (!scroller) return () => undefined
   const preventScroll = (event: Event) => event.preventDefault()
@@ -321,7 +307,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   } else {
     sourceEl.style.opacity = '0'
   }
-  if (container && !opts.keepSourcePlaceholder && !container.classList.contains('done-layout-root')) {
+  if (container && !opts.keepSourcePlaceholder) {
     requestAnimationFrame(() => {
       if (!deps.active.current || !session.isCurrent() || !sourceEl.isConnected) return
       // 「已完成」列的 recent-card-list/month-cards 不是单纯追加列表，卡片抓起/落下
@@ -341,15 +327,6 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       void flip.play().finally(() => {
         unregisterFlipCleanup()
         container.classList.remove('flip-engine-active')
-      })
-    })
-  } else if (container?.classList.contains('done-layout-root') && opts.onPickupFromDoneLayout) {
-    requestAnimationFrame(() => {
-      if (!deps.active.current || !session.isCurrent() || !sourceEl.isConnected) return
-      const layoutNode = sourceEl.closest<HTMLElement>('.done-card-item')
-      void opts.onPickupFromDoneLayout(() => {
-        sourceEl.style.display = 'none'
-        if (layoutNode?.isConnected) layoutNode.style.display = 'none'
       })
     })
   }
@@ -1085,21 +1062,6 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           else flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
           return
         }
-        // 完成列由 DoneLayout 自己协调 group/recent 布局。归位时不能把整个
-        // done-layout-root 交给通用 animateOpen，否则它会临时隐藏源卡并让
-        // 完成列进入 flip-engine-active，随后 getBoundingClientRect() 读到 0×0，
-        // clone 就会沿着左上角飞走。
-        if (container.classList.contains('done-layout-root')) {
-          sourceEl.style.display = ''
-          sourceEl.closest<HTMLElement>('.done-card-item')?.style.removeProperty('display')
-          visual.holdHoverUntilReveal(sourceEl)
-          sourceEl.style.opacity = '0'
-          const sc = deps.scrollParent(sourceEl)
-          deps.registerCleanup(session, blockScrollDuringLanding(sc))
-          const box = revealInScroller(sc, sourceEl.getBoundingClientRect())
-          flyMorph(box, sourceEl, _cloneLanding(sourceEl), restoreSourcePlaceholderStyle)
-          return
-        }
         // 已收合 → 先占位 FLIP 重新展开源卡，再计算最终归位位置。
         const box0 = animateOpen(container, sourceEl)
         const sc = deps.scrollParent(sourceEl)
@@ -1159,12 +1121,8 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           if (!opts.flipAllDescendants) return target.parentElement!
           return opts.resolveFlipContainer?.(target) ?? target.parentElement!
         }
-        const landToProjectTarget = (el: HTMLElement | null, deadline: number) => {
+        const landToProjectTarget = (el: HTMLElement | null) => {
           if (!session.isCurrent()) return
-          if (!el && opts.landingVisibilityWaitMs && performance.now() < deadline) {
-            requestAnimationFrame(() => landToProjectTarget(document.querySelector<HTMLElement>(sel), deadline))
-            return
-          }
           // 已完成列的卡片嵌在 year/month/recent 分组中，不能比较直接父节点。
           const movedToAnotherContainer = el
             ? projectFlipContainer(el) !== container
@@ -1173,31 +1131,12 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
             const restoreListTransition = suppressListLandingTransition(el)
             if (el.offsetWidth > 0) {   // 落点可见 → 占位 FLIP 展开；双克隆同轨迹飞行 + 样式渐变
             const flipTarget = projectFlipContainer(el)
-            // 完成列有独立的 group/recent 布局事务。不能再把整个 done-layout-root
-            // 交给通用 animateOpen，否则 recent 卡片和年/月组会被重复测量，顶部卡片
-            // 可能被压成 0×0 后把错误坐标传给落地动画。
-            if (flipTarget.classList.contains('done-layout-root')) {
-              // 完成列 TransitionGroup 的布局节点是 wrapper；只恢复内部卡片的
-              // display 仍会让 wrapper 保持 display:none，rect 依旧是 0×0。
-              el.closest<HTMLElement>('.done-card-item')?.style.removeProperty('display')
-              visual.holdHoverUntilReveal(el)
-              el.style.opacity = '0'
-            } else {
-              animateOpen(flipTarget, el)
-            }
+            animateOpen(flipTarget, el)
             // 落点在可滚动列里若滚出视口 → 快速滚进可视区，box 取滚动后的最终落点
             const sc = deps.scrollParent(el)
             deps.registerCleanup(session, blockScrollDuringLanding(sc))
             const box = revealInScroller(sc, el.getBoundingClientRect())
             flyMorph(box, el, _cloneLanding(el), restoreListTransition)
-              return
-            }
-            // 状态跨列后，已完成列的年/月分组可能要等 Vue 下一帧才重新挂载；此时不能
-            // 把短暂的 0×0 当成“折叠分组”，否则整张卡会错误地缩小淡出。
-            if (opts.landingVisibilityWaitMs && performance.now() < deadline) {
-              requestAnimationFrame(() => landToProjectTarget(
-                findVisibleProjectTarget(sel, sourceEl), deadline,
-              ))
               return
             }
             // 落点在确实折叠的分组里不可见 → 就地缩小淡出
@@ -1207,8 +1146,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
           }
           landHome()
         }
-        const deadline = performance.now() + (opts.landingVisibilityWaitMs ?? 0)
-        landToProjectTarget(findVisibleProjectTarget(sel, sourceEl), deadline)
+        landToProjectTarget(document.querySelector<HTMLElement>(sel))
         return
       }
 

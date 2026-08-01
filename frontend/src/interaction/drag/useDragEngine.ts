@@ -47,10 +47,6 @@ export interface PhysicsDragOpts {
   lift?: number
   sway?: number
   tilt?: number
-  // 返回值类型对齐 doneLayoutBridge.ts 的 DoneLayoutMutation（Promise<unknown>）——
-  // 调用方通常直接把 doneLayoutMutation 传进来，它包了一层 FLIP 事务，解出来的值
-  // 本来就用不上，不需要收窄成 Promise<void>。
-  onPickupFromDoneLayout?: (hide: () => void) => void | Promise<unknown>
   useSpringLanding?: boolean
   grabY?: number
   // true 时忽略 grabY，让克隆体的竖直中心（不是"顶部往下固定 28px 那一点"）跟着指针走——
@@ -99,9 +95,6 @@ export interface PhysicsDragOpts {
   /** 由业务 adapter 根据当前卡片所在分组解析 FLIP 范围；用于跨列重抓和落点重排。 */
   resolveFlipContainer?: (element: HTMLElement) => HTMLElement | null | undefined
   flipAllDescendants?: boolean
-  // 看板已完成列的卡片跨年/月分组重挂载时，等待 Vue 完成一帧或多帧布局，再决定是否走
-  // 完整 morph；避免把暂时 0×0 的目标误判成折叠目标而播放收缩动画。
-  landingVisibilityWaitMs?: number
   skipAbsorb?: boolean
   // 「吸入文件夹/面包屑」缩小消失动画的目标判定：不传则退回默认的 .folder-card,.bc-item 类名匹配
   // （历史行为）。传了就由调用方决定 under 是否算有效吸入目标、返回该元素（给动画取
