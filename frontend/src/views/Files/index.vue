@@ -1966,7 +1966,7 @@ async function ctxPaste() {
   ctx.value.visible = false
   const folderId = currentFolderId()
   const seg = currentSeg.value
-  const projectId = seg?.type === 'project' ? seg.id : (seg?.projectId ?? null)
+  const projectId = seg?.type === 'project' ? (seg.id ?? null) : (seg?.projectId ?? null)
   try {
     if (cbStore.type === 'cut') {
       // 剪切板同时可能带文件和文件夹（selCut/ctxCutFolder 都会填 folderIds）；此前这里只处理了

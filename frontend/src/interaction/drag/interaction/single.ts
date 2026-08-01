@@ -720,7 +720,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
       // 才随之消失，表现为"点一直显示到本体切换才突然消失"。落地目标不支持连线时传 false。
       revealElConnectable = true,
       trackTargetLayout = false,
-      measureTargetLayout = undefined,
+      measureTargetLayout: (() => Box) | undefined = undefined,
     ) => {
       session.setPhase('layout-playing')
       // clone2 已在参数求值阶段创建并继承当前姿态；不能在它接管前清掉源 holder，

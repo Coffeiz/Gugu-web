@@ -335,7 +335,7 @@ export function createFlipTransaction(options: FlipOptions): FlipTransaction {
   let finishTimer: number | null = null
   let pending = new Set<HTMLElement>()
   let phase: 'capturing' | 'measured' | 'playing' | 'settled' = 'capturing'
-  let cancelSelf = () => undefined
+  let cancelSelf: () => void = () => undefined
 
   const active = () => !cancelled && !settled && (options.isActive?.() ?? true)
   const read = (list: FlipItem[], rects?: DOMRect[]) => {

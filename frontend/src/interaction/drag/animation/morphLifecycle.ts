@@ -69,7 +69,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   // 不额外给 clone2 自己判一份"是不是压在 revealEl 上"的 hover——本体的 hover
   // 判定和抬起动画只在 finish()/forceCleanup() 里、克隆动画播完之后才发生一次，
   // 用的就是这里持续更新的 landingHovered，不是飞行途中现测的瞬时值。
-  const onPointerMove = (event: PointerEvent) => syncHover(isOverCard(event.clientX, event.clientY))
+  const onPointerMove = (event: MouseEvent | PointerEvent) => syncHover(isOverCard(event.clientX, event.clientY))
 
   const cleanupHandoff = installLandingHandoff({
     enabled: options.pointer,

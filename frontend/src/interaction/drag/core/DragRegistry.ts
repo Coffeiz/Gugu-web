@@ -25,7 +25,7 @@ export class DragRegistry {
     if (previous && previous.source !== source) {
       previous.session.cancel()
       this.sessions.delete(previous.source)
-      this.identitySessions.delete(identity)
+      if (identity) this.identitySessions.delete(identity)
     }
     const session = new DragSession(`drag-${Date.now()}-${nextSessionId++}`)
     session.bindCurrentChecker(() => this.sessions.get(source) === session)
