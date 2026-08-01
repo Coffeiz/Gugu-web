@@ -200,12 +200,6 @@ const _retargetRegistry = createFlipRetargetRegistry()
 function _retargetLandings(kids: HTMLElement[], _rectsIgnored?: any[], scope?: HTMLElement) {
   const measure = (element: HTMLElement) => {
     const b = measureWithoutTransform(element)
-    console.log('[retarget-landings-probe]', JSON.stringify({
-      key: element.dataset.projectId ?? element.dataset.layoutKey ?? null,
-      display: element.style.display,
-      connected: element.isConnected,
-      measured: [b.left, b.top, b.width, b.height],
-    }))
     return { left: b.left, top: b.top, width: b.width, height: b.height }
   }
   // 连续拖入或嵌套项目组时，仍在飞行的落地卡不一定出现在本次
@@ -267,51 +261,8 @@ export function prepareSiblingFlip(
   const kids = collectFlipChildren(container, exclude, allDescendants)
   beforeCapture?.()
   const before = _rects(kids)
-  console.log('[project-flip-probe]', JSON.stringify({
-    phase: 'capture-before',
-    container: container.className,
-    exclude: (exclude as HTMLElement | null)?.dataset.projectId ?? null,
-    kids: kids.map(el => {
-      const r = before[kids.indexOf(el)]
-      const zeroSized = r.width === 0 || r.height === 0
-      const duplicateKey = el.dataset.projectId
-      // 怀疑同一个 cardKey 此刻在文档里同时存在不止一个节点（旧的 pickup 隐藏源节点 +
-      // 新的 landing 节点），Vue 的 key 匹配/我们自己的选择器都可能挑错——量到 0 尺寸时
-      // 顺手把全文档里同 key 的所有节点都列出来，直接确认是不是这个情况。
-      const duplicates = zeroSized && duplicateKey
-        ? Array.from(document.querySelectorAll<HTMLElement>(`[data-project-id="${duplicateKey}"]`)).map(dupEl => ({
-          nodeId: _identityOf(dupEl),
-          display: dupEl.style.display,
-          opacity: dupEl.style.opacity,
-          connected: dupEl.isConnected,
-          isSameAsKid: dupEl === el,
-          isClone: dupEl.classList.contains('phys-drag-clone'),
-          rect: (() => { const rr = dupEl.getBoundingClientRect(); return [rr.left, rr.top, rr.width, rr.height] })(),
-        }))
-        : undefined
-      return {
-        key: el.dataset.projectId ?? el.dataset.layoutKey ?? null,
-        nodeId: _identityOf(el),
-        display: el.style.display,
-        connected: el.isConnected,
-        rect: [r.left, r.top, r.width, r.height],
-        duplicatesInDocument: duplicates,
-      }
-    }),
-  }))
   mutate()
   const after = _rects(kids)
-  console.log('[project-flip-probe]', JSON.stringify({
-    phase: 'capture-after',
-    container: container.className,
-    kids: kids.map((el, index) => ({
-      key: el.dataset.projectId ?? el.dataset.layoutKey ?? null,
-      nodeId: _identityOf(el),
-      display: el.style.display,
-      rect: [after[index].left, after[index].top, after[index].width, after[index].height],
-      dy: before[index].top - after[index].top,
-    })),
-  }))
   afterMeasure?.()
   const transaction = prepareFlipTransaction(createFlipItems(kids), before, after, options)
   return { kids, transaction }

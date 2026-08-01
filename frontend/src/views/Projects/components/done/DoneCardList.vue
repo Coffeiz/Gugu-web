@@ -1,6 +1,7 @@
 <template>
   <div
     class="month-cards"
+    :data-layout-collection="collectionKey"
     :class="{ 'recent-card-list': recent }"
   >
     <Teleport
@@ -38,5 +39,6 @@ function isDetached(projectId: string): boolean {
 defineProps({
   projects: { type: Array as PropType<Project[]>, default: () => [] },
   recent: { type: Boolean, default: false },
+  collectionKey: { type: String, default: '' },
 })
 </script>

@@ -409,10 +409,6 @@ export function createFlipTransaction(options: FlipOptions): FlipTransaction {
         const dx = from.left - to.left, dy = from.top - to.top
         if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) moving.push({ element, dx, dy })
       }
-      console.log('[project-flip-probe]', JSON.stringify({
-        phase: 'play-moving',
-        moving: moving.map(({ element, dx, dy }) => ({ key: element.dataset.projectId ?? element.dataset.layoutKey ?? null, dx, dy })),
-      }))
       if (!moving.length) return Promise.resolve('skipped')
       options.onBeforePlay?.()
       if (!active()) return Promise.resolve('stale')

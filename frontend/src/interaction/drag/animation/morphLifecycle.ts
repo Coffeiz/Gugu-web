@@ -182,15 +182,6 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   }
 
   const retarget = (newBox: MorphBox) => {
-    console.log('[retarget-probe]', JSON.stringify({
-      key: options.revealEl.dataset.projectId ?? options.revealEl.dataset.layoutKey ?? null,
-      landingDone: landing.isDone(),
-      currentBox: [box.left, box.top, box.width, box.height],
-      newBox: [newBox.left, newBox.top, newBox.width, newBox.height],
-      newBoxIsDegenerate: newBox.width === 0 || newBox.height === 0,
-      sameBox: sameBox(box, newBox),
-      time: performance.now(),
-    }))
     if (landing.isDone()) return
     if (sameBox(box, newBox)) return
     // 退化 box（宽或高为 0）说明这次测量测到的是还没揭示的隐藏节点（display:none 时
