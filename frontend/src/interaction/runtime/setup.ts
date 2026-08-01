@@ -1,4 +1,19 @@
-import { runtime } from './index'
+import { DefaultVisualAdapter, runtime } from './index'
+
+/** 看板自己的抓取视觉，不下沉到 Runtime 默认策略，便于其它对象保持原样。 */
+class ProjectCardVisualAdapter extends DefaultVisualAdapter {
+  createProxy(context: any) {
+    const proxy = super.createProxy(context)
+    const content = proxy.element.querySelector<HTMLElement>('[data-runtime-proxy-content]')
+    content?.setAttribute('data-project-glass-drag', 'true')
+    return proxy
+  }
+
+  applyState(element: HTMLElement, state: any): void {
+    super.applyState(element, state)
+    element.toggleAttribute('data-project-glass-drag', state.phase === 'dragging' && state.grabbed)
+  }
+}
 
 let initialized = false
 
@@ -10,6 +25,7 @@ export function setupInteractionRuntime(): void {
   runtime.registerObjectType('project-card', {
     defaultVisualMode: 'detach',
     motion: { enabled: true },
+    visual: new ProjectCardVisualAdapter(runtime),
   })
   runtime.configureMotion({
     flip: { duration: 250, easing: 'cubic-bezier(.22,1,.36,1)' },

@@ -469,6 +469,18 @@ body {
 /* 源卡 / 落点卡：隐藏但保留布局占位，让飞动的克隆体看起来就是卡片本体 */
 .phys-drag-source { opacity: 0 !important; }
 
+/* 仅 Gugu 看板通过 ProjectCardVisualAdapter opt-in 的抓取毛玻璃；Runtime 默认
+   代理不携带这套视觉，文件/画布等对象保持各自样式。 */
+[data-project-glass-drag="true"][data-runtime-proxy="true"],
+[data-project-glass-drag="true"][data-runtime-proxy-content="true"] {
+  background: rgba(255, 255, 255, 0.42) !important;
+  backdrop-filter: blur(12px) saturate(1.15);
+  -webkit-backdrop-filter: blur(12px) saturate(1.15);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow: 0 22px 50px rgba(30, 35, 60, 0.30) !important;
+  opacity: 0.97;
+}
+
 /* 曾经拖拽期间关掉顶栏/侧栏 backdrop-filter 减负（perf trace 显示单次整屏重绘 ~29ms）——
    但代价是拖拽这一两秒导航栏毛玻璃质感整个消失、松手后再突然变回来，用户体验上一直觉得
    是个别扭的跳变（"一直有的问题"）。撤掉这份优化，把手感放在性能之前；如果之后在低端设备
