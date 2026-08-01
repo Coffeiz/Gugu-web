@@ -6,11 +6,13 @@
         :key="col.key"
         :column="col"
         :projects="columnProjects(col.key)"
+        :ownership-version="ownershipVersion"
         @card-click="projectStore.openModal"
         @add-project="openNewWithStatus"
       />
       <DoneColumn
         :projects="columnProjects('done')"
+        :ownership-version="ownershipVersion"
         @card-click="projectStore.openModal"
         @open-archived="showArchived = true"
       />
@@ -36,6 +38,10 @@ const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
 const showArchived = ref(false)
+const ownershipVersion = ref(0)
+const stopOwnershipSubscription = runtime.owner.subscribe(() => {
+  ownershipVersion.value += 1
+})
 
 watch(() => projectStore.error, (message) => {
   if (!message) return
@@ -59,6 +65,7 @@ const stopRuntimeActions = runtime.onAction(action => {
   projectStore.moveProject(projectId, move.toSurfaceId)
 })
 onUnmounted(stopRuntimeActions)
+onUnmounted(stopOwnershipSubscription)
 
 // 全局搜索点击项目 → 跳转本页后高亮对应项目卡（不打开编辑弹窗）
 watch(() => uiStore.pendingProjectHighlight, (id) => {

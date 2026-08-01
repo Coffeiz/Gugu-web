@@ -2,7 +2,7 @@
   <template v-if="group.type === 'recent'">
     <div class="done-group-layout-node recent-done" :data-layout-key="group.key" data-layout-role="group" data-layout-group>
       <div class="recent-done-label"><PhCheckCircle :size="12" weight="fill" style="color:#5a9e88" />{{ group.label }}</div>
-      <DoneCardList :projects="group.items" recent collection-key="recent" @card-click="$emit('card-click', $event)" />
+      <DoneCardList :projects="group.items" :ownership-version="ownershipVersion" recent collection-key="recent" @card-click="$emit('card-click', $event)" />
     </div>
   </template>
   <div v-else-if="group.type === 'year'" class="done-group-layout-node" :data-layout-key="group.key" data-layout-role="group" data-layout-group>
@@ -18,7 +18,7 @@
         <span class="month-name">{{ group.label }}</span><span class="month-cnt">{{ group.items.length }}</span><svg class="month-chev" :class="{ open: group.open }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
       </button>
       <div :key="`${group.key}-cards`" class="month-folder" data-layout-content :data-layout-key="`${group.year}${group.month}`" :data-layout-open="group.open ? 'true' : 'false'">
-        <DoneCardList :projects="group.items" :collection-key="group.key" @card-click="$emit('card-click', $event)" />
+        <DoneCardList :projects="group.items" :ownership-version="ownershipVersion" :collection-key="group.key" @card-click="$emit('card-click', $event)" />
       </div>
     </div>
   </template>
@@ -27,7 +27,7 @@
       <button class="year-row" @click="$emit('toggle', '__undated')">
         <svg class="year-chev" :class="{ open: isUndatedOpen }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg><span class="year-label undated">{{ group.label }}</span><span class="year-cnt">{{ group.items.length }}</span>
       </button>
-      <DoneCardList v-if="isUndatedOpen" :projects="group.items" :collection-key="group.key" @card-click="$emit('card-click', $event)" />
+      <DoneCardList v-if="isUndatedOpen" :projects="group.items" :ownership-version="ownershipVersion" :collection-key="group.key" @card-click="$emit('card-click', $event)" />
     </div>
   </template>
 </template>
@@ -41,6 +41,7 @@ import DoneCardList from './DoneCardList.vue'
 const props = defineProps({
   group: { type: Object as PropType<DoneGroup>, required: true },
   isUndatedOpen: { type: Boolean, default: false },
+  ownershipVersion: { type: Number, default: 0 },
 })
 defineEmits(['toggle', 'card-click'])
 </script>

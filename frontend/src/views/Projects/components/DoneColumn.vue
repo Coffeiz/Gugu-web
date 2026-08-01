@@ -13,7 +13,7 @@
         <span class="col-count">{{ projects.length }}</span>
       </div>
     </div>
-    <div ref="colBodyRef" class="col-body"><DoneLayout ref="doneLayoutRef" :projects="projects" @card-click="$emit('card-click', $event)" /></div>
+    <div ref="colBodyRef" class="col-body"><DoneLayout ref="doneLayoutRef" :projects="projects" :ownership-version="ownershipVersion" @card-click="$emit('card-click', $event)" /></div>
   </div>
 </template>
 
@@ -23,7 +23,10 @@ import { useSurface } from '@/interaction/runtime'
 import type { Project } from '@/types/project'
 import DoneLayout from './done/DoneLayout.vue'
 
-const props = defineProps({ projects: { type: Array as PropType<Project[]>, default: () => [] } })
+const props = defineProps({
+  projects: { type: Array as PropType<Project[]>, default: () => [] },
+  ownershipVersion: { type: Number, default: 0 },
+})
 defineEmits(['card-click', 'open-archived'])
 const { elementRef: columnRef } = useSurface({
   id: 'done',

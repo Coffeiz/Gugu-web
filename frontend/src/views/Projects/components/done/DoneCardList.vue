@@ -18,27 +18,22 @@
 </template>
 
 <script setup lang="ts">
-import { onUnmounted, ref, type PropType } from 'vue'
+import { type PropType } from 'vue'
 import type { Project } from '@/types/project'
 import { runtime } from '@/interaction/runtime'
 import ProjectCard from '../ProjectCard.vue'
 
 defineEmits(['card-click'])
 
-const ownershipVersion = ref(0)
-const stopOwnershipSubscription = runtime.owner.subscribe(() => {
-  ownershipVersion.value += 1
-})
-onUnmounted(stopOwnershipSubscription)
-
 function isDetached(projectId: string): boolean {
-  ownershipVersion.value
+  props.ownershipVersion
   return runtime.owner.isControlled(projectId)
 }
 
-defineProps({
+const props = defineProps({
   projects: { type: Array as PropType<Project[]>, default: () => [] },
   recent: { type: Boolean, default: false },
   collectionKey: { type: String, default: '' },
+  ownershipVersion: { type: Number, default: 0 },
 })
 </script>

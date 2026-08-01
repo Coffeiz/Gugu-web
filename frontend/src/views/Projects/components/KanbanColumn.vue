@@ -36,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import { onUnmounted, ref, type PropType } from 'vue'
+import { ref, type PropType } from 'vue'
 import { runtime, useSurface } from '@/interaction/runtime'
 import ProjectCard from './ProjectCard.vue'
 import type { Project } from '@/types/project'
@@ -44,6 +44,7 @@ import type { Project } from '@/types/project'
 const props = defineProps({
   column:   { type: Object, required: true },
   projects: { type: Array as PropType<Project[]>, default: () => [] },
+  ownershipVersion: { type: Number, default: 0 },
 })
 defineEmits(['card-click', 'add-project'])
 const { elementRef: columnRef } = useSurface({
@@ -56,15 +57,8 @@ const colBodyRef = ref<HTMLElement | null>(null)
 // detach 策略专用：卡片被 Runtime 接管（抓起）时要用 <Teleport> 搬去 body，
 // 否则源节点只是 visibility:hidden，仍占着列表布局的位置，兄弟卡片没法收位
 // （跟 gugu-interaction-runtime demo 的 KanbanBoard.vue 是同一套接线）。
-// Owner 是框架无关的 reactive(Map)，要显式订阅才能驱动 Teleport 的 disabled。
-const ownershipVersion = ref(0)
-const stopOwnershipSubscription = runtime.owner.subscribe(() => {
-  ownershipVersion.value += 1
-})
-onUnmounted(stopOwnershipSubscription)
-
 function isDetached(projectId: string): boolean {
-  ownershipVersion.value
+  props.ownershipVersion
   return runtime.owner.isControlled(projectId)
 }
 
