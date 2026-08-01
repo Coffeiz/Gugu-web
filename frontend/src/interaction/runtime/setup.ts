@@ -11,7 +11,7 @@ export function setupInteractionRuntime(): void {
     defaultVisualMode: 'detach',
     motion: { enabled: true },
   })
-  runtime.configureVisual({ dragGlass: true })
+  runtime.configureVisual({ dragGlass: true, layoutPresence: true })
   runtime.configureMotion({
     flip: { duration: 250, easing: 'cubic-bezier(.22,1,.36,1)' },
     resize: { duration: 250, easing: 'cubic-bezier(.22,1,.36,1)' },
