@@ -110,7 +110,7 @@ const liveFileCounts = computed(() => {
 // 只要 projects/cacheStore.loaded/liveFileCounts 这几个依赖没变，同一轮渲染
 // 内多次调用 columnProjects() 用的是同一份缓存结果，同一个 project 对象引用，
 // 不会再凭空多出这类相邻渲染间的对象churn。
-const projectViewCache = new Map<number, { source: Project; fileCount: number; view: Project }>()
+const projectViewCache = new Map<number, { source: Project; sourceKey: string; fileCount: number; view: Project }>()
 const columnProjectsMap = computed(() => {
   const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
   const grouped = new Map()
@@ -120,12 +120,16 @@ const columnProjectsMap = computed(() => {
     const fileCount = cacheStore.loaded ? (liveFileCounts.value.get(p.id) ?? 0) : p.fileCount
     liveIds.add(p.id)
     const cached = projectViewCache.get(p.id)
-    const view = cached?.source === p && cached.fileCount === fileCount
+    // moveProject mutates the store object in place, so identity alone is not
+    // enough to validate a cached view. Include the fields that can change the
+    // card's sort position or visible status during a move.
+    const sourceKey = `${p.status}|${p.doneAt ?? ''}|${p.currentStage ?? ''}|${p.progress ?? ''}|${p.version ?? ''}`
+    const view = cached?.source === p && cached.sourceKey === sourceKey && cached.fileCount === fileCount
       ? cached.view
       : fileCount === p.fileCount
         ? p
         : { ...p, fileCount }
-    projectViewCache.set(p.id, { source: p, fileCount, view })
+    projectViewCache.set(p.id, { source: p, sourceKey, fileCount, view })
     // cache 已加载后以前端计数为准（只计根目录文件），避免回退到服务端含文件夹的数字
     list.push(view)
     grouped.set(p.status, list)
