@@ -2,6 +2,13 @@ import { DefaultVisualAdapter, runtime } from './index'
 
 /** 看板自己的抓取视觉，不下沉到 Runtime 默认策略，便于其它对象保持原样。 */
 class ProjectCardVisualAdapter extends DefaultVisualAdapter {
+  constructor(runtime: any) {
+    super(runtime)
+    // Runtime 会把 createMove 作为注册配置取出后调用；绑定实例避免继承方法
+    // 丢失 this，导致 pointerdown 无法创建移动事务。
+    this.createMove = this.createMove.bind(this)
+  }
+
   createProxy(context: any) {
     const proxy = super.createProxy(context)
     const content = proxy.element.querySelector<HTMLElement>('[data-runtime-proxy-content]')
