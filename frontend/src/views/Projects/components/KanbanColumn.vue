@@ -15,7 +15,9 @@
     </div>
 
     <div ref="colBodyRef" class="col-body">
-      <TransitionGroup tag="div" name="kanban-card-list" class="kanban-card-list" :css="!controlled">
+      <!-- 位移动画统一由 Runtime FLIP 驱动；保留 TransitionGroup 仅作为渲染容器，
+           避免新建项目按钮继续被旧的 0.18s CSS move 动画单独推动。 -->
+      <TransitionGroup tag="div" name="kanban-card-list" class="kanban-card-list" :css="false">
         <Teleport v-for="project in projects" :key="project.id" to="body" :disabled="!isDetached(String(project.id))">
           <ProjectCard
             :project="project"
@@ -35,7 +37,7 @@
 
 <script setup lang="ts">
 import { onUnmounted, ref, type PropType } from 'vue'
-import { runtime, useRuntimeTransition, useSurface } from '@/interaction/runtime'
+import { runtime, useSurface } from '@/interaction/runtime'
 import ProjectCard from './ProjectCard.vue'
 import type { Project } from '@/types/project'
 
@@ -51,8 +53,6 @@ const { elementRef: columnRef } = useSurface({
   viewport: () => colBodyRef.value,
 })
 const colBodyRef = ref<HTMLElement | null>(null)
-const { controlled } = useRuntimeTransition(props.column.key)
-
 // detach 策略专用：卡片被 Runtime 接管（抓起）时要用 <Teleport> 搬去 body，
 // 否则源节点只是 visibility:hidden，仍占着列表布局的位置，兄弟卡片没法收位
 // （跟 gugu-interaction-runtime demo 的 KanbanBoard.vue 是同一套接线）。
@@ -128,7 +128,9 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
   corner-shape: squircle;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.18s;
+  /* transform 由 Runtime FLIP 独占；不能使用 transition: all，
+     否则旧的列表位移或 hover 状态会让新建按钮二次进动。 */
+  transition: border-color 0.18s, color 0.18s, background 0.18s;
 }
 .add-card:hover {
   border-color: rgba(123,127,178,0.35);
