@@ -16,12 +16,12 @@
 
     <div ref="colBodyRef" class="col-body">
       <TransitionGroup tag="div" name="kanban-card-list" class="kanban-card-list" :css="!controlled">
-        <ProjectCard
-          v-for="project in projects"
-          :key="project.id"
-          :project="project"
-          @click="$emit('card-click', project)"
-        />
+        <Teleport v-for="project in projects" :key="project.id" to="body" :disabled="!isDetached(String(project.id))">
+          <ProjectCard
+            :project="project"
+            @click="$emit('card-click', project)"
+          />
+        </Teleport>
         <button :key="`add-${column.key}`" class="add-card" data-flip-target @click="$emit('add-project', column.key)">
           <svg width="14" height="14" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="opacity:0.5;flex-shrink:0">
             <line x1="11" y1="4" x2="11" y2="18"/><line x1="4" y1="11" x2="18" y2="11"/>
@@ -34,8 +34,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, type PropType } from 'vue'
-import { useRuntimeTransition, useSurface } from '@/interaction/runtime'
+import { onUnmounted, ref, type PropType } from 'vue'
+import { runtime, useRuntimeTransition, useSurface } from '@/interaction/runtime'
 import ProjectCard from './ProjectCard.vue'
 import type { Project } from '@/types/project'
 
@@ -52,6 +52,21 @@ const { elementRef: columnRef } = useSurface({
 })
 const colBodyRef = ref<HTMLElement | null>(null)
 const { controlled } = useRuntimeTransition(props.column.key)
+
+// detach 策略专用：卡片被 Runtime 接管（抓起）时要用 <Teleport> 搬去 body，
+// 否则源节点只是 visibility:hidden，仍占着列表布局的位置，兄弟卡片没法收位
+// （跟 gugu-interaction-runtime demo 的 KanbanBoard.vue 是同一套接线）。
+// Owner 是框架无关的 reactive(Map)，要显式订阅才能驱动 Teleport 的 disabled。
+const ownershipVersion = ref(0)
+const stopOwnershipSubscription = runtime.owner.subscribe(() => {
+  ownershipVersion.value += 1
+})
+onUnmounted(stopOwnershipSubscription)
+
+function isDetached(projectId: string): boolean {
+  ownershipVersion.value
+  return runtime.owner.isControlled(projectId)
+}
 
 const colColors: Record<string, string> = { pending: '#d46b6b', active: '#c9943a' }
 const colColor  = colColors[props.column.key] ?? '#9e9fc4'
@@ -101,7 +116,7 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
   width: 100%;
 }
 .kanban-card-list-move {
-  transition: transform 0.34s cubic-bezier(0.34, 1.2, 0.64, 1);
+  transition: transform 0.25s cubic-bezier(.22, 1, .36, 1);
 }
 /* 跟文件库「上传文件」(.fc-upload) 同款：只换边框/文字/背景色，不带外阴影、不抬起 */
 .add-card {
