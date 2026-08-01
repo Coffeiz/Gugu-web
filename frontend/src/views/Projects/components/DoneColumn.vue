@@ -63,6 +63,7 @@ const colBodyRef = ref<HTMLElement | null>(null)
 .year-cnt,.month-cnt { font-size:10px; color:rgba(0,0,0,.38); }
 .month-name { font-size:11px; font-weight:500; color:rgba(0,0,0,.52); flex:1; }
 .month-folder { display:grid; grid-template-rows:1fr; overflow:hidden; transform-origin:top; }
+.month-folder { min-height:0; }
 .month-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height:0; overflow:hidden; }
 .year-folder { min-height:0; overflow:hidden; }
 .year-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height:0; overflow:hidden; }
