@@ -29,14 +29,12 @@ const openYears = ref(new Set<string>([initialYear]))
 const openMonths = ref(new Set<string>([initialMonth]))
 const { groups, recent, toggleGroup, isGroupOpen } = useDoneGroups(toRef(props, 'projects'), openYears, openMonths)
 const layoutRoot = ref<HTMLElement | null>(null)
-let toggleToken = 0
 async function onToggle(key: string) {
   const stateKey = key.startsWith('year-') ? key.slice(5) : key
   const content = layoutRoot.value?.querySelector<HTMLElement>(
     `[data-layout-key="${CSS.escape(key)}"].month-folder, [data-layout-key="${CSS.escape(key)}"] .month-folder, [data-layout-key="${CSS.escape(key)}"].year-folder`,
   )
   const opening = !isGroupOpen(stateKey)
-  const token = ++toggleToken
   if (!content || !layoutRoot.value) return
   await runGroupToggle({
     root: layoutRoot.value,
@@ -44,7 +42,6 @@ async function onToggle(key: string) {
     opening,
     mutate: () => toggleGroup(key),
     waitForLayout: nextTick,
-    isCurrent: () => token === toggleToken,
     duration: 250,
     easing: 'cubic-bezier(.22,1,.36,1)',
   })
