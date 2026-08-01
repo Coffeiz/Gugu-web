@@ -63,8 +63,9 @@ const colBodyRef = ref<HTMLElement | null>(null)
 .year-cnt,.month-cnt { font-size:10px; color:rgba(0,0,0,.38); }
 .month-name { font-size:11px; font-weight:500; color:rgba(0,0,0,.52); flex:1; }
 .month-folder { display:grid; grid-template-rows:1fr; overflow:hidden; transform-origin:top; }
-.month-folder-enter-active,.month-folder-leave-active { transition:grid-template-rows .28s cubic-bezier(.22,1,.36,1), opacity .18s ease, transform .28s cubic-bezier(.22,1,.36,1); }
-.month-folder-enter-from,.month-folder-leave-to { grid-template-rows:0fr; opacity:0; transform:translateY(-8px) scaleY(.92); }
+.month-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height:0; overflow:hidden; }
+.year-folder { min-height:0; overflow:hidden; }
+.year-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height:0; overflow:hidden; }
 .done-card-list-enter-active,.done-card-list-leave-active { transition:opacity .22s ease; }
 .done-card-list-enter-from,.done-card-list-leave-to { opacity:0; }
 </style>
