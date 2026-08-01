@@ -51,12 +51,13 @@ def _files_block(fo: dict | None, proj_names: dict | None = None) -> str:
     folders = fo.get("folders") or []
     if folders:
         lines.append("文件夹：" + "、".join(
-            f"{x.get('path', x['name'])}" + (f"({_proj(x['project_id'])})" if x.get("project_id") else "")
+            f"{x.get('path', x['name'])}（文件数 {x.get('file_count', 0)}）"
+            + (f"({_proj(x['project_id'])})" if x.get("project_id") else "")
             for x in folders
         ))
     files = fo.get("files") or []
     if files:
-        lines.append(f"最近文件（最多 {len(files)} 个）：")
+        lines.append(f"最近文件样本（最多 {len(files)} 个；这里只是最近更新的截断列表，不代表其它文件夹为空）：")
         for f in files:
             loc = f.get("folder") or (_proj(f["project_id"]) if f.get("project_id") else f.get("space", ""))
             lines.append(f"- {f['name']}（{loc}）")
