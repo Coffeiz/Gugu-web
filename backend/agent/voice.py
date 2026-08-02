@@ -30,6 +30,7 @@ _ASR_RETRY_BACKOFF = [1, 2]   # ASR 单次调用本身较慢，退避拉满会�
 # mimo-v2.5-asr 等 ASR 模型只收这几种容器；浏览器录音多是 audio/mp4(Safari)/audio/webm(Chrome)，
 # QQ/微信语音也常是 amr/silk → 一律用 ffmpeg 转 wav 再送。
 _ASR_OK_MIME = {"audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3"}
+_DASHSCOPE_SERVICES = {"qwen3-asr", "qwen-audio"}
 def _dashscope_generation_url(base_url: str) -> str:
     """从兼容模式 base URL 推导百炼多模态生成端点。"""
     parsed = urlsplit((base_url or "").strip())
@@ -89,7 +90,7 @@ async def _to_wav(raw: bytes) -> bytes | None:
 
 def _vm(settings):
     """取语音模型配置，兼容它是 VoiceSettings 对象或 dict（不同加载路径下可能是 dict）。"""
-    v = getattr(settings, "voice", None)
+    v = settings.get("voice") if isinstance(settings, dict) else getattr(settings, "voice", None)
     return SimpleNamespace(**v) if isinstance(v, dict) else v
 
 
@@ -99,7 +100,7 @@ def is_configured(settings) -> bool:
     return bool(vm and (getattr(vm, "model", "") or "").strip())
 
 
-async def transcribe(media: list, settings) -> str | None:
+async def transcribe(media: list, settings, *, raise_errors: bool = False) -> str | None:
     """把 media（[{type:'audio'|'video', mime, b64}]）转成文字。
     返回 None = 未配置语音模型（调用方切断回「不支持」）；返回 str = 转写结果（可能为空串）。"""
     vm = _vm(settings)
@@ -134,22 +135,33 @@ async def transcribe(media: list, settings) -> str | None:
                  _openai.InternalServerError, _openai.RateLimitError,
                  httpx.TimeoutException, httpx.NetworkError)
     native_dashscope = (getattr(vm, "api_format", "") or "").strip().lower() == "dashscope"
+    dashscope_service = (getattr(vm, "dashscope_service", "qwen3-asr") or "qwen3-asr").strip().lower()
+    if native_dashscope and dashscope_service not in _DASHSCOPE_SERVICES:
+        raise ValueError("DashScope 语音产品线未选择或暂不支持")
     client = None if native_dashscope else providers.build_openai_client(vm, httpx.Timeout(60.0))
     for i in range(len(_ASR_RETRY_BACKOFF) + 1):
         try:
             if native_dashscope:
-                # Qwen-Audio-3.0-ASR-Flash 使用 DashScope 原生多模态接口，
-                # 不是 qwen3-asr-flash 的 OpenAI 兼容 chat/completions 接口。
-                data = {
-                    "model": vm.model,
-                    "input": {"messages": [{"role": "user", "content": [
+                # DashScope 产品线由配置显式选择；不要从模型名前缀猜请求协议。
+                if dashscope_service == "qwen3-asr":
+                    content = [
                         {"audio": block["input_audio"]["data"]}
                         for block in parts
-                    ]}]},
-                    "parameters": {"asr_options": {"enable_itn": False}},
+                    ]
+                    parameters = {"asr_options": {"enable_itn": False}}
+                else:
+                    content = parts
+                    parameters = {"format": "wav", "sample_rate": 16000}
+                data = {
+                    "model": vm.model,
+                    "input": {"messages": [{"role": "user", "content": content}]},
+                    "parameters": parameters,
                 }
-                headers = {"Authorization": f"Bearer {vm.api_key}",
-                           "Content-Type": "application/json"}
+                headers = {
+                    "Authorization": f"Bearer {vm.api_key}",
+                    "Content-Type": "application/json",
+                    "X-DashScope-SSE": "disable",
+                }
                 async with httpx.AsyncClient(timeout=60.0) as http:
                     response = await http.post(_dashscope_generation_url(vm.base_url),
                                                headers=headers, json=data)
@@ -168,6 +180,8 @@ async def transcribe(media: list, settings) -> str | None:
             if i >= len(_ASR_RETRY_BACKOFF):
                 diag_log("agent.voice.transcribe", e)   # 原始 → 受限诊断出口
                 logger.warning("语音转写重试 %d 次后仍失败 model=%s：%s", i, vm.model, type(e).__name__)
+                if raise_errors:
+                    raise
                 # 不上抛 RetryableError：transcribe() 的既有契约是「非 None 即成功（可能空串），
                 # 从不抛异常」（见模块 docstring），三处调用方（agent/runner.py、
                 # agent/adapters/web.py）都只判断 None/空串，没有 except RetryableError。
@@ -183,11 +197,15 @@ async def transcribe(media: list, settings) -> str | None:
                 logger.warning("语音转写失败 model=%s base_url=%s → %s",
                                getattr(vm, "model", "?"), getattr(vm, "base_url", "?"),
                                redact(f"HTTP {e.response.status_code}"))
+                if raise_errors:
+                    raise
                 return ""
             if i >= len(_ASR_RETRY_BACKOFF):
                 diag_log("agent.voice.transcribe", e)
                 logger.warning("语音转写重试 %d 次后仍失败 model=%s：HTTP %s",
                                i, vm.model, e.response.status_code)
+                if raise_errors:
+                    raise
                 return ""
             logger.info("语音转写 HTTP %s，%ss 后重试(%d)",
                         e.response.status_code, _ASR_RETRY_BACKOFF[i], i + 1)
@@ -200,5 +218,7 @@ async def transcribe(media: list, settings) -> str | None:
             logger.warning("语音转写失败 model=%s base_url=%s → %s",
                            getattr(vm, "model", "?"), getattr(vm, "base_url", "?"),
                            redact(f"{type(e).__name__}: {e}"))
+            if raise_errors:
+                raise
             return ""
     return ""   # 理论不可达（循环内每条路径都 return），留作类型兜底

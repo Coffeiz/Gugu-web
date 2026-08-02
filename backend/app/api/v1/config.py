@@ -7,8 +7,11 @@ POST  /api/v1/admin/config/init-db           → 手动初始化数据库（建�
 """
 
 import asyncio
+import base64
+import io
 import json
 import time
+import wave
 
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -17,6 +20,7 @@ from typing import Any, Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings, save_override
+from app.core.redaction import redact
 from app.db.session import create_all_tables, reset_engine, get_db
 
 router = APIRouter(prefix="/admin/config", tags=["admin"])
@@ -769,6 +773,72 @@ async def test_embedding(body: EmbeddingTestRequest):
     if not isinstance(vec, list) or not vec:
         return {"ok": False, "message": "返回的向量为空"}
     return {"ok": True, "message": f"OK — 连通，向量维度 {len(vec)}"}
+
+
+# ── 语音识别模型连通测试 ────────────────────────────────────────────────────
+
+class VoiceTestRequest(BaseModel):
+    api_format: str = "openai"
+    dashscope_service: str = "qwen3-asr"
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+
+
+def _voice_test_wav() -> bytes:
+    """生成短静音 WAV，只用于探测接口，不写入存储。"""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16000)
+        # 1 秒有效 PCM，比极短的 0.1 秒静音更容易通过上游音频预检；
+        # 测试只验证请求能被模型接收，不要求返回可识别文本。
+        wav.writeframes(b"\x00\x00" * 16000)
+    return buf.getvalue()
+
+
+@router.post("/test-voice")
+async def test_voice(body: VoiceTestRequest):
+    """按当前输入测试语音模型，不保存配置、不写聊天记录。"""
+    cfg = get_settings().voice
+    model = (body.model or cfg.model or "").strip()
+    base_url = (body.base_url or cfg.base_url or "").strip()
+    api_key = body.api_key if body.api_key and body.api_key != "****" else cfg.api_key
+    api_format = (body.api_format or cfg.api_format or "openai").strip().lower()
+    if not model or not base_url:
+        return {"ok": False, "message": "请先填写模型名和 Base URL"}
+    if api_format not in {"openai", "dashscope"}:
+        return {"ok": False, "message": "API 格式只支持 OpenAI 兼容或百炼 DashScope"}
+    dashscope_service = (body.dashscope_service or getattr(cfg, "dashscope_service", "qwen3-asr") or "qwen3-asr").strip().lower()
+    if api_format == "dashscope" and dashscope_service not in {"qwen3-asr", "qwen-audio"}:
+        return {"ok": False, "message": "百炼产品线只支持 Qwen3 ASR 或 Qwen-Audio 3.0"}
+    try:
+        from agent.voice import transcribe
+
+        audio = base64.b64encode(_voice_test_wav()).decode()
+        text = await transcribe(
+            [{"type": "audio", "mime": "audio/wav", "b64": audio}],
+            {"voice": {
+                "api_key": api_key,
+                "base_url": base_url,
+                "model": model,
+                "api_format": api_format,
+                "dashscope_service": dashscope_service,
+            }},
+            raise_errors=True,
+        )
+        if text is None:
+            return {"ok": False, "message": "语音模型未配置"}
+        return {"ok": True, "message": "连接正常（静音测试已收到响应）"}
+    except httpx.HTTPStatusError as e:
+        # 上游 4xx 的响应体通常包含真正的参数/模型校验原因；只返回短的
+        # 脱敏摘要，避免把可能包含凭据或请求细节的完整响应暴露给前端。
+        detail = redact((e.response.text or "").strip()[:300])
+        suffix = f"：{detail}" if detail else ""
+        return {"ok": False, "message": f"测试失败：HTTP {e.response.status_code}{suffix}"}
+    except Exception as e:
+        return {"ok": False, "message": f"测试失败：{redact(f'{type(e).__name__}: {e}')}"}
 
 
 # ── Embedding 向量重建（换模型后批量重算所有用户的 pattern 向量）──────────────────

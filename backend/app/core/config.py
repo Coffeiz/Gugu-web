@@ -76,6 +76,10 @@ class VoiceSettings(BaseModel):
     base_url: str = Field("", description="语音模型 Base URL")
     model: str = Field("", description="语音/识别模型名（空=未配置→收到语音回不支持）")
     api_format: str = Field("openai", description="语音接口格式: openai | dashscope")
+    dashscope_service: str = Field(
+        "qwen3-asr",
+        description="DashScope 产品线: qwen3-asr | qwen-audio",
+    )
 
 
 class AIPresetItem(BaseModel):

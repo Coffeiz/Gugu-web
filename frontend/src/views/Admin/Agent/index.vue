@@ -592,12 +592,18 @@
 
         <div class="behavior-grid">
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc"><b>留空 = 不支持语音</b>。MiMo 填 <code>mimo-v2.5-asr</code>；百炼新版填 <code>qwen-audio-3.0-asr-flash</code></span></div>
+            <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc"><b>留空 = 不支持语音</b>。DashScope 会根据下方产品线自动使用对应请求格式</span></div>
             <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.model" placeholder="留空=不支持语音" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>Base URL</span><span class="behavior-desc">OpenAI 兼容端点。百炼如 https://&#123;WorkspaceId&#125;.cn-beijing.maas.aliyuncs.com/compatible-mode/v1</span></div>
+            <div class="behavior-label"><span>Base URL</span><span class="behavior-desc">OpenAI 填兼容端点；DashScope 填 https://&#123;WorkspaceId&#125;.cn-beijing.maas.aliyuncs.com/api/v1</span></div>
             <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.base_url" placeholder="https://…/compatible-mode/v1" />
+          </div>
+          <div v-if="voiceDraft.api_format === 'dashscope'" class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>百炼产品线</span><span class="behavior-desc">选择后会自动填入适合的模型示例和请求适配器</span></div>
+            <AdminSelect :model-value="voiceDraft.dashscope_service || 'qwen3-asr'"
+                         :options="VOICE_DASHSCOPE_SERVICES"
+                         @update:model-value="setDashscopeService" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label"><span>API 格式</span><span class="behavior-desc">OpenAI 兼容：chat + input_audio；百炼 DashScope：原生多模态 HTTP</span></div>
@@ -618,8 +624,12 @@
           <span class="save-hint" :class="{ error: !!voiceError }">
             <template v-if="voiceSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
             <template v-else-if="voiceError">{{ voiceError }}</template>
+            <template v-else-if="voiceTestMsg">{{ voiceTestMsg }}</template>
           </span>
           <button class="btn-ghost" @click="resetVoice">撤销修改</button>
+          <button class="btn-ghost" :class="{ loading: voiceTesting }" :disabled="voiceTesting" @click="testVoice">
+            {{ voiceTesting ? '测试中…' : '测试接入' }}
+          </button>
           <button class="btn-primary" :class="{ loading: voiceSaving }" :disabled="voiceSaving" @click="saveVoice">
             <svg v-if="voiceSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
             {{ voiceSaving ? '保存中…' : '保存' }}
@@ -1618,11 +1628,25 @@ const voiceDraft  = reactive({ ...configStore.cfg.voice })
 const voiceSaving = ref(false)
 const voiceSaved  = ref(false)
 const voiceError  = ref('')
+const voiceTesting = ref(false)
+const voiceTestMsg = ref('')
 function resetVoice() { Object.assign(voiceDraft, configStore.cfg.voice) }
 const VOICE_API_FORMATS = [
   { value: 'openai', label: 'OpenAI 兼容' },
   { value: 'dashscope', label: '百炼 DashScope' },
 ]
+const VOICE_DASHSCOPE_SERVICES = [
+  { value: 'qwen3-asr', label: 'Qwen3 ASR · qwen3-asr-flash' },
+  { value: 'qwen-audio', label: 'Qwen-Audio 3.0 · qwen-audio-3.0-asr-flash' },
+]
+function setDashscopeService(value: string) {
+  voiceDraft.dashscope_service = value
+  const examples: Record<string, string> = {
+    'qwen3-asr': 'qwen3-asr-flash',
+    'qwen-audio': 'qwen-audio-3.0-asr-flash',
+  }
+  voiceDraft.model = examples[value] || ''
+}
 async function saveVoice() {
   voiceSaving.value = true; voiceSaved.value = false; voiceError.value = ''
   try {
@@ -1634,6 +1658,34 @@ async function saveVoice() {
     voiceError.value = (e instanceof Error ? e.message : String(e)) || '保存失败'
   } finally {
     voiceSaving.value = false
+  }
+}
+
+async function testVoice() {
+  voiceTesting.value = true
+  voiceError.value = ''
+  voiceTestMsg.value = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/test-voice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_format: voiceDraft.api_format,
+        dashscope_service: voiceDraft.dashscope_service,
+        base_url: voiceDraft.base_url,
+        api_key: voiceDraft.api_key,
+        model: voiceDraft.model,
+      }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.ok) throw new Error(data.message || `测试失败（${res.status}）`)
+    voiceSaved.value = false
+    voiceTestMsg.value = data.message || '语音模型连接正常'
+    setTimeout(() => { voiceTestMsg.value = '' }, 5000)
+  } catch (e) {
+    voiceError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    voiceTesting.value = false
   }
 }
 
