@@ -100,6 +100,23 @@ async def test_list_files_returns_full_folder_path(db, user_a):
     assert result["folder_path"] == "咕咕开发/方案"
 
 
+async def test_list_files_filters_by_folder_id(db, user_a):
+    target = await _mk(db, Folder(user_id=user_a.id, name="原神"))
+    other = await _mk(db, Folder(user_id=user_a.id, name="星穹铁道"))
+    inside = await _mk(db, File(
+        user_id=user_a.id, display_name="原神图片", ext="png",
+        folder_id=target.id, storage_key="inside",
+    ))
+    await _mk(db, File(
+        user_id=user_a.id, display_name="星穹图片", ext="png",
+        folder_id=other.id, storage_key="other",
+    ))
+
+    rows = await _list_files(db, user_a.id, {"folder_id": target.id})
+
+    assert [item["id"] for item in rows] == [inside.id]
+
+
 async def test_resolve_target_cross_user_folder(db, user_a, user_b):
     fo = await _mk(db, Folder(user_id=user_b.id, name="B的文件夹"))
     space, pid, fid, err = await _resolve_target(db, user_a.id, {"folder_id": fo.id})

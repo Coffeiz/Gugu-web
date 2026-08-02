@@ -193,6 +193,51 @@ async def test_voice_transcribe_does_not_retry_on_permanent_error():
     assert calls["n"] == 1
 
 
+async def test_voice_transcribe_qwen_audio_30_uses_dashscope_native_api():
+    from agent import voice
+
+    import httpx
+
+    calls = []
+
+    class _FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"output": {"choices": [{"message": {
+                "content": [{"text": "这是 QQ 语音"}]
+            }}]}}
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            calls.append((url, headers, json))
+            return _FakeResponse()
+
+    with patch.object(httpx, "AsyncClient", _FakeClient):
+        out = await voice.transcribe(_media(), SimpleNamespace(voice={
+            "model": "qwen-audio-3.0-asr-flash",
+            "api_key": "k",
+            "base_url": "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+            "api_format": "dashscope",
+        }))
+
+    assert out == "这是 QQ 语音"
+    assert calls[0][0].endswith("/api/v1/services/aigc/multimodal-generation/generation")
+    assert calls[0][2]["input"]["messages"][0]["content"][0]["audio"].startswith("data:audio/wav;base64,")
+
+
 # ── web: http_get 工具 ───────────────────────────────────────────────────────
 
 async def test_http_get_retries_on_timeout_then_succeeds(monkeypatch):

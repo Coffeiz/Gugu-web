@@ -253,13 +253,20 @@ async def _list_files(db, user_id, args: dict):
     stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
     if args.get("space"):
         stmt = stmt.where(File.space == args["space"])
-    if args.get("project_id"):
+    if args.get("project_id") is not None:
         stmt = stmt.where(File.project_id == args["project_id"])
+    if args.get("folder_id") is not None:
+        stmt = stmt.where(File.folder_id == args["folder_id"])
     if args.get("ext"):
         stmt = stmt.where(File.ext == args["ext"].lower().lstrip("."))
     if args.get("q"):
         stmt = stmt.where(File.display_name.ilike(f"%{args['q']}%"))
-    stmt = stmt.order_by(File.updated_at.desc()).limit(args.get("limit", 30))
+    requested_limit = args.get("limit", 100)
+    try:
+        limit = max(1, min(int(requested_limit), 200))
+    except (TypeError, ValueError):
+        limit = 100
+    stmt = stmt.order_by(File.updated_at.desc()).limit(limit)
     rows = (await db.execute(stmt)).scalars().all()
     out = []
     for file in rows:
@@ -1188,7 +1195,7 @@ class FilesSkill(BaseSkill):
     tools = [
         Tool(
             name="list_files", label="查询文件",
-            description="查询文件，可按空间(project/mind/asset/personal)、项目、扩展名、名称关键词筛选。"
+            description="查询文件，可按空间(project/mind/asset/personal)、项目、文件夹、扩展名、名称关键词筛选。"
                         "结果含 folder_path（完整文件夹路径）；回给用户时默认按 folder_path 分组，用目录树形式呈现（文件夹一行，文件缩进列出）。"
                         "同名文件按完整路径区分；不要把平铺结果揉成一段话，也不要把未出现在结果中的文件夹判断为空。",
             input_schema={
@@ -1196,8 +1203,11 @@ class FilesSkill(BaseSkill):
                 "properties": {
                     "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
                     "project_id": {"type": "integer"},
+                    "folder_id": {"type": "integer", "description": "只查询指定文件夹内的文件"},
                     "ext": {"type": "string", "description": "扩展名，如 png/md"},
                     "q": {"type": "string", "description": "名称模糊匹配"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200,
+                              "description": "最多返回多少条，默认 100；查询大文件夹时可提高到 200"},
                 },
             },
             handler=_list_files,
