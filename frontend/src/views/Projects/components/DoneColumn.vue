@@ -52,7 +52,7 @@ const colBodyRef = ref<HTMLElement | null>(null)
 .col-empty { display:flex; align-items:center; justify-content:center; min-height:96px; color:var(--text-secondary); opacity:.4; }
 .recent-done { margin-bottom:10px; }
 .recent-done-label { display:flex; align-items:center; gap:5px; font-size:11px; font-weight:600; color:#5a9e88; padding:0 2px 6px; }
-.month-cards { display:flex; flex-direction:column; gap:6px; padding:4px 0 4px 14px; border-left:1px solid rgba(0,0,0,.06); margin-left:12px; box-sizing:border-box; }
+.month-cards { display:flex; flex-direction:column; gap:6px; padding:4px; box-sizing:border-box; }
 .recent-done .month-cards { border-left:none; margin-left:0; padding:4px 0; }
 .done-card-item { flex:0 0 auto; width:100%; }
 .year-row,.month-row { display:flex; align-items:center; gap:6px; width:100%; border:0; background:none; cursor:pointer; font-family:var(--font-sans); text-align:left; transition:background .12s; }
@@ -68,8 +68,9 @@ const colBodyRef = ref<HTMLElement | null>(null)
 .month-folder { display:grid; grid-template-rows:1fr; overflow:hidden; transform-origin:top; }
 .month-folder { min-height:0; }
 .month-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height:0; overflow:hidden; }
-.year-folder { min-height:0; overflow:hidden; }
+.year-folder { min-height:0; overflow:hidden; padding:2px 0 2px 6px; border-left:1px solid rgba(0,0,0,.06); margin-left:6px; margin-top:1px; box-sizing:border-box; }
 .year-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height:0; overflow:hidden; }
+.year-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) > .done-group-layout-node { visibility:hidden; }
 .done-card-list-enter-active,.done-card-list-leave-active { transition:opacity .22s ease; }
 .done-card-list-enter-from,.done-card-list-leave-to { opacity:0; }
 </style>

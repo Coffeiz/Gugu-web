@@ -45,8 +45,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { MindCanvasItem, MindRefSuggestItem } from '@/services/api'
 import { useMindRefActions } from '@/composables/useMindRefActions'
 import { showAppError } from '@/composables/useAppToast'
@@ -61,8 +60,6 @@ type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
 
 const store = useMindStore()
 const projectStore = useProjectStore()
-const route = useRoute()
-const router = useRouter()
 const { openMindRef } = useMindRefActions()
 
 const canvasRef = ref<InstanceType<typeof MindCanvas> | null>(null)
@@ -101,25 +98,12 @@ onMounted(async () => {
   ])
   await ensureCanvas()
 })
-watch(() => route.params.id, async () => {
-  console.log('[canvas-switch-probe]', JSON.stringify({
-    event: 'route-change',
-    routeId: String(route.params.id),
-    activeCanvasId: activeCanvasId.value,
-    t: Math.round(performance.now()),
-  }))
-  flushViewSave()
-  await ensureCanvas()
-})
-
 async function ensureCanvas() {
-  canvasProjectIdsReady.value = false
-  const requestedId = Number(route.params.id)
   const rememberedId = Number(localStorage.getItem('mind-last-canvas-id'))
   const fallbackId = Number.isFinite(rememberedId) && store.canvases.some(canvas => canvas.id === rememberedId)
     ? rememberedId
     : store.canvases[0]?.id
-  let id = Number.isFinite(requestedId) ? requestedId : fallbackId
+  let id = fallbackId
   if (id == null) {
     const canvas = await store.createCanvas()
     id = canvas.id
@@ -127,16 +111,23 @@ async function ensureCanvas() {
   if (!Number.isFinite(id) || !store.canvases.some(canvas => canvas.id === id)) {
     const canvas = store.canvases[0] || await store.createCanvas()
     id = canvas.id
-    await router.replace({ name: 'MindCanvas', params: { id } })
-    return
   }
-  // store 会跨路由保留 activeCanvasId，但 MindCanvas 在离开再回来后是一个全新的组件，
-  // 它的 camera 又从 scale=1 开始。只跳过网络加载，不能连 restoreView 一起跳过。
-  if (store.activeCanvasId !== id) await store.loadCanvas(id)
+  await activateCanvas(id)
+}
+
+let activationSeq = 0
+/** 画布 ID 的唯一切换入口；路由只负责进入画布模式，当前画布由 Store 管理。 */
+async function activateCanvas(id: number) {
+  if (!store.canvases.some(canvas => canvas.id === id)) return
+  const seq = ++activationSeq
+  flushViewSave()
+  canvasProjectIdsReady.value = false
+  await store.loadCanvas(id)
+  if (seq !== activationSeq || store.activeCanvasId !== id) return
   canvasProjectIdsReady.value = true
   localStorage.setItem('mind-last-canvas-id', String(id))
   await nextTick()
-  restoreView(id)
+  if (seq === activationSeq) restoreView(id)
 }
 
 /** 打开画布时优先回到用户上次离开时的视角（存在 mind_maps.data_json 里）；
@@ -188,31 +179,19 @@ onBeforeUnmount(flushViewSave)
 
 async function createCanvas() {
   const canvas = await store.createCanvas()
-  await router.push({ name: 'MindCanvas', params: { id: canvas.id } })
+  await activateCanvas(canvas.id)
 }
 async function openCanvas(id: number) {
   if (id === activeCanvasId.value) return
-  localStorage.setItem('mind-last-canvas-id', String(id))
-  if (route.name === 'MindCanvas' && !route.params.id) {
-    canvasProjectIdsReady.value = false
-    await store.loadCanvas(id)
-    canvasProjectIdsReady.value = true
-    await nextTick()
-    restoreView(id)
-    return
-  }
-  await router.push({ name: 'MindCanvas' })
+  await activateCanvas(id)
 }
-/** 删的若不是当前正看着的画布，store.deleteCanvas 已经把它从 store.canvases 摘掉，
- *  CanvasSidebar 的列表跟着响应式更新，这里什么都不用做。删的正是当前画布才需要处理：
- *  路由的 id 还停在已删除的那个，不会自己变，得显式导去别的画布——优先跳列表里剩下的
- *  第一张，一张都不剩就照 ensureCanvas() 空画布兜底那一套新建一张。 */
+/** 删除当前画布后通过统一入口切到剩余画布；删除非当前画布只更新列表。 */
 async function deleteCanvas(id: number) {
   const wasActive = id === activeCanvasId.value
   await store.deleteCanvas(id)
   if (!wasActive) return
   const next = store.canvases[0] ?? await store.createCanvas()
-  await router.push({ name: 'MindCanvas', params: { id: next.id } })
+  await activateCanvas(next.id)
 }
 
 async function renameCanvas(id: number, title: string) {

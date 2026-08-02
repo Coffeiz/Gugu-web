@@ -193,7 +193,8 @@ const { elementRef: cardRef } = useObject({
   id: String(props.project.id),
   type: 'project-card',
   surface: () => props.project.status,
-  abilities: ['move', 'sort'],
+  // 项目看板当前按业务字段排序，Runtime 只负责跨 Surface 移动；同列自由排序尚未持久化。
+  abilities: ['move'],
 })
 const projectRef = computed(() => props.project)
 const { currentStageLabel, curTodoTotal, curDoneCount, stageProgress, nameColor, isUrgent, fmtDate, deadlineLabel } = useProjectCardBasics(projectRef)

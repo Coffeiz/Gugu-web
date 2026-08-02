@@ -27,7 +27,9 @@
       <button class="year-row" @click="$emit('toggle', '__undated')">
         <svg class="year-chev" :class="{ open: isUndatedOpen }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg><span class="year-label undated">{{ group.label }}</span><span class="year-cnt">{{ group.items.length }}</span>
       </button>
-      <DoneCardList v-if="isUndatedOpen" :projects="group.items" :ownership-version="ownershipVersion" :collection-key="group.key" @card-click="$emit('card-click', $event)" />
+      <div class="year-folder" data-layout-content data-layout-key="__undated" :data-layout-open="isUndatedOpen ? 'true' : 'false'">
+        <DoneCardList :projects="group.items" :ownership-version="ownershipVersion" :collection-key="group.key" @card-click="$emit('card-click', $event)" />
+      </div>
     </div>
   </template>
 </template>
