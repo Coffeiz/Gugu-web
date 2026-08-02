@@ -347,6 +347,7 @@ import FileUploadButton from '@/components/common/FileUploadButton.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
 import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
 import FileBrowserList from '@/components/common/FileBrowserList.vue'
+import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
 const {
@@ -376,7 +377,7 @@ const {
 }
 /* 切换期间临时关掉嵌套 backdrop-filter：它套在 .bm-card 的毛玻璃里、宽度又随动画变，
    会让外层整层毛玻璃在动画起止帧重栅格化 → 整个面板闪屏。切完恢复，静态时毛玻璃照常。 */
-.modal.pm-switching .modal-right { backdrop-filter: none; -webkit-backdrop-filter: none; }
+.project-modal-root.pm-switching .modal-right { backdrop-filter: none; -webkit-backdrop-filter: none; }
 
 /* 两栏边缘切换按钮：贴在右栏左缘，随宽度动画一起移动 */
 .col-toggle-btn {
@@ -440,7 +441,7 @@ const {
   align-content: start;
 }
 /* Mode2（文件区压窄）：卡片缩小，单行正好 4 个，宽高比与 mode1 完全一致（138:122） */
-.modal.stages-expanded .file-grid {
+.project-modal-root.stages-expanded .file-grid {
   grid-template-columns: repeat(4, 1fr);
 }
 /* 整卡（fc-card + folder-card）用 aspect-ratio 保持 138:122，flex-column 让缩略图区弹性填充。
@@ -448,17 +449,17 @@ const {
    <style> 的——Vue scoped CSS 默认只把属性选择器接在选择器链最后一节上，跨组件够不到子组件
    内部节点，所以这几条 .fc-card 相关都套 :deep() 主动放弃这份样式的 scoped 限制；.folder-card
    仍是本组件手写模板，不需要 :deep()。 */
-.modal.stages-expanded :deep(.fc-card),
-.modal.stages-expanded :deep(.folder-card) {
+.project-modal-root.stages-expanded .fc-card,
+.project-modal-root.stages-expanded .folder-card {
   min-height: 0;
   aspect-ratio: 138 / 122;
   display: flex;
   flex-direction: column;
 }
 /* 缩略图/图标区弹性占满卡片扣除 label 后的剩余高度 */
-.modal.stages-expanded :deep(.fc-thumb-area),
-.modal.stages-expanded :deep(.fc-icon-area),
-.modal.stages-expanded :deep(.fd-icon-area) {
+.project-modal-root.stages-expanded .fc-thumb-area,
+.project-modal-root.stages-expanded .fc-icon-area,
+.project-modal-root.stages-expanded .fd-icon-area {
   flex: 1;
   height: auto;
   min-height: 0;
@@ -466,28 +467,28 @@ const {
 /* FileCard 的缩略图/图标区默认是 90px 且不可收缩；Mode2 卡片更窄时会把外框撑高，
    与可收缩的文件夹卡产生高度差。按 138:122 的卡片比例给文件卡预留约 70px 内容区，
    让图片、普通文件图标和文件夹卡共享同一行高。 */
-.modal.stages-expanded :deep(.fc-thumb-area),
-.modal.stages-expanded :deep(.fc-icon-area) {
+.project-modal-root.stages-expanded .fc-thumb-area,
+.project-modal-root.stages-expanded .fc-icon-area {
   flex: 0 0 70px;
   height: 70px;
 }
-.modal.stages-expanded :deep(.fc-big-icon) { width: 52px; height: 52px; }
+.project-modal-root.stages-expanded .fc-big-icon { width: 52px; height: 52px; }
 /* 上传按钮与幽灵卡取消固定 min-height，跟随卡片同比例；网格态上传按钮现在是
    FileUploadButton.vue 组件根节点（class="fub grid"），跟上面 .fc-card 一样需要 :deep()
    才能够到，类名也从 .fc-upload 改成 .fub.grid。 */
-.modal.stages-expanded :deep(.fub.grid),
-.modal.stages-expanded :deep(.fc-ghost) { min-height: 0; aspect-ratio: 138 / 122; }
-/* 物理拖影克隆体被挂到 body、脱离 .modal.stages-expanded 上下文 → 用克隆标记类补回 mode2 版式，
+.project-modal-root.stages-expanded .fub.grid,
+.project-modal-root.stages-expanded .fc-ghost { min-height: 0; aspect-ratio: 138 / 122; }
+/* 物理拖影克隆体被挂到 body、脱离 .project-modal-root.stages-expanded 上下文 → 用克隆标记类补回 mode2 版式，
    否则拖影回落 mode1 的 min-height:122 尺寸，和面板里压扁的卡片对不上（克隆体外框高度由内联 rect 控制）。
-   同上，.fc-card 相关的部分需要 :deep()——见上面 .modal.stages-expanded 那组同样的说明。
+   同上，.fc-card 相关的部分需要 :deep()——见上面 .project-modal-root.stages-expanded 那组同样的说明。
    这块是拖拽克隆体尺寸相关的边界情况，跟拖拽动画重构分支（codex-drag-animation-refactor）
    有交叉，后续对接那条分支时一并复核这里的克隆尺寸表现是否仍然正确。 */
-:deep(.fc-card.pm-clone-expanded),
-:deep(.folder-card.pm-clone-expanded) { min-height: 0; display: flex; flex-direction: column; }
-:deep(.pm-clone-expanded .fc-thumb-area),
-:deep(.pm-clone-expanded .fc-icon-area),
-:deep(.pm-clone-expanded .fd-icon-area) { flex: 1; height: auto; min-height: 0; }
-:deep(.pm-clone-expanded .fc-big-icon) { width: 52px; height: 52px; }
+.fc-card.pm-clone-expanded,
+.folder-card.pm-clone-expanded { min-height: 0; display: flex; flex-direction: column; }
+.pm-clone-expanded .fc-thumb-area,
+.pm-clone-expanded .fc-icon-area,
+.pm-clone-expanded .fd-icon-area { flex: 1; height: auto; min-height: 0; }
+.pm-clone-expanded .fc-big-icon { width: 52px; height: 52px; }
 
 /* 文件卡片：网格视图已改用共用组件 FileCard.vue（跟文件库同一份），卡片外壳/角标/
    缩略图容器/图标/标题/元信息不再在这里各画一份，见 FileCard.vue 自己的 scoped 样式。

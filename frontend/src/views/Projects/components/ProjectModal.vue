@@ -1,6 +1,9 @@
 <template>
-  <BaseModal :show="!!project" width="1060px" height="780px" @close="onModalClose">
-      <div class="modal" :class="{ 'stages-expanded': stagesExpanded, 'info-expanded': infoExpanded, 'pm-switching': pmSwitching }">
+  <ProjectModalShell
+    :show="!!project"
+    :root-class="{ modal: true, 'stages-expanded': stagesExpanded, 'info-expanded': infoExpanded, 'pm-switching': pmSwitching }"
+    @close="onModalClose"
+  >
         <!-- 悬浮操作按钮：文件多选模式下让位给 .pm-selection-bar（同在右下角，多选栏内容多时会重叠，
              且两边都有删除按钮离太近容易误触），多选栏自己有取消/删除，先隐藏这组项目级按钮 -->
         <div v-if="!pmInSelectionMode" class="float-actions">
@@ -64,8 +67,7 @@
         </div>
 
         <ProjectFilesPanel :context="filePanelContext" />
-      </div>
-  </BaseModal>
+  </ProjectModalShell>
 
   <!-- 右键菜单 -->
   <FileBrowserContextMenu :show="pmCtx.visible" :x="pmCtx.x" :y="pmCtx.y" @close="pmCtx.visible = false">
@@ -110,7 +112,7 @@ import { readDroppedEntries, filesToItems } from '@/composables/useFileUpload'
 import { useBoxSelection } from '@/composables/useBoxSelection'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { fireHint } from '@/composables/useOnboarding'
-import BaseModal from '@/components/common/BaseModal.vue'
+import ProjectModalShell from '@/views/Projects/components/ProjectModalShell.vue'
 import UploadConflictDialog, { type ConflictItem, type ConflictDecision } from '@/components/common/UploadConflictDialog.vue'
 import type { UploadItem } from '@/composables/useFileUpload'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
