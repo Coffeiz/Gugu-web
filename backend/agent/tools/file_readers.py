@@ -122,7 +122,7 @@ async def read_audio(file) -> dict:
         data = await get_storage().get(file.storage_key)
         text = await _transcribe_audio(data, f"audio/{file.ext.lower()}")
     except Exception as error:
-        diag_log("agent.file_readers.read_audio", error)
+        diag_log(f"agent.file_readers.read_audio.file_id={file.id}", error)
         return {"error": "音频读取失败"}
     if not text:
         return {"error": "音频无法转写，可能未配置语音模型或格式不受支持"}
@@ -139,7 +139,7 @@ async def read_video(file) -> dict:
         audio = await _extract_audio(data, file.ext.lower())
         transcript = await _transcribe_audio(audio, "audio/wav") if audio else ""
     except Exception as error:
-        diag_log("agent.file_readers.read_video", error)
+        diag_log(f"agent.file_readers.read_video.file_id={file.id}", error)
         return {"error": "视频读取失败"}
 
     if frame and chat_attach.vision_ready():
