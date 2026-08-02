@@ -10,27 +10,15 @@
 
           <div class="right-header">
             <!-- 面包屑路径 -->
-            <FileBrowserBreadcrumb tag="nav" class-name="file-breadcrumb">
-              <button class="pm-nav-hist-btn" :disabled="!pmCanGoBack" @click="pmGoBack" title="后退">
-                <PhArrowLeft :size="13" weight="bold" />
-              </button>
-              <button class="pm-nav-hist-btn" :disabled="!pmCanGoForward" @click="pmGoForward" title="前进">
-                <PhArrowRight :size="13" weight="bold" />
-              </button>
-              <button class="bc-seg" :class="{ 'bc-drop-target': pmBcDragOverIdx === -1 }"
-                data-bc-idx="-1"
-                @click="pmNavigateTo(-1)"
-              >项目文件</button>
-              <template v-for="(seg, idx) in folderStack" :key="seg.id">
-                <PhCaretRight :size="10" weight="bold" class="bc-sep" />
-                <button v-if="idx < folderStack.length - 1" class="bc-seg"
-                  :class="{ 'bc-drop-target': pmBcDragOverIdx === idx }"
-                  :data-bc-idx="idx"
-                  @click="pmNavigateTo(idx)"
-                >{{ seg.name }}</button>
-                <span v-else class="bc-seg bc-cur">{{ seg.name }}</span>
-              </template>
-            </FileBrowserBreadcrumb>
+            <ProjectFileBreadcrumb
+              :can-go-back="pmCanGoBack"
+              :can-go-forward="pmCanGoForward"
+              :drag-over-index="pmBcDragOverIdx"
+              :folder-stack="folderStack"
+              @go-back="pmGoBack"
+              @go-forward="pmGoForward"
+              @navigate="pmNavigateTo"
+            />
             <!-- 粘贴（剪切/复制后出现）—— 放在所有按钮最左 -->
             <FilePasteButton
               v-if="pmCbStore.hasContent()"
@@ -333,7 +321,7 @@
 <script setup lang="ts">
 import { type PropType } from 'vue'
 import {
-  PhFolder, PhArrowLeft, PhArrowRight, PhCaretLeft, PhCaretRight, PhSquaresFour, PhList,
+  PhFolder, PhCaretLeft, PhCaretRight, PhSquaresFour, PhList,
   PhCheckSquare, PhFolderPlus, PhPencilSimple, PhDownloadSimple, PhX, PhCheck, PhTrash,
 } from '@phosphor-icons/vue'
 import SortMenu from '@/components/common/SortMenu.vue'
@@ -345,7 +333,7 @@ import FolderCard from '@/components/common/FolderCard.vue'
 import FileUploadGhostCard from '@/components/common/FileUploadGhostCard.vue'
 import FileUploadButton from '@/components/common/FileUploadButton.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
-import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
+import ProjectFileBreadcrumb from '@/views/Projects/components/ProjectFileBreadcrumb.vue'
 import FileBrowserList from '@/components/common/FileBrowserList.vue'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 
@@ -406,6 +394,15 @@ const {
 }
 .right-title { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .right-count { font-size: 11px; color: var(--text-secondary); flex: 1; }
+
+/* 关闭按钮由本文件面板渲染，样式必须与按钮同属本组件，避免被 ProjectModal 的 scoped 样式隔离。 */
+.right-header .close-btn {
+  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+  background: rgba(0,0,0,0.07); border: none;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--text-secondary); transition: background 0.15s;
+}
+.right-header .close-btn:hover { background: rgba(0,0,0,0.13); }
 
 /* 面包屑 */
 .file-breadcrumb { display: flex; align-items: center; gap: 3px; flex: 1; min-width: 0; }
