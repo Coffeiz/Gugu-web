@@ -362,27 +362,9 @@
             </FileCard>
 
             <!-- 幽灵上传卡：单文件 / 文件夹（拖入文件夹时汇总一张，不给里面每个文件各出一张） -->
-            <div v-for="g in uploadingItems" :key="g.uid"
-              class="fc-ghost" :class="{ error: g.error, 'fc-ghost-folder': g.isFolder }"
-              :style="{ '--fc-color': g.isFolder ? '#8a8fa8' : fileIconColor(g.ext) }">
-              <div class="fc-ghost-fill" :style="{ width: g.progress + '%' }"></div>
-              <span v-if="!g.isFolder" class="fc-ext-badge">{{ g.ext || '—' }}</span>
-              <div class="fc-icon-area">
-                <PhFolder v-if="g.isFolder" class="fc-big-icon" :size="86" weight="bold" />
-                <component v-else :is="fileListIcon(g.ext)" class="fc-big-icon" :size="86" weight="bold" />
-              </div>
-              <div class="fc-label">
-                <div class="fc-name" :title="g.name">{{ g.name }}</div>
-                <div class="fc-meta fc-ghost-meta">
-                  <template v-if="g.isFolder">
-                    <template v-if="g.error">{{ (g.done ?? 0) - (g.failed ?? 0) }}/{{ g.total }}（{{ g.failed }} 个失败）</template>
-                    <template v-else>{{ g.done }}/{{ g.total }}</template>
-                  </template>
-                  <template v-else-if="g.error">上传失败</template>
-                  <template v-else>{{ g.progress }}%</template>
-                </div>
-              </div>
-            </div>
+            <FileUploadGhostCard v-for="g in uploadingItems" :key="g.uid"
+              :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress"
+              :done="g.done" :total="g.total" :failed="g.failed" :error="g.error" />
             <!-- 上传快捷区：跟项目文件区同一份共用组件 FileUploadButton.vue -->
             <FileUploadButton v-if="canUpload" mode="grid" @select="handleFileInput" />
           </FileBrowserGrid>
@@ -512,12 +494,13 @@
             </div>
 
             <!-- 幽灵上传行：单文件 / 文件夹（拖入文件夹时汇总一行） -->
-            <div v-for="g in uploadingItems" :key="g.uid"
-              class="list-row fc-ghost-row" :class="{ error: g.error }">
-              <div class="fc-ghost-fill" :style="{ width: g.progress + '%' }"></div>
+            <FileUploadGhostCard v-for="g in uploadingItems" :key="g.uid" mode="list"
+              :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress"
+              :done="g.done" :total="g.total" :failed="g.failed" :error="g.error">
+              <template #list="{ color, statusText }">
               <span class="lr-name-cell">
-                <PhFolder v-if="g.isFolder" class="lr-file-icon" :size="16" weight="fill" style="color:#8a8fa8" />
-                <component v-else :is="fileListIcon(g.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color: fileIconColor(g.ext) }" />
+                <PhFolder v-if="g.isFolder" class="lr-file-icon" :size="16" weight="fill" :style="{ color }" />
+                <component v-else :is="fileListIcon(g.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color }" />
                 <span class="lr-filename">{{ g.name }}</span>
               </span>
               <span class="lr-type-cell">
@@ -526,12 +509,11 @@
               <span class="lr-text">—</span>
               <span class="lr-text">—</span>
               <span class="lr-text">
-                <template v-if="g.isFolder">{{ g.done }}/{{ g.total }}<template v-if="g.error">（{{ g.failed }} 失败）</template></template>
-                <template v-else-if="g.error">失败</template>
-                <template v-else>{{ g.progress }}%</template>
+                {{ statusText }}
               </span>
               <span class="lr-actions"></span>
-            </div>
+              </template>
+            </FileUploadGhostCard>
 
             <div v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading" class="list-empty">
               <svg width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.3">
@@ -597,6 +579,7 @@ import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from
 import { filesApi, trashApi, uploadWithProgress, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import FileCard       from '@/components/common/FileCard.vue'
 import FolderCard     from '@/components/common/FolderCard.vue'
+import FileUploadGhostCard from '@/components/common/FileUploadGhostCard.vue'
 import FileUploadButton from '@/components/common/FileUploadButton.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
 import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
@@ -2081,25 +2064,12 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   padding: 0 4px; height: 30px;
   flex-shrink: 0;
 }
-.storage-pill.no-limit {}
 .storage-bar-bg {
   width: 52px; height: 3px; border-radius: 2px; flex-shrink: 0;
   background: rgba(0,0,0,0.07); overflow: hidden;
 }
 .storage-bar-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease, background 0.4s; }
 .storage-text { font-size: 11px; color: #8a8fa8; white-space: nowrap; }
-
-/* 上传按钮 */
-.upload-btn {
-  display: flex; align-items: center; gap: 5px;
-  height: 30px; padding: 0 13px; border-radius: 8px; border: none;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-  color: white; font-size: 12px; font-weight: 600;
-  cursor: pointer; font-family: var(--font-sans);
-  box-shadow: 0 2px 8px rgba(123,127,178,0.28);
-  transition: opacity 0.15s; white-space: nowrap;
-}
-.upload-btn:hover { opacity: 0.88; }
 
 /* ── 内容区 ── */
 .files-body {
@@ -2255,48 +2225,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   background: rgba(123,127,178,0.08);
   outline: 1.5px solid var(--color-primary); outline-offset: -1px;
 }
-
-/* ── 幽灵上传卡片 ── */
-.fc-ghost {
-  position: relative; min-height: 122px; overflow: hidden;
-  border-radius: 14px; border: 1.5px dashed rgba(123,127,178,0.35);
-  background: rgba(123,127,178,0.04);
-  display: flex; flex-direction: column;
-  cursor: default; pointer-events: none;
-}
-.fc-ghost-fill {
-  position: absolute; inset: 0; right: auto; height: 100%;
-  background: linear-gradient(135deg,
-    color-mix(in srgb, var(--fc-color, rgba(123,127,178,1)) 18%, transparent),
-    color-mix(in srgb, var(--fc-color, rgba(123,127,178,1)) 10%, transparent));
-  transition: width 0.25s ease-out;
-}
-.fc-ghost .fc-ext-badge { opacity: 0.6; }
-.fc-ghost .fc-icon-area { opacity: 0.35; }
-.fc-ghost .fc-label { opacity: 0.75; }
-.fc-ghost-meta { font-size: 9px; font-weight: 600; color: var(--fc-color, var(--color-primary)); }
-.fc-ghost.error { border-color: rgba(200,90,90,0.4); background: rgba(200,90,90,0.04); }
-.fc-ghost.error .fc-ghost-fill { background: rgba(200,90,90,0.12); width: 100% !important; }
-.fc-ghost.error .fc-ghost-meta { color: rgba(200,90,90,0.85); }
-
-/* 幽灵上传行 */
-.fc-ghost-row {
-  position: relative; overflow: hidden;
-  border-radius: var(--radius-sm);
-  border: 1px solid rgba(123,127,178,0.2) !important;
-  background: rgba(123,127,178,0.03) !important;
-  pointer-events: none; cursor: default;
-}
-.fc-ghost-row .fc-ghost-fill {
-  position: absolute; inset: 0; right: auto; height: 100%;
-  background: rgba(123,127,178,0.08);
-  transition: width 0.25s ease-out;
-}
-.fc-ghost-row .lr-name-cell,
-.fc-ghost-row .lr-text,
-.fc-ghost-row .lr-type-cell { opacity: 0.6; }
-.fc-ghost-row.error { border-color: rgba(200,90,90,0.3) !important; }
-.fc-ghost-row.error .fc-ghost-fill { background: rgba(200,90,90,0.1); width: 100% !important; }
 
 /* 网格/列表上传按钮外观改由共用组件 FileUploadButton.vue 提供（跟项目文件区同一份）。 */
 

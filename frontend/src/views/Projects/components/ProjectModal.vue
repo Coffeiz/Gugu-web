@@ -254,56 +254,9 @@
                   </div>
                 </FileCard>
                 <!-- 幽灵上传卡片：单文件 / 文件夹（拖入文件夹时汇总一张） -->
-                <div v-for="g in uploadingItems" :key="g.uid"
-                  class="fc-ghost" :class="{ error: g.error, 'fc-ghost-folder': g.isFolder }"
-                  :style="{ '--fc-color': g.isFolder ? '#8a8fa8' : fileIconColor(g.ext) }">
-                  <div class="fc-ghost-fill" :style="{ width: g.progress + '%' }"></div>
-                  <span v-if="!g.isFolder" class="fc-ext-badge" :style="{ color: fileIconColor(g.ext), background: fileIconColor(g.ext) + '18' }">{{ g.ext || '—' }}</span>
-                  <div class="fc-icon-area">
-                    <svg class="fc-big-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
-                      <template v-if="g.isFolder">
-                        <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
-                      </template>
-                      <template v-else-if="fileExtCategory(g.ext) === 'image'">
-                        <rect x="3" y="3" width="18" height="18" rx="2.5"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21,15 16,10 5,21"/>
-                      </template>
-                      <template v-else-if="fileExtCategory(g.ext) === 'video'">
-                        <rect x="2" y="4" width="20" height="16" rx="2.5"/><polygon points="10,9 16,12 10,15" fill="currentColor" stroke="none"/>
-                      </template>
-                      <template v-else-if="fileExtCategory(g.ext) === 'audio'">
-                        <path d="M9 18V6l12-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-                      </template>
-                      <template v-else-if="fileExtCategory(g.ext) === 'sheet'">
-                        <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>
-                      </template>
-                      <template v-else-if="fileExtCategory(g.ext) === 'slide'">
-                        <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
-                        <rect x="6" y="6" width="5" height="4" rx="1"/><path d="M14 7h4M14 10h4"/>
-                      </template>
-                      <template v-else-if="fileExtCategory(g.ext) === 'archive'">
-                        <path d="M21 8l-4-4H7a2 2 0 00-2 2v16a2 2 0 002 2h14a2 2 0 002-2V8z"/><path d="M17 4v4h4"/><path d="M12 11v6M9 14h6"/>
-                      </template>
-                      <template v-else-if="fileExtCategory(g.ext) === 'code'">
-                        <polyline points="16,18 22,12 16,6"/><polyline points="8,6 2,12 8,18"/>
-                      </template>
-                      <template v-else>
-                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/>
-                        <line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/>
-                      </template>
-                    </svg>
-                  </div>
-                  <div class="fc-label">
-                    <div class="fc-name" :title="g.name">{{ g.name }}</div>
-                    <div class="fc-meta fc-ghost-meta">
-                      <template v-if="g.isFolder">
-                        <template v-if="g.error">{{ (g.done ?? 0) - (g.failed ?? 0) }}/{{ g.total }}（{{ g.failed }} 个失败）</template>
-                        <template v-else>{{ g.done }}/{{ g.total }}</template>
-                      </template>
-                      <template v-else-if="g.error">上传失败</template>
-                      <template v-else>{{ g.progress }}%</template>
-                    </div>
-                  </div>
-                </div>
+                <FileUploadGhostCard v-for="g in uploadingItems" :key="g.uid"
+                  :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress"
+                  :done="g.done" :total="g.total" :failed="g.failed" :error="g.error" />
                 <!-- 上传卡片 -->
                 <FileUploadButton mode="grid" :dragging="dragging"
                   @dragover.prevent="dragging = true" @dragleave="dragging = false" @drop.prevent="handleFileDrop"
@@ -400,22 +353,22 @@
                   </span>
                 </div>
                 <!-- 幽灵上传行：单文件 / 文件夹（拖入文件夹时汇总一行） -->
-                <div v-for="g in uploadingItems" :key="g.uid"
-                  class="list-row fc-ghost-row" :class="{ error: g.error }">
-                  <div class="fc-ghost-fill" :style="{ width: g.progress + '%' }"></div>
+            <FileUploadGhostCard v-for="g in uploadingItems" :key="g.uid" mode="list" list-layout="project"
+                  :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress"
+                  :done="g.done" :total="g.total" :failed="g.failed" :error="g.error">
+                  <template #list="{ color, statusText }">
                   <span class="lr-name-cell">
-                    <span v-if="!g.isFolder" class="lr-ext" :style="{ color: fileIconColor(g.ext), background: fileIconColor(g.ext) + '18' }">{{ g.ext || '—' }}</span>
+                    <span v-if="!g.isFolder" class="lr-ext" :style="{ color, background: color + '18' }">{{ g.ext || '—' }}</span>
                     <span class="lr-filename">{{ g.name }}</span>
                   </span>
                   <span class="lr-text">—</span>
                   <span class="lr-text">—</span>
                   <span class="lr-text">
-                    <template v-if="g.isFolder">{{ g.done }}/{{ g.total }}<template v-if="g.error">（{{ g.failed }} 失败）</template></template>
-                    <template v-else-if="g.error">失败</template>
-                    <template v-else>{{ g.progress }}%</template>
+                    {{ statusText }}
                   </span>
                   <span class="lr-actions"></span>
-                </div>
+                  </template>
+                </FileUploadGhostCard>
                 <!-- 上传行 -->
                 <FileUploadButton mode="list" :dragging="dragging"
                   @dragover.prevent="dragging = true" @dragleave="dragging = false" @drop.prevent="handleFileDrop"
@@ -500,6 +453,7 @@ import FilePasteButton from '@/components/common/FilePasteButton.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import FileCard from '@/components/common/FileCard.vue'
 import FolderCard from '@/components/common/FolderCard.vue'
+import FileUploadGhostCard from '@/components/common/FileUploadGhostCard.vue'
 import FileUploadButton from '@/components/common/FileUploadButton.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
 import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
@@ -1826,7 +1780,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
    FileUploadButton.vue 组件根节点（class="fub grid"），跟上面 .fc-card 一样需要 :deep()
    才能够到，类名也从 .fc-upload 改成 .fub.grid。 */
 .modal.stages-expanded :deep(.fub.grid),
-.modal.stages-expanded .fc-ghost { min-height: 0; aspect-ratio: 138 / 122; }
+.modal.stages-expanded :deep(.fc-ghost) { min-height: 0; aspect-ratio: 138 / 122; }
 /* 物理拖影克隆体被挂到 body、脱离 .modal.stages-expanded 上下文 → 用克隆标记类补回 mode2 版式，
    否则拖影回落 mode1 的 min-height:122 尺寸，和面板里压扁的卡片对不上（克隆体外框高度由内联 rect 控制）。
    同上，.fc-card 相关的部分需要 :deep()——见上面 .modal.stages-expanded 那组同样的说明。
@@ -1898,47 +1852,6 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* 卡片操作按钮（文件卡） */
 .fc-hover-actions { position: absolute; top: 8px; right: 8px; z-index: 3; display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s; }
 .fc-card:hover .fc-hover-actions { opacity: 1; }
-
-/* ── 幽灵上传卡片 ── */
-.fc-ghost {
-  position: relative; min-height: 100px; overflow: hidden;
-  border-radius: 14px; border: 1.5px dashed rgba(123,127,178,0.35);
-  background: rgba(123,127,178,0.04);
-  display: flex; flex-direction: column;
-  cursor: default; pointer-events: none;
-}
-.fc-ghost-fill {
-  position: absolute; inset: 0; right: auto; height: 100%;
-  background: linear-gradient(135deg,
-    color-mix(in srgb, var(--fc-color, rgba(123,127,178,1)) 18%, transparent),
-    color-mix(in srgb, var(--fc-color, rgba(123,127,178,1)) 10%, transparent));
-  transition: width 0.25s ease-out;
-  pointer-events: none;
-}
-.fc-ghost .fc-ext-badge { opacity: 0.6; }
-.fc-ghost .fc-icon-area { opacity: 0.35; }
-.fc-ghost .fc-label { opacity: 0.75; }
-.fc-ghost-meta { font-size: 10px; font-weight: 600; color: var(--fc-color, var(--color-primary)); }
-.fc-ghost.error { border-color: rgba(200,90,90,0.4); background: rgba(200,90,90,0.04); }
-.fc-ghost.error .fc-ghost-fill { background: rgba(200,90,90,0.12); width: 100% !important; }
-.fc-ghost.error .fc-ghost-meta { color: rgba(200,90,90,0.85); }
-
-/* 幽灵上传行 */
-.fc-ghost-row {
-  position: relative; overflow: hidden;
-  border-color: rgba(123,127,178,0.2) !important;
-  background: rgba(123,127,178,0.03) !important;
-  pointer-events: none; cursor: default;
-}
-.fc-ghost-row .fc-ghost-fill {
-  position: absolute; inset: 0; right: auto; height: 100%;
-  background: rgba(123,127,178,0.08);
-  transition: width 0.25s ease-out;
-}
-.fc-ghost-row .lr-name-cell,
-.fc-ghost-row .lr-text { opacity: 0.6; }
-.fc-ghost-row.error { border-color: rgba(200,90,90,0.3) !important; }
-.fc-ghost-row.error .fc-ghost-fill { background: rgba(200,90,90,0.1); width: 100% !important; }
 
 /* ── 批量操作浮动栏 ── */
 .pm-selection-bar {
