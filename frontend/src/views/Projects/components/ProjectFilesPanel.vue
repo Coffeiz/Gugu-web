@@ -1,69 +1,7 @@
 <template>
         <!-- 右栏：文件（两种模式都保持项目文件，仅宽度变化）-->
         <div class="modal-right">
-          <!-- 两栏边缘切换：展开阶段区(50/50) / 恢复文件区 -->
-          <button class="col-toggle-btn" @click="togglePmStages"
-            :title="stagesExpanded ? '恢复文件区' : '展开阶段区'">
-            <PhCaretLeft v-if="stagesExpanded" :size="13" weight="bold" />
-            <PhCaretRight v-else :size="13" weight="bold" />
-          </button>
-
-          <div class="right-header">
-            <!-- 面包屑路径 -->
-            <ProjectFileBreadcrumb
-              :can-go-back="pmCanGoBack"
-              :can-go-forward="pmCanGoForward"
-              :drag-over-index="pmBcDragOverIdx"
-              :folder-stack="folderStack"
-              @go-back="pmGoBack"
-              @go-forward="pmGoForward"
-              @navigate="pmNavigateTo"
-            />
-            <!-- 粘贴（剪切/复制后出现）—— 放在所有按钮最左 -->
-            <FilePasteButton
-              v-if="pmCbStore.hasContent()"
-              compact
-              :count="pmCbStore.fileIds.length + pmCbStore.folderIds.length"
-              @paste="pmCtxPaste"
-            />
-            <!-- 多选模式 -->
-            <button class="sel-mode-btn" :class="{ on: pmInSelectionMode }" @click.stop="togglePmSelectionMode" title="多选模式">
-              <PhCheckSquare :size="13" weight="bold" />
-            </button>
-            <!-- 视图切换 -->
-            <SegmentedControl class="view-toggle" :active-index="fileViewMode === 'grid' ? 0 : 1"
-              style="--pill-bg: rgba(255,255,255,0.85); --pill-radius: 6px">
-              <button :class="{ on: fileViewMode === 'grid' }" @click="fileViewMode = 'grid'" title="网格视图">
-                <PhSquaresFour :size="13" weight="bold" />
-              </button>
-              <button :class="{ on: fileViewMode === 'list' }" @click="fileViewMode = 'list'" title="列表视图">
-                <PhList :size="13" weight="bold" />
-              </button>
-            </SegmentedControl>
-            <!-- 新建文件夹（每层都可用） -->
-            <button v-if="!showNewFolder" class="new-folder-btn" @click.stop="showNewFolder = true">
-              <PhFolderPlus :size="13" weight="bold" />
-              新建文件夹
-            </button>
-            <div v-else class="new-folder-inline" @click.stop>
-              <input class="new-folder-input" v-model="newFolderName" placeholder="文件夹名称"
-                v-enter="createFolder" @keyup.esc="showNewFolder = false; newFolderName = ''"
-                ref="folderInputRef" autofocus />
-              <button class="btn-confirm-sm" :disabled="folderLoading" @click="createFolder">确定</button>
-              <button class="btn-cancel-sm" @click="showNewFolder = false; newFolderName = ''">✕</button>
-            </div>
-            <!-- 排序选择器（挪出 新建文件夹 的 v-if/v-else 对，否则 v-else 不相邻报错）-->
-            <SortMenu
-              ref="sortMenuRef"
-              :options="PM_SORT_OPTIONS"
-              :sort-key="pmSortKey"
-              :sort-dir="pmSortDir"
-              @select="onPmSortSelect"
-            />
-            <button class="close-btn" @click="closeProjectModal">
-              <PhX :size="14" weight="bold" />
-            </button>
-          </div>
+          <ProjectFileToolbar :context="props.context" />
 
           <div class="file-content" ref="pmGridRef" style="position:relative" @mousedown="onPmGridMouseDown"
             @click="onPmContentClick"
@@ -333,8 +271,8 @@ import FolderCard from '@/components/common/FolderCard.vue'
 import FileUploadGhostCard from '@/components/common/FileUploadGhostCard.vue'
 import FileUploadButton from '@/components/common/FileUploadButton.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
-import ProjectFileBreadcrumb from '@/views/Projects/components/ProjectFileBreadcrumb.vue'
 import FileBrowserList from '@/components/common/FileBrowserList.vue'
+import ProjectFileToolbar from '@/views/Projects/components/ProjectFileToolbar.vue'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
