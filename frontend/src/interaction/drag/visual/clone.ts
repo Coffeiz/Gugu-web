@@ -54,7 +54,9 @@ export function createLandingClone(source: HTMLElement, options: LandingCloneOpt
     willChange: 'transform', transition: 'none', opacity: '0', transform: options.transform,
   })
   const content = cloneForDrag(source, {
-    addClasses: ['phys-landing-content'],
+    // landing 与 grabbing 共享同一个内容层起始态。morph lifecycle 会在首帧提交后摘掉
+    // phys-drag-clone，让它从玻璃拖拽态平滑过渡到目标本体样式。
+    addClasses: ['phys-landing-content', 'phys-drag-clone'],
     removeClasses: ['phys-drag-source', 'phys-reveal-controls', 'phys-drag-source-placeholder'],
   })
   if (options.cloneClass) content.classList.add(options.cloneClass)
@@ -78,13 +80,6 @@ export function createLandingClone(source: HTMLElement, options: LandingCloneOpt
     left: '', top: '', right: '', bottom: '', opacity: '', zIndex: '',
     width: options.layoutWidth + 'px',
   })
-  const hoverShell = document.createElement('div')
-  Object.assign(hoverShell.style, {
-    position: 'absolute', left: '0', top: '0', width: options.layoutWidth + 'px', height: options.layoutHeight + 'px',
-    transform: 'translateY(0)', transformOrigin: '0 0', transition: 'transform 0.25s cubic-bezier(0.34,1.2,0.64,1)',
-  })
-  hoverShell.className = 'phys-landing-hover-shell'
-  hoverShell.appendChild(content)
   // 姿态单独分层：保留拖拽最后一帧的旋转，但不让旋转后的包围盒污染 morph 尺寸。
   const attitude = document.createElement('div')
   attitude.className = 'phys-landing-attitude'
@@ -94,7 +89,7 @@ export function createLandingClone(source: HTMLElement, options: LandingCloneOpt
     transition: 'transform 0.55s cubic-bezier(0.22, 1, 0.36, 1)', pointerEvents: 'none',
   })
   attitude.appendChild(scaleShell)
-  scaleShell.appendChild(hoverShell)
+  scaleShell.appendChild(content)
   holder.appendChild(attitude)
   document.body.appendChild(holder)
   return holder

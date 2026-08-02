@@ -121,7 +121,17 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   const cloneInner = options.clone
   const clone2Inner = options.clone2.querySelector<HTMLElement>('.phys-landing-content')
   const transition = `transform 0.55s ${options.easing}`
-  const fadeTransition = 'opacity 0.42s ease'
+  // 两个代理内容层必须同时参与交接：旧层保持 grabbing 的玻璃态，新层先以同一玻璃态
+  // 创建，再过渡到目标本体的背景、模糊、边框和阴影。只过渡 opacity 会让 landing
+  // 在松手瞬间直接变成不透明卡片。
+  const fadeTransition = [
+    'opacity 0.42s ease',
+    'background 0.42s ease',
+    'backdrop-filter 0.42s ease',
+    '-webkit-backdrop-filter 0.42s ease',
+    'border-color 0.42s ease',
+    'box-shadow 0.55s ease',
+  ].join(', ')
   const dragShadow = options.hidePrimaryVisual ? getComputedStyle(cloneInner).boxShadow : ''
   const landingShadow = options.hidePrimaryVisual && clone2Inner ? getComputedStyle(clone2Inner).boxShadow : ''
   cloneInner.style.transition = fadeTransition
@@ -135,8 +145,8 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
   // opacity:1 也会因父元素 opacity:0 而不可见，导致松手瞬间两张克隆都透明。
   // 此时 transition 还是创建时的 'none'，所以 opacity 0→1 是瞬间的，和 main 分支一致。
   options.clone2.style.opacity = '1'
-  cloneInner.style.opacity = '0'
-  if (clone2Inner) clone2Inner.style.opacity = '1'
+  cloneInner.style.opacity = options.hidePrimaryVisual ? '0' : '1'
+  if (clone2Inner) clone2Inner.style.opacity = options.hidePrimaryVisual ? '1' : '0'
   if (options.hidePrimaryVisual) {
     options.holder.style.opacity = '0'
     if (clone2Inner) {
@@ -324,6 +334,17 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
       void layer.offsetWidth
       layer.style.transform = 'none'
     })
+    if (clone2Inner?.classList.contains('phys-drag-clone')) {
+      // createLandingClone 与 cloneForDrag 使用同一个内容层类。先提交玻璃起始态，跨过一帧
+      // 后摘类，浏览器才会把目标本体样式视为同一元素上的过渡终点。
+      void clone2Inner.offsetWidth
+      clone2Inner.classList.remove('phys-drag-clone')
+      if (!options.hidePrimaryVisual) {
+        void clone2Inner.offsetWidth
+        clone2Inner.style.opacity = '1'
+        cloneInner.style.opacity = '0'
+      }
+    }
     if (options.useSpringLanding) {
       const current = options.holder.getBoundingClientRect()
       const params = springParamsFromResponse(dragPhysicsTuning.landing)
@@ -373,7 +394,7 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     options.holder.style.transition = transition
     options.clone2.style.transition = transition
     if (options.hidePrimaryVisual && clone2Inner && dragShadow !== landingShadow) {
-      clone2Inner.style.transition = `box-shadow 0.55s ${options.easing}`
+      clone2Inner.style.transition = fadeTransition
       clone2Inner.style.boxShadow = landingShadow
     }
     applyTransform()
