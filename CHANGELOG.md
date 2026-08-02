@@ -24,11 +24,13 @@
 - **项目页对象更新稳定性**（`views/Projects/index.vue`）：保持项目对象引用并处理 Store 原地更新，避免拖拽落地期间卡片不必要地重挂载。
 - **项目页 Owner 更新收口**（`views/Projects/components/`）：将 Runtime 接管状态的响应式更新从页面级收敛到列/列表范围，降低拖拽释放时的 Vue 更新量。
 - **项目看板 Runtime 性能基线**（`views/Projects/`）：保留 7.2 的对象引用稳定、Owner 订阅收口和 Runtime 布局测量优化；经过 4× CPU 降速 trace 对比，pointerup 平均处理时间较优化前减少约 42ms，端到端 EventTiming 平均减少约 31ms。
+- **CI 依赖安装可复现**（`frontend/package.json`、`frontend/package-lock.json`）：补齐 Vite/Vitest 所需的 esbuild 0.28.1 及平台包，使严格的 `npm ci` 能完成安装。
 
 ### 修复
 
 - **完成列年月组展开收起**（`views/Projects/components/done/`）：修复组容器高度、卡片让位和底部内容在 FLIP 过程中被提前裁切的问题。
 - **音视频文件读取提示**（`backend/agent/prompts/`）：补充音视频文件读取能力说明，避免文件处理时遗漏对应工具路径。
+- **拖拽落地玻璃态交接**（`interaction/drag/animation/morphLifecycle.ts`）：恢复隐藏本体路径在目标样式切换前的过渡，避免 landing 过程中毛玻璃、背景和边框瞬间跳变。
 
 ---
 

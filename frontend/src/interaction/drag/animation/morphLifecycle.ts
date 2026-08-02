@@ -337,6 +337,9 @@ export function startMorphLifecycle(options: MorphLifecycleOptions): void {
     if (clone2Inner?.classList.contains('phys-drag-clone')) {
       // createLandingClone 与 cloneForDrag 使用同一个内容层类。先提交玻璃起始态，跨过一帧
       // 后摘类，浏览器才会把目标本体样式视为同一元素上的过渡终点。
+      // hidePrimaryVisual 分支为了同步阴影会暂时关闭 transition；这里在摘类前统一恢复
+      // 玻璃态到目标态的过渡，确保普通与弹簧落地路径使用同一条视觉交接链路。
+      clone2Inner.style.transition = fadeTransition
       void clone2Inner.offsetWidth
       clone2Inner.classList.remove('phys-drag-clone')
       if (!options.hidePrimaryVisual) {
