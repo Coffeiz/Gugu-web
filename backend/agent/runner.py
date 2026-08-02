@@ -114,6 +114,37 @@ def _with_quoted_context(message: str, quoted_text: str | None) -> str:
     return f"💬 用户引用/回复了一条历史消息（原文：「{quoted_text}」），针对这条消息说：\n\n{message}"
 
 
+async def record_passive_im_message(req: AgentRequest, session_id: int | None = None) -> int:
+    """保存不触发回复的 IM 消息，供后续 @ 咕咕时读取上下文。
+
+    群聊普通消息只走这里，不调用模型、不产生回复，也不消耗配额；后续被 @ 的消息
+    仍沿用同一个 IM session，由 run_collect 读取这批历史。
+    """
+    import app.db.session as _sess
+    from app.models import ConversationMessage, ConversationSession
+
+    if _sess._engine is None:
+        _sess._build_engine()
+    async with _sess._SessionLocal() as db:
+        session = await db.get(ConversationSession, session_id) if session_id else None
+        if session is None:
+            session = ConversationSession(
+                user_id=req.user_id,
+                title=(req.message[:50] or "群聊记录"),
+                source=getattr(req, "source", "qqbot"),
+            )
+            db.add(session)
+            await db.flush()
+        db.add(ConversationMessage(
+            session_id=session.id,
+            role="user",
+            content=req.message,
+            quoted_text=getattr(req, "quoted_text", None),
+        ))
+        await db.commit()
+        return session.id
+
+
 async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str) -> str:
     """IM 新会话开场的「续接桥」：IM 会话是 12h 滑动 TTL，过期会起一条新空会话，咕咕会丢掉
     上一条的上下文（「没续上之前的聊天」根因）。这里趁 db 还开着补两档：

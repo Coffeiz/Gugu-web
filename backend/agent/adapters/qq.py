@@ -1,7 +1,8 @@
 """QQ 官方机器人网关（单聊 C2C + 群聊，BYO 每用户自带 bot）。
 
-群聊需要在「接入咕咕」页开启 group_chat_enabled 开关；QQ 官方 SDK 层面群消息本就只有
-@ 了机器人才会触发事件（没有"收全部群消息"的能力），group_requires_at 对 QQ 恒为 True。
+群聊需要在「接入咕咕」页开启 group_chat_enabled 开关；默认只响应 @ 机器人的消息，关闭
+group_requires_at 后同时接收 QQ 官方的 GROUP_MESSAGE_CREATE 全量群消息事件。开启
+group_read_enabled 后会额外接收并保存未 @ 咕咕的普通群消息；只有 @ 咕咕的消息才触发回复。
 
 和飞书长连接同模式：raw WebSocket outbound 主动连，**不需要公网**（备案前也能用）。
 BYO 模型：每个用户在「个人设置 → 接入咕咕 → QQ」填自己的 AppID/Secret（存 user_bots 表），
@@ -355,14 +356,23 @@ async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, ms
 
 async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
                                  channel_id: str, owner: str, last_ack: dict) -> None:
+    read_enabled = False
+    mentioned = event_type == "GROUP_AT_MESSAGE_CREATE"
     if event_type == "C2C_MESSAGE_CREATE":
         chat_type = "c2c"
         author = data.get("author") or {}
         sender_id = author.get("user_openid") or author.get("id") or ""
         chat_id = ""
-    elif event_type == "GROUP_AT_MESSAGE_CREATE":
-        group_enabled, _requires_at = await _group_settings(channel_id)
+    elif event_type in {"GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"}:
+        group_settings = await _group_settings(channel_id)
+        group_enabled, requires_at = group_settings[:2]
+        # 兼容旧的测试/自定义适配器返回二元组；正式实现始终返回三元组。
+        read_enabled = bool(group_settings[2]) if len(group_settings) > 2 else False
         if not group_enabled:
+            return
+        # 只读取模式的目的就是收集群内全部消息；它覆盖“只响应 @”筛选，
+        # 但仍通过 payload 标记让 worker 全链路静默，不向群内发消息。
+        if event_type == "GROUP_MESSAGE_CREATE" and requires_at and not read_enabled:
             return
         chat_type = "group"
         author = data.get("author") or {}
@@ -388,7 +398,8 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         ack_target = chat_id if chat_type == "group" else sender_id
         now = time.monotonic()
         ack_key = f"{chat_type}:{ack_target}"
-        if now - last_ack.get(ack_key, 0.0) > _ACK_COOLDOWN:
+        if (mentioned or not (chat_type == "group" and read_enabled)) \
+                and now - last_ack.get(ack_key, 0.0) > _ACK_COOLDOWN:
             last_ack[ack_key] = now
             await _qq_ack(channel_id, chat_type, ack_target, "文件收到啦，让我看看~", msg_id)
     attachments = await _ingest_qq_media(_raw_attachments_to_message(all_attachments), owner)
@@ -410,6 +421,8 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     }
     if chat_type == "group":
         payload["chat_id"] = chat_id
+        payload["group_read_enabled"] = read_enabled
+        payload["group_mentioned"] = mentioned
     from agent import logsafe
     if chat_type == "group":
         print(f"[qq:{channel_id}] 收到群 {chat_id} 内 {sender_id}: text_len={len(text)} "
@@ -516,7 +529,7 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
                                     print(f"[qq:{channel_id}] raw WebSocket READY session={session_id}", flush=True)
                                 elif event_type == "RESUMED":
                                     print(f"[qq:{channel_id}] raw WebSocket RESUMED", flush=True)
-                                elif event_type in ("C2C_MESSAGE_CREATE", "GROUP_AT_MESSAGE_CREATE"):
+                                elif event_type in ("C2C_MESSAGE_CREATE", "GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"):
                                     await _handle_raw_qq_message(event_type, data, channel_id, owner, last_ack)
                             elif op == _OP_RECONNECT:
                                 print(f"[qq:{channel_id}] QQ 要求重连", flush=True)
@@ -589,8 +602,8 @@ async def _creds_by_id(bot_id: str) -> tuple[str, str, bool]:
         return b.app_id, b.app_secret, b.sandbox
 
 
-async def _group_settings(bot_id: str) -> tuple[bool, bool]:
-    """网关接收端用：按 user_bots.id 现查 (group_chat_enabled, group_requires_at)。
+async def _group_settings(bot_id: str) -> tuple[bool, bool, bool]:
+    """网关接收端用：按 user_bots.id 现查群聊开关。
     每条群消息都查一次而不是启动时缓存，换来「切开关立即生效、不用重启网关子进程」。"""
     import app.db.session as _sess
     if _sess._engine is None:
@@ -599,8 +612,8 @@ async def _group_settings(bot_id: str) -> tuple[bool, bool]:
     async with _sess._SessionLocal() as db:
         b = await db.get(UserBot, int(bot_id))
         if not b:
-            return False, True
-        return b.group_chat_enabled, b.group_requires_at
+            return False, True, False
+        return b.group_chat_enabled, b.group_requires_at, b.group_read_enabled
 
 
 async def _send_token(channel_id: str) -> tuple[str, str]:

@@ -308,7 +308,9 @@ async def handle(msg_id: str, payload: dict):
 
     platform = payload.get("platform", "worker")
     puid = payload.get("platform_user_id")
-    sid = payload.get("session_id") or await _im_session_get(platform, puid)
+    # 群聊上下文按群维度共享，不能按发言人拆成多条 session；私聊仍按用户维度续聊。
+    session_key = (payload.get("chat_id") if payload.get("chat_type") == "group" else puid) or puid
+    sid = payload.get("session_id") or await _im_session_get(platform, session_key)
 
     # 恢复全链路 trace（网关生成、payload 接力；防抖合并取最后一条的）——此后本任务内
     # 的工具轨迹/回复日志自动带同一 trace，可与网关「收到」行 grep 串联
@@ -323,6 +325,15 @@ async def handle(msg_id: str, payload: dict):
         attachments=payload.get("attachments") or [],
         quoted_text=payload.get("quoted_text"),
     )
+    # QQ 群聊普通消息的“读取群消息”模式：只记录到同一会话，不跑模型也不回复；
+    # 被 @ 的消息不走此分支，继续执行完整的回应链路。
+    if (platform == "qqbot" and payload.get("chat_type") == "group"
+            and payload.get("group_read_enabled") and not payload.get("group_mentioned")):
+        from agent.runner import record_passive_im_message
+        passive_sid = await record_passive_im_message(req, sid)
+        await _im_session_set(platform, session_key, passive_sid)
+        print(f"[worker] qqbot 群聊普通消息已记录(session={passive_sid} trace={_tid})", flush=True)
+        return None
     # 记忆控制命令（/memory /forget，中文别名 /记忆 /忘记）：确定性短路，零 LLM、不计精力、
     # 不反思、不进会话历史——与 web 路（adapters/web.py）同一处理，IM 用户同享隐私控制权（P0-5）
     from agent import commands as _commands
@@ -371,7 +382,7 @@ async def handle(msg_id: str, payload: dict):
         await rtstate.clear_state(platform, puid)
         await rtstate.clear_cancel(platform, puid)
         await _wechat.stop_typing(_typing_ind)   # 无论成败都关 typing
-    await _im_session_set(platform, puid, resp.session_id)   # 续上同一会话
+    await _im_session_set(platform, session_key, resp.session_id)   # 续上同一会话
     if resp.cancelled:
         # 用户中途「算了」：网关已回「先不继续啦」，这里不再补发任何内容
         await rtstate.set_awaiting(platform, puid, False)   # 没有悬而未决的提问了

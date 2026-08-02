@@ -37,6 +37,7 @@ def _out(b: UserBot) -> dict:
         "enabled": b.enabled,
         "group_chat_enabled": b.group_chat_enabled,
         "group_requires_at": b.group_requires_at,
+        "group_read_enabled": b.group_read_enabled,
     }
 
 
@@ -96,6 +97,7 @@ class BotUpdate(BaseModel):
     enabled: bool | None = None
     group_chat_enabled: bool | None = None
     group_requires_at: bool | None = None
+    group_read_enabled: bool | None = None
 
 
 @router.put("/{bot_id}")
@@ -123,6 +125,8 @@ async def update_my_bot(
         bot.group_chat_enabled = body.group_chat_enabled
     if body.group_requires_at is not None:
         bot.group_requires_at = body.group_requires_at
+    if body.group_read_enabled is not None:
+        bot.group_read_enabled = body.group_read_enabled
     await db.commit()
     await db.refresh(bot)
     await _touch_supervisor()

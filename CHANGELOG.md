@@ -11,6 +11,7 @@
 
 - **项目看板 Runtime 接入**（`views/Projects/`、`interaction/runtime/`）：项目卡、Surface、组展开收起和完成列生命周期统一通过 Runtime API 编排，业务页移除旧拖拽事务入口。
 - **可选的抓取视觉配置**（`interaction/runtime/setup.ts`）：支持配置卡片抓取对齐方式和毛玻璃视觉效果，默认行为保持原有样式。
+- **QQ 群聊消息记录**（`backend/agent/adapters/qq.py`、`ProfileImPane.vue`）：可保存未 @ 咕咕的普通群消息供后续上下文读取，同时保留 @ 消息的正常回复。
 
 ### 改进
 
