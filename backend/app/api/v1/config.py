@@ -155,6 +155,8 @@ def _parse_path_migration_key(key: str) -> dict | None:
     parts = key.split("/")
     if len(parts) < 3:
         return None
+    if any(part in {"", ".", ".."} for part in parts):
+        return None
     try:
         user_id = str(_uuid.UUID(parts[0]))
     except ValueError:
@@ -191,47 +193,43 @@ def _same_file_scope(file, parsed: dict) -> bool:
 
 
 async def _import_orphan(db, key: str, storage) -> bool:
-    """把一个孤儿物理文件按其存储路径重建成 File 记录（best-effort）。
-    路径形如 {uid}/个人文件/[文件夹/]name.ext 或 {uid}/项目文件/yyyy/mm/{项目} #{pid}/[文件夹/]name.ext。
-    解析不出归属时仍尽量建在空间根（folder_id=None），让文件至少在 app 里现身。"""
-    import uuid as _uuid, re, mimetypes
-    from app.models import File, User
-    parts = key.split("/")
-    if len(parts) < 3:
+    """按已验证的 path-mirror key 导入孤儿文件，不猜测不完整的归属。"""
+    import mimetypes
+    import uuid
+    from app.models import File, Project, User
+
+    parsed = _parse_path_migration_key(key)
+    if parsed is None:
         return False
-    try:
-        uid = _uuid.UUID(parts[0])
-    except ValueError:
-        return False
+    uid_text = parsed["user_id"]
+    uid = uuid.UUID(uid_text)
     if not await db.get(User, uid):
         return False
-    fname = parts[-1]
+    # 修复接口也可能被手工传入重复 key；不能让同一物理对象产生第二条 File。
+    existing = (await db.execute(select(File).where(File.storage_key == key))).scalars().first()
+    if existing is not None:
+        return False
+
+    info = await storage.stat(key)
+    if info is None:
+        return False
+
+    fname = key.rsplit("/", 1)[-1]
     name, _, ext = fname.rpartition(".")
     if not name:
         name, ext = fname, ""
-    space, project_id, folder_id = "personal", None, None
-    seg = parts[1] if len(parts) > 1 else ""
-    if seg == "项目文件":
-        space = "project"
-        project_segment_index = None
-        for index, p in enumerate(parts):
-            mm = re.search(r"#(\d+)$", p)
-            if mm:
-                project_id = int(mm.group(1))
-                project_segment_index = index
-                break
-        folder_parts = parts[project_segment_index + 1:-1] if project_segment_index is not None else []
-        folder_id = await _resolve_import_folder(db, uid, project_id, folder_parts)
-    elif seg == "个人文件":
-        folder_id = await _resolve_import_folder(db, uid, None, parts[2:-1])
-    try:
-        size_bytes = len(await storage.get(key))
-    except Exception:
-        size_bytes = 0
+    project_id = parsed["project_id"]
+    if project_id is not None:
+        project = await db.get(Project, project_id)
+        if project is None or str(project.user_id) != uid_text:
+            return False
+    folder_id = await _resolve_import_folder(db, uid, project_id, parsed["folder_parts"])
+    if parsed["folder_parts"] and folder_id is None:
+        return False
     db.add(File(
-        user_id=uid, display_name=name, ext=ext.lower(), space=space,
+        user_id=uid, display_name=name, ext=ext.lower(), space=parsed["space"],
         project_id=project_id, folder_id=folder_id, storage_key=key,
-        size=_fmt_size(size_bytes), size_bytes=size_bytes,
+        size=_fmt_size(info.size), size_bytes=info.size,
         mime_type=mimetypes.guess_type(fname)[0],
     ))
     return True
@@ -440,6 +438,27 @@ async def repair_path_migration(body: PathMigrationRequest, db: AsyncSession = D
     rows = (await db.execute(select(File).where(File.id.in_(requested), File.deleted_at.is_(None)))).scalars().all()
     all_files = (await db.execute(select(File))).scalars().all()
     occupied = {file.storage_key: file.id for file in all_files}
+    # 扫描与修复之间可能又出现同 identity 的记录/对象；这里重新建立计数，
+    # 不把旧扫描结果当成永久授权。没有唯一 fingerprint 时，启发式匹配必须保持唯一。
+    db_identity_counts: dict[tuple, int] = {}
+    for file in all_files:
+        if file.deleted_at is not None:
+            continue
+        identity = (str(file.user_id), file.display_name, (file.ext or "").lower(), file.size_bytes or 0)
+        db_identity_counts[identity] = db_identity_counts.get(identity, 0) + 1
+    known_keys = {file.storage_key for file in all_files}
+    orphan_identity_counts: dict[tuple, int] = {}
+    for key in await storage.list_keys():
+        if key in known_keys or _is_internal_key(key):
+            continue
+        parsed_key = _parse_path_migration_key(key)
+        if parsed_key is None:
+            continue
+        info = await storage.stat(key)
+        if info is None:
+            continue
+        identity = (parsed_key["user_id"], parsed_key["display_name"], parsed_key["ext"], info.size)
+        orphan_identity_counts[identity] = orphan_identity_counts.get(identity, 0) + 1
     done, failed = [], []
     for file in rows:
         try:
@@ -474,8 +493,15 @@ async def repair_path_migration(body: PathMigrationRequest, db: AsyncSession = D
                 failed.append({"file_id": file.id, "error": "文件名或扩展名不匹配"})
                 continue
             stat = await storage.stat(new_key)
-            if stat and file.size_bytes and stat.size != file.size_bytes:
+            if stat is None:
+                failed.append({"file_id": file.id, "error": "物理文件不存在"})
+                continue
+            if stat.size != (file.size_bytes or 0):
                 failed.append({"file_id": file.id, "error": "文件大小不匹配"})
+                continue
+            identity = (str(file.user_id), file.display_name, (file.ext or "").lower(), stat.size)
+            if db_identity_counts.get(identity) != 1 or orphan_identity_counts.get(identity) != 1:
+                failed.append({"file_id": file.id, "error": "路径身份不再唯一，请重新扫描"})
                 continue
             # 路径迁移只允许同空间、同项目内修复；跨空间/项目必须走正式移动接口，
             # 避免只改 storage_key 而留下其它归属字段互相矛盾。
