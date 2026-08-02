@@ -17,6 +17,10 @@ from app.services.storage import get_storage
 VIDEO_EXTS = frozenset({"mp4", "mov", "avi", "mkv", "webm", "wmv", "m4v"})
 AUDIO_EXTS = frozenset({"mp3", "wav", "flac", "m4a", "ogg", "aac", "amr", "opus", "wma"})
 MEDIA_READ_MAX_BYTES = 36 * 1024 * 1024
+MEDIA_AUDIO_MAX_SECONDS = 300
+MEDIA_AUDIO_MAX_OUTPUT_BYTES = 16 * 1024 * 1024
+MEDIA_FRAME_MAX_OUTPUT_BYTES = 8 * 1024 * 1024
+MEDIA_FRAME_MAX_WIDTH = 1280
 _FFMPEG_SEMAPHORE = asyncio.Semaphore(2)
 
 
@@ -25,7 +29,21 @@ def _ffmpeg() -> str | None:
     return _ffmpeg_bin()
 
 
-async def _run_ffmpeg(data: bytes, ext: str, args: list[str]) -> bytes | None:
+async def _read_limited(stream, max_bytes: int) -> bytes | None:
+    """分块读取 ffmpeg 输出，超过上限时返回 None，让调用方终止子进程。"""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await stream.read(min(64 * 1024, max_bytes - total + 1))
+        if not chunk:
+            return b"".join(chunks)
+        total += len(chunk)
+        if total > max_bytes:
+            return None
+        chunks.append(chunk)
+
+
+async def _run_ffmpeg(data: bytes, ext: str, args: list[str], max_output_bytes: int) -> bytes | None:
     ffmpeg = _ffmpeg()
     if not ffmpeg:
         return None
@@ -35,15 +53,21 @@ async def _run_ffmpeg(data: bytes, ext: str, args: list[str]) -> bytes | None:
             stream.write(data)
         async with _FFMPEG_SEMAPHORE:
             proc = await asyncio.create_subprocess_exec(
-                ffmpeg, "-nostdin", "-y", "-i", source, *args,
+                ffmpeg, "-nostdin", "-loglevel", "error", "-y", "-i", source, *args,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
+            stderr_task = asyncio.create_task(proc.stderr.read())
             try:
-                output, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+                output = await asyncio.wait_for(_read_limited(proc.stdout, max_output_bytes), timeout=60)
             except asyncio.TimeoutError:
                 proc.kill()
-                await proc.communicate()
+                await proc.wait()
                 raise
+            finally:
+                if proc.returncode is None:
+                    proc.kill()
+                await proc.wait()
+                await stderr_task
         return output if proc.returncode == 0 and output else None
     except (OSError, asyncio.TimeoutError):
         return None
@@ -57,7 +81,8 @@ async def _run_ffmpeg(data: bytes, ext: str, args: list[str]) -> bytes | None:
 async def _extract_audio(data: bytes, ext: str) -> bytes | None:
     return await _run_ffmpeg(
         data, ext,
-        ["-vn", "-ar", "16000", "-ac", "1", "-f", "wav", "pipe:1"],
+        ["-vn", "-t", str(MEDIA_AUDIO_MAX_SECONDS), "-ar", "16000", "-ac", "1", "-f", "wav", "pipe:1"],
+        MEDIA_AUDIO_MAX_OUTPUT_BYTES,
     )
 
 
@@ -65,7 +90,10 @@ async def _extract_frame(data: bytes, ext: str) -> bytes | None:
     # 取中前段画面，避免只取首帧时遇到黑场或片头；短视频由 ffmpeg 自动退回可用帧。
     return await _run_ffmpeg(
         data, ext,
-        ["-ss", "00:00:01", "-frames:v", "1", "-f", "image2", "pipe:1"],
+        ["-ss", "00:00:01", "-frames:v", "1", "-vf",
+         f"scale={MEDIA_FRAME_MAX_WIDTH}:-2:force_original_aspect_ratio=decrease",
+         "-f", "image2", "pipe:1"],
+        MEDIA_FRAME_MAX_OUTPUT_BYTES,
     )
 
 

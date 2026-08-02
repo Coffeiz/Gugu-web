@@ -15,6 +15,7 @@
 ### 改进
 
 - **画布与媒体读取安全边界**（`views/Mind/`、`backend/agent/tools/file_readers.py`）：画布切换改为成功后原子提交，重命名增加保存闸门，音视频读取改用物理对象大小校验，避免重复写入、失败状态残留和历史大小字段绕过内存上限。
+- **音视频转码资源上限**（`backend/agent/tools/file_readers.py`）：限制音频时长、ffmpeg 输出字节数和视频帧宽度，超限时终止子进程，避免媒体解码膨胀造成内存峰值。
 - **路径迁移对账安全边界**（`backend/app/api/v1/config.py`）：按文件 identity 聚合数据库记录与物理孤儿对象，歧义项不再自动修复，并拒绝跨空间/跨项目迁移，原子更新完整归属字段。
 - **完成列动画统一**（`views/Projects/components/done/`）：最近完成、年月分组和新建项目按钮接入统一的 collection presence、容器高度和 FLIP 调度，减少业务侧重复动画逻辑。
 - **Runtime 接入基线与 CI**（`interaction/runtime/`、`.github/workflows/`）：固定 Runtime 源码 commit，补充同级源码目录布局的集成校验，避免联调时引用漂移版本。
