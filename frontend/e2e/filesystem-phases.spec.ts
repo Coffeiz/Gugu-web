@@ -13,6 +13,10 @@ async function openPersonalDirectory(page: Page) {
   if (await personal.count() === 0) return false
   await personal.click()
   await expect(page.locator('.select-mode-btn')).toBeVisible()
+  // 视图模式会持久化到测试账号；阶段 2–4 需要验证网格共享卡片，先显式切到网格。
+  const gridButton = page.getByTitle('网格视图')
+  if (await gridButton.count() > 0) await gridButton.click()
+  await expect(page.locator('.file-browser-grid')).toBeVisible()
   return true
 }
 
