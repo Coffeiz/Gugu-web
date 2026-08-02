@@ -42,40 +42,22 @@
             </button>
           </div>
           <!-- 待办列表 -->
-          <TransitionGroup tag="div" name="todo-flip" class="todo-list"
-               @dragover.prevent="todoListDragOver(stage)"
-               @drop="todoDragEnd">
-            <div v-for="(todo, ti) in (stage.todos ?? [])" :key="todo.id" class="todo-item"
-                 :class="{ 'todo-ghost': todoDrag && todoDrag.stageKey === stage.key && todoDrag.index === ti }"
-                 :draggable="editingTodo !== todo.id"
-                 @dragstart="todoDragStart(stage, ti)"
-                 @dragend="todoDragEnd"
-                 @dragover.prevent.stop="todoDragOver(stage, ti, $event)">
-              <button class="todo-check" :class="{ checked: todo.done }" @click.stop="handleToggleTodo(todo)">
-                <PhCheck v-if="todo.done" :size="9" weight="bold" />
-              </button>
-              <input
-                v-if="editingTodo === todo.id"
-                :class="['todo-input', `todo-input-${stage.key}`]"
-                :data-tid="todo.id"
-                v-model="todo.text"
-                :title="todo.text"
-                :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
-                placeholder="待办事项"
-                @blur="editingTodo = null; handleSaveTodos()"
-                v-enter.prevent="() => (editingTodo = null, handleSaveTodos())"
-                @keydown.esc="editingTodo = null"
-                @keydown.backspace="!todo.text && handleRemoveTodo(stage, todo.id)"
-              />
-              <span
-                v-else class="todo-name"
-                :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
-                @click.stop="startEditTodo(todo.id)"
-              >{{ todo.text || '待办事项' }}</span>
-              <button class="todo-del" @click.stop="handleRemoveTodo(stage, todo.id)"><PhX :size="8" weight="bold" /></button>
-            </div>
-            <button key="todo-add" class="todo-add-btn" @click.stop="handleAddTodo(stage)">＋ 添加待办</button>
-          </TransitionGroup>
+          <ProjectTodosPanel
+            :stage="stage"
+            :is-last="i === displayStages.length - 1"
+            :editing-todo="editingTodo"
+            :dragging="todoDrag"
+            @list-dragover="todoListDragOver"
+            @drag-start="todoDragStart"
+            @drag-end="todoDragEnd"
+            @drag-over="todoDragOver"
+            @toggle="handleToggleTodo"
+            @start-edit="startEditTodo"
+            @finish-edit="projectTodos.stopEditing"
+            @save="handleSaveTodos"
+            @remove="handleRemoveTodo"
+            @add="handleAddTodo"
+          />
         </div>
       </TransitionGroup>
     </div>
@@ -96,9 +78,10 @@
 <script setup lang="ts">
 import { ref, reactive, computed, nextTick, watch, onUnmounted, type PropType } from 'vue'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
-import { firstIncompleteStageIdx } from '@/utils/projectStages'
 import type { ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStages } from '@/composables/projects/useProjectStages'
+import { useProjectTodos } from '@/composables/projects/useProjectTodos'
+import ProjectTodosPanel from './ProjectTodosPanel.vue'
 
 const props = defineProps({
   stages: { type: Array as PropType<ProjectStage[]>, required: true },
@@ -121,11 +104,16 @@ watch(() => props.stages, (v) => {
 }, { immediate: true })
 
 // 通过 useProjectStages 复用阶段/待办操作编排
-  const projectStages = useProjectStages({
+const projectStages = useProjectStages({
     stages: localStages,
     saveStages: () => handleSaveStages(),
-    saveTodos: () => handleSaveTodos(),
   })
+const projectTodos = useProjectTodos({
+  stages: localStages,
+  currentStage: () => props.currentStage,
+  saveTodos: () => handleSaveTodos(),
+  setStage: (key, index) => handleSetStage(key, index),
+})
 
 const activeStageIdx = computed(() =>
   localStages.value.findIndex(s => s.key === props.currentStage))
@@ -140,23 +128,12 @@ const displayStages = computed(() => {
 })
 
 const lockedStageIndices = computed(() => {
-  const locked = new Set<number>()
-  const current = activeStageIdx.value
-  for (let target = 0; target < current; target++) {
-    for (let i = target; i < current; i++) {
-      const todos = localStages.value[i].todos ?? []
-      if (todos.length > 0 && todos.every(todo => todo.done && !todo.autoCompleted)) {
-        locked.add(target)
-        break
-      }
-    }
-  }
-  return locked
+  return projectStages.lockedStageIndices(props.currentStage)
 })
 
 // 编辑态
 const editingStage = ref<string | null>(null)
-const editingTodo = ref<string | null>(null)
+const editingTodo = projectTodos.editingTodo
 const expandedStages = ref(new Set<string>())
 const stageInputRef = ref<HTMLInputElement | null>(null)
 const stageFlowRef = ref<HTMLElement | null>(null)
@@ -300,7 +277,7 @@ function startEdit(stageKey: string) {
   nextTick(() => stageInputRef.value?.focus())
 }
 function startEditTodo(todoId: string) {
-  editingTodo.value = todoId
+  projectTodos.startEditing(todoId)
   nextTick(() => {
     const input = document.querySelector(`[data-tid="${todoId}"]`) as HTMLInputElement | null
     input?.focus()
@@ -328,29 +305,18 @@ function handleSaveTodos() {
   props.onSaveTodos()
 }
 function handleAddTodo(stage: ProjectStage) {
-  projectStages.addTodo(stage)
+  projectTodos.addTodo(stage)
   nextTick(() => {
     const inputs = document.querySelectorAll<HTMLElement>(`.todo-input-${stage.key}`)
     inputs[inputs.length - 1]?.focus()
   })
 }
 function handleRemoveTodo(stage: ProjectStage, id: string) {
-  projectStages.removeTodo(stage, id)
+  projectTodos.removeTodo(stage, id)
 }
 function handleToggleTodo(todo: ProjectTodo) {
-  projectStages.toggleTodo(todo)
-  if (todo.done) {
-    const currentIndex = localStages.value.findIndex(stage => stage.key === props.currentStage)
-    const targetIndex = firstIncompleteStageIdx(localStages.value)
-    if (targetIndex > currentIndex) {
-      // 阶段推进会自己整体保存一次（setStage → transitionProjectStage 里已经带上了
-      // 刚勾完的这份 todos），不能再额外调 handleSaveTodos 保存一次——同一 tick 内
-      // localStages 被整体替换两次是递归更新的根因，见 useProjectStages.ts 的注释。
-      handleSetStage(localStages.value[targetIndex].key, targetIndex)
-      return
-    }
-  }
-  handleSaveTodos()
+  // 阶段推进已经保存了包含本次勾选的完整草稿，普通勾选才需要单独保存。
+  if (!projectTodos.toggleTodo(todo)) handleSaveTodos()
 }
 </script>
 
@@ -407,49 +373,4 @@ function handleToggleTodo(todo: ProjectTodo) {
 }
 .stage-node:hover .del-stage { opacity: 0.5; }
 .del-stage:hover { opacity: 1 !important; color: var(--color-warning); }
-/* 待办列表 */
-.todo-list { padding: 2px 0 8px 30px; display: flex; flex-direction: column; gap: 3px;
-  background-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.06) 20%, rgba(0,0,0,0.06) 80%, transparent 100%);
-  background-size: 100% 1px; background-repeat: no-repeat; background-position: center bottom; }
-.stage-node:last-child .todo-list { background-image: none; }
-.todo-item { display: flex; align-items: flex-start; gap: 6px; min-height: 24px; }
-.todo-item + .todo-item { border-top: 1px solid rgba(0,0,0,0.05); }
-.todo-check, .todo-del { margin-top: 4px; }
-.todo-name { flex: 1; min-width: 0; font-size: 12px; line-height: 1.5; color: var(--text-primary); padding: 2px 0; cursor: grab; overflow-wrap: break-word; word-break: break-word; white-space: normal; }
-.todo-item:active .todo-name { cursor: grabbing; }
-.todo-ghost { opacity: 0.35; }
-.todo-check {
-  width: 15px; height: 15px; border-radius: 4px; flex-shrink: 0;
-  border: 1.5px solid rgba(0,0,0,0.18); background: rgba(255,255,255,0.7);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.15s, border-color 0.15s;
-}
-.todo-check.checked { background: var(--color-success); border-color: var(--color-success); color: white; }
-.todo-input {
-  flex: 1; font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
-  border: 1.5px solid transparent; border-radius: 5px;
-  background: transparent; outline: none; min-width: 0;
-  padding: 0 5px; box-sizing: border-box;
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
-}
-.todo-input:focus {
-  background: rgba(255,255,255,0.72);
-  border-color: rgba(123,127,178,0.4);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
-}
-.todo-del {
-  background: none; border: none; cursor: pointer; color: var(--text-secondary);
-  opacity: 0; transition: opacity 0.15s; padding: 2px; display: flex; align-items: center; flex-shrink: 0;
-}
-.todo-item:hover .todo-del { opacity: 0.4; }
-.todo-del:hover { opacity: 1 !important; color: var(--color-warning); }
-.todo-add-btn {
-  display: flex; align-items: center; gap: 4px;
-  height: 24px; padding: 0 10px; border-radius: 7px;
-  border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.62);
-  font-size: 11px; font-weight: 500; color: var(--text-secondary);
-  cursor: pointer; font-family: var(--font-sans); transition: all 0.15s;
-  margin-top: 2px; margin-right: 18px;
-}
-.todo-add-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(255,255,255,0.75); }
 </style>

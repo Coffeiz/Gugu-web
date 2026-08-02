@@ -28,6 +28,7 @@
 
 ### 修复
 
+- **项目编辑卡添加待办按钮动画**（`views/Projects/components/ProjectTodosPanel.vue`）：将添加按钮移出待办 FLIP 过渡组，避免新增第一个待办时按钮被错误地带入位移动画。
 - **完成列年月组展开收起**（`views/Projects/components/done/`）：修复组容器高度、卡片让位和底部内容在 FLIP 过程中被提前裁切的问题。
 - **音视频文件读取提示**（`backend/agent/prompts/`）：补充音视频文件读取能力说明，避免文件处理时遗漏对应工具路径。
 - **拖拽落地玻璃态交接**（`interaction/drag/animation/morphLifecycle.ts`）：恢复隐藏本体路径在目标样式切换前的过渡，避免 landing 过程中毛玻璃、背景和边框瞬间跳变。

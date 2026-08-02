@@ -1,18 +1,18 @@
 import type { Ref } from 'vue'
-import type { ProjectStage, ProjectTodo } from '@/types/project'
+import type { ProjectStage } from '@/types/project'
 
 interface ProjectStagesOptions {
   stages: Ref<ProjectStage[]>
   saveStages: () => void
-  saveTodos: () => void
 }
 
 /**
- * 阶段和待办的响应式操作编排。
- * 阶段拖拽的指针、ghost 和落点计算仍由 ProjectModal 保留；这里不接触 DOM。
+ * 项目阶段的响应式操作编排。
+ * 阶段拖拽的指针、ghost 和落点计算仍由 ProjectStagesPanel 保留；这里不接触 DOM。
+ * 待办操作由 useProjectTodos 单独负责，避免两个 composable 同时写入同一份 stages。
  */
 export function useProjectStages(options: ProjectStagesOptions) {
-  const { stages, saveStages, saveTodos } = options
+  const { stages, saveStages } = options
 
   function addStage() {
     const key = `stage_${Date.now()}`
@@ -28,25 +28,21 @@ export function useProjectStages(options: ProjectStagesOptions) {
     return true
   }
 
-  function addTodo(stage: ProjectStage) {
-    if (!stage.todos) stage.todos = []
-    stage.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
-    saveTodos()
+  /** 返回当前阶段之前、因手动完成待办而锁定的阶段位置。 */
+  function lockedStageIndices(currentStage: string): Set<number> {
+    const locked = new Set<number>()
+    const current = stages.value.findIndex(stage => stage.key === currentStage)
+    for (let target = 0; target < current; target++) {
+      for (let index = target; index < current; index++) {
+        const todos = stages.value[index].todos ?? []
+        if (todos.length > 0 && todos.every(todo => todo.done && !todo.autoCompleted)) {
+          locked.add(target)
+          break
+        }
+      }
+    }
+    return locked
   }
 
-  function removeTodo(stage: ProjectStage, id: string) {
-    stage.todos = (stage.todos ?? []).filter(todo => todo.id !== id)
-    saveTodos()
-  }
-
-  // 不在这里自动 saveTodos——调用方（ProjectStagesPanel.handleToggleTodo）勾完待办后
-  // 可能紧接着触发阶段自动推进（setStage），那条路径自己会保存一次完整状态；这里如果也
-  // 保存一次，同一个点击事件里 localStages 会被整体替换两次，触发 TransitionGroup 递归
-  // 更新（2026-07-17 手动验收环境复现：Maximum recursive updates exceeded in <BaseTransition>）。
-  function toggleTodo(todo: ProjectTodo) {
-    todo.done = !todo.done
-    todo.autoCompleted = false
-  }
-
-  return { addStage, removeStage, addTodo, removeTodo, toggleTodo }
+  return { addStage, removeStage, lockedStageIndices }
 }
