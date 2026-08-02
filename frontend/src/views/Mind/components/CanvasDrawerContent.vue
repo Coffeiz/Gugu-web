@@ -14,11 +14,11 @@
       </span>
       <span v-else class="ci-title">{{ (localTitles.get(canvas.id) ?? canvas.title) || '未命名画布' }}</span>
       <div class="ci-actions">
-        <button :title="editingId === canvas.id ? '确认' : '重命名'" class="ci-btn" @mousedown.prevent @click.stop="editingId === canvas.id ? commitRename(canvas.id) : startRename(canvas)">
+        <button :disabled="savingIds.has(canvas.id)" :title="editingId === canvas.id ? '确认' : '重命名'" class="ci-btn" @mousedown.prevent @click.stop="editingId === canvas.id ? commitRename(canvas.id) : startRename(canvas)">
           <PhCheck v-if="editingId === canvas.id" :size="11" weight="bold" />
           <PhPencilSimple v-else :size="11" weight="bold" />
         </button>
-        <button title="删除画布" class="ci-btn ci-delete" @click.stop="remove(canvas)"><PhTrash :size="11" weight="bold" /></button>
+        <button :disabled="savingIds.has(canvas.id)" title="删除画布" class="ci-btn ci-delete" @click.stop="remove(canvas)"><PhTrash :size="11" weight="bold" /></button>
       </div>
     </div>
     <button class="canvas-create-card" data-layout-key="canvas-create" @click="emit('create')"><PhPlus :size="14" weight="bold" />新建画布</button>
@@ -41,7 +41,7 @@ const emit = defineEmits<{ (e: 'create'): void; (e: 'open', id: number): void; (
 const listRef = ref<HTMLElement | null>(null)
 const editingId = ref<number | null>(null)
 const editingText = ref('')
-const savingId = ref<number | null>(null)
+const savingIds = ref(new Set<number>())
 const localTitles = ref(new Map<number, string>())
 let pendingLayout: ReturnType<typeof createFlipTransaction> | null = null
 let pendingLayoutItems: ReturnType<typeof createLayoutItems> = []
@@ -67,6 +67,7 @@ onUpdated(() => {
 function open(id: number) { emit('open', id) }
 function remove(canvas: MindCanvas) { if (window.confirm(`删除画布「${canvas.title || '未命名画布'}」？`)) emit('delete', canvas) }
 function startRename(canvas: MindCanvas) {
+  if (savingIds.value.has(canvas.id)) return
   editingId.value = canvas.id
   editingText.value = localTitles.value.get(canvas.id) ?? canvas.title ?? ''
   // 不用模板 ref：这个 input 嵌在 v-for 里，即使 v-if 保证同时只渲染一个，Vue 仍会把
@@ -81,12 +82,17 @@ function startRename(canvas: MindCanvas) {
 }
 function cancelRename() { editingId.value = null; editingText.value = '' }
 async function commitRename(id: number) {
-  if (editingId.value !== id || savingId.value === id) return
+  if (editingId.value !== id || savingIds.value.has(id)) return
   const title = editingText.value.trim()
   if (!title) return cancelRename()
   const previous = props.canvases.find(canvas => canvas.id === id)?.title ?? ''
-  savingId.value = id
-  editingId.value = null
+  const next = new Set(savingIds.value)
+  next.add(id)
+  savingIds.value = next
+  if (editingId.value === id) {
+    editingId.value = null
+    editingText.value = ''
+  }
   localTitles.value.set(id, title)
   try {
     await props.rename(id, title)
@@ -95,8 +101,13 @@ async function commitRename(id: number) {
     localTitles.value.delete(id)
     showAppError(`画布重命名失败，已恢复为「${previous || '未命名画布'}」`)
   } finally {
-    savingId.value = null
-    editingText.value = ''
+    const remaining = new Set(savingIds.value)
+    remaining.delete(id)
+    savingIds.value = remaining
+    if (editingId.value === id) {
+      editingId.value = null
+      editingText.value = ''
+    }
   }
 }
 defineExpose({ listRef })
