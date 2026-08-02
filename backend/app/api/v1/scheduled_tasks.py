@@ -152,8 +152,8 @@ async def list_tasks(event_id: int | None = None, user: User = Depends(get_curre
     # 面板自己也不显（也不留）过点的 @once。判据与 GC 同（过点超 120s 宽限，见 app/scheduled_tasks）。
     from app.scheduled_tasks import _once_expired
     from app.core.tz import local_now
-    now_naive = local_now().replace(tzinfo=None)
-    expired = [t for t in rows if _once_expired(t.cron, now_naive)]
+    now = local_now()
+    expired = [t for t in rows if _once_expired(t.cron, now)]
     if expired:
         for t in expired:
             await db.delete(t)

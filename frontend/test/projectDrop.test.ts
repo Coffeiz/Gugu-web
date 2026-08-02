@@ -17,7 +17,7 @@ describe('resolveProjectDropStatus', () => {
   })
 
   it('普通抛出只沿鼠标运动方向前探，不会反向拉回已进入的列', () => {
-    expect(resolveProjectDropStatus(columns, { pointerX: 450, pointerVelocityX: 1800, isLandingRegrab: false })).toBe('done')
+    expect(resolveProjectDropStatus(columns, { pointerX: 450, pointerVelocityX: 1800, isLandingRegrab: false })).toBe('active')
     expect(resolveProjectDropStatus(columns, { pointerX: 450, pointerVelocityX: -1800, isLandingRegrab: false })).toBe('pending')
   })
 

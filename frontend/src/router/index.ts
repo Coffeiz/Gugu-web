@@ -85,10 +85,7 @@ const routes: RouteRecordRaw[] = [
             // 侧栏入口始终是 /mind：恢复用户上次停留的子视图；失效的画布 id 由 CanvasView 回退。
             redirect: () => {
               const lastMode = localStorage.getItem('mind-last-mode')
-              const lastCanvasId = localStorage.getItem('mind-last-canvas-id')
-              return lastMode === 'canvas'
-                ? `/mind/canvases${lastCanvasId ? `/${lastCanvasId}` : ''}`
-                : '/mind/notes'
+              return lastMode === 'canvas' ? '/mind/canvases' : '/mind/notes'
             },
           },
           {
@@ -98,7 +95,7 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '思维', fullBleed: true },
           },
           {
-            path: 'canvases/:id?',
+            path: 'canvases',
             name: 'MindCanvas',
             component: () => import('@/views/Mind/CanvasView.vue'),
             meta: { title: '思维', fullBleed: true },
@@ -111,6 +108,14 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Schedules/index.vue'),
         meta: { title: '定时任务' },
       },
+      // /dev 索引页：列出下面所有 dev 工具的入口，新加工具只需要在 devRegistry.ts
+      // 里加一条，不需要再想"入口放哪"。同样仅 dev 注册。
+      ...(import.meta.env.DEV ? [{
+        path: 'dev',
+        name: 'DevHome',
+        component: () => import('@/views/DevHome.vue'),
+        meta: { title: 'Dev 工具' },
+      }] : []),
       // 新手引导 demo 面板：仅 dev 注册；prod build 时 import.meta.env.DEV=false，
       // 整个三元分支（含 import() 动态导入）被 tree-shake 掉，DevOnboarding.vue 不进生产包。
       ...(import.meta.env.DEV ? [{
@@ -118,6 +123,11 @@ const routes: RouteRecordRaw[] = [
         name: 'DevOnboarding',
         component: () => import('@/views/DevOnboarding.vue'),
         meta: { title: '新手引导 Demo' },
+      }, {
+        path: 'dev/drag-physics',
+        name: 'DevDragPhysics',
+        component: () => import('@/views/DevDragPhysics.vue'),
+        meta: { title: '拖拽物理调参' },
       }] : []),
     ],
   },

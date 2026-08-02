@@ -6,7 +6,7 @@ worker 进程每 ~30s 调 `reconcile()`：从 `scheduled_tasks` 表读启用任�
   ② IM 主动 DM（飞书可主动；QQ best-effort）
 """
 from __future__ import annotations
-from app.core.tz import now_utc
+from app.core.tz import LOCAL_TZ, now_utc
 
 import json
 import uuid as _uuid
@@ -35,9 +35,13 @@ def build_trigger(cron: str):
 _ONCE_GC_GRACE = timedelta(seconds=120)   # 一次性任务过点后多久可被 GC（正常触发的由 execute_task 即时删；这宽限只避开正在触发的那一下）
 
 
-def _once_expired(cron: str, now_naive: datetime) -> bool:
-    """是不是「已过点的一次性任务」。@once 时间是 Asia/Shanghai 本地(naive)，与 local_now 同口径比。
-    解析不了的不动（宁留勿误删）。仅过去超过宽限期才算过期，避开正在触发的那一下。"""
+def _once_expired(cron: str, now: datetime) -> bool:
+    """判断一次性任务是否过期，兼容旧数据中的 naive/aware ISO 时间。
+
+    历史任务可能保存为本地无时区时间，也可能保存为带 ``+08:00`` 的时间；
+    两者先统一到项目本地时区，再进行比较，避免 naive/aware 混用导致列表接口 500。
+    解析不了的不动（宁留勿误删）。仅过去超过宽限期才算过期，避开正在触发的那一下。
+    """
     c = cron or ""
     if not c.startswith("@once:"):
         return False
@@ -45,7 +49,15 @@ def _once_expired(cron: str, now_naive: datetime) -> bool:
         when = datetime.fromisoformat(c[6:])
     except Exception:
         return False
-    return when < now_naive - _ONCE_GC_GRACE
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=LOCAL_TZ)
+    else:
+        when = when.astimezone(LOCAL_TZ)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=LOCAL_TZ)
+    else:
+        now = now.astimezone(LOCAL_TZ)
+    return when < now - _ONCE_GC_GRACE
 
 
 async def _notify_tasks_changed(user_ids) -> None:
@@ -73,8 +85,8 @@ async def reconcile() -> None:
         all_tasks = (await db.execute(select(ScheduledTask))).scalars().all()
         # GC 过期的一次性任务：一次性任务过点就「用完了」——正常触发的已被 execute_task 即时删，
         # 这里兜底清理漏网的（misfire 没触发、被停用、或残留），否则它们永远僵在面板里。
-        now_naive = local_now().replace(tzinfo=None)
-        gc = [t for t in all_tasks if _once_expired(t.cron, now_naive)]
+        now = local_now()
+        gc = [t for t in all_tasks if _once_expired(t.cron, now)]
         gc_ids = {t.id for t in gc}
         if gc:
             gc_uids = {t.user_id for t in gc}

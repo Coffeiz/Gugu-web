@@ -669,8 +669,13 @@
             </button>
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>提供方 provider</span><span class="behavior-desc">百炼填 <code>bailian</code>；Ollama/OpenAI 可留空</span></div>
-            <input type="text" class="behavior-input" style="width:280px" v-model="embeddingDraft.provider" placeholder="bailian" />
+            <div class="behavior-label"><span>提供方 provider</span><span class="behavior-desc">选择服务商；通用兼容用于其他 OpenAI 兼容端点</span></div>
+            <select class="behavior-input" style="width:280px" v-model="embeddingDraft.provider">
+              <option value="bailian">百炼（Bailian）</option>
+              <option value="openai">OpenAI</option>
+              <option value="ollama">Ollama</option>
+              <option value="">通用 OpenAI 兼容</option>
+            </select>
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc">百炼填 <code>text-embedding-v4</code>；Ollama 填 <code>qwen3-embedding:0.6b</code></span></div>
@@ -1665,6 +1670,7 @@ async function testEmbedding() {
       method: 'POST',
       body: JSON.stringify({
         provider:   embeddingDraft.provider || '',
+        multimodal: !!embeddingDraft.multimodal,
         base_url:   embeddingDraft.base_url || '',   // 留空=用已存配置
         api_key:    embeddingDraft.api_key || '',
         model:      embeddingDraft.model || '',

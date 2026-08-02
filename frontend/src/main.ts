@@ -7,12 +7,15 @@ import ArcoVue from '@arco-design/web-vue'
 import ArcoVueIcon from '@arco-design/web-vue/es/icon'
 import '@arco-design/web-vue/dist/arco.css'
 import '@/assets/styles/global.css'
+import { setupInteractionRuntime } from '@/interaction/runtime/setup'
 
 import App from './App.vue'
 import router from './router'
 import DatePicker from '@/components/common/DatePicker.vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import { installEnterDirective } from '@/directives/enter'
+
+setupInteractionRuntime()
 
 const app = createApp(App)
 

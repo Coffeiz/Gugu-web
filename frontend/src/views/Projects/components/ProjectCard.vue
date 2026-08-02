@@ -1,10 +1,11 @@
 <template>
-  <div v-bind="attrs"
+  <div ref="cardRef" v-bind="attrs"
     class="proj-card hover-card-fx"
     :data-project-id="project.id"
+    :data-card="String(project.id)"
     :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
     :class="{ 'file-drag-over': fileDragOver }"
-    @pointerdown="onPointerDown"
+    @click="emit('click')"
     @dragenter.prevent="onFileDragEnter"
     @dragover.prevent="onFileDragOver"
     @dragleave="onFileDragLeave"
@@ -14,7 +15,7 @@
       <div class="card-top">
         <div class="proj-name" :style="{ color: nameColor }">{{ project.name }}</div>
         <!-- 星级优先级 -->
-        <div class="stars" @click.stop @mousedown.stop>
+        <div class="stars" @click.stop @mousedown.stop @pointerdown.stop>
           <button
             v-for="n in 3"
             :key="n"
@@ -49,6 +50,7 @@
           :title="currentStageLabel"
           @click.stop="openStagePop"
           @mousedown.stop
+          @pointerdown.stop
         >
           <span class="ps-label">{{ currentStageLabel || '阶段' }}</span>
           <span v-if="curTodoTotal" class="ps-count">{{ curDoneCount }}/{{ curTodoTotal }}</span>
@@ -84,7 +86,7 @@
         </div>
       </div>
 
-      <div class="seg-bar-wrap" @click.stop @mousedown.stop>
+      <div class="seg-bar-wrap" @click.stop @mousedown.stop @pointerdown.stop>
         <SegBar :project="project" />
       </div>
     </div>
@@ -115,13 +117,13 @@
       class="card-advance"
       :title="advanceLabel"
       @click.stop="advance"
+      @pointerdown.stop
     >
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="9 18 15 12 9 6"/>
       </svg>
     </button>
-  </div>
-
+    <span v-else class="card-advance card-advance-placeholder" aria-hidden="true"></span>
   <!-- 当前阶段待办弹层（点击阶段名弹出） -->
   <Teleport to="body">
     <div v-if="stagePopOpen" class="todo-pop" :style="stagePopStyle" ref="stagePopRef" @click.stop @mousedown.stop>
@@ -161,6 +163,7 @@
       <button class="tp-add" @click="addTodo">＋ 添加待办</button>
     </div>
   </Teleport>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -168,14 +171,13 @@ import { computed, ref, nextTick, onUnmounted, useAttrs, type PropType } from 'v
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { startPhysicsDrag, startThresholdDrag, type PhysicsDropContext } from '@/composables/usePhysicsDrag'
+import { useObject } from '@/interaction/runtime'
 import { fireHint } from '@/composables/useOnboarding'
 import { errorMessage, showAppError } from '@/composables/useAppToast'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
 import { cloneProjectStages, firstIncompleteStageIdx, projectTodoProgress } from '@/utils/projectStages'
-import { resolveProjectDropStatus } from '@/utils/projectDrop'
 import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 
 defineOptions({ inheritAttrs: false })
@@ -187,52 +189,16 @@ const props = defineProps({
 const emit = defineEmits(['click'])
 
 const projectStore = useProjectStore()
+const { elementRef: cardRef } = useObject({
+  id: String(props.project.id),
+  type: 'project-card',
+  surface: () => props.project.status,
+  // 项目看板当前按业务字段排序，Runtime 只负责跨 Surface 移动；同列自由排序尚未持久化。
+  abilities: ['move'],
+})
 const projectRef = computed(() => props.project)
 const { currentStageLabel, curTodoTotal, curDoneCount, stageProgress, nameColor, isUrgent, fmtDate, deadlineLabel } = useProjectCardBasics(projectRef)
 
-function isCardControl(target: EventTarget | null) {
-  return !!(target as HTMLElement | null)?.closest('.stars, .proj-stage, .seg-bar-wrap, .card-advance, button, input, textarea, select, a')
-}
-
-function dispatchDrop(
-  _cloneCenter: { x: number; y: number },
-  _cloneVelocity: { x: number; y: number },
-  _cloneSize: { w: number; h: number },
-  context?: PhysicsDropContext,
-) {
-  if (!context) return
-  // 状态落列不再依赖克隆命中位置：飞行克隆会滞后，落地中重抓时也不对应本次手势。
-  // DOM 这里只把当前看板列投影成横向区间，真正判定收在可测试的纯函数里。
-  const columns = Array.from(document.querySelectorAll<HTMLElement>('[data-col-status]')).map((column) => {
-    const rect = column.getBoundingClientRect()
-    return { status: column.getAttribute('data-col-status') ?? '', left: rect.left, right: rect.right }
-  }).filter((column) => column.status)
-  const status = resolveProjectDropStatus(columns, {
-    pointerX: context.pointer.x,
-    pointerVelocityX: context.pointerVelocity.x,
-    isLandingRegrab: context.isLandingRegrab,
-  })
-  // 落地中重抓的回调来自首次抓起的物理 holder；项目跨列后那个 Vue 实例的 props 是旧快照
-  // （看板为排序/文件数投影会创建项目副本），不能用 props.project.status 判断是否同列。
-  const currentStatus = projectStore.projects.find((project) => project.id === props.project.id)?.status
-  if (status && status !== currentStatus) projectStore.moveProject(props.project.id, status)
-}
-
-// pointer 驱动拖拽（替代原生 HTML5 drag）：先攒位移，越过阈值才真正开拖——否则当成点击开项目。
-// 内部控件（星级 / 阶段 / 进度条）自己处理点击，不在这里起拖。阈值判定本身收在
-// usePhysicsDrag.ts 的 startThresholdDrag（跟 useFileDragDrop.ts 共用同一份，不再各写一遍）。
-function onPointerDown(e: PointerEvent) {
-  startThresholdDrag(e, {
-    exclude: isCardControl,
-    // 落地飞行动画不再单独定制——跟画布卡片（Mind canvas 的 useCardDrag.ts）用同一套默认
-    // 缓出曲线，之前试过给项目卡单独做一版"甩出去带惯性"的落地动画（先后试了 Hermite 曲线、
-    // 弹簧模型），来回调了几轮手感始终不理想，弃用退回默认。
-    onDragStart: (ev, card) => startPhysicsDrag(ev, card, {
-      pointer: true, skipAbsorb: true, onDrop: dispatchDrop,
-    }),
-    onClick: () => emit('click'),   // 没拖动 = 点击 → 开项目
-  })
-}
 const cacheStore   = useFilesCacheStore()
 
 const _colorRgb = computed(() => {
@@ -655,6 +621,14 @@ async function setPriority(n: number) {
   color: var(--text-primary);
 }
 .card-advance:active { background: rgba(0,0,0,0.1); }
+.card-advance-placeholder {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  border-left-color: transparent;
+  pointer-events: none;
+}
 
 /* 全局搜索命中 → 跳转本页后高亮闪一下定位（class 由 Projects 面板 JS 动态加） */
 .proj-card.search-flash { animation: proj-search-flash 1.8s ease forwards; }

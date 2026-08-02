@@ -1,0 +1,406 @@
+import { LandingState } from './landing'
+import { morphTransform, type MorphBox } from './morph'
+import { trackLandingCamera } from './camera'
+import { revealWithoutStaleHover } from '../visual/reveal'
+import type { CardVisualController } from '../visual/CardVisualController'
+import { installLandingHandoff } from '../interaction/handoff'
+import { startThresholdDrag } from '../interaction/threshold'
+import type { DragSession } from '../core/DragSession'
+import { createCardMotionController } from './cardMotionController'
+import { springParamsFromResponse, dragPhysicsTuning } from '../physicsTuning'
+
+export interface MorphLifecycleOptions {
+  initialBox: MorphBox
+  holder: HTMLElement
+  clone: HTMLElement
+  clone2: HTMLElement
+  revealEl: HTMLElement
+  sourceEl: HTMLElement
+  connectionDotManager?: HTMLElement
+  restoreConnectionDot?: () => void
+  cardActionOverlay?: HTMLElement
+  pointer: boolean
+  pointerPosition: { x: number; y: number }
+  dropSize: { w: number; h: number }
+  half: { x: number; y: number }
+  easing: string
+  trackCanvasCamera: boolean
+  contentScale?: () => number
+  hidePrimaryVisual: boolean
+  revealElConnectable: boolean
+  session: DragSession
+  visualController?: Pick<CardVisualController, 'reveal'>
+  registerCleanup: (target: HTMLElement, cleanup: () => void) => () => void
+  setRetarget: (target: HTMLElement, retarget: (box: MorphBox) => void) => void
+  clearRetarget: (target: HTMLElement, retarget: (box: MorphBox) => void) => void
+  onRegrab: (event: PointerEvent, visualRect: DOMRect) => void
+  onReveal?: () => void
+  finishSession: () => void
+  trackTargetLayout?: boolean
+  measureTargetLayout?: () => MorphBox
+  /** legacy clone2 可选的连续物理落地；默认仍走原有 CSS morph。 */
+  useSpringLanding?: boolean
+  initialVelocity?: { x: number; y: number }
+}
+
+/** 双克隆落地的完整生命周期；业务目标和接力动作通过回调注入。 */
+export function startMorphLifecycle(options: MorphLifecycleOptions): void {
+  let box = options.initialBox
+  const landing = new LandingState()
+  landing.begin()
+  let landingHovered = false
+  let camGlue: HTMLElement | null = null
+  let finishTimer: ReturnType<typeof setTimeout> | null = null
+  let unregister: () => void = () => undefined
+  let onEnd: (event: TransitionEvent) => void = () => undefined
+  let targetResizeObserver: ResizeObserver | null = null
+  let hasRetargeted = false
+
+  const syncHover = (hovering: boolean) => {
+    landingHovered = hovering
+    options.connectionDotManager?.classList.toggle('hovering', options.revealElConnectable && hovering)
+    if (options.cardActionOverlay) options.cardActionOverlay.style.opacity = hovering ? '1' : '0'
+  }
+  const isOverCard = (x: number, y: number) => {
+    const rect = options.holder.getBoundingClientRect()
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+  }
+  // 跟 main 分支一致：克隆飞行期间只用这一份 landingHovered（按 holder 命中判定），
+  // 不额外给 clone2 自己判一份"是不是压在 revealEl 上"的 hover——本体的 hover
+  // 判定和抬起动画只在 finish()/forceCleanup() 里、克隆动画播完之后才发生一次，
+  // 用的就是这里持续更新的 landingHovered，不是飞行途中现测的瞬时值。
+  const onPointerMove = (event: MouseEvent | PointerEvent) => syncHover(isOverCard(event.clientX, event.clientY))
+
+  const cleanupHandoff = installLandingHandoff({
+    enabled: options.pointer,
+    holder: options.holder,
+    clone: options.clone2,
+    target: options.revealEl,
+    isActive: () => !landing.isDone() && options.session.isCurrent(),
+    startThreshold: startThresholdDrag,
+    onRegrab: options.onRegrab,
+  })
+  // 初始调用：只记录落地时的 hover 状态给后面 revealWithoutStaleHover 用，不动
+  // connectionDotManager 的 hovering 类——它在创建时已从源卡继承正确的初始状态
+  //（startsHovered），这里如果根据 release 瞬间的 isOverCard 重新 toggle，连接点
+  // 会先因 holder 坐标微小偏差被摘掉 hovering 类再恢复，在 0.15s transition 窗口内
+  // 表现为瞬间消失再淡入。
+  landingHovered = options.connectionDotManager?.classList.contains('hovering') ?? false
+  document.addEventListener('mousemove', onPointerMove)
+  if (options.pointer) document.addEventListener('pointermove', onPointerMove)
+  if (options.connectionDotManager) {
+    options.holder.style.zIndex = String((Number(options.holder.style.zIndex) || 0) + 1)
+  }
+
+  const transformFor = (targetBox: MorphBox) => morphTransform(targetBox, options.dropSize, options.half)
+  const applyTransform = () => {
+    const transform = transformFor(box)
+    options.holder.style.transform = transform
+    options.clone2.style.transform = transform
+  }
+
+  if (options.trackCanvasCamera && options.contentScale) {
+    camGlue = document.createElement('div')
+    Object.assign(camGlue.style, {
+      position: 'fixed', left: '0', top: '0', right: '0', bottom: '0',
+      transition: 'none', transform: 'translate3d(0,0,0)', pointerEvents: 'none',
+      zIndex: options.holder.style.zIndex,
+    })
+    document.body.appendChild(camGlue)
+    camGlue.appendChild(options.holder)
+    camGlue.appendChild(options.clone2)
+    camGlue.style.transformOrigin = `${options.initialBox.left}px ${options.initialBox.top}px`
+    trackLandingCamera({
+      revealEl: options.revealEl,
+      camGlue,
+      origin: options.initialBox,
+      isActive: () => !landing.isDone() && options.session.isCurrent(),
+    })
+  }
+
+  const cloneInner = options.clone
+  const clone2Inner = options.clone2.querySelector<HTMLElement>('.phys-landing-content')
+  const transition = `transform 0.55s ${options.easing}`
+  // 两个代理内容层必须同时参与交接：旧层保持 grabbing 的玻璃态，新层先以同一玻璃态
+  // 创建，再过渡到目标本体的背景、模糊、边框和阴影。只过渡 opacity 会让 landing
+  // 在松手瞬间直接变成不透明卡片。
+  const fadeTransition = [
+    'opacity 0.42s ease',
+    'background 0.42s ease',
+    'backdrop-filter 0.42s ease',
+    '-webkit-backdrop-filter 0.42s ease',
+    'border-color 0.42s ease',
+    'box-shadow 0.55s ease',
+  ].join(', ')
+  const dragShadow = options.hidePrimaryVisual ? getComputedStyle(cloneInner).boxShadow : ''
+  const landingShadow = options.hidePrimaryVisual && clone2Inner ? getComputedStyle(clone2Inner).boxShadow : ''
+  cloneInner.style.transition = fadeTransition
+  if (clone2Inner) clone2Inner.style.transition = fadeTransition
+  // 提交 clone2 的初始布局（opacity:0，与 holder 重叠），确保浏览器在 opacity 变为
+  // 1 之前先渲染出初始态——否则浏览器可能把创建和 opacity 设置合并到同一帧，导致
+  // clone2 从未以透明状态出现过，落地克隆瞬间取代拖拽克隆，阴影切换没有过渡感。
+  // 和 main 分支（usePhysicsDrag.ts:1050）一致。
+  options.clone2.getBoundingClientRect()
+  // clone2（holder2）创建时 opacity:0，必须同步设为 1——否则 clone2Inner 即使
+  // opacity:1 也会因父元素 opacity:0 而不可见，导致松手瞬间两张克隆都透明。
+  // 此时 transition 还是创建时的 'none'，所以 opacity 0→1 是瞬间的，和 main 分支一致。
+  options.clone2.style.opacity = '1'
+  cloneInner.style.opacity = options.hidePrimaryVisual ? '0' : '1'
+  if (clone2Inner) clone2Inner.style.opacity = options.hidePrimaryVisual ? '1' : '0'
+  if (options.hidePrimaryVisual) {
+    options.holder.style.opacity = '0'
+    if (clone2Inner) {
+      clone2Inner.style.transition = 'none'
+      clone2Inner.style.boxShadow = dragShadow
+    }
+    void options.clone2.offsetWidth
+  }
+  if (options.hidePrimaryVisual && clone2Inner && dragShadow !== landingShadow) {
+    // 落地克隆开始飞行前先继承拖拽强阴影，避免松手瞬间「强阴影→弱阴影」的突变
+    const savedTrans = clone2Inner.style.transition
+    clone2Inner.style.transition = 'none'
+    clone2Inner.style.boxShadow = dragShadow
+    void options.clone2.offsetWidth
+    clone2Inner.style.transition = savedTrans
+  }
+  // 目标框几乎没动就不算一次改向：ResizeObserver.observe() 注册瞬间会对每个被观察元素
+  // 上报一次「初始尺寸」（规范行为，不代表真的发生了 resize），目标卡 + 全祖先链一起注册
+  // 会在飞行启动的同一帧收到一整批这种噪音回调；抽屉高度过渡的多数帧里目标卡自身也并
+  // 没有位移。不过滤的话，初始批次会把 hasRetargeted 白白烧掉（唯一一次平滑改向被噪音
+  // 消耗），后续无位移帧还会反复打断飞行。
+  const sameBox = (a: MorphBox, b: MorphBox) =>
+    Math.abs(a.left - b.left) < 0.5 && Math.abs(a.top - b.top) < 0.5 &&
+    Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5
+
+  // 冻结当前视觉位置 → 下一帧朝 box 重启一段平滑过渡。settle=true 用在连续跟踪收尾的
+  // 那次改向：目标只在附近挪了一小段，用短过渡快速贴上去，不把整段飞行拖太长。
+  const redirectToBox = (settle: boolean) => {
+    const rect = options.clone2.getBoundingClientRect()
+    const frozen = morphTransform({ left: rect.left, top: rect.top, width: rect.width, height: rect.height }, options.dropSize, options.half)
+    options.holder.style.transition = 'none'
+    options.clone2.style.transition = 'none'
+    options.holder.style.transform = frozen
+    options.clone2.style.transform = frozen
+    requestAnimationFrame(() => {
+      if (landing.isDone() || !options.session.isCurrent()) return
+      const t = settle ? `transform 0.25s ${options.easing}` : transition
+      options.holder.style.transition = t
+      options.clone2.style.transition = t
+      applyTransform()
+      armFinishTimer()
+    })
+  }
+
+  const retarget = (newBox: MorphBox) => {
+    if (landing.isDone()) return
+    if (sameBox(box, newBox)) return
+    // 退化 box（宽或高为 0）说明这次测量测到的是还没揭示的隐藏节点（display:none 时
+    // getBoundingClientRect 恒为零矩形），不是真实落点——多半是另一张卡片的兄弟 FLIP
+    // 顺手重新measure 了本卡片仍处于隐藏状态的真实 DOM 节点。照单全收会把飞行克隆的
+    // 目标瞬间改写成 (0,0,0,0)，视觉上就是克隆猛地缩没/瞬移。丢弃这次改向，等下一次
+    // 带着真实矩形的 retarget 调用来纠正。
+    if (newBox.width === 0 || newBox.height === 0) return
+    const continuous = options.trackTargetLayout === true && hasRetargeted
+    hasRetargeted = true
+    box = newBox
+    if (continuous) {
+      // 抽屉高度过渡期间目标每帧都在挪：不冻结、不关 transition，直接把新目标写给正在跑的
+      // 过渡——CSS transition 的目标被改写时会从当前插值位置平滑转向新目标，缓动前段斜率
+      // 大，跟得上每帧几像素的小位移，克隆看起来就是一路追着展开中的落点飞（此前试过"只
+      // 记录目标、尾随防抖后再一次改向"：展开期间每帧变化都在重置防抖，settle 直到展开
+      // 彻底结束才触发，克隆全程朝旧目标飞、最后补一次可见的跳跃修正，观感就是"先飞向
+      // 原本的落点"）。这里显式重设 transition：若恰逢上一次冻结-重启的间隙（transition
+      // 还是 none），直接写目标 transform 会变成瞬移。
+      options.holder.style.transition = transition
+      options.clone2.style.transition = transition
+      applyTransform()
+      // 突发结束后仍补一次 0.25s 短过渡精确贴合：连续改写目标的过渡不会自然收敛出
+      // transitionend（每次改写都在重启），靠这次 settle 收尾并重新武装 finish 计时。
+      if (landing.isDone() || !options.session.isCurrent()) return
+      redirectToBox(true)
+      return
+    }
+    if (options.trackTargetLayout) {
+      // 抽屉展开时的首次改向不能先用 morphTransform 冻结当前矩形：该字符串只包含
+      // 位移/缩放，不包含拖拽中的 rotateZ 摆动，会把 clone2 的左右摆动瞬间清零。
+      // 直接从当前视觉 transform 过渡到新目标，保留旋转、阴影和尺寸的连续性。
+      options.holder.style.transition = transition
+      options.clone2.style.transition = transition
+      applyTransform()
+      armFinishTimer()
+      return
+    }
+    redirectToBox(false)
+  }
+  options.setRetarget(options.revealEl, retarget)
+  if (options.trackTargetLayout && typeof ResizeObserver !== 'undefined') {
+    targetResizeObserver = new ResizeObserver(() => {
+      if (landing.isDone() || !options.session.isCurrent()) return
+      const targetRect = options.measureTargetLayout?.() ?? options.revealEl.getBoundingClientRect()
+      retarget(targetRect)
+    })
+    targetResizeObserver.observe(options.revealEl)
+    let ancestor = options.revealEl.parentElement
+    while (ancestor && ancestor !== document.body) {
+      targetResizeObserver.observe(ancestor)
+      ancestor = ancestor.parentElement
+    }
+  }
+
+  const armFinishTimer = () => {
+    if (finishTimer) clearTimeout(finishTimer)
+    finishTimer = setTimeout(finish, 700)
+  }
+  const finish = () => {
+    if (landing.isDone()) return
+    landing.finish()
+    if (finishTimer) clearTimeout(finishTimer)
+    cleanupHandoff()
+    targetResizeObserver?.disconnect()
+    targetResizeObserver = null
+    document.removeEventListener('mousemove', onPointerMove)
+    if (options.pointer) document.removeEventListener('pointermove', onPointerMove)
+    options.clone2.removeEventListener('transitionend', onEnd)
+    options.clearRetarget(options.revealEl, retarget)
+    unregister()
+    options.clone2.style.willChange = 'auto'
+    // transformFor(box) 已经包含从 dropSize 到目标尺寸的唯一一次缩放；收尾不能
+    // 再把内容宽高改成目标尺寸，否则会叠加 scale，揭示本体时出现快速尺寸/位置校正。
+    options.clone2.style.width = options.dropSize.w + 'px'
+    options.clone2.style.height = options.dropSize.h + 'px'
+    options.clone2.style.transform = transformFor(box)
+    requestAnimationFrame(() => {
+      if (!options.session.isCurrent()) return
+      options.holder.remove()
+      options.clone2.remove()
+      camGlue?.remove()
+      options.restoreConnectionDot?.()
+      options.onReveal?.()
+      const reveal = options.visualController?.reveal ?? revealWithoutStaleHover
+      reveal(options.revealEl, options.pointer, undefined, landingHovered, () => options.session.isCurrent())
+      options.finishSession()
+    })
+  }
+  const forceCleanup = () => {
+    if (landing.isDone()) return
+    landing.cancel()
+    if (finishTimer) clearTimeout(finishTimer)
+    cleanupHandoff()
+    targetResizeObserver?.disconnect()
+    targetResizeObserver = null
+    document.removeEventListener('mousemove', onPointerMove)
+    if (options.pointer) document.removeEventListener('pointermove', onPointerMove)
+    options.clone2.removeEventListener('transitionend', onEnd)
+    options.clearRetarget(options.revealEl, retarget)
+    options.holder.remove()
+    options.clone2.remove()
+    camGlue?.remove()
+    // 重抓接力时新 session 会立即接管本体和视觉状态。旧 session 只清理自己的
+    // 飞行副本，不要同步揭示本体或触发 mouseenter；否则 forceCleanup 与新拖拽
+    // 的测量/建克隆会在同一帧串行触发布局，造成可见顿挫。
+    if (options.session.isHandoffRequested()) {
+      return
+    }
+    options.restoreConnectionDot?.()
+    options.revealEl.classList.add('phys-reveal-snap')
+    options.onReveal?.()
+    void options.revealEl.offsetWidth
+    options.revealEl.classList.remove('phys-reveal-snap')
+    const reveal = options.visualController?.reveal ?? revealWithoutStaleHover
+    reveal(options.revealEl, options.pointer, undefined, landingHovered, () => options.session.isCurrent())
+    options.finishSession()
+  }
+  unregister = options.registerCleanup(options.revealEl, forceCleanup)
+  onEnd = event => {
+    if (event.target === options.clone2 && event.propertyName === 'transform') finish()
+  }
+  options.clone2.addEventListener('transitionend', onEnd)
+  requestAnimationFrame(() => {
+    if (landing.isDone() || !options.session.isCurrent()) return
+    // clone2 继承拖拽最后一帧的姿态，但姿态不能冻结到落地结束；单代理路径的
+    // CardMotionController 会在 settle 阶段让 rotateX/rotateZ 衰减到 0，legacy
+    // 路径用同一时长的独立 attitude 层完成等价的恢复。它不参与 morph 的尺寸计算。
+    // 交叉淡变期间 holder（旧拖拽视觉）和 clone2（落地视觉）会同时可见。
+    // 两层必须使用同一份姿态收束，否则旧 holder 仍保留最后一帧旋转，而
+    // clone2 已经回正，松手瞬间会看到两张角度不同的卡片。
+    const attitudeTransition = `transform 0.55s ${options.easing}`
+    const attitudeLayers = [
+      options.holder.querySelector<HTMLElement>('.phys-drag-attitude'),
+      options.clone2.querySelector<HTMLElement>('.phys-landing-attitude'),
+    ]
+    attitudeLayers.forEach(layer => {
+      if (!layer || layer.style.transform === 'none') return
+      layer.style.transition = attitudeTransition
+      void layer.offsetWidth
+      layer.style.transform = 'none'
+    })
+    if (clone2Inner?.classList.contains('phys-drag-clone')) {
+      // createLandingClone 与 cloneForDrag 使用同一个内容层类。先提交玻璃起始态，跨过一帧
+      // 后摘类，浏览器才会把目标本体样式视为同一元素上的过渡终点。
+      // hidePrimaryVisual 分支为了同步阴影会暂时关闭 transition；这里在摘类前统一恢复
+      // 玻璃态到目标态的过渡，确保普通与弹簧落地路径使用同一条视觉交接链路。
+      clone2Inner.style.transition = fadeTransition
+      void clone2Inner.offsetWidth
+      clone2Inner.classList.remove('phys-drag-clone')
+      if (!options.hidePrimaryVisual) {
+        void clone2Inner.offsetWidth
+        clone2Inner.style.opacity = '1'
+        cloneInner.style.opacity = '0'
+      }
+    }
+    if (options.useSpringLanding) {
+      const current = options.holder.getBoundingClientRect()
+      const params = springParamsFromResponse(dragPhysicsTuning.landing)
+      const controller = createCardMotionController({
+        mode: 'settle',
+        onFrame: frame => {
+          const frameBox: MorphBox = {
+            left: frame.x,
+            top: frame.y,
+            width: options.dropSize.w * frame.scaleX,
+            height: options.dropSize.h * frame.scaleY,
+          }
+          const transform = morphTransform(frameBox, options.dropSize, options.half)
+          options.holder.style.transition = 'none'
+          options.clone2.style.transition = 'none'
+          options.holder.style.transform = transform
+          options.clone2.style.transform = transform
+        },
+        onArrived: finish,
+      })
+      // CardMotionControllerOptions 不再接受构造时的 profile 字段（配置弹簧只能
+      // 通过 setProfile()）——这里原来直接把 { position, scale } 塞进构造选项，
+      // TS 早就该报错但当时接口还有这个字段；接口收紧之后这里变成传了个多余字段，
+      // 运行时静默忽略，实际弹簧一直用的是控制器内部默认的 420/30，调参面板"落地
+      // 阶段"两个滑块因此看起来毫无效果（表现为"改了参数抛出的物理效果还是不对"）。
+      controller.setProfile({ position: params, scale: params })
+      controller.seed({
+        x: current.left,
+        y: current.top,
+        vx: options.initialVelocity?.x ?? 0,
+        vy: options.initialVelocity?.y ?? 0,
+        scaleX: current.width / Math.max(1, options.dropSize.w),
+        scaleY: current.height / Math.max(1, options.dropSize.h),
+        scaleVX: 0,
+        scaleVY: 0,
+      })
+      controller.setTarget({
+        x: box.left,
+        y: box.top,
+        scaleX: box.width / Math.max(1, options.dropSize.w),
+        scaleY: box.height / Math.max(1, options.dropSize.h),
+      })
+      controller.start()
+      unregister = options.registerCleanup(options.revealEl, () => controller.stop())
+      return
+    }
+    options.holder.style.transition = transition
+    options.clone2.style.transition = transition
+    if (options.hidePrimaryVisual && clone2Inner && dragShadow !== landingShadow) {
+      clone2Inner.style.transition = fadeTransition
+      clone2Inner.style.boxShadow = landingShadow
+    }
+    applyTransform()
+    armFinishTimer()
+  })
+}

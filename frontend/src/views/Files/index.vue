@@ -186,7 +186,9 @@
             <div class="list-row trash-folder-row" :data-trash-folder-id="`trash:${folder.id}`" :class="{ expanded: expandedTrashFolders.has(folder.id), selected: selectedTrashFolderIds.has(folder.id), 'pre-selected': previewFolderKeys.has(`trash:${folder.id}`) }" @click.stop="handleTrashFolderClick(folder, $event)">
               <span class="lr-name-cell">
                 <button class="trash-expand-btn" :title="expandedTrashFolders.has(folder.id) ? '收起内容' : '查看内容'" @click.stop="toggleTrashFolder(folder)">
-                  <span :class="{ rotated: expandedTrashFolders.has(folder.id) }">›</span>
+                  <svg :class="{ rotated: expandedTrashFolders.has(folder.id) }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <path d="M2 3.5l3 3 3-3"/>
+                  </svg>
                 </button>
                 <PhFolder class="lr-folder-icon" :size="16" weight="fill" />
                 <span class="lr-filename" :title="folder.name">{{ folder.name }}</span>
@@ -1964,7 +1966,7 @@ async function ctxPaste() {
   ctx.value.visible = false
   const folderId = currentFolderId()
   const seg = currentSeg.value
-  const projectId = seg?.type === 'project' ? seg.id : (seg?.projectId ?? null)
+  const projectId = seg?.type === 'project' ? (seg.id ?? null) : (seg?.projectId ?? null)
   try {
     if (cbStore.type === 'cut') {
       // 剪切板同时可能带文件和文件夹（selCut/ctxCutFolder 都会填 folderIds）；此前这里只处理了
@@ -2578,11 +2580,12 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 .trash-restore-btn:hover { background: rgba(123,127,178,0.15); }
 .trash-expand-btn {
+  display: inline-flex; align-items: center; justify-content: center;
   width: 18px; height: 18px; padding: 0; border: 0; background: transparent;
-  color: var(--text-secondary); cursor: pointer; font-size: 18px; line-height: 16px;
+  color: var(--text-secondary); cursor: pointer;
 }
-.trash-expand-btn span { display: inline-block; transition: transform .18s ease; }
-.trash-expand-btn .rotated { transform: rotate(90deg); }
+.trash-expand-btn svg { transform: rotate(-90deg); transition: transform .18s ease; }
+.trash-expand-btn svg.rotated { transform: rotate(0deg); }
 .trash-folder-contents { margin: -3px 0 5px 34px; padding: 4px 0 5px 14px; border-left: 1px solid rgba(130,135,170,.22); }
 .trash-child-row { display: flex; align-items: center; gap: 7px; min-height: 28px; color: var(--text-secondary); font-size: 11px; }
 .trash-child-row svg { color: var(--color-primary); flex: 0 0 auto; }

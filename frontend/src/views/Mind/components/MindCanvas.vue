@@ -2,6 +2,7 @@
   <div ref="viewportRef" class="mind-canvas" :style="bgStyle" @pointerdown="onViewportPointerDown" @wheel.prevent="onWheelZoom">
     <div class="canvas-world" :style="worldStyle">
       <RelationLayer
+        :key="canvasKey ?? 'none'"
         :items="relationItems" :relations="visibleRelations" :highlight-node-id="connectionDrag.originNodeId"
         :draft="connectionDrag.active ? { from: connectionDrag.from, to: connectionDrag.to, fromSide: connectionDrag.originSide, toSide: connectionDrag.targetSide } : null"
         :landing-positions="landingPositions" :measured-sizes="measuredSizes" :relation-anchors="relationAnchors"
@@ -62,6 +63,7 @@ const props = defineProps({
   items: { type: Array as PropType<MindCanvasItem[]>, required: true },
   relations: { type: Array as PropType<MindRelation[]>, required: true },
   relationAnchors: { type: Object as PropType<Record<string, RelationAnchorSides>>, default: () => ({}) },
+  canvasKey: { type: Number as PropType<number | null>, default: null },
 })
 const emit = defineEmits<{
   (e: 'remove', item: MindCanvasItem): void

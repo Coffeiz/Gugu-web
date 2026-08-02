@@ -8,7 +8,7 @@
         </button>
       </div>
 
-      <div class="ap-body">
+      <div ref="layoutRoot" class="ap-body">
         <!-- 只有真·首次（还没任何缓存数据）才显示加载态；已有数据后台静默刷新不再闪这个 -->
         <div v-if="projectStore.archivedLoading && !projectStore.archivedLoaded" class="ap-empty">加载中…</div>
         <div v-else-if="!projectStore.archivedProjects.length" class="ap-empty">暂无已归档项目</div>
@@ -28,7 +28,7 @@
               <span class="year-cnt">{{ yg.total }}</span>
             </button>
 
-            <div v-if="openYears.has(yg.year)" class="year-body">
+            <div class="year-body" data-layout-content :data-layout-key="`year-${yg.year}`" :data-layout-open="openYears.has(yg.year) ? 'true' : 'false'">
               <div v-for="mg in yg.months" :key="mg.month" class="month-group">
                 <button class="month-row" @click="toggleMonth(yg.year + mg.month)">
                   <PhFolderOpen v-if="openMonths.has(yg.year + mg.month)" :size="13" weight="fill" style="color:var(--color-primary); opacity:0.85; flex-shrink:0" />
@@ -44,7 +44,7 @@
                   </svg>
                 </button>
 
-                <div v-if="openMonths.has(yg.year + mg.month)" class="ap-list">
+                <div class="ap-list" data-layout-content :data-layout-key="yg.year + mg.month" :data-layout-open="openMonths.has(yg.year + mg.month) ? 'true' : 'false'">
                   <div v-for="p in mg.items" :key="p.id" class="ap-row">
                     <span class="ap-dot" :style="{ background: p.color }"></span>
                     <div class="ap-info">
@@ -66,17 +66,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { PhX, PhFolder, PhFolderOpen } from '@phosphor-icons/vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import { runtime } from '@/interaction/runtime'
 import { useProjectStore } from '@/stores/projects'
 import type { Project } from '@/types/project'
 
-defineProps({ show: { type: Boolean, default: false } })
+const props = defineProps({ show: { type: Boolean, default: false } })
 const emit = defineEmits(['close'])
 
 const projectStore = useProjectStore()
 const restoringId = ref<number | null>(null)
+const layoutRoot = ref<HTMLElement | null>(null)
 
 const STATUS_LABELS: Record<string, string> = { pending: '待开始', active: '进行中', done: '已完成' }
 function statusLabel(status: string) { return STATUS_LABELS[status] ?? status }
@@ -84,6 +86,13 @@ function statusLabel(status: string) { return STATUS_LABELS[status] ?? status }
 // 没有专门的「归档时间」字段，用 updatedAt（归档这个 PATCH 本身会刷新它）当分组依据
 const openYears  = ref(new Set<string>())
 const openMonths = ref(new Set<string>())
+const defaultsInitialized = ref(false)
+
+// BaseModal 的 slot 会在关闭过渡期间卸载；先由 Runtime 取消该根节点下的
+// RAF/FLIP/height 动画，避免关闭归档弹窗后旧回调在下一次拖拽时补写样式。
+watch(() => props.show, show => {
+  if (!show && layoutRoot.value) runtime.cancelLayoutAnimations(layoutRoot.value)
+})
 
 const groupedByYear = computed(() => {
   const yearMap = new Map<string, Map<string, Project[]>>()
@@ -106,23 +115,54 @@ const groupedByYear = computed(() => {
         .sort(([a], [b]) => b.localeCompare(a))
         .map(([month, items]) => ({ month, items })),
     }))
-  // 默认展开最新一年的最新一月，别的都收着，别一上来一大坨
-  if (years.length && openYears.value.size === 0) {
-    openYears.value = new Set([years[0].year])
-    if (years[0].months.length) openMonths.value = new Set([years[0].year + years[0].months[0].month])
-  }
   return years
 })
 
-function toggleYear(y: string) {
+// 默认状态只能初始化一次，不能放在 groupedByYear computed 内；否则用户把
+// 最后一个年组收起后，computed 再求值会把它自动设回展开，表现为“只能收起、不能展开”。
+watch(groupedByYear, years => {
+  if (defaultsInitialized.value || years.length === 0) return
+  defaultsInitialized.value = true
+  openYears.value = new Set([years[0].year])
+  if (years[0].months.length) {
+    openMonths.value = new Set([years[0].year + years[0].months[0].month])
+  }
+}, { immediate: true })
+
+function toggleYearState(y: string) {
   const next = new Set(openYears.value)
   next.has(y) ? next.delete(y) : next.add(y)
   openYears.value = next
 }
-function toggleMonth(key: string) {
+function toggleMonthState(key: string) {
   const next = new Set(openMonths.value)
   next.has(key) ? next.delete(key) : next.add(key)
   openMonths.value = next
+}
+
+async function runGroupToggle(key: string, opening: boolean, mutate: () => void) {
+  const root = layoutRoot.value
+  const content = root?.querySelector<HTMLElement>(`[data-layout-key="${CSS.escape(key)}"]`)
+  if (!root || !content) {
+    mutate()
+    return
+  }
+  await runtime.runGroupToggle({
+    root,
+    content,
+    opening,
+    mutate,
+    waitForLayout: nextTick,
+    duration: 250,
+    easing: 'cubic-bezier(.22,1,.36,1)',
+  })
+}
+
+function toggleYear(y: string) {
+  void runGroupToggle(`year-${y}`, !openYears.value.has(y), () => toggleYearState(y))
+}
+function toggleMonth(key: string) {
+  void runGroupToggle(key, !openMonths.value.has(key), () => toggleMonthState(key))
 }
 
 async function restore(id: number) {
@@ -177,6 +217,7 @@ async function restore(id: number) {
   padding: 2px 0 2px 6px;
   border-left: 1px solid rgba(0,0,0,0.06);
   margin-left: 6px; margin-top: 1px;
+  min-height: 0; overflow: hidden;
 }
 
 /* ── 月目录 ── */
@@ -195,7 +236,9 @@ async function restore(id: number) {
 .month-chev.open { transform: rotate(180deg); }
 
 /* ── 项目行 ── */
-.ap-list { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 4px 4px; }
+.ap-list { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 4px 4px; min-height: 0; overflow: hidden; }
+.year-body[data-layout-open="false"]:not([data-runtime-group-animating="true"]),
+.ap-list[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height: 0; overflow: hidden; }
 .ap-row {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 10px; border-radius: 10px; transition: background 0.12s;

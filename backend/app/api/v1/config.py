@@ -106,6 +106,11 @@ async def reconcile_storage(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"列出存储失败：{type(e).__name__}: {e}")
     file_keys = {k for k in all_keys if not _is_internal_key(k)}
 
+    # 仅比较 storage_key 会漏掉“DB 和物理文件都指向同一个旧路径、但文件夹归属已变”的历史错位。
+    # 复用目录对账的路径真源，把这类文件一并呈现在文件对账入口。
+    from app.services.storage import folder_doctor
+    doctor_report = await folder_doctor.scan(db, storage)
+
     rows = (await db.execute(select(File))).scalars().all()
     db_key_set = {f.storage_key for f in rows}
     projs = {p.id: p.name for p in (await db.execute(select(Project))).scalars().all()}
@@ -128,7 +133,9 @@ async def reconcile_storage(db: AsyncSession = Depends(get_db)):
         "orphan_count": len(orphans),
         "ghosts": ghosts[:300],
         "orphans": orphans[:300],
-        "truncated": len(ghosts) > 300 or len(orphans) > 300,
+        "misplaced_count": len(doctor_report.misplaced_files),
+        "misplaced_files": doctor_report.misplaced_files[:300],
+        "truncated": len(ghosts) > 300 or len(orphans) > 300 or doctor_report.truncated,
     }
 
 
@@ -140,56 +147,130 @@ def _fmt_size(n: float) -> str:
     return f"{n:.1f} GB"
 
 
-async def _import_orphan(db, key: str, storage) -> bool:
-    """把一个孤儿物理文件按其存储路径重建成 File 记录（best-effort）。
-    路径形如 {uid}/个人文件/[文件夹/]name.ext 或 {uid}/项目文件/yyyy/mm/{项目} #{pid}/[文件夹/]name.ext。
-    解析不出归属时仍尽量建在空间根（folder_id=None），让文件至少在 app 里现身。"""
-    import uuid as _uuid, re, mimetypes
-    from app.models import File, Folder, User
+def _parse_path_migration_key(key: str) -> dict | None:
+    """解析 path-mirror key 的稳定归属部分，不做数据库查询。"""
+    import re
+    import uuid as _uuid
+
     parts = key.split("/")
     if len(parts) < 3:
-        return False
+        return None
+    if any(part in {"", ".", ".."} for part in parts):
+        return None
     try:
-        uid = _uuid.UUID(parts[0])
+        user_id = str(_uuid.UUID(parts[0]))
     except ValueError:
+        return None
+    name, dot, ext = parts[-1].rpartition(".")
+    if not dot:
+        name, ext = parts[-1], ""
+    if parts[1] == "个人文件":
+        return {
+            "user_id": user_id, "space": "personal", "project_id": None,
+            "folder_parts": parts[2:-1], "display_name": name, "ext": ext.lower(),
+        }
+    if parts[1] != "项目文件":
+        return None
+    project_id = None
+    project_index = None
+    for index, part in enumerate(parts[2:-1], start=2):
+        match = re.search(r"#(\d+)$", part)
+        if match:
+            project_id = int(match.group(1))
+            project_index = index
+            break
+    if project_id is None or project_index is None:
+        return None
+    return {
+        "user_id": user_id, "space": "project", "project_id": project_id,
+        "folder_parts": parts[project_index + 1:-1], "display_name": name,
+        "ext": ext.lower(),
+    }
+
+
+def _same_file_scope(file, parsed: dict) -> bool:
+    return file.space == parsed["space"] and file.project_id == parsed["project_id"]
+
+
+async def _import_orphan(db, key: str, storage) -> bool:
+    """按已验证的 path-mirror key 导入孤儿文件，不猜测不完整的归属。"""
+    import mimetypes
+    import uuid
+    from app.models import File, Project, User
+
+    parsed = _parse_path_migration_key(key)
+    if parsed is None:
         return False
+    uid_text = parsed["user_id"]
+    uid = uuid.UUID(uid_text)
     if not await db.get(User, uid):
         return False
-    fname = parts[-1]
+    # 修复接口也可能被手工传入重复 key；不能让同一物理对象产生第二条 File。
+    existing = (await db.execute(select(File).where(File.storage_key == key))).scalars().first()
+    if existing is not None:
+        return False
+
+    info = await storage.stat(key)
+    if info is None:
+        return False
+
+    fname = key.rsplit("/", 1)[-1]
     name, _, ext = fname.rpartition(".")
     if not name:
         name, ext = fname, ""
-    space, project_id, folder_id = "personal", None, None
-    seg = parts[1] if len(parts) > 1 else ""
-    if seg == "项目文件":
-        space = "project"
-        for p in parts:
-            mm = re.search(r"#(\d+)$", p)
-            if mm:
-                project_id = int(mm.group(1))
-                break
-    elif seg == "个人文件" and len(parts) >= 4:
-        fo = (await db.execute(select(Folder).where(
-            Folder.user_id == uid, Folder.name == parts[2], Folder.project_id.is_(None)
-        ))).scalars().first()
-        if fo:
-            folder_id = fo.id
-    try:
-        size_bytes = len(await storage.get(key))
-    except Exception:
-        size_bytes = 0
+    project_id = parsed["project_id"]
+    if project_id is not None:
+        project = await db.get(Project, project_id)
+        if project is None or str(project.user_id) != uid_text:
+            return False
+    folder_id = await _resolve_import_folder(db, uid, project_id, parsed["folder_parts"])
+    if parsed["folder_parts"] and folder_id is None:
+        return False
     db.add(File(
-        user_id=uid, display_name=name, ext=ext.lower(), space=space,
+        user_id=uid, display_name=name, ext=ext.lower(), space=parsed["space"],
         project_id=project_id, folder_id=folder_id, storage_key=key,
-        size=_fmt_size(size_bytes), size_bytes=size_bytes,
+        size=_fmt_size(info.size), size_bytes=info.size,
         mime_type=mimetypes.guess_type(fname)[0],
     ))
     return True
 
 
+async def _resolve_import_folder(db, user_id, project_id: int | None, folder_parts: list[str]) -> int | None:
+    """按物理路径逐级解析文件夹，避免嵌套文件误挂到第一级目录。"""
+    from app.models import Folder
+
+    parent_id = None
+    for name in folder_parts:
+        folder = (await db.execute(select(Folder).where(
+            Folder.user_id == user_id,
+            Folder.project_id == project_id if project_id is not None else Folder.project_id.is_(None),
+            Folder.parent_id == parent_id if parent_id is not None else Folder.parent_id.is_(None),
+            Folder.name == name,
+            Folder.deleted_at.is_(None),
+        ))).scalars().first()
+        if folder is None:
+            return None
+        parent_id = folder.id
+    return parent_id
+
+
 class RepairRequest(BaseModel):
     action: Literal["delete", "import"]
     keys: list[str]
+
+
+class PathMigrationItem(BaseModel):
+    file_id: int
+    key: str
+    expected_old_key: str
+
+
+class PathMigrationRequest(BaseModel):
+    items: list[PathMigrationItem]
+
+    def model_post_init(self, __context: Any) -> None:
+        if len(self.items) > 1000:
+            raise ValueError("单次路径迁移最多处理 1000 项")
 
 
 class TrashMigrationRequest(BaseModel):
@@ -269,6 +350,188 @@ async def reconcile_repair(body: RepairRequest, db: AsyncSession = Depends(get_d
             failed.append({"key": key, "error": f"{type(e).__name__}: {e}"[:80]})
     await db.commit()
     return {"action": body.action, "done": len(done), "failed": failed, "done_keys": done}
+
+
+@router.get("/reconcile-storage/path-migration")
+async def scan_path_migration(db: AsyncSession = Depends(get_db)):
+    """扫描物理路径已变、但 File 记录仍指向旧路径的文件；只返回唯一安全匹配项。"""
+    from app.models import File
+    from app.services.storage import get_storage
+
+    storage = get_storage()
+    keys = {k for k in await storage.list_keys() if not _is_internal_key(k)}
+    rows = (await db.execute(select(File).where(File.deleted_at.is_(None)))).scalars().all()
+    by_identity: dict[tuple, list] = {}
+    for file in rows:
+        identity = (str(file.user_id), file.display_name, (file.ext or "").lower(), file.size_bytes or 0)
+        by_identity.setdefault(identity, []).append(file)
+    known = {file.storage_key for file in rows}
+    orphan_groups: dict[tuple, list[dict]] = {}
+    for key in sorted(keys - known):
+        parsed = _parse_path_migration_key(key)
+        if parsed is None:
+            continue
+        info = await storage.stat(key)
+        identity = (parsed["user_id"], parsed["display_name"], parsed["ext"], info.size if info else 0)
+        orphan_groups.setdefault(identity, []).append({"key": key, "parsed": parsed, "size_bytes": identity[3]})
+
+    candidates, ambiguous = [], []
+    for identity, orphans in orphan_groups.items():
+        matches = by_identity.get(identity, [])
+        # 一个 identity 对应多个物理对象时，不能猜哪一个才是 File 的真源。
+        if len(orphans) != 1 or len(matches) != 1:
+            ambiguous.append({
+                "keys": [item["key"] for item in orphans],
+                "file_ids": [file.id for file in matches],
+                "name": identity[1],
+                "size_bytes": identity[3],
+                "reason": "同一 identity 存在多个物理对象或数据库记录",
+            })
+            continue
+        file = matches[0]
+        parsed = orphans[0]["parsed"]
+        if parsed["space"] == "project":
+            from app.models import Project
+            project = await db.get(Project, parsed["project_id"])
+            if project is None or str(project.user_id) != parsed["user_id"]:
+                ambiguous.append({"keys": [orphans[0]["key"]], "file_ids": [file.id],
+                                  "name": identity[1], "size_bytes": identity[3],
+                                  "reason": "项目不存在或不属于文件所有者"})
+                continue
+        parsed["folder_id"] = await _resolve_import_folder(
+            db, parsed["user_id"], parsed["project_id"], parsed["folder_parts"]
+        )
+        if parsed["folder_parts"] and parsed["folder_id"] is None:
+            ambiguous.append({"keys": [orphans[0]["key"]], "file_ids": [file.id],
+                              "name": identity[1], "size_bytes": identity[3],
+                              "reason": "目录路径无法解析"})
+            continue
+        if not _same_file_scope(file, parsed):
+            ambiguous.append({
+                "keys": [orphans[0]["key"]], "file_ids": [file.id],
+                "name": identity[1], "size_bytes": identity[3],
+                "reason": "物理路径的空间或项目归属与数据库不一致",
+            })
+            continue
+        candidates.append({
+            "key": orphans[0]["key"], "file_id": file.id,
+            "expected_old_key": file.storage_key,
+            "old_folder_id": file.folder_id,
+            "space": parsed["space"], "project_id": parsed["project_id"],
+            "folder_id": parsed["folder_id"], "name": identity[1],
+            "size_bytes": identity[3],
+        })
+    return {"candidates": candidates, "ambiguous": ambiguous,
+            "candidate_count": len(candidates), "ambiguous_count": len(ambiguous)}
+
+
+@router.post("/reconcile-storage/path-migration/repair")
+async def repair_path_migration(body: PathMigrationRequest, db: AsyncSession = Depends(get_db)):
+    """按物理 key 重新计算文件夹归属并更新 File 记录；不搬动物理文件。"""
+    from app.models import File
+    from app.services.storage import get_storage
+
+    storage = get_storage()
+    requested = {item.file_id: item for item in body.items}
+    if len(requested) != len(body.items):
+        raise HTTPException(status_code=422, detail="同一文件不能重复提交迁移项")
+    rows = (await db.execute(select(File).where(File.id.in_(requested), File.deleted_at.is_(None)))).scalars().all()
+    found_ids = {file.id for file in rows}
+    missing_ids = sorted(set(requested) - found_ids)
+    all_files = (await db.execute(select(File))).scalars().all()
+    occupied = {file.storage_key: file.id for file in all_files}
+    # 扫描与修复之间可能又出现同 identity 的记录/对象；这里重新建立计数，
+    # 不把旧扫描结果当成永久授权。没有唯一 fingerprint 时，启发式匹配必须保持唯一。
+    db_identity_counts: dict[tuple, int] = {}
+    for file in all_files:
+        if file.deleted_at is not None:
+            continue
+        identity = (str(file.user_id), file.display_name, (file.ext or "").lower(), file.size_bytes or 0)
+        db_identity_counts[identity] = db_identity_counts.get(identity, 0) + 1
+    known_keys = {file.storage_key for file in all_files}
+    orphan_identity_counts: dict[tuple, int] = {}
+    for key in await storage.list_keys():
+        if key in known_keys or _is_internal_key(key):
+            continue
+        parsed_key = _parse_path_migration_key(key)
+        if parsed_key is None:
+            continue
+        info = await storage.stat(key)
+        if info is None:
+            continue
+        identity = (parsed_key["user_id"], parsed_key["display_name"], parsed_key["ext"], info.size)
+        orphan_identity_counts[identity] = orphan_identity_counts.get(identity, 0) + 1
+    done = []
+    failed = [{"file_id": file_id, "error": "文件不存在或已删除"} for file_id in missing_ids]
+    for file in rows:
+        try:
+            item = requested[file.id]
+            new_key = item.key
+            if item.expected_old_key != file.storage_key:
+                failed.append({"file_id": file.id, "error": "旧路径已变化，请重新扫描"})
+                continue
+            if new_key == file.storage_key:
+                failed.append({"file_id": file.id, "error": "新旧路径相同"})
+                continue
+            if not new_key.startswith(f"{file.user_id}/") or ".." in new_key.split("/"):
+                failed.append({"file_id": file.id, "error": "路径不属于文件所有者"})
+                continue
+            if occupied.get(new_key) not in (None, file.id):
+                failed.append({"file_id": file.id, "error": "新路径已被其他文件占用"})
+                continue
+            if await storage.exists(file.storage_key):
+                failed.append({"file_id": file.id, "error": "旧路径仍存在，拒绝覆盖"})
+                continue
+            if not await storage.exists(new_key):
+                failed.append({"file_id": file.id, "error": "物理文件不存在"})
+                continue
+            parsed = _parse_path_migration_key(new_key)
+            if parsed is None:
+                failed.append({"file_id": file.id, "error": "路径无法解析"})
+                continue
+            if parsed["user_id"] != str(file.user_id):
+                failed.append({"file_id": file.id, "error": "路径不属于文件所有者"})
+                continue
+            if parsed["display_name"] != file.display_name or parsed["ext"] != (file.ext or "").lower():
+                failed.append({"file_id": file.id, "error": "文件名或扩展名不匹配"})
+                continue
+            stat = await storage.stat(new_key)
+            if stat is None:
+                failed.append({"file_id": file.id, "error": "物理文件不存在"})
+                continue
+            if stat.size != (file.size_bytes or 0):
+                failed.append({"file_id": file.id, "error": "文件大小不匹配"})
+                continue
+            identity = (str(file.user_id), file.display_name, (file.ext or "").lower(), stat.size)
+            if db_identity_counts.get(identity) != 1 or orphan_identity_counts.get(identity) != 1:
+                failed.append({"file_id": file.id, "error": "路径身份不再唯一，请重新扫描"})
+                continue
+            # 路径迁移只允许同空间、同项目内修复；跨空间/项目必须走正式移动接口，
+            # 避免只改 storage_key 而留下其它归属字段互相矛盾。
+            if not _same_file_scope(file, parsed):
+                failed.append({"file_id": file.id, "error": "不支持跨空间或跨项目路径迁移"})
+                continue
+            if parsed["space"] == "project":
+                from app.models import Project
+                project = await db.get(Project, parsed["project_id"])
+                if project is None or str(project.user_id) != str(file.user_id):
+                    failed.append({"file_id": file.id, "error": "项目不存在或不属于文件所有者"})
+                    continue
+            folder_id = await _resolve_import_folder(
+                db, file.user_id, parsed["project_id"], parsed["folder_parts"]
+            )
+            if parsed["folder_parts"] and folder_id is None:
+                failed.append({"file_id": file.id, "error": "目录路径无法解析"})
+                continue
+            file.space = parsed["space"]
+            file.project_id = parsed["project_id"]
+            file.folder_id = folder_id
+            file.storage_key = new_key
+            done.append(file.id)
+        except Exception as exc:
+            failed.append({"file_id": file.id, "error": type(exc).__name__})
+    await db.commit()
+    return {"done": done, "failed": failed}
 
 
 # ── 连接测试 ──────────────────────────────────────────────────────────────
@@ -438,6 +701,7 @@ async def test_search(body: SearchTestRequest):
 
 class EmbeddingTestRequest(BaseModel):
     provider:   str = ""   # bailian/dashscope 可启用百炼专用请求参数
+    multimodal: bool = False
     base_url:   str = ""   # 留空=用已存配置
     api_key:    str = ""   # 留空=用已存配置
     model:      str = ""
@@ -457,6 +721,37 @@ async def test_embedding(body: EmbeddingTestRequest):
     dims     = body.dimensions or cfg.dimensions
     if not base_url or not model:
         return {"ok": False, "message": "缺少 Base URL 或模型名"}
+    if body.multimodal:
+        from agent.memory.embedding import BAILIAN_MULTIMODAL_PATH
+
+        if provider.lower() not in {"bailian", "dashscope", "aliyun"}:
+            return {"ok": False, "message": "多模态 Embedding 目前仅支持百炼"}
+        multimodal_base = base_url.split("/compatible-mode/v1", 1)[0]
+        payload = {
+            "model": model,
+            "input": {"contents": [{"text": "连通性测试"}]},
+            "parameters": {"output_type": "dense"},
+        }
+        if dims:
+            payload["parameters"]["dimension"] = dims
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+                resp = await client.post(
+                    multimodal_base.rstrip("/") + BAILIAN_MULTIMODAL_PATH,
+                    json=payload,
+                    headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+                )
+        except Exception as e:
+            return {"ok": False, "message": f"连不上：{type(e).__name__}: {str(e)[:80]}"}
+        if resp.status_code != 200:
+            return {"ok": False, "message": f"HTTP {resp.status_code}：{resp.text[:120]}"}
+        try:
+            vec = resp.json()["output"]["embeddings"][0]["embedding"]
+        except Exception:
+            return {"ok": False, "message": "返回格式不对（不是百炼多模态 Embedding 响应）"}
+        if not isinstance(vec, list) or not vec:
+            return {"ok": False, "message": "返回的多模态向量为空"}
+        return {"ok": True, "message": f"OK — 多模态连通，向量维度 {len(vec)}"}
     payload = build_payload(provider, base_url, model, "连通性测试", dims)
     # key 为空就不发 Authorization 头（Ollama 无需鉴权；空 key 拼 "Bearer " 是非法 header）
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}

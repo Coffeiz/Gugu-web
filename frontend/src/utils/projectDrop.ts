@@ -11,8 +11,8 @@ export interface ProjectDropIntent {
 }
 
 const THROW_SPEED = 260
-const THROW_SECONDS = 0.14
-const THROW_MAX_OFFSET = 220
+const THROW_SECONDS = 0.1
+const THROW_MAX_OFFSET = 150
 
 function columnIndexAtX(columns: ProjectDropColumn[], x: number) {
   return columns.findIndex((column) => x >= column.left && x <= column.right)

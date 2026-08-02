@@ -16,8 +16,8 @@
 <script setup lang="ts">
 defineProps<{
   // 拖拽/落地飞行途中，RelationLayer.vue 靠这个属性去 DOM 里精确定位当前正在飘着的那颗
-  // 连接点覆盖层（usePhysicsDrag.ts 的 connectionDotOverlay，跟这里是同一份内容 cloneNode
-  // 出去的），不必再假装卡片没有旋转、自己算一份可能跟摆动动画对不上的锚点坐标。
+  // 连接点管理节点（拖拽系统的 connectionDotManager 会复制这份结构并统一定位），不必再
+  // 假装卡片没有旋转、自己算一份可能跟摆动动画对不上的锚点坐标。
   nodeId: number
   hovering: boolean
   connecting: boolean

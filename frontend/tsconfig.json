@@ -23,7 +23,10 @@
     "verbatimModuleSyntax": false,
 
     "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] },
+    "paths": {
+      "@/*": ["src/*"],
+      "vue": ["node_modules/vue"]
+    },
     "types": ["vite/client"]
   },
   "include": [

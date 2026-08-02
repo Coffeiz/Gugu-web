@@ -1063,7 +1063,7 @@ async function movePmFilesInto(fileIds: (number | string)[], targetFolderId: num
   // 必须显式带上 projectId：后端 update_file 未传 project_id 时保留原值，而项目文件夹内文件的
   // project_id 可能为 null（只靠 folder_id 关联）；拖到根不带 projectId 会落到个人库根、项目根查不到。
   void droppedOn
-  const projectId = props.project?.id
+  const projectId = props.project?.id ?? null
   const folderId = targetFolderId == null ? null : Number(targetFolderId)
   try {
     await Promise.all(fileIds.map(id => filesApi.update(Number(id), { folderId, projectId })))
@@ -1996,8 +1996,8 @@ async function pmCtxPaste() {
   if (pmPasteBusy.value) return
   pmPasteBusy.value = true
   pmCtx.value.visible = false
-  const folderId  = pmCurrentFolderId()   // 当前所在文件夹 id；根目录为 null
-  const projectId = props.project?.id
+  const folderId  = pmCurrentFolderId() ?? null   // 当前所在文件夹 id；根目录为 null
+  const projectId = props.project?.id ?? null
   try {
     const fileIds = [...new Set(pmCbStore.fileIds)]
     const folderIds = [...new Set(pmCbStore.folderIds

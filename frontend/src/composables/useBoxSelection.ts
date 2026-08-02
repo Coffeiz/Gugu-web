@@ -75,7 +75,7 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
           .map(attr => el.getAttribute(attr))
           .find((value): value is string => value !== null)
         if (fv !== null) fileIds.add(parseFileId(fv))
-        if (dv !== null) folderIds.add(parseFolderId(dv))
+        if (dv != null) folderIds.add(parseFolderId(dv))
       }
     })
     return { fileIds, folderIds }

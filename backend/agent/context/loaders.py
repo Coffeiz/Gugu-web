@@ -59,6 +59,11 @@ async def load_files_overview(db, user_id, recent: int = 25) -> dict:
     trash = (await db.execute(
         select(func.count(File.id)).where(File.user_id == user_id, File.deleted_at.isnot(None))
     )).scalar() or 0
+    folder_counts = dict((await db.execute(
+        select(File.folder_id, func.count(File.id))
+        .where(File.user_id == user_id, File.deleted_at.is_(None), File.folder_id.isnot(None))
+        .group_by(File.folder_id)
+    )).all())
     files = (await db.execute(
         select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
         .order_by(File.updated_at.desc()).limit(recent)
@@ -75,6 +80,7 @@ async def load_files_overview(db, user_id, recent: int = 25) -> dict:
         folder_rows.append({
             "id": folder.id, "name": folder.name, "path": path,
             "project_id": folder.project_id, "parent_id": folder.parent_id,
+            "file_count": folder_counts.get(folder.id, 0),
         })
     return {
         "total": total,
