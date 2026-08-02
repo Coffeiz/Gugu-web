@@ -9,6 +9,7 @@ passlib[bcrypt]>=1.7.4
 python-multipart>=0.0.9
 pydantic-settings>=2.0.0
 httpx>=0.27.0
+aiohttp>=3.9.0
 # AI
 openai>=1.30.0
 anthropic>=0.111.0
