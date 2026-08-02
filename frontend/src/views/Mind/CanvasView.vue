@@ -122,7 +122,16 @@ async function activateCanvas(id: number) {
   const seq = ++activationSeq
   flushViewSave()
   canvasProjectIdsReady.value = false
-  await store.loadCanvas(id)
+  try {
+    const loaded = await store.loadCanvas(id)
+    if (!loaded) return
+  } catch {
+    if (seq === activationSeq) {
+      canvasProjectIdsReady.value = true
+      showAppError('画布加载失败，请稍后重试')
+    }
+    return
+  }
   if (seq !== activationSeq || store.activeCanvasId !== id) return
   canvasProjectIdsReady.value = true
   localStorage.setItem('mind-last-canvas-id', String(id))

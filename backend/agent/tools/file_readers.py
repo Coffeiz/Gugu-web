@@ -75,10 +75,21 @@ async def _transcribe_audio(raw: bytes, mime: str) -> str:
     return (await transcribe(media, get_settings())) or ""
 
 
+async def _media_size_error(file) -> str | None:
+    """以物理对象大小为准，避免历史 size_bytes=0 绕过内存门禁。"""
+    info = await get_storage().stat(file.storage_key)
+    if info is None:
+        return '{"error":"媒体文件不存在，无法读取"}'
+    if info.size > MEDIA_READ_MAX_BYTES:
+        return f"{{\"error\":\"媒体过大（{info.size} bytes），超出读取上限\"}}"
+    return None
+
+
 async def read_audio(file) -> dict | str:
-    if (file.size_bytes or 0) > MEDIA_READ_MAX_BYTES:
-        return f"{{\"error\":\"音频过大（{file.size}），超出读取上限\"}}"
     try:
+        error = await _media_size_error(file)
+        if error:
+            return error
         data = await get_storage().get(file.storage_key)
         text = await _transcribe_audio(data, f"audio/{file.ext.lower()}")
     except Exception:
@@ -89,9 +100,10 @@ async def read_audio(file) -> dict | str:
 
 
 async def read_video(file) -> dict | str:
-    if (file.size_bytes or 0) > MEDIA_READ_MAX_BYTES:
-        return f"{{\"error\":\"视频过大（{file.size}），超出读取上限\"}}"
     try:
+        error = await _media_size_error(file)
+        if error:
+            return error
         data = await get_storage().get(file.storage_key)
         frame = await _extract_frame(data, file.ext.lower())
         audio = await _extract_audio(data, file.ext.lower())

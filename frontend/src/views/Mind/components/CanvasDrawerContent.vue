@@ -14,7 +14,7 @@
       </span>
       <span v-else class="ci-title">{{ (localTitles.get(canvas.id) ?? canvas.title) || '未命名画布' }}</span>
       <div class="ci-actions">
-        <button :title="editingId === canvas.id ? '确认' : '重命名'" class="ci-btn" @click.stop="editingId === canvas.id ? commitRename(canvas.id) : startRename(canvas)">
+        <button :title="editingId === canvas.id ? '确认' : '重命名'" class="ci-btn" @mousedown.prevent @click.stop="editingId === canvas.id ? commitRename(canvas.id) : startRename(canvas)">
           <PhCheck v-if="editingId === canvas.id" :size="11" weight="bold" />
           <PhPencilSimple v-else :size="11" weight="bold" />
         </button>
@@ -41,6 +41,7 @@ const emit = defineEmits<{ (e: 'create'): void; (e: 'open', id: number): void; (
 const listRef = ref<HTMLElement | null>(null)
 const editingId = ref<number | null>(null)
 const editingText = ref('')
+const savingId = ref<number | null>(null)
 const localTitles = ref(new Map<number, string>())
 let pendingLayout: ReturnType<typeof createFlipTransaction> | null = null
 let pendingLayoutItems: ReturnType<typeof createLayoutItems> = []
@@ -80,19 +81,22 @@ function startRename(canvas: MindCanvas) {
 }
 function cancelRename() { editingId.value = null; editingText.value = '' }
 async function commitRename(id: number) {
-  if (editingId.value !== id) return
+  if (editingId.value !== id || savingId.value === id) return
   const title = editingText.value.trim()
   if (!title) return cancelRename()
   const previous = props.canvases.find(canvas => canvas.id === id)?.title ?? ''
+  savingId.value = id
+  editingId.value = null
   localTitles.value.set(id, title)
   try {
     await props.rename(id, title)
     localTitles.value.delete(id)
-    cancelRename()
   } catch {
     localTitles.value.delete(id)
-    cancelRename()
     showAppError(`画布重命名失败，已恢复为「${previous || '未命名画布'}」`)
+  } finally {
+    savingId.value = null
+    editingText.value = ''
   }
 }
 defineExpose({ listRef })

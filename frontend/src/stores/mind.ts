@@ -46,6 +46,7 @@ export const useMindStore = defineStore('mind', () => {
   const activeCanvasId = ref<number | null>(null)
   const canvasItems = ref<MindCanvasItem[]>([])
   const canvasRelations = ref<MindRelation[]>([])
+  let canvasLoadSeq = 0
   const canvasDataSaves = new Map<number, Promise<void>>()
   const canvasZSaves = new Map<number, Promise<void>>()
 
@@ -146,14 +147,16 @@ export const useMindStore = defineStore('mind', () => {
   }
 
   async function loadCanvas(id: number) {
-    activeCanvasId.value = id
+    const requestSeq = ++canvasLoadSeq
     const [items, relations] = await Promise.all([
       mindApi.listCanvasItems(id),
       mindApi.listCanvasRelations(id),
     ])
-    if (activeCanvasId.value !== id) return
+    if (requestSeq !== canvasLoadSeq) return false
+    activeCanvasId.value = id
     canvasItems.value = normalizeCanvasZ(items).map(({ item, z }) => ({ ...item, z }))
     canvasRelations.value = relations
+    return true
   }
 
   async function addNoteToCanvas(canvasId: number, note: MindNote, x: number, y: number) {
