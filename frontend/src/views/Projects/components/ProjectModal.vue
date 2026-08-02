@@ -165,24 +165,24 @@
             <template v-if="fileViewMode === 'grid'">
               <FileBrowserGrid @empty-context="openPmCtx('empty', null, $event)">
                 <!-- 文件夹卡片（当前层） -->
-                <div v-for="folder in sortedCurrentFolders" :key="folder.id"
-                  class="folder-card" :style="{ '--fd-color': accentColor }"
-                  :class="{ 'drag-over': pmDragOverFolderId === folder.id, selected: pmSelectedFolderIds.has(folder.id), 'pre-selected': pmPreviewFolderIds.has(folder.id) }"
+                <FolderCard v-for="folder in sortedCurrentFolders" :key="folder.id"
+                  :display-name="folder.name"
+                  :count-label="`${pmFolderCount(folder.id)} 个文件`"
+                  :accent-color="accentColor"
+                  :drag-over="pmDragOverFolderId === folder.id"
+                  :selected="pmSelectedFolderIds.has(folder.id)"
+                  :pre-selected="pmPreviewFolderIds.has(folder.id)"
+                  :selection-mode="pmInSelectionMode"
                   :data-pm-folder-id="folder.id"
                   @click.stop="onPmFolderClick(folder, $event)"
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
                   @pointerdown="onPmFolderPointerDown(folder, $event)">
-                  <Transition name="sel-cb">
-                    <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFolderIds.has(folder.id) }">
-                      <PhCheck v-if="pmSelectedFolderIds.has(folder.id)" :size="10" weight="bold" style="color:white" />
-                    </div>
-                  </Transition>
-                  <div class="fd-icon-area">
+                  <template #icon>
                     <svg class="fd-big-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
                     </svg>
-                  </div>
-                  <div class="fd-hover-actions" v-show="!pmInSelectionMode">
+                  </template>
+                  <template #actions>
                     <button class="file-card-btn" :title="renamingFolderId === folder.id ? '确认' : '重命名'"
                       @mousedown.prevent @click.stop="renamingFolderId === folder.id ? commitFolderRename() : startRenameFolder(folder)">
                       <PhCheck v-if="renamingFolderId === folder.id" :size="10" weight="bold" />
@@ -194,19 +194,18 @@
                     <button class="file-card-btn del" title="删除" @click.stop="deleteFolderCard(folder)">
                       <PhTrash :size="10" weight="bold" />
                     </button>
-                  </div>
-                  <div class="fd-label">
-                    <div class="fd-name" :title="folder.name">
+                  </template>
+                  <template #name>
+                    <span :title="folder.name">
                       <span v-if="renamingFolderId === folder.id" class="rename-sizer" @click.stop>
                         <span class="rename-ghost">{{ folderRenameText || ' ' }}</span>
                         <input class="rename-input-inline" v-model="folderRenameText"
                           v-enter="commitFolderRename" @keydown.esc="cancelFolderRename" @blur="commitFolderRename" @focus="($event.target as HTMLInputElement).select()" />
                       </span>
                       <template v-else>{{ folder.name }}</template>
-                    </div>
-                    <div class="fd-count">{{ pmFolderCount(folder.id) }} 个文件</div>
-                  </div>
-                </div>
+                    </span>
+                  </template>
+                </FolderCard>
                 <!-- 文件卡片（当前层）：共用视觉走 FileCard.vue，跟文件库网格同一份组件，
                      不再各画一套图标/角标/缩略图/卡片外壳；本页专属的选择态/拖拽态/剪切态/
                      悬浮操作按钮走 props 和默认插槽。 -->
@@ -500,6 +499,7 @@ import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
 import FilePasteButton from '@/components/common/FilePasteButton.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import FileCard from '@/components/common/FileCard.vue'
+import FolderCard from '@/components/common/FolderCard.vue'
 import FileUploadButton from '@/components/common/FileUploadButton.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
 import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
@@ -1807,7 +1807,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
    内部节点，所以这几条 .fc-card 相关都套 :deep() 主动放弃这份样式的 scoped 限制；.folder-card
    仍是本组件手写模板，不需要 :deep()。 */
 .modal.stages-expanded :deep(.fc-card),
-.modal.stages-expanded .folder-card {
+.modal.stages-expanded :deep(.folder-card) {
   min-height: 0;
   aspect-ratio: 138 / 122;
   display: flex;
@@ -1816,7 +1816,7 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 /* 缩略图/图标区弹性占满卡片扣除 label 后的剩余高度 */
 .modal.stages-expanded :deep(.fc-thumb-area),
 .modal.stages-expanded :deep(.fc-icon-area),
-.modal.stages-expanded .fd-icon-area {
+.modal.stages-expanded :deep(.fd-icon-area) {
   flex: 1;
   height: auto;
   min-height: 0;
@@ -1833,39 +1833,11 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
    这块是拖拽克隆体尺寸相关的边界情况，跟拖拽动画重构分支（codex-drag-animation-refactor）
    有交叉，后续对接那条分支时一并复核这里的克隆尺寸表现是否仍然正确。 */
 :deep(.fc-card.pm-clone-expanded),
-.folder-card.pm-clone-expanded { min-height: 0; display: flex; flex-direction: column; }
+:deep(.folder-card.pm-clone-expanded) { min-height: 0; display: flex; flex-direction: column; }
 :deep(.pm-clone-expanded .fc-thumb-area),
 :deep(.pm-clone-expanded .fc-icon-area),
-.pm-clone-expanded .fd-icon-area { flex: 1; height: auto; min-height: 0; }
+:deep(.pm-clone-expanded .fd-icon-area) { flex: 1; height: auto; min-height: 0; }
 :deep(.pm-clone-expanded .fc-big-icon) { width: 52px; height: 52px; }
-
-/* 文件夹卡片 */
-.folder-card {
-  min-height: 122px; border-radius: 14px;
-  background: color-mix(in srgb, var(--fd-color) 6%, rgba(255,255,255,0.82));
-  border: 1px solid color-mix(in srgb, var(--fd-color) 14%, rgba(255,255,255,0.92));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
-}
-.folder-card:hover {
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
-}
-.fd-icon-area { height: 90px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; overflow: visible; }
-.fd-big-icon {
-  width: 92px; height: 92px;
-  color: var(--fd-color); opacity: 0.58;
-  transform: translateY(20px);
-  mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
-  flex-shrink: 0;
-}
-.fd-label { padding: 0 13px 13px; }
-.fd-name { font-size: 11.5px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px; }
-.fd-count { font-size: 9px; color: var(--text-secondary); opacity: 0.55; margin-top: 2px; }
-.fd-hover-actions {
-  position: absolute; top: 8px; right: 8px; z-index: 3;
-  display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s;
-}
-.folder-card:hover .fd-hover-actions { opacity: 1; }
 
 /* 文件卡片：网格视图已改用共用组件 FileCard.vue（跟文件库同一份），卡片外壳/角标/
    缩略图容器/图标/标题/元信息不再在这里各画一份，见 FileCard.vue 自己的 scoped 样式。
@@ -2024,21 +1996,6 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
    同一份，数值本来就抄自这里），不用再手写一份——写了也够不到子组件内部，见上面 :deep() 的说明。
    这里只留 .list-row（列表视图，未改造）需要的部分。 */
 .list-row.dragging { opacity: 0.35; cursor: grabbing; }
-.folder-card.selected {
-  border-color: rgba(123,127,178,0.6);
-  background: rgba(123,127,178,0.08);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.85), 0 0 0 2px rgba(123,127,178,0.18);
-}
-.folder-card.pre-selected {
-  border-color: rgba(123,127,178,0.38);
-  background: rgba(123,127,178,0.05);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 1.5px rgba(123,127,178,0.12);
-}
-.folder-card.drag-over {
-  background: color-mix(in srgb, var(--fd-color, var(--color-primary)) 12%, rgba(255,255,255,0.9));
-  border-color: color-mix(in srgb, var(--fd-color, var(--color-primary)) 55%, rgba(255,255,255,0.5));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--fd-color, var(--color-primary)) 28%, transparent);
-}
 .list-row.folder-list-row.drag-over {
   background: rgba(123,127,178,0.08);
   outline: 1.5px solid var(--color-primary); outline-offset: -1px;

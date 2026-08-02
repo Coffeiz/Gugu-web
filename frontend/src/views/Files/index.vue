@@ -258,40 +258,36 @@
           <FileBrowserGrid @empty-context="openCtx('empty', null, $event)">
 
             <!-- 文件夹卡片 -->
-            <div
+            <FolderCard
               v-for="f in sortedContents.folders"
               :key="f.id"
-              class="folder-card"
-              :class="{ selected: selectedFolderKeys.has(f.id), 'pre-selected': previewFolderKeys.has(f.id), 'drag-over': dragOverFolderId === f.folderId }"
+              :display-name="f.displayName"
+              :count-label="f.count != null ? f.count + ' 项' : '—'"
+              :accent-color="folderAccentColor(f)"
+              :selected="selectedFolderKeys.has(f.id)"
+              :pre-selected="previewFolderKeys.has(f.id)"
+              :drag-over="dragOverFolderId === f.folderId"
+              :selection-mode="inSelectionMode"
               @contextmenu.prevent.stop="openCtx('folder', f, $event)"
               :data-folder-key="f.id"
               :data-folder-id="f.folderId"
-              :style="{ '--fd-color': folderAccentColor(f) }"
               @click.stop="handleFolderClick(f, $event)"
               @pointerdown="onFolderPointerDown(f, $event)"
             >
-              <div class="fd-icon-area">
+              <template #icon>
                 <component :is="folderListIcon(f)" class="fd-big-icon" :size="92" weight="bold" />
-              </div>
-              <div class="fd-label">
-                <div class="fd-name" :title="f.displayName">
+              </template>
+              <template #name>
+                <span :title="f.displayName">
                   <span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop>
                     <span class="rename-ghost">{{ renameText || ' ' }}</span>
                     <input class="rename-input-inline" v-model="renameText"
                       v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
                   </span>
                   <template v-else>{{ f.displayName }}</template>
-                </div>
-                <div class="fd-count">{{ f.count != null ? f.count + ' 项' : '—' }}</div>
-              </div>
-              <Transition name="sel-cb">
-                <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedFolderKeys.has(f.id) }">
-                  <svg v-if="selectedFolderKeys.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M2 6l3 3 5-5"/>
-                  </svg>
-                </div>
-              </Transition>
-              <div v-if="f.type === 'folder' && !inSelectionMode" class="fd-hover-actions">
+                </span>
+              </template>
+              <template #actions>
                 <button class="file-card-btn" :title="renamingFolderKey === f.folderId ? '确认' : '重命名'"
                   @mousedown.prevent @click.stop="renamingFolderKey === f.folderId ? commitRename() : startRenameFolder(f)">
                   <PhCheck v-if="renamingFolderKey === f.folderId" :size="11" weight="bold" />
@@ -303,8 +299,8 @@
                 <button class="file-card-btn del" title="删除" @click.stop="deleteFolder(f)">
                   <PhTrash :size="11" weight="bold" />
                 </button>
-              </div>
-            </div>
+              </template>
+            </FolderCard>
 
             <!-- 文件卡片：共用视觉抽到 components/common/FileCard.vue，这里只管文件库自己的
                  选择模式/拖拽/右键菜单等交互态（走 props 传给它统一画选中态），缩略图/重命名
@@ -600,6 +596,7 @@
 import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { filesApi, trashApi, uploadWithProgress, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import FileCard       from '@/components/common/FileCard.vue'
+import FolderCard     from '@/components/common/FolderCard.vue'
 import FileUploadButton from '@/components/common/FileUploadButton.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
 import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
@@ -628,7 +625,7 @@ import { statusFolders, yearFolders, monthFolders } from '@/utils/projectFolderC
 import { optimisticMutation } from '@/utils/optimisticMutation'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import type { Project } from '@/types/project'
-import { type NavSeg, type FolderCard } from '@/utils/filesNav'
+import { type NavSeg, type FolderCard as FolderCardMeta } from '@/utils/filesNav'
 import { useFilesNav } from '@/composables/useFilesNav'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useFileSelection } from '@/composables/files/useFileSelection'
@@ -784,7 +781,7 @@ const sortedContents = computed(() => {
 })
 
 // ── 内容 ──
-const contents = ref<{ folders: FolderCard[]; files: FileMeta[] }>({ folders: [], files: [] })
+const contents = ref<{ folders: FolderCardMeta[]; files: FileMeta[] }>({ folders: [], files: [] })
 const trashFolders = ref<TrashFolderMeta[]>([])
 const expandedTrashFolders = ref(new Set<number>())
 const trashFolderContents = ref<Record<number, TrashFolderContents>>({})
@@ -808,7 +805,7 @@ const STATUS_COLOR: Record<string, string> = { pending: '#8a8fa8', active: '#508
 const STATUS_ICON: Record<string, typeof PhClock> = { pending: PhClock, active: PhPlayCircle, done: PhCheckCircle }
 
 // 项目 → 文件夹卡
-function projFolder(p: Project): FolderCard {
+function projFolder(p: Project): FolderCardMeta {
   return {
     id: `p:${p.id}`, type: 'project', displayName: p.name,
     color: extractColor(p.color), projectId: p.id,
@@ -1040,7 +1037,7 @@ function _shiftSelect(type: 'file' | 'folder', id: number | string) {
   return fileSelection.selectRangeIn(flatSelectableItems.value, lastAnchorIndex.value, idx)
 }
 
-function handleFolderClick(folder: FolderCard, event: MouseEvent) {
+function handleFolderClick(folder: FolderCardMeta, event: MouseEvent) {
   if (event.shiftKey) {
     if (!_shiftSelect('folder', folder.id)) {
       // 没有锚点时 shift+click 当作普通选中，设置锚点，不导航
@@ -1497,7 +1494,7 @@ function startRenameFile(f: FileMeta) {
   nextTick(() => document.querySelector<HTMLInputElement>('.rename-input-inline')?.select())
 }
 
-function startRenameFolder(f: FolderCard) {
+function startRenameFolder(f: FolderCardMeta) {
   renamingFileId.value    = null
   renamingFolderKey.value = f.folderId ?? null
   renameText.value        = f.displayName
@@ -1543,7 +1540,7 @@ async function commitRename() {
   }
 }
 
-async function downloadFolder(f: FolderCard) {
+async function downloadFolder(f: FolderCardMeta) {
   if (f.folderId == null) return
   try {
     await fileActions.downloadFolder(f)
@@ -1625,7 +1622,7 @@ function _selectedFolderIdNums() {
   return new Set(resolveFolderIds(selectedFolderKeys.value, sortedContents.value.folders))
 }
 
-function onFolderPointerDown(f: FolderCard, e: PointerEvent) {
+function onFolderPointerDown(f: FolderCardMeta, e: PointerEvent) {
   // 全部文件根目录下"个人文件/项目文件/回收站"是伪文件夹卡片（type 不是 'folder'，没有真实
   // folderId），不能拖拽——之前没挡，f.folderId 是 undefined，落点判定/吸入动画照样能触发
   // （只是数据层最终 API 调用会因 id 无效而静默失败），表现为"能拖进别的卡片，但只有动画有效果"。
@@ -1646,7 +1643,7 @@ function onFilePointerDown(f: FileMeta, e: PointerEvent) {
   })
 }
 
-async function deleteFolder(f: FolderCard) {
+async function deleteFolder(f: FolderCardMeta) {
   if (f.folderId == null) return
   pruneHistoryForFolders([f.folderId])
   cacheStore.removeFolder(f.folderId)
@@ -1662,7 +1659,7 @@ async function deleteFolder(f: FolderCard) {
 }
 
 // ── 样式工具 ──
-function folderIconStyle(folder: FolderCard) {
+function folderIconStyle(folder: FolderCardMeta) {
   if (folder.type === 'personal') return { background: 'rgba(180,148,80,0.14)',  color: '#b49450' }
   if (folder.type === 'projects') return { background: 'rgba(123,127,178,0.13)', color: '#7b7fb2' }
   if (folder.type === 'trash')    return { background: 'rgba(220,80,80,0.1)',    color: '#c85a5a' }
@@ -1679,7 +1676,7 @@ function folderIconStyle(folder: FolderCard) {
 // 文件类型助手（isImageExt / fileExtCategory / fileIconColor / fileListIcon）与缩略图懒加载指令
 // vLazySrc 已统一收口到 @/utils/fileTypes 和 @/composables/useLazyThumb，见顶部 import。
 
-function folderListIcon(folder: FolderCard) {
+function folderListIcon(folder: FolderCardMeta) {
   if (folder.type === 'personal') return PhUser
   if (folder.type === 'projects') return PhStack
   if (folder.type === 'trash')    return PhTrash
@@ -1690,7 +1687,7 @@ function folderListIcon(folder: FolderCard) {
   return PhFolder
 }
 
-function folderAccentColor(folder: FolderCard) {
+function folderAccentColor(folder: FolderCardMeta) {
   if (folder.type === 'personal') return '#967858'
   if (folder.type === 'projects') return '#6878a8'
   if (folder.type === 'trash')    return '#987070'
@@ -1712,7 +1709,7 @@ const cbStore = useClipboardStore()
 type CtxType = 'file' | 'multi-file' | 'folder' | 'empty' | null
 // target 在 'folder' 菜单里读 .type 区分真实文件夹卡（f.type === 'folder'）与伪文件夹卡；
 // FileMeta 本身没有 type 字段，补一个可选的，让联合类型上都能访问 .type（不影响运行时形状）。
-type CtxTarget = (FileMeta & { type?: string }) | FolderCard | null
+type CtxTarget = (FileMeta & { type?: string }) | FolderCardMeta | null
 const { state: ctx, open: openFileContextMenu } = useFileContextMenu<Exclude<CtxType, null>, CtxTarget>()
 const infoPopup = ref<{ show: boolean; file: FileMeta | undefined; x: number; y: number }>({ show: false, file: undefined, x: 0, y: 0 })
 
@@ -1823,23 +1820,23 @@ async function ctxDelete() {
 // ── 文件夹操作 ──
 function ctxDownloadFolder() {
   const f = ctx.value.target; ctx.value.visible = false
-  if (f) downloadFolder(f as FolderCard)
+  if (f) downloadFolder(f as FolderCardMeta)
 }
 function ctxRenameFolder() {
   const f = ctx.value.target; ctx.value.visible = false
-  if (f) startRenameFolder(f as FolderCard)
+  if (f) startRenameFolder(f as FolderCardMeta)
 }
 function ctxCutFolder() {
   if (!ctx.value.target) return
-  cbStore.cut([], [(ctx.value.target as FolderCard).folderId as number]); ctx.value.visible = false
+  cbStore.cut([], [(ctx.value.target as FolderCardMeta).folderId as number]); ctx.value.visible = false
 }
 function ctxCopyFolder() {
   if (!ctx.value.target) return
-  cbStore.copy([], [(ctx.value.target as FolderCard).folderId as number]); ctx.value.visible = false
+  cbStore.copy([], [(ctx.value.target as FolderCardMeta).folderId as number]); ctx.value.visible = false
 }
 async function ctxDeleteFolder() {
   const f = ctx.value.target; ctx.value.visible = false
-  if (f) await deleteFolder(f as FolderCard)
+  if (f) await deleteFolder(f as FolderCardMeta)
 }
 
 // ── 粘贴 ──
@@ -2124,7 +2121,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 
 /* ── 框选拖拽中：禁用子元素 hover 动效 ── */
 .files-main.is-selecting .fc-card,
-.files-main.is-selecting .folder-card {
+.files-main.is-selecting :deep(.folder-card) {
   pointer-events: none;
   transform: none !important;
   transition: none !important;
@@ -2136,28 +2133,11 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   background: rgba(123,127,178,0.06);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.85), 0 0 0 1.5px rgba(123,127,178,0.15);
 }
-.folder-card.pre-selected {
-  border-color: rgba(123,127,178,0.38);
-  background: rgba(123,127,178,0.05);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 1.5px rgba(123,127,178,0.12);
-}
 .list-row.pre-selected {
   background: rgba(123,127,178,0.06);
   outline: 1px solid rgba(123,127,178,0.25);
 }
 
-/* ── 文件夹选中态 ── */
-.folder-card { position: relative; }
-.folder-card.selected {
-  border-color: rgba(123,127,178,0.55);
-  background: rgba(255,255,255,0.92);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 0 0 2px rgba(123,127,178,0.28);
-}
-.folder-card.selected::before {
-  content: ''; position: absolute; inset: 0; z-index: 2;
-  pointer-events: none; border-radius: inherit;
-  background: rgba(123,127,178,0.14);
-}
 .list-row.folder-row.selected {
   background: rgba(123,127,178,0.09);
 }
@@ -2175,48 +2155,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   gap: 10px; padding: 72px 0;
   font-size: 12px; color: var(--text-secondary); opacity: 0.5;
 }
-
-/* ── 文件夹卡片 ── */
-.folder-card {
-  background: color-mix(in srgb, var(--fd-color, #8888a0) 6%, rgba(255,255,255,0.82));
-  border: 1px solid color-mix(in srgb, var(--fd-color, #8888a0) 14%, rgba(255,255,255,0.92));
-  border-radius: 14px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
-  min-height: 122px;
-}
-.folder-card:hover {
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
-}
-
-.fd-icon-area {
-  height: 90px;
-  flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  overflow: visible;
-}
-.fd-big-icon {
-  width: 92px; height: 92px;
-  color: var(--fd-color, var(--color-primary));
-  opacity: 0.58;
-  transform: translateY(20px);
-  mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
-  flex-shrink: 0;
-}
-.fd-label { padding: 0 13px 13px; }
-.fd-name {
-  font-size: 11.5px; font-weight: 600; color: var(--text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
-}
-.fd-count {
-  font-size: 9px; color: var(--text-secondary); opacity: 0.55; margin-top: 2px;
-}
-.fd-hover-actions {
-  position: absolute; top: 8px; right: 8px; z-index: 2;
-  display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s;
-}
-.folder-card:hover .fd-hover-actions { opacity: 1; }
 
 /* ── 文件卡片 ──
    底色/边框/hover/选中态/缩略图区/大图标/标题元信息这些基础视觉已抽到
@@ -2313,11 +2251,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 
 /* ── 拖动状态（.fc-card.dragging 已挪进 FileCard.vue，这里只留列表行） ── */
 .list-row.dragging { opacity: 0.35; cursor: grabbing; }
-.folder-card.drag-over {
-  background: color-mix(in srgb, var(--fd-color, var(--color-primary)) 12%, rgba(255,255,255,0.9));
-  border-color: color-mix(in srgb, var(--fd-color, var(--color-primary)) 55%, rgba(255,255,255,0.6));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 2px color-mix(in srgb, var(--fd-color, var(--color-primary)) 30%, transparent);
-}
 .list-row.folder-row.drag-over {
   background: rgba(123,127,178,0.08);
   outline: 1.5px solid var(--color-primary); outline-offset: -1px;
