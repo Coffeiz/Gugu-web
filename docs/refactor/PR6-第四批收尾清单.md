@@ -16,6 +16,8 @@
 - 前端 `build` 通过；仅保留既有的动态导入和大 chunk 警告。
 - devserver 后端 pytest 已执行：458 个通过，1 个既有的跨项目文件夹移动用例失败，与本批改动无关。
 - 已增加 Runtime 集成 CI，固定 Runtime commit 并复现同级源码目录布局。
+- 第三轮审查 P0–P2 收口：媒体输出硬上限、画布加载/重命名竞态、路径迁移唯一性、孤儿导入归属校验、错位截断提示和结构化媒体错误结果均已落地。
+- CI 的 frontend/runtime job 已改用 `npm ci`；devserver 后端全量 pytest 当前为 471 passed。
 
 ## PR 前验证
 
