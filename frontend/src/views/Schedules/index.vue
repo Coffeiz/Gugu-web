@@ -112,7 +112,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed, nextTick } from 'vue'
+import { ref, reactive, onMounted, computed, nextTick, watch } from 'vue'
 import { scheduledTasksApi } from '@/services/api'
 import { errorMessage, showAppError, showAppNotice } from '@/composables/useAppToast'
 import { fireHint } from '@/composables/useOnboarding'
