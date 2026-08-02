@@ -12,6 +12,7 @@ import tempfile
 
 from app.core.config import get_settings
 from app.core import chat_attach
+from app.core.redaction import diag_log
 from app.services.storage import get_storage
 
 VIDEO_EXTS = frozenset({"mp4", "mov", "avi", "mkv", "webm", "wmv", "m4v"})
@@ -103,31 +104,32 @@ async def _transcribe_audio(raw: bytes, mime: str) -> str:
     return (await transcribe(media, get_settings())) or ""
 
 
-async def _media_size_error(file) -> str | None:
+async def _media_size_error(file) -> dict | None:
     """以物理对象大小为准，避免历史 size_bytes=0 绕过内存门禁。"""
     info = await get_storage().stat(file.storage_key)
     if info is None:
-        return '{"error":"媒体文件不存在，无法读取"}'
+        return {"error": "媒体文件不存在，无法读取"}
     if info.size > MEDIA_READ_MAX_BYTES:
-        return f"{{\"error\":\"媒体过大（{info.size} bytes），超出读取上限\"}}"
+        return {"error": f"媒体过大（{info.size} bytes），超出读取上限"}
     return None
 
 
-async def read_audio(file) -> dict | str:
+async def read_audio(file) -> dict:
     try:
         error = await _media_size_error(file)
         if error:
             return error
         data = await get_storage().get(file.storage_key)
         text = await _transcribe_audio(data, f"audio/{file.ext.lower()}")
-    except Exception:
-        return '{"error":"音频读取失败"}'
+    except Exception as error:
+        diag_log("agent.file_readers.read_audio", error)
+        return {"error": "音频读取失败"}
     if not text:
-        return '{"error":"音频无法转写，可能未配置语音模型或格式不受支持"}'
+        return {"error": "音频无法转写，可能未配置语音模型或格式不受支持"}
     return {"file_id": file.id, "name": f"{file.display_name}.{file.ext}", "content": text}
 
 
-async def read_video(file) -> dict | str:
+async def read_video(file) -> dict:
     try:
         error = await _media_size_error(file)
         if error:
@@ -136,8 +138,9 @@ async def read_video(file) -> dict | str:
         frame = await _extract_frame(data, file.ext.lower())
         audio = await _extract_audio(data, file.ext.lower())
         transcript = await _transcribe_audio(audio, "audio/wav") if audio else ""
-    except Exception:
-        return '{"error":"视频读取失败"}'
+    except Exception as error:
+        diag_log("agent.file_readers.read_video", error)
+        return {"error": "视频读取失败"}
 
     if frame and chat_attach.vision_ready():
         block = chat_attach.vision_block(frame, "png")
@@ -149,13 +152,13 @@ async def read_video(file) -> dict | str:
     if transcript:
         return {"file_id": file.id, "name": f"{file.display_name}.{file.ext}",
                 "content": f"视频音频转写：\n{transcript}"}
-    return '{"error":"视频无法读取：当前未配置可用的视觉模型或语音模型"}'
+    return {"error": "视频无法读取：当前未配置可用的视觉模型或语音模型"}
 
 
-async def read_media(file) -> dict | str:
+async def read_media(file) -> dict:
     ext = file.ext.lower()
     if ext in AUDIO_EXTS:
         return await read_audio(file)
     if ext in VIDEO_EXTS:
         return await read_video(file)
-    return '{"error":"不支持的媒体格式"}'
+    return {"error": "不支持的媒体格式"}

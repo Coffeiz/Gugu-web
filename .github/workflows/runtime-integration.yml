@@ -51,7 +51,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Typecheck
         working-directory: frontend
@@ -95,7 +95,7 @@ jobs:
 
       - name: Install Runtime dependencies
         working-directory: gugu-interaction-runtime
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Runtime typecheck
         working-directory: gugu-interaction-runtime

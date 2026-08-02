@@ -135,7 +135,7 @@ async def reconcile_storage(db: AsyncSession = Depends(get_db)):
         "orphans": orphans[:300],
         "misplaced_count": len(doctor_report.misplaced_files),
         "misplaced_files": doctor_report.misplaced_files[:300],
-        "truncated": len(ghosts) > 300 or len(orphans) > 300,
+        "truncated": len(ghosts) > 300 or len(orphans) > 300 or doctor_report.truncated,
     }
 
 
@@ -436,6 +436,8 @@ async def repair_path_migration(body: PathMigrationRequest, db: AsyncSession = D
     if len(requested) != len(body.items):
         raise HTTPException(status_code=422, detail="同一文件不能重复提交迁移项")
     rows = (await db.execute(select(File).where(File.id.in_(requested), File.deleted_at.is_(None)))).scalars().all()
+    found_ids = {file.id for file in rows}
+    missing_ids = sorted(set(requested) - found_ids)
     all_files = (await db.execute(select(File))).scalars().all()
     occupied = {file.storage_key: file.id for file in all_files}
     # 扫描与修复之间可能又出现同 identity 的记录/对象；这里重新建立计数，
@@ -459,7 +461,8 @@ async def repair_path_migration(body: PathMigrationRequest, db: AsyncSession = D
             continue
         identity = (parsed_key["user_id"], parsed_key["display_name"], parsed_key["ext"], info.size)
         orphan_identity_counts[identity] = orphan_identity_counts.get(identity, 0) + 1
-    done, failed = [], []
+    done = []
+    failed = [{"file_id": file_id, "error": "文件不存在或已删除"} for file_id in missing_ids]
     for file in rows:
         try:
             item = requested[file.id]

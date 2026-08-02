@@ -51,7 +51,7 @@ async def test_media_reader_uses_physical_size_before_get(monkeypatch):
 
     result = await file_readers.read_video(file)
 
-    assert "超出读取上限" in result
+    assert "超出读取上限" in result["error"]
     assert storage.get_called is False
 
 
@@ -63,7 +63,7 @@ async def test_media_reader_rejects_missing_physical_object(monkeypatch):
 
     result = await file_readers.read_audio(file)
 
-    assert "文件不存在" in result
+    assert "文件不存在" in result["error"]
     assert storage.get_called is False
 
 

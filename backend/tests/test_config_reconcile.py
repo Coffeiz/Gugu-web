@@ -61,3 +61,16 @@ async def test_path_migration_rechecks_identity_uniqueness(db, user_a, tmp_path,
     result = await config_api.repair_path_migration(body, db=db)
     assert result["done"] == []
     assert result["failed"][0]["error"] == "路径身份不再唯一，请重新扫描"
+
+
+async def test_path_migration_reports_missing_file_ids(db, tmp_path, monkeypatch):
+    storage = LocalStorageBackend(Path(tmp_path))
+    monkeypatch.setattr(storage_module, "get_storage", lambda: storage)
+    body = config_api.PathMigrationRequest(items=[
+        config_api.PathMigrationItem(file_id=999999, key="bad", expected_old_key="old"),
+    ])
+
+    result = await config_api.repair_path_migration(body, db=db)
+
+    assert result["done"] == []
+    assert result["failed"] == [{"file_id": 999999, "error": "文件不存在或已删除"}]

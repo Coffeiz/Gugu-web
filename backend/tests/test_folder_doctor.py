@@ -174,6 +174,25 @@ async def test_misplaced_file_skips_mind_space(db, user_a, tmp_path):
     assert report.misplaced_files == []   # mind 空间历史归档字段，不在纠正范围
 
 
+async def test_scan_marks_misplaced_report_truncated(db, user_a, tmp_path):
+    storage = _storage(tmp_path)
+    files = []
+    for index in range(301):
+        key = f"{user_a.id}/个人文件/old-{index}.txt"
+        await storage.put(key, b"x")
+        files.append(File(
+            user_id=user_a.id, display_name=f"new-{index}", ext="txt",
+            storage_key=key, size_bytes=1,
+        ))
+    db.add_all(files)
+    await db.commit()
+
+    report = await folder_doctor.scan(db, storage, user_a.id)
+
+    assert len(report.misplaced_files) == 300
+    assert report.truncated is True
+
+
 async def test_repair_relocate_resolves_conflict(db, user_a, tmp_path):
     storage = _storage(tmp_path)
     folder = await _folder_row(db, user_a, "资料")
