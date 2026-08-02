@@ -16,7 +16,8 @@ from app.services.storage import get_storage
 
 VIDEO_EXTS = frozenset({"mp4", "mov", "avi", "mkv", "webm", "wmv", "m4v"})
 AUDIO_EXTS = frozenset({"mp3", "wav", "flac", "m4a", "ogg", "aac", "amr", "opus", "wma"})
-MEDIA_READ_MAX_BYTES = 128 * 1024 * 1024
+MEDIA_READ_MAX_BYTES = 36 * 1024 * 1024
+_FFMPEG_SEMAPHORE = asyncio.Semaphore(2)
 
 
 def _ffmpeg() -> str | None:
@@ -32,11 +33,17 @@ async def _run_ffmpeg(data: bytes, ext: str, args: list[str]) -> bytes | None:
     try:
         with os.fdopen(fd, "wb") as stream:
             stream.write(data)
-        proc = await asyncio.create_subprocess_exec(
-            ffmpeg, "-nostdin", "-y", "-i", source, *args,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        output, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+        async with _FFMPEG_SEMAPHORE:
+            proc = await asyncio.create_subprocess_exec(
+                ffmpeg, "-nostdin", "-y", "-i", source, *args,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                output, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.communicate()
+                raise
         return output if proc.returncode == 0 and output else None
     except (OSError, asyncio.TimeoutError):
         return None

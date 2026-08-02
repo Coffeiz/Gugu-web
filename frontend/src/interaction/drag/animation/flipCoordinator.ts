@@ -221,18 +221,16 @@ let nextElementKey = 1
 
 /** 优先用业务身份（跨重挂载仍然稳定），没有的元素才退回一个跟这个元素对象绑定的数字 id。 */
 function stableElementKey(element: HTMLElement): string | number {
-  return element.dataset.layoutKey
-    ?? element.dataset.projectId
-    ?? element.dataset.fileId
-    ?? element.dataset.folderKey
-    ?? (() => {
-      let value = elementKeys.get(element)
-      if (!value) {
-        value = nextElementKey++
-        elementKeys.set(element, value)
-      }
-      return value
-    })()
+  if (element.dataset.layoutKey) return `layout:${element.dataset.layoutKey}`
+  if (element.dataset.projectId) return `project:${element.dataset.projectId}`
+  if (element.dataset.fileId) return `file:${element.dataset.fileId}`
+  if (element.dataset.folderKey) return `folder:${element.dataset.folderKey}`
+  let value = elementKeys.get(element)
+  if (!value) {
+    value = nextElementKey++
+    elementKeys.set(element, value)
+  }
+  return value
 }
 
 /** 为跨分组/重挂载仍存在的元素生成稳定 FLIP key。 */
@@ -264,6 +262,7 @@ export function measureWithoutTransform(element: HTMLElement): DOMRect {
  * 直到别的卡片的动画结束才瞬间归位。按业务身份登记后，即使元素被换了，只要新元素
  * 携带同一个 data-project-id/data-file-id/data-folder-key/data-layout-key，
  * `retargetWithin` 就能在 container 里重新查到它、继续把新位置通知给回调。
+ * key 会带上 layout/project/file/folder 命名空间，避免不同对象类型使用同值 id 时碰撞。
  * 没有这几个业务属性的元素（没有稳定身份）退回旧行为——只能按当时的元素引用匹配，
  * 这类元素本来就不会跨渲染重建（比如列表末尾的「新建」按钮），不需要这份健壮性。
  */
@@ -272,12 +271,17 @@ export function createFlipRetargetRegistry(): FlipRetargetRegistry {
 
   const resolveLive = (container: HTMLElement, key: string | number, fallback: HTMLElement): HTMLElement | null => {
     if (typeof key !== 'string') return fallback.isConnected ? fallback : null
-    // 注册时用 stableElementKey 按优先级选定了具体是哪个属性，这里已经不知道当时
-    // 选的是哪一个——四个属性都查一遍，查到第一个匹配的就是它，没有歧义（同一时刻
-    // 不会有两张卡共用同一个业务 id）。
-    return container.querySelector<HTMLElement>(
-      `[data-layout-key="${key}"], [data-project-id="${key}"], [data-file-id="${key}"], [data-folder-key="${key}"]`,
-    )
+    // key 已包含属性命名空间，不能把 project:12 与 file:12 当成同一个目标。
+    const separator = key.indexOf(':')
+    if (separator < 0) return fallback.isConnected ? fallback : null
+    const kind = key.slice(0, separator)
+    const value = key.slice(separator + 1)
+    const attribute = kind === 'layout' ? 'layoutKey'
+      : kind === 'project' ? 'projectId'
+        : kind === 'file' ? 'fileId' : kind === 'folder' ? 'folderKey' : null
+    if (!attribute) return null
+    return Array.from(container.querySelectorAll<HTMLElement>('[data-layout-key], [data-project-id], [data-file-id], [data-folder-key]'))
+      .find(element => element.dataset[attribute] === value) ?? null
   }
 
   return {
@@ -334,6 +338,7 @@ export function createFlipTransaction(options: FlipOptions): FlipTransaction {
   let resolvePlay: ((result: FlipResult) => void) | null = null
   let finishTimer: number | null = null
   let pending = new Set<HTMLElement>()
+  const transitionListeners = new Map<HTMLElement, (event: TransitionEvent) => void>()
   let phase: 'capturing' | 'measured' | 'playing' | 'settled' = 'capturing'
   let cancelSelf: () => void = () => undefined
 
@@ -372,7 +377,12 @@ export function createFlipTransaction(options: FlipOptions): FlipTransaction {
     settled = true
     phase = 'settled'
     if (finishTimer !== null) window.clearTimeout(finishTimer)
-    pending.forEach(restore)
+    pending.forEach(element => {
+      const listener = transitionListeners.get(element)
+      if (listener) element.removeEventListener('transitionend', listener)
+      transitionListeners.delete(element)
+      restore(element)
+    })
     pending.clear()
     resolvePlay?.(result)
     resolvePlay = null
@@ -444,13 +454,17 @@ export function createFlipTransaction(options: FlipOptions): FlipTransaction {
               snapshot.writtenTransform = ''
               snapshot.writtenTransition = transition
             }
-            element.addEventListener('transitionend', event => {
+            const onTransitionEnd = (event: TransitionEvent) => {
               if (event.target === element && event.propertyName === 'transform' && owners.get(element) === token) {
+                element.removeEventListener('transitionend', onTransitionEnd)
+                transitionListeners.delete(element)
                 pending.delete(element)
                 restore(element)
                 if (!pending.size) settle('finished')
               }
-            }, { once: true })
+            }
+            element.addEventListener('transitionend', onTransitionEnd)
+            transitionListeners.set(element, onTransitionEnd)
           })
           finishTimer = window.setTimeout(() => settle(active() ? 'finished' : 'stale'), (options.duration ?? 340) + 100)
         })

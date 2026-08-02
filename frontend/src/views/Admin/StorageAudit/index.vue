@@ -111,7 +111,7 @@
         <div v-if="pathReport.ambiguous_count" class="recon-meta">存在同名同大小文件，已跳过，需要人工确认。</div>
         <div v-for="item in pathReport.candidates" :key="item.file_id" class="recon-row">
           <span class="recon-name">{{ item.name }}</span>
-          <span class="recon-meta">{{ item.old_key }} → {{ item.key }}</span>
+          <span class="recon-meta">{{ item.expected_old_key }} → {{ item.key }}</span>
         </div>
       </div>
     </section>
@@ -347,7 +347,11 @@ async function repairPathMigration() {
   pathRepairing.value = true
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage/path-migration/repair', {
-      method: 'POST', body: JSON.stringify({ items }),
+      method: 'POST', body: JSON.stringify({ items: items.map((item: any) => ({
+        file_id: item.file_id,
+        key: item.key,
+        expected_old_key: item.expected_old_key,
+      })) }),
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || '路径修复失败')

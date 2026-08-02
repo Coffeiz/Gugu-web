@@ -200,4 +200,17 @@ describe('FLIP 协调器', () => {
     registry.retarget([element], () => ({ left: 20, top: 0, width: 1, height: 1 }))
     expect(received).toEqual([120])
   })
+
+  it('不同对象类型使用同值 id 时不会互相覆盖', () => {
+    const project = document.createElement('div')
+    project.dataset.projectId = '12'
+    const file = document.createElement('div')
+    file.dataset.fileId = '12'
+    const registry = createFlipRetargetRegistry()
+    const received: string[] = []
+    registry.set(project, () => received.push('project'))
+    registry.set(file, () => received.push('file'))
+    registry.retarget([project, file], () => ({ left: 0, top: 0, width: 1, height: 1 }))
+    expect(received).toEqual(['project', 'file'])
+  })
 })

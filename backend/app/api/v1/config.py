@@ -218,8 +218,14 @@ class RepairRequest(BaseModel):
     keys: list[str]
 
 
+class PathMigrationItem(BaseModel):
+    file_id: int
+    key: str
+    expected_old_key: str
+
+
 class PathMigrationRequest(BaseModel):
-    items: list[dict[str, Any]]
+    items: list[PathMigrationItem]
 
 
 class TrashMigrationRequest(BaseModel):
@@ -334,7 +340,7 @@ async def scan_path_migration(db: AsyncSession = Depends(get_db)):
         item = {"key": key, "name": parts[-1], "size_bytes": identity[3]}
         if len(matches) == 1:
             file = matches[0]
-            item.update({"file_id": file.id, "old_key": file.storage_key, "old_folder_id": file.folder_id})
+            item.update({"file_id": file.id, "expected_old_key": file.storage_key, "old_folder_id": file.folder_id})
             candidates.append(item)
         elif len(matches) > 1:
             item["file_ids"] = [file.id for file in matches]
@@ -350,12 +356,30 @@ async def repair_path_migration(body: PathMigrationRequest, db: AsyncSession = D
     from app.services.storage import get_storage
 
     storage = get_storage()
-    requested = {int(item["file_id"]): str(item["key"]) for item in body.items}
+    requested = {item.file_id: item for item in body.items}
     rows = (await db.execute(select(File).where(File.id.in_(requested), File.deleted_at.is_(None)))).scalars().all()
+    all_files = (await db.execute(select(File))).scalars().all()
+    occupied = {file.storage_key: file.id for file in all_files}
     done, failed = [], []
     for file in rows:
         try:
-            new_key = requested[file.id]
+            item = requested[file.id]
+            new_key = item.key
+            if item.expected_old_key != file.storage_key:
+                failed.append({"file_id": file.id, "error": "旧路径已变化，请重新扫描"})
+                continue
+            if new_key == file.storage_key:
+                failed.append({"file_id": file.id, "error": "新旧路径相同"})
+                continue
+            if not new_key.startswith(f"{file.user_id}/") or ".." in new_key.split("/"):
+                failed.append({"file_id": file.id, "error": "路径不属于文件所有者"})
+                continue
+            if occupied.get(new_key) not in (None, file.id):
+                failed.append({"file_id": file.id, "error": "新路径已被其他文件占用"})
+                continue
+            if await storage.exists(file.storage_key):
+                failed.append({"file_id": file.id, "error": "旧路径仍存在，拒绝覆盖"})
+                continue
             if not await storage.exists(new_key):
                 failed.append({"file_id": file.id, "error": "物理文件不存在"})
                 continue
@@ -363,7 +387,20 @@ async def repair_path_migration(body: PathMigrationRequest, db: AsyncSession = D
             if len(parts) < 3:
                 failed.append({"file_id": file.id, "error": "路径无法解析"})
                 continue
+            name, dot, ext = parts[-1].rpartition(".")
+            if not dot:
+                name, ext = parts[-1], ""
+            if name != file.display_name or (ext.lower() if dot else "") != (file.ext or "").lower():
+                failed.append({"file_id": file.id, "error": "文件名或扩展名不匹配"})
+                continue
+            stat = await storage.stat(new_key)
+            if stat and file.size_bytes and stat.size != file.size_bytes:
+                failed.append({"file_id": file.id, "error": "文件大小不匹配"})
+                continue
             project_id = None
+            if parts[1] not in ("个人文件", "项目文件"):
+                failed.append({"file_id": file.id, "error": "空间路径无法解析"})
+                continue
             folder_parts = parts[2:-1] if parts[1] == "个人文件" else []
             if parts[1] == "项目文件":
                 import re
@@ -373,7 +410,18 @@ async def repair_path_migration(body: PathMigrationRequest, db: AsyncSession = D
                         project_id = int(match.group(1))
                         folder_parts = parts[index + 1:-1]
                         break
+                if project_id is None:
+                    failed.append({"file_id": file.id, "error": "项目路径无法解析"})
+                    continue
+                from app.models import Project
+                project = await db.get(Project, project_id)
+                if project is None or project.user_id != file.user_id:
+                    failed.append({"file_id": file.id, "error": "项目不属于文件所有者"})
+                    continue
             folder_id = await _resolve_import_folder(db, file.user_id, project_id, folder_parts)
+            if folder_parts and folder_id is None:
+                failed.append({"file_id": file.id, "error": "目录路径无法解析"})
+                continue
             file.folder_id = folder_id
             file.storage_key = "/".join(parts)
             done.append(file.id)
