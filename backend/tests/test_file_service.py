@@ -142,7 +142,7 @@ async def test_move_folder_across_projects_relocates_subtree(db, user_a, tmp_pat
 
     moved = await svc.move_folder(
         user_a.id, root.id, None, client_version=root.version,
-        target_project_id=p2.id,
+        target_project_id=p2.id, target_project_set=True,
     )
     await db.commit()
     await db.refresh(child)
