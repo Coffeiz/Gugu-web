@@ -5,8 +5,8 @@
 - 未配置语音模型（`settings.voice.model` 为空）→ `transcribe` 返回 **None**，调用方据此切断、回「不支持」。
 - 配置了但转写失败/空 → 返回空串 `""`，调用方注入一句「没听清」兜底，仍交主模型（不报错）。
 
-固定走 **OpenAI 兼容方式**（chat + `input_audio` base64）：纯 ASR 模型只送音频块、不加文字指令；
-返回 `choices[0].message.content` 即转写文本。模型需支持 input_audio（qwen3-asr-flash / mimo 系等）。
+旧版 ASR 固定走 **OpenAI 兼容方式**（chat + `input_audio` base64）；
+Qwen-Audio-3.0-ASR-Flash 改走百炼 DashScope 多模态 HTTP 接口。纯 ASR 模型只送音频块、不加文字指令。
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import logging
 import os
 import tempfile
 from types import SimpleNamespace
+from urllib.parse import urlsplit, urlunsplit
 
 from app.core.redaction import diag_log, redact
 
@@ -29,6 +30,27 @@ _ASR_RETRY_BACKOFF = [1, 2]   # ASR 单次调用本身较慢，退避拉满会�
 # mimo-v2.5-asr 等 ASR 模型只收这几种容器；浏览器录音多是 audio/mp4(Safari)/audio/webm(Chrome)，
 # QQ/微信语音也常是 amr/silk → 一律用 ffmpeg 转 wav 再送。
 _ASR_OK_MIME = {"audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3"}
+def _dashscope_generation_url(base_url: str) -> str:
+    """从兼容模式 base URL 推导百炼多模态生成端点。"""
+    parsed = urlsplit((base_url or "").strip())
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("语音模型 Base URL 无效")
+    return urlunsplit((parsed.scheme, parsed.netloc,
+                       "/api/v1/services/aigc/multimodal-generation/generation", "", ""))
+
+
+def _dashscope_transcript(payload: dict) -> str:
+    """读取 DashScope 多模态响应中的文本结果。"""
+    content = (((payload.get("output") or {}).get("choices") or [{}])[0]
+               .get("message", {}).get("content", []))
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        return "".join(
+            str(item.get("text") or "") for item in content
+            if isinstance(item, dict)
+        ).strip()
+    return ""
 
 
 async def _to_wav(raw: bytes) -> bytes | None:
@@ -109,16 +131,37 @@ async def transcribe(media: list, settings) -> str | None:
     # 鉴权失败/参数错/模型不存在等 4xx（openai.APIStatusError 但非 5xx/429）不在白名单内，
     # 会落进下面的 except Exception 分支直接回空串——不重试。
     transient = (_openai.APITimeoutError, _openai.APIConnectionError,
-                 _openai.InternalServerError, _openai.RateLimitError)
-    client = providers.build_openai_client(vm, httpx.Timeout(60.0))
+                 _openai.InternalServerError, _openai.RateLimitError,
+                 httpx.TimeoutException, httpx.NetworkError)
+    native_dashscope = (getattr(vm, "api_format", "") or "").strip().lower() == "dashscope"
+    client = None if native_dashscope else providers.build_openai_client(vm, httpx.Timeout(60.0))
     for i in range(len(_ASR_RETRY_BACKOFF) + 1):
         try:
-            # ASR 模型（mimo-v2.5-asr / qwen3-asr-flash）干净调用即可——**不传 thinking**（那是聊天
-            # 模型的，ASR 模型会拒）；语言等用默认自动识别（如需指定可加
-            # extra_body={"asr_options": {"language": "zh"}}）。
-            resp = await client.chat.completions.create(
-                model=vm.model, messages=[{"role": "user", "content": parts}])
-            out = (resp.choices[0].message.content or "").strip()
+            if native_dashscope:
+                # Qwen-Audio-3.0-ASR-Flash 使用 DashScope 原生多模态接口，
+                # 不是 qwen3-asr-flash 的 OpenAI 兼容 chat/completions 接口。
+                data = {
+                    "model": vm.model,
+                    "input": {"messages": [{"role": "user", "content": [
+                        {"audio": block["input_audio"]["data"]}
+                        for block in parts
+                    ]}]},
+                    "parameters": {"asr_options": {"enable_itn": False}},
+                }
+                headers = {"Authorization": f"Bearer {vm.api_key}",
+                           "Content-Type": "application/json"}
+                async with httpx.AsyncClient(timeout=60.0) as http:
+                    response = await http.post(_dashscope_generation_url(vm.base_url),
+                                               headers=headers, json=data)
+                    response.raise_for_status()
+                    out = _dashscope_transcript(response.json())
+            else:
+                # 旧 ASR 模型（mimo-v2.5-asr / qwen3-asr-flash）走 OpenAI 兼容接口；
+                # 不传 thinking，ASR 模型会拒绝聊天模型专用参数。
+                resp = await client.chat.completions.create(
+                    model=vm.model, messages=[{"role": "user", "content": parts}],
+                    extra_body={"asr_options": {"enable_itn": False}})
+                out = (resp.choices[0].message.content or "").strip()
             logger.info("语音转写成功 model=%s → %d 字: %s", vm.model, len(out), out[:80])
             return out
         except transient as e:
@@ -133,6 +176,21 @@ async def transcribe(media: list, settings) -> str | None:
                 # 这个函数「不抛异常」的调用约定。
                 return ""
             logger.info("语音转写瞬时错误 %s，%ss 后重试(%d)", type(e).__name__, _ASR_RETRY_BACKOFF[i], i + 1)
+            await asyncio.sleep(_ASR_RETRY_BACKOFF[i])
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code not in (429,) and e.response.status_code < 500:
+                diag_log("agent.voice.transcribe.permanent", e)
+                logger.warning("语音转写失败 model=%s base_url=%s → %s",
+                               getattr(vm, "model", "?"), getattr(vm, "base_url", "?"),
+                               redact(f"HTTP {e.response.status_code}"))
+                return ""
+            if i >= len(_ASR_RETRY_BACKOFF):
+                diag_log("agent.voice.transcribe", e)
+                logger.warning("语音转写重试 %d 次后仍失败 model=%s：HTTP %s",
+                               i, vm.model, e.response.status_code)
+                return ""
+            logger.info("语音转写 HTTP %s，%ss 后重试(%d)",
+                        e.response.status_code, _ASR_RETRY_BACKOFF[i], i + 1)
             await asyncio.sleep(_ASR_RETRY_BACKOFF[i])
         except Exception as e:
             # 非瞬时（4xx 鉴权/参数错等）或未知错误：失败回空串（调用方兜底为「没听清」），
