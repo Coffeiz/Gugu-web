@@ -489,7 +489,10 @@ function onModalClose() { closeProjectModal() }
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 const projectStore     = useProjectStore()
-const fileActions      = useFileActions()
+const fileActions      = useFileActions({
+  scope: 'project',
+  projectId: () => props.project?.id ?? null,
+})
 const fileCacheStore   = useFilesCacheStore()
 const liveStore        = useLiveStore()
 const prefsStore       = usePreferencesStore()
@@ -1449,22 +1452,24 @@ async function pmCtxPaste() {
 }
 
 function onPmKeyDown(e: KeyboardEvent) {
+  // ProjectModal 在 DefaultLayout 中常驻挂载；未打开时不能参与文件库的全局快捷键。
+  if (!props.project) return
   const tag = (e.target as HTMLElement)?.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA') return
   const ctrl = e.ctrlKey || e.metaKey
   if (ctrl && e.key === 'x') {
     const fids = [...pmSelectedFileIds.value]; const dids = [...pmSelectedFolderIds.value]
-    if (fids.length || dids.length) { pmCbStore.cut(fids, dids); e.preventDefault() }
+    if (fids.length || dids.length) { pmCbStore.cut(fids, dids); e.preventDefault(); e.stopImmediatePropagation() }
   } else if (ctrl && e.key === 'c') {
     const fids = [...pmSelectedFileIds.value]
-    if (fids.length) { pmCbStore.copy(fids, []); e.preventDefault() }
+    if (fids.length) { pmCbStore.copy(fids, []); e.preventDefault(); e.stopImmediatePropagation() }
   } else if (ctrl && e.key === 'v') {
-    if (pmCbStore.hasContent()) { pmCtxPaste(); e.preventDefault() }
+    if (pmCbStore.hasContent()) { pmCtxPaste(); e.preventDefault(); e.stopImmediatePropagation() }
   }
 }
 
-onMounted(() => document.addEventListener('keydown', onPmKeyDown))
-onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
+onMounted(() => document.addEventListener('keydown', onPmKeyDown, true))
+onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown, true))
 </script>
 
 <style scoped>
