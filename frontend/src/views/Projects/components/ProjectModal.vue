@@ -4,7 +4,7 @@
         <!-- 悬浮操作按钮：文件多选模式下让位给 .pm-selection-bar（同在右下角，多选栏内容多时会重叠，
              且两边都有删除按钮离太近容易误触），多选栏自己有取消/删除，先隐藏这组项目级按钮 -->
         <div v-if="!pmInSelectionMode" class="float-actions">
-          <button class="save-float-btn" @click="$emit('close')" title="保存并关闭">
+          <button class="save-float-btn" @click="closeProjectModal" title="保存并关闭">
             <PhCheck :size="14" weight="bold" />
           </button>
           <button class="archive-float-btn" @click="handleArchive" title="归档此项目（可逆，随时可在「已归档」里恢复）">
@@ -130,12 +130,13 @@
             </div>
             <!-- 排序选择器（挪出 新建文件夹 的 v-if/v-else 对，否则 v-else 不相邻报错）-->
             <SortMenu
+              ref="sortMenuRef"
               :options="PM_SORT_OPTIONS"
               :sort-key="pmSortKey"
               :sort-dir="pmSortDir"
               @select="onPmSortSelect"
             />
-            <button class="close-btn" @click="$emit('close')">
+            <button class="close-btn" @click="closeProjectModal">
               <PhX :size="14" weight="bold" />
             </button>
           </div>
@@ -468,7 +469,7 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { parseFolderId } from '@/utils/folderKeys'
 import { optimisticMutation } from '@/utils/optimisticMutation'
 import { useFileSelection } from '@/composables/files/useFileSelection'
-import { sortFileProjection } from '@/composables/files/useFileProjection'
+import { projectFileDirectory } from '@/composables/files/useFileProjection'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileContextMenu } from '@/composables/files/useFileContextMenu'
@@ -477,7 +478,12 @@ import { useProjectDraft } from '@/composables/projects/useProjectDraft'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const emit = defineEmits(['close'])
-function onModalClose() { emit('close') }
+const sortMenuRef = ref<{ closeMenu: () => void } | null>(null)
+function closeProjectModal() {
+  sortMenuRef.value?.closeMenu()
+  emit('close')
+}
+function onModalClose() { closeProjectModal() }
 
 // e.message 兜底：console.error 里统一格式化未知类型的异常，跟 stores/projects.ts 的 errMsg 同一约定。
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -832,22 +838,25 @@ function onPmFilePointerDown(file: FileMeta, e: PointerEvent) {
 // ── 排序 ──────────────────────────────────────────────────────────────────────
 const { SORT_OPTIONS: PM_SORT_OPTIONS, sortKey: pmSortKey, sortDir: pmSortDir, onSortSelect: onPmSortSelect } = useSorting()
 
-const sortedCurrentFolders = computed(() => {
-  return sortFileProjection(currentFolders.value, pmSortKey.value, pmSortDir.value, {
-    name: folder => folder.name, type: folder => folder.name, id: folder => folder.id,
-  })
-})
-
-const sortedCurrentFiles = computed(() => {
-  return sortFileProjection(currentFiles.value, pmSortKey.value, pmSortDir.value, {
-    name: file => file.displayName,
-    type: file => `${fileExtCategory(file.ext)}:${file.ext ?? ''}`,
-    stage: file => file.stageName ?? '',
-    createdAt: file => file.createdAt,
-    size: file => file.sizeBytes ?? 0,
-    id: file => file.id,
-  })
-})
+const sortedCurrentDirectory = computed(() => projectFileDirectory(
+  currentFolders.value,
+  currentFiles.value,
+  pmSortKey.value,
+  pmSortDir.value,
+  {
+    folderSorters: { name: folder => folder.name, type: folder => folder.name, id: folder => folder.id },
+    fileSorters: {
+      name: file => file.displayName,
+      type: file => `${fileExtCategory(file.ext)}:${file.ext ?? ''}`,
+      stage: file => file.stageName ?? '',
+      createdAt: file => file.createdAt,
+      size: file => file.sizeBytes ?? 0,
+      id: file => file.id,
+    },
+  },
+))
+const sortedCurrentFolders = computed(() => sortedCurrentDirectory.value.folders)
+const sortedCurrentFiles = computed(() => sortedCurrentDirectory.value.files)
 
 // ── 文件夹 ────────────────────────────────────────────────────────────────────
 
@@ -1161,13 +1170,13 @@ async function handleDelete() {
   }
   await projectStore.deleteProject(id)
   if (fileCnt + folderCnt > 0) fileCacheStore.refresh()   // 该项目的文件/文件夹已随项目删除，重拉同步本地缓存
-  emit('close')
+  closeProjectModal()
 }
 
 async function handleArchive() {
   if (!props.project) return
   await projectStore.archiveProject(props.project.id)
-  emit('close')
+  closeProjectModal()
 }
 
 function saveStages() {
@@ -1746,8 +1755,8 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
 
 .file-grid {
   display: grid;
-  /* Mode1：固定卡片宽度（不随比例缩放），只改变列数 */
-  grid-template-columns: repeat(auto-fill, 138px);
+  /* Mode1：固定 5 列均分可用宽度，避免右侧留下空白 */
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   align-content: start;
 }
@@ -1774,6 +1783,14 @@ onUnmounted(() => document.removeEventListener('keydown', onPmKeyDown))
   flex: 1;
   height: auto;
   min-height: 0;
+}
+/* FileCard 的缩略图/图标区默认是 90px 且不可收缩；Mode2 卡片更窄时会把外框撑高，
+   与可收缩的文件夹卡产生高度差。按 138:122 的卡片比例给文件卡预留约 70px 内容区，
+   让图片、普通文件图标和文件夹卡共享同一行高。 */
+.modal.stages-expanded :deep(.fc-thumb-area),
+.modal.stages-expanded :deep(.fc-icon-area) {
+  flex: 0 0 70px;
+  height: 70px;
 }
 .modal.stages-expanded :deep(.fc-big-icon) { width: 52px; height: 52px; }
 /* 上传按钮与幽灵卡取消固定 min-height，跟随卡片同比例；网格态上传按钮现在是
