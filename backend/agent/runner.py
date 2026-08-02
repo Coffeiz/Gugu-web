@@ -254,9 +254,10 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
     # 语音 / 音视频：用独立配置的「语音识别模型」转成文字 → 交主模型，**主模型不再被强切**（见 agent/voice.py）。
     # 没配语音模型 → 切断，回「不支持」（用户消息已存，不再生成）。
-    if aug_media:
+    _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
+    if _transcribe_media:
         from agent import voice as _voice
-        transcript = await _voice.transcribe(aug_media, settings)
+        transcript = await _voice.transcribe(_transcribe_media, settings)
         if transcript is None:        # 未配置语音模型
             _release_model(model_cfg)
             return AgentResponse(
@@ -264,7 +265,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                 session_id=session_id, tokens_in=0, tokens_out=0)
         spoken = transcript.strip() or "（用户发来一段语音，但这次没听清内容）"
         aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
-        aug_media = []                # 已转文字 → 丢媒体，主模型按文本处理
+        aug_media = [m for m in aug_media if m.get("type") == "video"]
 
     # IM 来的用户消息：一存下就先推给网页（先看到「我发了什么」，咕咕回复生成完再推第二次），
     # 而不是等一轮结束把一来一回一起推。events 是局部变量（日历列表），用别名导模块。
@@ -309,7 +310,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         for h in history:
             content = h.content_json if h.content_json is not None else (h.content or "")
             anthr_messages.append({"role": h.role, "content": content})
-        anthr_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, True)})
+        anthr_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, True, media=aug_media)})
         # 清洗：去孤儿 tool_use/tool_result、空块、块里的 None 字段（MiniMax 严格校验，否则
         # 历史里带非标字段/不配对工具块会报 `text is not set` 等）。**IM 路此前漏了这步，web 路一直有**。
         anthr_messages = sanitize.sanitize_messages(anthr_messages)
@@ -499,9 +500,10 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         pass
 
     # 语音转写（跟 run_collect 一致）：不支持时直接结束
-    if aug_media:
+    _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
+    if _transcribe_media:
         from agent import voice as _voice
-        transcript = await _voice.transcribe(aug_media, settings)
+        transcript = await _voice.transcribe(_transcribe_media, settings)
         if transcript is None:
             _release_model(model_cfg)
             yield ("final", AgentResponse(
@@ -510,7 +512,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
             return
         spoken = transcript.strip() or "（用户发来一段语音，但这次没听清内容）"
         aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
-        aug_media = []
+        aug_media = [m for m in aug_media if m.get("type") == "video"]
 
     memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
     im_channels = await loaders.load_im_channels(user_id)
@@ -544,7 +546,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         for h in history:
             content = h.content_json if h.content_json is not None else (h.content or "")
             anthr_messages.append({"role": h.role, "content": content})
-        anthr_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, True)})
+        anthr_messages.append({"role": "user", "content": build_user_content(aug_text, aug_images, True, media=aug_media)})
         anthr_messages = sanitize.sanitize_messages(anthr_messages)
         anthr_initial_len = len(anthr_messages)
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True, model_cfg=model_cfg)

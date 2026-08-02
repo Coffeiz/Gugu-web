@@ -196,8 +196,10 @@ defineExpose({ flagConflict: () => { conflict.value = true }, confirmEdit, stopE
   /* 滚动条贴列右边缘、无底色，跟 AppSidebar.vue .nav 同一套技巧：右侧额外让出的 margin
      跟 padding 等值抵消，scrollbar-gutter:stable 让这段空间常驻预留——出不出滚动条，
      .note-stack 都不会跟着左右移动。左侧维持原来的 -4px/4px（横向视口裁切用，跟滚动条无关）。 */
-  margin: 0 -14px 0 -4px; padding: 2px 14px 4px 4px;
-  scrollbar-gutter: stable;
+  /* 滚动视口会裁切子元素阴影，左右和上下都留出 hover 阴影的安全区，避免卡片贴边时被截断。 */
+  margin: 0 -4px 0 -4px; padding: 8px 10px 14px 10px;
+  /* 右侧滚动条占用 gutter 时，左侧也预留同宽空间，保持便签卡片左右对称。 */
+  scrollbar-gutter: stable both-edges;
 }
 .note-stack { display: flex; flex-direction: column; gap: 10px; }
 

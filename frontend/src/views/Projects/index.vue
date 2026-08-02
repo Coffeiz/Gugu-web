@@ -6,14 +6,14 @@
         :key="col.key"
         :column="col"
         :projects="columnProjects(col.key)"
+        :ownership-version="ownershipVersion(columnProjects(col.key))"
         @card-click="projectStore.openModal"
-        @drop-project="handleDrop"
         @add-project="openNewWithStatus"
       />
       <DoneColumn
         :projects="columnProjects('done')"
+        :ownership-version="ownershipVersion(columnProjects('done'))"
         @card-click="projectStore.openModal"
-        @drop-project="handleDrop"
         @open-archived="showArchived = true"
       />
     </div>
@@ -23,11 +23,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { runtime, type MoveAction } from '@/interaction/runtime'
 import { showAppError } from '@/composables/useAppToast'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
+import type { Project } from '@/types/project'
 import KanbanColumn from './components/KanbanColumn.vue'
 import DoneColumn   from './components/DoneColumn.vue'
 import ArchivedProjectsModal from './components/ArchivedProjectsModal.vue'
@@ -35,8 +37,17 @@ import ArchivedProjectsModal from './components/ArchivedProjectsModal.vue'
 const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
-
 const showArchived = ref(false)
+const ownershipRevisions = reactive(new Map<string, number>())
+const stopOwnershipSubscription = runtime.owner.subscribe((objectId) => {
+  ownershipRevisions.set(objectId, (ownershipRevisions.get(objectId) ?? 0) + 1)
+})
+
+function ownershipVersion(projects: Project[]): number {
+  let revision = 0
+  for (const project of projects) revision = (revision * 31 + (ownershipRevisions.get(String(project.id)) ?? 0)) >>> 0
+  return revision
+}
 
 watch(() => projectStore.error, (message) => {
   if (!message) return
@@ -51,6 +62,21 @@ onMounted(() => {
   // 归档列表页面一进来就后台预取，避免用户点开归档按钮那一下要等网络往返、闪一下「加载中」
   if (!projectStore.archivedLoaded && !projectStore.archivedLoading) projectStore.fetchArchivedProjects()
 })
+
+const stopRuntimeActions = runtime.onAction(action => {
+  if (action.type !== 'move') return
+  const move = action as MoveAction
+  const object = runtime.objects.get(move.objectId)
+  const projectSurfaces = new Set(['pending', 'active', 'done'])
+  if (object?.type !== 'project-card') return
+  if (!projectSurfaces.has(move.fromSurfaceId) || !projectSurfaces.has(move.toSurfaceId)) return
+  const projectId = Number(move.objectId)
+  if (!Number.isFinite(projectId) || move.fromSurfaceId === move.toSurfaceId) return
+  if (!projectStore.projects.some(project => project.id === projectId)) return
+  projectStore.moveProject(projectId, move.toSurfaceId)
+})
+onUnmounted(stopRuntimeActions)
+onUnmounted(stopOwnershipSubscription)
 
 // 全局搜索点击项目 → 跳转本页后高亮对应项目卡（不打开编辑弹窗）
 watch(() => uiStore.pendingProjectHighlight, (id) => {
@@ -92,19 +118,55 @@ const liveFileCounts = computed(() => {
   return m
 })
 
-function columnProjects(statusKey) {
-  const list = projectStore.projects
-    .filter(p => p.status === statusKey)
-    // cache 已加载后以前端计数为准（只计根目录文件），避免回退到服务端含文件夹的数字
-    .map(p => ({ ...p, fileCount: cacheStore.loaded ? (liveFileCounts.value.get(p.id) ?? 0) : p.fileCount }))
+// 按状态分组的项目列表，缓存进 computed——之前是个普通函数，每次父组件重渲染
+// （项目移动、liveFileCounts 异步更新，往往是紧挨着的两次独立渲染）都会重新
+// filter/map/sort 一遍，且 map() 每次都生成全新的 project 对象。这些新对象配合
+// TransitionGroup 的 diff，在某些时机会让 Vue 把同一个 key 的 ProjectCard 实例
+// 整个卸载重挂载，而不只是 patch props（实测：拖拽落地动画中途，卡片的 Vue
+// 组件会在 <2ms 内 mounted→unmounted 一次，飞行中的克隆因此跟丢了目标元素引用，
+// 表现为落地卡在原地不动、直到别的卡片动画结束才瞬间归位）。改成 computed 后，
+// 只要 projects/cacheStore.loaded/liveFileCounts 这几个依赖没变，同一轮渲染
+// 内多次调用 columnProjects() 用的是同一份缓存结果，同一个 project 对象引用，
+// 不会再凭空多出这类相邻渲染间的对象churn。
+const projectViewCache = new Map<number, { source: Project; fileCount: number; view: Project }>()
+const columnProjectsMap = computed(() => {
   const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
-  if (statusKey === 'done')   return list.sort((a, b) => prioVal(b) - prioVal(a) || (b.doneAt ?? '').localeCompare(a.doneAt ?? ''))
-  if (statusKey === 'active') return list.sort((a, b) => prioVal(b) - prioVal(a) || (a.deadline ?? '').localeCompare(b.deadline ?? '') || a.id - b.id)
-  return list.sort((a, b) => prioVal(b) - prioVal(a) || (a.startDate ?? '').localeCompare(b.startDate ?? '') || a.id - b.id)
-}
+  const grouped = new Map()
+  const liveIds = new Set<number>()
+  for (const p of projectStore.projects) {
+    const list = grouped.get(p.status) ?? []
+    const fileCount = cacheStore.loaded ? (liveFileCounts.value.get(p.id) ?? 0) : p.fileCount
+    liveIds.add(p.id)
+    const cached = projectViewCache.get(p.id)
+    // Store 会原地更新 Project。派生 fileCount 需要克隆时，复用同一份 view 并同步整对象，
+    // 避免标题、优先级、日期、颜色等字段在乐观更新期间继续显示旧快照。
+    let view: Project
+    if (fileCount === p.fileCount) {
+      view = p
+    } else if (cached?.source === p && cached.view !== p) {
+      Object.assign(cached.view, p, { fileCount })
+      view = cached.view
+    } else {
+      view = { ...p, fileCount }
+    }
+    projectViewCache.set(p.id, { source: p, fileCount, view })
+    // cache 已加载后以前端计数为准（只计根目录文件），避免回退到服务端含文件夹的数字
+    list.push(view)
+    grouped.set(p.status, list)
+  }
+  for (const id of projectViewCache.keys()) {
+    if (!liveIds.has(id)) projectViewCache.delete(id)
+  }
+  for (const [statusKey, list] of grouped) {
+    if (statusKey === 'done') list.sort((a, b) => prioVal(b) - prioVal(a) || (b.doneAt ?? '').localeCompare(a.doneAt ?? ''))
+    else if (statusKey === 'active') list.sort((a, b) => prioVal(b) - prioVal(a) || (a.deadline ?? '').localeCompare(b.deadline ?? '') || a.id - b.id)
+    else list.sort((a, b) => prioVal(b) - prioVal(a) || (a.startDate ?? '').localeCompare(b.startDate ?? '') || a.id - b.id)
+  }
+  return grouped
+})
 
-function handleDrop({ projectId, targetStatus }) {
-  projectStore.moveProject(projectId, targetStatus)
+function columnProjects(statusKey) {
+  return columnProjectsMap.value.get(statusKey) ?? []
 }
 
 function openNewWithStatus(status) {

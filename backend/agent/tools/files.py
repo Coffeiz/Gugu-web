@@ -286,6 +286,10 @@ async def _read_file(db, user_id, args: dict):
         return _err
     ext = f.ext.lower()
 
+    from agent.tools.file_readers import AUDIO_EXTS, VIDEO_EXTS, read_media
+    if ext in AUDIO_EXTS or ext in VIDEO_EXTS:
+        return await read_media(f)
+
     # 图片：vision 模型 + Anthropic 通道 → 把图喂给模型「看」（结果走 tool_result 图片块）
     from app.core import chat_attach
     if ext in chat_attach.IMAGE_EXTS:
@@ -307,7 +311,7 @@ async def _read_file(db, user_id, args: dict):
 
     is_doc = ext in doctext.EXTRACTABLE      # PDF/docx/xlsx/pptx 等，需工具提取文本
     if ext not in TEXT_EXTS and not is_doc:
-        return json.dumps({"error": f"不支持读取该类型（{f.ext}），仅支持文本类 + PDF/Office 文档 + 图片"})
+        return json.dumps({"error": f"不支持读取该类型（{f.ext}），支持文本、PDF/Office、图片、音频和视频"})
     cap = doctext.EXTRACT_MAX_BYTES if is_doc else READ_MAX_BYTES
     if (f.size_bytes or 0) > cap:
         return json.dumps({"error": f"文件过大（{f.size}），超出可读上限"})
@@ -1185,7 +1189,8 @@ class FilesSkill(BaseSkill):
         Tool(
             name="list_files", label="查询文件",
             description="查询文件，可按空间(project/mind/asset/personal)、项目、扩展名、名称关键词筛选。"
-                        "结果含 folder_path（完整文件夹路径）；回给用户时按列表呈现（每个文件一行，多文件夹/项目时分组），别写成一段话堆文件名。",
+                        "结果含 folder_path（完整文件夹路径）；回给用户时默认按 folder_path 分组，用目录树形式呈现（文件夹一行，文件缩进列出）。"
+                        "同名文件按完整路径区分；不要把平铺结果揉成一段话，也不要把未出现在结果中的文件夹判断为空。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1199,7 +1204,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="read_file", label="读取文件",
-            description="读取文件内容：文本类（md/txt/json/代码等，≤256KB）直接读；PDF/Word/Excel/PPT 自动提取文本；图片（png/jpg/heic 等）可直接识别图像内容（需多模态模型）。视频/音频不可读。"
+            description="读取文件内容：文本类（md/txt/json/代码等，≤256KB）直接读；PDF/Word/Excel/PPT 自动提取文本；图片可识别图像；音频转写；视频提取代表画面并转写音频（需配置对应模型）。"
                         "读到后按需提炼、别整段复述给用户：大文件挑相关部分讲；JSON/YAML 点出顶层键和关键字段；CSV/TSV 给表头+前几行再总结各列；只回答用户问的那块。",
             input_schema={
                 "type": "object",

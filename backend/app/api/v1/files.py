@@ -7,6 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File as FastAPIFile, Form
 from sqlalchemy import select, func
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -45,6 +46,26 @@ _THUMB_SIZE_MAP = {"tiny": (20, 75), "card": (192, 82)}
 
 # 单文件上传硬上限（字节）——独立于存储配额，防一次性 read 进内存打爆。
 _MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+
+# 版本摘要是无副作用查询，遇到迁移/对账等 DDL 造成的短暂死锁时可以安全重试。
+_VERSION_RETRY_BACKOFF = (0.05, 0.15)
+
+
+def _is_deadlock_error(exc: DBAPIError) -> bool:
+    """仅识别 PostgreSQL/asyncpg 的死锁，避免把普通数据库错误当成可重试。"""
+    return type(getattr(exc, "orig", None)).__name__ == "DeadlockDetectedError"
+
+
+async def _execute_version_query(db: AsyncSession, stmt):
+    """执行文件版本摘要查询；死锁时回滚当前事务后有限重试。"""
+    for attempt in range(len(_VERSION_RETRY_BACKOFF) + 1):
+        try:
+            return await db.execute(stmt)
+        except DBAPIError as exc:
+            if not _is_deadlock_error(exc) or attempt >= len(_VERSION_RETRY_BACKOFF):
+                raise
+            await db.rollback()
+            await asyncio.sleep(_VERSION_RETRY_BACKOFF[attempt])
 
 # 缩略图生成是 CPU 密集（解码/缩放/编码）；小核机器上多个并发跑会占满 CPU、卡住其他请求。
 # 闸门：最多 (核数-1) 个并发，至少留一个核给事件循环（2 核 → 1）。
@@ -244,7 +265,7 @@ async def files_version(
         )
         .where(File.user_id == current_user.id)
     )
-    result = await db.execute(stmt)
+    result = await _execute_version_query(db, stmt)
     count, max_updated, max_deleted = result.one()
     version = f"{count}:{max_updated}:{max_deleted}"
     return {"version": version}

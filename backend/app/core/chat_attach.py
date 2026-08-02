@@ -33,15 +33,16 @@ TEXT_EXTS = {
     "sql", "xml", "toml", "ini", "conf", "env", "tex",
 }
 IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic", "heif", "tiff", "tif"}
-# 音 / 视频理解（仅 mimo + openai 格式路支持，见 _media_understanding_enabled）。格式 / 上限照 mimo 文档。
+# 音 / 视频理解：MiMo 使用 OpenAI 扩展块，MiniMax M3 使用 Anthropic 原生 video 块。
 AUDIO_EXTS = {"mp3", "wav", "flac", "m4a", "ogg"}              # mimo 原生收，免转
-VIDEO_EXTS = {"mp4", "mov", "avi", "wmv"}
+VIDEO_EXTS = {"mp4", "mov", "avi", "wmv", "mkv"}
 # 非 mimo 原生的音频（IM 语音 / 浏览器录音常见）：算「音频」但要先转 mp3 才能喂 mimo（需服务器装 ffmpeg）
 TRANSCODE_AUDIO_EXTS = {"amr", "silk", "sil", "slk", "opus", "aac", "wma", "webm", "3gp", "3gpp"}
 MEDIA_RAW_MAX = 36 * 1024 * 1024   # 原始字节上限：base64 后约 <50MB（mimo base64 限制）
 _MEDIA_MIME = {
     "mp3": "audio/mpeg", "wav": "audio/wav", "flac": "audio/flac", "m4a": "audio/mp4", "ogg": "audio/ogg",
     "mp4": "video/mp4", "mov": "video/quicktime", "avi": "video/x-msvideo", "wmv": "video/x-ms-wmv",
+    "mkv": "video/x-matroska",
 }
 
 # 能喂给 vision 模型的扩展名。png/jpeg/gif/webp 是 API 原生格式（达标即原样发）；
@@ -320,8 +321,7 @@ def _vision_enabled() -> bool:
 
 
 def _media_understanding_enabled() -> bool:
-    """音 / 视频理解是否可用：仅 **mimo + openai 格式路**。
-    `input_audio` / `video_url` 是 mimo 对 OpenAI 格式的扩展；mimo 走 anthropic 格式、或其它厂商都不支持。"""
+    """音 / 视频理解是否可用：MiMo 的 OpenAI 扩展媒体块。"""
     try:
         from app.core.config import get_settings
         from agent.llm_select import _is_mimo, use_anthropic_for
@@ -329,6 +329,14 @@ def _media_understanding_enabled() -> bool:
         return _is_mimo(ai) and not use_anthropic_for(ai)
     except Exception:
         return False
+
+
+def _minimax_video_enabled(model_cfg) -> bool:
+    """MiniMax 仅 M3 消息通道支持视频 content block。"""
+    provider = (getattr(model_cfg, "provider", "") or "").lower()
+    model = (getattr(model_cfg, "model", "") or "").lower()
+    base_url = (getattr(model_cfg, "base_url", "") or "").lower()
+    return (provider == "minimax" or "minimaxi.com" in base_url) and "m3" in model
 
 
 def _voice_recognition_enabled() -> bool:
@@ -425,8 +433,9 @@ def strip_vision_for_history(content):
         return content
     out = []
     for blk in content:
-        if isinstance(blk, dict) and blk.get("type") == "image":
-            out.append({"type": "text", "text": "[图片已查看]"})
+        if isinstance(blk, dict) and blk.get("type") in ("image", "video"):
+            label = "图片" if blk.get("type") == "image" else "视频"
+            out.append({"type": "text", "text": f"[{label}已查看]"})
         else:
             out.append(blk)
     return out
@@ -445,7 +454,8 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
     if model_cfg is not None:
         from agent.llm_select import _is_mimo, use_anthropic_for
         vision = bool(getattr(model_cfg, "vision", False))
-        media_ok = _is_mimo(model_cfg) and not use_anthropic_for(model_cfg)
+        media_ok = ((_is_mimo(model_cfg) and not use_anthropic_for(model_cfg))
+                    or _minimax_video_enabled(model_cfg))
     else:
         vision = _vision_enabled()
         media_ok = _media_understanding_enabled()
@@ -541,7 +551,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
 def build_user_content(text: str, images: list, use_anthropic: bool, media: list | None = None):
     """把增广文本 + 图片块（+ mimo 音视频块）拼成发给模型的 user content。
     无图无媒体 → 纯字符串（与旧行为一致）；否则 → 内容块列表（按 provider 格式）。
-    `media`（音/视频）只走 openai 路（mimo 扩展块），anthropic 路忽略。"""
+    `media`（音/视频）在 OpenAI 路使用 MiMo 扩展块，在 Anthropic 路使用 MiniMax 原生块。"""
     media = media or []
     if not images and not media:
         return text
@@ -550,7 +560,11 @@ def build_user_content(text: str, images: list, use_anthropic: bool, media: list
         for im in images:
             parts.append({"type": "image", "source": {
                 "type": "base64", "media_type": im["media_type"], "data": im["b64"]}})
-        return parts   # anthropic 不支持 input_audio/video_url，忽略 media（resolve 也只在 openai 路填它）
+        for m in media:
+            if m["type"] == "video":
+                parts.append({"type": "video", "source": {
+                    "type": "base64", "media_type": m["mime"], "data": m["b64"]}})
+        return parts
     parts = [{"type": "text", "text": text}] if text else []
     for im in images:
         parts.append({"type": "image_url", "image_url": {

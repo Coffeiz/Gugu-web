@@ -265,7 +265,6 @@ export const useProjectStore = defineStore('projects', () => {
   async function updateProject(id: number, fields: Partial<Project>) {
     const p = projects.value.find(p => p.id === id)
     if (p) {
-      const becameDone = p.status !== 'done' && fields.status === 'done'
       Object.assign(p, fields)
     }
     await _patchProject(id, fields)
@@ -274,7 +273,6 @@ export const useProjectStore = defineStore('projects', () => {
   function updateProjectDebounced(id: number, fields: Partial<Project>, delay = 400) {
     const p = projects.value.find(project => project.id === id)
     if (p) {
-      const becameDone = p.status !== 'done' && fields.status === 'done'
       Object.assign(p, fields)
     }
     const pending = delayedProjectUpdates.get(id)

@@ -1,7 +1,237 @@
 # 咕咕 · 早期开发记录
 
-> 更新：2026-07-15
+> 更新：2026-07-16
 > 状态：早期阶段记录，当前进度见 `product/overview.md`
+
+---
+
+## 2026-07-18 · 已完成列动画事务复杂度复核
+
+复核确认，已完成列当前的问题不是单个 CSS 或落地回调，而是多套布局事务同时存在：
+
+- `DoneLayoutCoordinator` 同时维护 group FLIP 和 recent card FLIP。
+- `DoneGroup` 继续独立启动组高度事务。
+- `DoneLayout` 同时通过 `onBeforeUpdate/onUpdated` 和 `runLayoutMutation()` 触发布局事务。
+- 项目拖拽桥还会并行启动 clone2 landing。
+
+这些逻辑分别控制父级 transform、子级 height、卡片显隐和滚动位置，导致二次 FLIP、瞬间收缩、滚动顿挫和落地目标变化反复出现。后续不再继续添加局部补偿，改为在主文档的 `DoneLayoutRuntime` 中统一 capture、最终布局计算、滚动和动画收尾。
+
+本次只更新架构结论，没有修改已完成列运行逻辑。详见 [拖拽系统模块化拆分方案.md](docs/refactor/拖拽系统模块化拆分方案.md) 的「FLIP 基础设施与页面适配」章节。
+
+## 2026-07-18 · 项目抽屉状态组的两个位移 bug：重叠事务、合成层未重绘
+
+### 现象
+
+1. 刚展开一个状态组（组的展开动画还在播），紧接着把这个组里第一张卡拖出到画布——组会莫名再跳一下。
+   只在"展开动画还没播完就立刻拖卡"时出现，展开动画早播完了（比如默认展开的"进行中"）就不会。
+2. 硬刷新页面后，如果某个状态组里恰好有一张卡当前在画布上，组内会莫名留出一张卡的空位，即使角标
+   显示的数量已经是对的；SPA 内切换页面再回来不会有这个问题。只要再触发一次这个组的数据变化
+   （比如把画布上那张卡拖回抽屉），空位就会消失。
+
+### 根因
+
+1. `projectGroupsLayout.ts` 的 `requestLayout()` 只会取消"还没开始播放"的 `pending` 事务；一旦
+   `measureAndPlay()` 已经跑到 `await transaction.play()`，这笔事务就不再被 `pending` 追踪，变成
+   孤儿。这时候如果又有新的 `requestLayout()` 调用（比如拖拽触发的 `data-update`），它会直接
+   `getBoundingClientRect()` 读取各组的 `top`，读到的是上一笔事务还在 transform 插值中的中间态，
+   而不是真实落点。等上一笔事务自己播完、清空 transform 复原到真实 CSS 位置，组就会从"中间态"
+   瞬间跳到真实位置——看起来像莫名又跳了一下。
+
+2. 页面刚加载时，画布数据（`canvasProjectIds`）有时比抽屉的项目列表晚到，`filteredProjects` 因此
+   会先渲染出偏多的卡片，紧接着再收窄一次（排除掉已经在画布上的项目）。这次收窄走的是原生 flex
+   回流（`.project-group-content` 没有触发折叠动画，只是 `v-for` 少渲染了一个子节点），跟
+   `createGroupLayoutTransaction` 的显式折叠不一样，没有做过任何强制同步 reflow/repaint。用
+   `getComputedStyle` 量出来的高度已经是对的（缩小后的高度），但极少数情况下 Chrome 的合成层
+   没有跟着重绘这块区域，画面还停在收窄前的高度——数据层面完全正确，纯粹是画面没刷新。
+
+### 修复
+
+1. `projectGroupsLayout.ts` 增加一个 `playing` 引用记录"当前正在播放"的事务；`requestLayout()`
+   除了取消 `pending`，也会一并取消 `playing`，让它立即清理内联 transform、落回真实位置，新一笔
+   事务的 before 基线才是准的。
+
+2. `CanvasSidebar.vue` 的 `onUpdated()` 里对 `.project-groups` 补一次强制同步 `offsetHeight`
+   reflow，再做一次无位移的 `translateZ(0)` 抖动（改了立刻改回，视觉上不产生位移）强制该层
+   重新合成。
+
+### 教训
+
+- 一个只追踪"待播放事务"的取消机制，管不到"已经在播放中"的事务——事务的生命周期比表面看到的
+  "pending → 播放 → 结束"三段更容易在并发请求下产生孤儿态，取消逻辑要覆盖到"正在播放"这一段，
+  不能只覆盖起点。
+- 布局数据（`getComputedStyle`/`getBoundingClientRect`）正确不等于画面正确；当一个 bug 只在
+  "页面刚加载、某块区域还没被绘制过"这种特定时机出现，且所有 DOM/尺寸探针都显示数据正常时，要
+  怀疑纯粹的合成层重绘问题，而不是继续在布局逻辑里找错。
+
+### 验证
+
+- 场景一：反复"展开一个组 → 立刻拖出组内第一张卡"，组不再跳动；`typecheck` 通过。
+- 场景二：多次硬刷新页面，画布上有卡片对应的抽屉组不再留空位；用户确认修复。
+
+---
+
+## 2026-07-17 · 项目抽屉状态组展开/收起的两次二次动画
+
+### 现象
+
+项目抽屉的状态组（进行中/待开始/已完成）支持展开/收起。两个独立问题：
+
+1. 已有一组展开着的情况下再展开/收起另一组，兄弟组的让位动画会明显playing 两遍——先平滑挪到位，
+   紧接着又用 transform 重新播一次同样的位移，只有单独展开一组（没有其它可见内容需要让位）时才不明显。
+2. 修完第 1 个问题后，收起动画播完仍残留 1 帧、约 1-2px 的额外向上位移，量级很小但每次收起都会出现。
+
+### 根因
+
+**问题 1**：`toggleProjectStatus` 同时接了两套让位机制——`createGroupLayoutTransaction` 直接
+animate 折叠元素自身的 `element.style.height`，这本身就是文档流里的正常块级/flex 子项高度变化，
+后面的兄弟 `.project-group` 会跟着逐帧自动回流、免费拿到平滑让位；而 `toggleProjectStatus` 又额外
+调用了 `projectGroupsLayout`（`createFlipTransaction` 的 before/after 快照 + transform 补间）去做
+同一批兄弟组的位移。折叠过渡已经把兄弟组挪到位之后，这层 FLIP 事务照着快照又用 transform 重播了
+一遍同一段位移——两段动画数值一致、视觉上就是"完成了又来一次"。
+
+**问题 2**：`.project-group` 是 `display:flex; flex-direction:column; gap:6px`。折叠内容元素的
+`height` 过渡到 0 后，只要它还没被 Vue 的 `v-if` 真正移出 DOM（leave 回调里的 `done()` 比
+`cleanup()` 晚一拍才调用），flex `gap` 依然会在它和上一个兄弟（分组标题按钮）之间占位——这份空间
+跟元素自己的 `height` 无关，只跟它还算不算一个 flex 子项有关。等 DOM 真正移除、gap 随之消失，
+父容器和后续兄弟组才会再产生一次可见的位移。用 Performance 级别的多帧探针（`before-cleanup` /
+`after-cleanup` / `mutation-observed` / `frame+1~6`）实测确认：`groupHeight` 在 DOM 真正移除
+（`mutation-observed`）那一刻才从 31 掉到 25，差值正好等于 `gap` 的 6px。
+
+最初怀疑过 `cleanup()` 把内联样式还原回事务开始前状态导致的"高度闪回"（还原成空字符串会撤销
+`height:0` 约束，元素瞬间弹回自然完整高度、又在下一帧被移除），这个猜测本身也是真实存在的坑
+（已经修掉：收起场景 `cleanup()` 不再还原内联样式，反正元素马上要被移除，恢复原状没有意义），
+但不是这次 1-2px 残留的成因——探针数据显示 `before-cleanup`/`after-cleanup` 两帧 `groupHeight`
+完全一致（都是 31→后来 25，两次真正的变化点始终是 DOM 移除那一刻，不是 `cleanup()` 那一刻）。
+
+### 修复
+
+1. `toggleProjectStatus` 不再触发 `projectGroupsLayout` 的 FLIP：只保留一次 `requestLayout('toggle')`
+   调用（唯一作用是置位 `skipNextDataUpdate`，抵消紧跟着 `onBeforeUpdate` 触发的 `'data-update'`
+   请求，避免同一次 toggle 从另一个入口重新引入二次动画）。`onGroupFoldEnter`/`onGroupFoldLeave`
+   收尾也不再调用 `measureAndPlay`，只保留 `measurePanel('projects')` 同步抽屉外层高度。
+   `projectGroupsLayout` 的 FLIP 现在只服务于真正的拖拽改数据场景（`data-update`），那种情况下
+   卡片数量是非连续突变，没有平滑高度过渡可言，才真的需要 FLIP 补偿。
+
+2. `createGroupLayoutTransaction` 收起时给折叠元素叠加一段等量负 `margin-top` 过渡，跟 `height`
+   同一个过渡窗口内一起走完——`height:0` 的空间 + `gap` 占的空间 + 负 margin 抵消的空间，净值在
+   动画终点正好归零，DOM 真正移除时不会再有可见变化。展开方向对称处理（`margin-top` 从 `-gap`
+   过渡回 `0`）。`gap` 值从父容器 `getComputedStyle(parent).rowGap` 现取，不需要写死常量。
+
+### 教训
+
+**FLIP 补偿是有代价的，普通块级/flex 布局能免费提供的平滑效果不需要 FLIP。** 高度用真实过渡
+（而不是瞬间切换）驱动时，同一文档流里的兄弟元素本来就会跟着逐帧自然回流；这时再叠一层
+"快照位移再补间"式的 FLIP，只会重播一次已经发生过的动作。FLIP 该留给真正非连续的布局跳变
+（数据突变、跨容器重挂载），不是默认对所有布局变化都套用的万能工具。
+
+**flex/grid 的 `gap` 不受子项自身尺寸变化的直接约束，只受"是否还是一个子项"约束。** 子项收缩到
+`height:0` 不等于它不再占 `gap` 的份额——只要还在 DOM 里参与 flex/grid 布局，`gap` 就照占不误，
+这类残留要么等 DOM 真正移除、要么显式用等量反向 margin/gap 覆盖抵消。
+
+### 验证
+
+- `npm run typecheck` 通过。
+- 已有一组展开时再展开/收起另一组：兄弟组让位动画不再播放两次；收起动画播完确认无残留位移。
+- 拖拽改数据触发的组收缩（`onBeforeUpdate`/`data-update` 路径）手测确认未受影响。
+
+---
+
+## 2026-07-17 · 项目跨列重抓残留旧 clone2
+
+项目卡从一列拖到另一列后，落地动画尚未结束时再次抓起，旧落地 `clone2` 可能仍停在目标列的落点，
+看起来像抓起时凭空多出一张假卡。跨列的 Vue keyed 列表可能重挂载项目卡 DOM，原来的
+`DragRegistry` 只按 HTMLElement 引用管理 session；新 DOM 与旧 DOM 引用不同，旧 session 就无法被
+新拖拽取消，旧 morph cleanup 继续保留 clone2。
+
+修复为在保留元素引用门禁的基础上，按 `data-project-id`、`data-file-id`、`data-folder-key` 建立稳定
+身份索引。相同业务卡片换 DOM 后开始新 session 会先取消旧 session，触发旧 holder/clone2 的统一清理，
+并新增回归测试覆盖“稳定身份替换 DOM”场景。
+
+**教训：** keyed 列表的 key 稳定不等于 DOM 引用一定稳定；跨列、分组和异步挂载场景的动画 session
+需要同时具备元素引用和业务身份两层取消门禁。
+
+## 2026-07-17 · 抽屉展开导致 clone2 落点先错后纠正
+
+### 现象
+
+从画布把卡片拖入项目抽屉时，如果抽屉原本卡片较少，落地过程中会因为内容增加而展开、变高。clone2
+仍按展开前的卡片位置飞行，接近终点后才快速移动到本体的最终位置；部分尝试还会让本体提前闪现，或让
+卡片先缩放/旋转到错误状态再纠正。抽屉已经完全展开时不明显，因此容易误判为 clone2 自身的 easing 问题。
+
+### 根因
+
+抽屉内容使用两层 `TransitionGroup` 做 FLIP，外层容器高度也同时通过 CSS transition 变化。飞行开始时直接
+读取 `getBoundingClientRect()`，拿到的是祖先高度过渡中的中间视觉盒，而不是抽屉展开结束后的最终布局盒。
+随后 ResizeObserver 又观察到容器高度变化，重复 retarget clone2，导致终点连续改变，最后一段表现为瞬移。
+
+### 修复
+
+在 `interaction/dom.ts` 增加不受 transform 影响的布局测量：沿目标和滚动容器的 `offsetParent` 链累计
+`offsetTop` / `offsetLeft`，得到稳定的布局坐标；同时在测量终点前临时把目标祖先链上正在运行的 Web Animation
+seek 到终点，读取抽屉完全展开后的尺寸和位置，再恢复动画进度。这样 clone2 从第一帧就以最终落点为目标，
+不再依赖动画中途的补偿式 retarget。
+
+本体揭示继续延后到 clone2 收尾，避免目标卡片在抽屉高度变化期间提前显示；抽屉侧的滚动、相机和业务状态
+时序不由落点测量工具直接修改。
+
+### 教训
+
+**动画中的视觉坐标不能直接当作最终布局坐标。** 当落点元素的祖先同时在做高度、FLIP 或滚动变化时，必须
+先计算无 transform 的最终布局盒；否则每次布局变化都会把误差推迟到动画末尾，形成“先飞错、再瞬移纠正”的感觉。
+
+### 验证
+
+- `npm run typecheck` 通过。
+- 抽屉未完全展开、抽屉已完全展开、目标需要滚动以及连续拖入四类路径均进行手测。
+- 后续仍需将这套最终布局测量纳入 FLIP 协调器，避免抽屉和拖拽流程各自维护一套位置修正逻辑。
+
+### 追加：同列接力时的短暂停顿
+
+跨列落地尚未结束时从 `clone2` 再次抓起并放回当前目标列，原位归还路径比拖回另一列更容易出现
+短暂停顿。旧 session 的取消收尾会在本体上安排 `phys-just-revealed` 等临时揭示类的下一帧清理；
+新 session 若在这之前 clone，本体状态会被 `cloneNode` 一并带走。开始新拖拽时现在会先清除这些仅用于
+揭示收尾的临时类，再创建新 clone，避免同列归还继承上一段动画状态。
+
+trace 进一步确认，主要顿挫发生在 `threshold.onMove → DragRegistry.start → DragSession.cancel →
+morphLifecycle.forceCleanup`：旧 session 的取消同步执行完整 reveal，并触发一次合成的
+`mouseenter` 和布局更新。新增 handoff 标记后，重抓交接只清除旧 holder/clone，不再揭示本体；新
+session 接管后自行建立视觉状态，普通取消仍走完整 reveal 收尾。
+
+---
+
+## 2026-07-16 · 已完成列拖拽动画：年月行 FLIP 缺口与月份文件夹嵌套
+
+### 问题
+
+1. **拖出卡片时年月标题瞬间移动**：从已完成列拖出卡片，year-row / month-row 没有让位动画，直接跳到新位置。
+2. **拖入卡片时年月组瞬间移动**：其他列的卡片拖入已完成列后，最近完成的第 3 张卡被挤出 `recentDone` 进入年月文件夹，此时年月行向上跳，没有过渡动画。
+3. **月份展开后卡片不在文件夹内**：展开月份文件夹时，卡片出现在所有月份行的最底部，而不是在对应月份行下方。
+
+### 根因
+
+**问题 1 & 2**：Vue TransitionGroup 的 FLIP（`done-group-list-move`）依赖在 `nextTick` 窗口内捕获新旧位置。但拖拽场景中：
+- 拖出时：`invertPlay`（drag 系统的 FLIP）查询子元素时没有覆盖 `.year-row` / `.month-row`（它们不是 `.project-card`），所以这些行不在 FLIP 补偿范围内。
+- 拖入时：卡片从 `recentDone` 退出进入年月文件夹，触发 `done-card-list-leave` 动画。leave 动画结束后 Vue 才更新布局，此时 TransitionGroup 的 FLIP 窗口早已关闭，`move` class 永远不会被添加到年月行上。
+
+探针验证：在 `afterCancel` / `afterFinish` 等时机读取 `[data-flip-target]` 元素的 class 和 computed style，发现 `move=false`、`transition=background 0.12s`——确认 Vue 从未给这些元素加 `move` class。
+
+**问题 3**：模板中 month-row 和 month-cards 分两个 `v-for` 渲染——先遍历 `yg.months` 渲染所有月份行，再遍历 `openMonthList(yg)` 渲染展开的卡片容器。DOM 顺序导致所有卡片排在所有月份行之后。
+
+### 修复
+
+1. **拖出 FLIP**：在 `useDragEngine.ts` 的 `_childCards` 查询中加入 `[data-flip-target]`，让 drag 系统的 `invertPlay` 覆盖年月行；`flip.ts` 改用 `el.style.setProperty('transition', ..., 'important')` 压过 CSS `!important` 冲突。
+
+2. **拖入 FLIP**：在 `DoneColumn.vue` 添加 `watch(recentDone, ...)` 手动 FLIP——在 `recentDone` 变化时记录年月行旧位置，`nextTick` 后记录新位置，差值用 `transform: translate()` 补偿，再 `requestAnimationFrame` 内过渡回零。这是对 Vue TransitionGroup FLIP 窗口过期后的手动补偿。
+
+3. **月份嵌套**：把 month-row 和对应的 month-cards 放在同一个 `<template v-for="mg in yg.months">` 中连续渲染，卡片紧跟在月份行下方；`month-cards` 增加 `padding-left: 14px`、`margin-left: 12px`、`border-left` 实现视觉缩进嵌套。删除不再需要的 `openMonthList()` 辅助函数。
+
+4. **退出动画妥协**：`recent-card-list .done-card-list-leave-active` 暂设 `display: none !important`，让卡片从最近完成退出时瞬间消失而非渐隐。原因是 leave 动画期间卡片仍占位，与手动 FLIP 的时序冲突会导致年月行跳动。后续可尝试用 `opacity` 渐隐 + `position: absolute` 脱流来兼顾两者。
+
+### 教训
+
+- Vue TransitionGroup 的 FLIP 只在 `nextTick` 窗口内生效，跨 TransitionGroup 的元素迁移（从一个 TG 的 leave 到另一个 TG 的 enter）必然超出这个窗口，需要手动补偿。
+- CSS `!important` 会覆盖 Vue TransitionGroup 内联设置的 `transition`，需要用 `setProperty('important')` 反压。
+- 探针（读取元素 class / computed style）比反复读代码猜时序有效得多——连续 2-3 轮猜不中就该换实测手段。
 
 ---
 
@@ -1327,3 +1557,104 @@ Modal 内 `localStatus` 是本地 `ref`，只在 `watch(() => props.project?.id,
 - **圆角**：`--radius-sm: 10px`，`--radius-md: 14px`，`--radius-lg: 18px`
 - **动画**：hover 弹性 `cubic-bezier(0.34,1.2,0.64,1)`，遮罩/阴影 `cubic-bezier(0.4,0,0.2,1)`，Modal 入场 `cubic-bezier(0.34,1.3,0.64,1)`
 - **Z-index 层级**：内容(default) → 渐变遮罩(5) → 顶栏(10) → Modal(200~300) → 对话球(1000) / 聊天(999)
+
+## 2026-07-16 · 拖拽系统模块化重构收口
+
+### 结构调整
+
+- `DragSession` / `DragRegistry` 只负责生命周期与 cleanup；physics、clone、落地动画和业务数据留在各自模块。
+- 单卡、多卡运行时迁移到 `interaction/single.ts`、`interaction/multi.ts`，`useDragEngine.ts` 只负责兼容入口和依赖组装。
+- 落地动画拆为 `animation/`，DOM 滚动工具与全局拖拽 listener 分别集中到 `interaction/dom.ts`、`interaction/listeners.ts`。
+- 文件、画布、项目、抽屉拖拽通过 adapter 接入，原有 `usePhysicsDrag.ts`、`useCardDrag.ts`、`useFileDragDrop.ts` 入口保留兼容转发。
+
+### 时序与状态
+
+- `requestAnimationFrame`、timeout、transitionend 和落地回调统一检查当前 session；同源新拖拽会通过 Registry 取消旧 session 并执行旧 cleanup。
+- 删除主入口的 `_pendingCleanups` Map，落地 cleanup 改由 `DragSession.addCleanup()` 管理。
+- 当前仍保留 `_active` 作为单套物理 listener 的调度锁；它不是 session 状态，现阶段不支持两套物理拖拽并行。
+
+### 验证
+
+- `npm run typecheck` 通过。
+- `npm run test:run` 通过：16 个测试文件、201 个测试。
+- `npm run typecheck:strict` 确认本次拖拽模块无新增错误；仓库已有 3 个错误仍位于 `useBoxSelection.ts`、`Files/index.vue`、`ProjectModal.vue`。
+- 文件库、项目页、画布和抽屉的实际拖拽行为仍需按架构方案的最终验收清单进行桌面端手测。
+
+## 2026-07-16 · 项目分组标题与年/月按钮的让位动画 (P0)
+
+### 问题
+
+0.19.1 那条「抽屉与画布之间的拖拽收尾」把拖拽飞行/落地/收尾链路修通了（详见 [devlog.md](docs/devlog.md) 2026-07-15 条目），但还有几个 P0 残留没补：当同组卡片增减时，分组标题、年/月折叠按钮会因 flex 重排瞬间跳到新位置，没有 FLIP 平移过渡。
+
+- `CanvasSidebar.project-group-title` 不在 `drawer-project-cards` TransitionGroup 内，是 TransitionGroup 外面的兄弟 div。
+- `DoneColumn.year-row` / `month-row` 被 `.year-group` / `.month-group` 包装层套住，按钮跟下方的卡片列表捆成一个 group 一起做 flex 重排。
+- `DoneColumn`「未设置日期」区也是同款 `.year-group` 包装。
+
+### 修复策略
+
+把所有「想让位但被外层 wrapper 套住」的元素都提到 TransitionGroup 的直接子项上，各自带稳定 key，让 Vue 的 `.*-move` 类能正确被注入做 FLIP。
+
+### 踩坑：Vue 3 `<template v-for>` 子元素禁止 `:key`
+
+第一版用 `<template v-for="yg in groupedByYear" :key="yg.year">` 包 button + TransitionGroup 两个兄弟（key 分别挂在 `button :key="`year-row-${yg.year}`"` 和 `<TransitionGroup :key="`year-body-${yg.year}`"` 上）。devserver 报 500，Vite 直接编译失败：
+
+```
+[vite:vue] <template v-for> key should be placed on the <template> tag.
+```
+
+Vue 3 编译器明确禁止在 `<template v-for>` 的子元素上放 `:key`——key 必须挂在 `<template>` 标签上。但要让外层 TransitionGroup 区分开 button 和 TransitionGroup 做 FLIP，就得让它们都是 TransitionGroup 的直接子项、各自带稳定 key，`<template v-for>` 这种结构天然冲突。
+
+另一个绕路是「同元素 v-for + v-if 过滤」，但 v-for 优先级低于 v-if，v-if 拿不到 v-for 变量，模板里写不出来。
+
+**最终方案**：拆成 4 个独立 v-for，每个 v-for 的源数据是已过滤的 computed——把「过滤」挪到 computed 里，模板里 v-for 拿到的就是已经过滤好的列表。
+
+| v-for 源 | 渲染什么 | key 模板 |
+|---|---|---|
+| `groupedByYear` | 所有年份的 year-row button | `year-row-${yg.year}` |
+| `openYearsList`（按 `openYears` 过滤） | 已展开年份的 year-body TransitionGroup | `year-body-${yg.year}` |
+| `yg.months`（在 openYearsList 内层） | 展开年内所有月份的 month-row button | `month-row-${yg.year+mg.month}` |
+| `openMonthList(yg)`（按 `openMonths` 过滤） | 双层展开的 month-cards TransitionGroup | `month-cards-${yg.year+mg.month}` |
+
+未展开的 year-body 完全不挂载，未展开月份的 month-cards 完全不挂载，保留原版「按需挂载」性能——`openYearsList` / `openMonthList` 是 computed，`openYears` / `openMonths` 变化时自动重算，Vue 拿到的是稳定引用。
+
+「未设置日期」区按同款思路拆：year-row 始终渲染（`v-if="undatedProjects.length"` 控制可见性），卡片组用 `v-if="undatedProjects.length && openYears.has('__undated')"` 控制挂载。
+
+### CSS 跟着改
+
+`.year-group` / `.month-group` 包装层没了，原本挂在它们身上的 `margin-bottom` 失效（这俩选择器现在匹配不到任何东西）。间距挪到 `.year-row:not(:last-child) { margin-bottom: 4px }` 和 `.month-row:not(:last-child) { margin-bottom: 1px }` 上，等价于原 wrapper 提供的视觉间距。
+
+### 教训
+
+**先实测再改模板结构**：Vue 3 对 `<template v-for>` 的 `:key` 位置、v-for / v-if 优先级、TransitionGroup 子元素要求都有硬约束，肉眼「看着对」不代表编译器放过。下次改 Vue 模板结构前先在 devserver / `vite build` 上过一遍编译，比反复改模板试错快得多。
+
+### 验证
+
+- `npx vite build` 通过（编译报错是先发现再修的，不是产品问题）。
+- HMR 行为待用户桌面端手测：①抽屉项目卡拖入/拖出时分组标题是否平滑让位；②已完成列年内/年内月间卡片增减时折叠按钮是否平滑让位；③跨年/跨月让位时整组（按钮 + 卡片）是否同步平移。
+
+## 2026-07-16 · 画布项目拖回抽屉时的延迟让位
+
+### 现象
+
+把画布项目拖回已打开的项目抽屉，且目标卡位在当前视野上方、需要向上滚动时，飞入的 clone2 会先与原先第一张可见卡重叠；直到 clone2 收尾，后续卡片才向下让出一张卡的空间。向下滚动不明显。
+
+### 排查结果
+
+probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `filteredProjects` 已完成更新；不是接口或 Vue 响应式更新延迟。
+
+问题在于抽屉的两层 `TransitionGroup` 正在执行 `.42s` FLIP 时，`getBoundingClientRect()` 返回的是带 transform 的视觉中间位置。落地逻辑把它当作滚动和 clone2 的终点，等 FLIP 结束后真实布局与初始快照相差约一张卡高度。
+
+曾尝试在 clone2 揭示前用 `scrollTop` 强制校正；这会让整列内容在收尾瞬间跳动。后续尝试把校正放到飞行中段并每帧 retarget clone2，性能 trace 显示每帧都会重置落地完成计时，飞行被延长，虽然让位改成了动画，仍是事后补偿。
+
+### 修复
+
+在 `interaction/dom.ts` 增加 `layoutBoxInScroller()`：沿目标与滚动容器各自的 `offsetParent` 链累计 `offsetTop` / `offsetLeft`，推导不受 FLIP transform 影响的最终布局盒。抽屉吸入路径从第一帧便用这份布局盒计算滚动终点和 clone2 飞行终点，删除延迟校正与其逐帧 retarget。
+
+### 教训
+
+**动画期间的 `getBoundingClientRect()` 是视觉坐标，不等于布局坐标。** 若终点由 FLIP 中的元素决定，应先拿 transform-free 的布局位置，而不是在动画结束后再让滚动容器补偿；后者会把布局误差转化成用户可见的整列跳动。
+
+### 验证
+
+- `npm run typecheck` 通过。
+- 用户手测确认：目标在当前视野上方、抽屉需要向上滚动的回收路径已恢复正常。

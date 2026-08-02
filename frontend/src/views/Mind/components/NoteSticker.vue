@@ -45,6 +45,7 @@ import { toggleTaskInMd } from '@/composables/useMindEditor'
 import { useCardDrag } from '@/composables/useCardDrag'
 import { itemSize } from '@/composables/useMindCanvas'
 import { MindConflictError, useMindStore } from '@/stores/mind'
+import { showAppError } from '@/composables/useAppToast'
 import type { MindCanvasItem } from '@/services/api'
 import NoteCard from './NoteCard.vue'
 
@@ -153,7 +154,13 @@ async function onToggleTask(idx: number) {
 async function onColor(color: string | null) {
   try {
     await store.updateCanvasNote(props.item.nodeId, { color })
-  } catch { /* 颜色改动冲突概率极低，静默失败不打断使用，下次编辑会带最新数据重试 */ }
+  } catch (e) {
+    // updateCanvasNote 现在加了乐观更新——UI 已经先按新色显示了，如果 PATCH 失败
+    // 还要静默吞掉，用户就会看到「点了变色但其实没存上」的不一致。把错误交给全局
+    // toast 提示，同时让用户能感知到这次改动需要重试或刷新。MindConflictError 也
+    // 走这里（409 在 store 层抛），跟 updateNote 路径同款处理。
+    showAppError(e)
+  }
 }
 
 // 点便签本体进编辑态、点标题/正文里的待办/引用/展开按钮等都是 NoteCard 自己处理

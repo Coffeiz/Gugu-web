@@ -46,6 +46,9 @@ export const useMindStore = defineStore('mind', () => {
   const activeCanvasId = ref<number | null>(null)
   const canvasItems = ref<MindCanvasItem[]>([])
   const canvasRelations = ref<MindRelation[]>([])
+  let canvasLoadSeq = 0
+  const pendingCanvasLoads = new Map<number, number>()
+  const invalidatedCanvasLoads = new Set<number>()
   const canvasDataSaves = new Map<number, Promise<void>>()
   const canvasZSaves = new Map<number, Promise<void>>()
 
@@ -133,7 +136,16 @@ export const useMindStore = defineStore('mind', () => {
   }
 
   async function deleteCanvas(id: number) {
-    await mindApi.deleteCanvas(id)
+    // 删除请求一发出就让该画布的 pending load 失效，避免「open → delete → load response」
+    // 的旧响应把已经从列表移除的画布重新写成 active。
+    invalidatedCanvasLoads.add(id)
+    pendingCanvasLoads.delete(id)
+    try {
+      await mindApi.deleteCanvas(id)
+    } catch (error) {
+      invalidatedCanvasLoads.delete(id)
+      throw error
+    }
     canvases.value = canvases.value.filter(canvas => canvas.id !== id)
     // 删的正好是当前打开这张——清空本地视图状态，CanvasView.vue 的 ensureCanvas() 会在
     // 路由跳到别的画布 id 后自然重新 loadCanvas；这里不主动切换，留给调用方决定切去哪张
@@ -146,14 +158,23 @@ export const useMindStore = defineStore('mind', () => {
   }
 
   async function loadCanvas(id: number) {
-    activeCanvasId.value = id
-    const [items, relations] = await Promise.all([
-      mindApi.listCanvasItems(id),
-      mindApi.listCanvasRelations(id),
-    ])
-    if (activeCanvasId.value !== id) return
-    canvasItems.value = normalizeCanvasZ(items).map(({ item, z }) => ({ ...item, z }))
-    canvasRelations.value = relations
+    const requestSeq = ++canvasLoadSeq
+    pendingCanvasLoads.set(id, requestSeq)
+    try {
+      const [items, relations] = await Promise.all([
+        mindApi.listCanvasItems(id),
+        mindApi.listCanvasRelations(id),
+      ])
+      const isCurrentRequest = pendingCanvasLoads.get(id) === requestSeq
+      const stillExists = canvases.value.some(canvas => canvas.id === id)
+      if (!isCurrentRequest || requestSeq !== canvasLoadSeq || invalidatedCanvasLoads.has(id) || !stillExists) return false
+      activeCanvasId.value = id
+      canvasItems.value = normalizeCanvasZ(items).map(({ item, z }) => ({ ...item, z }))
+      canvasRelations.value = relations
+      return true
+    } finally {
+      if (pendingCanvasLoads.get(id) === requestSeq) pendingCanvasLoads.delete(id)
+    }
   }
 
   async function addNoteToCanvas(canvasId: number, note: MindNote, x: number, y: number) {
@@ -228,6 +249,13 @@ export const useMindStore = defineStore('mind', () => {
   async function updateCanvasNote(nodeId: number, fields: { title?: string; contentMd?: string; color?: string | null }) {
     const item = canvasItems.value.find(current => current.nodeId === nodeId)
     if (!item) return
+
+    // 乐观更新：先把 fields 合并进 item.node，UI 立刻变。fields 不含 version 字段，
+    // spread 合并天然不会挪 version——等 PATCH 成功再用返回值（含递增 version）整体替换，
+    // 跟 updateNote 同一套策略。这样画布便签改色 / 改正文能秒级响应，不再等 100-300ms
+    // 网络往返才生效（跟纯笔记路径 NotesView 一致）。
+    item.node = { ...item.node, ...fields }
+
     let updated: MindNote
     try {
       updated = await mindApi.updateCanvasNote(nodeId, { ...fields, version: item.node.version })

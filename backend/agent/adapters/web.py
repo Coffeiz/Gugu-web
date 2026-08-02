@@ -171,7 +171,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         history = tokens.select_history(hist_res.scalars().all(), token_budget=settings.ai.context_tokens)
 
         # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化
-        aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(user_id, req.attachments, req.message)
+        aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
+            user_id, req.attachments, req.message, model_cfg=settings.ai)
         db.add(ConversationMessage(session_id=session.id, role="user", content=req.message,
                                    files=attach_cards or None))
         await db.commit()
@@ -205,9 +206,10 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         return
 
     # 语音 / 音视频：用独立「语音识别模型」转文字 → 交主模型（不强切）；没配 → 切断回「不支持」。
-    if aug_media:
+    _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
+    if _transcribe_media:
         from agent import voice as _voice
-        transcript = await _voice.transcribe(aug_media, settings)
+        transcript = await _voice.transcribe(_transcribe_media, settings)
         if transcript is None:        # 未配置语音模型
             block_msg = "抱歉，我现在还不能处理语音 / 音视频消息哦，打字告诉我就行～"
             async with _sess._SessionLocal() as db2:
@@ -220,7 +222,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             return
         spoken = transcript.strip() or "（用户发来一段语音，但这次没听清内容）"
         aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
-        aug_media = []                # 已转文字 → 丢媒体，主模型按文本处理
+        aug_media = [m for m in aug_media if m.get("type") == "video"]
 
     # ── 先订阅频道、再启动后台生成 ──
     #    顺序很关键：pub/sub 发完即弃，若先起生成、后订阅，生成的头几个 token（短回复时是全部）
@@ -330,7 +332,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
                     anthr_messages.append({"role": h.role, "content": h.content_json})
                 else:
                     anthr_messages.append({"role": h.role, "content": h.content or ""})
-            anthr_messages.append({"role": "user", "content": chat_attach.build_user_content(user_content, user_images, True)})
+            anthr_messages.append({"role": "user", "content": chat_attach.build_user_content(user_content, user_images, True, media=user_media)})
             # 清洗历史：窗口截断/压缩可能留下孤儿 tool_result、空消息、连续同角色 → MiniMax 报
             # invalid params / SDK IndexError。发送前修正，保证合法可发（用户消息已在 stream() 独立持久化）。
             anthr_messages = sanitize.sanitize_messages(anthr_messages)

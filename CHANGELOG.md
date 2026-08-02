@@ -5,11 +5,53 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 新增
+
+- **项目看板 Runtime 接入**（`views/Projects/`、`interaction/runtime/`）：项目卡、Surface、组展开收起和完成列生命周期统一通过 Runtime API 编排，业务页移除旧拖拽事务入口。
+- **可选的抓取视觉配置**（`interaction/runtime/setup.ts`）：支持配置卡片抓取对齐方式和毛玻璃视觉效果，默认行为保持原有样式。
+
+### 改进
+
+- **画布与媒体读取安全边界**（`views/Mind/`、`backend/agent/tools/file_readers.py`）：画布切换改为成功后原子提交，重命名增加保存闸门，音视频读取改用物理对象大小校验，避免重复写入、失败状态残留和历史大小字段绕过内存上限。
+- **音视频转码资源上限**（`backend/agent/tools/file_readers.py`）：限制音频时长、ffmpeg 输出字节数和视频帧宽度，超限时终止子进程，避免媒体解码膨胀造成内存峰值。
+- **路径迁移对账安全边界**（`backend/app/api/v1/config.py`）：按文件 identity 聚合数据库记录与物理孤儿对象，歧义项不再自动修复，并拒绝跨空间/跨项目迁移，原子更新完整归属字段。
+- **完成列动画统一**（`views/Projects/components/done/`）：最近完成、年月分组和新建项目按钮接入统一的 collection presence、容器高度和 FLIP 调度，减少业务侧重复动画逻辑。
+- **Runtime 接入基线与 CI**（`interaction/runtime/`、`.github/workflows/`）：固定 Runtime 源码 commit，补充同级源码目录布局的集成校验，避免联调时引用漂移版本。
+- **路径与媒体资源边界**（`interaction/runtime/`、`views/Projects/`）：收紧路径迁移、媒体读取和动画资源的边界，避免无效资源或过期入口继续参与业务事务。
+- **文件对账与 CI 可复现性**（`backend/app/api/v1/config.py`、`.github/workflows/`）：路径迁移对不存在的文件明确报错，存储对账补齐错位截断提示，前端与 Runtime CI 改用锁文件安装；媒体读取统一返回结构化结果并保留受限诊断上下文。
+- **项目页对象更新稳定性**（`views/Projects/index.vue`）：保持项目对象引用并处理 Store 原地更新，避免拖拽落地期间卡片不必要地重挂载。
+- **项目页 Owner 更新收口**（`views/Projects/components/`）：将 Runtime 接管状态的响应式更新从页面级收敛到列/列表范围，降低拖拽释放时的 Vue 更新量。
+- **项目看板 Runtime 性能基线**（`views/Projects/`）：保留 7.2 的对象引用稳定、Owner 订阅收口和 Runtime 布局测量优化；经过 4× CPU 降速 trace 对比，pointerup 平均处理时间较优化前减少约 42ms，端到端 EventTiming 平均减少约 31ms。
+- **CI 依赖安装可复现**（`frontend/package.json`、`frontend/package-lock.json`）：补齐 Vite/Vitest 所需的 esbuild 0.28.1 及平台包，使严格的 `npm ci` 能完成安装。
+
+### 修复
+
+- **完成列年月组展开收起**（`views/Projects/components/done/`）：修复组容器高度、卡片让位和底部内容在 FLIP 过程中被提前裁切的问题。
+- **音视频文件读取提示**（`backend/agent/prompts/`）：补充音视频文件读取能力说明，避免文件处理时遗漏对应工具路径。
+- **拖拽落地玻璃态交接**（`interaction/drag/animation/morphLifecycle.ts`）：恢复隐藏本体路径在目标样式切换前的过渡，避免 landing 过程中毛玻璃、背景和边框瞬间跳变。
+
 ---
+
+## [0.19.2] - 2026-07-16 · 已完成列年月行 FLIP 与月份文件夹视觉嵌套
+
+### 修复
+
+- **已完成列拖入卡片后年月组瞬间移动**（`frontend/src/views/Projects/components/DoneColumn.vue`）：`recentDone` 变化时手动测量年/月行位置，requestAnimationFrame 内补偿 translate 过渡，补上 Vue TransitionGroup 窗口过后的 FLIP 缺口。
+- **已完成列拖出卡片时年月标题瞬间移动**（`frontend/src/interaction/drag/animation/flip.ts`、`useDragEngine.ts`）：`data-flip-target` 查询覆盖到 .year-row/.month-row，`invertPlay` 改用 `setProperty('important')` 压过 CSS 默认过渡冲突。
+- **已完成列月份展开后卡片不在月份文件夹内**（`DoneColumn.vue`）：month-row 与对应的 month-cards 改为在同一组 `<template v-for>` 中连续渲染，卡片紧跟在月份行下方，`month-cards` 增加左缩进和右边线，视觉正确嵌套于月份文件夹内。
+
+### 改进
+
+- **已完成列卡片退出最近完成的退出动画**（`DoneColumn.vue`）：`recent-card-list .done-card-list-leave-active` 暂设 `display: none` 避免布局冲突，确保让位动画优先稳定；后续可调优为渐隐退出动画。
+- **morphLifecycle 探针清理**（`frontend/src/interaction/drag/animation/morphLifecycle.ts`）：移除排查过程中的临时日志。
 
 ## [0.19.1] - 2026-07-15 · 项目抽屉↔画布拖拽收尾与引用卡快照样式
 
 ### 改进
+
+- **拖拽系统模块化重构**（`frontend/src/interaction/drag/`）：将单卡、多卡、物理、落地动画、clone 生命周期、接力、DOM 工具和 listener 拆为独立模块，保留原有 composable 入口与业务调用方式。
 
 - **GuguChat 代码块样式统一**（`components/common/MarkdownView.vue`）：代码块改为与 Markdown 预览器一致的普通边框样式，顶部显示代码类型并保留复制入口。
 - **文件操作工具统一**（`components/common/{FilePasteButton,FileSelectionToolbar}.vue`、`views/{Files,Projects}/`）：文件库和项目编辑卡共用粘贴、多选操作与网格/列表切换控件，统一交互反馈和状态同步。
@@ -26,6 +68,7 @@
 - **画布卡片与连接线显示**（`views/Mind/`、`composables/usePhysicsDrag.ts`）：补齐卡片圆角、连接点层级与拖拽落地状态，修复部分卡片切换时的闪烁和连接线显示异常。
 
 - **项目抽屉与画布之间的拖拽收尾**（`composables/{usePhysicsDrag,useCardDrag}.ts`、`views/Mind/components/{CanvasSidebar,ProjectDrawerCard,ProjectRefCard}.vue`）：修复一系列抽屉↔画布拖拽体验问题——抽屉虚线占位框离场时跳动、画布卡拖回抽屉短暂变透明才淡入、飞行克隆偶发退化成缩小动画、揭示瞬间本体与克隆短暂重叠、某状态最后一张卡拖出/首张卡拖入时整块分组瞬间增删且丢失让位动画、飞行中途重新抓起后无法放回画布。详细排查过程见 [devlog.md](docs/devlog.md) 2026-07-15 条目。
+- **项目分组标题与年/月目录按钮的让位动画**（`views/Mind/components/CanvasSidebar.vue`、`views/Projects/components/DoneColumn.vue`）：让 `project-group-title`、`year-row`、`month-row` 和未设置日期按钮都作为 TransitionGroup 的直接子项参与 FLIP 平移过渡，组内卡片增减时不再因 flex 重排瞬间跳位。详细排查过程见 [devlog.md](docs/devlog.md) 2026-07-16 条目。
 - **渐变色项目首次拖入画布失败**（`backend/app/models/__init__.py`）：`MindNode.color` 由 `varchar(30)` 加宽到 `varchar(300)`，修复渐变色项目首次创建画布引用节点时 `StringDataRightTruncationError`。
 
 ## [0.19.0] - 2026-07-14 · 思维画布收尾、连接线体验统一与存储/LLM 架构重构
