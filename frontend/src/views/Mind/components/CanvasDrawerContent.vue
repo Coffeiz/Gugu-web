@@ -30,9 +30,14 @@ import { nextTick, onBeforeUpdate, onUpdated, ref, type PropType } from 'vue'
 import { PhCheck, PhPencilSimple, PhPlus, PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvas } from '@/services/api'
 import { createFlipTransaction, createLayoutItems } from '@/interaction/drag/animation/flipCoordinator'
+import { showAppError } from '@/composables/useAppToast'
 
-const props = defineProps({ canvases: { type: Array as PropType<MindCanvas[]>, required: true }, activeId: { type: Number as PropType<number | null>, default: null } })
-const emit = defineEmits<{ (e: 'create'): void; (e: 'open', id: number): void; (e: 'delete', canvas: MindCanvas): void; (e: 'rename', id: number, title: string): void; (e: 'layout-finished'): void }>()
+const props = defineProps({
+  canvases: { type: Array as PropType<MindCanvas[]>, required: true },
+  activeId: { type: Number as PropType<number | null>, default: null },
+  rename: { type: Function as PropType<(id: number, title: string) => Promise<unknown>>, required: true },
+})
+const emit = defineEmits<{ (e: 'create'): void; (e: 'open', id: number): void; (e: 'delete', canvas: MindCanvas): void; (e: 'layout-finished'): void }>()
 const listRef = ref<HTMLElement | null>(null)
 const editingId = ref<number | null>(null)
 const editingText = ref('')
@@ -74,13 +79,21 @@ function startRename(canvas: MindCanvas) {
   })
 }
 function cancelRename() { editingId.value = null; editingText.value = '' }
-function commitRename(id: number) {
+async function commitRename(id: number) {
   if (editingId.value !== id) return
   const title = editingText.value.trim()
   if (!title) return cancelRename()
+  const previous = props.canvases.find(canvas => canvas.id === id)?.title ?? ''
   localTitles.value.set(id, title)
-  emit('rename', id, title)
-  cancelRename()
+  try {
+    await props.rename(id, title)
+    localTitles.value.delete(id)
+    cancelRename()
+  } catch {
+    localTitles.value.delete(id)
+    cancelRename()
+    showAppError(`画布重命名失败，已恢复为「${previous || '未命名画布'}」`)
+  }
 }
 defineExpose({ listRef })
 </script>

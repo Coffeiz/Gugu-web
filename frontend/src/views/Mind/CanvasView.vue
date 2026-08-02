@@ -26,10 +26,10 @@
         :projects-loading="projectStore.loading"
         :canvas-scale="canvasRef?.camera.scale ?? 1"
         :add-project-to-canvas="addProjectAtScreen"
+        :rename-canvas="renameCanvas"
         @create="createCanvas"
         @open="openCanvas"
         @delete="deleteCanvas"
-        @rename="renameCanvas"
         @add-project="addProjectAtCenter"
       />
 

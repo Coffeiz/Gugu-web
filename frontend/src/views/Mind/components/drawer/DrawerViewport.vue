@@ -35,11 +35,6 @@ function animateTo(nextHeight: number) {
     return
   }
   const currentHeight = viewportRef.value.getBoundingClientRect().height
-  console.log('[drawer-height-probe]', JSON.stringify({
-    event: 'animate-to', current: +currentHeight.toFixed(2), target: +nextHeight.toFixed(2),
-    propTarget: +Number(props.targetHeight).toFixed(2), open: props.open,
-    t: Math.round(performance.now()),
-  }))
   if (Math.abs(currentHeight - nextHeight) < 0.5) {
     heightTransaction?.cancel()
     heightTransaction = null

@@ -33,7 +33,7 @@
       <div class="cd-stage">
         <section class="cd-content-panel canvas-panel" :class="{ visible: visiblePanel === 'canvases' && contentVisible }" :aria-hidden="visiblePanel !== 'canvases'">
           <DrawerTrack class="canvas-track" data-drawer-scroll="canvases">
-            <CanvasDrawerContent ref="canvasContentRef" :canvases="canvases" :active-id="activeId" @create="emit('create')" @open="onOpen" @delete="onDelete" @rename="(id, title) => emit('rename', id, title)" @layout-finished="measurePanel('canvases')" />
+            <CanvasDrawerContent ref="canvasContentRef" :canvases="canvases" :active-id="activeId" :rename="props.renameCanvas" @create="emit('create')" @open="onOpen" @delete="onDelete" @layout-finished="measurePanel('canvases')" />
           </DrawerTrack>
         </section>
 
@@ -112,12 +112,15 @@ const props = defineProps({
     type: Function as PropType<(projectId: number, center: { x: number; y: number }, size: { w: number; h: number }) => Promise<HTMLElement | null>>,
     required: true,
   },
+  renameCanvas: {
+    type: Function as PropType<(id: number, title: string) => Promise<unknown>>,
+    required: true,
+  },
 })
 const emit = defineEmits<{
   (e: 'create'): void
   (e: 'open', id: number): void
   (e: 'delete', id: number): void
-  (e: 'rename', id: number, title: string): void
   (e: 'addProject', id: number): void
 }>()
 
@@ -182,13 +185,7 @@ watch(filteredProjects, (projects) => {
       statusesToOpen.push(status)
     }
   }
-  const addedProjectIds = projects.filter(project => !previousDrawerProjectIds.has(project.id)).map(project => project.id)
   previousDrawerProjectIds = currentIds
-  console.log('[drawer-height-probe]', JSON.stringify({
-    event: 'projects-change', added: addedProjectIds,
-    autoOpen: statusesToOpen, list: projectListRef.value?.scrollHeight ?? null,
-    t: Math.round(performance.now()),
-  }))
   // 拖入画布抽屉时，状态组是由数据监听器自动打开的，不会经过点击组标题的入口；
   // 补上同一笔外层高度事务，让新卡进入、组展开和抽屉高度变化从同一帧开始。
   if (statusesToOpen.length) {
@@ -206,11 +203,6 @@ watch(() => props.canvasProjectIdsReady, (ready) => {
 // 画布列表的子项删除会先经过自身 FLIP，ResizeObserver 不一定能捕获到外层最终高度；
 // 数据提交后主动重测，避免删除后抽屉保留旧的底部空白。
 watch(() => props.canvases.length, () => {
-  console.log('[canvas-delete-probe]', JSON.stringify({
-    event: 'canvases-change',
-    count: props.canvases.length,
-    t: Math.round(performance.now()),
-  }))
   void nextTick(() => measurePanel('canvases'))
 }, { flush: 'post' })
 
@@ -225,30 +217,6 @@ function measurePanel(panelName: Panel) {
   const measuredHeight = panelName === 'canvases'
     ? list.getBoundingClientRect().height
     : list.scrollHeight
-  if (panelName === 'canvases') {
-    console.log('[canvas-delete-probe]', JSON.stringify({
-      event: 'measure-canvases',
-      count: props.canvases.length,
-      scrollHeight: measuredHeight,
-      rectHeight: +list.getBoundingClientRect().height.toFixed(2),
-      viewportHeight: +(drawerViewportRef.value?.viewportRef?.getBoundingClientRect().height ?? 0).toFixed(2),
-      targetHeight: panelHeights.value.canvases,
-      t: Math.round(performance.now()),
-    }))
-  }
-  if (panelName === 'projects') {
-    console.log('[drawer-height-probe]', JSON.stringify({
-      event: 'measure-panel', measured: measuredHeight,
-      listHeight: +list.getBoundingClientRect().height.toFixed(2),
-      groups: Array.from(list.querySelectorAll<HTMLElement>('.project-group')).map(group => ({
-        key: group.dataset.layoutKey,
-        height: +group.getBoundingClientRect().height.toFixed(2),
-        content: group.querySelector<HTMLElement>('.project-group-content')?.getBoundingClientRect().height ?? null,
-      })),
-      animations: projectGroupAnimationCount,
-      t: Math.round(performance.now()),
-    }))
-  }
   // 内容面板在切换可见性时会短暂处于 height:0；无内容的中间态不能覆盖已经量好的
   // 展开目标，否则高度事务会被重置成 0。
   if (measuredHeight <= 0) return
@@ -323,29 +291,10 @@ function onGroupFoldEnter(el: Element, done: () => void) {
       || !!el.querySelector('.phys-drag-source-placeholder, .phys-reveal-snap, .phys-just-revealed')
     alignProjectGroupTitleDuringExpand(status, !landingInProgress)
   }
-  const title = group?.querySelector<HTMLElement>('.project-group-title')
-  const card = el.querySelector<HTMLElement>('.drawer-project-card')
-  console.log('[drawer-geometry-probe]', JSON.stringify({
-    event: 'group-enter-geometry',
-    group: group?.getBoundingClientRect().toJSON(),
-    title: title?.getBoundingClientRect().toJSON(),
-    content: (el as HTMLElement).getBoundingClientRect().toJSON(),
-    card: card?.getBoundingClientRect().toJSON(),
-    styles: {
-      groupTransform: group ? getComputedStyle(group).transform : null,
-      contentHeight: (el as HTMLElement).style.height,
-      contentMarginTop: (el as HTMLElement).style.marginTop,
-      contentTransform: getComputedStyle(el as HTMLElement).transform,
-      contentOverflow: getComputedStyle(el as HTMLElement).overflow,
-    },
-    t: Math.round(performance.now()),
-  }))
-  console.log('[drawer-height-probe]', JSON.stringify({ event: 'group-enter-start', height: +(el as HTMLElement).getBoundingClientRect().height.toFixed(2), t: Math.round(performance.now()) }))
   const tx = createGroupLayoutTransaction(el as HTMLElement, DRAWER_LAYOUT_DURATION, DRAWER_LAYOUT_EASING)
   void tx.play(true).finally(() => {
     done()
     projectGroupAnimationCount = Math.max(0, projectGroupAnimationCount - 1)
-    console.log('[drawer-height-probe]', JSON.stringify({ event: 'group-enter-finish', animations: projectGroupAnimationCount, t: Math.round(performance.now()) }))
     if (projectGroupAnimationCount === 0) requestAnimationFrame(() => measurePanel('projects'))
   })
   if (status) animateViewportWithGroup(status, true, 0)
@@ -354,12 +303,10 @@ function onGroupFoldLeave(el: Element, done: () => void) {
   projectGroupAnimationCount += 1
   projectGroupsLayout.cancel()
   const previousHeight = (el as HTMLElement).getBoundingClientRect().height
-  console.log('[drawer-height-probe]', JSON.stringify({ event: 'group-leave-start', height: +previousHeight.toFixed(2), t: Math.round(performance.now()) }))
   const tx = createGroupLayoutTransaction(el as HTMLElement, DRAWER_LAYOUT_DURATION, DRAWER_LAYOUT_EASING)
   void tx.play(false).finally(() => {
     done()
     projectGroupAnimationCount = Math.max(0, projectGroupAnimationCount - 1)
-    console.log('[drawer-height-probe]', JSON.stringify({ event: 'group-leave-finish', animations: projectGroupAnimationCount, t: Math.round(performance.now()) }))
     if (projectGroupAnimationCount === 0) {
       // v-if 的离场节点在 done() 后还要经过 Vue 的卸载调度；下一帧可能仍读到
       // “标题存在、内容高度已是 0”的中间 DOM。等两帧再校准，避免把这个中间值
@@ -396,12 +343,6 @@ function animateViewportWithGroup(status: string, opening: boolean, previousHeig
     content.style.marginTop = previousInlineMarginTop
   }
   const target = Math.max(0, Math.min(maxHeight, targetNaturalHeight))
-  console.log('[drawer-height-probe]', JSON.stringify({
-    event: 'group-height-target', status, opening,
-    current: +currentHeight.toFixed(2), natural: +targetNaturalHeight.toFixed(2), target: +target.toFixed(2),
-    content: +contentHeight.toFixed(2), previous: +previousHeight.toFixed(2),
-    list: projectListRef.value?.scrollHeight ?? null, t: Math.round(performance.now()),
-  }))
   // 让 DrawerViewport 的 props watcher 负责启动唯一一笔外层高度事务；直接调用
   // animateTo 再改 panelHeights 会形成两次相同的高度动画。
   if (Math.abs(panelHeights.value.projects - target) >= 0.5) {
@@ -419,17 +360,11 @@ function toggleProjectStatus(status: string) {
   const previousHeight = content?.getBoundingClientRect().height ?? 0
   const opening = !openProjectStatuses.value.has(status)
   if (opening) alignProjectGroupTitleDuringExpand(status)
-  console.log('[drawer-height-probe]', JSON.stringify({
-    event: 'toggle', status, opening, previousContent: +previousHeight.toFixed(2),
-    viewport: +(drawerViewportRef.value?.viewportRef?.getBoundingClientRect().height ?? 0).toFixed(2),
-    panelTarget: +panelHeights.value.projects.toFixed(2), t: Math.round(performance.now()),
-  }))
   const next = new Set(openProjectStatuses.value)
   next.has(status) ? next.delete(status) : next.add(status)
   openProjectStatuses.value = next
   void nextTick(() => {
     animateViewportWithGroup(status, opening, previousHeight)
-    console.log('[drawer-height-probe]', JSON.stringify({ event: 'toggle-next-tick', status, t: Math.round(performance.now()) }))
   })
 }
 onBeforeUpdate(() => {

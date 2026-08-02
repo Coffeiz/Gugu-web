@@ -6,13 +6,13 @@
         :key="col.key"
         :column="col"
         :projects="columnProjects(col.key)"
-        :ownership-version="ownershipVersion"
+        :ownership-version="ownershipVersion(columnProjects(col.key))"
         @card-click="projectStore.openModal"
         @add-project="openNewWithStatus"
       />
       <DoneColumn
         :projects="columnProjects('done')"
-        :ownership-version="ownershipVersion"
+        :ownership-version="ownershipVersion(columnProjects('done'))"
         @card-click="projectStore.openModal"
         @open-archived="showArchived = true"
       />
@@ -23,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { runtime, type MoveAction } from '@/interaction/runtime'
 import { showAppError } from '@/composables/useAppToast'
 import { useProjectStore } from '@/stores/projects'
@@ -38,10 +38,16 @@ const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
 const showArchived = ref(false)
-const ownershipVersion = ref(0)
-const stopOwnershipSubscription = runtime.owner.subscribe(() => {
-  ownershipVersion.value += 1
+const ownershipRevisions = reactive(new Map<string, number>())
+const stopOwnershipSubscription = runtime.owner.subscribe((objectId) => {
+  ownershipRevisions.set(objectId, (ownershipRevisions.get(objectId) ?? 0) + 1)
 })
+
+function ownershipVersion(projects: Project[]): number {
+  let revision = 0
+  for (const project of projects) revision = (revision * 31 + (ownershipRevisions.get(String(project.id)) ?? 0)) >>> 0
+  return revision
+}
 
 watch(() => projectStore.error, (message) => {
   if (!message) return
