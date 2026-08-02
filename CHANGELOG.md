@@ -14,6 +14,7 @@
 
 ### 改进
 
+- **路径迁移对账安全边界**（`backend/app/api/v1/config.py`）：按文件 identity 聚合数据库记录与物理孤儿对象，歧义项不再自动修复，并拒绝跨空间/跨项目迁移，原子更新完整归属字段。
 - **完成列动画统一**（`views/Projects/components/done/`）：最近完成、年月分组和新建项目按钮接入统一的 collection presence、容器高度和 FLIP 调度，减少业务侧重复动画逻辑。
 - **Runtime 接入基线与 CI**（`interaction/runtime/`、`.github/workflows/`）：固定 Runtime 源码 commit，补充同级源码目录布局的集成校验，避免联调时引用漂移版本。
 - **路径与媒体资源边界**（`interaction/runtime/`、`views/Projects/`）：收紧路径迁移、媒体读取和动画资源的边界，避免无效资源或过期入口继续参与业务事务。
