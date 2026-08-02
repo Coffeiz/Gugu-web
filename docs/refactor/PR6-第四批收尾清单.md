@@ -3,7 +3,7 @@
 ## 当前基线
 
 - Gugu-web：`runtime-integration-backup-20260731`
-- Runtime：`4f1f39f7df88e5c4ccd0094af792071b08768da1`
+- Runtime：见仓库根目录 `.runtime-version`
 - Runtime 通过同级源码目录接入，暂不切换 npm 包。
 
 ## 已完成
@@ -18,6 +18,7 @@
 - 已增加 Runtime 集成 CI，固定 Runtime commit 并复现同级源码目录布局。
 - 第三轮审查 P0–P2 收口：媒体输出硬上限、画布加载/重命名竞态、路径迁移唯一性、孤儿导入归属校验、错位截断提示和结构化媒体错误结果均已落地。
 - CI 的 frontend/runtime job 已改用 `npm ci`；devserver 后端全量 pytest 当前为 471 passed。
+- Runtime commit 已收口到 `.runtime-version`，工作流、源码入口说明和文档不再各自维护版本号。
 
 ## PR 前验证
 
