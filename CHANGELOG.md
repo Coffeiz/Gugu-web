@@ -15,6 +15,8 @@
 ### 改进
 
 - **完成列动画统一**（`views/Projects/components/done/`）：最近完成、年月分组和新建项目按钮接入统一的 collection presence、容器高度和 FLIP 调度，减少业务侧重复动画逻辑。
+- **Runtime 接入基线与 CI**（`interaction/runtime/`、`.github/workflows/`）：固定 Runtime 源码 commit，补充同级源码目录布局的集成校验，避免联调时引用漂移版本。
+- **路径与媒体资源边界**（`interaction/runtime/`、`views/Projects/`）：收紧路径迁移、媒体读取和动画资源的边界，避免无效资源或过期入口继续参与业务事务。
 - **项目页对象更新稳定性**（`views/Projects/index.vue`）：保持项目对象引用并处理 Store 原地更新，避免拖拽落地期间卡片不必要地重挂载。
 - **项目页 Owner 更新收口**（`views/Projects/components/`）：将 Runtime 接管状态的响应式更新从页面级收敛到列/列表范围，降低拖拽释放时的 Vue 更新量。
 - **项目看板 Runtime 性能基线**（`views/Projects/`）：保留 7.2 的对象引用稳定、Owner 订阅收口和 Runtime 布局测量优化；经过 4× CPU 降速 trace 对比，pointerup 平均处理时间较优化前减少约 42ms，端到端 EventTiming 平均减少约 31ms。
