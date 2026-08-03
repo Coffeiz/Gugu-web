@@ -227,6 +227,26 @@ async def test_non_qq_private_message_keeps_owner_access():
     assert prepared.request.allowed_tool_names is None
 
 
+async def test_feishu_private_message_keeps_owner_access():
+    from agent.im.loop import prepare_request
+    from agent.im.models import ChatTarget, PlatformMessage, PlatformSender
+
+    message = PlatformMessage(
+        platform="feishu",
+        bot_id="bot-1",
+        message_id="message-1",
+        chat=ChatTarget("oc-private-1", "c2c"),
+        sender=PlatformSender("ou-owner-1", "coffeiz"),
+        content="看看我的文件",
+    )
+
+    prepared = await prepare_request(message, {"chat_type": "c2c"}, "owner", "coffeiz")
+
+    assert prepared.actor.role == "owner"
+    assert prepared.request.im_role == "owner"
+    assert prepared.request.allowed_tool_names is None
+
+
 def test_group_history_keeps_sender_id_and_name_in_model_context():
     from types import SimpleNamespace
 

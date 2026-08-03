@@ -81,6 +81,17 @@ def extract_platform_user_id(payload: Dict[str, Any]) -> str:
     return next((str(value) for value in candidates if value and not isinstance(value, dict)), "")
 
 
+def normalize_chat_type(platform: str, chat_type: Any) -> str:
+    """将各平台的会话类型归一到 IM 内部协议。
+
+    飞书私聊事件使用 ``p2p``，权限和会话路由内部统一使用 ``c2c``。
+    """
+    value = str(chat_type or "").strip().lower()
+    if platform == "feishu" and value == "p2p":
+        return "c2c"
+    return value
+
+
 @dataclass(frozen=True)
 class ChatTarget:
     id: str
@@ -112,7 +123,10 @@ class PlatformMessage:
         """从现有网关 dict 生成统一消息，不改变原 payload 的额外业务字段。"""
         platform = str(payload.get("platform") or "")
         group_id = payload.get("chat_id") or payload.get("wechat_group_id")
-        chat_type = str(payload.get("chat_type") or ("group" if group_id else "c2c"))
+        chat_type = normalize_chat_type(
+            platform,
+            payload.get("chat_type") or ("group" if group_id else "c2c"),
+        )
         chat_id = str(group_id or payload.get("platform_user_id") or "")
         sender_id = extract_platform_user_id(payload)
         bot_id = payload.get("bot_id") or payload.get("channel_id")

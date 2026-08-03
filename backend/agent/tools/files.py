@@ -254,8 +254,24 @@ async def _list_files(db, user_id, args: dict):
         stmt = stmt.where(File.space == args["space"])
     if args.get("project_id") is not None:
         stmt = stmt.where(File.project_id == args["project_id"])
-    if args.get("folder_id") is not None:
-        stmt = stmt.where(File.folder_id == args["folder_id"])
+    folder_value = args.get("folder_id")
+    if folder_value in (None, ""):
+        folder_value = args.get("folder")
+    if folder_value not in (None, ""):
+        try:
+            folder_id = int(str(folder_value).strip().lstrip("#"))
+        except (TypeError, ValueError):
+            folder, error = await _folder_by_name(
+                db,
+                user_id,
+                folder_value,
+                args.get("space"),
+                args.get("project_id"),
+            )
+            if error:
+                return error
+            folder_id = folder.id
+        stmt = stmt.where(File.folder_id == folder_id)
     if args.get("ext"):
         stmt = stmt.where(File.ext == args["ext"].lower().lstrip("."))
     if args.get("q"):
@@ -1203,6 +1219,7 @@ class FilesSkill(BaseSkill):
                     "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
                     "project_id": {"type": "integer"},
                     "folder_id": {"type": "integer", "description": "只查询指定文件夹内的文件"},
+                    "folder": {"type": "string", "description": "按文件夹名称筛选；已知 folder_id 时优先使用 id"},
                     "ext": {"type": "string", "description": "扩展名，如 png/md"},
                     "q": {"type": "string", "description": "名称模糊匹配"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200,

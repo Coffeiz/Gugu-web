@@ -117,6 +117,18 @@ async def test_list_files_filters_by_folder_id(db, user_a):
     assert [item["id"] for item in rows] == [inside.id]
 
 
+async def test_list_files_accepts_folder_name_without_integer_sql_error(db, user_a):
+    target = await _mk(db, Folder(user_id=user_a.id, name="咕咕开发"))
+    inside = await _mk(db, File(
+        user_id=user_a.id, display_name="方案", ext="md",
+        folder_id=target.id, storage_key="inside",
+    ))
+
+    rows = await _list_files(db, user_a.id, {"folder_id": "咕咕开发", "space": "personal"})
+
+    assert [item["id"] for item in rows] == [inside.id]
+
+
 async def test_resolve_target_cross_user_folder(db, user_a, user_b):
     fo = await _mk(db, Folder(user_id=user_b.id, name="B的文件夹"))
     space, pid, fid, err = await _resolve_target(db, user_a.id, {"folder_id": fo.id})
