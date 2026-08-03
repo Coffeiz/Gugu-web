@@ -91,358 +91,11 @@
         <div :key="JSON.stringify(navPath)" class="content-body">
 
         <!-- ── 回收站视图 ── -->
-        <template v-if="currentType === 'trash'">
-          <div v-if="trashFolders.length > 0 || contents.files.length > 0" class="file-list trash-list">
-            <div class="list-head">
-              <span class="lh-sortable" :class="{ active: sortKey === 'name' }" @click="onSortSelect('name')">名称<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
-              <span>类型</span>
-              <span class="lh-sortable" :class="{ active: sortKey === 'createdAt' }" @click="onSortSelect('createdAt')">删除时间<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
-              <span>剩余</span>
-              <span class="lh-sortable" :class="{ active: sortKey === 'size' }" @click="onSortSelect('size')">大小<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
-              <span></span>
-            </div>
-            <template v-for="folder in sortedTrashFolders" :key="`trash-folder-${folder.id}`">
-            <div class="list-row trash-folder-row" :data-trash-folder-id="`trash:${folder.id}`" :class="{ expanded: expandedTrashFolders.has(folder.id), selected: selectedTrashFolderIds.has(folder.id), 'pre-selected': previewFolderKeys.has(`trash:${folder.id}`) }" @click.stop="handleTrashFolderClick(folder, $event)">
-              <span class="lr-name-cell">
-                <button class="trash-expand-btn" :title="expandedTrashFolders.has(folder.id) ? '收起内容' : '查看内容'" @click.stop="toggleTrashFolder(folder)">
-                  <svg :class="{ rotated: expandedTrashFolders.has(folder.id) }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                    <path d="M2 3.5l3 3 3-3"/>
-                  </svg>
-                </button>
-                <PhFolder class="lr-folder-icon" :size="16" weight="fill" />
-                <span class="lr-filename" :title="folder.name">{{ folder.name }}</span>
-              </span>
-              <span class="lr-type-cell"><span class="lr-type-text">文件夹</span></span>
-              <span class="lr-text">{{ formatDate(folder.deletedAt) }}</span>
-              <span class="lr-text" :class="{ 'days-warn': daysLeft(folder.deletedAt) <= 3 }">{{ daysLeft(folder.deletedAt) }} 天</span>
-              <span class="lr-text">{{ folder.fileCount }} 个文件</span>
-              <span class="lr-actions">
-                <Transition name="sel-cb"><div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedTrashFolderIds.has(folder.id) }"><svg v-if="selectedTrashFolderIds.has(folder.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg></div></Transition>
-                <template v-if="!inSelectionMode">
-                <button class="file-list-btn trash-restore-btn" title="恢复文件夹及其内容" @click.stop="restoreTrashFolder(folder)">
-                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/>
-                  </svg>
-                  恢复
-                </button>
-                <button class="file-list-btn del" title="永久删除文件夹及其内容" @click.stop="hardDeleteTrashFolder(folder)">
-                  <PhTrash :size="11" weight="bold" />
-                </button>
-                </template>
-              </span>
-            </div>
-            <div v-if="expandedTrashFolders.has(folder.id)" class="trash-folder-contents">
-              <div v-if="trashFolderContents[folder.id]?.folders.length === 0 && trashFolderContents[folder.id]?.files.length === 0" class="trash-folder-empty">空文件夹</div>
-              <div v-for="child in trashFolderContents[folder.id]?.folders || []" :key="`trash-child-${child.id}`" class="trash-child-row">
-                <PhFolder :size="14" weight="fill" /> <span>{{ child.name }}</span><small>{{ child.fileCount }} 个文件</small>
-              </div>
-              <div v-for="file in trashFolderContents[folder.id]?.files || []" :key="`trash-child-file-${file.id}`" class="trash-child-row file">
-                <component :is="fileListIcon(file.ext)" :size="14" weight="fill" :style="{ color: fileIconColor(file.ext) }" /> <span>{{ file.displayName }}.{{ file.ext.toLowerCase() }}</span>
-              </div>
-            </div>
-            </template>
-            <div v-for="f in sortedContents.files" :key="f.id" class="list-row"
-              :data-file-id="f.id"
-              :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id) }"
-              @click.stop="handleTrashFileClick(f, $event)">
-              <span class="lr-name-cell">
-                <component :is="fileListIcon(f.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color: fileIconColor(f.ext) }" />
-                <span class="lr-filename" :title="f.displayName">{{ f.displayName }}</span>
-              </span>
-              <span class="lr-type-cell">
-                <span class="lr-ext" :style="{ color: fileIconColor(f.ext), background: fileIconColor(f.ext) + '18' }">{{ f.ext }}</span>
-              </span>
-              <span class="lr-text">{{ f.deletedAt ? formatDate(f.deletedAt) : '—' }}</span>
-              <span class="lr-text" :class="{ 'days-warn': daysLeft(f.deletedAt) <= 3 }">{{ daysLeft(f.deletedAt) }} 天</span>
-              <span class="lr-text">{{ f.size }}</span>
-              <span class="lr-actions">
-                <Transition name="sel-cb">
-                  <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedIds.has(f.id) }">
-                    <svg v-if="selectedIds.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M2 6l3 3 5-5"/>
-                    </svg>
-                  </div>
-                </Transition>
-                <template v-if="!inSelectionMode">
-                  <button class="file-list-btn trash-restore-btn" title="恢复" @click.stop="restoreFile(f)">
-                    <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/>
-                    </svg>
-                    恢复
-                  </button>
-                  <button class="file-list-btn del" title="永久删除" @click.stop="hardDeleteFile(f)">
-                    <PhTrash :size="11" weight="bold" />
-                  </button>
-                </template>
-              </span>
-            </div>
-          </div>
-          <FileBrowserEmptyState v-else-if="!loading" variant="trash" text="回收站为空" />
-        </template>
-
+        <FilesTrashView v-if="currentType === 'trash'" :context="trashViewContext" />
         <!-- ── 网格视图 ── -->
-        <template v-else-if="viewMode === 'grid'">
-          <FileBrowserGrid @empty-context="openCtx('empty', null, $event)">
-
-            <!-- 文件夹卡片 -->
-            <FolderCard
-              v-for="f in sortedContents.folders"
-              :key="f.id"
-              :display-name="f.displayName"
-              :count-label="f.count != null ? f.count + ' 项' : '—'"
-              :accent-color="folderAccentColor(f)"
-              :selected="selectedFolderKeys.has(f.id)"
-              :pre-selected="previewFolderKeys.has(f.id)"
-              :drag-over="dragOverFolderId === f.folderId"
-              :selection-mode="inSelectionMode"
-              @contextmenu.prevent.stop="openCtx('folder', f, $event)"
-              :data-folder-key="f.id"
-              :data-folder-id="f.folderId"
-              @click.stop="handleFolderClick(f, $event)"
-              @pointerdown="onFolderPointerDown(f, $event)"
-            >
-              <template #icon>
-                <component :is="folderListIcon(f)" class="fd-big-icon" :size="92" weight="bold" />
-              </template>
-              <template #name>
-                <span :title="f.displayName">
-                  <span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop>
-                    <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                    <input class="rename-input-inline" v-model="renameText"
-                      v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
-                  </span>
-                  <template v-else>{{ f.displayName }}</template>
-                </span>
-              </template>
-              <template #actions>
-                <button class="file-card-btn" :title="renamingFolderKey === f.folderId ? '确认' : '重命名'"
-                  @mousedown.prevent @click.stop="renamingFolderKey === f.folderId ? commitRename() : startRenameFolder(f)">
-                  <PhCheck v-if="renamingFolderKey === f.folderId" :size="11" weight="bold" />
-                  <PhPencilSimple v-else :size="11" weight="bold" />
-                </button>
-                <button class="file-card-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)">
-                  <PhDownloadSimple :size="11" weight="bold" />
-                </button>
-                <button class="file-card-btn del" title="删除" @click.stop="deleteFolder(f)">
-                  <PhTrash :size="11" weight="bold" />
-                </button>
-              </template>
-            </FolderCard>
-
-            <!-- 文件卡片：共用视觉抽到 components/common/FileCard.vue，这里只管文件库自己的
-                 选择模式/拖拽/右键菜单等交互态（走 props 传给它统一画选中态），缩略图/重命名
-                 输入框/悬浮操作这些本页专属内容走具名插槽。 -->
-            <FileCard
-              v-for="f in sortedContents.files"
-              :key="f.id"
-              class="hover-card-fx"
-              :ext="f.ext" :display-name="f.displayName" :has-thumb="isImageExt(f.ext)"
-              :selected="selectedIds.has(f.id)" :pre-selected="previewFileIds.has(f.id)"
-              :dragging="draggingFileIds.has(f.id)" :cut="cbStore.type === 'cut' && cbStore.fileIds.includes(f.id)"
-              :data-file-id="f.id"
-              @contextmenu.prevent.stop="openCtx('file', f, $event)"
-              @click.stop="handleFileClick(f, $event)"
-              @pointerdown="onFilePointerDown(f, $event)"
-            >
-              <template #thumb>
-                <!-- 模糊占位层：20×20 tiny，懒加载至视口附近再触发 -->
-                <img class="fc-thumb-tiny" v-lazy-src="{ id: f.id, size: 'tiny' }"
-                  decoding="async" draggable="false" alt="" />
-                <!-- 全尺寸层：首次加载淡入，已加载过直接显示 -->
-                <img class="fc-thumb-full" v-lazy-src="{ id: f.id, size: 'card' }"
-                  :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }"
-                  decoding="async" draggable="false" alt=""
-                  @load="cardBlobReadyIds.add(f.id)"
-                  @error="($event.target as HTMLElement).style.display='none'" />
-                <div class="fc-thumb-fade"></div>
-              </template>
-              <template #name>
-                <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
-                  <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                  <input class="rename-input-inline" v-model="renameText"
-                    v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
-                </span>
-                <template v-else>{{ f.displayName }}</template>
-              </template>
-              <template #meta>{{ f.size }} · {{ f.createdAt }}</template>
-
-              <Transition name="sel-cb">
-                <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedIds.has(f.id) }">
-                  <svg v-if="selectedIds.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M2 6l3 3 5-5"/>
-                  </svg>
-                </div>
-              </Transition>
-              <div v-if="!inSelectionMode" class="fc-hover-actions">
-                <button class="file-card-btn" :title="renamingFileId === f.id ? '确认' : '重命名'"
-                  @mousedown.prevent @click.stop="renamingFileId === f.id ? commitRename() : startRenameFile(f)">
-                  <PhCheck v-if="renamingFileId === f.id" :size="11" weight="bold" />
-                  <PhPencilSimple v-else :size="11" weight="bold" />
-                </button>
-                <button class="file-card-btn" title="下载" @click.stop="downloadFile(f)">
-                  <PhDownloadSimple :size="11" weight="bold" />
-                </button>
-                <button class="file-card-btn del" title="移到回收站" @click.stop="deleteSingleFile(f)">
-                  <PhTrash :size="11" weight="bold" />
-                </button>
-              </div>
-            </FileCard>
-
-            <!-- 幽灵上传卡：单文件 / 文件夹（拖入文件夹时汇总一张，不给里面每个文件各出一张） -->
-            <FileUploadGhostCard v-for="g in uploadingItems" :key="g.uid"
-              :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress"
-              :done="g.done" :total="g.total" :failed="g.failed" :error="g.error" />
-            <!-- 上传快捷区：跟项目文件区同一份共用组件 FileUploadButton.vue -->
-            <FileUploadButton v-if="canUpload" mode="grid" @select="handleFileInput" />
-          </FileBrowserGrid>
-
-          <FileBrowserEmptyState v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading && !canUpload" variant="grid" />
-        </template>
-
+        <FilesGridView v-else-if="viewMode === 'grid'" :context="gridViewContext" />
         <!-- ── 列表视图 ── -->
-        <template v-else>
-          <FileBrowserList @empty-context="openCtx('empty', null, $event)">
-            <div class="list-head">
-              <span class="lh-sortable" :class="{ active: sortKey === 'name' }" @click="onSortSelect('name')">名称<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
-              <span class="lh-sortable" :class="{ active: sortKey === 'type' }" @click="onSortSelect('type')">类型<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
-              <span class="lh-sortable" :class="{ active: sortKey === 'stage' }" @click="onSortSelect('stage')">项目 / 阶段<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
-              <span class="lh-sortable" :class="{ active: sortKey === 'size' }" @click="onSortSelect('size')">大小<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
-              <span class="lh-sortable" :class="{ active: sortKey === 'createdAt' }" @click="onSortSelect('createdAt')">日期<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
-              <span></span>
-            </div>
-
-            <div
-              v-for="f in sortedContents.folders"
-              :key="f.id"
-              class="list-row folder-row"
-              :class="{ selected: selectedFolderKeys.has(f.id), 'pre-selected': previewFolderKeys.has(f.id), 'drag-over': dragOverFolderId === f.folderId }"
-              :data-folder-key="f.id"
-              :data-folder-id="f.folderId"
-              @click.stop="handleFolderClick(f, $event)"
-              @contextmenu.prevent.stop="openCtx('folder', f, $event)"
-              @pointerdown="onFolderPointerDown(f, $event)"
-            >
-              <span class="lr-name-cell">
-                <component :is="folderListIcon(f)" class="lr-folder-icon" :size="16" weight="fill" :style="{ color: folderAccentColor(f) }" />
-                <span class="lr-filename" :title="f.displayName">
-                  <span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop>
-                    <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                    <input class="rename-input-inline" v-model="renameText"
-                      v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
-                  </span>
-                  <template v-else>{{ f.displayName }}</template>
-                </span>
-              </span>
-              <span class="lr-type-text">文件夹</span>
-              <span class="lr-text">—</span>
-              <span class="lr-text">{{ f.count != null ? f.count + ' 项' : '—' }}</span>
-              <span class="lr-text">—</span>
-              <span class="lr-actions">
-                <Transition name="sel-cb">
-                  <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedFolderKeys.has(f.id) }">
-                    <svg v-if="selectedFolderKeys.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M2 6l3 3 5-5"/>
-                    </svg>
-                  </div>
-                </Transition>
-                <template v-if="f.type === 'folder' && !inSelectionMode">
-                  <button class="file-list-btn" :title="renamingFolderKey === f.folderId ? '确认' : '重命名'"
-                    @mousedown.prevent @click.stop="renamingFolderKey === f.folderId ? commitRename() : startRenameFolder(f)">
-                    <PhCheck v-if="renamingFolderKey === f.folderId" :size="11" weight="bold" />
-                    <PhPencilSimple v-else :size="11" weight="bold" />
-                  </button>
-                  <button class="file-list-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)">
-                    <PhDownloadSimple :size="11" weight="bold" />
-                  </button>
-                  <button class="file-list-btn del" title="删除" @click.stop="deleteFolder(f)">
-                    <PhTrash :size="11" weight="bold" />
-                  </button>
-                </template>
-              </span>
-            </div>
-
-            <div
-              v-for="f in sortedContents.files"
-              :key="f.id"
-              class="list-row"
-              :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id), dragging: draggingFileIds.has(f.id), cut: cbStore.type === 'cut' && cbStore.fileIds.includes(f.id) }"
-              :data-file-id="f.id"
-              @contextmenu.prevent.stop="openCtx('file', f, $event)"
-              @click.stop="handleFileClick(f, $event)"
-              @pointerdown="onFilePointerDown(f, $event)"
-            >
-              <span class="lr-name-cell">
-                <component :is="fileListIcon(f.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color: fileIconColor(f.ext) }" />
-                <span class="lr-filename" :title="f.displayName">
-                  <span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop>
-                    <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                    <input class="rename-input-inline" v-model="renameText"
-                      v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
-                  </span>
-                  <template v-else>{{ f.displayName }}</template>
-                </span>
-              </span>
-              <span class="lr-type-cell">
-                <span class="lr-ext" :style="{ color: fileIconColor(f.ext), background: fileIconColor(f.ext) + '18' }">{{ f.ext }}</span>
-              </span>
-              <span class="lr-proj-cell">
-                <span v-if="f.projectColor" class="lr-dot" :style="{ background: f.projectColor }"></span>
-                <span class="lr-projname">{{ f.projectName || f.stageName || '—' }}</span>
-              </span>
-              <span class="lr-text">{{ f.size }}</span>
-              <span class="lr-text">{{ f.createdAt }}</span>
-              <span class="lr-actions">
-                <Transition name="sel-cb">
-                  <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedIds.has(f.id) }">
-                    <svg v-if="selectedIds.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M2 6l3 3 5-5"/>
-                    </svg>
-                  </div>
-                </Transition>
-                <template v-if="!inSelectionMode">
-                  <button class="file-list-btn" :title="renamingFileId === f.id ? '确认' : '重命名'"
-                    @mousedown.prevent @click.stop="renamingFileId === f.id ? commitRename() : startRenameFile(f)">
-                    <PhCheck v-if="renamingFileId === f.id" :size="11" weight="bold" />
-                    <PhPencilSimple v-else :size="11" weight="bold" />
-                  </button>
-                  <button class="file-list-btn" title="下载" @click.stop="downloadFile(f)">
-                    <PhDownloadSimple :size="11" weight="bold" />
-                  </button>
-                  <button class="file-list-btn del" title="移到回收站" @click.stop="deleteSingleFile(f)">
-                    <PhTrash :size="11" weight="bold" />
-                  </button>
-                </template>
-              </span>
-            </div>
-
-            <!-- 幽灵上传行：单文件 / 文件夹（拖入文件夹时汇总一行） -->
-            <FileUploadGhostCard v-for="g in uploadingItems" :key="g.uid" mode="list"
-              :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress"
-              :done="g.done" :total="g.total" :failed="g.failed" :error="g.error">
-              <template #list="{ color, statusText }">
-              <span class="lr-name-cell">
-                <PhFolder v-if="g.isFolder" class="lr-file-icon" :size="16" weight="fill" :style="{ color }" />
-                <component v-else :is="fileListIcon(g.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color }" />
-                <span class="lr-filename">{{ g.name }}</span>
-              </span>
-              <span class="lr-type-cell">
-                <span v-if="!g.isFolder" class="lr-ext" :style="{ color: fileIconColor(g.ext), background: fileIconColor(g.ext) + '18' }">{{ g.ext || '—' }}</span>
-              </span>
-              <span class="lr-text">—</span>
-              <span class="lr-text">—</span>
-              <span class="lr-text">
-                {{ statusText }}
-              </span>
-              <span class="lr-actions"></span>
-              </template>
-            </FileUploadGhostCard>
-
-            <FileBrowserEmptyState v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading" variant="list" />
-
-            <!-- 上传行：网格视图一直有这个入口，列表视图之前漏画了 -->
-            <FileUploadButton v-if="canUpload" mode="list" @select="handleFileInput" />
-          </FileBrowserList>
-        </template>
+        <FilesListView v-else :context="listViewContext" />
 
         </div>
         </Transition>
@@ -494,20 +147,16 @@
 <script setup lang="ts">
 import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { filesApi, type TrashFolderMeta } from '@/services/api'
-import FileCard       from '@/components/common/file-browser/FileCard.vue'
-import FolderCard     from '@/components/common/file-browser/FolderCard.vue'
-import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhostCard.vue'
-import FileUploadButton from '@/components/common/file-browser/FileUploadButton.vue'
 import FileUploadDropOverlay from '@/components/common/file-browser/FileUploadDropOverlay.vue'
-import FileBrowserEmptyState from '@/components/common/file-browser/FileBrowserEmptyState.vue'
 import FileStorageUsage from '@/components/common/file-browser/FileStorageUsage.vue'
 import FileTrashToolbarActions from '@/components/common/file-browser/FileTrashToolbarActions.vue'
-import FileBrowserGrid from '@/components/common/file-browser/FileBrowserGrid.vue'
+import FilesTrashView from '@/views/Files/components/FilesTrashView.vue'
+import FilesGridView from '@/views/Files/components/FilesGridView.vue'
+import FilesListView from '@/views/Files/components/FilesListView.vue'
 import FileBrowserBreadcrumb from '@/components/common/file-browser/FileBrowserBreadcrumb.vue'
 import FileBrowserPanel from '@/components/common/file-browser/FileBrowserPanel.vue'
 import FileBrowserContextMenu from '@/components/common/file-browser/FileBrowserContextMenu.vue'
 import FileBrowserContextMenuContent from '@/components/common/file-browser/FileBrowserContextMenuContent.vue'
-import FileBrowserList from '@/components/common/file-browser/FileBrowserList.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
 import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
 import { useClipboardStore } from '@/stores/clipboard'
@@ -815,6 +464,15 @@ const restoreSelected = () => trashActions.restoreSelected()
 const hardDeleteSelected = () => trashActions.hardDeleteSelected()
 const confirmEmptyTrash = () => trashActions.emptyTrash()
 
+// 页面级回收站视图的依赖集中从入口注入，视图组件不直接读取 stores 或执行 API。
+const trashViewContext = {
+  trashFolders, contents, sortedContents, sortedTrashFolders, expandedTrashFolders, trashFolderContents,
+  sortKey, sortDir, onSortSelect, inSelectionMode, selectedTrashFolderIds, selectedIds,
+  previewFolderKeys, previewFileIds, handleTrashFolderClick, toggleTrashFolder,
+  restoreTrashFolder, hardDeleteTrashFolder, handleTrashFileClick, restoreFile,
+  hardDeleteFile, fileListIcon, fileIconColor, formatDate, daysLeft, loading,
+}
+
 function downloadSelected() {
   return batchActions.downloadSelected()
 }
@@ -1082,6 +740,23 @@ const contextActions = useFileLibraryContextActions<Exclude<CtxTarget, null>>({
   },
 })
 const { state: ctx, openContext: openCtx, handleAction: handleCtxMenuAction } = contextActions
+const gridViewContext = {
+  contents, sortedContents, selectedFolderKeys, previewFolderKeys, dragOverFolderId, inSelectionMode,
+  openCtx, folderListIcon, folderAccentColor, handleFolderClick, onFolderPointerDown,
+  renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder,
+  deleteFolder, selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick,
+  onFilePointerDown, isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile,
+  downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading,
+}
+const listViewContext = {
+  contents, sortedContents, sortKey, sortDir, onSortSelect, openCtx, selectedFolderKeys,
+  previewFolderKeys, dragOverFolderId, handleFolderClick, onFolderPointerDown, folderListIcon,
+  folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename,
+  startRenameFolder, downloadFolder, deleteFolder, inSelectionMode, selectedIds,
+  previewFileIds, draggingFileIds, cbStore, handleFileClick, onFilePointerDown,
+  fileListIcon, fileIconColor, renamingFileId, startRenameFile, downloadFile,
+  deleteSingleFile, uploadingItems, loading, canUpload, handleFileInput,
+}
 
 function selCut() {
   batchActions.cutSelected()
