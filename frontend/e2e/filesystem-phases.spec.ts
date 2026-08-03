@@ -82,4 +82,18 @@ test.describe('文件浏览阶段 1–4 冒烟', () => {
     await expect(page.locator('.project-modal-root .file-browser-panel')).toBeVisible()
     await expect(page.locator('.project-modal-root .file-browser-toolbar')).toBeVisible()
   })
+
+  test('窄窗口下文件浏览面板不产生横向溢出', async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 700 })
+    await openFiles(page)
+
+    const overflow = await page.evaluate(() => ({
+      body: document.body.scrollWidth - document.documentElement.clientWidth,
+      panel: document.querySelector<HTMLElement>('.file-browser-panel')?.getBoundingClientRect(),
+    }))
+
+    expect(overflow.body).toBeLessThanOrEqual(1)
+    expect(overflow.panel).toBeTruthy()
+    expect(overflow.panel!.right).toBeLessThanOrEqual(900 + 1)
+  })
 })
