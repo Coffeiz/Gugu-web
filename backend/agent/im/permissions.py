@@ -43,11 +43,24 @@ async def resolve_access(
     不在这里擅自把平台身份升级成 owner。
     """
     if platform != "qqbot":
-        # 当前飞书/微信 Bot 是单 owner 私聊入口；群聊还没有可靠的 owner
-        # platform id 字段，先按 unknown 处理，不能因为 role 缺失而加载 owner 上下文。
+        # 飞书连接时会保存 owner open_id；群聊也必须按 Bot 作用域比较，不能
+        # 因为 payload 带有 owner_user_id 就把任意群成员升级为 owner。微信当前
+        # 只提供个人 Bot 私聊入口，群聊没有可验证 owner 身份时固定降级 unknown。
         if chat_type == "c2c":
             return ImAccess("owner", None)
         if chat_type == "group":
+            import app.db.session as db_session
+            from app.models import UserBot
+            if db_session._engine is None:
+                db_session._build_engine()
+            async with db_session._SessionLocal() as db:
+                bot = await db.get(UserBot, int(channel_id or 0))
+            if bot and bot.platform == platform and bot.user_id == owner_user_id:
+                if bot.owner_platform_user_id and bot.owner_platform_user_id == platform_user_id:
+                    return ImAccess("owner", None)
+                configured = bot.group_allowed_tools
+                allowed = configured if isinstance(configured, list) else DEFAULT_GROUP_TOOLS
+                return ImAccess("member", [str(name) for name in allowed if isinstance(name, str)])
             return ImAccess("unknown", list(DEFAULT_GROUP_TOOLS))
         return ImAccess("unknown", list(DEFAULT_GROUP_TOOLS))
     if chat_type not in {"group", "c2c"}:

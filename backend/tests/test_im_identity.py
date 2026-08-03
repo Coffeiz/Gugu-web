@@ -207,6 +207,49 @@ async def test_non_qq_group_defaults_to_unknown_minimal_access(monkeypatch):
     assert prepared.request.chat_id == "wx-group-1"
 
 
+async def test_feishu_group_uses_bound_owner_open_id(db, user_a):
+    from agent.im.loop import prepare_request
+    from agent.im.models import ChatTarget, PlatformMessage, PlatformSender
+    from app.models import UserBot
+
+    bot = UserBot(
+        user_id=user_a.id,
+        platform="feishu",
+        app_id="feishu-app",
+        app_secret="secret",
+        owner_platform_user_id="ou-owner",
+        group_allowed_tools=["web_search"],
+    )
+    db.add(bot)
+    await db.commit()
+    await db.refresh(bot)
+
+    owner_message = PlatformMessage(
+        platform="feishu",
+        bot_id=str(bot.id),
+        message_id="m-owner",
+        chat=ChatTarget("oc-group", "group"),
+        sender=PlatformSender("ou-owner", "本人"),
+        content="看项目",
+    )
+    member_message = PlatformMessage(
+        platform="feishu",
+        bot_id=str(bot.id),
+        message_id="m-member",
+        chat=ChatTarget("oc-group", "group"),
+        sender=PlatformSender("ou-member", "群友"),
+        content="你好",
+    )
+
+    owner = await prepare_request(owner_message, {"chat_type": "group", "channel_id": str(bot.id)}, user_a.id, "本人")
+    member = await prepare_request(member_message, {"chat_type": "group", "channel_id": str(bot.id)}, user_a.id, "本人")
+
+    assert owner.request.im_role == "owner"
+    assert owner.request.allowed_tool_names is None
+    assert member.request.im_role == "member"
+    assert member.request.allowed_tool_names == ["web_search"]
+
+
 async def test_non_qq_private_message_keeps_owner_access():
     from agent.im.loop import prepare_request
     from agent.im.models import ChatTarget, PlatformMessage, PlatformSender

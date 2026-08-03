@@ -568,13 +568,13 @@ Phase 4 收口：owner 绑定、身份协议、shortcut、出站能力门禁和�
    - ✅ 旧 Redis key 平滑失效：key 格式从 `imsession:{platform}:{scope_id}` 变为 `imsession:{platform}:{bot_id}:{scope_id}`，新代码不会读到旧格式 key，旧 key 不主动清理、靠原有 12 小时 TTL 自然过期，不做跨格式迁移。
 
 2. **修复平台协议归一化**
-   - `PlatformMessage.from_payload()` 统一处理微信群 ID，不在 worker 中添加平台分支；QQ 群事件若同时提供 `user_openid` 与 `member_openid`，优先沿用绑定使用的 `user_openid`，避免同一发言人的 owner 身份在私聊/群聊之间断裂。
-   - 为 QQ、飞书、微信补齐私聊/群聊、同用户跨群、同群多人和多 Bot 测试。
+   - ✅ `PlatformMessage.from_payload()` 统一处理微信群 ID，不在 worker 中添加平台分支；QQ 群事件若同时提供 `user_openid` 与 `member_openid`，优先沿用绑定使用的 `user_openid`，避免同一发言人的 owner 身份在私聊/群聊之间断裂。
+   - ✅ 已补 QQ/飞书/微信私聊与群聊归一化、跨群/跨 Bot scope、群成员与 owner 的回归测试；真实 Gateway 事件仍需三平台各做一次人工验收。
 
 3. **补齐身份安全边界**
-   - 为飞书/微信定义 owner 绑定查询和 member/unknown 角色解析。
-   - 权限解析异常、缺失或不支持的平台身份统一使用最小权限 `unknown`。
-   - 增加断言：只有明确 `role=owner` 才能加载 owner 项目、文件、日程、profile、pattern、memory 或触发 owner reflection。
+   - 🟡 飞书已使用连接时保存的 owner `open_id` 做 Bot 作用域 owner/member 查询；QQ 继续使用一次性绑定身份；微信群聊缺少可验证 owner 身份时固定降级 `unknown`，私聊仍沿用个人 Bot 入口语义。
+   - ✅ 权限解析异常、缺失或不支持的平台身份统一使用最小权限 `unknown`，并补 owner/member/unknown 与工具白名单测试。
+   - 🔲 runner 的 owner 资源加载/反思守卫仍需在 Phase 5 收尾审查中逐项验证，只有明确 `role=owner` 才能加载 owner 项目、文件、日程、profile、pattern、memory。
 
 4. **收回 worker 编排**
    - 将被动群消息记录、命令短路、执行 activity、session 写回和最终回复编排收进 `agent/im/loop.py` 的明确入口：`dispatch`、`execute`、`finalize`。
