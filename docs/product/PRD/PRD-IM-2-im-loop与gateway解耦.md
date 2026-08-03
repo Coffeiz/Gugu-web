@@ -62,31 +62,20 @@ flowchart TD
 
 | 模块 | 当前实际职责 | 边界判断 |
 |---|---|---|
-| `agent/gateway/{qq,feishu,wechat}.py` | 长连接/轮询、平台事件解析、引用和媒体下载/转码、平台即时 ack/reaction、部分 intent 短路、入 Redis、平台发送 API | 平台协议职责基本合适；仍有部分业务短路和群策略判断，尚未完全纯化。 |
-| `agent/im/models.py` | `PlatformMessage`、带 capability 的 `PlatformReply` 与旧 dict payload 互转，并校验目标平台能力 | 适合作为兼容协议层；文本/引用已接入，文件/流式仍在迁移中。 |
+| `agent/gateway/{qq,feishu,wechat}.py` | 长连接/轮询、平台事件解析、引用和媒体下载/转码、平台即时 ack/reaction、入 Redis、平台发送 API | 只保留平台协议和即时体验适配；业务身份、权限和执行由 IM Loop 处理。 |
+| `agent/im/models.py` | `PlatformMessage`、带 capability 的 `PlatformReply` 与旧 dict payload 互转，并校验目标平台能力 | 统一协议层；保留旧 payload 仅用于 Gateway 兼容，不在此做业务决策。 |
 | `agent/im/identity.py` | 根据 Bot owner 解析咕咕账号、owner 显示名裁剪 | 账号归属职责合适；QQ 平台 owner 绑定由网页验证码服务和 Gateway C2C 命令完成，member 身份解析仍主要在 QQ 权限服务中。 |
-| `agent/im/permissions.py` | QQ 群/C2C 角色查询、非 QQ 私聊 owner/群聊 unknown 策略、工具白名单裁剪和 dispatch 二次门禁、群开关读取 | 权限职责合适；跨平台 owner 绑定仍需后续补充，群聊未知身份已默认最小权限。 |
-| `agent/im/session.py` | IM session Redis 路由、群消息窗口裁剪、数据库会话创建 | 方向合适；当前 key 仍没有包含 `bot_id`，属于 Phase 5 隔离修复。 |
+| `agent/im/permissions.py` | QQ 群/C2C 角色查询、非 QQ 私聊 owner/群聊 unknown 策略、工具白名单裁剪和 dispatch 二次门禁、群开关读取 | 权限职责已收口；未知身份默认最小权限。 |
+| `agent/im/session.py` | IM session Redis 路由、群消息窗口裁剪、数据库会话创建 | Redis 与数据库 session 均按 `platform + bot_id + chat_id` 隔离。 |
 | `agent/im/context_policy.py` / `context_loader.py` | 根据 `im_role` 决定 owner 上下文范围并读取上下文数据 | 责任边界合适；`prepare_request()` 已保证 IM 缺失/异常身份先降级为 `unknown`。 |
-| `agent/im/loop.py` | 请求准备、身份/权限串联、session 解析、被动群消息持久化、命令短路、typing 生命周期、IM ContextVar、回复状态 | 目前是“准备门面 + 多个 worker helper”，还不是完整的消息执行 Loop。文件职责偏重。 |
-| `agent/im/replies.py` / `files.py` | 文本、流式 fallback、文件读取、平台限制和 Gateway 发送调用；`files.py` 也统一入站暂存门面 | 统一入口方向正确，但模块仍直接依赖各 Gateway，属于出站适配层而非完全平台无关的 reply model。 |
-| `worker.py` | Redis 消费、去重、防抖合并、同用户串行锁、调用准备门面、被动群记录、命令处理、执行生命周期、流式分支、session 写回、文本/文件发送、ack | 仍承担较多 IM 编排，是当前最大职责集中点。 |
-| `agent/runner.py` | Web 和 IM 的上下文读取、会话创建/历史、附件解析、prompt、模型/工具循环、持久化、用量、标题/摘要、反思、压缩 | 共享 Runtime 的核心，但 Web/IM 入口尚未通过同一个 Loop 门面；流式/非流式流程仍有较多重复。 |
+| `agent/im/loop.py` | 请求准备、身份/权限串联、session 解析、被动群消息持久化、命令短路、typing 生命周期、IM ContextVar、runner 选择、回复状态 | 完整 IM 编排入口；不复制模型/工具执行逻辑。 |
+| `agent/im/replies.py` / `files.py` | 文本、流式 fallback、文件读取、平台限制和 Gateway 发送调用；`files.py` 也统一入站暂存门面 | 统一出站适配层；Gateway 只接收最终平台协议调用。 |
+| `worker.py` | Redis 消费、去重、防抖合并、同用户串行锁、并发限制、优雅退出和异常边界 | 不再持有身份、权限、runner 或平台回复业务。 |
+| `agent/runner.py` | Web 和 IM 共用的上下文读取、会话创建/历史、附件解析、prompt、模型/工具循环、持久化、用量、标题/摘要、反思、压缩 | 共享 Runtime 核心；collect/stream 只保留消费方式差异。 |
 
-### 审查发现
+### 审查结论
 
-| 优先级 | 位置 | 发现 | 风险与建议 |
-|---|---|---|---|
-| P1 | `worker.py` 的 `_user_buffers`、`_user_locks`、`_user_deadline`、`_user_flush` | 防抖和串行键只有 `platform_user_id`，没有 `platform`、`bot_id`、`chat_type`、`chat_id`。同一用户跨 Bot、跨群或私聊/群聊同时发消息时可能合并到同一轮。 | 改为稳定的 `ImConversationKey(platform, bot_id, chat_type, scope_id)`；防抖、锁和并发状态全部使用该 key。补跨群并发回归测试。 |
-| P1 | `agent/im/session.py` 的 `session_key()`、`resolve_route()` | Redis session key 只有 `platform + scope_id`，没有 `bot_id`；文档要求的 `platform + bot_id + chat_id` 尚未落地。 | 不同 Bot 或同平台同 ID 场景可能共享会话。先扩充 `SessionRoute` 与 Redis key，再迁移旧 key。 |
-| ✅ P1 已修复 | `agent/im/models.py`、`agent/im/loop.py`、微信 Gateway | 微信 payload 使用 `wechat_group_id`，统一协议只读取 `chat_id`；因此微信群会话的 `chat_id` 可能为空或退化为发言人 ID。 | 已在协议层统一 `chat.id`，并补充微信群协议回归测试。 |
-| ✅ P1 已修复 | `agent/im/permissions.py` 的 `resolve_access()`、`context_policy.py` | 非 QQ 平台原先返回 `ImAccess()`，可能以 `role=None` 进入 owner 上下文。 | 已改为：私聊按当前单 Bot owner 规则，群聊和身份异常统一 `unknown + web_search`；跨平台 owner 绑定仍是后续扩展。 |
-| P2 | `worker.py` 91-185 行 | worker 仍直接编排被动群记录、命令短路、typing、流式选择、回复兜底、session 写回和文件发送。 | 与 PRD 中“worker 只负责队列消费”不一致。Phase 5 应把这些收进可测试的 `ImLoop.dispatch/execute/finalize`，worker 只保留队列生命周期和异常边界。 |
-| P2 | `agent/im/loop.py` 的 `OwnerAgentLoop` / `MemberAgentLoop` | 两个类目前只有同样的 `run_collect/run_stream` 转发，member 的限制实际由 `context_policy` 和工具过滤完成。 | 当前称为“两个 Loop”会夸大隔离程度。短期保留薄门面，文档明确它们是编排入口；长期将 policy/session/reply 作为显式参数传入共享 Runtime。 |
-| P2 | `agent/im/replies.py`、`agent/im/files.py` | 出站协议已创建，但实际仍按 payload 直接调用各 Gateway；文件和流式回复没有完全变成 `PlatformReply` part。 | 不属于立即 bug，但职责仍是“IM reply adapter”；Phase 5 再统一 capability 和 part 路由，不要在 Gateway 之外复制平台发送规则。 |
-| P2 | `agent/runner.py` `run_collect()` / `run_stream()` | 两条路径各自完成上下文、session、历史、附件、持久化、事件、反思和压缩，当前只是共享了部分 loader。 | 修改一条路径容易漏另一条。后续抽出共享执行上下文和 finalize pipeline，保留流式/非流式唯一差异。 |
-
-本次审查结论：模块拆分方向基本正确，但“职责已完成迁移”的表述过早。当前可接受的边界是 Gateway 负责平台协议、`im` 负责身份/策略/路由门面、runner 负责共享模型执行；`worker.py` 仍是过渡期编排中心。上述 P1 先修复后，再继续 Phase 5 的清理。
+Phase 5 已完成上述职责收口。历史审查中记录的 P1/P2 已逐项修复；当前唯一保留的重复代码是 `run_collect()` 与 `run_stream()` 的 token 消费循环，这是流式平台输出的必要差异，其他上下文、权限、session、附件、持久化、反思和压缩收尾均由同一套组件驱动。详细证据和测试命令见 [Phase 5 代码审查报告](./PRD-IM-2-Phase5-代码审查报告.md)。
 
 ## 1. 背景与目标
 
@@ -551,10 +540,10 @@ PlatformMessage
 - ✅ 飞书/微信私聊保持当前单 Bot owner 体验；群聊暂按 `unknown + web_search` 处理，身份无法解析时不会以 `role=None` 进入 owner 上下文。
 - ✅ QQ/飞书普通 intent shortcut 已由 worker 转交 `agent/im/loop.py` 决策和执行；仅“取消”保留 Gateway 即时控制信号，保证正在运行的任务能及时中断。附件消息不会被 shortcut 提前吞掉。
 - ✅ 即时 reaction 的关键词选择已移入 `agent/im/loop.py`；Gateway 只负责调用平台 reaction API，不再持有关键词业务规则。即时 ack、typing 仍保留在 Gateway/typing adapter，且不决定是否调用 Agent 或改变业务权限。
-- ✅ `PlatformReply` 已加入文本/引用/文件/图片/Keyboard/流式能力枚举、part 类型推导和平台能力校验；文件发送已收拢到 `agent/im/replies.py` 的 `send_file()` 统一分发（跟文本/流式共用同一个"该调哪个平台"判断），不再在 `files.py` 里维护一份 if/elif。worker 层面仍分别调用 `send_text`/`send_files`/`send_stream_with_fallback` 三个顶层入口，未整体收敛成单一 `send_reply(PlatformReply)`——这一步按 PRD 顺序属于 Phase 5 第 6 步"完成 capability 路由后删除各平台出站兼容函数"，不在 Phase 4 范围内提前做。
+- ✅ `PlatformReply` 已加入文本/引用/文件/图片/Keyboard/流式能力枚举、part 类型推导和平台能力校验；文本、文件和流式 fallback 均经 `agent/im/replies.py` 统一分发，`files.py` 只保留文件解析、存储读取和大小限制。
 - ✅ 三平台（飞书、QQ、微信）收发、引用、附件、群聊身份和重连已完成人工验收（2026-08-04）。
 
-Phase 4 收口：owner 绑定、身份协议、shortcut、出站能力门禁和三平台人工验收均已完成。`PlatformReply` 的完整 reply parts 统一（worker 顶层入口合并）留给 Phase 5 第 6 步收尾，不视为 Phase 4 欠账。
+Phase 4 收口：owner 绑定、身份协议、shortcut、出站能力门禁和三平台人工验收均已完成。Phase 5 进一步把 worker 顶层编排和 session/reply 收尾收回 IM Loop。
 
 ### Phase 5：隔离修复与编排清理
 
