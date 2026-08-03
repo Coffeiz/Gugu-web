@@ -120,6 +120,7 @@
               <template v-if="botsOf(p.key).length">
                 <div v-for="s in imSessionsOf(p.key)" :key="s.id"
                   class="exp-session-item" :class="{ active: s.id === sessionId }" @click="loadSession(s.id)">
+                  <span v-if="s.chatType === 'group'" class="exp-session-tag" title="群聊">群</span>
                   <span class="exp-session-title">{{ s.title }}</span>
                   <button class="exp-session-del" @click.stop="deleteSession(s.id)" title="删除"><PhTrash :size="12" weight="bold" /></button>
                 </div>
@@ -199,7 +200,10 @@
             <div v-for="{ row, msg } in rowsWithMsg" :key="row.index" :data-index="row.index" :ref="measureRow"
                  class="msg-virtual-row" :style="{ transform: `translateY(${row.start + msgsPadTop}px)` }">
               <div :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
-                   v-memo="[msg.text, msg.html, msg.streaming, msg.files?.length, msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
+                   v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.files?.length, msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
+                <!-- 群聊左侧消息标发言人：ai 标"咕咕"，群成员标 platformUserName。只在
+                     群聊会话里显示，1:1 对话左侧默认就是咕咕，不额外占地方。 -->
+                <div v-if="isGroupSession && msg.role !== 'user'" class="msg-speaker">{{ msg.role === 'ai' ? '咕咕' : msg.speakerLabel }}</div>
                 <!-- IM 引用/回复：单独一条浅色预览条，跟真正打的话分开显示，别把引用原文
                      （可能带 markdown 表格等）直接摊平混进正文气泡（devlog 2026-07-10）。 -->
                 <div v-if="msg.role !== 'ai' && msg.quotedText" class="msg-quoted" :title="msg.quotedText">{{ msg.quotedText }}</div>
@@ -343,6 +347,9 @@ interface ChatMessage {
   quotedText?: string
   time: string
   streaming?: boolean
+  // 群聊消息的发言人标注：ai 不用管；owner 自己发的不用管（右侧气泡不署名）；
+  // 群里其他成员填 platformUserName，气泡渲染在左侧并显示这个名字。
+  speakerLabel?: string
   _greeting?: boolean
   _greetAnimated?: boolean
   _greetFull?: string
@@ -369,6 +376,7 @@ interface ChatSession {
   id: number
   title: string
   source?: string
+  chatType?: string
 }
 
 interface Bot {
@@ -435,9 +443,11 @@ watch(() => liveStore.sessionEvent, async (e) => {
   if (e.origin && e.origin === CLIENT_ID) return
   for (const m of e.appended) {
     const isAi = m.role === 'assistant'
+    const speaker = resolveSpeaker(m.role || 'user', m.platform_user_id, m.platform_user_name)
     messages.value.push({
       id: mkid(),
-      role: isAi ? 'ai' : (m.role || 'user'),
+      role: speaker.role,
+      speakerLabel: speaker.speakerLabel,
       text: m.text || '',
       html: isAi ? renderMd(m.text || '') : null,
       files: (m.files && m.files.length) ? m.files as ChatFile[] : undefined,
@@ -882,6 +892,12 @@ function setStatus(item: StatusItem) {
 
 onUnmounted(cancelPendingStatus)
 const sessionId      = ref<number | null>(null)
+// 当前会话所属渠道里「owner」的平台身份（仅群聊/IM 用得上）：消息的
+// platformUserId 等于它才归到右侧气泡，否则是群里其他成员，归左侧并标 username。
+const ownerPlatformUserId = ref<string | null>(null)
+// 当前会话是不是群聊——只有群聊才需要在左侧气泡上方标"咕咕"/群成员 username，
+// 1:1 对话左侧默认就是咕咕，不用额外标注，保持原有视觉不变。
+const isGroupSession = ref(false)
 const abortCtrl      = ref<AbortController | null>(null)
 const pendingQueue   = ref<string[]>([])   // 生成中发的消息，排队等流式结束后接着发
 const pendingAtt   = ref<ChatFile[]>([])     // 待发送的聊天附件（已上传暂存）
@@ -1477,7 +1493,32 @@ interface RawSessionMessage {
   content: string
   files?: ChatFile[]
   quotedText?: string
+  platformUserId?: string | null
+  platformUserName?: string | null
   createdAt: string
+}
+
+// role/platformUserId → 气泡归属 + 群成员发言人标注。三态：
+// - 'ai'：assistant，左侧，不比对
+// - 'user'：owner 自己发的，右侧，不署名
+// - 'member'：群里其他成员（platformUserId 存在但跟 owner 对不上），左侧，署 speakerLabel。
+// 单独开一个 role 值而不是复用 'user'，是因为全文件所有 role 判断都只认 'ai'/非 'ai'
+// 两态（没有任何地方显式判断 === 'user'），加第三态不会破坏既有逻辑，但如果借用
+// 'user' 表达"群成员"，气泡会被现有 CSS 判到右侧去，跟需求正好相反。
+//
+// 只有真正的群聊会话才去比对 platformUserId === ownerPlatformUserId——owner 绑定
+// 目前只有 QQ 走了验证码流程，微信/飞书的 ownerPlatformUserId 恒为 null，但它们的
+// IM 消息一样带 platformUserId（不分群聊私聊），如果不看 isGroupSession 直接比对，
+// 微信/飞书自己的私聊消息会因为「真实 id !== null」被误判成群成员、错落左侧。
+// 私聊/网页对话没有"群里其他人"这个概念，直接按 owner 处理。
+function resolveSpeaker(
+  role: string,
+  platformUserId: string | null | undefined,
+  platformUserName: string | null | undefined,
+): { role: string; speakerLabel?: string } {
+  if (role === 'assistant') return { role: 'ai' }
+  if (!isGroupSession.value || !platformUserId || platformUserId === ownerPlatformUserId.value) return { role: 'user' }
+  return { role: 'member', speakerLabel: platformUserName || platformUserId }
 }
 
 async function loadSession(id: number) {
@@ -1487,19 +1528,25 @@ async function loadSession(id: number) {
   try {
     const data = await agentApi.getMessages(String(id))
     sessionId.value = id
+    ownerPlatformUserId.value = data.session?.ownerPlatformUserId ?? null
+    isGroupSession.value = data.session?.chatType === 'group'
     clearStatus()   // 切会话先清掉上个会话残留的状态指示（active 会话下面 resumeStream 会重置）
     // html 先留空、不在这一步就把整个历史都跑一遍 marked.parse——只有真正挂进虚拟列表
     // 视口的那些消息才会被 watch(virtualRows, ...) 补上，减轻长会话打开时的一次性 CPU 尖峰。
-    messages.value = data.messages.map((m: RawSessionMessage) => ({
-      id: mkid(),
-      dbId: m.id,
-      role: m.role === 'assistant' ? 'ai' : m.role,
-      text: m.content,
-      html: null,
-      files: m.files && m.files.length ? m.files : undefined,
-      quotedText: m.quotedText || undefined,
-      time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
-    }))
+    messages.value = data.messages.map((m: RawSessionMessage) => {
+      const speaker = resolveSpeaker(m.role, m.platformUserId, m.platformUserName)
+      return {
+        id: mkid(),
+        dbId: m.id,
+        role: speaker.role,
+        speakerLabel: speaker.speakerLabel,
+        text: m.content,
+        html: null,
+        files: m.files && m.files.length ? m.files : undefined,
+        quotedText: m.quotedText || undefined,
+        time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+      }
+    })
     contentH.value = SMALL_H; _sessionTurn = 0
     await nextTick()
     _baseScrollH = messagesEl.value?.scrollHeight || 0   // 基线 = 切入会话的历史高度
@@ -2128,6 +2175,12 @@ async function send(forcedText?: string) {
 }
 .exp-session-source.src-qqbot { background: rgba(18,183,245,0.15); color: #0c8fc0; }
 .exp-session-source.src-feishu { background: rgba(66,133,244,0.15); color: #3b6fc4; }
+.exp-session-tag {
+  flex-shrink: 0; font-size: 10.5px; font-weight: 600; line-height: 1;
+  font-family: var(--font-sans);
+  padding: 2px 4px; border-radius: 4px;
+  background: rgba(123,127,178,0.15); color: #6a6ea3;
+}
 
 /* IM 平台抽屉（飞书 / QQ） */
 .im-plat { display: flex; flex-direction: column; }
@@ -2264,6 +2317,9 @@ async function send(forcedText?: string) {
 }
 
 .msg.ai { align-items: flex-start; }
+/* 群成员消息（非 owner、非咕咕）：左侧，跟 ai 同一侧但气泡样式区分开，避免跟
+   咕咕的回复混淆。 */
+.msg.member { align-items: flex-start; }
 .msg-bubble {
   padding: 9px 13px; border-radius: 13px;
   font-size: var(--gugu-body-size); line-height: var(--gugu-body-line); max-width: 88%;
@@ -2273,9 +2329,17 @@ async function send(forcedText?: string) {
   background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.65);
   border-bottom-left-radius: 4px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
 }
+.msg.member .msg-bubble {
+  background: rgba(123,127,178,0.08); border: 1px solid rgba(123,127,178,0.18);
+  border-bottom-left-radius: 4px;
+}
 .msg.user .msg-bubble {
   background: linear-gradient(135deg, #7b7fb2, #9590c4); color: white;
   border-bottom-right-radius: 4px;
+}
+.msg-speaker {
+  font-size: 11px; color: var(--text-secondary); margin: 0 2px 3px;
+  font-weight: 600;
 }
 /* 引用/回复预览条：浅色小字，跟正文气泡区分开——只是提示"引用了什么"，不是正文。
    截到 8 行，超出部分靠 hover 的原生 title 提示看全文，避免长引用只剩一小段看不出内容。 */
@@ -2299,11 +2363,13 @@ async function send(forcedText?: string) {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px rgba(80,80,120,0.06);
   /* transform/opacity 是按下反馈(.press-fx)要用的——跟这里自己的 transition 写一起，
      避免两条规则的 transition 互相整体覆盖、丢掉其中一份 */
-  transition: background 0.15s, box-shadow 0.15s, transform 0.15s ease, opacity 0.15s ease;
+  transition: background 0.2s ease, box-shadow 0.25s ease,
+    transform 0.15s ease, opacity 0.15s ease;
 }
-.msg-file:hover {
+.msg-file.press-fx:hover {
   background: rgba(255,255,255,0.7);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 3px 10px rgba(100,110,200,0.14);
+  /* 覆盖全局 .press-fx.press-fx:hover 的按钮阴影，避免文件气泡 hover 瞬间换影。 */
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 3px 10px rgba(100,110,200,0.14) !important;
 }
 .msg-file-ext {
   position: relative; overflow: hidden;

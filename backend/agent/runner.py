@@ -327,7 +327,9 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         from app.core import events as _evmod
         await _evmod.publish(user_id, "sessions", session_id=session_id,
                              appended=[{"role": "user", "text": req.message, "files": attach_cards or None,
-                                       "quoted_text": getattr(req, "quoted_text", None)}])
+                                       "quoted_text": getattr(req, "quoted_text", None),
+                                       "platform_user_id": req.platform_user_id,
+                                       "platform_user_name": req.platform_user_name}])
     except Exception:
         pass
 
@@ -538,7 +540,9 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         from app.core import events as _evmod
         await _evmod.publish(user_id, "sessions", session_id=session_id, origin=getattr(req, "origin", None),
                              appended=[{"role": "user", "text": req.message, "files": attach_cards or None,
-                                       "quoted_text": getattr(req, "quoted_text", None)}])
+                                       "quoted_text": getattr(req, "quoted_text", None),
+                                       "platform_user_id": req.platform_user_id,
+                                       "platform_user_name": req.platform_user_name}])
     except Exception:
         pass
 

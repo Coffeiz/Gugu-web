@@ -17,7 +17,7 @@ from app.core.security import get_current_user
 from app.core.ownership import get_owned
 from app.core.tz import iso_utc
 from app.db.session import get_db
-from app.models import ConversationMessage, ConversationSession, User
+from app.models import ConversationMessage, ConversationSession, User, UserBot
 
 from agent import genstream
 from agent.gateway import web as web_adapter
@@ -201,6 +201,7 @@ async def list_sessions(
             "id": s.id,
             "title": s.title,
             "source": s.source,
+            "chatType": s.chat_type,
             "updatedAt": iso_utc(s.updated_at),
             "createdAt": iso_utc(s.created_at),
         }
@@ -255,12 +256,27 @@ async def get_session_messages(
         .order_by(ConversationMessage.created_at)
     )
     msgs = res.scalars().all()
+    # 群聊消息按发言人区分左右气泡：owner 的平台身份挂在该来源的 UserBot 上
+    # （目前只有 QQ 走了绑定流程，其它渠道查不到就是 None，前端据此把消息
+    # 归到左侧、标发言人 username，而不是误判成 owner 自己发的）。
+    owner_platform_user_id = None
+    if session.source:
+        bot = (await db.execute(
+            select(UserBot).where(
+                UserBot.user_id == current_user.id,
+                UserBot.platform == session.source,
+            )
+        )).scalars().first()
+        owner_platform_user_id = bot.owner_platform_user_id if bot else None
     return {
-        "session": {"id": session.id, "title": session.title},
+        "session": {"id": session.id, "title": session.title, "chatType": session.chat_type,
+                    "ownerPlatformUserId": owner_platform_user_id},
         "active": await genstream.is_active(session_id),   # 该会话是否正在生成（前端据此续看）
         "messages": [
             {"id": m.id, "role": m.role, "content": m.content, "files": m.files or [],
              "quotedText": m.quoted_text,
+             "platformUserId": m.platform_user_id,
+             "platformUserName": m.platform_user_name,
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
         ],
