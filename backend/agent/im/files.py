@@ -5,14 +5,28 @@
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+import json
+
 from agent.im.models import PlatformReply
-from agent.im.replies import send_text
 
 _FEISHU_IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 _FEISHU_IMAGE_MAX = 10 * 1024 * 1024
 _FEISHU_FILE_MAX = 30 * 1024 * 1024
 _WECHAT_FILE_MAX = 30 * 1024 * 1024
 _QQ_FILE_MAX = 10 * 1024 * 1024
+
+
+@dataclass
+class FileSendResult:
+    requested: int = 0
+    sent: int = 0
+    failed: int = 0
+    reason: str = ""
+
+    @property
+    def all_sent(self) -> bool:
+        return self.requested > 0 and self.sent == self.requested
 
 
 # 入站附件暂存门面：Gateway 负责下载、解密和转码，这里统一处理 attach_id 生命周期。
@@ -74,21 +88,22 @@ def stage_voice_sync(
     )
 
 
-async def send_files(payload: dict, files: list) -> None:
-    """把工具产出的文件按平台发回。"""
+async def send_files(payload: dict, files: list) -> FileSendResult:
+    """把工具产出的文件按平台发回，并返回实际发送结果。"""
+    result = FileSendResult(requested=len(files))
     if not files:
-        return
+        return result
     platform = payload.get("platform")
     if platform not in ("feishu", "qqbot", "wechat"):
         print(f"[im] {platform} 暂不支持发文件（{len(files)} 个）", flush=True)
-        return
+        result.failed = len(files)
+        result.reason = "这个平台暂时不能接收文件。"
+        return result
     file_reply = PlatformReply.from_parts(payload, [{"type": "file"}])
     if file_reply.unsupported_capabilities(platform):
-        await send_text(payload, "这个平台暂时不能接收文件，我放到文件库里了，你从网页打开吧～")
-        return
-    if platform == "qqbot" and payload.get("chat_type") == "group":
-        await send_text(payload, f"（群里暂不支持发图片/文件，私聊我看 {len(files)} 个文件吧～）")
-        return
+        result.failed = len(files)
+        result.reason = "这个平台暂时不能接收文件，我放到文件库里了，你从网页打开吧～"
+        return result
 
     import app.db.session as db_session
     from app.models import File
@@ -104,6 +119,7 @@ async def send_files(payload: dict, files: list) -> None:
                 async with db_session._SessionLocal() as db:
                     record = await db.get(File, file_id)
                 if not record:
+                    result.failed += 1
                     continue
                 display_name, ext, storage_key = (
                     record.display_name, record.ext, record.storage_key
@@ -113,39 +129,55 @@ async def send_files(payload: dict, files: list) -> None:
                 owner = payload.get("owner_user_id")
                 meta = await chat_attach.get_meta(owner, attach_id) if owner else None
                 if not meta:
+                    result.failed += 1
                     continue
                 display_name = file_item.get("name") or meta.get("name") or "图片"
                 ext, storage_key = meta.get("ext", ""), meta["storage_key"]
             else:
+                result.failed += 1
                 continue
 
             fname = f"{display_name}.{ext}"
             if platform == "feishu":
                 data = await get_storage().get(storage_key)
-                await _send_file_feishu(payload, ext, data, fname)
+                ok = await _send_file_feishu(payload, ext, data, fname)
             elif platform == "qqbot":
-                await _send_file_qq(payload, storage_key, ext, display_name, fname)
+                ok = await _send_file_qq(
+                    payload,
+                    storage_key,
+                    ext,
+                    display_name,
+                    fname,
+                )
             else:
-                await _send_file_wechat(payload, storage_key, ext, fname)
+                ok = await _send_file_wechat(payload, storage_key, ext, fname)
+            if ok:
+                result.sent += 1
+            else:
+                result.failed += 1
         except Exception as exc:
+            result.failed += 1
+            result.reason = "附件发送失败，你可以去网页或文件库查看。"
             print(
                 f"[im] 发文件出错 {file_id or attach_id}: {type(exc).__name__}",
                 flush=True,
             )
+    if result.failed and not result.reason:
+        result.reason = "附件没有成功发出，你可以去网页或文件库查看。"
+    return result
 
 
-async def _send_file_wechat(payload: dict, storage_key: str, ext: str, fname: str) -> None:
+async def _send_file_wechat(payload: dict, storage_key: str, ext: str, fname: str) -> bool:
     from agent.gateway import wechat
     from app.services.storage import get_storage
 
     openid = payload.get("platform_user_id")
     if not openid:
-        return
+        return False
     data = await get_storage().get(storage_key)
     if len(data) > _WECHAT_FILE_MAX:
         mb = len(data) / 1048576
-        await send_text(payload, f"《{fname}》有 {mb:.0f}MB，超过微信 30MB 上限发不了 😅")
-        return
+        return False
     context_token = payload.get("context_token", "")
     is_image = (ext or "").lower() in _FEISHU_IMAGE_EXTS
     if is_image:
@@ -160,11 +192,10 @@ async def _send_file_wechat(payload: dict, storage_key: str, ext: str, fname: st
         f"{'ok' if ok else '失败'}（{len(data)} bytes）",
         flush=True,
     )
-    if not ok:
-        await send_text(payload, f"《{fname}》没发出去（微信那边拒了），你去网页/文件库里下载吧。")
+    return ok
 
 
-async def _send_file_feishu(payload: dict, ext: str, data: bytes, fname: str) -> None:
+async def _send_file_feishu(payload: dict, ext: str, data: bytes, fname: str) -> bool:
     from agent.gateway import feishu
     from agent import logsafe
 
@@ -177,45 +208,49 @@ async def _send_file_feishu(payload: dict, ext: str, data: bytes, fname: str) ->
             f"跳过（{mb:.1f}MB > {lim_mb}MB 上限）",
             flush=True,
         )
-        await send_text(payload, f"《{fname}》有 {mb:.0f}MB，超过飞书 {lim_mb}MB 上限发不了 😅 你去网页/文件库里下载吧。")
-        return
+        return False
     display_name = fname.rsplit(".", 1)[0] if "." in fname else fname
     ok = await feishu.send_file(
         payload.get("chat_id"), data, display_name, ext, payload.get("channel_id")
     )
     print(f"[im] feishu 发文件 fp={logsafe.fingerprint(fname)}: {'ok' if ok else '失败'}", flush=True)
-    if not ok:
-        await send_text(payload, f"《{fname}》没发出去（飞书那边拒了），你去网页/文件库里下载吧。")
+    return ok
 
 
 async def _send_file_qq(
-    payload: dict, storage_key: str, ext: str, display_name: str, fname: str
-) -> None:
+    payload: dict,
+    storage_key: str,
+    ext: str,
+    display_name: str,
+    fname: str,
+) -> bool:
     from agent.gateway import qq
     from agent import logsafe
     from app.services.storage import get_storage
 
-    openid = payload.get("platform_user_id")
-    storage = get_storage()
-    url = storage.fetch_url(storage_key)
-    if url:
-        ok = await qq.send_file(
-            openid, None, display_name, ext, payload.get("channel_id"),
-            payload.get("message_id"), url=url,
-        )
-    else:
-        data = await storage.get(storage_key)
-        if len(data) > _QQ_FILE_MAX:
-            await send_text(payload, f"《{fname}》有 {len(data) / 1048576:.0f}MB，超过 QQ 上限（本地存储约 10MB）发不了，去网页/文件库下载吧。")
-            return
-        ok = await qq.send_file(
-            openid, data, display_name, ext, payload.get("channel_id"),
-            payload.get("message_id"),
-        )
+    is_group = payload.get("chat_type") == "group"
+    openid = payload.get("chat_id") if is_group else payload.get("platform_user_id")
     print(
-        f"[im] qq 发文件 fp={logsafe.fingerprint(fname)}: "
-        f"{'ok' if ok else '失败'}{'（URL模式）' if url else ''}",
+        "[file-flow-probe] " + json.dumps({
+            "event": "qq-dispatch",
+            "chat_type": payload.get("chat_type"),
+            "target_kind": "group" if is_group else "c2c",
+        }, ensure_ascii=False, separators=(",", ":")),
         flush=True,
     )
-    if not ok:
-        await send_text(payload, f"《{fname}》没发出去（QQ 那边拒了），你去网页/文件库里下载吧。")
+    if not openid:
+        return False
+    storage = get_storage()
+    data = await storage.get(storage_key)
+    if len(data) > _QQ_FILE_MAX:
+        return False
+    ok = await qq.send_file(
+        openid, data, display_name, ext, payload.get("channel_id"),
+        payload.get("message_id"), group=is_group,
+    )
+    print(
+        f"[im] qq 发文件 fp={logsafe.fingerprint(fname)}: "
+        f"{'ok' if ok else '失败'}（base64模式）",
+        flush=True,
+    )
+    return ok

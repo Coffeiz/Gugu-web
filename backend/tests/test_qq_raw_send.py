@@ -98,7 +98,7 @@ async def test_send_token_uses_cache_until_expiry(monkeypatch):
     assert fetch_count == 1
 
 
-async def test_send_file_url_mode_uploads_then_sends_media(monkeypatch):
+async def test_send_file_base64_mode_uploads_then_sends_media(monkeypatch):
     monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
     calls = []
 
@@ -110,11 +110,34 @@ async def test_send_file_url_mode_uploads_then_sends_media(monkeypatch):
 
     monkeypatch.setattr(qq, "_qq_request", fake_request)
 
-    ok = await qq.send_file("ou_1", None, "photo", "png", "bot-1", "msg-1", url="https://example.test/a.png")
+    ok = await qq.send_file("ou_1", b"image-bytes", "photo", "png", "bot-1", "msg-1")
 
     assert ok is True
     assert calls[0][0] == "/v2/users/ou_1/files"
-    assert calls[0][1]["url"] == "https://example.test/a.png"
+    assert calls[0][1]["file_data"] == "aW1hZ2UtYnl0ZXM="
     assert calls[1][0] == "/v2/users/ou_1/messages"
     assert calls[1][1]["media"] == {"file_info": "media-token-abc"}
     assert calls[1][1]["msg_type"] == 7
+
+
+async def test_send_group_file_uses_group_media_endpoints(monkeypatch):
+    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kw):
+        calls.append((path, json_body))
+        if path.endswith("/files"):
+            return {"file_info": "group-media-token"}
+        return {}
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+
+    ok = await qq.send_file(
+        "group-1", b"image-bytes", "photo", "png", "bot-1", "msg-1", group=True,
+    )
+
+    assert ok is True
+    assert calls[0][0] == "/v2/groups/group-1/files"
+    assert calls[0][1]["file_data"] == "aW1hZ2UtYnl0ZXM="
+    assert calls[1][0] == "/v2/groups/group-1/messages"
+    assert calls[1][1]["media"] == {"file_info": "group-media-token"}

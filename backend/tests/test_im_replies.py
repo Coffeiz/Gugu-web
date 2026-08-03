@@ -100,24 +100,62 @@ def test_platform_reply_infers_keyboard_capability_from_parts():
 
 
 @pytest.mark.asyncio
-async def test_qq_group_file_reply_is_rejected_without_gateway_call(monkeypatch):
+async def test_qq_group_file_result_is_returned_to_worker(monkeypatch):
     from agent.im import files
 
-    sent = []
+    class FakeStorage:
+        async def get(self, key):
+            return b"image-bytes"
 
-    async def fake_send_text(payload, text):
-        sent.append(text)
+    calls = []
+    async def fake_send_file(*args, **kwargs):
+        calls.append((args, kwargs))
+        return True
 
-    monkeypatch.setattr(files, "send_text", fake_send_text)
-
-    await files.send_files({
+    monkeypatch.setattr("app.services.storage.get_storage", lambda: FakeStorage())
+    monkeypatch.setattr("agent.gateway.qq.send_file", fake_send_file)
+    result = await files._send_file_qq({
         "platform": "qqbot",
         "chat_type": "group",
         "chat_id": "group-1",
-    }, [{"file_id": 42}])
+        "message_id": "msg-1",
+    }, "storage-key", "png", "阿罗娜", "阿罗娜.png")
 
-    assert len(sent) == 1
-    assert "群里暂不支持" in sent[0]
+    assert result is True
+    assert calls[0][1]["group"] is True
+
+
+@pytest.mark.asyncio
+async def test_qq_group_file_reads_local_storage_bytes(monkeypatch):
+    from agent.im import files
+
+    class FakeStorage:
+        async def get(self, key):
+            return b"image-bytes"
+
+    calls = []
+
+    async def fake_send_file(*args, **kwargs):
+        calls.append((args, kwargs))
+        return True
+
+    monkeypatch.setattr("app.services.storage.get_storage", lambda: FakeStorage())
+    monkeypatch.setattr("agent.gateway.qq.send_file", fake_send_file)
+    result = await files._send_file_qq(
+        {
+            "platform": "qqbot",
+            "chat_type": "group",
+            "chat_id": "group-1",
+            "message_id": "msg-1",
+        },
+        "storage-key",
+        "png",
+        "阿罗娜",
+        "阿罗娜.png",
+    )
+
+    assert result is True
+    assert calls[0][1]["group"] is True
 
 
 @pytest.mark.asyncio
@@ -125,27 +163,21 @@ async def test_feishu_oversized_file_sends_limit_notice_without_gateway_call(mon
     from agent.gateway import feishu
     from agent.im import files
 
-    sent = []
     gateway_calls = []
-
-    async def fake_send_text(payload, text):
-        sent.append(text)
 
     async def fake_send_file(*args):
         gateway_calls.append(args)
 
-    monkeypatch.setattr(files, "send_text", fake_send_text)
     monkeypatch.setattr(feishu, "send_file", fake_send_file)
 
-    await files._send_file_feishu(
+    result = await files._send_file_feishu(
         {"platform": "feishu", "chat_id": "chat-1"},
         "png",
         b"x" * (files._FEISHU_IMAGE_MAX + 1),
         "大图.png",
     )
 
-    assert len(sent) == 1
-    assert "超过飞书 10MB" in sent[0]
+    assert result is False
     assert gateway_calls == []
 
 

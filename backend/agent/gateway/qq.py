@@ -1,8 +1,8 @@
 """QQ 官方机器人网关（单聊 C2C + 群聊，BYO 每用户自带 bot）。
 
-群聊需要在「接入咕咕」页开启 group_chat_enabled 开关；默认只响应 @ 机器人的消息，关闭
-group_requires_at 后同时接收 QQ 官方的 GROUP_MESSAGE_CREATE 全量群消息事件。开启
-group_read_enabled 后会额外接收并保存未 @ 咕咕的普通群消息；只有 @ 咕咕的消息才触发回复。
+群聊需要在「接入咕咕」页开启 group_chat_enabled 开关；默认会处理普通群消息，开启
+group_requires_at 后才只响应 @ 机器人的消息。开启
+group_read_enabled 后会额外接收并保存未 @ 咕咕的普通群消息，但不触发回复。
 
 和飞书长连接同模式：raw WebSocket outbound 主动连，**不需要公网**（备案前也能用）。
 BYO 模型：每个用户在「个人设置 → 接入咕咕 → QQ」填自己的 AppID/Secret（存 user_bots 表），
@@ -52,8 +52,42 @@ _OP_HELLO = 10
 _OP_HEARTBEAT_ACK = 11
 
 _INTENT_GROUP_AND_C2C = 1 << 25
+_INTENT_INTERACTION = 1 << 26
+_INTENTS = _INTENT_GROUP_AND_C2C | _INTENT_INTERACTION
+_INTERACTION_QUERY = 2001
+_INTERACTION_UPDATE = 2002
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
 _HEARTBEAT_ACK_TIMEOUT_MULTIPLIER = 2.5
+
+
+def _qq_probe_value(value: Any) -> Any:
+    """生成不包含原文的 QQ 事件结构摘要，供临时排查 Gateway 事件投递。"""
+    from agent.logsafe import fingerprint
+
+    if isinstance(value, dict):
+        return {str(key): _qq_probe_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return {"type": "list", "length": len(value), "items": [
+            _qq_probe_value(item) for item in value[:8]
+        ]}
+    if isinstance(value, str):
+        return {"type": "string", "length": len(value), "fingerprint": fingerprint(value)}
+    if value is None or isinstance(value, (bool, int, float)):
+        return {"type": type(value).__name__}
+    return {"type": type(value).__name__}
+
+
+def _probe_qq_dispatch(event_type: str, data: Dict[str, Any]) -> None:
+    """记录事件结构而不落原始正文、ID、附件 URL 或凭据。"""
+    if os.environ.get("QQ_EVENT_PROBE") != "1":
+        return
+    print(
+        "[qq-event-probe] " + json.dumps({
+            "event": event_type,
+            "payload": _qq_probe_value(data),
+        }, ensure_ascii=False, separators=(",", ":")),
+        flush=True,
+    )
 
 def _heartbeat_ack_expired(last_ack_at: float, interval: float, now: float) -> bool:
     """连续超过两个心跳周期未获确认时，认为网关连接已失效。"""
@@ -340,6 +374,116 @@ async def _qq_gateway_url(token: str, sandbox: bool) -> str:
     return url
 
 
+def _platform_requires_mention(group_settings: tuple[bool, bool, bool]) -> bool:
+    """计算 QQ 平台侧是否仍应保持 @ 才激活。
+
+    ``group_read_enabled`` 和 ``group_requires_at`` 是本地两层策略：前者决定
+    是否旁路记录普通群消息，后者决定普通群消息是否进入 Agent。只要任一策略
+    需要普通消息先到达网关，平台就必须切到 ``always`` 接收模式。
+    """
+    _group_enabled, requires_at, read_enabled = group_settings
+    return bool(requires_at and not read_enabled)
+
+
+def _build_claw_config(requires_mention: bool) -> dict:
+    """构造 QQ interaction 配置查询/更新 ACK 的稳定字段。"""
+    return {
+        "channel_type": "qqbot",
+        "channel_ver": "gugu",
+        "claw_type": "gugu",
+        "require_mention": "mention" if requires_mention else "always",
+        "group_policy": "open",
+        "mention_patterns": "",
+        "online_state": "online",
+    }
+
+
+async def _set_group_requires_at(channel_id: str, requires_at: bool) -> None:
+    """把 QQ 平台配置交互回写到当前 bot 的全局本地策略。
+
+    当前 user_bot 只有 bot 级开关，没有按群存储的配置；因此 interaction update
+    只能更新 bot 级 ``group_requires_at``。若普通群消息读取已开启，平台仍必须
+    保持 always，查询时会由 ``group_read_enabled`` 覆盖该值。
+    """
+    import app.db.session as db_session
+    from app.models import UserBot
+
+    if db_session._engine is None:
+        db_session._build_engine()
+    async with db_session._SessionLocal() as db:
+        bot = await db.get(UserBot, int(channel_id))
+        if not bot:
+            return
+        bot.group_requires_at = requires_at
+        await db.commit()
+
+
+async def _ack_qq_interaction(
+    channel_id: str,
+    interaction_id: str,
+    *,
+    code: int = 0,
+    data: dict | None = None,
+) -> None:
+    """通过 QQ REST API ACK interaction（平台要求在短时间内完成）。"""
+    body: dict[str, Any] = {"code": code}
+    if data:
+        body["data"] = data
+    await _qq_request(
+        channel_id,
+        "PUT",
+        f"/interactions/{interaction_id}",
+        json_body=body,
+    )
+
+
+async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str) -> None:
+    """处理 QQ 配置查询/更新交互，不进入 Agent 消息链路。"""
+    interaction_id = str(data.get("id") or "")
+    interaction_data = data.get("data") or {}
+    interaction_type = interaction_data.get("type")
+    if not interaction_id or interaction_type not in {_INTERACTION_QUERY, _INTERACTION_UPDATE}:
+        return
+
+    try:
+        settings = await _group_settings(channel_id)
+        requires_at = bool(settings[1])
+        read_enabled = bool(settings[2])
+
+        if interaction_type == _INTERACTION_UPDATE:
+            resolved = interaction_data.get("resolved") or {}
+            config = resolved.get("claw_cfg") or {}
+            requested = config.get("require_mention")
+            if requested in {"mention", "always"}:
+                # 读取普通消息是平台 always 的硬约束；否则同步平台对本地回复门槛
+                # 的修改，避免下次查询又被旧值覆盖。
+                await _set_group_requires_at(channel_id, requested == "mention")
+                requires_at = requested == "mention"
+
+        platform_requires_at = requires_at and not read_enabled
+        await _ack_qq_interaction(
+            channel_id,
+            interaction_id,
+            data={"claw_cfg": _build_claw_config(platform_requires_at)},
+        )
+        from agent import logsafe
+        print(
+            "[qq-interaction] " + json.dumps({
+                "type": interaction_type,
+                "interaction_fp": logsafe.fingerprint(interaction_id),
+                "platform_mode": "mention" if platform_requires_at else "always",
+                "read_enabled": read_enabled,
+            }, ensure_ascii=False, separators=(",", ":")),
+            flush=True,
+        )
+    except Exception as e:
+        diag_log("agent.gateway.qq._handle_qq_interaction", e)
+        try:
+            await _ack_qq_interaction(channel_id, interaction_id, code=1)
+        except Exception as ack_error:
+            diag_log("agent.gateway.qq._handle_qq_interaction.ack", ack_error)
+
+
 async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, msg_id: str) -> None:
     try:
         if chat_type == "group":
@@ -531,17 +675,20 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
                                 else:
                                     await ws.send_json({"op": _OP_IDENTIFY, "d": {
                                         "token": f"QQBot {token}",
-                                        "intents": _INTENT_GROUP_AND_C2C,
+                                        "intents": _INTENTS,
                                         "shard": [0, 1],
                                     }})
                             elif op == _OP_HEARTBEAT_ACK:
                                 last_heartbeat_ack_at = time.monotonic()
                             elif op == _OP_DISPATCH:
+                                _probe_qq_dispatch(event_type, data)
                                 if event_type == "READY":
                                     session_id = data.get("session_id")
                                     print(f"[qq:{channel_id}] raw WebSocket READY session={session_id}", flush=True)
                                 elif event_type == "RESUMED":
                                     print(f"[qq:{channel_id}] raw WebSocket RESUMED", flush=True)
+                                elif event_type == "INTERACTION_CREATE":
+                                    await _handle_qq_interaction(data, channel_id)
                                 elif event_type in ("C2C_MESSAGE_CREATE", "GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"):
                                     await _handle_raw_qq_message(event_type, data, channel_id, owner, last_ack)
                             elif op == _OP_RECONNECT:
@@ -813,47 +960,67 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
     return False
 
 
-# ── 发文件（worker 用）。C2C 私聊支持图片(file_type=1)和文件(file_type=4)；群聊不支持发文件 ──
+# ── 发文件（worker 用）。C2C 和群聊分别走各自的富媒体上传接口 ──
 _IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 
 
 async def send_file(openid: str, data: bytes | None, name: str, ext: str,
                     channel_id: str | None = None, msg_id: str | None = None,
-                    url: str | None = None) -> bool:
-    """给 QQ 用户发图片/文件。**有 url（OSS 公网/签名地址）→ URL 模式让 QQ 自己抓（无体积限制）；
-    否则 base64 上传 data（本地存储用，受 ~10MB 限制）**。C2C 图片→file_type 1、其余文件→4。"""
+                    group: bool = False) -> bool:
+    """给 QQ 私聊或群聊发媒体；本地文件统一使用 base64 上传。"""
     import base64
     ext_l = (ext or "").lower()
     is_img = ext_l in _IMAGE_EXTS
     file_type = 1 if is_img else 4
     fname = f"{name}.{ext_l}" if ext_l else name
-    b64 = base64.b64encode(data).decode() if (data is not None and not url) else None
+    if data is None:
+        return False
+    b64 = base64.b64encode(data).decode()
+    target = "groups" if group else "users"
+    print(
+        "[file-flow-probe] " + json.dumps({
+            "event": "qq-upload-start",
+            "target_kind": target,
+            "encoding": "base64",
+            "file_type": file_type,
+        }, ensure_ascii=False, separators=(",", ":")),
+        flush=True,
+    )
     # 上传 inner proxy 偶发抖动，多重试几次（每次取新 msg_seq，避免去重）
     for attempt in range(1, 5):
         try:
-            # 1) 上传到 QQ 富媒体，拿 file_info（url 模式让 QQ 抓；否则 base64 file_data）
+            # 1) 上传到 QQ 富媒体，拿 file_info。
             body = {"file_type": file_type, "srv_send_msg": False}
-            if url:
-                body["url"] = url
-            else:
-                body["file_data"] = b64
+            body["file_data"] = b64
             if not is_img:
                 body["file_name"] = fname
-            media = await _qq_request(channel_id, "POST", f"/v2/users/{openid}/files", json_body=body)
+            media = await _qq_request(channel_id, "POST", f"/v2/{target}/{openid}/files", json_body=body)
             file_info = media.get("file_info") if isinstance(media, dict) else None
             if not file_info:
                 # 只打字段名，不打整个响应体（万一 QQ 把请求里的 file_name 之类字段原样回显）
                 keys = sorted(media.keys()) if isinstance(media, dict) else type(media).__name__
                 print(f"[qq] 富媒体上传无 file_info: keys={keys}", flush=True)
+                print("[file-flow-probe] " + json.dumps({
+                    "event": "qq-upload-no-file-info", "target_kind": target,
+                    "response_keys": keys if isinstance(keys, list) else str(keys),
+                }, ensure_ascii=False, separators=(",", ":")), flush=True)
                 return False
             # 2) 发媒体消息（被动回复带 msg_id；文件用 content 让 QQ 显示文件名）
             msg_body = {"msg_type": 7, "media": {"file_info": file_info},
                        "msg_id": msg_id, "msg_seq": await _next_seq(msg_id)}
             if not is_img:
                 msg_body["content"] = fname
-            await _qq_request(channel_id, "POST", f"/v2/users/{openid}/messages", json_body=msg_body)
+            await _qq_request(channel_id, "POST", f"/v2/{target}/{openid}/messages", json_body=msg_body)
+            print("[file-flow-probe] " + json.dumps({
+                "event": "qq-upload-sent", "target_kind": target,
+            }, ensure_ascii=False, separators=(",", ":")), flush=True)
             return True
         except Exception as e:
+            print("[file-flow-probe] " + json.dumps({
+                "event": "qq-upload-error", "target_kind": target,
+                "error_type": type(e).__name__,
+                "attempt": attempt,
+            }, ensure_ascii=False, separators=(",", ":")), flush=True)
             diag_log("agent.gateway.qq.send_file", e)
             _log.warning("[qq] 发文件失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             # token 失效才重建缓存；inner proxy 等抖动直接重试
