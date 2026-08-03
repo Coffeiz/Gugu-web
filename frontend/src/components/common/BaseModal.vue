@@ -20,7 +20,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
-import { OVERLAY_Z, nextZ, registerEsc } from '@/composables/windowz'
+import { OVERLAY_Z, nextZ, raisePopoversAbove, registerEsc } from '@/composables/windowz'
 
 const props = defineProps({
   show:    { type: Boolean, default: false },
@@ -52,7 +52,10 @@ const cardStyle = computed(() => ({
 
 // 窗口层级：打开领新 z、mousedown 置顶；ESC 统一走 windowz（只关最顶层）
 const myZ = ref(0)
-function raise() { myZ.value = nextZ() }
+function raise() {
+  myZ.value = nextZ()
+  raisePopoversAbove(myZ.value)
+}
 
 let unregEsc: (() => void) | null = null
 watch(() => props.show, v => {

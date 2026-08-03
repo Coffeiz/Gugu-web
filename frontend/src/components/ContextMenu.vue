@@ -1,6 +1,9 @@
 <template>
   <Teleport to="body">
-    <Transition name="menu-pop" :duration="{ enter: 240, leave: 180 }">
+    <Transition
+      name="menu-pop"
+      :duration="{ enter: 240, leave: 180 }"
+    >
       <div v-if="show" ref="el" class="ctx-menu popup-menu" :style="style" @click.stop @contextmenu.prevent>
         <slot />
       </div>
@@ -10,7 +13,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
-import { nextZ } from '@/composables/windowz'
+import { nextZ, registerPopover } from '@/composables/windowz'
 
 const props = defineProps({ show: Boolean, x: Number, y: Number })
 const emit  = defineEmits(['close'])
@@ -19,6 +22,11 @@ const el    = ref<HTMLElement | null>(null)
 // 每次弹出领新 z：保证盖在当前最顶的窗口（编辑卡/预览器…）之上
 const myZ = ref(0)
 watch(() => props.show, v => { if (v) myZ.value = nextZ() })
+let unregisterPopover: (() => void) | null = null
+watch(() => props.show, v => {
+  unregisterPopover?.()
+  unregisterPopover = v ? registerPopover(z => { myZ.value = z }) : null
+})
 
 const style = computed(() => ({
   position: 'fixed' as const,
@@ -53,6 +61,7 @@ watch(() => props.show, async (v) => {
 })
 
 onUnmounted(() => {
+  unregisterPopover?.()
   document.removeEventListener('keydown', onKey)
   document.removeEventListener('click',       close)
   document.removeEventListener('contextmenu', close)
