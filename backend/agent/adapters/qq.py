@@ -55,7 +55,6 @@ _INTENT_GROUP_AND_C2C = 1 << 25
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
 _HEARTBEAT_ACK_TIMEOUT_MULTIPLIER = 2.5
 
-
 def _heartbeat_ack_expired(last_ack_at: float, interval: float, now: float) -> bool:
     """连续超过两个心跳周期未获确认时，认为网关连接已失效。"""
     return now - last_ack_at >= interval * _HEARTBEAT_ACK_TIMEOUT_MULTIPLIER
@@ -362,6 +361,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         chat_type = "c2c"
         author = data.get("author") or {}
         sender_id = author.get("user_openid") or author.get("id") or ""
+        sender_name = str(author.get("username") or author.get("nickname") or "").strip()
         chat_id = ""
     elif event_type in {"GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"}:
         group_settings = await _group_settings(channel_id)
@@ -377,11 +377,25 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         chat_type = "group"
         author = data.get("author") or {}
         sender_id = author.get("member_openid") or author.get("id") or ""
+        sender_name = str(author.get("username") or author.get("nickname") or "").strip()
         chat_id = data.get("group_openid") or ""
     else:
         return
     if not sender_id:
         return
+    if chat_type == "c2c":
+        try:
+            from app.db import session as _sess
+            from app.services.im_identity import bind_qq_owner_if_empty
+
+            if _sess._engine is None:
+                _sess._build_engine()
+            async with _sess._SessionLocal() as db:
+                await bind_qq_owner_if_empty(db, int(channel_id), owner, sender_id)
+        except Exception as e:
+            diag_log("agent.adapters.qq.bind_owner", e)
+            _log.warning("[qq:%s] owner 身份绑定失败，消息继续入队: %s",
+                         channel_id, redact(f"{type(e).__name__}: {e}"))
     text = (data.get("content") or "").strip()
     msg_id = data.get("id") or ""
     raw_attachments = data.get("attachments") or []
@@ -412,6 +426,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         "channel_id": channel_id,
         "owner_user_id": owner,
         "platform_user_id": sender_id,
+        "platform_user_name": sender_name or None,
         "message_id": msg_id,
         "chat_type": chat_type,
         "text": text,
@@ -701,39 +716,57 @@ def _markdown_blocked(exc: Exception) -> bool:
     return ("50056" in s or "40034012" in s or "不允许发送原生 markdown" in s)
 
 
+def _qq_msg_id_invalid(exc: Exception) -> bool:
+    """QQ 被动回复窗口过期或 msg_id 越权时，允许降级为主动消息。"""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        if body.get("code") == 40034024 or body.get("err_code") == 40034024:
+            return True
+        message = str(body.get("message") or "")
+        return "msg_id无效或越权" in message
+    text = str(body) if body is not None else str(exc)
+    return "40034024" in text or "msg_id无效或越权" in text
+
+
 async def _post(channel_id: str, openid: str, text: str, msg_id: str | None):
     """先发原生 markdown(msg_type=2) 让 QQ 渲染；该 bot 无 md 权限则回退纯文本(msg_type=0)。
     每次发都取新 msg_seq，避免重复 seq 被去重。"""
     path = f"/v2/users/{openid}/messages"
+    body = {
+        "msg_type": 2, "markdown": {"content": text},
+        "msg_seq": await _next_seq(msg_id),
+    }
+    if msg_id:
+        body["msg_id"] = msg_id
     try:
-        await _qq_request(channel_id, "POST", path, json_body={
-            "msg_type": 2, "markdown": {"content": text},
-            "msg_id": msg_id, "msg_seq": await _next_seq(msg_id),
-        })
+        await _qq_request(channel_id, "POST", path, json_body=body)
     except Exception as me:
         if not _markdown_blocked(me):
             raise
-        await _qq_request(channel_id, "POST", path, json_body={
-            "msg_type": 0, "content": text,
-            "msg_id": msg_id, "msg_seq": await _next_seq(msg_id),
-        })
+        body = {"msg_type": 0, "content": text, "msg_seq": await _next_seq(msg_id)}
+        if msg_id:
+            body["msg_id"] = msg_id
+        await _qq_request(channel_id, "POST", path, json_body=body)
 
 
 async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str | None):
     """群聊版 _post：先发原生 markdown，该 bot 无 md 权限则回退纯文本。"""
     path = f"/v2/groups/{group_openid}/messages"
+    body = {
+        "msg_type": 2, "markdown": {"content": text},
+        "msg_seq": await _next_seq(msg_id),
+    }
+    if msg_id:
+        body["msg_id"] = msg_id
     try:
-        await _qq_request(channel_id, "POST", path, json_body={
-            "msg_type": 2, "markdown": {"content": text},
-            "msg_id": msg_id, "msg_seq": await _next_seq(msg_id),
-        })
+        await _qq_request(channel_id, "POST", path, json_body=body)
     except Exception as me:
         if not _markdown_blocked(me):
             raise
-        await _qq_request(channel_id, "POST", path, json_body={
-            "msg_type": 0, "content": text,
-            "msg_id": msg_id, "msg_seq": await _next_seq(msg_id),
-        })
+        body = {"msg_type": 0, "content": text, "msg_seq": await _next_seq(msg_id)}
+        if msg_id:
+            body["msg_id"] = msg_id
+        await _qq_request(channel_id, "POST", path, json_body=body)
 
 
 async def send_c2c(openid: str, text: str, msg_id: str | None = None,
@@ -746,6 +779,16 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
             await _post(channel_id, openid, text, msg_id)
             return True
         except Exception as e:
+            if msg_id and _qq_msg_id_invalid(e):
+                _log.warning("[qq] C2C 被动回复 msg_id 已失效，降级为主动消息")
+                try:
+                    await _post(channel_id, openid, text, None)
+                    return True
+                except Exception as fallback_error:
+                    diag_log("agent.adapters.qq.send_c2c.active_fallback", fallback_error)
+                    _log.warning("[qq] C2C 主动消息发送失败: %s",
+                                 redact(f"{type(fallback_error).__name__}: {fallback_error}"))
+                    return False
             diag_log("agent.adapters.qq.send_c2c", e)
             _log.warning("[qq] 发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)   # 丢弃缓存，下次重新取 token
@@ -764,6 +807,16 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
             await _post_group(channel_id, group_openid, text, msg_id)
             return True
         except Exception as e:
+            if msg_id and _qq_msg_id_invalid(e):
+                _log.warning("[qq] 群聊被动回复 msg_id 已失效，降级为主动消息")
+                try:
+                    await _post_group(channel_id, group_openid, text, None)
+                    return True
+                except Exception as fallback_error:
+                    diag_log("agent.adapters.qq.send_group.active_fallback", fallback_error)
+                    _log.warning("[qq] 群聊主动消息发送失败: %s",
+                                 redact(f"{type(fallback_error).__name__}: {fallback_error}"))
+                    return False
             diag_log("agent.adapters.qq.send_group", e)
             _log.warning("[qq] 群发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)

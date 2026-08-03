@@ -15,7 +15,7 @@ from typing import AsyncGenerator, AsyncIterator, List, Tuple
 
 logger = logging.getLogger(__name__)
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, desc, func, select
 
 from app.core.config import get_settings
 from app.core.redaction import redact
@@ -28,6 +28,42 @@ from agent.profiles import DefaultProfile
 
 # 后台任务引用，防止被 GC（fire-and-forget 的标题生成等）
 _bg_tasks: set = set()
+
+GROUP_MESSAGE_LIMIT = 50
+
+
+def _im_identity_block(req: AgentRequest, history: list) -> str:
+    """把 IM 身份元数据作为内部事实提供给模型，禁止模型凭熟悉感猜身份。"""
+    if req.source not in _IM_SOURCES:
+        return ""
+    chat_type = "群聊" if req.chat_id else "私聊"
+    role = req.im_role or ("owner" if not req.chat_id else "unknown")
+    role_text = {"owner": "绑定 Bot 的用户", "member": "群成员", "unknown": "未确认身份"}.get(role, role)
+    lines = [
+        "\n\n---\n\n## 当前 IM 身份事实（只供内部核对）",
+        f"- 平台：{req.source}",
+        f"- 会话类型：{chat_type}",
+        f"- 当前发言人平台身份标识：{req.platform_user_id or '未知'}",
+        f"- 当前发言人平台显示名：{req.platform_user_name or '未提供'}",
+        f"- 当前权限角色：{role_text}",
+    ]
+    if req.chat_id:
+        lines.append(f"- 当前群会话标识：{req.chat_id}")
+    previous = [
+        getattr(item, "platform_user_id", None)
+        for item in history
+        if getattr(item, "role", None) == "user" and getattr(item, "platform_user_id", None)
+    ]
+    if previous:
+        lines.append(f"- 当前会话中此前记录到的发言人标识：{', '.join(dict.fromkeys(previous))}")
+    lines.extend([
+        "- 这是当前消息的可靠元数据；不要根据昵称、记忆或语气猜测身份。",
+        "- 群聊和私聊是不同会话类型；回答当前消息时必须按这里的会话类型处理。",
+        "- 被问到‘是不是同一个 ID’时，只能根据这些标识比较；没有比较依据就明确说目前无法确认，不要编造‘一直没变’。",
+        "- 不向用户主动展示原始平台 ID，也不要把 Gugu 账号昵称当成 QQ 昵称。",
+        "- 平台显示名只用于自然称呼当前发言人，不能用于身份识别、权限判断或判断是否为同一个人。",
+    ])
+    return "\n".join(lines)
 
 
 def _schedule_title(user_id, session_id, user_msg: str, reply_text: str, settings, use_anthropic: bool) -> None:
@@ -132,6 +168,7 @@ async def record_passive_im_message(req: AgentRequest, session_id: int | None = 
                 user_id=req.user_id,
                 title=(req.message[:50] or "群聊记录"),
                 source=getattr(req, "source", "qqbot"),
+                chat_id=req.chat_id,
             )
             db.add(session)
             await db.flush()
@@ -140,9 +177,42 @@ async def record_passive_im_message(req: AgentRequest, session_id: int | None = 
             role="user",
             content=req.message,
             quoted_text=getattr(req, "quoted_text", None),
+            platform_user_id=req.platform_user_id,
+            platform_user_name=req.platform_user_name,
+            chat_type="group" if req.chat_id else "c2c" if req.source in _IM_SOURCES else None,
         ))
         await db.commit()
+        await trim_group_session_messages(session.id)
         return session.id
+
+
+async def trim_group_session_messages(session_id: int, limit: int = GROUP_MESSAGE_LIMIT) -> None:
+    """只保留群会话最近的消息记录，避免普通群消息让数据库无限增长。
+
+    这是数据库保留策略，不等同于 Agent Loop 的上下文裁剪：上下文仍由
+    ``HISTORY_MAX_MSGS`` 和 token budget 决定。调用方只对确认是群聊的 session 使用此函数。
+    """
+    import app.db.session as _sess
+    from app.models import ConversationMessage
+
+    if limit < 1:
+        return
+    if _sess._engine is None:
+        _sess._build_engine()
+    keep_ids = (
+        select(ConversationMessage.id)
+        .where(ConversationMessage.session_id == session_id)
+        .order_by(desc(ConversationMessage.created_at), desc(ConversationMessage.id))
+        .limit(limit)
+    )
+    async with _sess._SessionLocal() as db:
+        await db.execute(
+            delete(ConversationMessage).where(
+                ConversationMessage.session_id == session_id,
+                ConversationMessage.id.not_in(keep_ids),
+            )
+        )
+        await db.commit()
 
 
 async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str) -> str:
@@ -234,7 +304,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                 )).scalars().first()
                 if oldest:
                     await db.delete(oldest)
-            session = ConversationSession(user_id=user_id, title=(req.message[:50] or "新对话"), source=getattr(req, "source", "web"))
+            session = ConversationSession(user_id=user_id, title=(req.message[:50] or "新对话"),
+                                          source=getattr(req, "source", "web"), chat_id=req.chat_id)
             db.add(session)
             await db.flush()
             is_new_session = True
@@ -266,7 +337,10 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                 [c.get("kind") for c in (attach_cards or [])],
                 [c.get("ext") for c in (attach_cards or [])])
         db.add(ConversationMessage(session_id=session_id, role="user", content=req.message,
-                                   files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None)))
+                                   files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None),
+                                   platform_user_id=req.platform_user_id,
+                                   platform_user_name=req.platform_user_name,
+                                   chat_type="group" if req.chat_id else "c2c" if req.source in _IM_SOURCES else None))
         await db.commit()
 
         # 精力耗尽 → 硬拦（IM / 定时任务，与网页 web.stream 同口径）：用户消息已记，不再生成，直接回一句
@@ -319,6 +393,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         non_streaming=True,     # run_collect 是 IM 专用（worker.py 调用），不流式展示给用户
         user_tz=user_tz,
     )
+    system_prompt += _im_identity_block(req, history)
     if im_bridge:               # IM 新会话续接桥（见 _im_continuity_bridge）
         system_prompt += im_bridge
     if _proactive_lead:         # 主动推送是会话首条 assistant → sanitize 会剥掉，塞 system 兜底
@@ -332,7 +407,10 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
     from agent.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
-    runner = LLMRunner(profile.tool_names, settings)
+    tool_names = profile.tool_names if req.allowed_tool_names is None else [
+        name for name in req.allowed_tool_names if name in profile.tool_names
+    ]
+    runner = LLMRunner(tool_names, settings)
 
     from app.core.chat_attach import build_user_content
     anthr_messages: list = []
@@ -483,7 +561,8 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                 )).scalars().first()
                 if oldest:
                     await db.delete(oldest)
-            session = ConversationSession(user_id=user_id, title=(req.message[:50] or "新对话"), source=getattr(req, "source", "web"))
+            session = ConversationSession(user_id=user_id, title=(req.message[:50] or "新对话"),
+                                          source=getattr(req, "source", "web"), chat_id=req.chat_id)
             db.add(session)
             await db.flush()
             is_new_session = True
@@ -505,7 +584,10 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
             user_id, getattr(req, "attachments", None) or [], llm_text, model_cfg=model_cfg)
         db.add(ConversationMessage(session_id=session_id, role="user", content=req.message,
-                                   files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None)))
+                                   files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None),
+                                   platform_user_id=req.platform_user_id,
+                                   platform_user_name=req.platform_user_name,
+                                   chat_type="group" if req.chat_id else "c2c" if req.source in _IM_SOURCES else None))
         await db.commit()
 
         if await quota.is_exhausted(db, user_id, settings):
@@ -556,6 +638,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         non_streaming=False,     # ★ 流式：让 core.py 走流式生成路径（不走 builder._NON_STREAMING_BLOCK 抑制）
         user_tz=user_tz,
     )
+    system_prompt += _im_identity_block(req, history)
     if im_bridge:
         system_prompt += im_bridge
     if _proactive_lead:
@@ -568,7 +651,10 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
 
     from agent.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
-    runner = LLMRunner(profile.tool_names, settings)
+    tool_names = profile.tool_names if req.allowed_tool_names is None else [
+        name for name in req.allowed_tool_names if name in profile.tool_names
+    ]
+    runner = LLMRunner(tool_names, settings)
 
     from app.core.chat_attach import build_user_content
     anthr_messages: list = []

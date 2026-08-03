@@ -312,6 +312,28 @@ async def handle(msg_id: str, payload: dict):
     session_key = (payload.get("chat_id") if payload.get("chat_type") == "group" else puid) or puid
     sid = payload.get("session_id") or await _im_session_get(platform, session_key)
 
+    im_role = None
+    allowed_tool_names = None
+    if platform == "qqbot" and payload.get("chat_type") in {"group", "c2c"}:
+        import app.db.session as _identity_session
+        from app.services.im_identity import resolve_qq_group_access
+        if _identity_session._engine is None:
+            _identity_session._build_engine()
+        try:
+            async with _identity_session._SessionLocal() as identity_db:
+                access = await resolve_qq_group_access(
+                    identity_db, int(payload.get("channel_id") or 0), user_id, puid or ""
+                )
+            im_role = access.role
+            allowed_tool_names = access.allowed_tool_names
+        except Exception as e:
+            # 权限解析失败时按 unknown 的最小白名单处理，不把群成员升级成 owner。
+            from app.core.redaction import diag_log, redact
+            diag_log("worker.qq_group_access", e)
+            print(f"[worker] QQ 群成员权限解析失败，按最小权限继续: {redact(type(e).__name__)}", flush=True)
+            im_role = "unknown"
+            allowed_tool_names = ["web_search"]
+
     # 恢复全链路 trace（网关生成、payload 接力；防抖合并取最后一条的）——此后本任务内
     # 的工具轨迹/回复日志自动带同一 trace，可与网关「收到」行 grep 串联
     from agent import trace
@@ -321,9 +343,14 @@ async def handle(msg_id: str, payload: dict):
         message=payload.get("text", ""),
         user_id=user_id, user_name=user_name,
         session_id=sid,
+        chat_id=payload.get("chat_id") if payload.get("chat_type") == "group" else None,
+        platform_user_id=puid,
+        platform_user_name=payload.get("platform_user_name"),
         source=platform,
         attachments=payload.get("attachments") or [],
         quoted_text=payload.get("quoted_text"),
+        im_role=im_role,
+        allowed_tool_names=allowed_tool_names,
     )
     # QQ 群聊普通消息的“读取群消息”模式：只记录到同一会话，不跑模型也不回复；
     # 被 @ 的消息不走此分支，继续执行完整的回应链路。
@@ -347,7 +374,7 @@ async def handle(msg_id: str, payload: dict):
     # chat_type/context_token 供慢工具进度声明主动推送时直接拼 worker._send() 的 payload 用）
     from agent import imctx
     imctx.set_im(platform, payload.get("message_id"), payload.get("channel_id"), payload.get("chat_id"), puid,
-                payload.get("chat_type"), payload.get("context_token", ""))
+                payload.get("chat_type"), payload.get("context_token", ""), allowed_tool_names, im_role)
     # 记一份「可触达地址」：定时任务/主动推送时按 user_id 反查这里发 IM
     try:
         from app import scheduled_tasks as schedtasks
@@ -378,6 +405,9 @@ async def handle(msg_id: str, payload: dict):
                 resp = AgentResponse(text="", session_id=None, tokens_in=0, tokens_out=0)
         else:
             resp = await run_collect(req)
+            if payload.get("platform") == "qqbot" and payload.get("chat_type") == "group" and sid:
+                from agent.runner import trim_group_session_messages
+                await trim_group_session_messages(sid)
     finally:
         await rtstate.clear_state(platform, puid)
         await rtstate.clear_cancel(platform, puid)

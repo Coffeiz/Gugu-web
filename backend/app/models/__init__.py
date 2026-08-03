@@ -18,6 +18,7 @@ from uuid6 import uuid7
 
 from app.core.tz import now_utc
 from app.core.crypto import EncryptedString
+from app.core.project_colors import DEFAULT_PROJECT_COLOR
 from app.db.types import UtcDateTime
 from app.db.base import Base
 
@@ -93,7 +94,7 @@ class Project(Base):
     status:        Mapped[str]           = mapped_column(String(20),  default="pending")
     start_date:    Mapped[Optional[str]] = mapped_column(String(10),  nullable=True)
     deadline:      Mapped[Optional[str]] = mapped_column(String(10),  nullable=True)
-    color:         Mapped[str]           = mapped_column(String(300), default="linear-gradient(135deg,#7b7fb2,#c4afc8)")
+    color:         Mapped[str]           = mapped_column(String(300), default=DEFAULT_PROJECT_COLOR)
     progress:      Mapped[int]           = mapped_column(Integer,     default=0)
     stages_json:   Mapped[str]           = mapped_column(Text,        default="[]")
     current_stage: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -382,6 +383,9 @@ class ConversationSession(Base):
     title:      Mapped[str]      = mapped_column(String(300), default="新对话")
     summary:    Mapped[str]      = mapped_column(Text, default="")   # 一句话「这段对话聊了啥」，供跨 session 查找/续接（随会话刷新；绑 session、删则同删）
     source:     Mapped[str]      = mapped_column(String(20), default="web")
+    chat_id:   Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    chat_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
@@ -406,6 +410,9 @@ class ConversationMessage(Base):
     # 单独一列，别拼进 content——网页气泡按纯文本渲染 content，拼进去会把引用原文（可能带 markdown
     # 表格等）原样摊平显示，见 devlog 2026-07-10。
     quoted_text:  Mapped[Optional[str]]    = mapped_column(Text, nullable=True, default=None)
+    platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    platform_user_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    chat_type:    Mapped[Optional[str]]    = mapped_column(String(20), nullable=True)
     created_at:   Mapped[datetime]        = mapped_column(UtcDateTime, default=now_utc)
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
@@ -464,6 +471,11 @@ class UserBot(Base):
     group_chat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=True)
     group_read_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 群成员可用工具白名单；默认只开放联网搜索，不暴露用户私有内容和写操作。
+    group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search"])
+    # QQ 当前 Bot 作用域内的 owner 身份；不作为跨 Bot 全局 QQ ID 使用。
+    owner_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
+    owner_bound_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
 

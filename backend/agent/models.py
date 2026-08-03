@@ -14,6 +14,9 @@ class AgentRequest:
     user_id: object               # UUID
     user_name: str
     session_id: Optional[int] = None
+    chat_id: Optional[str] = None       # IM 群会话标识；网页/私聊为空
+    platform_user_id: Optional[str] = None  # 当前 IM 发言人的平台身份标识
+    platform_user_name: Optional[str] = None  # 当前 IM 发言人的平台显示名，仅用于称呼
     source: str = "web"           # "web" | "qqbot" | "openclaw"
     attachments: list = field(default_factory=list)   # 聊天附件 attach_id（仅 web）
     greeting: Optional[str] = None   # 新会话首条用户消息携带的「已显示默认问候」，落为本会话首条 assistant 消息（仅 web）
@@ -24,6 +27,8 @@ class AgentRequest:
                                         # 用户自己打的话，quoted_text 单独存单独展示，别再把引用原文
                                         # 拼进用户消息正文（网页气泡是纯文本渲染，拼进去会把 markdown
                                         # 原文摊平显示得很难看，见 devlog 2026-07-10）。
+    im_role: Optional[str] = None       # IM 身份：owner/member/unknown；网页为空
+    allowed_tool_names: Optional[list[str]] = None  # None=沿用完整工具集；群成员使用白名单
 
 
 @dataclass
