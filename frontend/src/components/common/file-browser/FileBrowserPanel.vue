@@ -39,7 +39,7 @@
 
 <script setup lang="ts">
 import type { PropType } from 'vue'
-import FileBrowserToolbar from '@/components/common/FileBrowserToolbar.vue'
+import FileBrowserToolbar from '@/components/common/file-browser/FileBrowserToolbar.vue'
 
 defineProps({
   canPaste: Boolean,

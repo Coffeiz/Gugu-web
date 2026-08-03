@@ -113,15 +113,15 @@ import {
   PhCheck, PhTrash, PhArchive,
 } from '@phosphor-icons/vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
-import FileBrowserContextMenu from '@/components/common/FileBrowserContextMenu.vue'
-import FileBrowserContextMenuContent from '@/components/common/FileBrowserContextMenuContent.vue'
+import FileBrowserContextMenu from '@/components/common/file-browser/FileBrowserContextMenu.vue'
+import FileBrowserContextMenuContent from '@/components/common/file-browser/FileBrowserContextMenuContent.vue'
 import ProjectInfoPanel from '@/views/Projects/components/ProjectInfoPanel.vue'
 import ProjectStagesPanel from '@/views/Projects/components/ProjectStagesPanel.vue'
 import ProjectFilesPanel from '@/views/Projects/components/ProjectFilesPanel.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
-import { useProjectFileSelection } from '@/composables/files/useProjectFileSelection'
+import { useFileSelection } from '@/composables/files/useFileSelection'
 import { useProjectFileWorkspace } from '@/composables/files/useProjectFileWorkspace'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useProjectDraft } from '@/composables/projects/useProjectDraft'
@@ -240,7 +240,7 @@ const {
   handleFileClick: pmHandleFileClick,
   onFileClick: onPmFileClick,
   onFolderClick: onPmFolderClick,
-} = useProjectFileSelection({
+} = useFileSelection({
   getFolders: () => sortedCurrentFolders.value,
   getFiles: () => sortedCurrentFiles.value,
   openPreview: file => openPreview(file),
@@ -296,9 +296,6 @@ const {
 const showNewFolder  = ref(false)
 const newFolderName  = ref('')
 const folderLoading  = ref(false)
-const folderInputRef = ref<HTMLInputElement | null>(null)
-
-watch(showNewFolder, v => { if (v) nextTick(() => folderInputRef.value?.focus()) })
 
 async function createFolder() {
   const name = newFolderName.value.trim()
@@ -517,7 +514,6 @@ const filePanelContext = {
   newFolderName,
   folderLoading,
   createFolder,
-  folderInputRef,
   PM_SORT_OPTIONS,
   pmSortKey,
   pmSortDir,

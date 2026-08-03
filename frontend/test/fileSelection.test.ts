@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ref } from 'vue'
 import { selectRange, useFileSelection } from '@/composables/files/useFileSelection'
+import { resolveSelectionAnchor } from '@/composables/files/useSelectionState'
 
 describe('selectRange', () => {
   it('按锚点和目标位置返回文件与文件夹集合', () => {
@@ -18,6 +19,14 @@ describe('selectRange', () => {
 
   it('锚点无效时不产生选择结果', () => {
     expect(selectRange([{ type: 'file' as const, id: 1 }], -1, 0)).toBeNull()
+  })
+
+  it('连续 Shift 选择保持第一次点击的锚点', () => {
+    const items = Array.from({ length: 10 }, (_, index) => ({ type: 'file' as const, id: index + 1 }))
+    const anchor = 0
+    expect(selectRange(items, anchor, 4)?.fileIds).toEqual(new Set([1, 2, 3, 4, 5]))
+    expect(selectRange(items, anchor, 9)?.fileIds).toEqual(new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
+    expect(resolveSelectionAnchor(anchor, 9, true)).toBe(anchor)
   })
 
   it('单选文件会清空文件夹选择，重复点击可取消', () => {

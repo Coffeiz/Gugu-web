@@ -1,7 +1,9 @@
 <template>
         <!-- 右栏：文件（两种模式都保持项目文件，仅宽度变化）-->
-        <div class="modal-right">
-          <ProjectFileToolbar :context="props.context" />
+        <FileBrowserPanel class="modal-right">
+          <template #toolbar>
+            <ProjectFileToolbar :context="props.context" />
+          </template>
 
           <div class="file-content" ref="pmGridRef" style="position:relative" @mousedown="onPmGridMouseDown"
             @click="onPmContentClick"
@@ -253,7 +255,7 @@
               @cancel="clearPmSelection"
             />
           </div>
-        </div>
+        </FileBrowserPanel>
 </template>
 
 <script setup lang="ts">
@@ -266,12 +268,13 @@ import SortMenu from '@/components/common/SortMenu.vue'
 import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
 import FilePasteButton from '@/components/common/FilePasteButton.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
-import FileCard from '@/components/common/FileCard.vue'
-import FolderCard from '@/components/common/FolderCard.vue'
-import FileUploadGhostCard from '@/components/common/FileUploadGhostCard.vue'
-import FileUploadButton from '@/components/common/FileUploadButton.vue'
-import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
-import FileBrowserList from '@/components/common/FileBrowserList.vue'
+import FileCard from '@/components/common/file-browser/FileCard.vue'
+import FolderCard from '@/components/common/file-browser/FolderCard.vue'
+import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhostCard.vue'
+import FileUploadButton from '@/components/common/file-browser/FileUploadButton.vue'
+import FileBrowserGrid from '@/components/common/file-browser/FileBrowserGrid.vue'
+import FileBrowserList from '@/components/common/file-browser/FileBrowserList.vue'
+import FileBrowserPanel from '@/components/common/file-browser/FileBrowserPanel.vue'
 import ProjectFileToolbar from '@/views/Projects/components/ProjectFileToolbar.vue'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 

@@ -26,6 +26,11 @@ export interface FileProjectionSorters<T> {
   id: (item: T) => unknown
 }
 
+export interface FileDirectoryProjectionOptions<Folder, File> {
+  folderSorters: FileProjectionSorters<Folder>
+  fileSorters: FileProjectionSorters<File>
+}
+
 /** 只负责把当前目录数据投影为排序后的数组，不持有页面状态或执行 API。 */
 export function sortFileProjection<T>(items: readonly T[], key: string, direction: SortDirection,
   sorters: FileProjectionSorters<T>): T[] {
@@ -37,4 +42,21 @@ export function sortFileProjection<T>(items: readonly T[], key: string, directio
     if (key === 'size' && sorters.size) return directionValue(direction) * (sorters.size(a) - sorters.size(b))
     return compareId(sorters.id(a), sorters.id(b), direction)
   })
+}
+
+/**
+ * 统一当前目录的文件/文件夹排序投影。目录范围由页面决定，这里只负责把两类
+ * 数据用同一组排序状态投影出来，避免文件库和项目文件区各自重复编排排序。
+ */
+export function projectFileDirectory<Folder, File>(
+  folders: readonly Folder[],
+  files: readonly File[],
+  key: string,
+  direction: SortDirection,
+  options: FileDirectoryProjectionOptions<Folder, File>,
+) {
+  return {
+    folders: sortFileProjection(folders, key, direction, options.folderSorters),
+    files: sortFileProjection(files, key, direction, options.fileSorters),
+  }
 }

@@ -43,6 +43,37 @@ test.describe('文件浏览阶段 1–4 冒烟', () => {
     await expect(page.locator('.fc-card.selected, .folder-card.selected')).toHaveCount(0)
   })
 
+  test('阶段 2：连续 Shift 选择保持第一次点击的范围锚点', async ({ page }) => {
+    test.skip(!(await openPersonalDirectory(page)), '测试账号没有个人文件目录')
+    const files = page.locator('.fc-card')
+    const count = await files.count()
+    test.skip(count < 8, '个人文件数量不足以验证连续 Shift 范围选择')
+
+    await page.locator('.select-mode-btn').click()
+    await files.nth(0).click()
+    await files.nth(4).click({ modifiers: ['Shift'] })
+    await files.nth(7).click({ modifiers: ['Shift'] })
+
+    await expect(page.locator('.fc-card.selected')).toHaveCount(8)
+  })
+
+  test('阶段 2：批量选择工具栏统一暴露下载、剪切、复制和删除', async ({ page }) => {
+    test.skip(!(await openPersonalDirectory(page)), '测试账号没有个人文件目录')
+    const file = page.locator('.fc-card').first()
+    test.skip(await file.count() === 0, '个人文件目录没有文件卡片')
+
+    await page.locator('.select-mode-btn').click()
+    await file.click()
+    const toolbar = page.locator('.file-selection-toolbar')
+    await expect(toolbar).toBeVisible()
+    await expect(toolbar).toContainText('已选 1 项')
+    for (const label of ['下载', '剪切', '复制', '删除', '取消']) {
+      await expect(toolbar.getByRole('button', { name: label })).toBeVisible()
+    }
+    await toolbar.getByRole('button', { name: '取消' }).click()
+    await expect(toolbar).toHaveCount(0)
+  })
+
   test('阶段 3：文件操作边界通过右键复制入口可达', async ({ page }) => {
     test.skip(!(await openPersonalDirectory(page)), '测试账号没有个人文件目录')
     const file = page.locator('.fc-card').first()

@@ -1,101 +1,94 @@
-import type { Ref } from 'vue'
+import { computed, ref } from 'vue'
+import type { FileMeta, FolderMeta } from '@/stores/filesCache'
+import { useBoxSelection } from '@/composables/useBoxSelection'
+import { useSelectionState, selectRange, type SelectableItem, type SelectionState } from './useSelectionState'
 
-export interface FileSelectionState<F = number> {
-  fileIds: Ref<Set<number>>
-  folderIds: Ref<Set<F>>
+export { selectRange }
+export type { SelectableItem }
+
+export interface FileSelectionOptions {
+  getFolders: () => FolderMeta[]
+  getFiles: () => FileMeta[]
+  openPreview: (file: FileMeta) => void
+  isPreviewable: (ext: string) => boolean
+  enterFolder: (folder: FolderMeta) => void
+  fileAttr?: string
+  folderAttr?: string
 }
 
-export interface SelectableItem<F = number> {
-  type: 'file' | 'folder'
-  id: number | F
+export type FileSelectionState<F = number> = SelectionState<F>
+
+/** 文件库通用选择协调器：组合基础集合选择和框选，不包含下载、删除等副作用。 */
+export function useFileSelection<F = number>(state: FileSelectionState<F>): ReturnType<typeof useSelectionState<F>>
+export function useFileSelection(options: FileSelectionOptions): ReturnType<typeof createFileSelectionCoordinator>
+export function useFileSelection(options: FileSelectionOptions | FileSelectionState<any>) {
+  if ('fileIds' in options && 'folderIds' in options) return useSelectionState(options)
+  return createFileSelectionCoordinator(options)
 }
 
-export function selectRange<F>(
-  items: SelectableItem<F>[],
-  anchorIndex: number,
-  targetIndex: number,
-): { fileIds: Set<number>; folderIds: Set<F> } | null {
-  if (anchorIndex < 0 || targetIndex < 0 || anchorIndex >= items.length || targetIndex >= items.length) return null
-  const [start, end] = anchorIndex <= targetIndex
-    ? [anchorIndex, targetIndex]
-    : [targetIndex, anchorIndex]
-  const fileIds = new Set<number>()
-  const folderIds = new Set<F>()
-  for (const item of items.slice(start, end + 1)) {
-    if (item.type === 'file') fileIds.add(item.id as number)
-    else folderIds.add(item.id as F)
-  }
-  return { fileIds, folderIds }
-}
+function createFileSelectionCoordinator(options: FileSelectionOptions) {
+  const gridRef = ref<HTMLElement | null>(null)
+  const lastAnchorIndex = ref(-1)
+  const selectionModeForced = ref(false)
+  const box = useBoxSelection(gridRef, {
+    fileAttr: options.fileAttr ?? 'data-pm-file-id',
+    folderAttr: options.folderAttr ?? 'data-pm-folder-id',
+    excludeSelector: 'button, input, .folder-card, .fc-card, label',
+    parseFolderId: Number,
+  })
+  const fileSelection = useSelectionState({ fileIds: box.selectedFileIds, folderIds: box.selectedFolderIds })
+  const flatSelectableItems = computed<SelectableItem[]>(() => [
+    ...options.getFolders().map(folder => ({ type: 'folder' as const, id: folder.id })),
+    ...options.getFiles().map(file => ({ type: 'file' as const, id: file.id })),
+  ])
+  const inSelectionMode = computed(() => selectionModeForced.value || box.selectedFileIds.value.size > 0 || box.selectedFolderIds.value.size > 0)
 
-/** 收口文件浏览页共用的基础集合操作；框选的 DOM 编排仍由页面负责。 */
-export function useFileSelection<F = number>(state: FileSelectionState<F>) {
-  function replaceSelection(fileIds: Set<number>, folderIds: Set<F>) {
-    state.fileIds.value = fileIds
-    state.folderIds.value = folderIds
+  function selectRange(type: 'file' | 'folder', id: number) {
+    const index = flatSelectableItems.value.findIndex(item => item.type === type && item.id === id)
+    if (index < 0 || lastAnchorIndex.value < 0) return false
+    return fileSelection.selectRangeIn(flatSelectableItems.value, lastAnchorIndex.value, index)
   }
-
-  function selectRangeIn(items: SelectableItem<F>[], anchorIndex: number, targetIndex: number) {
-    const selected = selectRange(items, anchorIndex, targetIndex)
-    if (!selected) return false
-    replaceSelection(selected.fileIds, selected.folderIds)
-    return true
-  }
-
   function clearSelection() {
-    state.fileIds.value = new Set()
-    state.folderIds.value = new Set()
+    fileSelection.clearSelection(); box.clearSelection(); selectionModeForced.value = false; lastAnchorIndex.value = -1
   }
-
-  function toggleFile(id: number) {
-    const next = new Set(state.fileIds.value)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    state.fileIds.value = next
+  function toggleSelectionMode() { if (inSelectionMode.value) clearSelection(); else selectionModeForced.value = true }
+  function onContentClick() { if (inSelectionMode.value) clearSelection() }
+  function toggleFolderSelect(folder: FolderMeta) { fileSelection.toggleFolder(folder.id) }
+  function onFileClick(file: FileMeta, event: MouseEvent) {
+    if (event.shiftKey) { if (!selectRange('file', file.id)) fileSelection.selectOnlyFile(file.id) }
+    else if (event.ctrlKey || event.metaKey || inSelectionMode.value) fileSelection.toggleFile(file.id)
+    else fileSelection.toggleExclusiveFile(file.id)
+    lastAnchorIndex.value = flatSelectableItems.value.findIndex(item => item.type === 'file' && item.id === file.id)
   }
-
-  function toggleFolder(id: F) {
-    const next = new Set(state.folderIds.value)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    state.folderIds.value = next
+  function onFolderClick(folder: FolderMeta, event: MouseEvent) {
+    if (event.shiftKey) { if (!selectRange('folder', folder.id)) fileSelection.selectOnlyFolder(folder.id) }
+    else if (event.ctrlKey || event.metaKey || inSelectionMode.value) fileSelection.toggleFolder(folder.id)
+    else return options.enterFolder(folder)
+    lastAnchorIndex.value = flatSelectableItems.value.findIndex(item => item.type === 'folder' && item.id === folder.id)
   }
-
-  function selectOnlyFile(id: number) {
-    state.fileIds.value = new Set([id])
-    state.folderIds.value = new Set()
+  function handleFileClick(file: FileMeta, event: MouseEvent) {
+    if (event.shiftKey || event.ctrlKey || event.metaKey || inSelectionMode.value) onFileClick(file, event)
+    else if (options.isPreviewable(file.ext)) options.openPreview(file)
+    else onFileClick(file, event)
   }
-
-  function selectOnlyFolder(id: F) {
-    state.fileIds.value = new Set()
-    state.folderIds.value = new Set([id])
-  }
-
-  function toggleExclusiveFile(id: number) {
-    if (state.fileIds.value.size === 1 && state.fileIds.value.has(id) && state.folderIds.value.size === 0) {
-      clearSelection()
-      return
-    }
-    selectOnlyFile(id)
-  }
-
-  function toggleExclusiveFolder(id: F) {
-    if (state.folderIds.value.size === 1 && state.folderIds.value.has(id) && state.fileIds.value.size === 0) {
-      clearSelection()
-      return
-    }
-    selectOnlyFolder(id)
-  }
-
   return {
+    gridRef,
+    selectedFileIds: box.selectedFileIds,
+    selectedFolderIds: box.selectedFolderIds,
+    previewFileIds: box.previewFileIds,
+    previewFolderIds: box.previewFolderIds,
+    selectionRect: box.selectionRect,
+    inSelectionMode,
+    selectionModeForced,
+    flatSelectableItems,
+    onContainerMouseDown: box.onContainerMouseDown,
+    cancelDrag: box.cancelDrag,
     clearSelection,
-    replaceSelection,
-    selectRangeIn,
-    toggleFile,
-    toggleFolder,
-    selectOnlyFile,
-    selectOnlyFolder,
-    toggleExclusiveFile,
-    toggleExclusiveFolder,
+    onContentClick,
+    toggleFolderSelect,
+    toggleSelectionMode,
+    handleFileClick,
+    onFileClick,
+    onFolderClick,
   }
 }

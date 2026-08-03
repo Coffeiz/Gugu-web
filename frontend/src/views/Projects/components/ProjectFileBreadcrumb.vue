@@ -26,7 +26,7 @@
 import type { PropType } from 'vue'
 import type { FolderMeta } from '@/stores/filesCache'
 import { PhArrowLeft, PhArrowRight, PhCaretRight } from '@phosphor-icons/vue'
-import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
+import FileBrowserBreadcrumb from '@/components/common/file-browser/FileBrowserBreadcrumb.vue'
 
 defineProps({
   canGoBack: Boolean,
