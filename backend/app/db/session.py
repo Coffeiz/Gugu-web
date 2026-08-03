@@ -9,6 +9,8 @@ _SessionLocal = None
 
 def _build_engine():
     global _engine, _SessionLocal
+    if _engine is not None and _SessionLocal is not None:
+        return
     settings = get_settings()
     _engine = create_async_engine(
         settings.db.url,
@@ -20,6 +22,13 @@ def _build_engine():
         pool_recycle=1800,
     )
     _SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+
+
+def ensure_engine():
+    """确保当前进程只初始化一次数据库引擎和连接池。"""
+    if _engine is None or _SessionLocal is None:
+        _build_engine()
+    return _engine
 
 
 def reset_engine():

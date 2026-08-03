@@ -193,8 +193,13 @@ async def handle(msg_id: str, payload: dict):
             # 模型没出文本：有文件配一句「给你～」，纯空则给个兜底——别发空
             #（空内容发 QQ 会报「无效 markdown content」，用户啥也收不到）
             reply_text = "给你～" if resp.files else "嗯~在的，你说～"
+        # 先提交媒体，再发送说明文字，避免先报「图发了」再补一条失败提示。
+        file_result = await _send_files(payload, resp.files)
+        if file_result.failed:
+            reply_text = file_result.reason or "附件没有成功发出，你可以去网页或文件库查看。"
         await send_text(payload, reply_text)
-    await _send_files(payload, resp.files)   # 咕咕 send_file 的文件发回平台
+    elif resp.files:
+        await _send_files(payload, resp.files)   # 流式卡片已建立；文件仍在收尾阶段外发
     # 这条以提问/确认收尾 → 置「等回话」标志，网关下条「嗯/好/算了」就放行进 agent。
     await finalize_im_response(platform, puid, False, reply_text)
     # 隐私：不打印回复原文（此前全文不截断，比收到那侧还暴露），只留结构+指纹（见 agent/logsafe.py）
@@ -314,6 +319,9 @@ async def _heartbeat():
 
 async def serve():
     await R.ensure_group(STREAM, GROUP)
+    # worker 启动时预热一次数据库引擎，后续 IM 请求复用同一连接池。
+    from app.db import session as db_session
+    db_session.ensure_engine()
     _refresh_concurrency()
     try:
         n = await R.cleanup_dead_consumers(STREAM, GROUP, CONSUMER)

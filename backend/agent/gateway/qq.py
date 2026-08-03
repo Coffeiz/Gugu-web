@@ -38,6 +38,18 @@ _log = logging.getLogger("agent.gateway.qq")
 STREAM = R.IM_INBOUND_STREAM
 _ACK_COOLDOWN = 10.0   # 同一用户「文件收到啦」秒回的冷却秒数：连发多图/文件只 ack 一次，不刷屏
 
+
+def _file_timing(event: str, **fields: Any) -> None:
+    """按需记录 QQ 媒体阶段耗时，不记录目标、文件名或正文。"""
+    if os.environ.get("QQ_FILE_TIMING") != "1":
+        return
+    print(
+        "[qq-file-timing] " + json.dumps(
+            {"event": event, **fields}, ensure_ascii=False, separators=(",", ":")
+        ),
+        flush=True,
+    )
+
 _QQ_API_BASE = "https://api.sgroup.qq.com"
 _QQ_SANDBOX_API_BASE = "https://sandbox.api.sgroup.qq.com"
 _QQ_TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
@@ -975,7 +987,9 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
     fname = f"{name}.{ext_l}" if ext_l else name
     if data is None:
         return False
+    encode_started = time.perf_counter()
     b64 = base64.b64encode(data).decode()
+    _file_timing("base64", ms=round((time.perf_counter() - encode_started) * 1000, 2), bytes=len(data))
     target = "groups" if group else "users"
     print(
         "[file-flow-probe] " + json.dumps({
@@ -994,7 +1008,9 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
             body["file_data"] = b64
             if not is_img:
                 body["file_name"] = fname
+            request_started = time.perf_counter()
             media = await _qq_request(channel_id, "POST", f"/v2/{target}/{openid}/files", json_body=body)
+            _file_timing("media-upload", ms=round((time.perf_counter() - request_started) * 1000, 2), attempt=attempt)
             file_info = media.get("file_info") if isinstance(media, dict) else None
             if not file_info:
                 # 只打字段名，不打整个响应体（万一 QQ 把请求里的 file_name 之类字段原样回显）
@@ -1010,7 +1026,9 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
                        "msg_id": msg_id, "msg_seq": await _next_seq(msg_id)}
             if not is_img:
                 msg_body["content"] = fname
+            request_started = time.perf_counter()
             await _qq_request(channel_id, "POST", f"/v2/{target}/{openid}/messages", json_body=msg_body)
+            _file_timing("media-message", ms=round((time.perf_counter() - request_started) * 1000, 2), attempt=attempt)
             print("[file-flow-probe] " + json.dumps({
                 "event": "qq-upload-sent", "target_kind": target,
             }, ensure_ascii=False, separators=(",", ":")), flush=True)

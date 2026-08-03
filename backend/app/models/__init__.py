@@ -469,7 +469,7 @@ class UserBot(Base):
     enabled:    Mapped[bool]     = mapped_column(Boolean, default=True)
     # 群聊：是否处理群消息、群消息是否要求 @ 机器人才响应、是否记录普通群消息。
     group_chat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=True)
+    group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=False)
     group_read_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # 群成员可用工具白名单；默认只开放联网搜索，不暴露用户私有内容和写操作。
     group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search"])

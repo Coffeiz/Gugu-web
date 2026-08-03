@@ -212,6 +212,27 @@ async def get_meta(user_id, attach_id: str) -> dict | None:
         return None
 
 
+async def get_meta_many(user_id, attach_ids: list[str]) -> dict[str, dict]:
+    """一次读取多个暂存附件的元数据，返回 attach_id 到 meta 的映射。"""
+    if not user_id or not attach_ids:
+        return {}
+    unique_ids = list(dict.fromkeys(str(attach_id) for attach_id in attach_ids if attach_id))
+    if not unique_ids:
+        return {}
+    try:
+        raw_items = await get_redis().mget([_key(user_id, attach_id) for attach_id in unique_ids])
+        result = {}
+        for attach_id, raw in zip(unique_ids, raw_items):
+            if not raw:
+                continue
+            if isinstance(raw, bytes):
+                raw = raw.decode()
+            result[attach_id] = json.loads(raw)
+        return result
+    except Exception:
+        return {}
+
+
 async def list_staged(user_id) -> list[dict]:
     """该用户当前所有未过期的暂存附件 meta，按剩余 TTL 降序（越新越靠前）。"""
     r = get_redis()
