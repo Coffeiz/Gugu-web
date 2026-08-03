@@ -18,7 +18,7 @@
 | Phase 3：QQ raw HTTP 发送侧 | ✅ 已完成（未按 3-7 天灰度期提前实施） | `send_c2c`/`send_group`/`send_file`/短路回复/ack 全部改 raw HTTP 直连 QQ Bot API，按 channel_id 缓存 access_token 并在过期前刷新；markdown 无权限回退纯文本、401 清缓存重试逻辑保留。 |
 | 清理：完全移除 botpy | ✅ 已完成 | `_GuguQQClient`（botpy `Client` 子类）、monkey patch、`QQ_RAW_WS_ENABLED` 回退开关、`qq-botpy` 依赖全部删除；本地已 `pip uninstall qq-botpy` 验证 83 个测试仍全过。QQ 群聊 raw event 已在后续联调中继续扩展。 |
 | Phase 4：QQ 群聊普通消息读取 | ✅ 已完成 | 支持 `GROUP_MESSAGE_CREATE`；未 @ 消息可按 bot 开关只记录、不调用模型、不回复；按群共享会话，数据库每群最多保留最近 50 条消息。 |
-| Phase 5：QQ 身份采集与 Bot owner 绑定 | 🔲 未做 | 每个 Gugu 账号只绑定一个 Bot；保存该 Bot 的 owner `sender_id`，不做跨 Bot QQ 身份自动合并。新用户可从首次 C2C 消息绑定，老用户通过 C2C Keyboard 确认；群消息不能自动抢占 owner。 |
+| Phase 5：QQ 身份采集与 Bot owner 绑定 | ✅ 已完成 | 每个 Gugu 账号只绑定一个 Bot；网页生成 6 位、10 分钟有效的一次性验证码，用户在 QQ C2C 私聊发送“绑定 6 位验证码”后原子保存 owner `sender_id`。不做跨 Bot QQ 身份自动合并，群消息不能自动抢占 owner。 |
 | Phase 6：群成员权限隔离与工具白名单 | ✅ 已完成 | 已按当前 Bot 的 `owner_platform_user_id` 解析 `owner/member/unknown`；owner 使用完整工具集，群成员/未知身份只使用 Bot 级白名单，默认开放网页搜索；runner 提供工具集过滤，dispatch 再做服务端拦截；个人设置可切换网页搜索和当前群上下文搜索。当前方案不按群单独绑定 owner，`im_chats` 群级开关作为后续独立需求保留。 |
 | Phase 7：群聊短期/长期记忆 | 🔲 未做 | 计划按 `platform_user_id` 记录群成员信息，并像个人聊天一样做短期、长期记忆压缩；需另行设计权限、可见范围和删除策略。 |
 | 飞书多媒体入站补齐 post/media/interactive | ✅ 已完成 | `post`（图文）拼接段落文字+下载内嵌图片/视频；`media`（视频消息）复用单附件下载逻辑；`interactive`（用户转发卡片）抽取可读文字，不下载卡片内嵌媒体（组件结构太杂，价值有限）。`_fetch_quoted_text` 引用反查同步支持这三种类型的占位/文字提取。 |

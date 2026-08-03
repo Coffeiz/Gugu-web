@@ -2,7 +2,7 @@
 
 群聊需要在「接入咕咕」页开启 group_chat_enabled 开关；默认会处理普通群消息，开启
 group_requires_at 后才只响应 @ 机器人的消息。开启
-group_read_enabled 后会额外接收并保存未 @ 咕咕的普通群消息，但不触发回复。
+group_read_enabled 后进入静默记录模式：接收并保存所有群消息，但不触发回复。
 
 和飞书长连接同模式：raw WebSocket outbound 主动连，**不需要公网**（备案前也能用）。
 BYO 模型：每个用户在「个人设置 → 接入咕咕 → QQ」填自己的 AppID/Secret（存 user_bots 表），
@@ -28,7 +28,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
+from uuid import UUID
 
 from app.core import redis as R
 from app.core.redaction import redact, diag_log, diag_log_raw
@@ -53,10 +55,7 @@ _OP_HELLO = 10
 _OP_HEARTBEAT_ACK = 11
 
 _INTENT_GROUP_AND_C2C = 1 << 25
-_INTENT_INTERACTION = 1 << 26
-_INTENTS = _INTENT_GROUP_AND_C2C | _INTENT_INTERACTION
-_INTERACTION_QUERY = 2001
-_INTERACTION_UPDATE = 2002
+_INTENTS = _INTENT_GROUP_AND_C2C
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
 _HEARTBEAT_ACK_TIMEOUT_MULTIPLIER = 2.5
 
@@ -205,7 +204,16 @@ def _log_quote_shape_if_needed(channel_id: str, raw_data: Dict[str, Any], found:
                 element_keys.append(sorted(elem.keys()))
     quoted_keys = sorted(quoted_elem.keys()) if isinstance(quoted_elem, dict) else []
     nested_keys = _nested_key_shape(quoted_elem)
-    print(f"[qq:{channel_id}] 引用结构未命中: ext={scene_ext} "
+    ext_shape = []
+    for entry in scene_ext[:8]:
+        if isinstance(entry, str):
+            ext_shape.append(entry.split("=", 1)[0])
+        elif isinstance(entry, dict):
+            ext_shape.append(sorted(str(key) for key in entry.keys()))
+        else:
+            ext_shape.append(type(entry).__name__)
+    from agent import logsafe
+    print(f"[qq:{logsafe.fingerprint(channel_id)}] 引用结构未命中: ext_keys={ext_shape} "
           f"msg_elements={len(msg_elements) if isinstance(msg_elements, list) else 0} "
           f"found={found} att={attachment_count} element_keys={element_keys} "
           f"quoted_keys={quoted_keys} nested_keys={nested_keys}", flush=True)
@@ -346,17 +354,6 @@ async def _qq_gateway_url(token: str, sandbox: bool) -> str:
     return url
 
 
-def _platform_requires_mention(group_settings: tuple[bool, bool, bool]) -> bool:
-    """计算 QQ 平台侧是否仍应保持 @ 才激活。
-
-    ``group_read_enabled`` 和 ``group_requires_at`` 是本地两层策略：前者决定
-    是否旁路记录普通群消息，后者决定普通群消息是否进入 Agent。只要任一策略
-    需要普通消息先到达网关，平台就必须切到 ``always`` 接收模式。
-    """
-    _group_enabled, requires_at, read_enabled = group_settings
-    return bool(requires_at and not read_enabled)
-
-
 def _qq_message_mentions_bot(data: Dict[str, Any], event_type: str) -> bool:
     """依据消息体判断是否真的 @ 了机器人。
 
@@ -370,115 +367,6 @@ def _qq_message_mentions_bot(data: Dict[str, Any], event_type: str) -> bool:
     if not isinstance(mentions, list):
         return False
     return any(isinstance(item, dict) and item.get("bot") is True for item in mentions)
-
-
-def _build_claw_config(requires_mention: bool) -> dict:
-    """构造 QQ interaction 配置查询/更新 ACK 的稳定字段。"""
-    return {
-        "channel_type": "qqbot",
-        "channel_ver": "gugu",
-        "claw_type": "gugu",
-        "require_mention": "mention" if requires_mention else "always",
-        "group_policy": "open",
-        "mention_patterns": "",
-        "online_state": "online",
-    }
-
-
-async def _set_group_requires_at(channel_id: str, requires_at: bool) -> None:
-    """把 QQ 平台配置交互回写到当前 bot 的全局本地策略。
-
-    当前 user_bot 只有 bot 级开关，没有按群存储的配置；因此 interaction update
-    只能更新 bot 级 ``group_requires_at``。若普通群消息读取已开启，平台仍必须
-    保持 always，查询时会由 ``group_read_enabled`` 覆盖该值。
-    """
-    import app.db.session as db_session
-    from app.models import UserBot
-
-    if db_session._engine is None:
-        db_session._build_engine()
-    async with db_session._SessionLocal() as db:
-        bot = await db.get(UserBot, int(channel_id))
-        if not bot:
-            return
-        bot.group_requires_at = requires_at
-        await db.commit()
-
-
-async def _ack_qq_interaction(
-    channel_id: str,
-    interaction_id: str,
-    *,
-    code: int = 0,
-    data: dict | None = None,
-) -> None:
-    """通过 QQ REST API ACK interaction（平台要求在短时间内完成）。"""
-    body: dict[str, Any] = {"code": code}
-    if data:
-        body["data"] = data
-    await _qq_request(
-        channel_id,
-        "PUT",
-        f"/interactions/{interaction_id}",
-        json_body=body,
-    )
-
-
-async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str) -> None:
-    """处理 QQ 配置查询/更新交互，不进入 Agent 消息链路。"""
-    interaction_id = str(data.get("id") or "")
-    interaction_data = data.get("data") or {}
-    if not isinstance(interaction_data, dict):
-        interaction_data = {}
-    raw_interaction_type = interaction_data.get("type", data.get("type"))
-    try:
-        interaction_type = int(raw_interaction_type)
-    except (TypeError, ValueError):
-        interaction_type = None
-    if not interaction_id or interaction_type not in {_INTERACTION_QUERY, _INTERACTION_UPDATE}:
-        return
-
-    try:
-        settings = await _group_settings(channel_id)
-        requires_at = bool(settings[1])
-        read_enabled = bool(settings[2])
-
-        if interaction_type == _INTERACTION_UPDATE:
-            resolved = interaction_data.get("resolved") or data.get("resolved") or {}
-            if not isinstance(resolved, dict):
-                resolved = {}
-            config = resolved.get("claw_cfg") or resolved
-            if not isinstance(config, dict):
-                config = {}
-            requested = config.get("require_mention")
-            if requested in {"mention", "always"}:
-                # 读取普通消息是平台 always 的硬约束；否则同步平台对本地回复门槛
-                # 的修改，避免下次查询又被旧值覆盖。
-                await _set_group_requires_at(channel_id, requested == "mention")
-                requires_at = requested == "mention"
-
-        platform_requires_at = requires_at and not read_enabled
-        await _ack_qq_interaction(
-            channel_id,
-            interaction_id,
-            data={"claw_cfg": _build_claw_config(platform_requires_at)},
-        )
-        from agent import logsafe
-        print(
-            "[qq-interaction] " + json.dumps({
-                "type": interaction_type,
-                "interaction_fp": logsafe.fingerprint(interaction_id),
-                "platform_mode": "mention" if platform_requires_at else "always",
-                "read_enabled": read_enabled,
-            }, ensure_ascii=False, separators=(",", ":")),
-            flush=True,
-        )
-    except Exception as e:
-        diag_log("agent.gateway.qq._handle_qq_interaction", e)
-        try:
-            await _ack_qq_interaction(channel_id, interaction_id, code=1)
-        except Exception as ack_error:
-            diag_log("agent.gateway.qq._handle_qq_interaction.ack", ack_error)
 
 
 async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, msg_id: str) -> None:
@@ -527,6 +415,21 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         return
     text = (data.get("content") or "").strip()
     msg_id = data.get("id") or ""
+    if chat_type == "c2c":
+        binding_match = re.fullmatch(r"(?:绑定|bind)\s*([0-9]{6})", text, flags=re.IGNORECASE)
+        if binding_match:
+            from app.services.im_identity import consume_qq_binding_code
+
+            try:
+                bound = await consume_qq_binding_code(
+                    int(channel_id), UUID(str(owner)), sender_id, binding_match.group(1)
+                )
+            except Exception as exc:
+                diag_log("agent.gateway.qq.binding_code", exc)
+                bound = False
+            reply = "QQ 身份已绑定，之后可以正常使用。" if bound else "验证码无效或已过期，请回网页重新生成。"
+            await _qq_ack(channel_id, chat_type, sender_id, reply, msg_id)
+            return
     raw_attachments = data.get("attachments") or []
     if not isinstance(raw_attachments, list):
         raw_attachments = []
@@ -568,11 +471,13 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         payload["group_read_enabled"] = read_enabled
         payload["group_mentioned"] = mentioned
     from agent import logsafe
+    channel_fp = logsafe.fingerprint(channel_id)
+    sender_fp = logsafe.fingerprint(sender_id)
     if chat_type == "group":
-        print(f"[qq:{channel_id}] 收到群 {chat_id} 内 {sender_id}: text_len={len(text)} "
+        print(f"[qq:{channel_fp}] 收到群 {logsafe.fingerprint(chat_id)} 内 {sender_fp}: text_len={len(text)} "
               f"fp={logsafe.fingerprint(text)} att={len(attachments)} trace={tid}", flush=True)
     else:
-        print(f"[qq:{channel_id}] 收到 {sender_id}: text_len={len(text)} "
+        print(f"[qq:{channel_fp}] 收到 {sender_fp}: text_len={len(text)} "
               f"fp={logsafe.fingerprint(text)} att={len(attachments)} trace={tid}", flush=True)
 
     # 取消是实时控制信号：必须在 Gateway 侧立刻写入 Redis，不能等同用户锁的
@@ -599,6 +504,9 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
 
 
 async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, owner: str) -> None:
+    from agent import logsafe
+
+    channel_fp = logsafe.fingerprint(channel_id)
     session_id = None
     last_seq = None
     reconnect_attempt = 0
@@ -609,7 +517,7 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
             gateway = await _qq_gateway_url(token, sandbox)
             async with aiohttp.ClientSession() as sess:
                 async with sess.ws_connect(gateway, heartbeat=None, receive_timeout=None) as ws:
-                    print(f"[qq:{channel_id}] raw WebSocket 已连接（owner={owner}, sandbox={sandbox}）", flush=True)
+                    print(f"[qq:{logsafe.fingerprint(channel_id)}] raw WebSocket 已连接（owner={logsafe.fingerprint(owner)}, sandbox={sandbox}）", flush=True)
                     reconnect_attempt = 0
                     heartbeat_task = None
                     last_heartbeat_ack_at = time.monotonic()
@@ -671,18 +579,16 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
                             elif op == _OP_DISPATCH:
                                 if event_type == "READY":
                                     session_id = data.get("session_id")
-                                    print(f"[qq:{channel_id}] raw WebSocket READY session={session_id}", flush=True)
+                                    print(f"[qq:{channel_fp}] raw WebSocket READY", flush=True)
                                 elif event_type == "RESUMED":
-                                    print(f"[qq:{channel_id}] raw WebSocket RESUMED", flush=True)
-                                elif event_type == "INTERACTION_CREATE":
-                                    await _handle_qq_interaction(data, channel_id)
+                                    print(f"[qq:{channel_fp}] raw WebSocket RESUMED", flush=True)
                                 elif event_type in ("C2C_MESSAGE_CREATE", "GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"):
                                     await _handle_raw_qq_message(event_type, data, channel_id, owner, last_ack)
                             elif op == _OP_RECONNECT:
-                                print(f"[qq:{channel_id}] QQ 要求重连", flush=True)
+                                print(f"[qq:{channel_fp}] QQ 要求重连", flush=True)
                                 break
                             elif op == _OP_INVALID_SESSION:
-                                print(f"[qq:{channel_id}] QQ session 失效", flush=True)
+                                print(f"[qq:{channel_fp}] QQ session 失效", flush=True)
                                 session_id = None
                                 last_seq = None
                                 break
@@ -697,7 +603,7 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
             # 所以这里不改变"无条件重连"的行为，只把原始异常和可见日志的出口按 P2-b §3 分开：
             # 原始 traceback 只进受限诊断出口，gugu.log/Debug 面板只看到脱敏摘要 + 异常类型名。
             diag_log(f"agent.gateway.qq._run_raw_ws.{channel_id}", e)
-            _log.error("[qq:%s] raw WebSocket 异常: %s", channel_id, redact(f"{type(e).__name__}: {e}"))
+            _log.error("[qq:%s] raw WebSocket 异常: %s", channel_fp, redact(f"{type(e).__name__}: {e}"))
         delay = _RECONNECT_DELAYS[min(reconnect_attempt, len(_RECONNECT_DELAYS) - 1)]
         reconnect_attempt += 1
         await asyncio.sleep(delay)
@@ -711,7 +617,8 @@ def serve() -> None:
     owner = os.environ.get("QQ_OWNER", "")
     if not app_id or not secret:
         raise SystemExit("缺少 QQ_APP_ID / QQ_APP_SECRET 环境变量（应由 supervisor 注入）。")
-    print(f"[qq:{channel_id}] 网关启动（raw WebSocket, sandbox={sandbox}）…", flush=True)
+    from agent import logsafe
+    print(f"[qq:{logsafe.fingerprint(channel_id)}] 网关启动（raw WebSocket, sandbox={sandbox}）…", flush=True)
     asyncio.run(_run_raw_ws(app_id, secret, sandbox, channel_id, owner))
 
 

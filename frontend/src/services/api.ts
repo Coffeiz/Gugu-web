@@ -477,6 +477,7 @@ export const userBotsApi = {
   create: (body: any)            => request('POST',   '/me/bots', body),
   update: (id: number, body: any) => request('PUT',    `/me/bots/${id}`, body),
   remove: (id: number)           => request('DELETE', `/me/bots/${id}`),
+  createQqBindingCode: (id: number) => request('POST', `/me/bots/${id}/qq-binding-code`),
 }
 
 // QQ 扫码自动连接（建 task → 轮询 → 自动填 key）

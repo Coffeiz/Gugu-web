@@ -36,7 +36,7 @@ flowchart TD
     REDIS --> WORKER[worker.py\n去重、防抖、并发、ack]
 
     WORKER --> PREP[agent/im/loop.py\nprepare_message / prepare_request]
-    PREP --> ID[identity.py\nowner 账号解析与 QQ 首次绑定]
+    PREP --> ID[identity.py\nowner 账号解析与平台身份权限]
     PREP --> ACCESS[permissions.py\nQQ 角色与工具白名单]
     PREP --> SESSION[session.py + owner_session.py\n群/私聊路由]
     PREP --> SELECT[select_loop\n薄 Owner/Member 门面]
@@ -64,7 +64,7 @@ flowchart TD
 |---|---|---|
 | `agent/gateway/{qq,feishu,wechat}.py` | 长连接/轮询、平台事件解析、引用和媒体下载/转码、平台即时 ack/reaction、部分 intent 短路、入 Redis、平台发送 API | 平台协议职责基本合适；仍有部分业务短路和群策略判断，尚未完全纯化。 |
 | `agent/im/models.py` | `PlatformMessage`、带 capability 的 `PlatformReply` 与旧 dict payload 互转，并校验目标平台能力 | 适合作为兼容协议层；文本/引用已接入，文件/流式仍在迁移中。 |
-| `agent/im/identity.py` | 根据 Bot owner 解析咕咕账号、QQ C2C 首次 sender 绑定、owner 显示名裁剪 | 账号归属职责合适；member 身份解析仍主要在 QQ 权限服务中。 |
+| `agent/im/identity.py` | 根据 Bot owner 解析咕咕账号、owner 显示名裁剪 | 账号归属职责合适；QQ 平台 owner 绑定由网页验证码服务和 Gateway C2C 命令完成，member 身份解析仍主要在 QQ 权限服务中。 |
 | `agent/im/permissions.py` | QQ 群/C2C 角色查询、非 QQ 私聊 owner/群聊 unknown 策略、工具白名单裁剪和 dispatch 二次门禁、群开关读取 | 权限职责合适；跨平台 owner 绑定仍需后续补充，群聊未知身份已默认最小权限。 |
 | `agent/im/session.py` | IM session Redis 路由、群消息窗口裁剪、数据库会话创建 | 方向合适；当前 key 仍没有包含 `bot_id`，属于 Phase 5 隔离修复。 |
 | `agent/im/context_policy.py` / `context_loader.py` | 根据 `im_role` 决定 owner 上下文范围并读取上下文数据 | 责任边界合适；`prepare_request()` 已保证 IM 缺失/异常身份先降级为 `unknown`。 |
@@ -543,7 +543,7 @@ PlatformMessage
 
 ### Phase 4：收窄 Gateway
 
-- ✅ QQ 首次 owner sender 绑定已移入 `agent/im/identity.py`，Gateway 不再直接访问身份服务。
+- ✅ QQ owner sender 绑定改为网页生成一次性验证码，Gateway 只在 C2C 私聊消费“绑定 6 位验证码”命令；首次普通私聊不会自动抢占 owner。
 - ✅ QQ/飞书 intent shortcut 决策和取消状态已移入 `agent/im/loop.py`。
 - ✅ QQ 群聊开关策略查询已移入 `agent/im/permissions.py`。
 - ✅ IM 附件暂存已统一经 `agent/im/files.py`，Gateway 只保留下载、解密和转码。

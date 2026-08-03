@@ -452,8 +452,8 @@ class SearchUsage(Base):
 class UserBot(Base):
     """用户自带机器人（Bring-Your-Own）：每用户存自己的 bot 凭据，咕咕为其起独立网关。
 
-    目前用于 QQ（platform=qqbot）。消息天然属于该 bot 的 owner（user_id），
-    所以不需要再做平台用户↔咕咕用户的绑定——bot 即归属。
+    目前用于 QQ（platform=qqbot）。消息归属于该 bot 的咕咕账号；QQ owner 的
+    平台身份另通过一次性验证码绑定，用于群聊权限判断，不作为跨 Bot 的全局身份。
     """
     __tablename__ = "user_bots"
 

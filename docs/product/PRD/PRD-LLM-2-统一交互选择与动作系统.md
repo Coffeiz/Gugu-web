@@ -12,12 +12,13 @@
 
 ## 当前实现边界
 
-当前只落地选择协议的薄骨架和平台身份注册动作：
+当前只落地选择协议的薄骨架；QQ 身份绑定已改为独立的一次性验证码流程：
 
 - `agent/selection/models.py` 提供 `SelectionPrompt`、`SelectionOption`。
-- `agent/selection/identity.py` 提供 QQ 私聊 `platform_user_id` 注册动作。
-- 注册动作复用现有 `bind_qq_owner_if_empty()`，不复制数据库绑定逻辑。
-- 现有 QQ 首次私聊自动绑定已经经过该动作入口。
+- 网页端为当前用户的 QQ Bot 生成 6 位、10 分钟有效的一次性绑定码。
+- 用户在 QQ 私聊机器人发送“绑定 6 位验证码”，网关校验后原子写入
+  `owner_platform_user_id`；首次普通私聊不会自动获得 owner 权限。
+- 绑定码只保存 HMAC 摘要，不把明文写入 Redis 或日志；验证码输入不进入 Agent。
 - 暂不发送 Keyboard，不保存选择状态，不处理点击回调、过期和重复消费。
 
 因此这不是完整选择系统，只是为后续 Keyboard 和 Guguchat 选择气泡提供稳定调用边界。

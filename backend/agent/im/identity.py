@@ -9,9 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from app.core.redaction import diag_log, redact
-
-
 @dataclass(frozen=True)
 class ImIdentity:
     """当前 IM 消息绑定到的 Gugu 账号。"""
@@ -40,24 +37,6 @@ async def resolve_owner_account(payload: dict) -> Optional[ImIdentity]:
     if not user:
         return None
     return ImIdentity(owner, user.display_name or "")
-
-
-async def ensure_owner_platform_binding(payload: dict) -> None:
-    """在 IM Loop 身份阶段完成 QQ owner 的首次 sender 绑定。
-
-    Gateway 只负责提供 sender 元数据；绑定属于账号身份业务，放在这里后网关
-    不再依赖数据库或用户身份服务。
-    """
-    try:
-        from agent.selection.identity import register_platform_user_id
-
-        await register_platform_user_id(payload)
-    except Exception as exc:
-        diag_log("agent.im.identity.bind_owner", exc)
-        print(
-            f"[im] QQ owner 身份绑定失败，消息继续处理: {redact(type(exc).__name__)}",
-            flush=True,
-        )
 
 
 def display_name_for_message(identity: ImIdentity, payload: dict, role: Optional[str]) -> str:
