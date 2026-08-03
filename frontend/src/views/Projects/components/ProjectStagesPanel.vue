@@ -45,7 +45,7 @@
           <ProjectTodosPanel
             :stage="stage"
             :is-last="i === displayStages.length - 1"
-            :editing-todo="editingTodo"
+            :editing-todo="editingTodo ?? undefined"
             :dragging="todoDrag"
             @list-dragover="todoListDragOver"
             @drag-start="todoDragStart"

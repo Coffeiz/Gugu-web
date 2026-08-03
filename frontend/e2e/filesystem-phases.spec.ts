@@ -63,4 +63,23 @@ test.describe('文件浏览阶段 1–4 冒烟', () => {
     await expect(page.locator('.popup-menu')).toBeVisible()
     await expect(page.locator('.popup-menu-item').first()).toBeVisible()
   })
+
+  test('文件库回收站保留场景扩展且仍由通用面板承载工具栏', async ({ page }) => {
+    await openFiles(page)
+    const trash = page.locator('.folder-card').filter({ hasText: '回收站' }).first()
+    test.skip(await trash.count() === 0, '测试账号没有回收站入口')
+    await trash.click()
+    await expect(page.locator('.file-browser-panel')).toBeVisible()
+    await expect(page.locator('.empty-trash-btn')).toBeVisible()
+  })
+
+  test('项目文件区使用通用面板并保留项目工具栏适配层', async ({ page }) => {
+    await page.goto('/projects')
+    const project = page.locator('.proj-card').first()
+    test.skip(await project.count() === 0, '测试账号没有项目卡片')
+    await project.click()
+    await expect(page.locator('.project-modal-root')).toBeVisible()
+    await expect(page.locator('.project-modal-root .file-browser-panel')).toBeVisible()
+    await expect(page.locator('.project-modal-root .file-browser-toolbar')).toBeVisible()
+  })
 })

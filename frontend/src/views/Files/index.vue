@@ -1,10 +1,31 @@
 <template>
-  <div class="files-page" @click="onPageClick">
+  <FileBrowserPanel
+    class="files-page"
+    :can-paste="cbStore.hasContent() && currentType !== 'root' && currentType !== 'trash'"
+    :paste-count="cbStore.fileIds.length + cbStore.folderIds.length"
+    :selection-mode="inSelectionMode"
+    :show-selection="currentType !== 'root'"
+    :show-view-toggle="currentType !== 'trash'"
+    :show-new-folder-button="currentType === 'personal' || currentType === 'project' || currentType === 'folder'"
+    :show-sort="currentType !== 'root'"
+    :view-mode="viewMode"
+    :show-new-folder="showNewFolderInput"
+    :new-folder-name="newFolderName"
+    :folder-loading="newFolderLoading"
+    :sort-options="SORT_OPTIONS"
+    :sort-key="sortKey"
+    :sort-dir="sortDir"
+    @click="onPageClick"
+    @paste="ctxPaste"
+    @toggle-selection="toggleSelectMode"
+    @update:view-mode="viewMode = $event"
+    @update:show-new-folder="showNewFolderInput = $event"
+    @update:new-folder-name="newFolderName = $event"
+    @create-folder="createFolder"
+    @sort-select="onSortSelect"
+  >
 
-    <!-- 工具栏 -->
-    <div class="files-toolbar glass-card" @click.stop>
-
-      <!-- 面包屑导航 -->
+    <template #breadcrumb>
       <FileBrowserBreadcrumb>
         <button class="nav-hist-btn" :disabled="!canGoBack" @click="goBack" title="后退">
           <PhArrowLeft :size="14" weight="bold" />
@@ -29,99 +50,30 @@
           </button>
         </template>
       </FileBrowserBreadcrumb>
+    </template>
 
-      <div class="toolbar-right">
-        <!-- 粘贴（剪切/复制后出现，回收站除外）—— 放在所有按钮最左 -->
-        <FilePasteButton
-          v-if="cbStore.hasContent() && currentType !== 'trash' && currentType !== 'root'"
-          :count="cbStore.fileIds.length + cbStore.folderIds.length"
-          @paste="ctxPaste"
-        />
-
-        <!-- 多选（根目录不需要） -->
-        <button
-          v-if="currentType !== 'root'"
-          class="select-mode-btn"
-          :class="{ on: inSelectionMode }"
-          @click="toggleSelectMode"
-          title="选择"
-        >
-          <PhCheckSquare :size="13" weight="bold" />
-        </button>
-
-        <!-- 全选（仅回收站，放在多选按钮右侧） -->
-        <button
-          v-if="currentType === 'trash' && (contents.files.length || trashFolders.length)"
-          class="select-all-btn"
-          :class="{ on: allTrashSelected }"
-          @click="toggleSelectAllTrash"
-          :title="allTrashSelected ? '取消全选' : '全选'"
-        >
+    <template #toolbar-extra>
+      <template v-if="currentType === 'trash'">
+        <button v-if="contents.files.length || trashFolders.length" class="select-all-btn"
+          :class="{ on: allTrashSelected }" @click="toggleSelectAllTrash"
+          :title="allTrashSelected ? '取消全选' : '全选'">
           {{ allTrashSelected ? '取消全选' : '全选' }}
         </button>
-
-        <!-- 网格/列表切换 -->
-        <SegmentedControl v-if="currentType !== 'trash'" class="view-toggle" :active-index="viewMode === 'grid' ? 0 : 1"
-                          style="--pill-bg: rgba(255,255,255,0.85); --pill-radius: 6px">
-          <button :class="{ on: viewMode === 'grid' }" @click="viewMode = 'grid'" title="网格视图">
-            <PhSquaresFour :size="13" weight="bold" />
-          </button>
-          <button :class="{ on: viewMode === 'list' }" @click="viewMode = 'list'" title="列表视图">
-            <PhList :size="13" weight="bold" />
-          </button>
-        </SegmentedControl>
-
-        <!-- 新建文件夹（个人层、项目层、文件夹层） -->
-        <template v-if="currentType === 'personal' || currentType === 'project' || currentType === 'folder'">
-          <div v-if="showNewFolderInput" class="new-folder-row" @click.stop>
-            <input
-              class="new-folder-input"
-              v-model="newFolderName"
-              placeholder="文件夹名称"
-              v-enter="createFolder"
-              @keyup.esc="showNewFolderInput = false; newFolderName = ''"
-              ref="folderInputRef"
-            />
-            <button class="btn-confirm" :disabled="newFolderLoading" @click="createFolder">确定</button>
-            <button class="btn-cancel" @click="showNewFolderInput = false; newFolderName = ''">✕</button>
-          </div>
-          <button v-else class="new-folder-btn" @click.stop="showNewFolderInput = true">
-            <PhFolderPlus :size="13" weight="bold" />
-            新建文件夹
-          </button>
-        </template>
-
-        <!-- 排序选择器 -->
-        <SortMenu
-          v-if="currentType !== 'root'"
-          :options="SORT_OPTIONS"
-          :sort-key="sortKey"
-          :sort-dir="sortDir"
-          @select="onSortSelect"
-        />
-
-        <!-- 清空回收站 -->
-        <button v-if="currentType === 'trash'" class="empty-trash-btn" @click.stop="confirmEmptyTrash">
-          <PhTrash :size="12" weight="bold" />
-          清空回收站
+        <button class="empty-trash-btn" @click.stop="confirmEmptyTrash">
+          <PhTrash :size="12" weight="bold" /> 清空回收站
         </button>
+      </template>
+    </template>
 
-        <!-- 存储用量 -->
-        <div v-if="storageInfo.loaded" class="storage-pill" :class="{ 'no-limit': storageInfo.limit === null }"
-          :title="storageInfo.limit ? `已用 ${fmtBytes(storageInfo.used)} / ${fmtBytes(storageInfo.limit)}` : `已用 ${fmtBytes(storageInfo.used)}`">
-          <template v-if="storageInfo.limit !== null">
-            <div class="storage-bar-bg">
-              <div class="storage-bar-fill" :style="storageFillStyle"></div>
-            </div>
-          </template>
-          <span class="storage-text">
-            {{ fmtBytes(storageInfo.used) }}
-            <template v-if="storageInfo.limit !== null"> / {{ fmtBytes(storageInfo.limit) }}</template>
-          </span>
-        </div>
-
+    <template #trailing>
+      <div v-if="storageInfo.loaded" class="storage-pill" :class="{ 'no-limit': storageInfo.limit === null }"
+        :title="storageInfo.limit ? `已用 ${fmtBytes(storageInfo.used)} / ${fmtBytes(storageInfo.limit)}` : `已用 ${fmtBytes(storageInfo.used)}`">
+        <template v-if="storageInfo.limit !== null">
+          <div class="storage-bar-bg"><div class="storage-bar-fill" :style="storageFillStyle"></div></div>
+        </template>
+        <span class="storage-text">{{ fmtBytes(storageInfo.used) }}<template v-if="storageInfo.limit !== null"> / {{ fmtBytes(storageInfo.limit) }}</template></span>
       </div>
-    </div>
+    </template>
 
     <!-- 内容区 -->
     <div class="files-body">
@@ -547,7 +499,7 @@
       @permanent-delete="hardDeleteSelected"
       @cancel="clearSelection"
     />
-  </div>
+  </FileBrowserPanel>
 
   <!-- 右键菜单 -->
   <FileBrowserContextMenu :show="ctx.visible" :x="ctx.x" :y="ctx.y" @close="ctx.visible = false">
@@ -583,14 +535,12 @@ import FileUploadGhostCard from '@/components/common/FileUploadGhostCard.vue'
 import FileUploadButton from '@/components/common/FileUploadButton.vue'
 import FileBrowserGrid from '@/components/common/FileBrowserGrid.vue'
 import FileBrowserBreadcrumb from '@/components/common/FileBrowserBreadcrumb.vue'
+import FileBrowserPanel from '@/components/common/FileBrowserPanel.vue'
 import FileBrowserContextMenu from '@/components/common/FileBrowserContextMenu.vue'
 import FileBrowserContextMenuContent from '@/components/common/FileBrowserContextMenuContent.vue'
 import FileBrowserList from '@/components/common/FileBrowserList.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
-import SortMenu from '@/components/common/SortMenu.vue'
 import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
-import FilePasteButton from '@/components/common/FilePasteButton.vue'
-import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
@@ -612,7 +562,7 @@ import { type NavSeg, type FolderCard as FolderCardMeta } from '@/utils/filesNav
 import { useFilesNav } from '@/composables/useFilesNav'
 import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useFileSelection } from '@/composables/files/useFileSelection'
-import { sortFileProjection } from '@/composables/files/useFileProjection'
+import { projectFileDirectory } from '@/composables/files/useFileProjection'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileContextMenu } from '@/composables/files/useFileContextMenu'
 import { executeUploadLifecycle, prepareUploadBatch } from '@/composables/files/useFileUploadController'
@@ -625,9 +575,9 @@ import {
   PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
   PhClock, PhPlayCircle, PhCheckCircle,
   PhBrowser,
-  PhArrowLeft, PhArrowRight, PhSquaresFour, PhList,
-  PhCheckSquare, PhCheck, PhFolderPlus, PhPencilSimple,
-  PhDownloadSimple, PhX,
+  PhArrowLeft, PhArrowRight,
+  PhCheck, PhPencilSimple,
+  PhDownloadSimple,
   PhWarningCircle,
 } from '@phosphor-icons/vue'
 
@@ -654,7 +604,7 @@ const storageFillStyle = computed(() => {
 
 // ── 视图状态 ──
 // 使用模块级 cardBlobReadyIds：首次 @load 后写入，session 内二次访问直接显示跳过动画
-const viewMode    = ref('grid')
+const viewMode    = ref<'grid' | 'list'>('grid')
 const loading     = ref(false)
 const dragCounter = ref(0)
 const isDragging  = computed(() => dragCounter.value > 0)
@@ -748,19 +698,17 @@ const sortedContents = computed(() => {
   const { folders, files } = contents.value
   // projects 层是「状态文件夹」，保持看板顺序（待开始→进行中→已完成），不参与排序
   if (currentType.value === 'root' || currentType.value === 'projects') return { folders, files }
-  const sortedFolders = sortFileProjection(folders, sortKey.value, sortDir.value, {
-    name: f => f.displayName, type: f => f.displayName, id: f => f.id,
+  return projectFileDirectory(folders, files, sortKey.value, sortDir.value, {
+    folderSorters: { name: f => f.displayName, type: f => f.displayName, id: f => f.id },
+    fileSorters: {
+      name: f => f.displayName,
+      type: f => `${fileExtCategory(f.ext)}:${f.ext ?? ''}`,
+      stage: f => f.projectName || f.stageName || '',
+      createdAt: f => f.createdAt,
+      size: f => f.sizeBytes ?? 0,
+      id: f => f.id,
+    },
   })
-  const sortedFiles = sortFileProjection(files, sortKey.value, sortDir.value, {
-    name: f => f.displayName,
-    type: f => `${fileExtCategory(f.ext)}:${f.ext ?? ''}`,
-    stage: f => f.projectName || f.stageName || '',
-    createdAt: f => f.createdAt,
-    size: f => f.sizeBytes ?? 0,
-    id: f => f.id,
-  })
-
-  return { folders: sortedFolders, files: sortedFiles }
 })
 
 // ── 内容 ──
@@ -1010,7 +958,9 @@ function onMainMouseDown(e: MouseEvent) {
 
 // ── Shift 多选 ──
 const flatSelectableItems = computed(() => [
-  ...sortedContents.value.folders.map(f => ({ type: 'folder' as const, id: f.id })),
+  ...(currentType.value === 'trash'
+    ? sortedTrashFolders.value.map(f => ({ type: 'folder' as const, id: f.id }))
+    : sortedContents.value.folders.map(f => ({ type: 'folder' as const, id: f.id }))),
   ...sortedContents.value.files.map(f => ({ type: 'file' as const, id: f.id })),
 ])
 
@@ -1029,6 +979,12 @@ function handleFolderClick(folder: FolderCardMeta, event: MouseEvent) {
     }
     return
   }
+  if (event.ctrlKey || event.metaKey) {
+    selectModeForced.value = true
+    fileSelection.toggleFolder(folder.id)
+    lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'folder' && i.id === folder.id)
+    return
+  }
   if (inSelectionMode.value) {
     fileSelection.toggleFolder(folder.id)
     lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'folder' && i.id === folder.id)
@@ -1044,6 +1000,13 @@ function handleFileClick(file: FileMeta, event: MouseEvent) {
       fileSelection.toggleFile(file.id)
       lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
     }
+    return
+  }
+  // Ctrl/⌘ 点击始终进入多选，不应被可预览文件的打开逻辑抢先处理。
+  if (event.ctrlKey || event.metaKey) {
+    selectModeForced.value = true
+    fileSelection.toggleFile(file.id)
+    lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === file.id)
     return
   }
   if (inSelectionMode.value) {
@@ -1096,7 +1059,7 @@ function toggleFileSelect(fileId: number, e: MouseEvent) {
 }
 
 function onPageClick() {
-  if (!inSelectionMode.value) clearSelection()
+  clearSelection()
   // 排序菜单由 SortMenu 内部的 ContextMenu 监听外部 click 自动关闭，这里不用手动处理
 }
 
@@ -1243,18 +1206,48 @@ async function hardDeleteTrashFolder(folder: TrashFolderMeta) {
 
 function handleTrashFileClick(f: FileMeta, event: MouseEvent) {
   if ((event.target as HTMLElement).closest('button')) return
+  if (event.shiftKey) {
+    const idx = flatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === f.id)
+    if (lastAnchorIndex.value >= 0 && idx >= 0) {
+      const selected = flatSelectableItems.value.slice(
+        Math.min(lastAnchorIndex.value, idx),
+        Math.max(lastAnchorIndex.value, idx) + 1,
+      )
+      selectedIds.value = new Set(selected.filter(i => i.type === 'file').map(i => i.id as number))
+      selectedTrashFolderIds.value = new Set(selected.filter(i => i.type === 'folder').map(i => i.id as number))
+      selectedFolderKeys.value = new Set()
+      selectModeForced.value = true
+      return
+    }
+  }
   const ids = new Set(selectedIds.value)
   if (ids.has(f.id)) ids.delete(f.id)
   else ids.add(f.id)
   selectedIds.value = ids
+  lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'file' && i.id === f.id)
 }
 
 function handleTrashFolderClick(folder: TrashFolderMeta, event: MouseEvent) {
   if ((event.target as HTMLElement).closest('button')) return
+  if (event.shiftKey) {
+    const idx = flatSelectableItems.value.findIndex(i => i.type === 'folder' && i.id === folder.id)
+    if (lastAnchorIndex.value >= 0 && idx >= 0) {
+      const selected = flatSelectableItems.value.slice(
+        Math.min(lastAnchorIndex.value, idx),
+        Math.max(lastAnchorIndex.value, idx) + 1,
+      )
+      selectedIds.value = new Set(selected.filter(i => i.type === 'file').map(i => i.id as number))
+      selectedTrashFolderIds.value = new Set(selected.filter(i => i.type === 'folder').map(i => i.id as number))
+      selectedFolderKeys.value = new Set()
+      selectModeForced.value = true
+      return
+    }
+  }
   const ids = new Set(selectedTrashFolderIds.value)
   if (ids.has(folder.id)) ids.delete(folder.id)
   else ids.add(folder.id)
   selectedTrashFolderIds.value = ids
+  lastAnchorIndex.value = flatSelectableItems.value.findIndex(i => i.type === 'folder' && i.id === folder.id)
 }
 
 async function restoreSelected() {
@@ -1615,6 +1608,8 @@ function onFolderPointerDown(f: FolderCardMeta, e: PointerEvent) {
     isSelected: selectedFolderKeys.value.has(f.id),
     selectedFileIds: selectedIds.value,
     selectedFolderIds: _selectedFolderIdNums(),
+    // landing 需要盖过文件工具栏/面包屑（工具栏 z-index:20），否则飞回面包屑时会被裁在其后。
+    extraOpts: { dragZIndex: 31 },
   })
 }
 function onFilePointerDown(f: FileMeta, e: PointerEvent) {
@@ -1623,6 +1618,7 @@ function onFilePointerDown(f: FileMeta, e: PointerEvent) {
     isSelected: selectedIds.value.has(f.id),
     selectedFileIds: selectedIds.value,
     selectedFolderIds: _selectedFolderIdNums(),
+    extraOpts: { dragZIndex: 31 },
   })
 }
 
