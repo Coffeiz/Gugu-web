@@ -1,9 +1,9 @@
-import { ref, type Ref } from 'vue'
+import { type Ref } from 'vue'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useClipboardStore } from '@/stores/clipboard'
-import { parseFolderId } from '@/utils/folderKeys'
 import { useFileContextMenu } from './useFileContextMenu'
+import { useFilePasteCore } from './useFilePasteCore'
 import type { useFileActions } from './useFileActions'
 
 type ContextType = 'file' | 'multi-file' | 'folder' | 'empty'
@@ -32,7 +32,39 @@ export interface ProjectFileContextOptions {
 /** 项目文件区右键菜单动作和剪贴板粘贴；菜单展示仍由 FileBrowserContextMenu 负责。 */
 export function useProjectFileContextActions(options: ProjectFileContextOptions) {
   const { state, open, close } = useFileContextMenu<ContextType, ContextTarget>()
-  const pasteBusy = ref(false)
+  const pasteCore = useFilePasteCore({
+    clipboardStore: options.clipboardStore,
+    getDestination: () => ({ folderId: currentFolderId(), projectId: options.getProjectId() }),
+    close,
+    onCut: async (fileIds, folderIds, destination) => {
+      const [, movedFolders] = await Promise.all([
+        Promise.all(fileIds.map(id => options.fileActions.moveFile(id, destination.folderId, destination.projectId))),
+        Promise.all(folderIds.map(id => options.fileActions.moveFolder(
+          id, destination.folderId, options.fileCacheStore.getFolder(id)?.version ?? 1, destination.projectId,
+        ))),
+      ])
+      fileIds.forEach(id => options.fileCacheStore.updateFile(id, {
+        folderId: destination.folderId,
+        projectId: destination.projectId,
+      }))
+      movedFolders.forEach(folder => options.fileCacheStore.updateFolder(folder.id, {
+        parentId: destination.folderId,
+        projectId: destination.projectId,
+        version: folder.version,
+      }))
+      options.clipboardStore.clear()
+      await options.fileCacheStore.refresh()
+    },
+    onCopy: async (fileIds, folderIds, destination) => {
+      const created = await Promise.all(fileIds.map(id => options.fileActions.copyFile(id, destination.folderId, destination.projectId)))
+      created.forEach(file => { if (file) options.fileCacheStore.addFile(file) })
+      const copiedFolders = await Promise.all(folderIds.map(id =>
+        options.fileActions.copyFolder(id, destination.folderId, destination.projectId)))
+      copiedFolders.forEach(folder => options.fileCacheStore.addFolder(folder))
+      await options.fileCacheStore.refresh()
+    },
+    onError: error => console.error('[ProjectModal] 粘贴失败:', error instanceof Error ? error.message : String(error)),
+  })
 
   function openContext(type: 'file' | 'folder' | 'empty', target: ContextTarget | null, event: MouseEvent) {
     const isMulti = type === 'file' && target &&
@@ -128,45 +160,6 @@ export function useProjectFileContextActions(options: ProjectFileContextOptions)
     if (folder) await options.deleteFolder(folder)
   }
 
-  async function paste() {
-    if (pasteBusy.value) return
-    pasteBusy.value = true
-    close()
-    const folderId = currentFolderId()
-    const projectId = options.getProjectId()
-    try {
-      const fileIds = [...new Set(options.clipboardStore.fileIds)]
-      const folderIds = [...new Set(options.clipboardStore.folderIds
-        .map(id => parseFolderId(id))
-        .filter((id): id is number => id != null))]
-      if (options.clipboardStore.type === 'cut') {
-        const [, movedFolders] = await Promise.all([
-          Promise.all(fileIds.map(id => options.fileActions.moveFile(id, folderId, projectId))),
-          Promise.all(folderIds.map(id => options.fileActions.moveFolder(
-            id, folderId, options.fileCacheStore.getFolder(id)?.version ?? 1, projectId,
-          ))),
-        ])
-        fileIds.forEach(id => options.fileCacheStore.updateFile(id, { folderId, projectId }))
-        movedFolders.forEach(folder => options.fileCacheStore.updateFolder(folder.id, {
-          parentId: folderId, projectId, version: folder.version,
-        }))
-        options.clipboardStore.clear()
-        await options.fileCacheStore.refresh()
-      } else if (options.clipboardStore.type === 'copy') {
-        const created = await Promise.all(fileIds.map(id => options.fileActions.copyFile(id, folderId, projectId)))
-        created.forEach(file => { if (file) options.fileCacheStore.addFile(file) })
-        const copiedFolders = await Promise.all(folderIds.map(id =>
-          options.fileActions.copyFolder(id, folderId, projectId)))
-        copiedFolders.forEach(folder => options.fileCacheStore.addFolder(folder))
-        await options.fileCacheStore.refresh()
-      }
-    } catch (error) {
-      console.error('[ProjectModal] 粘贴失败:', error instanceof Error ? error.message : String(error))
-    } finally {
-      pasteBusy.value = false
-    }
-  }
-
   function handleAction(action: string) {
     const actions: Record<string, () => unknown> = {
       info,
@@ -180,10 +173,10 @@ export function useProjectFileContextActions(options: ProjectFileContextOptions)
       'cut-folder': cutFolder,
       'delete-folder': removeFolder,
       'create-folder': () => { close(); options.showNewFolder.value = true },
-      paste,
+      paste: pasteCore.paste,
     }
     actions[action]?.()
   }
 
-  return { state, pasteBusy, openContext, paste, handleAction }
+  return { state, pasteBusy: pasteCore.pasteBusy, openContext, paste: pasteCore.paste, handleAction }
 }
