@@ -1,19 +1,15 @@
 """IM 附件回复。
 
-附件发送涉及文件库读取、暂存附件归属、平台大小限制和各 Gateway 的媒体协议，
-统一放在这里；文本回复通过 ``agent.im.replies.send_text`` 发出。
+附件的元数据解析、暂存归属和平台大小限制放在这里；"这个平台该调哪个 Gateway
+函数发送"这一步统一收在 ``agent.im.replies.send_file``，跟文本/流式共用同一个
+分发入口，不在这里再维护一份 if/elif。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from agent.im.models import PlatformReply
-
-_FEISHU_IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
-_FEISHU_IMAGE_MAX = 10 * 1024 * 1024
-_FEISHU_FILE_MAX = 30 * 1024 * 1024
-_WECHAT_FILE_MAX = 30 * 1024 * 1024
-_QQ_FILE_MAX = 10 * 1024 * 1024
+from agent.im.replies import send_file
 
 
 @dataclass
@@ -109,7 +105,6 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
 
     from app.core import chat_attach
     from app.models import File
-    from app.services.storage import get_storage
 
     db_session.ensure_engine()
 
@@ -159,19 +154,9 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
                 continue
 
             fname = f"{display_name}.{ext}"
-            if platform == "feishu":
-                data = await get_storage().get(storage_key)
-                ok = await _send_file_feishu(payload, ext, data, fname)
-            elif platform == "qqbot":
-                ok = await _send_file_qq(
-                    payload,
-                    storage_key,
-                    ext,
-                    display_name,
-                    fname,
-                )
-            else:
-                ok = await _send_file_wechat(payload, storage_key, ext, fname)
+            ok = await send_file(
+                payload, storage_key=storage_key, ext=ext, display_name=display_name, fname=fname,
+            )
             if ok:
                 result.sent += 1
             else:
@@ -186,78 +171,3 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
     if result.failed and not result.reason:
         result.reason = "附件没有成功发出，你可以去网页或文件库查看。"
     return result
-
-
-async def _send_file_wechat(payload: dict, storage_key: str, ext: str, fname: str) -> bool:
-    from agent.gateway import wechat
-    from app.services.storage import get_storage
-
-    openid = payload.get("platform_user_id")
-    if not openid:
-        return False
-    data = await get_storage().get(storage_key)
-    if len(data) > _WECHAT_FILE_MAX:
-        mb = len(data) / 1048576
-        return False
-    context_token = payload.get("context_token", "")
-    is_image = (ext or "").lower() in _FEISHU_IMAGE_EXTS
-    if is_image:
-        ok = await wechat.send_image(openid, data, context_token, payload.get("channel_id"))
-        label = "图片"
-    else:
-        ok = await wechat.send_file(openid, data, fname, context_token, payload.get("channel_id"))
-        label = "文件"
-    from agent import logsafe
-    print(
-        f"[im] wechat 发{label} fp={logsafe.fingerprint(fname)}: "
-        f"{'ok' if ok else '失败'}（{len(data)} bytes）",
-        flush=True,
-    )
-    return ok
-
-
-async def _send_file_feishu(payload: dict, ext: str, data: bytes, fname: str) -> bool:
-    from agent.gateway import feishu
-    from agent import logsafe
-
-    is_image = (ext or "").lower() in _FEISHU_IMAGE_EXTS
-    limit = _FEISHU_IMAGE_MAX if is_image else _FEISHU_FILE_MAX
-    if len(data) > limit:
-        mb, lim_mb = len(data) / 1048576, limit // 1048576
-        print(
-            f"[im] feishu 发文件 fp={logsafe.fingerprint(fname)}: "
-            f"跳过（{mb:.1f}MB > {lim_mb}MB 上限）",
-            flush=True,
-        )
-        return False
-    display_name = fname.rsplit(".", 1)[0] if "." in fname else fname
-    ok = await feishu.send_file(
-        payload.get("chat_id"), data, display_name, ext, payload.get("channel_id")
-    )
-    print(f"[im] feishu 发文件 fp={logsafe.fingerprint(fname)}: {'ok' if ok else '失败'}", flush=True)
-    return ok
-
-
-async def _send_file_qq(
-    payload: dict,
-    storage_key: str,
-    ext: str,
-    display_name: str,
-    fname: str,
-) -> bool:
-    from agent.gateway import qq
-    from app.services.storage import get_storage
-
-    is_group = payload.get("chat_type") == "group"
-    openid = payload.get("chat_id") if is_group else payload.get("platform_user_id")
-    if not openid:
-        return False
-    storage = get_storage()
-    data = await storage.get(storage_key)
-    if len(data) > _QQ_FILE_MAX:
-        return False
-    ok = await qq.send_file(
-        openid, data, display_name, ext, payload.get("channel_id"),
-        payload.get("message_id"), group=is_group,
-    )
-    return ok

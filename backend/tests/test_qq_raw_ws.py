@@ -52,6 +52,22 @@ async def test_qq_group_at_event_without_bot_mention_is_passive(monkeypatch):
     monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 
+    # 跟本文件其它测试一样 mock 掉 decide_im_shortcut 的底层依赖：不 mock 会真的连 Redis
+    # 查取消状态——单独跑这个测试时全局 Redis 客户端在本测试的事件循环里首次建立，能用；
+    # 跟其他测试一起跑，客户端已经绑在前一个测试的（已关闭）事件循环上，会报
+    # Event loop is closed。这不是偶发，是这个测试本身当初漏了这三行 mock。
+    from agent import router, runtime_state
+
+    async def fake_async_false(*args, **kwargs):
+        return False
+
+    async def fake_async_none(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(router, "decide", lambda *args, **kwargs: {"action": "run"})
+    monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
+    monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
+
     await qq._handle_raw_qq_message(
         "GROUP_AT_MESSAGE_CREATE",
         _raw_group_event(mentions=[]),

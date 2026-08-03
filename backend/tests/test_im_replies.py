@@ -101,7 +101,7 @@ def test_platform_reply_infers_keyboard_capability_from_parts():
 
 @pytest.mark.asyncio
 async def test_qq_group_file_result_is_returned_to_worker(monkeypatch):
-    from agent.im import files
+    from agent.im import replies
 
     class FakeStorage:
         async def get(self, key):
@@ -114,7 +114,7 @@ async def test_qq_group_file_result_is_returned_to_worker(monkeypatch):
 
     monkeypatch.setattr("app.services.storage.get_storage", lambda: FakeStorage())
     monkeypatch.setattr("agent.gateway.qq.send_file", fake_send_file)
-    result = await files._send_file_qq({
+    result = await replies._send_file_qq({
         "platform": "qqbot",
         "chat_type": "group",
         "chat_id": "group-1",
@@ -127,7 +127,7 @@ async def test_qq_group_file_result_is_returned_to_worker(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_qq_group_file_reads_local_storage_bytes(monkeypatch):
-    from agent.im import files
+    from agent.im import replies
 
     class FakeStorage:
         async def get(self, key):
@@ -141,7 +141,7 @@ async def test_qq_group_file_reads_local_storage_bytes(monkeypatch):
 
     monkeypatch.setattr("app.services.storage.get_storage", lambda: FakeStorage())
     monkeypatch.setattr("agent.gateway.qq.send_file", fake_send_file)
-    result = await files._send_file_qq(
+    result = await replies._send_file_qq(
         {
             "platform": "qqbot",
             "chat_type": "group",
@@ -161,7 +161,7 @@ async def test_qq_group_file_reads_local_storage_bytes(monkeypatch):
 @pytest.mark.asyncio
 async def test_feishu_oversized_file_sends_limit_notice_without_gateway_call(monkeypatch):
     from agent.gateway import feishu
-    from agent.im import files
+    from agent.im import replies
 
     gateway_calls = []
 
@@ -170,10 +170,10 @@ async def test_feishu_oversized_file_sends_limit_notice_without_gateway_call(mon
 
     monkeypatch.setattr(feishu, "send_file", fake_send_file)
 
-    result = await files._send_file_feishu(
+    result = await replies._send_file_feishu(
         {"platform": "feishu", "chat_id": "chat-1"},
         "png",
-        b"x" * (files._FEISHU_IMAGE_MAX + 1),
+        b"x" * (replies._FEISHU_IMAGE_MAX + 1),
         "大图.png",
     )
 
@@ -188,6 +188,48 @@ async def test_unknown_platform_file_reply_does_not_open_storage(capsys):
     await files.send_files({"platform": "unknown"}, [{"file_id": 42}])
 
     assert "暂不支持发文件" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_send_file_dispatches_by_platform(monkeypatch):
+    """send_file 是文件回复"该调哪个平台"的唯一分发入口，跟文本/流式共用同一套判断。"""
+    from agent.im import replies
+
+    calls = []
+
+    async def fake_qq(payload, storage_key, ext, display_name, fname):
+        calls.append("qq")
+        return True
+
+    async def fake_feishu(payload, ext, data, fname):
+        calls.append("feishu")
+        return True
+
+    async def fake_wechat(payload, storage_key, ext, fname):
+        calls.append("wechat")
+        return True
+
+    class FakeStorage:
+        async def get(self, key):
+            return b""
+
+    monkeypatch.setattr(replies, "_send_file_qq", fake_qq)
+    monkeypatch.setattr(replies, "_send_file_feishu", fake_feishu)
+    monkeypatch.setattr(replies, "_send_file_wechat", fake_wechat)
+    monkeypatch.setattr("app.services.storage.get_storage", lambda: FakeStorage())
+
+    for platform in ("qqbot", "feishu", "wechat"):
+        ok = await replies.send_file(
+            {"platform": platform}, storage_key="k", ext="png", display_name="n", fname="n.png",
+        )
+        assert ok is True
+
+    assert calls == ["qq", "feishu", "wechat"]
+
+    ok = await replies.send_file(
+        {"platform": "unknown"}, storage_key="k", ext="png", display_name="n", fname="n.png",
+    )
+    assert ok is False
 
 
 @pytest.mark.asyncio
