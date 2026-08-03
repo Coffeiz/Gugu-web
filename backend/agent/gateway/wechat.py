@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
-import time
 import uuid
 
 from app.core import redis as R
@@ -31,8 +30,6 @@ from agent.gateway.wechat_config_cache import WeixinConfigManager
 from agent.gateway.wechat_typing import TypingIndicator
 
 STREAM = R.IM_INBOUND_STREAM
-_ACK_COOLDOWN = 10.0    # 同一用户「收到啦」秒回冷却：连发多条/多图只 ack 一次，不刷屏（同 qq）
-_last_ack: dict = {}    # from_user -> 上次 ack 时刻（单 bot 单网关进程，模块级即可）
 
 # 网关进程内 per-user typing_ticket 缓存（2026-07-09 接入 iLink typing 接口）
 # 单 bot 单网关进程 → 模块级单例天然 per-bot 隔离；多 user 共享同一 manager
@@ -256,18 +253,6 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
             quoted_items = quoted_media
             has_quote = True
             break
-
-    # 即时反馈：先回一句「收到」，免得 agent 慢处理时用户干等（赶在 worker 之前）。**10s 冷却**：
-    # 连发多条/多图只 ack 一次，不刷屏（真实回复由 worker 防抖合并成一条）。
-    now = time.monotonic()
-    if now - _last_ack.get(from_user, 0.0) > _ACK_COOLDOWN:
-        _last_ack[from_user] = now
-        try:
-            await client.send_text(from_user, "收到啦，让我看看哈~", context_token)
-        except Exception as e:
-            # best-effort：即时 ack 只是体验优化，真实回复由 worker 兜底发出，失败不重试、不挡入队。
-            diag_log("agent.gateway.wechat.instant_ack", e)
-            print(f"[wechat] 即时反馈失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
 
     # 下载+解密+暂存媒体：当前消息附件 + 引用里的图片附件一并入队。
     media_items = non_text + quoted_items

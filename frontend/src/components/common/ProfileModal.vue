@@ -472,6 +472,12 @@ async function doDeleteAccount() {
   border-top: 1px solid rgba(120, 125, 160, 0.12);
 }
 .pm-bot-group-row .pm-field-desc { flex: 1; min-width: 0; }
+.pm-bot-tools-row { align-items: flex-start; }
+.pm-tool-options {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  max-width: 58%;
+}
 .pm-bot-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pm-bot-name { font-size: 13px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
 .pm-bot-tag { font-size: 10px; font-weight: 600; color: #b8860b; background: rgba(212,160,23,0.14); padding: 1px 6px; border-radius: 5px; }
