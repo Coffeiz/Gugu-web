@@ -37,6 +37,7 @@ import FileCard from '@/components/common/file-browser/FileCard.vue'
 import FolderCard from '@/components/common/file-browser/FolderCard.vue'
 import FileUploadButton from '@/components/common/file-browser/FileUploadButton.vue'
 import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhostCard.vue'
+import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
 const { contents, sortedContents, selectedFolderKeys, previewFolderKeys, dragOverFolderId, inSelectionMode, openCtx, folderListIcon, folderAccentColor, handleFolderClick, onFolderPointerDown, renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder, deleteFolder, selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick, onFilePointerDown, isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile, downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading } = props.context
 </script>
