@@ -208,3 +208,22 @@ async def send_stream_with_fallback(
     if not stream_sent and reply_text.strip():
         await send_text(payload, reply_text)
     return bool(stream_sent), response, reply_text
+
+
+async def send_agent_response(payload: dict, response: AgentResponse) -> str:
+    """统一收尾一轮 AgentResponse：先发送附件，再发送文本说明。
+
+    IM Loop 不再分别判断平台、文件和文本入口；平台 capability 由
+    ``send_reply``/``send_file`` 统一检查，返回最终实际发送的文本。
+    """
+    from agent.im.files import send_files
+
+    reply_text = _fix_loose_bold(response.text or "")
+    if not reply_text.strip():
+        reply_text = "给你～" if response.files else "嗯~在的，你说～"
+    result = await send_files(payload, response.files)
+    if result.failed:
+        reply_text = result.reason or "附件没有成功发出，你可以去网页或文件库查看。"
+    if payload.get("platform") != "feishu" or not response.files:
+        await send_text(payload, reply_text)
+    return reply_text

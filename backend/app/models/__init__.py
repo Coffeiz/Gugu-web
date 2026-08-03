@@ -383,6 +383,9 @@ class ConversationSession(Base):
     title:      Mapped[str]      = mapped_column(String(300), default="新对话")
     summary:    Mapped[str]      = mapped_column(Text, default="")   # 一句话「这段对话聊了啥」，供跨 session 查找/续接（随会话刷新；绑 session、删则同删）
     source:     Mapped[str]      = mapped_column(String(20), default="web")
+    # IM Bot 作用域。Web 会话保持为空；IM 会话必须和 source/chat_id 一起参与查找，
+    # 避免同一账号注册多个同平台 Bot 时串用会话。
+    bot_id:     Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     chat_id:   Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     chat_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
@@ -412,6 +415,7 @@ class ConversationMessage(Base):
     quoted_text:  Mapped[Optional[str]]    = mapped_column(Text, nullable=True, default=None)
     platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     platform_user_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    platform_bot_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     chat_type:    Mapped[Optional[str]]    = mapped_column(String(20), nullable=True)
     created_at:   Mapped[datetime]        = mapped_column(UtcDateTime, default=now_utc)
 
@@ -476,6 +480,8 @@ class UserBot(Base):
     # QQ 当前 Bot 作用域内的 owner 身份；不作为跨 Bot 全局 QQ ID 使用。
     owner_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
     owner_bound_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    # QQ 当前 Bot 的平台身份 ID，用于精确展示 @机器人。
+    bot_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
 

@@ -61,8 +61,8 @@ async def test_group_context_search_only_reads_current_group(db, user_a, monkeyp
     from agent.tools.group_context import _group_context_search
     from app.models import ConversationMessage, ConversationSession
 
-    current = ConversationSession(user_id=user_a.id, source="qqbot", chat_id="group-a", title="群 A")
-    other = ConversationSession(user_id=user_a.id, source="qqbot", chat_id="group-b", title="群 B")
+    current = ConversationSession(user_id=user_a.id, source="qqbot", bot_id="bot-1", chat_id="group-a", title="群 A")
+    other = ConversationSession(user_id=user_a.id, source="qqbot", bot_id="bot-1", chat_id="group-b", title="群 B")
     db.add_all([current, other])
     await db.flush()
     db.add_all([
@@ -70,7 +70,7 @@ async def test_group_context_search_only_reads_current_group(db, user_a, monkeyp
         ConversationMessage(session_id=other.id, role="user", content="群 B 的消息"),
     ])
     await db.commit()
-    imctx.set_im("qqbot", "m1", "1", "group-a", "member", "group")
+    imctx.set_im("qqbot", "m1", "bot-1", "group-a", "member", "group")
 
     result = await _group_context_search(db, user_a.id, {})
 
@@ -326,9 +326,51 @@ def test_im_session_scope_filters_isolate_group_and_private_sessions():
 
     group_filters = session_scope_filters(ConversationSession, "qqbot", "group-1")
     private_filters = session_scope_filters(ConversationSession, "qqbot", None)
-    assert len(group_filters) == 2
-    assert len(private_filters) == 2
-    assert "chat_id IS NULL" in str(private_filters[1])
+    assert len(group_filters) == 3
+    assert len(private_filters) == 3
+    assert "chat_id IS NULL" in str(private_filters[2])
+
+
+def test_im_session_scope_filters_include_bot_id():
+    from agent.im.session import session_scope_filters
+    from app.models import ConversationSession
+
+    filters = session_scope_filters(ConversationSession, "qqbot", "group-1", "bot-a")
+    assert "conversation_sessions.bot_id = :bot_id_1" in str(filters[1])
+
+
+async def test_im_sessions_are_isolated_by_bot_id(db, user_a):
+    from agent.im.session import get_or_create_session
+    from agent.models import AgentRequest
+
+    first = await get_or_create_session(
+        db,
+        AgentRequest(
+            message="bot A",
+            user_id=user_a.id,
+            user_name="群友",
+            source="qqbot",
+            platform_bot_id="bot-a",
+            chat_id="group-1",
+        ),
+        user_a.id,
+    )
+    second = await get_or_create_session(
+        db,
+        AgentRequest(
+            message="bot B",
+            user_id=user_a.id,
+            user_name="群友",
+            source="qqbot",
+            platform_bot_id="bot-b",
+            chat_id="group-1",
+        ),
+        user_a.id,
+    )
+
+    assert first.session.id != second.session.id
+    assert first.session.bot_id == "bot-a"
+    assert second.session.bot_id == "bot-b"
 
 
 def test_im_loop_selects_member_or_owner_facade_without_duplicate_runtime():
@@ -348,6 +390,20 @@ def test_im_loop_selects_member_or_owner_facade_without_duplicate_runtime():
     assert isinstance(select_loop(member), MemberAgentLoop)
     assert isinstance(select_loop(owner), OwnerAgentLoop)
     assert type(select_loop(member).run_collect) is type(select_loop(owner).run_collect)
+
+
+async def test_worker_handle_delegates_business_dispatch_to_im_loop(monkeypatch):
+    import worker
+
+    seen = []
+
+    async def fake_dispatch(payload):
+        seen.append(payload)
+        return "done"
+
+    monkeypatch.setattr("agent.im.loop.dispatch_im_message", fake_dispatch)
+    assert await worker.handle("msg-1", {"text": "你好"}) == "done"
+    assert seen == [{"text": "你好"}]
 
 
 def test_im_identity_context_marks_group_and_compares_history():

@@ -31,6 +31,20 @@ def _raw_group_event(**overrides):
     return data
 
 
+def test_qq_group_sender_prefers_user_openid_for_owner_binding(monkeypatch):
+    """群事件同时带两种 ID 时，必须沿用 C2C 绑定使用的 user_openid。"""
+    from agent.im.models import PlatformMessage
+
+    payload = {
+        "platform": "qqbot",
+        "chat_type": "group",
+        "chat_id": "group-1",
+        "author": {"user_openid": "owner-openid", "member_openid": "member-openid"},
+    }
+    message = PlatformMessage.from_payload(payload)
+    assert message.sender.id == "owner-openid"
+
+
 def test_qq_message_mentions_bot_prefers_payload_over_event_type():
     assert qq._qq_message_mentions_bot(
         {"mentions": [{"bot": True}]}, "GROUP_AT_MESSAGE_CREATE"
@@ -38,6 +52,50 @@ def test_qq_message_mentions_bot_prefers_payload_over_event_type():
     assert qq._qq_message_mentions_bot(
         {"mentions": []}, "GROUP_AT_MESSAGE_CREATE"
     ) is False
+
+
+def test_qq_bot_mention_id_uses_explicit_bot_mention():
+    from agent.gateway.qq import _qq_bot_mention_id
+
+    data = {
+        "content": "<@D5A139> 看看这个",
+        "mentions": [{"id": "D5A139", "bot": True}],
+    }
+    assert _qq_bot_mention_id(data, "GROUP_MESSAGE_CREATE") == "D5A139"
+
+
+def test_qq_bot_mention_id_does_not_guess_unknown_mentions():
+    from agent.gateway.qq import _qq_bot_mention_id
+
+    data = {
+        "content": "<@member-1> 看看这个",
+        "mentions": [{"id": "member-1", "bot": False}],
+    }
+    assert _qq_bot_mention_id(data, "GROUP_MESSAGE_CREATE") == ""
+
+
+def test_qq_bot_mention_id_falls_back_only_for_at_event():
+    from agent.gateway.qq import _qq_bot_mention_id
+
+    data = {"content": "<@D5A139> 看看这个"}
+    assert _qq_bot_mention_id(data, "GROUP_AT_MESSAGE_CREATE") == "D5A139"
+
+
+def test_qq_mention_display_uses_username_without_changing_identity_fields():
+    from agent.im.models import replace_mention_ids
+
+    text = replace_mention_ids(
+        "<@D5A139> 看来未来得继续做。",
+        {"D5A139": "Coffeiz"},
+    )
+
+    assert text == "@Coffeiz 看来未来得继续做。"
+
+
+def test_platform_mention_display_keeps_unknown_ids():
+    from agent.im.models import replace_mention_ids
+
+    assert replace_mention_ids("@known <@unknown>", {"known": "Coffeiz"}) == "@Coffeiz <@unknown>"
 
 
 async def test_qq_group_at_event_without_bot_mention_is_passive(monkeypatch):

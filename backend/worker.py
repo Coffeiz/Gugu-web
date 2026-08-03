@@ -35,6 +35,7 @@ from agent.im.loop import (
 from agent.im.files import send_files as _send_files
 from agent.im.models import PlatformMessage
 from agent.im.replies import _fix_loose_bold, send_stream_with_fallback, send_text
+from agent.im.session import ImConversationKey, conversation_key
 from agent.models import AgentRequest
 
 STREAM = R.IM_INBOUND_STREAM
@@ -50,19 +51,22 @@ _stop = asyncio.Event()
 # 并发上限由 Admin 配置 agent.worker_concurrency 控制，worker 每 30s（reconcile 时）热读、无需重启。
 # 实测单 MiniMax key 安全上限≈16（带工具 sem=20 全 429）；要更大吞吐 = 多备 key，不是调大此数。
 _max_concurrency = 16                          # 当前生效值（_refresh_concurrency 热更新；run_once 据此留空闲槽）
-_user_locks: dict[str, asyncio.Lock] = {}      # user_gate：同用户串行保序、不同用户并发
+# user_gate：同一会话串行保序、不同会话并发。key 是 ImConversationKey（platform+bot_id+
+# chat_type+scope_id），不是裸 platform_user_id——同一用户跨 bot、跨群或私聊/群聊同时
+# 发消息，用 puid 当 key 会被误合并到同一轮/同一把锁（PRD-IM-2 Phase 5 §1 P1）。
+_user_locks: dict[ImConversationKey, asyncio.Lock] = {}
 _inflight: set = set()                         # 在跑任务集：背压计数 + 优雅 drain
 
 # ── 输入防抖：QQ 等平台「一张图一条消息」，连发的图 + 后面的指令本是一次表达。
-#    不立即处理，攒进缓冲；同一用户每来一条就把「截止时刻」推后；静默到期才把缓冲里所有消息
+#    不立即处理，攒进缓冲；同一会话每来一条就把「截止时刻」推后；静默到期才把缓冲里所有消息
 #    合并成「一轮」处理、只回一次。**非对称窗口**：带文字的消息 = 用户说完了 → 短窗口快速回；
 #    纯附件（图/文件没配文字）= 多半还在补图 / 正手打指令 → 给更长窗口等后面的指令（先发图、隔
 #    几秒再打「存一下」也能并进同一轮，否则指令那轮手上没图、咕咕反问「存什么」）。
 DEBOUNCE_SEC = 1.0          # 带文字：用户说完了，快速处理
 DEBOUNCE_ATT_SEC = 1.0     # 纯附件：与文字同 1s（reset 仍能攒连发的图；快，但发完图停顿>1s 再打指令会拆轮）
-_user_buffers: dict[str, list] = {}            # puid -> [(msg_id, payload)] 待处理缓冲
-_user_deadline: dict[str, float] = {}          # puid -> 防抖截止时刻（loop.time()），每条新消息推后
-_user_flush: dict[str, asyncio.Task] = {}      # puid -> 正在跑的 flush loop（每用户至多一个）
+_user_buffers: dict[ImConversationKey, list] = {}   # key -> [(msg_id, payload)] 待处理缓冲
+_user_deadline: dict[ImConversationKey, float] = {} # key -> 防抖截止时刻（loop.time()），每条新消息推后
+_user_flush: dict[ImConversationKey, asyncio.Task] = {}  # key -> 正在跑的 flush loop（每会话至多一个）
 _flush_tasks: set = set()                       # 所有 flush loop：供优雅 drain 等它们跑完
 _run_sem = asyncio.Semaphore(_max_concurrency)  # flush 阶段真正跑 agent 的全局并发上限
 
@@ -90,7 +94,7 @@ def _refresh_concurrency():
 _DEFAULT_HINT = "你好，我是咕咕 🐦\n这个机器人还没和咕咕账号关联好，去咕咕「个人设置 → 接入咕咕」重新扫码连接一下吧。"
 
 
-async def handle(msg_id: str, payload: dict):
+async def _legacy_handle(msg_id: str, payload: dict):
     """处理一条：解析用户 → 未绑定回提示 / 已绑定跑 agent（带会话历史）→ 发回平台。"""
     # Phase 1：在保留旧 payload 的前提下建立平台无关消息视图；后续 IM Loop 将直接消费它。
     platform_message = PlatformMessage.from_payload(payload)
@@ -127,7 +131,7 @@ async def handle(msg_id: str, payload: dict):
     # 被 @ 的消息不走此分支，继续执行完整的回应链路。
     if should_record_passive_group(req, payload):
         passive_sid = await record_passive_im_message(req, sid)
-        await persist_im_session(platform, session_key, passive_sid, group=True)
+        await persist_im_session(platform, session_route.bot_id, session_key, passive_sid, group=True)
         print(f"[worker] qqbot 群聊普通消息已记录(session={passive_sid} trace={_tid})", flush=True)
         return None
     # Intent shortcut 属于 IM Loop 的业务决策；Gateway 只负责接收并入队，不提前决定
@@ -175,6 +179,7 @@ async def handle(msg_id: str, payload: dict):
         await finish_im_activity(activity)
     await persist_im_session(
         platform,
+        session_route.bot_id,
         session_key,
         resp.session_id,
         group=bool(payload.get("chat_type") == "group"),
@@ -209,6 +214,13 @@ async def handle(msg_id: str, payload: dict):
     return resp
 
 
+async def handle(msg_id: str, payload: dict):
+    """队列条目的业务处理入口，实际编排由 IM Loop 负责。"""
+    from agent.im.loop import dispatch_im_message
+
+    return await dispatch_im_message(payload)
+
+
 def _merge_payloads(payloads: list) -> dict:
     """把同一用户连发的多条消息合并成一条：拼接非空文字、合并所有附件；路由字段（message_id /
     channel_id 等）取**最后一条**——被动回复 / 表情挂在最近那条上。"""
@@ -224,8 +236,8 @@ def _merge_payloads(payloads: list) -> dict:
     return base
 
 
-async def _flush_loop(puid: str):
-    """等该用户「静默满 DEBOUNCE_SEC」→ 把缓冲里所有消息合并成一轮处理、只回一次。
+async def _flush_loop(key: ImConversationKey):
+    """等该会话「静默满 DEBOUNCE_SEC」→ 把缓冲里所有消息合并成一轮处理、只回一次。
     处理期间新到的消息进新缓冲，本 loop 跑完会再攒再处理，直到缓冲空才退出。
     用「截止时刻不断被推后」轮询、不 cancel——cancel 会打断正在跑的 run_collect。"""
     loop = asyncio.get_event_loop()
@@ -234,20 +246,20 @@ async def _flush_loop(puid: str):
             # 等防抖：截止时刻被新消息不断推后，就一直等到它不再往后挪
             while True:
                 now = loop.time()
-                dl = _user_deadline.get(puid, now)
+                dl = _user_deadline.get(key, now)
                 if now >= dl:
                     break
                 await asyncio.sleep(dl - now)
-            lock = _user_locks.setdefault(puid, asyncio.Lock())
+            lock = _user_locks.setdefault(key, asyncio.Lock())
             async with lock:
-                batch = _user_buffers.pop(puid, [])
+                batch = _user_buffers.pop(key, [])
                 if not batch:
-                    _user_deadline.pop(puid, None)
-                    _user_flush.pop(puid, None)
+                    _user_deadline.pop(key, None)
+                    _user_flush.pop(key, None)
                     return
                 merged = _merge_payloads([p for _, p in batch])
                 rep_msg_id = batch[-1][0]
-                async with _run_sem:     # 多用户同时活跃时，跑 agent 的全局并发上限
+                async with _run_sem:     # 多会话同时活跃时，跑 agent 的全局并发上限
                     try:
                         await handle(rep_msg_id, merged)
                     except Exception as e:
@@ -256,11 +268,11 @@ async def _flush_loop(puid: str):
                         for mid, _ in batch:
                             await R.ack(STREAM, GROUP, mid)
     finally:
-        _user_flush.pop(puid, None)
+        _user_flush.pop(key, None)
 
 
 async def _dispatch(msg_id: str, payload: dict):
-    """幂等去重 → 投入「防抖缓冲」（不立即处理）。同一用户 1s 内连发的消息攒成一轮、只回一次。"""
+    """幂等去重 → 投入「防抖缓冲」（不立即处理）。同一会话 1s 内连发的消息攒成一轮、只回一次。"""
     # 幂等：同一 stream 条目被 claim_stale（60s）重投时跳过，防重复（在投缓冲前就丢）
     try:
         fresh = await R.get_redis().set(f"imseen:{msg_id}", "1", ex=3600, nx=True)
@@ -269,16 +281,19 @@ async def _dispatch(msg_id: str, payload: dict):
     if not fresh:
         await R.ack(STREAM, GROUP, msg_id)
         return
-    puid = payload.get("platform_user_id") or msg_id
+    key = conversation_key(payload)
+    if not key.scope_id:
+        # 路由字段缺失（理论上不该发生）：退化成按 msg_id 各自成轮，不合并、不跟别的会话共用锁。
+        key = ImConversationKey(key.platform, key.bot_id, key.chat_type, msg_id)
     # 投缓冲 + 把截止时刻推后；**不在这里 ack**，留到 flush（崩了未 ack → claim_stale 60s 重投兜底）
-    _user_buffers.setdefault(puid, []).append((msg_id, payload))
+    _user_buffers.setdefault(key, []).append((msg_id, payload))
     has_text = bool((payload.get("text") or "").strip())   # 这条带文字 = 短窗口；纯附件 = 长窗口等指令
     window = DEBOUNCE_SEC if has_text else DEBOUNCE_ATT_SEC
-    _user_deadline[puid] = asyncio.get_event_loop().time() + window
-    t = _user_flush.get(puid)
+    _user_deadline[key] = asyncio.get_event_loop().time() + window
+    t = _user_flush.get(key)
     if t is None or t.done():
-        nt = asyncio.create_task(_flush_loop(puid))
-        _user_flush[puid] = nt
+        nt = asyncio.create_task(_flush_loop(key))
+        _user_flush[key] = nt
         _flush_tasks.add(nt)
         nt.add_done_callback(_flush_tasks.discard)
 

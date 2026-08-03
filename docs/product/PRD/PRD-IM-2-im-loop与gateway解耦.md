@@ -561,13 +561,14 @@ Phase 4 收口：owner 绑定、身份协议、shortcut、出站能力门禁和�
 按以下顺序执行，任一步骤的权限或会话验收失败，都不得进入下一步：
 
 1. **先修复会话作用域**
-   - 新增不可变的 `ImConversationKey(platform, bot_id, chat_type, scope_id)`。
-   - worker 的防抖 buffer、串行锁、deadline、flush task 和并发状态全部使用该 key。
-   - `SessionRoute`、Redis session key 和数据库会话查询统一包含 `platform + bot_id + chat_type + scope_id`。
-   - 设计旧 Redis key 的平滑失效策略，不把旧会话错误迁移到新作用域。
+   - ✅ 新增不可变的 `ImConversationKey(platform, bot_id, chat_type, scope_id)`，及从原始 payload 直接推导的 `conversation_key()`（`agent/im/session.py`）。
+   - ✅ worker 的防抖 buffer（`_user_buffers`）、串行锁（`_user_locks`）、deadline（`_user_deadline`）、flush task（`_user_flush`）已全部改用该 key；补充回归测试 `tests/test_im_conversation_key.py`（跨群、跨 bot、群聊/私聊分别不共享 key）。
+   - ✅ `SessionRoute` 和 Redis session key（`imsession:{platform}:{bot_id}:{scope_id}`）已补齐 `bot_id`。
+   - ✅ **数据库会话查询已包含 `bot_id`**：`ConversationSession.bot_id` 与 `session_scope_filters()`/`get_or_create_session()` 已按 `source + bot_id + chat_id` 隔离；本仓库采用重建表策略（见 `app/models/__init__.py` 顶部注释），部署时需按现有流程重建 schema。私聊 owner-session 绑定也带 Bot 作用域，避免多个同平台 Bot 共用 Redis 绑定。
+   - ✅ 旧 Redis key 平滑失效：key 格式从 `imsession:{platform}:{scope_id}` 变为 `imsession:{platform}:{bot_id}:{scope_id}`，新代码不会读到旧格式 key，旧 key 不主动清理、靠原有 12 小时 TTL 自然过期，不做跨格式迁移。
 
 2. **修复平台协议归一化**
-   - `PlatformMessage.from_payload()` 统一处理微信群 ID，不在 worker 中添加平台分支。
+   - `PlatformMessage.from_payload()` 统一处理微信群 ID，不在 worker 中添加平台分支；QQ 群事件若同时提供 `user_openid` 与 `member_openid`，优先沿用绑定使用的 `user_openid`，避免同一发言人的 owner 身份在私聊/群聊之间断裂。
    - 为 QQ、飞书、微信补齐私聊/群聊、同用户跨群、同群多人和多 Bot 测试。
 
 3. **补齐身份安全边界**

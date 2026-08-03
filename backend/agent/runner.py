@@ -180,7 +180,8 @@ def _with_quoted_context(message: str, quoted_text: str | None) -> str:
 
 
 async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str,
-                                source: str, chat_id: str | None) -> str:
+                                source: str, chat_id: str | None,
+                                bot_id: str | None = None) -> str:
     """IM 新会话开场的「续接桥」：IM 会话是 12h 滑动 TTL，过期会起一条新空会话，咕咕会丢掉
     上一条的上下文（「没续上之前的聊天」根因）。这里趁 db 还开着补两档：
       A 档（总给）：一行「上一条对话」指针，带 session id —— 让模型（尤其 mimo）知道去
@@ -193,7 +194,7 @@ async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str,
     query = select(ConversationSession).where(
         ConversationSession.user_id == user_id,
         ConversationSession.id != current_session_id,
-        *session_scope_filters(ConversationSession, source, chat_id),
+        *session_scope_filters(ConversationSession, source, chat_id, bot_id),
     )
     prev = (await db.execute(
         query
@@ -287,6 +288,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                                    files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None),
                                    platform_user_id=req.platform_user_id,
                                    platform_user_name=req.platform_user_name,
+                                   platform_bot_user_id=req.platform_bot_user_id,
                                    chat_type="group" if req.chat_id else "c2c" if req.source in IM_SOURCES else None))
         await db.commit()
 
@@ -301,7 +303,13 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         if is_new_session and context_policy.allow_continuity_bridge:
             try:
                 im_bridge = await _im_continuity_bridge(
-                    db, user_id, session_id, req.message, req.source, req.chat_id
+                    db,
+                    user_id,
+                    session_id,
+                    req.message,
+                    req.source,
+                    req.chat_id,
+                    req.platform_bot_id,
                 )
             except Exception:
                 im_bridge = ""
@@ -329,7 +337,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                              appended=[{"role": "user", "text": req.message, "files": attach_cards or None,
                                        "quoted_text": getattr(req, "quoted_text", None),
                                        "platform_user_id": req.platform_user_id,
-                                       "platform_user_name": req.platform_user_name}])
+                                       "platform_user_name": req.platform_user_name,
+                                       "platform_bot_user_id": req.platform_bot_user_id}])
     except Exception:
         pass
 
@@ -517,6 +526,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                                    files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None),
                                    platform_user_id=req.platform_user_id,
                                    platform_user_name=req.platform_user_name,
+                                   platform_bot_user_id=req.platform_bot_user_id,
                                    chat_type="group" if req.chat_id else "c2c" if req.source in IM_SOURCES else None))
         await db.commit()
 
@@ -529,7 +539,13 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         if is_new_session and context_policy.allow_continuity_bridge:
             try:
                 im_bridge = await _im_continuity_bridge(
-                    db, user_id, session_id, req.message, req.source, req.chat_id
+                    db,
+                    user_id,
+                    session_id,
+                    req.message,
+                    req.source,
+                    req.chat_id,
+                    req.platform_bot_id,
                 )
             except Exception:
                 im_bridge = ""

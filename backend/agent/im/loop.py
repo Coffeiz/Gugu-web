@@ -237,11 +237,20 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
         db_session._build_engine()
     async with db_session._SessionLocal() as db:
         session = await db.get(ConversationSession, session_id) if session_id else None
+        if session is not None and (
+            session.user_id != request.user_id
+            or session.source != (request.source or "qqbot")
+            or session.bot_id != request.platform_bot_id
+            or session.chat_id != request.chat_id
+        ):
+            # Redis 路由异常或旧 key 不得把消息写进另一个 Bot/群的会话。
+            session = None
         if session is None:
             session = ConversationSession(
                 user_id=request.user_id,
                 title=(request.message[:50] or "群聊记录"),
                 source=request.source or "qqbot",
+                bot_id=request.platform_bot_id,
                 chat_id=request.chat_id,
                 chat_type=("group" if request.chat_id else
                            "c2c" if request.source in IM_SOURCES else None),
@@ -255,6 +264,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
             quoted_text=request.quoted_text,
             platform_user_id=request.platform_user_id,
             platform_user_name=request.platform_user_name,
+            platform_bot_user_id=request.platform_bot_user_id,
             chat_type=("group" if request.chat_id else
                        "c2c" if request.source in IM_SOURCES else None),
         ))
@@ -273,6 +283,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                     "text": request.message,
                     "platform_user_id": request.platform_user_id,
                     "platform_user_name": request.platform_user_name,
+                    "platform_bot_user_id": request.platform_bot_user_id,
                     "chat_type": "group",
                 }],
             )
@@ -293,6 +304,7 @@ def should_record_passive_group(request: AgentRequest, payload: dict) -> bool:
 
 async def persist_im_session(
     platform: str,
+    bot_id: str,
     scope_id: str,
     session_id: Optional[int],
     *,
@@ -300,13 +312,13 @@ async def persist_im_session(
 ) -> None:
     """写回 IM 路由 session，并在群聊路径统一执行消息窗口裁剪。"""
     if group:
-        await set_session(platform, scope_id, session_id)
+        await set_session(platform, bot_id, scope_id, session_id)
         if session_id:
             await trim_group_messages(session_id)
         return
     # 私聊读取的是 owner-session 绑定，不能再写入旧的通用 imsession key。
     # 这里由 session 记录反查其用户归属，避免从平台字段重新推断 owner。
-    await bind_session_by_id(platform, scope_id, session_id)
+    await bind_session_by_id(platform, scope_id, session_id, bot_id)
 
 
 # 旧测试和外部诊断脚本使用的名称，实际实现归属 IM Loop。
@@ -341,6 +353,7 @@ async def prepare_message(payload: dict, platform_message: PlatformMessage) -> O
             platform_message.platform or "worker",
             platform_message.sender.id or payload.get("platform_user_id") or "",
             payload.get("session_id"),
+            route.bot_id,
         )
     return await prepare_request(
         platform_message,
@@ -415,7 +428,9 @@ async def prepare_request(
         session_id=session_id,
         chat_id=platform_message.chat.id if chat_type == "group" else None,
         platform_user_id=platform_user_id,
+        platform_bot_id=route.bot_id,
         platform_user_name=payload.get("platform_user_name"),
+        platform_bot_user_id=payload.get("platform_bot_user_id"),
         source=platform,
         attachments=payload.get("attachments") or [],
         quoted_text=payload.get("quoted_text"),
@@ -424,3 +439,91 @@ async def prepare_request(
         actor_context=actor,
     )
     return PreparedImRequest(request, actor, role, allowed_tool_names, route, session_id)
+
+
+async def dispatch_im_message(payload: dict):
+    """处理一条已入队 IM 消息的完整业务编排。
+
+    Redis worker 只负责消费、去重、防抖和生命周期；身份、权限、被动记录、
+    shortcut、模型执行、session 写回和出站回复均在这里完成，三平台共用同一条
+    可测试的 IM Loop。
+    """
+    from agent import logsafe, trace
+    from agent.im.replies import send_agent_response, send_stream_with_fallback, send_text
+
+    platform_message = PlatformMessage.from_payload(payload)
+    payload = platform_message.to_payload(payload)
+    prepared = await prepare_message(payload, platform_message)
+    if prepared is None:
+        await send_text(payload, "你好，我是咕咕 🐦\n这个机器人还没和咕咕账号关联好，去咕咕「个人设置 → 接入咕咕」重新扫码连接一下吧。")
+        return None
+
+    req = prepared.request
+    user_id = req.user_id
+    platform = prepared.actor.platform
+    puid = prepared.actor.platform_user_id
+    route = prepared.session_route
+    session_scope = route.scope_id
+    req.session_id = prepared.session_id
+    trace_id = trace.set_trace(payload.get("trace_id"))
+
+    if should_record_passive_group(req, payload):
+        passive_sid = await record_passive_im_message(req, prepared.session_id)
+        await persist_im_session(platform, route.bot_id, session_scope, passive_sid, group=True)
+        print(f"[im-loop] {platform} 群聊普通消息已记录(session={passive_sid} trace={trace_id})", flush=True)
+        return None
+
+    shortcut = await decide_im_shortcut(
+        platform,
+        puid or "",
+        req.message,
+        has_attachments=bool(req.attachments),
+    )
+    if shortcut["action"] == "drop":
+        return None
+    if shortcut["action"] in ("reply", "cancel"):
+        await apply_im_shortcut_cancel(platform, puid or "", shortcut)
+        await send_text(payload, shortcut["reply"])
+        await finalize_im_response(platform, puid or "", shortcut["action"] == "cancel", shortcut["reply"])
+        return None
+
+    cmd_reply = await handle_im_command(user_id, req.message)
+    if cmd_reply is not None:
+        await send_text(payload, cmd_reply)
+        return None
+
+    bind_im_context(req, payload)
+    await remember_im_reach(user_id, platform, payload, puid)
+    activity = await start_im_activity(payload, platform, puid)
+    agent_loop = select_loop(req)
+    try:
+        if platform == "feishu":
+            token_iter = agent_loop.run_stream(req)
+            _stream_sent, resp, reply_text = await send_stream_with_fallback(payload, token_iter)
+        else:
+            resp = await agent_loop.run_collect(req)
+            reply_text = ""
+    finally:
+        await finish_im_activity(activity)
+
+    await persist_im_session(
+        platform,
+        route.bot_id,
+        session_scope,
+        resp.session_id,
+        group=bool(payload.get("chat_type") == "group"),
+    )
+    if resp.cancelled:
+        await finalize_im_response(platform, puid, True, "")
+        return resp
+
+    if platform != "feishu" or resp.files:
+        reply_text = await send_agent_response(payload, resp)
+
+    await finalize_im_response(platform, puid, False, reply_text)
+    print(
+        f"[im-loop] {platform} 回复(session={resp.session_id} trace={trace_id}) "
+        f"len={len(reply_text)} fp={logsafe.fingerprint(reply_text)}",
+        flush=True,
+    )
+    return resp

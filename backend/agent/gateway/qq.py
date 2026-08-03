@@ -369,6 +369,40 @@ def _qq_message_mentions_bot(data: Dict[str, Any], event_type: str) -> bool:
     return any(isinstance(item, dict) and item.get("bot") is True for item in mentions)
 
 
+def _qq_bot_mention_id(data: Dict[str, Any], event_type: str) -> str:
+    """提取被 @ 的机器人平台 ID，不把未知 mention 猜成机器人。"""
+    mentions = data.get("mentions")
+    if isinstance(mentions, list):
+        for item in mentions:
+            if not isinstance(item, dict) or item.get("bot") is not True:
+                continue
+            for key in ("id", "user_openid", "member_openid", "openid"):
+                value = item.get(key)
+                if value:
+                    return str(value)
+    if event_type == "GROUP_AT_MESSAGE_CREATE":
+        match = re.search(r"<@!?([^>]+)>", str(data.get("content") or ""))
+        if match:
+            return match.group(1)
+    return ""
+
+
+async def _remember_bot_platform_user_id(channel_id: str, bot_platform_user_id: str) -> None:
+    """首次从 QQ mention 事件取得 Bot 身份后持久化，供历史展示使用。"""
+    if not channel_id or not bot_platform_user_id:
+        return
+    import app.db.session as _sess
+    if _sess._engine is None:
+        _sess._build_engine()
+    from app.models import UserBot
+    async with _sess._SessionLocal() as db:
+        bot = await db.get(UserBot, int(channel_id))
+        if not bot or bot.bot_platform_user_id == bot_platform_user_id:
+            return
+        bot.bot_platform_user_id = bot_platform_user_id
+        await db.commit()
+
+
 async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, msg_id: str) -> None:
     try:
         if chat_type == "group":
@@ -406,13 +440,23 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
             return
         chat_type = "group"
         author = data.get("author") or {}
-        sender_id = author.get("member_openid") or author.get("id") or ""
+        # QQ 群事件在新协议里可能同时提供 user_openid 与 member_openid。
+        # 绑定验证码使用 C2C 的 user_openid，优先采用同一字段才能让 owner
+        # 在私聊绑定后在群里 @ 咕咕时仍解析为 owner；旧事件没有它时再退回 member_openid。
+        sender_id = author.get("user_openid") or author.get("member_openid") or author.get("id") or ""
         sender_name = str(author.get("username") or author.get("nickname") or "").strip()
         chat_id = data.get("group_openid") or ""
     else:
         return
     if not sender_id:
         return
+    bot_platform_user_id = _qq_bot_mention_id(data, event_type)
+    if bot_platform_user_id:
+        try:
+            await _remember_bot_platform_user_id(channel_id, bot_platform_user_id)
+        except Exception as exc:
+            diag_log("agent.gateway.qq.remember_bot_platform_user_id", exc)
+    # 成员 mention 保留原始 ID；展示层按会话内最新 username 解析，避免改名后被旧昵称冻结。
     text = (data.get("content") or "").strip()
     msg_id = data.get("id") or ""
     if chat_type == "c2c":
@@ -459,6 +503,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         "owner_user_id": owner,
         "platform_user_id": sender_id,
         "platform_user_name": sender_name or None,
+        "platform_bot_user_id": bot_platform_user_id or None,
         "message_id": msg_id,
         "chat_type": chat_type,
         "text": text,

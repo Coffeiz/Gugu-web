@@ -17,8 +17,10 @@ class AgentRequest:
     user_name: str
     session_id: Optional[int] = None
     chat_id: Optional[str] = None       # IM 群会话标识；网页/私聊为空
+    platform_bot_id: Optional[str] = None  # 当前 IM Bot/频道标识（ConversationSession 的作用域）
     platform_user_id: Optional[str] = None  # 当前 IM 发言人的平台身份标识
     platform_user_name: Optional[str] = None  # 当前 IM 发言人的平台显示名，仅用于称呼
+    platform_bot_user_id: Optional[str] = None  # 当前 IM Bot 的平台身份标识，用于 mention 展示
     source: str = "web"           # "web" | "qqbot" | "openclaw"
     attachments: list = field(default_factory=list)   # 聊天附件 attach_id（仅 web）
     greeting: Optional[str] = None   # 新会话首条用户消息携带的「已显示默认问候」，落为本会话首条 assistant 消息（仅 web）
