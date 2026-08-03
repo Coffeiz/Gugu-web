@@ -1,4 +1,4 @@
-from agent.adapters import qq
+from agent.gateway import qq
 
 
 async def _fake_next_seq(msg_id):

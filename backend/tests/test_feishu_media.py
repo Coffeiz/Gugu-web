@@ -1,7 +1,7 @@
 import json
 from types import SimpleNamespace
 
-from agent.adapters import feishu
+from agent.gateway import feishu
 
 
 def _msg(message_type: str, content: dict, message_id: str = "om_1"):

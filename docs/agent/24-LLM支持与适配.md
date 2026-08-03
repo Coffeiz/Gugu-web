@@ -1,7 +1,7 @@
 # LLM 支持清单与适配优化
 
 > 咕咕当前支持的 LLM 厂商、各自走哪套 API 格式、做了哪些**针对性适配/优化**、以及踩过的坑。
-> 加新模型 / 排查模型相关问题先看这份。相关：[[03-可靠性.md]]、[[31-多步执行与防停顿.md]]、[[00-总览.md]]。
+> 加新模型 / 排查模型相关问题先看这份。相关：[[03-可靠性.md]]、[[33-多步执行与防停顿.md]]、[[00-总览.md]]。
 > 代码锚点：模型路由 `agent/llm_select.py`；调用循环 `agent/core.py`（`_run_anthropic` / `_run_openai`）；配置 `app/core/config.py`；后台 `app/api/v1/agent_admin.py` + `views/Admin/Agent/index.vue`。
 
 ---
@@ -62,7 +62,7 @@
 - **system 缓存标记**：去掉 builder 的 `CACHE_BREAK`（OpenAI 通道不支持 cache_control）。
 
 #### 全路共用的可靠性守卫（`agent/core.py`）
-真实性/防停顿守卫，与厂商无关：`_looks_like_narration`（假装已做完）、`_announces_intent`（说要做没动手，0.14.2）、`_is_decision_dodge`（擅自不做）、自我核实闭环（`did_mutate`/`verify_queried`）。详见 [[03-可靠性.md]]、[[31-多步执行与防停顿.md]]。
+真实性/防停顿守卫，与厂商无关：`_looks_like_narration`（假装已做完）、`_announces_intent`（说要做没动手，0.14.2）、`_is_decision_dodge`（擅自不做）、自我核实闭环（`did_mutate`/`verify_queried`）。详见 [[03-可靠性.md]]、[[33-多步执行与防停顿.md]]。
 
 ---
 
@@ -70,7 +70,7 @@
 
 #### MiniMax（`MiniMax-M3`，Anthropic 格式）—— 当前主力强模型
 - **优化**：prompt 缓存（稳定前缀 + 滚动断点）、thinking blocks 回传、`sanitize_messages`、流式抽风重试。
-- **实测**：复杂长任务能链式+同轮并行调 6 工具、可靠 finish、零停顿（[[31-多步执行与防停顿.md]] §7.5）。
+- **实测**：复杂长任务能链式+同轮并行调 6 工具、可靠 finish、零停顿（[[33-多步执行与防停顿.md]] §7.5）。
 - **坑**：历史里非标字段 / 不配对工具块 → 严格校验 `400`（已由 sanitize 兜）。
 
 #### Anthropic / Claude（`claude-opus-4-8`，Anthropic 格式）

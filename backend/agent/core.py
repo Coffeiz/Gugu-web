@@ -5,7 +5,7 @@
 两条逐字复制的循环（`_run_anthropic`/`_run_openai`），现在收成一条共享循环，"怎么跟
 这个 provider 打交道"（流式事件形状/工具参数解析/历史消息格式/缓存记账）收进
 `agent/loop_drivers.py` 的 `AnthropicDriver`/`OpenAIDriver`。`_run_anthropic`/
-`_run_openai` 两个方法名和外部签名原样保留（`runner.py`/`adapters/web.py` 等调用点、
+`_run_openai` 两个方法名和外部签名原样保留（`runner.py`/`gateway/web.py` 等调用点、
 以及 `tests/test_core_loop_characterization.py` 都按名字直接调用它们），内部只是转发
 给 `_run_loop`。
 """

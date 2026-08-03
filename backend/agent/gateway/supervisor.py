@@ -8,7 +8,7 @@ lark / botpy 的连接都没有 stop()、单连接断不掉 → 进程级管理�
 崩溃下轮自动重启。
 
 运行（从 backend/ 跑加载 .env）：
-    .venv/bin/python -m agent.adapters.supervisor
+    .venv/bin/python -m agent.gateway.supervisor
 """
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ import time
 POLL_SEC = 5
 # 平台 → 网关模块
 PLATFORM_MODULE = {
-    "feishu": "agent.adapters.feishu",
-    "qqbot":  "agent.adapters.qq",
-    "wechat": "agent.adapters.wechat",
+    "feishu": "agent.gateway.feishu",
+    "qqbot":  "agent.gateway.qq",
+    "wechat": "agent.gateway.wechat",
 }
 _procs: dict[str, subprocess.Popen] = {}
 _procs_spec: dict[str, dict] = {}

@@ -131,8 +131,8 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
         if not text:
             return
         imctx.mark_announced()   # 先标记再发送：即便发送失败也别在本 session 里反复重试打扰用户
-        import worker
-        await worker._send(payload, text)
+        from agent.im.replies import send_text
+        await send_text(payload, text)
     except Exception as e:
         print(f"[skill] 慢工具进度声明发送失败（不影响工具执行）: {type(e).__name__}: {e}", flush=True)
 
@@ -253,6 +253,14 @@ class SkillRegistry:
         其余字段序列化回给 LLM。每次工具调用自开一个数据库会话。
         """
         t0 = time.monotonic()
+        from agent import imctx
+        from agent.im.permissions import can_use_tool
+        current_im = imctx.get_im()
+        allowed_tool_names = current_im.get("allowed_tool_names") if current_im else None
+        if not can_use_tool(name, allowed_tool_names):
+            _log_traj(name, user_id, args, False, "当前群聊身份没有使用该工具的权限", t0)
+            return json.dumps({"error": "当前群聊身份没有使用该工具的权限"}, ensure_ascii=False), None
+
         tool = self._tools.get(name)
         if tool is None:
             _log_traj(name, user_id, args, False, "未知工具", t0)

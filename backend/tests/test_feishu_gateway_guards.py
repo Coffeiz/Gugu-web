@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import json
 
-from agent.adapters import feishu
+from agent.gateway import feishu
 
 
 def _feishu_event(message_id: str = "om_test", app_id: str = "cli_expected", age_ms: int = 0):

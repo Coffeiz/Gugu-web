@@ -27,6 +27,7 @@
 - **项目看板 Runtime 性能基线**（`views/Projects/`）：保留 7.2 的对象引用稳定、Owner 订阅收口和 Runtime 布局测量优化；经过 4× CPU 降速 trace 对比，pointerup 平均处理时间较优化前减少约 42ms，端到端 EventTiming 平均减少约 31ms。
 - **CI 依赖安装可复现**（`frontend/package.json`、`frontend/package-lock.json`）：补齐 Vite/Vitest 所需的 esbuild 0.28.1 及平台包，使严格的 `npm ci` 能完成安装。
 - **文件 API service 边界收口**（`backend/app/api/v1/files.py`、`backend/app/services/files/`）：将文件查询、媒体预览、上传校验、下载和响应组装迁入 service 层，路由保留鉴权、事务和 HTTP 响应协调。
+- **文件库入口职责收口**（`frontend/src/views/Files/index.vue`、`frontend/src/composables/files/`）：将存储统计、文件夹展示与动作、单文件下载/删除移入独立 composable，入口继续保留拖拽、回收站和菜单等页面适配协调。
 
 ### 修复
 

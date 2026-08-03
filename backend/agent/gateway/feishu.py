@@ -10,7 +10,7 @@ lark 无 stop()，单连接断不掉 → 一个 bot 一个子进程，由 superv
 
 启动（由 supervisor 拉起，注入 FEISHU_* 环境变量）：
     FEISHU_BOT_ID=.. FEISHU_APP_ID=.. FEISHU_APP_SECRET=.. FEISHU_OWNER=.. \
-      .venv/bin/python -m agent.adapters.feishu
+      .venv/bin/python -m agent.gateway.feishu
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def _download_and_stage(client, message_id: str, owner: str, key: str, rtype: st
     """下载单个飞书资源（图片/文件/视频共用）→ 转码（语音）→ 暂存。
     返回 (fallback 文本, attach_id)；成功时 fallback 为空串，失败时 attach_id 为空串。"""
     from lark_oapi.api.im.v1 import GetMessageResourceRequest
-    from app.core import chat_attach
+    from agent.im import files as im_attachments
     if not key:
         noun = "语音" if is_voice else "文件"
         return (f"[用户发来一个{noun}，但没取到资源]", "")
@@ -53,7 +53,7 @@ def _download_and_stage(client, message_id: str, owner: str, key: str, rtype: st
         resp = client.im.v1.message_resource.get(req)
         data = resp.file.read() if (resp.success() and resp.file) else b""
     except Exception as e:
-        diag_log("agent.adapters.feishu.download_resource", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.download_resource", e)   # 原始 → 受限诊断出口
         print(f"[feishu] 下载资源出错: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         data = b""
     if not data:
@@ -70,13 +70,13 @@ def _download_and_stage(client, message_id: str, owner: str, key: str, rtype: st
         duration = media_transcode.probe_duration(data, ext)
     try:
         if is_voice:
-            aid = chat_attach.stage_voice_sync(
+            aid = im_attachments.stage_voice_sync(
                 owner, name, ext, "audio/mpeg" if ext == "mp3" else None, data,
                 duration=duration, platform="feishu").get("attach_id", "")
         else:
-            aid = chat_attach.stage_sync(owner, name, ext, None, data, platform="feishu").get("attach_id", "")
+            aid = im_attachments.stage_sync(owner, name, ext, None, data, platform="feishu").get("attach_id", "")
     except Exception as e:
-        diag_log("agent.adapters.feishu.stage_media", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.stage_media", e)   # 原始 → 受限诊断出口
         print(f"[feishu] 暂存失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         aid = ""
     if aid:
@@ -229,7 +229,7 @@ def _fetch_quoted_text(client, parent_id: str) -> str | None:
             return "[图文消息]"
         return {"image": "[图片消息]", "file": "[文件消息]", "audio": "[语音消息]", "media": "[视频消息]"}.get(m.msg_type, "[非文字消息]")
     except Exception as e:
-        diag_log("agent.adapters.feishu.fetch_quoted_text", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.fetch_quoted_text", e)   # 原始 → 受限诊断出口
         print(f"[feishu] 查引用原消息失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return None
 
@@ -284,7 +284,7 @@ def _do_react(client, message_id: str, emoji_type: str) -> bool:
             return False
         return True
     except Exception as e:
-        diag_log("agent.adapters.feishu.reaction", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.reaction", e)   # 原始 → 受限诊断出口
         print(f"[feishu] reaction 出错: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
 
@@ -300,36 +300,6 @@ async def react(channel_id: str, message_id: str, emoji_type: str) -> bool:
     if channel_id not in _clients:
         _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
     return await asyncio.to_thread(_do_react, _clients[channel_id], message_id, emoji_type)
-
-
-# 「秒回」：网关收到即用关键词快速判一下（纯本地、零网络），赶在 LLM 之前发出短文字 + 表情。
-# 每条规则 = (表情, 一组短回话术, 关键词)。按从上到下优先命中；都不中走 _DEFAULT。
-# 默认表情用 OnIt(👀「在看」) 而非 THUMBSUP——配合「在看~」更连贯，也避免满屏👍。
-import random as _random
-
-_QUICK_RULES = [
-    ("LAUGH",    ("哈哈", "草", "笑死了", "哈哈哈"),       ("哈哈", "23333", "笑死", "草", "lol", "hhh", "😂", "🤣")),
-    ("THANKS",   ("客气啦~", "嗨这没事", "应该的~"),        ("谢谢", "多谢", "感谢", "辛苦", "thx", "thanks", "🙏")),
-    ("DONE",     ("漂亮~", "棒", "搞定收工"),               ("搞定", "完成", "好了", "弄好", "done", "成了", "通过了")),
-    ("WOW",      ("哇厉害", "牛啊", "可以的~"),             ("厉害", "牛", "强", "哇", "wow", "卧槽", "666", "绝了")),
-    ("CRY",      ("唉别难过", "抱抱", "心疼一下"),           ("难过", "可惜", "唉", "崩溃", "麻了", "心疼", "emo", "😭", "😢")),
-    ("PARTY",    ("恭喜恭喜!", "庆祝一下~", "太棒了!"),      ("恭喜", "庆祝", "上线", "发布", "纪念", "🎉")),
-    ("OnIt",     ("嗨~", "在呢", "诶到~"),                  ("你好", "在吗", "在不在", "早", "晚上好", "中午好", "hi", "hello")),
-    ("THINKING", ("让我想想哈~", "我看看哈", "稍等想一下"),   ("为什么", "怎么", "如何", "?", "？", "吗", "呢", "请问", "能不能", "可不可以")),
-]
-_DEFAULT = ("OnIt", ("在看~", "收到,马上", "看看哈~", "嗯嗯我瞧瞧"))
-_MEDIA_ACK = ("收到,我看看~", "文件到了,瞅瞅", "收到啦~")
-
-
-def _quick_react(text: str, has_media: bool) -> tuple[str, str]:
-    """返回 (秒回短文字, 表情 emoji_type)。纯关键词，零网络，赶在 LLM 之前。"""
-    if has_media:
-        return _random.choice(_MEDIA_ACK), "OnIt"
-    t = (text or "").lower()
-    for emoji, acks, kws in _QUICK_RULES:
-        if any(k in t for k in kws):
-            return _random.choice(acks), emoji
-    return _random.choice(_DEFAULT[1]), _DEFAULT[0]
 
 
 def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: str = ""):
@@ -389,31 +359,29 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
         print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text_len={len(text)} "
               f"fp={logsafe.fingerprint(text)} att={len(attachments)} quoted={bool(msg.parent_id)} trace={tid}", flush=True)
 
-        # Intent Router：纯文本消息先据当前状态判一手——任务进行中的「还在吗/算了/嗯」由网关
-        # 直接处理，不入队（IM 单 worker 顺序消费，忙时它根本看不到队列后面的消息）。带附件一律进主模型。
+        # 秒回表情：赶在入队/生成之前，用关键词快速判一个即时点上（完整回复随后由 worker 发）
+        from agent.im.loop import choose_instant_reaction
+        _, emoji = choose_instant_reaction(text, bool(attachments))
+        _do_react(api_client, msg.message_id, emoji)
+        # 取消是实时控制信号：必须在 Gateway 侧立刻写入 Redis；其他 shortcut 继续入队，
+        # 由 worker 的 IM Loop 统一处理，避免 Gateway 再承担业务回复编排。
         if not attachments:
-            from agent import router, runtime_state as rtstate
-            dec = router.decide(text, rtstate.get_state_sync("feishu", open_id),
-                                rtstate.is_awaiting_sync("feishu", open_id))
-            if dec["action"] == "drop":
-                return
-            if dec["action"] in ("reply", "cancel"):
-                if dec["action"] == "cancel":
-                    rtstate.request_cancel_sync("feishu", open_id)
+            from agent.im.loop import apply_im_shortcut_cancel_sync, decide_im_shortcut_sync
+            dec = decide_im_shortcut_sync("feishu", open_id, text)
+            if dec["action"] == "cancel":
+                apply_im_shortcut_cancel_sync("feishu", open_id, dec)
                 try:
                     _do_send(api_client, msg.chat_id, dec["reply"])
                 except Exception as e:
-                    diag_log("agent.adapters.feishu.short_circuit_reply", e)   # 原始 → 受限诊断出口
-                    print(f"[feishu] 短路回复失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
+                    diag_log("agent.gateway.feishu.cancel_reply", e)
+                    print(f"[feishu] 取消回复失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
                 return
-
-        # 秒回表情：赶在入队/生成之前，用关键词快速判一个即时点上（完整回复随后由 worker 发）
-        _, emoji = _quick_react(text, bool(attachments))
-        _do_react(api_client, msg.message_id, emoji)
         try:
+            from agent.im.models import normalize_payload
+            payload = normalize_payload(payload)
             R.produce_sync(STREAM, payload)
         except Exception as e:
-            diag_log("agent.adapters.feishu.enqueue", e)   # 原始 → 受限诊断出口
+            diag_log("agent.gateway.feishu.enqueue", e)   # 原始 → 受限诊断出口
             print(f"[feishu] 入队失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
     return _on_message
 
@@ -639,7 +607,7 @@ def _do_send_file(client, chat_id: str, data: bytes, name: str, ext: str) -> boo
             return False
         return True
     except Exception as e:
-        diag_log("agent.adapters.feishu.send_file", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.send_file", e)   # 原始 → 受限诊断出口
         print(f"[feishu] 发文件出错: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
 
@@ -728,7 +696,7 @@ async def _get_tenant_token(app_id: str, app_secret: str) -> str:
     if not token or data.get("code", -1) != 0:
         # 上游响应体可能回显请求里的 app_id/app_secret 片段，绝不能拼进异常消息（P2-b §5）；
         # 原始体只进受限诊断出口，异常消息只给通用文案。
-        diag_log_raw("agent.adapters.feishu._get_tenant_token", f"data={data}")
+        diag_log_raw("agent.gateway.feishu._get_tenant_token", f"data={data}")
         raise RuntimeError("飞书 tenant_access_token 获取失败（响应缺 token 字段或 code 非 0）")
     expire = int(data.get("expire", 7200))
     _tenant_token_cache[app_id] = (token, now + expire)
@@ -750,7 +718,7 @@ async def _do_create_card(app_id: str, app_secret: str, text: str) -> str | None
     try:
         token = await _get_tenant_token(app_id, app_secret)
     except Exception as e:
-        diag_log("agent.adapters.feishu.tenant_token", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.tenant_token", e)   # 原始 → 受限诊断出口
         print(f"[feishu] tenant_token 拿失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return None
     body = {"type": "card_json", "data": _make_card_payload(text)}
@@ -764,7 +732,7 @@ async def _do_create_card(app_id: str, app_secret: str, text: str) -> str | None
             )
         data = resp.json()
     except Exception as e:
-        diag_log("agent.adapters.feishu.create_card", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.create_card", e)   # 原始 → 受限诊断出口
         print(f"[feishu] create_card 异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return None
     if data.get("code") != 0:
@@ -791,7 +759,7 @@ async def _do_send_card_message(app_id: str, app_secret: str, receive_id: str,
     try:
         token = await _get_tenant_token(app_id, app_secret)
     except Exception as e:
-        diag_log("agent.adapters.feishu.tenant_token", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.tenant_token", e)   # 原始 → 受限诊断出口
         print(f"[feishu] tenant_token 拿失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     rid_type = "open_id" if str(receive_id).startswith("ou_") else "chat_id"
@@ -810,7 +778,7 @@ async def _do_send_card_message(app_id: str, app_secret: str, receive_id: str,
             )
         data = resp.json()
     except Exception as e:
-        diag_log("agent.adapters.feishu.send_card_message", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.send_card_message", e)   # 原始 → 受限诊断出口
         print(f"[feishu] send_card_message 异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     if data.get("code") != 0:
@@ -837,7 +805,7 @@ async def _do_streaming_update_text(app_id: str, app_secret: str, card_id: str,
     try:
         token = await _get_tenant_token(app_id, app_secret)
     except Exception as e:
-        diag_log("agent.adapters.feishu.tenant_token", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.tenant_token", e)   # 原始 → 受限诊断出口
         print(f"[feishu] tenant_token 拿失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     body = {"content": content, "sequence": sequence, "uuid": uuid}
@@ -852,7 +820,7 @@ async def _do_streaming_update_text(app_id: str, app_secret: str, card_id: str,
             )
         data = resp.json()
     except Exception as e:
-        diag_log("agent.adapters.feishu.streaming_update_text", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.streaming_update_text", e)   # 原始 → 受限诊断出口
         print(f"[feishu] streaming_update_text 异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     if data.get("code") != 0:
@@ -870,7 +838,7 @@ async def _do_finalize_streaming_card(app_id: str, app_secret: str, card_id: str
     try:
         token = await _get_tenant_token(app_id, app_secret)
     except Exception as e:
-        diag_log("agent.adapters.feishu.tenant_token", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.tenant_token", e)   # 原始 → 受限诊断出口
         print(f"[feishu] tenant_token 拿失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     preview = (summary_text or "").strip()
@@ -900,7 +868,7 @@ async def _do_finalize_streaming_card(app_id: str, app_secret: str, card_id: str
             )
         data = resp.json()
     except Exception as e:
-        diag_log("agent.adapters.feishu.finalize_streaming_card", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.finalize_streaming_card", e)   # 原始 → 受限诊断出口
         print(f"[feishu] finalize_streaming_card 异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     if data.get("code") != 0:
@@ -927,7 +895,7 @@ async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str,
     try:
         token = await _get_tenant_token(app_id, app_secret)
     except Exception as e:
-        diag_log("agent.adapters.feishu.tenant_token", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.tenant_token", e)   # 原始 → 受限诊断出口
         print(f"[feishu] tenant_token 拿失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     body = {
@@ -948,7 +916,7 @@ async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str,
             )
         data = resp.json()
     except Exception as e:
-        diag_log("agent.adapters.feishu.update_card", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.update_card", e)   # 原始 → 受限诊断出口
         print(f"[feishu] update_card 异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return False
     if data.get("code") != 0:
@@ -1045,7 +1013,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                                                    sequence=_card_seq[_stream_seq_key],
                                                    uuid=uuid.uuid4().hex)
         except Exception as e:
-            diag_log("agent.adapters.feishu.streaming_update_text", e)   # 原始 → 受限诊断出口
+            diag_log("agent.gateway.feishu.streaming_update_text", e)   # 原始 → 受限诊断出口
             print(f"[feishu] streaming_update_text 异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
             return False
 
@@ -1078,7 +1046,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                 pending_final_text = _stream_fallback_text(payload.text or accumulated, bool(payload.files))
                 break
     except Exception as e:
-        diag_log("agent.adapters.feishu.stream_consume", e)   # 原始 → 受限诊断出口
+        diag_log("agent.gateway.feishu.stream_consume", e)   # 原始 → 受限诊断出口
         print(f"[feishu] 流式消费异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
 
     # 5) 收尾：把最终版（final.text 优先；如果 final 没拿到就用 accumulated）patch 进卡片

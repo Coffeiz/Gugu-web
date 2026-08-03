@@ -38,6 +38,8 @@ def _out(b: UserBot) -> dict:
         "group_chat_enabled": b.group_chat_enabled,
         "group_requires_at": b.group_requires_at,
         "group_read_enabled": b.group_read_enabled,
+        "group_allowed_tools": b.group_allowed_tools or ["web_search"],
+        "owner_bound": bool(b.owner_platform_user_id),
     }
 
 
@@ -76,6 +78,14 @@ async def create_my_bot(
 ):
     if not body.app_id or not body.app_secret:
         raise HTTPException(400, "请填写 AppID 和 AppSecret")
+    existing = (await db.execute(
+        select(UserBot).where(
+            UserBot.user_id == current_user.id,
+            UserBot.platform == "qqbot",
+        )
+    )).scalars().first()
+    if existing:
+        raise HTTPException(409, "每个咕咕账号只能绑定一个 QQ 机器人")
     bot = UserBot(
         user_id=current_user.id, platform="qqbot",
         name=body.name or "我的 QQ 机器人",
@@ -98,6 +108,7 @@ class BotUpdate(BaseModel):
     group_chat_enabled: bool | None = None
     group_requires_at: bool | None = None
     group_read_enabled: bool | None = None
+    group_allowed_tools: list[str] | None = None
 
 
 @router.put("/{bot_id}")
@@ -127,6 +138,11 @@ async def update_my_bot(
         bot.group_requires_at = body.group_requires_at
     if body.group_read_enabled is not None:
         bot.group_read_enabled = body.group_read_enabled
+    if body.group_allowed_tools is not None:
+        unsupported = set(body.group_allowed_tools) - {"web_search", "group_context_search"}
+        if unsupported:
+            raise HTTPException(400, "当前群成员只支持网页搜索和当前群上下文搜索")
+        bot.group_allowed_tools = list(dict.fromkeys(body.group_allowed_tools))
     await db.commit()
     await db.refresh(bot)
     await _touch_supervisor()

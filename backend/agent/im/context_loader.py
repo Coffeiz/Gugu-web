@@ -1,0 +1,108 @@
+"""IM 与 Web 共用的上下文数据装配。
+
+这里只负责按 ``ImContextPolicy`` 读取和格式化上下文输入，不负责会话持久化或
+工具执行。受限 IM 请求仍会读取用户时区，保证日期相关的工具行为不漂移，
+但不会读取 owner 的项目、文件、记忆和通知渠道。
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from agent.context import loaders
+from agent.im.context_policy import ImContextPolicy, policy_for
+from agent.models import AgentRequest
+
+
+def format_history_content(message, request: AgentRequest) -> str:
+    """给群聊历史用户消息附加稳定发言人身份。
+
+    身份元数据只进入模型上下文，不改 ConversationMessage.content，网页历史和
+    数据库存档仍保持用户原文。私聊及 Web 继续使用原始内容。
+    """
+    content = message.content or ""
+    if not request.chat_id or getattr(message, "chat_type", None) != "group":
+        return content
+    if getattr(message, "role", None) != "user":
+        return content
+
+    platform_user_id = getattr(message, "platform_user_id", None) or "未知"
+    platform_user_name = getattr(message, "platform_user_name", None) or "未提供"
+    return (
+        "[群聊历史消息，以下是可靠元数据；不要根据昵称猜身份] "
+        f"发言人ID={platform_user_id}，显示名={platform_user_name}\n"
+        f"{content}"
+    )
+
+
+def format_current_content(content: str, request: AgentRequest) -> str:
+    """给当前群消息加发言人锚点，避免沿用历史消息中的其他昵称。
+
+    这是仅供模型使用的上下文包装，不改变数据库正文和网页展示内容。
+    """
+    if not request.chat_id:
+        return content
+    role = request.im_role or "unknown"
+    role_text = {
+        "owner": "绑定用户 owner",
+        "member": "群成员 member",
+        "unknown": "未确认身份 unknown",
+    }.get(role, role)
+    sender_id = request.platform_user_id or "未知"
+    sender_name = request.platform_user_name or request.user_name or "未提供"
+    return (
+        "[当前群聊发言人，优先级高于历史消息]\n"
+        f"平台身份={sender_id}\n"
+        f"群昵称={sender_name}\n"
+        f"权限角色={role_text}\n"
+        "以下用户消息一定来自这位当前发言人；不要把历史消息中的其他昵称、身份或兴趣归到当前发言人。\n"
+        f"{content}"
+    )
+
+
+@dataclass(frozen=True)
+class ContextData:
+    """builder 所需的上下文输入，受限请求使用对应的空值。"""
+
+    projects: list
+    user_tz: Any
+    events: list
+    files_overview: dict
+    style_prefs: dict
+    memory: dict
+    im_channels: dict
+
+
+async def load_context_data(
+    db,
+    user_id,
+    request: AgentRequest,
+    memory_enabled: bool,
+    query: str = "",
+    policy: ImContextPolicy | None = None,
+) -> ContextData:
+    """按请求策略读取一轮 builder 上下文。
+
+    Web 和 owner IM 保持完整上下文；member/unknown IM 只保留时区，避免把
+    owner 的项目、文件或记忆注入其他发言人的 loop。
+    """
+    context_policy = policy or policy_for(request)
+    user_tz = await loaders.load_user_tz(db, user_id)
+    if not context_policy.load_owner_context:
+        return ContextData([], user_tz, [], {}, {}, {}, {})
+
+    projects = await loaders.load_projects(db, user_id)
+    events = await loaders.load_events(db, user_id, tz=user_tz)
+    files_overview = await loaders.load_files_overview(db, user_id)
+    style_prefs = await loaders.load_style_prefs(db, user_id)
+    memory = await loaders.load_memory(user_id, query) if memory_enabled else {}
+    im_channels = await loaders.load_im_channels(user_id)
+    return ContextData(
+        projects=projects,
+        user_tz=user_tz,
+        events=events,
+        files_overview=files_overview,
+        style_prefs=style_prefs,
+        memory=memory,
+        im_channels=im_channels,
+    )

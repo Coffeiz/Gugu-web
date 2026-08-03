@@ -1,9 +1,9 @@
 # IM 接入稳定性与 QQ 自建 WebSocket PRD
 
-> 状态：Phase 1 / Phase 2 / Phase 3 已实现
+> 状态：Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 6 已实现
 > 创建：2026-07-09
 > 最近更新：2026-07-10
-> 关联模块：`backend/agent/adapters/feishu.py`、`backend/agent/adapters/qq.py`、`backend/worker.py`
+> 关联模块：`backend/agent/gateway/feishu.py`、`backend/agent/gateway/qq.py`、`backend/worker.py`
 > 背景参考：QwenPaw `src/qwenpaw/app/channels/{feishu,qq}/channel.py`
 
 ---
@@ -19,7 +19,7 @@
 | 清理：完全移除 botpy | ✅ 已完成 | `_GuguQQClient`（botpy `Client` 子类）、monkey patch、`QQ_RAW_WS_ENABLED` 回退开关、`qq-botpy` 依赖全部删除；本地已 `pip uninstall qq-botpy` 验证 83 个测试仍全过。QQ 群聊 raw event 已在后续联调中继续扩展。 |
 | Phase 4：QQ 群聊普通消息读取 | ✅ 已完成 | 支持 `GROUP_MESSAGE_CREATE`；未 @ 消息可按 bot 开关只记录、不调用模型、不回复；按群共享会话，数据库每群最多保留最近 50 条消息。 |
 | Phase 5：QQ 身份采集与 Bot owner 绑定 | 🔲 未做 | 每个 Gugu 账号只绑定一个 Bot；保存该 Bot 的 owner `sender_id`，不做跨 Bot QQ 身份自动合并。新用户可从首次 C2C 消息绑定，老用户通过 C2C Keyboard 确认；群消息不能自动抢占 owner。 |
-| Phase 6：群成员权限隔离与工具白名单 | 🔲 未做 | 根据 `sender_id` 与 Bot owner 身份解析 `owner/member/unknown`；owner 可使用完整 CUD，其他成员只能聊天和使用白名单工具。网页搜索固定开放，当前群上下文搜索可选，其余用户内容和 CUD 工具保持 owner-only。 |
+| Phase 6：群成员权限隔离与工具白名单 | ✅ 已完成 | 已按当前 Bot 的 `owner_platform_user_id` 解析 `owner/member/unknown`；owner 使用完整工具集，群成员/未知身份只使用 Bot 级白名单，默认开放网页搜索；runner 提供工具集过滤，dispatch 再做服务端拦截；个人设置可切换网页搜索和当前群上下文搜索。当前方案不按群单独绑定 owner，`im_chats` 群级开关作为后续独立需求保留。 |
 | Phase 7：群聊短期/长期记忆 | 🔲 未做 | 计划按 `platform_user_id` 记录群成员信息，并像个人聊天一样做短期、长期记忆压缩；需另行设计权限、可见范围和删除策略。 |
 | 飞书多媒体入站补齐 post/media/interactive | ✅ 已完成 | `post`（图文）拼接段落文字+下载内嵌图片/视频；`media`（视频消息）复用单附件下载逻辑；`interactive`（用户转发卡片）抽取可读文字，不下载卡片内嵌媒体（组件结构太杂，价值有限）。`_fetch_quoted_text` 引用反查同步支持这三种类型的占位/文字提取。 |
 | 修复：引用咕咕自己的流式卡片回复反查失败 | ✅ 已完成并经用户 devserver 实测确认（两轮踩坑才修好） | **devserver 实测踩坑 #1**：不带 `card_msg_content_type=user_card_content` 查询参数时反查拿到的是飞书兼容性占位文案「请升级至最新版本客户端，以查看内容」，不是卡片真实内容；对照 QwenPaw 同款逻辑补上参数后修复。**踩坑 #2**：补完参数后又变成反查出「[空消息]」——`_extract_card_text` 一直只从 `content["elements"]` 起步找文字，但咕咕流式卡片是 CardKit schema 2.0，elements 实际嵌在 `content["body"]["elements"]` 里一层，旧代码假设的是非流式卡片那种扁平 `{"elements":[...]}` 结构。改成直接从整个 `content` 递归（两种结构都能兼容）后才真正修好。**用户实测确认引用文字和引用图片都恢复正常。** |
@@ -307,7 +307,7 @@ QQ 群聊增加独立的“普通消息读取”模式。该模式与“群聊�
 - 正常 @ 回复完成后再清理一次，防止工具往返和 assistant 回复绕过上限。
 - 这只是数据库短期窗口，不代表已经实现群聊长期记忆。
 
-### 5.5 群聊身份权限与工具白名单（🔲 未做，Phase 6）
+### 5.5 群聊身份权限与工具白名单（✅ 已完成，Phase 6）
 
 Phase 6 是独立的权限实施阶段，依赖 Phase 5 已经为当前 Bot 保存 owner `sender_id`，但不负责身份绑定本身。具体身份绑定见下方 Phase 5 说明和 [`IM 用户数据结构`](../../agent/22-IM用户数据结构.md)。
 
@@ -324,7 +324,22 @@ Phase 6 是独立的权限实施阶段，依赖 Phase 5 已经为当前 Bot 保�
   → identity_error，只能聊天，拒绝所有工具
 ```
 
-权限计划不再只新增单个 `owner_platform_user_id` 字段，而是引入 `platform_identities`、`im_chats`、`im_chat_members` 三层数据结构；其中每个 Bot 的 owner 由 `UserBot.user_id` 关联的、经确认的平台身份推导，`users.id` 作为咕咕账号自身的全局 ID，但不用于跨 Bot 自动猜测 QQ 身份。`im_chats` 只负责群开关，`im_chat_members` 记录非 owner 成员状态。具体字段和绑定流程见 [`IM 用户数据结构`](../../agent/22-IM用户数据结构.md)。工具增加访问级别，并在统一 dispatch 层硬拦截：
+当前实现按 Bot 级 owner 和白名单执行：每个 Bot 只有一个 owner，owner 身份不因进入不同群而变化；其他成员仍可聊天，但工具集在 runner 进入模型前过滤，并在统一 dispatch 层再次硬拦截。`users.id` 是咕咕账号自身的全局 ID，不用于跨 Bot 自动猜测 QQ 身份。按群单独开关和成员管理的 `im_chats` / `im_chat_members` 仍作为后续独立需求，不属于本阶段。
+
+#### WebChat 与 IM 身份边界
+
+WebChat 和 IM 使用两套不同的身份语义：
+
+- WebChat 只使用 Gugu 的 `users.id` / `user_name`，不设置或注入 `platform_user_id`、`chat_type`、`im_role`。
+- QQ、飞书、微信才使用当前平台的 `platform_user_id`，并在需要时附带私聊/群聊类型、会话 ID 和权限角色。
+- IM 身份上下文只在当前 IM 会话中参与模型判断，不能用 WebChat 历史推断 QQ 发言人，也不能把 Gugu 用户名当作平台昵称。
+- 原始平台 ID 只供内部身份比较和权限判断，默认不直接展示给用户；`platform_user_name` 只用于当前发言人的自然称呼。
+- username 不能参与身份绑定、权限判断或“是否同一个人”的判断；不同 QQ ID 即使属于同一个 Gugu Bot owner，也必须保留为不同发言人。
+- QQ raw WebSocket 当前可从 `author.username` 获取发言人显示名，并映射为 `platform_user_name`；该字段随消息保存。群名不从正文或昵称猜测，查询不到时不填。
+
+#### 当前已知边界：群聊共享会话与用户资料隔离
+
+群聊短期上下文按 `chat_id=group_openid` 共享，这是为了理解群内连续对话；但 `owner_user_id` 只是 Bot 的 Gugu 账号归属，不等于当前 QQ 发言人。当前实现已用 `platform_user_id` 做 owner/member 权限判断，并把当前 username 作为称呼元数据；后续仍需完成非 owner 对 owner profile、记忆、项目和文件的资料范围隔离，避免共享历史让模型误把其他 QQ 号称为 owner。
 
 ```text
 网页搜索               chat_safe，固定开放
@@ -333,7 +348,9 @@ Phase 6 是独立的权限实施阶段，依赖 Phase 5 已经为当前 Bot 保�
 创建/修改/删除          owner_only + 现有确认门
 ```
 
-设置入口计划放在 `个人设置 → 接入咕咕 → QQ → 群聊工具权限`。实施上先保持现有 Bot 级开关兼容，完成身份和权限解析后再迁移到 `im_chats` 的群级配置，避免在没有身份边界时提前开放工具。
+设置入口已放在 `个人设置 → 接入咕咕 → QQ → 群聊工具权限`，当前允许切换 `web_search` 和 `group_context_search`。群上下文搜索只查询当前群的 `chat_id` 会话，不会读取其他群、私聊或网页历史对话。
+
+已完成：`backend/app/services/im_identity.py` 权限解析、`user_bots.group_allowed_tools` 白名单、runner/dispatch 双层拦截、`group_context_search` 当前群隔离和权限专项测试。后续若需要群级开关，再单独设计 `im_chats`，不改变本阶段的 Bot owner 规则。
 
 ### 5.6 群聊短期/长期记忆（🔲 未做，Phase 7）
 
@@ -351,7 +368,7 @@ Phase 6 是独立的权限实施阶段，依赖 Phase 5 已经为当前 Bot 保�
 
 ### 6.1 飞书
 
-在 `backend/agent/adapters/feishu.py` 中局部增强：
+在 `backend/agent/gateway/feishu.py` 中局部增强：
 
 - 在 `serve()` 或 `_make_on_message()` 闭包中维护 `_processed_message_ids`。
 - 读取 event header 的 `app_id` / `create_time`。
@@ -363,7 +380,7 @@ Phase 6 是独立的权限实施阶段，依赖 Phase 5 已经为当前 Bot 保�
 
 ### 6.2 QQ
 
-建议将 `backend/agent/adapters/qq.py` 分阶段重构，避免一次性替换过大：
+建议将 `backend/agent/gateway/qq.py` 分阶段重构，避免一次性替换过大：
 
 第一阶段：
 
@@ -422,7 +439,7 @@ QQ raw event 转咕咕 payload 时保持现有字段；**2026-07-10 起 `text` �
 }
 ```
 
-飞书/微信同款（`agent/adapters/feishu.py`/`wechat.py`）也是 `text`+`quoted_text` 分开两个字段；微信 iLink 在这次改动前就已经在 payload 里带 `quoted_text` 了，但 `worker.py` 从没把它读进 `AgentRequest`（`AgentRequest` 之前压根没有这个字段），等于微信引用功能一直没真正喂给模型过，这次顺带修了。
+飞书/微信同款（`agent/gateway/feishu.py`/`wechat.py`）也是 `text`+`quoted_text` 分开两个字段；微信 iLink 在这次改动前就已经在 payload 里带 `quoted_text` 了，但 `worker.py` 从没把它读进 `AgentRequest`（`AgentRequest` 之前压根没有这个字段），等于微信引用功能一直没真正喂给模型过，这次顺带修了。
 
 ### 7.2 日志要求
 

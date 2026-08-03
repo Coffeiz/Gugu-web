@@ -13,7 +13,7 @@
 
 启动（由 supervisor 拉起，注入 WECHAT_* 环境变量）：
     WECHAT_BOT_ID=.. WECHAT_BOT_TOKEN=.. WECHAT_BASE_URL=.. WECHAT_OWNER=.. \
-      .venv/bin/python -m agent.adapters.wechat
+      .venv/bin/python -m agent.gateway.wechat
 """
 from __future__ import annotations
 
@@ -26,9 +26,9 @@ import uuid
 from app.core import redis as R
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log, diag_log_raw, redact
-from agent.adapters.wechat_client import ILinkClient, DEFAULT_BASE_URL
-from agent.adapters.wechat_config_cache import WeixinConfigManager
-from agent.adapters.wechat_typing import TypingIndicator
+from agent.gateway.wechat_client import ILinkClient, DEFAULT_BASE_URL
+from agent.gateway.wechat_config_cache import WeixinConfigManager
+from agent.gateway.wechat_typing import TypingIndicator
 
 STREAM = R.IM_INBOUND_STREAM
 _ACK_COOLDOWN = 10.0    # 同一用户「收到啦」秒回冷却：连发多条/多图只 ack 一次，不刷屏（同 qq）
@@ -106,7 +106,7 @@ async def _ingest_wechat_media(items: list, owner: str) -> list:
     语音（type==3）已在 `_handle_msg` 里用自带的 `voice_item.text` 转写文字处理，不会传进这里；
     file 项格式仍未知 → 留日志待补。"""
     import httpx
-    from app.core import chat_attach
+    from agent.im import files as im_attachments
     out: list = []
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as cli:
         for it in items:
@@ -125,13 +125,15 @@ async def _ingest_wechat_media(items: list, owner: str) -> list:
                 raw = (await cli.get(url)).content
                 data = _aes128_ecb_decrypt(raw, bytes.fromhex(aeskey))
                 ext, mime = _img_ext_mime(data)
-                meta = await chat_attach.stage(owner, "微信图片", ext, mime, data, kind="image", platform="wechat")
+                meta = await im_attachments.stage(
+                    owner, "微信图片", ext, mime, data, kind="image", platform="wechat"
+                )
                 out.append(meta["attach_id"])
             except Exception as e:
                 # best-effort：一批消息可能带多张图，单张下载/解密失败（网络抖动/坏数据）不该
                 # 拖垮整批——跳过这一项、继续处理其余项（P2-b §8）。原始异常走受限诊断出口，
                 # 可见日志只留脱敏摘要。
-                diag_log("agent.adapters.wechat.ingest_media", e)
+                diag_log("agent.gateway.wechat.ingest_media", e)
                 print(f"[wechat] 图片下载/解密失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
     return out
 
@@ -264,7 +266,7 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
             await client.send_text(from_user, "收到啦，让我看看哈~", context_token)
         except Exception as e:
             # best-effort：即时 ack 只是体验优化，真实回复由 worker 兜底发出，失败不重试、不挡入队。
-            diag_log("agent.adapters.wechat.instant_ack", e)
+            diag_log("agent.gateway.wechat.instant_ack", e)
             print(f"[wechat] 即时反馈失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
 
     # 下载+解密+暂存媒体：当前消息附件 + 引用里的图片附件一并入队。
@@ -291,7 +293,7 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
     except Exception as e:
         # `asyncio.TimeoutError` 就是内建 `TimeoutError`，已被 `Exception` 覆盖，原元组冗余
         # （P2-b §6 反模式）。best-effort：拿不到 ticket 退化成不发 typing，不挡入队主流程。
-        diag_log("agent.adapters.wechat.typing_ticket", e)
+        diag_log("agent.gateway.wechat.typing_ticket", e)
         print(f"[wechat] typing_ticket 获取超时/失败（不影响主流程）: "
               f"{redact(f'{type(e).__name__}: {e}')}", flush=True)
 
@@ -312,12 +314,14 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
     }
     # TODO: 接 Intent Router 短路（仿 qq）
     try:
+        from agent.im.models import normalize_payload
+        payload = normalize_payload(payload)
         await R.produce(STREAM, payload)
     except Exception as e:
         # 不重试：Redis stream XADD 没有幂等键，重推同一 payload 会造成 worker 端重复处理这条
         # 消息（非幂等写，P2-b §4-A 幂等前提）。丢这一条比重复处理更安全，原始异常留受限出口
         # 供排查，可见日志只留脱敏摘要。
-        diag_log("agent.adapters.wechat.enqueue", e)
+        diag_log("agent.gateway.wechat.enqueue", e)
         print(f"[wechat] 入队失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
 
 
@@ -339,7 +343,7 @@ async def _serve_async(channel_id: str, owner: str, bot_token: str, base_url: st
                 # getupdates 是幂等读（long-poll 拉取，游标没推进就不会丢/重消息），无界重试是
                 # 安全的——不区分 4xx/5xx：哪怕是永久性错误（如 token 失效），网关也应该继续
                 # 挂着重试而不是退出进程（同 openclaw 网关退化策略），只是每次都留诊断记录。
-                diag_log("agent.adapters.wechat.long_poll", e)
+                diag_log("agent.gateway.wechat.long_poll", e)
                 print(f"[wechat:{channel_id}] long-poll 异常: "
                       f"{redact(f'{type(e).__name__}: {e}')}，3s 后重试", flush=True)
                 await asyncio.sleep(3)
@@ -378,7 +382,7 @@ def serve() -> None:
                 print(f"[wechat:{channel_id}] notifystop 已发", flush=True)
             except Exception as e:
                 # best-effort：进程反正要退出了，通知上游失败也不影响本进程收尾。
-                diag_log("agent.adapters.wechat.notify_stop", e)
+                diag_log("agent.gateway.wechat.notify_stop", e)
                 print(f"[wechat:{channel_id}] notifystop 失败（忽略）: "
                       f"{redact(f'{type(e).__name__}: {e}')}", flush=True)
 
@@ -405,14 +409,14 @@ async def _serve_async_with_start_notify(channel_id: str, owner: str, bot_token:
             print(f"[wechat:{channel_id}] notifystart 已发", flush=True)
         except Exception as e:
             # best-effort：notifystart 只是告知上游，失败不该挡后面 long-poll 主循环启动。
-            diag_log("agent.adapters.wechat.notify_start", e)
+            diag_log("agent.gateway.wechat.notify_start", e)
             print(f"[wechat:{channel_id}] notifystart 失败（不影响主流程）: "
                   f"{redact(f'{type(e).__name__}: {e}')}", flush=True)
         finally:
             await cli.stop()
     except Exception as e:
         # best-effort：整个启动通知阶段失败也不该阻止网关进主循环收消息。
-        diag_log("agent.adapters.wechat.start_notify_phase", e)
+        diag_log("agent.gateway.wechat.start_notify_phase", e)
         print(f"[wechat:{channel_id}] 启动通知阶段异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
 
     await _serve_async(channel_id, owner, bot_token, base_url)
@@ -472,7 +476,7 @@ async def send_text(to_user_id: str, text: str, channel_id: str | None = None,
                 print(f"[wechat] sendmessage ret={ret}（消息可能未投递）resp_keys={keys}", flush=True)
             return True
         except connect_transient as e:
-            diag_log("agent.adapters.wechat.send_text", e)
+            diag_log("agent.gateway.wechat.send_text", e)
             print(f"[wechat] 发送失败(连接建立阶段, 第{attempt}次): "
                   f"{redact(f'{type(e).__name__}: {e}')}", flush=True)
             c = _clients.pop(channel_id, None)
@@ -483,7 +487,7 @@ async def send_text(to_user_id: str, text: str, channel_id: str | None = None,
                     pass
         except Exception as e:
             # 请求可能已送达服务器：非幂等操作不敢盲重试（见上方 docstring），直接失败退出。
-            diag_log("agent.adapters.wechat.send_text", e)
+            diag_log("agent.gateway.wechat.send_text", e)
             print(f"[wechat] 发送失败（不重试，非连接阶段错误）: "
                   f"{redact(f'{type(e).__name__}: {e}')}", flush=True)
             c = _clients.pop(channel_id, None)
@@ -549,8 +553,8 @@ async def stop_typing(ind: TypingIndicator | None) -> None:
 
 import httpx as _httpx
 import urllib.parse as _urlparse
-from agent.adapters import wechat_media_crypto as _media
-from agent.adapters.wechat_client import (
+from agent.gateway import wechat_media_crypto as _media
+from agent.gateway.wechat_client import (
     MESSAGE_ITEM_TYPE_IMAGE,
     MESSAGE_ITEM_TYPE_FILE,
     UPLOAD_MEDIA_TYPE_IMAGE,
@@ -591,7 +595,7 @@ async def _upload_to_cdn(client: ILinkClient, plaintext: bytes, media_type: int,
     upload_full_url = (upload_resp.get("upload_full_url") or "").strip() or None
     upload_param = upload_resp.get("upload_param")
     if not upload_full_url and not upload_param:
-        diag_log_raw("agent.adapters.wechat.upload_to_cdn", f"getuploadurl 响应缺 URL: {upload_resp!r}")
+        diag_log_raw("agent.gateway.wechat.upload_to_cdn", f"getuploadurl 响应缺 URL: {upload_resp!r}")
         raise RuntimeError("getuploadurl 没返回可用的 upload URL")
 
     # 拼 CDN URL（参考 OpenClaw cdn/cdn-url.ts buildCdnUploadUrl）
@@ -615,13 +619,13 @@ async def _upload_to_cdn(client: ILinkClient, plaintext: bytes, media_type: int,
             # 4xx 客户端错误立即抛（不重试）；5xx/网络错误重试——本文件里判 4xx 不重试的
             # 既有做法，P2-b 把它当标杆抄到其余重试点。
             if 400 <= r.status_code < 500:
-                diag_log_raw("agent.adapters.wechat.upload_to_cdn",
+                diag_log_raw("agent.gateway.wechat.upload_to_cdn",
                               f"CDN 4xx status={r.status_code} body={r.text[:500]}")
                 raise _CdnPermanentError(f"CDN 上传客户端错误 status={r.status_code}")
             r.raise_for_status()
             download_param = r.headers.get("x-encrypted-param")
             if not download_param:
-                diag_log_raw("agent.adapters.wechat.upload_to_cdn",
+                diag_log_raw("agent.gateway.wechat.upload_to_cdn",
                               f"CDN 响应缺 x-encrypted-param，headers={dict(r.headers)!r}")
                 raise RuntimeError("CDN 上传响应缺 x-encrypted-param 头")
             break
@@ -629,7 +633,7 @@ async def _upload_to_cdn(client: ILinkClient, plaintext: bytes, media_type: int,
             raise   # 4xx：不重试，直接冒泡给调用方
         except Exception as e:
             last_err = e
-            diag_log("agent.adapters.wechat.upload_to_cdn", e)
+            diag_log("agent.gateway.wechat.upload_to_cdn", e)
             print(f"[wechat] CDN 上传第 {attempt} 次失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
     if not download_param:
         raise RetryableError("wechat.cdn_upload_exhausted", "CDN 上传重试后仍失败",

@@ -27,7 +27,7 @@ _BACKEND = Path(__file__).resolve().parents[3]
 # self-respawn 时的启动命令
 _MODULES = {
     "worker": ["-m", "worker"],
-    "supervisor": ["-m", "agent.adapters.supervisor"],
+    "supervisor": ["-m", "agent.gateway.supervisor"],
 }
 
 
@@ -102,7 +102,7 @@ _HOST = socket.gethostname()
 # 可重启的常驻进程：name → cmdline 里应出现的标识（防误杀 / pid 复用）
 RESTARTABLE = {
     "worker": "worker",
-    "supervisor": "agent.adapters.supervisor",
+    "supervisor": "agent.gateway.supervisor",
 }
 
 

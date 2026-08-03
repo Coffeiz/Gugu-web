@@ -7,6 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from agent.im.actor import ActorContext
+
 
 @dataclass
 class AgentRequest:
@@ -29,6 +31,7 @@ class AgentRequest:
                                         # 原文摊平显示得很难看，见 devlog 2026-07-10）。
     im_role: Optional[str] = None       # IM 身份：owner/member/unknown；网页为空
     allowed_tool_names: Optional[list[str]] = None  # None=沿用完整工具集；群成员使用白名单
+    actor_context: Optional[ActorContext] = None    # IM 统一身份快照；Web 为空
 
 
 @dataclass

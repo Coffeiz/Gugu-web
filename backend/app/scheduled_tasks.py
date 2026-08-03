@@ -282,7 +282,6 @@ async def _deliver_im(user_id, text: str, platform: str | None = None) -> bool:
     reach = await get_imreach(user_id, platform)
     if not reach:
         return False   # 该平台没用过/无可触达地址，跳过
-    import worker
     payload = {
         "platform": reach.get("platform"),
         "channel_id": reach.get("channel_id"),
@@ -290,7 +289,8 @@ async def _deliver_im(user_id, text: str, platform: str | None = None) -> bool:
         "platform_user_id": reach.get("puid"),
         "context_token": reach.get("context_token", ""),   # 微信 iLink 必需，其他平台为空
     }
-    await worker._send(payload, text)
+    from agent.im.replies import send_text
+    await send_text(payload, text)
     return True
 
 

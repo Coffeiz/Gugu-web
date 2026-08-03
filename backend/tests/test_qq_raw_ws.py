@@ -1,4 +1,4 @@
-from agent.adapters import qq
+from agent.gateway import qq
 
 
 def test_qq_heartbeat_ack_timeout_after_two_and_a_half_intervals():
@@ -186,6 +186,58 @@ async def test_qq_raw_group_disabled_drops_event(monkeypatch):
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 
     await qq._handle_raw_qq_message("GROUP_AT_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
+
+    assert produced == []
+
+
+async def test_qq_raw_group_message_create_respects_requires_at(monkeypatch):
+    produced: list[dict] = []
+
+    async def fake_group_settings(bot_id):
+        return True, False
+
+    async def fake_ingest(message, owner):
+        return []
+
+    async def fake_produce(stream, payload):
+        produced.append(payload)
+
+    monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
+    monkeypatch.setattr(qq, "_ingest_qq_media", fake_ingest)
+    monkeypatch.setattr(qq.R, "produce", fake_produce)
+
+    from agent import router, runtime_state
+
+    async def fake_async_false(*args, **kwargs):
+        return False
+
+    async def fake_async_none(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(router, "decide", lambda *args, **kwargs: {"action": "run"})
+    monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
+    monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
+
+    await qq._handle_raw_qq_message("GROUP_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
+
+    assert len(produced) == 1
+    assert produced[0]["chat_type"] == "group"
+    assert produced[0]["chat_id"] == "group_1"
+
+
+async def test_qq_raw_group_message_create_drops_when_at_is_required(monkeypatch):
+    produced: list[dict] = []
+
+    async def fake_group_settings(bot_id):
+        return True, True
+
+    async def fake_produce(stream, payload):
+        produced.append(payload)
+
+    monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
+    monkeypatch.setattr(qq.R, "produce", fake_produce)
+
+    await qq._handle_raw_qq_message("GROUP_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
 
     assert produced == []
 

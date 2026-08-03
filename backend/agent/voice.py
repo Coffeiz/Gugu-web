@@ -184,7 +184,7 @@ async def transcribe(media: list, settings, *, raise_errors: bool = False) -> st
                     raise
                 # 不上抛 RetryableError：transcribe() 的既有契约是「非 None 即成功（可能空串），
                 # 从不抛异常」（见模块 docstring），三处调用方（agent/runner.py、
-                # agent/adapters/web.py）都只判断 None/空串，没有 except RetryableError。
+                # agent/gateway/web.py）都只判断 None/空串，没有 except RetryableError。
                 # ASR 是辅助能力，重试用尽后降级成「没听清」优于打断整轮对话——用 diag_log +
                 # WARNING 留痕迹（P2-b §1 可重试用尽的处理方式之一是「降级」），不强行改变
                 # 这个函数「不抛异常」的调用约定。

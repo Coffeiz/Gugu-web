@@ -495,7 +495,7 @@ description 里补例子完全没用——description 对提示词有帮助，�
 
 **第一层误判：以为是前端渲染问题。** 用户说"这次没有空格""结尾空格"，咕咕自己也把 `[e~[` 认成"空格"，一度以为是某个不可见字符被前端转义/渲染成了 `[e~[`。查了 `GuguChat.vue` 的流式 token 拼接（`text += evt.content`）、`_revealMessage` 的逐字 slice、marked 渲染管线、Debug 面板的日志展示——全都只是**透传**，没有任何地方会凭空生成或转换字符。这条线索排查完，结论应该是"前端干净，问题在后端数据里"，但**当时没有立刻确定下来**，又在"是不是尾随空格"这个假设上来回绕了几轮。
 
-**第二层误判：探针加了却一直不响，一度怀疑判断方向错了。** 在 `agent/sanitize.py` 加了 `probe_leak_tail`，先后三版：只匹配「结尾是 `[`」→ 不响；扩大到匹配任意 Unicode 控制/格式字符 → 不响；再扩大到「任意尾随空白（含普通空格）」→ **还是不响**。每次不响都会怀疑"是不是判断条件又不对"，但真正的原因始终是同一个、更底层的问题：**探针被加在了 `agent/runner.py` 的 `run_stream`/`run_collect`/`run_ephemeral` 三个函数里，而网页 `/chat` 端点实际走的是 `agent/adapters/web.py::_generate`**——这是一条完全独立的后台任务路径，有自己的 `full_reply` 组装和落库逻辑，跟 runner.py 那几个函数毫无关系。探针挂错文件，加多少版、改多严都不可能触发。
+**第二层误判：探针加了却一直不响，一度怀疑判断方向错了。** 在 `agent/sanitize.py` 加了 `probe_leak_tail`，先后三版：只匹配「结尾是 `[`」→ 不响；扩大到匹配任意 Unicode 控制/格式字符 → 不响；再扩大到「任意尾随空白（含普通空格）」→ **还是不响**。每次不响都会怀疑"是不是判断条件又不对"，但真正的原因始终是同一个、更底层的问题：**探针被加在了 `agent/runner.py` 的 `run_stream`/`run_collect`/`run_ephemeral` 三个函数里，而网页 `/chat` 端点实际走的是 `agent/gateway/web.py::_generate`**——这是一条完全独立的后台任务路径，有自己的 `full_reply` 组装和落库逻辑，跟 runner.py 那几个函数毫无关系。探针挂错文件，加多少版、改多严都不可能触发。
 
 **捅破这层之后，才是真正卡住的地方：探针补到 `web.py` 后，还是隔了两次「重启时间差」才对上一次真实复现。** 每次让用户复现，探针代码虽然在磁盘上改好了，但后端进程还没重启、或者复现发生在重启完成前几秒——`ps -o lstart` 查进程启动时间、`stat` 查文件改动时间，两两对比才确认"这次复现在重启之前，探针没生效"。这提醒了一件容易漏想的事：**改探针代码 ≠ 探针生效，中间隔着一次进程重启，验证时一定要先比对时间戳，不能假设"我改了就该响"。**
 
@@ -548,7 +548,7 @@ description 里补例子完全没用——description 对提示词有帮助，�
 
 目标很朴素：飞书 IM 收到消息后，agent 生成期间实时 patch 同一张卡片内容，模拟 SSE 体感（飞书客户端不支持真流式推送，patch 是唯一可行方案）。最终落地的链路是 `agent.runner.run_stream` 异步生成器逐字 yield → `feishu.send_text_stream` 边累积边 PUT element content，typewriter 效果由飞书服务端在 `streaming_mode=true` 下自动渲染。一路撞上三个坑，**第一个最容易被再撞上**（文档把两条路线写一起，不仔细看就混），后两个属于 SDK/服务端细节但同样会让排错时间翻倍。
 
-**坑一：`type=template` 跟 `type=card` 是两条不同的路线，混了直接 200380 "template does not exist"。** 飞书 IM 发送 `interactive` 消息时，`content` JSON 长得像 `{"type": "X", "data": {...}}`，但 `X` 取值不同就走完全不同的卡系统：① `type=template` + `data.template_id` 对应**飞书 Card Builder GUI** 创建的"模板"（可视化拖拽那种），走模板管理 API 提前创建、提前分配 id；② `type=card` + `data.card_id` 对应**CardKit v1 card entity**（API 现场 create 出来、可被 streaming update 那种）。两者 id 形态一样（都是 `7660...` 开头的 19 位数字串），飞书拿到的是 `type=card`+`template_id` 时会**按 template 路线找**，找不到就返 `200380`。**官方文档把两种 type 写在同一节里**，第一遍很容易照着「interactive 消息 content 格式」示例直接照抄一个，示例里恰好给的是 template，模板一抄就用——但实际项目要做的是 CardKit 流式，差一步就撞墙。修复明确落在 `backend/agent/adapters/feishu.py:659` 的 `content` 字段，并把"为什么是 card 不是 template"写进了 docstring。教训：飞书 IM 的 `interactive.content.type` 选错不是"功能降级"，是**直接 200380 不可达**——以后给任何新平台接 CardKit 都要先确认走哪条路、写代码前就把 type 选对，不要等撞了再回来查。
+**坑一：`type=template` 跟 `type=card` 是两条不同的路线，混了直接 200380 "template does not exist"。** 飞书 IM 发送 `interactive` 消息时，`content` JSON 长得像 `{"type": "X", "data": {...}}`，但 `X` 取值不同就走完全不同的卡系统：① `type=template` + `data.template_id` 对应**飞书 Card Builder GUI** 创建的"模板"（可视化拖拽那种），走模板管理 API 提前创建、提前分配 id；② `type=card` + `data.card_id` 对应**CardKit v1 card entity**（API 现场 create 出来、可被 streaming update 那种）。两者 id 形态一样（都是 `7660...` 开头的 19 位数字串），飞书拿到的是 `type=card`+`template_id` 时会**按 template 路线找**，找不到就返 `200380`。**官方文档把两种 type 写在同一节里**，第一遍很容易照着「interactive 消息 content 格式」示例直接照抄一个，示例里恰好给的是 template，模板一抄就用——但实际项目要做的是 CardKit 流式，差一步就撞墙。修复明确落在 `backend/agent/gateway/feishu.py:659` 的 `content` 字段，并把"为什么是 card 不是 template"写进了 docstring。教训：飞书 IM 的 `interactive.content.type` 选错不是"功能降级"，是**直接 200380 不可达**——以后给任何新平台接 CardKit 都要先确认走哪条路、写代码前就把 type 选对，不要等撞了再回来查。
 
 **坑二：lark SDK `client.cardkit.v1.card.create()` 同步路径丢 body（200610 body is nil），用 `acreate()` 异步路径绕过。** 排查路径本身就是个反例：① 怀疑 body 构造——`{type: 'card_json', data: '<stringified card 2.0 JSON>'}` 用 `JSON.marshal` 出来格式正确；② 怀疑权限——但用户后台 `cardkit:card:write` 是开过的；③ 同样的 body 直接走 `httpx + 手动取 tenant_access_token` 调 → **200 成功**，拿到真实 card_id（如 `7660280254204284101`），说明 body 没问题、权限没问题；④ 缩到 SDK 内部——`Transport.execute` 同步路径走的是 `requests + data=bytes`，headers 合并用的是 `request.headers` 引用、body 走 `requests` 的 `data` 参数，实际发出去的 body 是空的。**SDK 自己的 `cardkit_create`（`channel/driver.py:266`）就是用 `acreate` 异步路径绕开这个 bug 的**，等于官方代码自己已经踩过。修复：`_do_create_card` / `_do_update_card` 从 `def` 改成 `async def`，内部用 `client.cardkit.v1.card.acreate/aupdate`（走 `httpx + json=` 参数），外层 `send_text_stream` 直接 `await`，去掉 `asyncio.to_thread` 包装。教训：**当 SDK 同步调用报 body 异常、而同样的 body 走直 HTTP 又成功时，第一反应应该是「绕 SDK」而不是「改 body」**——SDK 是飞书官方在维护，但它的 Transport 同步路径在 2.x 确实有 bug（不一定每个版本都修，且不一定在 changelog 里明写），cardkit 这条路官方自己都默认走异步，不要硬刚同步。
 
@@ -633,7 +633,7 @@ description 里补例子完全没用——description 对提示词有帮助，�
 
 **微信** iLink 最省事，引用消息的 `item.ref_msg.message_item` 直接内嵌了被引用消息的完整内容（含 `text_item`），不用额外查询。
 
-两边实现都只包装送进 LLM 的文本（新增 `llm_text`，不改原始 `text`），router/秒回表情逻辑继续用原始文本判关键词，不受影响。改动：`agent/adapters/{feishu,wechat}.py` 新增 `_fetch_quoted_text`/`_extract_quoted_text`。
+两边实现都只包装送进 LLM 的文本（新增 `llm_text`，不改原始 `text`），router/秒回表情逻辑继续用原始文本判关键词，不受影响。改动：`agent/gateway/{feishu,wechat}.py` 新增 `_fetch_quoted_text`/`_extract_quoted_text`。
 
 ## 2026-07-04 · 全项目安全审计 + 一批修复
 
@@ -1329,7 +1329,7 @@ Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面
 
 ```
 飞书私聊消息
-  → 网关 adapters/feishu.py（lark-oapi WebSocket 长连，收 im.message.receive_v1）
+  → 网关 gateway/feishu.py（lark-oapi WebSocket 长连，收 im.message.receive_v1）
   → produce_sync 入队 Redis Streams（im:inbound）
   → worker.py 独立进程 consume
   → run_collect(AgentRequest)：复用 loaders/builder/core/sanitize，攒完整回复（人格+记忆+41工具）
@@ -1352,8 +1352,8 @@ Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面
 
 ### 现状与下一步
 
-- 跑起来 = 两个独立后台进程：`python -m agent.adapters.feishu`（网关）+ `python -m worker`（worker）。
-- 已落地骨架：`app/core/redis.py`（Streams + produce_sync）、`agent/runner.py`（非流式）、`worker.py`、`agent/adapters/feishu.py`（收+发）。
+- 跑起来 = 两个独立后台进程：`python -m agent.gateway.feishu`（网关）+ `python -m worker`（worker）。
+- 已落地骨架：`app/core/redis.py`（Streams + produce_sync）、`agent/runner.py`（非流式）、`worker.py`、`agent/gateway/feishu.py`（收+发）。
 - **下一步**：OAuth 2.0 用户扫码绑定（方案 A 轻绑定）——绑定表 `(platform,open_id)↔user_id` + 后端授权URL/回调 + 设置页二维码 + 网关 open_id 解析，替换临时的 root123 映射，实现"每人各聊各的"。
 
 ---
@@ -1755,3 +1755,22 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 - `ProjectStagesPanel.vue` 314 行（含阶段展示、拖拽排序、待办编辑、待办跨阶段拖拽）
 - `ProjectInfoPanel.vue` 约 120 行
 - 后端 `upload.py` 进度编排状态确认已完成，更新方案文档
+
+## 2026-08-03 · 文件库入口非手测收口审计
+
+### 审计范围
+
+针对文件库模块化重构的 9.5 收尾，检查 `views/Files/index.vue` 是否仍重复实现通用能力，并核对页面级组件与文件能力 composable 的边界。
+
+### 结果
+
+- 存储统计已由 `useFileStorageUsage` 负责。
+- 文件夹图标、强调色和展示映射已由 `useFileLibraryFolderPresentation` 负责。
+- 文件夹创建、下载、删除已由 `useFileLibraryFolderActions` 负责。
+- 单文件下载、删除已由 `useFileLibraryFileActions` 负责。
+- 拖拽目标解析、重命名、右键菜单、回收站动作转发和键盘快捷键仍依赖文件库页面上下文，保留在入口作为适配层，没有发现重复的通用实现。
+- 清理了入口内未使用的重复选择函数。
+
+### 验证
+
+前端 `typecheck`、`typecheck:strict`、Vitest（26 个测试文件 / 246 passed）和 `git diff --check` 均通过；文件库 Playwright 冒烟此前已在 devserver 验证为 10 passed、1 skipped。剩余工作是 devserver 浏览器手测，不属于静态收口审计范围。

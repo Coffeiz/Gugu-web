@@ -15,7 +15,7 @@ import wave
 
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Any, Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -710,6 +710,13 @@ class EmbeddingTestRequest(BaseModel):
     api_key:    str = ""   # 留空=用已存配置
     model:      str = ""
     dimensions: int = 0
+
+    @field_validator("dimensions", mode="before")
+    @classmethod
+    def normalize_dimensions(cls, value: Any) -> int:
+        from app.core.config import normalize_dimensions
+
+        return normalize_dimensions(value)
 
 
 @router.post("/test-embedding")

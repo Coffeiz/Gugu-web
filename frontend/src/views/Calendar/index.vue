@@ -386,21 +386,23 @@
 
   <!-- 日期格右键菜单 -->
   <Teleport to="body">
-    <div
-      v-if="cellCtx.show"
-      ref="cellCtxRef"
-      class="popup-menu cal-ctx-menu"
-      :style="{ position:'fixed', left: cellCtx.x+'px', top: cellCtx.y+'px', zIndex: 3000, minWidth:'110px' }"
-    >
-      <button v-if="cellCtx.kind === 'timed'" class="popup-menu-item" @click="ctxAddEvent">
-        <PhCalendarPlus :size="13" weight="bold" />
-        新建活动
-      </button>
-      <button v-if="cellCtx.kind !== 'timed'" class="popup-menu-item" @click="ctxAddProject">
-        <PhFolderPlus :size="13" weight="bold" />
-        新建项目
-      </button>
-    </div>
+    <Transition name="menu-pop" :duration="{ enter: 240, leave: 180 }">
+      <div
+        v-if="cellCtx.show"
+        ref="cellCtxRef"
+        class="popup-menu cal-ctx-menu"
+        :style="{ position:'fixed', left: cellCtx.x+'px', top: cellCtx.y+'px', zIndex: 3000, minWidth:'110px' }"
+      >
+        <button v-if="cellCtx.kind === 'timed'" class="popup-menu-item" @click="ctxAddEvent">
+          <PhCalendarPlus :size="13" weight="bold" />
+          新建活动
+        </button>
+        <button v-if="cellCtx.kind !== 'timed'" class="popup-menu-item" @click="ctxAddProject">
+          <PhFolderPlus :size="13" weight="bold" />
+          新建项目
+        </button>
+      </div>
+    </Transition>
   </Teleport>
 
   <!-- 编辑事件弹窗 -->

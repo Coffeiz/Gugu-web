@@ -50,7 +50,7 @@
 | -------------- | ---------------------------------- | ----------------------------------------------- | ------ |
 | **web**        | FastAPI（API + Admin），uvicorn :8000 | `make start` / `./start.sh start`               | 必须     |
 | **worker**     | 消费 IM 队列 → 跑咕咕大脑 → 发回平台            | `.venv/bin/python -m worker`                    | 接 IM 时 |
-| **supervisor** | 频道管家：按 Admin 频道面板起停各平台网关子进程        | `.venv/bin/python -m agent.adapters.supervisor` | 接 IM 时 |
+| **supervisor** | 频道管家：按 Admin 频道面板起停各平台网关子进程        | `.venv/bin/python -m agent.gateway.supervisor` | 接 IM 时 |
 | PostgreSQL     | 主数据库                               | 系统服务 / Docker                                   | 必须     |
 | Redis          | IM 消息队列（Streams）                   | 系统服务 / Docker                                   | 接 IM 时 |
 | SearXNG        | 自建通用搜索（`web_search`，省 Tavily 配额）   | Docker / 1Panel                                 | 可选     |
@@ -175,11 +175,11 @@ npm run dev        # Vite :5173，已设 host:true 可局域网访问
 
 ```bash
 cd backend
-.venv/bin/python -m agent.adapters.supervisor   # 频道管家
+.venv/bin/python -m agent.gateway.supervisor   # 频道管家
 .venv/bin/python -m worker                        # 队列消费 worker
 ```
 
-频道在 **Admin → Agent 配置 → 频道** 里加（详见 `[21-飞书接入指南.md](../agent/21-飞书接入指南.md)`）。
+频道在 **Admin → Agent 配置 → 频道** 里加（详见 `[22-飞书接入指南.md](../agent/22-飞书接入指南.md)`）。
 
 > ⚠️ 改了 `agent/` 大脑代码后要重启 **worker**（不是 web、也不是 supervisor）——「改了什么、重启哪个」的完整决策表见 **§6.1**。
 
@@ -442,7 +442,7 @@ sudo systemctl status gugu-backend gugu-worker gugu-supervisor
 
 ### 5.1 接入步骤
 
-飞书 bot 创建、权限、长连接事件订阅、凭据填写、频道面板原理，**完整步骤见 `[21-飞书接入指南.md](../agent/21-飞书接入指南.md)`**。QQ / 微信（个人微信 iLink）走 Admin 面板扫码自连。
+飞书 bot 创建、权限、长连接事件订阅、凭据填写、频道面板原理，**完整步骤见 `[22-飞书接入指南.md](../agent/22-飞书接入指南.md)`**。QQ / 微信（个人微信 iLink）走 Admin 面板扫码自连。
 
 生产前提：确保 `gugu-supervisor` + `gugu-worker` 两个服务在跑（§4.5），频道在 Admin 面板增删启停**即时生效**（日常增删启停、重启管家见 §6.4 / §6.3）。
 
@@ -466,7 +466,7 @@ DB__HOST=<共享 DB IP>            DB__PASSWORD=...
 ```bash
 ./start.sh install                         # 装 systemd 三单元
 sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
-# 或手动：.venv/bin/python -m worker  &  .venv/bin/python -m agent.adapters.supervisor
+# 或手动：.venv/bin/python -m worker  &  .venv/bin/python -m agent.gateway.supervisor
 ```
 
 起来即**自动接入**：worker 加入共享 Redis 消费组 `agent-workers` 分摊队列；supervisor 读共享 DB 的 `user_bots` 拉网关。后台（在另一台）零改动，**「服务状态」页直接显示这台机**（host = 它的 hostname）。
@@ -500,7 +500,7 @@ sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
 | ----------------------------------------------------------------- | -------------------------------------- | --------------------------------- |
 | API / Admin 接口、`app/`、`main.py`、路由、新接口                            | **backend (web)**                      | `systemctl restart gugu-backend`  |
 | 咕咕大脑：`agent/` 下 runner / core / skills / tools / 上下文 / 记忆 / prompts | **worker**                             | `systemctl restart gugu-worker`   |
-| IM 网关代码：`agent/adapters/`（feishu / qq / wechat）、`router.py`        | **supervisor**（连带重起所有网关子进程）            | `systemctl restart gugu-supervisor` |
+| IM 网关代码：`agent/gateway/`（feishu / qq / wechat）、`router.py`        | **supervisor**（连带重起所有网关子进程）            | `systemctl restart gugu-supervisor` |
 | 前端 `frontend/`                                                    | 重新构建（不必重启服务）                           | `cd frontend && npm run build`    |
 | 配置 `.env`（含 `SECRET_KEY` / 管理员账号）                                 | **backend**                            | `systemctl restart gugu-backend`  |
 | **新增了模型字段 / 数据库列**                                                | **不是重启，是迁移！**                          | `make migrate`（见 §7）              |
@@ -547,7 +547,7 @@ journalctl -u gugu-supervisor -f         # 或 tail logs/gugu-supervisor.log
 
 # 开发（无 systemd）
 .venv/bin/python -m worker                       # 前台 worker
-.venv/bin/python -m agent.adapters.supervisor   # 前台 supervisor；Ctrl+C 停、连带杀子进程
+.venv/bin/python -m agent.gateway.supervisor   # 前台 supervisor；Ctrl+C 停、连带杀子进程
 ```
 
 也可在 **Admin → 服务状态** 页点「重启」（仅同主机有效，靠 kill + systemd 自愈）。
@@ -557,7 +557,7 @@ journalctl -u gugu-supervisor -f         # 或 tail logs/gugu-supervisor.log
 > ```bash
 > # A. 手动停（按进程，supervisor 收 TERM 会连带杀网关子进程）
 > ps aux | grep -E "agent\.adapters\.supervisor|python -m worker" | grep -v grep   # 先看 pid
-> pkill -TERM -f "agent.adapters.supervisor"
+> pkill -TERM -f "agent.gateway.supervisor"
 > pkill -TERM -f "python -m worker"
 > # B. 装成 systemd（推荐，之后 systemctl 可用 + 崩溃自拉 + 开机自启）
 > cd backend && RUN_USER=youruser make install

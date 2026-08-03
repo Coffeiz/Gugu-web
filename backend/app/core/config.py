@@ -11,11 +11,21 @@ import asyncio
 import json
 from pathlib import Path
 from functools import lru_cache
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 OVERRIDE_FILE = Path(__file__).parent.parent.parent / "config.override.json"
+
+
+def normalize_dimensions(value: Any) -> int:
+    """把后台配置中的空维度统一为 0，避免空字符串进入整数配置模型。"""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 class DatabaseSettings(BaseModel):
@@ -244,6 +254,7 @@ class AppSettings(BaseSettings):
                     k: v for k, v in override["embedding"].items()
                     if k in EmbeddingSettings.model_fields
                 }}
+                merged["dimensions"] = normalize_dimensions(merged.get("dimensions"))
                 updates["embedding"] = EmbeddingSettings.model_construct(**merged)
 
             if "quota" in override:
@@ -320,6 +331,11 @@ def get_settings() -> AppSettings:
 
 
 async def save_override(patch: dict) -> AppSettings:
+    if isinstance(patch.get("embedding"), dict) and "dimensions" in patch["embedding"]:
+        patch = {**patch, "embedding": {
+            **patch["embedding"],
+            "dimensions": normalize_dimensions(patch["embedding"].get("dimensions")),
+        }}
     existing = {}
     if OVERRIDE_FILE.exists():
         existing = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))

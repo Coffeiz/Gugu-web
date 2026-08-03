@@ -28,7 +28,7 @@ import asyncio
 import logging
 from typing import Awaitable, Callable, Optional
 
-from agent.adapters.wechat_client import TYPING_OFF, TYPING_ON
+from agent.gateway.wechat_client import TYPING_OFF, TYPING_ON
 
 # async (status: int) -> None — status 用 wechat_client.TYPING_ON/TYPING_OFF
 SendTypingFn = Callable[[int], Awaitable[None]]

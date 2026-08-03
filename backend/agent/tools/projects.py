@@ -8,6 +8,7 @@ import random
 
 from sqlalchemy import func, select, update
 
+from app.core.project_colors import PROJECT_COLOR_PRESETS
 from app.core.projects import (
     build_project, find_project_stage, next_project_stage_key, next_project_todo_number,
     normalize_project_stages, replace_project_stages, update_project_atomic,
@@ -15,16 +16,6 @@ from app.core.projects import (
 from app.core.tz import now_utc
 from app.models import File, Project
 
-_COLOR_PRESETS = [
-    "linear-gradient(135deg,#c8aa72,#b88060)",
-    "linear-gradient(135deg,#8fbe8b,#7ab8a8)",
-    "linear-gradient(135deg,#7ab8a8,#7ab8c8)",
-    "linear-gradient(135deg,#7ab8c8,#7b7fb2)",
-    "linear-gradient(135deg,#5e73b2,#7b7fb2)",
-    "linear-gradient(135deg,#7b7fb2,#c4afc8)",
-    "linear-gradient(135deg,#c4afc8,#b07090)",
-    "linear-gradient(135deg,#be8b8f,#c8aa72)",
-]
 from agent import confirm
 from agent.tools.base import BaseSkill, Tool
 
@@ -100,8 +91,8 @@ async def _pick_unused_color(db, user_id) -> str:
         select(Project.color).where(Project.user_id == user_id)
     )).scalars().all()
     used = set(rows)
-    unused = [c for c in _COLOR_PRESETS if c not in used]
-    pool = unused if unused else _COLOR_PRESETS
+    unused = [c for c in PROJECT_COLOR_PRESETS if c not in used]
+    pool = unused if unused else PROJECT_COLOR_PRESETS
     return random.choice(pool)
 
 
@@ -200,7 +191,7 @@ async def _set_color(db, user_id, args: dict):
         return _err
     color = (args.get("color") or "").strip()
     if not color:
-        return json.dumps({"error": "未提供颜色（color，如 #A3B1FF）"})
+        return json.dumps({"error": "未提供颜色（color，需为预设色板中的渐变色字符串）"})
     error = await _commit_project_intent(db, p, user_id, {"color": color})
     if error:
         return error
@@ -540,7 +531,7 @@ class ProjectsSkill(BaseSkill):
                     "status":     {"type": "string", "enum": ["pending", "active", "done"]},
                     "deadline":   {"type": "string", "description": "YYYY-MM-DD；不填默认一周后"},
                     "start_date": {"type": "string", "description": "YYYY-MM-DD；不填默认今天"},
-                    "color":      {"type": "string", "description": "渐变色字符串，如 linear-gradient(135deg,#7b7fb2,#c4afc8)；不传则随机从预设中选"},
+                    "color":      {"type": "string", "enum": list(PROJECT_COLOR_PRESETS), "description": "预设色板中的渐变色字符串；不传则随机从预设中选"},
                     "priority":   {"type": "string", "enum": ["high", "medium", "low"], "description": "优先级；不传则不设"},
                     "stages": {
                         "type": "array",
@@ -585,13 +576,13 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="set_color", label="设置项目颜色",
-            description="设置项目的颜色（十六进制，如 #A3B1FF）。",
+            description="设置项目的颜色，只能是预设色板中的渐变色字符串之一。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "integer", "description": "项目 ID（可选）"},
                     "project": {"type": "string", "description": "项目名称（推荐：直接用名字）"},
-                    "color": {"type": "string", "description": "颜色，十六进制如 #A3B1FF"},
+                    "color": {"type": "string", "enum": list(PROJECT_COLOR_PRESETS), "description": "预设色板中的渐变色字符串"},
                 },
                 "required": ["color"],
             },

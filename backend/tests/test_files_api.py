@@ -22,6 +22,7 @@ def _storage_and_events(tmp_path, monkeypatch):
     storage = LocalStorageBackend(Path(tmp_path))
     # FileService(db) 默认 get_storage()（在 file_service 命名空间导入），指向临时本地后端
     monkeypatch.setattr("app.services.storage.file_service.get_storage", lambda: storage)
+    monkeypatch.setattr(files_api, "get_storage", lambda: storage)
 
     async def _noop(*a, **k):
         pass
@@ -110,3 +111,10 @@ async def test_copy_not_found(db, user_a):
     with pytest.raises(NotFound):
         await files_api.copy_file(999, FileCopyBody(folder_id=None, project_id=None),
                                   current_user=user_a, origin=None, db=db)
+
+
+async def test_download_endpoint_reads_owned_file(db, user_a):
+    uploaded = await _do_upload(db, user_a, b"download-body", "report.txt")
+    response = await files_api.download_file(uploaded.id, current_user=user_a, db=db)
+    assert response.body == b"download-body"
+    assert response.media_type == "text/plain"

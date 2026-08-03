@@ -135,6 +135,15 @@ async def poll(
         existing.enabled = True
         bot = existing
     else:
+        existing_platform_bot = (await db.execute(
+            select(UserBot).where(
+                UserBot.user_id == current_user.id,
+                UserBot.platform == "qqbot",
+            )
+        )).scalars().first()
+        if existing_platform_bot:
+            await R.get_redis().delete(_redis_key(task_id))
+            return {"status": "fail", "reason": "每个咕咕账号只能绑定一个 QQ 机器人"}
         bot = UserBot(user_id=current_user.id, platform="qqbot",
                       name="我的 QQ 机器人", app_id=app_id, app_secret=secret,
                       sandbox=False, enabled=True)

@@ -63,7 +63,7 @@ backend/
 │   ├── llm_select.py             # 模型选择（pool/router 分流、mimo 识别等）
 │   ├── memory/                   # 记忆系统（store / lens / reflection / compress）
 │   ├── context/                  # 上下文构建、token 预算、对话压缩
-│   ├── adapters/                 # web / qq / wechat / supervisor 等渠道适配器
+│   ├── gateway/                 # web / qq / wechat / supervisor 等渠道适配器
 │   └── tools/                    # 工具集，15 个文件，约 60 个工具（见下）
 └── app/
     ├── main.py                   # FastAPI 入口，路由注册（约 30 个 router），lifespan

@@ -101,6 +101,31 @@ async def _read_conversation(db, user_id, args: dict):
     }
 
 
+async def _bind_web_session(db, user_id, args: dict):
+    """把当前 owner 私聊绑定到一个已确认属于自己的 Web session。"""
+    from agent import imctx
+    from agent.im.owner_session import bind_session
+
+    context = imctx.get_im()
+    if not context or context.get("im_role") != "owner":
+        return {"error": "只有绑定账号的私聊可以绑定网页会话"}
+    if context.get("chat_type") == "group":
+        return {"error": "群聊不绑定网页会话，请在私聊中操作"}
+    session_id = args.get("session_id")
+    if not session_id:
+        return {"error": "需要提供 session_id"}
+    ok = await bind_session(
+        db,
+        user_id,
+        context.get("platform") or "",
+        context.get("puid") or "",
+        int(session_id),
+    )
+    if not ok:
+        return {"error": "网页会话不存在、不属于你，或不是 Web 会话"}
+    return {"bound": True, "session_id": int(session_id), "message": "已绑定，之后可以在这里继续这段网页对话"}
+
+
 class ConversationsSkill(BaseSkill):
     name = "conversations"
     tools = [
@@ -128,6 +153,18 @@ class ConversationsSkill(BaseSkill):
                 "required": ["session_id"],
             },
             handler=_read_conversation,
+        ),
+        Tool(
+            name="bind_web_session", label="绑定网页会话",
+            description="仅 owner 私聊可用：把当前 IM 私聊绑定到一个属于自己的 Web 对话，之后 IM 会继续该对话。先用 search_conversations 找到 session_id；群聊不能绑定。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "integer", "description": "要继续的 Web 对话 id"},
+                },
+                "required": ["session_id"],
+            },
+            handler=_bind_web_session,
         ),
     ]
 

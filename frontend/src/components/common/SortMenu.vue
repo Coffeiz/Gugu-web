@@ -23,7 +23,8 @@ const sortMenuPos  = ref<{ x: number; y: number }>({ x: 0, y: 0 })
 function openMenu() {
   if (sortMenuOpen.value) { sortMenuOpen.value = false; return }
   const r = sortBtnRef.value?.getBoundingClientRect()
-  if (r) { sortMenuPos.value = { x: r.left, y: r.bottom + 6 } }
+  // ContextMenu 的基础宽度为 160px；用按钮中心作为锚点，避免菜单左边缘跟按钮左边缘对齐造成视觉偏移。
+  if (r) { sortMenuPos.value = { x: r.left + r.width / 2 - 80, y: r.bottom + 6 } }
   sortMenuOpen.value = true
 }
 
@@ -32,6 +33,8 @@ function onSelect(key: string) {
 }
 
 function closeMenu() { sortMenuOpen.value = false }
+
+defineExpose({ closeMenu })
 </script>
 
 <template>

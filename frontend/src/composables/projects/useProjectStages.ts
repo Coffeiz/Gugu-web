@@ -1,9 +1,13 @@
 import type { Ref } from 'vue'
-import type { ProjectStage } from '@/types/project'
+import type { ProjectStage, ProjectStatus } from '@/types/project'
+import { calculateStageProgress } from '@/composables/projects/useProjectProgress'
+import { transitionProjectStage } from '@/utils/projectStages'
 
 interface ProjectStagesOptions {
   stages: Ref<ProjectStage[]>
-  saveStages: () => void
+  saveStages?: () => void
+  currentStage?: Ref<string>
+  status?: Ref<ProjectStatus | string>
 }
 
 /**
@@ -12,7 +16,7 @@ interface ProjectStagesOptions {
  * 待办操作由 useProjectTodos 单独负责，避免两个 composable 同时写入同一份 stages。
  */
 export function useProjectStages(options: ProjectStagesOptions) {
-  const { stages, saveStages } = options
+  const { stages, saveStages = () => undefined, currentStage, status } = options
 
   function addStage() {
     const key = `stage_${Date.now()}`
@@ -44,5 +48,32 @@ export function useProjectStages(options: ProjectStagesOptions) {
     return locked
   }
 
-  return { addStage, removeStage, lockedStageIndices }
+  /**
+   * 统一执行阶段切换，并保留前进自动完成、后退快照还原和完成状态切换语义。
+   * 未提供当前阶段/状态引用时只用于阶段面板的增删排序，不执行切换。
+   */
+  function transitionStage(targetStage: string) {
+    if (!currentStage || !status) return null
+
+    const oldIndex = stages.value.findIndex(stage => stage.key === currentStage.value)
+    const newIndex = stages.value.findIndex(stage => stage.key === targetStage)
+    if (newIndex < 0) return null
+
+    if (newIndex < oldIndex && lockedStageIndices(currentStage.value).has(newIndex)) return null
+
+    const progress = calculateStageProgress(stages.value, targetStage)
+    const transition = transitionProjectStage({
+      stages: stages.value,
+      currentStage: currentStage.value || null,
+      progress,
+      status: status.value as ProjectStatus,
+    }, targetStage, progress)
+
+    stages.value = transition.stages
+    currentStage.value = transition.currentStage ?? ''
+    status.value = transition.status
+    return { oldIndex, newIndex, progress }
+  }
+
+  return { addStage, removeStage, lockedStageIndices, transitionStage }
 }

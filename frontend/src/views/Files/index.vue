@@ -145,8 +145,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
-import { filesApi, type TrashFolderMeta } from '@/services/api'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import type { TrashFolderMeta } from '@/services/api'
 import FileUploadDropOverlay from '@/components/common/file-browser/FileUploadDropOverlay.vue'
 import FileStorageUsage from '@/components/common/file-browser/FileStorageUsage.vue'
 import FileTrashToolbarActions from '@/components/common/file-browser/FileTrashToolbarActions.vue'
@@ -187,33 +187,22 @@ import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileLibraryContextActions } from '@/composables/files/useFileLibraryContextActions'
 import { useFileLibraryUpload } from '@/composables/files/useFileLibraryUpload'
 import { useFileLibraryRename } from '@/composables/files/useFileLibraryRename'
+import { useFileStorageUsage } from '@/composables/files/useFileStorageUsage'
+import { useFileLibraryFolderPresentation } from '@/composables/files/useFileLibraryFolderPresentation'
+import { useFileLibraryFolderActions } from '@/composables/files/useFileLibraryFolderActions'
+import { useFileLibraryFileActions } from '@/composables/files/useFileLibraryFileActions'
 import { useSorting } from '@/composables/useSorting'
 import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
-import {
-  PhFolder, PhUser, PhStack, PhTrash, PhCalendarBlank, PhCalendarDot,
-  PhClock, PhPlayCircle, PhCheckCircle,
-  PhBrowser,
-  PhArrowLeft, PhArrowRight,
-  PhCheck, PhPencilSimple,
-  PhDownloadSimple,
-  PhWarningCircle,
-} from '@phosphor-icons/vue'
+import { PhArrowLeft, PhArrowRight } from '@phosphor-icons/vue'
 
 const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
 const cbStore      = useClipboardStore()
+const fileActions = useFileActions()
 
 // ── 存储用量 ──
-const storageInfo = reactive({ used: 0, limit: null, loaded: false })
-async function fetchStorage() {
-  try {
-    const data = await filesApi.storage()
-    storageInfo.used   = data.used_bytes  ?? 0
-    storageInfo.limit  = data.limit_bytes ?? null
-    storageInfo.loaded = true
-  } catch {}
-}
+const { storageInfo, fetchStorage } = useFileStorageUsage()
 
 // ── 视图状态 ──
 // 使用模块级 cardBlobReadyIds：首次 @load 后写入，session 内二次访问直接显示跳过动画
@@ -223,8 +212,7 @@ const mainRef     = ref<HTMLElement | null>(null)
 let directoryLoader: () => void = () => {}
 function loadContents() { directoryLoader() }
 // 状态文件夹的色 / 图标（待开始灰 / 进行中蓝 / 已完成绿）
-const STATUS_COLOR: Record<string, string> = { pending: '#8a8fa8', active: '#5080c8', done: '#4a9a72' }
-const STATUS_ICON: Record<string, typeof PhClock> = { pending: PhClock, active: PhPlayCircle, done: PhCheckCircle }
+const { folderIconStyle, folderListIcon, folderAccentColor } = useFileLibraryFolderPresentation()
 
 // ── 导航 ──
 const {
@@ -332,30 +320,9 @@ function onMainMouseDown(e: MouseEvent) {
   _boxMouseDown(e)
 }
 
-function toggleFileSelect(fileId: number, e: MouseEvent) {
-  if (e.ctrlKey || e.metaKey) selection.handleFileClick(sortedContents.value.files.find(file => file.id === fileId)!, e)
-  else selection.handleFileClick(sortedContents.value.files.find(file => file.id === fileId)!, e)
-}
-
 function onPageClick() {
   clearSelection()
   // 排序菜单由 SortMenu 内部的 ContextMenu 监听外部 click 自动关闭，这里不用手动处理
-}
-
-// ── 删除 ──
-async function deleteSingleFile(f: FileMeta) {
-  const backup = cacheStore.getFile(f.id)
-  await optimisticMutation({
-    apply: () => {
-      cacheStore.removeFile(f.id)
-      selectedIds.value = new Set([...selectedIds.value].filter(id => id !== f.id))
-    },
-    afterMutate: loadContents,
-    work: () => fileActions.deleteFile(f.id),
-    onCommit: fetchStorage,
-    rollback: () => { if (backup) cacheStore.addFile(backup) },
-    onError: e => console.error('[Files] 删除失败:', (e as Error).message),
-  })
 }
 
 // ── 回收站工具函数 ──
@@ -367,40 +334,6 @@ function daysLeft(deletedAt: string | null | undefined) {
 
 function formatDate(iso: string | null | undefined) {
   return iso ? iso.slice(0, 10) : '—'
-}
-
-// ── 新建文件夹 ──
-const newFolderName      = ref('')
-const newFolderLoading   = ref(false)
-const showNewFolderInput = ref(false)
-
-async function createFolder() {
-  const name = newFolderName.value.trim()
-  if (!name) return
-  const type      = currentType.value
-  const seg       = currentSeg.value
-  const projectId = (type === 'project' || type === 'folder')
-    ? (projectSeg.value?.id ?? seg?.projectId ?? null)
-    : null
-  const parentId  = type === 'folder' ? (seg?.folderId ?? null) : null
-  newFolderLoading.value = true
-  const tempId = -(Date.now())
-  cacheStore.addFolder({ id: tempId, name, projectId, parentId, fileCount: 0 })
-  newFolderName.value = ''
-  showNewFolderInput.value = false
-  loadContents()
-  try {
-    const real = await fileActions.createFolder(projectId, name, parentId)
-    cacheStore.removeFolder(tempId)
-    cacheStore.addFolder({ id: real.id, name: real.name, projectId: real.projectId ?? null, parentId: real.parentId ?? null, fileCount: 0 })
-    loadContents()
-  } catch (e) {
-    cacheStore.removeFolder(tempId)
-    loadContents()
-    console.error('[Files] 新建文件夹失败:', (e as Error).message)
-  } finally {
-    newFolderLoading.value = false
-  }
 }
 
 const conflictDialogRef = ref<InstanceType<typeof UploadConflictDialog> | null>(null)
@@ -417,7 +350,6 @@ const { uploadingItems, uploadFiles, handleFileInput, onDragEnter, onDragLeave, 
 
 // ── 预览 ──
 const previewStore = usePreviewStore()
-const fileActions = useFileActions()
 const openPreview = (f: FileMeta) => {
   if (isAudioExt(f.ext)) fireHint('music')   // 新手引导：第一次打开音乐文件（🎵😌 彩蛋）
   previewStore.open(f, sortedContents.value.files)
@@ -482,14 +414,8 @@ function deleteSelected() {
   return batchActions.deleteSelected()
 }
 
-// ── 下载 ──
-async function downloadFile(f: FileMeta) {
-  try {
-    await fileActions.downloadFile(f)
-  } catch (e) {
-    console.error('[Files] 下载失败:', (e as Error).message)
-  }
-}
+const filePageActions = useFileLibraryFileActions({ cacheStore, fileActions, selectedIds, loadContents, fetchStorage })
+const { downloadFile, deleteSingleFile } = filePageActions
 
 // ── 重命名 ──
 const rename = useFileLibraryRename({
@@ -510,15 +436,6 @@ const {
   startFile: startRenameFile, startFolder: startRenameFolder,
   cancel: cancelRename, commit: commitRename,
 } = rename
-
-async function downloadFolder(f: FolderCardMeta) {
-  if (f.folderId == null) return
-  try {
-    await fileActions.downloadFolder(f)
-  } catch (e) {
-    console.error('[Files] 下载文件夹失败:', (e as Error).message)
-  }
-}
 
 // ── 拖动移动 ──
 // pointer 模式（setPointerCapture 自建拖拽，不是原生 HTML5 draggable/dragstart——原生拖拽从
@@ -617,60 +534,18 @@ function onFilePointerDown(f: FileMeta, e: PointerEvent) {
   })
 }
 
-async function deleteFolder(f: FolderCardMeta) {
-  if (f.folderId == null) return
-  pruneHistoryForFolders([f.folderId])
-  cacheStore.removeFolder(f.folderId)
-  loadContents()
-  try {
-    await fileActions.deleteFolder(f.folderId)
-    fetchStorage()
-  } catch (e) {
-    // 无法回滚（不知道子结构），静默刷新
-    cacheStore.refresh().then(() => loadContents())
-    console.error('[Files] 删除文件夹失败:', (e as Error).message)
-  }
-}
+const folderActions = useFileLibraryFolderActions({
+  currentType, currentSeg, projectSeg, cacheStore, fileActions,
+  loadContents, fetchStorage, pruneHistoryForFolders,
+})
+const {
+  newFolderName, newFolderLoading, showNewFolderInput,
+  createFolder, downloadFolder, deleteFolder,
+} = folderActions
 
 // ── 样式工具 ──
-function folderIconStyle(folder: FolderCardMeta) {
-  if (folder.type === 'personal') return { background: 'rgba(180,148,80,0.14)',  color: '#b49450' }
-  if (folder.type === 'projects') return { background: 'rgba(123,127,178,0.13)', color: '#7b7fb2' }
-  if (folder.type === 'trash')    return { background: 'rgba(220,80,80,0.1)',    color: '#c85a5a' }
-  if (folder.type === 'status')   { const c = STATUS_COLOR[folder.status ?? ''] || '#7b7fb2'; return { background: c + '1f', color: c } }
-  if (folder.type === 'year')     return { background: 'rgba(80,160,120,0.12)',  color: '#4a9a72' }
-  if (folder.type === 'month')    return { background: 'rgba(80,130,200,0.11)',  color: '#5080c8' }
-  if (folder.color) {
-    const c = folder.color
-    return { background: `${c}22`, color: c }
-  }
-  return { background: 'rgba(123,127,178,0.1)', color: 'var(--color-primary)' }
-}
-
 // 文件类型助手（isImageExt / fileExtCategory / fileIconColor / fileListIcon）与缩略图懒加载指令
 // vLazySrc 已统一收口到 @/utils/fileTypes 和 @/composables/useLazyThumb，见顶部 import。
-
-function folderListIcon(folder: FolderCardMeta) {
-  if (folder.type === 'personal') return PhUser
-  if (folder.type === 'projects') return PhStack
-  if (folder.type === 'trash')    return PhTrash
-  if (folder.type === 'status')   return STATUS_ICON[folder.status ?? ''] || PhStack
-  if (folder.type === 'year')     return PhCalendarBlank
-  if (folder.type === 'month')    return PhCalendarDot
-  if (folder.type === 'project')  return PhBrowser
-  return PhFolder
-}
-
-function folderAccentColor(folder: FolderCardMeta) {
-  if (folder.type === 'personal') return '#967858'
-  if (folder.type === 'projects') return '#6878a8'
-  if (folder.type === 'trash')    return '#987070'
-  if (folder.type === 'status')   return STATUS_COLOR[folder.status ?? ''] || '#8888a8'
-  if (folder.type === 'year')     return '#508878'
-  if (folder.type === 'month')    return '#5878a8'
-  if (folder.color) return folder.color
-  return '#8888a8'
-}
 
 const folderInputRef = ref<HTMLInputElement | null>(null)
 watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.focus()) })

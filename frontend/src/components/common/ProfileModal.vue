@@ -54,315 +54,19 @@
 
         <div class="pm-content-body" ref="pmBodyRef">
 
-          <!-- 个人信息 -->
-          <template v-if="activeNav === 'info'">
-            <div class="pm-section">
-              <div class="pm-section-label">账号信息</div>
-              <div class="pm-field">
-                <label>昵称</label>
-                <input v-model="displayName" class="form-input" :class="{ modified: displayName !== (authStore.user?.displayName ?? '') }" placeholder="填写昵称" />
-              </div>
-              <div class="pm-field">
-                <label>用户名</label>
-                <div class="pm-static">{{ authStore.user?.username ?? '—' }}</div>
-              </div>
-              <div class="pm-field">
-                <label>邮箱</label>
-                <div class="pm-static">{{ authStore.user?.email ?? '—' }}</div>
-              </div>
-              <div class="pm-field">
-                <label>UID</label>
-                <div class="pm-static pm-uid">{{ authStore.user?.id ?? '—' }}</div>
-              </div>
-              <div class="pm-field">
-                <label>加入时间</label>
-                <div class="pm-static">{{ authStore.user?.createdAt ?? '—' }}</div>
-              </div>
-              <div class="pm-footer">
-                <span v-if="infoMsg" class="pm-msg" :class="infoMsgType">{{ infoMsg }}</span>
-                <button class="pm-save-btn" :disabled="displayName === (authStore.user?.displayName ?? '') || infoSaving" @click="saveInfo">
-                  {{ infoSaving ? '保存中…' : '保存' }}
-                </button>
-              </div>
-            </div>
-          </template>
+          <KeepAlive>
+            <ProfileInfoPane
+              v-if="activeNav === 'info'"
+              :external-message="infoMsg"
+              :external-message-type="infoMsgType"
+            />
+            <ProfileAccountPane v-else-if="activeNav === 'account'" />
+            <ProfileGuguPane v-else-if="activeNav === 'gugu'" />
+            <ProfileImPane v-else-if="activeNav === 'im'" />
+            <ProfilePreferencesPane v-else-if="activeNav === 'prefs'" />
+          </KeepAlive>
 
-          <!-- 账号设置 -->
-          <template v-if="activeNav === 'account'">
-            <div class="pm-section">
-              <div class="pm-section-label">修改密码</div>
-              <div class="pm-field">
-                <label>当前密码</label>
-                <input v-model="currentPwd" type="password" class="form-input" placeholder="••••••••" />
-              </div>
-              <div class="pm-field">
-                <label>新密码</label>
-                <input v-model="newPwd" type="password" class="form-input" placeholder="至少 6 位" />
-              </div>
-              <div class="pm-field">
-                <label>确认密码</label>
-                <input v-model="confirmPwd" type="password" class="form-input" placeholder="再次输入" />
-              </div>
-              <div class="pm-footer">
-                <span v-if="pwdMsg" class="pm-msg" :class="pwdMsgType">{{ pwdMsg }}</span>
-                <button class="pm-save-btn" :disabled="!currentPwd || !newPwd || !confirmPwd || pwdSaving" @click="savePwd">
-                  {{ pwdSaving ? '保存中…' : '修改密码' }}
-                </button>
-              </div>
-            </div>
-          </template>
 
-          <!-- 咕咕设置 -->
-          <template v-if="activeNav === 'gugu'">
-            <div class="pm-section">
-              <div class="pm-section-label">精力</div>
-              <div v-if="quotaLoading" class="pm-quota-skeleton">
-                <div class="pm-quota-item">
-                  <div class="pm-quota-row">
-                    <span class="pm-quota-label">精力</span>
-                    <div class="pm-qs-pct"></div>
-                  </div>
-                  <div class="pm-quota-bar"><div class="pm-qs-fill"></div></div>
-                </div>
-                <div class="pm-quota-item">
-                  <div class="pm-quota-row">
-                    <span class="pm-quota-label">本周</span>
-                    <div class="pm-qs-pct"></div>
-                  </div>
-                  <div class="pm-quota-bar"><div class="pm-qs-fill"></div></div>
-                </div>
-              </div>
-              <template v-else>
-                <div class="pm-quota-item">
-                  <div class="pm-quota-row">
-                    <span class="pm-quota-label">{{ recoverLabel }}</span>
-                    <span class="pm-quota-pct" :class="quotaPctClass(quota.used_6h, quota.limit_6h)">
-                      {{ quota.limit_6h ? Math.round(quota.used_6h / quota.limit_6h * 100) + '%' : '不限' }}
-                    </span>
-                  </div>
-                  <div class="pm-quota-bar">
-                    <div class="pm-quota-fill" :style="quotaBarStyle(quota.used_6h, quota.limit_6h)" />
-                  </div>
-                </div>
-                <div class="pm-quota-item">
-                  <div class="pm-quota-row">
-                    <span class="pm-quota-label">本周</span>
-                    <span class="pm-quota-pct" :class="quotaPctClass(quota.used_weekly, quota.limit_weekly)">
-                      {{ quota.limit_weekly ? Math.round(quota.used_weekly / quota.limit_weekly * 100) + '%' : '不限' }}
-                    </span>
-                  </div>
-                  <div class="pm-quota-bar">
-                    <div class="pm-quota-fill" :style="quotaBarStyle(quota.used_weekly, quota.limit_weekly)" />
-                  </div>
-                </div>
-              </template>
-            </div>
-
-            <div class="pm-sep"></div>
-
-            <div class="pm-section">
-              <div class="pm-section-label">回复风格</div>
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">语气</span>
-                  <span class="pm-field-hint">咕咕回复时的语气风格</span>
-                </div>
-                <div class="pm-style-group">
-                  <button v-for="opt in TONE_OPTS" :key="opt.value"
-                          class="pm-style-chip"
-                          :class="{ active: (prefsStore.replyTone ?? 'natural') === opt.value }"
-                          @click="prefsStore.saveStyle({ tone: opt.value === 'natural' ? null : opt.value })">
-                    {{ opt.label }}
-                  </button>
-                </div>
-              </div>
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">回复长度</span>
-                  <span class="pm-field-hint">咕咕回复内容的详细程度</span>
-                </div>
-                <div class="pm-style-group">
-                  <button v-for="opt in LENGTH_OPTS" :key="opt.value"
-                          class="pm-style-chip"
-                          :class="{ active: (prefsStore.replyLength ?? 'medium') === opt.value }"
-                          @click="prefsStore.saveStyle({ length: opt.value === 'medium' ? null : opt.value })">
-                    {{ opt.label }}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="pm-sep"></div>
-
-            <div class="pm-section">
-              <div class="pm-section-label">对话</div>
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">重开浏览器时</span>
-                  <span class="pm-field-hint">下次重新打开浏览器，是接着上次的对话、还是开一段新对话</span>
-                </div>
-                <div class="pm-style-group">
-                  <button class="pm-style-chip" :class="{ active: reopenResume }" @click="setReopenResume(true)">接着上次</button>
-                  <button class="pm-style-chip" :class="{ active: !reopenResume }" @click="setReopenResume(false)">开新对话</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="pm-sep"></div>
-
-            <div class="pm-section">
-              <div class="pm-section-label">记忆</div>
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">删除所有记忆</span>
-                  <span class="pm-field-hint">清除咕咕记住的关于你的所有事实和对话记录，不可恢复</span>
-                </div>
-                <button class="pm-danger-btn" :disabled="memoryClearing" @click="clearMemory">
-                  {{ memoryClearing ? '清除中…' : '删除记忆' }}
-                </button>
-              </div>
-              <div v-if="memoryMsg" class="pm-msg" :class="memoryMsgType">{{ memoryMsg }}</div>
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">删除临时文件</span>
-                  <span class="pm-field-hint">清除发给咕咕但未存入文件库的聊天附件（图片、文件等），临时文件 7 天后自动过期</span>
-                </div>
-                <button class="pm-danger-btn" :disabled="attachClearing" @click="clearAttachments">
-                  {{ attachClearing ? '清除中…' : '删除临时文件' }}
-                </button>
-              </div>
-              <div v-if="attachMsg" class="pm-msg" :class="attachMsgType">{{ attachMsg }}</div>
-            </div>
-
-          </template>
-
-          <!-- 接入咕咕（个人设置里单独一个面板，放咕咕设置下面）-->
-          <template v-if="activeNav === 'im'">
-            <div class="pm-section">
-              <div class="pm-section-label">接入咕咕</div>
-
-              <!-- 飞书 / QQ：都是自带机器人(BYO)，扫码自动创建+连接 -->
-              <template v-for="p in IM_PLATFORMS" :key="p.key">
-                <div class="pm-field-row">
-                  <div class="pm-field-desc">
-                    <span class="pm-field-name">{{ p.label }}</span>
-                    <span class="pm-field-hint">{{ p.hint }}</span>
-                  </div>
-                  <button v-if="!botsOf(p.key).length" class="pm-bind-btn" :disabled="connecting === p.key" @click="startConnect(p.key)">
-                    {{ connecting === p.key ? '生成中…' : '扫码连接' }}
-                  </button>
-                  <span v-else class="pm-field-hint pm-bound-tag">已连接 · 删除后可重连</span>
-                </div>
-
-                <div v-for="b in botsOf(p.key)" :key="b.id" class="pm-bot-item">
-                  <div class="pm-bot-item-top">
-                    <div class="pm-bot-info">
-                      <span class="pm-bot-name">{{ b.name }}<span v-if="b.sandbox" class="pm-bot-tag">沙箱</span></span>
-                      <span class="pm-bot-appid">{{ b.app_id }}</span>
-                    </div>
-                    <span class="pm-switch-wrap">
-                      <label class="switch sm">
-                        <input type="checkbox" :checked="b.enabled" @change="toggleBot(b)" />
-                        <span class="slider"></span>
-                      </label>
-                      <span class="pm-switch-label" :class="{ on: b.enabled }">{{ b.enabled ? '已启用' : '已停用' }}</span>
-                    </span>
-                    <button class="pm-bot-del" @click="removeBot(b)">删除</button>
-                  </div>
-                </div>
-              </template>
-
-              <!-- 扫码连接二维码（飞书/QQ 共用，一次只连一个）-->
-              <div v-if="connect" class="pm-qr-box">
-                <canvas ref="connectCanvas" class="pm-qr-canvas"></canvas>
-                <div class="pm-qr-hint">{{ connectHint }}</div>
-                <button class="pm-qr-cancel" @click="cancelConnect">取消</button>
-              </div>
-              <div v-if="connectErr" class="pm-qr-err">{{ connectErr }}</div>
-            </div>
-          </template>
-
-          <!-- 偏好设置 -->
-          <template v-if="activeNav === 'prefs'">
-            <div class="pm-section">
-              <div class="pm-section-label">外观</div>
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">主题</span>
-                  <span class="pm-field-hint">界面颜色风格</span>
-                </div>
-                <div class="pm-coming">咕了</div>
-              </div>
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">语言</span>
-                  <span class="pm-field-hint">界面显示语言</span>
-                </div>
-                <div class="pm-static">简体中文</div>
-              </div>
-            </div>
-
-            <div class="pm-sep"></div>
-
-            <div class="pm-section">
-              <div class="pm-section-label">工作台</div>
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">默认视图</span>
-                  <span class="pm-field-hint">打开应用时首先显示的页面</span>
-                </div>
-                <div class="pm-style-group">
-                  <button class="pm-style-chip" :class="{ active: prefsStore.defaultView === 'projects' }" @click="prefsStore.saveDefaultView('projects')">项目</button>
-                  <button class="pm-style-chip" :class="{ active: prefsStore.defaultView === 'calendar' }" @click="prefsStore.saveDefaultView('calendar')">日历</button>
-                  <button class="pm-style-chip" :class="{ active: prefsStore.defaultView === 'files' }" @click="prefsStore.saveDefaultView('files')">文件库</button>
-                  <button class="pm-style-chip" :class="{ active: prefsStore.defaultView === 'mind' }" @click="prefsStore.saveDefaultView('mind')">思维</button>
-                </div>
-              </div>
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">项目排序</span>
-                  <span class="pm-field-hint">项目列表的默认排序方式</span>
-                </div>
-                <div class="pm-coming">咕了</div>
-              </div>
-            </div>
-
-            <div class="pm-sep"></div>
-
-            <div class="pm-section">
-              <div class="pm-section-label">日历</div>
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">一周起始日</span>
-                  <span class="pm-field-hint">日历每周从哪天开始</span>
-                </div>
-                <div class="pm-coming">咕了</div>
-              </div>
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">已完成项目显示</span>
-                  <span class="pm-field-hint">日历中已完成项目的截止日期显示方式</span>
-                </div>
-                <div class="pm-style-group">
-                  <button class="pm-style-chip" :class="{ active: prefsStore.calendarDoneMode === 'done' }" @click="prefsStore.saveCalendarDoneMode('done')">按完成日</button>
-                  <button class="pm-style-chip" :class="{ active: prefsStore.calendarDoneMode === 'deadline' }" @click="prefsStore.saveCalendarDoneMode('deadline')">按截止日</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="pm-sep"></div>
-
-            <div class="pm-section">
-              <div class="pm-section-label">通知</div>
-              <div class="pm-field-row">
-                <div class="pm-field-desc">
-                  <span class="pm-field-name">项目截止提醒</span>
-                  <span class="pm-field-hint">截止前 3 天发送通知</span>
-                </div>
-                <div class="pm-coming">咕了</div>
-              </div>
-            </div>
-          </template>
 
         </div>
       </div>
@@ -403,35 +107,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
-import QRCode from 'qrcode'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { usePreferencesStore } from '@/stores/preferences'
 import BaseModal from '@/components/common/BaseModal.vue'
 import AvatarCropper from '@/components/common/AvatarCropper.vue'
-import { authApi, agentApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi } from '@/services/api'
-import { fireHint } from '@/composables/useOnboarding'
+import ProfileInfoPane from './ProfileModal/ProfileInfoPane.vue'
+import ProfileAccountPane from './ProfileModal/ProfileAccountPane.vue'
+import ProfilePreferencesPane from './ProfileModal/ProfilePreferencesPane.vue'
+import ProfileGuguPane from './ProfileModal/ProfileGuguPane.vue'
+import ProfileImPane from './ProfileModal/ProfileImPane.vue'
+import { authApi } from '@/services/api'
 import { TOP_Z } from '@/composables/windowz'
 import { PhX, PhUserMinus, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird, PhChatsCircle } from '@phosphor-icons/vue'
-
-const TONE_OPTS   = [
-  { value: 'natural', label: '自然' },
-  { value: 'formal',  label: '正式' },
-  { value: 'lively',  label: '活泼' },
-]
-const LENGTH_OPTS = [
-  { value: 'medium',   label: '适中' },
-  { value: 'short',    label: '简短' },
-  { value: 'detailed', label: '详细' },
-]
 
 const props = defineProps({ show: Boolean })
 const emit  = defineEmits(['close'])
 
 const router     = useRouter()
 const authStore  = useAuthStore()
-const prefsStore = usePreferencesStore()
 
 const displayLabel = computed(() => authStore.user?.displayName || authStore.user?.username || '—')
 const initial = computed(() => (displayLabel.value[0] ?? '?').toUpperCase())
@@ -447,76 +141,18 @@ const navItems = [
 const activeNav = ref('info')
 const currentNavLabel = computed(() => navItems.find(n => !n.divider && n.key === activeNav.value)?.label ?? '')
 
-// 重开浏览器是否接续上次对话：存 localStorage『gugu_reopen_resume』，GuguChat onMounted 读它决定接续/新对话
-const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') === '1')
-function setReopenResume(v: boolean) {
-  reopenResume.value = v
-  localStorage.setItem('gugu_reopen_resume', v ? '1' : '0')
-}
+const infoMsg = ref('')
+const infoMsgType = ref('ok')
 
-// 打开时重置
-watch(() => props.show, v => {
-  if (v) {
-    activeNav.value    = 'info'
-    displayName.value  = authStore.user?.displayName ?? ''
-    infoMsg.value      = ''
-    pwdMsg.value       = ''
-    currentPwd.value   = newPwd.value = confirmPwd.value = ''
-    reopenResume.value = localStorage.getItem('gugu_reopen_resume') === '1'
+watch(() => props.show, value => {
+  if (value) {
+    activeNav.value = 'info'
+    infoMsg.value = ''
     showDeleteAccount.value = false
     deletePwd.value = ''
     deleteErr.value = ''
   }
 })
-
-// 个人信息
-const displayName = ref(authStore.user?.displayName ?? '')
-const infoSaving  = ref(false)
-const infoMsg     = ref('')
-const infoMsgType = ref('ok')
-
-watch(() => authStore.user?.displayName, v => { displayName.value = v ?? '' })
-
-async function saveInfo() {
-  infoSaving.value  = true
-  infoMsg.value     = ''
-  try {
-    await authStore.updateProfile({ displayName: displayName.value })
-    infoMsg.value     = '保存成功'
-    infoMsgType.value = 'ok'
-  } catch (e) {
-    infoMsg.value     = (e instanceof Error ? e.message : '') || '保存失败'
-    infoMsgType.value = 'err'
-  } finally {
-    infoSaving.value = false
-  }
-}
-
-// 账号设置
-const currentPwd  = ref('')
-const newPwd      = ref('')
-const confirmPwd  = ref('')
-const pwdSaving   = ref(false)
-const pwdMsg      = ref('')
-const pwdMsgType  = ref('ok')
-
-async function savePwd() {
-  pwdMsg.value = ''
-  if (newPwd.value.length < 6)           { pwdMsg.value = '新密码至少 6 位'; pwdMsgType.value = 'err'; return }
-  if (newPwd.value !== confirmPwd.value) { pwdMsg.value = '两次密码不一致';  pwdMsgType.value = 'err'; return }
-  pwdSaving.value = true
-  try {
-    await authStore.updateProfile({ currentPassword: currentPwd.value, newPassword: newPwd.value })
-    pwdMsg.value     = '密码已更新'
-    pwdMsgType.value = 'ok'
-    currentPwd.value = newPwd.value = confirmPwd.value = ''
-  } catch (e) {
-    pwdMsg.value     = (e instanceof Error ? e.message : '') || '修改失败'
-    pwdMsgType.value = 'err'
-  } finally {
-    pwdSaving.value = false
-  }
-}
 
 // 头像上传：选图 → 方形裁切/降采样弹窗 → 只上传裁切结果
 const avatarInput    = ref<HTMLInputElement | null>(null)
@@ -554,183 +190,6 @@ async function onCropped(cropped: File) {
   } finally {
     avatarUploading.value = false
   }
-}
-
-// 精力值配额
-const quota = ref({ used_6h: 0, limit_6h: null, reset_6h_at: null, used_weekly: 0, limit_weekly: null })
-const quotaLoading = ref(false)
-const quotaHasData = ref(false)
-
-async function loadQuota() {
-  if (!quotaHasData.value) quotaLoading.value = true
-  try { quota.value = await authApi.getQuota(); quotaHasData.value = true } catch {}
-  finally { quotaLoading.value = false }
-}
-
-// 记忆管理
-const memoryClearing = ref(false)
-const memoryMsg      = ref('')
-const memoryMsgType  = ref('ok')
-
-async function clearMemory() {
-  if (!confirm('确定要删除咕咕的所有记忆吗？此操作不可恢复。')) return
-  memoryClearing.value = true
-  memoryMsg.value = ''
-  try {
-    await agentApi.clearMemory()
-    memoryMsg.value    = '记忆已清除'
-    memoryMsgType.value = 'ok'
-  } catch (e) {
-    memoryMsg.value    = (e instanceof Error ? e.message : '') || '删除失败'
-    memoryMsgType.value = 'err'
-  } finally {
-    memoryClearing.value = false
-  }
-}
-
-// 临时文件清除
-const attachClearing = ref(false)
-const attachMsg      = ref('')
-const attachMsgType  = ref('ok')
-
-async function clearAttachments() {
-  if (!confirm('确定要删除所有临时文件吗？')) return
-  attachClearing.value = true
-  attachMsg.value = ''
-  try {
-    const r = await agentApi.clearAttachments()
-    attachMsg.value    = r.deleted > 0 ? `已删除 ${r.deleted} 个临时文件` : '没有可删除的临时文件'
-    attachMsgType.value = 'ok'
-  } catch (e) {
-    attachMsg.value    = (e instanceof Error ? e.message : '') || '删除失败'
-    attachMsgType.value = 'err'
-  } finally {
-    attachClearing.value = false
-  }
-}
-
-watch(activeNav, (v, old) => {
-  if (v === 'gugu') { loadQuota(); memoryMsg.value = ''; attachMsg.value = '' }
-  // 「接入咕咕」页（im 页签）才是真正展示/操作 bots 列表和扫码连接的地方——之前误绑在
-  // 'gugu'（咕咕设置页签，跟 bots 完全无关）上，导致切到 im 页签从不刷新 bots，刷新页面后
-  // 只要没经过 'gugu' 页签，bots 就一直是初始空数组，所有平台被误判成"需要扫码连接"。
-  if (v === 'im') loadBots()
-  if (old === 'im') cancelConnect()
-})
-
-// ── 接入咕咕：飞书 / QQ 都是自带机器人(BYO) + 扫码自动连接 ──
-const IM_PLATFORMS = [
-  { key: 'feishu', label: '飞书（自带机器人）', api: feishuConnectApi,
-    hint: '手机飞书扫码 → 授权创建机器人，咕咕自动连接，私聊它直接管项目/文件/日程' },
-  { key: 'qqbot', label: 'QQ（自带机器人）', api: qqConnectApi,
-    hint: '手机 QQ 扫码 → 选一个机器人授权，咕咕自动连接，私聊它直接管项目/文件/日程' },
-  { key: 'wechat', label: '微信（个人微信）', api: wechatConnectApi,
-    hint: '手机微信扫码 → 授权个人微信机器人（官方 iLink、无需企业资质），私聊它直接管项目/文件/日程' },
-]
-
-interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean }
-const bots = ref<Bot[]>([])
-const botsOf = (platform: string) => bots.value.filter(b => b.platform === platform)
-async function loadBots() {
-  try { const r = await userBotsApi.list(); bots.value = r.items || [] } catch {}
-}
-
-// 通用扫码连接（建任务 → 渲染二维码 → 轮询 → 自动写 user_bot）
-const connecting = ref('')          // 正在生成二维码的平台 key
-const connect = ref<{ platform: string; id: string } | null>(null)           // { platform, id } 连接进行中
-const connectHint = ref('')
-const connectErr = ref('')
-const connectCanvas = ref<HTMLCanvasElement | null>(null)
-const pmBodyRef = ref<HTMLElement | null>(null)
-let connectPoll: ReturnType<typeof setInterval> | null = null
-
-async function startConnect(platform: string) {
-  const p = IM_PLATFORMS.find(x => x.key === platform)
-  if (!p) return
-  connecting.value = platform; connectErr.value = ''
-  try {
-    const r = await p.api.start()
-    const id = r.poll_id || r.task_id       // 飞书 poll_id / QQ·微信 task_id
-    connect.value = { platform, id }
-    connectHint.value = platform === 'feishu'
-      ? '手机飞书扫码 → 授权创建机器人，授权后自动连接'
-      : platform === 'wechat'
-      ? '手机微信扫码 → 授权个人微信机器人，授权后自动连接'
-      : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
-    await nextTick()
-    await QRCode.toCanvas(connectCanvas.value, r.scan_url, { width: 180, margin: 1 })
-    pmBodyRef.value?.scrollTo({ top: pmBodyRef.value?.scrollHeight ?? 0, behavior: 'smooth' })
-    _startConnectPoll(p)
-  } catch (e) {
-    connectErr.value = (e instanceof Error ? e.message : '') || '生成二维码失败'
-    connect.value = null
-  } finally {
-    connecting.value = ''
-  }
-}
-
-function _startConnectPoll(p: (typeof IM_PLATFORMS)[number]) {
-  _stopConnectPoll()
-  let tries = 0
-  connectPoll = setInterval(async () => {
-    tries++
-    try {
-      if (!connect.value) return
-      const r = await p.api.poll(connect.value.id)
-      if (r.status === 'success') { cancelConnect(); await loadBots(); fireHint('im_bind') }   // 新手引导：第一次绑定 IM
-      else if (r.status === 'expired') { connectErr.value = '二维码已过期，请重新扫码连接'; cancelConnect() }
-      else if (r.status === 'fail') { connectErr.value = '连接失败：' + (r.reason || '未知'); cancelConnect() }
-    } catch {}
-    if (tries > 100) cancelConnect()   // ~5 分钟超时
-  }, 3000)
-}
-function _stopConnectPoll() { if (connectPoll) { clearInterval(connectPoll); connectPoll = null } }
-
-function cancelConnect() {
-  _stopConnectPoll()
-  connect.value = null
-}
-
-async function toggleBot(b: Bot) {
-  try { await userBotsApi.update(b.id, { enabled: !b.enabled }); await loadBots() }
-  catch (e) { connectErr.value = e instanceof Error ? e.message : '连接失败' }
-}
-
-async function removeBot(b: Bot) {
-  if (!confirm(`删除「${b.name}」？删除后这个机器人不再连咕咕。`)) return
-  try { await userBotsApi.remove(b.id); await loadBots() }
-  catch (e) { connectErr.value = e instanceof Error ? e.message : '连接失败' }
-}
-
-onUnmounted(() => {
-  _stopConnectPoll()
-  document.removeEventListener('keydown', _onDeleteAccountKeydown, true)
-})
-
-const recoverLabel = computed(() => {
-  if (!quota.value.used_6h || !quota.value.reset_6h_at) return '精力充沛'
-  const diffMs = new Date(quota.value.reset_6h_at).getTime() - Date.now()
-  if (diffMs <= 0) return '精力充沛'
-  const totalMin = Math.ceil(diffMs / 60000)
-  const h = Math.floor(totalMin / 60)
-  const m = totalMin % 60
-  const timeStr = h > 0 ? `${h} 小时 ${m} 分钟` : `${m} 分钟`
-  return `${timeStr}后恢复精力`
-})
-
-function quotaBarStyle(used: number, limit: number | null) {
-  if (!limit) return { width: '8%', background: 'rgba(123,127,178,0.3)' }
-  const pct = Math.min(100, (used / limit) * 100)
-  const color = pct >= 90 ? 'rgba(200,80,80,0.7)'
-              : pct >= 70 ? 'rgba(210,160,60,0.75)'
-              : 'linear-gradient(90deg, rgba(123,127,178,0.6), rgba(149,144,196,0.75))'
-  return { width: pct + '%', background: color }
-}
-
-function quotaPctClass(used: number, limit: number | null) {
-  if (!limit) return ''
-  const pct = (used / limit) * 100
-  return pct >= 90 ? 'pct-danger' : pct >= 70 ? 'pct-warn' : ''
 }
 
 // 注销账号：需要密码二次确认，成功后清会话跳登录页（跟退出登录一样，但数据已经删了）
@@ -775,7 +234,7 @@ async function doDeleteAccount() {
 }
 </script>
 
-<style scoped>
+<style>
 
 .pm-layout {
   display: grid;
@@ -1004,6 +463,15 @@ async function doDeleteAccount() {
   background: rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.06);
 }
 .pm-bot-item-top { display: flex; align-items: center; gap: 10px; }
+.pm-bot-group-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(120, 125, 160, 0.12);
+}
+.pm-bot-group-row .pm-field-desc { flex: 1; min-width: 0; }
 .pm-bot-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pm-bot-name { font-size: 13px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
 .pm-bot-tag { font-size: 10px; font-weight: 600; color: #b8860b; background: rgba(212,160,23,0.14); padding: 1px 6px; border-radius: 5px; }

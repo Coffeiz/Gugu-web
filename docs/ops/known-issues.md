@@ -19,7 +19,7 @@
 ## 2026-07-10 · 微信（iLink）引用消息无法识别原文
 
 - 现象：在微信里引用一条历史消息（无论是引用咕咕的回复还是引用用户自己发的文字）发送后，`getupdates` 拿到的 `ref_msg.message_item`（type=0）只有 `msg_id`/`create_time_ms`/`update_time_ms`/`is_completed`/空的 `button_item_list`，不带任何原文内容。
-- 影响范围：微信 iLink 适配器（[backend/agent/adapters/wechat.py](../../backend/agent/adapters/wechat.py)）的引用文字识别；引用图片不受影响（图片走独立的 CDN 下载逻辑，已修复，见下方"引用图片下载失败"记录于 devlog）。
+- 影响范围：微信 iLink 适配器（[backend/agent/gateway/wechat.py](../../backend/agent/gateway/wechat.py)）的引用文字识别；引用图片不受影响（图片走独立的 CDN 下载逻辑，已修复，见下方"引用图片下载失败"记录于 devlog）。
 - 复现条件：任意一条被引用的文字消息，不区分发送者。
 - 当前结论：iLink `getupdates` 接口本身就不回传引用消息的原文，跟发消息的是谁无关，是平台/协议限制，不是解析代码漏字段或判断错类型。对照过两份参考实现：
   - 本地 `qwenpaw` 项目里没有对应的兜底方案；

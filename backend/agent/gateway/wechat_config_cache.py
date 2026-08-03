@@ -29,7 +29,7 @@ import random
 import time
 from typing import Any, Callable
 
-from agent.adapters.wechat_client import ILinkClient
+from agent.gateway.wechat_client import ILinkClient
 
 # 与 OpenClaw config-cache.ts 常量一致
 CONFIG_CACHE_TTL_MS = 24 * 60 * 60 * 1000           # 24h 上限

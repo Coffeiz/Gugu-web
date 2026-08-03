@@ -1,8 +1,10 @@
 <template>
   <Teleport to="body">
-    <div v-if="show" ref="el" class="ctx-menu popup-menu" :style="style" @click.stop @contextmenu.prevent>
-      <slot />
-    </div>
+    <Transition name="menu-pop" :duration="{ enter: 240, leave: 180 }">
+      <div v-if="show" ref="el" class="ctx-menu popup-menu" :style="style" @click.stop @contextmenu.prevent>
+        <slot />
+      </div>
+    </Transition>
   </Teleport>
 </template>
 

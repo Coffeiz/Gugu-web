@@ -20,7 +20,7 @@ from app.db.session import get_db
 from app.models import ConversationMessage, ConversationSession, User
 
 from agent import genstream
-from agent.adapters import web as web_adapter
+from agent.gateway import web as web_adapter
 from agent.models import AgentRequest
 
 router = APIRouter(prefix="/agent", tags=["agent"])

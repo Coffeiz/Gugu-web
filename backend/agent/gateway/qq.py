@@ -15,7 +15,7 @@ supervisor 为每个启用的 user_bot 起一条本网关子进程。bot 收到�
 
 启动（由 supervisor 拉起，注入 QQ_* 环境变量）：
     QQ_BOT_ID=.. QQ_APP_ID=.. QQ_APP_SECRET=.. QQ_SANDBOX=0 QQ_OWNER=.. \
-      .venv/bin/python -m agent.adapters.qq
+      .venv/bin/python -m agent.gateway.qq
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ import time
 from app.core import redis as R
 from app.core.redaction import redact, diag_log, diag_log_raw
 
-_log = logging.getLogger("agent.adapters.qq")
+_log = logging.getLogger("agent.gateway.qq")
 
 STREAM = R.IM_INBOUND_STREAM
 _ACK_COOLDOWN = 10.0   # 同一用户「文件收到啦」秒回的冷却秒数：连发多图/文件只 ack 一次，不刷屏
@@ -244,7 +244,7 @@ async def _ingest_qq_media(message: Any, owner: str) -> list:
     if not atts:
         return []
     import aiohttp
-    from app.core import chat_attach
+    from agent.im import files as im_attachments
     out: list = []
     async with aiohttp.ClientSession() as sess:
         for a in atts:
@@ -275,14 +275,14 @@ async def _ingest_qq_media(message: Any, owner: str) -> list:
                         is_voice = True
                 if is_voice:
                     dur = media_transcode.probe_duration(data, ext)
-                    meta = await chat_attach.stage_voice(owner, name, ext, mime, data, duration=dur, platform="qq")
+                    meta = await im_attachments.stage_voice(owner, name, ext, mime, data, duration=dur, platform="qq")
                 else:
-                    meta = await chat_attach.stage(owner, name, ext, mime, data, platform="qq")
+                    meta = await im_attachments.stage(owner, name, ext, mime, data, platform="qq")
                 out.append(meta["attach_id"])
             except Exception as e:
                 # best-effort：单个附件下载/转码/暂存失败（网络抖动、ffmpeg 缺失、解码错…原因很杂）
                 # 不该拖垮其余附件的处理，跳过继续；但仍要留痕（受限出口拿原始，可见日志只留脱敏摘要）。
-                diag_log("agent.adapters.qq._ingest_qq_media", e)
+                diag_log("agent.gateway.qq._ingest_qq_media", e)
                 _log.warning("[qq] 暂存附件出错: %s", redact(f"{type(e).__name__}: {e}"))
     return out
 
@@ -304,7 +304,7 @@ async def _qq_access_token(app_id: str, secret: str) -> str:
     if not token:
         # 上游响应体可能回显请求里的 appId/secret 片段，绝不能拼进异常消息（P2-b §5）；
         # 原始体只进受限诊断出口，异常消息只给通用文案。
-        diag_log_raw("agent.adapters.qq._qq_access_token", f"data={data}")
+        diag_log_raw("agent.gateway.qq._qq_access_token", f"data={data}")
         raise RuntimeError("QQ access_token 获取失败（响应缺 access_token 字段）")
     return token
 
@@ -320,7 +320,7 @@ async def _qq_access_token_with_ttl(app_id: str, secret: str) -> tuple[str, int]
             data = await resp.json()
     token = data.get("access_token", "")
     if not token:
-        diag_log_raw("agent.adapters.qq._qq_access_token_with_ttl", f"data={data}")
+        diag_log_raw("agent.gateway.qq._qq_access_token_with_ttl", f"data={data}")
         raise RuntimeError("QQ access_token 获取失败（响应缺 access_token 字段）")
     return token, int(data.get("expires_in") or 0)
 
@@ -335,7 +335,7 @@ async def _qq_gateway_url(token: str, sandbox: bool) -> str:
             data = await resp.json()
     url = data.get("url", "")
     if not url:
-        diag_log_raw("agent.adapters.qq._qq_gateway_url", f"data={data}")
+        diag_log_raw("agent.gateway.qq._qq_gateway_url", f"data={data}")
         raise RuntimeError("QQ gateway 获取失败（响应缺 url 字段）")
     return url
 
@@ -349,7 +349,7 @@ async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, ms
     except Exception as e:
         # best-effort：这只是"收到啦"的秒回提示，失败不影响正式回复走 worker 那条主链路，
         # 可以广吞，但仍要留痕方便排查。
-        diag_log("agent.adapters.qq._qq_ack", e)
+        diag_log("agent.gateway.qq._qq_ack", e)
         _log.warning("[qq] 即时回复失败: %s", redact(f"{type(e).__name__}: {e}"))
 
 
@@ -368,6 +368,16 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         group_enabled, requires_at = group_settings[:2]
         # 兼容旧的测试/自定义适配器返回二元组；正式实现始终返回三元组。
         read_enabled = bool(group_settings[2]) if len(group_settings) > 2 else False
+        print(
+            "[qq-group-routing-probe] " + json.dumps({
+                "event": event_type,
+                "group_enabled": bool(group_enabled),
+                "requires_at": bool(requires_at),
+                "read_enabled": read_enabled,
+                "mentioned_by_event": event_type == "GROUP_AT_MESSAGE_CREATE",
+            }, ensure_ascii=False, separators=(",", ":")),
+            flush=True,
+        )
         if not group_enabled:
             return
         # 只读取模式的目的就是收集群内全部消息；它覆盖“只响应 @”筛选，
@@ -383,19 +393,6 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         return
     if not sender_id:
         return
-    if chat_type == "c2c":
-        try:
-            from app.db import session as _sess
-            from app.services.im_identity import bind_qq_owner_if_empty
-
-            if _sess._engine is None:
-                _sess._build_engine()
-            async with _sess._SessionLocal() as db:
-                await bind_qq_owner_if_empty(db, int(channel_id), owner, sender_id)
-        except Exception as e:
-            diag_log("agent.adapters.qq.bind_owner", e)
-            _log.warning("[qq:%s] owner 身份绑定失败，消息继续入队: %s",
-                         channel_id, redact(f"{type(e).__name__}: {e}"))
     text = (data.get("content") or "").strip()
     msg_id = data.get("id") or ""
     raw_attachments = data.get("attachments") or []
@@ -446,25 +443,26 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         print(f"[qq:{channel_id}] 收到 {sender_id}: text_len={len(text)} "
               f"fp={logsafe.fingerprint(text)} att={len(attachments)} trace={tid}", flush=True)
 
+    # 取消是实时控制信号：必须在 Gateway 侧立刻写入 Redis，不能等同用户锁的
+    # worker 轮到这条消息；普通 reply/drop shortcut 仍交给 worker 决策。
     if not attachments:
-        from agent import router, runtime_state as rtstate
-        dec = router.decide(text, await rtstate.get_state("qqbot", sender_id),
-                            await rtstate.is_awaiting("qqbot", sender_id))
-        if dec["action"] == "drop":
-            return
-        if dec["action"] in ("reply", "cancel"):
-            if dec["action"] == "cancel":
-                await rtstate.request_cancel("qqbot", sender_id)
+        from agent.im.loop import apply_im_shortcut_cancel, decide_im_shortcut
+        dec = await decide_im_shortcut("qqbot", sender_id, text)
+        if dec["action"] == "cancel":
+            await apply_im_shortcut_cancel("qqbot", sender_id, dec)
             target = chat_id if chat_type == "group" else sender_id
             await _qq_ack(channel_id, chat_type, target, dec["reply"], msg_id)
             return
+
     try:
+        from agent.im.models import normalize_payload
+        payload = normalize_payload(payload)
         await R.produce(STREAM, payload)
     except Exception as e:
         # 入队失败＝这条用户消息会被丢——不是无关紧要的 best-effort，值得响亮记录（受限出口留原始，
         # 可见日志留脱敏摘要），但不重试：Redis 层面的问题重试一次大概率还是失败，且这里已经是
         # 网关事件回调里，没有把整条 WS 消息回放重放的机制，重试意义不大，交给运维看诊断日志处理。
-        diag_log("agent.adapters.qq._handle_raw_qq_message.enqueue", e)
+        diag_log("agent.gateway.qq._handle_raw_qq_message.enqueue", e)
         _log.error("[qq] 入队失败: %s", redact(f"{type(e).__name__}: {e}"))
 
 
@@ -514,7 +512,7 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
                                         except asyncio.CancelledError:
                                             raise
                                         except Exception as e:
-                                            diag_log("agent.adapters.qq.heartbeat", e)
+                                            diag_log("agent.gateway.qq.heartbeat", e)
                                             _log.warning(
                                                 "[qq:%s] 心跳发送失败，关闭连接后按退避策略重连: %s",
                                                 channel_id,
@@ -564,7 +562,7 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
             # 都汇聚到这——包括编程错误（不新增分类，交给下面统一记录）。协议本身要求"断了就重连"，
             # 所以这里不改变"无条件重连"的行为，只把原始异常和可见日志的出口按 P2-b §3 分开：
             # 原始 traceback 只进受限诊断出口，gugu.log/Debug 面板只看到脱敏摘要 + 异常类型名。
-            diag_log(f"agent.adapters.qq._run_raw_ws.{channel_id}", e)
+            diag_log(f"agent.gateway.qq._run_raw_ws.{channel_id}", e)
             _log.error("[qq:%s] raw WebSocket 异常: %s", channel_id, redact(f"{type(e).__name__}: {e}"))
         delay = _RECONNECT_DELAYS[min(reconnect_attempt, len(_RECONNECT_DELAYS) - 1)]
         reconnect_attempt += 1
@@ -617,18 +615,7 @@ async def _creds_by_id(bot_id: str) -> tuple[str, str, bool]:
         return b.app_id, b.app_secret, b.sandbox
 
 
-async def _group_settings(bot_id: str) -> tuple[bool, bool, bool]:
-    """网关接收端用：按 user_bots.id 现查群聊开关。
-    每条群消息都查一次而不是启动时缓存，换来「切开关立即生效、不用重启网关子进程」。"""
-    import app.db.session as _sess
-    if _sess._engine is None:
-        _sess._build_engine()
-    from app.models import UserBot
-    async with _sess._SessionLocal() as db:
-        b = await db.get(UserBot, int(bot_id))
-        if not b:
-            return False, True, False
-        return b.group_chat_enabled, b.group_requires_at, b.group_read_enabled
+from agent.im.permissions import resolve_group_policy as _group_settings
 
 
 async def _send_token(channel_id: str) -> tuple[str, str]:
@@ -697,7 +684,7 @@ async def _qq_request(channel_id: str, method: str, path: str, *,
     if status == 401 and retry_on_401:
         _send_tokens.pop(channel_id, None)
         return await _qq_request(channel_id, method, path, json_body=json_body, retry_on_401=False)
-    diag_log_raw("agent.adapters.qq._qq_request",
+    diag_log_raw("agent.gateway.qq._qq_request",
                   f"{method} {path} status={status} body={data}")
     raise QQAPIError(method, path, status, data)
 
@@ -785,11 +772,11 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                     await _post(channel_id, openid, text, None)
                     return True
                 except Exception as fallback_error:
-                    diag_log("agent.adapters.qq.send_c2c.active_fallback", fallback_error)
+                    diag_log("agent.gateway.qq.send_c2c.active_fallback", fallback_error)
                     _log.warning("[qq] C2C 主动消息发送失败: %s",
                                  redact(f"{type(fallback_error).__name__}: {fallback_error}"))
                     return False
-            diag_log("agent.adapters.qq.send_c2c", e)
+            diag_log("agent.gateway.qq.send_c2c", e)
             _log.warning("[qq] 发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)   # 丢弃缓存，下次重新取 token
             if attempt == 2 or not _qq_is_transient(e):
@@ -813,11 +800,11 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                     await _post_group(channel_id, group_openid, text, None)
                     return True
                 except Exception as fallback_error:
-                    diag_log("agent.adapters.qq.send_group.active_fallback", fallback_error)
+                    diag_log("agent.gateway.qq.send_group.active_fallback", fallback_error)
                     _log.warning("[qq] 群聊主动消息发送失败: %s",
                                  redact(f"{type(fallback_error).__name__}: {fallback_error}"))
                     return False
-            diag_log("agent.adapters.qq.send_group", e)
+            diag_log("agent.gateway.qq.send_group", e)
             _log.warning("[qq] 群发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)
             if attempt == 2 or not _qq_is_transient(e):
@@ -867,7 +854,7 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
             await _qq_request(channel_id, "POST", f"/v2/users/{openid}/messages", json_body=msg_body)
             return True
         except Exception as e:
-            diag_log("agent.adapters.qq.send_file", e)
+            diag_log("agent.gateway.qq.send_file", e)
             _log.warning("[qq] 发文件失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             # token 失效才重建缓存；inner proxy 等抖动直接重试
             if isinstance(e, QQAPIError) and e.status == 401:

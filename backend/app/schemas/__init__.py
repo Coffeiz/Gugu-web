@@ -12,6 +12,8 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
+from app.core.project_colors import DEFAULT_PROJECT_COLOR, PROJECT_COLOR_PRESETS
+
 _INVALID_NAME_RE = re.compile(r'[\\/:*?"<>|]')
 
 
@@ -134,6 +136,14 @@ def _validate_project_date(v: Optional[str]) -> Optional[str]:
     return v
 
 
+def _validate_project_color(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return v
+    if v not in PROJECT_COLOR_PRESETS:
+        raise ValueError("颜色必须是预设色板中的值")
+    return v
+
+
 def _validate_project_stages(stages: Optional[list[dict]]) -> Optional[list[dict]]:
     if stages is None:
         return stages
@@ -174,7 +184,7 @@ class ProjectCreate(CamelModel):
     status: Literal["pending", "active", "done"] = "pending"
     start_date: Optional[str] = None
     deadline: Optional[str] = None
-    color: str = "linear-gradient(135deg,#7b7fb2,#c4afc8)"
+    color: str = DEFAULT_PROJECT_COLOR
     stages: list[dict] = []
     current_stage: Optional[str] = None
     progress: int = Field(0, ge=0, le=100)
@@ -186,6 +196,7 @@ class ProjectCreate(CamelModel):
 
     _start_date_valid = field_validator("start_date")(_validate_project_date)
     _deadline_valid = field_validator("deadline")(_validate_project_date)
+    _color_valid = field_validator("color")(_validate_project_color)
     _stages_valid = field_validator("stages")(_validate_project_stages)
 
     @model_validator(mode="after")
@@ -221,6 +232,7 @@ class ProjectUpdate(CamelModel):
 
     _start_date_valid = field_validator("start_date")(_validate_project_date)
     _deadline_valid = field_validator("deadline")(_validate_project_date)
+    _color_valid = field_validator("color")(_validate_project_color)
     _stages_valid = field_validator("stages")(_validate_project_stages)
 
     @model_validator(mode="after")
