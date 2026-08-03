@@ -1,8 +1,8 @@
 # IM Loop 与 Gateway 解耦 PRD
 
-> 状态：Phase 4 代码完成，待三平台手动验收
+> 状态：Phase 4 已完成，Phase 5 待实施
 > 创建：2026-08-03
-> 最近更新：2026-08-03
+> 最近更新：2026-08-04
 > 关联模块：`backend/agent/gateway/qq.py`、`backend/agent/gateway/feishu.py`、`backend/agent/gateway/wechat.py`、`backend/worker.py`、`backend/agent/runner.py`
 > 关联文档：[`PRD-IM-1-im接入稳定性与qq自建websocket.md`](./PRD-IM-1-im接入稳定性与qq自建websocket.md)、[`20-IM接入架构.md`](../../agent/20-IM接入架构.md)、[`21-群聊消息架构.md`](../../agent/21-群聊消息架构.md)、[`22-IM用户数据结构.md`](../../agent/22-IM用户数据结构.md)
 
@@ -14,7 +14,7 @@
 | Phase 1：统一消息协议 | ✅ 已完成 | 已新增入站 `PlatformMessage`、出站 `PlatformReply`，三个 Gateway 在入队前归一化消息，worker 在发送边界消费统一回复协议，并保留旧平台发送实现。 |
 | Phase 2：抽出身份与权限层 | ✅ 已完成 | 身份、权限、上下文策略、ActorContext、上下文装配和 Loop 选择门面已接入 runner/dispatch；worker 仅保留队列、session 和发送兼容边界。 |
 | Phase 3：建立 IM Loop | ✅ 已完成 | 已完成 Owner/Member Loop 门面、上下文与权限编排、session 路由、显式 Web session 绑定、统一回复和 worker 职责收口。 |
-| Phase 4：收窄 Gateway | ✅ 代码完成，待验收 | owner 绑定、身份协议、shortcut 和出站能力门禁已收口；平台媒体 API、即时 ack/reaction/typing 作为纯协议适配仍保留在 Gateway。 |
+| Phase 4：收窄 Gateway | ✅ 已完成 | owner 绑定、身份协议、shortcut 和出站能力门禁已收口；三平台收发/引用/附件/群聊身份/重连已人工验收（2026-08-04）；平台媒体 API、即时 ack/reaction/typing 作为纯协议适配仍保留在 Gateway。 |
 | Phase 5：隔离修复与编排清理 | 🔲 待实施 | 先修复 scope/身份边界，再收回 worker 编排，最后统一 Web/owner Loop 和出站协议。 |
 | Phase 6：群组与成员记忆 | 🔲 后续 | 复用 memory 组件，但使用独立的群组/平台用户 namespace，不与 owner 记忆混用。 |
 
@@ -551,8 +551,10 @@ PlatformMessage
 - ✅ 飞书/微信私聊保持当前单 Bot owner 体验；群聊暂按 `unknown + web_search` 处理，身份无法解析时不会以 `role=None` 进入 owner 上下文。
 - ✅ QQ/飞书普通 intent shortcut 已由 worker 转交 `agent/im/loop.py` 决策和执行；仅“取消”保留 Gateway 即时控制信号，保证正在运行的任务能及时中断。附件消息不会被 shortcut 提前吞掉。
 - ✅ 即时 reaction 的关键词选择已移入 `agent/im/loop.py`；Gateway 只负责调用平台 reaction API，不再持有关键词业务规则。即时 ack、typing 仍保留在 Gateway/typing adapter，且不决定是否调用 Agent 或改变业务权限。
-- 🔄 `PlatformReply` 已加入文本/引用/文件/图片/Keyboard/流式能力枚举、part 类型推导和平台能力校验；文本、文件门禁和流式门禁已接入，具体上传/流式 API 仍在各自 adapter 路径，后续继续迁移为 reply parts。
-- 🔲 逐个平台验证收发、引用、附件、群聊身份和重连。
+- ✅ `PlatformReply` 已加入文本/引用/文件/图片/Keyboard/流式能力枚举、part 类型推导和平台能力校验；文件发送已收拢到 `agent/im/replies.py` 的 `send_file()` 统一分发（跟文本/流式共用同一个"该调哪个平台"判断），不再在 `files.py` 里维护一份 if/elif。worker 层面仍分别调用 `send_text`/`send_files`/`send_stream_with_fallback` 三个顶层入口，未整体收敛成单一 `send_reply(PlatformReply)`——这一步按 PRD 顺序属于 Phase 5 第 6 步"完成 capability 路由后删除各平台出站兼容函数"，不在 Phase 4 范围内提前做。
+- ✅ 三平台（飞书、QQ、微信）收发、引用、附件、群聊身份和重连已完成人工验收（2026-08-04）。
+
+Phase 4 收口：owner 绑定、身份协议、shortcut、出站能力门禁和三平台人工验收均已完成。`PlatformReply` 的完整 reply parts 统一（worker 顶层入口合并）留给 Phase 5 第 6 步收尾，不视为 Phase 4 欠账。
 
 ### Phase 5：隔离修复与编排清理
 
