@@ -76,7 +76,7 @@ export function useFileUpload(options: FileUploadOptions) {
         }
         const created = await uploadWithProgress('/files', form, onProgress)
         if (overwriteId != null) {
-          options.fileCacheStore.updateFile(overwriteId, created)
+          options.fileCacheStore.updateFile(overwriteId, { ...created, thumbRevision: Date.now() })
           clearThumbCache(overwriteId)
         } else {
           options.fileCacheStore.addFile(created)
@@ -120,4 +120,3 @@ export function useFileUpload(options: FileUploadOptions) {
     handleDrop,
   }
 }
-

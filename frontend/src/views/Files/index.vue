@@ -375,6 +375,7 @@ const batchActions = useFileLibraryBatchActions({
       projectId: seg?.type === 'project' ? (seg.id ?? null) : (seg?.projectId ?? null),
     }
   },
+  showConflicts: conflicts => conflictDialogRef.value?.show(conflicts) ?? Promise.resolve(new Map()),
 })
 const downloadingZip = batchActions.downloading
 const trashActions = useFileLibraryTrashActions({

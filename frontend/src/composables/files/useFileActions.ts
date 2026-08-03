@@ -92,9 +92,10 @@ export function useFileActions(options: FileActionOptions = {}) {
     return foldersApi.move(id, parentId, version, projectId)
   }
 
-  function copyFile(id: number, folderId: number | null, projectId: number | null = null) {
+  function copyFile(id: number, folderId: number | null, projectId: number | null = null,
+    conflict?: { onConflict?: 'keep_both' | 'overwrite'; overwriteFileId?: number | null }) {
     assertProjectTarget(projectId)
-    return filesApi.copy(id, { folderId, projectId })
+    return filesApi.copy(id, { folderId, projectId, ...conflict })
   }
 
   function copyFolder(id: number, parentId: number | null, projectId: number | null = null) {

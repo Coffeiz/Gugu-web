@@ -7,6 +7,8 @@ import { optimisticMutation } from '@/utils/optimisticMutation'
 import type { useFileActions } from './useFileActions'
 import { useFileBatchCore } from './useFileBatchCore'
 import { useFilePasteCore } from './useFilePasteCore'
+import type { ConflictDecision, ConflictItem } from '@/components/common/UploadConflictDialog.vue'
+import { clearThumbCache } from '@/composables/useThumbCache'
 
 export interface FileLibraryBatchActionOptions {
   fileActions: ReturnType<typeof useFileActions>
@@ -22,6 +24,7 @@ export interface FileLibraryBatchActionOptions {
   pruneHistoryForFolders: (ids: number[]) => void
   fetchStorage: () => void | Promise<void>
   getDestination: () => { folderId: number | null; projectId: number | null }
+  showConflicts?: (items: ConflictItem[]) => Promise<Map<string, ConflictDecision>>
 }
 
 type FileLibraryFolder = {
@@ -81,6 +84,7 @@ export function useFileLibraryBatchActions(options: FileLibraryBatchActionOption
   const pasteCore = useFilePasteCore({
     clipboardStore: options.clipboardStore,
     getDestination: options.getDestination,
+    showConflicts: options.showConflicts,
     onCut: async (fileIds, folderIds, destination) => {
       const fileBackups = fileIds.map(id => options.cacheStore.getFile(id)).filter((file): file is FileMeta => file != null)
       const folderBackups = folderIds.map(id => options.cacheStore.getFolder(id)).filter((folder): folder is FolderMeta => folder != null)
@@ -108,9 +112,38 @@ export function useFileLibraryBatchActions(options: FileLibraryBatchActionOption
         onError: error => console.error('[Files] 粘贴失败:', error),
       })
     },
-    onCopy: async (fileIds, folderIds, destination) => {
-      const created = await Promise.all(fileIds.map(id => options.fileActions.copyFile(id, destination.folderId, destination.projectId)))
-      created.forEach(file => options.cacheStore.addFile(file))
+    getCopyConflicts: fileIds => {
+      const destinationFiles = options.getFiles()
+      return fileIds.map(id => options.cacheStore.getFile(id)).filter((source): source is FileMeta => source != null)
+        .map(source => {
+          const existing = destinationFiles.find(target => target.displayName === source.displayName && target.ext === source.ext)
+          return existing ? { filename: `${source.displayName}.${source.ext}`, existingFile: { id: existing.id } } : null
+        }).filter(item => item != null) as ConflictItem[]
+    },
+    onCopy: async (fileIds, folderIds, destination, decisions) => {
+      const copyIds = fileIds.filter(id => {
+        const source = options.cacheStore.getFile(id)
+        const name = source ? `${source.displayName}.${source.ext}` : String(id)
+        return decisions?.get(name)?.action !== 'skip'
+      })
+      const created = await Promise.all(copyIds.map(id => {
+        const source = options.cacheStore.getFile(id)
+        const name = source ? `${source.displayName}.${source.ext}` : String(id)
+        const decision = decisions?.get(name)
+        const target = decision?.existingFileId
+        return options.fileActions.copyFile(id, destination.folderId, destination.projectId,
+          decision?.action === 'overwrite' ? { onConflict: 'overwrite', overwriteFileId: target } : undefined)
+      }))
+      created.forEach((file, index) => {
+        const sourceId = copyIds[index]
+        const source = options.cacheStore.getFile(sourceId)
+        const name = source ? `${source.displayName}.${source.ext}` : String(sourceId)
+        const decision = decisions?.get(name)
+        if (decision?.action === 'overwrite' && decision.existingFileId != null) {
+          clearThumbCache(decision.existingFileId)
+          options.cacheStore.updateFile(decision.existingFileId, { ...file, thumbRevision: Date.now() })
+        } else options.cacheStore.addFile(file)
+      })
       const copiedFolders = await Promise.all(folderIds.map(id => options.fileActions.copyFolder(id, destination.folderId, destination.projectId)))
       copiedFolders.forEach(folder => options.cacheStore.addFolder({
         id: folder.id, projectId: folder.projectId, parentId: folder.parentId, name: folder.name, fileCount: 0, version: folder.version,

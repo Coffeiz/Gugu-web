@@ -485,6 +485,8 @@ const {
   deleteFolder: deleteFolderCard,
   openInfo: (file, x, y) => { pmInfoPopup.value = { show: true, file, x, y } },
   showNewFolder,
+  showConflicts: conflicts => conflictDialogRef.value?.show(conflicts)
+    ?? Promise.resolve(new Map<string, ConflictDecision>()),
 })
 
 useProjectFileKeyboard({

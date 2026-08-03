@@ -8,6 +8,8 @@ import type { components } from '@/types/api'
 // 文件对象在各视图里是「带客户端增补的袋子」——已知 wire 字段照常有类型，另留少量历史/客户端字段
 // 与索引签名，容纳消费方现存用法（如聊天附件预览携带 attach_id、旧面板仍读 versions）。
 export type FileMeta = components['schemas']['FileResponse'] & {
+  /** 覆盖上传/粘贴覆盖后强制缩略图指令重建节点。 */
+  thumbRevision?: number
   versions?: Array<{ size?: string }>   // 历史字段：wire 现已直接给 size，个别面板仍读 versions
   attach_id?: number | string | null    // 聊天附件预览时携带（非库文件）
   file_id?: number | null

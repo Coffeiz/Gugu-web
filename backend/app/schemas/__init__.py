@@ -298,6 +298,8 @@ class BatchDownloadBody(CamelModel):
 class FileCopyBody(CamelModel):
     folder_id:  Optional[int] = None
     project_id: Optional[int] = None
+    on_conflict: str = "keep_both"
+    overwrite_file_id: Optional[int] = None
 
 
 class FileUpdate(CamelModel):

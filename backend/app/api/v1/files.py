@@ -411,7 +411,8 @@ async def copy_file(
     # 文件库」这类跨空间粘贴会静默失败，复制出的文件还留在原项目里（两处前端调用都会显式带上
     # 目标 project_id，个人空间传 null）。物理拷贝 + key + 落库交 FileService。
     result = await FileService(db).copy_file(
-        current_user.id, fid, folder_id=body.folder_id, project_id=body.project_id)
+        current_user.id, fid, folder_id=body.folder_id, project_id=body.project_id,
+        on_conflict=body.on_conflict, overwrite_file_id=body.overwrite_file_id)
     await db.commit()
     await db.refresh(result.file)
     await events.publish(current_user.id, "files", origin=origin)

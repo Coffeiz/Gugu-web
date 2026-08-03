@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import type { useClipboardStore } from '@/stores/clipboard'
+import type { ConflictDecision, ConflictItem } from '@/components/common/UploadConflictDialog.vue'
 
 export interface FilePasteDestination {
   folderId: number | null
@@ -11,7 +12,10 @@ export interface FilePasteCoreOptions {
   getDestination: () => FilePasteDestination
   close?: () => void
   onCut: (fileIds: number[], folderIds: number[], destination: FilePasteDestination) => void | Promise<void>
-  onCopy: (fileIds: number[], folderIds: number[], destination: FilePasteDestination) => void | Promise<void>
+  onCopy: (fileIds: number[], folderIds: number[], destination: FilePasteDestination,
+    decisions?: Map<string, ConflictDecision>) => void | Promise<void>
+  getCopyConflicts?: (fileIds: number[], destination: FilePasteDestination) => ConflictItem[]
+  showConflicts?: (items: ConflictItem[]) => Promise<Map<string, ConflictDecision>>
   onError?: (error: unknown) => void
 }
 
@@ -30,7 +34,11 @@ export function useFilePasteCore(options: FilePasteCoreOptions) {
       if (options.clipboardStore.type === 'cut') {
         await options.onCut(fileIds, folderIds, destination)
       } else if (options.clipboardStore.type === 'copy') {
-        await options.onCopy(fileIds, folderIds, destination)
+        const conflicts = options.getCopyConflicts?.(fileIds, destination) ?? []
+        const decisions = conflicts.length && options.showConflicts
+          ? await options.showConflicts(conflicts)
+          : new Map<string, ConflictDecision>()
+        await options.onCopy(fileIds, folderIds, destination, decisions)
       }
     } catch (error) {
       options.onError?.(error)
@@ -41,4 +49,3 @@ export function useFilePasteCore(options: FilePasteCoreOptions) {
 
   return { pasteBusy, paste }
 }
-

@@ -2750,6 +2750,10 @@ export interface components {
             folderId?: number | null;
             /** Projectid */
             projectId?: number | null;
+            /** Onconflict */
+            onConflict?: "keep_both" | "overwrite";
+            /** Overwritefileid */
+            overwriteFileId?: number | null;
         };
         /** FileResponse */
         FileResponse: {

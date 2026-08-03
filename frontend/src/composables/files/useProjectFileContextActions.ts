@@ -5,6 +5,8 @@ import { useClipboardStore } from '@/stores/clipboard'
 import { useFileContextMenu } from './useFileContextMenu'
 import { useFilePasteCore } from './useFilePasteCore'
 import type { useFileActions } from './useFileActions'
+import type { ConflictDecision, ConflictItem } from '@/components/common/UploadConflictDialog.vue'
+import { clearThumbCache } from '@/composables/useThumbCache'
 
 type ContextType = 'file' | 'multi-file' | 'folder' | 'empty'
 type ContextTarget = FileMeta | FolderMeta
@@ -27,6 +29,7 @@ export interface ProjectFileContextOptions {
   deleteFolder: (folder: FolderMeta) => Promise<void>
   openInfo: (file: FileMeta, x: number, y: number) => void
   showNewFolder: Ref<boolean>
+  showConflicts?: (items: ConflictItem[]) => Promise<Map<string, ConflictDecision>>
 }
 
 /** 项目文件区右键菜单动作和剪贴板粘贴；菜单展示仍由 FileBrowserContextMenu 负责。 */
@@ -55,9 +58,40 @@ export function useProjectFileContextActions(options: ProjectFileContextOptions)
       options.clipboardStore.clear()
       await options.fileCacheStore.refresh()
     },
-    onCopy: async (fileIds, folderIds, destination) => {
-      const created = await Promise.all(fileIds.map(id => options.fileActions.copyFile(id, destination.folderId, destination.projectId)))
-      created.forEach(file => { if (file) options.fileCacheStore.addFile(file) })
+    getCopyConflicts: fileIds => {
+      const destinationFiles = options.getFiles()
+      return fileIds.map(id => options.fileCacheStore.getFile(id)).filter((source): source is FileMeta => source != null)
+        .map(source => {
+          const existing = destinationFiles.find(target => target.displayName === source.displayName && target.ext === source.ext)
+          return existing ? { filename: `${source.displayName}.${source.ext}`, existingFile: { id: existing.id } } : null
+        }).filter(item => item != null) as ConflictItem[]
+    },
+    showConflicts: conflicts => (/* 由 ProjectModal 通过 showConflicts 注入 */
+      options.showConflicts?.(conflicts) ?? Promise.resolve(new Map<string, ConflictDecision>())),
+    onCopy: async (fileIds, folderIds, destination, decisions) => {
+      const copyIds = fileIds.filter(id => {
+        const source = options.fileCacheStore.getFile(id)
+        const name = source ? `${source.displayName}.${source.ext}` : String(id)
+        return decisions?.get(name)?.action !== 'skip'
+      })
+      const created = await Promise.all(copyIds.map(id => {
+        const source = options.fileCacheStore.getFile(id)
+        const name = source ? `${source.displayName}.${source.ext}` : String(id)
+        const decision = decisions?.get(name)
+        return options.fileActions.copyFile(id, destination.folderId, destination.projectId,
+          decision?.action === 'overwrite' ? { onConflict: 'overwrite', overwriteFileId: decision.existingFileId } : undefined)
+      }))
+      created.forEach((file, index) => {
+        if (!file) return
+        const sourceId = copyIds[index]
+        const source = options.fileCacheStore.getFile(sourceId)
+        const name = source ? `${source.displayName}.${source.ext}` : String(sourceId)
+        const decision = decisions?.get(name)
+        if (decision?.action === 'overwrite' && decision.existingFileId != null) {
+          clearThumbCache(decision.existingFileId)
+          options.fileCacheStore.updateFile(decision.existingFileId, { ...file, thumbRevision: Date.now() })
+        } else options.fileCacheStore.addFile(file)
+      })
       const copiedFolders = await Promise.all(folderIds.map(id =>
         options.fileActions.copyFolder(id, destination.folderId, destination.projectId)))
       copiedFolders.forEach(folder => options.fileCacheStore.addFolder(folder))
