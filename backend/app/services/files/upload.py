@@ -1,11 +1,14 @@
 from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
 
+import asyncio
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ownership import get_owned
 from app.models import File, Folder, Project
+from app.services.storage import OSSStorageBackend
 from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.keys import _build_key, _resolve_conflict
@@ -26,6 +29,15 @@ class ConfirmUploadResult:
     project: Optional[Project]
     folder_name: Optional[str]
     overwritten_file_id: Optional[int] = None
+
+
+async def presign_upload_url(storage, target: PresignTarget, mime_type: str) -> str | None:
+    """为 OSS 目标签发直传地址；本地存储返回 None，由路由回退到代理上传。"""
+    if not isinstance(storage, OSSStorageBackend):
+        return None
+    return await asyncio.to_thread(
+        storage.presign_put, target.final_key, mime_type, 600
+    )
 
 
 async def check_upload_conflicts(
@@ -49,6 +61,16 @@ class UploadTargetError(ValueError):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+
+
+async def validate_oss_upload(storage, user_id: int, storage_key: str) -> None:
+    """校验 OSS 直传对象的归属、后端类型和上传完成状态。"""
+    if not isinstance(storage, OSSStorageBackend):
+        raise UploadTargetError(400, "当前存储后端不是 OSS，请使用普通上传")
+    if not storage_key.startswith(f"{user_id}/"):
+        raise UploadTargetError(403, "无权限访问该存储路径")
+    if not await storage.exists(storage_key):
+        raise UploadTargetError(400, "文件尚未上传到 OSS，请先完成直传")
 
 
 def parse_upload_filename(filename: str) -> Tuple[str, str]:

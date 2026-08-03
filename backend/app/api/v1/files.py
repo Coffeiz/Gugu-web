@@ -2,76 +2,57 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File as FastAPIFile, Form
 from jose import JWTError, jwt
-from sqlalchemy import select, func
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
-
-import asyncio
 
 from app.core import events
 from app.core.config import get_settings
 from app.core.ownership import get_owned
-from app.core.security import create_stream_token, get_client_id, get_current_user, verify_stream_token
+from app.core.security import get_client_id, get_current_user, verify_stream_token
 from app.core.tz import now_utc
 from app.db.session import get_db
-from app.models import File, Folder, Project, User
+from app.models import File, User
 from app.schemas import FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry, BatchDeleteBody, FileCopyBody, BatchDownloadBody
-from app.services.files.browser import (
-    get_file_tree_rows,
-    get_file_version_snapshot,
-    get_storage_usage,
-    list_all_file_rows,
-    list_file_rows,
-)
-from app.services.files.response import color_value, to_file_response
+from app.services.files.browser import get_file_tree_rows, get_file_version_snapshot, get_storage_usage, list_existing_file_rows, list_file_rows
+from app.services.files.response import color_value, to_file_response, to_related_file_response
 from app.services.files.upload import (
     UploadTargetError,
     check_upload_conflicts,
     confirm_oss_upload,
     find_conflict,
     parse_upload_filename,
+    presign_upload_url,
     prepare_presign_target,
+    validate_oss_upload,
 )
-from app.services.files.actions import delete_file as delete_file_service, delete_files
+from app.services.files.actions import (
+    FileContentError,
+    FileStreamError,
+    build_stream_url,
+    delete_file as delete_file_service,
+    delete_files,
+    read_file_download,
+    resolve_local_file_stream,
+    update_file_content as update_file_content_service,
+)
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
-from app.services.storage.file_service.files import _fmt_size
 from app.services.files.selection import build_batch_zip
 from app.services.files.previews import (
+    IMAGE_MIMES,
+    PreviewError,
     delete_thumb_cache,
-    office_to_pdf,
     pregenerate_thumb,
-    render_thumbnail,
+    read_image_dimensions,
+    read_file_thumbnail,
+    read_pdf_preview,
 )
 
 router = APIRouter(prefix="/files", tags=["files"])
-
-_OFFICE_EXTS = frozenset({'DOC', 'DOCX', 'XLS', 'XLSX', 'PPT', 'PPTX'})
-_pdf_cache: dict[str, bytes] = {}   # key: "{fid}:{updated_at_iso}"
 
 # 单文件上传硬上限（字节）——独立于存储配额，防一次性 read 进内存打爆。
 _MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
 # 版本摘要是无副作用查询，遇到迁移/对账等 DDL 造成的短暂死锁时可以安全重试。
-_VERSION_RETRY_BACKOFF = (0.05, 0.15)
-
-
-def _is_deadlock_error(exc: DBAPIError) -> bool:
-    """仅识别 PostgreSQL/asyncpg 的死锁，避免把普通数据库错误当成可重试。"""
-    return type(getattr(exc, "orig", None)).__name__ == "DeadlockDetectedError"
-
-
-async def _execute_version_query(db: AsyncSession, stmt):
-    """执行文件版本摘要查询；死锁时回滚当前事务后有限重试。"""
-    for attempt in range(len(_VERSION_RETRY_BACKOFF) + 1):
-        try:
-            return await db.execute(stmt)
-        except DBAPIError as exc:
-            if not _is_deadlock_error(exc) or attempt >= len(_VERSION_RETRY_BACKOFF):
-                raise
-            await db.rollback()
-            await asyncio.sleep(_VERSION_RETRY_BACKOFF[attempt])
-
 # ── GET /files ────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=list[FileResponse])
@@ -106,23 +87,9 @@ async def list_all_files(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await list_all_file_rows(db, current_user.id)
-
-    # 本地存储时过滤掉实体文件已被手动删除的记录，并同步软删除数据库条目
-    storage = get_storage()
-    from app.services.storage import LocalStorageBackend
-    if isinstance(storage, LocalStorageBackend):
-        now = now_utc()
-        valid_rows = []
-        for row in rows:
-            f, pname, pcolor, fname = row
-            if (storage.root / f.storage_key).exists():
-                valid_rows.append(row)
-            else:
-                await db.delete(f)
-        if len(valid_rows) < len(rows):
-            await db.commit()
-        rows = valid_rows
+    rows, changed = await list_existing_file_rows(db, get_storage(), current_user.id)
+    if changed:
+        await db.commit()
 
     return [to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in rows]
 
@@ -135,16 +102,7 @@ async def files_version(
     db: AsyncSession = Depends(get_db),
 ):
     """返回文件表状态摘要，用于前端感知服务端变更（删除/修改均会改变结果）。"""
-    stmt = (
-        select(
-            func.count(File.id),
-            func.max(File.updated_at),
-            func.max(File.deleted_at),
-        )
-        .where(File.user_id == current_user.id)
-    )
-    result = await _execute_version_query(db, stmt)
-    count, max_updated, max_deleted = result.one()
+    count, max_updated, max_deleted = await get_file_version_snapshot(db, current_user.id)
     version = f"{count}:{max_updated}:{max_deleted}"
     return {"version": version}
 
@@ -251,17 +209,8 @@ async def upload_file(
     if size_bytes > _MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=f"文件过大（单文件上限 {_MAX_UPLOAD_BYTES // 1048576}MB）")
 
-    _is_img = bool(mime_type) and mime_type.lower() in _IMAGE_MIMES and mime_type.lower() != "image/svg+xml"
-    img_width, img_height = None, None
-    if _is_img:
-        try:
-            from PIL import Image as _PILImage
-            import io as _io
-            _pil = _PILImage.open(_io.BytesIO(data))
-            img_width, img_height = _pil.size
-            _pil.close()
-        except Exception:
-            pass
+    _is_img = bool(mime_type) and mime_type.lower() in IMAGE_MIMES and mime_type.lower() != "image/svg+xml"
+    img_width, img_height = read_image_dimensions(data, mime_type)
 
     _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
 
@@ -283,9 +232,7 @@ async def upload_file(
     if not result.was_overwrite:
         await events.publish(current_user.id, "files", origin=origin)
 
-    project_name = result.project.name if result.project else None
-    project_color = color_value(result.project.color) if result.project else None
-    resp = to_file_response(f, project_name, project_color, result.folder_name)
+    resp = to_related_file_response(f, result.project, result.folder_name)
     if _is_img:
         background_tasks.add_task(pregenerate_thumb, f.storage_key, f.id)
     return resp
@@ -312,8 +259,6 @@ async def presign_upload(
     db: AsyncSession = Depends(get_db),
 ):
     """检查存储后端：OSS 时签发 presigned PUT URL；本地时返回 {mode:'proxy'}。"""
-    from app.services.storage import get_storage, OSSStorageBackend
-
     storage = get_storage()
     try:
         target = await prepare_presign_target(
@@ -332,11 +277,8 @@ async def presign_upload(
     except UploadTargetError as error:
         raise HTTPException(error.status_code, error.detail) from error
 
-    if isinstance(storage, OSSStorageBackend):
-        import asyncio as _asyncio
-        upload_url = await _asyncio.to_thread(
-            storage.presign_put, target.final_key, body.mime_type, 600
-        )
+    upload_url = await presign_upload_url(storage, target, body.mime_type)
+    if upload_url is not None:
         return {
             "mode": "oss",
             "upload_url": upload_url,
@@ -372,19 +314,9 @@ async def confirm_upload(
     db: AsyncSession = Depends(get_db),
 ):
     """OSS 直传完成后，注册 DB 记录（或覆盖已有文件时，原地更新那条记录）。"""
-    from app.services.storage import get_storage, OSSStorageBackend
-
-    if not body.storage_key.startswith(f"{current_user.id}/"):
-        raise HTTPException(403, "无权限访问该存储路径")
-
     storage = get_storage()
-    if not isinstance(storage, OSSStorageBackend):
-        raise HTTPException(400, "当前存储后端不是 OSS，请使用普通上传")
-
-    if not await storage.exists(body.storage_key):
-        raise HTTPException(400, "文件尚未上传到 OSS，请先完成直传")
-
     try:
+        await validate_oss_upload(storage, current_user.id, body.storage_key)
         result = await confirm_oss_upload(
             db,
             current_user.id,
@@ -408,9 +340,7 @@ async def confirm_upload(
     await db.refresh(result.file)
     await events.publish(current_user.id, "files", origin=origin)
 
-    project_color = color_value(result.project.color) if result.project else None
-    return to_file_response(result.file, result.project.name if result.project else None,
-                            project_color, result.folder_name)
+    return to_related_file_response(result.file, result.project, result.folder_name)
 
 
 # ── PATCH /files/{fid} ───────────────────────────────────────────────────────
@@ -436,9 +366,7 @@ async def update_file(
     await db.refresh(result.file)
     await events.publish(current_user.id, "files", origin=origin)
 
-    project_name = result.project.name if result.project else None
-    project_color = color_value(result.project.color) if result.project else None
-    return to_file_response(result.file, project_name, project_color, result.folder_name)
+    return to_related_file_response(result.file, result.project, result.folder_name)
 
 
 class _FileContentBody(_BaseModel):
@@ -454,18 +382,14 @@ async def update_file_content(
     db: AsyncSession = Depends(get_db),
 ):
     """改文本文件正文（md 预览里点任务勾选框等场景，前端直接存）。仅文本类、限 1MB。"""
-    from app.core.chat_attach import TEXT_EXTS
-    f = await get_owned(db, File, fid, current_user.id)
-    if not f:
+    try:
+        f = await update_file_content_service(
+            db, get_storage(), current_user.id, fid, body.content
+        )
+    except FileContentError as error:
+        raise HTTPException(error.status_code, error.detail) from error
+    if f is None:
         raise HTTPException(404, "文件不存在")
-    if (f.ext or "").lower() not in TEXT_EXTS:
-        raise HTTPException(400, "仅文本类文件可改内容")
-    data = body.content.encode("utf-8")
-    if len(data) > 1024 * 1024:
-        raise HTTPException(400, "内容过大（上限 1MB）")
-    await get_storage().put(f.storage_key, data, f.mime_type or "text/markdown")
-    f.size_bytes = len(data)
-    f.size = _fmt_size(len(data))
     f.updated_at = now_utc()
     await db.commit()
     await db.refresh(f)
@@ -492,9 +416,7 @@ async def copy_file(
     await db.refresh(result.file)
     await events.publish(current_user.id, "files", origin=origin)
 
-    project_name = result.project.name if result.project else None
-    project_color = color_value(result.project.color) if result.project else None
-    return to_file_response(result.file, project_name, project_color, result.folder_name)
+    return to_related_file_response(result.file, result.project, result.folder_name)
 
 
 # ── DELETE /files/{fid} （软删除→回收站）────────────────────────────────────
@@ -559,11 +481,6 @@ async def batch_download_files(
 # ── GET /files/{fid}/thumb ────────────────────────────────────────────────────
 # 供 <img src="..."> 使用，通过 query param 传 JWT（与 stream 端点一致）
 
-_IMAGE_MIMES = frozenset({
-    'image/jpeg', 'image/png', 'image/gif', 'image/webp',
-    'image/avif', 'image/bmp', 'image/svg+xml', 'image/heic', 'image/heif',
-})
-
 @router.get("/{fid}/thumb")
 async def get_thumb(
     request: Request,
@@ -571,7 +488,6 @@ async def get_thumb(
     size: str = Query("full"),   # "tiny" | "card" | "full"
     db: AsyncSession = Depends(get_db),
 ):
-    import asyncio
     from fastapi.responses import Response as FastAPIResponse
     settings = get_settings()
     auth = request.headers.get("Authorization", "")
@@ -592,24 +508,19 @@ async def get_thumb(
         raise HTTPException(404, "文件不存在")
 
     mime = (f.mime_type or '').lower()
-    if mime not in _IMAGE_MIMES:
+    if mime not in IMAGE_MIMES:
         raise HTTPException(415, "不是图片文件")
 
-    # SVG 和全尺寸直接返回原图
-    if size == "full" or mime == "image/svg+xml":
-        try:
-            data = await get_storage().get(f.storage_key)
-        except FileNotFoundError:
-            raise HTTPException(404, "物理文件丢失")
-        return FastAPIResponse(content=data, media_type=mime,
-                               headers={"Cache-Control": "private, max-age=86400"})
-
-    # 缓存 miss：读原图，按需生成请求的尺寸（card 不在上传时预生成）
     try:
-        raw = await get_storage().get(f.storage_key)
+        content, media_type = await read_file_thumbnail(
+            get_storage(),
+            storage_key=f.storage_key,
+            file_id=fid,
+            mime_type=mime,
+            size=size,
+        )
     except FileNotFoundError:
         raise HTTPException(404, "物理文件丢失")
-    content, media_type = await render_thumbnail(raw, fid, size, mime)
     return FastAPIResponse(content=content, media_type=media_type,
                            headers={"Cache-Control": "private, max-age=86400"})
 
@@ -625,14 +536,13 @@ async def download_file(
     from fastapi.responses import Response
     from urllib.parse import quote
 
-    f = await get_owned(db, File, fid, current_user.id)
-    if not f:
+    result = await read_file_download(db, get_storage(), current_user.id, fid)
+    if result is None:
         raise HTTPException(404, "文件不存在")
-    data = await get_storage().get(f.storage_key)
-    filename = quote(f"{f.display_name}.{f.ext.lower()}")
+    filename = quote(f"{result.file.display_name}.{result.file.ext.lower()}")
     return Response(
-        content=data,
-        media_type=f.mime_type or "application/octet-stream",
+        content=result.content,
+        media_type=result.file.mime_type or "application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )
 
@@ -647,26 +557,13 @@ async def preview_pdf(
 ):
     from fastapi.responses import Response
 
-    f = await get_owned(db, File, fid, current_user.id)
-    if not f or f.deleted_at is not None:
-        raise HTTPException(404, "文件不存在")
-    if f.ext.upper() not in _OFFICE_EXTS:
-        raise HTTPException(400, "不支持的格式")
-
-    cache_key = f"{fid}:{f.updated_at.isoformat()}"
-    if cache_key not in _pdf_cache:
-        if len(_pdf_cache) > 50:
-            _pdf_cache.clear()
-        raw = await get_storage().get(f.storage_key)
-        try:
-            _pdf_cache[cache_key] = await office_to_pdf(raw, f.ext)
-        except asyncio.TimeoutError:
-            raise HTTPException(422, "文档转换超时")
-        except RuntimeError as error:
-            raise HTTPException(422, str(error))
+    try:
+        pdf = await read_pdf_preview(db, get_storage(), current_user.id, fid)
+    except PreviewError as error:
+        raise HTTPException(error.status_code, error.detail) from error
 
     return Response(
-        content=_pdf_cache[cache_key],
+        content=pdf,
         media_type="application/pdf",
         headers={"Cache-Control": "private, max-age=300"},
     )
@@ -680,24 +577,19 @@ async def get_stream_url(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from app.core.config import get_settings
-
     f = await get_owned(db, File, fid, current_user.id)
     if not f:
         raise HTTPException(404, "文件不存在")
 
     storage = get_storage()
-    from app.services.storage import OSSStorageBackend, LocalStorageBackend
-    if isinstance(storage, OSSStorageBackend):
-        import asyncio
-        url = await asyncio.to_thread(
-            storage.bucket.sign_url, "GET", storage.pfx + f.storage_key, 600
+    return {
+        "url": await build_stream_url(
+            storage,
+            storage_key=f.storage_key,
+            file_id=fid,
+            user_id=current_user.id,
         )
-        return {"url": url}
-
-    # 本地存储：签发 stream token，返回相对路径（浏览器相对当前 origin 解析）
-    token = create_stream_token(fid, current_user.id, expires_minutes=10)
-    return {"url": f"/api/v1/files/{fid}/stream?token={token}"}
+    }
 
 
 # ── GET /files/{fid}/stream ──────────────────────────────────────────────────
@@ -709,26 +601,20 @@ async def stream_file(
     db: AsyncSession = Depends(get_db),
 ):
     from fastapi.responses import FileResponse
-    from app.services.storage import LocalStorageBackend
 
     token_fid, user_id = verify_stream_token(token)
     if token_fid != fid:
         raise HTTPException(401, "token 与文件不符")
 
-    f = await get_owned(db, File, fid, user_id)
-    if not f:
+    try:
+        result = await resolve_local_file_stream(db, get_storage(), user_id, fid)
+    except FileStreamError as error:
+        raise HTTPException(error.status_code, error.detail) from error
+    if result is None:
         raise HTTPException(404, "文件不存在")
 
-    storage = get_storage()
-    if not isinstance(storage, LocalStorageBackend):
-        raise HTTPException(400, "OSS 后端请使用 stream-url 返回的 presigned URL")
-
-    file_path = storage.root / f.storage_key
-    if not file_path.exists():
-        raise HTTPException(404, "文件不存在于存储")
-
     return FileResponse(
-        path=str(file_path),
-        media_type=f.mime_type or "application/octet-stream",
-        filename=f"{f.display_name}.{f.ext.lower()}",
+        path=str(result.path),
+        media_type=result.file.mime_type or "application/octet-stream",
+        filename=f"{result.file.display_name}.{result.file.ext.lower()}",
     )

@@ -26,6 +26,7 @@
 - **项目页 Owner 更新收口**（`views/Projects/components/`）：将 Runtime 接管状态的响应式更新从页面级收敛到列/列表范围，降低拖拽释放时的 Vue 更新量。
 - **项目看板 Runtime 性能基线**（`views/Projects/`）：保留 7.2 的对象引用稳定、Owner 订阅收口和 Runtime 布局测量优化；经过 4× CPU 降速 trace 对比，pointerup 平均处理时间较优化前减少约 42ms，端到端 EventTiming 平均减少约 31ms。
 - **CI 依赖安装可复现**（`frontend/package.json`、`frontend/package-lock.json`）：补齐 Vite/Vitest 所需的 esbuild 0.28.1 及平台包，使严格的 `npm ci` 能完成安装。
+- **文件 API service 边界收口**（`backend/app/api/v1/files.py`、`backend/app/services/files/`）：将文件查询、媒体预览、上传校验、下载和响应组装迁入 service 层，路由保留鉴权、事务和 HTTP 响应协调。
 
 ### 修复
 

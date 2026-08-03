@@ -4,12 +4,45 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import get_settings
+from app.core.ownership import get_owned
+from app.models import File
 from app.services.storage import get_storage
 
 
 THUMB_SIZE_MAP = {"tiny": (20, 75), "card": (192, 82)}
 THUMB_SEM = asyncio.Semaphore(max(1, (os.cpu_count() or 2) - 1))
+OFFICE_EXTS = frozenset({"DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX"})
+IMAGE_MIMES = frozenset({
+    "image/jpeg", "image/png", "image/gif", "image/webp",
+    "image/avif", "image/bmp", "image/svg+xml", "image/heic", "image/heif",
+})
+_PDF_CACHE: dict[str, bytes] = {}
+
+
+class PreviewError(ValueError):
+    """文件预览的可预期业务错误。"""
+
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+def read_image_dimensions(raw: bytes, mime_type: str | None) -> tuple[int | None, int | None]:
+    """读取图片尺寸；无法解析时返回空尺寸，不影响文件上传。"""
+    if not mime_type or mime_type.lower() not in IMAGE_MIMES or mime_type.lower() == "image/svg+xml":
+        return None, None
+    try:
+        from io import BytesIO
+        from PIL import Image
+
+        with Image.open(BytesIO(raw)) as image:
+            return image.size
+    except Exception:
+        return None, None
 
 
 def thumb_dir() -> Path:
@@ -113,6 +146,22 @@ async def render_thumbnail(raw: bytes, file_id: int, size: str, fallback_mime: s
     return raw, fallback_mime
 
 
+async def read_file_thumbnail(
+    storage,
+    *,
+    storage_key: str,
+    file_id: int,
+    mime_type: str,
+    size: str,
+) -> tuple[bytes, str]:
+    """读取并渲染文件缩略图；存储不存在由调用方映射为 HTTP 404。"""
+    mime = mime_type.lower()
+    raw = await storage.get(storage_key)
+    if size == "full" or mime == "image/svg+xml":
+        return raw, mime
+    return await render_thumbnail(raw, file_id, size, mime)
+
+
 async def office_to_pdf(data: bytes, extension: str) -> bytes:
     tmpdir = Path(tempfile.mkdtemp())
     try:
@@ -140,3 +189,41 @@ async def office_to_pdf(data: bytes, extension: str) -> bytes:
         return pdf.read_bytes()
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+async def render_cached_pdf(raw: bytes, *, cache_key: str, extension: str) -> bytes:
+    """转换并缓存 Office/PDF 预览；缓存键由路由按文件版本构造。"""
+    cached = _PDF_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    if len(_PDF_CACHE) > 50:
+        _PDF_CACHE.clear()
+    rendered = await office_to_pdf(raw, extension)
+    _PDF_CACHE[cache_key] = rendered
+    return rendered
+
+
+async def read_pdf_preview(
+    db: AsyncSession,
+    storage,
+    user_id: int,
+    file_id: int,
+) -> bytes:
+    """读取当前用户 Office 文件并生成带版本缓存的 PDF 预览。"""
+    file = await get_owned(db, File, file_id, user_id)
+    if file is None or file.deleted_at is not None:
+        raise PreviewError(404, "文件不存在")
+    if file.ext.upper() not in OFFICE_EXTS:
+        raise PreviewError(400, "不支持的格式")
+
+    raw = await storage.get(file.storage_key)
+    try:
+        return await render_cached_pdf(
+            raw,
+            cache_key=f"{file_id}:{file.updated_at.isoformat()}",
+            extension=file.ext,
+        )
+    except asyncio.TimeoutError as error:
+        raise PreviewError(422, "文档转换超时") from error
+    except RuntimeError as error:
+        raise PreviewError(422, str(error)) from error

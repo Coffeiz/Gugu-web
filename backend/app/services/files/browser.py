@@ -1,9 +1,19 @@
+import asyncio
 from typing import Optional
 
 from sqlalchemy import Select, func, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import File, Folder, Project
+from app.services.storage import LocalStorageBackend
+
+_VERSION_RETRY_BACKOFF = (0.05, 0.15)
+
+
+def _is_deadlock_error(exc: DBAPIError) -> bool:
+    """仅识别 PostgreSQL/asyncpg 的死锁，避免把普通数据库错误当成可重试。"""
+    return type(getattr(exc, "orig", None)).__name__ == "DeadlockDetectedError"
 
 
 def file_listing_query(
@@ -85,6 +95,22 @@ async def list_all_file_rows(db: AsyncSession, user_id: int):
     return result.all()
 
 
+async def list_existing_file_rows(db: AsyncSession, storage, user_id: int):
+    """列出全部文件，并清理本地存储中已经丢失实体文件的数据库记录。"""
+    rows = await list_all_file_rows(db, user_id)
+    if not isinstance(storage, LocalStorageBackend):
+        return rows, False
+
+    valid_rows = []
+    for row in rows:
+        file = row[0]
+        if (storage.root / file.storage_key).exists():
+            valid_rows.append(row)
+        else:
+            await db.delete(file)
+    return valid_rows, len(valid_rows) < len(rows)
+
+
 async def get_storage_usage(db: AsyncSession, user_id: int) -> int:
     """返回当前用户已使用的存储字节数。"""
     result = await db.execute(storage_usage_query(user_id))
@@ -93,14 +119,19 @@ async def get_storage_usage(db: AsyncSession, user_id: int) -> int:
 
 async def get_file_version_snapshot(db: AsyncSession, user_id: int):
     """查询文件表状态摘要所需的聚合值。"""
-    result = await db.execute(
-        select(
-            func.count(File.id),
-            func.max(File.updated_at),
-            func.max(File.deleted_at),
-        ).where(File.user_id == user_id)
-    )
-    return result.one()
+    stmt = select(
+        func.count(File.id),
+        func.max(File.updated_at),
+        func.max(File.deleted_at),
+    ).where(File.user_id == user_id)
+    for attempt in range(len(_VERSION_RETRY_BACKOFF) + 1):
+        try:
+            return (await db.execute(stmt)).one()
+        except DBAPIError as exc:
+            if not _is_deadlock_error(exc) or attempt >= len(_VERSION_RETRY_BACKOFF):
+                raise
+            await db.rollback()
+            await asyncio.sleep(_VERSION_RETRY_BACKOFF[attempt])
 
 
 async def get_file_tree_rows(db: AsyncSession, user_id: int):

@@ -20,7 +20,7 @@ def test_once_expired_accepts_legacy_naive_and_aware_iso():
 
 @pytest.mark.asyncio
 async def test_files_version_retries_deadlock_after_rollback(monkeypatch):
-    from app.api.v1.files import _execute_version_query
+    from app.services.files.browser import get_file_version_snapshot
 
     class DeadlockDetectedError(Exception):
         pass
@@ -28,22 +28,22 @@ async def test_files_version_retries_deadlock_after_rollback(monkeypatch):
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=[
             DBAPIError("SELECT", {}, DeadlockDetectedError()),
-            "success",
+        SimpleNamespace(one=lambda: (1, "updated", None)),
         ]),
         rollback=AsyncMock(),
     )
     monkeypatch.setattr("asyncio.sleep", AsyncMock())
 
-    result = await _execute_version_query(db, object())
+    result = await get_file_version_snapshot(db, 1)
 
-    assert result == "success"
+    assert result == (1, "updated", None)
     assert db.execute.await_count == 2
     db.rollback.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_files_version_does_not_retry_non_deadlock():
-    from app.api.v1.files import _execute_version_query
+    from app.services.files.browser import get_file_version_snapshot
 
     db_error = DBAPIError("SELECT", {}, ValueError("bad query"))
     db = SimpleNamespace(
@@ -52,7 +52,7 @@ async def test_files_version_does_not_retry_non_deadlock():
     )
 
     with pytest.raises(DBAPIError):
-        await _execute_version_query(db, object())
+        await get_file_version_snapshot(db, 1)
 
     db.execute.assert_awaited_once()
     db.rollback.assert_not_awaited()
