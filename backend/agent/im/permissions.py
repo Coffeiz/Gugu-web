@@ -79,4 +79,6 @@ async def resolve_group_policy(bot_id: str) -> tuple[bool, bool, bool]:
         bot = await db.get(UserBot, int(bot_id))
         if not bot:
             return False, True, False
-        return bot.group_chat_enabled, bot.group_requires_at, bot.group_read_enabled
+        return bot.group_chat_enabled, bot.group_requires_at, (
+            bot.group_read_enabled if bot.group_requires_at else False
+        )

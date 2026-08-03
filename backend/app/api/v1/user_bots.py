@@ -27,6 +27,7 @@ def _mask(s: str) -> str:
 
 
 def _out(b: UserBot) -> dict:
+    response_mode = "record_only" if b.group_read_enabled and b.group_requires_at else "reply_mentions" if b.group_requires_at else "reply_all"
     return {
         "id": b.id,
         "platform": b.platform,
@@ -38,6 +39,7 @@ def _out(b: UserBot) -> dict:
         "group_chat_enabled": b.group_chat_enabled,
         "group_requires_at": b.group_requires_at,
         "group_read_enabled": b.group_read_enabled,
+        "group_response_mode": response_mode,
         "group_allowed_tools": b.group_allowed_tools or ["web_search"],
         "owner_bound": bool(b.owner_platform_user_id),
     }
@@ -99,6 +101,24 @@ async def create_my_bot(
     return _out(bot)
 
 
+@router.post("/{bot_id}/qq-binding-code")
+async def create_qq_binding_code(
+    bot_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """为尚未绑定 QQ 身份的 Bot 生成一次性绑定码。"""
+    bot = await get_owned(db, UserBot, bot_id, current_user.id)
+    if not bot or bot.platform != "qqbot":
+        raise HTTPException(404, "机器人不存在")
+    if bot.owner_platform_user_id:
+        raise HTTPException(409, "QQ 身份已经绑定")
+    from app.services.im_identity import create_qq_binding_code as create_code
+
+    code, expires_in = await create_code(bot.id, current_user.id)
+    return {"code": code, "expires_in": expires_in}
+
+
 class BotUpdate(BaseModel):
     name: str | None = None
     app_id: str | None = None
@@ -108,6 +128,7 @@ class BotUpdate(BaseModel):
     group_chat_enabled: bool | None = None
     group_requires_at: bool | None = None
     group_read_enabled: bool | None = None
+    group_response_mode: str | None = None
     group_allowed_tools: list[str] | None = None
 
 
@@ -138,6 +159,14 @@ async def update_my_bot(
         bot.group_requires_at = body.group_requires_at
     if body.group_read_enabled is not None:
         bot.group_read_enabled = body.group_read_enabled
+    if body.group_response_mode is not None:
+        if body.group_response_mode not in {"reply_all", "reply_mentions", "record_only"}:
+            raise HTTPException(400, "无效的群聊回应方式")
+        bot.group_requires_at = body.group_response_mode != "reply_all"
+        bot.group_read_enabled = body.group_response_mode == "record_only"
+    # 普通群聊模式默认接收并回复所有消息；只有显式选择静默记录时才保存后静默。
+    if bot.group_requires_at is False and body.group_response_mode is None:
+        bot.group_read_enabled = False
     if body.group_allowed_tools is not None:
         unsupported = set(body.group_allowed_tools) - {"web_search", "group_context_search"}
         if unsupported:

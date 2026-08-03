@@ -472,7 +472,7 @@ async function doDeleteAccount() {
   border-top: 1px solid rgba(120, 125, 160, 0.12);
 }
 .pm-bot-group-row .pm-field-desc { flex: 1; min-width: 0; }
-.pm-bot-tools-row { align-items: flex-start; }
+.pm-bot-tools-row { align-items: center; }
 .pm-tool-options {
   justify-content: flex-end;
   flex-wrap: wrap;

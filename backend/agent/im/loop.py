@@ -13,7 +13,7 @@ from typing import Any, List, Optional
 from app.core.redaction import diag_log, redact
 from agent.im.actor import ActorContext
 from agent.im.context_policy import IM_SOURCES
-from agent.im.identity import ensure_owner_platform_binding, resolve_owner_account
+from agent.im.identity import resolve_owner_account
 from agent.im.models import PlatformMessage
 from agent.im.owner_session import (
     bind_session_by_id,
@@ -243,6 +243,8 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                 title=(request.message[:50] or "群聊记录"),
                 source=request.source or "qqbot",
                 chat_id=request.chat_id,
+                chat_type=("group" if request.chat_id else
+                           "c2c" if request.source in IM_SOURCES else None),
             )
             db.add(session)
             await db.flush()
@@ -280,13 +282,12 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
 
 
 def should_record_passive_group(request: AgentRequest, payload: dict) -> bool:
-    """判断是否只记录 QQ 群普通消息，不触发模型回复。"""
+    """判断是否为 QQ 群静默记录模式；该模式对所有消息都不触发回复。"""
     return bool(
         request.source == "qqbot"
         and request.chat_id
         and payload.get("chat_type") == "group"
         and payload.get("group_read_enabled")
-        and not payload.get("group_mentioned")
     )
 
 
@@ -326,7 +327,6 @@ async def prepare_message(payload: dict, platform_message: PlatformMessage) -> O
     identity = await resolve_owner_account(payload)
     if identity is None:
         return None
-    await ensure_owner_platform_binding(payload)
     route = resolve_route(platform_message, payload)
     if route.is_group:
         session_id = await resolve_session_id(

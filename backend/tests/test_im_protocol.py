@@ -46,6 +46,25 @@ def test_platform_message_uses_sender_as_private_chat_target():
     })
 
 
+def test_platform_message_normalizes_feishu_p2p_as_private_chat():
+    message = PlatformMessage.from_payload({
+        "platform": "feishu",
+        "platform_user_id": "ou-user-1",
+        "chat_id": "oc-chat-1",
+        "chat_type": "p2p",
+        "message_id": "om-1",
+        "text": "你好",
+    })
+
+    assert message.chat == ChatTarget(id="oc-chat-1", type="c2c")
+    assert normalize_payload({
+        "platform": "feishu",
+        "platform_user_id": "ou-user-1",
+        "chat_id": "oc-chat-1",
+        "chat_type": "p2p",
+        "message_id": "om-1",
+    })["chat_type"] == "c2c"
+
 def test_platform_message_normalizes_wechat_group_id():
     payload = {
         "platform": "wechat",
@@ -100,7 +119,7 @@ def test_platform_reply_from_text_preserves_group_reply_route():
     assert reply.text == "完成啦"
 
 
-def test_passive_group_policy_only_matches_unmentioned_qq_messages():
+def test_record_only_group_policy_matches_all_qq_messages():
     request = AgentRequest(
         message="群里的普通消息",
         user_id="owner-1",
@@ -111,6 +130,6 @@ def test_passive_group_policy_only_matches_unmentioned_qq_messages():
     base = {"chat_type": "group", "group_read_enabled": True}
 
     assert should_record_passive_group(request, base) is True
-    assert should_record_passive_group(request, {**base, "group_mentioned": True}) is False
+    assert should_record_passive_group(request, {**base, "group_mentioned": True}) is True
     request.source = "feishu"
     assert should_record_passive_group(request, base) is False
