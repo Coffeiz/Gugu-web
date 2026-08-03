@@ -136,6 +136,11 @@ def _schedule_summary(user_id, session_id, force: bool, settings, use_anthropic:
 
 
 _IM_SOURCES = ("feishu", "qqbot", "wechat")
+
+
+def _is_restricted_im_request(req: AgentRequest) -> bool:
+    """群成员/未确认身份只能使用受限工具，不加载 Bot owner 的个人上下文。"""
+    return req.source in _IM_SOURCES and req.im_role in {"member", "unknown"}
 _CONTINUE_CUES = ("继续", "刚刚", "刚才", "刚说", "刚聊", "上次", "上回", "之前",
                   "接着", "那个事", "那件事", "没续上")
 
@@ -262,6 +267,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     profile = DefaultProfile()
     settings = get_settings()
     model_cfg = pick_model(settings, req)   # 解析层：active/pool/router 选一个模型配置
+    restricted_im = _is_restricted_im_request(req)
     # 不强切 vision 模型：这轮 pick 到的模型看得了图就识图、看不了就当普通文件存（下面 resolve
     # 按 model_cfg 判 vision）。避免硬切到「标了 vision 实则不收图片块」的模型（如 MiniMax 兼容口）。
 
@@ -273,12 +279,12 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     )
 
     async with _sess._SessionLocal() as db:
-        projects = await loaders.load_projects(db, user_id)
+        projects = [] if restricted_im else await loaders.load_projects(db, user_id)
         user_tz = await loaders.load_user_tz(db, user_id)   # 「今天」按用户时区算（Phase 3）
         set_ctx_tz(user_tz)                                 # tool dispatch 深处（overview 等）也能读到
-        events = await loaders.load_events(db, user_id, tz=user_tz)
-        files_overview = await loaders.load_files_overview(db, user_id)
-        style_prefs = await loaders.load_style_prefs(db, user_id)
+        events = [] if restricted_im else await loaders.load_events(db, user_id, tz=user_tz)
+        files_overview = {} if restricted_im else await loaders.load_files_overview(db, user_id)
+        style_prefs = {} if restricted_im else await loaders.load_style_prefs(db, user_id)
 
         # ── 会话 get / create（IM 续聊靠 worker 传稳定 session_id）──
         session = None
@@ -351,7 +357,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         # IM 新会话「续接桥」：趁 db 还开着查上一条对话，给指针/尾部，免得 12h TTL 起新会话后
         # 用户说「继续刚刚」咕咕空着答（web 有自己的会话续接 + 可手动选历史，无需此桥）。
         im_bridge = ""
-        if is_new_session and getattr(req, "source", None) in _IM_SOURCES:
+        if is_new_session and getattr(req, "source", None) in _IM_SOURCES and not restricted_im:
             try:
                 im_bridge = await _im_continuity_bridge(db, user_id, session_id, req.message)
             except Exception:
@@ -382,8 +388,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     except Exception:
         pass
 
-    memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
-    im_channels = await loaders.load_im_channels(user_id)
+    memory = {} if restricted_im else await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
+    im_channels = [] if restricted_im else await loaders.load_im_channels(user_id)
     prompt_name = profile.prompt_file.removesuffix(".md")
     system_prompt = builder.build(
         prompt_name, req.user_name, projects, events, memory, files_overview,
@@ -492,7 +498,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
         # 对话后反思（fire-and-forget）。IM 用「工具轮次让 anthr_messages 变长」当「咕咕动作了」代理，
         # 这样「嗯」确认后真建改东西的轮也会反思（openai 路径无此代理、回落到 user_msg 判，可接受）。
-        if profile.memory_enabled and text:
+        if profile.memory_enabled and text and not restricted_im:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
             reflection.schedule(user_id, req.user_name, req.message, text, settings,
@@ -521,6 +527,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     profile = DefaultProfile()
     settings = get_settings()
     model_cfg = pick_model(settings, req)
+    restricted_im = _is_restricted_im_request(req)
 
     import app.db.session as _sess
     if _sess._engine is None:
@@ -530,12 +537,12 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     )
 
     async with _sess._SessionLocal() as db:
-        projects = await loaders.load_projects(db, user_id)
+        projects = [] if restricted_im else await loaders.load_projects(db, user_id)
         user_tz = await loaders.load_user_tz(db, user_id)   # 「今天」按用户时区算（Phase 3）
         set_ctx_tz(user_tz)                                 # tool dispatch 深处（overview 等）也能读到
-        events = await loaders.load_events(db, user_id, tz=user_tz)
-        files_overview = await loaders.load_files_overview(db, user_id)
-        style_prefs = await loaders.load_style_prefs(db, user_id)
+        events = [] if restricted_im else await loaders.load_events(db, user_id, tz=user_tz)
+        files_overview = {} if restricted_im else await loaders.load_files_overview(db, user_id)
+        style_prefs = {} if restricted_im else await loaders.load_style_prefs(db, user_id)
 
         # ── 会话 get / create（跟 run_collect 同款）──
         session = None
@@ -596,7 +603,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
             return
 
         im_bridge = ""
-        if is_new_session and getattr(req, "source", None) in _IM_SOURCES:
+        if is_new_session and getattr(req, "source", None) in _IM_SOURCES and not restricted_im:
             try:
                 im_bridge = await _im_continuity_bridge(db, user_id, session_id, req.message)
             except Exception:
@@ -627,8 +634,8 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
         aug_media = [m for m in aug_media if m.get("type") == "video"]
 
-    memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
-    im_channels = await loaders.load_im_channels(user_id)
+    memory = {} if restricted_im else await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
+    im_channels = [] if restricted_im else await loaders.load_im_channels(user_id)
     prompt_name = profile.prompt_file.removesuffix(".md")
     system_prompt = builder.build(
         prompt_name, req.user_name, projects, events, memory, files_overview,
@@ -779,7 +786,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         except Exception:
             pass
 
-        if profile.memory_enabled and text:
+        if profile.memory_enabled and text and not restricted_im:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
             reflection.schedule(user_id, req.user_name, req.message, text, settings,
