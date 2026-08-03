@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -38,6 +39,21 @@ _PLATFORM_REPLY_CAPABILITIES = {
         REPLY_CAPABILITY_REPLY,
     }),
 }
+
+
+def replace_mention_ids(text: str, names: Dict[str, str]) -> str:
+    """只替换可见文本中的平台 mention，保留身份字段和未解析的 ID。"""
+    result = text or ""
+    for platform_user_id, name in names.items():
+        if not platform_user_id or not name:
+            continue
+        escaped_id = re.escape(str(platform_user_id))
+        result = re.sub(
+            rf"<@!?{escaped_id}>|@{escaped_id}",
+            lambda _match, display_name=name: f"@{display_name}",
+            result,
+        )
+    return result
 
 _PART_CAPABILITIES = {
     "text": REPLY_CAPABILITY_TEXT,

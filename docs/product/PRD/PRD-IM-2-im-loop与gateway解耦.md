@@ -1,6 +1,6 @@
 # IM Loop 与 Gateway 解耦 PRD
 
-> 状态：Phase 4 已完成，Phase 5 待实施
+> 状态：Phase 5 已完成，Phase 6 待后续设计
 > 创建：2026-08-03
 > 最近更新：2026-08-04
 > 关联模块：`backend/agent/gateway/qq.py`、`backend/agent/gateway/feishu.py`、`backend/agent/gateway/wechat.py`、`backend/worker.py`、`backend/agent/runner.py`
@@ -15,7 +15,7 @@
 | Phase 2：抽出身份与权限层 | ✅ 已完成 | 身份、权限、上下文策略、ActorContext、上下文装配和 Loop 选择门面已接入 runner/dispatch；worker 仅保留队列、session 和发送兼容边界。 |
 | Phase 3：建立 IM Loop | ✅ 已完成 | 已完成 Owner/Member Loop 门面、上下文与权限编排、session 路由、显式 Web session 绑定、统一回复和 worker 职责收口。 |
 | Phase 4：收窄 Gateway | ✅ 已完成 | owner 绑定、身份协议、shortcut 和出站能力门禁已收口；三平台收发/引用/附件/群聊身份/重连已人工验收（2026-08-04）；平台媒体 API、即时 ack/reaction/typing 作为纯协议适配仍保留在 Gateway。 |
-| Phase 5：隔离修复与编排清理 | 🔲 待实施 | 先修复 scope/身份边界，再收回 worker 编排，最后统一 Web/owner Loop 和出站协议。 |
+| Phase 5：隔离修复与编排清理 | ✅ 已完成 | 已完成 Bot/session scope 隔离、平台身份归一化、owner/member 安全边界、worker 编排收口、统一 Loop 门面和出站能力审查。 |
 | Phase 6：群组与成员记忆 | 🔲 后续 | 复用 memory 组件，但使用独立的群组/平台用户 namespace，不与 owner 记忆混用。 |
 
 ## 0.1 当前实现基线与代码审查
@@ -523,7 +523,7 @@ PlatformMessage
 - ✅ 新增 owner-only `bind_web_session(session_id)` 工具，绑定前校验 Web session 归属和来源，群聊/member 不可使用。
 - ✅ 群聊 50 条窗口、私聊 session、发言人身份标注已接入现有 IM 流程；引用和附件仍沿用共享处理链路。
 - ✅ 未 @ 的群聊消息记录入口已移入 `agent/im/loop.py`，不再由通用 `runner.py` 持有 IM 专属持久化逻辑。
-- 🔄 `worker.py` 已不再负责身份/权限字段组装和基础 session 路由，但仍保留被动群消息、命令短路、执行生命周期、session 写回和平台发送等过渡编排。
+- ✅ `worker.py` 现在只负责 Redis 消费、去重、防抖、并发和优雅退出；身份、权限、被动记录、命令短路、执行生命周期、session 写回和平台回复均由 `agent/im/loop.py` 编排。
 - ✅ IM 命令短路入口已移入 `agent/im/loop.py`，worker 只消费命令处理结果。
 - ✅ 文本回复已移入 `agent/im/replies.py`，统一消费 `PlatformReply` 并按平台转发；工具进度消息也走同一入口。
 - ✅ 文件回复已移入 `agent/im/files.py`，统一处理文件库/暂存附件读取、平台大小限制和媒体发送。
@@ -539,7 +539,7 @@ PlatformMessage
 - ✅ 飞书流式失败后的普通文本 fallback 已移入 `agent/im/replies.py`，worker 只消费统一结果。
 - ✅ IM session 写回和群消息窗口裁剪已移入 `agent/im/loop.py`，worker 不再直接操作 session 细节。
 - ✅ QQ 群普通消息的被动记录策略已移入 `agent/im/loop.py`，worker 不再持有平台规则判断。
-- 🔄 `runner.py` 保持 Web 入口和外部协议不变；Web 继续经 `gateway/web.py` 进入 runner，owner IM 经 `OwnerAgentLoop` 转发到同一套 runner、模型和工具执行逻辑，二者的统一 Loop 门面尚未完成。
+- ✅ `runner.py` 保持 Web 入口和外部协议不变；Web 与 owner/member IM 通过 Loop 门面调用同一套 runner、模型和工具执行逻辑。`run_collect` 与 `run_stream` 共享上下文策略、session、附件、持久化、反思和压缩收尾；两者仅保留 token 消费方式的必要差异。
 
 ### Phase 4：收窄 Gateway
 
@@ -572,24 +572,23 @@ Phase 4 收口：owner 绑定、身份协议、shortcut、出站能力门禁和�
    - ✅ 已补 QQ/飞书/微信私聊与群聊归一化、跨群/跨 Bot scope、群成员与 owner 的回归测试；真实 Gateway 事件仍需三平台各做一次人工验收。
 
 3. **补齐身份安全边界**
-   - 🟡 飞书已使用连接时保存的 owner `open_id` 做 Bot 作用域 owner/member 查询；QQ 继续使用一次性绑定身份；微信群聊缺少可验证 owner 身份时固定降级 `unknown`，私聊仍沿用个人 Bot 入口语义。
+   - 🟡 飞书已使用连接时保存的 owner `open_id` 做 Bot 作用域 owner/member 查询；QQ 继续使用一次性绑定身份；微信群聊缺少可验证 owner 身份时固定降级 `unknown`，私聊仍沿用个人 Bot 入口语义。该差异是平台能力限制，不是未收口的业务分支。
    - ✅ 权限解析异常、缺失或不支持的平台身份统一使用最小权限 `unknown`，并补 owner/member/unknown 与工具白名单测试。
-   - 🔲 runner 的 owner 资源加载/反思守卫仍需在 Phase 5 收尾审查中逐项验证，只有明确 `role=owner` 才能加载 owner 项目、文件、日程、profile、pattern、memory。
+   - ✅ runner 的 owner 资源加载/反思守卫已由 `ImContextPolicy` 统一控制；只有 `role=owner` 才加载 owner 项目、文件、日程、profile、pattern、memory，member/unknown 只保留时区和群上下文。
 
-4. **收回 worker 编排**
-   - 将被动群消息记录、命令短路、执行 activity、session 写回和最终回复编排收进 `agent/im/loop.py` 的明确入口：`dispatch`、`execute`、`finalize`。
+4. **收回 worker 编排** ✅
+   - `dispatch_im_message()` 已收口被动群消息记录、命令短路、执行 activity、session 写回和最终回复。
    - worker 只负责 Redis 消费、去重、防抖调度、优雅退出和最外层异常边界。
-   - 防抖仍属于 worker 的队列调度职责，但不得再携带身份、权限和平台业务判断。
+   - 防抖仍属于 worker 的队列调度职责，不携带身份、权限和平台业务判断。
 
-5. **统一 Web/owner Loop 门面**
-   - 保持 Web API 协议不变，让 Web 和 owner IM 共同经过稳定的 `OwnerAgentLoop` 入口。
-   - `OwnerAgentLoop` 只编排请求范围和调用共享 Runtime，不复制 `runner.py` 的模型/工具逻辑。
-   - `MemberAgentLoop` 只提供上下文策略、权限和 session scope，不把 member 伪装成另一套模型执行器。
+5. **统一 Web/owner Loop 门面** ✅
+   - Web API 协议保持不变，owner/member IM 通过稳定的 Loop 门面进入共享 Runtime。
+   - `OwnerAgentLoop` 只调用共享 runner；`MemberAgentLoop` 只替换上下文策略、权限和 session scope，不复制模型/工具执行器。
 
-6. **最后清理重复实现**
-   - 合并 `run_collect()` / `run_stream()` 的共享 session、历史、附件解析、持久化、反思和压缩 finalize pipeline。
-   - 删除旧 payload 兼容分支和 worker 中已经迁移的 IM 判断。
-   - 完成 `PlatformReply` capability 路由后，再删除各平台出站兼容函数。
+6. **最后清理重复实现** ✅
+   - `run_collect()` / `run_stream()` 已通过同一套 `ImContextPolicy`、上下文 loader、session resolver、附件解析和持久化/反思收尾保持行为一致；流式 token 消费保留为唯一必要差异。
+   - worker 旧业务编排和旧 payload 分支已删除。
+   - `PlatformReply` capability 校验、文本/文件/流式回复均经过统一 reply 层，Gateway 只保留平台协议调用。
 
 ### Phase 6：群组与成员记忆预留
 
@@ -604,24 +603,24 @@ Phase 4 收口：owner 绑定、身份协议、shortcut、出站能力门禁和�
 
 ### 自动验收
 
-- [ ] `PlatformMessage` 可由 QQ、飞书、微信事件生成。
-- [ ] `PlatformReply` 可转换为三平台文本、文件和 Keyboard 回复。
-- [ ] 相同 `message_id` 只处理一次。
-- [ ] owner/member/unknown 解析结果稳定。
-- [ ] member 不加载 owner 的项目、文件、日程、profile、pattern、memory。
-- [ ] member 不触发 owner 的 memory reflection。
-- [ ] member 只能使用配置的工具白名单。
-- [ ] 群消息按 `platform + bot_id + chat_id` 隔离。
-- [ ] 不同群的消息不会进入同一上下文窗口。
-- [ ] `owner_account_id` 不会被当成 `platform_user_id`。
-- [ ] 防抖、串行锁和 session key 均包含 `platform + bot_id + chat_type + scope_id`。
-- [ ] 微信群 `wechat_group_id` 能正确进入统一 `PlatformMessage.chat.id`。
-- [ ] 飞书/微信身份缺失或解析失败时只能进入 `unknown` 最小权限路径。
-- [ ] Gateway 不依赖 Agent prompt 或个人记忆模块。
-- [ ] 可在不启动 Web runner 的情况下单测 IM Loop。
-- [ ] Web 与 owner IM 调用同一个 `OwnerAgentLoop` 和共享能力组件，不存在两套工具/模型执行逻辑。
-- [ ] member 使用 `MemberAgentLoop`，只能替换上下文、权限和会话编排，不能读取 owner 个人上下文。
-- [ ] 同一用户跨群、跨 Bot、群聊/私聊并发发送时，不会合并消息或共享错误 session。
+- [x] `PlatformMessage` 可由 QQ、飞书、微信事件生成。
+- [x] `PlatformReply` 可转换为三平台文本、文件和 Keyboard 回复。
+- [x] 相同 `message_id` 只处理一次。
+- [x] owner/member/unknown 解析结果稳定。
+- [x] member 不加载 owner 的项目、文件、日程、profile、pattern、memory。
+- [x] member 不触发 owner 的 memory reflection。
+- [x] member 只能使用配置的工具白名单。
+- [x] 群消息按 `platform + bot_id + chat_id` 隔离。
+- [x] 不同群的消息不会进入同一上下文窗口。
+- [x] `owner_account_id` 不会被当成 `platform_user_id`。
+- [x] 防抖、串行锁和 session key 均包含 `platform + bot_id + chat_type + scope_id`。
+- [x] 微信群 `wechat_group_id` 能正确进入统一 `PlatformMessage.chat.id`。
+- [x] 飞书/微信身份缺失或解析失败时只能进入 `unknown` 最小权限路径。
+- [x] Gateway 不依赖 Agent prompt 或个人记忆模块。
+- [x] 可在不启动 Web runner 的情况下单测 IM Loop。
+- [x] Web 与 owner IM 调用同一个 `OwnerAgentLoop` 和共享能力组件，不存在两套工具/模型执行逻辑。
+- [x] member 使用 `MemberAgentLoop`，只能替换上下文、权限和会话编排，不能读取 owner 个人上下文。
+- [x] 同一用户跨群、跨 Bot、群聊/私聊并发发送时，不会合并消息或共享错误 session。
 - [x] owner 私聊默认使用绑定的 owner session；未显式绑定时不会自动拼接任意 Web session 正文。
 - [x] 显式绑定 Web session 后，owner IM 可以继续该 session 的上下文，Web 侧也能看到同一 session 的 IM 消息。
 

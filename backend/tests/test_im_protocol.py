@@ -29,6 +29,24 @@ def test_platform_message_normalizes_group_payload_without_losing_metadata():
     assert normalized["attachments"] == [{"id": "att-1"}]
 
 
+def test_platform_message_preserves_bot_identity_for_session_messages():
+    payload = {
+        "platform": "qqbot",
+        "bot_id": "42",
+        "platform_bot_user_id": "bot-openid-42",
+        "chat_type": "group",
+        "chat_id": "group-1",
+        "platform_user_id": "member-1",
+        "message_id": "msg-1",
+        "text": "@咕咕 看看这个",
+    }
+
+    normalized = normalize_payload(payload)
+
+    assert normalized["bot_id"] == "42"
+    assert normalized["platform_bot_user_id"] == "bot-openid-42"
+
+
 def test_platform_message_uses_sender_as_private_chat_target():
     message = PlatformMessage.from_payload({
         "platform": "wechat",

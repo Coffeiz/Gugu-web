@@ -21,6 +21,7 @@ from app.models import ConversationMessage, ConversationSession, User, UserBot
 
 from agent import genstream
 from agent.gateway import web as web_adapter
+from agent.im.models import replace_mention_ids
 from agent.models import AgentRequest
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -256,27 +257,48 @@ async def get_session_messages(
         .order_by(ConversationMessage.created_at)
     )
     msgs = res.scalars().all()
+    mention_names = {
+        str(message.platform_user_id): message.platform_user_name
+        for message in msgs
+        if message.platform_user_id and message.platform_user_name
+    }
+    for message in msgs:
+        if message.platform_bot_user_id:
+            mention_names[message.platform_bot_user_id] = "咕咕"
     # 群聊消息按发言人区分左右气泡：owner 的平台身份挂在该来源的 UserBot 上
     # （目前只有 QQ 走了绑定流程，其它渠道查不到就是 None，前端据此把消息
     # 归到左侧、标发言人 username，而不是误判成 owner 自己发的）。
     owner_platform_user_id = None
     if session.source:
-        bot = (await db.execute(
-            select(UserBot).where(
-                UserBot.user_id == current_user.id,
-                UserBot.platform == session.source,
-            )
-        )).scalars().first()
+        bot_query = select(UserBot).where(
+            UserBot.user_id == current_user.id,
+            UserBot.platform == session.source,
+        )
+        if session.bot_id:
+            bot_query = bot_query.where(UserBot.id == int(session.bot_id))
+        bot = (await db.execute(bot_query)).scalars().first()
         owner_platform_user_id = bot.owner_platform_user_id if bot else None
+        if bot and bot.bot_platform_user_id:
+            mention_names[bot.bot_platform_user_id] = bot.name or "咕咕"
+
+    def render_content(text: str) -> str:
+        if session.chat_type != "group":
+            return text
+        # 只替换当前会话已知的成员和 Bot ID，未知 mention 保留原样。
+        return replace_mention_ids(text, mention_names)
+
     return {
         "session": {"id": session.id, "title": session.title, "chatType": session.chat_type,
                     "ownerPlatformUserId": owner_platform_user_id},
         "active": await genstream.is_active(session_id),   # 该会话是否正在生成（前端据此续看）
         "messages": [
-            {"id": m.id, "role": m.role, "content": m.content, "files": m.files or [],
+            {"id": m.id, "role": m.role,
+             "content": render_content(m.content),
+             "files": m.files or [],
              "quotedText": m.quoted_text,
              "platformUserId": m.platform_user_id,
              "platformUserName": m.platform_user_name,
+             "platformBotUserId": m.platform_bot_user_id,
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
         ],
