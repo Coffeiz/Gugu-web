@@ -186,6 +186,7 @@ import { useSelectionState } from '@/composables/files/useSelectionState'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileLibraryContextActions } from '@/composables/files/useFileLibraryContextActions'
 import { useFileLibraryUpload } from '@/composables/files/useFileLibraryUpload'
+import { useFileLibraryRename } from '@/composables/files/useFileLibraryRename'
 import { useSorting } from '@/composables/useSorting'
 import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
 import {
@@ -491,62 +492,24 @@ async function downloadFile(f: FileMeta) {
 }
 
 // ── 重命名 ──
-const renamingFileId    = ref<number | null>(null)
-const renamingFolderKey = ref<number | null>(null)
-const renameText        = ref('')
-
-function startRenameFile(f: FileMeta) {
-  renamingFolderKey.value = null
-  renamingFileId.value    = f.id
-  renameText.value        = f.displayName
-  nextTick(() => document.querySelector<HTMLInputElement>('.rename-input-inline')?.select())
-}
-
-function startRenameFolder(f: FolderCardMeta) {
-  renamingFileId.value    = null
-  renamingFolderKey.value = f.folderId ?? null
-  renameText.value        = f.displayName
-  nextTick(() => document.querySelector<HTMLInputElement>('.rename-input-inline')?.select())
-}
-
-function cancelRename() {
-  renamingFileId.value    = null
-  renamingFolderKey.value = null
-  renameText.value        = ''
-}
-
-async function commitRename() {
-  const fileId    = renamingFileId.value
-  const folderId  = renamingFolderKey.value
-  if (fileId == null && folderId == null) return
-  const name = renameText.value.trim()
-  cancelRename()
-  if (!name) return
-  if (fileId != null) {
-    const oldName = cacheStore.getFile(fileId)?.displayName
-    cacheStore.updateFile(fileId, { displayName: name })
-    loadContents()
-    fileActions.renameFile(fileId, name).catch(e => {
-      if (oldName != null) cacheStore.updateFile(fileId, { displayName: oldName })
-      loadContents()
-      console.error('[Files] 重命名失败:', (e as Error).message)
-    })
-  } else {
-    if (folderId == null) return
-    const oldFolder = cacheStore.getFolder(folderId)
-    const oldName = oldFolder?.name
-    const version = oldFolder?.version ?? 1
-    cacheStore.updateFolder(folderId, { name })
-    loadContents()
-    fileActions.renameFolder(folderId, name, version).then(updated => {
-      cacheStore.updateFolder(folderId, { version: updated.version })
-    }).catch(e => {
-      if (oldName != null) cacheStore.updateFolder(folderId, { name: oldName })
-      loadContents()   // 409（版本冲突）时顺带把最新状态/version 拉回来
-      console.error('[Files] 重命名失败:', (e as Error).message)
-    })
-  }
-}
+const rename = useFileLibraryRename({
+  getFile: id => cacheStore.getFile(id),
+  getFolder: id => cacheStore.getFolder(id),
+  updateFile: (id, patch) => cacheStore.updateFile(id, patch),
+  updateFolder: (id, patch) => cacheStore.updateFolder(id, patch),
+  renameFile: async (id, name) => { await fileActions.renameFile(id, name) },
+  renameFolder: async (id, name, version) => {
+    const updated = await fileActions.renameFolder(id, name, version)
+    return { version: updated.version }
+  },
+  reload: loadContents,
+  onError: (scope, error) => console.error(`[Files] ${scope === 'file' ? '文件' : '文件夹'}重命名失败:`, (error as Error).message),
+})
+const {
+  renamingFileId, renamingFolderKey, renameText,
+  startFile: startRenameFile, startFolder: startRenameFolder,
+  cancel: cancelRename, commit: commitRename,
+} = rename
 
 async function downloadFolder(f: FolderCardMeta) {
   if (f.folderId == null) return

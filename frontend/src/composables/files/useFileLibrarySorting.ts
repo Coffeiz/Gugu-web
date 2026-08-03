@@ -2,7 +2,7 @@ import { computed, type ComputedRef, type Ref } from 'vue'
 import type { FileMeta } from '@/stores/filesCache'
 import type { FolderCard as FolderCardMeta } from '@/utils/filesNav'
 import { fileExtCategory } from '@/utils/fileTypes'
-import { projectFileDirectory } from '@/composables/files/useFileProjection'
+import { useFileSorting } from './useFileSorting'
 
 type Contents = { folders: FolderCardMeta[]; files: FileMeta[] }
 
@@ -15,20 +15,21 @@ interface SortingOptions {
 
 export function useFileLibrarySorting(options: SortingOptions): ComputedRef<Contents> {
   const { contents, currentType, sortKey, sortDir } = options
-  return computed(() => {
-    const { folders, files } = contents.value
-    // projects 层是「状态文件夹」，保持看板顺序（待开始→进行中→已完成），不参与排序
-    if (currentType.value === 'root' || currentType.value === 'projects') return { folders, files }
-    return projectFileDirectory(folders, files, sortKey.value, sortDir.value, {
-      folderSorters: { name: folder => folder.displayName, type: folder => folder.displayName, id: folder => folder.id },
-      fileSorters: {
-        name: file => file.displayName,
-        type: file => `${fileExtCategory(file.ext)}:${file.ext ?? ''}`,
-        stage: file => file.projectName || file.stageName || '',
-        createdAt: file => file.createdAt,
-        size: file => file.sizeBytes ?? 0,
-        id: file => file.id,
-      },
-    })
+  const sorted = useFileSorting({
+    folders: computed(() => contents.value.folders),
+    files: computed(() => contents.value.files),
+    sortKey,
+    sortDir,
+    preserveOrder: () => currentType.value === 'root' || currentType.value === 'projects',
+    folderSorters: { name: folder => folder.displayName, type: folder => folder.displayName, id: folder => folder.id },
+    fileSorters: {
+      name: file => file.displayName,
+      type: file => `${fileExtCategory(file.ext)}:${file.ext ?? ''}`,
+      stage: file => file.projectName || file.stageName || '',
+      createdAt: file => file.createdAt,
+      size: file => file.sizeBytes ?? 0,
+      id: file => file.id,
+    },
   })
+  return computed(() => sorted.sortedDirectory.value)
 }
