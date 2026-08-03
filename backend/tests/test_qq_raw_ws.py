@@ -31,6 +31,39 @@ def _raw_group_event(**overrides):
     return data
 
 
+def test_qq_message_mentions_bot_prefers_payload_over_event_type():
+    assert qq._qq_message_mentions_bot(
+        {"mentions": [{"bot": True}]}, "GROUP_AT_MESSAGE_CREATE"
+    ) is True
+    assert qq._qq_message_mentions_bot(
+        {"mentions": []}, "GROUP_AT_MESSAGE_CREATE"
+    ) is False
+
+
+async def test_qq_group_at_event_without_bot_mention_is_passive(monkeypatch):
+    produced: list[dict] = []
+
+    async def fake_group_settings(_bot_id):
+        return True, True, True
+
+    async def fake_produce(_stream, payload):
+        produced.append(payload)
+
+    monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
+    monkeypatch.setattr(qq.R, "produce", fake_produce)
+
+    await qq._handle_raw_qq_message(
+        "GROUP_AT_MESSAGE_CREATE",
+        _raw_group_event(mentions=[]),
+        "bot-1",
+        "user-1",
+        {},
+    )
+
+    assert len(produced) == 1
+    assert produced[0]["group_mentioned"] is False
+
+
 def test_qq_extracts_quoted_text_by_ref_msg_idx():
     text, attachments = qq._extract_quoted(_raw_c2c_event())
 

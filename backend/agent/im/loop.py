@@ -6,7 +6,6 @@ worker 仍负责 Redis 消费、被动群消息、命令/intent shortcut 的执�
 """
 from __future__ import annotations
 
-import json
 import random
 from dataclasses import dataclass
 from typing import Any, List, Optional
@@ -30,19 +29,6 @@ from agent.im.session import (
     trim_group_messages,
 )
 from agent.models import AgentRequest
-
-
-def _log_im_identity_probe(event: str, **fields: Any) -> None:
-    """临时记录 IM 身份判定的结构，不落原始平台身份或聊天正文。"""
-    from agent import logsafe
-
-    safe = {"event": event}
-    for key, value in fields.items():
-        if key.endswith("_id") or key.endswith("_openid") or key.endswith("_user"):
-            safe[f"{key}_fp"] = logsafe.fingerprint(str(value)) if value else ""
-        else:
-            safe[key] = value
-    print(f"[im-identity-probe] {json.dumps(safe, ensure_ascii=False, separators=(',', ':'))}", flush=True)
 
 
 # 即时反馈只负责体验层，不决定是否进入 Agent、身份和权限。
@@ -416,17 +402,6 @@ async def prepare_request(
         chat_type=chat_type,
         chat_id=platform_message.chat.id if chat_type == "group" else None,
         allowed_tool_names=allowed_tool_names,
-    )
-    _log_im_identity_probe(
-        "access-resolved",
-        platform=platform,
-        chat_type=chat_type,
-        role=role,
-        sender_id=platform_user_id,
-        owner_user=owner_user_id,
-        bot_id=payload.get("channel_id") or platform_message.bot_id,
-        chat_id=platform_message.chat.id if chat_type == "group" else "",
-        session_id=session_id,
     )
     agent_user_name = (
         payload.get("platform_user_name") or platform_message.sender.name or "这位群友"

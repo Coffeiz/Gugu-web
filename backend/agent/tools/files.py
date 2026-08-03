@@ -1025,20 +1025,6 @@ _SEND_URL_IMAGE_EXT = {
 }
 
 
-def _file_flow_probe(event: str, **fields) -> None:
-    """记录媒体链路阶段，不落原文 URL、文件名或用户身份。"""
-    import json as _json
-    from agent.logsafe import fingerprint
-
-    safe = {}
-    for key, value in fields.items():
-        if key in {"url", "name"} and value:
-            safe[f"{key}_fp"] = fingerprint(str(value))
-        elif isinstance(value, (str, int, float, bool)) or value is None:
-            safe[key] = value
-    print("[file-flow-probe] " + _json.dumps({"event": event, **safe}, ensure_ascii=False, separators=(",", ":")), flush=True)
-
-
 def _url_is_safe(url: str) -> str | None:
     """校验一个外部 URL 能不能拿去下载：只准 http/https，挡掉内网/回环/链路本地/云元数据地址。
     返回 None=安全；否则返回拒绝原因。"""
@@ -1099,10 +1085,8 @@ async def _list_recent_attachments(db, user_id, args: dict):
 
 async def _send_file_from_url(user_id, url: str, title: str):
     """下载一张网络图片（如 image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。"""
-    _file_flow_probe("download-start", url=url)
     reason = _url_is_safe(url)
     if reason:
-        _file_flow_probe("download-rejected", reason=reason)
         return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
 
     import httpx
@@ -1127,15 +1111,12 @@ async def _send_file_from_url(user_id, url: str, title: str):
                     return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
                 resp = await client.get(cur)
     except Exception as e:
-        _file_flow_probe("download-error", error_type=type(e).__name__)
         return json.dumps({"error": f"图片下载失败（{type(e).__name__}），换一张或换个来源试试"}, ensure_ascii=False)
     if resp.status_code != 200:
-        _file_flow_probe("download-status", status=resp.status_code)
         return json.dumps({"error": f"图片下载失败（HTTP {resp.status_code}）"}, ensure_ascii=False)
 
     ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
     data = resp.content
-    _file_flow_probe("download-response", status=resp.status_code, content_type=ctype, bytes=len(data))
     ext = _SEND_URL_IMAGE_EXT.get(ctype)
     if not ext:
         return json.dumps({"error": f"这个链接返回的不是支持的图片格式（{ctype or '未知类型'}）"}, ensure_ascii=False)
@@ -1147,7 +1128,6 @@ async def _send_file_from_url(user_id, url: str, title: str):
     from app.core import chat_attach
     name = (title or "").strip()[:80] or "图片"
     meta = await chat_attach.stage(user_id, name, ext, ctype, data, kind="image")
-    _file_flow_probe("download-staged", name=name, ext=ext, bytes=len(data))
     return {
         "ok": True,
         "message": f"已把「{name}」发到对话窗口。",

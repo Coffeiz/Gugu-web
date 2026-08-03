@@ -6,9 +6,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
-import os
-import time
 
 from agent.im.models import PlatformReply
 
@@ -17,18 +14,6 @@ _FEISHU_IMAGE_MAX = 10 * 1024 * 1024
 _FEISHU_FILE_MAX = 30 * 1024 * 1024
 _WECHAT_FILE_MAX = 30 * 1024 * 1024
 _QQ_FILE_MAX = 10 * 1024 * 1024
-
-
-def _file_timing(event: str, **fields) -> None:
-    """按需记录附件阶段耗时，不记录文件名、用户或目标 ID。"""
-    if os.environ.get("QQ_FILE_TIMING") != "1":
-        return
-    print(
-        "[qq-file-timing] " + json.dumps(
-            {"event": event, **fields}, ensure_ascii=False, separators=(",", ":")
-        ),
-        flush=True,
-    )
 
 
 @dataclass
@@ -104,7 +89,6 @@ def stage_voice_sync(
 
 async def send_files(payload: dict, files: list) -> FileSendResult:
     """把工具产出的文件按平台发回，并返回实际发送结果。"""
-    batch_started = time.perf_counter()
     result = FileSendResult(requested=len(files))
     if not files:
         return result
@@ -140,29 +124,15 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
                 continue
     file_records = {}
     if file_ids:
-        metadata_started = time.perf_counter()
         async with db_session._SessionLocal() as db:
             rows = await db.scalars(select(File).where(File.id.in_(file_ids)))
             file_records = {record.id: record for record in rows.all()}
-        _file_timing(
-            "file-metadata-batch",
-            ms=round((time.perf_counter() - metadata_started) * 1000, 2),
-            count=len(file_ids),
-        )
 
     owner = payload.get("owner_user_id")
     attach_ids = [item.get("attach_id") for item in files if item.get("attach_id")]
-    attach_started = time.perf_counter()
     attach_meta = await chat_attach.get_meta_many(owner, attach_ids) if owner else {}
-    if attach_ids:
-        _file_timing(
-            "attachment-metadata-batch",
-            ms=round((time.perf_counter() - attach_started) * 1000, 2),
-            count=len(attach_ids),
-        )
 
     for file_item in files:
-        file_started = time.perf_counter()
         file_id = file_item.get("file_id")
         attach_id = file_item.get("attach_id")
         try:
@@ -206,11 +176,6 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
                 result.sent += 1
             else:
                 result.failed += 1
-            _file_timing(
-                "file-finished",
-                ms=round((time.perf_counter() - file_started) * 1000, 2),
-                ok=ok,
-            )
         except Exception as exc:
             result.failed += 1
             result.reason = "附件发送失败，你可以去网页或文件库查看。"
@@ -220,13 +185,6 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
             )
     if result.failed and not result.reason:
         result.reason = "附件没有成功发出，你可以去网页或文件库查看。"
-    _file_timing(
-        "batch-finished",
-        ms=round((time.perf_counter() - batch_started) * 1000, 2),
-        requested=result.requested,
-        sent=result.sent,
-        failed=result.failed,
-    )
     return result
 
 
@@ -288,36 +246,18 @@ async def _send_file_qq(
     fname: str,
 ) -> bool:
     from agent.gateway import qq
-    from agent import logsafe
     from app.services.storage import get_storage
 
     is_group = payload.get("chat_type") == "group"
     openid = payload.get("chat_id") if is_group else payload.get("platform_user_id")
-    print(
-        "[file-flow-probe] " + json.dumps({
-            "event": "qq-dispatch",
-            "chat_type": payload.get("chat_type"),
-            "target_kind": "group" if is_group else "c2c",
-        }, ensure_ascii=False, separators=(",", ":")),
-        flush=True,
-    )
     if not openid:
         return False
     storage = get_storage()
-    storage_started = time.perf_counter()
     data = await storage.get(storage_key)
-    _file_timing("storage-read", ms=round((time.perf_counter() - storage_started) * 1000, 2), bytes=len(data))
     if len(data) > _QQ_FILE_MAX:
         return False
-    qq_started = time.perf_counter()
     ok = await qq.send_file(
         openid, data, display_name, ext, payload.get("channel_id"),
         payload.get("message_id"), group=is_group,
-    )
-    _file_timing("qq-send-total", ms=round((time.perf_counter() - qq_started) * 1000, 2), ok=ok)
-    print(
-        f"[im] qq 发文件 fp={logsafe.fingerprint(fname)}: "
-        f"{'ok' if ok else '失败'}（base64模式）",
-        flush=True,
     )
     return ok

@@ -39,17 +39,6 @@ STREAM = R.IM_INBOUND_STREAM
 _ACK_COOLDOWN = 10.0   # 同一用户「文件收到啦」秒回的冷却秒数：连发多图/文件只 ack 一次，不刷屏
 
 
-def _file_timing(event: str, **fields: Any) -> None:
-    """按需记录 QQ 媒体阶段耗时，不记录目标、文件名或正文。"""
-    if os.environ.get("QQ_FILE_TIMING") != "1":
-        return
-    print(
-        "[qq-file-timing] " + json.dumps(
-            {"event": event, **fields}, ensure_ascii=False, separators=(",", ":")
-        ),
-        flush=True,
-    )
-
 _QQ_API_BASE = "https://api.sgroup.qq.com"
 _QQ_SANDBOX_API_BASE = "https://sandbox.api.sgroup.qq.com"
 _QQ_TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
@@ -71,35 +60,6 @@ _INTERACTION_UPDATE = 2002
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
 _HEARTBEAT_ACK_TIMEOUT_MULTIPLIER = 2.5
 
-
-def _qq_probe_value(value: Any) -> Any:
-    """生成不包含原文的 QQ 事件结构摘要，供临时排查 Gateway 事件投递。"""
-    from agent.logsafe import fingerprint
-
-    if isinstance(value, dict):
-        return {str(key): _qq_probe_value(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return {"type": "list", "length": len(value), "items": [
-            _qq_probe_value(item) for item in value[:8]
-        ]}
-    if isinstance(value, str):
-        return {"type": "string", "length": len(value), "fingerprint": fingerprint(value)}
-    if value is None or isinstance(value, (bool, int, float)):
-        return {"type": type(value).__name__}
-    return {"type": type(value).__name__}
-
-
-def _probe_qq_dispatch(event_type: str, data: Dict[str, Any]) -> None:
-    """记录事件结构而不落原始正文、ID、附件 URL 或凭据。"""
-    if os.environ.get("QQ_EVENT_PROBE") != "1":
-        return
-    print(
-        "[qq-event-probe] " + json.dumps({
-            "event": event_type,
-            "payload": _qq_probe_value(data),
-        }, ensure_ascii=False, separators=(",", ":")),
-        flush=True,
-    )
 
 def _heartbeat_ack_expired(last_ack_at: float, interval: float, now: float) -> bool:
     """连续超过两个心跳周期未获确认时，认为网关连接已失效。"""
@@ -397,6 +357,21 @@ def _platform_requires_mention(group_settings: tuple[bool, bool, bool]) -> bool:
     return bool(requires_at and not read_enabled)
 
 
+def _qq_message_mentions_bot(data: Dict[str, Any], event_type: str) -> bool:
+    """依据消息体判断是否真的 @ 了机器人。
+
+    QQ 切到 always 接收模式后，普通消息也可能使用
+    ``GROUP_AT_MESSAGE_CREATE`` 事件名，不能再只看事件类型。旧测试或旧适配器
+    没有 ``mentions`` 字段时保留事件类型回退。
+    """
+    if "mentions" not in data:
+        return event_type == "GROUP_AT_MESSAGE_CREATE"
+    mentions = data.get("mentions")
+    if not isinstance(mentions, list):
+        return False
+    return any(isinstance(item, dict) and item.get("bot") is True for item in mentions)
+
+
 def _build_claw_config(requires_mention: bool) -> dict:
     """构造 QQ interaction 配置查询/更新 ACK 的稳定字段。"""
     return {
@@ -453,7 +428,13 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str) -> None:
     """处理 QQ 配置查询/更新交互，不进入 Agent 消息链路。"""
     interaction_id = str(data.get("id") or "")
     interaction_data = data.get("data") or {}
-    interaction_type = interaction_data.get("type")
+    if not isinstance(interaction_data, dict):
+        interaction_data = {}
+    raw_interaction_type = interaction_data.get("type", data.get("type"))
+    try:
+        interaction_type = int(raw_interaction_type)
+    except (TypeError, ValueError):
+        interaction_type = None
     if not interaction_id or interaction_type not in {_INTERACTION_QUERY, _INTERACTION_UPDATE}:
         return
 
@@ -463,8 +444,12 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str) -> None:
         read_enabled = bool(settings[2])
 
         if interaction_type == _INTERACTION_UPDATE:
-            resolved = interaction_data.get("resolved") or {}
-            config = resolved.get("claw_cfg") or {}
+            resolved = interaction_data.get("resolved") or data.get("resolved") or {}
+            if not isinstance(resolved, dict):
+                resolved = {}
+            config = resolved.get("claw_cfg") or resolved
+            if not isinstance(config, dict):
+                config = {}
             requested = config.get("require_mention")
             if requested in {"mention", "always"}:
                 # 读取普通消息是平台 always 的硬约束；否则同步平台对本地回复门槛
@@ -512,7 +497,7 @@ async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, ms
 async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
                                  channel_id: str, owner: str, last_ack: dict) -> None:
     read_enabled = False
-    mentioned = event_type == "GROUP_AT_MESSAGE_CREATE"
+    mentioned = False
     if event_type == "C2C_MESSAGE_CREATE":
         chat_type = "c2c"
         author = data.get("author") or {}
@@ -524,21 +509,12 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         group_enabled, requires_at = group_settings[:2]
         # 兼容旧的测试/自定义适配器返回二元组；正式实现始终返回三元组。
         read_enabled = bool(group_settings[2]) if len(group_settings) > 2 else False
-        print(
-            "[qq-group-routing-probe] " + json.dumps({
-                "event": event_type,
-                "group_enabled": bool(group_enabled),
-                "requires_at": bool(requires_at),
-                "read_enabled": read_enabled,
-                "mentioned_by_event": event_type == "GROUP_AT_MESSAGE_CREATE",
-            }, ensure_ascii=False, separators=(",", ":")),
-            flush=True,
-        )
+        mentioned = _qq_message_mentions_bot(data, event_type)
         if not group_enabled:
             return
         # 只读取模式的目的就是收集群内全部消息；它覆盖“只响应 @”筛选，
         # 但仍通过 payload 标记让 worker 全链路静默，不向群内发消息。
-        if event_type == "GROUP_MESSAGE_CREATE" and requires_at and not read_enabled:
+        if requires_at and not read_enabled and not mentioned:
             return
         chat_type = "group"
         author = data.get("author") or {}
@@ -693,7 +669,6 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
                             elif op == _OP_HEARTBEAT_ACK:
                                 last_heartbeat_ack_at = time.monotonic()
                             elif op == _OP_DISPATCH:
-                                _probe_qq_dispatch(event_type, data)
                                 if event_type == "READY":
                                     session_id = data.get("session_id")
                                     print(f"[qq:{channel_id}] raw WebSocket READY session={session_id}", flush=True)
@@ -987,19 +962,8 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
     fname = f"{name}.{ext_l}" if ext_l else name
     if data is None:
         return False
-    encode_started = time.perf_counter()
     b64 = base64.b64encode(data).decode()
-    _file_timing("base64", ms=round((time.perf_counter() - encode_started) * 1000, 2), bytes=len(data))
     target = "groups" if group else "users"
-    print(
-        "[file-flow-probe] " + json.dumps({
-            "event": "qq-upload-start",
-            "target_kind": target,
-            "encoding": "base64",
-            "file_type": file_type,
-        }, ensure_ascii=False, separators=(",", ":")),
-        flush=True,
-    )
     # 上传 inner proxy 偶发抖动，多重试几次（每次取新 msg_seq，避免去重）
     for attempt in range(1, 5):
         try:
@@ -1008,37 +972,21 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
             body["file_data"] = b64
             if not is_img:
                 body["file_name"] = fname
-            request_started = time.perf_counter()
             media = await _qq_request(channel_id, "POST", f"/v2/{target}/{openid}/files", json_body=body)
-            _file_timing("media-upload", ms=round((time.perf_counter() - request_started) * 1000, 2), attempt=attempt)
             file_info = media.get("file_info") if isinstance(media, dict) else None
             if not file_info:
                 # 只打字段名，不打整个响应体（万一 QQ 把请求里的 file_name 之类字段原样回显）
                 keys = sorted(media.keys()) if isinstance(media, dict) else type(media).__name__
                 print(f"[qq] 富媒体上传无 file_info: keys={keys}", flush=True)
-                print("[file-flow-probe] " + json.dumps({
-                    "event": "qq-upload-no-file-info", "target_kind": target,
-                    "response_keys": keys if isinstance(keys, list) else str(keys),
-                }, ensure_ascii=False, separators=(",", ":")), flush=True)
                 return False
             # 2) 发媒体消息（被动回复带 msg_id；文件用 content 让 QQ 显示文件名）
             msg_body = {"msg_type": 7, "media": {"file_info": file_info},
                        "msg_id": msg_id, "msg_seq": await _next_seq(msg_id)}
             if not is_img:
                 msg_body["content"] = fname
-            request_started = time.perf_counter()
             await _qq_request(channel_id, "POST", f"/v2/{target}/{openid}/messages", json_body=msg_body)
-            _file_timing("media-message", ms=round((time.perf_counter() - request_started) * 1000, 2), attempt=attempt)
-            print("[file-flow-probe] " + json.dumps({
-                "event": "qq-upload-sent", "target_kind": target,
-            }, ensure_ascii=False, separators=(",", ":")), flush=True)
             return True
         except Exception as e:
-            print("[file-flow-probe] " + json.dumps({
-                "event": "qq-upload-error", "target_kind": target,
-                "error_type": type(e).__name__,
-                "attempt": attempt,
-            }, ensure_ascii=False, separators=(",", ":")), flush=True)
             diag_log("agent.gateway.qq.send_file", e)
             _log.warning("[qq] 发文件失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             # token 失效才重建缓存；inner proxy 等抖动直接重试
