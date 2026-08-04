@@ -14,7 +14,7 @@
 | Phase 2：站内工具接入 | ✅ 已完成 | 已迁移全局、文件、便签、历史会话、群上下文，并清理重复查询分支 |
 | Phase 3：匹配模式与排序 | ✅ 已完成 | 默认 OR，支持 AND，按命中数量、字段命中和原有时间规则排序 |
 | Phase 4：工具 prompt/skills 迁移 | ✅ 已完成 | 已更新工具 schema、skill 文档和调用提示，默认引导一次传入多个关键词 |
-| Phase 5：测试与性能验证 | ✅ 已完成 | 后端 599 项测试通过，前端 typecheck、build 与 246 项测试通过；devserver 已完成 targeted tests、typecheck 和真实项目数据的多词 OR 搜索冒烟 |
+| Phase 5：测试与性能验证 | ✅ 已完成 | 后端 607 项测试通过，前端 typecheck、build 与 246 项测试通过；devserver 已完成 targeted tests、typecheck 和真实项目数据的多词 OR 搜索冒烟 |
 
 ## 1. 背景与目标
 
@@ -151,6 +151,7 @@
 - 标题命中优先于正文命中，命中数量排序正确。
 - 会话和群上下文仍保持用户、bot、群隔离。
 - 空结果、非法模式和超限输入返回稳定错误。
+- 场景脚本 `backend/tests/test_search_scenarios.py` 覆盖未指定对象类型、明确项目范围、OR/AND、历史会话、思维便签、当前群隔离和无结果解释。
 
 ### 4.2 手测
 
