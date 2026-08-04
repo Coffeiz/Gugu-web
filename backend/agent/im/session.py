@@ -10,7 +10,8 @@ from app.core import redis as R
 from agent.im.context_policy import IM_SOURCES
 
 IM_SESSION_TTL = 12 * 3600  # 12 小时滑动 TTL
-GROUP_MESSAGE_LIMIT = 50
+GROUP_MESSAGE_RETENTION_LIMIT = 500
+GROUP_CONTEXT_LIMIT = 50
 
 
 @dataclass(frozen=True)
@@ -181,7 +182,10 @@ async def get_or_create_session(db, request, user_id, max_sessions: int = 50) ->
     return SessionState(session, True)
 
 
-async def trim_group_messages(session_id: int, limit: int = GROUP_MESSAGE_LIMIT) -> None:
+async def trim_group_messages(
+    session_id: int,
+    limit: int = GROUP_MESSAGE_RETENTION_LIMIT,
+) -> None:
     """只保留群会话最近的消息记录，避免普通群消息无限增长。"""
     if limit < 1:
         return

@@ -6,13 +6,13 @@ from agent.im.loop import trim_group_session_messages
 from app.models import ConversationMessage, ConversationSession
 
 
-async def test_qq_group_session_keeps_only_latest_50_messages(db, user_a):
+async def test_qq_group_session_keeps_only_latest_500_messages(db, user_a):
     session = ConversationSession(user_id=user_a.id, title="群聊记录", source="qqbot")
     db.add(session)
     await db.flush()
     db.add_all([
         ConversationMessage(session_id=session.id, role="user", content=f"消息 {index}")
-        for index in range(55)
+        for index in range(505)
     ])
     await db.commit()
 
@@ -29,5 +29,5 @@ async def test_qq_group_session_keeps_only_latest_50_messages(db, user_a):
         .order_by(ConversationMessage.id.desc())
         .limit(1)
     )
-    assert count == 50
-    assert latest == "消息 54"
+    assert count == 500
+    assert latest == "消息 504"

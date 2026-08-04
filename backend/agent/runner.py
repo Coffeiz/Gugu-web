@@ -26,6 +26,7 @@ from agent.im.context_policy import IM_SOURCES, policy_for
 from agent.im.context_loader import load_context_data
 from agent.im.permissions import filter_tool_names
 from agent.im.session import (
+    GROUP_CONTEXT_LIMIT,
     get_or_create_session,
     session_scope_filters,
     trim_group_messages,
@@ -36,6 +37,13 @@ from agent.profiles import DefaultProfile
 
 # 后台任务引用，防止被 GC（fire-and-forget 的标题生成等）
 _bg_tasks: set = set()
+
+
+def _history_query_limit(request: AgentRequest) -> int:
+    """群聊从较大的保留池中取最近 50 条，Web 会话沿用原窗口。"""
+    if request.source in IM_SOURCES and request.chat_id:
+        return GROUP_CONTEXT_LIMIT
+    return tokens.HISTORY_MAX_MSGS
 
 
 def _log_im_context_probe(event: str, request: AgentRequest, session_id: int,
@@ -263,7 +271,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             select(ConversationMessage)
             .where(ConversationMessage.session_id == session_id)
             .order_by(ConversationMessage.created_at.desc())
-            .limit(tokens.HISTORY_MAX_MSGS)
+            .limit(_history_query_limit(req))
         )
         history = tokens.select_history(hist_res.scalars().all(), token_budget=model_cfg.context_tokens)
         _log_im_context_probe("collect", req, session_id, history, context_policy)
@@ -511,7 +519,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
             select(ConversationMessage)
             .where(ConversationMessage.session_id == session_id)
             .order_by(ConversationMessage.created_at.desc())
-            .limit(tokens.HISTORY_MAX_MSGS)
+            .limit(_history_query_limit(req))
         )
         history = tokens.select_history(hist_res.scalars().all(), token_budget=model_cfg.context_tokens)
         _log_im_context_probe("stream", req, session_id, history, context_policy)

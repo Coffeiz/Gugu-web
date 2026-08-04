@@ -17,7 +17,7 @@
 | Phase 2：QQ 自建 WebSocket 接收侧 | ✅ 已完成 | `serve()` 走 raw WebSocket；支持 C2C 与群 @ raw event、引用文本/引用附件解析、现有 worker payload 兼容。 |
 | Phase 3：QQ raw HTTP 发送侧 | ✅ 已完成（未按 3-7 天灰度期提前实施） | `send_c2c`/`send_group`/`send_file`/短路回复/ack 全部改 raw HTTP 直连 QQ Bot API，按 channel_id 缓存 access_token 并在过期前刷新；markdown 无权限回退纯文本、401 清缓存重试逻辑保留。 |
 | 清理：完全移除 botpy | ✅ 已完成 | `_GuguQQClient`（botpy `Client` 子类）、monkey patch、`QQ_RAW_WS_ENABLED` 回退开关、`qq-botpy` 依赖全部删除；本地已 `pip uninstall qq-botpy` 验证 83 个测试仍全过。QQ 群聊 raw event 已在后续联调中继续扩展。 |
-| Phase 4：QQ 群聊普通消息读取 | ✅ 已完成 | 支持 `GROUP_MESSAGE_CREATE`；未 @ 消息可按 bot 开关只记录、不调用模型、不回复；按群共享会话，数据库每群最多保留最近 50 条消息。 |
+| Phase 4：QQ 群聊普通消息读取 | ✅ 已完成 | 支持 `GROUP_MESSAGE_CREATE`；未 @ 消息可按 bot 开关只记录、不调用模型、不回复；按群共享会话，数据库每群最多保留最近 500 条消息，每次上下文最多取最近 50 条。 |
 | Phase 5：QQ 身份采集与 Bot owner 绑定 | ✅ 已完成 | 每个 Gugu 账号只绑定一个 Bot；网页生成 6 位、10 分钟有效的一次性验证码，用户在 QQ C2C 私聊发送“绑定 6 位验证码”后原子保存 owner `sender_id`。不做跨 Bot QQ 身份自动合并，群消息不能自动抢占 owner。 |
 | Phase 6：群成员权限隔离与工具白名单 | ✅ 已完成 | 已按当前 Bot 的 `owner_platform_user_id` 解析 `owner/member/unknown`；owner 使用完整工具集，群成员/未知身份只使用 Bot 级白名单，默认开放网页搜索；runner 提供工具集过滤，dispatch 再做服务端拦截；个人设置可切换网页搜索和当前群上下文搜索。当前方案不按群单独绑定 owner，`im_chats` 群级开关作为后续独立需求保留。 |
 | Phase 7：群聊短期/长期记忆 | 🔲 未做 | 计划按 `platform_user_id` 记录群成员信息，并像个人聊天一样做短期、长期记忆压缩；需另行设计权限、可见范围和删除策略。 |
@@ -227,7 +227,7 @@ QQ 网关启动时，不再用 botpy `Client.run()` 接收消息，而是：
 - C2C 私聊消息能入队。
 - 群 @ 消息在 `group_chat_enabled=true` 时入队，关闭时丢弃。
 - `group_read_enabled=true` 时，未 @ 的普通群消息只记录、不调用模型、不回复。
-- 普通群消息和 @ 消息使用同一个 `group_openid` 会话，群会话最多保留最近 50 条消息。
+- 普通群消息和 @ 消息使用同一个 `group_openid` 会话，数据库最多保留最近 500 条消息；每次送入模型的上下文最多取最近 50 条，并继续受 token 预算限制。
 - 群消息 payload 中 `chat_id=group_openid`，`platform_user_id=member_openid`。
 
 #### FR-QQ-3：引用消息识别（✅ 已完成）
@@ -302,7 +302,7 @@ QQ 群聊增加独立的“普通消息读取”模式。该模式与“群聊�
 
 数据库保留策略：
 
-- 每个群会话最多保留最近 50 条 `conversation_messages`。
+- 每个群会话最多保留最近 500 条 `conversation_messages`；模型上下文最多取其中最近 50 条，并继续受 token 预算限制。
 - 普通消息落库后清理一次。
 - 正常 @ 回复完成后再清理一次，防止工具往返和 assistant 回复绕过上限。
 - 这只是数据库短期窗口，不代表已经实现群聊长期记忆。
