@@ -1,7 +1,6 @@
+import asyncio
 from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
-
-import asyncio
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession

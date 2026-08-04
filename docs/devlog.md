@@ -1813,8 +1813,14 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 
 ### 验证结果
 
-- 后端：`641 passed`，ownership/confirmation guard 通过，Python compileall 通过。
+- 后端：`643 passed`，ownership/confirmation guard 通过，Python compileall 通过。
 - 前端：typecheck、strict typecheck、246 个 Vitest 测试和 build 全部通过；build 仅保留既有 chunk/import 警告。
 - 迁移：在临时 PostgreSQL 上从项目的现有 schema 基线 `20260804000002` 升级至 `20260804000007`，执行一次 downgrade 到 `20260804000006` 后再次 upgrade，最终为 head。
 - 直接从空 PostgreSQL 执行历史第一条 Alembic revision 不属于当前仓库支持的初始化路径：仓库基础表由 `Base.metadata.create_all()` 创建，历史第一条 revision 假定基础表已存在；该限制已记录在 PR，不将 offline SQL 或空库直升结果误报为通过。
-- devserver 当前工作树存在其他未归属改动且数据库服务未就绪，因此未覆盖真实生产结构副本、OSS 对象和人工 IM 验收；这些仍是合并前部署验收项。
+- devserver 工作树存在其他未归属改动，未在其目录执行迁移。通过只读 `pg_dump --schema-only` 获取远端生产结构副本，在本地 PostgreSQL 18 临时库中从 head 回退到 `20260804000002`，再升级到 `20260804000007`，最终 head 验证通过；未修改远端数据库。
+- 真实 OSS 对象和人工 IM 交互仍需部署后手测，不能由本地单测替代。
+
+### 复审收尾补充
+
+- 清理了上传服务的导入顺序问题，保持项目统一的标准库导入规范。
+- 生产结构副本迁移复核命令输出：`production_schema_copy_downgrade_upgrade_ok`，最终版本 `20260804000007`。

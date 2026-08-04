@@ -154,3 +154,61 @@ async def test_qq_media_ingress_rejects_attachment_over_limit(monkeypatch):
         "owner-1",
     ) == []
     assert staged == []
+
+
+@pytest.mark.asyncio
+async def test_qq_media_ingress_rejects_stream_without_content_length(monkeypatch):
+    from agent.im import media_ingress
+
+    class _StreamingTooLargeResponse(_FakeResponse):
+        headers = {}
+
+        class _Content:
+            async def iter_chunked(self, _size):
+                yield b"x" * (media_ingress.MAX_IM_ATTACHMENT_BYTES + 1)
+
+        content = _Content()
+
+    class _StreamingTooLargeSession(_FakeSession):
+        def get(self, url, **kwargs):
+            self.urls.append(url)
+            return _StreamingTooLargeResponse()
+
+    staged = []
+    monkeypatch.setattr("aiohttp.ClientSession", _StreamingTooLargeSession)
+    monkeypatch.setattr("agent.im.media_ingress.url_is_safe", lambda _url: None)
+    monkeypatch.setattr("app.core.chat_attach.stage", lambda *a, **k: staged.append(1))
+
+    assert await media_ingress.ingest_qq_media(
+        [{"url": "https://example.test/stream.bin", "filename": "stream.bin"}],
+        "owner-1",
+    ) == []
+    assert staged == []
+
+
+@pytest.mark.asyncio
+async def test_qq_media_ingress_enforces_message_total_limit(monkeypatch):
+    from agent.im import media_ingress
+
+    monkeypatch.setattr(media_ingress, "MAX_IM_ATTACHMENT_BYTES", 20)
+    monkeypatch.setattr(media_ingress, "MAX_IM_MESSAGE_BYTES", 15)
+    staged = []
+
+    async def fake_stage(*args, **kwargs):
+        staged.append(1)
+        return {"attach_id": f"attach-{len(staged)}"}
+
+    monkeypatch.setattr("aiohttp.ClientSession", _FakeSession)
+    monkeypatch.setattr("agent.im.media_ingress.url_is_safe", lambda _url: None)
+    monkeypatch.setattr("app.core.chat_attach.stage", fake_stage)
+
+    result = await media_ingress.ingest_qq_media(
+        [
+            {"url": "https://example.test/one.bin", "filename": "one.bin"},
+            {"url": "https://example.test/two.bin", "filename": "two.bin"},
+        ],
+        "owner-1",
+    )
+
+    assert result == ["attach-1"]
+    assert len(staged) == 1
