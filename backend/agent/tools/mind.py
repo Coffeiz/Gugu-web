@@ -387,7 +387,8 @@ class MindSkill(BaseSkill):
                     "limit": {"type": "integer", "description": "最多返回命中数，默认 5，最大 10"},
                     "include_content": {"type": "boolean", "description": "true 时返回命中笔记完整正文；默认只返回预览"},
                 },
-                "required": ["q"],
+                # q / queries 至少传一个；具体校验由 handler 统一完成，兼容 queries-only 调用。
+                "required": [],
             },
             handler=_mind_search,
         ),

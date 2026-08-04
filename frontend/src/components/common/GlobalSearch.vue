@@ -126,7 +126,7 @@ async function runSearch(text: string) {
   const seq = ++reqSeq
   searchAbort?.abort()
   searchAbort = new AbortController()
-  const queries = text.split(/\s+/).map(item => item.trim()).filter(Boolean)
+  const queries = [...new Set(text.split(/\s+/).map(item => item.trim()).filter(Boolean))]
   try {
     const r = await searchApi.query(queries, searchAbort.signal)
     if (seq !== reqSeq) return   // 有更新的请求了，丢弃这次

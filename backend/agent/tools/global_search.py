@@ -67,7 +67,8 @@ class GlobalSearchSkill(BaseSkill):
                               "description": "可选，限定只搜这些类型（project/file/folder/event/"
                                             "client/conversation/note）；不传则全搜"},
                 },
-                "required": ["q"],
+                # q / queries 至少传一个；具体校验由 handler 统一完成，避免只传 queries 时被旧 schema 拦截。
+                "required": [],
             },
             handler=_global_search,
         ),

@@ -116,6 +116,16 @@ async def test_global_search_or_matches_any_keyword_in_one_call(db, user_a):
     assert result["mode"] == "OR"
 
 
+async def test_global_search_tool_accepts_queries_without_legacy_q(db, user_a):
+    await _mk(db, Project(user_id=user_a.id, name="部署方案"))
+
+    result = await _global_search(db, user_a.id, {"queries": ["部署"], "types": ["project"]})
+
+    assert result["queries"] == ["部署"]
+    assert result["mode"] == "OR"
+    assert result["total"] == 1
+
+
 async def test_global_search_and_requires_every_keyword(db, user_a):
     await _mk(db, Project(user_id=user_a.id, name="部署方案"))
     await _mk(db, Project(user_id=user_a.id, name="上线清单"))

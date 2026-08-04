@@ -239,6 +239,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 MindNode.deleted_at.is_(None),
                 keyword_condition([MindNode.title, MindNode.content_plain], search_queries, mode),
             ).order_by(
+                keyword_score([MindNode.title, MindNode.content_plain], search_queries).desc(),
                 case(
                     (func.lower(MindNode.title) == q.lower(), 0),
                     (func.lower(MindNode.title).like(f"{q.lower()}%"), 1),
@@ -288,7 +289,10 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
             .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
             .where(ConversationSession.user_id == uid,
                    keyword_condition([ConversationMessage.content], search_queries, mode))
-            .order_by(ConversationMessage.created_at.desc()).limit(MSG_PER_TYPE)
+            .order_by(
+                keyword_score([ConversationMessage.content], search_queries).desc(),
+                ConversationMessage.created_at.desc(),
+            ).limit(MSG_PER_TYPE)
         )).all()
         for m, stitle in msg_rows:
             if m.session_id not in conv:

@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import select, desc, or_
+from sqlalchemy import desc, select
 
 from app.models import ConversationMessage, ConversationSession
 from app.core.ownership import get_owned
-from app.search.query import keyword_condition, normalize_mode, normalize_queries
+from app.search.query import keyword_condition, keyword_score, normalize_mode, normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 
@@ -52,7 +52,13 @@ async def _search_conversations(db, user_id, args: dict):
                 search_queries, mode,
             ),
         )
-        .order_by(desc(ConversationMessage.created_at))
+        .order_by(
+            keyword_score(
+                [ConversationMessage.content, ConversationSession.title, ConversationSession.summary],
+                search_queries,
+            ).desc(),
+            desc(ConversationMessage.created_at),
+        )
         .limit(limit * 4)
     )).all()
 
