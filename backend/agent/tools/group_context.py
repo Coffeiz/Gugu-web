@@ -27,7 +27,8 @@ async def _group_context_search(db, user_id, args: dict):
             ConversationSession.chat_id == im["chat_id"],
             ConversationMessage.content_json.is_(None),
         )
-        .order_by(desc(ConversationMessage.created_at))
+        # 同一批消息可能拥有相同时间戳，用自增 id 保证倒序取回后再翻转时稳定按发送顺序返回。
+        .order_by(desc(ConversationMessage.created_at), desc(ConversationMessage.id))
         .limit(limit)
     )
     if search_queries:
