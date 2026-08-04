@@ -568,6 +568,8 @@ class ScheduledTask(Base):
     # 执行时按需精简注入用：{"tool_groups": ["web","meta"], "projects": false, "calendar": false,
     # "files": false, "memory": false}。null = 不裁剪，走全量（兼容旧任务/未判断出结果时的安全默认）。
     context_config: Mapped[Optional[dict]]  = mapped_column(JSON, nullable=True, default=None)
+    # 任务自己的 IM 投递目标；null = 旧任务兼容，执行时沿用最近可触达地址。
+    delivery_targets: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
     created_at:  Mapped[datetime]           = mapped_column(UtcDateTime, default=now_utc)
     updated_at:  Mapped[datetime]           = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)

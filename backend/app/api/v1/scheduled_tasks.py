@@ -120,6 +120,7 @@ def _to_resp(t: ScheduledTask) -> dict:
         "event_id": t.event_id,   # 绑定的日历事件（活动面板加的提醒）；null=独立任务
         "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,   # 原始 UTC ISO，前端按浏览器 tz 显示
         "context_config": t.context_config,   # null=全量注入；非空=按需精简（见 agent/runner.py run_ephemeral）
+        "delivery_targets": t.delivery_targets,
     }
 
 
@@ -178,6 +179,8 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         event_id=body.event_id,
         context_config=None,   # 先给安全默认（全量），分类结果后台补丁进来，别让创建等 LLM 调用
     )
+    from app.scheduled_tasks import owner_private_targets
+    t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
     db.add(t)
     await db.commit()
     await db.refresh(t)
@@ -207,6 +210,8 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.context_config = None
     if body.channels is not None:
         t.channels = _norm_channels(body.channels)
+        from app.scheduled_tasks import owner_private_targets
+        t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
     if body.enabled is not None:
         t.enabled = body.enabled
     payload_changed = body.payload is not None

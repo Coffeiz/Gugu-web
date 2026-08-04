@@ -9,12 +9,40 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from app.core.redaction import diag_log
+
+
 @dataclass(frozen=True)
 class ImIdentity:
     """当前 IM 消息绑定到的 Gugu 账号。"""
 
     user_id: Any
     user_name: str
+
+
+async def remember_bot_platform_user_id(bot_id: str, platform_user_id: str) -> None:
+    """在 IM 业务层记录当前 Bot 的平台身份，不让 Gateway 直接写数据库。"""
+    if not bot_id or not platform_user_id:
+        return
+    try:
+        numeric_bot_id = int(bot_id)
+    except (TypeError, ValueError):
+        return
+    import app.db.session as db_session
+    if db_session._engine is None:
+        db_session._build_engine()
+    from app.models import UserBot
+
+    try:
+        async with db_session._SessionLocal() as db:
+            bot = await db.get(UserBot, numeric_bot_id)
+            if not bot or bot.bot_platform_user_id == platform_user_id:
+                return
+            bot.bot_platform_user_id = platform_user_id
+            await db.commit()
+    except Exception as exc:
+        # 身份回写是旁路同步，失败不能丢弃当前 IM 消息；原始异常只进诊断出口。
+        diag_log("agent.im.identity.remember_bot_platform_user_id", exc)
 
 
 async def resolve_owner_account(payload: dict) -> Optional[ImIdentity]:

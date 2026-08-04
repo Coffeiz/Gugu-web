@@ -24,7 +24,7 @@ class FileSendResult:
         return self.requested > 0 and self.sent == self.requested
 
 
-# 入站附件暂存门面：Gateway 负责下载、解密和转码，这里统一处理 attach_id 生命周期。
+# 入站附件暂存门面：IM 入站处理负责下载、解密和转码，这里统一处理 attach_id 生命周期。
 async def stage(
     owner,
     name: str,

@@ -132,6 +132,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             return {"错误": "任务不存在或已停用"}
         payload, uid, name = t.payload or "", t.user_id, t.name
         context_config = t.context_config
+        delivery_targets = t.delivery_targets
         chans = {c for c in (t.channels or "").split(",") if c}
         t.last_run_at = now_utc()
         once_deleted = not is_trial and (t.cron or "").startswith("@once:")
@@ -152,7 +153,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             "也不要提及渠道、推送、工具不可用或无法发送。"
         )
         text = await _run_agent(uid, prompt, context_config)
-        result = await deliver_to_channels(uid, name, text, chans)
+        result = await deliver_to_channels(uid, name, text, chans, delivery_targets)
     except Exception as e:
         import traceback
         result["错误"] = f"{type(e).__name__}: {e}"
@@ -161,7 +162,13 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
     return result
 
 
-async def deliver_to_channels(uid, name: str, text: str, chans: set) -> dict:
+async def deliver_to_channels(
+    uid,
+    name: str,
+    text: str,
+    chans: set,
+    delivery_targets: dict | None = None,
+) -> dict:
     """把 text 投递到选定渠道，返回 {渠道: 状态}。供定时任务执行 / 提醒测试复用。
     chat=web 历史别名；im=发到用过的所有 IM 平台（旧任务兼容）。"""
     result: dict = {}
@@ -172,15 +179,21 @@ async def deliver_to_channels(uid, name: str, text: str, chans: set) -> dict:
     im_targets = {_CHAN_PLATFORM[c] for c in chans if c in _CHAN_PLATFORM}
     if "im" in chans:
         im_targets.update(_CHAN_PLATFORM.values())
+    targets = delivery_targets if isinstance(delivery_targets, dict) else {}
     for platform in im_targets:
         lbl = _PLAT_LABEL.get(platform, platform)
+        channel = next(
+            (key for key, value in _CHAN_PLATFORM.items() if value == platform),
+            platform,
+        )
+        target = targets.get(channel)
         try:
-            sent = await _deliver_im(uid, f"⏰ {name}\n\n{text}", platform)
+            sent = await _deliver_im(uid, f"⏰ {name}\n\n{text}", platform, target)
             result[lbl] = "已发送" if sent else "无可触达地址（先给该 bot 发条消息）"
             if sent:
                 # 把推送写进 IM 会话历史，用户回复时咕咕才有上下文（隐藏临时会话，回复即转正）
                 try:
-                    await _persist_push_im(uid, platform, name, text)
+                    await _persist_push_im(uid, platform, name, text, target)
                 except Exception as e:
                     print(f"[sched] {platform} 推送入会话失败: {type(e).__name__}: {e}", flush=True)
         except Exception as e:
@@ -189,7 +202,13 @@ async def deliver_to_channels(uid, name: str, text: str, chans: set) -> dict:
     return result
 
 
-async def _persist_push_im(uid, platform: str, title: str, text: str) -> None:
+async def _persist_push_im(
+    uid,
+    platform: str,
+    title: str,
+    text: str,
+    target: dict | None = None,
+) -> None:
     """把一条主动推送 append 到该用户在 IM 的最近会话（imsession 指向的那个），使下次回复带上上下文。
     无 imsession（如隔夜冷启）→ 建一个普通会话并把 imsession 指过去。刷新 imsession 12h TTL，
     保证「推送后 12h 内回复」能路由回此会话。"""
@@ -197,7 +216,7 @@ async def _persist_push_im(uid, platform: str, title: str, text: str) -> None:
     import app.db.session as ss
     from app.models import ConversationSession, ConversationMessage
 
-    reach = await get_imreach(uid, platform)
+    reach = target or await get_imreach(uid, platform)
     puid = (reach or {}).get("puid")
     if not puid:
         return
@@ -243,6 +262,38 @@ _CHAN_PLATFORM = {"feishu": "feishu", "qq": "qqbot", "wechat": "wechat"}
 _PLAT_LABEL = {"feishu": "飞书", "qqbot": "QQ", "wechat": "微信"}
 
 
+async def owner_private_targets(db, user_id, channels: set | list[str] | None) -> dict | None:
+    """为网页创建的任务解析固定私聊目标，不依赖最近一次 IM 会话。"""
+    channels = set(channels or [])
+    wanted = {"qq": "qqbot", "feishu": "feishu", "wechat": "wechat"}
+    selected = {channel: platform for channel, platform in wanted.items() if channel in channels}
+    if not selected:
+        return None
+
+    from app.models import UserBot
+
+    targets = {}
+    for channel, platform in selected.items():
+        row = (
+            await db.execute(
+                select(UserBot)
+                .where(
+                    UserBot.user_id == _as_uuid(user_id),
+                    UserBot.platform == platform,
+                    UserBot.enabled.is_(True),
+                )
+                .order_by(UserBot.id.asc())
+            )
+        ).scalars().first()
+        targets[channel] = {
+            "chat_type": "c2c",
+            "chat_id": None,
+            "puid": row.owner_platform_user_id if row else None,
+            "channel_id": str(row.id) if row else None,
+        }
+    return targets
+
+
 def _scheduled_delivery_targets(chans: set) -> str:
     """把任务配置转换成模型可理解的投递范围；只描述配置，不承诺实际触达。"""
     labels = []
@@ -273,13 +324,18 @@ async def _has_enabled_bot(user_id, platform: str) -> bool:
     return row is not None
 
 
-async def _deliver_im(user_id, text: str, platform: str | None = None) -> bool:
+async def _deliver_im(
+    user_id,
+    text: str,
+    platform: str | None = None,
+    target: dict | None = None,
+) -> bool:
     """主动 DM 到指定 IM 平台。platform=None 时发到最近一次可触达平台（兜底）。
     飞书可主动；QQ 主动受限，best-effort。返回是否真的投出（无地址/无活绑定=False）。"""
     # 保险二：必须有该平台的 enabled bot 才发——解绑后绝不发给旧账号
     if platform and not await _has_enabled_bot(user_id, platform):
         return False
-    reach = await get_imreach(user_id, platform)
+    reach = target or await get_imreach(user_id, platform)
     if not reach:
         return False   # 该平台没用过/无可触达地址，跳过
     payload = {
@@ -287,6 +343,7 @@ async def _deliver_im(user_id, text: str, platform: str | None = None) -> bool:
         "channel_id": reach.get("channel_id"),
         "chat_id": reach.get("chat_id"),
         "platform_user_id": reach.get("puid"),
+        "chat_type": reach.get("chat_type") or ("group" if reach.get("chat_id") else "c2c"),
         "context_token": reach.get("context_token", ""),   # 微信 iLink 必需，其他平台为空
     }
     from agent.im.replies import send_text

@@ -1,6 +1,7 @@
 from agent.im.models import ChatTarget, PlatformMessage, PlatformReply, normalize_payload
 from agent.im.loop import should_record_passive_group
 from agent.models import AgentRequest
+from worker import _is_passive_group_payload
 
 
 def test_platform_message_normalizes_group_payload_without_losing_metadata():
@@ -175,3 +176,24 @@ def test_reply_mentions_records_unmentioned_qq_messages_without_replying():
     assert should_record_passive_group(
         request, {**policy, "group_requires_at": False}
     ) is False
+
+
+def test_passive_group_payload_can_bypass_active_agent_task():
+    base = {
+        "platform": "qqbot",
+        "chat_type": "group",
+        "chat_id": "group-1",
+    }
+
+    assert _is_passive_group_payload({**base, "group_read_enabled": True}) is True
+    assert _is_passive_group_payload({
+        **base,
+        "group_requires_at": True,
+        "group_mentioned": False,
+    }) is True
+    assert _is_passive_group_payload({
+        **base,
+        "group_requires_at": True,
+        "group_mentioned": True,
+    }) is False
+    assert _is_passive_group_payload({**base, "group_requires_at": False}) is False

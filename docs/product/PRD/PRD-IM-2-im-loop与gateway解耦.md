@@ -1,10 +1,10 @@
 # IM Loop 与 Gateway 解耦 PRD
 
-> 状态：Phase 5 已完成，Phase 6 待后续设计
+> 状态：Phase 5 已完成，Phase 6 由独立 PRD 定义，尚未实现
 > 创建：2026-08-03
 > 最近更新：2026-08-04
 > 关联模块：`backend/agent/gateway/qq.py`、`backend/agent/gateway/feishu.py`、`backend/agent/gateway/wechat.py`、`backend/worker.py`、`backend/agent/runner.py`
-> 关联文档：[`PRD-IM-1-im接入稳定性与qq自建websocket.md`](./PRD-IM-1-im接入稳定性与qq自建websocket.md)、[`20-IM接入架构.md`](../../agent/20-IM接入架构.md)、[`21-群聊消息架构.md`](../../agent/21-群聊消息架构.md)、[`22-IM用户数据结构.md`](../../agent/22-IM用户数据结构.md)
+> 关联文档：[`PRD-IM-1-im接入稳定性与qq自建websocket.md`](./PRD-IM-1-im接入稳定性与qq自建websocket.md)、[`PRD-IM-3-群组与成员记忆.md`](./PRD-IM-3-群组与成员记忆.md)、[`20-IM接入架构.md`](../../agent/20-IM接入架构.md)、[`21-群聊消息架构.md`](../../agent/21-群聊消息架构.md)、[`22-IM用户数据结构.md`](../../agent/22-IM用户数据结构.md)
 
 ## 0. 实施状态
 
@@ -16,7 +16,7 @@
 | Phase 3：建立 IM Loop | ✅ 已完成 | 已完成 Owner/Member Loop 门面、上下文与权限编排、session 路由、显式 Web session 绑定、统一回复和 worker 职责收口。 |
 | Phase 4：收窄 Gateway | ✅ 已完成 | owner 绑定、身份协议、shortcut 和出站能力门禁已收口；三平台收发/引用/附件/群聊身份/重连已人工验收（2026-08-04）；平台媒体 API、即时 ack/reaction/typing 作为纯协议适配仍保留在 Gateway。 |
 | Phase 5：隔离修复与编排清理 | ✅ 已完成 | 已完成 Bot/session scope 隔离、平台身份归一化、owner/member 安全边界、worker 编排收口、统一 Loop 门面和出站能力审查。 |
-| Phase 6：群组与成员记忆 | 🔲 后续 | 复用 memory 组件，但使用独立的群组/平台用户 namespace，不与 owner 记忆混用。 |
+| Phase 6：群组与成员记忆 | 🔲 后续 | 具体契约和执行计划见 [`PRD-IM-3-群组与成员记忆.md`](./PRD-IM-3-群组与成员记忆.md)，当前未实现。 |
 
 ## 0.1 当前实现基线与代码审查
 
@@ -203,33 +203,13 @@ member/unknown 消息进入独立的 `MemberContext`：
 
 ### FR-IM-5A：群组与平台用户记忆（待实施）
 
-群组/member 记忆复用现有 memory 组件的提取、压缩和检索能力，但不复用 owner 的记忆 namespace、加载范围和写入策略。两类记忆按平台、Bot 和作用域隔离：
+本需求的完整存储、读写边界、反思、压缩、生命周期和验收以独立 PRD [`PRD-IM-3-群组与成员记忆.md`](./PRD-IM-3-群组与成员记忆.md) 为准。本文件只保留 Loop 层约束：
 
-```text
-.agent/im/
-├── qq/
-│   ├── platform-users/{platform_user_id}/
-│   │   ├── profile.md
-│   │   ├── pattern.md
-│   │   └── summary.md
-│   └── groups/{group_id}/
-│       ├── profile.md
-│       ├── daily.md
-│       └── memory.md
-├── feishu/
-└── weixin/
-```
-
-逻辑唯一作用域必须包含 `platform + bot_id`：
-
-```text
-platform + bot_id + platform_user_id
-platform + bot_id + group_id
-```
-
-平台用户记忆只记录轻量资料、表达模式和阶段性摘要；群组记忆沿用现有 `profile.md`、`daily.md`、`memory.md` 结构，分别记录群资料、近期群聊和压缩后的稳定群知识。成员个人资料不能自动写入群记忆，群内公开信息也不能反向写入 owner memory。
-
-MemberLoop 的读取顺序为：当前群 `daily.md` → 当前群 `memory.md` → 当前群 `profile.md` → 当前发言人的平台用户记忆 → 当前群消息窗口。写入和压缩应异步执行，不阻塞群聊回复；成员记忆需要独立的可见范围、删除、过期和群解散清理策略。
+- 作用域必须包含 `platform + bot_id + group_id` 或 `platform + bot_id + platform_user_id`。
+- `MemberLoop` 只接收当前群的公开群记忆、当前发言人的轻量平台用户记忆和带发言人元数据的近期消息窗口。
+- `OwnerAgentLoop` 可以读取 owner 个人记忆，但群内公开内容只写入当前群 scope。
+- 反思、压缩由 IM Loop 异步投递，不能阻塞当前回复。
+- Gateway、session 和 context loader 不直接实现长期记忆写入。
 
 ### FR-IM-6：Gateway 纯传输职责（待实施）
 
@@ -579,12 +559,9 @@ Phase 4 收口：owner 绑定、身份协议、shortcut、出站能力门禁和�
    - worker 旧业务编排和旧 payload 分支已删除。
    - `PlatformReply` capability 校验、文本/文件/流式回复均经过统一 reply 层，Gateway 只保留平台协议调用。
 
-### Phase 6：群组与成员记忆预留
+### Phase 6：群组与成员记忆
 
-- 只有 Phase 5 的身份和 scope 隔离验收通过后才开始。
-- 将群消息窗口与个人记忆存储边界写入数据库约束和测试。
-- 复用现有 memory 组件，但使用独立的群组/平台用户 namespace。
-- 仅完成长期群聊记忆的接口预留，不在本 PRD 中实现压缩算法。
+执行计划、数据格式、文件职责、上下文策略和验收清单已迁移到 [`PRD-IM-3-群组与成员记忆.md`](./PRD-IM-3-群组与成员记忆.md)。本 PRD 只负责在 Phase 5 通过后启动该 PRD 的 Phase 1～4；未完成前不得把 group/member 记忆当作已上线能力。
 
 每个阶段单独提交。任一阶段出现 owner 权限、群回复路由或上下文差异时，不进入下一阶段。
 
@@ -639,7 +616,7 @@ Phase 4 收口：owner 绑定、身份协议、shortcut、出站能力门禁和�
 | `owner_account_id` 仍用于现有资源查询 | 迁移期间可能误把 member 当 owner | Phase 2 增加显式 `ContextScope` 和工具层权限守卫。 |
 | 三个平台出站能力不一致 | 文件、Keyboard 或引用回复行为不同 | `PlatformReply` 使用 capability 声明，不支持的 part 必须显式降级。 |
 | Gateway 与 worker 同时保留旧/新 payload | 迁移期间字段含义可能冲突 | 每阶段保留兼容解析，但只允许一处做业务身份解析。 |
-| member 长期记忆尚未定义 | 可能污染 owner 记忆或造成隐私越界 | Phase 6 单独设计存储、可见范围、删除和用户授权。 |
+| member 长期记忆尚未实现 | 可能污染 owner 记忆或造成隐私越界 | 按 [`PRD-IM-3-群组与成员记忆.md`](./PRD-IM-3-群组与成员记忆.md) 实现独立 scope、可见范围、删除和用户授权。 |
 
 待确认：
 

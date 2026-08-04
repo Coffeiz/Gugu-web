@@ -36,6 +36,7 @@ _max_concurrency = 16                          # 当前生效值（_refresh_conc
 # chat_type+scope_id），不是裸 platform_user_id——同一用户跨 bot、跨群或私聊/群聊同时
 # 发消息，用 puid 当 key 会被误合并到同一轮/同一把锁（PRD-IM-2 Phase 5 §1 P1）。
 _user_locks: dict[ImConversationKey, asyncio.Lock] = {}
+_passive_locks: dict[ImConversationKey, asyncio.Lock] = {}
 _inflight: set = set()                         # 在跑任务集：背压计数 + 优雅 drain
 
 # ── 输入防抖：QQ 等平台「一张图一条消息」，连发的图 + 后面的指令本是一次表达。
@@ -85,14 +86,40 @@ def _merge_payloads(payloads: list) -> dict:
     channel_id 等）取**最后一条**——被动回复 / 表情挂在最近那条上。"""
     base = dict(payloads[-1])
     texts, atts = [], []
+    has_face_marker = any(bool(p.get("qq_face_marker")) for p in payloads)
     for p in payloads:
         t = (p.get("text") or "").strip()
         if t:
+            if has_face_marker and t == "[QQ表情]" and p.get("qq_face_marker"):
+                t = ""
+            if not t:
+                continue
             texts.append(t)
         atts.extend(p.get("attachments") or [])
     base["text"] = "\n".join(texts)
     base["attachments"] = atts
+    base["qq_face_marker"] = has_face_marker
     return base
+
+
+def _is_passive_group_payload(payload: dict) -> bool:
+    """判断消息是否可以绕过正在运行的 Agent，直接记录到群会话。
+
+    这条判断必须只依赖 Gateway 已经写入的回应方式字段，不能提前解析身份或
+    读取数据库；这样被动消息才能在同一群的主动模型任务期间实时落库并推送前端。
+    """
+    return bool(
+        payload.get("platform") == "qqbot"
+        and payload.get("chat_type") == "group"
+        and payload.get("chat_id")
+        and (
+            payload.get("group_read_enabled")
+            or (
+                payload.get("group_requires_at")
+                and not payload.get("group_mentioned")
+            )
+        )
+    )
 
 
 async def _flush_loop(key: ImConversationKey):
@@ -144,6 +171,21 @@ async def _dispatch(msg_id: str, payload: dict):
     if not key.scope_id:
         # 路由字段缺失（理论上不该发生）：退化成按 msg_id 各自成轮，不合并、不跟别的会话共用锁。
         key = ImConversationKey(key.platform, key.bot_id, key.chat_type, msg_id)
+
+    # 静默记录/未被 @ 的群消息不应该排队等当前 LLM 任务结束；否则用户在咕咕
+    # 搜索期间发出的消息会一直留在 buffer，直到回复完成才出现在 GuguChat。
+    # 被动消息使用独立锁保持群内写入顺序，但不占用主动回复的会话锁。
+    if _is_passive_group_payload(payload):
+        lock = _passive_locks.setdefault(key, asyncio.Lock())
+        try:
+            async with lock:
+                await handle(msg_id, payload)
+        except Exception as e:
+            print(f"[worker] 被动群消息处理出错（已 ack 丢弃）: {type(e).__name__}: {e}", flush=True)
+        finally:
+            await R.ack(STREAM, GROUP, msg_id)
+        return
+
     # 投缓冲 + 把截止时刻推后；**不在这里 ack**，留到 flush（崩了未 ack → claim_stale 60s 重投兜底）。
     # _dispatch 由多个消费 task 并发调用，必须把“注册缓冲 + 创建 flush task”作为
     # 一个临界区，否则两个 task 都可能看到空的 _user_flush，从而把同一群拆成多条 session。
