@@ -818,8 +818,8 @@ async def test_voice(body: VoiceTestRequest):
     if api_format not in {"openai", "dashscope"}:
         return {"ok": False, "message": "API 格式只支持 OpenAI 兼容或百炼 DashScope"}
     dashscope_service = (body.dashscope_service or getattr(cfg, "dashscope_service", "qwen3-asr") or "qwen3-asr").strip().lower()
-    if api_format == "dashscope" and dashscope_service not in {"qwen3-asr", "qwen-audio"}:
-        return {"ok": False, "message": "百炼产品线只支持 Qwen3 ASR 或 Qwen-Audio 3.0"}
+    if api_format == "dashscope" and dashscope_service not in {"qwen3-asr", "qwen-audio", "fun-asr"}:
+        return {"ok": False, "message": "百炼产品线只支持 Qwen3 ASR、Qwen-Audio 3.0 或 Fun-ASR"}
     try:
         from agent.voice import transcribe
 

@@ -88,7 +88,7 @@ class VoiceSettings(BaseModel):
     api_format: str = Field("openai", description="语音接口格式: openai | dashscope")
     dashscope_service: str = Field(
         "qwen3-asr",
-        description="DashScope 产品线: qwen3-asr | qwen-audio",
+        description="DashScope 产品线: qwen3-asr | qwen-audio | fun-asr",
     )
 
 

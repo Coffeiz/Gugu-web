@@ -6,7 +6,7 @@
 - 配置了但转写失败/空 → 返回空串 `""`，调用方注入一句「没听清」兜底，仍交主模型（不报错）。
 
 旧版 ASR 固定走 **OpenAI 兼容方式**（chat + `input_audio` base64）；
-Qwen-Audio-3.0-ASR-Flash 改走百炼 DashScope 多模态 HTTP 接口。纯 ASR 模型只送音频块、不加文字指令。
+Qwen-Audio-3.0-ASR-Flash 和 Fun-ASR 改走百炼 DashScope 多模态 HTTP 接口。纯 ASR 模型只送音频块、不加文字指令。
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ import tempfile
 from types import SimpleNamespace
 from urllib.parse import urlsplit, urlunsplit
 
+from agent.logsafe import fingerprint
 from app.core.redaction import diag_log, redact
 
 logger = logging.getLogger("agent.voice")
@@ -30,19 +31,35 @@ _ASR_RETRY_BACKOFF = [1, 2]   # ASR 单次调用本身较慢，退避拉满会�
 # mimo-v2.5-asr 等 ASR 模型只收这几种容器；浏览器录音多是 audio/mp4(Safari)/audio/webm(Chrome)，
 # QQ/微信语音也常是 amr/silk → 一律用 ffmpeg 转 wav 再送。
 _ASR_OK_MIME = {"audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3"}
-_DASHSCOPE_SERVICES = {"qwen3-asr", "qwen-audio"}
+_DASHSCOPE_SERVICES = {"qwen3-asr", "qwen-audio", "fun-asr"}
+
+
 def _dashscope_generation_url(base_url: str) -> str:
-    """从兼容模式 base URL 推导百炼多模态生成端点。"""
+    """校验并返回用户填写的百炼原生多模态生成端点。
+
+    DashScope 原生接口不使用 OpenAI 的 ``/compatible-mode/v1`` Base URL；
+    这里要求 Admin 直接填写完整 endpoint，避免自动拼接掩盖地域或 Workspace 配置错误。
+    """
     parsed = urlsplit((base_url or "").strip())
     if not parsed.scheme or not parsed.netloc:
         raise ValueError("语音模型 Base URL 无效")
-    return urlunsplit((parsed.scheme, parsed.netloc,
-                       "/api/v1/services/aigc/multimodal-generation/generation", "", ""))
+    path = parsed.path.rstrip("/")
+    suffix = "/api/v1/services/aigc/multimodal-generation/generation"
+    if not path.endswith(suffix):
+        raise ValueError("DashScope Base URL 必须填写完整的多模态生成接口地址")
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ""))
 
 
 def _dashscope_transcript(payload: dict) -> str:
     """读取 DashScope 多模态响应中的文本结果。"""
-    content = (((payload.get("output") or {}).get("choices") or [{}])[0]
+    output = payload.get("output") or {}
+    direct_text = output.get("text")
+    if isinstance(direct_text, str):
+        return direct_text.strip()
+    sentence = output.get("sentence")
+    if isinstance(sentence, dict) and isinstance(sentence.get("text"), str):
+        return sentence["text"].strip()
+    content = ((output.get("choices") or [{}])[0]
                .get("message", {}).get("content", []))
     if isinstance(content, str):
         return content.strip()
@@ -149,9 +166,11 @@ async def transcribe(media: list, settings, *, raise_errors: bool = False) -> st
                         for block in parts
                     ]
                     parameters = {"asr_options": {"enable_itn": False}}
-                else:
+                elif dashscope_service in {"qwen-audio", "fun-asr"}:
                     content = parts
                     parameters = {"format": "wav", "sample_rate": 16000}
+                else:  # 白名单校验已拦截；保留显式分支避免协议静默降级
+                    raise ValueError("DashScope 语音产品线未选择或暂不支持")
                 data = {
                     "model": vm.model,
                     "input": {"messages": [{"role": "user", "content": content}]},
@@ -174,7 +193,8 @@ async def transcribe(media: list, settings, *, raise_errors: bool = False) -> st
                     model=vm.model, messages=[{"role": "user", "content": parts}],
                     extra_body={"asr_options": {"enable_itn": False}})
                 out = (resp.choices[0].message.content or "").strip()
-            logger.info("语音转写成功 model=%s → %d 字: %s", vm.model, len(out), out[:80])
+            logger.info("语音转写成功 model=%s → %d 字 fingerprint=%s",
+                        vm.model, len(out), fingerprint(out))
             return out
         except transient as e:
             if i >= len(_ASR_RETRY_BACKOFF):

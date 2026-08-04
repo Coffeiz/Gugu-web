@@ -592,12 +592,12 @@
 
         <div class="behavior-grid">
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc"><b>留空 = 不支持语音</b>。DashScope 会根据下方产品线自动使用对应请求格式</span></div>
+            <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc"><b>留空 = 不支持语音</b>。DashScope 会根据下方产品线自动使用对应请求格式；当前支持同步短音频接口，Filetrans 长录音任务暂未接入</span></div>
             <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.model" placeholder="留空=不支持语音" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>Base URL</span><span class="behavior-desc">OpenAI 填兼容端点；DashScope 填 https://&#123;WorkspaceId&#125;.cn-beijing.maas.aliyuncs.com/api/v1</span></div>
-            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.base_url" placeholder="https://…/compatible-mode/v1" />
+            <div class="behavior-label"><span>Base URL</span><span class="behavior-desc">OpenAI 填兼容端点；DashScope 请填写完整的 /api/v1/services/aigc/multimodal-generation/generation 地址</span></div>
+            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.base_url" placeholder="https://…/api/v1/services/aigc/multimodal-generation/generation" />
           </div>
           <div v-if="voiceDraft.api_format === 'dashscope'" class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label"><span>百炼产品线</span><span class="behavior-desc">选择后会自动填入适合的模型示例和请求适配器</span></div>
@@ -1665,12 +1665,14 @@ const VOICE_API_FORMATS = [
 const VOICE_DASHSCOPE_SERVICES = [
   { value: 'qwen3-asr', label: 'Qwen3 ASR · qwen3-asr-flash' },
   { value: 'qwen-audio', label: 'Qwen-Audio 3.0 · qwen-audio-3.0-asr-flash' },
+  { value: 'fun-asr', label: 'Fun-ASR · fun-asr-flash-2026-06-15' },
 ]
 function setDashscopeService(value: string) {
   voiceDraft.dashscope_service = value
   const examples: Record<string, string> = {
     'qwen3-asr': 'qwen3-asr-flash',
     'qwen-audio': 'qwen-audio-3.0-asr-flash',
+    'fun-asr': 'fun-asr-flash-2026-06-15',
   }
   voiceDraft.model = examples[value] || ''
 }
