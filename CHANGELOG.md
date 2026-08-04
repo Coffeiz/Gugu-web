@@ -14,6 +14,7 @@
 - **QQ 群聊消息记录**（`backend/agent/adapters/qq.py`、`ProfileImPane.vue`）：可保存未 @ 咕咕的普通群消息供后续上下文读取，同时保留 @ 消息的正常回复。
 - **站内多关键词搜索**（`backend/app/search/`、`agent/tools/{global_search,files,conversations}.py`）：支持组合搜索项目、文件、笔记、会话和群上下文，并保留拼音回退、结果排序与请求取消能力。
 - **群组与成员记忆系统**（`backend/agent/memory/`、`agent/im/`）：为 IM 成员和群组增加独立的资料、行为模式、日常记录与摘要存储，支持按范围触发反思、压缩和生命周期清理。
+- **画像结构规范化**（`backend/agent/memory/`、`agent/tools/`）：统一 owner、平台用户和群组画像的类型化字段，并让 `remember` 按统一结构写入 profile 与 pattern，减少不同记忆范围之间的格式漂移。
 - **DashScope 语音模型产品线适配**（`backend/agent/voice.py`、`frontend/src/views/Admin/Agent/`）：支持按百炼产品线选择语音识别模型，并提供配置与连通性测试入口。
 
 ### 改进
@@ -37,6 +38,7 @@
 - **记忆维护与召回**（`backend/agent/memory/`）：优化 pattern 的水位触发、合并和输出预算，并稳定群上下文搜索结果顺序。
 - **记忆反思触发节奏**（`backend/agent/memory/`、`agent/im/`）：群内普通消息累计 30 条、进入 Agent 的回合累计 5 条，工具调用立即反思，owner/member 共用节奏但保持记忆作用域隔离。
 - **QQ 群消息与媒体链路**（`backend/agent/gateway/qq.py`、`agent/im/`）：统一群聊消息解析、身份映射、表情/引用媒体和本地附件发送路径，减少群聊与私聊的行为差异。
+- **RAG 召回评估工具**（`backend/scripts/bench_rag_virtual.py`、`docs/product/PRD/report/`）：增加 BM25、真实 Embedding 缓存和 DeepSeek/MiniMax LLM 重排的离线压测，记录召回质量、排序耗时和上下文注入成本；当前结论是 BM25 作为默认路径，LLM 重排按需启用。
 
 ### 修复
 
