@@ -99,6 +99,45 @@ async def test_confirm_overwrite_rechecks_quota_with_actual_size(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_confirm_new_file_rechecks_quota_with_actual_size(db, user_a, monkeypatch):
+    import app.services.files.upload as upload
+    from app.models import File
+    from app.services.files.upload import UploadTargetError, confirm_oss_upload
+
+    monkeypatch.setattr(upload, "_build_key", lambda **kwargs: "expected-key")
+
+    db.add(File(
+        user_id=user_a.id,
+        display_name="existing",
+        ext="BIN",
+        space="personal",
+        storage_key="existing-key",
+        size="9 B",
+        size_bytes=9,
+        mime_type="application/octet-stream",
+    ))
+    await db.commit()
+
+    with pytest.raises(UploadTargetError, match="存储空间已满"):
+        await confirm_oss_upload(
+            db,
+            user_a.id,
+            storage_key="expected-key",
+            display_name="new",
+            ext="BIN",
+            size_bytes=2,
+            actual_mime_type="application/octet-stream",
+            space="personal",
+            project_id=None,
+            folder_id=None,
+            stage_name="",
+            overwrite_file_id=None,
+            storage_limit_bytes=10,
+            max_file_bytes=200 * 1024 * 1024,
+        )
+
+
+@pytest.mark.asyncio
 async def test_confirm_locks_user_before_quota_read(db, user_a, monkeypatch):
     """配额读取前必须锁用户行，覆盖确认不能并发突破配额。"""
     from app.services.files import upload

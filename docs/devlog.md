@@ -1813,7 +1813,7 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 
 ### 验证结果
 
-- 后端：`643 passed`，ownership/confirmation guard 通过，Python compileall 通过。
+- 后端：`644 passed`，ownership/confirmation guard 通过，Python compileall 通过。
 - 前端：typecheck、strict typecheck、246 个 Vitest 测试和 build 全部通过；build 仅保留既有 chunk/import 警告。
 - 迁移：在临时 PostgreSQL 上从项目的现有 schema 基线 `20260804000002` 升级至 `20260804000007`，执行一次 downgrade 到 `20260804000006` 后再次 upgrade，最终为 head。
 - 直接从空 PostgreSQL 执行历史第一条 Alembic revision 不属于当前仓库支持的初始化路径：仓库基础表由 `Base.metadata.create_all()` 创建，历史第一条 revision 假定基础表已存在；该限制已记录在 PR，不将 offline SQL 或空库直升结果误报为通过。
@@ -1823,4 +1823,6 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 ### 复审收尾补充
 
 - 清理了上传服务的导入顺序问题，保持项目统一的标准库导入规范。
+- 复审时发现并修复 OSS confirm 新建文件分支遗漏实际配额复核的问题，新增“已有占用 + 新对象真实大小”回归测试；覆盖分支原有的替换配额检查保持不变。
+- 在临时 PostgreSQL 18 中执行真实双会话并发 confirm，结果为一条成功、一条配额拒绝，总占用保持 `95`，证明用户行锁和服务端配额复核生效。
 - 生产结构副本迁移复核命令输出：`production_schema_copy_downgrade_upgrade_ok`，最终版本 `20260804000007`。

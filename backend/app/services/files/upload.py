@@ -272,6 +272,8 @@ async def confirm_oss_upload(
     )
     if storage_key != expected_key:
         raise UploadTargetError(400, "上传路径与目标位置不一致，请重新上传")
+    if storage_limit_bytes is not None and used + size_bytes > storage_limit_bytes:
+        raise UploadTargetError(400, "存储空间已满，无法上传")
 
     db_file = File(
         user_id=user_id,
