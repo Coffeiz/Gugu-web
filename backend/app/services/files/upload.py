@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ownership import get_owned
-from app.models import File, Folder, Project, User
+from app.models import File, Project, User
 from app.services.storage import OSSStorageBackend
 from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.folders import resolve_folder_path

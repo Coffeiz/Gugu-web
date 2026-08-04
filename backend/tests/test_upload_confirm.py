@@ -58,3 +58,41 @@ async def test_confirm_rejects_actual_size_over_single_file_limit(db, user_a):
             storage_limit_bytes=None,
             max_file_bytes=200 * 1024 * 1024,
         )
+
+
+@pytest.mark.asyncio
+async def test_confirm_overwrite_rechecks_quota_with_actual_size(db, user_a):
+    from app.models import File
+    from app.services.files.upload import UploadTargetError, confirm_oss_upload
+
+    existing = File(
+        user_id=user_a.id,
+        display_name="note",
+        ext="TXT",
+        space="personal",
+        storage_key="existing-key",
+        size="5 B",
+        size_bytes=5,
+        mime_type="text/plain",
+    )
+    db.add(existing)
+    await db.commit()
+    await db.refresh(existing)
+
+    with pytest.raises(UploadTargetError, match="存储空间已满"):
+        await confirm_oss_upload(
+            db,
+            user_a.id,
+            storage_key="existing-key",
+            display_name="note",
+            ext="TXT",
+            size_bytes=11,
+            actual_mime_type="text/plain",
+            space="personal",
+            project_id=None,
+            folder_id=None,
+            stage_name="",
+            overwrite_file_id=existing.id,
+            storage_limit_bytes=10,
+            max_file_bytes=200 * 1024 * 1024,
+        )
