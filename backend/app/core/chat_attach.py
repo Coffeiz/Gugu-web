@@ -79,6 +79,8 @@ def _kind(ext: str) -> str:
 
 def _model_attachment_name(meta: dict) -> str:
     """给模型看的附件名：隐藏平台生成的长随机文件名，保留用户自定义文件名。"""
+    if meta.get("qq_face"):
+        return "QQ表情"
     name = str(meta.get("name") or "附件")
     if re.fullmatch(r"[0-9a-fA-F]{24,}", name):
         return {
@@ -492,6 +494,8 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
         cards.append({
             "attach_id": meta["attach_id"], "name": meta["name"], "ext": meta["ext"],
             "size_bytes": meta["size"], "kind": meta["kind"], "upload": True,
+            "qq_face": bool(meta.get("qq_face")),
+            "quoted": bool(meta.get("quoted")),
             "duration": meta.get("duration"),   # 语音条用：前端显示时长 + 渲染成播放条
             "img_width": meta.get("img_width"), "img_height": meta.get("img_height"),
         })

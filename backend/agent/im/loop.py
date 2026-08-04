@@ -234,6 +234,29 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
     from sqlalchemy import desc, select
     from app.models import ConversationMessage, ConversationSession
 
+    attachment_cards = []
+    if request.attachments:
+        from app.core import chat_attach
+
+        metas = await chat_attach.get_meta_many(request.user_id, request.attachments)
+        for attach_id in request.attachments:
+            meta = metas.get(str(attach_id))
+            if not meta:
+                continue
+            attachment_cards.append({
+                "attach_id": meta["attach_id"],
+                "name": meta["name"],
+                "ext": meta["ext"],
+                "size_bytes": meta["size"],
+                "kind": meta["kind"],
+                "qq_face": bool(meta.get("qq_face")),
+                "quoted": bool(meta.get("quoted")),
+                "upload": True,
+                "duration": meta.get("duration"),
+                "img_width": meta.get("img_width"),
+                "img_height": meta.get("img_height"),
+            })
+
     if db_session._engine is None:
         db_session._build_engine()
     async with db_session._SessionLocal() as db:
@@ -283,6 +306,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
             platform_bot_user_id=request.platform_bot_user_id,
             chat_type=("group" if request.chat_id else
                        "c2c" if request.source in IM_SOURCES else None),
+            files=attachment_cards or None,
         ))
         await db.commit()
         await trim_group_messages(session.id)
@@ -301,6 +325,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                     "platform_user_name": request.platform_user_name,
                     "platform_bot_user_id": request.platform_bot_user_id,
                     "chat_type": "group",
+                    "files": attachment_cards,
                 }],
             )
         except Exception:
@@ -477,6 +502,25 @@ async def dispatch_im_message(payload: dict):
     """
     from agent import logsafe, trace
     from agent.im.replies import send_agent_response, send_stream_with_fallback, send_text
+
+    if payload.get("platform") == "qqbot":
+        raw_attachments = payload.get("attachments") or []
+        if any(isinstance(item, dict) for item in raw_attachments):
+            from agent.im.media_ingress import ingest_qq_media
+
+            payload = dict(payload)
+            payload["attachments"] = await ingest_qq_media(
+                raw_attachments,
+                str(payload.get("owner_user_id") or ""),
+                str(payload.get("message_id") or ""),
+            )
+        if payload.get("platform_bot_user_id"):
+            from agent.im.identity import remember_bot_platform_user_id
+
+            await remember_bot_platform_user_id(
+                str(payload.get("channel_id") or ""),
+                str(payload["platform_bot_user_id"]),
+            )
 
     platform_message = PlatformMessage.from_payload(payload)
     payload = platform_message.to_payload(payload)

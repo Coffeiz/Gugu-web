@@ -20,11 +20,12 @@ supervisor 为每个启用的 user_bot 起一条本网关子进程。bot 收到�
 from __future__ import annotations
 
 from contextlib import suppress
-from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import aiohttp
 import asyncio
+import base64
+import binascii
 import json
 import logging
 import os
@@ -58,6 +59,47 @@ _INTENT_GROUP_AND_C2C = 1 << 25
 _INTENTS = _INTENT_GROUP_AND_C2C
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
 _HEARTBEAT_ACK_TIMEOUT_MULTIPLIER = 2.5
+
+_QQ_FACE_RE = re.compile(
+    r'<faceType=(?P<face_type>[^,>]+),faceId="(?P<face_id>[^"]*)",'
+    r'ext="(?P<ext>[^"]*)">'
+)
+_QQ_FACE_PENDING_TTL = 3.0
+_pending_qq_faces: dict[str, float] = {}
+
+
+def _contains_qq_face(text: str) -> bool:
+    return bool(text and _QQ_FACE_RE.search(text))
+
+
+def _qq_face_pending_key(chat_type: str, chat_id: str, sender_id: str) -> str:
+    return f"qq-face-pending:{chat_type}:{chat_id or sender_id}"
+
+
+def _normalize_qq_faces(text: str) -> str:
+    """将 QQ 内部表情标记转换成可展示文本，避免协议串直接进入会话。"""
+    if not text or "<faceType=" not in text:
+        return text
+
+    def replace(match: re.Match) -> str:
+        encoded = match.group("ext")
+        if encoded:
+            try:
+                padding = "=" * (-len(encoded) % 4)
+                payload = json.loads(base64.b64decode(encoded + padding).decode("utf-8"))
+                label = str(payload.get("text") or "").strip()
+                if label:
+                    return label
+            except (ValueError, TypeError, UnicodeDecodeError, binascii.Error, json.JSONDecodeError):
+                pass
+        return "[QQ表情]"
+
+    return _QQ_FACE_RE.sub(replace, text)
+
+
+def _strip_qq_face_markers(text: str) -> str:
+    """移除协议表情标记，图片附件会作为这条消息的视觉内容单独展示。"""
+    return _QQ_FACE_RE.sub("", text or "").strip()
 
 
 def _heartbeat_ack_expired(last_ack_at: float, interval: float, now: float) -> bool:
@@ -187,70 +229,6 @@ def _dedupe_attachments(attachments: list) -> list:
     return deduped
 
 
-def _raw_attachments_to_message(attachments: list):
-    """把 QQ raw attachment dict 包成现有 _ingest_qq_media 需要的属性对象。"""
-    return SimpleNamespace(
-        attachments=[
-            SimpleNamespace(
-                url=a.get("url"),
-                filename=a.get("filename") or a.get("file_name") or "file",
-                content_type=a.get("content_type") or a.get("type"),
-            )
-            for a in attachments
-            if isinstance(a, dict)
-        ],
-    )
-
-
-async def _ingest_qq_media(message: Any, owner: str) -> list:
-    """下载 QQ 消息里的图片/文件 → 暂存 → 返回 [attach_id]。handler 是 async，直接用 async stage。"""
-    atts = getattr(message, "attachments", None) or []
-    if not atts:
-        return []
-    import aiohttp
-    from agent.im import files as im_attachments
-    out: list = []
-    async with aiohttp.ClientSession() as sess:
-        for a in atts:
-            url = getattr(a, "url", None)
-            if not url:
-                continue
-            if not url.startswith("http"):
-                url = "https://" + url.lstrip("/")
-            fname = getattr(a, "filename", None) or "file"
-            name, _, ext = fname.rpartition(".")
-            name = name or fname
-            mime = getattr(a, "content_type", None)
-            try:
-                async with sess.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                    if resp.status != 200:
-                        print(f"[qq] 下载附件失败 status={resp.status}", flush=True)
-                        continue
-                    data = await resp.read()
-                # 语音/音频：QQ 语音是 SILK 等 mimo 不支持的编码 → 转成 mp3 再暂存，
-                # 这样 resolve_for_message 才会按音频喂给模型听（缺 ffmpeg/pilk 则原样、退文字提示）。
-                # QQ 语音原编码就是 silk/amr，转码成功＝这是一条「语音消息」→ 渲染成语音条 + 30 天独立存储。
-                is_voice = False
-                from app.core import media_transcode
-                if ext not in ("mp3", "wav", "flac", "m4a", "ogg"):
-                    conv = media_transcode.to_mimo_mp3(data, ext, mime)
-                    if conv is not None:
-                        data, ext, mime, name = conv, "mp3", "audio/mpeg", (name or "语音")
-                        is_voice = True
-                if is_voice:
-                    dur = media_transcode.probe_duration(data, ext)
-                    meta = await im_attachments.stage_voice(owner, name, ext, mime, data, duration=dur, platform="qq")
-                else:
-                    meta = await im_attachments.stage(owner, name, ext, mime, data, platform="qq")
-                out.append(meta["attach_id"])
-            except Exception as e:
-                # best-effort：单个附件下载/转码/暂存失败（网络抖动、ffmpeg 缺失、解码错…原因很杂）
-                # 不该拖垮其余附件的处理，跳过继续；但仍要留痕（受限出口拿原始，可见日志只留脱敏摘要）。
-                diag_log("agent.gateway.qq._ingest_qq_media", e)
-                _log.warning("[qq] 暂存附件出错: %s", redact(f"{type(e).__name__}: {e}"))
-    return out
-
-
 def _qq_api_base(sandbox: bool) -> str:
     return _QQ_SANDBOX_API_BASE if sandbox else _QQ_API_BASE
 
@@ -341,22 +319,6 @@ def _qq_bot_mention_id(data: Dict[str, Any], event_type: str) -> str:
     return ""
 
 
-async def _remember_bot_platform_user_id(channel_id: str, bot_platform_user_id: str) -> None:
-    """首次从 QQ mention 事件取得 Bot 身份后持久化，供历史展示使用。"""
-    if not channel_id or not bot_platform_user_id:
-        return
-    import app.db.session as _sess
-    if _sess._engine is None:
-        _sess._build_engine()
-    from app.models import UserBot
-    async with _sess._SessionLocal() as db:
-        bot = await db.get(UserBot, int(channel_id))
-        if not bot or bot.bot_platform_user_id == bot_platform_user_id:
-            return
-        bot.bot_platform_user_id = bot_platform_user_id
-        await db.commit()
-
-
 async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, msg_id: str) -> None:
     try:
         if chat_type == "group":
@@ -403,13 +365,13 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     if not sender_id:
         return
     bot_platform_user_id = _qq_bot_mention_id(data, event_type)
-    if bot_platform_user_id:
-        try:
-            await _remember_bot_platform_user_id(channel_id, bot_platform_user_id)
-        except Exception as exc:
-            diag_log("agent.gateway.qq.remember_bot_platform_user_id", exc)
     # 成员 mention 保留原始 ID；展示层按会话内最新 username 解析，避免改名后被旧昵称冻结。
-    text = (data.get("content") or "").strip()
+    raw_text = (data.get("content") or "").strip()
+    has_qq_face = _contains_qq_face(raw_text)
+    # QQ 经常把一个表情拆成「协议文本」和紧随其后的图片事件；协议文本本身不应成为
+    # 一条独立聊天消息，也不应和图片同时显示成两个内容块。
+    face_only = has_qq_face and not _strip_qq_face_markers(raw_text)
+    text = _normalize_qq_faces(raw_text)
     msg_id = data.get("id") or ""
     if chat_type == "c2c":
         binding_match = re.fullmatch(r"(?:绑定|bind)\s*([0-9]{6})", text, flags=re.IGNORECASE)
@@ -429,11 +391,77 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     raw_attachments = data.get("attachments") or []
     if not isinstance(raw_attachments, list):
         raw_attachments = []
+    # 临时探针：只记录附件结构和 URL 字段是否存在，不记录 URL、正文或用户标识。
+    print(
+        "[runtime-qq-face-probe] " + json.dumps({
+            "phase": "gateway-raw",
+            "face": has_qq_face,
+            "count": len(raw_attachments),
+            "items": [
+                {
+                    "keys": sorted(item.keys()) if isinstance(item, dict) else [],
+                    "urlKeys": [
+                        key for key in (
+                            "url", "file_url", "download_url", "image_url",
+                            "origin_url", "preview_url",
+                        )
+                        if isinstance(item, dict) and item.get(key)
+                    ],
+                    "qqFace": bool(item.get("qq_face")) if isinstance(item, dict) else False,
+                }
+                for item in raw_attachments
+            ],
+        }, ensure_ascii=False),
+        flush=True,
+    )
     # 引用原文单独存 quoted_text，不拼进 text——runner.py 只把它喂给模型当上下文，
     # ConversationMessage.content/网页展示仍是用户自己打的话，别再把引用原文拼进正文
     # （网页气泡纯文本渲染，拼进去会把引用的 markdown 原样摊平显示得很难看，见 devlog 2026-07-10）。
     quoted_text, quoted_attachments = _extract_quoted(data)
+    quoted_text = _normalize_qq_faces(quoted_text)
+    if quoted_attachments and quoted_text == "[QQ表情]":
+        quoted_text = ""
+    if quoted_attachments:
+        quoted_attachments = [dict(item, quoted=True) for item in quoted_attachments]
     all_attachments = raw_attachments + quoted_attachments
+    face_key = _qq_face_pending_key(chat_type, chat_id, sender_id)
+    now = time.monotonic()
+    pending_until = _pending_qq_faces.get(face_key, 0.0)
+    pending_face = not has_qq_face and pending_until > now
+    if pending_face:
+        _pending_qq_faces.pop(face_key, None)
+    if face_only and not all_attachments and not quoted_text and not quoted_attachments:
+        _pending_qq_faces[face_key] = now + _QQ_FACE_PENDING_TTL
+        # 等下一条图片事件到达，再以一条「图片表情消息」入队。
+        return
+    if has_qq_face or pending_face:
+        all_attachments = [
+            dict(item, qq_face=True)
+            if isinstance(item, dict) and not item.get("quoted")
+            else item
+            for item in all_attachments
+        ]
+    if has_qq_face and all_attachments:
+        text = _normalize_qq_faces(_strip_qq_face_markers(raw_text))
+    if pending_face:
+        text = ""
+    print(
+        "[runtime-qq-face-probe] " + json.dumps({
+            "phase": "gateway-normalized",
+            "face": has_qq_face,
+            "pendingFace": pending_face,
+            "count": len(all_attachments),
+            "items": [
+                {
+                    "keys": sorted(item.keys()) if isinstance(item, dict) else [],
+                    "hasUrl": bool(isinstance(item, dict) and item.get("url")),
+                    "qqFace": bool(item.get("qq_face")) if isinstance(item, dict) else False,
+                }
+                for item in all_attachments
+            ],
+        }, ensure_ascii=False),
+        flush=True,
+    )
     if all_attachments:
         ack_target = chat_id if chat_type == "group" else sender_id
         now = time.monotonic()
@@ -450,8 +478,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         if should_reply and now - last_ack.get(ack_key, 0.0) > _ACK_COOLDOWN:
             last_ack[ack_key] = now
             await _qq_ack(channel_id, chat_type, ack_target, "文件收到啦，让我看看~", msg_id)
-    attachments = await _ingest_qq_media(_raw_attachments_to_message(all_attachments), owner)
-    if not text and not attachments and not quoted_text:
+    if not text and not all_attachments and not quoted_text:
         return
     from agent import trace
     tid = trace.new_trace()
@@ -466,7 +493,8 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         "chat_type": chat_type,
         "text": text,
         "quoted_text": quoted_text or None,
-        "attachments": attachments,
+        "attachments": all_attachments,
+        "qq_face_marker": has_qq_face,
         "trace_id": tid,
     }
     if chat_type == "group":
@@ -479,14 +507,14 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     sender_fp = logsafe.fingerprint(sender_id)
     if chat_type == "group":
         print(f"[qq:{channel_fp}] 收到群 {logsafe.fingerprint(chat_id)} 内 {sender_fp}: text_len={len(text)} "
-              f"fp={logsafe.fingerprint(text)} att={len(attachments)} trace={tid}", flush=True)
+              f"fp={logsafe.fingerprint(text)} att={len(all_attachments)} trace={tid}", flush=True)
     else:
         print(f"[qq:{channel_fp}] 收到 {sender_fp}: text_len={len(text)} "
-              f"fp={logsafe.fingerprint(text)} att={len(attachments)} trace={tid}", flush=True)
+              f"fp={logsafe.fingerprint(text)} att={len(all_attachments)} trace={tid}", flush=True)
 
     # 取消是实时控制信号：必须在 Gateway 侧立刻写入 Redis，不能等同用户锁的
     # worker 轮到这条消息；普通 reply/drop shortcut 仍交给 worker 决策。
-    if not attachments:
+    if not all_attachments:
         from agent.im.loop import apply_im_shortcut_cancel, decide_im_shortcut
         dec = await decide_im_shortcut("qqbot", sender_id, text)
         if dec["action"] == "cancel":
@@ -496,8 +524,6 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
             return
 
     try:
-        from agent.im.models import normalize_payload
-        payload = normalize_payload(payload)
         await R.produce(STREAM, payload)
     except Exception as e:
         # 入队失败＝这条用户消息会被丢——不是无关紧要的 best-effort，值得响亮记录（受限出口留原始，

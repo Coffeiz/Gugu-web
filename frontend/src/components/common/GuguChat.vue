@@ -200,17 +200,24 @@
             <div v-for="{ row, msg } in rowsWithMsg" :key="row.index" :data-index="row.index" :ref="measureRow"
                  class="msg-virtual-row" :style="{ transform: `translateY(${row.start + msgsPadTop}px)` }">
               <div :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
-                   v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.files?.length, msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
+                   v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
                 <!-- 群聊左侧消息标发言人：ai 标"咕咕"，群成员标 platformUserName。只在
                      群聊会话里显示，1:1 对话左侧默认就是咕咕，不额外占地方。 -->
                 <div v-if="isGroupSession && msg.role !== 'user'" class="msg-speaker">{{ msg.role === 'ai' ? '咕咕' : msg.speakerLabel }}</div>
                 <!-- IM 引用/回复：单独一条浅色预览条，跟真正打的话分开显示，别把引用原文
                      （可能带 markdown 表格等）直接摊平混进正文气泡（devlog 2026-07-10）。 -->
-                <div v-if="msg.role !== 'ai' && msg.quotedText" class="msg-quoted" :title="msg.quotedText">{{ msg.quotedText }}</div>
+                <div v-if="msg.role !== 'ai' && (msg.quotedText || msg.files?.some(f => f.quoted))" class="msg-quoted" :title="msg.quotedText || '引用的 QQ 表情'">
+                  <span v-if="msg.quotedText">{{ displayQQFaces(msg.quotedText) }}</span>
+                  <template v-for="f in (msg.files || []).filter(f => f.quoted)" :key="`quoted:${f.file_id || f.attach_id}`">
+                    <img v-if="f._thumbUrl" class="msg-quoted-thumb" :src="f._thumbUrl" draggable="false" alt="引用图片" @click.stop="openFileFromChat(f)" />
+                    <img v-else-if="f.qq_face" class="msg-quoted-thumb msg-face-gif" v-lazy-face="f.file_id || f.attach_id" draggable="false" alt="引用 QQ 表情" @click.stop="openFileFromChat(f)" />
+                    <img v-else-if="isImageFile(f)" class="msg-quoted-thumb" v-lazy-thumb="f.file_id || f.attach_id" draggable="false" alt="引用图片" @click.stop="openFileFromChat(f)" />
+                  </template>
+                </div>
                 <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onChatActionClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderMd(msg.text))" :text="msg.text" chat /></div>
-                <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
+                <div v-else-if="msg.text" class="msg-bubble">{{ displayQQFaces(msg.text) }}</div>
                 <div v-if="msg.files && msg.files.length" class="msg-files">
-                  <template v-for="f in msg.files" :key="f.file_id || f.attach_id">
+                  <template v-for="f in msg.files.filter(f => !f.quoted)" :key="f.file_id || f.attach_id">
                   <!-- 语音条：点一下播放（带鉴权拉 blob），不是文件卡 -->
                   <div v-if="f.kind === 'voice'" class="msg-voice" :class="{ playing: voicePlayingId === f.attach_id }"
                        @click="toggleVoice(f)" title="点击播放语音">
@@ -221,9 +228,13 @@
                     <span class="mv-wave"><i v-for="n in 13" :key="n" :style="{ height: voiceBar(n) }" /></span>
                     <span class="mv-dur">{{ fmtDur(f.duration) }}</span>
                   </div>
+                  <div v-else-if="f.qq_face" class="msg-face-image-wrap" @click="openFileFromChat(f)" title="点击查看表情">
+                    <img v-if="f._thumbUrl" class="msg-face-image" :src="f._thumbUrl" draggable="false" alt="QQ表情" />
+                    <img v-else class="msg-face-image" v-lazy-face="f.file_id || f.attach_id" draggable="false" alt="QQ表情" />
+                  </div>
                   <div v-else class="msg-file press-fx" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
                     <span class="msg-file-ext">
-                      {{ (f.ext || 'file').toUpperCase().slice(0, 4) }}
+                      <template v-if="!f.qq_face">{{ (f.ext || 'file').toUpperCase().slice(0, 4) }}</template>
                       <template v-if="isImageFile(f)">
                         <img v-if="f._thumbUrl" class="msg-file-thumb" :src="f._thumbUrl"
                           draggable="false" alt="" @error="($event.target as HTMLElement).remove()" />
@@ -232,7 +243,7 @@
                       </template>
                     </span>
                     <span class="msg-file-info">
-                      <span class="msg-file-name">{{ f.name }}.{{ f.ext }}</span>
+                      <span v-if="!f.qq_face" class="msg-file-name">{{ f.name }}.{{ f.ext }}</span>
                       <span class="msg-file-meta">{{ fmtSize(f.size_bytes) }} · {{ canPreview(f) ? '预览' : '下载' }}</span>
                     </span>
                     <svg class="msg-file-dl" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>
@@ -366,6 +377,8 @@ interface ChatFile {
   size?: number
   size_bytes?: number
   kind?: string
+  qq_face?: boolean
+  quoted?: boolean
   duration?: number
   upload?: boolean
   _thumbUrl?: string
@@ -443,6 +456,20 @@ watch(() => liveStore.sessionEvent, async (e) => {
   if (!e || !e.appended?.length || e.session_id !== sessionId.value) return
   if (e.origin && e.origin === CLIENT_ID) return
   for (const m of e.appended) {
+    if (m.files?.length) {
+      console.info('[runtime-qq-face-probe]', JSON.stringify({
+        phase: 'chat-event-files',
+        count: m.files.length,
+        files: m.files.map((file: any) => ({
+          keys: Object.keys(file || {}).sort(),
+          kind: file?.kind || null,
+          ext: file?.ext || null,
+          qqFace: Boolean(file?.qq_face),
+          hasFileId: Boolean(file?.file_id),
+          hasAttachId: Boolean(file?.attach_id),
+        })),
+      }))
+    }
     const isAi = m.role === 'assistant'
     const speaker = resolveSpeaker(m.role || 'user', m.platform_user_id, m.platform_user_name)
     const latestNames: Record<string, string> = {}
@@ -462,8 +489,8 @@ watch(() => liveStore.sessionEvent, async (e) => {
       role: speaker.role,
       speakerLabel: speaker.speakerLabel,
       platformUserId: m.platform_user_id || null,
-      text: replaceMentionIdsForDisplay(m.text || '', latestNames),
-      html: isAi ? renderMd(replaceMentionIdsForDisplay(m.text || '', latestNames)) : null,
+      text: displayQQFaces(replaceMentionIdsForDisplay(m.text || '', latestNames)),
+      html: isAi ? renderMd(displayQQFaces(replaceMentionIdsForDisplay(m.text || '', latestNames))) : null,
       files: (m.files && m.files.length) ? m.files as ChatFile[] : undefined,
       quotedText: m.quoted_text || undefined,
       time: now(),
@@ -1099,27 +1126,57 @@ function isImageFile(f: ChatFile) {
 }
 // IntersectionObserver 懒加载指令：进视口附近才取 card 尺寸缩略图。
 // 值为数字 file_id → 文件库缩略图；为字符串 attach_id → 暂存附件缩略图端点。
-interface ThumbEl extends HTMLImageElement { _thumbObs?: IntersectionObserver | null }
-const vLazyThumb = {
-  mounted(el: ThumbEl, { value: id }: { value: number | string | undefined | null }) {
-    if (!id) return
-    const isAttach = typeof id === 'string'
-    const key  = isAttach ? `att:${id}_card` : `${id}_card`
-    const cached = isAttach ? getCachedThumbUrl(key) : getCachedThumb(id, 'card')
-    if (cached) { el.src = cached; return }
-    const fetchThumb = () => isAttach
-      ? getThumbUrl(key, `${API_BASE}/agent/attachment/${id}/thumb?size=card`)
-      : getThumb(id, 'card')
-    const obs = new IntersectionObserver(([entry]) => {
-      if (!entry.isIntersecting) return
-      obs.disconnect(); el._thumbObs = null
-      fetchThumb().then((url: string | null) => { if (url) el.src = url })
-    }, { rootMargin: '200px' })
-    obs.observe(el)
-    el._thumbObs = obs
-  },
-  unmounted(el: ThumbEl) { el._thumbObs?.disconnect(); el._thumbObs = null },
+interface ThumbEl extends HTMLImageElement {
+  _thumbObs?: IntersectionObserver | null
+  _thumbKey?: string
+  _thumbGeneration?: number
 }
+
+function bindLazyThumb(el: ThumbEl, id: number | string | undefined | null, size = 'card') {
+  el._thumbObs?.disconnect()
+  el._thumbObs = null
+  const generation = (el._thumbGeneration ?? 0) + 1
+  el._thumbGeneration = generation
+  el._thumbKey = id == null || id === '' ? undefined : String(id)
+  // DOM 节点会被虚拟列表复用；切换附件时先清掉旧图，避免旧 blob 在新附件加载前残留。
+  el.removeAttribute('src')
+  if (!id) return
+
+  const isAttach = typeof id === 'string'
+  const key = isAttach ? `att:${id}_${size}` : `${id}_${size}`
+  const cached = isAttach ? getCachedThumbUrl(key) : getCachedThumb(id, size)
+  if (cached) { el.src = cached; return }
+  const fetchThumb = () => isAttach
+    ? getThumbUrl(key, `${API_BASE}/agent/attachment/${id}/thumb?size=${size}`)
+    : getThumb(id, size)
+  const obs = new IntersectionObserver(([entry]) => {
+    if (!entry.isIntersecting) return
+    obs.disconnect(); el._thumbObs = null
+    fetchThumb().then((url: string | null) => {
+      if (url && el._thumbGeneration === generation && el._thumbKey === String(id)) el.src = url
+    })
+  }, { rootMargin: '200px' })
+  obs.observe(el)
+  el._thumbObs = obs
+}
+
+function makeLazyThumbDirective(size: string) {
+  return {
+    mounted(el: ThumbEl, { value }: { value: number | string | undefined | null }) { bindLazyThumb(el, value, size) },
+    updated(el: ThumbEl, { value, oldValue }: { value: number | string | undefined | null; oldValue: number | string | undefined | null }) {
+      if (value !== oldValue) bindLazyThumb(el, value, size)
+    },
+    unmounted(el: ThumbEl) {
+      el._thumbObs?.disconnect(); el._thumbObs = null
+      el._thumbGeneration = (el._thumbGeneration ?? 0) + 1
+      el._thumbKey = undefined
+    },
+  }
+}
+
+const vLazyThumb = makeLazyThumbDirective('card')
+// QQ 表情需要保留 GIF/动画 WebP，不能走会转成 JPEG 的 card 缩略图端点。
+const vLazyFace = makeLazyThumbDirective('full')
 
 async function downloadFile(f: ChatFile) {
   if (f.attach_id) {
@@ -1131,13 +1188,13 @@ async function downloadFile(f: ChatFile) {
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url; a.download = `${f.name}.${f.ext}`
+    a.href = url; a.download = `${f.qq_face ? 'QQ表情' : f.name}.${f.ext}`
     document.body.appendChild(a); a.click()
     setTimeout(() => { URL.revokeObjectURL(url); a.remove() }, 1000)
     return
   }
   if (f.file_id == null) return
-  try { await filesApi.download(f.file_id, `${f.name}.${f.ext}`) }
+  try { await filesApi.download(f.file_id, `${f.qq_face ? 'QQ表情' : f.name}.${f.ext}`) }
   catch (e) { console.error('下载失败', e) }
 }
 
@@ -1147,11 +1204,12 @@ function canPreview(f: ChatFile) {
 }
 function openFileFromChat(f: ChatFile) {
   if (canPreview(f)) {
+    const displayName = f.qq_face ? 'QQ表情' : f.name
     previewStore.open({
       id: f.file_id ?? undefined,
       attach_id: f.attach_id ?? null,
       ext: (f.ext || '').toUpperCase(),
-      displayName: f.name,
+      displayName,
       size: fmtSize(f.size_bytes),
       // 真实像素尺寸（有的话）：预览窗口直接按此定尺，不用再靠缩略图猜大小
       imgWidth: f.img_width ?? null,
@@ -1545,6 +1603,25 @@ function replaceMentionIdsForDisplay(text: string, names: Record<string, string>
   return result
 }
 
+// 兼容历史消息：旧记录可能还保存着 QQ 的内部表情协议串。
+function displayQQFaces(text: string): string {
+  if (!text || !text.includes('<faceType=')) return text || ''
+  return text.replace(
+    /<faceType=[^,>]+,faceId="[^"]*",ext="([^"]*)">/g,
+    (_match, encoded: string) => {
+      if (encoded) {
+        try {
+          const padded = encoded + '='.repeat((4 - encoded.length % 4) % 4)
+          const bytes = Uint8Array.from(atob(padded), char => char.charCodeAt(0))
+          const payload = JSON.parse(new TextDecoder().decode(bytes))
+          if (typeof payload.text === 'string' && payload.text.trim()) return payload.text
+        } catch { /* 历史协议串不完整时显示统一占位 */ }
+      }
+      return '[QQ表情]'
+    },
+  )
+}
+
 async function loadSession(id: number) {
   if (id === sessionId.value) return
   abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
@@ -1565,7 +1642,7 @@ async function loadSession(id: number) {
         role: speaker.role,
         speakerLabel: speaker.speakerLabel,
         platformUserId: m.platformUserId || null,
-        text: m.content,
+        text: displayQQFaces(m.content),
         html: null,
         files: m.files && m.files.length ? m.files : undefined,
         quotedText: m.quotedText || undefined,
@@ -2374,6 +2451,17 @@ async function send(forcedText?: string) {
   background: rgba(123,127,178,0.08); border-left: 2.5px solid rgba(123,127,178,0.45);
   border-radius: 4px; white-space: pre-wrap; word-break: break-word;
   display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden;
+}
+.msg-quoted-thumb {
+  display: block; width: 112px; height: 112px; margin-top: 5px; object-fit: cover;
+  border-radius: 8px; cursor: pointer; border: 1px solid rgba(123,127,178,0.18);
+}
+.msg-face-image-wrap {
+  max-width: 150px; margin-top: 5px; cursor: pointer; line-height: 0;
+}
+.msg-face-image {
+  display: block; width: 128px; height: 128px; max-width: 100%; object-fit: contain;
+  border-radius: 12px;
 }
 /* 咕咕发来的文件卡片 */
 .msg-files { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 88%; min-width: 0; }

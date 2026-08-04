@@ -54,6 +54,32 @@ def test_qq_message_mentions_bot_uses_at_event_and_payload_fallback():
     ) is True
 
 
+def test_qq_face_marker_is_normalized_without_protocol_text():
+    marker = '<faceType=6,faceId="0",ext="eyJ0ZXh0IjoiIn0=">'
+    assert qq._contains_qq_face(marker)
+    assert qq._normalize_qq_faces(marker) == "[QQ表情]"
+
+
+def test_qq_face_marker_is_normalized_without_leaking_protocol_text():
+    import base64
+    import json
+
+    ext = base64.b64encode(json.dumps({"text": ""}).encode()).decode()
+    assert qq._normalize_qq_faces(
+        f"看这个 <faceType=4,faceId=\"\",ext=\"{ext}\">"
+    ) == "看这个 [QQ表情]"
+
+
+def test_qq_face_marker_uses_text_from_extension_when_available():
+    import base64
+    import json
+
+    ext = base64.b64encode(json.dumps({"text": "😀"}).encode()).decode()
+    assert qq._normalize_qq_faces(
+        f"<faceType=4,faceId=\"\",ext=\"{ext}\">"
+    ) == "😀"
+
+
 def test_qq_bot_mention_id_uses_explicit_bot_mention():
     from agent.gateway.qq import _qq_bot_mention_id
 
@@ -213,13 +239,9 @@ def test_qq_extract_quoted_returns_empty_without_ref_msg_idx():
 async def test_qq_raw_c2c_event_to_payload(monkeypatch):
     produced: list[dict] = []
 
-    async def fake_ingest(message, owner):
-        return []
-
     async def fake_produce(stream, payload):
         produced.append(payload)
 
-    monkeypatch.setattr(qq, "_ingest_qq_media", fake_ingest)
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 
     from agent import router, runtime_state
@@ -250,14 +272,10 @@ async def test_qq_raw_group_event_to_payload(monkeypatch):
     async def fake_group_settings(bot_id):
         return True, True
 
-    async def fake_ingest(message, owner):
-        return []
-
     async def fake_produce(stream, payload):
         produced.append(payload)
 
     monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
-    monkeypatch.setattr(qq, "_ingest_qq_media", fake_ingest)
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 
     from agent import router, runtime_state
@@ -303,14 +321,10 @@ async def test_qq_raw_group_message_create_respects_requires_at(monkeypatch):
     async def fake_group_settings(bot_id):
         return True, False
 
-    async def fake_ingest(message, owner):
-        return []
-
     async def fake_produce(stream, payload):
         produced.append(payload)
 
     monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
-    monkeypatch.setattr(qq, "_ingest_qq_media", fake_ingest)
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 
     from agent import router, runtime_state
@@ -341,11 +355,7 @@ async def test_qq_raw_group_message_create_is_received_when_at_is_required(monke
     async def fake_produce(stream, payload):
         produced.append(payload)
 
-    async def fake_ingest(message, owner):
-        return []
-
     monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
-    monkeypatch.setattr(qq, "_ingest_qq_media", fake_ingest)
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 
     await qq._handle_raw_qq_message("GROUP_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
@@ -356,7 +366,6 @@ async def test_qq_raw_group_message_create_is_received_when_at_is_required(monke
 
 
 async def test_qq_raw_quoted_attachment_is_ingested(monkeypatch):
-    seen_filenames: list[str] = []
     produced: list[dict] = []
     data = _raw_c2c_event(
         msg_elements=[
@@ -373,15 +382,10 @@ async def test_qq_raw_quoted_attachment_is_ingested(monkeypatch):
     async def fake_ack(*args, **kwargs):
         return None
 
-    async def fake_ingest(message, owner):
-        seen_filenames.extend(a.filename for a in message.attachments)
-        return ["att_1"]
-
     async def fake_produce(stream, payload):
         produced.append(payload)
 
     monkeypatch.setattr(qq, "_qq_ack", fake_ack)
-    monkeypatch.setattr(qq, "_ingest_qq_media", fake_ingest)
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 
     from agent import router, runtime_state
@@ -398,5 +402,4 @@ async def test_qq_raw_quoted_attachment_is_ingested(monkeypatch):
 
     await qq._handle_raw_qq_message("C2C_MESSAGE_CREATE", data, "bot-1", "user-1", {})
 
-    assert seen_filenames == ["a.png"]
-    assert produced[0]["attachments"] == ["att_1"]
+    assert produced[0]["attachments"][0]["url"] == "https://example.test/a.png"

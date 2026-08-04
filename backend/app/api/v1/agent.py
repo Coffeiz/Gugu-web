@@ -62,7 +62,7 @@ async def upload_attachment(
         meta = await chat_attach.stage_voice(current_user.id, name or "语音", ext, mime, data, duration=dur, platform="web")
     else:
         meta = await chat_attach.stage(current_user.id, name, ext, mime, data, platform="web")
-    return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration", "img_width", "img_height")}
+    return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration", "img_width", "img_height", "qq_face")}
 
 
 @router.get("/attachment/{attach_id}/thumb")
@@ -86,6 +86,11 @@ async def attachment_thumb(
         raise HTTPException(404, "附件已过期或物理文件丢失")
     if (meta.get("ext") or "").lower() == "svg":
         return Response(content=raw, media_type="image/svg+xml",
+                        headers={"Cache-Control": "private, max-age=3600"})
+    # QQ 表情可能是 GIF/动画 WebP；原图端点保留动画帧，普通缩略图则统一转 JPEG。
+    if size == "full" and (meta.get("qq_face") or (meta.get("ext") or "").lower() in {"gif", "webp"}):
+        mime = meta.get("mime") or f"image/{(meta.get('ext') or 'gif').lower()}"
+        return Response(content=raw, media_type=mime,
                         headers={"Cache-Control": "private, max-age=3600"})
     # 复用文件库的缩略图生成（JPEG 兜底版，按 size 取最大边）
     from app.services.files.previews import generate_thumb_jpeg_fallback
